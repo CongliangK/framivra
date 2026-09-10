@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;font-family:"Noto Sans CJK SC",sans-serif;overflow:hidden;position:absolute}
+.card{position:absolute;left:170px;top:300px;width:900px;height:560px;border-radius:26px;
+  background:rgba(10,15,35,.62);border:1px solid rgba(244,114,182,.3);backdrop-filter:blur(6px);
+  box-shadow:0 24px 70px rgba(2,6,23,.55)}
+.ct{position:absolute;top:36px;left:44px;font-size:34px;font-weight:900;color:#f1f5f9;letter-spacing:2px}
+.cs{position:absolute;top:84px;left:44px;font-size:20px;color:#94a3b8;letter-spacing:3px}
+.ring{position:absolute;right:1180px;top:360px;width:360px;height:360px}
+.kpis{position:absolute;right:120px;top:560px;text-align:right}
+.kpi{font-size:26px;color:#94a3b8;margin:10px 0}
+.kpi b{font-size:56px;color:#67e8f9;font-weight:900;margin-left:14px}
+#ph{position:absolute;left:0;top:0}
+</style></head><body>
+<div class="card">
+  <div class="ct">渲染负载遥测</div><div class="cs">RENDER TELEMETRY · LIVE</div>
+</div>
+<svg id="ph" width="1920" height="1080">
+  <polyline id="l1" fill="none" stroke="#f472b6" stroke-width="5" stroke-linejoin="round"/>
+  <polyline id="l2" fill="none" stroke="#67e8f9" stroke-width="5" stroke-linejoin="round"/>
+</svg>
+<svg class="ring" id="rg"></svg>
+<div class="kpis" id="kp"></div>
+<script>
+const FPS=24,N=192,f=parseInt(new URLSearchParams(location.search).get("f")||"0"),t=Math.min(f/FPS,N/FPS);
+const clamp01=v=>Math.max(0,Math.min(1,v)),seg=(t,a,b)=>clamp01((t-a)/(b-a));
+const eoc=x=>1-Math.pow(1-x,3),eoe=x=>x>=1?1:1-Math.pow(2,-10*x);
+function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15,1|a);x=x+Math.imul(x^x>>>7,61|x)^x;return((x^x>>>14)>>>0)/4294967296}}
+
+/* 卡片入场 */
+document.querySelector(".card").style.cssText+=`;opacity:${clamp01(seg(t,.1,.5))};transform:translateY(${(1-eoc(seg(t,.1,.7)))*50}px) scale(${.92+.08*eoc(seg(t,.1,.7))})`;
+
+/* 折线图：两条相位不同的曲线逐步画出 */
+const X0=210,Y0=790,W=800,H=380,M=110;
+function pts(seed){const R=rng(seed),a=[];for(let i=0;i<=48;i++)a.push(60+R()*220+40*Math.sin(i*.4+seed));return a}
+function draw(id,arr,pr,dy){const n=Math.floor(48*pr);let s="";
+  for(let i=0;i<=n;i++)s+=`${X0+i*(W/48)},${Y0-arr[i]*H/320+dy} `;document.getElementById(id).setAttribute("points",s)}
+const pr1=eoc(seg(t,.5,3.2)),pr2=eoc(seg(t,.9,3.8));
+draw("l1",pts(3),pr1,0);draw("l2",pts(9),pr2,-70);
+/* 网格与轴 */
+const ph=document.getElementById("ph");let gl="";
+for(let i=0;i<5;i++)gl+=`<line x1="${X0}" y1="${Y0-i*95}" x2="${X0+W}" y2="${Y0-i*95}" stroke="rgba(148,197,255,.12)" stroke-width="1"/>`;
+for(let i=0;i<7;i++)gl+=`<text x="${X0+i*(W/6)}" y="${Y0+40}" fill="#64748b" font-size="22" font-family="Noto Sans CJK SC">${i*5}s</text>`;
+ph.insertAdjacentHTML("beforeend",gl);
+
+/* 环形进度 */
+const rp=eoe(seg(t,.6,4.2));
+const C=2*Math.PI*150;
+document.getElementById("rg").innerHTML=
+ `<circle cx="180" cy="180" r="150" fill="none" stroke="rgba(148,197,255,.15)" stroke-width="18"/>
+  <circle cx="180" cy="180" r="150" fill="none" stroke="url(#gg)" stroke-width="18" stroke-linecap="round"
+    stroke-dasharray="${C*rp} ${C}" transform="rotate(-90 180 180)"/>
+  <defs><linearGradient id="gg"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#f472b6"/></linearGradient></defs>
+  <text x="180" y="172" text-anchor="middle" fill="#f1f5f9" font-size="64" font-weight="900" font-family="Noto Sans CJK SC">${Math.round(rp*100)}%</text>
+  <text x="180" y="222" text-anchor="middle" fill="#94a3b8" font-size="24" font-family="Noto Sans CJK SC">PIPELINE</text>`;
+document.querySelector(".ring").style.opacity=clamp01(seg(t,.55,.9));
+
+/* KPI 数字滚动 */
+const K=[["帧",720],["图层",5],["音轨",4],["切点",7]];
+document.getElementById("kp").innerHTML=K.map(([l,v],i)=>{
+  const p=eoc(seg(t,.8+i*.2,1.7+i*.2));return `<div class="kpi">${l}<b>${Math.round(v*p)}</b></div>`}).join("");
+
+/* 淡出 */
+document.body.style.opacity=1-clamp01(seg(t,7.55,7.95));
+</script></body></html>

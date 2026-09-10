@@ -6,14 +6,14 @@
 
 本仓是视频工具的**唯一权威本体**（D40）：
 
-- `~/.agents/skills/video/` 中的 `vtx/` 与 `scripts/` 是指向本仓的**符号链接**——skill 瘦身为「纯文本说明（SKILL.md + references/）+ 模板资产（assets/）」，历史调用路径（`~/.agents/skills/video/vtx/vtx.py`）全部继续可用。
-- 修改任何程序一律改本仓，skill 侧零改动（链接自动跟随）。
-- skill 的文档（references/edit.md·gfx.md·research.md）权威位置仍在 skill 内；本仓不再保留文档副本，避免双源漂移。
+- `~/.agents/skills/video/` 中的 `vtx/`、`scripts/`、`references/`、`assets/`、`SKILL.md` 全部是指向本仓的**符号链接**——skill 的说明文档与工作流（`skill/`）随本仓分发与版本化，live 位置零实体，历史调用路径（`~/.agents/skills/video/vtx/vtx.py` 等）全部继续可用。
+- 修改任何程序或 skill 文档一律改本仓，live 侧零改动（链接自动跟随）。
 
 ## 目录结构
 
 | 目录 | 内容 | 说明 |
 |---|---|---|
+| `skill/` | **video skill 全部文档与模板**（工作流载体，随仓分享）：SKILL.md 路由索引 + references/{edit,gfx,research}.md 三领域完整文档 + assets/（起手模板 + gfx 实例页 + 调研模板） | `~/.agents/skills/video/` 内全部内容为指向本目录（及根级 vtx/、scripts/）的符号链接 |
 | `vtx/` | **vtx 渲染 CLI**：vtx.py（validate/audit/prepare/gfx/video/audio/mux/qc + --draft/--gpu/seg 缓存/两遍静态增益响度）+ timeline.schema.json + preview.html + models/（rnnoise）+ 历史回滚锚（vtx.py.bak_v35/36） | 唯一渲染入口；自定位无硬编码路径；零外部 Python 依赖 |
 | `scripts/` | 9 件脚本：new_project.sh（脚手架）、sync_audio.py（双系统 GCC-PHAT 同步）、denoise_voice.py（D25 降噪链）、bilibili.py / github_repos.py / score_topic.py（research 采集与评分）、scroll-shoot.mjs / fetch-site-assets.py / dump-computed-styles.mjs（设计研究） | skill 内符号链接指到此处 |
 | `blender_bridge/` | timeline.json ↔ Blender VSE 双向预览桥：json2blend / verify_blend / blend2json / subs_alpha / **audit_bundle.py**（BGM 分轨审计包五步链）+ README（VSE API 坑表） | 权威副本（`04_bilibili视频/_library/blender_bridge/` 退役为指针） |
@@ -45,7 +45,7 @@ python3 blender_bridge/json2blend.py -t <项目>/timeline.json   # Blender 预�
 
 ## 与其他位置的关系
 
-- `~/.agents/skills/video/`：**瘦身后的 skill**（SKILL.md 索引 + references/ 三文档 + assets/ 模板），其 `vtx/`、`scripts/` 为指向本仓的符号链接。
+- `~/.agents/skills/video/`：**live skill 挂载点**——目录内五项（SKILL.md、references/、assets/、vtx/、scripts/）全部为指向本仓的符号链接，本仓 `skill/` 即 skill 本体。
 - `~/文档/04_bilibili视频/`：视频工作区（各期项目、素材、缓存、报告），不是 git 仓库；项目绑定脚本（make_subs.py、repack_voice.py、retimeline_v3x 等）留在工作区各项目内，未收编。
 - `_library/blender_bridge/`：已由本仓 `blender_bridge/` 取代为权威；原位置保留为兼容入口（工作区历史脚本仍引用其路径）。
 - 音频工具见姊妹仓：`~/文档/01_活跃项目/music_tools/`。
