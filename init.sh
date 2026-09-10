@@ -19,6 +19,17 @@ if command -v ffmpeg >/dev/null 2>&1;  then ok "ffmpeg $(ffmpeg -version 2>/dev/
 command -v ffprobe >/dev/null 2>&1 && ok ffprobe || miss ffprobe
 command -v google-chrome >/dev/null 2>&1 && ok "google-chrome（gfx 帧截图）" || miss google-chrome
 
+echo "--- 1b/4 程序自检（收编组件可运行性）---"
+python3 vtx/vtx.py --help >/dev/null 2>&1 && ok "vtx/vtx.py（渲染 CLI）" || miss "vtx/vtx.py --help"
+bash -n scripts/new_project.sh && ok "scripts/new_project.sh（脚手架）" || miss "scripts/new_project.sh 语法"
+for f in blender_bridge/json2blend.py blender_bridge/verify_blend.py blender_bridge/blend2json.py blender_bridge/subs_alpha.py; do
+  # 四件需在 blender --python 下运行（import bpy），普通 python3 只做语法门
+  python3 -m py_compile "$f" && ok "$f（语法门；运行需 blender）" || miss "$f 语法错误"
+done
+python3 blender_bridge/audit_bundle.py --help >/dev/null 2>&1 && ok "blender_bridge/audit_bundle.py" || miss "audit_bundle.py --help"
+[ -f vtx/timeline.schema.json ] && ok "vtx/timeline.schema.json" || miss "vtx/timeline.schema.json"
+[ -f vtx/preview.html ] && ok "vtx/preview.html" || miss "vtx/preview.html"
+
 echo "--- 2/4 可选依赖（按工具按需）---"
 command -v blender >/dev/null 2>&1 && ok "blender（blender_bridge/ 预览桥）" || opt "blender 未装——blender_bridge/ 不可用"
 command -v sox >/dev/null 2>&1 && ok "sox（部分音频后处理）" || opt "sox 未装"

@@ -59,7 +59,6 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 
 用法：`blender --background --python blend2json.py -- <preview.blend> [out.json]`
 （json 源取 scene["vtx_timeline"] 钩子；缺省输出 `<项目>/timeline.blendback.json`，不覆盖原文件）
-
 回写面：视频条与音频条的**时间平移 / 左右缘裁剪（左缘=入点后移）/ 同族换轨**；
 音频**整组**平移（loop 组无缝时）。产物需过 `python3 vtx.py -t <out> validate`。
 
@@ -74,3 +73,13 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 回写 7 项精确捕捉、1 项换通道正确告警，vtx validate 通过。
 注意：Blender 不允许同通道重叠，拖动相撞会把条自动顶到上层通道——表现为换轨
 （视频侧同族照收，音频/跨族会被上述规则拦下并提示）。
+
+## 分轨审计包 audit_bundle.py（2026-09-10 建成，人机协作交付门）
+
+用法：`python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-] [--force]`
+BGM 正式版默认必做（用户裁定，见 music skill「交付门：分轨审计包」节）：分轨 MP3 导出 →
+审计 timeline（逐轨一列、生产音量原样、静音切分=只保留实际发声段、无 voice 轨）→
+vtx validate → json2blend →
+verify_blend 五步一键，产物落 `<项目>/cache/audit_bgm/{mp3/,timeline.json,audit.blend}`。
+MP3 按源 mtime 自动失效重转（分轨重渲后重跑即可），`--force` 强制全量。首例=voice-ime
+BGM v2 13 轨（`voice-ime/cache/bgm_audit/`，--mp3-dir 指到其 assets/bgm/v2/mp3）。

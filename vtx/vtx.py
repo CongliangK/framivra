@@ -30,7 +30,7 @@
 clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fade 统一为 alpha 淡入淡出。
 仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome。
 """
-import argparse, json, subprocess, sys, hashlib, time
+import argparse, json, os, subprocess, sys, hashlib, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -716,7 +716,8 @@ def main():
         print("--draft 仅作用于 video/mux 阶段"); sys.exit(1)
     if a.gpu and a.command != "video":
         print("--gpu 仅作用于 video 阶段"); sys.exit(1)
-    tp = Path(a.timeline).expanduser().resolve()
+    # 不跟随符号链接（resolve() 会穿透 cp -rs 链接树等隔离副本，把 out/ 回执写到 live 项目）
+    tp = Path(os.path.abspath(os.path.expanduser(a.timeline)))
     if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)
     c = Ctx(tp); c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
     c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu

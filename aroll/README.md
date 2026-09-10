@@ -14,7 +14,7 @@
 
 全链中的 ASR 文本配对（Qwen3-ASR sidecar `127.0.0.1:18081`）与 Resemble 降噪属大模型能力，默认关闭；其中：
 
-- `sync_audio.py`（GCC-PHAT 双系统音频同步）与 `denoise_voice.py`（陷波→Resemble 降噪链）**已收编在 `../skill/scripts/`**（同仓快照内），运行分别需要 conda `denoise` 环境（numpy/scipy/soundfile/soxr）与 `~/models/resemble-enhance` 权重。
+- `sync_audio.py`（GCC-PHAT 双系统音频同步）与 `denoise_voice.py`（陷波→Resemble 降噪链）**已收编在本仓 `../scripts/`**（权威本体，D40），运行分别需要 conda `denoise` 环境（numpy/scipy/soundfile/soxr）与 `~/models/resemble-enhance` 权重。
 - 开启状态记录在仓库根 `config.local.json`（asr / tts 项）。
 
 ## 用法
