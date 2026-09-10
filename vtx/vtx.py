@@ -21,8 +21,11 @@
   --gpu              正式参数 GPU 渲染：NVENC p7+tune hq+vbr cq17（1080p 交付透明），
                      产物仍是 video_noaudio.mp4；NVENC 不可用自动回落 x264 crf17 medium
   （阶段二 2026-09-10）video 正式/草稿渲染默认走「时间轴分段 + 段间并行渲染 + concat
-  -c copy 拼接」；环境变量 VTX_VIDEO_SEGMENTS=N 控制段数（默认 6，=1 回落旧单 graph，
+  -c copy 拼接」；环境变量 VTX_VIDEO_SEGMENTS=N 控制段数（默认 8，=1 回落旧单 graph，
   行为逐字节等价）；--draft --frames 组合强制旧单 graph（头窗截短与分段冲突）
+  （阶段三 2026-09-10）seg 预编码与 prepare 抽音频并行化：两处逐任务串行的 ffmpeg
+  改为线程池并行（VTX_VIDEO_SEGMENTS 分段开关同上，不受影响）；并行线程数 =
+  min(6, cpu//4)，环境变量 VTX_IO_WORKERS=N 可覆盖；任一任务失败即整阶段失败退出
   qc         渲染后质检（帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一），写 qc_report.json
              （--strict：帧数改用 -count_frames 真解码计数，默认容器元数据）
   clean      清空 cache/ 与 out/
@@ -35,7 +38,7 @@ clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fad
 仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome。
 """
 import argparse, json, os, subprocess, sys, hashlib, time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 VTX_DIR = Path(__file__).parent
@@ -267,14 +270,60 @@ def audit(c: Ctx):
     print(f"审计：{len(lines)} 项指标，{warns} 条建议（详见 out/audit_report.json，建议性不阻断）")
     c.receipt("audit", True, f"{len(lines)} indicators, {warns} advisories")
 
+# ---------------------------------------------------------------- 并行基础设施（阶段三 2026-09-10）
+# seg 预编码与抽音频都是「任务间零依赖的 ffmpeg 子进程」，串行是纯浪费；线程池并行，
+# 墙钟 ≈ max(单任务)。IO/CPU 混合负载，线程数取 min(6, cpu//4)（可 VTX_IO_WORKERS 覆盖）。
+def io_workers() -> int:
+    v = os.environ.get("VTX_IO_WORKERS", "")
+    if v.isdigit() and int(v) > 0: return int(v)
+    return max(1, min(6, (os.cpu_count() or 8) // 4))
+
+def run_ffmpeg_task(c: Ctx, label: str, cmd):
+    # 并行 worker 内不用 c.run：其失败路径 sys.exit 在线程中不生效，改为抛异常
+    # 由主线程统一收集传播（任一任务失败 → 整阶段失败）。
+    if DRY and str(cmd[0]).endswith("ffmpeg"):
+        print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
+        return
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"{label}: " + r.stderr[-1500:])
+
+def run_parallel(c: Ctx, tasks, what: str):
+    """tasks = [(label, cmd)]，全部执行；任一失败打印并退出。进度按完成序打印（带标签）。"""
+    if not tasks: return
+    workers = min(io_workers(), len(tasks))
+    t0 = time.time()
+    print(f"  {what}：{len(tasks)} 个任务，{workers} 线程并行")
+    failed = None
+    if workers == 1 or DRY:      # 串行保底 / dry-run 只打印
+        for label, cmd in tasks:
+            try: run_ffmpeg_task(c, label, cmd)
+            except RuntimeError as e: failed = failed or (label, str(e))
+            print(f"    · {label}")
+    else:
+        with ThreadPoolExecutor(workers) as ex:
+            futs = {ex.submit(run_ffmpeg_task, c, label, cmd): label for label, cmd in tasks}
+            for fu in as_completed(futs):
+                label = futs[fu]
+                try:
+                    fu.result(); print(f"    ✓ {label}（+{time.time() - t0:.0f}s）")
+                except RuntimeError as e:
+                    failed = failed or (label, str(e)); print(f"    ✗ {label} 失败")
+    if failed:
+        print(f"✗ {what}失败（{failed[0]}）：\n{failed[1]}", file=sys.stderr); sys.exit(1)
+    print(f"  ✓ {what}完成（{time.time() - t0:.0f}s）")
+
 # ---------------------------------------------------------------- prepare
 def prepare(c: Ctx):
     (c.cache / "audio").mkdir(parents=True, exist_ok=True)
+    tasks = []
     for s in c.tl["sources"]:
         wav = c.cache / "audio" / f"{s['id']}.wav"
         if not wav.exists():
-            c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(s["id"])),
-                   "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)])
+            tasks.append((f"audio {s['id']}",
+                          ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(s["id"])),
+                           "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]))
+    run_parallel(c, tasks, "音频提取")
     msg = f"{len(c.tl['sources'])} → 48kHz stereo PCM"
     print("✓ 音频提取：" + msg); c.receipt("prepare", True, msg)
 
@@ -431,6 +480,7 @@ def build_video(c: Ctx):
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
     # 需要 alpha（opacity<1 或 fade）→ ProRes 4444；纯不透明全屏 → libx264。所有轨道等价。
     layers = []      # 每项: {cl, seg|pngdir, x, y, w2, h2|None, gfx:bool, ti}
+    enc_tasks = []   # (label, cmd)：待并行编码的 seg（缓存命中的不进列表）
     for ti, tr in enumerate(tracks):
         for ci, cl in enumerate(tr["clips"]):
             kind = tr.get("kind")
@@ -477,10 +527,15 @@ def build_video(c: Ctx):
                     layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
                                    "gfx": False, "ti": ti})
                     continue
-            c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
-                   "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
-                   *vcodec_seg, str(seg)])
-            layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2, "gfx": False, "ti": ti})
+            # 阶段三（2026-09-10）：待编码任务不再就地串行执行——层对象先占位（顺序
+            # 不变，分段切片按 dst_in 过滤依赖顺序），收集到 enc_tasks 由线程池并行编。
+            L = {"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2, "gfx": False, "ti": ti}
+            layers.append(L)
+            enc_tasks.append((f"seg t{ti:02d}c{ci:02d}（{cl['dur']} 帧）",
+                              ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
+                               "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
+                               *vcodec_seg, str(seg)]))
+    run_parallel(c, enc_tasks, "seg 预编码")
     def fc(fr):
         cs = round(fr * 100 / c.fps); hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
         return f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
@@ -691,7 +746,10 @@ def build_video(c: Ctx):
         print(f"  ✓ 拼接自检：总帧数 {fr} == {c.dur}")
         return enc
 
-    nseg = int(os.environ.get("VTX_VIDEO_SEGMENTS", "6"))
+    # 默认 8（阶段三 2026-09-10 调优：voice-ime 实测 N=8 89.8s vs N=6 112.9s，-20%；
+    # 20 帧含段边界灰度差均值 0.135/最大帧均值 1.195，与 N=6 相对单 graph golden 同级——
+    # 偏差为段边界 ±1 帧固有，非 N=8 特有。NVENC 8 并发会话实测可用，探测失败自动回落串行）
+    nseg = int(os.environ.get("VTX_VIDEO_SEGMENTS", "8"))
     out_main = c.out / ("draft.mp4" if draft else "video_noaudio.mp4")
     # --frames 与分段冲突（头窗截短逻辑基于全片坐标），回落旧单 graph；
     # VTX_VIDEO_SEGMENTS=1 回落旧单 graph（行为逐字节等价）。
