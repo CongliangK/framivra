@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC",sans-serif;overflow:hidden}
+#lt{position:absolute;left:0;bottom:190px;width:820px;height:120px;
+  background:linear-gradient(90deg,rgba(8,47,73,.92),rgba(8,47,73,.55) 75%,transparent);
+  border-left:10px solid #22d3ee;transform-origin:left;transform:scaleX(0)}
+#lt .n{position:absolute;left:44px;top:20px;font-size:42px;font-weight:900;color:#f1f5f9}
+#lt .d{position:absolute;left:46px;top:74px;font-size:22px;color:#7dd3fc;letter-spacing:2px}
+</style></head><body>
+<div id="lt"><div class="n">主标题文字</div><div class="d">SECONDARY LINE</div></div>
+<script>
+/* 帧驱动协议：替换 N 为总帧数；改 IN_SEC/OUT_SEC 控制条的出现/消失时机 */
+const FPS=24,N=192,f=parseInt(new URLSearchParams(location.search).get("f")||"0"),t=Math.min(f/FPS,N/FPS);
+const IN_SEC=.2, OUT_SEC=5.0;                 // ← 入场/退场时机（相对本图层 0 点）
+const clamp01=v=>Math.max(0,Math.min(1,v)),seg=(t,a,b)=>clamp01((t-a)/(b-a));
+const eoc=x=>1-Math.pow(1-x,3);
+const lt=document.getElementById("lt");
+const lp=eoc(seg(t,IN_SEC,IN_SEC+.8));
+lt.style.transform=`scaleX(${lp})`;
+lt.style.opacity=clamp01(seg(t,IN_SEC,IN_SEC+.3))*(1-seg(t,OUT_SEC,OUT_SEC+.5));
+lt.querySelector(".d").style.opacity=clamp01(seg(t,IN_SEC+.4,IN_SEC+.9));
+document.body.style.opacity=1-clamp01(seg(t,N/FPS-.4,N/FPS));
+</script></body></html>

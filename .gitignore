@@ -1,0 +1,30 @@
+# video_tools .gitignore
+# 原则：工具代码、文档、配置模板入库；本地机器配置、大二进制、运行产物不入库。
+
+# Python 缓存
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 旧版备份文件（收编时已剔除，防御性保留规则）
+*.bak
+*.bak_v3*
+
+# 本地配置（init.sh 从 config.example.json 生成，含机器特有开关，不入库）
+config.local.json
+
+# 可再生的公开字体二进制（blender_bridge/assets/ 的 Noto Sans CJK SC，
+# 无代码引用；系统 /usr/share/fonts 或 fonts.google.com 可取）
+*.otf
+*.ttf
+
+# 运行产物 / 大媒体（本仓只收工具，产物一律不入库）
+out/
+frames/
+*.mp4
+*.mov
+*.webm
+*.wav
+*.flac
+*.aup3
+*.png

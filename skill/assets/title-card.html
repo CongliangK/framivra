@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC",sans-serif;overflow:hidden}
+.blob{position:absolute;width:900px;height:900px;border-radius:50%;filter:blur(150px);opacity:.4}
+.b1{left:-200px;top:-300px;background:radial-gradient(circle,#0e7490,transparent 65%)}
+.b2{right:-200px;bottom:-350px;background:radial-gradient(circle,#6d28d9,transparent 65%)}
+#title{position:absolute;top:400px;width:100%;text-align:center;font-size:140px;font-weight:900}
+#title .ch{display:inline-block;background:linear-gradient(120deg,#e0f2fe,#67e8f9,#c4b5fd);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+#sub{position:absolute;top:600px;width:100%;text-align:center;color:#7dd3fc;
+  font-size:30px;letter-spacing:16px;opacity:0}
+</style></head><body>
+<div class="blob b1"></div><div class="blob b2"></div>
+<h1 id="title"></h1><div id="sub">SUBTITLE HERE</div>
+<script>
+/* 帧驱动协议：替换 N 为总帧数（timeline 的 out - in） */
+const FPS=24,N=192,f=parseInt(new URLSearchParams(location.search).get("f")||"0"),t=Math.min(f/FPS,N/FPS);
+const clamp01=v=>Math.max(0,Math.min(1,v)),seg=(t,a,b)=>clamp01((t-a)/(b-a));
+const eoe=x=>x>=1?1:1-Math.pow(2,-10*x);
+const TXT="标题文字";                       // ← 改这里
+const el=document.getElementById("title");
+[...TXT].forEach((ch,i)=>{const s=document.createElement("span");s.className="ch";s.textContent=ch;
+  const p=eoe(seg(t,.2+i*.06,1.0+i*.06));
+  s.style.opacity=p;s.style.transform=`translateY(${(1-p)*115}px)`;el.appendChild(s)});
+const sub=document.getElementById("sub");
+const sp=seg(t,.95,1.6);
+sub.style.opacity=sp;sub.style.letterSpacing=`${16+10*(1-sp)}px`;
+document.body.style.opacity=1-clamp01(seg(t,N/FPS-.4,N/FPS));
+</script></body></html>

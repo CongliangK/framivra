@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>VTX TIMELINE · vtx 时间线预览</title>
+<style>
+  :root{
+    --paper:#fef7e6;      /* 页面/轨道区底色（奶油纸） */
+    --white:#ffffff;      /* 面板/轨道头/对话框底 */
+    --ink:#0e0e0e;        /* 97.5% 文字色 + 全部描边（近黑，非纯黑） */
+    --ink-dim:#6b6257;    /* 次要文字（暖灰，奶油底上可读） */
+    --hairline:rgba(14,14,14,.2);  /* 刻度线/网格线/次分隔线 */
+    --navy:#2b3d73;       /* 顶部状态条底 / 线条强调 */
+    --coral:#f15b40;      /* 播放头 / 错误 / 字幕身份色 */
+    --magenta:#e72f63;    /* sfx 音轨身份 */
+    /* 轨道身份色（粉彩组） */
+    --aroll:#acd084;  --broll:#ffd372;  --screen:#88c1f8;
+    --pip:#f6b1cf;    --gfx:#91c949;    --kind-other:#d8cfc0;
+    /* 音轨身份（饱和组，深底配白字） */
+    --bed:#2b3d73;  --voice:#f15b40;  --sfx:#e72f63;  --amb:#195e1c;  --audio-other:#8a7f6b;
+    --r-pill:999px; --r-card:12px; --r-blk:7px;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--paper);color:var(--ink);font:12.5px/1.5 "Noto Sans CJK SC",system-ui,sans-serif;
+       height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  button{font:inherit;cursor:pointer}
+  svg{flex:0 0 auto}
+
+  /* ---------- 2.1 顶部状态条（藏青通知条） ---------- */
+  header{background:var(--navy);color:#fff;border-bottom:1px solid var(--ink);min-height:44px;
+         padding:4px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:0 0 auto}
+  .brand{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .brand h1{font-size:13px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#fff;white-space:nowrap}
+  #meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0}
+  .chip{background:rgba(255,255,255,.12);color:rgba(255,255,255,.78);border-radius:var(--r-blk);
+        padding:2px 8px;font-size:11px;white-space:nowrap}
+  .chip b{color:#fff;font-weight:600}
+  #vbadge{display:inline-flex;align-items:center;gap:6px;background:#fff;color:var(--navy);
+          border-radius:var(--r-blk);padding:4px 11px;font-size:12px;font-weight:500;cursor:pointer;
+          white-space:nowrap;transition:background .15s ease,border-color .15s ease}
+  #vbadge:hover{background:var(--paper)}
+  #vbadge.bad{background:var(--coral);color:#fff}
+  #vbadge.bad:hover{background:var(--coral)}
+  .acts{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .hbtn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid #fff;color:#fff;
+        border-radius:var(--r-pill);padding:4px 13px;font-size:12px;white-space:nowrap;
+        transition:background .15s ease,border-color .15s ease}
+  .hbtn:hover{background:#fff;color:var(--navy)}
+  #drop{font-size:11px;color:rgba(255,255,255,.62);white-space:nowrap}
+
+  /* v1 兼容通知条 */
+  #banner{background:var(--paper);border-bottom:1px solid var(--ink);color:var(--ink);font-size:12px;
+          padding:5px 14px;flex:0 0 auto}
+
+  /* 校验问题面板 */
+  #vpanel{display:none;max-height:200px;overflow:auto;background:var(--white);border-bottom:1px solid var(--ink);
+          padding:8px 14px;flex:0 0 auto}
+  #vpanel li{list-style:none;display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--ink);
+             padding:4px 10px;border-left:3px solid var(--gfx);margin-bottom:2px}
+  #vpanel li.err{border-left-color:var(--coral)}
+  #vpanel li svg{margin-top:2px;color:var(--ink-dim)}
+  #vpanel li.err svg{color:var(--coral)}
+
+  /* ---------- 主体 ---------- */
+  #main{flex:1;display:flex;min-height:0}
+  #tlwrap{flex:1;display:flex;flex-direction:column;min-width:0}
+
+  /* 2.2 工具栏 */
+  #toolbar{display:flex;gap:12px;align-items:center;padding:7px 14px;background:var(--white);
+           border-bottom:1px solid var(--ink);flex:0 0 auto}
+  #toolbar label{display:flex;align-items:center;gap:6px;color:var(--ink-dim);font-size:11px;
+                 text-transform:uppercase;letter-spacing:.06em}
+  #zoom{-webkit-appearance:none;appearance:none;width:180px;height:18px;background:transparent;cursor:pointer}
+  #zoom::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--hairline)}
+  #zoom::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+        background:var(--navy);border:1px solid var(--ink);margin-top:-5px}
+  #zoom::-moz-range-track{height:4px;border-radius:2px;background:var(--hairline)}
+  #zoom::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--navy);border:1px solid var(--ink)}
+  .wbtn{display:inline-flex;align-items:center;gap:6px;background:var(--white);border:1px solid var(--ink);
+        color:var(--ink);border-radius:var(--r-pill);padding:4px 13px;font-size:12px;white-space:nowrap;
+        transition:background .15s ease,border-color .15s ease}
+  .wbtn:hover{background:var(--ink);color:var(--paper)}
+  .wbtn.pri{background:var(--ink);color:var(--paper)}
+  .wbtn.pri:hover{background:var(--navy);border-color:var(--navy)}
+  #timecur{font-family:var(--mono);color:var(--coral);font-size:12px;min-width:130px;margin-left:auto;text-align:right}
+
+  /* 2.3 标尺 / 2.4 轨道行 */
+  #scroll{flex:1;overflow:auto;background:var(--paper)}
+  #content{position:relative;min-width:100%}
+  .row{display:flex;align-items:stretch;height:44px;border-bottom:1px solid var(--hairline);background:var(--paper)}
+  .row.head{height:26px;background:var(--paper)}
+  .row.sec{height:22px;background:var(--white)}
+  .lbl{flex:0 0 148px;position:sticky;left:0;z-index:5;background:var(--white);border-right:1px solid var(--ink);
+       padding:5px 10px;display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0}
+  .row.head .lbl{font-size:10px;color:var(--ink);text-transform:uppercase;letter-spacing:.06em}
+  .row.sec .lbl{border-left:3px solid var(--navy);font-size:10px;color:var(--ink-dim);
+                text-transform:uppercase;letter-spacing:.08em}
+  .s-sub .lbl{border-left-color:var(--coral)}
+  .s-aud .lbl{border-left-color:var(--magenta)}
+  .l1{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--ink);min-width:0}
+  .l1 b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .l2{font-size:10px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dt{width:10px;height:10px;border-radius:50%;border:1px solid var(--ink);flex:0 0 10px;display:inline-block}
+  .lane{position:relative;flex:1}
+  .secline{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);display:flex;align-items:center;
+           gap:8px;color:var(--ink-dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding-left:10px}
+  .secline::before{content:"";flex:0 0 14px;height:0;border-top:1px dashed var(--hairline)}
+  .secline::after{content:"";flex:1;height:0;border-top:1px dashed var(--hairline)}
+  .secline span{background:var(--white);padding:0 5px;white-space:nowrap}
+
+  /* 事件块（v1.1：纯色粗描边，块内禁一切渐变与纹理） */
+  .blk{position:absolute;top:6px;bottom:6px;border:2px solid var(--ink);border-radius:var(--r-blk);
+       overflow:hidden;cursor:pointer;display:flex;align-items:center;padding:0 6px;font-size:11px;
+       font-weight:500;white-space:nowrap;color:var(--ink)}
+  .blk.a-bed,.blk.a-amb{color:#fff}
+  .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .blk .meta{opacity:.75;margin-left:5px;font-size:10px;font-weight:400;font-family:var(--mono)}
+  .blk.sel{border:3px solid var(--ink);z-index:3}
+  .gstar{position:absolute;left:2px;top:2px;width:16px;height:16px;color:var(--ink);opacity:.6;pointer-events:none}
+  .blk.c-gfx{padding-left:24px}
+  /* 窄块去掉水平 padding：v1.1 的 2px 描边下 border-box 地板 = padding12+border4=16px，
+     指定宽 <16px 时归零 padding 才能按实际宽度渲染（维持 D6 裁定） */
+  .blk.tiny{padding-left:0;padding-right:0}
+
+  /* 身份色（事件块与轨道头圆点共用；用 background-color 长属性保持纯色填充） */
+  .c-aroll{background-color:var(--aroll)} .c-broll{background-color:var(--broll)} .c-screen{background-color:var(--screen)}
+  .c-pip{background-color:var(--pip)}     .c-gfx{background-color:var(--gfx)}      .c-other{background-color:var(--kind-other)}
+  .c-sub{background-color:var(--coral)}
+  .a-bed{background-color:var(--bed)} .a-voice{background-color:var(--voice)} .a-sfx{background-color:var(--sfx)}
+  .a-amb{background-color:var(--amb)}  .a-other{background-color:var(--audio-other)}
+
+  /* 刻度 / 播放头 */
+  .tick{position:absolute;top:0;bottom:0;width:1px;background:var(--hairline)}
+  .tick.major{background:var(--ink)}
+  .tlab{position:absolute;top:1px;font-size:10px;color:var(--ink-dim);transform:translateX(4px);font-family:var(--mono)}
+  #playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--coral);z-index:8;pointer-events:none;display:none}
+  #playhead::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
+                    width:10px;height:10px;border-radius:50%;background:var(--coral)}
+  #playhead::after{content:attr(data-t);position:sticky;top:13px;float:right;background:var(--coral);color:#fff;
+                   font-size:10px;font-family:var(--mono);padding:0 5px;border-radius:3px;margin-left:4px}
+
+  /* ---------- 2.6 详情面板 ---------- */
+  #detail{flex:0 0 320px;border-left:1px solid var(--ink);background:var(--white);overflow:auto;padding:14px}
+  .empty{text-align:center;padding:22px 6px}
+  .empty svg{display:block;margin:0 auto 16px}
+  .empty p{color:var(--ink-dim);font-size:12px;margin-bottom:10px;text-align:left}
+  .empty code{font-family:var(--mono)}
+  .dt-head{display:flex;gap:9px;align-items:flex-start;margin-bottom:12px}
+  .dt-head .dt{width:12px;height:12px;flex:0 0 12px;margin-top:4px}
+  .dname{font-size:15px;font-weight:500;line-height:1.3;word-break:break-all}
+  .dlab{font-size:10px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.08em;margin-top:3px}
+  #detail table{width:100%;border-collapse:collapse;font-size:12px}
+  #detail td{padding:4px 6px;border-bottom:1px solid var(--hairline);vertical-align:top;font-family:var(--mono)}
+  #detail td:first-child{font-family:inherit;font-size:11px;color:var(--ink-dim);white-space:nowrap;
+                         width:108px;text-transform:uppercase;letter-spacing:.06em}
+  #detail td.derr{color:var(--coral);border-left:3px solid var(--coral);padding-left:8px}
+  #detail td.derr svg{vertical-align:-2px;margin-right:6px}
+  #detail details{margin-top:10px}
+  #detail summary{cursor:pointer;color:var(--ink-dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  #detail pre{font-size:11px;font-family:var(--mono);overflow:auto;margin-top:6px;background:var(--paper);
+              border:1px solid var(--hairline);border-radius:var(--r-blk);padding:8px}
+
+  /* ---------- 2.7 对话框 ---------- */
+  dialog{background:var(--white);color:var(--ink);border:1px solid var(--ink);border-radius:var(--r-card);
+         width:min(680px,90vw);padding:16px}
+  dialog::backdrop{background:rgba(14,14,14,.4)}
+  .dlg-h{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;font-weight:500}
+  .xbtn{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
+        border:1px solid transparent;border-radius:50%;background:transparent;color:var(--ink-dim);
+        transition:background .15s ease,border-color .15s ease}
+  .xbtn:hover{background:var(--paper);border-color:var(--hairline);color:var(--ink)}
+  dialog textarea{width:100%;height:230px;background:var(--paper);color:var(--ink);border:1px solid var(--hairline);
+                  border-radius:var(--r-blk);padding:9px;font-family:var(--mono);font-size:12px;resize:vertical}
+  .dlg-f{margin-top:12px;display:flex;justify-content:flex-end;gap:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h18M3 12h18M3 18.5h18"/><rect x="5" y="3" width="8" height="5" rx="1.5"/><rect x="10.5" y="9.5" width="9" height="5" rx="1.5"/><rect x="4" y="16" width="7" height="5" rx="1.5"/></svg>
+    <h1>VTX TIMELINE</h1>
+  </div>
+  <span id="meta"></span>
+  <span id="vbadge"></span>
+  <div class="acts">
+    <button class="hbtn" id="bOpen"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18.5V5.5h6l2 2.4h10v10.6H3z"/></svg>打开</button>
+    <input type="file" id="file" accept=".json" hidden>
+    <button class="hbtn" id="bPaste"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="16.5" rx="2.5"/><path d="M9 4V2.5h6V4"/></svg>粘贴</button>
+    <button class="hbtn" id="bSample"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 2 5 14h5.5L9 22l10-12.5h-5.5z"/></svg>示例</button>
+    <span id="drop">或将 JSON 拖到页面</span>
+  </div>
+</header>
+<div id="banner" hidden></div>
+<div id="vpanel"></div>
+<div id="main">
+  <div id="tlwrap">
+    <div id="toolbar">
+      <label><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>缩放</label>
+      <input type="range" id="zoom" min="0.4" max="24" step="0.2">
+      <button class="wbtn" id="bFit"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M8 8l-4 4 4 4M16 8l4 4-4 4"/></svg>适应宽度</button>
+      <span id="timecur">—</span>
+    </div>
+    <div id="scroll"><div id="content"></div></div>
+  </div>
+  <div id="detail"></div>
+</div>
+<dialog id="dlg">
+  <div class="dlg-h">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="16.5" rx="2.5"/><path d="M9 4V2.5h6V4"/></svg>
+    <span>粘贴 TIMELINE.JSON 内容</span>
+    <button class="xbtn" id="bX" title="关闭"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <textarea id="paste" spellcheck="false"></textarea>
+  <div class="dlg-f">
+    <button class="wbtn" id="bCancel">取消</button>
+    <button class="wbtn pri" id="bLoad">载入</button>
+  </div>
+</dialog>
+
+<script>
+const SAMPLE = {"version":2,"project":{"fps":24,"width":1920,"height":1080,"duration_frames":720},"sources":[{"id":"v01","path":"assets/V01_01.mp4","transform":"crop_center_scale"},{"id":"v02","path":"assets/V01_02.mp4","transform":"crop_center_scale"},{"id":"v03","path":"assets/V01_03.mp4","transform":"crop_center_scale"},{"id":"v04","path":"assets/V02_01.mp4","transform":"crop_center_scale"},{"id":"v05","path":"assets/V02_02.mp4","transform":"crop_center_scale"},{"id":"v06","path":"assets/V03_01.mp4","transform":"crop_center_scale"},{"id":"v07","path":"assets/V03_02.mp4","transform":"crop_center_scale"},{"id":"v08","path":"assets/V04_01.mp4","transform":"crop_center_scale"}],"video_tracks":[{"name":"aroll","kind":"aroll","clips":[{"src":"v01","src_in":0,"src_out":96,"dst_in":0,"dur":96,"fade_in_frames":12},{"src":"v02","src_in":24,"src_out":108,"dst_in":96,"dur":84},{"src":"v03","src_in":0,"src_out":144,"dst_in":180,"dur":144,"fade_out_frames":12},{"src":"v04","src_in":12,"src_out":96,"dst_in":324,"dur":84},{"src":"v05","src_in":0,"src_out":120,"dst_in":408,"dur":120},{"src":"v06","src_in":0,"src_out":96,"dst_in":528,"dur":96,"fade_out_frames":12},{"src":"v01","src_in":24,"src_out":120,"dst_in":624,"dur":96}]},{"name":"pip","kind":"pip","clips":[{"src":"v07","src_in":0,"src_out":96,"dst_in":48,"dur":96,"scale":0.26,"x":1460,"y":90,"opacity":0.92,"fade_in_frames":12,"fade_out_frames":12}]},{"name":"gfx","kind":"gfx","clips":[{"src":"gfx/gfxA.html","dst_in":0,"dur":192},{"src":"gfx/gfxB.html","dst_in":240,"dur":192},{"src":"gfx/gfxC.html","dst_in":528,"dur":168}]}],"subtitles":[{"in":12,"out":88,"text":"示例字幕 01 · 帧对齐验证"},{"in":100,"out":172,"text":"示例字幕 02 · 硬切 @frame 96"},{"in":184,"out":260,"text":"示例字幕 03 · PiP 双视频轨"},{"in":330,"out":400,"text":"示例字幕 04 · 四轨混音窗口"},{"in":412,"out":500,"text":"示例字幕 05 · 图表动效层"},{"in":532,"out":610,"text":"示例字幕 06 · 下三分之一条"},{"in":628,"out":700,"text":"示例字幕 07 · 端板淡出"}],"audio_tracks":[{"name":"bed","events":[{"src":"v05","in":0,"out":720,"volume":0.22,"loop":true}]},{"name":"voice","events":[{"src":"v03","src_in":0,"in":60,"out":252,"volume":0.85,"fade_in_frames":12,"fade_out_frames":20},{"src":"v03","src_in":24,"in":360,"out":528,"volume":0.85,"fade_in_frames":12,"fade_out_frames":20}]},{"name":"sfx","events":[{"src":"v06","src_in":0,"in":96,"out":132,"volume":0.7},{"src":"v06","src_in":12,"in":240,"out":276,"volume":0.7},{"src":"v06","src_in":24,"in":432,"out":468,"volume":0.7},{"src":"v06","src_in":36,"in":528,"out":564,"volume":0.7},{"src":"v06","src_in":48,"in":648,"out":684,"volume":0.7}]},{"name":"amb","events":[{"src":"v08","src_in":0,"in":400,"out":500,"volume":0.3,"pan":-0.6,"fade_in_frames":24,"fade_out_frames":24},{"src":"v08","src_in":0,"in":530,"out":630,"volume":0.3,"pan":0.6,"fade_in_frames":24,"fade_out_frames":24}]}]};
+
+let TL=null, PXF=6;
+const $=id=>document.getElementById(id);
+const fm=t=>t.toFixed(2).replace(/\.?0+$/,"");
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const KIND_CN={aroll:"出镜",broll:"B-roll",screen:"录屏",pip:"画中画",gfx:"动效"};
+const VC={aroll:1,broll:1,screen:1,pip:1,gfx:1};
+const AMAP={bed:"a-bed",voice:"a-voice",sfx:"a-sfx",amb:"a-amb"};
+const SW='fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+const I={
+  check:'<svg viewBox="0 0 24 24" width="12" height="12" '+SW+'><circle cx="12" cy="12" r="9.2"/><path d="M7.7 12.4l2.9 2.9 5.7-6.3"/></svg>',
+  cross:'<svg viewBox="0 0 24 24" width="12" height="12" '+SW+'><circle cx="12" cy="12" r="9.2"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+  warn:'<svg viewBox="0 0 24 24" width="12" height="12" '+SW+'><path d="M12 3.5 22 20.5H2z"/><path d="M12 9.8v4.4M12 17.3v.01"/></svg>',
+  star:'<svg class="gstar" viewBox="0 0 24 24" width="16" height="16"><path d="M12 2l2.2 7.6L22 12l-7.8 2.4L12 22l-2.2-7.6L2 12l7.8-2.4z" fill="currentColor"/></svg>'
+};
+const HINT=`<div class="empty">
+<svg viewBox="0 0 132 96" width="132" height="96">
+  <circle cx="48" cy="38" r="26" style="fill:var(--screen);stroke:var(--ink);stroke-width:1.8"/>
+  <path d="M41 27 61 38 41 49z" style="fill:var(--paper);stroke:var(--ink);stroke-width:1.8;stroke-linejoin:round"/>
+  <path d="M10 76q9-9 18 0t18 0 18 0 18 0 18 0 18 0" style="fill:none;stroke:var(--ink);stroke-width:1.8;stroke-linecap:round"/>
+  <circle cx="103" cy="16" r="6" style="fill:var(--coral);stroke:var(--ink);stroke-width:1.8"/>
+</svg>
+<p>点击时间线上的任意事件块查看详情。</p>
+<p>缩放支持 Ctrl+滚轮。契约 v2：视频轨道等价（数组顺序＝图层顺序，[0] 最底），kind 仅语义标注。</p>
+<p>校验为预览级快查，最终以 <code>vtx validate</code> 为准。</p>
+</div>`;
+
+/* ---------- 载入（兼容 v1：overlays 数组 → 合成 gfx 轨；role 忽略） ---------- */
+function normalize(tl){
+  if(tl.version!==2){
+    const tracks=(tl.video_tracks||[]).map(t=>({name:t.name,kind:t.role==="base"?"aroll":(t.kind||"pip"),clips:t.clips}));
+    if(tl.overlays?.length) tracks.push({name:"gfx(v1)","kind":"gfx",
+      clips:tl.overlays.map(o=>({src:o.src,dst_in:o.in,dur:o.out-o.in,x:o.x,y:o.y}))});
+    tl={...tl,version:2,video_tracks:tracks};
+  }
+  return tl;
+}
+function load(tl, banner){
+  TL=normalize(tl); $("detail").innerHTML=HINT;
+  $("banner").hidden=!banner; if(banner) $("banner").textContent=banner;
+  render(); fit();
+}
+function loadText(txt, isSample){
+  try{ const tl=JSON.parse(txt); load(tl, isSample?null:(tl.version===2?null:"检测到 v1 契约，已按兼容模式展示（gfx 合成轨）")); }
+  catch(e){ alert("JSON 解析失败："+e.message); }
+}
+$("bOpen").onclick=()=>$("file").click();
+$("file").onchange=e=>{ const f=e.target.files[0]; if(!f)return; f.text().then(t=>loadText(t)); };
+$("bSample").onclick=()=>loadText(JSON.stringify(SAMPLE), true);
+$("bPaste").onclick=()=>$("dlg").showModal();
+$("bLoad").onclick=()=>{ $("dlg").close(); loadText($("paste").value); };
+$("bCancel").onclick=()=>$("dlg").close();
+$("bX").onclick=()=>$("dlg").close();
+document.addEventListener("dragover",e=>e.preventDefault());
+document.addEventListener("drop",e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) f.text().then(t=>loadText(t)); });
+
+/* ---------- 校验（预览级，v2 语义） ---------- */
+function validate(tl){
+  const iss=[], err=m=>iss.push({lv:"err",m}), warn=m=>iss.push({lv:"warn",m});
+  const P=tl.project||{}, dur=P.duration_frames, fps=P.fps||24;
+  const srcIds=new Set((tl.sources||[]).map(s=>s.id));
+  const allF=v=>Number.isInteger(v);
+  if(!dur) err("project.duration_frames 缺失");
+  if(!tl.video_tracks?.length) warn("没有任何视频轨（成片将是纯黑场）");
+  (tl.video_tracks||[]).forEach((t,ti)=>{
+    const clips=[...t.clips].sort((a,b)=>a.dst_in-b.dst_in);
+    for(let i=1;i<clips.length;i++)
+      if(clips[i].dst_in<clips[i-1].dst_in+clips[i-1].dur)
+        err(`轨 ${t.name}: clips 重叠 @${clips[i].dst_in}f`);
+    clips.forEach((c,i)=>{
+      if(!allF(c.dst_in)||!allF(c.dur)) err(`轨 ${t.name}[${i}]: 非整数帧`);
+      if(dur&&c.dst_in+c.dur>dur) err(`轨 ${t.name}[${i}] 超出总时长`);
+      if(c.dst_in<0||c.dur<1) err(`轨 ${t.name}[${i}] 区间非法`);
+      if(t.kind==="gfx") return;
+      if(!srcIds.has(c.src)) err(`轨 ${t.name}[${i}] 引用不存在的源 ${c.src}`);
+      if(c.src_in!==undefined&&!allF(c.src_in)) err(`轨 ${t.name}[${i}]: src_in 非整数`);
+      if(c.src_out!==undefined&&c.src_in!==undefined&&c.src_out-c.src_in!==c.dur)
+        err(`轨 ${t.name}[${i}] ${c.src}: src_out-src_in(${c.src_out-c.src_in}) ≠ dur(${c.dur})`);
+      if((c.fade_in_frames||0)+(c.fade_out_frames||0)>c.dur) err(`轨 ${t.name}[${i}] fade 总长超过片段`);
+    });
+  });
+  (tl.subtitles||[]).forEach((s,i)=>{ if(s.in>=s.out) err(`字幕[${i}] in≥out`); if(dur&&s.out>dur) err(`字幕[${i}] 超出总时长`); });
+  (tl.audio_tracks||[]).forEach(t=>{
+    const ev=[...t.events].sort((a,b)=>a.in-b.in);
+    for(let i=1;i<ev.length;i++) if(ev[i].in<ev[i-1].out) err(`音轨 ${t.name}: ${ev[i-1].in}–${ev[i-1].out} 与 ${ev[i].in}–${ev[i].out} 重叠`);
+    t.events.forEach((e,i)=>{ if(!srcIds.has(e.src)) err(`音轨 ${t.name}[${i}] 引用不存在的源 ${e.src}`); if(dur&&e.out>dur) err(`音轨 ${t.name}[${i}] 超出总时长`); });
+  });
+  return iss;
+}
+
+/* ---------- 渲染 ---------- */
+function durF(tl){
+  if(tl.project?.duration_frames) return tl.project.duration_frames;
+  let m=0; (tl.video_tracks||[]).forEach(t=>t.clips.forEach(c=>m=Math.max(m,c.dst_in+c.dur)));
+  (tl.audio_tracks||[]).forEach(t=>t.events.forEach(e=>m=Math.max(m,e.out)));
+  return m||1;
+}
+function render(){
+  const C=$("content"); C.innerHTML="";
+  if(!TL){ return; }
+  const D=durF(TL), fps=TL.project?.fps||24, W=Math.max(D*PXF, 600);
+  const ruler=document.createElement("div"); ruler.className="row head";
+  ruler.innerHTML=`<div class="lbl">标尺 · ${fps}FPS</div><div class="lane" id="lane0" style="width:${W}px"></div>`;
+  C.appendChild(ruler);
+  const L=ruler.querySelector("#lane0");
+  let labEvery=1; while(labEvery*fps*PXF<70) labEvery*=2;
+  const frag=document.createDocumentFragment();
+  for(let f=0;f<=D;f++){
+    const isSec=f%fps===0;
+    if(!isSec){                                   /* 次刻度与逐帧刻度按缩放密度节流，避免重绘洪泛 */
+      if(f%4===0){ if(PXF<0.5) continue; }
+      else if(PXF<3) continue;
+    }
+    const t=document.createElement("div");
+    t.className="tick"+(isSec?" major":"");
+    t.style.left=f*PXF+"px"; frag.appendChild(t);
+    if(isSec&&(f/fps)%labEvery===0){ const lb=document.createElement("span"); lb.className="tlab"; lb.textContent=(f/fps)+"s"; lb.style.left=f*PXF+"px"; frag.appendChild(lb); }
+  }
+  L.appendChild(frag);
+  /* 行定义：视频区自上而下 = 图层从上到下（数组倒序）；字幕、音频各自分区 */
+  const VT=TL.video_tracks||[];
+  const rows=[];
+  rows.push({kind:"sec", title:"视频 · 等价轨道，自上而下＝上层在上（数组顺序＝图层顺序）", cls:"s-vid"});
+  for(let i=VT.length-1;i>=0;i--) rows.push({kind:"v",t:VT[i]});
+  if(TL.subtitles?.length){ rows.push({kind:"sec", title:"字幕 · ASS 烧录于全部图层之上", cls:"s-sub"}); rows.push({kind:"sub"}); }
+  rows.push({kind:"sec", title:"音频 · 混音（amix 不归一 + 限幅）", cls:"s-aud"});
+  (TL.audio_tracks||[]).forEach(t=>rows.push({kind:"a",t}));
+  rows.forEach(r=>{
+    const row=document.createElement("div"); row.className="row"+(r.kind==="sec"?" sec "+r.cls:"");
+    const lbl=document.createElement("div"); lbl.className="lbl";
+    const lane=document.createElement("div"); lane.className="lane"; lane.style.width=W+"px";
+    if(r.kind==="sec"){ lbl.textContent=r.title.split(" · ")[0];
+      lane.innerHTML=`<div class="secline"><span>${esc(r.title)}</span></div>`; }
+    if(r.kind==="v"){
+      const kd=r.t.kind||"other", vcls="c-"+(VC[kd]?kd:"other");
+      const cn=KIND_CN[kd], cnLat=cn&&/^[A-Za-z0-9\- ]+$/.test(cn);
+      const roleTxt=((cn&&!cnLat)?cn+" ":"")+(cnLat?cn:(kd||"")).toUpperCase();
+      lbl.innerHTML=`<span class="l1"><i class="dt ${vcls}"></i><b>${esc(r.t.name)}</b></span><span class="l2">${roleTxt} · ${r.t.clips.length} CLIPS</span>`;
+      r.t.clips.forEach(c=>blk(lane,vcls,c.src,c,vcls));
+    }
+    if(r.kind==="a"){
+      const a=AMAP[r.t.name]||"a-other";
+      lbl.innerHTML=`<span class="l1"><i class="dt ${a}"></i><b>${esc(r.t.name)}</b></span><span class="l2">AUDIO · ${r.t.events.length} 事件</span>`;
+      r.t.events.forEach((e,i)=>blk(lane,a,(e.src||"?")+"#"+(i+1),e,a));
+    }
+    if(r.kind==="sub"){ lbl.innerHTML=`<span class="l1"><i class="dt c-sub"></i><b>字幕</b></span><span class="l2">SUBTITLE · ${TL.subtitles.length} 条</span>`;
+      TL.subtitles.forEach((s,i)=>blk(lane,"c-sub",(i+1)+" · "+s.text,s,"c-sub")); }
+    row.appendChild(lbl); row.appendChild(lane); C.appendChild(row);
+  });
+  C.style.width=(148+W)+"px";
+  const ph=document.createElement("div"); ph.id="playhead"; C.appendChild(ph);
+  /* meta + 画面构成统计 + 校验 */
+  const nEv=(TL.audio_tracks||[]).reduce((s,t)=>s+t.events.length,0);
+  const kindPct={};
+  VT.forEach(t=>{ const kd=KIND_CN[t.kind]||t.kind||"other";
+    kindPct[kd]=(kindPct[kd]||0)+t.clips.reduce((s,c)=>s+c.dur,0)/D*100; });
+  const comp=Object.entries(kindPct).map(([k,v])=>`<b>${k}</b> ${v.toFixed(0)}%`).join(" / ");
+  $("meta").innerHTML=`<span class="chip"><b>${(D/fps).toFixed(1)}s</b> / ${D}f</span>
+    <span class="chip"><b>${fps}</b>fps</span><span class="chip"><b>${TL.project?.width}x${TL.project?.height}</b></span>
+    <span class="chip">源 <b>${(TL.sources||[]).length}</b></span>
+    <span class="chip">视频轨 <b>${VT.length}</b></span>
+    <span class="chip">画面构成 ${comp}</span>
+    <span class="chip">字幕 <b>${(TL.subtitles||[]).length}</b></span>
+    <span class="chip">音轨 <b>${(TL.audio_tracks||[]).length}</b>/<b>${nEv}</b></span>`;
+  const iss=validate(TL), errs=iss.filter(i=>i.lv==="err").length, warns=iss.length-errs;
+  const vb=$("vbadge");
+  vb.className=errs?"bad":"";
+  vb.innerHTML=(errs?I.cross:I.check)+`<span>${errs?`${errs} 错误${warns?` / ${warns} 警告`:""}`:(warns?`${warns} 警告`:"校验通过")}</span>`;
+  $("vpanel").style.display="none";
+  $("vpanel").innerHTML=iss.length?iss.map(i=>`<li class="${i.lv}">${i.lv==="err"?I.cross:I.warn}<span>${esc(i.m)}</span></li>`).join(""):"";
+  vb.onclick=()=>{ const p=$("vpanel"); p.style.display=p.style.display==="block"?"none":"block"; };
+}
+function blk(lane, cls, name, e, idt){
+  const inF=e.dst_in??e.in, outF=inF+(e.dur??(e.out-e.in));
+  const b=document.createElement("div"); b.className="blk "+cls;
+  b.style.left=inF*PXF+"px"; b.style.width=Math.max((outF-inF)*PXF,3)+"px";
+  if(parseFloat(b.style.width)<16) b.classList.add("tiny");
+  const meta=[];
+  if(e.dur!==undefined||e.out) meta.push(`${outF-inF}f`);
+  if(e.volume!==undefined) meta.push(`vol ${e.volume}`);
+  if(e.fade_in_frames) meta.push(`fi ${e.fade_in_frames}`);
+  if(e.fade_out_frames) meta.push(`fo ${e.fade_out_frames}`);
+  if(e.pan!==undefined) meta.push(`pan ${e.pan>0?"R":"L"}${Math.abs(e.pan)}`);
+  if(e.loop) meta.push("loop");
+  b.innerHTML=`<span class="nm">${esc(name)}</span>`+(meta.length&&parseFloat(b.style.width)>90?`<span class="meta">${meta.join(" · ")}</span>`:"");
+  if(cls==="c-gfx") b.insertAdjacentHTML("beforeend",I.star);
+  b.onclick=()=>{ document.querySelectorAll(".blk.sel").forEach(x=>x.classList.remove("sel")); b.classList.add("sel"); showDetail(e,name,idt); };
+  lane.appendChild(b);
+}
+function showDetail(e,name,idt){
+  const fps=TL.project?.fps||24;
+  const inF=e.dst_in??e.in, outF=inF+(e.dur??(e.out-e.in));
+  const sec=f=>`${fm(f/fps)}s`;
+  let h=`<div class="dt-head"><i class="dt ${idt||"c-other"}"></i><div><div class="dname">${esc(name)}</div><div class="dlab">DETAILS</div></div></div><table>`;
+  h+=`<tr><td>成片窗口</td><td>${inF}–${outF} f（${sec(inF)} → ${sec(outF)}）</td></tr>`;
+  if(e.dur!==undefined) h+=`<tr><td>时长</td><td>${e.dur} f = ${sec(e.dur)}</td></tr>`;
+  if(e.src!==undefined){ const s=TL.sources?.find(x=>x.id===e.src);
+    h+=`<tr><td>源</td><td>${esc(e.src)}${s?` · ${esc(s.path)}`:""}</td></tr>`; }
+  if(e.src_in!==undefined){
+    h+=`<tr><td>源内窗口</td><td>${e.src_in}–${e.src_out??e.src_in+e.dur} f（${sec(e.src_in)} → ${sec(e.src_out??e.src_in+e.dur)}）</td></tr>`;
+    if(e.src_out!==undefined&&e.src_out-e.src_in!==e.dur) h+=`<tr><td colspan="2" class="derr">${I.warn}src_out-src_in ≠ dur（EDL 校验失败，以 vtx validate 为准）</td></tr>`;
+  }
+  for(const k of["text","scale","x","y","opacity","volume","pan","loop","transform"]) if(e[k]!==undefined) h+=`<tr><td>${k}</td><td>${esc(e[k])}</td></tr>`;
+  if(e.fade_in_frames) h+=`<tr><td>淡入(alpha)</td><td>${e.fade_in_frames} f = ${sec(e.fade_in_frames)}</td></tr>`;
+  if(e.fade_out_frames) h+=`<tr><td>淡出(alpha)</td><td>${e.fade_out_frames} f = ${sec(e.fade_out_frames)}</td></tr>`;
+  h+=`</table><details><summary>原始 JSON</summary><pre>${esc(JSON.stringify(e,null,2))}</pre></details>`;
+  $("detail").innerHTML=h;
+}
+
+/* ---------- 缩放 / 播放头 ---------- */
+function fit(){
+  const D=durF(TL||SAMPLE);
+  PXF=Math.min(24,Math.max(0.4,($("scroll").clientWidth-180)/D));
+  $("zoom").value=PXF; render();
+}
+$("zoom").oninput=e=>{ PXF=+e.target.value; render(); };
+$("bFit").onclick=fit;
+window.addEventListener("resize",()=>{ if(TL) render(); });
+$("scroll").addEventListener("wheel",e=>{ if(e.ctrlKey){ e.preventDefault(); $("zoom").value=PXF=Math.min(24,Math.max(0.4,PXF*(e.deltaY<0?1.15:0.87))); render(); } },{passive:false});
+$("scroll").addEventListener("mousemove",e=>{
+  const ph=$("playhead"); if(!ph) return;
+  const sc=$("scroll"), hw=(document.querySelector(".lbl")||{offsetWidth:0}).offsetWidth;
+  /* x 以 lane 起点（轨道头右侧）为原点；playhead 定位在 #content 内需加回头宽 */
+  const x=e.clientX+sc.scrollLeft-sc.getBoundingClientRect().left-hw;
+  const f=Math.round(x/PXF); if(f<0||f>durF(TL)){ ph.style.display="none"; $("timecur").textContent="—"; return; }
+  ph.style.display="block"; ph.style.left=hw+f*PXF+"px"; ph.dataset.t=f+"f";
+  $("timecur").textContent=`frame ${f} · ${fm(f/(TL.project?.fps||24))}s`;
+});
+$("scroll").addEventListener("mouseleave",()=>{ const ph=$("playhead"); if(ph) ph.style.display="none"; $("timecur").textContent="—"; });
+
+loadText(JSON.stringify(SAMPLE), true);
+</script>
+</body>
+</html>

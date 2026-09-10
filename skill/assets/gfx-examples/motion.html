@@ -1,0 +1,241 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1920px; height:1080px; background:transparent;
+    font-family:"Noto Sans CJK SC","Noto Sans SC",sans-serif; overflow:hidden; }
+  #stage { position:absolute; inset:0; }
+
+  /* ---- 背景：漂浮渐变斑 + 暗角 ---- */
+  .blob { position:absolute; width:1100px; height:1100px; border-radius:50%;
+    filter:blur(160px); opacity:.45; }
+  .b1 { background:radial-gradient(circle,#0e7490 0%,transparent 65%); }
+  .b2 { background:radial-gradient(circle,#6d28d9 0%,transparent 65%); }
+  .vignette { position:absolute; inset:0;
+    background:radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(2,6,23,.55) 100%); }
+  .grid { position:absolute; inset:0; opacity:.10;
+    background-image:linear-gradient(rgba(148,197,255,.5) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(148,197,255,.5) 1px,transparent 1px);
+    background-size:96px 96px; }
+
+  /* ---- 顶部进度条 ---- */
+  #topbar { position:absolute; top:0; left:0; height:5px; width:100%;
+    background:linear-gradient(90deg,#22d3ee,#a78bfa,#f472b6);
+    transform-origin:left; }
+
+  #tag { position:absolute; top:34px; left:60px; padding:8px 22px;
+    border:1px solid rgba(167,139,250,.6); border-radius:999px;
+    color:#c4b5fd; font-size:22px; letter-spacing:4px;
+    font-weight:500; background:rgba(30,27,75,.35); }
+
+  /* ---- 主标题 ---- */
+  #title { position:absolute; top:150px; left:0; width:100%;
+    text-align:center; font-size:150px; font-weight:900; letter-spacing:2px; }
+  #title .ch { display:inline-block; opacity:0;
+    background:linear-gradient(120deg,#e0f2fe 10%,#67e8f9 45%,#c4b5fd 90%);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    text-shadow:0 0 90px rgba(103,232,249,.25); }
+  #titlewrap { overflow:hidden; padding:0 40px; }
+  #underline { position:absolute; top:335px; left:50%; height:6px; width:900px;
+    margin-left:-450px; border-radius:3px;
+    background:linear-gradient(90deg,transparent,#22d3ee 20%,#a78bfa 80%,transparent); }
+  #sub { position:absolute; top:370px; width:100%; text-align:center;
+    color:#7dd3fc; font-size:30px; letter-spacing:16px; font-weight:400; opacity:0; }
+
+  /* ---- 流水线节点 ---- */
+  .node { position:absolute; width:264px; height:170px; top:505px;
+    border-radius:22px; background:rgba(15,23,42,.55);
+    border:1px solid rgba(148,197,255,.28); backdrop-filter:blur(6px);
+    box-shadow:0 18px 50px rgba(2,6,23,.5), inset 0 1px 0 rgba(255,255,255,.08);
+    opacity:0; }
+  .node .idx { position:absolute; top:16px; left:22px; font-size:20px;
+    color:#67e8f9; font-weight:700; letter-spacing:2px; }
+  .node .name { position:absolute; top:48px; left:22px; font-size:40px;
+    font-weight:900; color:#f1f5f9; }
+  .node .desc { position:absolute; top:100px; left:22px; font-size:19px;
+    color:#94a3b8; letter-spacing:1px; }
+  .node .pbar { position:absolute; bottom:0; left:0; height:5px; width:100%;
+    border-radius:0 0 22px 22px; transform-origin:left; transform:scaleX(0);
+    background:linear-gradient(90deg,#22d3ee,#a78bfa); }
+  .node .dot { position:absolute; top:24px; right:22px; width:12px; height:12px;
+    border-radius:50%; background:#22d3ee; box-shadow:0 0 14px #22d3ee; }
+
+  /* ---- 图表 ---- */
+  #chart { position:absolute; left:130px; bottom:110px; width:760px; height:330px; opacity:0; }
+  #chart .ct { font-size:26px; color:#e2e8f0; font-weight:700; letter-spacing:2px; margin-bottom:18px; }
+  .barrow { position:absolute; left:0; height:44px; }
+  .blab { position:absolute; left:0; width:150px; font-size:24px; color:#94a3b8; }
+  .btrack { position:absolute; left:160px; right:0; top:50%; height:44px; margin-top:-22px;
+    background:rgba(148,197,255,.08); border-radius:10px; }
+  .bfill { position:absolute; left:0; top:0; height:100%; width:100%;
+    border-radius:10px; transform-origin:left; transform:scaleX(0);
+    background:linear-gradient(90deg,#0891b2,#7c3aed); box-shadow:0 0 24px rgba(124,58,237,.35); }
+  .bval { position:absolute; font-size:24px; font-weight:700; color:#e0f2fe; }
+
+  /* ---- 右下计数器 ---- */
+  #counter { position:absolute; right:150px; bottom:130px; text-align:right; opacity:0; }
+  #counter .lab { font-size:24px; color:#94a3b8; letter-spacing:3px; }
+  #counter .big { font-size:120px; font-weight:900; line-height:1.15;
+    background:linear-gradient(90deg,#67e8f9,#f472b6);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  #counter .big .arr { font-size:70px; }
+  #ring { position:absolute; right:150px; bottom:150px; width:340px; height:340px;
+    pointer-events:none; opacity:0; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="grid"></div><div class="vignette"></div>
+  <div id="topbar"></div>
+  <div id="tag">POC · HTML MOTION PIPELINE</div>
+
+  <div id="titlewrap"><h1 id="title"></h1></div>
+  <div id="underline"></div>
+  <div id="sub">FROM IDEA TO FINAL CUT</div>
+
+  <svg id="wire" width="1920" height="1080" style="position:absolute;inset:0"></svg>
+
+  <div class="node" id="n0"><div class="idx">01</div><div class="name">选题调研</div><div class="desc">IDEATION · 抓取对标</div><div class="dot"></div><div class="pbar"></div></div>
+  <div class="node" id="n1"><div class="idx">02</div><div class="name">脚本分镜</div><div class="desc">SCRIPT · 视觉指令</div><div class="dot"></div><div class="pbar"></div></div>
+  <div class="node" id="n2"><div class="idx">03</div><div class="name">真人录制</div><div class="desc">A-ROLL · 声音即灵魂</div><div class="dot"></div><div class="pbar"></div></div>
+  <div class="node" id="n3"><div class="idx">04</div><div class="name">AI 生成</div><div class="desc">B-ROLL · 动效音效</div><div class="dot"></div><div class="pbar"></div></div>
+  <div class="node" id="n4"><div class="idx">05</div><div class="name">合成交付</div><div class="desc">TIMELINE · RENDER</div><div class="dot"></div><div class="pbar"></div></div>
+
+  <div id="chart">
+    <div class="ct">单期耗时拆解（小时）</div>
+  </div>
+
+  <div id="counter">
+    <div class="lab">后期周期压缩</div>
+    <div class="big"><span id="ch1">0h</span> <span class="arr">➜</span> <span id="ch2">0h</span></div>
+    <div class="lab" style="color:#67e8f9" id="ratio">效率提升 0%</div>
+  </div>
+  <svg id="ring"></svg>
+</div>
+
+<script>
+/* ===== 确定性渲染协议：render(t)，t 为秒；帧号经 URL ?f= 传入 ===== */
+const FPS = 24, DUR = 5;
+const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
+const t = Math.min(f / FPS, DUR);
+
+/* --- 缓动 --- */
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const easeOutCubic = x => 1 - Math.pow(1 - x, 3);
+const easeOutExpo  = x => x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+const easeOutBack  = x => { const c = 1.70158; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const seg = (t, a, b) => clamp01((t - a) / (b - a));       // 时间段 → 0..1
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15,1|a);x=x+Math.imul(x^x>>>7,61|x)^x;return((x^x>>>14)>>>0)/4294967296}}
+
+/* --- 背景：斑体漂移 --- */
+const rnd = mulberry32(42);
+document.querySelector(".b1").style.cssText += `left:${-200+rnd()*400}px; top:${-300+rnd()*200}px; transform:translate(${Math.sin(t*.25)*130}px,${Math.cos(t*.2)*90}px)`;
+document.querySelector(".b2").style.cssText += `right:${-200+rnd()*400}px; bottom:${-350}px; transform:translate(${Math.cos(t*.22)*150}px,${Math.sin(t*.28)*80}px)`;
+
+/* --- 顶部进度 --- */
+document.getElementById("topbar").style.transform = `scaleX(${t / DUR})`;
+
+/* --- 主标题：逐字弹入 + 下划线划过 --- */
+const TXT = "AI × 视频流水线";
+const titleEl = document.getElementById("title");
+[...TXT].forEach((c, i) => {
+  const s = document.createElement("span"); s.className = "ch"; s.textContent = c;
+  const p = easeOutExpo(seg(t, 0.18 + i * 0.055, 0.95 + i * 0.055));
+  s.style.opacity = p;
+  s.style.transform = `translateY(${(1 - p) * 115}%) rotate(${(1 - p) * 6}deg)`;
+  titleEl.appendChild(s);
+});
+document.getElementById("underline").style.transform =
+  `translateX(${(easeOutCubic(seg(t, 0.7, 1.7)) - 0.5) * 2 * 100}%) scaleX(${easeOutCubic(seg(t, 0.7, 1.7))})`;
+document.getElementById("underline").style.opacity = clamp01(seg(t, 0.7, 0.9)) * clamp01(1 - seg(t, 4.5, 4.9));
+document.getElementById("sub").style.opacity = easeOutCubic(seg(t, 0.95, 1.5)) * clamp01(1 - seg(t, 4.5, 4.9));
+document.getElementById("sub").style.letterSpacing = `${16 + 10 * (1 - easeOutCubic(seg(t, 0.95, 1.7)))}px`;
+
+/* --- 流水线节点 + 连线 + 粒子 --- */
+const NX = [230, 590, 950, 1310, 1670], NY = 590, NW = 264;
+const wire = document.getElementById("wire");
+let d = `M ${NX[0]+NW/2},${NY}`;
+for (let i = 1; i < 5; i++) {
+  const x0 = NX[i-1]+NW/2, x1 = NX[i]+NW/2, mx = (x0+x1)/2;
+  d += ` C ${mx},${NY-6} ${mx},${NY+6} ${x1},${NY}`;
+}
+const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+path.setAttribute("d", d); path.setAttribute("fill", "none");
+path.setAttribute("stroke", "rgba(103,232,249,.5)"); path.setAttribute("stroke-width", "3");
+const L = path.getTotalLength();
+path.setAttribute("stroke-dasharray", `${L * easeOutCubic(seg(t, 0.75, 2.1))} ${L}`);
+path.setAttribute("opacity", clamp01(seg(t, 0.75, 1.0)) * clamp01(1 - seg(t, 4.5, 4.9)));
+wire.appendChild(path);
+
+for (let i = 0; i < 16; i++) {          // 沿线粒子
+  const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  const u = ((i / 16 + t * 0.14) % 1);
+  const pt = path.getPointAtLength(u * L * easeOutCubic(seg(t, 0.75, 2.1)));
+  c.setAttribute("cx", pt.x); c.setAttribute("cy", pt.y);
+  c.setAttribute("r", 3 + 3 * Math.abs(Math.sin(t * 3 + i)));
+  c.setAttribute("fill", i % 3 === 0 ? "#f472b6" : "#67e8f9");
+  c.setAttribute("opacity", clamp01(seg(t, 1.0, 1.5)) * (0.35 + 0.6 * Math.abs(Math.sin(t * 2.4 + i * 1.3))) * clamp01(1 - seg(t, 4.5, 4.9)));
+  wire.appendChild(c);
+}
+
+for (let i = 0; i < 5; i++) {
+  const el = document.getElementById("n" + i);
+  const p = seg(t, 0.9 + i * 0.26, 1.42 + i * 0.26);
+  const e = easeOutBack(p);
+  el.style.left = (NX[i]) + "px";
+  el.style.opacity = clamp01(p * 1.4) * clamp01(1 - seg(t, 4.5, 4.9));
+  el.style.transform = `translate(-50%,0) scale(${0.55 + 0.45 * e}) translateY(${(1 - p) * 40}px)`;
+  const pf = easeOutCubic(seg(t, 1.15 + i * 0.26, 2.05 + i * 0.26));
+  el.querySelector(".pbar").style.transform = `scaleX(${pf})`;
+  const glow = 0.5 + 0.5 * Math.sin(t * 2.2 + i);
+  el.style.boxShadow = pf >= 1
+    ? `0 18px 50px rgba(2,6,23,.5), 0 0 ${28 * glow + 10}px rgba(34,211,238,.28), inset 0 1px 0 rgba(255,255,255,.08)`
+    : "";
+}
+
+/* --- 图表：条形生长 + 数字滚动 --- */
+const BARS = [["传统后期", 20], ["AI 流水线", 8], ["目标", 2]];
+const chart = document.getElementById("chart");
+chart.style.opacity = clamp01(seg(t, 2.35, 2.8)) * clamp01(1 - seg(t, 4.5, 4.9));
+chart.style.transform = `translateY(${(1 - easeOutCubic(seg(t, 2.35, 3.0))) * 60}px)`;
+BARS.forEach(([lab, val], i) => {
+  let row = document.getElementById("br" + i);
+  if (!row) {
+    row = document.createElement("div"); row.className = "barrow"; row.id = "br" + i;
+    row.innerHTML = `<div class="blab">${lab}</div><div class="btrack"><div class="bfill"></div></div><div class="bval"></div>`;
+    chart.appendChild(row);
+  }
+  row.style.top = (60 + i * 78) + "px"; row.style.left = "0"; row.style.right = "0";
+  const p = easeOutCubic(seg(t, 2.5 + i * 0.18, 3.4 + i * 0.18));
+  row.querySelector(".bfill").style.transform = `scaleX(${p * val / 20})`;
+  row.querySelector(".bfill").style.background =
+    i === 2 ? "linear-gradient(90deg,#db2777,#f59e0b)" : "linear-gradient(90deg,#0891b2,#7c3aed)";
+  const v = row.querySelector(".bval");
+  v.textContent = Math.round(val * p) + "h";
+  const w = 160 + (760 - 220) * p * val / 20;
+  v.style.left = (w + 14) + "px"; v.style.top = "4px";
+});
+
+/* --- 计数器 + 冲击环 --- */
+const counter = document.getElementById("counter");
+counter.style.opacity = clamp01(seg(t, 3.1, 3.6)) * clamp01(1 - seg(t, 4.5, 4.9));
+counter.style.transform = `translateY(${(1 - easeOutCubic(seg(t, 3.1, 3.8))) * 50}px)`;
+const v1 = Math.round(20 * easeOutCubic(seg(t, 3.2, 4.0)));
+const v2 = Math.round(2 * easeOutExpo(seg(t, 3.8, 4.5)));
+document.getElementById("ch1").textContent = v1 + "h";
+document.getElementById("ch2").textContent = v2 + "h";
+document.getElementById("ratio").textContent = v2 > 0 ? `效率提升 ${Math.round(v1 / v2) * 100}%` : "效率提升 0%";
+const rp = seg(t, 3.75, 4.5);
+const ring = document.getElementById("ring");
+ring.setAttribute("width", 340); ring.setAttribute("height", 340);
+ring.style.opacity = (rp > 0 && rp < 1) ? (1 - rp) * 0.9 : 0;
+ring.innerHTML = `<circle cx="170" cy="170" r="${60 + rp * 90}" fill="none" stroke="#f472b6" stroke-width="${5 * (1 - rp)}" />`;
+
+/* --- 结尾整体淡出 --- */
+document.getElementById("stage").style.opacity = clamp01(1 - seg(t, 4.55, 4.95));
+</script>
+</body>
+</html>
