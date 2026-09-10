@@ -298,7 +298,31 @@ def find_chrome() -> str:
             return c
     print("✗ 找不到 Chrome/Chromium（gfx 帧截图需要）。可设环境变量 VTX_CHROME 指定可执行文件路径"); sys.exit(1)
 def gfx(c: Ctx):
+    import shutil
     total = 0
+    engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
+    use_cdp = os.environ.get("VTX_GFX", "cdp").lower() != "cli"
+    cdp_mod = None
+    if use_cdp:
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import gfx_render as cdp_mod
+            if not cdp_mod.available():
+                cdp_mod = None
+        except Exception as e:
+            print(f"⚠ CDP 渲染器不可用（{e}），回落 CLI 截图路径")
+            cdp_mod = None
+
+    def shot_cli(i, d, html, chrome):                    # 原 CLI 路径（回落保底）
+        return subprocess.run(
+            [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+             "--window-size=1920,1080", "--default-background-color=00000000",
+             f"--screenshot={d}/f{i:04d}.png", f"file://{html}?f={i}"], capture_output=True)
+
+    def render_cli(i_range, d, html, chrome):
+        with ThreadPoolExecutor(6) as ex:
+            list(ex.map(lambda i: shot_cli(i, d, html, chrome), i_range))
+
     for tr in c.tl["video_tracks"]:
         if tr.get("kind") != "gfx": continue
         for cl in tr["clips"]:
@@ -306,23 +330,39 @@ def gfx(c: Ctx):
             n = cl["dur"]
             d = c.cache / cid
             if d.exists() and len(list(d.glob("f*.png"))) != n:  # 帧数不符（换时长）→ 清缓存重渲
-                import shutil; shutil.rmtree(d)
+                shutil.rmtree(d)
             d.mkdir(parents=True, exist_ok=True)
             if len(list(d.glob("f*.png"))) == n:
-                print(f"✓ {cid}: {n} 帧已缓存"); continue
+                # D29 缓存坑补丁：html mtime > 缓存帧 mtime → 源已改，整页重渲
+                html = (c.root / cl["src"]).resolve()
+                pngs = sorted(d.glob("f*.png"))
+                if pngs and html.stat().st_mtime > pngs[0].stat().st_mtime:
+                    print(f"· {cid}: html 比缓存新，整页重渲")
+                    shutil.rmtree(d); d.mkdir(parents=True, exist_ok=True)
+                else:
+                    print(f"✓ {cid}: {n} 帧已缓存"); total += 1; continue
             html = (c.root / cl["src"]).resolve()
-            chrome = find_chrome()
-            def shot(i, d=d, html=html, chrome=chrome):
-                return subprocess.run(
-                    [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
-                     "--window-size=1920,1080", "--default-background-color=00000000",
-                     f"--screenshot={d}/f{i:04d}.png", f"file://{html}?f={i}"], capture_output=True)
-            with ThreadPoolExecutor(6) as ex: list(ex.map(shot, range(n)))
+            rendered_via = "cli"
+            if cdp_mod is not None:
+                try:
+                    st = cdp_mod.render_page(html, d, n, chrome_path=find_chrome())
+                    if st["failed"]:
+                        print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
+                        render_cli(st["failed"], d, html, find_chrome())
+                    rendered_via = f"{st['tabs']} tabs CDP, {st['ms_per_frame']:.0f}ms/帧"
+                except Exception as e:
+                    print(f"⚠ {cid}: CDP 渲染失败（{e}），整页回落 CLI")
+                    rendered_via = f"cli（CDP 失败回落: {e}）"
+            if cdp_mod is None or rendered_via.startswith("cli（"):
+                render_cli(range(n), d, html, find_chrome())
+                rendered_via = "cli 6 并发"
             got = len(list(d.glob("f*.png")))
             if got != n: print(f"✗ {cid}: 期望 {n} 帧得到 {got}"); sys.exit(1)
-            print(f"✓ {cid}: 渲染 {n} 帧（含 alpha）")
+            print(f"✓ {cid}: 渲染 {n} 帧（含 alpha，{rendered_via}）")
+            engine_notes.append(f"{cid}: {rendered_via}")
             total += 1
-    c.receipt("gfx", True, f"{total} gfx clips")
+    c.receipt("gfx", True, f"{total} gfx clips"
+              + ("｜" + "; ".join(engine_notes) if engine_notes else ""))
 
 # ---------------------------------------------------------------- video
 def nvenc_ok(c: Ctx) -> bool:

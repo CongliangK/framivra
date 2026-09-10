@@ -43,10 +43,12 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json validate   # 
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json --dry-run video  # 只打印将执行的 ffmpeg
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json all        # 全流程 → myvideo/out/final.mp4
 
-# 分阶段（gfx 帧缓存可复用，改哪段重跑哪段）：
+# 分阶段（gfx 帧缓存可复用，改哪段重跑哪段；缓存按源 html mtime 自动失效）：
 #   validate → audit（指标体检）→ prepare（提取音频）→ gfx（渲染动效）→ video → audio → mux → qc
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 清空 cache/ out/
 ```
+
+**gfx 渲染引擎（D42）**：默认 CDP 常驻浏览器（单浏览器多 tab，不透明页单截直写/透明页白黑双截解算 alpha，实测 4.6×，约 34ms/帧）；渲染器失败自动整页回落 CLI 逐帧路径。`VTX_GFX=cli` 强制 CLI、`VTX_GFX_TABS=N` 调并发（默认 4）、`VTX_GFX_PNG_LEVEL` 调透明页压缩级别。不透明页输出与 CLI 逐字节一致；透明页半透明边缘有 ≤5/255 舍入级差异（亚感知）。
 
 每次阶段完成写 `out/receipt.json`（timeline 哈希、各阶段结果）；QC 报告在 `out/qc_report.json`，审计报告在 `out/audit_report.json`。
 
