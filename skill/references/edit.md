@@ -159,3 +159,9 @@ gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，
 - 选题调研与 01-brief → 本 skill `references/research.md`
 - BGM/音效/环境声的选取与授权 → `~/文档/04_bilibili视频/_library/reports/音频资产与混音惯例调查.md` §四-§六（三层资产库 + 混音默认值 + 开源音乐生成；授权态度按 AGENTS.md D17：商业音乐不用=唯一红线、音效/环境声宽松获取、AI 生成积极使用）；**现成资产在工作区 `_library/assets_audio/`**（Kenney/Mixkit/Sonniss 音效库 + bgm/ AI 试听样，登记见其 LICENSE.md；跨期共用，不在单期项目内；各期 timeline 以 `../_library/assets_audio/...` 相对引用）；**本地 BGM 产线路由进 `music` skill（~/.agents/skills/music/）**，本体在 `~/文档/01_活跃项目/music_tools/`（ACE-Step 1.5 = 时长精确 BGM 主力，MiniMax Music3 = 整曲备选，ComfyUI 8188 端口跑；CLI：bgm）
 - 选题/脚本/录制规划 → 上层流程（见 `~/文档/04_bilibili视频/AGENTS.md`）
+
+## 方法论指针
+
+- **编排总纲**：`~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md`（开场模板/正文节奏/演示对位三原则/字幕 ASR 锚定/音频避让与响度链/结尾模板/验证门清单，溯源 D31-D39）——编排每期 timeline 前先读。
+- 用户手剪回读协议（blend2json→ASR→用户权威文本对照）→ `~/文档/01_活跃项目/video_tools/blender_bridge/README.md`「用户手剪回读协议」节。
+- **待办（拍板后执行）**：voice-ime/07-shooting-guide.md 的通用实拍规范（参数/机位/打光/同步/降噪结论）上提为 `_library/reports/` 通用手册，项目版留本期装备记录——上提后此处补指针。

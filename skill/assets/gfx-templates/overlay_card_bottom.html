@@ -1,0 +1,157 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>模板 · overlay 下带流程条（gfx-overlay · 脸下方 · 避字幕带）</title><style>
+/* ===== 模板：overlay 下带流程条 =====
+ * 用途：gfx-overlay 叠全屏出镜上的「下带」横条流程卡——N 节点（圆点序号章+图标+短词）
+ *   依序点亮 + 连线生长 + 全链低频呼吸；叠加在脸下方身体上，不遮脸不抢戏。
+ * 来源：voice-ime v3.5 p6_pipeline_strip.html（叠 P6 全屏出镜实案，用户拍板「底部叠加信息」形态）。
+ * 改哪里：只改 CONST DATA（节点词/图标/节拍/几何）；机制代码勿动。
+ * 避让几何（★overlay 红线）：本模板卡位 left:280 top:608 w:1360 h:184；投影扩散 ≤40px
+ *   → 卡底 792+40=832 < 860 字幕安全线（字幕带 y[950,1020] 保守 860）；上沿 608 避开脸带。
+ *   pip 在位时另避 x≥1440∧y≥600 安全区（本位右缘 1640 与 pip x≥1440 重叠——挂载窗须避 pip 或改窄）。
+ * 出入：入场淡入+上移 18px；结束由时间线裁切（无淡出——需求单可覆盖；要淡出参照
+ *   overlay_card_top 的尾 12f 写法）。透明底卡片自带暖白底色（D33 坑）。
+ * 注意：#wire 选择器勿改通配「#card svg」——会以 (1,0,1) 压过 .icon 把图标拉成整卡画布（v3.5 实坑）。 */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC","Noto Sans SC",sans-serif;overflow:hidden}
+#card{position:absolute;left:280px;top:608px;width:1360px;height:184px;border-radius:16px;
+  background:rgba(255,253,250,.92);            /* 半透明暖白：压在出镜人物身体上文字仍清晰 */
+  border:1.5px solid rgba(26,26,26,.55);
+  box-shadow:0 10px 30px rgba(70,58,24,.18)}
+#wire{position:absolute;left:0;top:0;width:1360px;height:184px}
+.icon{position:absolute;top:24px;width:34px;height:34px}
+.word{position:absolute;top:122px;width:140px;text-align:center;font-size:27px;font-weight:800;
+  letter-spacing:2px;white-space:nowrap}
+</style></head><body>
+<div id="card">
+  <svg id="wire" viewBox="0 0 1360 184"></svg>
+</div>
+<script>
+/* ===== CONST DATA：本页全部数据/节拍（改这里） ===== */
+const DATA = {
+  N: 720,                                      // 总帧数（30fps）
+  /* 节点：name=短词（2-4 字为佳，一眼读完不念）；ic=IC 库键 */
+  IC: {
+    mic:     '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8.5 21h7"/>',
+    sliders: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/><circle cx="9.5" cy="6.5" r="2.4" fill="#fff"/>' +
+              '<circle cx="15" cy="12" r="2.4" fill="#fff"/><circle cx="7.5" cy="17.5" r="2.4" fill="#fff"/>',
+    chip:    '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><rect x="10" y="10" width="4" height="4" rx="1"/>' +
+              '<path d="M9 2.8v3.7M15 2.8v3.7M9 17.5v3.7M15 17.5v3.7M2.8 9h3.7M2.8 15h3.7M17.5 9h3.7M17.5 15h3.7"/>',
+    funnel:  '<path d="M4.5 5h15l-6 7v5.6l-3 1.9v-7.5L4.5 5z"/>',
+    cursor:  '<path d="M6 3.5l7.2 16 1.9-6.9 6.9-1.9L6 3.5z"/>'
+  },
+  nodes: [
+    { name: "步骤一", ic: "mic" },
+    { name: "步骤二", ic: "sliders" },
+    { name: "步骤三", ic: "chip" },
+    { name: "步骤四", ic: "funnel" },
+    { name: "步骤五", ic: "cursor" }
+  ],
+  /* 节拍（页内秒）：节点 i 点亮起点=ST(i)；段 i 生长起点=GROW(i)（生长窗 .5s，线先到下一节点后亮）；
+     全链点亮后起低频呼吸（breathIn 起，2s 渐入）——句锁时改为词位常量数组 */
+  ST:     i => 1 + i,
+  GROW:   i => 1.5 + i,
+  breathIn: 6,
+  AXY: 96,                                     /* 主轴线 y（卡内局部） */
+};
+
+/* ===== 帧驱动协议（D8；D24：30fps；同 f 同像素） ===== */
+const FPS = 30, N = DATA.N;
+const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
+const t = Math.min(f / FPS, N / FPS);
+
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const seg  = (x, a, b) => clamp01((x - a) / (b - a));
+const eoc  = x => 1 - Math.pow(1 - x, 3);
+const eob  = x => { const c = 1.70158; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const lerp = (a, b, m) => a + (b - a) * m;
+const mix = (c1, c2, m) => {                    /* hex→hex 插值（灰态→点亮态） */
+  const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+  return `rgb(${Math.round(lerp(a>>16&255, b>>16&255, m))},${Math.round(lerp(a>>8&255, b>>8&255, m))},${Math.round(lerp(a&255, b&255, m))})`;
+};
+const INK = "#1a1a1a", AMBER = "#d97706";      /* D22 调色板 token */
+
+/* ===== 卡内局部坐标（_tokens §10：嵌套元素一律容器局部坐标） ===== */
+const n = DATA.nodes.length;
+const X = DATA.nodes.map((_, i) => 140 + i * (1080 / (n - 1)));  /* 等距，卡内左右各留 140 */
+const breath = seg(t, DATA.breathIn, DATA.breathIn + 2);         /* 呼吸包络（全链点亮后起） */
+
+/* ===== 卡壳：入场淡入+上移 18px；呼吸期整卡 ±3px 低频微动（无信息变化） ===== */
+const card = document.getElementById("card");
+card.style.opacity = eoc(seg(t, 0, 1));
+card.style.transform =
+  `translateY(${(1 - eoc(seg(t, 0, .8))) * 18 + 3 * Math.sin((t - DATA.breathIn) * .9) * breath}px)`;
+
+/* ===== SVG 构建（每帧重建当帧状态，纯函数） ===== */
+const NS = "http://www.w3.org/2000/svg";
+const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+const wire = document.getElementById("wire");
+const AXY = DATA.AXY;
+
+/* —— 段连线 + 箭头：线从节点 i 圆边长到箭头翼，箭头随线头抵达淡入 —— */
+const segs = [];
+for (let i = 0; i < n - 1; i++) {
+  const x1 = X[i] + 13, x2t = X[i + 1] - 22;
+  const p = eoc(seg(t, DATA.GROW(i), DATA.GROW(i) + .5));
+  const ah = mk("polygon", {
+    points: `${X[i + 1] - 13},${AXY} ${X[i + 1] - 22},${AXY - 5} ${X[i + 1] - 22},${AXY + 5}` });
+  ah.setAttribute("opacity", seg(p, .75, 1));
+  wire.appendChild(ah);
+  if (p > 0) {                            // p=0 时零长线+round cap 会留 2.5px 墨点，不画
+    const ln = mk("line", { x1, y1: AXY, x2: lerp(x1, x2t, p), y2: AXY,
+      "stroke-linecap": "round", "stroke-width": 2.5 });
+    wire.appendChild(ln);
+    segs.push([ln, ah]);
+  }
+}
+/* 呼吸期线/箭头透明度微幅波动（.78±.07，信息不变） */
+const lineA = .78 + .07 * Math.sin(t * .9);
+segs.forEach(([ln, ah]) => {
+  ln.setAttribute("stroke", `rgba(26,26,26,${lineA})`);
+  ah.setAttribute("fill", `rgba(26,26,26,${lineA})`);
+});
+
+/* —— 节点：圆点序号章（灰→琥珀+一次微弹+冲击环）+ 图标（灰→墨）+ 词（灰→墨微升） —— */
+DATA.nodes.forEach((nd, i) => {
+  const p = seg(t, DATA.ST(i), DATA.ST(i) + .5);   // 点亮进度 0→1
+
+  /* 冲击环：点亮瞬间琥珀描边环扩散渐隐（eoc 扩张） */
+  if (p > 0 && p < 1) {
+    const ring = mk("circle", { cx: X[i], cy: AXY, r: 11 + 26 * eoc(p),
+      fill: "none", stroke: AMBER, "stroke-width": 2.5 * (1 - p) });
+    ring.setAttribute("opacity", (1 - p) * .8);
+    wire.appendChild(ring);
+  }
+  /* 呼吸微光：点亮后琥珀点外圈软环低频明暗（幅度小） */
+  if (p >= 1 && breath > 0) {
+    const glow = mk("circle", { cx: X[i], cy: AXY, r: 14.5, fill: AMBER });
+    glow.setAttribute("opacity", clamp01(.12 + .10 * Math.sin(t * .9 + i * .7)) * breath);
+    wire.appendChild(glow);
+  }
+  /* 圆点+序号：一次 sin(πx) 微弹（起终 scale=1，峰 1.18） */
+  const pop = 1 + .18 * Math.sin(Math.PI * clamp01(seg(t, DATA.ST(i), DATA.ST(i) + .4)));
+  const dot = mk("circle", { cx: X[i], cy: AXY, r: 11, fill: mix("#e8e4da", AMBER, eoc(p)) });
+  dot.setAttribute("transform", `translate(${X[i]} ${AXY}) scale(${pop}) translate(${-X[i]} ${-AXY})`);
+  wire.appendChild(dot);
+  const num = mk("text", { x: X[i], y: AXY + 4.5, "text-anchor": "middle", "font-size": 13,
+    "font-weight": 700, "font-family": "Noto Sans CJK SC", fill: mix("#a8a29e", "#ffffff", eoc(p)) });
+  num.textContent = i + 1;
+  wire.appendChild(num);
+
+  /* 图标（IC path，stroke 灰→墨） */
+  card.insertAdjacentHTML("beforeend",
+    `<svg class="icon" style="left:${X[i] - 17}px" viewBox="0 0 24 24" fill="none" ` +
+    `stroke="${mix("#c9c5bd", INK, eoc(p))}" stroke-width="1.8" opacity="${lerp(.55, 1, eoc(p))}" ` +
+    `stroke-linecap="round" stroke-linejoin="round">${DATA.IC[nd.ic]}</svg>`);
+
+  /* 词（灰→墨 + 5px 微升） */
+  const w = document.createElement("div");
+  w.className = "word"; w.textContent = nd.name;
+  w.style.left = (X[i] - 70) + "px";
+  w.style.color = mix("#b0aaa0", INK, eoc(p));
+  w.style.transform = `translateY(${(1 - eoc(p)) * 5}px)`;
+  card.appendChild(w);
+});
+/* 无淡出：t 至 N/FPS 恒保持终态，结束由时间线裁切（需要淡出时参照 overlay_card_top 尾 12f 写法） */
+</script></body></html>

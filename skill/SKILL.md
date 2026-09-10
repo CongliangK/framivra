@@ -44,10 +44,11 @@ video/（live 挂载点 ~/.agents/skills/video/，五项全部为符号链接，
 │   ├── title-card.html    ← gfx：标题卡起手模板
 │   ├── lower-third.html   ← gfx：下三分之一条起手模板
 │   ├── gfx-examples/      ← gfx：样式模式库实例页（gfxA/B/C.html + motion.html）
+│   ├── gfx-templates/     ← gfx：voice-ime 验证过的通用模板（D41）：分组数据表/实测曲线/端板/上下 overlay 卡/导航卡 + _tokens.md 设计基准
 │   ├── brief-template.md  ← research：01-brief 十节模板
 │   └── supplement.template.json ← research：评分补充表模板
 ├── vtx/        -> video_tools/vtx                 ← 渲染 CLI（vtx.py+schema+preview+models）
-└── scripts/    -> video_tools/scripts             ← new_project/sync_audio/denoise_voice/调研三件/设计研究三件
+└── scripts/    -> video_tools/scripts             ← new_project/sync_audio/denoise_voice/调研三件/设计研究三件 + voice-ime 收编五件（post_loudness/check_4k/bed_static_duck/repack_voice/content_gates，D41）
 ```
 
 **本体在 video_tools 仓（2026-09-10 D40）**：本 skill 的**全部内容**——文档（本文件与 references/）、模板（assets/）、程序（vtx/、scripts/）——权威位置都是 `~/文档/01_活跃项目/video_tools/`（文档在其 `skill/` 子目录，随仓分享与版本化）；`~/.agents/skills/video/` 只是挂载点，历史路径（如 `~/.agents/skills/video/vtx/vtx.py`）继续可用。**修改任何程序或文档一律改 video_tools 仓**。程序侧仅依赖 python3 标准库 + 系统 ffmpeg/ffprobe/google-chrome；脚本用自身位置定位根目录，无硬编码主目录路径。

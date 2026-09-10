@@ -83,3 +83,20 @@ vtx validate → json2blend →
 verify_blend 五步一键，产物落 `<项目>/cache/audit_bgm/{mp3/,timeline.json,audit.blend}`。
 MP3 按源 mtime 自动失效重转（分轨重渲后重跑即可），`--force` 强制全量。首例=voice-ime
 BGM v2 13 轨（`voice-ime/cache/bgm_audit/`，--mp3-dir 指到其 assets/bgm/v2/mp3）。
+
+## 用户手剪回读协议（D39 工作法，2026-09-10 成文）
+
+用户在 preview.blend 里手剪（平移/裁剪/换轨）后，回读**不得直接采信 Blender 读数**，必须走实证链：
+
+1. `blend2json.py` 重读手剪结果 → 产物过 `vtx validate`；
+2. 按新切点**音频拼接**（导出对应窗口 wav）；
+3. 送 **Qwen3-ASR**（sidecar 127.0.0.1:18081，language 全称 Chinese）转写；
+4. 与**用户权威文本**逐句对照——用户说了算的句子清单优先于任何代理回读推断；
+5. 切点按**能量谷检测微调**（ASR 句边界附近的静音谷，样本级定位）。
+
+两处已实证的系统性偏差（D39 教训）：
+
+- **吸附手放值当精确切点**：strip 边缘读数是用户粗放位置，非精确切点——须 ASR 句首/能量谷校正后再定切；
+- **头段语义误判**：seg 头填充词/重复废读（「一个」说两遍）代理回读易误判语义，须以用户权威文本裁定（净读 vs 废读）。
+
+另：**用户手放值须做 D-A 恒等修正**——aroll 画面 src 与 voice src 是映射关系（dst−src 恒等），手剪只动了画面侧时须换算回 voice 侧，否则口型漂移。总纲见 `_library/reports/编排方法论-科技口播视频.md` §六。

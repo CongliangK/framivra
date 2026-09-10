@@ -1,0 +1,153 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>模板 · overlay 上带流程卡（gfx-overlay · 避脸带/字幕带）</title><style>
+/* ===== 模板：overlay 上带流程卡 =====
+ * 用途：gfx-overlay 叠全屏出镜上的「上带」横条流程卡——标题 + N 节点（图标+短词）+
+ *   连线生长（可标虚线=「隔层/异常」语义）+ 落章徽章；节点随口播词拍逐个点亮。
+ * 来源：voice-ime v3.8 e1_pain_card.html（叠 ar_九 全屏实案；D38 画面=口播裁定：只画讲了的部分）。
+ * 改哪里：只改 CONST DATA（标题/节点/节拍秒/连线段/徽章/N）；图标用 24×24 stroke path（IC 库可扩）。
+ * 避让几何（★overlay 红线，改卡位前必算）：
+ *   上带卡 y[26,128]，投影 0 6px 16px → 墨迹下界 ≈144，须 < 人脸带顶（实测脸带用 Haar/视觉取值）；
+ *   字幕带 y[950,1020]（保守 860）与上带零关联；pip 在位时另避 x≥1440∧y≥600 安全区。
+ * 出入：入场快淡入 ≤8f；尾 12f alpha 淡出止于 N（overlay 铁律）。透明底卡片自带暖白底色（D33 坑）。 */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC","Noto Sans SC",sans-serif;overflow:hidden}
+#card{position:absolute;left:160px;top:26px;width:1600px;height:102px;border-radius:16px;
+  background:rgba(255,253,250,.92);border:1.5px solid rgba(26,26,26,.55);
+  box-shadow:0 6px 16px rgba(70,58,24,.18);opacity:0}
+#tbar{position:absolute;left:30px;top:34px;width:5px;height:34px;border-radius:3px;background:#d97706}
+#title{position:absolute;left:46px;top:0;height:102px;display:flex;align-items:center;
+  font-size:26px;font-weight:800;color:#1a1a1a;letter-spacing:2px;white-space:nowrap}
+#div1{position:absolute;left:250px;top:24px;width:1.5px;height:54px;background:rgba(26,26,26,.16)}
+#wire{position:absolute;left:0;top:0;width:1600px;height:102px}
+.icon{position:absolute;top:16px;width:32px;height:32px}
+.word{position:absolute;top:60px;width:240px;text-align:center;font-size:23px;font-weight:800;
+  letter-spacing:1px;white-space:nowrap}
+#gapBadge{position:absolute;left:882px;top:15px;width:120px;height:34px;border-radius:999px;
+  background:rgba(255,253,250,1);border:2px solid #d97706;
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;font-weight:800;color:#b45309;letter-spacing:2px;opacity:0}
+</style></head><body>
+<div id="card">
+  <div id="tbar"></div>
+  <div id="title"></div>
+  <div id="div1"></div>
+  <svg id="wire" viewBox="0 0 1600 102"></svg>
+  <div id="gapBadge"></div>
+</div>
+<script>
+/* ===== CONST DATA：本页全部文案/数据/节拍（改这里） =====
+ * 节拍法=句锁词位：ST/AR/badge.t 全部页内秒，按「挂载 dst + 口播词位」换算；节点只画口播讲了的部分。 */
+const DATA = {
+  N: 324,                                      // 总帧数（30fps）
+  title: "卡标题 · ≤8 字",
+  /* 节点：name=短词（≤10 字）；ic=IC 库键；cx=卡内中心 x；st=点亮秒（词位） */
+  IC: {
+    mic:   '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8.5 21h7"/>',
+    chip:  '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><rect x="10" y="10" width="4" height="4" rx="1"/>' +
+           '<path d="M9 2.8v3.7M15 2.8v3.7M9 17.5v3.7M15 17.5v3.7M2.8 9h3.7M2.8 15h3.7M17.5 9h3.7M17.5 15h3.7"/>',
+    copy:  '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/>' +
+           '<path d="M15.5 8.5v-2a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2"/>',
+    paste: '<rect x="3" y="7.5" width="18" height="9" rx="1.8"/><path d="M7.5 10.8v2.4"/>' +
+           '<path d="M12.6 2.6l4.9 4.9-2.7.75-.75 2.7z"/>'
+  },
+  nodes: [
+    { name: "节点一",   ic: "mic",   cx: 400,  st: 5.267 },
+    { name: "节点二",   ic: "chip",  cx: 745,  st: 6.2   },
+    { name: "节点三",   ic: "copy",  cx: 1090, st: 7.767 },
+    { name: "节点四",   ic: "paste", cx: 1435, st: 8.733 },
+  ],
+  /* 连线段：x1/x2 卡内像素；a/b=生长起止秒（线先到、下一节点后亮）；dashed=true→琥珀虚线（隔层/异常语义） */
+  arcs: [
+    { x1: 452,  x2: 632,  a: 5.4,   b: 6.2,   dashed: false },
+    { x1: 862,  x2: 1022, a: 6.7,   b: 7.767, dashed: true  },
+    { x1: 1162, x2: 1347, a: 8.0,   b: 8.733, dashed: false }
+  ],
+  badge: { text: "隔了一层", t: 9.333, left: 882 },  // 落章徽章（null=不用）；t=落章秒（对应口播句首）
+  cardIn: [2.70, 3.35],                        // 卡壳入场 [淡入起, 落位止]（秒）
+};
+
+/* ===== 帧驱动协议（D8；D24：30fps；同 f 同像素） ===== */
+const FPS = 30, N = DATA.N;
+const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
+const t = Math.min(f / FPS, N / FPS);
+
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const seg  = (x, a, b) => clamp01((x - a) / (b - a));
+const eoc  = x => 1 - Math.pow(1 - x, 3);
+const eob  = x => { const c = 1.70158; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const lerp = (a, b, m) => a + (b - a) * m;
+const mix = (c1, c2, m) => {                    /* hex→hex 插值（灰态→点亮态） */
+  const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+  return `rgb(${Math.round(lerp(a>>16&255, b>>16&255, m))},${Math.round(lerp(a>>8&255, b>>8&255, m))},${Math.round(lerp(a&255, b&255, m))})`;
+};
+const INK = "#1a1a1a", AMBER = "#d97706";      /* D22 调色板 token */
+
+/* ===== gfx-overlay 尾淡出：12f 止于 N（之后恒全透明） ===== */
+document.body.style.opacity = 1 - clamp01(seg(t, (N - 13) / FPS, (N - 1) / FPS));
+
+document.getElementById("title").textContent = DATA.title;
+if (DATA.badge) {
+  const gb = document.getElementById("gapBadge");
+  gb.textContent = DATA.badge.text; gb.style.left = DATA.badge.left + "px";
+}
+
+const card = document.getElementById("card");
+
+/* ===== 卡壳+标题：快淡入 ≤8f + 下滑落位 ===== */
+card.style.opacity = clamp01(seg(t, DATA.cardIn[0], DATA.cardIn[0] + .27));
+card.style.transform = `translateY(${((1 - eoc(seg(t, DATA.cardIn[0], DATA.cardIn[1]))) * -16).toFixed(2)}px)`;
+
+/* ===== SVG 构建（每帧重建，纯函数；卡内局部坐标系 _tokens §10） ===== */
+const NS = "http://www.w3.org/2000/svg";
+const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+const wire = document.getElementById("wire");
+const AXY = 32;                                        /* 图标中心线 y（卡内局部） */
+
+/* —— 段连线：默认实线墨色；dashed=琥珀虚线（语义段）；线先到、下一节点后亮 —— */
+DATA.arcs.forEach((s) => {
+  const p = eoc(seg(t, s.a, s.b));
+  const ah = mk("polygon", {
+    points: `${s.x2 + 11},${AXY} ${s.x2},${AXY - 5} ${s.x2},${AXY + 5}` });
+  ah.setAttribute("opacity", seg(p, .75, 1));
+  ah.setAttribute("fill", s.dashed ? AMBER : "rgba(26,26,26,.78)");
+  wire.appendChild(ah);
+  if (p > 0) {
+    const ln = mk("line", { x1: s.x1, y1: AXY, x2: lerp(s.x1, s.x2, p), y2: AXY,
+      "stroke-linecap": "round", "stroke-width": 2.5 });
+    if (s.dashed) ln.setAttribute("stroke-dasharray", "7 6");
+    ln.setAttribute("stroke", s.dashed ? AMBER : "rgba(26,26,26,.78)");
+    wire.appendChild(ln);
+  }
+});
+
+/* —— 节点：图标+词（灰→墨 mix 插值）+ 点亮冲击环（琥珀） —— */
+DATA.nodes.forEach((nd) => {
+  const p = eoc(seg(t, nd.st, nd.st + .5));
+  if (p > 0 && p < 1) {
+    const ring = mk("ellipse", { cx: nd.cx, cy: AXY, rx: 10 + 24 * eoc(p), ry: 10 + 24 * eoc(p),
+      fill: "none", stroke: AMBER, "stroke-width": 2.2 * (1 - p) });
+    ring.setAttribute("opacity", (1 - p) * .8);
+    wire.appendChild(ring);
+  }
+  card.insertAdjacentHTML("beforeend",
+    `<svg class="icon" style="left:${nd.cx - 16}px" viewBox="0 0 24 24" fill="none" ` +
+    `stroke="${mix("#c9c5bd", INK, p)}" stroke-width="1.8" opacity="${lerp(.55, 1, p)}" ` +
+    `stroke-linecap="round" stroke-linejoin="round">${DATA.IC[nd.ic]}</svg>`);
+  const w = document.createElement("div");
+  w.className = "word"; w.textContent = nd.name;
+  w.style.left = (nd.cx - 120) + "px";
+  w.style.color = mix("#b0aaa0", INK, p);
+  w.style.transform = `translateY(${((1 - p) * 5).toFixed(2)}px)`;
+  card.appendChild(w);
+});
+
+/* —— 落章徽章：eob 弹入+微旋于虚线段中点（拍点=对应口播句首） —— */
+if (DATA.badge) {
+  const a = DATA.badge.t, elx = document.getElementById("gapBadge");
+  const bp = eob(seg(t, a, a + .37));
+  elx.style.opacity = clamp01(seg(t, a, a + .2));
+  elx.style.transform = `rotate(-5deg) scale(${(0.5 + 0.5 * bp).toFixed(4)})`;
+}
+</script></body></html>

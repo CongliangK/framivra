@@ -1,0 +1,111 @@
+<!doctype html><html><head><meta charset="utf-8"><title>模板 · 片尾端板（gfx-full · 暖底）</title><style>
+/* ===== 模板：片尾端板 =====
+ * 用途：gfx-full 片尾整页——署名行 → 仓库/主 URL 主行（最优先入场）→ 分隔线 → 副行 → 徽章
+ *   → 左下同类致意 credits → 右下反馈指引；暖斑 blob 背景漂移 + URL 呼吸辉光。
+ * 来源：voice-ime v3.8 g6b_endboard.html（SIGNATURE_TEXT 占位常量样板）。
+ * 改哪里：只改 CONST DATA（署名/URL/副行/徽章/致意/反馈/总帧数）；入场时序秒窗可整体缩放。
+ * 安全红线：f≥600 长挂载自查——全部动画为 sin(t) 连续函数/seg 窗口，无数组按 t 索引、无定格越界；
+ *   字幕带避让：左下/右下行 bottom:190（内容下界 y≈890，让出烧录字幕带 y[958,1020]）；
+ *   gfx-full 无下层：底色瞬显、全局 opacity 恒 1、禁淡入淡出（D14/D21 硬切）。 */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC",sans-serif;overflow:hidden}
+#bg{position:absolute;inset:0;background:#f5f0e6}
+.blob{position:absolute;width:980px;height:980px;border-radius:50%;filter:blur(150px);opacity:.10}
+.b1{left:-220px;top:-280px;background:radial-gradient(circle,#c8a24a,transparent 65%)}
+.b2{right:-260px;bottom:-320px;background:radial-gradient(circle,#d97706,transparent 65%);opacity:.07}
+#mid{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);text-align:center}
+#byline{font-size:22px;color:#57534e;letter-spacing:6px;margin-bottom:26px}
+#repo{font-family:"Noto Sans Mono CJK SC","Noto Sans CJK SC",monospace;
+  font-size:52px;font-weight:700;color:#1a1a1a;letter-spacing:2px;white-space:nowrap}
+#rule{width:820px;height:2px;margin:30px auto 0;
+  background:linear-gradient(90deg,transparent,#1a1a1a,transparent)}
+#sub{margin-top:28px;font-size:26px;color:#57534e;letter-spacing:5px}
+#ebadge{display:inline-block;margin-top:34px;padding:10px 34px;border-radius:999px;
+  border:1.5px solid #1a1a1a;color:#1a1a1a;font-size:24px;font-weight:600;letter-spacing:5px}
+#credits{position:absolute;left:170px;bottom:190px}
+#credits .cap{font-size:20px;color:#a8a29e;letter-spacing:5px}
+#credits .row{margin-top:14px;font-size:24px;color:#57534e;letter-spacing:1px}
+#credits .note{margin-top:10px;font-size:20px;color:#a8a29e}
+#next{position:absolute;right:170px;bottom:190px;text-align:right}
+#next .row{font-size:24px;color:#57534e;letter-spacing:1px}
+</style></head><body>
+<div id="bg"></div><div class="blob b1"></div><div class="blob b2"></div>
+<div id="mid">
+  <div id="byline"></div>
+  <div id="repo"></div>
+  <div id="rule"></div>
+  <div id="sub"></div>
+  <div><span id="ebadge"></span></div>
+</div>
+<div id="credits"><div class="cap" id="credCap"></div><div id="credRows"></div><div class="note" id="credNote"></div></div>
+<div id="next"><div id="nextRows"></div></div>
+<script>
+/* ===== CONST DATA：本页全部文案（改这里；署名定稿后只改 SIGNATURE_TEXT 重渲） ===== */
+const DATA = {
+  N: 765,                                     // 总帧数（30fps）
+  signature: "频道名",                          // ★ 署名行占位——定稿后只改这一处重渲
+  repo: "github.com/yourname/your-repo",       // 主 URL 行（最优先入场）
+  sub: "地址在置顶评论",                        // 副行（建议＝口播逐字，提前切入时句首前静止到位）
+  badge: "开源 · 免费 · 无商单",                // 徽章
+  credits: { cap: "同类项目 · 致意", rows: ["项目甲 · 项目乙"], note: "链接在简介" },  // rows 可多条
+  next: ["问题反馈 · GitHub Issues / 评论区"],  // 右下反馈行（可多条）
+};
+
+const FPS=30,N=DATA.N,f=parseInt(new URLSearchParams(location.search).get("f")||"0"),
+      t=Math.min(f/FPS,N/FPS),T=N/FPS;
+const clamp01=v=>Math.max(0,Math.min(1,v));
+const seg=(t,a,b)=>clamp01((t-a)/(b-a));
+const eoc=x=>1-Math.pow(1-x,3);
+const eob=x=>{const c=1.70158;return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2)};
+/* gfx-full 无下层：端板底色瞬显，全局 opacity 恒 1，交界硬切（D14/D21） */
+document.getElementById("bg").style.opacity=1;
+document.body.style.opacity=1;
+
+/* 文案注入 */
+document.getElementById("repo").textContent=DATA.repo;
+document.getElementById("sub").textContent=DATA.sub;
+document.getElementById("ebadge").textContent=DATA.badge;
+document.getElementById("credCap").textContent=DATA.credits.cap;
+DATA.credits.rows.forEach(r=>{const d=document.createElement("div");d.className="row";
+  d.textContent=r;document.getElementById("credRows").appendChild(d);});
+document.getElementById("credNote").textContent=DATA.credits.note;
+DATA.next.forEach(r=>{const d=document.createElement("div");d.className="row";
+  d.textContent=r;document.getElementById("nextRows").appendChild(d);});
+
+/* ===== 入场时序（秒窗；提前切入适配时整体前移并保证句首前静止到位）：
+   byline .02-.25 → URL 主行 .05-.40（op）/scale .05-.75 → 分隔线 .45-.75
+   → 副行 .55-.85 → 徽章 .65-1.05 → 左下 credits .75-1.05 → 右下反馈 .85-1.15 ===== */
+const byline=document.getElementById("byline");
+byline.textContent=DATA.signature;
+byline.style.opacity=seg(t,.02,.25);
+/* 仓库 URL 主行：scale 入场 + 极淡琥珀呼吸（呼吸为 sin 连续函数，f≥600 安全） */
+const ep=eob(seg(t,.05,.75));
+const repo=document.getElementById("repo");
+repo.style.opacity=seg(t,.05,.40);
+repo.style.transform="scale("+(.82+.18*ep).toFixed(4)+")";
+repo.style.filter="drop-shadow(0 0 "+(14+8*Math.sin(t*.85)).toFixed(1)+"px rgba(217,119,6,.16))";
+/* 分隔细线从中心展开 */
+document.getElementById("rule").style.transform="scaleX("+eoc(seg(t,.45,.75)).toFixed(4)+")";
+/* 副行 scaleX 展开 */
+const cp=eoc(seg(t,.55,.85));
+const sub=document.getElementById("sub");
+sub.style.opacity=cp;sub.style.transform="scaleX("+(.4+.6*cp).toFixed(4)+")";
+/* 徽章弹出 + 轻呼吸 */
+const bp=eob(seg(t,.65,1.05));
+const eb=document.getElementById("ebadge");
+eb.style.opacity=seg(t,.65,.95);
+eb.style.transform="scale("+(.4+.6*bp).toFixed(4)+")";
+/* 左下同类致意 / 右下反馈指引（bottom:190 避字幕带） */
+const cIn=eoc(seg(t,.75,1.05));
+const credits=document.getElementById("credits");
+credits.style.opacity=seg(t,.75,1.0);
+credits.style.transform="translateY("+((1-cIn)*26).toFixed(1)+"px)";
+const nIn=eoc(seg(t,.85,1.15));
+const next=document.getElementById("next");
+next.style.opacity=seg(t,.85,1.1);
+next.style.transform="translateY("+((1-nIn)*26).toFixed(1)+"px)";
+/* 背景斑漂移（暖色极淡；sin 连续函数，f≥600 安全） */
+document.querySelector(".b1").style.transform="translate("+(90*Math.sin(t*.28+.6)).toFixed(1)+"px,"+(70*Math.cos(t*.22)).toFixed(1)+"px)";
+document.querySelector(".b2").style.transform="translate("+(100*Math.cos(t*.25+2.1)).toFixed(1)+"px,"+(80*Math.sin(t*.30+1.2)).toFixed(1)+"px)";
+</script></body></html>

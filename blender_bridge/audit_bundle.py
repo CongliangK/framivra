@@ -152,10 +152,22 @@ def main():
             dur = float(r.stdout.strip())
             spans = content_spans(mp3_of[sid], dur, fps,
                                   a.silence_threshold, a.min_silence, a.pad)
-            evs = [{"src": sid, "src_in": i, "in": i, "out": o, "volume": vol}
-                   for i, o in spans]
-            voiced = sum(o - i for i, o in spans) / fps
-            report.append((sid, vol, len(evs), voiced))
+            # 发声段 × 生产事件窗求交：逐段继承所在事件的 volume（分段音量轨的审计
+            # 正确性；2026-09-10 修——旧版取首事件 volume 施加全轨，分段音量会听错）
+            evs = []
+            for i, o in spans:
+                cur = i
+                for e in sorted(tr["events"], key=lambda x: x["in"]):
+                    s, t = max(cur, e["in"]), min(o, e["out"])
+                    if s < t:
+                        evs.append({"src": sid, "src_in": s, "in": s, "out": t,
+                                    "volume": e.get("volume", 1.0)})
+                        cur = t
+                    if cur >= o:
+                        break
+            vols = sorted({e["volume"] for e in evs})
+            voiced = sum(e["out"] - e["in"] for e in evs) / fps
+            report.append((sid, vols, len(evs), voiced))
         tracks.append({"name": sid, "events": evs})
 
     audit = {
@@ -184,7 +196,8 @@ def main():
     print(f"[json ] {at_path}（{len(tracks)} 轨 / {n_ev} 事件）")
     for sid, vol, n, voiced in report:
         tail = f" 发声 {voiced:.1f}s" if voiced is not None else ""
-        print(f"       {sid:16s} vol={vol:<5} {n} 段{tail}")
+        vs = "/".join(str(v) for v in vol) if isinstance(vol, list) else str(vol)
+        print(f"       {sid:16s} vol={vs:<9} {n} 段{tail}")
 
     # ③ validate
     vtx = Path.home() / ".agents/skills/video/vtx/vtx.py"

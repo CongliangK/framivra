@@ -15,7 +15,7 @@
 |---|---|---|
 | `skill/` | **video skill 全部文档与模板**（工作流载体，随仓分享）：SKILL.md 路由索引 + references/{edit,gfx,research}.md 三领域完整文档 + assets/（起手模板 + gfx 实例页 + 调研模板） | `~/.agents/skills/video/` 内全部内容为指向本目录（及根级 vtx/、scripts/）的符号链接 |
 | `vtx/` | **vtx 渲染 CLI**：vtx.py（validate/audit/prepare/gfx/video/audio/mux/qc + --draft/--gpu/seg 缓存/两遍静态增益响度）+ timeline.schema.json + preview.html + models/（rnnoise）+ 历史回滚锚（vtx.py.bak_v35/36） | 唯一渲染入口；自定位无硬编码路径；零外部 Python 依赖 |
-| `scripts/` | 9 件脚本：new_project.sh（脚手架）、sync_audio.py（双系统 GCC-PHAT 同步）、denoise_voice.py（D25 降噪链）、bilibili.py / github_repos.py / score_topic.py（research 采集与评分）、scroll-shoot.mjs / fetch-site-assets.py / dump-computed-styles.mjs（设计研究） | skill 内符号链接指到此处 |
+| `scripts/` | 14 件脚本：new_project.sh（脚手架）、sync_audio.py（双系统 GCC-PHAT 同步）、denoise_voice.py（D25 降噪链）、bilibili.py / github_repos.py / score_topic.py（research 采集与评分）、scroll-shoot.mjs / fetch-site-assets.py / dump-computed-styles.mjs（设计研究）+ **voice-ime 收编五件（D41）**：post_loudness.sh（响度限幅兜底）、check_4k.sh（4K 投稿版 9 项断言）、bed_static_duck.py（bed 静态分段避让）、repack_voice.py（实录 take 替换 TTS 占位）、content_gates.py（内容级验证门 G1/G2/G3/G7/G10+项目门） | skill 内符号链接指到此处 |
 | `blender_bridge/` | timeline.json ↔ Blender VSE 双向预览桥：json2blend / verify_blend / blend2json / subs_alpha / **audit_bundle.py**（BGM 分轨审计包五步链）+ README（VSE API 坑表） | 权威副本（`04_bilibili视频/_library/blender_bridge/` 退役为指针） |
 | `matting/` | 抠像/背景替换链 runner：run_birefnet_hr.py（首帧 mask）、run_matanyone2.py（视频抠像）、run_matanyone.py（v1）、post_h3.sh、run_full_bg.sh + docs/ 报告 | GPU 推理，需 conda env 与权重（见 matting/README.md） |
 | `aroll/` | A-roll 素材工具：aup3_extract.py（Audacity .aup3 解析→提 WAV）、trim_takes.py（VAD 掐头去尾）+ docs/ 全链流程手册 | 配合 `_library/reports/A-roll实拍素材处理流程` 使用 |
