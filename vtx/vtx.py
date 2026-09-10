@@ -20,6 +20,9 @@
   --draft --frames N 只渲前 N 帧（输入按头窗截短，避免 drain 全量解码；改动集中片头时提速一个量级）
   --gpu              正式参数 GPU 渲染：NVENC p7+tune hq+vbr cq17（1080p 交付透明），
                      产物仍是 video_noaudio.mp4；NVENC 不可用自动回落 x264 crf17 medium
+  （阶段二 2026-09-10）video 正式/草稿渲染默认走「时间轴分段 + 段间并行渲染 + concat
+  -c copy 拼接」；环境变量 VTX_VIDEO_SEGMENTS=N 控制段数（默认 6，=1 回落旧单 graph，
+  行为逐字节等价）；--draft --frames 组合强制旧单 graph（头窗截短与分段冲突）
   qc         渲染后质检（帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一），写 qc_report.json
              （--strict：帧数改用 -count_frames 真解码计数，默认容器元数据）
   clean      清空 cache/ 与 out/
@@ -366,6 +369,33 @@ def gfx(c: Ctx):
               + ("｜" + "; ".join(engine_notes) if engine_notes else ""))
 
 # ---------------------------------------------------------------- video
+def choose_cutpoints(bounds, dur: int, n: int, guard: int = 20, radius: int = 150):
+    """阶段二切点选择（纯函数，2026-09-10）：在均匀网格候选位附近搜索「静默帧」。
+
+    静默帧定义：±guard 帧内无任何 clip 的 dst_in/dst_out（红线依据：多段 framesync
+    病灶 100% 落在多层端点 ±20 帧密集交叠带，v3.6 渲染棒实测，见 composite 注释；
+    切点避开该带 = 段边界不落任何层窗口开/闭沿，段首/段尾不产生 dst_in_rel==0 的
+    中段入流配对风险）。搜索半径 radius 帧内找不到则放弃该切点（段并入邻段，
+    宁少勿险）。返回升序切点帧位列表（不含 0 与 dur）。
+    """
+    bs = sorted({p for a, b in bounds for p in (a, b)})
+    def silent(f):
+        return all(abs(f - p) > guard for p in bs)
+    cuts, prev = [], 0
+    for i in range(1, n):
+        cand = round(i * dur / n)
+        found = None
+        for r in range(0, radius + 1):
+            for f in ((cand,) if r == 0 else (cand - r, cand + r)):
+                if 0 < f < dur and silent(f) and f - prev > 2 * guard and dur - f > 2 * guard:
+                    found = f; break
+            if found is not None: break
+        if found is not None:
+            cuts.append(found); prev = found
+        else:
+            print(f"  · 切点候选 @{cand}：±{radius} 帧内无静默帧，该段并入邻段")
+    return cuts
+
 def nvenc_ok(c: Ctx) -> bool:
     import os
     if os.environ.get("VTX_NO_NVENC"): return False
@@ -374,6 +404,23 @@ def nvenc_ok(c: Ctx) -> bool:
     r = c.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:d=0.04",
                "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], need=False)
     return r != "" and r.returncode == 0
+
+def pick_vcodec(c: Ctx, draft: bool):
+    """输出编码参数选择（自 composite 提取，2026-09-10 阶段二；选项与旧版逐字一致）。"""
+    if draft:
+        if nvenc_ok(c):
+            return (["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0",
+                     "-pix_fmt", "yuv420p"], "NVENC p4")
+        return (["-c:v", "libx264", "-crf", "26", "-preset", "veryfast", "-pix_fmt", "yuv420p"], "x264 veryfast")
+    if getattr(c, "gpu", False):
+        if nvenc_ok(c):
+            # GPU 正式渲染：p7 最高质量档 + tune hq + vbr-cq17（对 1080p 交付与
+            # 下游 4K 重编码透明；voice-ime 2026-09-08 引入）
+            return (["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "17",
+                     "-b:v", "0", "-pix_fmt", "yuv420p"], "NVENC p7")
+        print("⚠ NVENC 不可用，回落 x264 medium（官方参数）")
+        return (["-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p"], "x264 medium(回落)")
+    return (["-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p"], "x264 medium")
 
 def build_video(c: Ctx):
     draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
@@ -437,39 +484,101 @@ def build_video(c: Ctx):
     def fc(fr):
         cs = round(fr * 100 / c.fps); hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
         return f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
-    ass = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 2", "",
-           "[V4+ Styles]",
-           "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-           f"Style: Def,Noto Sans CJK SC,{58*f:.0f},&H00F8FBFF,&H00000000,&H80000000,1,1,{3*f:.1f},{2*f:.1f},2,{60*f:.0f},{60*f:.0f},{60*f:.0f},1",
-           "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+    def ass_head():
+        return ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 2", "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                f"Style: Def,Noto Sans CJK SC,{58*f:.0f},&H00F8FBFF,&H00000000,&H80000000,1,1,{3*f:.1f},{2*f:.1f},2,{60*f:.0f},{60*f:.0f},{60*f:.0f},1",
+                "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+    ass = ass_head()
     for s in c.tl["subtitles"]:
         ass.append(f"Dialogue: 0,{fc(s['in'])},{fc(s['out'])},Def,,0,0,0,,{s['text']}")
     (c.cache / ("subs_draft.ass" if draft else "subs.ass")).write_text("\n".join(ass))
 
-    def composite(layers_subset, out_path, with_subs):
+    # 段级字幕（阶段二 2026-09-10）：每段一份 ass，Dialogue 帧号换算 =「全局 fc 的
+    # cs − 段起点 fc 的 cs」（整数 cs 相减，与全局量化逐位一致；直接对相对帧取整
+    # 会因舍入方向差 ±1cs）；负值（段前已开始的字幕）钳 0。
+    def write_seg_ass(path, a, b):
+        cs_a = round(a * 100 / c.fps)
+        def fcg(g):
+            cs = max(0, round(g * 100 / c.fps) - cs_a)
+            hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
+            return f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
+        lines = ass_head()
+        for s in c.tl["subtitles"]:
+            if s["out"] > a and s["in"] < b:
+                lines.append(f"Dialogue: 0,{fcg(s['in'])},{fcg(s['out'])},Def,,0,0,0,,{s['text']}")
+        path.write_text("\n".join(lines))
+
+    def composite(layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
+        # 阶段二（2026-09-10）：a/b = 本段帧区间 [a,b)，段内时间从 0 起。默认
+        # a=0/b=dur 与旧单 graph 逐字节等价（VTX_VIDEO_SEGMENTS=1 回落路径）。
+        # ⚠ 不可把主链/enable 换到全局时间坐标：实测 -fps_mode cfr 输出级在首帧
+        # pts≠0 时整段冻结（最小复现：canvas+setpts(+10s)+cfr → 300 帧全为首帧
+        # 复制，2026-09-10）。故段内一律相对时间。
+        b = c.dur if b is None else b
+        seglen = b - a
+        if sub_file is None:
+            sub_file = c.cache / ("subs_draft.ass" if draft else "subs.ass")
         cmd = ["ffmpeg", "-v", "error", "-y",
-               "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={c.fps}:d={c.dur * c.spf:.3f}"]
+               "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={c.fps}:d={seglen * c.spf:.3f}"]
         for L in layers_subset:
+            rel_in = L["cl"]["dst_in"] - a   # 段内相对起点（可负 = 跨段界的层）
             # 头窗草稿（--frames）：截短每路输入。否则 -frames:v 触发的 drain 会把
             # 52 路输入全部解到 EOF（voice-ime 实测 300 帧耗 4:32，全量解码即瓶颈，
-            # 2026-09-08 定位）；截短后仅解码头窗所需帧。
+            # 2026-09-08 定位）；截短后仅解码头窗所需帧。（仅旧单 graph 路径使用）
             topts = (["-t", f"{max(2, nframes - L['cl']['dst_in']) / c.fps:.3f}"]
                      if (draft and nframes) else [])
             if L["gfx"]:
-                cmd += ["-framerate", str(c.fps), "-start_number", "0", *topts,
+                # PNG 序列按 clip 内帧序号读入（start_number=段起点之前的已过帧数）：
+                # 首帧内容 = 全局帧 max(dst_in, a)。a=0 时恒为 0，与旧路径逐字节一致。
+                cmd += ["-framerate", str(c.fps), "-start_number", str(max(0, -rel_in)), *topts,
                         "-i", str(L["pngdir"] / "f%04d.png")]
             else:
-                cmd += [*topts, "-i", str(L["seg"])]
+                # 跨段界层（rel_in<0）：输入 -ss 对齐段起点（首帧内容=全局帧 a）。
+                # 实测 -ss 提帧与全解提帧逐字节一致（prores mov / h264 mp4 各验）。
+                # 红线教训（2026-09-10 最小复现定位）：不得把次输入 setpts 到负时间——
+                # 负 PTS 下 overlay framesync 在输入 EOF 附近渐暗、repeat 失效透传
+                # 主帧（u2_backends 跨 2791 切点复现，3033-3364 帧 gfx 层塌暗）。
+                ss = ["-ss", f"{max(0, -rel_in) / c.fps:.6f}"] if rel_in < 0 else []
+                cmd += [*ss, *topts, "-i", str(L["seg"])]
         parts = ["[0:v]format=yuv420p[cv]"]; cur = "cv"
         for k, L in enumerate(layers_subset):
             cl = L["cl"]; idx = k + 1
-            t0 = cl["dst_in"] * c.spf; t1 = (cl["dst_in"] + cl["dur"]) * c.spf
-            # 次输入提前半帧（dst_in=0 无余量除外）：PNG 序列输入瞬间涌入时 framesync
+            rel_in = cl["dst_in"] - a
+            rel_out = rel_in + cl["dur"]
+            # enable 界值（2026-09-10 定稿，确定性取舍，不依赖浮点量化运气）：
+            # 旧全片 graph 的 t1 = %.6f(dst_out·spf)，dst_out 帧是否显示取决于量化
+            # 方向——dst_out·10⁶ mod fps == 0（整）或 > 1/2（进位）→ t1 ≥ 帧 pts →
+            # dst_out 帧显示（层重复末帧，如 5160）；< 1/2 → 提前 1 帧切层（如
+            # 4312、13003、4024，golden 实证一致）。段内用显式偏移复刻该取舍：
+            #   含 dst_out → t1 = (rel_out+¼帧)·spf（含 rel_out、不含 rel_out+1）
+            #   不含 dst_out → t1 = (rel_out−½帧)·spf（含 rel_out−1、不含 rel_out）
+            # 两者均落在帧网格 ±¼~½ 帧，比较余量 ≥ 1/120s，无浮点边界。
+            # t0 = (rel_in−pre)·spf：dst_in 帧在旧路径恒显示（pre 半帧放宽兜住
+            # 量化方向，见下），rel_in−1 帧恒不显示，同为确定性。
+            g_out = cl["dst_in"] + cl["dur"]
+            m = (g_out * 10**6) % c.fps
+            incl_end = (m == 0) or (2 * m > c.fps)
+            eff = max(rel_in, 0)
+            pre = 0.5 if rel_in != 0 else 0
+            lo = rel_in * c.spf - pre * c.spf
+            if a:
+                t1 = (rel_out + (0.25 if incl_end else -0.5)) * c.spf
+            else:
+                t1 = rel_out * c.spf   # a=0 回落路径：与旧公式逐字节一致
+            # 次输入提前半帧（rel_in=0 无余量除外）：PNG 序列输入瞬间涌入时 framesync
             # 对「次帧 PTS 恰等于主帧」的首帧偶发配对失败（该层 dst_in 首帧整帧丢失=黑帧，
             # 非确定性复现，2026-08-25 voice-ime 轮7 实测）。次帧恒早于主帧半个采样后，
             # framesync 始终能取到「最近过去帧」配对；视觉前移 1/48s 无感。enable 窗口
             # 同步放宽半帧保持覆盖不变。
-            pre = 0.5 if cl["dst_in"] > 0 else 0
+            # （段内换算 2026-09-10：时移基准取 max(rel_in, 0)——跨段界层的输入已被
+            # -ss/start_number 截到段起点（流首内容=全局帧 a）。pre/pad 对跨界层
+            # 同样启用——实测教训：跨界层不垫帧时次输入 EOF 前约 3 帧整帧丢失
+            # （u2_backends 跨 2791 切点，3350-3352 黑帧；A/B 复现：tpad 1/1 后逐帧
+            # 与旧全片一致），与 v3.5 渲染棒「垫帧推开 framesync 边界异常窗口」同族。
+            # rel_in==0 仅出现在 a=0（切点静默约束保证中段切点 ±20 帧内无任何
+            # dst_in），与旧路径 dst_in==0 分支同构。）
             # 草稿模式：各层统一缩到 f 倍（seg/PNG 均按 iw/ih 等比，含窗口 clip）
             shrink = f"scale=trunc(iw*{f}/2)*2:trunc(ih*{f}/2)*2," if draft else ""
             # 2026-09-08 v3.5 渲染棒：tpad 首帧克隆垫片。根因（A/B 已证编码器无关）：
@@ -488,38 +597,18 @@ def build_video(c: Ctx):
             # 尾部多 10 帧、时长 594.833）。保持 1/1，不要再加大。
             pad = (f"tpad=start_duration={1/c.fps:.6f}:start_mode=clone:"
                    f"stop_duration={1/c.fps:.6f}:stop_mode=clone," if pre else "")
-            shift = cl['dst_in'] - pre - (1 if pad else 0)
+            shift = eff - pre - (1 if pad else 0)
             parts.append(f"[{idx}:v]{shrink}{pad}setpts=PTS+{shift}/{c.fps}/TB[L{k}T]")
             # eof_action=repeat（非 pass；ffmpeg≥5 枚举名）：pass 在「窗口右端点主帧遇次输入
             # EOF」时直通丢层（黑帧）；repeat 克隆尾帧，窗口外由 enable=0 屏蔽，无残留风险。
             parts.append(f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
-                         f"enable='between(t,{t0 - pre * c.spf:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
+                         f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
             cur = f"L{k}"
         if with_subs:
-            sub_file = c.cache / ("subs_draft.ass" if draft else "subs.ass")
             parts.append(f"[{cur}]subtitles={sub_file}[vout]")
         else:
             parts.append(f"[{cur}]null[vout]")
-        if draft:
-            if nvenc_ok(c):
-                vcodec = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0",
-                          "-pix_fmt", "yuv420p"]; enc = "NVENC p4"
-            else:
-                vcodec = ["-c:v", "libx264", "-crf", "26", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
-                enc = "x264 veryfast"
-        elif getattr(c, "gpu", False):
-            if nvenc_ok(c):
-                # GPU 正式渲染：p7 最高质量档 + tune hq + vbr-cq17（对 1080p 交付与
-                # 下游 4K 重编码透明；voice-ime 2026-09-08 引入）
-                vcodec = ["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "17",
-                          "-b:v", "0", "-pix_fmt", "yuv420p"]; enc = "NVENC p7"
-            else:
-                print("⚠ NVENC 不可用，回落 x264 medium（官方参数）")
-                vcodec = ["-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p"]
-                enc = "x264 medium(回落)"
-        else:
-            vcodec = ["-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p"]
-            enc = "x264 medium"
+        vcodec, enc = pick_vcodec(c, draft)
         # -filter_complex_threads 1：filtergraph 单线程执行（2026-09-08 v3.6 渲染棒）。
         # 根因定位（voice-ime v3.6，61 层 graph 三渲实测）：多线程 filtergraph 下，
         # 多个 framesync 的 enable 窗口边界在 ±20 帧内密集交叠的时间点发生主链整帧
@@ -536,12 +625,80 @@ def build_video(c: Ctx):
         # 补偿帧而非原渲染帧，须 blackdetect+帧数+断点内容抽验三重确认。
         c.run(cmd + ["-filter_complex_threads", "1",
                      "-filter_complex", ";".join(parts), "-map", "[vout]",
-                     "-frames:v", str(nframes if (draft and nframes) else c.dur),
+                     "-frames:v", str(nframes if (draft and nframes) else seglen),
                      "-fps_mode", "cfr", "-r", str(c.fps),
                      *vcodec, str(out_path)])
         return enc
 
-    enc = composite(layers, c.out / ("draft.mp4" if draft else "video_noaudio.mp4"), True)
+    # ---- 阶段二：段级编码 → concat demuxer -c copy 拼接（2026-09-10）----
+    # 单条 61 层全片 graph 的滤镜链是单线程硬瓶颈（voice-ime 实测 CPU 7.8%、511s）。
+    # 分段后每段独立 NVENC + 线程池并行（线程数 = min(段数, cpu//4)），段间以 concat
+    # demuxer -c copy 无损拼接（各段统一编码参数，copy 拼接零重编码零画质损失）。
+    # 段长由 -frames:v 钳到精确帧数（tpad stop 垫帧多出的尾帧被裁掉），拼接后总帧数
+    # 必须 == project.duration_frames，不等即报错退出（正确性自检，不静默）。
+    def render_segmented(out_path, layer_set=None, with_subs=True, tag="vseg"):
+        lset = layers if layer_set is None else layer_set
+        vdir = c.cache / tag; vdir.mkdir(exist_ok=True)
+        bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in lset]
+        cuts = choose_cutpoints(bounds, c.dur, nseg)
+        edges = [0] + cuts + [c.dur]
+        print(f"  分段渲染：{len(edges) - 1} 段，切点 {cuts}（VTX_VIDEO_SEGMENTS={nseg}，guard=±20 帧）")
+        vcodec, enc = pick_vcodec(c, draft)
+        segs = [vdir / f"seg{si:02d}_{a:06d}.mp4" for si, a in enumerate(edges[:-1])]
+        def render_one(si):
+            a, b = edges[si], edges[si + 1]
+            segp = segs[si]
+            # 段缓存：与 cache/seg 同哲学（存在性 + 流头帧数，D29），便于断点重跑
+            if segp.exists():
+                fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                                     "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(segp)],
+                                    capture_output=True, text=True).stdout.strip()
+                if fr.isdigit() and int(fr) == b - a:
+                    print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return
+            sfile = None
+            if with_subs:
+                sfile = vdir / f"subs_{a:06d}.ass"; write_seg_ass(sfile, a, b)
+            sl = [L for L in lset if L["cl"]["dst_in"] < b and L["cl"]["dst_in"] + L["cl"]["dur"] > a]
+            composite(sl, segp, with_subs, a=a, b=b, sub_file=sfile)
+        # NVENC 会话上限探测：并发发起 workers 路编码探测，任一失败回落串行
+        workers = min(len(segs), max(1, (os.cpu_count() or 8) // 4))
+        if workers > 1 and not DRY and enc.startswith("NVENC"):
+            def _p(_):
+                r = c.run(["ffmpeg", "-v", "error", "-f", "lavfi",
+                           "-i", "color=c=black:s=256x144:d=0.04", "-frames:v", "1",
+                           "-c:v", "h264_nvenc", "-f", "null", "-"], need=False)
+                return r == "" or r.returncode == 0
+            with ThreadPoolExecutor(workers) as ex:
+                if not all(ex.map(_p, range(workers))):
+                    print("⚠ NVENC 并发会话探测失败，回落串行渲染"); workers = 1
+        print(f"  段间并行：{workers} 线程")
+        if DRY:
+            for si in range(len(segs)): render_one(si)
+        else:
+            with ThreadPoolExecutor(workers) as ex:
+                list(ex.map(render_one, range(len(segs))))
+        lst = vdir / "list.txt"
+        lst.write_text("".join(f"file '{s.name}'\n" for s in segs))
+        c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+               "-c", "copy", str(out_path)])
+        # 内置正确性自检：容器元数据总帧数必须精确 == project.duration_frames
+        fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                             "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out_path)],
+                            capture_output=True, text=True).stdout.strip()
+        if not (fr.isdigit() and int(fr) == c.dur):
+            print(f"✗ 分段拼接自检失败：总帧数 {fr or '?'} ≠ {c.dur}（段边界丢帧/垫帧泄漏，禁止交付）")
+            sys.exit(1)
+        print(f"  ✓ 拼接自检：总帧数 {fr} == {c.dur}")
+        return enc
+
+    nseg = int(os.environ.get("VTX_VIDEO_SEGMENTS", "6"))
+    out_main = c.out / ("draft.mp4" if draft else "video_noaudio.mp4")
+    # --frames 与分段冲突（头窗截短逻辑基于全片坐标），回落旧单 graph；
+    # VTX_VIDEO_SEGMENTS=1 回落旧单 graph（行为逐字节等价）。
+    if nseg <= 1 or (draft and nframes):
+        enc = composite(layers, out_main, True)
+    else:
+        enc = render_segmented(out_main, tag="vseg_draft" if draft else "vseg")
     # qc_clean = 仅底轨（tracks[0]）的基准画面，供 QC 做上层窗口生效比对（草稿跳过）。
     # 性能升级（2026-09-10）：仅当底轨是 gfx（无源视频可提帧）时才渲全片基准轨——
     # 那是第二遍全片合成（voice-ime 实测与主合成同量级）；底轨为普通视频轨时，
@@ -549,8 +706,13 @@ def build_video(c: Ctx):
     # video 阶段不再为 qc 付这笔全片成本。
     if not draft and tracks and tracks[0].get("kind") == "gfx":
         bottom = [L for L in layers if L["ti"] == 0]
-        composite(bottom, c.cache / "qc_clean.mp4", False)
+        if nseg > 1:
+            render_segmented(c.cache / "qc_clean.mp4", bottom, with_subs=False, tag="vseg_qc")
+        else:
+            composite(bottom, c.cache / "qc_clean.mp4", False)
     msg = f"黑场画布 + {len(tracks)} 轨 {len(layers)} 层等价叠加（时移）+ 字幕｜{enc}"
+    if nseg > 1 and not (draft and nframes):
+        msg += f"｜分段并行 N={nseg}"
     if draft:
         msg += f"｜草稿 {W}x{H}" + (f" 前 {nframes} 帧" if nframes else "")
     print("✓ 视频合成：" + msg)
