@@ -25,20 +25,30 @@
 ## 快速开始
 
 ```bash
-bash init.sh                                    # 依赖自检 + 生成 config.local.json（幂等）
+python3 init.py          # 跨平台初始化：依赖自检 + 安装指引 + 生成 config.local.json（幂等）
+                         # Linux 也可 bash init.sh（薄包装）；加 --fix 自动安装缺失基础依赖；--json 机器可读
 python3 vtx/vtx.py --help                       # 渲染 CLI
 bash scripts/new_project.sh <项目目录> [时长秒]   # 新项目脚手架
 python3 blender_bridge/json2blend.py -t <项目>/timeline.json   # Blender 预览工程
 ```
 
+## 跨平台初始化（Linux / macOS / Windows）
+
+`init.py` 按五段自检：基础依赖（python≥3.9、ffmpeg/ffprobe、浏览器）→ 编码能力（libfdk_aac、NVENC，缺则 vtx 自动回落并告警）→ 可选工具（blender/sox）→ 程序自检 → 大模型能力（默认关闭）。缺失项打印**当前 OS 的安装指引**（winget/brew/dnf/apt/pacman），`--fix` 直接尝试安装。
+
+- **浏览器**：vtx 的 gfx 帧截图跨平台定位 Chrome/Chromium/Edge（PATH → 标准安装路径 → 环境变量 `VTX_CHROME` 指定可执行文件兜底）。
+- **libfdk_aac**：正式封装用它（D31 坑位：原生 aac 对真人素材真峰过冲 +8.5dB）。Linux 装 fdk 构建的 ffmpeg（RPM Fusion/deb-multimedia）；Windows 用 gyan.dev **full+** 或 BtbN 构建；缺时 vtx 回落原生 aac 并打印告警，交付须复测编码后解码 TP。
+- **Windows 注意**：`new_project.sh` 等 bash 脚本需 Git Bash 或 WSL；vtx/blender_bridge 的 Python 部分原生可用。
+
 ## 依赖矩阵
 
 | 层级 | 依赖 | 用途 | 状态 |
 |---|---|---|---|
-| 基础（必需） | python3（标准库即可）、ffmpeg/ffprobe、google-chrome | vtx 渲染与 gfx 帧截图 | init.sh 自检 |
-| 可选 | blender | blender_bridge/ 预览桥 | init.sh 自检 |
+| 基础（必需） | python3≥3.9（标准库即可）、ffmpeg/ffprobe、Chrome/Chromium/Edge | vtx 渲染与 gfx 帧截图 | init.py 自检 |
+| 基础（强烈建议） | libfdk_aac 构建 | mux 正式封装音质（D31） | init.py 自检，缺则回落+告警 |
+| 可选 | blender | blender_bridge/ 预览桥 | init.py 自检 |
 | 可选 | NVENC（NVIDIA GPU） | vtx --gpu 渲染 | 自动探测，不可用回落 x264 |
-| 可选 | sox | 部分音频后处理 | init.sh 自检 |
+| 可选 | sox | 部分音频后处理 | init.py 自检 |
 | **大模型（默认关闭）** | conda env comfyui + MatAnyone2/BiRefNet_HR 克隆与权重 | matting/ 抠像链 | **需手动配置**，见 `matting/README.md` |
 | **大模型（默认关闭）** | ComfyUI 服务 127.0.0.1:8188 | 背景图生成（post_h3.sh） | **需手动配置** |
 | **大模型（默认关闭）** | Qwen3-ASR sidecar 127.0.0.1:18081 | A-roll 文本配对 / 听写 | **需手动配置** |

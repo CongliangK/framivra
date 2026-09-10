@@ -275,6 +275,28 @@ def prepare(c: Ctx):
     print("✓ 音频提取：" + msg); c.receipt("prepare", True, msg)
 
 # ---------------------------------------------------------------- gfx
+def find_chrome() -> str:
+    """跨平台定位 Chrome/Chromium：环境变量 VTX_CHROME 优先，其次 PATH 常见名，再退标准安装路径。"""
+    import shutil
+    cands = [os.environ.get("VTX_CHROME")] if os.environ.get("VTX_CHROME") else []
+    cands += ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+              "chrome", "msedge"]  # msedge 同为 Chromium 内核，headless 截图兼容
+    w = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+    pf86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+    lapp = os.environ.get("LOCALAPPDATA", "")
+    if sys.platform == "win32":
+        cands += [rf"{w}\Google\Chrome\Application\chrome.exe",
+                  rf"{pf86}\Google\Chrome\Application\chrome.exe",
+                  rf"{lapp}\Google\Chrome\Application\chrome.exe",
+                  rf"{w}\Microsoft\Edge\Application\msedge.exe"]
+    elif sys.platform == "darwin":
+        cands += ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                  "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+    for c in cands:
+        if c and (shutil.which(c) or os.path.isfile(c)):
+            return c
+    print("✗ 找不到 Chrome/Chromium（gfx 帧截图需要）。可设环境变量 VTX_CHROME 指定可执行文件路径"); sys.exit(1)
 def gfx(c: Ctx):
     total = 0
     for tr in c.tl["video_tracks"]:
@@ -289,9 +311,10 @@ def gfx(c: Ctx):
             if len(list(d.glob("f*.png"))) == n:
                 print(f"✓ {cid}: {n} 帧已缓存"); continue
             html = (c.root / cl["src"]).resolve()
-            def shot(i, d=d, html=html):
+            chrome = find_chrome()
+            def shot(i, d=d, html=html, chrome=chrome):
                 return subprocess.run(
-                    ["google-chrome", "--headless", "--disable-gpu", "--hide-scrollbars",
+                    [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
                      "--window-size=1920,1080", "--default-background-color=00000000",
                      f"--screenshot={d}/f{i:04d}.png", f"file://{html}?f={i}"], capture_output=True)
             with ThreadPoolExecutor(6) as ex: list(ex.map(shot, range(n)))
