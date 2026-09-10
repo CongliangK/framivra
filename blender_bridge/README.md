@@ -13,6 +13,8 @@ blender --background --python verify_blend.py -- <项目>/timeline.json <项目>
 blender <项目>/preview.blend                        # ④ 打开预览（空格播放，拖拽刮擦）
 ```
 
+**打开即视频编辑工作区（2026-09-10）**：json2blend 生成的 .blend 默认活动工作区=「Video Editing」——打开即是时间线+视频预览面板，无需手动切换工作区/场景。实现：以 Blender 官方 `Video_Editing` app template 的 startup.blend 为底（出厂启动文件不含该工作区，且 headless 下 append 法/`win.workspace=` 赋值均不生效——实测 5.2.1 唯一可靠路径），清掉模板示例物件后在模板场景上建 VSE；找不到模板时回落原 Layout（不影响条目生成）。
+
 依赖：Blender 5.2.1 LTS（`~/.local/opt/blender-5.2.1-linux-x64`，符号链接 `~/.local/bin/blender`）、ffmpeg/ffprobe。
 
 ## 产物状态（2026-08-29）

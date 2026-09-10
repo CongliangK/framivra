@@ -2,6 +2,7 @@
 """json2blend.py — timeline.json (契约 v2) → Blender VSE 预览工程
 
 用法: blender --background --factory-startup --python json2blend.py -- <timeline.json> <out.blend>
+打开产物默认即为「视频编辑」工作区（时间线+视频预览面板直接呈现，无需手动切换）。
 
 与契约 v2 的对应（语义以 vtx.py 源码为准）:
 - video_tracks 数组序 = 图层序：[0] 最底 → 最低视频通道；音频轨占更低通道
@@ -31,6 +32,18 @@ W, H, FPS, DUR = P["width"], P["height"], P["fps"], P["duration_frames"]
 SRC = {s["id"]: (base / s["path"]).resolve() for s in tl["sources"]}
 
 errors, stats = [], {"video": 0, "gfx": 0, "audio": 0, "subs": 0}
+
+# ---------- 工作区：以官方 Video Editing 模板为底 ----------
+# 目标：打开生成的 .blend 即为「视频编辑」工作区（时间线+预览面板直接呈现），免手动切换。
+# 机制：出厂启动文件不含 Video Editing 工作区，且 headless 下 win.workspace= 赋值不生效、
+# append 法保存后仍回落 Layout（实测 5.2.1）；唯一可靠路径=open 模板 startup.blend 为底
+# （其活动工作区即 VE）→ 清掉模板示例物件 → 在其场景上建 VSE → 保存（活动工作区随文件持久）。
+_VE_TPL = Path(bpy.utils.script_paths()[0]) / "startup" / "bl_app_templates_system" \
+    / "Video_Editing" / "startup.blend"
+if "Video Editing" not in {w.name for w in bpy.data.workspaces} and _VE_TPL.is_file():
+    bpy.ops.wm.open_mainfile(filepath=str(_VE_TPL))
+    for ob in list(bpy.context.scene.objects):
+        bpy.data.objects.remove(ob, do_unlink=True)
 
 # ---------- 场景 ----------
 sc = bpy.context.scene
