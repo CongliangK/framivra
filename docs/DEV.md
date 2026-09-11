@@ -11,6 +11,7 @@
 - 拆包同批提速（2026-09-11）：qc 690s→11s（约 60×，结果与旧版逐项一致）；video 分段并行（8 段，511s→112s，约 4.6×）；冷启动并行化（seg 预编码 + prepare 抽音频线程池）。全链 21.5min → 缓存命中约 50s / 冷启动约 164s。
 - 片头迭代 `--draft --frames 300`（10s 画面）9.8s；validate 3s。
 - gfx 引擎：CDP 常驻浏览器多 tab 约 34ms/帧（不透明页单截直写）；透明页白黑双截解算。后续透明页快路径（`Emulation.setDefaultBackgroundColorOverride(a=0)` 直出带 alpha PNG）单帧 2400ms→91ms（约 6.6×）；页级并行 `VTX_GFX_PAGES` 后全量冷 gfx 12024 帧 192.5s（约 62fps）。tab 并发 4→16 收益递减，页级并行才是增量方向。〔出处：edit.md「gfx 渲染引擎」＋工作区 AGENTS.md D44/D44b〕
+- gfx 方案 v2（2026-09-11，本机 32C64G，基准项目 voice-ime 28 页 12024 帧，配置记法=PAGES/SPLIT_FRAMES/TABS）：新增**页内分片并行**（`VTX_GFX_SPLIT_FRAMES`/`VTX_GFX_SPLIT_MAX`）与**静态跨度去重**（`__vtx_static_spans`，1474 帧≈12.4% 字节复制免渲）后，生产默认定版 **7/450/4＝全量冷 129.8-131.9s、峰值 RSS 15.0-15.2GB**（commit 2e65536；桌面活跃时段正式验收 3 轮中位 149.8s，chrome/firefox/obsidian 同跑）。矩阵实测（冷跑 WALL s / 峰值 RSS GB）：6/0/4=161.9/13.0-16.4；8/600/4=129.3（±0.5%）/16.5-17.3；12/0/4=145.6；8/450/4=126.5-143.9/16.5-17.9（破 16GB 门）；**8/450/6=112.9-122.1/19.8-20.4（RSS 破线被否）**。≤110s 硬门未达：方案主杠杆（canvas 批量导出通道）被像素门槛证伪（见 §二），四个重页（g6b_endboard 765 帧/c5a 1153/c5b 810，全部零静态跨度）只剩截图通路，g6b 串行估算 ≈80s 构成硬下限。校准纪律：当次 6/0/4 基线 160.25s vs 历史记录 192.5s 偏差 -16.8%，未破 20% 修正线，矩阵数字可比。〔出处：docs/plans-2026-09-11/方案一＋voice-ime/cache/reports/gfx_opt_20260911 审计归档〕
 - blender_bridge audit_bundle：早期 json2blend+verify_blend 全链 22.2s → 优化后 8.1s。〔出处：工作区决策台账〕
 - content_gates 五门合并单次 pass（G1/G2/G3/G7/G10 + 项目门一次跑完）。〔出处：README scripts 节〕
 - `ffprobe -count_frames` 逐帧解码计数：1080p 全源 12-27s/个；改流头 nb_frames + count_packets 回落后 validate 2min→3s。〔出处：edit.md 坑表〕
@@ -76,6 +77,18 @@ body 级 opacity 的页面（如 g6a_title）会使 Chrome 合成组拍平，`se
 
 GPU 光栅对 gfx 截图无收益；Chrome 同源 tab 共用渲染进程，单浏览器加 tab 无效——提速靠 `VTX_GFX_PAGES` 页级并行。
 
+### foreignObject 快照批量导出通道判死（方案 v2 阶段 2）〔出处：docs/plans-2026-09-11/方案一＋cache/reports/gfx_opt_20260911〕
+
+设想：把页面 DOM 序列化进 SVG `<foreignObject>`，经 Image→canvas→toDataURL 一次导出整帧，绕过逐帧截图。实测：文本/字体/transform/drop-shadow 与截图通路**逐位一致**，但两类固有偏差过不了 golden 全零门槛——(a) 含 `filter:blur(150px)` 的页确定性 ±1/255 抖动约 1.5% 像素；(b) 径向渐变背景页（本项目四个重页全是）固有 max|Δ|=25~61、差异像素 7-14%（渐变 dithering＋低透明度文字 AA）。**对照实验判死归因**：同一帧原件直接走同一 SVG-image 管线差异逐位相同——偏差与页面重构无关，是 SVG-image 光栅上下文固有，任何"把页面写得更标准"都救不回。相关驱动与 `VTX_GFX_BATCH` env 已整体移除。附带实测：toDataURL 编码耗时强依赖内容熵（低熵页 7.7ms、高熵 blur 页 77ms）。
+
+### navfree 免导航截图判负双杀（方案 v2 阶段 2）〔出处：同上，golden 报告 compare_p2_c4.json〕
+
+设想：页内 `__vtx_render(f)` 置帧态，每 tab 只导航一次（`VTX_GFX_NAVFREE=1`）。单页空闲实测 40/40 帧逐字节一致，但负载下双杀——①**像素漂移**：8 实例并发对 4 个 `__vtx_render` 页自 ~f22 起全偏（llm_post 387/u3_install 127/c5a_main_path 641/c5b_hotkey 430 帧差异，golden 全帧比对）；②**反而更慢**：同页 ms/帧 1.5-4.4× 劣于逐帧导航（DOM 突变触发整页重光栅，blur 页尤甚：g6b navfree 111-163ms vs 导航 64-126ms）。处置：`VTX_GFX_NAVFREE` 默认 0 封存，代码保留（env 门控＋页内抛错哨兵回落＋页级告警齐全）——**勿开**。
+
+### 纯页级并行扩容无效（方案 v2 阶段 1）〔出处：bench_p1 矩阵，cache/reports/gfx_opt_20260911/SUMMARY.md〕
+
+PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 仅 43-58%）——瓶颈是单页关键路径不是 CPU，只加页不切片买不到时间。结论：收益方向转为**页内分片**（`VTX_GFX_SPLIT_FRAMES`，8/450 起显著），见 §一 gfx 方案 v2 行。
+
 ## 三、工具演进史
 
 - **剪辑中间层自研**：ffmpeg 唯一渲染后端，vtx CLI，不引 NLE 依赖；达芬奇/Blender 作剪辑底层经调研与 POC 后否决（继续 vtx 路线）。转场仅硬切；全管线固定 30fps 精确（≠29.97，教训：时基等平台参数先实测平台事实标准）。〔出处：工作区决策台账 D9/D14/D24〕
@@ -83,7 +96,7 @@ GPU 光栅对 gfx 截图无收益；Chrome 同源 tab 共用渲染进程，单�
 - **缓存内容寻址内建**：voice-ime 174G→25G 清理实测后收编为 gc/df/snapshot/体积预算等治理机制；「改源不重渲」与「误命中旧内容」两类历史问题从机制上消失。〔出处：edit.md「缓存卫生」〕
 - **程序权威本体收编（D40）**：video_tools 仓为唯一权威，skill live 挂载点全部符号链接；双仓收编方案（D36）同日被升格取代。
 - **vtx 拆包重构（2026-09-11）**：vtx.py 单文件 → 包（infra/encoders/composite/qc/stages/gfx_render/hygiene/cache_state 八模块），行为与旧版逐项一致；历史回滚锚点在 git 历史。〔出处：edit.md「工具位置」〕
-- **gfx 引擎演进**：CLI 逐帧截图 → CDP 常驻浏览器多 tab（4.6×）→ 透明页 override 直出快路径（6.6×）→ 页级并行（全冷 192.5s）。`VTX_GFX=cli` 保留回退。〔出处：edit.md + AGENTS.md D42/D44/D44b〕
+- **gfx 引擎演进**：CLI 逐帧截图 → CDP 常驻浏览器多 tab（4.6×）→ 透明页 override 直出快路径（6.6×）→ 页级并行（全冷 192.5s）→ 页内分片＋静态跨度去重（2026-09-11 方案 v2：默认 7/450/4 定版，全冷 129.8-131.9s）。方案 v2 配套两件基建：`scripts/gfx_golden.py` 像素基线（全零门槛，成为导出通道改造硬门——FO 快照、navfree 两通道均由它判死封存，详录 §二）；帧落盘原子化（tmp+os.replace，修 split×static 头帧并发双写竞态）。`VTX_GFX=cli` 保留回退。〔出处：edit.md + AGENTS.md D42/D44/D44b + docs/plans-2026-09-11/方案一〕
 - **blender_bridge 路线拍板**：不用 MCP（CLI/bpy 直连更自由）、不用外部直写 .blend（无格式规范），用 `blender --background --python` 生成；json2blend 建成后逐步补 blend2json 回写桥与 audit_bundle 分轨审计包。〔出处：blender_bridge/README 头注〕
 - **「打开即视频编辑工作区」实现注记**：headless 下 append 法/`win.workspace=` 赋值均不生效（实测 5.2.1 唯一可靠路径）＝以官方 Video_Editing app template 的 startup.blend 为底。〔出处：blender_bridge/README〕
 - **design tokens 与模板库**：gfx-templates 七件源自 voice-ime v3.1-v3.9 九轮迭代已验收页参数化抽取；毛玻璃深底卡样式已废弃（违反白底暖色设计铁律），替代 = 白底暖色卡。〔出处：gfx.md〕

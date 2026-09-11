@@ -127,13 +127,49 @@ python3 $VTX -t timeline.json mux
 python3 $VTX -t timeline.json qc
 ```
 
-**耗时基准**：单页重渲秒级（CDP 常驻浏览器 ~34ms/帧；透明快路径 ~15ms/帧）；全量冷 gfx 192.5s（12024 帧@62fps，D44b）；gfx 全冷+全链+4K ≈6 分钟。
+**耗时基准**：单页重渲秒级（CDP 常驻浏览器 ~34ms/帧；透明快路径 ~15ms/帧）；全量冷 gfx 129.8-131.9s（12024 帧，默认 7/450/4，2026-09-11 方案 v2 定版；桌面活跃时段约 150s）；gfx 全冷+全链+4K ≈5.5 分钟。
+
+**gfx 基准表**（2026-09-11 方案 v2 矩阵，voice-ime 28 页 12024 帧、本机 32C64G，冷跑 WALL / 峰值 Chrome RSS，配置=PAGES/SPLIT_FRAMES/TABS）：
+
+| 配置 | WALL s | 峰值 RSS GB | 判定 |
+|---|---|---|---|
+| 6/0/4（旧默认） | 161.9（当次校准基线 160.25） | 13.0-16.4 | 基准 |
+| 8/600/4 | 129.3（±0.5%） | 16.5-17.3 | 破 16GB 门 |
+| 12/0/4 | 145.6 | — | 只加页无效（CPU 43-58%） |
+| 8/450/4 | 126.5-143.9 | 16.5-17.9 | 破 16GB 门 |
+| 8/450/6 | 112.9-122.1 | 19.8-20.4 | RSS 破线**被否** |
+| **7/450/4** | **129.8-131.9** | **15.0-15.2** | ✅ **生产默认**（commit 2e65536） |
+
+≤110s 硬门未达，归因＝四个重页（g6b_endboard 765 帧/c5a 1153/c5b 810，零静态跨度）只剩截图通路（canvas 批量导出通道已证伪，DEV.md §二），g6b 串行估算 ≈80s 为硬下限。
+
+**gfx 重测方法**（改引擎配置/代码后按同一口径复测，像素门槛不过=白测）：
+
+```bash
+cd ~/文档/04_bilibili视频/voice-ime
+rm -rf cache/gfx                                   # 冷跑口径；当次 6/0/4 基线偏差 >20% 先查机器再比数字
+time env python3 $VIDEO_TOOLS/vtx/vtx.py -t timeline.json gfx
+env python3 $VIDEO_TOOLS/scripts/gfx_golden.py compare -t timeline.json \
+    --golden cache/gfx_golden.json --strict --report cache/compare_retest.json
+# compare 全零才通过（golden=28 页 3536 帧、5 页全帧；--strict 防缓存未重渲假一致）
+```
+
+**gfx env 速查**（默认即定版配置，改前先看基准表）：
+
+| env | 默认 | 说明 |
+|---|---|---|
+| `VTX_GFX_PAGES` | 7 | 页级并行浏览器实例数 |
+| `VTX_GFX_SPLIT_FRAMES` | 450 | 页内分片阈值（帧，0=关）；主要收益来源 |
+| `VTX_GFX_SPLIT_MAX` | 3 | 单页最大分片数 |
+| `VTX_GFX_TABS` | 4 | 每实例 tab 数（6 有收益但 RSS 破 16GB 门） |
+| `VTX_GFX_NAVFREE` | 0 | 免导航截图，**勿开 1**（负载下像素漂移且更慢） |
+| `VTX_GFX_STATIC` | 1 | 静态跨度字节复制（`__vtx_static_spans`） |
+| `GFX_GOLDEN_WORKERS` | min(8,CPU) | golden 比对解码并行度 |
 
 **必跑验证门**：validate → qc（上层窗口生效/空窗无泄漏）→ 视觉抽帧人审（DOM/像素证据才是权威）。
 
 **已知坑位**：
 - **body 级 opacity 页**（如 g6a_title）会导致 Chrome 合成组拍平、透明 override 静默失效——flatten 守卫双探针帧**自动回落双截**，日志出现回落属正常现象，不是错误。
-- 页级并行 `VTX_GFX_PAGES=N` 可加速多页场景（Chrome 同源 tab 共用渲染进程，单浏览器只加 tab 无效）。
+- 页级并行 `VTX_GFX_PAGES` + 页内分片 `VTX_GFX_SPLIT_FRAMES` 双轮驱动（Chrome 同源 tab 共用渲染进程，单浏览器只加 tab 无效；只加页不切片也无效）；配置改动前先看上方基准表与 DEV.md §二证伪记录。
 - 回退开关 `VTX_GFX=cli`（引擎异常时强制旧 CLI 逐帧路径）。
 
 ---
@@ -152,7 +188,7 @@ python3 $VTX -t timeline.json qc
 python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final.mp4
 ```
 
-**耗时基准**（voice-ime 653s@1080p30，RTX 4080/8 核，2026-09-11 拆包提速后）：gfx 全冷 ~192.5s、video 并行 ~2min、**全链冷启动 ≈6 分钟**、4K 另加 ~2.5min；缓存命中全链 ~50s。
+**耗时基准**（voice-ime 653s@1080p30，RTX 4080/8 核，2026-09-11 拆包提速后；gfx 为同日方案 v2 定版数字）：gfx 全冷 ~130s、video 并行 ~2min、**全链冷启动 ≈5.5 分钟**、4K 另加 ~2.5min；缓存命中全链 ~50s。
 
 **必跑验证门**：qc 全项 + content_gates + check_4k（若出 4K 版）。
 
