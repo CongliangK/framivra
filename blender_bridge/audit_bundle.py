@@ -31,11 +31,23 @@ timeline 按每轨实际发声区间切段（ffmpeg silencedetect 反相 + pad �
   注意：独听比成片"干"是预期（厅堂 wet 只在参考混）；这里无口播 duck，比成片略"满"。
 """
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
 import sys
+import threading
+import time
+import runpy
+import traceback
 from pathlib import Path
+
+_PRINT_LOCK = threading.Lock()
+
+
+def tprint(msg):
+    with _PRINT_LOCK:
+        print(msg, flush=True)
 
 
 def run(cmd, cwd=None, tail=3):
@@ -116,9 +128,11 @@ def main():
     if not sel:
         sys.exit(f"无音轨匹配前缀 {prefixes}（现有轨：{[t['name'] for t in tl['audio_tracks']]}）")
 
-    # ① MP3 导出（同轨多事件取第一个事件的 src；loop 组共享同一源）
+    # ① MP3 导出（同轨多事件取第一个事件的 src；loop 组共享同一源）——并行转码
+    t0 = time.perf_counter()
     src_of = {s["id"]: root / s["path"] for s in tl["sources"]}
     mp3_of = {}
+    jobs = []  # (name, src, dst) 需转码项；skip 项当场按序打印
     for tr in sel:
         src = src_of[tr["events"][0]["src"]]
         dst = mp3_dir / f"{tr['name']}.mp3"
@@ -127,48 +141,77 @@ def main():
                 and dst.stat().st_mtime > src.stat().st_mtime):
             print(f"[skip] {dst.name}（比源新）")
             continue
+        jobs.append((tr["name"], src, dst))
+
+    def _transcode(job):
+        name, src, dst = job
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src),
                         "-map", "0:a", "-c:a", "libmp3lame", "-b:a", "320k", str(dst)],
-                       check=True)
-        print(f"[mp3 ] {tr['name']} ← {src.name}")
+                       check=True, capture_output=True, text=True)
+        return job
+
+    if jobs:
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(8, (os.cpu_count() or 2))) as ex:
+            futs = {ex.submit(_transcode, j): j for j in jobs}
+            for fu in concurrent.futures.as_completed(futs):
+                try:
+                    name, src, dst = fu.result()
+                except Exception as e:
+                    bad = futs[fu][0]
+                    err = getattr(e, "stderr", "") or e
+                    sys.exit(f"转码失败：轨 {bad}（{futs[fu][1].name}）：{err}")
+                tprint(f"[mp3 ] {name} ← {src.name}")
+    print(f"[timing] step1 transcode: {time.perf_counter() - t0:.1f}s")
 
     # ② 审计 timeline（音量取生产值；事件窗=静音切分后的发声段，锚定视频绝对时间）
+    #    ——逐轨 ffprobe+silencedetect 并行（结果按原轨序回收，与完成顺序无关）
+    t1 = time.perf_counter()
     fps = tl["project"]["fps"]
     sources, tracks, report = [], [], []
-    for tr in sel:
+
+    def _analyze(tr):
+        sid = tr["name"]
+        vol0 = tr["events"][0].get("volume", 1.0)
+        if a.whole:
+            evs = [{"src": sid, "src_in": e.get("src_in", 0),
+                    "in": e["in"], "out": e["out"], "volume": vol0}
+                   for e in tr["events"]]
+            return (vol0, 1, None), evs
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                            "format=duration", "-of", "csv=p=0", str(mp3_of[sid])],
+                           capture_output=True, text=True, check=True)
+        dur = float(r.stdout.strip())
+        spans = content_spans(mp3_of[sid], dur, fps,
+                              a.silence_threshold, a.min_silence, a.pad)
+        # 发声段 × 生产事件窗求交：逐段继承所在事件的 volume（分段音量轨的审计
+        # 正确性；2026-09-10 修——旧版取首事件 volume 施加全轨，分段音量会听错）
+        evs = []
+        for i, o in spans:
+            cur = i
+            for e in sorted(tr["events"], key=lambda x: x["in"]):
+                s, t = max(cur, e["in"]), min(o, e["out"])
+                if s < t:
+                    evs.append({"src": sid, "src_in": s, "in": s, "out": t,
+                                "volume": e.get("volume", 1.0)})
+                    cur = t
+                if cur >= o:
+                    break
+        vols = sorted({e["volume"] for e in evs})
+        voiced = sum(e["out"] - e["in"] for e in evs) / fps
+        return (vols, len(evs), voiced), evs
+
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(8, (os.cpu_count() or 2))) as ex:
+        results = list(ex.map(_analyze, sel))  # ex.map 保序
+
+    for tr, (rep, evs) in zip(sel, results):
         sid = tr["name"]
         sources.append({"id": sid,
                         "path": os.path.relpath(mp3_of[sid], audit_dir)})
-        vol = tr["events"][0].get("volume", 1.0)
-        if a.whole:
-            evs = [{"src": sid, "src_in": e.get("src_in", 0),
-                    "in": e["in"], "out": e["out"], "volume": vol}
-                   for e in tr["events"]]
-            report.append((sid, vol, 1, None))
-        else:
-            r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                                "format=duration", "-of", "csv=p=0", str(mp3_of[sid])],
-                               capture_output=True, text=True, check=True)
-            dur = float(r.stdout.strip())
-            spans = content_spans(mp3_of[sid], dur, fps,
-                                  a.silence_threshold, a.min_silence, a.pad)
-            # 发声段 × 生产事件窗求交：逐段继承所在事件的 volume（分段音量轨的审计
-            # 正确性；2026-09-10 修——旧版取首事件 volume 施加全轨，分段音量会听错）
-            evs = []
-            for i, o in spans:
-                cur = i
-                for e in sorted(tr["events"], key=lambda x: x["in"]):
-                    s, t = max(cur, e["in"]), min(o, e["out"])
-                    if s < t:
-                        evs.append({"src": sid, "src_in": s, "in": s, "out": t,
-                                    "volume": e.get("volume", 1.0)})
-                        cur = t
-                    if cur >= o:
-                        break
-            vols = sorted({e["volume"] for e in evs})
-            voiced = sum(e["out"] - e["in"] for e in evs) / fps
-            report.append((sid, vols, len(evs), voiced))
+        report.append((sid, *rep))
         tracks.append({"name": sid, "events": evs})
+    print(f"[timing] step2 analyze: {time.perf_counter() - t1:.1f}s")
 
     audit = {
         "version": 2,
@@ -200,21 +243,26 @@ def main():
         print(f"       {sid:16s} vol={vs:<9} {n} 段{tail}")
 
     # ③ validate
+    t2 = time.perf_counter()
     vtx = Path.home() / ".agents/skills/video/vtx/vtx.py"
     run([sys.executable, str(vtx), "-t", str(at_path), "validate"], tail=2)
+    print(f"[timing] step3 validate: {time.perf_counter() - t2:.1f}s")
     if a.skip_blend:
         print("[done] --skip-blend：审计 blend 未生成")
         return
 
     # ④⑤ json2blend + verify_blend（cwd=bridge：两脚本按自身位置工作）
+    #     合并为单次 blender 会话（bundle_session.py 内 runpy 依次以 __main__ 执行
+    #     两脚本，零逻辑复制；verify 自行 open_mainfile 打开产物，合并安全）
+    t3 = time.perf_counter()
     bridge = Path(__file__).resolve().parent
     blend = audit_dir / "audit.blend"
     run(["blender", "--background", "--factory-startup",
-         "--python", str(bridge / "json2blend.py"), "--", str(at_path), str(blend)],
-        cwd=bridge, tail=3)
-    run(["blender", "--background",
-         "--python", str(bridge / "verify_blend.py"), "--", str(at_path), str(blend)],
-        cwd=bridge, tail=1)
+         "--python", str(bridge / "bundle_session.py"), "--",
+         str(at_path), str(blend),
+         str(bridge / "json2blend.py"), str(bridge / "verify_blend.py")],
+        cwd=bridge, tail=6)
+    print(f"[timing] step4+5 blend+verify: {time.perf_counter() - t3:.1f}s")
     print(f"[done] 打开：blender {blend}")
 
 
