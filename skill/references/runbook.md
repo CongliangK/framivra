@@ -107,6 +107,36 @@ python3 $VTX -t timeline.json gc --dry
 
 ---
 
+## R2s · 纯字幕修订（只改 timeline.json 的 subtitles）
+
+**适用场景**：只改字幕文本/开窗，不动任何 clip/音轨/源。背景：v39 事故（字幕超前口播最大 4.3s，渲染完整片才发现）——本配方的定位就是让这类漂移在渲染前被抓到。
+
+**前置条件**：同 R2；字幕改动用幂等脚本实施（`vtx snapshot` 先留快照）。
+
+```bash
+cd ~/文档/04_bilibili视频/<项目>
+python3 $VTX -t timeline.json subs check      # ① 秒级：对齐漂移/CPS/重叠/行宽，FAIL 先改完再往下
+# …幂等脚本改 timeline.json subtitles…
+python3 $VTX -t timeline.json subs check      # ② 复查全绿（报告 out/subs_check.json）
+python3 $VTX -t timeline.json subs preview 12.5 f360   # ③ 抽查可疑条目（秒或 f帧号，单张 ≤5s，支持多点）
+python3 $VTX -t timeline.json video --gpu     # ④ 段级缓存：改一条字幕只重渲其覆盖的 1-2 段（~10-25s）
+bash $VIDEO_TOOLS/scripts/post_loudness.sh ~/文档/04_bilibili视频/<项目>
+python3 $VTX -t timeline.json mux
+python3 $VTX -t timeline.json qc
+python3 $VTX -t timeline.json diff <上一版报告>.json out/qc_report.json   # ⑤ 与上一版对比（可选；支持 qc_report/audit_report/subs_check，字幕项逐条对比）
+```
+
+**耗时基准**（2026-09-12 合成 30s/900 帧项目实测）：subs check <1s、subs preview 单张 ~0.6s、改 1 条字幕重渲 2 段 ~2s。
+
+**已知坑位**：
+- **subs check 对齐检查依赖 name="voice" 音轨**：没有 voice 轨或字幕距最近口播窗 >5s 时该项出 WARN（不静默跳过），此时对齐靠 preview 人审兜底。
+- 阈值语义：对齐 FAIL ±1.5s / WARN ±0.5s（`--align-threshold` 可调）；CPS >9 FAIL / >7.5 WARN（与 audit 同基准）；行宽 28 字/行 × 2 行（PlayResX 1920 / Fontsize 58 / MarginL/R 60 推算）。
+- subs preview 三级背景回退（qc_clean 提帧 → 图层单帧合成 → 黑场兜底并 WARN）；背景为黑场时只审字幕位置/样式，画面构图回 R2 走 draft。
+- 字幕 ass 以字节进段内容键（composite._seg_content_key）：改一条字幕只失效其覆盖的 1-2 段，**无需也不许手工清段缓存**。
+- subs render 写的 cache/subs.ass 与 video 阶段正式渲染同路径（draft 用 subs_draft.ass 不受影响）；--draft 分支不会读它，正常接力无竞态。
+
+---
+
 ## R3 · gfx 页改动（html 修订 / 新页）
 
 **适用场景**：修改 `gfx/*.html`（数据、布局、动效纯函数）。

@@ -19,6 +19,11 @@
              --keep-days N 暂缓近 N 天条目；cache/reports/ 永不回收）
   df         体积体检：cache/out 分项占用 + top-20 大文件 + tmp 孤儿清单
   snapshot   timeline + 文本资产快照到 cache/snapshots/（只留最近 2 份，VTX_SNAPSHOT_KEEP 可调）
+  diff       报告对比：diff <旧报告.json> <新报告.json>（qc/audit/subs_check 同构报告
+             字段级差异，检查项状态翻转显著标出，末行 PASS/DIFF；纯读不写产物）
+  subs       字幕信息性命令（不进流水线）：render 生成 cache/subs.ass（内容寻址记账）/
+             preview <时间点...> 单帧字幕预览 PNG（时间点 `12.5`=秒 / `f360`=帧号）/
+             check 纯 timeline 字幕四项检查（对齐/CPS/重叠/行宽），写 out/subs_check.json
 
 缓存卫生（2026-09-11 治理升级）：gfx/seg/audio 缓存全部内容寻址（键 = sha1(内容+参数)[:12]，
 键变即新条目，旧键由 gc 回收）；mux 每次成功追加 out/VERSIONS.json（覆盖检测 + superseded
@@ -73,6 +78,7 @@ from hygiene import budget_gate, df, gc, gfx_key, gfx_dir, manifest_record, snap
 from infra import Ctx
 from qc import qc
 from stages import audit, build_audio, mux, prepare, validate
+from subs import run_subs
 
 
 # ---------------------------------------------------------------- gfx
@@ -317,9 +323,16 @@ def main():
                     help="gc 专属：近 N 天动过的条目暂缓回收（默认 0 = 只看键集）")
     ap.add_argument("--keep-versions", type=int, metavar="N", default=2,
                     help="mux 专属：out/history/ 保留最近 N 版历史成片（默认 2）")
+    ap.add_argument("--align-threshold", type=float, metavar="S", default=1.5,
+                    help="subs check 专属：口播对齐 FAIL 阈值秒数（默认 1.5，≥0.5 先 WARN）")
     ap.add_argument("command",
                     help="all | " + " | ".join(s[0] for s in STAGES) +
-                         " | clean | gc | df | snapshot")
+                         " | clean | gc | df | snapshot | subs | diff")
+    # 必须定义在 command 之后：argparse 位置参数按定义序匹配，`*` 放前面会把
+    # `subs check` 的两个 token 全部吞掉、command 只剩末位（实测 2026-09-11）
+    ap.add_argument("subs_extra", nargs="*", metavar="ARG",
+                    help="subs 专属：render | preview <时间点...> | check（时间点 `12.5`=秒 / `f360`=帧号）；"
+                         "diff 专属：<旧报告.json> <新报告.json>（复用同一位置参数槽，见上注）")
     a = ap.parse_args()
     if a.frames and not (a.draft and a.command == "video"):
         print("--frames 仅在 video --draft 下可用（正确用法：vtx.py video --draft --frames 90）"); sys.exit(1)
@@ -328,11 +341,19 @@ def main():
     if a.gpu and a.command != "video":
         print("--gpu 仅作用于 video 阶段（正确用法：vtx.py video --gpu）"); sys.exit(1)
     # 未知命令先于 timeline 检查（错字时给最接近建议，不被 timeline 缺失报错挡住）
-    valid_names = [s[0] for s in STAGES] + ["all", "clean", "gc", "df", "snapshot"]
+    valid_names = [s[0] for s in STAGES] + ["all", "clean", "gc", "df", "snapshot", "subs", "diff"]
     if a.command not in valid_names:
         sug = difflib.get_close_matches(a.command, valid_names, n=3, cutoff=0.6)
         hint = f"，最接近：{' | '.join(sug)}" if sug else ""
         print(f"✗ 未知命令：{a.command!r}（可用：{' | '.join(valid_names)}）{hint}"); sys.exit(2)
+    if a.command == "diff":
+        # 报告对比（信息性，与 gc/df/snapshot 同类）：不依赖 timeline，故在 timeline
+        # 检查前分发；两个位置参数复用 subs_extra 槽（argparse `*` 在 command 后的
+        # 既有约定，见上注）。纯读命令：不写任何产物、不做 receipt；--dry-run 尊重。
+        if len(a.subs_extra) != 2:
+            print("✗ 用法：diff <旧报告.json> <新报告.json>"); sys.exit(2)
+        from diffcmd import run_diff
+        sys.exit(run_diff(a.subs_extra[0], a.subs_extra[1], dry=a.dry_run))
     # 不跟随符号链接（resolve() 会穿透 cp -rs 链接树等隔离副本，把 out/ 回执写到 live 项目）
     tp = Path(os.path.abspath(os.path.expanduser(a.timeline)))
     if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)
@@ -357,6 +378,14 @@ def main():
         df(c); return
     if a.command == "snapshot":
         snapshot(c); return
+    if a.command == "subs":
+        # 信息性命令（render/preview/check）：不进流水线、不做 receipt 依赖门，
+        # 但 subs render 写 cache 走 manifest_record 记账；--dry-run 被尊重。
+        if a.subs_extra and a.subs_extra[0] in ("render", "preview", "check"):
+            c.align_threshold = a.align_threshold
+            run_subs(c, a.subs_extra); return
+        print("✗ 用法：subs render | subs preview <时间点...> | subs check"
+              "（时间点 `12.5`=秒 / `f360`=帧号）"); sys.exit(2)
     names = [s[0] for s in STAGES] if a.command == "all" else [a.command]
     todo = STAGES if a.command == "all" else \
         [next((s for s in STAGES if s[0] == a.command), None)]

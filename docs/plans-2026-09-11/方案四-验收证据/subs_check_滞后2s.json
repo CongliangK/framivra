@@ -1,0 +1,123 @@
+{
+  "total": 5,
+  "checked": 5,
+  "coverage": "5/5",
+  "results": [
+    {
+      "index": 0,
+      "in_s": 4.0,
+      "out_s": 7.0,
+      "text": "第一条字幕内容",
+      "align": {
+        "status": "fail",
+        "offset_s": 2.0,
+        "detail": "起点偏移 +2.00s"
+      },
+      "cps": {
+        "status": "ok",
+        "detail": "CPS 2.3"
+      },
+      "overlap": {
+        "status": "ok",
+        "detail": ""
+      },
+      "width": {
+        "status": "ok",
+        "detail": ""
+      }
+    },
+    {
+      "index": 1,
+      "in_s": 9.0,
+      "out_s": 13.0,
+      "text": "第二条字幕覆盖段边界用于测试",
+      "align": {
+        "status": "fail",
+        "offset_s": 2.0,
+        "detail": "起点偏移 +2.00s"
+      },
+      "cps": {
+        "status": "ok",
+        "detail": "CPS 3.5"
+      },
+      "overlap": {
+        "status": "ok",
+        "detail": ""
+      },
+      "width": {
+        "status": "ok",
+        "detail": ""
+      }
+    },
+    {
+      "index": 2,
+      "in_s": 15.0,
+      "out_s": 18.0,
+      "text": "第三条字幕内容",
+      "align": {
+        "status": "fail",
+        "offset_s": 2.0,
+        "detail": "起点偏移 +2.00s"
+      },
+      "cps": {
+        "status": "ok",
+        "detail": "CPS 2.3"
+      },
+      "overlap": {
+        "status": "ok",
+        "detail": ""
+      },
+      "width": {
+        "status": "ok",
+        "detail": ""
+      }
+    },
+    {
+      "index": 3,
+      "in_s": 20.0,
+      "out_s": 24.0,
+      "text": "第四条字幕内容测试行宽完全正常的情况",
+      "align": {
+        "status": "fail",
+        "offset_s": 2.0,
+        "detail": "起点偏移 +2.00s"
+      },
+      "cps": {
+        "status": "ok",
+        "detail": "CPS 4.5"
+      },
+      "overlap": {
+        "status": "ok",
+        "detail": ""
+      },
+      "width": {
+        "status": "ok",
+        "detail": ""
+      }
+    },
+    {
+      "index": 4,
+      "in_s": 25.0,
+      "out_s": 29.0,
+      "text": "第五条字幕内容",
+      "align": {
+        "status": "fail",
+        "offset_s": 2.0,
+        "detail": "起点偏移 +2.00s"
+      },
+      "cps": {
+        "status": "ok",
+        "detail": "CPS 1.8"
+      },
+      "overlap": {
+        "status": "ok",
+        "detail": ""
+      },
+      "width": {
+        "status": "ok",
+        "detail": ""
+      }
+    }
+  ],
+  "summary": "FAIL"
+}

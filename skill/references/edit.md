@@ -31,6 +31,10 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json --dry-run vid
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json all        # 全流程 → myvideo/out/final.mp4
 # 分阶段（gfx/seg/audio 缓存全部内容寻址，源或参数一变自动换键重渲，无需手工清缓存）：
 #   validate → audit（指标体检）→ prepare（提取音频）→ gfx（渲染动效）→ video → audio → mux → qc
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json subs check    # 字幕渲染前检查（秒级，零渲染）：对齐漂移/CPS/重叠/行宽；FAIL 退出码 1
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json subs preview 12.5 f360  # 字幕单帧预览图（秒级，改字幕抽查；支持多时间点）
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json subs render   # 独立产出 cache/subs.ass（字节一致自动跳过）
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json diff 旧.json out/qc_report.json  # 报告对比（qc/audit/subs_check；状态翻转显著标出，DIFF 退出码 1）
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc --dry    # 回收清单预览（收尾习惯）
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc          # 执行回收（键集外垃圾+tmp 孤儿）
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc --all    # 深度回收（保留 reports/VERSIONS/history/final）
@@ -48,6 +52,11 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 
 **gfx 渲染引擎**：默认 CDP 常驻浏览器（单浏览器多 tab/页并行；不透明页单截直写、透明页双探针解算 alpha）；渲染器失败自动整页回落 CLI 逐帧路径。`VTX_GFX=cli` 强制 CLI、`VTX_GFX_TABS=N` 调 tab 并发（默认 4）、`VTX_GFX_PAGES` 调页级并行、`VTX_GFX_PNG_LEVEL` 调透明页压缩级别。不透明页输出与 CLI 逐字节一致；透明页半透明边缘有 ≤5/255 舍入级差异（亚感知）。每次阶段完成写 `out/receipt.json`（timeline 哈希、各阶段结果）；QC 报告在 `out/qc_report.json`，审计报告在 `out/audit_report.json`。**回执依赖门**：receipt.json 绑定输入身份（timeline+源指纹+gfx html+声明的 cache_dependencies）——输入变化不继承旧阶段成功；单跑某阶段前置未成功会被直接拒绝（audio←prepare、video←gfx（有 gfx 轨时）、mux←video+audio、qc←mux），编辑输入后按序重跑或直接 `all`。详见 docs/cache-provenance.md。
 ## audit 指标审计（建议性，不阻断渲染）
 **validate 是机制硬门，audit 是内容体检**——审计出的 ⚠ 不拦截渲染，但发布前应逐条看过。检查项：画面构成占比与模块完整性（缺 broll/screen/gfx 提示）、黑场窗口、**无声窗口**（bed 轨应全程兜底）、口播覆盖率（主流观察 83-99.7%）、全片语速（**标准值 5.5 字/s（用户拍板引导值，=主流中位）；ok 区间 4.8~6.3**，明细在 `~/文档/04_bilibili视频/_library/corpus/叙事风格分析/data/speech_rate.json`）、字幕阅读速度（>7.5 字/s 偏快、>9 过快）/最短时长/相互重叠。基准值都注明在报告里，来源是本项目自己的 39 视频语料实测。
+## 字幕预检与预览（subs check / preview，2026-09-12 方案四）
+- **`subs check`（零渲染，timeline 层面可跑）**：①字幕窗 vs voice 轨口播窗对齐（重叠取最大重叠窗算起点偏移，无重叠取最近外沿——滞后窗口末端为正/超前窗口起点为负；FAIL ±1.5s / WARN ±0.5s，`--align-threshold` 可调；最近窗距离 >5s 或无 voice 轨 → WARN 不静默，报告 coverage 如实扣减）；②阅读速度 CPS >9 FAIL / >7.5 WARN / <0.6s WARN（与 audit 同基准）；③字幕时间重叠双标 FAIL；④行宽 28 字×2 行 FAIL（PlayResX 1920/Fontsize 58/MarginL-R 60 推算）。报告 `out/subs_check.json` + 人类可读表格，末行 PASS/FAIL（FAIL 退出码 1，可做 CI 门）。
+- **`subs preview <秒|f帧号>...`**：单帧预览图 `out/subs_preview_f<N>.png`，单张 ≤5s。背景三级回退：qc_clean 提帧 → 图层单帧合成（素材不全自动跳过）→ 黑场兜底（WARN，仅审字幕位置/样式）。活跃集判定与真实烧录的 cs 量化逐位一致（`_fc` 同式），烧录用 `ass_head` 同源样式——预览与成片差异仅为成片有损编码噪声（红队 S7 复核口径：跨 ffmpeg 输入路径有 1px 级 AA 差，视觉无差）。
+- **迭代回路**：改 timeline 字幕 → `subs check`（秒级）→ `subs preview` 抽查 → `video`（段级缓存：字幕 ass 以字节进段内容键，改 1 条只重渲其覆盖的 1-2 段）。配方见 runbook R2s。
+
 ## 音频工程（build_audio 内置）
 - **音乐避让（duck）**：音轨声明 `"duck": true`（bed/amb 建议）即被 `"duck_by"`（缺省 `["voice"]`）轨的混音经 `sidechaincompress`（threshold 0.03 / ratio 6 / attack 150ms / release 700ms）压低。**⚠ 新项目启用 duck 前必须先做「duck 开/关」A/B 响度对照，否则长节目下无口播段床乐可能反常抬高约 19dB**；床乐静态电平已足够低（低于口播 ≥5dB）时建议直接不开（破案详录见 DEV.md）。
 - **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测（±1.5 LUFS 容差）。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。峰值安全由项目侧 limiter 兜底（`post_loudness.sh`：alimiter limit=0.599，audio 后 mux 前必跑）。

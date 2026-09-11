@@ -16,6 +16,7 @@
 - content_gates 五门合并单次 pass（G1/G2/G3/G7/G10 + 项目门一次跑完）。〔出处：README scripts 节〕
 - `ffprobe -count_frames` 逐帧解码计数：1080p 全源 12-27s/个；改流头 nb_frames + count_packets 回落后 validate 2min→3s。〔出处：edit.md 坑表〕
 - `-frames:v N` 触发 filter_complex 全量 drain：曾耗 4:30（300 帧）；已对每路输入加 `-t` 截短。〔出处：edit.md 坑表〕
+- 字幕 subs 三命令（2026-09-12，方案四，合成 30s/900 帧项目实测）：`subs check` <1s（零渲染纯文本）；`subs preview` 单张 0.56s（图层单帧合成路径）；改 1 条字幕重渲 2 段 1.9s（6 段缓存命中）——段键含本段窗口内 ass 字节（composite._seg_content_key），「改一条字幕=全链重渲」的担忧实测不成立。〔出处：docs/plans-2026-09-11/方案四 + 方案四-验收证据/〕
 
 迁移即测试基线（2026-09-10，全部通过）：〔原 README「深度测试基线」节，7a75655 瘦身后由本文承载〕
 
@@ -89,11 +90,18 @@ GPU 光栅对 gfx 截图无收益；Chrome 同源 tab 共用渲染进程，单�
 
 PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 仅 43-58%）——瓶颈是单页关键路径不是 CPU，只加页不切片买不到时间。结论：收益方向转为**页内分片**（`VTX_GFX_SPLIT_FRAMES`，8/450 起显著），见 §一 gfx 方案 v2 行。
 
+### 字幕预览/烧录等价性两个量化陷阱（方案四红队 S1/S2/S7，2026-09-12）〔出处：docs/plans-2026-09-11/方案四-验收证据/＋审查报告〕
+
+- **对齐偏移参照点**（S1）：字幕在 voice 窗口**结束后**顺延开始是常态（句间留白），偏移若参照窗口起点会夸大一个窗口长（实测 0.5s 滞后报 +5.50s FAIL）。subs check 已改为参照最近外沿（滞后窗口末端为正/超前窗口起点为负），重叠字幕仍参照窗口起点（v39 漂移语义）。
+- **活跃集判定必须过 cs 量化**（S2）：`write_global_ass` 的 Dialogue 时间经 `_fc` 的 `round(frame·100/fps)` 量化，libass 以帧 pts 精确值比较——fps=24 时帧 17 的 pts=0.70833s < 量化起点 0.71s，成片不画而帧坐标判定会画。`_active_subs` 已复刻同一量化。
+- **「逐像素一致」措辞口径**（S7）：子集 ass@0s 与全量 ass@t 在**同一输入表示**下烧录逐位一致（实测零差）；跨 ffmpeg 输入路径（mp4 解码 vs png 解码）因色度上采样差异有 1px 级 AA 差（PSNR 34.5dB，视觉无差）。preview vs 成片的差异全部为 x264 有损编码噪声（无字幕帧噪声底 max|Δ|=10/0.57%，字幕帧差异全部集中于文字带，其余画面 ≤8）。
+
 ## 三、工具演进史
 
 - **剪辑中间层自研**：ffmpeg 唯一渲染后端，vtx CLI，不引 NLE 依赖；达芬奇/Blender 作剪辑底层经调研与 POC 后否决（继续 vtx 路线）。转场仅硬切；全管线固定 30fps 精确（≠29.97，教训：时基等平台参数先实测平台事实标准）。〔出处：工作区决策台账 D9/D14/D24〕
 - **timeline 契约 v2**：轨道等价（数组序=图层序）、kind 纯语义、gfx 并入 video_tracks、同轨 clips 不重叠；旧 v1（role+overlays）退役。〔出处：edit.md 契约节，D15〕
 - **缓存内容寻址内建**：voice-ime 174G→25G 清理实测后收编为 gc/df/snapshot/体积预算等治理机制；「改源不重渲」与「误命中旧内容」两类历史问题从机制上消失。〔出处：edit.md「缓存卫生」〕
+- **字幕独立预检与预览（2026-09-12，方案四）**：`vtx subs check / preview / render` + `vtx diff` 报告对比入编（vtx/subs.py、vtx/diffcmd.py）；runbook 新增 R2s 纯字幕修订配方。动机 = v39 式「渲染完整片才发现字幕漂移 4.3s」事故循环（12 条字幕重开窗触发全链修订轮）；v1 的「字幕解耦独立烧录 pass」设计被红队 F4 证伪撤销（解耦多一整遍全片解码+重编码，且段键本就只含本段字幕）。〔出处：docs/plans-2026-09-11/方案四〕
 - **程序权威本体收编（D40）**：video_tools 仓为唯一权威，skill live 挂载点全部符号链接；双仓收编方案（D36）同日被升格取代。
 - **vtx 拆包重构（2026-09-11）**：vtx.py 单文件 → 包（infra/encoders/composite/qc/stages/gfx_render/hygiene/cache_state 八模块），行为与旧版逐项一致；历史回滚锚点在 git 历史。〔出处：edit.md「工具位置」〕
 - **gfx 引擎演进**：CLI 逐帧截图 → CDP 常驻浏览器多 tab（4.6×）→ 透明页 override 直出快路径（6.6×）→ 页级并行（全冷 192.5s）→ 页内分片＋静态跨度去重（2026-09-11 方案 v2：默认 7/450/4 定版，全冷 129.8-131.9s）。方案 v2 配套两件基建：`scripts/gfx_golden.py` 像素基线（全零门槛，成为导出通道改造硬门——FO 快照、navfree 两通道均由它判死封存，详录 §二）；帧落盘原子化（tmp+os.replace，修 split×static 头帧并发双写竞态）。`VTX_GFX=cli` 保留回退。〔出处：edit.md + AGENTS.md D42/D44/D44b + docs/plans-2026-09-11/方案一〕

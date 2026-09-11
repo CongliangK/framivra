@@ -70,6 +70,8 @@ python3 <video_tools>/scripts/check_4k.sh out/final_4k.mp4 ...     # 4K 投稿�
 ## CLI 速查
 | 操作 | 命令 |
 |---|---|
+| 字幕检查（渲染前必跑，秒级） | `... vtx.py -t <项目>/timeline.json subs check`（对齐漂移/CPS/重叠/行宽，报告 out/subs_check.json） |
+| 字幕预览（秒级看效果） | `... vtx.py -t <项目>/timeline.json subs preview <秒\|f帧号>...`（改字幕抽查首选，单张 ≤5s） |
 | 项目脚手架 | `bash <skill>/scripts/new_project.sh <目录> [时长秒]` |
 | 渲染前校验（必跑） | `python3 <skill>/vtx/vtx.py -t <项目>/timeline.json validate` |
 | 全流程渲染 | `... vtx.py -t <项目>/timeline.json all` |
