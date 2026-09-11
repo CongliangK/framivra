@@ -31,6 +31,7 @@ import re
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -145,12 +146,45 @@ def main():
                      f"（门 +{args.g1_min_gap_db}）；口播窗极差 {spread:.1f} dB"
                      f"（门 ≤{args.g1_spread_db}）；音频源={asrc}")
 
-    # ---------- G2/G3 响度与真峰（解码域） ----------
+    # ---------- G2/G3 响度与真峰（解码域）＋ G7 黑帧（合并单次全片解码） ----------
+    # G2/G3 原用 -vn、G7 原用 -an 各解一遍全片；现合并为一条 -filter_complex
+    # （音频链 ebur128 + 视频链 blackdetect，双 -map 到 null）单次解码同时提取。
+    # 合并命令失败时回落旧两步路径（稳妥优先）。
+    mI = mP = None
+    blacks = None
     if MEDIA.exists():
-        r = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA), "-vn",
-                 "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
-        mI = re.search(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
-        mP = re.search(r"Peak:\s+(-?[\d.]+) dBFS", r.stderr)
+
+        def meas_lufs_peak():
+            r = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA), "-vn",
+                     "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
+            return (re.search(r"I:\s+(-?[\d.]+) LUFS", r.stderr),
+                    re.search(r"Peak:\s+(-?[\d.]+) dBFS", r.stderr))
+
+        def detect_blacks():
+            bd = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA),
+                      "-vf", f"blackdetect=d={args.g7_black_d}:pix_th={args.g7_pix_th}",
+                      "-an", "-f", "null", "-"])
+            return re.findall(r"black_start:(\S+)\s+black_end:(\S+)", bd.stderr)
+
+        if "G7" in skip:
+            mI, mP = meas_lufs_peak()
+        else:
+            t0 = time.monotonic()
+            r = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA),
+                     "-filter_complex",
+                     f"[0:a]ebur128=peak=true:framelog=quiet[amet];"
+                     f"[0:v]blackdetect=d={args.g7_black_d}:pix_th={args.g7_pix_th}[vmet]",
+                     "-map", "[amet]", "-map", "[vmet]", "-f", "null", "-"])
+            dt = time.monotonic() - t0
+            mI = re.search(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
+            mP = re.search(r"Peak:\s+(-?[\d.]+) dBFS", r.stderr)
+            blacks = re.findall(r"black_start:(\S+)\s+black_end:(\S+)", r.stderr)
+            if r.returncode != 0 or not mI:
+                print("⚠ G2/G3+G7 合并解码 pass 失败，回落两步路径")
+                mI, mP = meas_lufs_peak()
+                blacks = detect_blacks()
+            else:
+                print(f"[timing] 全片解码合并 pass（G2/G3+G7）: {dt:.1f}s")
         if mI:
             full_i = float(mI.group(1))
             gate("G2 全片响度", args.g2_lo <= full_i <= args.g2_hi,
@@ -162,14 +196,10 @@ def main():
     else:
         print(f"SKIP G2/G3（{MEDIA} 不存在）")
 
-    # ---------- G7 黑闪门 ----------
+    # ---------- G7 黑闪门（结果取自上方合并解码；blacks=None = 跳过或无成片） ----------
     if "G7" in skip:
         pass
-    elif MEDIA.exists():
-        bd = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA),
-                  "-vf", f"blackdetect=d={args.g7_black_d}:pix_th={args.g7_pix_th}",
-                  "-an", "-f", "null", "-"])
-        blacks = re.findall(r"black_start:(\S+)\s+black_end:(\S+)", bd.stderr)
+    elif blacks is not None:
         gate("G7 零黑帧", len(blacks) == 0,
              f"blackdetect(d={args.g7_black_d},pix_th={args.g7_pix_th}) 命中 {len(blacks)} 处"
              + (f"：t={[b[0] for b in blacks]}" if blacks else ""))

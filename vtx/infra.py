@@ -70,12 +70,14 @@ class Ctx:
                     "w": 0, "h": 0, "has_video": False, "has_audio": a is not None}
         self.probes[path] = info; return info
 
-    def receipt(self, stage, ok, detail=""):
+    def receipt(self, stage, ok, detail="", extra=None):
         f = self.out / "receipt.json"
         rec = json.loads(f.read_text()) if f.exists() else {"timeline": None, "stages": {}}
         rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
         rec["updated"] = time.strftime("%F %T")
         rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
+        if extra:
+            rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
         self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
 
     def src_path(self, sid):

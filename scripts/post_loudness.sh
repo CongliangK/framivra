@@ -7,6 +7,9 @@
 #   不信 wav 域 TP) → 复测门 ±1.5 LU。
 # 注意（voice-ime D32 教训）：vtx audio 若已采用「两遍静态增益」响度链，增益收敛问题
 #   已在上游解决，本脚本职责收窄为限幅兜底+复测确认；alimiter 兜底段不可省。
+# 首测 I 优先读 out/receipt.json 的 stages.audio.extra.raw_i（vtx audio 阶段两遍静态
+#   增益后的终态即本脚本输入 out/audio.wav，该 I 可直接作首测值，免再全片解码一遍）；
+#   无回执或字段缺失时回落 ffmpeg ebur128 实测。复测一步始终保留，不可省。
 # 用法：
 #   bash post_loudness.sh [项目目录]     # 默认当前目录；项目目录须含 out/audio.wav
 #   TARGET_LUFS=-14 bash post_loudness   # 目标响度覆盖（默认 -14 = B 站 EBU R128 标准）
@@ -19,8 +22,23 @@ cd "$DIR"
 
 [ -f out/audio.wav ] || { echo "FATAL: $PWD/out/audio.wav 不存在（须在 vtx audio 之后运行）"; exit 2; }
 
-I=$(ffmpeg -i out/audio.wav -af ebur128=peak=true -f null - 2>&1 | grep -A9 "Summary" | grep "I:" | head -1 | grep -oE "\-?[0-9]+\.[0-9]+" | head -1)
-[ -n "${I:-}" ] || { echo "无法测量 I 值"; exit 1; }
+I=""
+if [ -f out/receipt.json ]; then
+  I=$(python3 -c "
+import json
+try:
+    st = json.load(open('out/receipt.json'))['stages']['audio']
+    v = st.get('raw_i', st.get('extra', {}).get('raw_i'))
+    print('' if v is None else v)
+except Exception:
+    print('')" 2>/dev/null)
+fi
+if [ -n "${I:-}" ]; then
+  echo "首测 I=${I} LUFS（来自 out/receipt.json stages.audio，免首测解码）"
+else
+  I=$(ffmpeg -i out/audio.wav -af ebur128=peak=true -f null - 2>&1 | grep -A9 "Summary" | grep "I:" | head -1 | grep -oE "\-?[0-9]+\.[0-9]+" | head -1)
+  [ -n "${I:-}" ] || { echo "无法测量 I 值"; exit 1; }
+fi
 VOL=$(python3 -c "print(round($TARGET - ($I), 1))")
 echo "实测 I=${I} LUFS → 补增益 ${VOL}dB + alimiter(-4.45dBFS)"
 ffmpeg -y -v error -i out/audio.wav -af "volume=${VOL}dB,alimiter=limit=0.599:level=false" \

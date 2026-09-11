@@ -277,6 +277,7 @@ def build_audio(c: Ctx):
                 f"amix=inputs={len(atracks)}:duration=longest:normalize=0,aresample=48000,"
                 f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS")
     gain = 0.0
+    raw_i = None
     if not c.dry:
         meas_cmd = list(cmd)
         meas_cmd[meas_cmd.index("error")] = "info"  # -v error → info：ebur128 Summary 是 info 级
@@ -291,7 +292,11 @@ def build_audio(c: Ctx):
     msg = f"{len(atracks)} 轨 {len(evs)} 事件（帧网格对齐"
     if duck_tis: msg += f"，{len(duck_tis)} 轨 duck 避让"
     msg += f"，响度 {TARGET_LUFS:g} LUFS（两遍静态增益）"
-    print("✓ 音频混音：" + msg); c.receipt("audio", True, msg)
+    print("✓ 音频混音：" + msg)
+    extra = {"gain_db": round(gain, 2), "target": TARGET_LUFS}
+    if raw_i is not None:
+        extra = {"raw_i": raw_i, **extra}   # post_loudness.sh 免首测读该字段
+    c.receipt("audio", True, msg, extra=extra)
 
 
 def mux(c: Ctx):

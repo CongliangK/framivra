@@ -52,7 +52,7 @@
 clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fade 统一为 alpha 淡入淡出。
 仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome。
 """
-import argparse, os, shutil, subprocess, sys
+import argparse, difflib, os, shutil, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -178,11 +178,17 @@ def main():
                          " | clean | gc | df | snapshot")
     a = ap.parse_args()
     if a.frames and not (a.draft and a.command == "video"):
-        print("--frames 仅在 video --draft 下可用"); sys.exit(1)
+        print("--frames 仅在 video --draft 下可用（正确用法：vtx.py video --draft --frames 90）"); sys.exit(1)
     if a.draft and a.command not in ("video", "mux"):
-        print("--draft 仅作用于 video/mux 阶段"); sys.exit(1)
+        print("--draft 仅作用于 video/mux 阶段（正确用法：vtx.py video --draft 或 vtx.py mux --draft）"); sys.exit(1)
     if a.gpu and a.command != "video":
-        print("--gpu 仅作用于 video 阶段"); sys.exit(1)
+        print("--gpu 仅作用于 video 阶段（正确用法：vtx.py video --gpu）"); sys.exit(1)
+    # 未知命令先于 timeline 检查（错字时给最接近建议，不被 timeline 缺失报错挡住）
+    valid_names = [s[0] for s in STAGES] + ["all", "clean", "gc", "df", "snapshot"]
+    if a.command not in valid_names:
+        sug = difflib.get_close_matches(a.command, valid_names, n=3, cutoff=0.6)
+        hint = f"，最接近：{' | '.join(sug)}" if sug else ""
+        print(f"✗ 未知命令：{a.command!r}（可用：{' | '.join(valid_names)}）{hint}"); sys.exit(2)
     # 不跟随符号链接（resolve() 会穿透 cp -rs 链接树等隔离副本，把 out/ 回执写到 live 项目）
     tp = Path(os.path.abspath(os.path.expanduser(a.timeline)))
     if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)
@@ -191,7 +197,7 @@ def main():
     c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
     c.keep_versions = a.keep_versions   # mux：out/history/ 保留版数
     if a.strict and a.command != "qc":
-        print("--strict 仅作用于 qc 阶段"); sys.exit(1)
+        print("--strict 仅作用于 qc 阶段（正确用法：vtx.py qc --strict）"); sys.exit(1)
     if a.command == "clean":
         shutil.rmtree(c.cache, ignore_errors=True); shutil.rmtree(c.out, ignore_errors=True)
         print("✓ 已清空 cache/ out/"); return
