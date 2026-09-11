@@ -6,9 +6,9 @@
 必须产出分轨审计包；草稿/内部迭代轮不要求。
 
 一键五步：
-  ①按轨道名前缀选中音轨，源 stem 逐条 ffmpeg→320k MP3（快速试听件；生产 flac 是正本）
+  ①按轨道名前缀选中音轨，每个引用源 ffmpeg→320k MP3（试听件；生产素材是正本）
   ②生成审计 timeline：逐轨一列、生产音量/事件窗原样、源指向 MP3、无 voice 轨=无 duck
-    ——全部 unmute 相加≈成片床乐状态，屏蔽任一轨即 A/B 其真实贡献
+    ——用于 duck 和总混处理前的逐轨比较，不宣称与成片采样等价
   ③vtx validate 硬门
   ④json2blend → <audit-dir>/audit.blend（Blender 预览工程）
   ⑤verify_blend 结构校验
@@ -17,13 +17,14 @@
   python3 audit_bundle.py -t <项目>/timeline.json --prefix bgm2-
       [--prefix 可多次] [--mp3-dir <dir>] [--audit-dir <dir>] [--force] [--skip-blend]
       [--whole] [--silence-threshold -50dB] [--min-silence 1.0] [--pad 0.25]
-  缺省 mp3-dir/audit-dir = <项目>/cache/audit_bgm/{mp3,.}；mp3 已存在且比源新则跳过转码
-  （分轨重渲后自动失效重转），--force 强制全量重转。
+  缺省 mp3-dir/audit-dir = <项目>/cache/audit_bgm/{mp3,.}；按源内容、FFmpeg 版本、
+  转码规格命名并校验 MP3 内容。--force 强制重转，旧的轨名/mtime 缓存不复用。
 
 静音切分（2026-09-10 用户裁定，默认开启；--whole 关闭）：分轨不是全程有声音，审计
 timeline 按每轨实际发声区间切段（ffmpeg silencedetect 反相 + pad 余量 + 帧对齐），
 事件仍锚定视频绝对时间——Blender 里每轨只在其发声段出现条带，静音区留白，观演/刮擦
-不用再拖过无声段。源 MP3 仍只有每轨一条（事件 src_in 指回原位），零数据重复。
+不用再拖过无声段。同源共享 MP3，源时间映射到事件时间；循环/淡变及没有检出声音的
+事件保持完整并报告回退，避免切分重启包络或产生无效空轨。--whole 保留所有原事件。
 
 给用户的 Blender 用法（附在交付信息里）：
   blender <项目>/cache/audit_bgm/audit.blend → Sequencer 工作区 → 空格播放；
@@ -33,16 +34,87 @@ timeline 按每轨实际发声区间切段（ffmpeg silencedetect 反相 + pad �
 import argparse
 import concurrent.futures
 import json
+import hashlib
+import math
 import os
 import subprocess
 import sys
 import threading
 import time
-import runpy
-import traceback
+import tempfile
 from pathlib import Path
 
 _PRINT_LOCK = threading.Lock()
+
+
+def file_hash(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def media_path(path, root):
+    """Relative where possible; Windows cannot relativize across drives."""
+    try:
+        return os.path.relpath(path, root)
+    except ValueError:
+        return str(path.resolve())
+
+
+def export_mp3(src, directory, profile, force=False):
+    """Content-addressed, checked cache; a failed encoder never publishes a file."""
+    identity = {'source_sha256': file_hash(src), 'profile': profile}
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    dst = directory / f'{key}.mp3'
+    receipt = dst.with_suffix('.json')
+    if not force and dst.is_file() and receipt.is_file():
+        try:
+            record = json.loads(receipt.read_text(encoding='utf-8'))
+            if record['identity'] == identity and record['output_sha256'] == file_hash(dst):
+                return dst
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    fd, name = tempfile.mkstemp(prefix='.audit-', suffix='.mp3', dir=directory)
+    os.close(fd)
+    candidate = Path(name)
+    try:
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(src),
+                        '-map', '0:a:0', '-vn', '-ar', '48000', '-ac', '2',
+                        '-c:a', 'libmp3lame', '-b:a', '320k', str(candidate)],
+                       check=True, capture_output=True, text=True, encoding='utf-8', errors='replace')
+        # Verify decoding too: an encoder exit alone does not certify a usable cache.
+        subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(candidate), '-f', 'null', '-'],
+                       check=True, capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if not candidate.stat().st_size:
+            raise ValueError(f'Empty MP3: {src}')
+        output_hash = file_hash(candidate)
+        os.replace(candidate, dst)
+        # Missing/partial receipt is a cache miss on the next run, never a hit.
+        receipt.write_text(json.dumps({'identity': identity, 'output_sha256': output_hash},
+                                      ensure_ascii=False, indent=2), encoding='utf-8')
+        return dst
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
+def split_event(event, spans):
+    """Map source-domain spans into this event, without restarting envelopes."""
+    if event.get('loop') or event.get('fade_in_frames') or event.get('fade_out_frames'):
+        return [dict(event)], 'loop_or_fade_preserved'
+    start = event.get('src_in', 0)
+    stop = start + event['out'] - event['in']
+    events = []
+    for a, b in spans:
+        lo, hi = max(start, a), min(stop, b)
+        if lo < hi:
+            events.append({**event, 'src_in': lo,
+                           'in': event['in'] + lo - start,
+                           'out': event['in'] + hi - start})
+    # Keep a valid event/track for silent or below-threshold material; do not
+    # silently discard a creator's audio just because it missed the detector.
+    return (events, None) if events else ([dict(event)], 'no_detected_content_preserved')
 
 
 def tprint(msg):
@@ -66,9 +138,9 @@ def content_spans(src: Path, dur_s: float, fps: int, thr: str, min_sil: float, p
     """silencedetect 反相求发声区间：[silence_start, silence_end) 的补集，加 pad 余量，
     合并后按帧对齐。返回 [(in_f, out_f), ...]。"""
     r = subprocess.run(
-        ["ffmpeg", "-nostats", "-i", str(src),
+        ["ffmpeg", "-nostats", "-i", str(src), '-map', '0:a:0', '-vn',
          "-af", f"silencedetect=noise={thr}:d={min_sil}", "-f", "null", "-"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     sils = []
     for line in r.stderr.splitlines():
         if "silence_start:" in line:
@@ -97,7 +169,16 @@ def content_spans(src: Path, dur_s: float, fps: int, thr: str, min_sil: float, p
             out[-1] = (out[-1][0], max(out[-1][1], b))
         else:
             out.append((a, b))
-    return [(round(a * fps), round(b * fps)) for a, b in out]
+    frames = []
+    for a, b in out:
+        if b <= a:
+            continue
+        lo, hi = math.floor(a * fps), math.ceil(b * fps)
+        if frames and lo <= frames[-1][1]:
+            frames[-1] = (frames[-1][0], max(hi, frames[-1][1]))
+        else:
+            frames.append((lo, hi))
+    return frames
 
 
 def main():
@@ -109,7 +190,7 @@ def main():
     ap.add_argument("--audit-dir", type=Path, default=None)
     ap.add_argument("--force", action="store_true", help="强制重转全部 MP3")
     ap.add_argument("--skip-blend", action="store_true", help="只做 MP3+审计 timeline，不跑 Blender")
-    ap.add_argument("--whole", action="store_true", help="关闭静音切分（每轨一条全程事件）")
+    ap.add_argument("--whole", action="store_true", help="关闭静音切分，保留每个生产事件及全部事件字段")
     ap.add_argument("--silence-threshold", default="-50dB", help="silencedetect 噪声门（默认 -50dB）")
     ap.add_argument("--min-silence", type=float, default=1.0, help="最短静默段秒数（默认 1.0）")
     ap.add_argument("--pad", type=float, default=0.25, help="每段两端余量秒数（默认 0.25）")
@@ -120,6 +201,8 @@ def main():
     tl = json.loads(tl_path.read_text(encoding="utf-8"))
     audit_dir = (a.audit_dir or root / "cache" / "audit_bgm").resolve()
     mp3_dir = (a.mp3_dir or audit_dir / "mp3").resolve()
+    if (audit_dir / 'timeline.json') == tl_path:
+        ap.error('audit-dir 不能覆盖生产 timeline.json')
     mp3_dir.mkdir(parents=True, exist_ok=True)
     audit_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,106 +211,79 @@ def main():
     if not sel:
         sys.exit(f"无音轨匹配前缀 {prefixes}（现有轨：{[t['name'] for t in tl['audio_tracks']]}）")
 
-    # ① MP3 导出（同轨多事件取第一个事件的 src；loop 组共享同一源）——并行转码
+    if not math.isfinite(a.pad) or a.pad < 0 or not math.isfinite(a.min_silence) or a.min_silence <= 0:
+        ap.error('pad 必须非负，min-silence 必须为正有限数')
+    if any(not tr['events'] for tr in sel):
+        ap.error('选中的音轨不能没有事件')
+
+    # ① 每个源都保留原 ID；相同内容只转一次，不把轨名当文件身份。
     t0 = time.perf_counter()
     src_of = {s["id"]: root / s["path"] for s in tl["sources"]}
-    mp3_of = {}
-    jobs = []  # (name, src, dst) 需转码项；skip 项当场按序打印
-    for tr in sel:
-        src = src_of[tr["events"][0]["src"]]
-        dst = mp3_dir / f"{tr['name']}.mp3"
-        mp3_of[tr["name"]] = dst
-        if (dst.exists() and not a.force
-                and dst.stat().st_mtime > src.stat().st_mtime):
-            print(f"[skip] {dst.name}（比源新）")
-            continue
-        jobs.append((tr["name"], src, dst))
+    selected_ids = list(dict.fromkeys(e['src'] for tr in sel for e in tr['events']))
+    version = subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True,
+                             text=True, encoding='utf-8', errors='replace').stdout
+    profile = {'version': 1, 'encoder': 'libmp3lame', 'bitrate': '320k',
+               'stream': '0:a:0', 'rate': 48000, 'channels': 2, 'ffmpeg': version}
+    grouped = {}
+    for sid in selected_ids:
+        grouped.setdefault(file_hash(src_of[sid]), []).append(sid)
 
-    def _transcode(job):
-        name, src, dst = job
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src),
-                        "-map", "0:a", "-c:a", "libmp3lame", "-b:a", "320k", str(dst)],
-                       check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        return job
+    def _transcode(ids):
+        dst = export_mp3(src_of[ids[0]], mp3_dir, profile, a.force)
+        tprint(f"[mp3 ] {', '.join(ids)} → {dst.name}")
+        return ids, dst
 
-    if jobs:
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(8, (os.cpu_count() or 2))) as ex:
-            futs = {ex.submit(_transcode, j): j for j in jobs}
-            for fu in concurrent.futures.as_completed(futs):
-                try:
-                    name, src, dst = fu.result()
-                except Exception as e:
-                    bad = futs[fu][0]
-                    err = getattr(e, "stderr", "") or e
-                    sys.exit(f"转码失败：轨 {bad}（{futs[fu][1].name}）：{err}")
-                tprint(f"[mp3 ] {name} ← {src.name}")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2)) as ex:
+        mp3_of = {sid: dst for ids, dst in ex.map(_transcode, grouped.values()) for sid in ids}
     print(f"[timing] step1 transcode: {time.perf_counter() - t0:.1f}s")
 
-    # ② 审计 timeline（音量取生产值；事件窗=静音切分后的发声段，锚定视频绝对时间）
-    #    ——逐轨 ffprobe+silencedetect 并行（结果按原轨序回收，与完成顺序无关）
+    # ② 检测原素材第一音轨，避免 MP3 编码补齐影响源时间。
     t1 = time.perf_counter()
     fps = tl["project"]["fps"]
-    sources, tracks, report = [], [], []
+    sources = [{'id': sid, 'path': media_path(mp3_of[sid], audit_dir)} for sid in selected_ids]
+    tracks, report, fallbacks = [], [], []
 
-    def _analyze(tr):
-        sid = tr["name"]
-        vol0 = tr["events"][0].get("volume", 1.0)
-        if a.whole:
-            evs = [{"src": sid, "src_in": e.get("src_in", 0),
-                    "in": e["in"], "out": e["out"], "volume": vol0}
-                   for e in tr["events"]]
-            return (vol0, 1, None), evs
+    def _analyze(sid):
         r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                            "format=duration", "-of", "csv=p=0", str(mp3_of[sid])],
+                            "format=duration", "-of", "csv=p=0", str(src_of[sid])],
                            capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
         dur = float(r.stdout.strip())
-        spans = content_spans(mp3_of[sid], dur, fps,
-                              a.silence_threshold, a.min_silence, a.pad)
-        # 发声段 × 生产事件窗求交：逐段继承所在事件的 volume（分段音量轨的审计
-        # 正确性；2026-09-10 修——旧版取首事件 volume 施加全轨，分段音量会听错）
+        if not math.isfinite(dur) or dur <= 0:
+            raise ValueError(f'无法测量音频时长: {sid}')
+        return sid, content_spans(src_of[sid], dur, fps, a.silence_threshold, a.min_silence, a.pad)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2)) as ex:
+        spans_of = dict(ex.map(_analyze, selected_ids)) if not a.whole else {}
+    for tr in sel:
         evs = []
-        for i, o in spans:
-            cur = i
-            for e in sorted(tr["events"], key=lambda x: x["in"]):
-                s, t = max(cur, e["in"]), min(o, e["out"])
-                if s < t:
-                    evs.append({"src": sid, "src_in": s, "in": s, "out": t,
-                                "volume": e.get("volume", 1.0)})
-                    cur = t
-                if cur >= o:
-                    break
-        vols = sorted({e["volume"] for e in evs})
-        voiced = sum(e["out"] - e["in"] for e in evs) / fps
-        return (vols, len(evs), voiced), evs
-
-    with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(8, (os.cpu_count() or 2))) as ex:
-        results = list(ex.map(_analyze, sel))  # ex.map 保序
-
-    for tr, (rep, evs) in zip(sel, results):
-        sid = tr["name"]
-        sources.append({"id": sid,
-                        "path": os.path.relpath(mp3_of[sid], audit_dir)})
-        report.append((sid, *rep))
-        tracks.append({"name": sid, "events": evs})
+        for index, event in enumerate(tr['events']):
+            parts, reason = ([dict(event)], None) if a.whole else split_event(event, spans_of[event['src']])
+            evs.extend(parts)
+            if reason:
+                fallbacks.append({'track': tr['name'], 'event': index, 'reason': reason})
+                print(f"[whole] {tr['name']} event {index}: {reason}")
+        tracks.append({'name': tr['name'], 'events': evs})
+        report.append((tr['name'], sorted({e.get('volume', 1.0) for e in evs}), len(evs),
+                       sum(e['out']-e['in'] for e in evs)/fps))
     print(f"[timing] step2 analyze: {time.perf_counter() - t1:.1f}s")
 
+    project = dict(tl['project'])
+    removed_dependencies = project.pop('cache_dependencies', [])
     audit = {
         "version": 2,
         "_meta": {
-            "note": "BGM 分轨审计时间线（audit_bundle.py 生成）：逐轨一列、音量=生产值、"
-                    "事件按各轨实际发声区间切段（silencedetect 反相+pad，锚定视频绝对时间），"
-                    "静音区在 Blender 里留白不出现条带；源=320k MP3 导出件（每轨一条，"
-                    "事件 src_in 指回原位）。全部 unmute 相加≈成片床乐状态（无 voice 轨="
-                    "无 duck，比成片略满）；屏蔽任一轨即 A/B 其贡献。独听偏干属预期（厅堂 "
-                    "wet 仅参考混）。",
+            "note": "逐源 MP3 试听件、事件级音量/偏移/声像/循环/淡变保留。"
+                    "这是 duck 和总混响度处理前的审计，不等同于成片采样。"
+                    "默认静音切分为阈值近似；loop/fade 和未检出声音的事件保留整段。",
             "generated_by": "audit_bundle.py",
             "silence": f"threshold={a.silence_threshold} min_silence={a.min_silence}s pad={a.pad}s"
                        if not a.whole else "whole（未切分）",
             "from_timeline": str(tl_path),
+            "whole_fallbacks": fallbacks,
+            "excluded_visual_dependencies": removed_dependencies,
+            "excluded_duck_tracks": [tr['name'] for tr in sel if tr.get('duck')],
         },
-        "project": dict(tl["project"]),
+        "project": project,
         "sources": sources,
         "video_tracks": [],
         "subtitles": [],
@@ -238,7 +294,7 @@ def main():
     n_ev = sum(len(t["events"]) for t in tracks)
     print(f"[json ] {at_path}（{len(tracks)} 轨 / {n_ev} 事件）")
     for sid, vol, n, voiced in report:
-        tail = f" 发声 {voiced:.1f}s" if voiced is not None else ""
+        tail = f" 保留 {voiced:.1f}s" if voiced is not None else ""
         vs = "/".join(str(v) for v in vol) if isinstance(vol, list) else str(vol)
         print(f"       {sid:16s} vol={vs:<9} {n} 段{tail}")
 
@@ -274,4 +330,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+        print(f"FATAL: {getattr(exc, 'stderr', None) or exc}", file=sys.stderr)
+        sys.exit(1)

@@ -72,6 +72,8 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 
 ## 分轨审计包 audit_bundle.py（人机协作交付门）
 
+事件映射、逐源导出、内容缓存、整段回退及验收边界见 [音频审计说明](../docs/audio-audit.md)。审计是 duck/总混处理前的 MP3 试听；`--whole` 保留每个原事件，默认切分不会重启循环或淡变。
+
 用法：`python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-] [--force]`
 BGM 正式版默认必做（见 music skill「交付门：分轨审计包」节）：分轨 MP3 导出 →
 审计 timeline（逐轨一列、生产音量原样、静音切分=只保留实际发声段、无 voice 轨）→
