@@ -1,7 +1,8 @@
 # blender_bridge — timeline.json → Blender VSE 预览前端
 
-> 建立于 2026-08-29。路线拍板：不用 MCP（CLI/bpy 直连更自由）、不用外部直写 .blend（无格式规范），
-> 用 `blender --background --python` 生成。回写（Blender→json）未做，属下一步。
+> **使用者向**：Blender 预览桥用法与 VSE 坑表。历史校验记录与实测数据见 `../docs/DEV.md`。
+
+> 路线：不用 MCP（CLI/bpy 直连更自由）、不用外部直写 .blend（无格式规范），用 `blender --background --python` 生成。回写（Blender→json）由 blend2json.py 提供（见下）。
 
 ## 用法（对一个项目生成预览工程）
 
@@ -13,20 +14,15 @@ blender --background --python verify_blend.py -- <项目>/timeline.json <项目>
 blender <项目>/preview.blend                        # ④ 打开预览（空格播放，拖拽刮擦）
 ```
 
-**打开即视频编辑工作区（2026-09-10）**：json2blend 生成的 .blend 默认活动工作区=「Video Editing」——打开即是时间线+视频预览面板，无需手动切换工作区/场景。实现：以 Blender 官方 `Video_Editing` app template 的 startup.blend 为底（出厂启动文件不含该工作区，且 headless 下 append 法/`win.workspace=` 赋值均不生效——实测 5.2.1 唯一可靠路径），清掉模板示例物件后在模板场景上建 VSE；找不到模板时回落原 Layout（不影响条目生成）。
+**打开即视频编辑工作区**：json2blend 生成的 .blend 默认活动工作区=「Video Editing」——打开即是时间线+视频预览面板，无需手动切换工作区/场景。实现：以 Blender 官方 `Video_Editing` app template 的 startup.blend 为底（出厂启动文件不含该工作区，headless 下唯一可靠路径），清掉模板示例物件后在模板场景上建 VSE；找不到模板时回落原 Layout（不影响条目生成）。
 
 依赖：Blender 5.2.1 LTS（`~/.local/opt/blender-5.2.1-linux-x64`，符号链接 `~/.local/bin/blender`）、ffmpeg/ffprobe。
 
-## 产物状态（2026-08-29）
+## 历史校验记录
 
-| 项目 | blend | 校验 | 样帧 PSNR vs 终渲 |
-|---|---|---|---|
-| poc2（24fps 30s 测试） | `_archive/poc2/preview.blend` | 103/103 | 35.6 dB @f120 |
-| voice-ime（30fps 600s） | `voice-ime/preview.blend` | 410/410 | 41.2 dB @f6000 |
-| voice-ime v3.3（30fps 653s，2026-09-08） | `voice-ime/preview.blend` | 520/0（122 条） | — |
-| voice-ime 终版（30fps 653.13s/19594f，D31 2026-09-08） | `voice-ime/preview.blend`（重生成） | 524/524 | 43.6 dB @f3000 |
+各项目 preview.blend 的 verify 校验通过数与样帧 PSNR 记录迁移至 `../docs/DEV.md`（迁移即测试基线一节）。
 
-字幕透明轨：`<项目>/cache/subs_alpha.mov`（ProRes 4444 alpha；voice-ime 1.24GB/18000帧/2min14s 渲染）。
+字幕透明轨产物：`<项目>/cache/subs_alpha.mov`（ProRes 4444 alpha）。
 
 ## 语义映射（与 vtx.py 源码对齐）
 
@@ -40,7 +36,7 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 - fade_in/out：blend_alpha/volume 关键帧（插值取默认，预览近似）
 - 色彩：view_transform=Standard、FRAME_DROP 同步；已知与终渲有 ~2% 整体亮度差（色彩管理路径），预览可接受
 
-## 本轮踩坑记录（Blender 5.2.1 VSE API）
+## 本工具踩坑记录（Blender 5.2.1 VSE API）
 
 1. `Scene.use_sequencer` → `scene.render.use_sequencer`；`sequences` 集合改名 `strips`
 2. **先 trim 再设 channel**：未 trim 的条（源全长）与同通道条重叠时，channel 赋值会被自动顶到上层
@@ -57,7 +53,7 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 字幕样式/侧链 ducking/LUFS/精确 fade 曲线是**渲染语义**，不进预览（预览是结构+视觉近似）；
 终渲永远走 vtx。
 
-## 回写桥 blend2json.py（2026-08-29 建成并测试通过）
+## 回写桥 blend2json.py
 
 用法：`blender --background --python blend2json.py -- <preview.blend> [out.json]`
 （json 源取 scene["vtx_timeline"] 钩子；缺省输出 `<项目>/timeline.blendback.json`，不覆盖原文件）
@@ -71,22 +67,19 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 - 音量/声像改动 → 告警不回写（带淡变事件的静态属性不可靠，已跳过比对）
 - 字幕条（subs|ASS）移动 → 告警（字幕回写需改 subtitles 数组，未做）
 
-测试记录：恒等回写两项目零改动结构相等 PASS；模拟 4 视频+3 音频操作+1 故意撞轨，
-回写 7 项精确捕捉、1 项换通道正确告警，vtx validate 通过。
 注意：Blender 不允许同通道重叠，拖动相撞会把条自动顶到上层通道——表现为换轨
 （视频侧同族照收，音频/跨族会被上述规则拦下并提示）。
 
-## 分轨审计包 audit_bundle.py（2026-09-10 建成，人机协作交付门）
+## 分轨审计包 audit_bundle.py（人机协作交付门）
 
 用法：`python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-] [--force]`
-BGM 正式版默认必做（用户裁定，见 music skill「交付门：分轨审计包」节）：分轨 MP3 导出 →
+BGM 正式版默认必做（见 music skill「交付门：分轨审计包」节）：分轨 MP3 导出 →
 审计 timeline（逐轨一列、生产音量原样、静音切分=只保留实际发声段、无 voice 轨）→
 vtx validate → json2blend →
 verify_blend 五步一键，产物落 `<项目>/cache/audit_bgm/{mp3/,timeline.json,audit.blend}`。
-MP3 按源 mtime 自动失效重转（分轨重渲后重跑即可），`--force` 强制全量。首例=voice-ime
-BGM v2 13 轨（`voice-ime/cache/bgm_audit/`，--mp3-dir 指到其 assets/bgm/v2/mp3）。
+MP3 按源 mtime 自动失效重转（分轨重渲后重跑即可），`--force` 强制全量。
 
-## 用户手剪回读协议（D39 工作法，2026-09-10 成文）
+## 用户手剪回读协议
 
 用户在 preview.blend 里手剪（平移/裁剪/换轨）后，回读**不得直接采信 Blender 读数**，必须走实证链：
 
@@ -96,7 +89,7 @@ BGM v2 13 轨（`voice-ime/cache/bgm_audit/`，--mp3-dir 指到其 assets/bgm/v2
 4. 与**用户权威文本**逐句对照——用户说了算的句子清单优先于任何代理回读推断；
 5. 切点按**能量谷检测微调**（ASR 句边界附近的静音谷，样本级定位）。
 
-两处已实证的系统性偏差（D39 教训）：
+两处已实证的系统性偏差（须防）：
 
 - **吸附手放值当精确切点**：strip 边缘读数是用户粗放位置，非精确切点——须 ASR 句首/能量谷校正后再定切；
 - **头段语义误判**：seg 头填充词/重复废读（「一个」说两遍）代理回读易误判语义，须以用户权威文本裁定（净读 vs 废读）。
