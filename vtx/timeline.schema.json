@@ -4,28 +4,67 @@
   "title": "时间线数据契约 v2（轨道等价模型）",
   "description": "精确剪辑的单一事实源。所有时间量为【整数帧】（项目时基 fps 固定）。区间统一为 [in, out) 左闭右开。音频对齐到帧网格，量化误差 ≤1ms（adelay 毫秒精度）。字幕经 ASS 烧录，粒度 1cs（< 1 帧）。v2 核心变化（D15）：① video_tracks 所有轨道等价，数组顺序即图层顺序（[0] 最底、末位最上），画布为黑场，无任何轨道有全覆盖特权；② role 字段废除，kind 为纯语义标注（aroll/broll/screen/pip/gfx），只服务于编排规范、预览与统计，渲染机制完全不区分；③ HTML 动效并入 video_tracks（kind=gfx），不再使用独立 overlays 数组；④ clip 的 scale/x/y/opacity/fade 全部可选——缺省即全屏不透明，fade 统一为 alpha 淡入淡出（无下层时自然露出黑场，视觉等价淡黑）。机制层唯一约束：同轨 clips 时间不重叠。本 Schema 为规范文档；vtx.py 内置同语义的强制校验器，渲染前执行。",
   "type": "object",
-  "required": ["version", "project", "sources", "video_tracks", "subtitles", "audio_tracks"],
+  "required": [
+    "version",
+    "project",
+    "sources",
+    "video_tracks",
+    "subtitles",
+    "audio_tracks"
+  ],
   "properties": {
-    "version": { "const": 2 },
+    "version": {
+      "const": 2
+    },
     "project": {
       "type": "object",
-      "required": ["fps", "width", "height", "duration_frames"],
+      "required": [
+        "fps",
+        "width",
+        "height",
+        "duration_frames"
+      ],
       "properties": {
-        "fps": { "const": 30, "description": "项目时基固定 30fps（D24 换基，≠29.97）；素材必须 CFR 且一致" },
-        "width": { "const": 1920 },
-        "height": { "const": 1080 },
-        "duration_frames": { "type": "integer", "minimum": 1, "description": "成片总帧数（画布时长）。任何帧都可能无内容而显示黑场——这是合法输出，语义层规划负责避免" }
+        "fps": {
+          "const": 30,
+          "description": "项目时基固定 30fps（D24 换基，≠29.97）；素材必须 CFR 且一致"
+        },
+        "width": {
+          "const": 1920
+        },
+        "height": {
+          "const": 1080
+        },
+        "duration_frames": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "成片总帧数（画布时长）。任何帧都可能无内容而显示黑场——这是合法输出，语义层规划负责避免"
+        }
       }
     },
     "sources": {
-      "type": "array", "minItems": 1,
+      "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "path"],
+        "required": [
+          "id",
+          "path"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "path": { "type": "string", "description": "相对 timeline.json 的素材路径。可以是纯音频文件（wav/mp3，音效/BGM/环境声）——无视频轨，时长换算到项目帧网格，只能被音频事件引用（视频 clip 引用纯音频源会被校验拒绝）；transform 对其无意义" },
-          "transform": { "enum": ["crop_center_scale"], "description": "768x1344 → 中心裁 432 高 → lanczos 拉伸 1920x1080；仅全屏 clip 生效" }
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "相对 timeline.json 的素材路径。可以是纯音频文件（wav/mp3，音效/BGM/环境声）——无视频轨，时长换算到项目帧网格，只能被音频事件引用（视频 clip 引用纯音频源会被校验拒绝）；transform 对其无意义"
+          },
+          "transform": {
+            "enum": [
+              "crop_center_scale"
+            ],
+            "description": "768x1344 → 中心裁 432 高 → lanczos 拉伸 1920x1080；仅全屏 clip 生效"
+          }
         }
       }
     },
@@ -34,29 +73,89 @@
       "description": "全部视频图层轨道，彼此等价：数组顺序 = 图层顺序（[0] 最底，末位最上）。画布为黑场，每帧像素 = 自上而下第一个不透明内容；全空帧为黑。无覆盖性要求（全屏空洞是规划问题，不是校验错误）。跨轨时间可任意交叠；仅同轨内 clips 不重叠。",
       "items": {
         "type": "object",
-        "required": ["name", "kind", "clips"],
+        "required": [
+          "name",
+          "kind",
+          "clips"
+        ],
         "properties": {
-          "name": { "type": "string", "description": "轨道名，一般与 kind 同名或加序号" },
-          "kind": { "enum": ["aroll", "broll", "screen", "pip", "gfx"],
-            "description": "纯语义标注（渲染不区分）：aroll=出镜口播 / broll=实拍空镜 / screen=录屏演示（软件界面实况） / pip=画中画小窗 / gfx=HTML 图形动画（流程图、表格、数据展示、标题卡、下三分之一等一切程序化图形）。编排规范：一条轨一个 kind、按内容分队列。gfx 按用途拆双轨（同为 kind=gfx）：gfx-full=全屏概念段（z 序在实拍之上、装饰之下），gfx-overlay=叠加装饰（z 序最上，仅低于字幕）——注意 gfx 帧恒为全画布 PNG，'全屏还是局部叠加'由 HTML 页面自身设计（透明区域）决定，timeline 层面不区分" },
+          "name": {
+            "type": "string",
+            "description": "轨道名，一般与 kind 同名或加序号"
+          },
+          "kind": {
+            "enum": [
+              "aroll",
+              "broll",
+              "screen",
+              "pip",
+              "gfx"
+            ],
+            "description": "纯语义标注（渲染不区分）：aroll=出镜口播 / broll=实拍空镜 / screen=录屏演示（软件界面实况） / pip=画中画小窗 / gfx=HTML 图形动画（流程图、表格、数据展示、标题卡、下三分之一等一切程序化图形）。编排规范：一条轨一个 kind、按内容分队列。gfx 按用途拆双轨（同为 kind=gfx）：gfx-full=全屏概念段（z 序在实拍之上、装饰之下），gfx-overlay=叠加装饰（z 序最上，仅低于字幕）——注意 gfx 帧恒为全画布 PNG，'全屏还是局部叠加'由 HTML 页面自身设计（透明区域）决定，timeline 层面不区分"
+          },
           "clips": {
-            "type": "array", "minItems": 1,
+            "type": "array",
+            "minItems": 1,
             "items": {
               "type": "object",
               "description": "普通 clip（kind≠gfx）：EDL 五元组，不变量 src_out-src_in == dur；素材帧范围由校验器对照 ffprobe 实测。gfx clip：src 指向 HTML 文件（非 sources id），只需 dst_in+dur（帧序列按需渲染）",
-              "required": ["src", "dst_in", "dur"],
+              "required": [
+                "src",
+                "dst_in",
+                "dur"
+              ],
               "properties": {
-                "src": { "type": "string", "description": "sources[].id；gfx 轨为 HTML 文件路径" },
-                "src_in": { "type": "integer", "minimum": 0 },
-                "src_out": { "type": "integer", "minimum": 1 },
-                "dst_in": { "type": "integer", "minimum": 0 },
-                "dur": { "type": "integer", "minimum": 1 },
-                "fade_in_frames": { "type": "integer", "minimum": 0, "description": "alpha 淡入（与下层叠化；无下层则淡入自黑场）" },
-                "fade_out_frames": { "type": "integer", "minimum": 0, "description": "alpha 淡出" },
-                "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "相对源尺寸的缩放；缺省=全屏铺满（经 transform 归一到项目分辨率）" },
-                "x": { "type": "integer", "minimum": 0, "description": "左上角 x；缺省 0（全屏）" },
-                "y": { "type": "integer", "minimum": 0 },
-                "opacity": { "type": "number", "minimum": 0, "maximum": 1, "description": "缺省 1" }
+                "src": {
+                  "type": "string",
+                  "description": "sources[].id；gfx 轨为 HTML 文件路径"
+                },
+                "src_in": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "src_out": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "dst_in": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "dur": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "fade_in_frames": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "alpha 淡入（与下层叠化；无下层则淡入自黑场）"
+                },
+                "fade_out_frames": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "alpha 淡出"
+                },
+                "scale": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1,
+                  "description": "相对源尺寸的缩放；缺省=全屏铺满（经 transform 归一到项目分辨率）"
+                },
+                "x": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "左上角 x；缺省 0（全屏）"
+                },
+                "y": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "opacity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "缺省 1"
+                }
               }
             }
           }
@@ -67,10 +166,22 @@
       "type": "array",
       "description": "帧对齐字幕；构建时转 ASS 烧录于全部图层之上",
       "items": {
-        "type": "object", "required": ["in", "out", "text"],
+        "type": "object",
+        "required": [
+          "in",
+          "out",
+          "text"
+        ],
         "properties": {
-          "in": { "type": "integer" }, "out": { "type": "integer" },
-          "text": { "type": "string" }
+          "in": {
+            "type": "integer"
+          },
+          "out": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
         }
       }
     },
@@ -78,30 +189,84 @@
       "type": "array",
       "description": "并行音轨；同轨内 events 时间不重叠，跨轨自由叠加。混音链：轨内子混音 → duck 避让（sidechaincompress，口播出现时压低 duck 轨）→ 总混音（amix 不归一，保留音量比例）→ EBU R128 响度归一（-14 LUFS / TP -1.5，B站标准）",
       "items": {
-        "type": "object", "required": ["name", "events"],
+        "type": "object",
+        "required": [
+          "name",
+          "events"
+        ],
         "properties": {
-          "name": { "type": "string", "description": "语义命名惯例：bed=BGM铺底 / voice=口播 / sfx=音效点 / amb=环境声；audit 阶段依赖 voice 这个名字评估口播覆盖率与语速" },
-          "duck": { "type": "boolean", "description": "true 时本轨被 duck_by 轨的混音压低（音乐避让；bed/amb 建议 true）" },
-          "duck_by": { "type": "array", "items": { "type": "string" }, "description": "避让触发轨名列表，缺省 [\"voice\"]" },
-          "events": {
-            "type": "array", "minItems": 1,
+          "name": {
+            "type": "string",
+            "description": "语义命名惯例：bed=BGM铺底 / voice=口播 / sfx=音效点 / amb=环境声；audit 阶段依赖 voice 这个名字评估口播覆盖率与语速"
+          },
+          "duck": {
+            "type": "boolean",
+            "description": "true 时本轨被 duck_by 轨的混音压低（音乐避让；bed/amb 建议 true）"
+          },
+          "duck_by": {
+            "type": "array",
             "items": {
-              "type": "object", "required": ["src", "in", "out", "volume"],
+              "type": "string"
+            },
+            "description": "避让触发轨名列表，缺省 [\"voice\"]"
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "src",
+                "in",
+                "out",
+                "volume"
+              ],
               "properties": {
-                "src": { "type": "string", "description": "sources[].id；音频从对应素材提取（48kHz 立体声 PCM）" },
-                "src_in": { "type": "integer", "minimum": 0, "description": "缺省 0" },
-                "in": { "type": "integer", "minimum": 0 },
-                "out": { "type": "integer", "minimum": 1 },
-                "volume": { "type": "number", "minimum": 0, "maximum": 2 },
-                "fade_in_frames": { "type": "integer", "minimum": 0 },
-                "fade_out_frames": { "type": "integer", "minimum": 0 },
-                "pan": { "type": "number", "minimum": -1, "maximum": 1 },
-                "loop": { "type": "boolean", "description": "true 时源音频循环平铺至 out-in" }
+                "src": {
+                  "type": "string",
+                  "description": "sources[].id；音频从对应素材提取（48kHz 立体声 PCM）"
+                },
+                "src_in": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "缺省 0"
+                },
+                "in": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "out": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "volume": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                },
+                "fade_in_frames": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "fade_out_frames": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "pan": {
+                  "type": "number",
+                  "minimum": -1,
+                  "maximum": 1
+                },
+                "loop": {
+                  "type": "boolean",
+                  "description": "true 时源音频循环平铺至 out-in"
+                }
               }
             }
           }
         }
       }
     }
-  }
+  },
+  "$comment": "契约权威定义互指（2026-09-10）：本 Schema=结构权威；机制合法性权威=vtx/stages.py validate()（对照素材实测硬门）；可视化预览权威=vtx/preview.html。三处需同步修改。"
 }

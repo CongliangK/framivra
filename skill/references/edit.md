@@ -61,7 +61,7 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 
 - **音乐避让（duck）**：音轨声明 `"duck": true`（bed/amb 建议）即被 `"duck_by"`（缺省 `["voice"]`）轨的混音经 `sidechaincompress`（threshold 0.03 / ratio 6 / attack 150ms / release 700ms）压低——口播出现时音乐自动让路，经典剪辑思路的程序化实现。**⚠ 长流警告（2026-09-08）**：voice-ime 653s 全图实测该滤镜在长流上使无口播段的床乐反常抬高 ~19dB（10s 短流隔离测试行为正常，深层机制未定位）——新项目启用 duck 前必须先做「duck 开/关」A/B 响度对照；床乐静态电平已足够低（低于口播 ≥5dB）时建议直接不开。
 - **响度归一（两遍静态增益，2026-09-08 起）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测（±1.5 LUFS 容差）。**不要退回单遍 `loudnorm`（dynamic 模式）**：长节目上其时变增益随内容游走——voice-ime 653s 成片实测前段 -11.8、后段 -21.7~-32 LUFS 的区域塌陷（同一素材两遍渲染可复现）。峰值安全由项目侧 limiter 兜底（voice-ime 的 post_loudness.sh：alimiter limit=0.599，audio 后 mux 前必跑，见 D30/D31）。
 - 混音链：轨内子混音（apad 补齐成片全长）→ duck → 总混音（amix normalize=0 保留音量比例）→ 静态增益 → 定长裁切。
-- **BGM 分轨审计包（2026-09-10 用户裁定：正式版默认必做）**：BGM 正式版本挂载进时间线后，除 vtx 渲染外必跑 `python3 ~/文档/04_bilibili视频/_library/blender_bridge/audit_bundle.py -t <项目>/timeline.json`——分轨 MP3 导出 + 审计 timeline + Blender 审计工程 `audit.blend` 一键五步，产物落 `<项目>/cache/audit_bgm/`。用户在 Blender VSE 逐轨静音/独听对比才能参与混音与编排裁决（人机协作交付门；完整规程与给用户的使用话术见 music skill「交付门：分轨审计包」节）。分轨或音量改动后重跑即可（MP3 按源 mtime 自动失效重转）。
+- **BGM 分轨审计包（2026-09-10 用户裁定：正式版默认必做）**：BGM 正式版本挂载进时间线后，除 vtx 渲染外必跑 `python3 <本仓>/blender_bridge/audit_bundle.py -t <项目>/timeline.json`（旧库 `~/文档/04_bilibili视频/_library/blender_bridge/` 位置为兼容指针，权威副本已收编本仓）——分轨 MP3 导出 + 审计 timeline + Blender 审计工程 `audit.blend` 一键五步，产物落 `<项目>/cache/audit_bgm/`。用户在 Blender VSE 逐轨静音/独听对比才能参与混音与编排裁决（人机协作交付门；完整规程与给用户的使用话术见 music skill「交付门：分轨审计包」节）。分轨或音量改动后重跑即可（MP3 按源 mtime 自动失效重转）。
 
 ## 渲染速度：草稿 / GPU / 缓存（2026-09-08，voice-ime 653s@1080p30 实测基准）
 
