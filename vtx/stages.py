@@ -213,10 +213,23 @@ def prepare(c: Ctx):
 
 
 # ---------------------------------------------------------------- audio
-def build_audio(c: Ctx):
+def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
+    """构建多轨混音 filtergraph（区间渲染与整片 build_audio 共用，唯一实现）。
+
+    win=None：与现行全片行为逐字一致（全部事件、apad 补齐成片全长）。
+    win=(fa, fb)（区间渲染预览，方案五阶段1）：只纳入与 [fa-margin, fb+margin)
+    相交的音频事件——margin（默认 60 帧=2s@30fps）兜住 sidechaincompress 的
+    release 尾巴与淡出；事件 adelay 仍用全局时间（不平移），终混后由调用方在
+    mix_head 尾部按采样网格 atrim 到 [fa,fb)。窗口内无事件的 duck/sidechain 轨
+    自动跳过（sidechaincompress 需要双流齐备，缺流会让 ffmpeg 挂起解析）。
+    返回 (cmd_inputs, chains, n_ev, duck_used)：cmd_inputs = 输入参数片段列表。
+    """
     atracks = c.tl["audio_tracks"]
-    evs = [(ti, tr, e) for ti, tr in enumerate(atracks) for e in tr["events"]]
+    fa, fb = (0, c.dur) if win is None else win
+    inside = (lambda e: True) if win is None else \
+        (lambda e: e["in"] < fb + margin_frames and e["out"] > fa - margin_frames)
     cmd = ["ffmpeg", "-v", "error", "-y"]
+    evs = [(ti, tr, e) for ti, tr in enumerate(atracks) for e in tr["events"] if inside(e)]
     for ti, tr, e in evs:
         if e.get("loop"): cmd += ["-stream_loop", "-1"]
         cmd += ["-i", str(c.cache / "audio" / f"{audio_key(c, e['src'])}.wav")]
@@ -224,9 +237,12 @@ def build_audio(c: Ctx):
     chains = []
     trk_lbl = {}
     k = 0
+    present = set()
+    for ti, tr, e in evs:
+        present.add(ti)
     for ti, tr in enumerate(atracks):
         ev_lbls = []
-        for e in tr["events"]:
+        for _ti, _tr, e in [x for x in evs if x[0] == ti]:
             dur = e["out"] - e["in"]; sin = e.get("src_in", 0)
             fl = [f"atrim=start_sample={sin*c.spf_samples}:end_sample={(sin+dur)*c.spf_samples}", "asetpts=PTS-STARTPTS"]
             fl.append(f"volume={e['volume']}")
@@ -240,6 +256,7 @@ def build_audio(c: Ctx):
             chains.append(f"[{k}:a]" + ",".join(fl) + f"[e{k}]")
             ev_lbls.append(f"[e{k}]")
             k += 1
+        if not ev_lbls: continue     # 窗口内无事件的轨：不进混音（静音轨无贡献）
         pad = (f"apad=whole_dur={c.dur*c.spf:.3f},"
                f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS")
         if len(ev_lbls) == 1:
@@ -248,11 +265,14 @@ def build_audio(c: Ctx):
             chains.append(f"{''.join(ev_lbls)}amix=inputs={len(ev_lbls)}:duration=longest:normalize=0,{pad}[t{ti}]")
         trk_lbl[ti] = f"[t{ti}]"
     # 音乐避让：duck:true 的轨被 duck_by（默认 voice）的混音经 sidechaincompress 压低
-    duck_tis = [ti for ti, tr in enumerate(atracks) if tr.get("duck")]
+    duck_tis = [ti for ti in present if atracks[ti].get("duck")]
+    duck_used = False
     if duck_tis:
         by_names = {n for ti in duck_tis for n in atracks[ti].get("duck_by", ["voice"])}
-        sc_tis = [ti for ti, tr in enumerate(atracks) if tr["name"] in by_names and ti not in duck_tis]
+        sc_tis = [ti for ti in present if trk_lbl.get(ti) and atracks[ti]["name"] in by_names
+                  and ti not in duck_tis]
         if sc_tis:
+            duck_used = True
             if len(sc_tis) == 1:
                 # 修复（2026-09-10，voice-ime BGM v2 轮定位）：asplit=恰 N 路把 sidechain 轨
                 # （voice）整轨吞尽，终混仍引用原标签→该 ffmpeg 版本静默解析为空流=口播
@@ -285,29 +305,50 @@ def build_audio(c: Ctx):
                       f"attack={atk}ms release={rel}ms makeup={mkup}")
         else:
             print("⚠ duck 声明无效：找不到 duck_by 指向的非 duck 轨，跳过避让")
-    # 总混音（不归一，保留音量比例）→ 定长。响度归一改两遍法（2026-09-08）：
-    # 第一遍 ebur128 实测原始混音 I，第二遍施加恒定静态增益到目标响度。
-    # 单遍 dynamic loudnorm 在长节目上增益随内容游走——voice-ime v3.2/v3.3 实测
-    # 前段 -11.8、后段 -21.7~-32 LUFS 的区域塌陷（2026-09-08 定位）。
-    # 峰值安全由项目侧 post_loudness.sh 的 alimiter 兜底，响度链顺序不变。
-    mix_head = (f"{''.join(trk_lbl[ti] for ti in range(len(atracks)))}"
-                f"amix=inputs={len(atracks)}:duration=longest:normalize=0,aresample=48000,"
-                f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS")
+    # 总混音头（不归一，保留音量比例）：全片补齐到 dur；窗口模式多一截 atrim 到
+    # [fa,fb) 采样网格（apad 定长在上游已保证窗口尾不足时有静音可截）。
+    tail = (f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS"
+            if win is None else
+            f"atrim=start_sample={fa*c.spf_samples}:end_sample={fb*c.spf_samples},"
+            f"asetpts=PTS-STARTPTS")
+    mix_head = (f"{''.join(trk_lbl[ti] for ti in sorted(trk_lbl))}"
+                f"amix=inputs={len(trk_lbl)}:duration=longest:normalize=0,aresample=48000,{tail}")
+    chains.append(mix_head)
+    return cmd, chains, len(evs), duck_used
+
+
+def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
+    """两遍响度混音（共用执行体）：第一遍 ebur128 实测原始混音 I，第二遍施加恒定
+    静态增益到目标响度（单遍 dynamic loudnorm 长节目塌陷，见 build_audio 注）。
+    峰值安全由项目侧 post_loudness.sh 的 alimiter 兜底，响度链顺序不变。
+    gain_override：外部指定静态增益（区间预览用——窗口局部内容响度 ≠ 全片响度，
+    窗口自测增益会把安静段放大到削波；复用整片回执里的 gain_db 保持听感一致，
+    且省一遍 ebur128 测量）。返回 (gain, raw_i, n_ev, duck_used)。win 语义见 _audio_graph。"""
+    cmd, chains, n_ev, duck_used = _audio_graph(c, win)
     gain = 0.0
     raw_i = None
-    if not c.dry:
+    if gain_override is not None:
+        gain = gain_override
+    elif not c.dry:
         meas_cmd = list(cmd)
         meas_cmd[meas_cmd.index("error")] = "info"  # -v error → info：ebur128 Summary 是 info 级
-        r = c.run(meas_cmd + ["-filter_complex", ";".join(chains + [mix_head + ",ebur128=framelog=quiet[amet]"]),
+        r = c.run(meas_cmd + ["-filter_complex", ";".join(chains[:-1] + [chains[-1] + ",ebur128=framelog=quiet[amet]"]),
                               "-map", "[amet]", "-f", "null", "-"])
         mI = re.search(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
         if not mI: print("✗ 原始混音响度测量失败"); sys.exit(1)
         raw_i = float(mI.group(1)); gain = TARGET_LUFS - raw_i
         print(f"  原始混音 I={raw_i:.1f} LUFS → 静态增益 {gain:+.1f}dB")
-    c.run(cmd + ["-filter_complex", ";".join(chains + [mix_head + f",volume={gain:+.2f}dB[aout]"]),
-                 "-map", "[aout]", "-c:a", "pcm_s16le", "-ar", "48000", str(c.out / "audio.wav")])
-    msg = f"{len(atracks)} 轨 {len(evs)} 事件（帧网格对齐"
-    if duck_tis: msg += f"，{len(duck_tis)} 轨 duck 避让"
+    c.run(cmd + ["-filter_complex", ";".join(chains[:-1] + [chains[-1] + f",volume={gain:+.2f}dB[aout]"]),
+                 "-map", "[aout]", "-c:a", "pcm_s16le", "-ar", "48000", str(out_wav)])
+    return gain, raw_i, n_ev, duck_used
+
+
+def build_audio(c: Ctx):
+    atracks = c.tl["audio_tracks"]
+    gain, raw_i, _n_ev, duck_used = mix_audio_wav(c, c.out / "audio.wav")
+    msg = f"{len(atracks)} 轨 {sum(len(t['events']) for t in atracks)} 事件（帧网格对齐"
+    if duck_used:
+        msg += f"，{sum(1 for tr in atracks if tr.get('duck'))} 轨 duck 避让"
     msg += f"，响度 {TARGET_LUFS:g} LUFS（两遍静态增益）"
     print("✓ 音频混音：" + msg)
     extra = {"gain_db": round(gain, 2), "target": TARGET_LUFS}

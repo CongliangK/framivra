@@ -316,12 +316,15 @@ class RenderPlan:
         return enc
 
 
-# ---------------------------------------------------------------- video 阶段编排
-def build_video(c: Ctx):
-    draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
-    budget_gate(c, "video")
-    f = 0.5 if draft else 1.0
-    W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
+# ---------------------------------------------------------------- 图层预处理（整片与区间渲染共用）
+def prepare_layers(c: Ctx):
+    """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
+    （每项 {cl, seg|pngdir, x, y, w2, h2, gfx, ti}，顺序=图层序）。
+
+    自 build_video 提取（方案五阶段1 区间渲染）：seg 键与渲染窗口无关（内容寻址），
+    整片与区间共用同一份 cache/seg——区间渲染不得另造键或另写命名空间。本函数只做
+    seg/gfx 缓存侧副作用；manifest 记账与回执由调用方负责（区间渲染不记账不写回执）。
+    """
     (c.cache / "seg").mkdir(parents=True, exist_ok=True)
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
@@ -388,6 +391,16 @@ def build_video(c: Ctx):
                                "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
                                *vcodec_seg, str(seg)]))
     run_parallel(c, enc_tasks, "seg 预编码")
+    return layers
+
+
+def build_video(c: Ctx):
+    draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
+    budget_gate(c, "video")
+    f = 0.5 if draft else 1.0
+    W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
+    layers = prepare_layers(c)
+    tracks = c.tl["video_tracks"]
     for L in layers:                      # 记账：本时间轴的全部 seg（含缓存命中）
         if not L["gfx"] and L["seg"].exists() and not c.dry:
             manifest_record(c, L["seg"], "video", L["seg"].stem)
