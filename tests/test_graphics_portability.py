@@ -16,6 +16,7 @@ from unittest import mock
 sys.path.insert(0, os.environ.get('VTX_TEST_MODULE_DIR', str(Path(__file__).resolve().parents[1] / 'vtx')))
 import gfx_render as gfx
 import infra
+import vtx
 
 
 class ExportValidation(unittest.TestCase):
@@ -174,6 +175,127 @@ class GfxStatsMock(unittest.TestCase):
         self.assertAlmostEqual(s['p50'], 250.0)
         self.assertAlmostEqual(s['p95'], 385.0)
         self.assertEqual(gfx._timings_summary([]), {'p50': 0.0, 'p95': 0.0, 'sum': 0.0})
+
+
+class FramesParamMock(unittest.TestCase):
+    """方案 v2 阶段 1 页内分片：render_page frames 参数只做缺失交集；全缓存早退
+    不构造 Browser（零 Chrome）。"""
+
+    def _prep(self, tmp, present=()):
+        root = Path(tmp)
+        page = root / 'p.html'
+        page.write_text('<html></html>', encoding='utf-8')
+        out = root / 'out'
+        out.mkdir()
+        for i in present:
+            (out / f'f{i:04d}.png').write_bytes(b'x')
+        return page, out
+
+    def test_frames_intersects_missing(self):
+        # frames=[1..5]、其中 1/3 已缓存 → 只渲缺失的 2/4/5，frames 外的 0 不碰
+        with tempfile.TemporaryDirectory(prefix='vtx_split_') as tmp:
+            page, out = self._prep(tmp, present=(1, 3))
+            browser = _FakeBrowser('override', 1)
+            with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
+                st = gfx.render_page(page, out, 6, chrome_path='fake', tabs=1,
+                                     frames=[1, 2, 3, 4, 5])
+            self.assertEqual(st['n'], 6)                       # n 仍=页总帧数
+            self.assertEqual(st['rendered'], 3)
+            self.assertEqual(st['path_counts']['override'], 3)
+            self.assertEqual(st['failed'], [])
+            self.assertEqual((out / 'f0001.png').read_bytes(), b'x')  # 已存在未被重写
+            for i in (2, 4, 5):
+                self.assertTrue((out / f'f{i:04d}.png').exists(), i)
+            self.assertFalse((out / 'f0000.png').exists())     # frames 之外不渲
+
+    def test_frames_all_cached_early_return_zero_chrome(self):
+        # 块内全部帧已缓存 → work 空 → 不构造/启动 Browser 即早退
+        with tempfile.TemporaryDirectory(prefix='vtx_split_') as tmp:
+            page, out = self._prep(tmp, present=(0, 1))
+
+            def _no_chrome(*a, **k):
+                raise AssertionError('全缓存块不得构造 Browser（白起 Chrome）')
+
+            with mock.patch.object(gfx, 'Browser', _no_chrome):
+                st = gfx.render_page(page, out, 2, chrome_path='fake', tabs=1,
+                                     frames=[0, 1])
+            self.assertEqual((st['rendered'], st['failed']), (0, []))
+            self.assertEqual(st['ms_total'], 0.0)
+            self.assertEqual(st['path_counts']['override'], 0)
+
+    def test_frames_empty_list_is_noop(self):
+        with tempfile.TemporaryDirectory(prefix='vtx_split_') as tmp:
+            page, out = self._prep(tmp)
+            with mock.patch.object(gfx, 'Browser',
+                                   lambda *a, **k: (_ for _ in ()).throw(AssertionError('no chrome'))):
+                st = gfx.render_page(page, out, 3, chrome_path='fake', tabs=1,
+                                     frames=[])
+            self.assertEqual(st['rendered'], 0)
+            self.assertFalse(list(out.glob('f*.png')))
+
+    def test_frames_none_keeps_whole_page_semantics(self):
+        # frames=None（默认）行为不变：扫全页缺失帧
+        with tempfile.TemporaryDirectory(prefix='vtx_split_') as tmp:
+            page, out = self._prep(tmp, present=(1,))
+            browser = _FakeBrowser('override', 1)
+            with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
+                st = gfx.render_page(page, out, 3, chrome_path='fake', tabs=1)
+            self.assertEqual(st['rendered'], 2)
+            self.assertTrue((out / 'f0000.png').exists())
+            self.assertTrue((out / 'f0002.png').exists())
+
+
+class VtxSplitMath(unittest.TestCase):
+    """vtx 页内分片：切块数学（阈值/上限/关闭态）与多块 stats 聚合。"""
+
+    def test_split_page_disabled_and_small(self):
+        self.assertIsNone(vtx._split_page(1153, 0, 3))    # SPLIT_FRAMES=0 关闭态
+        self.assertIsNone(vtx._split_page(600, 600, 3))   # 不大于阈值不拆
+        self.assertIsNone(vtx._split_page(100, 600, 3))
+        self.assertIsNone(vtx._split_page(601, 600, 0))   # 阈值≤0 或上限<1 一律关
+
+    def test_split_page_ceil_and_contiguous(self):
+        self.assertEqual(vtx._split_page(601, 600, 3), [301, 300])    # ceil=2
+        self.assertEqual(vtx._split_page(1153, 600, 3), [577, 576])   # 基准最大页
+        self.assertEqual(vtx._split_page(1200, 600, 3), [600, 600])   # 整除
+
+    def test_split_page_max_cap(self):
+        self.assertEqual(vtx._split_page(3000, 600, 3), [1000, 1000, 1000])  # ceil=5→截3
+        self.assertEqual(vtx._split_page(5000, 600, 4), [1250] * 4)          # ceil=9→截4
+        self.assertEqual(vtx._split_page(12000, 600, 2), [6000, 6000])
+
+    def test_split_page_invariants(self):
+        for n in (601, 1153, 2000, 3000, 4321, 12024):
+            for sf in (600, 1000):
+                sizes = vtx._split_page(n, sf, 3)
+                if sizes is None:
+                    self.assertLessEqual(n, sf)
+                    continue
+                self.assertEqual(sum(sizes), n)
+                self.assertLessEqual(len(sizes), 3)
+                self.assertTrue(all(s > 0 for s in sizes))
+                self.assertTrue(all(b - a <= 1 for a, b in zip(sizes, sizes[1:])))
+
+    def test_merge_cdp_stats_sums_and_weights(self):
+        def block(rendered, ms_total, p50):
+            return {"rendered": rendered, "failed": [], "tabs": 4,
+                    "ms_total": ms_total,
+                    "path_counts": dict.fromkeys(
+                        ("override", "canvas", "twoshot", "opaque",
+                         "canvas_fallback", "failed"), 0)
+                    | {"override": rendered},
+                    "timings_ms": {"nav": {"p50": p50, "p95": 0.0, "sum": 0.0},
+                                   "export": {"p50": p50, "p95": 0.0, "sum": 0.0},
+                                   "decode": {"p50": 0.0, "p95": 0.0, "sum": 0.0},
+                                   "write": {"p50": 0.0, "p95": 0.0, "sum": 0.0}}}
+        m = vtx._merge_cdp_stats([block(100, 20000.0, 10.0), block(300, 30000.0, 30.0)])
+        self.assertAlmostEqual(m['ms_per_frame'], 125.0)      # Σms/Σ帧 = 50000/400
+        self.assertEqual(m['path_counts']['override'], 400)   # 路径计数求和
+        self.assertAlmostEqual(m['timings_ms']['nav']['p50'], 25.0)  # 帧数加权
+        via = vtx._cdp_via(m)                                 # 可直接进 _cdp_via 格式化
+        self.assertIn('override×400', via)
+        self.assertIn('125ms/帧', via)
+        self.assertIsNone(vtx._merge_cdp_stats([]))
 
 
 @unittest.skipUnless(os.environ.get('VTX_TEST_CHROME'), 'set VTX_TEST_CHROME')

@@ -464,8 +464,13 @@ def decode_canvas_export(data_url, width, height):
 
 
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
-                width=1920, height=1080, progress=None):
+                width=1920, height=1080, progress=None, frames=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
+
+    frames=None（默认）= 现行语义：work=全部 n 帧里的缺失帧；显式传帧号列表
+    （页内分片，方案 v2 阶段 1）= work=frames 与缺失帧的交集，frames 之外的
+    帧一概不碰。work 为空（全缓存页/块）时在构造 Browser 之前早退——不再
+    为纯缓存命中白起 Chrome；早退返回 stats 字段与正常路径完全一致。
 
     返回统计 dict；帧级失败（含浏览器崩溃自愈重试 2 次）列入 failed，
     调用方对这些帧回落 CLI。浏览器起不来抛 GfxRenderError（全页回落 CLI）。
@@ -480,6 +485,15 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     html_path = os.path.abspath(html_path)
     outdir = os.path.abspath(outdir)
     os.makedirs(outdir, exist_ok=True)
+    work = [i for i in (range(n_frames) if frames is None else frames)
+            if not os.path.exists(os.path.join(outdir, f"f{i:04d}.png"))]
+    if not work:
+        return {"n": n_frames, "rendered": 0, "failed": [], "transparent": None,
+                "tabs": tabs_n, "ms_total": 0.0, "ms_per_frame": 0.0,
+                "canvas_export": False, "path_counts": _empty_path_counts(),
+                "timings_ms": {c: _timings_summary([]) for c in _TIME_CATS}}
+    # Browser 构造/启动放在 work 空判之后（v2 阶段 1 页内分片）：全缓存块零
+    # Chrome；ms_total 仍从启动完成后起算（与旧语义一致，不含浏览器启动耗时）
     browser = Browser(chrome_path, tabs_n, width, height)
     browser.start()
     pool = []
@@ -487,14 +501,6 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     failed = []
     transparent = None
     canvas_export = False
-    work = [i for i in range(n_frames)
-            if not os.path.exists(os.path.join(outdir, f"f{i:04d}.png"))]
-    if not work:
-        browser.stop()
-        return {"n": n_frames, "rendered": 0, "failed": [], "transparent": None,
-                "tabs": tabs_n, "ms_total": 0.0, "ms_per_frame": 0.0,
-                "canvas_export": False, "path_counts": _empty_path_counts(),
-                "timings_ms": {c: _timings_summary([]) for c in _TIME_CATS}}
     queues = [work[k::tabs_n] for k in range(tabs_n)]
     per_tab = [None] * tabs_n   # 观测槽位：worker 收尾写入 (path_counts, time_samples)
 

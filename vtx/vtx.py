@@ -57,7 +57,7 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
 clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fade 统一为 alpha 淡入淡出。
 仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome。
 """
-import argparse, difflib, os, shutil, subprocess, sys
+import argparse, difflib, os, shutil, subprocess, sys, threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -92,6 +92,45 @@ def _cdp_via(st):
             f"({split} ms@p50)")
 
 
+def _split_page(n, split_frames, split_max):
+    """页内分片切块数学（方案 v2 阶段 1）：split_frames<=0（开关默认关）或
+    n<=split_frames → None（现行整页单块）；否则块数 k=min(split_max,
+    ceil(n/split_frames))，返回 k 个连续块大小（Σ=n，前 r 块各 +1）。"""
+    if split_frames <= 0 or n <= split_frames or split_max < 1:
+        return None
+    k = min(split_max, -(-n // split_frames))
+    base, r = divmod(n, k)
+    return [base + (1 if b < r else 0) for b in range(k)]
+
+
+def _merge_cdp_stats(stats_list):
+    """同页多块 render_page stats → 合并 stats（供 _cdp_via 聚合格式化）。
+    路径计数逐键求和；ms_per_frame=Σms_total/Σ帧数（等价于按帧数加权）；
+    timings 各分项 p50/sum 按块帧数加权（p50 真值需原始样本，聚合为展示近似，
+    p95 不参与展示不合并）。空列表返回 None。"""
+    if not stats_list:
+        return None
+    pc, tm = {}, {}
+    frames = ms = 0.0
+    tabs = 1
+    for s in stats_list:
+        w = s["rendered"] + len(s["failed"])
+        frames += w
+        ms += s["ms_total"]
+        tabs = max(tabs, s["tabs"])
+        for k, v in s["path_counts"].items():
+            pc[k] = pc.get(k, 0) + v
+        for cat, t in s["timings_ms"].items():
+            a = tm.setdefault(cat, {"w": 0, "p50": 0.0, "sum": 0.0})
+            a["w"] += w
+            a["p50"] += t["p50"] * w
+            a["sum"] += t["sum"]
+    frames = max(1, frames)
+    return {"tabs": tabs, "path_counts": pc, "ms_per_frame": ms / frames,
+            "timings_ms": {cat: {"p50": a["p50"] / max(1, a["w"]), "p95": 0.0, "sum": a["sum"]}
+                           for cat, a in tm.items()}}
+
+
 def gfx(c: Ctx):
     budget_gate(c, "gfx")
     total = 0
@@ -119,7 +158,12 @@ def gfx(c: Ctx):
         with ThreadPoolExecutor(6) as ex:
             list(ex.map(lambda i: shot_cli(i, d, html, chrome), i_range))
 
-    jobs = []   # (cid, key, cl, n, d, html) 需要渲染的页
+    # 页内分片开关（方案 v2 阶段 1）：VTX_GFX_SPLIT_FRAMES（默认 0=关）为块大小
+    # 阈值，VTX_GFX_SPLIT_MAX（默认 3）为单页最大块数；默认值下行为与旧版一致。
+    split_frames = max(0, int(os.environ.get("VTX_GFX_SPLIT_FRAMES", "0")))
+    split_max = max(1, int(os.environ.get("VTX_GFX_SPLIT_MAX", "3")))
+
+    jobs = []   # (cid, key, cl, n, d, html, frames|None) 待渲块；frames=None=整页现行语义
     for tr in c.tl["video_tracks"]:
         if tr.get("kind") != "gfx": continue
         for cl in tr["clips"]:
@@ -137,32 +181,86 @@ def gfx(c: Ctx):
                 d.mkdir(parents=True, exist_ok=True)
             if d.exists() and len(list(d.glob("f*.png"))) == n:
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
-            jobs.append((cid, key, cl, n, d, (c.root / cl["src"]).resolve()))
+            html = (c.root / cl["src"]).resolve()
+            # 页内分片（方案 v2 阶段 1，默认关）：SPLIT_FRAMES>0 且页帧数超阈值时把
+            # [0,n) 切成 min(SPLIT_MAX, ceil(n/阈值)) 个连续块，每块独立一次
+            # render_page（独立 Chrome 实例）；dry-run / CLI 回落态不拆。
+            sizes = (None if (c.dry or cdp_mod is None)
+                     else _split_page(n, split_frames, split_max))
+            if sizes is None:
+                jobs.append((cid, key, cl, n, d, html, None))
+                continue
+            off, put = 0, 0
+            for sz in sizes:
+                fb = list(range(off, off + sz)); off += sz
+                if all((d / f"f{i:04d}.png").exists() for i in fb):
+                    continue    # 整块已缓存 → 跳过（不起 Chrome、不占池槽）
+                jobs.append((cid, key, cl, n, d, html, fb)); put += 1
+            if put == 0:        # 页级帧数门已滤全缓存，理论不可达；防御性兜底
+                print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1
 
     # 页级并行（2026-09-11）：Chrome 对同源 tab 共用渲染进程，单浏览器内加 tab 光栅
     # 收益递减；真正的并行单位是浏览器实例×页。VTX_GFX_PAGES 控制并行页数（默认 6）。
     page_workers = max(1, int(os.environ.get("VTX_GFX_PAGES", "6")))
 
+    # 同页多块聚合：块完成只并入聚合器，末块收尾时输出一行 ✓（路径计数求和、
+    # ms/帧按帧数加权、块数标注 split×k），receipt engine_notes 同样每页一条。
+    agg_lock = threading.Lock()
+    page_agg = {}
+    for j in jobs:
+        if j[6] is not None:
+            page_agg.setdefault((j[0], j[1]), {"left": 0, "blocks": []})["left"] += 1
+
     def render_one(job):
-        cid, key, cl, n, d, html = job
-        rendered_via = "cli"
+        cid, key, cl, n, d, html, frames = job
+        st = None
         if cdp_mod is not None:
             try:
                 # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）
                 st = cdp_mod.render_page(html, d, n, chrome_path=find_chrome(),
-                                         width=c.w, height=c.h)
+                                         width=c.w, height=c.h, frames=frames)
                 if st["failed"]:
                     print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
                     render_cli(st["failed"], d, html, find_chrome())
                     # CLI 补渲计数由调用方补进 path_counts（gfx_render 不感知 CLI 通道）
                     st["path_counts"]["cli_fallback"] = len(st["failed"])
-                rendered_via = _cdp_via(st)
             except Exception as e:
-                print(f"⚠ {cid}: CDP 渲染失败（{e}），整页回落 CLI")
-                rendered_via = f"cli（CDP 失败回落: {e}）"
-        if cdp_mod is None or rendered_via.startswith("cli（"):
+                # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
+                fb = range(n) if frames is None else frames
+                print(f"⚠ {cid}: CDP 渲染失败（{e}），"
+                      f"{'该块' if frames is not None else '整页'}回落 CLI")
+                render_cli(fb, d, html, find_chrome())
+                st = None
+        if cdp_mod is None:
             render_cli(range(n), d, html, find_chrome())
-            rendered_via = "cli 6 并发"
+        if frames is None:
+            # —— 整页单块（SPLIT 关或页不超阈值）：日志格式与现行逐字节一致 ——
+            rendered_via = "cli 6 并发" if st is None else _cdp_via(st)
+            got = len(list(d.glob("f*.png")))
+            if got != n: print(f"✗ {cid}: 期望 {n} 帧得到 {got}"); sys.exit(1)
+            print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
+            manifest_record(c, d, "gfx", key)
+            return cid, rendered_via
+        # —— split 块：并入页聚合器，末块负责校验/打印/记账 ——
+        with agg_lock:
+            acc = page_agg[(cid, key)]
+            acc["blocks"].append((len(frames), st))
+            acc["left"] -= 1
+            last = acc["left"] == 0
+        if not last:
+            return cid, None
+        blocks = acc["blocks"]
+        k = len(blocks)
+        stats_list = [s for _, s in blocks if s is not None]
+        n_cli = sum(1 for _, s in blocks if s is None)
+        if stats_list:
+            rendered_via = _cdp_via(_merge_cdp_stats(stats_list))
+            if n_cli:
+                rendered_via += f"，{n_cli} 块CLI回落"
+            if k > 1:
+                rendered_via += f"，split×{k}"
+        else:
+            rendered_via = "cli 6 并发" + (f"（split×{k}）" if k > 1 else "")
         got = len(list(d.glob("f*.png")))
         if got != n: print(f"✗ {cid}: 期望 {n} 帧得到 {got}"); sys.exit(1)
         print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
@@ -172,13 +270,15 @@ def gfx(c: Ctx):
     if jobs:
         if c.dry:
             # dry-run：只报告将渲染的页，不起 Chrome（否则冷态 all --dry-run 白付
-            # 数分钟真实渲染 + GB 级 PNG 落盘，2026-09-11 门控）
-            for cid, key, cl, n, d, html in jobs:
+            # 数分钟真实渲染 + GB 级 PNG 落盘，2026-09-11 门控；dry 不拆块）
+            for cid, key, cl, n, d, html, frames in jobs:
                 print(f"  [dry-run] gfx {cid}[{key}]: 将渲染 {n} 帧（Chrome {c.w}×{c.h}）")
             total += len(jobs)
         else:
             with ThreadPoolExecutor(min(page_workers, len(jobs))) as pex:
                 for cid, rendered_via in pex.map(render_one, jobs):
+                    if rendered_via is None:
+                        continue    # split 中间块：✓ 行由末块聚合输出
                     engine_notes.append(f"{cid}: {rendered_via}")
                     total += 1
     c.receipt("gfx", True, f"{total} gfx clips"
