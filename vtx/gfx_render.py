@@ -293,10 +293,20 @@ class Browser:
         if self.chrome:
             return
         for c in [os.environ.get("VTX_CHROME"), "google-chrome", "google-chrome-stable",
-                  "chromium", "chromium-browser", "chrome"]:
+                  "chromium", "chromium-browser", "chrome", "msedge"]:
             if c and (shutil.which(c) or os.path.isfile(c)):
                 self.chrome = c
                 return
+        if sys.platform == "win32":   # Windows 标准安装路径（含 (x86) 的系统自带 Edge）
+            w = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+            pf86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+            for c in (rf"{w}\Google\Chrome\Application\chrome.exe",
+                      rf"{pf86}\Google\Chrome\Application\chrome.exe",
+                      rf"{w}\Microsoft\Edge\Application\msedge.exe",
+                      rf"{pf86}\Microsoft\Edge\Application\msedge.exe"):
+                if os.path.isfile(c):
+                    self.chrome = c
+                    return
         raise RuntimeError("no chrome found")
 
     def start(self):
@@ -502,7 +512,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             return False
 
     def worker(idx):
-        nonlocal pool
+        nonlocal pool, use_override
         qi, retries = 0, 0
         my_gen = browser.generation
         while qi < len(queues[idx]):
@@ -528,16 +538,21 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 # 浏览器/连接级自愈：重启浏览器并重建 tab 池
                 # （generation 防多线程重复重启：自己那代已被别人换新则直接换用新池）
                 try:
+                    new_pool = None
                     with browser.lock:
                         if browser.generation == my_gen:
                             browser.hard_restart()
                             new_pool = browser.open_tabs()
-                        else:
-                            new_pool = None
+                            # override 重应用须在锁内、池发布前完成（2026-09-11 修复）：
+                            # 此前 worker 内对 use_override 赋值使其沦为局部变量，读取即
+                            # UnboundLocalError 且被下方 except 吞掉——重启后的新池永远
+                            # 不带 override，透明页静默渲成白底不透明帧并被续渲缓存信任；
+                            # 且池发布与 override 应用之间存竞态窗口，其它 worker 会抢用
+                            # 无 override 的新池。锁内 CDP 调用有 Tab.call 硬超时兜底。
+                            if new_pool is not None and use_override and not apply_override(new_pool):
+                                use_override = False  # 重应用失败 → 本页回落双截
                     if new_pool is not None:
                         pool = new_pool
-                        if use_override and not apply_override(pool):
-                            use_override = False  # 重应用失败 → 本页回落双截
                 except Exception:
                     time.sleep(0.5)
 

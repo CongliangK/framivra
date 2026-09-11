@@ -18,7 +18,8 @@ def find_chrome() -> str:
         cands += [rf"{w}\Google\Chrome\Application\chrome.exe",
                   rf"{pf86}\Google\Chrome\Application\chrome.exe",
                   rf"{lapp}\Google\Chrome\Application\chrome.exe",
-                  rf"{w}\Microsoft\Edge\Application\msedge.exe"]
+                  rf"{w}\Microsoft\Edge\Application\msedge.exe",
+                  rf"{pf86}\Microsoft\Edge\Application\msedge.exe"]  # 系统自带 Edge 默认装 (x86) 目录（只装 Edge 的出厂机 gfx 链不断）
     elif sys.platform == "darwin":
         cands += ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                   "/Applications/Chromium.app/Contents/MacOS/Chromium",

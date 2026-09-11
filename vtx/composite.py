@@ -298,6 +298,10 @@ class RenderPlan:
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
                "-c", "copy", str(out_path)])
         # 内置正确性自检：容器元数据总帧数必须精确 == project.duration_frames
+        # （dry-run 下产物不落地，探测必空 → 跳过自检；否则冷态 all --dry-run 在此误报退出）
+        if c.dry:
+            print(f"  [dry-run] 跳过拼接自检（产物未产出，帧数以段切点计算为准 = {c.dur}）")
+            return enc
         fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                              "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out_path)],
                             capture_output=True, text=True).stdout.strip()

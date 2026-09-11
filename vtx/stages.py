@@ -180,9 +180,11 @@ def audit(c: Ctx):
                      "total_h": f"{vol['total'] / 1024**3:.2f}G",
                      "tmp_orphans": [str(x) for x in tmp_orphans(c)],
                      "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry`"}
-    (c.out / "audit_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2))
+    if not c.dry:   # dry-run 不落 out/ 产物（audit_report 属交付诊断件，2026-09-11 门控）
+        (c.out / "audit_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2))
     warns = sum(1 for x in lines if x["status"] == "warn")
-    print(f"审计：{len(lines)} 项指标，{warns} 条建议（详见 out/audit_report.json，建议性不阻断）")
+    print(f"审计：{len(lines)} 项指标，{warns} 条建议"
+          + ("（dry-run，报告未落盘）" if c.dry else "（详见 out/audit_report.json，建议性不阻断）"))
     c.receipt("audit", True, f"{len(lines)} indicators, {warns} advisories")
 
 
@@ -320,5 +322,6 @@ def mux(c: Ctx):
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.out / "video_noaudio.mp4"),
            "-i", str(c.out / "audio.wav"), "-c:v", "copy", "-c:a", acodec, "-b:a", "192k",
            "-movflags", "+faststart", str(final)])
-    versions_record(c, final, "mux")
+    if not c.dry:   # dry-run 无产物可记账（versions_record 读 final.mp4，2026-09-11 门控）
+        versions_record(c, final, "mux")
     print(f"✓ 封装 final.mp4（{acodec} 192k）"); c.receipt("mux", True, f"{acodec} 192k")

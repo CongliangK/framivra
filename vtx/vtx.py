@@ -113,10 +113,12 @@ def gfx(c: Ctx):
             key = gfx_key(c, cl)
             n = cl["dur"]
             d = gfx_dir(c, cl)
-            if d.exists() and len(list(d.glob("f*.png"))) != n:  # 帧数不符（换时长）→ 清缓存重渲
-                shutil.rmtree(d)
-            d.mkdir(parents=True, exist_ok=True)
-            if len(list(d.glob("f*.png"))) == n:
+            # dry-run 只报告不动缓存：清缓存/mkdir 均为真实副作用，门控（2026-09-11）
+            if not c.dry:
+                if d.exists() and len(list(d.glob("f*.png"))) != n:  # 帧数不符（换时长）→ 清缓存重渲
+                    shutil.rmtree(d)
+                d.mkdir(parents=True, exist_ok=True)
+            if d.exists() and len(list(d.glob("f*.png"))) == n:
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
             jobs.append((cid, key, cl, n, d, (c.root / cl["src"]).resolve()))
 
@@ -149,10 +151,17 @@ def gfx(c: Ctx):
         return cid, rendered_via
 
     if jobs:
-        with ThreadPoolExecutor(min(page_workers, len(jobs))) as pex:
-            for cid, rendered_via in pex.map(render_one, jobs):
-                engine_notes.append(f"{cid}: {rendered_via}")
-                total += 1
+        if c.dry:
+            # dry-run：只报告将渲染的页，不起 Chrome（否则冷态 all --dry-run 白付
+            # 数分钟真实渲染 + GB 级 PNG 落盘，2026-09-11 门控）
+            for cid, key, cl, n, d, html in jobs:
+                print(f"  [dry-run] gfx {cid}[{key}]: 将渲染 {n} 帧（Chrome {c.w}×{c.h}）")
+            total += len(jobs)
+        else:
+            with ThreadPoolExecutor(min(page_workers, len(jobs))) as pex:
+                for cid, rendered_via in pex.map(render_one, jobs):
+                    engine_notes.append(f"{cid}: {rendered_via}")
+                    total += 1
     c.receipt("gfx", True, f"{total} gfx clips"
               + ("｜" + "; ".join(engine_notes) if engine_notes else ""))
 

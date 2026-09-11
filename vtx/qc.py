@@ -18,6 +18,11 @@ TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_
 
 
 def qc(c):
+    # dry-run 无产物可检（ffprobe 不在 dry 门控内，探测不存在的 final.mp4 会误报退出）
+    # —— 整阶段跳过，真实运行时逐项检查（2026-09-11 门控）
+    if getattr(c, "dry", False):
+        print("  [dry-run] qc：产物未产出，跳过探测（命令预览模式不做质量检查）")
+        return
     # 性能升级（2026-09-10，voice-ime 实测 qc 674s → 目标 <120s）三处病灶与对策：
     #   1) select=eq(n,N) 无输入 seek：每个探测点从片头解码到第 N 帧（多在 8000+ 帧），
     #      约 70 探测点 × 2 源串行 → 改 -ss 输入 seek（transcode 下帧精确）+ -frames:v 1；

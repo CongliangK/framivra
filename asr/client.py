@@ -250,7 +250,10 @@ def warm(base_url, timeout=600.0):
 # ---------------------------------------------------------------- sidecar 进程管理
 
 def pid_file(port):
-    return Path("/tmp/asr_sidecar_%d.pid" % port)
+    # tempfile.gettempdir() 跨平台（Windows 原生 Python 对 "/tmp" 会解析到当前盘根，
+    # 目录不存在写入失败；Git Bash 与 Linux 不变）
+    import tempfile
+    return Path(tempfile.gettempdir()) / ("asr_sidecar_%d.pid" % port)
 
 
 def _port_of(base_url):

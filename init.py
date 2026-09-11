@@ -21,6 +21,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OS = sys.platform  # linux / darwin / win32
 
+# Windows 控制台/管道默认 GBK 编码，✓✗ 中文输出会 UnicodeEncodeError 崩溃（Python
+# ≤3.14 非 UTF-8 模式）——统一重配 UTF-8 + replace，跨平台输出稳定
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -51,7 +59,8 @@ def find_chrome():
         paths = [rf"{w}\Google\Chrome\Application\chrome.exe",
                  rf"{p86}\Google\Chrome\Application\chrome.exe",
                  rf"{la}\Google\Chrome\Application\chrome.exe",
-                 rf"{w}\Microsoft\Edge\Application\msedge.exe"]
+                 rf"{w}\Microsoft\Edge\Application\msedge.exe",
+                 rf"{p86}\Microsoft\Edge\Application\msedge.exe"]  # 系统自带 Edge 默认装 (x86) 目录
     elif OS == "darwin":
         paths = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                  "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -88,15 +97,17 @@ HINTS = {
     "ffmpeg": {
         "linux": "dnf install ffmpeg | apt install ffmpeg（RPM Fusion/ Deb 多媒体源）",
         "darwin": "brew install ffmpeg",
-        "win32": "winget install Gyan.FFmpeg（或 gyan.dev 全量包，含 libfdk_aac 需选 full+ 或自备 BtbN/tytan650 构建）",
+        "win32": "winget install Gyan.FFmpeg（注意：gyan.dev/BtbN 的 GPL 发行包均不含 libfdk_aac，见下方 libfdk_aac 条）",
     },
     "chrome": {
         "linux": "dnf install google-chrome-stable（Google 官方 repo）或 chromium",
         "darwin": "brew install --cask google-chrome",
-        "win32": "winget install Google.Chrome（Edge 亦可：vtx 自动识别 msedge）",
+        "win32": "winget install Google.Chrome（Edge 亦可：vtx 自动识别 msedge，系统自带 Edge 在 (x86) 目录也能定位）",
     },
     "libfdk_aac": "缺 libfdk_aac 时 vtx 自动回落原生 aac 并告警——正式交付需复测编码后解码 TP（edit.md 坑表）。"
-                  "Linux 装 ffmpeg 自 fdk 构建（RPM Fusion / deb-multimedia）；Windows 用 gyan.dev full+ 或 BtbN 构建包。",
+                  "Linux 装 ffmpeg 自 fdk 构建（RPM Fusion / deb-multimedia）；Windows 的 gyan.dev/BtbN/winget "
+                  "发行包均不含 fdk（nonfree 不可随 GPL 分发），需自编译或找 nonfree 自动构建（如 tytan650 "
+                  "autobuild 系列），否则接受原生 aac 回落 + 交付前复测 TP。",
     "nvenc": "需要 NVIDIA 显卡 + NVIDIA 驱动；不可用时 vtx 自动回落 x264（慢但可用）。",
     "blender": {"linux": "dnf install blender", "darwin": "brew install --cask blender", "win32": "winget install BlenderFoundation.Blender"},
     "sox": {"linux": "dnf install sox", "darwin": "brew install sox", "win32": "winget install Gyan.FFmpeg 替代（sox 可选）"},
@@ -156,6 +167,16 @@ def _load_module(rel, name):
         return None
 
 
+def _conda_env_py(env, hook):
+    """conda env 解释器路径：环境变量钩子优先（与各 init.sh 同名钩子对齐，消除探测面
+    漂移），其次按平台取 ~/miniconda3/envs/<env>/bin/python（POSIX）或
+    <env>/python.exe（Windows conda 无 bin/ 层）。"""
+    hooked = os.environ.get(hook)
+    if hooked:
+        return Path(hooked)
+    return Path.home() / "miniconda3" / "envs" / env / ("python.exe" if OS == "win32" else "bin/python")
+
+
 # ---------------------------------------------------------------- 主流程
 def main():
     ap = argparse.ArgumentParser(description="video_tools 跨平台初始化")
@@ -207,7 +228,7 @@ def main():
     say("--- 4/5 大模型能力（默认关闭，按需开启；各链 init 见下）---")
     # matting 抠像链：细粒度探测（2026-09-11，此前只探 env 目录）
     _m = ROOT / "matting"
-    comfy_py = Path(os.path.expanduser("~/miniconda3/envs/comfyui/bin/python"))
+    comfy_py = _conda_env_py("comfyui", "COMFYUI_PY")   # 钩子对齐 matting/init.sh，Windows 布局自动切换
     rec("comfyui_env", comfy_py.is_file(), "matting/ 抠像推理 env；细探测 bash matting/init.sh")
     rec("matanyone2", (_m / "MatAnyone2/pretrained_models/hf2/model.safetensors").is_file(),
         "缺失跑：bash matting/init.sh --download（github 克隆+HF 权重 141MB）")
@@ -252,14 +273,15 @@ def main():
     rec("tts_repo", tts_repo.is_dir() and not miss,
         (str(tts_repo) + "（checkpoints 五件齐）") if not miss
         else f"缺 {'、'.join(miss)}（{tts_repo}）；部署路线见 tts/README.md，或用 --engine edge 兜底")
-    tts_py = next((p for p in (_cfg_get(lc, "tts.python", "~/miniconda3/envs/indextts/bin/python"),
-                               str(tts_repo / ".venv/bin/python"))
+    tts_py = next((p for p in (_cfg_get(lc, "tts.python", str(_conda_env_py("indextts", "TTS_PY"))),
+                               str(tts_repo / (".venv/Scripts/python.exe" if OS == "win32" else ".venv/bin/python")))
                    if p and Path(p).expanduser().is_file()), None)
     rec("tts_python", bool(tts_py), str(Path(tts_py).expanduser()) if tts_py
         else "缺 indextts 解释器（conda create -n indextts python=3.10，见 tts/README.md）")
     vr = Path(_cfg_get(lc, "tts.voice_ref", "~/音乐/5_G_Resemble仅降噪.wav")).expanduser()
     rec("tts_voice_ref", vr.is_file(), str(vr) if vr.is_file() else "缺 5-10s 干声音色参考（tts/README.md）")
-    eb = Path(_cfg_get(lc, "tts.edge_bin", "~/miniconda3/bin/edge-tts")).expanduser()
+    eb = Path(_cfg_get(lc, "tts.edge_bin", "~/miniconda3/" +
+                       ("Scripts/edge-tts.exe" if OS == "win32" else "bin/edge-tts"))).expanduser()
     rec("tts_edge", eb.is_file(), str(eb) if eb.is_file() else "缺 edge-tts（pip install edge-tts；免 GPU 兜底引擎）")
     # imgen：key 链复用 imgen/secrets.py（不复制逻辑）；requests 为模块唯一第三方依赖
     imgen_secrets = _load_module("imgen/secrets.py", "vt_init_imgen_secrets")
@@ -269,8 +291,10 @@ def main():
         sc_key = imgen_secrets.get_env_api_key() or imgen_secrets.get_stored_api_key()
         rec("imgen_key", bool(sc_key), (f"尾4位 {imgen_secrets.mask_key(sc_key)}" if sc_key
             else "未配置（解析链见 python3 imgen/imgen_cli.py key status）"))
-    r = sh(["python3", "-c", "import requests"])   # 与 imgen 实际运行方式一致（PATH python3）
-    v = sh(["python3", "-c", "import requests;print(requests.__version__)"]).stdout.split()[-1:] or [""]
+    # requests 探测用当前解释器：Windows 无 python3 别名，subprocess 会 FileNotFoundError
+    # 直接崩溃（2026-09-11 体检修复；与 imgen 实际运行解释器同源）
+    r = sh([sys.executable, "-c", "import requests"])
+    v = sh([sys.executable, "-c", "import requests;print(requests.__version__)"]).stdout.split()[-1:] or [""]
     rec("imgen_requests", r.returncode == 0, v[0]
         if r.returncode == 0 else "缺 requests（pip install requests；仅 imgen 需要）")
 
@@ -291,7 +315,7 @@ def main():
         for key in fail:
             cmd = table.get(key)
             print(f"  [{key}] {try_fix(key, cmd)}")
-        print("  安装后请重跑 init 验证。")
+        print("  安装后请重开终端再重跑 init 验证（winget 装的 PATH 不刷新进当前进程）。")
     elif fail:
         pm = pm_available()
         print(f"--- 缺失基础依赖安装指引（检测到包管理器：{pm or '未识别，请手动安装'}；或重跑加 --fix 自动安装）---")

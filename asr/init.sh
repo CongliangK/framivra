@@ -45,14 +45,20 @@ fi
 
 if [[ -z "$PY" ]]; then
   warn "探测链无解释器（config → IME .venv-qwen-asr → asr/.venv）→ 自建 asr/.venv"
-  SYS_PY="$(command -v python3)"
+  # Windows/Git Bash 无 python3 别名 → 回退 python（set -e 下 command -v 失败会直接杀脚本）
+  SYS_PY="$(command -v python3 || command -v python)"
+  if [[ -z "$SYS_PY" ]]; then
+    bad "无 python3/python 解释器——Windows 装 Python 勾选 Add to PATH 后重试"
+    exit 1
+  fi
   PYVER="$("$SYS_PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
   if [[ "${PYVER%%.*}" -lt 3 || "$PYVER" < "3.10" ]]; then
     bad "系统 python3 版本 $PYVER < 3.10，无法自建 venv（官方建议 3.12；本机 IME venv 3.14.7 已实证可用）"
   else
-    python3 -m venv "$ASR/.venv"
-    "$ASR/.venv/bin/pip" install -i "$TUNA" -U qwen-asr modelscope
-    PY="$ASR/.venv/bin/python"
+    "$SYS_PY" -m venv "$ASR/.venv"
+    VP="$ASR/.venv/bin/pip"; [[ -x "$ASR/.venv/Scripts/pip.exe" ]] && VP="$ASR/.venv/Scripts/pip.exe"
+    "$VP" install -i "$TUNA" -U qwen-asr modelscope
+    PY="$ASR/.venv/bin/python"; [[ -x "$ASR/.venv/Scripts/python.exe" ]] && PY="$ASR/.venv/Scripts/python.exe"
     ok "解释器（新建 asr/.venv）：$PY"
   fi
 fi

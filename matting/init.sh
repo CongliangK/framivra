@@ -91,9 +91,14 @@ fi
 if [ "$PY" = "--download" ]; then
   echo "--- 开始补齐缺失项 ---"
   dl_hf() { # dl_hf <repo_id> <local_dir>
+    # heredoc 走 stdin，Git Bash 的 /c/Users/... 路径不经 MSYS 参数转换，Windows
+    # Python 会解析到盘根 \c\Users\... 下错位置——cygpath -w 转 Windows 路径兜底
+    #（非 MSYS 环境无 cygpath，原样返回，Linux/macOS 行为不变）
+    local dl_dir
+    dl_dir="$(cygpath -w "$2" 2>/dev/null || echo "$2")"
     HF_ENDPOINT="$MIRROR" "$CPY" - <<PYEOF || return 1
 from huggingface_hub import snapshot_download
-print(snapshot_download("$1", local_dir=r"$2"))
+print(snapshot_download("$1", local_dir=r"$dl_dir"))
 PYEOF
   }
   clone_gh() { # clone_gh <url> <dir>
