@@ -372,6 +372,26 @@ _BG_INJECT_BLACK = (
     "(()=>{const s=document.getElementById('__vtx_bg');"
     "s.textContent=`html,body{background:#000 !important}`;'ok'})()")
 
+# 观测（方案 v2 阶段 0）：导出路径打标 + 每帧分项计时，只加观测不改像素行为。
+_PATH_KEYS = ("override", "canvas", "twoshot", "opaque", "canvas_fallback", "failed")
+_TIME_CATS = ("nav", "export", "decode", "write")
+
+
+def _empty_path_counts():
+    """每帧导出路径计数。键 = 帧实际走的分支（不凭 canvas_export 布尔推断）；
+    canvas 校验失败回落帧同时计入实际路径与 canvas_fallback，故总和可大于帧数。"""
+    return dict.fromkeys(_PATH_KEYS, 0)
+
+
+def _timings_summary(seconds_list):
+    """一个分项的耗时样本（秒）→ {"p50","p95","sum"} 毫秒；无成功帧时全 0。"""
+    import numpy as np
+    if not seconds_list:
+        return {"p50": 0.0, "p95": 0.0, "sum": 0.0}
+    ms = np.asarray(seconds_list, dtype=np.float64) * 1000.0
+    return {"p50": float(np.percentile(ms, 50)), "p95": float(np.percentile(ms, 95)),
+            "sum": float(ms.sum())}
+
 
 def page_transparent(tab) -> bool:
     """像素级检测：探针帧分别注白/黑背景截图，无差异（≤1/255）即整页有效不透明
@@ -449,6 +469,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
 
     返回统计 dict；帧级失败（含浏览器崩溃自愈重试 2 次）列入 failed，
     调用方对这些帧回落 CLI。浏览器起不来抛 GfxRenderError（全页回落 CLI）。
+    观测字段（方案 v2 阶段 0，只加观测）：path_counts=各帧实际导出路径计数
+    （canvas 校验失败回落帧同时计入实际路径与 canvas_fallback）；timings_ms=
+    nav/export/decode/write 四分项 p50/p95/sum 毫秒（只含成功帧；每 tab 线程
+    本地累积、join 后单线程合并，运行期无共享写免锁）。
     """
     if not _HAS_NUMPY:
         raise GfxRenderError("numpy unavailable")
@@ -469,22 +493,36 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         browser.stop()
         return {"n": n_frames, "rendered": 0, "failed": [], "transparent": None,
                 "tabs": tabs_n, "ms_total": 0.0, "ms_per_frame": 0.0,
-                "canvas_export": False}
+                "canvas_export": False, "path_counts": _empty_path_counts(),
+                "timings_ms": {c: _timings_summary([]) for c in _TIME_CATS}}
     queues = [work[k::tabs_n] for k in range(tabs_n)]
+    per_tab = [None] * tabs_n   # 观测槽位：worker 收尾写入 (path_counts, time_samples)
 
     def do_frame(tab, i):
+        """渲一帧 → (png, 实际路径标, 分项耗时秒)。路径标 ∈ override/canvas/twoshot/
+        opaque，在函数内各分支出口就地打标（与真实走向一致，不凭 canvas_export
+        布尔推断）；canvas 校验失败的回落帧由 worker 另计 canvas_fallback。
+        setup 探针帧不走本函数，不进分项样本；write 由 worker 侧单独计。"""
+        timing = dict.fromkeys(("nav", "export", "decode"), 0.0)
+        t0 = time.monotonic()
         # PR#1 合入：Path.as_uri() 生成 file URL——Windows 盘符保留、空格/Unicode/#/
         # ? 等 URL 保留字全部百分号编码（旧 f"file://{path}" 在含 # 的目录下截断成
         # fragment，Linux 同样中招；无特殊字符的绝对路径两形式逐字符一致）。
         tab.navigate(f"{Path(html_path).resolve().as_uri()}?f={i}")
+        timing["nav"] = time.monotonic() - t0
         if canvas_export:
             # Canvas 导出通道（PR#1）：页面可选实现 window.__vtx_export_png() 同步返回
             # 画布 dataURL——校验 PNG 信封（分块边界/CRC/IHDR 尺寸色彩型/IEND）后直用，
             # 失效载荷绝不写入可续渲缓存，回落同页截图路径（见下，两截保 alpha）。
+            t0 = time.monotonic()
+            ok = True
             try:
-                return decode_canvas_export(tab.eval("window.__vtx_export_png()"), width, height)
+                png = decode_canvas_export(tab.eval("window.__vtx_export_png()"), width, height)
             except (ValueError, TypeError, GfxRenderError):
-                pass
+                ok = False
+            timing["export"] = time.monotonic() - t0
+            if ok:
+                return png, "canvas", timing
         if use_override:
             # 透明快路径（2026-09-11）：Emulation.setDefaultBackgroundColorOverride(a=0)
             # 使 captureScreenshot 直出带 alpha 的 RGBA PNG——单截直写，与白黑双截金标准
@@ -492,14 +530,27 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             # override 跨导航持久（每 tab 设一次）。替代注入式双截（省一次整页光栅+
             # 两次解码+一次重编码）。注意：override 干不过页面显式 CSS 背景，gfx 页协议
             # 要求 body 透明故无冲突；直写 Chrome 原生 PNG，Python 侧零编解码。
-            return tab.shot()
+            t0 = time.monotonic()
+            png = tab.shot()
+            timing["export"] = time.monotonic() - t0
+            return png, "override", timing
         if not transparent:
-            return tab.shot()
+            # 整页有效不透明且 override 未启用：朴素单截直写
+            t0 = time.monotonic()
+            png = tab.shot()
+            timing["export"] = time.monotonic() - t0
+            return png, "opaque", timing
+        # 白黑两截：注入+截图属浏览器侧导出，解算+重编码属 Python 侧
+        t0 = time.monotonic()
         tab.eval(_BG_INJECT_WHITE)
         w_png = tab.shot()
         tab.eval(_BG_INJECT_BLACK)
         b_png = tab.shot()
-        return _two_shot_combine(w_png, b_png)
+        timing["export"] = time.monotonic() - t0
+        t0 = time.monotonic()
+        png = _two_shot_combine(w_png, b_png)
+        timing["decode"] = time.monotonic() - t0
+        return png, "twoshot", timing
 
     def apply_override(tabs_):
         """给每个 tab 设透明背景 override；任一失败返回 False（整页回落双截）。"""
@@ -513,6 +564,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
 
     def worker(idx):
         nonlocal pool, use_override
+        # 观测累积全部线程本地（每 worker 独立 dict/list，收尾写 per_tab 自己的槽位，
+        # 运行期无共享写免锁），join 后 render_page 单线程合并。
+        my_paths = _empty_path_counts()
+        my_times = {c: [] for c in _TIME_CATS}
         qi, retries = 0, 0
         my_gen = browser.generation
         while qi < len(queues[idx]):
@@ -520,9 +575,16 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             try:
                 if idx >= len(pool):
                     raise ConnectionError("tab lost after browser restart")
-                png = do_frame(pool[idx], i)
+                png, path, timing = do_frame(pool[idx], i)
+                if canvas_export and path != "canvas":
+                    my_paths["canvas_fallback"] += 1  # canvas 校验失败回落：实际路径仍照常计
+                my_paths[path] += 1
+                t0 = time.monotonic()
                 with open(os.path.join(outdir, f"f{i:04d}.png"), "wb") as fh:
                     fh.write(png)
+                my_times["write"].append(time.monotonic() - t0)
+                for c in ("nav", "export", "decode"):
+                    my_times[c].append(timing[c])
                 qi += 1
                 retries = 0
                 my_gen = browser.generation
@@ -530,6 +592,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 retries += 1
                 if retries > 2:
                     failed.append(i)
+                    my_paths["failed"] += 1  # 失败帧只计数：耗时样本只留成功帧，避免重试噪声
                     qi += 1
                     retries = 0
                     if progress:
@@ -555,6 +618,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                         pool = new_pool
                 except Exception:
                     time.sleep(0.5)
+        # 收尾：写本 worker 的观测槽位（每槽只被所属线程写一次，无竞争）
+        per_tab[idx] = (my_paths, my_times)
 
     try:
         pool = browser.open_tabs()
@@ -599,10 +664,22 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     finally:
         browser.stop()
     dt = (time.monotonic() - t0) * 1000
+    # 合并各 tab 线程本地的路径计数与分项耗时（槽位由 worker 收尾写入；None 兜底
+    # 防 worker 异常退出缺槽）
+    path_counts = _empty_path_counts()
+    samples = {c: [] for c in _TIME_CATS}
+    for slot in per_tab:
+        pc_t, ts_t = slot if slot else (_empty_path_counts(), {c: [] for c in _TIME_CATS})
+        for k, v in pc_t.items():
+            path_counts[k] += v
+        for c, vals in ts_t.items():
+            samples[c].extend(vals)
     return {"n": n_frames, "rendered": len(work) - len(failed), "failed": sorted(failed),
             "transparent": transparent, "tabs": tabs_n, "ms_total": dt,
             "ms_per_frame": dt / max(1, len(work)),
-            "canvas_export": canvas_export}
+            "canvas_export": canvas_export,
+            "path_counts": path_counts,
+            "timings_ms": {c: _timings_summary(samples[c]) for c in _TIME_CATS}}
 
 
 class GfxRenderError(RuntimeError):

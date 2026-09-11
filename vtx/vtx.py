@@ -76,6 +76,22 @@ from stages import audit, build_audio, mux, prepare, validate
 
 
 # ---------------------------------------------------------------- gfx
+def _cdp_via(st):
+    """render_page stats → 一行渲染摘要（方案 v2 阶段 0 观测）：路径打标 + ms/帧 +
+    分项 p50。只读 stats 字段直接格式化，不做字符串状态判断（DEV.md NIT）。
+    path_counts 键序固定、零值也显示，保证多页日志可 grep 对齐。"""
+    pc, tm = st["path_counts"], st["timings_ms"]
+    paths = " ".join(f"{k}×{pc[k]}" for k in
+                     ("override", "canvas", "twoshot", "opaque", "canvas_fallback", "failed")
+                     if k in pc)
+    if "cli_fallback" in pc:
+        paths += f" cli_fallback×{pc['cli_fallback']}"
+    split = "/".join(f"{k} {tm[k]['p50']:.0f}" for k in ("nav", "export", "decode", "write")
+                     if k in tm)
+    return (f"{st['tabs']} tabs CDP {paths}, {st['ms_per_frame']:.0f}ms/帧 "
+            f"({split} ms@p50)")
+
+
 def gfx(c: Ctx):
     budget_gate(c, "gfx")
     total = 0
@@ -138,7 +154,9 @@ def gfx(c: Ctx):
                 if st["failed"]:
                     print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
                     render_cli(st["failed"], d, html, find_chrome())
-                rendered_via = f"{st['tabs']} tabs CDP, {st['ms_per_frame']:.0f}ms/帧"
+                    # CLI 补渲计数由调用方补进 path_counts（gfx_render 不感知 CLI 通道）
+                    st["path_counts"]["cli_fallback"] = len(st["failed"])
+                rendered_via = _cdp_via(st)
             except Exception as e:
                 print(f"⚠ {cid}: CDP 渲染失败（{e}），整页回落 CLI")
                 rendered_via = f"cli（CDP 失败回落: {e}）"
