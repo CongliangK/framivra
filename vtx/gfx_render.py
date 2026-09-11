@@ -16,6 +16,11 @@ alpha 处理（本机 Chrome 152 实测，/tmp/gfx_cdp_dev/REPORT.md 实验1）�
   数学无损；不透明页（html/body computed background 不透明）单截直写 Chrome
   原生 PNG，零重编码。
 
+__vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注释块）：
+  VTX_GFX_NAVFREE（默认 0）=1 时每 tab 免逐帧导航，帧态由页内 __vtx_render 置位；
+  VTX_GFX_STATIC（默认 1）按页面 __vtx_static_spans 声明字节复制静态跨度成员帧。
+  原 foreignObject 快照批量通路已判死移除（FO 图像上下文光栅化固有偏差）。
+
 纯标准库（socket/struct/base64/json/zlib）+ numpy（仅两截 alpha 解算与 PNG
 编解码；无 numpy 时返回不可用，调用方全量回落 CLI）。
 
@@ -362,6 +367,28 @@ class Browser:
         self.generation += 1
 
 
+# ---------------------------------------------------------------- __vtx_render 两项加速（方案 v2 阶段 2 转向后设计）
+#
+# 页面契约：window.__vtx_render(f) 为同步纯函数（调用后页面视觉状态 == 以 ?f=f
+# 加载的状态，幂等、与调用顺序无关）。
+#
+# 特性 1 nav-free 截图（VTX_GFX_NAVFREE，默认 0）：页面有 __vtx_render 时每 tab
+# 只导航一次，之后每帧页内 __vtx_render(f) 置帧态 + 现有 tab.shot()，省每帧导航。
+# 像素风险点=「JS 突变后 captureScreenshot 是否强制重绘出当前帧」，由集成阶段
+# golden 全帧比对验收；渲染器侧不做额外校验，仅 navfree×N 打标 + 启用告警。
+# eval 用 try/catch 包一层取哨兵值：__vtx_render 抛错的帧立即转回导航路径，
+# 绝不把失败帧的前一帧状态静默截下来。
+#
+# 特性 2 静态跨度去重（VTX_GFX_STATIC，默认 1）：页面可声明
+#   window.__vtx_static_spans = [[a,b), ...]（帧号左闭右开，承诺「此区间画面恒定」；
+#   与 __vtx_render 无关，任何页可声明，由声明生成方经序列化 hash 全等扫描产出
+#   ——DOM 全等 ⇒ 光栅全等 ⇒ 字节全等）。渲染器按跨度缩减渲染集：区间头渲染/
+#   复用，区间内缺失成员帧字节复制头帧文件（零解码零编码）。正确性由声明生成方
+#   扫描 + golden 比对双兜底，渲染器信任声明；解析失败惰性降级原路径（warning）。
+# 成员帧「缺失才复制」，已存在的不动（与现行续渲语义一致）。
+# 原 foreignObject 快照/alpha 探针通路已判死（FO 图像上下文光栅化固有偏差，
+# golden 全零门槛不过），相关驱动与 VTX_GFX_BATCH* env 一并移除。
+
 # ---------------------------------------------------------------- 渲染主体
 
 _BG_INJECT_WHITE = (
@@ -373,7 +400,10 @@ _BG_INJECT_BLACK = (
     "s.textContent=`html,body{background:#000 !important}`;'ok'})()")
 
 # 观测（方案 v2 阶段 0）：导出路径打标 + 每帧分项计时，只加观测不改像素行为。
-_PATH_KEYS = ("override", "canvas", "twoshot", "opaque", "canvas_fallback", "failed")
+# 方案 v2 阶段 2 追加：navfree=经页内 __vtx_render 置帧态的免导航截图帧；
+# static_copied=按静态跨度声明字节复制头帧产生的成员帧（不计入 rendered）。
+_PATH_KEYS = ("override", "canvas", "twoshot", "opaque", "navfree",
+              "canvas_fallback", "static_copied", "failed")
 _TIME_CATS = ("nav", "export", "decode", "write")
 
 
@@ -463,6 +493,66 @@ def decode_canvas_export(data_url, width, height):
         raise GfxRenderError(f"invalid canvas PNG: {exc}") from exc
 
 
+def _normalize_spans(raw, n_frames):
+    """__vtx_static_spans 声明解析：[[a,b),…] 帧号左闭右开、0≤a<b≤n_frames。
+    缺失（None）→ 空表（无缩减）；形状/数值非法 → None（调用方 warning 后按
+    无声明处理）——声明是惰性数据，任何解析问题都不阻断渲染。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return None
+    out = []
+    try:
+        for sp in raw:
+            if not (isinstance(sp, (list, tuple)) and len(sp) == 2):
+                return None
+            a, b = int(sp[0]), int(sp[1])
+            if not (0 <= a < b <= n_frames):
+                return None
+            out.append((a, b))
+    except (TypeError, ValueError):
+        return None
+    return out
+
+
+def plan_static_spans(spans, want, outdir):
+    """静态跨度缩减规划（纯函数，文件系统只读探测）。
+
+    spans=[(a,b),…] 声明区间；want=本调用缺失帧号集（现行 work 语义：frames 参数
+    ∩ 缺失帧）。返回 (work, copy_now, deferred, n_spans)：
+      work      渲染帧号升序表——原 want 加上「缺失且不在本调用」的跨度头
+                （跨分片块正确性：块内自足，头不在 frames 参数也并入渲染）
+      copy_now  [(member, head_path)] 头帧已缓存 → 立即字节复制
+      deferred  [(head, [members])]   头帧由本次渲染落盘后复制
+      n_spans   生效跨度数（有成员被复制/待复制的跨度）
+    成员只取 want 内的缺失帧——已存在帧不动（与现行续渲语义一致）；帧被第一个
+    声明它的跨度认领，重叠声明不重复处理。"""
+    want_set = set(want)
+    claimed = set()
+    work_add = set()
+    copy_now, deferred = [], []
+    n_spans = 0
+    for a, b in spans:
+        head = a
+        head_path = os.path.join(outdir, f"f{head:04d}.png")
+        members = [m for m in range(a + 1, b)
+                   if m in want_set and m not in claimed]
+        if not members:
+            continue
+        claimed.update(members)
+        if os.path.exists(head_path):
+            copy_now.extend((m, head_path) for m in members)
+        else:
+            # 头帧缺失：∈want 则已在 work；∉want（其他分片块的范围）也并入本调用
+            if head not in want_set:
+                work_add.add(head)
+            deferred.append((head, members))
+        n_spans += 1
+    # 被复制成员退出渲染集（字节复制替代渲染）；头帧并入
+    work = sorted((set(want) - claimed) | work_add)
+    return work, copy_now, deferred, n_spans
+
+
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 width=1920, height=1080, progress=None, frames=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
@@ -476,8 +566,19 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     调用方对这些帧回落 CLI。浏览器起不来抛 GfxRenderError（全页回落 CLI）。
     观测字段（方案 v2 阶段 0，只加观测）：path_counts=各帧实际导出路径计数
     （canvas 校验失败回落帧同时计入实际路径与 canvas_fallback）；timings_ms=
-    nav/export/decode/write 四分项 p50/p95/sum 毫秒（只含成功帧；每 tab 线程
+    nav/export/decode/write 各分项 p50/p95/sum 毫秒（只含成功帧；每 tab 线程
     本地累积、join 后单线程合并，运行期无共享写免锁）。
+
+    __vtx_render 两项加速（方案 v2 阶段 2，转向后设计）：
+    nav-free 截图（VTX_GFX_NAVFREE，默认 0）：页面有 __vtx_render 时每 tab 只
+    导航一次，之后每帧页内 __vtx_render(f) 置帧态 + 现有截图路径（打标 navfree）；
+    页内执行抛错的帧立即转回导航路径（页级一次性告警），绝不静默截错帧。
+    静态跨度去重（VTX_GFX_STATIC，默认 1）：页面声明 __vtx_static_spans=[[a,b),…]
+    （区间画面恒定承诺）时，缺失的区间成员帧字节复制头帧文件（static_copied 计数，
+    不占 rendered）；头帧缺失则并入本调用渲染集（跨分片块/续渲天然正确）；声明
+    缺失/解析失败 → 无缩减原路径。见模块头注释。
+    未启用特性的页行为逐字节不变：VTX_GFX_NAVFREE=0 时零额外 eval；
+    VTX_GFX_STATIC 只多一次声明读取 eval（惰性数据，像素零影响）。
     """
     if not _HAS_NUMPY:
         raise GfxRenderError("numpy unavailable")
@@ -485,12 +586,14 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     html_path = os.path.abspath(html_path)
     outdir = os.path.abspath(outdir)
     os.makedirs(outdir, exist_ok=True)
+    base_uri = Path(html_path).resolve().as_uri()
     work = [i for i in (range(n_frames) if frames is None else frames)
             if not os.path.exists(os.path.join(outdir, f"f{i:04d}.png"))]
     if not work:
         return {"n": n_frames, "rendered": 0, "failed": [], "transparent": None,
                 "tabs": tabs_n, "ms_total": 0.0, "ms_per_frame": 0.0,
                 "canvas_export": False, "path_counts": _empty_path_counts(),
+                "static_spans": 0,
                 "timings_ms": {c: _timings_summary([]) for c in _TIME_CATS}}
     # Browser 构造/启动放在 work 空判之后（v2 阶段 1 页内分片）：全缓存块零
     # Chrome；ms_total 仍从启动完成后起算（与旧语义一致，不含浏览器启动耗时）
@@ -501,20 +604,40 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     failed = []
     transparent = None
     canvas_export = False
-    queues = [work[k::tabs_n] for k in range(tabs_n)]
     per_tab = [None] * tabs_n   # 观测槽位：worker 收尾写入 (path_counts, time_samples)
+    warned = [False]            # navfree 页内执行失败「首次告警」槽（页级）
+    navfree_on = False          # 特性 1：本页 nav-free 截图开关（setup 判定）
+    static_spans_n = 0          # 特性 2：生效跨度数（stats 打 span×K）
+    static_copied_n = 0         # 特性 2：字节复制成员帧数（write 成功才计数，B5 口径）
+    deferred_spans = []         # [(head, [members])]：头帧本次渲染落盘后复制
 
-    def do_frame(tab, i):
-        """渲一帧 → (png, 实际路径标, 分项耗时秒)。路径标 ∈ override/canvas/twoshot/
-        opaque，在函数内各分支出口就地打标（与真实走向一致，不凭 canvas_export
-        布尔推断）；canvas 校验失败的回落帧由 worker 另计 canvas_fallback。
+    def note(msg):
+        """加速特性告警：progress 缺席（vtx 现行接法）也必须可见——落 stderr。"""
+        if progress:
+            progress("⚠ gfx_render: " + msg)
+        else:
+            print("⚠ gfx_render: " + msg, file=sys.stderr)
+
+    def do_frame(tab, i, navfree=False):
+        """渲一帧 → (png, 实际路径标, 分项耗时秒)。路径标 ∈ canvas/navfree/override/
+        twoshot/opaque，在函数内各分支出口就地打标（与真实走向一致，不凭 canvas_export
+        布尔推断）；navfree=True 时免导航——页内 __vtx_render(i) 置帧态（try/catch
+        哨兵：页内抛错即 raise，由调用方转回导航路径，绝不静默截前一帧），截图子
+        路径统一打标 navfree；canvas 校验失败的回落帧由 worker 另计 canvas_fallback。
         setup 探针帧不走本函数，不进分项样本；write 由 worker 侧单独计。"""
         timing = dict.fromkeys(("nav", "export", "decode"), 0.0)
         t0 = time.monotonic()
-        # PR#1 合入：Path.as_uri() 生成 file URL——Windows 盘符保留、空格/Unicode/#/
-        # ? 等 URL 保留字全部百分号编码（旧 f"file://{path}" 在含 # 的目录下截断成
-        # fragment，Linux 同样中招；无特殊字符的绝对路径两形式逐字符一致）。
-        tab.navigate(f"{Path(html_path).resolve().as_uri()}?f={i}")
+        if navfree:
+            # 特性 1 nav-free：省每帧导航。哨兵 0 = 页内 __vtx_render 抛错。
+            ok = tab.eval("(()=>{try{window.__vtx_render(%d);return 1}"
+                          "catch(e){return 0}})()" % i)
+            if ok != 1:
+                raise GfxRenderError(f"__vtx_render({i}) 页内执行失败")
+        else:
+            # PR#1 合入：Path.as_uri() 生成 file URL——Windows 盘符保留、空格/Unicode/#/
+            # ? 等 URL 保留字全部百分号编码（旧 f"file://{path}" 在含 # 的目录下截断成
+            # fragment，Linux 同样中招；无特殊字符的绝对路径两形式逐字符一致）。
+            tab.navigate(f"{base_uri}?f={i}")
         timing["nav"] = time.monotonic() - t0
         if canvas_export:
             # Canvas 导出通道（PR#1）：页面可选实现 window.__vtx_export_png() 同步返回
@@ -542,13 +665,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             t0 = time.monotonic()
             png = tab.shot()
             timing["export"] = time.monotonic() - t0
-            return png, "override", timing
+            return png, ("navfree" if navfree else "override"), timing
         if not transparent:
             # 整页有效不透明且 override 未启用：朴素单截直写
             t0 = time.monotonic()
             png = tab.shot()
             timing["export"] = time.monotonic() - t0
-            return png, "opaque", timing
+            return png, ("navfree" if navfree else "opaque"), timing
         # 白黑两截：注入+截图属浏览器侧导出，解算+重编码属 Python 侧
         t0 = time.monotonic()
         tab.eval(_BG_INJECT_WHITE)
@@ -559,7 +682,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         t0 = time.monotonic()
         png = _two_shot_combine(w_png, b_png)
         timing["decode"] = time.monotonic() - t0
-        return png, "twoshot", timing
+        return png, ("navfree" if navfree else "twoshot"), timing
 
     def apply_override(tabs_):
         """给每个 tab 设透明背景 override；任一失败返回 False（整页回落双截）。"""
@@ -577,72 +700,137 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         # 运行期无共享写免锁），join 后 render_page 单线程合并。
         my_paths = _empty_path_counts()
         my_times = {c: [] for c in _TIME_CATS}
-        qi, retries = 0, 0
-        my_gen = browser.generation
-        while qi < len(queues[idx]):
-            i = queues[idx][qi]
+        gen = [browser.generation]
+
+        def heal():
+            """浏览器/连接级自愈：重启浏览器并重建 tab 池（generation 防多线程
+            重复重启：自己那代已被别人换新则直接换用共享新池）。"""
+            nonlocal pool, use_override
+            try:
+                new_pool = None
+                with browser.lock:
+                    if browser.generation == gen[0]:
+                        browser.hard_restart()
+                        new_pool = browser.open_tabs()
+                        # override 重应用须在锁内、池发布前完成（2026-09-11 修复）：
+                        # 重启后的新池若不带 override，透明页会静默渲成白底不透明帧。
+                        # 锁内 CDP 调用有 Tab.call 硬超时兜底。
+                        if new_pool is not None and use_override and not apply_override(new_pool):
+                            use_override = False  # 重应用失败 → 本页回落双截
+                if new_pool is not None:
+                    pool = new_pool
+                    gen[0] = browser.generation
+            except Exception:
+                time.sleep(0.5)
+
+        def shot_with_heal(i, navfree=False):
+            """渲一帧并落盘（含自愈重试 ≤2）。B5 语义：路径计数移到 write 成功
+            之后，write 失败重试不再重复计数。navfree=True 且页内 __vtx_render
+            抛错时本帧自动转回导航路径（不耗重试预算，页级一次性告警）。"""
+            nf = navfree
+            retries = 0
+            while True:
+                try:
+                    if idx >= len(pool):
+                        raise ConnectionError("tab lost after browser restart")
+                    png, path, timing = do_frame(pool[idx], i, navfree=nf)
+                    t0 = time.monotonic()
+                    with open(os.path.join(outdir, f"f{i:04d}.png"), "wb") as fh:
+                        fh.write(png)
+                    my_times["write"].append(time.monotonic() - t0)
+                    for c in ("nav", "export", "decode"):
+                        my_times[c].append(timing[c])
+                    if canvas_export and path != "canvas":
+                        my_paths["canvas_fallback"] += 1  # canvas 校验失败回落：实际路径仍照常计
+                    my_paths[path] += 1
+                    gen[0] = browser.generation
+                    return True
+                except Exception:
+                    if nf:
+                        # navfree 失败 → 本帧转导航路径；绝不静默（页级告警一次）
+                        nf = False
+                        if not warned[0]:
+                            warned[0] = True
+                            note("页内 __vtx_render 执行失败，回落逐帧导航路径"
+                                 "（本页首次告警）")
+                        continue
+                    retries += 1
+                    if retries > 2:
+                        failed.append(i)
+                        my_paths["failed"] += 1  # 失败帧只计数：耗时样本只留成功帧，避免重试噪声
+                        note(f"帧 {i} 重试 2 次仍失败，交由调用方回落")
+                        return False
+                    heal()
+
+        # —— navfree 每 tab 一次性导航（特性 1）：之后帧态全由页内 __vtx_render 置位 ——
+        nf_tab = navfree_on
+        if nf_tab and queues[idx]:
             try:
                 if idx >= len(pool):
                     raise ConnectionError("tab lost after browser restart")
-                png, path, timing = do_frame(pool[idx], i)
                 t0 = time.monotonic()
-                with open(os.path.join(outdir, f"f{i:04d}.png"), "wb") as fh:
-                    fh.write(png)
-                my_times["write"].append(time.monotonic() - t0)
-                for c in ("nav", "export", "decode"):
-                    my_times[c].append(timing[c])
-                # B5：路径计数移到 write 成功之后——此前 write 抛错（磁盘满/权限）时
-                # 计数已落，同帧重试成功后路径计数与 canvas_fallback 双计
-                if canvas_export and path != "canvas":
-                    my_paths["canvas_fallback"] += 1  # canvas 校验失败回落：实际路径仍照常计
-                my_paths[path] += 1
-                qi += 1
-                retries = 0
-                my_gen = browser.generation
+                pool[idx].navigate(f"{base_uri}?f={queues[idx][0]}")
+                my_times["nav"].append(time.monotonic() - t0)
             except Exception:
-                retries += 1
-                if retries > 2:
-                    failed.append(i)
-                    my_paths["failed"] += 1  # 失败帧只计数：耗时样本只留成功帧，避免重试噪声
-                    qi += 1
-                    retries = 0
-                    if progress:
-                        progress(f"⚠ gfx_render: 帧 {i} 重试 2 次仍失败，交由调用方回落")
-                    continue
-                # 浏览器/连接级自愈：重启浏览器并重建 tab 池
-                # （generation 防多线程重复重启：自己那代已被别人换新则直接换用新池）
-                try:
-                    new_pool = None
-                    with browser.lock:
-                        if browser.generation == my_gen:
-                            browser.hard_restart()
-                            new_pool = browser.open_tabs()
-                            # override 重应用须在锁内、池发布前完成（2026-09-11 修复）：
-                            # 此前 worker 内对 use_override 赋值使其沦为局部变量，读取即
-                            # UnboundLocalError 且被下方 except 吞掉——重启后的新池永远
-                            # 不带 override，透明页静默渲成白底不透明帧并被续渲缓存信任；
-                            # 且池发布与 override 应用之间存竞态窗口，其它 worker 会抢用
-                            # 无 override 的新池。锁内 CDP 调用有 Tab.call 硬超时兜底。
-                            if new_pool is not None and use_override and not apply_override(new_pool):
-                                use_override = False  # 重应用失败 → 本页回落双截
-                    if new_pool is not None:
-                        pool = new_pool
-                except Exception:
-                    time.sleep(0.5)
+                nf_tab = False    # 首导航失败 → 本 tab 逐帧导航（各帧自会重试/自愈）
+        for i in queues[idx]:
+            shot_with_heal(i, navfree=nf_tab)
         # 收尾：写本 worker 的观测槽位（每槽只被所属线程写一次，无竞争）
         per_tab[idx] = (my_paths, my_times)
 
     try:
         pool = browser.open_tabs()
-        pool[0].navigate(f"{Path(html_path).resolve().as_uri()}?f={work[0]}")
+        pool[0].navigate(f"{base_uri}?f={work[0]}")
         time.sleep(0.15)
         # Canvas 导出通道（PR#1）先于透明检测：opt-in 页直出画布 PNG（自带精确 alpha），
         # 截图路径整体旁路——override/flatten 守卫/两截解算都不需要；导出失败帧在
         # do_frame 内回落白黑双截（transparent=True 保证回落路径走两截，保 alpha）。
         canvas_export = bool(pool[0].eval("typeof window.__vtx_export_png === 'function'"))
+        # —— 特性 2 静态跨度去重：导航后读声明并缩减渲染集。必须在 worker 启动前
+        # 完成（缺失头帧要并入 work 并重建队列）；声明是惰性数据，读取/解析失败
+        # 只影响缩减不影响像素。复制在规划后立即做（头帧已缓存的成员）。——
+        raw_spans = None
+        if os.environ.get("VTX_GFX_STATIC", "1") != "0":
+            try:
+                raw_spans = pool[0].eval("window.__vtx_static_spans || null")
+            except Exception:
+                raw_spans = None
+        spans = _normalize_spans(raw_spans, n_frames)
+        if spans is None:
+            note("__vtx_static_spans 声明解析失败，按无声明原路径渲染")
+            spans = []
+        copy_now = []
+        if spans:
+            work, copy_now, deferred_spans, static_spans_n = plan_static_spans(
+                spans, work, outdir)
+        for m, head_path in copy_now:
+            # 头帧已缓存：字节复制（B5 口径：写成功才计数）；失败则交回渲染集
+            try:
+                with open(head_path, "rb") as fh:
+                    data = fh.read()
+                with open(os.path.join(outdir, f"f{m:04d}.png"), "wb") as fh:
+                    fh.write(data)
+                static_copied_n += 1
+            except OSError as e:
+                note(f"帧 {m} 复制头帧失败（{e}），改渲染")
+                work.append(m)
+                work.sort()
+        queues = [work[k::tabs_n] for k in range(tabs_n)]
+        # —— 特性 1 nav-free 资格判定：VTX_GFX_NAVFREE=1 且页面有 __vtx_render。
+        # 默认 0：env 关闭时零额外 eval，页面行为与旧路径逐字节一致。——
+        if os.environ.get("VTX_GFX_NAVFREE", "0") == "1":
+            try:
+                navfree_on = bool(pool[0].eval(
+                    "typeof window.__vtx_render === 'function'"))
+            except Exception:
+                navfree_on = False
+            if navfree_on:
+                note("navfree 已启用：每 tab 仅导航一次、帧态由页内 __vtx_render 置位"
+                     "（像素一致性以 golden 全帧比对验收）")
         transparent = None
         use_override = False
-        if not canvas_export:
+        if not canvas_export and work:
+            # 跨度缩减后 work 可能为空（缺失帧全是已缓存头帧的成员）→ 跳过透明检测
             use_override = apply_override(pool)  # 透明快路径开关（2026-09-11）
             if use_override:
                 # flatten 守卫（2026-09-11）：body/html 级 opacity 的页（标题/端板类淡入
@@ -653,7 +841,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 probes = [work[0], work[len(work) // 2]]
                 flat = True
                 for pf in probes:
-                    pool[0].navigate(f"{Path(html_path).resolve().as_uri()}?f={pf}")
+                    pool[0].navigate(f"{base_uri}?f={pf}")
                     arr = png_decode_rgba(pool[0].shot())
                     if not (arr[:, :, 3] == 255).all():
                         flat = False
@@ -667,14 +855,38 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 transparent = page_transparent(pool[0])
         else:
             transparent = True
-        threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        if work:
+            # 缩减后 work 可能清空（缺失帧全是已缓存头帧的跨度成员）→ 零线程收尾
+            threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
     finally:
         browser.stop()
     dt = (time.monotonic() - t0) * 1000
+    rendered_n = len(work) - len(failed)
+    # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
+    for head, members in deferred_spans:
+        head_path = os.path.join(outdir, f"f{head:04d}.png")
+        try:
+            with open(head_path, "rb") as fh:
+                data = fh.read()
+        except OSError as e:
+            # 头帧渲染失败/不可读：成员帧交回 failed 由调用方 CLI 补渲，绝不静默丢帧
+            note(f"跨度头帧 f{head:04d}.png 不可读（{e}），{len(members)} 个成员帧交由调用方回落")
+            for m in members:
+                if not os.path.exists(os.path.join(outdir, f"f{m:04d}.png")):
+                    failed.append(m)
+            continue
+        for m in members:
+            try:
+                with open(os.path.join(outdir, f"f{m:04d}.png"), "wb") as fh:
+                    fh.write(data)
+                static_copied_n += 1
+            except OSError as e:
+                note(f"帧 {m} 复制头帧失败（{e}），交由调用方回落")
+                failed.append(m)
     # 合并各 tab 线程本地的路径计数与分项耗时（槽位由 worker 收尾写入；None 兜底
     # 防 worker 异常退出缺槽）
     path_counts = _empty_path_counts()
@@ -685,10 +897,12 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             path_counts[k] += v
         for c, vals in ts_t.items():
             samples[c].extend(vals)
-    return {"n": n_frames, "rendered": len(work) - len(failed), "failed": sorted(failed),
+    path_counts["static_copied"] += static_copied_n
+    return {"n": n_frames, "rendered": rendered_n, "failed": sorted(set(failed)),
             "transparent": transparent, "tabs": tabs_n, "ms_total": dt,
             "ms_per_frame": dt / max(1, len(work)),
             "canvas_export": canvas_export,
+            "static_spans": static_spans_n,
             "path_counts": path_counts,
             "timings_ms": {c: _timings_summary(samples[c]) for c in _TIME_CATS}}
 

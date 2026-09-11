@@ -4,6 +4,7 @@ Set VTX_TEST_CHROME and/or VTX_TEST_FFMPEG to enable real integration checks.
 All fixtures are synthetic. No private footage or machine paths are required.
 """
 import base64
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -43,6 +44,9 @@ class _FakeTab:
     canvas_bad— typeof 为 function 但载荷非法 → 回落两截并计 canvas_fallback
     fail      — canvas 页形态 + 截图必抛错（canvas 页 setup 零截图 → 首截即
                 worker 帧内失败）→ 全帧重试耗尽计 failed
+    navfree   — 有 __vtx_render（资格判定过）：navfree 截图路径
+    navfree_eval_fail — 资格过但页内 __vtx_render 抛错（哨兵 0）→ 逐帧转回导航
+    spans     — 有 __vtx_render + browser.spans 声明（静态跨度去重）
     """
     def __init__(self, browser, mode):
         self.browser, self.mode, self.bg = browser, mode, 'white'
@@ -51,9 +55,17 @@ class _FakeTab:
         return {}
 
     def navigate(self, url, timeout=5.0):
-        pass
+        self.browser.navs += 1
 
     def eval(self, expression):
+        # 加速特性标记必须先于 __vtx_export_png 系列判断
+        if 'typeof window.__vtx_render' in expression:      # navfree 资格判定
+            self.browser.elig_evals += 1
+            return self.mode in ('navfree', 'navfree_eval_fail', 'spans')
+        if '__vtx_static_spans' in expression:              # 静态跨度声明读取
+            return self.browser.spans
+        if 'catch(e){return 0}' in expression:              # navfree 安全 eval 哨兵
+            return 0 if self.mode == 'navfree_eval_fail' else 1
         if '__vtx_export_png()' in expression:
             if self.mode == 'canvas':
                 import numpy as np
@@ -74,7 +86,10 @@ class _FakeTab:
         self.browser.shots += 1
         if self.mode == 'fail':
             raise RuntimeError('fake shot failure')
-        v = 200 if self.bg == 'white' else 10
+        if self.mode in ('navfree', 'navfree_eval_fail', 'spans'):
+            v = 200   # 加速特性模式模拟自带不透明背景的页：白黑注入无差异
+        else:
+            v = 200 if self.bg == 'white' else 10
         arr = np.full((4, 6, 4), v, dtype=np.uint8)
         arr[:, :, 3] = 255
         if self.mode == 'override':
@@ -83,10 +98,13 @@ class _FakeTab:
 
 
 class _FakeBrowser:
-    def __init__(self, mode, tabs_n=1):
+    def __init__(self, mode, tabs_n=1, spans=None):
         self.lock = threading.Lock()
         self.generation = 0
         self.mode, self.tabs_n, self.shots = mode, tabs_n, 0
+        self.navs = 0          # 导航次数（navfree 每 tab 一次 vs 旧路径逐帧导航）
+        self.elig_evals = 0    # navfree 资格判定 eval 次数（env 关闭时必须为 0）
+        self.spans = spans     # __vtx_static_spans 声明（None=无声明）
 
     def start(self):
         pass
@@ -166,7 +184,9 @@ class GfxStatsMock(unittest.TestCase):
                 st = gfx.render_page(page, out, 2, chrome_path='fake', tabs=1)
         self.assertEqual(st['path_counts'],
                          dict.fromkeys(('override', 'canvas', 'twoshot', 'opaque',
-                                        'canvas_fallback', 'failed'), 0))
+                                        'navfree', 'canvas_fallback', 'static_copied',
+                                        'failed'), 0))
+        self.assertEqual(st['static_spans'], 0)
         self.assertEqual(st['timings_ms']['nav'], {'p50': 0.0, 'p95': 0.0, 'sum': 0.0})
 
     def test_timings_summary_math(self):
@@ -276,9 +296,196 @@ class RenderedViaFormat(unittest.TestCase):
         for c in ("nav", "export", "decode", "write"):
             self.assertIn(c + " ", line)
 
+    def test_batch_keys_displayed(self):
+        # v2 阶段 2 新键：navfree/static_copied 进打印行，span×K 追加
+        st = self._stats(navfree=5, static_copied=2)
+        st["static_spans"] = 3
+        line = vtx._cdp_via(st)
+        for frag in ("navfree×5", "static_copied×2", "span×3"):
+            self.assertIn(frag, line)
+        self.assertNotIn("span×", vtx._cdp_via(self._stats(override=1)))
+
+
+class NavfreeMock(unittest.TestCase):
+    """特性 1 nav-free 截图（mock 级）：资格判定三分支、每 tab 一次导航、
+    页内执行失败逐帧转回导航路径、env 关闭红线。"""
+
+    def _run(self, mode, n, env=None, spans=None):
+        env = env or {}
+        with tempfile.TemporaryDirectory(prefix='vtx_navfree_') as tmp:
+            root = Path(tmp)
+            page = root / 'p.html'
+            page.write_text('<html></html>', encoding='utf-8')
+            browser = _FakeBrowser(mode, 1, spans=spans)
+            with mock.patch.dict(os.environ, env):
+                with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
+                    st = gfx.render_page(page, root / 'out', n, chrome_path='fake',
+                                         tabs=1, width=6, height=4)
+            return st, browser
+
+    def test_navfree_happy_path(self):
+        # 资格-正常：navfree×N 打标；导航次数 = setup 1 + flatten 守卫探针 2 +
+        # navfree 每 tab 1（免掉 N-1 次逐帧导航）
+        st, browser = self._run('navfree', 5, env={'VTX_GFX_NAVFREE': '1'})
+        pc = st['path_counts']
+        self.assertEqual((pc['navfree'], pc['override'], pc['failed']), (5, 0, 0))
+        self.assertEqual(browser.navs, 1 + 2 + 1)
+        self.assertEqual(st['failed'], [])
+
+    def test_navfree_env_off_is_red_line(self):
+        # 红线：NAVFREE=0（默认）→ 零资格判定 eval、逐帧导航、无 navfree 计数
+        st, browser = self._run('navfree', 3, env={'VTX_GFX_NAVFREE': '0'})
+        pc = st['path_counts']
+        self.assertEqual((pc['override'], pc['navfree']), (3, 0))
+        self.assertEqual(browser.elig_evals, 0)
+        self.assertEqual(browser.navs, 1 + 2 + 3)  # setup 1 + flatten 2 + 每帧 3
+
+    def test_eligibility_no_render_function_untouched(self):
+        # 资格-无函数：判定 eval 照做但不启用，行为同旧路径（逐帧导航）
+        st, browser = self._run('override', 3, env={'VTX_GFX_NAVFREE': '1'})
+        pc = st['path_counts']
+        self.assertEqual((pc['override'], pc['navfree']), (3, 0))
+        self.assertEqual(browser.elig_evals, 1)
+        self.assertEqual(browser.navs, 1 + 1 + 3)  # setup 1 + 首个 flatten 探针即破 1 + 每帧 3
+
+    def test_navfree_eval_fail_falls_back_to_nav(self):
+        # 页内 __vtx_render 抛错（哨兵 0）→ 该帧立即转回导航路径，绝不静默截错帧
+        st, browser = self._run('navfree_eval_fail', 3, env={'VTX_GFX_NAVFREE': '1'})
+        pc = st['path_counts']
+        self.assertEqual((pc['navfree'], pc['override'], pc['failed']), (0, 3, 0))
+        self.assertEqual(st['failed'], [])
+        self.assertEqual(browser.navs, 1 + 2 + 1 + 3)  # + navfree 首导航 + 3 帧回落导航
+
+
+class StaticSpanMock(unittest.TestCase):
+    """特性 2 静态跨度去重（mock 级）：与分片 frames 参数组合的四种情形 +
+    声明解析失败惰性降级 + plan_static_spans 纯函数不变量。"""
+
+    def _run(self, n, frames=None, spans=None, present=(), env=None):
+        env = env or {}
+        with tempfile.TemporaryDirectory(prefix='vtx_span_') as tmp:
+            root = Path(tmp)
+            page = root / 'p.html'
+            page.write_text('<html></html>', encoding='utf-8')
+            out = root / 'out'
+            out.mkdir()
+            for i in present:
+                (out / f'f{i:04d}.png').write_bytes(b'PREEXISTING-%d' % i)
+            browser = _FakeBrowser('spans', 1, spans=spans)
+            with mock.patch.dict(os.environ, env):
+                with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
+                    st = gfx.render_page(page, out, n, chrome_path='fake', tabs=1,
+                                         width=6, height=4, frames=frames)
+            files = {p.name: p.read_bytes() for p in out.glob('f*.png')}
+            return st, files
+
+    def test_head_cached_members_copied(self):
+        # 情形·头已缓存：跨度 [2,5) 头帧 f0002 已存在 → 缺失成员 3/4 立即字节复制，
+        # 复制帧与头帧逐字节相同；渲染集只剩 {0,1,5}
+        st, files = self._run(6, spans=[[2, 5]], present=(2,))
+        self.assertEqual((st['rendered'], st['failed']), (3, []))
+        self.assertEqual(st['path_counts']['static_copied'], 2)
+        self.assertEqual(st['static_spans'], 1)
+        self.assertIn('f0002.png', files)
+        self.assertEqual(files['f0003.png'], files['f0002.png'])
+        self.assertEqual(files['f0004.png'], files['f0002.png'])
+        # work = 全部缺失帧 - 被复制成员 = {0,1,5}，已渲 3 帧
+        for i in (0, 1, 5):
+            self.assertIn(f'f{i:04d}.png', files)
+
+    def test_head_missing_in_this_call(self):
+        # 情形·头缺失且在本调用范围：头照常渲染，成员渲染后字节复制头帧
+        st, files = self._run(6, spans=[[2, 5]])
+        self.assertEqual((st['rendered'], st['failed']), (4, []))
+        self.assertEqual(st['path_counts']['static_copied'], 2)
+        self.assertEqual(files['f0003.png'], files['f0002.png'])
+        self.assertEqual(files['f0004.png'], files['f0002.png'])
+        self.assertEqual(len(files), 6)   # 全部帧落盘（0,1,2,5 渲染 + 3,4 复制）
+
+    def test_head_outside_frames_param_merged_in(self):
+        # 情形·头不在本调用 frames 参数（跨分片块）：头并入本调用 work 渲染，
+        # 成员复制；frames 外且非成员的帧（f0001）不碰。渲染集 = {头2, 5}
+        st, files = self._run(6, frames=[3, 4, 5], spans=[[2, 5]])
+        self.assertEqual((st['rendered'], st['failed']), (2, []))
+        self.assertEqual(st['path_counts']['static_copied'], 2)
+        self.assertEqual(files['f0003.png'], files['f0002.png'])
+        self.assertEqual(files['f0004.png'], files['f0002.png'])
+        self.assertNotIn('f0001.png', files)   # frames 参数外不渲
+
+    def test_members_partially_cached_untouched(self):
+        # 情形·成员部分缓存：已存在成员（f0003）原样保留不覆盖，缺失成员复制
+        st, files = self._run(6, spans=[[2, 5]], present=(2, 3))
+        self.assertEqual(files['f0003.png'], b'PREEXISTING-3')      # 已存在不动
+        self.assertEqual(files['f0004.png'], files['f0002.png'])    # 缺失成员复制
+        self.assertEqual(st['path_counts']['static_copied'], 1)
+        self.assertEqual(st['static_spans'], 1)
+
+    def test_bad_declaration_is_lazy_noop(self):
+        # 声明解析失败 → warning + 无缩减原路径（像素/帧集与无声明完全一致）
+        st, files = self._run(4, spans="garbage")
+        self.assertEqual((st['rendered'], st['failed']), (4, []))
+        self.assertEqual(st['path_counts']['static_copied'], 0)
+        self.assertEqual(st['static_spans'], 0)
+        # env 关闭同理：零影响
+        st2, files2 = self._run(4, spans=[[1, 3]], env={'VTX_GFX_STATIC': '0'})
+        self.assertEqual(st2['path_counts']['static_copied'], 0)
+        self.assertEqual(st2['static_spans'], 0)
+        self.assertEqual(len(files2), 4)
+
+    def test_all_missing_frames_are_copies_zero_render(self):
+        # 缺失帧全是已缓存头帧的跨度成员 → 复制后 work 清空，rendered=0 也不丢帧
+        st, files = self._run(4, frames=[2, 3], spans=[[2, 4]], present=(2,))
+        self.assertEqual((st['rendered'], st['failed']), (0, []))
+        self.assertEqual(st['path_counts']['static_copied'], 1)
+        self.assertEqual(files['f0003.png'], files['f0002.png'])
+
+    def test_plan_static_spans_invariants(self):
+        # 纯函数不变量：work = (want - 被复制成员) ∪ 缺失头；成员只取 want；
+        # 重叠声明首占
+        import tempfile as _tf
+        with _tf.TemporaryDirectory(prefix='vtx_plan_') as tmp:
+            out = Path(tmp)
+            (out / 'f0002.png').write_bytes(b'H')     # 头2已缓存
+            spans = [(2, 5), (3, 6)]                  # 重叠：4 被第一个跨度认领
+            work, copy_now, deferred, n_spans = gfx.plan_static_spans(
+                spans, [3, 4, 9], str(out))
+            self.assertEqual(work, [9])               # 3/4 被复制退出渲染集，头2已缓存
+            self.assertEqual(sorted(m for m, _ in copy_now), [3, 4])
+            self.assertEqual(deferred, [])
+            self.assertEqual(n_spans, 1)
+            # 头缺失且不在 want → 并入 work；被复制成员同样退出 want
+            (out / 'f0002.png').unlink()
+            work2, _cn, deferred2, n2 = gfx.plan_static_spans(spans, [3, 4], str(out))
+            self.assertEqual(work2, [2])
+            self.assertEqual([(h, sorted(ms)) for h, ms in deferred2], [(2, [3, 4])])
+            self.assertEqual(n2, 1)
+
 
 class VtxSplitMath(unittest.TestCase):
     """vtx 页内分片：切块数学（阈值/上限/关闭态）与多块 stats 聚合。"""
+
+    def test_merge_cdp_stats_sums_batch_keys(self):
+        # v2 阶段 2：navfree/static_copied 路径计数逐块求和，static_spans 取 max
+        # （跨块跨度求和会重复计数）
+        def block(rendered, navfree, copied, spans):
+            return {"rendered": rendered, "failed": [], "tabs": 4,
+                    "ms_total": 10000.0, "static_spans": spans,
+                    "path_counts": dict.fromkeys(
+                        ("override", "canvas", "twoshot", "opaque", "navfree",
+                         "canvas_fallback", "static_copied", "failed"), 0)
+                    | {"navfree": navfree, "static_copied": copied},
+                    "timings_ms": {"nav": {"p50": 0.0, "p95": 0.0, "sum": 0.0},
+                                   "export": {"p50": 0.0, "p95": 0.0, "sum": 0.0},
+                                   "decode": {"p50": 0.0, "p95": 0.0, "sum": 0.0},
+                                   "write": {"p50": 0.0, "p95": 0.0, "sum": 0.0}}}
+        m = vtx._merge_cdp_stats([block(100, 100, 5, 2), block(50, 30, 4, 7)])
+        self.assertEqual(m['path_counts']['navfree'], 130)
+        self.assertEqual(m['path_counts']['static_copied'], 9)
+        self.assertEqual(m['static_spans'], 7)
+        via = vtx._cdp_via(m)
+        self.assertIn('navfree×130', via)
+        self.assertIn('static_copied×9', via)
+        self.assertIn('span×7', via)
 
     def test_split_page_disabled_and_small(self):
         self.assertIsNone(vtx._split_page(1153, 0, 3))    # SPLIT_FRAMES=0 关闭态
@@ -387,6 +594,116 @@ EXPORT
                 for s in st['timings_ms'].values():
                     self.assertGreaterEqual(s['p95'], s['p50'])
                     self.assertGreaterEqual(s['sum'], 0.0)
+
+
+def _toy_gfx_page(render_body="window.__vtx_render=function(f){"
+                  "const t=f/30;"
+                  "document.getElementById('bar').style.transform='translateY('+(f*3%900)+'px)';"
+                  "document.getElementById('chip').style.transform='translate('+(200+300*Math.sin(t))+'px,'+(150+250*Math.cos(t))+'px) rotate('+(f*2%360)+'deg)';"
+                  "};",
+                  static_spans=None):
+    """toy gfx 页（1920×1080，无文本/无 webfont/无外链图）：__vtx_render 纯函数 +
+    ?f= 加载路径同语义，navfree 与逐帧导航两通道可比。页形貌遵循 gfx 页协议：
+    body 透明 + 内部满幅 #bg 元素承担背景（背景写在 html/body 会传播到根画布，
+    被透明背景 override 打穿，两通道就没有可比性了）。"""
+    spans_js = '' if static_spans is None else \
+        f'window.__vtx_static_spans={json.dumps(static_spans)};'
+    return f'''<!doctype html><html style="background:transparent"><head><meta charset="utf-8"><style>
+html,body{{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent}}
+#bg{{position:absolute;inset:0;background:rgb(245,246,248)}}
+#bar{{position:absolute;left:0;top:0;width:1920px;height:120px;background:#1f6feb}}
+#chip{{position:absolute;left:0;top:0;width:340px;height:140px;background:#d29922}}
+</style></head><body>
+<div id="bg"></div><div id="bar"></div><div id="chip"></div>
+<script>{render_body}
+{spans_js}
+const q=Number(new URLSearchParams(location.search).get('f')||'0');
+__vtx_render(q);
+</script></body></html>'''
+
+
+@unittest.skipUnless(os.environ.get('VTX_TEST_CHROME'), 'set VTX_TEST_CHROME')
+class NavfreeSpanIntegration(unittest.TestCase):
+    """方案 v2 阶段 2（转向后）真 Chrome 集成：navfree vs 逐帧导航逐像素一致；
+    静态跨度成员帧字节全同；无声明页行为不变；__vtx_render 抛错页回落导航。"""
+
+    def _render(self, root, name, html, n, navfree):
+        page = root / (name + '.html')
+        page.write_text(html, encoding='utf-8')
+        env = {'VTX_GFX_NAVFREE': '1' if navfree else '0'}
+        with mock.patch.dict(os.environ, env):
+            st = gfx.render_page(page, root / ('out_' + name), n, tabs=2,
+                                 chrome_path=os.environ['VTX_TEST_CHROME'])
+        out = root / ('out_' + name)
+        return st, out, [out / f'f{i:04d}.png' for i in range(n)]
+
+    def test_navfree_vs_navigate_pixel_identical(self):
+        import numpy as np
+        with tempfile.TemporaryDirectory(prefix="vtx_navfree_real_") as tmp:
+            root = Path(tmp)
+            html = _toy_gfx_page()
+            st_nf, _, paths_nf = self._render(root, 'navfree', html, 5, navfree=True)
+            st_nav, _, paths_nav = self._render(root, 'nav', html, 5, navfree=False)
+            # navfree 证据：全部帧打 navfree 标、无失败
+            self.assertEqual(st_nf['failed'], [])
+            self.assertEqual(st_nf['path_counts']['navfree'], 5)
+            self.assertEqual(st_nav['path_counts']['navfree'], 0)
+            # 核心断言：两通道逐像素一致（JS 突变后 captureScreenshot 出当前帧）
+            for i in range(5):
+                a = gfx.png_decode_rgba(paths_nf[i].read_bytes())
+                b = gfx.png_decode_rgba(paths_nav[i].read_bytes())
+                self.assertTrue(np.array_equal(a, b), f'帧 {i} navfree 与导航像素不一致')
+
+    def test_static_spans_copied_frames_byte_identical(self):
+        with tempfile.TemporaryDirectory(prefix="vtx_span_real_") as tmp:
+            root = Path(tmp)
+            # 帧态在 [2,5) 恒定（截断 500px），f≥5 变 800px → 声明区间外有差异
+            html = _toy_gfx_page(
+                render_body="window.__vtx_render=function(f){"
+                            "var y=f<2?f*250:(f<5?500:800);"
+                            "document.getElementById('bar').style.transform="
+                            "'translateY('+y+'px)';};",
+                static_spans=[[2, 5]])
+            st, out, paths = self._render(root, 'span', html, 6, navfree=False)
+            self.assertEqual(st['failed'], [])
+            self.assertEqual(st['static_spans'], 1)
+            self.assertEqual(st['path_counts']['static_copied'], 2)  # 成员 3/4 复制
+            self.assertEqual(st['rendered'], 4)                      # 0,1,2,5 渲染
+            h2 = paths[2].read_bytes()
+            self.assertEqual(paths[3].read_bytes(), h2)   # 复制帧与头帧逐字节相同
+            self.assertEqual(paths[4].read_bytes(), h2)
+            self.assertNotEqual(paths[5].read_bytes(), h2)  # 非成员帧独立渲染
+
+    def test_no_declaration_page_unchanged(self):
+        import numpy as np
+        with tempfile.TemporaryDirectory(prefix="vtx_nodecl_real_") as tmp:
+            root = Path(tmp)
+            html = _toy_gfx_page()
+            st, _, paths = self._render(root, 'plain', html, 3, navfree=False)
+            self.assertEqual(st['failed'], [])
+            self.assertEqual(st['static_spans'], 0)
+            self.assertEqual(st['path_counts']['static_copied'], 0)
+            self.assertEqual(st['path_counts']['navfree'], 0)
+            for p in paths:
+                arr = gfx.png_decode_rgba(p.read_bytes())
+                self.assertEqual(arr.shape, (1080, 1920, 4))
+                self.assertTrue((arr[:, :, 3] == 255).all())   # 不透明页 alpha 完整
+
+    def test_throwing_render_falls_back_to_nav(self):
+        with tempfile.TemporaryDirectory(prefix="vtx_throw_real_") as tmp:
+            root = Path(tmp)
+            html = _toy_gfx_page(
+                render_body="window.__vtx_render=function(f){"
+                            "if(f>0){throw new Error('boom');}};")
+            st, _, paths = self._render(root, 'throw', html, 3, navfree=True)
+            # 帧 0 页内执行成功走 navfree；f>0 抛错（哨兵 0）→ 立即转回导航路径
+            self.assertEqual(st['failed'], [])
+            self.assertEqual(st['path_counts']['navfree'], 1)
+            self.assertEqual(st['path_counts']['override'], 2)
+            self.assertEqual(st['rendered'], 3)
+            for p in paths:
+                self.assertEqual(gfx.png_decode_rgba(p.read_bytes()).shape,
+                                 (1080, 1920, 4))
 
 
 @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG')

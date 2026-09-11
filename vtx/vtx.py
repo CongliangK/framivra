@@ -79,13 +79,18 @@ from stages import audit, build_audio, mux, prepare, validate
 def _cdp_via(st):
     """render_page stats → 一行渲染摘要（方案 v2 阶段 0 观测）：路径打标 + ms/帧 +
     分项 p50。只读 stats 字段直接格式化，不做字符串状态判断（DEV.md NIT）。
-    path_counts 键序固定、零值也显示，保证多页日志可 grep 对齐。"""
+    path_counts 键序固定、零值也显示，保证多页日志可 grep 对齐；navfree/static_copied
+    为 v2 阶段 2 加速特性新键（旧版 stats 无该键由 `if k in pc` 兜住）；span×K =
+    静态跨度生效数。"""
     pc, tm = st["path_counts"], st["timings_ms"]
     paths = " ".join(f"{k}×{pc[k]}" for k in
-                     ("override", "canvas", "twoshot", "opaque", "canvas_fallback", "failed")
+                     ("override", "canvas", "twoshot", "opaque", "navfree",
+                      "canvas_fallback", "static_copied", "failed")
                      if k in pc)
     if "cli_fallback" in pc:
         paths += f" cli_fallback×{pc['cli_fallback']}"
+    if st.get("static_spans"):
+        paths += f" span×{st['static_spans']}"
     split = "/".join(f"{k} {tm[k]['p50']:.0f}" for k in ("nav", "export", "decode", "write")
                      if k in tm)
     return (f"{st['tabs']} tabs CDP {paths}, {st['ms_per_frame']:.0f}ms/帧 "
@@ -107,17 +112,20 @@ def _merge_cdp_stats(stats_list):
     """同页多块 render_page stats → 合并 stats（供 _cdp_via 聚合格式化）。
     路径计数逐键求和；ms_per_frame=Σms_total/Σ帧数（等价于按帧数加权）；
     timings 各分项 p50/sum 按块帧数加权（p50 真值需原始样本，聚合为展示近似，
-    p95 不参与展示不合并）。空列表返回 None。"""
+    p95 不参与展示不合并）；static_spans 取 max（同页各块报各自生效跨度数，
+    求和会对跨块跨度重复计数）。空列表返回 None。"""
     if not stats_list:
         return None
     pc, tm = {}, {}
     frames = ms = 0.0
     tabs = 1
+    spans = 0
     for s in stats_list:
         w = s["rendered"] + len(s["failed"])
         frames += w
         ms += s["ms_total"]
         tabs = max(tabs, s["tabs"])
+        spans = max(spans, s.get("static_spans", 0))
         for k, v in s["path_counts"].items():
             pc[k] = pc.get(k, 0) + v
         for cat, t in s["timings_ms"].items():
@@ -127,6 +135,7 @@ def _merge_cdp_stats(stats_list):
             a["sum"] += t["sum"]
     frames = max(1, frames)
     return {"tabs": tabs, "path_counts": pc, "ms_per_frame": ms / frames,
+            "static_spans": spans,
             "timings_ms": {cat: {"p50": a["p50"] / max(1, a["w"]), "p95": 0.0, "sum": a["sum"]}
                            for cat, a in tm.items()}}
 
