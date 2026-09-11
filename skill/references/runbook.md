@@ -202,12 +202,12 @@ bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
 ```bash
 cd ~/文档/04_bilibili视频/voice-ime
 python3 $VIDEO_TOOLS/blender_bridge/audit_bundle.py -t timeline.json --prefix bgm2-
-# 产物：<项目>/cache/audit_bgm/  ├ mp3/（逐轨 320k 试听件）
-#                               ├ timeline.audit.json（逐轨一列审计时间线）
+# 产物：<项目>/cache/audit_bgm/  ├ mp3/（逐源 320k 试听件，内容校验缓存）
+#                               ├ timeline.json（逐轨一列审计时间线）
 #                               └ audit.blend（Blender 审计工程，交用户逐轨静音/独听）
 ```
 
-**重跑规则**：分轨或音量改动后**重跑即可**——MP3 按源 mtime 自动失效重转；`--force` 强制全量重转。草稿/内部迭代轮不要求，正式版必做（人机协作交付门）。
+**重跑规则**：分轨或音量改动后**重跑即可**——MP3 按源内容和转码规格校验缓存；`--force` 强制全量重转。草稿/内部迭代轮不要求，正式版必做（人机协作交付门）。`--whole` 保留所有原事件；默认切分的 loop/fade 回退和审听边界见 `docs/audio-audit.md`。
 
 **耗时基准**：分钟级（逐轨 ffmpeg 转码 + json2blend + verify_blend）。
 
