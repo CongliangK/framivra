@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from encoders import pick_vcodec, nvenc_concurrency
+from hygiene import budget_gate, gfx_dir, manifest_record, seg_key
 from infra import Ctx, run_parallel
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
@@ -284,6 +285,7 @@ class RenderPlan:
 # ---------------------------------------------------------------- video 阶段编排
 def build_video(c: Ctx):
     draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
+    budget_gate(c, "video")
     f = 0.5 if draft else 1.0
     W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
     (c.cache / "seg").mkdir(parents=True, exist_ok=True)
@@ -296,7 +298,8 @@ def build_video(c: Ctx):
         for ci, cl in enumerate(tr["clips"]):
             kind = tr.get("kind")
             if kind == "gfx":
-                layers.append({"cl": cl, "pngdir": c.cache / Path(cl["src"]).stem,
+                # gfx 帧缓存目录 = 内容寻址键（与 gfx 阶段同键，见 hygiene.gfx_key）
+                layers.append({"cl": cl, "pngdir": gfx_dir(c, cl),
                                "x": cl.get("x", 0), "y": cl.get("y", 0), "w2": None, "h2": None,
                                "gfx": True, "ti": ti})
                 continue
@@ -313,6 +316,10 @@ def build_video(c: Ctx):
             else:
                 vf += [c.crop169(cl["src"]), f"scale={c.w}:{c.h}:flags=lanczos"]
                 w2 = h2 = None; x, y = 0, 0
+            # seg 内容寻址键（2026-09-11 治理升级）：键 = sha1(源指纹+切片/窗口/fade/编码
+            # 参数)[:12]。源或 clip 参数变了键就变，旧 seg 由 gc 回收——不再依赖
+            # 「源/clip 变更后须手工 rm cache/seg」（旧 D29 注释）。
+            skey = seg_key(c, cl, ti, ci, windowed, need_alpha)
             if need_alpha:
                 vf.append("format=yuva420p")
                 if cl.get("fade_in_frames"):
@@ -320,16 +327,14 @@ def build_video(c: Ctx):
                 if cl.get("fade_out_frames"):
                     vf.append(f"fade=t=out:st={(cl['dur']-cl['fade_out_frames'])*c.spf:.6f}:d={cl['fade_out_frames']*c.spf:.6f}:alpha=1")
                 if cl.get("opacity", 1) < 1: vf.append(f"colorchannelmixer=aa={cl['opacity']}")
-                seg = c.cache / "seg" / f"t{ti:02d}c{ci:02d}.mov"
+                seg = c.cache / "seg" / f"{skey}.mov"
                 vcodec_seg = ["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"]
             else:
                 vf.append("format=yuv420p")
-                seg = c.cache / "seg" / f"t{ti:02d}c{ci:02d}.mp4"
+                seg = c.cache / "seg" / f"{skey}.mp4"
                 vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
-            # seg 缓存（2026-09-08）：存在且流头帧数=clip 时长即跳过（只读容器元数据，
-            # 不用 -count_frames 解码数帧——33 个 seg 解码计数实测 5-6 分钟）。此前每次
-            # video 全量重编 33 个 seg ≈4.5 分钟常量成本。源/clip 变更后须 rm cache/seg
-            # 对应文件（同 prepare/gfx 存在性缓存哲学，见 AGENTS D29）。
+            # seg 缓存命中：存在且流头帧数=clip 时长即跳过（键已含全部参数，帧数检查
+            # 只是便宜的兜底自检，不读内容）。
             if seg.exists():
                 fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                                      "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(seg)],
@@ -347,6 +352,9 @@ def build_video(c: Ctx):
                                "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
                                *vcodec_seg, str(seg)]))
     run_parallel(c, enc_tasks, "seg 预编码")
+    for L in layers:                      # 记账：本时间轴的全部 seg（含缓存命中）
+        if not L["gfx"] and L["seg"].exists() and not c.dry:
+            manifest_record(c, L["seg"], "video", L["seg"].stem)
     plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, nframes=nframes,
                       nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", str(DEFAULT_SEGMENTS))),
                       layers=layers)

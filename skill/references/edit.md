@@ -17,7 +17,7 @@ vtx CLI：        ~/.agents/skills/video/vtx/vtx.py            （符号链接�
 参考实现（POC）： ~/文档/04_bilibili视频/_archive/poc2/   （外部示例项目：30s 多轨 demo，QC 全过；不随 skill 分发）
 ```
 
-程序本体在 video_tools 仓（D40）：`vtx/` 与 `scripts/` 的权威位置是 `~/文档/01_活跃项目/video_tools/`，本 skill 内为符号链接（上文路径全部继续可用）；**修改程序一律改 video_tools 仓**。vtx.py 用 `Path(__file__)` 自定位、无任何硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + google-chrome）。
+程序本体在 video_tools 仓（D40）：`vtx/` 与 `scripts/` 的权威位置是 `~/文档/01_活跃项目/video_tools/`，本 skill 内为符号链接（上文路径全部继续可用）；**修改程序一律改 video_tools 仓**。**vtx 已拆包（2026-09-11）**：`vtx/vtx.py` 是唯一入口（用法不变），实现分为 `infra`（探测/缓存/回执）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）六个模块；历史回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
 
 ## 时间线预览（人审用）
 
@@ -43,10 +43,24 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json validate   # 
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json --dry-run video  # 只打印将执行的 ffmpeg
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json all        # 全流程 → myvideo/out/final.mp4
 
-# 分阶段（gfx 帧缓存可复用，改哪段重跑哪段；缓存按源 html mtime 自动失效）：
+# 分阶段（gfx/seg/audio 缓存全部内容寻址，源或参数一变自动换键重渲，无需手工清缓存）：
 #   validate → audit（指标体检）→ prepare（提取音频）→ gfx（渲染动效）→ video → audio → mux → qc
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 清空 cache/ out/
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc --dry    # 回收清单预览（收尾习惯）
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc          # 执行回收（键集外垃圾+tmp 孤儿）
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc --all    # 深度回收（保留 reports/VERSIONS/history/final）
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json df          # 体积体检（分项占用+top-20 大文件）
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json snapshot    # timeline+文本资产快照（自动留 2 份）
+python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 清空 cache/ out/（慎用）
 ```
+
+## 缓存卫生与体积治理（2026-09-11 起，voice-ime 174G→25G 清理实测后内建）
+
+- **内容寻址缓存**：gfx 帧缓存键 = `sha1(html字节+fps+视口+时长)[:12]`（目录 `cache/gfx/<key>/`），seg 键含源指纹+切片/窗口/编码参数（`cache/seg/<key>.mov|mp4`），音频键含源指纹。**源改了键就变，D29「改源不重渲」与 D38「误命中旧内容」从机制上消失**；旧键自然成为垃圾，由 gc 回收。不要再手工 `rm cache/seg/...`。
+- **`vtx gc`**：回收「当前 timeline 键集之外」的全部缓存条目 + tmp 孤儿（>24h）+ out 一次性中间物。`cache/reports/` 永不回收。`--keep-days N` 暂缓近 N 天条目。**收尾习惯：每轮「改 timeline→重渲」结束后先 `gc --dry` 看一眼再 `gc`**——cache 占用从此有上界（≈当前键集工作集），不再单调增长。
+- **证据纪律（管线级约定）**：调试渲次（整片 mp4）一律写 `cache/tmp/<runid>/`，阶段结束即删（`hygiene.tmp_run` 上下文）；需留证一律抽帧（≤10 张）或 540p 小样 ≤10MB 存 `cache/reports/evidence/`。**报告/回执/JSON 一律 `cache/reports/`，gc 永不触碰**。**tmp 选址铁律：GB 级媒体中间物严禁写系统 /tmp**——本机 /tmp 是 tmpfs（写即占 RAM/swap，且 systemd-tmpfiles 10 天自清，长任务文件可能中途消失）；≤数十 MB 小件可用 /tmp。
+- **产物版本记账**：mux 每次成功追加 `out/VERSIONS.json`（md5/大小/timeline+audio md5）；**覆盖检测**——将覆盖的 final.mp4 与账面末条 md5 不符（被外部改动/并行工程改写）→ 显著告警 + 旧条目标 superseded。旧成片轮转 `out/history/`（硬链接优先），`--keep-versions N` 默认 2。
+- **快照**：改 timeline 的批量脚本（retimeline 类）改调 `vtx snapshot`（timeline+全部引用文本资产，KB 级，自动留 2 份），不再手写 `timeline.pre-vXX.json` / `.bak`。
+- **体积预算**：`VTX_CACHE_BUDGET_GB=80` 设预算后 gfx/video 阶段前超限自动跑 gc 清单提示（`VTX_GC_AUTO=1` 直接回收）；audit 报告新增 volume 节（cache/out 占用+tmp 孤儿），体积异常从人眼发现变体检常驻项。
 
 **gfx 渲染引擎（D42）**：默认 CDP 常驻浏览器（单浏览器多 tab，不透明页单截直写/透明页白黑双截解算 alpha，实测 4.6×，约 34ms/帧）；渲染器失败自动整页回落 CLI 逐帧路径。`VTX_GFX=cli` 强制 CLI、`VTX_GFX_TABS=N` 调并发（默认 4）、`VTX_GFX_PNG_LEVEL` 调透明页压缩级别。不透明页输出与 CLI 逐字节一致；透明页半透明边缘有 ≤5/255 舍入级差异（亚感知）。
 
@@ -63,7 +77,7 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 
 - 混音链：轨内子混音（apad 补齐成片全长）→ duck → 总混音（amix normalize=0 保留音量比例）→ 静态增益 → 定长裁切。
 - **BGM 分轨审计包（2026-09-10 用户裁定：正式版默认必做）**：BGM 正式版本挂载进时间线后，除 vtx 渲染外必跑 `python3 <本仓>/blender_bridge/audit_bundle.py -t <项目>/timeline.json`（旧库 `~/文档/04_bilibili视频/_library/blender_bridge/` 位置为兼容指针，权威副本已收编本仓）——分轨 MP3 导出 + 审计 timeline + Blender 审计工程 `audit.blend` 一键五步，产物落 `<项目>/cache/audit_bgm/`。用户在 Blender VSE 逐轨静音/独听对比才能参与混音与编排裁决（人机协作交付门；完整规程与给用户的使用话术见 music skill「交付门：分轨审计包」节）。分轨或音量改动后重跑即可（MP3 按源 mtime 自动失效重转）。
 
-## 渲染速度：草稿 / GPU / 缓存（2026-09-08，voice-ime 653s@1080p30 实测基准）
+## 渲染速度：草稿 / GPU / 缓存（基准：voice-ime 653s@1080p30；2026-09-11 大幅提速后）
 
 ```bash
 # 迭代预览（不碰正式产物）：540p + NVENC p4，跳过 qc_clean；改动集中片头时加 --frames
@@ -74,7 +88,7 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json mux --draft  
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json video --gpu
 ```
 
-实测（RTX 4080 / 8 核，voice-ime 653s@1080p30，2026-09-08）：全片 CPU 渲染 14.7min（含重复 seg 编码）→ **--gpu 9:46**（瓶颈已移到 52 层 overlay 滤镜链，编码器近零耗时；seg 缓存命中后纯合成为主）；片头迭代 `--draft --frames 300`（10s 画面）**9.8s**；validate 2min→**3s**。三层缓存语义（变更后需手动失效）：prepare=cache/audio 存在性；gfx=cache/<stem> 存在+帧数；**video seg=cache/seg/tXXcYY 存在+流头帧数（2026-09-08 新增，此前每次 video 全量重编 ≈4.5min）**。源/clip 参数变更 → `rm -rf cache/seg`（或对应文件）后重跑。
+实测（RTX 4080 / 8 核，voice-ime 653s@1080p30）：2026-09-08 基线为全片 14.7min → --gpu 9:46；**2026-09-11 三阶段提速后（拆包同批提交）：qc 690s→11s（~60×，结果与旧版逐项一致）、video 分段并行（8 段，511s→112s，~4.6×）、冷启动并行化（seg 预编码+prepare 抽音频线程池）——全链路 21.5min → 缓存命中 ~50s / 冷启动 ~164s**。片头迭代 `--draft --frames 300`（10s 画面）9.8s；validate 3s。缓存语义：gfx=内容寻址（sha1 键，见上节）；video seg 键含源指纹与切片参数；音频键含源指纹。
 
 坑表（全部踩过、已内置规避）：
 - **`ffprobe -count_frames` 是逐帧解码计数**（1080p 全源 12-27s/个；probe 已改流头 nb_frames + count_packets 回落，validate 2min→3s）

@@ -17,7 +17,7 @@ document.body.style.opacity = 1 - clamp01(seg(t, N/FPS - 0.4, N/FPS)); // 结尾
 
 - 画布固定 `1920x1080`、`background:transparent`、`overflow:hidden`；字体 `"Noto Sans CJK SC", sans-serif`（系统已装，无头渲染正常）。
 - 动效时长 = timeline `out - in` 帧数；页面内容的时间轴从 0 开始（vtx 负责把它平移到成片时间轴）。
-- vtx 用 `google-chrome --headless --screenshot --default-background-color=00000000 "?f=N"` 逐帧截图，输出带 alpha 的 PNG 序列。
+- vtx 逐帧截图渲染 gfx 帧。默认走 **CDP 常驻浏览器引擎**（D42：多 tab 并行 ~34ms/帧，不透明页与 CLI 逐字节一致、透明页白黑双截解算 alpha，≤5/255 舍入级）；失败自动回落 CLI 逐帧路径（`google-chrome --headless --screenshot --default-background-color=00000000 "?f=N"`），输出同为带 alpha 的 PNG 序列。两引擎对页面唯一要求：**从 `?f=` 查询参数确定性渲染**（CDP 引擎以 location.search 变更确认新文档，页面不得依赖滚动/焦点等副作用）。
 
 ## 独立预览与自查
 

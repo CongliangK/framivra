@@ -8,6 +8,8 @@ timeline 契约权威定义互指（三处需同步修改，2026-09-10 定）：
 import json, re, subprocess, sys
 from pathlib import Path
 
+from hygiene import (audio_key, manifest_record, rotate_history, versions_check,
+                     versions_record)
 from infra import Ctx, run_parallel
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 收拢）----
@@ -169,6 +171,15 @@ def audit(c: Ctx):
         f"过快(>9字/s≈P99) {n_fast} 条 / 偏快(>7.5≈P92) {n_long} 条 / 过短(<0.6s) {n_short} 条 / 相互重叠 {overlaps} 条")
     rep = {"benchmarks": "叙事风格分析与稿子方向.md / 画面构成与节奏.md（2026-08-21 实测）",
            "indicators": lines}
+    # 体积体检（2026-09-11 治理升级）：cache/out 占用与 tmp 孤儿常驻审计报告——
+    # 体积异常从人眼发现变体检常驻项
+    from hygiene import df as _df, tmp_orphans
+    vol = _df(c, quiet=True)
+    rep["volume"] = {"cache_bytes": vol["cache"], "out_bytes": vol["out"],
+                     "total_bytes": vol["total"],
+                     "total_h": f"{vol['total'] / 1024**3:.2f}G",
+                     "tmp_orphans": [str(x) for x in tmp_orphans(c)],
+                     "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry`"}
     (c.out / "audit_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2))
     warns = sum(1 for x in lines if x["status"] == "warn")
     print(f"审计：{len(lines)} 项指标，{warns} 条建议（详见 out/audit_report.json，建议性不阻断）")
@@ -180,12 +191,16 @@ def prepare(c: Ctx):
     (c.cache / "audio").mkdir(parents=True, exist_ok=True)
     tasks = []
     for s in c.tl["sources"]:
-        wav = c.cache / "audio" / f"{s['id']}.wav"
+        # 内容寻址键（2026-09-11 治理升级）：源变了键就变，旧 wav 由 gc 回收
+        wav = c.cache / "audio" / f"{audio_key(c, s['id'])}.wav"
         if not wav.exists():
             tasks.append((f"audio {s['id']}",
                           ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(s["id"])),
                            "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]))
     run_parallel(c, tasks, "音频提取")
+    for s in c.tl["sources"]:
+        wav = c.cache / "audio" / f"{audio_key(c, s['id'])}.wav"
+        if wav.exists(): manifest_record(c, wav, "prepare", audio_key(c, s["id"]))
     msg = f"{len(c.tl['sources'])} → 48kHz stereo PCM"
     print("✓ 音频提取：" + msg); c.receipt("prepare", True, msg)
 
@@ -197,7 +212,7 @@ def build_audio(c: Ctx):
     cmd = ["ffmpeg", "-v", "error", "-y"]
     for ti, tr, e in evs:
         if e.get("loop"): cmd += ["-stream_loop", "-1"]
-        cmd += ["-i", str(c.cache / "audio" / f"{e['src']}.wav")]
+        cmd += ["-i", str(c.cache / "audio" / f"{audio_key(c, e['src'])}.wav")]
     # 事件链（atrim 采样网格/音量/声像/淡变/adelay）→ 轨内子混音 → 补齐成片全长
     chains = []
     trk_lbl = {}
@@ -290,7 +305,15 @@ def mux(c: Ctx):
     acodec = "libfdk_aac" if "libfdk_aac" in encs else "aac"
     if acodec == "aac":
         print("⚠ libfdk_aac 不可用，回落原生 aac——终检必须复测编码后解码 TP（edit.md 坑表）")
+    # 版本记账（2026-09-11 治理升级）：覆盖前把旧 final 轮转进 out/history/（--keep-versions，
+    # 默认 2）并做 md5 覆盖检测——final 被并行工程静默改写时显著告警 + 旧条目标 superseded
+    # （D39/BGM-v2 事故类从此自动留痕）。
+    final = c.out / "final.mp4"
+    rotate_history(c, final, getattr(c, "keep_versions", 2))
+    warn = versions_check(c, final)
+    if warn: print("⚠⚠ 建议核对 out/history/ 与 VERSIONS.json 确认旧版归属后再继续分发")
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.out / "video_noaudio.mp4"),
            "-i", str(c.out / "audio.wav"), "-c:v", "copy", "-c:a", acodec, "-b:a", "192k",
-           "-movflags", "+faststart", str(c.out / "final.mp4")])
+           "-movflags", "+faststart", str(final)])
+    versions_record(c, final, "mux")
     print(f"✓ 封装 final.mp4（{acodec} 192k）"); c.receipt("mux", True, f"{acodec} 192k")

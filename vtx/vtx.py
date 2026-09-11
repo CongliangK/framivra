@@ -15,6 +15,15 @@
   qc         渲染后质检（帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一），写 qc_report.json
              （--strict：帧数改用 -count_frames 真解码计数，默认容器元数据）
   clean      清空 cache/ 与 out/
+  gc         缓存回收（键集外垃圾 + tmp 孤儿 + out 中间物；--dry 只列清单，--all 深度回收，
+             --keep-days N 暂缓近 N 天条目；cache/reports/ 永不回收）
+  df         体积体检：cache/out 分项占用 + top-20 大文件 + tmp 孤儿清单
+  snapshot   timeline + 文本资产快照到 cache/snapshots/（只留最近 2 份，VTX_SNAPSHOT_KEEP 可调）
+
+缓存卫生（2026-09-11 治理升级）：gfx/seg/audio 缓存全部内容寻址（键 = sha1(内容+参数)[:12]，
+键变即新条目，旧键由 gc 回收）；mux 每次成功追加 out/VERSIONS.json（覆盖检测 + superseded
+留痕 + out/history/ 保留最近 N 版，--keep-versions 默认 2）；环境变量 VTX_CACHE_BUDGET_GB
+设预算时 gfx/video 阶段前超限自动跑 gc 清单（VTX_GC_AUTO=1 直接回收）。
 
 迭代提速（2026-09-08，video/mux 专属标志）：
   --draft            草稿模式：540p 半分辨率 + NVENC 硬编码（不可用自动回落 x264 veryfast），
@@ -55,6 +64,7 @@ if str(VTX_DIR) not in sys.path:
 
 from composite import build_video
 from encoders import find_chrome
+from hygiene import budget_gate, df, gc, gfx_key, gfx_dir, manifest_record, snapshot
 from infra import Ctx
 from qc import qc
 from stages import audit, build_audio, mux, prepare, validate
@@ -62,6 +72,7 @@ from stages import audit, build_audio, mux, prepare, validate
 
 # ---------------------------------------------------------------- gfx
 def gfx(c: Ctx):
+    budget_gate(c, "gfx")
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
     use_cdp = os.environ.get("VTX_GFX", "cdp").lower() != "cli"
@@ -87,46 +98,57 @@ def gfx(c: Ctx):
         with ThreadPoolExecutor(6) as ex:
             list(ex.map(lambda i: shot_cli(i, d, html, chrome), i_range))
 
+    jobs = []   # (cid, key, cl, n, d, html) 需要渲染的页
     for tr in c.tl["video_tracks"]:
         if tr.get("kind") != "gfx": continue
         for cl in tr["clips"]:
-            cid = Path(cl["src"]).stem          # 缓存键 = html 文件名去扩展（同 html 复用帧缓存）
+            cid = Path(cl["src"]).stem
+            # 内容寻址键（2026-09-11 治理升级）：键 = sha1(html字节+fps+视口+时长)[:12]。
+            # html 变了键就变（新条目），旧键由 gc 回收——D29 mtime 补丁与 D38 同索引
+            # 误命中从机制上消失，故此处不再有任何 mtime 比对。
+            key = gfx_key(c, cl)
             n = cl["dur"]
-            d = c.cache / cid
+            d = gfx_dir(c, cl)
             if d.exists() and len(list(d.glob("f*.png"))) != n:  # 帧数不符（换时长）→ 清缓存重渲
                 shutil.rmtree(d)
             d.mkdir(parents=True, exist_ok=True)
             if len(list(d.glob("f*.png"))) == n:
-                # D29 缓存坑补丁：html mtime > 缓存帧 mtime → 源已改，整页重渲
-                html = (c.root / cl["src"]).resolve()
-                pngs = sorted(d.glob("f*.png"))
-                if pngs and html.stat().st_mtime > pngs[0].stat().st_mtime:
-                    print(f"· {cid}: html 比缓存新，整页重渲")
-                    shutil.rmtree(d); d.mkdir(parents=True, exist_ok=True)
-                else:
-                    print(f"✓ {cid}: {n} 帧已缓存"); total += 1; continue
-            html = (c.root / cl["src"]).resolve()
-            rendered_via = "cli"
-            if cdp_mod is not None:
-                try:
-                    # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）
-                    st = cdp_mod.render_page(html, d, n, chrome_path=find_chrome(),
-                                             width=c.w, height=c.h)
-                    if st["failed"]:
-                        print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
-                        render_cli(st["failed"], d, html, find_chrome())
-                    rendered_via = f"{st['tabs']} tabs CDP, {st['ms_per_frame']:.0f}ms/帧"
-                except Exception as e:
-                    print(f"⚠ {cid}: CDP 渲染失败（{e}），整页回落 CLI")
-                    rendered_via = f"cli（CDP 失败回落: {e}）"
-            if cdp_mod is None or rendered_via.startswith("cli（"):
-                render_cli(range(n), d, html, find_chrome())
-                rendered_via = "cli 6 并发"
-            got = len(list(d.glob("f*.png")))
-            if got != n: print(f"✗ {cid}: 期望 {n} 帧得到 {got}"); sys.exit(1)
-            print(f"✓ {cid}: 渲染 {n} 帧（含 alpha，{rendered_via}）")
-            engine_notes.append(f"{cid}: {rendered_via}")
-            total += 1
+                print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
+            jobs.append((cid, key, cl, n, d, (c.root / cl["src"]).resolve()))
+
+    # 页级并行（2026-09-11）：Chrome 对同源 tab 共用渲染进程，单浏览器内加 tab 光栅
+    # 收益递减；真正的并行单位是浏览器实例×页。VTX_GFX_PAGES 控制并行页数（默认 6）。
+    page_workers = max(1, int(os.environ.get("VTX_GFX_PAGES", "6")))
+
+    def render_one(job):
+        cid, key, cl, n, d, html = job
+        rendered_via = "cli"
+        if cdp_mod is not None:
+            try:
+                # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）
+                st = cdp_mod.render_page(html, d, n, chrome_path=find_chrome(),
+                                         width=c.w, height=c.h)
+                if st["failed"]:
+                    print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
+                    render_cli(st["failed"], d, html, find_chrome())
+                rendered_via = f"{st['tabs']} tabs CDP, {st['ms_per_frame']:.0f}ms/帧"
+            except Exception as e:
+                print(f"⚠ {cid}: CDP 渲染失败（{e}），整页回落 CLI")
+                rendered_via = f"cli（CDP 失败回落: {e}）"
+        if cdp_mod is None or rendered_via.startswith("cli（"):
+            render_cli(range(n), d, html, find_chrome())
+            rendered_via = "cli 6 并发"
+        got = len(list(d.glob("f*.png")))
+        if got != n: print(f"✗ {cid}: 期望 {n} 帧得到 {got}"); sys.exit(1)
+        print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
+        manifest_record(c, d, "gfx", key)
+        return cid, rendered_via
+
+    if jobs:
+        with ThreadPoolExecutor(min(page_workers, len(jobs))) as pex:
+            for cid, rendered_via in pex.map(render_one, jobs):
+                engine_notes.append(f"{cid}: {rendered_via}")
+                total += 1
     c.receipt("gfx", True, f"{total} gfx clips"
               + ("｜" + "; ".join(engine_notes) if engine_notes else ""))
 
@@ -143,7 +165,17 @@ def main():
     ap.add_argument("--gpu", action="store_true", help="video 专属：正式参数 GPU 渲染（NVENC p7 hq cq17），产物仍为 video_noaudio.mp4")
     ap.add_argument("--strict", action="store_true",
                     help="qc 专属：成片帧数用 -count_frames 真解码计数（默认容器元数据，省全片解码）")
-    ap.add_argument("command", help="all | " + " | ".join(s[0] for s in STAGES) + " | clean")
+    ap.add_argument("--dry", action="store_true",
+                    help="gc 专属：只列回收清单不删除（gc 默认执行，--all 深度回收）")
+    ap.add_argument("--all", action="store_true",
+                    help="gc 专属：深度回收（等价原 clean，但保留 reports/VERSIONS/history/final）")
+    ap.add_argument("--keep-days", type=int, metavar="N", default=0,
+                    help="gc 专属：近 N 天动过的条目暂缓回收（默认 0 = 只看键集）")
+    ap.add_argument("--keep-versions", type=int, metavar="N", default=2,
+                    help="mux 专属：out/history/ 保留最近 N 版历史成片（默认 2）")
+    ap.add_argument("command",
+                    help="all | " + " | ".join(s[0] for s in STAGES) +
+                         " | clean | gc | df | snapshot")
     a = ap.parse_args()
     if a.frames and not (a.draft and a.command == "video"):
         print("--frames 仅在 video --draft 下可用"); sys.exit(1)
@@ -157,13 +189,24 @@ def main():
     c = Ctx(tp); c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
     c.dry = a.dry_run   # 原 DRY 全局改为 Ctx 字段（消除可变全局）
     c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
+    c.keep_versions = a.keep_versions   # mux：out/history/ 保留版数
     if a.strict and a.command != "qc":
         print("--strict 仅作用于 qc 阶段"); sys.exit(1)
     if a.command == "clean":
         shutil.rmtree(c.cache, ignore_errors=True); shutil.rmtree(c.out, ignore_errors=True)
         print("✓ 已清空 cache/ out/"); return
+    if a.command == "gc":
+        gc(c, do=not a.dry, deep=a.all, keep_days=a.keep_days); return
+    if a.command == "df":
+        df(c); return
+    if a.command == "snapshot":
+        snapshot(c); return
     names = [s[0] for s in STAGES] if a.command == "all" else [a.command]
-    todo = STAGES if a.command == "all" else [next(s for s in STAGES if s[0] == a.command)]
+    todo = STAGES if a.command == "all" else \
+        [next((s for s in STAGES if s[0] == a.command), None)]
+    if todo == [None]:
+        names = " | ".join([s[0] for s in STAGES] + ["clean", "gc", "df", "snapshot"])
+        print(f"✗ 未知命令：{a.command!r}（可用：{names}）"); sys.exit(2)
     for name, fn in todo:
         print(f"== {name} =="); fn(c)
     print("完成：", c.out / "final.mp4" if a.command in ("all", "mux", "qc") else names)
