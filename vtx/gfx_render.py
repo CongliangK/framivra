@@ -553,6 +553,30 @@ def plan_static_spans(spans, want, outdir):
     return work, copy_now, deferred, n_spans
 
 
+def _atomic_write_bytes(path, data):
+    """帧落盘原子化（M1）：同目录临时文件写完整字节 → os.replace 原子替换目标。
+    背景：同页 split×k 时多个 render_page 并发写同一 outdir（跨度头帧可被两块
+    同时渲染并双写），直接 truncate/write 交错会产生撕裂 PNG 并经 deferred 复制
+    扩散。os.replace 在同目录（同一文件系统）上是单次原子目录项替换：并发读者/
+    双写者见到的目标文件恒为「旧文件或某一次写入的完整新字节」，绝无交错混合。
+    字节内容与直接 write 完全一致（像素零影响）；tmp 名由 mkstemp 保证同目录
+    唯一（O_EXCL），成功路径 tmp 已被 replace 移走、异常路径 finally 清理，
+    两种路径均不留 tmp 残留。"""
+    fd, tmp = tempfile.mkstemp(
+        prefix="." + os.path.basename(path) + ".tmp.",
+        dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 width=1920, height=1080, progress=None, frames=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
@@ -563,7 +587,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     为纯缓存命中白起 Chrome；早退返回 stats 字段与正常路径完全一致。
 
     返回统计 dict；帧级失败（含浏览器崩溃自愈重试 2 次）列入 failed，
-    调用方对这些帧回落 CLI。浏览器起不来抛 GfxRenderError（全页回落 CLI）。
+    调用方对这些帧回落 CLI。rendered = work 帧渲染成功数（按 work 归属过滤
+    failed 后扣减，deferred 复制失败成员不入该口径；static_copied 字节复制帧
+    单独计数不占 rendered）。帧落盘统一走 _atomic_write_bytes（同目录 tmp +
+    os.replace 原子替换，并发双写不撕裂）。浏览器起不来抛 GfxRenderError（全页回落 CLI）。
     观测字段（方案 v2 阶段 0，只加观测）：path_counts=各帧实际导出路径计数
     （canvas 校验失败回落帧同时计入实际路径与 canvas_fallback）；timings_ms=
     nav/export/decode/write 各分项 p50/p95/sum 毫秒（只含成功帧；每 tab 线程
@@ -735,8 +762,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                         raise ConnectionError("tab lost after browser restart")
                     png, path, timing = do_frame(pool[idx], i, navfree=nf)
                     t0 = time.monotonic()
-                    with open(os.path.join(outdir, f"f{i:04d}.png"), "wb") as fh:
-                        fh.write(png)
+                    _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png)
                     my_times["write"].append(time.monotonic() - t0)
                     for c in ("nav", "export", "decode"):
                         my_times[c].append(timing[c])
@@ -804,12 +830,12 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             work, copy_now, deferred_spans, static_spans_n = plan_static_spans(
                 spans, work, outdir)
         for m, head_path in copy_now:
-            # 头帧已缓存：字节复制（B5 口径：写成功才计数）；失败则交回渲染集
+            # 头帧已缓存：字节复制（B5 口径：写成功才计数）；失败则交回渲染集。
+            # 读头帧直读、写成员走 _atomic_write_bytes（并发双写下成员文件同样不撕裂）
             try:
                 with open(head_path, "rb") as fh:
                     data = fh.read()
-                with open(os.path.join(outdir, f"f{m:04d}.png"), "wb") as fh:
-                    fh.write(data)
+                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data)
                 static_copied_n += 1
             except OSError as e:
                 note(f"帧 {m} 复制头帧失败（{e}），改渲染")
@@ -865,7 +891,6 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     finally:
         browser.stop()
     dt = (time.monotonic() - t0) * 1000
-    rendered_n = len(work) - len(failed)
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
     for head, members in deferred_spans:
         head_path = os.path.join(outdir, f"f{head:04d}.png")
@@ -881,12 +906,17 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             continue
         for m in members:
             try:
-                with open(os.path.join(outdir, f"f{m:04d}.png"), "wb") as fh:
-                    fh.write(data)
+                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data)
                 static_copied_n += 1
             except OSError as e:
                 note(f"帧 {m} 复制头帧失败（{e}），交由调用方回落")
                 failed.append(m)
+    # rendered 口径（m2 修正）：= work 帧渲染成功数，按 work 归属过滤后再扣减。
+    # failed 里可能混有 deferred 复制失败的成员帧（成员被跨度认领后不在 work 内），
+    # 直接 len(work)-len(failed) 会失真甚至为负；static_copied 字节复制帧按既有
+    # 文档口径不计入 rendered（单独计入 path_counts["static_copied"]）。
+    work_set = set(work)
+    rendered_n = len(work) - sum(1 for f in failed if f in work_set)
     # 合并各 tab 线程本地的路径计数与分项耗时（槽位由 worker 收尾写入；None 兜底
     # 防 worker 异常退出缺槽）
     path_counts = _empty_path_counts()

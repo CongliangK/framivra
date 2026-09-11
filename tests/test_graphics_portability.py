@@ -97,6 +97,29 @@ class _FakeTab:
         return gfx.png_encode_rgba(arr)
 
 
+class _CorruptJsonTab(_FakeTab):
+    """canvas 页 + CDP 响应损坏：__vtx_export_png() 的 Runtime.evaluate 响应经
+    Tab.call 的 json.loads 抛 JSONDecodeError（ValueError 子类）。setup 的 typeof
+    资格 eval 正常返回（canvas_export=True），仅帧内 export eval 损坏——用于验证
+    do_frame 的 canvas except (GfxRenderError, TypeError) 不吞 JSONDecodeError，
+    异常穿透到 worker 重试路径（B6 语义）。"""
+
+    def call(self, method, timeout=30, **params):
+        if params.get("expression") == "window.__vtx_export_png()":
+            raise json.JSONDecodeError("Expecting value", doc="", pos=0)
+        return {}
+
+    def eval(self, expression):
+        # 沿真实 Tab.eval→call 链路；这里 call 直接抛，等价于响应字节损坏
+        if 'typeof window.__vtx_export_png' in expression:
+            return 'function'                       # 资格判定过：canvas 页
+        r = self.call("Runtime.evaluate", expression=expression)
+        return r.get("result", {}).get("value")
+
+    def shot(self):
+        raise AssertionError('JSONDecodeError 被吞成回落时才会走到截图')
+
+
 class _FakeBrowser:
     def __init__(self, mode, tabs_n=1, spans=None):
         self.lock = threading.Lock()
@@ -113,7 +136,8 @@ class _FakeBrowser:
         pass
 
     def open_tabs(self):
-        return [_FakeTab(self, self.mode) for _ in range(self.tabs_n)]
+        cls = _CorruptJsonTab if self.mode == 'canvas_json_err' else _FakeTab
+        return [cls(self, self.mode) for _ in range(self.tabs_n)]
 
     def hard_restart(self):
         self.generation += 1
@@ -459,6 +483,91 @@ class StaticSpanMock(unittest.TestCase):
             self.assertEqual(work2, [2])
             self.assertEqual([(h, sorted(ms)) for h, ms in deferred2], [(2, [3, 4])])
             self.assertEqual(n2, 1)
+
+
+class AtomicWriteAndResilienceMock(unittest.TestCase):
+    """m3 健壮性三测（mock 级）：
+    ① CDP 响应损坏 → Tab.call json.loads 抛 JSONDecodeError（ValueError 子类），
+       断言不被 canvas except 吞掉、走 worker 重试路径（B6 语义回归锁定）；
+    ② 写盘失败重试不双计：os.replace 首两次注错 → path_counts 只计最终成功那次
+       的路径标签、failed 不误增（B5 语义）；
+    ③ M1 帧落盘原子性：同一路径并发双写（一好一坏字节），最终文件恒为二者之一
+       的完整字节（tmp+os.replace 生效，无 truncate/write 交错混合），且 tmp 无残留。"""
+
+    def test_corrupt_cdp_json_not_swallowed_by_canvas_except(self):
+        with tempfile.TemporaryDirectory(prefix='vtx_jsonerr_') as tmp:
+            root = Path(tmp)
+            page = root / 'p.html'
+            page.write_text('<html></html>', encoding='utf-8')
+            browser = _FakeBrowser('canvas_json_err', 1)
+            with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
+                st = gfx.render_page(page, root / 'out', 2, chrome_path='fake',
+                                     tabs=1, width=6, height=4)
+            self.assertEqual(st['canvas_export'], True)  # canvas 页：export eval 触发损坏响应
+            self.assertEqual(st['failed'], [0, 1])       # 异常穿透 → 重试耗尽进 failed
+            self.assertEqual(st['rendered'], 0)
+            pc = st['path_counts']
+            self.assertEqual(pc['failed'], 2)            # 每帧只计一次失败（非每次尝试）
+            self.assertEqual(pc['canvas_fallback'], 0)   # 未被误吞成「载荷失效」回落
+            self.assertEqual(pc['twoshot'], 0)           # 也未回落截图路径静默出帧
+
+    def test_write_failure_retry_not_double_counted(self):
+        with tempfile.TemporaryDirectory(prefix='vtx_wfail_') as tmp:
+            root = Path(tmp)
+            page = root / 'p.html'
+            page.write_text('<html></html>', encoding='utf-8')
+            real_replace, calls = os.replace, [0]
+
+            def flaky_replace(src, dst):
+                calls[0] += 1
+                if calls[0] <= 2:                        # 帧 0 前两个尝试注错
+                    raise OSError(16, 'injected transient write failure')
+                return real_replace(src, dst)
+
+            browser = _FakeBrowser('override', 1)
+            with mock.patch.object(os, 'replace', flaky_replace), \
+                    mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
+                st = gfx.render_page(page, root / 'out', 3, chrome_path='fake',
+                                     tabs=1, width=6, height=4)
+            self.assertEqual(calls[0], 3 + 2)            # 2 次注错 + 每帧恰 1 次成功替换
+            self.assertEqual((st['rendered'], st['failed']), (3, []))
+            pc = st['path_counts']
+            self.assertEqual((pc['override'], pc['failed']), (3, 0))  # 只计最终成功那次
+            self.assertEqual((root / 'out' / 'f0000.png').read_bytes()[:8],
+                             b'\x89PNG\r\n\x1a\n')       # 落盘为完整真实 PNG
+
+    def test_atomic_write_concurrent_no_torn_file(self):
+        # 同帧并发双写（同页 split×k 双块并发渲同一跨度头帧的等价场景）
+        import numpy as np
+        good = gfx.png_encode_rgba(np.zeros((4, 6, 4), dtype=np.uint8))
+        bad = b'CORRUPT-BYTES-' * 300                     # 与 good 长度不同，混合必可检出
+        with tempfile.TemporaryDirectory(prefix='vtx_atomic_') as tmp:
+            target = Path(tmp) / 'f0000.png'
+            for _ in range(64):
+                barrier = threading.Barrier(2)
+
+                def w(payload):
+                    barrier.wait(timeout=10)
+                    gfx._atomic_write_bytes(str(target), payload)
+
+                t1 = threading.Thread(target=w, args=(good,))
+                t2 = threading.Thread(target=w, args=(bad,))
+                t1.start(); t2.start(); t1.join(); t2.join()
+                self.assertIn(target.read_bytes(), (good, bad))  # 完整字节之一，无交错混合
+            self.assertEqual(list(Path(tmp).glob('.*.tmp*')), [])  # 成功路径不留 tmp
+
+    def test_atomic_write_failure_cleans_tmp_keeps_target(self):
+        # 异常路径：replace 抛错 → OSError 穿透、目标文件保持旧完整内容、tmp 被清理
+        import numpy as np
+        good = gfx.png_encode_rgba(np.zeros((4, 6, 4), dtype=np.uint8))
+        with tempfile.TemporaryDirectory(prefix='vtx_atomic_err_') as tmp:
+            target = Path(tmp) / 'f0001.png'
+            target.write_bytes(good)
+            with mock.patch.object(os, 'replace', side_effect=OSError(5, 'injected')):
+                with self.assertRaises(OSError):
+                    gfx._atomic_write_bytes(str(target), b'torn-partial')
+            self.assertEqual(target.read_bytes(), good)          # 目标未被半写破坏
+            self.assertEqual(list(Path(tmp).glob('.*.tmp*')), [])
 
 
 class VtxSplitMath(unittest.TestCase):
