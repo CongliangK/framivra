@@ -51,7 +51,7 @@ def tprint(msg):
 
 
 def run(cmd, cwd=None, tail=3):
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     out = "\n".join(r.stdout.strip().splitlines()[-tail:]) if r.stdout.strip() else ""
     print(f"[exit={r.returncode}] {' '.join(map(str, cmd[:4]))}…")
     if out:
@@ -68,7 +68,7 @@ def content_spans(src: Path, dur_s: float, fps: int, thr: str, min_sil: float, p
     r = subprocess.run(
         ["ffmpeg", "-nostats", "-i", str(src),
          "-af", f"silencedetect=noise={thr}:d={min_sil}", "-f", "null", "-"],
-        capture_output=True, text=True)
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
     sils = []
     for line in r.stderr.splitlines():
         if "silence_start:" in line:
@@ -117,7 +117,7 @@ def main():
 
     tl_path = a.timeline.resolve()
     root = tl_path.parent
-    tl = json.loads(tl_path.read_text())
+    tl = json.loads(tl_path.read_text(encoding="utf-8"))
     audit_dir = (a.audit_dir or root / "cache" / "audit_bgm").resolve()
     mp3_dir = (a.mp3_dir or audit_dir / "mp3").resolve()
     mp3_dir.mkdir(parents=True, exist_ok=True)
@@ -147,7 +147,7 @@ def main():
         name, src, dst = job
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src),
                         "-map", "0:a", "-c:a", "libmp3lame", "-b:a", "320k", str(dst)],
-                       check=True, capture_output=True, text=True)
+                       check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
         return job
 
     if jobs:
@@ -180,7 +180,7 @@ def main():
             return (vol0, 1, None), evs
         r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
                             "format=duration", "-of", "csv=p=0", str(mp3_of[sid])],
-                           capture_output=True, text=True, check=True)
+                           capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
         dur = float(r.stdout.strip())
         spans = content_spans(mp3_of[sid], dur, fps,
                               a.silence_threshold, a.min_silence, a.pad)
@@ -234,7 +234,7 @@ def main():
         "audio_tracks": tracks,
     }
     at_path = audit_dir / "timeline.json"
-    at_path.write_text(json.dumps(audit, ensure_ascii=False, indent=1))
+    at_path.write_text(json.dumps(audit, ensure_ascii=False, indent=1), encoding="utf-8")
     n_ev = sum(len(t["events"]) for t in tracks)
     print(f"[json ] {at_path}（{len(tracks)} 轨 / {n_ev} 事件）")
     for sid, vol, n, voiced in report:

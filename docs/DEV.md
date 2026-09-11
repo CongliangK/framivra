@@ -91,3 +91,13 @@ GPU 光栅对 gfx 截图无收益；Chrome 同源 tab 共用渲染进程，单�
 - **自包含底色原则来历**：透明底+深色字页面在演示层被剪短/落黑场后变黑底深字不可读（g6a_title 实案），确立「需要浅底就自带」。〔出处：gfx.md〕
 - **历史副本纪律**：`_library/bg_test/works/`（matting 四件）与 `voice-ime/cache/aup3_extract/`（aroll 两件）与本体当前逐字节一致，但属冻结历史快照——修改一律改本仓。`matting/run_full_bg.sh` 与 `post_h3.sh` 为 bg_test 历史运行器，内含本机绝对路径未参数化，属收编原样保留。〔出处：README「历史副本纪律」〕
 - **时间线预览器 preview.html**：单文件网页，内置 poc2 示例自动载入；预览级校验发现问题标红，最终以 `vtx validate` 为准。〔出处：edit.md〕
+
+## 四、2026-09-11 全面体检遗留登记（未修项，勿无声消失）
+
+体检当日修复清单见 commit 92609f3 / 898870e；以下为**有意未修/待外部条件**项：
+
+- **NIT 清单**（健壮性审查判 NIT，修不动代码不影响正确性）：qc.py dry 早退后 176-177 死代码、infra.py:71 恒真分支、imgen_cli.py 死变量、vtx.py render_via 字符串状态机、init.py requests 双探测、bilibili.py --retry 0 NameError、aroll/trim_takes.py 44 字节 WAV 头假定（与自家 aup3_extract 配对成立）。
+- **Windows 实机终验待办**：本仓跨平台修复（.gitattributes LF / init.py UTF-8/sys.executable / Edge x86 / conda 钩子 / heredoc cygpath / vtx Windows 三件套）均为 Linux 侧理论推演+Linux 回归，**尚无 Windows 实机验证**——朋友首次在 Windows 落地时按 README 跨平台节 + docs/依赖盘点 §三 清单逐项过一遍，重点复跑 tests/run_e2e.py（VTX_TEST_PYTHON/CHROME/FFMPEG 显式指定）。
+- **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；asr/README 手动路线兜底。
+- **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。
+- **cache_dependencies 未声明依赖的外链变更不触发重渲**：当前全部工程未声明，属声明式契约的已知边界（docs/cache-provenance.md 有口径）。

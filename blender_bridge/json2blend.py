@@ -33,7 +33,7 @@ except ImportError:
 argv = sys.argv[sys.argv.index("--") + 1:]
 tl_path, blend_path = Path(argv[0]).resolve(), Path(argv[1]).resolve()
 
-tl = json.loads(tl_path.read_text())
+tl = json.loads(tl_path.read_text(encoding="utf-8"))
 base = tl_path.parent
 P = tl["project"]
 W, H, FPS, DUR = P["width"], P["height"], P["fps"], P["duration_frames"]
@@ -75,7 +75,8 @@ def probe(sid):
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                             "-count_frames", "-show_entries",
                             "stream=width,height,nb_read_frames",
-                            "-of", "csv=p=0", str(SRC[sid])], capture_output=True, text=True)
+                            "-of", "csv=p=0", str(SRC[sid])], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
         try:
             w, h, n = (r.stdout.strip().split(",") + ["0", "0", "0"])[:3]
             _probe[sid] = (int(w), int(h), int(n))
