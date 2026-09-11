@@ -21,7 +21,14 @@ import hashlib
 import json, subprocess, sys
 from pathlib import Path
 
-import bpy
+try:
+    import bpy
+except ImportError:
+    # 本脚本须由 blender 解释器运行（python3 直跑无 bpy 模块）：
+    print("错误: 未找到 bpy 模块 —— json2blend.py 必须由 blender 解释器运行，不能 python3 直跑。", file=sys.stderr)
+    print("正确调用:", file=sys.stderr)
+    print("  blender --background --factory-startup --python json2blend.py -- <timeline.json> <out.blend>", file=sys.stderr)
+    sys.exit(2)
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 tl_path, blend_path = Path(argv[0]).resolve(), Path(argv[1]).resolve()

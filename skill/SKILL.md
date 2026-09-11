@@ -122,7 +122,7 @@ python3 <video_tools>/scripts/check_4k.sh out/final_4k.mp4 ...     # 4K 投稿�
 | 内容验证门 | `python3 <video_tools>/scripts/content_gates.py -t ... [--project-gates 门.json]` |
 | 4K 投稿断言 | `bash <video_tools>/scripts/check_4k.sh <成片> ...` |
 | 缓存治理 | `... gc --dry` / `gc` / `df` / `snapshot` |
-| Blender 审片工程 | `python3 <video_tools>/blender_bridge/json2blend.py -t <项目>/timeline.json` |
+| Blender 审片工程 | `blender --background --factory-startup --python <video_tools>/blender_bridge/json2blend.py -- <项目>/timeline.json <项目>/preview.blend`（json2blend/verify_blend 须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError） |
 | BGM 分轨审计包 | `python3 <video_tools>/blender_bridge/audit_bundle.py -t <项目>/timeline.json` |
 | 音视频同步 / 降噪 / 响度 | `sync_audio.py` / `denoise_voice.py` / `post_loudness.sh` |
 | 时间线人审预览 | 浏览器打开 `<skill>/vtx/preview.html` |

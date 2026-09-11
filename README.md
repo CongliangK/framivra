@@ -32,7 +32,7 @@ python3 init.py          # 跨平台初始化：依赖自检 + 安装指引 + �
                          # Linux 也可 bash init.sh（薄包装）；加 --fix 自动安装缺失基础依赖；--json 机器可读
 python3 vtx/vtx.py --help                       # 渲染 CLI
 bash scripts/new_project.sh <项目目录> [时长秒]   # 新项目脚手架
-python3 blender_bridge/json2blend.py -t <项目>/timeline.json   # Blender 预览工程
+blender --background --factory-startup --python blender_bridge/json2blend.py -- <项目>/timeline.json <项目>/preview.blend   # Blender 预览工程（json2blend/verify_blend 须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError）
 bash asr/init.sh                                # 字幕产线初始化（模型/解释器探测，幂等）
 bash tts/init.sh                                # TTS 产线初始化（IndexTTS repo/edge-tts 探测，幂等）
 bash imgen/init.sh                              # 生图产线初始化（key/requests 探测，秒级幂等）
