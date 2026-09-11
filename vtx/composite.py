@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from encoders import pick_vcodec, nvenc_concurrency
-from infra import Ctx, run_parallel
+from infra import Ctx, run_parallel, filter_filename
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）
@@ -197,7 +197,7 @@ class RenderPlan:
                          f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
             cur = f"L{k}"
         if with_subs:
-            parts.append(f"[{cur}]subtitles={sub_file}[vout]")
+            parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
         else:
             parts.append(f"[{cur}]null[vout]")
         vcodec, enc = pick_vcodec(c, draft)
@@ -233,7 +233,9 @@ class RenderPlan:
     def render_segmented(self, out_path, layer_set=None, with_subs=True, tag="vseg"):
         c, draft = self.c, self.draft
         lset = self.layers if layer_set is None else layer_set
-        vdir = c.cache / tag; vdir.mkdir(exist_ok=True)
+        # Separate encoding/segmentation variants inside the input generation.
+        variant = f"{tag}-n{self.nseg}-gpu{int(bool(getattr(c, 'gpu', False)))}"
+        vdir = c.cache / variant; vdir.mkdir(exist_ok=True)
         bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in lset]
         cuts = choose_cutpoints(bounds, c.dur, self.nseg)
         edges = [0] + cuts + [c.dur]
@@ -267,7 +269,12 @@ class RenderPlan:
             with ThreadPoolExecutor(workers) as ex:
                 list(ex.map(render_one, range(len(segs))))
         lst = vdir / "list.txt"
-        lst.write_text("".join(f"file '{s.name}'\n" for s in segs))
+        # Relative concat URLs are resolved incorrectly when the list's Windows
+        # directory contains '#'. Absolute paths avoid URL-base resolution.
+        def concat_entry(path):
+            name = path.resolve().as_posix().replace("'", "'\\''")
+            return f"file '{name}'\n"
+        lst.write_text("".join(concat_entry(s) for s in segs), encoding="utf-8")
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
                "-c", "copy", str(out_path)])
         # 内置正确性自检：容器元数据总帧数必须精确 == project.duration_frames
@@ -296,7 +303,7 @@ def build_video(c: Ctx):
         for ci, cl in enumerate(tr["clips"]):
             kind = tr.get("kind")
             if kind == "gfx":
-                layers.append({"cl": cl, "pngdir": c.cache / Path(cl["src"]).stem,
+                layers.append({"cl": cl, "pngdir": c.gfx_dir(cl),
                                "x": cl.get("x", 0), "y": cl.get("y", 0), "w2": None, "h2": None,
                                "gfx": True, "ti": ti})
                 continue

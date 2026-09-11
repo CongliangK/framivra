@@ -81,7 +81,7 @@ def gfx(c: Ctx):
         return subprocess.run(
             [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
              f"--window-size={c.w},{c.h}", "--default-background-color=00000000",
-             f"--screenshot={d}/f{i:04d}.png", f"file://{html}?f={i}"], capture_output=True)
+             f"--screenshot={d}/f{i:04d}.png", f"{html.resolve().as_uri()}?f={i}"], capture_output=True)
 
     def render_cli(i_range, d, html, chrome):
         with ThreadPoolExecutor(6) as ex:
@@ -92,7 +92,7 @@ def gfx(c: Ctx):
         for cl in tr["clips"]:
             cid = Path(cl["src"]).stem          # 缓存键 = html 文件名去扩展（同 html 复用帧缓存）
             n = cl["dur"]
-            d = c.cache / cid
+            d = c.gfx_dir(cl)
             if d.exists() and len(list(d.glob("f*.png"))) != n:  # 帧数不符（换时长）→ 清缓存重渲
                 shutil.rmtree(d)
             d.mkdir(parents=True, exist_ok=True)
@@ -154,18 +154,21 @@ def main():
     # 不跟随符号链接（resolve() 会穿透 cp -rs 链接树等隔离副本，把 out/ 回执写到 live 项目）
     tp = Path(os.path.abspath(os.path.expanduser(a.timeline)))
     if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)
-    c = Ctx(tp); c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
+    c = Ctx(tp); c.cache.mkdir(parents=True, exist_ok=True); c.out.mkdir(exist_ok=True)
     c.dry = a.dry_run   # 原 DRY 全局改为 Ctx 字段（消除可变全局）
     c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
     if a.strict and a.command != "qc":
         print("--strict 仅作用于 qc 阶段"); sys.exit(1)
     if a.command == "clean":
-        shutil.rmtree(c.cache, ignore_errors=True); shutil.rmtree(c.out, ignore_errors=True)
+        shutil.rmtree(c.cache_root, ignore_errors=True); shutil.rmtree(c.out, ignore_errors=True)
         print("✓ 已清空 cache/ out/"); return
     names = [s[0] for s in STAGES] if a.command == "all" else [a.command]
     todo = STAGES if a.command == "all" else [next(s for s in STAGES if s[0] == a.command)]
     for name, fn in todo:
-        print(f"== {name} =="); fn(c)
+        print(f"== {name} ==")
+        stage = name + "_draft" if c.draft and name in ("video", "mux") else name
+        c.begin_stage(stage)
+        fn(c)
     print("完成：", c.out / "final.mp4" if a.command in ("all", "mux", "qc") else names)
 
 if __name__ == "__main__":

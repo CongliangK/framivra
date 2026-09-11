@@ -22,6 +22,7 @@ alpha 处理（本机 Chrome 152 实测，/tmp/gfx_cdp_dev/REPORT.md 实验1）�
 独立测试：python3 gfx_render.py <html> <outdir> <N帧> [--tabs 4] [--opaque-check]
 """
 import base64
+from pathlib import Path
 import json
 import os
 import shutil
@@ -368,6 +369,48 @@ def _two_shot_combine(png_white: bytes, png_black: bytes) -> bytes:
     return png_encode_rgba(np.dstack([rgb, a]))
 
 
+def decode_canvas_export(data_url, width, height):
+    """Validate the opt-in canvas PNG envelope without decoding every pixel."""
+    prefix = "data:image/png;base64,"
+    if not isinstance(data_url, str) or not data_url.startswith(prefix):
+        raise GfxRenderError("invalid canvas export data URL")
+    try:
+        png = base64.b64decode(data_url[len(prefix):], validate=True)
+        if png[:8] != b"\x89PNG\r\n\x1a\n":
+            raise ValueError("not a PNG")
+        pos, header, image_data, ended = 8, False, False, False
+        while pos + 12 <= len(png):
+            size = struct.unpack(">I", png[pos:pos + 4])[0]
+            end = pos + 12 + size
+            if end > len(png):
+                raise ValueError("truncated PNG chunk")
+            kind = png[pos + 4:pos + 8]
+            data = png[pos + 8:pos + 8 + size]
+            crc = struct.unpack(">I", png[end - 4:end])[0]
+            if zlib.crc32(kind + data) & 0xffffffff != crc:
+                raise ValueError("invalid PNG checksum")
+            if pos == 8:
+                if kind != b"IHDR" or size != 13:
+                    raise ValueError("missing PNG header")
+                w, h, depth, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", data)
+                if (w, h) != (width, height) or depth != 8 or color not in (2, 6):
+                    raise ValueError("unexpected canvas dimensions or pixel format")
+                if (compression, filtering, interlace) != (0, 0, 0):
+                    raise ValueError("unsupported canvas PNG encoding")
+                header = True
+            if kind == b"IDAT":
+                image_data = True
+            if kind == b"IEND":
+                ended = size == 0 and end == len(png)
+                break
+            pos = end
+        if not (header and image_data and ended):
+            raise ValueError("incomplete PNG")
+        return png
+    except (ValueError, struct.error) as exc:
+        raise GfxRenderError(f"invalid canvas PNG: {exc}") from exc
+
+
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 width=1920, height=1080, progress=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
@@ -387,6 +430,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     t0 = time.monotonic()
     failed = []
     transparent = None
+    canvas_export = False
     work = [i for i in range(n_frames)
             if not os.path.exists(os.path.join(outdir, f"f{i:04d}.png"))]
     if not work:
@@ -396,7 +440,14 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     queues = [work[k::tabs_n] for k in range(tabs_n)]
 
     def do_frame(tab, i):
-        tab.navigate(f"file://{html_path}?f={i}")
+        tab.navigate(f"{Path(html_path).resolve().as_uri()}?f={i}")
+        if canvas_export:
+            try:
+                return decode_canvas_export(tab.eval("window.__vtx_export_png()"), width, height)
+            except (ValueError, TypeError, GfxRenderError):
+                # Invalid opt-in output falls back to the same page's screenshot.
+                # Never write an invalid payload into the resumable frame cache.
+                pass
         if not transparent:
             return tab.shot()
         tab.eval(_BG_INJECT_WHITE)
@@ -445,9 +496,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
 
     try:
         pool = browser.open_tabs()
-        pool[0].navigate(f"file://{html_path}?f={work[0]}")
+        pool[0].navigate(f"{Path(html_path).resolve().as_uri()}?f={work[0]}")
         time.sleep(0.15)
-        transparent = page_transparent(pool[0])
+        canvas_export = bool(pool[0].eval("typeof window.__vtx_export_png === 'function'"))
+        transparent = True if canvas_export else page_transparent(pool[0])
         threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
         for t in threads:
             t.start()
@@ -458,7 +510,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     dt = (time.monotonic() - t0) * 1000
     return {"n": n_frames, "rendered": len(work) - len(failed), "failed": sorted(failed),
             "transparent": transparent, "tabs": tabs_n, "ms_total": dt,
-            "ms_per_frame": dt / max(1, len(work))}
+            "ms_per_frame": dt / max(1, len(work)),
+            "canvas_export": canvas_export}
 
 
 class GfxRenderError(RuntimeError):

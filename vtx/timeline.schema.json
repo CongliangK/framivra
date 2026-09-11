@@ -39,6 +39,13 @@
           "type": "integer",
           "minimum": 1,
           "description": "成片总帧数（画布时长）。任何帧都可能无内容而显示黑场——这是合法输出，语义层规划负责避免"
+        },
+        "cache_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Local files used by HTML/CSS/JS (images, fonts, stylesheets, scripts). Content hashes participate in cache identity. Remote or undeclared assets are not tracked."
         }
       }
     },

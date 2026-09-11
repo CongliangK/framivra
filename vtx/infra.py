@@ -6,6 +6,7 @@
 import hashlib, json, os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from cache_state import project_fingerprint, load_receipt, DOWNSTREAM
 
 
 def is_ffmpeg_cmd(cmd) -> bool:
@@ -24,7 +25,10 @@ class Ctx:
         self.h = self.tl["project"]["height"]
         self.spf = 1.0 / self.fps
         self.spf_samples = 48000 // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
-        self.cache = self.root / "cache"; self.out = self.root / "out"
+        self.cache_root = self.root / "cache"
+        self.input_fingerprint = project_fingerprint(self.root, self.tl)
+        self.cache = self.cache_root / self.input_fingerprint
+        self.out = self.root / "out"
         self.probes = {}
         self.dry = False   # --dry-run（main 里按 CLI 参数赋值；替代原模块级可变全局 DRY）
 
@@ -71,12 +75,36 @@ class Ctx:
         self.probes[path] = info; return info
 
     def receipt(self, stage, ok, detail=""):
+        if self.dry:
+            return
         f = self.out / "receipt.json"
-        rec = json.loads(f.read_text()) if f.exists() else {"timeline": None, "stages": {}}
+        rec = load_receipt(f, self.input_fingerprint)
         rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
         rec["updated"] = time.strftime("%F %T")
         rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
         self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
+
+    def gfx_dir(self, clip):
+        identity = str((self.root / clip['src']).resolve()) + ':' + str(clip['dur'])
+        return self.cache / ('gfx-' + hashlib.sha256(identity.encode()).hexdigest()[:24])
+
+    def begin_stage(self, stage):
+        """Reject stale prerequisites and invalidate downstream success receipts."""
+        if self.dry:
+            return
+        rec = load_receipt(self.out / 'receipt.json', self.input_fingerprint)
+        dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
+                        'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
+        if any(t.get('kind') == 'gfx' for t in self.tl['video_tracks']):
+            dependencies['video'] = dependencies['video_draft'] = ['gfx']
+        missing = [name for name in dependencies.get(stage, [])
+                   if not rec['stages'].get(name, {}).get('ok')]
+        if missing:
+            raise RuntimeError('Current inputs require successful stages: ' + ', '.join(missing))
+        for name in DOWNSTREAM.get(stage, []) + [stage]:
+            rec['stages'].pop(name, None)
+        self.out.mkdir(exist_ok=True)
+        (self.out / 'receipt.json').write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]
@@ -135,3 +163,14 @@ def run_parallel(c: Ctx, tasks, what: str):
     if failed:
         print(f"✗ {what}失败（{failed[0]}）：\n{failed[1]}", file=sys.stderr); sys.exit(1)
     print(f"  ✓ {what}完成（{time.time() - t0:.0f}s）")
+
+
+def filter_filename(path):
+    """Escape an absolute filename through FFmpeg option and filtergraph parsers.
+
+    This value is passed in an argv element, not through a shell.
+    """
+    value = Path(path).resolve().as_posix()
+    for chars in ("\\':", "\\'[],;"):
+        value = ''.join('\\' + ch if ch in chars else ch for ch in value)
+    return value
