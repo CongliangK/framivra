@@ -1,6 +1,10 @@
 """gfx_golden.py 单测：PIL 现场生成小 PNG（64×48）构造假缓存目录 + 假 timeline
 （无 chrome 依赖），覆盖 build 抽样/全帧、帧缺失报错、compare 全零/差异/帧缺失、
-同页双 dur 并列。golden 键与帧目录定位复用 vtx/hygiene.gfx_key（与渲染器同键）。"""
+同页双 dur 并列、名单逐项零匹配报错（B2）、缓存未重渲新鲜度防线（B1 默认警告/
+--strict 失败）、页 html 改键后 compare 显式失败（目录缺失，绝不静默错比）。
+golden 键与帧目录定位复用 vtx/hygiene.gfx_key（与渲染器同键）。"""
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -160,6 +164,99 @@ class GfxGolden(unittest.TestCase):
         f0 = gg.hygiene.gfx_dir(c, {"src": "pages/a.html", "dur": 6}) / "f0000.png"
         _make_frame(f0, 0, tamper=True)
         self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(g)]), 1)
+
+
+    def test_build_rejects_unmatched_full_pages(self):
+        """B2：build --full-pages 名单逐项零匹配 → 报错退出非零，golden 不落盘。"""
+        tp = _project(self.root, [("pages/a.html", 6)])
+        _fill_cache(tp, [("pages/a.html", 6)])
+        g = self.root / "golden.json"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gg.main(["build", "-t", str(tp), "--golden", str(g),
+                          "--full-pages", "no_such_page,c5a_main"])
+        self.assertEqual(rc, 1)
+        self.assertFalse(g.exists())
+        self.assertIn("逐项零匹配", buf.getvalue())
+
+    def test_compare_rejects_unmatched_pages(self):
+        """B2：compare --pages 名单中有项在 golden 零匹配 → 报错退出非零
+        （防拼错时其余名单静默通过被误当全量比对）。"""
+        tp = _project(self.root, [("pages/a.html", 6)])
+        _fill_cache(tp, [("pages/a.html", 6)])
+        g = self.root / "golden.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(g)]), 0)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gg.main(["compare", "-t", str(tp), "--golden", str(g),
+                          "--pages", "a,no_such_page"])
+        self.assertEqual(rc, 1)
+        self.assertIn("逐项零匹配", buf.getvalue())
+        # 名单全部可匹配 → 正常
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(g),
+                                      "--pages", "a"]), 0)
+
+    def test_compare_stale_cache_warn_and_strict(self):
+        """B1：golden 建后缓存未重渲（帧 mtime ≤ built）→ 默认显式警告但 exit 0，
+        --strict 判失败 exit 1；重渲一帧后（mtime 变新）恢复正常。"""
+        tp = _project(self.root, [("pages/a.html", 6)])
+        _fill_cache(tp, [("pages/a.html", 6)])
+        g = self.root / "golden.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(g)]), 0)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(g)]), 0)
+        self.assertIn("缓存未重渲", buf.getvalue())
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(g),
+                                      "--strict"]), 1)
+        # 重渲一帧（内容不变，mtime 显式推到 built+120s 越过 2s 容差）→ 防线解除
+        import time as _time
+        golden = json.loads(g.read_text(encoding="utf-8"))
+        built = _time.mktime(_time.strptime(golden["meta"]["built"],
+                                            "%Y-%m-%d %H:%M:%S"))
+        c = gg.make_ctx(tp)
+        f0 = gg.hygiene.gfx_dir(c, {"src": "pages/a.html", "dur": 6}) / "f0000.png"
+        _make_frame(f0, 0)
+        import os as _os
+        _os.utime(f0, (built + 120, built + 120))
+        buf3 = io.StringIO()
+        with contextlib.redirect_stdout(buf3):
+            self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(g),
+                                      "--strict"]), 0)
+        self.assertNotIn("缓存未重渲", buf3.getvalue())
+
+    def test_compare_fails_explicitly_after_html_key_change(self):
+        """页 html 改键（审查指出的缺失用例）：html 变 → gfx_key 变 → 新键目录
+        不存在 → compare 显式失败（目录缺失），绝不静默错比旧目录。"""
+        tp = _project(self.root, [("pages/a.html", 6)])
+        _fill_cache(tp, [("pages/a.html", 6)])
+        g = self.root / "golden.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(g)]), 0)
+        golden = json.loads(g.read_text(encoding="utf-8"))
+        old_key = golden["pages"]["pages/a.html"]["durs"]["6"]["key"]
+        (self.root / "pages/a.html").write_text("<html>changed</html>", encoding="utf-8")
+        report = self.root / "report.json"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(g),
+                                      "--report", str(report)]), 1)
+        rep = json.loads(report.read_text(encoding="utf-8"))
+        self.assertFalse(rep["ok"])
+        self.assertEqual(len(rep["dir_missing"]), 1)
+        self.assertNotEqual(rep["dir_missing"][0]["key"], old_key)  # 键确实随内容变了
+        self.assertIn("目录缺失", buf.getvalue())
+
+    def test_golden_write_is_atomic_no_tmp_left(self):
+        """B4：golden 落盘走 tmp+os.replace，成功后不留 .tmp 残件。"""
+        tp = _project(self.root, [("pages/a.html", 4)])
+        _fill_cache(tp, [("pages/a.html", 4)])
+        g = self.root / "golden.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(g)]), 0)
+        self.assertTrue(g.exists())
+        self.assertFalse((self.root / "golden.json.tmp").exists())
 
 
 if __name__ == "__main__":

@@ -245,6 +245,38 @@ class FramesParamMock(unittest.TestCase):
             self.assertTrue((out / 'f0002.png').exists())
 
 
+class RenderedViaFormat(unittest.TestCase):
+    """B7：_cdp_via 纯格式化单测——路径计数键序固定零值也显示、分项 p50 拼接、
+    cli_fallback 追加；只读 stats 字段，不做字符串状态判断。"""
+
+    @staticmethod
+    def _stats(**pc_over):
+        pc = dict.fromkeys(("override", "canvas", "twoshot", "opaque",
+                            "canvas_fallback", "failed"), 0) | pc_over
+        tm = {c: {"p50": float(i), "p95": 0.0, "sum": 0.0}
+              for i, c in enumerate(("nav", "export", "decode", "write"))}
+        return {"tabs": 4, "ms_per_frame": 100.0, "path_counts": pc, "timings_ms": tm}
+
+    def test_zero_keys_still_displayed_for_grep_alignment(self):
+        line = vtx._cdp_via(self._stats(override=3))
+        self.assertIn("override×3", line)
+        for k in ("canvas×0", "twoshot×0", "opaque×0", "canvas_fallback×0", "failed×0"):
+            self.assertIn(k, line)
+        self.assertIn("4 tabs CDP", line)
+        self.assertIn("100ms/帧", line)
+
+    def test_cli_fallback_appended_when_present(self):
+        st = self._stats(override=1, failed=2)
+        st["path_counts"]["cli_fallback"] = 2
+        self.assertIn("cli_fallback×2", vtx._cdp_via(st))
+        self.assertNotIn("cli_fallback", vtx._cdp_via(self._stats(override=1)))
+
+    def test_timing_categories_joined(self):
+        line = vtx._cdp_via(self._stats())
+        for c in ("nav", "export", "decode", "write"):
+            self.assertIn(c + " ", line)
+
+
 class VtxSplitMath(unittest.TestCase):
     """vtx 页内分片：切块数学（阈值/上限/关闭态）与多块 stats 聚合。"""
 

@@ -524,7 +524,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             ok = True
             try:
                 png = decode_canvas_export(tab.eval("window.__vtx_export_png()"), width, height)
-            except (ValueError, TypeError, GfxRenderError):
+            # B6：except 收窄到 (GfxRenderError, TypeError)——decode_canvas_export 已把
+            # 载荷类 ValueError/struct.error 包装成 GfxRenderError；json.JSONDecodeError
+            # （CDP 响应损坏，ValueError 子类）不再被误吞成「载荷失效」，照常走重试/自愈
+            except (GfxRenderError, TypeError):
                 ok = False
             timing["export"] = time.monotonic() - t0
             if ok:
@@ -582,15 +585,17 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 if idx >= len(pool):
                     raise ConnectionError("tab lost after browser restart")
                 png, path, timing = do_frame(pool[idx], i)
-                if canvas_export and path != "canvas":
-                    my_paths["canvas_fallback"] += 1  # canvas 校验失败回落：实际路径仍照常计
-                my_paths[path] += 1
                 t0 = time.monotonic()
                 with open(os.path.join(outdir, f"f{i:04d}.png"), "wb") as fh:
                     fh.write(png)
                 my_times["write"].append(time.monotonic() - t0)
                 for c in ("nav", "export", "decode"):
                     my_times[c].append(timing[c])
+                # B5：路径计数移到 write 成功之后——此前 write 抛错（磁盘满/权限）时
+                # 计数已落，同帧重试成功后路径计数与 canvas_fallback 双计
+                if canvas_export and path != "canvas":
+                    my_paths["canvas_fallback"] += 1  # canvas 校验失败回落：实际路径仍照常计
+                my_paths[path] += 1
                 qi += 1
                 retries = 0
                 my_gen = browser.generation

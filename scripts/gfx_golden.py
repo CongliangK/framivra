@@ -162,6 +162,13 @@ def cmd_build(args) -> int:
     full_names = _split_names(args.full_pages)
     sample = max(1, args.sample)
 
+    # ---- 名单防线（B2）：--full-pages 逐项必须至少命中一个 gfx 页，防拼错静默降级抽检
+    unmatched = [n for n in full_names if not any(_match(n, src) for src, _ in clips)]
+    if unmatched:
+        print(f"✗ --full-pages 名单逐项零匹配: {unmatched}"
+              f"（timeline 共 {len(clips)} 个 gfx 实例，检查拼写/是否已渲）")
+        return 1
+
     # ---- 定位 + 完整性预检：任一目录/帧缺失 → 列全问题后退出非零（golden 必须完整）
     errors, plan = [], []
     for src, dur in clips:
@@ -228,7 +235,10 @@ def cmd_build(args) -> int:
         "pages": pages,
     }
     out = Path(args.golden)
-    out.write_text(json.dumps(golden, ensure_ascii=False, indent=1), encoding="utf-8")
+    # 落盘原子化（B4）：同目录 tmp + os.replace，杜绝半份 golden 被下次 compare 读到
+    tmp = out.parent / (out.name + ".tmp")
+    tmp.write_text(json.dumps(golden, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, out)
     n_full = sum(1 for *_, m, _f in plan if m == "full")
     print(f"✓ golden 已写入 {out}：{len(pages)} 页 / {len(plan)} 个实例"
           f"（full {n_full}），{len(hashes)} 帧，{time.time() - t0:.0f}s")
@@ -253,12 +263,33 @@ def cmd_compare(args) -> int:
         return 1
 
     names = _split_names(args.pages)
+    # 名单防线（B2）：--pages 逐项必须至少命中一个 golden 页，防拼错时「其余名单」
+    # 静默通过让人误以为全量比对
+    unmatched = [n for n in names if not any(_match(n, src) for src in g.get("pages", {}))]
+    if unmatched:
+        print(f"✗ --pages 名单在 golden 中逐项零匹配: {unmatched}"
+              f"（golden 共 {len(g.get('pages', {}))} 页）")
+        return 1
     sel = {src: v for src, v in g.get("pages", {}).items()
            if not names or any(_match(n, src) for n in names)}
     if not sel:
         print(f"✗ --pages 名单在 golden 中无匹配页（golden 共 "
               f"{len(g.get('pages', {}))} 页）")
         return 1
+
+    # ---- 交叉核对 timeline 页集（B3）：timeline 有而 golden 未记录的 gfx 页 → 警告列出
+    unrecorded = []
+    for src, dur in gfx_clips(c):
+        pv = g.get("pages", {}).get(src)
+        if pv is None or str(dur) not in pv.get("durs", {}):
+            unrecorded.append({"src": src, "dur": dur})
+    if unrecorded:
+        print(f"  ⚠ timeline 中有 {len(unrecorded)} 个 gfx 实例未记录在 golden（不在本次比对"
+              f"范围，需要覆盖请重建 golden）：")
+        for u in unrecorded[:20]:
+            print(f"    - {u['src']} dur={u['dur']}")
+        if len(unrecorded) > 20:
+            print(f"    ... 另有 {len(unrecorded) - 20} 个")
 
     # ---- 收集待比任务（抽检页只比 golden 已记录帧；full 页=全帧）
     tasks, dir_missing, unreadable = [], [], []
@@ -282,6 +313,17 @@ def cmd_compare(args) -> int:
     for label, _p, e in fails:
         unreadable.append({"src": label[0], "dur": label[1], "frame": label[2],
                            "why": f"解码失败: {e}"})
+
+    # ---- 新鲜度防线（B1）：被比帧 mtime 全部 ≤ golden 构建时间 → 缓存自 golden 构建
+    # 后未重渲，比对恒等、无意义。默认显式警告不阻断；--strict 判失败（验收口径）。
+    # 容差 2s：meta.built 字符串秒级截断，帧可能写在同一秒内但 mtime 略晚。
+    stale = False
+    try:
+        built = time.mktime(time.strptime(meta.get("built", ""), "%Y-%m-%d %H:%M:%S"))
+        newest = max(p.stat().st_mtime for _l, p in tasks)
+        stale = bool(tasks) and newest <= built + 2
+    except (ValueError, TypeError, OSError):
+        stale = False    # built 缺失/不可解析或 stat 失败：无法判定，不拦截
 
     # ---- 逐实例比对
     identical, differ = [], []
@@ -317,15 +359,22 @@ def cmd_compare(args) -> int:
               f"（内容/键已变？重建 golden 或先渲染）")
     for u in unreadable:
         print(f"  ✗ 帧缺失/损坏  {u['src']} dur={u['dur']} f{u['frame']}.png（{u['why']}）")
+    if stale and args.strict:
+        ok = False    # 新鲜度防线在 --strict 下判失败（验收口径）
+    if ok and stale:
+        print("⚠ 新鲜度防线：被比帧 mtime 全部 ≤ golden 构建时间——缓存未重渲，比对无意义"
+              "（仅警告，验收请加 --strict）")
     if ok:
         print(f"✓ 通过：{len(identical)} 个实例全零差异")
     else:
         print(f"✗ 未通过：差异 {len(differ)} / 目录缺失 {len(dir_missing)} / "
-              f"帧缺失损坏 {len(unreadable)}")
+              f"帧缺失损坏 {len(unreadable)}"
+              + ("；缓存未重渲（--strict）" if stale else ""))
     if args.report:
-        report = {"ok": ok, "golden": str(gp), "timeline": str(Path(args.timeline)),
+        report = {"ok": ok, "stale": stale, "golden": str(gp), "timeline": str(Path(args.timeline)),
                   "compared_frames": n_cmp, "identical": identical, "differ": differ,
-                  "dir_missing": dir_missing, "missing_or_unreadable": unreadable}
+                  "dir_missing": dir_missing, "missing_or_unreadable": unreadable,
+                  "unrecorded": unrecorded}
         Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
         print(f"  报告已写入 {args.report}")
@@ -354,6 +403,9 @@ def main(argv=None) -> int:
     p.add_argument("--report", default="", help="比对结果 JSON 输出路径（可选）")
     p.add_argument("--pages", default="",
                    help="只比名单内页（逗号分隔，匹配规则同 --full-pages；缺省=golden 全部）")
+    p.add_argument("--strict", action="store_true",
+                   help="新鲜度防线判失败：被比帧 mtime 全部 ≤ golden 构建时间（缓存未重渲）"
+                        "时 exit 1（默认仅显式警告）")
 
     args = ap.parse_args(argv)
     return cmd_build(args) if args.cmd == "build" else cmd_compare(args)
