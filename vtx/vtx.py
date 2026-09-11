@@ -47,6 +47,9 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
   （阶段三 2026-09-10）seg 预编码与 prepare 抽音频并行化：两处逐任务串行的 ffmpeg
   改为线程池并行（VTX_VIDEO_SEGMENTS 分段开关同上，不受影响）；并行线程数 =
   min(6, cpu//4)，环境变量 VTX_IO_WORKERS=N 可覆盖；任一任务失败即整阶段失败退出
+  （方案五阶段1 2026-09-12）video --draft --range A B / --clip ID / --track NAME：
+  区间预览渲染——复用整片切点与 cache/seg|gfx 缓存，产物 cache/preview/*.mp4
+  （独立命名空间：不写 out/、不更新 receipt，含窗口音频混音）
 
 模块布局（2026-09-10 单文件拆分为包，入口本文件保持可直接运行）：
   infra.py      Ctx/执行/ffmpeg/并行调度            encoders.py  Chrome/NVENC/编码参数选型
@@ -312,6 +315,15 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="只打印将执行的 ffmpeg 命令，不执行")
     ap.add_argument("--draft", action="store_true", help="草稿模式（仅 video/mux）：540p+NVENC 快速预览，不影响正式产物")
     ap.add_argument("--frames", type=int, metavar="N", help="video --draft 专属：只渲前 N 帧")
+    ap.add_argument("--range", nargs=2, metavar=("A", "B"),
+                    help="video --draft 专属：只渲全局帧区间 [A,B) 的画面+音频（含字幕）。"
+                         "时间点支持 秒（12 / 12.5）/ 时间码（mm:ss / hh:mm:ss(.fff)）/ 帧号后缀 f（300f）。"
+                         "产物 cache/preview/range_<A>_<B>.mp4（独立命名空间：不写 out/、不更新 receipt）；"
+                         "与 --clip / --track 互斥")
+    ap.add_argument("--clip", metavar="ID",
+                    help="video --draft 专属：只渲单个 clip 所在窗口（按 src 文件名匹配，推出区间 [dst_in,dst_out)）；与 --range / --track 互斥")
+    ap.add_argument("--track", metavar="NAME",
+                    help="video --draft 专属：只渲单轨窗口（该轨 clips 的外包络）；与 --range / --clip 互斥")
     ap.add_argument("--gpu", action="store_true", help="video 专属：正式参数 GPU 渲染（NVENC p7 hq cq17），产物仍为 video_noaudio.mp4")
     ap.add_argument("--strict", action="store_true",
                     help="qc 专属：成片帧数用 -count_frames 真解码计数（默认容器元数据，省全片解码）")
@@ -336,6 +348,14 @@ def main():
     a = ap.parse_args()
     if a.frames and not (a.draft and a.command == "video"):
         print("--frames 仅在 video --draft 下可用（正确用法：vtx.py video --draft --frames 90）"); sys.exit(1)
+    # 方案五阶段1：区间渲染标志（video --draft 专属；三者为「选一种窗口来源」互斥组）
+    range_flags = [x for x in (a.range, a.clip, a.track) if x]
+    if range_flags and not (a.draft and a.command == "video"):
+        print("--range/--clip/--track 仅在 video --draft 下可用"
+              "（正确用法：vtx.py video --draft --range 0 6）"); sys.exit(1)
+    if len(range_flags) > 1:
+        print("--range / --clip / --track 互斥：窗口来源三选一"
+              "（--clip 按 src 名推出单 clip 区间；--track 取单轨 clips 外包络）"); sys.exit(1)
     if a.draft and a.command not in ("video", "mux"):
         print("--draft 仅作用于 video/mux 阶段（正确用法：vtx.py video --draft 或 vtx.py mux --draft）"); sys.exit(1)
     if a.gpu and a.command != "video":
@@ -367,6 +387,27 @@ def main():
     c.dry = a.dry_run   # 原 DRY 全局改为 Ctx 字段（消除可变全局）
     c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
     c.keep_versions = a.keep_versions   # mux：out/history/ 保留版数
+    # 区间渲染（方案五阶段1）：解析窗口帧区间；独立命名空间路径，绕过 receipt 依赖门
+    if range_flags:
+        from range import parse_timespec, window_from_clip, window_from_track
+        try:
+            if a.range:
+                fa, fb = parse_timespec(a.range[0], c.fps), parse_timespec(a.range[1], c.fps)
+            elif a.clip:
+                w = window_from_clip(c.tl, a.clip)
+                if w is None:
+                    print(f"✗ 找不到 clip {a.clip!r}（按 src 文件名匹配，不含扩展名）"); sys.exit(1)
+                fa, fb = w
+            else:
+                w = window_from_track(c.tl, a.track)
+                if w is None:
+                    print(f"✗ 找不到轨道 {a.track!r}（按 track name 或 kind 匹配）"); sys.exit(1)
+                fa, fb = w
+        except ValueError as e:
+            print(f"✗ {e}"); sys.exit(1)
+        if fa >= fb:
+            print(f"✗ 空区间：B（帧 {fb}）必须大于 A（帧 {fa}）"); sys.exit(1)
+        c.range_window = (fa, fb)
     if a.strict and a.command != "qc":
         print("--strict 仅作用于 qc 阶段（正确用法：vtx.py qc --strict）"); sys.exit(1)
     if a.command == "clean":
@@ -386,6 +427,12 @@ def main():
             run_subs(c, a.subs_extra); return
         print("✗ 用法：subs render | subs preview <时间点...> | subs check"
               "（时间点 `12.5`=秒 / `f360`=帧号）"); sys.exit(2)
+    # 区间渲染分发（在常规阶段编排之前短路）：不进 receipt 依赖门、不写回执——
+    # 预览渲染对正式产物链（out/、receipt、manifest、VERSIONS）零干扰
+    if getattr(c, "range_window", None):
+        from range import run_range
+        run_range(c, *c.range_window)
+        return
     names = [s[0] for s in STAGES] if a.command == "all" else [a.command]
     todo = STAGES if a.command == "all" else \
         [next((s for s in STAGES if s[0] == a.command), None)]
