@@ -167,9 +167,10 @@ def gfx(c: Ctx):
         with ThreadPoolExecutor(6) as ex:
             list(ex.map(lambda i: shot_cli(i, d, html, chrome), i_range))
 
-    # 页内分片开关（方案 v2 阶段 1）：VTX_GFX_SPLIT_FRAMES（默认 0=关）为块大小
-    # 阈值，VTX_GFX_SPLIT_MAX（默认 3）为单页最大块数；默认值下行为与旧版一致。
-    split_frames = max(0, int(os.environ.get("VTX_GFX_SPLIT_FRAMES", "0")))
+    # 页内分片开关（方案 v2 阶段 1）：VTX_GFX_SPLIT_FRAMES 为块大小阈值，
+    # VTX_GFX_SPLIT_MAX（默认 3）为单页最大块数。默认 450（2026-09-12 定版，
+    # 基准 28 页 12024 帧：PAGES=7+SPLIT450 冷跑 129.8/131.9s，RSS 15.0-15.2GB）。
+    split_frames = max(0, int(os.environ.get("VTX_GFX_SPLIT_FRAMES", "450")))
     split_max = max(1, int(os.environ.get("VTX_GFX_SPLIT_MAX", "3")))
 
     jobs = []   # (cid, key, cl, n, d, html, frames|None) 待渲块；frames=None=整页现行语义
@@ -209,8 +210,10 @@ def gfx(c: Ctx):
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1
 
     # 页级并行（2026-09-11）：Chrome 对同源 tab 共用渲染进程，单浏览器内加 tab 光栅
-    # 收益递减；真正的并行单位是浏览器实例×页。VTX_GFX_PAGES 控制并行页数（默认 6）。
-    page_workers = max(1, int(os.environ.get("VTX_GFX_PAGES", "6")))
+    # 收益递减；真正的并行单位是浏览器实例×页。VTX_GFX_PAGES 控制并行页数
+    # （默认 7：2026-09-12 定版，PAGES=8 峰值 RSS 16.5-20.4GB 破 16GB 线，
+    # 7 页 15.0-15.2GB 达标且 129.8-131.9s 仅比 8 页慢 ~2%）。
+    page_workers = max(1, int(os.environ.get("VTX_GFX_PAGES", "7")))
 
     # 同页多块聚合：块完成只并入聚合器，末块收尾时输出一行 ✓（路径计数求和、
     # ms/帧按帧数加权、块数标注 split×k），receipt engine_notes 同样每页一条。
