@@ -41,3 +41,8 @@ imgen/.venv/
 
 # 内容寻址缓存（vtx 产物缓存，可再生，不入库）
 cache/
+
+# matting 平级克隆（init.sh --download 重建，不入库）
+matting/MatAnyone2/
+matting/BiRefNet_HR/
+matting/__pycache__/

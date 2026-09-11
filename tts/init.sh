@@ -113,4 +113,33 @@ if [ "$OK" -ge 4 ]; then
 elif [ "$OK" -ge 1 ]; then
   echo "⚠ 部分就绪——edge 兜底可用性见上；配置后把 config.local.json tts.enabled 置 true"
 fi
+
+# ---- 可选 --download：补齐 repo / checkpoints（11GB 权重，确认后再跑）----
+# 用法：bash tts/init.sh --download
+# 渠道定案（2026-09-11）：权重走 ModelScope 国内直连；代码克隆 github 须走代理
+#（gitclone/ghproxy 镜像实测不可用）；模型本体不经自建 Gitea LFS（服务器带宽仅 ~0.5MB/s）。
+if [ "${1:-}" = "--download" ] || [ "${2:-}" = "--download" ]; then
+  REPO="$(cfg tts.repo "$DEFAULT_REPO")"
+  echo "--- tts --download：目标 $REPO ---"
+  if [ ! -d "$REPO/.git" ] && [ ! -d "$REPO" ]; then
+    echo "[1/2] 克隆 IndexTTS 代码（直连失败自动走代理 127.0.0.1:7890）..."
+    git clone --depth 1 https://github.com/index-tts/index-tts "$REPO" \
+      || https_proxy=http://127.0.0.1:7890 git clone --depth 1 https://github.com/index-tts/index-tts "$REPO" \
+      || { echo "克隆失败；edge 兜底路线：pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts"; exit 1; }
+    echo "✓ 代码 → $REPO"
+  else
+    echo "[1/2] 代码已存在，跳过克隆"
+  fi
+  CKPT="$REPO/checkpoints"
+  if [ ! -e "$CKPT/config.yaml" ]; then
+    echo "[2/2] 下载权重（ModelScope 国内直连，约 11GB，数十分钟）..."
+    command -v modelscope >/dev/null 2>&1 \
+      || pip install -i https://pypi.tuna.tsinghua.edu.cn/simple modelscope
+    modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir "$CKPT" \
+      && echo "✓ 权重 → $CKPT（重跑 tts/init.sh 复核）" \
+      || { echo "下载失败，手动：modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir $CKPT"; exit 1; }
+  else
+    echo "[2/2] checkpoints 五件已齐，跳过"
+  fi
+fi
 exit 0

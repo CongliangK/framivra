@@ -204,11 +204,26 @@ def main():
     r = sh([sys.executable, str(ROOT / "blender_bridge/audit_bundle.py"), "--help"])
     rec("audit_bundle", r.returncode == 0)
 
-    say("--- 4/5 大模型能力（默认关闭，按需开启）---")
-    comfy = Path(os.path.expanduser("~/miniconda3/envs/comfyui"))
-    rec("comfyui_env", comfy.is_dir(), "matting/ 抠像链需要（开启步骤见 matting/README.md）")
+    say("--- 4/5 大模型能力（默认关闭，按需开启；各链 init 见下）---")
+    # matting 抠像链：细粒度探测（2026-09-11，此前只探 env 目录）
+    _m = ROOT / "matting"
+    comfy_py = Path(os.path.expanduser("~/miniconda3/envs/comfyui/bin/python"))
+    rec("comfyui_env", comfy_py.is_file(), "matting/ 抠像推理 env；细探测 bash matting/init.sh")
+    rec("matanyone2", (_m / "MatAnyone2/pretrained_models/hf2/model.safetensors").is_file(),
+        "缺失跑：bash matting/init.sh --download（github 克隆+HF 权重 141MB）")
+    rec("birefnet_hr", (_m / "BiRefNet_HR/config.json").is_file(),
+        "缺失跑：bash matting/init.sh --download（HF ZhengPeng7/BiRefNet_HR-matting）")
+    resnet = Path("~/.cache/torch/hub/checkpoints/resnet18-5c106cde.pth").expanduser()
+    rec("matting_resnet18", resnet.is_file() or (_m / "resnet18-5c106cde.pth").is_file(),
+        "MatAnyone2 光流隐藏依赖（被墙假死坑），--download 会预置")
+    import urllib.request
+    try:
+        urllib.request.urlopen("http://127.0.0.1:8188", timeout=2)
+        rec("comfyui_service", True, "ComfyUI 8188 在线（背景图生成）")
+    except Exception:
+        rec("comfyui_service", False, "未运行（可选）：bash matting/comfyui_init.sh --start")
     rw = Path.home() / "models/resemble-enhance"
-    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 需要" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选）")
+    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 需要（下载：bash scripts/denoise_init.sh --download）" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选；bash scripts/denoise_init.sh --download）")
 
     say("--- 4b/5 三大生成模块 asr/tts/imgen（默认关闭，按需开启）---")
     lc = _load_local_cfg()
