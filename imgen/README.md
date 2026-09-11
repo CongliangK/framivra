@@ -112,13 +112,9 @@ python3 -m unittest discover -s imgen/tests -v   # 57 用例，零网络零扣�
 
 `requests`（系统 python3 已装 2.32.5；仅 gen/batch 触网链需要，postprocess/key status 离线可跑）+ `ffmpeg`/`ffprobe`（8.x 已验证）+ stdlib。与 vtx 零依赖纪律不冲突（vtx 不 import imgen；imgen 不 import vtx）。
 
-## 待集成事项（共享文件归 D 集成智能体裁决，本模块未越界）
+## 待集成事项
 
-1. `config.example.json` 尚无 `imgen` 键（方案 §7.1 由 D 添加：api_base/model_default/price_per_image/confirm_before_submit）；本模块读取已容错（缺键→默认值，api_base 默认 `https://api.wuyinkeji.com`）。
-2. 根 `init.py` 应增 `imgen_key` / `imgen_requests` 探测项（方案 §6.6，D 所有权）。
-3. 根 `README.md` 目录表/依赖矩阵应补 imgen 行（方案 §8，D 所有权）。
-4. `.gitignore` 无需为 imgen 改动：模块无 venv；测试合成图运行时生成于 /tmp，tests/ 内无 *.png fixtures 落仓。
-5. `skill/references/edit.md` 产线接口章节（bg4k 硬接口与付费纪律）由 D 文末追加。
+集成事项已于 2026-09-11 全部落地（根 README/init.py/config.example.json/edit.md 均已更新）。
 
 ## 已验证版本
 

@@ -11,7 +11,8 @@ description: "B站视频产线一体化 skill：选题调研（R0-R6 多智能�
 | 调研 research | `references/research.md` | 多智能体选题调研（R0-R6 编排、采集脚本、独立评分、红队质询），产出 01-brief.md |
 | 动效 gfx | `references/gfx.md` | HTML 帧驱动透明动效页（标题卡、图表、导航卡、overlay 卡、端板）的设计协议、模板库与样式模式库 |
 | 剪辑 edit | `references/edit.md` | timeline.json 契约 + vtx CLI 全阶段（validate/audit/prepare/gfx/video/audio/mux/qc/gc）+ 音频工程 + 渲染坑表 + 缓存治理 |
-| 实拍/音频脚本 | `scripts/`（各脚本 `--help`） | sync_audio / denoise_voice / repack_voice / post_loudness / check_4k / content_gates / bed_static_duck / new_project 等 14 件 |
+| 修改配方/棒次 | `references/runbook.md` | 标准修改配方集 R1-R6 与子智能体棒次协议 |
+| 实拍/音频脚本 | `scripts/`（多数脚本 `--help`；score_topic 用 `--rubric`） | sync_audio / denoise_voice / repack_voice / post_loudness / check_4k / content_gates / bed_static_duck / new_project 等 15 件 |
 | 用户任务 / 关键词 | 先读 |
 |---|---|
 | 新选题、调研可行性、对标分析、生成 01-brief | `references/research.md` |

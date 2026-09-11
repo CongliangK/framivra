@@ -22,8 +22,16 @@ class Ctx:
     def __init__(self, timeline_path: Path):
         self.tl_path = timeline_path
         self.root = timeline_path.parent
-        self.tl = json.loads(timeline_path.read_text())
+        self.tl = json.loads(timeline_path.read_text(encoding="utf-8"))
         self.fps = self.tl["project"]["fps"]
+        # fps 契约前置校验（2026-09-11）：spf_samples = 48000 // fps 须整除，否则音频
+        # 事件 atrim 采样网格漂移——非正整数或不能整除 48000 直接 ValueError
+        # （由 vtx.py main 的 except 捕获友好打印，NTSC 29.97 等非整数帧率不支持）。
+        if not (isinstance(self.fps, int) and not isinstance(self.fps, bool)
+                and self.fps > 0 and 48000 % self.fps == 0):
+            raise ValueError(
+                f"project.fps={self.fps!r} 无效：fps 必须为能整除 48000 的正整数"
+                "（如 24/30/60；NTSC 29.97 等非整数帧率不支持）")
         self.dur = self.tl["project"]["duration_frames"]
         self.w = self.tl["project"]["width"]
         self.h = self.tl["project"]["height"]
@@ -45,7 +53,8 @@ class Ctx:
         if self.dry and is_ffmpeg_cmd(cmd):
             print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
             return ""
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
         if r.returncode != 0 and need:
             print("CMD FAILED:", " ".join(map(str, cmd))[:300], file=sys.stderr)
             print(r.stderr[-1500:], file=sys.stderr); sys.exit(1)
@@ -69,12 +78,40 @@ class Ctx:
                                "-count_packets", "-show_entries", "stream=nb_read_packets",
                                "-of", "csv=p=0", str(path)])
                 nb = r2.stdout.strip() if r2 else ""
-            info = {"fps": eval(v["r_frame_rate"]),
+            # r_frame_rate 安全解析（原 eval：异常值会裸抛 SyntaxError/ZeroDivisionError，
+            # 且 eval 本身是任意表达式执行面）。正常形如 "30/1"；分母非正/解析失败 →
+            # 回落 nb_frames ÷ format.duration 路径，仍不可得才友好报错退出。
+            fps = None
+            num, _, den = str(v.get("r_frame_rate") or "").partition("/")
+            try:
+                den_i = int(den.strip() or "1")
+                if den_i > 0:
+                    fps = int(num.strip()) / den_i
+            except (ValueError, ZeroDivisionError):
+                fps = None
+            if fps is None:
+                try:
+                    dur_s = float(d.get("format", {}).get("duration") or 0)
+                except (TypeError, ValueError):
+                    dur_s = 0.0
+                if dur_s > 0 and nb.isdigit() and int(nb) > 0:
+                    fps = int(nb) / dur_s
+                else:
+                    print(f"✗ ffprobe 无法解析 {path.name} 的帧率"
+                          f"（r_frame_rate={v.get('r_frame_rate')!r}，duration/帧数回落亦不可得）",
+                          file=sys.stderr)
+                    sys.exit(1)
+            info = {"fps": fps,
                     "nb_frames": int(nb) if nb.isdigit() else 0,
                     "w": int(v["width"]), "h": int(v["height"]),
                     "has_video": True, "has_audio": a is not None}
         else:  # 纯音频源（音效/BGM/环境声文件）：时长换算到项目帧网格，仅供音频事件引用
-            dur = float(d["format"]["duration"])
+            dur_raw = d.get("format", {}).get("duration")
+            if not dur_raw:
+                print(f"✗ ffprobe 未返回纯音频源 {path.name} 的 format.duration，"
+                      "无法换算到项目帧网格", file=sys.stderr)
+                sys.exit(1)
+            dur = float(dur_raw)
             info = {"fps": None, "nb_frames": int(dur * self.fps),
                     "w": 0, "h": 0, "has_video": False, "has_audio": a is not None}
         self.probes[path] = info; return info
@@ -89,7 +126,7 @@ class Ctx:
         rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
         if extra:
             rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
-        self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
+        self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # （PR#1 的 Ctx.gfx_dir 路径哈希版被放弃：main 13bed7a 的 hygiene.gfx_key
     #  内容寻址键覆盖其全部场景——同名页不同内容/同页换时长自然分键，且同内容
@@ -143,7 +180,8 @@ def run_ffmpeg_task(c: Ctx, label: str, cmd):
     if c.dry and is_ffmpeg_cmd(cmd):
         print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
         return
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError(f"{label}: " + r.stderr[-1500:])
 

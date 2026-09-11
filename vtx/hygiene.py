@@ -7,12 +7,26 @@
   - cache/reports/ 永不回收（报告/回执/证据）；out/VERSIONS.json、out/history/ 永不回收。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
-import hashlib, json, os, shutil, time
+import hashlib, json, os, shutil, threading, time
 from pathlib import Path
 
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
 TMP = "tmp"                  # cache/tmp/<runid>/：一次性中间物，gc 清扫孤儿
 KEEP_BASELINES = ("manifest.json",)   # cache 根下永不删的记账文件
+
+# manifest 读-改-写串行锁（2026-09-11）：video 段间并行 worker 与 gfx 页级并行
+# 会并发调用 manifest_record，无锁时读-改-写竞态会互相覆盖丢笔。
+_MANIFEST_LOCK = threading.Lock()
+
+
+def _md5_file(p) -> str:
+    """分块 md5（1MB 块流式 update）：终片/audio.wav 可达 GB 级，read_bytes 整读
+    会瞬时占用等量内存；分块结果与整读完全一致。"""
+    m = hashlib.md5()
+    with open(p, "rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            m.update(block)
+    return m.hexdigest()
 
 
 # ---------------------------------------------------------------- 内容寻址键
@@ -86,23 +100,24 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
     """写完一个产物后记一笔（路径/阶段/键/字节/mtime/timeline_md5）。只追加，不阻塞：
     记账失败绝不影响渲染主流程（gc 不依赖 manifest）。"""
     try:
-        f = _manifest_path(c)
-        try:
-            rec = json.loads(f.read_text())
-        except Exception:
-            rec = {"entries": []}
-        try:
-            size = path.stat().st_size if path.is_file() else \
-                sum(x.stat().st_size for x in path.rglob("*") if x.is_file())
-        except OSError:
-            size = 0
-        rec["entries"].append({
-            "path": str(Path(path).relative_to(c.root)),
-            "stage": stage, "key": key, "bytes": size,
-            "mtime": time.strftime("%F %T"), "tl": tl_md5(c)})
-        if len(rec["entries"]) > 5000:      # 防无限膨胀：只留最近 5000 笔
-            rec["entries"] = rec["entries"][-4000:]
-        f.write_text(json.dumps(rec, ensure_ascii=False, indent=1))
+        with _MANIFEST_LOCK:   # 并发 worker（段编码/gfx 页）读-改-写串行化，防丢笔
+            f = _manifest_path(c)
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                rec = {"entries": []}
+            try:
+                size = path.stat().st_size if path.is_file() else \
+                    sum(x.stat().st_size for x in path.rglob("*") if x.is_file())
+            except OSError:
+                size = 0
+            rec["entries"].append({
+                "path": str(Path(path).relative_to(c.root)),
+                "stage": stage, "key": key, "bytes": size,
+                "mtime": time.strftime("%F %T"), "tl": tl_md5(c)})
+            if len(rec["entries"]) > 5000:      # 防无限膨胀：只留最近 5000 笔
+                rec["entries"] = rec["entries"][-4000:]
+            f.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
     except Exception as e:
         print(f"⚠ manifest 记账失败（不影响渲染）: {e}")
 
@@ -245,9 +260,9 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
                                                "VERSIONS.json", "history",
                                                "receipt.json", "reports"):
                     continue
+                total += dir_size(x)   # 先统计再删（删除后 dir_size=0，--dry/--do 统计口径须一致）
                 if do:
                     shutil.rmtree(x, ignore_errors=True) if x.is_dir() else x.unlink(missing_ok=True)
-                total += dir_size(x)
         print(("✓ 深度回收（保留 reports/snapshots/VERSIONS/history/final）" if do
                else "深度回收清单（--dry）") + f"：{gb(total)}")
         return
@@ -306,7 +321,7 @@ def df(c, quiet: bool = False):
     m = _manifest_path(c)
     if m.exists():
         try:
-            last = json.loads(m.read_text())["entries"][-1]
+            last = json.loads(m.read_text(encoding="utf-8"))["entries"][-1]
             P(f"最近一笔记账：{last['mtime']} {last['stage']} {last['path']}")
         except Exception:
             pass
@@ -323,7 +338,7 @@ def snapshot(c, keep: int = None):
     if dst.exists():
         print(f"✓ 快照已存在（同 timeline md5）：{dst.name}"); return dst
     dst.mkdir(parents=True)
-    (dst / "timeline.json").write_text(c.tl_path.read_text())
+    (dst / "timeline.json").write_text(c.tl_path.read_text(encoding="utf-8"), encoding="utf-8")
     texts = set()
     for tr in c.tl.get("video_tracks", []):
         for cl in tr.get("clips", []):
@@ -335,7 +350,9 @@ def snapshot(c, keep: int = None):
         op.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, op)
     snaps = sorted((c.cache / "snapshots").iterdir())
-    for old in snaps[:-keep] if len(snaps) > keep else []:
+    # 注意切片写法：snaps[:-keep] 在 keep=0 时是 snaps[:0]（语义反转为全保留），
+    # 显式 len(snaps)-keep 才是「保留最近 keep 份、其余全删」。
+    for old in snaps[:len(snaps) - keep] if len(snaps) > keep else []:
         shutil.rmtree(old, ignore_errors=True)
     n = len(texts) + 1
     print(f"✓ 快照 {dst.name}（{n} 个文本文件，{gb(dir_size(dst))}；保留最近 {keep} 份）")
@@ -348,11 +365,11 @@ def versions_check(c, product: Path) -> bool:
     显著告警并把旧条目标 superseded。返回是否告警。"""
     f = c.out / "VERSIONS.json"
     try:
-        rec = json.loads(f.read_text()) if f.exists() else {"versions": []}
+        rec = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {"versions": []}
     except Exception:
         rec = {"versions": []}
     if not product.exists(): return False
-    old_md5 = hashlib.md5(product.read_bytes()).hexdigest()
+    old_md5 = _md5_file(product)
     last = next((v for v in reversed(rec["versions"])
                  if v.get("product") == product.name and v.get("md5")), None)
     if last and last["md5"] != old_md5:
@@ -361,7 +378,7 @@ def versions_check(c, product: Path) -> bool:
               f"旧版本已标记 superseded（历史见 out/history/）。")
         last["superseded"] = True
         last["superseded_note"] = f"{time.strftime('%F %T')} 覆盖前发现 md5 不符"
-        f.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
+        f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
         return True
     return False
 
@@ -370,24 +387,24 @@ def versions_record(c, product: Path, label: str):
     """mux 成功后追加一条 VERSIONS 记录（只记元数据，不复制全片）。"""
     f = c.out / "VERSIONS.json"
     try:
-        rec = json.loads(f.read_text()) if f.exists() else {"versions": []}
+        rec = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {"versions": []}
     except Exception:
         rec = {"versions": []}
     rec["versions"].append({
         "time": time.strftime("%F %T"), "cmd": label, "product": product.name,
-        "md5": hashlib.md5(product.read_bytes()).hexdigest(),
+        "md5": _md5_file(product),
         "bytes": product.stat().st_size,
         "timeline_md5": tl_md5(c),
-        "audio_md5": hashlib.md5((c.out / "audio.wav").read_bytes()).hexdigest()
+        "audio_md5": _md5_file(c.out / "audio.wav")
         if (c.out / "audio.wav").exists() else None})
-    f.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
+    f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def rotate_history(c, product: Path, keep: int):
     """覆盖写 final 前把旧片轮转进 out/history/（硬链接优先，跨文件系统回落复制）。"""
     if not product.exists(): return
     hdir = c.out / "history"; hdir.mkdir(exist_ok=True)
-    md5 = hashlib.md5(product.read_bytes()).hexdigest()[:8]
+    md5 = _md5_file(product)[:8]
     dst = hdir / f"{product.stem}_{time.strftime('%Y%m%d-%H%M%S')}_{md5}{product.suffix}"
     try:
         os.link(product, dst)
@@ -395,7 +412,8 @@ def rotate_history(c, product: Path, keep: int):
         shutil.copy2(product, dst)
     keep = max(0, keep)
     olds = sorted(hdir.glob(f"{product.stem}_*{product.suffix}"))
-    for old in olds[:-keep] if len(olds) > keep else []:
+    # 同 snapshot：olds[:-keep] 在 keep=0 时语义反转（全保留），显式 len(olds)-keep。
+    for old in olds[:len(olds) - keep] if len(olds) > keep else []:
         old.unlink()
 
 

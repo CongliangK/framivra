@@ -14,7 +14,7 @@
 | `edge_worker.py` | edge-tts 兜底引擎（晓晓 zh-CN-XiaoxiaoNeural，免 GPU 免模型，subprocess 二进制 + 同 atempo/归一链） |
 | `atempo.py` | atempo 参数纯函数（`atempo_chain(raw_s, budget_s)`，方向 raw/budget + 域外 √ 双级链）+ ffmpeg 应用器 |
 | `levelnorm.py` | 峰值归一 -6dBFS（ffmpeg volumedetect + volume，幂等） |
-| `init.sh` | 幂等资产探测（repo/解释器/音色参考/edge-tts/GPU；复用本机已有 11GB 模型，不自动下载） |
+| `init.sh` | 幂等资产探测（repo/解释器/音色参考/edge-tts/GPU；复用本机已有资产优先）；`--download` 补齐代码克隆 + 11GB 权重（ModelScope 国内直连，确认后再跑） |
 | `tests/` | unittest（atempo golden / spec 预算 / levelnorm / manifest+final 格式；零模型零 GPU 零网络） |
 
 ## 快速使用
@@ -111,19 +111,15 @@ python3 -m unittest discover -s tts/tests -v   # 零模型零 GPU 零网络（ff
 
 ## 开启步骤
 
-1. `bash tts/init.sh`（幂等探测；缺 repo 时打印两条路线，**不自动下载 11GB**）。
+1. `bash tts/init.sh`（幂等探测，缺 repo 打印两条路线；`bash tts/init.sh --download`
+   补齐代码克隆 + 11GB 权重下载——权重走 ModelScope 国内直连，耗时数十分钟，确认后再跑）。
 2. `config.local.json` 的 `tts.enabled` 置 `true`（键缺省时全走默认探测链，旧配置无需重生成）。
 3. GPU 排程建议：TTS 批跑与 vtx video 阶段（NVENC 同卡）、ASR sidecar 错峰；同卡共驻显存
    紧张时 indextts 会 OOM 退出并提示降级 edge（预期路径）。
 
-## 待集成事项（归集成智能体 D，本模块零越界）
+## 待集成事项
 
-- `config.example.json`：tts 条目按方案 §7.1 更新（repo / python / voice_ref / edge_bin /
-  fallback_engine 键现缺，旧 config.local.json 靠 cfg_get 默认链兜底）。
-- 根 `init.py`：新增 §6.6 探测项（tts_repo / tts_python / tts_voice_ref / tts_edge）。
-- 根 `README.md`：目录表/依赖矩阵加 tts/ 行。
-- `.gitignore`：`!tts/tests/fixtures/**` 反排除——本模块测试全部运行时 ffmpeg 合成、
-  无静态 fixtures，该反排除非必需（由 D 统一评估）。
+集成事项已于 2026-09-11 全部落地（根 README/init.py/config.example.json/edit.md 均已更新）。
 
 ## 风险
 

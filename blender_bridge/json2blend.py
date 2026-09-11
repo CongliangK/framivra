@@ -114,6 +114,27 @@ def crop169_dims(w, h):
         cw = int(h * 16 / 9); cw -= cw % 2
     return cw, ch
 
+
+def _file_sha256(path):
+    """小文件全量 sha256，1MB 块流式（与 vtx cache_state.file_digest 同式）。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def gfx_cache_key(html_path, clip):
+    """与 vtx hygiene.gfx_key 同键（D44 漂移修复，2026-09-11）：
+    sha1(html 字节 + 逐依赖 str(resolve路径)+\\0+sha256 内容 + f"|{FPS}|{W}x{H}|{dur}")[:12]。
+    json2blend 由 blender 解释器运行、不能 import 仓内模块，就地复刻；
+    cache_dependencies 缺省（老 timeline 无此键）= 无依赖不加料，与 hygiene 行为一致。"""
+    blob = html_path.read_bytes()
+    for dep in tl.get("project", {}).get("cache_dependencies", []):
+        p = (base / dep).resolve()
+        blob += b"|" + str(p).encode() + b"\0" + _file_sha256(p).encode()
+    return hashlib.sha1(blob + f"|{FPS}|{W}x{H}|{clip['dur']}".encode()).hexdigest()[:12]
+
 def place(strip, track_i, ch_base, clip, src_w, src_h):
     """视频条：trim→channel→变换（顺序不可换）。
     全屏: crop169+等比拉满；窗口: scale 相对源原始尺寸，x/y 左上角"""
@@ -181,11 +202,10 @@ for ti, tr in enumerate(tl["video_tracks"]):
         name, ch = f"{tr['name']}|{i}", CH_V + ti
         if tr["kind"] == "gfx":  # HTML → vtx 帧缓存
             # 缓存目录解析：旧版 cache/<stem>/，2026-09-11 起内容寻址 cache/gfx/<sha1[:12]>
-            # （键式与 vtx hygiene.gfx_key 一致：html 字节+fps+视口+时长；D44）
+            # （键式与 vtx hygiene.gfx_key 一致：html 字节+声明的 cache_dependencies 内容
+            # +fps+视口+时长；D44——两实现必须同键，见上方 gfx_cache_key）
             _html = (base / clip["src"]).resolve()
-            _key = hashlib.sha1(
-                _html.read_bytes() +
-                f"|{FPS}|{W}x{H}|{clip['dur']}".encode()).hexdigest()[:12]
+            _key = gfx_cache_key(_html, clip)
             pngdir = (base / "cache" / "gfx" / _key).resolve()
             if not pngdir.is_dir():  # 回落旧版布局 cache/<stem>/
                 pngdir = (base / "cache" / Path(clip["src"]).stem).resolve()

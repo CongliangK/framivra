@@ -181,7 +181,7 @@ def audit(c: Ctx):
                      "tmp_orphans": [str(x) for x in tmp_orphans(c)],
                      "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry`"}
     if not c.dry:   # dry-run 不落 out/ 产物（audit_report 属交付诊断件，2026-09-11 门控）
-        (c.out / "audit_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2))
+        (c.out / "audit_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
     warns = sum(1 for x in lines if x["status"] == "warn")
     print(f"审计：{len(lines)} 项指标，{warns} 条建议"
           + ("（dry-run，报告未落盘）" if c.dry else "（详见 out/audit_report.json，建议性不阻断）"))
@@ -308,7 +308,8 @@ def mux(c: Ctx):
                "-movflags", "+faststart", str(c.out / "draft_final.mp4")])
         print("✓ 封装 draft_final.mp4（草稿）"); c.receipt("mux_draft", True); return
     # D31 坑位：原生 aac 对真人素材（波峰因子 23-25dB 密集瞬态）解码真峰过冲实测可达 +8.5dB——正式封装用 libfdk_aac
-    encs = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+    encs = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout
     acodec = "libfdk_aac" if "libfdk_aac" in encs else "aac"
     if acodec == "aac":
         print("⚠ libfdk_aac 不可用，回落原生 aac——终检必须复测编码后解码 TP（edit.md 坑表）")
@@ -316,9 +317,11 @@ def mux(c: Ctx):
     # 默认 2）并做 md5 覆盖检测——final 被并行工程静默改写时显著告警 + 旧条目标 superseded
     # （D39/BGM-v2 事故类从此自动留痕）。
     final = c.out / "final.mp4"
-    rotate_history(c, final, getattr(c, "keep_versions", 2))
-    warn = versions_check(c, final)
-    if warn: print("⚠⚠ 建议核对 out/history/ 与 VERSIONS.json 确认旧版归属后再继续分发")
+    if not c.dry:   # dry-run 不轮转/删除 out/history/ 真实成片（2026-09-11 门控，
+                    # 与下方 versions_record 门控同口径——预览运行不得动真实产物链）
+        rotate_history(c, final, getattr(c, "keep_versions", 2))
+        warn = versions_check(c, final)
+        if warn: print("⚠⚠ 建议核对 out/history/ 与 VERSIONS.json 确认旧版归属后再继续分发")
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.out / "video_noaudio.mp4"),
            "-i", str(c.out / "audio.wav"), "-c:v", "copy", "-c:a", acodec, "-b:a", "192k",
            "-movflags", "+faststart", str(final)])

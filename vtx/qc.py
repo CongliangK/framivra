@@ -222,7 +222,7 @@ def qc(c):
     if loud_v is not None:
         ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", abs(loud_v - TARGET_LUFS) <= QC_LOUDNESS_TOL, f"实测 {loud_v} LUFS")
     ok(f"{stacked[0]} 轨并发窗口有能量", v1 > -50, f"mean {v1:.1f} dB @frame {stacked[1]}")
-    (c.out / "qc_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2))
+    (c.out / "qc_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
     failed = [x for x in rep["checks"] if not x["pass"]]
     print(f"QC：{len(rep['checks']) - len(failed)}/{len(rep['checks'])} 通过")
     c.receipt("qc", not failed, f"{len(rep['checks'])-len(failed)}/{len(rep['checks'])}")

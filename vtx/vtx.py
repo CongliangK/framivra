@@ -44,9 +44,10 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
   min(6, cpu//4)，环境变量 VTX_IO_WORKERS=N 可覆盖；任一任务失败即整阶段失败退出
 
 模块布局（2026-09-10 单文件拆分为包，入口本文件保持可直接运行）：
-  infra.py      Ctx/DRY/ffmpeg 执行/并行调度        encoders.py  Chrome/NVENC/编码参数选型
+  infra.py      Ctx/执行/ffmpeg/并行调度            encoders.py  Chrome/NVENC/编码参数选型
   composite.py  切点选择 + 合成 + ass（RenderPlan）  qc.py        质检
   stages.py     validate/audit/prepare/audio/mux    gfx_render.py CDP gfx 渲染后端
+  hygiene.py    缓存键/gc/df/snapshot/VERSIONS      cache_state.py 回执身份/依赖门
   本文件        gfx 阶段 + main/argparse/STAGES 编排
 
 约定：AI 智能体不应手写 ffmpeg 剪辑命令；只编写/修改 timeline.json 并调用本工具。
@@ -207,7 +208,9 @@ def main():
     if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)
     try:
         c = Ctx(tp)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
-    except ValueError as e:
+    except (ValueError, KeyError, TypeError, ZeroDivisionError, FileNotFoundError) as e:
+        # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
+        # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
         print(f"✗ timeline 无效：{e}"); sys.exit(1)
     c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
     c.dry = a.dry_run   # 原 DRY 全局改为 Ctx 字段（消除可变全局）

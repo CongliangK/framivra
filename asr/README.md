@@ -117,20 +117,14 @@ GPU：4080 16GB 下 1.7B+aligner 同驻约 6-8GB；IME sidecar 同跑时本 side
 | 18081 | IME 输入法 sidecar（`ibus-voice-ime`，本仓**绝不复用**；仅启动时探测它做共驻降档） |
 | 18085 | 本模块 sidecar 默认端口（`--port` / config `asr.base_url` 可改） |
 
-## 待集成事项（共享文件改动，归集成智能体/D 裁决）
+## 待集成事项
 
-1. `config.example.json`：asr 条目更新为 §7.1 目标态（`python`/`model_dir`/`aligner_dir`/
-   `language` 键 + base_url 迁 18085 + howto 指向本 README）。
-2. `README.md`（根）：目录表/依赖矩阵加 asr 行。
-3. `.gitignore`：若后续在 `asr/tests/fixtures/` 加入被全局规则误杀的资产，需反排除
-   `!asr/tests/fixtures/**`（当前 fixtures 仅 .txt/.json，不受影响）。
-4. `init.py`（根）：§6.6 的 `asr_model/asr_aligner/asr_python/asr_sidecar` 探测项。
-5. `skill/references/edit.md`：文末追加「字幕锚定工作流」章节（asr timeline → vtx audit）。
+集成事项已于 2026-09-11 全部落地（根 README/init.py/config.example.json/edit.md 均已更新）。
 
 ## 测试
 
 ```bash
-python3 -m unittest discover -s asr/tests -v   # 56 个用例，零模型零 GPU 零网络
+python3 -m unittest discover -s asr/tests -v   # 59 个用例，零模型零 GPU 零网络
 ```
 
 覆盖：textnorm golden ≥8、segline 边界全套（floor/ceil、行宽 18、行首无标点硬断言、

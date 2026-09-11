@@ -2,8 +2,8 @@
 
 > 本文描述 PR#1（Windows 适配）合入 main 后的实际语义。PR 原始方案（项目级全量
 > 指纹 + `cache/<input-fingerprint>/` 整仓布局）在合并中被 main 13bed7a 的
-> per-产物内容寻址缓存取代，回执侧价值全部保留——详见 `vtx/cache_state.py`
-> 模块头的合并裁定与仓库 MERGE 报告。
+> per-产物内容寻址缓存取代，回执侧价值全部保留——合并裁定见 merge commit
+> f0c98dd 与 `vtx/cache_state.py` 模块头。
 
 ## 修复的问题
 
@@ -69,5 +69,6 @@ qc 要求当前 mux；单跑某阶段前置不满足会直接拒绝。可以直�
 
 Windows 实测旧候选版本暖/冷最大单帧平均差 100.64/255、音频不一致且旧成片字节
 完全不变；修复版本差为 0、音频一致，成片已更新。Linux 侧由上述合成回归 +
-voice-ime 真实工程 E2E 复验（见合并报告）。这是确定性合成用例的正确性结果，
+voice-ime 真实工程 E2E 复验（合并裁定见 merge commit f0c98dd 与
+`vtx/cache_state.py` 模块头）。这是确定性合成用例的正确性结果，
 不是长视频或跨平台性能结论。

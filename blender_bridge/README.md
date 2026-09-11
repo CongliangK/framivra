@@ -30,7 +30,7 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 - clip：`frame_final_start=dst_in`，`frame_final_end=dst_in+dur`（右开区间语义一致）；源偏移＝src_in
 - 全屏 clip：crop169（16:9 中心裁切）+ 等比拉满（vtx L313）
 - 窗口 clip（scale/x/y 任一存在）：scale 相对**源原始尺寸**（vtx L306-311，非画布 fit）、x/y=左上角像素
-- gfx：读 vtx 帧缓存 `cache/<stem>/f*.png` 图像序列
+- gfx：读 vtx 帧缓存 `cache/gfx/<内容寻址键>/f*.png` 图像序列（旧版 `cache/<stem>/` 布局作回落）
 - 字幕：**不经 Blender 文字渲染**——vtx 的 subs.ass 经 `alphamerge 透明画布 + ass:alpha=1` 渲成
   透明视频轨叠加，与终渲像素同源（libass 同库同字体）
 - fade_in/out：blend_alpha/volume 关键帧（插值取默认，预览近似）
@@ -85,7 +85,7 @@ MP3 按源 mtime 自动失效重转（分轨重渲后重跑即可），`--force`
 
 1. `blend2json.py` 重读手剪结果 → 产物过 `vtx validate`；
 2. 按新切点**音频拼接**（导出对应窗口 wav）；
-3. 送 **Qwen3-ASR**（sidecar 127.0.0.1:18081，language 全称 Chinese）转写；
+3. 送 **Qwen3-ASR**（sidecar 127.0.0.1:18085，language 全称 Chinese）转写；
 4. 与**用户权威文本**逐句对照——用户说了算的句子清单优先于任何代理回读推断；
 5. 切点按**能量谷检测微调**（ASR 句边界附近的静音谷，样本级定位）。
 

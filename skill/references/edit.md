@@ -11,7 +11,7 @@ vtx CLI：        ~/.agents/skills/video/vtx/vtx.py            （符号链接�
 时间线预览器：    ~/.agents/skills/video/vtx/preview.html     （人审编排用，双击打开）
 参考实现（POC）： ~/文档/04_bilibili视频/_archive/poc2/   （外部示例项目：30s 多轨 demo，QC 全过；不随 skill 分发）
 ```
-程序本体在 video_tools 仓：`vtx/` 与 `scripts/` 的权威位置是 `~/文档/01_活跃项目/video_tools/`，本 skill 内为符号链接（上文路径全部继续可用）；**修改程序一律改 video_tools 仓**。`vtx/vtx.py` 是唯一入口，实现分为 `infra`（探测/缓存/回执）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）六个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
+程序本体在 video_tools 仓：`vtx/` 与 `scripts/` 的权威位置是 `~/文档/01_活跃项目/video_tools/`，本 skill 内为符号链接（上文路径全部继续可用）；**修改程序一律改 video_tools 仓**。`vtx/vtx.py` 是唯一入口，实现分为 `infra`（Ctx/执行/并行）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）、`hygiene`（缓存键/gc/df/snapshot/VERSIONS）、`cache_state`（回执身份/依赖门）八个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
 ## 时间线预览（人审用）
 `preview.html` 是单文件网页（无外部依赖），把 timeline.json 渲染成可视化时间线供**人类**审阅编排：视频轨/动效层/字幕/音轨分行显示，事件块带源名、时长、vol/pan/loop 标注与淡入淡出条；支持缩放、适应宽度、悬停播放头、点击事件块看全字段详情，并有**预览级校验**（整数帧、EDL 不变量、base 轨连续性、越界、同轨音频重叠等）——发现问题标红，但最终以 `vtx validate` 为准。
 ```bash
@@ -27,6 +27,7 @@ bash ~/.agents/skills/video/scripts/new_project.sh ~/文档/04_bilibili视频/my
 cd ~/文档/04_bilibili视频
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json validate   # 渲染前校验门（必跑）
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json --dry-run video  # 只打印将执行的 ffmpeg
+#   `--dry-run` 现已全阶段安全（gfx/qc/audit 均只预览不落副作用；cache 侧段字幕/清单为键保真的有意豁免）
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json all        # 全流程 → myvideo/out/final.mp4
 # 分阶段（gfx/seg/audio 缓存全部内容寻址，源或参数一变自动换键重渲，无需手工清缓存）：
 #   validate → audit（指标体检）→ prepare（提取音频）→ gfx（渲染动效）→ video → audio → mux → qc
@@ -38,13 +39,13 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json snapshot    #
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 清空 cache/ out/（慎用）
 ```
 ## 缓存卫生与体积治理
-- **内容寻址缓存**：gfx 帧缓存键 = `sha1(html字节+fps+视口+时长)[:12]`（目录 `cache/gfx/<key>/`），seg 键含源指纹+切片/窗口/编码参数（`cache/seg/<key>.mov|mp4`），音频键含源指纹。**源改了键就变**；旧键自然成为垃圾，由 gc 回收。不要手工 `rm cache/seg/...`。
+- **内容寻址缓存**：gfx 帧缓存键 = `sha1(html字节+声明的 cache_dependencies 内容+fps+视口+时长)[:12]`（目录 `cache/gfx/<key>/`），seg 键含源指纹+切片/窗口/编码参数（`cache/seg/<key>.mov|mp4`），音频键含源指纹。**源改了键就变**；旧键自然成为垃圾，由 gc 回收。不要手工 `rm cache/seg/...`。
 - **`vtx gc`**：回收「当前 timeline 键集之外」的全部缓存条目 + tmp 孤儿（>24h）+ out 一次性中间物。`cache/reports/` 永不回收。`--keep-days N` 暂缓近 N 天条目。**收尾习惯：每轮「改 timeline→重渲」结束后先 `gc --dry` 看一眼再 `gc`**——cache 占用从此有上界（≈当前键集工作集），不再单调增长。
 - **证据纪律（管线级约定）**：调试渲次（整片 mp4）一律写 `cache/tmp/<runid>/`，阶段结束即删（`hygiene.tmp_run` 上下文）；需留证一律抽帧（≤10 张）或 540p 小样 ≤10MB 存 `cache/reports/evidence/`。**报告/回执/JSON 一律 `cache/reports/`，gc 永不触碰**。**tmp 选址铁律：GB 级媒体中间物严禁写系统 /tmp**（本机 /tmp 是 tmpfs，写即占 RAM/swap 且会被定期清理，长任务文件可能中途消失）；≤数十 MB 小件可用 /tmp。
 - **产物版本记账**：mux 每次成功追加 `out/VERSIONS.json`（md5/大小/timeline+audio md5）；**覆盖检测**——将覆盖的 final.mp4 与账面末条 md5 不符 → 显著告警 + 旧条目标 superseded。旧成片轮转 `out/history/`（硬链接优先），`--keep-versions N` 默认 2。
 - **快照**：改 timeline 的批量脚本（retimeline 类）改调 `vtx snapshot`（timeline+全部引用文本资产，KB 级，自动留 2 份），不手写 `.bak`。
 - **体积预算**：`VTX_CACHE_BUDGET_GB=80` 设预算后 gfx/video 阶段前超限自动跑 gc 清单提示（`VTX_GC_AUTO=1` 直接回收）；audit 报告含 volume 节（cache/out 占用+tmp 孤儿）。
-**gfx 渲染引擎**：默认 CDP 常驻浏览器（单浏览器多 tab/页并行；不透明页单截直写、透明页双探针解算 alpha）；渲染器失败自动整页回落 CLI 逐帧路径。`VTX_GFX=cli` 强制 CLI、`VTX_GFX_TABS=N` 调 tab 并发（默认 4）、`VTX_GFX_PAGES` 调页级并行、`VTX_GFX_PNG_LEVEL` 调透明页压缩级别。不透明页输出与 CLI 逐字节一致；透明页半透明边缘有 ≤5/255 舍入级差异（亚感知）。每次阶段完成写 `out/receipt.json`（timeline 哈希、各阶段结果）；QC 报告在 `out/qc_report.json`，审计报告在 `out/audit_report.json`。
+**gfx 渲染引擎**：默认 CDP 常驻浏览器（单浏览器多 tab/页并行；不透明页单截直写、透明页双探针解算 alpha）；渲染器失败自动整页回落 CLI 逐帧路径。`VTX_GFX=cli` 强制 CLI、`VTX_GFX_TABS=N` 调 tab 并发（默认 4）、`VTX_GFX_PAGES` 调页级并行、`VTX_GFX_PNG_LEVEL` 调透明页压缩级别。不透明页输出与 CLI 逐字节一致；透明页半透明边缘有 ≤5/255 舍入级差异（亚感知）。每次阶段完成写 `out/receipt.json`（timeline 哈希、各阶段结果）；QC 报告在 `out/qc_report.json`，审计报告在 `out/audit_report.json`。**回执依赖门**：receipt.json 绑定输入身份（timeline+源指纹+gfx html+声明的 cache_dependencies）——输入变化不继承旧阶段成功；单跑某阶段前置未成功会被直接拒绝（audio←prepare、video←gfx（有 gfx 轨时）、mux←video+audio、qc←mux），编辑输入后按序重跑或直接 `all`。详见 docs/cache-provenance.md。
 ## audit 指标审计（建议性，不阻断渲染）
 **validate 是机制硬门，audit 是内容体检**——审计出的 ⚠ 不拦截渲染，但发布前应逐条看过。检查项：画面构成占比与模块完整性（缺 broll/screen/gfx 提示）、黑场窗口、**无声窗口**（bed 轨应全程兜底）、口播覆盖率（主流观察 83-99.7%）、全片语速（**标准值 5.5 字/s（用户拍板引导值，=主流中位）；ok 区间 4.8~6.3**，明细在 `~/文档/04_bilibili视频/_library/corpus/叙事风格分析/data/speech_rate.json`）、字幕阅读速度（>7.5 字/s 偏快、>9 过快）/最短时长/相互重叠。基准值都注明在报告里，来源是本项目自己的 39 视频语料实测。
 ## 音频工程（build_audio 内置）
@@ -61,7 +62,7 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json mux --draft  
 # 正式 GPU 渲染：NVENC p7+tune hq+vbr cq17（1080p 交付透明，下游 4K 重编码无感）
 python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json video --gpu
 ```
-量级预期：片头迭代 `--draft --frames 300` 秒级返回；全片冷渲染分钟级、缓存命中后约 1 分钟（详细基准见 DEV.md）。缓存语义：gfx=内容寻址（sha1 键，见上节）；video seg 键含源指纹与切片参数；音频键含源指纹。
+量级预期：片头迭代 `--draft --frames 300` 秒级返回；全片冷渲染分钟级、缓存命中后约 1 分钟（详细基准见 DEV.md）。缓存语义：gfx=内容寻址（sha1 键，见上节）；video seg 键含源指纹与切片参数；音频键含源指纹。video 分段渲染的段缓存文件名携带段内容键（段区间+画布/模式/gpu+每层上游内容键+段字幕 ass 字节），改字幕/图层/gfx 内容后旧段不再命中。
 ## 坑表（vtx 已内置规避，手写 ffmpeg 时必看；⚠ 规则+后果，破案详录见 DEV.md）
 - **⚠ `ffprobe -count_frames` 是逐帧解码计数，probe 一律用流头 nb_frames + count_packets 回落**，否则 validate 可能分钟级。
 - **⚠ `-frames:v N` 会触发 filter_complex 全量 drain（所有输入解到 EOF）**，draft 截短须对每路输入加 `-t`。

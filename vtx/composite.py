@@ -80,7 +80,7 @@ class RenderPlan:
         lines = self.ass_head()
         for s in c.tl["subtitles"]:
             lines.append(f"Dialogue: 0,{self._fc(s['in'])},{self._fc(s['out'])},Def,,0,0,0,,{s['text']}")
-        path.write_text("\n".join(lines))
+        path.write_text("\n".join(lines), encoding="utf-8")
 
     # 段级字幕（阶段二 2026-09-10）：每段一份 ass，Dialogue 帧号换算 =「全局 fc 的
     # cs − 段起点 fc 的 cs」（整数 cs 相减，与全局量化逐位一致；直接对相对帧取整
@@ -98,7 +98,7 @@ class RenderPlan:
                 hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
                 fout = f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
                 lines.append(f"Dialogue: 0,{fin},{fout},Def,,0,0,0,,{s['text']}")
-        path.write_text("\n".join(lines))
+        path.write_text("\n".join(lines), encoding="utf-8")
 
     # ---------------------------------------------------------------- 单 graph / 单段合成
     def composite(self, layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
@@ -265,6 +265,8 @@ class RenderPlan:
             a, b = edges[si], edges[si + 1]
             sfile = None
             if with_subs:
+                # dry-run 豁免（有意）：段字幕 ass/清单（list.txt）属 cache 侧再生物，且
+                # 段内容键哈希其字节——不写会导致 dry 预览的段文件名与真实运行不一致。
                 sfile = vdir / f"subs_{a:06d}.ass"; self.write_seg_ass(sfile, a, b)
             sl = [L for L in lset if L["cl"]["dst_in"] < b and L["cl"]["dst_in"] + L["cl"]["dur"] > a]
             segp = vdir / f"seg{si:02d}_{a:06d}_{self._seg_content_key(a, b, sl, with_subs, sfile)}.mp4"
@@ -273,7 +275,8 @@ class RenderPlan:
             if segp.exists():
                 fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                                      "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(segp)],
-                                    capture_output=True, text=True).stdout.strip()
+                                    capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace").stdout.strip()
                 if fr.isdigit() and int(fr) == b - a:
                     print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return segp
             self.composite(sl, segp, with_subs, a=a, b=b, sub_file=sfile)
@@ -304,7 +307,8 @@ class RenderPlan:
             return enc
         fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                              "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out_path)],
-                            capture_output=True, text=True).stdout.strip()
+                            capture_output=True, text=True,
+                            encoding="utf-8", errors="replace").stdout.strip()
         if not (fr.isdigit() and int(fr) == c.dur):
             print(f"✗ 分段拼接自检失败：总帧数 {fr or '?'} ≠ {c.dur}（段边界丢帧/垫帧泄漏，禁止交付）")
             sys.exit(1)
@@ -369,7 +373,8 @@ def build_video(c: Ctx):
             if seg.exists():
                 fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                                      "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(seg)],
-                                    capture_output=True, text=True).stdout.strip()
+                                    capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace").stdout.strip()
                 if fr.isdigit() and int(fr) == cl["dur"]:
                     layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
                                    "gfx": False, "ti": ti})

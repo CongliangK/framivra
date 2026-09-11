@@ -12,7 +12,7 @@
 
 ## 大模型依赖（默认关闭）
 
-全链中的 ASR 文本配对（Qwen3-ASR sidecar `127.0.0.1:18081`）与 Resemble 降噪属大模型能力，默认关闭；其中：
+全链中的 ASR 文本配对（Qwen3-ASR sidecar `127.0.0.1:18085`）与 Resemble 降噪属大模型能力，默认关闭；其中：
 
 - `sync_audio.py`（GCC-PHAT 双系统音频同步）与 `denoise_voice.py`（陷波→Resemble 降噪链）**已收编在本仓 `../scripts/`**（权威本体，D40），运行分别需要 conda `denoise` 环境（numpy/scipy/soundfile/soxr）与 `~/models/resemble-enhance` 权重。
 - **迁移/新机配置**：运行 `bash ../scripts/denoise_init.sh` 探测三项依赖（ffmpeg / denoise 环境 / 681MB 权重），缺权重时 `--download` 走 hf-mirror 直连下载（国内实测 2.0 MB/s；HF 走代理 3.9 MB/s 备选，HF 直连不可达，ModelScope 无此模型）。模型分发不走自建 Gitea LFS——服务器公网带宽仅 ~0.5 MB/s，无分发价值（2026-09-11 实测定案）。

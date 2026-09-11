@@ -7,6 +7,8 @@
 | 文件 | 用途 |
 |---|---|
 | `run_birefnet_hr.py` | 首帧 → 高分辨率 mask（BiRefNet_HR，2048 档） |
+| `init.sh` | 抠像链幂等依赖探测（conda env / 两克隆 / torch hub 权重）；`--download` 补缺失项（HF 权重走 hf-mirror，github 克隆失败自动换代理） |
+| `comfyui_init.sh` | ComfyUI 背景图服务（127.0.0.1:8188）依赖探测/初始化（仅生成背景图时需要） |
 | `run_matanyone2.py` | 主 runner：帧目录 + 首帧 mask → alpha 序列（raw + guided filter 收边） |
 | `run_matanyone.py` | v1 版 runner（MatAnyone，已被 v2 取代，留档） |
 | `post_h3.sh` | H3 成片后处理（找 ComfyUI 输出→补音轨→拉伸→抽质检帧） |
@@ -17,7 +19,9 @@
 
 本链属大模型类能力，**默认关闭，需手动配置**：
 
-1. **conda 环境 `comfyui`**（torch 等 GPU 栈）。
+1. 一键探测/补齐：`bash matting/init.sh --download`（幂等；探测 conda env `comfyui`、
+   两个平级克隆、torch hub ResNet18，缺失项实际下载——HF 权重走 hf-mirror，github 克隆
+   失败自动换代理）。ComfyUI 背景图服务另跑 `bash matting/comfyui_init.sh`。
 2. **两个外部 git 克隆，必须与 runner 脚本同目录平级**（脚本用相对路径 `sys.path` 引入）：
    - `MatAnyone2/`（含官方代码 + `pretrained_models/hf2/model.safetensors` 权重）
    - `BiRefNet_HR/`（含 swint 权重）
