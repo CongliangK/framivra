@@ -14,10 +14,15 @@ from infra import Ctx, run_parallel
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 收拢）----
 TARGET_LUFS = -14.0      # 项目目标响度（EBU R128，与 qc.py 同一权威值）
-DUCK_THRESHOLD = 0.03    # sidechaincompress 阈值（duck 音乐避让）
-DUCK_RATIO = 6
-DUCK_ATTACK_MS = 150
-DUCK_RELEASE_MS = 700
+# sidechaincompress 避让缺省值（可被轨级 duck_params 覆盖，见 build_audio）。
+# 2026-09-11 voice-ime 实测校准：缺省 threshold=0.03(-30.5dBFS) 高于口播 RMS 中位
+# （约-31dBFS），避让只在语音峰值咬合、句间停顿 0.7s 即弹回全量——实测成片句间
+# 床乐仅比人声低 ~6dB（正常应为 13~15dB）。新缺省：threshold=-38dBFS 早咬合、
+# ratio 4（语音段压 ~8-14dB）、attack 20ms 快压、release 1500ms 慢回不弹跳。
+DUCK_THRESHOLD = 0.0126  # ≈ -38 dBFS
+DUCK_RATIO = 4
+DUCK_ATTACK_MS = 20
+DUCK_RELEASE_MS = 1500
 DUCK_MAKEUP = 1
 
 
@@ -265,9 +270,19 @@ def build_audio(c: Ctx):
                               f"amix=inputs={len(sc_tis)}:duration=longest:normalize=0[scm]")
                 chains.append(f"[scm]asplit={len(duck_tis)}" + "".join(f"[sc{j}]" for j in range(len(duck_tis))))
             for j, ti in enumerate(duck_tis):
-                chains.append(f"{trk_lbl[ti]}[sc{j}]sidechaincompress=threshold={DUCK_THRESHOLD}:ratio={DUCK_RATIO}:"
-                              f"attack={DUCK_ATTACK_MS}:release={DUCK_RELEASE_MS}:makeup={DUCK_MAKEUP}[td{ti}]")
+                # 轨级 duck_params 覆盖缺省（2026-09-11）：threshold 线性值 / ratio /
+                # attack_ms / release_ms / makeup，单位与 sidechaincompress 一致
+                dp = atracks[ti].get("duck_params", {})
+                thr = dp.get("threshold", DUCK_THRESHOLD)
+                rat = dp.get("ratio", DUCK_RATIO)
+                atk = dp.get("attack_ms", DUCK_ATTACK_MS)
+                rel = dp.get("release_ms", DUCK_RELEASE_MS)
+                mkup = dp.get("makeup", DUCK_MAKEUP)
+                chains.append(f"{trk_lbl[ti]}[sc{j}]sidechaincompress=threshold={thr}:ratio={rat}:"
+                              f"attack={atk}:release={rel}:makeup={mkup}[td{ti}]")
                 trk_lbl[ti] = f"[td{ti}]"
+                print(f"  duck[{atracks[ti]['name']}]: threshold={thr} ratio={rat} "
+                      f"attack={atk}ms release={rel}ms makeup={mkup}")
         else:
             print("⚠ duck 声明无效：找不到 duck_by 指向的非 duck 轨，跳过避让")
     # 总混音（不归一，保留音量比例）→ 定长。响度归一改两遍法（2026-09-08）：

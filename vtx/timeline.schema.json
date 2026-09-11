@@ -217,6 +217,17 @@
             },
             "description": "避让触发轨名列表，缺省 [\"voice\"]"
           },
+          "duck_params": {
+            "type": "object",
+            "description": "sidechaincompress 避让参数（缺省 threshold=0.0126(-38dBFS)/ratio=4/attack=20ms/release=1500ms/makeup=1）。threshold 为线性振幅；语音段压低量≈(key-threshold)×(1-1/ratio)，建议口播段压 8~14dB、停顿 1.5s+ 后回升",
+            "properties": {
+              "threshold": { "type": "number" },
+              "ratio": { "type": "number" },
+              "attack_ms": { "type": "number" },
+              "release_ms": { "type": "number" },
+              "makeup": { "type": "number" }
+            }
+          },
           "events": {
             "type": "array",
             "minItems": 1,
