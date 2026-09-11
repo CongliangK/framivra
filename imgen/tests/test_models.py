@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""test_models.py · 端点常量 / payload 构建 / kind 联动矩阵单测（方案 §9.3）。
+
+重点防回归：gpt 端点 /api/async/image_gpt 无 `_image` 后缀变体（红队 P0-1）；
+参考图 14 张上限；nano 与 gpt 参数差异（size 语义 / aspectRatio 交不交）。
+"""
+import unittest
+
+import _loader
+
+models = _loader.load("models")
+
+
+class EndpointConstantsTest(unittest.TestCase):
+    def test_endpoints(self):
+        # 上游 core/models.py:10/11/36/43 权威定义（gpt 无 _image 后缀）
+        self.assertEqual(models.BASE_URL, "https://api.wuyinkeji.com")
+        self.assertEqual(models.NANO_SUBMIT_PATH, "/api/async/image_nanoBanana2")
+        self.assertEqual(models.GPT_SUBMIT_PATH, "/api/async/image_gpt")
+        self.assertEqual(models.DETAIL_PATH, "/api/async/detail")
+        self.assertNotIn("image_gpt_image", models.GPT_SUBMIT_PATH)
+
+    def test_model_registry_uses_constants(self):
+        self.assertEqual(models.MODELS["nano"].submit_path, models.NANO_SUBMIT_PATH)
+        self.assertEqual(models.MODELS["gpt-image"].submit_path, models.GPT_SUBMIT_PATH)
+        self.assertTrue(models.MODELS["nano"].supports_aspect_ratio)
+        self.assertFalse(models.MODELS["gpt-image"].supports_aspect_ratio)
+
+
+class BuildPayloadTest(unittest.TestCase):
+    def test_nano_size_and_ratio(self):
+        payload = models.build_payload("测试提示词", "nano", "4K", "16:9")
+        self.assertEqual(payload["prompt"], "测试提示词")
+        self.assertEqual(payload["size"], "4K")
+        self.assertEqual(payload["aspectRatio"], "16:9")
+
+    def test_nano_auto_ratio_omitted(self):
+        payload = models.build_payload("p", "nano", "2K", "auto")
+        self.assertNotIn("aspectRatio", payload)
+        self.assertEqual(payload["size"], "2K")
+
+    def test_nano_default_size_1k(self):
+        payload = models.build_payload("p", "nano", None, "auto")
+        self.assertEqual(payload["size"], "1K")
+
+    def test_nano_invalid_size(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "nano", "8K", "auto")
+
+    def test_nano_invalid_ratio(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "nano", "2K", "7:3")
+
+    def test_gpt_size_is_ratio_no_aspect(self):
+        payload = models.build_payload("p", "gpt-image", "16:9", "auto")
+        self.assertEqual(payload["size"], "16:9")
+        self.assertNotIn("aspectRatio", payload)
+
+    def test_gpt_auto_size_omitted(self):
+        payload = models.build_payload("p", "gpt-image", "auto", "auto")
+        self.assertNotIn("size", payload)
+        self.assertNotIn("aspectRatio", payload)
+
+    def test_gpt_invalid_ratio(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-image", "5:4", "auto")
+
+    def test_gpt_data_url_rejected(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-image", "auto", "auto", ["data:image/png;base64,xxxx"])
+
+    def test_empty_prompt_rejected(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("   ", "nano")
+
+    def test_ref_limit_14(self):
+        urls = [f"https://example.com/r{i}.png" for i in range(15)]
+        with self.assertRaises(ValueError) as ctx:
+            models.build_payload("p", "nano", "1K", "auto", urls)
+        self.assertIn("14", str(ctx.exception))
+        ok = models.build_payload("p", "nano", "1K", "auto", urls[:14])
+        self.assertEqual(len(ok["urls"]), 14)
+
+
+class KindMatrixTest(unittest.TestCase):
+    def test_matrix_complete(self):
+        self.assertEqual(set(models.KIND_TARGETS), {"bg4k", "bg1080p", "vertical"})
+        self.assertEqual(models.KIND_TARGETS["bg4k"], (3840, 2160))
+        self.assertEqual(models.KIND_TARGETS["bg1080p"], (1920, 1080))
+        self.assertEqual(models.KIND_TARGETS["vertical"], (1080, 1920))
+        self.assertEqual(models.KIND_LINKAGE["bg4k"], {"model": "nano", "size": "4K", "ratio": "16:9"})
+        self.assertEqual(models.KIND_LINKAGE["bg1080p"], {"model": "nano", "size": "2K", "ratio": "16:9"})
+        self.assertEqual(models.KIND_LINKAGE["vertical"], {"model": "nano", "size": "4K", "ratio": "9:16"})
+        self.assertNotIn("raw", models.KIND_LINKAGE)  # raw 不联动
+        self.assertEqual(models.KIND_FILENAME["bg4k"], "background_4k.png")
+
+    def test_estimate_nano_anchor(self):
+        # 2K 16:9 实证锚点（方案 §5.2：实出 ~2752×1536）
+        self.assertEqual(models.estimate_nano_output("2K", "16:9"), (2752, 1536))
+
+    def test_upscale_factor(self):
+        factor = models.upscale_factor((2752, 1536), (3840, 2160))
+        self.assertAlmostEqual(factor, 2160 / 1536, places=4)  # ≈1.406（方案 §5.2 数字）
+        self.assertLessEqual(models.upscale_factor((3840, 2160), (1920, 1080)), 1.0)
+
+
+class CostTest(unittest.TestCase):
+    def test_estimate_cost(self):
+        self.assertEqual(models.estimate_cost(1), 0.1)
+        self.assertEqual(models.estimate_cost(3), 0.3)
+        self.assertEqual(models.estimate_cost(0), 0.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

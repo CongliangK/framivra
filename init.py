@@ -12,7 +12,8 @@
 依赖分级：
   基础（vtx 渲染链必需）：python3≥3.9、ffmpeg/ffprobe（建议带 libfdk_aac）、Chrome/Chromium/Edge
   可选：blender（预览桥）、sox（音频后处理）、NVIDIA GPU+NVENC（--gpu/--draft 硬编码，缺则回落 x264）
-  大模型（默认关闭）：matting 需 conda comfyui env + 权重；denoise 需 resemble 权重；ASR 需 sidecar
+  大模型（默认关闭）：matting 需 conda comfyui env + 权重；denoise 需 resemble 权重；
+  三大生成模块 asr/tts/imgen（4b 段探测）：ASR 需 qwen-asr 解释器+模型+sidecar 18085；TTS 需 IndexTTS repo/edge-tts；imgen 需速创 API key+requests
 """
 import argparse, json, os, platform, shutil, subprocess, sys
 from pathlib import Path
@@ -118,6 +119,43 @@ def try_fix(pkg_key, install_cmd):
     return "已执行安装命令" + ("" if r.returncode == 0 else f"（退出码 {r.returncode}，请手动检查）")
 
 
+# ------------------------------------------- 三大生成模块探测（asr/tts/imgen，方案 §6.6）
+def _load_local_cfg():
+    """容错读 config.local.json（缺文件/坏 JSON → {}，探测走默认链，不阻断）。"""
+    f = ROOT / "config.local.json"
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _cfg_get(cfg, path, default):
+    """逐级取键；缺键/None → default（方案 §7.2，与 asr/tts/imgen 三模块同款语义）。"""
+    node = cfg
+    for key in path.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return default
+        node = node[key]
+    return default if node is None else node
+
+
+def _load_module(rel, name):
+    """按文件路径加载同仓平铺模块（避免 'client'/'secrets' 等通用名污染 sys.modules）。"""
+    import importlib.util
+    f = ROOT / rel
+    if not f.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location(name, f)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------- 主流程
 def main():
     ap = argparse.ArgumentParser(description="video_tools 跨平台初始化")
@@ -172,13 +210,62 @@ def main():
     rw = Path.home() / "models/resemble-enhance"
     rec("resemble_weights", rw.is_dir(), "denoise_voice.py 需要" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选）")
 
+    say("--- 4b/5 三大生成模块 asr/tts/imgen（默认关闭，按需开启）---")
+    lc = _load_local_cfg()
+    # asr：复用 asr/client.py 探测链（§6.5 复用优先：config → IME 资产 → 本模块 venv/~/models）
+    asr_client = _load_module("asr/client.py", "vt_init_asr_client")
+    if asr_client is None:
+        for k in ("asr_model", "asr_aligner", "asr_python", "asr_sidecar"):
+            rec(k, False, "asr/ 模块缺失（探测跳过）")
+    else:
+        acfg = asr_client.load_config(str(ROOT))
+        am = asr_client.probe_model(acfg, "1.7b") or asr_client.probe_model(acfg, "0.6b")
+        rec("asr_model", bool(am), am or "缺 Qwen3-ASR，跑 bash asr/init.sh")
+        al = asr_client.probe_aligner(acfg)
+        rec("asr_aligner", bool(al), al or "缺 Qwen3-ForcedAligner（字级时间戳需要），跑 bash asr/init.sh")
+        ap = asr_client.probe_python(acfg)
+        rec("asr_python", bool(ap), ap or "缺 qwen-asr 解释器，跑 bash asr/init.sh")
+        asr_base = _cfg_get(lc, "asr.base_url", "http://127.0.0.1:18085")
+        h = asr_client.health(asr_base, timeout=0.5)
+        rec("asr_sidecar", bool(h), (f"ok model={h.get('model', '?')}" if h
+            else f"未运行（{asr_base}；python3 asr/asr_cli.py sidecar start）"))
+    # tts：IndexTTS-2.5 repo（checkpoints 五件齐）+ 解释器 + 音色参考 + edge 兜底
+    tts_repo = Path(_cfg_get(lc, "tts.repo", "~/AI/IndexTTS/repo")).expanduser()
+    five = ("checkpoints/config.yaml", "checkpoints/gpt.pth", "checkpoints/qwen0.6bemo4-merge",
+            "checkpoints/codec.pth", "checkpoints/s2mel.pth")
+    miss = [n for n in five if not (tts_repo / n).exists()]
+    rec("tts_repo", tts_repo.is_dir() and not miss,
+        (str(tts_repo) + "（checkpoints 五件齐）") if not miss
+        else f"缺 {'、'.join(miss)}（{tts_repo}）；部署路线见 tts/README.md，或用 --engine edge 兜底")
+    tts_py = next((p for p in (_cfg_get(lc, "tts.python", "~/miniconda3/envs/indextts/bin/python"),
+                               str(tts_repo / ".venv/bin/python"))
+                   if p and Path(p).expanduser().is_file()), None)
+    rec("tts_python", bool(tts_py), str(Path(tts_py).expanduser()) if tts_py
+        else "缺 indextts 解释器（conda create -n indextts python=3.10，见 tts/README.md）")
+    vr = Path(_cfg_get(lc, "tts.voice_ref", "~/音乐/5_G_Resemble仅降噪.wav")).expanduser()
+    rec("tts_voice_ref", vr.is_file(), str(vr) if vr.is_file() else "缺 5-10s 干声音色参考（tts/README.md）")
+    eb = Path(_cfg_get(lc, "tts.edge_bin", "~/miniconda3/bin/edge-tts")).expanduser()
+    rec("tts_edge", eb.is_file(), str(eb) if eb.is_file() else "缺 edge-tts（pip install edge-tts；免 GPU 兜底引擎）")
+    # imgen：key 链复用 imgen/secrets.py（不复制逻辑）；requests 为模块唯一第三方依赖
+    imgen_secrets = _load_module("imgen/secrets.py", "vt_init_imgen_secrets")
+    if imgen_secrets is None:
+        rec("imgen_key", False, "imgen/ 模块缺失（探测跳过）")
+    else:
+        sc_key = imgen_secrets.get_env_api_key() or imgen_secrets.get_stored_api_key()
+        rec("imgen_key", bool(sc_key), (f"尾4位 {imgen_secrets.mask_key(sc_key)}" if sc_key
+            else "未配置（解析链见 python3 imgen/imgen_cli.py key status）"))
+    r = sh(["python3", "-c", "import requests"])   # 与 imgen 实际运行方式一致（PATH python3）
+    v = sh(["python3", "-c", "import requests;print(requests.__version__)"]).stdout.split()[-1:] or [""]
+    rec("imgen_requests", r.returncode == 0, v[0]
+        if r.returncode == 0 else "缺 requests（pip install requests；仅 imgen 需要）")
+
     say("--- 5/5 本地配置 ---")
     cfg = ROOT / "config.local.json"
     if cfg.exists():
         say("  config.local.json 已存在，保持不动")
     else:
         cfg.write_text((ROOT / "config.example.json").read_text(), encoding="utf-8")
-        say("  已生成 config.local.json（comfyui / asr / tts 全部 enabled:false）")
+        say("  已生成 config.local.json（comfyui / asr / tts / imgen 全部 enabled:false）")
     res["config_local"] = {"ok": True, "detail": str(cfg)}
 
     # --fix：只装基础缺失项

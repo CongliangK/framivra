@@ -167,3 +167,11 @@ gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，
 - **编排总纲**：`~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md`（开场模板/正文节奏/演示对位三原则/字幕 ASR 锚定/音频避让与响度链/结尾模板/验证门清单，溯源 D31-D39）——编排每期 timeline 前先读。
 - 用户手剪回读协议（blend2json→ASR→用户权威文本对照）→ `~/文档/01_活跃项目/video_tools/blender_bridge/README.md`「用户手剪回读协议」节。
 - **待办（拍板后执行）**：voice-ime/07-shooting-guide.md 的通用实拍规范（参数/机位/打光/同步/降噪结论）上提为 `_library/reports/` 通用手册，项目版留本期装备记录——上提后此处补指针。
+
+## 三大生成模块（asr/tts/imgen）产线接口
+
+三模块默认关闭。开启：`bash asr/init.sh` / `bash tts/init.sh` / `bash imgen/init.sh`（幂等，复用本机已有资产优先）→ `config.local.json` 对应条目 `enabled:true`（模板见 `config.example.json`，缺键自动走默认探测链）。三模块互不依赖、与 vtx 零耦合，唯一耦合面 = 项目目录文件契约（timeline.json / assets/**）。
+
+- **字幕锚定工作流（asr/，口播→subtitles[]）**：口播音频/成片 → `python3 asr/asr_cli.py timeline <音频> -t <项目>/timeline.json`——sidecar 转写 + 字级时间戳 → 文本规范化断句（口水词清除/行宽 ≤18/最短 0.6s）→ subtitles[] 就地合并（旧值自动备份进 `cache/reports/`，保护其他字段）。**合并后必须 `vtx validate` + `audit` 复核**：阅读速度 ≤9 字/s、行宽与 audit 同口径，告警逐条人工解释后才可进 `video` 阶段烧录。长音频库内自动分块（±5s 低能量边界），无需人工切段；`--dry-run` 只预览。端口纪律：**18081 是 IME 输入法 sidecar，本仓 ASR sidecar 默认 18085**（config `asr.base_url`）。
+- **TTS 占位→实录替换衔接（tts/）**：`python3 tts/tts_cli.py spec -t <项目>/timeline.json` 从 voice 轨 `vt_<ID>` 事件链反推每窗预算（budget=Σ链帧/30+0.02s）成 spec.json（人工校对文本）→ `python3 tts/tts_cli.py gen <spec.json> --project <项目> [--engine edge]` → 产物落 **`<项目>/assets/voice_tts/final/<窗口ID>.wav`**（48kHz/mono/pcm_s16le，时长=budget±0.02s，atempo 贴预算 + 峰值归一 -6dBFS）。此路径与既有实录替换链**完全同构**：用户按窗录音进 `assets/voice_takes/<ID>.wav` → `python3 scripts/repack_voice.py -t <项目>/timeline.json`（用法与断言见其 `--help`；SKILL.md 路由表「实拍/音频脚本」行）替换占位 → 按 repack 打印的后续命令序列清 prepare 缓存重跑（audio 必重跑）。IndexTTS 需 repo+专用解释器；`--engine edge` 免 GPU 兜底（晓晓）。
+- **背景图 bg4k 硬接口（imgen/）**：`python3 imgen/imgen_cli.py gen "<prompt>" --out <项目> --kind bg4k --yes` → 速创 API 生成 + lanczos cover-crop 到**恰好 3840×2160、8-bit RGB PNG** 落 `assets/bg/background_4k.png`——matting `run_full_bg.sh` 的 cv2.imread 直读逐像素合成，尺寸/像素格式不符即链断（模块内置 ffprobe 断言，错图不落位）。`bg1080p`（1920×1080）/`vertical`（1080×1920）变体供口播底图；离线补裁 `imgen_cli.py postprocess <原图> --kind bg4k -o <目标>`（免 API 重跑）。**付费纪律：0.1 元/张，提交前确认门（无 `--yes` 时交互 y/N，非 TTY 直接中止）；审核拒绝不退款**；生成 URL 2 小时失效，原图留档 `assets/imgen/`。

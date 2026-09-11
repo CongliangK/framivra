@@ -1,5 +1,5 @@
 {
-  "_comment": "video_tools 本地能力开关（模板）。init.sh 将本文件复制为 config.local.json（gitignored）。大模型相关能力默认全部关闭，需用户显式配置开启。注意：当前阶段本文件是「能力状态声明 + 未来接线点」，各工具脚本尚未读取它——开启某项能力前，以对应目录 README 的依赖清单与开启步骤为准。",
+  "_comment": "video_tools 本地能力开关（模板）。init.py/init.sh 将本文件复制为 config.local.json（gitignored）。大模型相关能力默认全部关闭，需用户显式配置开启。asr/tts/imgen 三模块已接线（各自 CLI 容错读取，缺键走默认探测链，见 docs/plans/2026-09-11-三大模块整合方案.md §7）；comfyui 仍为声明式预留（matting 链按 matting/README.md 独立开启）。开启某项能力前，以对应目录 README 的依赖清单与开启步骤为准。",
   "comfyui": {
     "enabled": false,
     "base_url": "http://127.0.0.1:8188",
@@ -8,13 +8,32 @@
   },
   "asr": {
     "enabled": false,
-    "base_url": "http://127.0.0.1:18081",
-    "purpose": "Qwen3-ASR sidecar（A-roll 文本配对、演示素材听写；aroll/ 全链与 voice-ime 演示链使用）",
-    "howto": "本地起 Qwen3-ASR 服务（127.0.0.1:18081，language=Chinese 全称），见 aroll/docs/ 流程手册"
+    "base_url": "http://127.0.0.1:18085",
+    "python": null,
+    "model_dir": null,
+    "aligner_dir": null,
+    "language": "Chinese",
+    "purpose": "Qwen3-ASR+ForcedAligner 字幕产线（asr/）：口播/素材听写→字级时间戳→timeline subtitles[]/SRT",
+    "howto": "bash asr/init.sh 后置 enabled:true。注：18081 为 IME 输入法 sidecar，本仓 sidecar 默认 18085"
   },
   "tts": {
     "enabled": false,
-    "purpose": "IndexTTS-2.5 占位语音产线（原 voice-ime/assets/voice_tts/，本轮未收编，留在视频工作区）",
-    "howto": "按需自行部署；参考 04_bilibili视频/_library/reports/ 终版制作经验报告"
+    "engine": "indextts",
+    "fallback_engine": "edge",
+    "repo": "~/AI/IndexTTS/repo",
+    "python": "~/miniconda3/envs/indextts/bin/python",
+    "voice_ref": "~/音乐/5_G_Resemble仅降噪.wav",
+    "edge_bin": "~/miniconda3/bin/edge-tts",
+    "purpose": "IndexTTS-2.5 口播占位语音（tts/，参数化收编 voice-ime 产线）+ edge-tts 兜底",
+    "howto": "bash tts/init.sh 后置 enabled:true"
+  },
+  "imgen": {
+    "enabled": false,
+    "api_base": "https://api.wuyinkeji.com",
+    "model_default": "nano",
+    "price_per_image": 0.1,
+    "confirm_before_submit": true,
+    "purpose": "速创 API 生图（imgen/）：背景图 bg4k/bg1080p/竖版，cover-crop 后处理直达 matting/口播链",
+    "howto": "bash imgen/init.sh 配 key（SC_API_KEY 或 keyring）；0.1 元/张，提交前确认"
   }
 }

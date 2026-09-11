@@ -28,3 +28,13 @@ frames/
 *.flac
 *.aup3
 *.png
+
+# 三大生成模块自建 venv（asr/tts/imgen init.sh 可能创建，不入库）
+asr/.venv/
+tts/.venv/
+imgen/.venv/
+
+# 测试 fixtures 反排除（防上面 *.wav/*.png 全局规则误杀测试小资产）
+!asr/tests/fixtures/**
+!tts/tests/fixtures/**
+!imgen/tests/fixtures/**

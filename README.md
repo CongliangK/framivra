@@ -19,8 +19,11 @@
 | `blender_bridge/` | timeline.json ↔ Blender VSE 双向预览桥：json2blend / verify_blend / blend2json / subs_alpha / **audit_bundle.py**（BGM 分轨审计包五步链）+ README（VSE API 坑表） | 权威副本（`04_bilibili视频/_library/blender_bridge/` 退役为指针） |
 | `matting/` | 抠像/背景替换链 runner：run_birefnet_hr.py（首帧 mask）、run_matanyone2.py（视频抠像）、run_matanyone.py（v1）、post_h3.sh、run_full_bg.sh + docs/ 报告 | GPU 推理，需 conda env 与权重（见 matting/README.md） |
 | `aroll/` | A-roll 素材工具：aup3_extract.py（Audacity .aup3 解析→提 WAV）、trim_takes.py（VAD 掐头去尾）+ docs/ 全链流程手册 | 配合 `_library/reports/A-roll实拍素材处理流程` 使用 |
+| `asr/` | **Qwen3-ASR + ForcedAligner 字幕产线**：sidecar（18085）转写→字级时间戳→规范化断句→timeline subtitles[] 合并/独立 SRT（asr_cli.py） | 默认关闭；`bash asr/init.sh` 后按 asr/README.md 开启 |
+| `tts/` | **IndexTTS-2.5 / edge-tts 口播占位语音产线**：spec.json 驱动多窗合成 + atempo 贴预算 + 峰值归一，产物按 repack_voice.py 既有约定落位（tts_cli.py） | 默认关闭；`bash tts/init.sh` 后按 tts/README.md 开启 |
+| `imgen/` | **速创 API 生图 + cover-crop 后处理**：nano/gpt-image 异步提交轮询→lanczos 精确 3840×2160/1920×1080/1080×1920，直达 matting 抠像链与口播底图（imgen_cli.py） | 默认关闭；0.1 元/张；`bash imgen/init.sh` 配 key |
 | `init.sh` | 依赖自检 + 生成 config.local.json（幂等；大模型默认关闭） | |
-| `config.example.json` | 本地能力开关模板（comfyui/asr/tts 默认全关） | 声明式预留，脚本尚未读取 |
+| `config.example.json` | 本地能力开关模板（comfyui/asr/tts/imgen 默认全关） | asr/tts/imgen 已接线（读取各自模块），comfyui 仍为声明 |
 
 ## 快速开始
 
@@ -30,6 +33,9 @@ python3 init.py          # 跨平台初始化：依赖自检 + 安装指引 + �
 python3 vtx/vtx.py --help                       # 渲染 CLI
 bash scripts/new_project.sh <项目目录> [时长秒]   # 新项目脚手架
 python3 blender_bridge/json2blend.py -t <项目>/timeline.json   # Blender 预览工程
+bash asr/init.sh                                # 字幕产线初始化（模型/解释器探测，幂等）
+bash tts/init.sh                                # TTS 产线初始化（IndexTTS repo/edge-tts 探测，幂等）
+bash imgen/init.sh                              # 生图产线初始化（key/requests 探测，秒级幂等）
 ```
 
 ## 跨平台初始化（Linux / macOS / Windows）
@@ -51,7 +57,9 @@ python3 blender_bridge/json2blend.py -t <项目>/timeline.json   # Blender 预�
 | 可选 | sox | 部分音频后处理 | init.py 自检 |
 | **大模型（默认关闭）** | conda env comfyui + MatAnyone2/BiRefNet_HR 克隆与权重 | matting/ 抠像链 | **需手动配置**，见 `matting/README.md` |
 | **大模型（默认关闭）** | ComfyUI 服务 127.0.0.1:8188 | 背景图生成（post_h3.sh） | **需手动配置** |
-| **大模型（默认关闭）** | Qwen3-ASR sidecar 127.0.0.1:18081 | A-roll 文本配对 / 听写 | **需手动配置** |
+| **大模型（默认关闭）** | Qwen3-ASR sidecar 127.0.0.1:18085（qwen-asr 解释器 + Qwen3-ASR/ForcedAligner 模型） | asr/ 字幕产线：听写→字级时间戳→subtitles[] | **需手动配置**，见 `asr/README.md` |
+| **大模型（默认关闭）** | IndexTTS-2.5 repo（11GB）+ conda indextts / edge-tts 兜底 | tts/ 口播占位语音产线 | **需手动配置**，见 `tts/README.md` |
+| **大模型（默认关闭）** | 速创 API key（api.wuyinkeji.com，0.1 元/张）+ requests | imgen/ 背景图生成（bg4k/bg1080p/竖版） | **需手动配置**，见 `imgen/README.md` |
 
 ## 与其他位置的关系
 
