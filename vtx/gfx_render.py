@@ -62,6 +62,17 @@ def png_decode_rgba(data: bytes):
 
 def _png_decode(data: bytes):
     import numpy as np
+    # PIL 快路径（2026-09-11）：C 层解码 ~27ms 且释放 GIL，替代逐行 numpy unfilter
+    # （1080p 实测 181ms 且持 GIL，是透明页双截路径的最大瓶颈；像素级一致性已验）。
+    try:
+        from io import BytesIO
+        from PIL import Image
+        im = Image.open(BytesIO(data))
+        if im.mode == "RGB":
+            return np.asarray(im)
+        return np.asarray(im.convert("RGBA"))
+    except ImportError:
+        pass
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("not a PNG")
     pos, ihdr, idat = 8, None, []
@@ -121,6 +132,17 @@ def _png_decode(data: bytes):
 
 def png_encode_rgba(arr) -> bytes:
     """(h,w,4) uint8 numpy → RGBA PNG（filter=0，zlib 级别可调）。"""
+    # PIL 快路径（2026-09-11）：compress_level=PNG_COMPRESS_LEVEL，~17ms vs zlib 直压 ~22ms，
+    # 且无逐行 bytes 拼接的 Python 开销；输出像素等价（QC 比对像素，不比对字节）。
+    try:
+        from io import BytesIO
+        from PIL import Image
+        buf = BytesIO()
+        Image.fromarray(arr, "RGBA").save(
+            buf, "PNG", compress_level=PNG_COMPRESS_LEVEL)
+        return buf.getvalue()
+    except ImportError:
+        pass
     h, w, _ = arr.shape
 
     def chunk(typ, body):
@@ -397,13 +419,29 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
 
     def do_frame(tab, i):
         tab.navigate(f"file://{html_path}?f={i}")
-        if not transparent:
+        if use_override:
+            # 透明快路径（2026-09-11）：Emulation.setDefaultBackgroundColorOverride(a=0)
+            # 使 captureScreenshot 直出带 alpha 的 RGBA PNG——单截直写，与白黑双截金标准
+            # 逐像素一致（b1_bricks/g6b_endboard/nav_two_pillars 实测 max|Δ|=0），且
+            # override 跨导航持久（每 tab 设一次）。替代注入式双截（省一次整页光栅+
+            # 两次解码+一次重编码）。注意：override 干不过页面显式 CSS 背景，gfx 页协议
+            # 要求 body 透明故无冲突；直写 Chrome 原生 PNG，Python 侧零编解码。
             return tab.shot()
         tab.eval(_BG_INJECT_WHITE)
         w_png = tab.shot()
         tab.eval(_BG_INJECT_BLACK)
         b_png = tab.shot()
         return _two_shot_combine(w_png, b_png)
+
+    def apply_override(tabs_):
+        """给每个 tab 设透明背景 override；任一失败返回 False（整页回落双截）。"""
+        try:
+            for t in tabs_:
+                t.call("Emulation.setDefaultBackgroundColorOverride",
+                       color={"r": 0, "g": 0, "b": 0, "a": 0})
+            return True
+        except Exception:
+            return False
 
     def worker(idx):
         nonlocal pool
@@ -440,14 +478,38 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                             new_pool = None
                     if new_pool is not None:
                         pool = new_pool
+                        if use_override and not apply_override(pool):
+                            use_override = False  # 重应用失败 → 本页回落双截
                 except Exception:
                     time.sleep(0.5)
 
     try:
         pool = browser.open_tabs()
+        use_override = apply_override(pool)  # 透明快路径开关（2026-09-11）
         pool[0].navigate(f"file://{html_path}?f={work[0]}")
         time.sleep(0.15)
-        transparent = page_transparent(pool[0])
+        transparent = None
+        if use_override:
+            # flatten 守卫（2026-09-11）：body/html 级 opacity 的页（标题/端板类淡入
+            # 淡出）会使 Chrome 合成组拍平，override 截图静默变全不透明白底（g6a_title
+            # 实案）。双探针帧（首帧+中帧）截图若 alpha 全 255 且注入式探针判定页面
+            # 为透明 → 判定 flatten，本页回落白黑双截。
+            import numpy as np
+            probes = [work[0], work[len(work) // 2]]
+            flat = True
+            for pf in probes:
+                pool[0].navigate(f"file://{html_path}?f={pf}")
+                arr = png_decode_rgba(pool[0].shot())
+                if not (arr[:, :, 3] == 255).all():
+                    flat = False
+                    break
+            if flat and page_transparent(pool[0]):
+                use_override = False
+                pool[0].call("Emulation.setDefaultBackgroundColorOverride")
+            elif not flat:
+                transparent = True
+        if not use_override:
+            transparent = page_transparent(pool[0])
         threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
         for t in threads:
             t.start()

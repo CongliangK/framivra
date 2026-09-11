@@ -17,6 +17,7 @@
 - 条命名 {track}|{idx}[|{src}]；scene 记录来源 json（回写桥钩子）
 - 顺序铁律: 先 trim 再设 channel（源全长重叠时 channel 赋值会被自动顶替）
 """
+import hashlib
 import json, subprocess, sys
 from pathlib import Path
 
@@ -172,7 +173,15 @@ for ti, tr in enumerate(tl["video_tracks"]):
     for i, clip in enumerate(tr["clips"]):
         name, ch = f"{tr['name']}|{i}", CH_V + ti
         if tr["kind"] == "gfx":  # HTML → vtx 帧缓存
-            pngdir = (base / "cache" / Path(clip["src"]).stem).resolve()
+            # 缓存目录解析：旧版 cache/<stem>/，2026-09-11 起内容寻址 cache/gfx/<sha1[:12]>
+            # （键式与 vtx hygiene.gfx_key 一致：html 字节+fps+视口+时长；D44）
+            _html = (base / clip["src"]).resolve()
+            _key = hashlib.sha1(
+                _html.read_bytes() +
+                f"|{FPS}|{W}x{H}|{clip['dur']}".encode()).hexdigest()[:12]
+            pngdir = (base / "cache" / "gfx" / _key).resolve()
+            if not pngdir.is_dir():  # 回落旧版布局 cache/<stem>/
+                pngdir = (base / "cache" / Path(clip["src"]).stem).resolve()
             files = sorted(pngdir.glob("f*.png")) if pngdir.is_dir() else []
             if len(files) < clip["dur"]:
                 errors.append(f"gfx 缓存不足 {name}: {pngdir} 有 {len(files)} 帧 < dur {clip['dur']}")
