@@ -4,14 +4,14 @@
 RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 --draft --frames 回落路径共用同一段代码）。
 """
-import os, subprocess, sys
+import hashlib, json, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from encoders import pick_vcodec, nvenc_concurrency
 from hygiene import budget_gate, gfx_dir, manifest_record, seg_key
-from infra import Ctx, run_parallel
+from infra import Ctx, run_parallel, filter_filename
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）
@@ -198,7 +198,7 @@ class RenderPlan:
                          f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
             cur = f"L{k}"
         if with_subs:
-            parts.append(f"[{cur}]subtitles={sub_file}[vout]")
+            parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
         else:
             parts.append(f"[{cur}]null[vout]")
         vcodec, enc = pick_vcodec(c, draft)
@@ -231,6 +231,26 @@ class RenderPlan:
     # 必须 == project.duration_frames，不等即报错退出（正确性自检，不静默）。
     # 注：此处段间并行度（N=8 时 8 线程）与 infra.io_workers（上限 6，IO 混合任务）
     # 是两套各自用途的并行度，不统一（见 infra 注释）。
+    def _seg_content_key(self, a, b, sl, with_subs, sfile) -> str:
+        """段内容键（PR#1 合入融合，替代 PR 的 tag-n{nseg}-gpu{gpu} 目录变体）：
+        sha1(段区间 + 画布/模式/gpu + 每层上游内容键与参数 + 段字幕 ass 字节)[:12]。
+
+        段文件名携带内容键后，存在性+帧数缓存不再可能吃到旧内容——PR 回归场景
+        「改字幕/改图层/换 gfx 内容后分段缓存仍命中旧段」从机制上关闭；nseg/gpu
+        变体隔离（PR④）由 a|b 区间与 gpu 位天然覆盖。上游层标识复用 13bed7a 的
+        内容寻址键（seg 文件名 / gfx 目录名）——底层内容变，段键随之变。
+        """
+        h = hashlib.sha1()
+        h.update(f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}"
+                 f"|{int(bool(getattr(self.c, 'gpu', False)))}\n".encode())
+        for L in sl:
+            ident = L["pngdir"].name if L["gfx"] else L["seg"].name   # 上游内容键
+            h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
+                      + f"|{L['x']}|{L['y']}|{L['w2']}|{L['h2']}\n").encode())
+        if with_subs and sfile is not None and sfile.exists():
+            h.update(sfile.read_bytes())
+        return h.hexdigest()[:12]
+
     def render_segmented(self, out_path, layer_set=None, with_subs=True, tag="vseg"):
         c, draft = self.c, self.draft
         lset = self.layers if layer_set is None else layer_set
@@ -241,34 +261,40 @@ class RenderPlan:
         print(f"  分段渲染：{len(edges) - 1} 段，切点 {cuts}"
               f"（VTX_VIDEO_SEGMENTS={self.nseg}，guard=±{SEG_CUT_GUARD} 帧）")
         vcodec, enc = pick_vcodec(c, draft)
-        segs = [vdir / f"seg{si:02d}_{a:06d}.mp4" for si, a in enumerate(edges[:-1])]
         def render_one(si):
             a, b = edges[si], edges[si + 1]
-            segp = segs[si]
-            # 段缓存：与 cache/seg 同哲学（存在性 + 流头帧数，D29），便于断点重跑
+            sfile = None
+            if with_subs:
+                sfile = vdir / f"subs_{a:06d}.ass"; self.write_seg_ass(sfile, a, b)
+            sl = [L for L in lset if L["cl"]["dst_in"] < b and L["cl"]["dst_in"] + L["cl"]["dur"] > a]
+            segp = vdir / f"seg{si:02d}_{a:06d}_{self._seg_content_key(a, b, sl, with_subs, sfile)}.mp4"
+            # 段缓存（PR#1 内容键化）：存在且流头帧数==段长即跳过——键已含全部内容
+            # 决定因素（字幕/图层/上游内容/参数），命中即安全；帧数检查是便宜兜底。
             if segp.exists():
                 fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                                      "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(segp)],
                                     capture_output=True, text=True).stdout.strip()
                 if fr.isdigit() and int(fr) == b - a:
-                    print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return
-            sfile = None
-            if with_subs:
-                sfile = vdir / f"subs_{a:06d}.ass"; self.write_seg_ass(sfile, a, b)
-            sl = [L for L in lset if L["cl"]["dst_in"] < b and L["cl"]["dst_in"] + L["cl"]["dur"] > a]
+                    print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return segp
             self.composite(sl, segp, with_subs, a=a, b=b, sub_file=sfile)
+            return segp
         # NVENC 会话上限探测：并发发起 workers 路编码探测，任一失败回落串行
-        workers = min(len(segs), max(1, (os.cpu_count() or 8) // 4))
+        workers = min(len(edges) - 1, max(1, (os.cpu_count() or 8) // 4))
         if workers > 1 and not c.dry and enc.startswith("NVENC"):
             workers = nvenc_concurrency(c, workers)
         print(f"  段间并行：{workers} 线程")
         if c.dry:
-            for si in range(len(segs)): render_one(si)
+            segs = [render_one(si) for si in range(len(edges) - 1)]
         else:
             with ThreadPoolExecutor(workers) as ex:
-                list(ex.map(render_one, range(len(segs))))
+                segs = list(ex.map(render_one, range(len(edges) - 1)))   # map 保序 → concat 顺序确定
         lst = vdir / "list.txt"
-        lst.write_text("".join(f"file '{s.name}'\n" for s in segs))
+        # PR#1（Windows 实测）：相对路径 concat 项在含 '#' 等特殊字符的目录下会被
+        # 按清单目录做 URL 基准解析出错；绝对 POSIX 路径 + 引号转义规避（-safe 0 已带）。
+        def concat_entry(path):
+            name = path.resolve().as_posix().replace("'", "'\\''")
+            return f"file '{name}'\n"
+        lst.write_text("".join(concat_entry(s) for s in segs), encoding="utf-8")
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
                "-c", "copy", str(out_path)])
         # 内置正确性自检：容器元数据总帧数必须精确 == project.duration_frames
@@ -298,7 +324,8 @@ def build_video(c: Ctx):
         for ci, cl in enumerate(tr["clips"]):
             kind = tr.get("kind")
             if kind == "gfx":
-                # gfx 帧缓存目录 = 内容寻址键（与 gfx 阶段同键，见 hygiene.gfx_key）
+                # gfx 帧缓存目录 = 内容寻址键（与 gfx 阶段同键，见 hygiene.gfx_key；
+                # PR#1 的路径哈希 gfx_dir 被此方案取代——内容键同样隔离同名页/换时长）
                 layers.append({"cl": cl, "pngdir": gfx_dir(c, cl),
                                "x": cl.get("x", 0), "y": cl.get("y", 0), "w2": None, "h2": None,
                                "gfx": True, "ti": ti})

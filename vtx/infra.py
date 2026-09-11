@@ -7,6 +7,11 @@ import hashlib, json, os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+# PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
+# 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
+from cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
+                         validate_cache_dependencies)
+
 
 def is_ffmpeg_cmd(cmd) -> bool:
     """dry-run 判断收拢（原两处 str(cmd[0]).endswith("ffmpeg") 重复）。"""
@@ -25,6 +30,10 @@ class Ctx:
         self.spf = 1.0 / self.fps
         self.spf_samples = 48000 // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
         self.cache = self.root / "cache"; self.out = self.root / "out"
+        # PR#1 合入：声明依赖快速失败 + 回执输入身份（注意：不是缓存目录键——
+        # 缓存布局维持 main 的 per-产物内容寻址，见 cache_state.py 合并裁定）。
+        validate_cache_dependencies(self)
+        self.input_fingerprint = receipt_fingerprint(self)
         self.probes = {}
         self.dry = False   # --dry-run（main 里按 CLI 参数赋值；替代原模块级可变全局 DRY）
 
@@ -71,14 +80,39 @@ class Ctx:
         self.probes[path] = info; return info
 
     def receipt(self, stage, ok, detail="", extra=None):
+        if self.dry:
+            return   # dry-run 不落回执（PR#1：预览运行不得改写真实阶段状态）
         f = self.out / "receipt.json"
-        rec = json.loads(f.read_text()) if f.exists() else {"timeline": None, "stages": {}}
+        rec = load_receipt(f, self.input_fingerprint)
         rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
         rec["updated"] = time.strftime("%F %T")
         rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
         if extra:
             rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
         self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2))
+
+    # （PR#1 的 Ctx.gfx_dir 路径哈希版被放弃：main 13bed7a 的 hygiene.gfx_key
+    #  内容寻址键覆盖其全部场景——同名页不同内容/同页换时长自然分键，且同内容
+    #  跨路径可复用；此处不保留第二实现。）
+
+    def begin_stage(self, stage):
+        """PR#1：拒绝过期前置 + 运行前撤销下游成功回执（失败重跑不留旧 QC PASS）。"""
+        if self.dry:
+            return
+        rec = load_receipt(self.out / 'receipt.json', self.input_fingerprint)
+        dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
+                        'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
+        if any(t.get('kind') == 'gfx' for t in self.tl['video_tracks']):
+            dependencies['video'] = dependencies['video_draft'] = ['gfx']
+        missing = [name for name in dependencies.get(stage, [])
+                   if not rec['stages'].get(name, {}).get('ok')]
+        if missing:
+            raise RuntimeError('当前输入要求先成功完成阶段: ' + ', '.join(missing) +
+                               '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
+        for name in DOWNSTREAM.get(stage, []) + [stage]:
+            rec['stages'].pop(name, None)
+        self.out.mkdir(exist_ok=True)
+        (self.out / 'receipt.json').write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]
@@ -137,3 +171,14 @@ def run_parallel(c: Ctx, tasks, what: str):
     if failed:
         print(f"✗ {what}失败（{failed[0]}）：\n{failed[1]}", file=sys.stderr); sys.exit(1)
     print(f"  ✓ {what}完成（{time.time() - t0:.0f}s）")
+
+
+def filter_filename(path):
+    """Escape an absolute filename through FFmpeg option and filtergraph parsers.
+
+    This value is passed in an argv element, not through a shell.
+    """
+    value = Path(path).resolve().as_posix()
+    for chars in ("\\':", "\\'[],;"):
+        value = ''.join('\\' + ch if ch in chars else ch for ch in value)
+    return value

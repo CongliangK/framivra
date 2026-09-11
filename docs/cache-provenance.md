@@ -1,0 +1,73 @@
+# 缓存与回执：输入变化必须使旧结果失效
+
+> 本文描述 PR#1（Windows 适配）合入 main 后的实际语义。PR 原始方案（项目级全量
+> 指纹 + `cache/<input-fingerprint>/` 整仓布局）在合并中被 main 13bed7a 的
+> per-产物内容寻址缓存取代，回执侧价值全部保留——详见 `vtx/cache_state.py`
+> 模块头的合并裁定与仓库 MERGE 报告。
+
+## 修复的问题
+
+原缓存按文件存在、帧数或 HTML 时间戳判断命中。同路径替换同长素材、修改字幕，
+或两个目录使用同名 HTML 时，旧声音/画面可能继续被输出。失败的重跑也可能留下
+旧 QC 成功回执。
+
+合入后的机制（main 13bed7a 架构 + PR#1 补强）：
+
+- **gfx 页缓存** `cache/gfx/<key>/`：键 = sha1(html 字节 + 显式依赖内容 + fps +
+  视口 + 时长)。同内容跨路径复用；同名页不同内容、同页换时长自然分键。
+- **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
+  键 = sha1(源 stat 身份 + 切片/窗口/fade/编码参数)。源 stat 身份 = path + size +
+  mtime_ns + **首/尾 64KB 采样哈希**（PR#1 补强：同尺寸 + 恢复时间戳的同路径替换
+  不再误命中——媒体重编码首尾字节必变）。
+- **分段渲染段缓存** `cache/vseg*/seg…_<内容键>.mp4`（PR#1 合入融合）：段文件名
+  携带内容键（段区间 + 画布/模式/gpu + 每层上游内容键与参数 + 段字幕 ass 字节）。
+  改字幕/改图层/换 gfx 内容后旧段不再命中——PR 回归场景「改字幕不重渲」关闭。
+  段数（nseg）与 GPU 开关由区间和键内 gpu 位天然隔离（PR 的 tag 变体方案被此取代）。
+- 键变即新条目，旧键是垃圾由 `vtx gc` 回收；`vtx df`/`vtx snapshot`/VERSIONS
+  记账不受影响。
+
+## HTML 依赖
+
+外部 CSS、JavaScript、图片、字体等本地依赖需显式列出（PR#1：`cache_dependencies`
+参与 gfx 缓存键与回执身份），例如：
+
+```json
+"project": {
+  "fps": 30, "width": 1920, "height": 1080, "duration_frames": 180,
+  "cache_dependencies": ["gfx/style.css", "gfx/logo.png"]
+}
+```
+
+不存在或非文件依赖会报错（Ctx 构造即快速失败）。声明属项目级——任一依赖变化会使
+全部 gfx 页重渲（保守过失效，可接受）。未声明的间接依赖、网络资源、运行时下载和
+浏览器/FFmpeg/vtx 代码升级不在此覆盖范围；建议使用内嵌或明确声明的静态本地素材。
+升级渲染器/运行依赖后请 `vtx clean` 或 `vtx gc` 后重新运行。输入在一次命令期间应
+保持不变，同一项目不要同时运行多个写入命令。
+
+## 阶段回执（PR#1）
+
+`receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
+gfx html 字节 + 声明依赖内容)——与缓存键同等敏感（任何缓存键会变的输入变化，
+回执门同样重置），但不做全量媒体哈希（GB 级 I/O 不可接受）。输入变化不继承旧的
+成功状态。CLI 在阶段开始前撤销其旧成功及下游成功，失败重跑不能保留旧 QC PASS。
+audio 要求当前 prepare，video（有 gfx 时）要求当前 gfx，mux 要求当前 video/audio，
+qc 要求当前 mux；单跑某阶段前置不满足会直接拒绝。可以直接运行 `all` 完成依赖顺序。
+旧工程首次需完整重建一次；不直接认领旧产物。
+
+历史缓存保留以便恢复和审计；工具的显式 `clean` 仍删除项目 cache/ 与 out/。本次不
+自动删除用户旧工程或媒体。回执是流程来源检查，不是对最终文件外部篡改的完整性证明
+（源指纹的采样哈希亦非对抗性保证）。
+
+## 回归
+
+- `python -m unittest discover -s tests -v`：内容/时间戳/依赖/同名页面/回执失效
+  测试，以及可选 Chrome/FFmpeg 集成用例（`VTX_TEST_CHROME` / `VTX_TEST_FFMPEG`）。
+- `python tests/run_cache_regression.py --repo <checkout> --output <new-dir> --ffmpeg <executable> --chrome <executable>`：初次渲染→同长素材替换且恢复时间戳→修改
+  字幕/HTML→不清缓存重跑→独立冷启动对照。比较完整 180 帧的缩略 RGB 与解码 PCM。
+- `tests/run_e2e.py` 与 `tests/verify_e2e.py`：12 秒单段/并行全流程、严格 QC、
+  接缝和音频对照。
+
+Windows 实测旧候选版本暖/冷最大单帧平均差 100.64/255、音频不一致且旧成片字节
+完全不变；修复版本差为 0、音频一致，成片已更新。Linux 侧由上述合成回归 +
+voice-ime 真实工程 E2E 复验（见合并报告）。这是确定性合成用例的正确性结果，
+不是长视频或跨平台性能结论。

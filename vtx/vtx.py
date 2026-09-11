@@ -24,6 +24,10 @@
 键变即新条目，旧键由 gc 回收）；mux 每次成功追加 out/VERSIONS.json（覆盖检测 + superseded
 留痕 + out/history/ 保留最近 N 版，--keep-versions 默认 2）；环境变量 VTX_CACHE_BUDGET_GB
 设预算时 gfx/video 阶段前超限自动跑 gc 清单（VTX_GC_AUTO=1 直接回收）。
+阶段回执（PR#1 合入）：receipt.json 绑定输入身份（timeline + 源 stat 指纹 + gfx html +
+声明的 cache_dependencies）——输入变化不继承旧阶段成功；每阶段运行前做依赖门（audio 需
+prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux）并撤销下游成功。
+单跑某阶段前置不满足会直接拒绝；编辑输入后请按序重跑或直接 `all`。详见 docs/cache-provenance.md。
 
 迭代提速（2026-09-08，video/mux 专属标志）：
   --draft            草稿模式：540p 半分辨率 + NVENC 硬编码（不可用自动回落 x264 veryfast），
@@ -92,7 +96,7 @@ def gfx(c: Ctx):
         return subprocess.run(
             [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
              f"--window-size={c.w},{c.h}", "--default-background-color=00000000",
-             f"--screenshot={d}/f{i:04d}.png", f"file://{html}?f={i}"], capture_output=True)
+             f"--screenshot={d}/f{i:04d}.png", f"{html.resolve().as_uri()}?f={i}"], capture_output=True)
 
     def render_cli(i_range, d, html, chrome):
         with ThreadPoolExecutor(6) as ex:
@@ -192,7 +196,11 @@ def main():
     # 不跟随符号链接（resolve() 会穿透 cp -rs 链接树等隔离副本，把 out/ 回执写到 live 项目）
     tp = Path(os.path.abspath(os.path.expanduser(a.timeline)))
     if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)
-    c = Ctx(tp); c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
+    try:
+        c = Ctx(tp)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
+    except ValueError as e:
+        print(f"✗ timeline 无效：{e}"); sys.exit(1)
+    c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
     c.dry = a.dry_run   # 原 DRY 全局改为 Ctx 字段（消除可变全局）
     c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
     c.keep_versions = a.keep_versions   # mux：out/history/ 保留版数
@@ -214,7 +222,15 @@ def main():
         names = " | ".join([s[0] for s in STAGES] + ["clean", "gc", "df", "snapshot"])
         print(f"✗ 未知命令：{a.command!r}（可用：{names}）"); sys.exit(2)
     for name, fn in todo:
-        print(f"== {name} =="); fn(c)
+        print(f"== {name} ==")
+        # PR#1：阶段开始前做依赖门 + 撤销下游旧成功（失败重跑不得保留旧 QC PASS）。
+        # draft 模式的 video/mux 记为 video_draft/mux_draft。
+        stage = name + "_draft" if c.draft and name in ("video", "mux") else name
+        try:
+            c.begin_stage(stage)
+        except RuntimeError as e:
+            print(f"✗ {e}"); sys.exit(1)
+        fn(c)
     print("完成：", c.out / "final.mp4" if a.command in ("all", "mux", "qc") else names)
 
 if __name__ == "__main__":

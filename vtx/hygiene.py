@@ -18,15 +18,18 @@ KEEP_BASELINES = ("manifest.json",)   # cache 根下永不删的记账文件
 # ---------------------------------------------------------------- 内容寻址键
 # 键变即新条目，旧键自然成为垃圾由 gc 回收——D29（源改缓存不重渲）与
 # D38（同索引误命中旧内容）从机制上消失。源视频不整文件哈希（GB 级太贵），
-# 用 path+size+mtime_ns 指纹（源是不可变素材，mtime 即内容代理）。
+# 用 stat 指纹 + 首/尾 64KB 采样哈希（PR#1 合入补强：同尺寸 + 恢复时间戳的
+# 同路径替换不再误命中——媒体重编码首尾字节必变；与 cache_state.media_stat_digest
+# 同一判据，保持回执敏感度 == 缓存键敏感度）。
 
 def _sha1(b) -> str:
     return hashlib.sha1(b).hexdigest()[:12]
 
 
 def _fp(p: Path) -> str:
+    from cache_state import media_stat_digest
     st = p.stat()
-    return f"{p}:{st.st_size}:{st.st_mtime_ns}"
+    return f"{p}:{st.st_size}:{st.st_mtime_ns}:{media_stat_digest(p)}"
 
 
 def tl_md5(c) -> str:
@@ -34,10 +37,19 @@ def tl_md5(c) -> str:
 
 
 def gfx_key(c, cl) -> str:
-    """gfx 页缓存键 = sha1(html 字节 + fps + 视口 + 时长)[:12]。"""
+    """gfx 页缓存键 = sha1(html 字节 + 显式依赖内容 + fps + 视口 + 时长)[:12]。
+
+    PR#1 合入：project.cache_dependencies 声明的本地资产（HTML/CSS/JS 引用的
+    图片/字体/样式/脚本）内容入键——改依赖即重渲；未声明/网络资产不追踪
+    （cache-provenance.md）。声明属项目级，所有 gfx 页共享（保守过失效，可接受）。
+    """
     html = (c.root / cl["src"]).resolve()
-    return _sha1(html.read_bytes() +
-                 f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
+    blob = html.read_bytes()
+    from cache_state import declared_dependencies, file_digest
+    for dep in declared_dependencies(c):
+        blob += b"|" + str((c.root / dep).resolve()).encode() + b"\0" \
+                + file_digest(c.root / dep).encode()
+    return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
 
 
 def gfx_dir(c, cl) -> Path:
