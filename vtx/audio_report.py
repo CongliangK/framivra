@@ -325,7 +325,8 @@ def run_report(c, json_path=None):
 
     print(f"== audio report ==（{wav}）")
     if not wav.exists():
-        print(f"✗ 产物不存在：{wav}（先运行 vtx audio，或用 --report 走混音+报告）")
+        print(f"✗ 产物不存在：{wav}（--report-only 只读已有产物，适用于上一版 audio.wav 还在的"
+              f"回看场景；timeline 有新改动时先用 --report 混音+报告，或先跑 vtx audio 再 --report-only）")
         return 2
 
     # 1) 整片 LUFS / TP（判级对象 = audio.wav 本体，与 mux/成片无关）
