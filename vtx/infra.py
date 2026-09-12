@@ -3,7 +3,7 @@
 由 stages/composite/qc/encoders 共用。入口 vtx/vtx.py 保持可直接
 `python3 vtx/vtx.py ...` 运行（同目录平铺 import，sys.path 由入口脚本保证）。
 """
-import hashlib, json, os, subprocess, sys, time
+import hashlib, json, os, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -44,6 +44,12 @@ class Ctx:
         self.input_fingerprint = receipt_fingerprint(self)
         self.probes = {}
         self.dry = False   # --dry-run（main 里按 CLI 参数赋值；替代原模块级可变全局 DRY）
+        # receipt.json 并发写锁（方案二阶段2，2026-09-12）：`vtx all` 依赖图流水线的
+        # 并行波内 gfx/audio 两线程几乎同时 c.receipt() / c.begin_stage()——两者都是
+        # receipt.json 的「读-改-写」，无锁竞态会互相覆盖丢回执（真丢数据风险，非
+        # 理论洁癖）。实例锁（每 Ctx 一把足够：receipt.json 每 Ctx 恰一份）；
+        # dry 早退路径在锁外（见各方法）。
+        self._receipt_lock = threading.Lock()
 
     # ---- 基础设施 ----
     def run(self, cmd, need=True):
@@ -118,15 +124,17 @@ class Ctx:
 
     def receipt(self, stage, ok, detail="", extra=None):
         if self.dry:
-            return   # dry-run 不落回执（PR#1：预览运行不得改写真实阶段状态）
-        f = self.out / "receipt.json"
-        rec = load_receipt(f, self.input_fingerprint)
-        rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
-        rec["updated"] = time.strftime("%F %T")
-        rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
-        if extra:
-            rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
-        self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+            return   # dry-run 不落回执（PR#1：预览运行不得改写真实阶段状态）——锁外早退
+        # 读-改-写整段持锁（方案二阶段2）：波内并发阶段的回执写入串行化，防互相覆盖
+        with self._receipt_lock:
+            f = self.out / "receipt.json"
+            rec = load_receipt(f, self.input_fingerprint)
+            rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
+            rec["updated"] = time.strftime("%F %T")
+            rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
+            if extra:
+                rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
+            self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # （PR#1 的 Ctx.gfx_dir 路径哈希版被放弃：main 13bed7a 的 hygiene.gfx_key
     #  内容寻址键覆盖其全部场景——同名页不同内容/同页换时长自然分键，且同内容
@@ -136,20 +144,23 @@ class Ctx:
         """PR#1：拒绝过期前置 + 运行前撤销下游成功回执（失败重跑不留旧 QC PASS）。"""
         if self.dry:
             return
-        rec = load_receipt(self.out / 'receipt.json', self.input_fingerprint)
-        dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
-                        'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
-        if any(t.get('kind') == 'gfx' for t in self.tl['video_tracks']):
-            dependencies['video'] = dependencies['video_draft'] = ['gfx']
-        missing = [name for name in dependencies.get(stage, [])
-                   if not rec['stages'].get(name, {}).get('ok')]
-        if missing:
-            raise RuntimeError('当前输入要求先成功完成阶段: ' + ', '.join(missing) +
-                               '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
-        for name in DOWNSTREAM.get(stage, []) + [stage]:
-            rec['stages'].pop(name, None)
-        self.out.mkdir(exist_ok=True)
-        (self.out / 'receipt.json').write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding='utf-8')
+        # 读-改-写整段持锁（方案二阶段2）：与 receipt() 同一锁——波内 gfx/audio 两路
+        # begin_stage 并发时依赖门判定与下游撤销也须串行化（dry 早退在锁外）。
+        with self._receipt_lock:
+            rec = load_receipt(self.out / 'receipt.json', self.input_fingerprint)
+            dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
+                            'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
+            if any(t.get('kind') == 'gfx' for t in self.tl['video_tracks']):
+                dependencies['video'] = dependencies['video_draft'] = ['gfx']
+            missing = [name for name in dependencies.get(stage, [])
+                       if not rec['stages'].get(name, {}).get('ok')]
+            if missing:
+                raise RuntimeError('当前输入要求先成功完成阶段: ' + ', '.join(missing) +
+                                   '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
+            for name in DOWNSTREAM.get(stage, []) + [stage]:
+                rec['stages'].pop(name, None)
+            self.out.mkdir(exist_ok=True)
+            (self.out / 'receipt.json').write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]
@@ -229,6 +240,60 @@ def run_parallel(c: Ctx, tasks, what: str):
     if failed:
         print(f"✗ {what}失败（{failed[0]}）：\n{failed[1]}", file=sys.stderr); sys.exit(1)
     print(f"  ✓ {what}完成（{time.time() - t0:.0f}s）")
+
+
+def run_wave(c: Ctx, jobs):
+    """jobs = [(label, fn)] 的 Python 可调用并行波执行器（方案二阶段2，2026-09-12，
+    `vtx all` 依赖图流水线）：gfx / audio / video 预编码三路零数据依赖任务重叠执行。
+    与 run_parallel 的分工：后者面向「ffmpeg 子进程任务」（label+cmd，io_workers 限流），
+    本函数面向「整段 Python 阶段函数」——每路一个线程（len(jobs) 即线程数，波内三路
+    各自内部还有自己的并行度：gfx 页池 / run_parallel / 段间并行，CPU 聚合即设计目标）。
+
+    失败语义：每个 fn 包 try/except BaseException——阶段函数内部失败走 sys.exit，
+    在线程里 SystemExit 只杀线程不杀进程，必须显式捕获记入失败表；任一 job 失败后
+    其余 job 仍跑完再统一退出（取消另一半波内 Chrome/ffmpeg 进程树的复杂度不值，
+    失败路径罕见），join 后打印首个失败标签与异常并以退出码 1 结束（不静默）。
+
+    打点（对齐 range.py [timing] 惯例）：波开始一行（含墙钟时刻）；每 job 线程体开头
+    `== {label} ==`（与线性序列阶段头同格式，外部队列按行 grep 兼容）、结束
+    `✓ {label} 完成 [timing] +{t:.1f}s（结束时刻）`；波结束打印总耗时。多线程 print
+    按行交错（行缓冲），可接受——方案明文「日志交错但分项计时保留可归因」。
+    c 参数与 run_parallel 签名对称（当前无消费，预留 dry/上下文扩展位）。
+    """
+    if not jobs:
+        return
+    t0 = time.monotonic()
+    print(f"── 并行波（{len(jobs)} 路：{' + '.join(l for l, _ in jobs)}）"
+          f"开始 {time.strftime('%H:%M:%S')} ──")
+    failed = []   # [(label, exc)]；list.append 在 GIL 下原子，无需额外锁
+
+    def _worker(label, fn):
+        t1 = time.monotonic()
+        print(f"== {label} ==")
+        try:
+            fn()
+        except BaseException as e:   # 含 SystemExit：sys.exit 在线程内只杀线程，必须捕获
+            failed.append((label, e))
+            if isinstance(e, SystemExit):
+                # 真实错误文案已由阶段函数自行打印，这里只归因到波内标签
+                print(f"✗ {label} 失败（exit {e.code}，错误详情见上方该路输出）")
+            else:
+                print(f"✗ {label} 失败：{e}")
+            return
+        print(f"✓ {label} 完成 [timing] +{time.monotonic() - t1:.1f}s"
+              f"（{time.strftime('%H:%M:%S')}）")
+
+    with ThreadPoolExecutor(len(jobs)) as ex:
+        list(ex.map(lambda j: _worker(*j), jobs))
+    if failed:
+        label, e = failed[0]
+        if not isinstance(e, SystemExit):
+            print(f"✗ 并行波失败（首个失败：{label}）：{e!r}", file=sys.stderr)
+        else:
+            print(f"✗ 并行波失败（首个失败：{label}，exit {e.code}）", file=sys.stderr)
+        sys.exit(1)
+    print(f"✓ 并行波完成 [timing] 总耗时 {time.monotonic() - t0:.1f}s"
+          f"（{time.strftime('%H:%M:%S')}）")
 
 
 def filter_filename(path):

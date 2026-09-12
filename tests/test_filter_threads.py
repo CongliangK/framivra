@@ -72,7 +72,8 @@ class TestFilterThreadsEnv(unittest.TestCase):
     def test_valid_values(self):
         self.assertEqual(self._get("1"), 1)
         self.assertEqual(self._get("4"), 4)    # 显式解锁多线程
-        self.assertEqual(self._get("16"), 16)
+        # 采纳值封顶 cpu 核数（<16 核机上 16 会被截断，按机器实际上限断言才可移植）
+        self.assertEqual(self._get("16"), min(16, os.cpu_count() or 8))
 
     def test_invalid_falls_back_to_1(self):
         for bad in ("0", "-1", "abc", "", "4.5", " 4"):

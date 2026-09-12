@@ -404,12 +404,21 @@ def prepare_layers(c: Ctx):
     return layers
 
 
-def build_video(c: Ctx):
+def build_video(c: Ctx, layers=None):
+    """layers=None（单跑 `vtx video` / 线性 all）：内部现做 prepare_layers（行为逐字
+    不变）；流水线模式（方案二阶段2）由波内「video 预编码」job 预计算传入，跳过
+    重复扫描——layers 是纯数据（clip→缓存路径映射 + 参数），先算后用无时序风险
+    （seg 内容寻址键与渲染时机无关，波内先行写入的段文件 video 阶段直接命中）。
+    """
     draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
+    # budget_gate 仍在 video 阶段开头执行（流水线下为提示性门）：seg 预编码已在波内
+    # 先行落盘，但 gc 只回收「键集外」条目——先行写入的当前键 seg 不在回收集，
+    # 无冲突；超预算提示/自动回收语义与线性路径一致。
     budget_gate(c, "video")
     f = 0.5 if draft else 1.0
     W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
-    layers = prepare_layers(c)
+    if layers is None:
+        layers = prepare_layers(c)
     tracks = c.tl["video_tracks"]
     for L in layers:                      # 记账：本时间轴的全部 seg（含缓存命中）
         if not L["gfx"] and L["seg"].exists() and not c.dry:

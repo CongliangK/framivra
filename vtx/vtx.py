@@ -53,8 +53,12 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
   改为线程池并行（VTX_VIDEO_SEGMENTS 分段开关同上，不受影响）；并行线程数 =
   min(6, cpu//4)，环境变量 VTX_IO_WORKERS=N 可覆盖；任一任务失败即整阶段失败退出
   （方案五阶段1 2026-09-12）video --draft --range A B / --clip ID / --track NAME：
-  区间预览渲染——复用整片切点与 cache/seg|gfx 缓存，产物 cache/preview/*.mp4
-  （独立命名空间：不写 out/、不更新 receipt，含窗口音频混音）
+             区间预览渲染——复用整片切点与 cache/seg|gfx 缓存，产物 cache/preview/*.mp4
+             （独立命名空间：不写 out/、不更新 receipt，含窗口音频混音）
+  （方案二阶段2 2026-09-12）`vtx all` 默认走跨阶段依赖图流水线：validate→audit→prepare
+             （串行）→ 并行波 gfx ‖ audio ‖ video 预编码（seg 预编码提前入波，墙钟与
+             gfx 重叠）→ video → mux → qc（串行）；VTX_PIPELINE=0 回退线性序列（独立
+             A/B 开关）。单阶段命令与各阶段产物语义/缓存键/依赖门不变。
 
 模块布局（2026-09-10 单文件拆分为包，入口本文件保持可直接运行）：
   infra.py      Ctx/执行/ffmpeg/并行调度            encoders.py  Chrome/NVENC/编码参数选型
@@ -80,10 +84,10 @@ VTX_DIR = Path(__file__).resolve().parent
 if str(VTX_DIR) not in sys.path:
     sys.path.insert(0, str(VTX_DIR))
 
-from composite import build_video
+from composite import build_video, prepare_layers
 from encoders import find_chrome
 from hygiene import budget_gate, df, gc, gfx_key, gfx_dir, manifest_record, snapshot
-from infra import Ctx
+from infra import Ctx, run_wave
 from qc import qc
 from stages import audit, build_audio, mux, prepare, validate
 from subs import run_subs
@@ -311,8 +315,73 @@ def gfx(c: Ctx):
               + ("｜" + "; ".join(engine_notes) if engine_notes else ""))
 
 
+# STAGES = 单阶段命令分发的权威表 + 线性文档序（`all` = 依次全部执行）。
+# `vtx all` 实际编排（方案二阶段2，2026-09-12）默认走依赖图（_run_all_pipeline）：
+#   串行头 validate→audit→prepare → 并行波（gfx ‖ audio ‖ video 预编码 prepare_layers）
+#   → 串行尾 video（用预计算 layers）→ mux → qc——波内三路零数据依赖（基线实测
+#   gfx 全冷 165s / seg 预编码 33s / audio 混音 27s 本机 32C），后两路完全落在 gfx
+#   墙钟窗口内省 ~60s 串行等待；VTX_PIPELINE=0 回退本表线性序列。
 STAGES = [("validate", validate), ("audit", audit), ("prepare", prepare), ("gfx", gfx),
           ("video", build_video), ("audio", build_audio), ("mux", mux), ("qc", qc)]
+
+
+def _stage_receipt_name(name: str, draft: bool) -> str:
+    """阶段回执名（现行内联规则抽 helper，2026-09-12）：draft 模式的 video/mux 记为
+    video_draft/mux_draft（receipt/依赖门/下游撤销共用同一名字），其余阶段原名。
+    线性序列与流水线两处复用（单一权威）。"""
+    return name + "_draft" if draft and name in ("video", "mux") else name
+
+
+def _pipeline_enabled(env=None) -> bool:
+    """VTX_PIPELINE 解析（方案二阶段2 A/B 开关）：仅显式 "0" 回退线性序列，缺省与
+    其他任意值（含空串/"false"/"1"）走依赖图——开关语义单值精确，避免布尔猜测。"""
+    e = os.environ if env is None else env
+    return e.get("VTX_PIPELINE", "1") != "0"
+
+
+def _run_all_pipeline(c: Ctx):
+    """`vtx all` 依赖图编排（方案二阶段2）：串行头（validate/audit/prepare，现行
+    begin_stage + 阶段函数语义）→ 并行波（gfx ‖ audio ‖ video 预编码，run_wave）→
+    串行尾（video/mux/qc）。波内前两路 = begin_stage(该阶段名) + 现行阶段函数；
+    「video 预编码」= 无 begin_stage 无 receipt 的 prepare_layers——receipt/manifest
+    记账仍由 video 阶段本体负责（预编码只产 layers 数据 + seg 缓存侧副作用），结果
+    经 c._pre_layers 传入 build_video。各阶段产物语义、缓存键、依赖门判定、receipt
+    文案全部不变，只改执行顺序。注：STAGES 名集须与下面三段划分一致（静态表，
+    见 STAGES 旁注释）。"""
+    by_name = dict(STAGES)
+    for name in ("validate", "audit", "prepare"):   # —— 串行头 ——
+        print(f"== {name} ==")
+        try:
+            c.begin_stage(_stage_receipt_name(name, c.draft))
+        except RuntimeError as e:
+            print(f"✗ {e}"); sys.exit(1)
+        by_name[name](c)
+
+    def _stage_job(name, fn):                        # —— 波内阶段路：现行阶段语义 ——
+        def run():
+            try:
+                c.begin_stage(_stage_receipt_name(name, c.draft))
+            except RuntimeError as e:
+                print(f"✗ {e}"); sys.exit(1)
+            fn(c)
+        return run
+
+    def _pre_layers():                               # —— 波内预编码路：无门无回执 ——
+        c._pre_layers = prepare_layers(c)
+
+    run_wave(c, [("gfx", _stage_job("gfx", by_name["gfx"])),
+                 ("audio", _stage_job("audio", by_name["audio"])),
+                 ("video 预编码", _pre_layers)])
+    for name in ("video", "mux", "qc"):              # —— 串行尾 ——
+        print(f"== {name} ==")
+        try:
+            c.begin_stage(_stage_receipt_name(name, c.draft))
+        except RuntimeError as e:
+            print(f"✗ {e}"); sys.exit(1)
+        if name == "video":
+            build_video(c, layers=getattr(c, "_pre_layers", None))
+        else:
+            by_name[name](c)
 
 def main():
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
@@ -501,22 +570,26 @@ def main():
     if todo == [None]:
         names = " | ".join([s[0] for s in STAGES] + ["clean", "gc", "df", "snapshot"])
         print(f"✗ 未知命令：{a.command!r}（可用：{names}）"); sys.exit(2)
-    for name, fn in todo:
-        print(f"== {name} ==")
-        # PR#1：阶段开始前做依赖门 + 撤销下游旧成功（失败重跑不得保留旧 QC PASS）。
-        # draft 模式的 video/mux 记为 video_draft/mux_draft。
-        stage = name + "_draft" if c.draft and name in ("video", "mux") else name
-        try:
-            c.begin_stage(stage)
-        except RuntimeError as e:
-            print(f"✗ {e}"); sys.exit(1)
-        fn(c)
-        # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
-        # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
-        if name == "audio" and a.report:
-            from audio_report import run_report
-            rc = run_report(c, json_path=a.json)
-            if rc: sys.exit(rc)
+    if a.command == "all" and _pipeline_enabled():
+        # 方案二阶段2：all 默认走依赖图（串行头 → 并行波 → 串行尾）；
+        # VTX_PIPELINE=0 回退下方线性序列（独立 A/B 开关）
+        _run_all_pipeline(c)
+    else:
+        for name, fn in todo:
+            print(f"== {name} ==")
+            # PR#1：阶段开始前做依赖门 + 撤销下游旧成功（失败重跑不得保留旧 QC PASS）。
+            # draft 模式的 video/mux 记为 video_draft/mux_draft。
+            try:
+                c.begin_stage(_stage_receipt_name(name, c.draft))
+            except RuntimeError as e:
+                print(f"✗ {e}"); sys.exit(1)
+            fn(c)
+            # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
+            # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
+            if name == "audio" and a.report:
+                from audio_report import run_report
+                rc = run_report(c, json_path=a.json)
+                if rc: sys.exit(rc)
     print("完成：", c.out / "final.mp4" if a.command in ("all", "mux", "qc") else names)
 
 if __name__ == "__main__":
