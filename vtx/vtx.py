@@ -340,9 +340,18 @@ def main():
                     help="mux 专属：out/history/ 保留最近 N 版历史成片（默认 2）")
     ap.add_argument("--align-threshold", type=float, metavar="S", default=1.5,
                     help="subs check 专属：口播对齐 FAIL 阈值秒数（默认 1.5，≥0.5 先 WARN）")
+    # 方案五阶段3：音频一等报告（audio 专属）。--report 混音后附报告；--report-only
+    # 纯报告（只读已有 out/audio.wav + cache/audio，不重混音、不做 receipt）
+    ap.add_argument("--report", action="store_true",
+                    help="audio 专属：混音完成后附加音频一等报告（整片 LUFS/TP、人声-床乐响度差、"
+                         "duck 咬合/回升、静音空洞），写 out/audio_report.json；有 FAIL 退出码 1")
+    ap.add_argument("--report-only", action="store_true",
+                    help="audio 专属：纯报告模式——不重混音，只读已有 out/audio.wav 出报告"
+                         "（缺失报错）；与 --report 互斥")
     ap.add_argument("--json", metavar="PATH",
                     help="diff 时间线模式专属：机器可读 diff/影响面/推荐路径 JSON 写入 PATH"
-                         "（缺省只打印人读摘要；报告对比模式不支持）")
+                         "（缺省只打印人读摘要；报告对比模式不支持）；"
+                         "audio --report/--report-only 专属：报告 JSON 落盘 PATH（默认 out/audio_report.json）")
     ap.add_argument("command",
                     help="all | " + " | ".join(s[0] for s in STAGES) +
                          " | clean | gc | df | snapshot | subs | diff")
@@ -385,22 +394,26 @@ def main():
                   "（timeline 语义 diff 同形：diff <旧timeline> <新timeline> [--json PATH]）"); sys.exit(2)
         # 时间线语义 diff（方案五阶段2）：两参均为 timeline JSON（含 project+video_tracks
         # 特征键）时自动走 timeline_diff；否则维持报告对比（diffcmd）——一个 diff 入口，
-        # 按输入特征分流，最小惊讶。
+        # 按输入特征分流，最小惊讶。坏 JSON / 类型不一致（timeline 混报告）给分类文案。
         from diffcmd import run_diff
         from timeline_diff import is_timeline
         ja, jb = a.subs_extra
-        both_tl = False
         try:
-            # 特征键探测容忍任何失败（读不到/解析不了 → 回落报告对比，让其给出错误提示）
-            both_tl = is_timeline(json.loads(Path(ja).read_text(encoding="utf-8"))) and \
-                is_timeline(json.loads(Path(jb).read_text(encoding="utf-8")))
-        except Exception:
-            both_tl = False
-        if both_tl:
+            da = json.loads(Path(ja).read_text(encoding="utf-8"))
+            db = json.loads(Path(jb).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(f"✗ 输入读取/解析失败（timeline 语义 diff 与报告对比都要求两份合法 JSON）：{e}")
+            sys.exit(2)
+        tl_a, tl_b = is_timeline(da), is_timeline(db)
+        if tl_a and tl_b:
             if a.json and a.dry_run:
                 print("✗ --json 落盘与 --dry-run 冲突（diff 为纯读命令，dry 下不写文件）"); sys.exit(2)
             from timeline_diff import run_timeline_diff
             sys.exit(run_timeline_diff(ja, jb, json_path=a.json, dry=a.dry_run))
+        if tl_a != tl_b:
+            print(f"✗ 两参类型不一致（{ja if tl_a else jb} 是 timeline，"
+                  f"{jb if tl_a else ja} 不是）：时间线语义 diff 要求两参均为 timeline JSON"
+                  "（含 project/video_tracks/sources）；报告对比要求两份同构报告"); sys.exit(2)
         if a.json:
             print("✗ --json 仅在 diff 时间线模式（两参均为 timeline JSON）下可用"); sys.exit(2)
         sys.exit(run_diff(ja, jb, dry=a.dry_run))

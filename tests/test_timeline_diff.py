@@ -14,6 +14,7 @@
 裸 python3 的 sys.executable 被 AppImage 劫持，见全局 AGENTS.md）
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -224,6 +225,31 @@ class TestAdvice(_Base):
         self.assertIn("patch_script", res["advice"]["recommended_path"])
         self.assertEqual(res["entries"][0]["category"], "patch")
 
+    def test_same_id_audio_source_swap_prepare_not_video(self):
+        """P1：同 id 换纯音频源 path → prepare/audio 置位、video 不误报。"""
+        def fn(tl):
+            next(s for s in tl["sources"] if s["id"] == "bgm")["path"] = "bgm2.wav"
+        res = self.diff(_tl(), self.edit(_tl(), fn))
+        imp = res["impact"]
+        self.assertEqual(imp["sources_changed"]["audio_only"], ["bgm"])
+        self.assertTrue(imp["stages"]["prepare"] and imp["stages"]["audio"])
+        self.assertFalse(imp["stages"]["video"])
+        self.assertEqual(imp["seg_invalid"], [])
+
+    def test_same_id_visual_source_swap_video_invalid(self):
+        """P1 对照：同 id 换画面源 path（不被音频事件引用）→ video 置位（seg 键含路径
+        指纹）、audio 不置位。"""
+        (self.root / "b2.mp4").write_bytes(b"b2" * 512)
+        def fn(tl):
+            next(s for s in tl["sources"] if s["id"] == "b")["path"] = "b2.mp4"
+        res = self.diff(_tl(), self.edit(_tl(), fn))
+        imp = res["impact"]
+        self.assertEqual(imp["sources_changed"]["visual"], ["b"])
+        self.assertTrue(imp["stages"]["video"] and imp["stages"]["prepare"])
+        self.assertFalse(imp["stages"]["audio"])
+        # seg 键路径入指纹：引用该源的 clip 键必须失效（真值=重算差集）
+        self.assertEqual({x["clip"] for x in imp["seg_invalid"]}, {"b@180"})
+
     def test_estimate_declares_basis(self):
         def fn(tl):
             tl["video_tracks"][0]["clips"][0]["dur"] += 10
@@ -284,6 +310,44 @@ class TestCli(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("类型：qc / qc", r.stdout)   # diffcmd 报告对比路径
         self.assertNotIn("语义 diff", r.stdout)
+
+    def test_bad_json_distinct_error(self):
+        """P2c：坏 JSON 报「两类对比都要求合法 JSON」，不静默回落报告对比。"""
+        bad = Path(self.tmp.name) / "bad.json"
+        bad.write_text("{not json", encoding="utf-8")
+        ok = self._write("ok.json", _tl())
+        r = self._run(str(bad), ok)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("都要求两份合法 JSON", r.stdout)
+
+    def test_mixed_type_distinct_error(self):
+        """P2c：timeline 混报告 → 类型不一致文案区分两类输入。"""
+        tl = self._write("t.json", _tl())
+        rep = self._write("r.json", {"checks": []})
+        for x, y in ((tl, rep), (rep, tl)):
+            r = self._run(x, y)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("两参类型不一致", r.stdout)
+
+    def test_json_nested_dir_created(self):
+        """P2b：--json 落盘路径父目录不存在时自动创建。"""
+        old, new = _tl(), _tl()
+        new["audio_tracks"][1]["events"][0]["volume"] = 0.2
+        a, b = self._write("a.json", old), self._write("b.json", new)
+        out = str(Path(self.tmp.name) / "deep" / "nest" / "d.json")
+        r = self._run(a, b, "--json", out)
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(Path(out).exists())
+
+    def test_nseg_env_followed(self):
+        """P2a：VTX_VIDEO_SEGMENTS 与 composite 同源取值（切点集随 env 变化）。"""
+        from timeline_diff import _nseg
+        self.assertEqual(_nseg(), 8)
+        os.environ["VTX_VIDEO_SEGMENTS"] = "4"
+        try:
+            self.assertEqual(_nseg(), 4)
+        finally:
+            del os.environ["VTX_VIDEO_SEGMENTS"]
 
 
 if __name__ == "__main__":

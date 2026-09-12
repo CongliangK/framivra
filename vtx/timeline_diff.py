@@ -160,9 +160,22 @@ def _seg_layers(c, layers_by_track, a, b):
     for tr, ti, idents in layers_by_track:
         for cl, ident in zip(tr["clips"], idents):
             if cl["dst_in"] < b and cl["dst_in"] + cl["dur"] > a:
-                items.append((*ident[:1], json.dumps(cl, sort_keys=True, ensure_ascii=False),
+                # 源缺失时 ident[0] 为 None——归一成标记串，保证可排序可比对
+                # （一侧缺失一侧存在 → 值不同 → 所在段正确判失效）
+                items.append((ident[0] or "MISSING",
+                              json.dumps(cl, sort_keys=True, ensure_ascii=False),
                               ident[2], ident[3]))
     return sorted(items)
+
+
+def _nseg() -> int:
+    """分段数与 composite.build_video 同源取值（VTX_VIDEO_SEGMENTS，缺省 8），
+    保证 diff 的段失效推断与实际渲染同一切点集。非法值静默回落 8。"""
+    import os
+    try:
+        return max(1, int(os.environ.get("VTX_VIDEO_SEGMENTS", str(DEFAULT_NSEG))))
+    except ValueError:
+        return DEFAULT_NSEG
 
 
 def _edges(tl, nseg):
@@ -175,12 +188,15 @@ def _edges(tl, nseg):
 
 
 # ---------------------------------------------------------------- 主 diff
-def diff_timelines(tla, roota, tlb, rootb, nseg=DEFAULT_NSEG):
+def diff_timelines(tla, roota, tlb, rootb, nseg=None):
     """两份 timeline → 机器可读 dict（entries/impact/advice）。纯函数：无副作用。"""
+    if nseg is None:
+        nseg = _nseg()
     ca, cb = DiffCtx(tla, roota), DiffCtx(tlb, rootb)
     entries = []          # (kind, path, old, new, category) category ∈ gen/patch/white
     impact = {"seg_invalid": [], "seg_orphan": [], "gfx_invalid": [], "gfx_orphan": [],
               "audio_prepare_new": [], "audio_orphan": [],
+              "sources_changed": {"visual": [], "audio_only": []},
               "vseg_invalid": {"count": 0, "total": 0, "segments": []},
               "stages": {}, "estimated_seconds": {}, "estimate_basis": ""}
     advice = {"generator": {"items": [], "reason": ""}, "patch_script": {"items": [], "reason": ""},
@@ -219,17 +235,38 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=DEFAULT_NSEG):
             add("change", f"project.{k}", va, vb, "gen")
 
     # ---- sources ----
+    # 画面引用集（P1 修复）：被任一非 gfx video clip 引用的源 id。同 id 换 path 时按此
+    # 分流影响面——画面源变化进 seg 键（路径入 _fp 指纹）→ video 重渲；纯音频源变化
+    # 只改 audio_key（prepare 按键提取）→ prepare/audio 重跑，不碰 video（此前
+    # sources.* 前缀一律置 video=True 属误报）。
+    vis_refs = {cl["src"] for tl_ in (tla, tlb) for tr in tl_["video_tracks"]
+                if tr.get("kind") != "gfx" for cl in tr["clips"]}
+    audio_refs = {e["src"] for tl_ in (tla, tlb) for t in tl_.get("audio_tracks", [])
+                  for e in t.get("events", [])}
     sa = {s["id"]: s for s in tla["sources"]}
     sb = {s["id"]: s for s in tlb["sources"]}
     for sid in sorted(set(sa) - set(sb)):
         add("del", f"sources[{sid}]", sa[sid].get("path"), None, "gen")
-        impact["audio_orphan"].append(sid)
+        (impact["sources_changed"]["visual"] if sid in vis_refs
+         else impact["sources_changed"]["audio_only"]).append(sid)
+        if sid not in vis_refs:
+            impact["audio_orphan"].append(sid)
     for sid in sorted(set(sb) - set(sa)):
         add("add", f"sources[{sid}]", None, sb[sid].get("path"), "gen")
-        impact["audio_prepare_new"].append(sid)
+        (impact["sources_changed"]["visual"] if sid in vis_refs
+         else impact["sources_changed"]["audio_only"]).append(sid)
+        if sid not in vis_refs:
+            impact["audio_prepare_new"].append(sid)
     for sid in sorted(set(sa) & set(sb)):
         if sa[sid] != sb[sid]:
             add("change", f"sources[{sid}]", _short(sa[sid]), _short(sb[sid]), "gen")
+            # 同 id 换 path/transform：画面源由 seg 键重算捕获（下文）；纯音频源必须
+            # 重跑 prepare（audio_key=sha1(源指纹+…)，path 变即键变）+ audio 重混。
+            if sid in vis_refs:
+                impact["sources_changed"]["visual"].append(sid)
+            else:
+                impact["sources_changed"]["audio_only"].append(sid)
+                impact["audio_prepare_new"].append(sid)
 
     # ---- 视频轨 / clips ----
     ta = {tr.get("name", f"#{i}"): (i, tr) for i, tr in enumerate(tla["video_tracks"])}
@@ -377,21 +414,33 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=DEFAULT_NSEG):
                               "guard": SEG_CUT_GUARD}
 
     # ---- 阶段推断 + 耗时预估 ----
-    video_changed = bool(entries and any(e["path"].startswith(("video_tracks", "subtitles", "project", "sources"))
+    # P1 修复：sources.* 变化不再一概触发 video——只有画面源（被非 gfx clip 引用）
+    # 变化才置 video；纯音频源变化只走 prepare/audio。画面源变化即使 seg 键因文件
+    # 缺失算不出（None），video 置位也不依赖键比对成功。
+    video_changed = bool(entries and any(e["path"].startswith(("video_tracks", "subtitles", "project"))
                                          or e["path"] in ("version",) for e in entries)) \
+        or bool(impact["sources_changed"]["visual"]) \
         or bool(impact["seg_invalid"] or impact["gfx_invalid"] or impact["seg_orphan"] or impact["gfx_orphan"])
+    prepare_needed = bool(impact["sources_changed"]["visual"] or impact["sources_changed"]["audio_only"]
+                          or impact["audio_prepare_new"] or impact["audio_orphan"])
+    n_prepare = len(impact["sources_changed"]["visual"]) + len(impact["sources_changed"]["audio_only"]) \
+        + len(impact["audio_prepare_new"]) + len(impact["audio_orphan"])
     stages = {"validate": bool(entries)}
-    stages["prepare"] = bool(impact["audio_prepare_new"] or impact["audio_orphan"])
+    stages["prepare"] = prepare_needed   # prepare 对全部 sources 按键提取，任何源变化都重提取
     stages["gfx"] = bool(impact["gfx_invalid"] or impact["gfx_orphan"])
     stages["video"] = video_changed
-    stages["audio"] = audio_changed
+    # 纯音频源替换 = 提取内容变了 → audio 必重混（不依赖音轨 entries 是否变化）；
+    # 画面源若同时被音频事件引用（双料源），其替换同样重混
+    src_audio_touched = bool({*impact["sources_changed"]["visual"],
+                              *impact["sources_changed"]["audio_only"]} & audio_refs)
+    stages["audio"] = audio_changed or bool(impact["sources_changed"]["audio_only"]) or src_audio_touched
     stages["mux"] = stages["video"] or stages["audio"]
     stages["qc"] = stages["mux"]
     impact["stages"] = stages
 
     est = {"validate": EST_VALIDATE if stages["validate"] else 0}
     if stages["prepare"]:
-        est["prepare"] = EST_PREPARE_PER_SOURCE * max(1, len(impact["audio_prepare_new"]) + len(impact["audio_orphan"]))
+        est["prepare"] = EST_PREPARE_PER_SOURCE * max(1, n_prepare)
     if stages["gfx"]:
         est["gfx"] = 15   # 单页级重渲秒级基准（runbook R3：CDP ~15-34ms/帧）；页多时按此下限偏保守
     if stages["video"]:
@@ -508,6 +557,8 @@ def run_timeline_diff(old_path, new_path, json_path=None, dry=False):
         print("PASS｜两份 timeline 无实质差异")
         rc = 0
     if json_path:
-        Path(json_path).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+        jp = Path(json_path)
+        jp.parent.mkdir(parents=True, exist_ok=True)   # out/ 或嵌套目录可能尚不存在
+        jp.write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"✓ 机器可读结果已写入 {json_path}")
     return rc
