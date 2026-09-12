@@ -19,7 +19,7 @@ description: "B站视频产线一体化 skill：选题调研（R0-R6 多智能�
 | `vtx all` | 上述回路全绿后的正式全量渲染 | `out/final.mp4`；voice-ime 温态全链基线 100.8s |
 
 **硬性规则**：任何 timeline 修改，全量 `vtx all` 前必须先走上述局部验证回路；区间渲染只进 `cache/preview/`，不产生正式产物（out/ 不受影响）。
-**vtx 选项须置于子命令之后**（阶段专属开关不进 argparse 顶层）：如 `vtx -t x video --draft --range 0 6`，`--range` 不能提到 `video` 前面的顶层位置。
+**风格约定：阶段选项写在子命令之后**（如 `vtx -t x video --draft --range 0 6`）。多数阶段开关放到顶层也能解析，但 `--report/--report-only` 仅限 `audio` 阶段、且与 `--dry-run` 冲突时会被阶段门拒绝（vtx.py 阶段校验），统一写在子命令后可避免踩差异。
 ## 领域文档路由
 | 领域 | 文档 | 管什么 |
 |---|---|---|
