@@ -73,7 +73,8 @@ python3 $VTX diff timeline.pre-<改动>.json timeline.json --json out/tl_diff.js
 **快速确认命令**（全量 R1 链前先局部验证，音频改动场景；上面「0) 先跑 diff」是决策步，此处是决策后的确认步）：
 
 ```bash
-python3 $VTX -t timeline.json video --draft --range 0 6   # 热改动区间窗口（时间点支持 秒/时间码/f帧号；gfx 冷缓存提示先跑 vtx gfx）；产物 cache/preview/range_*.mp4，温态 7-9s
+python3 $VTX -t timeline.json video --draft --range 0 6   # 热改动区间窗口（时间点支持 秒/时间码/f帧号；gfx 冷缓存提示先跑 vtx gfx）；产物 cache/preview/range_*.mp4，耗时双口径：纯回看窗 ~5s，改动窗（窗内 rseg 失效重编码+窗口混音）显著更长（DEV.md「迭代回路基线」）
+python3 $VTX -t timeline.json prepare                     # audio --report 前置：输入变化后依赖门要求先过 prepare（温态命中缓存 ~1.4s）
 python3 $VTX -t timeline.json audio --report              # 混音后判级：LUFS/TP/人声-床乐差/duck 咬合/空洞，FAIL 退出码 1；报告 out/audio_report.json
 ```
 
@@ -128,7 +129,7 @@ python3 $VTX -t timeline.json gc --dry
 **快速确认命令**（编排改动已由上方 diff 定界为几何/字幕类后、全量 video --gpu 前，先区间看效果）：
 
 ```bash
-python3 $VTX -t timeline.json video --draft --range <改动clip入点> <出点>   # 只渲改动邻域；产物 cache/preview/range_*.mp4，温态 7-9s（voice-ime 0-6s 窗实测 7.1-8.4s）
+python3 $VTX -t timeline.json video --draft --range <改动clip入点> <出点>   # 只渲改动邻域；产物 cache/preview/range_*.mp4，耗时双口径：纯回看窗 ~5s（复验 5.18-5.20s），改动窗（窗内 rseg 内容键失效需重编码，含窗口混音）显著更长（voice-ime 字幕改动窗空载实测 11.0s；DEV.md「迭代回路基线」）
 python3 $VTX -t timeline.json video --draft --range <A> <B> --track <轨名>   # 或按轨取窗；--clip <ID> 按 clip 取窗
 python3 $VTX -t timeline.json subs check                                     # 动了字幕再复查全绿（<1s）
 ```
@@ -165,7 +166,7 @@ python3 $VTX -t timeline.json diff <上一版报告>.json out/qc_report.json   #
 **快速确认命令**（③ 步 preview 抽查后、④ 步全量段重渲前，用区间渲染带字幕看动态效果）：
 
 ```bash
-python3 $VTX -t timeline.json video --draft --range <字幕窗入点> <出点>   # 带字幕烧录的区间预览（含音频），核对对齐/样式随时间的变化；产物 cache/preview/range_*.mp4，温态 7-9s
+python3 $VTX -t timeline.json video --draft --range <字幕窗入点> <出点>   # 带字幕烧录的区间预览（含音频），核对对齐/样式随时间的变化；产物 cache/preview/range_*.mp4，耗时双口径：纯回看窗 ~5s，改动窗（字幕改动使窗内 rseg 内容键失效需重编码，含窗口混音）显著更长（DEV.md「迭代回路基线」）
 ```
 
 **已知坑位**：
