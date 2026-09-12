@@ -70,6 +70,13 @@ python3 $VTX diff timeline.pre-<改动>.json timeline.json --json out/tl_diff.js
 
 输出逐字段差异 + 影响面（seg/gfx 缓存键逐 clip 重算比对=真值、vseg 失效段、需重跑阶段、耗时预估）+ 推荐修改路径。R1 场景（只动音轨）预期报告：seg 失效 0、vseg 失效 0 段、需重跑 validate → audio → mux → qc、推荐路径 `patch_script`。若 diff 显示 seg/vseg 失效 >0，说明改动越界进了视频侧——按 R2 重跑，别只走本配方。原则口径：**改动走哪条路以 diff 输出的 advice.recommended_path 为准**（generator=改 make_subs.py 再生；patch_script=幂等补丁；manual_whitelist=仅 _meta 可手改）。
 
+**快速确认命令**（全量 R1 链前先局部验证，音频改动场景；上面「0) 先跑 diff」是决策步，此处是决策后的确认步）：
+
+```bash
+python3 $VTX -t timeline.json video --draft --range 0 6   # 热改动区间窗口（时间点支持 秒/时间码/f帧号；gfx 冷缓存提示先跑 vtx gfx）；产物 cache/preview/range_*.mp4，温态 7-9s
+python3 $VTX -t timeline.json audio --report              # 混音后判级：LUFS/TP/人声-床乐差/duck 咬合/空洞，FAIL 退出码 1；报告 out/audio_report.json
+```
+
 **必跑验证门**：validate（机制）→ qc（-14±1.5 LUFS/切点/帧数）→ content_gates（G1/G2/**G3 解码 TP**/G7/G10）→ check_4k（4K 版 14 项断言）。
 
 **已知坑位**：
@@ -118,6 +125,14 @@ python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final
 python3 $VTX -t timeline.json gc --dry
 ```
 
+**快速确认命令**（编排改动已由上方 diff 定界为几何/字幕类后、全量 video --gpu 前，先区间看效果）：
+
+```bash
+python3 $VTX -t timeline.json video --draft --range <改动clip入点> <出点>   # 只渲改动邻域；产物 cache/preview/range_*.mp4，温态 7-9s（voice-ime 0-6s 窗实测 7.1-8.4s）
+python3 $VTX -t timeline.json video --draft --range <A> <B> --track <轨名>   # 或按轨取窗；--clip <ID> 按 clip 取窗
+python3 $VTX -t timeline.json subs check                                     # 动了字幕再复查全绿（<1s）
+```
+
 **耗时基准**：缓存全命中全链 ~50s；video 段缓存命中、其余冷 ≈3min；video 冷（并行 8 段）~2min。
 
 **必跑验证门**：validate → qc → content_gates。黑帧嫌疑（动过窗口边界）加 `blackdetect` 抽验（qc 内置零黑帧检查）。
@@ -146,6 +161,12 @@ python3 $VTX -t timeline.json diff <上一版报告>.json out/qc_report.json   #
 ```
 
 **耗时基准**（2026-09-12 合成 30s/900 帧项目实测）：subs check <1s、subs preview 单张 ~0.6s、改 1 条字幕重渲 2 段 ~2s。
+
+**快速确认命令**（③ 步 preview 抽查后、④ 步全量段重渲前，用区间渲染带字幕看动态效果）：
+
+```bash
+python3 $VTX -t timeline.json video --draft --range <字幕窗入点> <出点>   # 带字幕烧录的区间预览（含音频），核对对齐/样式随时间的变化；产物 cache/preview/range_*.mp4，温态 7-9s
+```
 
 **已知坑位**：
 - **subs check 对齐检查依赖 name="voice" 音轨**：没有 voice 轨或字幕距最近口播窗 >5s 时该项出 WARN（不静默跳过），此时对齐靠 preview 人审兜底。
