@@ -10,6 +10,8 @@
 import hashlib, json, os, shutil, threading, time
 from pathlib import Path
 
+from encoders import seg_encoder_kind
+
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
 TMP = "tmp"                  # cache/tmp/<runid>/：一次性中间物，gc 清扫孤儿
 KEEP_BASELINES = ("manifest.json",)   # cache 根下永不删的记账文件
@@ -70,11 +72,15 @@ def gfx_dir(c, cl) -> Path:
     return c.cache / "gfx" / gfx_key(c, cl)
 
 
-def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool) -> str:
-    """seg 缓存键 = sha1(源指纹 + 切片/窗口/fade 参数 + 编码路径)[:12]。
+def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: str) -> str:
+    """seg 缓存键 = sha1(源指纹 + 切片/窗口/fade 参数 + 编码路径 + 编码器 token)[:12]。
 
     ti/ci 不参与（同参数的两处 clip 复用同一 seg 是正确的）；windowed/need_alpha
-    决定滤镜与编码器（prores 4444 vs x264），必须入键。
+    决定滤镜与编码器（prores 4444 vs x264/NVENC），必须入键。
+    encoder（方案二阶段3，2026-09-12）："nvenc"/"x264"/"prores"——无 alpha 分支按
+    encoders.seg_encoder_kind(c) 的判定传入，alpha 分支恒 "prores"（ProRes 4444
+    编码不变，但键加 token 使格式变更在未来也能自然分键）。键变 → 旧 seg 一次性
+    失效由 gc 回收（内容寻址设计使然，正常）。
     """
     src = c.src_path(cl["src"])
     spec = ["seg", _fp(src), str(cl["src_in"]), str(cl["src_out"]), str(cl["dur"]),
@@ -82,6 +88,7 @@ def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool) -> str:
             repr(cl.get("opacity")), repr(cl.get("fade_in_frames")),
             repr(cl.get("fade_out_frames")),
             "win" if windowed else "full", "alpha" if need_alpha else "opaque",
+            encoder,
             f"{c.fps}|{c.w}x{c.h}"]
     return _sha1("|".join(spec).encode())
 
@@ -173,6 +180,10 @@ def tmp_orphans(c) -> list:
 def _current_keys(c):
     """当前 timeline 的全部合法缓存键（gfx 目录名 / seg 文件名 / audio 文件名）。"""
     gfx, seg, audio = set(), set(), set()
+    # seg 编码器判定与 composite.prepare_layers 同源（encoders.seg_encoder_kind，
+    # 方案二阶段3）：gc 重算键必须与编码时同判据，否则键集对不上会误回收活 seg。
+    # 循环外算一次（nvenc_ok 真探测时起 ffmpeg 子进程，逐 clip 探测是纯浪费）。
+    seg_kind = seg_encoder_kind(c)
     for ti, tr in enumerate(c.tl["video_tracks"]):
         for ci, cl in enumerate(tr["clips"]):
             if tr.get("kind") == "gfx":
@@ -183,7 +194,8 @@ def _current_keys(c):
                         windowed = any(k in cl for k in ("scale", "x", "y"))
                         need_alpha = (cl.get("opacity", 1) < 1 or
                                       cl.get("fade_in_frames") or cl.get("fade_out_frames"))
-                        seg.add((seg_key(c, cl, ti, ci, windowed, need_alpha),
+                        seg.add((seg_key(c, cl, ti, ci, windowed, need_alpha,
+                                         "prores" if need_alpha else seg_kind),
                                  need_alpha))
     for s in c.tl["sources"]:
         if c.src_path(s["id"]).exists():

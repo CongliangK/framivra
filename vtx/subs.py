@@ -8,6 +8,7 @@ import hashlib, json, re, sys
 from pathlib import Path
 
 from composite import RenderPlan
+from encoders import seg_encoder_kind
 from hygiene import gfx_dir, manifest_record, seg_key, tmp_run
 from infra import Ctx, filter_filename
 
@@ -232,6 +233,9 @@ def _write_point_ass(c: Ctx, path: Path, subs):
 def _layer_ready(c: Ctx, f: int):
     """帧 f 处全部覆盖层素材是否现成（只读检查，不触发编码/渲染）。返回层列表或 None。"""
     layers = []
+    # seg 键编码器 token 与 composite.prepare_layers 同源判定（方案二阶段3）——
+    # 否则这里会按旧编码器键找文件，NVENC seg 恒 miss。
+    seg_kind = seg_encoder_kind(c)
     for ti, tr in enumerate(c.tl["video_tracks"]):
         for ci, cl in enumerate(tr["clips"]):
             if not (cl["dst_in"] <= f < cl["dst_in"] + cl["dur"]):
@@ -247,7 +251,8 @@ def _layer_ready(c: Ctx, f: int):
                 windowed = any(k in cl for k in ("scale", "x", "y"))
                 need_alpha = (cl.get("opacity", 1) < 1 or cl.get("fade_in_frames")
                               or cl.get("fade_out_frames"))
-                skey = seg_key(c, cl, ti, ci, windowed, need_alpha)
+                skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
+                               "prores" if need_alpha else seg_kind)
                 seg = c.cache / "seg" / f"{skey}.{'mov' if need_alpha else 'mp4'}"
                 if not seg.exists():
                     return None

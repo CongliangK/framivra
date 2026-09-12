@@ -3,7 +3,7 @@
 由 stages/composite/qc/encoders 共用。入口 vtx/vtx.py 保持可直接
 `python3 vtx/vtx.py ...` 运行（同目录平铺 import，sys.path 由入口脚本保证）。
 """
-import hashlib, json, os, subprocess, sys, threading, time
+import contextlib, hashlib, json, os, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from pathlib import Path
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
 from cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
                          validate_cache_dependencies)
+from encoders import nvenc_budget
 
 
 def is_ffmpeg_cmd(cmd) -> bool:
@@ -50,6 +51,9 @@ class Ctx:
         # 理论洁癖）。实例锁（每 Ctx 一把足够：receipt.json 每 Ctx 恰一份）；
         # dry 早退路径在锁外（见各方法）。
         self._receipt_lock = threading.Lock()
+        # 方案二阶段3：波内预编码路写入的 layers（依赖图流水线专用，NIT 显式声明
+        # 替代动态属性——getattr 兜底在波失败路径实际不可达，见 p2 审查报告）。
+        self._pre_layers = None
 
     # ---- 基础设施 ----
     def run(self, cmd, need=True):
@@ -205,32 +209,38 @@ def filter_threads() -> int:
         return min(int(v), max(1, os.cpu_count() or 8))
     return 1
 
-def run_ffmpeg_task(c: Ctx, label: str, cmd):
+def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
     # 并行 worker 内不用 c.run：其失败路径 sys.exit 在线程中不生效，改为抛异常
     # 由主线程统一收集传播（任一任务失败 → 整阶段失败）。
     if c.dry and is_ffmpeg_cmd(cmd):
         print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
         return
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    # nvenc=True（方案二阶段3）：任务线程体里占 NVENC 会话预算槽（只包 ffmpeg 执行
+    # 段）；x264/prores 任务不占预算。dry 已在上面早退，预算信号量同样直通。
+    with nvenc_budget(c) if nvenc else contextlib.nullcontext():
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError(f"{label}: " + r.stderr[-1500:])
 
 def run_parallel(c: Ctx, tasks, what: str):
-    """tasks = [(label, cmd)]，全部执行；任一失败打印并退出。进度按完成序打印（带标签）。"""
+    """tasks = [(label, cmd)]（或 (label, cmd, nvenc)），全部执行；任一失败打印并退出。
+    进度按完成序打印（带标签）。nvenc 标志见 run_ffmpeg_task（方案二阶段3）。"""
     if not tasks: return
     workers = min(io_workers(), len(tasks))
     t0 = time.time()
     print(f"  {what}：{len(tasks)} 个任务，{workers} 线程并行")
     failed = None
     if workers == 1 or c.dry:      # 串行保底 / dry-run 只打印
-        for label, cmd in tasks:
-            try: run_ffmpeg_task(c, label, cmd)
+        for t in tasks:
+            label, cmd = t[0], t[1]
+            try: run_ffmpeg_task(c, label, cmd, t[2] if len(t) > 2 else False)
             except RuntimeError as e: failed = failed or (label, str(e))
             print(f"    · {label}")
     else:
         with ThreadPoolExecutor(workers) as ex:
-            futs = {ex.submit(run_ffmpeg_task, c, label, cmd): label for label, cmd in tasks}
+            futs = {ex.submit(run_ffmpeg_task, c, t[0], t[1], t[2] if len(t) > 2 else False): t[0]
+                    for t in tasks}
             for fu in as_completed(futs):
                 label = futs[fu]
                 try:
@@ -265,15 +275,17 @@ def run_wave(c: Ctx, jobs):
     t0 = time.monotonic()
     print(f"── 并行波（{len(jobs)} 路：{' + '.join(l for l, _ in jobs)}）"
           f"开始 {time.strftime('%H:%M:%S')} ──")
-    failed = []   # [(label, exc)]；list.append 在 GIL 下原子，无需额外锁
+    failed = []   # [(提交序 idx, label, exc)]；list.append 在 GIL 下原子，无需额外锁
+                  # （P2-1，p2 审查报告：报告「首个失败」须取提交序而非完成序——
+                  # 多路同败时完成序取值非确定，带 idx 后 min 即 STAGES 提交序）
 
-    def _worker(label, fn):
+    def _worker(idx, label, fn):
         t1 = time.monotonic()
         print(f"== {label} ==")
         try:
             fn()
         except BaseException as e:   # 含 SystemExit：sys.exit 在线程内只杀线程，必须捕获
-            failed.append((label, e))
+            failed.append((idx, label, e))
             if isinstance(e, SystemExit):
                 # 真实错误文案已由阶段函数自行打印，这里只归因到波内标签
                 print(f"✗ {label} 失败（exit {e.code}，错误详情见上方该路输出）")
@@ -284,9 +296,9 @@ def run_wave(c: Ctx, jobs):
               f"（{time.strftime('%H:%M:%S')}）")
 
     with ThreadPoolExecutor(len(jobs)) as ex:
-        list(ex.map(lambda j: _worker(*j), jobs))
+        list(ex.map(lambda j: _worker(j[0], j[1][0], j[1][1]), enumerate(jobs)))
     if failed:
-        label, e = failed[0]
+        _, label, e = min(failed, key=lambda x: x[0])
         if not isinstance(e, SystemExit):
             print(f"✗ 并行波失败（首个失败：{label}）：{e!r}", file=sys.stderr)
         else:

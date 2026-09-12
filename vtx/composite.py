@@ -4,12 +4,12 @@
 RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 --draft --frames 回落路径共用同一段代码）。
 """
-import hashlib, json, os, subprocess, sys
+import contextlib, hashlib, json, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from encoders import pick_vcodec, nvenc_concurrency
+from encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
 from hygiene import budget_gate, gfx_dir, manifest_record, seg_key
 from infra import Ctx, run_parallel, filter_filename, filter_threads
 import probe_cache
@@ -298,7 +298,14 @@ class RenderPlan:
         if c.dry:
             segs = [render_one(si) for si in range(len(edges) - 1)]
         else:
-            with ThreadPoolExecutor(workers) as ex:
+            # NVENC 会话预算（方案二阶段3）：批次开始一次性占 min(workers, 预算) 个槽、
+            # 结束释放。与探测的分工（见 encoders.nvenc_budget 注释）：nvenc_concurrency
+            # 管「会话真可用」（workers 已被它钳到驱动可用会话数），nvenc_budget 管
+            # 「本进程内不超发」（防段渲染与 seg 预编码等进程内其他 NVENC 点叠加）——
+            # 批次级整段持有，不与逐任务的探测钳制重复。x264 段不占预算。
+            batch = (nvenc_budget(c, min(workers, nvenc_budget_value()))
+                     if enc.startswith("NVENC") else contextlib.nullcontext())
+            with batch, ThreadPoolExecutor(workers) as ex:
                 segs = list(ex.map(render_one, range(len(edges) - 1)))   # map 保序 → concat 顺序确定
         lst = vdir / "list.txt"
         # PR#1（Windows 实测）：相对路径 concat 项在含 '#' 等特殊字符的目录下会被
@@ -339,7 +346,13 @@ def prepare_layers(c: Ctx):
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
     # 需要 alpha（opacity<1 或 fade）→ ProRes 4444；纯不透明全屏 → libx264。所有轨道等价。
     layers = []      # 每项: {cl, seg|pngdir, x, y, w2, h2|None, gfx:bool, ti}
-    enc_tasks = []   # (label, cmd)：待并行编码的 seg（缓存命中的不进列表）
+    enc_tasks = []   # (label, cmd, nvenc)：待并行编码的 seg（缓存命中的不进列表）；
+                     # nvenc=True 的任务在 run_ffmpeg_task 里占 NVENC 会话预算槽
+    # seg 编码器判定（方案二阶段3）循环外算一次：无 alpha seg 默认 NVENC 化
+    # （卸给 GPU，缓解波内与 gfx 的 CPU 竞争），VTX_SEG_NVENC=0 或探测失败回落
+    # x264。判定单一来源 encoders.seg_encoder_kind——hygiene.gc 的键集重算共用
+    # 同一函数，防键集漂移误回收。alpha 段 ProRes 4444 完全不动。
+    seg_kind = seg_encoder_kind(c)
     for ti, tr in enumerate(tracks):
         for ci, cl in enumerate(tr["clips"]):
             kind = tr.get("kind")
@@ -366,7 +379,8 @@ def prepare_layers(c: Ctx):
             # seg 内容寻址键（2026-09-11 治理升级）：键 = sha1(源指纹+切片/窗口/fade/编码
             # 参数)[:12]。源或 clip 参数变了键就变，旧 seg 由 gc 回收——不再依赖
             # 「源/clip 变更后须手工 rm cache/seg」（旧 D29 注释）。
-            skey = seg_key(c, cl, ti, ci, windowed, need_alpha)
+            skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
+                           "prores" if need_alpha else seg_kind)
             if need_alpha:
                 vf.append("format=yuva420p")
                 if cl.get("fade_in_frames"):
@@ -379,7 +393,15 @@ def prepare_layers(c: Ctx):
             else:
                 vf.append("format=yuv420p")
                 seg = c.cache / "seg" / f"{skey}.mp4"
-                vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+                if seg_kind == "nvenc":
+                    # NVENC p4 + vbr cq14（方案二阶段3）：cq 14 对齐 x264 crf14 的
+                    # 中间物质量档；编码卸给 GPU，缓解流水线波内与 gfx 的 CPU 竞争
+                    vcodec_seg = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
+                                  "-cq", "14", "-b:v", "0", "-pix_fmt", "yuv420p"]
+                else:
+                    # x264 回退串保持原样（VTX_SEG_NVENC=0 显式回退或探测失败回落）
+                    vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast",
+                                  "-pix_fmt", "yuv420p"]
             # seg 缓存命中：存在且流头帧数=clip 时长即跳过（键已含全部参数，帧数检查
             # 只是便宜的兜底自检，不读内容）。帧数检查经 probe_cache（(路径,mtime_ns,
             # size) 键缓存 ffprobe 结论）：69 层逐层 ffprobe 温态实测 8.7s（区间渲染
@@ -399,7 +421,8 @@ def prepare_layers(c: Ctx):
             enc_tasks.append((f"seg t{ti:02d}c{ci:02d}（{cl['dur']} 帧）",
                               ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
                                "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
-                               *vcodec_seg, str(seg)]))
+                               *vcodec_seg, str(seg)],
+                              not need_alpha and seg_kind == "nvenc"))
     run_parallel(c, enc_tasks, "seg 预编码")
     return layers
 

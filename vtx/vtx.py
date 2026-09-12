@@ -379,7 +379,7 @@ def _run_all_pipeline(c: Ctx):
         except RuntimeError as e:
             print(f"✗ {e}"); sys.exit(1)
         if name == "video":
-            build_video(c, layers=getattr(c, "_pre_layers", None))
+            build_video(c, layers=c._pre_layers)   # 波内预编码产物（Ctx.__init__ 显式声明，见 infra）
         else:
             by_name[name](c)
 

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from cache_state import declared_dependencies, file_digest
 from composite import SEG_CUT_GUARD, choose_cutpoints
+from encoders import seg_encoder_kind
 from hygiene import audio_key, gfx_key, seg_key
 
 DEFAULT_NSEG = 8   # 与 composite.DEFAULT_SEGMENTS 同值（避免 import 产生环形依赖，取字面量并注释）
@@ -51,6 +52,9 @@ class DiffCtx:
     """键计算最小上下文：只提供 hygiene 键函数用到的属性（tl/root/fps/w/h/src_path）。
     不走 Ctx（其构造会校验 cache_dependencies 强制存在、算全量回执指纹——diff 是
     纯读命令，对 frozen 历史文件不该有这些前置要求）。"""
+
+    dry = True   # seg 编码器判定（seg_encoder_kind→nvenc_ok）按 dry 短路：diff 纯读，
+                 # 不真探测 NVENC（env 判定仍生效，与真实运行同一 VTX_SEG_NVENC 口径）
 
     def __init__(self, tl, root: Path):
         self.tl = tl
@@ -121,7 +125,10 @@ def _clip_seg_key(c, tr, ti, cl):
         windowed = any(k in cl for k in ("scale", "x", "y"))
         need_alpha = (cl.get("opacity", 1) < 1 or
                       cl.get("fade_in_frames") or cl.get("fade_out_frames"))
-        return seg_key(c, cl, ti, 0, windowed, need_alpha)   # ci 不参与键，占位 0
+        # 编码器 token 与 composite.prepare_layers 同源（方案二阶段3）：两侧同一 env
+        # 口径，token 同值不影响「改 clip → 键变」的失效判定。
+        return seg_key(c, cl, ti, 0, windowed, need_alpha,
+                       "prores" if need_alpha else seg_encoder_kind(c))   # ci 不参与键，占位 0
     except OSError:
         return None
 
