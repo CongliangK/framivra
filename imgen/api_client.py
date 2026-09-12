@@ -79,13 +79,17 @@ class SuchuangClient:
         size: Optional[str] = None,
         aspect_ratio: str = "auto",
         urls: Optional[Iterable[str]] = None,
+        quality: Optional[str] = None,
+        background: Optional[str] = None,
+        mask: Optional[str] = None,
     ) -> dict:
         """提交付费生成任务，返回 {task_id, prompt, count, request, model}。
 
-        调用方必须先完成付费确认门（0.1 元/张）。
+        调用方必须先完成付费确认门（按模型单价 0.1/0.3 元/张）。
         """
         model = models.require_model(model_key)
-        payload = models.build_payload(prompt, model_key, size, aspect_ratio, urls)
+        payload = models.build_payload(prompt, model_key, size, aspect_ratio, urls,
+                                       quality=quality, background=background, mask=mask)
         endpoint = self.api_base + model.submit_path
         resp = self.session.post(endpoint, headers=self.json_headers, json=payload, timeout=30)
         data = _json_or_raise(resp)

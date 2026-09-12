@@ -93,7 +93,13 @@ def _make_handler(state):
             with state.lock:
                 state.submit_count += 1
                 state.submits.append((self.path, payload, dict(self.headers)))
-            if self.path in ("/api/async/image_nanoBanana2", "/api/async/image_gpt"):
+            if self.path in (
+                "/api/async/image_nanoBanana2",
+                "/api/async/image_gpt",
+                "/api/async/image_gpt_2.5",
+                "/api/async/image_gpt_2.5_sunburst",
+                "/api/async/image_gpt_2.5_flare",
+            ):
                 self._json({"code": 200, "data": {"id": f"task-{state.submit_count}", "count": "1"}})
             else:
                 self._json({"code": 404, "msg": "unknown endpoint"}, status=404)
@@ -307,6 +313,83 @@ class FullChainTest(ApiMockTestCase):
         self.assertEqual(path, "/api/async/image_gpt")
         self.assertEqual(payload["size"], "16:9")
         self.assertNotIn("aspectRatio", payload)
+
+    def test_gpt25_family_endpoints_and_payloads(self):
+        # 三个 GPT-Image-2.5 端点：/doc/78/79/80；aspectRatio 传比例串；
+        # sunburst 带 quality；基础版无 quality 参数
+        cases = [
+            ("gpt-2.5", "/api/async/image_gpt_2.5", []),
+            ("gpt-2.5-sunburst", "/api/async/image_gpt_2.5_sunburst", ["--quality", "high"]),
+            ("gpt-2.5-flare", "/api/async/image_gpt_2.5_flare", ["--quality", "low"]),
+        ]
+        for model, endpoint, extra in cases:
+            self.mock.state.detail_script = [
+                {"status": 2, "result": [self.mock.url("/img/d.png")]},
+            ]
+            proc = self.run_cli(self.gen_args("2.5 系测试", "raw", "--model", model,
+                                              "--ratio", "16:9", *extra))
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            path, payload, _headers = self.mock.state.submits[-1]  # 循环累积，取最新一条
+            self.assertEqual(path, endpoint)
+            self.assertEqual(payload["aspectRatio"], "16:9")
+            self.assertNotIn("size", payload)
+            if extra:
+                self.assertEqual(payload["quality"], extra[1])
+            else:
+                self.assertNotIn("quality", payload)
+
+    def test_gpt25_sunburst_explicit_4k_wxh_and_background_mask(self):
+        self.mock.state.detail_script = [
+            {"status": 2, "result": [self.mock.url("/img/a.png")]},
+        ]
+        proc = self.run_cli(self.gen_args(
+            "4K 编辑", "raw", "--model", "gpt-2.5-sunburst",
+            "--ratio", "3840x2160", "--background", "transparent",
+            "--mask", "https://example.com/mask.png"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        _path, payload, _headers = self.mock.state.submits[0]
+        self.assertEqual(payload["aspectRatio"], "3840x2160")
+        self.assertEqual(payload["background"], "transparent")
+        self.assertEqual(payload["mask"], "https://example.com/mask.png")
+
+    def test_gpt25_base_rejects_quality_and_4k_price_gate(self):
+        # 基础版无 quality 参数 → 提交前置报错（0 次提交 0 扣费）
+        proc = self.run_cli(self.gen_args("参数校验", "raw", "--model", "gpt-2.5",
+                                          "--quality", "high"))
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(self.mock.state.submit_count, 0)
+        self.assertIn("quality", proc.stderr)
+
+    def test_gpt25_pricing_per_model(self):
+        # 付费门按模型单价：sunburst 0.3 元/张（非默认 0.1）
+        proc = self.run_cli(self.gen_args("价格测试", "raw", "--model", "gpt-2.5-sunburst"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("0.3", proc.stderr)
+        report = json.loads(Path(self.report_files()[0]).read_text(encoding="utf-8"))
+        self.assertEqual(report["estimated_cost_yuan"], 0.3)
+
+    def test_batch_mixed_model_pricing_breakdown(self):
+        # 混合模型 batch：逐行列价 0.1 + 0.3 = 0.4
+        self.mock.state.detail_script = [
+            {"status": 2, "result": [self.mock.url("/img/d.png")]},
+            {"status": 2, "result": [self.mock.url("/img/d.png")]},
+        ]
+        spec = Path(self._tmp.name) / "mix.json"
+        spec.write_text(json.dumps([
+            {"prompt": "基础版", "kind": "raw", "model": "gpt-2.5"},
+            {"prompt": "快速版", "kind": "raw", "model": "gpt-2.5-flare", "quality": "medium"},
+        ], ensure_ascii=False), encoding="utf-8")
+        proc = self.run_cli(["batch", str(spec), "--out", str(self.out),
+                             "--key", TEST_KEY, "--yes"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("0.4", proc.stderr)
+        self.assertIn("gpt-2.5 × 1 张 @ 0.1", proc.stderr)
+        self.assertIn("gpt-2.5-flare × 1 张 @ 0.3", proc.stderr)
+        payloads = [payload for (_path, payload, _h) in self.mock.state.submits]
+        self.assertEqual(len(payloads), 2)
+        # 线程池完成顺序不保证 → 按特征匹配而非下标
+        self.assertEqual(sum("quality" in p for p in payloads), 1)
+        self.assertEqual(next(p["quality"] for p in payloads if "quality" in p), "medium")
 
     def test_result_wrapper_dict_shape(self):
         # result 四形态防御解析：wrapper dict {"images": [...]}

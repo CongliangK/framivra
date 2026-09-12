@@ -22,11 +22,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
 BASE_URL = "https://api.wuyinkeji.com"
 NANO_SUBMIT_PATH = "/api/async/image_nanoBanana2"
 GPT_SUBMIT_PATH = "/api/async/image_gpt"
+GPT25_SUBMIT_PATH = "/api/async/image_gpt_2.5"            # /doc/78 基础版（0.1 元/张）
+GPT25_SUNBURST_SUBMIT_PATH = "/api/async/image_gpt_2.5_sunburst"  # /doc/79 慢速高精（0.3 元/张）
+GPT25_FLARE_SUBMIT_PATH = "/api/async/image_gpt_2.5_flare"        # /doc/80 快速（0.3 元/张）
 DETAIL_PATH = "/api/async/detail"
 
 NANO_SIZES = ("1K", "2K", "4K")
@@ -38,6 +42,27 @@ GPT_RATIO_CHOICES = (
 )
 GPT_SIZE_CHOICES = GPT_RATIO_CHOICES  # 兼容名（上游 core/models.py:18）
 
+# GPT-Image-2.5 三端点（/doc/78/79/80）共用 aspectRatio（比例或 WxH 像素串）。
+GPT25_FAMILY = ("gpt-2.5", "gpt-2.5-sunburst", "gpt-2.5-flare")
+GPT25_RATIOS = (
+    "auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3",
+    "5:4", "4:5", "21:9", "9:21", "1:3", "3:1", "2:1", "1:2",
+)
+# 2.5 系 quality 档位（文档 /doc/79：low~max；/doc/80：low/high；/doc/78 无 quality 参数）
+QUALITY_CHOICES_SUNBURST = ("low", "medium", "high", "xhigh", "max")
+QUALITY_CHOICES_FLARE = ("low", "medium", "high")
+BACKGROUND_CHOICES = ("auto", "transparent")
+_WXH_RE = re.compile(r"^\d{2,4}x\d{2,4}$")
+
+# /doc/78 官方 1K 档尺寸锚点（基础版只出 1K；用于画质警告估算）
+_GPT25_1K_SIZES = {
+    "1:1": (1024, 1024), "16:9": (1280, 720), "9:16": (720, 1280),
+    "4:3": (1152, 864), "3:4": (864, 1153), "3:2": (1536, 1024),
+    "2:3": (1024, 1536), "5:4": (1120, 896), "4:5": (896, 1120),
+    "21:9": (1456, 624), "9:21": (624, 1456), "1:3": (688, 2048),
+    "3:1": (2048, 688), "2:1": (1536, 768), "1:2": (768, 1536),
+}
+
 
 @dataclass(frozen=True)
 class ModelDefinition:
@@ -48,6 +73,8 @@ class ModelDefinition:
     price_label: str = "0.1元/张"
     supports_urls: bool = True
     supports_aspect_ratio: bool = False
+    price: float = 0.1  # 元/张（/doc/78=0.1；/doc/79、/doc/80=0.3）
+    quality_choices: Tuple[str, ...] = ()  # 空 = 该端点无 quality 参数
 
 
 MODELS: Dict[str, ModelDefinition] = {
@@ -64,6 +91,31 @@ MODELS: Dict[str, ModelDefinition] = {
         submit_path=GPT_SUBMIT_PATH,
         description="OpenAI 底座，适合写实/文字，使用 size 字段控制比例，不提交 aspectRatio",
         supports_aspect_ratio=False,
+    ),
+    "gpt-2.5": ModelDefinition(
+        key="gpt-2.5",
+        name="GPT-Image-2.5 基础版 (/doc/78)",
+        submit_path=GPT25_SUBMIT_PATH,
+        description="OpenAI 新一代底座基础版：1K 档比例，最便宜（0.1 元/张）；无 quality/background/mask 参数",
+        supports_aspect_ratio=True,
+    ),
+    "gpt-2.5-sunburst": ModelDefinition(
+        key="gpt-2.5-sunburst",
+        name="GPT-Image-2.5-sunburst (/doc/79)",
+        submit_path=GPT25_SUNBURST_SUBMIT_PATH,
+        description="质量好、速度慢、精度很高，适合编辑图片；支持 1K/2K/4K、quality low~max、background、mask（0.3 元/张）",
+        supports_aspect_ratio=True,
+        price=0.3,
+        quality_choices=QUALITY_CHOICES_SUNBURST,
+    ),
+    "gpt-2.5-flare": ModelDefinition(
+        key="gpt-2.5-flare",
+        name="GPT-Image-2.5-flare (/doc/80)",
+        submit_path=GPT25_FLARE_SUBMIT_PATH,
+        description="生成速度快、质量好；支持 1K/2K/4K、quality low/medium/high、background、mask（0.3 元/张）",
+        supports_aspect_ratio=True,
+        price=0.3,
+        quality_choices=QUALITY_CHOICES_FLARE,
     ),
 }
 
@@ -95,19 +147,48 @@ def gpt_size_to_api(size: Optional[str]) -> Optional[str]:
     return size
 
 
+def validate_gpt25_aspect_ratio(value: Optional[str]) -> Optional[str]:
+    """2.5 系 aspectRatio：auto 省略；或官方比例（1:1/16:9/…），或显式像素 WxH（如 3840x2160）。"""
+    if not value or value == "auto":
+        return None
+    if value in GPT25_RATIOS:
+        return value
+    if _WXH_RE.match(value):
+        return value
+    raise ValueError(
+        f"GPT-Image-2.5 aspectRatio 必须是比例（{', '.join(GPT25_RATIOS[1:])}）"
+        f"或显式像素（如 3840x2160），当前: {value}"
+    )
+
+
+def estimate_gpt25_output(aspect_ratio: Optional[str]) -> Tuple[int, int]:
+    """估算 2.5 系实出像素：WxH 精确；比例串按 /doc/78 官方 1K 档锚点（2K/4K 档
+    由服务端按 WxH 决定，比例串无契约，仅作警告估算）。"""
+    value = validate_gpt25_aspect_ratio(aspect_ratio)
+    if value is None:
+        return _GPT25_1K_SIZES["1:1"]
+    if _WXH_RE.match(value):
+        w_str, h_str = value.split("x")
+        return (int(w_str), int(h_str))
+    return _GPT25_1K_SIZES[value]
+
+
 def build_payload(
     prompt: str,
     model_key: str = "nano",
     size: Optional[str] = None,
     aspect_ratio: str = "auto",
     urls: Optional[Iterable[str]] = None,
+    quality: Optional[str] = None,
+    background: Optional[str] = None,
+    mask: Optional[str] = None,
 ) -> dict:
     """构建速创 API 提交载荷（模型相关参数差异集中在此校验，付费提交前先过一遍）。"""
     prompt = (prompt or "").strip()
     if not prompt:
         raise ValueError("prompt 不能为空")
 
-    require_model(model_key)
+    model = require_model(model_key)
     payload = {"prompt": prompt}
     clean_urls = normalize_urls(urls)
 
@@ -127,19 +208,51 @@ def build_payload(
         if api_size:
             payload["size"] = api_size
         # gpt-image 明确不提交 aspectRatio（上游 core/models.py:108 同款纪律）。
+    elif model_key in GPT25_FAMILY:
+        if any(is_data_url(url) for url in clean_urls):
+            raise ValueError("GPT-Image-2.5 的参考图需要公网图片 URL；请用本地图片自动上传，或输入远程图片 URL")
+        api_ratio = validate_gpt25_aspect_ratio(aspect_ratio)
+        if api_ratio:
+            payload["aspectRatio"] = api_ratio
+        if quality:
+            if not model.quality_choices:
+                raise ValueError(f"{model.name} 无 quality 参数（仅 sunburst/flare 支持）")
+            if quality not in model.quality_choices:
+                raise ValueError(
+                    f"{model.name} quality 必须是: {', '.join(model.quality_choices)}"
+                )
+            payload["quality"] = quality
+        if background:
+            if model_key == "gpt-2.5":
+                raise ValueError("gpt-2.5 基础版无 background 参数（仅 sunburst/flare 支持）")
+            if background not in BACKGROUND_CHOICES:
+                raise ValueError(f"background 必须是: {', '.join(BACKGROUND_CHOICES)}")
+            if background != "auto":
+                payload["background"] = background
+        if mask:
+            if model_key == "gpt-2.5":
+                raise ValueError("gpt-2.5 基础版无 mask 参数（仅 sunburst/flare 支持）")
+            if not str(mask).startswith(("http://", "https://")):
+                raise ValueError("mask 需要是公网图片 URL")
+            payload["mask"] = mask
     else:  # 防御；require_model 已校验。
         raise ValueError(f"未知模型: {model_key}")
 
     if clean_urls:
         if len(clean_urls) > 14:
             raise ValueError("参考图 urls 最多 14 张")
-        payload["urls"] = clean_urls
+        # /doc/78：2.5 系 urls 参数类型为 string（逗号拼接）；旧端点兼容 list
+        payload["urls"] = ",".join(clean_urls) if model_key in GPT25_FAMILY else clean_urls
 
     return payload
 
 
-def estimate_cost(task_count: int) -> float:
-    return round(max(0, int(task_count)) * 0.1, 2)
+def model_price(model_key: str) -> float:
+    return require_model(model_key).price
+
+
+def estimate_cost(task_count: int, model_key: str = "nano") -> float:
+    return round(max(0, int(task_count)) * model_price(model_key), 2)
 
 
 # ---------------------------------------------------------------------------

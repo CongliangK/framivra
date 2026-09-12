@@ -1,6 +1,6 @@
 # imgen —— 速创 API 生图 + cover-crop 后处理
 
-脚本阶段写 prompt → 速创 API（api.wuyinkeji.com，nano / gpt-image 两模型）付费生图（0.1 元/张）→ 原图即下（URL 2 小时失效）→ ffmpeg lanczos cover-crop 到**精确尺寸** → 硬对接下游：
+脚本阶段写 prompt → 速创 API（api.wuyinkeji.com，nano / gpt-image / GPT-Image-2.5 三系五模型）付费生图（0.1 或 0.3 元/张按模型）→ 原图即下（URL 2 小时失效）→ ffmpeg lanczos cover-crop 到**精确尺寸** → 硬对接下游：
 - `assets/bg/background_4k.png`（3840×2160 8-bit RGB PNG）→ `matting/run_full_bg.sh` 抠像逐像素合成（cv2.imread 直读、无 resize，**像素契约不过即崩**）；
 - `assets/bg/background_1080p.png`（1920×1080）/ `background_vertical.png`（1080×1920）→ 口播链 / gfx 底图；
 - `assets/imgen/<UTC>-<n>.png` → 原图留档（API 原图不可再生，属资产非缓存，不入 cache/）。
@@ -16,18 +16,28 @@
 | `reference_upload.py` | 本地参考图外链：scp jd-gitea-root → https://ruochongliang.top/sc-img/，失败回退 tmpfiles.org（SC_PROXY/本地 7890） | `src/slime/core/reference_upload.py`（scp+chmod+回验 :118-147；tmpfiles :75-115；代理链 :40-49；回退编排 :150-162） |
 | `postprocess.py` | ffmpeg lanczos cover-crop → 精确 3840×2160 / 1920×1080 / 1080×1920 + ffprobe 断言 | 方案 §5.3（ffmpeg 零新依赖；无上游对应） |
 | `init.sh` | 幂等初始化（秒级，无模型下载） | 方案 §6.4 |
-| `tests/` | 57 用例：models/secrets/postprocess 单测 + 本地 mock http.server 全链 | 方案 §9.3 |
+| `tests/` | 71 用例：models/secrets/postprocess 单测 + 本地 mock http.server 全链 | 方案 §9.3 |
 
 **内化说明**：上游仓 `/home/liangruochong/文档/01_活跃项目/图像与多媒体/suchuang-image` 只读；本模块运行时零依赖上游（搬入改写、本仓内化维护）。内化改动：api_base 可注入（mock 测试/换网关不改代码）、下载失败重试 ≤2 次后上抛、`resolve_api_key` 空白串视为未提供（上游会把 `"  "` 误当路径）、ffprobe 对无效图返回 0 尺寸的显式拦截。
 
 ## API 模型表
 
-| 模型 | 提交端点 | size 语义 | aspectRatio | 参考图 |
-|---|---|---|---|---|
-| `nano`（NanoBanana2 / Gemini 底座，默认） | `POST /api/async/image_nanoBanana2`（上游 `core/models.py:36`） | `1K`/`2K`/`4K` 分辨率档 | 交（非 `auto` 时；`auto/1:1/16:9/9:16/…`） | urls ≤14 张 |
-| `gpt-image`（GPT-Image-2 / OpenAI 底座） | `POST /api/async/image_gpt`（上游 `core/models.py:43`，**无 `_image` 后缀**） | **纯比例**（`auto/1:1/16:9/9:16/…`，非像素） | **不交** | urls ≤14 张（拒绝 data URL） |
+| 模型 | 提交端点 | size 语义 | aspectRatio | 参考图 | 单价 |
+|---|---|---|---|---|---|
+| `nano`（NanoBanana2 / Gemini 底座，默认） | `POST /api/async/image_nanoBanana2`（上游 `core/models.py:36`） | `1K`/`2K`/`4K` 分辨率档 | 交（非 `auto` 时；`auto/1:1/16:9/9:16/…`） | urls ≤14 张 | 0.1 元 |
+| `gpt-image`（GPT-Image-2 / OpenAI 底座） | `POST /api/async/image_gpt`（上游 `core/models.py:43`，**无 `_image` 后缀**） | **纯比例**（`auto/1:1/16:9/9:16/…`，非像素） | **不交** | urls ≤14 张（拒绝 data URL） | 0.1 元 |
+| `gpt-2.5`（GPT-Image-2.5 基础版，[/doc/78](https://api.wuyinkeji.com/doc/78)） | `POST /api/async/image_gpt_2.5` | —（比例走 aspectRatio，官方仅 1K 档尺寸） | 交（比例或显式 `WxH`） | urls ≤14 张 | 0.1 元 |
+| `gpt-2.5-sunburst`（[/doc/79](https://api.wuyinkeji.com/doc/79)，慢速高精、适合编辑图） | `POST /api/async/image_gpt_2.5_sunburst` | —（1K/2K/4K，比例或 `WxH`） | 交 | urls ≤14 张 | 0.3 元 |
+| `gpt-2.5-flare`（[/doc/80](https://api.wuyinkeji.com/doc/80)，快速、质量好） | `POST /api/async/image_gpt_2.5_flare` | —（1K/2K/4K，比例或 `WxH`） | 交 | urls ≤14 张 | 0.3 元 |
 
-轮询 `GET /api/async/detail?id=<task_id>`：status `0/1`=排队/生成中、`2`=成功、`3`=**审核拒绝（不退款不重试）**、`-1`=失败。`result` 字段四形态防御解析（str / list[str] / list[dict] / wrapper dict）。错误分类：429/5xx 可重试，4xx 立即上抛。鉴权头 `Authorization: <裸key>`（无 Bearer）。价格 0.1 元/张。
+2.5 系参数差异（提交前 `build_payload` 集中校验）：
+
+- `quality`：仅 sunburst（`low/medium/high/xhigh/max`）与 flare（`low/medium/high`），默认 `medium`；**基础版无此参数**。
+- `background`（`auto`/`transparent`，auto 省略不交）与 `mask`（遮罩图公网 URL，局部重绘）：仅 sunburst/flare。
+- 质量差异（来自官方文案，未实测横评）：基础版=标准档最便宜；flare=生成速度快、质量好；sunburst=生成质量好、速度慢、精度很高、适合编辑图片。选型建议：批量出图/背景用基础版或 flare，参考图精修/局部重绘用 sunburst（可配 `mask`+`quality high`）。
+- 要 2K/4K：`--ratio 3840x2160` 这类显式像素串（sunburst/flare 支持）；基础版只有 1K 档。
+
+轮询 `GET /api/async/detail?id=<task_id>`：status `0/1`=排队/生成中、`2`=成功、`3`=**审核拒绝（不退款不重试）**、`-1`=失败。`result` 字段四形态防御解析（str / list[str] / list[dict] / wrapper dict）。错误分类：429/5xx 可重试，4xx 立即上抛。鉴权头 `Authorization: <裸key>`（无 Bearer）。
 
 ## --kind 联动矩阵（方案 §5.2 强制）
 
@@ -66,7 +76,17 @@ python3 imgen/imgen_cli.py gen "..." --out <项目> --kind vertical --yes
 python3 imgen/imgen_cli.py gen "保留构图，改成水彩" --out <项目> --kind raw \
     --ref ./ref1.png https://example.com/ref2.jpg --yes
 
-# 批量（[{prompt,kind,model,size,ratio,ref}, ...]；线程池 10/10/5；>50 张二次确认）
+# GPT-Image-2.5 三端点
+python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5 --ratio 16:9 --yes          # 基础版 0.1 元
+python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-flare --quality high --yes  # 快速 0.3 元
+python3 imgen/imgen_cli.py gen "编辑这张图" --out <项目> --model gpt-2.5-sunburst \
+    --quality xhigh --background transparent --mask https://example.com/mask.png \
+    --ref ./in.png --yes                                                                       # 精修 0.3 元
+python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-sunburst \
+    --ratio 3840x2160 --yes   # 显式 4K（WxH 像素串）
+
+# 批量（[{prompt,kind,model,size,ratio,ref,quality,background,mask}, ...]；>50 张二次确认；
+# 混合模型按模型单价逐行列价）
 python3 imgen/imgen_cli.py batch prompts.json --out <项目> --yes
 
 # 离线后处理（免 API、不扣费；源<目标时打印插值倍数警告后照做）
@@ -80,7 +100,7 @@ python3 imgen/imgen_cli.py gen "<原prompt>" --out <项目> --kind bg4k --task-i
 
 ## 付费纪律（硬门）
 
-- 提交前打印「将提交 N 张 × 0.1 元/张 = X 元」+「**审核拒绝（status=3）不退款、不重试**」提示；无 `--yes` 时交互 `y/N`；**非 TTY 且无 --yes 直接中止（0 次提交，退出码 2）**。
+- 提交前按模型单价打印费用（混合模型 batch 逐行列价）+「**审核拒绝（status=3）不退款、不重试**」提示；无 `--yes` 时交互 `y/N`；**非 TTY 且无 --yes 直接中止（0 次提交，退出码 2）**。
 - batch 单次 >50 张：即使 `--yes` 也需 TTY 二次确认。
 - config `imgen.confirm_before_submit: false` 可关闭交互（相当于自动 yes，自担风险）。
 - job 记账 → `<项目>/cache/reports/imgen_jobs_<runid>.json`（task_id/payload/状态/产物/费用，原子写）；下载临时件 → `<项目>/cache/tmp/<runid>/`（后处理完成即删）。
@@ -103,7 +123,7 @@ cover 语义：等比缩放至**完全覆盖** W×H（lanczos）→ 中心 crop 
 ## 测试
 
 ```bash
-python3 -m unittest discover -s imgen/tests -v   # 57 用例，零网络零扣费（mock http.server）
+python3 -m unittest discover -s imgen/tests -v   # 71 用例，零网络零扣费（mock http.server）
 ```
 
 覆盖（方案 §9.3）：postprocess 三分支 golden+实跑断言；mock 全链（提交→轮询 0→1→2→下载→落位）；status=3 中文报错不重试不重复提交；4xx 立即上抛；URL 失效重试 ≤2 上抛；key 链优先级；付费门 0/1 次提交计数；--kind 载荷联动（bg4k=4K/16:9 等）；--ref 15 拒 14 过；空目录自建；--task-id 恢复零提交；batch 总价文案与 >50 中止。测试输入 PNG 由 ffmpeg 合成（KB 级，不落仓）；断言用 ffprobe（不依赖 PIL/numpy）。

@@ -105,6 +105,73 @@ class KindMatrixTest(unittest.TestCase):
         self.assertLessEqual(models.upscale_factor((3840, 2160), (1920, 1080)), 1.0)
 
 
+class Gpt25FamilyTest(unittest.TestCase):
+    """/doc/78/79/80 三个 GPT-Image-2.5 端点：路径、单价、参数差异。"""
+
+    def test_endpoints_and_prices(self):
+        self.assertEqual(models.MODELS["gpt-2.5"].submit_path, "/api/async/image_gpt_2.5")
+        self.assertEqual(models.MODELS["gpt-2.5-sunburst"].submit_path,
+                         "/api/async/image_gpt_2.5_sunburst")
+        self.assertEqual(models.MODELS["gpt-2.5-flare"].submit_path,
+                         "/api/async/image_gpt_2.5_flare")
+        self.assertEqual(models.model_price("gpt-2.5"), 0.1)
+        self.assertEqual(models.model_price("gpt-2.5-sunburst"), 0.3)
+        self.assertEqual(models.model_price("gpt-2.5-flare"), 0.3)
+        self.assertEqual(models.estimate_cost(3, "gpt-2.5-sunburst"), 0.9)
+
+    def test_quality_choices_per_model(self):
+        self.assertEqual(models.MODELS["gpt-2.5"].quality_choices, ())
+        self.assertEqual(models.MODELS["gpt-2.5-sunburst"].quality_choices,
+                         ("low", "medium", "high", "xhigh", "max"))
+        self.assertEqual(models.MODELS["gpt-2.5-flare"].quality_choices,
+                         ("low", "medium", "high"))
+
+    def test_payload_ratio_and_quality(self):
+        payload = models.build_payload("p", "gpt-2.5", None, "16:9")
+        self.assertEqual(payload["aspectRatio"], "16:9")
+        self.assertNotIn("size", payload)
+        payload = models.build_payload("p", "gpt-2.5-sunburst", None, "auto", quality="max")
+        self.assertNotIn("aspectRatio", payload)
+        self.assertEqual(payload["quality"], "max")
+
+    def test_payload_wxh_background_mask(self):
+        payload = models.build_payload("p", "gpt-2.5-sunburst", None, "3840x2160",
+                                       background="transparent", mask="https://x.com/m.png")
+        self.assertEqual(payload["aspectRatio"], "3840x2160")
+        self.assertEqual(payload["background"], "transparent")
+        self.assertEqual(payload["mask"], "https://x.com/m.png")
+
+    def test_base_version_rejects_sunburst_only_params(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-2.5", None, "auto", quality="high")
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-2.5", None, "auto", background="transparent")
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-2.5", None, "auto", mask="https://x.com/m.png")
+
+    def test_quality_validation(self):
+        with self.assertRaises(ValueError):  # flare 不收 xhigh/max
+            models.build_payload("p", "gpt-2.5-flare", None, "auto", quality="xhigh")
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-2.5-sunburst", None, "auto", quality="ultra")
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-2.5-sunburst", None, "auto", background="black")
+
+    def test_aspect_ratio_validation(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-2.5", None, "7:3")
+
+    def test_estimate_gpt25_output(self):
+        # WxH 精确；比例按 /doc/78 1K 档锚点
+        self.assertEqual(models.estimate_gpt25_output("3840x2160"), (3840, 2160))
+        self.assertEqual(models.estimate_gpt25_output("16:9"), (1280, 720))
+        self.assertEqual(models.estimate_gpt25_output(None), (1024, 1024))
+
+    def test_data_url_rejected(self):
+        with self.assertRaises(ValueError):
+            models.build_payload("p", "gpt-2.5", None, "auto", ["data:image/png;base64,xx"])
+
+
 class CostTest(unittest.TestCase):
     def test_estimate_cost(self):
         self.assertEqual(models.estimate_cost(1), 0.1)

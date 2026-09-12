@@ -23,9 +23,9 @@ cover-crop 前源图 ≥ 目标、只降采样不放大）：
 用户显式 --model/--size 覆盖联动档位且低于安全档时，打印画质警告（含插值
 倍数）后照做（用户主权）。
 
-付费确认硬门：提交前打印「N 张 × 0.1 元/张」+「审核拒绝（status=3）不退款」
-提示；无 --yes 时交互 y/N；非 TTY 且无 --yes 直接中止（0 次提交）；
-batch > 50 张二次确认（即使 --yes）。
+付费确认硬门：提交前按模型单价打印费用（0.1/0.3 元/张）+「审核拒绝
+（status=3）不退款」提示；无 --yes 时交互 y/N；非 TTY 且无 --yes 直接中止
+（0 次提交）；batch > 50 张二次确认（即使 --yes）。
 
 落位纪律（§5.6）：下载临时件 → <项目>/cache/tmp/<runid>/（后处理完成即删）；
 成品 → assets/bg/、assets/imgen/；job 记账 → <项目>/cache/reports/imgen_jobs_<runid>.json。
@@ -171,6 +171,17 @@ def resolve_kind_params(
                     f"cover-crop 需放大约 {factor:.2f}×（插值软化会固化进抠像合成链画质，{advice}）；"
                     "按显式指定照做"
                 )
+        elif model in models.GPT25_FAMILY:
+            # 2.5 系：比例串按官方 1K 档锚点估算（基础版只有 1K）；要 2K/4K 请显式
+            # 传像素串 aspectRatio（如 --ratio 3840x2160，sunburst/flare 支持）。
+            est_w, est_h = models.estimate_gpt25_output(ratio)
+            factor = models.upscale_factor((est_w, est_h), (tw, th))
+            if factor > 1.0:
+                advice = "（sunburst/flare 可 --ratio 3840x2160 显式 4K）" if model != "gpt-2.5" else "（基础版仅 1K 档）"
+                warnings.append(
+                    f"⚠ {kind} 目标 {tw}×{th}，{model}（{ratio}）按 1K 锚点估算约 {est_w}×{est_h}，"
+                    f"cover-crop 需放大约 {factor:.2f}×{advice}；按显式指定照做"
+                )
         else:
             warnings.append(
                 f"⚠ {kind} 配 gpt-image：输出分辨率不受控，无法保证 ≥ {tw}×{th}，可能插值放大"
@@ -226,14 +237,21 @@ def confirm_paid_submit(
     is_tty: bool,
     stdin=None,
     stderr=sys.stderr,
+    breakdown: Optional[dict] = None,
 ) -> bool:
     """打印费用与审核拒绝不退款提示，按 y/N 确认。
 
     规则：--yes 跳过；无 --yes 需 TTY 交互，非 TTY 直接中止；
     batch >50 张即使 --yes 也需二次确认（此时非 TTY 同样中止）。
+    breakdown（可选）：{model_key: (张数, 单价)}——混合模型 batch 按模型逐行列价。
     """
-    total = count * price
-    print(f"⚠ 将提交 {count} 张 × {price} 元/张 = {total:.1f} 元（速创 API 实付）", file=stderr)
+    total = count * price if breakdown is None else sum(n * p for n, p in breakdown.values())
+    if breakdown is None:
+        print(f"⚠ 将提交 {count} 张 × {price} 元/张 = {total:.1f} 元（速创 API 实付）", file=stderr)
+    else:
+        print(f"⚠ 将提交 {count} 张，合计 {total:.1f} 元（速创 API 实付）", file=stderr)
+        for model_key, (n, unit) in breakdown.items():
+            print(f"  · {model_key} × {n} 张 @ {unit} 元/张", file=stderr)
     print("⚠ 内容审核拒绝（status=3）不退款、不重试；请确认 prompt 与参考图合规", file=stderr)
 
     over_threshold = count > BATCH_WARN_THRESHOLD
@@ -293,9 +311,13 @@ class JobReport:
             tmp.write_text(payload, encoding="utf-8")
             os.replace(tmp, self.path)
 
-    def finish(self, price: float) -> None:
+    def finish(self, _price: float = None) -> None:
         with self._lock:
-            self.data["estimated_cost_yuan"] = round(self.data["submitted_count"] * price, 2)
+            # 按条目模型单价合计（0.1/0.3 元/张随模型而异）
+            self.data["estimated_cost_yuan"] = round(sum(
+                models.model_price(e.get("model", "nano"))
+                for e in self.data["entries"] if e.get("task_id")
+            ), 2)
             self.data["finished_utc"] = utc_ts()
             payload = json.dumps(self.data, ensure_ascii=False, indent=2)
             tmp = self.path.with_name(f".{self.path.name}.tmp-{os.getpid()}")
@@ -375,7 +397,7 @@ def _run_pool(items, worker, max_workers: int):
 
 
 def run_generation_pipeline(jobs: List[dict], out_root: Path, api_key: str, api_base: str,
-                            price: float, report: JobReport) -> int:
+                            report: JobReport) -> int:
     """jobs: [{prompt, model, size, ratio, urls, kind, entry, task_id?}]。
 
     提交/轮询/下载 = 上游 cli.py 线程池 10/10/5（单张退化为串行）；
@@ -394,7 +416,9 @@ def run_generation_pipeline(jobs: List[dict], out_root: Path, api_key: str, api_
 
     # ---- 阶段 1：提交（池 10）----
     def submit_one(job):
-        result = client.submit(job["prompt"], job["model"], job["size"], job["ratio"], job["urls"])
+        result = client.submit(job["prompt"], job["model"], job["size"], job["ratio"],
+                               job["urls"], quality=job.get("quality"),
+                               background=job.get("background"), mask=job.get("mask"))
         job["task_id"] = result["task_id"]
         report.touch_entry(job["entry"], task_id=result["task_id"],
                            payload=result["request"], status="submitted")
@@ -467,7 +491,7 @@ def run_generation_pipeline(jobs: List[dict], out_root: Path, api_key: str, api_
 
     # ---- 收尾：删本次 runid 临时目录（2h URL 失效件与垃圾不滞留）----
     shutil.rmtree(tmp_dir, ignore_errors=True)
-    report.finish(price)
+    report.finish()
     done = sum(1 for j in jobs if j["entry"].get("status") == "done")
     eprint(f"{'✓' if exit_code == EXIT_OK else '⚠'} 完成 {done}/{len(jobs)}；记账 → {report.path}")
     return exit_code
@@ -484,7 +508,9 @@ def _mark_failed(report: JobReport, job: dict, exc: Exception, status: str) -> N
 
 
 def _new_job(no: int, prompt: str, resolved: dict, urls: List[str], kind: str,
-             report: JobReport, task_id: Optional[str] = None) -> dict:
+             report: JobReport, task_id: Optional[str] = None,
+             quality: Optional[str] = None, background: Optional[str] = None,
+             mask: Optional[str] = None) -> dict:
     entry = {
         "no": no,
         "prompt": prompt,
@@ -493,6 +519,9 @@ def _new_job(no: int, prompt: str, resolved: dict, urls: List[str], kind: str,
         "size": resolved["size"],
         "ratio": resolved["ratio"],
         "urls": urls,
+        "quality": quality,
+        "background": background,
+        "mask": mask,
         "task_id": task_id,
         "status": "prepared",
         "image_urls": None,
@@ -503,6 +532,7 @@ def _new_job(no: int, prompt: str, resolved: dict, urls: List[str], kind: str,
     return {
         "no": no, "label": f"#{no}", "prompt": prompt, "model": resolved["model"],
         "size": resolved["size"], "ratio": resolved["ratio"], "urls": urls,
+        "quality": quality, "background": background, "mask": mask,
         "kind": kind, "entry": entry, "task_id": task_id,
     }
 
@@ -520,7 +550,6 @@ def _resolve_key(args) -> str:
 def cmd_gen(args, cfg) -> int:
     from api_client import SuchuangClient  # noqa: F401（付费链需 requests）
 
-    price = float(cfg_get(cfg, "imgen.price_per_image", 0.1))
     model_default = str(cfg_get(cfg, "imgen.model_default", "nano"))
     confirm_enabled = bool(cfg_get(cfg, "imgen.confirm_before_submit", True))
 
@@ -536,7 +565,13 @@ def cmd_gen(args, cfg) -> int:
         return EXIT_ERROR
 
     # 参数预校验（build_payload 集中模型差异；URL 先用占位跳过上传，确认后再上传）
-    models.build_payload(args.prompt, resolved["model"], resolved["size"], resolved["ratio"], [])
+    try:
+        models.build_payload(args.prompt, resolved["model"], resolved["size"], resolved["ratio"], [],
+                             quality=args.quality, background=args.background, mask=args.mask)
+    except ValueError as exc:
+        eprint(f"✗ {exc}")
+        return EXIT_ERROR
+    price = models.model_price(resolved["model"])
 
     try:
         api_key = _resolve_key(args)
@@ -567,9 +602,10 @@ def cmd_gen(args, cfg) -> int:
         "runid": runid, "started_utc": utc_ts(), "command": "gen",
         "api_base": resolve_api_base(cfg),
     })
-    job = _new_job(1, args.prompt, resolved, urls, args.kind, report, task_id=args.task_id)
+    job = _new_job(1, args.prompt, resolved, urls, args.kind, report, task_id=args.task_id,
+                   quality=args.quality, background=args.background, mask=args.mask)
     report.flush()
-    return run_generation_pipeline([job], out_root, api_key, resolve_api_base(cfg), price, report)
+    return run_generation_pipeline([job], out_root, api_key, resolve_api_base(cfg), report)
 
 
 def cmd_batch(args, cfg) -> int:
@@ -586,7 +622,7 @@ def cmd_batch(args, cfg) -> int:
         eprint("✗ prompts.json 应为非空列表 [{prompt, kind, model, size, ratio, ref}, ...]")
         return EXIT_ERROR
 
-    price = float(cfg_get(cfg, "imgen.price_per_image", 0.1))
+    price = float(cfg_get(cfg, "imgen.price_per_image", 0.1))  # 兼容旧 config；实际按模型单价
     model_default = str(cfg_get(cfg, "imgen.model_default", "nano"))
     confirm_enabled = bool(cfg_get(cfg, "imgen.confirm_before_submit", True))
 
@@ -609,13 +645,18 @@ def cmd_batch(args, cfg) -> int:
                                        item.get("ratio"), model_default)
         for warning in resolved["warnings"]:
             eprint(f"[#{idx}] {warning}")
+        quality = item.get("quality")
+        background = item.get("background")
+        mask = item.get("mask")
         try:
-            models.build_payload(item["prompt"], resolved["model"], resolved["size"], resolved["ratio"], [])
+            models.build_payload(item["prompt"], resolved["model"], resolved["size"], resolved["ratio"], [],
+                                 quality=quality, background=background, mask=mask)
         except ValueError as exc:
             eprint(f"✗ 第 {idx} 条参数不合法: {exc}")
             return EXIT_ERROR
         specs.append({"prompt": str(item["prompt"]).strip(), "resolved": resolved,
-                      "ref": ref, "kind": kind})
+                      "ref": ref, "kind": kind, "quality": quality,
+                      "background": background, "mask": mask})
 
     try:
         api_key = _resolve_key(args)
@@ -623,8 +664,14 @@ def cmd_batch(args, cfg) -> int:
         eprint(f"✗ {exc}")
         return EXIT_ERROR
 
+    # 按模型单价逐行列价（2.5 基础版 0.1、sunburst/flare 0.3 元/张）
+    breakdown: dict = {}
+    for spec in specs:
+        mk = spec["resolved"]["model"]
+        n, unit = breakdown.get(mk, (0, models.model_price(mk)))
+        breakdown[mk] = (n + 1, unit)
     gate_yes = args.yes or not confirm_enabled
-    if not confirm_paid_submit(len(specs), price, gate_yes, sys.stdin.isatty()):
+    if not confirm_paid_submit(len(specs), price, gate_yes, sys.stdin.isatty(), breakdown=breakdown):
         return EXIT_PAID_ABORT
 
     # 确认后再做免费但可能失败的外链上传
@@ -644,10 +691,12 @@ def cmd_batch(args, cfg) -> int:
         "runid": runid, "started_utc": utc_ts(), "command": "batch",
         "api_base": resolve_api_base(cfg),
     })
-    jobs = [_new_job(no, s["prompt"], s["resolved"], s["urls"], s["kind"], report)
+    jobs = [_new_job(no, s["prompt"], s["resolved"], s["urls"], s["kind"], report,
+                     quality=s.get("quality"), background=s.get("background"),
+                     mask=s.get("mask"))
             for no, s in enumerate(specs, start=1)]
     report.flush()
-    return run_generation_pipeline(jobs, out_root, api_key, resolve_api_base(cfg), price, report)
+    return run_generation_pipeline(jobs, out_root, api_key, resolve_api_base(cfg), report)
 
 
 def cmd_postprocess(args, _cfg) -> int:
@@ -698,16 +747,26 @@ _KIND_MATRIX = """\
   vertical → nano / 4K / 9:16 → assets/bg/background_vertical.png(1080x1920)
   raw      → 不联动 → assets/imgen/<UTC>-<n>.png（原图留档，仅尺寸校验）
 
+模型矩阵（--model）：
+  nano              NanoBanana2，0.1 元/张，1K/2K/4K + --ratio
+  gpt-image         GPT-Image-2，0.1 元/张，--size 传比例
+  gpt-2.5           GPT-Image-2.5 基础版，0.1 元/张，1K 档比例（无 quality 等参数）
+  gpt-2.5-sunburst  慢速高精、适合编辑图，0.3 元/张，--quality low~max、--background、--mask，
+                    2K/4K 用 --ratio 显式像素（如 3840x2160）
+  gpt-2.5-flare     快速、质量好，0.3 元/张，--quality low/medium/high、--background、--mask
+
 示例：
   python3 imgen/imgen_cli.py gen "深色科技感演播室背景，无人物" --out <项目> --kind bg4k --yes
   python3 imgen/imgen_cli.py gen "..." --out <项目> --kind bg4k --size 2K --yes   # 警告后照做
+  python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5 --ratio 16:9 --yes
+  python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-sunburst --quality high --yes
   python3 imgen/imgen_cli.py gen "..." --out <项目> --ref ref1.png https://.../r2.jpg
   python3 imgen/imgen_cli.py batch prompts.json --out <项目> --yes
   python3 imgen/imgen_cli.py postprocess raw.png --kind bg4k -o assets/bg/background_4k.png
   python3 imgen/imgen_cli.py key status
 
-付费纪律：0.1 元/张；审核拒绝（status=3）不退款不重试；无 --yes 时需交互确认，
-非交互终端必须 --yes。"""
+付费纪律：按模型单价 0.1 / 0.3 元/张；审核拒绝（status=3）不退款不重试；
+无 --yes 时需交互确认，非交互终端必须 --yes。"""
 
 _EPILOG = _KIND_MATRIX + """
 
@@ -718,21 +777,30 @@ core/api_client.py、core/secrets.py、core/reference_upload.py）；运行时�
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="imgen_cli.py",
-        description="速创 API 生图（0.1 元/张）+ ffmpeg lanczos cover-crop 后处理（imgen 模块总入口）",
+        description="速创 API 生图（0.1/0.3 元/张按模型）+ ffmpeg lanczos cover-crop 后处理（imgen 模块总入口）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_EPILOG,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    g = sub.add_parser("gen", help="单张生成（付费 0.1 元/张；提交→轮询→下载→后处理一体）")
+    g = sub.add_parser("gen", help="单张生成（付费 0.1/0.3 元/张按模型；提交→轮询→下载→后处理一体）")
     g.add_argument("prompt", help="生成 prompt")
     g.add_argument("--out", required=True, help="项目目录（产物按 --kind 落位，目录自动创建）")
     g.add_argument("--model", default=None, choices=list(models.MODELS),
-                   help="模型（默认按 --kind 联动或 config imgen.model_default）")
+                   help="模型（默认按 --kind 联动或 config imgen.model_default）；"
+                        "2.5 系=gpt-2.5 / gpt-2.5-sunburst / gpt-2.5-flare")
     g.add_argument("--size", default=None,
-                   help="nano=1K/2K/4K；gpt-image=比例（auto/1:1/16:9/9:16 等）")
+                   help="nano=1K/2K/4K；gpt-image=比例（auto/1:1/16:9/9:16 等）；2.5 系不适用（用 --ratio）")
     g.add_argument("--ratio", default=None,
-                   help="nano 的 aspectRatio（默认按 kind 联动或 auto）；gpt-image 不收（用 --size）")
+                   help="nano/2.5 系的 aspectRatio（默认 auto 或 kind 联动）；2.5 系还收显式像素"
+                        "（如 3840x2160，sunburst/flare 的 2K/4K 档）；gpt-image 不收（用 --size）")
+    g.add_argument("--quality", default=None,
+                   help="仅 gpt-2.5-sunburst（low/medium/high/xhigh/max）与 gpt-2.5-flare"
+                        "（low/medium/high）；默认 medium")
+    g.add_argument("--background", default=None, choices=("auto", "transparent"),
+                   help="仅 sunburst/flare：transparent 透明底（默认 auto）")
+    g.add_argument("--mask", default=None,
+                   help="仅 sunburst/flare：遮罩图公网 URL（局部重绘）")
     g.add_argument("--ref", nargs="+", default=None,
                    help="参考图，本地路径或 http(s) URL，最多 14 张（本地图先外链上传）")
     g.add_argument("--kind", default="raw", choices=models.KIND_CHOICES,
@@ -743,7 +811,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="断线恢复：按 job id 只重轮询+下载+后处理（不产生新提交）")
 
     b = sub.add_parser("batch", help="批量生成（prompts.json 列表，编排线程池 10/10/5）")
-    b.add_argument("prompts_json", help="JSON 列表 [{prompt, kind, model, size, ratio, ref}, ...]")
+    b.add_argument("prompts_json", help="JSON 列表 [{prompt, kind, model, size, ratio, ref,"
+                                        " quality, background, mask}, ...]")
     b.add_argument("--out", required=True, help="项目目录")
     b.add_argument("--yes", action="store_true", help="跳过付费确认（>50 张仍需二次确认）")
     b.add_argument("--key", default=None, help="API key 值或 key 文件路径")
