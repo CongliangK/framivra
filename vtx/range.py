@@ -70,10 +70,12 @@ def window_from_clip(tl: dict, cid: str):
 
 def window_from_track(tl: dict, name: str):
     """--track <name>：该轨全部 clips 的外包络 [min dst_in, max dst_out)（轨内可能有
-    空档，预览取连续外包络比逐段渲染便宜且足够预览用）。找不到返回 None。"""
+    空档，预览取连续外包络比逐段渲染便宜且足够预览用）。找不到或该轨无 clips
+    （空轨不可外包）返回 None（调用方统一友好报错）。"""
     for tr in tl["video_tracks"]:
         if tr.get("name") == name or tr.get("kind") == name:
-            cl = tr["clips"]
+            cl = tr.get("clips") or []
+            if not cl: continue
             return min(c["dst_in"] for c in cl), max(c["dst_in"] + c["dur"] for c in cl)
     return None
 
@@ -102,7 +104,8 @@ def _receipt_audio_gain(c):
 
 def _ensure_audio_wavs(c, fa: int, fb: int):
     """窗口音频事件引用的 prepare 抽音频 wav 缺失时冷填充（与 stages.prepare 同键
-    同命令——共享正式缓存，非 preview 私有产物；温态零写）。"""
+    同命令——共享正式缓存，非 preview 私有产物；温态零写；dry-run 不落盘）。"""
+    if c.dry: return
     from hygiene import audio_key
     margin = AUDIO_MARGIN_FRAMES
     need = {e["src"] for tr in c.tl["audio_tracks"] for e in tr["events"]
@@ -131,8 +134,23 @@ def run_range(c, fa: int, fb: int):
     print("  ℹ 预览渲染：不写 out/ 与 receipt，产物在 cache/preview/")
 
     t = time.monotonic()
-    layers = prepare_layers(c)      # seg/gfx 缓存命中即秒回；缺失时冷填充（键与整片一致）
+    layers = prepare_layers(c)      # seg 缓存命中即秒回；缺失时冷填充（键与整片一致）
     print(f"[timing] gfx/seg 复用检查（{len(layers)} 层）: {time.monotonic() - t:.1f}s")
+    # gfx 冷缓存门（P1-B）：区间渲染复用 gfx 阶段产物但不自动渲 gfx——缺帧时让
+    # ffmpeg 报 PNG 读不到的原始错误毫无指向性，故此处显式拦截并指路 `vtx gfx`。
+    missing_gfx = []
+    for L in layers:
+        if not L["gfx"]: continue
+        have = len(list(L["pngdir"].glob("f*.png"))) if L["pngdir"].exists() else 0
+        if have != L["cl"]["dur"]:
+            missing_gfx.append((L["cl"]["src"], L["pngdir"], have, L["cl"]["dur"]))
+    if missing_gfx and not c.dry:
+        print(f"✗ gfx 帧缓存缺失（{len(missing_gfx)} 页）——区间渲染只复用不渲染 gfx，"
+              f"请先运行：vtx.py -t <timeline> gfx")
+        for src, d, have, need in missing_gfx[:8]:
+            print(f"  - {src}：{d.name} 有 {have} 帧 / 需 {need} 帧")
+        if len(missing_gfx) > 8: print(f"  … 另 {len(missing_gfx) - 8} 页")
+        sys.exit(1)
 
     plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, layers=layers,
                       nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", "8")))
@@ -194,7 +212,12 @@ def run_range(c, fa: int, fb: int):
            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
            "-movflags", "+faststart", str(out)])
     tmpv.unlink(missing_ok=True)
-    # 自检：总帧数必须精确 == 窗口帧数（复合段边界丢帧不静默）
+    # 自检：总帧数必须精确 == 窗口帧数（复合段边界丢帧不静默）。dry-run 无产物
+    # （P1-A：此前 ffprobe 真执行读空 → 误报「自检失败」），只打印将执行的命令即退出。
+    if c.dry:
+        print(f"  [dry-run] 跳过产物自检与落盘（帧数以段切点计算为准 = {fb - fa}）")
+        print("✓ [dry-run] 区间预览命令验证通过（未产出文件）")
+        return None
     fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                          "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(out)],
                         capture_output=True, text=True,

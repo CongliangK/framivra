@@ -362,6 +362,10 @@ def main():
     if len(range_flags) > 1:
         print("--range / --clip / --track 互斥：窗口来源三选一"
               "（--clip 按 src 名推出单 clip 区间；--track 取单轨 clips 外包络）"); sys.exit(1)
+    # P2（阶段1复审）：区间预览恒为 draft 快速路径，与头窗截短/正式 GPU 参数无组合语义
+    if range_flags and (a.frames or a.gpu):
+        print("--range/--clip/--track 与 --frames/--gpu 互斥（区间预览固定 draft 540p；"
+              "截短请直接缩小区间，正式参数请走完整 video 阶段）"); sys.exit(1)
     if a.draft and a.command not in ("video", "mux"):
         print("--draft 仅作用于 video/mux 阶段（正确用法：vtx.py video --draft 或 vtx.py mux --draft）"); sys.exit(1)
     if a.gpu and a.command != "video":
@@ -427,7 +431,11 @@ def main():
             else:
                 w = window_from_track(c.tl, a.track)
                 if w is None:
-                    print(f"✗ 找不到轨道 {a.track!r}（按 track name 或 kind 匹配）"); sys.exit(1)
+                    names = [f"{t.get('name')}/{t.get('kind')}"
+                             + ("（空轨）" if not t.get("clips") else "")
+                             for t in c.tl["video_tracks"]]
+                    print(f"✗ 找不到有 clips 的轨道 {a.track!r}（按 name 或 kind 匹配；"
+                          f"现有：{'、'.join(names) or '无轨道'}）"); sys.exit(1)
                 fa, fb = w
         except ValueError as e:
             print(f"✗ {e}"); sys.exit(1)

@@ -129,6 +129,34 @@ class TestCliGuards(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("互斥", r.stdout)
 
+    def test_range_vs_frames_gpu_exclusive(self):
+        # P2-b（复审）：区间预览恒为 draft 快速路径，与 --frames/--gpu 无组合语义
+        for extra in (("--frames", "90"), ("--gpu",)):
+            r = self._run("--draft", "--range", "0", "6", *extra)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("互斥", r.stdout)
+
+    def test_empty_track_friendly(self):
+        # P2-a（复审）：空轨（无 clips）不得在 min() 上裸崩，须给出列出现有轨的文案
+        with tempfile.TemporaryDirectory() as d:
+            tl = {"version": 2, "project": {"fps": 30, "width": 64, "height": 64,
+                                            "duration_frames": 300},
+                  "sources": [], "subtitles": [], "audio_tracks": [],
+                  "video_tracks": [{"name": "ghost", "kind": "aroll", "clips": []}]}
+            p = Path(d) / "timeline.json"
+            p.write_text(json.dumps(tl), encoding="utf-8")
+            r = subprocess.run(
+                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                 "-t", str(p), "video", "--draft", "--track", "ghost"],
+                capture_output=True, text=True, cwd=str(REPO))
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("空轨", r.stdout)
+            self.assertIn("ghost", r.stdout)
+
+    def test_window_from_track_empty_returns_none(self):
+        self.assertIsNone(window_from_track(
+            {"video_tracks": [{"name": "x", "kind": "aroll", "clips": []}]}, "x"))
+
     def test_bad_timespec_friendly(self):
         # 校验发生在 timeline 存在性检查之后——用真实存在的最小 timeline 验证友好报错
         with tempfile.TemporaryDirectory() as d:
@@ -144,6 +172,44 @@ class TestCliGuards(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("无法解析时间点", r.stdout)
             self.assertFalse((Path(d) / "cache" / "preview").exists())
+
+    def test_dry_run_no_false_selfcheck_failure(self):
+        # P1-A（复审）：--dry-run + --range 组合——dry 不产物流，末尾自检 ffprobe
+        # 不得真执行（曾误报「✗ 区间渲染自检失败：总帧数 ? ≠ 90」exit=1）
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "timeline.json"
+            p.write_text(json.dumps(self._min_tl()), encoding="utf-8")
+            r = subprocess.run(
+                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                 "-t", str(p), "video", "--draft", "--range", "0", "6", "--dry-run"],
+                capture_output=True, text=True, cwd=str(REPO))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("[dry-run]", r.stdout)
+            self.assertNotIn("自检失败", r.stdout)
+
+    def test_cold_gfx_friendly_error(self):
+        # P1-B（复审）：gfx 页缓存缺失时须显式指路 `vtx gfx`，而非 ffmpeg 原始报错
+        with tempfile.TemporaryDirectory() as d:
+            gfxdir = Path(d) / "gfx"; gfxdir.mkdir()
+            (gfxdir / "page.html").write_text("<html></html>", encoding="utf-8")
+            p = Path(d) / "timeline.json"
+            p.write_text(json.dumps(self._min_tl(video_tracks=[
+                {"name": "g", "kind": "gfx",
+                 "clips": [{"src": "gfx/page.html", "dst_in": 0, "dur": 60}]}])), encoding="utf-8")
+            r = subprocess.run(
+                ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
+                 "-t", str(p), "video", "--draft", "--range", "0", "6"],
+                capture_output=True, text=True, cwd=str(REPO))
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("先运行", r.stdout)
+            self.assertIn("gfx/page.html", r.stdout)
+
+    @staticmethod
+    def _min_tl(video_tracks=()):
+        return {"version": 2, "project": {"fps": 30, "width": 64, "height": 64,
+                                          "duration_frames": 300},
+                "sources": [], "subtitles": [], "audio_tracks": [],
+                "video_tracks": list(video_tracks)}
 
 
 @unittest.skipUnless(os.environ.get("VTX_RANGE_INTEG") == "1",
