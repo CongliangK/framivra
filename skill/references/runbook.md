@@ -170,6 +170,7 @@ python3 $VTX -t timeline.json video --draft --range <字幕窗入点> <出点>  
 ```
 
 **已知坑位**：
+- **subs check FAIL 先分辨存量与新增**（不要求新代码）：用 `vtx diff out/subs_check_prev.json out/subs_check.json`（若留存上一版报告）逐项对比状态翻转；无上一版报告时对改前 timeline 基线复跑一次 subs check 作对照——只修本次改动引入的新增 FAIL，存量问题单独立项，不混入本轮验收口径。
 - **subs check 对齐检查依赖 name="voice" 音轨**：没有 voice 轨或字幕距最近口播窗 >5s 时该项出 WARN（不静默跳过），此时对齐靠 preview 人审兜底。
 - 阈值语义：对齐 FAIL ±1.5s / WARN ±0.5s（`--align-threshold` 可调）；CPS >9 FAIL / >7.5 WARN（与 audit 同基准）；行宽 28 字/行 × 2 行（PlayResX 1920 / Fontsize 58 / MarginL/R 60 推算）。
 - subs preview 三级背景回退（qc_clean 提帧 → 图层单帧合成 → 黑场兜底并 WARN）；背景为黑场时只审字幕位置/样式，画面构图回 R2 走 draft。

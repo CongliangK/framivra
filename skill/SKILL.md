@@ -14,7 +14,7 @@ description: "B站视频产线一体化 skill：选题调研（R0-R6 多智能�
 | `vtx diff <旧timeline> <新timeline>` | 任何 timeline 改动的第一步，看影响面与推荐路径（generator/patch_script/manual_whitelist） | 控制台 + `--json out/tl_diff.json`；秒级 |
 | `vtx video --draft --range <A> <B>` [--clip ID \| --track NAME] | 改了 clip/字幕后只看改动区间效果（时间点支持 秒/时间码/帧号f；gfx 冷缓存会提示先跑 vtx gfx） | `cache/preview/range_*.mp4`（含音频）；耗时双口径：纯回看窗（无改动，rseg 全命中）~5s，改动窗（窗内 rseg 内容键失效需重编码，含窗口混音）显著更长（详见 DEV.md「迭代回路基线」） |
 | `vtx audio --report` | 改了音轨后快速判级（LUFS/TP/duck/空洞），FAIL 退出码 1 | 控制台 + `out/audio_report.json`；秒级-数十秒（渲 3 个 stem） |
-| `vtx subs check` / `subs preview` | 字幕改动后必跑：check 全绿（<1s）→ preview 抽可疑条目（单张 ≤5s） | `out/subs_check.json` / 单张图 |
+| `vtx subs check` / `subs preview` | 字幕改动后必跑：check 全绿（<1s）→ preview 抽可疑条目（单张 ≤5s）。check FAIL 先分辨存量与新增：`vtx diff out/subs_check_prev.json out/subs_check.json`（若留存上一版）或对改前 timeline 基线复跑对照，只修新增 FAIL | `out/subs_check.json` / 单张图 |
 | `vtx qc diff`（走 `vtx diff` 入口） | 局部验证通过后与上一版报告对比，确认只有预期项翻转 | 控制台；秒级 |
 | `vtx all` | 上述回路全绿后的正式全量渲染 | `out/final.mp4`；voice-ime 温态全链基线 100.8s |
 
