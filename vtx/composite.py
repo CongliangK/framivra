@@ -11,7 +11,7 @@ from pathlib import Path
 
 from encoders import pick_vcodec, nvenc_concurrency
 from hygiene import budget_gate, gfx_dir, manifest_record, seg_key
-from infra import Ctx, run_parallel, filter_filename
+from infra import Ctx, run_parallel, filter_filename, filter_threads
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）
@@ -202,21 +202,29 @@ class RenderPlan:
         else:
             parts.append(f"[{cur}]null[vout]")
         vcodec, enc = pick_vcodec(c, draft)
-        # -filter_complex_threads 1：filtergraph 单线程执行（2026-09-08 v3.6 渲染棒）。
-        # 根因定位（voice-ime v3.6，61 层 graph 三渲实测）：多线程 filtergraph 下，
-        # 多个 framesync 的 enable 窗口边界在 ±20 帧内密集交叠的时间点发生主链整帧
-        # 丢失（PTS 空洞，非确定性但病灶区 100% 复现：draft 缺 3 / r1 缺 8 且伴
-        # [6180,6193) 近黑崩溃带 / r2 缺 6 / r3 垫帧扩版缺 10——垫帧参数无关，病灶
-        # 在次输入流传输中段）。overlay 链本身为串行依赖（L0→L1→…→L60），线程化
-        # 无并行收益，强制单线程消除调度竞态。
-        # 输出端 CFR 强制（2026-09-08 v3.6 渲染棒，主控拍板兜底）：61 层大 graph 的
-        # framesync 存在系统性「层窗口边界密集区中段主链丢帧」（voice-ime v3.6 六渲
-        # 实测：NVENC/x264、多/单线程、tpad 1/1 与 2/24 参数无关，病灶 100% 落在
-        # 多层共享相近端点的 ±20 帧带，缺连续 2-4 帧 PTS 空洞）。-fps_mode cfr -r 30
-        # 使输出端按 30fps 网格强制补帧（相邻帧复制），缺帧恰好落在层切换点（画面
-        # 相对静止的 gfx 淡出带），1-4 帧复制视觉不可见。交付口径：这些帧是复制
-        # 补偿帧而非原渲染帧，须 blackdetect+帧数+断点内容抽验三重确认。
-        c.run(cmd + ["-filter_complex_threads", "1",
+        # -filter_complex_threads：滤镜图线程数（infra.filter_threads，默认 1，
+        # VTX_FILTER_THREADS=4 可显式解锁多线程）。历史病灶记载（2026-09-08
+        # v3.6 渲染棒，61 层 graph 三渲实测）：多线程 filtergraph 下多个 framesync
+        # 的 enable 窗口边界在 ±20 帧内密集交叠的时间点发生主链整帧丢失（PTS 空洞：
+        # draft 缺 3 / r1 缺 8 且伴 [6180,6193) 近黑崩溃带 / r2 缺 6 / r3 垫帧扩版
+        # 缺 10——垫帧参数无关，病灶在次输入流传输中段），当时归因调度竞态故强制 1。
+        # 该竞态归因已于 2026-09-12 证伪过时：61 层 ±20 帧密集端点复现图（exp6d
+        # 形态，收编为 tests/test_filter_threads.py）threads=1 与 4 输出 MD5 逐位
+        # 一致，且 4 快 2.0×（26.17s vs 13.54s）。默认暂不放开 4（bench_p2 全链
+        # A/B，2026-09-12）：真实项目前 3 段存在与线程数无关的跨运行非确定性
+        # （同 argv 复渲 4 次 4 个 md5，与 v3.6「病灶非确定性、与线程数无关」记载
+        # 自洽；其余 5 段 t1/t4/基线逐字节全等），逐字节等价门不可复现；且 8 段
+        # 并行 + x264 多线程下 threads=4 无墙钟收益（98/99s vs 99s）——单线程
+        # 滤镜主链的 2× 收益只在单进程大 graph 场景，分段并行管线吃不到。
+        # 输出端 CFR 强制（2026-09-08 v3.6 渲染棒，主控拍板兜底，真修复保留）：
+        # 61 层大 graph 的 framesync 存在系统性「层窗口边界密集区中段主链丢帧」
+        # （voice-ime v3.6 六渲实测：NVENC/x264、多/单线程、tpad 1/1 与 2/24 参数
+        # 无关，病灶 100% 落在多层共享相近端点的 ±20 帧带，缺连续 2-4 帧 PTS
+        # 空洞）。-fps_mode cfr -r 30 使输出端按 30fps 网格强制补帧（相邻帧复制），
+        # 缺帧恰好落在层切换点（画面相对静止的 gfx 淡出带），1-4 帧复制视觉不可见。
+        # 交付口径：这些帧是复制补偿帧而非原渲染帧，须 blackdetect+帧数+断点内容
+        # 抽验三重确认。
+        c.run(cmd + ["-filter_complex_threads", str(filter_threads()),
                      "-filter_complex", ";".join(parts), "-map", "[vout]",
                      "-frames:v", str(nframes if (draft and nframes) else seglen),
                      "-fps_mode", "cfr", "-r", str(c.fps),

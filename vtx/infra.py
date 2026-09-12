@@ -174,6 +174,24 @@ def io_workers() -> int:
     if v.isdigit() and int(v) > 0: return int(v)
     return max(1, min(6, (os.cpu_count() or 8) // 4))
 
+# -filter_complex_threads 的线程数（2026-09-12 滤镜多线程解锁，方案二阶段1）。
+# v3.6 时代（2026-09-08）强制 1 的依据——「多线程 filtergraph 下 framesync 窗口
+# 边界密集带调度竞态致主链丢帧」——已被 61 层 ±20 帧密集端点复现图证伪
+# （2026-09-11/12 两轮：threads=1 与 4 输出 MD5 逐位一致，4 快 2.0×，实验收编于
+# tests/test_filter_threads.py）。但 bench_p2 全链 A/B（2026-09-12 阶段1 验收）后
+# 默认仍保持 1，两条实测依据：①真实项目（voice-ime 16746f/69 层）前 3 段——恰为
+# 输入路数最多的 15/11/13 路——存在与线程数无关的跨运行输出非确定性（同 argv
+# 隔离复渲 4 次 4 个 md5；seg03-07 五段 t1/t4/基线逐字节全等），逐字节等价门不可
+# 复现，放行证据不足；②8 段并行 + x264 自带多线程下 threads=4 无墙钟收益
+# （99s vs 98/99s；隔离单段仅 1.35×）——解锁收益在单进程大 graph 场景，分段
+# 并行管线吃不到。安全网不变：输出端 -fps_mode cfr 补帧 + 段拼接后总帧数硬自检。
+# VTX_FILTER_THREADS=4 可显式开启（合成复现图 MD5 等价、全链 QC 75 项字段级
+# 一致、差异段 PSNR 与同线程方差同分布，无新增风险）。
+def filter_threads() -> int:
+    v = os.environ.get("VTX_FILTER_THREADS", "1")
+    if v.isdigit() and int(v) > 0: return int(v)
+    return 1
+
 def run_ffmpeg_task(c: Ctx, label: str, cmd):
     # 并行 worker 内不用 c.run：其失败路径 sys.exit 在线程中不生效，改为抛异常
     # 由主线程统一收集传播（任一任务失败 → 整阶段失败）。
