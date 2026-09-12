@@ -30,13 +30,28 @@ def find_chrome() -> str:
     print("✗ 找不到 Chrome/Chromium（gfx 帧截图需要）。可设环境变量 VTX_CHROME 指定可执行文件路径"); sys.exit(1)
 
 
-def nvenc_ok(c) -> bool:
+def nvenc_ok(c, use_memo: bool = False) -> bool:
     if os.environ.get("VTX_NO_NVENC"): return False
+    # P2-1（方案二阶段3 复审）：use_memo=True 时真探测结果做进程级 memo——
+    # seg_encoder_kind 的消费者（prepare_layers 编码 / gc._current_keys 键集重算 /
+    # subs 预检 / timeline_diff）各自独立调用，若每次都真探测，探测结果在两次调用
+    # 间翻转（NVENC 硬件级故障，如驱动忙/设备消失）会导致键集分叉：gc 把活 seg 误判
+    # 成键集外垃圾回收 → 整轮重编。memo 后同一进程内全部消费者同值（memo 判定放在
+    # dry 短路之前：先有真探测结论时，后续 dry 调用也同值，键口径进程内恒一致）；
+    # 跨进程翻转场景仍存在，但属硬件级故障（罕见且后果仅一次性重编码，不做跨进程
+    # 协调）。pick_vcodec 不用 memo（保持默认 use_memo=False）：成片编码器探测失败
+    # 回落 x264 的告警语义要保持即时性（每次真探测）。
+    global _NVENC_OK_MEMO
+    if use_memo and _NVENC_OK_MEMO is not None:
+        return _NVENC_OK_MEMO
     if c.dry: return True
     # 探测尺寸须 ≥ NVENC 最小宽 145（128 会假失败）
     r = c.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:d=0.04",
                "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], need=False)
-    return r != "" and r.returncode == 0
+    ok = r != "" and r.returncode == 0
+    if use_memo:
+        _NVENC_OK_MEMO = ok
+    return ok
 
 
 def nvenc_concurrency(c, workers: int) -> int:
@@ -69,6 +84,7 @@ def nvenc_concurrency(c, workers: int) -> int:
 # seg 预编码后台任务与段渲染同进程叠加——当前编排时间上不重叠，机制上封死）。
 _NVENC_SEM = None
 _NVENC_SEM_LOCK = threading.Lock()
+_NVENC_OK_MEMO = None   # nvenc_ok(use_memo=True) 的进程级探测结果缓存（P2-1，见函数注释）
 
 
 def nvenc_budget_value() -> int:
@@ -92,6 +108,12 @@ def reset_nvenc_budget():
         _NVENC_SEM = None
 
 
+def reset_nvenc_ok_memo():
+    """仅测试用：清空 nvenc_ok(use_memo=True) 的进程级探测缓存。"""
+    global _NVENC_OK_MEMO
+    _NVENC_OK_MEMO = None
+
+
 def seg_encoder_kind(c) -> str:
     """「无 alpha seg 用哪个编码器」的单一判定（方案二阶段3）。
 
@@ -105,7 +127,9 @@ def seg_encoder_kind(c) -> str:
     """
     if os.environ.get("VTX_SEG_NVENC", "1") == "0":
         return "x264"
-    if nvenc_ok(c):
+    # use_memo=True（P2-1）：进程级 memo 探测——prepare_layers/gc/subs/diff 各自调用
+    # 本函数，memo 保证同进程内键集判定同值（详见 nvenc_ok 注释）。
+    if nvenc_ok(c, use_memo=True):
         return "nvenc"
     print("⚠ NVENC 探测失败，seg 预编码回落 x264（显式告警，非静默）")
     return "x264"

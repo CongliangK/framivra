@@ -231,7 +231,10 @@ def _write_point_ass(c: Ctx, path: Path, subs):
 
 
 def _layer_ready(c: Ctx, f: int):
-    """帧 f 处全部覆盖层素材是否现成（只读检查，不触发编码/渲染）。返回层列表或 None。"""
+    """帧 f 处全部覆盖层素材是否现成（只读检查，不触发编码/渲染）。返回层列表或 None。
+
+    缓存命中判定可能触发一次 nvenc 能力探测（进程级 memo 后仅首次，P2-1）。
+    """
     layers = []
     # seg 键编码器 token 与 composite.prepare_layers 同源判定（方案二阶段3）——
     # 否则这里会按旧编码器键找文件，NVENC seg 恒 miss。

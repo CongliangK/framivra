@@ -8,7 +8,10 @@
   ② seg_key 编码器 token 入键：同 clip 同参数不同 encoder 键必不同（键集漂移防护），
      同 encoder 键稳定；alpha（prores）与 opaque 同 encoder 仍由 need_alpha 位区分；
   ③ nvenc_budget 信号量并发：预算 2 时 8 线程各占 1 槽，峰值并发 ≤2（计数器断言，
-     不真编码——只测上下文管理器本身）；dry 上下文直通不占槽。
+     不真编码——只测上下文管理器本身）；dry 上下文直通不占槽；
+  ④ nvenc_ok(use_memo=True) 进程级 memo（P2-1 复审）：真探测仅首次、结果恒定，
+     False 结论同样入 memo，dry 短路在 memo 之后（键口径进程内恒一致）；默认路径
+     不 memo（pick_vcodec 告警即时性）。
 运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3 前缀：
 AppImage 劫持 argv[0]，裸 python3 的 sys.executable 指向错误解释器，见全局 AGENTS.md）
 """
@@ -24,7 +27,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "vtx"))
 
 import encoders
-from encoders import nvenc_budget, nvenc_budget_value, reset_nvenc_budget, seg_encoder_kind
+from encoders import (nvenc_budget, nvenc_budget_value, reset_nvenc_budget,
+                      reset_nvenc_ok_memo, seg_encoder_kind)
 from hygiene import seg_key
 
 
@@ -50,6 +54,7 @@ _CL = {"src": "README.md", "src_in": 0, "src_out": 90, "dur": 90}
 class TestSegEncoderKind(unittest.TestCase):
     def setUp(self):
         reset_nvenc_budget()
+        reset_nvenc_ok_memo()   # 类内 dry 短路判定不得被前序用例的 memo 污染
 
     def test_default_is_nvenc(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -74,6 +79,56 @@ class TestSegEncoderKind(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VTX_NVENC_BUDGET", None)
             self.assertEqual(nvenc_budget_value(), 8)
+
+
+class TestNvencOkMemo(unittest.TestCase):
+    """P2-1（方案二阶段3 复审）：nvenc_ok(use_memo=True) 进程级 memo——不真探测，
+    用假 ctx 计数探测次数，断言 memo 后只探一次且结果恒定；默认路径（pick_vcodec 用）
+    不 memo，每次都探。"""
+
+    def setUp(self):
+        reset_nvenc_ok_memo()
+
+    def _ctx_with_probe(self, fail):
+        calls = []
+        class Ctx:
+            dry = False
+            def run(self, cmd, need=True):
+                calls.append(1)
+                class R: returncode = 1 if fail else 0
+                return R()
+        return Ctx(), calls
+
+    def test_memo_probes_once_and_stays(self):
+        c, calls = self._ctx_with_probe(fail=False)
+        self.assertTrue(encoders.nvenc_ok(c, use_memo=True))
+        self.assertTrue(encoders.nvenc_ok(c, use_memo=True))
+        self.assertTrue(encoders.nvenc_ok(c, use_memo=True))
+        self.assertEqual(len(calls), 1)          # 真探测仅首次
+        self.assertEqual(seg_encoder_kind(c), "nvenc")
+        self.assertEqual(len(calls), 1)          # seg_encoder_kind 复用 memo
+
+    def test_memo_false_result_also_memoed(self):
+        c, calls = self._ctx_with_probe(fail=True)
+        self.assertFalse(encoders.nvenc_ok(c, use_memo=True))
+        self.assertFalse(encoders.nvenc_ok(c, use_memo=True))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(seg_encoder_kind(c), "x264")
+        self.assertEqual(len(calls), 1)
+
+    def test_no_memo_probes_every_time(self):
+        # 默认 use_memo=False（pick_vcodec 口径）：不 memo，逐次真探测
+        c, calls = self._ctx_with_probe(fail=False)
+        for _ in range(3):
+            self.assertTrue(encoders.nvenc_ok(c))
+        self.assertEqual(len(calls), 3)
+
+    def test_memo_precedes_dry_shortcircuit(self):
+        # 先有真探测结论（False）后，dry ctx 的 seg_encoder_kind 也同值（键口径一致）
+        c, _ = self._ctx_with_probe(fail=True)
+        self.assertFalse(encoders.nvenc_ok(c, use_memo=True))
+        class DryCtx: dry = True
+        self.assertEqual(seg_encoder_kind(DryCtx()), "x264")
 
 
 class TestSegKeyEncoderToken(unittest.TestCase):
