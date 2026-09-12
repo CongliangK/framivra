@@ -53,7 +53,15 @@ for i in $(seq 1 "$ROUNDS"); do
     echo ""
   } | tee -a "$SUMMARY"
 
-  [ "$i" -lt "$ROUNDS" ] && { echo "轮间回落 sleep 10 …"; sleep 10; }
+  [ "$i" -lt "$ROUNDS" ] && {
+    echo "轮间回落：等 1min load <3（最多 10 分钟）…"
+    sleep 10
+    waited=10
+    while [ "$(cut -d' ' -f1 /proc/loadavg | cut -d. -f1)" -ge 3 ]; do
+      [ "$waited" -ge 600 ] && { echo "警告：load 10 分钟未回落 <3，超时放行（本轮数字可能偏脏）"; break; }
+      sleep 15; waited=$((waited+15))
+    done
+  }
 done
 
 echo "===== 各轮汇总（$SUMMARY）====="
