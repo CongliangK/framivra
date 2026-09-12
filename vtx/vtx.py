@@ -11,6 +11,8 @@
   gfx        渲染 kind=gfx 轨的 HTML 动效 → 透明 PNG 序列（Chrome headless，带缓存）
   video      黑场画布 + 全部视频轨按图层序时移叠加 + 字幕烧录（v2 轨道等价模型）
   audio      多轨音频混音（帧网格对齐、fade/pan/loop、duck 音乐避让、EBU R128 响度归一 -14 LUFS）
+             （--report 混音后附加一等报告 / --report-only 只读已有产物出报告：
+             整片 LUFS/TP、人声-床乐响度差、duck 咬合/回升、静音空洞 → out/audio_report.json）
   mux        视音频封装
   qc         渲染后质检（帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一），写 qc_report.json
              （--strict：帧数改用 -count_frames 真解码计数，默认容器元数据）
@@ -377,6 +379,14 @@ def main():
               "截短请直接缩小区间，正式参数请走完整 video 阶段）"); sys.exit(1)
     if a.draft and a.command not in ("video", "mux"):
         print("--draft 仅作用于 video/mux 阶段（正确用法：vtx.py video --draft 或 vtx.py mux --draft）"); sys.exit(1)
+    # 方案五阶段3：音频一等报告标志（audio 专属，两开关互斥）
+    if (a.report or a.report_only) and a.command != "audio":
+        print("--report/--report-only 仅作用于 audio 阶段"
+              "（正确用法：vtx.py audio --report 或 vtx.py audio --report-only）"); sys.exit(1)
+    if a.report and a.report_only:
+        print("--report 与 --report-only 互斥：--report 混音后出报告，--report-only 只读已有产物"); sys.exit(1)
+    if (a.report or a.report_only) and a.dry_run:
+        print("✗ --report/--report-only 与 --dry-run 冲突（报告需要真实产物测量）"); sys.exit(1)
     if a.gpu and a.command != "video":
         print("--gpu 仅作用于 video 阶段（正确用法：vtx.py video --gpu）"); sys.exit(1)
     # 未知命令先于 timeline 检查（错字时给最接近建议，不被 timeline 缺失报错挡住）
@@ -480,6 +490,11 @@ def main():
         from range import run_range
         run_range(c, *c.range_window)
         return
+    # 音频纯报告分发（方案五阶段3，区间渲染同款短路）：只读已有产物，不进依赖门、
+    # 不做 receipt——报告对正式产物链零干扰（写 out/audio_report.json 一个报告件）
+    if a.report_only:
+        from audio_report import run_report
+        sys.exit(run_report(c, json_path=a.json))
     names = [s[0] for s in STAGES] if a.command == "all" else [a.command]
     todo = STAGES if a.command == "all" else \
         [next((s for s in STAGES if s[0] == a.command), None)]
@@ -496,6 +511,12 @@ def main():
         except RuntimeError as e:
             print(f"✗ {e}"); sys.exit(1)
         fn(c)
+        # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
+        # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
+        if name == "audio" and a.report:
+            from audio_report import run_report
+            rc = run_report(c, json_path=a.json)
+            if rc: sys.exit(rc)
     print("完成：", c.out / "final.mp4" if a.command in ("all", "mux", "qc") else names)
 
 if __name__ == "__main__":
