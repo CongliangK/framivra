@@ -1,0 +1,239 @@
+1789195713 14:48:33 | == validate ==
+1789195718 14:48:38 | ✓ 校验通过：45 源 / 5 视频轨 69 clips / 150 字幕 / 17 音轨 73 事件
+1789195718 14:48:38 | == audit ==
+1789195718 14:48:38 |   ✓ 画面构成  aroll 39% / gfx 71% / pip 59% / screen 17%
+1789195718 14:48:38 |   ℹ 缺少 broll 模块  可用该类画面增加视觉变化（主流技术视频均有覆盖）
+1789195718 14:48:38 |   ✓ 黑场窗口  全程有画面
+1789195718 14:48:38 |   ✓ 无声窗口  全程有音频（BGM 铺底达标）
+1789195718 14:48:38 |   ✓ 口播覆盖率（voice 轨）  97.3%（主流观察 83-99.7%，目标 85-90%）
+1789195718 14:48:38 |   ⚠ 全片语速（字/秒）  6.35 字/s（标准值 5.5，偏差 +15%；主流中位 5.56、P25-P75 4.95~5.76；<4.8 偏慢拖节奏，>6.3 高密度口播需确认是有意为之）
+1789195718 14:48:38 |   ✓ 字幕阅读速度  过快(>9字/s≈P99) 0 条 / 偏快(>7.5≈P92) 18 条 / 过短(<0.6s) 0 条 / 相互重叠 0 条
+1789195718 14:48:38 | 审计：7 项指标，1 条建议（详见 out/audit_report.json，建议性不阻断）
+1789195718 14:48:38 | == prepare ==
+1789195718 14:48:38 |   音频提取：45 个任务，6 线程并行
+1789195718 14:48:38 |     ✓ audio d8（+0s）
+1789195718 14:48:38 |     ✓ audio d9b（+0s）
+1789195718 14:48:38 |     ✓ audio d9a（+0s）
+1789195718 14:48:38 |     ✓ audio d4（+0s）
+1789195718 14:48:38 |     ✓ audio d6（+0s）
+1789195718 14:48:38 |     ✓ audio d1（+0s）
+1789195718 14:48:38 |     ✓ audio d7（+0s）
+1789195718 14:48:38 |     ✓ audio d10（+0s）
+1789195718 14:48:38 |     ✓ audio bgmC（+0s）
+1789195718 14:48:38 |     ✓ audio bgmB（+0s）
+1789195718 14:48:38 |     ✓ audio bgmA（+0s）
+1789195718 14:48:38 |     ✓ audio sfxKb（+0s）
+1789195718 14:48:38 |     ✓ audio sfxPop（+0s）
+1789195718 14:48:38 |     ✓ audio sfxChime（+0s）
+1789195718 14:48:38 |     ✓ audio sfxEnter（+0s）
+1789195718 14:48:38 |     ✓ audio bedD（+0s）
+1789195718 14:48:38 |     ✓ audio ar_一（+0s）
+1789195718 14:48:38 |     ✓ audio ar_二（+0s）
+1789195718 14:48:38 |     ✓ audio ar_三（+0s）
+1789195718 14:48:38 |     ✓ audio ar_四（+0s）
+1789195718 14:48:38 |     ✓ audio ar_五（+1s）
+1789195718 14:48:38 |     ✓ audio ar_八（+1s）
+1789195718 14:48:38 |     ✓ audio ar_二_sq（+1s）
+1789195718 14:48:38 |     ✓ audio ar_九（+1s）
+1789195718 14:48:38 |     ✓ audio ar_六_sq（+1s）
+1789195719 14:48:39 |     ✓ audio ar_七_sq（+1s）
+1789195719 14:48:39 |     ✓ audio ar_八_sq（+1s）
+1789195719 14:48:39 |     ✓ audio ar_三_sq（+1s）
+1789195719 14:48:39 |     ✓ audio ar_六（+1s）
+1789195719 14:48:39 |     ✓ audio ar_四_sq（+1s）
+1789195719 14:48:39 |     ✓ audio ar_七（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-vln1（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-str-tutti（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-vln2（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-vla（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-vc（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-vc-pizz（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-cb（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-piano-sal（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-piano-up（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-guitar（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-bass（+1s）
+1789195719 14:48:39 |     ✓ audio bed_silent（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-drums（+1s）
+1789195719 14:48:39 |     ✓ audio bgm2-bgm-sting（+1s）
+1789195719 14:48:39 |   ✓ 音频提取完成（1s）
+1789195719 14:48:39 | ✓ 音频提取：45 → 48kHz stereo PCM
+1789195719 14:48:39 | ── 并行波（3 路：gfx + audio + video 预编码）开始 14:48:39 ──
+1789195719 14:48:39 | == gfx ==
+1789195719 14:48:39 | == audio ==
+1789195719 14:48:39 | == video 预编码 ==
+1789195719 14:48:39 |   duck[bgm-intro]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-vln1]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-vln2]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-vla]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-vc]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-vc-pizz]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-cb]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-str-tutti]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-piano-sal]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-piano-up]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-guitar]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-bass]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-drums]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195719 14:48:39 |   duck[bgm-sting]: threshold=0.0126 ratio=4 attack=20ms release=1500ms makeup=1
+1789195720 14:48:40 |   seg 预编码：41 个任务，6 线程并行
+1789195723 14:48:43 |     ✓ seg t00c02（180 帧）（+3s）
+1789195723 14:48:43 |     ✓ seg t00c04（247 帧）（+3s）
+1789195723 14:48:43 |     ✓ seg t00c05（279 帧）（+3s）
+1789195724 14:48:44 |     ✓ seg t00c00（313 帧）（+4s）
+1789195724 14:48:44 |     ✓ seg t00c01（423 帧）（+4s）
+1789195725 14:48:45 |     ✓ seg t00c03（435 帧）（+5s）
+1789195725 14:48:45 |     ✓ seg t01c00（15 帧）（+5s）
+1789195726 14:48:46 |     ✓ seg t00c07（240 帧）（+6s）
+1789195726 14:48:46 |     ✓ seg t00c06（420 帧）（+6s）
+1789195727 14:48:47 |     ✓ seg t00c08（331 帧）（+7s）
+1789195727 14:48:47 |     ✓ seg t01c01（177 帧）（+7s）
+1789195729 14:48:49 |     ✓ seg t01c03（238 帧）（+9s）
+1789195729 14:48:49 |     ✓ seg t01c06（109 帧）（+10s）
+1789195732 14:48:52 |     ✓ seg t01c02（480 帧）（+13s）
+1789195733 14:48:53 | ✓ nav_two_pillars[d01e8920b4d2]: 渲染 155 帧（含 alpha，4 tabs CDP override×125 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×30 failed×0 span×1, 102ms/帧 (nav 98/export 224/decode 0/write 1 ms@p50)）
+1789195734 14:48:54 |     ✓ seg t01c05（29 帧）（+14s）
+1789195735 14:48:55 |     ✓ seg t01c04（91 帧）（+15s）
+1789195739 14:48:59 |     ✓ seg t01c08（166 帧）（+20s）
+1789195740 14:49:00 |     ✓ seg t01c07（698 帧）（+20s）
+1789195741 14:49:01 |     ✓ seg t01c13（127 帧）（+21s）
+1789195742 14:49:02 |     ✓ seg t01c09（310 帧）（+22s）
+1789195742 14:49:02 | ✓ c1_config_full[3ccfecef2ad4]: 渲染 660 帧（含 alpha，4 tabs CDP override×358 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×303 failed×0 span×3, 105ms/帧 (nav 95/export 250/decode 0/write 1 ms@p50)，split×2）
+1789195742 14:49:02 |     ✓ seg t01c12（762 帧）（+22s）
+1789195742 14:49:02 |     ✓ seg t01c14（229 帧）（+23s）
+1789195743 14:49:03 | ✓ open_source_card[66f464d384b2]: 渲染 120 帧（含 alpha，4 tabs CDP override×120 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 193ms/帧 (nav 71/export 458/decode 0/write 1 ms@p50)）
+1789195744 14:49:04 |     ✓ seg t01c10（590 帧）（+24s）
+1789195744 14:49:04 |     ✓ seg t01c11（1192 帧）（+24s）
+1789195744 14:49:04 |     ✓ seg t01c17（101 帧）（+25s）
+1789195749 14:49:09 |     ✓ seg t03c00（423 帧）（+29s）
+1789195751 14:49:11 |     ✓ seg t01c18（422 帧）（+31s）
+1789195751 14:49:11 |     ✓ seg t03c01（425 帧）（+31s）
+1789195755 14:49:15 |     ✓ seg t03c02（180 帧）（+35s）
+1789195756 14:49:16 | ✓ llm_post[b2f3d0203568]: 渲染 425 帧（含 alpha，4 tabs CDP override×425 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 86ms/帧 (nav 100/export 206/decode 0/write 1 ms@p50)）
+1789195757 14:49:17 |     ✓ seg t01c15（416 帧）（+37s）
+1789195759 14:49:19 |     ✓ seg t01c19（381 帧）（+39s）
+1789195760 14:49:20 |     ✓ seg t01c16（60 帧）（+40s）
+1789195761 14:49:21 | ✓ usage_page[3feb7e4685aa]: 渲染 296 帧（含 alpha，4 tabs CDP override×296 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 86ms/帧 (nav 90/export 188/decode 0/write 0 ms@p50)）
+1789195763 14:49:23 |     ✓ seg t03c04（586 帧）（+43s）
+1789195765 14:49:25 |     ✓ seg t03c05（762 帧）（+45s）
+1789195765 14:49:25 |     ✓ seg t03c03（1556 帧）（+45s）
+1789195766 14:49:26 | ✓ u2_backends[3205022d1265]: 渲染 896 帧（含 alpha，4 tabs CDP override×793 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×103 failed×0 span×1, 95ms/帧 (nav 100/export 240/decode 0/write 1 ms@p50)，split×2）
+1789195767 14:49:27 |     ✓ seg t03c07（579 帧）（+47s）
+1789195769 14:49:29 |     ✓ seg t03c10（281 帧）（+49s）
+1789195769 14:49:29 | ✓ why_ibus[a612f26d489e]: 渲染 435 帧（含 alpha，4 tabs CDP override×260 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×175 failed×0 span×4, 99ms/帧 (nav 93/export 209/decode 0/write 0 ms@p50)）
+1789195774 14:49:34 |     ✓ seg t03c08（866 帧）（+54s）
+1789195775 14:49:35 |     ✓ seg t03c06（1963 帧）（+55s）
+1789195776 14:49:36 | ✓ u3_install[d4dc4908cb47]: 渲染 262 帧（含 alpha，4 tabs CDP override×262 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 161ms/帧 (nav 168/export 402/decode 0/write 1 ms@p50)）
+1789195776 14:49:36 |     ✓ seg t03c11（998 帧）（+56s）
+1789195777 14:49:37 |     ✓ seg t03c09（1243 帧）（+57s）
+1789195777 14:49:37 |   ✓ seg 预编码完成（57s）
+1789195777 14:49:37 | ✓ video 预编码 完成 [timing] +57.4s（14:49:37）
+1789195779 14:49:39 | ✓ librime_page[b85e6c807698]: 渲染 327 帧（含 alpha，4 tabs CDP override×327 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 88ms/帧 (nav 95/export 207/decode 0/write 0 ms@p50)）
+1789195781 14:49:41 |   原始混音 I=-28.6 LUFS → 静态增益 +14.6dB
+1789195790 14:49:50 | ✓ c4_pipeline[4650244cdb68]: 渲染 218 帧（含 alpha，4 tabs CDP override×218 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 47ms/帧 (nav 51/export 107/decode 0/write 0 ms@p50)）
+1789195798 14:49:58 | ✓ 音频混音：17 轨 73 事件（帧网格对齐，14 轨 duck 避让，响度 -14 LUFS（两遍静态增益）
+1789195798 14:49:58 | ✓ audio 完成 [timing] +78.8s（14:49:58）
+1789195807 14:50:07 | ✓ c4b_branch[34d366e5cfbe]: 渲染 300 帧（含 alpha，4 tabs CDP override×300 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 57ms/帧 (nav 49/export 110/decode 0/write 0 ms@p50)）
+1789195808 14:50:08 | ✓ feedback_card[dfa3824d4c65]: 渲染 290 帧（含 alpha，4 tabs CDP override×290 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 222ms/帧 (nav 65/export 435/decode 0/write 0 ms@p50)）
+1789195819 14:50:19 | ✓ c5a_main_path[dcea16bfa82b]: 渲染 1153 帧（含 alpha，4 tabs CDP override×1153 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 138ms/帧 (nav 183/export 336/decode 0/write 1 ms@p50)，split×3）
+1789195820 14:50:20 | ✓ c4t_tick[7f14f24ebba9]: 渲染 459 帧（含 alpha，4 tabs CDP override×459 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 48ms/帧 (nav 52/export 117/decode 0/write 0 ms@p50)，split×2）
+1789195833 14:50:33 | ✓ c5b_hotkey[d257535da170]: 渲染 810 帧（含 alpha，4 tabs CDP override×810 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 138ms/帧 (nav 142/export 354/decode 0/write 1 ms@p50)，split×2）
+1789195834 14:50:34 | ✓ c3_perf[199c03daa9fb]: 渲染 281 帧（含 alpha，4 tabs CDP override×281 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 49ms/帧 (nav 55/export 117/decode 0/write 0 ms@p50)）
+1789195834 14:50:34 | ✓ c4f_filter[47bc3f2927d3]: 渲染 750 帧（含 alpha，4 tabs CDP override×750 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 52ms/帧 (nav 72/export 111/decode 0/write 0 ms@p50)，split×2）
+1789195836 14:50:36 | ✓ c2_components[e15e396b9ef8]: 渲染 480 帧（含 alpha，4 tabs CDP override×355 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×125 failed×0 span×1, 71ms/帧 (nav 63/export 137/decode 0/write 0 ms@p50)，split×2）
+1789195840 14:50:40 | ✓ w_u1[b2d2d6ef0dc3]: 渲染 60 帧（含 alpha，4 tabs CDP override×60 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 66ms/帧 (nav 79/export 141/decode 0/write 0 ms@p50)）
+1789195845 14:50:45 | ✓ w_b1[2381fd28a80e]: 渲染 60 帧（含 alpha，4 tabs CDP override×60 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 73ms/帧 (nav 82/export 149/decode 0/write 0 ms@p50)）
+1789195853 14:50:53 | ✓ g6a_title[c51e3f839fbb]: 渲染 120 帧（含 alpha，4 tabs CDP override×0 canvas×0 twoshot×120 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 153ms/帧 (nav 52/export 287/decode 194/write 0 ms@p50)）
+1789195857 14:50:57 | ✓ c4g_regulate[71a88f54025f]: 渲染 998 帧（含 alpha，4 tabs CDP override×931 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×67 failed×0 span×1, 70ms/帧 (nav 68/export 160/decode 0/write 0 ms@p50)，split×3）
+1789195859 14:50:59 | ✓ cutaway_key[47fba569067d]: 渲染 90 帧（含 alpha，4 tabs CDP override×90 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 58ms/帧 (nav 69/export 118/decode 0/write 0 ms@p50)）
+1789195860 14:51:00 | ✓ c4_mini[25f29c9b44db]: 渲染 195 帧（含 alpha，4 tabs CDP override×52 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×143 failed×0 span×1, 54ms/帧 (nav 52/export 119/decode 0/write 0 ms@p50)）
+1789195861 14:51:01 | ✓ cutaway_cand[04326b6c8eb8]: 渲染 90 帧（含 alpha，4 tabs CDP override×90 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 99ms/帧 (nav 65/export 144/decode 0/write 0 ms@p50)）
+1789195865 14:51:05 | ✓ b1_bricks[862d4125551e]: 渲染 1080 帧（含 alpha，4 tabs CDP override×553 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×528 failed×0 span×3, 62ms/帧 (nav 77/export 141/decode 0/write 0 ms@p50)，split×3）
+1789195870 14:51:10 | ✓ recap_a[0aa5b5a3a39e]: 渲染 249 帧（含 alpha，4 tabs CDP override×249 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 42ms/帧 (nav 49/export 102/decode 0/write 0 ms@p50)）
+1789195901 14:51:41 | ✓ g6b_endboard[92ff9d7c0283]: 渲染 765 帧（含 alpha，4 tabs CDP override×765 canvas×0 twoshot×0 opaque×0 navfree×0 canvas_fallback×0 static_copied×0 failed×0, 174ms/帧 (nav 72/export 344/decode 0/write 0 ms@p50)，split×2）
+1789195901 14:51:41 | ✓ gfx 完成 [timing] +181.7s（14:51:41）
+1789195901 14:51:41 | ✓ 并行波完成 [timing] 总耗时 181.7s（14:51:41）
+1789195901 14:51:41 | == video ==
+1789195901 14:51:41 |   分段渲染：8 段，切点 [2093, 4186, 6280, 8373, 10466, 12560, 14656]（VTX_VIDEO_SEGMENTS=8，guard=±20 帧）
+1789195901 14:51:41 |   段间并行：8 线程
+1789195999 14:53:19 |   ✓ 拼接自检：总帧数 16746 == 16746
+1789195999 14:53:19 | ✓ 视频合成：黑场画布 + 5 轨 69 层等价叠加（时移）+ 字幕｜x264 medium｜分段并行 N=8
+1789195999 14:53:19 | == mux ==
+1789196004 14:53:24 | ✓ 封装 final.mp4（libfdk_aac 192k）
+1789196004 14:53:24 | == qc ==
+1789196015 14:53:35 |   ✓ 成片帧数 = 16746  实测 16746（容器元数据）
+1789196015 14:53:35 |   ✓ 成片时长 ≈ 558.20s  实测 558.200s
+1789196015 14:53:35 |   ✓ 分辨率 1920x1080
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=192 src=d1:2  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=1223 src=d4:2  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=2150 src=d8:2  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=4312 src=d6:2  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=4747 src=d6:437  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=10615 src=d9a:2  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=10894 src=d9b:2  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=14395 src=d7:2  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 底轨切点帧比对 dst=15051 src=d10:31  平均像素差 0.00/255
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 7 生效  整帧差 126.5，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 103 生效  整帧差 124.6，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 745 生效  整帧差 121.4，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 1104 生效  整帧差 123.3，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 2104 生效  整帧差 125.1，覆盖 99.9%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 2344 生效  整帧差 125.1，覆盖 99.9%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 2413 生效  整帧差 126.0，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 3701 生效  整帧差 232.8，覆盖 100.0%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 5077 生效  整帧差 126.7，覆盖 100.0%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 5315 生效  整帧差 122.9，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 5765 生效  整帧差 236.6，覆盖 100.0%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 6656 生效  整帧差 139.2，覆盖 99.9%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 7633 生效  整帧差 236.0，覆盖 100.0%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 10033 生效  整帧差 125.8，覆盖 99.9%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 13117 生效  整帧差 125.9，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 14843 生效  整帧差 123.3，覆盖 100.0%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 15412 生效  整帧差 124.1，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 15492 生效  整帧差 126.5，覆盖 99.9%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 15754 生效  整帧差 130.3，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 全屏 clip aroll @frame 16155 生效  整帧差 235.0，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 nav_two_pillars 生效  采样 [543, 582, 622] 最大均值差 249.0，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 open_source_card 生效  采样 [900, 930, 960] 最大均值差 246.0，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 llm_post 生效  采样 [1752, 1858, 1965] 最大均值差 237.0，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 u2_backends 生效  采样 [2692, 2916, 3140] 最大均值差 234.2，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c1_config_full 生效  采样 [3529, 3694, 3859] 最大均值差 234.3，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 u3_install 生效  采样 [4115, 4181, 4247] 最大均值差 246.4，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 usage_page 生效  采样 [5544, 5618, 5692] 最大均值差 237.9，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 feedback_card 生效  采样 [5838, 5911, 5984] 最大均值差 229.6，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 why_ibus 生效  采样 [7360, 7469, 7579] 最大均值差 238.4，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 librime_page 生效  采样 [7768, 7850, 7933] 最大均值差 237.1，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c5a_main_path 生效  采样 [8302, 8590, 8879] 最大均值差 236.3，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c5b_hotkey 生效  采样 [9369, 9572, 9775] 最大均值差 232.2，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c4_pipeline 生效  采样 [10151, 10206, 10261] 最大均值差 247.3，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c4b_branch 生效  采样 [10390, 10465, 10540] 最大均值差 237.0，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c4t_tick 生效  采样 [11428, 11543, 11659] 最大均值差 236.2，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c4f_filter 生效  采样 [11960, 12148, 12336] 最大均值差 235.7，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c2_components 生效  采样 [12643, 12763, 12883] 最大均值差 235.5，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c3_perf 生效  采样 [13302, 13372, 13443] 最大均值差 240.5，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 c4g_regulate 生效  采样 [13762, 14012, 14262] 最大均值差 236.7，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 g6b_endboard 生效  采样 [16172, 16363, 16555] 最大均值差 237.2，覆盖 100.0%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 1434 生效  区域差 83.0，覆盖 86.5%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 1858 生效  区域差 136.0，覆盖 99.5%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 2240 生效  区域差 76.1，覆盖 80.9%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 3246 生效  区域差 137.0，覆盖 99.5%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 5763 生效  区域差 137.1，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 7633 生效  区域差 135.2，覆盖 99.6%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 8995 生效  区域差 136.4，覆盖 99.5%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 10604 生效  区域差 132.4，覆盖 99.8%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 11327 生效  区域差 132.8，覆盖 99.6%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 12381 生效  区域差 132.2，覆盖 99.5%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 13372 生效  区域差 135.2，覆盖 99.3%
+1789196015 14:53:35 |   ✓ 窗口 clip pip @frame 14012 生效  区域差 135.2，覆盖 99.5%
+1789196015 14:53:35 |   ✓ gfx 窗口 g6a_title 生效  采样 [1019, 1049, 1079] 最大均值差 125.1，覆盖 99.9%
+1789196015 14:53:35 |   ✓ gfx 窗口 w_u1 生效  采样 [1124, 1139, 1154] 最大均值差 128.6，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 w_b1 生效  采样 [6075, 6090, 6105] 最大均值差 126.2，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 b1_bricks 生效  采样 [6390, 6660, 6930] 最大均值差 140.9，覆盖 99.9%
+1789196015 14:53:35 |   ✓ gfx 窗口 cutaway_cand 生效  采样 [8539, 8562, 8585] 最大均值差 238.0，覆盖 100.0%
+1789196015 14:53:35 |   ✓ gfx 窗口 cutaway_key 生效  采样 [9709, 9732, 9755] 最大均值差 230.2，覆盖 100.0%
+1789196015 14:53:35 |   ✗ gfx 窗口 c4_mini 生效  采样 [15235, 15284, 15334] 最大均值差 2.2，覆盖 2.9%
+1789196015 14:53:35 |   ✓ gfx 窗口 recap_a 生效  采样 [15794, 15856, 15919] 最大均值差 130.9，覆盖 99.9%
+1789196015 14:53:35 |   ✓ 空窗无叠加泄漏 @frame 15057  差异 0.78，覆盖 0.0%
+1789196015 14:53:35 |   ✓ 响度归一 ≈ -14 LUFS  实测 -14.1 LUFS
+1789196015 14:53:35 |   ✓ 16 轨并发窗口有能量  mean -17.5 dB @frame 48
+1789196015 14:53:35 | QC：74/75 通过
