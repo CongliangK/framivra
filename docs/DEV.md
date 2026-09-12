@@ -17,6 +17,7 @@
 - `ffprobe -count_frames` 逐帧解码计数：1080p 全源 12-27s/个；改流头 nb_frames + count_packets 回落后 validate 2min→3s。〔出处：edit.md 坑表〕
 - `-frames:v N` 触发 filter_complex 全量 drain：曾耗 4:30（300 帧）；已对每路输入加 `-t` 截短。〔出处：edit.md 坑表〕
 - 字幕 subs 三命令（2026-09-12，方案四，合成 30s/900 帧项目实测）：`subs check` <1s（零渲染纯文本）；`subs preview` 单张 0.56s（图层单帧合成路径）；改 1 条字幕重渲 2 段 1.9s（6 段缓存命中）——段键含本段窗口内 ass 字节（composite._seg_content_key），「改一条字幕=全链重渲」的担忧实测不成立。〔出处：docs/plans-2026-09-11/方案四 + 方案四-验收证据/〕
+- **合成链路提速定版（2026-09-12，方案二：滤镜图线程 + 依赖图流水线 + NVENC seg）**：voice-ime 基准项目 3 轮冷跑（cache 全清口径，`scripts/bench_cold.sh`）**中位 299s（三轮 281/302/299）vs 串行基线 375s，-20%**；分阶段中位：validate 5 / prepare 1 / 并行波 180（gfx 180 为关键路径，audio 74、seg 预编码 NVENC 54.6）/ video 拼接段 98 / mux 4 / qc 11。波内 seg 预编码 54.6s（NVENC，三轮 49.9/57.4/54.6）vs x264 波内 64.4s（方案二阶段2 实测）；串行基线 video seg 33+分段 126 的形态已被并行波取代。画质对照（阶段3 审查 P2 遗留项）：NVENC cq14 seg 代 vs x264 crf14 seg 代成片（threads 形态相同，差异来源=seg 编码器代差）抽 31 帧（7 切点边界 ±1 + 10 随机）单帧 PSNR——**18 帧逐位相同（PSNR=inf），其余 12 帧 40.4-50.1dB（有限值中位 ≈41.5dB，min 40.4dB @f2092）**，编码器代差在成片为不可见级。三轮 qc 均 74/75（唯一 ✗=已证伪的 c4_mini 探针假阴性）、拼接自检 16746==16746 每轮一致；qc --strict 复验 EXIT=0。〔出处：docs/plans-2026-09-11/方案二 + /tmp/vtx_bench_20260912_* 日志〕
 
 ### 迭代回路基线（2026-09-12 实测，voice-ime v4.3 timeline 16746f@30fps，RTX 4080）〔出处：docs/plans-2026-09-11/方案五 阶段1-4 验收记录〕
 
@@ -105,6 +106,14 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 - **竞态证伪（安全性）**：61 层 ±20 帧密集端点复现图（v3.6 病灶形态）threads=1 与 4 输出 MD5 逐位一致且 4 快 1.9×（26.17s vs 13.54s；收编为 tests/test_filter_threads.py）。`-filter_complex_threads 1` 改为 `infra.filter_threads()`（env `VTX_FILTER_THREADS`）。
 - **但解锁在真实管线无墙钟收益（性能证伪）**：8 段并行下 --gpu 形态 89→86s（-3%）、x264 形态 99→98s；隔离单段（15 路输入的 seg00）仅 1.35×（38→28s）。2× 只在单进程大 graph 成立——段图 9-15 层的并行度来自「各输入独立预处理链」thread 化，overlay 主脊（全帧串行混合）与解码不被该开关加速；8 段并行时 CPU 聚合已饱和。**默认维持 1**；单进程路径（`--draft --frames` 头窗、VTX_VIDEO_SEGMENTS=1 回落、gfx 底轨 qc_clean）可显式 `VTX_FILTER_THREADS=4` 提速。
 - **真实项目前 3 段跨运行非确定性（重要新事实）**：voice-ime seg00/01/02（恰为输入路数最多的 15/11/13 路）同 argv（threads=1）隔离复渲 4 次得 4 个 md5——与 DEV.md v3.6 条目「病灶非确定性、与滤镜图线程数无关」自洽；差异形态为长连片（78-370 帧）CFR 补偿帧位置漂移，非结构性。含义：**「两次渲染逐字节一致」类等价门在此项目不可用**，A/B 判定须用 t1 控制组方差对照（t4 差异段 PSNR 47.7-54.2dB 与同线程方差 49.3-50.2dB 同分布=无新增差异形态）；seg03-07（≤10 路）四轮逐字节全等。
+
+### seg 键编码器 token 与 NVENC 会话预算（方案二阶段3，2026-09-12）〔出处：docs/plans-2026-09-11/方案二 + commits ae1564a/90d2f1d〕
+
+- **seg 键含编码器 token（nvenc/x264/prores）**：内容寻址不受破坏——编码器切换=键集全变=全量重编一次，属预期一次性成本；判定单一来源 `encoders.seg_encoder_kind`（prepare_layers/hygiene.gc/subs 预检/timeline_diff 同源，防键集漂移误回收活 seg）。
+- **`VTX_SEG_NVENC=0`** 独立回退 seg→x264（探测失败显式告警回落，不静默）；与 `VTX_PIPELINE=0`（线性序列回退）互为独立开关。
+- **`VTX_NVENC_BUDGET` 默认 8**：进程内 NVENC 会话信号量，8=本机实测并发拐点，**写死为默认防误调**（跨进程协调无机制，4K 导出等并行场景才手动下调）；seg 预编码逐任务占槽，段渲染批次一次性占 min(workers,预算) 槽，阻塞 >0.1s 才打等待行。
+- **NVENC 会话并发拐点数据**：会话 8→12 无收益，聚合吞吐 ~1100-1150fps（1080p）平台封顶。
+- **nvenc_ok 进程级 memo**（90d2f1d）：seg 键判定掺运行时探测值时，各消费者独立探测会在探测结果翻转（NVENC 硬件级故障）时键集分叉、gc 误删活 seg 整轮重编——memo 后同进程全部消费者同值（memo 先于 dry 短路，gc --dry 口径一致）；跨进程翻转仍存在但属硬件级故障，后果仅一次性重编码。`pick_vcodec` 不用 memo（成片编码器回落告警保持即时语义）。
 
 ### 字幕预览/烧录等价性两个量化陷阱（方案四红队 S1/S2/S7，2026-09-12）〔出处：docs/plans-2026-09-11/方案四-验收证据/＋审查报告〕
 

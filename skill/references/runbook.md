@@ -260,7 +260,18 @@ python3 $VTX -t timeline.json qc
 python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final.mp4
 ```
 
-**耗时基准**（voice-ime 653s@1080p30，RTX 4080/8 核，2026-09-11 拆包提速后；gfx 为同日方案 v2 定版数字）：gfx 全冷 ~130s、video 并行 ~2min、**全链冷启动 ≈5.5 分钟**、4K 另加 ~2.5min；缓存命中全链 ~50s。
+**耗时基准**（voice-ime 653s@1080p30，RTX 4080/8 核）：**方案二后（2026-09-12 定版，3 轮冷跑中位）全链冷启动 ≈299s（281/302/299，`bash $VIDEO_TOOLS/scripts/bench_cold.sh 3` 实测）**——并行波 180s（gfx 关键路径）+ video 拼接段 98s + qc 11s + mux 4s + validate/prepare 6s；波内 seg 预编码 54.6s（NVENC）。〔方案二前：全链冷启动 ≈5.5 分钟（拆包提速后，2026-09-11）〕gfx 全冷 ~130-180s、4K 另加 ~2.5min；缓存命中全链 ~50s。
+
+**流水线/编码器 env 速查**（默认即定版，回退开关独立 A/B）：
+
+| env | 默认 | 说明 |
+|---|---|---|
+| `VTX_PIPELINE` | 1 | =0 回退线性序列（validate→prepare→gfx→video→audio→mux→qc 串行） |
+| `VTX_SEG_NVENC` | 1 | =0 seg 预编码回 x264（探测失败显式告警回落，不静默） |
+| `VTX_FILTER_THREADS` | 1 | 滤镜图线程数；单进程路径（draft 头窗/单段）可显式 4 |
+| `VTX_NVENC_BUDGET` | 8 | 进程内 NVENC 会话预算（=并发拐点，勿上调；4K 导出并行时下调） |
+
+**冷跑基准**：`bash $VIDEO_TOOLS/scripts/bench_cold.sh [轮数] [项目目录]`——清 cache 逐行时间戳跑 `vtx all`，轮后自动提取各阶段摘要（基准数字归档 DEV.md §一；不触碰 baseline_threads1/）。
 
 **必跑验证门**：qc 全项 + content_gates + check_4k（若出 4K 版）。
 
