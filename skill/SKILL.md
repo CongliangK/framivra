@@ -5,6 +5,20 @@ description: "B站视频产线一体化 skill：选题调研（R0-R6 多智能�
 # video · B站视频产线 skill（索引 + 全链路）
 > **使用者向**：如何用本 skill 完成视频制作。当前行为细节见 `references/`，开发者分析见 `docs/DEV.md`。
 **接到任务先查路由表去读对应 reference 再动手**；本文件是「路线图」，字段语义与坑表以 references 为准。
+## 迭代回路速查（改 timeline 前必读）
+```
+改 clip/字幕/音频前：vtx diff → vtx video --draft --range → （动了音频）vtx audio --report → vtx subs check/preview → vtx qc diff → 确认后 vtx all
+```
+| 命令 | 何时用 | 产物 / 耗时 |
+|---|---|---|
+| `vtx diff <旧timeline> <新timeline>` | 任何 timeline 改动的第一步，看影响面与推荐路径（generator/patch_script/manual_whitelist） | 控制台 + `--json out/tl_diff.json`；秒级 |
+| `vtx video --draft --range <A> <B>` [--clip ID \| --track NAME] | 改了 clip/字幕后只看改动区间效果（时间点支持 秒/时间码/帧号f；gfx 冷缓存会提示先跑 vtx gfx） | `cache/preview/range_*.mp4`（含音频）；温态单窗 7-9s |
+| `vtx audio --report` | 改了音轨后快速判级（LUFS/TP/duck/空洞），FAIL 退出码 1 | 控制台 + `out/audio_report.json`；秒级-数十秒（渲 3 个 stem） |
+| `vtx subs check` / `subs preview` | 字幕改动后必跑：check 全绿（<1s）→ preview 抽可疑条目（单张 ≤5s） | `out/subs_check.json` / 单张图 |
+| `vtx qc diff`（走 `vtx diff` 入口） | 局部验证通过后与上一版报告对比，确认只有预期项翻转 | 控制台；秒级 |
+| `vtx all` | 上述回路全绿后的正式全量渲染 | `out/final.mp4`；voice-ime 温态全链基线 100.8s |
+
+**硬性规则**：任何 timeline 修改，全量 `vtx all` 前必须先走上述局部验证回路；区间渲染只进 `cache/preview/`，不产生正式产物（out/ 不受影响）。
 ## 领域文档路由
 | 领域 | 文档 | 管什么 |
 |---|---|---|
