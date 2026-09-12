@@ -12,6 +12,7 @@ from pathlib import Path
 from encoders import pick_vcodec, nvenc_concurrency
 from hygiene import budget_gate, gfx_dir, manifest_record, seg_key
 from infra import Ctx, run_parallel, filter_filename, filter_threads
+import probe_cache
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）
@@ -380,12 +381,13 @@ def prepare_layers(c: Ctx):
                 seg = c.cache / "seg" / f"{skey}.mp4"
                 vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
             # seg 缓存命中：存在且流头帧数=clip 时长即跳过（键已含全部参数，帧数检查
-            # 只是便宜的兜底自检，不读内容）。
+            # 只是便宜的兜底自检，不读内容）。帧数检查经 probe_cache（(路径,mtime_ns,
+            # size) 键缓存 ffprobe 结论）：69 层逐层 ffprobe 温态实测 8.7s（区间渲染
+            # --range 0 6 总 10.5s 的 83%），缓存后温态零 ffprobe；文件被删/被换
+            # （mtime/size 变或不存在）自动 miss 回落真实 ffprobe，不漏检缓存失效。
             if seg.exists():
-                fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                                     "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(seg)],
-                                    capture_output=True, text=True,
-                                    encoding="utf-8", errors="replace").stdout.strip()
+                fr = probe_cache.ffprobe_nb_frames(c, seg)
+                fr = str(fr) if fr is not None else ""
                 if fr.isdigit() and int(fr) == cl["dur"]:
                     layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
                                    "gfx": False, "ti": ti})
