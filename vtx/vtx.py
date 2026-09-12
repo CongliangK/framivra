@@ -19,8 +19,11 @@
              --keep-days N 暂缓近 N 天条目；cache/reports/ 永不回收）
   df         体积体检：cache/out 分项占用 + top-20 大文件 + tmp 孤儿清单
   snapshot   timeline + 文本资产快照到 cache/snapshots/（只留最近 2 份，VTX_SNAPSHOT_KEEP 可调）
-  diff       报告对比：diff <旧报告.json> <新报告.json>（qc/audit/subs_check 同构报告
-             字段级差异，检查项状态翻转显著标出，末行 PASS/DIFF；纯读不写产物）
+  diff       对比：diff <旧.json> <新.json> [--json PATH]。两参均为 timeline JSON
+             （含 project/video_tracks 特征键）时走时间线语义 diff——逐 clip/字幕/音轨
+             字段级变化 + 缓存键重算影响面（seg/gfx/段失效）+ 需重跑阶段/耗时预估 +
+             推荐修改路径（timeline_diff.py）；否则为报告对比（qc/audit/subs_check 同构
+             报告字段级差异，检查项状态翻转显著标出，末行 PASS/DIFF）。纯读不写产物
   subs       字幕信息性命令（不进流水线）：render 生成 cache/subs.ass（内容寻址记账）/
              preview <时间点...> 单帧字幕预览 PNG（时间点 `12.5`=秒 / `f360`=帧号）/
              check 纯 timeline 字幕四项检查（对齐/CPS/重叠/行宽），写 out/subs_check.json
@@ -65,7 +68,7 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
 clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fade 统一为 alpha 淡入淡出。
 仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome。
 """
-import argparse, difflib, os, shutil, subprocess, sys, threading
+import argparse, difflib, json, os, shutil, subprocess, sys, threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -337,6 +340,9 @@ def main():
                     help="mux 专属：out/history/ 保留最近 N 版历史成片（默认 2）")
     ap.add_argument("--align-threshold", type=float, metavar="S", default=1.5,
                     help="subs check 专属：口播对齐 FAIL 阈值秒数（默认 1.5，≥0.5 先 WARN）")
+    ap.add_argument("--json", metavar="PATH",
+                    help="diff 时间线模式专属：机器可读 diff/影响面/推荐路径 JSON 写入 PATH"
+                         "（缺省只打印人读摘要；报告对比模式不支持）")
     ap.add_argument("command",
                     help="all | " + " | ".join(s[0] for s in STAGES) +
                          " | clean | gc | df | snapshot | subs | diff")
@@ -371,9 +377,29 @@ def main():
         # 检查前分发；两个位置参数复用 subs_extra 槽（argparse `*` 在 command 后的
         # 既有约定，见上注）。纯读命令：不写任何产物、不做 receipt；--dry-run 尊重。
         if len(a.subs_extra) != 2:
-            print("✗ 用法：diff <旧报告.json> <新报告.json>"); sys.exit(2)
+            print("✗ 用法：diff <旧报告.json> <新报告.json>"
+                  "（timeline 语义 diff 同形：diff <旧timeline> <新timeline> [--json PATH]）"); sys.exit(2)
+        # 时间线语义 diff（方案五阶段2）：两参均为 timeline JSON（含 project+video_tracks
+        # 特征键）时自动走 timeline_diff；否则维持报告对比（diffcmd）——一个 diff 入口，
+        # 按输入特征分流，最小惊讶。
         from diffcmd import run_diff
-        sys.exit(run_diff(a.subs_extra[0], a.subs_extra[1], dry=a.dry_run))
+        from timeline_diff import is_timeline
+        ja, jb = a.subs_extra
+        both_tl = False
+        try:
+            # 特征键探测容忍任何失败（读不到/解析不了 → 回落报告对比，让其给出错误提示）
+            both_tl = is_timeline(json.loads(Path(ja).read_text(encoding="utf-8"))) and \
+                is_timeline(json.loads(Path(jb).read_text(encoding="utf-8")))
+        except Exception:
+            both_tl = False
+        if both_tl:
+            if a.json and a.dry_run:
+                print("✗ --json 落盘与 --dry-run 冲突（diff 为纯读命令，dry 下不写文件）"); sys.exit(2)
+            from timeline_diff import run_timeline_diff
+            sys.exit(run_timeline_diff(ja, jb, json_path=a.json, dry=a.dry_run))
+        if a.json:
+            print("✗ --json 仅在 diff 时间线模式（两参均为 timeline JSON）下可用"); sys.exit(2)
+        sys.exit(run_diff(ja, jb, dry=a.dry_run))
     # 不跟随符号链接（resolve() 会穿透 cp -rs 链接树等隔离副本，把 out/ 回执写到 live 项目）
     tp = Path(os.path.abspath(os.path.expanduser(a.timeline)))
     if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)

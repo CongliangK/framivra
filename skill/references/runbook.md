@@ -62,6 +62,14 @@ bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
 
 **耗时基准**（voice-ime 653s@1080p30，缓存命中）：validate ~3s、audio 数十秒、post_loudness ~10s、mux ~20s、qc ~11s、4K ~2.5min；**全链 ≈4-5 分钟**。
 
+**0) 先跑 `vtx diff` 定位影响面与推荐路径**（时间线语义 diff，2026-09-12 新增）：
+
+```bash
+python3 $VTX diff timeline.pre-<改动>.json timeline.json --json out/tl_diff.json
+```
+
+输出逐字段差异 + 影响面（seg/gfx 缓存键逐 clip 重算比对=真值、vseg 失效段、需重跑阶段、耗时预估）+ 推荐修改路径。R1 场景（只动音轨）预期报告：seg 失效 0、vseg 失效 0 段、需重跑 validate → audio → mux → qc、推荐路径 `patch_script`。若 diff 显示 seg/vseg 失效 >0，说明改动越界进了视频侧——按 R2 重跑，别只走本配方。原则口径：**改动走哪条路以 diff 输出的 advice.recommended_path 为准**（generator=改 make_subs.py 再生；patch_script=幂等补丁；manual_whitelist=仅 _meta 可手改）。
+
 **必跑验证门**：validate（机制）→ qc（-14±1.5 LUFS/切点/帧数）→ content_gates（G1/G2/**G3 解码 TP**/G7/G10）→ check_4k（4K 版 14 项断言）。
 
 **已知坑位**：
@@ -81,7 +89,18 @@ bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
 cd ~/文档/04_bilibili视频/voice-ime
 python3 $VTX -t timeline.json snapshot
 # …幂等脚本改 timeline.json…
+python3 $VTX diff cache/snapshots/<最近快照>/timeline.json timeline.json --json out/tl_diff.json
+```
 
+**先看 diff 再决定动不动画布**（2026-09-12 新增，统一「改生成器 vs 补丁」口径）：上面第 3 步的语义 diff 就是决策依据——
+
+- `seg 失效 / vseg 失效段 >0` 或 entries 落在 `video_tracks/subtitles/project` → 几何/时长/字幕类改动，**只能走生成器**（本配方 R2 全链），推荐路径应显示 `generator`；
+- `seg/gfx/vseg 全 0` 且 entries 落在 `audio_tracks` → 纯音频参数改动，降级走 R1（audio+post_loudness+mux+qc，跳过 video）；
+- `manual_whitelist` 之外的任何「手改」都不合规（timeline 由生成器再生，禁止手改）；白名单仅 `_meta` 注释类字段。
+
+硬门槛自验：只改 1 个 clip 时长的 diff 必须报告 **seg 失效恰好 1 个 clip**（voice-ime 实测：ar_二@2059 dur 91→121，seg 重编码恰 1 任务、vseg 失效 2/8 段，实跑逐段核对一致；预估 42s vs 实测 46s，误差 +8.7%）。
+
+```bash
 python3 $VTX -t timeline.json validate
 
 # 缓存决策（gfx=内容寻址自动换键，通常无需手工清）：
