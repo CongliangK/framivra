@@ -177,7 +177,7 @@ def io_workers() -> int:
 # -filter_complex_threads 的线程数（2026-09-12 滤镜多线程解锁，方案二阶段1）。
 # v3.6 时代（2026-09-08）强制 1 的依据——「多线程 filtergraph 下 framesync 窗口
 # 边界密集带调度竞态致主链丢帧」——已被 61 层 ±20 帧密集端点复现图证伪
-# （2026-09-11/12 两轮：threads=1 与 4 输出 MD5 逐位一致，4 快 2.0×，实验收编于
+# （2026-09-11/12 两轮：threads=1 与 4 输出 MD5 逐位一致，4 快 1.9×，实验收编于
 # tests/test_filter_threads.py）。但 bench_p2 全链 A/B（2026-09-12 阶段1 验收）后
 # 默认仍保持 1，两条实测依据：①真实项目（voice-ime 16746f/69 层）前 3 段——恰为
 # 输入路数最多的 15/11/13 路——存在与线程数无关的跨运行输出非确定性（同 argv
@@ -189,7 +189,9 @@ def io_workers() -> int:
 # 一致、差异段 PSNR 与同线程方差同分布，无新增风险）。
 def filter_threads() -> int:
     v = os.environ.get("VTX_FILTER_THREADS", "1")
-    if v.isdigit() and int(v) > 0: return int(v)
+    # 采纳值封顶 cpu 核数：滤镜线程超核数无收益只增调度开销（对齐 io_workers 封顶纪律）
+    if v.isdigit() and int(v) > 0:
+        return min(int(v), max(1, os.cpu_count() or 8))
     return 1
 
 def run_ffmpeg_task(c: Ctx, label: str, cmd):
