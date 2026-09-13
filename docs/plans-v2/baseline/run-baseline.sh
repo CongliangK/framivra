@@ -56,7 +56,7 @@ for f in cache/report_audio/stem_voice.wav cache/report_audio/stem_bed_raw.wav \
          cache/report_audio/stem_bed_duck.wav; do
   if [ -L "$f" ]; then echo "✗ $f 仍是符号链接（写穿 live 风险），先 rm 再跑"; exit 9; fi
 done
-rm -f out/subs_check.json
+rm -f out/subs_check.json out/audit_report.json   # 红队 P2-5：audit_bundle 亦为固定名直写（偏离冻结程序时防穿透）
 
 run_one() {
   name="$1"; shift

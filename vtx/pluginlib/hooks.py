@@ -263,10 +263,32 @@ def contribute_keys(c) -> set:
     return keys
 
 
+def _plugin_code_digest(name: str) -> str:
+    """插件代码内容摘要（红队终审 P1-1 裁定 2026-09-14）：插件目录全部 .py 文件
+    （排序 文件名+字节）的 sha1 前 12 位——改默认参/改代码不 bump version 的
+    场景一律翻转指纹（「version 纪律为唯一代码变更代理」的盲区堵死）。模块加载
+    成功后文件必在；读不到按 MISSING 计（fail-方向：指纹必变）。"""
+    d, _origin = _registry.plugin_module_dir(name)
+    h = hashlib.sha1()
+    if d is None or not d.is_dir():
+        h.update(b"NO-DIR")
+        return h.hexdigest()[:12]
+    for f in sorted(d.glob("*.py"), key=lambda x: x.name):
+        h.update(f.name.encode())
+        try:
+            h.update(f.read_bytes())
+        except OSError:
+            h.update(b"MISSING")
+    return h.hexdigest()[:12]
+
+
 def _plugin_params_digest(c, name: str) -> str:
-    """对本 timeline 生效的插件参数摘要：插件键声明（registry 静态注册表 +
-    external manifest，P4 起经 registry.key_map 双源）在 timeline 中的取值
-    （排序 JSON 的 sha1 前 12 位）——插件改默认参/键值变 → 摘要变 → 回执失效。"""
+    """对本 timeline 生效的插件参数摘要 = 显式键值 + **插件代码内容摘要**：
+    键声明（registry 静态注册表 + external manifest，P4 起经 registry.key_map
+    双源）在 timeline 中的取值（收集全部实例——P1 审查 F2），叠加
+    `_plugin_code_digest`（红队终审 P1-1：官方插件改 DEFAULTS 不 bump version、
+    无键 external 改代码两类盲区实测会使 digest 不变 → 旧回执放行陈旧产物，
+    与 §2.1 宣称冲突——掺代码摘要后宣称成立）。"""
     picked = {}
     try:
         key_map = _registry.key_map()
@@ -286,7 +308,8 @@ def _plugin_params_digest(c, name: str) -> str:
                     picked.setdefault(f"{path}:{key}", []).append(it[key])
     except Exception:
         pass   # 摘要失败不阻断指纹——退化为无参数成分（宁弱不崩）
-    blob = json.dumps(picked, ensure_ascii=False, sort_keys=True)
+    blob = json.dumps({"params": picked, "code": _plugin_code_digest(name)},
+                      ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:12]
 
 

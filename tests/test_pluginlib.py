@@ -595,6 +595,27 @@ class FakePluginBus(unittest.TestCase):
                 pl_hooks._load_plugin_module("fakeplug3")
         self.assertIn("注册了没声明", str(cm.exception))
 
+    def test_plugin_code_change_flips_digest(self):
+        """红队终审 P1-1 回归：插件代码内容变（不 bump version / 不改键值）
+        → 摘要必变——改 DEFAULTS 盲区与无键插件盲区的共同兜底。"""
+        with tempfile.TemporaryDirectory() as d:
+            import shutil as _sh
+            root = Path(d)
+            src = Path("plugins/duck-static/__init__.py").read_text(encoding="utf-8")
+            fake = root / "duck-static"
+            fake.mkdir()
+            (fake / "__init__.py").write_text(src, encoding="utf-8")
+            c = Ctx(_tl(root))
+            with mock.patch("vtx.pluginlib.registry.plugin_module_dir",
+                            return_value=(fake, "builtin")):
+                d1 = pl_hooks._plugin_code_digest("duck-static")
+                d2 = pl_hooks._plugin_code_digest("duck-static")
+                (fake / "__init__.py").write_text(
+                    src + "\n# 改默认参（不 bump version 的代码变更）\n", encoding="utf-8")
+                d3 = pl_hooks._plugin_code_digest("duck-static")
+            self.assertEqual(d1, d2)      # 同码同摘要（幂等）
+            self.assertNotEqual(d2, d3)   # 改 DEFAULTS → 摘要变
+
     def test_params_digest_collects_all_instances(self):
         """P1 对抗审查 F2：多实例参数全收集——改第二例参数 digest 必须变。"""
         with tempfile.TemporaryDirectory() as d:

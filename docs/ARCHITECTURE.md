@@ -48,8 +48,8 @@ video_tools/
 ├── apps/           # 12 件应用（见 §3）
 ├── plugins/        # 官方插件（denoise / duck-static，见 §2）+ registry.json
 ├── skills/         # 工作流包（tech-talk，见 §4）
-├── examples/       # hello-app + hello-plugin 纪律范本（见 §4.2）
-├── scripts/        # 仅内核工具残留：new_project / gfx_golden / bench_cold
+├── examples/       # hello-app + hello-plugin 纪律范本 + skill-demo 虚拟歌手骨架（见 §4.2）
+├── scripts/        # 内核工具与仓级基建：new_project / gfx_golden / bench_cold + run_all_tests / docs_smoke + 迁走件的兼容 symlink
 ├── vt.py           # 统一入口（doctor/list/check/version/init，见 §5.1）
 └── pyproject.toml  # 包 video-tools，console scripts vtx/vt（见 §5.2）
 ```
@@ -119,7 +119,7 @@ v2 定案〔用户拍板〕：**G3 的 -1.0 dBFS 为唯一权威**，三处对�
 
 **不变量 1 · 缓存键贡献**。插件经 `contribute_keys(c)` 把自己的缓存键并入 gc 的存留白名单。现状缺口〔代码现状 hygiene.py:231-245〕：`gc_plan` 把 `cache/audio/` 下不在 `_current_keys` ak 集合内的文件、`cache/` 根下不在 known 集合内的目录一律判垃圾，而 `budget_gate` 在渲染阶段前自动触发 gc〔hygiene.py:440-455〕——插件产物若不注册键，**渲染中就会被自动回收**。denoise 缓存键构成 = `media_stat_digest(源)` + 插件名 + 版本 + 参数摘要（**勿用全文件 md5**，GB 级源全量哈希违背缓存卫生层哲学〔代码现状 hygiene.py:39-53〕）。
 
-**不变量 2 · 回执指纹**。`cache_state.receipt_fingerprint` 现状 = timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容〔代码现状 cache_state.py:70-87〕。v2 **必须掺入「生效插件清单」**（插件名 + 版本 + 对本 timeline 生效的参数摘要）——防插件升级/改默认参后旧回执放行陈旧产物。混入位置在现有哈希序末尾追加一段，不改变既有成分。**空生效清单时省略该段**〔总控裁定 2026-09-13，P1 影子基线温态复验的前提〕：无插件时间线的指纹与 v1 逐字节一致、v1 回执在 v2 下继续有效（迁移兼容）；不变量 ② 由"段的出现/内容变化"保证——装/卸/升级/改参任一状态翻转都使录制侧指纹与重算侧失配（含卸载后回落 v1 形态：带段录制的旧回执对无段重算同样失配被拒）。〔P2b 落地注：「对本 timeline 生效」= installed+enabled 且 timeline 声明了该插件任一注册键（hooks.active_plugins 的 c 过滤）——无插件键时间线生效清单恒空，省略段的 v1 兼容由此保证。〕
+**不变量 2 · 回执指纹**。`cache_state.receipt_fingerprint` 现状 = timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容〔代码现状 cache_state.py:70-87〕。v2 **必须掺入「生效插件清单」**（插件名 + 版本 + 对本 timeline 生效的参数摘要 **+ 插件代码内容摘要**——红队终审 P1-1 裁定 2026-09-14：官方插件改 DEFAULTS 不 bump version、无键 external 改代码两类盲区实测使 digest 不变，掺代码摘要后「防插件升级/改默认参/改代码后旧回执放行陈旧产物」的宣称成立）。混入位置在现有哈希序末尾追加一段，不改变既有成分。**空生效清单时省略该段**〔总控裁定 2026-09-13，P1 影子基线温态复验的前提〕：无插件时间线的指纹与 v1 逐字节一致、v1 回执在 v2 下继续有效（迁移兼容）；不变量 ② 由"段的出现/内容变化"保证——装/卸/升级/改参任一状态翻转都使录制侧指纹与重算侧失配（含卸载后回落 v1 形态：带段录制的旧回执对无段重算同样失配被拒）。〔P2b 落地注：「对本 timeline 生效」= installed+enabled 且 timeline 声明了该插件任一注册键（hooks.active_plugins 的 c 过滤）——无插件键时间线生效清单恒空，省略段的 v1 兼容由此保证。〕
 
 **不变量 3 · 安装态与键注册表**。
 
@@ -182,6 +182,7 @@ plugin 额外：
 - health 探测命令必须为**插件根内相对路径**，拒绝对路径与 `..`（防 health 探针被指向任意可执行）。
 - 外部路径 resolve 后做**白名单根校验**（插件目录之外的任何路径不加载）。
 - external 模块导入锚 = 父目录 **append** 进 sys.path + 导入后即摘除 + `mod.__file__` 落点断言（防 external 父目录下同名模块顶替官方插件/stdlib——P4 审查 P1-1 裁定）。
+- **无键声明插件 = 全局生效语义**（红队终审登记）：hooks 声明但无 schema_keys 的插件（如纯 audio_events 型）对**所有** timeline 生效且无键位门——安装即信任；其代码变更由代码内容摘要兜底失效（上一条）。external 默认 disabled 是信任边界。
 - 官方声明（registry.json）的插件实体**只认 `plugins/<name>/`**——目录缺失即 not_installed（安装破损），不被同名 external 顶替身份（P4 审查 P2-2 裁定）。
 - 已知限制：external 插件 manifest 的 `cache_dirs` 声明暂无生效通道（get_cache_dirs 只读静态注册表；external 插件缓存键走 contribute_keys 的 ak 集不受影响）〔P4 审查 P2-9 记录〕。
 
@@ -258,6 +259,9 @@ uses 声明按**产线用法定**（不是最小依赖）：`uses_apps: asr, tts
 ### 4.2 examples/（纪律范本）
 
 - **hello-app**：最小 app 结构范本（manifest/health/README/tests 自包含）。
+- **skill-demo**：虚拟歌手搞笑视频工作流包骨架（零 apps/plugins 依赖的纯内核包）——
+  兼验收门 4 关停测试道具（gen_fixture.sh/gfxA.html/timeline.json/expected_check.sh 四件，
+  expected_check 以 `qc --strict` 断言全检含 TP 项）。
 - **hello-plugin**（音频插件完整纪律范本）：演示装/未装/禁用**三分支**报错文案（§2.1 不变量 3）、`contribute_keys` 缓存键贡献（§2.1 不变量 1）、环境缺失 fail-hard（§2.2 缝 A）、**卸载后缓存失效**（键出白名单 → gc 回收，验收门 6 的对照实现）。
 
 examples 本身走 external 注册路径安装（默认 disabled，§2.4）——范本即安全节的活体测试。

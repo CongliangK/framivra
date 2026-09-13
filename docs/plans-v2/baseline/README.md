@@ -116,7 +116,9 @@ stem_bed_raw.wav / stem_bed_duck.wav`（3×107M）经影子符号链接被写穿
    绑定失配 → qc 输出形态变化（属基线漂移，非 v2 回归）；
 3. **live 跑过 subs check** → 影子重建带 out/subs_check.json 符号链接 →
    subs.py write_text 直写穿透 live（run-baseline.sh 已内置防御性 rm 兜底）；
-4. **timeline.v4.2-frozen.json 被清理** → diff 对照件缺失。
+4. **timeline.v4.2-frozen.json 被清理** → diff 对照件缺失；
+5. **`../_library` 素材变更**（红队 P2-6 补录）→ 源 stat 指纹失配 → 回执整体
+   丢弃 → qc 依赖门拒绝（检测方向与 1 相同，但触发面在仓外素材库）。
 
 ## 已知不可复现项 / 行为注记
 
