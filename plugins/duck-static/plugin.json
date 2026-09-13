@@ -1,0 +1,25 @@
+{
+  "name": "duck-static",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "entry": {
+    "cli": ["bed_static_duck.py"]
+  },
+  "health": {
+    "type": "command",
+    "command": "bed_static_duck.py --help"
+  },
+  "requires": {
+    "binaries": [],
+    "python_packages": [],
+    "platforms": []
+  },
+  "config_keys": [],
+  "docs": "README.md",
+  "extends": {
+    "schema_keys": [
+      {"path": "audio_tracks[]", "key": "duck_strategy"}
+    ],
+    "hooks": ["validate", "audio_events"]
+  }
+}

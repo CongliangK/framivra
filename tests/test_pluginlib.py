@@ -161,6 +161,9 @@ class RegistryTest(unittest.TestCase):
                          [{"path": "audio_tracks[]", "key": "duck_strategy"}])
         self.assertTrue(reg["denoise"]["installed"])       # P2b 已落地实体
         self.assertEqual(reg["denoise"]["version"], "1.0.0")
+        self.assertTrue(reg["duck-static"]["installed"])
+        self.assertEqual(reg["duck-static"]["version"], "1.0.0")
+        self.assertEqual(reg["duck-static"]["hooks"], ["validate", "audio_events"])
 
     def test_lookup_key(self):
         name, ki = pl_registry.lookup_key("denoise", REPO)
@@ -170,10 +173,9 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(pl_registry.lookup_key("no_such_key", REPO), (None, None))
 
     def test_plugin_state_installed_vs_declared(self):
-        # denoise：registry installed:true 且 plugins/denoise/ 实体在 → active
+        # P2b 两插件实体落地：registry installed:true 且 plugins/<name>/ 在 → active
         self.assertEqual(pl_registry.plugin_state("denoise", REPO), "active")
-        # duck-static（本提交时点）：声明未落地 → not_installed（P2b 后续提交置 true）
-        self.assertEqual(pl_registry.plugin_state("duck-static", REPO), "not_installed")
+        self.assertEqual(pl_registry.plugin_state("duck-static", REPO), "active")
         self.assertEqual(pl_registry.plugin_state("unknown-thing", REPO), "not_installed")
 
     def test_builtin_scan_finds_valid_apps(self):
@@ -366,14 +368,53 @@ class ThreeBranchCli(unittest.TestCase):
         self.assertNotIn("⚠", r.stdout)
         self.assertNotIn("未安装", r.stdout)
 
-    def test_duck_strategy_key_fails_with_install_hint(self):
+    def test_duck_strategy_key_active_passes_validate(self):
+        # 语法差异门真实跑（P2b 后 duck-static active）：duck_strategy 键 →
+        # validate 全绿放行（未装分支报错正例见 ThreeBranchScan mock 驱动）
         p = self._proj(self.root)
         tl = json.loads(p.read_text(encoding="utf-8"))
-        tl["audio_tracks"][0]["duck_strategy"] = "static"
+        tl["audio_tracks"][0]["duck_strategy"] = {"mode": "static"}
+        p.write_text(json.dumps(tl), encoding="utf-8")
+        r = self._run(p)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("✓ 校验通过", r.stdout)
+        self.assertNotIn("⚠", r.stdout)
+
+    def test_duck_mutual_exclusion_and_meta_double_apply_fail(self):
+        # validate 钩子（协议 v1.1）真实跑：互斥 / _meta 双施 → exit 1 带指向文案
+        p = self._proj(self.root)
+        tl = json.loads(p.read_text(encoding="utf-8"))
+        tl["audio_tracks"][0]["duck_strategy"] = {"mode": "static"}
+        tl["audio_tracks"][0]["duck"] = True
         p.write_text(json.dumps(tl), encoding="utf-8")
         r = self._run(p)
         self.assertEqual(r.returncode, 1)
-        self.assertIn("由 plugins/duck-static 提供，未安装", r.stdout)
+        self.assertIn("互斥", r.stdout)
+        p2 = self._proj(self.root)
+        tl2 = json.loads(p2.read_text(encoding="utf-8"))
+        tl2["_meta"] = {"bed_static_duck": {"script": "scripts/bed_static_duck.py"}}
+        tl2["audio_tracks"][0]["duck_strategy"] = {"mode": "static"}
+        p2.write_text(json.dumps(tl2), encoding="utf-8")
+        r2 = self._run(p2)
+        self.assertEqual(r2.returncode, 1)
+        self.assertIn("_meta.bed_static_duck", r2.stdout)
+        self.assertIn("pre-duck", r2.stdout)
+
+    def test_both_plugin_keys_active_passes_validate(self):
+        # 语法差异门预演（真实跑）：denoise + duck_strategy 键同 timeline、
+        # 两插件 active → validate 全绿放行、零 ⚠ 零提示（三分支分支 1）
+        p = self._proj(self.root, denoise=True)
+        tl = json.loads(p.read_text(encoding="utf-8"))
+        tl["audio_tracks"].append(
+            {"name": "bed", "duck_strategy": {"mode": "static"},
+             "events": [{"src": "a", "in": 0, "out": 60, "volume": 0.5}]})
+        p.write_text(json.dumps(tl), encoding="utf-8")
+        r = self._run(p)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("✓ 校验通过：1 源 / 1 视频轨 1 clips / 0 字幕 / 2 音轨 2 事件", r.stdout)
+        self.assertNotIn("⚠", r.stdout)
+        self.assertNotIn("未安装", r.stdout)
+        self.assertNotIn("禁用", r.stdout)
 
     def test_clean_timeline_output_identical_to_p1_1(self):
         # 无插件键/未知键：validate 成功行与 P1-1 逐字一致（零 ⚠ 零新行）

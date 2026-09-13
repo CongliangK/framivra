@@ -20,7 +20,7 @@ from pathlib import Path
 import re
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-KNOWN_HOOKS = ("prepare_source", "audio_events")   # §2.2 v1 两缝（扩展点冻结面）
+KNOWN_HOOKS = ("prepare_source", "audio_events", "validate")   # §2.2 v1 两缝 + v1.1 validate（扩展点冻结面）
 KINDS = ("app", "plugin")
 
 

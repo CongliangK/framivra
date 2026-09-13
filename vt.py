@@ -609,7 +609,10 @@ def cmd_list(kind: str) -> int:
     if kind == "plugins":
         for d in comp["declared"]:
             keys = "、".join(f"{k.get('path')}.{k.get('key')}" for k in d["keys"] if isinstance(k, dict))
-            print(f"  {'ℹ 未安装':9s} {d['name']}@{d['version']}（registry 声明，键 {keys}）——{d['note']}")
+            # P2b 起插件可落地：按实际安装态打标（未装=未安装；已装在上方发现
+            # 段已按 enabled/FAIL 展示，此行是 registry 声明对账）
+            tag = {"active": "✓ 已装", "disabled": "ℹ 已装禁用"}.get(d["state"], "ℹ 未安装")
+            print(f"  {tag:9s} {d['name']}@{d['version']}（registry 声明，键 {keys}）——{d['note']}")
     return 1 if comp["fail"] else 0
 
 

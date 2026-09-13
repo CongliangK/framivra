@@ -1,6 +1,6 @@
 """钩子总线（§2.2 两缝）+ 三不变量聚合入口（§2.1，设计权威 docs/ARCHITECTURE.md）。
 
-扩展点（v1 仅音频侧，值域冻结）：
+扩展点（v1 仅音频侧 + v1.1 validate；值域冻结）：
   缝 A `prepare_source`（denoise 型）：源级键插件——在源音频提取的**单一实现**
     （stages.source_audio_extraction）内统一触发，一源一产物进 cache/audio/
     （内容寻址键见不变量 ①）。契约 v1.1（P2b 细化，§2.2 缝 A 小注）：
@@ -12,6 +12,10 @@
   缝 B `audio_events`（duck-static 型）：轨级键插件——_audio_graph 构建
     filtergraph **前**对全量 tracks 的纯内存 events 变换，**不写回 timeline**
     （幂等天然成立）；区间渲染走同一缝（窗口模式自动正确，无需特判）。
+  `validate`（协议 v1.1 增补，§2.2）：validate 阶段在 _scan_plugin_keys 后
+    调用的插件校验扩展点——插件暴露 ``validate(c) -> list[str]``，错误行由
+    stages.validate 并入 errs 阻断。用途：插件键的互斥/形状/双施防护等插件级
+    契约的早失败（duck:true × duck_strategy 互斥、_meta.bed_static_duck 双施）。
 
 插件加载走**包导入** `importlib.import_module("plugins.<name>")`（§2.3 规则，
 禁 spec_from_file_location——绕过包语义是双模块裂分的另一入口）；加载时做
@@ -28,7 +32,7 @@ from pathlib import Path
 
 from . import registry as _registry
 
-HOOK_NAMES = ("prepare_source", "audio_events")
+HOOK_NAMES = ("prepare_source", "audio_events", "validate")   # v1.1 + validate（§2.2）
 
 
 def _plugin_hooks_declared(name: str, repo_root=None) -> list:
@@ -169,6 +173,29 @@ def run_audio_events(c, tracks) -> list:
         if callable(fn):
             tracks = fn(c, tracks)
     return tracks
+
+
+def run_validate(c) -> list:
+    """validate 钩子（协议 v1.1 增补，§2.2）：validate 阶段在 _scan_plugin_keys
+    后调用的插件校验扩展点。
+
+    逐个应用声明了 validate 的生效插件（约定：插件暴露
+    ``validate(c) -> list[str]``——返回错误行列表，空/非列表 = 通过），错误行由
+    stages.validate 并入 errs 阻断。仅对「本 timeline 生效」的插件调用（三分支
+    已在 _scan_plugin_keys 把未装/禁用挡在前面，此处不重复报）。用途：插件键
+    互斥（duck:true × duck_strategy 同轨）、_meta 双施防护（bed_static_duck
+    标记）、键值形状（mode 值域/数值参数类型）等插件级契约的早失败。"""
+    errs = []
+    for p in active_plugins(c):
+        if "validate" not in _plugin_hooks_declared(p["name"]):
+            continue
+        mod = _load_plugin_module(p["name"])
+        fn = getattr(mod, "validate", None) if mod else None
+        if callable(fn):
+            got = fn(c)
+            if isinstance(got, (list, tuple)):
+                errs.extend(str(x) for x in got)
+    return errs
 
 
 def contribute_keys(c) -> set:

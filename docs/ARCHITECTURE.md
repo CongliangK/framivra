@@ -143,9 +143,9 @@ v2 定案〔用户拍板〕：**G3 的 -1.0 dBFS 为唯一权威**，三处对�
 
 **缝 B · 音轨事件内存变换钩子**（duck-static 型）：
 
-- 轨级键 `duck_strategy: "static"`，与既有 `duck: true`（sidechaincompress 动态避让〔代码现状 stages.py:268-307〕）**互斥校验**（两键同轨 = validate 报错）。
-- 检测到 `_meta.bed_static_duck` 存在即报错——防现役 timeline（已用脚本烘焙过静态避让）再挂插件**双施避让**〔现状标记语义 bed_static_duck.py:63-69〕。
-- 钩子 = **纯内存 events 列表变换**：在 `_audio_graph` 构建 filtergraph 前对全量 tracks 生效，**不写回 timeline**（幂等天然成立）；变换逻辑与 bed_static_duck.py 现实现一致（全局增益×口播窗内额外衰减×切段 src_in 连续〔代码现状 bed_static_duck.py:93-109〕）。区间渲染（`--range`）走同一 `_audio_graph` 前缝，窗口模式自动正确，无需特判。
+- 轨级键 `duck_strategy: {"mode": "static", ...}`（对象参数缺省化，缺省对齐 bed_static_duck CLI 默认：global_db -8 / duck_db -4 / voice_track "voice" / merge_gap 20 / attack 5 / release 8〔P2b 落地注：冻结稿的裸串 `"static"` 值形状细化为对象——缺省化后与 CLI 默认逐项对齐，语义不变面更窄〕），与既有 `duck: true`（sidechaincompress 动态避让〔代码现状 stages.py:268-307〕）**互斥校验**（两键同轨 = validate 报错）。
+- **validate 钩子（协议 v1.1 增补，P2b 落地）**：新增扩展点 `validate`——validate 阶段在 `_scan_plugin_keys` 后调用 `hooks.run_validate(c) -> list[str]`（错误行并入 errs 阻断；插件暴露 `validate(c) -> list[str]`，空 = 通过）。用途：① duck:true 与 duck_strategy 同轨互斥；② `_meta.bed_static_duck` 存在即报错（防现役 timeline 已用脚本烘焙过静态避让再挂插件键**双施**——提示先从 pre-duck 备份恢复）；③ 键值形状（对象 / mode 值域 / 数值参数类型 / voice_track 轨存在）早失败。仅对三分支放行后的生效插件调用，未装/禁用分支不重复报。
+- 钩子 = **纯内存 events 列表变换**：在 `_audio_graph` 构建 filtergraph 前对全量 tracks 生效，**不写回 timeline**（幂等天然成立）；变换逻辑与 bed_static_duck.py 现实现一致（全局增益×口播窗内额外衰减×切段 src_in 连续〔代码现状 bed_static_duck.py:93-109〕——P2b 起两者共用同一 transform_events 纯函数，脚本烘焙与管线渲染永不分叉）。区间渲染（`--range`）走同一 `_audio_graph` 前缝，窗口模式自动正确，无需特判。
 
 ### 2.3 manifest schema v1
 
@@ -166,8 +166,10 @@ plugin 额外：
 
 ```json
 { "extends": { "schema_keys": [{ "path": "json_pointer 风格定位", "key": "键名" }],
-               "hooks": ["prepare_source", "audio_events"] } }
+               "hooks": ["prepare_source", "audio_events", "validate"] } }
 ```
+
+（hooks 值域 = 已冻结扩展点：缝 A `prepare_source` / 缝 B `audio_events` / v1.1 `validate`〔P2b 增补〕，见 §2.2。）
 
 规则〔用户拍板〕：
 

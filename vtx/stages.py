@@ -159,6 +159,9 @@ def validate(c: Ctx):
     # （含 events[]）/project；`_meta` 永久白名单）。已声明未装/被禁用进 errs FAIL；
     # 未知键只警告不阻断——现有 timeline（键全部已知或已声明）零新输出。
     _plugin_warns = _scan_plugin_keys(c, errs)
+    # v2 §2.2 validate 钩子（协议 v1.1 增补）：插件级契约早失败（互斥/_meta 双施/
+    # 键值形状），错误行并入 errs 阻断——仅对三分支放行后的生效插件调用。
+    errs.extend(_plugin_hooks.run_validate(c))
     if errs:
         print(f"校验失败（{len(errs)} 项）："); [print("  ✗", e) for e in errs]
         c.receipt("validate", False, f"{len(errs)} errors"); sys.exit(1)

@@ -67,18 +67,21 @@ class DoctorJson(unittest.TestCase):
         v = d["version"]
         for k in ("version", "head", "state", "notes"):
             self.assertIn(k, v)
-        # 组件段：注册表声明 + import vtx 自检（P2b 起 denoise 落地 active；
-        # duck-static 本提交时点仍声明未装）
+        # 组件段：注册表声明 + import vtx 自检（P2b 两插件落地 active）
         c = d["components"]
         self.assertIn("declared", c)
         self.assertIn("import_vtx", c)
         declared = {x["name"]: x for x in c["declared"]}
         self.assertIn("denoise", declared)
         self.assertIn("duck-static", declared)
-        self.assertEqual(declared["denoise"]["state"], "active")
-        self.assertEqual(declared["denoise"]["version"], "1.0.0")
-        self.assertEqual(declared["duck-static"]["state"], "not_installed")
-        self.assertIn("未安装（规划中）", declared["duck-static"]["note"])
+        for name in ("denoise", "duck-static"):
+            self.assertEqual(declared[name]["state"], "active")
+            self.assertEqual(declared[name]["version"], "1.0.0")
+        # 发现件（builtin）两插件也须过 health 门
+        plugins = [e for e in c["entries"] if e["kind"] == "plugin"]
+        self.assertEqual({e["name"] for e in plugins}, {"denoise", "duck-static"})
+        for e in plugins:
+            self.assertFalse(e["fail"], e)
         self.assertTrue(c["import_vtx"]["ok"], c["import_vtx"])
         self.assertTrue(str(REPO) in c["import_vtx"]["path"])
         # skills 段
@@ -98,7 +101,10 @@ class ListCheck(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("denoise", r.stdout)
         self.assertIn("duck-static", r.stdout)
-        self.assertIn("未安装", r.stdout)
+        # P2b 两插件落地：list 展示 enabled 态与 registry 声明（1.0.0）
+        self.assertIn("✓ enabled denoise", r.stdout)
+        self.assertIn("duck-static@1.0.0", r.stdout)
+        self.assertNotIn("✗ FAIL", r.stdout)
 
     def test_apps_and_skills_list_ok(self):
         for args in (("apps", "list"), ("skills", "list"),
