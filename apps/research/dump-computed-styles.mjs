@@ -3,7 +3,15 @@
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
-const url = process.argv[2] ?? "https://en.manayerbamate.com/";
+// 无参/--help 守卫（P3：防误触直连浏览器——调研工具须显式给目标 URL）
+if (process.argv.length < 3 || process.argv[2] === "--help" || process.argv[2] === "-h") {
+  console.error("用法: node dump-computed-styles.mjs <url> <输出.json>");
+  console.error("  CDP 计算样式采集：滚动触发懒加载后，遍历全部可见元素，聚合计算样式统计。");
+  console.error("  依赖 PATH 上的 google-chrome（CDP 端口 9334）。");
+  process.exit(process.argv.length < 3 ? 2 : 0);
+}
+
+const url = process.argv[2];
 const out = process.argv[3] ?? "computed-styles.json";
 const PORT = 9334;
 

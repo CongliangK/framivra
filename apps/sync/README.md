@@ -15,7 +15,7 @@ v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py`
 
 - 硬依赖（app 级，manifest requires）：ffmpeg + numpy（repack_voice 系统 python3 即可跑）
 - `sync_audio.py` 须在 **conda `denoise` 环境**运行（numpy/scipy/soundfile/soxr；scipy 仅该环境提供，doctor 的系统解释器探不到，故不进 app 级 requires）：`~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py ...`
-- 全链依赖探测：`bash scripts/denoise_init.sh`（ffmpeg / denoise 环境 / Resemble 权重三探）
+- 全链依赖探测：`bash plugins/denoise/denoise_init.sh`（ffmpeg / denoise 环境 / Resemble 权重三探；原 scripts/denoise_init.sh 经兼容 symlink 可达）
 
 ## 健康检查
 

@@ -1,11 +1,11 @@
 # Faithful audio audit bundles
 
-`blender_bridge/audit_bundle.py` exports the selected tracks for listening before ducking and master loudness processing. Production media is never modified. MP3 is a lossy preview; a validated audit timeline is not proof that its mix equals the delivered film.
+`apps/blender-bridge/audit_bundle.py` exports the selected tracks for listening before ducking and master loudness processing. Production media is never modified. MP3 is a lossy preview; a validated audit timeline is not proof that its mix equals the delivered film.
 
 ```sh
-python blender_bridge/audit_bundle.py -t /project/timeline.json --prefix bed --prefix sfx --skip-blend
+python apps/blender-bridge/audit_bundle.py -t /project/timeline.json --prefix bed --prefix sfx --skip-blend
 # Preserve every event without silence detection:
-python blender_bridge/audit_bundle.py -t /project/timeline.json --prefix bed --whole --skip-blend
+python apps/blender-bridge/audit_bundle.py -t /project/timeline.json --prefix bed --whole --skip-blend
 ```
 
 Python, FFmpeg and ffprobe must be on PATH. These commands work with quoted Windows paths; omit `--skip-blend` only when Blender is installed. Cross-drive media directories use absolute paths and therefore require rebasing if moved to another computer.

@@ -75,7 +75,7 @@ manifest 行字段（对齐 voice-ime manifest.json + peak_db）：
 
 `gen` 完成后打印 repack_voice.py 同款后续命令序列（清 prepare 缓存 → prepare → audio →
 mux → qc → audit；v2 §1.2：limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用
-`scripts/repack_voice.py` 替换）。
+`apps/sync/repack_voice.py` 替换）。
 
 ## 引擎与 atempo 契约（方向坑必须钉死）
 

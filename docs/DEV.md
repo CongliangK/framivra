@@ -12,7 +12,7 @@
 - 片头迭代 `--draft --frames 300`（10s 画面）9.8s；validate 3s。
 - gfx 引擎：CDP 常驻浏览器多 tab 约 34ms/帧（不透明页单截直写）；透明页白黑双截解算。后续透明页快路径（`Emulation.setDefaultBackgroundColorOverride(a=0)` 直出带 alpha PNG）单帧 2400ms→91ms（约 6.6×）；页级并行 `VTX_GFX_PAGES` 后全量冷 gfx 12024 帧 192.5s（约 62fps）。tab 并发 4→16 收益递减，页级并行才是增量方向。〔出处：edit.md「gfx 渲染引擎」＋工作区 AGENTS.md D44/D44b〕
 - gfx 方案 v2（2026-09-11，本机 32C64G，基准项目 voice-ime 28 页 12024 帧，配置记法=PAGES/SPLIT_FRAMES/TABS）：新增**页内分片并行**（`VTX_GFX_SPLIT_FRAMES`/`VTX_GFX_SPLIT_MAX`）与**静态跨度去重**（`__vtx_static_spans`，1474 帧≈12.4% 字节复制免渲）后，生产默认定版 **7/450/4＝全量冷 129.8-131.9s、峰值 RSS 15.0-15.2GB**（commit 2e65536；桌面活跃时段正式验收 3 轮中位 149.8s，chrome/firefox/obsidian 同跑）。矩阵实测（冷跑 WALL s / 峰值 RSS GB）：6/0/4=161.9/13.0-16.4；8/600/4=129.3（±0.5%）/16.5-17.3；12/0/4=145.6；8/450/4=126.5-143.9/16.5-17.9（破 16GB 门）；**8/450/6=112.9-122.1/19.8-20.4（RSS 破线被否）**。≤110s 硬门未达：方案主杠杆（canvas 批量导出通道）被像素门槛证伪（见 §二），四个重页（g6b_endboard 765 帧/c5a 1153/c5b 810，全部零静态跨度）只剩截图通路，g6b 串行估算 ≈80s 构成硬下限。校准纪律：当次 6/0/4 基线 160.25s vs 历史记录 192.5s 偏差 -16.8%，未破 20% 修正线，矩阵数字可比。〔出处：docs/plans-2026-09-11/方案一＋voice-ime/cache/reports/gfx_opt_20260911 审计归档〕
-- blender_bridge audit_bundle：早期 json2blend+verify_blend 全链 22.2s → 优化后 8.1s。〔出处：工作区决策台账〕
+- blender-bridge（原 blender_bridge）audit_bundle：早期 json2blend+verify_blend 全链 22.2s → 优化后 8.1s。〔出处：工作区决策台账〕
 - content_gates 五门合并单次 pass（G1/G2/G3/G7/G10 + 项目门一次跑完）。〔出处：README scripts 节〕
 - `ffprobe -count_frames` 逐帧解码计数：1080p 全源 12-27s/个；改流头 nb_frames + count_packets 回落后 validate 2min→3s。〔出处：edit.md 坑表〕
 - `-frames:v N` 触发 filter_complex 全量 drain：曾耗 4:30（300 帧）；已对每路输入加 `-t` 截短。〔出处：edit.md 坑表〕
@@ -34,11 +34,11 @@
 
 - 合成项目 vtx 全链 QC 9/9（切点帧比对 0.03-0.04/255、-14.1 LUFS）；`--draft --frames` NVENC 草稿链验证。
 - 真实项目回归（voice-ime v3.9 冻结 timeline 在 /tmp 链接树副本上，live 原位零写入）：validate 37 源/69 clips/150 字幕 5.2s 通过；qc 74/75 与 FREEZE v3.9 完全一致（唯一 ✗ = 已证伪的 c4_mini 探针假阴性）；timeline md5 `9ce6ec43…`、final.mp4 md5 `ae9389ef…` 与冻结记录相符。
-- blender_bridge：json2blend+verify_blend 556/556、129 条（=D39 基线精确复现）。
+- blender-bridge：json2blend+verify_blend 556/556、129 条（=D39 基线精确复现）。
 - 组件矩阵：new_project 脚手架契约校验、全脚本 py_compile/bash -n/node --check、init.sh 幂等两次零差异。
 - 迁移附带修复：vtx.py timeline 路径改 `os.path.abspath`（防符号链接穿透把回执写到 live 项目，已回归验证）；aroll/README 失效引用修正。
 
-blender_bridge 历史产物校验记录：〔原 blender_bridge/README「历史校验记录」节，迁移后由本文承载〕
+blender-bridge 历史产物校验记录：〔原 blender_bridge/README「历史校验记录」节（现 apps/blender-bridge/README.md），迁移后由本文承载〕
 
 | 项目 | 校验 | 样帧 PSNR vs 终渲 |
 |---|---|---|
@@ -131,12 +131,12 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 - **程序权威本体收编（D40）**：video_tools 仓为唯一权威，skill live 挂载点全部符号链接；双仓收编方案（D36）同日被升格取代。
 - **vtx 拆包重构（2026-09-11）**：vtx.py 单文件 → 包（infra/encoders/composite/qc/stages/gfx_render/hygiene/cache_state 八模块），行为与旧版逐项一致；历史回滚锚点在 git 历史。〔出处：edit.md「工具位置」〕
 - **gfx 引擎演进**：CLI 逐帧截图 → CDP 常驻浏览器多 tab（4.6×）→ 透明页 override 直出快路径（6.6×）→ 页级并行（全冷 192.5s）→ 页内分片＋静态跨度去重（2026-09-11 方案 v2：默认 7/450/4 定版，全冷 129.8-131.9s）。方案 v2 配套两件基建：`scripts/gfx_golden.py` 像素基线（全零门槛，成为导出通道改造硬门——FO 快照、navfree 两通道均由它判死封存，详录 §二）；帧落盘原子化（tmp+os.replace，修 split×static 头帧并发双写竞态）。`VTX_GFX=cli` 保留回退。〔出处：edit.md + AGENTS.md D42/D44/D44b + docs/plans-2026-09-11/方案一〕
-- **blender_bridge 路线拍板**：不用 MCP（CLI/bpy 直连更自由）、不用外部直写 .blend（无格式规范），用 `blender --background --python` 生成；json2blend 建成后逐步补 blend2json 回写桥与 audit_bundle 分轨审计包。〔出处：blender_bridge/README 头注〕
-- **「打开即视频编辑工作区」实现注记**：headless 下 append 法/`win.workspace=` 赋值均不生效（实测 5.2.1 唯一可靠路径）＝以官方 Video_Editing app template 的 startup.blend 为底。〔出处：blender_bridge/README〕
+- **blender_bridge 路线拍板**：不用 MCP（CLI/bpy 直连更自由）、不用外部直写 .blend（无格式规范），用 `blender --background --python` 生成；json2blend 建成后逐步补 blend2json 回写桥与 audit_bundle 分轨审计包。〔出处：apps/blender-bridge/README 头注（原 blender_bridge/）〕
+- **「打开即视频编辑工作区」实现注记**：headless 下 append 法/`win.workspace=` 赋值均不生效（实测 5.2.1 唯一可靠路径）＝以官方 Video_Editing app template 的 startup.blend 为底。〔出处：apps/blender-bridge/README（原 blender_bridge/）〕
 - **design tokens 与模板库**：gfx-templates 七件源自 voice-ime v3.1-v3.9 九轮迭代已验收页参数化抽取；毛玻璃深底卡样式已废弃（违反白底暖色设计铁律），替代 = 白底暖色卡。〔出处：gfx.md〕
 - **pip 安全区红线来历**：voice-ime v3.7 五页（c5b/c4b/c4t/c4f/c2）因未预留 pip 安全区整版返工+全量重渲，遂成设计期硬约束。〔出处：gfx.md「pip 安全区」〕
 - **自包含底色原则来历**：透明底+深色字页面在演示层被剪短/落黑场后变黑底深字不可读（g6a_title 实案），确立「需要浅底就自带」。〔出处：gfx.md〕
-- **历史副本纪律**：`_library/bg_test/works/`（matting 四件）与 `voice-ime/cache/aup3_extract/`（aroll 两件）与本体当前逐字节一致，但属冻结历史快照——修改一律改本仓。`matting/run_full_bg.sh` 与 `post_h3.sh` 为 bg_test 历史运行器，内含本机绝对路径未参数化，属收编原样保留。〔出处：README「历史副本纪律」〕
+- **历史副本纪律**：`_library/bg_test/works/`（matting 四件）与 `voice-ime/cache/aup3_extract/`（aroll 两件）与本体当前逐字节一致，但属冻结历史快照——修改一律改本仓。`apps/matting/run_full_bg.sh` 与 `post_h3.sh` 为 bg_test 历史运行器，内含本机绝对路径未参数化，属收编原样保留。〔出处：README「历史副本纪律」〕
 - **时间线预览器 preview.html**：单文件网页，内置 poc2 示例自动载入；预览级校验发现问题标红，最终以 `vtx validate` 为准。〔出处：edit.md〕
 
 ## 四、2026-09-11 全面体检遗留登记（未修项，勿无声消失）

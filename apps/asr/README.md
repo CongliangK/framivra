@@ -47,7 +47,7 @@ env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
 | `/transcribe` | POST | `{"audio":"<本地wav路径>","language":"Chinese","timestamps":true}` | `{"text":"…","words":[{"w":"字","s":0.833,"e":0.913},…],"degraded_ranges":[[起,止],…],"duration_s":12.34}` |
 
 - 错误统一 `{"error":"中文可行动信息"}` + 4xx/5xx；音频不存在 400；`timestamps:true`
-  但 aligner 未加载 409（先跑 `bash asr/init.sh`）。
+  但 aligner 未加载 409（先跑 `bash apps/asr/init.sh`）。
 - **words 为 sidecar 加工格式，非 qwen-asr 原生 items**（原生为 token 级、无标点、ms
   制）：words[] = 单字粒度（拉丁连续串拆单字符共享 token 时间窗）、含标点（零宽锚 =
   前实字 {s,e}）、单位秒 3 位小数；`degraded_ranges` 为 text↔items 失配区段（text 字符

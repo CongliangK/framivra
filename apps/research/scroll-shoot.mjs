@@ -3,7 +3,15 @@
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
-const url = process.argv[2] ?? "https://en.manayerbamate.com/";
+// 无参/--help 守卫（P3：防误触直连浏览器——调研工具须显式给目标 URL）
+if (process.argv.length < 3 || process.argv[2] === "--help" || process.argv[2] === "-h") {
+  console.error("用法: node scroll-shoot.mjs <url> <输出前缀>");
+  console.error("  CDP 滚动截图：chrome --remote-debugging-port → 逐步滚动触发懒加载 → 逐段截图。");
+  console.error("  依赖 PATH 上的 google-chrome（CDP 端口 9333）。");
+  process.exit(process.argv.length < 3 ? 2 : 0);
+}
+
+const url = process.argv[2];
 const prefix = process.argv[3] ?? "sec";
 const PORT = 9333;
 
