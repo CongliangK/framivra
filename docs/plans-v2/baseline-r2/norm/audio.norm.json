@@ -1,14 +1,14 @@
 {
  "checks": [
   {
-   "detail": "实测 -15.6 LUFS，偏差 -1.6（容差 1.5~2.5）",
-   "level": "WARN",
+   "detail": "实测 -15.5 LUFS（目标 -14±1.5）",
+   "level": "PASS",
    "measured": {
-    "i_lufs": -15.6,
+    "i_lufs": -15.5,
     "target": -14.0
    },
    "name": "整片响度 I",
-   "pass": false
+   "pass": true
   },
   {
    "detail": "实测 TP -3.0 dBTP（≤-1）",
@@ -74,5 +74,5 @@
   "tp_fail": -1.0,
   "tp_warn": -1.0
  },
- "warn": 2
+ "warn": 1
 }

@@ -1,0 +1,2 @@
+  ✓ [app:external] hello-app｜health ✓（exit 0｜hello-app healthy｜python 3.13.11｜Linux）｜requires ✓
+doctor 结论：✅ 通过

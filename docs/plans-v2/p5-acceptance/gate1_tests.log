@@ -1,0 +1,843 @@
+test_inputs_use_plugin_product_path (tests.test_audio_report.CollectInputsPluginSource.test_inputs_use_plugin_product_path) ... ok
+test_report_dry_run_conflict (tests.test_audio_report.TestCliValidation.test_report_dry_run_conflict) ... ok
+test_report_mutually_exclusive (tests.test_audio_report.TestCliValidation.test_report_mutually_exclusive) ... ok
+test_report_only_on_audio (tests.test_audio_report.TestCliValidation.test_report_only_on_audio) ... ok
+test_scenarios (tests.test_audio_report.TestEndToEndSynthetic.test_scenarios) ... skipped 'set VTX_AUDIO_REPORT_INTEG=1 to run end-to-end'
+test_attack_fail (tests.test_audio_report.TestGradeDuck.test_attack_fail) ... ok
+test_degraded_warn (tests.test_audio_report.TestGradeDuck.test_degraded_warn) ... ok
+test_depth_fail (tests.test_audio_report.TestGradeDuck.test_depth_fail) ... ok
+test_release_fail (tests.test_audio_report.TestGradeDuck.test_release_fail) ... ok
+test_v42_measured_pass (tests.test_audio_report.TestGradeDuck.test_v42_measured_pass) ... ok
+test_mid_warn_and_fail (tests.test_audio_report.TestGradeHoles.test_mid_warn_and_fail) ... ok
+test_none_pass (tests.test_audio_report.TestGradeHoles.test_none_pass) ... ok
+test_opening_small_fail (tests.test_audio_report.TestGradeHoles.test_opening_small_fail) ... ok
+test_tail_only_warn (tests.test_audio_report.TestGradeHoles.test_tail_only_warn) ... ok
+test_v43_opening_fail (tests.test_audio_report.TestGradeHoles.test_v43_opening_fail) ... ok
+test_v41_incident_fail (tests.test_audio_report.TestGradeLoudnessDiff.test_v41_incident_fail) ... ok
+test_v42_anchor_pass (tests.test_audio_report.TestGradeLoudnessDiff.test_v42_anchor_pass) ... ok
+test_warn_bands (tests.test_audio_report.TestGradeLoudnessDiff.test_warn_bands) ... ok
+test_fail (tests.test_audio_report.TestGradeLufs.test_fail) ... ok
+test_pass (tests.test_audio_report.TestGradeLufs.test_pass) ... ok
+test_warn (tests.test_audio_report.TestGradeLufs.test_warn) ... ok
+test_above_minus_one_fails (tests.test_audio_report.TestGradeTp.test_above_minus_one_fails) ... ok
+test_pass (tests.test_audio_report.TestGradeTp.test_pass) ... ok
+test_activity_windows (tests.test_audio_report.TestMeasurePrimitives.test_activity_windows) ... ok
+test_ebur128_series (tests.test_audio_report.TestMeasurePrimitives.test_ebur128_series) ... ok
+test_silences_detects_head_hole (tests.test_audio_report.TestMeasurePrimitives.test_silences_detects_head_hole) ... ok
+test_no_meta (tests.test_audio_report.TestMergeThresholds.test_no_meta) ... ok
+test_override (tests.test_audio_report.TestMergeThresholds.test_override) ... ok
+test_content_not_timestamp_and_declared_dependencies (tests.test_cache_state.CacheIdentity.test_content_not_timestamp_and_declared_dependencies) ... ok
+test_receipt_invalidation_and_graphics_identity (tests.test_cache_state.CacheIdentity.test_receipt_invalidation_and_graphics_identity) ... ok
+test_new_state_files_exempt_from_gc_plan (tests.test_cache_state.GcExemptions.test_new_state_files_exempt_from_gc_plan) ... ok
+test_bad_json_warns_and_returns_empty (tests.test_config_unified.BadJsonWarns.test_bad_json_warns_and_returns_empty) ... ok
+test_non_dict_top_level_warns_and_returns_empty (tests.test_config_unified.BadJsonWarns.test_non_dict_top_level_warns_and_returns_empty) ... ok
+test_tolerance_semantics (tests.test_config_unified.CfgGet.test_tolerance_semantics) ... ok
+test_missing_key_returns_empty (tests.test_config_unified.ExternalEntries.test_missing_key_returns_empty) ... ok
+test_normalization (tests.test_config_unified.ExternalEntries.test_normalization) ... ok
+test_expand_path_utility (tests.test_config_unified.HomeExpansion.test_expand_path_utility) ... ok
+test_path_keys_expanded_others_untouched (tests.test_config_unified.HomeExpansion.test_path_keys_expanded_others_untouched) ... ok
+test_imgen_config_deprecation_notice (tests.test_config_unified.LegacyImgenvConfig.test_imgen_config_deprecation_notice) ... ok
+test_no_legacy_env_no_notice (tests.test_config_unified.LegacyImgenvConfig.test_no_legacy_env_no_notice) ... ok
+test_env_var_overrides_repo_local (tests.test_config_unified.PathPriority.test_env_var_overrides_repo_local) ... ok
+test_missing_file_silent_empty (tests.test_config_unified.PathPriority.test_missing_file_silent_empty) ... ok
+test_form_a_active_transmission_band (tests.test_filter_threads.TestDense61Equivalence.test_form_a_active_transmission_band)
+形态A：次输入 120 帧=4s，端点带 [1,3] 全程处于活跃传输中段（v3.6 真病灶几何）。 ... ok
+test_form_b_eof_repeat_band (tests.test_filter_threads.TestDense61Equivalence.test_form_b_eof_repeat_band)
+形态B：次输入 60 帧=2s，带后半（t>2.0）与全部关闭沿落在 EOF-repeat 态 ... ok
+test_default (tests.test_filter_threads.TestFilterThreadsEnv.test_default) ... ok
+test_invalid_falls_back_to_1 (tests.test_filter_threads.TestFilterThreadsEnv.test_invalid_falls_back_to_1) ... ok
+test_oversized_capped_to_cpu_count (tests.test_filter_threads.TestFilterThreadsEnv.test_oversized_capped_to_cpu_count) ... ok
+test_valid_values (tests.test_filter_threads.TestFilterThreadsEnv.test_valid_values) ... ok
+test_build_missing_frame_errors (tests.test_gfx_golden.GfxGolden.test_build_missing_frame_errors)
+帧缺失 → build 报错退出非零，golden 不落盘。 ... ok
+test_build_rejects_unmatched_full_pages (tests.test_gfx_golden.GfxGolden.test_build_rejects_unmatched_full_pages)
+B2：build --full-pages 名单逐项零匹配 → 报错退出非零，golden 不落盘。 ... ok
+test_build_sample_and_full (tests.test_gfx_golden.GfxGolden.test_build_sample_and_full)
+抽样页取 ≥sample 帧且含首中尾；--full-pages 页全帧；mode 标记正确。 ... ok
+test_compare_fails_explicitly_after_html_key_change (tests.test_gfx_golden.GfxGolden.test_compare_fails_explicitly_after_html_key_change)
+页 html 改键（审查指出的缺失用例）：html 变 → gfx_key 变 → 新键目录 ... ok
+test_compare_identical_diff_missing (tests.test_gfx_golden.GfxGolden.test_compare_identical_diff_missing)
+全零差异 exit 0；篡改一帧像素 → exit 1 报首个差异帧与双 hash； ... ok
+test_compare_rejects_unmatched_pages (tests.test_gfx_golden.GfxGolden.test_compare_rejects_unmatched_pages)
+B2：compare --pages 名单中有项在 golden 零匹配 → 报错退出非零 ... ok
+test_compare_stale_cache_warn_and_strict (tests.test_gfx_golden.GfxGolden.test_compare_stale_cache_warn_and_strict)
+B1：golden 建后缓存未重渲（帧 mtime ≤ built）→ 默认显式警告但 exit 0， ... ok
+test_golden_write_is_atomic_no_tmp_left (tests.test_gfx_golden.GfxGolden.test_golden_write_is_atomic_no_tmp_left)
+B4：golden 落盘走 tmp+os.replace，成功后不留 .tmp 残件。 ... ok
+test_same_page_two_durs (tests.test_gfx_golden.GfxGolden.test_same_page_two_durs)
+同页双 dur → 同一 src 键下 durs 并列、缓存键不同；compare 双实例全零。 ... ok
+test_atomic_write_concurrent_no_torn_file (tests.test_graphics_portability.AtomicWriteAndResilienceMock.test_atomic_write_concurrent_no_torn_file) ... ok
+test_atomic_write_failure_cleans_tmp_keeps_target (tests.test_graphics_portability.AtomicWriteAndResilienceMock.test_atomic_write_failure_cleans_tmp_keeps_target) ... ok
+test_corrupt_cdp_json_not_swallowed_by_canvas_except (tests.test_graphics_portability.AtomicWriteAndResilienceMock.test_corrupt_cdp_json_not_swallowed_by_canvas_except) ... ⚠ gfx_render: 帧 0 重试 2 次仍失败，交由调用方回落
+⚠ gfx_render: 帧 1 重试 2 次仍失败，交由调用方回落
+ok
+test_write_failure_retry_not_double_counted (tests.test_graphics_portability.AtomicWriteAndResilienceMock.test_write_failure_retry_not_double_counted) ... ok
+test_canvas_html_and_invalid_export (tests.test_graphics_portability.BrowserIntegration.test_canvas_html_and_invalid_export) ... skipped 'set VTX_TEST_CHROME'
+test_path_counts_and_timings (tests.test_graphics_portability.BrowserIntegration.test_path_counts_and_timings) ... skipped 'set VTX_TEST_CHROME'
+test_valid_and_invalid_png (tests.test_graphics_portability.ExportValidation.test_valid_and_invalid_png) ... ok
+test_frames_all_cached_early_return_zero_chrome (tests.test_graphics_portability.FramesParamMock.test_frames_all_cached_early_return_zero_chrome) ... ok
+test_frames_empty_list_is_noop (tests.test_graphics_portability.FramesParamMock.test_frames_empty_list_is_noop) ... ok
+test_frames_intersects_missing (tests.test_graphics_portability.FramesParamMock.test_frames_intersects_missing) ... ok
+test_frames_none_keeps_whole_page_semantics (tests.test_graphics_portability.FramesParamMock.test_frames_none_keeps_whole_page_semantics) ... ok
+test_all_cached_zero_stats (tests.test_graphics_portability.GfxStatsMock.test_all_cached_zero_stats) ... ok
+test_canvas_fallback_counted_as_twoshot (tests.test_graphics_portability.GfxStatsMock.test_canvas_fallback_counted_as_twoshot) ... ok
+test_failed_frames_counted_not_timed (tests.test_graphics_portability.GfxStatsMock.test_failed_frames_counted_not_timed) ... ⚠ gfx_render: 帧 0 重试 2 次仍失败，交由调用方回落
+⚠ gfx_render: 帧 1 重试 2 次仍失败，交由调用方回落
+ok
+test_path_counts_match_actual_branch (tests.test_graphics_portability.GfxStatsMock.test_path_counts_match_actual_branch) ... ok
+test_stats_fields_backward_compatible (tests.test_graphics_portability.GfxStatsMock.test_stats_fields_backward_compatible) ... ok
+test_timings_summary_math (tests.test_graphics_portability.GfxStatsMock.test_timings_summary_math) ... ok
+test_eligibility_no_render_function_untouched (tests.test_graphics_portability.NavfreeMock.test_eligibility_no_render_function_untouched) ... ok
+test_navfree_env_off_is_red_line (tests.test_graphics_portability.NavfreeMock.test_navfree_env_off_is_red_line) ... ok
+test_navfree_eval_fail_falls_back_to_nav (tests.test_graphics_portability.NavfreeMock.test_navfree_eval_fail_falls_back_to_nav) ... ⚠ gfx_render: navfree 已启用：每 tab 仅导航一次、帧态由页内 __vtx_render 置位（像素一致性以 golden 全帧比对验收）
+⚠ gfx_render: 页内 __vtx_render 执行失败，回落逐帧导航路径（本页首次告警）
+ok
+test_navfree_happy_path (tests.test_graphics_portability.NavfreeMock.test_navfree_happy_path) ... ⚠ gfx_render: navfree 已启用：每 tab 仅导航一次、帧态由页内 __vtx_render 置位（像素一致性以 golden 全帧比对验收）
+ok
+test_navfree_vs_navigate_pixel_identical (tests.test_graphics_portability.NavfreeSpanIntegration.test_navfree_vs_navigate_pixel_identical) ... skipped 'set VTX_TEST_CHROME'
+test_no_declaration_page_unchanged (tests.test_graphics_portability.NavfreeSpanIntegration.test_no_declaration_page_unchanged) ... skipped 'set VTX_TEST_CHROME'
+test_static_spans_copied_frames_byte_identical (tests.test_graphics_portability.NavfreeSpanIntegration.test_static_spans_copied_frames_byte_identical) ... skipped 'set VTX_TEST_CHROME'
+test_throwing_render_falls_back_to_nav (tests.test_graphics_portability.NavfreeSpanIntegration.test_throwing_render_falls_back_to_nav) ... skipped 'set VTX_TEST_CHROME'
+test_batch_keys_displayed (tests.test_graphics_portability.RenderedViaFormat.test_batch_keys_displayed) ... ok
+test_cli_fallback_appended_when_present (tests.test_graphics_portability.RenderedViaFormat.test_cli_fallback_appended_when_present) ... ok
+test_timing_categories_joined (tests.test_graphics_portability.RenderedViaFormat.test_timing_categories_joined) ... ok
+test_zero_keys_still_displayed_for_grep_alignment (tests.test_graphics_portability.RenderedViaFormat.test_zero_keys_still_displayed_for_grep_alignment) ... ok
+test_all_missing_frames_are_copies_zero_render (tests.test_graphics_portability.StaticSpanMock.test_all_missing_frames_are_copies_zero_render) ... ok
+test_bad_declaration_is_lazy_noop (tests.test_graphics_portability.StaticSpanMock.test_bad_declaration_is_lazy_noop) ... ⚠ gfx_render: __vtx_static_spans 声明解析失败，按无声明原路径渲染
+ok
+test_head_cached_members_copied (tests.test_graphics_portability.StaticSpanMock.test_head_cached_members_copied) ... ok
+test_head_missing_in_this_call (tests.test_graphics_portability.StaticSpanMock.test_head_missing_in_this_call) ... ok
+test_head_outside_frames_param_merged_in (tests.test_graphics_portability.StaticSpanMock.test_head_outside_frames_param_merged_in) ... ok
+test_members_partially_cached_untouched (tests.test_graphics_portability.StaticSpanMock.test_members_partially_cached_untouched) ... ok
+test_plan_static_spans_invariants (tests.test_graphics_portability.StaticSpanMock.test_plan_static_spans_invariants) ... ok
+test_special_character_filename (tests.test_graphics_portability.SubtitleIntegration.test_special_character_filename) ... skipped 'set VTX_TEST_FFMPEG'
+test_merge_cdp_stats_sums_and_weights (tests.test_graphics_portability.VtxSplitMath.test_merge_cdp_stats_sums_and_weights) ... ok
+test_merge_cdp_stats_sums_batch_keys (tests.test_graphics_portability.VtxSplitMath.test_merge_cdp_stats_sums_batch_keys) ... ok
+test_split_page_ceil_and_contiguous (tests.test_graphics_portability.VtxSplitMath.test_split_page_ceil_and_contiguous) ... ok
+test_split_page_disabled_and_small (tests.test_graphics_portability.VtxSplitMath.test_split_page_disabled_and_small) ... ok
+test_split_page_invariants (tests.test_graphics_portability.VtxSplitMath.test_split_page_invariants) ... ok
+test_split_page_max_cap (tests.test_graphics_portability.VtxSplitMath.test_split_page_max_cap) ... ok
+test_dry_run_does_not_touch_products (tests.test_mux_history.TestMuxPreservesHistory.test_dry_run_does_not_touch_products) ... ok
+test_mux_failure_cleans_tmp_and_keeps_final (tests.test_mux_history.TestMuxPreservesHistory.test_mux_failure_cleans_tmp_and_keeps_final) ... ok
+test_mux_keeps_history_hardlink_content (tests.test_mux_history.TestMuxPreservesHistory.test_mux_keeps_history_hardlink_content) ... ok
+test_rotate_history_hardlink_semantics (tests.test_mux_history.TestMuxPreservesHistory.test_rotate_history_hardlink_semantics) ... ok
+test_default_on (tests.test_pipeline.TestPipelineEnabled.test_default_on) ... ok
+test_explicit_zero_falls_back (tests.test_pipeline.TestPipelineEnabled.test_explicit_zero_falls_back) ... ok
+test_other_values_are_pipeline (tests.test_pipeline.TestPipelineEnabled.test_other_values_are_pipeline) ... ok
+test_cold_then_two_warm_runs (tests.test_pipeline.TestPipelineIntegration.test_cold_then_two_warm_runs) ... skipped '可选集成测试：VTX_PIPE_INTEG=1 且需 ffmpeg + Chrome（真实全链渲染）'
+test_8_threads_no_lost_receipts (tests.test_pipeline.TestReceiptConcurrentLock.test_8_threads_no_lost_receipts) ... ok
+test_draft_video_mux (tests.test_pipeline.TestStageReceiptName.test_draft_video_mux) ... ok
+test_nondraft_and_other_stages (tests.test_pipeline.TestStageReceiptName.test_nondraft_and_other_stages) ... ok
+test_invalid_stage_rejected (tests.test_pipeline.TestUntilFlag.test_invalid_stage_rejected) ... ok
+test_linear_truncation_follows_stages_order (tests.test_pipeline.TestUntilFlag.test_linear_truncation_follows_stages_order) ... ok
+test_non_all_rejected (tests.test_pipeline.TestUntilFlag.test_non_all_rejected) ... ok
+test_until_gfx_stops_after_wave (tests.test_pipeline.TestUntilFlag.test_until_gfx_stops_after_wave) ... ok
+test_until_mux_qc_same_topology_as_default (tests.test_pipeline.TestUntilFlag.test_until_mux_qc_same_topology_as_default) ... ok
+test_until_serial_head_bin (tests.test_pipeline.TestUntilFlag.test_until_serial_head_bin) ... ok
+test_until_video_runs_wave_and_video_tail (tests.test_pipeline.TestUntilFlag.test_until_video_runs_wave_and_video_tail) ... ok
+test_active_plugin_module_load_failure_fails_hard (tests.test_pluginlib.FakePluginBus.test_active_plugin_module_load_failure_fails_hard) ... ok
+test_audio_events_transforms_tracks (tests.test_pluginlib.FakePluginBus.test_audio_events_transforms_tracks) ... ok
+test_contribute_keys_unions_plugin_keys (tests.test_pluginlib.FakePluginBus.test_contribute_keys_unions_plugin_keys) ... ok
+test_hooks_declared_not_registered_rejected (tests.test_pluginlib.FakePluginBus.test_hooks_declared_not_registered_rejected)
+§2.3 单一事实源对账：声明了没注册 / 注册了没声明都报错。 ... ok
+test_hooks_registered_not_declared_rejected (tests.test_pluginlib.FakePluginBus.test_hooks_registered_not_declared_rejected) ... ok
+test_params_digest_collects_all_instances (tests.test_pluginlib.FakePluginBus.test_params_digest_collects_all_instances)
+P1 对抗审查 F2：多实例参数全收集——改第二例参数 digest 必须变。 ... ok
+test_prepare_source_short_circuits_for_handled_source (tests.test_pluginlib.FakePluginBus.test_prepare_source_short_circuits_for_handled_source) ... ok
+test_cache_root_whitelist_unchanged (tests.test_pluginlib.InvariantsIdle.test_cache_root_whitelist_unchanged) ... ok
+test_contribute_keys_and_cache_dirs_empty (tests.test_pluginlib.InvariantsIdle.test_contribute_keys_and_cache_dirs_empty) ... ok
+test_receipt_fingerprint_contains_plugin_segment (tests.test_pluginlib.InvariantsIdle.test_receipt_fingerprint_contains_plugin_segment) ... ok
+test_seams_idle (tests.test_pluginlib.InvariantsIdle.test_seams_idle) ... ok
+test_bad_kind_rejected (tests.test_pluginlib.ManifestValidation.test_bad_kind_rejected) ... ok
+test_broken_json_collects_error (tests.test_pluginlib.ManifestValidation.test_broken_json_collects_error) ... ok
+test_errors_collected_not_crashed (tests.test_pluginlib.ManifestValidation.test_errors_collected_not_crashed) ... ok
+test_health_command_dotdot_rejected (tests.test_pluginlib.ManifestValidation.test_health_command_dotdot_rejected) ... ok
+test_missing_manifest (tests.test_pluginlib.ManifestValidation.test_missing_manifest) ... ok
+test_name_mismatch_dir_and_bad_name (tests.test_pluginlib.ManifestValidation.test_name_mismatch_dir_and_bad_name) ... ok
+test_valid_manifest_passes (tests.test_pluginlib.ManifestValidation.test_valid_manifest_passes) ... ok
+test_builtin_scan_finds_valid_apps (tests.test_pluginlib.RegistryTest.test_builtin_scan_finds_valid_apps) ... ok
+test_lookup_key (tests.test_pluginlib.RegistryTest.test_lookup_key) ... ok
+test_plugin_state_installed_vs_declared (tests.test_pluginlib.RegistryTest.test_plugin_state_installed_vs_declared) ... ok
+test_static_registry_loads (tests.test_pluginlib.RegistryTest.test_static_registry_loads) ... ok
+test_both_plugin_keys_active_passes_validate (tests.test_pluginlib.ThreeBranchCli.test_both_plugin_keys_active_passes_validate) ... ok
+test_clean_timeline_output_identical_to_p1_1 (tests.test_pluginlib.ThreeBranchCli.test_clean_timeline_output_identical_to_p1_1) ... ok
+test_denoise_key_active_passes_validate (tests.test_pluginlib.ThreeBranchCli.test_denoise_key_active_passes_validate) ... ok
+test_duck_mutual_exclusion_and_meta_double_apply_fail (tests.test_pluginlib.ThreeBranchCli.test_duck_mutual_exclusion_and_meta_double_apply_fail) ... ok
+test_duck_strategy_key_active_passes_validate (tests.test_pluginlib.ThreeBranchCli.test_duck_strategy_key_active_passes_validate) ... ok
+test_meta_key_silent (tests.test_pluginlib.ThreeBranchCli.test_meta_key_silent) ... ok
+test_unknown_key_warns_but_passes (tests.test_pluginlib.ThreeBranchCli.test_unknown_key_warns_but_passes) ... ok
+test_active_branch_passes_silently (tests.test_pluginlib.ThreeBranchRest.test_active_branch_passes_silently) ... ok
+test_declared_key_wrong_path_warns_as_unknown (tests.test_pluginlib.ThreeBranchRest.test_declared_key_wrong_path_warns_as_unknown) ... ok
+test_disabled_branch_errors_with_enable_hint (tests.test_pluginlib.ThreeBranchRest.test_disabled_branch_errors_with_enable_hint) ... ok
+test_declared_not_installed_errors_with_hint (tests.test_pluginlib.ThreeBranchScan.test_declared_not_installed_errors_with_hint) ... ok
+test_kernel_keys_pass_silently (tests.test_pluginlib.ThreeBranchScan.test_kernel_keys_pass_silently) ... ok
+test_meta_permanent_whitelist (tests.test_pluginlib.ThreeBranchScan.test_meta_permanent_whitelist) ... ok
+test_unknown_key_warns_not_blocks (tests.test_pluginlib.ThreeBranchScan.test_unknown_key_warns_not_blocks) ... ok
+test_dev_boundaries_warn_and_silent (tests.test_post_loudness.TestBuildAudioValidation.test_dev_boundaries_warn_and_silent)
+P1 审查 F7：dev 恰 3.0 → WARN 不阻断；dev 恰 1.5 → 静默（裁定边界）。 ... ok
+test_dev_over_3_fails_explicitly (tests.test_post_loudness.TestBuildAudioValidation.test_dev_over_3_fails_explicitly)
+P1 审查 F7：dev > 3 的显式路径（与 TP 解析失败路径区分）。 ... ok
+test_dry_run_skips_validation_and_receipt (tests.test_post_loudness.TestBuildAudioValidation.test_dry_run_skips_validation_and_receipt) ... ok
+test_duration_drift_failure_exits (tests.test_post_loudness.TestBuildAudioValidation.test_duration_drift_failure_exits) ... ok
+test_loudness_deviation_warns_not_fails (tests.test_post_loudness.TestBuildAudioValidation.test_loudness_deviation_warns_not_fails)
+分级裁定（ARCHITECTURE §1.2 2026-09-13）：偏离 ∈ (1.5, 3] = WARN 不阻断 ... ok
+test_loudness_recheck_failure_exits (tests.test_post_loudness.TestBuildAudioValidation.test_loudness_recheck_failure_exits) ... ok
+test_receipt_post_loudness_field (tests.test_post_loudness.TestBuildAudioValidation.test_receipt_post_loudness_field) ... ok
+test_tp_over_limit_fails (tests.test_post_loudness.TestBuildAudioValidation.test_tp_over_limit_fails)
+TP > -1.0 = 硬 FAIL（limiter 失效，机制错误）。 ... ok
+test_dry_run_path_also_limited (tests.test_post_loudness.TestMixAudioChain.test_dry_run_path_also_limited) ... ok
+test_gain_override_path_also_limited (tests.test_post_loudness.TestMixAudioChain.test_gain_override_path_also_limited) ... ok
+test_output_chain_has_alimiter_after_volume (tests.test_post_loudness.TestMixAudioChain.test_output_chain_has_alimiter_after_volume) ... ok
+test_encoder_failure_preserves_original (tests.test_post_loudness.TestPostLoudnessCompat.test_encoder_failure_preserves_original) ... ok
+test_idempotent_and_no_receipt_surgery (tests.test_post_loudness.TestPostLoudnessCompat.test_idempotent_and_no_receipt_surgery) ...     · dense61A(传输中段带) threads=1: md5=dd2c178e7533a594474bba3d0177564a（6.1s，仅计时不断言）
+    · dense61A(传输中段带) threads=4: md5=dd2c178e7533a594474bba3d0177564a（3.3s，仅计时不断言）
+    · dense61B(EOF-repeat带) threads=1: md5=19fd9c5d852559f06950e0974fc0c193（3.3s，仅计时不断言）
+    · dense61B(EOF-repeat带) threads=4: md5=19fd9c5d852559f06950e0974fc0c193（1.9s，仅计时不断言）
+✗ build 预检失败 1 项（golden 必须完整，不落半份）：
+  - 帧缺失: pages/a.html dur=10 缺 1 帧（如 f0002.png；mode=sample）
+✗ build 预检失败 1 项（golden 必须完整，不落半份）：
+  - 帧目录缺失: pages/none.html dur=4 → cache/gfx/6da627437286（先完成 gfx 渲染）
+  hash 13/13（8 线程）
+✓ golden 已写入 /tmp/tmp5_64pwmo/golden.json：2 页 / 2 个实例（full 1），13 帧，0s
+  hash 6/6（8 线程）
+✓ golden 已写入 /tmp/tmpyewq30nb/golden.json：1 页 / 1 个实例（full 0），6 帧，0s
+  hash 6/6（8 线程）
+✓ golden 已写入 /tmp/tmpv811j41v/golden.json：1 页 / 1 个实例（full 0），6 帧，0s
+  比对 6/6（8 线程）
+== gfx golden 比对（1 页，6 帧，golden 构建于 2026-09-14 02:19:28）==
+  ✓ 全零差异  pages/a.html dur=10（sample，6 帧）
+⚠ 新鲜度防线：被比帧 mtime 全部 ≤ golden 构建时间——缓存未重渲，比对无意义（仅警告，验收请加 --strict）
+✓ 通过：1 个实例全零差异
+  报告已写入 /tmp/tmpv811j41v/report.json
+  比对 6/6（8 线程）
+== gfx golden 比对（1 页，1 帧，golden 构建于 2026-09-14 02:19:28）==
+  ✗ 像素差异  pages/a.html dur=10 首个差异帧 f0005.png golden=7856d98d4a84 current=131b43899679（共 1 帧不同）
+✗ 未通过：差异 1 / 目录缺失 0 / 帧缺失损坏 0；缓存未重渲（--strict）
+  报告已写入 /tmp/tmpv811j41v/report2.json
+  比对 6/6（8 线程）
+== gfx golden 比对（1 页，6 帧，golden 构建于 2026-09-14 02:19:28）==
+  ✓ 全零差异  pages/a.html dur=10（sample，6 帧）
+⚠ 新鲜度防线：被比帧 mtime 全部 ≤ golden 构建时间——缓存未重渲，比对无意义（仅警告，验收请加 --strict）
+✓ 通过：1 个实例全零差异
+  比对 5/5（8 线程）
+== gfx golden 比对（1 页，6 帧，golden 构建于 2026-09-14 02:19:28）==
+  ✓ 全零差异  pages/a.html dur=10（sample，6 帧）
+  ✗ 帧缺失/损坏  pages/a.html dur=10 f0005.png（帧文件缺失）
+✗ 未通过：差异 0 / 目录缺失 0 / 帧缺失损坏 1；缓存未重渲（--strict）
+  报告已写入 /tmp/tmpv811j41v/report3.json
+  hash 6/6（8 线程）
+✓ golden 已写入 /tmp/tmp7rjzoeds/golden.json：1 页 / 1 个实例（full 0），6 帧，0s
+  hash 6/6（8 线程）
+✓ golden 已写入 /tmp/tmpupinlihx/golden.json：1 页 / 1 个实例（full 0），6 帧，0s
+  hash 4/4（8 线程）
+✓ golden 已写入 /tmp/tmpi_ar6nic/golden.json：1 页 / 1 个实例（full 0），4 帧，0s
+  hash 6/6（8 线程）
+✓ golden 已写入 /tmp/tmpvzlsgc1b/golden.json：1 页 / 2 个实例（full 0），6 帧，0s
+  比对 6/6（8 线程）
+== gfx golden 比对（1 页，6 帧，golden 构建于 2026-09-14 02:19:28）==
+  ✓ 全零差异  pages/a.html dur=6（sample，3 帧）
+  ✓ 全零差异  pages/a.html dur=9（sample，3 帧）
+⚠ 新鲜度防线：被比帧 mtime 全部 ≤ golden 构建时间——缓存未重渲，比对无意义（仅警告，验收请加 --strict）
+✓ 通过：2 个实例全零差异
+  报告已写入 /tmp/tmpvzlsgc1b/report.json
+  比对 6/6（8 线程）
+== gfx golden 比对（1 页，4 帧，golden 构建于 2026-09-14 02:19:28）==
+  ✓ 全零差异  pages/a.html dur=9（sample，3 帧）
+  ✗ 像素差异  pages/a.html dur=6 首个差异帧 f0000.png golden=5e9d5b686a0c current=ef8942af4266（共 1 帧不同）
+✗ 未通过：差异 1 / 目录缺失 0 / 帧缺失损坏 0；缓存未重渲（--strict）
+[dry-run] ffmpeg -v error -y -i /tmp/tmp_7chjzps/out/video_noaudio.mp4 -i /tmp/tmp_7chjzps/out/audio.wav -c:v copy -c:a libfdk_aac -b:a 192k -movflags +faststart /tmp/tmp_7chjzps/out/.final.tmp.mp4
+✓ 封装 final.mp4（libfdk_aac 192k）
+✓ 封装 final.mp4（libfdk_aac 192k）
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+[dry-run] ffmpeg -v error -y -i /tmp/vtx-post-build-mtokr7yb/cache/audio/82bf3107a68b.wav -filter_complex [0:a]atrim=start_sample=0:end_sample=144000,asetpts=PTS-STARTPTS,volume=0.9,adelay=delays=0.000:all=1[e0];[e0]apad=whole_dur=3.000,atrim=end_sample=144000,asetpts=PTS-STARTPTS[t0];[t0]amix=inputs=1:durati
+✓ 音频混音：1 轨 1 事件（帧网格对齐，响度 -14 LUFS（两遍静态增益 + alimiter 限幅）
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+  原始混音 I=-15.8 LUFS → 静态增益 +1.8dB
+✓ 音频混音：1 轨 1 事件（帧网格对齐，响度 -14 LUFS（两遍静态增益 + alimiter 限幅）
+  终态复测 I=-14.0 LUFS / TP=-13.3 dBFS（目标 -14）
+✗ 音频时长校验失败：144500 采样 ≠ 期望 144000（±1 采样）
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+  原始混音 I=-15.8 LUFS → 静态增益 +1.8dB
+✓ 音频混音：1 轨 1 事件（帧网格对齐，响度 -14 LUFS（两遍静态增益 + alimiter 限幅）
+  终态复测 I=-16.0 LUFS / TP=-5.0 dBFS（目标 -14）
+⚠ 终态响度 -16.0 LUFS 偏离目标 2.0 LU（>1.5）——限幅响度损耗属内容级问题（配乐密集/原始混音偏 quiet），发布侧内容门 G2 会拦截；如需硬过请调 bed 音量后重渲
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+  原始混音 I=-15.8 LUFS → 静态增益 +1.8dB
+✓ 音频混音：1 轨 1 事件（帧网格对齐，响度 -14 LUFS（两遍静态增益 + alimiter 限幅）
+  终态复测 I=-30.0 LUFS（目标 -14）
+✗ 终态复测未捕获真峰（ebur128 peak 解析失败）
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+  原始混音 I=-15.8 LUFS → 静态增益 +1.8dB
+✓ 音频混音：1 轨 1 事件（帧网格对齐，响度 -14 LUFS（两遍静态增益 + alimiter 限幅）
+  终态复测 I=-14.0 LUFS / TP=-13.3 dBFS（目标 -14）
+  原始混音 I=-15.8 LUFS → 静态增益 +1.8dB
+✓ 音频混音：1 轨 1 事件（帧网格对齐，响度 -14 LUFS（两遍静态增益 + alimiter 限幅）
+  终态复测 I=-14.0 LUFS / TP=-13.3 dBFS（目标 -14）
+  音频提取：1 个任务，1 线程并行
+    · audio a
+  ✓ 音频提取完成（0s）
+✓ 音频提取：1 → 48kHz stereo PCM
+  原始混音 I=-15.8 LUFS → 静态增益 +1.8dB
+✓ 音频混音：1 轨 1 事件（帧网格对齐，响度 -14 LUFS（两遍静态增益 + alimiter 限幅）
+  终态复测 I=-14.0 LUFS（目标 -14）
+✗ 终态复测未捕获真峰（ebur128 peak 解析失败）
+  原始混音 I=-20.5 LUFS → 静态增益 +6.5dB
+v2: 兼容重跑（v1 post_loudness 语义；v2 正常链路无需本命令）
+⚠ 本次将再施加 -12.8dB 增益（v1 旧语义：把当前响度推回 target）——对限幅损耗产物重跑会改变交付响度；v2 正常链路（vtx audio）已内置限幅，如需调整响度请改 timeline 后重渲
+v2: 兼容重跑（v1 post_loudness 语义；v2 正常链路无需本命令）
+⚠ 本次将再施加 -12.8dB 增益（v1 旧语义：把当前响度推回 target）——对限幅损耗产物重跑会改变交付响度；v2 正常链路（vtx audio）已内置限幅，如需调整响度请改 timeline 后重渲
+v2: 兼容重跑（v1 post_loudness 语义；v2 正常链路无需本命令）ok
+test_missing_audio_raises (tests.test_post_loudness.TestPostLoudnessCompat.test_missing_audio_raises) ... ok
+test_disk_hit_skips_ffprobe_across_processes (tests.test_probe_cache.TestProbeCache.test_disk_hit_skips_ffprobe_across_processes) ... ok
+test_failure_not_cached (tests.test_probe_cache.TestProbeCache.test_failure_not_cached) ... ok
+test_mem_hit_skips_ffprobe (tests.test_probe_cache.TestProbeCache.test_mem_hit_skips_ffprobe) ... ok
+test_missing_file_returns_none (tests.test_probe_cache.TestProbeCache.test_missing_file_returns_none) ... ok
+test_mtime_change_invalidates (tests.test_probe_cache.TestProbeCache.test_mtime_change_invalidates)
+缓存失效不误跳：内容重写（mtime 变）→ 键失配 → 重新 ffprobe。 ... ok
+test_bad_timespec_friendly (tests.test_range_render.TestCliGuards.test_bad_timespec_friendly) ... ok
+test_cold_gfx_friendly_error (tests.test_range_render.TestCliGuards.test_cold_gfx_friendly_error) ... ok
+test_dry_run_no_false_selfcheck_failure (tests.test_range_render.TestCliGuards.test_dry_run_no_false_selfcheck_failure) ... ok
+test_empty_track_friendly (tests.test_range_render.TestCliGuards.test_empty_track_friendly) ... ok
+test_flags_mutually_exclusive (tests.test_range_render.TestCliGuards.test_flags_mutually_exclusive) ... ok
+test_range_requires_draft_video (tests.test_range_render.TestCliGuards.test_range_requires_draft_video) ... ok
+test_range_vs_frames_gpu_exclusive (tests.test_range_render.TestCliGuards.test_range_vs_frames_gpu_exclusive) ... ok
+test_window_from_track_empty_returns_none (tests.test_range_render.TestCliGuards.test_window_from_track_empty_returns_none) ... ok
+test_frame_suffix (tests.test_range_render.TestParseTimespec.test_frame_suffix) ... ok
+test_invalid (tests.test_range_render.TestParseTimespec.test_invalid) ... ok
+test_seconds (tests.test_range_render.TestParseTimespec.test_seconds) ... ok
+test_timecode (tests.test_range_render.TestParseTimespec.test_timecode) ... ok
+test_range_render (tests.test_range_render.TestRangeIntegration.test_range_render) ... skipped '可选集成测试：VTX_RANGE_INTEG=1 且需 ffmpeg（真实渲染，含gfx则需 Chrome）'
+test_label (tests.test_range_render.TestRangeLabel.test_label) ... ok
+test_across_boundary (tests.test_range_render.TestSelectSegments.test_across_boundary) ... ok
+test_exact_segment_frame (tests.test_range_render.TestSelectSegments.test_exact_segment_frame) ... ok
+test_full_span_and_clamp (tests.test_range_render.TestSelectSegments.test_full_span_and_clamp) ... ok
+test_middle_window (tests.test_range_render.TestSelectSegments.test_middle_window) ... ok
+test_clip_window (tests.test_range_render.TestWindows.test_clip_window) ... ok
+test_track_window (tests.test_range_render.TestWindows.test_track_window) ... ok
+test_concurrency_capped_at_budget (tests.test_seg_nvenc.TestNvencBudget.test_concurrency_capped_at_budget) ... ok
+test_dry_bypasses_budget (tests.test_seg_nvenc.TestNvencBudget.test_dry_bypasses_budget) ... ok
+test_memo_false_result_also_memoed (tests.test_seg_nvenc.TestNvencOkMemo.test_memo_false_result_also_memoed) ... ok
+test_memo_precedes_dry_shortcircuit (tests.test_seg_nvenc.TestNvencOkMemo.test_memo_precedes_dry_shortcircuit) ... ok
+test_memo_probes_once_and_stays (tests.test_seg_nvenc.TestNvencOkMemo.test_memo_probes_once_and_stays) ... ok
+test_no_memo_probes_every_time (tests.test_seg_nvenc.TestNvencOkMemo.test_no_memo_probes_every_time) ... ok
+test_budget_value_env (tests.test_seg_nvenc.TestSegEncoderKind.test_budget_value_env) ... ok
+test_default_is_nvenc (tests.test_seg_nvenc.TestSegEncoderKind.test_default_is_nvenc) ... ok
+test_explicit_zero_falls_back_x264 (tests.test_seg_nvenc.TestSegEncoderKind.test_explicit_zero_falls_back_x264) ... ok
+test_nonzero_values_still_nvenc (tests.test_seg_nvenc.TestSegEncoderKind.test_nonzero_values_still_nvenc) ... ok
+test_alpha_bit_still_distinguishes (tests.test_seg_nvenc.TestSegKeyEncoderToken.test_alpha_bit_still_distinguishes) ... ok
+test_different_encoder_different_key (tests.test_seg_nvenc.TestSegKeyEncoderToken.test_different_encoder_different_key) ... ok
+test_same_encoder_stable (tests.test_seg_nvenc.TestSegKeyEncoderToken.test_same_encoder_stable) ... ok
+test_align_threshold_cli_override (tests.test_subs_check.Alignment.test_align_threshold_cli_override) ... ok
+test_drift_minus_4s_fails_red (tests.test_subs_check.Alignment.test_drift_minus_4s_fails_red) ... ok
+test_early_2s_fails (tests.test_subs_check.Alignment.test_early_2s_fails) ... ok
+test_late_2s_fails (tests.test_subs_check.Alignment.test_late_2s_fails) ... ok
+test_max_overlap_window_wins (tests.test_subs_check.Alignment.test_max_overlap_window_wins) ... ok
+test_no_voice_track_warns_all (tests.test_subs_check.Alignment.test_no_voice_track_warns_all) ... ok
+test_small_drift_warns (tests.test_subs_check.Alignment.test_small_drift_warns) ... ok
+test_unmatched_far_window_warns_honest (tests.test_subs_check.Alignment.test_unmatched_far_window_warns_honest) ... ok
+test_aligned_reasonable_subs_pass (tests.test_subs_check.NormalAllGreen.test_aligned_reasonable_subs_pass) ... ok
+test_align_fail_boundary_inclusive (tests.test_subs_check.ReviewS1PostWindow.test_align_fail_boundary_inclusive) ... ok
+test_lead_before_window_negative_offset (tests.test_subs_check.ReviewS1PostWindow.test_lead_before_window_negative_offset) ... ok
+test_pair_radius_boundary_inclusive (tests.test_subs_check.ReviewS1PostWindow.test_pair_radius_boundary_inclusive) ... ok
+test_short_gap_after_window_ok (tests.test_subs_check.ReviewS1PostWindow.test_short_gap_after_window_ok) ... ok
+test_window_switch_boundary_zero_distance (tests.test_subs_check.ReviewS1PostWindow.test_window_switch_boundary_zero_distance) ... ok
+test_frame17_fps24_not_active (tests.test_subs_check.ReviewS2ActiveSetCsQuantization.test_frame17_fps24_not_active) ... ok
+test_frame18_fps24_active (tests.test_subs_check.ReviewS2ActiveSetCsQuantization.test_frame18_fps24_active) ... ok
+test_normal_frame_active (tests.test_subs_check.ReviewS2ActiveSetCsQuantization.test_normal_frame_active) ... ok
+test_cps_over_fail_threshold (tests.test_subs_check.SpeedOverlapWidth.test_cps_over_fail_threshold) ... ok
+test_cps_over_warn_threshold (tests.test_subs_check.SpeedOverlapWidth.test_cps_over_warn_threshold) ... ok
+test_overlapping_subs_both_fail (tests.test_subs_check.SpeedOverlapWidth.test_overlapping_subs_both_fail) ... ok
+test_three_lines_fails (tests.test_subs_check.SpeedOverlapWidth.test_three_lines_fails) ... ok
+test_too_short_duration_warns (tests.test_subs_check.SpeedOverlapWidth.test_too_short_duration_warns) ... ok
+test_wide_line_fails (tests.test_subs_check.SpeedOverlapWidth.test_wide_line_fails) ... ok
+test_width_boundary_28_ok (tests.test_subs_check.SpeedOverlapWidth.test_width_boundary_28_ok) ... ok
+test_validate_and_subs_check_pass (tests.test_subtitles_src.CliEndToEnd.test_validate_and_subs_check_pass) ... ok
+test_basic_boundary_and_rounding (tests.test_subtitles_src.ParseSrt.test_basic_boundary_and_rounding) ... ok
+test_bom_crlf_and_empty (tests.test_subtitles_src.ParseSrt.test_bom_crlf_and_empty) ... ok
+test_half_frame_rounds_up (tests.test_subtitles_src.ParseSrt.test_half_frame_rounds_up) ... ok
+test_missing_index_line_ok_garbage_line_fails (tests.test_subtitles_src.ParseSrt.test_missing_index_line_ok_garbage_line_fails) ... ok
+test_multiline_joined_with_ass_break (tests.test_subtitles_src.ParseSrt.test_multiline_joined_with_ass_break) ... ok
+test_point_separator_and_attributes_tolerated (tests.test_subtitles_src.ParseSrt.test_point_separator_and_attributes_tolerated) ... ok
+test_timestamp_without_text_fails (tests.test_subtitles_src.ParseSrt.test_timestamp_without_text_fails) ... ok
+test_bad_structure_raises (tests.test_subtitles_src.ParseSubsJson.test_bad_structure_raises) ... ok
+test_list_direct_and_wrapped (tests.test_subtitles_src.ParseSubsJson.test_list_direct_and_wrapped) ... ok
+test_file_content_change_invalidates_fingerprint (tests.test_subtitles_src.ReceiptIdentity.test_file_content_change_invalidates_fingerprint) ... ok
+test_absent_or_empty_string_is_default (tests.test_subtitles_src.ResolveAtLoadPoint.test_absent_or_empty_string_is_default) ... ok
+test_empty_inline_subs_allows_src (tests.test_subtitles_src.ResolveAtLoadPoint.test_empty_inline_subs_allows_src) ... ok
+test_missing_file_and_parse_failure (tests.test_subtitles_src.ResolveAtLoadPoint.test_missing_file_and_parse_failure) ... ok
+test_mutual_exclusion_records_error_keeps_inline (tests.test_subtitles_src.ResolveAtLoadPoint.test_mutual_exclusion_records_error_keeps_inline) ... ok
+test_unsupported_suffix_and_bad_type (tests.test_subtitles_src.ResolveAtLoadPoint.test_unsupported_suffix_and_bad_type) ... ok
+test_estimate_declares_basis (tests.test_timeline_diff.TestAdvice.test_estimate_declares_basis) ... ok
+test_geometry_goes_generator (tests.test_timeline_diff.TestAdvice.test_geometry_goes_generator) ... ok
+test_same_id_audio_source_swap_prepare_not_video (tests.test_timeline_diff.TestAdvice.test_same_id_audio_source_swap_prepare_not_video)
+P1：同 id 换纯音频源 path → prepare/audio 置位、video 不误报。 ... ok
+test_same_id_visual_source_swap_video_invalid (tests.test_timeline_diff.TestAdvice.test_same_id_visual_source_swap_video_invalid)
+P1 对照：同 id 换画面源 path（不被音频事件引用）→ video 置位（seg 键含路径 ... ok
+test_volume_goes_patch (tests.test_timeline_diff.TestAdvice.test_volume_goes_patch) ... ok
+test_bad_json_distinct_error (tests.test_timeline_diff.TestCli.test_bad_json_distinct_error)
+P2c：坏 JSON 报「两类对比都要求合法 JSON」，不静默回落报告对比。 ... ok
+test_json_nested_dir_created (tests.test_timeline_diff.TestCli.test_json_nested_dir_created)
+P2b：--json 落盘路径父目录不存在时自动创建。 ... ok
+test_mixed_type_distinct_error (tests.test_timeline_diff.TestCli.test_mixed_type_distinct_error)
+P2c：timeline 混报告 → 类型不一致文案区分两类输入。 ... ok
+test_nseg_env_followed (tests.test_timeline_diff.TestCli.test_nseg_env_followed)
+P2a：VTX_VIDEO_SEGMENTS 与 composite 同源取值（切点集随 env 变化）。 ... ok
+test_report_diff_not_rerouted (tests.test_timeline_diff.TestCli.test_report_diff_not_rerouted) ... ok
+test_timeline_auto_route_and_pass_code (tests.test_timeline_diff.TestCli.test_timeline_auto_route_and_pass_code) ... ok
+test_timeline_diff_exit_1_and_json (tests.test_timeline_diff.TestCli.test_timeline_diff_exit_1_and_json) ... ok
+test_yes_no (tests.test_timeline_diff.TestIsTimeline.test_yes_no) ... ok
+test_add_del_clip (tests.test_timeline_diff.TestPairing.test_add_del_clip) ... ok
+test_audio_event_volume_change (tests.test_timeline_diff.TestPairing.test_audio_event_volume_change) ... ok
+test_identical_no_entries (tests.test_timeline_diff.TestPairing.test_identical_no_entries) ... ok
+test_same_src_window_change_paired (tests.test_timeline_diff.TestPairing.test_same_src_window_change_paired)
+同源 clip 改 src_in（窗口移动）→ 配对为 change 而非 add+del。 ... ok
+test_subtitle_change_paired_not_reindexed (tests.test_timeline_diff.TestPairing.test_subtitle_change_paired_not_reindexed) ... ok
+test_track_delete (tests.test_timeline_diff.TestPairing.test_track_delete) ... ok
+test_audio_only_change_no_video_invalid (tests.test_timeline_diff.TestSegKeyImpact.test_audio_only_change_no_video_invalid)
+纯音量改动：seg/gfx/vseg 全部零失效，video 阶段不需重跑。 ... ok
+test_meta_only_is_whitelist_no_stages (tests.test_timeline_diff.TestSegKeyImpact.test_meta_only_is_whitelist_no_stages)
+_meta 是唯一白名单：只改 _meta → 除 validate（输入变化必跑，秒级）外零阶段。 ... ok
+test_one_clip_dur_change_invalidates_exactly_one_seg_key (tests.test_timeline_diff.TestSegKeyImpact.test_one_clip_dur_change_invalidates_exactly_one_seg_key)
+硬门槛（不多报）：只改 1 个 clip 时长 → 失效 seg 键集合 == 逐 clip 公式重算集合。 ... ok
+test_unrelated_clip_change_no_extra_invalid (tests.test_timeline_diff.TestSegKeyImpact.test_unrelated_clip_change_no_extra_invalid)
+改 gfx 页 dur → 不产生任何 seg 失效（gfx 键失效单独报）。 ... ok
+test_vseg_invalidates_intersecting_segments_only (tests.test_timeline_diff.TestSegKeyImpact.test_vseg_invalidates_intersecting_segments_only)
+改 1 clip 时长（中段）：失效段必与该 clip 相交，且 ≤ 全部段。 ... ok
+test_doctor_fix_json_has_fix_section (tests.test_vt_entry.DoctorFix.test_doctor_fix_json_has_fix_section) ... ok
+test_fix_rebuilds_missing_mount_links_then_reports_none (tests.test_vt_entry.DoctorFix.test_fix_rebuilds_missing_mount_links_then_reports_none) ... ok
+test_foreign_live_mount_not_auto_fixed (tests.test_vt_entry.DoctorFix.test_foreign_live_mount_not_auto_fixed) ... 
+⚠ NVENC 探测失败，seg 预编码回落 x264（显式告警，非静默）
+⚠ NVENC 探测失败，seg 预编码回落 x264（显式告警，非静默）
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @270：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+  · 切点候选 @315：±150 帧内无静默帧，该段并入邻段
+ok
+test_registry_fix_backfills_missing_fields (tests.test_vt_entry.DoctorFix.test_registry_fix_backfills_missing_fields) ... ok
+test_doctor_human_readable_offline (tests.test_vt_entry.DoctorJson.test_doctor_human_readable_offline) ... ok
+test_doctor_json_sections_complete (tests.test_vt_entry.DoctorJson.test_doctor_json_sections_complete) ... ok
+test_unregistered_skill_packages_not_misreported (tests.test_vt_entry.DoctorSkillsSection.test_unregistered_skill_packages_not_misreported) ... ok
+test_dry_reports_missing_then_fix_creates_relative_links (tests.test_vt_entry.FixLinks.test_dry_reports_missing_then_fix_creates_relative_links) ... ok
+test_wrong_target_repaired (tests.test_vt_entry.FixLinks.test_wrong_target_repaired) ... ok
+test_init_json_key_structure_matches_v1 (tests.test_vt_entry.InitForwarderParity.test_init_json_key_structure_matches_v1) ... ok
+test_init_via_vt_equivalent (tests.test_vt_entry.InitForwarderParity.test_init_via_vt_equivalent) ... ok
+test_apps_and_skills_list_ok (tests.test_vt_entry.ListCheck.test_apps_and_skills_list_ok) ... ok
+test_bad_subcommand_usage_error (tests.test_vt_entry.ListCheck.test_bad_subcommand_usage_error) ... ok
+test_plugins_list_shows_declared (tests.test_vt_entry.ListCheck.test_plugins_list_shows_declared) ... ok
+test_version_prints_version_and_head (tests.test_vt_entry.VersionCmd.test_version_prints_version_and_head) ... ok
+test_vtx_help_still_works (tests.test_vt_entry.VtxRegression.test_vtx_help_still_works) ... ok
+
+----------------------------------------------------------------------
+Ran 286 tests in 36.868s
+
+OK (skipped=10)
+test_default_when_absent (tests.test_cli_baseurl.TestBaseUrlPosition.test_default_when_absent)
+未传 → config/默认 18085。 ... ok
+test_prefix_position_honored (tests.test_cli_baseurl.TestBaseUrlPosition.test_prefix_position_honored)
+主级位置：--base-url X sidecar health → 请求打到 X（不被默认覆盖）。 ... ok
+test_suffix_position_honored (tests.test_cli_baseurl.TestBaseUrlPosition.test_suffix_position_honored)
+子级位置：sidecar health --base-url X → 同样生效。 ... ok
+test_4xx_error_path (tests.test_client.TestClient.test_4xx_error_path) ... ok
+test_cfg_get (tests.test_client.TestClient.test_cfg_get) ... ok
+test_ensure_sidecar_already_running_no_spawn (tests.test_client.TestClient.test_ensure_sidecar_already_running_no_spawn) ... ok
+test_health (tests.test_client.TestClient.test_health) ... ok
+test_long_audio_passthrough_no_split (tests.test_client.TestClient.test_long_audio_passthrough_no_split) ... ok
+test_timeout (tests.test_client.TestClient.test_timeout) ... ok
+test_transcribe_ok (tests.test_client.TestClient.test_transcribe_ok) ... ok
+test_empty_words (tests.test_segline.TestSegline.test_empty_words) ... ok
+test_end_clamped_to_duration (tests.test_segline.TestSegline.test_end_clamped_to_duration) ... ok
+test_filler_words_removed_with_time (tests.test_segline.TestSegline.test_filler_words_removed_with_time) ... ok
+test_floor_ceil_and_zero_start (tests.test_segline.TestSegline.test_floor_ceil_and_zero_start) ... ok
+test_latin_safe_cut (tests.test_segline.TestSegline.test_latin_safe_cut) ... ok
+test_line_width_and_head_punct (tests.test_segline.TestSegline.test_line_width_and_head_punct) ... ok
+test_min_dur_frames (tests.test_segline.TestSegline.test_min_dur_frames) ... ok
+test_no_orphan_punct_line (tests.test_segline.TestSegline.test_no_orphan_punct_line) ... ok
+test_offset_frames (tests.test_segline.TestSegline.test_offset_frames) ... ok
+test_out_of_range_dropped (tests.test_segline.TestSegline.test_out_of_range_dropped) ... ok
+test_overlap_kept_on_extreme_conflict (tests.test_segline.TestSegline.test_overlap_kept_on_extreme_conflict) ... ok
+test_overlap_resolution_keeps_min_dur (tests.test_segline.TestSegline.test_overlap_resolution_keeps_min_dur) ... ok
+test_punct_zero_width_no_inflate (tests.test_segline.TestSegline.test_punct_zero_width_no_inflate) ... ok
+test_rate_8_5_passes (tests.test_segline.TestSegline.test_rate_8_5_passes) ... ok
+test_rate_9_5_expands (tests.test_segline.TestSegline.test_rate_9_5_expands) ... ok
+test_rate_9_5_no_gap_warns (tests.test_segline.TestSegline.test_rate_9_5_no_gap_warns) ... ok
+test_soft_split_candidate_used (tests.test_segline.TestSegline.test_soft_split_candidate_used) ... ok
+test_empty_subs (tests.test_srt.TestSrtOut.test_empty_subs) ... ok
+test_frame_to_srt_time (tests.test_srt.TestSrtOut.test_frame_to_srt_time) ... ok
+test_golden (tests.test_srt.TestSrtOut.test_golden) ... ok
+test_write_file (tests.test_srt.TestSrtOut.test_write_file) ... ok
+test_n1_head_punct (tests.test_textnorm.TestTextnormGolden.test_n1_head_punct) ... ok
+test_n2_fold_strongest (tests.test_textnorm.TestTextnormGolden.test_n2_fold_strongest) ... ok
+test_n3_cjk_cjk_space (tests.test_textnorm.TestTextnormGolden.test_n3_cjk_cjk_space) ... ok
+test_n3_cjk_latin_space_kept (tests.test_textnorm.TestTextnormGolden.test_n3_cjk_latin_space_kept) ... ok
+test_n3_space_around_cjk_punct (tests.test_textnorm.TestTextnormGolden.test_n3_space_around_cjk_punct) ... ok
+test_n4_soft_split_candidates (tests.test_textnorm.TestTextnormGolden.test_n4_soft_split_candidates) ... ok
+test_n5_disable (tests.test_textnorm.TestTextnormGolden.test_n5_disable) ... ok
+test_n5_discourse_boundary (tests.test_textnorm.TestTextnormGolden.test_n5_discourse_boundary) ... ok
+test_n5_inline_fillers (tests.test_textnorm.TestTextnormGolden.test_n5_inline_fillers) ... ok
+test_n6_t2s_soft_dependency (tests.test_textnorm.TestTextnormGolden.test_n6_t2s_soft_dependency) ... ok
+test_n7_rstrip_mid_punct (tests.test_textnorm.TestTextnormGolden.test_n7_rstrip_mid_punct) ... ok
+test_stream_matches_text_and_drops_time (tests.test_textnorm.TestTextnormGolden.test_stream_matches_text_and_drops_time) ... ok
+test_backup_written_to_reports (tests.test_tl_merge.TestTlMerge.test_backup_written_to_reports) ... ok
+test_corrupt_json_rejected_file_kept (tests.test_tl_merge.TestTlMerge.test_corrupt_json_rejected_file_kept) ... ok
+test_dry_run_writes_nothing (tests.test_tl_merge.TestTlMerge.test_dry_run_writes_nothing) ... ok
+test_invalid_subs_rejected (tests.test_tl_merge.TestTlMerge.test_invalid_subs_rejected) ... ok
+test_merge_keeps_all_other_keys (tests.test_tl_merge.TestTlMerge.test_merge_keeps_all_other_keys) ... ok
+test_two_merges_idempotent_shape (tests.test_tl_merge.TestTlMerge.test_two_merges_idempotent_shape) ... ok
+test_all_mismatch_empty_words (tests.test_words.TestBuildWords.test_all_mismatch_empty_words) ... ok
+test_case_fold (tests.test_words.TestBuildWords.test_case_fold) ... ok
+test_digit_variant (tests.test_words.TestBuildWords.test_digit_variant) ... ok
+test_empty (tests.test_words.TestBuildWords.test_empty) ... ok
+test_head_punct_defensive_anchor (tests.test_words.TestBuildWords.test_head_punct_defensive_anchor) ... ok
+test_latin_absorb_across_separators (tests.test_words.TestBuildWords.test_latin_absorb_across_separators) ... ok
+test_mismatch_interpolated_with_degraded_ranges (tests.test_words.TestBuildWords.test_mismatch_interpolated_with_degraded_ranges) ... ok
+test_ms_defense (tests.test_words.TestBuildWords.test_ms_defense) ... ok
+test_out_of_order_tokens_partially_matched (tests.test_words.TestBuildWords.test_out_of_order_tokens_partially_matched) ... ok
+test_punct_zero_width_anchor (tests.test_words.TestBuildWords.test_punct_zero_width_anchor) ... ok
+
+----------------------------------------------------------------------
+Ran 59 tests in 4.220s
+
+OK
+test_cannot_overwrite_production_timeline (tests.test_audio_audit.AudioAuditIntegration.test_cannot_overwrite_production_timeline) ... ok
+test_corrupt_cached_mp3_is_repaired (tests.test_audio_audit.AudioAuditIntegration.test_corrupt_cached_mp3_is_repaired) ... ok
+test_default_retains_loop_and_envelopes (tests.test_audio_audit.AudioAuditIntegration.test_default_retains_loop_and_envelopes) ... ok
+test_failed_forced_transcode_preserves_cached_bytes (tests.test_audio_audit.AudioAuditIntegration.test_failed_forced_transcode_preserves_cached_bytes) ... ok
+test_relocated_audio_audit_ignores_visual_dependencies (tests.test_audio_audit.AudioAuditIntegration.test_relocated_audio_audit_ignores_visual_dependencies) ... ok
+test_same_timestamp_source_replacement_refreshes_audio (tests.test_audio_audit.AudioAuditIntegration.test_same_timestamp_source_replacement_refreshes_audio) ... ok
+test_silent_source_retains_valid_event (tests.test_audio_audit.AudioAuditIntegration.test_silent_source_retains_valid_event) ... ok
+test_split_maps_source_time_to_delayed_event (tests.test_audio_audit.AudioAuditIntegration.test_split_maps_source_time_to_delayed_event) ... ok
+test_whole_preserves_events_and_multiple_sources (tests.test_audio_audit.AudioAuditIntegration.test_whole_preserves_events_and_multiple_sources) ... ok
+test_cross_drive_path_falls_back_to_absolute (tests.test_audio_audit.AudioAuditMapping.test_cross_drive_path_falls_back_to_absolute) ... ok
+test_detector_failure_is_not_treated_as_content (tests.test_audio_audit.AudioAuditMapping.test_detector_failure_is_not_treated_as_content) ... ok
+test_frame_boundaries_expand_instead_of_truncating (tests.test_audio_audit.AudioAuditMapping.test_frame_boundaries_expand_instead_of_truncating) ... ok
+test_quantized_spans_do_not_overlap (tests.test_audio_audit.AudioAuditMapping.test_quantized_spans_do_not_overlap) ... ok
+test_source_intersection_has_independent_time_origin (tests.test_audio_audit.AudioAuditMapping.test_source_intersection_has_independent_time_origin) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 5.893s
+
+OK
+test_packets_equals_frames (tests.test_qc_gates_opt.TestCountPacketsEquivalence.test_packets_equals_frames) ... ok
+test_batch_equals_per_window (tests.test_qc_gates_opt.TestG1BatchEquivalence.test_batch_equals_per_window) ... ok
+test_batch_failure_returns_none (tests.test_qc_gates_opt.TestG1BatchEquivalence.test_batch_failure_returns_none)
+任一批 ffmpeg 失败 → 整体 None（回落逐窗旧路径的触发条件）。 ... ok
+test_empty_windows_return_empty (tests.test_qc_gates_opt.TestG1BatchEquivalence.test_empty_windows_return_empty) ... ok
+test_no_receipt_merged_pass_detects_black (tests.test_qc_gates_opt.TestG7BlackSensitivity.test_no_receipt_merged_pass_detects_black) ... ok
+test_receipt_hit_blackdetect_only_still_detects_black (tests.test_qc_gates_opt.TestG7BlackSensitivity.test_receipt_hit_blackdetect_only_still_detects_black) ... ok
+test_two_processes_no_lost_entry (tests.test_qc_gates_opt.TestLoudnessCrossProcessLock.test_two_processes_no_lost_entry) ... ok
+test_failed_measure_not_stored (tests.test_qc_gates_opt.TestLoudnessReceipt.test_failed_measure_not_stored) ... ok
+test_missing_file_lookup_none (tests.test_qc_gates_opt.TestLoudnessReceipt.test_missing_file_lookup_none) ... ok
+test_store_then_hit_and_miss_on_change (tests.test_qc_gates_opt.TestLoudnessReceipt.test_store_then_hit_and_miss_on_change) ... ok
+test_01_record_written_and_warm_exempt (tests.test_qc_gates_opt.TestQcSegmentExemption.test_01_record_written_and_warm_exempt) ... ok
+test_02_seg_tamper_disables_that_segs_exempt (tests.test_qc_gates_opt.TestQcSegmentExemption.test_02_seg_tamper_disables_that_segs_exempt) ... ok
+test_03_final_stat_change_invalidates_all (tests.test_qc_gates_opt.TestQcSegmentExemption.test_03_final_stat_change_invalidates_all) ... ok
+test_04_strict_disables_exempt (tests.test_qc_gates_opt.TestQcSegmentExemption.test_04_strict_disables_exempt) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 6.420s
+
+OK
+test_batch_two_items (tests.test_api_mock.BatchTest.test_batch_two_items) ... ok
+test_invalid_url_download_retries_then_raises (tests.test_api_mock.FailurePathTest.test_invalid_url_download_retries_then_raises) ... ok
+test_status3_rejected_no_retry_no_resubmit (tests.test_api_mock.FailurePathTest.test_status3_rejected_no_retry_no_resubmit) ... ok
+test_submit_4xx_surfaces_immediately (tests.test_api_mock.FailurePathTest.test_submit_4xx_surfaces_immediately) ... ok
+test_batch_mixed_model_pricing_breakdown (tests.test_api_mock.FullChainTest.test_batch_mixed_model_pricing_breakdown) ... ok
+test_full_chain_bg1080p_payload_and_output (tests.test_api_mock.FullChainTest.test_full_chain_bg1080p_payload_and_output) ... ok
+test_full_chain_bg4k (tests.test_api_mock.FullChainTest.test_full_chain_bg4k) ... ok
+test_full_chain_vertical_payload_and_output (tests.test_api_mock.FullChainTest.test_full_chain_vertical_payload_and_output) ... ok
+test_gpt25_base_rejects_quality_and_4k_price_gate (tests.test_api_mock.FullChainTest.test_gpt25_base_rejects_quality_and_4k_price_gate) ... ok
+test_gpt25_family_endpoints_and_payloads (tests.test_api_mock.FullChainTest.test_gpt25_family_endpoints_and_payloads) ... ok
+test_gpt25_pricing_per_model (tests.test_api_mock.FullChainTest.test_gpt25_pricing_per_model) ... ok
+test_gpt25_sunburst_explicit_4k_wxh_and_background_mask (tests.test_api_mock.FullChainTest.test_gpt25_sunburst_explicit_4k_wxh_and_background_mask) ... ok
+test_gpt_endpoint_and_payload (tests.test_api_mock.FullChainTest.test_gpt_endpoint_and_payload) ... ok
+test_raw_no_linkage (tests.test_api_mock.FullChainTest.test_raw_no_linkage) ... ok
+test_result_wrapper_dict_shape (tests.test_api_mock.FullChainTest.test_result_wrapper_dict_shape) ... ok
+test_task_id_resume_skips_submit (tests.test_api_mock.FullChainTest.test_task_id_resume_skips_submit) ... ok
+test_explicit_2k_with_bg4k_warns_but_proceeds (tests.test_api_mock.KindOverrideTest.test_explicit_2k_with_bg4k_warns_but_proceeds) ... ok
+test_explicit_model_gpt_with_kind_warns (tests.test_api_mock.KindOverrideTest.test_explicit_model_gpt_with_kind_warns) ... ok
+test_bad_key_fails_before_submit (tests.test_api_mock.PayGateTest.test_bad_key_fails_before_submit) ... ok
+test_batch_over_50_needs_double_confirm_non_tty_aborts (tests.test_api_mock.PayGateTest.test_batch_over_50_needs_double_confirm_non_tty_aborts) ... ok
+test_no_yes_non_tty_aborts_with_zero_submits (tests.test_api_mock.PayGateTest.test_no_yes_non_tty_aborts_with_zero_submits) ... ok
+test_yes_submits_once (tests.test_api_mock.PayGateTest.test_yes_submits_once) ... ok
+test_14_refs_pass (tests.test_api_mock.RefLimitTest.test_14_refs_pass) ... ok
+test_15_refs_rejected_before_submit (tests.test_api_mock.RefLimitTest.test_15_refs_rejected_before_submit) ... ok
+test_empty_prompt_rejected (tests.test_models.BuildPayloadTest.test_empty_prompt_rejected) ... ok
+test_gpt_auto_size_omitted (tests.test_models.BuildPayloadTest.test_gpt_auto_size_omitted) ... ok
+test_gpt_data_url_rejected (tests.test_models.BuildPayloadTest.test_gpt_data_url_rejected) ... ok
+test_gpt_invalid_ratio (tests.test_models.BuildPayloadTest.test_gpt_invalid_ratio) ... ok
+test_gpt_size_is_ratio_no_aspect (tests.test_models.BuildPayloadTest.test_gpt_size_is_ratio_no_aspect) ... ok
+test_nano_auto_ratio_omitted (tests.test_models.BuildPayloadTest.test_nano_auto_ratio_omitted) ... ok
+test_nano_default_size_1k (tests.test_models.BuildPayloadTest.test_nano_default_size_1k) ... ok
+test_nano_invalid_ratio (tests.test_models.BuildPayloadTest.test_nano_invalid_ratio) ... ok
+test_nano_invalid_size (tests.test_models.BuildPayloadTest.test_nano_invalid_size) ... ok
+test_nano_size_and_ratio (tests.test_models.BuildPayloadTest.test_nano_size_and_ratio) ... ok
+test_ref_limit_14 (tests.test_models.BuildPayloadTest.test_ref_limit_14) ... ok
+test_estimate_cost (tests.test_models.CostTest.test_estimate_cost) ... ok
+test_endpoints (tests.test_models.EndpointConstantsTest.test_endpoints) ... ok
+test_model_registry_uses_constants (tests.test_models.EndpointConstantsTest.test_model_registry_uses_constants) ... ok
+test_aspect_ratio_validation (tests.test_models.Gpt25FamilyTest.test_aspect_ratio_validation) ... ok
+test_base_version_rejects_sunburst_only_params (tests.test_models.Gpt25FamilyTest.test_base_version_rejects_sunburst_only_params) ... ok
+test_data_url_rejected (tests.test_models.Gpt25FamilyTest.test_data_url_rejected) ... ok
+test_endpoints_and_prices (tests.test_models.Gpt25FamilyTest.test_endpoints_and_prices) ... ok
+test_estimate_gpt25_output (tests.test_models.Gpt25FamilyTest.test_estimate_gpt25_output) ... ok
+test_payload_ratio_and_quality (tests.test_models.Gpt25FamilyTest.test_payload_ratio_and_quality) ... ok
+test_payload_wxh_background_mask (tests.test_models.Gpt25FamilyTest.test_payload_wxh_background_mask) ... ok
+test_quality_choices_per_model (tests.test_models.Gpt25FamilyTest.test_quality_choices_per_model) ... ok
+test_quality_validation (tests.test_models.Gpt25FamilyTest.test_quality_validation) ... ok
+test_estimate_nano_anchor (tests.test_models.KindMatrixTest.test_estimate_nano_anchor) ... ok
+test_matrix_complete (tests.test_models.KindMatrixTest.test_matrix_complete) ... ok
+test_upscale_factor (tests.test_models.KindMatrixTest.test_upscale_factor) ... ok
+test_golden_argv (tests.test_postprocess.FilterGoldenTest.test_golden_argv) ... ok
+test_golden_filter_strings (tests.test_postprocess.FilterGoldenTest.test_golden_filter_strings) ... ok
+test_kind_target (tests.test_postprocess.FilterGoldenTest.test_kind_target) ... ok
+test_branch_crop_1x1_to_16x9 (tests.test_postprocess.RealCropTest.test_branch_crop_1x1_to_16x9) ... ok
+test_branch_downscale_4k_to_1080p (tests.test_postprocess.RealCropTest.test_branch_downscale_4k_to_1080p) ... ok
+test_branch_upscale_2752x1536_to_bg4k (tests.test_postprocess.RealCropTest.test_branch_upscale_2752x1536_to_bg4k) ... ok
+test_cover_crop_missing_input (tests.test_postprocess.RealCropTest.test_cover_crop_missing_input) ... ok
+test_probe_invalid_file_raises (tests.test_postprocess.RealCropTest.test_probe_invalid_file_raises) ... ok
+test_verify_fail_deletes_output (tests.test_postprocess.RealCropTest.test_verify_fail_deletes_output) ... ok
+test_vertical (tests.test_postprocess.RealCropTest.test_vertical) ... ok
+test_all_missing_raises_actionable_error (tests.test_secrets.KeyChainTest.test_all_missing_raises_actionable_error) ... ok
+test_cli_key_from_file (tests.test_secrets.KeyChainTest.test_cli_key_from_file) ... ok
+test_cli_key_missing_file_raises (tests.test_secrets.KeyChainTest.test_cli_key_missing_file_raises) ... ok
+test_cli_key_value_beats_all (tests.test_secrets.KeyChainTest.test_cli_key_value_beats_all) ... ok
+test_describe_key_chain_reports_levels (tests.test_secrets.KeyChainTest.test_describe_key_chain_reports_levels) ... ok
+test_keyring_beats_secret_file (tests.test_secrets.KeyChainTest.test_keyring_beats_secret_file) ... ok
+test_mask_key_tail4 (tests.test_secrets.KeyChainTest.test_mask_key_tail4) ... ok
+test_nanobanana_env_beats_stored (tests.test_secrets.KeyChainTest.test_nanobanana_env_beats_stored) ... ok
+test_resolve_empty_string_treated_as_missing (tests.test_secrets.KeyChainTest.test_resolve_empty_string_treated_as_missing) ... ok
+test_sc_env_beats_nanobanana_and_stored (tests.test_secrets.KeyChainTest.test_sc_env_beats_nanobanana_and_stored) ... ok
+test_secret_file_last (tests.test_secrets.KeyChainTest.test_secret_file_last) ... ok
+
+----------------------------------------------------------------------
+Ran 71 tests in 18.074s
+
+OK
+test_parse_psnr_garbage_exits_2 (tests.test_export_4k.TestCompareParseFailClosed.test_parse_psnr_garbage_exits_2) ... ✗ PSNR 解析失败：psnr filter 日志无 average 行（ffmpeg 输出格式变化？）
+ok
+test_parse_psnr_valid_and_inf (tests.test_export_4k.TestCompareParseFailClosed.test_parse_psnr_valid_and_inf) ... ok
+test_parse_ssim_garbage_exits_2 (tests.test_export_4k.TestCompareParseFailClosed.test_parse_ssim_garbage_exits_2) ... ✗ SSIM 解析失败：ssim filter 日志无 All 行（ffmpeg 输出格式变化？）
+ok
+test_parse_ssim_valid (tests.test_export_4k.TestCompareParseFailClosed.test_parse_ssim_valid) ... ok
+test_fallback_command_params (tests.test_export_4k.TestFallbackX264.test_fallback_command_params) ... ok
+test_fallback_x264_cmd_matches_runbook (tests.test_export_4k.TestFallbackX264.test_fallback_x264_cmd_matches_runbook) ... ok
+test_match_passes_precheck (tests.test_export_4k.TestFpsPrecheck.test_match_passes_precheck) ... ok
+test_mismatch_rejected_exit_2 (tests.test_export_4k.TestFpsPrecheck.test_mismatch_rejected_exit_2) ... ✗ 母带 r_frame_rate 25fps ≠ timeline fps 30（timeline fps 被改而母带未换？seek 会按错 fps 取帧——先跑 vtx all 产出现行母带，或改回 timeline fps）
+ok
+test_probe_media_fps_unparseable_exits_2 (tests.test_export_4k.TestFpsPrecheck.test_probe_media_fps_unparseable_exits_2) ... ✗ 无法解析母带帧率 r_frame_rate='0/0'：/tmp/tmp1tu7u6_o/out/final.mp4
+✗ 无法解析母带帧率 r_frame_rate=''：/tmp/tmp1tu7u6_o/out/final.mp4
+✗ 无法解析母带帧率 r_frame_rate='n/a'：/tmp/tmp1tu7u6_o/out/final.mp4
+ok
+test_full_chain_and_cache_hit (tests.test_export_4k.TestNvencConcatIntegration.test_full_chain_and_cache_hit) ... ok
+test_frame0_and_midframe (tests.test_export_4k.TestSSSeekEquivalence.test_frame0_and_midframe) ... ok
+test_key_length (tests.test_export_4k.TestSegKey.test_key_length) ... ok
+test_media_stat_change_changes_key (tests.test_export_4k.TestSegKey.test_media_stat_change_changes_key) ... ok
+test_params_and_encoder_change_key (tests.test_export_4k.TestSegKey.test_params_and_encoder_change_key) ... ok
+test_n_exceeds_total_shrinks (tests.test_export_4k.TestSplitFrames.test_n_exceeds_total_shrinks) ... ok
+test_single_segment (tests.test_export_4k.TestSplitFrames.test_single_segment) ... ok
+test_sum_and_monotone (tests.test_export_4k.TestSplitFrames.test_sum_and_monotone) ... ok
+test_export_writes_cache_beside_symlink (tests.test_export_4k.TestSymlinkTimelineNoPenetration.test_export_writes_cache_beside_symlink) ... ok
+test_project_root_uses_symlink_dir (tests.test_export_4k.TestSymlinkTimelineNoPenetration.test_project_root_uses_symlink_dir) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 4.859s
+
+OK
+⚠ NVENC 探测失败，回落 x264 medium 单进程（显式告警，非静默）
+[timing] x264 回落单进程: 0.0s
+✓ 4K 导出完成（回落路径）：/tmp/tmp2hbnwb6x/out/f4k.mp4（90f，总墙钟 0.0s）
+⚠ NVENC 探测失败，回落 x264 medium 单进程（显式告警，非静默）
+[timing] x264 回落单进程: 0.0s
+✓ 4K 导出完成（回落路径）：/tmp/tmp1tu7u6_o/out/f4k.mp4（30f，总墙钟 0.0s）
+  段编码：3 段待编，3 线程并行（h264_nvenc p4）
+  ✓ seg 2 [60,90) 0.6s
+  ✓ seg 1 [30,60) 0.6s
+  ✓ seg 0 [0,30) 0.6s
+[timing] 段渲染（3 段 / 3 编 / 命中 0）: 0.6s
+  ✓ 拼接自检：总帧数 90 == 90
+[timing] concat+封装（音轨母带直通）: 0.1s
+[timing] 总墙钟: 1.2s
+✓ 4K 导出完成：/tmp/tmp4gn1si3e/out/final_4k.mp4（90f，nvenc p4 ×3 段，命中 0）
+  ✓ seg 0 [0,30) 已缓存
+  ✓ seg 1 [30,60) 已缓存
+  ✓ seg 2 [60,90) 已缓存
+[timing] 段渲染（3 段 / 0 编 / 命中 3）: 0.0s
+  ✓ 拼接自检：总帧数 90 == 90
+[timing] concat+封装（音轨母带直通）: 0.1s
+[timing] 总墙钟: 0.8s
+✓ 4K 导出完成：/tmp/tmp4gn1si3e/out/final_4k.mp4（90f，nvenc p4 ×3 段，命中 3）
+  段编码：2 段待编，2 线程并行（h264_nvenc p4）
+  ✓ seg 1 [15,30) 0.4s
+  ✓ seg 0 [0,15) 0.4s
+[timing] 段渲染（2 段 / 2 编 / 命中 0）: 0.4s
+  ✓ 拼接自检：总帧数 30 == 30
+[timing] concat+封装（音轨母带直通）: 0.1s
+[timing] 总墙钟: 0.9s
+✓ 4K 导出完成：/tmp/tmp3ah7a_sg/out/final_4k.mp4（30f，nvenc p4 ×2 段，命中 0）
+test_chain_math (tests.test_atempo.TestAtempoChain.test_chain_math)
+链条语义：输出时长 = raw / r，多级乘积 = r。 ... ok
+test_direction_golden (tests.test_atempo.TestAtempoChain.test_direction_golden)
+raw=9.14 / budget=7.62 → atempo=1.199475（=raw/budget，方向钉死）。 ... ok
+test_domain_boundaries_single_level (tests.test_atempo.TestAtempoChain.test_domain_boundaries_single_level)
+r=0.5 / 2.0 恰在单级域内（[0.5, 2.0] 闭区间）。 ... ok
+test_equal_no_filter (tests.test_atempo.TestAtempoChain.test_equal_no_filter)
+budget=raw（|r-1|<1e-9）→ 空串，不加滤镜（口径见 atempo.py docstring）。 ... ok
+test_extreme_9x_recurse (tests.test_atempo.TestAtempoChain.test_extreme_9x_recurse)
+更极端依次再拆：r=9 → 9^(1/4)=1.732051 四级同值串联。 ... ok
+test_invalid (tests.test_atempo.TestAtempoChain.test_invalid) ... ok
+test_out_of_range_high_4x (tests.test_atempo.TestAtempoChain.test_out_of_range_high_4x)
+raw/budget=4 → 双级 √4=2.0：atempo=2.000000,atempo=2.000000。 ... ok
+test_out_of_range_low_quarter (tests.test_atempo.TestAtempoChain.test_out_of_range_low_quarter)
+raw/budget=0.25 → 双级 √0.25=0.5。 ... ok
+test_already_in_band_noop (tests.test_levelnorm.TestLevelNorm.test_already_in_band_noop)
+峰值已在 -6±0.5dB 带宽内 → 不动文件（mtime/内容不变）。 ... ok
+test_idempotent (tests.test_levelnorm.TestLevelNorm.test_idempotent) ... ok
+test_normalize_to_minus6 (tests.test_levelnorm.TestLevelNorm.test_normalize_to_minus6) ... ok
+test_peak_measure (tests.test_levelnorm.TestLevelNorm.test_peak_measure) ... ok
+test_exact_quantization_anchor (tests.test_pipeline.TestFinishWindow.test_exact_quantization_anchor)
+量化点精确落点（2026-09-11 集成验收缺陷回归）： ... ok
+test_final_format_contract (tests.test_pipeline.TestFinishWindow.test_final_format_contract)
+repack_voice.py 消费契约：48kHz / mono / pcm_s16le / 时长=budget±0.002。 ... ok
+test_manifest_fields (tests.test_pipeline.TestFinishWindow.test_manifest_fields) ... ok
+test_stretch_direction (tests.test_pipeline.TestFinishWindow.test_stretch_direction)
+atempo 方向集成验证：raw 3s 贴预算 4s → 变慢（r=0.75，输出更长）。 ... ok
+test_chain_window_sum (tests.test_spec.TestSpec.test_chain_window_sum)
+vt_B 两片窗：链 = max(0+300, 300+50) = 350 帧 → 350/30+0.02。 ... ok
+test_ids_filter (tests.test_spec.TestSpec.test_ids_filter) ... ok
+test_missing_voice_track (tests.test_spec.TestSpec.test_missing_voice_track) ... ok
+test_non_vt_skipped_with_warning (tests.test_spec.TestSpec.test_non_vt_skipped_with_warning)
+非 vt_ 前缀源（sfx01/bgm）跳过并警告；windows 只含 vt_ 去前缀 ID。 ... ok
+test_single_window_golden (tests.test_spec.TestSpec.test_single_window_golden)
+vt_A1 单片窗 (1492,1720)=228 帧 → budget=228/30+0.02=7.62。 ... ok
+test_spec_shape (tests.test_spec.TestSpec.test_spec_shape) ... ok
+
+----------------------------------------------------------------------
+Ran 22 tests in 4.554s
+
+OK
+⚠ 跳过非 vt_ 前缀源：sfx01（voice 轨应只放 TTS 占位源）
+✓ A1: 1 片事件 链 228 帧 → 预算 7.62s
+✓ B: 2 片事件 链 350 帧 → 预算 11.687s
+test_real_chain_produces_48k_stereo (tests.test_denoise.DenoiseChainIntegration.test_real_chain_produces_48k_stereo) ... skipped '可选集成测试：VTX_TEST_DENOISE=1 且需 conda denoise 环境 + Resemble 权重（真实推理链，约数十秒）'
+test_contribute_keys_only_declaring_sources (tests.test_denoise.InvariantOneKeys.test_contribute_keys_only_declaring_sources) ... ok
+test_product_whitelisted_in_gc_plan (tests.test_denoise.InvariantOneKeys.test_product_whitelisted_in_gc_plan) ... ok
+test_digest_and_fingerprint_follow_value (tests.test_denoise.InvariantTwoFingerprint.test_digest_and_fingerprint_follow_value) ... ok
+test_cache_hit_returns_without_chain_or_env (tests.test_denoise.PrepareSourceContract.test_cache_hit_returns_without_chain_or_env) ... ok
+test_dry_run_no_artifact (tests.test_denoise.PrepareSourceContract.test_dry_run_no_artifact) ... ok
+test_missing_env_fails_hard (tests.test_denoise.PrepareSourceContract.test_missing_env_fails_hard) ... ✗ denoise 环境缺失（fail-hard，不回落裸音频——回落=产物标注降噪实未降噪）：
+    - conda denoise 环境解释器 /x/py（修复：init）
+ok
+test_production_runs_three_step_chain (tests.test_denoise.PrepareSourceContract.test_production_runs_three_step_chain) ... ok
+test_undeclared_source_returns_none (tests.test_denoise.PrepareSourceContract.test_undeclared_source_returns_none) ... ok
+test_path_shape_and_bare_key_unpolluted (tests.test_denoise.ProductPathSemantics.test_path_shape_and_bare_key_unpolluted) ... ok
+test_value_change_changes_path (tests.test_denoise.ProductPathSemantics.test_value_change_changes_path) ... ok
+test_extraction_and_graph_read_plugin_product (tests.test_denoise.StagesWiring.test_extraction_and_graph_read_plugin_product) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.380s
+
+OK (skipped=1)
+  [dry-run] denoise 产物 ac18b71615dc::denoise:1.0.0:5ffe533b830f.wav（陷波→Resemble 仅降噪→48k stereo）
+  · denoise: v → 31526d291269::denoise:1.0.0:1a6c15c2f72f.wav（陷波→Resemble 仅降噪→48k stereo）
+  · denoise: v → 22d564246983::denoise:1.0.0:5ffe533b830f.wav（陷波→Resemble 仅降噪→48k stereo）
+test_defaults_and_multi_track (tests.test_duck_static.AudioEventsHook.test_defaults_and_multi_track) ... ok
+test_missing_voice_track_no_windows (tests.test_duck_static.AudioEventsHook.test_missing_voice_track_no_windows) ... ok
+test_voice_track_windows_from_original_events (tests.test_duck_static.AudioEventsHook.test_voice_track_windows_from_original_events) ... ok
+test_validate_and_audio_with_strategy (tests.test_duck_static.DuckInteg.test_validate_and_audio_with_strategy) ... skipped '可选集成测试：VTX_TEST_DUCK_INTEG=1 且需 ffmpeg（真实混音链）'
+test_run_audio_events_via_hooks (tests.test_duck_static.RealBus.test_run_audio_events_via_hooks) ... ok
+test_run_validate_no_key_timeline_empty (tests.test_duck_static.RealBus.test_run_validate_no_key_timeline_empty) ... ok
+test_run_validate_via_hooks (tests.test_duck_static.RealBus.test_run_validate_via_hooks) ... ok
+test_boundary_split_and_volume (tests.test_duck_static.TransformMath.test_boundary_split_and_volume) ... ok
+test_fades_kept_on_edges_microfade_on_duck (tests.test_duck_static.TransformMath.test_fades_kept_on_edges_microfade_on_duck) ... ok
+test_no_input_mutation (tests.test_duck_static.TransformMath.test_no_input_mutation) ... ok
+test_src_in_continuous (tests.test_duck_static.TransformMath.test_src_in_continuous) ... ok
+test_clean_timeline_no_errors (tests.test_duck_static.ValidateHook.test_clean_timeline_no_errors) ... ok
+test_duck_and_strategy_mutually_exclusive (tests.test_duck_static.ValidateHook.test_duck_and_strategy_mutually_exclusive) ... ok
+test_meta_marker_blocks_double_application (tests.test_duck_static.ValidateHook.test_meta_marker_blocks_double_application) ... ok
+test_shape_errors (tests.test_duck_static.ValidateHook.test_shape_errors) ... ok
+test_merge_within_gap_and_split_beyond (tests.test_duck_static.VoiceWindows.test_merge_within_gap_and_split_beyond) ... ok
+test_overlap_takes_max_out (tests.test_duck_static.VoiceWindows.test_overlap_takes_max_out) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.016s
+
+OK (skipped=1)
+test_health_check_exits_zero (tests.test_hello.HelloAppCli.test_health_check_exits_zero) ... ok
+test_hello_produces_standalone_asset (tests.test_hello.HelloAppCli.test_hello_produces_standalone_asset) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.028s
+
+OK
+test_enabled_whitelists_keys_and_fingerprints_plugin (tests.test_hello_plugin.CacheIdentity.test_enabled_whitelists_keys_and_fingerprints_plugin) ... ok
+test_kernel_digest_varies_with_key_value (tests.test_hello_plugin.CacheIdentity.test_kernel_digest_varies_with_key_value)
+P4 审查 P2-4：内核侧 active_plugins_digest 必须随键值变（key_map 双源 ... ok
+test_key_value_changes_product_digest (tests.test_hello_plugin.CacheIdentity.test_key_value_changes_product_digest) ... ok
+test_uninstall_keys_leave_whitelist_and_fingerprint_changes (tests.test_hello_plugin.CacheIdentity.test_uninstall_keys_leave_whitelist_and_fingerprint_changes) ... ok
+test_manifest_validates_and_health_exits_zero (tests.test_hello_plugin.ManifestAndHealth.test_manifest_validates_and_health_exits_zero) ... ok
+test_missing_ffmpeg_fails_hard (tests.test_hello_plugin.PrepareSourceContract.test_missing_ffmpeg_fails_hard) ... ok
+test_no_key_returns_none (tests.test_hello_plugin.PrepareSourceContract.test_no_key_returns_none) ... ok
+test_real_ffmpeg_product_and_raw_key_untouched (tests.test_hello_plugin.PrepareSourceContract.test_real_ffmpeg_product_and_raw_key_untouched) ... ok
+test_branch_active_passes_validate (tests.test_hello_plugin.ThreeBranchSemantics.test_branch_active_passes_validate) ... ok
+test_branch_disabled_errors_with_hint (tests.test_hello_plugin.ThreeBranchSemantics.test_branch_disabled_errors_with_hint) ... ok
+test_branch_not_installed_errors_with_hint (tests.test_hello_plugin.ThreeBranchSemantics.test_branch_not_installed_errors_with_hint) ... ok
+test_entry_removed_degrades_to_unknown_key_warning (tests.test_hello_plugin.ThreeBranchSemantics.test_entry_removed_degrades_to_unknown_key_warning) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 2.398s
+
+OK
+  · hello: v → 1eac960e5bbd::hello:1.0.0:80c549e4d427.wav（volume=+6dB）
+  · hello: v → 12ab1fe81b58::hello:1.0.0:b1a470dcdb93.wav（volume=-40dB）

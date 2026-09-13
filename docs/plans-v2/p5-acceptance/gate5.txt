@@ -1,0 +1,11 @@
+== 门5：语法差异门 + 缓存身份门 ==
+-- (a) 插件 active：denoise 键合法放行 --
+完成： ['validate']
+-- (b) 未安装：报错+安装提示 --
+  ✗ sources[0]: 键 'denoise' 由 plugins/denoise 提供，未安装——vt plugins list 查看
+-- (c) 禁用：报错+启用提示 --
+  ✗ sources[0]: 键 'denoise' 对应插件 plugins/denoise 已安装但被禁用——plugins/registry.json 启用后重跑
+-- (d) 缓存身份：键值变→参数摘要与指纹变，卸载→指纹回落 v1 形态 --
+  digest(x=1)=plugins:denoise@1.0.0:1781f24ccbab
+  digest(x=9)=plugins:denoise@1.0.0:922356286a57  ≠ 参数变→失效
+  卸载回落指纹 = 无插件形态（与带段失配→旧回执拒绝）

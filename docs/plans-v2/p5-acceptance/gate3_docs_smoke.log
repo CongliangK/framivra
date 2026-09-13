@@ -1,0 +1,35 @@
+docs_smoke：扫描 34 份文档 / 45 个 bash 围栏 / 31 个唯一仓库脚本引用
+
+PASS [apps/aroll/README.md:27] ×2 compile apps/aroll/aup3_extract.py（--help 不可用：exit 1）
+PASS [apps/aroll/README.md:28] ×2 --help apps/aroll/trim_takes.py
+PASS [apps/asr/README.md:30] ×5 --help apps/asr/asr_cli.py
+PASS [apps/asr/README.md:29] ×2 bash -n apps/asr/init.sh
+PASS [docs/audio-audit.md:6] ×3 --help apps/blender-bridge/audit_bundle.py
+PASS [apps/cover/README.md:24] ×7 --help apps/cover/make_cover.py
+PASS [apps/gates/README.md:30] ×5 --help apps/gates/content_gates.py
+PASS [apps/imgen/README.md:66] ×13 --help apps/imgen/imgen_cli.py
+PASS [apps/imgen/README.md:63] ×1 bash -n apps/imgen/init.sh
+PASS [docs/依赖盘点与init方案-2026-09-11.md:63] ×1 bash -n apps/matting/init.sh
+PASS [apps/matting/README.md:60] ×1 bash -n apps/matting/resolve_matte/matte_pipeline.sh
+PASS [apps/publish/README.md:30] ×4 bash -n apps/publish/check_4k.sh
+PASS [apps/publish/README.md:31] ×2 --help apps/publish/compare_4k_quality.py
+PASS [apps/publish/README.md:29] ×4 --help apps/publish/export_4k.py
+PASS [apps/research/README.md:31] ×1 --help apps/research/bilibili.py
+PASS [apps/research/README.md:36] ×1 node --check apps/research/dump-computed-styles.mjs
+PASS [apps/research/README.md:35] ×1 compile apps/research/fetch-site-assets.py（--help 不可用：exit 1）
+PASS [apps/research/README.md:32] ×1 --help apps/research/github_repos.py
+PASS [apps/research/README.md:33] ×2 compile apps/research/score_topic.py（--help 不可用：exit 1）
+PASS [apps/research/README.md:37] ×1 node --check apps/research/scroll-shoot.mjs
+PASS [apps/sync/README.md:30] ×1 --help apps/sync/repack_voice.py
+PASS [apps/sync/README.md:28] ×2 --help apps/sync/sync_audio.py
+PASS [apps/tts/README.md:35] ×2 bash -n apps/tts/init.sh
+PASS [apps/tts/README.md:36] ×5 --help apps/tts/tts_cli.py
+PASS [docs/依赖盘点与init方案-2026-09-11.md:62] ×1 bash -n plugins/denoise/denoise_init.sh
+PASS [skill/references/runbook.md:218] ×1 --help scripts/gfx_golden.py
+PASS [README.md:26] ×2 bash -n scripts/new_project.sh
+PASS [docs/post-loudness.md:15] ×1 --help scripts/post_loudness.py
+PASS [apps/gates/README.md:35] ×2 bash -n scripts/run_all_tests.sh
+PASS [README.md:24] ×2 --help vt.py
+PASS [README.md:27] ×64 --help vtx/vtx.py
+
+结论：✅ 全 PASS（PASS 31 / FAIL 0 / SKIP 0）
