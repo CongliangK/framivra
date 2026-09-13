@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""等待 Magic Mask 演算完成：监听 ResolveDebug.txt 的新增行，
-出现 "Tracking has been completed"（或 No more source frame）即退出。
+"""等待 Magic Mask 演算完成（多段稳定判定）。
 
-用法: env python3 wait_tracking_done.py [--timeout 600]
-在日志无新增且超时后以非零退出，便于流水线感知异常。
+关键经验：达芬奇演算分正向+反向多段，第一段 "Tracking has been completed"
+之后往往立即跟着新的 "Start tracking"（反向段），且**演算期间达芬奇会抓住
+指针，所有鼠标操作都会失效**。因此必须等到"完成后再无新开始"才可继续
+鼠标操作。
+
+判定规则：见到 completed 后，连续 STABLE_SECONDS 秒内没有新的
+"Start tracking" 行，才算真正完成。
+
+用法: env python3 wait_tracking_done.py [--timeout 600] [--stable 20]
+超时未开始/未完成以非零退出。
 """
 import argparse
 import sys
@@ -17,6 +24,8 @@ START_MARK = "Start tracking"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--stable", type=int, default=20,
+                    help="completed 后需保持无新 Start tracking 的秒数（等反向段）")
     a = ap.parse_args()
 
     try:
@@ -28,6 +37,8 @@ def main():
 
     t0 = time.time()
     started = False
+    done_at = None
+    last_activity = time.time()
     while time.time() - t0 < a.timeout:
         f.seek(offset)
         new = f.read()
@@ -35,15 +46,24 @@ def main():
         for line in new.splitlines():
             if START_MARK in line:
                 started = True
-                print("[wait] 检测到演算开始:", line.split("|")[-1].strip(), flush=True)
+                done_at = None  # 反向段开始，重新等稳定
+                last_activity = time.time()
+                print("[wait] 演算段开始:", line.split("|")[-1].strip()[-90:], flush=True)
             if any(m in line for m in DONE_MARKS):
-                print("[wait] 演算完成 ✓", flush=True)
-                return
+                if done_at is None:
+                    print("[wait] 一段演算完成，等待确认无后续段 ...", flush=True)
+                done_at = time.time()
+                last_activity = time.time()
+        if done_at is not None and time.time() - done_at >= a.stable:
+            print(f"[wait] 演算全部完成 ✓（稳定 {a.stable}s 无新段）", flush=True)
+            return
         time.sleep(1)
     if not started:
-        print("[wait] 超时且未见演算开始（可能未触发跟踪）", file=sys.stderr)
-    else:
+        print("[wait] 超时且未见演算开始（可能未触发跟踪，或指针被达芬奇抓住）", file=sys.stderr)
+    elif done_at is None:
         print("[wait] 演算超时未完成", file=sys.stderr)
+    else:
+        print("[wait] 演算段间间隔过长，超时", file=sys.stderr)
     sys.exit(1)
 
 

@@ -44,6 +44,7 @@ def kill_apps(names):
 
 
 def alive():
+    # 注意：不能用 pgrep -x resolve（实测匹配不到进程名），必须 -f 全命令行
     return subprocess.run(["pgrep", "-f", RESOLVE_PAT], capture_output=True).returncode == 0
 
 

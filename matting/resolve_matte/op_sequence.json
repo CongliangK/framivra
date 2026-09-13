@@ -5,7 +5,7 @@
    0,
    64
   ],
-  "note": "坐标为达芬奇窗口相对坐标；来自 my_ops.json 录制 + 卡片带测量"
+  "note": "坐标为达芬奇窗口相对坐标；卡片映射 CARD_TO_TRACK 见 gen_sequence.py"
  },
  "steps": [
   {
@@ -87,8 +87,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -100,7 +100,7 @@
    "op": "click",
    "x": 529,
    "y": 1188,
-   "comment": "选择片段卡 02（轨道 V2）"
+   "comment": "选择片段卡 02（轨道 V5）"
   },
   {
    "op": "wait",
@@ -165,8 +165,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -178,7 +178,7 @@
    "op": "click",
    "x": 739,
    "y": 1179,
-   "comment": "选择片段卡 03（轨道 V3）"
+   "comment": "选择片段卡 03（轨道 V2）"
   },
   {
    "op": "wait",
@@ -243,8 +243,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -256,7 +256,7 @@
    "op": "click",
    "x": 1093,
    "y": 1190,
-   "comment": "选择片段卡 04（轨道 V4）"
+   "comment": "选择片段卡 04（轨道 V3）"
   },
   {
    "op": "wait",
@@ -321,8 +321,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -334,7 +334,7 @@
    "op": "click",
    "x": 1398,
    "y": 1190,
-   "comment": "选择片段卡 05（轨道 V5）"
+   "comment": "选择片段卡 05（轨道 V9）"
   },
   {
    "op": "wait",
@@ -399,8 +399,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -412,7 +412,7 @@
    "op": "click",
    "x": 1697,
    "y": 1188,
-   "comment": "选择片段卡 06（轨道 V6）"
+   "comment": "选择片段卡 06（轨道 V4）"
   },
   {
    "op": "wait",
@@ -477,8 +477,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -490,7 +490,7 @@
    "op": "click",
    "x": 1884,
    "y": 1140,
-   "comment": "选择片段卡 07（轨道 V7）"
+   "comment": "选择片段卡 07（轨道 V8）"
   },
   {
    "op": "wait",
@@ -555,8 +555,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -568,7 +568,7 @@
    "op": "click",
    "x": 2309,
    "y": 1182,
-   "comment": "选择片段卡 08（轨道 V8）"
+   "comment": "选择片段卡 08（轨道 V6）"
   },
   {
    "op": "wait",
@@ -633,8 +633,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
@@ -646,7 +646,7 @@
    "op": "click",
    "x": 2596,
    "y": 1193,
-   "comment": "选择片段卡 09（轨道 V9）"
+   "comment": "选择片段卡 09（轨道 V7）"
   },
   {
    "op": "wait",
@@ -711,8 +711,8 @@
   },
   {
    "op": "shell",
-   "cmd": "env python3 wait_tracking_done.py --timeout 600",
-   "comment": "日志监听：等待 Magic Mask 演算完成",
+   "cmd": "env python3 wait_tracking_done.py --timeout 900 --stable 20",
+   "comment": "日志监听：等演算全部段完成（正向+反向，期间指针被达芬奇抓住勿操作）",
    "ignore_fail": true
   },
   {
