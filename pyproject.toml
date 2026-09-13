@@ -1,0 +1,34 @@
+# pyproject.toml —— v2 包化（ARCHITECTURE §5.2）
+# 包名 video-tools；console scripts 双入口：`vtx`（渲染 CLI，vtx.cli:main）与
+# `vt`（统一入口 doctor/list/check/version/init/--fix-links，vt:main）。
+# vt.py 在仓根（不在 vtx/ 包内），经 py-modules 以顶层模块身份进发行包。
+# pip 包只含内核（vtx/ 含 pluginlib + vt.py）；apps/plugins/skills/examples
+# 不进发行包。clone 即用与 pip 安装并存：repo 根可直接 `python3 vt.py` /
+# `python3 vtx/vtx.py` / `python3 -m vtx`，与安装后同码同义。
+# 内核零第三方依赖（仅 python3 标准库 + 外部 ffmpeg/ffprobe/Chrome）。
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-tools"
+version = "2.0.0"
+description = "vtx — 视频剪辑中间层（timeline.json → ffmpeg，帧精确合成）内核包"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+vtx = "vtx.cli:main"
+vt = "vt:main"
+
+[tool.setuptools]
+packages = ["vtx", "vtx.pluginlib"]
+py-modules = ["vt"]
+
+[tool.setuptools.package-data]
+# timeline.schema.json = 结构权威、preview.html = 预览权威（stages.py 模块头三处互指）。
+# VERSION：clone 即用由 repo 根文件直读（vtx/__init__ 与 vt.py）；pip 安装布局无
+# 根文件，回落 vtx.__version__ 内置字面量（版本串只用于标识不参与门控，P0 复审
+# 口径）。此处 "VERSION" 为发布流程把 VERSION 置入 vtx/ 时预留的读取通道
+# （vtx._read_version 的第二优先级），当前源树不重复维护该文件（单一事实源在仓根）。
+vtx = ["timeline.schema.json", "preview.html", "VERSION"]

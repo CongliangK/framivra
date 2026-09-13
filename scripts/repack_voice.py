@@ -147,7 +147,7 @@ def main():
     print(f"  rm {ROOT}/cache/audio/vt_*.wav")
     print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} prepare")
     print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} audio   # voice 变必重跑")
-    print(f"  bash post_loudness.sh {ROOT}                                       # audio 后 mux 前必跑")
+    print(f"  （v2：vtx audio 已内置限幅，无需手动 post_loudness）")
     print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} mux")
     print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} qc && "
           f"python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} audit")

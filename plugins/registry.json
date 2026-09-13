@@ -1,0 +1,23 @@
+{
+  "_comment": "plugins/registry.json —— 官方插件静态注册表（v2 §2.1 不变量 3，P1-2 创建）。键声明汇总 = validate 插件键三分支的「未装插件报错文案」数据源（报错给安装指引而非裸 Unknown key）。installed = 落地声明：P2b 装配 plugins/<name>/ 实体时置 true（与目录存在须同时成立，防单边漂移）；enabled 缺省 true（external 注册默认 disabled 见 §2.4 安全节）。cache_dirs 可选：插件自立的 cache 子目录白名单（缝 A 型产物走 contribute_keys 键集，无须此字段）。",
+  "plugins": {
+    "denoise": {
+      "version": "0.1.0",
+      "keys": [
+        {"path": "sources[]", "key": "denoise"}
+      ],
+      "hooks": ["prepare_source"],
+      "installed": false,
+      "docs": "（规划中，P2b 落地）prepare 源产物钩子（缝 A）：sources[] 级键 denoise，一源一降噪 wav 进 cache/audio/（内容寻址），环境缺失 fail-hard（§2.2）"
+    },
+    "duck-static": {
+      "version": "0.1.0",
+      "keys": [
+        {"path": "audio_tracks[]", "key": "duck_strategy"}
+      ],
+      "hooks": ["audio_events"],
+      "installed": false,
+      "docs": "（规划中，P2b 落地）音轨事件内存变换钩子（缝 B）：audio_tracks[] 级键 duck_strategy:\"static\" 静态避让，与既有 duck:true 互斥校验（§2.2）"
+    }
+  }
+}

@@ -14,9 +14,9 @@ cache 正式键产物、不写 out/、不更新 receipt/manifest/VERSIONS——�
 import json, os, re, subprocess, sys, time
 from pathlib import Path
 
-from composite import RenderPlan, choose_cutpoints, prepare_layers
-from encoders import pick_vcodec
-from stages import mix_audio_wav
+from .composite import RenderPlan, choose_cutpoints, prepare_layers
+from .encoders import pick_vcodec
+from .stages import mix_audio_wav
 
 # 音频窗口事件纳入外延（帧）：兜住 sidechaincompress release（1500ms）与淡出尾巴
 AUDIO_MARGIN_FRAMES = 60
@@ -103,20 +103,20 @@ def _receipt_audio_gain(c):
 
 
 def _ensure_audio_wavs(c, fa: int, fb: int):
-    """窗口音频事件引用的 prepare 抽音频 wav 缺失时冷填充（与 stages.prepare 同键
-    同命令——共享正式缓存，非 preview 私有产物；温态零写；dry-run 不落盘）。"""
+    """窗口音频事件引用的 prepare 抽音频 wav 缺失时冷填充。提取语义（键/命令/
+    缝 A 触发）与 stages.prepare **同一实现**（source_audio_extraction，v2 §2.2
+    对抗审查 P0 复审 P1-5：两处各自为政会让区间预览绕过源级插件裸抽 wav）——
+    共享正式缓存非 preview 私有产物；温态零写；dry-run 不落盘。"""
     if c.dry: return
-    from hygiene import audio_key
+    from .stages import source_audio_extraction
     margin = AUDIO_MARGIN_FRAMES
     need = {e["src"] for tr in c.tl["audio_tracks"] for e in tr["events"]
             if e["in"] < fb + margin and e["out"] > fa - margin}
     for sid in sorted(need):
-        wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
-        if wav.exists(): continue
-        wav.parent.mkdir(parents=True, exist_ok=True)
+        wav, cmd = source_audio_extraction(c, sid)
+        if cmd is None: continue
         print(f"  · 抽音频（prepare 同键冷填充）: {sid}")
-        c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(sid)),
-               "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)])
+        c.run(cmd)
 
 
 def run_range(c, fa: int, fb: int):

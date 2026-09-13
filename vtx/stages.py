@@ -5,12 +5,14 @@ timeline 契约权威定义互指（三处需同步修改，2026-09-10 定）：
   ② vtx/timeline.schema.json —— 结构权威（字段/类型）
   ③ vtx/preview.html —— 可视化预览权威（timeline → 浏览器预览）
 """
-import json, os, re, subprocess, sys
+import hashlib, json, math, os, re, subprocess, sys, tempfile, wave
 from pathlib import Path
 
-from hygiene import (audio_key, manifest_record, rotate_history, versions_check,
+from .hygiene import (audio_key, manifest_record, rotate_history, versions_check,
                      versions_record)
-from infra import Ctx, run_parallel
+from .infra import Ctx, run_parallel
+from .pluginlib import hooks as _plugin_hooks
+from .pluginlib import registry as _plugin_registry
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 收拢）----
 TARGET_LUFS = -14.0      # 项目目标响度（EBU R128，与 qc.py 同一权威值）
@@ -24,6 +26,76 @@ DUCK_RATIO = 4
 DUCK_ATTACK_MS = 20
 DUCK_RELEASE_MS = 1500
 DUCK_MAKEUP = 1
+
+# ---------------------------------------------------------------- v2 插件键三分支（§2.1 不变量 ③）
+# 内核已知键清单：timeline.schema.json 全量键的机制侧对照表（结构权威在 schema，
+# 三处同步修改约定见本文件模块头；hardcode 一份使 validate 的未知键扫描零 I/O）。
+# 插件扩展键不在此列（由 plugins/registry.json 声明，三分支判定见 _scan_plugin_keys）；
+# `_meta` 为永久自由命名空间白名单（§2.1——插件/脚本标记不触发任何分支）。
+KERNEL_KEYS = {
+    "root": {"version", "project", "sources", "video_tracks", "subtitles",
+             "subtitles_src", "audio_tracks"},
+    "project": {"fps", "width", "height", "duration_frames", "cache_dependencies"},
+    "sources[]": {"id", "path", "transform"},
+    "audio_tracks[]": {"name", "duck", "duck_by", "duck_params", "events"},
+    "audio_tracks[].events[]": {"src", "src_in", "in", "out", "volume",
+                                "fade_in_frames", "fade_out_frames", "pan", "loop"},
+}
+
+
+def _scan_plugin_keys(c: Ctx, errs: list) -> list:
+    """sources[] / audio_tracks[]（含 events[]）/ project 的未知键与插件键扫描。
+
+    三分支（§2.1 不变量 3）：键在 registry 声明且插件 installed+enabled = 合法
+    放行；声明未装 = 报错+安装提示；已装被禁用 = 报错+启用提示（绝不静默忽略——
+    「缺省关闭」指不写键无行为，不是写了键可跳过）；完全不认识的键 = **警告不
+    阻断**（新行为；对现有 timeline 零影响——现有键全部已知或已声明）。声明键
+    的 path 须与出现位置一致（denoise 声明于 sources[] 却写在音轨上 → 按未知键
+    警告处理）。返回警告行列表（调用方打印，不进 errs）。
+    """
+    warns = []
+
+    def scan(scope_path: str, known: set, items, label_fmt: str):
+        for i, item in enumerate(items if isinstance(items, list) else []):
+            if not isinstance(item, dict):
+                continue
+            for k in sorted(item):
+                if k == "_meta" or k in known:
+                    continue
+                label = label_fmt.format(i=i)
+                name, ki = _plugin_registry.lookup_key(k)
+                if name is not None and ki and ki.get("path") == scope_path:
+                    state = _plugin_registry.plugin_state(name)
+                    if state == "active":
+                        continue   # 分支 1：合法放行
+                    if state == "not_installed":
+                        errs.append(f"{label}: 键 {k!r} 由 plugins/{name} 提供，"
+                                    f"未安装——vt plugins list 查看")
+                    elif state == "disabled":
+                        errs.append(f"{label}: 键 {k!r} 对应插件 plugins/{name} "
+                                    f"已安装但被禁用——plugins/registry.json 启用后重跑")
+                    else:
+                        errs.append(f"{label}: 键 {k!r} 声明于 plugins/{name}，"
+                                    f"但插件安装态异常（{state}）")
+                elif name is not None:
+                    warns.append(f"{label}: 键 {k!r} 声明于 {ki.get('path')}（plugins/{name}），"
+                                 f"写在 {scope_path} 位置不符——按未知键处理")
+                else:
+                    warns.append(f"{label}: 未知键 {k!r}（不在内核 schema，也无插件声明）")
+
+    scan("project", KERNEL_KEYS["project"],
+         [c.tl.get("project")] if isinstance(c.tl.get("project"), dict) else [],
+         "project")
+    scan("sources[]", KERNEL_KEYS["sources[]"], c.tl.get("sources", []),
+         "sources[{i}]")
+    tracks = c.tl.get("audio_tracks", [])
+    scan("audio_tracks[]", KERNEL_KEYS["audio_tracks[]"], tracks,
+         "audio_tracks[{i}]")
+    scan("audio_tracks[].events[]", KERNEL_KEYS["audio_tracks[].events[]"],
+         [e for tr in tracks if isinstance(tr, dict)
+          for e in (tr.get("events") or [])],
+         "audio_tracks[].events[{i}]")
+    return warns
 
 
 # ---------------------------------------------------------------- validate
@@ -66,6 +138,10 @@ def validate(c: Ctx):
                     err(f"切割越界: {tr['name']} src={cl['src']} src_out={cl['src_out']} > 实测 {i['nb_frames']}")
             if cl.get("fade_in_frames", 0) + cl.get("fade_out_frames", 0) > cl["dur"]:
                 err(f"fade 总长超过片段: {tr['name']} dst_in={cl['dst_in']}")
+    # v2 subtitles_src（§1.1 条目 6）：加载点解析错误在此 FAIL——互斥/文件缺失/
+    # 解析失败（infra.Ctx 构造期记入，语义裁定见 vtx/subtitles_src.py 模块头）。
+    for e in getattr(c, "subtitles_errors", []):
+        err(e)
     for s in c.tl["subtitles"]:
         if not (0 <= s["in"] < s["out"] <= c.dur): err(f"字幕区间非法: {s['text'][:10]}")
     for tr in c.tl["audio_tracks"]:
@@ -79,9 +155,15 @@ def validate(c: Ctx):
                 err(f"音频源不足: {tr['name']}@{e['in']} 需 {need} 帧 > {i['nb_frames']}（或声明 loop）")
         for a, b in zip(evs, evs[1:]):
             if a["out"] > b["in"]: err(f"音频轨内事件重叠: {tr['name']}")
+    # v2 §2.1 不变量 ③：插件键三分支 + 未知键警告（扫描范围 sources[]/audio_tracks[]
+    # （含 events[]）/project；`_meta` 永久白名单）。已声明未装/被禁用进 errs FAIL；
+    # 未知键只警告不阻断——现有 timeline（键全部已知或已声明）零新输出。
+    _plugin_warns = _scan_plugin_keys(c, errs)
     if errs:
         print(f"校验失败（{len(errs)} 项）："); [print("  ✗", e) for e in errs]
         c.receipt("validate", False, f"{len(errs)} errors"); sys.exit(1)
+    for w in _plugin_warns:
+        print("  ⚠", w)
     nclips = sum(len(t["clips"]) for t in c.tl["video_tracks"])
     msg = (f"{len(srcs)} 源 / {len(c.tl['video_tracks'])} 视频轨 {nclips} clips / "
            f"{len(c.tl['subtitles'])} 字幕 / "
@@ -178,7 +260,7 @@ def audit(c: Ctx):
            "indicators": lines}
     # 体积体检（2026-09-11 治理升级）：cache/out 占用与 tmp 孤儿常驻审计报告——
     # 体积异常从人眼发现变体检常驻项
-    from hygiene import df as _df, tmp_orphans
+    from .hygiene import df as _df, tmp_orphans
     vol = _df(c, quiet=True)
     rep["volume"] = {"cache_bytes": vol["cache"], "out_bytes": vol["out"],
                      "total_bytes": vol["total"],
@@ -194,16 +276,37 @@ def audit(c: Ctx):
 
 
 # ---------------------------------------------------------------- prepare
+def source_audio_extraction(c: Ctx, sid: str):
+    """§2.2 缝 A 单一实现：prepare 逐源提取与 range `_ensure_audio_wavs` 冷填充
+    收敛为**同函数同命令**（对抗审查 P0 复审 P1-5 裁定——两处各自为政时区间预览
+    将绕过降噪裸抽 wav）。
+
+    返回 (wav_path, cmd|None)：wav 已存在或缝 A 插件已产出 → cmd=None（无须提取）；
+    否则 cmd = 与 v1 逐字节相同的裸提取命令，由调用方执行（prepare 经 run_parallel
+    线程池并行；range 冷填充顺序 c.run——执行策略归调用方，提取语义归本函数）。
+    pluginlib prepare_source 钩子在本函数内统一触发（无插件注册 = 恒直抽，P1-2
+    空转零行为变化；插件环境缺失的 fail-hard 语义由钩子实现，§2.2）。
+    """
+    wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
+    if wav.exists():
+        return wav, None
+    if _plugin_hooks.run_prepare_source(c, sid, wav):
+        return wav, None     # 缝 A：源声明了插件键（如 denoise）→ 插件产物
+    wav.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(sid)),
+           "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]
+    return wav, cmd
+
+
 def prepare(c: Ctx):
     (c.cache / "audio").mkdir(parents=True, exist_ok=True)
     tasks = []
     for s in c.tl["sources"]:
-        # 内容寻址键（2026-09-11 治理升级）：源变了键就变，旧 wav 由 gc 回收
-        wav = c.cache / "audio" / f"{audio_key(c, s['id'])}.wav"
-        if not wav.exists():
-            tasks.append((f"audio {s['id']}",
-                          ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(s["id"])),
-                           "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]))
+        # 内容寻址键（2026-09-11 治理升级）：源变了键就变，旧 wav 由 gc 回收；
+        # 提取语义（键/命令/缝 A 触发）收敛在 source_audio_extraction（§2.2 缝 A）
+        _wav, cmd = source_audio_extraction(c, s["id"])
+        if cmd is not None:
+            tasks.append((f"audio {s['id']}", cmd))
     run_parallel(c, tasks, "音频提取")
     for s in c.tl["sources"]:
         wav = c.cache / "audio" / f"{audio_key(c, s['id'])}.wav"
@@ -225,6 +328,11 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
     返回 (cmd_inputs, chains, n_ev, duck_used)：cmd_inputs = 输入参数片段列表。
     """
     atracks = c.tl["audio_tracks"]
+    # v2 §2.2 缝 B 挂载点：构建 filtergraph 前对全量 tracks 的纯内存 events 变换
+    # （duck-static 型插件；无插件注册 = 原样恒等，P1-2 空转零行为变化）。
+    # 不写回 timeline（幂等天然成立）；区间渲染走同一缝（win 过滤在变换之后，
+    # 窗口模式自动正确，无需特判）。
+    atracks = _plugin_hooks.run_audio_events(c, atracks)
     fa, fb = (0, c.dur) if win is None else win
     inside = (lambda e: True) if win is None else \
         (lambda e: e["in"] < fb + margin_frames and e["out"] > fa - margin_frames)
@@ -320,7 +428,10 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
 def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
     """两遍响度混音（共用执行体）：第一遍 ebur128 实测原始混音 I，第二遍施加恒定
     静态增益到目标响度（单遍 dynamic loudnorm 长节目塌陷，见 build_audio 注）。
-    峰值安全由项目侧 post_loudness.sh 的 alimiter 兜底，响度链顺序不变。
+    输出链内置 alimiter 采样限幅（v2 §1.2，2026-09-13 吸收 post_loudness.py）：
+    `volume={gain}dB` 后追加 `,alimiter=limit=0.599:level=false:latency=true`——
+    build_audio 与区间预览（range.py 直调本函数）统一过 limiter，out/audio.wav 恒为
+    「归一+限幅」终态，杜绝「成片有限幅、预览无限幅」的分叉。
     gain_override：外部指定静态增益（区间预览用——窗口局部内容响度 ≠ 全片响度，
     窗口自测增益会把安静段放大到削波；复用整片回执里的 gain_db 保持听感一致，
     且省一遍 ebur128 测量）。返回 (gain, raw_i, n_ev, duck_used)。win 语义见 _audio_graph。"""
@@ -338,23 +449,167 @@ def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
         if not mI: print("✗ 原始混音响度测量失败"); sys.exit(1)
         raw_i = float(mI.group(1)); gain = TARGET_LUFS - raw_i
         print(f"  原始混音 I={raw_i:.1f} LUFS → 静态增益 {gain:+.1f}dB")
-    c.run(cmd + ["-filter_complex", ";".join(chains[:-1] + [chains[-1] + f",volume={gain:+.2f}dB[aout]"]),
+    c.run(cmd + ["-filter_complex", ";".join(chains[:-1] + [chains[-1] + f",volume={gain:+.2f}dB,alimiter=limit=0.599:level=false:latency=true[aout]"]),
                  "-map", "[aout]", "-c:a", "pcm_s16le", "-ar", "48000", str(out_wav)])
     return gain, raw_i, n_ev, duck_used
 
 
+def _ebur128_i_from_log(stderr: str) -> float:
+    """ebur128 Summary 的整合响度 I 解析（post_loudness.py 原实现照搬）：取末个 I 值，
+    静音/不可测（-inf / ≤-70）抛 ValueError（无法归一）。"""
+    values = re.findall(r"I:\s+(-?[\d.]+|[-+]?inf) LUFS", stderr)
+    if not values or not math.isfinite(float(values[-1])) or float(values[-1]) <= -70:
+        raise ValueError("Cannot normalize silent or unmeasurable audio")
+    return float(values[-1])
+
+
+def _wav_seconds(path: Path) -> float:
+    with wave.open(str(path), "rb") as audio:
+        return audio.getnframes() / audio.getframerate()
+
+
 def build_audio(c: Ctx):
     atracks = c.tl["audio_tracks"]
-    gain, raw_i, _n_ev, duck_used = mix_audio_wav(c, c.out / "audio.wav")
+    out_wav = c.out / "audio.wav"
+    gain, raw_i, _n_ev, duck_used = mix_audio_wav(c, out_wav)
     msg = f"{len(atracks)} 轨 {sum(len(t['events']) for t in atracks)} 事件（帧网格对齐"
     if duck_used:
         msg += f"，{sum(1 for tr in atracks if tr.get('duck'))} 轨 duck 避让"
-    msg += f"，响度 {TARGET_LUFS:g} LUFS（两遍静态增益）"
+    msg += f"，响度 {TARGET_LUFS:g} LUFS（两遍静态增益 + alimiter 限幅）"
     print("✓ 音频混音：" + msg)
     extra = {"gain_db": round(gain, 2), "target": TARGET_LUFS}
     if raw_i is not None:
-        extra = {"raw_i": raw_i, **extra}   # post_loudness.sh 免首测读该字段
+        # raw_i 归档（勘误 §1.2：全仓无代码消费回执 raw_i——post_loudness 时代每次
+        # 实测，旧注释「免首测复用」失修已删；gain_db 的真实消费者 = range.py 区间
+        # 渲染复用整片增益）
+        extra = {"raw_i": raw_i, **extra}
+    if not c.dry:
+        # —— 终态校验（v2 §1.2；分级裁定 2026-09-13 影子复验期：机制/内容分离）——
+        # 一遍 ebur128 同时取 I 与 TP：
+        #   硬 FAIL（机制错误）：TP > -1 dBFS（limiter 失效）；时长漂移；I 偏离 >3 LU
+        #     （增益链断裂——如增益未施 I 会停在 raw_i 量级）；
+        #   WARN（内容级）：I 偏离 ∈ (1.5, 3]——限幅响度损耗属配乐结构/原始混音问题，
+        #     发布侧内容门 G2 拦截，提示调 bed 音量重渲；
+        #   ≤1.5 静默通过（v1 post_loudness ±1.5 语义原样保留）。
+        # 裁定证据：live voice-ime v1 回执 post 字段 input_i=-14.0 → output_i=-15.5
+        # （|偏离|=1.5 恰压线通过并已交付）；同内容 v2 浮点域限幅实测 -15.6——边界
+        # 内容 + 0.1 LU 级测量抖动不得成为管线 flaky 硬 FAIL。
+        r = c.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(out_wav),
+                   "-af", "ebur128=peak=true", "-f", "null", "-"])
+        try:
+            after = _ebur128_i_from_log(r.stderr)
+        except ValueError as e:
+            print(f"✗ 响度终态复测失败：{e}"); sys.exit(1)
+        m_tp = re.search(r"Peak:\s*(-?[\d.]+) dBFS", r.stderr)   # 与 qc.py TP 门同一解析口径
+        after_tp = float(m_tp.group(1)) if m_tp else None
+        dev = abs(after - TARGET_LUFS)
+        print(f"  终态复测 I={after:.1f} LUFS"
+              + (f" / TP={after_tp:.1f} dBFS" if after_tp is not None else "")
+              + f"（目标 {TARGET_LUFS:g}）")
+        if after_tp is None:
+            print("✗ 终态复测未捕获真峰（ebur128 peak 解析失败）"); sys.exit(1)
+        if after_tp > -1.0:
+            print(f"✗ 终态真峰 {after_tp:.1f} dBFS > -1.0（limiter 失效——检查输出链）"); sys.exit(1)
+        if dev > 3.0:
+            print(f"✗ 终态响度偏离目标 {dev:.1f} LU（>3，疑增益链断裂）"); sys.exit(1)
+        if dev > 1.5:
+            print(f"⚠ 终态响度 {after:.1f} LUFS 偏离目标 {dev:.1f} LU（>1.5）——限幅响度损耗"
+                  "属内容级问题（配乐密集/原始混音偏 quiet），发布侧内容门 G2 会拦截；"
+                  "如需硬过请调 bed 音量后重渲")
+        with wave.open(str(out_wav), "rb") as w:
+            n_samples = w.getnframes()
+        expect = c.dur * c.spf_samples
+        if abs(n_samples - expect) > 1:
+            print(f"✗ 音频时长校验失败：{n_samples} 采样 ≠ 期望 {expect}（±1 采样）"); sys.exit(1)
+        extra["post_loudness"] = {
+            "input_i": raw_i, "output_i": after, "gain_db": gain,
+            "target": TARGET_LUFS, "tp_dbfs": round(after_tp, 2),
+            "sha256": hashlib.sha256(out_wav.read_bytes()).hexdigest()}
     c.receipt("audio", True, msg, extra=extra)
+
+
+def post_loudness_compat(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
+    """v2 兼容重跑（scripts/post_loudness.py 薄壳的内核实现，2026-09-13）：
+    响度终链已并入 vtx audio（ARCHITECTURE §1.2），`vtx audio` 产出的 out/audio.wav
+    恒为「归一+限幅」终态，R4 链不再需要独立 post 步。本函数保留旧 CLI 命令面的
+    行为：对项目 out/audio.wav 再走一遍「测 I → volume={gain}dB,alimiter → 复测
+    ±1.5 LU → 时长 ±1 采样 → 原子替换」。**幂等性收窄声明（P1 对抗审查 F1 修正）**：
+    真幂等仅两种情形——①audio.wav 与回执 post_loudness.sha256 一致（已是终态，
+    直接跳过返回已有测量）；②当前 I 已在 target（gain≈0）。对因限幅损耗停在
+    target-1.5~target-2 的产物（voice-ime 类配乐密集内容，实测重跑一次 +1.9dB
+    蠕升），本函数会按 v1 旧语义把响度再推向 target 并**改变交付响度**——打印
+    蠕升警告；v2 正常链路无需本命令。与旧实现的差异（v2 单写者语义）：不做回执
+    摘除-回写手术（audio 阶段回执照常有效），返回测量 dict（含 tp_dbfs）由调用
+    方打印。"""
+    if not math.isfinite(target):
+        raise ValueError("Target must be finite")
+    source = Path(project).resolve() / "out" / "audio.wav"
+    if not source.is_file():
+        raise FileNotFoundError(f"audio source not found: {source}")
+    sha_now = hashlib.sha256(source.read_bytes()).hexdigest()
+    receipt = source.parent / "receipt.json"
+    if receipt.is_file():
+        try:
+            rec = json.loads(receipt.read_text(encoding="utf-8"))
+            prev = ((rec.get("stages") or {}).get("audio") or {}).get("post_loudness")
+        except Exception:
+            prev = None
+        if isinstance(prev, dict) and prev.get("sha256") == sha_now:
+            print("v2: audio.wav 与回执 post_loudness.sha256 一致（已是 vtx audio 终态），"
+                  "跳过兼容重跑")
+            return prev
+    print("v2: 兼容重跑（v1 post_loudness 语义；v2 正常链路无需本命令）")
+
+    def measure(path):
+        r = subprocess.run([ffmpeg, "-hide_banner", "-nostats", "-i", str(path),
+                            "-af", "ebur128=peak=true", "-f", "null", "-"],
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        if r.returncode:
+            raise RuntimeError(r.stderr[-3000:])
+        m_tp = re.search(r"Peak:\s*(-?[\d.]+) dBFS", r.stderr)
+        return _ebur128_i_from_log(r.stderr), (float(m_tp.group(1)) if m_tp else None)
+
+    before, _before_tp = measure(source)   # 现文件实测（v1 教训：不读回执 raw_i，防双施 gain）
+    seconds = _wav_seconds(source)
+    gain = target - before
+    if abs(gain) > 0.1:
+        print(f"⚠ 本次将再施加 {gain:+.1f}dB 增益（v1 旧语义：把当前响度推回 target）——"
+              "对限幅损耗产物重跑会改变交付响度；v2 正常链路（vtx audio）已内置限幅，"
+              "如需调整响度请改 timeline 后重渲")
+    fd, name = tempfile.mkstemp(prefix=".post-audio-", suffix=".wav", dir=source.parent)
+    os.close(fd)
+    candidate = Path(name)
+    try:
+        r = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", str(source), "-af",
+                            f"volume={gain:.3f}dB,alimiter=limit=0.599:level=false:latency=true",
+                            "-c:a", "pcm_s16le", "-ar", "48000", str(candidate)],
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        if r.returncode:
+            raise RuntimeError(r.stderr[-3000:])
+        after, after_tp = measure(candidate)
+        if abs(after - target) > 1.5:
+            raise ValueError(f"Loudness {after} outside target {target} +/- 1.5 LU")
+        if abs(_wav_seconds(candidate) - seconds) > 1 / 48000 + 1e-9:
+            raise ValueError("Post-processing changed audio duration")
+        result = {"input_i": before, "output_i": after, "gain_db": gain, "target": target,
+                  "tp_dbfs": round(after_tp, 2) if after_tp is not None else None,
+                  "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest()}
+        os.replace(candidate, source)
+        return result
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
+def load_timeline_check(timeline_path):
+    """timeline 加载 + 契约校验（vtx.api 暴露的稳定入口）：构造 Ctx（fps 契约 /
+    cache_dependencies 快速失败 + 输入指纹计算）后跑全量 validate（对照素材实测的
+    硬门）。校验失败 validate 自身打印并 sys.exit(1)（内核 CLI 语义，调用方按需
+    捕获 SystemExit）；成功返回 (ctx, timeline_dict)。"""
+    c = Ctx(Path(timeline_path))
+    validate(c)
+    return c, c.tl
 
 
 def mux(c: Ctx):

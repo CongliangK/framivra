@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
-# compare.sh —— vtx P0 基线对比器（P1/P5 复验直接用）。
-# 用法: compare.sh <新基线目录>
+# compare.sh —— vtx 基线对比器（P2/P3/P5 复验直接用）。
+# 用法: compare.sh <新基线目录> [重锚目录]
 #   <新基线目录> 须含与本目录同构的 norm/（由 run-baseline.sh + normalize.py 产出）。
+#   [重锚目录]   baseline-r2/（P1 响度终链后的重锚基线）：给出后，凡 r2/norm/ 存在
+#                的产物改为对 r2 比较（audio 全部 + qc 含 TP 项），其余仍对本
+#                baseline（r1）比较——ARCHITECTURE §9 门 2 两段口径的机器实现。
 # 对 5 条命令（validate/diff/subs/qc/audio）的归一化产物逐条比较：
-#   .txt 逐字节 cmp；.json 先按 known-diffs.conf 白名单豁免/容差再深度比较。
+#   .txt 逐字节 cmp；.json 按 known-diffs.conf 白名单豁免/容差后深度比较。
 # 输出 PASS/FAIL 汇总；全部一致退出 0，有差异/缺失退出 1（白名单外差异即 FAIL）。
 set -u
 BASE="$(cd "$(dirname "$0")" && pwd)"
-NEW="${1:?用法: compare.sh <新基线目录>}"
+NEW="${1:?用法: compare.sh <新基线目录> [重锚目录]}"
 CONF="$BASE/known-diffs.conf"
+R2=""
+if [ "${2:-}" != "" ]; then
+  if [ ! -d "$2/norm" ]; then
+    echo "✗ 重锚目录 $2/norm 不存在"
+    exit 2
+  fi
+  R2="$(cd "$2" && pwd)"
+fi
 if [ ! -d "$NEW/norm" ]; then
   echo "✗ $NEW/norm 不存在（先按 NORMALIZATION.md 产出归一化产物）"
   exit 2
@@ -119,6 +130,10 @@ for cmd in validate diff subs qc audio; do
   for ext in txt json; do
     base_f="$BASE/norm/$cmd.norm.$ext"
     new_f="$NEW/norm/$cmd.norm.$ext"
+    # 重锚模式：r2 有的产物改对 r2 比较（audio 全部 + qc 含 TP 项）
+    if [ -n "$R2" ] && [ -f "$R2/norm/$cmd.norm.$ext" ]; then
+      base_f="$R2/norm/$cmd.norm.$ext"
+    fi
     # 基线侧没有的产物类型（validate/diff 无 .json）直接跳过
     [ -f "$base_f" ] || continue
     compared=$((compared + 1))

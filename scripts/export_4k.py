@@ -45,8 +45,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vtx"))   # post_loudness.py 同款注入
-from cache_state import media_stat_digest
+# v2 §1.4 包化：注入 repo 根 + 包导入（不再注入 repo/vtx，防双模块裂分）
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from vtx.cache_state import media_stat_digest
 
 SCALE_4K = "scale=3840:2160:flags=lanczos"
 # nvenc 段编码参数（方案三阶段2定版）：p4 实测快于 p6；-g 250 < check_4k 门 300；

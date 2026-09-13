@@ -9,10 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
-from hygiene import budget_gate, gfx_dir, manifest_record, seg_key
-from infra import Ctx, run_parallel, filter_filename, filter_threads
-import probe_cache
+from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
+from .hygiene import budget_gate, gfx_dir, manifest_record, seg_key
+from .infra import Ctx, run_parallel, filter_filename, filter_threads
+from . import probe_cache
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）

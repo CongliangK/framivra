@@ -1,7 +1,7 @@
 """vtx 基础设施层：Ctx 上下文、ffmpeg 执行、并行任务调度。
 
-由 stages/composite/qc/encoders 共用。入口 vtx/vtx.py 保持可直接
-`python3 vtx/vtx.py ...` 运行（同目录平铺 import，sys.path 由入口脚本保证）。
+由 stages/composite/qc/encoders 共用。v2 §1.4 包化：模块内相对导入；
+`python3 vtx/vtx.py ...` 经薄启动器自锚定 repo 根后照常可跑。
 """
 import contextlib, hashlib, json, os, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,9 +9,9 @@ from pathlib import Path
 
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
-from cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
+from .cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
                          validate_cache_dependencies)
-from encoders import nvenc_budget
+from .encoders import nvenc_budget
 
 
 def is_ffmpeg_cmd(cmd) -> bool:
@@ -39,6 +39,12 @@ class Ctx:
         self.spf = 1.0 / self.fps
         self.spf_samples = 48000 // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
         self.cache = self.root / "cache"; self.out = self.root / "out"
+        # v2 subtitles_src（§1.1 条目 6）：timeline 加载点解析——load 后 self.tl
+        # ["subtitles"] 即为解析结果（各阶段无感）；解析失败/互斥错误记入
+        # self.subtitles_errors 由 validate FAIL。必须在 receipt_fingerprint 之前：
+        # subtitles_src 文件内容参与回执身份（见 cache_state.receipt_fingerprint）。
+        from .subtitles_src import resolve_subtitles_src
+        resolve_subtitles_src(self)
         # PR#1 合入：声明依赖快速失败 + 回执输入身份（注意：不是缓存目录键——
         # 缓存布局维持 main 的 per-产物内容寻址，见 cache_state.py 合并裁定）。
         validate_cache_dependencies(self)

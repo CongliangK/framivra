@@ -107,22 +107,35 @@ def cfg_get(cfg: dict, path: str, default):
     return node
 
 
+def _pluginlib_config():
+    """vtx.pluginlib.config（v2 §5.3 统一加载）——repo 根追加进 sys.path 后导入
+    （本模块平铺布局，脚本目录不含 repo 根；append 不抢占既有解析序）。"""
+    root = str(Path(__file__).resolve().parent.parent)
+    if root not in sys.path:
+        sys.path.append(root)
+    from vtx.pluginlib import config as _cfg
+    return _cfg
+
+
 def config_path() -> Path:
-    override = os.environ.get("IMGEN_CONFIG")
+    """生效配置路径（v2 §5.3 语义）：VTX_CONFIG > IMGEN_CONFIG（废弃，见
+    load_config 公告）> repo 根 config.local.json。"""
+    override = os.environ.get("VTX_CONFIG")
     if override:
         return Path(override).expanduser()
+    legacy = os.environ.get("IMGEN_CONFIG")
+    if legacy:
+        return Path(legacy).expanduser()
     return Path(__file__).resolve().parent.parent / "config.local.json"
 
 
 def load_config() -> dict:
-    path = config_path()
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    """仓库配置（v2 §5.3 统一加载入口 vtx/pluginlib/config.py，legacy_env=
+    "IMGEN_CONFIG"）：VTX_CONFIG > repo config.local.json；IMGEN_CONFIG 保留读取
+    并打废弃公告（stderr 一行，迁移期不破）；坏 JSON 一律警告 + {} 继续（原静默
+    {} 收敛到全局化语义）；路径型键自动 ~ 展开。键结构与缺省探测链不变。"""
+    return _pluginlib_config().load_config(
+        Path(__file__).resolve().parent.parent, legacy_env="IMGEN_CONFIG")
 
 
 def resolve_api_base(cfg: dict) -> str:

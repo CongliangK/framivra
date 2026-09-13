@@ -84,17 +84,21 @@ def _expand(p):
     return str(Path(p).expanduser()) if p else p
 
 
+def _pluginlib_config():
+    """vtx.pluginlib.config（v2 §5.3 统一加载）——repo 根追加进 sys.path 后导入
+    （本模块平铺布局，脚本目录不含 repo 根；append 不抢占既有解析序）。"""
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.append(str(REPO_ROOT))
+    from vtx.pluginlib import config as _cfg
+    return _cfg
+
+
 def load_config(repo_root=None):
-    """读仓库根 config.local.json（缺文件/坏 JSON → {}，不阻断）。"""
-    root = Path(repo_root) if repo_root else REPO_ROOT
-    f = root / "config.local.json"
-    if not f.exists():
-        return {}
-    try:
-        return json.loads(f.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print("⚠ config.local.json 解析失败（%s），按默认探测链继续" % exc, file=sys.stderr)
-        return {}
+    """仓库配置（v2 §5.3 统一加载入口 vtx/pluginlib/config.py）：
+    VTX_CONFIG 环境变量 > repo 根 config.local.json；坏 JSON 一律警告 + 空 {}
+    继续不阻断（全局化语义）；已知路径型键（asr.python/model_dir/aligner_dir 等）
+    自动 ~ 展开。本模块键结构与探测链不变，只统一加载入口（四重复制收敛之一）。"""
+    return _pluginlib_config().load_config(repo_root or REPO_ROOT)
 
 
 def ime_root():

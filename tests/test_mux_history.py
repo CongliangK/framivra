@@ -23,10 +23,10 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "vtx"))
+sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-import stages          # noqa: E402
-from infra import Ctx  # noqa: E402
+from vtx import stages          # noqa: E402
+from vtx.infra import Ctx  # noqa: E402
 
 
 def _tl(root: Path) -> Path:

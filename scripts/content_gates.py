@@ -44,10 +44,10 @@ from pathlib import Path
 
 import numpy as np
 
-# vtx 侧模块复用（方案三阶段1）：响度回执在 vtx/loudness_cache.py——scripts 与
-# vtx 包同仓，注入 repo/vtx 到 sys.path（与 tests/test_*.py 的 sys.path 惯例同）。
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vtx"))
-import loudness_cache
+# vtx 侧模块复用（方案三阶段1）：响度回执在 vtx/loudness_cache.py——v2 §1.4 包化：
+# 注入 repo 根 + 包导入（不再注入 repo/vtx，防平铺/包双模块裂分）。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from vtx import loudness_cache
 
 ok_all = True
 

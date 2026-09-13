@@ -23,8 +23,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
-sys.path.insert(0, str(REPO / "vtx"))
+sys.path.insert(0, str(REPO / "scripts"))  # export_4k.py 非包成员，按路径导入
+sys.path.insert(0, str(REPO))                # repo 根（v2 §1.4 包导入，不再注入 repo/vtx）
 
 import export_4k
 from export_4k import (NVENC_ARGS, SCALE_4K, fallback_x264_cmd, project_root,
@@ -73,7 +73,7 @@ class TestSplitFrames(unittest.TestCase):
 
 class TestSegKey(unittest.TestCase):
     def _key(self, td, content, a=100, b=200, rewrite=True):
-        from cache_state import media_stat_digest
+        from vtx.cache_state import media_stat_digest
         p = td / "m.mp4"
         if rewrite or not p.exists():
             p.write_bytes(content)

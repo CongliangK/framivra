@@ -67,7 +67,7 @@ def print_followups(project_dir: str):
     print(f"  rm {project_dir}/cache/audio/vt_*.wav")
     print(f"  python3 vtx/vtx.py -t {tl} prepare")
     print(f"  python3 vtx/vtx.py -t {tl} audio   # voice 变必重跑")
-    print(f"  bash scripts/post_loudness.sh {project_dir}     # audio 后 mux 前必跑")
+    print(f"  # v2：vtx audio 已内置限幅，无需手动 post_loudness")
     print(f"  python3 vtx/vtx.py -t {tl} mux")
     print(f"  python3 vtx/vtx.py -t {tl} qc && python3 vtx/vtx.py -t {tl} audit")
     print(f"（实录终版替换：python3 scripts/repack_voice.py -t {tl}）")

@@ -24,12 +24,12 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "vtx"))
+sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-import encoders
-from encoders import (nvenc_budget, nvenc_budget_value, reset_nvenc_budget,
-                      reset_nvenc_ok_memo, seg_encoder_kind)
-from hygiene import seg_key
+from vtx import encoders
+from vtx.encoders import (nvenc_budget, nvenc_budget_value, reset_nvenc_budget,
+                          reset_nvenc_ok_memo, seg_encoder_kind)
+from vtx.hygiene import seg_key
 
 
 class _KindCtx:

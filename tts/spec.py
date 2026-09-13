@@ -51,15 +51,21 @@ def cfg_get(cfg: dict, path: str, default):
     return cur
 
 
+def _pluginlib_config():
+    """vtx.pluginlib.config（v2 §5.3 统一加载）——repo 根追加进 sys.path 后导入
+    （本模块平铺布局，脚本目录不含 repo 根；append 不抢占既有解析序）。"""
+    if DEFAULT_REPO_ROOT not in sys.path:
+        sys.path.append(DEFAULT_REPO_ROOT)
+    from vtx.pluginlib import config as _cfg
+    return _cfg
+
+
 def load_config(root: str = None) -> dict:
-    """读仓库根 config.local.json（缺文件/损坏 JSON → 空 dict，走默认探测链）。"""
-    p = os.path.join(root or DEFAULT_REPO_ROOT, "config.local.json")
-    try:
-        with open(p, encoding="utf-8") as f:
-            cfg = json.load(f)
-        return cfg if isinstance(cfg, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    """仓库配置（v2 §5.3 统一加载入口 vtx/pluginlib/config.py）：
+    VTX_CONFIG 环境变量 > repo 根 config.local.json；坏 JSON 一律警告 + 空 {}
+    继续（全局化语义——原静默 {} 收敛）；路径型键（tts.repo/python/voice_ref/
+    edge_bin）自动 ~ 展开。键结构与默认探测链不变，只统一加载入口。"""
+    return _pluginlib_config().load_config(root or DEFAULT_REPO_ROOT)
 
 
 def expanduser(p: str) -> str:

@@ -1,0 +1,16 @@
+# exit=1
+对比：timeline.v4.2-frozen.json  vs  timeline.json（类型：timeline / timeline，语义 diff）
+  · [变化] _meta: {"note": "voice-ime 终版（R3 retimeline，202… → {"note": "voice-ime 终版（R3 retimeline，202…
+  + [新增] audio_tracks[bgm-intro]: 1 events
+── 影响面（缓存键重算比对，键为纯函数即真值）──
+  seg 失效需重编码：0 个 clip
+  gfx 失效需重渲：0 页
+  分段合成（vseg）失效：0/8 段（nseg=8，切点 guard=±20 帧）
+  需重跑：validate → audio → mux → qc
+── 推荐修改路径 ──
+  总体：patch_script：写幂等补丁脚本改音轨参数（R1 口径，snapshot 先行 + 防重施标记）
+  [幂等补丁脚本（R1）] 1 项：audio_tracks[bgm-intro]
+    理由：纯音频参数（volume/pan/事件 fade/duck_params）不进任何视频缓存键，幂等补丁脚本（带防重施标记 + vtx snapshot 先行）可安全小改，走 R1 口径只重混音频
+  [白名单手改] 1 项：_meta
+    理由：白名单仅 _meta 类注释性字段（不参与任何缓存键与渲染）可直接手改；runbook 原则：其余一律生成器或幂等脚本
+DIFF｜共 2 条差异；受影响段 0/8，seg 重编码 0，gfx 重渲 0

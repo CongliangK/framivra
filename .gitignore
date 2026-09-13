@@ -6,6 +6,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# pip 构建产物（v2 P1-2 起 pyproject.toml 可本地 pip wheel，构建垃圾不入库）
+build/
+dist/
+*.egg-info/
+
 # 旧版备份文件（收编时已剔除，防御性保留规则）
 *.bak
 *.bak_v3*

@@ -8,8 +8,8 @@ import json, os, sys, unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vtx"))
-import probe_cache
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo 根（v2 §1.4 包导入）
+from vtx import probe_cache
 
 
 class FakeCtx:

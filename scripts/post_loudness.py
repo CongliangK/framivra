@@ -1,70 +1,24 @@
-"""Measure current WAV; validate before replacing and invalidate consumers."""
-import argparse, hashlib, json, math, os, re, subprocess, sys, tempfile, wave
+"""Measure current WAV; validate before replacing and invalidate consumers.
+
+v2（P1-1，2026-09-13）：响度终链（增益 + alimiter + 复测校验 + 时长校验 + 回执
+post_loudness 字段）已并入 vtx audio（ARCHITECTURE §1.2）——`vtx audio` 产出的
+out/audio.wav 恒为「归一+限幅」终态，R4 链（all --until video → mux → qc）不再
+需要本件。本文件保留 argparse 命令面作兼容薄壳：实现改为调内核兼容函数
+vtx.stages.post_loudness_compat。**幂等性声明（P1 对抗审查 F1 修正）**：真幂等
+仅当 ①audio.wav 与回执 post_loudness.sha256 一致（终态，直接跳过）或 ②当前 I
+已在 target；对限幅损耗停在 target-1.5~-2 的产物重跑会按 v1 旧语义再推增益
+（实测 +1.9dB 蠕升）并改变交付响度——函数会打印蠕升警告，v2 正常链路无需
+本命令。不做 v1 的回执摘除-回写手术（v2 单写者 = vtx audio，audio 阶段回执
+照常有效）。post_loudness.sh 照旧调本件。
+"""
+import argparse, json, os, sys, wave
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vtx'))
-from cache_state import DOWNSTREAM
 
-def run(args):
-    r = subprocess.run(list(map(str, args)), capture_output=True, text=True, encoding='utf-8', errors='replace')
-    if r.returncode:
-        raise RuntimeError(r.stderr[-3000:])
-    return r.stderr
+# v2 §1.4：注入 repo 根（不再注入 repo/vtx——平铺/包双实例会让锁形同虚设）
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-def measure(ffmpeg, path):
-    log = run([ffmpeg, '-hide_banner', '-nostats', '-i', path, '-af', 'ebur128=peak=true', '-f', 'null', '-'])
-    values = re.findall(r'I:\s+(-?[\d.]+|[-+]?inf) LUFS', log)
-    if not values or not math.isfinite(float(values[-1])) or float(values[-1]) <= -70:
-        raise ValueError('Cannot normalize silent or unmeasurable audio')
-    return float(values[-1])
+from vtx.stages import post_loudness_compat
 
-def duration(path):
-    with wave.open(str(path), 'rb') as audio:
-        return audio.getnframes() / audio.getframerate()
-
-def atomic_json(path, data):
-    fd, name = tempfile.mkstemp(prefix='.post-receipt-', suffix='.json', dir=path.parent)
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-            json.dump(data, stream, ensure_ascii=False, indent=2)
-        os.replace(name, path)
-    finally:
-        Path(name).unlink(missing_ok=True)
-
-def process(project, ffmpeg='ffmpeg', target=-14):
-    if not math.isfinite(target):
-        raise ValueError('Target must be finite')
-    source = Path(project).resolve() / 'out' / 'audio.wav'
-    receipt = source.parent / 'receipt.json'
-    before = measure(ffmpeg, source)  # raw_i is before stages.audio applies gain_db
-    seconds = duration(source)
-    gain = target - before
-    fd, name = tempfile.mkstemp(prefix='.post-audio-', suffix='.wav', dir=source.parent)
-    os.close(fd)
-    candidate = Path(name)
-    try:
-        run([ffmpeg, '-y', '-v', 'error', '-i', source, '-af', f'volume={gain:.3f}dB,alimiter=limit=0.599:level=false:latency=true', '-c:a', 'pcm_s16le', '-ar', '48000', candidate])
-        after = measure(ffmpeg, candidate)
-        if abs(after - target) > 1.5:
-            raise ValueError(f'Loudness {after} outside target {target} +/- 1.5 LU')
-        if abs(duration(candidate) - seconds) > 1 / 48000 + 1e-9:
-            raise ValueError('Post-processing changed audio duration')
-        result = {'input_i': before, 'output_i': after, 'gain_db': gain, 'target': target, 'sha256': hashlib.sha256(candidate.read_bytes()).hexdigest()}
-        record = json.loads(receipt.read_text(encoding='utf-8')) if receipt.exists() else None
-        audio_stage = None
-        if record is not None:
-            stages = record['stages']
-            audio_stage = stages.pop('audio', None)
-            for stage in DOWNSTREAM['audio']:
-                stages.pop(stage, None)
-            atomic_json(receipt, record)  # interruption cannot leave stale PASS
-        os.replace(candidate, source)
-        if record is not None and audio_stage is not None:
-            audio_stage['post_loudness'] = result
-            record['stages']['audio'] = audio_stage
-            atomic_json(receipt, record)
-        return result
-    finally:
-        candidate.unlink(missing_ok=True)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -73,7 +27,7 @@ def main():
     parser.add_argument('--target', type=float, default=float(os.environ.get('TARGET_LUFS', '-14')))
     args = parser.parse_args()
     try:
-        print(json.dumps(process(args.project, args.ffmpeg, args.target), ensure_ascii=False))
+        print(json.dumps(post_loudness_compat(args.project, args.ffmpeg, args.target), ensure_ascii=False))
     except (OSError, ValueError, RuntimeError, KeyError, wave.Error) as exc:
         print(f'FATAL: {exc}', file=sys.stderr)
         return 1

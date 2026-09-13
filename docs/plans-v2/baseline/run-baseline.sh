@@ -32,7 +32,9 @@
 # diff 对照旧版（冻结）：timeline.v4.2-frozen.json（与现行 timeline.json 有实质
 #   差异的最近旧版；v4.3~v4.6-frozen 与现行 timeline.json 逐字节相同，diff 无信息量）。
 set -u
-VTX=/home/liangruochong/文档/01_活跃项目/video_tools/vtx/vtx.py
+# VTX 参数化（P1 复验）：默认 v1 主工作区（首跑基线口径）；复验 v2 时
+# VTX=/home/liangruochong/文档/01_活跃项目/video_tools-v2/vtx/vtx.py bash run-baseline.sh <raw目录>
+VTX="${VTX:-/home/liangruochong/文档/01_活跃项目/video_tools/vtx/vtx.py}"
 # RAW 输出目录参数化（P0 复审 P1-6）：不传参 → 影子区时间戳目录；指向基线目录 → 拒绝
 # （防止复跑覆盖首跑原始证据）
 RAW="${1:-/home/liangruochong/文档/04_bilibili视频/_shadow_v2/raw-$(date +%Y%m%d-%H%M%S)}"

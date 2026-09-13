@@ -2,7 +2,8 @@
 """tests/test_audio_report.py —— 音频一等报告（方案五阶段3）单元测试。
 
 覆盖（判级纯函数零渲染免费测 + 合成工程端到端）：
-  ① grade_lufs / grade_tp：PASS/INFO/WARN/FAIL 边界（LUFS 容差沿用 qc.QC_LOUDNESS_TOL）；
+  ① grade_lufs / grade_tp：PASS/FAIL 边界（LUFS 容差沿用 qc.QC_LOUDNESS_TOL；TP 为
+    v2 §1.3 权威阈 -1.0——limiter 已并入 vtx audio，> -1 即 FAIL，INFO 档已废除）；
   ② grade_loudness_diff：v4.1 事故态（锚 22.0-4.6=17.4dB 与原始 4.6dB）→ FAIL、
     v4.2 定稿实测锚 22.0dB → PASS、边缘带 WARN、床乐过弱 WARN；
   ③ grade_duck：v4.2 实测值（深度-10.4 / 咬合 0.05 / 回升 2.41）→ PASS、深度不足/
@@ -27,9 +28,9 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "vtx"))
+sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-import audio_report as ar
+from vtx import audio_report as ar
 
 VTX = REPO / "vtx" / "vtx.py"
 FF = shutil.which("ffmpeg")
@@ -50,16 +51,16 @@ class TestGradeLufs(unittest.TestCase):
 
 
 class TestGradeTp(unittest.TestCase):
-    def test_reference_info(self):
-        # 现口径：-1~+3 dBTP 为 post_loudness alimiter 设计内 headroom（v4.2 实测 +0.8）
-        self.assertEqual(ar.grade_tp(0.8)[0], "INFO")
-        self.assertEqual(ar.grade_tp(-0.5)[0], "INFO")
+    def test_above_minus_one_fails(self):
+        # v2 §1.3（2026-09-13）：-1.0 dBFS 为唯一权威阈（与 G3/内核 qc 同口径）——
+        # limiter 已并入 vtx audio，> -1 即 FAIL；旧 -1~+3「设计内」INFO 档废除
+        self.assertEqual(ar.grade_tp(0.8)[0], "FAIL")    # 旧口径 v4.2 实测 +0.8 曾判 INFO
+        self.assertEqual(ar.grade_tp(-0.5)[0], "FAIL")
+        self.assertEqual(ar.grade_tp(3.5)[0], "FAIL")
 
     def test_pass(self):
         self.assertEqual(ar.grade_tp(-2.0)[0], "PASS")
-
-    def test_fail(self):
-        self.assertEqual(ar.grade_tp(3.5)[0], "FAIL")
+        self.assertEqual(ar.grade_tp(-1.0)[0], "PASS")   # 边界含
 
 
 class TestGradeLoudnessDiff(unittest.TestCase):

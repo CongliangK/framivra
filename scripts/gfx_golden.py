@@ -24,7 +24,7 @@ golden JSON 结构（自包含、无歧义）：
       [--report report.json] [--pages c5a_main_path]
 
 实现要点：
-  - 缓存键/帧目录定位直接复用 vtx/hygiene.gfx_key（sys.path 挂 vtx 平铺模块）——
+  - 缓存键/帧目录定位直接复用 vtx/hygiene.gfx_key（v2 §1.4 包导入，注入 repo 根）——
     golden 与渲染器永远同一套键；键逻辑若变，compare 以「目录缺失」显式失败并提示
     重建 golden，绝不静默错比。
   - 帧缺失/目录缺失在 build 即报错退出非零（golden 必须完整，宁缺毋滥）。
@@ -44,9 +44,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "vtx"))   # vtx 平铺 import（hygiene ← cache_state 同目录）
-from infra import Ctx   # noqa: E402
-import hygiene          # noqa: E402
+sys.path.insert(0, str(REPO))   # v2 §1.4 包化：注入 repo 根 + 包导入（不再注入 repo/vtx）
+from vtx.infra import Ctx   # noqa: E402
+from vtx import hygiene     # noqa: E402
 
 HASH_DESC = "sha256(PIL 解码 → RGBA 原始字节, 行主序) 每帧 64 hex"
 

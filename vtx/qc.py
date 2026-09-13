@@ -1,14 +1,17 @@
-"""vtx 渲染后质检（qc 阶段）：帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一。
+"""vtx 渲染后质检（qc 阶段）：帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一/解码域真峰。
 
 原 vtx.py qc 函数整体迁移（2026-09-10 模块化拆分），检查内容/顺序/名称与阈值不变。
 方案三阶段1（2026-09-13）新增：响度检查 -vn+peak 并消费 loudness_cache 回执；
 命中段免检（qc_pass_segs.json，见下方辅助函数注释）。
+v2 §1.3（2026-09-13）新增：解码域真峰 TP 判定项（阈 -1.0 dBFS，与 gates G3 同一
+权威值、同一回执不重测）——limiter 恒在 build_audio 尾部后，成片 TP 超阈 = 上游
+削波/限幅失效，属产物可信度问题，归内核 qc。
 """
 import json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import loudness_cache
+from . import loudness_cache
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
 QC_CUT_MEAN_MAX = 6.0        # 底轨切点帧比对：平均像素差上限
@@ -19,6 +22,7 @@ QC_LEAK_MEAN_MAX = 2.0       # 空窗泄漏：平均像素差上限
 QC_LEAK_COVER_MAX = 0.02     # 空窗泄漏：覆盖率上限
 QC_LOUDNESS_TOL = 1.5        # 响度归一容差（LUFS）
 TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_audio 同一权威值）
+QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
 # ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
 # 记录 cache/qc_pass_segs.json：{"version":1,"final":{size,mtime_ns,frames},
@@ -321,13 +325,14 @@ def qc(c):
     # 响度归一验证（EBU R128 整合响度应 ≈ 目标值）——与帧探测并行。
     # 方案三阶段1（2026-09-13）：①加 -vn 免整遍视频解码（-f null 默认流选择会连
     # 视频一起解码，本机实测 4.9s→0.4s）；②peak=true 顺带测 TP 归档回执
-    # （vtx/loudness_cache.py——同一解码域输入全链只测一次；qc 自身检查仍只用
-    # I，TP 门在 gates G3）；③先查回执，命中免测（内容键绑定，文件任何变动
-    # 自然失效重测，不跨版本复用数字）。
+    # （vtx/loudness_cache.py——同一解码域输入全链只测一次）；③先查回执，命中免测
+    # （内容键绑定，文件任何变动自然失效重测，不跨版本复用数字）。
+    # v2 §1.3（2026-09-13）：TP 从「只归档回执」升为内核 qc 判定项（阈 -1.0 dBFS，
+    # 与 gates G3 同一权威值、同一回执不重测）——检查项见下方 checks 回填段。
     def loudness():
         hit = loudness_cache.lookup(final, root=c.root)
         if hit is not None:
-            return hit["i_lufs"], True
+            return hit["i_lufs"], hit["tp_dbfs"], True
         def measure():
             r2 = c.run(["ffmpeg", "-nostats", "-vn", "-i", str(final),
                         "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
@@ -336,7 +341,7 @@ def qc(c):
             return (float(mI.group(1)) if mI else None,
                     float(mP.group(1)) if mP else None)
         r = loudness_cache.measure_and_store(final, measure, root=c.root)
-        return r["i_lufs"], False
+        return r["i_lufs"], r["tp_dbfs"], False
     def vol(f0, f1):
         r = c.run(["ffmpeg", "-v", "info", "-ss", f"{f0*c.spf:.3f}", "-t", f"{(f1-f0)*c.spf:.3f}",
                    "-i", str(final), "-map", "0:a", "-af", "volumedetect", "-f", "null", "-"])
@@ -349,7 +354,7 @@ def qc(c):
         if stacked is None or active > stacked[0]:
             stacked = (active, f0)
     if c.dry:
-        loud_v, loud_hit, v1 = None, False, -999   # dry-run 不执行，直接走缺省
+        loud_v, loud_tp, loud_hit, v1 = None, None, False, -999   # dry-run 不执行，直接走缺省
     else:
         # 三组互不依赖：帧探测（内部 8 线程并发 ffmpeg）/ ebur128 / volumedetect 并行，墙钟 ≈ max
         with ThreadPoolExecutor(3) as gex:
@@ -362,7 +367,7 @@ def qc(c):
             fp = gex.submit(run_probes)
             fl = gex.submit(loudness)
             fv = gex.submit(lambda: vol(stacked[1] + 2, stacked[1] + 10))
-            loud_v, loud_hit = fl.result(); v1 = fv.result(); fp.result()
+            loud_v, loud_tp, loud_hit = fl.result(); v1 = fv.result(); fp.result()
 
     # ---- 按原顺序回填 checks（内容/顺序/名称与旧版一致）----
     ok(f"成片帧数 = {c.dur}", nb == c.dur, f"实测 {nb}（{nb_src}）")
@@ -417,6 +422,13 @@ def qc(c):
     if loud_v is not None:
         ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", abs(loud_v - TARGET_LUFS) <= QC_LOUDNESS_TOL,
            f"实测 {loud_v} LUFS" + ("（回执命中，免测）" if loud_hit else ""))
+    if loud_tp is not None:
+        # v2 §1.3 解码域真峰 TP 判定：阈 -1.0 dBFS（G3 同一权威值，同一回执不重测）。
+        # vtx audio 已内置 alimiter，成片 TP 超阈 = 上游削波/限幅失效，须查上游。
+        ok(f"解码域真峰 TP ≤ {QC_TP_MAX:g} dBFS", loud_tp <= QC_TP_MAX,
+           f"实测 {loud_tp} dBFS" + ("（回执命中，免测）" if loud_hit else "")
+           + ("" if loud_tp <= QC_TP_MAX
+              else "——audio 已内置 alimiter，若仍超标检查上游削波"))
     ok(f"{stacked[0]} 轨并发窗口有能量", v1 > -50, f"mean {v1:.1f} dB @frame {stacked[1]}")
     rep["skipped_probes"] = skipped_probes
     (c.out / "qc_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")

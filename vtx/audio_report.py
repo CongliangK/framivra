@@ -8,11 +8,11 @@ cache/audio 源 wav 现场渲染的轨级 stem（人声活动响度 vs duck 床�
 判级阈值表（出处）：
   LUFS  |I-(-14)|≤1.5 PASS / ≤2.5 WARN / 其余 FAIL
         —— qc.QC_LOUDNESS_TOL=1.5（成片 qc 同一口径）；2.5 档为本报告新增中间档
-  TP    >+3 dBTP FAIL / -1~+3 INFO（参考值，不计 WARN）/ ≤-1 PASS
-        —— 现口径为准（docs/DEV.md：wav 域 TP 达标不代表成片达标，aac 解码过冲实测
-        +8.5dB，TP 终检在 mux 后成片）；本管线 post_loudness.sh 设计 alimiter
-        -4.45dBFS 采样限幅 = 有意消耗 headroom，v4.2 定稿 audio.wav/final.mp4 实测
-        TP 均为 +0.7~+0.8（设计内），故 -1~+3 判参考 INFO，超 +3 判设计外 FAIL
+  TP    >-1 dBTP FAIL / ≤-1 PASS（v2 §1.3，2026-09-13：-1.0 dBFS 为唯一权威阈，与
+        gates G3 / 内核 qc「解码域真峰」同一口径——limiter 已并入 vtx audio
+        （ARCHITECTURE §1.2），audio.wav 域 TP 应稳定 ≤-1，旧 -1~+3「设计内」INFO
+        档（post_loudness 可选时代 v4.2 实测 TP +0.7~+0.8 的口径）已废除；wav 域
+        达标仍不代表成片达标——aac 解码过冲实测 +8.5dB，成片终检在内核 qc）
   人声-床乐响度差（人声活动窗内 S 均值差） <19 FAIL / 19-21 WARN / 21-29 PASS
         / >29 WARN（床乐过弱）
         —— 口径：stem 级 ebur128 短时响度 S（3s 积分窗）均值差。v4.2 定稿实测锚
@@ -50,14 +50,14 @@ FAIL 表示事故级问题必须处理）。
 import json, re, statistics, sys, time
 from pathlib import Path
 
-from hygiene import audio_key
+from .hygiene import audio_key
 
 # ---- 阈值常量（出处见模块头判级阈值表）----
 LUFS_TARGET = -14.0        # stages.TARGET_LUFS / qc.TARGET_LUFS 同一权威值
 LUFS_TOL = 1.5             # qc.QC_LOUDNESS_TOL（PASS 容差）
 LUFS_WARN_TOL = 2.5        # WARN 容差（本报告新增中间档）
-TP_WARN_DBTP = -1.0        # EBU R128 流媒体 -1dBTP（低于它 = 设计内 headroom 参考档）
-TP_FAIL_DBTP = 3.0         # post_loudness alimiter -4.45dBFS 设计外的 headroom 消耗
+TP_WARN_DBTP = -1.0        # v2 §1.3 权威阈：-1.0 dBFS（gates G3 / 内核 qc 同一值）
+TP_FAIL_DBTP = -1.0        # 同上（> -1 即 FAIL）；双常量保留命名以兼容 _meta 覆盖键
 DIFF_FAIL_BELOW = 19.0     # v4.1 事故态 = v4.2 锚(22.0)-4.6 ≈ 17.4，19 留 1.6dB 余量
 DIFF_WARN_BELOW = 21.0     # 实测锚 ±1dB 抖动带
 DIFF_PASS_MAX = 29.0       # 锚 +7；超过 = 床乐过弱
@@ -87,11 +87,14 @@ def grade_lufs(i, tol=LUFS_TOL, warn_tol=LUFS_WARN_TOL, target=LUFS_TARGET):
 
 
 def grade_tp(tp, warn=TP_WARN_DBTP, fail=TP_FAIL_DBTP):
-    """TP 在 audio.wav 域为参考项（现口径见模块头）：-1~+3 INFO 不计 WARN，
-    超设计 headroom（+3）FAIL，≤-1 PASS。"""
-    if tp > fail: return "FAIL", f"实测 TP {tp:.1f} dBTP > +{fail:g}（超出 alimiter 设计 headroom，编码后必削波）"
-    if tp > warn: return "INFO", f"实测 TP {tp:.1f} dBTP（参考值：-1~+{fail:g} 设计内，成片终检须复测编码后 TP）"
-    return "PASS", f"实测 TP {tp:.1f} dBTP（≤{warn:g}）"
+    """TP 判级（v2 §1.3 权威口径）：阈 -1.0 dBFS，> 阈即 FAIL——limiter 已并入
+    vtx audio（§1.2），audio.wav 域 TP 应稳定 ≤-1，超阈 = 上游削波/限幅失效；
+    ≤ 阈 PASS。warn/fail 双参数仅为 _meta.audio_report 覆盖键兼容保留，判定取
+    两者较严值（覆盖出现分歧时不放宽权威阈）。"""
+    thr = min(warn, fail)
+    if tp > thr:
+        return "FAIL", f"实测 TP {tp:.1f} dBTP > {thr:g}（vtx audio 已内置 alimiter，超阈请查上游削波）"
+    return "PASS", f"实测 TP {tp:.1f} dBTP（≤{thr:g}）"
 
 
 def grade_loudness_diff(diff, fail_b=DIFF_FAIL_BELOW, warn_b=DIFF_WARN_BELOW,

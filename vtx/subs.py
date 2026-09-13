@@ -7,10 +7,10 @@ check_subtitles(subs, voice_windows, fps)——可脱离视频/音频产物独�
 import hashlib, json, re, sys
 from pathlib import Path
 
-from composite import RenderPlan
-from encoders import seg_encoder_kind
-from hygiene import gfx_dir, manifest_record, seg_key, tmp_run
-from infra import Ctx, filter_filename
+from .composite import RenderPlan
+from .encoders import seg_encoder_kind
+from .hygiene import gfx_dir, manifest_record, seg_key, tmp_run
+from .infra import Ctx, filter_filename
 
 # ---- 阈值常量（与 stages.audit 字幕基准对齐；2026-08-21 实测，见 stages 注释）----
 CPS_FAIL = 9.0           # 阅读速度 >9 字/s 过快（≈P99）→ FAIL

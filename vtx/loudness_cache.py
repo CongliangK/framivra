@@ -31,7 +31,7 @@ root 缺省 = media 父目录的父目录（out/final.mp4 → 项目根）。
 import hashlib, json, os, threading, time
 from pathlib import Path
 
-from cache_state import media_stat_digest
+from .cache_state import media_stat_digest
 
 try:
     import fcntl    # POSIX 跨进程文件锁；Windows 缺该模块（降级见模块头注释）

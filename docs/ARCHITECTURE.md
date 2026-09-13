@@ -80,7 +80,8 @@ video_tools/
 
 v2 定案〔用户拍板〕：**整套逻辑吸收进 `vtx build_audio` 尾部**，即 `all`/`audio` 产出的 out/audio.wav 恒为"归一+限幅"终态；post_loudness.py/.sh 变薄壳调同一内核函数（CLI 命令面保留，§6.4），不再有独立进程语义。要点：
 
-- **施加位置**：alimiter 段下沉进 `mix_audio_wav` 输出链（`volume=…dB` 后追加 `,alimiter=limit=0.599:level=false:latency=true`）——build_audio 与区间预览（range.py 直调 mix_audio_wav）**统一过 limiter**，杜绝"成片有限幅、预览无限幅"的分叉〔对抗审查 P0 复审 P1-1/P1-2 裁定〕；复测 ±1.5 LU、时长校验、回执 `post_loudness` 字段仅 build_audio（win=None）路径执行。
+- **施加位置**：alimiter 段下沉进 `mix_audio_wav` 输出链（`volume=…dB` 后追加 `,alimiter=limit=0.599:level=false:latency=true`）——build_audio 与区间预览（range.py 直调 mix_audio_wav）**统一过 limiter**，杜绝"成片有限幅、预览无限幅"的分叉〔对抗审查 P0 复审 P1-1/P1-2 裁定〕；终态校验与回执 `post_loudness` 字段仅 build_audio（win=None）路径执行。
+- **终态校验分级（总控裁定 2026-09-13 影子复验期，修订原"照搬 ±1.5"）**：机制/内容分离——硬 FAIL：限幅后 TP > -1.0 dBFS（limiter 失效）、时长漂移 ±1 采样、I 偏离目标 >3 LU（增益链断裂）；WARN：I 偏离 ∈ (1.5, 3]（限幅响度损耗属内容级——配乐密集/原始混音偏 quiet，发布侧 G2 拦截，提示调 bed 重渲）；≤1.5 静默通过（v1 语义）。证据：live voice-ime v1 回执 input_i=-14.0→output_i=-15.5（\|偏离\|=1.5 恰压线已交付），同内容 v2 浮点域限幅实测 -15.6——边界内容 + 0.1 LU 测量抖动不得成为管线 flaky 硬 FAIL。回执 post_loudness 字段增记 tp_dbfs。
 - 测量→增益→alimiter→复测→时长校验→回执，顺序与阈值逐条照搬 post_loudness.py 现实现。回执字段 `raw_i`/`gain_db` 语义保留；**勘误**（P0 复审 P1-1）：stages.py:353-356 注释所称「raw_i 供 post_loudness.sh 免首测复用」已失修——post_loudness.py:38 每次实测（docs/post-loudness.md:11 记载旧 wrapper 曾因读该字段双施 gain 的事故），全仓无代码消费回执 raw_i；`gain_db` 的唯一真实消费者是 `vtx/range.py:100`（区间渲染复用整片增益）——吸收后语义不变（预览与整片同增益同限幅）。迁移时一并修正该失修注释。
 - **R4 链消费者改写清单**（吸收后随 P1 同步改）：bench_cold.sh 四处（L12/54/156/203-260 独立 post_loudness 步骤与逐步骤计时表；门 8 的 291.4s 口径随链结构重定）、tts/tts_cli.py:70 与 tts/indextts_worker.py:70 与 scripts/repack_voice.py:150 的「audio 后 mux 前必跑」提示文案、vtx/vtx.py:63-64/419 的 --until 帮助文本〔对抗审查 P0 复审 P1-3〕。
 - 干跑（--dry-run）不落产物不手术，与现行门控纪律一致。
@@ -118,7 +119,7 @@ v2 定案〔用户拍板〕：**G3 的 -1.0 dBFS 为唯一权威**，三处对�
 
 **不变量 1 · 缓存键贡献**。插件经 `contribute_keys(c)` 把自己的缓存键并入 gc 的存留白名单。现状缺口〔代码现状 hygiene.py:231-245〕：`gc_plan` 把 `cache/audio/` 下不在 `_current_keys` ak 集合内的文件、`cache/` 根下不在 known 集合内的目录一律判垃圾，而 `budget_gate` 在渲染阶段前自动触发 gc〔hygiene.py:440-455〕——插件产物若不注册键，**渲染中就会被自动回收**。denoise 缓存键构成 = `media_stat_digest(源)` + 插件名 + 版本 + 参数摘要（**勿用全文件 md5**，GB 级源全量哈希违背缓存卫生层哲学〔代码现状 hygiene.py:39-53〕）。
 
-**不变量 2 · 回执指纹**。`cache_state.receipt_fingerprint` 现状 = timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容〔代码现状 cache_state.py:70-87〕。v2 **必须掺入「生效插件清单」**（插件名 + 版本 + 对本 timeline 生效的参数摘要）——防插件升级/改默认参后旧回执放行陈旧产物。混入位置在现有哈希序末尾追加一段，不改变既有成分。
+**不变量 2 · 回执指纹**。`cache_state.receipt_fingerprint` 现状 = timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容〔代码现状 cache_state.py:70-87〕。v2 **必须掺入「生效插件清单」**（插件名 + 版本 + 对本 timeline 生效的参数摘要）——防插件升级/改默认参后旧回执放行陈旧产物。混入位置在现有哈希序末尾追加一段，不改变既有成分。**空生效清单时省略该段**〔总控裁定 2026-09-13，P1 影子基线温态复验的前提〕：无插件时间线的指纹与 v1 逐字节一致、v1 回执在 v2 下继续有效（迁移兼容）；不变量 ② 由"段的出现/内容变化"保证——装/卸/升级/改参任一状态翻转都使录制侧指纹与重算侧失配（含卸载后回落 v1 形态：带段录制的旧回执对无段重算同样失配被拒）。
 
 **不变量 3 · 安装态与键注册表**。
 
@@ -390,7 +391,7 @@ CLI 命令面保留承诺：`post_loudness.sh` / `bed_static_duck.py` / `content
 ## 9. 验收硬门（9 条，全部通过才算 v2 完成）
 
 1. **全测试绿**：tests/ 全量通过（test_post_loudness.py 随 §1.2 改为直测内核函数，spec_from_file_location 加载脚本路径的旧加载方式〔代码现状 tests/test_post_loudness.py:7-9〕随薄壳重写）。
-2. **影子基线归一化一致（两段口径）**〔对抗审查 P0 复审 P0-1/P1-4 裁定〕：**不变段**（validate / diff / subs 全部输出 + qc 除新增 TP 项外的全部 checks）——P1/P2/P3/P5 每次复验与首跑基线逐项一致；**重锚段**（audio --report 全部输出 + qc 新增 TP 判定项）——因 §1.2/§1.3 响度终链合并属设计内变化，P1 落地后在影子复跑产出**重锚基线**（`plans-v2/baseline-r2/`，合法性条件：解码域 TP ≤ -1.0 dBFS、整片 I ∈ [-15.5, -14] LUFS、判级不劣于首跑已知项），此后 P2/P3/P5 对重锚基线逐项一致。预期差异经 `known-diffs.conf` 白名单承载（数值容差 ±0.15 LUFS 仅限 audio.norm.json 浮点字段），**白名单外任何差异即 FAIL**。
+2. **影子基线归一化一致（两段口径）**〔对抗审查 P0 复审 P0-1/P1-4 裁定〕：**不变段**（validate / diff / subs 全部输出 + qc 除新增 TP 项外的全部 checks）——P1/P2/P3/P5 每次复验与首跑基线（r1）逐项一致；**重锚段**（audio --report 全部输出 + qc 含 TP 项）——因 §1.2/§1.3 响度终链合并属设计内变化，P1 落地后已在影子复跑产出**重锚基线 r2**（`plans-v2/baseline-r2/`，合法性实测：解码域 TP -3.1 ≤ -1.0 ✅、整片 I -15.6 ∈ **[-15.8, -14.0]**〔合法带按实证修正：v1 交付 -15.5/v2 实测 -15.6 的边界内容 + 0.1 级域差，原 [-15.5,-14] 不可满足，超出修正带即真回归〕、判级不劣于首跑已知项 ✅），此后 P2/P3/P5 对 r2 逐项一致（`compare.sh <新目录> ../baseline-r2`）。预期差异经 `known-diffs.conf` 白名单承载（r2 建立后已清空），**白名单外任何差异即 FAIL**。
 3. **旧路径冒烟**：docs_smoke 提取全部旧路径引用逐一验证 + **外部三载体**（§6.3）核销后可解析。
 4. **关停测试**：apps+plugins 全禁 → 仅内核仍可出片（`all` 走通 + qc 含 TP 判定通过）——§0.1 判据的实测化。
 5. **语法差异门 + 缓存身份门**：插件装/未装 timeline JSON 语法差异符合三分支语义（§2.1 不变量 3）；插件产物缓存键进 gc 白名单（渲染中 budget_gate 触发不误杀，§2.1 不变量 1）；插件升级/改参 → 回执指纹变（旧回执不放行陈旧产物，§2.1 不变量 2）。

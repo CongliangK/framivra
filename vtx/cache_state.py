@@ -68,7 +68,17 @@ def validate_cache_dependencies(c):
 
 
 def receipt_fingerprint(c) -> str:
-    """回执输入身份：timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容。"""
+    """回执输入身份：timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容
+    + subtitles_src 文件内容（v2 §1.1 条目 6）+ 生效插件摘要段（v2 §2.1 不变量 ②）。
+
+    v2 两处追加（均在现有哈希序末尾，不改既有成分）：
+      - subtitles_src：文件内容 digest（对齐 gfx html/声明依赖处理方式；未声明
+        该键的 timeline 不追加任何字节），文件变更 → 回执失效；
+      - active_plugins_digest：生效插件名+版本+参数摘要——**空生效清单时省略
+        该段**（无插件时间线的指纹与 v1 逐字节一致，v1 回执在 v2 下继续有效；
+        影子基线温态复验依赖此兼容）。不变量 ② 仍成立：插件安装/卸载/升级/
+        参数变化 → 段出现或内容变化 → 录制侧指纹与重算侧失配 → 旧回执拒绝。
+    """
     h = hashlib.sha256()
     h.update(c.tl_path.read_bytes())
     for s in sorted(c.tl.get("sources", []), key=lambda s: str(s.get("path", ""))):
@@ -84,6 +94,20 @@ def receipt_fingerprint(c) -> str:
                       (file_digest(p) if p.is_file() else "MISSING") + "\n").encode())
     for item in declared_dependencies(c):
         h.update((item + ":" + file_digest(c.root / item) + "\n").encode())
+    # v2 §1.1 条目 6：subtitles_src 文件内容并入（缺失记 MISSING——validate 侧 FAIL）
+    src = c.tl.get("subtitles_src")
+    if isinstance(src, str) and src:
+        p = c.root / src
+        h.update(("subtitles_src:" + (file_digest(p) if p.is_file() else "MISSING")
+                  + "\n").encode())
+    # v2 §2.1 不变量 ②：生效插件清单摘要段（迟导入便于测试替身；pluginlib 零 vtx
+    # 依赖无环）。空生效清单时省略段——无插件时间线指纹与 v1 逐字节一致（v1 回执
+    # 继续有效，影子基线温态复验依赖）；插件装/卸/升级/改参时段出现或内容变，
+    # 录制指纹与重算失配即拒绝陈旧产物。
+    from .pluginlib.hooks import active_plugins_digest
+    _pdigest = active_plugins_digest(c)
+    if _pdigest:
+        h.update(_pdigest.encode())
     return h.hexdigest()
 
 

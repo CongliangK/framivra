@@ -6,20 +6,21 @@
 # ——gfx/seg/段(vseg)/音频/回执/免检记录/响度回执全在 cache/ 下整删即全清；
 # out/receipt.json 单列删除（回执口径：out/ 产物本体保留，轮转记账照常累积）。
 #
-# 验证链（每轮逐步计时，替代旧版 `vtx all` 一条龙——audio 后须 post_loudness 再
-# mux，一条龙会把 mux/qc 白跑一遍；方案三阶段3 `all --until video` 消灭双跑）：
-#   1) env python3 $VTX -t … all --until video   # 串行头+并行波+video 尾
-#   2) bash $REPO/scripts/post_loudness.sh $PROJ # 响度限幅兜底（R4 链必经）
-#   3) env python3 $VTX -t … mux                 # libfdk_aac 192k 封装
-#   4) env python3 $VTX -t … qc                  # 预期 74/75、exit 1=c4_mini 已知
+# 验证链（每轮逐步计时，替代旧版 `vtx all` 一条龙——一条龙会把 mux/qc 白跑一遍；
+# 方案三阶段3 `all --until video` 消灭双跑。v2 §1.2（2026-09-13）：limiter 已并入
+# vtx audio（ARCHITECTURE §1.2），audio 产出的 out/audio.wav 恒为「归一+限幅」
+# 终态，原独立 post_loudness 步骤与计时行移除）：
+#   1) env python3 $VTX -t … all --until video   # 串行头+并行波+video 尾（audio 含限幅）
+#   2) env python3 $VTX -t … mux                 # libfdk_aac 192k 封装
+#   3) env python3 $VTX -t … qc                  # 预期 74/75、exit 1=c4_mini 已知
 #                                               # 探针假阴性，不中断基准
-#   5) env python3 scripts/content_gates.py -t … --media …/out/final.mp4  # 五门
+#   4) env python3 scripts/content_gates.py -t … --media …/out/final.mp4  # 五门
 #
 # --with-4k（默认出列，方案三.6「4K 剔出冷跑关键路径」）：验证链后追加发布链分项
 #   export_4k.py（计时）+ check_4k.sh（断言）——单列「发布链预算」，不计入验证链合计。
 #
 # 轮摘要提取：串行头（validate→prepare 墙钟）/ 并行波 [timing] 总耗时（gfx 关键
-# 路径）/ video 尾（波结束→video 完成墙钟）/ post/mux/qc/gates 各步（/usr/bin/time）
+# 路径）/ video 尾（波结束→video 完成墙钟）/ mux/qc/gates 各步（/usr/bin/time）
 # / 验证链合计（validate→gates 墙钟）/ qc 通过数 / 五门结论。全部轮结束后输出
 # 各阶段中位数表 + 波动（(max-min)/中位，>15% 打 ⚠）。
 #
@@ -51,7 +52,6 @@ PROJ="${PROJ:-$HOME/文档/04_bilibili视频/bench_p2}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VTX="$REPO/vtx/vtx.py"
 GATES="$REPO/scripts/content_gates.py"
-POST="$REPO/scripts/post_loudness.sh"
 DATE="$(date +%Y%m%d)"
 
 [ -f "$PROJ/timeline.json" ] || { echo "防呆：$PROJ/timeline.json 不存在，退出"; exit 1; }
@@ -66,7 +66,7 @@ fi
 LOGDIR="/tmp"
 TDIR="$LOGDIR/vtx_bench_${DATE}_times"; mkdir -p "$TDIR"
 # 中位数表数据文件按本次调用清旧（同日多次调用——正式轮/A-B/4K 轮——不得互串）
-rm -f "$TDIR"/{head,wave,gfx,votail,post,mux,qc,gates,chain,exp4k}_* 2>/dev/null || true
+rm -f "$TDIR"/{head,wave,gfx,votail,mux,qc,gates,chain,exp4k}_* 2>/dev/null || true
 SUMMARY="$TDIR/summary_${DATE}_$$.txt"
 : > "$SUMMARY"
 
@@ -153,11 +153,8 @@ for i in $(seq 1 "$ROUNDS"); do
   if ! run_step all_until_video env python3 "$VTX" -t "$PROJ/timeline.json" all --until video; then
     echo "⚠ step1 all --until video 异常退出（rc=$(cat "$TDIR/rc_${ROUND}_all_until_video")）——下游预期连锁失败，本轮照常采集"; UNEXPECTED_FAIL=1
   fi
-  if ! run_step post_loudness bash "$POST" "$PROJ"; then
-    echo "⚠ step2 post_loudness 异常退出（rc=$(cat "$TDIR/rc_${ROUND}_post_loudness")）"; UNEXPECTED_FAIL=1
-  fi
   if ! run_step mux env python3 "$VTX" -t "$PROJ/timeline.json" mux; then
-    echo "⚠ step3 mux 异常退出（rc=$(cat "$TDIR/rc_${ROUND}_mux")）"; UNEXPECTED_FAIL=1
+    echo "⚠ step2 mux 异常退出（rc=$(cat "$TDIR/rc_${ROUND}_mux")）"; UNEXPECTED_FAIL=1
   fi
   run_step qc env python3 "$VTX" -t "$PROJ/timeline.json" qc || true
   case "$(cat "$TDIR/rc_${ROUND}_qc")" in
@@ -167,7 +164,7 @@ for i in $(seq 1 "$ROUNDS"); do
   esac
   # gates 在项目目录内跑：--audio-wav 缺省 ./out/audio.wav 按 CWD 解析（G1 口径 = wav 源）
   if ! ( cd "$PROJ" && run_step gates env python3 "$GATES" -t "$PROJ/timeline.json" --media "$PROJ/out/final.mp4" ); then
-    echo "⚠ step5 gates 非 0（rc=$(cat "$TDIR/rc_${ROUND}_gates" 2>/dev/null || echo '?')）——五门应全绿"; UNEXPECTED_FAIL=1
+    echo "⚠ step4 gates 非 0（rc=$(cat "$TDIR/rc_${ROUND}_gates" 2>/dev/null || echo '?')）——五门应全绿"; UNEXPECTED_FAIL=1
   fi
   mark "#### 验证链 END（validate→gates）"
 
@@ -200,15 +197,15 @@ for i in $(seq 1 "$ROUNDS"); do
   GATES_N=$(grep -c '| ✓ G[0-9]' "$LOG" || true)
   GATES_RC=$(cat "$TDIR/rc_${ROUND}_gates" 2>/dev/null || echo "?")
   # 分步耗时落盘（中位数表用；wave/gfx 来自 [timing] 行，head/votail/chain 来自
-  # 日志 epoch 差，post/mux/qc/gates 来自 /usr/bin/time；post_loudness 记作 post）
+  # 日志 epoch 差，mux/qc/gates 来自 /usr/bin/time；v2 §1.2 后无独立 post 步）
   [ -n "$HEAD_S" ] && echo "$HEAD_S" > "$TDIR/head_$i"
   [ -n "$WAVE_TOTAL" ] && echo "$WAVE_TOTAL" > "$TDIR/wave_$i"
   [ -n "$GFX_PATH" ] && echo "$GFX_PATH" > "$TDIR/gfx_$i"
   [ -n "$VOTAIL_S" ] && echo "$VOTAIL_S" > "$TDIR/votail_$i"
   [ -n "$CHAIN_S" ] && echo "$CHAIN_S" > "$TDIR/chain_$i"
-  for s in post_loudness mux qc gates; do
+  for s in mux qc gates; do
     v=$(tval "$TDIR/t_${ROUND}_${s}")
-    if [ -n "$v" ]; then echo "$v" > "$TDIR/${s%_*}_$i"; fi
+    if [ -n "$v" ]; then echo "$v" > "$TDIR/${s}_$i"; fi
   done
   if [ "$WITH_4K" = "1" ]; then
     v4=$(tval "$TDIR/t_${ROUND}_export_4k")
@@ -220,8 +217,8 @@ for i in $(seq 1 "$ROUNDS"); do
     echo "  串行头（validate→prepare）  : ${HEAD_S:-n/a}s"
     echo "  并行波 [timing] 总耗时        : ${WAVE_TOTAL:-n/a}s（gfx 路径 ${GFX_PATH:-n/a}s）"
     echo "  video 尾（波结束→video 完成）: ${VOTAIL_S:-n/a}s"
-    echo "  post_loudness / mux / qc / gates:"
-    for s in post_loudness mux qc gates; do
+    echo "  mux / qc / gates:"
+    for s in mux qc gates; do
       echo "    $s : $(tval "$TDIR/t_${ROUND}_${s}" || echo n/a)s（rc=$(cat "$TDIR/rc_${ROUND}_${s}" 2>/dev/null || echo '?')）"
     done
     echo "  验证链合计（validate→gates） : ${CHAIN_S:-n/a}s"
@@ -244,7 +241,7 @@ echo "===== 各阶段中位数表（$ROUNDS 轮；波动=(max-min)/中位）====
 {
   echo "| 阶段 | 中位 s | min | max | 波动 |"
   echo "|---|---|---|---|---|"
-  for m in head wave gfx votail post mux qc gates chain exp4k; do
+  for m in head wave gfx votail mux qc gates chain exp4k; do
     med=$(median_of "$m") || continue
     vals=$(cat $TDIR/${m}_* 2>/dev/null | grep -v '^$' | sort -n)
     mn=$(printf '%s\n' "$vals" | head -1); mx=$(printf '%s\n' "$vals" | tail -1)
@@ -257,7 +254,6 @@ echo "===== 各阶段中位数表（$ROUNDS 轮；波动=(max-min)/中位）====
       wave) label="并行波总耗时";;
       gfx) label="波内 gfx 路径";;
       votail) label="video 尾";;
-      post) label="post_loudness";;
       chain) label="验证链合计（validate→gates）";;
       exp4k) label="4K 导出（发布链，单列）";;
       *) label="$m";;

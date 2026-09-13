@@ -34,11 +34,11 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "vtx"))
-sys.path.insert(0, str(REPO / "scripts"))   # content_gates.py 非 包成员，按路径导入
+sys.path.insert(0, str(REPO))              # repo 根（v2 §1.4 包导入，不再注入 repo/vtx）
+sys.path.insert(0, str(REPO / "scripts"))  # content_gates.py 非包成员，按路径导入
 
-import content_gates     # noqa: E402（main() 有 __main__ 守卫，导入无副作用）
-import loudness_cache    # noqa: E402
+import content_gates              # noqa: E402（main() 有 __main__ 守卫，导入无副作用）
+from vtx import loudness_cache   # noqa: E402
 
 
 # ---------------------------------------------------------------- ① 响度回执
@@ -98,8 +98,8 @@ class TestLoudnessCrossProcessLock(unittest.TestCase):
     CHILD = r"""
 import sys, time
 from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-import loudness_cache
+sys.path.insert(0, sys.argv[1])   # repo 根（v2 §1.4 包导入）
+from vtx import loudness_cache
 root = Path(sys.argv[2]); tag = sys.argv[3]
 for _ in range(2000):            # 起跑门：等对端 import/构造完（go 文件由测试侧落）
     if (root / "go").exists(): break
@@ -118,7 +118,7 @@ for j in range(150):             # 高频读-改-写，最大化丢笔窗口
         for tag in ("0", "1"):
             (root / "out" / f"media_{tag}.bin").write_bytes(b"\1" * 64)
             procs.append(subprocess.Popen(
-                ["env", "python3", "-c", self.CHILD, str(REPO / "vtx"), str(root), tag],
+                ["env", "python3", "-c", self.CHILD, str(REPO), str(root), tag],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         time.sleep(0.3)           # 两子进程都过 import 后放行
         (root / "go").write_text("go")

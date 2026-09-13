@@ -27,9 +27,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "vtx"))
+sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx import _stage_receipt_name, _pipeline_enabled
+from vtx import _stage_receipt_name        # __init__ 再导出（v2 §1.4）
+from vtx.cli import _pipeline_enabled
 
 
 class TestStageReceiptName(unittest.TestCase):
@@ -117,7 +118,7 @@ class TestReceiptConcurrentLock(unittest.TestCase):
     """
 
     def test_8_threads_no_lost_receipts(self):
-        from infra import Ctx
+        from vtx.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             assets = _synth_assets(root)
@@ -262,7 +263,8 @@ class TestUntilFlag(unittest.TestCase):
         self.assertNotIn("video", wave_members)   # 尾部 video 不跑（≠「video 预编码」）
 
     def test_until_video_runs_wave_and_video_tail(self):
-        # until=video：串行头 + 波 + video 尾；mux/qc 不跑（R4 链拆出 post_loudness 用）
+        # until=video：串行头 + 波 + video 尾；mux/qc 不跑（R4 冷链在此截断，
+        # v2 §1.2 后音频已含限幅，后续直接 mux → qc）
         r = self._dry("--until", "video")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         heads = _stage_heads(r.stdout)

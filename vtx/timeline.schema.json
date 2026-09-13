@@ -171,7 +171,7 @@
     },
     "subtitles": {
       "type": "array",
-      "description": "帧对齐字幕；构建时转 ASS 烧录于全部图层之上",
+      "description": "帧对齐字幕；构建时转 ASS 烧录于全部图层之上。与根级 subtitles_src 互斥（两者都非空 validate 报错）——内联字幕直接写本数组，外部字幕文件（asr/手写产出）经 subtitles_src 声明，由内核在 timeline 加载点解析为本数组（各阶段拿到的是解析后的帧值列表）",
       "items": {
         "type": "object",
         "required": [
@@ -191,6 +191,10 @@
           }
         }
       }
+    },
+    "subtitles_src": {
+      "type": "string",
+      "description": "字幕文件来源（v2 §1.1 条目 6）：相对 timeline.json 的路径。内核只负责引用与烧录语义，谁产出该文件（asr/手写/其他工具）内核不感知。支持格式：.srt（时间戳按项目 fps 换算整帧，四舍五入 half-up，[in,out) 语义，多行文本以 \\N 连接，空文件=无字幕）与 .json（v1 subtitles[] 同构列表，帧值直用，也接受 {\"subtitles\": [...]} 包裹形）。与根级 subtitles[] 互斥（两者都非空 validate 报错）；解析在 timeline 加载点完成（加载后 subtitles[] 即为解析结果）；解析失败/文件缺失 validate FAIL；文件内容参与回执指纹（变更 → 回执失效）"
     },
     "audio_tracks": {
       "type": "array",

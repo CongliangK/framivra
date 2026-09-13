@@ -1,5 +1,10 @@
 # vtx P0 基线（voice-ime 影子演练，2026-09-13）
 
+> **2026-09-13 P1 重锚注记**：audio 全部输出与 qc 的 TP 项已被 `../baseline-r2/`
+> 取代（v2 响度终链落地，ARCHITECTURE §9 门 2 两段口径）；本基线（r1）仍是
+> validate/diff/subs 及 qc 其余项的对比权威。复验命令：
+> `compare.sh <新目录> ../baseline-r2`。
+
 video_tools v2 重构的 P0 基线：在 live voice-ime 的 **cp -rs 影子副本**上跑 5 条
 vtx 只读/近只读命令，归档原始输出 + 归一化产物，冻结对比口径。v2 实现（P1/P5）
 复验时按「演练程序」重跑 + `compare.sh` 对比即可。

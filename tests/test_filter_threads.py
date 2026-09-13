@@ -34,9 +34,9 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "vtx"))
+sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from infra import filter_threads
+from vtx.infra import filter_threads
 
 
 def _have_libx264() -> bool:

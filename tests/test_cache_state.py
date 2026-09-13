@@ -6,10 +6,10 @@ PR 原版断言 cache/<input-fingerprint>/ 目录随输入变化——整仓指�
 """
 import json, os, sys, tempfile, unittest
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vtx'))
-import hygiene
-from cache_state import media_stat_digest, receipt_fingerprint
-from infra import Ctx
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # repo 根（v2 §1.4 包导入）
+from vtx import hygiene
+from vtx.cache_state import media_stat_digest, receipt_fingerprint
+from vtx.infra import Ctx
 
 
 def _tl(root, **over):

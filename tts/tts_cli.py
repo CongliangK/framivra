@@ -40,14 +40,10 @@ EXIT_ENGINE_FAIL = 3  # indextts_worker 同款（OOM 等），触发 edge 降级
 
 # ---------------------------------------------------------------- config 容错
 def load_config() -> dict:
-    """仓库根 config.local.json（缺/坏 → {}，全走默认探测链，方案 §7.2）。"""
-    try:
-        with open(os.path.join(REPO_ROOT, "config.local.json"),
-                  encoding="utf-8") as f:
-            cfg = json.load(f)
-        return cfg if isinstance(cfg, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    """仓库配置（v2 §5.3 统一加载入口 vtx/pluginlib/config.py，经 spec.load_config
+    委托）：VTX_CONFIG > repo config.local.json；坏 JSON 警告 + {}；路径型键
+    ~ 展开。键结构与默认探测链不变，只统一加载入口（四重复制收敛之一）。"""
+    return spec_mod.load_config()
 
 
 def tts_cfg(key: str, default):
@@ -67,7 +63,7 @@ def print_followups(project_dir: str):
     print(f"  rm {project_dir}/cache/audio/vt_*.wav")
     print(f"  python3 vtx/vtx.py -t {tl} prepare")
     print(f"  python3 vtx/vtx.py -t {tl} audio   # voice 变必重跑")
-    print(f"  bash scripts/post_loudness.sh {project_dir}     # audio 后 mux 前必跑")
+    print(f"  # v2：vtx audio 已内置限幅，无需手动 post_loudness")
     print(f"  python3 vtx/vtx.py -t {tl} mux")
     print(f"  python3 vtx/vtx.py -t {tl} qc && python3 vtx/vtx.py -t {tl} audit")
     print(f"（实录终版替换：python3 scripts/repack_voice.py -t {tl}）")

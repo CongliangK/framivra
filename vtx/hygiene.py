@@ -10,7 +10,8 @@
 import hashlib, json, os, shutil, threading, time
 from pathlib import Path
 
-from encoders import seg_encoder_kind
+from .encoders import seg_encoder_kind
+from .pluginlib import hooks as _plugin_hooks
 
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
 TMP = "tmp"                  # cache/tmp/<runid>/：一次性中间物，gc 清扫孤儿
@@ -48,7 +49,7 @@ def _sha1(b) -> str:
 
 
 def _fp(p: Path) -> str:
-    from cache_state import media_stat_digest
+    from .cache_state import media_stat_digest
     st = p.stat()
     return f"{p}:{st.st_size}:{st.st_mtime_ns}:{media_stat_digest(p)}"
 
@@ -66,7 +67,7 @@ def gfx_key(c, cl) -> str:
     """
     html = (c.root / cl["src"]).resolve()
     blob = html.read_bytes()
-    from cache_state import declared_dependencies, file_digest
+    from .cache_state import declared_dependencies, file_digest
     for dep in declared_dependencies(c):
         blob += b"|" + str((c.root / dep).resolve()).encode() + b"\0" \
                 + file_digest(c.root / dep).encode()
@@ -205,6 +206,9 @@ def _current_keys(c):
     for s in c.tl["sources"]:
         if c.src_path(s["id"]).exists():
             audio.add(audio_key(c, s["id"]))
+    # v2 §2.1 不变量 ①：插件缓存键贡献并入 ak 集合（插件产物不注册键就会被
+    # budget_gate 自动触发的 gc 回收）；P1-2 空转 = 空集，键集零变化。
+    audio |= _plugin_hooks.contribute_keys(c)
     return gfx, seg, audio
 
 
@@ -240,6 +244,9 @@ def gc_plan(c, keep_days: int = 0):
     known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
              "subs.ass", "subs_draft.ass", "qc_clean.mp4",
              "vseg", "vseg_draft", "vseg_qc"} | set(KEEP_BASELINES)
+    # v2 §2.1 不变量 ①：插件声明的 cache 子目录并入白名单（自立目录型插件产物
+    # 不再判 legacy 垃圾）；P1-2 空转 = 空集，白名单零变化。
+    known |= _plugin_hooks.get_cache_dirs()
     for x in c.cache.iterdir():
         if x.name in known: continue
         plan["legacy"].append((x, dir_size(x), "旧布局条目（键不含内容指纹，不可信）"))
@@ -362,6 +369,11 @@ def snapshot(c, keep: int = None):
     for tr in c.tl.get("video_tracks", []):
         for cl in tr.get("clips", []):
             if tr.get("kind") == "gfx": texts.add(cl["src"])
+    # v2 subtitles_src（§1.1 条目 6）：引用的字幕文件同为文本资产（KB 级）——快照
+    # 含它才有完整回滚锚点；仅影响声明了 subtitles_src 的 timeline（v1 零变化）。
+    _sub_src = c.tl.get("subtitles_src")
+    if isinstance(_sub_src, str) and _sub_src:
+        texts.add(_sub_src)
     for p in sorted(texts):
         src = c.root / p
         if not src.exists(): print(f"  ⚠ 快照跳过不存在的资产: {p}"); continue

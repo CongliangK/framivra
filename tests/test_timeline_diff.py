@@ -22,9 +22,9 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "vtx"))
+sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from timeline_diff import DiffCtx, _clip_seg_key, diff_timelines, is_timeline
+from vtx.timeline_diff import DiffCtx, _clip_seg_key, diff_timelines, is_timeline
 
 VTX = REPO / "vtx" / "vtx.py"
 
@@ -341,7 +341,7 @@ class TestCli(unittest.TestCase):
 
     def test_nseg_env_followed(self):
         """P2a：VTX_VIDEO_SEGMENTS 与 composite 同源取值（切点集随 env 变化）。"""
-        from timeline_diff import _nseg
+        from vtx.timeline_diff import _nseg
         self.assertEqual(_nseg(), 8)
         os.environ["VTX_VIDEO_SEGMENTS"] = "4"
         try:

@@ -20,10 +20,10 @@ import json
 import sys
 from pathlib import Path
 
-from cache_state import declared_dependencies, file_digest
-from composite import SEG_CUT_GUARD, choose_cutpoints
-from encoders import seg_encoder_kind
-from hygiene import audio_key, gfx_key, seg_key
+from .cache_state import declared_dependencies, file_digest
+from .composite import SEG_CUT_GUARD, choose_cutpoints
+from .encoders import seg_encoder_kind
+from .hygiene import audio_key, gfx_key, seg_key
 
 DEFAULT_NSEG = 8   # 与 composite.DEFAULT_SEGMENTS 同值（避免 import 产生环形依赖，取字面量并注释）
 

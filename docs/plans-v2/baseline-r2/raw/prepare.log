@@ -1,0 +1,51 @@
+# exit=0
+== prepare ==
+  音频提取：45 个任务，6 线程并行
+    ✓ audio d8（+0s）
+    ✓ audio d9b（+0s）
+    ✓ audio d4（+0s）
+    ✓ audio d6（+0s）
+    ✓ audio d9a（+0s）
+    ✓ audio d1（+0s）
+    ✓ audio d7（+0s）
+    ✓ audio d10（+0s）
+    ✓ audio bgmC（+0s）
+    ✓ audio sfxKb（+0s）
+    ✓ audio bgmB（+0s）
+    ✓ audio bgmA（+0s）
+    ✓ audio sfxChime（+0s）
+    ✓ audio sfxPop（+0s）
+    ✓ audio sfxEnter（+0s）
+    ✓ audio bedD（+0s）
+    ✓ audio ar_一（+0s）
+    ✓ audio ar_二（+0s）
+    ✓ audio ar_三（+0s）
+    ✓ audio ar_四（+1s）
+    ✓ audio ar_五（+1s）
+    ✓ audio ar_六（+1s）
+    ✓ audio ar_八（+1s）
+    ✓ audio ar_七（+1s）
+    ✓ audio ar_二_sq（+1s）
+    ✓ audio ar_九（+1s）
+    ✓ audio ar_六_sq（+1s）
+    ✓ audio ar_三_sq（+1s）
+    ✓ audio ar_八_sq（+1s）
+    ✓ audio ar_七_sq（+1s）
+    ✓ audio ar_四_sq（+1s）
+    ✓ audio bgm2-bgm-vln1（+1s）
+    ✓ audio bgm2-bgm-vln2（+1s）
+    ✓ audio bgm2-bgm-vla（+1s）
+    ✓ audio bgm2-bgm-str-tutti（+1s）
+    ✓ audio bgm2-bgm-vc（+1s）
+    ✓ audio bgm2-bgm-vc-pizz（+1s）
+    ✓ audio bgm2-bgm-cb（+1s）
+    ✓ audio bgm2-bgm-piano-sal（+1s）
+    ✓ audio bed_silent（+1s）
+    ✓ audio bgm2-bgm-piano-up（+1s）
+    ✓ audio bgm2-bgm-guitar（+1s）
+    ✓ audio bgm2-bgm-bass（+1s）
+    ✓ audio bgm2-bgm-drums（+1s）
+    ✓ audio bgm2-bgm-sting（+1s）
+  ✓ 音频提取完成（1s）
+✓ 音频提取：45 → 48kHz stereo PCM
+完成： ['prepare']
