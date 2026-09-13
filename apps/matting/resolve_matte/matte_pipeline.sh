@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PROJECT="${1:?用法: matte_pipeline.sh <工程名> [视频目录]}"
-VIDEOS="${2:-/home/liangruochong/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9}"
+VIDEOS="${2:-${VIDEOS:-$HOME/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9}}"
 PY="env python3"
 
 echo "==== [1/4] 显存清理 + 启动达芬奇 ===="

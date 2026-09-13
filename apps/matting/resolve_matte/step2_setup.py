@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """测试：自动启动 Resolve → 健壮建工程 → 导入素材 → 建时间线 → 探测 Fusion keyer 工具。"""
+import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from resolve_ctl import get_resolve, ensure_project
 
 PROJ = "resolve_matte_dev"
-SRC = "/home/liangruochong/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9/视频一.mp4"
+# 素材路径：env MATTE_SRC 覆盖 > ~ 展开默认（原硬编码平移）
+SRC = (os.environ.get("MATTE_SRC")
+       or os.path.expanduser("~/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9/视频一.mp4"))
 
 resolve = get_resolve()
 pm = resolve.GetProjectManager()

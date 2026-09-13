@@ -3,12 +3,16 @@
 import os
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte")
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 from resolve_ctl import get_resolve, ensure_project
 
-SRC = "/home/liangruochong/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9/视频二.mp4"
-DRX = "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte/out/matte_template_1.1.1.drx"
+# 素材：env MATTE_SRC 覆盖 > ~ 展开默认（原硬编码平移）；DRX 随迁移 HERE 相对
+SRC = (os.environ.get("MATTE_SRC")
+       or os.path.expanduser("~/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9/视频二.mp4"))
+DRX = os.environ.get("MATTE_DRX") or str(HERE / "out" / "matte_template_1.1.1.drx")
 
 r = get_resolve()
 pm = r.GetProjectManager()

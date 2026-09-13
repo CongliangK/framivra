@@ -47,11 +47,11 @@ apps/imgen/.venv/
 # 内容寻址缓存（vtx 产物缓存，可再生，不入库）
 cache/
 
-# matting 平级克隆（init.sh --download 重建，不入库）
-matting/MatAnyone2/
-matting/BiRefNet_HR/
-matting/__pycache__/
+# matting 平级克隆（init.sh --download 重建，不入库；P2a 迁移 apps/ 改锚）
+apps/matting/MatAnyone2/
+apps/matting/BiRefNet_HR/
+apps/matting/__pycache__/
 
 # matting/resolve_matte 运行产物（runner 日志、uinject.c 现场编译的二进制，可再生）
-matting/resolve_matte/*.log
-matting/resolve_matte/uinject
+apps/matting/resolve_matte/*.log
+apps/matting/resolve_matte/uinject

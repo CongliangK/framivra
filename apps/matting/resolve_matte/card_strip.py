@@ -12,8 +12,9 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mouse_ctl
 
 SHOT_SCALE = 1.2          # 物理(3840/屏) -> X11(4608/屏) 系数

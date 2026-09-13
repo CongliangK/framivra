@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """抠像流水线 phase1：prep（纯 API，避开创_race 的高危接口）。
 
-用法: env python3 prep.py [工程名]
+用法: env python3 prep.py [工程名] [视频目录]
 流程: 建工程 → 立刻设帧率/分辨率 → 导入 9 视频 → 建 9 轨道时间线 →
       每轨追加前归零播放头 → 校验对齐 → 打开调色页等待人工/鼠标序列操作。
 """
+import os
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from resolve_ctl import get_resolve, ensure_project
 
-BASE = "/home/liangruochong/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9"
+# 视频素材目录：CLI 参数（argv[2]）> env MATTE_BASE > ~ 展开默认（原硬编码平移）
+BASE = (sys.argv[2] if len(sys.argv) > 2
+        else os.environ.get("MATTE_BASE")
+        or os.path.expanduser("~/文档/04_bilibili视频/voice-ime/cache/bg_gen/centered9"))
 NAMES = ["视频一", "视频二", "视频三", "视频四", "视频五", "视频六", "视频七", "视频八", "视频九"]
 TC_START = "01:00:00:00"
 

@@ -2,11 +2,14 @@
 """验证 DRX 链：抓取画廊静帧 → 导出 DRX。"""
 import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte")
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 from resolve_ctl import get_resolve, ensure_project
 
-OUT_DIR = "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte/out"
+# 输出目录随迁移 HERE 相对（原硬编码为旧仓 matting 位置，语义即本目录）
+OUT_DIR = os.environ.get("MATTE_OUT") or str(HERE / "out")
 
 r = get_resolve()
 pm = r.GetProjectManager()

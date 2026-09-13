@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """检查 MagicMask 工具的输入/输出/参数。"""
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from resolve_ctl import get_resolve
 

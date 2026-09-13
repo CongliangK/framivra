@@ -1,9 +1,12 @@
 #!/bin/bash
 # 全量背景替换：precrop 素材 → 2048 抽帧 → BiRefNet_HR 首帧mask → MatAnyone2 → 4K合成 → crop+NVENC+音轨
+# 路径参数化（P2a 随迁）：voice-ime 项目根 = 参数1 > env VOICE_IME > ~ 展开默认；
+# works 目录（runner 脚本+克隆所在）= env WORKS > ~ 展开默认（原硬编码平移）。
 set -e
-cd "/home/liangruochong/文档/04_bilibili视频/voice-ime"
-WORKS="/home/liangruochong/文档/04_bilibili视频/_library/bg_test/works"
+VOICE_IME="${1:-${VOICE_IME:-$HOME/文档/04_bilibili视频/voice-ime}}"
+WORKS="${WORKS:-$HOME/文档/04_bilibili视频/_library/bg_test/works}"
 PYC=~/miniconda3/envs/comfyui/bin/python
+cd "$VOICE_IME"
 FULL=cache/bg_gen/full
 mkdir -p $FULL
 mv cache/bg_gen/sample_v1/样片_视频一_换背景.mp4 "$FULL/视频一.mp4"
@@ -15,9 +18,9 @@ for n in 二 三 四 五 六 七 八 九; do
   rm -rf "$W"; mkdir -p "$W/frames" "$W/frames2048"
   ffmpeg -nostdin -y -v error -i "cache/av_sync/aroll_backup_precrop/$V.mp4" -vsync 0 "$W/frames/f%04d.png"
   ffmpeg -nostdin -y -v error -i "cache/av_sync/aroll_backup_precrop/$V.mp4" -vsync 0 -vf scale=2048:-2 "$W/frames2048/f%04d.png"
-  (cd "$WORKS" && $PYC run_birefnet_hr.py "/home/liangruochong/文档/04_bilibili视频/voice-ime/$W/frames/f0001.png" "/home/liangruochong/文档/04_bilibili视频/voice-ime/$W/mask.png")
+  (cd "$WORKS" && $PYC run_birefnet_hr.py "$VOICE_IME/$W/frames/f0001.png" "$VOICE_IME/$W/mask.png")
   $PYC -c "from PIL import Image; Image.open('$W/mask.png').resize((2048,1152), Image.LANCZOS).save('$W/mask_2048.png')"
-  (cd "$WORKS" && $PYC run_matanyone2.py "/home/liangruochong/文档/04_bilibili视频/voice-ime/$W/frames2048" "/home/liangruochong/文档/04_bilibili视频/voice-ime/$W/mask_2048.png" "/home/liangruochong/文档/04_bilibili视频/voice-ime/$W/alpha_raw" "/home/liangruochong/文档/04_bilibili视频/voice-ime/$W/alpha")
+  (cd "$WORKS" && $PYC run_matanyone2.py "$VOICE_IME/$W/frames2048" "$VOICE_IME/$W/mask_2048.png" "$VOICE_IME/$W/alpha_raw" "$VOICE_IME/$W/alpha")
   mkdir -p "$W/comp"
   $PYC - "$W" << 'PYEOF'
 import cv2, numpy as np, os, sys, json

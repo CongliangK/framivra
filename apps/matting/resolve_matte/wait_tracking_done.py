@@ -9,14 +9,17 @@
 判定规则：见到 completed 后，连续 STABLE_SECONDS 秒内没有新的
 "Start tracking" 行，才算真正完成。
 
-用法: env python3 wait_tracking_done.py [--timeout 600] [--stable 20]
+用法: env python3 wait_tracking_done.py [--timeout 600] [--stable 20] [--log FILE]
 超时未开始/未完成以非零退出。
 """
 import argparse
+import os
 import sys
 import time
 
-LOG = "/home/liangruochong/.local/share/DaVinciResolve/logs/ResolveDebug.txt"
+# Resolve 调试日志：--log 参数 > env RESOLVE_DEBUG_LOG > ~ 展开默认（原硬编码平移）
+LOG_DEFAULT = os.path.expanduser(
+    "~/.local/share/DaVinciResolve/logs/ResolveDebug.txt")
 DONE_MARKS = ("Tracking has been completed", "No more source frame to track")
 START_MARK = "Start tracking"
 
@@ -26,7 +29,10 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--stable", type=int, default=20,
                     help="completed 后需保持无新 Start tracking 的秒数（等反向段）")
+    ap.add_argument("--log", default=os.environ.get("RESOLVE_DEBUG_LOG") or LOG_DEFAULT,
+                    help="ResolveDebug.txt 路径（env RESOLVE_DEBUG_LOG 同效）")
     a = ap.parse_args()
+    LOG = a.log
 
     try:
         f = open(LOG, "r", errors="ignore")

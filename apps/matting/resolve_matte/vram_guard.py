@@ -7,8 +7,9 @@ import argparse
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/home/liangruochong/文档/01_活跃项目/video_tools/matting/resolve_matte")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mouse_ctl
 from resolve_ctl import get_resolve, ensure_project
 
