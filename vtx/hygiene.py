@@ -14,7 +14,12 @@ from encoders import seg_encoder_kind
 
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
 TMP = "tmp"                  # cache/tmp/<runid>/：一次性中间物，gc 清扫孤儿
-KEEP_BASELINES = ("manifest.json",)   # cache 根下永不删的记账文件
+KEEP_BASELINES = ("manifest.json", "qc_pass_segs.json")   # cache 根下永不删的记账/状态件
+# cache/audio/ 下不回收的状态件（方案三阶段1审查 P1-2）：loudness_receipts.json 是
+# 响度测量回执（loudness_cache，qc/gates 免重测依据）——语义同 manifest（报告/回执/
+# 证据不回收，见模块头），误回收只降级不破坏（回退全检/重测一轮），但 gc --dry
+# 持续列它会诱导误删。
+AUDIO_KEEP = ("loudness_receipts.json",)
 
 # manifest 读-改-写串行锁（2026-09-11）：video 段间并行 worker 与 gfx 页级并行
 # 会并发调用 manifest_record，无锁时读-改-写竞态会互相覆盖丢笔。
@@ -226,6 +231,8 @@ def gc_plan(c, keep_days: int = 0):
     d = c.cache / "audio"
     if d.exists():
         for x in d.iterdir():
+            if x.name in AUDIO_KEEP:   # 测量回执不属内容寻址键集（方案三阶段1审查 P1-2）
+                continue
             if x.stem not in ak:
                 plan["audio"].append((x, dir_size(x), "源指纹不在当前 timeline 键集"))
     # 历史遗留目录（迁移期）：cache 根下非本方案布局的一级目录/文件 → 全部视为垃圾

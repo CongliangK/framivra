@@ -81,5 +81,30 @@ class CacheIdentity(unittest.TestCase):
             self.assertEqual(list(rec['stages']), ['validate'])
 
 
+class GcExemptions(unittest.TestCase):
+    """方案三阶段1审查 P1-2：两个新状态件（loudness_receipts.json / qc_pass_segs.json）
+    不进 gc 回收清单（gc_plan 即 `vtx gc --dry` 的计算路径）——回执/记录被回收只是
+    优雅降级（全检/重测一轮），但 gc --dry 持续列出会诱导误删。"""
+
+    def test_new_state_files_exempt_from_gc_plan(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            p = _tl(root)
+            (root / 'cache' / 'audio').mkdir(parents=True)
+            (root / 'cache' / 'audio' / 'loudness_receipts.json').write_text('{"entries": {}}')
+            (root / 'cache' / 'qc_pass_segs.json').write_text('{"version": 1}')
+            # 对照组：audio/ 下键集外的陈旧 wav 仍须回收——豁免不得扩大到整个 audio/
+            (root / 'cache' / 'audio' / 'deadbeef0000.wav').write_bytes(b'x' * 16)
+            c = Ctx(p)
+            c.dry = True   # nvenc_ok dry 短路（不真探测），gc_plan 纯计算无副作用
+            plan = hygiene.gc_plan(c)
+            listed = [str(e[0]) for items in plan.values() for e in items]
+            self.assertNotIn(str(root / 'cache' / 'audio' / 'loudness_receipts.json'),
+                             listed, f"loudness_receipts 被列入: {listed}")
+            self.assertNotIn(str(root / 'cache' / 'qc_pass_segs.json'),
+                             listed, f"qc_pass_segs 被列入: {listed}")
+            self.assertIn(str(root / 'cache' / 'audio' / 'deadbeef0000.wav'), listed)
+
+
 if __name__ == '__main__':
     unittest.main()

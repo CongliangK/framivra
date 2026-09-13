@@ -1,10 +1,14 @@
 """vtx 渲染后质检（qc 阶段）：帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一。
 
 原 vtx.py qc 函数整体迁移（2026-09-10 模块化拆分），检查内容/顺序/名称与阈值不变。
+方案三阶段1（2026-09-13）新增：响度检查 -vn+peak 并消费 loudness_cache 回执；
+命中段免检（qc_pass_segs.json，见下方辅助函数注释）。
 """
 import json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import loudness_cache
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
 QC_CUT_MEAN_MAX = 6.0        # 底轨切点帧比对：平均像素差上限
@@ -15,6 +19,105 @@ QC_LEAK_MEAN_MAX = 2.0       # 空窗泄漏：平均像素差上限
 QC_LEAK_COVER_MAX = 0.02     # 空窗泄漏：覆盖率上限
 QC_LOUDNESS_TOL = 1.5        # 响度归一容差（LUFS）
 TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_audio 同一权威值）
+
+# ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
+# 记录 cache/qc_pass_segs.json：{"version":1,"final":{size,mtime_ns,frames},
+# "segs":[{name,a,b,key,size,mtime_ns}],"checks":{检查名:上轮是否 pass}}。
+# 免检判定（非 --strict，见 qc() 内）：final (size,mtime_ns) 与记录一致 + 检查项
+# 上轮 pass + 探测帧全部落在 stat 一致的记录段 [a,b) 内 → 跳过实际探测（仍占
+# checks 位，pass=True，detail 前缀「免检」——检查项数量不减少）。final 重封装
+# （stat 变）→ 记录整体失效全检；段文件被换/重写（stat 变）→ 该段失配实测。
+# 全局元数据项（帧数/时长/分辨率/响度/并发窗能量）不在此机制内，永远实测。
+# 裁定记录（与方案原文的偏差，总控未应答现场问询、子代理按验收一致性裁定）：
+# 原文「全检全过才写记录，有 ✗ 删记录」在存在持续假阴性 ✗ 的项目（bench_p2 恒
+# 74/75，c4_mini 已证伪探针假阴性）会使记录永不建立、机制永不生效，与验收要求
+# 「74/75 不变 + 温态免检生效」矛盾——改为按检查项记忆：每轮刷新记录，✗ 项永远
+# 实测（下轮必复测，持续失败持续可见），逐项内容绑定的安全性与全过门等价。
+_QC_SEG_RECORD = "qc_pass_segs.json"
+_VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
+
+
+def _load_qc_pass_record(c):
+    """读免检记录；缺失/损坏/version 不符/final stat 失配/segs 空 → None（全检）。"""
+    try:
+        rec = json.loads((c.cache / _QC_SEG_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(rec, dict) or rec.get("version") != 1:
+        return None
+    fin = rec.get("final") or {}
+    try:
+        st = (c.out / "final.mp4").stat()
+    except OSError:
+        return None
+    if fin.get("size") != st.st_size or fin.get("mtime_ns") != st.st_mtime_ns:
+        return None   # final 重封装（stat 变）→ 记录整体失效
+    if not isinstance(rec.get("segs"), list) or not rec["segs"] \
+            or not isinstance(rec.get("checks"), dict):
+        return None
+    return rec
+
+
+def _collect_active_segs(c):
+    """当前生效段序列 → [{name,a,b,key,size,mtime_ns}]；不可得 → None（机制不生效）。
+    段文件名只带段起点（seg{si}_{a:06d}_{key}.mp4），b = 下一段起点（末段 = c.dur）。
+    以 cache/vseg/list.txt（最近一次段渲染的拼接清单）为准——直接 glob seg* 会把
+    同槽旧键残留也当成生效段，产生重叠 [a,b) 区间：stat 未变的陈旧段可错误豁免
+    被篡改的现役段所在帧（清单之外的一切不参与免检，见实现报告）。"""
+    vdir = c.cache / "vseg"
+    lst = vdir / "list.txt"
+    if not lst.exists():
+        return None
+    names = []
+    for line in lst.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^file '(.+)'$", line.strip())
+        if m:
+            names.append(Path(m.group(1)).name)
+    parsed = []
+    for nm in names:
+        m = _VSEG_NAME.match(nm)
+        if not m:
+            return None   # 清单含非标准段名（理论不可达）→ 放弃，全检
+        parsed.append((nm, int(m.group(2)), m.group(3)))
+    if not parsed or parsed[0][1] != 0 \
+            or any(parsed[i][1] >= parsed[i + 1][1] for i in range(len(parsed) - 1)):
+        return None   # 段序列须从 0 起且起点严格递增（连续覆盖 [0,c.dur)）
+    segs = []
+    for i, (nm, a, key) in enumerate(parsed):
+        try:
+            st = (vdir / nm).stat()
+        except OSError:
+            return None
+        segs.append({"name": nm, "a": a,
+                     "b": parsed[i + 1][1] if i + 1 < len(parsed) else c.dur,
+                     "key": key, "size": st.st_size, "mtime_ns": st.st_mtime_ns})
+    return segs
+
+
+def _write_qc_pass_record(c, frames_nb, checks):
+    """每轮非 dry qc 结束刷新记录：segs/final 重新绑定当前 stat；checks 按检查名
+    记忆（同名多项须全部 pass 才可免检——防同名 gfx 页一项假阴性被另一项真过
+    掩盖成免检）。落盘失败不影响 qc 主流程（下轮全检而已）。"""
+    mem = {}
+    for x in checks:
+        mem[x["name"]] = mem.get(x["name"], True) and bool(x["pass"])
+    segs = _collect_active_segs(c) or []
+    try:
+        st = (c.out / "final.mp4").stat()
+    except OSError:
+        return
+    rec = {"version": 1,
+           "final": {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
+                     "frames": frames_nb},
+           "segs": segs, "checks": mem}
+    try:
+        c.cache.mkdir(parents=True, exist_ok=True)
+        tmp = c.cache / (_QC_SEG_RECORD + ".tmp")
+        tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1),
+                       encoding="utf-8")
+        tmp.replace(c.cache / _QC_SEG_RECORD)
+    except OSError:
+        pass
 
 
 def qc(c):
@@ -33,6 +136,12 @@ def qc(c):
     def ok(name, passed, detail=""):
         rep["checks"].append({"name": name, "pass": bool(passed), "detail": detail})
         print(("  ✓ " if passed else "  ✗ ") + name + (f"  {detail}" if detail else ""))
+    skipped_probes = []   # qc_report.json 的 skipped_probes 字段素材（免检项+覆盖区间）
+    def ok_exempt(name, span):
+        """免检项入账：照常占 checks 位（pass=True），detail 前缀「免检」——
+        检查项数量与名称同全检，只是免实际探测。"""
+        ok(name, True, f"免检（段 [{span[0]},{span[1]}) 内容键命中）")
+        skipped_probes.append({"name": name, "seg": list(span)})
     final = c.out / "final.mp4"
     # 帧数/时长/分辨率：容器元数据（流头 nb_frames；缺失回落 duration×fps 四舍五入）。
     # -count_frames 逐帧解码全片实测数十秒，仅 --strict 时使用（真解码计数）。
@@ -91,6 +200,36 @@ def qc(c):
         cover = sum(1 for x, y in zip(a, b) if abs(x - y) > QC_PIXEL_DIFF) / len(a)
         return mean, cover
 
+    # ---- 命中段免检（方案三阶段1）：--strict 整体禁用；记录不可用 → 全检 ----
+    # 判定在任务生成阶段做：免检项不 submit 探测但仍占 checks 位（输出顺序/名称
+    # 与全检完全一致）。_seg_rec 由 _load_qc_pass_record 校验过 final stat 绑定。
+    _seg_rec = None if getattr(c, "strict", False) else _load_qc_pass_record(c)
+    exempt = {}    # 任务键 -> 覆盖段区间 (a,b)（免测项）
+    cut_sf = {}    # cut 免测项的比对帧 sf（检查名要显示 src:帧号）
+    def seg_span_of(f0):
+        """f0 是否落在某 stat 与记录一致的段 [a,b) 内；是 → (a,b)，否 → None。"""
+        if _seg_rec is None:
+            return None
+        for s in _seg_rec["segs"]:
+            if s["a"] <= f0 < s["b"]:
+                try:
+                    st = (c.cache / "vseg" / s["name"]).stat()
+                except OSError:
+                    return None
+                if st.st_size == s["size"] and st.st_mtime_ns == s["mtime_ns"]:
+                    return (s["a"], s["b"])
+                return None   # 段文件被换/重写（stat 变）→ 该段失配实测
+        return None
+    def check_exempt(frames, name):
+        """检查项免测判定：上轮该名 pass 且全部探测帧都在 stat 一致段内 →
+        合并覆盖区间 (min_a, max_b)；否则 None。"""
+        if _seg_rec is None or not _seg_rec["checks"].get(name):
+            return None
+        spans = [seg_span_of(f0) for f0 in frames]
+        if any(s is None for s in spans):
+            return None
+        return (min(a_ for a_, _ in spans), max(b_ for _, b_ in spans))
+
     # ---- 并行任务收集（结果按 timeline 顺序回填，checks 顺序不变）----
     tasks = []   # (key, callable)
     ti_ = 0
@@ -116,7 +255,13 @@ def qc(c):
             if cl.get("fade_out_frames"): j = max(j, cl["dur"] - cl["fade_out_frames"] - 1)
             j = min(j, cl["dur"] - 1)
             key = f"cut:{cl['dst_in']}:{cl['src']}"
-            launch(lambda cl=cl, j=j, key=key: cut_diff(cl, j, key))
+            sf = cl["src_in"] + j   # 检查名显示的源帧号（免检路径无 cut_diff 可读）
+            e = check_exempt([cl["dst_in"] + j],
+                             f"底轨切点帧比对 dst={cl['dst_in']} src={cl['src']}:{sf}")
+            if e is not None:
+                exempt[key] = e; cut_sf[key] = sf
+            else:
+                launch(lambda cl=cl, j=j, key=key: cut_diff(cl, j, key))
     # 上层轨（tracks[1:]）逐 clip 窗口生效检查：窗口 clip 比对其放置区域，全屏 clip 比对整帧
     up_res = {}
     for tr in tracks[1:]:
@@ -125,21 +270,33 @@ def qc(c):
                 probes = sorted({cl["dst_in"] + cl["dur"] // 4, cl["dst_in"] + cl["dur"] // 2,
                                  cl["dst_in"] + cl["dur"] - cl["dur"] // 4})
                 key = f"gfx:{id(cl)}"
-                launch(lambda probes=probes, key=key:
-                       up_res.__setitem__(key, [fdiff(m, tag=f"{m}_{i}") for i, m in enumerate(probes)]))
+                e = check_exempt(probes, f"gfx 窗口 {Path(cl['src']).stem} 生效")
+                if e is not None:
+                    exempt[key] = e
+                else:
+                    launch(lambda probes=probes, key=key:
+                           up_res.__setitem__(key, [fdiff(m, tag=f"{m}_{i}") for i, m in enumerate(probes)]))
                 continue
             windowed = any(k in cl for k in ("scale", "x", "y"))
             m = cl["dst_in"] + cl["dur"] // 2
             if windowed:
+                key = f"win:{id(cl)}"
+                e = check_exempt([m], f"窗口 clip {tr['name']} @frame {m} 生效")
+                if e is not None:
+                    exempt[key] = e
+                    continue   # 免检路径无需 crop（c.probe 也可省一次）
                 i = c.probe(c.src_path(cl["src"]))
                 sc = cl.get("scale", 1.0)
                 w2 = int(i["w"] * sc); h2 = int(i["h"] * sc)
                 crop = f"{w2}:{h2 + 2}:{max(0, cl.get('x', 0) - 10)}:{max(0, cl.get('y', 0) - 10)}"
-                key = f"win:{id(cl)}"
                 launch(lambda m=m, crop=crop, key=key: up_res.__setitem__(key, fdiff(m, crop=crop, tag=f"{m}_")))
             else:
                 key = f"full:{id(cl)}"
-                launch(lambda m=m, key=key: up_res.__setitem__(key, fdiff(m, tag=f"{m}_")))
+                e = check_exempt([m], f"全屏 clip {tr['name']} @frame {m} 生效")
+                if e is not None:
+                    exempt[key] = e
+                else:
+                    launch(lambda m=m, key=key: up_res.__setitem__(key, fdiff(m, tag=f"{m}_")))
     # 空窗帧（无任何上层/字幕覆盖）泄漏检查；底轨非 gfx 时额外避开底轨 fade 边界
     # （现场提帧基准不含 fade 混黑，落入 fade 带会产生假差异）
     covered = [(s["in"], s["out"]) for s in c.tl["subtitles"]]
@@ -156,12 +313,30 @@ def qc(c):
                        if not any(a_ <= f0 < b_ for a_, b_ in covered) and not in_bottom_fade(f0)), None)
     free_res = {}
     if free_frame is not None:
-        launch(lambda: free_res.__setitem__("f", fdiff(free_frame, tag=f"{free_frame}_")))
-    # 响度归一验证（EBU R128 整合响度应 ≈ 目标值）——全片解码 ~60-90s，与帧探测并行
+        e = check_exempt([free_frame], f"空窗无叠加泄漏 @frame {free_frame}")
+        if e is not None:
+            exempt["f"] = e
+        else:
+            launch(lambda: free_res.__setitem__("f", fdiff(free_frame, tag=f"{free_frame}_")))
+    # 响度归一验证（EBU R128 整合响度应 ≈ 目标值）——与帧探测并行。
+    # 方案三阶段1（2026-09-13）：①加 -vn 免整遍视频解码（-f null 默认流选择会连
+    # 视频一起解码，本机实测 4.9s→0.4s）；②peak=true 顺带测 TP 归档回执
+    # （vtx/loudness_cache.py——同一解码域输入全链只测一次；qc 自身检查仍只用
+    # I，TP 门在 gates G3）；③先查回执，命中免测（内容键绑定，文件任何变动
+    # 自然失效重测，不跨版本复用数字）。
     def loudness():
-        r2 = c.run(["ffmpeg", "-nostats", "-i", str(final), "-af", "ebur128=framelog=quiet", "-f", "null", "-"])
-        m2 = re.search(r"I:\s*(-?[\d.]+) LUFS", r2.stderr)
-        return float(m2.group(1)) if m2 else None
+        hit = loudness_cache.lookup(final, root=c.root)
+        if hit is not None:
+            return hit["i_lufs"], True
+        def measure():
+            r2 = c.run(["ffmpeg", "-nostats", "-vn", "-i", str(final),
+                        "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
+            mI = re.search(r"I:\s*(-?[\d.]+) LUFS", r2.stderr)
+            mP = re.search(r"Peak:\s*(-?[\d.]+) dBFS", r2.stderr)
+            return (float(mI.group(1)) if mI else None,
+                    float(mP.group(1)) if mP else None)
+        r = loudness_cache.measure_and_store(final, measure, root=c.root)
+        return r["i_lufs"], False
     def vol(f0, f1):
         r = c.run(["ffmpeg", "-v", "info", "-ss", f"{f0*c.spf:.3f}", "-t", f"{(f1-f0)*c.spf:.3f}",
                    "-i", str(final), "-map", "0:a", "-af", "volumedetect", "-f", "null", "-"])
@@ -174,19 +349,20 @@ def qc(c):
         if stacked is None or active > stacked[0]:
             stacked = (active, f0)
     if c.dry:
-        loud_v, v1 = None, -999   # dry-run 不执行，直接走缺省
+        loud_v, loud_hit, v1 = None, False, -999   # dry-run 不执行，直接走缺省
     else:
         # 三组互不依赖：帧探测（内部 8 线程并发 ffmpeg）/ ebur128 / volumedetect 并行，墙钟 ≈ max
         with ThreadPoolExecutor(3) as gex:
             def run_probes():
                 # 每任务独立 ffmpeg 子进程；结果按 key 回填 dict，报告顺序不受并发影响
+                # （免检项在生成阶段已被剔除，此处全部为需实测任务）
                 with ThreadPoolExecutor(8) as pex:
                     futs = [pex.submit(fn) for _, fn in tasks]
                     for f in futs: f.result()
             fp = gex.submit(run_probes)
             fl = gex.submit(loudness)
             fv = gex.submit(lambda: vol(stacked[1] + 2, stacked[1] + 10))
-            loud_v = fl.result(); v1 = fv.result(); fp.result()
+            loud_v, loud_hit = fl.result(); v1 = fv.result(); fp.result()
 
     # ---- 按原顺序回填 checks（内容/顺序/名称与旧版一致）----
     ok(f"成片帧数 = {c.dur}", nb == c.dur, f"实测 {nb}（{nb_src}）")
@@ -196,12 +372,20 @@ def qc(c):
         for cl in sorted(tracks[0]["clips"], key=lambda x: x["dst_in"]):
             if "src_in" not in cl: continue
             key = f"cut:{cl['dst_in']}:{cl['src']}"
+            if key in exempt:
+                ok_exempt(f"底轨切点帧比对 dst={cl['dst_in']} src={cl['src']}:{cut_sf[key]}",
+                          exempt[key])
+                continue
             sf, d_ = cut_res[key]
             ok(f"底轨切点帧比对 dst={cl['dst_in']} src={cl['src']}:{sf}", d_ < QC_CUT_MEAN_MAX, f"平均像素差 {d_:.2f}/255")
     for tr in tracks[1:]:
         for ci, cl in enumerate(tr["clips"]):
             if tr.get("kind") == "gfx":
-                stats = up_res[f"gfx:{id(cl)}"]
+                key = f"gfx:{id(cl)}"
+                if key in exempt:
+                    ok_exempt(f"gfx 窗口 {Path(cl['src']).stem} 生效", exempt[key])
+                    continue
+                stats = up_res[key]
                 dmax = max(s[0] for s in stats); cov = max(s[1] for s in stats)
                 ok(f"gfx 窗口 {Path(cl['src']).stem} 生效", dmax > QC_WINDOW_MEAN_MIN or cov > QC_WINDOW_COVER_MIN,
                    f"采样 {[cl['dst_in'] + cl['dur'] // 4, cl['dst_in'] + cl['dur'] // 2, cl['dst_in'] + cl['dur'] - cl['dur'] // 4]} 最大均值差 {dmax:.1f}，覆盖 {cov*100:.1f}%")
@@ -209,21 +393,41 @@ def qc(c):
             windowed = any(k in cl for k in ("scale", "x", "y"))
             m = cl["dst_in"] + cl["dur"] // 2
             if windowed:
-                d_, cov = up_res[f"win:{id(cl)}"]
+                key = f"win:{id(cl)}"
+                if key in exempt:
+                    ok_exempt(f"窗口 clip {tr['name']} @frame {m} 生效", exempt[key])
+                    continue
+                d_, cov = up_res[key]
                 ok(f"窗口 clip {tr['name']} @frame {m} 生效", d_ > QC_WINDOW_MEAN_MIN or cov > QC_WINDOW_COVER_MIN,
                    f"区域差 {d_:.1f}，覆盖 {cov*100:.1f}%")
             else:
-                d_, cov = up_res[f"full:{id(cl)}"]
+                key = f"full:{id(cl)}"
+                if key in exempt:
+                    ok_exempt(f"全屏 clip {tr['name']} @frame {m} 生效", exempt[key])
+                    continue
+                d_, cov = up_res[key]
                 ok(f"全屏 clip {tr['name']} @frame {m} 生效", d_ > QC_WINDOW_MEAN_MIN or cov > QC_WINDOW_COVER_MIN,
                    f"整帧差 {d_:.1f}，覆盖 {cov*100:.1f}%")
     if free_frame is not None:
-        d_, cov = free_res["f"]
-        ok(f"空窗无叠加泄漏 @frame {free_frame}", d_ < QC_LEAK_MEAN_MAX and cov < QC_LEAK_COVER_MAX, f"差异 {d_:.2f}，覆盖 {cov*100:.1f}%")
+        if "f" in exempt:
+            ok_exempt(f"空窗无叠加泄漏 @frame {free_frame}", exempt["f"])
+        else:
+            d_, cov = free_res["f"]
+            ok(f"空窗无叠加泄漏 @frame {free_frame}", d_ < QC_LEAK_MEAN_MAX and cov < QC_LEAK_COVER_MAX, f"差异 {d_:.2f}，覆盖 {cov*100:.1f}%")
     if loud_v is not None:
-        ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", abs(loud_v - TARGET_LUFS) <= QC_LOUDNESS_TOL, f"实测 {loud_v} LUFS")
+        ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", abs(loud_v - TARGET_LUFS) <= QC_LOUDNESS_TOL,
+           f"实测 {loud_v} LUFS" + ("（回执命中，免测）" if loud_hit else ""))
     ok(f"{stacked[0]} 轨并发窗口有能量", v1 > -50, f"mean {v1:.1f} dB @frame {stacked[1]}")
+    rep["skipped_probes"] = skipped_probes
     (c.out / "qc_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
     failed = [x for x in rep["checks"] if not x["pass"]]
     print(f"QC：{len(rep['checks']) - len(failed)}/{len(rep['checks'])} 通过")
+    if skipped_probes:
+        print(f"⚠ 免检 {len(skipped_probes)} 项（内容键命中段，stat 绑定一致）："
+              "段内像素级篡改若同时保持段文件 stat 不变则本模式不查——--strict 恢复全检")
     c.receipt("qc", not failed, f"{len(rep['checks'])-len(failed)}/{len(rep['checks'])}")
+    # 免检记录每轮刷新（方案三阶段1）：segs/final 重绑当前 stat，checks 按名记忆
+    # pass——✗ 项下轮必复测；记录在 exit 判定前写（失败轮同样刷新，失败项记忆
+    # 为 False 即「不可免检」，安全性不受影响）。
+    _write_qc_pass_record(c, nb, rep["checks"])
     if failed: sys.exit(1)
