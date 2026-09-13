@@ -5,7 +5,7 @@ timeline 契约权威定义互指（三处需同步修改，2026-09-10 定）：
   ② vtx/timeline.schema.json —— 结构权威（字段/类型）
   ③ vtx/preview.html —— 可视化预览权威（timeline → 浏览器预览）
 """
-import json, re, subprocess, sys
+import json, os, re, subprocess, sys
 from pathlib import Path
 
 from hygiene import (audio_key, manifest_record, rotate_history, versions_check,
@@ -369,18 +369,34 @@ def mux(c: Ctx):
     acodec = "libfdk_aac" if "libfdk_aac" in encs else "aac"
     if acodec == "aac":
         print("⚠ libfdk_aac 不可用，回落原生 aac——终检必须复测编码后解码 TP（edit.md 坑表）")
-    # 版本记账（2026-09-11 治理升级）：覆盖前把旧 final 轮转进 out/history/（--keep-versions，
-    # 默认 2）并做 md5 覆盖检测——final 被并行工程静默改写时显著告警 + 旧条目标 superseded
-    # （D39/BGM-v2 事故类从此自动留痕）。
+    # 写临时路径再原子替换（P0-2 修复，2026-09-13 阶段2审查）：rotate_history 用
+    # os.link 把旧 final 轮转进 out/history/——历史副本与 live 件共享 inode，若让
+    # ffmpeg -y 直接写 final 路径（原地 O_TRUNC 同一 inode），每次渲染会把 live 件
+    # 与全部 history「保留」副本一并改写为最新内容（2026-09-12 04:08 事故实锤：三名
+    # 一 inode，历史保留只剩文件名里的 md5）。ffmpeg 先写 .final.tmp.mp4，成功后
+    # os.replace 到 final——replace 只换目录项，旧 inode（含 history 硬链接组）内容
+    # 原样保留。失败（c.run 内 sys.exit）时 finally 清理半写 tmp。
+    # 版本记账（2026-09-11 治理升级）：覆盖前把旧 final 轮转进 out/history/
+    # （--keep-versions，默认 2）并做 md5 覆盖检测——final 被并行工程静默改写时显著
+    # 告警 + 旧条目标 superseded（D39/BGM-v2 事故类从此自动留痕）。
     final = c.out / "final.mp4"
+    tmp = c.out / ".final.tmp.mp4"
+    mux_cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.out / "video_noaudio.mp4"),
+               "-i", str(c.out / "audio.wav"), "-c:v", "copy", "-c:a", acodec, "-b:a", "192k",
+               "-movflags", "+faststart", str(tmp)]
     if not c.dry:   # dry-run 不轮转/删除 out/history/ 真实成片（2026-09-11 门控，
                     # 与下方 versions_record 门控同口径——预览运行不得动真实产物链）
         rotate_history(c, final, getattr(c, "keep_versions", 2))
         warn = versions_check(c, final)
         if warn: print("⚠⚠ 建议核对 out/history/ 与 VERSIONS.json 确认旧版归属后再继续分发")
-    c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.out / "video_noaudio.mp4"),
-           "-i", str(c.out / "audio.wav"), "-c:v", "copy", "-c:a", acodec, "-b:a", "192k",
-           "-movflags", "+faststart", str(final)])
+    try:
+        c.run(mux_cmd)
+        if not c.dry:   # dry-run 不落产物：不做 replace（tmp 只存在于 [dry-run] 打印）
+            os.replace(tmp, final)
+    finally:
+        if not c.dry:
+            tmp.unlink(missing_ok=True)   # 成功路径 tmp 已被 replace 移走（无操作）；
+                                          # 失败路径清理半写 tmp，不留占 out/ 的残件
     if not c.dry:   # dry-run 无产物可记账（versions_record 读 final.mp4，2026-09-11 门控）
         versions_record(c, final, "mux")
     print(f"✓ 封装 final.mp4（{acodec} 192k）"); c.receipt("mux", True, f"{acodec} 192k")
