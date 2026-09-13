@@ -59,6 +59,12 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
              （串行）→ 并行波 gfx ‖ audio ‖ video 预编码（seg 预编码提前入波，墙钟与
              gfx 重叠）→ video → mux → qc（串行）；VTX_PIPELINE=0 回退线性序列（独立
              A/B 开关）。单阶段命令与各阶段产物语义/缓存键/依赖门不变。
+  （方案三阶段3 2026-09-13）`all --until <stage>`：只执行到该阶段止——R4 冷跑链
+             audio 之后须 post_loudness 再 mux，`vtx all` 一条龙会把 mux/qc 白跑一遍；
+             `all --until video` → post_loudness → `vtx mux` → `vtx qc` 消灭双跑。
+             允许值 = STAGES 线性序中除 audio 外的 7 个阶段名（audio 是流水线波内
+             成员不作独立终点；线性模式按 STAGES 序字面截断，until=video 不含 audio）。
+             流水线模式映射见 _run_all_pipeline docstring。
 
 模块布局（2026-09-10 单文件拆分为包，入口本文件保持可直接运行）：
   infra.py      Ctx/执行/ffmpeg/并行调度            encoders.py  Chrome/NVENC/编码参数选型
@@ -324,6 +330,12 @@ def gfx(c: Ctx):
 STAGES = [("validate", validate), ("audit", audit), ("prepare", prepare), ("gfx", gfx),
           ("video", build_video), ("audio", build_audio), ("mux", mux), ("qc", qc)]
 
+# `all --until <stage>` 允许值（方案三阶段3）：线性 STAGES 序中除 audio 外的 7 个阶段名
+# ——audio 是流水线波内成员（与 gfx/预编码三路同波，语义上不存在「跑到 audio 为止」的
+# 编排边界），故不作独立终点；until=mux/qc 时 audio 随波/随序自然包含。序列与 STAGES
+# 的相对顺序保持一致（静态表，改 STAGES 时同步）。
+_UNTIL_STAGES = ("validate", "audit", "prepare", "gfx", "video", "mux", "qc")
+
 
 def _stage_receipt_name(name: str, draft: bool) -> str:
     """阶段回执名（现行内联规则抽 helper，2026-09-12）：draft 模式的 video/mux 记为
@@ -339,7 +351,7 @@ def _pipeline_enabled(env=None) -> bool:
     return e.get("VTX_PIPELINE", "1") != "0"
 
 
-def _run_all_pipeline(c: Ctx):
+def _run_all_pipeline(c: Ctx, until=None):
     """`vtx all` 依赖图编排（方案二阶段2）：串行头（validate/audit/prepare，现行
     begin_stage + 阶段函数语义）→ 并行波（gfx ‖ audio ‖ video 预编码，run_wave）→
     串行尾（video/mux/qc）。波内前两路 = begin_stage(该阶段名) + 现行阶段函数；
@@ -347,7 +359,16 @@ def _run_all_pipeline(c: Ctx):
     记账仍由 video 阶段本体负责（预编码只产 layers 数据 + seg 缓存侧副作用），结果
     经 c._pre_layers 传入 build_video。各阶段产物语义、缓存键、依赖门判定、receipt
     文案全部不变，只改执行顺序。注：STAGES 名集须与下面三段划分一致（静态表，
-    见 STAGES 旁注释）。"""
+    见 STAGES 旁注释）。
+
+    until（方案三阶段3，None=缺省全链）：按阶段族截断执行——
+      until∈{validate,audit,prepare} → 只跑串行头到该阶段（不起波）；
+      until∈{gfx,video} → 串行头 + 并行波（波内 gfx‖audio‖预编码三路全跑：audio 是
+        波成员不拆，until=gfx 也完整跑波以保证 audio 回执/段缓存就绪）+（until=video
+        时）video 尾；until=gfx 到波结束即止；
+      until∈{mux,qc} → 与缺省全链同一编排，到该阶段止（qc 即完整全链）。
+    依赖门/receipt 语义不变：截断只少跑阶段，已跑阶段的回执照常落盘（--until video
+    后 `vtx mux` 的依赖门 video+audio 恰好满足）。"""
     by_name = dict(STAGES)
     for name in ("validate", "audit", "prepare"):   # —— 串行头 ——
         print(f"== {name} ==")
@@ -356,6 +377,8 @@ def _run_all_pipeline(c: Ctx):
         except RuntimeError as e:
             print(f"✗ {e}"); sys.exit(1)
         by_name[name](c)
+        if until == name:
+            return
 
     def _stage_job(name, fn):                        # —— 波内阶段路：现行阶段语义 ——
         def run():
@@ -372,6 +395,8 @@ def _run_all_pipeline(c: Ctx):
     run_wave(c, [("gfx", _stage_job("gfx", by_name["gfx"])),
                  ("audio", _stage_job("audio", by_name["audio"])),
                  ("video 预编码", _pre_layers)])
+    if until == "gfx":
+        return   # 波结束即止：audio 回执/seg 缓存已就绪，video 尾不跑
     for name in ("video", "mux", "qc"):              # —— 串行尾 ——
         print(f"== {name} ==")
         try:
@@ -382,10 +407,16 @@ def _run_all_pipeline(c: Ctx):
             build_video(c, layers=c._pre_layers)   # 波内预编码产物（Ctx.__init__ 显式声明，见 infra）
         else:
             by_name[name](c)
+        if until == name:
+            return
 
 def main():
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
+    ap.add_argument("--until", metavar="STAGE", default=None,
+                    help="all 专属：只执行到该阶段止（validate|audit|prepare|gfx|video|mux|qc，"
+                         "STAGES 线性序；audio 为波内成员不作终点）。R4 冷跑链用法："
+                         "all --until video → post_loudness → mux → qc（免 mux/qc 白跑）")
     ap.add_argument("--dry-run", action="store_true", help="只打印将执行的 ffmpeg 命令，不执行")
     ap.add_argument("--draft", action="store_true", help="草稿模式（仅 video/mux）：540p+NVENC 快速预览，不影响正式产物")
     ap.add_argument("--frames", type=int, metavar="N", help="video --draft 专属：只渲前 N 帧")
@@ -432,6 +463,15 @@ def main():
                     help="subs 专属：render | preview <时间点...> | check（时间点 `12.5`=秒 / `f360`=帧号）；"
                          "diff 专属：<旧报告.json> <新报告.json>（复用同一位置参数槽，见上注）")
     a = ap.parse_args()
+    # --until 校验（方案三阶段3）：仅 all 合法 + 值域 = _UNTIL_STAGES；两错均退出码 2
+    # （与「未知命令」同级：用法错而非运行错，脚本侧好分类）。audio 不可作终点的
+    # 原因见 _UNTIL_STAGES 旁注释。
+    if a.until is not None:
+        if a.command != "all":
+            print("--until 仅在 all 命令下可用（正确用法：vtx.py -t timeline.json all --until video）"); sys.exit(2)
+        if a.until not in _UNTIL_STAGES:
+            print(f"✗ --until 非法阶段名：{a.until!r}（可用：{' | '.join(_UNTIL_STAGES)}；"
+                  "audio 是流水线波内成员，不作独立终点）"); sys.exit(2)
     if a.frames and not (a.draft and a.command == "video"):
         print("--frames 仅在 video --draft 下可用（正确用法：vtx.py video --draft --frames 90）"); sys.exit(1)
     # 方案五阶段1：区间渲染标志（video --draft 专属；三者为「选一种窗口来源」互斥组）
@@ -564,16 +604,25 @@ def main():
     if a.report_only:
         from audio_report import run_report
         sys.exit(run_report(c, json_path=a.json))
-    names = [s[0] for s in STAGES] if a.command == "all" else [a.command]
-    todo = STAGES if a.command == "all" else \
-        [next((s for s in STAGES if s[0] == a.command), None)]
+    if a.command == "all":
+        todo = STAGES
+        if a.until is not None:
+            # 线性模式截断（方案三阶段3）：按 STAGES 序字面保留到目标阶段。注意与
+            # 流水线映射的口径差——线性序中 audio 在 video 之后，until=video 不含
+            # audio（后续 mux 需先 `vtx audio` 补回执）；until=mux/qc 则自然包含。
+            idx = next(i for i, s in enumerate(STAGES) if s[0] == a.until)
+            todo = STAGES[:idx + 1]
+    else:
+        todo = [next((s for s in STAGES if s[0] == a.command), None)]
+    names = [s[0] for s in todo] if a.command == "all" else [a.command]
     if todo == [None]:
         names = " | ".join([s[0] for s in STAGES] + ["clean", "gc", "df", "snapshot"])
         print(f"✗ 未知命令：{a.command!r}（可用：{names}）"); sys.exit(2)
     if a.command == "all" and _pipeline_enabled():
         # 方案二阶段2：all 默认走依赖图（串行头 → 并行波 → 串行尾）；
-        # VTX_PIPELINE=0 回退下方线性序列（独立 A/B 开关）
-        _run_all_pipeline(c)
+        # VTX_PIPELINE=0 回退下方线性序列（独立 A/B 开关）；
+        # 方案三阶段3：--until 截断在依赖图内按阶段族映射（见 _run_all_pipeline）
+        _run_all_pipeline(c, until=a.until)
     else:
         for name, fn in todo:
             print(f"== {name} ==")
@@ -590,7 +639,10 @@ def main():
                 from audio_report import run_report
                 rc = run_report(c, json_path=a.json)
                 if rc: sys.exit(rc)
-    print("完成：", c.out / "final.mp4" if a.command in ("all", "mux", "qc") else names)
+    # 完成行（方案三阶段3 微调）：--until 截在 mux/qc 之前时 final.mp4 尚不存在，
+    # 打印已跑阶段名单而非产物路径（all 缺省/mux/qc 及单阶段 mux/qc 仍打印产物）
+    final_ready = a.command in ("all", "mux", "qc") and a.until in (None, "mux", "qc")
+    print("完成：", c.out / "final.mp4" if final_ready else names)
 
 if __name__ == "__main__":
     main()

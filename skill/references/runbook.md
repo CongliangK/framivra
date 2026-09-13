@@ -50,17 +50,15 @@ python3 $VTX -t timeline.json mux
 python3 $VTX -t timeline.json qc
 python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final.mp4
 
-# 6) 4K 投稿版重导出 + 断言
-ffmpeg -i out/final.mp4 -vf scale=3840:2160:flags=lanczos \
-  -c:v libx264 -profile:v high -preset medium \
-  -b:v 19.5M -maxrate 55M -bufsize 80M -pix_fmt yuv420p \
-  -c:a copy -movflags +faststart out/final_4k.mp4
+# 6) 4K 投稿版重导出 + 断言（export_4k.py：8 段并行 nvenc p4 + lanczos scale + concat -c copy；
+#    x264 软件链为回退路径与画质对照基线，命令与门禁见 R5）
+env python3 $VIDEO_TOOLS/scripts/export_4k.py -t timeline.json
 bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
 
 # 7) 冻结：更新 out/FREEZE.json（md5 清单）+ CHANGELOG.md 变更单 + timeline.<ver>-frozen.json
 ```
 
-**耗时基准**（voice-ime 653s@1080p30，缓存命中）：validate ~3s、audio 数十秒、post_loudness ~10s、mux ~20s、qc ~11s、4K ~2.5min；**全链 ≈4-5 分钟**。
+**耗时基准**（voice-ime 653s@1080p30，缓存命中）：validate ~3s、audio 数十秒、post_loudness ~2.6s、mux ~4.4s、qc ~8.6s、4K ~66s；**全链 ≈2 分钟**。〔方案三前（2026-09-12 口径）：post ~10s、mux ~20s、qc ~11s、4K ~2.5min、全链 ≈4-5 分钟〕
 
 **0) 先跑 `vtx diff` 定位影响面与推荐路径**（时间线语义 diff，2026-09-12 新增）：
 
@@ -199,7 +197,7 @@ python3 $VTX -t timeline.json mux
 python3 $VTX -t timeline.json qc
 ```
 
-**耗时基准**：单页重渲秒级（CDP 常驻浏览器 ~34ms/帧；透明快路径 ~15ms/帧）；全量冷 gfx 129.8-131.9s（12024 帧，默认 7/450/4，2026-09-11 方案 v2 定版；桌面活跃时段约 150s）；gfx 全冷+全链+4K ≈5.5 分钟。
+**耗时基准**：单页重渲秒级（CDP 常驻浏览器 ~34ms/帧；透明快路径 ~15ms/帧）；全量冷 gfx 129.8-131.9s（12024 帧，默认 7/450/4，2026-09-11 方案 v2 定版；桌面活跃时段约 150s）；gfx 全冷+全链+4K ≈6 分钟（方案三 2026-09-13 口径：验证链 ≈291s + 4K ≈66s；〔方案三前 ≈5.5 分钟，方案一口径〕）。
 
 **gfx 基准表**（2026-09-11 方案 v2 矩阵，voice-ime 28 页 12024 帧、本机 32C64G，冷跑 WALL / 峰值 Chrome RSS，配置=PAGES/SPLIT_FRAMES/TABS）：
 
@@ -260,7 +258,7 @@ python3 $VTX -t timeline.json qc
 python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final.mp4
 ```
 
-**耗时基准**（voice-ime 653s@1080p30，RTX 4080/8 核）：**方案二后（2026-09-12 定版，3 轮冷跑中位）全链冷启动 ≈299s（281/302/299，`bash $VIDEO_TOOLS/scripts/bench_cold.sh 3` 实测）**——并行波 180s（gfx 关键路径）+ video 拼接段 98s + qc 11s + mux 4s + validate/prepare 6s；波内 seg 预编码 54.6s（NVENC）。〔方案二前：全链冷启动 ≈5.5 分钟（拆包提速后，2026-09-11）〕gfx 全冷 ~130-180s、4K 另加 ~2.5min；缓存命中全链 ~50s。
+**耗时基准**（bench_p2 16746 帧/558.2s@1080p30（voice-ime 同型），RTX 4080/32C64G）：**方案三后（2026-09-13 定版，3 轮冷跑中位）验证链冷跑（validate→gates）≈291s（289.6/291.4/310.0，`bash $VIDEO_TOOLS/scripts/bench_cold.sh 3` 实测）**——并行波（gfx 关键路径）165s（163.1-183.6，波动 12%）+ video 尾 97s + qc 8.6s（rc=1 = 74/75，c4_mini 已知探针假阴性的预期形态）+ gates 8.1s（五门全绿）+ mux 4.4s + post_loudness 2.6s + 串行头（validate→prepare）5.6s；4K 发布链单列 ≈66s（8 段并行 nvenc p4 + concat，`bench_cold.sh … --with-4k`）。〔方案三前：≈299s（方案二 2026-09-12 定版，voice-ime 口径）〕〔方案二前：全链冷启动 ≈5.5 分钟（拆包提速后，2026-09-11）〕gfx 全冷 ~130-180s；缓存命中全链 ~50s。
 
 **流水线/编码器 env 速查**（默认即定版，回退开关独立 A/B）：
 
@@ -286,14 +284,17 @@ python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final
 ```bash
 cd ~/文档/04_bilibili视频/voice-ime
 
-# 1) 4K lanczos 放大（音频 copy 不重编码）
-ffmpeg -i out/final.mp4 -vf scale=3840:2160:flags=lanczos \
-  -c:v libx264 -profile:v high -preset medium \
-  -b:v 19.5M -maxrate 55M -bufsize 80M -pix_fmt yuv420p \
-  -c:a copy -movflags +faststart out/final_4k.mp4
+# 1) 4K 投稿版导出（方案三：8 段并行 nvenc p4，段内 lanczos 放大，concat -c copy 拼接 + aac 直通）
+env python3 $VIDEO_TOOLS/scripts/export_4k.py -t timeline.json
 
-# 2) 4K 断言（9 项：分辨率/帧率/h264 High/yuv420p/码率 cap/帧数/aac/I 间隔/faststart）
+# 2) 4K 断言（14 项：分辨率/帧率/h264 High/yuv420p/码率 cap/时长+帧数/aac/I 间隔/faststart）
 bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
+
+#    x264 软件链（lanczos + libx264 medium 单进程，--fallback-x264）为回退路径与画质对照基线
+#    （NVENC 探测失败时 export_4k.py 显式告警后自动整链回落，不静默）；画质对照门
+#    compare_4k_quality.py：PSNR ≥42dB / SSIM ≥0.99（2026-09-13 定版实测 10 帧 PSNR min 49.45dB / SSIM min 0.993247 全达标）
+env python3 $VIDEO_TOOLS/scripts/export_4k.py -t timeline.json --fallback-x264 -o out/final_4k_x264_ref.mp4
+env python3 $VIDEO_TOOLS/scripts/compare_4k_quality.py out/final_4k.mp4 out/final_4k_x264_ref.mp4
 
 # 3) 冻结三件套：
 #    out/FREEZE.json（md5 清单，final.mp4+final_4k.mp4+timeline）
@@ -302,7 +303,7 @@ bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
 # 4) 发布物料：PUBLISH-PACK.md（参数+简介+备答）
 ```
 
-**耗时基准**：4K 转码 ~2.5min；check_4k 秒级。
+**耗时基准**：4K 导出 ~66s（方案三 2026-09-13 实测 65.68s = 段渲染 62.8s + concat 2.1s，8 段并行 nvenc p4；段缓存全命中重跑时秒级）；check_4k 秒级。〔方案三前：x264 软件链单进程 ~2.5min〕
 
 **必跑验证门**：check_4k 全 PASS（任一 FAIL 退出码 1）。码率门覆盖用 `BITRATE_CAP_MBPS=20.5 bash check_4k.sh …`。
 

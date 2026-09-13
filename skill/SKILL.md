@@ -58,7 +58,7 @@ python3 <skill>/vtx/vtx.py -t <项目>/timeline.json gc              # 收尾回
 python3 <video_tools>/scripts/content_gates.py -t ... --project-gates <项目门>.json   # 内容级验证门
 python3 <video_tools>/scripts/check_4k.sh out/final_4k.mp4 ...     # 4K 投稿版断言（帧数门自动从 timeline 推导）
 ```
-  发布链：母带 1080p30 → 4K lanczos 放大投稿版（进 B 站高码率池）→ FREEZE 冻结点（md5 清单）→ PUBLISH-PACK 物料。全冷缓存下渲染全链（含 4K）量级预期约 6 分钟。
+  发布链：母带 1080p30 → 4K lanczos 放大投稿版（`export_4k.py` 8 段并行 nvenc p4，进 B 站高码率池）→ FREEZE 冻结点（md5 清单）→ PUBLISH-PACK 物料。全冷缓存冷跑预期：验证链（validate→gates）≈5 分钟（291s，2026-09-13 定版），4K 发布链另加 ~1 分钟（`bench_cold.sh --with-4k` 单列 ≈66s）。
 ## 音频创作流程（两条支线）
 - **口播/同期声支线**（每期视频必经）：① 录音=电容麦/boom 同期声 + 相机内录麦常开（=同步参考轨），长镜连续录制（详见 07-shooting-guide §七）；② 同步=`scripts/sync_audio.py`（GCC-PHAT 相关法，无需拍掌/时间码）；③ 降噪=`scripts/denoise_voice.py`（陷波 80Hz 高通+工频 notch → Resemble 降噪级 → 48kHz；备胎 MossFormer2）；④ 入轨=timeline voice 轨事件（画面/声音同源，口型同步由构造保证；口型感知全局 +200ms）；⑤ 混音=bed 避让用静态分段方案 `scripts/bed_static_duck.py`（新项目默认）+ 两遍静态增益到 **-14 LUFS** + `scripts/post_loudness.sh` 限幅兜底，**终检必测编码后解码 TP**；⑥ 验证=`scripts/content_gates.py`（G1 口播−间隙响度 / G2 全片 LUFS / G3 解码域 TP / G7 零黑帧 / G10 帧数封装 + 项目门）。
 - **BGM/音效支线** → 路由进 **`music` skill**（`~/.agents/skills/music/SKILL.md`，本体 music_tools 仓）：音色契约先行门 → 产线选路（公有领域改编=默认路线 / ACE-Step 时长精确 / synthlib 代码合成）→ 渲染+QC → **挂载进视频 timeline 后必做分轨审计包**（`blender_bridge/audit_bundle.py`，用户 Blender 逐轨审听=交付门）。授权红线：**商业音乐绝对不用**；音效宽松获取、AI 生成积极使用；现成资产在 `_library/assets_audio/`。

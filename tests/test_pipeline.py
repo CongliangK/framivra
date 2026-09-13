@@ -211,5 +211,98 @@ class TestPipelineIntegration(unittest.TestCase):
             json.loads((self.proj / "cache" / "manifest.json").read_text(encoding="utf-8"))
 
 
+def _stage_heads(out: str):
+    """从 vtx 输出提取 `== <label> ==` 阶段头行序（波成员 gfx/audio/video 预编码
+    由 run_wave 线程体打印，同格式——`--until` 截断断言用）。"""
+    return [ln[3:-3] for ln in out.splitlines()
+            if ln.startswith("== ") and ln.endswith(" ==")]
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"),
+                     "--until 测试需要 ffmpeg（生成带媒体的合成项目）")
+class TestUntilFlag(unittest.TestCase):
+    """`all --until <stage>`（方案三阶段3）：三种阶段族的截断序列 + 用法错误。
+
+    流水线映射：{validate,audit,prepare}→只跑串行头；{gfx,video}→串行头+完整并行波
+    （audio 是波成员不拆）+（video 时）video 尾；{mux,qc}→与缺省全链同一编排。
+    线性模式（VTX_PIPELINE=0）按 STAGES 序字面截断（until=video 不含 audio）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        assets = _synth_assets(root)
+        assert assets is not None, "setUpClass 已 skipUnless 保证 ffmpeg 在位"
+        self.tl = root / "timeline.json"
+        # dur=90：_synth_timeline 的 pip clip（dst_in=20/dur=30）要求 ≥50 帧
+        self.tl.write_text(json.dumps(_synth_timeline(root, assets, dur=90)),
+                           encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _dry(self, *args, extra_env=None):
+        return _run_vtx(self.tl, "all", "--dry-run", *args, extra_env=extra_env)
+
+    def test_until_serial_head_bin(self):
+        # until=prepare：只跑串行头，不起波（无并行波行、无 gfx/video 头）
+        r = self._dry("--until", "prepare")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(_stage_heads(r.stdout), ["validate", "audit", "prepare"])
+        self.assertNotIn("并行波", r.stdout)
+
+    def test_until_gfx_stops_after_wave(self):
+        # until=gfx：串行头 + 完整波（gfx‖audio‖预编码三路全跑），video 尾不跑
+        r = self._dry("--until", "gfx")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        heads = _stage_heads(r.stdout)
+        self.assertEqual(heads[:3], ["validate", "audit", "prepare"])
+        wave_members = {h for h in heads[3:]}
+        self.assertEqual(wave_members, {"gfx", "audio", "video 预编码"},
+                         "波内三路必须全跑（audio 是波成员不拆）")
+        self.assertNotIn("video", wave_members)   # 尾部 video 不跑（≠「video 预编码」）
+
+    def test_until_video_runs_wave_and_video_tail(self):
+        # until=video：串行头 + 波 + video 尾；mux/qc 不跑（R4 链拆出 post_loudness 用）
+        r = self._dry("--until", "video")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        heads = _stage_heads(r.stdout)
+        self.assertEqual(heads[:3], ["validate", "audit", "prepare"])
+        self.assertEqual(heads[-1], "video")
+        self.assertTrue({("gfx"), ("audio"), ("video 预编码")} <= set(heads[3:-1]))
+        self.assertNotIn("mux", heads)
+        self.assertNotIn("qc", heads)
+
+    def test_until_mux_qc_same_topology_as_default(self):
+        # until=mux：与缺省全链同一编排，止于 mux（无 qc）；until=qc = 缺省全链
+        for until, expect_last, has_qc in (("mux", "mux", False), ("qc", "qc", True)):
+            r = self._dry("--until", until)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            heads = _stage_heads(r.stdout)
+            self.assertEqual(heads[-1], expect_last)
+            self.assertIn("qc", heads) if has_qc else self.assertNotIn("qc", heads)
+
+    def test_linear_truncation_follows_stages_order(self):
+        # VTX_PIPELINE=0：按 STAGES 序字面截断——until=video 不含 audio（audio 在
+        # 线性序中位于 video 之后）；until=mux 自然包含 audio
+        r = self._dry("--until", "video", extra_env={"VTX_PIPELINE": "0"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(_stage_heads(r.stdout),
+                         ["validate", "audit", "prepare", "gfx", "video"])
+        r2 = self._dry("--until", "mux", extra_env={"VTX_PIPELINE": "0"})
+        self.assertEqual(_stage_heads(r2.stdout),
+                         ["validate", "audit", "prepare", "gfx", "video", "audio", "mux"])
+
+    def test_non_all_rejected(self):
+        r = _run_vtx(self.tl, "video", "--until", "video", "--dry-run")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("仅在 all 命令下可用", r.stdout + r.stderr)
+
+    def test_invalid_stage_rejected(self):
+        for bad in ("bogus", "audio"):   # audio 是波内成员，不作独立终点
+            r = _run_vtx(self.tl, "all", "--until", bad, "--dry-run")
+            self.assertEqual(r.returncode, 2, f"--until {bad} 应退出码 2")
+            self.assertIn("非法阶段名", r.stdout + r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
