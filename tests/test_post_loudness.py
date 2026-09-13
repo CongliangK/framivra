@@ -7,7 +7,7 @@ v1 时代本文件经 spec_from_file_location 加载 scripts/post_loudness.py（
 scripts/post_loudness.py 变薄壳调 stages.post_loudness_compat。本文件改为直测
 内核函数（包导入，无 spec 加载——§1.4 / 验收门 1）：
   ① mix_audio_wav 输出链构造（mock c.run）：第二遍命令必含
-     volume={gain}dB,alimiter=limit=0.599:level=false:latency=true——win=None /
+     volume={gain}dB,aformat=sample_fmts=s16,alimiter=…（s16 量化中间步复刻 v1 域，P5 门 8）——win=None /
      gain_override / dry 三路径同样生效；第一遍测量链含 ebur128 且不含 alimiter；
   ② build_audio 终态校验（合成小工程真实 ffmpeg + 定点 mock）：正常路径回执
      stages.audio 附 post_loudness 字段（input_i=raw_i/output_i/gain_db/target/
@@ -108,7 +108,7 @@ class TestMixAudioChain(unittest.TestCase):
         self.assertEqual((raw_i, n_ev, duck), (-20.5, 1, False))
         self.assertAlmostEqual(gain, TARGET_LUFS - (-20.5))
         out = self._out_cmd(c)
-        self.assertIn(f",volume={gain:+.2f}dB,{ALIMITER}[aout]", out)
+        self.assertIn(f",volume={gain:+.2f}dB,aformat=sample_fmts=s16,{ALIMITER}[aout]", out)
 
     def test_gain_override_path_also_limited(self):
         c = _FakeCtx(self.root)
@@ -116,14 +116,14 @@ class TestMixAudioChain(unittest.TestCase):
         self.assertEqual(len(c.calls), 1, "gain_override 跳过测量遍")
         self.assertIsNone(raw_i)
         self.assertEqual(gain, -3.25)
-        self.assertIn(f",volume={-3.25:+.2f}dB,{ALIMITER}[aout]", " ".join(c.calls[0]))
+        self.assertIn(f",volume={-3.25:+.2f}dB,aformat=sample_fmts=s16,{ALIMITER}[aout]", " ".join(c.calls[0]))
 
     def test_dry_run_path_also_limited(self):
         c = _FakeCtx(self.root)
         c.dry = True
         mix_audio_wav(c, c.out / "audio.wav")
         self.assertEqual(len(c.calls), 1, "dry 跳过测量遍，只打印输出命令")
-        self.assertIn(f",volume={0.0:+.2f}dB,{ALIMITER}[aout]", " ".join(c.calls[0]))
+        self.assertIn(f",volume={0.0:+.2f}dB,aformat=sample_fmts=s16,{ALIMITER}[aout]", " ".join(c.calls[0]))
 
 
 @unittest.skipUnless(FFMPEG and shutil.which(str(FFMPEG)),

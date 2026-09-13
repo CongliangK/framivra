@@ -451,9 +451,14 @@ def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
     """两遍响度混音（共用执行体）：第一遍 ebur128 实测原始混音 I，第二遍施加恒定
     静态增益到目标响度（单遍 dynamic loudnorm 长节目塌陷，见 build_audio 注）。
     输出链内置 alimiter 采样限幅（v2 §1.2，2026-09-13 吸收 post_loudness.py）：
-    `volume={gain}dB` 后追加 `,alimiter=limit=0.599:level=false:latency=true`——
-    build_audio 与区间预览（range.py 直调本函数）统一过 limiter，out/audio.wav 恒为
-    「归一+限幅」终态，杜绝「成片有限幅、预览无限幅」的分叉。
+    `volume={gain}dB,aformat=sample_fmts=s16,alimiter=limit=0.599:level=false:
+    latency=true`——build_audio 与区间预览（range.py 直调本函数）统一过 limiter，
+    out/audio.wav 恒为「归一+限幅」终态，杜绝「成片有限幅、预览无限幅」的分叉。
+    **s16 量化中间步（P5 门 8 实测裁定 2026-09-14）**：v1 终链是「float 混音→
+    写 s16 audio.wav→post 进程 volume+alimiter」两段——中间量化不是可删细节：
+    纯浮点单段链对近阈值峰的限幅处置有系统性偏移，bench_p2 实测集成响度
+    -15.5(v1)→-15.7(v2)，边界内容 G2 直接翻车。aformat 复刻 v1 域（吸收契约
+    「逐条照搬」），双重量化音质差不可闻（v1 按此上线数月）。
     gain_override：外部指定静态增益（区间预览用——窗口局部内容响度 ≠ 全片响度，
     窗口自测增益会把安静段放大到削波；复用整片回执里的 gain_db 保持听感一致，
     且省一遍 ebur128 测量）。返回 (gain, raw_i, n_ev, duck_used)。win 语义见 _audio_graph。"""
@@ -471,7 +476,7 @@ def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
         if not mI: print("✗ 原始混音响度测量失败"); sys.exit(1)
         raw_i = float(mI.group(1)); gain = TARGET_LUFS - raw_i
         print(f"  原始混音 I={raw_i:.1f} LUFS → 静态增益 {gain:+.1f}dB")
-    c.run(cmd + ["-filter_complex", ";".join(chains[:-1] + [chains[-1] + f",volume={gain:+.2f}dB,alimiter=limit=0.599:level=false:latency=true[aout]"]),
+    c.run(cmd + ["-filter_complex", ";".join(chains[:-1] + [chains[-1] + f",volume={gain:+.2f}dB,aformat=sample_fmts=s16,alimiter=limit=0.599:level=false:latency=true[aout]"]),
                  "-map", "[aout]", "-c:a", "pcm_s16le", "-ar", "48000", str(out_wav)])
     return gain, raw_i, n_ev, duck_used
 
