@@ -284,14 +284,18 @@ def source_audio_extraction(c: Ctx, sid: str):
     返回 (wav_path, cmd|None)：wav 已存在或缝 A 插件已产出 → cmd=None（无须提取）；
     否则 cmd = 与 v1 逐字节相同的裸提取命令，由调用方执行（prepare 经 run_parallel
     线程池并行；range 冷填充顺序 c.run——执行策略归调用方，提取语义归本函数）。
-    pluginlib prepare_source 钩子在本函数内统一触发（无插件注册 = 恒直抽，P1-2
-    空转零行为变化；插件环境缺失的 fail-hard 语义由钩子实现，§2.2）。
+    pluginlib prepare_source 钩子在本函数内统一触发（契约 v1.1：插件自算产物路径
+    并保证在盘，`cache/audio/{audio_key}::<plugin>:...wav`——裸提取键不被插件产物
+    污染；未声明键/无插件 = 恒直抽裸 wav；插件环境缺失的 fail-hard 语义由钩子
+    实现并在此生效，§2.2）。插件产物**串行内联产出**（conda 推理链非单条 ffmpeg
+    命令，不入 run_parallel 任务表；降噪是瓶颈本身，串行可接受）。
     """
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
     if wav.exists():
         return wav, None
-    if _plugin_hooks.run_prepare_source(c, sid, wav):
-        return wav, None     # 缝 A：源声明了插件键（如 denoise）→ 插件产物
+    p = _plugin_hooks.run_prepare_source(c, sid)
+    if p is not None:
+        return p, None         # 缝 A：源声明了插件键（如 denoise）→ 插件产物
     wav.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(sid)),
            "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]
@@ -309,8 +313,11 @@ def prepare(c: Ctx):
             tasks.append((f"audio {s['id']}", cmd))
     run_parallel(c, tasks, "音频提取")
     for s in c.tl["sources"]:
-        wav = c.cache / "audio" / f"{audio_key(c, s['id'])}.wav"
-        if wav.exists(): manifest_record(c, wav, "prepare", audio_key(c, s["id"]))
+        # 记账键 = 产物名 stem（裸提取即 audio_key；插件产物即其内容寻址键——
+        # manifest 只记账不做删除判据，两形态同栏即可）
+        wav, _cmd = source_audio_extraction(c, s["id"])
+        if wav.exists():
+            manifest_record(c, wav, "prepare", wav.stem)
     msg = f"{len(c.tl['sources'])} → 48kHz stereo PCM"
     print("✓ 音频提取：" + msg); c.receipt("prepare", True, msg)
 
@@ -337,10 +344,22 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
     inside = (lambda e: True) if win is None else \
         (lambda e: e["in"] < fb + margin_frames and e["out"] > fa - margin_frames)
     cmd = ["ffmpeg", "-v", "error", "-y"]
+    # §2.2 缝 A 读取点：事件源 wav 经 resolve_source_wav 统一解析（声明了插件键
+    # 的源读插件产物，其余读裸提取键）——与 source_audio_extraction 产出侧同一
+    # 解析，prepare 与 graph 两处恒一致；逐源 memo 防同源多事件重复解析。
+    wav_of = {}
+
+    def _wav(sid: str) -> Path:
+        if sid not in wav_of:
+            p = _plugin_hooks.resolve_source_wav(c, sid)
+            wav_of[sid] = Path(p) if p is not None else \
+                c.cache / "audio" / f"{audio_key(c, sid)}.wav"
+        return wav_of[sid]
+
     evs = [(ti, tr, e) for ti, tr in enumerate(atracks) for e in tr["events"] if inside(e)]
     for ti, tr, e in evs:
         if e.get("loop"): cmd += ["-stream_loop", "-1"]
-        cmd += ["-i", str(c.cache / "audio" / f"{audio_key(c, e['src'])}.wav")]
+        cmd += ["-i", str(_wav(e["src"]))]
     # 事件链（atrim 采样网格/音量/声像/淡变/adelay）→ 轨内子混音 → 补齐成片全长
     chains = []
     trk_lbl = {}

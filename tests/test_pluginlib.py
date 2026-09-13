@@ -6,14 +6,19 @@
      command 根内相对（安全节拒绝对路径与 ..）/plugin extends/hooks 值域；
      损坏 manifest 收集全部错误不崩）；
   ② registry：plugins/registry.json 静态注册表加载（denoise/duck-static 键声明）、
-     lookup_key / plugin_state（本轮全部 not_installed）；
-  ③ validate 三分支（§2.1 不变量 ③）：denoise/duck_strategy 键 → 报错带安装提示
-     （vt plugins list）；未知键 → 警告不阻断；`_meta` 永久白名单；无插件键的
-     timeline → validate 输出与 P1-1 完全一致（零 ⚠/零新行）；
-  ④ 不变量 ①② 空转：contribute_keys 空集并入 ak（gc 键集不变）/get_cache_dirs
-     空集/cache 白名单不变；receipt_fingerprint 末尾含 active_plugins_digest 段
-     （mock 替身验证指纹随插件段变化——v1 回执 v2 下失效属设计内）；
-  ⑤ 两缝空转：run_prepare_source 恒 False（prepare 直抽）/run_audio_events 恒等。
+     lookup_key / plugin_state（P2b 起 denoise 落地 active；未装/禁用分支 mock 驱动）；
+  ③ validate 三分支（§2.1 不变量 ③）：denoise/duck_strategy 键 → 已装 active 放行
+     （CLI 真跑）；mock not_installed → 报错+安装提示；mock disabled → 启用提示；
+     未知键 → 警告不阻断；`_meta` 永久白名单；无插件键的 timeline → validate
+     输出与 P1-1 完全一致（零 ⚠/零新行）；
+  ④ 不变量 ①② 空转（无插件键时间线，生效过滤后恒空转）：contribute_keys 空集
+     并入 ak（gc 键集不变）/get_cache_dirs 空集/cache 白名单不变；
+     receipt_fingerprint 末尾含 active_plugins_digest 段（mock 替身验证指纹随
+     插件段变化——v1 回执 v2 下失效属设计内；真实插件路径的正例见
+     plugins/denoise/tests）；
+  ⑤ 两缝：run_prepare_source 契约 v1.1（(c,sid)->Path|None，未受理 → None）/
+     run_audio_events 恒等；hooks 声明↔代码注册对账（§2.3）。
+插件实体测试（denoise 键语义/产物路径/不变量真实路径）见 plugins/denoise/tests/。
 运行：bash scripts/run_all_tests.sh（统一入口）。
 """
 import io
@@ -144,7 +149,7 @@ class ManifestValidation(unittest.TestCase):
 
 # ---------------------------------------------------------------- registry
 class RegistryTest(unittest.TestCase):
-    """repo 实 registry.json（本轮创建：denoise/duck-static 两规划插件声明）。"""
+    """repo 实 registry.json（P2b 起插件实体落地：denoise installed:true）。"""
 
     def test_static_registry_loads(self):
         reg = pl_registry.load_static_registry(REPO)["plugins"]
@@ -154,7 +159,8 @@ class RegistryTest(unittest.TestCase):
                          [{"path": "sources[]", "key": "denoise"}])
         self.assertEqual(reg["duck-static"]["keys"],
                          [{"path": "audio_tracks[]", "key": "duck_strategy"}])
-        self.assertFalse(reg["denoise"]["installed"])     # P2b 落地时置 true
+        self.assertTrue(reg["denoise"]["installed"])       # P2b 已落地实体
+        self.assertEqual(reg["denoise"]["version"], "1.0.0")
 
     def test_lookup_key(self):
         name, ki = pl_registry.lookup_key("denoise", REPO)
@@ -163,8 +169,10 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual((name2, ki2["path"]), ("duck-static", "audio_tracks[]"))
         self.assertEqual(pl_registry.lookup_key("no_such_key", REPO), (None, None))
 
-    def test_plugin_state_not_installed(self):
-        self.assertEqual(pl_registry.plugin_state("denoise", REPO), "not_installed")
+    def test_plugin_state_installed_vs_declared(self):
+        # denoise：registry installed:true 且 plugins/denoise/ 实体在 → active
+        self.assertEqual(pl_registry.plugin_state("denoise", REPO), "active")
+        # duck-static（本提交时点）：声明未落地 → not_installed（P2b 后续提交置 true）
         self.assertEqual(pl_registry.plugin_state("duck-static", REPO), "not_installed")
         self.assertEqual(pl_registry.plugin_state("unknown-thing", REPO), "not_installed")
 
@@ -189,12 +197,16 @@ class _FakeCtx:
 
 class ThreeBranchScan(unittest.TestCase):
     def test_declared_not_installed_errors_with_hint(self):
+        # P2b 起 denoise 实体落地（registry active）——未装分支改 mock 驱动
+        # （真实态的正例由 test_active_branch_passes_silently / CLI 真跑覆盖）
         tl = {"project": {"fps": 30},
               "sources": [{"id": "a", "path": "a.mp4", "denoise": {"strength": 0.8}}],
               "audio_tracks": [{"name": "bed", "duck_strategy": "static", "events": []}]}
         errs, warns = [], []
-        with redirect_stdout(io.StringIO()):
-            warns = _scan_plugin_keys(_FakeCtx(tl), errs)
+        with mock.patch("vtx.pluginlib.registry.plugin_state",
+                        return_value="not_installed"):
+            with redirect_stdout(io.StringIO()):
+                warns = _scan_plugin_keys(_FakeCtx(tl), errs)
         joined = "\n".join(errs)
         self.assertEqual(len(errs), 2)
         self.assertIn("由 plugins/denoise 提供，未安装", joined)
@@ -293,7 +305,9 @@ class InvariantsIdle(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             c = Ctx(_tl(root))
-            self.assertFalse(pl_hooks.run_prepare_source(c, "a", root / "x.wav"))
+            # 无插件键时间线（生效过滤）→ 缝 A 返回 None（prepare 直抽裸 wav）
+            self.assertIsNone(pl_hooks.run_prepare_source(c, "a"))
+            self.assertIsNone(pl_hooks.resolve_source_wav(c, "a"))
             tracks = [{"name": "voice", "events": []}]
             self.assertIs(pl_hooks.run_audio_events(c, tracks), tracks)
 
@@ -342,12 +356,15 @@ class ThreeBranchCli(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def test_denoise_key_fails_with_install_hint(self):
+    def test_denoise_key_active_passes_validate(self):
+        # 语法差异门真实跑（P2b 后 denoise active）：denoise 键 → validate 全绿
+        # 放行（分支 1；未装分支报错正例见 ThreeBranchScan mock 驱动）
         p = self._proj(self.root, denoise={"strength": 0.8})
         r = self._run(p)
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("由 plugins/denoise 提供，未安装", r.stdout)
-        self.assertIn("vt plugins list", r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("✓ 校验通过", r.stdout)
+        self.assertNotIn("⚠", r.stdout)
+        self.assertNotIn("未安装", r.stdout)
 
     def test_duck_strategy_key_fails_with_install_hint(self):
         p = self._proj(self.root)
@@ -426,16 +443,16 @@ class ThreeBranchRest(unittest.TestCase):
 
 
 class FakePluginBus(unittest.TestCase):
-    """P1 对抗审查 F3：假插件模块验证总线正例（短路 True / 链式变换 / 键并集）
-    与加载失败 fail-hard（F4）。"""
+    """P1 对抗审查 F3：假插件模块验证总线正例（受理短路 / 链式变换 / 键并集）
+    与加载失败 fail-hard（F4）+ hooks 声明↔注册对账（§2.3，P2b 起）。"""
 
     def setUp(self):
         import types
         pkg = types.ModuleType("plugins")
         mod = types.ModuleType("plugins.fakeplug")
 
-        def prepare_source(c, sid, wav):
-            return sid == "src1"          # 只受理 src1，其余回落直抽
+        def prepare_source(c, sid):          # 契约 v1.1：(c, sid) -> Path | None
+            return Path(c.cache) / "fake.wav" if sid == "src1" else None
 
         def audio_events(c, tracks):
             out = []
@@ -474,8 +491,12 @@ class FakePluginBus(unittest.TestCase):
     def test_prepare_source_short_circuits_for_handled_source(self):
         with tempfile.TemporaryDirectory() as d:
             c = Ctx(_tl(Path(d)))
-            self.assertTrue(pl_hooks.run_prepare_source(c, "src1", Path(d) / "x.wav"))
-            self.assertFalse(pl_hooks.run_prepare_source(c, "src2", Path(d) / "y.wav"))
+            self.assertEqual(pl_hooks.run_prepare_source(c, "src1"),
+                             Path(c.cache) / "fake.wav")
+            self.assertIsNone(pl_hooks.run_prepare_source(c, "src2"))
+            # 读取点同一解析（graph 与 prepare 恒一致）
+            self.assertEqual(pl_hooks.resolve_source_wav(c, "src1"),
+                             Path(c.cache) / "fake.wav")
 
     def test_audio_events_transforms_tracks(self):
         with tempfile.TemporaryDirectory() as d:
@@ -498,7 +519,40 @@ class FakePluginBus(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d:
                 c = Ctx(_tl(Path(d)))
                 with self.assertRaises(RuntimeError):
-                    pl_hooks.run_prepare_source(c, "src1", Path(d) / "x.wav")
+                    pl_hooks.run_prepare_source(c, "src1")
+
+    def test_hooks_declared_not_registered_rejected(self):
+        """§2.3 单一事实源对账：声明了没注册 / 注册了没声明都报错。"""
+        import types
+        # 声明了 prepare_source 但模块只注册 audio_events
+        mod = types.ModuleType("plugins.fakeplug2")
+        mod.audio_events = lambda c, tracks: tracks
+        sys.modules["plugins.fakeplug2"] = mod
+        reg = {"fakeplug2": {"version": "0.1.0", "hooks": ["prepare_source"]}}
+        self.addCleanup(sys.modules.pop, "plugins.fakeplug2", None)
+        with mock.patch("vtx.pluginlib.registry.declared_plugins",
+                        return_value=reg), \
+             mock.patch("vtx.pluginlib.registry.plugin_state",
+                        return_value="active"):
+            with self.assertRaises(RuntimeError) as cm:
+                pl_hooks._load_plugin_module("fakeplug2")
+        self.assertIn("声明了没注册", str(cm.exception))
+
+    def test_hooks_registered_not_declared_rejected(self):
+        import types
+        mod = types.ModuleType("plugins.fakeplug3")
+        mod.prepare_source = lambda c, sid: None
+        mod.audio_events = lambda c, tracks: tracks   # 注册了但 registry 未声明
+        sys.modules["plugins.fakeplug3"] = mod
+        reg = {"fakeplug3": {"version": "0.1.0", "hooks": ["prepare_source"]}}
+        self.addCleanup(sys.modules.pop, "plugins.fakeplug3", None)
+        with mock.patch("vtx.pluginlib.registry.declared_plugins",
+                        return_value=reg), \
+             mock.patch("vtx.pluginlib.registry.plugin_state",
+                        return_value="active"):
+            with self.assertRaises(RuntimeError) as cm:
+                pl_hooks._load_plugin_module("fakeplug3")
+        self.assertIn("注册了没声明", str(cm.exception))
 
     def test_params_digest_collects_all_instances(self):
         """P1 对抗审查 F2：多实例参数全收集——改第二例参数 digest 必须变。"""

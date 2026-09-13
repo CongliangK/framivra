@@ -119,7 +119,7 @@ v2 定案〔用户拍板〕：**G3 的 -1.0 dBFS 为唯一权威**，三处对�
 
 **不变量 1 · 缓存键贡献**。插件经 `contribute_keys(c)` 把自己的缓存键并入 gc 的存留白名单。现状缺口〔代码现状 hygiene.py:231-245〕：`gc_plan` 把 `cache/audio/` 下不在 `_current_keys` ak 集合内的文件、`cache/` 根下不在 known 集合内的目录一律判垃圾，而 `budget_gate` 在渲染阶段前自动触发 gc〔hygiene.py:440-455〕——插件产物若不注册键，**渲染中就会被自动回收**。denoise 缓存键构成 = `media_stat_digest(源)` + 插件名 + 版本 + 参数摘要（**勿用全文件 md5**，GB 级源全量哈希违背缓存卫生层哲学〔代码现状 hygiene.py:39-53〕）。
 
-**不变量 2 · 回执指纹**。`cache_state.receipt_fingerprint` 现状 = timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容〔代码现状 cache_state.py:70-87〕。v2 **必须掺入「生效插件清单」**（插件名 + 版本 + 对本 timeline 生效的参数摘要）——防插件升级/改默认参后旧回执放行陈旧产物。混入位置在现有哈希序末尾追加一段，不改变既有成分。**空生效清单时省略该段**〔总控裁定 2026-09-13，P1 影子基线温态复验的前提〕：无插件时间线的指纹与 v1 逐字节一致、v1 回执在 v2 下继续有效（迁移兼容）；不变量 ② 由"段的出现/内容变化"保证——装/卸/升级/改参任一状态翻转都使录制侧指纹与重算侧失配（含卸载后回落 v1 形态：带段录制的旧回执对无段重算同样失配被拒）。
+**不变量 2 · 回执指纹**。`cache_state.receipt_fingerprint` 现状 = timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容〔代码现状 cache_state.py:70-87〕。v2 **必须掺入「生效插件清单」**（插件名 + 版本 + 对本 timeline 生效的参数摘要）——防插件升级/改默认参后旧回执放行陈旧产物。混入位置在现有哈希序末尾追加一段，不改变既有成分。**空生效清单时省略该段**〔总控裁定 2026-09-13，P1 影子基线温态复验的前提〕：无插件时间线的指纹与 v1 逐字节一致、v1 回执在 v2 下继续有效（迁移兼容）；不变量 ② 由"段的出现/内容变化"保证——装/卸/升级/改参任一状态翻转都使录制侧指纹与重算侧失配（含卸载后回落 v1 形态：带段录制的旧回执对无段重算同样失配被拒）。〔P2b 落地注：「对本 timeline 生效」= installed+enabled 且 timeline 声明了该插件任一注册键（hooks.active_plugins 的 c 过滤）——无插件键时间线生效清单恒空，省略段的 v1 兼容由此保证。〕
 
 **不变量 3 · 安装态与键注册表**。
 
@@ -139,6 +139,7 @@ v2 定案〔用户拍板〕：**G3 的 -1.0 dBFS 为唯一权威**，三处对�
 - timeline `sources[]` 级键（如 `"denoise": {...}`），一源一产物进 `cache/audio/`（内容寻址，键见不变量 1）。
 - **源产物提取收敛为单一实现**：prepare 的逐源提取（stages.py:197-212）与区间渲染冷填充 `_ensure_audio_wavs`（range.py:105-119，现状为复刻的裸提取命令）合并为同一函数、同一缝触发〔对抗审查 P0 复审 P1-5 裁定〕——否则区间预览将绕过降噪裸抽 wav。声明了键的源先出降噪 wav，后续 `_audio_graph` 读取点（stages.py:235）用降噪产物而非裸提取。
 - **环境缺失 fail-hard**（权重不在/conda env 缺 → 阶段失败退出，不回落裸音频——回落=产物标注降噪实未降噪，不可信）；validate 做环境预检（早失败优于渲染半路死）。
+- **契约 v1.1（P2b 落地细化）**：钩子契约为 `prepare_source(c, sid) -> Path | None`——插件**自算**内容寻址产物路径（形如 `cache/audio/{audio_key}::denoise:{version}:{参数摘要}.wav`；audio_key 经内核 API 面 `vtx.api.audio_key` 取得，插件禁捅内部模块）并保证产物在盘后返回（缓存命中直返/缺失产出/环境缺失打印缺什么 + exit 1）。v1 草案的 `(c, sid, wav) -> bool`（wav = 调用方裸提取键路径）会让降噪产物写进裸键——裸键名与内容不符即内容寻址破坏，已废弃。**读取点同规**：`_audio_graph` 的事件源 wav 经 `hooks.resolve_source_wav` 与 source_audio_extraction 产出侧同一解析（逐源 memo），prepare 与 graph 两处恒一致；环境预检现由 doctor health 探针承担（validate 期环境预检可经 v1.1 validate 钩子按需补挂，本轮 denoise 只注册 prepare_source）。
 
 **缝 B · 音轨事件内存变换钩子**（duck-static 型）：
 

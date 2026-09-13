@@ -67,15 +67,18 @@ class DoctorJson(unittest.TestCase):
         v = d["version"]
         for k in ("version", "head", "state", "notes"):
             self.assertIn(k, v)
-        # 组件段：注册表声明（本轮两插件未装）+ import vtx 自检
+        # 组件段：注册表声明 + import vtx 自检（P2b 起 denoise 落地 active；
+        # duck-static 本提交时点仍声明未装）
         c = d["components"]
         self.assertIn("declared", c)
         self.assertIn("import_vtx", c)
         declared = {x["name"]: x for x in c["declared"]}
         self.assertIn("denoise", declared)
         self.assertIn("duck-static", declared)
-        self.assertEqual(declared["denoise"]["state"], "not_installed")
-        self.assertIn("未安装（规划中）", declared["denoise"]["note"])
+        self.assertEqual(declared["denoise"]["state"], "active")
+        self.assertEqual(declared["denoise"]["version"], "1.0.0")
+        self.assertEqual(declared["duck-static"]["state"], "not_installed")
+        self.assertIn("未安装（规划中）", declared["duck-static"]["note"])
         self.assertTrue(c["import_vtx"]["ok"], c["import_vtx"])
         self.assertTrue(str(REPO) in c["import_vtx"]["path"])
         # skills 段

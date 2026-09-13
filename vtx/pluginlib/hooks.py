@@ -3,20 +3,28 @@
 扩展点（v1 仅音频侧，值域冻结）：
   缝 A `prepare_source`（denoise 型）：源级键插件——在源音频提取的**单一实现**
     （stages.source_audio_extraction）内统一触发，一源一产物进 cache/audio/
-    （内容寻址键见不变量 ①）；无插件注册 = 直抽裸 wav；环境缺失 fail-hard
-    （权重不在 → 阶段失败退出，不回落裸音频——回落 = 产物标注降噪实未降噪）。
+    （内容寻址键见不变量 ①）。契约 v1.1（P2b 细化，§2.2 缝 A 小注）：
+    ``prepare_source(c, sid) -> Path | None``——插件**自算**内容寻址产物路径并
+    保证产物在盘（缓存命中直返 / 缺失则产出 / 环境缺失 fail-hard——打印缺什么
+    + exit 1，不回落裸音频，回落 = 产物标注降噪实未降噪）；v1 草案的
+    ``(c, sid, wav) -> bool``（wav = 裸提取键路径）会让降噪产物写进裸键——
+    内容寻址破坏，已废弃。无插件受理 = 直抽裸 wav。
   缝 B `audio_events`（duck-static 型）：轨级键插件——_audio_graph 构建
     filtergraph **前**对全量 tracks 的纯内存 events 变换，**不写回 timeline**
     （幂等天然成立）；区间渲染走同一缝（窗口模式自动正确，无需特判）。
 
 插件加载走**包导入** `importlib.import_module("plugins.<name>")`（§2.3 规则，
-禁 spec_from_file_location——绕过包语义是双模块裂分的另一入口）。
-P1-2 时点 plugins/ 无实体包：**总线空转**——所有入口返回空集/False/原样列表，
-内核零行为变化（三不变量已接线，见 pluginlib/__init__.py 接线表）。
+禁 spec_from_file_location——绕过包语义是双模块裂分的另一入口）；加载时做
+hooks 声明↔代码注册一致性对账（声明了没注册 / 注册了没声明都报错，§2.3）。
+P2b 起 plugins/ 有实体包（denoise / duck-static）。「生效」按 timeline 过滤
+（active_plugins 的 c 参数）：无插件键时间线 = 空生效清单——回执指纹省略
+插件段（v1 逐字节兼容）、总线空转，内核零行为变化（三不变量接线见
+pluginlib/__init__.py 接线表）。
 """
 import hashlib
 import importlib
 import json
+from pathlib import Path
 
 from . import registry as _registry
 
@@ -37,10 +45,14 @@ def _plugin_hooks_declared(name: str, repo_root=None) -> list:
 
 
 def active_plugins(c=None, repo_root=None) -> list:
-    """生效插件清单（installed+enabled 且声明了钩子）→ [{name, version, module}]。
+    """生效插件清单（installed+enabled 且声明了钩子 且 **本 timeline 声明了其键**）
+    → [{name, version, module}]。
 
-    P1-2 恒为 []（registry 两官方插件均 installed:false，总线空转）。
-    c 参数预留（P2b：按 timeline 实际声明键过滤「对本 timeline 生效」的插件）。
+    P2b 起 c 参数生效（「对本 timeline 生效」过滤，§2.1 不变量 ② 的"空生效
+    清单"前提）：timeline 未声明插件的任一注册键 → 该插件不计入——无插件键
+    时间线的 active_plugins_digest 恒 ""（指纹省略段，与 v1 逐字节一致）、
+    contribute_keys/两缝空转（v1 行为）。c=None（无上下文，list/doctor 展示
+    等机器态）不过滤。
     """
     out = []
     for name in sorted(_registry.declared_plugins(repo_root)):
@@ -48,41 +60,99 @@ def active_plugins(c=None, repo_root=None) -> list:
             continue
         if not _plugin_hooks_declared(name, repo_root):
             continue
+        if c is not None and not _timeline_declares(c, name, repo_root):
+            continue
         version = str(_registry.declared_plugins(repo_root)[name].get("version", "?"))
         out.append({"name": name, "version": version, "module": None})
     return out
 
 
+def _timeline_declares(c, name: str, repo_root=None) -> bool:
+    """timeline 是否声明了插件注册键中的任一键（「对本 timeline 生效」判定）。
+
+    键位检索用 registry 键声明的 path（sources[] / audio_tracks[]，与
+    _plugin_params_digest 同源）。无法判定（c 无 tl / 插件在 registry_key_map
+    无键声明，如 external 实体）时保守返回 True——宁多生效不静默漏（fail-hard
+    可见性优先）。
+    """
+    tl = getattr(c, "tl", None) if c is not None else None
+    if not isinstance(tl, dict):
+        return True
+    key_map = _registry.registry_key_map(repo_root)
+    scopes = {"sources[]": tl.get("sources", []),
+              "audio_tracks[]": tl.get("audio_tracks", [])}
+    has_keys = False
+    for key, info in sorted(key_map.items()):
+        if info.get("plugin") != name:
+            continue
+        has_keys = True
+        items = scopes.get(info.get("path"))
+        for it in items if isinstance(items, list) else []:
+            if isinstance(it, dict) and key in it:
+                return True
+    return not has_keys
+
+
 def _load_plugin_module(name: str):
-    """包导入 plugins.<name>（P2b 实体落地后可用）。
+    """包导入 plugins.<name> + hooks 声明↔代码注册一致性对账（§2.3：hooks 由
+    代码注册为单一事实源，manifest/registry 声明为对账面——声明了没注册 /
+    注册了没声明都报错）。
 
     **加载失败 fail-hard**（P1 对抗审查 F4 修正，§1.2 缝 A 同源纪律）：插件已
-    生效（installed+enabled+声明钩子）却模块起不来 = 安装破损——静默回落裸产物
-    等于「标注处理实未处理」，不可信。抛 RuntimeError 由阶段崩溃；缺件属安装态
-    矛盾另由 doctor/registry 报告，总线不重复报。"""
+    生效（installed+enabled+声明钩子）却模块起不来 / 对账不齐 = 安装破损——
+    静默回落裸产物等于「标注处理实未处理」，不可信。抛 RuntimeError 由阶段
+    崩溃；缺件属安装态矛盾另由 doctor/registry 报告，总线不重复报。
+
+    注：contribute_keys 是不变量 ① 入口而非钩子（不在 HOOK_NAMES 值域），
+    不参与对账。"""
     try:
-        return importlib.import_module(f"plugins.{name}")
+        mod = importlib.import_module(f"plugins.{name}")
     except Exception as e:
         raise RuntimeError(
             f"插件 plugins/{name} 已生效但模块加载失败（安装破损？）：{e}") from e
+    declared = set(_plugin_hooks_declared(name))
+    exposed = {h for h in HOOK_NAMES if callable(getattr(mod, h, None))}
+    unregistered, undeclared = declared - exposed, exposed - declared
+    if unregistered or undeclared:
+        parts = []
+        if unregistered:
+            parts.append(f"声明了没注册 {sorted(unregistered)}")
+        if undeclared:
+            parts.append(f"注册了没声明 {sorted(undeclared)}")
+        raise RuntimeError(f"插件 plugins/{name} hooks 声明与代码注册不一致"
+                           f"（§2.3 单一事实源对账）：{'；'.join(parts)}")
+    return mod
 
 
-def run_prepare_source(c, sid: str, wav) -> bool:
+def run_prepare_source(c, sid: str):
     """缝 A：源级键插件的产物钩子（stages.source_audio_extraction 内统一触发）。
 
-    逐个询问声明了 prepare_source 的生效插件（约定：插件暴露
-    ``prepare_source(c, sid, wav) -> bool``——自行产出 wav 并返回 True，环境缺失
-    自行 fail-hard）。任一插件产出 → True；无插件/全部不受理 → False（调用方
-    直抽裸 wav）。P1-2 恒 False（空转）。
+    契约 v1.1（P2b 细化，§2.2 缝 A 小注）：插件暴露
+    ``prepare_source(c, sid) -> Path | None``——**自算**内容寻址产物路径（形如
+    ``cache/audio/{audio_key}::<plugin>:{version}:{params_digest}.wav``，audio_key
+    经内核 API 面 vtx.api 取得）并保证产物在盘后返回：缓存命中直接返回；缺失
+    则产出（环境缺失打印缺什么 + exit 1 fail-hard，不回落裸音频）；未声明键/
+    不受理该源返回 None（调用方直抽裸 wav）。任一插件返回 Path → 该源用插件
+    产物；prepare 提取与 _audio_graph 读取经 resolve_source_wav 同一解析。
     """
     for p in active_plugins(c):
         if "prepare_source" not in _plugin_hooks_declared(p["name"]):
             continue
         mod = _load_plugin_module(p["name"])
         fn = getattr(mod, "prepare_source", None) if mod else None
-        if callable(fn) and fn(c, sid, wav):
-            return True
-    return False
+        if callable(fn):
+            got = fn(c, sid)
+            if got is not None:
+                return Path(got)
+    return None
+
+
+def resolve_source_wav(c, sid: str):
+    """缝 A 读取点统一解析：prepare 产物与 _audio_graph/区间渲染的 wav 读取走
+    同一入口（P2b 契约细化——两处各自为政时 graph 会读裸提取键而 prepare 产出
+    插件键，降噪静默失效；或反之污染裸键）。返回插件产物 Path；无插件受理 →
+    None（调用方回落裸提取键 cache/audio/{audio_key}.wav）。"""
+    return run_prepare_source(c, sid)
 
 
 def run_audio_events(c, tracks) -> list:

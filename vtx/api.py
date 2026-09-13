@@ -8,6 +8,7 @@ sys.path hack（§1.4 双模块裂分防护）。
 导出分组：
   Ctx                     渲染上下文（timeline 加载/fps 契约/回执读写入口）
   media_stat_digest       源媒体 stat 身份（缓存键/回执指纹的公共判据）
+  audio_key               prepare 裸提取音频的内容寻址键（缝 A 插件产物路径的锚）
   DOWNSTREAM              阶段下游失效表（回执撤销语义的权威数据）
   load_receipt            回执读取（输入身份不符 → 空表，不继承旧成功）
   loudness_cache.lookup / measure_and_store
@@ -23,11 +24,11 @@ from pathlib import Path
 from .infra import Ctx
 from .cache_state import DOWNSTREAM, load_receipt, media_stat_digest
 from .loudness_cache import lookup, measure_and_store
-from .hygiene import gfx_key, gfx_dir
-from .stages import load_timeline_check
+from .hygiene import gfx_key, gfx_dir, audio_key   # audio_key：缝 A 插件产物路径锚（§2.2），
+from .stages import load_timeline_check            # 稳定性承诺随本 API 面
 
 __all__ = [
-    "Ctx", "DOWNSTREAM", "load_receipt", "media_stat_digest",
+    "Ctx", "DOWNSTREAM", "load_receipt", "media_stat_digest", "audio_key",
     "lookup", "measure_and_store", "gfx_key", "gfx_dir", "load_timeline_check",
     "read_receipt_atomic", "write_receipt_atomic",
 ]
