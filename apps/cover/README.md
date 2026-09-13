@@ -4,7 +4,7 @@ v2 应用（P2a 批次 1 自 `scripts/make_cover.py` 迁入；manifest 见 `app.
 
 ## 用途
 
-把「背景图 + 大标题/小字」合成为 B 站投稿封面（1920×1200 16:10），并产出四端裁切预览（pc_16x9 / thumb_384 / app_138 / app_43）与验证门（尺寸断言 + 安全区几何守卫 + 标题区背景亮度 YAVG≥115 + JPG ≤2MB）。子命令链 `all = prep-bg → render → previews → qc`，确定性优先可复现。规格依据与背景图生成（imgen）知识见 `skill/references/cover.md`。
+把「背景图 + 大标题/小字」合成为 B 站投稿封面（1920×1200 16:10），并产出四端裁切预览（pc_16x9 / thumb_384 / app_138 / app_43）与验证门（尺寸断言 + 安全区几何守卫 + 标题区背景亮度 YAVG≥115 + JPG ≤2MB）。子命令链 `all = prep-bg → render → previews → qc`，确定性优先可复现。规格依据与背景图生成（imgen）知识见 `skills/tech-talk/references/cover.md`。
 
 ## 依赖
 

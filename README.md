@@ -65,7 +65,8 @@ env python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out
 | 可选 | NVENC（NVIDIA GPU） | `video --gpu` 渲染 | 自动探测，不可用回落 x264 |
 | **大模型（默认关闭）** | conda env comfyui + MatAnyone2/BiRefNet_HR 权重 | apps/matting 自研抠像链 | `bash apps/matting/init.sh --download` |
 | **大模型（默认关闭）** | Qwen3-ASR sidecar（18085） | apps/asr 字幕产线 | `bash apps/asr/init.sh` |
-| **大模型（默认关闭）** | IndexTTS-2.5 repo + conda indextts（edge-tts 兜底） | apps/tts 占位语音 | `bash apps/tts/init.sh` |
+| **大模型（默认关闭）** | IndexTTS-2.5 repo（11GB 权重）+ conda indextts（edge-tts 兜底） | apps/tts 占位语音 | `bash apps/tts/init.sh` |
+| 可选 | ComfyUI 服务 127.0.0.1:8188 | apps/matting 背景图生成（post_h3.sh 消费其输出） | `bash apps/matting/comfyui_init.sh` |
 | **大模型（默认关闭）** | 速创 API key（0.1 元/张）+ requests | apps/imgen 生图 | `bash apps/imgen/init.sh` 配 key |
 | **大模型（默认关闭）** | resemble-enhance 权重 681MB + conda denoise env | plugins/denoise 口播降噪 | `bash plugins/denoise/denoise_init.sh --download` |
 

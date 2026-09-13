@@ -1,6 +1,6 @@
 ---
 name: video
-description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 skills/tech-talk/（本仓 skills/ 工作流包）——封面（make_cover）、调研（research 六件）、BGM（music skill 路由）的完整配方在彼处。"
+description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、制作视频动效/动态图表/字幕条/片头片尾/透明图层、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook / sync_audio / denoise_voice / content_gates / A-roll，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门，或要求视频调研、对标分析、选题池、B 站视频制作（→ 先读 skills/tech-talk/）。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 skills/tech-talk/（本仓 skills/ 工作流包）——封面（make_cover）、调研（research 六件）、BGM（music skill 路由）的完整配方在彼处。"
 ---
 # video · video_tools v2 内核 skill（路由索引 + 迭代回路）
 
