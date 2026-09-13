@@ -40,7 +40,6 @@ ffmpeg/ffprobe（postprocess）。
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import shutil
@@ -56,21 +55,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import models  # noqa: E402（无 requests 依赖；script 目录已在 sys.path[0]）
 
+# 本目录 secrets.py key 链：app 根注入 sys.path[0] 后普通 import（v2 §1.4 禁
+# spec_from_file_location——app 目录注入不涉内核双模块，允许）。stdlib 虽有同名
+# secrets 模块，但 sys.path[0] 优先且本 CLI 的 import 链（argparse/uuid/...）不
+# 触发 stdlib secrets 预缓存，解析确定落到本目录；仍留 fail-hard 哨兵防未来
+# import 序变化导致的静默串味。
+import secrets as keychain  # noqa: E402
 
-def _load_local_module(name: str):
-    """按文件路径加载本目录模块（防与 stdlib 同名模块混淆，如 secrets）。"""
-    path = Path(__file__).resolve().parent / f"{name}.py"
-    cached = sys.modules.get(name)
-    if cached is not None and getattr(cached, "__file__", "") == str(path):
-        return cached
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-keychain = _load_local_module("secrets")
+if not str(getattr(keychain, "__file__", "")).startswith(str(Path(__file__).resolve().parent)):
+    raise ImportError(
+        "secrets 模块解析到非本 app 目录（stdlib 同名污染）：%r——请检查 import 序"
+        % getattr(keychain, "__file__", None)
+    )
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -110,7 +106,7 @@ def cfg_get(cfg: dict, path: str, default):
 def _pluginlib_config():
     """vtx.pluginlib.config（v2 §5.3 统一加载）——repo 根追加进 sys.path 后导入
     （本模块平铺布局，脚本目录不含 repo 根；append 不抢占既有解析序）。"""
-    root = str(Path(__file__).resolve().parent.parent)
+    root = str(Path(__file__).resolve().parent.parent.parent)  # v2 迁移后 imgen 在 apps/ 下，仓根 = 上两级
     if root not in sys.path:
         sys.path.append(root)
     from vtx.pluginlib import config as _cfg
@@ -126,7 +122,7 @@ def config_path() -> Path:
     legacy = os.environ.get("IMGEN_CONFIG")
     if legacy:
         return Path(legacy).expanduser()
-    return Path(__file__).resolve().parent.parent / "config.local.json"
+    return Path(__file__).resolve().parent.parent.parent / "config.local.json"
 
 
 def load_config() -> dict:
@@ -135,7 +131,7 @@ def load_config() -> dict:
     并打废弃公告（stderr 一行，迁移期不破）；坏 JSON 一律警告 + {} 继续（原静默
     {} 收敛到全局化语义）；路径型键自动 ~ 展开。键结构与缺省探测链不变。"""
     return _pluginlib_config().load_config(
-        Path(__file__).resolve().parent.parent, legacy_env="IMGEN_CONFIG")
+        Path(__file__).resolve().parent.parent.parent, legacy_env="IMGEN_CONFIG")
 
 
 def resolve_api_base(cfg: dict) -> str:
@@ -769,11 +765,11 @@ _KIND_MATRIX = """\
   gpt-2.5-flare     快速、质量好，0.3 元/张，--quality low/medium/high、--background、--mask
 
 示例：
-  python3 imgen/imgen_cli.py gen "深色科技感演播室背景，无人物" --out <项目> --kind bg4k --yes
-  python3 imgen/imgen_cli.py gen "..." --out <项目> --kind bg4k --size 2K --yes   # 警告后照做
-  python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5 --ratio 16:9 --yes
-  python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-sunburst --quality high --yes
-  python3 imgen/imgen_cli.py gen "..." --out <项目> --ref ref1.png https://.../r2.jpg
+  env python3 apps/imgen/imgen_cli.py gen "深色科技感演播室背景，无人物" --out <项目> --kind bg4k --yes
+  env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --kind bg4k --size 2K --yes   # 警告后照做
+  env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5 --ratio 16:9 --yes
+  env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-sunburst --quality high --yes
+  env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --ref ref1.png https://.../r2.jpg
   python3 imgen/imgen_cli.py batch prompts.json --out <项目> --yes
   python3 imgen/imgen_cli.py postprocess raw.png --kind bg4k -o assets/bg/background_4k.png
   python3 imgen/imgen_cli.py key status

@@ -7,7 +7,7 @@
 """
 import unittest
 
-import _loader
+from . import _loader   # v2 P2a：tests 成包后相对导入
 
 models = _loader.load("models")
 

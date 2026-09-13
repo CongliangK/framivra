@@ -28,16 +28,13 @@ echo "-- API key 解析链探测（不触网、不扣费）--"
 python3 - <<'PY'
 import sys
 sys.path.insert(0, ".")
-import importlib.util
+# v2 §1.4 禁 spec_from_file_location——app 根注入 sys.path[0] 后普通 import
+# （cwd=app 根；与 imgen_cli.py 同一纪律，stdlib 同名 secrets 由 path[0] 优先排除）
+import secrets as keychain
+if not keychain.__file__.startswith("/"):
+    import os
+    assert keychain.__file__.startswith(os.getcwd()), keychain.__file__
 
-def load(name):
-    spec = importlib.util.spec_from_file_location(name, f"./{name}.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-keychain = load("secrets")
 levels, chosen = keychain.describe_key_chain(None)
 for name, value in levels:
     print(f"  {'✓' if value else '✗'} {name}：{'命中 ' + keychain.mask_key(value) if value else '未提供/未命中'}")
@@ -46,7 +43,7 @@ if chosen:
 else:
     print("⚠ 未配置任何 key。生成前请配置（任选其一）：")
     print("    export SC_API_KEY=<你的速创 key>        # 推荐，写入 ~/.zshrc / ~/.bashrc")
-    print("    python3 imgen/imgen_cli.py gen ... --key <KEY 或 key 文件路径>")
+    print("    python3 apps/imgen/imgen_cli.py gen ... --key <KEY 或 key 文件路径>")
     print("    keyring（service=slime-suchuang, account=api-key）或 ~/.config/slime/secrets.json（0600，{\"api_key\": \"...\"}）")
 PY
 

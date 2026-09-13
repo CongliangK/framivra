@@ -23,7 +23,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import _loader
+from . import _loader   # v2 P2a：tests 成包后相对导入
 
 IMGEN_DIR = _loader.IMGEN_DIR
 IMGEN_CLI = _loader.IMGEN_CLI

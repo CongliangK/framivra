@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import _loader
+from . import _loader   # v2 P2a：tests 成包后相对导入
 
 models = _loader.load("models")
 postprocess = _loader.load("postprocess")

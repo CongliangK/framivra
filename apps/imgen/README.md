@@ -1,5 +1,7 @@
 # imgen —— 速创 API 生图 + cover-crop 后处理
 
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/imgen/`）**：manifest 见 `app.json`（kind=app；健康检查 = `imgen_cli.py --help`）；兼容 symlink：仓库根 `imgen → apps/imgen`（目录级，旧路径引用仍可达）。随迁清除 `spec_from_file_location`（v2 §1.4 冻结禁令）：imgen_cli.py 加载 secrets.py 与 tests/_loader.py、init.sh 探测内嵌加载统一改为 **app 根 sys.path 注入 + 普通 import**（app 目录注入不涉内核双模块，允许；保留解析落点校验哨兵防 stdlib 同名 secrets 串味）。
+
 脚本阶段写 prompt → 速创 API（api.wuyinkeji.com，nano / gpt-image / GPT-Image-2.5 三系五模型）付费生图（0.1 或 0.3 元/张按模型）→ 原图即下（URL 2 小时失效）→ ffmpeg lanczos cover-crop 到**精确尺寸** → 硬对接下游：
 - `assets/bg/background_4k.png`（3840×2160 8-bit RGB PNG）→ `matting/run_full_bg.sh` 抠像逐像素合成（cv2.imread 直读、无 resize，**像素契约不过即崩**）；
 - `assets/bg/background_1080p.png`（1920×1080）/ `background_vertical.png`（1080×1920）→ 口播链 / gfx 底图；
@@ -58,42 +60,42 @@
 
 ```bash
 # 初始化（幂等，秒级；requests/key 链/ffmpeg 探测，默认不触网）
-bash imgen/init.sh            # 加 --net 可选开启 GET api.wuyinkeji.com 连通探测（不扣费）
+bash apps/imgen/init.sh          # 加 --net 可选开启 GET api.wuyinkeji.com 连通探测（不扣费）
 
 # key 本地探测（不触网不扣费；展示仅尾 4 位）
-python3 imgen/imgen_cli.py key status
+env python3 apps/imgen/imgen_cli.py key status
 
 # 4K 背景图（提交前有付费确认门：无 --yes 时交互 y/N，非 TTY 必须 --yes）
-python3 imgen/imgen_cli.py gen "深色科技感演播室背景，无人物，景深虚化" \
+env python3 apps/imgen/imgen_cli.py gen "深色科技感演播室背景，无人物，景深虚化" \
     --out <项目目录> --kind bg4k --yes
 # → <项目>/assets/bg/background_4k.png（3840×2160 rgb24，ffprobe 断言通过）
 
 # 1080p 横版 / 竖版
-python3 imgen/imgen_cli.py gen "..." --out <项目> --kind bg1080p --yes
-python3 imgen/imgen_cli.py gen "..." --out <项目> --kind vertical --yes
+env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --kind bg1080p --yes
+env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --kind vertical --yes
 
 # 带参考图（本地文件自动外链：scp 自有服务器 → 回退 tmpfiles.org；URL 直传；≤14 张）
-python3 imgen/imgen_cli.py gen "保留构图，改成水彩" --out <项目> --kind raw \
+env python3 apps/imgen/imgen_cli.py gen "保留构图，改成水彩" --out <项目> --kind raw \
     --ref ./ref1.png https://example.com/ref2.jpg --yes
 
 # GPT-Image-2.5 三端点
-python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5 --ratio 16:9 --yes          # 基础版 0.1 元
-python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-flare --quality high --yes  # 快速 0.3 元
-python3 imgen/imgen_cli.py gen "编辑这张图" --out <项目> --model gpt-2.5-sunburst \
+env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5 --ratio 16:9 --yes          # 基础版 0.1 元
+env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-flare --quality high --yes  # 快速 0.3 元
+env python3 apps/imgen/imgen_cli.py gen "编辑这张图" --out <项目> --model gpt-2.5-sunburst \
     --quality xhigh --background transparent --mask https://example.com/mask.png \
     --ref ./in.png --yes                                                                       # 精修 0.3 元
-python3 imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-sunburst \
+env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-sunburst \
     --ratio 3840x2160 --yes   # 显式 4K（WxH 像素串）
 
 # 批量（[{prompt,kind,model,size,ratio,ref,quality,background,mask}, ...]；>50 张二次确认；
 # 混合模型按模型单价逐行列价）
-python3 imgen/imgen_cli.py batch prompts.json --out <项目> --yes
+env python3 apps/imgen/imgen_cli.py batch prompts.json --out <项目> --yes
 
 # 离线后处理（免 API、不扣费；源<目标时打印插值倍数警告后照做）
-python3 imgen/imgen_cli.py postprocess <原图.png> --kind bg4k -o /tmp/out.png
+env python3 apps/imgen/imgen_cli.py postprocess <原图.png> --kind bg4k -o /tmp/out.png
 
 # 断线恢复（URL 2h 失效内：只重轮询+下载+后处理，零新提交零扣费；task_id 见记账文件）
-python3 imgen/imgen_cli.py gen "<原prompt>" --out <项目> --kind bg4k --task-id <task_id>
+env python3 apps/imgen/imgen_cli.py gen "<原prompt>" --out <项目> --kind bg4k --task-id <task_id>
 ```
 
 环境变量（一般无需设置）：`IMGEN_API_BASE`（覆盖 API 地址，测试/mock 用）、`IMGEN_CONFIG`（覆盖 config.local.json 路径）、`IMGEN_POLL_INTERVAL`/`IMGEN_POLL_TIMEOUT`（轮询节奏）、`SC_PROXY` 等参考图上传代理（见 reference_upload.py docstring）。
@@ -123,14 +125,19 @@ cover 语义：等比缩放至**完全覆盖** W×H（lanczos）→ 中心 crop 
 ## 测试
 
 ```bash
-python3 -m unittest discover -s imgen/tests -v   # 71 用例，零网络零扣费（mock http.server）
+cd apps/imgen && env python3 -m unittest discover -s tests -t . -v   # 71 用例，零网络零扣费（mock http.server）
+# 或仓根统一入口：bash scripts/run_all_tests.sh（自动发现 apps/*/tests）
 ```
 
 覆盖（方案 §9.3）：postprocess 三分支 golden+实跑断言；mock 全链（提交→轮询 0→1→2→下载→落位）；status=3 中文报错不重试不重复提交；4xx 立即上抛；URL 失效重试 ≤2 上抛；key 链优先级；付费门 0/1 次提交计数；--kind 载荷联动（bg4k=4K/16:9 等）；--ref 15 拒 14 过；空目录自建；--task-id 恢复零提交；batch 总价文案与 >50 中止。测试输入 PNG 由 ffmpeg 合成（KB 级，不落仓）；断言用 ffprobe（不依赖 PIL/numpy）。
 
 ## 依赖
 
-`requests`（系统 python3 已装 2.32.5；仅 gen/batch 触网链需要，postprocess/key status 离线可跑）+ `ffmpeg`/`ffprobe`（8.x 已验证）+ stdlib。与 vtx 零依赖纪律不冲突（vtx 不 import imgen；imgen 不 import vtx）。
+**app 级（manifest requires，doctor 可探测）**：`requests`（系统 python3 已装 2.32.5；仅 gen/batch 触网链需要，postprocess/key status 离线可跑）+ `ffmpeg`/`ffprobe`（8.x 已验证）+ stdlib。与 vtx 零依赖纪律不冲突（vtx 不 import imgen；imgen 不 import vtx，仅经 vtx.pluginlib.config 统一加载 config）。
+
+## 健康检查
+
+`env python3 apps/imgen/imgen_cli.py --help` 退出码 0（app.json health.command；不触网不扣费）。key 链配置态另探：`imgen_cli.py key status`（只读本地）。
 
 ## 待集成事项
 

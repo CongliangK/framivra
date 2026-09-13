@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import _loader
+from . import _loader   # v2 P2a：tests 成包后相对导入
 
 keychain = _loader.load("secrets")
 
