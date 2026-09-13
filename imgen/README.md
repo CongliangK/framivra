@@ -139,3 +139,4 @@ python3 -m unittest discover -s imgen/tests -v   # 71 用例，零网络零扣�
 ## 已验证版本
 
 - 2026-09-11：requests 2.32.5 / ffmpeg 8.1.2 / Python 3.13（仓基线 ≥3.9 兼容语法）。上游内化自 suchuang-image 2026-09 工作区快照（src/slime/），端点与参数规则以 README 表中行号为准。
+- 2026-09-13（封面产线实测，voice-ime/cover/COVER-REPORT.md）：**flare 端点对无害纯抽象画中文提示词两连 status=3 审核拒绝**（不退款、排队数分钟后转拒，判供应商审核误杀；同 prompt 在 sunburst 通过）——重要生成勿单独依赖 flare；**sunburst 端点忽略 payload 中的 `aspectRatio`（含 2048x1280 显式像素串）返回 1K 方图**（记账 JSON 可证载荷正确）——非 1:1 用途需下游 cover-crop（放大须标注倍数）。
