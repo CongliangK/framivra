@@ -1,0 +1,23 @@
+### 轮 1 · 2026-09-13 02:38:28 · 日志 /tmp/vtx_bench_20260913_r1.log
+  串行头（validate→prepare）  : 5.26s
+  并行波 [timing] 总耗时        : 154.1s（gfx 路径 154.1s）
+  video 尾（波结束→video 完成）: 91.38s
+  post_loudness / mux / qc / gates:
+    post_loudness : 2.53s（rc=0）
+    mux : 4.34s（rc=0）
+    qc : 8.11s（rc=1）
+    gates : 7.53s（rc=0）
+  验证链合计（validate→gates） : 273.35s
+  qc 通过数: QC：74/75   五门: G 门 ✓×5，gates rc=0
+
+| 阶段 | 中位 s | min | max | 波动 |
+|---|---|---|---|---|
+| 串行头（validate→prepare） | 5.3 | 5.26 | 5.26 | 0% |
+| 并行波总耗时 | 154.1 | 154.1 | 154.1 | 0% |
+| 波内 gfx 路径 | 154.1 | 154.1 | 154.1 | 0% |
+| video 尾 | 91.4 | 91.38 | 91.38 | 0% |
+| post_loudness | 2.5 | 2.53 | 2.53 | 0% |
+| mux | 4.3 | 4.34 | 4.34 | 0% |
+| qc | 8.1 | 8.11 | 8.11 | 0% |
+| gates | 7.5 | 7.53 | 7.53 | 0% |
+| 验证链合计（validate→gates） | 273.4 | 273.35 | 273.35 | 0% |

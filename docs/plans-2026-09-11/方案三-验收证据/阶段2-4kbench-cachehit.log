@@ -1,0 +1,14 @@
+  ✓ seg 0 [0,2094) 已缓存
+  ✓ seg 1 [2094,4188) 已缓存
+  ✓ seg 2 [4188,6281) 已缓存
+  ✓ seg 3 [6281,8374) 已缓存
+  ✓ seg 4 [8374,10467) 已缓存
+  ✓ seg 5 [10467,12560) 已缓存
+  ✓ seg 6 [12560,14653) 已缓存
+  ✓ seg 7 [14653,16746) 已缓存
+[timing] 段渲染（8 段 / 0 编 / 命中 8）: 0.0s
+  ✓ 拼接自检：总帧数 16746 == 16746
+[timing] concat+封装（音轨母带直通）: 1.9s
+[timing] 总墙钟: 3.3s
+✓ 4K 导出完成：/home/liangruochong/文档/04_bilibili视频/bench_p2/out/final_4k.mp4（16746f，nvenc p4 ×8 段，命中 8）
+→ 规格断言：bash /home/liangruochong/文档/01_活跃项目/video_tools/scripts/check_4k.sh /home/liangruochong/文档/04_bilibili视频/bench_p2/out/final_4k.mp4

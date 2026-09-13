@@ -1,0 +1,25 @@
+### 轮 1 · 2026-09-13 02:02:23 · 日志 /tmp/vtx_bench_20260913_r1.log
+  串行头（validate→prepare）  : 0.23s
+  并行波 [timing] 总耗时        : 1.6s（gfx 路径 1.6s）
+  video 尾（波结束→video 完成）: 0.50s
+  post_loudness / mux / qc / gates:
+    post_loudness : 0.30s（rc=0）
+    mux : 0.21s（rc=0）
+    qc : 0.68s（rc=1）
+    gates : 0.43s（rc=0）
+  验证链合计（validate→gates） : 4.02s
+  qc 通过数: QC：8/9   五门: G 门 ✓×4，gates rc=0
+  发布链预算（单列）: export_4k 2.47s + check_4k rc=1
+
+| 阶段 | 中位 s | min | max | 波动 |
+|---|---|---|---|---|
+| 串行头（validate→prepare） | 0.2 | 0.23 | 0.23 | 0% |
+| 并行波总耗时 | 1.6 | 1.6 | 1.6 | 0% |
+| 波内 gfx 路径 | 1.6 | 1.6 | 1.6 | 0% |
+| video 尾 | 0.5 | 0.50 | 0.50 | 0% |
+| post_loudness | 0.3 | 0.30 | 0.30 | 0% |
+| mux | 0.2 | 0.21 | 0.21 | 0% |
+| qc | 0.7 | 0.68 | 0.68 | 0% |
+| gates | 0.4 | 0.43 | 0.43 | 0% |
+| 验证链合计（validate→gates） | 4.0 | 4.02 | 4.02 | 0% |
+| 4K 导出（发布链，单列） | 2.5 | 2.47 | 2.47 | 0% |
