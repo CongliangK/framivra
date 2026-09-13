@@ -12,7 +12,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(dirname "$HERE")"
+ROOT="$(cd "$HERE/../.." && pwd)"   # v2 迁移后 tts 在 apps/ 下，仓根 = 上两级
 CFG="$ROOT/config.local.json"
 DEFAULT_REPO="$HOME/AI/IndexTTS/repo"
 DEFAULT_PY="$HOME/miniconda3/envs/indextts/bin/python"

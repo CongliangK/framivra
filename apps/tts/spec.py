@@ -28,7 +28,7 @@ sys.path.insert(0, HERE)
 FPS_DEFAULT = 30
 TAIL_S = 0.02  # 句尾保护余量（repack_voice TAIL_MS 同款）
 
-DEFAULT_REPO_ROOT = os.path.dirname(HERE)  # 仓库根 = tts/ 父目录
+DEFAULT_REPO_ROOT = os.path.dirname(os.path.dirname(HERE))  # 仓库根（v2 迁移后 tts 在 apps/ 下，= 上两级）
 
 
 def cfg_get(cfg: dict, path: str, default):

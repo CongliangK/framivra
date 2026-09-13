@@ -30,7 +30,7 @@ sys.path.insert(0, HERE)
 import levelnorm  # noqa: E402
 import spec as spec_mod  # noqa: E402
 
-REPO_ROOT = os.path.dirname(HERE)
+REPO_ROOT = os.path.dirname(os.path.dirname(HERE))  # v2 迁移后 tts 在 apps/ 下，仓根 = 上两级
 DEFAULT_REPO = os.path.expanduser("~/AI/IndexTTS/repo")
 DEFAULT_TTS_PY = os.path.expanduser("~/miniconda3/envs/indextts/bin/python")
 DEFAULT_VOICE_REF = os.path.expanduser("~/音乐/5_G_Resemble仅降噪.wav")

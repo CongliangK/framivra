@@ -1,10 +1,12 @@
 # tts/ · IndexTTS-2.5 口播占位语音产线 + edge-tts 兜底
 
-口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`scripts/repack_voice.py` 既有链，终版）**。
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）；兼容 symlink：仓库根 `tts → apps/tts`（目录级，旧路径引用仍可达）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
+
+口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版；旧路径 `scripts/repack_voice.py` 经 symlink 可达）**。
 来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）
 参数化收编——硬编码窗口表 → `spec.json` 驱动；产物按 repack_voice.py 既有消费约定落位，**零协议改动**。
 
-## 文件清单
+## 用途
 
 | 文件 | 职责 |
 |---|---|
@@ -17,17 +19,29 @@
 | `init.sh` | 幂等资产探测（repo/解释器/音色参考/edge-tts/GPU；复用本机已有资产优先）；`--download` 补齐代码克隆 + 11GB 权重（ModelScope 国内直连，确认后再跑） |
 | `tests/` | unittest（atempo golden / spec 预算 / levelnorm / manifest+final 格式；零模型零 GPU 零网络） |
 
-## 快速使用
+## 依赖
+
+- **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（atempo 应用器、时长实测、峰值归一、volumedetect）；CLI 面（tts_cli/spec）系统 python3 stdlib 零第三方依赖。
+- **indextts 引擎（conda/venv 级，不进 requires）**：IndexTTS-2.5 repo + 11GB 权重 + conda `indextts` py3.10（或 repo `.venv` py3.11）——`bash apps/tts/init.sh` 探测，`--download` 补齐。
+- **edge 兜底引擎**：`edge-tts` 二进制（默认 `~/miniconda3/bin/edge-tts`，`tts.edge_bin` 可改；pip 安装）。
+
+## 健康检查
+
+`env python3 apps/tts/tts_cli.py --help` 退出码 0（app.json health.command；CLI 面系统 python3 即可跑，不涉模型/解释器）。资产态另探：`tts_cli.py probe` / `bash apps/tts/init.sh`。
+
+## 开启步骤
 
 ```bash
-bash tts/init.sh                                   # 1) 资产探测（幂等，只打印）
-python3 tts/tts_cli.py spec -t <项目>/timeline.json -o /tmp/spec.json
+bash apps/tts/init.sh                                        # 1) 资产探测（幂等，只打印）
+env python3 apps/tts/tts_cli.py spec -t <项目>/timeline.json -o /tmp/spec.json
 # 2) 人工校对回填 spec.json 各窗 text（timeline voice 轨不含文本）
-python3 tts/tts_cli.py gen /tmp/spec.json --project <项目>            # indextts（默认）
-python3 tts/tts_cli.py gen /tmp/spec.json --project <项目> --engine edge   # 免 GPU 兜底
-python3 tts/tts_cli.py normalize --project <项目>   # final/ 批量峰值归一（幂等，可独立重跑）
-python3 tts/tts_cli.py probe                       # 快速资产探测
+env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目>            # indextts（默认）
+env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目> --engine edge   # 免 GPU 兜底
+env python3 apps/tts/tts_cli.py normalize --project <项目>   # final/ 批量峰值归一（幂等，可独立重跑）
+env python3 apps/tts/tts_cli.py probe                       # 快速资产探测
 ```
+
+config.local.json 的 `tts.enabled` 置 `true`（键缺省时全走默认探测链，旧配置无需重生成）；GPU 排程与 ASR sidecar/NVENC 错峰，OOM 属预期降级路径（退出码 3 + 提示 `--engine edge`）。
 
 ## spec.json 格式（windows[].id 即 `vt_<ID>` 去前缀）
 
@@ -96,7 +110,8 @@ config `tts.voice_ref`（默认 `~/音乐/5_G_Resemble仅降噪.wav`，9.9s 本�
 ## 测试
 
 ```bash
-python3 -m unittest discover -s tts/tests -v   # 零模型零 GPU 零网络（ffmpeg 合成 KB 级 wav）
+cd apps/tts && env python3 -m unittest discover -s tests -t . -v   # 零模型零 GPU 零网络（ffmpeg 合成 KB 级 wav）
+# 或仓根统一入口：bash scripts/run_all_tests.sh（自动发现 apps/*/tests）
 ```
 
 覆盖：atempo golden 四例（方向/域外双级/相等无滤镜）、spec 预算（vt_A1 单片窗 228 帧→7.62、
@@ -109,18 +124,6 @@ python3 -m unittest discover -s tts/tests -v   # 零模型零 GPU 零网络（ff
   ModelScope revision 见方案 §6.1 表 #4）；代码仓 indextts（infer_v2_5.IndexTTS2）。
 - 解释器：conda indextts py3.10.19 / repo `.venv` py3.11.13（官方支持区间 3.10-3.11）。
 - edge-tts @ `~/miniconda3/bin/edge-tts`（py3.13 入口脚本）；音色参考 9.9s 已核实。
-
-## 开启步骤
-
-1. `bash tts/init.sh`（幂等探测，缺 repo 打印两条路线；`bash tts/init.sh --download`
-   补齐代码克隆 + 11GB 权重下载——权重走 ModelScope 国内直连，耗时数十分钟，确认后再跑）。
-2. `config.local.json` 的 `tts.enabled` 置 `true`（键缺省时全走默认探测链，旧配置无需重生成）。
-3. GPU 排程建议：TTS 批跑与 vtx video 阶段（NVENC 同卡）、ASR sidecar 错峰；同卡共驻显存
-   紧张时 indextts 会 OOM 退出并提示降级 edge（预期路径）。
-
-## 待集成事项
-
-集成事项已于 2026-09-11 全部落地（根 README/init.py/config.example.json/edit.md 均已更新）。
 
 ## 风险
 
