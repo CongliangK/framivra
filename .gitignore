@@ -18,7 +18,7 @@ dist/
 # 本地配置（init.sh 从 config.example.json 生成，含机器特有开关，不入库）
 config.local.json
 
-# 可再生的公开字体二进制（blender_bridge/assets/ 的 Noto Sans CJK SC，
+# 可再生的公开字体二进制（apps/blender-bridge/assets/ 的 Noto Sans CJK SC，
 # 无代码引用；系统 /usr/share/fonts 或 fonts.google.com 可取）
 *.otf
 *.ttf

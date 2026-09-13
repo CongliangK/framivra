@@ -1,5 +1,4 @@
 """Real FFmpeg audit regressions; set VTX_AUDIT_SCRIPT to compare an older script."""
-import importlib.util
 import json
 import math
 import os
@@ -13,11 +12,15 @@ import unittest
 from unittest.mock import patch
 import wave
 
-REPO = Path(__file__).resolve().parents[1]
-SCRIPT = Path(os.environ.get('VTX_AUDIT_SCRIPT', REPO / 'blender_bridge/audit_bundle.py'))
-spec = importlib.util.spec_from_file_location('audio_audit_under_test', SCRIPT)
-audit_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(audit_module)
+# v2 P2a 随迁 apps/blender-bridge/tests/：app 根注入 sys.path 后普通 import
+# audit_bundle（清除 spec_from_file_location，§1.4；app 目录注入不涉内核双模块）
+APP = Path(__file__).resolve().parent.parent
+REPO = APP.parent.parent
+if str(APP) not in sys.path:
+    sys.path.insert(0, str(APP))
+import audit_bundle as audit_module   # noqa: E402
+
+SCRIPT = Path(os.environ.get('VTX_AUDIT_SCRIPT', APP / 'audit_bundle.py'))
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')

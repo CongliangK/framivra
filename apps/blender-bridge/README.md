@@ -1,26 +1,49 @@
 # blender_bridge — timeline.json → Blender VSE 预览前端
 
-> **使用者向**：Blender 预览桥用法与 VSE 坑表。历史校验记录与实测数据见 `../docs/DEV.md`。
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/blender-bridge/`）**：manifest 见 `app.json`（kind=app；健康检查 = `audit_bundle.py --help`）；兼容 symlink：仓库根 `blender_bridge → apps/blender-bridge`（目录级，旧路径引用仍可达——music skill 跨仓引用的保命线，§6.1/§6.3）。随迁定位改写：audit_bundle.py 的 vtx 解析链重算为 **repo 根锚定**（自本文件向上找含 `vt.py`+`vtx/vtx.py` 的祖先；原「上级目录」在迁移后是 `apps/` 而非仓根，§6.2）；`tests/test_audio_audit.py` 随迁并清除 spec_from_file_location（app 根注入 + 普通 import，§1.4）。
+
+> **使用者向**：Blender 预览桥用法与 VSE 坑表。历史校验记录与实测数据见 `../../docs/DEV.md`。
 
 > 路线：不用 MCP（CLI/bpy 直连更自由）、不用外部直写 .blend（无格式规范），用 `blender --background --python` 生成。回写（Blender→json）由 blend2json.py 提供（见下）。
+
+## 文件清单（用途）
+
+| 件 | 用途 | 解释器 |
+|---|---|---|
+| `audit_bundle.py` | BGM 分轨审计包五步链（MP3 导出→审计 timeline→vtx validate→json2blend→verify_blend） | 系统 python3 |
+| `json2blend.py` / `verify_blend.py` | timeline.json → preview.blend 生成 / 结构校验 | **blender**（`--python` 载入，python3 直跑 ModuleNotFoundError: bpy） |
+| `blend2json.py` | 用户手剪回写桥（Blender→json，保护规则拒收危险改动） | **blender** |
+| `subs_alpha.py` | 字幕透明轨（cache/subs.ass → ProRes 4444 alpha mov） | 系统 python3 |
+| `bundle_session.py` | audit_bundle 的单次 blender 会话合并执行器（runpy 依次跑 json2blend/verify） | **blender** |
+| `tests/` | audit 真 ffmpeg 回归（`test_audio_audit.py`，10 用例） | 系统 python3 |
+
+## 依赖
+
+- **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（audit_bundle 逐源导出与内容检测，系统 python3 即可跑）。
+- **blender 解释器（README 约束，不进 requires）**：json2blend / verify_blend / blend2json / bundle_session 须由 **blender** 运行（`blender --background --python <脚本>`）——依赖 bpy，系统 python3 无法 import。本机 Blender 5.2.1 LTS（`~/.local/opt/blender-5.2.1-linux-x64`，符号链接 `~/.local/bin/blender`）。
+
+## 健康检查
+
+`env python3 apps/blender-bridge/audit_bundle.py --help` 退出码 0（app.json health.command；系统 python3 面不涉 blender）。blend 件另走语法门（vt init 的 bridge_* 编译检查）与实际 blender 会话（audit 全链）。
 
 ## 用法（对一个项目生成预览工程）
 
 ```bash
-cd ~/文档/04_bilibili视频/_library/blender_bridge
-python3 subs_alpha.py <项目>/timeline.json          # ① 字幕透明轨（需先有 cache/subs.ass，vtx 字幕阶段产物）
+cd apps/blender-bridge   # （旧路径 blender_bridge/ 经 symlink 同样可达；_library 挂载引用继续解析成功）
+env python3 subs_alpha.py <项目>/timeline.json      # ① 字幕透明轨（需先有 cache/subs.ass，vtx 字幕阶段产物）
 blender --background --factory-startup --python json2blend.py -- <项目>/timeline.json <项目>/preview.blend   # ② 生成
 blender --background --python verify_blend.py -- <项目>/timeline.json <项目>/preview.blend                   # ③ 结构校验（退出码 0=全过）
 blender <项目>/preview.blend                        # ④ 打开预览（空格播放，拖拽刮擦）
+env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨审计包五步链
 ```
 
 **打开即视频编辑工作区**：json2blend 生成的 .blend 默认活动工作区=「Video Editing」——打开即是时间线+视频预览面板，无需手动切换工作区/场景。实现：以 Blender 官方 `Video_Editing` app template 的 startup.blend 为底（出厂启动文件不含该工作区，headless 下唯一可靠路径），清掉模板示例物件后在模板场景上建 VSE；找不到模板时回落原 Layout（不影响条目生成）。
 
-依赖：Blender 5.2.1 LTS（`~/.local/opt/blender-5.2.1-linux-x64`，符号链接 `~/.local/bin/blender`）、ffmpeg/ffprobe。
+依赖（app 级与 blender 解释器约束见顶部「依赖」节）。
 
 ## 历史校验记录
 
-各项目 preview.blend 的 verify 校验通过数与样帧 PSNR 记录迁移至 `../docs/DEV.md`（迁移即测试基线一节）。
+各项目 preview.blend 的 verify 校验通过数与样帧 PSNR 记录迁移至 `../../docs/DEV.md`（迁移即测试基线一节）。
 
 字幕透明轨产物：`<项目>/cache/subs_alpha.mov`（ProRes 4444 alpha）。
 
@@ -72,9 +95,9 @@ blender <项目>/preview.blend                        # ④ 打开预览（空�
 
 ## 分轨审计包 audit_bundle.py（人机协作交付门）
 
-事件映射、逐源导出、内容缓存、整段回退及验收边界见 [音频审计说明](../docs/audio-audit.md)。审计是 duck/总混处理前的 MP3 试听；`--whole` 保留每个原事件，默认切分不会重启循环或淡变。
+事件映射、逐源导出、内容缓存、整段回退及验收边界见 [音频审计说明](../../docs/audio-audit.md)。审计是 duck/总混处理前的 MP3 试听；`--whole` 保留每个原事件，默认切分不会重启循环或淡变。
 
-用法：`python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-] [--force]`
+用法：`env python3 apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json [--prefix bgm-] [--force]`
 BGM 正式版默认必做（见 music skill「交付门：分轨审计包」节）：分轨 MP3 导出 →
 审计 timeline（逐轨一列、生产音量原样、静音切分=只保留实际发声段、无 voice 轨）→
 vtx validate → json2blend →

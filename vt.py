@@ -221,14 +221,14 @@ def cmd_init(a):
     rec("new_project", (ROOT / "scripts/new_project.sh").is_file(), "scripts/new_project.sh（bash 脚本；Windows 需 Git Bash/WSL）")
     for f in ("json2blend.py", "verify_blend.py", "blend2json.py", "subs_alpha.py"):
         try:
-            compile((ROOT / "blender_bridge" / f).read_text(encoding="utf-8"), f, "exec")
+            compile((ROOT / "apps/blender-bridge" / f).read_text(encoding="utf-8"), f, "exec")
             rec(f"bridge_{f}", True, "语法门；运行需 blender --python")
         except SyntaxError as e:
             rec(f"bridge_{f}", False, str(e))
     if interp is None:
         rec("audit_bundle", False, "找不到 python3 解释器（PATH）")
     else:
-        r = sh([interp, str(ROOT / "blender_bridge/audit_bundle.py"), "--help"])
+        r = sh([interp, str(ROOT / "apps/blender-bridge/audit_bundle.py"), "--help"])
         rec("audit_bundle", r.returncode == 0)
 
     say("--- 4/5 大模型能力（默认关闭，按需开启；各链 init 见下）---")

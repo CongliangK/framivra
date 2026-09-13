@@ -300,13 +300,20 @@ def main():
 
     # ③ validate
     t2 = time.perf_counter()
-    # vtx.py 解析顺序（2026-09-11）：VTX_VTX_PY 环境变量 > 本仓权威副本（blender_bridge
-    # 上级 vtx/vtx.py）> 技能安装路径 fallback。此前无条件用技能路径，本仓副本与其
-    # 漂移时会审到旧实现。
+    # vtx.py 解析顺序（2026-09-11；v2 P2a 定位链重算 §6.2）：VTX_VTX_PY 环境变量 >
+    # 本仓权威副本 > 技能安装路径 fallback。此前无条件用技能路径，本仓副本与其
+    # 漂移时会审到旧实现。迁移 apps/blender-bridge/ 后上级不再是仓根——改为自本
+    # 文件向上找 repo 根（含 vt.py 标记的祖先目录）下的 vtx/vtx.py。
     vtx_env = os.environ.get("VTX_VTX_PY")
-    vtx = (Path(vtx_env) if vtx_env
-           else Path(__file__).resolve().parent.parent / "vtx" / "vtx.py")
-    if not vtx.exists():
+    vtx = None
+    if vtx_env:
+        vtx = Path(vtx_env)
+    else:
+        for anc in Path(__file__).resolve().parents:
+            if (anc / "vt.py").is_file() and (anc / "vtx" / "vtx.py").is_file():
+                vtx = anc / "vtx" / "vtx.py"
+                break
+    if vtx is None or not vtx.exists():
         vtx = Path.home() / ".agents/skills/video/vtx/vtx.py"
     run([sys.executable, str(vtx), "-t", str(at_path), "validate"], tail=2)
     print(f"[timing] step3 validate: {time.perf_counter() - t2:.1f}s")
