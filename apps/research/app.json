@@ -1,0 +1,25 @@
+{
+  "name": "research",
+  "version": "1.0.0",
+  "kind": "app",
+  "entry": {
+    "cli": [
+      "bilibili.py",
+      "github_repos.py",
+      "score_topic.py",
+      "fetch-site-assets.py",
+      "dump-computed-styles.mjs",
+      "scroll-shoot.mjs"
+    ]
+  },
+  "health": {
+    "type": "command",
+    "command": "bilibili.py --help"
+  },
+  "requires": {
+    "binaries": ["node", "google-chrome"],
+    "python_packages": []
+  },
+  "config_keys": [],
+  "docs": "README.md"
+}
