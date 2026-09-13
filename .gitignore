@@ -46,3 +46,7 @@ cache/
 matting/MatAnyone2/
 matting/BiRefNet_HR/
 matting/__pycache__/
+
+# matting/resolve_matte 运行产物（runner 日志、uinject.c 现场编译的二进制，可再生）
+matting/resolve_matte/*.log
+matting/resolve_matte/uinject
