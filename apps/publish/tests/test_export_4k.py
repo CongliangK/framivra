@@ -10,8 +10,10 @@
      （export() 走探测/分段/编码/concat/自检；探测失败 skip 并标注）；二次运行段全命中；
   ⑤ x264 回落路径参数：mock 探测 False，断言执行的 ffmpeg 命令含 libx264 medium
      及 R5 全部关键参数（19.5M/55M/80M/high/copy/faststart）。
-运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3 前缀：
-AppImage 劫持 argv[0]，裸 python3 的 sys.executable 指向错误解释器，见全局 AGENTS.md）
+运行：repo 根 `bash scripts/run_all_tests.sh`（P2a 起统一运行器含 apps/*/tests 发现）；
+本 app 内独立跑：`cd apps/publish && env python3 -m unittest discover -s tests -t . -v`
+（本机 ZCode 环境必须 env python3 前缀：AppImage 劫持 argv[0]，裸 python3 的
+sys.executable 指向错误解释器，见全局 AGENTS.md）
 """
 import json
 import subprocess
@@ -22,9 +24,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "scripts"))  # export_4k.py 非包成员，按路径导入
-sys.path.insert(0, str(REPO))                # repo 根（v2 §1.4 包导入，不再注入 repo/vtx）
+APP = Path(__file__).resolve().parents[1]  # apps/publish/（app 根；tests 随 app 迁入 P2a）
+REPO = APP.parent.parent                   # repo 根（apps/publish → apps → repo）
+sys.path.insert(0, str(APP))               # export_4k.py 非包成员，按路径导入
+sys.path.insert(0, str(REPO))              # repo 根（v2 §1.4 包导入，不再注入 repo/vtx）
 
 import export_4k
 from export_4k import (NVENC_ARGS, SCALE_4K, fallback_x264_cmd, project_root,
