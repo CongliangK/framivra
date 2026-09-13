@@ -454,7 +454,9 @@ def _probe_health(manifest: dict, comp_dir: Path) -> tuple:
             node = node.get(part) if isinstance(node, dict) else None
             if node is None:
                 break
-        return (node is not None and node != ""), f"config {health.get('key')}: {'已配置' if node else '未配置'}"
+        # 判定口径 = 键已配置（值非空即可，false 也算已配置——如 bgm 路由声明的开关标记）
+        present = node is not None and node != ""
+        return present, f"config {health.get('key')}: {'已配置' if present else '未配置'}"
     return None, f"health.type={htype!r} 未知，跳过探测"
 
 

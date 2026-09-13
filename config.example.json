@@ -1,5 +1,5 @@
 {
-  "_comment": "video_tools 本地能力开关（模板）。init（vt.py init）将本文件复制为 config.local.json（gitignored）。大模型相关能力默认全部关闭，需用户显式配置开启。asr/tts/imgen 三模块已接线（v2 起配置统一经 vtx/pluginlib/config.py 加载：VTX_CONFIG 环境变量 > 本文件；坏 JSON 警告并按空配置继续；路径型键自动 ~ 展开）；comfyui 仍为声明式预留（matting 链按 matting/README.md 独立开启）。开启某项能力前，以对应目录 README 的依赖清单与开启步骤为准。",
+  "_comment": "video_tools 本地能力开关（模板）。init（vt.py init）将本文件复制为 config.local.json（gitignored）。大模型相关能力默认全部关闭，需用户显式配置开启。asr/tts/imgen 三模块已接线（v2 起配置统一经 vtx/pluginlib/config.py 加载：VTX_CONFIG 环境变量 > 本文件；坏 JSON 警告并按空配置继续；路径型键自动 ~ 展开）；comfyui/bgm 仍为声明式预留（matting 链按 matting/README.md、bgm 路由按 apps/bgm/README.md 独立开启）。开启某项能力前，以对应目录 README 的依赖清单与开启步骤为准。",
   "_comment_external": "external_apps / external_plugins（v2 §2.4 安全节）：仓外 app/plugin 根目录注册。条目 = 绝对或 ~/ 路径字符串（默认 disabled），或 {\"path\": ..., \"enabled\": true} 显式启用；路径 resolve 后做白名单根校验（manifest/health 命令必须落在该目录内）；external 插件即使 enabled 仍须 plugins/registry.json 未禁用才生效。官方件不在此注册（随仓分发）。",
   "external_apps": [],
   "external_plugins": [],
@@ -39,6 +39,11 @@
     "confirm_before_submit": true,
     "purpose": "速创 API 生图（imgen/）：背景图 bg4k/bg1080p/竖版，cover-crop 后处理直达 matting/口播链",
     "howto": "bash imgen/init.sh 配 key（SC_API_KEY 或 keyring）；0.1 元/张，提交前确认"
+  },
+  "bgm": {
+    "enabled": false,
+    "purpose": "BGM/配乐产线路由声明（apps/bgm/，纯声明无代码）：本体在姊妹仓 music_tools（~/文档/01_活跃项目/music_tools，具体项目在 music_project）；分轨审计包交付门走 apps/blender-bridge/audit_bundle.py",
+    "howto": "路由与开启步骤见 apps/bgm/README.md；BGM 生成/响度 QC 入口：music skill（~/.agents/skills/music）"
   },
   "denoise": {
     "enabled": false,
