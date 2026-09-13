@@ -1,4 +1,4 @@
-# runbook · 标准修改配方集（R1-R6）与棒次协议
+# runbook · 标准修改配方集（R1-R7）与棒次协议
 
 > **定位：接棒子智能体「只读这一份就开工」的配方文件。** 路由索引在 `../SKILL.md`，字段语义与坑表在 `edit.md`/`gfx.md`；本文只回答「接到某类任务后，按什么顺序敲哪些命令」。命令必须与 `edit.md`/各脚本 `--help` 及仓库现状一致，本文每条配方都经过 voice-ime（v3.x–v4.1）实测。
 >
@@ -334,6 +334,34 @@ python3 $VIDEO_TOOLS/blender_bridge/audit_bundle.py -t timeline.json --prefix bg
 **必跑验证门**：audit_bundle 内置五步（转码→审计 timeline→vtx validate→audit.blend→verify_blend 结构校验）。
 
 **已知坑位**：给用户的 Blender 用法话术与交付规程见 music skill「交付门：分轨审计包」节与 `blender_bridge/README.md`。
+
+---
+
+## R7 · 封面制作/修改（B 站投稿封面，D50）
+
+**适用场景**：新视频出投稿封面，或改封面文案/背景/排布重铺。规格依据（显示比例/安全区/文案法）与完整坑表 → `cover.md`。
+
+**前置条件**：背景图已生成并验收（imgen GPT 系端点，付费动作人工授权；提示词原则与选型见 `cover.md` §五）；大标题+小字两行文案已拍板。
+
+```bash
+# 一条龙：prep-bg(lanczos 精确画布) → render(HTML+Chrome 截图 PNG/JPG≤2MB) → previews(四端裁切) → qc(验证门)
+env python3 $VIDEO_TOOLS/scripts/make_cover.py all --out <项目>/cover \
+    --bg-src <项目>/assets/imgen/<UTC>-<n>.png \
+    --title "说话 就是 打字" --sub "Linux 开源 · 语音键盘同引擎"
+
+# 只改文案/排布重铺（bg_1920x1200.png 已在 <项目>/cover/ 内）：
+env python3 $VIDEO_TOOLS/scripts/make_cover.py render --out <项目>/cover --title "…" --sub "…"
+env python3 $VIDEO_TOOLS/scripts/make_cover.py previews --dir <项目>/cover
+env python3 $VIDEO_TOOLS/scripts/make_cover.py qc --dir <项目>/cover
+```
+
+**产物契约**：`<项目>/cover/` = bg png + cover.html + cover.meta.json（参数自述）+ cover png/jpg（上传用 JPG）+ previews/{pc_16x9,thumb_384,app_138,app_43}.png + cover_qc.json。
+
+**耗时基准**：全链 ~10s（voice-ime 实测：prep-bg ~2s + Chrome 截图 ~3s + 预览 ~3s + qc ~2s）。
+
+**必跑验证门**：`qc` PASS（尺寸/安全区几何/YAVG≥115/JPG≤2MB，FAIL 退出码 1）+ thumb_384 缩略图大标题 1 秒可读（人审）+ 独立视觉子智能体 OCR 复检。
+
+**已知坑位**：生图勿单独依赖 flare（对无害抽象画提示词有审核误杀两连拒记录）；sunburst 忽略 aspectRatio 出 1K 方图，prep-bg 兜底裁切（放大倍数自动警告）；Chrome headless 同输入渲染字节一致，可当幂等重铺工具；投稿时创作中心裁切预览框再自查一次。
 
 ---
 

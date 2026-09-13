@@ -26,14 +26,18 @@ description: "B站视频产线一体化 skill：选题调研（R0-R6 多智能�
 | 调研 research | `references/research.md` | 多智能体选题调研（R0-R6 编排、采集脚本、独立评分、红队质询），产出 01-brief.md |
 | 动效 gfx | `references/gfx.md` | HTML 帧驱动透明动效页（标题卡、图表、导航卡、overlay 卡、端板）的设计协议、模板库与样式模式库 |
 | 剪辑 edit | `references/edit.md` | timeline.json 契约 + vtx CLI 全阶段（validate/audit/prepare/gfx/video/audio/mux/qc/gc）+ 音频工程 + 渲染坑表 + 缓存治理 |
-| 修改配方/棒次 | `references/runbook.md` | 标准修改配方集 R1-R6 与子智能体棒次协议 |
-| 实拍/音频脚本 | `scripts/`（多数脚本 `--help`；score_topic 用 `--rubric`） | sync_audio / denoise_voice / repack_voice / post_loudness / check_4k / content_gates / bed_static_duck / new_project 等 15 件 |
+| 抠像/背景合成 matting | `references/matting.md` | 真人实拍抠像（达芬奇 Magic Mask 主力 + 自研链备用）→ 带 alpha ProRes4444 → 背景合成全流程 |
+| 修改配方/棒次 | `references/runbook.md` | 标准修改配方集 R1-R7 与子智能体棒次协议 |
+| 封面 cover | `references/cover.md` | B 站投稿封面产线：显示比例/安全区规格、文案法、imgen 背景生成、make_cover.py 合成渲染与 QC 门（D50） |
+| 实拍/音频脚本 | `scripts/`（多数脚本 `--help`；score_topic 用 `--rubric`） | sync_audio / denoise_voice / repack_voice / post_loudness / check_4k / content_gates / bed_static_duck / new_project / make_cover 等 16 件 |
 | 用户任务 / 关键词 | 先读 |
 |---|---|
 | 新选题、调研可行性、对标分析、生成 01-brief | `references/research.md` |
 | 做动效页、动态图表、片头片尾、overlay 卡、写 gfx/*.html | `references/gfx.md` |
 | 剪辑、切素材、多轨合成、画中画、烧字幕、混音、渲染、QC、缓存治理；提到 timeline.json / vtx | `references/edit.md` |
 | 实拍素材处理、音视频同步、降噪、响度、验证门 | `references/edit.md` + 下文「音频创作流程」+ 脚本 --help |
+| 制作/修改 B 站投稿封面、封面文案、封面裁切预览 | `references/cover.md` |
+| 抠像、换背景、绿幕、背景替换、Magic Mask、matte、带 alpha 前景合成 | `references/matting.md` |
 | BGM/配乐生成、音色、乐谱 | **路由到 `music` skill**，见「音频创作流程·BGM 支线」 |
 ## 视频创作流程（六阶段）
 > 编排层方法论（开场模板/演示对位/字幕策略/结尾模板）读 `_library/reports/编排方法论-科技口播视频.md`。
@@ -47,6 +51,7 @@ python3 <video_tools>/scripts/sync_audio.py 相机轨 话筒轨   # GCC-PHAT 无
 # 音轨替换 → 口型感知全局 +200ms（默认）→ 降噪链 → 头尾真空切割 → 构图统一
 # 手册（可照抄）：_library/reports/A-roll实拍素材处理流程-2026-09-07.md
 ```
+- **抠像支线**：需要「真人出现在新背景前」的镜头 → 抠像 + 背景合成，全流程见 `references/matting.md`（resolve_matte 主力，产物带 alpha ProRes4444）。
 - **④ 动效页** → `references/gfx.md`（帧驱动协议；**优先复用 `assets/gfx-templates/` 七件已验收模板**，改 CONST 数据不碰机制代码；新页三件套=manifest+data-sources+自查脚本）。
 - **⑤ 时间线编排**：手写/脚本生成 `timeline.json`（契约速览与「素材放哪条轨」速查表见 `references/edit.md`）。**编排完先开 `preview.html` 人审，再 validate**。批量重排写幂等脚本 + `vtx snapshot` 留快照。
 - **⑥ 渲染与 QC**：
@@ -69,7 +74,7 @@ python3 <video_tools>/scripts/check_4k.sh out/final_4k.mp4 ...     # 4K 投稿�
   → timeline.json 编排（preview.html 人审 → validate）→ --draft 迭代
   → 用户 Blender 审片（json2blend 预览工程）→ 意见修订（幂等脚本+snapshot）
   → 正式渲染 all → content_gates + check_4k 验证门 → 音频耳验（sfx/床乐）
-  → BGM 分轨审计包（audit_bundle.py）→ FREEZE 冻结（md5）→ 4K 投稿版 → 发布物料
+  → BGM 分轨审计包（audit_bundle.py）→ FREEZE 冻结（md5）→ 4K 投稿版 → 发布物料 + 投稿封面（references/cover.md）
   → 收尾：vtx gc + snapshot 归档
 ```
 迭代遵循**修复工作法**：先问后做不脑测 / 在时间轴编排层定性（Blender=审片界面）/ 区分「编排对实现错」vs「编排本身错」/ 用户权威文本 > 代理回读推断。
@@ -94,6 +99,7 @@ python3 <video_tools>/scripts/check_4k.sh out/final_4k.mp4 ...     # 4K 投稿�
 | 正式 GPU | `... video --gpu` |
 | 内容验证门 | `python3 <video_tools>/scripts/content_gates.py -t ... [--project-gates 门.json]` |
 | 4K 投稿断言 | `bash <video_tools>/scripts/check_4k.sh <成片> ...` |
+| B 站投稿封面 | `env python3 <video_tools>/scripts/make_cover.py all --out <项目>/cover --bg-src <imgen原图> --title "…" --sub "…"`（规格/QC 见 `references/cover.md`） |
 | 缓存治理 | `... gc --dry` / `gc` / `df` / `snapshot` |
 | Blender 审片工程 | `blender --background --factory-startup --python <video_tools>/blender_bridge/json2blend.py -- <项目>/timeline.json <项目>/preview.blend`（json2blend/verify_blend 须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError） |
 | BGM 分轨审计包 | `python3 <video_tools>/blender_bridge/audit_bundle.py -t <项目>/timeline.json` |
