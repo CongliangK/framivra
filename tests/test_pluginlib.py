@@ -168,9 +168,15 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(pl_registry.plugin_state("duck-static", REPO), "not_installed")
         self.assertEqual(pl_registry.plugin_state("unknown-thing", REPO), "not_installed")
 
-    def test_builtin_scan_empty_ok(self):
-        entries = pl_registry.scan_builtin(REPO)   # apps/ 不存在、plugins/ 只有 registry.json
-        self.assertEqual(entries, [])
+    def test_builtin_scan_finds_valid_apps(self):
+        # P2a 起 apps/ 有实体（首个为 cover）——发现件 manifest 必须全部有效
+        # （P1-2 时点 apps/ 不存在、扫描为空是合规态；本断言随落地件演进）
+        entries = pl_registry.scan_builtin(REPO)
+        names = {(e["name"], e["kind"]) for e in entries}
+        self.assertIn(("cover", "app"), names)
+        for e in entries:
+            self.assertEqual(e["manifest_errors"], [], f"{e['name']} manifest 无效")
+            self.assertTrue(e["dir"].is_dir())
 
 
 # ---------------------------------------------------------------- 三分支扫描（纯函数层）
