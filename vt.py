@@ -2,11 +2,18 @@
 """vt —— video_tools v2 统一入口（ARCHITECTURE §5.1，吸收原 init.py 全部语义）。
 
 子命令：
-  doctor [--json]        三检：①版本（本地 HEAD vs origin/HEAD 漂移；VTX_DOCTOR_OFFLINE=1
-                         或 fetch 5s 超时降级 WARN；clean/dirty/ahead/behind；VERSION 展示，
-                         无 tag 不告警）②组件（registry 全量 apps/plugins 的 manifest 有效 +
-                         health 探测 + requires 依赖；enabled 才 FAIL 门——未装/disabled 仅提示；
-                         附 `import vtx` 实际解析路径自检）③skills（工作流包完好性）
+  doctor [--json] [--fix]  三检：①版本（本地 HEAD vs origin/HEAD 漂移；真 fetch
+                         5s 超时，VTX_DOCTOR_OFFLINE=1 或超时降级 WARN；
+                         clean/dirty/ahead/behind；VERSION 展示，无 tag 不告警）
+                         ②组件（registry 全量 apps/plugins 的 manifest 有效 +
+                         health 探测 + requires 依赖；enabled 才 FAIL 门——未装/
+                         disabled 仅提示；附 `import vtx` 实际解析路径自检）
+                         ③skills（工作流包完好性；未注册包如 examples/skill-demo
+                         不在扫描面，不误报）
+  doctor --fix          修复三检中可自动修复项：挂载链接重建（联动 --fix-links
+                         同表；live 挂载指向其他仓时只报人工项不自动改）+
+                         plugins/registry.json 缺字段回填（manifest 为声明数据源，
+                         §2.3）。无可自动修复项时明确说明。
   apps|plugins|skills list|check
                          list = 注册表 + 安装态清单；check = doctor 组件段单层体检
   version                VERSION 内容 + git HEAD 短哈希
@@ -22,8 +29,7 @@ asr/client.py、imgen/secrets.py 的 spec 复用已废除（asr/imgen 现无探�
 doctor 改走 manifest health.command 子进程探测）。
 
 注：init 的 --fix（安装缺失基础依赖）与 doctor 的 --fix（修复可自动修复项，如
-链接/注册表）语义不同，不得混用（§5.1）——doctor --fix 本轮未实现（无注册表/
-链接以外的自动修复项），--fix-links 独立成入口。
+链接/注册表）语义不同，不得混用（§5.1）。
 """
 import argparse
 import importlib.util
@@ -52,6 +58,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from vtx.pluginlib import config as _pcfg    # noqa: E402（统一加载，§5.3）
 from vtx.pluginlib import registry as _preg  # noqa: E402（发现/静态注册表，§2.1）
+from vtx.pluginlib.manifest import load_manifest as _load_manifest  # noqa: E402
 
 
 def py3() -> str:
@@ -606,6 +613,173 @@ def _doctor_skills(json_out: bool) -> dict:
     return out
 
 
+# ================================================================ doctor --fix（§5.1，P4 落地）
+def _mount_link_state() -> list:
+    """挂载链接体检（与 cmd_fix_links 同表 MOUNT_LINKS）：
+    → [(link_path, target_path, problem, want)]，problem ∈ missing|wrong_target|
+    absolute_form|occupied；want = 应有的相对链接目标串。空列表 = 全部健康。
+
+    目标件本仓未落地的链接项不体检（cmd_fix_links 同口径：落地后再挂）。
+    """
+    mroot = mount_root()
+    out = []
+    for link_name, rel_target in MOUNT_LINKS:
+        target = (ROOT / rel_target).resolve()
+        link = mroot / link_name
+        if not target.exists():
+            continue
+        want = os.path.relpath(target, mroot)
+        if link.is_symlink():
+            current = Path(os.readlink(link))
+            resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
+            if resolved == target:
+                if current.is_absolute():
+                    out.append((link, target, "absolute_form", want))
+                continue
+            out.append((link, target, "wrong_target", want))
+        elif link.exists():
+            out.append((link, target, "occupied", want))       # 真实文件占用：永不自动改
+        else:
+            out.append((link, target, "missing", want))
+    return out
+
+
+def _mount_fix_safe(items: list) -> tuple:
+    """挂载链接自动修复的安全门 → (safe, reason)。
+
+    VTX_MOUNT_ROOT 覆盖 → 安全（测试/多仓并存的隔离环境）；默认 live 挂载根下
+    任一现存链接解析到**本仓之外**的存在的路径 → 不安全（挂载属其他仓——本机
+    live voice-ime/主工作区场景，铁律：不自动改，列人工项）；其余（缺失/仓内
+    错指/绝对形）→ 安全。"""
+    if os.environ.get("VT_MOUNT_ROOT"):
+        return True, "VT_MOUNT_ROOT 隔离环境"
+    for link, _target, problem, _want in items:
+        if problem != "wrong_target":
+            continue
+        current = Path(os.readlink(link))
+        resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
+        if resolved.exists() and not str(resolved).startswith(str(ROOT)):
+            return False, f"{link.name} 指向本仓之外（{resolved}）——挂载根属其他仓"
+    return True, ""
+
+
+def _apply_mount_link_fixes(items: list) -> list:
+    """执行挂载链接修复（missing/wrong_target/absolute_form → 重建相对链接）；
+    occupied 跳过。返回实际修复的链接名列表。"""
+    mroot = mount_root()
+    mroot.mkdir(parents=True, exist_ok=True)
+    applied = []
+    for link, _target, problem, want in items:
+        if problem == "occupied":
+            continue
+        if link.is_symlink():
+            link.unlink()
+        os.symlink(want, link)
+        applied.append(f"{link.name} → {want}")
+    return applied
+
+
+def _registry_fix_plan(repo_root=None) -> tuple:
+    """registry.json 缺字段修复计划（§5.1 doctor --fix 能修项②）→ (fixes, manual)。
+
+    plugins/<name>/ 实体在盘且 manifest 有效、registry 条目缺 version/keys/hooks/
+    installed（manifest 是 registry.json 的声明数据源，§2.3）→ 回填清单
+    [(name, field, value)]；installed 显式 false / 实体无条目 → 人工项（可能
+    有意，不自动改）。fixes 为空且 manual 为空 = 注册表无缺字段。"""
+    root = Path(repo_root) if repo_root else ROOT
+    fixes, manual = [], []
+    base = root / "plugins"
+    if not base.is_dir():
+        return fixes, manual
+    reg = _preg.load_static_registry(root)["plugins"]
+    for d in sorted(base.iterdir()):
+        if not d.is_dir() or d.name.startswith((".", "_")):
+            continue
+        manifest, errors = _load_manifest(d)
+        if errors or not manifest or manifest.get("kind") != "plugin":
+            continue   # manifest 无效是组件段 FAIL 项，不属 --fix 语义
+        entry = reg.get(d.name)
+        ext = manifest.get("extends", {}) or {}
+        if entry is None:
+            manual.append(f"plugins/{d.name}/ 实体存在但 registry.json 未声明——"
+                          "是否正式插件请人工补录条目")
+            continue
+        if "version" not in entry:
+            fixes.append((d.name, "version", manifest.get("version", "?")))
+        if not entry.get("keys"):
+            sk = ext.get("schema_keys") or []
+            if sk:
+                fixes.append((d.name, "keys", sk))
+        if not entry.get("hooks"):
+            hk = ext.get("hooks") or []
+            if hk:
+                fixes.append((d.name, "hooks", hk))
+        if "installed" not in entry:
+            fixes.append((d.name, "installed", True))
+        elif entry.get("installed") is False:
+            manual.append(f"plugins/{d.name}: registry 显式 installed:false"
+                          "（有意卸载？）——不自动改")
+    return fixes, manual
+
+
+def _apply_registry_fixes(fixes: list, repo_root=None) -> None:
+    """按计划回填 registry.json（保留其余字段原样；原子性靠小文件整体重写）。"""
+    root = Path(repo_root) if repo_root else ROOT
+    f = root / "plugins" / "registry.json"
+    data = json.loads(f.read_text(encoding="utf-8"))
+    for name, field, value in fixes:
+        data.setdefault("plugins", {}).setdefault(name, {})[field] = value
+    f.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                 encoding="utf-8")
+
+
+def _doctor_fix(json_out: bool) -> dict:
+    """doctor --fix 修复通道：挂载链接（联动 --fix-links 同表）+ registry.json
+    缺字段。返回报告 dict；无可自动修复项时 applied 空 + 说明齐全。"""
+    report = {"mount": {}, "registry": {}, "manual": []}
+    items = _mount_link_state()
+    if not items:
+        report["mount"] = {"status": "ok", "note": "挂载链接全部健康"}
+    else:
+        safe, reason = _mount_fix_safe(items)
+        if safe:
+            applied = _apply_mount_link_fixes(items)
+            report["mount"] = {"status": "fixed", "applied": applied}
+        else:
+            report["mount"] = {"status": "manual", "note": reason +
+                               "——确认目标仓后跑 vt.py --fix-links"}
+            report["manual"].append(f"挂载链接：{reason}")
+    fixes, manual = _registry_fix_plan()
+    report["registry"] = {"status": "fixed" if fixes else "ok",
+                          "fixes": [f"{n}.{f} = {v!r}" for n, f, v in fixes]}
+    if fixes:
+        _apply_registry_fixes(fixes)
+    report["manual"].extend(f"registry：{m}" for m in manual)
+    n_applied = len(report["mount"].get("applied", [])) + len(fixes)
+    if not json_out:
+        print("== --fix：可自动修复项 ==")
+        m = report["mount"]
+        if m.get("status") == "ok":
+            print("  ✓ 挂载链接全部健康")
+        elif m.get("status") == "fixed":
+            for a in m["applied"]:
+                print(f"  · 已重建挂载链接 {a}")
+        else:
+            print(f"  ℹ 挂载链接：{m['note']}")
+        r = report["registry"]
+        if r["status"] == "ok":
+            print("  ✓ registry.json 无缺字段")
+        else:
+            for line in r["fixes"]:
+                print(f"  · 已回填 {line}")
+        if report["manual"]:
+            for line in report["manual"]:
+                print(f"  ℹ 人工项（不自动改）：{line}")
+        if n_applied == 0:
+            print("  doctor --fix：无可自动修复项（链接/注册表均已健康或需人工处理）")
+    return report
+
+
 def cmd_doctor(a) -> int:
     if not a.json:
         print("== ① 版本 ==")
@@ -616,9 +790,12 @@ def cmd_doctor(a) -> int:
     if not a.json:
         print("== ③ skills（工作流包）==")
     skills = _doctor_skills(a.json)
+    fix = _doctor_fix(a.json) if a.fix else None
     if a.json:
-        print(json.dumps({"version": version, "components": components,
-                          "skills": skills}, ensure_ascii=False, indent=2))
+        out = {"version": version, "components": components, "skills": skills}
+        if fix is not None:
+            out["fix"] = fix
+        print(json.dumps(out, ensure_ascii=False, indent=2))
         return 1 if (components["fail"] or skills["fail"]) else 0
     fails = []
     if components["fail"]:
@@ -738,7 +915,9 @@ def main():
                     help="doctor | apps|plugins|skills list|check | version | init")
     ap.add_argument("sub", nargs="?", default=None, help="list | check（apps/plugins/skills 的子命令）")
     ap.add_argument("--json", action="store_true", help="doctor/init：机器可读输出")
-    ap.add_argument("--fix", action="store_true", help="init 专属：尝试自动安装缺失的基础依赖")
+    ap.add_argument("--fix", action="store_true",
+                    help="init：安装缺失基础依赖；doctor：修复可自动修复项（挂载链接重建 + "
+                         "registry.json 缺字段回填，§5.1）——两者语义不同，不得混用")
     ap.add_argument("--fix-links", action="store_true",
                     help="重建挂载符号链接（skill 5 链接 + skills 链接，指向本仓；--dry 只报告）")
     ap.add_argument("--dry", action="store_true", help="--fix-links 专属：只报告不修复")

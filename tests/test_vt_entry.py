@@ -11,6 +11,11 @@
      不存在时跳过并提示；
   ⑤ init 薄转发等价：`init.py --json` 输出键结构与 v1 对齐（七小节自检键齐全，
      32 键全集）——init 在 repo 根生成 config.local.json 的副作用在测试内复原。
+  ⑥ doctor --fix（P4）：挂载链接联动重建（VT_MOUNT_ROOT 隔离）+ 无可修复项时
+     明确说明 + live 挂载属其他仓只报人工项（安全门）+ registry.json 缺字段
+     回填幂等；--json 输出含 fix 段。
+  ⑦ skills 段对未注册包（examples/skill-demo，不在 skills/ 也不在 external）
+     不扫描不误报。
 运行：bash scripts/run_all_tests.sh。子进程一律 env python3（argv[0] 劫持纪律）。
 """
 import json
@@ -21,6 +26,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -209,6 +215,100 @@ class VtxRegression(unittest.TestCase):
                            capture_output=True, text=True, cwd=str(REPO))
         self.assertEqual(r.returncode, 0)
         self.assertIn("vtx", r.stdout)
+
+
+class DoctorFix(unittest.TestCase):
+    """doctor --fix（P4，§5.1 修复通道）：挂载链接联动 + registry 缺字段回填 +
+    live 挂载安全门（指向其他仓只报人工项不自动改）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.mount = Path(self._tmp.name) / "video"
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_fix_rebuilds_missing_mount_links_then_reports_none(self):
+        # 隔离挂载根（绝不触 live ~/.agents/skills/video/）：缺失 → 自动重建
+        env = {"VT_MOUNT_ROOT": str(self.mount), "VTX_DOCTOR_OFFLINE": "1"}
+        r = _vt("doctor", "--fix", env_extra=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for name in ("SKILL.md", "references", "assets", "vtx", "scripts", "skills"):
+            link = self.mount / name
+            self.assertTrue(link.is_symlink(), f"{name} 未建链")
+            self.assertFalse(Path(os.readlink(link)).is_absolute())
+        # 幂等：再跑 → 全健康 + 「无可自动修复项」明确说明
+        r2 = _vt("doctor", "--fix", env_extra=env)
+        self.assertEqual(r2.returncode, 0)
+        self.assertIn("挂载链接全部健康", r2.stdout)
+        self.assertIn("registry.json 无缺字段", r2.stdout)
+        self.assertIn("无可自动修复项", r2.stdout)
+
+    def test_doctor_fix_json_has_fix_section(self):
+        env = {"VT_MOUNT_ROOT": str(self.mount), "VTX_DOCTOR_OFFLINE": "1"}
+        r = _vt("doctor", "--fix", "--json", env_extra=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        d = json.loads(r.stdout)
+        self.assertIn("fix", d)
+        self.assertEqual(d["fix"]["mount"]["status"], "fixed")
+        self.assertEqual(d["fix"]["registry"]["status"], "ok")
+
+    def test_foreign_live_mount_not_auto_fixed(self):
+        # 默认 live 挂载根存在指向**其他仓**的链接 → 安全门拒绝自动修复（本机
+        # live voice-ime/主工作区铁律）；无 VT_MOUNT_ROOT 覆盖时才走该门
+        import vt as vt_mod
+        self.mount.mkdir(parents=True, exist_ok=True)
+        (self.mount / "vtx").symlink_to(Path("/tmp"))     # 指向本仓之外的存在的路径
+        with mock.patch.object(vt_mod, "mount_root", return_value=self.mount), \
+                mock.patch.dict(os.environ, {"VT_MOUNT_ROOT": ""}):
+            items = vt_mod._mount_link_state()
+            safe, reason = vt_mod._mount_fix_safe(items)
+            self.assertFalse(safe, reason)
+            self.assertIn("本仓之外", reason)
+            report = vt_mod._doctor_fix(json_out=True)
+            self.assertEqual(report["mount"]["status"], "manual")
+            # 指针未被改写
+            self.assertEqual(os.readlink(self.mount / "vtx"), "/tmp")
+
+    def test_registry_fix_backfills_missing_fields(self):
+        # registry 条目缺 version/keys/hooks/installed（manifest 为声明数据源）→
+        # 计划+回填+幂等；_comment 等无关字段保留
+        import vt as vt_mod
+        plug = Path(self._tmp.name) / "plugins" / "demo"
+        plug.mkdir(parents=True)
+        (plug / "health_check.py").write_text("print('ok')\n", encoding="utf-8")
+        (plug / "README.md").write_text("# demo\n", encoding="utf-8")
+        (plug / "plugin.json").write_text(json.dumps({
+            "name": "demo", "version": "0.2.0", "kind": "plugin",
+            "entry": {"cli": []},
+            "health": {"type": "command", "command": "health_check.py"},
+            "requires": {}, "config_keys": [], "docs": "README.md",
+            "extends": {"schema_keys": [{"path": "sources[]", "key": "demo"}],
+                        "hooks": ["prepare_source"]}}), encoding="utf-8")
+        regf = Path(self._tmp.name) / "plugins" / "registry.json"
+        regf.write_text(json.dumps({"_comment": "keep",
+                                    "plugins": {"demo": {"docs": "..."}}}), encoding="utf-8")
+        fixes, manual = vt_mod._registry_fix_plan(Path(self._tmp.name))
+        fields = {f for _n, f, _v in fixes}
+        self.assertEqual(fields, {"version", "keys", "hooks", "installed"})
+        vt_mod._apply_registry_fixes(fixes, Path(self._tmp.name))
+        data = json.loads(regf.read_text(encoding="utf-8"))
+        self.assertEqual(data["plugins"]["demo"]["version"], "0.2.0")
+        self.assertTrue(data["plugins"]["demo"]["installed"])
+        self.assertIn("_comment", data)                    # 无关字段保留
+        fixes2, _manual2 = vt_mod._registry_fix_plan(Path(self._tmp.name))
+        self.assertEqual(fixes2, [])                       # 幂等
+
+
+class DoctorSkillsSection(unittest.TestCase):
+    def test_unregistered_skill_packages_not_misreported(self):
+        # examples/skill-demo 这类未注册包（不在 skills/ 也不在 external）不进
+        # doctor skills 段扫描面——不误报（§5.1；P4 起 examples/ 有 skill.json）
+        self.assertTrue((REPO / "examples" / "skill-demo" / "skill.json").is_file())
+        r = _vt("doctor", "--json", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        d = json.loads(r.stdout)
+        names = [s["name"] for s in d["skills"]["installed"]]
+        self.assertEqual(names, ["tech-talk"])
+        self.assertFalse(d["skills"]["fail"])
 
 
 if __name__ == "__main__":
