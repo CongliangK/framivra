@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "kind": "app",
   "entry": {
-    "cli": ["audit_bundle.py"]
+    "cli": [
+      "audit_bundle.py"
+    ]
   },
   "health": {
     "type": "command",
@@ -11,7 +13,11 @@
   },
   "requires": {
     "core": ">=2.0.0",
-    "binaries": ["ffmpeg", "ffprobe"]
+    "binaries": [
+      "ffmpeg",
+      "ffprobe",
+      "blender"
+    ]
   },
   "config_keys": [],
   "docs": "README.md"

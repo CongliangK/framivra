@@ -37,6 +37,7 @@ import json
 import hashlib
 import math
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -315,7 +316,9 @@ def main():
                 break
     if vtx is None or not vtx.exists():
         vtx = Path.home() / ".agents/skills/video/vtx/vtx.py"
-    run([sys.executable, str(vtx), "-t", str(at_path), "validate"], tail=2)
+    # P2 审查 P2-4：本机 AppImage 有 argv[0] 劫持，sys.executable 指向错误解释器
+    py3 = shutil.which("python3") or "python3"
+    run([py3, str(vtx), "-t", str(at_path), "validate"], tail=2)
     print(f"[timing] step3 validate: {time.perf_counter() - t2:.1f}s")
     if a.skip_blend:
         print("[done] --skip-blend：审计 blend 未生成")

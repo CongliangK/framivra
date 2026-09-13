@@ -192,9 +192,25 @@ def build_words(text, items):
 
 # ================================================================ 模型管理（换挡 + 空闲卸载）
 
+def _ime_root():
+    """IME 根三级覆盖链（P2 审查 P2-2 补齐 config 层，与 client.py 对齐）：
+    env VT_ASR_IME_ROOT > config asr.ime_root > ~ 展开默认。"""
+    env = os.environ.get("VT_ASR_IME_ROOT")
+    if env:
+        return str(Path(env).expanduser())
+    try:
+        from vtx.pluginlib.config import load_config
+        cfg = (load_config().get("asr") or {}).get("ime_root")
+        if cfg:
+            return str(Path(str(cfg)).expanduser())
+    except Exception:
+        pass
+    return str(Path(IME_ROOT_DEFAULT).expanduser())
+
+
 def _models_roots(extra=None):
     """模型根目录探测链（手动运行时；client 拉起时显式传 --model/--aligner）。"""
-    ime = str(Path(os.environ.get("VT_ASR_IME_ROOT", IME_ROOT_DEFAULT)).expanduser())
+    ime = _ime_root()
     roots = []
     if extra:
         roots.append(str(Path(extra).expanduser()))

@@ -138,7 +138,7 @@ v2 定案〔用户拍板〕：**G3 的 -1.0 dBFS 为唯一权威**，三处对�
 
 - timeline `sources[]` 级键（如 `"denoise": {...}`），一源一产物进 `cache/audio/`（内容寻址，键见不变量 1）。
 - **源产物提取收敛为单一实现**：prepare 的逐源提取（stages.py:197-212）与区间渲染冷填充 `_ensure_audio_wavs`（range.py:105-119，现状为复刻的裸提取命令）合并为同一函数、同一缝触发〔对抗审查 P0 复审 P1-5 裁定〕——否则区间预览将绕过降噪裸抽 wav。声明了键的源先出降噪 wav，后续 `_audio_graph` 读取点（stages.py:235）用降噪产物而非裸提取。
-- **环境缺失 fail-hard**（权重不在/conda env 缺 → 阶段失败退出，不回落裸音频——回落=产物标注降噪实未降噪，不可信）；validate 做环境预检（早失败优于渲染半路死）。
+- **环境缺失 fail-hard**（权重不在/conda env 缺 → 阶段失败退出，不回落裸音频——回落=产物标注降噪实未降噪，不可信）。环境**预检通道 = doctor 组件段 health 探针**（组件级早发现）；渲染期 fail-hard 兜底在 prepare 源产物钩子内〔P2 审查 P2-3 调和本条与 v1.1 小注的矛盾：validate 期探测 conda/权重对无键时间线是纯开销，denoise 现 hooks=[prepare_source] 不挂 validate 预检、接受 prepare 期失败；需要时可经 v1.1 validate 钩子按需补挂〕。**读取点清单**：主链 `_audio_graph`、prepare 产出侧、`audio_report._collect_inputs`（P2 审查 P1-1 修复——报告的轨级 stem 渲染同走 `resolve_source_wav`，裸键读取即插件时间线报告必挂）三处一律同解析。
 - **契约 v1.1（P2b 落地细化）**：钩子契约为 `prepare_source(c, sid) -> Path | None`——插件**自算**内容寻址产物路径（形如 `cache/audio/{audio_key}::denoise:{version}:{参数摘要}.wav`；audio_key 经内核 API 面 `vtx.api.audio_key` 取得，插件禁捅内部模块）并保证产物在盘后返回（缓存命中直返/缺失产出/环境缺失打印缺什么 + exit 1）。v1 草案的 `(c, sid, wav) -> bool`（wav = 调用方裸提取键路径）会让降噪产物写进裸键——裸键名与内容不符即内容寻址破坏，已废弃。**读取点同规**：`_audio_graph` 的事件源 wav 经 `hooks.resolve_source_wav` 与 source_audio_extraction 产出侧同一解析（逐源 memo），prepare 与 graph 两处恒一致；环境预检现由 doctor health 探针承担（validate 期环境预检可经 v1.1 validate 钩子按需补挂，本轮 denoise 只注册 prepare_source）。
 
 **缝 B · 音轨事件内存变换钩子**（duck-static 型）：

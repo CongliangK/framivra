@@ -254,11 +254,16 @@ def _track_group(c, tracks):
 
 def _collect_inputs(c, tracks, cmd):
     """把轨事件的源 wav 逐事件挂到 -i（与 _event_chain 的 [k:a] 事件序号一一同序；
-    loop 事件加 stream_loop。不去重——输入序号必须严格等于事件序号）。"""
+    loop 事件加 stream_loop。不去重——输入序号必须严格等于事件序号）。
+    源解析走 hooks.resolve_source_wav（P2 审查 P1-1 修复）：denoise 等缝 A 插件
+    源的裸键按设计永不产出，主链 _audio_graph 已走产物键，本处必须同解析——
+    否则 denoise 时间线 audio --report 的轨级 stem 渲染读不存在的裸键直接 FAIL。"""
+    from .pluginlib import hooks as _hooks
     for tr in tracks:
         for e in tr["events"]:
-            cmd += (["-stream_loop", "-1"] if e.get("loop") else []) + \
-                ["-i", str(c.cache / "audio" / f"{audio_key(c, e['src'])}.wav")]
+            wav = _hooks.resolve_source_wav(c, e["src"]) or \
+                (c.cache / "audio" / f"{audio_key(c, e['src'])}.wav")
+            cmd += (["-stream_loop", "-1"] if e.get("loop") else []) + ["-i", str(wav)]
 
 
 def render_stems(c, voice_tracks, bed_tracks, workdir):

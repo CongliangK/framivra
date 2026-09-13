@@ -64,6 +64,10 @@ def validate(c) -> list:
             continue
         if v.get("mode", "static") != "static":
             errs.append(f"{label}: duck_strategy.mode 仅支持 \"static\"，得到 {v.get('mode')!r}")
+        unknown = [k for k in v if k not in DEFAULTS]
+        if unknown:   # P2 审查 P2-5：未知参数键不静默吞——警告但不阻断
+            print(f"⚠ {label}: duck_strategy 未知参数 {', '.join(map(repr, sorted(unknown)))}"
+                  f"（可用：{sorted(DEFAULTS)}）——已忽略")
         for k in _NUMERIC:
             if k in v and (isinstance(v[k], bool) or not isinstance(v[k], (int, float))):
                 errs.append(f"{label}: duck_strategy.{k} 须为数值（dB），得到 {v[k]!r}")

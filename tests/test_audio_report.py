@@ -20,6 +20,7 @@
 """
 import json
 import os
+from unittest import mock
 import shutil
 import subprocess
 import sys
@@ -292,6 +293,32 @@ class TestEndToEndSynthetic(unittest.TestCase):
         holes = next(c for c in v43["checks"] if c["name"] == "静音空洞")
         self.assertEqual(holes["level"], "FAIL")
         self.assertTrue(holes["measured"]["holes"][0][0] < 0.2)        # 空洞从片头开始
+
+
+class CollectInputsPluginSource(unittest.TestCase):
+    """P2 审查 P1-1 回归：_collect_inputs 必须经 resolve_source_wav 解析插件源
+    （denoise 裸键按设计永不产出，读裸键 = audio --report 在插件时间线必挂）。"""
+
+    def test_inputs_use_plugin_product_path(self):
+        from types import SimpleNamespace
+        from vtx import audio_report
+        product = Path("/tmp/fake") / "cache/audio/abc::denoise:1.0.0:d41.wav"
+        naked = Path("/tmp/fake") / "cache/audio/abc.wav"
+        c = SimpleNamespace(cache=Path("/tmp/fake/cache"))
+        tracks = [{"name": "voice",
+                   "events": [{"src": "v1", "in": 0, "out": 30, "volume": 1.0}]}]
+        with mock.patch("vtx.pluginlib.hooks.resolve_source_wav",
+                        return_value=product):
+            cmd = []
+            audio_report._collect_inputs(c, tracks, cmd)
+        self.assertIn(str(product), cmd)
+        self.assertNotIn(str(naked), cmd)
+        # 无插件受理（resolve 返回 None）→ 回落裸键
+        with mock.patch("vtx.pluginlib.hooks.resolve_source_wav", return_value=None), \
+             mock.patch.object(audio_report, "audio_key", return_value="abc"):
+            cmd2 = []
+            audio_report._collect_inputs(c, tracks, cmd2)
+        self.assertIn(str(naked), cmd2)
 
 
 if __name__ == "__main__":
