@@ -1,0 +1,20 @@
+{
+  "name": "hello-app",
+  "version": "1.0.0",
+  "kind": "app",
+  "entry": {
+    "cli": ["cli.py"]
+  },
+  "health": {
+    "type": "command",
+    "command": "health_check.py"
+  },
+  "requires": {
+    "core": ">=2.0.0",
+    "binaries": [],
+    "python_packages": [],
+    "platforms": []
+  },
+  "config_keys": [],
+  "docs": "README.md"
+}

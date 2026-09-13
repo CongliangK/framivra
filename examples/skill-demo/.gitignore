@@ -1,0 +1,5 @@
+# skill-demo 运行产物（真渲染验证）：素材与缓存不入库（根 .gitignore 已有
+# *.mp4 / out/ / cache/ 规则，此处显式声明便于整包复制后保持同语义）
+v01.mp4
+out/
+cache/

@@ -1,0 +1,10 @@
+{
+  "name": "skill-demo",
+  "version": "0.1.0",
+  "kind": "skill",
+  "uses_apps": [],
+  "uses_plugins": [],
+  "optional_plugins": [],
+  "docs": "SKILL.md",
+  "_comment": "零依赖纯内核包演示（ARCHITECTURE §4.1 同构独立包）：uses/optional 全空——本包只用 vtx 内核（时间线+渲染+QC），不依赖任何 app/plugin。skill-demo 不在 skills/ 也不在 external 注册——doctor skills 段对这类未注册包不扫不误报（§5.1）。包内四件道具（gen_fixture.sh/gfxA.html/timeline.json/expected_check.sh）为验收门 4（关停测试）现成对照：gen_fixture.sh 生成 v01.mp4，timeline.json 过 validate，expected_check.sh 断言 all 全链 qc 含 TP 全 PASS。"
+}
