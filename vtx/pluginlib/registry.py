@@ -142,15 +142,14 @@ def plugin_state(name: str, repo_root=None) -> str:
     """
     root = _root(repo_root)
     reg = load_static_registry(root)["plugins"].get(name)
-    builtin_dir = root / "plugins" / name
-    phys = builtin_dir.is_dir()
-    if not phys:
-        ext = _external_by_name(root).get(name)
-        phys = ext is not None and ext["dir"] is not None and ext["dir"].is_dir()
     if reg is not None:
-        installed = bool(reg.get("installed", False)) and phys
+        # P4 审查 P2-2：官方声明的插件只认 plugins/<name>/ 实体——目录缺失即
+        # not_installed（安装破损 fail-hard），**不得**被同名 external 顶替
+        # （否则第三方以官方身份运行且版本号仍报官方）。
+        installed = bool(reg.get("installed", False)) and (root / "plugins" / name).is_dir()
     else:
-        installed = phys
+        ext = _external_by_name(root).get(name)
+        installed = ext is not None and ext["dir"] is not None and ext["dir"].is_dir()
     if not installed:
         return "not_installed"
     if reg is not None:
@@ -203,13 +202,20 @@ def key_map(repo_root=None) -> dict:
     生效过滤保守恒 True、参数摘要退化为空（不变量 ② 的参数成分对 external 失效）。
     与 lookup_key 同一双源同一优先序：静态注册表优先，external manifest 并入。"""
     out = registry_key_map(repo_root)
+    import sys as _sys
     for e in discover(repo_root):
         if e["kind"] != "plugin" or not e["manifest"] or e["source"] != "external":
             continue
         for ki in (e["manifest"].get("extends", {}) or {}).get("schema_keys", []):
-            if (isinstance(ki, dict) and isinstance(ki.get("key"), str)
-                    and ki["key"] not in out):
-                out[ki["key"]] = {"plugin": e["name"], "path": ki.get("path", "?")}
+            if not (isinstance(ki, dict) and isinstance(ki.get("key"), str)):
+                continue
+            if ki["key"] in out:
+                # P4 审查 P2-1：同名键冲突不静默归官方——external 声明失效须可见
+                print(f"⚠ [registry] external 插件 {e['name']} 声明的键 {ki['key']!r} "
+                      f"与静态注册表（{out[ki['key']]['plugin']}）冲突，按官方优先忽略",
+                      file=_sys.stderr)
+                continue
+            out[ki["key"]] = {"plugin": e["name"], "path": ki.get("path", "?")}
     return out
 
 

@@ -122,9 +122,11 @@ def _load_plugin_module(name: str):
 
     导入锚双源（P4）：官方件/已注入模块 = ``importlib.import_module("plugins.<name>")``
     （repo 根已在 path；tests 亦经 sys.modules 预置假模块走同一路径）；external 件 =
-    实体父目录入 sys.path 后按目录名包导入（manifest 校验保证 name == 目录名，
-    连字符目录名不碍 import_module）——仍是真包导入，**禁 spec_from_file_location**
-    （绕过包语义是双模块裂分的另一入口）不破例。
+    实体父目录 **append** 进 sys.path 按目录名包导入、导入后即摘除、并断言
+    mod.__file__ 落在该插件目录内（manifest 校验保证 name == 目录名，连字符
+    目录名不碍 import_module）——仍是真包导入，**禁 spec_from_file_location**
+    （绕过包语义是双模块裂分的另一入口）不破例；append+摘除+落点断言防
+    external 父目录下的同名模块顶替官方插件/stdlib（P4 审查 P1-1）。
 
     **加载失败 fail-hard**（P1 对抗审查 F4 修正，§1.2 缝 A 同源纪律）：插件已
     生效（installed+enabled+声明钩子）却模块起不来 / 对账不齐 = 安装破损——
@@ -136,10 +138,24 @@ def _load_plugin_module(name: str):
     try:
         d, origin = _registry.plugin_module_dir(name)
         if origin == "external":
+            # P4 审查 P1-1 修正：append（官方包/stdlib 优先）+ 导入后即摘除 +
+            # mod.__file__ 落点断言——insert(0) 且常驻会让 external 父目录下的
+            # 同名模块（假 plugins/denoise、同名 stdlib）优先解析，包身份纪律
+            # 与 import 卫生（§9 门 7(c)）双破。
             parent = str(d.parent)
-            if parent not in sys.path:
-                sys.path.insert(0, parent)   # external 父目录（幂等判重）
-            mod = importlib.import_module(d.name)
+            added = parent not in sys.path
+            if added:
+                sys.path.append(parent)
+            try:
+                mod = importlib.import_module(d.name)
+            finally:
+                if added and parent in sys.path:
+                    sys.path.remove(parent)
+            mf = getattr(mod, "__file__", None)
+            if not mf or not Path(mf).resolve().is_relative_to(d.resolve()):
+                raise RuntimeError(
+                    f"external 插件 {name} 的模块落点异常（{mf} 不在 {d} 内）"
+                    "——疑似同名模块顶替，拒绝加载")
         else:
             mod = importlib.import_module(f"plugins.{name}")
     except Exception as e:

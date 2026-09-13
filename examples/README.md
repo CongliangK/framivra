@@ -19,7 +19,7 @@ examples/ **不在 registry 内置扫描范围**（内置只扫 `apps/` 与 `plu
 2. **写 manifest**：app → `app.json`；plugin → `plugin.json`（`extends.schema_keys`
    声明扩展键，`hooks` 值域 = `prepare_source`/`audio_events`/`validate`；schema 见
    ARCHITECTURE §2.3）。`health.type=command` 的命令必须是**组件根内相对路径**。
-3. **外部注册**：编辑 `config.local.json`（gitignored，不入库；模板
+3. **外部注册**：编辑 `config.local.json`（gitignored，不入库；纯净 clone 先 `env python3 vt.py init` 或 `cp config.example.json config.local.json` 生成；模板
    `config.example.json` 的 `external_apps` / `external_plugins`）：
    ```json
    "external_apps":    [{"path": "examples/my-app", "enabled": true}],

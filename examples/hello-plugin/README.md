@@ -77,7 +77,7 @@ config.local.json 的 `external_plugins`（gitignored，不入库）：
    `cache/audio/{audio_key}::hello:...wav` 不再在存留键集内 → `vtx gc` 将其列入
    回收（`gc --dry` 可先验）。
 2. **指纹段消失 → 旧回执失配**：回执指纹末尾有「生效插件清单」追加段
-   （`plugins:hello@1.0.0:{参数摘要}`，§2.1 不变量 2）。卸载后该段消失——录制侧
+   （`plugins:hello-plugin@1.0.0:{参数摘要}`，§2.1 不变量 2）。卸载后该段消失——录制侧
    （带段）与重算侧（无段）指纹失配，`vtx all` 拒绝复用旧 prepare/audio 产物，
    必然重走裸提取。反向同理：无插件时代录的回执，装上插件后同样失配重渲。
 

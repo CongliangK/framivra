@@ -157,6 +157,15 @@ class CacheIdentity(ExternalCfgTestBase):
         self.assertNotEqual(hello.value_digest({"db": 3}), hello.value_digest({"db": 6}))
         self.assertEqual(hello.value_digest({"db": 3}), hello.value_digest({"db": 3}))
 
+    def test_kernel_digest_varies_with_key_value(self):
+        """P4 审查 P2-4：内核侧 active_plugins_digest 必须随键值变（key_map 双源
+        的回归锚——若退化回静态单源，external 插件参数摘要恒定，本测试即红）。"""
+        c3 = self.ctx_with(self.ENABLED, db=3)
+        c6 = self.ctx_with(self.ENABLED, db=6)
+        d3, d6 = pl_hooks.active_plugins_digest(c3), pl_hooks.active_plugins_digest(c6)
+        self.assertTrue(d3.startswith("plugins:hello-plugin@1.0.0:"), d3)
+        self.assertNotEqual(d3, d6)
+
     def test_enabled_whitelists_keys_and_fingerprints_plugin(self):
         c = self.ctx_with(self.ENABLED)
         stem = hello.product_path(c, "v").stem

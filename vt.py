@@ -461,9 +461,14 @@ def _probe_health(manifest: dict, comp_dir: Path) -> tuple:
             node = node.get(part) if isinstance(node, dict) else None
             if node is None:
                 break
-        # 判定口径 = 键已配置（值非空即可，false 也算已配置——如 bgm 路由声明的开关标记）
+        # 判定口径 = 键已配置（值非空即可，false 也算已配置——如 bgm 路由声明的开关标记）。
+        # P4 审查 P2-5：键缺失 = 提示级（None）不 FAIL——config_key 型组件（bgm 路由
+        # 声明类）的键即启用开关，未配置=未启用，按「enabled 才 FAIL 门」原则放行
+        # （纯净 clone 无 config.local.json 时 doctor 不得因此 exit 1）。
         present = node is not None and node != ""
-        return present, f"config {health.get('key')}: {'已配置' if present else '未配置'}"
+        if not present:
+            return None, f"config {health.get('key')}: 未配置（可选能力，不阻断）"
+        return present, f"config {health.get('key')}: 已配置"
     return None, f"health.type={htype!r} 未知，跳过探测"
 
 
@@ -648,17 +653,21 @@ def _mount_fix_safe(items: list) -> tuple:
     """挂载链接自动修复的安全门 → (safe, reason)。
 
     VTX_MOUNT_ROOT 覆盖 → 安全（测试/多仓并存的隔离环境）；默认 live 挂载根下
-    任一现存链接解析到**本仓之外**的存在的路径 → 不安全（挂载属其他仓——本机
-    live voice-ime/主工作区场景，铁律：不自动改，列人工项）；其余（缺失/仓内
-    错指/绝对形）→ 安全。"""
+    任一现存链接解析到**本仓之外**的路径（含悬空——目标虽缺失但明确不属本仓）
+    → 不安全（挂载属其他仓——本机 live voice-ime/主工作区场景，铁律：不自动
+    改，列人工项）；其余（缺失/仓内错指/绝对形）→ 安全。
+    判属用路径包含（is_relative_to）而非字符串前缀（P4 审查 P1-2：前缀判定
+    会被兄弟检出 video_tools-v2-* 误放行）；悬空链接按属主判定（resolve 后
+    is_relative_to 对不存在的目标同样成立）。"""
     if os.environ.get("VT_MOUNT_ROOT"):
         return True, "VT_MOUNT_ROOT 隔离环境"
+    root = ROOT.resolve()
     for link, _target, problem, _want in items:
         if problem != "wrong_target":
             continue
         current = Path(os.readlink(link))
         resolved = (link.parent / current).resolve() if not current.is_absolute() else current.resolve()
-        if resolved.exists() and not str(resolved).startswith(str(ROOT)):
+        if not resolved.is_relative_to(root):
             return False, f"{link.name} 指向本仓之外（{resolved}）——挂载根属其他仓"
     return True, ""
 

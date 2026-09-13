@@ -178,9 +178,12 @@ plugin 额外：
 
 ### 2.4 安全节
 
-- external 插件注册**默认 disabled**（`registry.json` 显式 enable 才生效）。
+- external 插件/应用注册**默认 disabled**（config 的 `external_plugins[]`/`external_apps[]` 条目 `enabled: true` 才生效——路径含 `..` 一律拒绝；官方内置件的启停走 `plugins/registry.json`）〔P4 审查 P2-6 调和：实现即 config 条目开关，原文"registry.json 显式 enable"为设计稿笔误〕。
 - health 探测命令必须为**插件根内相对路径**，拒绝对路径与 `..`（防 health 探针被指向任意可执行）。
 - 外部路径 resolve 后做**白名单根校验**（插件目录之外的任何路径不加载）。
+- external 模块导入锚 = 父目录 **append** 进 sys.path + 导入后即摘除 + `mod.__file__` 落点断言（防 external 父目录下同名模块顶替官方插件/stdlib——P4 审查 P1-1 裁定）。
+- 官方声明（registry.json）的插件实体**只认 `plugins/<name>/`**——目录缺失即 not_installed（安装破损），不被同名 external 顶替身份（P4 审查 P2-2 裁定）。
+- 已知限制：external 插件 manifest 的 `cache_dirs` 声明暂无生效通道（get_cache_dirs 只读静态注册表；external 插件缓存键走 contribute_keys 的 ak 集不受影响）〔P4 审查 P2-9 记录〕。
 
 ---
 
