@@ -217,6 +217,45 @@ class InvariantTwoFingerprint(unittest.TestCase):
             self.assertNotEqual(fp_uninstalled, receipt_fingerprint(c1))
 
 
+class StagesWiring(unittest.TestCase):
+    """内核接线回归（stages 侧契约 v1.1 真插件路径，mock 链免 conda）：
+    source_audio_extraction 产出侧与 _audio_graph 读取侧都解析到插件产物——
+    裸提取键既不产出也不读取（内容寻址不污染；e2e 证据见本测试组注释：
+    vtx prepare/audio --dry-run 的 -i 路径即插件产物）。"""
+
+    def test_extraction_and_graph_read_plugin_product(self):
+        from vtx.stages import _audio_graph, source_audio_extraction
+        from vtx.api import audio_key
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            c = Ctx(_proj(root, denoise_value=True))
+            p = dn.product_path(c, "v")
+
+            def fake_run(cmd, **kw):
+                if str(cmd[-1]) == str(p):      # 终步 ffmpeg 落产物
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_bytes(b"produced")
+                r = mock.Mock()
+                r.returncode, r.stderr = 0, ""
+                return r
+
+            with mock.patch("plugins.denoise.missing_env", return_value=[]), \
+                 mock.patch("plugins.denoise.denoise_voice.subprocess.run",
+                            side_effect=fake_run):
+                wav, cmd = source_audio_extraction(c, "v")
+            self.assertEqual(Path(wav), p)
+            self.assertIsNone(cmd)              # 插件产物 → 无裸提取命令
+            # graph 读取点：事件源 -i = 插件产物路径；裸提取键不出现
+            c.tl["audio_tracks"] = [{"name": "voice", "events": [
+                {"src": "v", "in": 0, "out": 30, "volume": 1.0}]}]
+            graph_cmd, _chains, n_ev, _duck_used = _audio_graph(c)
+            joined = " ".join(map(str, graph_cmd))
+            self.assertIn(str(p), joined)
+            self.assertNotIn(str(c.cache / "audio" / f"{audio_key(c, 'v')}.wav"),
+                             joined)
+            self.assertEqual(n_ev, 1)
+
+
 @unittest.skipUnless(os.environ.get("VTX_TEST_DENOISE") == "1",
                      "可选集成测试：VTX_TEST_DENOISE=1 且需 conda denoise 环境 + "
                      "Resemble 权重（真实推理链，约数十秒）")
