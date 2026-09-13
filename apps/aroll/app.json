@@ -1,0 +1,17 @@
+{
+  "name": "aroll",
+  "version": "1.0.0",
+  "kind": "app",
+  "entry": {
+    "cli": ["aup3_extract.py", "trim_takes.py"]
+  },
+  "health": {
+    "type": "command",
+    "command": "health_check.py"
+  },
+  "requires": {
+    "python_packages": ["numpy"]
+  },
+  "config_keys": [],
+  "docs": "README.md"
+}
