@@ -20,8 +20,10 @@
      blackdetect 单链）都须检出 ≥1 处——G7 逻辑未动，验证响度回执命中路径
      不吞黑场结论。
 
-运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3
-前缀：AppImage 劫持 argv[0]，见全局 AGENTS.md；unittest 非 pytest）
+运行：repo 根 `bash scripts/run_all_tests.sh`（P2a 起统一运行器含 apps/*/tests 发现）；
+本 app 内独立跑：`cd apps/gates && env python3 -m unittest discover -s tests -t . -v`
+（本机 ZCode 环境必须 env python3 前缀：AppImage 劫持 argv[0]，见全局 AGENTS.md；
+unittest 非 pytest）
 """
 import json
 import os
@@ -33,9 +35,10 @@ import time
 import unittest
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+APP = Path(__file__).resolve().parents[1]  # apps/gates/（app 根；tests 随 app 迁入 P2a）
+REPO = APP.parent.parent                   # repo 根（apps/gates → apps → repo）
 sys.path.insert(0, str(REPO))              # repo 根（v2 §1.4 包导入，不再注入 repo/vtx）
-sys.path.insert(0, str(REPO / "scripts"))  # content_gates.py 非包成员，按路径导入
+sys.path.insert(0, str(APP))               # content_gates.py 非包成员，按路径导入
 
 import content_gates              # noqa: E402（main() 有 __main__ 守卫，导入无副作用）
 from vtx import loudness_cache   # noqa: E402
@@ -361,7 +364,7 @@ class TestG7BlackSensitivity(unittest.TestCase):
     def _gates(self):
         return subprocess.run(
             ["env", "python3", "-X", "utf8",
-             str(REPO / "scripts" / "content_gates.py"),
+             str(APP / "content_gates.py"),
              "-t", str(self.root / "no_timeline.json"),   # 无 timeline：只跑 G2/G3/G7
              "--media", str(self.media)],
             capture_output=True, text=True, cwd=str(self.root))
