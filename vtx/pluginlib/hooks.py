@@ -28,6 +28,7 @@ pluginlib/__init__.py 接线表）。
 import hashlib
 import importlib
 import json
+import sys
 from pathlib import Path
 
 from . import registry as _registry
@@ -52,37 +53,55 @@ def active_plugins(c=None, repo_root=None) -> list:
     """生效插件清单（installed+enabled 且声明了钩子 且 **本 timeline 声明了其键**）
     → [{name, version, module}]。
 
+    候选双源（P4）：plugins/registry.json 静态注册表（官方件）+ **已发现 external
+    实体**（第三方件——不进静态注册表，manifest 即声明面；验收门 6 的注册路径）。
     P2b 起 c 参数生效（「对本 timeline 生效」过滤，§2.1 不变量 ② 的"空生效
     清单"前提）：timeline 未声明插件的任一注册键 → 该插件不计入——无插件键
     时间线的 active_plugins_digest 恒 ""（指纹省略段，与 v1 逐字节一致）、
     contribute_keys/两缝空转（v1 行为）。c=None（无上下文，list/doctor 展示
     等机器态）不过滤。
     """
+    names = list(sorted(_registry.declared_plugins(repo_root)))
+    for e in _registry.discover(repo_root):
+        if (e["kind"] == "plugin" and e["source"] == "external"
+                and e["manifest"] and e.get("dir") and e["dir"].is_dir()):
+            if e["name"] not in names:
+                names.append(e["name"])
     out = []
-    for name in sorted(_registry.declared_plugins(repo_root)):
+    for name in sorted(names):
         if _registry.plugin_state(name, repo_root) != "active":
             continue
         if not _plugin_hooks_declared(name, repo_root):
             continue
         if c is not None and not _timeline_declares(c, name, repo_root):
             continue
-        version = str(_registry.declared_plugins(repo_root)[name].get("version", "?"))
-        out.append({"name": name, "version": version, "module": None})
+        out.append({"name": name, "version": _plugin_version(name, repo_root),
+                    "module": None})
     return out
+
+
+def _plugin_version(name: str, repo_root=None) -> str:
+    """插件版本（registry 条目 > 实体 manifest——external 件无 registry 条目）。"""
+    entry = _registry.declared_plugins(repo_root).get(name)
+    if entry is not None:
+        return str(entry.get("version", "?"))
+    for e in _registry.discover(repo_root):
+        if e["name"] == name and e["manifest"]:
+            return str(e["manifest"].get("version", "?"))
+    return "?"
 
 
 def _timeline_declares(c, name: str, repo_root=None) -> bool:
     """timeline 是否声明了插件注册键中的任一键（「对本 timeline 生效」判定）。
 
-    键位检索用 registry 键声明的 path（sources[] / audio_tracks[]，与
-    _plugin_params_digest 同源）。无法判定（c 无 tl / 插件在 registry_key_map
-    无键声明，如 external 实体）时保守返回 True——宁多生效不静默漏（fail-hard
-    可见性优先）。
+    键位检索用全量键声明（registry 静态注册表 + external 实体 manifest，P4 起经
+    registry.key_map 双源），path 同 _plugin_params_digest。无法判定（c 无 tl /
+    插件无键声明）时保守返回 True——宁多生效不静默漏（fail-hard 可见性优先）。
     """
     tl = getattr(c, "tl", None) if c is not None else None
     if not isinstance(tl, dict):
         return True
-    key_map = _registry.registry_key_map(repo_root)
+    key_map = _registry.key_map(repo_root)
     scopes = {"sources[]": tl.get("sources", []),
               "audio_tracks[]": tl.get("audio_tracks", [])}
     has_keys = False
@@ -98,9 +117,14 @@ def _timeline_declares(c, name: str, repo_root=None) -> bool:
 
 
 def _load_plugin_module(name: str):
-    """包导入 plugins.<name> + hooks 声明↔代码注册一致性对账（§2.3：hooks 由
-    代码注册为单一事实源，manifest/registry 声明为对账面——声明了没注册 /
-    注册了没声明都报错）。
+    """包导入 + hooks 声明↔代码注册一致性对账（§2.3：hooks 由代码注册为单一
+    事实源，manifest/registry 声明为对账面——声明了没注册 / 注册了没声明都报错）。
+
+    导入锚双源（P4）：官方件/已注入模块 = ``importlib.import_module("plugins.<name>")``
+    （repo 根已在 path；tests 亦经 sys.modules 预置假模块走同一路径）；external 件 =
+    实体父目录入 sys.path 后按目录名包导入（manifest 校验保证 name == 目录名，
+    连字符目录名不碍 import_module）——仍是真包导入，**禁 spec_from_file_location**
+    （绕过包语义是双模块裂分的另一入口）不破例。
 
     **加载失败 fail-hard**（P1 对抗审查 F4 修正，§1.2 缝 A 同源纪律）：插件已
     生效（installed+enabled+声明钩子）却模块起不来 / 对账不齐 = 安装破损——
@@ -110,7 +134,14 @@ def _load_plugin_module(name: str):
     注：contribute_keys 是不变量 ① 入口而非钩子（不在 HOOK_NAMES 值域），
     不参与对账。"""
     try:
-        mod = importlib.import_module(f"plugins.{name}")
+        d, origin = _registry.plugin_module_dir(name)
+        if origin == "external":
+            parent = str(d.parent)
+            if parent not in sys.path:
+                sys.path.insert(0, parent)   # external 父目录（幂等判重）
+            mod = importlib.import_module(d.name)
+        else:
+            mod = importlib.import_module(f"plugins.{name}")
     except Exception as e:
         raise RuntimeError(
             f"插件 plugins/{name} 已生效但模块加载失败（安装破损？）：{e}") from e
@@ -217,11 +248,12 @@ def contribute_keys(c) -> set:
 
 
 def _plugin_params_digest(c, name: str) -> str:
-    """对本 timeline 生效的插件参数摘要：registry 键声明在 timeline 中的取值
+    """对本 timeline 生效的插件参数摘要：插件键声明（registry 静态注册表 +
+    external manifest，P4 起经 registry.key_map 双源）在 timeline 中的取值
     （排序 JSON 的 sha1 前 12 位）——插件改默认参/键值变 → 摘要变 → 回执失效。"""
     picked = {}
     try:
-        key_map = _registry.registry_key_map()
+        key_map = _registry.key_map()
         for key, info in sorted(key_map.items()):
             if info.get("plugin") != name:
                 continue

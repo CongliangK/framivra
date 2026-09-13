@@ -100,6 +100,14 @@ def scan_external(repo_root=None) -> list:
             d = Path(raw).expanduser()
             if not d.is_absolute():
                 d = (root / d)
+            if ".." in Path(raw).parts:
+                # 安全节（§2.4，P4 落地）：external 路径含 .. 一律拒绝——仓外目录
+                # 合法（绝对/~/ 路径即可），穿越式相对路径只会制造歧义与逃逸面
+                entry["manifest_errors"] = [
+                    f"external 路径禁止包含 ..（安全节 §2.4，用绝对或相对本仓的规范路径）: {raw}"]
+                entry["name"] = Path(str(raw)).name or "<external>"
+                entries.append(entry)
+                continue
             d = d.resolve()
             entry["dir"] = d
             if not d.is_dir():
@@ -184,6 +192,42 @@ def registry_key_map(repo_root=None) -> dict:
                 out[ki["key"]] = {"plugin": name,
                                   "path": ki.get("path", "?")}
     return out
+
+
+def key_map(repo_root=None) -> dict:
+    """全量键声明汇总（静态注册表 + external 实体 manifest，P4）：
+    {key: {"plugin": name, "path": path}}。
+
+    hooks 的「对本 timeline 生效」过滤与插件参数摘要依赖键→插件反查——external
+    插件只在其 manifest 声明 schema_keys（不进 plugins/registry.json），漏并会使
+    生效过滤保守恒 True、参数摘要退化为空（不变量 ② 的参数成分对 external 失效）。
+    与 lookup_key 同一双源同一优先序：静态注册表优先，external manifest 并入。"""
+    out = registry_key_map(repo_root)
+    for e in discover(repo_root):
+        if e["kind"] != "plugin" or not e["manifest"] or e["source"] != "external":
+            continue
+        for ki in (e["manifest"].get("extends", {}) or {}).get("schema_keys", []):
+            if (isinstance(ki, dict) and isinstance(ki.get("key"), str)
+                    and ki["key"] not in out):
+                out[ki["key"]] = {"plugin": e["name"], "path": ki.get("path", "?")}
+    return out
+
+
+def plugin_module_dir(name: str, repo_root=None):
+    """插件实体目录定位（hooks._load_plugin_module 的导入锚，P4）：
+    → (dir | None, "builtin" | "external" | None)。
+
+    plugins/<name>/ 优先（官方件）；否则 external 注册目录（manifest 有效且目录在盘
+    ——坏条目/坏 manifest 不作导入锚）。"""
+    root = _root(repo_root)
+    builtin = root / "plugins" / name
+    if builtin.is_dir():
+        return builtin, "builtin"
+    for e in scan_external(repo_root):
+        if (e["kind"] == "plugin" and e["name"] == name
+                and e.get("dir") and e["dir"].is_dir() and e["manifest"]):
+            return e["dir"], "external"
+    return None, None
 
 
 def declared_plugins(repo_root=None) -> dict:
