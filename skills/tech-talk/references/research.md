@@ -35,7 +35,7 @@ R0 主编（主智能体）
 
 ### R1 B站供给侧采集员
 ```
-工具：python3 ~/.agents/skills/video/scripts/bilibili.py
+工具：python3 <video_tools>/apps/research/bilibili.py
 产出：research/bilibili_search.json / bilibili_stats.json / bilibili_comments.json + supply_digest.md
 digest 必含：①供给分层表（娱乐层/工具盘点层/场景演示层/空白层，每层代表视频+播放+藏率+投币赞比）
           ②直接竞品 BV 清单（定义：同主题×同形态×同平台）③时效判断 ④相关视频总数与空关键词记录
@@ -43,7 +43,7 @@ digest 必含：①供给分层表（娱乐层/工具盘点层/场景演示层/�
 ```
 ### R2 GitHub 生态调研员
 ```
-工具：python3 ~/.agents/skills/video/scripts/github_repos.py（GITHUB_TOKEN 可选）
+工具：python3 <video_tools>/apps/research/github_repos.py（GITHUB_TOKEN 可选）
 产出：research/github_repos.json + ecosystem.md（现有方案表：stars/最近推送/做不到什么；底座热度；差异化空间结论）
 ```
 ### R3 全网需求侧调研员
@@ -56,13 +56,13 @@ digest 必含：①供给分层表（娱乐层/工具盘点层/场景演示层/�
 ```
 输入：R1 的竞品 BV 清单中选 2-3 个 + research/bilibili_comments.json
 产出：research/benchmarks.md —— 每标杆四问：hook 怎么写/结构怎么分章/评论区高赞在说什么/它的短板=我的差异；附评论区需求清单
-工具补充：python3 ~/.agents/skills/video/scripts/bilibili.py comments "BV.." 可再采
+工具补充：python3 <video_tools>/apps/research/bilibili.py comments "BV.." 可再采
 ```
 ### R5 独立评分员
 ```
 输入：【仅】research/ 目录下的落盘文件——提示词不得含主智能体的任何结论或情绪倾向
-步骤：先 --rubric 读锚点 → 填 supplement.json（模板 ~/.agents/skills/video/assets/supplement.template.json，每项附证据）→ 跑 score_topic.py
-工具：python3 ~/.agents/skills/video/scripts/score_topic.py
+步骤：先 --rubric 读锚点 → 填 supplement.json（模板 <video_tools>/skills/tech-talk/assets/supplement.template.json，每项附证据）→ 跑 score_topic.py
+工具：python3 <video_tools>/apps/research/score_topic.py
 产出：research/supplement.json + topic_score.json + score_notes.md（评分理由，特别说明不确定项）
 ```
 ### R6 红队质询员
@@ -75,11 +75,11 @@ digest 必含：①供给分层表（娱乐层/工具盘点层/场景演示层/�
 
 ## 产出契约
 
-- `01-brief.md`：复制 `~/.agents/skills/video/assets/brief-template.md`（十节+§11 争议记录，顶层章节不得增删）。
+- `01-brief.md`：复制 `<video_tools>/skills/tech-talk/assets/brief-template.md`（十节+§11 争议记录，顶层章节不得增删）。
 - `research/`：所有原始数据 JSON + 各角色 md（supply_digest / ecosystem / demand / benchmarks / score_notes / challenge）。
 - 人工拍板项始终保留：切入角度、标题封面、时长——主编只给带推荐的选项。
 
-Brief 定稿后的下一步（脚本 → gfx 动效 → vtx 剪辑渲染）见同 skill `references/gfx.md` 与 `references/edit.md`。
+Brief 定稿后的下一步（脚本 → gfx 动效 → vtx 剪辑渲染）见内核 skill `references/gfx.md` 与 `references/edit.md`（本包 SKILL.md 六阶段④⑤）。
 
 ## 已知坑
 

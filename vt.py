@@ -541,12 +541,25 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
 
 
 def _doctor_skills(json_out: bool) -> dict:
-    """skills 段：skills/ 工作流包完好性（skill.json + SKILL.md 齐备）。"""
+    """skills 段：skills/ 工作流包完好性（skill.json + SKILL.md 齐备 + uses 声明逐件在册）。
+
+    在册校验（P3，tech-talk 落地）：uses_apps 逐件对照 apps 发现清单；uses_plugins/
+    optional_plugins 逐件对照 plugins/registry.json 静态注册表——声明了未落地/未注册
+    的件计 FAIL（uses 声明是包与组件之间的契约面，漂移即失效）。
+    """
     out = {"installed": [], "fail": False}
     base = ROOT / "skills"
     if not base.is_dir():
-        out["note"] = "无已安装工作流包（skills/ 未创建；P2 落地 skills/tech-talk）"
+        out["note"] = "无已安装工作流包（skills/ 未创建）"
     else:
+        known_apps = {e["name"] for e in _preg.discover(ROOT) if e["kind"] == "app"}
+        known_plugins = set(_preg.load_static_registry(ROOT)["plugins"])
+
+        def _names(decl) -> list:
+            if not isinstance(decl, list):
+                return []
+            return [u["name"] if isinstance(u, dict) else str(u) for u in decl]
+
         for d in sorted(base.iterdir()):
             if not d.is_dir() or d.name.startswith((".", "_")):
                 continue
@@ -554,13 +567,30 @@ def _doctor_skills(json_out: bool) -> dict:
             try:
                 meta = json.loads((d / "skill.json").read_text(encoding="utf-8"))
                 item["version"] = meta.get("version", "?")
-                item["uses_apps"] = meta.get("uses_apps", [])
+                item["uses_apps"] = _names(meta.get("uses_apps", []))
+                item["uses_plugins"] = _names(meta.get("uses_plugins", []))
+                item["optional_plugins"] = _names(meta.get("optional_plugins", []))
             except (OSError, ValueError) as e:
                 item["ok"] = False
                 item["error"] = f"skill.json 缺失/损坏: {e}"
             if not (d / "SKILL.md").is_file():
                 item["ok"] = False
                 item["error"] = (item.get("error", "") + "；SKILL.md 缺失").lstrip("；")
+            if item["ok"]:
+                errs = []
+                miss_a = [n for n in item["uses_apps"] if n not in known_apps]
+                if miss_a:
+                    errs.append(f"uses_apps 不在册：{', '.join(miss_a)}")
+                for field in ("uses_plugins", "optional_plugins"):
+                    miss_p = [n for n in item[field] if n not in known_plugins]
+                    if miss_p:
+                        errs.append(f"{field} 未在 registry.json 注册：{', '.join(miss_p)}")
+                overlap = set(item["uses_plugins"]) & set(item["optional_plugins"])
+                if overlap:
+                    errs.append(f"uses_plugins 与 optional_plugins 重复声明：{', '.join(sorted(overlap))}")
+                if errs:
+                    item["ok"] = False
+                    item["error"] = "；".join(errs)
             out["installed"].append(item)
             out["fail"] = out["fail"] or not item["ok"]
     if not json_out:
@@ -569,6 +599,10 @@ def _doctor_skills(json_out: bool) -> dict:
         for it in out["installed"]:
             print(f"  {'✓' if it['ok'] else '✗'} skills/{it['name']}@{it.get('version', '?')}"
                   + (f"（{it['error']}）" if it.get("error") else ""))
+            if it.get("ok"):
+                print(f"      uses_apps {len(it['uses_apps'])} 件逐件在册"
+                      + (f"；plugins uses {len(it['uses_plugins'])} / optional {len(it['optional_plugins'])}"
+                         if it.get("uses_plugins") or it.get("optional_plugins") else ""))
     return out
 
 

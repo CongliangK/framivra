@@ -1,8 +1,10 @@
-# runbook · 标准修改配方集（R1-R7）与棒次协议
+# runbook · 标准修改配方集（R1-R4）与棒次协议
 
 > **定位：接棒子智能体「只读这一份就开工」的配方文件。** 路由索引在 `../SKILL.md`，字段语义与坑表在 `edit.md`/`gfx.md`；本文只回答「接到某类任务后，按什么顺序敲哪些命令」。命令必须与 `edit.md`/各脚本 `--help` 及仓库现状一致，本文每条配方都经过 voice-ime（v3.x–v4.1）实测。
 >
-> `<项目>` = 项目目录占位（下文用真实项目 voice-ime 作示例）；`<VTX>` = `~/.agents/skills/video/vtx/vtx.py`（符号链接，权威本体 `~/文档/01_活跃项目/video_tools/vtx/`）；`<video_tools>` = `~/文档/01_活跃项目/video_tools`。
+> **R5/R6/R7 归 `skills/tech-talk/references/runbook-r5r6r7.md`**——发布链（4K 投稿+冻结）/ BGM 分轨审计 / 封面制作属产线配方（各依赖具体 app 组合），v2 文档双层拆分时迁出内核。
+>
+> `<项目>` = 项目目录占位（下文用真实项目 voice-ime 作示例）；`<VTX>` = `~/.agents/skills/video/vtx/vtx.py`（符号链接，权威本体 video_tools 仓 `vtx/`）；`<video_tools>` = video_tools 仓根。
 
 ## 使用规则（worker 必读）
 
@@ -37,28 +39,25 @@ python3 $VTX -t timeline.json snapshot
 # 1) 机制硬门
 python3 $VTX -t timeline.json validate
 
-# 2) 重混音频（音视频画面不动，video 段缓存全命中）
+# 2) 重混音频（音视频画面不动，video 段缓存全命中；v2 §1.2 起两遍增益+alimiter
+#    限幅已在 audio 尾部一体完成——out/audio.wav 即「归一+限幅」终态，无独立步骤）
 python3 $VTX -t timeline.json audio
 
-# 3) 响度限幅兜底 —— 不可跳过！
-bash $VIDEO_TOOLS/scripts/post_loudness.sh ~/文档/04_bilibili视频/voice-ime
-
-# 4) 封装（正式 libfdk_aac 192k）
+# 3) 封装（正式 libfdk_aac 192k）
 python3 $VTX -t timeline.json mux
 
-# 5) QC（响度/切点/黑帧）+ 内容验证门
+# 4) QC（响度/切点/黑帧）+ 内容验证门
 python3 $VTX -t timeline.json qc
-python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final.mp4
+python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/final.mp4
 
-# 6) 4K 投稿版重导出 + 断言（export_4k.py：8 段并行 nvenc p4 + lanczos scale + concat -c copy；
-#    x264 软件链为回退路径与画质对照基线，命令与门禁见 R5）
-env python3 $VIDEO_TOOLS/scripts/export_4k.py -t timeline.json
-bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
+# 5) 4K 投稿版重导出 + 断言（配方见 tech-talk runbook-r5r6r7.md R5）：
+env python3 $VIDEO_TOOLS/apps/publish/export_4k.py -t timeline.json
+bash $VIDEO_TOOLS/apps/publish/check_4k.sh out/final_4k.mp4
 
-# 7) 冻结：更新 out/FREEZE.json（md5 清单）+ CHANGELOG.md 变更单 + timeline.<ver>-frozen.json
+# 6) 冻结：更新 out/FREEZE.json（md5 清单）+ CHANGELOG.md 变更单 + timeline.<ver>-frozen.json
 ```
 
-**耗时基准**（voice-ime 653s@1080p30，缓存命中）：validate ~3s、audio 数十秒、post_loudness ~2.6s、mux ~4.4s、qc ~8.6s、4K ~66s；**全链 ≈2 分钟**。〔方案三前（2026-09-12 口径）：post ~10s、mux ~20s、qc ~11s、4K ~2.5min、全链 ≈4-5 分钟〕
+**耗时基准**（voice-ime 653s@1080p30，缓存命中）：validate ~3s、audio 数十秒（含终链限幅，v1 时代独立 post_loudness ~2.6s 已并入）、mux ~4.4s、qc ~8.6s、4K ~66s；**全链 ≈2 分钟**。〔方案三前（2026-09-12 口径）：post ~10s、mux ~20s、qc ~11s、4K ~2.5min、全链 ≈4-5 分钟〕
 
 **0) 先跑 `vtx diff` 定位影响面与推荐路径**（时间线语义 diff，2026-09-12 新增）：
 
@@ -79,8 +78,8 @@ python3 $VTX -t timeline.json audio --report              # 混音后判级：LU
 **必跑验证门**：validate（机制）→ qc（-14±1.5 LUFS/切点/帧数）→ content_gates（G1/G2/**G3 解码 TP**/G7/G10）→ check_4k（4K 版 14 项断言）。
 
 **已知坑位**：
-- **post_loudness 不可跳过**：audio→post_loudness→mux 三步链漏中步，G3 解码 TP 必超标（v4.0 并入时 G3 实测抓出）。alimiter 兜底段不可省——AAC 编码后真峰过冲，wav 域 TP 不算数。
-- **响度语义**：post_loudness 归一后全片综合响度 I 恒为 ≈-14 LUFS；改某轨 volume 改变的是**轨间相对比例**，不是成片 LUFS。预期「成片更响」的验收口径要写对。
+- **响度终链语义（v2 §1.2）**：alimiter 限幅已并入 `vtx audio` 尾部，audio→mux 直连即可；v1 时代「audio → post_loudness → mux 三步链」的中步已消失（`scripts/post_loudness.sh` 留兼容薄壳，正常链路勿跑——对已终态 audio.wav 幂等直过，无收益）。**AAC 编码后真峰过冲仍在：G3 解码域 TP 终检不可省**，wav 域 TP 不算数。
+- **响度语义**：归一后全片综合响度 I 恒为 ≈-14 LUFS；改某轨 volume 改变的是**轨间相对比例**，不是成片 LUFS。预期「成片更响」的验收口径要写对。
 - 幂等脚本须带**防重施标记**（如改前检测目标值已是新值则跳过），防同脚本跑两遍把 -5dB 叠成 -10dB。
 
 ---
@@ -101,7 +100,7 @@ python3 $VTX diff cache/snapshots/<最近快照>/timeline.json timeline.json --j
 **先看 diff 再决定动不动画布**（2026-09-12 新增，统一「改生成器 vs 补丁」口径）：上面第 3 步的语义 diff 就是决策依据——
 
 - `seg 失效 / vseg 失效段 >0` 或 entries 落在 `video_tracks/subtitles/project` → 几何/时长/字幕类改动，**只能走生成器**（本配方 R2 全链），推荐路径应显示 `generator`；
-- `seg/gfx/vseg 全 0` 且 entries 落在 `audio_tracks` → 纯音频参数改动，降级走 R1（audio+post_loudness+mux+qc，跳过 video）；
+- `seg/gfx/vseg 全 0` 且 entries 落在 `audio_tracks` → 纯音频参数改动，降级走 R1（audio+mux+qc，跳过 video）；
 - `manual_whitelist` 之外的任何「手改」都不合规（timeline 由生成器再生，禁止手改）；白名单仅 `_meta` 注释类字段。
 
 硬门槛自验：只改 1 个 clip 时长的 diff 必须报告 **seg 失效恰好 1 个 clip**（voice-ime 实测：ar_二@2059 dur 91→121，seg 重编码恰 1 任务、vseg 失效 2/8 段，实跑逐段核对一致；预估 42s vs 实测 46s，误差 +8.7%）。
@@ -115,11 +114,10 @@ python3 $VTX -t timeline.json validate
 #   · 改了 gfx html → gfx 键自动变（见 R3）
 
 python3 $VTX -t timeline.json video --gpu    # 正式渲染（NVENC）；迭代期用 --draft --frames N
-python3 $VTX -t timeline.json audio
-bash $VIDEO_TOOLS/scripts/post_loudness.sh ~/文档/04_bilibili视频/voice-ime
+python3 $VTX -t timeline.json audio          # 含响度终链（增益+限幅一体）
 python3 $VTX -t timeline.json mux
 python3 $VTX -t timeline.json qc
-python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final.mp4
+python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/final.mp4
 # 收尾习惯：先 gc --dry 看一眼，再 gc
 python3 $VTX -t timeline.json gc --dry
 ```
@@ -153,7 +151,7 @@ python3 $VTX -t timeline.json subs check      # ① 秒级：对齐漂移/CPS/�
 python3 $VTX -t timeline.json subs check      # ② 复查全绿（报告 out/subs_check.json）
 python3 $VTX -t timeline.json subs preview 12.5 f360   # ③ 抽查可疑条目（秒或 f帧号，单张 ≤5s，支持多点）
 python3 $VTX -t timeline.json video --gpu     # ④ 段级缓存：改一条字幕只重渲其覆盖的 1-2 段（~10-25s）
-bash $VIDEO_TOOLS/scripts/post_loudness.sh ~/文档/04_bilibili视频/<项目>
+python3 $VTX -t timeline.json audio           # 字幕改动不动音频键，命中即过（响度终链在内）
 python3 $VTX -t timeline.json mux
 python3 $VTX -t timeline.json qc
 python3 $VTX -t timeline.json diff <上一版报告>.json out/qc_report.json   # ⑤ 与上一版对比（可选；支持 qc_report/audit_report/subs_check，字幕项逐条对比）
@@ -192,14 +190,13 @@ python3 $VTX -t timeline.json validate
 python3 $VTX -t timeline.json gfx            # 内容寻址：html 字节变 → 键自动变 → 只重渲该页
 python3 $VTX -t timeline.json video --gpu
 python3 $VTX -t timeline.json audio          # 若音频无关可省（audio 键未变则命中）
-bash $VIDEO_TOOLS/scripts/post_loudness.sh ~/文档/04_bilibili视频/voice-ime
 python3 $VTX -t timeline.json mux
 python3 $VTX -t timeline.json qc
 ```
 
 **耗时基准**：单页重渲秒级（CDP 常驻浏览器 ~34ms/帧；透明快路径 ~15ms/帧）；全量冷 gfx 129.8-131.9s（12024 帧，默认 7/450/4，2026-09-11 方案 v2 定版；桌面活跃时段约 150s）；gfx 全冷+全链+4K ≈6 分钟（方案三 2026-09-13 口径：验证链 ≈291s + 4K ≈66s；〔方案三前 ≈5.5 分钟，方案一口径〕）。
 
-**gfx 基准表**（2026-09-11 方案 v2 矩阵，voice-ime 28 页 12024 帧、本机 32C64G，冷跑 WALL / 峰值 Chrome RSS，配置=PAGES/SPLIT_FRAMES/TABS）：
+**gfx 基准表**（2026-09-11 方案 v2 矩阵，voice-ime 28 页 12024 帧、本机 32C64G，冷跑 WALL / 峰值 Chrome RSS，配置=PAGES/SPLIT_FRAMES/TABS）。**单机校准口径：32C64G / voice-ime 28 页——换机（核数/内存/页数任一变化）先按下方「重测方法」节复测，勿直接引用本表数字**：
 
 | 配置 | WALL s | 峰值 RSS GB | 判定 |
 |---|---|---|---|
@@ -248,17 +245,18 @@ env python3 $VIDEO_TOOLS/scripts/gfx_golden.py compare -t timeline.json \
 
 **适用场景**：cache 为空、换机、或需从头验证全链。
 
+**v2 链（§1.2 响度终链合并后）**：限幅在 `vtx audio` 内部完成，全冷链简化为 **`all --until video` → mux → qc**——`all` 一条龙会把 mux/qc 白跑一遍（音频终态已在波内就绪），截断后再接力封装与质检：
+
 ```bash
 cd ~/文档/04_bilibili视频/voice-ime
 python3 $VTX -t timeline.json validate
-python3 $VTX -t timeline.json all            # prepare→gfx→video→audio→mux→qc 一条龙（不含 post_loudness）
-bash $VIDEO_TOOLS/scripts/post_loudness.sh ~/文档/04_bilibili视频/voice-ime
-python3 $VTX -t timeline.json mux            # all 里已含 mux 时此步幂等确认即可
+python3 $VTX -t timeline.json all --until video   # 串行头+并行波（gfx‖audio‖seg 预编码）→ video 截止；audio 已含增益+alimiter 终链
+python3 $VTX -t timeline.json mux                 # 正式封装（libfdk_aac 192k）
 python3 $VTX -t timeline.json qc
-python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final.mp4
+python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/final.mp4
 ```
 
-**耗时基准**（bench_p2 16746 帧/558.2s@1080p30（voice-ime 同型），RTX 4080/32C64G）：**方案三后（2026-09-13 定版，3 轮冷跑中位）验证链冷跑（validate→gates）≈291s（289.6/291.4/310.0，`bash $VIDEO_TOOLS/scripts/bench_cold.sh 3` 实测）**——并行波（gfx 关键路径）165s（163.1-183.6，波动 12%）+ video 尾 97s + qc 8.6s（rc=1 = 74/75，c4_mini 已知探针假阴性的预期形态）+ gates 8.1s（五门全绿）+ mux 4.4s + post_loudness 2.6s + 串行头（validate→prepare）5.6s；4K 发布链单列 ≈66s（8 段并行 nvenc p4 + concat，`bench_cold.sh … --with-4k`）。〔方案三前：≈299s（方案二 2026-09-12 定版，voice-ime 口径）〕〔方案二前：全链冷启动 ≈5.5 分钟（拆包提速后，2026-09-11）〕gfx 全冷 ~130-180s；缓存命中全链 ~50s。
+**耗时基准**（bench_p2 16746 帧/558.2s@1080p30（voice-ime 同型），RTX 4080/32C64G）：**方案三后（2026-09-13 定版，3 轮冷跑中位）验证链冷跑（validate→gates）≈291s（289.6/291.4/310.0，`bash $VIDEO_TOOLS/scripts/bench_cold.sh 3` 实测）**——并行波（gfx 关键路径）165s（163.1-183.6，波动 12%）+ video 尾 97s + qc 8.6s（rc=1 = 74/75，c4_mini 已知探针假阴性的预期形态）+ gates 8.1s（五门全绿）+ mux 4.4s + 串行头（validate→prepare）5.6s；〔v1 时代另有独立 post_loudness 2.6s 步骤，v2 §1.2 已并入 audio 波内，不再单列〕；4K 发布链单列 ≈66s（8 段并行 nvenc p4 + concat，`bench_cold.sh … --with-4k`）。〔方案三前：≈299s（方案二 2026-09-12 定版，voice-ime 口径）〕〔方案二前：全链冷启动 ≈5.5 分钟（拆包提速后，2026-09-11）〕gfx 全冷 ~130-180s；缓存命中全链 ~50s。
 
 **流水线/编码器 env 速查**（默认即定版，回退开关独立 A/B）：
 
@@ -277,94 +275,6 @@ python3 $VIDEO_TOOLS/scripts/content_gates.py -t timeline.json --media out/final
 
 ---
 
-## R5 · 发布链（4K 投稿版 + 冻结）
-
-**适用场景**：母带 out/final.mp4 已过全部门，出投稿版并冻结。
-
-```bash
-cd ~/文档/04_bilibili视频/voice-ime
-
-# 1) 4K 投稿版导出（方案三：8 段并行 nvenc p4，段内 lanczos 放大，concat -c copy 拼接 + aac 直通）
-env python3 $VIDEO_TOOLS/scripts/export_4k.py -t timeline.json
-
-# 2) 4K 断言（14 项：分辨率/帧率/h264 High/yuv420p/码率 cap/时长+帧数/aac/I 间隔/faststart）
-bash $VIDEO_TOOLS/scripts/check_4k.sh out/final_4k.mp4
-
-#    x264 软件链（lanczos + libx264 medium 单进程，--fallback-x264）为回退路径与画质对照基线
-#    （NVENC 探测失败时 export_4k.py 显式告警后自动整链回落，不静默）；画质对照门
-#    compare_4k_quality.py：PSNR ≥42dB / SSIM ≥0.99（2026-09-13 定版实测 10 帧 PSNR min 49.45dB / SSIM min 0.993247 全达标）
-env python3 $VIDEO_TOOLS/scripts/export_4k.py -t timeline.json --fallback-x264 -o out/final_4k_x264_ref.mp4
-env python3 $VIDEO_TOOLS/scripts/compare_4k_quality.py out/final_4k.mp4 out/final_4k_x264_ref.mp4
-
-# 3) 冻结三件套：
-#    out/FREEZE.json（md5 清单，final.mp4+final_4k.mp4+timeline）
-#    CHANGELOG.md 变更单（版本号/改动/验证门结果）
-#    timeline.<版本号>-frozen.json（冻结时间线快照）
-# 4) 发布物料：PUBLISH-PACK.md（参数+简介+备答）
-```
-
-**耗时基准**：4K 导出 ~66s（方案三 2026-09-13 实测 65.68s = 段渲染 62.8s + concat 2.1s，8 段并行 nvenc p4；段缓存全命中重跑时秒级）；check_4k 秒级。〔方案三前：x264 软件链单进程 ~2.5min〕
-
-**必跑验证门**：check_4k 全 PASS（任一 FAIL 退出码 1）。码率门覆盖用 `BITRATE_CAP_MBPS=20.5 bash check_4k.sh …`。
-
-**已知坑位**：
-- **冻结纪律**：FREEZE 记录的 md5 必须与当轮产物一致；后续任何改动（哪怕只重导 4K）都要更新 FREEZE 对应条目（final_4k md5 会变、final.mp4 不变时只改一处并注明）。
-- AI 不手写 ffmpeg **剪辑**命令；此处的 4K 重编码是发布转码不是剪辑，属白名单用法（剪辑永远走 timeline+vtx）。
-
----
-
-## R6 · BGM 挂载 / 音量改动后（分轨审计包）
-
-**适用场景**：BGM 正式版挂载进 timeline、或已挂载 BGM 的音量/分轨有改动（用户裁定：正式版默认必做）。
-
-**前置条件**：R1（或 R2）渲染链已跑完、验证门 PASS。
-
-```bash
-cd ~/文档/04_bilibili视频/voice-ime
-python3 $VIDEO_TOOLS/blender_bridge/audit_bundle.py -t timeline.json --prefix bgm2-
-# 产物：<项目>/cache/audit_bgm/  ├ mp3/（逐源 320k 试听件，内容校验缓存）
-#                               ├ timeline.json（逐轨一列审计时间线）
-#                               └ audit.blend（Blender 审计工程，交用户逐轨静音/独听）
-```
-
-**重跑规则**：分轨或音量改动后**重跑即可**——MP3 按源内容和转码规格校验缓存；`--force` 强制全量重转。草稿/内部迭代轮不要求，正式版必做（人机协作交付门）。`--whole` 保留所有原事件；默认切分的 loop/fade 回退和审听边界见 `docs/audio-audit.md`。
-
-**耗时基准**：分钟级（逐轨 ffmpeg 转码 + json2blend + verify_blend）。
-
-**必跑验证门**：audit_bundle 内置五步（转码→审计 timeline→vtx validate→audit.blend→verify_blend 结构校验）。
-
-**已知坑位**：给用户的 Blender 用法话术与交付规程见 music skill「交付门：分轨审计包」节与 `blender_bridge/README.md`。
-
----
-
-## R7 · 封面制作/修改（B 站投稿封面，D50）
-
-**适用场景**：新视频出投稿封面，或改封面文案/背景/排布重铺。规格依据（显示比例/安全区/文案法）与完整坑表 → `cover.md`。
-
-**前置条件**：背景图已生成并验收（imgen GPT 系端点，付费动作人工授权；提示词原则与选型见 `cover.md` §五）；大标题+小字两行文案已拍板。
-
-```bash
-# 一条龙：prep-bg(lanczos 精确画布) → render(HTML+Chrome 截图 PNG/JPG≤2MB) → previews(四端裁切) → qc(验证门)
-env python3 $VIDEO_TOOLS/scripts/make_cover.py all --out <项目>/cover \
-    --bg-src <项目>/assets/imgen/<UTC>-<n>.png \
-    --title "说话 就是 打字" --sub "Linux 开源 · 语音键盘同引擎"
-
-# 只改文案/排布重铺（bg_1920x1200.png 已在 <项目>/cover/ 内）：
-env python3 $VIDEO_TOOLS/scripts/make_cover.py render --out <项目>/cover --title "…" --sub "…"
-env python3 $VIDEO_TOOLS/scripts/make_cover.py previews --dir <项目>/cover
-env python3 $VIDEO_TOOLS/scripts/make_cover.py qc --dir <项目>/cover
-```
-
-**产物契约**：`<项目>/cover/` = bg png + cover.html + cover.meta.json（参数自述）+ cover png/jpg（上传用 JPG）+ previews/{pc_16x9,thumb_384,app_138,app_43}.png + cover_qc.json。
-
-**耗时基准**：全链 ~10s（voice-ime 实测：prep-bg ~2s + Chrome 截图 ~3s + 预览 ~3s + qc ~2s）。
-
-**必跑验证门**：`qc` PASS（尺寸/安全区几何/YAVG≥115/JPG≤2MB，FAIL 退出码 1）+ thumb_384 缩略图大标题 1 秒可读（人审）+ 独立视觉子智能体 OCR 复检。
-
-**已知坑位**：生图勿单独依赖 flare（对无害抽象画提示词有审核误杀两连拒记录）；sunburst 忽略 aspectRatio 出 1K 方图，prep-bg 兜底裁切（放大倍数自动警告）；Chrome headless 同输入渲染字节一致，可当幂等重铺工具；投稿时创作中心裁切预览框再自查一次。
-
----
-
 ## 主控-子智能体棒次协议
 
 1. **棒次 prompt 必须自包含**：权威仓路径、任务目标、报告落盘路径（`<video_tools>/cache/opt20250911/`）、**严禁 git commit**（改完留工作区由主控提交）。
@@ -375,19 +285,19 @@ env python3 $VIDEO_TOOLS/scripts/make_cover.py qc --dir <项目>/cover
 
 ## 命令正字法速查（易抄错项）
 
-- **vtx 子命令全集**：`all | validate | audit | prepare | gfx | video | audio | mux | qc | clean | gc | df | snapshot`。常用开关：`-t <timeline.json>`、`--draft [--frames N]`（仅 video/mux）、`--gpu`（仅 video）、`gc --dry/--all`。入口：`python3 $VTX …`。
+- **vtx 子命令全集**：`all | validate | audit | prepare | gfx | video | audio | mux | qc | clean | gc | df | snapshot`。常用开关：`-t <timeline.json>`、`--draft [--frames N]`（仅 video/mux）、`--gpu`（仅 video）、`all --until <stage>`（截断，如 `all --until video`）、`gc --dry/--all`。入口：`python3 $VTX …`。
 - **json2blend**（⚠ **必须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError**）：
   ```bash
-  blender --background --factory-startup --python $VIDEO_TOOLS/blender_bridge/json2blend.py -- \
+  blender --background --factory-startup --python $VIDEO_TOOLS/apps/blender-bridge/json2blend.py -- \
       <项目>/timeline.json <项目>/preview.blend
   ```
   参数在 `--` 之后：`<timeline.json> <out.blend>`，无 `-t` 开关。
 - **verify_blend**（同理 blender 运行，参数序=timeline 在前 blend 在后）：
   ```bash
-  blender --background --python $VIDEO_TOOLS/blender_bridge/verify_blend.py -- \
-      <timeline.json> <preview.blend>
+  blender --background --python $VIDEO_TOOLS/apps/blender-bridge/verify_blend.py -- \
+      <项目>/timeline.json <preview.blend>
   ```
-- **audit_bundle**（普通 python3 可运行）：`python3 $VIDEO_TOOLS/blender_bridge/audit_bundle.py -t <项目>/timeline.json [--prefix bgm2- …]`，产物 `<项目>/cache/audit_bgm/`。
-- **content_gates**：`python3 $VIDEO_TOOLS/scripts/content_gates.py -t <项目>/timeline.json --media <项目>/out/final.mp4 [--project-gates 门.json]`。
-- **post_loudness**：`bash $VIDEO_TOOLS/scripts/post_loudness.sh <项目目录>`（项目目录须含 `out/audio.wav`，即在 vtx audio 之后）。
-- **check_4k**：`bash $VIDEO_TOOLS/scripts/check_4k.sh <4k文件> [期望帧数]`（帧数缺省时从 timeline.json 自动推导）。
+- **audit_bundle**（普通 python3 可运行）：`python3 $VIDEO_TOOLS/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json [--prefix bgm2- …]`，产物 `<项目>/cache/audit_bgm/`（产线配方 R6 见 tech-talk runbook-r5r6r7.md）。
+- **content_gates**：`python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t <项目>/timeline.json --media <项目>/out/final.mp4 [--project-gates 门.json]`。
+- **post_loudness（v2 兼容薄壳，正常链路无需）**：`bash $VIDEO_TOOLS/scripts/post_loudness.sh <项目目录>`——限幅已在 `vtx audio` 尾部一体完成，本命令仅对 v1 遗留产物/排查场景做兼容重跑（对已终态 audio.wav 幂等直过）。
+- **check_4k**：`bash $VIDEO_TOOLS/apps/publish/check_4k.sh <4k文件> [期望帧数]`（帧数缺省时从 timeline.json 自动推导；4K 发布链配方见 tech-talk runbook-r5r6r7.md R5）。

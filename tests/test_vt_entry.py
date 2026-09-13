@@ -84,9 +84,15 @@ class DoctorJson(unittest.TestCase):
             self.assertFalse(e["fail"], e)
         self.assertTrue(c["import_vtx"]["ok"], c["import_vtx"])
         self.assertTrue(str(REPO) in c["import_vtx"]["path"])
-        # skills 段
+        # skills 段（P3 起 tech-talk 落地：发现 + uses_apps 逐件在册）
         self.assertIn("skills", d)
         self.assertFalse(d["skills"]["fail"])
+        installed = {s["name"]: s for s in d["skills"]["installed"]}
+        self.assertIn("tech-talk", installed)
+        tt = installed["tech-talk"]
+        self.assertTrue(tt["ok"], tt)
+        self.assertEqual(tt["version"], "1.0.0")
+        self.assertEqual(len(tt["uses_apps"]), 12)
 
     def test_doctor_human_readable_offline(self):
         r = _vt("doctor", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
@@ -136,15 +142,15 @@ class FixLinks(unittest.TestCase):
         r2 = _vt("--fix-links", env_extra=env)
         self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
         for name, rel in (("SKILL.md", "skill/SKILL.md"), ("references", "skill/references"),
-                          ("assets", "skill/assets"), ("vtx", "vtx"), ("scripts", "scripts")):
+                          ("assets", "skill/assets"), ("vtx", "vtx"), ("scripts", "scripts"),
+                          ("skills", "skills")):
             link = self.mount / name
             self.assertTrue(link.is_symlink(), f"{name} 未建链")
             target = Path(os.readlink(link))
             self.assertFalse(target.is_absolute(), f"{name} 应为相对链接")
             self.assertEqual((link.parent / target).resolve(), (REPO / rel).resolve())
-        # 第 6 条 skills 链接：目标（repo skills/）尚不存在 → 跳过并提示
-        self.assertIn("skills：目标不存在", r2.stdout)
-        self.assertFalse((self.mount / "skills").exists() or (self.mount / "skills").is_symlink())
+        # P3 起 skills/tech-talk 落地：第 6 条 skills 链接照常建立（过渡期断言已随包成立退役）
+        self.assertTrue((self.mount / "skills" / "tech-talk" / "SKILL.md").is_file())
         # 幂等：再跑一遍全 ✓ 零变更
         r3 = _vt("--fix-links", env_extra=env)
         self.assertEqual(r3.returncode, 0)

@@ -1,5 +1,5 @@
 # 剪辑（edit）· 中间层工具站：timeline.json + vtx
-> **使用者向**：timeline.json 契约、vtx CLI 用法、音频工程规则与渲染坑表。性能基准与坑位破案详录见 `../../docs/DEV.md`。不涉及 HTML 动效设计（→ `references/gfx.md`）、不涉及选题调研（→ `references/research.md`）。索引见 `../SKILL.md`。
+> **使用者向**：timeline.json 契约、vtx CLI 用法、音频工程规则与渲染坑表。性能基准与坑位破案详录见 `../../docs/DEV.md`。不涉及 HTML 动效设计（→ `references/gfx.md`）、不涉及选题调研（→ `skills/tech-talk/references/research.md`）。索引见 `../SKILL.md`。
 ## 铁律
 1. **AI 永远不手写 ffmpeg 剪辑命令**。剪辑 = 编写/修改 timeline.json + 调用 vtx。失误率控制靠三道闸：渲染前校验（validate）、确定性构建（vtx 生成全部 ffmpeg）、渲染后 QC。
 2. **修改 timeline.json 后必须重跑 validate**，校验失败时修数据、不绕过。
@@ -59,10 +59,10 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 
 
 ## 音频工程（build_audio 内置）
 - **音乐避让（duck）**：音轨声明 `"duck": true`（bed/amb 建议）即被 `"duck_by"`（缺省 `["voice"]`）轨的混音经 `sidechaincompress`（threshold 0.03 / ratio 6 / attack 150ms / release 700ms）压低。**⚠ 新项目启用 duck 前必须先做「duck 开/关」A/B 响度对照，否则长节目下无口播段床乐可能反常抬高约 19dB**；床乐静态电平已足够低（低于口播 ≥5dB）时建议直接不开（破案详录见 DEV.md）。
-- **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测（±1.5 LUFS 容差）。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。峰值安全由项目侧 limiter 兜底（`post_loudness.sh`：alimiter limit=0.599，audio 后 mux 前必跑）。
-- **⚠ audio → post_loudness → mux 三步链不可跳中步，否则 mux 后解码 TP 超标**。
+- **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测（±1.5 LUFS 容差）。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。
+- **响度终链（v2 §1.2，2026-09-13）**：alimiter 限幅（`limit=0.599:level=false:latency=true`）已并入 `vtx audio`（build_audio 尾部，与区间预览统一过 limiter）——out/audio.wav 恒为「归一+限幅」终态，**audio → mux 直连，无独立 post_loudness 步骤**（`scripts/post_loudness.py/.sh` 留兼容薄壳，正常链路无需）。终态校验分级：硬 FAIL=TP>-1.0 dBFS/时长漂移 ±1 采样/I 偏离 >3 LU；WARN=I 偏离 ∈(1.5,3]。**编码后解码 TP 终检纪律不变**（G3/qc）。
 - 混音链：轨内子混音（apad 补齐成片全长）→ duck → 总混音（amix normalize=0 保留音量比例）→ 静态增益 → 定长裁切。
-- **BGM 分轨审计包（正式版默认必做）**：BGM 正式版本挂载进时间线后，除 vtx 渲染外必跑 `python3 <本仓>/blender_bridge/audit_bundle.py -t <项目>/timeline.json`（旧库 `~/文档/04_bilibili视频/_library/blender_bridge/` 位置为兼容指针，权威副本已收编本仓）——分轨 MP3 导出 + 审计 timeline + Blender 审计工程 `audit.blend` 一键五步，产物落 `<项目>/cache/audit_bgm/`。用户在 Blender VSE 逐轨静音/独听对比才能参与混音与编排裁决（人机协作交付门；完整规程见 music skill「交付门：分轨审计包」节）。分轨或音量改动后重跑即可（MP3 按源内容与转码规格校验缓存；事件映射及整段回退见 docs/audio-audit.md）。
+- **BGM 分轨审计包（正式版默认必做）**：BGM 正式版本挂载进时间线后，除 vtx 渲染外必跑 `python3 <本仓>/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json`（旧库 `~/文档/04_bilibili视频/_library/blender_bridge/` 位置为兼容指针，权威副本已收编本仓）——分轨 MP3 导出 + 审计 timeline + Blender 审计工程 `audit.blend` 一键五步，产物落 `<项目>/cache/audit_bgm/`。用户在 Blender VSE 逐轨静音/独听对比才能参与混音与编排裁决（人机协作交付门；完整规程见 music skill「交付门：分轨审计包」节）。分轨或音量改动后重跑即可（MP3 按源内容与转码规格校验缓存；事件映射及整段回退见 docs/audio-audit.md）。
 ## 渲染速度：草稿 / GPU / 缓存
 ```bash
 # 迭代预览（不碰正式产物）：540p + NVENC p4，跳过 qc_clean；改动集中片头时加 --frames
@@ -131,16 +131,16 @@ gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，
 - **音频并发窗口响度**：最大并发轨数的窗口有能量
 ## 与其他文档/资产的衔接
 - HTML 动效页面（gfx/*.html）的编写与设计 → 本 skill `references/gfx.md`（帧驱动协议、样式模板）
-- 选题调研与 01-brief → 本 skill `references/research.md`
+- 选题调研与 01-brief → `skills/tech-talk/references/research.md`（产线知识，v2 迁出内核）
 - BGM/音效/环境声的选取与授权 → `~/文档/04_bilibili视频/_library/reports/音频资产与混音惯例调查.md` §四-§六（授权红线：**商业音乐不用=唯一红线**、音效/环境声宽松获取、AI 生成积极使用）；**现成资产在工作区 `_library/assets_audio/`**（Kenney/Mixkit/Sonniss 音效库 + bgm/ AI 试听样，登记见其 LICENSE.md；各期 timeline 以 `../_library/assets_audio/...` 相对引用）；**本地 BGM 产线路由进 `music` skill（~/.agents/skills/music/）**，本体在 `~/文档/01_活跃项目/music_tools/`（CLI：bgm）
 - 选题/脚本/录制规划 → 上层流程（见 `~/文档/04_bilibili视频/AGENTS.md`）
 ## 方法论指针
 - **编排总纲**：`~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md`（开场模板/正文节奏/演示对位三原则/字幕 ASR 锚定/音频避让与响度链/结尾模板/验证门清单）——编排每期 timeline 前先读。
-- 用户手剪回读协议（blend2json→ASR→用户权威文本对照）→ `~/文档/01_活跃项目/video_tools/blender_bridge/README.md`「用户手剪回读协议」节。
-- **待办（拍板后执行）**：voice-ime/07-shooting-guide.md 的通用实拍规范上提为 `_library/reports/` 通用手册，项目版留本期装备记录——上提后此处补指针。
+- 用户手剪回读协议（blend2json→ASR→用户权威文本对照）→ `apps/blender-bridge/README.md`「用户手剪回读协议」节。
+- 拍摄规范速查（产线向）→ `skills/tech-talk/references/shooting.md`（装备全量手册仍在 voice-ime/07-shooting-guide.md）；**待办（拍板后执行）**：07-shooting-guide 的通用实拍规范上提为 `_library/reports/` 通用手册，项目版留本期装备记录——上提后各指针收敛。
 ## 三大生成模块（asr/tts/imgen）产线接口
-三模块默认关闭。开启：`bash asr/init.sh` / `bash tts/init.sh` / `bash imgen/init.sh`（幂等，复用本机已有资产优先）→ `config.local.json` 对应条目 `enabled:true`（模板见 `config.example.json`）。三模块互不依赖、与 vtx 零耦合，唯一耦合面 = 项目目录文件契约（timeline.json / assets/**）。
-- **字幕锚定工作流（asr/，口播→subtitles[]）**：口播音频/成片 → `python3 asr/asr_cli.py timeline <音频> -t <项目>/timeline.json`——sidecar 转写 + 字级时间戳 → 文本规范化断句（口水词清除/行宽 ≤18/最短 0.6s）→ subtitles[] 就地合并（旧值自动备份进 `cache/reports/`）。**合并后必须 `vtx validate` + `audit` 复核**：阅读速度 ≤9 字/s、告警逐条人工解释后才可进 `video` 阶段烧录。长音频库内自动分块（±5s 低能量边界）；`--dry-run` 只预览。端口纪律：**18081 是 IME 输入法 sidecar，本仓 ASR sidecar 默认 18085**（config `asr.base_url`）。
-- **TTS 占位→实录替换衔接（tts/）**：`python3 tts/tts_cli.py spec -t <项目>/timeline.json` 从 voice 轨 `vt_<ID>` 事件链反推每窗预算（budget=Σ链帧/30+0.02s）成 spec.json（人工校对文本）→ `python3 tts/tts_cli.py gen <spec.json> --project <项目> [--engine edge]` → 产物落 **`<项目>/assets/voice_tts/final/<窗口ID>.wav`**（48kHz/mono/pcm_s16le，时长=budget±0.02s）。实录替换链同构：用户按窗录音进 `assets/voice_takes/<ID>.wav` → `python3 scripts/repack_voice.py -t <项目>/timeline.json` 替换占位（用法见 `--help`）→ 按 repack 打印的后续命令清 prepare 缓存重跑（audio 必重跑）。IndexTTS 需 repo+专用解释器；`--engine edge` 免 GPU 兜底（晓晓）。
-- **背景图 bg4k 硬接口（imgen/）**：`python3 imgen/imgen_cli.py gen "<prompt>" --out <项目> --kind bg4k --yes` → 速创 API 生成 + lanczos cover-crop 到**恰好 3840×2160、8-bit RGB PNG** 落 `assets/bg/background_4k.png`——matting `run_full_bg.sh` 的 cv2.imread 直读逐像素合成，尺寸/像素格式不符即链断（模块内置 ffprobe 断言）。`bg1080p`/`vertical` 变体供口播底图；离线补裁 `imgen_cli.py postprocess <原图> --kind bg4k -o <目标>`。**付费纪律：0.1 元/张，提交前确认门（无 `--yes` 时交互 y/N，非 TTY 直接中止）；审核拒绝不退款**；生成 URL 2 小时失效，原图留档 `assets/imgen/`。
-- **抠像与背景合成（matting/）**：真人实拍抠像 → 带 alpha ProRes4444 → 与背景合成，全流程见 `references/matting.md`（resolve_matte 达芬奇 Magic Mask 为主力，`matting/run_full_bg.sh` 自研链为历史备用）。
+三模块默认关闭（v2 迁至 `apps/asr|tts|imgen`）。开启：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等，复用本机已有资产优先；仓根 `asr/` 等为兼容 symlink）→ `config.local.json` 对应条目 `enabled:true`（模板见 `config.example.json`）。三模块互不依赖、与 vtx 零耦合，唯一耦合面 = 项目目录文件契约（timeline.json / assets/**）。
+- **字幕锚定工作流（asr/，口播→subtitles[]）**：口播音频/成片 → `python3 apps/asr/asr_cli.py timeline <音频> -t <项目>/timeline.json`——sidecar 转写 + 字级时间戳 → 文本规范化断句（口水词清除/行宽 ≤18/最短 0.6s）→ subtitles[] 就地合并（旧值自动备份进 `cache/reports/`）。**合并后必须 `vtx validate` + `audit` 复核**：阅读速度 ≤9 字/s、告警逐条人工解释后才可进 `video` 阶段烧录。长音频库内自动分块（±5s 低能量边界）；`--dry-run` 只预览。端口纪律：**18081 是 IME 输入法 sidecar，本仓 ASR sidecar 默认 18085**（config `asr.base_url`）。
+- **TTS 占位→实录替换衔接（tts/）**：`python3 apps/tts/tts_cli.py spec -t <项目>/timeline.json` 从 voice 轨 `vt_<ID>` 事件链反推每窗预算（budget=Σ链帧/30+0.02s）成 spec.json（人工校对文本）→ `python3 apps/tts/tts_cli.py gen <spec.json> --project <项目> [--engine edge]` → 产物落 **`<项目>/assets/voice_tts/final/<窗口ID>.wav`**（48kHz/mono/pcm_s16le，时长=budget±0.02s）。实录替换链同构：用户按窗录音进 `assets/voice_takes/<ID>.wav` → `python3 apps/sync/repack_voice.py -t <项目>/timeline.json` 替换占位（用法见 `--help`）→ 按 repack 打印的后续命令清 prepare 缓存重跑（audio 必重跑）。IndexTTS 需 repo+专用解释器；`--engine edge` 免 GPU 兜底（晓晓）。
+- **背景图 bg4k 硬接口（imgen/）**：`python3 apps/imgen/imgen_cli.py gen "<prompt>" --out <项目> --kind bg4k --yes` → 速创 API 生成 + lanczos cover-crop 到**恰好 3840×2160、8-bit RGB PNG** 落 `assets/bg/background_4k.png`——matting `apps/matting/run_full_bg.sh` 的 cv2.imread 直读逐像素合成，尺寸/像素格式不符即链断（模块内置 ffprobe 断言）。`bg1080p`/`vertical` 变体供口播底图；离线补裁 `apps/imgen/imgen_cli.py postprocess <原图> --kind bg4k -o <目标>`。**付费纪律：0.1 元/张，提交前确认门（无 `--yes` 时交互 y/N，非 TTY 直接中止）；审核拒绝不退款**；生成 URL 2 小时失效，原图留档 `assets/imgen/`。
+- **抠像与背景合成（apps/matting/）**：真人实拍抠像 → 带 alpha ProRes4444 → 与背景合成，全流程见 `apps/matting/matting.md`（v2 自本 skill 迁入 app 目录；resolve_matte 达芬奇 Magic Mask 为主力，`run_full_bg.sh` 自研链为历史备用）。

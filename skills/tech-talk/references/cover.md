@@ -2,7 +2,7 @@
 
 > **定位：制作/修改 B 站投稿封面的完整配方。** 规格结论、文案方法、背景生成、`make_cover.py` 合成渲染与 QC 门全部在本文；命令经 voice-ime 首期封面全链实测（复现性：脚本产物与人工链成品**逐文件字节一致**，记录见 §九）。
 >
-> 路由索引在 `../SKILL.md`；标准修改配方视角的速查版在 `runbook.md` R7。相关：背景图生成=仓 `imgen/`（速创 API，付费）；视觉铁律=D22（禁深蓝/蓝紫渐变科技风、暖色基线）。
+> 路由索引在本包 `../SKILL.md`；标准修改配方视角的速查版在 `runbook-r5r6r7.md` R7。相关：背景图生成=仓 `apps/imgen/`（速创 API，付费）；视觉铁律=D22（禁深蓝/蓝紫渐变科技风、暖色基线，定义在内核 gfx.md）。
 
 ## 一、产线总览（三步法，总控+子智能体分工）
 
@@ -44,7 +44,7 @@
 ```bash
 cd <video_tools>
 # 模型选型：GPT 系（用户拍板 D50：封面生图限 GPT 系，不用 nano 兜底）
-env python3 imgen/imgen_cli.py gen "<提示词>" --out <项目> \
+env python3 apps/imgen/imgen_cli.py gen "<提示词>" --out <项目> \
     --model gpt-2.5-sunburst --quality high --ratio 2048x1280 --kind raw --yes
 # 产物 <项目>/assets/imgen/<UTC>-<n>.png；task_id 记账在 <项目>/cache/reports/imgen_jobs_*.json
 ```
@@ -53,11 +53,11 @@ env python3 imgen/imgen_cli.py gen "<提示词>" --out <项目> \
 - **选型**：flare=快速档但**有审核误杀记录**；sunburst=慢速精修，本项目两次实证可用（背景重制+封面）；基础版 gpt-2.5 只出 1K 方图且比例串被忽略。
 - **验收（生成后逐张过，再进合成）**：① 无文字/字母/水印 ② 大面积暖琥珀主导、非蓝紫/深色主导 ③ 中央偏上（文字落区）色域均匀 ④ 宽 ≥1920（比例不对交 prep-bg 裁切，见坑位②）。
 
-## 六、合成与渲染（`scripts/make_cover.py`，零外部 Python 依赖）
+## 六、合成与渲染（`apps/cover/make_cover.py`，零外部 Python 依赖）
 
 ```bash
 # 一条龙（prep-bg → render → previews → qc）：
-env python3 <video_tools>/scripts/make_cover.py all --out <项目>/cover \
+env python3 <video_tools>/apps/cover/make_cover.py all --out <项目>/cover \
     --bg-src <项目>/assets/imgen/<UTC>-<n>.png \
     --title "说话 就是 打字" --sub "Linux 开源 · 语音键盘同引擎"
 # 分步：prep-bg <src> -o bg.png / render --out <dir> --bg bg.png --title … --sub … / previews --dir <dir> / qc --dir <dir>
@@ -74,7 +74,7 @@ env python3 <video_tools>/scripts/make_cover.py all --out <项目>/cover \
 
 ## 八、已知坑位（2026-09-13 实测）
 
-1. **速创 flare 端点审核误杀**：无害纯抽象画中文提示词两连 status=3 拒绝（不退款、排队数分钟后转拒）——重要生成直接用 sunburst，勿把 flare 当唯一依赖（已入册 imgen/README「已验证版本」）。
+1. **速创 flare 端点审核误杀**：无害纯抽象画中文提示词两连 status=3 拒绝（不退款、排队数分钟后转拒）——重要生成直接用 sunburst，勿把 flare 当唯一依赖（已入册 apps/imgen/README「已验证版本」）。
 2. **sunburst 忽略 aspectRatio**：payload 携带 `2048x1280` 仍出 1K 方图（1024²）→ 由 `prep-bg` cover-crop 到 1920×1200，**1.875× lanczos 放大**（脚本自动警告倍数；抽象平涂色域可接受，精细纹理需重生成）。
 3. **4:3 预览尺寸口径**：4:3 of 高 1200 = **1600×1200**（裁左右各 8.3%）；曾误算 1440（6:5）——1600 才是真 4:3，脚本已按比例通用计算。
 4. 小字在缩略图（384px）上不可读属平台常态，不按缺陷处理；大标题承担信息流触达。

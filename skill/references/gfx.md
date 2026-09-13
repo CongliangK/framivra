@@ -49,9 +49,9 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
   x=x+Math.imul(x^x>>>7,61|x)^x;return((x^x>>>14)>>>0)/4294967296}}  // seeded 伪随机
 ```
 
-## 样式模式库（按需取用，完整示例见 assets/ 起手模板与 assets/gfx-examples/ 实例页）
+## 样式模式库（按需取用；起手模板在本 skill assets/，实例页见 tech-talk assets/）
 
-实例页已随 skill 收录在 `~/.agents/skills/video/assets/gfx-examples/`（源自 poc1/poc2 已验证页面），下表实例位置均相对该目录：
+实例页已随产线资产迁至 `skills/tech-talk/assets/gfx-examples/`（源自 poc1/poc2 已验证页面，v2 迁出内核），下表实例位置均相对该目录：
 
 | 模式 | 关键手法 | 实例位置 |
 |---|---|---|
@@ -66,36 +66,17 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
 | 毛玻璃卡片 | ~~`background:rgba(15,23,42,.55)` + `backdrop-filter:blur(6px)` + 内高光 inset~~ **已作废**：深底玻璃属禁用深蓝系；替代=白底暖色卡 `#fff`/`rgba(255,253,250,.92)` + 浅暖描边+柔投影（见 gfx-templates/ overlay 卡族） | gfxA |
 | 漂移渐变背景 | 两个 blur(150px) 径向渐变 div 按 `sin/cos(t)` 平移——**暖底版**（卡其 #c8a24a/琥珀 #d97706 极淡斑，白底之上）为现行基线；poc 深底版实例仅作机制参考 | motion / endboard.html |
 
-起手模板：`~/.agents/skills/video/assets/title-card.html`（标题卡）和 `~/.agents/skills/video/assets/lower-third.html`（下三分之一条），复制到项目 `gfx/` 改文案与配色即可。
+起手模板（内核通用件）：本 skill `assets/title-card.html`（标题卡）和 `assets/lower-third.html`（下三分之一条），复制到项目 `gfx/` 改文案与配色即可；产线已验收七件参数化模板（gfx-templates/）在 `skills/tech-talk/assets/gfx-templates/`。
 
 页面写好后如何挂进时间线（timeline 里 kind=gfx 的 clip、帧序列渲染），见 `references/edit.md`。
 
-## 模板库（assets/gfx-templates/，经完整项目全流程验收页参数化抽取）
+## 模板库（→ skills/tech-talk/assets/gfx-templates/）
 
-参数化自已验收页面——**文案与数据全部集中在页首 CONST DATA 区，改数据不碰机制代码**；每件头部注释块标明用途/来源/改哪里/避让红线。
+产线已验收模板（六件参数化页 + `_tokens.md` 设计基准，合七件）随产线资产迁至 **`skills/tech-talk/assets/gfx-templates/`**——参数化自已验收页面，**文案与数据全部集中在页首 CONST DATA 区，改数据不碰机制代码**；每件头部注释块标明用途/来源/改哪里/避让红线，逐件适用场景见各模板头注。`_tokens.md` 为 D22 调色板 token 的产线落地面，**D22 定义权威仍在本文「设计基准」节**（tech-talk 反向引用）。
 
-| 模板 | 适用场景 |
-|---|---|
-| `data_table_grouped.html` | 整页「口播没念的数据」表：分组行表+推荐行+右侧数据卡+选型脚注（技术选型/对比表页） |
-| `chart_curve.html` | 实测数据曲线图表：KV 关键帧+TP 讲述节奏驱动画图进度+实时读数+阶段标签+侧表 |
-| `endboard.html` | 片尾端板：署名/URL/副行/徽章/同类致意/反馈行，暖斑底+长挂载安全自查 |
-| `overlay_card_top.html` | 叠全屏出镜的上带流程卡：节点+连线生长（虚线=语义段）+落章徽章，含避让几何注释 |
-| `overlay_card_bottom.html` | 叠全屏出镜的脸下方流程条：圆点序号章+图标+依序点亮+低频呼吸，避字幕带 |
-| `nav_card.html` | 视频结构预告导航卡：暗态入场→口播词拍点亮→双亮定格（PART1/PART2 状态机） |
-| `_tokens.md` | 设计基准页（调色板/字号/组件模式/自查流程），voice-ime gfx 开发前必读底本 |
+## voice-ime 成熟范式速查（→ skills/tech-talk/references/voice-ime-paradigm.md）
 
-## voice-ime 成熟范式速查（详细实现看对应源页 `voice-ime/gfx/`）
-
-- **句锁节拍法**：所有节拍常量=页内秒/帧，按「挂载 dst 锚点表 + 口播句窗→页内秒对照注释」组织；词位无词级时间戳时标「待视觉抽验」——见 u2_backends.html 头注释。
-- **曲线 KV/TP 机制**：KV=[进度,数值] 分段线性出曲线形状，TP=[讲述秒,进度] 把口播节奏映射成画图进度（讲述到哪画到哪）——g4c_vram.html。
-- **骨架占位→落位两拍**：暖灰骨架条先占版式，真内容句拍落位时同步淡出，解决前段版式空——open_source_card.html。
-- **暗态→词拍点亮状态机**：信息暗态在位不抢注意，口播词首一到 rgb()/mix() 色插值渐变点亮+定格辉光——nav_two_pillars.html。
-- **overlay 卡避让几何**：上带卡=投影尾预算（墨迹下界<脸带顶，Haar 实测脸带）；下带卡=卡底+投影<字幕带保守线 860——e1_pain_card / p6_pipeline_strip。
-- **数据外置架构**：HTML+data-*.json 分离（改数据不碰版式）+ data-sources.md 全页溯源登记——c2_components.html。
-- **mix()/rgb() 色插值**：hex→hex 与数组→rgb 两形态，灰态→点亮态过渡的通用手段（e1/p6/nav/recap 共用）。
-- **同页时间压缩复用**：同一页面二次使用时 TP 全表×系数重排讲述节奏（×0.75 实案）——c3_perf.html。
-- **长挂载页安全复核**：f 超出设计窗时全部动画须为 sin 连续函数/seg 窗口，无数组按 t 索引、无定格越界——g6b_endboard.html。
-- **虚线语义**：流程连线中 dashed 琥珀段=「隔层/异常/跳转」语义标记，实线墨色=正常流——e1_pain_card.html。
+句锁节拍法 / 曲线 KV-TP 机制 / 骨架占位两拍 / 暗态点亮状态机 / overlay 避让几何 / 数据外置 / mix 色插值 / 同页时间压缩 / 长挂载安全复核 / 虚线语义——**十条实测范式已迁至 `skills/tech-talk/references/voice-ime-paradigm.md`**（产线编排知识；详细实现看对应源页 `voice-ime/gfx/`），编排方法论指针（编排总纲/修复工作法/手剪回读协议）同在该文件。
 
 ## 设计基准
 

@@ -1,16 +1,16 @@
 # 抠像与背景合成（matting）· 真人实拍场景
-> **使用者向**：把实拍真人从原背景中抠出（带 alpha 通道），再与背景图/背景视频合成。工具本体在 video_tools 仓 `matting/`，两条路线详见下表；合成侧规则见 `references/edit.md`。索引见 `../SKILL.md`。
+> **使用者向**：把实拍真人从原背景中抠出（带 alpha 通道），再与背景图/背景视频合成。本文为 app 专属全流程文档（v2 自内核 skill/references/ 迁入本目录）；合成侧规则见内核 `skill/references/edit.md`，路由索引见内核 `skill/SKILL.md`。
 ## 场景与路线选型
 | 路线 | 位置 | 适用 | 状态 |
 |---|---|---|---|
-| **达芬奇 Magic Mask（主力）** | `matting/resolve_matte/` | 真人实拍抠像 → 带 alpha ProRes4444 导出，质量高 | 已验收（matte_auto_v8/v9 全流程跑通） |
-| 自研 BiRefNet_HR + MatAnyone2（备用） | `matting/`（根） | 无达芬奇 Studio 时的兜底 | 可用，官方标注质量差、慢 |
+| **达芬奇 Magic Mask（主力）** | `apps/matting/resolve_matte/`（本目录） | 真人实拍抠像 → 带 alpha ProRes4444 导出，质量高 | 已验收（matte_auto_v8/v9 全流程跑通） |
+| 自研 BiRefNet_HR + MatAnyone2（备用） | `apps/matting/`（本目录根） | 无达芬奇 Studio 时的兜底 | 可用，官方标注质量差、慢 |
 
 **选型结论：默认走 resolve_matte**；旧链仅在无达芬奇环境时考虑。
 ## 路线一：resolve_matte（达芬奇 Magic Mask，默认）
-前置：DaVinci Resolve 21 **Studio**（Linux）、空闲显存 ≥15GB（下限 13G 放行）。完整阶段表/坐标系标定/踩坑实录读 `matting/resolve_matte/README.md`（动手前必读）。
+前置：DaVinci Resolve 21 **Studio**（Linux）、空闲显存 ≥15GB（下限 13G 放行）。完整阶段表/坐标系标定/踩坑实录读本目录 `resolve_matte/README.md`（动手前必读）。
 ```bash
-cd ~/文档/01_活跃项目/video_tools/matting/resolve_matte
+cd <video_tools>/apps/matting/resolve_matte
 env bash matte_pipeline.sh matte_auto_v9    # 一键：清显存→建工程→9轨抠像→等演算→导出
 SKIP_GUARD=1 env bash matte_pipeline.sh proj   # 达芬奇已就绪，跳过重启
 SKIP_OPS=1    env bash matte_pipeline.sh proj   # 已抠好，仅重新导出
@@ -21,11 +21,11 @@ SKIP_OPS=1    env bash matte_pipeline.sh proj   # 已抠好，仅重新导出
 - Magic Mask 演算期间达芬奇**抓住指针**，等待期间禁止任何鼠标操作。
 - 渲染只能写家目录；每轨单独 MarkIn/MarkOut；阿尔法三件套（ExportAlpha + AlphaMode=1 + ProRes4444）缺一即出废片。
 ## 路线二：自研链（备用）
-BiRefNet_HR@2048 首帧 mask → MatAnyone2 视频抠像 → guided filter 收边。依赖默认关闭，需 `bash matting/init.sh --download` 配置 conda env + 两个平级克隆 + 权重。用法与坑见 `matting/README.md` 与 `matting/docs/测试报告-背景替换与H3重绘.md`。
+BiRefNet_HR@2048 首帧 mask → MatAnyone2 视频抠像 → guided filter 收边。依赖默认关闭，需 `bash apps/matting/init.sh --download` 配置 conda env + 两个平级克隆 + 权重。用法与坑见本目录 `README.md` 与 `docs/测试报告-背景替换与H3重绘.md`。
 ## 合成侧：把带 alpha 前景放进成片
-1. **背景图**：`python3 imgen/imgen_cli.py gen "<prompt>" --out <项目> --kind bg4k --yes` → 恰好 3840×2160 RGB PNG 落 `assets/bg/`（硬接口契约见 `references/edit.md`「三大生成模块」节）。
-2. **首选机制：timeline.json 多轨叠加**（`references/edit.md` 契约）——背景素材放底层轨（aroll/broll），matte_V*.mov 带 alpha 前景放**上层轨**（数组顺序＝图层顺序，末位最上），几何/透明度用 clip 的 scale/x/y/opacity。
-3. **手写 ffmpeg 合成时守 `references/edit.md` 坑表三条**（2026-09-13 matte×背景实锤）：
+1. **背景图**：`python3 <video_tools>/apps/imgen/imgen_cli.py gen "<prompt>" --out <项目> --kind bg4k --yes` → 恰好 3840×2160 RGB PNG 落 `assets/bg/`（硬接口契约见内核 `skill/references/edit.md`「三大生成模块」节）。
+2. **首选机制：timeline.json 多轨叠加**（内核 `skill/references/edit.md` 契约）——背景素材放底层轨（aroll/broll），matte_V*.mov 带 alpha 前景放**上层轨**（数组顺序＝图层顺序，末位最上），几何/透明度用 clip 的 scale/x/y/opacity。
+3. **手写 ffmpeg 合成时守内核 `skill/references/edit.md` 坑表三条**（2026-09-13 matte×背景实锤）：
    - `overlay` 输入序 `[底层][上层]`，**带 alpha 的一律放第二位**——同尺寸输入放反不报错，但前景被背景整帧盖住（输出「没有人」）。
    - 上层流要 `setpts=PTS+{in帧}/{fps}/TB` 时移 + `enable='between(t,...)'` 双保险，否则从 t=0 播放。
    - 透明中间片只用 ProRes 4444 或 PNG 序列；本机 VP9 (`yuva420p`) alpha 会丢。
