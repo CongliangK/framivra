@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
 # asr 模块初始化：qwen-asr 解释器与模型探测/下载（ModelScope 国内直连）+ sidecar 冒烟。
 # 幂等：已有资产一律复用（探测+引用，不重复下载）；只补缺失项。
-# 用法：bash asr/init.sh
+# 用法：bash apps/asr/init.sh（旧路径 bash asr/init.sh 经兼容 symlink 同样可达）
 # 设计：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §6.2/§6.5（复用优先链）。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASR="$ROOT/asr"
+# v2 迁移后本脚本在 apps/asr/ 内：app 根 = 脚本所在目录，仓根 = 上两级（config.local.json）
+ASR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$ASR/../.." && pwd)"
 MODELS_HOME="$HOME/models/qwen3-asr"
 TUNA="https://pypi.tuna.tsinghua.edu.cn/simple"
-IME_DEFAULT="/home/liangruochong/文档/01_活跃项目/type/ibus-voice-ime-github"
-IME="${VT_ASR_IME_ROOT:-$IME_DEFAULT}"
+# IME 仓根覆盖链（P2a 参数化收编）：env VT_ASR_IME_ROOT > config asr.ime_root >
+# ~ 展开型默认（与 client.py IME_ROOT_DEFAULT 同一值）
+IME_DEFAULT="$HOME/文档/01_活跃项目/type/ibus-voice-ime-github"
+CFG_IME="$(python3 - "$ROOT/config.local.json" <<'PY' 2>/dev/null || true
+import json, sys, os
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+    v = cfg.get("asr", {}).get("ime_root")
+    print(os.path.expanduser(v) if v else "")
+except Exception:
+    print("")
+PY
+)"
+IME="${VT_ASR_IME_ROOT:-${CFG_IME:-$IME_DEFAULT}}"
 FAIL=0
 
 ok()   { echo "✓ $*"; }

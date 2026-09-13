@@ -15,6 +15,7 @@
     "python": null,
     "model_dir": null,
     "aligner_dir": null,
+    "ime_root": null,
     "language": "Chinese",
     "purpose": "Qwen3-ASR+ForcedAligner 字幕产线（asr/）：口播/素材听写→字级时间戳→timeline subtitles[]/SRT",
     "howto": "bash asr/init.sh 后置 enabled:true。注：18081 为 IME 输入法 sidecar，本仓 sidecar 默认 18085"

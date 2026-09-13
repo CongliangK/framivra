@@ -1,5 +1,7 @@
 # asr —— Qwen3-ASR + ForcedAligner 字幕产线
 
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/asr/`）**：manifest 见 `app.json`（kind=app；健康检查 = `asr_cli.py --help`）；兼容 symlink：仓库根 `asr → apps/asr`（目录级，旧路径引用仍可达）。随迁参数化收编：IME 仓根三处 `/home/liangruochong` 硬编码（client.py / sidecar_server.py / init.sh）改为 `~` 展开型默认值 `~/文档/01_活跃项目/type/ibus-voice-ime-github`，覆盖链 **env `VT_ASR_IME_ROOT` > config `asr.ime_root` > 默认**（`asr.ime_root` 已入 config 路径型键清单自动 ~ 展开）。
+
 音频/视频 → sidecar 转写（字级时间戳）→ 文本规范化 → 锚定式断句聚合 → 帧级
 `timeline.json subtitles[]` 合并（保护其他字段、写前备份）+ 独立 SRT。模块自有轻量
 sidecar（stdlib http.server，默认 **127.0.0.1:18085**，与 IME 输入法 sidecar 18081
@@ -24,12 +26,12 @@ sidecar（stdlib http.server，默认 **127.0.0.1:18085**，与 IME 输入法 si
 ## 用法
 
 ```bash
-bash asr/init.sh                                  # 一次性初始化（幂等）
-python3 asr/asr_cli.py sidecar start              # 拉起 sidecar（日志 ~/.local/state/video_tools/asr_sidecar.log）
-python3 asr/asr_cli.py transcribe 口播.wav --timestamps --json
-python3 asr/asr_cli.py srt 口播.mp4 -o out.srt    # 音视频皆可（自动抽 16k wav）
-python3 asr/asr_cli.py timeline 成片.wav -t <项目>/timeline.json --dry-run
-python3 asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
+bash apps/asr/init.sh                                        # 一次性初始化（幂等；旧路径 bash asr/init.sh 经 symlink 同样可达）
+env python3 apps/asr/asr_cli.py sidecar start                # 拉起 sidecar（日志 ~/.local/state/video_tools/asr_sidecar.log）
+env python3 apps/asr/asr_cli.py transcribe 口播.wav --timestamps --json
+env python3 apps/asr/asr_cli.py srt 口播.mp4 -o out.srt      # 音视频皆可（自动抽 16k wav）
+env python3 apps/asr/asr_cli.py timeline 成片.wav -t <项目>/timeline.json --dry-run
+env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
 ```
 
 `timeline` 子命令：读 `project.fps/duration_frames`，subtitles[] 就地合并（旧值备份进
@@ -82,11 +84,20 @@ audit 同阈值）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留
 - 合并后的 subtitles[] 只写回 timeline.json 本体；
 - sidecar 日志 → `~/.local/state/video_tools/asr_sidecar.log`（不进仓库不进项目）。
 
-## 依赖与开启步骤（默认关闭）
+## 依赖（默认关闭）
 
-1. `bash asr/init.sh`：探测链复用本机资产——解释器 `config.asr.python` → IME
-   `.venv-qwen-asr`（本机 Python 3.14.7 + qwen-asr 0.0.6 + torch 2.12.0）→
-   `asr/.venv`（都没有则自建并走清华 PyPI）；模型 `config.asr.model_dir` → IME
+- **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（16k wav 抽取与时长探测）；系统 python3 ≥3.9 stdlib（CLI 全部子命令零第三方依赖）。
+- **sidecar 级（conda/venv 环境依赖，不进 requires，README 落实）**：qwen-asr 解释器（本机复用 IME `.venv-qwen-asr`，Python 3.14.7 + qwen-asr 0.0.6 + torch 2.12.0）+ Qwen3-ASR-1.7B/0.6B + Qwen3-ForcedAligner-0.6B 模型；`bash apps/asr/init.sh` 一键探测/补齐。
+- **IME 仓根**（解释器/模型复用链的锚）：默认 `~/文档/01_活跃项目/type/ibus-voice-ime-github`（~ 展开，跨机可移植）；覆盖链 env `VT_ASR_IME_ROOT` > config `asr.ime_root` > 默认——非本机布局时写 config `"asr": {"ime_root": "<路径>"}` 即可，无需改代码。
+
+## 健康检查
+
+`env python3 apps/asr/asr_cli.py --help` 退出码 0（app.json health.command；CLI 面系统 python3 即可跑，不涉 sidecar/模型）。sidecar 运行态另经 `asr_cli.py sidecar status` / `GET /health` 探测。
+
+## 开启步骤（默认关闭）
+
+1. `bash apps/asr/init.sh`：探测链复用本机资产——解释器 `config.asr.python` → IME
+   `.venv-qwen-asr` → `apps/asr/.venv`（都没有则自建并走清华 PyPI）；模型 `config.asr.model_dir` → IME
    `vendor/models/qwen3-asr` → `~/models/qwen3-asr`（Qwen3-ASR-1.7B / 0.6B /
    **Qwen3-ForcedAligner-0.6B**，缺才下载，ModelScope 国内直连，ForcedAligner 约 2GB）；
    完成后 `--once-health` 冒烟。
@@ -124,7 +135,8 @@ GPU：4080 16GB 下 1.7B+aligner 同驻约 6-8GB；IME sidecar 同跑时本 side
 ## 测试
 
 ```bash
-python3 -m unittest discover -s asr/tests -v   # 59 个用例，零模型零 GPU 零网络
+cd apps/asr && env python3 -m unittest discover -s tests -t . -v   # 59 个用例，零模型零 GPU 零网络
+# 或仓根统一入口：bash scripts/run_all_tests.sh（自动发现 apps/*/tests）
 ```
 
 覆盖：textnorm golden ≥8、segline 边界全套（floor/ceil、行宽 18、行首无标点硬断言、

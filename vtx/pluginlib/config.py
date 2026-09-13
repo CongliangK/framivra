@@ -25,7 +25,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # 已知路径型键（自动 ~ 展开；与 config.example.json 的路径型键同步维护）
-PATH_KEYS = ("asr.python", "asr.model_dir", "asr.aligner_dir",
+PATH_KEYS = ("asr.python", "asr.model_dir", "asr.aligner_dir", "asr.ime_root",
              "tts.repo", "tts.python", "tts.voice_ref", "tts.edge_bin")
 
 

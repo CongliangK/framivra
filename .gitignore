@@ -34,15 +34,15 @@ frames/
 *.aup3
 *.png
 
-# 三大生成模块自建 venv（asr/tts/imgen init.sh 可能创建，不入库）
-asr/.venv/
-tts/.venv/
-imgen/.venv/
+# 三大生成模块自建 venv（apps/asr|tts|imgen 的 init.sh 可能创建，不入库；P2a 迁移改锚）
+apps/asr/.venv/
+apps/tts/.venv/
+apps/imgen/.venv/
 
 # 测试 fixtures 反排除（防上面 *.wav/*.png 全局规则误杀测试小资产）
-!asr/tests/fixtures/**
-!tts/tests/fixtures/**
-!imgen/tests/fixtures/**
+!apps/asr/tests/fixtures/**
+!apps/tts/tests/fixtures/**
+!apps/imgen/tests/fixtures/**
 
 # 内容寻址缓存（vtx 产物缓存，可再生，不入库）
 cache/

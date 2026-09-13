@@ -48,7 +48,7 @@ import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-IME_ROOT_DEFAULT = "/home/liangruochong/文档/01_活跃项目/type/ibus-voice-ime-github"
+IME_ROOT_DEFAULT = "~/文档/01_活跃项目/type/ibus-voice-ime-github"   # ~ 展开（P2a 参数化；env VT_ASR_IME_ROOT 可覆盖）
 PROTOCOL_VERSION = 1
 PORT_DEFAULT = 18085
 IME_PORT = 18081          # IME 输入法 sidecar 既有端口，绝不复用（探测它只为共驻降档）
@@ -194,7 +194,7 @@ def build_words(text, items):
 
 def _models_roots(extra=None):
     """模型根目录探测链（手动运行时；client 拉起时显式传 --model/--aligner）。"""
-    ime = os.environ.get("VT_ASR_IME_ROOT", IME_ROOT_DEFAULT)
+    ime = str(Path(os.environ.get("VT_ASR_IME_ROOT", IME_ROOT_DEFAULT)).expanduser())
     roots = []
     if extra:
         roots.append(str(Path(extra).expanduser()))

@@ -37,9 +37,11 @@ import urllib.request
 from pathlib import Path
 
 ASR_DIR = Path(__file__).resolve().parent
-REPO_ROOT = ASR_DIR.parent
+REPO_ROOT = ASR_DIR.parent.parent    # v2 迁移后 asr 在 apps/ 下，仓根 = 上两级
 DEFAULT_BASE_URL = "http://127.0.0.1:18085"
-IME_ROOT_DEFAULT = "/home/liangruochong/文档/01_活跃项目/type/ibus-voice-ime-github"
+# IME 仓默认位置（~ 展开型，P2a 参数化收编；覆盖链 env VT_ASR_IME_ROOT > config
+# asr.ime_root > 本默认，见 ime_root()）
+IME_ROOT_DEFAULT = "~/文档/01_活跃项目/type/ibus-voice-ime-github"
 SIDECAR_LOG = Path("~/.local/state/video_tools/asr_sidecar.log").expanduser()
 TRANSCRIBE_TIMEOUT_DEFAULT = 1800.0     # 长音频（1200s 上限 × RTF）也要能跑完
 
@@ -101,8 +103,14 @@ def load_config(repo_root=None):
     return _pluginlib_config().load_config(repo_root or REPO_ROOT)
 
 
-def ime_root():
-    return os.environ.get("VT_ASR_IME_ROOT", IME_ROOT_DEFAULT)
+def ime_root(cfg=None):
+    """IME 仓根（解释器/模型复用链的锚）：env VT_ASR_IME_ROOT > config asr.ime_root
+    > ~ 展开型默认（~/文档/01_活跃项目/type/ibus-voice-ime-github）。统一 expanduser
+    归一（默认值含 ~；显式给出的绝对路径 expanduser 幂等无害）。"""
+    v = os.environ.get("VT_ASR_IME_ROOT")
+    if not v and cfg is not None:
+        v = cfg_get(cfg, "asr.ime_root", None)
+    return str(Path(v or IME_ROOT_DEFAULT).expanduser())
 
 
 # ---------------------------------------------------------------- 探测链（§6.5 复用优先）
@@ -131,7 +139,7 @@ def probe_python(cfg=None):
     候选必须能 import qwen_asr（PYTHONPATH 补齐后验证）。"""
     cfg = cfg if cfg is not None else load_config()
     cands = [cfg_get(cfg, "asr.python", None)]
-    cands.append(Path(ime_root()) / ".venv-qwen-asr/bin/python")
+    cands.append(Path(ime_root(cfg)) / ".venv-qwen-asr/bin/python")
     cands.append(ASR_DIR / ".venv/bin/python")
     for c in cands:
         if not c:
@@ -149,7 +157,7 @@ def model_roots(cfg=None):
     c = cfg_get(cfg, "asr.model_dir", None)
     if c:
         roots.append(_expand(c))
-    roots.append(str(Path(ime_root()) / "vendor/models/qwen3-asr"))
+    roots.append(str(Path(ime_root(cfg)) / "vendor/models/qwen3-asr"))
     roots.append(str(Path("~/models/qwen3-asr").expanduser()))
     return roots
 
