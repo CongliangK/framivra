@@ -129,15 +129,17 @@ def tool_version(cmd):
 
 # ================================================================ 安装指引 / --fix（init）
 FIX = {
+    # 键 = rec() 的 fail 键名（python/ffmpeg/ffprobe/chrome，P6 修复 C-P2-1：v1 的
+    # "google-chrome" 键与 fail 键 "chrome" 不匹配 → init --fix 对 chrome 恒"跳过"）
     "linux": {
-        "dnf":  {"ffmpeg": ["dnf", "install", "-y", "ffmpeg"], "google-chrome": None},
-        "apt":  {"ffmpeg": ["apt", "install", "-y", "ffmpeg"], "google-chrome": None},
-        "pacman": {"ffmpeg": ["pacman", "-S", "--noconfirm", "ffmpeg"], "google-chrome": None},
+        "dnf":  {"ffmpeg": ["dnf", "install", "-y", "ffmpeg"], "chrome": None},
+        "apt":  {"ffmpeg": ["apt", "install", "-y", "ffmpeg"], "chrome": None},
+        "pacman": {"ffmpeg": ["pacman", "-S", "--noconfirm", "ffmpeg"], "chrome": None},
     },
-    "darwin": {"brew": {"ffmpeg": ["brew", "install", "ffmpeg"], "google-chrome": None}},
+    "darwin": {"brew": {"ffmpeg": ["brew", "install", "ffmpeg"], "chrome": None}},
     "win32": {"winget": {
         "ffmpeg": ["winget", "install", "--id", "Gyan.FFmpeg", "-e", "--accept-source-agreements", "--accept-package-agreements"],
-        "google-chrome": ["winget", "install", "--id", "Google.Chrome", "-e", "--accept-source-agreements", "--accept-package-agreements"],
+        "chrome": ["winget", "install", "--id", "Google.Chrome", "-e", "--accept-source-agreements", "--accept-package-agreements"],
         "blender": ["winget", "install", "--id", "BlenderFoundation.Blender", "-e"],
     }},
 }
@@ -240,13 +242,13 @@ def cmd_init(a):
 
     say("--- 4/5 大模型能力（默认关闭，按需开启；各链 init 见下）---")
     # matting 抠像链：细粒度探测（2026-09-11，此前只探 env 目录）
-    _m = ROOT / "matting"
-    comfy_py = _conda_env_py("comfyui", "COMFYUI_PY")   # 钩子对齐 matting/init.sh
-    rec("comfyui_env", comfy_py.is_file(), "matting/ 抠像推理 env；细探测 bash matting/init.sh")
+    _m = ROOT / "apps" / "matting"
+    comfy_py = _conda_env_py("comfyui", "COMFYUI_PY")   # 钩子对齐 apps/matting/init.sh
+    rec("comfyui_env", comfy_py.is_file(), "apps/matting/ 抠像推理 env；细探测 bash apps/matting/init.sh")
     rec("matanyone2", (_m / "MatAnyone2/pretrained_models/hf2/model.safetensors").is_file(),
-        "缺失跑：bash matting/init.sh --download（github 克隆+HF 权重 141MB）")
+        "缺失跑：bash apps/matting/init.sh --download（github 克隆+HF 权重 141MB）")
     rec("birefnet_hr", (_m / "BiRefNet_HR/config.json").is_file(),
-        "缺失跑：bash matting/init.sh --download（HF ZhengPeng7/BiRefNet_HR-matting）")
+        "缺失跑：bash apps/matting/init.sh --download（HF ZhengPeng7/BiRefNet_HR-matting）")
     resnet = Path("~/.cache/torch/hub/checkpoints/resnet18-5c106cde.pth").expanduser()
     rec("matting_resnet18", resnet.is_file() or (_m / "resnet18-5c106cde.pth").is_file(),
         "MatAnyone2 光流隐藏依赖（被墙假死坑），--download 会预置")
@@ -254,9 +256,9 @@ def cmd_init(a):
         urllib.request.urlopen("http://127.0.0.1:8188", timeout=2)
         rec("comfyui_service", True, "ComfyUI 8188 在线（背景图生成）")
     except Exception:
-        rec("comfyui_service", False, "未运行（可选）：bash matting/comfyui_init.sh --start")
+        rec("comfyui_service", False, "未运行（可选）：bash apps/matting/comfyui_init.sh --start")
     rw = Path.home() / "models/resemble-enhance"
-    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 需要（下载：bash scripts/denoise_init.sh --download）" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选；bash scripts/denoise_init.sh --download）")
+    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 需要（下载：bash plugins/denoise/denoise_init.sh --download）" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选；bash plugins/denoise/denoise_init.sh --download）")
 
     say("--- 4b/5 三大生成模块 asr/tts/imgen（默认关闭，按需开启）---")
     # config 统一加载（§5.3：VTX_CONFIG > config.local.json；坏 JSON 警告 + {}；
@@ -267,15 +269,15 @@ def cmd_init(a):
     am = _pcfg.cfg_get(lc, "asr.model_dir", None)
     am_dir = Path(am) if am else None
     rec("asr_model", bool(am_dir and am_dir.is_dir()),
-        str(am_dir) if am_dir and am_dir.is_dir() else "未配置 asr.model_dir（config_key 型探测；bash asr/init.sh）")
+        str(am_dir) if am_dir and am_dir.is_dir() else "未配置 asr.model_dir（config_key 型探测；bash apps/asr/init.sh）")
     al = _pcfg.cfg_get(lc, "asr.aligner_dir", None)
     al_dir = Path(al) if al else None
     rec("asr_aligner", bool(al_dir and al_dir.is_dir()),
-        str(al_dir) if al_dir and al_dir.is_dir() else "未配置 asr.aligner_dir（字级时间戳需要；bash asr/init.sh）")
+        str(al_dir) if al_dir and al_dir.is_dir() else "未配置 asr.aligner_dir（字级时间戳需要；bash apps/asr/init.sh）")
     ap = _pcfg.cfg_get(lc, "asr.python", None)
     ap_path = Path(ap) if ap else None
     rec("asr_python", bool(ap_path and ap_path.is_file()),
-        str(ap_path) if ap_path and ap_path.is_file() else "未配置 asr.python（qwen-asr 解释器；bash asr/init.sh）")
+        str(ap_path) if ap_path and ap_path.is_file() else "未配置 asr.python（qwen-asr 解释器；bash apps/asr/init.sh）")
     asr_base = _pcfg.cfg_get(lc, "asr.base_url", "http://127.0.0.1:18085")
     try:
         req = urllib.request.Request(str(asr_base).rstrip("/") + "/health", method="GET")
@@ -283,7 +285,7 @@ def cmd_init(a):
             h = json.loads(hr.read().decode("utf-8"))
         rec("asr_sidecar", True, f"ok model={h.get('model', '?')}")
     except Exception:
-        rec("asr_sidecar", False, f"未运行（{asr_base}；python3 asr/asr_cli.py sidecar start）")
+        rec("asr_sidecar", False, f"未运行（{asr_base}；python3 apps/asr/asr_cli.py sidecar start）")
     # tts：IndexTTS-2.5 repo（checkpoints 五件齐）+ 解释器 + 音色参考 + edge 兜底
     tts_repo = Path(_pcfg.cfg_get(lc, "tts.repo", "~/AI/IndexTTS/repo")).expanduser()
     five = ("checkpoints/config.yaml", "checkpoints/gpt.pth", "checkpoints/qwen0.6bemo4-merge",
@@ -291,14 +293,14 @@ def cmd_init(a):
     miss = [n for n in five if not (tts_repo / n).exists()]
     rec("tts_repo", tts_repo.is_dir() and not miss,
         (str(tts_repo) + "（checkpoints 五件齐）") if not miss
-        else f"缺 {'、'.join(miss)}（{tts_repo}）；部署路线见 tts/README.md，或用 --engine edge 兜底")
+        else f"缺 {'、'.join(miss)}（{tts_repo}）；部署路线见 apps/tts/README.md，或用 --engine edge 兜底")
     tts_py = next((p for p in (_pcfg.cfg_get(lc, "tts.python", str(_conda_env_py("indextts", "TTS_PY"))),
                                str(tts_repo / (".venv/Scripts/python.exe" if OS == "win32" else ".venv/bin/python")))
                    if p and Path(p).expanduser().is_file()), None)
     rec("tts_python", bool(tts_py), str(Path(tts_py).expanduser()) if tts_py
-        else "缺 indextts 解释器（conda create -n indextts python=3.10，见 tts/README.md）")
+        else "缺 indextts 解释器（conda create -n indextts python=3.10，见 apps/tts/README.md）")
     vr = Path(_pcfg.cfg_get(lc, "tts.voice_ref", "~/音乐/5_G_Resemble仅降噪.wav")).expanduser()
-    rec("tts_voice_ref", vr.is_file(), str(vr) if vr.is_file() else "缺 5-10s 干声音色参考（tts/README.md）")
+    rec("tts_voice_ref", vr.is_file(), str(vr) if vr.is_file() else "缺 5-10s 干声音色参考（apps/tts/README.md）")
     eb = Path(_pcfg.cfg_get(lc, "tts.edge_bin", "~/miniconda3/" +
                             ("Scripts/edge-tts.exe" if OS == "win32" else "bin/edge-tts"))).expanduser()
     rec("tts_edge", eb.is_file(), str(eb) if eb.is_file() else "缺 edge-tts（pip install edge-tts；免 GPU 兜底引擎）")
@@ -312,7 +314,7 @@ def cmd_init(a):
         except Exception:
             sc_key = None
     rec("imgen_key", bool(sc_key), (f"尾4位 ****{sc_key[-4:]}" if sc_key
-        else "未配置（SC_API_KEY / NANOBANANA2_API_KEY / keyring；解析链见 python3 imgen/imgen_cli.py key status）"))
+        else "未配置（SC_API_KEY / NANOBANANA2_API_KEY / keyring；解析链见 python3 apps/imgen/imgen_cli.py key status）"))
     # requests 探测：importlib.util.find_spec（doctor requires 同款；零子进程）
     rec("imgen_requests", importlib.util.find_spec("requests") is not None,
         "requests 可导入" if importlib.util.find_spec("requests") is not None
@@ -320,12 +322,18 @@ def cmd_init(a):
 
     say("--- 5/5 本地配置 ---")
     cfg = ROOT / "config.local.json"
+    example = ROOT / "config.example.json"
     if cfg.exists():
         say("  config.local.json 已存在，保持不动")
-    else:
-        cfg.write_text((ROOT / "config.example.json").read_text(), encoding="utf-8")
+    elif example.is_file():
+        cfg.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
         say("  已生成 config.local.json（comfyui / asr / tts / imgen 全部 enabled:false）")
-    res["config_local"] = {"ok": True, "detail": str(cfg)}
+    else:
+        # pip 安装布局只含内核（§5.2：apps/plugins/config.example 不进发行包——
+        # P6 修复 C-P3-2：v1 此处裸 FileNotFoundError 崩 init）
+        say("  config.example.json 不在（pip 安装布局）——跳过生成，"
+            "clone 仓获取完整 config 模板")
+    res["config_local"] = {"ok": True, "detail": str(cfg) if cfg.exists() else "未生成（pip 布局）"}
 
     # --fix：只装基础缺失项
     if a.fix and fail:
@@ -534,7 +542,11 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
                 line += "｜manifest 无效：" + "；".join(it["manifest_errors"][:3])
             if it["enabled"] and it.get("manifest_ok"):
                 if it.get("health"):
-                    line += f"｜health {'✓' if it['health']['ok'] else '✗'}（{it['health']['detail']}）"
+                    # 三分支显示（P6 修复 C-P3-1）：None = 提示级（无法探测/未配置）
+                    # 不再与 FAIL 同显 ✗——JSON 侧 ok:null 本就三态，文本对齐
+                    h = it["health"]["ok"]
+                    h_flag = "✓" if h else ("ℹ" if h is None else "✗")
+                    line += f"｜health {h_flag}（{it['health']['detail']}）"
                 if it.get("requires"):
                     line += f"｜requires {'✓' if it['requires']['ok'] else '✗'}"
             if it.get("note"):
@@ -747,6 +759,12 @@ def _doctor_fix(json_out: bool) -> dict:
     缺字段。返回报告 dict；无可自动修复项时 applied 空 + 说明齐全。"""
     report = {"mount": {}, "registry": {}, "manual": []}
     items = _mount_link_state()
+    # occupied 项任何分支都列人工（P6 修复 C-P2-3：v1 在 safe 分支跳过修复也不进
+    # manual，全部为 occupied 时报 status="fixed", applied=[] ——问题在文本与 JSON
+    # 双侧静默消失）
+    occupied_notes = [f"挂载链接 {lk.name} 被真实文件占用（非符号链接）——永不自动改，"
+                      "人工确认后处理（--fix-links 同口径跳过）"
+                      for lk, _t, prob, _w in items if prob == "occupied"]
     if not items:
         report["mount"] = {"status": "ok", "note": "挂载链接全部健康"}
     else:
@@ -764,6 +782,7 @@ def _doctor_fix(json_out: bool) -> dict:
     if fixes:
         _apply_registry_fixes(fixes)
     report["manual"].extend(f"registry：{m}" for m in manual)
+    report["manual"].extend(occupied_notes)
     n_applied = len(report["mount"].get("applied", [])) + len(fixes)
     if not json_out:
         print("== --fix：可自动修复项 ==")

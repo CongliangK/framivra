@@ -83,6 +83,10 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
                 else:
                     warns.append(f"{label}: 未知键 {k!r}（不在内核 schema，也无插件声明）")
 
+    # root scope（协议 v1.2，P6 接线）：顶层键纳入扫描——KERNEL_KEYS["root"]
+    # 自 v2 起即备而未扫（死键集），blender_bridge 类顶层插件键需此 scope 走
+    # 三分支；顶层未知键自此「警告不阻断」（v1 静默，与 §2.1 语义对齐）。
+    scan("root", KERNEL_KEYS["root"], [c.tl], "timeline")
     scan("project", KERNEL_KEYS["project"],
          [c.tl.get("project")] if isinstance(c.tl.get("project"), dict) else [],
          "project")
@@ -91,6 +95,8 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
     tracks = c.tl.get("audio_tracks", [])
     scan("audio_tracks[]", KERNEL_KEYS["audio_tracks[]"], tracks,
          "audio_tracks[{i}]")
+    # events[] 扫描标签按轨内索引计（P6 修复 A-P2-3：v1 扁平跨轨索引与其它
+    # scope 的「容器内索引」惯例不符，报错定位难读）。
     scan("audio_tracks[].events[]", KERNEL_KEYS["audio_tracks[].events[]"],
          [e for tr in tracks if isinstance(tr, dict)
           for e in (tr.get("events") or [])],
@@ -102,11 +108,20 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
 def validate(c: Ctx):
     errs = []
     def err(m): errs.append(m)
-    srcs = {s["id"]: s for s in c.tl["sources"]}
+    srcs = {}
+    for si, s in enumerate(c.tl["sources"]):
+        if (not isinstance(s, dict) or not isinstance(s.get("id"), str) or not s["id"]
+                or not isinstance(s.get("path"), str) or not s["path"]):
+            err(f"sources[{si}]: 条目须为含非空 id/path 字符串的对象"); continue
+        srcs[s["id"]] = s
     for sid, s in srcs.items():
         p = c.src_path(sid)
         if not p.exists(): err(f"source {sid}: 文件不存在 {p}"); continue
-        i = c.probe(p)
+        # 缝 C（协议 v1.2，P6）：虚拟源 facts——插件受理的源（如 bgm-render 的
+        # music_tools 工程 JSON）用插件供给的 facts，其余照旧 ffprobe 实测
+        i = _plugin_hooks.run_probe_source(c, sid)
+        if i is None:
+            i = c.probe(p)
         if i["has_video"]:
             if abs(i["fps"] - c.fps) > 0.01: err(f"source {sid}: fps={i['fps']} ≠ {c.fps}（须先 CFR 归一化）")
         if not i["has_audio"]: err(f"source {sid}: 无音频轨")   # 纯视频源同禁；纯音频源合法（has_video=False）
@@ -144,17 +159,35 @@ def validate(c: Ctx):
         err(e)
     for s in c.tl["subtitles"]:
         if not (0 <= s["in"] < s["out"] <= c.dur): err(f"字幕区间非法: {s['text'][:10]}")
-    for tr in c.tl["audio_tracks"]:
-        evs = sorted(tr["events"], key=lambda e: e["in"])
+    for ti, tr in enumerate(c.tl["audio_tracks"]):
+        # 容器与必填键防御（P6 修复 B-P2-3）：schema 声明 events[].volume 等必填
+        # 但结构权威零强制——缺键 timeline 此前在 _audio_graph 裸 KeyError 崩栈，
+        # validate（机制权威）须把缺键挡在渲染前；缺 name/events 的轨在 validate
+        # 自身就会 KeyError，一并防御。
+        if not isinstance(tr, dict):
+            err(f"audio_tracks[{ti}]: 须为对象"); continue
+        name = tr.get("name", f"#{ti}")
+        evs_raw = tr.get("events")
+        if not isinstance(evs_raw, list) or not all(isinstance(e, dict) for e in evs_raw):
+            err(f"轨道 {name}: events 须为对象列表"); continue
+        for e in evs_raw:
+            for k in ("src", "in", "out", "volume"):
+                if k not in e:
+                    err(f"轨道 {name} 事件缺必填键 {k!r}: {e}")
+        if any(any(k not in e for k in ("src", "in", "out")) for e in evs_raw):
+            continue   # 缺键事件已报错；排序键不可得，跳过该轨区间校验
+        evs = sorted(evs_raw, key=lambda e: e["in"])
         for e in evs:
-            if not (0 <= e["in"] < e["out"] <= c.dur): err(f"音频事件区间非法: {tr['name']}@{e['in']}")
+            if not (0 <= e["in"] < e["out"] <= c.dur): err(f"音频事件区间非法: {name}@{e['in']}")
             if e["src"] not in srcs: err(f"音频引用未知 src {e['src']}"); continue
-            i = c.probe(c.src_path(e["src"]))
+            i = _plugin_hooks.run_probe_source(c, e["src"])
+            if i is None:
+                i = c.probe(c.src_path(e["src"]))
             need = e.get("src_in", 0) + (e["out"] - e["in"])
             if not e.get("loop") and need > i["nb_frames"]:
-                err(f"音频源不足: {tr['name']}@{e['in']} 需 {need} 帧 > {i['nb_frames']}（或声明 loop）")
+                err(f"音频源不足: {name}@{e['in']} 需 {need} 帧 > {i['nb_frames']}（或声明 loop）")
         for a, b in zip(evs, evs[1:]):
-            if a["out"] > b["in"]: err(f"音频轨内事件重叠: {tr['name']}")
+            if a["out"] > b["in"]: err(f"音频轨内事件重叠: {name}")
     # v2 §2.1 不变量 ③：插件键三分支 + 未知键警告（扫描范围 sources[]/audio_tracks[]
     # （含 events[]）/project；`_meta` 永久白名单）。已声明未装/被禁用进 errs FAIL；
     # 未知键只警告不阻断——现有 timeline（键全部已知或已声明）零新输出。
@@ -522,7 +555,7 @@ def build_audio(c: Ctx):
         # （|偏离|=1.5 恰压线通过并已交付）；同内容 v2 浮点域限幅实测 -15.6——边界
         # 内容 + 0.1 LU 级测量抖动不得成为管线 flaky 硬 FAIL。
         r = c.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(out_wav),
-                   "-af", "ebur128=peak=true", "-f", "null", "-"])
+                   "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
         try:
             after = _ebur128_i_from_log(r.stderr)
         except ValueError as e:
@@ -589,7 +622,7 @@ def post_loudness_compat(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
 
     def measure(path):
         r = subprocess.run([ffmpeg, "-hide_banner", "-nostats", "-i", str(path),
-                            "-af", "ebur128=peak=true", "-f", "null", "-"],
+                            "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"],
                            capture_output=True, text=True,
                            encoding="utf-8", errors="replace")
         if r.returncode:

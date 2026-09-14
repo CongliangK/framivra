@@ -51,9 +51,11 @@ def parse_timespec(spec: str, fps: int) -> int:
 
 
 def range_label(fr: int, fps: int) -> str:
-    """产物文件名标签：秒保留 1 位小数（确定性，不依赖用户输入写法），只留文件名
-    安全字符。"""
-    lab = f"{fr / fps:.1f}".replace("/", "_")
+    """产物文件名标签：秒保留 3 位小数（确定性，不依赖用户输入写法），只留文件名
+    安全字符。P6 修复 B-P3-5c：v1 的 1 位小数使相邻窗（如 [3,6) 与 [4,5)）同标签
+    `range_3.0_6.0` 静默互相覆盖；3 位小数（≈毫秒）在帧网格粒度（33ms@30fps）下
+    无碰撞。"""
+    lab = f"{fr / fps:.3f}".replace("/", "_")
     return re.sub(r"[^0-9A-Za-z._-]", "_", lab)
 
 
@@ -94,12 +96,31 @@ def _receipt_audio_gain(c):
     """读 out/receipt.json 里整片 audio 阶段记录的静态增益（只读，不写回执）。
     窗口局部内容响度 ≠ 全片响度——窗口自测增益会把安静段（如片头 bed-only）放大到
     削波（实测 0-6s 窗自测 +15.7dB → max 0dB）；复用整片增益保持听感一致，且免一遍
-    ebur128 测量。无回执时返回 None（回落窗口自测两遍法）。"""
+    ebur128 测量。无回执/**回执与当前输入身份不符**（P6 修复 B-P2-2：timeline/源
+    已变更而未重跑 vtx audio 时，v1 直读陈旧 gain_db 会拿旧混音增益渲新内容且无
+    提示——现经 load_receipt 指纹门，失配回落窗口自测并打印陈旧告警）时返回 None。"""
+    from .cache_state import load_receipt
     f = c.out / "receipt.json"
+    had_file = f.exists()
     try:
-        return float(json.loads(f.read_text(encoding="utf-8"))["stages"]["audio"]["gain_db"])
+        rec = load_receipt(f, c.input_fingerprint)
+        gain = (rec.get("stages") or {}).get("audio", {}).get("gain_db")
+        return float(gain) if gain is not None else None
     except Exception:
         return None
+    finally:
+        if had_file and gain_is_stale(c, f):
+            print("  ⚠ 整片回执与当前输入不符（timeline/源已变更未重跑 vtx audio）——"
+                  "区间增益改用窗口自测")
+
+
+def gain_is_stale(c, f) -> bool:
+    """回执文件在盘但输入指纹失配 = 陈旧（供 _receipt_audio_gain 告警判定）。"""
+    try:
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        return rec.get("input_fingerprint") != c.input_fingerprint
+    except Exception:
+        return False
 
 
 def _ensure_audio_wavs(c, fa: int, fb: int):

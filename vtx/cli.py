@@ -67,6 +67,8 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
              允许值 = STAGES 线性序中除 audio 外的 7 个阶段名（audio 是流水线波内
              成员不作独立终点；线性模式按 STAGES 序字面截断，until=video 不含 audio）。
              流水线模式映射见 _run_all_pipeline docstring。
+  （协议 v1.2 · P6 2026-09-14）all 全链（qc 通过后）触发插件 finish 收尾钩子
+             （blender-bridge 自动导出 .blend 等）；--draft/--dry-run/--until 截断链不触发。
 
 模块布局（2026-09-10 单文件拆分；v2 §1.4 包化 2026-09-13：模块内全部相对导入，
 入口三通——vtx/vtx.py 薄启动器 / python3 -m vtx / pyproject console script `vtx`）：
@@ -471,7 +473,9 @@ def main():
         if a.until not in _UNTIL_STAGES:
             print(f"✗ --until 非法阶段名：{a.until!r}（可用：{' | '.join(_UNTIL_STAGES)}；"
                   "audio 是流水线波内成员，不作独立终点）"); sys.exit(2)
-    if a.frames and not (a.draft and a.command == "video"):
+    if a.frames is not None and not (a.draft and a.command == "video"):
+        # is not None 判定（P6 修复 B-P3-5b）：v1 的真值检查把 `--frames 0` 当
+        # 未提供绕过组合检查；0 帧本就是无效渲染请求，须走同一条用法错误路径
         print("--frames 仅在 video --draft 下可用（正确用法：vtx.py video --draft --frames 90）"); sys.exit(1)
     # 方案五阶段1：区间渲染标志（video --draft 专属；三者为「选一种窗口来源」互斥组）
     range_flags = [x for x in (a.range, a.clip, a.track) if x]
@@ -638,6 +642,19 @@ def main():
                 from .audio_report import run_report
                 rc = run_report(c, json_path=a.json)
                 if rc: sys.exit(rc)
+    # 缝 D（协议 v1.2，P6）：`vtx all` 全链（qc 通过后）触发插件 finish 收尾钩子
+    # ——blender-bridge 类「渲染完成自动导出」动作挂此缝。--draft / --dry-run /
+    # --until 截断链不触发（draft 链无正式产物；dry 不落产物；截断链非完整渲染）。
+    # 收尾失败以退出码 1 结束但产物已就绪（final.mp4 不受影响——失败可见即可）。
+    if (a.command == "all" and a.until in (None, "qc")
+            and not c.draft and not c.dry):
+        from .pluginlib import hooks as _plugin_hooks
+        _finish_errs = _plugin_hooks.run_finish(c)
+        if _finish_errs:
+            for e in _finish_errs:
+                print("  ✗", e)
+            print("✗ finish 钩子失败（正式产物已就绪；修复后重跑对应插件动作或 `vtx all`）")
+            sys.exit(1)
     # 完成行（方案三阶段3 微调）：--until 截在 mux/qc 之前时 final.mp4 尚不存在，
     # 打印已跑阶段名单而非产物路径（all 缺省/mux/qc 及单阶段 mux/qc 仍打印产物）
     final_ready = a.command in ("all", "mux", "qc") and a.until in (None, "mux", "qc")

@@ -1,6 +1,6 @@
 """钩子总线（§2.2 两缝）+ 三不变量聚合入口（§2.1，设计权威 docs/ARCHITECTURE.md）。
 
-扩展点（v1 仅音频侧 + v1.1 validate；值域冻结）：
+扩展点（v1 音频侧 + v1.1 validate + v1.2 probe_source/finish；值域冻结）：
   缝 A `prepare_source`（denoise 型）：源级键插件——在源音频提取的**单一实现**
     （stages.source_audio_extraction）内统一触发，一源一产物进 cache/audio/
     （内容寻址键见不变量 ①）。契约 v1.1（P2b 细化，§2.2 缝 A 小注）：
@@ -16,6 +16,18 @@
     调用的插件校验扩展点——插件暴露 ``validate(c) -> list[str]``，错误行由
     stages.validate 并入 errs 阻断。用途：插件键的互斥/形状/双施防护等插件级
     契约的早失败（duck:true × duck_strategy 互斥、_meta.bed_static_duck 双施）。
+  缝 C `probe_source`（协议 v1.2 增补，2026-09-14 P6）：**虚拟源 facts** 钩子
+    ——sources[] 条目可以不是媒体文件（如 bgm-render 插件的 music_tools 工程
+    JSON）。插件暴露 ``probe_source(c, sid) -> dict | None``：None = 不受理该源
+    （调用方回落 ffprobe）；受理则返回 ``{"has_audio": bool, "has_video": bool,
+    "nb_frames": int, "fps": num|None, "w": int, "h": int}``（与 Ctx.probe 返回
+    同构）。stages.validate 的源级检查与音频事件时长校验统一经本缝取 facts——
+    非媒体源不再触发 ffprobe 误报（「无音频轨」/时长 0）。
+  缝 D `finish`（协议 v1.2 增补，2026-09-14 P6）：**管线收尾**钩子——`vtx all`
+    全链（qc 通过后、进程收尾前）触发，插件暴露 ``finish(c) -> list[str]``
+    （错误行；空 = 成功），cli 将错误行打印并以退出码 1 结束（产物已就绪、
+    收尾件失败不静默）。用途：渲染完成后的自动导出类动作（blender-bridge 插件
+    的 .blend 审片工程自动导出）。--draft / --dry-run / --until 截断链不触发。
 
 插件加载走**包导入** `importlib.import_module("plugins.<name>")`（§2.3 规则，
 禁 spec_from_file_location——绕过包语义是双模块裂分的另一入口）；加载时做
@@ -33,19 +45,24 @@ from pathlib import Path
 
 from . import registry as _registry
 
-HOOK_NAMES = ("prepare_source", "audio_events", "validate")   # v1.1 + validate（§2.2）
+HOOK_NAMES = ("prepare_source", "audio_events", "validate",
+              "probe_source", "finish")   # v1.1 + validate；v1.2 + 缝 C/D（§2.2）
 
 
 def _plugin_hooks_declared(name: str, repo_root=None) -> list:
-    """插件声明的 hooks（registry 条目 hooks 字段 > 实体 manifest extends.hooks）。"""
+    """插件声明的 hooks（registry 条目 hooks 字段**非空**列表 > 实体 manifest
+    extends.hooks）。registry 条目 hooks 为空列表/缺失时 fallback 实体 manifest
+    声明（P6 修复 A-P1-3：registry 被手改清空 hooks 会让插件静默废掉——键照放行、
+    钩子永不跑、零报错；fallback 后 manifest 仍是声明面，与 _plugin_version 的
+    fallback 语义对齐）。"""
     reg = _registry.declared_plugins(repo_root).get(name)
-    if reg is not None and isinstance(reg.get("hooks"), list):
+    if reg is not None and isinstance(reg.get("hooks"), list) and reg["hooks"]:
         return [h for h in reg["hooks"] if isinstance(h, str)]
     for e in _registry.discover(repo_root):
         if e["name"] == name and e["manifest"]:
             declared = (e["manifest"].get("extends", {}) or {}).get("hooks")
             if isinstance(declared, list):
-                return declared
+                return [h for h in declared if isinstance(h, str)]
     return []
 
 
@@ -91,26 +108,45 @@ def _plugin_version(name: str, repo_root=None) -> str:
     return "?"
 
 
+def _scope_items(tl, path):
+    """键声明 path → timeline 中的检索容器（_scan_plugin_keys 四 scope 同构）。
+    P6 修复 A-P1-2：v1 只认 sources[]/audio_tracks[] 两 path，声明在 root/project/
+    events[] 的键「validate 放行但插件永不生效」+ 参数摘要盲区——现与内核扫描
+    scope 全面对齐（root=[tl] 本体、project=tl.project、events[] 拍平全部事件）。"""
+    if not isinstance(tl, dict):
+        return []
+    if path == "root":
+        return [tl]
+    if path == "project":
+        return [tl["project"]] if isinstance(tl.get("project"), dict) else []
+    if path == "sources[]":
+        return tl.get("sources", [])
+    if path == "audio_tracks[]":
+        return tl.get("audio_tracks", [])
+    if path == "audio_tracks[].events[]":
+        return [e for tr in tl.get("audio_tracks", []) if isinstance(tr, dict)
+                for e in (tr.get("events") or [])]
+    return []
+
+
 def _timeline_declares(c, name: str, repo_root=None) -> bool:
     """timeline 是否声明了插件注册键中的任一键（「对本 timeline 生效」判定）。
 
     键位检索用全量键声明（registry 静态注册表 + external 实体 manifest，P4 起经
-    registry.key_map 双源），path 同 _plugin_params_digest。无法判定（c 无 tl /
-    插件无键声明）时保守返回 True——宁多生效不静默漏（fail-hard 可见性优先）。
+    registry.key_map 双源），path 同 _plugin_params_digest（_scope_items 四 scope，
+    P6 对齐）。无法判定（c 无 tl / 插件无键声明）时保守返回 True——宁多生效
+    不静默漏（fail-hard 可见性优先）。
     """
     tl = getattr(c, "tl", None) if c is not None else None
     if not isinstance(tl, dict):
         return True
     key_map = _registry.key_map(repo_root)
-    scopes = {"sources[]": tl.get("sources", []),
-              "audio_tracks[]": tl.get("audio_tracks", [])}
     has_keys = False
     for key, info in sorted(key_map.items()):
         if info.get("plugin") != name:
             continue
         has_keys = True
-        items = scopes.get(info.get("path"))
-        for it in items if isinstance(items, list) else []:
+        for it in _scope_items(tl, info.get("path")):
             if isinstance(it, dict) and key in it:
                 return True
     return not has_keys
@@ -245,6 +281,48 @@ def run_validate(c) -> list:
     return errs
 
 
+def run_probe_source(c, sid: str):
+    """缝 C（协议 v1.2 增补，§2.2）：虚拟源 facts 钩子。
+
+    逐个应用声明了 probe_source 的生效插件（约定：插件暴露
+    ``probe_source(c, sid) -> dict | None``——None = 不受理该源，调用方回落
+    ffprobe；受理返回与 Ctx.probe 同构的 facts dict）。stages.validate 的源级
+    检查（has_audio/fps 契约）与音频事件时长校验（nb_frames）统一经本缝——
+    sources[] 引用非媒体文件（music_tools 工程 JSON 等）时由插件供给 facts。
+    无插件受理 → None（调用方照旧 ffprobe，v1 行为）。"""
+    for p in active_plugins(c):
+        if "probe_source" not in _plugin_hooks_declared(p["name"]):
+            continue
+        mod = _load_plugin_module(p["name"])
+        fn = getattr(mod, "probe_source", None) if mod else None
+        if callable(fn):
+            got = fn(c, sid)
+            if isinstance(got, dict):
+                return got
+    return None
+
+
+def run_finish(c) -> list:
+    """缝 D（协议 v1.2 增补，§2.2）：管线收尾钩子——`vtx all` 全链（qc 通过后）
+    由 cli 触发（--draft / --dry-run / --until 截断链不触发）。
+
+    逐个应用声明了 finish 的生效插件（约定：插件暴露 ``finish(c) -> list[str]``
+    ——错误行列表，空 = 成功）。cli 汇总错误行打印并以退出码 1 结束——正式
+    产物（final.mp4）已就绪，收尾件失败不吞（如 blender-bridge 的 .blend
+    自动导出失败须可见）。插件自行打印进度行。"""
+    errs = []
+    for p in active_plugins(c):
+        if "finish" not in _plugin_hooks_declared(p["name"]):
+            continue
+        mod = _load_plugin_module(p["name"])
+        fn = getattr(mod, "finish", None) if mod else None
+        if callable(fn):
+            got = fn(c)
+            if isinstance(got, (list, tuple)):
+                errs.extend(str(x) for x in got)
+    return errs
+
+
 def contribute_keys(c) -> set:
     """不变量 ①（§2.1）：插件缓存键贡献聚合（hygiene._current_keys 的 ak 并集）。
 
@@ -263,23 +341,31 @@ def contribute_keys(c) -> set:
     return keys
 
 
-def _plugin_code_digest(name: str) -> str:
-    """插件代码内容摘要（红队终审 P1-1 裁定 2026-09-14）：插件目录全部 .py 文件
-    （排序 文件名+字节）的 sha1 前 12 位——改默认参/改代码不 bump version 的
-    场景一律翻转指纹（「version 纪律为唯一代码变更代理」的盲区堵死）。模块加载
-    成功后文件必在；读不到按 MISSING 计（fail-方向：指纹必变）。"""
-    d, _origin = _registry.plugin_module_dir(name)
+def plugin_code_digest(name: str, repo_root=None) -> str:
+    """插件代码内容摘要（红队终审 P1-1 裁定 2026-09-14；P6 公共化经 vtx.api 供
+    插件产物键复用——A-P1-1：产物键侧同样要掺代码摘要，否则改代码不 bump
+    version 时回执指纹翻转但旧产物被缓存命中「洗白」）：插件目录全部 .py 文件
+    （rglob 递归含子目录/子包，排除 __pycache__；排序 文件名+字节）的 sha1 前
+    12 位——改默认参/改代码不 bump version 的场景一律翻转。模块加载成功后文件
+    必在；读不到按 MISSING 计（fail-方向：摘要必变）。"""
+    d, _origin = _registry.plugin_module_dir(name, repo_root)
     h = hashlib.sha1()
     if d is None or not d.is_dir():
         h.update(b"NO-DIR")
         return h.hexdigest()[:12]
-    for f in sorted(d.glob("*.py"), key=lambda x: x.name):
+    for f in sorted(d.rglob("*.py"), key=lambda x: x.name):
+        if "__pycache__" in f.parts:
+            continue
         h.update(f.name.encode())
         try:
             h.update(f.read_bytes())
         except OSError:
             h.update(b"MISSING")
     return h.hexdigest()[:12]
+
+
+# 兼容别名（内部调用点沿用旧名；语义同 plugin_code_digest）
+_plugin_code_digest = plugin_code_digest
 
 
 def _plugin_params_digest(c, name: str) -> str:
@@ -295,17 +381,11 @@ def _plugin_params_digest(c, name: str) -> str:
         for key, info in sorted(key_map.items()):
             if info.get("plugin") != name:
                 continue
-            path = info.get("path")
-            items = []
-            if path == "sources[]":
-                items = c.tl.get("sources", []) if hasattr(c, "tl") else []
-            elif path == "audio_tracks[]":
-                items = c.tl.get("audio_tracks", []) if hasattr(c, "tl") else []
-            for it in items:
+            for it in _scope_items(getattr(c, "tl", None), info.get("path")):
                 if isinstance(it, dict) and key in it:
                     # 收集全部实例（P1 对抗审查 F2 修正）：只取首例时，多实例
                     # 场景改第二例参数 digest 不变——旧回执放行陈旧产物。
-                    picked.setdefault(f"{path}:{key}", []).append(it[key])
+                    picked.setdefault(f"{info.get('path')}:{key}", []).append(it[key])
     except Exception:
         pass   # 摘要失败不阻断指纹——退化为无参数成分（宁弱不崩）
     blob = json.dumps({"params": picked, "code": _plugin_code_digest(name)},

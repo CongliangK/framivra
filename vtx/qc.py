@@ -20,7 +20,13 @@ QC_WINDOW_COVER_MIN = 0.03   # 上层窗口生效：覆盖率下限
 QC_PIXEL_DIFF = 24           # 「显著差异像素」判定阈值（0-255）
 QC_LEAK_MEAN_MAX = 2.0       # 空窗泄漏：平均像素差上限
 QC_LEAK_COVER_MAX = 0.02     # 空窗泄漏：覆盖率上限
-QC_LOUDNESS_TOL = 1.5        # 响度归一容差（LUFS）
+# 响度归一分级（P6 修复 B-P1-1，总控裁定 2026-09-14 对齐 §1.2）：|I-目标| >3
+# 硬 FAIL（增益链断裂，与 build_audio 终态校验同一硬阈）；(1.5, 3] **放行带
+# WARN 注记**——限幅响度损耗属内容级（发布侧内容门 G2 拦截口径），边界内容 +
+# aac 解码域 0.1~0.3 LU 漂移不得让 `vtx all` 在 qc 处 flaky 翻车（audio 阶段
+# WARN 放行而 qc ±1.5 硬 FAIL 的门内矛盾就此消解）；≤1.5 静默通过（v1 语义）。
+QC_LOUDNESS_TOL = 1.5        # 响度归一容差（LUFS，≤ 此值静默通过）
+QC_LOUDNESS_FAIL = 3.0       # 响度归一硬 FAIL 阈（> 此值，对齐 build_audio）
 TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_audio 同一权威值）
 QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
@@ -353,6 +359,14 @@ def qc(c):
         active = sum(1 for a_, b_ in marks if a_ <= f0 < b_)
         if stacked is None or active > stacked[0]:
             stacked = (active, f0)
+    # 并发窗探测帧域防御（P6 修复 B-P3-5a）：v1 直接取 stacked[1]+2..+10，短 timeline
+    # （dur < 探测帧上界）时 -ss 越片尾 volumedetect 空读 -999 假 FAIL；无任何
+    # 音频事件（stacked None）时 v1 在 dry 外路径裸 TypeError。
+    vol_span = None
+    if stacked is not None:
+        v1_end = min(stacked[1] + 10, c.dur)
+        v1_beg = min(stacked[1] + 2, max(v1_end - 1, 0))
+        vol_span = (v1_beg, v1_end)
     if c.dry:
         loud_v, loud_tp, loud_hit, v1 = None, None, False, -999   # dry-run 不执行，直接走缺省
     else:
@@ -366,7 +380,7 @@ def qc(c):
                     for f in futs: f.result()
             fp = gex.submit(run_probes)
             fl = gex.submit(loudness)
-            fv = gex.submit(lambda: vol(stacked[1] + 2, stacked[1] + 10))
+            fv = gex.submit(lambda: vol(*vol_span) if vol_span else -999)
             loud_v, loud_tp, loud_hit = fl.result(); v1 = fv.result(); fp.result()
 
     # ---- 按原顺序回填 checks（内容/顺序/名称与旧版一致）----
@@ -419,9 +433,25 @@ def qc(c):
         else:
             d_, cov = free_res["f"]
             ok(f"空窗无叠加泄漏 @frame {free_frame}", d_ < QC_LEAK_MEAN_MAX and cov < QC_LEAK_COVER_MAX, f"差异 {d_:.2f}，覆盖 {cov*100:.1f}%")
+    # 响度/TP 检查项（P6 修复 B-P3-4）：测量失败（None）不再是「检查项静默消失」
+    # ——final 的音频流异常到测不出响度/真峰，属产物可信度问题，显性 FAIL。
     if loud_v is not None:
-        ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", abs(loud_v - TARGET_LUFS) <= QC_LOUDNESS_TOL,
-           f"实测 {loud_v} LUFS" + ("（回执命中，免测）" if loud_hit else ""))
+        dev = abs(loud_v - TARGET_LUFS)
+        if dev > QC_LOUDNESS_FAIL:
+            ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", False,
+               f"实测 {loud_v} LUFS（偏离 {dev:.1f} LU >{QC_LOUDNESS_FAIL:g}——疑增益链断裂，"
+               f"对齐 build_audio 终态硬阈）" + ("（回执命中，免测）" if loud_hit else ""))
+        elif dev > QC_LOUDNESS_TOL:
+            ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", True,
+               f"实测 {loud_v} LUFS（偏离 {dev:.1f} LU ∈({QC_LOUDNESS_TOL:g},{QC_LOUDNESS_FAIL:g}]——"
+               f"限幅响度损耗属内容级，WARN 放行；发布侧内容门 G2 拦截口径）"
+               + ("（回执命中，免测）" if loud_hit else ""))
+        else:
+            ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", True,
+               f"实测 {loud_v} LUFS" + ("（回执命中，免测）" if loud_hit else ""))
+    else:
+        ok(f"响度归一 ≈ {TARGET_LUFS:g} LUFS", False,
+           "ebur128 解析失败（final 音频流异常或不可测）")
     if loud_tp is not None:
         # v2 §1.3 解码域真峰 TP 判定：阈 -1.0 dBFS（G3 同一权威值，同一回执不重测）。
         # vtx audio 已内置 alimiter，成片 TP 超阈 = 上游削波/限幅失效，须查上游。
@@ -429,7 +459,12 @@ def qc(c):
            f"实测 {loud_tp} dBFS" + ("（回执命中，免测）" if loud_hit else "")
            + ("" if loud_tp <= QC_TP_MAX
               else "——audio 已内置 alimiter，若仍超标检查上游削波"))
-    ok(f"{stacked[0]} 轨并发窗口有能量", v1 > -50, f"mean {v1:.1f} dB @frame {stacked[1]}")
+    else:
+        ok(f"解码域真峰 TP ≤ {QC_TP_MAX:g} dBFS", False,
+           "ebur128 peak 解析失败（final 音频流异常或不可测）")
+    ok(f"{stacked[0] if stacked else 0} 轨并发窗口有能量", v1 > -50,
+       f"mean {v1:.1f} dB"
+       + (f" @frame {stacked[1]}" if stacked else "（无任何音频事件）"))
     rep["skipped_probes"] = skipped_probes
     (c.out / "qc_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
     failed = [x for x in rep["checks"] if not x["pass"]]

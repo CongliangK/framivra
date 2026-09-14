@@ -19,7 +19,9 @@ KEEP_BASELINES = ("manifest.json", "qc_pass_segs.json")   # cache 根下永不�
 # cache/audio/ 下不回收的状态件（方案三阶段1审查 P1-2）：loudness_receipts.json 是
 # 响度测量回执（loudness_cache，qc/gates 免重测依据）——语义同 manifest（报告/回执/
 # 证据不回收，见模块头），误回收只降级不破坏（回退全检/重测一轮），但 gc --dry
-# 持续列它会诱导误删。
+# 持续列它会诱导误删。伴生件（.lock flock 锁文件 / .tmp 原子写残件，P6 修复
+# B-P2-1：锁文件被 budget_gate 自动 gc 删除后新开 inode，跨进程互斥失效）按
+# 名字前缀一并豁免。
 AUDIO_KEEP = ("loudness_receipts.json",)
 
 # manifest 读-改-写串行锁（2026-09-11）：video 段间并行 worker 与 gfx 页级并行
@@ -235,18 +237,21 @@ def gc_plan(c, keep_days: int = 0):
     d = c.cache / "audio"
     if d.exists():
         for x in d.iterdir():
-            if x.name in AUDIO_KEEP:   # 测量回执不属内容寻址键集（方案三阶段1审查 P1-2）
-                continue
+            # 伴生件前缀豁免（.lock/.tmp，见 AUDIO_KEEP 注）：精确名或前缀命中即免
+            if x.name in AUDIO_KEEP or \
+                    any(x.name.startswith(k + ".") for k in AUDIO_KEEP):
+                continue   # 测量回执不属内容寻址键集（方案三阶段1审查 P1-2）
             if x.stem not in ak:
                 plan["audio"].append((x, dir_size(x), "源指纹不在当前 timeline 键集"))
     # 历史遗留目录（迁移期）：cache 根下非本方案布局的一级目录/文件 → 全部视为垃圾
     # （subs*.ass/qc_clean/vseg* 另有专属类别，这里排除避免重复计数）
     known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
              "subs.ass", "subs_draft.ass", "qc_clean.mp4",
-             "vseg", "vseg_draft", "vseg_qc"} | set(KEEP_BASELINES)
+             "vseg", "vseg_draft", "vseg_qc", "preview", "report_audio"} | set(KEEP_BASELINES)
     # v2 §2.1 不变量 ①：插件声明的 cache 子目录并入白名单（自立目录型插件产物
-    # 不再判 legacy 垃圾）；P1-2 空转 = 空集，白名单零变化。
-    known |= _plugin_hooks.get_cache_dirs()
+    # 不再判 legacy 垃圾）；P1-2 空转 = 空集，白名单零变化。传 c 使「仅对本
+    # timeline 生效的插件」过滤生效（与 get_cache_dirs docstring 口径一致）。
+    known |= _plugin_hooks.get_cache_dirs(c)
     for x in c.cache.iterdir():
         if x.name in known: continue
         plan["legacy"].append((x, dir_size(x), "旧布局条目（键不含内容指纹，不可信）"))
@@ -319,6 +324,7 @@ def df(c, quiet: bool = False):
     """体积体检：分项占用 + top-20 大文件 + tmp 孤儿。quiet=True（audit 内嵌）只算不打印，
     返回 {cache, out, total} 字节数。"""
     P = (lambda *a, **k: None) if quiet else print
+    c.cache.mkdir(parents=True, exist_ok=True)   # api.load_timeline_check 等不经 cli 的调用无 mkdir 兜底
     P("== cache/ ==")
     tcache = 0
     entries = sorted(((x, dir_size(x)) for x in c.cache.iterdir()), key=lambda e: -e[1])

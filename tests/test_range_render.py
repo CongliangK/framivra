@@ -64,9 +64,11 @@ class TestParseTimespec(unittest.TestCase):
 
 class TestRangeLabel(unittest.TestCase):
     def test_label(self):
-        self.assertEqual(range_label(0, FPS), "0.0")
-        self.assertEqual(range_label(180, FPS), "6.0")
-        self.assertEqual(range_label(185, FPS), "6.2")   # round 秒 1 位
+        self.assertEqual(range_label(0, FPS), "0.000")
+        self.assertEqual(range_label(180, FPS), "6.000")
+        self.assertEqual(range_label(185, FPS), "6.167")   # round 秒 3 位（P6：1 位小数相邻窗碰撞）
+        # 相邻窗不碰撞（P6 修复 B-P3-5c：[3,6) 与 [4,5) 曾同标签互相覆盖）
+        self.assertNotEqual(range_label(90, FPS), range_label(120, FPS))
         # 文件名安全：即使将来换标签来源也不会漏出危险字符
         self.assertRegex(range_label(300, FPS), r"^[0-9A-Za-z._-]+$")
 

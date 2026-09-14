@@ -124,7 +124,8 @@ def load_receipt(path, fingerprint):
     """读回执；输入身份不符（或文件缺失/损坏）→ 空阶段表，不继承任何旧成功。"""
     try:
         record = json.loads(Path(path).read_text(encoding='utf-8'))
-    except (FileNotFoundError, ValueError):
+    # OSError（P6 修复 B-P3-5d）：权限类读失败与缺失/损坏同语义（空表），不裸栈
+    except (OSError, ValueError):
         record = {}
     if record.get('input_fingerprint') != fingerprint:
         record = {'input_fingerprint': fingerprint, 'stages': {}}

@@ -20,7 +20,9 @@ from pathlib import Path
 import re
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-KNOWN_HOOKS = ("prepare_source", "audio_events", "validate")   # §2.2 v1 两缝 + v1.1 validate（扩展点冻结面）
+# §2.2 v1 两缝 + v1.1 validate + v1.2 缝 C/D（probe_source/finish，2026-09-14
+# P6 增补——扩展点冻结面，与 pluginlib.hooks.HOOK_NAMES 同一值域）
+KNOWN_HOOKS = ("prepare_source", "audio_events", "validate", "probe_source", "finish")
 KINDS = ("app", "plugin")
 
 

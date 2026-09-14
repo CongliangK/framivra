@@ -8,7 +8,8 @@ infra/hygiene/cache_state/stages 依赖，反向依赖会成环）；模块内�
   registry.py   发现（内置扫描 apps/ plugins/ + config external_*）与
                 plugins/registry.json 静态注册表（键声明汇总 = 「未装插件报错
                 文案」数据源，§2.1 不变量 3）
-  hooks.py      钩子总线（缝 A prepare_source / 缝 B audio_events，§2.2）+
+  hooks.py      钩子总线（缝 A prepare_source / 缝 B audio_events / validate
+                + v1.2 缝 C probe_source / 缝 D finish，§2.2/§2.5）+
                 三不变量聚合入口（contribute_keys / active_plugins_digest /
                 get_cache_dirs）；P1-2 时点 plugins/ 无实体包，总线空转
   config.py     config 统一加载（§5.3：VTX_CONFIG > repo config.local.json；
