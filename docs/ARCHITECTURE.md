@@ -64,7 +64,7 @@ video_tools/
 
 1. **时间线操作**：schema（timeline.schema.json 结构权威）/ validate / audit / diff / snapshot / subs（render/preview/check，信息性命令不进流水线〔代码现状 subs.py 模块头〕）/ clean / gc / df / preview.html（可视化预览权威）/ new_project 脚手架。契约三处互指（validate=机制权威、schema=结构权威、preview.html=预览权威〔代码现状 stages.py:1-7〕）。
 2. **HTML gfx 渲染**：CDP/Chrome 帧截图链（gfx_render.py、encoders.py 的 Chrome 定位）。
-3. **ffmpeg 合成**：prepare（音频提取）/ video（分段并行合成 + 字幕烧录）/ mux（含 libfdk_aac 探测回落、原子替换、VERSIONS/history）/ composite / encoders / 区间渲染。
+3. **ffmpeg 合成**：prepare（音频提取）/ video（分段并行合成 + 字幕烧录）/ mux（含 libfdk_aac 探测回落、原子替换、VERSIONS/history）/ composite / encoders / 区间渲染。段级多层合成 = **逐层 pass**（每 pass 恰 2 输入 overlay，中间物 FFV1 intra 无损落 cache/vseg_pass，pass 键掺合成代码摘要；链式 N 输入 graph 的 overlay/framesync 输出节律跨运行非确定〔KNOWN-ISSUES ⑭，R4-E1-v2 修复〕；单层/整片回落仍走单 graph）。
 4. **响度终链**：两遍静态增益 -14 LUFS + **limiter 并入 build_audio 尾部**（§1.2）。
 5. **qc 含 TP 判定**（§1.3）。
 6. **`subtitles_src` 键**：timeline 可声明字幕文件来源路径，内核只负责引用与烧录语义；谁产出该文件（asr/手写/别的工具）内核不感知〔对抗审查裁定 #4〕。

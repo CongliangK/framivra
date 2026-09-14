@@ -4,7 +4,7 @@
 RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 --draft --frames 回落路径共用同一段代码）。
 """
-import contextlib, hashlib, json, os, subprocess, sys
+import contextlib, functools, hashlib, inspect, json, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +20,36 @@ SEG_CUT_RADIUS = 150    # 切点搜索半径：找不到静默帧则放弃该切
 DEFAULT_SEGMENTS = 8    # VTX_VIDEO_SEGMENTS 默认段数
 
 
+# ---------------------------------------------------------------- 合成代码摘要（段缓存防洗白）
+_SYNTH_FUNCS = ("composite", "_composite_graph", "_composite_passes",
+                "_layer_chain", "_layer_input_args")
+
+
+@functools.lru_cache(maxsize=1)
+def _graph_code_digest() -> str:
+    """段内容键掺入的合成代码摘要（R4-E1，2026-09-14，先例：插件产物键掺 12 位
+    代码摘要 vtx.api.plugin_code_digest）：合成路径全部函数源码联合 sha1[:12]。
+
+    为什么必须掺：段文件是字节级缓存产物，合成代码改一行（如 R4-E1 改 tpad
+    尾垫、R4-E1-v2 改中间物编码）输出即变；若键不含代码内容，改码后旧段文件
+    仍被 _seg_content_key 命中——脏缓存「洗白」（与插件「改代码不 bump version
+    时回执翻转但产物命中旧缓存」同一盲区，A-P1-1）。
+
+    函数集口径（R4-E1-v2 2026-09-14 修订）：曾只摘 RenderPlan.composite 单函数，
+    其论证前提「composite() 是段文件内容的唯一代码决定因素」在 composite() 路由化
+    （单 graph / 逐层 pass 分派）后不再成立——决定输出的 _composite_passes/
+    _composite_graph/_layer_chain/_layer_input_args 改动将不翻转键（FFV1 迭代
+    E-B2 恰属此类，当时仅凭中间物扩展名 .mp4→.mkv 巧合失效，非机制保证）。
+    现扩为合成路径五函数联合摘要：任一行为性改动必翻转段键与 pass 键；切点逻辑
+    经 a|b 入键、prepare_layers 滤镜链经上游内容键入键，不在此列。代价是函数内
+    纯注释改动也翻转键：有意保守（无法机械区分行为性与非行为性改动，段产物字节
+    敏感，宁一次性重渲不冒脏命中风险）。lru_cache：进程内取一次。
+    """
+    return hashlib.sha1("".join(
+        inspect.getsource(getattr(RenderPlan, n)) for n in _SYNTH_FUNCS
+    ).encode("utf-8")).hexdigest()[:12]
+
+
 # ---------------------------------------------------------------- 切点选择
 def choose_cutpoints(bounds, dur: int, n: int, guard: int = SEG_CUT_GUARD, radius: int = SEG_CUT_RADIUS):
     """阶段二切点选择（纯函数，2026-09-10）：在均匀网格候选位附近搜索「静默帧」。
@@ -29,6 +59,11 @@ def choose_cutpoints(bounds, dur: int, n: int, guard: int = SEG_CUT_GUARD, radiu
     切点避开该带 = 段边界不落任何层窗口开/闭沿，段首/段尾不产生 dst_in_rel==0 的
     中段入流配对风险）。搜索半径 radius 帧内找不到则放弃该切点（段并入邻段，
     宁少勿险）。返回升序切点帧位列表（不含 0 与 dur）。
+    R4-E1 注（2026-09-14，R4-E1-v2 依实修订）：曾记载「⑭ 非确定性已由次输入
+    尾垫至段尾消灭」，该断言被复渲数据证伪——seg00/01/02 尾垫修复版隔离复渲
+    4 次仍各得 4 个 md5（/tmp/vtx_r4/repro_seg0{0,1,2}_new.log），非确定性主因
+    不在 EOF 裁决层。guard 回归本义：作为纵深防御保留（段边界远离层端点仍
+    降低 framesync 行为变化的暴露面），不是确定性前提。
     """
     bs = sorted({p for a, b in bounds for p in (a, b)})
     def silent(f):
@@ -101,13 +136,31 @@ class RenderPlan:
                 lines.append(f"Dialogue: 0,{fin},{fout},Def,,0,0,0,,{s['text']}")
         path.write_text("\n".join(lines), encoding="utf-8")
 
-    # ---------------------------------------------------------------- 单 graph / 单段合成
+    # ---------------------------------------------------------------- 单 graph / 逐层 pass 合成
     def composite(self, layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
+        """入口（按形态路由，R4-E1-v2 2026-09-14）：
+        - b=None（整片回落：VTX_VIDEO_SEGMENTS=1 / --draft --frames）或单层 → 单 graph
+          （_composite_graph，旧行为；整片回落路径不承诺跨运行确定性——⑭ 病灶在
+          多输入 graph，单层图已证确定，回落路径为兼容保留）；
+        - 段级多层（render_segmented 常规路径）→ 逐层 pass（_composite_passes）：
+          每 pass ≤2 输入（主=canvas 或上游中间物 + 次=1 层），中间物无损落 cache
+          复用段缓存体系。确定性依据见 _composite_passes docstring。
+        """
+        if b is None or len(layers_subset) <= 1:
+            return self._composite_graph(layers_subset, out_path, with_subs, a, b, sub_file)
+        return self._composite_passes(layers_subset, out_path, with_subs, a, b, sub_file)
+
+    def _composite_graph(self, layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
         # 阶段二（2026-09-10）：a/b = 本段帧区间 [a,b)，段内时间从 0 起。默认
-        # a=0/b=dur 与旧单 graph 逐字节等价（VTX_VIDEO_SEGMENTS=1 回落路径）。
+        # a=0/b=dur 供 VTX_VIDEO_SEGMENTS=1 与 --draft --frames 回落路径共用。
         # ⚠ 不可把主链/enable 换到全局时间坐标：实测 -fps_mode cfr 输出级在首帧
         # pts≠0 时整段冻结（最小复现：canvas+setpts(+10s)+cfr → 300 帧全为首帧
         # 复制，2026-09-10）。故段内一律相对时间。
+        # R4-E1（2026-09-14，R4-E1-v2 依实修订）：次输入尾垫从固定 1 帧改为垫满
+        # 至段尾+2（见下方 pad 注释）。⚠ 该改动曾宣称带来「同 argv 跨运行确定性」，
+        # 已被复渲数据证伪：seg00/01/02 修复后隔离复渲 4 次仍各得 4 个 md5
+        # （/tmp/vtx_r4/repro_seg0{0,1,2}_new.log）——尾垫只消除段内 EOF 裁决这一族，
+        # 非确定性主因未除，最终机制与修复口径以本函数 pad 注释的最新修订为准。
         c, draft, f = self.c, self.draft, self.f
         W, H, nframes = self.W, self.H, self.nframes
         b = c.dur if b is None else b
@@ -117,87 +170,16 @@ class RenderPlan:
         cmd = ["ffmpeg", "-v", "error", "-y",
                "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={c.fps}:d={seglen * c.spf:.3f}"]
         for L in layers_subset:
-            rel_in = L["cl"]["dst_in"] - a   # 段内相对起点（可负 = 跨段界的层）
-            # 头窗草稿（--frames）：截短每路输入。否则 -frames:v 触发的 drain 会把
-            # 52 路输入全部解到 EOF（voice-ime 实测 300 帧耗 4:32，全量解码即瓶颈，
-            # 2026-09-08 定位）；截短后仅解码头窗所需帧。（仅旧单 graph 路径使用）
+            rel_in = L["cl"]["dst_in"] - a
+            # 头窗草稿（--frames）：截短每路输入（仅回落路径；否则 -frames:v 触发
+            # 的 drain 会把全部输入解到 EOF——voice-ime 实测 300 帧耗 4:32，2026-09-08）
             topts = (["-t", f"{max(2, nframes - L['cl']['dst_in']) / c.fps:.3f}"]
                      if (draft and nframes) else [])
-            if L["gfx"]:
-                # PNG 序列按 clip 内帧序号读入（start_number=段起点之前的已过帧数）：
-                # 首帧内容 = 全局帧 max(dst_in, a)。a=0 时恒为 0，与旧路径逐字节一致。
-                cmd += ["-framerate", str(c.fps), "-start_number", str(max(0, -rel_in)), *topts,
-                        "-i", str(L["pngdir"] / "f%04d.png")]
-            else:
-                # 跨段界层（rel_in<0）：输入 -ss 对齐段起点（首帧内容=全局帧 a）。
-                # 实测 -ss 提帧与全解提帧逐字节一致（prores mov / h264 mp4 各验）。
-                # 红线教训（2026-09-10 最小复现定位）：不得把次输入 setpts 到负时间——
-                # 负 PTS 下 overlay framesync 在输入 EOF 附近渐暗、repeat 失效透传
-                # 主帧（u2_backends 跨 2791 切点复现，3033-3364 帧 gfx 层塌暗）。
-                ss = ["-ss", f"{max(0, -rel_in) / c.fps:.6f}"] if rel_in < 0 else []
-                cmd += [*ss, *topts, "-i", str(L["seg"])]
+            cmd += self._layer_input_args(L, a, topts)
         parts = ["[0:v]format=yuv420p[cv]"]; cur = "cv"
         for k, L in enumerate(layers_subset):
-            cl = L["cl"]; idx = k + 1
-            rel_in = cl["dst_in"] - a
-            rel_out = rel_in + cl["dur"]
-            # enable 界值（2026-09-10 定稿，确定性取舍，不依赖浮点量化运气）：
-            # 旧全片 graph 的 t1 = %.6f(dst_out·spf)，dst_out 帧是否显示取决于量化
-            # 方向——dst_out·10⁶ mod fps == 0（整）或 > 1/2（进位）→ t1 ≥ 帧 pts →
-            # dst_out 帧显示（层重复末帧，如 5160）；< 1/2 → 提前 1 帧切层（如
-            # 4312、13003、4024，golden 实证一致）。段内用显式偏移复刻该取舍：
-            #   含 dst_out → t1 = (rel_out+¼帧)·spf（含 rel_out、不含 rel_out+1）
-            #   不含 dst_out → t1 = (rel_out−½帧)·spf（含 rel_out−1、不含 rel_out）
-            # 两者均落在帧网格 ±¼~½ 帧，比较余量 ≥ 1/120s，无浮点边界。
-            # t0 = (rel_in−pre)·spf：dst_in 帧在旧路径恒显示（pre 半帧放宽兜住
-            # 量化方向，见下），rel_in−1 帧恒不显示，同为确定性。
-            g_out = cl["dst_in"] + cl["dur"]
-            m = (g_out * 10**6) % c.fps
-            incl_end = (m == 0) or (2 * m > c.fps)
-            eff = max(rel_in, 0)
-            pre = 0.5 if rel_in != 0 else 0
-            lo = rel_in * c.spf - pre * c.spf
-            if a:
-                t1 = (rel_out + (0.25 if incl_end else -0.5)) * c.spf
-            else:
-                t1 = rel_out * c.spf   # a=0 回落路径：与旧公式逐字节一致
-            # 次输入提前半帧（rel_in=0 无余量除外）：PNG 序列输入瞬间涌入时 framesync
-            # 对「次帧 PTS 恰等于主帧」的首帧偶发配对失败（该层 dst_in 首帧整帧丢失=黑帧，
-            # 非确定性复现，2026-08-25 voice-ime 轮7 实测）。次帧恒早于主帧半个采样后，
-            # framesync 始终能取到「最近过去帧」配对；视觉前移 1/48s 无感。enable 窗口
-            # 同步放宽半帧保持覆盖不变。
-            # （段内换算 2026-09-10：时移基准取 max(rel_in, 0)——跨段界层的输入已被
-            # -ss/start_number 截到段起点（流首内容=全局帧 a）。pre/pad 对跨界层
-            # 同样启用——实测教训：跨界层不垫帧时次输入 EOF 前约 3 帧整帧丢失
-            # （u2_backends 跨 2791 切点，3350-3352 黑帧；A/B 复现：tpad 1/1 后逐帧
-            # 与旧全片一致），与 v3.5 渲染棒「垫帧推开 framesync 边界异常窗口」同族。
-            # rel_in==0 仅出现在 a=0（切点静默约束保证中段切点 ±20 帧内无任何
-            # dst_in），与旧路径 dst_in==0 分支同构。）
-            # 草稿模式：各层统一缩到 f 倍（seg/PNG 均按 iw/ih 等比，含窗口 clip）
-            shrink = f"scale=trunc(iw*{f}/2)*2:trunc(ih*{f}/2)*2," if draft else ""
-            # 2026-09-08 v3.5 渲染棒：tpad 首帧克隆垫片。根因（A/B 已证编码器无关）：
-            # 57 层大 graph 下 framesync 对「窗口开启首帧」确定性配对失败——主链帧到达
-            # overlay 时次输入首帧尚未产出，framesync 透传主帧=该层整帧丢失（voice-ime
-            # v3.5 五点 100% 复现：3859/6049/6499/11779/14029，NVENC/x264 同集）。
-            # 修复：次输入头部克隆 1 垫帧（pts=窗口前 1.5 帧），使 slave 流在主帧到达
-            # 前已进入传输状态；真首帧 pts 与映射不变，垫帧时刻 enable=0 永不显示。
-            # stop 垫：流尾克隆尾帧 1 帧（pts=原尾帧+1/30），把 EOF 边界的主帧配对
-            # 异常窗口推开 1 帧；克隆尾帧即使被 enable 右端点（闭区间）拾取，画面与
-            # 原尾帧完全相同，视觉零差异（voice-ime r5 实测 5 确定点全消、剩 3858
-            # 尾帧侧单点，r6 验证）。
-            # ⚠ v3.6 渲染棒实测教训（2026-09-08）：垫帧量扩大（start 2/stop 24）对
-            # 「主链中段丢帧」型病灶无效（病灶在次输入流传输中段而非头尾边界），
-            # 且 stop 过大时克隆尾帧会被输出为片尾 extra 帧（voice-ime v3.6 r3：
-            # 尾部多 10 帧、时长 594.833）。保持 1/1，不要再加大。
-            pad = (f"tpad=start_duration={1/c.fps:.6f}:start_mode=clone:"
-                   f"stop_duration={1/c.fps:.6f}:stop_mode=clone," if pre else "")
-            shift = eff - pre - (1 if pad else 0)
-            parts.append(f"[{idx}:v]{shrink}{pad}setpts=PTS+{shift}/{c.fps}/TB[L{k}T]")
-            # eof_action=repeat（非 pass；ffmpeg≥5 枚举名）：pass 在「窗口右端点主帧遇次输入
-            # EOF」时直通丢层（黑帧）；repeat 克隆尾帧，窗口外由 enable=0 屏蔽，无残留风险。
-            parts.append(f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
-                         f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
-            cur = f"L{k}"
+            slave, ov, cur = self._layer_chain(L, k, cur, a, seglen, idx=k + 1)
+            parts += [slave, ov]
         if with_subs:
             parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
         else:
@@ -223,13 +205,261 @@ class RenderPlan:
         # 无关，病灶 100% 落在多层共享相近端点的 ±20 帧带，缺连续 2-4 帧 PTS
         # 空洞）。-fps_mode cfr -r 30 使输出端按 30fps 网格强制补帧（相邻帧复制），
         # 缺帧恰好落在层切换点（画面相对静止的 gfx 淡出带），1-4 帧复制视觉不可见。
-        # 交付口径：这些帧是复制补偿帧而非原渲染帧，须 blackdetect+帧数+断点内容
-        # 抽验三重确认。
+        # 交付口径（2026-09-14，R4-E1-v2 依实修订）：曾记载「尾垫至段尾后主链不再
+        # 丢帧、cfr 成零操作」，其前提（EOF 裁决=非确定性主因）已被复渲证伪（见
+        # 上方 pad 注释），cfr 对本 graph 仍是兜底而非可宣告零操作。帧数/时基
+        # 安全网与拼接自检（总帧数 ffprobe 硬门）保留。
         c.run(cmd + ["-filter_complex_threads", str(filter_threads()),
                      "-filter_complex", ";".join(parts), "-map", "[vout]",
                      "-frames:v", str(nframes if (draft and nframes) else seglen),
                      "-fps_mode", "cfr", "-r", str(c.fps),
                      *vcodec, str(out_path)])
+        return enc
+
+    # ---- 层级滤镜构件（单 graph 与逐层 pass 两路共用，防双实现漂移）----
+    def _layer_input_args(self, L, a, topts=()):
+        """单层次输入的 ffmpeg 输入选项（-i 前）：gfx PNG 序列 / seg 文件（含跨段 -ss）。
+        PNG 序列按 clip 内帧序号读入（start_number=段起点之前的已过帧数）：首帧内容
+        = 全局帧 max(dst_in, a)。跨段界层（rel_in<0）输入 -ss 对齐段起点——实测 -ss
+        提帧与全解提帧逐字节一致（prores mov / h264 mp4 各验）。红线教训（2026-09-10
+        最小复现定位）：不得把次输入 setpts 到负时间——负 PTS 下 overlay framesync
+        在输入 EOF 附近渐暗、repeat 失效透传主帧（u2_backends 跨 2791 切点复现，
+        3033-3364 帧 gfx 层塌暗）。topts：头窗草稿的 -t 截短（仅旧单 graph 回落路径）。
+        """
+        c = self.c
+        rel_in = L["cl"]["dst_in"] - a   # 段内相对起点（可负 = 跨段界的层）
+        if L["gfx"]:
+            return ["-framerate", str(c.fps), "-start_number", str(max(0, -rel_in)),
+                    *topts, "-i", str(L["pngdir"] / "f%04d.png")]
+        ss = ["-ss", f"{max(0, -rel_in) / c.fps:.6f}"] if rel_in < 0 else []
+        return [*ss, *topts, "-i", str(L["seg"])]
+
+    def _layer_chain(self, L, k, cur, a, seglen, idx):
+        """单层次输入滤镜段与 overlay 段。返回 (slave_part, overlay_part, out_label)。
+
+        enable 界值（2026-09-10 定稿，确定性取舍，不依赖浮点量化运气）：旧全片
+        graph 的 t1 = %.6f(dst_out·spf)，dst_out 帧是否显示取决于量化方向——
+        dst_out·10⁶ mod fps == 0（整）或 > 1/2（进位）→ t1 ≥ 帧 pts → dst_out 帧
+        显示（层重复末帧）；< 1/2 → 提前 1 帧切层。段内用显式偏移复刻该取舍：
+          含 dst_out → t1 = (rel_out+¼帧)·spf；不含 → (rel_out−½帧)·spf。
+        两者均落在帧网格 ±¼~½ 帧，比较余量 ≥ 1/120s，无浮点边界。t0 同理：
+        dst_in 帧恒显示（pre 半帧放宽兜住量化方向），rel_in−1 帧恒不显示。
+
+        次输入提前半帧 + 头垫 1 帧（rel_in=0 无余量除外）：PNG 序列输入瞬间涌入时
+        framesync 对「次帧 PTS 恰等于主帧」的首帧偶发配对失败（该层 dst_in 首帧整
+        帧丢失=黑帧，非确定性复现，2026-08-25 voice-ime 轮7；v3.5 渲染棒五点 100%
+        复现 3859/6049/6499/11779/14029，A/B 已证编码器无关）。次帧恒早于主帧半个
+        采样后 framesync 始终取「最近过去帧」配对；enable 窗口同步放宽半帧。
+        段内换算（2026-09-10）：时移基准取 max(rel_in, 0)——跨段界层的输入已被
+        -ss/start_number 截到段起点（流首内容=全局帧 a）；rel_in==0 仅出现在 a=0
+        （切点静默约束保证中段切点 ±20 帧内无任何 dst_in）。
+
+        尾垫（R4-E1 改版 2026-09-14 / R4-E1-v2 依实修订）：克隆垫满至段尾+2 帧。
+        原假说「EOF 裁决=非确定性主因，尾垫后段内不再 EOF 裁决 → 应收敛」❌ 已被
+        复渲证伪（seg00/01/02 修复后隔离复渲各 4 次仍各 4 个 md5，
+        /tmp/vtx_r4/repro_seg0{0,1,2}_new.log）。尾垫的保留价值收窄为：消除段内
+        EOF 裁决触发面（次输入 EOF 前丢帧/近-EOF 渐暗族的边界条件）——最终段文件
+        的确定性已由逐层 pass 结构保证（_composite_passes），垫帧本身不承担确定性
+        语义。语义不变论证（仍成立）：垫出的克隆尾帧 pts ≥ rel_out，enable 右端
+        t1 ≤ (rel_out+¼)·spf，窗口外帧 enable=0 直通主帧；incl_end 的 ¼ 帧规则
+        拾取的首个克隆帧内容==原尾帧（v3.5 r5/r6 已证）。v3.6「stop 过大→片尾
+        extra 帧」教训不适用：输出端恒有 -frames:v 硬钳 + 拼接后总帧数 ffprobe
+        硬门（render_segmented），extra 帧无法逸出。
+        eof_action=repeat（非 pass；ffmpeg≥5 枚举名）：pass 在「窗口右端点主帧遇
+        次输入 EOF」时直通丢层（黑帧）；repeat 克隆尾帧，窗口外由 enable=0 屏蔽。
+        """
+        c, draft, f = self.c, self.draft, self.f
+        cl = L["cl"]
+        rel_in = cl["dst_in"] - a
+        rel_out = rel_in + cl["dur"]
+        g_out = cl["dst_in"] + cl["dur"]
+        m = (g_out * 10**6) % c.fps
+        incl_end = (m == 0) or (2 * m > c.fps)
+        eff = max(rel_in, 0)
+        pre = 0.5 if rel_in != 0 else 0
+        lo = rel_in * c.spf - pre * c.spf
+        if a:
+            t1 = (rel_out + (0.25 if incl_end else -0.5)) * c.spf
+        else:
+            t1 = rel_out * c.spf   # a=0 回落路径：与旧公式逐字节一致
+        head = 1 if pre else 0                       # 头垫 1 帧（v3.5 修复，保持）
+        stop = max(1, seglen - rel_out + 2)          # 尾垫至段尾+2；跨右界层自然退化为 1
+        pad = ("tpad="
+               + (f"start_duration={head / c.fps:.6f}:start_mode=clone:" if head else "")
+               + f"stop_duration={stop / c.fps:.6f}:stop_mode=clone,")
+        shift = eff - pre - head
+        shrink = f"scale=trunc(iw*{f}/2)*2:trunc(ih*{f}/2)*2," if draft else ""
+        slave = f"[{idx}:v]{shrink}{pad}setpts=PTS+{shift}/{c.fps}/TB[L{k}T]"
+        ov = (f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
+              f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
+        return slave, ov, f"L{k}"
+
+    def _pass_fresh(self, p, seglen, sidecar=False):
+        """pass 中间物缓存命中：存在且精确帧数==段长。
+
+        sidecar 快路径（仅中间 pass 用，R4-E1-v2 2026-09-14）：mkv 容器不写
+        nb_frames 流元数据，-count_frames 需全文件逐包读——FFV1 无损中间物体量
+        巨大（1080p×2093 帧实测 44~610MB/个，alpha 10bit 域尤甚），单次解包读帧
+        数十秒（docstring 曾记「~0.5s 级」系 libx264 qp0 小文件口径，对 FFV1 失效，
+        E-B3 实测温态 13 pass 校验拖成分钟级）。故创建路径帧数硬校验通过后把
+        段长写入旁车 <target>.n；命中判定=旁车存在且内容==seglen 且 target 非空。
+        防伪命中：旁车只在「真实 count_frames 校验通过后」落盘，ffmpeg 中断遗留
+        的截断中间物无旁车；外部损坏 target 而旁车尚存的极端场景由段级总帧数
+        ffprobe 硬门（render_segmented）兜底。
+        非 sidecar 路径（段文件/无旁车旧产物）维持 -count_frames 实测。"""
+        if not p.exists() or p.stat().st_size == 0:
+            return False
+        if sidecar:
+            try:
+                return int((p.with_suffix(p.suffix + ".n")).read_text()) == seglen
+            except (OSError, ValueError):
+                return False
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                            "-count_frames", "-show_entries", "stream=nb_read_frames",
+                            "-of", "csv=p=0", str(p)],
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        return r.stdout.strip().isdigit() and int(r.stdout.strip()) == seglen
+
+    def _composite_passes(self, layers_subset, out_path, with_subs, a, b, sub_file=None):
+        """段内逐层 pass 合成（R4-E1-v2 核心修复，2026-09-14）：每 pass 恰 2 输入
+        （主=canvas 或上游 pass 中间物，次=1 层），pass k 的输出作为 pass k+1 的
+        主输入，层序与旧链式 graph 逐位同序（视觉合成语义不变）。
+
+        为什么必须拆 pass（证据链全部在案 /tmp/vtx_r4/FINDINGS.md、
+        docs/plans-v2/p5-acceptance/KNOWN-ISSUES.md ⑭）：链式 N 输入 graph 下
+        overlay/framesync 的输出节律存在跨运行随机的丢帧/配对滞后——E-A5 showinfo
+        直证：canvas+L9+L11 双 overlay 最小图 2 次复渲，一版 L11 输出缺 4 帧
+        （pts 2054~2057）且其后 1 帧内容迟到，另一版 L9 输出旧帧内容；错帧全程
+        随机发生，静止区 checksum 相同不可见，只在层淡入/淡出（enable 窗口边界
+        带）被观测——这同时解释 E2 的「差异带在层窗口边界 ±20 帧」与 96.9% 帧
+        一致（观测偏差而非病灶位置）。单 overlay+canvas 三种输入（PNG/prores/
+        h264）各 2 次复渲全确定（E-A3）；tpad 尾垫满（EOF 裁决假说）与全输入
+        -threads 1（解码线程假说）两族参数化方案均被 4×复渲证伪。framesync.c
+        状态机本身闭合（miss→request 等待、同 pts 同轮推进），非确定源在滤镜图
+        框架对「帧何时可得」的调度依赖 → 参数层无法钉死，结构化：把 N 输入问题
+        分解为 N−1 个「已证确定的两输入 pass」。
+
+        中间物：cache/vseg_pass/p{k}_{键}.mkv，FFV1 intra（-level 3 -g 1）无损编码，
+        输出端不强制 format——保留 overlay(format=auto) 协商出的 alpha/位深，使 pass
+        链的格式域演化与链式 graph 逐位同构（关键教训：曾用 libx264 qp0 + 强制
+        format=yuv420p，prores alpha 10bit 层使链式自该层升 10bit/alpha 域而中间物
+        落回 8bit，量化点错位造成全帧 ±1 级系统性微差——与链式成品 0/2093 帧一致、
+        PSNR 46.7dB，见 E-B2/FINDINGS）。pass 键 = sha1(上游 pass 键|pass 序|合成代码
+        摘要|层内容键/参数)[a|b|WxH|draft 打头][:12]——上游内容/层参数/代码任一变更
+        整条 pass 链自动失效（与段键 _seg_content_key 同防洗白口径）。中间物帧数硬
+        校验 == 段长（不 cfr 补帧：丢帧 fail-fast 而非静默复制；这也是对 framesync
+        节律异常的在案探针）。
+        成本（voice-ime 实测口径）：温态 pass 全命中=仅最终段编码一次 ffmpeg；
+        冷态每段 N−1 个 pass 串行（2093 帧段 14 层 ≈ 13 pass，FFV1 每 pass ~15s 级
+        级），段间并行不变 → 全片冷渲 ≈4~5× 于旧单 graph 分段（可接受，⑭ 验收
+        拍板）。gc：vseg_pass 目录按「分段渲染中间物（可再生）」类别整体回收。
+        -fps_mode cfr 只在最终 pass（正式段文件）：帧数/时基安全网 + 拼接自检
+        （render_segmented 总帧数硬门），语义见 _composite_graph 同名注释。
+        """
+        c = self.c
+        seglen = b - a
+        pdir = c.cache / "vseg_pass"; pdir.mkdir(parents=True, exist_ok=True)
+        prev_key = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}"
+        prev = None            # None = 主输入用 canvas（pass0）
+        n = len(layers_subset)
+        vcodec, enc = pick_vcodec(c, self.draft)
+        for k, L in enumerate(layers_subset):
+            last = k == n - 1
+            ident = L["pngdir"].name if L["gfx"] else L["seg"].name
+            h = hashlib.sha1()
+            h.update(f"{prev_key}|pass{k}\n".encode())
+            h.update(f"passgraph={_graph_code_digest()}\n".encode())
+            h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
+                      + f"|{L['x']}|{L['y']}|{L['w2']}|{L['h2']}\n").encode())
+            pkey = h.hexdigest()[:12]
+            prev_key = pkey
+            target = out_path if last else pdir / f"p{k}_{pkey}.mkv"
+            if not last:
+                if self._pass_fresh(target, seglen, sidecar=True):
+                    print(f"    · pass {k + 1}/{n} 已缓存（{target.name}）")
+                    prev = target
+                    continue
+            elif out_path.exists() and self._pass_fresh(out_path, seglen):
+                # 最终 pass 也走帧数兜底（段缓存已在 render_segmented 判过，防御
+                # composite 被直接调用无段缓存的场景——如 --draft --frames 回落不
+                # 进此路径，b=None 时根本不到这里）
+                break
+            cmd = ["ffmpeg", "-v", "error", "-y"]
+            if prev is None:
+                cmd += ["-f", "lavfi", "-i",
+                        f"color=c=black:s={self.W}x{self.H}:r={c.fps}:d={seglen * c.spf:.3f}"]
+            else:
+                cmd += ["-i", str(prev)]
+            cmd += self._layer_input_args(L, a)
+            slave, ov, cur = self._layer_chain(L, k, "base", a, seglen, idx=1)
+            if k == 0:
+                parts = ["[0:v]format=yuv420p[base]", slave, ov]
+            else:
+                # pass k>0 主输入：FFV1 的 RGB 打包往返会把 rgba 落成 bgra 且旗标
+                # 标 pc/gbr（实测），format=rgba 重排回链式布局（无损），setparams
+                # 把旗标抹回链式内存帧口径（E-C3 实测链式 rgba 帧 cl:unspecified）。
+                parts = ["[0:v]format=rgba,setparams=range=unspecified:colorspace=unknown[base]",
+                         slave, ov]
+            if last and with_subs:
+                parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
+            elif last:
+                parts.append(f"[{cur}]format=yuv420p[vout]")
+            elif with_subs:
+                # 域钉定 rgba（域同构核心步骤，R4-E1-v2 2026-09-14）：链式
+                # graph 里 subtitles(libass) 只接受 RGB 输入，该约束经 filtergraph
+                # 协商反向传播，把主链自 L0 overlay 起全程钉在 rgba（E-C3 实测：
+                # seg00 链式 14 层 showinfo fmt 全=rgba、cl=unspecified，
+                # /tmp/vtx_r4/FINDINGS.md）。pass 链主输入格式列表钉成 [rgba] 后，
+                # overlay 的 auto 协商输入与链式相同 → 域演化逐层同构。
+                # 实测史（为何必须钉）：不钉则 pass 开头的 format=yuv420p 把主链
+                # 拉回 YUV 域且下游无 RGB 约束，协商自由漂移（yuva420p/bgra 混杂）
+                # → 全帧 ±1 级系统性微差：vs 链式 0/2093、vs v4.6 基线 8.15%
+                # （链式同测 96.3%，E-B4/E-C1/E-C2）；首版钉 rgba 未抹旗标仍
+                # 255/2093（FFV1 落盘 bgra/pc/gbr，旗标路径与链式 unspec 不对称）
+                # → 本版输入/输出端 setparams 抹旗标（修复迭代 4）。
+                parts.append(f"[{cur}]format=rgba,setparams=range=unspecified:colorspace=unknown[vout]")
+            else:
+                # 无字幕路径（复渲/内部形态）：单 graph 回落路径同样无 subtitles
+                # 的 RGB 反向约束，链式域本身协商自由——pass 链保持 auto 不钉
+                # （确定性由单 overlay pass 结构保证，与域无关；域不承诺与链式
+                # 逐位同构——该承诺只在正式段路径 with_subs=True 下成立）。
+                parts.append(f"[{cur}]null[vout]")
+            if last:
+                tail = ["-frames:v", str(seglen), "-fps_mode", "cfr", "-r", str(c.fps),
+                        *vcodec, str(out_path)]
+            else:
+                # FFV1 intra（-g 1）无损：像素/alpha/位深零漂移，编码确定性
+                # （FFV1 为逐帧确定性编码器，与线程数无关）。落盘走 *.part.mkv
+                # 临时名 + os.replace 原子替换：并发/重入读者（帧数校验、下游
+                # pass）永远看到完整文件而非半截 mkv（FFV1 大文件写入窗口数十秒，
+                # 直接写 target 存在互踩窗口——tests 并发复渲实测踩中，R4-E1-v2）。
+                # 临时名保留 .mkv 结尾：ffmpeg 按扩展名选 muxer，.part 结尾无法
+                # 初始化（实测 Invalid argument）。
+                tail = ["-frames:v", str(seglen), "-c:v", "ffv1", "-level", "3",
+                        "-g", "1",
+                        str(target.with_name(target.stem + ".part" + target.suffix))]
+            c.run(cmd + ["-filter_complex_threads", "1",
+                         "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
+            if c.dry:
+                # dry-run：命令已由 Ctx.run 打印（[dry-run] 前缀），不执行不落盘
+                # ——跳过原子替换/帧数校验/旁车，继续打印余下 pass 命令。dry 口径
+                # 与单 graph 一致（编排可见、零副作用）；否则 dry 下帧数校验
+                # sys.exit(1) 误杀 --dry-run（TestUntilFlag 实测回归，R4-E1-v2）
+                prev = target
+                continue
+            if not last:
+                os.replace(target.with_name(target.stem + ".part" + target.suffix),
+                           target)
+            if not self._pass_fresh(target, seglen):
+                print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
+                      f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
+                sys.exit(1)
+            if not last:
+                # 帧数硬校验通过后落旁车（_pass_fresh sidecar 快路径的凭据，
+                # 见其 docstring；截断/中断产物到不了这里，不会误发旁车）
+                target.with_suffix(target.suffix + ".n").write_text(str(seglen))
+            prev = target
         return enc
 
     # ---- 阶段二：段级编码 → concat demuxer -c copy 拼接（2026-09-10）----
@@ -242,16 +472,21 @@ class RenderPlan:
     # 是两套各自用途的并行度，不统一（见 infra 注释）。
     def _seg_content_key(self, a, b, sl, with_subs, sfile) -> str:
         """段内容键（PR#1 合入融合，替代 PR 的 tag-n{nseg}-gpu{gpu} 目录变体）：
-        sha1(段区间 + 画布/模式/gpu + 每层上游内容键与参数 + 段字幕 ass 字节)[:12]。
+        sha1(段区间 + 画布/模式/gpu + 每层上游内容键与参数 + 段字幕 ass 字节
+        + 合成代码摘要)[:12]。
 
         段文件名携带内容键后，存在性+帧数缓存不再可能吃到旧内容——PR 回归场景
         「改字幕/改图层/换 gfx 内容后分段缓存仍命中旧段」从机制上关闭；nseg/gpu
         变体隔离（PR④）由 a|b 区间与 gpu 位天然覆盖。上游层标识复用 13bed7a 的
         内容寻址键（seg 文件名 / gfx 目录名）——底层内容变，段键随之变。
+        R4-E1（2026-09-14）补合成代码摘要 _graph_code_digest：composite() 改码
+        （如 tpad 尾垫策略）不再依赖手工清段缓存，旧段自动键漂移失效（防洗白，
+        见该函数 docstring）。
         """
         h = hashlib.sha1()
         h.update(f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}"
                  f"|{int(bool(getattr(self.c, 'gpu', False)))}\n".encode())
+        h.update(f"graph={_graph_code_digest()}\n".encode())
         for L in sl:
             ident = L["pngdir"].name if L["gfx"] else L["seg"].name   # 上游内容键
             h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
