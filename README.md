@@ -10,7 +10,7 @@
 vtx/            ① 内核（永不可关）：渲染链 + validate/qc + 响度终链 + 缓存 + pluginlib/api.py
 skill/             ① 内核文档：SKILL.md 路由索引 + references/{edit,gfx,runbook}.md + assets/ 起手模板
 apps/  (12 件)  ② 应用：产出独立素材不进 timeline 管线，关停不影响主链
-plugins/ (2 件) ② 插件：扩展 timeline.json 词汇并钩进管线（denoise / duck-static + registry.json）
+plugins/ (4 件) ② 插件：扩展 timeline.json 词汇并钩进管线（denoise / duck-static / blender-bridge / bgm-render + registry.json）
 skills/         ③ 工作流包：tech-talk（科技口播制作范本；skill.json 声明 uses_apps/optional_plugins）
 scripts/           内核工具残留：new_project.sh / gfx_golden.py / bench_cold.sh（+ 迁走件兼容 symlink）
 vt.py              统一入口：doctor / apps|plugins|skills list|check / version / init / --fix-links
@@ -51,7 +51,7 @@ env python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out
 | `apps/gates/` | 发布前内容级复检（G1/G2/G7/G10 + 项目门；G3 TP 已上内核 qc） |
 | `apps/sync/` | 双系统同步（GCC-PHAT）与实录 take 替换（管线前置素材工具） |
 
-**plugins/**（2 件）：`plugins/denoise/`——口播降噪（`sources[]` 级键，prepare 源产物钩子）；`plugins/duck-static/`——床乐静态分段避让（`duck_strategy` 轨级键，音轨事件内存变换）。协议 v1 与 registry.json 见 `docs/ARCHITECTURE.md` §2。
+**plugins/**（4 件）：`plugins/denoise/`——口播降噪（`sources[].denoise`，缝 A prepare 源产物钩子）；`plugins/duck-static/`——床乐静态分段避让（`audio_tracks[].duck_strategy`，缝 B 音轨事件内存变换）；`plugins/blender-bridge/`——顶层键 `blender_bridge` 配置即 `vtx all` 收尾自动导出 Blender 审片工程（缝 D finish，协议 v1.2）；`plugins/bgm-render/`——`sources[].bgm` 音轨直接引用 music_tools 工程 JSON，自动渲染母带入内容寻址缓存（缝 A+C，协议 v1.2）。协议 v1/v1.2 与 registry.json 见 `docs/ARCHITECTURE.md` §2/§2.5。
 
 **skills/**：`skills/tech-talk/`——科技口播 B 站视频制作范本（六阶段流程 / 音频支线 / 全链 SOP / 已验收模板资产），产线任务先读其 SKILL.md。
 

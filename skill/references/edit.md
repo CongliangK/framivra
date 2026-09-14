@@ -58,10 +58,10 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 
 - **迭代回路**：改 timeline 字幕 → `subs check`（秒级）→ `subs preview` 抽查 → `video`（段级缓存：字幕 ass 以字节进段内容键，改 1 条只重渲其覆盖的 1-2 段）。配方见 runbook R2s。
 
 ## 音频工程（build_audio 内置）
-- **音乐避让（duck）**：音轨声明 `"duck": true`（bed/amb 建议）即被 `"duck_by"`（缺省 `["voice"]`）轨的混音经 `sidechaincompress`（threshold 0.03 / ratio 6 / attack 150ms / release 700ms）压低。**⚠ 新项目启用 duck 前必须先做「duck 开/关」A/B 响度对照，否则长节目下无口播段床乐可能反常抬高约 19dB**；床乐静态电平已足够低（低于口播 ≥5dB）时建议直接不开（破案详录见 DEV.md）。
-- **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测（±1.5 LUFS 容差）。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。
+- **音乐避让（duck）**：音轨声明 `"duck": true`（bed/amb 建议）即被 `"duck_by"`（缺省 `["voice"]`）轨的混音经 `sidechaincompress`（缺省 threshold=0.0126(-38dBFS) / ratio=4 / attack=20ms / release=1500ms / makeup=1，轨级 `duck_params` 可覆盖；2026-09-11 D47 voice-ime 实测校准）压低。**⚠ 新项目启用 duck 前必须先做「duck 开/关」A/B 响度对照，否则长节目下无口播段床乐可能反常抬高约 19dB**；床乐静态电平已足够低（低于口播 ≥5dB）时建议直接不开（破案详录见 DEV.md）。
+- **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测（分级：偏离 >3 LU 硬 FAIL、(1.5,3] WARN 放行（内容级，发布侧 G2 拦截）、≤1.5 静默通过——与 build_audio 终态校验同口径）。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。
 - **响度终链（v2 §1.2，2026-09-13）**：alimiter 限幅（`limit=0.599:level=false:latency=true`）已并入 `vtx audio`（build_audio 尾部，与区间预览统一过 limiter）——out/audio.wav 恒为「归一+限幅」终态，**audio → mux 直连，无独立 post_loudness 步骤**（`scripts/post_loudness.py/.sh` 留兼容薄壳，正常链路无需）。终态校验分级：硬 FAIL=TP>-1.0 dBFS/时长漂移 ±1 采样/I 偏离 >3 LU；WARN=I 偏离 ∈(1.5,3]。**编码后解码 TP 终检纪律不变**（G3/qc）。
-- 混音链：轨内子混音（apad 补齐成片全长）→ duck → 总混音（amix normalize=0 保留音量比例）→ 静态增益 → 定长裁切。
+- 混音链：轨内子混音（apad 补齐成片全长）→ duck → 总混音（amix normalize=0 保留音量比例）→ 两遍静态增益 -14 LUFS + alimiter 限幅（v2 §1.2 响度终链已并入 vtx audio，无独立 post 步）→ 定长裁切。
 - **BGM 分轨审计包（正式版默认必做）**：BGM 正式版本挂载进时间线后，除 vtx 渲染外必跑 `python3 <本仓>/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json`（旧库 `~/文档/04_bilibili视频/_library/blender_bridge/` 位置为兼容指针，权威副本已收编本仓）——分轨 MP3 导出 + 审计 timeline + Blender 审计工程 `audit.blend` 一键五步，产物落 `<项目>/cache/audit_bgm/`。用户在 Blender VSE 逐轨静音/独听对比才能参与混音与编排裁决（人机协作交付门；完整规程见 music skill「交付门：分轨审计包」节）。分轨或音量改动后重跑即可（MP3 按源内容与转码规格校验缓存；事件映射及整段回退见 docs/audio-audit.md）。
 ## 渲染速度：草稿 / GPU / 缓存
 ```bash
@@ -122,6 +122,17 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json video --gpu
 | 标题卡/下三分之一/角标/强调字 | `gfx-overlay`（kind=gfx） | 页面自身留透明区域，叠在最上（仅低于字幕） |
 gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，透明区域即"局部"），timeline 层不区分——不要为全屏图形发明新 kind。动效页面本身怎么写，见 `references/gfx.md`。
 不变量（validate 强制）：`src_out - src_in == dur`（gfx clip 除外）；切割范围 ≤ 素材实测帧数；**同轨 clips 不重叠**（视频与音频皆是，唯一机制约束）；clip/事件不超出 duration_frames；fade 总长 ≤ 片段长。音频事件可加 `src_in`（取源音频中段）与 `loop`（循环平铺）。**source 可以是纯音频文件**（wav/mp3：音效、BGM、环境声等资产库素材直接进 timeline；时长换算项目帧网格，只能被音频事件引用，视频 clip 引用会被拒绝）。完整字段语义读 `~/.agents/skills/video/vtx/timeline.schema.json`，里面有每个字段的注释。
+
+**字幕来源 `subtitles_src`（v2 内核键）**：根级声明 `"subtitles_src": "subs/ep.srt"`（相对 timeline 路径），与根级 `subtitles[]` 互斥——内核只负责引用与烧录（.srt 时间戳按项目 fps 换算整帧 / .json 帧值直用），谁产出该文件（asr/手写/其他工具）内核不感知；文件内容参与回执指纹（改字幕文件即失效重渲）。
+
+**插件键（v2 §2.1 三分支：已装启用=生效 / 未装=报错+安装提示 / 禁用=报错+启用提示；`_meta` 永久自由命名空间）**：
+| 键 | 位置 | 插件 | 行为 |
+|---|---|---|---|
+| `"denoise": true\|{...}` | sources[] | plugins/denoise | 该源 prepare 音频走「陷波→Resemble 仅降噪→48k」链，产物内容寻址 |
+| `"duck_strategy": {"mode":"static",...}` | audio_tracks[] | plugins/duck-static | 床乐静态分段避让（与 `duck:true` 互斥；纯内存变换不写回 timeline） |
+| `"bgm": true\|{"output","extra_deps"}` | sources[] | plugins/bgm-render | **音轨直接引用 music_tools 工程 JSON**：validate 期供时长 facts，prepare 期自动 `bgm render` 母带 → 48k stereo s16 落内容寻址键（缓存命中零渲染/工程·$ref·参数变更自动重渲；详见 plugins/bgm-render/README.md） |
+| `"blender_bridge": true\|{"out","verify"}` | 根级 | plugins/blender-bridge | `vtx all` 全链（qc 后）自动导出 Blender 审片工程（默认 `<项目>/preview.blend`），配置即导出免手敲命令 |
+未知键警告不阻断；插件未装/禁用时写键会 validate FAIL 并给出安装/启用指引。协议权威见 `docs/ARCHITECTURE.md` §2。
 ## QC 检查项语义（qc 阶段自动执行）
 - 成片帧数/时长/分辨率与 project 声明一致
 - **底轨切点帧比对**：底轨（tracks[0]）每个切片在成片与源素材（同变换）间做像素比对——证明切点落在声明的帧上

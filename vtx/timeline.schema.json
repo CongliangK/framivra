@@ -198,7 +198,7 @@
     },
     "audio_tracks": {
       "type": "array",
-      "description": "并行音轨；同轨内 events 时间不重叠，跨轨自由叠加。混音链：轨内子混音 → duck 避让（sidechaincompress，口播出现时压低 duck 轨）→ 总混音（amix 不归一，保留音量比例）→ EBU R128 响度归一（-14 LUFS / TP -1.5，B站标准）",
+      "description": "并行音轨；同轨内 events 时间不重叠，跨轨自由叠加。混音链：轨内子混音 → duck 避让（sidechaincompress，口播出现时压低 duck 轨）→ 总混音（amix 不归一，保留音量比例）→ 两遍静态增益 -14 LUFS + alimiter 限幅（v2 §1.2 响度终链：out/audio.wav 恒为归一+限幅终态，解码域 TP ≤ -1.0 dBFS）",
       "items": {
         "type": "object",
         "required": [

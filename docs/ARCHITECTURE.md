@@ -169,7 +169,7 @@ plugin 额外：
                "hooks": ["prepare_source", "audio_events", "validate"] } }
 ```
 
-（hooks 值域 = 已冻结扩展点：缝 A `prepare_source` / 缝 B `audio_events` / v1.1 `validate`〔P2b 增补〕，见 §2.2。）
+（hooks 值域 = 已冻结扩展点：缝 A `prepare_source` / 缝 B `audio_events` / v1.1 `validate`〔P2b 增补〕/ **v1.2 `probe_source` / `finish`〔P6 增补，见 §2.5〕**，见 §2.2。）
 
 规则〔用户拍板〕：
 
@@ -185,6 +185,57 @@ plugin 额外：
 - **无键声明插件 = 全局生效语义**（红队终审登记）：hooks 声明但无 schema_keys 的插件（如纯 audio_events 型）对**所有** timeline 生效且无键位门——安装即信任；其代码变更由代码内容摘要兜底失效（上一条）。external 默认 disabled 是信任边界。
 - 官方声明（registry.json）的插件实体**只认 `plugins/<name>/`**——目录缺失即 not_installed（安装破损），不被同名 external 顶替身份（P4 审查 P2-2 裁定）。
 - 已知限制：external 插件 manifest 的 `cache_dirs` 声明暂无生效通道（get_cache_dirs 只读静态注册表；external 插件缓存键走 contribute_keys 的 ak 集不受影响）〔P4 审查 P2-9 记录〕。
+
+### 2.5 协议 v1.2 增补（P6 总控裁定，2026-09-14 重构验收期）
+
+P5 合入后的验收体检（四路深审 + 全量回归）发现三处 P1 断层与两处产线缺口，裁定如下（全部已落地）：
+
+1. **缝 C `probe_source`（虚拟源 facts）**：sources[] 条目可以不是媒体文件——插件暴露
+   `probe_source(c, sid) -> {has_audio, has_video, nb_frames, fps, w, h} | None`（None=不受理，回落 ffprobe），
+   stages.validate 的源级检查与音频事件时长校验统一经此缝取 facts。动机：bgm-render 插件
+   （音轨直接引用 music_tools 工程 JSON）——工程 JSON 过 ffprobe 会误报「无音频轨/时长 0」。
+   实现件 plugins/bgm-render：probe 期 `bgm show structure --json` 取 duration_s（与 render 的
+   build_render_plan 同口径，mix 被 atrim 定长），prepare 期 `bgm render` 母带转 48k stereo s16
+   落 `cache/audio/{audio_key}::bgm:{version}:{digest}.wav`（digest = 键值+**插件代码摘要**+
+   **$ref 拆分件内容**+extra_deps 内容——主工程字节不变而 $ref 件被改时产物键仍翻转）。
+2. **缝 D `finish`（管线收尾）**：插件暴露 `finish(c) -> list[str]`（错误行；空=成功），cli 在
+   `vtx all` 全链（qc 通过后）触发；--draft/--dry-run/`--until` 截断链不触发。收尾失败以退出码 1
+   结束但正式产物（final.mp4）已就绪——失败可见即可。实现件 plugins/blender-bridge：顶层键
+   `blender_bridge: true|{out, verify}` 配置即 `all` 收尾自动导出 Blender 审片工程（json2blend，
+   blender --background）——「配置了就默认直接导出」。
+3. **root scope 键扫描接线**：KERNEL_KEYS["root"] 自 v2 起备而未扫（死键集）；v1.2 起顶层键纳入
+   _scan_plugin_keys（未知顶层键自此「警告不阻断」，v1 静默）——blender_bridge 类顶层插件键走
+   三分支。**hooks 键声明 scope 四值对齐**：_timeline_declares/_plugin_params_digest 的检索容器
+   与 _scan_plugin_keys 同构（root/project/sources[]/audio_tracks[]/audio_tracks[].events[]，
+   经 hooks._scope_items 单一实现）——修复体检 A-P1-2（v1 只认两 path，其余 path 声明的键
+   「validate 放行但插件永不生效」+ 参数摘要盲区）。
+4. **registry hooks 空列表 fallback**（体检 A-P1-3）：registry 条目 hooks 为空列表/缺失时
+   fallback 实体 manifest extends.hooks 声明——防注册表被手改清空后插件静默废掉（键照放行、
+   钩子永不跑、零报错）；与 _plugin_version 的 fallback 语义对齐。
+5. **插件产物键掺代码摘要**（体检 A-P1-1，红队终审 P1-1 的另一半）：回执指纹掺代码摘要后，
+   产物键侧同场景（改代码不 bump version）旧产物仍被缓存命中「洗白」——v1.2 起缝 A 型插件产物
+   键经 `vtx.api.plugin_code_digest` 掺 12 位代码摘要（denoise/hello-plugin/bgm-render 已接）；
+   `_plugin_code_digest` 的 glob 升 rglob（子目录/子包代码进摘要，A-P2-1）。
+6. **qc 响度带对齐裁定**（体检 B-P1-1）：build_audio 终态 WARN 带（I 偏离 ∈(1.5,3] 属内容级，
+   发布侧 G2 拦截）与内核 qc ±1.5 硬 FAIL 自相矛盾——边界内容 + aac 解码域 0.1~0.3 LU 漂移会
+   让 `vtx all` 在 qc 处 flaky 翻车。裁定：qc 响度项分级对齐 build_audio（>3 硬 FAIL /
+   (1.5,3] 放行带 WARN 注记 / ≤1.5 静默）；测量失败（解析不出 I/TP）显性 FAIL 不再静默消失
+   （B-P3-4）。TP 阈 -1.0 不变（§1.3 唯一权威）。
+7. **vtx.api 面扩两件**：`plugin_code_digest(name)`（产物键掺摘要的公共锚）与
+   `cfg_get(key, default)`（插件读自身 config 的唯一入口）——稳定性承诺随 API 面。
+
+体检同期修复（非协议面，实现级）：gc 豁免 loudness_receipts 伴生件 .lock/.tmp（B-P2-1，
+防 budget_gate 自动 gc 删锁文件破跨进程互斥）；cache/preview、cache/report_audio 进 gc 白名单
+（B-P3-1）；区间渲染 `_receipt_audio_gain` 经 load_receipt 指纹门，陈旧回执回落窗口自测并告警
+（B-P2-2）；validate 必填键检查（events 的 src/in/out/volume、轨的 name/events——B-P2-3，缺键
+不再裸 KeyError 崩栈）；range_label 秒标签 1→3 位小数（相邻窗碰撞互覆盖，B-P3-5c）；`--frames 0`
+组合检查（B-P3-5b）；build_audio 终态复测补 framelog=quiet（B-P3-3）；load_receipt 捕 OSError
+（B-P3-5d）；df 的 cache mkdir 兜底；qc 并发窗探测帧域防御（短 timeline 越片尾/无音频事件
+TypeError，B-P3-5a）；vt.py init --fix FIX 表键名 chrome 对齐 fail 键（C-P2-1）；doctor --fix 的
+occupied 挂载项列人工（C-P2-3）；health ok=None 文本显示 ℹ（C-P3-1）；pip 布局 init 缺
+config.example.json 友好降级（C-P3-2）；活代码旧路径收敛 apps//plugins/（C-P2-2：vt.py init 段、
+bench_cold.sh、tts 提示、config.example）；edit.md duck 缺省参数勘误（D47 校准值）+ 补
+subtitles_src/插件键文档；timeline.schema.json TP 旧口径 -1.5 → -1.0 勘误。
 
 ---
 

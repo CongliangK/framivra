@@ -55,3 +55,6 @@ apps/matting/__pycache__/
 # matting/resolve_matte 运行产物（runner 日志、uinject.c 现场编译的二进制，可再生）
 apps/matting/resolve_matte/*.log
 apps/matting/resolve_matte/uinject
+
+# ZCode 会话目录（P6：验收 --ignored 干净门补录）
+.zcode/

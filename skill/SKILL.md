@@ -19,7 +19,7 @@ video_tools/
 ├── apps/  (12 件)  ② 应用（产出独立素材，不进 timeline 管线；关停不影响主链）：
 │                      asr / tts / imgen / matting / aroll / cover / research /
 │                      blender-bridge / publish / bgm / gates / sync
-├── plugins/ (2 件) ② 插件（扩展 timeline.json 词汇并钩进管线）：denoise / duck-static + registry.json
+├── plugins/ (4 件) ② 插件（扩展 timeline.json 词汇并钩进管线）：denoise / duck-static / blender-bridge（blender_bridge 键→all 收尾自动导出 .blend）/ bgm-render（sources[].bgm→音轨直引 music_tools 工程JSON自动渲染）+ registry.json
 └── skills/         ③ 工作流包：tech-talk（科技口播 B 站视频制作范本；skill.json 声明 uses_apps）
 ```
 
@@ -87,6 +87,8 @@ video_tools/
 | 4K 投稿断言 | `bash <video_tools>/apps/publish/check_4k.sh <成片> ...` |
 | B 站投稿封面 | `env python3 <video_tools>/apps/cover/make_cover.py all --out <项目>/cover --bg-src <imgen原图> --title "…" --sub "…"`（规格/QC 见 `skills/tech-talk/references/cover.md`） |
 | Blender 审片工程 | `blender --background --factory-startup --python <video_tools>/apps/blender-bridge/json2blend.py -- <项目>/timeline.json <项目>/preview.blend`（json2blend/verify_blend 须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError） |
+| Blender 自动导出（v1.2） | timeline 顶层 `"blender_bridge": true`（或 `{out, verify}`）→ `vtx all` 收尾自动导出 `<项目>/preview.blend`（plugins/blender-bridge，免手敲命令；blender 缺失收尾报错不吞） |
+| BGM 音轨直引工程 JSON（v1.2） | sources[] 加 `{"id":"bgm_main","path":"<music_tools 工程>.json","bgm":{"output":"master"}}` → validate/prepare 自动 `bgm render` 母带 → 48k stereo 入内容寻址缓存（plugins/bgm-render；缓存命中零渲染，工程/$ref/参数变更自动重渲） |
 | BGM 分轨审计包 | `python3 <video_tools>/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json` |
 | 音视频同步 / 降噪 | `env python3 <video_tools>/apps/sync/sync_audio.py …` / `env python3 <video_tools>/plugins/denoise/denoise_voice.py …`（响度限幅已并入 vtx audio，无独立步骤） |
 | 缓存治理 | `... gc --dry` / `gc` / `df` / `snapshot` |
