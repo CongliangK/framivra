@@ -182,6 +182,30 @@ class GcLoudnessSidecarExemption(unittest.TestCase):
             self.assertNotIn("loudness_receipts.json", names)
 
 
+class GcOutDeliverableExemption(unittest.TestCase):
+    def test_final_4k_and_freeze_exempt(self):
+        # 2026-09-14 白名单遗漏交付件修复：final_4k*.mp4（apps/publish/export_4k
+        # 发布件与 x264 对照件）与 FREEZE*.json（runbook 步骤 6 冻结记录）不进
+        # gc 回收清单；白名单外 out 件仍照常列为「out 一次性中间物」
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "cache").mkdir()
+            out = root / "out"; out.mkdir(parents=True)
+            for n in ("final_4k.mp4", "final_4k_x264_ref.mp4", "FREEZE.json",
+                      "FREEZE_v47.json", "tmp_junk.bin"):
+                (out / n).write_bytes(b"x" * 8)
+            from vtx.infra import Ctx
+            c = Ctx(_write(root, _tl()))
+            plan = hygiene.gc_plan(c)
+            names = [p.name for p, _, _ in plan["out_intermediate"]]
+            for keep in ("final_4k.mp4", "final_4k_x264_ref.mp4",
+                         "FREEZE.json", "FREEZE_v47.json"):
+                self.assertNotIn(keep, names,
+                                 f"{keep} 是交付件/冻结证据，不得进回收清单")
+            self.assertIn("tmp_junk.bin", names,
+                          "白名单外 out 中间物仍应照常列为可回收")
+
+
 class ValidateRequiredKeys(unittest.TestCase):
     def _run(self, tl):
         import io

@@ -105,6 +105,46 @@ class GcExemptions(unittest.TestCase):
                              listed, f"qc_pass_segs 被列入: {listed}")
             self.assertIn(str(root / 'cache' / 'audio' / 'deadbeef0000.wav'), listed)
 
+class StaleReceiptArchive(unittest.TestCase):
+    """⑮（2026-09-14 登记+最小修复）：回执输入指纹翻转（如 validate-only 运行在
+    新指纹下落笔）不再静默归零旧全量阶段记录——先轮转单槽旁证 out/receipt.prev.json。
+    receipt.json 语义不变（旧成功不继承的安全不变量保留）。"""
+
+    def test_fingerprint_flip_rotates_prev(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            p = _tl(root)
+            c = Ctx(p)
+            out = root / 'out'; out.mkdir(parents=True)
+            old = {'input_fingerprint': 'OLD_FP', 'stages': {
+                'validate': {'ok': True}, 'audio': {'ok': True},
+                'mux': {'ok': True}, 'qc': {'ok': True, 'detail': '75/76'}}}
+            (out / 'receipt.json').write_text(json.dumps(old))
+            # 指纹翻转下落一笔（validate-only 场景）→ 旧记录进 prev，主回执归零重记
+            c.receipt('validate', True, 'validate-only 复检')
+            prev = json.loads((out / 'receipt.prev.json').read_text())
+            self.assertEqual(prev['input_fingerprint'], 'OLD_FP')
+            self.assertEqual(set(prev['stages']), {'validate', 'audio', 'mux', 'qc'})
+            rec = json.loads((out / 'receipt.json').read_text())
+            self.assertEqual(rec['input_fingerprint'], c.input_fingerprint)
+            self.assertEqual(list(rec['stages']), ['validate'])
+
+    def test_fingerprint_match_no_rotation(self):
+        # 指纹一致（常规温态重跑）不产生 prev——轮转只在真翻转时发生
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            p = _tl(root)
+            c = Ctx(p)
+            out = root / 'out'; out.mkdir(parents=True)
+            (out / 'receipt.json').write_text(json.dumps(
+                {'input_fingerprint': c.input_fingerprint,
+                 'stages': {'validate': {'ok': True}, 'qc': {'ok': True}}}))
+            c.receipt('qc', True, '温态复跑')
+            self.assertFalse((out / 'receipt.prev.json').exists(),
+                             "指纹未翻转不应轮转旁证")
+            rec = json.loads((out / 'receipt.json').read_text())
+            self.assertEqual(set(rec['stages']), {'validate', 'qc'})   # 旧成功保留
+
 
 if __name__ == '__main__':
     unittest.main()

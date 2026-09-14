@@ -80,9 +80,19 @@ class DoctorJson(unittest.TestCase):
         declared = {x["name"]: x for x in c["declared"]}
         self.assertIn("denoise", declared)
         self.assertIn("duck-static", declared)
+        # 版本三面一致（R1-F F6：doctor 组件段读 registry——只拿 doctor 输出比
+        # registry.json 是同义反复永真；真比对锚在 plugin.json manifest：
+        # manifest ↔ registry ↔ doctor 输出同值，任一面 drift 在此被抓）
+        registry = json.loads((REPO / "plugins" / "registry.json")
+                              .read_text(encoding="utf-8"))["plugins"]
         for name in ("denoise", "duck-static", "blender-bridge", "bgm-render"):
+            manifest_v = json.loads((REPO / "plugins" / name / "plugin.json")
+                                    .read_text(encoding="utf-8"))["version"]
             self.assertEqual(declared[name]["state"], "active")
-            self.assertEqual(declared[name]["version"], "1.0.0")
+            self.assertEqual(declared[name]["version"], manifest_v,
+                             f"{name}: doctor 输出版本须等于 plugin.json")
+            self.assertEqual(registry[name]["version"], manifest_v,
+                             f"{name}: registry 与 manifest 双面一致")
         # 发现件（builtin）四插件也须过 health 门
         plugins = [e for e in c["entries"] if e["kind"] == "plugin"]
         self.assertEqual({e["name"] for e in plugins},

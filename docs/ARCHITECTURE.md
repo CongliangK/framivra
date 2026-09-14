@@ -199,7 +199,9 @@ P5 合入后的验收体检（四路深审 + 全量回归）发现三处 P1 断�
    落 `cache/audio/{audio_key}::bgm:{version}:{digest}.wav`（digest = 键值+**插件代码摘要**+
    **$ref 拆分件内容**+extra_deps 内容——主工程字节不变而 $ref 件被改时产物键仍翻转）。
 2. **缝 D `finish`（管线收尾）**：插件暴露 `finish(c) -> list[str]`（错误行；空=成功），cli 在
-   `vtx all` 全链（qc 通过后）触发；--draft/--dry-run/`--until` 截断链不触发。收尾失败以退出码 1
+   `vtx all` 全链（mux/qc 完成后）触发；qc 失败不阻断 finish（final.mp4/qc_report.json 等产物
+   已就绪——存量假阴性项目也要能收尾），退出码按 qc/finish 各自失败态如实汇总（任一失败
+   exit 1）；--draft/--dry-run/`--until` 截断链不触发。收尾失败以退出码 1
    结束但正式产物（final.mp4）已就绪——失败可见即可。实现件 plugins/blender-bridge：顶层键
    `blender_bridge: true|{out, verify}` 配置即 `all` 收尾自动导出 Blender 审片工程（json2blend，
    blender --background）——「配置了就默认直接导出」。
@@ -223,6 +225,55 @@ P5 合入后的验收体检（四路深审 + 全量回归）发现三处 P1 断�
    （B-P3-4）。TP 阈 -1.0 不变（§1.3 唯一权威）。
 7. **vtx.api 面扩两件**：`plugin_code_digest(name)`（产物键掺摘要的公共锚）与
    `cfg_get(key, default)`（插件读自身 config 的唯一入口）——稳定性承诺随 API 面。
+8. **bgm-render stem 分轨 + 共享渲染缓存（2026-09-14，voice-ime 迁移暴露缺口）**：
+   `sources[].bgm.output` 值域 `master|premaster` 扩至 `master|premaster|stem:<轨名>`
+   ——轨名 `^[A-Za-z0-9][A-Za-z0-9_.-]*$`（validate 拒路径穿透），prepare 派生该轨
+   **总线分轨** `stems/<轨名>.bus.wav`（含 gain/pan/space 的 float32 工程全长 bus，
+   mixer._render_track_chain 产出；bgm render 结果 JSON 的 stems 映射是引擎级 stem，
+   bus 无映射按命名约定拼路径，缺失 fail-hard 列可用轨名；轨名不进任何 shell 字符串，
+   subprocess 列表参数）。动机：13 分轨各挂独立音轨自行混音的架构（volume 0.08~0.12
+   + duck，验收门 ≤2% 对位旧片）用 master 会引入母带 loudnorm(-14 LUFS) 与母带 IR 尾，
+   语义完全不同。**共享渲染缓存**：整工程渲染一工程一次落 `cache/bgm/<render_digest>/`
+   （render_digest = 工程字节 + $ref 件 + extra_deps + 插件代码摘要，**不含输出选择与
+   轨名**——只影响派生不影响渲染），多源同工程零重复渲染（13 源 = 1 次渲染）；
+   成功原子写 `_complete.json`（tmp+os.replace），`<digest>.lock` flock 防跨进程双写
+   （P6 并发窗防御惯例），缓存命中零渲染直接派生；目录经 registry `cache_dirs: ["bgm"]`
+   进 gc 白名单（弃用 bgm 键后作 legacy 回收），派生产物键仍走 contribute_keys。
+   probe 缝 C 口径不变（分轨时长 = 工程时长）。插件 1.0.0 → 1.1.0（产物键随代码
+   摘要自动翻转，预期重渲一次）。
+9. **bgm-render 红队修复批（2026-09-14，R1-F；插件 1.1.0 → 1.2.0）**：
+   - **目录型 extra_deps 递归签名**（F1）：`_file_sig` 遇目录改递归内容签名
+     （(相对路径, size, sha256[:16]) 排序整体哈希）——目录不再等价 MISSING
+     （README 邀请声明采样库目录，旧实现 open() 抛 IsADirectoryError 静默记
+     MISSING，与不存在路径不可区分）；`__pycache__`/`.lock`/`.tmp` 伴生件豁免
+     （hygiene gc 同惯例）；护栏：文件数 >5000 或累计 >2GiB 降级
+     (相对路径, size, mtime_ns) 清单签名，前缀 `DIRL:`/`DIRC:` 进 digest JSON
+     可观测。
+   - **gc 键级回收陈旧 render_digest 目录**（F2，方向 A）：pluginlib 新增不变量
+     ① 键级聚合 `get_cache_dir_keys(c)`（插件暴露可选 `cache_dir_keys(c) ->
+     {目录名: 键集}`，与 contribute_keys 同为不变量入口非钩子、不参与对账；
+     仅对经 registry cache_dirs 注册的目录生效，层叠语义=目录注册+键级条目）；
+     gc_plan 新类别 `plugin_cache`：cache/bgm/ 一级子目录按内容寻址键对待——
+     在当前 timeline 键集（bgm-render 供给的 render_digest 集，纯静态可算与
+     渲染期同源）内保活，不在 = 陈旧（--dry 列出、gc 实删）——修复陈旧 digest
+     目录（每个 ≈整工程渲染产物）无界累积；`<digest>.lock` 伴生件豁免
+     （B-P2-1 防删锁破跨进程互斥）；无插件声明键集 = 该类别恒空，其他
+     cache_dirs 消费者语义不变。
+   - **轨名正则 fullmatch**（F3）：re 的 `$` 允许尾随换行，`match+$` 曾放行
+     `stem:abc\n`——改 fullmatch 整串锚定。
+   - **CLI 通道存在性门**（F4）：config `bgm.cli` 指向不存在/不可执行路径 =
+     该通道不可用落下一通道（原行为 _run_bgm 里 FileNotFoundError 裸栈崩）；
+     三通道全败文案列逐通道具体原因（含 config 通道坏路径）。
+   - **plugin_code_digest 排除 tests/**（F5，统一口径对全部插件生效——
+     denoise/blender-bridge/bgm-render）：改一行测试 ≠ 插件行为变化，掺入会使
+     产物键/回执指纹无谓翻转（真工程整轮重渲）。注：此口径变化本身翻转上述
+     三插件全部产物键与回执指纹，属预期行为（本批 1.2.0 版本 bump 一并生效）。
+   - **共享缓存产物残缺自愈**（F7）：`_complete.json` 完好但目标 wav 缺失/空
+     文件（size=0 同判）→ 自动覆盖重渲一次（_ensure_shared_render force 通道）；
+     轨名不在轨集等工程侧问题不触发自愈（重渲治不了），仍 fail-hard 列可用轨名。
+   - test_vt_entry 版本断言改真比对（F6：doctor 读 registry，doctor↔registry
+     比对是同义反复永真——现锚在 plugin.json：manifest ↔ registry ↔ doctor
+     三面一致）。
 
 体检同期修复（非协议面，实现级）：gc 豁免 loudness_receipts 伴生件 .lock/.tmp（B-P2-1，
 防 budget_gate 自动 gc 删锁文件破跨进程互斥）；cache/preview、cache/report_audio 进 gc 白名单

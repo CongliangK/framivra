@@ -388,5 +388,62 @@ class TestG7BlackSensitivity(unittest.TestCase):
         self.assertIn("I=-14.2", r.stdout)   # G2/G3 直接用回执值（命中免测）
 
 
+# ---------------------------------------------------------------- ⑥ --out JSON 留档
+class TestOutJsonArchive(unittest.TestCase):
+    """--out PATH（2026-09-14）：门结论/skip/实测/输入指纹/时间戳落 JSON；
+    默认不写（兼容不变）。无成片 + --skip G1 场景免 ffmpeg 走纯留档路径。"""
+
+    def _gates(self, root: Path, *extra):
+        return subprocess.run(
+            ["env", "python3", "-X", "utf8", str(APP / "content_gates.py"),
+             "-t", str(root / "timeline.json"),
+             "--media", str(root / "nope.mp4"), "--skip", "G1", *extra],
+            capture_output=True, text=True, cwd=str(root))
+
+    def test_out_writes_structured_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "timeline.json").write_text(json.dumps(
+                {"version": 2, "project": {"fps": 30, "duration_frames": 90,
+                                            "width": 640, "height": 360},
+                 "sources": [], "video_tracks": [], "subtitles": [],
+                 "audio_tracks": []}, ensure_ascii=False), encoding="utf-8")
+            out = root / "out" / "content_gates.json"
+            r = self._gates(root, "--out", str(out))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("[out] gates 留档", r.stdout)
+            rep = json.loads(out.read_text(encoding="utf-8"))
+            self.assertTrue(rep["pass"])
+            self.assertEqual(rep["tool"], "apps/gates/content_gates.py")
+            self.assertRegex(rep["timestamp"], r"^\d{4}-\d{2}-\d{2} ")
+            # skip 留档（G1 显式 skip + G2/G3/G7/G10 无成片 skip）
+            joined = " ".join(rep["skipped"])
+            self.assertIn("SKIP G1", joined)
+            self.assertIn("SKIP G2/G3", joined)
+            # 输入指纹：timeline md5/size/mtime + frames/fps；media 不存在如实记录
+            self.assertEqual(rep["timeline"]["frames"], 90)
+            self.assertEqual(rep["timeline"]["fps"], 30)
+            self.assertTrue(rep["timeline"]["exists"])
+            self.assertEqual(len(rep["timeline"]["md5"]), 32)
+            self.assertFalse(rep["media"]["exists"])
+            # 参数快照（复跑可追溯阈值口径）
+            self.assertEqual(rep["params"]["g3_tp"], -1.0)
+            self.assertEqual(rep["params"]["skip"], ["G1"])
+
+    def test_default_no_out_file(self):
+        # 默认（无 --out）不落任何留档件——既有行为兼容
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "timeline.json").write_text(json.dumps(
+                {"version": 2, "project": {"fps": 30, "duration_frames": 90,
+                                            "width": 640, "height": 360},
+                 "sources": [], "video_tracks": [], "subtitles": [],
+                 "audio_tracks": []}, ensure_ascii=False), encoding="utf-8")
+            r = self._gates(root)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertNotIn("gates 留档", r.stdout)
+            self.assertEqual(list(root.glob("**/*.json")), [root / "timeline.json"])
+
+
 if __name__ == "__main__":
     unittest.main()

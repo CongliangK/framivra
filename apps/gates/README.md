@@ -12,6 +12,7 @@ v2 应用（P2a 批次 1 自 `scripts/content_gates.py` 迁入；manifest 见 `a
 - **G7** blackdetect 零黑帧
 - **G10** 帧数/时长/帧率断言（-count_packets 默认口径）+ 打包编码器报告
 - `--project-gates` 用户自定义字段相等断言（frames/first_voice_frame/*_events/duration_frames）
+- `--out out/content_gates.json` 本轮结论留档 JSON（各门 pass/detail/skip + 实测数值 + media/timeline md5 指纹 + 时间戳；默认不写）——「音频链改动后必须重跑 gates」的证据链落盘
 
 ## 依赖
 
@@ -28,7 +29,8 @@ v2 应用（P2a 批次 1 自 `scripts/content_gates.py` 迁入；manifest 见 `a
 ```bash
 # 项目根
 env python3 apps/gates/content_gates.py -t timeline.json --media out/final.mp4 \
-    --audio-wav out/audio.wav [--project-gates gates.json] [--skip G1,G7] [--count-frames]
+    --audio-wav out/audio.wav [--project-gates gates.json] [--skip G1,G7] [--count-frames] \
+    [--out out/content_gates.json]
 # 本 app 测试（随迁件）
 cd apps/gates && env python3 -m unittest discover -s tests -t . -v
 # repo 根全量（含本 app）

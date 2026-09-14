@@ -67,8 +67,9 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
              允许值 = STAGES 线性序中除 audio 外的 7 个阶段名（audio 是流水线波内
              成员不作独立终点；线性模式按 STAGES 序字面截断，until=video 不含 audio）。
              流水线模式映射见 _run_all_pipeline docstring。
-  （协议 v1.2 · P6 2026-09-14）all 全链（qc 通过后）触发插件 finish 收尾钩子
-             （blender-bridge 自动导出 .blend 等）；--draft/--dry-run/--until 截断链不触发。
+  （协议 v1.2 · P6 2026-09-14）all 全链（mux/qc 完成后）触发插件 finish 收尾钩子
+             （blender-bridge 自动导出 .blend 等）；qc 失败不阻断 finish（产物已就绪），
+             退出码按 qc/finish 各自失败态如实汇总；--draft/--dry-run/--until 截断链不触发。
 
 模块布局（2026-09-10 单文件拆分；v2 §1.4 包化 2026-09-13：模块内全部相对导入，
 入口三通——vtx/vtx.py 薄启动器 / python3 -m vtx / pyproject console script `vtx`）：
@@ -351,6 +352,22 @@ def _pipeline_enabled(env=None) -> bool:
     return e.get("VTX_PIPELINE", "1") != "0"
 
 
+def _stage_exit_code(fn, c: Ctx) -> int:
+    """`vtx all` 编排内运行 qc 阶段并捕获其 SystemExit（2026-09-14 裁定：qc 失败
+    不阻断 finish 收尾——final.mp4/qc_report.json 等产物此时已就绪，历史行为
+    SystemExit 直接冒出会跳过缝 D 的 run_finish，存量假阴性项目永远到不了收尾）。
+    仅 SystemExit 被捕获记退出码，其他异常照旧即时终止（final 未就绪时 finish
+    不该跑）；单阶段 `vtx qc` 不经本函数，退出码冒泡语义不变。"""
+    try:
+        fn(c)
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else (1 if e.code else 0)
+        print(f"⚠ qc 阶段失败（退出码 {code}）——按裁定不阻断 finish 收尾，"
+              "退出码在收尾后如实汇总")
+        return code
+    return 0
+
+
 def _run_all_pipeline(c: Ctx, until=None):
     """`vtx all` 依赖图编排（方案二阶段2）：串行头（validate/audit/prepare，现行
     begin_stage + 阶段函数语义）→ 并行波（gfx ‖ audio ‖ video 预编码，run_wave）→
@@ -368,7 +385,10 @@ def _run_all_pipeline(c: Ctx, until=None):
         时）video 尾；until=gfx 到波结束即止；
       until∈{mux,qc} → 与缺省全链同一编排，到该阶段止（qc 即完整全链）。
     依赖门/receipt 语义不变：截断只少跑阶段，已跑阶段的回执照常落盘（--until video
-    后 `vtx mux` 的依赖门 video+audio 恰好满足）。"""
+    后 `vtx mux` 的依赖门 video+audio 恰好满足）。
+
+    返回 qc 阶段退出码（int，0=成功/未跑到；2026-09-14 裁定 qc 失败不阻断 finish
+    ——SystemExit 在此捕获记码，由 main 在 finish 后与收尾失败态一并汇总退出）。"""
     by_name = dict(STAGES)
     for name in ("validate", "audit", "prepare"):   # —— 串行头 ——
         print(f"== {name} ==")
@@ -378,7 +398,7 @@ def _run_all_pipeline(c: Ctx, until=None):
             print(f"✗ {e}"); sys.exit(1)
         by_name[name](c)
         if until == name:
-            return
+            return 0
 
     def _stage_job(name, fn):                        # —— 波内阶段路：现行阶段语义 ——
         def run():
@@ -396,7 +416,8 @@ def _run_all_pipeline(c: Ctx, until=None):
                  ("audio", _stage_job("audio", by_name["audio"])),
                  ("video 预编码", _pre_layers)])
     if until == "gfx":
-        return   # 波结束即止：audio 回执/seg 缓存已就绪，video 尾不跑
+        return 0   # 波结束即止：audio 回执/seg 缓存已就绪，video 尾不跑
+    qc_exit = 0
     for name in ("video", "mux", "qc"):              # —— 串行尾 ——
         print(f"== {name} ==")
         try:
@@ -405,10 +426,15 @@ def _run_all_pipeline(c: Ctx, until=None):
             print(f"✗ {e}"); sys.exit(1)
         if name == "video":
             build_video(c, layers=c._pre_layers)   # 波内预编码产物（Ctx.__init__ 显式声明，见 infra）
+        elif name == "qc":
+            # 2026-09-14 裁定：qc 失败不阻断 finish（产物已就绪）——捕获退出码，
+            # 由 main 在 finish 后汇总；video/mux 失败仍即时终止
+            qc_exit = _stage_exit_code(by_name["qc"], c)
         else:
             by_name[name](c)
         if until == name:
-            return
+            return qc_exit
+    return qc_exit
 
 def main():
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
@@ -621,11 +647,12 @@ def main():
     if todo == [None]:
         names = " | ".join([s[0] for s in STAGES] + ["clean", "gc", "df", "snapshot"])
         print(f"✗ 未知命令：{a.command!r}（可用：{names}）"); sys.exit(2)
+    qc_exit = 0
     if a.command == "all" and _pipeline_enabled():
         # 方案二阶段2：all 默认走依赖图（串行头 → 并行波 → 串行尾）；
         # VTX_PIPELINE=0 回退下方线性序列（独立 A/B 开关）；
         # 方案三阶段3：--until 截断在依赖图内按阶段族映射（见 _run_all_pipeline）
-        _run_all_pipeline(c, until=a.until)
+        qc_exit = _run_all_pipeline(c, until=a.until)
     else:
         for name, fn in todo:
             print(f"== {name} ==")
@@ -635,17 +662,25 @@ def main():
                 c.begin_stage(_stage_receipt_name(name, c.draft))
             except RuntimeError as e:
                 print(f"✗ {e}"); sys.exit(1)
-            fn(c)
+            if name == "qc" and a.command == "all":
+                # 2026-09-14 裁定（同流水线路径）：all 内 qc 失败不阻断 finish——
+                # 捕获退出码交 main 汇总；单阶段 `vtx qc` 仍走下方 fn(c) 冒泡退出
+                qc_exit = _stage_exit_code(fn, c)
+            else:
+                fn(c)
             # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
             # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
             if name == "audio" and a.report:
                 from .audio_report import run_report
                 rc = run_report(c, json_path=a.json)
                 if rc: sys.exit(rc)
-    # 缝 D（协议 v1.2，P6）：`vtx all` 全链（qc 通过后）触发插件 finish 收尾钩子
-    # ——blender-bridge 类「渲染完成自动导出」动作挂此缝。--draft / --dry-run /
+    # 缝 D（协议 v1.2，P6）：`vtx all` 全链（mux/qc 完成后）触发插件 finish 收尾钩子
+    # ——blender-bridge 类「渲染完成自动导出」动作挂此缝。qc 失败不阻断 finish
+    # （final.mp4/qc_report.json 等产物已就绪——存量假阴性项目也要能到收尾），退出码
+    # 按 qc/finish 各自失败态如实汇总（任一失败 exit 1）。--draft / --dry-run /
     # --until 截断链不触发（draft 链无正式产物；dry 不落产物；截断链非完整渲染）。
     # 收尾失败以退出码 1 结束但产物已就绪（final.mp4 不受影响——失败可见即可）。
+    finish_failed = False
     if (a.command == "all" and a.until in (None, "qc")
             and not c.draft and not c.dry):
         from .pluginlib import hooks as _plugin_hooks
@@ -654,7 +689,9 @@ def main():
             for e in _finish_errs:
                 print("  ✗", e)
             print("✗ finish 钩子失败（正式产物已就绪；修复后重跑对应插件动作或 `vtx all`）")
-            sys.exit(1)
+            finish_failed = True
+    if qc_exit or finish_failed:
+        sys.exit(qc_exit or 1)
     # 完成行（方案三阶段3 微调）：--until 截在 mux/qc 之前时 final.mp4 尚不存在，
     # 打印已跑阶段名单而非产物路径（all 缺省/mux/qc 及单阶段 mux/qc 仍打印产物）
     final_ready = a.command in ("all", "mux", "qc") and a.until in (None, "mux", "qc")

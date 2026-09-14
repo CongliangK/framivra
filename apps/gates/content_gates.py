@@ -22,7 +22,12 @@
 用法（项目根）：
   python3 content_gates.py [-t timeline.json] [--media out/final.mp4]
       [--audio-wav out/audio.wav] [--project-gates gates.json] [--skip G1,G8]
-      [--count-frames]
+      [--count-frames] [--out out/content_gates.json]
+
+--out JSON 留档（2026-09-14）：红队实证「音频链改动后必须重跑 gates」此前只打印
+不落盘、无留档证据——加 --out 把本轮门结论（各门 pass/detail/skip）、实测数值
+（metrics：G1 中位/极差、G2 I、G3 TP、G7 黑帧、G10 帧数…）、输入指纹（media/
+timeline 的 md5/size/mtime）与时间戳写成一份 JSON。默认不写（兼容不变）。
 
 方案三阶段1提速（2026-09-13，详见 docs/plans-2026-09-11/方案三）：
   - G1 短窗 ebur128 逐窗 spawn 改分批（≤16 窗/进程，lufs_batch），失败回落逐窗；
@@ -34,6 +39,7 @@
 来源项目：voice-ime（决策 D31/D32/D34/D35/D39；蓝本 cache/v39/ver_gates_v39.py）。
 """
 import argparse
+import hashlib
 import json
 import re
 import struct
@@ -53,11 +59,39 @@ from vtx import loudness_cache
 
 ok_all = True
 
+# --out JSON 留档收集器（2026-09-14）：gate()/note_skip() 顺手记账，主流程语义不变。
+GATE_ROWS = []   # [{"name", "pass", "detail"}]
+SKIP_ROWS = []   # ["SKIP Gx（原因）", ...]
+METRICS = {}     # {"G1": {...实测数值...}, "G2_G3": {...}, ...}
+
 
 def gate(name, cond, detail):
     global ok_all
     print(f"{'✓' if cond else '✗'} {name}: {detail}")
     ok_all &= bool(cond)
+    GATE_ROWS.append({"name": name, "pass": bool(cond), "detail": detail})
+
+
+def note_skip(msg):
+    """SKIP 行统一出口：打印 + 留档收集（--out 时进 report.skipped；命名避开
+    main 内的局部变量 skip——args.skip 解析出的门名集合）。"""
+    print(msg)
+    SKIP_ROWS.append(msg)
+
+
+def fingerprint(p: Path) -> dict:
+    """输入指纹（--out 留档用）：exists/bytes/mtime/md5（1MB 分块流式）。"""
+    try:
+        st = p.stat()
+    except OSError:
+        return {"exists": False}
+    h = hashlib.md5()
+    with open(p, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return {"exists": True, "bytes": st.st_size,
+            "mtime": time.strftime("%F %T", time.localtime(st.st_mtime)),
+            "md5": h.hexdigest()}
 
 
 def run(cmd):
@@ -148,6 +182,9 @@ def main():
                     help="G10/PG:frames 帧数恢复 -count_frames 真解码计数口径"
                          "（默认 -count_packets 仅解封装：h264 每包恰一帧，"
                          "check_4k.sh 帧数门同口径先例，bench_p2 实测 26.6s→0.12s）")
+    ap.add_argument("--out", default=None, metavar="PATH",
+                    help="JSON 留档：各门 pass/detail/skip + 实测数值 + media/timeline"
+                         " 指纹（md5/size/mtime）+ 时间戳（默认不写，兼容不变）")
     args = ap.parse_args()
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
 
@@ -167,12 +204,12 @@ def main():
     if "G1" in skip:
         pass
     elif not have_tl:
-        print("SKIP G1（无 timeline）")
+        note_skip("SKIP G1（无 timeline）")
     else:
         vo = sorted((e for tr in TL["audio_tracks"] if tr["name"] == "voice"
                      for e in tr["events"]), key=lambda e: e["in"])
         if not vo:
-            print("SKIP G1（voice 轨无事件）")
+            note_skip("SKIP G1（voice 轨无事件）")
         else:
             asrc = AW if AW.exists() else MEDIA
             speech = [(e["in"] / F, e["out"] / F) for e in vo if e["out"] - e["in"] >= 2.5]
@@ -202,12 +239,16 @@ def main():
                     + (len(gaps) + G1_BATCH - 1) // G1_BATCH
                 print(f"[timing] G1 批量测量（{n_w} 窗 {n_b} 批）: {dt:.1f}s")
             if not sp or not gp:
-                print(f"SKIP G1（窗不足：口播 {len(sp)} / 间隙 {len(gp)}）")
+                note_skip(f"SKIP G1（窗不足：口播 {len(sp)} / 间隙 {len(gp)}）")
             else:
                 sv = sorted(sp)
                 gv = sorted(gp)
                 med_s, med_g = sv[len(sv) // 2], gv[len(gv) // 2]
                 spread = sv[-1] - sv[0]
+                METRICS["G1"] = {"med_s_lufs": round(med_s, 2), "med_g_lufs": round(med_g, 2),
+                                 "gap_db": round(med_s - med_g, 2), "spread_db": round(spread, 2),
+                                 "n_speech": len(sp), "n_gaps": len(gp),
+                                 "audio_src": str(asrc)}
                 gate("G1 口播窗−间隙窗+均匀",
                      med_s - med_g >= args.g1_min_gap_db and spread <= args.g1_spread_db,
                      f"中位 {med_s:.1f} vs {med_g:.1f} = +{med_s-med_g:.1f} dB"
@@ -277,6 +318,7 @@ def main():
                     print(f"[timing] 全片解码合并 pass（G2/G3+G7）: {dt:.1f}s")
         if lc_hit is not None:
             full_i, tp = lc_hit["i_lufs"], lc_hit["tp_dbfs"]
+            METRICS["G2_G3"] = {"i_lufs": full_i, "tp_dbfs": tp, "from_receipt": True}
             gate("G2 全片响度", args.g2_lo <= full_i <= args.g2_hi,
                  f"I={full_i} LUFS（门 [{args.g2_lo},{args.g2_hi}]，回执命中免测）")
             gate("G3 解码真峰", tp <= args.g3_tp,
@@ -288,24 +330,29 @@ def main():
                 loudness_cache.measure_and_store(MEDIA, lambda: (_i, _p))
             if mI:
                 full_i = float(mI.group(1))
+                METRICS.setdefault("G2_G3", {})["i_lufs"] = full_i
                 gate("G2 全片响度", args.g2_lo <= full_i <= args.g2_hi,
                      f"I={full_i} LUFS（门 [{args.g2_lo},{args.g2_hi}]）")
             if mI and mP:
                 tp = float(mP.group(1))
+                METRICS.setdefault("G2_G3", {}).update(
+                    {"tp_dbfs": tp, "from_receipt": False})
                 gate("G3 解码真峰", tp <= args.g3_tp,
                      f"TP={tp} dBFS（门 ≤{args.g3_tp}，解码域测 {MEDIA}——不信 wav 域）")
     else:
-        print(f"SKIP G2/G3（{MEDIA} 不存在）")
+        note_skip(f"SKIP G2/G3（{MEDIA} 不存在）")
 
     # ---------- G7 黑闪门（结果取自上方合并解码；blacks=None = 跳过或无成片） ----------
     if "G7" in skip:
         pass
     elif blacks is not None:
+        METRICS["G7"] = {"blacks": len(blacks),
+                         "black_starts": [b[0] for b in blacks]}
         gate("G7 零黑帧", len(blacks) == 0,
              f"blackdetect(d={args.g7_black_d},pix_th={args.g7_pix_th}) 命中 {len(blacks)} 处"
              + (f"：t={[b[0] for b in blacks]}" if blacks else ""))
     else:
-        print("SKIP G7（无成片）")
+        note_skip("SKIP G7（无成片）")
 
     # ---------- G10 帧数/时长/帧率 + 打包 ----------
     # 帧数计数口径（方案三阶段1，2026-09-13 校准）：默认 -count_packets 仅解封装
@@ -329,6 +376,13 @@ def main():
         nb_read = int(fc.stdout.strip())
         dur_expect = DURF / F
         fs_ok = moov_before_mdat(str(MEDIA))
+        METRICS["G10"] = {"frames": nb_read, "duration_s": fmt["duration"],
+                          "r_frame_rate": v["r_frame_rate"], "faststart": fs_ok,
+                          "frames_expect": DURF, "count_mode": cnt_field,
+                          "video_encoder": v.get("tags", {}).get("encoder"),
+                          "audio": f"{a.get('codec_name')}-{a.get('profile')} "
+                                   f"{int(a.get('bit_rate', 0))//1000}k "
+                                   f"{a.get('sample_rate')}Hz {a.get('channels')}ch"}
         gate("G10 帧数+封装",
              nb_read == DURF and abs(float(fmt["duration"]) - dur_expect) < 0.001
              and v["r_frame_rate"] == f"{F}/1" and fs_ok,
@@ -339,7 +393,7 @@ def main():
              f"{int(a.get('bit_rate', 0))//1000}k {a.get('sample_rate')}Hz "
              f"{a.get('channels')}ch / faststart={fs_ok}")
     else:
-        print("SKIP G10（须 timeline+成片齐备）")
+        note_skip("SKIP G10（须 timeline+成片齐备）")
 
     # ---------- 自定义项目门 ----------
     if args.project_gates:
@@ -352,6 +406,7 @@ def main():
                               "-show_entries", f"stream={cnt_field}",
                               "-of", "csv=p=0", str(MEDIA)])
                     got = int(fc.stdout.strip())
+                    METRICS.setdefault("PG", {})[key] = got
                     gate(f"PG:{key}", got == want,
                          f"{got}（门 {want}，计数口径 {cnt_field}）")
             elif key == "first_voice_frame" and have_tl:
@@ -359,16 +414,39 @@ def main():
                              if tr["name"] == "voice" for e in tr["events"]),
                             key=lambda e: e["in"])
                 got = vo[0]["in"] if vo else None
+                METRICS.setdefault("PG", {})[key] = got
                 gate(f"PG:{key}", got == want, f"{got}（门 {want}）")
             elif key.endswith("_events") and have_tl:
                 tname = key[:-len("_events")]
                 tr = next((t for t in TL["audio_tracks"] if t["name"] == tname), None)
                 got = len(tr["events"]) if tr else None
+                METRICS.setdefault("PG", {})[key] = got
                 gate(f"PG:{key}", got == want, f"{got}（门 {want}）")
             elif key == "duration_frames" and have_tl:
+                METRICS.setdefault("PG", {})[key] = DURF
                 gate(f"PG:{key}", DURF == want, f"{DURF}（门 {want}）")
             else:
-                print(f"SKIP PG:{key}（无法解析的字段）")
+                note_skip(f"SKIP PG:{key}（无法解析的字段）")
+
+    # ---------- --out JSON 留档（2026-09-14） ----------
+    if args.out:
+        report = {"tool": "apps/gates/content_gates.py",
+                  "timestamp": time.strftime("%F %T"),
+                  "pass": ok_all,
+                  "gates": GATE_ROWS, "skipped": SKIP_ROWS, "metrics": METRICS,
+                  "media": {"path": str(MEDIA), **fingerprint(MEDIA)},
+                  "timeline": {"path": str(TL_PATH), "frames": DURF, "fps": F,
+                               **(fingerprint(TL_PATH) if have_tl else {"exists": False})},
+                  "params": {"skip": sorted(skip),
+                             "g1_min_gap_db": args.g1_min_gap_db,
+                             "g1_spread_db": args.g1_spread_db,
+                             "g2_lo": args.g2_lo, "g2_hi": args.g2_hi,
+                             "g3_tp": args.g3_tp, "count_frames": args.count_frames}}
+        outp = Path(args.out)
+        outp.parent.mkdir(parents=True, exist_ok=True)
+        outp.write_text(json.dumps(report, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+        print(f"[out] gates 留档 → {outp}")
 
     print("PASS" if ok_all else "FAIL")
     sys.exit(0 if ok_all else 1)

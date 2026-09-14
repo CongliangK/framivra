@@ -27,7 +27,7 @@ timeline.json 顶层键（配置即生效，不配置零行为）：
 | `out` | `preview.blend` | 产物路径，相对项目根（禁绝对路径/`..`） |
 | `verify` | `false` | 导出后追加 verify_blend.py 逐条回读断言（blender 再起一次，多花几秒） |
 
-`vtx all`（完整链，qc 通过后）自动执行等价命令：
+`vtx all`（完整链，mux/qc 完成后）自动执行等价命令：
 
 ```bash
 blender --background --factory-startup --python apps/blender-bridge/json2blend.py \
@@ -35,6 +35,8 @@ blender --background --factory-startup --python apps/blender-bridge/json2blend.p
 ```
 
 - `--draft` / `--dry-run` / `all --until <截断>` 不触发（无正式产物语义）。
+- qc 失败不阻断导出（2026-09-14 裁定：产物已就绪，存量假阴性项目也要能收尾）——
+  `vtx all` 退出码按 qc/finish 各自失败态如实汇总（任一失败 exit 1）。
 - blender 不在 PATH → `vtx all` 收尾 exit 1（final.mp4 已就绪不受影响）——配置了
   就要导出，失败必须可见，不静默跳过。
 - 键在插件未装/禁用时走三分支报错（`vt plugins list` 查看），绝不静默忽略。

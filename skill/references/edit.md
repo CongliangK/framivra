@@ -130,7 +130,7 @@ gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，
 |---|---|---|---|
 | `"denoise": true\|{...}` | sources[] | plugins/denoise | 该源 prepare 音频走「陷波→Resemble 仅降噪→48k」链，产物内容寻址 |
 | `"duck_strategy": {"mode":"static",...}` | audio_tracks[] | plugins/duck-static | 床乐静态分段避让（与 `duck:true` 互斥；纯内存变换不写回 timeline） |
-| `"bgm": true\|{"output","extra_deps"}` | sources[] | plugins/bgm-render | **音轨直接引用 music_tools 工程 JSON**：validate 期供时长 facts，prepare 期自动 `bgm render` 母带 → 48k stereo s16 落内容寻址键（缓存命中零渲染/工程·$ref·参数变更自动重渲；详见 plugins/bgm-render/README.md） |
+| `"bgm": true\|{"output","extra_deps"}` | sources[] | plugins/bgm-render | **音轨直接引用 music_tools 工程 JSON**：validate 期供时长 facts，prepare 期自动 `bgm render` → 48k stereo s16 落内容寻址键（`output`：`master` 母带 / `premaster` 母前 / `stem:<轨名>` 该轨总线分轨 `stems/<轨>.bus.wav`，video 侧自行混音，轨名 `^[A-Za-z0-9][A-Za-z0-9_.-]*$`）；`extra_deps` 文件/目录均可（目录递归内容签名）；一工程共享渲染缓存 `cache/bgm/` 只渲一次多源派生，陈旧渲染目录由 `vtx gc` 键级回收（在用保活）；缓存命中零渲染/工程·$ref·参数变更自动重渲；详见 plugins/bgm-render/README.md |
 | `"blender_bridge": true\|{"out","verify"}` | 根级 | plugins/blender-bridge | `vtx all` 全链（qc 后）自动导出 Blender 审片工程（默认 `<项目>/preview.blend`），配置即导出免手敲命令 |
 未知键警告不阻断；插件未装/禁用时写键会 validate FAIL 并给出安装/启用指引。协议权威见 `docs/ARCHITECTURE.md` §2。
 ## QC 检查项语义（qc 阶段自动执行）

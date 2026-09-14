@@ -19,6 +19,24 @@ def is_ffmpeg_cmd(cmd) -> bool:
     return str(cmd[0]).endswith("ffmpeg")
 
 
+def _archive_stale_receipt(f: Path, fingerprint: str):
+    """⑮ 最小修复（2026-09-14 登记+修复，KNOWN-ISSUES ⑮）：回执输入指纹即将
+    翻转时（timeline/源/插件代码变更，或 validate-only 等单阶段运行在新指纹下
+    落笔），旧 receipt.json 的全量阶段记录会被 load_receipt 归零覆盖（voice-ime
+    v4.6 回执 9/14 被 13:28 validate 覆盖丢失的实案）。修复形态取「翻转前轮转
+    单槽旁证」：旧记录原样存 out/receipt.prev.json——receipt.json 的语义/安全
+    不变量（旧成功不继承）零变化，gc/VERSIONS 消费者不受影响。指纹一致/旧件
+    无阶段记录/读写失败均静默直过（旁证尽力而为，不进主链失败路径）。"""
+    try:
+        old = json.loads(f.read_text(encoding="utf-8"))
+        if (old.get("input_fingerprint") not in (None, fingerprint)
+                and old.get("stages")):
+            (f.parent / "receipt.prev.json").write_text(
+                json.dumps(old, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 class Ctx:
     def __init__(self, timeline_path: Path):
         self.tl_path = timeline_path
@@ -138,6 +156,7 @@ class Ctx:
         # 读-改-写整段持锁（方案二阶段2）：波内并发阶段的回执写入串行化，防互相覆盖
         with self._receipt_lock:
             f = self.out / "receipt.json"
+            _archive_stale_receipt(f, self.input_fingerprint)   # ⑮ 指纹翻转旁证轮转
             rec = load_receipt(f, self.input_fingerprint)
             rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
             rec["updated"] = time.strftime("%F %T")
@@ -151,12 +170,13 @@ class Ctx:
     #  跨路径可复用；此处不保留第二实现。）
 
     def begin_stage(self, stage):
-        """PR#1：拒绝过期前置 + 运行前撤销下游成功回执（失败重跑不留旧 QC PASS）。"""
+        """PR#1：拒绝过期前置 + 运行前撤销下游旧成功回执（失败重跑不留旧 QC PASS）。"""
         if self.dry:
             return
         # 读-改-写整段持锁（方案二阶段2）：与 receipt() 同一锁——波内 gfx/audio 两路
         # begin_stage 并发时依赖门判定与下游撤销也须串行化（dry 早退在锁外）。
         with self._receipt_lock:
+            _archive_stale_receipt(self.out / 'receipt.json', self.input_fingerprint)
             rec = load_receipt(self.out / 'receipt.json', self.input_fingerprint)
             dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
                             'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
@@ -208,6 +228,10 @@ def io_workers() -> int:
 # 并行管线吃不到。安全网不变：输出端 -fps_mode cfr 补帧 + 段拼接后总帧数硬自检。
 # VTX_FILTER_THREADS=4 可显式开启（合成复现图 MD5 等价、全链 QC 75 项字段级
 # 一致、差异段 PSNR 与同线程方差同分布，无新增风险）。
+# 更新（2026-09-14 R4-E1）：依据①的跨运行非确定性已归因为次输入 EOF 裁决依赖
+# 帧到达顺序（非线程数问题），composite.py 次输入尾垫至段尾后同 argv 复渲逐字节
+# 可复现（KNOWN-ISSUES ⑭ 核销），「逐字节等价门不可复现」不再是保持默认 1 的
+# 理由；依据②的分段并行无收益结论不变，默认维持 1。
 def filter_threads() -> int:
     v = os.environ.get("VTX_FILTER_THREADS", "1")
     # 采纳值封顶 cpu 核数：滤镜线程超核数无收益只增调度开销（对齐 io_workers 封顶纪律）

@@ -1,7 +1,8 @@
 """blender-bridge 插件（缝 D · finish 管线收尾钩子，协议 v1.2；设计权威 docs/ARCHITECTURE.md）。
 
 timeline **顶层键** ``"blender_bridge": true | {"out": "...", "verify": bool}``——
-`vtx all` 全链（qc 通过后）自动导出 Blender 审片工程（apps/blender-bridge/
+`vtx all` 全链（mux/qc 完成后；qc 失败不阻断——产物已就绪，退出码如实汇总）
+自动导出 Blender 审片工程（apps/blender-bridge/
 json2blend.py，经 ``blender --background --factory-startup --python`` 运行）。
 「JSON 里配置了就默认直接导出」——省去每次手敲 blender 命令行。
 

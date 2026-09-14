@@ -298,6 +298,6 @@ python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/fi
       <项目>/timeline.json <preview.blend>
   ```
 - **audit_bundle**（普通 python3 可运行）：`python3 $VIDEO_TOOLS/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json [--prefix bgm2- …]`，产物 `<项目>/cache/audit_bgm/`（产线配方 R6 见 tech-talk runbook-r5r6r7.md）。
-- **content_gates**：`python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t <项目>/timeline.json --media <项目>/out/final.mp4 [--project-gates 门.json]`。
+- **content_gates**：`python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t <项目>/timeline.json --media <项目>/out/final.mp4 [--project-gates 门.json] [--out <项目>/out/content_gates.json]`——`--out` 落本轮结论留档 JSON（各门 pass/实测值/media+timeline md5 指纹/时间戳），音频链改动后重跑 gates 的证据链用。
 - **post_loudness（v2 兼容薄壳，正常链路无需）**：`bash $VIDEO_TOOLS/scripts/post_loudness.sh <项目目录>`——限幅已在 `vtx audio` 尾部一体完成，本命令仅对 v1 遗留产物/排查场景做兼容重跑（对已终态 audio.wav 幂等直过）。
 - **check_4k**：`bash $VIDEO_TOOLS/apps/publish/check_4k.sh <4k文件> [期望帧数]`（帧数缺省时从 timeline.json 自动推导；4K 发布链配方见 tech-talk runbook-r5r6r7.md R5）。

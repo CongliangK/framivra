@@ -24,10 +24,12 @@
     同构）。stages.validate 的源级检查与音频事件时长校验统一经本缝取 facts——
     非媒体源不再触发 ffprobe 误报（「无音频轨」/时长 0）。
   缝 D `finish`（协议 v1.2 增补，2026-09-14 P6）：**管线收尾**钩子——`vtx all`
-    全链（qc 通过后、进程收尾前）触发，插件暴露 ``finish(c) -> list[str]``
+    全链（mux/qc 完成后、进程收尾前）触发，插件暴露 ``finish(c) -> list[str]``
     （错误行；空 = 成功），cli 将错误行打印并以退出码 1 结束（产物已就绪、
-    收尾件失败不静默）。用途：渲染完成后的自动导出类动作（blender-bridge 插件
-    的 .blend 审片工程自动导出）。--draft / --dry-run / --until 截断链不触发。
+    收尾件失败不静默）。qc 失败不阻断本钩（final.mp4 等产物已落盘，存量假阴性
+    项目也要能收尾），退出码按 qc/finish 各自失败态汇总。用途：渲染完成后的
+    自动导出类动作（blender-bridge 插件的 .blend 审片工程自动导出）。
+    --draft / --dry-run / --until 截断链不触发。
 
 插件加载走**包导入** `importlib.import_module("plugins.<name>")`（§2.3 规则，
 禁 spec_from_file_location——绕过包语义是双模块裂分的另一入口）；加载时做
@@ -303,8 +305,9 @@ def run_probe_source(c, sid: str):
 
 
 def run_finish(c) -> list:
-    """缝 D（协议 v1.2 增补，§2.2）：管线收尾钩子——`vtx all` 全链（qc 通过后）
-    由 cli 触发（--draft / --dry-run / --until 截断链不触发）。
+    """缝 D（协议 v1.2 增补，§2.2）：管线收尾钩子——`vtx all` 全链（mux/qc 完成后）
+    由 cli 触发（--draft / --dry-run / --until 截断链不触发）。qc 失败不阻断本钩
+    （产物已就绪），cli 按 qc/finish 各自失败态汇总退出码。
 
     逐个应用声明了 finish 的生效插件（约定：插件暴露 ``finish(c) -> list[str]``
     ——错误行列表，空 = 成功）。cli 汇总错误行打印并以退出码 1 结束——正式
@@ -345,9 +348,11 @@ def plugin_code_digest(name: str, repo_root=None) -> str:
     """插件代码内容摘要（红队终审 P1-1 裁定 2026-09-14；P6 公共化经 vtx.api 供
     插件产物键复用——A-P1-1：产物键侧同样要掺代码摘要，否则改代码不 bump
     version 时回执指纹翻转但旧产物被缓存命中「洗白」）：插件目录全部 .py 文件
-    （rglob 递归含子目录/子包，排除 __pycache__；排序 文件名+字节）的 sha1 前
-    12 位——改默认参/改代码不 bump version 的场景一律翻转。模块加载成功后文件
-    必在；读不到按 MISSING 计（fail-方向：摘要必变）。"""
+    （rglob 递归含子目录/子包，排除 __pycache__ 与 **tests/ 子目录**——R1-F F5：
+    改一行测试 ≠ 插件行为变化，掺入会使产物键/回执无谓翻转触发真工程整轮重渲；
+    口径统一对全部插件生效，见 ARCHITECTURE §2.5 条 9；排序 文件名+字节）的
+    sha1 前 12 位——改默认参/改代码不 bump version 的场景一律翻转。模块加载
+    成功后文件必在；读不到按 MISSING 计（fail-方向：摘要必变）。"""
     d, _origin = _registry.plugin_module_dir(name, repo_root)
     h = hashlib.sha1()
     if d is None or not d.is_dir():
@@ -356,6 +361,8 @@ def plugin_code_digest(name: str, repo_root=None) -> str:
     for f in sorted(d.rglob("*.py"), key=lambda x: x.name):
         if "__pycache__" in f.parts:
             continue
+        if "tests" in f.relative_to(d).parts:
+            continue       # tests/ 不进代码摘要（R1-F F5，docstring 见口径）
         h.update(f.name.encode())
         try:
             h.update(f.read_bytes())
@@ -426,3 +433,30 @@ def get_cache_dirs(c=None, repo_root=None) -> set:
             if isinstance(d, str):
                 dirs.add(d)
     return dirs
+
+
+def get_cache_dir_keys(c=None, repo_root=None) -> dict:
+    """不变量 ① 的键级扩展（v1.2.0，R1-F F2）：插件 cache 子目录的**内容寻址
+    键级条目**白名单——插件暴露可选 ``cache_dir_keys(c) -> dict[str, set[str]]``
+    （{目录名: 键集}，与 contribute_keys 同为不变量入口而非钩子，不参与对账）。
+
+    声明了键集的 cache_dirs 目录，gc 把其一级子目录按键对待：在键集内保活，
+    不在 = 陈旧可回收（gc_plan 的 plugin_cache 类别）——修复 bgm-render 共享
+    渲染缓存陈旧 render_digest 目录（每个 ≈整工程渲染产物）无界累积。仅对
+    同时经 registry cache_dirs 注册的目录生效（目录注册 + 键级条目两层声明的
+    层叠语义）；未暴露本函数的插件 = 整目录白名单（原语义不变）。P1-2 恒空
+    dict（空转）。"""
+    out = {}
+    for p in active_plugins(c, repo_root):
+        mod = _load_plugin_module(p["name"])
+        fn = getattr(mod, "cache_dir_keys", None) if mod else None
+        if callable(fn):
+            got = fn(c)
+            if isinstance(got, dict):
+                for dname, keys in got.items():
+                    if not (isinstance(dname, str) and
+                            isinstance(keys, (set, frozenset, list, tuple))):
+                        continue
+                    merged = out.setdefault(dname, set())
+                    merged |= {str(k) for k in keys}
+    return out

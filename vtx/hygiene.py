@@ -7,7 +7,7 @@
   - cache/reports/ 永不回收（报告/回执/证据）；out/VERSIONS.json、out/history/ 永不回收。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
-import hashlib, json, os, shutil, threading, time
+import fnmatch, hashlib, json, os, shutil, threading, time
 from pathlib import Path
 
 from .encoders import seg_encoder_kind
@@ -216,8 +216,8 @@ def _current_keys(c):
 
 def gc_plan(c, keep_days: int = 0):
     """返回 {类别: [(路径, 字节, 原因)]}。只计算，不删除。"""
-    plan = {"gfx": [], "seg": [], "audio": [], "legacy": [], "tmp": [],
-            "out_intermediate": [], "vseg": []}
+    plan = {"gfx": [], "seg": [], "audio": [], "plugin_cache": [], "legacy": [],
+            "tmp": [], "out_intermediate": [], "vseg": []}
     gk, sk, ak = _current_keys(c)
     cut = time.time() - keep_days * 86400 if keep_days else 0
 
@@ -243,6 +243,23 @@ def gc_plan(c, keep_days: int = 0):
                 continue   # 测量回执不属内容寻址键集（方案三阶段1审查 P1-2）
             if x.stem not in ak:
                 plan["audio"].append((x, dir_size(x), "源指纹不在当前 timeline 键集"))
+    # v2 §2.1 不变量 ①（v1.2.0 键级扩展，R1-F F2）：插件 cache_dirs 的**键级
+    # 条目**回收——插件经 cache_dir_keys 声明键集的目录（bgm-render 的
+    # cache/bgm/<render_digest>/），一级子目录按内容寻址键对待：在当前 timeline
+    # 键集内保活，不在 = 陈旧（--dry 列出、gc 删）——修复整工程渲染缓存目录随
+    # 工程/digest 演进无界累积。伴生件（<digest>.lock 等非目录件）按 AUDIO_KEEP
+    # 同惯例豁免不回收（锁文件删除破跨进程互斥，B-P2-1；量级仅空文件）。仅对
+    # 经 registry cache_dirs 注册的目录生效；无插件声明键集 = 本类恒空（通道
+    # 消费兼容：整目录白名单语义对其他 cache_dirs 消费者不变）。
+    dirs_whitelist = _plugin_hooks.get_cache_dirs(c)
+    for dname, dkeys in _plugin_hooks.get_cache_dir_keys(c).items():
+        d = c.cache / dname
+        if dname not in dirs_whitelist or not d.is_dir():
+            continue
+        for x in d.iterdir():
+            if x.is_dir() and x.name not in dkeys:
+                plan["plugin_cache"].append(
+                    (x, dir_size(x), "键不在当前 timeline 键集（陈旧共享渲染缓存）"))
     # 历史遗留目录（迁移期）：cache 根下非本方案布局的一级目录/文件 → 全部视为垃圾
     # （subs*.ass/qc_clean/vseg* 另有专属类别，这里排除避免重复计数）
     known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
@@ -265,16 +282,26 @@ def gc_plan(c, keep_days: int = 0):
         plan["tmp"].append((x, dir_size(x), "tmp 孤儿（>24h）"))
     # out/ 一次性中间物（成片/回执/VERSIONS/history/reports 不动）
     out_keep = {"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
-                "audio.wav", "receipt.json", "VERSIONS.json", "audit_report.json",
-                "qc_report.json", "history", "reports"}
+                "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
+                "audit_report.json", "qc_report.json", "history", "reports"}
     if c.out.exists():
         for x in c.out.iterdir():
-            if x.name not in out_keep:
-                plan["out_intermediate"].append((x, dir_size(x), "out 一次性中间物"))
+            if x.name in out_keep or _out_deliverable(x.name):
+                continue
+            plan["out_intermediate"].append((x, dir_size(x), "out 一次性中间物"))
     if keep_days:
-        for cat in ("gfx", "seg", "audio", "legacy", "vseg"):
+        for cat in ("gfx", "seg", "audio", "plugin_cache", "legacy", "vseg"):
             plan[cat] = [e for e in plan[cat] if not fresh(e[0])]
     return plan
+
+
+def _out_deliverable(name: str) -> bool:
+    """out/ 交付件白名单模式（2026-09-14 补，红队 gc --dry 实证遗漏）：
+    final_4k*.mp4 = apps/publish/export_4k.py 发布件（runbook R5 4K 链产物，
+    final_4k_x264_ref.mp4 质量对照件同前缀）；FREEZE*.json = runbook 步骤 6
+    冻结记录（md5 清单证据）。两者此前落「out 一次性中间物」分类被 gc 列为
+    可回收——发布件/冻结证据不可再生，属白名单遗漏交付件。"""
+    return any(fnmatch.fnmatch(name, p) for p in ("final_4k*.mp4", "FREEZE*.json"))
 
 
 def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
@@ -287,9 +314,10 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
                 if kill_out and (x.name in (REPORTS, TMP, "snapshots") or
                                  x.name in KEEP_BASELINES):
                     continue
-                if not kill_out and x.name in ("final.mp4", "draft_final.mp4",
-                                               "VERSIONS.json", "history",
-                                               "receipt.json", "reports"):
+                if not kill_out and (x.name in ("final.mp4", "draft_final.mp4",
+                                                "VERSIONS.json", "history",
+                                                "receipt.json", "reports")
+                                     or _out_deliverable(x.name)):
                     continue
                 total += dir_size(x)   # 先统计再删（删除后 dir_size=0，--dry/--do 统计口径须一致）
                 if do:
@@ -470,3 +498,4 @@ def budget_gate(c, stage: str):
         print(f"✓ VTX_GC_AUTO=1 已自动回收，cache 现 {gb(dir_size(c.cache))}")
     else:
         print("  上面为回收清单（--dry 预览）；执行 `vtx gc` 回收，或设 VTX_GC_AUTO=1 自动回收")
+

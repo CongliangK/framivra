@@ -16,6 +16,8 @@
 运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3 前缀：
 AppImage 劫持 argv[0]，裸 python3 的 sys.executable 指向错误解释器，见全局 AGENTS.md）
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -25,6 +27,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
@@ -218,7 +221,6 @@ def _stage_heads(out: str):
     return [ln[3:-3] for ln in out.splitlines()
             if ln.startswith("== ") and ln.endswith(" ==")]
 
-
 @unittest.skipUnless(shutil.which("ffmpeg"),
                      "--until 测试需要 ffmpeg（生成带媒体的合成项目）")
 class TestUntilFlag(unittest.TestCase):
@@ -304,6 +306,107 @@ class TestUntilFlag(unittest.TestCase):
             r = _run_vtx(self.tl, "all", "--until", bad, "--dry-run")
             self.assertEqual(r.returncode, 2, f"--until {bad} 应退出码 2")
             self.assertIn("非法阶段名", r.stdout + r.stderr)
+
+
+class TestAllFinishSurvivesQcFailure(unittest.TestCase):
+    """2026-09-14 裁定回归：`vtx all` 内 qc 失败不阻断 finish 收尾钩子。
+
+    背景：qc 阶段失败以 `sys.exit(1)` 收尾（qc.py 尾部，报告/回执已先落盘），
+    历史上 SystemExit 直接冒出 `main`，跳过缝 D 的 run_finish——存量假阴性项目
+    （如 voice-ime c4_mini）永远到不了 finish，blender-bridge 自动导出失效。
+    裁定：qc 失败不阻断 finish（产物已就绪），退出码按 qc/finish 各自失败态
+    如实汇总（任一失败 exit 1）；更早阶段异常仍即时终止。
+
+    手法：进程内直调 cli.main()，STAGES 整体换成伪阶段（只写 receipt，不渲染），
+    run_finish 换成记录调用的伪钩子——纯编排逻辑测试，无 ffmpeg/Chrome 依赖。
+    流水线（缺省）与线性回退（VTX_PIPELINE=0）两路径各覆盖。"""
+
+    @staticmethod
+    def _mk_stage(name, ok=True):
+        def fn(c, *args, **kwargs):
+            c.receipt(name, ok, "伪阶段")
+            if not ok:
+                sys.exit(1)   # 对齐真 qc：报告/回执写完再退
+        return fn
+
+    def _run_main(self, tl_path, qc_ok=True, linear=False, argv=None):
+        """伪阶段全链跑 cli.main()，返回 (exit_code, finish_calls, stdout, receipt)。"""
+        import vtx.cli as cli_mod
+        import vtx.pluginlib.hooks as pl_hooks
+        calls = []
+
+        def fake_finish(c):
+            calls.append(c)
+            return []
+
+        stages = [(n, self._mk_stage(n, ok=(qc_ok if n == "qc" else True)))
+                  for n in ("validate", "audit", "prepare", "gfx", "video",
+                            "audio", "mux", "qc")]
+        env = {"VTX_PIPELINE": "0"} if linear else {}
+        buf = io.StringIO()
+        with mock.patch.object(cli_mod, "STAGES", stages), \
+             mock.patch.object(cli_mod, "build_video", self._mk_stage("video")), \
+             mock.patch.object(cli_mod, "prepare_layers", lambda c: []), \
+             mock.patch.object(pl_hooks, "run_finish", fake_finish), \
+             mock.patch.dict(os.environ, env), \
+             mock.patch.object(sys, "argv", argv or ["vtx.py", "-t", str(tl_path), "all"]), \
+             contextlib.redirect_stdout(buf):
+            if not linear:
+                os.environ.pop("VTX_PIPELINE", None)   # 消除外层环境污染
+            try:
+                cli_mod.main()
+                code = 0
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+        rp = tl_path.parent / "out" / "receipt.json"
+        rec = json.loads(rp.read_text(encoding="utf-8")) if rp.exists() else None
+        return code, calls, buf.getvalue(), rec
+
+    @staticmethod
+    def _write_tl(root: Path) -> Path:
+        tl = {"version": 2,
+              "project": {"fps": 30, "duration_frames": 90, "width": 640, "height": 360},
+              "sources": [], "video_tracks": [], "subtitles": [], "audio_tracks": []}
+        p = root / "timeline.json"
+        p.write_text(json.dumps(tl), encoding="utf-8")
+        return p
+
+    def test_pipeline_qc_fail_still_finishes_exit1(self):
+        # (a) 流水线路径：qc 失败 → finish 仍被调用，退出码 1（qc 的码如实汇总）
+        with tempfile.TemporaryDirectory() as d:
+            tl = self._write_tl(Path(d))
+            code, calls, out, rec = self._run_main(tl, qc_ok=False, linear=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 1, "qc 失败后 finish 钩子必须仍被执行")
+        self.assertFalse(rec["stages"]["qc"]["ok"], "qc 失败须如实落回执")
+        self.assertIn("不阻断 finish", out)
+
+    def test_pipeline_qc_pass_finishes_normally(self):
+        # (b) 防回归：qc 全绿 → finish 照常、退出码 0
+        with tempfile.TemporaryDirectory() as d:
+            tl = self._write_tl(Path(d))
+            code, calls, out, rec = self._run_main(tl, qc_ok=True, linear=False)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(rec["stages"]["qc"]["ok"])
+
+    def test_linear_qc_fail_still_finishes_exit1(self):
+        # 线性回退路径（VTX_PIPELINE=0）同裁定
+        with tempfile.TemporaryDirectory() as d:
+            tl = self._write_tl(Path(d))
+            code, calls, out, rec = self._run_main(tl, qc_ok=False, linear=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 1, "线性路径 qc 失败后 finish 也必须执行")
+        self.assertFalse(rec["stages"]["qc"]["ok"])
+
+    def test_single_qc_command_exit_unchanged(self):
+        # 单阶段 `vtx qc`：退出码冒泡语义不变（不经 all 的捕获路径），且不触发 finish
+        with tempfile.TemporaryDirectory() as d:
+            tl = self._write_tl(Path(d))
+            code, calls, out, rec = self._run_main(
+                tl, qc_ok=False, argv=["vtx.py", "-t", str(tl), "qc"])
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [], "单阶段命令不得触发 finish 钩子")
 
 
 if __name__ == "__main__":

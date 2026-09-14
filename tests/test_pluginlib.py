@@ -12,12 +12,14 @@
      未知键 → 警告不阻断；`_meta` 永久白名单；无插件键的 timeline → validate
      输出与 P1-1 完全一致（零 ⚠/零新行）；
   ④ 不变量 ①② 空转（无插件键时间线，生效过滤后恒空转）：contribute_keys 空集
-     并入 ak（gc 键集不变）/get_cache_dirs 空集/cache 白名单不变；
+     并入 ak（gc 键集不变）/get_cache_dirs 空集/cache 白名单不变/键级通道
+     get_cache_dir_keys 恒空 dict（R1-F F2）；
      receipt_fingerprint 末尾含 active_plugins_digest 段（mock 替身验证指纹随
      插件段变化——v1 回执 v2 下失效属设计内；真实插件路径的正例见
      plugins/denoise/tests）；
   ⑤ 两缝：run_prepare_source 契约 v1.1（(c,sid)->Path|None，未受理 → None）/
-     run_audio_events 恒等；hooks 声明↔代码注册对账（§2.3）。
+     run_audio_events 恒等；hooks 声明↔代码注册对账（§2.3）；插件代码摘要
+     幂等/翻转/tests 目录排除（R1-F F5：改测试 ≠ 改行为，不得翻转产物键）。
 插件实体测试（denoise 键语义/产物路径/不变量真实路径）见 plugins/denoise/tests/。
 运行：bash scripts/run_all_tests.sh（统一入口）。
 """
@@ -263,7 +265,13 @@ class InvariantsIdle(unittest.TestCase):
             root = Path(d)
             c = Ctx(_tl(root))
             self.assertEqual(pl_hooks.contribute_keys(c), set())
-            self.assertEqual(pl_hooks.get_cache_dirs(), set())
+            # timeline 无插件键 → 生效清单空 → cache_dirs 白名单零并入（空转不变）；
+            # 无参调用（机器态，不过滤 timeline）= 静态注册表全部声明（v1.1.0 起
+            # bgm-render 声明 cache_dirs: ["bgm"]——首个使用该通道的官方插件）。
+            self.assertEqual(pl_hooks.get_cache_dirs(c), set())
+            self.assertEqual(pl_hooks.get_cache_dirs(), {"bgm"})
+            # 键级通道（v1.2.0 R1-F F2）同空转：无插件键时间线恒空 dict
+            self.assertEqual(pl_hooks.get_cache_dir_keys(c), {})
             # 空生效清单返回 ""（指纹侧省略段）——v1 回执兼容的前提
             self.assertEqual(pl_hooks.active_plugins_digest(c), "")
             # ak 并入空集 → _current_keys 与 P1-1 等价（sources 空 → ak 空）
@@ -615,6 +623,29 @@ class FakePluginBus(unittest.TestCase):
                 d3 = pl_hooks._plugin_code_digest("duck-static")
             self.assertEqual(d1, d2)      # 同码同摘要（幂等）
             self.assertNotEqual(d2, d3)   # 改 DEFAULTS → 摘要变
+
+    def test_plugin_code_digest_excludes_tests_dir(self):
+        """R1-F F5：tests/ 子目录不进代码摘要——改一行测试 ≠ 插件行为变化，
+        掺入会使产物键/回执无谓翻转（真工程整轮重渲）；本体代码变化仍须翻转。"""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            fake = root / "duck-static"
+            fake.mkdir()
+            (fake / "__init__.py").write_text("X = 1\n", encoding="utf-8")
+            (fake / "tests").mkdir()
+            (fake / "tests" / "test_x.py").write_text("# v1\n", encoding="utf-8")
+            with mock.patch("vtx.pluginlib.registry.plugin_module_dir",
+                            return_value=(fake, "builtin")):
+                d1 = pl_hooks._plugin_code_digest("duck-static")
+                (fake / "tests" / "test_x.py").write_text(
+                    "# v2 改一行测试（不 bump version 不改行为）\n", encoding="utf-8")
+                (fake / "tests" / "test_new.py").write_text("# 新增测试文件\n",
+                                                            encoding="utf-8")
+                d2 = pl_hooks._plugin_code_digest("duck-static")
+                (fake / "__init__.py").write_text("X = 2\n", encoding="utf-8")
+                d3 = pl_hooks._plugin_code_digest("duck-static")
+            self.assertEqual(d1, d2, "tests/ 内容变化不得翻转代码摘要")
+            self.assertNotEqual(d2, d3, "插件本体代码变化仍须翻转摘要")
 
     def test_params_digest_collects_all_instances(self):
         """P1 对抗审查 F2：多实例参数全收集——改第二例参数 digest 必须变。"""
