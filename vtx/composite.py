@@ -350,10 +350,15 @@ class RenderPlan:
         整条 pass 链自动失效（与段键 _seg_content_key 同防洗白口径）。中间物帧数硬
         校验 == 段长（不 cfr 补帧：丢帧 fail-fast 而非静默复制；这也是对 framesync
         节律异常的在案探针）。
-        成本（voice-ime 实测口径）：温态 pass 全命中=仅最终段编码一次 ffmpeg；
-        冷态每段 N−1 个 pass 串行（2093 帧段 14 层 ≈ 13 pass，FFV1 每 pass ~15s 级
-        级），段间并行不变 → 全片冷渲 ≈4~5× 于旧单 graph 分段（可接受，⑭ 验收
-        拍板）。gc：vseg_pass 目录按「分段渲染中间物（可再生）」类别整体回收。
+        成本（实测口径 R5 2026-09-15）：温态 pass 全命中=仅最终段编码一次 ffmpeg；
+        冷态每段 N−1 个 pass 串行（2093 帧段 14 层 ≈ 13 pass，FFV1 每 pass ~15s 级）。
+        全片冷建（8 段并行 ~104 pass）墙钟实测 900s、单代 pass 占盘 ~44G，对照 v4.0
+        旧链式分段 277s ≈ 3.2×（「≈4~5×」为无实测支撑的推算值已废弃；区间多层窗口
+        回落路径更慢且未被该账覆盖——R4-E2' A5）。
+        gc：hygiene.gc_plan 的 known 白名单不含 vseg_pass，本目录整体落 legacy 类别
+        （判定理由=「键不含内容指纹」，对内容寻址 pass 键是误描述）随 gc 回收——
+        行为可辩护（可再生中间物，删后下次段重渲自动重建），后果=温态冻结语义失效、
+        下次渲染全冷建（R4-E2' A3 定谳；白名单补录需动 hygiene.py=P6 遗留文件，暂缓）。
         -fps_mode cfr 只在最终 pass（正式段文件）：帧数/时基安全网 + 拼接自检
         （render_segmented 总帧数硬门），语义见 _composite_graph 同名注释。
         """
@@ -429,8 +434,11 @@ class RenderPlan:
                 tail = ["-frames:v", str(seglen), "-fps_mode", "cfr", "-r", str(c.fps),
                         *vcodec, str(out_path)]
             else:
-                # FFV1 intra（-g 1）无损：像素/alpha/位深零漂移，编码确定性
-                # （FFV1 为逐帧确定性编码器，与线程数无关）。落盘走 *.part.mkv
+                # FFV1 intra（-g 1）无损：像素/alpha/位深零漂移，解码域确定
+                # （实测口径 R4-E2' A1d：FFV1 同输入同 argv 重复编码 4 次得 4 个
+                # 不同容器 md5——容器字节层非确定；但 4 产物解码域 framemd5 逐帧
+                # 全同，无损语义成立，只影响 pass 文件字节、不影响像素与缓存命中
+                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。落盘走 *.part.mkv
                 # 临时名 + os.replace 原子替换：并发/重入读者（帧数校验、下游
                 # pass）永远看到完整文件而非半截 mkv（FFV1 大文件写入窗口数十秒，
                 # 直接写 target 存在互踩窗口——tests 并发复渲实测踩中，R4-E1-v2）。
