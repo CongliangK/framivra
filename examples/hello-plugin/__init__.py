@@ -8,11 +8,13 @@ v2 ARCHITECTURE §4.2 / §2.2 缝 A / §2.1 三不变量——第三方音频插
 声明即该源的 prepare 音频被施加 ``volume=N dB``（ffmpeg volume 滤镜，无重依赖），
 产物内容寻址（与内核裸提取同格式：48kHz stereo pcm_s16le）：
 
-    cache/audio/{audio_key}::hello:{version}:{value_digest}.wav
+    cache/audio/{audio_key}::hello:{version}:{value_digest}:{code_digest}.wav
 
 - audio_key = 内核 prepare 裸提取键（经 ``vtx.api.audio_key``——插件只依赖内核
-  API 面，禁捅内部模块）；value_digest = hello_gain 键值排序 JSON sha1[:12]
-  （键值变/版本升 → 产物键变，旧产物由 gc 回收）。
+  API 面，禁捅内部模块）；value_digest = hello_gain 键值排序 JSON sha1[:12]；
+  code_digest = 插件代码内容摘要（经 ``vtx.api.plugin_code_digest``——P6 起产物
+  键掺代码摘要，改代码不 bump version 时产物键同样翻转，防旧产物被缓存命中
+  「洗白」）。键值变/版本升/代码变 → 产物键变，旧产物由 gc 回收。
 - **裸键不污染**：``cache/audio/{audio_key}.wav`` 恒为未处理音频（契约 v1.1——
   插件自算产物路径，见 vtx/pluginlib/hooks.py run_prepare_source docstring）；
   声明了键的源不再抽裸 wav，直接产出本插件键。
@@ -33,6 +35,7 @@ import sys
 from pathlib import Path
 
 from vtx.api import audio_key as _audio_key
+from vtx.api import plugin_code_digest
 
 VERSION = "1.0.0"
 KEY = "hello_gain"
@@ -65,10 +68,11 @@ def _gain_db(value):
 
 
 def product_path(c, sid) -> Path:
-    """产物路径 cache/audio/{audio_key}::hello:{version}:{value_digest}.wav。"""
+    """产物路径 cache/audio/{audio_key}::hello:{version}:{value_digest}:{code_digest}.wav。"""
     s = _source(c, sid) or {}
     return c.cache / "audio" / (
-        f"{_audio_key(c, sid)}::hello:{VERSION}:{value_digest(s.get(KEY))}.wav")
+        f"{_audio_key(c, sid)}::hello:{VERSION}:{value_digest(s.get(KEY))}"
+        f":{plugin_code_digest('hello-plugin')}.wav")
 
 
 def prepare_source(c, sid):

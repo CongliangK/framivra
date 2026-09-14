@@ -73,19 +73,20 @@ class DoctorJson(unittest.TestCase):
         v = d["version"]
         for k in ("version", "head", "state", "notes"):
             self.assertIn(k, v)
-        # 组件段：注册表声明 + import vtx 自检（P2b 两插件落地 active）
+        # 组件段：注册表声明 + import vtx 自检（P2b 两插件 + P6 v1.2 两插件落地 active）
         c = d["components"]
         self.assertIn("declared", c)
         self.assertIn("import_vtx", c)
         declared = {x["name"]: x for x in c["declared"]}
         self.assertIn("denoise", declared)
         self.assertIn("duck-static", declared)
-        for name in ("denoise", "duck-static"):
+        for name in ("denoise", "duck-static", "blender-bridge", "bgm-render"):
             self.assertEqual(declared[name]["state"], "active")
             self.assertEqual(declared[name]["version"], "1.0.0")
-        # 发现件（builtin）两插件也须过 health 门
+        # 发现件（builtin）四插件也须过 health 门
         plugins = [e for e in c["entries"] if e["kind"] == "plugin"]
-        self.assertEqual({e["name"] for e in plugins}, {"denoise", "duck-static"})
+        self.assertEqual({e["name"] for e in plugins},
+                         {"denoise", "duck-static", "blender-bridge", "bgm-render"})
         for e in plugins:
             self.assertFalse(e["fail"], e)
         self.assertTrue(c["import_vtx"]["ok"], c["import_vtx"])

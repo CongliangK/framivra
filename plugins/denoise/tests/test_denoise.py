@@ -67,9 +67,11 @@ class ProductPathSemantics(unittest.TestCase):
             p = dn.product_path(c, "v")
             from vtx.api import audio_key
             bare = c.cache / "audio" / f"{audio_key(c, 'v')}.wav"
+            # P6（A-P1-1）：产物键尾部掺 12 位插件代码摘要（ vtx.api.plugin_code_digest）
             self.assertEqual(p.name,
                              f"{audio_key(c, 'v')}::denoise:{dn.VERSION}:"
-                             f"{dn.value_digest(True)}.wav")
+                             f"{dn.value_digest(True)}:"
+                             f"{dn.plugin_code_digest('denoise')}.wav")
             self.assertNotEqual(p, bare)   # 产物键 ≠ 裸提取键（内容寻址不污染）
 
     def test_value_change_changes_path(self):

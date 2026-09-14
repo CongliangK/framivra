@@ -3,11 +3,14 @@
 sources[] 级键 ``"denoise": true | {...可选参数}``——声明即该源的 prepare 音频
 走「陷波(ffmpeg) → Resemble 仅降噪(conda) → 回 48kHz」链，产物内容寻址：
 
-    cache/audio/{audio_key}::denoise:{version}:{value_digest}.wav
+    cache/audio/{audio_key}::denoise:{version}:{value_digest}:{code_digest}.wav
 
 - audio_key = 内核 prepare 裸提取键（经 vtx.api.audio_key——插件只依赖内核
-  API 面，禁捅内部模块）；value_digest = 该源 denoise 键值的排序 JSON sha1[:12]
-  （键值变/版本升 → 新产物，旧产物由 gc 回收）。
+  API 面，禁捅内部模块）；value_digest = 该源 denoise 键值的排序 JSON sha1[:12]；
+  code_digest = 插件代码内容摘要（P6 修复 A-P1-1，经 vtx.api.plugin_code_digest：
+  改推理代码/默认参不 bump version 时**产物键也翻转**——只掺回执指纹不掺产物键
+  的话，旧产物会被缓存命中「洗白」）。键值变/版本升/代码变 → 新产物，旧产物由
+  gc 回收。
 - **裸键不污染**：cache/audio/{audio_key}.wav 恒为未处理音频（契约 v1.1——插件
   自算产物路径，见 vtx/pluginlib/hooks.py run_prepare_source docstring）。
 - 环境缺失 fail-hard（渲染链口径）：conda env / 权重缺 → 打印缺什么 + exit 1，
@@ -25,6 +28,7 @@ import sys
 from pathlib import Path
 
 from vtx.api import audio_key as _audio_key
+from vtx.api import plugin_code_digest
 
 from .denoise_voice import chain, conda_python, missing_env, run_dir, weights_dir
 
@@ -48,10 +52,11 @@ def _source(c, sid):
 
 
 def product_path(c, sid) -> Path:
-    """产物路径 cache/audio/{audio_key}::denoise:{version}:{value_digest}.wav。"""
+    """产物路径 cache/audio/{audio_key}::denoise:{version}:{value_digest}:{code_digest}.wav。"""
     s = _source(c, sid) or {}
     return c.cache / "audio" / (
-        f"{_audio_key(c, sid)}::denoise:{VERSION}:{value_digest(s.get(KEY))}.wav")
+        f"{_audio_key(c, sid)}::denoise:{VERSION}:{value_digest(s.get(KEY))}"
+        f":{plugin_code_digest('denoise')}.wav")
 
 
 def prepare_source(c, sid):

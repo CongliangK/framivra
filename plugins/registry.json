@@ -4,20 +4,62 @@
     "denoise": {
       "version": "1.0.0",
       "keys": [
-        {"path": "sources[]", "key": "denoise"}
+        {
+          "path": "sources[]",
+          "key": "denoise"
+        }
       ],
-      "hooks": ["prepare_source"],
+      "hooks": [
+        "prepare_source"
+      ],
       "installed": true,
       "docs": "缝 A prepare 源产物钩子（§2.2）：sources[] 级键 denoise，一源一降噪 wav 进 cache/audio/{audio_key}::denoise:{ver}:{digest}.wav（内容寻址，裸键不污染），环境缺失 fail-hard；CLI denoise_voice.py 命令面不变（依赖环境见 plugins/denoise/README.md）"
     },
     "duck-static": {
       "version": "1.0.0",
       "keys": [
-        {"path": "audio_tracks[]", "key": "duck_strategy"}
+        {
+          "path": "audio_tracks[]",
+          "key": "duck_strategy"
+        }
       ],
-      "hooks": ["validate", "audio_events"],
+      "hooks": [
+        "validate",
+        "audio_events"
+      ],
       "installed": true,
       "docs": "缝 B 音轨事件内存变换钩子 + validate 钩子（v1.1）（§2.2）：audio_tracks[] 级键 duck_strategy {mode:static,...}，床乐全局增益+口播窗静态避让（纯内存不写 timeline）；duck:true 互斥与 _meta.bed_static_duck 双施由 validate 报错；CLI bed_static_duck.py 命令面不变"
+    },
+    "blender-bridge": {
+      "version": "1.0.0",
+      "keys": [
+        {
+          "path": "root",
+          "key": "blender_bridge"
+        }
+      ],
+      "hooks": [
+        "validate",
+        "finish"
+      ],
+      "installed": true,
+      "docs": "缝 D 管线收尾钩子（v1.2，§2.2）：timeline 顶层键 blender_bridge true|{out,verify}——vtx all 全链（qc 后）自动导出 Blender 审片工程（apps/blender-bridge/json2blend.py，blender --background）；blender 缺失 finish fail（final.mp4 不受影响）；交互工具命令面在 apps/blender-bridge 应用件不变"
+    },
+    "bgm-render": {
+      "version": "1.0.0",
+      "keys": [
+        {
+          "path": "sources[]",
+          "key": "bgm"
+        }
+      ],
+      "hooks": [
+        "validate",
+        "probe_source",
+        "prepare_source"
+      ],
+      "installed": true,
+      "docs": "缝 A+C 双缝（v1.2，§2.2）：sources[] 级键 bgm——音轨直接引用 music_tools 工程 JSON（类比 gfx 引用 HTML）：probe 期 bgm show structure 供时长 facts，prepare 期 bgm render 母带转 48k s16 落内容寻址键（digest=键值+代码+$ref 件+extra_deps），缓存命中零渲染/变更自动重渲；CLI 解析 config bgm.cli > ~/.local/bin/bgm > bgm.repo+python3 -m bgm_gen"
     }
   }
 }
