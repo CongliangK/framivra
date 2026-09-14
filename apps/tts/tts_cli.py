@@ -66,7 +66,7 @@ def print_followups(project_dir: str):
     print(f"  # v2：vtx audio 已内置限幅，无需手动 post_loudness")
     print(f"  python3 vtx/vtx.py -t {tl} mux")
     print(f"  python3 vtx/vtx.py -t {tl} qc && python3 vtx/vtx.py -t {tl} audit")
-    print(f"（实录终版替换：python3 scripts/repack_voice.py -t {tl}）")
+    print(f"（实录终版替换：python3 apps/sync/repack_voice.py -t {tl}）")
 
 
 # ---------------------------------------------------------------- 子命令

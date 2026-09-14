@@ -32,12 +32,30 @@ except ImportError:
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 tl_path, blend_path = Path(argv[0]).resolve(), Path(argv[1]).resolve()
+# 可选第 3 参（P6，plugins/blender-bridge finish 传入）：源产物解析映射
+# {sid: wav 绝对路径}——虚拟源（bgm 工程 JSON）与降噪源的音频实际可用件是
+# prepare 插件产物（cache/audio/*.wav），直引源路径对 JSON 源无效。**以 .json
+# 后缀判定**（bundle_session 语境下 argv[2]=json2blend.py 自身路径，不能按位
+# 置盲取）；无映射时保持 v1 行为（源路径直引——无插件产物的项目零变化）。
+RESOLVED = {}
+if len(argv) > 2 and argv[2].endswith(".json") and Path(argv[2]).is_file():
+    RESOLVED = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
 
 tl = json.loads(tl_path.read_text(encoding="utf-8"))
 base = tl_path.parent
 P = tl["project"]
 W, H, FPS, DUR = P["width"], P["height"], P["fps"], P["duration_frames"]
 SRC = {s["id"]: (base / s["path"]).resolve() for s in tl["sources"]}
+
+
+def audio_src(sid):
+    """音轨事件源路径解析：插件产物映射优先（虚拟源/降噪源），否则源路径。
+    JSON 虚拟源无映射 → None（记 error：先跑 vtx prepare/all 渲出产物）。"""
+    p = SRC[sid]
+    if p.suffix.lower() == ".json":
+        w = RESOLVED.get(sid)
+        return Path(w) if w else None
+    return p
 
 errors, stats = [], {"video": 0, "gfx": 0, "audio": 0, "subs": 0}
 
@@ -70,18 +88,31 @@ seq = sc.sequence_editor_create().strips  # Blender 5.x: sequences → strips
 
 _probe = {}
 def probe(sid):
-    """ffprobe 源 (w, h, 总帧数)；音频源 (0,0,0)"""
+    """ffprobe 源 (w, h, 总帧数)；纯音频源（含虚拟源产物 wav）按 format.duration×
+    FPS 折算帧数——v1 音频源恒 (0,0,0) 使 loop 事件必报「无法测帧数」（bgm 床乐
+    loop 平铺是常用形态，P6 修）。"""
     if sid not in _probe:
+        path = audio_src(sid) or SRC[sid]
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                             "-count_frames", "-show_entries",
                             "stream=width,height,nb_read_frames",
-                            "-of", "csv=p=0", str(SRC[sid])], capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
+                            "-of", "csv=p=0", str(path)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
         try:
             w, h, n = (r.stdout.strip().split(",") + ["0", "0", "0"])[:3]
-            _probe[sid] = (int(w), int(h), int(n))
+            w, h, n = int(w), int(h), int(n)
         except ValueError:
-            _probe[sid] = (0, 0, 0)
+            w, h, n = 0, 0, 0
+        if not n:
+            r2 = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                                 "format=duration", "-of", "csv=p=0", str(path)],
+                                capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
+            try:
+                n = round(float(r2.stdout.strip()) * FPS)
+            except ValueError:
+                n = 0
+        _probe[sid] = (w, h, n)
     return _probe[sid]
 
 def kf_linear(strip, prop, points):
@@ -167,7 +198,9 @@ CH_V = 1 + len(tl["audio_tracks"])
 for ti, tr in enumerate(tl["audio_tracks"], start=1):
     for i, ev in enumerate(tr["events"]):
         sid, name = ev["src"], f"{tr['name']}|{i}|{ev['src']}"
-        path = SRC[sid]
+        path = audio_src(sid)
+        if path is None:
+            errors.append(f"虚拟源 {sid} 无产物映射（bgm 工程 JSON 须先跑 vtx prepare/all 渲出插件产物）"); continue
         if not path.exists():
             errors.append(f"音频源缺失 {sid}: {path}"); continue
         src_in, t_in, t_out = ev.get("src_in", 0), ev["in"], ev["out"]

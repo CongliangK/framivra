@@ -220,6 +220,33 @@ def main():
     # ① 每个源都保留原 ID；相同内容只转一次，不把轨名当文件身份。
     t0 = time.perf_counter()
     src_of = {s["id"]: root / s["path"] for s in tl["sources"]}
+    # P6：虚拟源/降噪源解析——经 vtx.api.resolve_source_wav（内核缝 A 读取点）取
+    # 插件产物 wav：bgm 工程 JSON 源不能直接过 ffmpeg/ffprobe，denoise 源的实际
+    # 音频也是产物而非源路径。解析链失败（vtx 不可导入/无插件）回落后述 v1 行为。
+    try:
+        try:
+            from vtx.api import Ctx, resolve_source_wav
+        except ImportError:
+            _repo = next((anc for anc in Path(__file__).resolve().parents
+                          if (anc / "vtx" / "api.py").is_file()), None)
+            if _repo is None:
+                raise
+            sys.path.insert(0, str(_repo))
+            from vtx.api import Ctx, resolve_source_wav
+        _c = Ctx(a.timeline.resolve())
+        n_resolved = 0
+        for sid in list(src_of):
+            try:
+                p = resolve_source_wav(_c, sid)
+            except Exception:
+                p = None
+            if p is not None and Path(p).is_file():
+                src_of[sid] = Path(p)
+                n_resolved += 1
+        if n_resolved:
+            print(f"[src ] {n_resolved} 源经插件产物解析（bgm/denoise wav）")
+    except Exception as e:
+        print(f"ℹ 插件源解析不可用（{type(e).__name__}），音轨按源路径直引")
     selected_ids = list(dict.fromkeys(e['src'] for tr in sel for e in tr['events']))
     version = subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True,
                              text=True, encoding='utf-8', errors='replace').stdout

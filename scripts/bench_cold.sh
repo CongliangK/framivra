@@ -14,7 +14,7 @@
 #   2) env python3 $VTX -t … mux                 # libfdk_aac 192k 封装
 #   3) env python3 $VTX -t … qc                  # 预期 74/75、exit 1=c4_mini 已知
 #                                               # 探针假阴性，不中断基准
-#   4) env python3 scripts/content_gates.py -t … --media …/out/final.mp4  # 五门
+#   4) env python3 apps/gates/content_gates.py -t … --media …/out/final.mp4  # 五门
 #
 # --with-4k（默认出列，方案三.6「4K 剔出冷跑关键路径」）：验证链后追加发布链分项
 #   export_4k.py（计时）+ check_4k.sh（断言）——单列「发布链预算」，不计入验证链合计。
@@ -51,7 +51,7 @@ ROUNDS="${ROUNDS:-3}"
 PROJ="${PROJ:-$HOME/文档/04_bilibili视频/bench_p2}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VTX="$REPO/vtx/vtx.py"
-GATES="$REPO/scripts/content_gates.py"
+GATES="$REPO/apps/gates/content_gates.py"
 DATE="$(date +%Y%m%d)"
 
 [ -f "$PROJ/timeline.json" ] || { echo "防呆：$PROJ/timeline.json 不存在，退出"; exit 1; }
@@ -171,7 +171,7 @@ for i in $(seq 1 "$ROUNDS"); do
   # —— 发布链（--with-4k，单列不计入验证链）——
   if [ "$WITH_4K" = "1" ]; then
     mark "#### 发布链（4K，预算单列）START"
-    if ! run_step export_4k env python3 "$REPO/scripts/export_4k.py" -t "$PROJ/timeline.json"; then
+    if ! run_step export_4k env python3 "$REPO/apps/publish/export_4k.py" -t "$PROJ/timeline.json"; then
       echo "⚠ export_4k 异常退出（rc=$(cat "$TDIR/rc_${ROUND}_export_4k")）"; UNEXPECTED_FAIL=1
     fi
     if ! run_step check_4k bash "$REPO/scripts/check_4k.sh" "$PROJ/out/final_4k.mp4"; then
