@@ -4,7 +4,7 @@
 RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 --draft --frames 回落路径共用同一段代码）。
 """
-import contextlib, functools, hashlib, inspect, json, os, subprocess, sys
+import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,10 +25,46 @@ _SYNTH_FUNCS = ("composite", "_composite_graph", "_composite_passes",
                 "_layer_chain", "_layer_input_args")
 
 
+def _normalized_ast_src(source: str) -> str:
+    """源码 → 去注释/去 docstring/去格式的 AST 归一化文本。
+
+    2026-09-15 口径修订（R7）：原实现哈希 inspect.getsource 原始字节，纯注释/
+    docstring 提交（如 R5 收口 4e4b756「行为零变化」）也翻转段键 → 全片 ~900s
+    冷重建（实测事故）。AST 归一化后只有语法树变才翻键——表达式结构、常量、
+    控制流全部保留（ast.dump 含位置无关的完整语义树）；注释天生不在树中，
+    docstring 是函数体首条 Expr(Constant str)，显式剔除（docstring 运行期仅
+    可经 __doc__ 访问，合成路径不读它）。inspect.getsource 对类方法返回**带类体
+    缩进**的源码，直接 parse 抛 SyntaxError（unexpected indent）——实测教训
+    （2026-09-15 实测轮）：漏 dedent 时回退分支生效，摘要退化为原始字节哈希，
+    R7 归一化在真实方法上整体空转（单测用无缩进片段未覆盖该形态）。故先
+    textwrap.dedent 再 parse；dedent 后仍解析失败（真语法错误）退回原始字节
+    哈希：保守失效优于崩溃。
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(source))
+    except SyntaxError:
+        return source
+
+    def strip_docstrings(node):
+        body = getattr(node, "body", None)
+        if isinstance(body, list) and body:
+            first = body[0]
+            if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                node.body = body[1:]
+        for child in ast.iter_child_nodes(node):
+            strip_docstrings(child)
+
+    strip_docstrings(tree)
+    return ast.dump(tree, include_attributes=False)
+
+
 @functools.lru_cache(maxsize=1)
 def _graph_code_digest() -> str:
     """段内容键掺入的合成代码摘要（R4-E1，2026-09-14，先例：插件产物键掺 12 位
-    代码摘要 vtx.api.plugin_code_digest）：合成路径全部函数源码联合 sha1[:12]。
+    代码摘要 vtx.api.plugin_code_digest）：合成路径全部函数 **AST 归一化** 源码
+    联合 sha1[:12]（归一化口径见 _normalized_ast_src：注释/docstring/格式不翻键，
+    任何语法级改动必翻键）。
 
     为什么必须掺：段文件是字节级缓存产物，合成代码改一行（如 R4-E1 改 tpad
     尾垫、R4-E1-v2 改中间物编码）输出即变；若键不含代码内容，改码后旧段文件
@@ -41,12 +77,10 @@ def _graph_code_digest() -> str:
     _composite_graph/_layer_chain/_layer_input_args 改动将不翻转键（FFV1 迭代
     E-B2 恰属此类，当时仅凭中间物扩展名 .mp4→.mkv 巧合失效，非机制保证）。
     现扩为合成路径五函数联合摘要：任一行为性改动必翻转段键与 pass 键；切点逻辑
-    经 a|b 入键、prepare_layers 滤镜链经上游内容键入键，不在此列。代价是函数内
-    纯注释改动也翻转键：有意保守（无法机械区分行为性与非行为性改动，段产物字节
-    敏感，宁一次性重渲不冒脏命中风险）。lru_cache：进程内取一次。
+    经 a|b 入键、prepare_layers 滤镜链经上游内容键入键，不在此列。lru_cache：进程内取一次。
     """
     return hashlib.sha1("".join(
-        inspect.getsource(getattr(RenderPlan, n)) for n in _SYNTH_FUNCS
+        _normalized_ast_src(inspect.getsource(getattr(RenderPlan, n))) for n in _SYNTH_FUNCS
     ).encode("utf-8")).hexdigest()[:12]
 
 
@@ -557,6 +591,13 @@ class RenderPlan:
             name = path.resolve().as_posix().replace("'", "'\\''")
             return f"file '{name}'\n"
         lst.write_text("".join(concat_entry(s) for s in segs), encoding="utf-8")
+        # 记录本代段缓存对应的合成代码摘要（R7）：vtx diff 据此在 timeline 侧 0 失效
+        # 时仍能提示「代码摘要已漂移 → 磁盘段缓存全冷重建」，避免影响面误报温态。
+        if not c.dry:
+            try:
+                (vdir / ".graph_digest").write_text(_graph_code_digest(), encoding="utf-8")
+            except OSError:
+                pass
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
                "-c", "copy", str(out_path)])
         # 内置正确性自检：容器元数据总帧数必须精确 == project.duration_frames

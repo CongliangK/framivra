@@ -27,6 +27,39 @@ from .hygiene import audio_key, gfx_key, seg_key
 
 DEFAULT_NSEG = 8   # 与 composite.DEFAULT_SEGMENTS 同值（避免 import 产生环形依赖，取字面量并注释）
 
+
+def _cold_rebuild_hints(project_root: Path) -> list:
+    """R7（2026-09-15）：影响面之外的磁盘侧失效提示。
+
+    timeline 侧影响面是「新旧时间线同用当前代码摘要」的纯函数比对，天然看不见
+    两类磁盘侧失效（实测事故：R5 注释提交 4e4b756 后 diff 报 0 失效，实际全片
+    ~900s 冷重建）：
+      ① 合成代码摘要漂移——上一代段缓存由旧摘要产出（cache/vseg/.graph_digest
+         记账），摘要变则全部段键翻转，与时间线内容无关；
+      ② 段缓存目录被 gc 清空/半清——known 白名单不含 vseg_pass（R4-E2' A3），
+         gc 后温态冻结语义失效，下次冷建。
+    只提示不改判定：影响面数字仍以纯函数口径为准（键为纯函数即真值）。
+    红队审查修订（2026-09-15）：gc 对 vseg 是整目录 rmtree，目录不存在才是最常见
+    形态——原实现恰好在该形态下静默（漏报），改为显式报冷建。
+    """
+    hints = []
+    vdir = project_root / "cache" / "vseg"
+    try:
+        from .composite import _graph_code_digest
+        recorded = (vdir / ".graph_digest").read_text(encoding="utf-8").strip()
+        current = _graph_code_digest()
+        if recorded != current:
+            hints.append(
+                f"  ⚠ 合成代码摘要已漂移（磁盘段缓存 {recorded} → 当前 {current}）："
+                "vseg 段/中间物将全部冷重建（全片段级合成，实测口径百秒~千秒级），与本次 timeline 改动无关")
+    except (OSError, ImportError):
+        pass
+    if not vdir.is_dir():
+        hints.append("  ⚠ cache/vseg 段缓存目录不存在（被 gc 回收或从未渲染）：video 阶段将全量冷建，非温态")
+    elif not [p for p in vdir.iterdir() if p.suffix == ".mp4"]:
+        hints.append("  ⚠ cache/vseg 无段文件（被 gc 或从未渲染）：video 阶段将全量冷建，非温态")
+    return hints
+
 # clip 几何/时间字段：任何变化推移同轨后续 clip / 切点 / 段内容——走生成器
 GEOM_FIELDS = ("src", "src_in", "src_out", "dst_in", "dur", "scale", "x", "y",
                "opacity", "fade_in_frames", "fade_out_frames")
@@ -540,6 +573,9 @@ def run_timeline_diff(old_path, new_path, json_path=None, dry=False):
             print(f"    ⚡ 段 [{a},{b})")
         if impact["vseg_invalid"]["segments"][10:]:
             print(f"    … 另 {len(impact['vseg_invalid']['segments']) - 10} 段")
+        # R7 磁盘侧真相提示：上面是 timeline 侧纯函数比对（两份时间线同用当前代码
+        # 摘要重算），0 失效 ≠ 温态命中——段/中间物缓存还受合成代码摘要与 gc 影响。
+        # （打印点在函数尾统一执行，含 entries 为空的 PASS 分支。）
         chain = [s for s in ("validate", "prepare", "gfx", "video", "audio", "mux", "qc")
                  if impact["stages"].get(s)]
         print(f"  需重跑：{' → '.join(chain) or '无'}")
@@ -555,6 +591,10 @@ def run_timeline_diff(old_path, new_path, json_path=None, dry=False):
                 shown = "、".join(ad["items"][:5]) + ("…" if len(ad["items"]) > 5 else "")
                 print(f"  [{cat}] {len(ad['items'])} 项：{shown}")
                 print(f"    理由：{ad['reason']}")
+    # 磁盘侧预警独立于 timeline 差异打印（红队修订）："代码摘要漂移 + timeline 未变"
+    # 正是本机制的核心场景——原实现挂在 if entries 分支内，无差异时静默漏报。
+    for line in _cold_rebuild_hints(Path(new_path).parent):
+        print(line)
     if res["entries"]:
         print(f"DIFF｜共 {len(res['entries'])} 条差异；受影响段 "
               f"{impact['vseg_invalid']['count']}/{impact['vseg_invalid']['total']}，"
