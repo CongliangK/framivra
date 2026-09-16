@@ -14,7 +14,7 @@ video_tools/
 ├── vtx/            ① 内核（永不可关）：timeline schema/validate/diff/subs/audit/snapshot
 │                      + 渲染链 prepare/gfx/video/audio/mux + qc（含 TP）+ 混音响度终链
 │                      （两遍静态增益 -14 LUFS + alimiter 限幅已并入 audio，§1.2）
-│                      + 内容寻址缓存（gc/df/VERSIONS）+ pluginlib/api.py
+│                      + 内容寻址缓存（gc/df/VERSIONS）+ vtx/api.py+vtx/pluginlib/
 ├── skill/          ① 内核文档：本索引 + references/{edit,gfx,runbook}.md + assets/ 起手模板两件
 ├── apps/  (12 件)  ② 应用（产出独立素材，不进 timeline 管线；关停不影响主链）：
 │                      asr / tts / imgen / matting / aroll / cover / research /

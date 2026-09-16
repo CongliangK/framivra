@@ -7,7 +7,7 @@
 ## 四层架构一页
 
 ```
-vtx/            ① 内核（永不可关）：渲染链 + validate/qc + 响度终链 + 缓存 + pluginlib/api.py
+vtx/            ① 内核（永不可关）：渲染链 + validate/qc + 响度终链 + 缓存 + vtx/api.py 对外面 + vtx/pluginlib/ 协议运行时
 skill/             ① 内核文档：SKILL.md 路由索引 + references/{edit,gfx,runbook}.md + assets/ 起手模板
 apps/  (12 件)  ② 应用：产出独立素材不进 timeline 管线，关停不影响主链
 plugins/ (4 件) ② 插件：扩展 timeline.json 词汇并钩进管线（denoise / duck-static / blender-bridge / bgm-render + registry.json）

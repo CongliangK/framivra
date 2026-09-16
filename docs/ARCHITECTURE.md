@@ -69,7 +69,7 @@ video_tools/
 5. **qc 含 TP 判定**（§1.3）。
 6. **`subtitles_src` 键**：timeline 可声明字幕文件来源路径，内核只负责引用与烧录语义；谁产出该文件（asr/手写/别的工具）内核不感知〔对抗审查裁定 #4〕。
 7. **内容寻址缓存**：gfx/seg/audio 键 + manifest 记账 + gc/df/snapshot/VERSIONS/budget_gate（hygiene.py）+ 回执身份/依赖门/下游失效（cache_state.py）+ 响度回执（loudness_cache.py，跨进程 flock〔代码现状 loudness_cache.py 模块头〕）。
-8. **pluginlib**：插件加载/注册表/钩子协议运行时（§2），与 **api.py**（供 apps/plugins/skills 复用的稳定内核 API 面）。
+8. **pluginlib（vtx/pluginlib/，包）**：插件加载/注册表/钩子协议运行时（§2），与 **api.py（vtx/api.py，单文件）**（供 apps/plugins/skills 复用的稳定内核 API 面）。
 9. **内核工具留 scripts/**：new_project.sh / gfx_golden.py / bench_cold.sh 三件（渲染链自检与基准，属内核可信度基建）。
 
 **死资产删除**：`vtx/models/*.rnnn`（bd.rnnn / sh.rnnn）——全仓 grep 无任何代码引用〔代码现状：vtx/models/ 仅两文件，vtx/*.py 无 rnnn/models 引用〕。
@@ -304,7 +304,7 @@ subtitles_src/插件键文档；timeline.schema.json TP 旧口径 -1.5 → -1.0 
 
 ### 3.2 逐件边界表（关停测试落表）
 
-**内核组成模块**（内核的组成部分而非可关停组件，不适用关停测试；列出以界定边界——渲染链/validate/qc/limiter/缓存直接构成产物可信度，diff/subs/snapshot/gc/new_project 为配套操作面，pluginlib/api.py 为协议运行时与对外契约面，关停它们等于功能缺失而非"降级仍可信"〔对抗审查 P0 复审 P2-1 裁定〕）：
+**内核组成模块**（内核的组成部分而非可关停组件，不适用关停测试；列出以界定边界——渲染链/validate/qc/limiter/缓存直接构成产物可信度，diff/subs/snapshot/gc/new_project 为配套操作面，vtx/pluginlib/ 为协议运行时、vtx/api.py 为对外契约面，关停它们等于功能缺失而非"降级仍可信"〔对抗审查 P0 复审 P2-1 裁定〕）：
 
 | 组件 | 关停后果 | 归类理由 |
 |---|---|---|
@@ -388,7 +388,7 @@ examples 本身走 external 注册路径安装（默认 disabled，§2.4）—�
 ### 5.2 pyproject.toml
 
 - 包名 `video-tools`；console scripts：`vtx`（渲染 CLI）与 `vt`（§5.1 入口）。
-- **pip 包只含内核**（vtx/ + pluginlib + scripts/ 内核工具 + 内核文档）；apps/plugins/skills/examples 不进发行包。
+- **pip 包只含内核**（vtx/ 含 vtx/pluginlib/ + scripts/ 内核工具 + 内核文档）；apps/plugins/skills/examples 不进发行包。
 - **clone 即用与 pip 安装并存**：repo 根可直接 `python3 vt.py` / `python3 -m vtx`（不依赖安装步骤）；pip 安装提供全局命令与稳定 import 路径。两路径必须同码同义（验收门 8 的 import<1s 顺带守护包导入健康）。
 
 ### 5.3 config 统一
