@@ -40,7 +40,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
 ## 音频创作流程（两条支线）
 
 - **口播/同期声支线**（每期视频必经）：① 录音=电容麦/boom 同期声 + 相机内录麦常开（=同步参考轨），长镜连续录制（详见 `references/shooting.md`）；② 同步=`apps/sync/sync_audio.py`（GCC-PHAT 相关法，无需拍掌/时间码）；③ 降噪=可选插件 `plugins/denoise/denoise_voice.py`（陷波 80Hz 高通+工频 notch → Resemble 降噪级 → 48kHz；备胎 MossFormer2；timeline `sources[]` 声明 `denoise` 键即生效）；④ 入轨=timeline voice 轨事件（画面/声音同源，口型同步由构造保证；口型感知全局 +200ms）；⑤ 混音=bed 避让可选插件 `duck_strategy` 静态分段方案（`plugins/duck-static/`，与 `duck:true` 互斥）或 sidechaincompress 动态避让（启用前必做 A/B 响度对照，见内核 edit.md）+ **vtx audio 内置两遍静态增益到 -14 LUFS + alimiter 限幅终态**（post_loudness 已并入 build_audio 尾部，v2 §1.2，无独立步骤），**终检必测编码后解码 TP**；⑥ 验证=`apps/gates/content_gates.py`（G1 口播−间隙响度 / G2 全片 LUFS / G3 解码域 TP（内核 qc 同阈复检）/ G7 零黑帧 / G10 帧数封装 + 项目门）。
-- **BGM/音效支线** → 路由进 **`music` skill**（`~/.agents/skills/music/SKILL.md`，本体 music_tools 仓）：音色契约先行门 → 产线选路（公有领域改编=默认路线 / ACE-Step 时长精确 / synthlib 代码合成）→ 渲染+QC → **挂载进视频 timeline 后必做分轨审计包**（`apps/blender-bridge/audit_bundle.py`，用户 Blender 逐轨审听=交付门；配方见 `references/runbook-r5r6r7.md` R6）。授权红线：**商业音乐绝对不用**；音效宽松获取、AI 生成积极使用；现成资产在 `_library/assets_audio/`。
+- **BGM/音效支线** → 路由进 **`music` skill**（挂载 `~/.agents/skills/music/`，本体 music_tools 仓）：音色契约先行门 → 产线选路（公有领域改编=默认路线 / ACE-Step 时长精确 / synthlib 代码合成）→ 渲染+QC → **挂载进视频 timeline 后必做分轨审计包**（`apps/blender-bridge/audit_bundle.py`，用户 Blender 逐轨审听=交付门；配方见 `references/runbook-r5r6r7.md` R6）。授权红线：**商业音乐绝对不用**；音效宽松获取、AI 生成积极使用；现成资产在 `_library/assets_audio/`。
 
 ## 全链路闭环（推荐 SOP）
 

@@ -6,7 +6,7 @@
 
 | 需求 | 归属（本仓不含本体） |
 |---|---|
-| BGM/配乐/床乐/卡点音乐/音效生成（bgm_gen / bgm CLI / ACE-Step / MiniMax Music3 / synthlib） | **music_tools 姊妹仓**：`~/文档/01_活跃项目/music_tools/`（独立仓库）；具体项目在姊妹仓 `music_project/`。入口索引：**music skill**（`~/.agents/skills/music/SKILL.md`，触发词 bgm/配乐/分轨审计/LUFS 等） |
+| BGM/配乐/床乐/卡点音乐/音效生成（bgm_gen / bgm CLI / ACE-Step / MiniMax Music3 / synthlib） | **music_tools 姊妹仓**：`~/文档/01_活跃项目/music_tools/`（独立仓库）；具体项目在姊妹仓 `music_project/`。入口索引：**music skill**（挂载 `~/.agents/skills/music/`，本体 music_tools 仓；触发词 bgm/配乐/分轨审计/LUFS 等） |
 | 选曲 / 公有领域乐谱 / 确定性合成 / SF2/SFZ 音源 | 同上 music_tools |
 | 混音 / 响度 QC（LUFS） | 同上 music_tools（`bgm qc`） |
 | **分轨审计包交付门**（BGM 正式版挂载进 timeline 后必做，用户逐轨裁决） | 本仓 `apps/blender-bridge/audit_bundle.py`（旧路径 `blender_bridge/audit_bundle.py` 经兼容 symlink 可达）：MP3 导出→审计 timeline→vtx validate→json2blend→verify_blend 五步一键，产物 `<项目>/cache/audit_bgm/` |
