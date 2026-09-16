@@ -29,7 +29,7 @@ Encoding and strict candidate decoding finish before atomic MP3 replacement. Fai
 ## Regression coverage and remaining limits
 
 ```sh
-python -m unittest discover -s tests -p test_audio_audit.py -v
+cd apps/blender-bridge && env PYTHONDONTWRITEBYTECODE=1 env python3 -m unittest discover -s tests -t . -v
 ```
 
 Tests use synthetic audio and real FFmpeg/vtx validation for relocated dependencies, multiple sources and volumes, delayed nonzero source offsets, actual trimming, whole/fallback behavior, all-silent audio, content replacement with preserved timestamps, corrupt-cache repair, forced-encoder failure preservation and production timeline overwrite rejection. Additional boundary tests cover detector failure, subframe merging and cross-drive fallback. Set `VTX_AUDIT_TEST_OUTPUT` to keep fixtures/logs; otherwise temporary fixtures are cleaned. FFmpeg-dependent tests explicitly skip when unavailable; a skipped run is not acceptance.
