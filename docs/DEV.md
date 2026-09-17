@@ -148,3 +148,9 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 - **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；asr/README 手动路线兜底。
 - **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。
 - **cache_dependencies 未声明依赖的外链变更不触发重渲**：当前全部工程未声明，属声明式契约的已知边界（docs/cache-provenance.md 有口径）。
+
+### 版本与发布纪律（R-04，2026-09-17）〔出处：R-03/04/05 合并任务书〕
+
+- **tag↔VERSION 同步**：VERSION 文件变更必须与同名 annotated tag 同批落地（tag 名=VERSION 文件内容字面，如 `2.0.0`）。tag 创建后 doctor 版本段应 clean（`VTX_DOCTOR_OFFLINE=1 vtx.py doctor --json` 顶层 `version`/`state` 达标）。
+- **语义**：tag 锚定可信任状态——带已知缺陷的状态不打 release tag。
+- **兼容**：doctor「无 tag 不告警」为 §5.1 设计语义，本纪律不改变该行为；tag 为发布锚，非门控条件。
