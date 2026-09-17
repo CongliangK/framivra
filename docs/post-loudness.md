@@ -4,7 +4,7 @@
 > `all`/`audio` 产出的 out/audio.wav 恒为「归一+限幅」终态（`volume=…dB,alimiter=
 > limit=0.599:level=false:latency=true` + 复测 ±1.5 LU + 时长 ±1 采样 + 回执
 > `post_loudness` 字段），R4 链简化为 `all --until video` → `mux` → `qc`。
-> scripts/post_loudness.py/.sh 保留为兼容薄壳（调 vtx.stages.post_loudness_compat；
+> scripts/post_loudness.py 与 scripts/post_loudness.sh 保留为兼容薄壳（调 vtx.stages.post_loudness_compat；
 > 真幂等仅限「回执 sha256 一致的终态」或「I 已在 target」两种情形——对限幅损耗
 > 产物重跑会按 v1 旧语义再推增益（实测 +1.9dB 蠕升），函数打印蠕升警告）。
 > **本文以下内容留档历史链路。**
