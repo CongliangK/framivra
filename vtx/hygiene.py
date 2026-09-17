@@ -264,7 +264,7 @@ def gc_plan(c, keep_days: int = 0):
     # （subs*.ass/qc_clean/vseg* 另有专属类别，这里排除避免重复计数）
     known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
              "subs.ass", "subs_draft.ass", "qc_clean.mp4",
-             "vseg", "vseg_draft", "vseg_qc", "preview", "report_audio"} | set(KEEP_BASELINES)
+             "vseg", "vseg_draft", "vseg_qc", "vseg_pass", "preview", "report_audio"} | set(KEEP_BASELINES)
     # v2 §2.1 不变量 ①：插件声明的 cache 子目录并入白名单（自立目录型插件产物
     # 不再判 legacy 垃圾）；P1-2 空转 = 空集，白名单零变化。传 c 使「仅对本
     # timeline 生效的插件」过滤生效（与 get_cache_dirs docstring 口径一致）。

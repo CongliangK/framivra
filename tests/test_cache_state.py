@@ -105,6 +105,39 @@ class GcExemptions(unittest.TestCase):
                              listed, f"qc_pass_segs 被列入: {listed}")
             self.assertIn(str(root / 'cache' / 'audio' / 'deadbeef0000.wav'), listed)
 
+    def test_vseg_pass_exempt_from_gc_plan(self):
+        """R-03.J1（⑭ 收尾）：cache/vseg_pass 整目录入 gc 白名单——gc_plan 各回收
+        类别（vseg/legacy/tmp/out_intermediate/plugin_cache）零命中 vseg_pass。
+
+        背景（R12-G1-001 同案 ⑭ gc 交互）：known 集独缺 vseg_pass 时该目录整体落
+        legacy 类别随 gc 回收——pass 中间物可再生，但温态冻结语义失效、下次渲染
+        全冷建（900s ≈ 3.2× 旧链式，KNOWN-ISSUES ⑭ 在案）。修复=known 集补录
+        （hygiene.py :265-267），豁免语义与同族先例 preview 一致（整目录豁免）。
+        c.dry=True 纯计算路径（gc_plan 即 `vtx gc --dry` 的计算侧，无副作用）。
+        对照组：cache 根下白名单外杂散目录仍须落 legacy——豁免不得扩大到整个
+        cache 根（镜像 test_new_state_files_exempt_from_gc_plan 对照组先例）。
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            p = _tl(root)
+            (root / 'cache' / 'vseg_pass').mkdir(parents=True)
+            (root / 'cache' / 'vseg_pass' / 'p0_deadbeef0000.mkv').write_bytes(b'x' * 16)
+            # 对照组：白名单外杂散目录仍回收
+            (root / 'cache' / 'legacy_junk').mkdir()
+            (root / 'cache' / 'legacy_junk' / 'old.bin').write_bytes(b'y' * 16)
+            c = Ctx(p)
+            c.dry = True   # gc_plan 纯计算无副作用（:89 先例同口径）
+            plan = hygiene.gc_plan(c)
+            vpass = str(root / 'cache' / 'vseg_pass')
+            for cat in ('vseg', 'legacy', 'tmp', 'out_intermediate', 'plugin_cache'):
+                listed = [str(e[0]) for e in plan.get(cat, [])]
+                hits = [x for x in listed if x == vpass or x.startswith(vpass + os.sep)]
+                self.assertEqual(hits, [],
+                                 f"gc_plan {cat} 类别命中 vseg_pass: {hits}")
+            self.assertIn(str(root / 'cache' / 'legacy_junk'),
+                          [str(e[0]) for e in plan['legacy']],
+                          "对照组杂散目录未被回收——白名单误扩大")
+
 class StaleReceiptArchive(unittest.TestCase):
     """⑮（2026-09-14 登记+最小修复）：回执输入指纹翻转（如 validate-only 运行在
     新指纹下落笔）不再静默归零旧全量阶段记录——先轮转单槽旁证 out/receipt.prev.json。
