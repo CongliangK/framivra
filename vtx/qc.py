@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import loudness_cache
+from .hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
 QC_CUT_MEAN_MAX = 6.0        # 底轨切点帧比对：平均像素差上限
@@ -240,6 +241,62 @@ def qc(c):
             return None
         return (min(a_ for a_, _ in spans), max(b_ for _, b_ in spans))
 
+    def gfx_content_crop(cl):
+        """gfx overlay 内容域 crop（R-05 探针口径对齐，2026-09-17 定谳单）：
+        从 png 稳态帧（dur//2）alpha 通道提取内容 bbox，叠加 clip x/y 放置偏移，
+        偶对齐后作 fdiff 采样域。背景：c4_mini 类「全画布 png+小内容条带」页
+        （内容仅占画布 4.63%）在整帧 48:27 口径被稀释——放置域实测 cover 82%
+        vs 整帧 2.9%，双阈双低误判「未生效」恒红。png 缺失/读取失败/内容全透明
+        （空页）/矩形退化 → None 回落整帧口径（旧行为）。仅改采样域：阈值、
+        检查名、checks 数量全部不变；域内信号单调不弱于整帧，既有 PASS 不翻。"""
+        try:
+            png = gfx_dir(c, cl) / f"f{cl['dur'] // 2:04d}.png"
+            if not png.is_file():
+                return None
+            with png.open("rb") as fh:
+                head = fh.read(24)
+            if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+                return None
+            pw = int.from_bytes(head[16:20], "big")
+            ph = int.from_bytes(head[20:24], "big")
+            if pw <= 0 or ph <= 0:
+                return None
+            tmp = c.cache / "qc_gfx_bbox.raw"
+            c.run(["ffmpeg", "-v", "error", "-y", "-i", str(png), "-vf", "format=rgba",
+                   "-frames:v", "1", "-f", "rawvideo", str(tmp)], need=False)
+            raw = tmp.read_bytes(); tmp.unlink()
+            if len(raw) < pw * ph * 4:
+                return None
+            # alpha>24 视为内容（与 QC_PIXEL_DIFF 同量级的存在性阈）；
+            # translate + 逐行 find 全 C 路径，1080p 单帧毫秒级。
+            t = raw[3::4].translate(bytes(1 if v > 24 else 0 for v in range(256)))
+            x0 = y0 = x1 = y1 = -1
+            for y in range(ph):
+                row = t[y * pw:(y + 1) * pw]
+                i = row.find(1)
+                if i < 0:
+                    continue
+                if y0 < 0:
+                    y0 = y
+                y1 = y
+                if x0 < 0 or i < x0:
+                    x0 = i
+                j = row.rfind(1)
+                if j > x1:
+                    x1 = j
+            if x0 < 0 or y0 < 0:
+                return None   # 内容全透明（空页）→ 回落整帧，判定将如实 FAIL
+            ox = int(cl.get("x", 0)); oy = int(cl.get("y", 0))
+            cx0 = max(0, x0 + ox); cy0 = max(0, y0 + oy)
+            cx1 = min(c.w, x1 + 1 + ox); cy1 = min(c.h, y1 + 1 + oy)
+            w = cx1 - cx0; h = cy1 - cy0
+            if w < 2 or h < 2:
+                return None
+            w -= w % 2; h -= h % 2   # 偶对齐（对齐 composite 放置 //2*2 口径）
+            return f"{w}:{h}:{cx0}:{cy0}"
+        except Exception:
+            return None   # 任何失败回落整帧——探针永不因本 helper 阻断 qc
+
     # ---- 并行任务收集（结果按 timeline 顺序回填，checks 顺序不变）----
     tasks = []   # (key, callable)
     ti_ = 0
@@ -284,8 +341,9 @@ def qc(c):
                 if e is not None:
                     exempt[key] = e
                 else:
-                    launch(lambda probes=probes, key=key:
-                           up_res.__setitem__(key, [fdiff(m, tag=f"{m}_{i}") for i, m in enumerate(probes)]))
+                    gcrop = gfx_content_crop(cl)   # R-05 探针口径对齐（None=整帧回落）
+                    launch(lambda probes=probes, key=key, gcrop=gcrop:
+                           up_res.__setitem__(key, [fdiff(m, crop=gcrop, tag=f"{m}_{i}") for i, m in enumerate(probes)]))
                 continue
             windowed = any(k in cl for k in ("scale", "x", "y"))
             m = cl["dst_in"] + cl["dur"] // 2
