@@ -12,8 +12,8 @@
 # 终态，原独立 post_loudness 步骤与计时行移除）：
 #   1) env python3 $VTX -t … all --until video   # 串行头+并行波+video 尾（audio 含限幅）
 #   2) env python3 $VTX -t … mux                 # libfdk_aac 192k 封装
-#   3) env python3 $VTX -t … qc                  # 预期 74/75、exit 1=c4_mini 已知
-#                                               # 探针假阴性，不中断基准
+#   3) env python3 $VTX -t … qc                  # 预期 exit 0 全过（c4_mini 探针
+#                                               # 口径已修，R-05.J1；rc=1 非预期）
 #   4) env python3 apps/gates/content_gates.py -t … --media …/out/final.mp4  # 五门
 #
 # --with-4k（默认出列，方案三.6「4K 剔出冷跑关键路径」）：验证链后追加发布链分项
@@ -159,7 +159,7 @@ for i in $(seq 1 "$ROUNDS"); do
   run_step qc env python3 "$VTX" -t "$PROJ/timeline.json" qc || true
   case "$(cat "$TDIR/rc_${ROUND}_qc")" in
     0) echo "  （qc rc=0：全过）";;
-    1) echo "  （qc rc=1：74/75 c4_mini 已知假阴性形态，属预期，不中断）";;
+    1) echo "⚠ qc rc=1 非预期（c4_mini 探针口径已修 R-05.J1，基准应全绿；查 out/qc_report.json 失败项）"; UNEXPECTED_FAIL=1;;
     *) echo "⚠ qc 退出码 $(cat "$TDIR/rc_${ROUND}_qc") 非预期（非 0/1）"; UNEXPECTED_FAIL=1;;
   esac
   # gates 在项目目录内跑：--audio-wav 缺省 ./out/audio.wav 按 CWD 解析（G1 口径 = wav 源）
