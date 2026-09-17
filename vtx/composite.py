@@ -399,7 +399,7 @@ class RenderPlan:
         c = self.c
         seglen = b - a
         pdir = c.cache / "vseg_pass"; pdir.mkdir(parents=True, exist_ok=True)
-        prev_key = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}"
+        prev_key = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
         prev = None            # None = 主输入用 canvas（pass0）
         n = len(layers_subset)
         vcodec, enc = pick_vcodec(c, self.draft)

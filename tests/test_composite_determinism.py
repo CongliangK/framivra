@@ -173,6 +173,73 @@ class TestPassFreshSidecar(unittest.TestCase):
             self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
 
 
+class TestPassKeySubsSeparation(unittest.TestCase):
+    """R-03.J2（R12-G1-001）键分离回归：pass 键种子必须掺 with_subs 政策位。
+
+    机理（R12-G1-001 互染，双席互证+联席核准在案）：正式段（with_subs=True，图尾
+    subtitles rgba 钉定）与 qc 基准段（with_subs=False，图尾 null）图尾两分支产出
+    异质内容，而键种子 prev_key 若只有 a|b|WxH|draft 四元，两路径的 prev_key/层
+    身份/合成代码摘要全同源 → 同 pkey 写同一 cache/vseg_pass/p{k}_<pkey>.mkv——
+    先渲者占键，后渲者读错域中间物。段级无染（段键 _seg_content_key 的字幕字节面
+    已随 with_subs 漂移），染在 pass 级；修复位=_composite_passes prev_key 尾部掺
+    |{int(bool(with_subs))}。代价（在案声明）：键变 → 既有 vseg_pass 缓存一次性
+    全失效（下次全量冷建），属修复预期。
+
+    驱动形态：c.dry=True 纯计算（dry 分支命令经 Ctx.run 只打印不执行，此处录制）
+    ——pass 键自中间物目标文件名 p{k}_{pkey}.part.mkv 提取，锁产品路径的键计算
+    本身，非复制品重算。零 ffmpeg 依赖（pick_vcodec 正式档无 gpu 不探测；
+    _pass_fresh 对缺失产物快速 False，不触 ffprobe）。
+    """
+
+    def _p0_pkey(self, with_subs):
+        class _Ctx:
+            pass
+        outs = []
+
+        def _run(cmd, need=True):   # dry：只录命令尾元（中间物 .part.mkv 路径）
+            outs.append(str(cmd[-1]))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with tempfile.TemporaryDirectory(prefix="vtx_pkey_") as td:
+            d = Path(td)
+            c = _Ctx()
+            c.fps, c.spf, c.dur = 30, 1.0 / 30, 4.0
+            c.w, c.h, c.dry = 64, 64, True
+            c.cache = d / "cache"
+            c.run = _run
+            plan = RenderPlan(c=c, draft=False, f=1.0, W=64, H=64,
+                              nframes=None, nseg=1, layers=[])
+            sl = [{"cl": {"dst_in": 0, "dur": 30}, "gfx": True,
+                   "pngdir": d / "seqA", "x": 0, "y": 0, "w2": None, "h2": None, "ti": 0},
+                  {"cl": {"dst_in": 10, "dur": 30}, "gfx": True,
+                   "pngdir": d / "seqB", "x": 8, "y": 4, "w2": None, "h2": None, "ti": 0}]
+            sfile = None
+            if with_subs:
+                # 尾支 last and with_subs 触 subtitles=filename=（filter_filename
+                # 解析路径），dry 下仍须真实路径——哑 ass 只走命令字符串不真渲
+                sfile = d / "seg.ass"
+                sfile.write_text("[Script Info]\n", encoding="utf-8")
+            plan._composite_passes(sl, d / "seg.mp4", with_subs, a=0, b=120,
+                                   sub_file=sfile)
+        pks = re.findall(r"p(\d+)_([0-9a-f]{12})\.part\.mkv$", "\n".join(outs), re.M)
+        self.assertTrue(pks, f"dry 命令未录得中间物 pass 键: {outs}")
+        return dict(pks)
+
+    def test_with_subs_flips_pass_key(self):
+        """同 layers 同窗口 with_subs=True/False：pass 键必分离（R12-G1-001 关闭）。"""
+        k_true = self._p0_pkey(True)
+        k_false = self._p0_pkey(False)
+        self.assertIn("0", k_true)
+        self.assertIn("0", k_false)
+        self.assertNotEqual(k_true["0"], k_false["0"],
+                            "with_subs 两路径 pass 键同源——pass 级互染未关闭")
+
+    def test_same_subs_mode_key_stable(self):
+        """同 with_subs 复算键稳定：政策位掺入不得破坏温态命中确定性。"""
+        self.assertEqual(self._p0_pkey(True), self._p0_pkey(True))
+        self.assertEqual(self._p0_pkey(False), self._p0_pkey(False))
+
+
 @unittest.skipUnless(_have_ffmpeg_x264(), "需要 ffmpeg 与 libx264 编码器")
 class TestCrossRunDeterminism(unittest.TestCase):
     """dense-EOF 端点图的跨运行确定性（真渲染，走 RenderPlan.composite 逐层 pass 路径）。
