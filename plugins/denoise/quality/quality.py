@@ -109,6 +109,9 @@ def drift_check(ref: np.ndarray, deg: np.ndarray, fs: int = MEASURE_FS) -> dict:
     活动门(改尺 v3,同日批准):仅活动帧(帧 RMS dBFS>第 10 百分位+10dB,
     =seg_snr 活动帧定义)测滞后——噪声主导帧滞后无定义(与 v1 同族根因:
     在无定义处做测量;静帧门 1e-6 形同虚设实证 -37.8dBFS vs -29.5dBFS)。
+    双侧收口(改尺 v4,同日第三次批准):ref 与 deg 各自过本侧活动门方测
+    滞后——链压静帧(v1 降噪 -19dB)deg 侧无定义,单侧门漏放。三处同族
+    根因(搜索窗出支撑/ref 侧无定义/deg 侧无定义)至此语义闭合。
     返回 {frame_lags_samples, lag_std_samples, lag_std_ms, max_dev_samples,
           suspicious, reason}。
     """
@@ -122,16 +125,22 @@ def drift_check(ref: np.ndarray, deg: np.ndarray, fs: int = MEASURE_FS) -> dict:
     # 第 10 百分位为 floor,仅活动帧(floor+10dB 以上)测滞后。原静帧门 1e-6
     # (=-120dBFS)对真实语料形同虚设,噪声主导帧相关峰随机(无定义滞后入统计
     # =与 v1 搜索窗同族根因:「在无定义处做测量」)。
+    # 改尺 v4(同日第三次批准·同族收口):活动门双侧化——ref 与 deg 各自超其
+    # 本侧 floor+10dB 方测滞后(v1 链将帧压静 ~19dB 时 deg 侧无定义,ref 单侧
+    # 门漏放;实证离群帧 deg 中位 -42.5dBFS vs 正常 -23.4dBFS)。
     idx_all = np.arange(frame)[None, :] + hop * np.arange(max(1, 1 + (n_all - frame) // hop))[:, None]
-    rms_all = np.sqrt(np.mean(ref[idx_all] ** 2, axis=1))
-    db_all = 20.0 * np.log10(np.maximum(rms_all, 1e-10))
-    floor_db = float(np.percentile(db_all, 10))
+    db_ref = 20.0 * np.log10(np.maximum(np.sqrt(np.mean(ref[idx_all] ** 2, axis=1)), 1e-10))
+    db_deg = 20.0 * np.log10(np.maximum(np.sqrt(np.mean(deg[idx_all] ** 2, axis=1)), 1e-10))
+    floor_ref = float(np.percentile(db_ref, 10))
+    floor_deg = float(np.percentile(db_deg, 10))
     lags = []
     for start in range(0, n_all - frame, hop):
         r = ref[start : start + frame]
         d = deg[start : start + frame]
-        if 20.0 * np.log10(max(np.sqrt(np.mean(r * r)), 1e-10)) <= floor_db + 10.0:
-            continue  # 非活动帧:滞后无定义,不入统计(改尺 v3)
+        if 20.0 * np.log10(max(np.sqrt(np.mean(r * r)), 1e-10)) <= floor_ref + 10.0:
+            continue  # ref 非活动帧:滞后无定义,不入统计(改尺 v3)
+        if 20.0 * np.log10(max(np.sqrt(np.mean(d * d)), 1e-10)) <= floor_deg + 10.0:
+            continue  # deg 非活动帧:同上(改尺 v4 双侧收口)
         lags.append(_xcorr_lag(r, d, frame_max_lag))
     if len(lags) < 3:
         return {"frame_lags_samples": lags, "lag_std_samples": 0.0, "lag_std_ms": 0.0,
