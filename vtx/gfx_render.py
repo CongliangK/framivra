@@ -21,12 +21,13 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
   VTX_GFX_STATIC（默认 1）按页面 __vtx_static_spans 声明字节复制静态跨度成员帧。
   原 foreignObject 快照批量通路已判死移除（FO 图像上下文光栅化固有偏差）。
 
-纯标准库（socket/struct/base64/json/zlib）+ numpy（仅两截 alpha 解算与 PNG
+纯标准库（socket/struct/base64/hashlib/json/zlib）+ numpy（仅两截 alpha 解算与 PNG
 编解码；无 numpy 时返回不可用，调用方全量回落 CLI）。
 
 独立测试：python3 gfx_render.py <html> <outdir> <N帧> [--tabs 4] [--opaque-check]
 """
 import base64
+import hashlib
 from pathlib import Path
 import json
 import os
@@ -163,10 +164,22 @@ def png_encode_rgba(arr) -> bytes:
 
 # ---------------------------------------------------------------- 最小 WebSocket 客户端（RFC6455 客户端子集）
 
+_WS_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+_WS_FRAME_MAX = 1 << 30   # 单帧 1GiB 防御上限：流错乱时防内存爆
+
+
 class WSConn:
     def __init__(self, port, path, timeout=20):
+        self._rbuf = bytearray()   # 握手响应同包尾随的帧字节（罕见），交 recv 消费
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         self.sock.settimeout(timeout)
+        try:
+            self._handshake(port, path)
+        except BaseException:
+            self.sock.close()   # 握手半途失败显式关 fd（防异常 traceback 持帧引用拖延回收）
+            raise
+
+    def _handshake(self, port, path):
         key = base64.b64encode(os.urandom(16)).decode()
         self.sock.sendall((
             f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
@@ -178,13 +191,27 @@ class WSConn:
             if not chunk:
                 raise ConnectionError("ws handshake failed")
             buf += chunk
-        if b" 101 " not in buf.split(b"\r\n", 1)[0]:
-            raise ConnectionError(f"ws handshake rejected: {buf[:120]!r}")
+        head, _, rest = buf.partition(b"\r\n\r\n")
+        self._rbuf += rest
+        if b" 101 " not in head.split(b"\r\n", 1)[0]:
+            raise ConnectionError(f"ws handshake rejected: {head[:120]!r}")
+        # G1-049 销号（RECP-20260916-002）：校验 Sec-WebSocket-Accept =
+        # b64(sha1(key + GUID))（RFC6455 §4.2.2），防握手降级/错接。回环 Chrome
+        # 恒带此头，实跑验证不引入回归。
+        expected = base64.b64encode(
+            hashlib.sha1((key + _WS_ACCEPT_GUID).encode()).digest()).decode()
+        accept = None
+        for line in head.decode("latin-1").split("\r\n")[1:]:
+            name, _, val = line.partition(":")
+            if name.strip().lower() == "sec-websocket-accept":
+                accept = val.strip()
+                break
+        if accept != expected:
+            raise ConnectionError(f"ws handshake accept mismatch: {accept!r}")
 
-    def send_text(self, text):
-        data = text.encode()
-        hdr = bytearray([0x81])
-        n = len(data)
+    def _send_frame(self, op, payload):
+        hdr = bytearray([0x80 | op])
+        n = len(payload)
         if n < 126:
             hdr.append(0x80 | n)
         elif n < 65536:
@@ -195,29 +222,56 @@ class WSConn:
             hdr += struct.pack(">Q", n)
         mask = os.urandom(4)
         hdr += mask
-        self.sock.sendall(bytes(hdr) + bytes(b ^ mask[i & 3] for i, b in enumerate(data)))
+        self.sock.sendall(bytes(hdr) + bytes(b ^ mask[i & 3] for i, b in enumerate(payload)))
+
+    def send_text(self, text):
+        self._send_frame(0x1, text.encode())
 
     def _recv_exact(self, n):
-        buf = b""
+        buf = bytearray(self._rbuf[:n])
+        del self._rbuf[:len(buf)]
         while len(buf) < n:
             chunk = self.sock.recv(n - len(buf))
             if not chunk:
                 raise ConnectionError("ws closed")
             buf += chunk
-        return buf
+        return bytes(buf)
 
     def recv_msg(self):
-        hdr = self._recv_exact(2)
-        op = hdr[0] & 0x0F
-        ln = hdr[1] & 0x7F
-        if ln == 126:
-            ln = struct.unpack(">H", self._recv_exact(2))[0]
-        elif ln == 127:
-            ln = struct.unpack(">Q", self._recv_exact(8))[0]
-        if hdr[1] & 0x80:  # 服务器帧按协议不掩码，防御性处理
-            mask = self._recv_exact(4)
-            return op, bytes(b ^ mask[i & 3] for i, b in enumerate(self._recv_exact(ln)))
-        return op, self._recv_exact(ln)
+        """读一条完整消息：自动重组分片；ping→回 pong、pong→忽略（RECP-20260916-002：
+        原实现把控制帧/分片原样喂 json.loads，Chrome 一旦发 ping 即解析失败，触发
+        无谓的浏览器重启自愈）。close 帧仍原样返回由调用方处理。"""
+        op, frag = None, bytearray()
+        while True:
+            hdr = self._recv_exact(2)
+            fin, top = hdr[0] & 0x80, hdr[0] & 0x0F
+            ln = hdr[1] & 0x7F
+            if ln == 126:
+                ln = struct.unpack(">H", self._recv_exact(2))[0]
+            elif ln == 127:
+                ln = struct.unpack(">Q", self._recv_exact(8))[0]
+            if ln > _WS_FRAME_MAX:
+                raise ConnectionError(f"ws frame too large: {ln}")
+            if hdr[1] & 0x80:  # 服务器帧按协议不掩码，防御性处理
+                mask = self._recv_exact(4)
+                payload = bytes(b ^ mask[i & 3] for i, b in enumerate(self._recv_exact(ln)))
+            else:
+                payload = self._recv_exact(ln)
+            if top == 0x8:            # close：上抛给 call() 判连接关闭
+                return 0x8, payload
+            if top == 0x9:            # ping → pong（控帧可夹在数据分片之间）
+                self._send_frame(0xA, payload)
+                continue
+            if top == 0xA:            # pong → 忽略
+                continue
+            if op is None:
+                if top == 0x0:
+                    raise ConnectionError("ws unexpected continuation frame")
+                op, frag = top, bytearray(payload)
+            else:                     # 数据续帧（top==0x0）
+                frag += payload
+            if fin:
+                return op, bytes(frag)
 
     def close(self):
         try:
@@ -231,10 +285,18 @@ class Tab:
 
     def __init__(self, port, ws_path, width=1920, height=1080):
         self.ws = WSConn(port, ws_path)
-        self._mid = 0
-        self.call("Page.enable")
-        self.call("Emulation.setDeviceMetricsOverride",
-                  width=width, height=height, deviceScaleFactor=1, mobile=False)
+        try:
+            self._mid = 0
+            self.call("Page.enable")
+            self.call("Emulation.setDeviceMetricsOverride",
+                      width=width, height=height, deviceScaleFactor=1, mobile=False)
+        except BaseException:
+            self.ws.close()   # 半初始化 Tab 显式关 fd（RECP-20260916-002）
+            raise
+
+    def close(self):
+        """释放本 tab 的 CDP socket（对端已死时为无害 no-op，close 内吞 OSError）。"""
+        self.ws.close()
 
     def call(self, method, timeout=30, **params):
         self._mid += 1
@@ -348,7 +410,17 @@ class Browser:
             self.tab_ws_urls.append("/" + url.split("/", 3)[3])
 
     def open_tabs(self):
-        return [Tab(self.port, u, self.width, self.height) for u in self.tab_ws_urls]
+        # 部分失败回收：第 k 个 Tab 起不来时，前 k-1 个已建会话显式关闭再上抛
+        # （RECP-20260916-002；原 list 推导式泄漏半建池，仅靠 GC 兜底）。
+        tabs = []
+        try:
+            for u in self.tab_ws_urls:
+                tabs.append(Tab(self.port, u, self.width, self.height))
+        except BaseException:
+            for t in tabs:
+                t.close()
+            raise
+        return tabs
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -625,7 +697,14 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     # Browser 构造/启动放在 work 空判之后（v2 阶段 1 页内分片）：全缓存块零
     # Chrome；ms_total 仍从启动完成后起算（与旧语义一致，不含浏览器启动耗时）
     browser = Browser(chrome_path, tabs_n, width, height)
-    browser.start()
+    try:
+        browser.start()
+    except BaseException:
+        # start 在下方 try(其 finally 才调 stop)之外,半途失败时 Chrome 进程
+        # (起了但 devtools 未就绪/建 tab 失败)与 mkdtemp 临时目录双泄漏且调用方
+        # 拿不到 stop——此处显式回收再上抛(RECP-20260916-002 主修缺陷)。
+        browser.stop()
+        raise
     pool = []
     t0 = time.monotonic()
     failed = []
@@ -889,6 +968,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             for t in threads:
                 t.join()
     finally:
+        for t in pool:
+            t.close()   # 显式释放 tab CDP fd(对端将随 stop() 退出,无害)
         browser.stop()
     dt = (time.monotonic() - t0) * 1000
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
