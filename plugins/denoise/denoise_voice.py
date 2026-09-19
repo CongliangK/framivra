@@ -11,6 +11,7 @@
 CLI 保持 v1 行为（mono 输出），插件产物传 True（对齐内核裸提取的 48k stereo
 契约，防混音 graph 通道协商分叉）。
 """
+import argparse
 import os
 import subprocess
 import sys
@@ -94,19 +95,21 @@ sf.write(r"{denoised}", out.cpu().numpy(), sr_out)
 
 
 def main(argv=None) -> int:
-    args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2:
-        print("用法: denoise_voice.py <in.wav> <out.wav>", file=sys.stderr)
-        return 2
-    IN, OUT = args
+    parser = argparse.ArgumentParser(
+        prog="denoise_voice.py",
+        description="口播标准降噪链 v1：陷波(ffmpeg) → Resemble 仅降噪(conda,CPU) "
+                    "→ 回 48kHz(mono)。环境缺失 fail-hard 不产半链产物。")
+    parser.add_argument("in_wav", metavar="in.wav", help="输入 wav")
+    parser.add_argument("out_wav", metavar="out.wav", help="输出 wav（48kHz mono）")
+    args = parser.parse_args(argv)
     miss = missing_env()
     if miss:
         print("✗ denoise 环境缺失：", file=sys.stderr)
         for m in miss:
             print(f"    - {m}", file=sys.stderr)
         return 1
-    chain(IN, OUT)
-    print(f"OK -> {OUT}")
+    chain(args.in_wav, args.out_wav)
+    print(f"OK -> {args.out_wav}")
     return 0
 
 
