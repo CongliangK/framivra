@@ -285,7 +285,7 @@ python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/fi
 
 ## 命令正字法速查（易抄错项）
 
-- **vtx 子命令全集**：`all | validate | audit | prepare | gfx | video | audio | mux | qc | clean | gc | df | snapshot`。常用开关：`-t <timeline.json>`、`--draft [--frames N]`（仅 video/mux）、`--gpu`（仅 video）、`all --until <stage>`（截断，如 `all --until video`）、`gc --dry/--all`。入口：`python3 $VTX …`。
+- **vtx 子命令全集**：`all | validate | audit | prepare | gfx | video | audio | mux | qc | clean | gc | df | snapshot | subs | diff`（subs=字幕校验，diff=时间线差异审计；全集对照 `vtx/cli.py` STAGES 表）。常用开关：`-t <timeline.json>`、`--draft [--frames N]`（仅 video/mux）、`--gpu`（仅 video）、`all --until <stage>`（截断，如 `all --until video`）、`gc --dry/--all`。入口：`python3 $VTX …`。
 - **json2blend**（⚠ **必须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError**）：
   ```bash
   blender --background --factory-startup --python $VIDEO_TOOLS/apps/blender-bridge/json2blend.py -- \

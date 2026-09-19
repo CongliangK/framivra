@@ -11,7 +11,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 
 ```
 video_tools/
-├── vtx/            ① 内核（永不可关）：timeline schema/validate/diff/subs/audit/snapshot
+├── vtx/            ① 内核（永不可关，宪法信条）：timeline schema/validate/diff/subs/audit/snapshot
 │                      + 渲染链 prepare/gfx/video/audio/mux + qc（含 TP）+ 混音响度终链
 │                      （两遍静态增益 -14 LUFS + alimiter 限幅已并入 audio，§1.2）
 │                      + 内容寻址缓存（gc/df/VERSIONS）+ vtx/api.py+vtx/pluginlib/
@@ -88,7 +88,7 @@ video_tools/
 | B 站投稿封面 | `env python3 <video_tools>/apps/cover/make_cover.py all --out <项目>/cover --bg-src <imgen原图> --title "…" --sub "…"`（规格/QC 见 `skills/tech-talk/references/cover.md`） |
 | Blender 审片工程 | `blender --background --factory-startup --python <video_tools>/apps/blender-bridge/json2blend.py -- <项目>/timeline.json <项目>/preview.blend`（json2blend/verify_blend 须由 blender 解释器运行，python3 直跑会 ModuleNotFoundError） |
 | Blender 自动导出（v1.2） | timeline 顶层 `"blender_bridge": true`（或 `{out, verify}`）→ `vtx all` 收尾自动导出 `<项目>/preview.blend`（plugins/blender-bridge，免手敲命令；blender 缺失收尾报错不吞） |
-| BGM 音轨直引工程 JSON（v1.2） | sources[] 加 `{"id":"bgm_main","path":"<music_tools 工程>.json","bgm":{"output":"master"}}`（output 亦可 `stem:<轨名>` 取分轨总线 bus.wav，各 stem 挂独立轨自行混音）→ validate/prepare 自动 `bgm render` → 48k stereo 入内容寻址缓存（plugins/bgm-render；一工程共享缓存只渲一次多源派生，工程/$ref/参数变更自动重渲） |
+| BGM 音轨直引工程 JSON（v1.2） | sources[] 加 `{"id":"bgm_main","path":"<music_tools 工程>.json","bgm":{"output":"master"}}`（output 双档：`master` 母带终态 / `premaster` 母前档，plugins/bgm-render `OUTPUTS`；亦可 `stem:<轨名>` 取分轨总线 bus.wav，各 stem 挂独立轨自行混音）→ validate/prepare 自动 `bgm render` → 48k stereo 入内容寻址缓存（plugins/bgm-render；一工程共享缓存只渲一次多源派生，工程/$ref/参数变更自动重渲） |
 | BGM 分轨审计包 | `python3 <video_tools>/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json` |
 | 音视频同步 / 降噪 | `env python3 <video_tools>/apps/sync/sync_audio.py …` / `env python3 <video_tools>/plugins/denoise/denoise_voice.py …`（响度限幅已并入 vtx audio，无独立步骤） |
 | 缓存治理 | `... gc --dry` / `gc` / `df` / `snapshot` |

@@ -8,7 +8,7 @@
 
 ```html
 <script>
-const FPS = 30, N = <总帧数>;              // 全管线精确 30fps；N == timeline 里该 overlay 的 out - in
+const FPS = 30, N = <总帧数>;              // 全管线精确 30fps；N = 该 gfx 页所属事件的帧数（out−in）
 const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
 const t = Math.min(f / FPS, N / FPS);      // t：本图层局部时间（秒）
 /* 全部动画状态 = t 的纯函数。禁止：CSS animation/transition、Date.now()、
@@ -18,7 +18,7 @@ document.body.style.opacity = 1 - clamp01(seg(t, N/FPS - 0.4, N/FPS)); // 结尾
 ```
 
 - 画布固定 `1920x1080`、`background:transparent`、`overflow:hidden`；字体 `"Noto Sans CJK SC", sans-serif`（系统已装，无头渲染正常）。
-- 动效时长 = timeline `out - in` 帧数；页面内容的时间轴从 0 开始（vtx 负责把它平移到成片时间轴）。
+- 动效时长 = 所属事件的帧数（`out`−`in`，契约字段见 `docs/ARCHITECTURE.md`）；页面内容的时间轴从 0 开始（vtx 负责把它平移到成片时间轴）。
 - vtx 逐帧截图渲染 gfx 帧。默认走 **CDP 常驻浏览器引擎**（多 tab/页并行；不透明页与 CLI 逐字节一致、透明页双探针解算 alpha，≤5/255 舍入级）；失败自动回落 CLI 逐帧路径（`google-chrome --headless --screenshot --default-background-color=00000000 "?f=N"`），输出同为带 alpha 的 PNG 序列。两引擎对页面唯一要求：**从 `?f=` 查询参数确定性渲染**（CDP 引擎以 location.search 变更确认新文档，页面不得依赖滚动/焦点等副作用）。
 - **外部依赖声明（cache_dependencies 契约）**：gfx 页引用的外部本地资产（CSS/JS/图片/字体等）必须在 timeline `project.cache_dependencies` 显式声明（相对项目根的路径列表）。声明的依赖内容参与 gfx 缓存键与回执输入身份——**改依赖即换键重渲**；依赖不存在或非文件会在 vtx 构造期直接报错。声明属项目级：任一依赖变化会使全部 gfx 页重渲（保守过失效，可接受）；未声明的间接依赖、网络资源不追踪，建议内嵌素材或全部显式声明。详见 `docs/cache-provenance.md`。
 - **可选 Canvas 导出通道**：整页预期输出就是单个 canvas 的页面可选择实现导出函数：在返回前同步画完 `?f=N` 请求帧，然后 `window.__vtx_export_png = () => canvas.toDataURL('image/png')`。画布位图须精确等于渲染宽高（通常 1920×1080），叠层用透明画布；CSS 装饰与其他 DOM 元素**不**包含在 toDataURL 里——它们属于预期输出就不要 opt-in。协议期望立即返回字符串（非 Promise），不等待异步资源。渲染器校验 data URL/PNG 头/尺寸/校验和后直接缓存该帧（整体绕过截图机制，含透明页双探针路径）；无效导出自动回落同帧双背景截图，未实现该函数的页面渲染路径不变。本通道协议自始未变、保持可选；它不是批量通道（仍是逐帧导出）——曾设想替代它的 foreignObject 快照批量通道已因固有像素偏差经 golden 全零门槛判死移除，`__vtx_export_png` 校验失败的回落与路径打标（`canvas×N`/`canvas_fallback×N`）不变。详见 `docs/canvas-export.md`。
