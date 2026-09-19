@@ -106,6 +106,9 @@ def drift_check(ref: np.ndarray, deg: np.ndarray, fs: int = MEASURE_FS) -> dict:
     帧级搜索窗(改尺 v2,经理批准 2026-09-19):min(全局窗 ±1s, frame//2)——
     搜索窗不得超出帧支撑(超支撑=循环相关比零/环绕=边界伪峰;原实现 ±1s 对
     0.5s 帧系实现 bug,伪峰贴 ±0.9s 边界误触发排除门 61%)。
+    活动门(改尺 v3,同日批准):仅活动帧(帧 RMS dBFS>第 10 百分位+10dB,
+    =seg_snr 活动帧定义)测滞后——噪声主导帧滞后无定义(与 v1 同族根因:
+    在无定义处做测量;静帧门 1e-6 形同虚设实证 -37.8dBFS vs -29.5dBFS)。
     返回 {frame_lags_samples, lag_std_samples, lag_std_ms, max_dev_samples,
           suspicious, reason}。
     """
@@ -114,12 +117,21 @@ def drift_check(ref: np.ndarray, deg: np.ndarray, fs: int = MEASURE_FS) -> dict:
     frame = int(DRIFT_FRAME_S * fs)
     hop = int(DRIFT_HOP_S * fs)
     frame_max_lag = min(int(ALIGN_MAX_LAG_S * fs), frame // 2)  # 改尺 v2(见 docstring)
+    n_all = min(len(ref), len(deg))
+    # 改尺 v3(经理批准 2026-09-19):活动门=seg_snr 成文口径复用——帧 RMS dBFS
+    # 第 10 百分位为 floor,仅活动帧(floor+10dB 以上)测滞后。原静帧门 1e-6
+    # (=-120dBFS)对真实语料形同虚设,噪声主导帧相关峰随机(无定义滞后入统计
+    # =与 v1 搜索窗同族根因:「在无定义处做测量」)。
+    idx_all = np.arange(frame)[None, :] + hop * np.arange(max(1, 1 + (n_all - frame) // hop))[:, None]
+    rms_all = np.sqrt(np.mean(ref[idx_all] ** 2, axis=1))
+    db_all = 20.0 * np.log10(np.maximum(rms_all, 1e-10))
+    floor_db = float(np.percentile(db_all, 10))
     lags = []
-    for start in range(0, min(len(ref), len(deg)) - frame, hop):
+    for start in range(0, n_all - frame, hop):
         r = ref[start : start + frame]
         d = deg[start : start + frame]
-        if np.sqrt(np.mean(r * r)) < 1e-6:  # 静帧不参与(滞后无定义)
-            continue
+        if 20.0 * np.log10(max(np.sqrt(np.mean(r * r)), 1e-10)) <= floor_db + 10.0:
+            continue  # 非活动帧:滞后无定义,不入统计(改尺 v3)
         lags.append(_xcorr_lag(r, d, frame_max_lag))
     if len(lags) < 3:
         return {"frame_lags_samples": lags, "lag_std_samples": 0.0, "lag_std_ms": 0.0,
