@@ -103,6 +103,9 @@ def drift_check(ref: np.ndarray, deg: np.ndarray, fs: int = MEASURE_FS) -> dict:
     """分帧漂移检查(修订七.2):逐帧滞后统计与嫌疑判定。
 
     嫌疑判据(成文):std(帧滞后) > 0.25 ms 或 max|帧滞后−全局滞后| > 1.0 ms。
+    帧级搜索窗(改尺 v2,经理批准 2026-09-19):min(全局窗 ±1s, frame//2)——
+    搜索窗不得超出帧支撑(超支撑=循环相关比零/环绕=边界伪峰;原实现 ±1s 对
+    0.5s 帧系实现 bug,伪峰贴 ±0.9s 边界误触发排除门 61%)。
     返回 {frame_lags_samples, lag_std_samples, lag_std_ms, max_dev_samples,
           suspicious, reason}。
     """
@@ -110,13 +113,14 @@ def drift_check(ref: np.ndarray, deg: np.ndarray, fs: int = MEASURE_FS) -> dict:
     deg = require_measure_domain(deg, fs)
     frame = int(DRIFT_FRAME_S * fs)
     hop = int(DRIFT_HOP_S * fs)
+    frame_max_lag = min(int(ALIGN_MAX_LAG_S * fs), frame // 2)  # 改尺 v2(见 docstring)
     lags = []
     for start in range(0, min(len(ref), len(deg)) - frame, hop):
         r = ref[start : start + frame]
         d = deg[start : start + frame]
         if np.sqrt(np.mean(r * r)) < 1e-6:  # 静帧不参与(滞后无定义)
             continue
-        lags.append(_xcorr_lag(r, d, int(ALIGN_MAX_LAG_S * fs)))
+        lags.append(_xcorr_lag(r, d, frame_max_lag))
     if len(lags) < 3:
         return {"frame_lags_samples": lags, "lag_std_samples": 0.0, "lag_std_ms": 0.0,
                 "max_dev_samples": 0.0, "suspicious": False, "reason": ""}
