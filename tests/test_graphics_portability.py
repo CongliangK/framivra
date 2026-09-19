@@ -54,6 +54,10 @@ class _FakeTab:
     def call(self, method, timeout=30, **params):
         return {}
 
+    def close(self):
+        # 3c415b2 起 render_page finally 段显式 t.close() 释放 tab CDP fd——桩随迁(记录型,供断言扩展)
+        self.closed = True
+
     def navigate(self, url, timeout=5.0):
         self.browser.navs += 1
 
