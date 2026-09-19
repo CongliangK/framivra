@@ -9,10 +9,11 @@
 > 产物重跑会按 v1 旧语义再推增益（实测 +1.9dB 蠕升），函数打印蠕升警告）。
 > **本文以下内容留档历史链路。**
 
-Run after `vtx audio`, before `vtx mux`:
+> **v2 导航**：以下为 v1 历史链路留档；v2 直接 `vtx audio`（终态语义见文件头留档说明）。
+Run after `vtx audio`, before `vtx mux` (historical):
 
 ```sh
-python scripts/post_loudness.py /path/to/project --ffmpeg /path/to/ffmpeg
+python3 scripts/post_loudness.py /path/to/project --ffmpeg /path/to/ffmpeg
 ```
 
 Windows supports the same Python entrypoint and quoted paths. The Bash wrapper remains compatible. `TARGET_LUFS` (default -14) or `--target` selects the target; `FFMPEG` or `--ffmpeg` selects FFmpeg.

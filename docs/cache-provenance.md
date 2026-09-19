@@ -15,6 +15,10 @@
 
 - **gfx 页缓存** `cache/gfx/<key>/`：键 = sha1(html 字节 + 显式依赖内容 + fps +
   视口 + 时长)。同内容跨路径复用；同名页不同内容、同页换时长自然分键。
+- **键轴边界（诚实注记）**：渲染驱动/算法轴（Chrome 升级、渲染算法变更）与行为开关轴
+  （NAVFREE/STATIC/VTX_GFX 引擎选择）不入键——同键不同生成路径的理论风险以人工
+  `vtx clean`/`vtx gc` 为补救（R12-G1-037 交界认知在案）；段中间物 `vseg_pass` 已入
+  gc 白名单（commit fa650ad）。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
   键 = sha1(源 stat 身份 + 切片/窗口/fade/编码参数)。源 stat 身份 = path + size +
   mtime_ns + **首/尾 64KB 采样哈希**（PR#1 补强：同尺寸 + 恢复时间戳的同路径替换
