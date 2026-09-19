@@ -69,9 +69,16 @@ class TestDegradation(unittest.TestCase):
         self.assertGreater(r["lsd"], 1.0)
 
     def test_drift_suspicion(self):
-        x = speech_like()
-        n = len(x) // 2
-        d = np.concatenate([x[:n], np.concatenate([np.zeros(30), x[n:]])[: len(x) - n]])
+        fs = MEASURE_FS
+        # 宽带噪声突发(唯一相关峰,防纯音周期混叠)+1s 真静音(间隙>帧长 0.5s,
+        # 静音帧全落底→floor+10dB 门可分):活动帧前半滞后 0、后半 30 样本=时变漂移
+        half = int(fs * 2.0)
+        rng = np.random.RandomState(11)
+        burst = 0.3 * rng.standard_normal(half)
+        seg_a = np.concatenate([burst, np.zeros(half)])           # 2s 声+2s 静
+        x = np.concatenate([seg_a, seg_a])
+        d = x.copy()
+        d[half:] = np.concatenate([np.zeros(30), x[half:]])[: len(x) - half]
         r = Q.measure_pair(x, d)
         self.assertTrue(r["drift"]["suspicious"], "半段时变延迟应触发漂移嫌疑")
         self.assertEqual(r["drift"]["reason"], "nonlinear_drift")
