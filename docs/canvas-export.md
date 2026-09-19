@@ -90,6 +90,7 @@ baseline (`scripts/gfx_golden.py`), and rejected. Details and full data:
   the same pages run 1.5–4.4× slower per frame than per-frame navigation (DOM
   mutation triggers full-page re-rasterization; blur pages worst). The code is
   kept behind the default-off env with fallback and warnings — **do not enable**.
+  （封存件 since 2026-09-13 golden full-frame disproof；中文提要见 docs/DEV.md navfree 节。）
   The `__vtx_render` page protocol itself stays (it is harmless and is the
   intended entry point for future channels).
 

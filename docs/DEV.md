@@ -17,7 +17,7 @@
 - `ffprobe -count_frames` 逐帧解码计数：1080p 全源 12-27s/个；改流头 nb_frames + count_packets 回落后 validate 2min→3s。〔出处：edit.md 坑表〕
 - `-frames:v N` 触发 filter_complex 全量 drain：曾耗 4:30（300 帧）；已对每路输入加 `-t` 截短。〔出处：edit.md 坑表〕
 - 字幕 subs 三命令（2026-09-12，方案四，合成 30s/900 帧项目实测）：`subs check` <1s（零渲染纯文本）；`subs preview` 单张 0.56s（图层单帧合成路径）；改 1 条字幕重渲 2 段 1.9s（6 段缓存命中）——段键含本段窗口内 ass 字节（composite._seg_content_key），「改一条字幕=全链重渲」的担忧实测不成立。〔出处：docs/plans-2026-09-11/方案四 + 方案四-验收证据/〕
-- **合成链路提速定版（2026-09-12，方案二：滤镜图线程 + 依赖图流水线 + NVENC seg）**：voice-ime 基准项目 3 轮冷跑（cache 全清口径，`scripts/bench_cold.sh`）**中位 299s（三轮 281/302/299）vs 串行基线 375s，-20%**；分阶段中位：validate 5 / prepare 1 / 并行波 180（gfx 180 为关键路径，audio 74、seg 预编码 NVENC 54.6）/ video 拼接段 98 / mux 4 / qc 11。波内 seg 预编码 54.6s（NVENC，三轮 49.9/57.4/54.6）vs x264 波内 64.4s（方案二阶段2 实测）；串行基线 video seg 33+分段 126 的形态已被并行波取代。画质对照（阶段3 审查 P2 遗留项）：NVENC cq14 seg 代 vs x264 crf14 seg 代成片（threads 形态相同，差异来源=seg 编码器代差）抽 31 帧（7 切点边界 ±1 + 10 随机）单帧 PSNR——**19 帧逐位相同（PSNR=inf），其余 12 帧 40.4-50.1dB（有限值中位 ≈41.5dB，最坏为切点边界帧 min 40.4dB @f2092，高质量带）**，编码器代差对成片质量影响在该量级。三轮 qc 均 74/75（唯一 ✗=已证伪的 c4_mini 探针假阴性，按 qc 既有语义必然 exit 1）、拼接自检 16746==16746 每轮一致；qc --strict 复验 74/75 / EXIT=1（--strict 只改帧数核验方式，退出码语义不变）。〔出处：docs/plans-2026-09-11/方案二 + /tmp/vtx_bench_20260912_* 日志〕
+- **合成链路提速定版（2026-09-12，方案二：滤镜图线程 + 依赖图流水线 + NVENC seg）**：voice-ime 基准项目 3 轮冷跑（cache 全清口径，`scripts/bench_cold.sh`）**中位 299s（三轮 281/302/299）vs 串行基线 375s，-20%**；分阶段中位：validate 5 / prepare 1 / 并行波 180（gfx 180 为关键路径，audio 74、seg 预编码 NVENC 54.6）/ video 拼接段 98 / mux 4 / qc 11。波内 seg 预编码 54.6s（NVENC，三轮 49.9/57.4/54.6）vs x264 波内 64.4s（方案二阶段2 实测）；串行基线 video seg 33+分段 126 的形态已被并行波取代。画质对照（阶段3 审查 P2 遗留项）：NVENC cq14 seg 代 vs x264 crf14 seg 代成片（threads 形态相同，差异来源=seg 编码器代差）抽 31 帧（7 切点边界 ±1 + 10 随机）单帧 PSNR——**19 帧逐位相同（PSNR=inf），其余 12 帧 40.4-50.1dB（有限值中位 ≈41.5dB，最坏为切点边界帧 min 40.4dB @f2092，高质量带）**，编码器代差对成片质量影响在该量级。三轮 qc 均 74/75（唯一 ✗=已证伪的 c4_mini 探针假阴性〔已证伪实证：docs/MERGE_REPORT.md:68/:90 交界记录，live 同项失败逐位一致〕，按 qc 既有语义必然 exit 1）、拼接自检 16746==16746 每轮一致；qc --strict 复验 74/75 / EXIT=1（--strict 只改帧数核验方式，退出码语义不变）。〔出处：docs/plans-2026-09-11/方案二 + /tmp/vtx_bench_20260912_* 日志〕
 - **成片后期链路 GPU 化定版（2026-09-13，方案三：qc/gates 提速 + 4K 发布链并行化 + 4K 剔出关键路径）**：bench_p2 基准项目（voice-ime 同型 16746 帧/558.2s@1080p30，RTX 4080/32C64G）3 轮冷跑（cache 全清口径，`scripts/bench_cold.sh 3`）**验证链（validate→gates）中位 291.4s（三轮 289.57/291.41/310.01，波动 7%）vs 方案二定版 ≈299s（2026-09-12，voice-ime 口径）**；分阶段中位：串行头（validate→prepare）5.6 / 并行波（gfx 关键路径）164.8（163.1-183.6，波动 12%）/ video 尾 97.3 / post_loudness 2.6 / mux 4.4 / qc 8.6（rc=1 = 74/75，唯一 ✗ 为 c4_mini 已知探针假阴性）/ gates 8.1（五门全绿）。方案三目标核算：qc+gates 16.7s（预算 ≤30s，达标）、4K 单列 65.7s（预算 ≤80s，达标）；全链 240s 硬门槛未达，缺口归因＝gfx 波内 164.8s（方案一遗留：波内 seg/audio CPU 争用 + g6b 串行硬下限）+ video 尾 97.3s（方案二遗留：threads 解锁无收益）。4K 发布链（--with-4k 单列）：export_4k 65.68s（8 段并行 nvenc p4 = 段渲染 62.8s + concat 2.1s）、check_4k 14 项断言全过；画质门禁 vs x264 基线 10 帧抽样 PSNR min 49.45dB / SSIM min 0.993247 全达标（门 ≥42dB / ≥0.99）。qc/gates 2026-09-13 实测口径（对上方方案二条目 qc 11s、gates 未分项的演进订正）：qc 8.6s + gates 8.1s＝qc -vn + 响度回执共享 + G10 改 count_packets（§〇b 校准：G10 count_frames 26.6s→0.12s 为 gates 大头）+ G1 批量化的合成效果。〔出处：docs/plans-2026-09-11/方案三 §〇b＋方案三-验收证据/bench-正式3轮、bench-正式4k轮 summary〕
 - **真实项目冷渲染基线重锚（2026-09-19，R-07a）**：voice-ime 真实项目（16746f@30fps，HEAD 6388d6e，RTX 4080/32C64G）bench_cold 3 轮冷跑（cache 全清口径，`scripts/bench_cold.sh 3`）**验证链合计（validate→gates）中位 1117.8s（三轮 1119.19/1117.83/1116.81，波动 0.2%）**；分阶段中位：all_until_video 1096.15 / mux 4.1 / qc 10.2 / gates 7.3；三轮 qc 全 **76/76 exit 0**（voice-ime 无 c4_mini 假阴性，与 bench_p2 形态异）、脚本总出口 rc=0。**旧基准 291.4s（bench_p2 非真实项目口径）作废，仅存档对照**；本基线为创新轨 R-07b「三轮中位 ≤基线×0.8，同口径同标的」的继承口径。〔出处：perf 桌 records/2026-09-19-R07a-第二窗逐轮证据/DEST_final_20260919.log（sha256 ff1fc4ac…，与 cache 原件等值）＋机检执行单〕
 
@@ -35,7 +35,7 @@
 迁移即测试基线（2026-09-10，全部通过）：〔原 README「深度测试基线」节，7a75655 瘦身后由本文承载〕
 
 - 合成项目 vtx 全链 QC 9/9（切点帧比对 0.03-0.04/255、-14.1 LUFS）；`--draft --frames` NVENC 草稿链验证。
-- 真实项目回归（voice-ime v3.9 冻结 timeline 在 /tmp 链接树副本上，live 原位零写入）：validate 37 源/69 clips/150 字幕 5.2s 通过；qc 74/75 与 FREEZE v3.9 完全一致（唯一 ✗ = 已证伪的 c4_mini 探针假阴性）；timeline md5 `9ce6ec43…`、final.mp4 md5 `ae9389ef…` 与冻结记录相符。
+- 真实项目回归（voice-ime v3.9 冻结 timeline 在 /tmp 链接树副本上，live 原位零写入）：validate 37 源/69 clips/150 字幕 5.2s 通过；qc 74/75 与 FREEZE v3.9 完全一致（唯一 ✗ = 已证伪的 c4_mini 探针假阴性；已证伪实证同「合成链路提速定版」条所引）；timeline md5 `9ce6ec43…`、final.mp4 md5 `ae9389ef…` 与冻结记录相符。
 - blender-bridge：json2blend+verify_blend 556/556、129 条（=D39 基线精确复现）。
 - 组件矩阵：new_project 脚手架契约校验、全脚本 py_compile/bash -n/node --check、init.sh 幂等两次零差异。
 - 迁移附带修复：vtx.py timeline 路径改 `os.path.abspath`（防符号链接穿透把回执写到 live 项目，已回归验证）；aroll/README 失效引用修正。
@@ -86,7 +86,7 @@ voice-ime 653s 全图实测该滤镜在长流上使无口播段的床乐反常�
 
 ### gfx 透明页合成组拍平〔出处：工作区 AGENTS.md D44b〕
 
-body 级 opacity 的页面（如 g6a_title）会使 Chrome 合成组拍平，`setDefaultBackgroundColorOverride` 静默失效——双探针帧 flatten 守卫自动回落白黑双截。omitBackground 方案四次实测均无 alpha 输出，已证伪不再尝试。
+body 级 opacity 的页面（如 g6a_title）会使 Chrome 合成组拍平，`setDefaultBackgroundColorOverride` 静默失效——双探针帧 flatten 守卫自动回落白黑双截。omitBackground 方案四次实测均无 alpha 输出，已证伪不再尝试（已证伪实证：本节前述四次实测在案）。
 
 ### GPU 光栅 / tab 并发上限〔出处：工作区 AGENTS.md D44b〕
 
@@ -98,7 +98,7 @@ GPU 光栅对 gfx 截图无收益；Chrome 同源 tab 共用渲染进程，单�
 
 ### navfree 免导航截图判负双杀（方案 v2 阶段 2）〔出处：同上，golden 报告 compare_p2_c4.json〕
 
-设想：页内 `__vtx_render(f)` 置帧态，每 tab 只导航一次（`VTX_GFX_NAVFREE=1`）。单页空闲实测 40/40 帧逐字节一致，但负载下双杀——①**像素漂移**：8 实例并发对 4 个 `__vtx_render` 页自 ~f22 起全偏（llm_post 387/u3_install 127/c5a_main_path 641/c5b_hotkey 430 帧差异，golden 全帧比对）；②**反而更慢**：同页 ms/帧 1.5-4.4× 劣于逐帧导航（DOM 突变触发整页重光栅，blur 页尤甚：g6b navfree 111-163ms vs 导航 64-126ms）。处置：`VTX_GFX_NAVFREE` 默认 0 封存，代码保留（env 门控＋页内抛错哨兵回落＋页级告警齐全）——**勿开**。
+设想：页内 `__vtx_render(f)` 置帧态，每 tab 只导航一次（`VTX_GFX_NAVFREE=1`）。单页空闲实测 40/40 帧逐字节一致，但负载下双杀——①**像素漂移**：8 实例并发对 4 个 `__vtx_render` 页自 ~f22 起全偏（llm_post 387/u3_install 127/c5a_main_path 641/c5b_hotkey 430 帧差异，golden 全帧比对）；②**反而更慢**：同页 ms/帧 1.5-4.4× 劣于逐帧导航（DOM 突变触发整页重光栅，blur 页尤甚：g6b navfree 111-163ms vs 导航 64-126ms）。处置：`VTX_GFX_NAVFREE` 已封存(golden 证伪):默认 0，代码保留（env 门控＋页内抛错哨兵回落＋页级告警齐全）——**勿开**。
 
 ### 纯页级并行扩容无效（方案 v2 阶段 1）〔出处：bench_p1 矩阵，cache/reports/gfx_opt_20260911/SUMMARY.md〕
 
