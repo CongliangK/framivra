@@ -113,7 +113,7 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 log "下载载荷…"
-curl -fsS "$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz" -o "$WORK/pkg.tar.gz" \
+curl -fsS "$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz" -o "$WORK/video-tools-$VERSION.tar.gz" \
   || die "载荷下载失败:$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz"
 curl -fsS "$BASE_URL/SHA256SUMS" -o "$WORK/SHA256SUMS" \
   || die "SHA256SUMS 下载失败"
@@ -123,7 +123,7 @@ log "校验通过。"
 
 # ---- 解包安装 ----
 mkdir -p "$TARGET_DIR"
-tar -xzf "$WORK/pkg.tar.gz" -C "$TARGET_DIR" || die "解包失败"
+tar -xzf "$WORK/video-tools-$VERSION.tar.gz" -C "$TARGET_DIR" || die "解包失败"
 cat > "$TARGET_DIR/.vt-install.json" <<MARK
 {"installed_by": "install.sh", "version": "$VERSION", "base_url": "$BASE_URL", "date": "$(date -Iseconds)"}
 MARK
