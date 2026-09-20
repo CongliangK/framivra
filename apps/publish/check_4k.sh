@@ -27,7 +27,7 @@ if [ -z "$EXPECT_FRAMES" ]; then
   D=$(dirname "$F")
   for TL in "$D/timeline.json" "$D/../timeline.json"; do
     if [ -f "$TL" ]; then
-      EXPECT_FRAMES=$(python3 -c "import json;print(json.load(open('$TL'))['project']['duration_frames'])" 2>/dev/null) && break || EXPECT_FRAMES=""
+      EXPECT_FRAMES=$(env python3 -c "import json;print(json.load(open('$TL'))['project']['duration_frames'])" 2>/dev/null) && break || EXPECT_FRAMES=""
     fi
   done
 fi
@@ -36,7 +36,7 @@ F=$(readlink -f "$F")
 FPS=30
 DUR_S="?"
 if [ -n "$EXPECT_FRAMES" ]; then
-  DUR_S=$(python3 -c "print($EXPECT_FRAMES/$FPS)")
+  DUR_S=$(env python3 -c "print($EXPECT_FRAMES/$FPS)")
 fi
 
 # ---- 1-4: 流参数 ----
@@ -61,8 +61,8 @@ VBR=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of csv
 ABR=$(ffprobe -v error -select_streams a:0 -show_entries stream=bit_rate -of csv=p=0 "$F")
 DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$F")
 SIZE=$(stat -c%s "$F")
-TOTAL_MBPS=$(python3 -c "print(f'{$SIZE*8/$DUR/1e6:.2f}')")
-python3 -c "
+TOTAL_MBPS=$(env python3 -c "print(f'{$SIZE*8/$DUR/1e6:.2f}')")
+env python3 -c "
 v=float('${VBR:-0}'); t=float('${SIZE}')*8/float('$DUR')
 avg=max(v,t)/1e6
 print('OK' if avg<=$CAP else 'NG')" | grep -q OK \
@@ -71,7 +71,7 @@ print('OK' if avg<=$CAP else 'NG')" | grep -q OK \
 
 # ---- 6: 时长与帧数（须有期望帧数；无则跳过 6/6b）----
 if [ -n "$EXPECT_FRAMES" ]; then
-  python3 -c "
+  env python3 -c "
 import sys
 d=float('$DUR')
 sys.exit(0 if abs(d-$DUR_S)<=0.05 else 1)" \
@@ -86,7 +86,7 @@ ACODEC=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -o
 ASR=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of csv=p=0 "$F")
 [ "$ACODEC" = "aac" ] && ok "7a 音轨 ${ACODEC} 在" || bad "7a 音轨非 aac（${ACODEC}）"
 [ "$ASR" = "48000" ] && ok "7b 采样率 ${ASR}Hz" || bad "7b 采样率 ${ASR} ≠ 48000"
-python3 -c "
+env python3 -c "
 a=float('${ABR:-0}')
 # copy 验证：fdk_aac 192k 母带直通，码率应在 180-205k 区间（重编码会漂移）
 print('OK' if 180000<=a<=205000 else 'NG')" | grep -q OK \
@@ -94,7 +94,7 @@ print('OK' if 180000<=a<=205000 else 'NG')" | grep -q OK \
 
 # ---- 8: I 帧间隔（keyframe 间距 <300 帧）----
 MAXGAP=$(ffprobe -v error -select_streams v:0 -show_entries packet=flags -of csv=p=0 "$F" \
-  | python3 -c "
+  | env python3 -c "
 import sys
 last=None; gap=0; mx=0
 for line in sys.stdin:
@@ -109,7 +109,7 @@ print(mx)")
 [ "$MAXGAP" -lt 300 ] 2>/dev/null && ok "8 I 帧最大间隔 ${MAXGAP} 帧 <300（$(( MAXGAP/30 ))s）" || bad "8 I 帧最大间隔 ${MAXGAP} 帧 ≥300（10s）"
 
 # ---- 9: faststart（moov 在 mdat 前）----
-MOOV=$(python3 -c "
+MOOV=$(env python3 -c "
 data=open('$F','rb').read(64)
 i=data.find(b'moov'); m=data.find(b'mdat')
 if i>=0 and (m<0 or i<m): print('front')
