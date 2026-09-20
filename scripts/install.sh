@@ -119,7 +119,7 @@ curl -fsS "$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz" -o "$WORK/video-tool
   || die "载荷下载失败:$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz"
 curl -fsS "$BASE_URL/SHA256SUMS" -o "$WORK/SHA256SUMS" \
   || die "SHA256SUMS 下载失败"
-( cd "$WORK" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ) \
+( cd "$WORK" && grep "video-tools-$VERSION.tar.gz" SHA256SUMS | sha256sum -c - >/dev/null 2>&1 ) \
   || die "SHA256 校验失败——载荷不落地(信任源校验不过,检查网络或 releases 一致性)"
 log "校验通过。"
 
