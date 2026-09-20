@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# doc_gates.sh — M1 文档四门聚合器(R-22,席 A)。
-# LEAVES=4
+# doc_gates.sh — M1 文档六门聚合器(R-22,席 A;M2 席 D 增 leaf_5/leaf_6)。
+# LEAVES=6
 #
 # 保什么:
-#   - 四个 leaf 的 rc 全收集,逐行显形(leaf_N: <id> rc=<rc> PASS|FAIL);
+#   - 六个 leaf 的 rc 全收集,逐行显形(leaf_N: <id> rc=<rc> PASS|FAIL);
 #   - 聚合非零语义:任一 leaf FAIL,或尾部对账三数(registry/output/header)不等 → 总 exit 1;
 #   - 目标脚本缺位 → leaf_N: <id> SKIP reason=target-missing,SKIP 不致败但必须显形。
 # 不保什么:
 #   - 散文语义质量(= review 分工,本门只做可机检形态);
 #   - C4 极限声明(不在本门判定)。
+#   - 保:区内生成物单源一致与三源版本同值;不保:catalog 区外散文与版本号应然值。
 #
-# 注册面唯一来源为下方 heredoc:四行,行首即 leaf_,格式 leaf_N:TAG:id:command。
+# 注册面唯一来源为下方 heredoc:六行,行首即 leaf_,格式 leaf_N:TAG:id:command。
 # 目标脚本取命令第二 token 做存在性预检;执行统一 bash -c "<command>",cwd=仓根。
 
 set -u
@@ -33,6 +34,8 @@ leaf_1:L1:docs_smoke:bash scripts/docs_smoke.sh
 leaf_2:L2:doc_budget:python3 scripts/verify_doc_budget.py
 leaf_3:L3:repeat_anchors:python3 scripts/verify_repeat_anchors.py
 leaf_4:L4:charter_budget:python3 scripts/verify_charter_budget.py
+leaf_5:L5:catalog_check:python3 scripts/verify_manifest_catalog.py --check
+leaf_6:L6:version_sync:python3 scripts/verify_version_sync.py
 REG_EOF
 )"
 

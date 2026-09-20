@@ -1,0 +1,12 @@
+{
+  "id": "g8",
+  "name": "marker_missing",
+  "kind": "capture",
+  "expect_rc": 1,
+  "cmd": ["python3", "scripts/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g8_marker_missing/catalog.md"],
+  "attack": "END 行整行删除(生成器 bug 或人手误删尾标,BEGIN=1/END=0,悬空区)",
+  "expected_behavior": "BEGIN/END 计数不成对即红(marker count BEGIN=1 END=0 expected 1/1),exit 1;禁止单侧计数、禁止悬空区当合法替换",
+  "fixture": "catalog.md(基于真 docs/catalog.md 复制至档目录后按档篡改;真件只读零触,集成席收口重验)",
+  "issued_by": "R-22 M2 席 D",
+  "date": "2026-09-20"
+}

@@ -3,9 +3,9 @@
   "generated_at": "2026-09-20T01:14:54Z",
   "anchor_head": "8c6d534",
   "source": {
-    "path": "desks/docs-people-mgr/tools/doc_budget.json",
-    "sha256": "b7f45b251e781214bdee4730b258d951d8a8710a53dbb56bd45c4129ad08ec0e",
-    "version": "v1"
+    "path": "tools/doc_budget.json",
+    "sha256": "68523ee1e9c61f81654f784ce0c450a1c888147575032c100b6254085aa1b8d1",
+    "version": "v2"
   },
   "budget_items": [
     {
@@ -33,6 +33,19 @@
       "measured": 1955,
       "measured_at": "2026-09-20T01:14:54Z",
       "state": "ANCHORED-COMPANY"
+    },
+    {
+      "id": "catalog",
+      "path_company": "docs/catalog.md(产品仓 GENERATED 区)",
+      "ceiling": 2334,
+      "unit": "char",
+      "extract_cmd": "sed -n '/BEGIN GENERATED/,/END GENERATED/p' docs/catalog.md | wc -m",
+      "warning": 2334,
+      "headroom_min": 0.1,
+      "generated_budget": 2334,
+      "measured": 2122,
+      "measured_at": "2026-09-20T02:07:14Z",
+      "state": "SNAPSHOT"
     }
   ],
   "repeat_anchors": [

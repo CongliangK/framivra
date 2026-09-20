@@ -1,0 +1,12 @@
+{
+  "id": "g10",
+  "name": "trailing_ws",
+  "kind": "absorb",
+  "expect_rc": 0,
+  "cmd": ["python3", "scripts/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g10_trailing_ws/catalog.md"],
+  "attack": "区内 4 行(表头/分隔/aroll 行/denoise 行)行尾加两空格(编辑器尾空白残留),区内容语义不变",
+  "expected_behavior": "normalize 去每行行尾空白后逐字节相等,exit 0(预告②边界:行尾空白在吸收侧);禁裸比假红",
+  "fixture": "catalog.md(基于真 docs/catalog.md 复制至档目录后仅加行尾空白;真件只读零触,集成席收口重验)",
+  "issued_by": "R-22 M2 席 D",
+  "date": "2026-09-20"
+}

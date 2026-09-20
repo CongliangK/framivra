@@ -1,0 +1,12 @@
+{
+  "id": "g4",
+  "name": "manifest_tamper",
+  "kind": "capture",
+  "expect_rc": 1,
+  "cmd": ["python3", "scripts/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g4_manifest_tamper/catalog.md"],
+  "attack": "GENERATED 区内 aroll 行版本列篡改:1.0.0 → 9.9.9(手改生成区;指针行豁免不得掩盖值列失配)",
+  "expected_behavior": "verify 重生成区与副本区 normalize 后逐行比对,值列首差即列,exit 1",
+  "fixture": "catalog.md(基于真 docs/catalog.md 复制至档目录后按档篡改;真件只读零触,集成席收口重验)",
+  "issued_by": "R-22 M2 席 D",
+  "date": "2026-09-20"
+}
