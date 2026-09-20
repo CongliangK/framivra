@@ -20,6 +20,8 @@ vt.py              统一入口：doctor / apps|plugins|skills list|check / vers
 
 ## 快速开始（clone 即用，零安装步骤）
 
+自托管一键安装（无需 clone；入口与载荷在本方服务器，Gitea 保持私有）：`curl -fsSL https://ruochongliang.top/dl/video-tools/install.sh | bash -s -- --dir <目录>`（可选 `--chrome`；版本清单见 `/releases.json`；详见 `scripts/install.sh --help`）。
+
 ```bash
 env python3 vt.py init                     # 依赖自检 + 安装指引 + 生成 config.local.json（幂等；--fix 自动装）
 env python3 vt.py doctor                   # 三检：版本漂移 / apps+plugins manifest+health / skills 完好性
