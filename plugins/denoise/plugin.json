@@ -1,6 +1,6 @@
 {
   "name": "denoise",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "kind": "plugin",
   "entry": {
     "cli": ["denoise_voice.py"]

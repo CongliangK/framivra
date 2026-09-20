@@ -34,7 +34,7 @@
 - source: plugins/blender-bridge/plugin.json:3
 | blender-bridge | plugin | 1.0.0 | root:blender_bridge | validate, finish | true | 有 | 有 |
 - source: plugins/denoise/plugin.json:3
-| denoise | plugin | 1.0.0 | sources[]:denoise | prepare_source | true | 有 | 有 |
+| denoise | plugin | 2.0.0 | sources[]:denoise | prepare_source | true | 有 | 有 |
 - source: plugins/duck-static/plugin.json:3
 | duck-static | plugin | 1.0.0 | audio_tracks[]:duck_strategy | validate, audio_events | true | 有 | 有 |
 | registry | registry | — | 4 键声明 | audio_events×1, finish×1, prepare_source×2, probe_source×1, validate×3 | 4/4 | — | — |

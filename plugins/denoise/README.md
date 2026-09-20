@@ -1,8 +1,19 @@
 # denoise 插件（缝 A · prepare 源产物钩子）
 
-口播陷波 + Resemble 仅降噪链，以 timeline 键挂进 vtx prepare 阶段（v2 §2.2 缝 A，
+口播人声降噪链 v2（R-20 P2 攻坚定案）：Resemble 仅降噪 → afftdn 谱降噪 + 回
+48kHz（链内延迟补偿），以 timeline 键挂进 vtx prepare 阶段（v2 §2.2 缝 A，
 ARCHITECTURE.md 设计权威）。`scripts/denoise_voice.py` / `scripts/denoise_init.sh`
 旧路径留相对 symlink 兼容。
+
+## 链版本与升级记录
+
+| 版本 | 链 | 备注 |
+|---|---|---|
+| 1.0.0（2026-08-26 定案） | 陷波(ffmpeg highpass+anequalizer 三点) → Resemble 仅降噪 → 回 48k | P1 基线链（R-20 质量基线档案在档） |
+| **2.0.0（R-20 P2 攻坚）** | mono s16 规范化 → Resemble 仅降噪(CPU) → afftdn(nr=12:nf=-25)@48k + aresample=48000 + atrim 链内延迟补偿 | v1 陷波级弃用（IIR 群延迟=分数相位失真，对照实测 segSNR −9.5dB 且漂移嫌疑；去嗡由 Resemble+afftdn 承接）；afftdn 25ms 算法延迟经 TRIM_48K=1200 精确扣除。升级实证=测量区对比报告（R-20 P2 报告在档） |
+
+**结论适用域声明（修订二）**：本链升级结论适用域=与 R-20 样本库同谱系的口播
+素材（单一说话人/单一录音链）；跨说话人/跨麦克风/跨环境泛化未验证，不得外推。
 
 ## timeline 键用法（管线内）
 

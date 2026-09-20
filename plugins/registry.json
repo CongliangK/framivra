@@ -2,7 +2,7 @@
   "_comment": "plugins/registry.json —— 官方插件静态注册表（v2 §2.1 不变量 3，P1-2 创建）。键声明汇总 = validate 插件键三分支的「未装插件报错文案」数据源（报错给安装指引而非裸 Unknown key）。installed = 落地声明：P2b 装配 plugins/<name>/ 实体时置 true（与目录存在须同时成立，防单边漂移）；enabled 缺省 true（external 注册默认 disabled 见 §2.4 安全节）。cache_dirs 可选：插件自立的 cache 子目录白名单（缝 A 型产物走 contribute_keys 键集，无须此字段）。",
   "plugins": {
     "denoise": {
-      "version": "1.0.0",
+      "version": "2.0.0",
       "keys": [
         {
           "path": "sources[]",

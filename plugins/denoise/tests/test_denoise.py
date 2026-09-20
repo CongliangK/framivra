@@ -142,18 +142,25 @@ class PrepareSourceContract(unittest.TestCase):
                             side_effect=fake_run):
                 got = dn.prepare_source(c, "v")
             self.assertEqual(Path(got), p)
-            self.assertEqual(len(calls), 3)                 # 陷波 → conda → 回 48k
-            notch = " ".join(calls[0])
+            self.assertEqual(len(calls), 3)                 # 规范化 → conda → 终步
+            # R-20 P2（v2 链）：v1 陷波级弃用（IIR 群延迟=分数相位失真，弃选
+            # 理由在 denoise_voice.py 头注），首步改为 mono s16 规范化（无滤镜）。
             self.assertIn("ffmpeg", calls[0][0])
-            self.assertIn("highpass=f=80", notch)           # 陷波滤波链
-            self.assertIn("-ac", calls[0])                  # 陷波步 mono
-            self.assertIn("-af", calls[0])
+            self.assertNotIn("-af", calls[0])               # 首步零滤镜（v2）
+            self.assertIn("-ac", calls[0])
+            self.assertEqual(calls[0][calls[0].index("-ac") + 1], "1")  # mono
             self.assertEqual(str(calls[1][0]),
                              str(dn.conda_python()))        # conda denoise 解释器
             self.assertIn("resemble_enhance", calls[1][2])  # -c 推理代码
             final = calls[2]
             self.assertEqual(final[0], "ffmpeg")
-            self.assertIn("48000", final)                   # 回 48k
+            # R-20 P2（v2 链）：回 48k 并入 -af（aresample=48000），afftdn 算法延迟
+            # 由链内 atrim 常量补偿（trim 须在 48k 域计数才与输入采样率无关），
+            # 故 48k 契约改查 -af 串（v1 的独立 -ar 48000 元素形态废止）。
+            self.assertIn("-af", final)
+            af = final[final.index("-af") + 1]
+            self.assertIn("aresample=48000", af)            # 回 48k（v2 形态）
+            self.assertIn("atrim=start_sample=", af)        # 链内延迟补偿
             self.assertIn("-ac", final)                     # 插件产物 stereo 契约
             self.assertEqual(final[-1], str(p))             # 直接落产物键
 
@@ -207,7 +214,7 @@ class InvariantTwoFingerprint(unittest.TestCase):
             c2 = Ctx(_proj(root, denoise_value={"a": 2}))
             c3 = Ctx(_proj(root))                         # 无插件键
             seg1 = pl_hooks.active_plugins_digest(c1)
-            self.assertIn("plugins:denoise@1.0.0:", seg1)
+            self.assertIn("plugins:denoise@2.0.0:", seg1)  # R-20 P2: VERSION 2.0.0
             self.assertNotEqual(seg1, pl_hooks.active_plugins_digest(c2))
             self.assertEqual(pl_hooks.active_plugins_digest(c3), "")   # v1 形态
             fps = {receipt_fingerprint(c1), receipt_fingerprint(c2),

@@ -1,7 +1,8 @@
 """denoise 插件（缝 A · prepare 源产物钩子，v2 §2.2；设计权威 docs/ARCHITECTURE.md）。
 
 sources[] 级键 ``"denoise": true | {...可选参数}``——声明即该源的 prepare 音频
-走「陷波(ffmpeg) → Resemble 仅降噪(conda) → 回 48kHz」链，产物内容寻址：
+走「Resemble 仅降噪(conda) → afftdn 谱降噪+回 48kHz」链（v2，链内延迟
+补偿；v1 陷波级弃用，弃选理由见 denoise_voice.py 头注），产物内容寻址：
 
     cache/audio/{audio_key}::denoise:{version}:{value_digest}:{code_digest}.wav
 
@@ -32,7 +33,7 @@ from vtx.api import plugin_code_digest
 
 from .denoise_voice import chain, conda_python, missing_env, run_dir, weights_dir
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 KEY = "denoise"
 
 
@@ -62,7 +63,7 @@ def product_path(c, sid) -> Path:
 def prepare_source(c, sid):
     """缝 A 钩子（契约 v1.1，§2.2）：源声明 denoise 键 → 保证产物在盘并返回
     Path；未声明 → None（调用方直抽裸 wav）。产物缓存命中直返；缺失则经
-    denoise_voice.chain 产出（陷波→Resemble→48k，-ac 2 对齐裸提取 stereo 契约）；
+    denoise_voice.chain 产出（Resemble→afftdn+48k，-ac 2 对齐裸提取 stereo 契约）；
     环境缺失打印缺什么 + exit 1（fail-hard，不回落裸音频）。dry-run 不落产物。"""
     s = _source(c, sid)
     if s is None or KEY not in s:
@@ -78,9 +79,9 @@ def prepare_source(c, sid):
             print(f"    - {m}", file=sys.stderr)
         sys.exit(1)
     if getattr(c, "dry", False):
-        print(f"  [dry-run] denoise 产物 {out.name}（陷波→Resemble 仅降噪→48k stereo）")
+        print(f"  [dry-run] denoise 产物 {out.name}（v2 Resemble→afftdn+48k stereo）")
         return out
-    print(f"  · denoise: {sid} → {out.name}（陷波→Resemble 仅降噪→48k stereo）")
+    print(f"  · denoise: {sid} → {out.name}（v2 Resemble→afftdn+48k stereo）")
     chain(c.src_path(sid), out, stereo=True)
     return out
 
