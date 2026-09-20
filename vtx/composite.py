@@ -4,7 +4,7 @@
 RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 --draft --frames 回落路径共用同一段代码）。
 """
-import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, tempfile, textwrap, time
+import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -374,9 +374,7 @@ class RenderPlan:
         框架对「帧何时可得」的调度依赖 → 参数层无法钉死，结构化：把 N 输入问题
         分解为 N−1 个「已证确定的两输入 pass」。
 
-        中间物：cache/vseg_pass/p{k}_{键}.nut（R-07c a1 起，容器自 MKV 改 NUT——
-        流式容器，tee/pipe 双模共用；V1-V4 前置验证在案），FFV1 intra（-level 3
-        -g 1）无损编码，
+        中间物：cache/vseg_pass/p{k}_{键}.mkv，FFV1 intra（-level 3 -g 1）无损编码，
         输出端不强制 format——保留 overlay(format=auto) 协商出的 alpha/位深，使 pass
         链的格式域演化与链式 graph 逐位同构（关键教训：曾用 libx264 qp0 + 强制
         format=yuv420p，prores alpha 10bit 层使链式自该层升 10bit/alpha 域而中间物
@@ -386,36 +384,8 @@ class RenderPlan:
         整条 pass 链自动失效（与段键 _seg_content_key 同防洗白口径）。中间物帧数硬
         校验 == 段长（不 cfr 补帧：丢帧 fail-fast 而非静默复制；这也是对 framesync
         节律异常的在案探针）。
-
-        I/O 层（R-07c a1，2026-09-20，签发版=v1+修订件 A1–A14+ERRATUM 两件合读）：
-        非 final pass 的输出由「写 .part.mkv→replace→下一 pass 读盘」改为 -f tee
-        单命令双落点——file 主 sink 恒写 p{k}_{键}.part.nut 临时名（缓存有效性唯一
-        由 ffmpeg rc=0 + os.replace 门定义，增 13 designated 语义），pipe 副 sink
-        [f=nut]pipe:1 交下游 pass 直读（冷链：相邻 pass 编码/解码流水重叠，V2/V3
-        已证 tee 双落点解码域全同、pipe 与盘产物逐帧一致）。下一 pass 主输入双模
-        （D1 义务③）：冷链（上游 pass 实跑且本 pass 未命中）走 -f nut -i pipe:0，
-        温态命中走文件直读；命中判定先于命令构造（pass k 落 tee 命令前预判 k+1
-        命中态，下游命中时 tee 不接 pipe——无消费者的管道写满 64KB 缓冲即死锁）。
-        原子性与失败语义（D1 义务①②逐字平移）：os.replace 仅在 rc=0 后发生；旁车
-        .n 仅帧数硬校验（==seglen）通过后落盘，截断件永无正式名永无旁车；pipe 断/
-        EPIPE→上游 ffmpeg rc≠0→整链不 replace 不落旁车，报错 sys.exit(1) fail-fast
-        （下游崩致上游已编码工作丢弃、链式重跑自段头起=增 13 代价知悉语义）。pass
-        级计时打点 [timing]（增 3，非行为性观测面）随出口 stdout 输出。
-
-        已知差异项（R-07c-F1，2026-09-20 合成件实测在案，候 L3 裁定）：MKV 容器
-        由 matroska muxer 强制 1/1000(ms) pts 网格，NUT 取编码器建议网格
-        （30fps 下 1/61440=帧精确网格）。a=0 段的 enable 界值 t1=rel_out·spf
-        （与旧全片 graph 逐字节一致的兼容分支）与 dst_out 边界帧 pts 的比较在
-        两网格下可翻转（rel_out≡2 (mod 3) @30fps 时 ms 网格进位切层、精确网格
-        恰等显示；a>0 段的 ±¼/½ 帧余量形式两网格判定恒同）——合成件 4 层 90 帧
-        实测=第 3 pass 输出差 1 帧（pip 窗口末端边界帧）。pts 网格归一化候选
-        （-enc_time_base 1/1000）实测与 tee+pipe 链不兼容（链上第 2 级消费者
-        静默早退→上游级联 EPIPE，ffmpeg 8.1.2 复现在案）且越出签发 tee 形态，
-        故本实现保持 V1-V4 验证形态不改，差异面交 ④ 硬门在真实项目上机检裁定
-        （异常扩样序/R4 条款适用）。
         成本（实测口径 R5 2026-09-15）：温态 pass 全命中=仅最终段编码一次 ffmpeg；
-        冷态每段 N−1 个 pass 链（2093 帧段 14 层 ≈ 13 pass，FFV1 每 pass ~15s 级；
-        R-07c a1 起相邻 pass 经 tee+pipe 流水重叠，盘读侧冷链消失）。
+        冷态每段 N−1 个 pass 串行（2093 帧段 14 层 ≈ 13 pass，FFV1 每 pass ~15s 级）。
         全片冷建（8 段并行 ~104 pass）墙钟实测 900s、单代 pass 占盘 ~44G，对照 v4.0
         旧链式分段 277s ≈ 3.2×（「≈4~5×」为无实测支撑的推算值已废弃；区间多层窗口
         回落路径更慢且未被该账覆盖——R4-E2' A5）。
@@ -433,86 +403,32 @@ class RenderPlan:
         prev = None            # None = 主输入用 canvas（pass0）
         n = len(layers_subset)
         vcodec, enc = pick_vcodec(c, self.draft)
-
-        def pass_key(pk, idx, layer):
-            """pass 键配方（构成与掺入分量=R4-E1-v2 原文逐字节平移，抽函数仅为
-            D1 义务③「命中判定先于命令构造」的冷链形态复用——pass k 构造 tee
-            命令前须预判 pass k+1 命中态以决定是否接 pipe 副 sink；键值口径
-            零变化，不增不减分量）。"""
-            ident = layer["pngdir"].name if layer["gfx"] else layer["seg"].name
-            h = hashlib.sha1()
-            h.update(f"{pk}|pass{idx}\n".encode())
-            h.update(f"passgraph={_graph_code_digest()}\n".encode())
-            h.update((ident + "|" + json.dumps(layer["cl"], sort_keys=True, ensure_ascii=False)
-                      + f"|{layer['x']}|{layer['y']}|{layer['w2']}|{layer['h2']}\n").encode())
-            return h.hexdigest()[:12]
-
-        def spool_tail(f):
-            """Popen stderr spool（临时文件）尾部读取。链式子进程的 stderr 不用
-            管道收——无人读取的 err 管道写满 64KB 会反压阻塞整条流水，spool 无此
-            风险；失败时取尾部诊断（与 Ctx.run 的 stderr[-1500:] 同口径）。"""
-            try:
-                f.seek(0)
-                data = f.read()
-                return data[-1500:] if data else "(stderr 空)"
-            except OSError:
-                return "(stderr 不可读)"
-
-        def drop_parts(paths):
-            """失败路径尽力清理半途 .part.nut（R1 盘容：FFV1 中间物数百 MB/个）。
-            正式名/旁车只在 rc=0 收拢路径产生，残留 .part 仅占盘不污染缓存语义。"""
-            for pp in paths:
-                try:
-                    pp.unlink(missing_ok=True)
-                except OSError:
-                    pass
-
-        chain = []             # 在途生产者 [(k, proc, part, target, t0, errspool)]：
-                               # stdout 已交下游 pass，rc/replace/校验/旁车链尾收拢
-        dry_pipe_in = False    # dry-run 显示态：上一 pass 的 tee 将接 pipe 副 sink
         for k, L in enumerate(layers_subset):
             last = k == n - 1
-            pkey = pass_key(prev_key, k, L)
+            ident = L["pngdir"].name if L["gfx"] else L["seg"].name
+            h = hashlib.sha1()
+            h.update(f"{prev_key}|pass{k}\n".encode())
+            h.update(f"passgraph={_graph_code_digest()}\n".encode())
+            h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
+                      + f"|{L['x']}|{L['y']}|{L['w2']}|{L['h2']}\n").encode())
+            pkey = h.hexdigest()[:12]
             prev_key = pkey
-            target = out_path if last else pdir / f"p{k}_{pkey}.nut"
-            if not last and not chain:
-                # 在途生产者（chain 非空）=上游 pass 已把本 pass 判为 miss 并接管
-                # 主输入管道，此处不再复查命中——若翻转只会孤儿化上游 pipe 生产者
-                # （写满管道即死锁）；预判与本处共用同一判定谓词且之间无写入者。
+            target = out_path if last else pdir / f"p{k}_{pkey}.mkv"
+            if not last:
                 if self._pass_fresh(target, seglen, sidecar=True):
                     print(f"    · pass {k + 1}/{n} 已缓存（{target.name}）")
-                    print(f"[timing] pass {k + 1}/{n} cached")
                     prev = target
-                    dry_pipe_in = False
                     continue
-            elif last and not chain and out_path.exists() and self._pass_fresh(out_path, seglen):
+            elif out_path.exists() and self._pass_fresh(out_path, seglen):
                 # 最终 pass 也走帧数兜底（段缓存已在 render_segmented 判过，防御
                 # composite 被直接调用无段缓存的场景——如 --draft --frames 回落不
                 # 进此路径，b=None 时根本不到这里）
                 break
-            # D1 义务③（双模输入·命中判定先于命令构造）：本 pass 实跑前预判
-            # pass k+1 命中态——下游命中则 tee 只落缓存文件（pipe 无消费者，接了
-            # 必因 64KB 管道缓冲写满死锁）；下游 miss 才接 pipe 副 sink 成冷链。
-            pipe_out = False
-            if not last:
-                nk = k + 1
-                nkey = pass_key(prev_key, nk, layers_subset[nk])
-                if nk == n - 1:
-                    pipe_out = not (out_path.exists()
-                                    and self._pass_fresh(out_path, seglen))
-                else:
-                    pipe_out = not self._pass_fresh(
-                        pdir / f"p{nk}_{nkey}.nut", seglen, sidecar=True)
             cmd = ["ffmpeg", "-v", "error", "-y"]
             if prev is None:
                 cmd += ["-f", "lavfi", "-i",
                         f"color=c=black:s={self.W}x{self.H}:r={c.fps}:d={seglen * c.spf:.3f}"]
-            elif chain or dry_pipe_in:
-                # 冷链主输入（R-07c a1）：上游 tee 的 pipe 副 sink 直递。f=nut 显式
-                # 声明（管道无文件名可探测）；V3 已证 pipe 与盘产物解码域逐帧全同
-                cmd += ["-f", "nut", "-i", "pipe:0"]
             else:
-                # 温态命中文件直读（双模之温态；内容探测，.nut 与旧 .mkv 同面）
                 cmd += ["-i", str(prev)]
             cmd += self._layer_input_args(L, a)
             slave, ov, cur = self._layer_chain(L, k, "base", a, seglen, idx=1)
@@ -548,106 +464,35 @@ class RenderPlan:
                 # （确定性由单 overlay pass 结构保证，与域无关；域不承诺与链式
                 # 逐位同构——该承诺只在正式段路径 with_subs=True 下成立）。
                 parts.append(f"[{cur}]null[vout]")
-            t0 = time.monotonic()
             if last:
                 tail = ["-frames:v", str(seglen), "-fps_mode", "cfr", "-r", str(c.fps),
                         *vcodec, str(out_path)]
             else:
-                # FFV1 intra（GOP 1）无损：像素/alpha/位深零漂移，解码域确定
+                # FFV1 intra（-g 1）无损：像素/alpha/位深零漂移，解码域确定
                 # （实测口径 R4-E2' A1d：FFV1 同输入同 argv 重复编码 4 次得 4 个
                 # 不同容器 md5——容器字节层非确定；但 4 产物解码域 framemd5 逐帧
                 # 全同，无损语义成立，只影响 pass 文件字节、不影响像素与缓存命中
-                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。
-                # R-07c a1（2026-09-20）：容器自 MKV 改 NUT，落盘走 -f tee 单命令
-                # 双落点——file 主 sink 恒写 *.part.nut 临时名（缓存有效性唯一由
-                # rc=0 + os.replace 门定义，增 13 designated 语义），pipe 副 sink
-                # [f=nut]pipe:1 交下游 pass 直读（冷链重叠，V2/V3 已证）。per-sink
-                # f=nut 显式选 muxer，临时名不再依赖扩展名（旧 .part.mkv 因「按
-                # 扩展名选 muxer、.part 结尾无法初始化（实测 Invalid argument）」
-                # 而必须保留 .mkv 结尾的限制随 tee 消失）。os.replace 仅 rc=0 后
-                # 发生（D1 义务①）；旁车仅帧数硬校验通过后落；并发/重入读者永远
-                # 看到完整文件而非半截（R4-E1-v2 原语义平移）。
-                if "|" in str(target):
-                    print(f"✗ pass 缓存名含 '|'，与 tee spec 分隔符冲突：{target}")
-                    sys.exit(1)
-                part = target.with_name(target.stem + ".part.nut")
-                spec = f"[f=nut]{part}"
-                if pipe_out:
-                    spec += "|[f=nut]pipe:1"
+                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。落盘走 *.part.mkv
+                # 临时名 + os.replace 原子替换：并发/重入读者（帧数校验、下游
+                # pass）永远看到完整文件而非半截 mkv（FFV1 大文件写入窗口数十秒，
+                # 直接写 target 存在互踩窗口——tests 并发复渲实测踩中，R4-E1-v2）。
+                # 临时名保留 .mkv 结尾：ffmpeg 按扩展名选 muxer，.part 结尾无法
+                # 初始化（实测 Invalid argument）。
                 tail = ["-frames:v", str(seglen), "-c:v", "ffv1", "-level", "3",
-                        "-g", "1", "-f", "tee", spec]
-            full = cmd + ["-filter_complex_threads", "1",
-                          "-filter_complex", ";".join(parts), "-map", "[vout]", *tail]
+                        "-g", "1",
+                        str(target.with_name(target.stem + ".part" + target.suffix))]
+            c.run(cmd + ["-filter_complex_threads", "1",
+                         "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
             if c.dry:
                 # dry-run：命令已由 Ctx.run 打印（[dry-run] 前缀），不执行不落盘
                 # ——跳过原子替换/帧数校验/旁车，继续打印余下 pass 命令。dry 口径
                 # 与单 graph 一致（编排可见、零副作用）；否则 dry 下帧数校验
                 # sys.exit(1) 误杀 --dry-run（TestUntilFlag 实测回归，R4-E1-v2）
-                c.run(full)
-                prev = target
-                dry_pipe_in = pipe_out
-                continue
-            if pipe_out:
-                # 冷链在途生产者（D1 义务②链式形态）：stdout 交下游 pass 消费，
-                # 本 pass 不等待；rc/replace/帧数校验/旁车全部推迟到链尾收拢。
-                # stdin：链首 DEVNULL（ffmpeg 不读入），链中段接上游 stdout。
-                err = tempfile.TemporaryFile()
-                proc = subprocess.Popen(
-                    full,
-                    stdin=chain[-1][1].stdout if chain else subprocess.DEVNULL,
-                    stdout=subprocess.PIPE, stderr=err)
-                if chain:
-                    chain[-1][1].stdout.close()   # 读端已交子进程，父侧关副本
-                chain.append((k, proc, part, target, t0, err))
                 prev = target
                 continue
-            if chain:
-                # 冷链链尾（阻塞）：主输入吃上游 stdout，自身输出只落文件（下游
-                # 命中或最终段），结束后收拢整条链。
-                err = tempfile.TemporaryFile()
-                r = subprocess.run(full, stdin=chain[-1][1].stdout,
-                                   stdout=subprocess.DEVNULL, stderr=err)
-                chain[-1][1].stdout.close()
-                failed = r.returncode != 0
-                if failed:
-                    print("CMD FAILED:", " ".join(map(str, full))[:300], file=sys.stderr)
-                    print(spool_tail(err), file=sys.stderr)
-                for jk, jproc, jpart, jtarget, jt0, jerr in chain:
-                    jrc = jproc.wait()
-                    if jrc != 0:
-                        failed = True
-                        print(f"✗ pass {jk + 1}/{n} ffmpeg rc={jrc}"
-                              f"（tee 链断裂/EPIPE 族：下游先死→上游写端破裂，或上游自败）",
-                              file=sys.stderr)
-                        print(spool_tail(jerr), file=sys.stderr)
-                if failed:
-                    # D1 义务②：任一 rc≠0→整链不 replace 不落旁车 sys.exit(1)
-                    # fail-fast（半途 .part.nut 尽力清理，正式缓存零污染）
-                    drop_parts([e[2] for e in chain]
-                               + ([] if last else [part]))
-                    sys.exit(1)
-                # 全链 rc=0 → 逐 pass：os.replace（仅 rc=0 后）→ 帧数硬校验 → 旁车
-                # （与下方面内联路径同款语义，D1 义务①逐字平移）
-                for jk, jproc, jpart, jtarget, jt0, jerr in chain:
-                    os.replace(jpart, jtarget)
-                    if not self._pass_fresh(jtarget, seglen):
-                        print(f"✗ pass {jk + 1}/{n} 帧数自检失败：{jtarget.name} ≠ {seglen} 帧"
-                              f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
-                        sys.exit(1)
-                    jtarget.with_suffix(jtarget.suffix + ".n").write_text(str(seglen))
-                    print(f"[timing] pass {jk + 1}/{n} {time.monotonic() - jt0:.1f}s")
-                    try:
-                        jerr.close()
-                    except OSError:
-                        pass
-                chain = []
-            else:
-                # 非链形态（链空、非 dry、无 pipe 副 sink）：文件落盘单命令阻塞跑
-                # ——末 pass（vcodec 段编码）与「下游命中」的缓存补建 pass。
-                # 失败语义与改造前 Ctx.run 逐字同款：打印+sys.exit(1)，.part 不 replace
-                c.run(full)
             if not last:
-                os.replace(part, target)
+                os.replace(target.with_name(target.stem + ".part" + target.suffix),
+                           target)
             if not self._pass_fresh(target, seglen):
                 print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
                       f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
@@ -657,7 +502,6 @@ class RenderPlan:
                 # 见其 docstring；截断/中断产物到不了这里，不会误发旁车）
                 target.with_suffix(target.suffix + ".n").write_text(str(seglen))
             prev = target
-            print(f"[timing] pass {k + 1}/{n} {time.monotonic() - t0:.1f}s")
         return enc
 
     # ---- 阶段二：段级编码 → concat demuxer -c copy 拼接（2026-09-10）----
