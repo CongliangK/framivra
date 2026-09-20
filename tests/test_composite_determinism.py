@@ -186,7 +186,8 @@ class TestPassKeySubsSeparation(unittest.TestCase):
     全失效（下次全量冷建），属修复预期。
 
     驱动形态：c.dry=True 纯计算（dry 分支命令经 Ctx.run 只打印不执行，此处录制）
-    ——pass 键自中间物目标文件名 p{k}_{pkey}.part.mkv 提取，锁产品路径的键计算
+    ——pass 键自中间物目标文件名 p{k}_{pkey}.part.nut（R-07c a1 起内嵌 tee spec）
+    提取，锁产品路径的键计算
     本身，非复制品重算。零 ffmpeg 依赖（pick_vcodec 正式档无 gpu 不探测；
     _pass_fresh 对缺失产物快速 False，不触 ffprobe）。
     """
@@ -196,7 +197,7 @@ class TestPassKeySubsSeparation(unittest.TestCase):
             pass
         outs = []
 
-        def _run(cmd, need=True):   # dry：只录命令尾元（中间物 .part.mkv 路径）
+        def _run(cmd, need=True):   # dry：只录命令尾元（中间物 .part.nut 所在 tee spec）
             outs.append(str(cmd[-1]))
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -221,7 +222,11 @@ class TestPassKeySubsSeparation(unittest.TestCase):
                 sfile.write_text("[Script Info]\n", encoding="utf-8")
             plan._composite_passes(sl, d / "seg.mp4", with_subs, a=0, b=120,
                                    sub_file=sfile)
-        pks = re.findall(r"p(\d+)_([0-9a-f]{12})\.part\.mkv$", "\n".join(outs), re.M)
+        # R-07c a1 连带适配（2026-09-20）：落盘改 -f tee 双落点，中间物目标名内嵌
+        # tee spec（[f=nut]<p{k}_{pkey}.part.nut>|[f=nut]pipe:1）且 dry 命令尾元=
+        # 整段 spec——正则去 $ 锚、mkv→nut 就地提取；断言语义零变化（同锁：键提
+        # 取自产品路径 dry 命令的中间物目标名）。
+        pks = re.findall(r"p(\d+)_([0-9a-f]{12})\.part\.nut", "\n".join(outs), re.M)
         self.assertTrue(pks, f"dry 命令未录得中间物 pass 键: {outs}")
         return dict(pks)
 
