@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""run_golden.py — doc_gates 金样跑器(R-22 M1 席 B 三档;M2 席 D 扩至 10 档)。
+"""run_golden.py — doc_gates 金样跑器(R-22 M1 席 B 三档;M2 席 D 扩至 10 档;M3 席 E 扩至 11 档)。
 
 cwd 锚定仓根(由本件位置推定为 <repo>/tests/doc_gates_golden/ 的上两级)。
-总 10 档,golden_<n> 按序编号:
+总 11 档,golden_<n> 按序编号:
 
   g1  scripts/verify_doc_budget.py     --anchor-check g1_source --snapshot g1_snapshot_tampered   (ceiling 篡改;捕获)
   g2  scripts/verify_repeat_anchors.py --snapshot g2_snapshot_phantom                            (幻词锚;捕获)
@@ -12,18 +12,20 @@ cwd 锚定仓根(由本件位置推定为 <repo>/tests/doc_gates_golden/ 的上�
       g4_manifest_tamper/g5_registry_drift/g6_marker_corrupt/g7_double_inject/g8_marker_missing
   g9~g10 编码/尾空白差异 → 同上(吸收,期望 exit 0)
       g9_bom_absorb/g10_trailing_ws
+  g11 KERNEL_KEYS 幻影 scope 副本 → scripts/verify_contract_surface.py --stages <副本>(幻影键;捕获)
 
 rc 反转语义=「每档断言符合」:
-  捕获类(g1~g8)期望被测 verifier exit 1;吸收类(g9,g10)期望 exit 0。
+  捕获类(g1~g8,g11)期望被测 verifier exit 1;吸收类(g9,g10)期望 exit 0。
   每档输出 golden_<n>: <名> as-expected rc=<r> PASS 或 UNEXPECTED rc=<r> FAIL;
-  尾行 golden summary: <k>/10 as-expected;10/10 → exit 0,否则 1。
+  尾行 golden summary: <k>/11 as-expected;11/11 → exit 0,否则 1。
 
-g4~g10 由各档目录 instruction.json 驱动(cmd/expect_rc 见各件)。
+g4~g11 由各档目录 instruction.json 驱动(cmd/expect_rc 见各件)。
 g2/g3 被测脚本由席 A 并行产出、verify_manifest_catalog.py/gen_manifest_catalog.py
 由席 C 并行产出;集成时点未在位,该档如实报缺(UNEXPECTED rc=missing FAIL),
 由 L3 集成席收口。
 g4~g10 的 catalog.md 副本=真 docs/catalog.md 复制至各档目录后按 instruction.json
-载明的篡改点落刀(真件只读零触,禁改真 docs/catalog.md);集成席收口重验。
+载明的篡改点落刀(真件只读零触,禁改真 docs/catalog.md);g11 的 stages_copy.py=
+真 vtx/stages.py 只读复制后注入幻影 scope(真件只读零触);集成席收口重验。
 全部金样自足,不引公司仓真实源件。仅标准库;除被测脚本自身行为外不写任何文件。
 """
 
@@ -52,7 +54,7 @@ BASE_GATES = [
     ], 1),
 ]
 
-# g4~g10(M2 席 D):各档目录 instruction.json 驱动。
+# g4~g11(M2 席 D g4~g10;M3 席 E g11):各档目录 instruction.json 驱动。
 INSTRUCTION_DIRS = [
     "g4_manifest_tamper",
     "g5_registry_drift",
@@ -61,6 +63,7 @@ INSTRUCTION_DIRS = [
     "g8_marker_missing",
     "g9_bom_absorb",
     "g10_trailing_ws",
+    "g11_phantom_key",
 ]
 
 
