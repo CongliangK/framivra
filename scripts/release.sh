@@ -49,25 +49,27 @@ try:
 except Exception:
     pass
 rels = old.get("releases", [])
-rels = [r for r in rels if r.get("version") != version]
-rels.append({"version": version,
-             "tar": f"v{version[1:]}/video-tools-{version[1:]}.tar.gz",
-             "install_sh": f"v{version[1:]}/install.sh"})
+bare = version[1:]                      # releases.json 存裸版本号(2.0.0),URL 由消费方拼 v 前缀
+rels = [r for r in rels if r.get("version") != bare]
+rels.append({"version": bare,
+             "tar": f"v{bare}/video-tools-{bare}.tar.gz",
+             "install_sh": f"v{bare}/install.sh"})
 work.joinpath("releases.json").write_text(
-    json.dumps({"latest": version, "releases": rels}, ensure_ascii=False, indent=2) + "\n")
+    json.dumps({"latest": bare, "releases": rels}, ensure_ascii=False, indent=2) + "\n")
 PY
 
-# 6) 服务器建目录+上传四件(载荷/冻结 install.sh/SHA256SUMS/releases.json)
+# 6) 服务器建目录+上传五件(稳定入口 install.sh/载荷/冻结 install.sh/SHA256SUMS/releases.json)
 ssh "$REMOTE" "mkdir -p $DL_ROOT/v$V_NO_V && chmod 755 $DL_ROOT $DL_ROOT/v$V_NO_V"
+scp -q scripts/install.sh "$REMOTE:$DL_ROOT/install.sh"
 scp -q "$WORK/video-tools-$V_NO_V.tar.gz" "$REMOTE:$DL_ROOT/v$V_NO_V/video-tools-$V_NO_V.tar.gz"
 scp -q scripts/install.sh "$REMOTE:$DL_ROOT/v$V_NO_V/install.sh"
 scp -q "$WORK/SHA256SUMS" "$REMOTE:$DL_ROOT/SHA256SUMS"
 scp -q "$WORK/releases.json" "$REMOTE:$DL_ROOT/releases.json"
-chmod 644 "$WORK/SHA256SUMS" "$WORK/releases.json"
-ssh "$REMOTE" "chmod 644 $DL_ROOT/v$V_NO_V/* $DL_ROOT/SHA256SUMS $DL_ROOT/releases.json"
+ssh "$REMOTE" "chmod 644 $DL_ROOT/install.sh $DL_ROOT/v$V_NO_V/* $DL_ROOT/SHA256SUMS $DL_ROOT/releases.json"
 
-# 7) 回读验证
+# 7) 回读验证(含稳定入口)
+curl -fsS "$BASE_URL/install.sh" | bash -n && echo "✓ 稳定入口 install.sh 语法门通过"
 curl -fsS "$BASE_URL/releases.json" | python3 -c 'import json,sys;d=json.load(sys.stdin);print("✓ releases.json latest =",d["latest"])'
 curl -fsSI "$BASE_URL/v$V_NO_V/video-tools-$V_NO_V.tar.gz" | head -1
-curl -fsS "$BASE_URL/v$V_NO_V/install.sh" | bash -n && echo "✓ 线上 install.sh 语法门通过"
+curl -fsS "$BASE_URL/v$V_NO_V/install.sh" | bash -n && echo "✓ 版本冻结 install.sh 语法门通过"
 echo "✅ 发布完成: $VERSION → $BASE_URL"

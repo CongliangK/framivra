@@ -20,10 +20,13 @@ warn() { printf '[install] ⚠ %s\n' "$*"; }
 VERSION="" ; TARGET_DIR="" ; CHROME=0 ; UNINSTALL=0 ; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version)   VERSION="${2:-}"; [ -n "$VERSION" ] || die "--version 需要值"; shift 2 ;;
+    --version)   VERSION="${2:-}"; [ -n "$VERSION" ] || die "--version 需要值"; VERSION="${VERSION#v}"; shift 2 ;;
+    --version=*) VERSION="${1#--version=}"; [ -n "$VERSION" ] || die "--version 需要值"; VERSION="${VERSION#v}"; shift ;;
     --dir)       TARGET_DIR="${2:-}"; [ -n "$TARGET_DIR" ] || die "--dir 需要值"; shift 2 ;;
+    --dir=*)     TARGET_DIR="${1#--dir=}"; [ -n "$TARGET_DIR" ] || die "--dir 需要值"; shift ;;
     --chrome)    CHROME=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
+    --uninstall=*) UNINSTALL=1; TARGET_DIR="${1#--uninstall=}"; shift ;;
     --dry-run)   DRY_RUN=1; shift ;;
     -h|--help)
       cat <<USAGE
@@ -71,8 +74,8 @@ PY
   log "线上最新版本: $v_cur(如需升级请移除后重装或手动 git pull)"
   exit 0
 fi
-if [ -e "$TARGET_DIR" ]; then
-  die "目标 $TARGET_DIR 已存在且不是 video_tools checkout——拒绝覆盖(换 --dir 或清空后重试)"
+if [ -e "$TARGET_DIR" ] && [ -n "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]; then
+  die "目标 $TARGET_DIR 已存在、非空且不是 video_tools checkout——拒绝覆盖(换 --dir 或清空后重试)"
 fi
 
 # ---- 版本解析 ----
@@ -80,6 +83,7 @@ if [ -z "$VERSION" ]; then
   VERSION="$(curl -fsS "$BASE_URL/releases.json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])')" \
     || die "releases.json 拉取/解析失败($BASE_URL)"
 fi
+VERSION="${VERSION#v}"
 log "安装版本: $VERSION"
 [ "$VERSION" = "$(printf '%s' "$VERSION" | tr -cd 'A-Za-z0-9.v_-')" ] || die "版本串含非法字符"
 
