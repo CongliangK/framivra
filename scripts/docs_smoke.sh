@@ -260,7 +260,7 @@ for (path_s, method), rec in sorted(combined.items()):
                             ("" if r.returncode == 0 else f" — {r.stderr.strip()[:160]}") + suffix))
     else:  # py：--help 优先，失败/超时回落内存 compile（降级计数，洞 3）
         try:
-            r = subprocess.run(["python3", str(p), "--help"], capture_output=True, text=True, timeout=30)
+            r = subprocess.run(["env", "python3", str(p), "--help"], capture_output=True, text=True, timeout=30)
             if r.returncode == 0:
                 status = "PASS"
                 results.append((status, f"{tag} --help {rel}{suffix}"))
