@@ -10,6 +10,8 @@
 set -uo pipefail
 
 BASE_URL="${VIDEO_TOOLS_DL_BASE:-https://ruochongliang.top/dl/video-tools}"
+CFT_MIRROR="${CHROME_CFT_MIRROR:-https://registry.npmmirror.com/-/binary/chrome-for-testing}"
+CHROME_VERSION="${CHROME_VERSION:-153.0.8010.52}"   # R-23 P1 定版:headless=new 渲染+CDP 端点实测通过(2026-09-20)
 DEFAULT_HOME="${HOME}/.local/share/video-tools"
 
 log()  { printf '[install] %s\n' "$*"; }
@@ -139,9 +141,19 @@ else
   warn "doctor 未全绿——见上方输出(多为可选依赖缺省,基础渲染面不受影响;补依赖后重跑 doctor)"
 fi
 
-# ---- Chrome(显式开启;npmmirror,绝不占自托管带宽) ----
+# ---- Chrome(显式开启;npmmirror CDN,绝不占自托管带宽) ----
 if [ "$CHROME" = 1 ]; then
-  log "Chrome for Testing 下载通道由 R-23 P1 承接(npmmirror 镜像,~170MB);"
-  log "当前版本请以 vt.py doctor 的 chrome 探测结果为准,或按 doctor 提示自装。"
+  log "下载 Chrome for Testing $CHROME_VERSION(npmmirror CDN,~195MB)…"
+  curl -fsSL "$CFT_MIRROR/$CHROME_VERSION/linux64/chrome-linux64.zip" -o "$WORK/chrome-linux64.zip" \
+    || die "Chrome for Testing 下载失败($CFT_MIRROR/$CHROME_VERSION)"
+  mkdir -p "$TARGET_DIR/chrome-for-testing"
+  ( cd "$TARGET_DIR/chrome-for-testing" && python3 -c "import zipfile;zipfile.ZipFile('$WORK/chrome-linux64.zip').extractall()" ) \
+    || die "Chrome 解包失败"
+  # python zipfile 不保留 unix 权限位:补主二进制与崩溃处理器执行位
+  chmod +x "$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome" \
+           "$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome_crashpad_handler" 2>/dev/null || true
+  log "✓ Chrome 就绪:$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome"
+  log "  启用方式(二选一): export VTX_CHROME=$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome"
+  log "                    或将该路径加入 PATH(export PATH=\$PATH:$TARGET_DIR/chrome-for-testing/chrome-linux64)"
 fi
 exit 0
