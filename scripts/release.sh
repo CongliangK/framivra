@@ -19,6 +19,8 @@ cd "$REPO"
 
 # 1) 工作区净检
 [ -z "$(git status --porcelain)" ] || { echo "✗ 工作区不净(porcelain≠0)——先收口再发布"; exit 1; }
+# 1b) pyproject 版本同步义务(leaf_6 活门教训 R-23.FIX:发布版本三源 VERSION/pyproject/releases 必须同值)
+[ "$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)" = "${VERSION#v}" ] || { echo "✗ pyproject.toml version 与发布版本 $VERSION 不同步——先同步(防三源异)再发布"; exit 1; }
 
 # 2) tag 存在检
 git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null || { echo "✗ tag $VERSION 不存在(先 git tag -a $VERSION -m …)"; exit 1; }
