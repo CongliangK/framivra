@@ -20,7 +20,7 @@
 ## 依赖
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（audit_bundle 逐源导出与内容检测，系统 python3 即可跑）。
-- **blender 解释器（README 约束，不进 requires）**：json2blend / verify_blend / blend2json / bundle_session 须由 **blender** 运行（`blender --background --python <脚本>`）——依赖 bpy，系统 python3 无法 import。本机 Blender 5.2.1 LTS（`~/.local/opt/blender-5.2.1-linux-x64`，符号链接 `~/.local/bin/blender`）。
+- **blender 解释器（app.json `requires.binaries` 含 blender）**：json2blend / verify_blend / blend2json / bundle_session 须由 **blender** 运行（`blender --background --python <脚本>`）——依赖 bpy，系统 python3 无法 import。本机 Blender 5.2.1 LTS（`~/.local/opt/blender-5.2.1-linux-x64`，符号链接 `~/.local/bin/blender`）。
 
 ## 健康检查
 
@@ -29,7 +29,7 @@
 ## 用法（对一个项目生成预览工程）
 
 ```bash
-cd apps/blender-bridge   # （旧路径 blender_bridge/ 经 symlink 同样可达；_library 挂载引用继续解析成功）
+cd apps/blender-bridge   # （旧路径 blender_bridge/ 经 symlink 同样可达；外部 `_library` 资产一律以工作区绝对路径引用，见文末编排方法论条目）
 env python3 subs_alpha.py <项目>/timeline.json      # ① 字幕透明轨（需先有 cache/subs.ass，vtx 字幕阶段产物）
 blender --background --factory-startup --python json2blend.py -- <项目>/timeline.json <项目>/preview.blend   # ② 生成
 blender --background --python verify_blend.py -- <项目>/timeline.json <项目>/preview.blend                   # ③ 结构校验（退出码 0=全过）
@@ -47,7 +47,7 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 
 字幕透明轨产物：`<项目>/cache/subs_alpha.mov`（ProRes 4444 alpha）。
 
-## 语义映射（与 vtx.py 源码对齐）
+## 语义映射（与 vtx 包源码对齐）
 
 - video_tracks 数组序＝图层序：音频轨占通道 1..A（每轨一条），视频轨 [0] 最底从 A+1 起，字幕轨最顶
 - clip：`frame_final_start=dst_in`，`frame_final_end=dst_in+dur`（右开区间语义一致）；源偏移＝src_in
@@ -81,7 +81,7 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 用法：`blender --background --python blend2json.py -- <preview.blend> [out.json]`
 （json 源取 scene["vtx_timeline"] 钩子；缺省输出 `<项目>/timeline.blendback.json`，不覆盖原文件）
 回写面：视频条与音频条的**时间平移 / 左右缘裁剪（左缘=入点后移）/ 同族换轨**；
-音频**整组**平移（loop 组无缝时）。产物需过 `python3 vtx.py -t <out> validate`。
+音频**整组**平移（loop 组无缝时）。产物需过 `python3 -m vtx -t <out> validate`。
 
 保护规则（拒收或告警，均保留原值）：
 - 视频：跨族换轨（movie↔gfx）、同轨重叠、素材 src 越界、越过画布尾、dst<0 → 拒收
@@ -119,4 +119,4 @@ MP3 按源 mtime 自动失效重转（分轨重渲后重跑即可），`--force`
 - **吸附手放值当精确切点**：strip 边缘读数是用户粗放位置，非精确切点——须 ASR 句首/能量谷校正后再定切；
 - **头段语义误判**：seg 头填充词/重复废读（「一个」说两遍）代理回读易误判语义，须以用户权威文本裁定（净读 vs 废读）。
 
-另：**用户手放值须做 D-A 恒等修正**——aroll 画面 src 与 voice src 是映射关系（dst−src 恒等），手剪只动了画面侧时须换算回 voice 侧，否则口型漂移。总纲见 `_library/reports/编排方法论-科技口播视频.md` §六。
+另：**用户手放值须做 D-A 恒等修正**——aroll 画面 src 与 voice src 是映射关系（dst−src 恒等），手剪只动了画面侧时须换算回 voice 侧，否则口型漂移。总纲见工作区 `~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md` §六。
