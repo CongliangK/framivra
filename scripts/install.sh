@@ -72,7 +72,10 @@ if is_checkout "$TARGET_DIR"; then
 print(open(__import__("sys").argv[1]).read().strip())
 PY
 )"
-  v_cur="$(curl -fsS "$BASE_URL/releases.json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])' 2>/dev/null || echo unknown)"  log "检测到既有 checkout($TARGET_DIR,VERSION=$v_now)——复用不覆盖。"
+  v_cur="$(curl -fsS "$BASE_URL/releases.json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])' 2>/dev/null || echo unknown)"
+  # rc 语义钉死(RECP-20260920-001):复用分支=检测+告知后干净返回 0;
+  # 历史缺陷=本赋值行与 log 行粘连,v_cur 沦为临时赋值永不持久,下一行 $v_cur 撞 set -u 崩溃 rc=1。
+  log "检测到既有 checkout($TARGET_DIR,VERSION=$v_now)——复用不覆盖。"
   log "线上最新版本: $v_cur(如需升级请移除后重装或手动 git pull)"
   exit 0
 fi
