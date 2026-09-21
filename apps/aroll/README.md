@@ -17,7 +17,7 @@
 
 全链中的 ASR 文本配对（Qwen3-ASR sidecar `127.0.0.1:18085`）与 Resemble 降噪属大模型能力，默认关闭；其中：
 
-- `sync_audio.py`（GCC-PHAT 双系统音频同步）已随 P2a 迁入 **`apps/sync/`**（本 app 的姊妹应用）；`denoise_voice.py`（陷波→Resemble 降噪链）仍在 `../../scripts/`（P2b 迁 plugins/denoise）。运行分别需要 conda `denoise` 环境（numpy/scipy/soundfile/soxr）与 `~/models/resemble-enhance` 权重。
+- `sync_audio.py`（GCC-PHAT 双系统音频同步）已随 P2a 迁入 **`apps/sync/`**（本 app 的姊妹应用）；`denoise_voice.py` 真身在 **`plugins/denoise/`**（P2b 迁入，`../../scripts/` 仅为兼容 symlink），链为 v2：规范化 → Resemble 仅降噪（conda）→ afftdn 谱降噪 + 回 48kHz（v1 陷波级已弃用，R-20 P2 定案）。运行分别需要 conda `denoise` 环境（numpy/scipy/soundfile/soxr）与 `~/models/resemble-enhance` 权重。
 - **迁移/新机配置**：运行 `bash ../../plugins/denoise/denoise_init.sh` 探测三项依赖——ffmpeg / denoise 环境 / 681MB 权重（原 scripts/denoise_init.sh 经兼容 symlink 可达），缺权重时 `--download` 走 hf-mirror 直连下载（国内实测 2.0 MB/s；HF 走代理 3.9 MB/s 备选，HF 直连不可达，ModelScope 无此模型）。模型分发不走自建 Gitea LFS——服务器公网带宽仅 ~0.5 MB/s，无分发价值（2026-09-11 实测定案）。
 - 开启状态记录在仓库根 `config.local.json`（asr / tts 项）。
 
