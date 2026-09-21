@@ -9,7 +9,7 @@ v2 应用（P2a 批次 1 自 `scripts/export_4k.py`、`scripts/check_4k.sh`、`s
 | 件 | 用途 |
 |---|---|
 | `export_4k.py` | 4K 并行导出（方案三阶段2）：母带按帧均分 N 段并行 h264_nvenc p4 + lanczos 放大 + concat -c copy；段缓存内容寻址（复用 `vtx.cache_state.media_stat_digest`），重跑段全命中秒级；NVENC 探测失败显式回落 x264 medium 单进程（R5 命令逐字一致） |
-| `check_4k.sh` | 4K 成片规格断言（14 门：分辨率/帧率双验/h264 High/yuv420p/码率 ≤20.5M/时长帧数/aac 48k copy 区间/I 帧间隔/faststart） |
+| `check_4k.sh` | 4K 成片规格断言（多门规格断言：分辨率/帧率双验/h264 High/yuv420p/码率 ≤20.5M/时长帧数/aac 48k copy 区间/I 帧间隔/faststart） |
 | `compare_4k_quality.py` | 画质门禁：nvenc 版 vs x264 基线同位抽帧 PSNR/SSIM（≥5 帧，或语义达标；解析失败 fail-closed exit 2） |
 
 ## 依赖
