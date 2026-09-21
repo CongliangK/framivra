@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "generated_at": "2026-09-20T01:14:54Z",
-  "anchor_head": "8c6d534",
+  "generated_at": "2026-09-21T02:33:33Z",
+  "anchor_head": "89f35aa",
   "source": {
     "path": "tools/doc_budget.json",
-    "sha256": "68523ee1e9c61f81654f784ce0c450a1c888147575032c100b6254085aa1b8d1",
-    "version": "v2"
+    "sha256": "07ef0f9aae3421bc76ad611b50bef562b70aa358fd20ef163f8ca6cf9d8378c3",
+    "version": "v3"
   },
   "budget_items": [
     {
@@ -45,6 +45,19 @@
       "generated_budget": 2334,
       "measured": 2122,
       "measured_at": "2026-09-20T02:07:14Z",
+      "state": "SNAPSHOT"
+    },
+    {
+      "id": "agents",
+      "path_company": "video_tools:AGENTS.md(产品仓根)",
+      "ceiling": 2000,
+      "unit": "char",
+      "extract_cmd": "wc -m < AGENTS.md",
+      "warning": 1800,
+      "headroom_min": 0.1,
+      "generated_budget": null,
+      "measured": 1658,
+      "measured_at": "2026-09-21T02:33:33Z",
       "state": "SNAPSHOT"
     }
   ],
