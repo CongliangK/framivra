@@ -278,7 +278,7 @@ class DenoiseProductKeyDigest(unittest.TestCase):
         with mock.patch.object(den, "_audio_key", return_value="ak123"):
             p = den.product_path(_C(), "s1")
         name = p.name
-        self.assertIn("::denoise:1.0.0:", name)
+        self.assertIn("::denoise:2.0.0:", name)   # R-20 P2 升级连带随迁(P3:根 tests 版本钉遗漏,越界申报获批,仅字面量)
         parts = name[:-4].split(":")
         self.assertEqual(len(parts[-1]), 12,
                          f"产物键尾部须为 12 位代码摘要（A-P1-1）：{name}")

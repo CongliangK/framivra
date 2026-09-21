@@ -162,7 +162,7 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(reg["duck-static"]["keys"],
                          [{"path": "audio_tracks[]", "key": "duck_strategy"}])
         self.assertTrue(reg["denoise"]["installed"])       # P2b 已落地实体
-        self.assertEqual(reg["denoise"]["version"], "1.0.0")
+        self.assertEqual(reg["denoise"]["version"], "2.0.0")   # R-20 P2 升级连带随迁(P3:根 tests 版本钉遗漏,越界申报获批,仅字面量)
         self.assertTrue(reg["duck-static"]["installed"])
         self.assertEqual(reg["duck-static"]["version"], "1.0.0")
         self.assertEqual(reg["duck-static"]["hooks"], ["validate", "audio_events"])
