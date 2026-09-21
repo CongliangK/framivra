@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "video-tools"
-version = "2.0.0"
+version = "2.0.1"
 description = "vtx — 视频剪辑中间层（timeline.json → ffmpeg，帧精确合成）内核包"
 requires-python = ">=3.9"
 dependencies = []
