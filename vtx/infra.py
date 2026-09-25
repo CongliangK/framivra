@@ -11,7 +11,8 @@ from pathlib import Path
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
 from .cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
                          validate_cache_dependencies)
-from .encoders import nvenc_budget
+from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
+                       nvenc_retry_run)
 
 
 def is_ffmpeg_cmd(cmd) -> bool:
@@ -245,11 +246,32 @@ def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
     if c.dry and is_ffmpeg_cmd(cmd):
         print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
         return
-    # nvenc=True（方案二阶段3）：任务线程体里占 NVENC 会话预算槽（只包 ffmpeg 执行
-    # 段）；x264/prores 任务不占预算。dry 已在上面早退，预算信号量同样直通。
-    with nvenc_budget(c) if nvenc else contextlib.nullcontext():
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
+    if nvenc:
+        # R-07h S5 重试武装（机制本体=encoders.nvenc_retry_run）：失败入重试队列，
+        # 至多 N=2 次指数退避后原 argv 原样重发（cmd 列表对象原样重用——编码命令
+        # 一字不动）；占槽纪律：每次尝试独立占槽（_attempt 内），退避等待期不持槽
+        # （retry_clock 在占槽域之外）；仅失败件重试，成功件零重试零副作用；耗尽→
+        # 现行 fail-fast 语义（RuntimeError → run_parallel failed 收集 → rc=1 零变化）。
+        def _attempt(_no):
+            with nvenc_budget(c):   # 每次尝试独立占槽
+                return subprocess.run(cmd, capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace")
+        ok, attempts, r = nvenc_retry_run(_attempt, label)
+        if not ok:
+            nvenc_guard_note("exhausted")
+            # 失败清单行（修 11 格式冻结：label+尝试次数+瞬时/环境型判别；stderr 留档）
+            print(f"✗ [NVENC 重试清单] label={label} 尝试={attempts}/{NVENC_RETRY_ATTEMPTS}"
+                  f" 判别=环境型（重试耗尽，非瞬时争用）", file=sys.stderr)
+            raise RuntimeError(f"{label}: " + r.stderr[-1500:])
+        if attempts > 1:
+            nvenc_guard_note("transient")
+            print(f"↻ [NVENC 重试清单] label={label} 尝试={attempts}/{NVENC_RETRY_ATTEMPTS}"
+                  f" 判别=瞬时型（重试成功）")
+        return
+    # 非 nvenc 任务（方案二阶段3 起 x264/prores/抽音频不占 NVENC 预算槽——占槽域零
+    # 触达，S5 零武装；语义与原 nvenc=False 分支逐字等价）。
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError(f"{label}: " + r.stderr[-1500:])
 
