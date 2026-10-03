@@ -1,0 +1,231 @@
+{
+  "version": 2,
+  "_meta": {
+    "doc": "tech-talk 轨制骨架（模板包 R2，2026-10-03）：按 voice-ime v4.7 实际轨道组织抽象。用法＝整份复制为 <项目>/timeline.json，删除 ph_* 占位源与占位 clips/events，按 00-structure 帧预算铺真实编排；本骨架原位可通过 `python3 <video_tools>/vtx/vtx.py -t 本文件 validate`。",
+    "timebase": {
+      "fps": 30,
+      "sample_rate": 48000,
+      "note": "30fps（≠29.97，D24）；整数帧；区间 [in,out) 左闭右开；每帧整 1600 音频采样"
+    },
+    "layer_order": "video_tracks 数组序＝图层序（[0] 最底、末位最上）；画布为黑场；kind 纯语义标注（aroll/broll/screen/pip/gfx），渲染机制不区分",
+    "placeholders_note": "ph_av/ph_au/placeholder_gfx.html 为极小占位素材（placeholders/ 目录），仅证明结构合法——validate 要求每条视频轨 ≥1 clip 且 clip 引用的源必须真实存在，故骨架用占位件保「原位可验证」；实例化时全部删除",
+    "sources_doc": {
+      "ph_av": "占位：带视频+音频的微型 mp4（320x180@30fps，1s）——实例化后由 aroll_final 成品/演示录屏替换",
+      "ph_au": "占位：0.5s 静音 wav（48kHz mono）——实例化后由口播成品/音效库/BGM stem 替换"
+    },
+    "source_templates": {
+      "A-roll 成品轨": {
+        "id": "ar_{{序号}}",
+        "path": "assets/aroll_final/{{视频N}}.mp4"
+      },
+      "演示录屏": {
+        "id": "d{{序号}}",
+        "path": "assets/d{{序号}}.mp4"
+      },
+      "口播降噪（可选插件）": {
+        "id": "{{id}}",
+        "path": "assets/{{口播素材}}.wav",
+        "denoise": true
+      },
+      "BGM stem（bgm-render 插件，推荐）": {
+        "id": "bgm2-{{轨名}}",
+        "path": "{{music_project工程}}/out/{{项目}}/project.json",
+        "bgm": {
+          "output": "stem:{{轨名}}"
+        }
+      },
+      "音效库直引": {
+        "id": "sfx{{名}}",
+        "path": "../_library/assets_audio/_raw/{{库}}/{{文件}}"
+      }
+    },
+    "audio_tracks_doc": {
+      "voice": "口播主轨（duck_by 缺省目标）：事件窗=口播真实朗读区段；A-roll 画面与 voice 事件同窗构造=口型同步（D-A 单一事实源）",
+      "bed": "床乐轨：轨级键 duck_strategy（plugins/duck-static 静态分段避让，与 duck:true 互斥）；参数见 assets/presets/mixing.json",
+      "sfx": "音效轨：事件锚画面动作帧（不是时间轴刻度），撤画面必连带审 sfx",
+      "bgm-stem": "BGM stem 轨组示范：正式 BGM 按 stem 拆多轨（voice-ime v4.7 为 bgm-vln1/bgm-piano-sal 等 13 轨），每轨 duck:true + duck_params（D47）；stem 源写法见 source_templates"
+    },
+    "instantiate_steps": [
+      "① 复制本骨架为 <项目>/timeline.json（占位源指向随文件走，先 validate 一次确认环境）",
+      "② 删 ph_* 源与全部占位 clips/events，按 00-structure 帧预算与 02-script 分段铺真实编排",
+      "③ 字幕锚定走 apps/asr（asr_cli.py timeline），铺完后 preview.html 人审",
+      "④ vtx validate 硬门必过；批量重排写幂等脚本 + vtx snapshot"
+    ],
+    "validate_side_note": "在 presets/ 原位跑 vtx validate 会生成 out/receipt.json 与 cache/ 副产物（临时物，可删勿提交）。"
+  },
+  "project": {
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "duration_frames": 300
+  },
+  "sources": [
+    {
+      "id": "ph_av",
+      "path": "placeholders/placeholder_av.mp4"
+    },
+    {
+      "id": "ph_au",
+      "path": "placeholders/placeholder_audio.wav"
+    }
+  ],
+  "video_tracks": [
+    {
+      "name": "bg",
+      "kind": "broll",
+      "_doc": "背景层（最底）：抠像合成项目的替换背景全屏窗（imgen bg4k 产线）；纯实拍项目可整轨删除",
+      "clips": [
+        {
+          "src": "ph_av",
+          "src_in": 0,
+          "src_out": 30,
+          "dst_in": 0,
+          "dur": 30
+        }
+      ]
+    },
+    {
+      "name": "screen",
+      "kind": "screen",
+      "_doc": "演示轨：录屏/软件界面实况/产品演示（全屏或分区）；voice-ime v4.7 同款第 0 层职能",
+      "clips": [
+        {
+          "src": "ph_av",
+          "src_in": 0,
+          "src_out": 30,
+          "dst_in": 0,
+          "dur": 30
+        }
+      ]
+    },
+    {
+      "name": "aroll",
+      "kind": "aroll",
+      "_doc": "口播出镜轨：A-roll 成品全屏窗（同步+降噪+归一后）；口型同步=本轨 clip 窗与 voice 轨事件同窗构造",
+      "clips": [
+        {
+          "src": "ph_av",
+          "src_in": 0,
+          "src_out": 30,
+          "dst_in": 30,
+          "dur": 30
+        }
+      ]
+    },
+    {
+      "name": "gfx-full",
+      "kind": "gfx",
+      "_doc": "gfx 全屏动效层：流程图/数据表/原理动画（gfx-templates/ 模板库起步）；clip 只写 src(html)+dst_in+dur，缺省全屏",
+      "clips": [
+        {
+          "src": "placeholders/placeholder_gfx.html",
+          "dst_in": 60,
+          "dur": 30
+        }
+      ]
+    },
+    {
+      "name": "pip",
+      "kind": "pip",
+      "_doc": "画中画轨：方形 420px 右下角小窗（gfx 期出镜补偿）；pip clip 必须给 scale/x/y",
+      "clips": [
+        {
+          "src": "ph_av",
+          "src_in": 0,
+          "src_out": 30,
+          "dst_in": 0,
+          "dur": 30,
+          "scale": 0.22,
+          "x": 1460,
+          "y": 620,
+          "fade_in_frames": 6,
+          "fade_out_frames": 6
+        }
+      ]
+    },
+    {
+      "name": "gfx-overlay",
+      "kind": "gfx",
+      "_doc": "gfx 叠层（最上，仅低于字幕）：标题卡/下三分之一/流程条/强调字；页面自身留透明区域+结尾 0.4s alpha 淡出",
+      "clips": [
+        {
+          "src": "placeholders/placeholder_gfx.html",
+          "dst_in": 90,
+          "dur": 30
+        }
+      ]
+    }
+  ],
+  "subtitles": [
+    {
+      "in": 30,
+      "out": 60,
+      "text": "占位字幕（实例化时删除；正式字幕走 apps/asr 锚定或 subtitles_src）"
+    }
+  ],
+  "audio_tracks": [
+    {
+      "name": "voice",
+      "events": [
+        {
+          "src": "ph_au",
+          "in": 0,
+          "out": 30,
+          "volume": 0.9,
+          "loop": true
+        }
+      ]
+    },
+    {
+      "name": "bed",
+      "duck_strategy": {
+        "mode": "static"
+      },
+      "events": [
+        {
+          "src": "ph_au",
+          "in": 0,
+          "out": 300,
+          "volume": 0.35,
+          "loop": true,
+          "fade_in_frames": 15,
+          "fade_out_frames": 30
+        }
+      ]
+    },
+    {
+      "name": "sfx",
+      "events": [
+        {
+          "src": "ph_au",
+          "in": 60,
+          "out": 75,
+          "volume": 0.5,
+          "loop": true
+        }
+      ]
+    },
+    {
+      "name": "bgm-stem",
+      "duck": true,
+      "duck_params": {
+        "threshold": 0.0126,
+        "ratio": 4,
+        "attack_ms": 20,
+        "release_ms": 1500,
+        "makeup": 1
+      },
+      "events": [
+        {
+          "src": "ph_au",
+          "in": 0,
+          "out": 300,
+          "volume": 0.4,
+          "loop": true,
+          "fade_in_frames": 15,
+          "fade_out_frames": 45
+        }
+      ]
+    }
+  ]
+}

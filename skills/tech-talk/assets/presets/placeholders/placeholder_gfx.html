@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>placeholder_gfx · 骨架占位页（30帧 · 1s · 仅保 validate 用）</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:#faf9f6;
+  font-family:"Noto Sans CJK SC","Noto Sans SC",sans-serif;overflow:hidden}
+#stage{display:flex;align-items:center;justify-content:center;height:100vh;
+  color:#1a1a1a;font-size:44px}
+</style></head><body>
+<div id="stage">gfx 占位页 · 实例化时删除并替换为真实动效页</div>
+<script>
+/* 帧驱动协议占位实现（同 f 同像素；无 animation/墙钟/随机） */
+const FPS = 30, N = 30;
+const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
+const t = Math.min(f / FPS, N / FPS);
+document.getElementById("stage").style.opacity = 1;
+</script></body></html>
