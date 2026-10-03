@@ -25,6 +25,11 @@
 
 ## 六阶段创作流程
 
+> **新项目一键开局**（生成目录树 + 工程文档四件 + 01-brief + 可 validate 的 timeline 骨架 + gates/mixing 预设，幂等可重跑）：
+> ```bash
+> bash <video_tools>/skills/tech-talk/scripts/new_project.sh <项目目录> --title "视频标题" --id 项目代号
+> ```
+
 - **① 调研立项** → `references/research.md`（R0-R6 多智能体编排 + score_topic 量化评分，产出 `01-brief.md`；模板 `assets/brief-template.md`，量化分与红队质疑是「做不做」的依据）。采集/评分脚本在 `apps/research/`（bilibili / github_repos / score_topic 等）。
 - **② 稿子与结构**：01-brief 定稿后写脚本分段表（**锁定稿冻结后不再擅改**，实录差异走变更单）。产出 02-script（分段/字幕真值基准）+ 00-structure（结构帧预算）+ 提词稿。**工程文档模板四件在 `templates/`**：`00-structure.md`（段×帧数×字数预算，5.5 字/s 换算）/ `02-script.md`（分段表+冻结纪律）/ `03-assets-plan.md`（五线素材判定清单）/ `06-teleprompter.md`（提词分镜+录制检查表）。需要 TTS 占位时 → `apps/tts/`（spec.json 驱动，实录替换链见下文音频支线）。
 - **③ 实拍与素材**：拍摄规范（4K 30p / 相机悬屏上 / 双系统录音 / 长镜连续录制）→ `references/shooting.md` 速查（完整通用手册=`references/shooting-guide.md`，含 voice-ime/07-shooting-guide 装备版指针）。素材入库链：
