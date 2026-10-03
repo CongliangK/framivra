@@ -58,3 +58,7 @@ apps/matting/resolve_matte/uinject
 
 # ZCode 会话目录（P6：验收 --ignored 干净门补录）
 .zcode/
+
+# tech-talk 模板包占位素材豁免（骨架开箱可 validate）
+!skills/tech-talk/assets/presets/placeholders/*.mp4
+!skills/tech-talk/assets/presets/placeholders/*.wav
