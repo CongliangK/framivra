@@ -17,6 +17,7 @@
 |---|---|---|
 | `references/production-workflow.md` | **九阶段全流程总览**（调研→脚本→结构预算→拍摄→A-roll→gfx→编排→音频→QC/封面/冻结），每阶段入口工具/配方号/规则/验证门 | 新项目起手、接手中途项目先读 |
 | `references/narrative.md` | **叙事逻辑**：开场钩子/正文论证结构/演示对位三原则/字幕与口播节奏/结尾收束/验证门 + 硬约束单列（口播无缝/片尾同话题/无口播不留演示等） | 写稿、排时间线、审片定性前 |
+| `references/voice-style.md` | **文风规范**（决策级，提炼自 voice-ime 用户精调锁定稿）：句式节奏/零语气词零反问/人称口径/数字口径/禁忌词表 + 速查卡 15 条硬规则与初稿自检清单 | 写口播稿前必读、交稿前跑自检清单 |
 | `references/visual-baseline.md` | **色调与视觉宏观基准**：禁深蓝/白底暖色/背景板原则/pip 规范/封面 D50/视觉判读证据原则（数值以 `assets/gfx-templates/_tokens.md` 为准） | gfx 设计、封面、视觉验收前 |
 | `references/aroll-pipeline.md` | **A-roll 素材全链处理手册**（aup3→同步→替换→降噪→真空切割→构图统一，参数化通用版） | 实拍素材入库阶段 |
 | `references/audio-mixing.md` | **混音/响度/避让基准**：-14 LUFS 两遍静态增益链、D47 避让量化口径、降噪链、双系统同步、授权红线 | 音频阶段与任何 duck/音量改动前 |
@@ -31,7 +32,7 @@
 > ```
 
 - **① 调研立项** → `references/research.md`（R0-R6 多智能体编排 + score_topic 量化评分，产出 `01-brief.md`；模板 `assets/brief-template.md`，量化分与红队质疑是「做不做」的依据）。采集/评分脚本在 `apps/research/`（bilibili / github_repos / score_topic 等）。
-- **② 稿子与结构**：01-brief 定稿后写脚本分段表（**锁定稿冻结后不再擅改**，实录差异走变更单）。产出 02-script（分段/字幕真值基准）+ 00-structure（结构帧预算）+ 提词稿。**工程文档模板四件在 `templates/`**：`00-structure.md`（段×帧数×字数预算，5.5 字/s 换算）/ `02-script.md`（分段表+冻结纪律）/ `03-assets-plan.md`（五线素材判定清单）/ `06-teleprompter.md`（提词分镜+录制检查表）。需要 TTS 占位时 → `apps/tts/`（spec.json 驱动，实录替换链见下文音频支线）。
+- **② 稿子与结构**：01-brief 定稿后写脚本分段表（**写口播文案前必读 `references/voice-style.md` 文风速查卡，交稿前跑其自检清单**；**锁定稿冻结后不再擅改**，实录差异走变更单）。产出 02-script（分段/字幕真值基准）+ 00-structure（结构帧预算）+ 提词稿。**工程文档模板四件在 `templates/`**：`00-structure.md`（段×帧数×字数预算，5.5 字/s 换算）/ `02-script.md`（分段表+冻结纪律）/ `03-assets-plan.md`（五线素材判定清单）/ `06-teleprompter.md`（提词分镜+录制检查表）。需要 TTS 占位时 → `apps/tts/`（spec.json 驱动，实录替换链见下文音频支线）。
 - **③ 实拍与素材**：拍摄规范（4K 30p / 相机悬屏上 / 双系统录音 / 长镜连续录制）→ `references/shooting.md` 速查（完整通用手册=`references/shooting-guide.md`，含 voice-ime/07-shooting-guide 装备版指针）。素材入库链：
 ```bash
 env python3 <video_tools>/apps/aroll/aup3_extract.py 口播.aup3   # Audacity 工程提取
