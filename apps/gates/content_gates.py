@@ -192,6 +192,18 @@ def main():
     MEDIA = Path(args.media)
     AW = Path(args.audio_wav)
 
+    # 相对路径默认按 CWD 解析；若落空且给了 timeline，则回退按 timeline 所在目录再解析一次
+    # （防止跨目录运行时成片门被静默 SKIP——R5 验收 #1）
+    def _rebase(p: Path) -> Path:
+        if not p.is_absolute() and not p.exists() and TL_PATH.exists():
+            cand = TL_PATH.parent / p
+            if cand.exists():
+                return cand
+        return p
+
+    MEDIA = _rebase(MEDIA)
+    AW = _rebase(AW)
+
     have_tl = TL_PATH.exists()
     if have_tl:
         TL = json.loads(TL_PATH.read_text())
@@ -368,30 +380,38 @@ def main():
                   "stream=index,codec_name,profile,bit_rate,sample_rate,channels,r_frame_rate:"
                   "format=duration:stream_tags=encoder", "-of", "json", str(MEDIA)])
         stj = json.loads(pr.stdout)
-        st = {s["index"]: s for s in stj["streams"]}
-        fmt = stj["format"]
-        v, a = st[0], st[1]
-        fc = run(["ffprobe", "-v", "error", cnt_flag, "-select_streams", "v:0",
+        try:
+            st = {s["index"]: s for s in stj["streams"]}
+            fmt = stj["format"]
+            v, a = st[0], st[1]
+        except (KeyError, IndexError):
+            # 非有效媒体（无 streams/format/轨序异常）——显式 FAIL 该门而非裸崩溃（R5 验收 #2）
+            METRICS["G10"] = {"media": str(MEDIA), "probe_raw_keys": sorted(stj.keys())}
+            gate("G10 帧数+封装", False,
+                 f"成片非有效媒体（ffprobe 无完整 streams/format：{sorted(stj.keys())}）")
+            st = fmt = v = a = None
+        if st is not None:
+            fc = run(["ffprobe", "-v", "error", cnt_flag, "-select_streams", "v:0",
                   "-show_entries", f"stream={cnt_field}", "-of", "csv=p=0", str(MEDIA)])
-        nb_read = int(fc.stdout.strip())
-        dur_expect = DURF / F
-        fs_ok = moov_before_mdat(str(MEDIA))
-        METRICS["G10"] = {"frames": nb_read, "duration_s": fmt["duration"],
-                          "r_frame_rate": v["r_frame_rate"], "faststart": fs_ok,
-                          "frames_expect": DURF, "count_mode": cnt_field,
-                          "video_encoder": v.get("tags", {}).get("encoder"),
-                          "audio": f"{a.get('codec_name')}-{a.get('profile')} "
-                                   f"{int(a.get('bit_rate', 0))//1000}k "
-                                   f"{a.get('sample_rate')}Hz {a.get('channels')}ch"}
-        gate("G10 帧数+封装",
-             nb_read == DURF and abs(float(fmt["duration"]) - dur_expect) < 0.001
-             and v["r_frame_rate"] == f"{F}/1" and fs_ok,
-             f"{nb_read}f/{fmt['duration']}s/{v['r_frame_rate']}"
-             f"（门 {DURF}f/{dur_expect:.3f}s/{F}/1；计数口径 {cnt_field}）；"
-             f"[信息] enc={v.get('tags', {}).get('encoder')} / "
-             f"{a.get('codec_name')}-{a.get('profile')} "
-             f"{int(a.get('bit_rate', 0))//1000}k {a.get('sample_rate')}Hz "
-             f"{a.get('channels')}ch / faststart={fs_ok}")
+            nb_read = int(fc.stdout.strip())
+            dur_expect = DURF / F
+            fs_ok = moov_before_mdat(str(MEDIA))
+            METRICS["G10"] = {"frames": nb_read, "duration_s": fmt["duration"],
+                              "r_frame_rate": v["r_frame_rate"], "faststart": fs_ok,
+                              "frames_expect": DURF, "count_mode": cnt_field,
+                              "video_encoder": v.get("tags", {}).get("encoder"),
+                              "audio": f"{a.get('codec_name')}-{a.get('profile')} "
+                                       f"{int(a.get('bit_rate', 0))//1000}k "
+                                       f"{a.get('sample_rate')}Hz {a.get('channels')}ch"}
+            gate("G10 帧数+封装",
+                 nb_read == DURF and abs(float(fmt["duration"]) - dur_expect) < 0.001
+                 and v["r_frame_rate"] == f"{F}/1" and fs_ok,
+                 f"{nb_read}f/{fmt['duration']}s/{v['r_frame_rate']}"
+                 f"（门 {DURF}f/{dur_expect:.3f}s/{F}/1；计数口径 {cnt_field}）；"
+                 f"[信息] enc={v.get('tags', {}).get('encoder')} / "
+                 f"{a.get('codec_name')}-{a.get('profile')} "
+                 f"{int(a.get('bit_rate', 0))//1000}k {a.get('sample_rate')}Hz "
+                 f"{a.get('channels')}ch / faststart={fs_ok}")
     else:
         note_skip("SKIP G10（须 timeline+成片齐备）")
 

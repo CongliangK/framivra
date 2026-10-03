@@ -8,7 +8,7 @@
 **适用场景**：母带 out/final.mp4 已过全部门，出投稿版并冻结。
 
 ```bash
-cd ~/文档/04_bilibili视频/voice-ime
+cd <项目目录>   # 例：~/文档/04_bilibili视频/voice-ime
 
 # 1) 4K 投稿版导出（方案三：8 段并行 nvenc p4，段内 lanczos 放大，concat -c copy 拼接 + aac 直通）
 env python3 $VIDEO_TOOLS/apps/publish/export_4k.py -t timeline.json
@@ -54,7 +54,7 @@ env python3 $VIDEO_TOOLS/skills/tech-talk/scripts/publish_pack.py <项目目录>
 **前置条件**：R1（或 R2）渲染链已跑完、验证门 PASS。
 
 ```bash
-cd ~/文档/04_bilibili视频/voice-ime
+cd <项目目录>   # 例：~/文档/04_bilibili视频/voice-ime
 python3 $VIDEO_TOOLS/apps/blender-bridge/audit_bundle.py -t timeline.json --prefix bgm2-
 # 产物：<项目>/cache/audit_bgm/  ├ mp3/（逐源 320k 试听件，内容校验缓存）
 #                               ├ timeline.json（逐轨一列审计时间线）

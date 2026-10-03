@@ -134,6 +134,7 @@ cat <<EOF
 
 ✓ tech-talk 项目脚手架完成：$DIR（标题「$TITLE」/ 代号 $ID / $DATE）
 下一步（按 SKILL.md 六阶段流程）：
+#   gfx 动效起步：复制 <包>/assets/gfx-templates/ 六件模板（选型见 INDEX.md「叙事阶段→推荐模板」）到 <项目>/gfx/ 改文案与数据
   ① 调研立项（R0 起）：读 references/research.md，多智能体采集+score_topic 评分，
      按九节契约填写 01-brief.md（占位符已渲染标题与日期，内容级 {{}} 待填）→ 人工拍板
   ② 稿子与结构：01-brief 定稿后填 02-script / 00-structure / 03-assets-plan / 06-teleprompter
