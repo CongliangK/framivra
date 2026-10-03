@@ -1,6 +1,6 @@
 # runbook · 标准修改配方集（R1-R4）与棒次协议
 
-> **定位：接棒子智能体「只读这一份就开工」的配方文件。** 路由索引在 `../SKILL.md`，字段语义与坑表在 `edit.md`/`gfx.md`；本文只回答「接到某类任务后，按什么顺序敲哪些命令」。命令必须与 `edit.md`/各脚本 `--help` 及仓库现状一致，本文每条配方都经过 voice-ime（v3.x–v4.1）实测。
+> **定位：接棒子智能体「只读这一份就开工」的配方文件。** 路由索引在 `../SKILL.md`，字段语义与坑表在 `edit.md`/`gfx.md`；本文只回答「接到某类任务后，按什么顺序敲哪些命令」。命令必须与 `edit.md`/各脚本 `--help` 及仓库现状一致，本文每条配方都经过 voice-ime（v3.x–v4.x 全迭代周期）实测。
 >
 > **R5/R6/R7 归 `skills/tech-talk/references/runbook-r5r6r7.md`**——发布链（4K 投稿+冻结）/ BGM 分轨审计 / 封面制作属产线配方（各依赖具体 app 组合），v2 文档双层拆分时迁出内核。
 >
@@ -12,7 +12,8 @@
 2. **命令按配方原样执行，禁止凭记忆改参数**（改参数=改配方，须主控拍板）。
 3. **预期 >60s 的长命令一律后台运行 + 轮询**（同步等待会被看门狗杀）。
 4. 修改 timeline.json 一律走**幂等脚本 + `vtx snapshot`**（先快照后改动），不手写 .bak。
-5. 每棒结束落 REPORT 到 `<video_tools>/cache/opt20250911/`（契约见文末）。
+5. 每棒结束落 REPORT 到 `<video_tools>/docs/reports/`（契约见文末；原 `cache/opt20250911/` 已弃用——cache/ 不入 git 且会重组，重要文档勿放，voice-ime 发布物料灭失实案 2026-10-03）。
+6. **回滚锚点惯例**：重大轨源迁移（BGM stem 迁移、资产源换路径等）前，先落 `timeline.pre-<改动>.json` 长期锚点（与 `vtx snapshot` 自动轮转快照并行不悖；冻结链回滚以 `pre-*` 为输入）——voice-ime v4.7 stem 迁移即用 `timeline.pre-stem-migration.json` 兜底。
 
 环境变量占位（复制配方时先赋值一次）：
 
@@ -267,7 +268,7 @@ python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/fi
 | `VTX_FILTER_THREADS` | 1 | 滤镜图线程数；单进程路径（draft 头窗/单段）可显式 4 |
 | `VTX_NVENC_BUDGET` | 8 | 进程内 NVENC 会话预算（=并发拐点，勿上调；4K 导出并行时下调） |
 
-**冷跑基准**：`bash $VIDEO_TOOLS/scripts/bench_cold.sh [轮数] [项目目录]`——清 cache 逐行时间戳跑 `vtx all`，轮后自动提取各阶段摘要（基准数字归档 DEV.md §一；不触碰 baseline_threads1/）。
+**冷跑基准**：`bash $VIDEO_TOOLS/scripts/bench_cold.sh [轮数] [项目目录]`——清 cache 逐行时间戳跑 `vtx all`，轮后自动提取各阶段摘要（基准数字归档 DEV.md §一；不触碰 baseline_threads1/）。**警告**：该脚本会在项目本目录清 cache 并全量渲染直写 `out/final.mp4`——对已冻结/已交付项目跑基准必须先复制项目到独立目录（voice-ime 投稿母带曾于 2026-09-21 被冷跑基准覆盖，2026-10-03 才经 md5 比对发现）。
 
 **必跑验证门**：qc 全项 + content_gates + check_4k（若出 4K 版）。
 
@@ -277,10 +278,10 @@ python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/fi
 
 ## 主控-子智能体棒次协议
 
-1. **棒次 prompt 必须自包含**：权威仓路径、任务目标、报告落盘路径（`<video_tools>/cache/opt20250911/`）、**严禁 git commit**（改完留工作区由主控提交）。
+1. **棒次 prompt 必须自包含**：权威仓路径、任务目标、报告落盘路径（`<video_tools>/docs/reports/`）、**严禁 git commit**（改完留工作区由主控提交）。
 2. **worker 只读 runbook 对应配方**，不读全仓；配方外需求回报主控拍板，不自行发挥。
 3. **命令原样执行**；环境变量占位先赋值，项目路径按棒次替换。
-4. **REPORT 契约**：每棒结束写 `<video_tools>/cache/opt20250911/REPORT-<棒次>.md`，四节=①结论 ②改动/证据清单（关键行 cat 摘录）③逐步耗时 ④遗留问题。
+4. **REPORT 契约**：每棒结束写 `<video_tools>/docs/reports/REPORT-<棒次>.md`，四节=①结论 ②改动/证据清单（关键行 cat 摘录）③逐步耗时 ④遗留问题。
 5. 长命令（>60s 预期）后台运行+轮询；调试中间物写 `cache/tmp/<runid>/` 阶段结束即删（**严禁 GB 级中间物写系统 /tmp**，本机 /tmp 是 tmpfs）。
 
 ## 命令正字法速查（易抄错项）

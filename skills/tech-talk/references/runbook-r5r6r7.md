@@ -36,6 +36,7 @@ env python3 $VIDEO_TOOLS/apps/publish/compare_4k_quality.py out/final_4k.mp4 out
 **已知坑位**：
 - **冻结纪律**：FREEZE 记录的 md5 必须与当轮产物一致；后续任何改动（哪怕只重导 4K）都要更新 FREEZE 对应条目（final_4k md5 会变、final.mp4 不变时只改一处并注明）。
 - AI 不手写 ffmpeg **剪辑**命令；此处的 4K 重编码是发布转码不是剪辑，属白名单用法（剪辑永远走 timeline+vtx）。
+- **发布冻结纪律（2026-10-03 固化）**：①冻结后 `out/` 成品目录严禁被任何基准/重渲任务复用为输出目录——上传前将投稿母带**另存并记录 md5**，基准/重渲任务用独立 out 目录（voice-ime 实案：final.mp4 被 09-21 冷启动基准重渲覆盖，上传后才比对发现）；②重要过程文档（CHANGELOG/PUBLISH-PACK/审计包）必须放 git 管理目录，不得放内容寻址 cache（voice-ime 实案：cache 重组后发布物料原件灭失、影子侧断链无副本）。
 
 ---
 
