@@ -52,7 +52,7 @@ python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gc              # 收
 env python3 <video_tools>/apps/gates/content_gates.py -t ... --project-gates <项目门>.json   # 内容级验证门（项目门骨架=`assets/presets/gates.json`，字段写法见其 _doc）
 bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K 投稿版断言（帧数门自动从 timeline 推导）
 ```
-  发布链：母带 1080p30 → 4K lanczos 放大投稿版（`apps/publish/export_4k.py` 8 段并行 nvenc p4，进 B 站高码率池）→ FREEZE 冻结点（md5 清单）→ PUBLISH-PACK 物料。全冷缓存冷跑预期：验证链（validate→gates）≈5 分钟（291s，2026-09-13 定版），4K 发布链另加 ~1 分钟（`scripts/bench_cold.sh --with-4k` 单列 ≈66s）。
+  发布链：母带 1080p30 → 4K lanczos 放大投稿版（`apps/publish/export_4k.py` 8 段并行 nvenc p4，进 B 站高码率池）→ FREEZE 冻结点 + CHANGELOG 变更单（**脚本化：`scripts/freeze.py` 一键生成/追加多版本节，禁手写**，qc 段人工核对补写）→ PUBLISH-PACK 物料骨架（`scripts/publish_pack.py`，TODO 段人工补写；冻结/变更单必须落项目目录 git 区，严禁写 cache/，D52 实案）。全冷缓存冷跑预期：验证链（validate→gates）≈5 分钟（291s，2026-09-13 定版），4K 发布链另加 ~1 分钟（`scripts/bench_cold.sh --with-4k` 单列 ≈66s）。
 
 ## 音频创作流程（两条支线）
 

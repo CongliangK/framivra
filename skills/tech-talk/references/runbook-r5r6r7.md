@@ -22,11 +22,17 @@ bash $VIDEO_TOOLS/apps/publish/check_4k.sh out/final_4k.mp4
 env python3 $VIDEO_TOOLS/apps/publish/export_4k.py -t timeline.json --fallback-x264 -o out/final_4k_x264_ref.mp4
 env python3 $VIDEO_TOOLS/apps/publish/compare_4k_quality.py out/final_4k.mp4 out/final_4k_x264_ref.mp4
 
-# 3) 冻结三件套：
-#    out/FREEZE.json（md5 清单，final.mp4+final_4k.mp4+timeline）
-#    CHANGELOG.md 变更单（版本号/改动/验证门结果）
-#    timeline.<版本号>-frozen.json（冻结时间线快照）
-# 4) 发布物料：PUBLISH-PACK.md（参数+简介+备答）
+# 3) 冻结三件套（2026-10-03 起脚本化，杜绝手写漏项/落错目录）：
+#    a. FREEZE.json + CHANGELOG.md 一键生成/追加（本包 scripts/freeze.py，多版本节历史保留，
+#       自动算 md5/size/ffprobe 元数据 + timeline _meta 摘要 + git 状态；ffprobe 缺失自动降级）：
+env python3 $VIDEO_TOOLS/skills/tech-talk/scripts/freeze.py <项目目录> \
+    --version v1.0 --note "本版改动与验证门摘要"
+#    b. 冻结时间线快照：cp timeline.json timeline.<版本号>-frozen.json
+#    c. 生成后**人工核对**：补写 FREEZE 最新节 qc 占位段（vtx qc 分数/content_gates 各门/
+#       check_4k 断言与 verdict）与 CHANGELOG 对应 QC 行——脚本只算指纹，不替人下验证结论。
+# 4) 发布物料：PUBLISH-PACK.md 骨架（参数快照/简介/备答模板，自动填 FREEZE/timeline 字段，
+#    TODO 段人工补写）：
+env python3 $VIDEO_TOOLS/skills/tech-talk/scripts/publish_pack.py <项目目录> [--version v1.0]
 ```
 
 **耗时基准**：4K 导出 ~66s（方案三 2026-09-13 实测 65.68s = 段渲染 62.8s + concat 2.1s，8 段并行 nvenc p4；段缓存全命中重跑时秒级）；check_4k 秒级。〔方案三前：x264 软件链单进程 ~2.5min〕
@@ -36,6 +42,7 @@ env python3 $VIDEO_TOOLS/apps/publish/compare_4k_quality.py out/final_4k.mp4 out
 **已知坑位**：
 - **冻结纪律**：FREEZE 记录的 md5 必须与当轮产物一致；后续任何改动（哪怕只重导 4K）都要更新 FREEZE 对应条目（final_4k md5 会变、final.mp4 不变时只改一处并注明）。
 - AI 不手写 ffmpeg **剪辑**命令；此处的 4K 重编码是发布转码不是剪辑，属白名单用法（剪辑永远走 timeline+vtx）。
+- **冻结产物落位红线（D52/D54）**：冻结产物（FREEZE.json/PUBLISH-PACK.md）与变更单（CHANGELOG.md）**必须落在项目目录（git 管理区）**——freeze.py/publish_pack.py 已内置落位（out/ 与项目根）并带 cache/ 写入拦截；**严禁手工写进 cache/**（voice-ime 第 1 期实案：发布物料放不入 git 的 cache/final_render/，cache 重组后原件灭失、影子侧断链无副本）。freeze.py 兼容旧扁平 FREEZE（首跑自动迁移为多版本 history 首节）。
 - **发布冻结纪律（2026-10-03 固化）**：①冻结后 `out/` 成品目录严禁被任何基准/重渲任务复用为输出目录——上传前将投稿母带**另存并记录 md5**，基准/重渲任务用独立 out 目录（voice-ime 实案：final.mp4 被 09-21 冷启动基准重渲覆盖，上传后才比对发现）；②重要过程文档（CHANGELOG/PUBLISH-PACK/审计包）必须放 git 管理目录，不得放内容寻址 cache（voice-ime 实案：cache 重组后发布物料原件灭失、影子侧断链无副本）。
 
 ---
