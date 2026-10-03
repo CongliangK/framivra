@@ -9,13 +9,25 @@
 - **一条主链**：调研立项 → 稿子与结构 → 实拍与素材 → 动效页 → 时间线编排 → 渲染与 QC → 发布链（4K/封面/冻结）。
 - **两条音频支线**：口播/同期声支线（每期必经）与 BGM/音效支线（路由 music skill + 分轨审计包交付门）。
 - **产线挂载件**：见文末「uses 声明表」——12 件 app 全量使用，denoise/duck-static 两插件可选（键声明进 timeline 才生效）。
-- 编排层方法论（开场模板/演示对位/字幕策略/结尾模板）读 `~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md`；gfx 页面写法（帧驱动协议 + D22）读内核 `skill/references/gfx.md`，成熟页面范式速查见本包 `references/voice-ime-paradigm.md`。
+- 编排层方法论（开场模板/演示对位/字幕策略/结尾模板）已提炼收编为本包 `references/narrative.md`（原外部报告 `~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md` 为历史源件）；gfx 页面写法（帧驱动协议 + D22）读内核 `skill/references/gfx.md`，成熟页面范式速查见本包 `references/voice-ime-paradigm.md`。
+
+## references/ 知识文档路由（2026-10-03 收编，宏观经验自包含、跨项目可用）
+
+| 文档 | 管什么 | 何时读 |
+|---|---|---|
+| `references/production-workflow.md` | **九阶段全流程总览**（调研→脚本→结构预算→拍摄→A-roll→gfx→编排→音频→QC/封面/冻结），每阶段入口工具/配方号/规则/验证门 | 新项目起手、接手中途项目先读 |
+| `references/narrative.md` | **叙事逻辑**：开场钩子/正文论证结构/演示对位三原则/字幕与口播节奏/结尾收束/验证门 + 硬约束单列（口播无缝/片尾同话题/无口播不留演示等） | 写稿、排时间线、审片定性前 |
+| `references/visual-baseline.md` | **色调与视觉宏观基准**：禁深蓝/白底暖色/背景板原则/pip 规范/封面 D50/视觉判读证据原则（数值以 `assets/gfx-templates/_tokens.md` 为准） | gfx 设计、封面、视觉验收前 |
+| `references/aroll-pipeline.md` | **A-roll 素材全链处理手册**（aup3→同步→替换→降噪→真空切割→构图统一，参数化通用版） | 实拍素材入库阶段 |
+| `references/audio-mixing.md` | **混音/响度/避让基准**：-14 LUFS 两遍静态增益链、D47 避让量化口径、降噪链、双系统同步、授权红线 | 音频阶段与任何 duck/音量改动前 |
+| `references/shooting-guide.md` | **实拍完整通用手册**（相机/机位/打光几何/录音/提词/同步纪律；`shooting.md` 为其速查版） | 拍摄准备阶段 |
+| `references/research.md` / `cover.md` / `runbook-r5r6r7.md` / `voice-ime-paradigm.md` / `shooting.md` | 既有件：调研编排 / 封面产线 / R5-R7 配方 / gfx 范式速查 / 拍摄速查 | 按各自场景 |
 
 ## 六阶段创作流程
 
 - **① 调研立项** → `references/research.md`（R0-R6 多智能体编排 + score_topic 量化评分，产出 `01-brief.md`；模板 `assets/brief-template.md`，量化分与红队质疑是「做不做」的依据）。采集/评分脚本在 `apps/research/`（bilibili / github_repos / score_topic 等）。
 - **② 稿子与结构**：01-brief 定稿后写脚本分段表（**锁定稿冻结后不再擅改**，实录差异走变更单）。产出 02-script（分段/字幕真值基准）+ 00-structure（结构帧预算）+ 提词稿。需要 TTS 占位时 → `apps/tts/`（spec.json 驱动，实录替换链见下文音频支线）。
-- **③ 实拍与素材**：拍摄规范（4K 30p / 相机悬屏上 / 双系统录音 / 长镜连续录制）→ `references/shooting.md`（含 voice-ime/07-shooting-guide 装备版指针）。素材入库链：
+- **③ 实拍与素材**：拍摄规范（4K 30p / 相机悬屏上 / 双系统录音 / 长镜连续录制）→ `references/shooting.md` 速查（完整通用手册=`references/shooting-guide.md`，含 voice-ime/07-shooting-guide 装备版指针）。素材入库链：
 ```bash
 env python3 <video_tools>/apps/aroll/aup3_extract.py 口播.aup3   # Audacity 工程提取
 env python3 <video_tools>/apps/aroll/trim_takes.py ...            # VAD 掐头去尾+废片判定（ASR 配对）
