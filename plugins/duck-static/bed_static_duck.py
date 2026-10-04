@@ -86,6 +86,11 @@ def transform_events(events, wins, global_db: float, duck_db: float,
             if inside_voice(f1, f2):
                 seg["fade_in_frames"] = max(seg.get("fade_in_frames", 0) or 0, attack)
                 seg["fade_out_frames"] = max(seg.get("fade_out_frames", 0) or 0, release)
+            # 钳制 fade ≤ 段长（2026-10-05 D-A：切段可短于原 fade——如尾段 42f < 原
+            # fade_out 45f → 混音链 afade st<0 报错；微淡入出同理可能超短段）
+            dur = f2 - f1
+            if seg.get("fade_in_frames"): seg["fade_in_frames"] = min(seg["fade_in_frames"], dur)
+            if seg.get("fade_out_frames"): seg["fade_out_frames"] = min(seg["fade_out_frames"], dur)
             new_events.append(seg)
     return new_events
 

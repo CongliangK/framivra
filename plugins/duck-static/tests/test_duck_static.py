@@ -133,6 +133,50 @@ class TransformMath(unittest.TestCase):
         self.assertEqual(ev, before)                      # 纯函数不改性入参
 
 
+class FadeClamp(unittest.TestCase):
+    """D-A（2026-10-05）：切段后段长可短于 fade 帧数 → 混音链 afade st<0 报错。
+    钳制 fade_in/fade_out ≤ 段长（原事件边缘淡变与避让微淡变同理）。"""
+
+    def test_tail_seg_shorter_than_original_fade_out(self):
+        # 复刻缺陷场景：voice 窗 [0,90) 后 bed 尾段 42f < 原 fade_out 45f
+        ev = {"src": "bgm", "in": 0, "out": 132, "src_in": 0, "volume": 1.0,
+              "fade_in_frames": 10, "fade_out_frames": 45}
+        segs = _duck.transform_events([ev], [[0, 90]], -8, -4, 5, 8)
+        self.assertEqual([(s["in"], s["out"]) for s in segs], [(0, 90), (90, 132)])
+        # 尾段 [90,132)=42f 在窗外、保留原 fade_out=45 → 钳到 42
+        self.assertEqual(segs[1]["fade_out_frames"], 42)
+        self.assertLessEqual(segs[1]["fade_out_frames"], segs[1]["out"] - segs[1]["in"])
+
+    def test_head_seg_shorter_than_original_fade_in(self):
+        # 床乐先起、口播窗随后：首段 8f < 原 fade_in 10f → 钳到 8
+        ev = {"src": "bgm", "in": 0, "out": 100, "src_in": 0, "volume": 1.0,
+              "fade_in_frames": 10}
+        segs = _duck.transform_events([ev], [[8, 100]], -8, -4, 5, 8)
+        self.assertEqual(segs[0]["fade_in_frames"], 8)
+
+    def test_duck_microfade_clamped_on_short_seg(self):
+        # 窗内极短段（12f）也能容纳 attack 5 / release 8；更短段（6f）时 release 钳到 6
+        ev = {"src": "bgm", "in": 0, "out": 100, "src_in": 0, "volume": 1.0}
+        segs = _duck.transform_events([ev], [[0, 6], [50, 62]], -8, -4, 5, 8)
+        s0 = segs[0]                                     # [0,6) 窗内 6f
+        self.assertEqual(s0["fade_in_frames"], 5)
+        self.assertEqual(s0["fade_out_frames"], 6)       # release 8 → 6
+        for s in segs:
+            for k in ("fade_in_frames", "fade_out_frames"):
+                if k in s:
+                    self.assertLessEqual(s[k], s["out"] - s["in"], f"{s} {k} 超段长")
+
+    def test_all_fades_never_exceed_seg_len(self):
+        # 不变式扫描：任意 fade ≤ 段长（防 afade st<0 的充分条件）
+        ev = {"src": "bgm", "in": 0, "out": 500, "src_in": 0, "volume": 1.0,
+              "fade_in_frames": 30, "fade_out_frames": 30}
+        wins = [[0, 200], [205, 209], [300, 390]]
+        for s in _duck.transform_events([ev], wins, -8, -4, 5, 8):
+            for k in ("fade_in_frames", "fade_out_frames"):
+                if k in s:
+                    self.assertLessEqual(s[k], s["out"] - s["in"])
+
+
 class ValidateHook(unittest.TestCase):
     def test_duck_and_strategy_mutually_exclusive(self):
         tl = _ducked_tl({"mode": "static"})

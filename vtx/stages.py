@@ -407,14 +407,18 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
         ev_lbls = []
         for _ti, _tr, e in [x for x in evs if x[0] == ti]:
             dur = e["out"] - e["in"]; sin = e.get("src_in", 0)
+            # fade 钳制 ≤ 事件时长（D-A 2026-10-05：fade>时长 → afade st<0 报错；
+            # duck-static 插件已在上游切段时钳制，此处兜底手写 timeline 的同类错）
+            fi = min(e["fade_in_frames"], dur) if e.get("fade_in_frames") else 0
+            fo = min(e["fade_out_frames"], dur) if e.get("fade_out_frames") else 0
             fl = [f"atrim=start_sample={sin*c.spf_samples}:end_sample={(sin+dur)*c.spf_samples}", "asetpts=PTS-STARTPTS"]
             fl.append(f"volume={e['volume']}")
             if e.get("pan"):
                 p = e["pan"]; lg = min(1.5, 1 - p * .5); rg = min(1.5, 1 + p * .5)
                 fl.append(f"pan=stereo|c0={lg:.3f}*c0|c1={rg:.3f}*c1")
-            if e.get("fade_in_frames"): fl.append(f"afade=t=in:st=0:d={e['fade_in_frames']*c.spf:.6f}")
-            if e.get("fade_out_frames"):
-                fl.append(f"afade=t=out:st={(dur-e['fade_out_frames'])*c.spf:.6f}:d={e['fade_out_frames']*c.spf:.6f}")
+            if fi: fl.append(f"afade=t=in:st=0:d={fi*c.spf:.6f}")
+            if fo:
+                fl.append(f"afade=t=out:st={(dur-fo)*c.spf:.6f}:d={fo*c.spf:.6f}")
             fl.append(f"adelay=delays={e['in']/c.fps*1000:.3f}:all=1")
             chains.append(f"[{k}:a]" + ",".join(fl) + f"[e{k}]")
             ev_lbls.append(f"[e{k}]")

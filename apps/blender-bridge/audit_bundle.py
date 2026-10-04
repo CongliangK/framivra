@@ -186,7 +186,8 @@ def main():
     ap = argparse.ArgumentParser(description="BGM 分轨审计包生成器")
     ap.add_argument("-t", "--timeline", required=True, type=Path, help="项目生产 timeline.json")
     ap.add_argument("-p", "--prefix", action="append", default=None,
-                    help="音轨名前缀，可多次（默认 bgm-；注意是 timeline 轨道名非源 ID）")
+                    help="音轨名前缀，可多次（默认 bgm——同时匹配 bgm 与 bgm-1/bgm-2 等"
+                         "带后缀轨名；注意是 timeline 轨道名非源 ID）")
     ap.add_argument("--mp3-dir", type=Path, default=None)
     ap.add_argument("--audit-dir", type=Path, default=None)
     ap.add_argument("--force", action="store_true", help="强制重转全部 MP3")
@@ -207,7 +208,8 @@ def main():
     mp3_dir.mkdir(parents=True, exist_ok=True)
     audit_dir.mkdir(parents=True, exist_ok=True)
 
-    prefixes = a.prefix or ["bgm-"]
+    prefixes = a.prefix or ["bgm"]   # D-B 2026-10-05：默认 bgm（无后缀）——startswith 同时
+    # 兼容 bgm-1/bgm-2 等带后缀轨名；原默认 "bgm-" 匹配不到无后缀轨名 "bgm"
     sel = [tr for tr in tl["audio_tracks"] if tr["name"].startswith(tuple(prefixes))]
     if not sel:
         sys.exit(f"无音轨匹配前缀 {prefixes}（现有轨：{[t['name'] for t in tl['audio_tracks']]}）")
