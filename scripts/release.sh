@@ -8,7 +8,8 @@ set -euo pipefail
 
 VERSION="${1:-}"
 BASE_URL="${VIDEO_TOOLS_DL_BASE:-https://ruochongliang.top/dl/video-tools}"
-REMOTE="jd-gitea-root"
+REMOTE="${VT_RELEASE_REMOTE:-}"
+[ -n "$REMOTE" ] || { echo "✗ 未设置发布服务器 ssh 目标:先 export VT_RELEASE_REMOTE=<ssh-target>(自托管下载宿主)"; exit 1; }
 DL_ROOT="/var/www/dl/video-tools"
 [ -n "$VERSION" ] || { echo "用法: bash scripts/release.sh v2.1.0"; exit 2; }
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "✗ 版本串须形如 v2.1.0"; exit 2; }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # install.sh —— video_tools 自托管安装入口(curl | bash 安全形态)
-# 法源:boss 令《自托管安装入口执行方案》2026-09-20;R-23 P0。
+# 设计目标:《自托管安装入口执行方案》2026-09-20;R-23 P0。
 # 设计要点(§3.1):零 git 零 sudo 依赖 / $0 无关 / 非交互安全 / 幂等复用 /
 #   ffmpeg≥5.1 下限 / --chrome 显式走 npmmirror / SHA256SUMS 校验 /
 #   --uninstall 标记门 / 版本源 releases.json(--version 可覆盖)。

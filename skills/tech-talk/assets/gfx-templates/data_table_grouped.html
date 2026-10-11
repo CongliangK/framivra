@@ -345,8 +345,9 @@ DATA.beats.rowT.forEach((a, i) => {
   if (ax) { const r = eoc(seg(t, a + .22, a + .75)); ax.style.opacity = r; ax.style.transform = `translateY(${(1 - r) * 12}px)`; }
 });
 
-/* ---- 推荐行（行 0）：常亮琥珀框 + 徽章弹入 + 辉光呼吸（拍点=DATA.beats.rec） ---- */
+/* ---- 推荐行（行 0）：常亮琥珀框 + 徽章弹入 + 辉光呼吸（拍点=DATA.beats.rec；recommend:null 时整段跳过，守卫 2026-10-04 avt 实案回馈） ---- */
 (function () {
+  if (!DATA.recommend) return;
   const a = DATA.beats.rec;
   const recP = eoc(seg(t, a, a + .8)), rset = eoc(seg(t, a + .9, a + 1.9));
   const rc0 = $("rc0");

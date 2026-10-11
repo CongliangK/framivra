@@ -508,7 +508,7 @@ CLI 命令面保留承诺：`post_loudness.sh` / `bed_static_duck.py` / `content
 4. **关停测试**：apps+plugins 全禁 → 仅内核仍可出片（`all` 走通 + qc 含 TP 判定通过）——§0.1 判据的实测化。
 5. **语法差异门 + 缓存身份门**：插件装/未装 timeline JSON 语法差异符合三分支语义（§2.1 不变量 3）；插件产物缓存键进 gc 白名单（渲染中 budget_gate 触发不误杀，§2.1 不变量 1）；插件升级/改参 → 回执指纹变（旧回执不放行陈旧产物，§2.1 不变量 2）。
 6. **examples 外部注册**：hello-app/hello-plugin 经 external 注册路径（默认 disabled → 显式 enable）装/卸全流程可复现，卸载后缓存失效符合预期。
-7. **三 grep 门**：(a) 活代码（py/sh/mjs/json，白名单显式豁免 docs/plans* 历史归档）零 `/home/liangruochong` 本机硬编码；(b) 旧路径形态消解——按 §7.1 映射表 grep 旧形态（`blender_bridge/`、`matting/`、`scripts/make_cover` 等）在现行代码/文档中逐条消解（兼容 symlink 除外）；(c) import 卫生——**运行时管线代码与 tests** 零 `sys.path.insert` 注入 repo/vtx、零 `spec_from_file_location`（§1.4/§2.3 的静态验证；vt.py 走子进程探测不涉 spec）。
+7. **三 grep 门**：(a) 活代码（py/sh/mjs/json，白名单显式豁免 docs/plans* 历史归档）零 `/home/<user>` 形态本机用户名硬编码；(b) 旧路径形态消解——按 §7.1 映射表 grep 旧形态（`blender_bridge/`、`matting/`、`scripts/make_cover` 等）在现行代码/文档中逐条消解（兼容 symlink 除外）；(c) import 卫生——**运行时管线代码与 tests** 零 `sys.path.insert` 注入 repo/vtx、零 `spec_from_file_location`（§1.4/§2.3 的静态验证；vt.py 走子进程探测不涉 spec）。
 8. **bench ±10% + import <1s**：`bench_cold.sh` 三轮中位相对迁移前基线（291.4s 口径〔代码现状 docs/DEV.md 性能基准节〕）偏差 ≤±10%（bench_cold.sh 随 §1.2 链结构变化改写后重定口径——291.4s 为 v1 含独立 post_loudness 步骤的口径，v2 合并后以 ±10% 容差吸收结构性差异〔P0 复审 P1-3〕）；`python3 -c "import vtx"` 冷导入 <1s。
 9. **红队通过**：对本文件 §2 协议的对抗审查（三分支绕过/缓存键伪造/回执指纹遗漏/安全节路径逃逸四类攻击面）全部未突破。
 

@@ -2,7 +2,7 @@
 """tests/test_quality_noise_gen.py —— quality.noise_gen 单元测试(R-20 P0 测量器自测)。
 
 运行(quality 包自身验证,与产品仓测试进程不同,遵 R-20 窗口声明口径;
-【WIP 隔离·CEO 令】文件名前缀 selftest_ 不入产品仓默认收集模式 test*.py,
+【WIP 隔离约定】文件名前缀 selftest_ 不入产品仓默认收集模式 test*.py,
 run_all_tests.sh 零收集;stable 后再议入收集面——落树申报附此隔离说明):
   cd plugins/denoise && ~/miniconda3/envs/denoise/bin/python \
     -m unittest discover -s tests -t . -p "test_quality_*.py" -v

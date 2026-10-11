@@ -5,7 +5,7 @@
 cwd 锚定仓根(由本件位置推定为 <repo>/tests/doc_gates_golden/ 的上两级)。
 总 11 档,golden_<n> 按序编号:
 
-  g1  scripts/verify_doc_budget.py     --anchor-check g1_source --snapshot g1_snapshot_tampered   (ceiling 篡改;捕获)
+  g1  scripts/verify_doc_budget.py     --snapshot g1_snapshot_tampered                          (measured>ceiling 篡改;捕获)
   g2  scripts/verify_repeat_anchors.py --snapshot g2_snapshot_phantom                            (幻词锚;捕获)
   g3  scripts/verify_charter_budget.py --snapshot g3_snapshot_over                               (measured>ceiling;捕获)
   g4~g8 各档 catalog 副本篡改/破坏 → scripts/verify_manifest_catalog.py --check(捕获)
@@ -26,7 +26,8 @@ g2/g3 被测脚本由席 A 并行产出、verify_manifest_catalog.py/gen_manifes
 g4~g10 的 catalog.md 副本=真 docs/catalog.md 复制至各档目录后按 instruction.json
 载明的篡改点落刀(真件只读零触,禁改真 docs/catalog.md);g11 的 stages_copy.py=
 真 vtx/stages.py 只读复制后注入幻影 scope(真件只读零触);集成席收口重验。
-全部金样自足,不引公司仓真实源件。仅标准库;除被测脚本自身行为外不写任何文件。
+全部金样仓内自足(R5 起 g1 只走 verify_doc_budget.py 默认快照核验模式,
+无外部真实源件核对模式)。仅标准库;除被测脚本自身行为外不写任何文件。
 """
 
 import json
@@ -37,11 +38,10 @@ import sys
 GOLDEN_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(GOLDEN_DIR))
 
-# g1~g3 维持原断言(M1 席 B;捕获类,期望被测门 exit 1)。
+# g1~g3 维持原断言(捕获类,期望被测门 exit 1;R5 起 g1 仅对照仓内快照)。
 BASE_GATES = [
-    ("g1", "anchor-check-tamper", [
+    ("g1", "snapshot-tamper", [
         sys.executable or "python3", "scripts/verify_doc_budget.py",
-        "--anchor-check", "tests/doc_gates_golden/g1_source.json",
         "--snapshot", "tests/doc_gates_golden/g1_snapshot_tampered.json",
     ], 1),
     ("g2", "phantom-anchor", [

@@ -15,7 +15,7 @@ dist/
 *.bak
 *.bak_v3*
 
-# 本地配置（init.sh 从 config.example.json 生成，含机器特有开关，不入库）
+# 本地配置（config.local.json 由 vt.py init 从 config.example.json 生成，含机器特有开关，不入库）
 config.local.json
 
 # 可再生的公开字体二进制（apps/blender-bridge/assets/ 的 Noto Sans CJK SC，

@@ -109,7 +109,7 @@ def _make_handler(state):
                 try:
                     info = state.next_detail()
                 except DetailBusinessError as exc:
-                    self._json(exc.payload)  # HTTP 200 + 业务 code（速创语义）
+                    self._json(exc.payload)  # HTTP 200 + 业务 code（生图语义）
                     return
                 except DetailScriptError as exc:
                     self._json({"code": 500, "msg": str(exc)}, status=500)
@@ -134,8 +134,8 @@ def _make_handler(state):
     return Handler
 
 
-class MockSuchuang:
-    """本地 mock 速创 API（随机端口；绝不触网）。"""
+class MockApi:
+    """本地 mock 生图 API（随机端口；绝不触网）。"""
 
     def __init__(self, images):
         self.state = MockState(images)
@@ -180,7 +180,7 @@ class ApiMockTestCase(unittest.TestCase):
             "/img/c.png": _make_png_bytes(3096, 5504),  # vertical（4K 9:16 实出模拟）
             "/img/d.png": _make_png_bytes(1024, 1024),  # raw 默认 1K
         }
-        cls.mock = MockSuchuang(cls.images)
+        cls.mock = MockApi(cls.images)
 
     @classmethod
     def tearDownClass(cls):

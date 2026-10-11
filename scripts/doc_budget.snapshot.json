@@ -23,10 +23,10 @@
     },
     {
       "id": "roadmap",
-      "path_company": "desks/ceo/roadmap.md",
+      "path_company": "(外部源件路径已移除;数值本体保留于仓内自足快照)",
       "ceiling": 2000,
       "unit": "char",
-      "extract_cmd": "wc -m < desks/ceo/roadmap.md",
+      "extract_cmd": "(外部源件路径已移除;数值本体保留于仓内自足快照)",
       "warning": 1800,
       "headroom_min": 0.1,
       "generated_budget": null,
@@ -64,11 +64,20 @@
   "repeat_anchors": [
     {
       "word": "永不可关",
-      "files": ["README.md", "skill/SKILL.md", "docs/ARCHITECTURE.md"],
-      "expected": [2, 1, 3],
+      "files": [
+        "README.md",
+        "skill/SKILL.md",
+        "docs/ARCHITECTURE.md"
+      ],
+      "expected": [
+        2,
+        1,
+        3
+      ],
       "baseline": "T0-C8-rerecord",
       "cross_ref": "B1-after-line:pending(R14-L3 出证+qa 复核)",
-      "source_ref": "desks/docs-people-mgr/records/2026-09-19-R22-M0-基线登记件.md"
+      "source_ref": "仓内自足快照"
     }
-  ]
+  ],
+  "note": "仓内自足快照:预算与锚数值本体以本件为唯一来源,不引用任何外部仓路径。"
 }

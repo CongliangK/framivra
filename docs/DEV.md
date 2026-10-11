@@ -1,7 +1,7 @@
 # DEV · 开发者向文档
 
 > **开发者向**：工具演进史、性能基准、坑位破案详录。使用视频产线请读 `skill/SKILL.md`，无需阅读本文。
-> 条目末尾标注出处（裁自哪份文档的哪一节）。
+> 条目末尾标注出处（裁自哪份文档的哪一节）。部分出处指向 `docs/plans*` 等内部历史归档，该归档不随公开发布——出处仅作溯源注，外部读者视其为历史参考即可，文中操作步骤均自足。
 
 ## 一、性能基准
 
@@ -146,7 +146,11 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 体检当日修复清单见 commit 92609f3 / 898870e；以下为**有意未修/待外部条件**项：
 
 - **NIT 清单**（健壮性审查判 NIT，修不动代码不影响正确性）：qc.py dry 早退后 176-177 死代码、infra.py:71 恒真分支、imgen_cli.py 死变量、vtx.py render_via 字符串状态机、init.py requests 双探测、bilibili.py --retry 0 NameError、aroll/trim_takes.py 44 字节 WAV 头假定（与自家 aup3_extract 配对成立）。
-- **Windows 实机终验待办**：本仓跨平台修复（.gitattributes LF / init.py UTF-8/sys.executable / Edge x86 / conda 钩子 / heredoc cygpath / vtx Windows 三件套）均为 Linux 侧理论推演+Linux 回归，**尚无 Windows 实机验证**——朋友首次在 Windows 落地时按 README 跨平台节 + docs/依赖盘点 §三 清单逐项过一遍，重点复跑 tests/run_e2e.py（VTX_TEST_PYTHON/CHROME/FFMPEG 显式指定）。
+- **Windows 实机终验待办**：本仓跨平台修复（.gitattributes LF / init.py UTF-8/sys.executable / Edge x86 / conda 钩子 / heredoc cygpath / vtx Windows 三件套）均为 Linux 侧理论推演+Linux 回归，**尚无 Windows 实机验证**——首次在 Windows 落地时按下列最小清单逐项核验，重点复跑仓内 tests/run_e2e.py（VTX_TEST_PYTHON/CHROME/FFMPEG 显式指定）：
+  1. clone 后 LF 保持（.gitattributes 生效，无 CRLF 改写）；
+  2. `env python3 vt.py init` 在 UTF-8 控制台跑通（Python/ffmpeg/Chrome 三探测全绿）；
+  3. Edge x86 路径与 conda 钩子在 Windows 布局下可被探测；
+  4. `python3 tests/run_e2e.py` 全链（显式指定 VTX_TEST_PYTHON/VTX_TEST_CHROME/VTX_TEST_FFMPEG）。
 - **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；asr/README 手动路线兜底。
 - **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。
 - **cache_dependencies 未声明依赖的外链变更不触发重渲**：当前全部工程未声明，属声明式契约的已知边界（docs/cache-provenance.md 有口径）。

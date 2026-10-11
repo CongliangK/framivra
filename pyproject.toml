@@ -1,5 +1,6 @@
 # pyproject.toml —— v2 包化（ARCHITECTURE §5.2）
-# 包名 video-tools；console scripts 双入口：`vtx`（渲染 CLI，vtx.cli:main）与
+# 包名 framivra（项目品牌名；仓目录沿用 video_tools 历史路径名）；
+# console scripts 双入口：`vtx`（渲染 CLI，vtx.cli:main）与
 # `vt`（统一入口 doctor/list/check/version/init/--fix-links，vt:main）。
 # vt.py 在仓根（不在 vtx/ 包内），经 py-modules 以顶层模块身份进发行包。
 # pip 包只含内核（vtx/ 含 pluginlib + vt.py）；apps/plugins/skills/examples
@@ -11,11 +12,37 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "video-tools"
+name = "framivra"
 version = "2.0.1"
-description = "vtx — 视频剪辑中间层（timeline.json → ffmpeg，帧精确合成）内核包"
+description = "Framivra — reproducible, frame-accurate video production toolkit (vtx kernel: timeline.json → ffmpeg)"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "ruochongliang", email = "ruochongliang@users.noreply.github.com" },
+]
+keywords = ["framivra", "video", "ffmpeg", "timeline", "editing", "rendering", "bilibili", "multimedia"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Video :: Conversion",
+    "Topic :: Multimedia :: Sound/Audio",
+]
 requires-python = ">=3.9"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/CongliangK/framivra"
+Repository = "https://github.com/CongliangK/framivra"
 
 [project.scripts]
 vtx = "vtx.cli:main"

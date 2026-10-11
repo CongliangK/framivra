@@ -4,6 +4,8 @@
 
 真人出镜视频的背景替换管线（bg_test 实测定稿路线）：**BiRefNet_HR@2048 生成首帧 mask → MatAnyone2 视频抠像 → guided filter 收边 → 与新背景合成**。另有 `resolve_matte/` 子链（DaVinci Resolve 21 Studio Magic Mask 命令行驱动，见 `resolve_matte/README.md`）。
 
+> ⚠️ **许可证提示**：MatAnyone2 的开源许可证状态待核实，商用（含商业视频产线使用）前须自行确认其授权条款与合规性。
+
 **快照性质声明**：本链脚本为 bg_test 产线实测定稿的快照（`run_full_bg.sh` 编排九段视频、`resolve_matte/step*.py` 探针、`card_points.json` 本机标定点位等）——路径已参数化，但**步骤编排与点位仍是原工程实测快照**，跨工程复用时须按 README 各节核对改写。
 
 ## 用途

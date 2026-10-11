@@ -1,8 +1,8 @@
-# video_tools —— 视频制作工具仓（v2 插件化架构）
+# Framivra —— 可复现、帧精确的视频制作工具箱（v2 插件化架构）
 
-> **本仓是什么**：B 站视频产线的程序本体权威仓。**内核** `vtx/` = timeline.json 契约 + 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ 混音响度终链（-14 LUFS + limiter）+ 内容寻址缓存——关停它主链产物不可信，故永不可关（宪法信条）。产线知识在 `skills/tech-talk/` 工作流包（科技口播六阶段 SOP + 调研/拍摄/封面/发布链配方）；机制契约文档在 `skill/`（路由索引 `skill/SKILL.md`）。git 管理，大模型能力默认关闭。
+> **Framivra**（小写 `framivra`，读 "frame-ee-vra"）:frame + 自造后缀。仓目录与文档内路径占位沿用 `video_tools` 历史路径名,品牌名以本行与 pyproject 包名为准。**本仓是什么**:B 站视频产线的程序本体权威仓。**内核** `vtx/` = timeline.json 契约 + 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ 混音响度终链（-14 LUFS + limiter）+ 内容寻址缓存——关停它主链产物不可信，故永不可关（宪法信条）。产线知识在 `skills/tech-talk/` 工作流包（科技口播六阶段 SOP + 调研/拍摄/封面/发布链配方）；机制契约文档在 `skill/`（路由索引 `skill/SKILL.md`）。git 管理，大模型能力默认关闭。
 
-> **姊妹项目 Music Tools**：本仓专注「视频」产线。BGM / 配乐 / 床乐 / 音效 / 响度 QC / 分轨混音需求请移步姊妹仓 `~/文档/01_活跃项目/music_tools/`（本仓 `apps/bgm` 为路由声明）——music_tools 产出的 BGM 挂载进本仓 timeline.json 后，由 `apps/blender-bridge/audit_bundle.py` 生成分轨审计包供 Blender 逐轨裁决。
+> **姊妹项目 Music Tools**：本仓专注「视频」产线。BGM / 配乐 / 床乐 / 音效 / 响度 QC / 分轨混音需求请移步姊妹仓 music_tools（本仓 `apps/bgm` 为路由声明）——music_tools 产出的 BGM 挂载进本仓 timeline.json 后，由 `apps/blender-bridge/audit_bundle.py` 生成分轨审计包供 Blender 逐轨裁决。
 
 ## 四层架构一页
 
@@ -20,17 +20,19 @@ vt.py              统一入口：doctor / apps|plugins|skills list|check / vers
 
 ## 快速开始（clone 即用，零安装步骤）
 
-自托管一键安装（无需 clone；入口与载荷在本方服务器，Gitea 保持私有）：`curl -fsSL https://ruochongliang.top/dl/video-tools/install.sh | bash -s -- --dir <目录>`（可选 `--chrome`；版本清单见 `/releases.json`；详见 `scripts/install.sh --help`）。
-
 ```bash
-env python3 vt.py init                     # 依赖自检 + 安装指引 + 生成 config.local.json（幂等；--fix 自动装）
-env python3 vt.py doctor                   # 三检：版本漂移 / apps+plugins manifest+health / skills 完好性
+git clone https://github.com/CongliangK/framivra
+cd framivra
+python3 vt.py init                     # 依赖自检 + 安装指引 + 生成 config.local.json（幂等；--fix 自动装）
+python3 vt.py doctor                   # 三检：版本漂移 / apps+plugins manifest+health / skills 完好性
 bash scripts/new_project.sh <项目目录> 30  # 新项目脚手架（目录 + 模板 timeline.json + schema）
-env python3 vtx/vtx.py -t <项目>/timeline.json validate    # 渲染前校验门（必跑）
-env python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/final.mp4（--until video 可截断）
+python3 vtx/vtx.py -t <项目>/timeline.json validate    # 渲染前校验门（必跑）
+python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/final.mp4（--until video 可截断）
 ```
 
-可选产线初始化：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等）；`bash apps/matting/init.sh --download`（抠像链权重）。live skill 挂载（`~/.agents/skills/video/`）为指向本仓的符号链接，`vt.py --fix-links` 可重建。
+可选产线初始化：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等）；`bash apps/matting/init.sh --download`（抠像链权重）。live skill 挂载（如 `~/.agents/skills/video/`，为指向本仓的符号链接）可用 `vt.py --fix-links` 重建。
+
+**个人自托管镜像（可选）**：不 clone 也可从作者个人镜像一键安装：`curl -fsSL https://ruochongliang.top/dl/video-tools/install.sh | bash -s -- --dir <目录>`（可选 `--chrome`；版本清单见 `/releases.json`；详见 `scripts/install.sh --help`）。该域名为作者个人服务器，可用环境变量 `VIDEO_TOOLS_DL_BASE` 覆盖下载基址指向自己的镜像。
 
 ## 三层路由
 
@@ -42,7 +44,7 @@ env python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out
 |---|---|
 | `apps/asr/` | Qwen3-ASR + ForcedAligner 字幕产线（口播→subtitles[] 锚定），默认关闭 |
 | `apps/tts/` | IndexTTS-2.5 / edge-tts 口播占位语音（spec.json 贴预算），默认关闭 |
-| `apps/imgen/` | 速创 API 生图 + cover-crop 后处理（bg4k 硬接口 3840×2160），默认关闭 |
+| `apps/imgen/` | 生图 API 生图 + cover-crop 后处理（bg4k 硬接口 3840×2160），默认关闭 |
 | `apps/matting/` | 抠像/背景替换两路线（resolve_matte 达芬奇主力 + 自研链备用；专属文档 matting.md） |
 | `apps/aroll/` | A-roll 素材工具（aup3 提取 / VAD 掐头去尾） |
 | `apps/cover/` | B 站投稿封面产线（make_cover.py 一条龙 + QC 门，D50） |
@@ -69,7 +71,7 @@ env python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out
 | **大模型（默认关闭）** | Qwen3-ASR sidecar（18085） | apps/asr 字幕产线 | `bash apps/asr/init.sh` |
 | **大模型（默认关闭）** | IndexTTS-2.5 repo（11GB 权重）+ conda indextts（edge-tts 兜底） | apps/tts 占位语音 | `bash apps/tts/init.sh` |
 | 可选 | ComfyUI 服务 127.0.0.1:8188 | apps/matting 背景图生成（post_h3.sh 消费其输出） | `bash apps/matting/comfyui_init.sh` |
-| **大模型（默认关闭）** | 速创 API key（0.1 元/张）+ requests | apps/imgen 生图 | `bash apps/imgen/init.sh` 配 key |
+| **大模型（默认关闭）** | 生图 API key（0.1 元/张）+ requests | apps/imgen 生图 | `bash apps/imgen/init.sh` 配 key |
 | **大模型（默认关闭）** | resemble-enhance 权重 681MB + conda denoise env | plugins/denoise 口播降噪 | `bash plugins/denoise/denoise_init.sh --download` |
 
 ## 开发者文档与项目布局
@@ -79,4 +81,12 @@ env python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out
 - 架构设计权威：`docs/ARCHITECTURE.md`（v2 四层架构 / 插件协议 / 迁移映射 / 验收门）。
 - 开发者文档：`docs/DEV.md`（演进史、性能基准、坑位破案详录）、`cache-provenance.md`（缓存与回执溯源）、`canvas-export.md`（gfx Canvas 导出协议）、`audio-audit.md`（分轨审计包语义）、`post-loudness.md`（响度终链）。
 - 测试：`bash scripts/run_all_tests.sh`（`python3 -m unittest discover -s tests`；集成用例需 VTX_TEST_CHROME/VTX_TEST_FFMPEG）。
-- 工作区（非 git 仓）：`~/文档/04_bilibili视频/` 各期项目 + `_library/`（方法论/资产/blender_bridge 挂载）——**修改一律改本仓**，工作区历史副本为冻结快照。音频工具见姊妹仓 `~/文档/01_活跃项目/music_tools/`。推送 Gitea（私有）：`git remote add origin <你的 Gitea 地址>/video_tools.git && git push -u origin main`。
+- 工作区（非 git 仓）：各期视频项目目录 + `_library/`（方法论/资产/blender_bridge 挂载，例如 `~/videos/projects/`）——**修改一律改本仓**，工作区历史副本为冻结快照。音频工具见姊妹仓 music_tools。
+
+## License
+
+本项目以 **MIT License** 发布（版权人 ruochongliang），许可证全文见仓根 `LICENSE`。补充说明：
+
+- **外部工具用户自装**：渲染链依赖的外部工具（ffmpeg/ffprobe、Chrome/Chromium/Edge、可选的 Blender/sox 等）**不随本仓分发任何二进制**，请自行安装并遵守其各自许可证。
+- **上游模型/权重许可待核实**：init 脚本 `--download` 会实际拉取的大体量第三方资产——apps/matting 的 MatAnyone2、BiRefNet_HR 权重，apps/tts 的 IndexTTS-2.5 代码与 11GB 权重，plugins/denoise 的 resemble-enhance 权重等——其上游许可证尚待核实，正式使用前请自行确认上游条款。
+- **可选 Python 依赖许可**：多数为宽松许可证（如 numpy 为 BSD 三条款、Pillow 为 MIT-CMU），以各依赖包自带声明为准。**例外**：apps/tts 兜底引擎 edge-tts 为 **GPL-3.0** 许可——本仓仅以独立命令行子进程方式调用、不链接进仓内代码，是否安装由用户自行决定（详见 apps/tts/README.md 风险节：edge-tts 依赖微软非官方公开接口，无 SLA，仅作免 GPU 兜底）。

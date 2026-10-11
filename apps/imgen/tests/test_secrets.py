@@ -3,8 +3,8 @@
 """test_secrets.py · key 解析链优先级单测（方案 §9.3）。
 
 优先级：--key（值或文件） > SC_API_KEY > NANOBANANA2_API_KEY > keyring
-> ~/.config/slime/secrets.json。env 注入断言；全缺 → 提交前失败。
-测试隔离：XDG_CONFIG_HOME 指向临时目录（屏蔽真实 ~/.config/slime）、
+> ~/.config/vtx-imgen/secrets.json。env 注入断言；全缺 → 提交前失败。
+测试隔离：XDG_CONFIG_HOME 指向临时目录（屏蔽真实 ~/.config 目录）、
 keyring 以 monkeypatch 模拟（不触网）。
 """
 import json
@@ -23,7 +23,7 @@ class KeyChainTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="imgen_key_test_")
         self.addCleanup(self.tmp.cleanup)
-        # 隔离真实 ~/.config/slime（XDG 指到临时目录）
+        # 隔离真实 ~/.config（XDG 指到临时目录）
         self._xdg = os.environ.pop("XDG_CONFIG_HOME", None)
         os.environ["XDG_CONFIG_HOME"] = self.tmp.name
         self.addCleanup(self._restore_xdg)
@@ -45,9 +45,9 @@ class KeyChainTest(unittest.TestCase):
             os.environ["XDG_CONFIG_HOME"] = self._xdg
 
     def _write_secret_file(self, key):
-        slime = Path(self.tmp.name) / "slime"
-        slime.mkdir(parents=True, exist_ok=True)
-        (slime / "secrets.json").write_text(json.dumps({"api_key": key}), encoding="utf-8")
+        cfg = Path(self.tmp.name) / keychain.CONFIG_DIR_NAME
+        cfg.mkdir(parents=True, exist_ok=True)
+        (cfg / "secrets.json").write_text(json.dumps({"api_key": key}), encoding="utf-8")
 
     def test_cli_key_value_beats_all(self):
         os.environ["SC_API_KEY"] = "sk-env-1111"

@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""reference_upload.py · 本地参考图 → 公网 URL（内化自 suchuang-image src/slime/core/reference_upload.py）
+"""reference_upload.py · 本地参考图 → 公网 URL（参考实现改写）
 
-速创 API 参考图走 JSON ``urls`` 字段（公网 URL）。本地文件先外链：
-  1. 默认通道：scp 到自有 VPS（36.151.146.227，ssh alias jd-gitea-root）
-     → https://ruochongliang.top/sc-img/<名>（Caddy 静态服务，国内直连稳定；
-     服务器端 cron 每日清理超 1 天文件）。
-  2. scp 失败自动回退 tmpfiles.org（常被墙，支持 SC_PROXY/HTTPS_PROXY/HTTP_PROXY
-     代理与本地 7890 mihomo 兜底重试）。
+生图 API 参考图走 JSON ``urls`` 字段（公网 URL）。本地文件先外链：
+  1. 自有服务器通道（可选）：设置 VT_OWN_UPLOAD_SSH_TARGET（ssh 目标）与
+     VT_OWN_UPLOAD_BASE_URL（公网基 URL）后启用，scp 上传 → <BASE_URL>/<名>
+     公网可读。两个变量任一未设置即整体跳过该通道。
+  2. 默认通道 tmpfiles.org（临时外链服务；常被墙，支持
+     SC_PROXY/HTTPS_PROXY/HTTP_PROXY 代理与本地 7890 mihomo 兜底重试）。
 
-内化对照（上游仓只读，行号对应 2026-09 快照）：
-  - scp + chmod 644 + 裸公网 HEAD 回验                       ← :118-147
-  - tmpfiles 上传与 /dl/ 直链改写                             ← :75-115
-  - 代理链 SC_PROXY > ALL_PROXY > HTTPS_PROXY > HTTP_PROXY    ← :40-49
-  - upload_reference 双通道回退（SC_REF_UPLOAD_TARGET=tmpfiles 跳过服务器）← :150-162
+通道选择：VT_OWN_UPLOAD_SSH_TARGET 已设置 → 先自有服务器，失败自动回退
+tmpfiles.org（SC_REF_UPLOAD_TARGET=tmpfiles 可强制只走 tmpfiles）。
 
 注意：本文件是 imgen 内唯一联网上传通道，仅在 --ref 指向本地文件时使用
 （URL 形式的 --ref 原样直传，零上传动作）。依赖 requests（本模块软依赖）。
@@ -36,10 +33,10 @@ import requests
 
 TMPFILES_UPLOAD_URL = "https://tmpfiles.org/api/v1/upload"
 
-# 自有服务器图床（默认通道）。服务器端 cron（/etc/cron.d/sc-img-cleanup）每日清理超 1 天文件。
-OWN_SERVER_SSH_TARGET = "jd-gitea-root"      # = 36.151.146.227（用户 ssh config alias）
-OWN_SERVER_REMOTE_DIR = "/var/www/sc-img"
-OWN_SERVER_BASE_URL = "https://ruochongliang.top/sc-img"
+# 自有服务器图床（可选通道，环境变量注入；未配置 VT_OWN_UPLOAD_SSH_TARGET 即跳过）。
+OWN_SERVER_SSH_TARGET = os.environ.get("VT_OWN_UPLOAD_SSH_TARGET") or os.environ.get("SC_IMG_SSH_TARGET", "")
+OWN_SERVER_REMOTE_DIR = os.environ.get("VT_OWN_UPLOAD_REMOTE_DIR") or os.environ.get("SC_IMG_REMOTE_DIR", "/var/www/sc-img")
+OWN_SERVER_BASE_URL = os.environ.get("VT_OWN_UPLOAD_BASE_URL") or os.environ.get("SC_IMG_BASE_URL", "")
 
 
 def _upload_proxies() -> Optional[dict]:
@@ -118,9 +115,13 @@ def upload_to_tmpfiles(path: Path, timeout: int = 60) -> str:
 def upload_to_own_server(path: Path, timeout: int = 90) -> str:
     """scp 到自有服务器并返回公网 URL；scp/ssh/回验任一失败即抛错（触发回退）。"""
     image_path = ensure_image_file(path)
-    ssh_target = os.environ.get("SC_IMG_SSH_TARGET", OWN_SERVER_SSH_TARGET)
-    remote_dir = os.environ.get("SC_IMG_REMOTE_DIR", OWN_SERVER_REMOTE_DIR)
-    base_url = os.environ.get("SC_IMG_BASE_URL", OWN_SERVER_BASE_URL).rstrip("/")
+    ssh_target = OWN_SERVER_SSH_TARGET
+    remote_dir = OWN_SERVER_REMOTE_DIR
+    base_url = OWN_SERVER_BASE_URL.rstrip("/")
+    if not ssh_target or not base_url:
+        raise ReferenceUploadError(
+            "自有服务器通道未配置（需设置 VT_OWN_UPLOAD_SSH_TARGET 与 VT_OWN_UPLOAD_BASE_URL）"
+        )
 
     stem = re.sub(r"[^0-9A-Za-z_-]+", "-", image_path.stem).strip("-")[:40] or "ref"
     remote_name = "{}-{}-{}{}".format(
@@ -143,15 +144,17 @@ def upload_to_own_server(path: Path, timeout: int = 90) -> str:
         timeout=30,
     )
     url = "{}/{}".format(base_url, remote_name)
-    # 回验：不走本地代理（裸公网可达性必须与速创 API 视角一致）。
+    # 回验：不走本地代理（裸公网可达性必须与生图 API 视角一致）。
     response = requests.head(url, timeout=20, proxies={"http": None, "https": None})
     response.raise_for_status()
     return url
 
 
 def upload_reference(path: Path, timeout: int = 90) -> str:
-    """默认自有服务器图床，失败自动回退 tmpfiles.org（不阻塞生成流程）。"""
-    if os.environ.get("SC_REF_UPLOAD_TARGET", "server").strip().lower() == "tmpfiles":
+    """自有服务器通道（已配置时）优先，失败/未配置走 tmpfiles.org（不阻塞生成流程）。"""
+    if not OWN_SERVER_SSH_TARGET or not OWN_SERVER_BASE_URL:
+        return upload_to_tmpfiles(path, timeout=timeout)
+    if os.environ.get("SC_REF_UPLOAD_TARGET", "").strip().lower() == "tmpfiles":
         return upload_to_tmpfiles(path, timeout=timeout)
     try:
         return upload_to_own_server(path, timeout=timeout)

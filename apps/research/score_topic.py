@@ -97,6 +97,7 @@ def score(research_dir: Path):
 
     # ---- 时机成熟度 ----
     repos = load(research_dir / "github_repos.json", [])
+    repos = repos.get("repos", []) if isinstance(repos, dict) else repos  # 兼容 {meta,repos} schema
     max_stars = max((r["stars"] for r in repos), default=0)
     activity = clamp(math.log10(max_stars + 1) * 20)
     timing = w["t_mat"] * m["tech_maturity"]["score"] + w["t_trend"] * m["trend"]["score"] + w["t_act"] * activity
@@ -123,7 +124,8 @@ def score(research_dir: Path):
 
 def gh_demand(research_dir: Path):
     """GitHub 需求代理：近似方案的存在与热度证明需求（竞品 stars 对数，上限封顶防大厂项目扭曲）"""
-    repos = load(research_dir / "github_repos.json", [])
+    data = load(research_dir / "github_repos.json", [])
+    repos = data.get("repos", []) if isinstance(data, dict) else data  # 兼容 {meta,repos} 与纯列表两种 schema
     if not repos: return 50.0
     near = [r for r in repos if r["stars"] > 100]
     if not near: return 30.0

@@ -3,7 +3,7 @@
 """verify_contract_surface.py — L7 三源键面对账门(R-22 M3,席 E)。
 
 保:三源键面不脱节(KERNEL_KEYS/schema/edit.md fence/registry 路径域)/
-不保:schema 本身正确与散文语义正确(=kernel-mgr review 分工);
+不保:schema 本身正确与散文语义正确(由人工评审另行把关);
 a green L7 means the three surfaces agree at these exact contents,
 not that the contract is right。
 

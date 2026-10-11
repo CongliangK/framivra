@@ -37,7 +37,7 @@
     "model_default": "nano",
     "price_per_image": 0.1,
     "confirm_before_submit": true,
-    "purpose": "速创 API 生图（apps/imgen/）：背景图 bg4k/bg1080p/竖版，cover-crop 后处理直达 matting/口播链",
+    "purpose": "生图 API 生图（apps/imgen/）：背景图 bg4k/bg1080p/竖版，cover-crop 后处理直达 matting/口播链",
     "howto": "bash apps/imgen/init.sh 配 key（SC_API_KEY 或 keyring）；0.1 元/张，提交前确认"
   },
   "bgm": {

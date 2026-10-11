@@ -1,26 +1,26 @@
-# imgen —— 速创 API 生图 + cover-crop 后处理
+# imgen —— 生图 API 生图 + cover-crop 后处理
 
 > **v2 结构（P2a 批次 2 起本目录迁入 `apps/imgen/`）**：manifest 见 `app.json`（kind=app；健康检查 = `imgen_cli.py --help`）；兼容 symlink：仓库根 `imgen → apps/imgen`（目录级，旧路径引用仍可达）。随迁清除 `spec_from_file_location`（v2 §1.4 冻结禁令）：imgen_cli.py 加载 secrets.py 与 tests/_loader.py、init.sh 探测内嵌加载统一改为 **app 根 sys.path 注入 + 普通 import**（app 目录注入不涉内核双模块，允许；保留解析落点校验哨兵防 stdlib 同名 secrets 串味）。
 
-脚本阶段写 prompt → 速创 API（api.wuyinkeji.com，nano / gpt-image / GPT-Image-2.5 三系五模型）付费生图（0.1 或 0.3 元/张按模型）→ 原图即下（URL 2 小时失效）→ ffmpeg lanczos cover-crop 到**精确尺寸** → 硬对接下游：
+脚本阶段写 prompt → 生图 API（api.wuyinkeji.com，nano / gpt-image / GPT-Image-2.5 三系五模型）付费生图（0.1 或 0.3 元/张按模型）→ 原图即下（URL 2 小时失效）→ ffmpeg lanczos cover-crop 到**精确尺寸** → 硬对接下游：
 - `assets/bg/background_4k.png`（3840×2160 8-bit RGB PNG）→ `matting/run_full_bg.sh` 抠像逐像素合成（cv2.imread 直读、无 resize，**像素契约不过即崩**）；
 - `assets/bg/background_1080p.png`（1920×1080）/ `background_vertical.png`（1080×1920）→ 口播链 / gfx 底图；
 - `assets/imgen/<UTC>-<n>.png` → 原图留档（API 原图不可再生，属资产非缓存，不入 cache/）。
 
 ## 文件清单
 
-| 文件 | 用途 | 上游内化来源（行号=2026-09 快照） |
-|---|---|---|
-| `imgen_cli.py` | 总入口：`gen` / `batch` / `postprocess` / `key status`；编排线程池 10/10/5 | `src/slime/cli.py`（:87/:108/:137 三池；:41-80 单次生成） |
-| `api_client.py` | SuchuangClient：异步提交 + 轮询 detail + 下载 + 错误分类 | `src/slime/core/api_client.py`（鉴权裸 key 头 :48-54；提交 :56-83；轮询 :92-151；result 四形态 :172-204；错误分类 :17-37） |
-| `models.py` | 模型/端点/参数定义 + kind 联动矩阵 | `src/slime/core/models.py`（BASE_URL :10；nano 端点 :36；**gpt 端点 `/api/async/image_gpt` 无 `_image` 后缀** :43；参数校验 :93-108；**参考图 ≤14 张 :113-114**；估价 :120-121）+ `reference_upload.py:57`（is_data_url） |
-| `secrets.py` | key 解析链 `--key > SC_API_KEY > NANOBANANA2_API_KEY > keyring > ~/.config/slime/secrets.json(0600)` | `src/slime/core/secrets.py`（resolve :119-139；env 链 :90-92；keyring :21-29；secrets.json :56-87）+ `core/config.py:19-20`（XDG 目录） |
-| `reference_upload.py` | 本地参考图外链：scp jd-gitea-root → https://ruochongliang.top/sc-img/，失败回退 tmpfiles.org（SC_PROXY/本地 7890） | `src/slime/core/reference_upload.py`（scp+chmod+回验 :118-147；tmpfiles :75-115；代理链 :40-49；回退编排 :150-162） |
-| `postprocess.py` | ffmpeg lanczos cover-crop → 精确 3840×2160 / 1920×1080 / 1080×1920 + ffprobe 断言 | 方案 §5.3（ffmpeg 零新依赖；无上游对应） |
-| `init.sh` | 幂等初始化（秒级，无模型下载） | 方案 §6.4 |
-| `tests/` | 71 用例：models/secrets/postprocess 单测 + 本地 mock http.server 全链 | 方案 §9.3 |
+| 文件 | 用途 |
+|---|---|
+| `imgen_cli.py` | 总入口：`gen` / `batch` / `postprocess` / `key status`；编排线程池 10/10/5 |
+| `api_client.py` | ImgenClient：异步提交 + 轮询 detail + 下载 + 错误分类 |
+| `models.py` | 模型/端点/参数定义 + kind 联动矩阵 |
+| `secrets.py` | key 解析链 `--key > SC_API_KEY > NANOBANANA2_API_KEY > keyring > ~/.config/vtx-imgen/secrets.json(0600)` |
+| `reference_upload.py` | 本地参考图外链：配置自有服务器通道时 scp 优先，默认 tmpfiles.org（SC_PROXY/本地 7890 兜底）；详见下方「参考图外链通道」 |
+| `postprocess.py` | ffmpeg lanczos cover-crop → 精确 3840×2160 / 1920×1080 / 1080×1920 + ffprobe 断言 |
+| `init.sh` | 幂等初始化（秒级，无模型下载） |
+| `tests/` | 71 用例：models/secrets/postprocess 单测 + 本地 mock http.server 全链 |
 
-**内化说明**：上游仓 `/home/liangruochong/文档/01_活跃项目/图像与多媒体/suchuang-image` 只读；本模块运行时零依赖上游（搬入改写、本仓内化维护）。内化改动：api_base 可注入（mock 测试/换网关不改代码）、下载失败重试 ≤2 次后上抛、`resolve_api_key` 空白串视为未提供（上游会把 `"  "` 误当路径）、ffprobe 对无效图返回 0 尺寸的显式拦截。
+**实现说明**：本模块由独立参考实现改写内化维护，运行时零外部仓依赖。相对参考实现的改动：api_base 可注入（mock 测试/换网关不改代码）、下载失败重试 ≤2 次后上抛、`resolve_api_key` 空白串视为未提供、ffprobe 对无效图返回 0 尺寸的显式拦截。
 
 ## API 模型表
 
@@ -74,7 +74,7 @@ env python3 apps/imgen/imgen_cli.py gen "深色科技感演播室背景，无人
 env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --kind bg1080p --yes
 env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --kind vertical --yes
 
-# 带参考图（本地文件自动外链：scp 自有服务器 → 回退 tmpfiles.org；URL 直传；≤14 张）
+# 带参考图（本地文件自动外链：默认 tmpfiles.org，可配自有服务器通道；URL 直传；≤14 张）
 env python3 apps/imgen/imgen_cli.py gen "保留构图，改成水彩" --out <项目> --kind raw \
     --ref ./ref1.png https://example.com/ref2.jpg --yes
 
@@ -98,7 +98,12 @@ env python3 apps/imgen/imgen_cli.py postprocess <原图.png> --kind bg4k -o /tmp
 env python3 apps/imgen/imgen_cli.py gen "<原prompt>" --out <项目> --kind bg4k --task-id <task_id>
 ```
 
-环境变量（一般无需设置）：`IMGEN_API_BASE`（覆盖 API 地址，测试/mock 用）、`IMGEN_CONFIG`（覆盖 config.local.json 路径）、`IMGEN_POLL_INTERVAL`/`IMGEN_POLL_TIMEOUT`（轮询节奏）、`SC_PROXY` 等参考图上传代理（见 reference_upload.py docstring）。
+环境变量（一般无需设置）：`IMGEN_API_BASE`（覆盖 API 地址，测试/mock 用）、`IMGEN_CONFIG`（覆盖 config.local.json 路径）、`IMGEN_POLL_INTERVAL`/`IMGEN_POLL_TIMEOUT`（轮询节奏）、`SC_PROXY` 等参考图上传代理、`VT_OWN_UPLOAD_SSH_TARGET`/`VT_OWN_UPLOAD_BASE_URL`（自有服务器通道，见下节）。
+
+## 参考图外链通道（reference_upload.py）
+
+- **默认：tmpfiles.org**——零配置即用，属第三方临时文件服务。**隐私提示：上传的参考图会被传到第三方公网服务且短期内可被任意人访问（文件 1 小时左右过期），请勿上传含敏感/私密内容的图片**；常被墙，支持 `SC_PROXY`/`HTTPS_PROXY`/`HTTP_PROXY` 代理与本地 7890 兜底重试。
+- **可选：自有服务器通道**——设置 `VT_OWN_UPLOAD_SSH_TARGET`（ssh 目标，如 `my-host`）与 `VT_OWN_UPLOAD_BASE_URL`（如 `https://example.com/sc-img`）后启用：scp 上传 → 公网 URL 回验。两个变量任一未设置即整体跳过、只走 tmpfiles.org；上传失败也自动回退 tmpfiles.org（`SC_REF_UPLOAD_TARGET=tmpfiles` 可强制只走 tmpfiles）。可选 `VT_OWN_UPLOAD_REMOTE_DIR` 覆盖远端目录（默认 `/var/www/sc-img`）。
 
 ## 付费纪律（硬门）
 
@@ -110,7 +115,7 @@ env python3 apps/imgen/imgen_cli.py gen "<原prompt>" --out <项目> --kind bg4k
 
 ## key 管理
 
-解析链优先级：`--key`（值或文件路径）> `SC_API_KEY` > `NANOBANANA2_API_KEY` > 系统 keyring（service=`slime-suchuang`, account=`api-key`）> `~/.config/slime/secrets.json`（0600，`{"api_key": "..."}`）。key 永不入仓不入日志（打印仅尾 4 位）。推荐 `export SC_API_KEY=...` 入 shell rc。
+解析链优先级：`--key`（值或文件路径）> `SC_API_KEY` > `NANOBANANA2_API_KEY` > 系统 keyring（service=`vtx-imgen`, account=`api-key`）> `~/.config/vtx-imgen/secrets.json`（0600，`{"api_key": "..."}`）。key 永不入仓不入日志（打印仅尾 4 位）。推荐 `export SC_API_KEY=...` 入 shell rc。
 
 ## 后处理（postprocess.py）
 
@@ -145,5 +150,5 @@ cd apps/imgen && env python3 -m unittest discover -s tests -t . -v   # 71 用例
 
 ## 已验证版本
 
-- 2026-09-11：requests 2.32.5 / ffmpeg 8.1.2 / Python 3.13（仓基线 ≥3.9 兼容语法）。上游内化自 suchuang-image 2026-09 工作区快照（src/slime/），端点与参数规则以 README 表中行号为准。
+- 2026-09-11：requests 2.32.5 / ffmpeg 8.1.2 / Python 3.13（仓基线 ≥3.9 兼容语法）。端点与参数规则以本 README「API 模型表」为准。
 - 2026-09-13（封面产线实测，voice-ime/cover/COVER-REPORT.md）：**flare 端点对无害纯抽象画中文提示词两连 status=3 审核拒绝**（不退款、排队数分钟后转拒，判供应商审核误杀；同 prompt 在 sunburst 通过）——重要生成勿单独依赖 flare；**sunburst 端点忽略 payload 中的 `aspectRatio`（含 2048x1280 显式像素串）返回 1K 方图**（记账 JSON 可证载荷正确）——非 1:1 用途需下游 cover-crop（放大须标注倍数）。

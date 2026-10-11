@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""secrets.py · 速创 API key 解析链（内化自 suchuang-image src/slime/core/secrets.py）
+"""secrets.py · 生图 API key 解析链（参考实现改写）
 
 优先级链（方案 §5.5）：
   --key（值或文件路径） > SC_API_KEY > NANOBANANA2_API_KEY > 系统 keyring
-  > ~/.config/slime/secrets.json（0600）
+  > ~/.config/vtx-imgen/secrets.json（0600）
 key 永不入仓不入日志；对外展示只打印尾 4 位（mask_key）。
 
-内化对照（上游仓只读，行号对应 2026-09 快照）：
-  - resolve_api_key         ← core/secrets.py:119-139
-  - env 链 SC_API_KEY/NANOBANANA2_API_KEY ← core/secrets.py:90-92
-  - keyring（service slime-suchuang / account api-key）← core/secrets.py:21-29
-  - secrets.json 读取       ← core/secrets.py:56-65（0600 纪律 ← :68-87）
-  - XDG config 目录         ← core/config.py:19-20（APP_ID=slime）
-
-内化删减：save/delete（本模块 CLI 只读消费，写入按上游 UI 流程或手工建文件）；
+相对参考实现的删减：save/delete（本模块 CLI 只读消费，写入手工建文件）；
 新增 describe_key_chain() 供 `key status` / init.sh 做只本地探测（不触网）。
 """
 from __future__ import annotations
@@ -24,15 +17,16 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-SERVICE_NAME = "slime-suchuang"
+SERVICE_NAME = "vtx-imgen"
 ACCOUNT_NAME = "api-key"
 SECRET_FILE = "secrets.json"
+CONFIG_DIR_NAME = "vtx-imgen"
 
 
 def _config_dir() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
-    return base / "slime"
+    return base / CONFIG_DIR_NAME
 
 
 def _secret_path() -> Path:
@@ -113,7 +107,7 @@ def resolve_api_key(key_or_file: Optional[str] = None, allow_stored: bool = True
 
     raise ValueError(
         "未提供 API Key，请通过 --key（值或文件）、环境变量 SC_API_KEY / "
-        "NANOBANANA2_API_KEY、keyring 或 ~/.config/slime/secrets.json 提供。"
+        "NANOBANANA2_API_KEY、keyring 或 ~/.config/vtx-imgen/secrets.json 提供。"
     )
 
 
@@ -145,11 +139,11 @@ def describe_key_chain(key_or_file: Optional[str] = None) -> Tuple[List[Tuple[st
     stored = None
     if not cli_key and not sc and not nb:
         stored = _try_keyring_get() or _read_secret_file()
-        levels.append(("keyring（slime-suchuang/api-key）", _try_keyring_get()))
-        levels.append(("~/.config/slime/secrets.json", _read_secret_file()))
+        levels.append(("keyring（vtx-imgen/api-key）", _try_keyring_get()))
+        levels.append(("~/.config/vtx-imgen/secrets.json", _read_secret_file()))
     else:
-        levels.append(("keyring（slime-suchuang/api-key，被高级别遮蔽）", None))
-        levels.append(("~/.config/slime/secrets.json（被高级别遮蔽）", None))
+        levels.append(("keyring（vtx-imgen/api-key，被高级别遮蔽）", None))
+        levels.append(("~/.config/vtx-imgen/secrets.json（被高级别遮蔽）", None))
 
     chosen: Optional[Tuple[str, str]] = None
     if cli_key:

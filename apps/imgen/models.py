@@ -1,21 +1,17 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""models.py · 速创 API 模型/端点/参数定义（内化自 suchuang-image src/slime/core/models.py）
+"""models.py · 生图 API 模型/端点/参数定义（由独立参考实现改写内化维护）
 
-内化对照（上游仓只读，运行时零依赖；行号对应 2026-09 快照）：
-  - BASE_URL                 ← core/models.py:10
-  - nano 提交端点 POST /api/async/image_nanoBanana2      ← core/models.py:36
-  - gpt 提交端点 POST /api/async/image_gpt（无 _image 后缀变体，:43 权威）
-                                                            ← core/models.py:43
-  - detail 轮询端点 GET /api/async/detail                 ← core/models.py:11
-  - nano size 1K/2K/4K + aspectRatio 校验                 ← core/models.py:93-101
-  - gpt size=纯比例、不提交 aspectRatio                    ← core/models.py:63-74,102-108
-  - 参考图 ≤14 张                                          ← core/models.py:113-114
-  - estimate_cost 0.1 元/张                                ← core/models.py:120-121
-  - is_data_url                                            ← core/reference_upload.py:57
-    （内化时改为本文件内嵌纯函数，避免 models 传递依赖 requests）
+端点与参数规则（详见 README「API 模型表」）：
+  - BASE_URL
+  - nano 提交端点 POST /api/async/image_nanoBanana2
+  - gpt 提交端点 POST /api/async/image_gpt（无 _image 后缀变体）
+  - detail 轮询端点 GET /api/async/detail
+  - nano size 1K/2K/4K + aspectRatio 校验
+  - gpt size=纯比例、不提交 aspectRatio
+  - 参考图 ≤14 张
+  - estimate_cost 0.1 元/张
+  - is_data_url（本文件内嵌纯函数，避免 models 传递依赖 requests）
 
-本文件新增（上游无此概念，方案 v2.1 §5.2）：
+本文件新增（参考实现无此概念，方案 v2.1 §5.2）：
   - --kind 联动矩阵 KIND_LINKAGE 与目标尺寸 KIND_TARGETS、固定文件名 KIND_FILENAME
   - nano 实出尺寸估算锚点（用于画质警告的插值倍数估算，仅提示性质）
 """
@@ -183,7 +179,7 @@ def build_payload(
     background: Optional[str] = None,
     mask: Optional[str] = None,
 ) -> dict:
-    """构建速创 API 提交载荷（模型相关参数差异集中在此校验，付费提交前先过一遍）。"""
+    """构建生图 API 提交载荷（模型相关参数差异集中在此校验，付费提交前先过一遍）。"""
     prompt = (prompt or "").strip()
     if not prompt:
         raise ValueError("prompt 不能为空")

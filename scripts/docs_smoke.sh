@@ -69,10 +69,14 @@ else:
                        if t.relative_to(docs_root).parts[0].startswith("plans"))
 
 FENCE = re.compile(r"^```(bash|sh|shell)\s*$", re.M)
+# R5 修:① heads 增 skills(skills/tech-talk/scripts/*.py 等产线脚本入冒烟面);
+# ② 行首边界负向后顾 (?<![\w./$-])——路径必须始于词边界,禁止在
+# $VIDEO_TOOLS/skills/... 一类长路径中段回退误捕尾部 scripts/xxx.py。
 TOKEN = re.compile(
+    r"(?<![\w./$-])"
     r"(?:(?:\$\{?VIDEO_TOOLS\}?|<video_tools>|<本仓>|<skill>|~/文档/01_活跃项目/video_tools[\w-]*"
     r"|~/.agents/skills/video)/+)?"                       # 可选前缀（env 占位/挂载/家目录）
-    r"((?:\.\./)*(?:apps|plugins|scripts|vtx)/[A-Za-z0-9_./-]+\.(?:py|sh|mjs))"
+    r"((?:\.\./)*(?:apps|plugins|scripts|vtx|skills)/[A-Za-z0-9_./-]+\.(?:py|sh|mjs))"
     r"(?=[\s'\"\\<>|$;#&)]|$)")                           # 仓库路径形态（含 README 相对 ../）
 CMD_WORDS = re.compile(r"\b(?:python3?|bash|env|node)\b")
 INLINE_SPAN = re.compile(r"`([^`]+)`")

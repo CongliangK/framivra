@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""imgen_cli.py · 速创 API 生图 + ffmpeg cover-crop 后处理 总入口（imgen 模块）
+"""imgen_cli.py · 生图 API 生图 + ffmpeg cover-crop 后处理 总入口（imgen 模块）
 
 子命令（方案 v2.1 §5.2）：
   gen "<prompt>" --out <项目目录> [--model nano|gpt-image] [--size ...] [--ratio ...]
@@ -32,9 +32,9 @@ cover-crop 前源图 ≥ 目标、只降采样不放大）：
 产物目录自建（new_project.sh 不建 assets/bg/、assets/imgen/，写前 mkdir -p）。
 进度走 stderr、产物路径走 stdout（管道友好，随上游 cli.py）。
 
-编排内化自 suchuang-image src/slime/cli.py（提交/轮询/下载线程池 10/10/5，
+编排由独立参考实现改写内化（提交/轮询/下载线程池 10/10/5，
 单张时退化为串行）；config 容错 cfg_get 见 §7.2；key 链见 secrets.py。
-运行时零依赖上游仓。依赖：requests（仅 gen/batch 且 --ref 本地图时触网）、
+运行时零外部仓依赖。依赖：requests（仅 gen/batch 且 --ref 本地图时触网）、
 ffmpeg/ffprobe（postprocess）。
 """
 from __future__ import annotations
@@ -201,13 +201,13 @@ def resolve_kind_params(
 def prepare_ref_urls(refs: Optional[List[str]], *, upload=True) -> List[str]:
     """--ref 处理：URL 直传；本地文件外链上传（自有服务器图床→tmpfiles 回退）。
 
-    >14 张在确认门前前置报错（速创 API 硬限制，上游 core/models.py:113-114），
+    >14 张在确认门前前置报错（生图 API 硬限制，上游 core/models.py:113-114），
     不浪费一次交互确认。
     """
     if not refs:
         return []
     if len(refs) > 14:
-        raise ValueError(f"参考图最多 14 张（速创 API 硬限制），当前 {len(refs)} 张")
+        raise ValueError(f"参考图最多 14 张（生图 API 硬限制），当前 {len(refs)} 张")
     urls: List[str] = []
     for value in refs:
         value = value.strip()
@@ -256,9 +256,9 @@ def confirm_paid_submit(
     """
     total = count * price if breakdown is None else sum(n * p for n, p in breakdown.values())
     if breakdown is None:
-        print(f"⚠ 将提交 {count} 张 × {price} 元/张 = {total:.1f} 元（速创 API 实付）", file=stderr)
+        print(f"⚠ 将提交 {count} 张 × {price} 元/张 = {total:.1f} 元（生图 API 实付）", file=stderr)
     else:
-        print(f"⚠ 将提交 {count} 张，合计 {total:.1f} 元（速创 API 实付）", file=stderr)
+        print(f"⚠ 将提交 {count} 张，合计 {total:.1f} 元（生图 API 实付）", file=stderr)
         for model_key, (n, unit) in breakdown.items():
             print(f"  · {model_key} × {n} 张 @ {unit} 元/张", file=stderr)
     print("⚠ 内容审核拒绝（status=3）不退款、不重试；请确认 prompt 与参考图合规", file=stderr)
@@ -412,9 +412,9 @@ def run_generation_pipeline(jobs: List[dict], out_root: Path, api_key: str, api_
     提交/轮询/下载 = 上游 cli.py 线程池 10/10/5（单张退化为串行）；
     后处理落位主线程串行（ffmpeg 重活不并发）。
     """
-    from api_client import SuchuangClient
+    from api_client import ImgenClient
 
-    client = SuchuangClient(api_key, api_base=api_base)
+    client = ImgenClient(api_key, api_base=api_base)
     runid = report.data["runid"]
     tmp_dir = out_root / "cache" / "tmp" / runid
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -557,13 +557,13 @@ def _resolve_key(args) -> str:
 
 
 def cmd_gen(args, cfg) -> int:
-    from api_client import SuchuangClient  # noqa: F401（付费链需 requests）
+    from api_client import ImgenClient  # noqa: F401（付费链需 requests）
 
     model_default = str(cfg_get(cfg, "imgen.model_default", "nano"))
     confirm_enabled = bool(cfg_get(cfg, "imgen.confirm_before_submit", True))
 
     if args.ref and len(args.ref) > 14:  # 前置报错（先于确认门，不浪费交互）
-        eprint(f"✗ 参考图最多 14 张（速创 API 硬限制），当前 {len(args.ref)} 张")
+        eprint(f"✗ 参考图最多 14 张（生图 API 硬限制），当前 {len(args.ref)} 张")
         return EXIT_ERROR
 
     resolved = resolve_kind_params(args.kind, args.model, args.size, args.ratio, model_default)
@@ -741,7 +741,7 @@ def cmd_key_status(args, _cfg) -> int:
         eprint(f"✓ 最终将使用：{level}（尾 4 位 {keychain.mask_key(api_key)}）")
         return EXIT_OK
     eprint("✗ 未配置任何 key。请通过 --key、SC_API_KEY / NANOBANANA2_API_KEY 环境变量、")
-    eprint("  keyring（service=slime-suchuang, account=api-key）或 ~/.config/slime/secrets.json 提供。")
+    eprint("  keyring（service=vtx-imgen, account=api-key）或 ~/.config/vtx-imgen/secrets.json 提供。")
     return EXIT_ERROR
 
 
@@ -779,14 +779,14 @@ _KIND_MATRIX = """\
 
 _EPILOG = _KIND_MATRIX + """
 
-内化来源：suchuang-image src/slime/（cli.py 线程池 10/10/5、core/models.py、
-core/api_client.py、core/secrets.py、core/reference_upload.py）；运行时零依赖上游仓。"""
+实现来源：由独立参考实现改写内化（编排/模型/API 客户端/key 链/参考图外链）；
+运行时零外部仓依赖。"""
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="imgen_cli.py",
-        description="速创 API 生图（0.1/0.3 元/张按模型）+ ffmpeg lanczos cover-crop 后处理（imgen 模块总入口）",
+        description="生图 API 生图（0.1/0.3 元/张按模型）+ ffmpeg lanczos cover-crop 后处理（imgen 模块总入口）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_EPILOG,
     )

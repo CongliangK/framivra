@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""vt —— video_tools v2 统一入口（ARCHITECTURE §5.1，吸收原 init.py 全部语义）。
+"""vt —— Framivra(video_tools 仓)v2 统一入口（ARCHITECTURE §5.1，吸收原 init.py 全部语义）。
 
 子命令：
   doctor [--json] [--fix]  三检：①版本（本地 HEAD vs origin/HEAD 漂移；真 fetch
@@ -200,7 +200,7 @@ def cmd_init(a):
             fail.append(key)
 
     say = (lambda s: None) if a.json else (lambda s: print(s))
-    say(f"=== video_tools init（vt.py）===  platform={platform.system()} ({OS})")
+    say(f"=== Framivra init（vt.py）===  platform={platform.system()} ({OS})")
 
     say("--- 1/5 基础依赖（vtx 渲染链必需）---")
     v = sys.version_info
@@ -304,12 +304,12 @@ def cmd_init(a):
     eb = Path(_pcfg.cfg_get(lc, "tts.edge_bin", "~/miniconda3/" +
                             ("Scripts/edge-tts.exe" if OS == "win32" else "bin/edge-tts"))).expanduser()
     rec("tts_edge", eb.is_file(), str(eb) if eb.is_file() else "缺 edge-tts（pip install edge-tts；免 GPU 兜底引擎）")
-    # imgen：key 链 config_key 型（env SC_API_KEY/NANOBANANA2_API_KEY > ~/.config/slime/
+    # imgen：key 链 config_key 型（env SC_API_KEY/NANOBANANA2_API_KEY > ~/.config/vtx-imgen/
     # secrets.json 的 api_key——与 imgen/secrets.py 同一实践链的只读复刻，不跨目录 import）
     sc_key = (os.environ.get("SC_API_KEY") or os.environ.get("NANOBANANA2_API_KEY") or "").strip() or None
     if not sc_key:
         try:
-            sc_key = (json.loads(Path("~/.config/slime/secrets.json").expanduser()
+            sc_key = (json.loads(Path("~/.config/vtx-imgen/secrets.json").expanduser()
                                  .read_text(encoding="utf-8")).get("api_key")) or None
         except Exception:
             sc_key = None
@@ -875,7 +875,7 @@ def cmd_version() -> int:
         r = sh(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"])
         if r.returncode == 0:
             head = r.stdout.strip()
-    print(f"video-tools {_read_version()}（HEAD {head}）")
+    print(f"framivra {_read_version()}（HEAD {head}）")
     return 0
 
 
@@ -941,7 +941,7 @@ def cmd_fix_links(dry: bool) -> int:
 
 # ================================================================ main
 def main():
-    ap = argparse.ArgumentParser(description="vt —— video_tools v2 统一入口（doctor/list/check/version/init/--fix-links）")
+    ap = argparse.ArgumentParser(description="vt —— Framivra v2 统一入口（doctor/list/check/version/init/--fix-links）")
     ap.add_argument("command", nargs="?", default=None,
                     help="doctor | apps|plugins|skills list|check | version | init")
     ap.add_argument("sub", nargs="?", default=None, help="list | check（apps/plugins/skills 的子命令）")

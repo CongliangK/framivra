@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""api_client.py · 速创 API 客户端：异步提交 + 轮询 + 下载 + 错误分类
-（内化自 suchuang-image src/slime/core/api_client.py）
+"""api_client.py · 生图 API 客户端：异步提交 + 轮询 + 下载 + 错误分类
+（由独立参考实现改写内化维护）
 
-内化对照（上游仓只读，行号对应 2026-09 快照）：
-  - Authorization 裸 key 头（无 Bearer 前缀）          ← :48-54
-  - 异步提交 {code:200,data:{id,count}} 解析           ← :56-83
+协议要点：
+  - Authorization 裸 key 头（无 Bearer 前缀）
+  - 异步提交 {code:200,data:{id,count}} 解析
   - 轮询 GET /api/async/detail（status 0/1 排队生成、2=成功、
-    3=审核拒绝（不退款不重试）、-1=失败）              ← :92-151
+    3=审核拒绝（不退款不重试）、-1=失败）
   - result 四形态防御解析（str / list[str] / list[dict] /
-    wrapper dict images|urls|result|data|list）        ← :172-204
-  - 错误分类：429/5xx 可重试（继续轮询），4xx 立即上抛  ← :17-37
-  - 「result 已有图即成功」优先于数值 status 的防御策略 ← :98-106
+    wrapper dict images|urls|result|data|list）
+  - 错误分类：429/5xx 可重试（继续轮询），4xx 立即上抛
+  - 「result 已有图即成功」优先于数值 status 的防御策略
 
-内化改动（相对上游）：
+相对参考实现的改动：
   - api_base 可注入（默认 models.BASE_URL）：测试用本地 mock http.server、
     未来切网关都不改代码；
   - download_url 增加网络失败重试 ≤2 次后上抛可行动错误（方案 §9.3：
@@ -33,8 +33,8 @@ import models
 StatusCallback = Callable[[dict], None]
 
 
-class SuchuangApiError(RuntimeError):
-    """速创 API 错误（code 附带，供 retryable 分类与 CLI 文案）。"""
+class ImgenApiError(RuntimeError):
+    """生图 API 错误（code 附带，供 retryable 分类与 CLI 文案）。"""
 
     def __init__(self, message: str, code: Optional[int] = None):
         super().__init__(message)
@@ -55,7 +55,7 @@ class SuchuangApiError(RuntimeError):
         return True
 
 
-class SuchuangClient:
+class ImgenClient:
     def __init__(self, api_key: str, api_base: Optional[str] = None, session: Optional[requests.Session] = None):
         api_key = (api_key or "").strip()
         if not api_key:
@@ -94,12 +94,12 @@ class SuchuangClient:
         resp = self.session.post(endpoint, headers=self.json_headers, json=payload, timeout=30)
         data = _json_or_raise(resp)
         if data.get("code") != 200:
-            raise SuchuangApiError(
+            raise ImgenApiError(
                 "提交失败 [{}]: {}".format(data.get("code"), data.get("msg", resp.text)), code=data.get("code")
             )
         task_id = data.get("data", {}).get("id")
         if not task_id:
-            raise SuchuangApiError(f"提交成功但响应缺少 task id: {data}")
+            raise ImgenApiError(f"提交成功但响应缺少 task id: {data}")
         return {
             "task_id": task_id,
             "prompt": prompt,
@@ -113,7 +113,7 @@ class SuchuangClient:
         resp = self.session.get(url, headers=self.auth_headers, params={"id": task_id}, timeout=30)
         data = _json_or_raise(resp)
         if data.get("code") != 200:
-            raise SuchuangApiError(
+            raise ImgenApiError(
                 "查询失败 [{}]: {}".format(data.get("code"), data.get("msg", resp.text)), code=data.get("code")
             )
         return data.get("data", {})
@@ -140,7 +140,7 @@ class SuchuangClient:
 
             try:
                 info = self.detail(task_id)
-            except SuchuangApiError as exc:
+            except ImgenApiError as exc:
                 if not exc.retryable:
                     raise
                 if callback:
@@ -165,18 +165,18 @@ class SuchuangClient:
             if _status_is_success(status):
                 empty_success_retries += 1
                 if empty_success_retries > max_empty_success_retries:
-                    raise SuchuangApiError(f"任务成功但未返回图片，task_id={task_id}")
+                    raise ImgenApiError(f"任务成功但未返回图片，task_id={task_id}")
                 time.sleep(poll_interval)
                 continue
 
             if _status_is_rejected(status):
                 # status=3：内容审核拒绝。终态失败：不退款、不重试、不重复提交。
                 reason = info.get("message", "unknown")
-                raise SuchuangApiError(f"任务被内容审核拒绝（不退款不重试）: {reason}", code=3)
+                raise ImgenApiError(f"任务被内容审核拒绝（不退款不重试）: {reason}", code=3)
 
             if _status_is_failure(status):
                 reason = info.get("message", "unknown")
-                raise SuchuangApiError(f"任务失败: {reason}")
+                raise ImgenApiError(f"任务失败: {reason}")
 
             time.sleep(poll_interval)
 
@@ -209,7 +209,7 @@ def download_url(
             last_exc = exc
             if attempt < attempts:
                 time.sleep(min(2.0, 0.5 * attempt))
-    raise SuchuangApiError(
+    raise ImgenApiError(
         f"下载失败（已重试 {attempts - 1} 次）: {url}（{last_exc}）——"
         "图片 URL 约 2 小时失效；可用 gen --task-id <id> 恢复只重下载"
     ) from last_exc
@@ -268,7 +268,7 @@ def _json_or_raise(resp: requests.Response) -> dict:
     try:
         return resp.json()
     except ValueError as exc:
-        raise SuchuangApiError(
+        raise ImgenApiError(
             f"API 返回非 JSON 响应: HTTP {resp.status_code} {resp.text[:300]}", code=resp.status_code
         ) from exc
 
