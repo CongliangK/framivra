@@ -33,10 +33,14 @@ cat > "$DIR/timeline.json" <<EOF
 }
 EOF
 cp "$VTX_DIR/timeline.schema.json" "$DIR/timeline.schema.json"
+# 保留用户已有页面（包括符号链接），重跑脚手架不覆盖自定义 gfx。
+if [ ! -e "$DIR/gfx/gfxA.html" ] && [ ! -L "$DIR/gfx/gfxA.html" ]; then
+  cp "$SKILL_DIR/scripts/templates/gfx-starter.html" "$DIR/gfx/gfxA.html"
+fi
 cat <<'EOF'
 ✓ 项目已创建。下一步：
   1. 素材放 assets/（CFR 30fps（D24 换基）、含音轨，竖版会自动中心裁 16:9）
-  2. 按 video skill 的 references/gfx.md 编写 gfx/gfxA.html（帧驱动动效页）
+  2. gfx/gfxA.html 为协议合规样页，可直接 vtx all 跑通，改文案/配色即可；协议见 skill/references/gfx.md
   3. 编辑 timeline.json 完成编排
   4. python3 ~/.agents/skills/video/vtx/vtx.py -t <项目>/timeline.json validate
   5. 校验通过后 ... all → out/final.mp4

@@ -30,7 +30,12 @@ import subprocess
 import sys
 import tempfile
 
-import numpy as np
+EXIT_MISSING_DEP = 3  # 依赖缺失专用退出码（与 argparse 参数错=2、运行期报错=1 区分；A4）
+
+try:
+    import numpy as np
+except ImportError:   # 不让 --help 失败；main() 入口统一给中文指引后退出（A4）
+    np = None
 
 FPS = 30
 TAIL_MS = 20  # 句尾保护余量（TTS 惯例同款）
@@ -86,6 +91,11 @@ def main():
                     help="默认 <timeline 父目录>/assets/voice_tts/final")
     ap.add_argument("windows", nargs="*", help="只替换指定窗口 ID（缺省=全量）")
     args = ap.parse_args()
+
+    if np is None:  # A4：缺 numpy 时给中文指引而非裸 traceback（本脚本仅需 numpy，系统 python3 即可跑）
+        print("repack_voice: 缺少第三方依赖 numpy（本脚本系统 python3 即可运行，仅需 numpy）。",
+              f"\n补装：{sys.executable or 'python3'} -m pip install numpy", file=sys.stderr)
+        sys.exit(EXIT_MISSING_DEP)
 
     ROOT = os.path.dirname(os.path.abspath(args.timeline))
     TL = os.path.abspath(args.timeline)

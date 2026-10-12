@@ -14,6 +14,7 @@
     13 Push / 14 Pop                 16 Blob: u16 id, i32 len, bytes
 采样数据在 sampleblocks 表（blockid 主键，samples blob = 原生 PCM）。
 """
+import argparse
 import json
 import os
 import sqlite3
@@ -251,5 +252,25 @@ def main(aup3_path, out_dir, dump=False):
     print(json.dumps(extract_all(aup3_path, out_dir), ensure_ascii=False, indent=1))
 
 
+def build_arg_parser():
+    """统一参数面（A4）：位置参数顺序与旧版 sys.argv 手工解析完全一致，
+    --dump 语义不变；--help/-h 由 argparse 提供中文描述。"""
+    ap = argparse.ArgumentParser(
+        prog='aup3_extract.py',
+        description='解析 Audacity 3.x .aup3 工程（SQLite）并提取音轨为 WAV',
+        epilog='输出：逐轨 float32 WAV + orphans/（未被引用块）+ structure.json + extract_report.json')
+    ap.add_argument('aup3', help='.aup3 工程文件路径（Audacity 3.x 单文件工程，不支持旧版 .aup XML）')
+    ap.add_argument('out_dir', nargs='?', default='.', help='输出目录（默认当前目录）')
+    ap.add_argument('--dump', action='store_true', help='额外导出 doc token 事件流到 <out_dir>/doc_events.txt')
+    return ap
+
+
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else '.', dump='--dump' in sys.argv)
+    _args = build_arg_parser().parse_args()
+    try:
+        main(_args.aup3, _args.out_dir, dump=_args.dump)
+    except sqlite3.DatabaseError as e:  # 文件不存在(mode=ro)/非 SQLite/缺 project 表等
+        sys.exit(f'aup3_extract: 无法读取工程 {_args.aup3}：{e}\n'
+                 '（确认是 Audacity 3.x 的 .aup3 文件且未损坏）')
+    except OSError as e:  # 输出目录不可写等文件系统错误
+        sys.exit(f'aup3_extract: 文件/目录访问失败：{e}')

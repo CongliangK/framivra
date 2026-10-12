@@ -9,13 +9,17 @@
   ④ concat 后帧数==期望：合成 90 帧 640x360→1280x720 小规模 nvenc 真编全链
      （export() 走探测/分段/编码/concat/自检；探测失败 skip 并标注）；二次运行段全命中；
   ⑤ x264 回落路径参数：mock 探测 False，断言执行的 ffmpeg 命令含 libx264 medium
-     及 R5 全部关键参数（19.5M/55M/80M/high/copy/faststart）。
+     及质量模式/VBV/时基/音轨映射关键参数；
+  ⑥ maxrate ASCII 数字、后缀归一化与最小值门；两链母带音轨前置校验。
 运行：repo 根 `bash scripts/run_all_tests.sh`（P2a 起统一运行器含 apps/*/tests 发现）；
 本 app 内独立跑：`cd apps/publish && env python3 -m unittest discover -s tests -t . -v`
 （本机 ZCode 环境必须 env python3 前缀：AppImage 劫持 argv[0]，裸 python3 的
 sys.executable 指向错误解释器，见全局 AGENTS.md）
 """
+import argparse
+import io
 import json
+from contextlib import redirect_stderr
 import subprocess
 import sys
 import tempfile
@@ -48,6 +52,62 @@ def write_timeline(td: Path, frames: int, fps: int = 30, w: int = 640, h: int = 
                                           "duration_frames": frames}}),
                   encoding="utf-8")
     return tl
+
+
+class TestMaxrate(unittest.TestCase):
+    def test_valid_rates_are_normalized(self):
+        for value, expected in [("20m", "20M"), ("20M", "20M"), ("1000k", "1000k"),
+                                ("1000K", "1000k"), ("1000", "1000"), ("0.001M", "0.001M")]:
+            with self.subTest(value=value):
+                self.assertEqual(export_4k.parse_maxrate(value), expected)
+                for nvenc in (True, False):
+                    args = export_4k.video_args(nvenc, value)
+                    for option in ("-maxrate", "-bufsize"):
+                        self.assertEqual(args[args.index(option) + 1], expected)
+
+    def test_invalid_rates_rejected(self):
+        for value in ("２０M", "-5M", "0.00001", "20M;rm", "0", "999", "0.999k",
+                      "1e6", "NaN", "inf", "1" + "0" * 400):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    export_4k.parse_maxrate(value)
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "过小"):
+            export_4k.parse_maxrate("0.00001")
+
+
+class TestAudioPrecheck(unittest.TestCase):
+    def test_missing_audio_rejected_before_either_encoder(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            media = root / "master.mp4"
+            media.write_bytes(b"dummy")
+            tl = write_timeline(root, 75, fps=25)
+            for force_fallback in (False, True):
+                with self.subTest(force_fallback=force_fallback):
+                    stderr = io.StringIO()
+                    with mock.patch.object(export_4k, "_sh", return_value=SimpleNamespace(
+                            returncode=0, stdout="", stderr="")) as probe, \
+                         mock.patch.object(export_4k, "nvenc_probe") as nvenc, \
+                         redirect_stderr(stderr):
+                        with self.assertRaises(SystemExit) as cm:
+                            export_4k.export(tl, media, root / "4k.mp4",
+                                             force_fallback=force_fallback)
+                    self.assertNotEqual(cm.exception.code, 0)
+                    self.assertIn("母带无音轨，4K 投稿版需音轨直通", stderr.getvalue())
+                    self.assertIn(str(media), stderr.getvalue())
+                    self.assertIn("检查 vtx mux 阶段产物", stderr.getvalue())
+                    probe.assert_called_once_with([
+                        "ffprobe", "-v", "error", "-select_streams", "a",
+                        "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(media)])
+                    nvenc.assert_not_called()
+                    self.assertFalse((root / "cache").exists())
+                    self.assertFalse((root / "4k.mp4").exists())
+
+    def test_audio_present(self):
+        for output in ("audio\n", "audio\naudio\n"):
+            with mock.patch.object(export_4k, "_sh", return_value=SimpleNamespace(
+                    returncode=0, stdout=output, stderr="")):
+                self.assertTrue(export_4k.probe_has_audio("master.mp4"))
 
 
 class TestSplitFrames(unittest.TestCase):
@@ -243,6 +303,8 @@ class TestFallbackX264(unittest.TestCase):
             def fake_sh(cmd, need=True):
                 cmd = [str(x) for x in cmd]
                 cmds.append(cmd)
+                if "stream=codec_type" in cmd:
+                    return SimpleNamespace(returncode=0, stdout="audio\n", stderr="")
                 if any("r_frame_rate" in x for x in cmd):   # fps 前置校验探测（P2-4）
                     return SimpleNamespace(returncode=0, stdout="30/1\n", stderr="")
                 return SimpleNamespace(returncode=0, stdout="90\n", stderr="")
@@ -255,18 +317,23 @@ class TestFallbackX264(unittest.TestCase):
             self.assertEqual(len(enc), 1)             # 恰一条编码命令（单进程整链）
             c = enc[0]
             for tok in ["-i", str(media), "-vf", SCALE_4K, "-c:v", "libx264",
-                        "-profile:v", "high", "-preset", "medium", "-b:v", "19.5M",
-                        "-maxrate", "55M", "-bufsize", "80M", "-pix_fmt", "yuv420p",
-                        "-c:a", "copy", "-movflags", "+faststart"]:
+                        "-profile:v", "high", "-preset", "medium", "-crf", "18",
+                        "-maxrate", "20M", "-bufsize", "20M", "-pix_fmt", "yuv420p",
+                        "-c:a", "copy", "-movflags", "+faststart",
+                        "-video_track_timescale", "15360", "-movie_timescale", "15360"]:
                 self.assertIn(tok, c)
             self.assertNotIn("h264_nvenc", c)
 
     def test_fallback_x264_cmd_matches_runbook(self):
         c = fallback_x264_cmd("m.mp4", "o.mp4")
-        # R5 命令核心参数逐项在位（runbook.md R5 / check_4k.sh 断言对应的生成侧）
+        # 质量模式 + VBV 上限 + 双时基（check_4k.sh 断言对应的生成侧）
         self.assertEqual(c[c.index("-vf") + 1], "scale=3840:2160:flags=lanczos")
+        self.assertEqual([c[i + 1] for i, token in enumerate(c) if token == "-map"],
+                         ["0:v:0", "0:a"])
         self.assertEqual(c[c.index("-preset") + 1], "medium")
-        self.assertEqual(c[c.index("-b:v") + 1], "19.5M")
+        self.assertEqual(c[c.index("-crf") + 1], "18")
+        self.assertEqual(c[c.index("-maxrate") + 1], "20M")
+        self.assertEqual(c[c.index("-movie_timescale") + 1], "15360")
 
 
 class TestFpsPrecheck(unittest.TestCase):
@@ -283,7 +350,9 @@ class TestFpsPrecheck(unittest.TestCase):
         cls.media.parent.mkdir(parents=True)
         # 30 帧 @25fps（duration_frames 校验可对齐 30，只有 fps 口径暴露差异）
         ff(["-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=1.2",
-            "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", str(cls.media)])
+            "-f", "lavfi", "-i", "sine=sample_rate=48000:duration=1.2",
+            "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", str(cls.media)])
         assert export_4k.probe_nb_frames(cls.media) == 30
 
     def test_mismatch_rejected_exit_2(self):
@@ -298,6 +367,8 @@ class TestFpsPrecheck(unittest.TestCase):
         tl = write_timeline(self.root, 30, fps=25)
         def fake_sh(cmd, need=True):
             cmd = [str(x) for x in cmd]
+            if "stream=codec_type" in cmd:
+                return SimpleNamespace(returncode=0, stdout="audio\n", stderr="")
             if any("r_frame_rate" in x for x in cmd):
                 return SimpleNamespace(returncode=0, stdout="25/1\n", stderr="")
             return SimpleNamespace(returncode=0, stdout="30\n", stderr="")

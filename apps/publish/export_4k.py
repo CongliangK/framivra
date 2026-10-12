@@ -40,6 +40,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import time
@@ -53,23 +55,64 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vtx.cache_state import media_stat_digest
 
 SCALE_4K = "scale=3840:2160:flags=lanczos"
-# nvenc 段编码参数（方案三阶段2定版）：p4 实测快于 p6；-g 250 < check_4k 门 300；
-# 码率三参对齐 R5 x264 命令（19.5M 目标均值 + 55M/80M 峰值缓冲）。
-NVENC_ARGS = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
-              "-b:v", "19.5M", "-maxrate", "55M", "-bufsize", "80M",
+DEFAULT_MAXRATE = "20M"  # 给 192k 音轨与 MP4 封装留出 20.5M 文件门余量
+# 质量优先、只限上限：NVENC VBR CQ18（b:v=0 禁止目标均值），x264 CRF18 + VBV。
+# 一秒 VBV 缓冲避免短段反复消耗大缓冲而累计突破文件均值门；不设 minrate。
+NVENC_ARGS = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "18",
+              "-b:v", "0", "-maxrate", DEFAULT_MAXRATE, "-bufsize", DEFAULT_MAXRATE,
               "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "250"]
-# 回落路径 = runbook R5 现行命令逐字一致（唯一权威命令，改这里须同步 runbook）
 X264_ARGS = ["-c:v", "libx264", "-profile:v", "high", "-preset", "medium",
-             "-b:v", "19.5M", "-maxrate", "55M", "-bufsize", "80M",
-             "-pix_fmt", "yuv420p"]
+             "-crf", "18", "-maxrate", DEFAULT_MAXRATE, "-bufsize", DEFAULT_MAXRATE,
+             "-pix_fmt", "yuv420p", "-g", "250"]
+
+
+def parse_maxrate(value: str) -> str:
+    """ASCII 十进制 bit/s；统一 k/M 后缀，拒绝会使 VBV 归零的过小上限。"""
+    value = str(value)
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([kKmM]?)", value)
+    if not match:
+        raise argparse.ArgumentTypeError("--maxrate 必须为正码率（ASCII 数字，可用 k/M 后缀，如 20M）")
+    suffix = {"k": "k", "K": "k", "m": "M", "M": "M", "": ""}[match[2]]
+    # FFmpeg 的 m 是 milli，不是 mega；必须在传给编码器前归一化为 M。
+    bits_per_second = float(match[1]) * {"": 1, "k": 1000, "M": 1000000}[suffix]
+    if not bits_per_second < float("inf"):
+        raise argparse.ArgumentTypeError("--maxrate 必须为有限码率（bit/s，如 20M）")
+    if bits_per_second < 1000:
+        raise argparse.ArgumentTypeError("--maxrate 过小：至少 1000 bit/s，避免 VBV 归零")
+    return match[1] + suffix
+
+
+def video_args(nvenc: bool, maxrate: str = DEFAULT_MAXRATE):
+    """统一两链的可覆盖 VBV 上限（bufsize 为一秒），返回独立列表。"""
+    args = list(NVENC_ARGS if nvenc else X264_ARGS)
+    rate = parse_maxrate(maxrate)
+    for option in ("-maxrate", "-bufsize"):
+        args[args.index(option) + 1] = rate
+    return args
+
+
+def timescale_args(fps: int = 30):
+    """轨道与电影时基都能整除 fps；只设轨道时基不能修正 MP4 edit-list 舍入。
+
+    默认电影时基 1000 会把 112f/30 的段时长截成 3.733008s，concat 累积漂移。
+    两个时基统一为 fps*512（30fps=15360），每帧精确 512 tick。
+    """
+    return ["-video_track_timescale", str(fps * 512), "-movie_timescale", str(fps * 512)]
 
 
 def _sh(cmd, need=True):
     """子进程封装（对齐 infra.Ctx.run 语义）：失败打印命令 + stderr 尾部并退出。"""
-    r = subprocess.run([str(x) for x in cmd], capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    cmd = [str(x) for x in cmd]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    except OSError as e:
+        print(f"✗ 外部工具无法执行：{e}\n完整命令：{shlex.join(cmd)}", file=sys.stderr)
+        if need:
+            sys.exit(2)
+        return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=str(e))
     if r.returncode != 0 and need:
-        print("CMD FAILED:", " ".join(map(str, cmd))[:300], file=sys.stderr)
+        print(f"✗ 外部命令执行失败（退出码 {r.returncode}）：{shlex.join(cmd)}", file=sys.stderr)
         print(r.stderr[-1500:], file=sys.stderr)
         sys.exit(1)
     return r
@@ -112,6 +155,13 @@ def probe_nb_frames(path) -> int:
     return int(nb) if nb.isdigit() else 0
 
 
+def probe_has_audio(path) -> bool:
+    """沿用 ffprobe CSV 探测风格；音轨存在才允许两条导出链直通。"""
+    r = _sh(["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)])
+    return "audio" in r.stdout.splitlines()
+
+
 def probe_media_fps(path) -> float:
     """母带 r_frame_rate → fps（P2-4 前置校验用）。解析失败/分母非正 → fail-closed
     显式报错退出（不猜测回落——帧率口径错了 seek 时刻全错）。"""
@@ -134,10 +184,12 @@ def nvenc_probe() -> bool:
     VTX_NO_NVENC=1 显式禁用（A/B 回退开关）。"""
     if os.environ.get("VTX_NO_NVENC"):
         return False
-    r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi",
-                        "-i", "color=c=black:s=256x144:d=0.04",
-                        "-frames:v", "1", "-c:v", "h264_nvenc",
-                        "-f", "null", "-"], capture_output=True, text=True)
+    cmd = ["ffmpeg", "-v", "error", "-f", "lavfi",
+           "-i", "color=c=black:s=256x144:d=0.04",
+           "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"]
+    r = _sh(cmd, need=False)
+    if r.returncode != 0:
+        print(f"⚠ NVENC 探测命令失败：{shlex.join(cmd)}\n{r.stderr[-1500:]}", file=sys.stderr)
     return r.returncode == 0
 
 
@@ -146,20 +198,23 @@ def seg_cmd(media, a: int, nframes: int, fps: int, scale: str, codec, out):
     (a-0.2)/fps 保证输出首帧=全局帧 a（vtx/qc.py gray_frame 同款语义，a=0 用 0）。"""
     ss = "0" if a == 0 else f"{(a - 0.2) / fps:.6f}"
     return ["ffmpeg", "-v", "error", "-y", "-ss", ss, "-i", str(media),
-            "-vf", scale, "-frames:v", str(nframes), "-an", *codec, str(out)]
+            "-vf", scale, "-frames:v", str(nframes), "-an", *codec,
+            *timescale_args(fps), str(out)]
 
 
-def fallback_x264_cmd(media, out):
-    """回落命令 = runbook R5 现行 x264 medium 单进程（含 -c:a copy + faststart）。"""
-    return ["ffmpeg", "-v", "error", "-y", "-i", str(media), "-vf", SCALE_4K,
-            *X264_ARGS, "-c:a", "copy", "-movflags", "+faststart", str(out)]
+def fallback_x264_cmd(media, out, maxrate: str = DEFAULT_MAXRATE, fps: int = 30):
+    """x264 medium 单进程质量模式 + VBV（含 -c:a copy + faststart）。"""
+    return ["ffmpeg", "-v", "error", "-y", "-i", str(media),
+            "-map", "0:v:0", "-map", "0:a", "-vf", SCALE_4K,
+            *video_args(False, maxrate), *timescale_args(fps),
+            "-c:a", "copy", "-movflags", "+faststart", str(out)]
 
 
-def concat_copy_cmd(list_txt, media, out):
+def concat_copy_cmd(list_txt, media, out, fps: int = 30):
     """concat -c copy + 母带音轨直通（视频取段、音频取母带，各自零重编码）。"""
     return ["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0",
             "-i", str(list_txt), "-i", str(media),
-            "-map", "0:v", "-map", "1:a", "-c", "copy",
+            "-map", "0:v", "-map", "1:a", "-c", "copy", *timescale_args(fps),
             "-movflags", "+faststart", str(out)]
 
 
@@ -181,7 +236,8 @@ def project_root(tl_path) -> Path:
 
 
 def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
-           force_fallback: bool = False, scale: str = SCALE_4K) -> dict:
+           force_fallback: bool = False, scale: str = SCALE_4K,
+           maxrate: str = DEFAULT_MAXRATE) -> dict:
     """主流程。返回统计 dict（encoder/wall/seg_wall/concat/hits，测试与打点共用）。
     scale 参数仅供小规模合成素材的集成测试覆盖（默认 4K）。"""
     t_total = time.monotonic()
@@ -191,6 +247,10 @@ def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
     proj_root = project_root(tl_path)
     if not Path(media).exists():
         print(f"✗ 母带不存在：{media}", file=sys.stderr); sys.exit(2)
+    if not probe_has_audio(media):
+        print(f"✗ 母带无音轨，4K 投稿版需音轨直通：{media}；请检查 vtx mux 阶段产物",
+              file=sys.stderr)
+        sys.exit(2)
     mnb = probe_nb_frames(media)
     if mnb != total:
         print(f"✗ 母带帧数 {mnb} ≠ timeline duration_frames {total}（先跑 vtx all 产出现行母带）",
@@ -209,7 +269,7 @@ def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
     if force_fallback or not nvenc_probe():
         if not force_fallback:
             print("⚠ NVENC 探测失败，回落 x264 medium 单进程（显式告警，非静默）")
-        cmd = fallback_x264_cmd(media, out)
+        cmd = fallback_x264_cmd(media, out, maxrate=maxrate, fps=fps)
         t0 = time.monotonic(); _sh(cmd); dt = time.monotonic() - t0
         nb = probe_nb_frames(out)
         if nb != total:
@@ -224,9 +284,11 @@ def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
     spans = split_frames(total, segments)
     segdir = proj_root / "cache" / "4k"; segdir.mkdir(parents=True, exist_ok=True)
     media_fp = media_stat_digest(media)
+    codec = video_args(True, maxrate)
+    cache_args = [*codec, *timescale_args(fps)]  # 时基修复与 maxrate 变更必须使旧段失效
     todo, seg_paths, hits = [], [], 0
     for i, (a, b) in enumerate(spans):
-        key = seg_key(media_fp, a, b, scale, NVENC_ARGS)
+        key = seg_key(media_fp, a, b, scale, cache_args)
         segp = segdir / f"seg{i:02d}_{a:06d}_{key}.mp4"
         seg_paths.append(segp)
         # 命中即跳过（键已含全部内容决定因素；流头帧数检查是便宜兜底，对齐 composite）
@@ -244,7 +306,7 @@ def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
 
         def render_one(item):
             i, a, b, segp = item
-            cmd = seg_cmd(media, a, b - a, fps, scale, NVENC_ARGS, segp)
+            cmd = seg_cmd(media, a, b - a, fps, scale, codec, segp)
             t0 = time.monotonic()
             try:
                 _sh(cmd)
@@ -269,7 +331,7 @@ def export(tl_path: Path, media: Path, out: Path, segments: int = 8,
     lst = segdir / "list.txt"
     lst.write_text("".join(concat_entry(s) for s in seg_paths), encoding="utf-8")
     t0 = time.monotonic()
-    _sh(concat_copy_cmd(lst, media, out))
+    _sh(concat_copy_cmd(lst, media, out, fps=fps))
     concat_dt = time.monotonic() - t0
     nb = probe_nb_frames(out)
     if nb != total:
@@ -291,15 +353,17 @@ def main():
     ap.add_argument("--media", default=None, help="母带（缺省 <timeline目录>/out/final.mp4）")
     ap.add_argument("-o", "--out", default=None, help="输出（缺省 <timeline目录>/out/final_4k.mp4）")
     ap.add_argument("--segments", type=int, default=8, help="并行段数（默认 8）")
+    ap.add_argument("--maxrate", type=parse_maxrate, default=DEFAULT_MAXRATE,
+                    help="视频 VBV 码率上限（默认 20M bit/s，一秒缓冲；质量模式，无下限；可用 k/M 后缀）")
     ap.add_argument("--fallback-x264", action="store_true",
-                    help="强制回落 x264 medium 单进程（现行 R5 命令）")
+                    help="强制回落 x264 medium 单进程（CRF18 + 同一 VBV 上限）")
     args = ap.parse_args()
     tl_path = Path(os.path.abspath(args.timeline))
     proj_root = project_root(tl_path)
     media = Path(args.media) if args.media else proj_root / "out" / "final.mp4"
     out = Path(args.out) if args.out else proj_root / "out" / "final_4k.mp4"
     export(tl_path, media, out, segments=args.segments,
-           force_fallback=args.fallback_x264)
+           force_fallback=args.fallback_x264, maxrate=args.maxrate)
     print(f"→ 规格断言：bash {Path(__file__).resolve().parent / 'check_4k.sh'} {out}")
 
 

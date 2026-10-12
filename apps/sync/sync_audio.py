@@ -14,12 +14,76 @@
 原理与经验记录: voice-ime/07-shooting-guide.md §七「双系统同步」；拍掌标记已废除。
 依赖: denoise conda 环境（numpy/scipy/soundfile/soxr）+ 系统 ffmpeg。
 """
-import argparse, json, os, subprocess, sys, tempfile
-import numpy as np
+import argparse, importlib, json, os, subprocess, sys, tempfile
+from pathlib import Path
+
+EXIT_MISSING_DEP = 3  # 依赖缺失专用退出码（与 argparse 参数错=2、运行期报错=1 区分；A4）
+
+try:
+    import numpy as np
+except ImportError:   # 不让 --help 失败；main() 入口统一给中文指引后退出（A4）
+    np = None
 
 SR = 48000  # 统一工作采样率（与 vtx/契约一致）
 CONF_MIN = 3.0      # 峰旁比置信度门限（峰/相关序列中位绝对值）
 ENERGY_FRAC = 0.15  # 语音窗能量门限（占最高窗 RMS 的比例）
+
+
+def _denoise_interpreter():
+    """缺依赖时的解释器指引（A4）：config.local.json denoise.python（如有）优先，
+    其次本机默认约定路径 ~/miniconda3/envs/denoise/bin/python；均不存在则回退通用文案。
+    返回 (路径或 None, 来源标签)——路径存在性由调用方判断，绝不硬编码只在某机可用的路径。"""
+    cfg_py = None
+    cfg_path = os.environ.get("VTX_CONFIG") or (
+        Path(__file__).resolve().parents[2] / "config.local.json")
+    try:
+        with open(os.path.expanduser(cfg_path), encoding="utf-8") as f:
+            denoise = (json.load(f) or {}).get("denoise") or {}
+        p = denoise.get("python")
+        if isinstance(p, str) and p.strip():
+            cfg_py = os.path.expanduser(p.strip())
+    except (OSError, ValueError):
+        pass  # 无 config.local.json / 坏 JSON：按空配置继续（与仓内 config 加载策略一致）
+    default_py = os.path.expanduser("~/miniconda3/envs/denoise/bin/python")
+    for p, src in ((cfg_py, "config"), (default_py, "default")):
+        if p and os.path.isfile(p):
+            return p, src
+    return (cfg_py or default_py), "absent"
+
+
+def _dep_guidance(missing):
+    """缺依赖 → 中文指引：缺什么、用哪个解释器跑、pip 备选。"""
+    lines = [f"sync_audio: 缺少第三方依赖：{', '.join(missing)}",
+             "本工具须在 conda denoise 环境（numpy/scipy/soundfile/soxr）中运行，推荐："]
+    py, src = _denoise_interpreter()
+    example = "apps/sync/sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav>"
+    if src == "config":
+        lines.append(f"  {py} {example}   # config.local.json denoise.python 已配置的解释器")
+    elif src == "default":
+        lines.append(f"  {py} {example}   # 本机已安装 denoise 环境")
+    else:
+        lines.append(f"  ~/miniconda3/envs/denoise/bin/python {example}   "
+                     "# 默认约定路径（本机未检测到，需先创建 denoise 环境）")
+    lines.append(f"或给当前解释器补装：{sys.executable or 'python3'} -m pip install {' '.join(missing)}")
+    return "\n".join(lines)
+
+
+def require_deps():
+    """入口统一探测第三方依赖（A4）：numpy 已在模块顶尝试导入；scipy/soundfile/soxr
+    在此预探测（原本深处 bandpass/load_mono/conform 的懒 import，缺库要到 ffmpeg 转码
+    之后才炸裸 traceback）。置于 argparse 之后 → --help 永不因缺依赖失败
+    （app.json health.command = `sync_audio.py --help`，系统解释器无 scipy）。"""
+    missing = []
+    if np is None:
+        missing.append("numpy")
+    for mod in ("scipy", "soundfile", "soxr"):
+        try:
+            importlib.import_module(mod)
+        except ImportError:
+            missing.append(mod)
+    if missing:
+        print(_dep_guidance(missing), file=sys.stderr)
+        sys.exit(EXIT_MISSING_DEP)
 
 
 def load_mono(path):
@@ -174,6 +238,7 @@ def main():
     ap.add_argument("--search", type=float, default=2, help="逐窗搜索半径(秒)")
     ap.add_argument("--report", default=None, help="JSON 报告输出路径")
     args = ap.parse_args()
+    require_deps()
 
     mic = load_mono(args.mic)
     cam = load_mono(args.camera)

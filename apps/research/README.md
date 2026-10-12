@@ -21,6 +21,14 @@ v2 应用（P2a 批次 1 自 `scripts/` 六件迁入；manifest 见 `app.json`�
 - node（>=18，内置 fetch/WebSocket）+ google-chrome —— 2 个 .mjs 件（CDP 端口 9333/9334，`/tmp/chrome-cdp*` 独立 user-data-dir）
 - 网络（bilibili/GitHub/目标站点；本机代理纪律见全局 AGENTS.md）
 
+## 请求失败与验证
+
+[B 站采集器](bilibili.py) 不保证通过风控；可用 `BILIBILI_COOKIE` 环境变量提供合法 cookie（不要提交或公开 cookie）。`--retry` 保持原尝试次数语义（含首次，至少 1），单次 HTTP 超时 15 秒；网络层最多尝试 3 次。搜索失败退出 1（含 `code=0` 但带 `v_voucher` 的风控挑战），正常接口返回 `result=[]` 重试后明确标为「真无结果」，停止当前关键词翻页；整批有数据则保留并落盘、退出 0，仅整批最终零条时退出 2，不写伪成功空文件。风控或请求异常最终失败退出 1，不落盘本轮结果。成功输出格式不变；`-n` 仍仅限制评论数，不限制搜索数。
+
+[GitHub 采集器](github_repos.py) 请求失败退出非零（部分成功输出会明确标注）；[样式资产采集器](fetch-site-assets.py) 任一资产失败也退出非零，保留已采集的部分资产。网络不可达时检查代理，可配置 `HTTPS_PROXY`；工具不会强制使用本机代理。
+
+离线回归：在本目录运行 `env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -v`。
+
 ## 健康检查
 
 `env python3 apps/research/bilibili.py --help` 退出码 0（app.json health.command；mjs 件无 --help 面，冒烟用 `node --check`）。

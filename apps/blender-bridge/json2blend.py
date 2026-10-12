@@ -31,7 +31,8 @@ except ImportError:
     sys.exit(2)
 
 argv = sys.argv[sys.argv.index("--") + 1:]
-tl_path, blend_path = Path(argv[0]).resolve(), Path(argv[1]).resolve()
+# 相对素材/cache 属于 timeline 文件所在项目，不能跟随其符号链接到别的项目。
+tl_path, blend_path = Path(argv[0]).absolute(), Path(argv[1]).resolve()
 # 可选第 3 参（P6，plugins/blender-bridge finish 传入）：源产物解析映射
 # {sid: wav 绝对路径}——虚拟源（bgm 工程 JSON）与降噪源的音频实际可用件是
 # prepare 插件产物（cache/audio/*.wav），直引源路径对 JSON 源无效。**以 .json

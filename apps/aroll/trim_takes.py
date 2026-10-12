@@ -6,6 +6,7 @@
 裁剪：首个/末个活动帧外扩 head 150ms / tail 250ms 气口；中部气口不裁
       （留给 repack_voice.py 按静音谷切分）。输出保持 float32/44100Hz 原样。
 """
+import argparse
 import glob
 import json
 import os
@@ -79,6 +80,19 @@ def main(src_dir, out_dir):
     print(f"\nwrote {len(index)} takes → {out_dir}")
 
 
+def build_arg_parser():
+    """统一参数面（A4）：位置参数顺序与缺省值与旧版 sys.argv 手工解析完全一致；
+    --help/-h 由 argparse 提供中文描述。"""
+    ap = argparse.ArgumentParser(
+        prog='trim_takes.py',
+        description='对 aup3_extract 提取的口播 take 做掐头去尾（300-3400Hz 带通 RMS VAD + 气口外扩）',
+        epilog='扫描 <src_dir>/track*.wav，输出 take*.wav 与 takes_index.json 到 <out_dir>')
+    ap.add_argument('src_dir', nargs='?', default='.', help='提取输出目录（含 track*.wav；默认当前目录）')
+    ap.add_argument('out_dir', nargs='?', default='../../assets/voice_takes',
+                    help='take 输出目录（默认 ../../assets/voice_takes）')
+    return ap
+
+
 if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else '.',
-         sys.argv[2] if len(sys.argv) > 2 else '../../assets/voice_takes')
+    _args = build_arg_parser().parse_args()
+    main(_args.src_dir, _args.out_dir)
