@@ -101,7 +101,20 @@ def prepare_media(kind):
 
 def strict_suite(names, stream=None):
     loader = unittest.TestLoader()
-    suite = loader.loadTestsFromNames(names)
+    suite = unittest.TestSuite()
+    # Per-selector discovery gate: an aggregate count would let one empty
+    # selector hide behind another nonempty one (any order must be refused).
+    for name in names:
+        selected = loader.loadTestsFromNames([name])
+        if selected.countTestCases() == 0:
+            print('CI media gate: selector resolved to zero tests: %s' % name,
+                  file=sys.stderr)
+            return 1
+        suite.addTests(selected)
+    if suite.countTestCases() == 0:
+        print('CI media gate requires nonempty execution; total=0',
+              file=sys.stderr)
+        return 1
     result = unittest.TextTestRunner(verbosity=2, stream=stream).run(suite)
     if not result.testsRun or result.skipped:
         print('CI media gate requires nonempty execution and ZERO skips; '
