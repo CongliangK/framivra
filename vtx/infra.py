@@ -3,12 +3,13 @@
 由 stages/composite/qc/encoders 共用。v2 §1.4 包化：模块内相对导入；
 `python3 vtx/vtx.py ...` 经薄启动器自锚定 repo 根后照常可跑。
 """
-import contextlib, hashlib, json, os, subprocess, sys, threading, time
+import contextlib, hashlib, json, os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
+from . import fstxn
 from .cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
                          validate_cache_dependencies)
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
@@ -33,8 +34,11 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
         old = json.loads(f.read_text(encoding="utf-8"))
         if (old.get("input_fingerprint") not in (None, fingerprint)
                 and old.get("stages")):
-            (f.parent / "receipt.prev.json").write_text(
-                json.dumps(old, ensure_ascii=False, indent=2), encoding="utf-8")
+            # B06：旁证轮转同样走 fstxn 原子写（tmp+os.replace）——调用方已持
+            # receipt.json 事务锁，prev 伴生件无须再拿第二把锁文件；写一半被杀
+            # 不再留下截断的 prev.json。
+            fstxn.atomic_write(f.parent / "receipt.prev.json",
+                               json.dumps(old, ensure_ascii=False, indent=2))
     except (OSError, ValueError, TypeError):
         pass
 
@@ -73,12 +77,17 @@ class Ctx:
         self.input_fingerprint = receipt_fingerprint(self)
         self.probes = {}
         self.dry = False   # --dry-run（main 里按 CLI 参数赋值；替代原模块级可变全局 DRY）
-        # receipt.json 并发写锁（方案二阶段2，2026-09-12）：`vtx all` 依赖图流水线的
-        # 并行波内 gfx/audio 两线程几乎同时 c.receipt() / c.begin_stage()——两者都是
-        # receipt.json 的「读-改-写」，无锁竞态会互相覆盖丢回执（真丢数据风险，非
-        # 理论洁癖）。实例锁（每 Ctx 一把足够：receipt.json 每 Ctx 恰一份）；
+        # receipt.json 并发写锁（方案二阶段2，2026-09-12；B06 升级 2026-10-13）：
+        # `vtx all` 依赖图流水线的并行波内 gfx/audio 两线程几乎同时
+        # c.receipt() / c.begin_stage()——两者都是 receipt.json 的「读-改-写」，
+        # 无锁竞态会互相覆盖丢回执（真丢数据风险，非理论洁癖）。锁本体已下沉
+        # fstxn（B05）：进程内 per-path threading.Lock（快速层）之上再加
+        # out/receipt.json.lock 的 flock（跨进程——另一 vtx 进程的 validate/qc
+        # 与本进程并行落笔同样串行化，issue #29/#30 / F-08）；落盘一律
+        # tmp+os.replace（中断不再产生截断 JSON）。原实例锁 _receipt_lock 随
+        # 下沉移除——fstxn 的 per-path 锁覆盖同进程全部 Ctx 实例，序列化面只增不减。
         # dry 早退路径在锁外（见各方法）。
-        self._receipt_lock = threading.Lock()
+        #
         # 方案二阶段3：波内预编码路写入的 layers（依赖图流水线专用，NIT 显式声明
         # 替代动态属性——getattr 兜底在波失败路径实际不可达，见 p2 审查报告）。
         self._pre_layers = None
@@ -157,17 +166,24 @@ class Ctx:
     def receipt(self, stage, ok, detail="", extra=None):
         if self.dry:
             return   # dry-run 不落回执（PR#1：预览运行不得改写真实阶段状态）——锁外早退
-        # 读-改-写整段持锁（方案二阶段2）：波内并发阶段的回执写入串行化，防互相覆盖
-        with self._receipt_lock:
-            f = self.out / "receipt.json"
+        f = self.out / "receipt.json"
+
+        def _mutate(rec):
             _archive_stale_receipt(f, self.input_fingerprint)   # ⑮ 指纹翻转旁证轮转
-            rec = load_receipt(f, self.input_fingerprint)
             rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
             rec["updated"] = time.strftime("%F %T")
             rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
             if extra:
                 rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
-            self.out.mkdir(exist_ok=True); f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+            return rec
+
+        # B06：读-改-写整段走 fstxn 事务（原方案二阶段2 的实例锁已下沉——见
+        # __init__ 注）：线程锁之上再加 receipt.json.lock 的 flock，波内并发阶段
+        # 之外另一 vtx 进程的并行落笔也串行化；写入 tmp+os.replace，中断/被杀后
+        # receipt.json 要么旧值要么新值，永不为截断 JSON。load 注入指纹门
+        # （load_receipt 语义原样：身份不符/损坏 → 空阶段表，不继承旧成功）。
+        fstxn.locked_update(f, _mutate,
+                            load=lambda p: load_receipt(p, self.input_fingerprint))
 
     # （PR#1 的 Ctx.gfx_dir 路径哈希版被放弃：main 13bed7a 的 hygiene.gfx_key
     #  内容寻址键覆盖其全部场景——同名页不同内容/同页换时长自然分键，且同内容
@@ -177,11 +193,10 @@ class Ctx:
         """PR#1：拒绝过期前置 + 运行前撤销下游旧成功回执（失败重跑不留旧 QC PASS）。"""
         if self.dry:
             return
-        # 读-改-写整段持锁（方案二阶段2）：与 receipt() 同一锁——波内 gfx/audio 两路
-        # begin_stage 并发时依赖门判定与下游撤销也须串行化（dry 早退在锁外）。
-        with self._receipt_lock:
-            _archive_stale_receipt(self.out / 'receipt.json', self.input_fingerprint)
-            rec = load_receipt(self.out / 'receipt.json', self.input_fingerprint)
+        f = self.out / 'receipt.json'
+
+        def _mutate(rec):
+            _archive_stale_receipt(f, self.input_fingerprint)
             dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
                             'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
             if any(t.get('kind') == 'gfx' for t in self.tl['video_tracks']):
@@ -193,8 +208,13 @@ class Ctx:
                                    '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
             for name in DOWNSTREAM.get(stage, []) + [stage]:
                 rec['stages'].pop(name, None)
-            self.out.mkdir(exist_ok=True)
-            (self.out / 'receipt.json').write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding='utf-8')
+            return rec
+
+        # 与 receipt() 同一 fstxn 事务（原同持 _receipt_lock——锁下沉见 __init__ 注）：
+        # 依赖门判定与下游撤销的读-改-写跨进程同样串行化；门失败（RuntimeError）
+        # 时 tmp 清残件、receipt.json 保持旧值。dry 早退在锁外。
+        fstxn.locked_update(f, _mutate,
+                            load=lambda p: load_receipt(p, self.input_fingerprint))
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]

@@ -17,9 +17,12 @@
   mux        视音频封装
   qc         渲染后质检（帧数/底轨切点帧比对/上层窗口生效/泄漏/响度归一），写 qc_report.json
              （--strict：帧数改用 -count_frames 真解码计数，默认容器元数据）
-  clean      清空 cache/ 与 out/
+  clean      清空 cache/ 与 out/（A02/issue #21：默认保留不可再生交付件——final.mp4、
+             VERSIONS.json、history/、FREEZE* 冻结凭证、final_4k*.mp4、out/reports/ 证据；
+             全删需显式危险旗标 --i-know-this-nukes-everything）
   gc         缓存回收（键集外垃圾 + tmp 孤儿 + out 中间物；--dry 只列清单，--all 深度回收，
-             --keep-days N 暂缓近 N 天条目；cache/reports/ 永不回收）
+             --keep-days N 暂缓近 N 天条目；cache/reports/ 永不回收；不可再生交付件
+             任何 gc 变体都不删——全删唯一入口是 clean --i-know-this-nukes-everything）
   df         体积体检：cache/out 分项占用 + top-20 大文件 + tmp 孤儿清单
   snapshot   timeline + 文本资产快照到 cache/snapshots/（只留最近 2 份，VTX_SNAPSHOT_KEEP 可调）
   diff       对比：diff <旧.json> <新.json> [--json PATH]。两参均为 timeline JSON
@@ -95,7 +98,7 @@ from pathlib import Path
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
 from .composite import build_video, prepare_layers
 from .encoders import find_chrome
-from . import hygiene
+from . import gfx_cli, hygiene
 from .hygiene import budget_gate, df, gfx_key, gfx_dir, manifest_record, snapshot
 from .infra import Ctx, run_wave
 from .qc import qc
@@ -169,6 +172,20 @@ def _merge_cdp_stats(stats_list):
 
 
 def gfx(c: Ctx):
+    # issue #28：任何渲染/有效性门失败均写失败回执，不允许静默计完成。
+    try:
+        _gfx(c)
+    except SystemExit as e:
+        if e.code:
+            c.receipt("gfx", False, f"gfx 提前退出（退出码 {e.code}）")
+        raise
+    except Exception as e:
+        c.receipt("gfx", False, str(e))
+        print(f"✗ gfx: {e}")
+        sys.exit(1)
+
+
+def _gfx(c: Ctx):
     budget_gate(c, "gfx")
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
@@ -183,16 +200,9 @@ def gfx(c: Ctx):
             print(f"⚠ CDP 渲染器不可用（{e}），回落 CLI 截图路径")
             cdp_mod = None
 
-    def shot_cli(i, d, html, chrome):                    # 原 CLI 路径（回落保底）
-        # 视口尺寸取项目分辨率（2026-09-10 参数化，原硬编码 1920,1080；1080p 项目不变）
-        return subprocess.run(
-            [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
-             f"--window-size={c.w},{c.h}", "--default-background-color=00000000",
-             f"--screenshot={d}/f{i:04d}.png", f"{html.resolve().as_uri()}?f={i}"], capture_output=True)
-
     def render_cli(i_range, d, html, chrome):
-        with ThreadPoolExecutor(6) as ex:
-            list(ex.map(lambda i: shot_cli(i, d, html, chrome), i_range))
+        # issue #28：强制 CLI、整页回落、帧级补渲共用退出码与产物双重校验。
+        return gfx_cli.render_cli(i_range, d, html, chrome, width=c.w, height=c.h)
 
     # 页内分片开关（方案 v2 阶段 1）：VTX_GFX_SPLIT_FRAMES 为块大小阈值，
     # VTX_GFX_SPLIT_MAX（默认 3）为单页最大块数。默认 450（2026-09-12 定版，
@@ -211,13 +221,15 @@ def gfx(c: Ctx):
             key = gfx_key(c, cl)
             n = cl["dur"]
             d = gfx_dir(c, cl)
-            # dry-run 只报告不动缓存：清缓存/mkdir 均为真实副作用，门控（2026-09-11）
-            if not c.dry:
-                if d.exists() and len(list(d.glob("f*.png"))) != n:  # 帧数不符（换时长）→ 清缓存重渲
-                    shutil.rmtree(d)
-                d.mkdir(parents=True, exist_ok=True)
-            if d.exists() and len(list(d.glob("f*.png"))) == n:
+            # issue #28：逐一核验 [0,n)，f9999/空文件等不再冒充完整缓存。
+            bad = gfx_cli.verify_frames(d, range(n))
+            if not bad:
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
+            # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
+            if not c.dry:
+                d.mkdir(parents=True, exist_ok=True)
+                for i, _ in bad:
+                    (d / f"f{i:04d}.png").unlink(missing_ok=True)
             html = (c.root / cl["src"]).resolve()
             # 页内分片（方案 v2 阶段 1，默认关）：SPLIT_FRAMES>0 且页帧数超阈值时把
             # [0,n) 切成 min(SPLIT_MAX, ceil(n/阈值)) 个连续块，每块独立一次
@@ -230,7 +242,7 @@ def gfx(c: Ctx):
             off, put = 0, 0
             for sz in sizes:
                 fb = list(range(off, off + sz)); off += sz
-                if all((d / f"f{i:04d}.png").exists() for i in fb):
+                if not gfx_cli.verify_frames(d, fb):
                     continue    # 整块已缓存 → 跳过（不起 Chrome、不占池槽）
                 jobs.append((cid, key, cl, n, d, html, fb)); put += 1
             if put == 0:        # 页级帧数门已滤全缓存，理论不可达；防御性兜底
@@ -258,11 +270,6 @@ def gfx(c: Ctx):
                 # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）
                 st = cdp_mod.render_page(html, d, n, chrome_path=find_chrome(),
                                          width=c.w, height=c.h, frames=frames)
-                if st["failed"]:
-                    print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
-                    render_cli(st["failed"], d, html, find_chrome())
-                    # CLI 补渲计数由调用方补进 path_counts（gfx_render 不感知 CLI 通道）
-                    st["path_counts"]["cli_fallback"] = len(st["failed"])
             except Exception as e:
                 # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
                 fb = range(n) if frames is None else frames
@@ -270,13 +277,18 @@ def gfx(c: Ctx):
                       f"{'该块' if frames is not None else '整页'}回落 CLI")
                 render_cli(fb, d, html, find_chrome())
                 st = None
+            else:
+                if st["failed"]:
+                    print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
+                    # issue #28：补渲失败不可被 CDP 的 except 吞掉后重试成成功。
+                    render_cli(st["failed"], d, html, find_chrome())
+                    st["path_counts"]["cli_fallback"] = len(st["failed"])
         if cdp_mod is None:
             render_cli(range(n), d, html, find_chrome())
         if frames is None:
             # —— 整页单块（SPLIT 关或页不超阈值）：日志格式与现行逐字节一致 ——
             rendered_via = "cli 6 并发" if st is None else _cdp_via(st)
-            got = len(list(d.glob("f*.png")))
-            if got != n: print(f"✗ {cid}: 期望 {n} 帧得到 {got}"); sys.exit(1)
+            gfx_cli.require_frames(d, range(n))
             print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
             manifest_record(c, d, "gfx", key)
             return cid, rendered_via
@@ -300,8 +312,7 @@ def gfx(c: Ctx):
                 rendered_via += f"，split×{k}"
         else:
             rendered_via = "cli 6 并发" + (f"（split×{k}）" if k > 1 else "")
-        got = len(list(d.glob("f*.png")))
-        if got != n: print(f"✗ {cid}: 期望 {n} 帧得到 {got}"); sys.exit(1)
+        gfx_cli.require_frames(d, range(n))
         print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
         manifest_record(c, d, "gfx", key)
         return cid, rendered_via
@@ -454,7 +465,7 @@ class ExecutionPolicy(Enum):
             for path, _, _ in items:
                 # is_dir() 会跟随符号链接，rmtree 对链接本身会抛错——显式排除，
                 # 防止计划外条目经链接根越界删除（红队 A03×A01 对抗复审）
-                if category == "clean" or (path.is_dir() and not path.is_symlink()):
+                if path.is_dir() and not path.is_symlink():
                     shutil.rmtree(path, ignore_errors=True)
                 else:
                     path.unlink(missing_ok=True)
@@ -477,11 +488,19 @@ def _plan_without_linked_roots(plan, links):
             for cat, items in plan.items()}
 
 
-def _cleanup_plan(c, command, *, deep=False, keep_days=0):
+def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
     """先完整列出删除候选，再执行；沿用 hygiene 的现有保护策略。
 
-    clean 仍清空两棵树，深度 gc 仍使用原白名单（不在 A01 扩大保护范围）。
-    普通 gc 复用 gc_plan；cache 不存在时仅需计算 out 的既有中间物规则。
+    A02（issue #21 / F-01）清理三段式的计划段（预览=_run_cleanup，执行=
+    ExecutionPolicy.execute_cleanup）：
+      - clean（默认）：cache/ 整树清空；out/ 只清可再生条目——不可再生交付件
+        （hygiene.out_protected：final.mp4/VERSIONS.json/history/FREEZE*/
+        final_4k*/reports）永不进计划。
+      - clean --i-know-this-nukes-everything（nuke=True）：唯一全删入口，恢复
+        全清空语义（cache/out 整树，但锁文件与拒绝的链接目标永不删除）。
+      - gc --all 深度回收仍用波1白名单（不在 A02 扩大或缩小保护范围），out 侧
+        保护名单改经 out_protected() 单源取判据（等价合并，行为不变）。
+      - 普通 gc 复用 gc_plan；cache 不存在时仅需计算 out 的既有中间物规则。
     cache/out 根为符号链接时整根拒绝（打印原因，不列、不删链接目标内容）。
     """
     links = _symlink_roots(c)
@@ -489,25 +508,36 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0):
         print(f"✗ 拒绝清理符号链接根 {p.relative_to(c.root)} → {os.readlink(p)}"
               "（不跟随符号链接，防越界删除；如需回收请先解除链接）")
     if command == "clean":
-        plan = {"clean": [(p, hygiene.dir_size(p), "清空目录")
-                          for p in (c.cache, c.out)
-                          if p.exists() and not p.is_symlink()]}
-        return _plan_without_linked_roots(plan, links)
+        if nuke:
+            # issue #30：危险全删也永不删锁；危险链接仍拒绝并保留其祖先。
+            plan = {"clean": []}
+            for p in (c.cache, c.out):
+                if p.exists() and not p.is_symlink():
+                    plan["clean"].extend(hygiene.cleanup_entries(
+                        c, p, "全清空（危险旗标：含不可再生交付件，锁除外）", nuke=True))
+            return plan
+        plan = {"cache": [], "out": []}
+        if c.cache.exists() and not c.cache.is_symlink():
+            plan["cache"].extend(hygiene.cleanup_entries(c, c.cache, "可再生缓存"))
+        for p in hygiene.cleanup_children(c, c.out):
+            if not hygiene.out_protected(p.name):
+                plan["out"].extend(hygiene.cleanup_entries(c, p, "可再生 out 条目"))
+        return plan
     if deep:
         plan = {"cache": [], "out": []}
         for root, category in ((c.cache, "cache"), (c.out, "out")):
             if not root.exists() or root.is_symlink():
                 continue
-            for path in sorted(root.iterdir()):
+            for path in hygiene.cleanup_children(c, root):
                 if category == "cache" and (path.name in
                         (hygiene.REPORTS, hygiene.TMP, "snapshots")
                         or path.name in hygiene.KEEP_BASELINES):
                     continue
-                if category == "out" and (path.name in
-                        ("final.mp4", "draft_final.mp4", "VERSIONS.json", "history",
-                         "receipt.json", "reports") or hygiene._out_deliverable(path.name)):
+                if category == "out" and (path.name in ("draft_final.mp4",
+                                                        "receipt.json")
+                                          or hygiene.out_protected(path.name)):
                     continue
-                plan[category].append((path, hygiene.dir_size(path), "深度回收"))
+                plan[category].extend(hygiene.cleanup_entries(c, path, "深度回收"))
         return _plan_without_linked_roots(plan, links)
     if c.cache.exists() and not c.cache.is_symlink():
         # gc_plan 会 iterdir cache/out：根为符号链接时同样不得进入（只列清单也算
@@ -516,16 +546,47 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0):
     out_keep = {"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
                 "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
                 "audit_report.json", "qc_report.json", "history", "reports"}
-    plan = {"out_intermediate": [
-        (p, hygiene.dir_size(p), "out 一次性中间物")
-        for p in sorted(c.out.iterdir())
-        if p.name not in out_keep and not hygiene._out_deliverable(p.name)
-    ] if c.out.exists() and not c.out.is_symlink() else []}
-    return _plan_without_linked_roots(plan, links)
+    plan = {"out_intermediate": []}
+    for p in hygiene.cleanup_children(c, c.out):
+        if p.name not in out_keep and not hygiene.out_protected(p.name):
+            plan["out_intermediate"].extend(hygiene.cleanup_entries(c, p, "out 一次性中间物"))
+    return plan
 
 
-def _run_cleanup(c, policy, command, *, deep=False, keep_days=0):
-    plan = _cleanup_plan(c, command, deep=deep, keep_days=keep_days)
+def _clean_preview(c, nuke: bool):
+    """A02 预览段：把「不可再生交付件会发生什么」说清楚再动手——
+
+    默认 clean 列出将保留的保护件（用户须看见 final.mp4 留下来了，以及全删
+    需要哪个旗标）；危险旗标下列出将被销毁的保护件（最后警告）。只读 out/
+    一级条目，不 stat 深层（dir_size 惰性）。dry 与 EXECUTE 都打印（预览不是
+    dry 专属：执行前同样要看见）。
+    """
+    if not c.out.exists() or c.out.is_symlink():
+        return
+    protected = [p for p in sorted(c.out.iterdir())
+                 if hygiene.out_protected(p.name)]
+    if nuke:
+        print("⚠ 危险操作（--i-know-this-nukes-everything）：以下不可再生交付件将被一并删除")
+        for p in protected:
+            print(f"  ✗ {p.relative_to(c.root)}  {hygiene.gb(hygiene.dir_size(p))}")
+        if not protected:
+            print("  （out/ 当前无不可再生交付件）")
+        return
+    print("保留不可再生交付件（A02 默认保护；确实需要全删请加 --i-know-this-nukes-everything）：")
+    for p in protected:
+        print(f"  ✓ {p.relative_to(c.root)}  {hygiene.gb(hygiene.dir_size(p))}")
+    if not protected:
+        print("  （out/ 当前无不可再生交付件）")
+
+
+def _run_cleanup(c, policy, command, *, deep=False, keep_days=0, nuke=False):
+    # 计划段：先完整列出删除候选（nuke 时最后警告先行，眼见为实）
+    if command == "clean":
+        _clean_preview(c, nuke)
+    plan = _cleanup_plan(c, command, deep=deep, keep_days=keep_days, nuke=nuke)
+    if command == "gc" and deep:
+        print("注：深度回收保留不可再生交付件与 reports/snapshots"
+              "（gc 无全删变体；全删唯一入口 clean --i-know-this-nukes-everything）")
     count = total = 0
     for category, items in plan.items():
         if not items:
@@ -538,11 +599,27 @@ def _run_cleanup(c, policy, command, *, deep=False, keep_days=0):
         if len(items) > 30:
             print(f"  … 另 {len(items) - 30} 项")
     print(f"合计：{count} 项，{hygiene.gb(total)}")
+    # 执行段：PLAN 只到这里（预览输出已在上方），EXECUTE 才落删
     policy.execute_cleanup(plan)
     if policy.dry:
         print("[dry-run] 仅生成清理计划，未删除或写入任何文件")
-    elif command == "clean":
-        print("✓ 已清空 cache/ out/")
+        return
+    if command == "clean":
+        if not nuke:
+            # out/ 清空后无保护件残留时连空壳一起收走（有保护件则整目录保留）
+            if c.out.exists() and not c.out.is_symlink():
+                try:
+                    c.out.rmdir()
+                except OSError:
+                    pass
+            if c.out.exists():
+                kept = sum(1 for p in c.out.iterdir())
+                print(f"✓ 已清理 cache/ 与 out/ 可再生条目"
+                      f"（out 保留 {kept} 项交付件/锁/拒绝路径；cache 锁与拒绝路径保留）")
+            else:
+                print("✓ 已清理 cache/ 与 out/（out 无残留；cache 锁与拒绝路径保留）")
+        else:
+            print("✓ 已清理 cache/ out/（含不可再生交付件——危险旗标已确认；锁与拒绝路径保留）")
     else:
         print(f"✓ 已回收 {count} 项，{hygiene.gb(total)}")
 
@@ -621,7 +698,13 @@ def main():
     ap.add_argument("--strict", action="store_true",
                     help="qc 专属：成片帧数用 -count_frames 真解码计数（默认容器元数据，省全片解码）")
     ap.add_argument("--all", action="store_true",
-                    help="gc 专属：深度回收（等价原 clean，但保留 reports/VERSIONS/history/final）")
+                    help="gc 专属：深度回收（等价原 clean，但保留 reports/snapshots 与"
+                         " final/VERSIONS/history/FREEZE* 等不可再生交付件）")
+    ap.add_argument("--i-know-this-nukes-everything", dest="nuke_everything",
+                    action="store_true",
+                    help="clean 专属危险操作旗标：连不可再生交付件（final.mp4、VERSIONS.json、"
+                         "history/、FREEZE* 冻结凭证、final_4k*.mp4）一并全删。默认 clean "
+                         "保留这些交付件——只有本旗标显式确认后才是真正的全清空")
     ap.add_argument("--keep-days", type=int, metavar="N", default=None,
                     help="gc 专属：近 N 天动过的条目暂缓回收（默认 0 = 只看键集）")
     ap.add_argument("--keep-versions", type=int, metavar="N", default=None,
@@ -684,6 +767,9 @@ def main():
         print("--strict 仅作用于 qc 阶段"); sys.exit(2)
     if (a.all or a.keep_days is not None) and a.command != "gc":
         print("--all/--keep-days 仅作用于 gc 命令"); sys.exit(2)
+    if a.nuke_everything and a.command != "clean":
+        print("--i-know-this-nukes-everything 仅作用于 clean 命令"
+              "（gc 永不删除不可再生交付件，无全删变体）"); sys.exit(2)
     if a.keep_versions is not None and a.command not in ("mux", "all"):
         print("--keep-versions 仅作用于 mux/all 命令"); sys.exit(2)
     if (a.keep_days is not None and a.keep_days < 0 or
@@ -775,7 +861,8 @@ def main():
             print(f"✗ 空区间：B（帧 {fb}）必须大于 A（帧 {fa}）"); sys.exit(1)
         c.range_window = (fa, fb)
     if a.command in ("clean", "gc"):
-        _run_cleanup(c, policy, a.command, deep=a.all, keep_days=a.keep_days or 0)
+        _run_cleanup(c, policy, a.command, deep=a.all,
+                     keep_days=a.keep_days or 0, nuke=a.nuke_everything)
         return
     if policy.dry:
         _preview_command(c, a)

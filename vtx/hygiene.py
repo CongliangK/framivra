@@ -5,6 +5,9 @@
   - gc 以「当前 timeline 键集」为存留判据，manifest 只做记账/df/audit，不做删除判据
     （键集可从 timeline 独立重算，manifest 缺损/损坏不影响回收正确性）。
   - cache/reports/ 永不回收（报告/回执/证据）；out/VERSIONS.json、out/history/ 永不回收。
+  - A02（issue #21 / F-01）：不可再生交付件保护清单（OUT_PROTECTED_*，out_protected()）
+    对 clean/gc 全量生效——普通 clean/gc 绝不删除；全删唯一入口 = clean
+    --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli.py）。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
 import fnmatch, hashlib, json, os, shutil, threading, time
@@ -23,6 +26,80 @@ KEEP_BASELINES = ("manifest.json", "qc_pass_segs.json")   # cache 根下永不�
 # B-P2-1：锁文件被 budget_gate 自动 gc 删除后新开 inode，跨进程互斥失效）按
 # 名字前缀一并豁免。
 AUDIO_KEEP = ("loudness_receipts.json",)
+
+# A02 不可再生交付件保护清单（issue #21 / F-01）：out/ 一级条目命中即视为
+# 不可再生，普通 clean/gc 绝不删除——成片本体（final.mp4）、版本账本
+# （VERSIONS.json）、历史轮转（history/）、发布冻结凭证（FREEZE*，runbook
+# 步骤 6 冻结记录）、4K 发布件（final_4k*.mp4，apps/publish/export_4k 产物）
+# 与证据目录（reports/，gc 既有白名单同款）。全删除唯一入口 = clean
+# --i-know-this-nukes-everything（vtx/cli.py 显式危险旗标）；gc/gc --all
+# 无任何变体可删保护件。清单是全仓唯一权威：clean 保护、gc --all 白名单、
+# gc_plan out 豁免都经 out_protected() 取判据，禁在各处复制名单。
+OUT_PROTECTED_NAMES = ("final.mp4", "VERSIONS.json")
+OUT_PROTECTED_DIRS = ("history", "reports")
+OUT_PROTECTED_PATTERNS = ("final_4k*.mp4", "FREEZE*")   # 发布冻结凭证/4K 发布件
+
+
+def out_protected(name: str) -> bool:
+    """out/ 一级条目名是否属不可再生交付件保护清单（A02）。只判名字，不 stat：
+    计划阶段零副作用；条目本身是符号链接时同样按名保护（不跟随）。"""
+    return (name in OUT_PROTECTED_NAMES or name in OUT_PROTECTED_DIRS
+            or any(fnmatch.fnmatch(name, p) for p in OUT_PROTECTED_PATTERNS))
+
+
+def cleanup_allowed(c, path: Path, *, nuke=False) -> bool:
+    """issue #21/#30：计划枚举先解析目标；交付件、越界目标和锁永不穿透。"""
+    path = Path(path)
+    try:
+        target = path.resolve()
+        roots = [c.root.resolve() / name for name in ("cache", "out")]
+        if not any(target == root or root in target.parents for root in roots):
+            reason = "解析目标落在 cache/out 根之外"
+        elif path.name.endswith(".lock") or target.name.endswith(".lock"):
+            reason = "事务锁文件永不删除（issue #30）"
+        else:
+            out = roots[1]
+            rel = target.relative_to(out) if out in target.parents else None
+            protected = rel is not None and out_protected(rel.parts[0])
+            # 危险 clean 仅允许直接删除保护件，不允许链接绕过保护边界。
+            if protected and (not nuke or target != path.absolute()):
+                reason = "解析目标属于不可再生交付件保护集（issue #21）"
+            elif any(root.is_symlink() for root in (c.cache, c.out)
+                     if path == root or root in path.parents):
+                reason = "拒绝清理符号链接根"
+            else:
+                return True
+    except (OSError, RuntimeError, ValueError) as e:
+        reason = f"无法安全解析目标（{e}）"
+    print(f"✗ 拒绝清理 {path}：{reason}")
+    return False
+
+
+def cleanup_children(c, path):
+    """issue #21：iterdir 前先挡住目录链接穿透，候选条目仍逐一校验。"""
+    if not cleanup_allowed(c, path) or not path.is_dir():
+        return []
+    return sorted(path.iterdir())
+
+
+def cleanup_entries(c, path, reason, *, nuke=False):
+    """issue #21/#30：安全子树压成一项；含锁/危险链接的祖先保留，安全兄弟照常清。"""
+    def visit(p):
+        if not cleanup_allowed(c, p, nuke=nuke):
+            return [], False
+        if p.is_symlink() or not p.is_dir():
+            return [(p, dir_size(p), reason)], True
+        entries, complete = [], True
+        for child in sorted(p.iterdir()):
+            part, safe = visit(child)
+            entries.extend(part)
+            complete = complete and safe
+        if complete:
+            return [(p, dir_size(p), reason)], True
+        return entries, False
+
+    return visit(Path(path))[0]
+
 
 # manifest 读-改-写串行锁（2026-09-11）：video 段间并行 worker 与 gfx 页级并行
 # 会并发调用 manifest_record，无锁时读-改-写竞态会互相覆盖丢笔。
@@ -224,25 +301,28 @@ def gc_plan(c, keep_days: int = 0):
     def fresh(p):    # --keep-days N：近期动过的条目暂缓回收
         return cut and p.stat().st_mtime > cut
 
+    def add(category, path, reason):
+        plan[category].extend(cleanup_entries(c, path, reason))
+
     d = c.cache / "gfx"
     if d.exists():
-        for x in d.iterdir():
+        for x in cleanup_children(c, d):
             if x.name not in gk:
-                plan["gfx"].append((x, dir_size(x), "键不在当前 timeline 键集"))
+                add("gfx", x, "键不在当前 timeline 键集")
     d = c.cache / "seg"
     if d.exists():
-        for x in d.iterdir():
+        for x in cleanup_children(c, d):
             if x.stem not in {k for k, _ in sk}:
-                plan["seg"].append((x, dir_size(x), "键不在当前 timeline 键集"))
+                add("seg", x, "键不在当前 timeline 键集")
     d = c.cache / "audio"
     if d.exists():
-        for x in d.iterdir():
+        for x in cleanup_children(c, d):
             # 伴生件前缀豁免（.lock/.tmp，见 AUDIO_KEEP 注）：精确名或前缀命中即免
             if x.name in AUDIO_KEEP or \
                     any(x.name.startswith(k + ".") for k in AUDIO_KEEP):
                 continue   # 测量回执不属内容寻址键集（方案三阶段1审查 P1-2）
             if x.stem not in ak:
-                plan["audio"].append((x, dir_size(x), "源指纹不在当前 timeline 键集"))
+                add("audio", x, "源指纹不在当前 timeline 键集")
     # v2 §2.1 不变量 ①（v1.2.0 键级扩展，R1-F F2）：插件 cache_dirs 的**键级
     # 条目**回收——插件经 cache_dir_keys 声明键集的目录（bgm-render 的
     # cache/bgm/<render_digest>/），一级子目录按内容寻址键对待：在当前 timeline
@@ -256,10 +336,9 @@ def gc_plan(c, keep_days: int = 0):
         d = c.cache / dname
         if dname not in dirs_whitelist or not d.is_dir():
             continue
-        for x in d.iterdir():
+        for x in cleanup_children(c, d):
             if x.is_dir() and x.name not in dkeys:
-                plan["plugin_cache"].append(
-                    (x, dir_size(x), "键不在当前 timeline 键集（陈旧共享渲染缓存）"))
+                add("plugin_cache", x, "键不在当前 timeline 键集（陈旧共享渲染缓存）")
     # 历史遗留目录（迁移期）：cache 根下非本方案布局的一级目录/文件 → 全部视为垃圾
     # （subs*.ass/qc_clean/vseg* 另有专属类别，这里排除避免重复计数）
     known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
@@ -269,26 +348,29 @@ def gc_plan(c, keep_days: int = 0):
     # 不再判 legacy 垃圾）；P1-2 空转 = 空集，白名单零变化。传 c 使「仅对本
     # timeline 生效的插件」过滤生效（与 get_cache_dirs docstring 口径一致）。
     known |= _plugin_hooks.get_cache_dirs(c)
-    for x in c.cache.iterdir():
+    for x in cleanup_children(c, c.cache):
         if x.name in known: continue
-        plan["legacy"].append((x, dir_size(x), "旧布局条目（键不含内容指纹，不可信）"))
+        add("legacy", x, "旧布局条目（键不含内容指纹，不可信）")
     # 分段渲染中间物：切点/段名随 timeline 变化且无内容键，整体按可再生垃圾处理
     for name in ("vseg", "vseg_draft", "vseg_qc"):
         d = c.cache / name
-        if d.exists(): plan["vseg"].append((d, dir_size(d), "分段渲染中间物（可再生）"))
+        if d.exists(): add("vseg", d, "分段渲染中间物（可再生）")
     for x in [c.cache / "qc_clean.mp4", c.cache / "subs.ass", c.cache / "subs_draft.ass"]:
-        if x.exists(): plan["legacy"].append((x, dir_size(x), "一次性中间物（可再生）"))
-    for x in tmp_orphans(c):
-        plan["tmp"].append((x, dir_size(x), "tmp 孤儿（>24h）"))
+        if x.exists(): add("legacy", x, "一次性中间物（可再生）")
+    for x in cleanup_children(c, c.cache / TMP):
+        if x.is_dir() and cleanup_allowed(c, x) and x.stat().st_mtime < time.time() - 86400:
+            add("tmp", x, "tmp 孤儿（>24h）")
     # out/ 一次性中间物（成片/回执/VERSIONS/history/reports 不动）
     out_keep = {"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
                 "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
                 "audit_report.json", "qc_report.json", "history", "reports"}
     if c.out.exists():
-        for x in c.out.iterdir():
-            if x.name in out_keep or _out_deliverable(x.name):
+        for x in cleanup_children(c, c.out):
+            # A02：保护清单经 out_protected() 单源取判据（与 clean/gc --all 同一
+            # 权威；out_keep 本就含全部保护名，此处判据等价合并，行为不变）
+            if x.name in out_keep or out_protected(x.name):
                 continue
-            plan["out_intermediate"].append((x, dir_size(x), "out 一次性中间物"))
+            add("out_intermediate", x, "out 一次性中间物")
     if keep_days:
         for cat in ("gfx", "seg", "audio", "plugin_cache", "legacy", "vseg"):
             plan[cat] = [e for e in plan[cat] if not fresh(e[0])]
@@ -300,29 +382,25 @@ def _out_deliverable(name: str) -> bool:
     final_4k*.mp4 = apps/publish/export_4k.py 发布件（runbook R5 4K 链产物，
     final_4k_x264_ref.mp4 质量对照件同前缀）；FREEZE*.json = runbook 步骤 6
     冻结记录（md5 清单证据）。两者此前落「out 一次性中间物」分类被 gc 列为
-    可回收——发布件/冻结证据不可再生，属白名单遗漏交付件。"""
-    return any(fnmatch.fnmatch(name, p) for p in ("final_4k*.mp4", "FREEZE*.json"))
+    可回收——发布件/冻结证据不可再生，属白名单遗漏交付件。
+    A02 起并入 out_protected() 保护清单（模式部分仍由本函数承载）。"""
+    return any(fnmatch.fnmatch(name, p) for p in OUT_PROTECTED_PATTERNS)
 
 
 def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     """gc 主入口。do=False 只列清单（--dry）；do=True 执行；deep 等价原 clean 但
-    保留 reports/VERSIONS/history。"""
+    保留 reports/VERSIONS/history/snapshots 等（A02：out 侧保护经 out_protected()
+    单源判据，与 cli 的 gc --all 白名单同一权威；cache 侧仍留 reports/tmp/
+    snapshots/记账基线）。注：CLI 的 gc/clean 统一走 vtx/cli.py _cleanup_plan
+    （计划-预览-执行三段），本函数供 budget_gate 与直调方使用。"""
     if deep:
-        total = 0
-        for root, kill_out in ((c.cache, True), (c.out, False)):
-            for x in sorted(root.iterdir()):
-                if kill_out and (x.name in (REPORTS, TMP, "snapshots") or
-                                 x.name in KEEP_BASELINES):
-                    continue
-                if not kill_out and (x.name in ("final.mp4", "draft_final.mp4",
-                                                "VERSIONS.json", "history",
-                                                "receipt.json", "reports")
-                                     or _out_deliverable(x.name)):
-                    continue
-                total += dir_size(x)   # 先统计再删（删除后 dir_size=0，--dry/--do 统计口径须一致）
-                if do:
-                    shutil.rmtree(x, ignore_errors=True) if x.is_dir() else x.unlink(missing_ok=True)
-        print(("✓ 深度回收（保留 reports/snapshots/VERSIONS/history/final）" if do
+        # issue #21/#30：预算门/直调与 CLI 复用同一安全计划，不保留绕过入口。
+        from .cli import ExecutionPolicy, _cleanup_plan
+        plan = _cleanup_plan(c, "gc", deep=True)
+        total = sum(size for items in plan.values() for _, size, _ in items)
+        if do:
+            ExecutionPolicy.EXECUTE.execute_cleanup(plan)
+        print(("✓ 深度回收（保留不可再生交付件与 reports/snapshots）" if do
                else "深度回收清单（--dry）") + f"：{gb(total)}")
         return
     plan = gc_plan(c, keep_days)
@@ -340,10 +418,8 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     print(f"合计：{n} 项，{gb(total)}")
     if not do:
         print("（--dry 预览；执行回收请去掉 --dry 重跑 `vtx gc`）"); return
-    for cat, items in plan.items():
-        for p, _, _ in items:
-            (shutil.rmtree(p, ignore_errors=True) if p.is_dir()
-             else p.unlink(missing_ok=True))
+    from .cli import ExecutionPolicy
+    ExecutionPolicy.EXECUTE.execute_cleanup(plan)
     print(f"✓ 已回收 {n} 项，{gb(total)}")
 
 
