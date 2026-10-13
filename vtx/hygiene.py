@@ -14,6 +14,7 @@ import fnmatch, hashlib, json, os, shutil, time
 from pathlib import Path
 
 from . import fstxn
+from .cache_state import InputIdentityError, verify_input_identity
 from .encoders import seg_encoder_kind
 from .infra import ProjectPathError, ensure_inside_project
 from .pluginlib import hooks as _plugin_hooks
@@ -245,9 +246,12 @@ def _dump_versions(o) -> str:
 def manifest_record(c, path: Path, stage: str, key: str = ""):
     """写完一个产物后记一笔（路径/阶段/键/字节/mtime/timeline_md5）。只追加，不阻塞：
     记账失败绝不影响渲染主流程（gc 不依赖 manifest）。"""
+    if c.dry:
+        return
     p = Path(path)
     try:
         def _mutate(rec):
+            verify_input_identity(c)
             try:
                 size = p.stat().st_size if p.is_file() else \
                     sum(x.stat().st_size for x in p.rglob("*") if x.is_file())
@@ -256,7 +260,7 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
             rec["entries"].append({
                 "path": str(p.relative_to(c.root)),
                 "stage": stage, "key": key, "bytes": size,
-                "mtime": time.strftime("%F %T"), "tl": tl_md5(c)})
+                "mtime": time.strftime("%F %T"), "tl": c.timeline_md5})
             if len(rec["entries"]) > 5000:      # 防无限膨胀：只留最近 5000 笔
                 rec["entries"] = rec["entries"][-4000:]
             return rec
@@ -272,6 +276,8 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
         # 由下方既有外层兜底降级为 ⚠ 警告：渲染不受影响，账本不被静默清零。
         fstxn.locked_update(_manifest_path(c), _mutate,
                             load=_load_manifest, dump=_dump_manifest)
+    except InputIdentityError as e:
+        c.reject_input_identity(stage, e)
     except Exception as e:
         print(f"⚠ manifest 记账失败（不影响渲染）: {e}")
 
@@ -653,6 +659,8 @@ def versions_check(c, product: Path) -> bool:
 
 def versions_record(c, product: Path, label: str):
     """mux 成功后追加一条 VERSIONS 记录（只记元数据，不复制全片）。"""
+    if c.dry:
+        return
     f = c.out / "VERSIONS.json"
     product = Path(product)
     audio = c.out / "audio.wav"
@@ -660,11 +668,12 @@ def versions_record(c, product: Path, label: str):
     def _mutate(rec):
         # md5/字节数在锁内取自当前产物：记录值与账本提交点之间产物不再漂移
         # （跨进程并发 mux 时本笔与账本同锁序提交，谁先谁后账本与终态一致）。
+        verify_input_identity(c)
         rec["versions"].append({
             "time": time.strftime("%F %T"), "cmd": label, "product": product.name,
             "md5": _md5_file(product),
             "bytes": product.stat().st_size,
-            "timeline_md5": tl_md5(c),
+            "timeline_md5": c.timeline_md5,
             "audio_md5": _md5_file(audio)
             if audio.exists() else None})
         return rec
@@ -675,7 +684,10 @@ def versions_record(c, product: Path, label: str):
     # out 一次性中间物规则清扫）。损坏账本经 _load_versions 显式失败上抛中断
     # mux（取舍见 _load_ledger 注释）——终片已落盘不受影响，人工修复账本后
     # 重跑 mux 即补记。A04 符号链接免疫同 versions_check。
-    fstxn.locked_update(f, _mutate, load=_load_versions, dump=_dump_versions)
+    try:
+        fstxn.locked_update(f, _mutate, load=_load_versions, dump=_dump_versions)
+    except InputIdentityError as e:
+        c.reject_input_identity(label, e)
 
 
 def rotate_history(c, product: Path, keep: int):

@@ -67,7 +67,25 @@ def validate_cache_dependencies(c):
             raise ValueError(f'cache dependency is not a file: {item}')
 
 
-def receipt_fingerprint(c) -> str:
+class InputIdentityError(RuntimeError):
+    """A build cannot certify products after its pinned inputs have changed."""
+
+
+def verify_input_identity(c):
+    """Re-read inputs; never adopt the current identity for an in-flight build."""
+    try:
+        current = receipt_fingerprint(c)
+    except (OSError, ValueError, RuntimeError) as e:
+        raise InputIdentityError(
+            f"issue #32：输入在渲染期间变化或无法复核（{e}）；"
+            "本次产物不标成功，请恢复输入或重新运行 vtx all") from e
+    if current != c.input_fingerprint:
+        raise InputIdentityError(
+            "issue #32：输入在渲染期间被修改；本次产物不标成功，"
+            "请恢复输入或重新运行 vtx all")
+
+
+def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     """回执输入身份：timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容
     + subtitles_src 文件内容（v2 §1.1 条目 6）+ 生效插件摘要段（v2 §2.1 不变量 ②）。
 
@@ -80,7 +98,7 @@ def receipt_fingerprint(c) -> str:
         参数变化 → 段出现或内容变化 → 录制侧指纹与重算侧失配 → 旧回执拒绝。
     """
     h = hashlib.sha256()
-    h.update(c.tl_path.read_bytes())
+    h.update(c.tl_path.read_bytes() if timeline_bytes is None else timeline_bytes)
     for s in sorted(c.tl.get("sources", []), key=lambda s: str(s.get("path", ""))):
         p = c.root / s["path"]
         h.update((str(s.get("path", "")) + ":" +

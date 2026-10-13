@@ -10,8 +10,9 @@ from pathlib import Path
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
 from . import fstxn
-from .cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
-                         validate_cache_dependencies)
+from .cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
+                         receipt_fingerprint, validate_cache_dependencies,
+                         verify_input_identity)
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
 from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
                        nvenc_retry_run)
@@ -85,7 +86,10 @@ class Ctx:
     def __init__(self, timeline_path: Path):
         self.tl_path = timeline_path
         self.root = timeline_path.parent
-        self.tl = json.loads(timeline_path.read_text(encoding="utf-8"))
+        self.timeline_bytes = timeline_path.read_bytes()
+        self.timeline_sha256 = hashlib.sha256(self.timeline_bytes).hexdigest()
+        self.timeline_md5 = hashlib.md5(self.timeline_bytes).hexdigest()
+        self.tl = json.loads(self.timeline_bytes.decode("utf-8"))
         self.fps = self.tl["project"]["fps"]
         # fps 契约前置校验（B02/issue #26 / F-04 / #4 三面统一，2026-10-13）：
         # 允许值单一来源 constraints.ALLOWED_FPS——D24 换基后全管线固定 30fps
@@ -105,14 +109,18 @@ class Ctx:
         self.cache = self.root / "cache"; self.out = self.root / "out"
         # v2 subtitles_src（§1.1 条目 6）：timeline 加载点解析——load 后 self.tl
         # ["subtitles"] 即为解析结果（各阶段无感）；解析失败/互斥错误记入
-        # self.subtitles_errors 由 validate FAIL。必须在 receipt_fingerprint 之前：
-        # subtitles_src 文件内容参与回执身份（见 cache_state.receipt_fingerprint）。
+        # self.subtitles_errors 由 validate FAIL。subtitles_src 原文已参与输入
+        # 指纹；解析前锁定、解析后复核，避免内存字幕和身份来自不同版本。
+        # Pin before resolving external subtitles so changes during loading are
+        # caught too. Hash exactly the bytes parsed above, not a second read.
+        validate_cache_dependencies(self)
+        self.input_fingerprint = receipt_fingerprint(
+            self, timeline_bytes=self.timeline_bytes)
         from .subtitles_src import resolve_subtitles_src
         resolve_subtitles_src(self)
+        verify_input_identity(self)
         # PR#1 合入：声明依赖快速失败 + 回执输入身份（注意：不是缓存目录键——
         # 缓存布局维持 main 的 per-产物内容寻址，见 cache_state.py 合并裁定）。
-        validate_cache_dependencies(self)
-        self.input_fingerprint = receipt_fingerprint(self)
         self.probes = {}
         self.dry = False   # --dry-run（main 里按 CLI 参数赋值；替代原模块级可变全局 DRY）
         # receipt.json 并发写锁（方案二阶段2，2026-09-12；B06 升级 2026-10-13）：
@@ -201,6 +209,21 @@ class Ctx:
                     "w": 0, "h": 0, "has_video": False, "has_audio": a is not None}
         self.probes[path] = info; return info
 
+    def reject_input_identity(self, stage, error):
+        """Explicit failure under the pinned identity, never under new inputs."""
+        if stage is not None:  # preview tasks must not touch the formal receipt
+            self.receipt(stage, False, str(error))
+        print(f"✗ {error}", file=sys.stderr)
+        sys.exit(1)
+
+    def verify_inputs(self, stage):
+        if self.dry:
+            return
+        try:
+            verify_input_identity(self)
+        except InputIdentityError as e:
+            self.reject_input_identity(stage, e)
+
     def receipt(self, stage, ok, detail="", extra=None):
         if self.dry:
             return   # dry-run 不落回执（PR#1：预览运行不得改写真实阶段状态）——锁外早退
@@ -208,7 +231,9 @@ class Ctx:
 
         def _mutate(rec):
             _archive_stale_receipt(f, self.input_fingerprint)   # ⑮ 指纹翻转旁证轮转
-            rec["timeline"] = hashlib.sha256(self.tl_path.read_bytes()).hexdigest()
+            if ok:
+                verify_input_identity(self)
+            rec["timeline"] = self.timeline_sha256
             rec["updated"] = time.strftime("%F %T")
             rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
             if extra:
@@ -220,8 +245,12 @@ class Ctx:
         # 之外另一 vtx 进程的并行落笔也串行化；写入 tmp+os.replace，中断/被杀后
         # receipt.json 要么旧值要么新值，永不为截断 JSON。load 注入指纹门
         # （load_receipt 语义原样：身份不符/损坏 → 空阶段表，不继承旧成功）。
-        fstxn.locked_update(f, _mutate,
-                            load=lambda p: load_receipt(p, self.input_fingerprint))
+        try:
+            fstxn.locked_update(f, _mutate,
+                                load=lambda p: load_receipt(p, self.input_fingerprint))
+        except InputIdentityError as e:
+            # Release the ledger lock before writing failure (no nested lock).
+            self.reject_input_identity(stage, e)
 
     # （PR#1 的 Ctx.gfx_dir 路径哈希版被放弃：main 13bed7a 的 hygiene.gfx_key
     #  内容寻址键覆盖其全部场景——同名页不同内容/同页换时长自然分键，且同内容
@@ -234,6 +263,7 @@ class Ctx:
         f = self.out / 'receipt.json'
 
         def _mutate(rec):
+            verify_input_identity(self)
             _archive_stale_receipt(f, self.input_fingerprint)
             dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
                             'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
