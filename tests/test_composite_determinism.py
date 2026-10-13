@@ -150,9 +150,9 @@ class TestPassFreshSidecar(unittest.TestCase):
             # 旁车数值不符 → 不命中
             p.with_suffix(".mkv.n").write_text("119")
             self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
-            # 旁车匹配 → 命中
+            # 旁车匹配也不能认证假的/中断的媒体（issue #34）。
             p.with_suffix(".mkv.n").write_text("120")
-            self.assertTrue(plan._pass_fresh(p, 120, sidecar=True))
+            self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
             # target 空文件 → 不命中（旁车在也挡不住）
             p.write_bytes(b"")
             self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
