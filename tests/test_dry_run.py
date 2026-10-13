@@ -246,6 +246,14 @@ class DryRunRegression(unittest.TestCase):
         result = self.run_vtx("clean")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((self.root / "cache").exists())
+        # A02（issue #21 / F-01）：普通 clean 默认保留不可再生交付件——out 根
+        # 因 final.mp4/VERSIONS.json/history/FREEZE* 存活而保留；全删唯一入口
+        # 是显式危险旗标（本用例语义随工单同步，非 dry 执行面不变）
+        self.assertTrue((self.root / "out/final.mp4").exists())
+        self.assertTrue((self.root / "out/VERSIONS.json").exists())
+        self.assertTrue((self.root / "out/history/final_old.mp4").exists())
+        result = self.run_vtx("clean", "--i-know-this-nukes-everything")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((self.root / "out").exists())
         self.assertTrue(self.timeline.exists())
 

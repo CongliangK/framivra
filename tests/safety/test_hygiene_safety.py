@@ -33,6 +33,58 @@ class CleanupSafety(SandboxCase):
         self.assert_ok(self.run_vtx("clean"))
         self.assert_outside_unchanged()
 
+    # ---- A02（issue #21 / F-01）：不可再生交付件保护 ----
+    # 保护清单权威 = hygiene.out_protected（OUT_PROTECTED_*）：普通 clean/gc 绝不
+    # 删除；全删唯一入口 = clean --i-know-this-nukes-everything 显式危险旗标。
+
+    def test_clean_preserves_nonregenerable_deliverables(self):
+        self.garbage()
+        protected = ["out/final.mp4", "out/VERSIONS.json", "out/history/old.mp4",
+                     "out/FREEZE.json", "out/FREEZE_v47.json", "out/final_4k.mp4",
+                     "out/final_4k_x264_ref.mp4", "out/reports/a.json"]
+        for name in protected:
+            self.put(self.root / name, name.encode())
+        self.assert_ok(self.run_vtx("clean"))
+        self.assertFalse((self.root / "cache").exists())
+        self.assertFalse((self.root / "out/intermediate.bin").exists())
+        for name in protected:
+            self.assertEqual((self.root / name).read_bytes(), name.encode(),
+                             f"不可再生交付件被普通 clean 删除: {name}")
+        self.assert_outside_unchanged()
+
+    def test_clean_nuke_flag_is_the_only_full_delete_path(self):
+        # 危险旗标变体：显式确认后恢复全清空语义（对照组=上一用例的默认保留）
+        for name in ("out/final.mp4", "out/VERSIONS.json", "out/history/old.mp4",
+                     "out/FREEZE.json"):
+            self.put(self.root / name, name.encode())
+        self.assert_ok(self.run_vtx("clean", "--i-know-this-nukes-everything"))
+        self.assertFalse((self.root / "cache").exists())
+        self.assertFalse((self.root / "out").exists())
+        self.assert_outside_unchanged()
+
+    def test_nuke_flag_rejected_on_non_clean_commands(self):
+        # gc 永不删除交付件，旗标对 gc/其他命令是用法错（退出码 2、零副作用）
+        before = self.tree()
+        for argv in (("gc", "--i-know-this-nukes-everything"),
+                     ("gc", "--all", "--i-know-this-nukes-everything"),
+                     ("df", "--i-know-this-nukes-everything")):
+            result = self.run_vtx(*argv)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("仅作用于 clean", result.stdout)
+        self.assertEqual(self.tree(), before)
+
+    def test_clean_refuses_out_entry_symlink_outside_roots(self):
+        # issue #21：解析目标在根外时连链接也不列计划，不能枚举其内容。
+        self.garbage()
+        (self.root / "out/intermediate.bin").unlink()
+        (self.root / "out/intermediate.bin").symlink_to(self.outside,
+                                                        target_is_directory=True)
+        result = self.run_vtx("clean")
+        self.assert_ok(result)
+        self.assertIn("cache/out 根之外", result.stdout)
+        self.assertTrue((self.root / "out/intermediate.bin").is_symlink())
+        self.assert_outside_unchanged()
+
     def test_gc_dry_flag_preserves_exact_tree(self):
         self.garbage()
         before = self.tree()

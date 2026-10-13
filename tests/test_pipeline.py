@@ -7,7 +7,9 @@
      「仅显式 "0" 回退线性序列」，其余任意值走依赖图（env 参数注入，不污染进程环境）；
   ③ receipt 并发锁：ThreadPoolExecutor 8 线程并发各调 c.receipt("s0"…"s7") × 10 次，
      join 后 receipt.json 必须含全部 8 个 stage 且 ok——receipt/begin_stage 的读-改-写
-     现持 Ctx._receipt_lock，无锁时并发写互相覆盖会丢笔（真丢数据，非理论洁癖）；
+     现走 fstxn 事务（B06 起：进程内 per-path 锁 + receipt.json.lock 的 flock；
+     原 Ctx._receipt_lock 已随锁下沉 fstxn 移除），无锁时并发写互相覆盖会丢笔
+     （真丢数据，非理论洁癖）；
   ④ 流水线集成（可选，VTX_PIPE_INTEG=1 门控，对齐 VTX_RANGE_INTEG 惯例；需 ffmpeg
      与 Chrome）：合成项目实跑 `vtx all` 三遍——首遍全冷断言 receipt 全阶段 ok、
      final.mp4 帧数精确、cache/manifest.json 合法且含 prepare/gfx/video 各阶段；
@@ -113,7 +115,8 @@ def _run_vtx(tl: Path, *args, extra_env=None):
 @unittest.skipUnless(shutil.which("ffmpeg"),
                      "receipt 并发测试需要 ffmpeg（生成带媒体的合成项目）")
 class TestReceiptConcurrentLock(unittest.TestCase):
-    """Ctx._receipt_lock：8 线程 × 10 次 receipt 读-改-写，全部 8 笔必须都在。
+    """receipt 并发锁（B06 起在 fstxn：per-path 线程锁 + flock）：8 线程 × 10 次
+    receipt 读-改-写，全部 8 笔必须都在。
 
     receipt() 是 receipt.json 的「读-改-写」，波内 gfx/audio 两路并发回执若无锁，
     后写者会用自己读到的旧快照覆盖前写者的笔——丢笔是真实数据风险。锁合入前
