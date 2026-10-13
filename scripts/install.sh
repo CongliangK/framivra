@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install.sh —— video_tools 自托管安装入口(curl | bash 安全形态)
-# 设计目标:《自托管安装入口执行方案》2026-09-20;R-23 P0。
+# install.sh —— GitHub Releases 安装入口(curl | bash)
+# 校验和仅保证传输完整性,不证明独立发布者身份(另见 #41)。
 # 设计要点(§3.1):零 git 零 sudo 依赖 / $0 无关 / 非交互安全 / 幂等复用 /
 #   ffmpeg≥5.1 下限 / --chrome 显式走 npmmirror / SHA256SUMS 校验 /
 #   --uninstall 标记门 / 版本源 releases.json(--version 可覆盖)。
@@ -9,7 +9,17 @@
 #   ffmpeg<5.1 警告 / 校验失败 die / --uninstall 无标记 die。
 set -uo pipefail
 
-BASE_URL="${VIDEO_TOOLS_DL_BASE:-https://ruochongliang.top/dl/video-tools}"
+if [ -n "${VIDEO_TOOLS_DL_BASE:-}" ]; then
+  BASE_URL="${VIDEO_TOOLS_DL_BASE%/}"
+  case "$BASE_URL" in
+    https://github.com/*/*/releases/download)
+      LATEST_URL="${BASE_URL%/download}/latest/download/releases.json" ;;
+    *) LATEST_URL="$BASE_URL/releases.json" ;;  # 普通镜像保留旧发现布局
+  esac
+else
+  BASE_URL="https://github.com/CongliangK/framivra/releases/download"
+  LATEST_URL="https://github.com/CongliangK/framivra/releases/latest/download/releases.json"
+fi
 CFT_MIRROR="${CHROME_CFT_MIRROR:-https://registry.npmmirror.com/-/binary/chrome-for-testing}"
 CHROME_VERSION="${CHROME_VERSION:-153.0.8010.52}"   # R-23 P1 定版:headless=new 渲染+CDP 端点实测通过(2026-09-20)
 DEFAULT_HOME="${HOME}/.local/share/video-tools"
@@ -34,7 +44,8 @@ while [ $# -gt 0 ]; do
       cat <<USAGE
 用法: install.sh [--dir DIR] [--version vX.Y.Z] [--chrome] [--uninstall] [--dry-run]
   --dir DIR      安装根(默认顺序: \$VT_HOME > 当前目录若为 checkout > $DEFAULT_HOME)
-  --version VER  安装指定版本(默认取 releases.json 最新)
+  --version VER  安装指定版本(默认取 GitHub Latest Release 的 releases.json)
+  VIDEO_TOOLS_DL_BASE  GitHub .../releases/download 或用户镜像(根 releases.json,vVER/资产)
   --chrome       同时下载 Chrome for Testing(npmmirror,~170MB)
   --uninstall    卸载(仅限带 .vt-install.json 标记的安装目录)
   --dry-run      演练:零下载零写入零修改
@@ -72,7 +83,8 @@ if is_checkout "$TARGET_DIR"; then
 print(open(__import__("sys").argv[1]).read().strip())
 PY
 )"
-  v_cur="$(curl -fsS "$BASE_URL/releases.json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])' 2>/dev/null || echo unknown)"
+  if [ "$DRY_RUN" = 1 ]; then v_cur="未查询(dry-run)"
+  else v_cur="$(curl -fsSL "$LATEST_URL" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])' 2>/dev/null || echo unknown)"; fi
   # rc 语义钉死(RECP-20260920-001):复用分支=检测+告知后干净返回 0;
   # 历史缺陷=本赋值行与 log 行粘连,v_cur 沦为临时赋值永不持久,下一行 $v_cur 撞 set -u 崩溃 rc=1。
   log "检测到既有 checkout($TARGET_DIR,VERSION=$v_now)——复用不覆盖。"
@@ -84,13 +96,17 @@ if [ -e "$TARGET_DIR" ] && [ -n "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]; then
 fi
 
 # ---- 版本解析 ----
+if [ "$DRY_RUN" = 1 ] && [ -z "$VERSION" ]; then
+  log "[dry-run] 将从 $LATEST_URL 发现版本;零下载零写入零修改"
+  exit 0
+fi
 if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsS "$BASE_URL/releases.json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])')" \
-    || die "releases.json 拉取/解析失败($BASE_URL)"
+  VERSION="$(curl -fsSL "$LATEST_URL" | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])')" \
+    || die "releases.json 拉取/解析失败($LATEST_URL)"
 fi
 VERSION="${VERSION#v}"
 log "安装版本: $VERSION"
-[ "$VERSION" = "$(printf '%s' "$VERSION" | tr -cd 'A-Za-z0-9.v_-')" ] || die "版本串含非法字符"
+[ -n "$VERSION" ] && [ "$VERSION" = "$(printf '%s' "$VERSION" | tr -cd 'A-Za-z0-9.v_-')" ] || die "版本串为空或含非法字符"
 
 # ---- ffmpeg 探测(≥5.1 下限;缺则提示+exit 0;旧版警告) ----
 FFMPEG_MAJOR=0
@@ -109,21 +125,35 @@ elif [ "$FFMPEG_MAJOR" -lt 5 ]; then
 fi
 
 # ---- 下载与校验(dry-run 零副作用) ----
-WORK="$(mktemp -d)"
-cleanup() { rm -rf "$WORK"; }
-trap cleanup EXIT
 if [ "$DRY_RUN" = 1 ]; then
-  log "[dry-run] 将执行:下载 $BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz + SHA256SUMS 校验 + 解包到 $TARGET_DIR + vt.py init + doctor"
+  log "[dry-run] 将执行:下载 $BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz + 同 tag SHA256SUMS 校验 + 解包到 $TARGET_DIR + vt.py init + doctor"
   log "[dry-run] 零下载零写入零修改——演练结束"
   exit 0
 fi
+WORK="$(mktemp -d)" || die "创建临时下载目录失败"
+cleanup() { rm -rf -- "${WORK:?}"; }
+trap cleanup EXIT
 log "下载载荷…"
-curl -fsS "$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz" -o "$WORK/video-tools-$VERSION.tar.gz" \
+curl -fsSL "$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz" -o "$WORK/video-tools-$VERSION.tar.gz" \
   || die "载荷下载失败:$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz"
-curl -fsS "$BASE_URL/SHA256SUMS" -o "$WORK/SHA256SUMS" \
+curl -fsSL "$BASE_URL/v$VERSION/SHA256SUMS" -o "$WORK/SHA256SUMS" \
   || die "SHA256SUMS 下载失败"
-( cd "$WORK" && grep "video-tools-$VERSION.tar.gz" SHA256SUMS | sha256sum -c - >/dev/null 2>&1 ) \
-  || die "SHA256 校验失败——载荷不落地(信任源校验不过,检查网络或 releases 一致性)"
+python3 - "$WORK" "$VERSION" <<'PY'
+import hashlib, re, sys
+from pathlib import Path
+work, version = Path(sys.argv[1]), sys.argv[2]
+name = f"video-tools-{version}.tar.gz"
+rows = [line.split() for line in (work / "SHA256SUMS").read_text().splitlines()]
+entries = [row for row in rows if len(row) == 2 and row[1] == name]
+if len(entries) != 1 or not re.fullmatch(r"[0-9a-fA-F]{64}", entries[0][0]):
+    sys.exit(1)
+h = hashlib.sha256()
+with (work / name).open("rb") as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        h.update(chunk)
+sys.exit(0 if h.hexdigest() == entries[0][0].lower() else 1)
+PY
+[ $? = 0 ] || die "SHA256 校验失败——载荷不落地(仅传输完整性,不证明发布者身份)"
 log "校验通过。"
 
 # ---- 解包安装 ----
