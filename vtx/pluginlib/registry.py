@@ -33,6 +33,10 @@ def load_static_registry(repo_root=None) -> dict:
     （注册表损坏不阻断内核——三分支扫描退化为「未知键警告不阻断」）。
     """
     f = _root(repo_root) / "plugins" / "registry.json"
+    if not f.is_file() and _root(repo_root).resolve() == REPO_ROOT.resolve():
+        # Kernel-only wheel: retain declarations, not plugin execution code.
+        # Other explicit roots (tests/external installations) keep their contract.
+        f = Path(__file__).resolve().parent / "builtin_registry.json"
     if not f.is_file():
         return {"plugins": {}}
     try:
