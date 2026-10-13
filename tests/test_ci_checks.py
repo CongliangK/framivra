@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import tempfile
 import unittest
 from unittest import mock
 
@@ -65,6 +66,107 @@ class StrictMediaGate(unittest.TestCase):
             self.assertEqual(os.environ['VTX_RANGE_INTEG'], '1')
             self.assertEqual(os.environ['VTX_AUDIO_REPORT_INTEG'], '1')
             self.assertEqual(os.environ['VTX_NO_NVENC'], '1')
+
+
+class MediaInventoryContract(unittest.TestCase):
+    def fixture_inventory(self, source, selections=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tests = root / 'tests'
+            tests.mkdir()
+            (tests / 'test_media.py').write_text(source, encoding='utf-8')
+            if selections is None:
+                return ci.media_inventory(root)
+            with contextlib.redirect_stdout(io.StringIO()):
+                return ci.check_media_inventory(root, selections)
+
+    def test_source_scan_resolves_tools_aliases_helpers_and_method_gates(self):
+        source = '''import os, shutil, unittest
+FF = shutil.which('ffmpeg')
+def have_encoder():
+    return FF is not None
+@unittest.skipUnless(have_encoder(), 'needs encoder')
+class Encoder(unittest.TestCase):
+    def test_encode(self): pass
+class Browser(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('VTX_TEST_CHROME'), 'needs browser')
+    def test_draw(self): pass
+raise AssertionError('inventory must not import or execute test modules')
+'''
+        self.assertEqual(self.fixture_inventory(source), {
+            'tests.test_media.Encoder': 'ffmpeg',
+            'tests.test_media.Browser.test_draw': 'chrome',
+        })
+
+    def test_dynamic_skip_and_setup_conditions_are_inventoried(self):
+        source = '''import os, unittest
+class Pipeline(unittest.TestCase):
+    def setUpClass(cls):
+        if not os.environ.get('VTX_PIPE_INTEG'):
+            cls.skipTest('enable pipeline')
+    def test_pipeline(self): pass
+class Probe(unittest.TestCase):
+    def test_probe(self):
+        if not __import__('shutil').which('ffprobe'):
+            self.skipTest('enable probe')
+'''
+        self.assertEqual(self.fixture_inventory(source), {
+            'tests.test_media.Pipeline': 'chrome',
+            'tests.test_media.Probe.test_probe': 'ffmpeg',
+        })
+
+    def test_optional_models_music_and_gpu_do_not_enter_cpu_jobs(self):
+        source = '''import os, unittest
+@unittest.skipUnless(os.environ.get('VTX_TEST_BGM_INTEG'), 'music_tools')
+class Music(unittest.TestCase):
+    def test_render(self): pass
+@unittest.skipUnless(os.environ.get('VTX_TEST_DENOISE'), 'model weights')
+class Model(unittest.TestCase):
+    def test_denoise(self): pass
+class Gpu(unittest.TestCase):
+    def test_nvenc(self):
+        if not export_4k.nvenc_probe():
+            self.skipTest('NVENC unavailable')
+'''
+        self.assertEqual(self.fixture_inventory(source), {})
+
+    def test_new_unlisted_media_gate_fails_then_explicit_selection_passes(self):
+        source = '''import os, unittest
+@unittest.skipUnless(os.environ.get('VTX_TEST_CHROME'), 'real browser')
+class NewBrowser(unittest.TestCase):
+    def test_real(self): pass
+'''
+        with self.assertRaisesRegex(RuntimeError, 'NewBrowser.*chrome'):
+            self.fixture_inventory(source, {'ffmpeg': (), 'chrome': ()})
+        # Listing a Chrome suite only in the FFmpeg job cannot satisfy coverage.
+        with self.assertRaisesRegex(RuntimeError, 'NewBrowser.*chrome'):
+            self.fixture_inventory(source, {'ffmpeg': ('tests.test_media',), 'chrome': ()})
+        inventory = self.fixture_inventory(source, {'chrome': ('tests.test_media.NewBrowser',)})
+        self.assertEqual(inventory, {'tests.test_media.NewBrowser': 'chrome'})
+
+    def test_current_repository_cpu_media_gates_are_all_selected(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            inventory = ci.check_media_inventory()
+        self.assertEqual(inventory['tests.test_gfx_cache_integrity.RealBrowserIntegrity'], 'chrome')
+        self.assertEqual(inventory['tests.test_failure_recovery.RealChromeRecovery'], 'chrome')
+        self.assertEqual(inventory['tests.test_failure_recovery.RealFFmpegRecovery'], 'ffmpeg')
+        for selector in ('tests.test_gfx_cache_integrity.RealBrowserIntegrity',
+                         'tests.test_failure_recovery.RealChromeRecovery',
+                         'tests.test_failure_recovery.RealFFmpegRecovery'):
+            with self.subTest(selector=selector):
+                selections = {kind: tuple(name for name in names if name != selector)
+                              for kind, names in ci.MEDIA_TESTS.items()}
+                with self.assertRaisesRegex(RuntimeError, selector):
+                    ci.check_media_inventory(selections=selections)
+
+    def test_media_inventory_failure_prevents_tool_launch_and_execution(self):
+        with mock.patch.object(ci, 'check_media_inventory', side_effect=RuntimeError('unlisted')), \
+                mock.patch.object(ci, 'prepare_media') as preflight, \
+                mock.patch.object(ci, 'strict_suite') as suite, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ci.main(['chrome']), 1)
+            preflight.assert_not_called()
+            suite.assert_not_called()
 
 
 class WorkflowContract(unittest.TestCase):
