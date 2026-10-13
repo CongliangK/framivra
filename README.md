@@ -32,7 +32,13 @@ python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/fin
 
 可选产线初始化：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等）；`bash apps/matting/init.sh --download`（抠像链权重）。live skill 挂载（如 `~/.agents/skills/video/`，为指向本仓的符号链接）可用 `vt.py --fix-links` 重建。
 
-**个人自托管镜像（可选）**：不 clone 也可从作者个人镜像一键安装：`curl -fsSL https://ruochongliang.top/dl/video-tools/install.sh | bash -s -- --dir <目录>`（可选 `--chrome`；版本清单见 `/releases.json`；详见 `scripts/install.sh --help`）。该域名为作者个人服务器，可用环境变量 `VIDEO_TOOLS_DL_BASE` 覆盖下载基址指向自己的镜像。
+**GitHub Releases 安装**（需已有完整发布资产）：`curl -fsSL https://github.com/CongliangK/framivra/releases/latest/download/install.sh | bash -s -- --dry-run --dir <目录>`；去掉 `--dry-run` 才下载并写入安装目录（可选 `--chrome`）。版本发现与载荷均来自 GitHub；`VIDEO_TOOLS_DL_BASE` 可覆盖为用户镜像（布局见 `scripts/install.sh --help`）。SHA256SUMS 仅校验传输完整性，不是独立发布者签名。
+
+维护者发布入口（仅查看参数；真实发布需 GitHub 仓库写权限）：
+
+```bash
+bash scripts/release.sh --help
+```
 
 ## 三层路由
 
