@@ -232,7 +232,9 @@ def cmd_init(a):
         try:
             compile((ROOT / "apps/blender-bridge" / f).read_text(encoding="utf-8"), f, "exec")
             rec(f"bridge_{f}", True, "语法门；运行需 blender --python")
-        except SyntaxError as e:
+        except (SyntaxError, OSError) as e:
+            # Optional apps are intentionally absent in the kernel-only wheel.
+            # Report missing/broken bridge files instead of crashing init.
             rec(f"bridge_{f}", False, str(e))
     if interp is None:
         rec("audit_bundle", False, "找不到 python3 解释器（PATH）")
