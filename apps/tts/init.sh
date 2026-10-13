@@ -11,6 +11,14 @@
 # 不自动下载。重复运行结果一致。
 set -u
 
+# Fail before probing user configuration or cloning/downloading the unknown chain.
+for license_arg in "$@"; do
+  if [ "$license_arg" = "--download" ]; then
+    LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
+    python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download indextts || exit "$?"
+  fi
+done
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"   # v2 迁移后 tts 在 apps/ 下，仓根 = 上两级
 CFG="$ROOT/config.local.json"
@@ -61,10 +69,10 @@ if [ -d "$CKPT" ]; then
   if [ -z "$MISS" ]; then
     mark ok "repo" "复用 $CKPT（五件权重齐）"
   else
-    mark fail "repo" "$CKPT 缺：$MISS —— 路线 a) modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir <repo>/checkpoints（国内直连）+ 代码 git clone https://github.com/index-tts/index-tts（走代理；gitclone/ghproxy 镜像 2026-09-11 实测不可用）；路线 b) 只用兜底引擎 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（注：GPL-3.0 许可，仅作独立 CLI 兜底，装否自定）&& tts_cli.py gen --engine edge（不下载 11GB）"
+    mark fail "repo" "$CKPT 缺：$MISS —— 路线 a) modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir <repo>/checkpoints（国内直连）+ 代码 git clone https://github.com/index-tts/index-tts（走代理；gitclone/ghproxy 镜像 2026-09-11 实测不可用）；路线 b) 只用兜底引擎 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（注：许可见 docs/third-party-licenses.md 许可，仅作独立 CLI 兜底，装否自定）&& tts_cli.py gen --engine edge（不下载 11GB）"
   fi
 else
-  mark fail "repo" "$REPO 不存在 —— 路线 a) git clone https://github.com/index-tts/index-tts（走代理）到 $REPO && modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir $REPO/checkpoints；路线 b) 只用兜底引擎 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（注：GPL-3.0 许可，仅作独立 CLI 兜底，装否自定）&& tts_cli.py gen --engine edge（不下载 11GB）"
+  mark fail "repo" "$REPO 不存在 —— 路线 a) git clone https://github.com/index-tts/index-tts（走代理）到 $REPO && modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir $REPO/checkpoints；路线 b) 只用兜底引擎 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（注：许可见 docs/third-party-licenses.md 许可，仅作独立 CLI 兜底，装否自定）&& tts_cli.py gen --engine edge（不下载 11GB）"
 fi
 
 # ---- 2. 解释器（indextts conda env / repo venv，官方支持 3.10-3.11）----
@@ -96,7 +104,7 @@ fi
 if [ -e "$EB" ]; then
   mark ok "edge-tts" "$EB"
 else
-  mark warn "edge-tts" "未找到（$DEFAULT_EDGE / PATH 均无）—— pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（GPL-3.0，独立 CLI 兜底，装否自定）"
+  mark warn "edge-tts" "未找到（$DEFAULT_EDGE / PATH 均无）—— pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（许可见 docs/third-party-licenses.md，独立 CLI 兜底，装否自定）"
 fi
 
 # ---- 5. GPU ----
@@ -125,7 +133,7 @@ if [ "${1:-}" = "--download" ] || [ "${2:-}" = "--download" ]; then
     echo "[1/2] 克隆 IndexTTS 代码（直连失败自动走代理 127.0.0.1:7890）..."
     git clone --depth 1 https://github.com/index-tts/index-tts "$REPO" \
       || https_proxy=http://127.0.0.1:7890 git clone --depth 1 https://github.com/index-tts/index-tts "$REPO" \
-      || { echo "克隆失败；edge 兜底路线：pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（GPL-3.0，装否自定）"; exit 1; }
+      || { echo "克隆失败；edge 兜底路线：pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（许可见 docs/third-party-licenses.md，装否自定）"; exit 1; }
     echo "✓ 代码 → $REPO"
   else
     echo "[1/2] 代码已存在，跳过克隆"

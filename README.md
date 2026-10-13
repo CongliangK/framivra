@@ -85,8 +85,6 @@ python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/fin
 
 ## License
 
-本项目以 **MIT License** 发布（版权人 ruochongliang），许可证全文见仓根 `LICENSE`。补充说明：
+本项目许可证与版权声明见仓根 [LICENSE](LICENSE)，不替代上游代码、模型/辅助权重、API 服务与输出权利。
 
-- **外部工具用户自装**：渲染链依赖的外部工具（ffmpeg/ffprobe、Chrome/Chromium/Edge、可选的 Blender/sox 等）**不随本仓分发任何二进制**，请自行安装并遵守其各自许可证。
-- **上游模型/权重许可待核实**：init 脚本 `--download` 会实际拉取的大体量第三方资产——apps/matting 的 MatAnyone2、BiRefNet_HR 权重，apps/tts 的 IndexTTS-2.5 代码与 11GB 权重，plugins/denoise 的 resemble-enhance 权重等——其上游许可证尚待核实，正式使用前请自行确认上游条款。
-- **可选 Python 依赖许可**：多数为宽松许可证（如 numpy 为 BSD 三条款、Pillow 为 MIT-CMU），以各依赖包自带声明为准。**例外**：apps/tts 兜底引擎 edge-tts 为 **GPL-3.0** 许可——本仓仅以独立命令行子进程方式调用、不链接进仓内代码，是否安装由用户自行决定（详见 apps/tts/README.md 风险节：edge-tts 依赖微软非官方公开接口，无 SLA，仅作免 GPU 兜底）。
+第三方许可、固定官方证据与默认载荷/可选下载边界统一见 [第三方许可](docs/third-party-licenses.md)；未知或受限资产不算合规通过，未审查的自动下载明确阻断。默认源码/内核未捆绑权重或外部工具二进制，与安装器的可选下载不是同一声明。

@@ -16,6 +16,14 @@
 # 幂等：只探测打印；缺依赖打印修复命令，不自动建环境；仅 --download 会下载权重。
 set -u
 
+# Mirror/latest is not the reviewed official immutable model-card snapshot.
+for license_arg in "$@"; do
+  if [ "$license_arg" = "--download" ]; then
+    LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
+    python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download denoise || exit "$?"
+  fi
+done
+
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 DENoise_PY="${DENOISE_PY:-$HOME/miniconda3/envs/denoise/bin/python}"
 WEIGHTS="${RESEMBLE_WEIGHTS:-$HOME/models/resemble-enhance}"
@@ -51,9 +59,8 @@ if [ -s "$WEIGHT_FILE" ]; then
   ok "权重 $WEIGHT_FILE ($(du -sh "$WEIGHTS" | awk '{print $1}'))"
 else
   warn "权重缺失 $WEIGHT_FILE"
-  say "    默认渠道（hf-mirror 直连，约 681MB）："
-  say "    HF_ENDPOINT=$MIRROR $DENoise_PY -c 'from huggingface_hub import snapshot_download; snapshot_download(\"ResembleAI/resemble-enhance\", local_dir=r\"$WEIGHTS\")'"
-  say "    或执行本脚本：bash $0 --download"
+  say "    下载须审查官方固定快照与通知：python3 scripts/model_license_policy.py plan resemble-enhance"
+  say "    旧 mirror/latest --download 已阻断；已有资产探测不改变用户文件。"
 fi
 
 # --download：权重缺失时走 hf-mirror 实际下载

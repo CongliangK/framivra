@@ -14,6 +14,14 @@
 # 换代理 https_proxy=$PROXY。--download 实际执行缺失项下载；不带参数只探测。
 set -u
 
+# Do not clone code or fetch unknown weights under a blanket download switch.
+for license_arg in "$@"; do
+  if [ "$license_arg" = "--download" ]; then
+    LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
+    python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download matting || exit "$?"
+  fi
+done
+
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CPY="${COMFYUI_PY:-$HOME/miniconda3/envs/comfyui/bin/python}"
 MA2="$HERE/MatAnyone2"
