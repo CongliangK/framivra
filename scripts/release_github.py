@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 
@@ -120,6 +121,52 @@ def find_release(repository, tag, *, allow_missing=False):
     return api(repository, 'releases/' + str(release_id))
 
 
+def verify_archive_payload(root, commit, payload):
+    """Prove the produced archive equals the tagged tree, entry by entry.
+
+    `git archive` also applies .git/info/attributes, core.attributesFile and
+    system gitattributes (untracked by `status --porcelain`), so export-ignore
+    can silently drop any tracked file and export-subst can rewrite its bytes
+    while every Git-object read still matches (#38/#39). Compare the real tar
+    payload against `ls-tree` of the tagged commit instead of trusting the
+    source gate plus an asset count.
+    """
+    expected = {}
+    for entry in git(root, 'ls-tree', '-r', '-z', commit).split('\0'):
+        if not entry:
+            continue
+        meta, path = entry.split('\t', 1)
+        mode, kind, sha = meta.split(' ', 2)
+        if kind != 'blob':
+            # Never fake submodule contents; fail closed on unsupported trees.
+            raise ReleaseError('cannot verify archive entry: ' + path)
+        blob = subprocess.run(['git', 'cat-file', 'blob', sha], cwd=root,
+                              capture_output=True, check=True).stdout
+        expected[path] = (mode == '100755', mode == '120000', blob)
+    with tarfile.open(payload, 'r:gz') as archive:
+        actual = {}
+        for member in archive:
+            if member.isdir():
+                continue  # Directory entries carry no payload to verify.
+            if member.name in actual:
+                raise ReleaseError('duplicate archive entry: ' + member.name)
+            if member.issym():
+                actual[member.name] = (False, True, member.linkname.encode())
+            elif member.isfile():
+                data = archive.extractfile(member).read()
+                actual[member.name] = (bool(member.mode & 0o111), False, data)
+            else:
+                raise ReleaseError('unsupported archive entry type: ' + member.name)
+    if set(actual) != set(expected):
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        raise ReleaseError('archive payload differs from tagged tree '
+                           '(missing=%s extra=%s)' % (missing[:5], extra[:5]))
+    for path, (exec_bit, symlink, blob) in expected.items():
+        if actual[path] != (exec_bit, symlink, blob):
+            raise ReleaseError('archive payload differs from tagged tree: ' + path)
+
+
 def digest(path):
     value = hashlib.sha256()
     with path.open('rb') as stream:
@@ -132,6 +179,8 @@ def build_assets(root, tag, commit, work):
     version = tag[1:]
     payload = work / ('video-tools-' + version + '.tar.gz')
     run(['git', 'archive', '--format=tar.gz', commit, '-o', str(payload)], cwd=root)
+    # Prove the real payload equals the tagged tree before any remote write.
+    verify_archive_payload(root, commit, payload)
     # git show bytes: do not strip the installer or change its frozen content.
     installer = subprocess.run(['git', 'show', commit + ':scripts/install.sh'],
                                cwd=root, capture_output=True, check=True).stdout

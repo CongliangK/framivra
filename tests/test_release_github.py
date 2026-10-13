@@ -265,6 +265,91 @@ class GithubRelease(unittest.TestCase):
         self.assertEqual(self.state()['calls'], [])
         self.assertEqual(self.git('status', '--porcelain').stdout, before)
 
+    def write_local_attributes(self, text):
+        info = self.repo / '.git/info'
+        info.mkdir(exist_ok=True)
+        (info / 'attributes').write_text(text)
+        # Local Git metadata edits must stay invisible to status checks.
+        self.assertEqual(self.git('status', '--porcelain').stdout, '')
+
+    def retag(self, message):
+        self.git('add', '.')
+        self.git('commit', '-qm', message)
+        self.git('tag', '-f', 'v2.0.1', '-m', 'fixture')
+        self.commit = self.git('rev-parse', 'HEAD').stdout.strip()
+        state = self.state()
+        state['commit'] = self.commit
+        self.state_path.write_text(json.dumps(state))
+
+    def assert_no_remote_writes(self):
+        state = self.state()
+        self.assertFalse(any(call[:2] in (['release', 'create'], ['release', 'upload'])
+                             or 'PATCH' in call for call in state['calls']))
+        self.assertEqual(state['latest'], self.old)
+
+    def test_hidden_archive_attributes_reject_versions_installer_and_runtime(self):
+        # .git/info/attributes is untracked Git metadata: status stays clean,
+        # yet export-ignore removes entries from the real git archive.
+        self.write_local_attributes(
+            'VERSION export-ignore\nvtx/__init__.py export-ignore\n'
+            'pyproject.toml export-ignore\nscripts/install.sh export-ignore\n'
+            'vt.py export-ignore\n')
+        result = self.release()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('archive payload differs from tagged tree', result.stderr)
+        self.assert_no_remote_writes()
+        self.assertTrue(self.state()['release'] is None)
+
+    def test_export_subst_byte_rewrite_rejects_even_with_all_names_present(self):
+        # export-subst keeps every entry but rewrites bytes in flight.
+        (self.repo / 'buildstamp').write_text('$Format:%H$\n')
+        self.retag('add buildstamp')
+        self.write_local_attributes('buildstamp export-subst\n')
+        result = self.release()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('archive payload differs from tagged tree', result.stderr)
+        self.assert_no_remote_writes()
+        self.assertTrue(self.state()['release'] is None)
+
+    def test_legal_archive_with_modes_symlink_and_nested_paths_publishes(self):
+        (self.repo / 'vtx/core').mkdir(parents=True)
+        (self.repo / 'vtx/core/engine.py').write_text('# runtime\n')
+        tool = self.repo / 'scripts/tool.sh'
+        tool.write_text('#!/bin/sh\necho tool\n')
+        tool.chmod(0o755)
+        (self.repo / 'current').symlink_to('VERSION')
+        self.retag('rich tree')
+        result = self.release()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.state()
+        self.assertFalse(state['release']['draft'])
+        data = base64.b64decode(state['bytes']['video-tools-2.0.1.tar.gz'])
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+            members = {m.name: m for m in archive if not m.isdir()}
+            self.assertIn('vtx/core/engine.py', members)
+            self.assertIn('scripts/tool.sh', members)
+            self.assertTrue(members['scripts/tool.sh'].mode & 0o111)
+            self.assertTrue(members['current'].issym())
+            self.assertEqual(members['current'].linkname, 'VERSION')
+            self.assertEqual(archive.extractfile('VERSION').read(), b'2.0.1\n')
+            # Payload must cover the whole tracked tree, not a key-file subset.
+            tracked = {}
+            for entry in self.git('ls-tree', '-r', '-z', 'v2.0.1').stdout.split('\0'):
+                if entry:
+                    meta, path = entry.split('\t', 1)
+                    mode, kind, sha = meta.split(' ', 2)
+                    tracked[path] = (mode, kind, sha)
+            self.assertEqual(set(members), set(tracked))
+
+    def test_global_gitattributes_export_ignore_also_rejects(self):
+        config = self.root / 'global-attributes'
+        config.write_text('vt.py export-ignore\n')
+        self.git('config', 'core.attributesFile', str(config))
+        result = self.release()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('archive payload differs from tagged tree', result.stderr)
+        self.assert_no_remote_writes()
+
     def test_existing_draft_mismatched_asset_refuses_mutation(self):
         self.assertNotEqual(self.release(MOCK_FAIL_UPLOAD='install.sh').returncode, 0)
         state = self.state()
