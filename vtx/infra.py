@@ -146,8 +146,15 @@ class Ctx:
         if self.dry and is_ffmpeg_cmd(cmd):
             print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
             return ""
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
+        from .recovery import atomic_ffmpeg
+        def execute(argv):
+            return subprocess.run(argv, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
+        try:
+            r = atomic_ffmpeg(self, cmd, execute) if need else execute(cmd)
+        except RuntimeError as error:
+            print(f"CMD FAILED: {error}", file=sys.stderr)
+            sys.exit(1)
         if r.returncode != 0 and need:
             print("CMD FAILED:", " ".join(map(str, cmd))[:300], file=sys.stderr)
             print(r.stderr[-1500:], file=sys.stderr); sys.exit(1)
@@ -332,6 +339,11 @@ def filter_threads() -> int:
     return 1
 
 def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
+    from .recovery import atomic_ffmpeg
+    return atomic_ffmpeg(c, cmd, lambda argv: _run_ffmpeg_task(c, label, argv, nvenc))
+
+
+def _run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
     # 并行 worker 内不用 c.run：其失败路径 sys.exit 在线程中不生效，改为抛异常
     # 由主线程统一收集传播（任一任务失败 → 整阶段失败）。
     if c.dry and is_ffmpeg_cmd(cmd):
