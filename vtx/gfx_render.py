@@ -42,6 +42,11 @@ import time
 import urllib.request
 import zlib
 
+if __package__:
+    from .gfx_cli import png_invalid_reason, verify_frames
+else:  # keep the documented standalone renderer entry point usable
+    from gfx_cli import png_invalid_reason, verify_frames
+
 try:
     import numpy  # noqa: F401
     _HAS_NUMPY = True
@@ -587,7 +592,7 @@ def _normalize_spans(raw, n_frames):
     return out
 
 
-def plan_static_spans(spans, want, outdir):
+def plan_static_spans(spans, want, outdir, *, width=None, height=None):
     """静态跨度缩减规划（纯函数，文件系统只读探测）。
 
     spans=[(a,b),…] 声明区间；want=本调用缺失帧号集（现行 work 语义：frames 参数
@@ -612,7 +617,7 @@ def plan_static_spans(spans, want, outdir):
         if not members:
             continue
         claimed.update(members)
-        if os.path.exists(head_path):
+        if png_invalid_reason(head_path, width=width, height=height) is None:
             copy_now.extend((m, head_path) for m in members)
         else:
             # 头帧缺失：∈want 则已在 work；∉want（其他分片块的范围）也并入本调用
@@ -686,8 +691,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     outdir = os.path.abspath(outdir)
     os.makedirs(outdir, exist_ok=True)
     base_uri = Path(html_path).resolve().as_uri()
-    work = [i for i in (range(n_frames) if frames is None else frames)
-            if not os.path.exists(os.path.join(outdir, f"f{i:04d}.png"))]
+    requested = list(range(n_frames) if frames is None else frames)
+    work = [i for i, _ in verify_frames(outdir, requested, width=width, height=height)]
     if not work:
         return {"n": n_frames, "rendered": 0, "failed": [], "transparent": None,
                 "tabs": tabs_n, "ms_total": 0.0, "ms_per_frame": 0.0,
@@ -907,7 +912,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         copy_now = []
         if spans:
             work, copy_now, deferred_spans, static_spans_n = plan_static_spans(
-                spans, work, outdir)
+                spans, work, outdir, width=width, height=height)
         for m, head_path in copy_now:
             # 头帧已缓存：字节复制（B5 口径：写成功才计数）；失败则交回渲染集。
             # 读头帧直读、写成员走 _atomic_write_bytes（并发双写下成员文件同样不撕裂）
@@ -976,6 +981,9 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     for head, members in deferred_spans:
         head_path = os.path.join(outdir, f"f{head:04d}.png")
         try:
+            reason = png_invalid_reason(head_path, width=width, height=height)
+            if reason:
+                raise OSError(reason)
             with open(head_path, "rb") as fh:
                 data = fh.read()
         except OSError as e:
@@ -996,6 +1004,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     # failed 里可能混有 deferred 复制失败的成员帧（成员被跨度认领后不在 work 内），
     # 直接 len(work)-len(failed) 会失真甚至为负；static_copied 字节复制帧按既有
     # 文档口径不计入 rendered（单独计入 path_counts["static_copied"]）。
+    failed.extend(i for i, _ in verify_frames(outdir, requested, width=width, height=height))
+    failed = sorted(set(failed))
     work_set = set(work)
     rendered_n = len(work) - sum(1 for f in failed if f in work_set)
     # 合并各 tab 线程本地的路径计数与分项耗时（槽位由 worker 收尾写入；None 兜底

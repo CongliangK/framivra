@@ -20,6 +20,12 @@ from vtx import infra
 from vtx import cli as vtx
 
 
+def _cached_png(value=0):
+    """A real 6×4 cache fixture; file existence alone is not validity."""
+    import numpy as np
+    return gfx.png_encode_rgba(np.full((4, 6, 4), value, dtype=np.uint8))
+
+
 class ExportValidation(unittest.TestCase):
     def test_valid_and_invalid_png(self):
         import numpy as np
@@ -207,9 +213,9 @@ class GfxStatsMock(unittest.TestCase):
             out = root / 'out'
             out.mkdir()
             for i in range(2):
-                (out / f'f{i:04d}.png').write_bytes(b'x')  # 帧全在 → work 空、早退
+                (out / f'f{i:04d}.png').write_bytes(_cached_png())  # 帧全在 → work 空、早退
             with mock.patch.object(gfx, 'Browser', lambda *a, **k: _FakeBrowser('override', 1)):
-                st = gfx.render_page(page, out, 2, chrome_path='fake', tabs=1)
+                st = gfx.render_page(page, out, 2, chrome_path='fake', tabs=1, width=6, height=4)
         self.assertEqual(st['path_counts'],
                          dict.fromkeys(('override', 'canvas', 'twoshot', 'opaque',
                                         'navfree', 'canvas_fallback', 'static_copied',
@@ -236,7 +242,7 @@ class FramesParamMock(unittest.TestCase):
         out = root / 'out'
         out.mkdir()
         for i in present:
-            (out / f'f{i:04d}.png').write_bytes(b'x')
+            (out / f'f{i:04d}.png').write_bytes(_cached_png())
         return page, out
 
     def test_frames_intersects_missing(self):
@@ -245,13 +251,13 @@ class FramesParamMock(unittest.TestCase):
             page, out = self._prep(tmp, present=(1, 3))
             browser = _FakeBrowser('override', 1)
             with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
-                st = gfx.render_page(page, out, 6, chrome_path='fake', tabs=1,
+                st = gfx.render_page(page, out, 6, chrome_path='fake', tabs=1, width=6, height=4,
                                      frames=[1, 2, 3, 4, 5])
             self.assertEqual(st['n'], 6)                       # n 仍=页总帧数
             self.assertEqual(st['rendered'], 3)
             self.assertEqual(st['path_counts']['override'], 3)
             self.assertEqual(st['failed'], [])
-            self.assertEqual((out / 'f0001.png').read_bytes(), b'x')  # 已存在未被重写
+            self.assertEqual((out / 'f0001.png').read_bytes(), _cached_png())  # 已存在未被重写
             for i in (2, 4, 5):
                 self.assertTrue((out / f'f{i:04d}.png').exists(), i)
             self.assertFalse((out / 'f0000.png').exists())     # frames 之外不渲
@@ -265,7 +271,7 @@ class FramesParamMock(unittest.TestCase):
                 raise AssertionError('全缓存块不得构造 Browser（白起 Chrome）')
 
             with mock.patch.object(gfx, 'Browser', _no_chrome):
-                st = gfx.render_page(page, out, 2, chrome_path='fake', tabs=1,
+                st = gfx.render_page(page, out, 2, chrome_path='fake', tabs=1, width=6, height=4,
                                      frames=[0, 1])
             self.assertEqual((st['rendered'], st['failed']), (0, []))
             self.assertEqual(st['ms_total'], 0.0)
@@ -276,7 +282,7 @@ class FramesParamMock(unittest.TestCase):
             page, out = self._prep(tmp)
             with mock.patch.object(gfx, 'Browser',
                                    lambda *a, **k: (_ for _ in ()).throw(AssertionError('no chrome'))):
-                st = gfx.render_page(page, out, 3, chrome_path='fake', tabs=1,
+                st = gfx.render_page(page, out, 3, chrome_path='fake', tabs=1, width=6, height=4,
                                      frames=[])
             self.assertEqual(st['rendered'], 0)
             self.assertFalse(list(out.glob('f*.png')))
@@ -287,7 +293,7 @@ class FramesParamMock(unittest.TestCase):
             page, out = self._prep(tmp, present=(1,))
             browser = _FakeBrowser('override', 1)
             with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
-                st = gfx.render_page(page, out, 3, chrome_path='fake', tabs=1)
+                st = gfx.render_page(page, out, 3, chrome_path='fake', tabs=1, width=6, height=4)
             self.assertEqual(st['rendered'], 2)
             self.assertTrue((out / 'f0000.png').exists())
             self.assertTrue((out / 'f0002.png').exists())
@@ -398,7 +404,7 @@ class StaticSpanMock(unittest.TestCase):
             out = root / 'out'
             out.mkdir()
             for i in present:
-                (out / f'f{i:04d}.png').write_bytes(b'PREEXISTING-%d' % i)
+                (out / f'f{i:04d}.png').write_bytes(_cached_png(i))
             browser = _FakeBrowser('spans', 1, spans=spans)
             with mock.patch.dict(os.environ, env):
                 with mock.patch.object(gfx, 'Browser', lambda *a, **k: browser):
@@ -443,7 +449,7 @@ class StaticSpanMock(unittest.TestCase):
     def test_members_partially_cached_untouched(self):
         # 情形·成员部分缓存：已存在成员（f0003）原样保留不覆盖，缺失成员复制
         st, files = self._run(6, spans=[[2, 5]], present=(2, 3))
-        self.assertEqual(files['f0003.png'], b'PREEXISTING-3')      # 已存在不动
+        self.assertEqual(files['f0003.png'], _cached_png(3))      # 已存在不动
         self.assertEqual(files['f0004.png'], files['f0002.png'])    # 缺失成员复制
         self.assertEqual(st['path_counts']['static_copied'], 1)
         self.assertEqual(st['static_spans'], 1)
@@ -473,7 +479,7 @@ class StaticSpanMock(unittest.TestCase):
         import tempfile as _tf
         with _tf.TemporaryDirectory(prefix='vtx_plan_') as tmp:
             out = Path(tmp)
-            (out / 'f0002.png').write_bytes(b'H')     # 头2已缓存
+            (out / 'f0002.png').write_bytes(_cached_png())     # 头2已缓存
             spans = [(2, 5), (3, 6)]                  # 重叠：4 被第一个跨度认领
             work, copy_now, deferred, n_spans = gfx.plan_static_spans(
                 spans, [3, 4, 9], str(out))

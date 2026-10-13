@@ -150,7 +150,7 @@ class GfxCliFallbackTests(unittest.TestCase):
     def test_nonzero_exit_fails_naming_command(self):
         stub = self._stub("fail")
         with self.assertRaises(GfxCliError) as cm:
-            render_cli(range(2), self.out, self.html, stub, width=64, height=48)
+            render_cli(range(2), self.out, self.html, stub, width=1, height=1)
         msg = str(cm.exception)
         self.assertIn("2/2 帧失败", msg)
         self.assertIn(f"退出码 3", msg)
@@ -164,7 +164,7 @@ class GfxCliFallbackTests(unittest.TestCase):
     def test_exit_zero_but_no_file_fails(self):
         stub = self._stub("nowrite")
         with self.assertRaises(GfxCliError) as cm:
-            render_cli(range(2), self.out, self.html, stub, width=64, height=48)
+            render_cli(range(2), self.out, self.html, stub, width=1, height=1)
         msg = str(cm.exception)
         self.assertIn("2/2 帧失败", msg)
         self.assertIn("缺失", msg)
@@ -176,7 +176,7 @@ class GfxCliFallbackTests(unittest.TestCase):
     def test_zero_byte_png_fails(self):
         stub = self._stub("empty")
         with self.assertRaises(GfxCliError) as cm:
-            render_cli(range(1), self.out, self.html, stub, width=64, height=48)
+            render_cli(range(1), self.out, self.html, stub, width=1, height=1)
         msg = str(cm.exception)
         self.assertIn("1/1 帧失败", msg)
         self.assertIn("零字节", msg)
@@ -188,7 +188,7 @@ class GfxCliFallbackTests(unittest.TestCase):
     def test_non_png_content_fails(self):
         stub = self._stub("notpng")
         with self.assertRaises(GfxCliError) as cm:
-            render_cli(range(1), self.out, self.html, stub, width=64, height=48)
+            render_cli(range(1), self.out, self.html, stub, width=1, height=1)
         msg = str(cm.exception)
         self.assertIn("1/1 帧失败", msg)
         self.assertIn("魔数头不符", msg)
@@ -199,7 +199,7 @@ class GfxCliFallbackTests(unittest.TestCase):
     # ---------------------------------------------------------- ⑤ 正常成功
     def test_normal_success(self):
         stub = self._stub("ok")
-        n = render_cli(range(3), self.out, self.html, stub, width=64, height=48)
+        n = render_cli(range(3), self.out, self.html, stub, width=1, height=1)
         self.assertEqual(n, 3)
         for i in range(3):
             p = self.out / f"f{i:04d}.png"
@@ -213,7 +213,7 @@ class GfxCliFallbackTests(unittest.TestCase):
     def test_partial_failure_reports_only_failing_frames(self):
         stub = self._stub("half")            # f=0 退出码 3；其余写真 PNG
         with self.assertRaises(GfxCliError) as cm:
-            render_cli(range(3), self.out, self.html, stub, width=64, height=48)
+            render_cli(range(3), self.out, self.html, stub, width=1, height=1)
         msg = str(cm.exception)
         self.assertIn("1/3 帧失败", msg)
         self.assertIn("[0000]", msg)                              # 只报失败帧
@@ -354,11 +354,11 @@ class GfxCliFallbackTests(unittest.TestCase):
     # ------------------------------------------------- 单帧 API 与空区间
     def test_run_cli_shot_single_frame(self):
         ok, fail = self._stub("ok"), self._stub("fail")
-        png = run_cli_shot(7, self.out, self.html, ok, width=64, height=48)
+        png = run_cli_shot(7, self.out, self.html, ok, width=1, height=1)
         self.assertEqual(png, self.out / "f0007.png")
         self.assertIsNone(png_invalid_reason(png))
         with self.assertRaises(GfxCliError) as cm:
-            run_cli_shot(0, self.out, self.html, fail, width=64, height=48)
+            run_cli_shot(0, self.out, self.html, fail, width=1, height=1)
         msg = str(cm.exception)
         self.assertIn("退出码 3", msg)
         self.assertIn(str(fail), msg)
@@ -390,7 +390,7 @@ class GfxCliEntryTests(unittest.TestCase):
         timeline = self.tmp / "timeline.json"
         timeline.write_text(json.dumps({
             "version": 2,
-            "project": {"fps": 30, "width": 64, "height": 48, "duration_frames": n},
+            "project": {"fps": 30, "width": 1, "height": 1, "duration_frames": n},
             "sources": [], "subtitles": [], "audio_tracks": [],
             "video_tracks": [{"name": "gfx", "kind": "gfx", "clips": [
                 {"src": self.html.name, "dst_in": 0, "dur": n}]}],
