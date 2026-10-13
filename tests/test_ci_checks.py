@@ -5,6 +5,7 @@ import io
 import os
 from pathlib import Path
 import re
+import shlex
 import unittest
 from unittest import mock
 
@@ -85,6 +86,19 @@ class WorkflowContract(unittest.TestCase):
         matrix = set(self.workflow['jobs']['core']['strategy']['matrix']['python'])
         self.assertEqual(matrix, declared)
         self.assertIn('3.9', matrix)
+
+    def test_core_declares_dependencies_for_all_unittest_batches(self):
+        # The app batches are mandatory too: imgen's mock gen/batch chains
+        # import requests even though no real image service is contacted.
+        installs = [step['run'] for step in self.workflow['jobs']['core']['steps']
+                    if 'run' in step and 'python -m pip install ' in step['run']]
+        self.assertEqual(len(installs), 1)
+        argv = shlex.split(installs[0])
+        self.assertEqual(argv[:4], ['python', '-m', 'pip', 'install'])
+        dependencies = {re.split(r'[<>=!~\[]', requirement, maxsplit=1)[0].lower()
+                        for requirement in argv[4:]}
+        self.assertEqual(dependencies,
+                         {'numpy', 'pillow', 'jsonschema', 'pyyaml', 'requests'})
 
     def test_actions_are_commit_pinned_and_checkout_drops_credentials(self):
         for job in self.workflow['jobs'].values():
