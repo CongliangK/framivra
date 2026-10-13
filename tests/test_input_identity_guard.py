@@ -62,6 +62,9 @@ class InputIdentityGuard(unittest.TestCase):
     def test_every_tracked_input_blocks_all_success_gates(self):
         for name in ('timeline.json', 'media', 'page.html', 'style.css'):
             with self.subTest(name=name):
+                # Restoring media bytes changes mtime; pin a fresh baseline so
+                # every subcase proves its own input change, not the previous one.
+                self.c = Ctx(self.path)
                 p = self.root / name
                 original = p.read_bytes()
                 self.mutate(name)
