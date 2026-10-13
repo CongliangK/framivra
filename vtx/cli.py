@@ -88,13 +88,15 @@ clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fad
 """
 import argparse, difflib, json, os, shutil, subprocess, sys, threading
 from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
 from pathlib import Path
 
 # v2 §1.4 包化：模块内全部相对导入（外部一律 from vtx import / import vtx.xxx；
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
 from .composite import build_video, prepare_layers
 from .encoders import find_chrome
-from .hygiene import budget_gate, df, gc, gfx_key, gfx_dir, manifest_record, snapshot
+from . import hygiene
+from .hygiene import budget_gate, df, gfx_key, gfx_dir, manifest_record, snapshot
 from .infra import Ctx, run_wave
 from .qc import qc
 from .stages import audit, build_audio, mux, prepare, validate
@@ -436,6 +438,164 @@ def _run_all_pipeline(c: Ctx, until=None):
             return qc_exit
     return qc_exit
 
+class ExecutionPolicy(Enum):
+    """CLI 副作用边界：PLAN 只读；EXECUTE 才允许创建、写入或删除。"""
+    PLAN = "plan"
+    EXECUTE = "execute"
+
+    @property
+    def dry(self):
+        return self is ExecutionPolicy.PLAN
+
+    def execute_cleanup(self, plan):
+        if self.dry:
+            return
+        for category, items in plan.items():
+            for path, _, _ in items:
+                # is_dir() 会跟随符号链接，rmtree 对链接本身会抛错——显式排除，
+                # 防止计划外条目经链接根越界删除（红队 A03×A01 对抗复审）
+                if category == "clean" or (path.is_dir() and not path.is_symlink()):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+
+
+def _symlink_roots(c):
+    """cache/out 中本身是符号链接的根。清理与快照一律拒绝跟随（A03 红线）：
+    根级链接把 iterdir/rmtree/unlink 全部导向链接目标——攻击者把 cache 换成
+    指向任意目录的链接，等 `vtx gc`/`clean` 定时执行即可越界删除外部文件。"""
+    return [p for p in (c.cache, c.out) if p.is_symlink()]
+
+
+def _plan_without_linked_roots(plan, links):
+    """丢弃位于符号链接根之内（含根本身）的计划条目（文本前缀判定即可：
+    计划条目路径全部由 c.cache/c.out 拼接而来，无需 resolve）。"""
+    if not links:
+        return plan
+    return {cat: [e for e in items
+                  if not any(e[0] == l or l in e[0].parents for l in links)]
+            for cat, items in plan.items()}
+
+
+def _cleanup_plan(c, command, *, deep=False, keep_days=0):
+    """先完整列出删除候选，再执行；沿用 hygiene 的现有保护策略。
+
+    clean 仍清空两棵树，深度 gc 仍使用原白名单（不在 A01 扩大保护范围）。
+    普通 gc 复用 gc_plan；cache 不存在时仅需计算 out 的既有中间物规则。
+    cache/out 根为符号链接时整根拒绝（打印原因，不列、不删链接目标内容）。
+    """
+    links = _symlink_roots(c)
+    for p in links:
+        print(f"✗ 拒绝清理符号链接根 {p.relative_to(c.root)} → {os.readlink(p)}"
+              "（不跟随符号链接，防越界删除；如需回收请先解除链接）")
+    if command == "clean":
+        plan = {"clean": [(p, hygiene.dir_size(p), "清空目录")
+                          for p in (c.cache, c.out)
+                          if p.exists() and not p.is_symlink()]}
+        return _plan_without_linked_roots(plan, links)
+    if deep:
+        plan = {"cache": [], "out": []}
+        for root, category in ((c.cache, "cache"), (c.out, "out")):
+            if not root.exists() or root.is_symlink():
+                continue
+            for path in sorted(root.iterdir()):
+                if category == "cache" and (path.name in
+                        (hygiene.REPORTS, hygiene.TMP, "snapshots")
+                        or path.name in hygiene.KEEP_BASELINES):
+                    continue
+                if category == "out" and (path.name in
+                        ("final.mp4", "draft_final.mp4", "VERSIONS.json", "history",
+                         "receipt.json", "reports") or hygiene._out_deliverable(path.name)):
+                    continue
+                plan[category].append((path, hygiene.dir_size(path), "深度回收"))
+        return _plan_without_linked_roots(plan, links)
+    if c.cache.exists() and not c.cache.is_symlink():
+        # gc_plan 会 iterdir cache/out：根为符号链接时同样不得进入（只列清单也算
+        # 读穿链接目标）；cache 侧被拒后仅保留 out 的既有中间物规则
+        return _plan_without_linked_roots(hygiene.gc_plan(c, keep_days), links)
+    out_keep = {"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
+                "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
+                "audit_report.json", "qc_report.json", "history", "reports"}
+    plan = {"out_intermediate": [
+        (p, hygiene.dir_size(p), "out 一次性中间物")
+        for p in sorted(c.out.iterdir())
+        if p.name not in out_keep and not hygiene._out_deliverable(p.name)
+    ] if c.out.exists() and not c.out.is_symlink() else []}
+    return _plan_without_linked_roots(plan, links)
+
+
+def _run_cleanup(c, policy, command, *, deep=False, keep_days=0):
+    plan = _cleanup_plan(c, command, deep=deep, keep_days=keep_days)
+    count = total = 0
+    for category, items in plan.items():
+        if not items:
+            continue
+        size = sum(s for _, s, _ in items)
+        count += len(items); total += size
+        print(f"{category}: {len(items)} 项，{hygiene.gb(size)}")
+        for path, size, reason in items[:30]:
+            print(f"  - {path.relative_to(c.root)}  {hygiene.gb(size)}  {reason}")
+        if len(items) > 30:
+            print(f"  … 另 {len(items) - 30} 项")
+    print(f"合计：{count} 项，{hygiene.gb(total)}")
+    policy.execute_cleanup(plan)
+    if policy.dry:
+        print("[dry-run] 仅生成清理计划，未删除或写入任何文件")
+    elif command == "clean":
+        print("✓ 已清空 cache/ out/")
+    else:
+        print(f"✓ 已回收 {count} 项，{hygiene.gb(total)}")
+
+
+def _preview_command(c, a):
+    """只读阶段计划，不调用 legacy dry 分支中仍写 ass/清单/tmp 的执行器。
+
+    CLI 的 dry 不是「禁用 ffmpeg」：预算门、插件钩子、快照轮转等也不可写。
+    限于阶段级计划，不把计划误报为已完成渲染或已通过真实产物测量。
+    """
+    if a.command == "subs":
+        if a.subs_extra[0] != "preview":
+            c.align_threshold = a.align_threshold
+            run_subs(c, a.subs_extra)  # check/render 的 dry 分支是纯读
+        else:
+            from .subs import _parse_points
+            for frame, _ in _parse_points(a.subs_extra[1:], c):
+                print(f"[dry-run] subs preview → {c.out / f'subs_preview_f{frame}.png'}")
+        return
+    if a.command == "snapshot":
+        print(f"[dry-run] snapshot：将快照 timeline/文本资产并轮转 {c.cache / 'snapshots'}")
+        return
+    if a.command == "df":
+        print(f"[dry-run] cache: {hygiene.gb(hygiene.dir_size(c.cache))}；"
+              f"out: {hygiene.gb(hygiene.dir_size(c.out))}")
+        return
+    if getattr(c, "range_window", None):
+        fa, fb = c.range_window
+        fa, fb = max(0, fa), min(c.dur, fb)
+        if fa >= fb:
+            print(f"✗ 无效区间 [{fa},{fb})（项目总长 {c.dur} 帧）"); sys.exit(2)
+        print(f"[dry-run] video draft 区间 [{fa},{fb}) → {c.cache / 'preview'}")
+        return
+    names = [name for name, _ in STAGES]
+    if a.command != "all":
+        names = [a.command]
+    elif _pipeline_enabled():
+        head = ["validate", "audit", "prepare"]
+        if a.until in head:
+            names = head[:head.index(a.until) + 1]
+        else:
+            names = head + ["gfx", "audio", "video 预编码"]
+            tail = ["video", "mux", "qc"]
+            if a.until != "gfx":
+                names += tail[:tail.index(a.until) + 1] if a.until in tail else tail
+    elif a.until:
+        names = names[:names.index(a.until) + 1]
+    for name in names:
+        print(f"== {name} ==")
+        print(f"[dry-run] 计划阶段 {name}（不执行渲染、测量或插件钩子）")
+    print("[dry-run] 计划完成；未删除或写入任何文件")
+
+
 def main():
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
@@ -444,7 +604,8 @@ def main():
                          "STAGES 线性序；audio 为波内成员不作终点）。R4 冷跑链用法："
                          "all --until video → mux → qc（免 mux/qc 白跑；v2 limiter 已并入"
                          " audio，无 post 步）")
-    ap.add_argument("--dry-run", action="store_true", help="只打印将执行的 ffmpeg 命令，不执行")
+    ap.add_argument("--dry-run", "--dry", dest="dry_run", action="store_true",
+                    help="只读执行计划：不删除、创建或写入文件（--dry 为兼容别名）")
     ap.add_argument("--draft", action="store_true", help="草稿模式（仅 video/mux）：540p+NVENC 快速预览，不影响正式产物")
     ap.add_argument("--frames", type=int, metavar="N", help="video --draft 专属：只渲前 N 帧")
     ap.add_argument("--range", nargs=2, metavar=("A", "B"),
@@ -459,13 +620,11 @@ def main():
     ap.add_argument("--gpu", action="store_true", help="video 专属：正式参数 GPU 渲染（NVENC p7 hq cq17），产物仍为 video_noaudio.mp4")
     ap.add_argument("--strict", action="store_true",
                     help="qc 专属：成片帧数用 -count_frames 真解码计数（默认容器元数据，省全片解码）")
-    ap.add_argument("--dry", action="store_true",
-                    help="gc 专属：只列回收清单不删除（gc 默认执行，--all 深度回收）")
     ap.add_argument("--all", action="store_true",
                     help="gc 专属：深度回收（等价原 clean，但保留 reports/VERSIONS/history/final）")
-    ap.add_argument("--keep-days", type=int, metavar="N", default=0,
+    ap.add_argument("--keep-days", type=int, metavar="N", default=None,
                     help="gc 专属：近 N 天动过的条目暂缓回收（默认 0 = 只看键集）")
-    ap.add_argument("--keep-versions", type=int, metavar="N", default=2,
+    ap.add_argument("--keep-versions", type=int, metavar="N", default=None,
                     help="mux 专属：out/history/ 保留最近 N 版历史成片（默认 2）")
     ap.add_argument("--align-threshold", type=float, metavar="S", default=1.5,
                     help="subs check 专属：口播对齐 FAIL 阈值秒数（默认 1.5，≥0.5 先 WARN）")
@@ -489,7 +648,8 @@ def main():
     ap.add_argument("subs_extra", nargs="*", metavar="ARG",
                     help="subs 专属：render | preview <时间点...> | check（时间点 `12.5`=秒 / `f360`=帧号）；"
                          "diff 专属：<旧报告.json> <新报告.json>（复用同一位置参数槽，见上注）")
-    a = ap.parse_args()
+    a = ap.parse_intermixed_args()
+    policy = ExecutionPolicy.PLAN if a.dry_run else ExecutionPolicy.EXECUTE
     # --until 校验（方案三阶段3）：仅 all 合法 + 值域 = _UNTIL_STAGES；两错均退出码 2
     # （与「未知命令」同级：用法错而非运行错，脚本侧好分类）。audio 不可作终点的
     # 原因见 _UNTIL_STAGES 旁注释。
@@ -500,33 +660,45 @@ def main():
             print(f"✗ --until 非法阶段名：{a.until!r}（可用：{' | '.join(_UNTIL_STAGES)}；"
                   "audio 是流水线波内成员，不作独立终点）"); sys.exit(2)
     if a.frames is not None and not (a.draft and a.command == "video"):
-        # is not None 判定（P6 修复 B-P3-5b）：v1 的真值检查把 `--frames 0` 当
-        # 未提供绕过组合检查；0 帧本就是无效渲染请求，须走同一条用法错误路径
-        print("--frames 仅在 video --draft 下可用（正确用法：vtx.py video --draft --frames 90）"); sys.exit(1)
-    # 方案五阶段1：区间渲染标志（video --draft 专属；三者为「选一种窗口来源」互斥组）
-    range_flags = [x for x in (a.range, a.clip, a.track) if x]
+        print("--frames 仅在 video --draft 下可用（正确用法：vtx.py video --draft --frames 90）"); sys.exit(2)
+    if a.frames is not None and a.frames <= 0:
+        print("--frames 必须为正整数"); sys.exit(2)
+    range_flags = [x for x in (a.range, a.clip, a.track) if x is not None]
     if range_flags and not (a.draft and a.command == "video"):
-        print("--range/--clip/--track 仅在 video --draft 下可用"
-              "（正确用法：vtx.py video --draft --range 0 6）"); sys.exit(1)
+        print("--range/--clip/--track 仅在 video --draft 下可用"); sys.exit(2)
     if len(range_flags) > 1:
-        print("--range / --clip / --track 互斥：窗口来源三选一"
-              "（--clip 按 src 名推出单 clip 区间；--track 取单轨 clips 外包络）"); sys.exit(1)
-    # P2（阶段1复审）：区间预览恒为 draft 快速路径，与头窗截短/正式 GPU 参数无组合语义
-    if range_flags and (a.frames or a.gpu):
-        print("--range/--clip/--track 与 --frames/--gpu 互斥（区间预览固定 draft 540p；"
-              "截短请直接缩小区间，正式参数请走完整 video 阶段）"); sys.exit(1)
+        print("--range / --clip / --track 互斥：窗口来源三选一"); sys.exit(2)
+    if range_flags and (a.frames is not None or a.gpu):
+        print("--range/--clip/--track 与 --frames/--gpu 互斥"); sys.exit(2)
     if a.draft and a.command not in ("video", "mux"):
-        print("--draft 仅作用于 video/mux 阶段（正确用法：vtx.py video --draft 或 vtx.py mux --draft）"); sys.exit(1)
-    # 方案五阶段3：音频一等报告标志（audio 专属，两开关互斥）
+        print("--draft 仅作用于 video/mux 阶段"); sys.exit(2)
     if (a.report or a.report_only) and a.command != "audio":
-        print("--report/--report-only 仅作用于 audio 阶段"
-              "（正确用法：vtx.py audio --report 或 vtx.py audio --report-only）"); sys.exit(1)
+        print("--report/--report-only 仅作用于 audio 阶段"); sys.exit(2)
     if a.report and a.report_only:
-        print("--report 与 --report-only 互斥：--report 混音后出报告，--report-only 只读已有产物"); sys.exit(1)
-    if (a.report or a.report_only) and a.dry_run:
-        print("✗ --report/--report-only 与 --dry-run 冲突（报告需要真实产物测量）"); sys.exit(1)
+        print("--report 与 --report-only 互斥"); sys.exit(2)
+    if (a.report or a.report_only) and policy.dry:
+        print("✗ --report/--report-only 与 --dry-run/--dry 冲突（报告需要真实产物测量）"); sys.exit(2)
     if a.gpu and a.command != "video":
-        print("--gpu 仅作用于 video 阶段（正确用法：vtx.py video --gpu）"); sys.exit(1)
+        print("--gpu 仅作用于 video 阶段"); sys.exit(2)
+    if a.strict and a.command != "qc":
+        print("--strict 仅作用于 qc 阶段"); sys.exit(2)
+    if (a.all or a.keep_days is not None) and a.command != "gc":
+        print("--all/--keep-days 仅作用于 gc 命令"); sys.exit(2)
+    if a.keep_versions is not None and a.command not in ("mux", "all"):
+        print("--keep-versions 仅作用于 mux/all 命令"); sys.exit(2)
+    if (a.keep_days is not None and a.keep_days < 0 or
+            a.keep_versions is not None and a.keep_versions < 0):
+        print("--keep-days/--keep-versions 必须 ≥0"); sys.exit(2)
+    if a.subs_extra and a.command not in ("subs", "diff"):
+        print(f"✗ {a.command} 不接受位置参数：{' '.join(a.subs_extra)}"); sys.exit(2)
+    if a.json and not (a.command == "diff" or
+                       a.command == "audio" and (a.report or a.report_only)):
+        print("--json 仅用于 diff 或 audio --report/--report-only"); sys.exit(2)
+    if a.command == "subs":
+        if (not a.subs_extra or a.subs_extra[0] not in ("render", "preview", "check")
+                or a.subs_extra[0] == "preview" and len(a.subs_extra) < 2
+                or a.subs_extra[0] != "preview" and len(a.subs_extra) != 1):
+            print("✗ 用法：subs render | subs preview <时间点...> | subs check"); sys.exit(2)
     # 未知命令先于 timeline 检查（错字时给最接近建议，不被 timeline 缺失报错挡住）
     valid_names = [s[0] for s in STAGES] + ["all", "clean", "gc", "df", "snapshot", "subs", "diff"]
     if a.command not in valid_names:
@@ -574,10 +746,9 @@ def main():
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
         # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
         print(f"✗ timeline 无效：{e}"); sys.exit(1)
-    c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
-    c.dry = a.dry_run   # 原 DRY 全局改为 Ctx 字段（消除可变全局）
+    c.dry = policy.dry   # 所有阶段读取同一显式策略；PLAN 下不得 mkdir
     c.draft = a.draft; c.frames = a.frames; c.gpu = a.gpu; c.strict = a.strict
-    c.keep_versions = a.keep_versions   # mux：out/history/ 保留版数
+    c.keep_versions = a.keep_versions if a.keep_versions is not None else 2
     # 区间渲染（方案五阶段1）：解析窗口帧区间；独立命名空间路径，绕过 receipt 依赖门
     if range_flags:
         from .range import parse_timespec, window_from_clip, window_from_track
@@ -603,16 +774,22 @@ def main():
         if fa >= fb:
             print(f"✗ 空区间：B（帧 {fb}）必须大于 A（帧 {fa}）"); sys.exit(1)
         c.range_window = (fa, fb)
-    if a.strict and a.command != "qc":
-        print("--strict 仅作用于 qc 阶段（正确用法：vtx.py qc --strict）"); sys.exit(1)
-    if a.command == "clean":
-        shutil.rmtree(c.cache, ignore_errors=True); shutil.rmtree(c.out, ignore_errors=True)
-        print("✓ 已清空 cache/ out/"); return
-    if a.command == "gc":
-        gc(c, do=not a.dry, deep=a.all, keep_days=a.keep_days); return
+    if a.command in ("clean", "gc"):
+        _run_cleanup(c, policy, a.command, deep=a.all, keep_days=a.keep_days or 0)
+        return
+    if policy.dry:
+        _preview_command(c, a)
+        return
+    c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
     if a.command == "df":
         df(c); return
     if a.command == "snapshot":
+        # A03×A01 红线：cache 根为符号链接时快照会 mkdir/写穿链接目标（越界
+        # 写入链接所指目录）——拒绝执行；dry 计划路径只打印不受影响
+        if c.cache.is_symlink():
+            print(f"✗ 拒绝快照：{c.cache.relative_to(c.root)} 是符号链接"
+                  f"（→ {os.readlink(c.cache)}，不跟随，防越界写入；如需快照请先解除链接）")
+            sys.exit(1)
         snapshot(c); return
     if a.command == "subs":
         # 信息性命令（render/preview/check）：不进流水线、不做 receipt 依赖门，

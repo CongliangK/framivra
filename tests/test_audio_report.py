@@ -194,17 +194,17 @@ class TestCliValidation(unittest.TestCase):
 
     def test_report_only_on_audio(self):
         r = self.run_vtx("video", "--report")
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, 2)
         self.assertIn("--report", r.stdout + r.stderr)
 
     def test_report_mutually_exclusive(self):
         r = self.run_vtx("audio", "--report", "--report-only")
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, 2)
         self.assertIn("互斥", r.stdout)
 
     def test_report_dry_run_conflict(self):
         r = self.run_vtx("audio", "--report", "--dry-run")
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, 2)
         self.assertIn("--dry-run", r.stdout)
 
 

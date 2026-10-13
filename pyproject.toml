@@ -54,8 +54,10 @@ py-modules = ["vt"]
 
 [tool.setuptools.package-data]
 # timeline.schema.json = 结构权威、preview.html = 预览权威（stages.py 模块头三处互指）。
-# VERSION：clone 即用由 repo 根文件直读（vtx/__init__ 与 vt.py）；pip 安装布局无
-# 根文件，回落 vtx.__version__ 内置字面量（版本串只用于标识不参与门控，P0 复审
-# 口径）。此处 "VERSION" 为发布流程把 VERSION 置入 vtx/ 时预留的读取通道
-# （vtx._read_version 的第二优先级），当前源树不重复维护该文件（单一事实源在仓根）。
+# VERSION：clone 即用由 repo 根文件直读（vtx/__init__ 与 vt.py）；pip/wheel 安装布局
+# 无根文件，vtx._read_version 回退链（B01/F-03/#25）= 包内 VERSION → pyproject
+# version 行（源树）→ importlib.metadata（已安装发行包，wheel 布局权威源）→ 内置
+# 字面量（与三源同步）。此处 "VERSION" 为发布流程把 VERSION 置入 vtx/ 时预留的
+# 读取通道（vtx._read_version 的第二优先级），当前源树不重复维护该文件（单一事实
+# 源在仓根）。
 vtx = ["timeline.schema.json", "preview.html", "VERSION"]

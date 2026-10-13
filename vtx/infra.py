@@ -11,6 +11,7 @@ from pathlib import Path
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
 from .cache_state import (DOWNSTREAM, load_receipt, receipt_fingerprint,
                          validate_cache_dependencies)
+from .constraints import AUDIO_SAMPLE_RATE, fps_error
 from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
                        nvenc_retry_run)
 
@@ -44,19 +45,21 @@ class Ctx:
         self.root = timeline_path.parent
         self.tl = json.loads(timeline_path.read_text(encoding="utf-8"))
         self.fps = self.tl["project"]["fps"]
-        # fps 契约前置校验（2026-09-11）：spf_samples = 48000 // fps 须整除，否则音频
-        # 事件 atrim 采样网格漂移——非正整数或不能整除 48000 直接 ValueError
-        # （由 vtx.py main 的 except 捕获友好打印，NTSC 29.97 等非整数帧率不支持）。
-        if not (isinstance(self.fps, int) and not isinstance(self.fps, bool)
-                and self.fps > 0 and 48000 % self.fps == 0):
-            raise ValueError(
-                f"project.fps={self.fps!r} 无效：fps 必须为能整除 48000 的正整数"
-                "（如 24/30/60；NTSC 29.97 等非整数帧率不支持）")
+        # fps 契约前置校验（B02/issue #26 / F-04 / #4 三面统一，2026-10-13）：
+        # 允许值单一来源 constraints.ALLOWED_FPS——D24 换基后全管线固定 30fps
+        # （≠29.97；24/25/50/60 及 NTSC 非整数帧率一律拒绝），schema/preview 同源
+        # 判定，tests/test_fps_constraints.py 守护三面一致。旧门收「可整除 48000 的
+        # 任意正整数」（24/25/50/60 全放行）与 schema const 30 漂移，即本单标的。
+        # 数值等值的 30.0 归一为 int 30（JSON Schema const 数学等值语义，三面同判）。
+        _fps_err = fps_error(self.fps)
+        if _fps_err:
+            raise ValueError(_fps_err)
+        self.fps = int(self.fps)
         self.dur = self.tl["project"]["duration_frames"]
         self.w = self.tl["project"]["width"]
         self.h = self.tl["project"]["height"]
         self.spf = 1.0 / self.fps
-        self.spf_samples = 48000 // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
+        self.spf_samples = AUDIO_SAMPLE_RATE // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
         self.cache = self.root / "cache"; self.out = self.root / "out"
         # v2 subtitles_src（§1.1 条目 6）：timeline 加载点解析——load 后 self.tl
         # ["subtitles"] 即为解析结果（各阶段无感）；解析失败/互斥错误记入

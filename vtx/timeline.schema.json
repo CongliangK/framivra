@@ -26,14 +26,16 @@
       ],
       "properties": {
         "fps": {
-          "const": 30,
-          "description": "项目时基固定 30fps（D24 换基，≠29.97）；素材必须 CFR 且一致"
+          "enum": [30],
+          "description": "项目时基固定 30fps（D24 换基，≠29.97）；素材必须 CFR 且一致。允许值单一来源=vtx/constraints.py ALLOWED_FPS（本 enum 为其静态镜像，tests/test_fps_constraints.py 守护与 infra/preview 三面一致：仅 30 放行，23.976/24/25/29.97/50/59.94/60 一律拒绝；数学等值 30.0 视同 30）"
         },
         "width": {
-          "const": 1920
+          "const": 1920,
+          "description": "分辨率约束单一来源=vtx/constraints.py ALLOWED_SIZES（本 const 为静态镜像）"
         },
         "height": {
-          "const": 1080
+          "const": 1080,
+          "description": "同 width：分辨率约束单一来源=vtx/constraints.py ALLOWED_SIZES"
         },
         "duration_frames": {
           "type": "integer",
@@ -290,5 +292,5 @@
       }
     }
   },
-  "$comment": "契约权威定义互指（2026-09-10）：本 Schema=结构权威；机制合法性权威=vtx/stages.py validate()（对照素材实测硬门）；可视化预览权威=vtx/preview.html。三处需同步修改。"
+  "$comment": "契约权威定义互指（2026-09-10）：本 Schema=结构权威；机制合法性权威=vtx/stages.py validate()（对照素材实测硬门）；可视化预览权威=vtx/preview.html。三处需同步修改。fps/分辨率允许值唯一取值点=vtx/constraints.py（B02/issue #26：schema fps enum 与 width/height const、preview 内嵌 CONSTRAINTS 均为其镜像，tests/test_fps_constraints.py 守护三面判定一致）。"
 }

@@ -4,7 +4,8 @@
 覆盖：
   ① manifest 校验正/负用例（§2.3：name 规则与目录一致/entry.cli 存在性/health
      command 根内相对（安全节拒绝对路径与 ..）/plugin extends/hooks 值域；
-     损坏 manifest 收集全部错误不崩）；
+     损坏 manifest 收集全部错误不崩；A03 issue #22/F-02：路径符号链接
+     解析后仍须在插件根内——根外符号链接与断链拒绝）；
   ② registry：plugins/registry.json 静态注册表加载（denoise/duck-static 键声明）、
      lookup_key / plugin_state（P2b 起 denoise 落地 active；未装/禁用分支 mock 驱动）；
   ③ validate 三分支（§2.1 不变量 ③）：denoise/duck_strategy 键 → 已装 active 放行
@@ -147,6 +148,112 @@ class ManifestValidation(unittest.TestCase):
             data, errors = pl_manifest.load_manifest(Path(d) / "empty")
             self.assertIsNone(data)
             self.assertTrue(any("缺少 manifest" in e for e in errors))
+
+
+# ------------------------------------- A03 符号链接逃逸（issue #22 / F-02 / #2）
+@unittest.skipUnless(hasattr(os, "symlink"), "符号链接用例需要 os.symlink")
+class ManifestSymlinkEscape(unittest.TestCase):
+    """A03：三路径字段（health.command / entry.cli / docs）统一符号链接解析
+    （resolve strict）后的真实落点必须落在插件根内——四类拒绝样本全部命中；
+    合法相对路径（含指向根内文件的符号链接）正常通过。"""
+
+    # 四类拒绝样本：类别 → (manifest 中的值, 须命中的错误文案片段)
+    BAD = [
+        ("absolute",    "/abs/evil.py",   "绝对路径"),   # 1 绝对路径
+        ("dotdot",      "../outside.py",  ".."),         # 2 ..
+        ("symlink_out", "escape.py",      "插件根外"),   # 3 根外符号链接
+        ("broken",      "broken.py",      "不存在"),     # 4 断链
+    ]
+
+    def _build(self, d, **over):
+        """标准插件目录 + 三件链接样本：escape→根外真文件 / broken→断链 /
+        inside→根内文件（合法）；over 透传给 _make_plugin_dir 改路径字段。"""
+        root = Path(d)
+        (root / "outside.py").write_text("print('evil')\n", encoding="utf-8")
+        pdir, _ = _make_plugin_dir(root, **over)
+        os.symlink("../outside.py", pdir / "escape.py")         # 解析后出根
+        os.symlink("../no_such_target.py", pdir / "broken.py")  # 断链
+        os.symlink("health.py", pdir / "inside.py")             # 解析后仍在根内
+        return pdir
+
+    def _assert_rejected(self, over, label_prefix):
+        for label, val, msg in self.BAD:
+            with self.subTest(category=label):
+                with tempfile.TemporaryDirectory() as d:
+                    pdir = self._build(d, **over(val))
+                    _, errors = pl_manifest.load_manifest(pdir)
+                    joined = "\n".join(errors)
+                    self.assertIn(label_prefix, joined)
+                    self.assertIn(msg, joined)
+
+    def test_health_command_four_categories_rejected(self):
+        # 首 token = 脚本路径（可带参数）——四类样本均落在脚本路径位
+        self._assert_rejected(
+            lambda v: {"health": {"type": "command", "command": f"{v} --check"}},
+            "health.command")
+
+    def test_entry_cli_four_categories_rejected(self):
+        self._assert_rejected(lambda v: {"entry": {"cli": [v]}}, "entry.cli")
+
+    def test_docs_four_categories_rejected(self):
+        self._assert_rejected(lambda v: {"docs": v}, "docs")
+
+    def test_valid_relative_and_in_root_symlink_pass(self):
+        # 合法相对路径放行：直连根内文件 + 根内符号链接（解析后仍在根内）
+        with tempfile.TemporaryDirectory() as d:
+            pdir = self._build(
+                d, entry={"cli": ["cli.py", "inside.py"]},
+                health={"type": "command", "command": "inside.py --flag"},
+                docs="README.md")
+            data, errors = pl_manifest.load_manifest(pdir)
+            self.assertEqual(errors, [])
+            self.assertEqual(data["name"], "demo")
+
+
+# ------------------- A03 追加（工单 A03 残留洞）：manifest 文件本身出根，2026-10-13
+@unittest.skipUnless(hasattr(os, "symlink"), "符号链接用例需要 os.symlink")
+class ManifestFileEscape(unittest.TestCase):
+    """plugin.json|app.json 本身是指向插件根外的符号链接 → load_manifest 拒绝
+    （此前字段级校验只认「根内相对路径」，对 manifest 文件自身全盲——gated
+    对应用例 tests/safety/test_plugin_paths_safety.py）；指向根内文件的符号
+    链接仍放行。插件根相对扫描根的收口（scan_builtin）同批覆盖。"""
+
+    def test_manifest_symlink_outside_root_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            outside = root / "outside"
+            outside.mkdir()
+            pdir, _ = _make_plugin_dir(root)
+            (outside / "plugin.json").write_text(
+                (pdir / "plugin.json").read_text(encoding="utf-8"), encoding="utf-8")
+            (pdir / "plugin.json").unlink()
+            (pdir / "plugin.json").symlink_to(outside / "plugin.json")
+            data, errors = pl_manifest.load_manifest(pdir)
+            self.assertIsNone(data)
+            self.assertTrue(any("插件根外" in e for e in errors), errors)
+
+    def test_manifest_symlink_inside_root_still_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            pdir, _ = _make_plugin_dir(Path(d))
+            (pdir / "plugin.json").rename(pdir / "manifest.real.json")
+            (pdir / "plugin.json").symlink_to("manifest.real.json")
+            data, errors = pl_manifest.load_manifest(pdir)
+            self.assertEqual(errors, [])
+            self.assertEqual(data["name"], "demo")
+
+    def test_builtin_scan_rejects_dir_symlinked_outside_scan_root(self):
+        # apps//plugins/ 内指向扫描根外的目录符号链接不作内置件（errors entry）
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "plugins").mkdir()
+            pdir, _ = _make_plugin_dir(root / "outside")   # 根外合法插件实体
+            (root / "plugins" / "demo").symlink_to(pdir, target_is_directory=True)
+            entries = pl_registry.scan_builtin(root)
+            demo = [e for e in entries if e["name"] == "demo"]
+            self.assertEqual(len(demo), 1)
+            self.assertIsNone(demo[0]["manifest"])
+            self.assertTrue(any("扫描根" in e for e in demo[0]["manifest_errors"]),
+                            demo[0]["manifest_errors"])
 
 
 # ---------------------------------------------------------------- registry

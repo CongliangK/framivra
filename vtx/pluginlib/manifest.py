@@ -8,7 +8,13 @@ manifest 只**静态登记** kind + schema_keys（registry.json 的数据源）�
 安全节（§2.4）：
   - health.command 必须为插件根内**相对路径**（拒绝对路径与 ..——防 health 探针
     被指向任意可执行；带参数时首 token 为脚本路径）；
-  - entry.cli 相对路径存在性校验。
+  - entry.cli 相对路径存在性校验；
+  - 路径统一符号链接解析（resolve strict）后必须仍落在 root.resolve() 内
+    （A03 / issue #22：根内符号链接指向根外脚本、断链均拒绝）；
+  - manifest 文件本身（plugin.json|app.json）resolve 后必须仍落在插件根
+    resolve() 内（A03 追加修复，2026-10-13：manifest 本身是指向插件根外的
+    符号链接时数据源已出根——字段级校验都以「根内相对路径」为前提，挡不住
+    根外文件本身；插件根相对扫描根的收口见 registry.scan_builtin）。
 
 错误语义：损坏 manifest **收集全部错误不崩**（doctor / registry 需要完整错误清单
 而非首个异常）→ load_manifest 返回 (data|None, errors)。
@@ -28,8 +34,10 @@ KINDS = ("app", "plugin")
 
 def _check_rel_inside(root: Path, value: str, label: str, errors: list,
                       must_exist: bool = True):
-    """相对路径安全校验：拒绝对路径与 ..；resolve 后必须落在 root 内（白名单根）；
-    must_exist 时文件必须存在。返回规范化绝对路径或 None。"""
+    """相对路径安全校验：拒绝对路径与 ..；candidate.resolve(strict=True) 统一
+    解析符号链接后的真实落点必须落在 root.resolve() 内（白名单根，防根内符号
+    链接逃逸到根外脚本）；断链/缺失由 strict 解析直接拒绝；must_exist 时真实
+    落点必须是常规文件。返回解析后的绝对真实路径或 None。"""
     p = Path(value)
     if p.is_absolute():
         errors.append(f"{label} 必须为相对路径（插件根内），得到绝对路径: {value}")
@@ -37,7 +45,18 @@ def _check_rel_inside(root: Path, value: str, label: str, errors: list,
     if ".." in p.parts:
         errors.append(f"{label} 禁止包含 ..（安全节 §2.4）: {value}")
         return None
-    resolved = (root / p)
+    root_real = root.resolve()
+    candidate = root_real / p
+    # strict=True：断链（含指向根外的断链）与缺失文件在此统一拒绝
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        errors.append(f"{label} 指向的文件不存在（含断链）: {value}")
+        return None
+    if not resolved.is_relative_to(root_real):
+        errors.append(
+            f"{label} 符号链接解析后落在插件根外（安全节 §2.4）: {value} -> {resolved}")
+        return None
     if must_exist and not resolved.is_file():
         errors.append(f"{label} 指向的文件不存在: {value}")
         return None
@@ -170,6 +189,16 @@ def load_manifest(dir_path: Path):
         return None, [f"缺少 manifest（{dir_path}/plugin.json 或 app.json）"]
     f = sorted(candidates,
                key=lambda p: 0 if p.name == "plugin.json" else 1)[0]
+    # A03 追加修复（2026-10-13）：manifest 文件本身是指向插件根外的符号链接时，
+    # 数据源已出根（后续字段校验只认「根内相对路径」，对此全盲）。与
+    # _check_rel_inside 同一白名单根语义：f.resolve() 必须落在 dir_path.resolve()
+    # 内——根内符号链接（如 plugin.json -> manifest.real.json）仍放行；断链指向
+    # 根外时 resolve 出根在此拒绝，指向根内则由下方 read_text 的 OSError 拒绝。
+    root_real = dir_path.resolve()
+    f_real = f.resolve()
+    if not f_real.is_relative_to(root_real):
+        return None, [f"manifest 文件符号链接解析后落在插件根外（安全节 §2.4）: "
+                      f"{f} -> {f_real}"]
     try:
         data = json.loads(f.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:

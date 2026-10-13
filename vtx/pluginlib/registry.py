@@ -57,6 +57,11 @@ def scan_builtin(repo_root=None) -> list:
 
     {name, kind, source: "builtin", dir, enabled, manifest, manifest_errors}
     官方内置件 enabled 缺省 true（「缺省关闭」指不写键无行为，不是写了键可跳过）。
+
+    受信扫描根收口（A03 追加，2026-10-13）：apps//plugins/ 下发现的目录
+    resolve 后必须仍落在对应扫描根 resolve() 内——指向扫描根外的目录符号链接
+    按坏件产出 errors entry 不崩（防根外目录以「内置」身份注册；外部目录只能
+    走显式注册的 external 通道，§2.4 默认 disabled）。
     """
     root = _root(repo_root)
     entries = []
@@ -64,8 +69,17 @@ def scan_builtin(repo_root=None) -> list:
         base = root / folder
         if not base.is_dir():
             continue
+        base_real = base.resolve()
         for d in sorted(base.iterdir()):
             if not d.is_dir() or d.name.startswith((".", "_")):
+                continue
+            d_real = d.resolve()
+            if not d_real.is_relative_to(base_real):
+                entries.append({"name": d.name, "kind": kind, "source": "builtin",
+                                "dir": d_real, "enabled": True, "manifest": None,
+                                "manifest_errors": [
+                                    f"目录符号链接解析后落在扫描根 {folder}/ 外"
+                                    f"（安全节 §2.4，A03）: {d} -> {d_real}"]})
                 continue
             manifest, errors = load_manifest(d)
             name = (manifest or {}).get("name") or d.name
