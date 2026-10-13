@@ -327,7 +327,8 @@ def source_audio_extraction(c: Ctx, sid: str):
     命令，不入 run_parallel 任务表；降噪是瓶颈本身，串行可接受）。
     """
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
-    if wav.exists():
+    from .recovery import audio_cache_valid
+    if audio_cache_valid(c, wav, sid):
         return wav, None
     p = _plugin_hooks.run_prepare_source(c, sid)
     if p is not None:
@@ -354,6 +355,10 @@ def prepare(c: Ctx):
         # 记账键 = 产物名 stem（裸提取即 audio_key；插件产物即其内容寻址键——
         # manifest 只记账不做删除判据，两形态同栏即可）
         wav, _cmd = source_audio_extraction(c, s["id"])
+        if _cmd is not None and not c.dry:
+            c.receipt("prepare", False, "incomplete extracted audio; rerun prepare")
+            print(f"✗ incomplete extracted audio: {wav}", file=sys.stderr)
+            sys.exit(1)
         if wav.exists():
             manifest_record(c, wav, "prepare", wav.stem)
     msg = f"{len(c.tl['sources'])} → 48kHz stereo PCM"

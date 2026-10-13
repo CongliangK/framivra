@@ -13,6 +13,7 @@ from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concu
 from .hygiene import budget_gate, gfx_dir, manifest_record, seg_key
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
 from . import probe_cache
+from .recovery import media_cache_valid
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）
@@ -329,31 +330,20 @@ class RenderPlan:
         return slave, ov, f"L{k}"
 
     def _pass_fresh(self, p, seglen, sidecar=False):
-        """pass 中间物缓存命中：存在且精确帧数==段长。
+        """Require a verified complete-media digest and the exact segment length.
 
-        sidecar 快路径（仅中间 pass 用，R4-E1-v2 2026-09-14）：mkv 容器不写
-        nb_frames 流元数据，-count_frames 需全文件逐包读——FFV1 无损中间物体量
-        巨大（1080p×2093 帧实测 44~610MB/个，alpha 10bit 域尤甚），单次解包读帧
-        数十秒（docstring 曾记「~0.5s 级」系 libx264 qp0 小文件口径，对 FFV1 失效，
-        E-B3 实测温态 13 pass 校验拖成分钟级）。故创建路径帧数硬校验通过后把
-        段长写入旁车 <target>.n；命中判定=旁车存在且内容==seglen 且 target 非空。
-        防伪命中：旁车只在「真实 count_frames 校验通过后」落盘，ffmpeg 中断遗留
-        的截断中间物无旁车；外部损坏 target 而旁车尚存的极端场景由段级总帧数
-        ffprobe 硬门（render_segmented）兜底。
-        非 sidecar 路径（段文件/无旁车旧产物）维持 -count_frames 实测。"""
-        if not p.exists() or p.stat().st_size == 0:
+        Legacy files are decoded before reuse. The historical .n sidecar is an
+        additional pass constraint, not proof that a nonempty file is complete.
+        Warm completion records avoid re-decoding; hashing still costs file I/O.
+        """
+        if not media_cache_valid(p, seglen):
             return False
         if sidecar:
             try:
                 return int((p.with_suffix(p.suffix + ".n")).read_text()) == seglen
             except (OSError, ValueError):
                 return False
-        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                            "-count_frames", "-show_entries", "stream=nb_read_frames",
-                            "-of", "csv=p=0", str(p)],
-                           capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
-        return r.stdout.strip().isdigit() and int(r.stdout.strip()) == seglen
+        return True  # verified digest/frame count, or complete legacy decode above
 
     def _composite_passes(self, layers_subset, out_path, with_subs, a, b, sub_file=None):
         """段内逐层 pass 合成（R4-E1-v2 核心修复，2026-09-14）：每 pass 恰 2 输入
@@ -560,13 +550,8 @@ class RenderPlan:
             segp = vdir / f"seg{si:02d}_{a:06d}_{self._seg_content_key(a, b, sl, with_subs, sfile)}.mp4"
             # 段缓存（PR#1 内容键化）：存在且流头帧数==段长即跳过——键已含全部内容
             # 决定因素（字幕/图层/上游内容/参数），命中即安全；帧数检查是便宜兜底。
-            if segp.exists():
-                fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                                     "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(segp)],
-                                    capture_output=True, text=True,
-                                    encoding="utf-8", errors="replace").stdout.strip()
-                if fr.isdigit() and int(fr) == b - a:
-                    print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return segp
+            if media_cache_valid(segp, b - a):
+                print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return segp
             self.composite(sl, segp, with_subs, a=a, b=b, sub_file=sfile)
             return segp
         # NVENC 会话上限探测：并发发起 workers 路编码探测，任一失败回落串行
@@ -688,18 +673,12 @@ def prepare_layers(c: Ctx):
                     # x264 回退串保持原样（VTX_SEG_NVENC=0 显式回退或探测失败回落）
                     vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast",
                                   "-pix_fmt", "yuv420p"]
-            # seg 缓存命中：存在且流头帧数=clip 时长即跳过（键已含全部参数，帧数检查
-            # 只是便宜的兜底自检，不读内容）。帧数检查经 probe_cache（(路径,mtime_ns,
-            # size) 键缓存 ffprobe 结论）：69 层逐层 ffprobe 温态实测 8.7s（区间渲染
-            # --range 0 6 总 10.5s 的 83%），缓存后温态零 ffprobe；文件被删/被换
-            # （mtime/size 变或不存在）自动 miss 回落真实 ffprobe，不漏检缓存失效。
-            if seg.exists():
-                fr = probe_cache.ffprobe_nb_frames(c, seg)
-                fr = str(fr) if fr is not None else ""
-                if fr.isdigit() and int(fr) == cl["dur"]:
-                    layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
-                                   "gfx": False, "ti": ti})
-                    continue
+            # Verify a successful decode's digest/frame record, or fully decode
+            # legacy media. Container header counts alone cannot certify a hit.
+            if media_cache_valid(seg, cl['dur'], allow_short_verified=True):
+                layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
+                               "gfx": False, "ti": ti})
+                continue
             # 阶段三（2026-09-10）：待编码任务不再就地串行执行——层对象先占位（顺序
             # 不变，分段切片按 dst_in 过滤依赖顺序），收集到 enc_tasks 由线程池并行编。
             L = {"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2, "gfx": False, "ti": ti}
