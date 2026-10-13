@@ -348,6 +348,8 @@ def prepare(c: Ctx):
         if cmd is not None:
             tasks.append((f"audio {s['id']}", cmd))
     run_parallel(c, tasks, "音频提取")
+    # Do not re-resolve source keys (or invoke plugins) after an input swap.
+    c.verify_inputs("prepare")
     for s in c.tl["sources"]:
         # 记账键 = 产物名 stem（裸提取即 audio_key；插件产物即其内容寻址键——
         # manifest 只记账不做删除判据，两形态同栏即可）

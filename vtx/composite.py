@@ -710,6 +710,9 @@ def prepare_layers(c: Ctx):
                                *vcodec_seg, str(seg)],
                               not need_alpha and seg_kind == "nvenc"))
     run_parallel(c, enc_tasks, "seg 预编码")
+    # This task also runs independently in the all pipeline wave.
+    stage = "video_draft" if getattr(c, "draft", False) else "video"
+    c.verify_inputs(None if getattr(c, "range_window", None) else stage)
     return layers
 
 
