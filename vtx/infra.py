@@ -22,6 +22,44 @@ def is_ffmpeg_cmd(cmd) -> bool:
     return str(cmd[0]).endswith("ffmpeg")
 
 
+# ---------------------------------------------------------------- 写路径安全门（issue #23 / A04）
+class ProjectPathError(ValueError):
+    """issue #23（A04 / P0 安全止损）：写路径 resolve 后落在白名单根之外。
+
+    ValueError 子类——cli 的 timeline 无效捕获链与 tests/safety 既有对抗用例的
+    ``assertRaises((ValueError, OSError))`` 都按 ValueError 对待，无须新增捕获面。
+    """
+
+
+def ensure_inside_project(path, root, *, what: str = "写路径") -> Path:
+    """issue #23（A04）统一项目路径校验入口：**写/输出**路径的单一安全门。
+
+    语义（工单原文）：resolve（跟随符号链接、容忍末段缺失）后必须落在 root
+    （同样 resolve）之内——root 本身或其子孙。三种逃逸载体在此一并拦截：
+      - ``../`` 穿越（含符号链接间接放大深度的场景）；
+      - 绝对路径（pathlib 拼接 ``dst / "/abs"`` 会整体替换左侧前缀）；
+      - 符号链接指向根外（含断链——非 strict resolve 仍跟随链接目标）。
+    符号链接指向根内 = 允许（A03 波 manifest 收口同款口径，不误杀正常软链接
+    用法）。拒绝时报 ProjectPathError，文案含路径与去向（解析落点 + 白名单根）。
+
+    只护写侧：「用户显式引用的外部素材」的**读取**不受此限（timeline 声明的
+    源文件可以在项目外，validate/gc 等读侧不经过本门）。返回 resolve 后的绝对
+    路径，调用方可继续用它落笔（同一落点，不再经过原符号链接）。
+
+    与 A03 波清理侧收口（hygiene.cleanup_allowed / cli._symlink_roots）的分工：
+    那里管「删除不得穿链接」，本门管「写入不得逃根」——同一白名单根思想、
+    方向相反的两面，共用 resolve 判据。
+    """
+    root_real = Path(root).resolve()
+    target = Path(path).resolve()
+    if target != root_real and root_real not in target.parents:
+        raise ProjectPathError(
+            f"{what}逃逸安全根（issue #23）：{path} 解析为 {target}，"
+            f"落在 {root_real} 之外（../ 穿越、绝对路径或符号链接指向根外）——"
+            "系统写路径必须限制在根内；素材源读取不受此门限制")
+    return target
+
+
 def _archive_stale_receipt(f: Path, fingerprint: str):
     """⑮ 最小修复（2026-09-14 登记+修复，KNOWN-ISSUES ⑮）：回执输入指纹即将
     翻转时（timeline/源/插件代码变更，或 validate-only 等单阶段运行在新指纹下

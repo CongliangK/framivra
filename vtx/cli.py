@@ -100,7 +100,8 @@ from .composite import build_video, prepare_layers
 from .encoders import find_chrome
 from . import gfx_cli, hygiene
 from .hygiene import budget_gate, df, gfx_key, gfx_dir, manifest_record, snapshot
-from .infra import Ctx, run_wave
+from .infra import (Ctx, ProjectPathError, ensure_inside_project,
+                    run_wave)
 from .qc import qc
 from .stages import audit, build_audio, mux, prepare, validate
 from .subs import run_subs
@@ -867,17 +868,38 @@ def main():
     if policy.dry:
         _preview_command(c, a)
         return
+    # issue #23（A04 / P0）写路径统一安全门：cache/out 两写根及一切衍生写路径
+    # （回执/锁文件、manifest、VERSIONS/history、qc_report、tmp、快照、gfx/seg/
+    # audio 缓存……全部由两根拼接而来）绝不允许经 ../、绝对路径或符号链接逃逸
+    # 项目根——在首个写动作（mkdir）之前经 ensure_inside_project 判定。素材源的
+    # 外部引用是「读」，不经过本门（validate/gc 等照常，对照组见 tests/safety/
+    # test_timeline_escape_safety.py）。符号链接指向项目内 = 允许（resolve 后仍
+    # 在根内）；指向外 = 拒绝并报去向。clean/gc 在上方已分发——A02/#21/#30 的
+    # 清理保护有自己的拒绝语义与退出码契约（拒绝条目保留、整体仍 exit 0），
+    # 不受本门影响；--dry-run 计划路径亦在门之前返回（只读）。
+    try:
+        ensure_inside_project(c.cache, c.root, what="cache 写根")
+        ensure_inside_project(c.out, c.root, what="out 写根")
+    except ProjectPathError as e:
+        print(f"✗ {e}"); sys.exit(1)
     c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
     if a.command == "df":
         df(c); return
     if a.command == "snapshot":
         # A03×A01 红线：cache 根为符号链接时快照会 mkdir/写穿链接目标（越界
-        # 写入链接所指目录）——拒绝执行；dry 计划路径只打印不受影响
+        # 写入链接所指目录）——拒绝执行；dry 计划路径只打印不受影响。
+        # issue #23（A04）：指向根外的链接根到不了这里（上方统一写根门已拒）；
+        # hygiene.snapshot 自身再对逐资产引用做 ../、绝对路径、符号链接逃逸的
+        # 写前校验（timeline 不可信输入），拒绝时在此转友好报错 + 退出码 1。
         if c.cache.is_symlink():
             print(f"✗ 拒绝快照：{c.cache.relative_to(c.root)} 是符号链接"
                   f"（→ {os.readlink(c.cache)}，不跟随，防越界写入；如需快照请先解除链接）")
             sys.exit(1)
-        snapshot(c); return
+        try:
+            snapshot(c)
+        except ProjectPathError as e:
+            print(f"✗ {e}"); sys.exit(1)
+        return
     if a.command == "subs":
         # 信息性命令（render/preview/check）：不进流水线、不做 receipt 依赖门，
         # 但 subs render 写 cache 走 manifest_record 记账；--dry-run 被尊重。
