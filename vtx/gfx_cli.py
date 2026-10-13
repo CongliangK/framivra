@@ -23,9 +23,16 @@
 独立测试：python3 -m unittest tests.test_gfx_cli_fallback（假 chrome stub，
 无需真 Chrome）。
 """
+import hashlib
+import json
 import struct
 import subprocess
 import zlib
+
+if __package__:
+    from . import fstxn
+else:
+    import fstxn
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -51,7 +58,22 @@ class GfxCliError(RuntimeError):
     """Chrome CLI 截图回退路径的显式失败（非零退出码 / 产物校验不过）。"""
 
 
-def png_invalid_reason(path) -> "str | None":
+class _HashingReader:
+    """Hash exactly the bytes validated, not a second possibly changed read."""
+    def __init__(self, stream):
+        self.stream = stream
+        self.digest = hashlib.sha256()
+
+    def read(self, n):
+        data = self.stream.read(n)
+        self.digest.update(data)
+        return data
+
+    def tell(self):
+        return self.stream.tell()
+
+
+def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "str | None":
     """校验单个目标 PNG：存在、非零字节、PNG 签名、完整块与 CRC、IDAT 可解码。
 
     有效返回 None；无效返回中文原因（缺失/零字节/非 PNG/截断/CRC 损坏/不支持
@@ -69,7 +91,8 @@ def png_invalid_reason(path) -> "str | None":
     if size == 0:
         return "零字节"
     try:
-        with open(p, "rb") as fh:
+        with open(p, "rb") as stream:
+            fh = _HashingReader(stream)
             head = fh.read(len(PNG_SIGNATURE))
             if head != PNG_SIGNATURE:
                 return f"魔数头不符（前 {len(head)} 字节 = {head[:8]!r}，期望 {PNG_SIGNATURE!r}）"
@@ -77,6 +100,8 @@ def png_invalid_reason(path) -> "str | None":
             if size < 33:
                 return "截断 PNG（不足完整 IHDR 的 33 字节）"
             first, has_data = True, False
+            palette = False
+            idat_ended = False
             # issue #28 R3：CRC 全对 ≠ 像素可解码——红队用「块结构完整、CRC 正确、
             # IDAT 为垃圾字节」的件骗过纯结构校验：真 CLI rc0、gfx ok:true、二次
             # 运行还缓存命中。故对全部 IDAT 块的联合 zlib 流做增量解压：解码报错、
@@ -94,6 +119,23 @@ def png_invalid_reason(path) -> "str | None":
                 length, tag = struct.unpack(">I4s", header)
                 if length > size - fh.tell() - 4:
                     return "截断 PNG（块长度超出文件）"
+                if not all(65 <= x <= 90 or 97 <= x <= 122 for x in tag) or tag[2] & 32:
+                    return "损坏 PNG（块类型非法）"
+                if not first:
+                    if tag == b"IHDR":
+                        return "损坏 PNG（重复 IHDR）"
+                    if not tag[0] & 32 and tag not in (b"PLTE", b"IDAT", b"IEND"):
+                        return "损坏 PNG（未知关键块）"
+                    if tag == b"PLTE":
+                        if palette or has_data or not length or length % 3 or length > 768 \
+                                or color in (0, 4) or (color == 3 and length // 3 > 2 ** depth):
+                            return "损坏 PNG（PLTE 无效或顺序错误）"
+                        palette = True
+                    if tag == b"IDAT":
+                        if idat_ended or (color == 3 and not palette):
+                            return "损坏 PNG（IDAT 顺序错误或缺少 PLTE）"
+                    elif has_data:
+                        idat_ended = True
                 if first:
                     if tag != b"IHDR" or length != 13:
                         return "损坏 PNG（首块必须是完整 IHDR）"
@@ -101,6 +143,8 @@ def png_invalid_reason(path) -> "str | None":
                     w, h, depth, color, comp, filt, interlace = struct.unpack(">IIBBBBB", data)
                     if not w or not h:
                         return "损坏 PNG（IHDR 尺寸为零）"
+                    if (width is not None and w != width) or (height is not None and h != height):
+                        return f"损坏 PNG（尺寸 {w}×{h}，期望 {width}×{height}）"
                     channels = _IHDR_CHANNELS.get(color)
                     if channels is None or depth not in _IHDR_DEPTHS.get(color, ()) \
                             or comp or filt or interlace not in (0, 1):
@@ -114,7 +158,8 @@ def png_invalid_reason(path) -> "str | None":
                         return ("损坏 PNG（不支持隔行 PNG（interlace=1，issue #28）："
                                 "本管线产物均为非隔行；隔行且尺寸不符的垃圾件无法经"
                                 "总量比对拦截）")
-                    expect_raw = h * (1 + (w * channels * depth + 7) // 8)
+                    row_stride = 1 + (w * channels * depth + 7) // 8
+                    expect_raw = h * row_stride
                     crc = zlib.crc32(data, zlib.crc32(tag))
                     first = False
                 else:
@@ -132,7 +177,13 @@ def png_invalid_reason(path) -> "str | None":
                                 tail = data
                                 while tail:
                                     out = dec.decompress(tail, _MAX_ZLIB_OUT)
+                                    # Filters are the first byte of each scanline, even
+                                    # when a row crosses a decompression chunk boundary.
+                                    if any(x > 4 for x in out[(-raw_len) % row_stride::row_stride]):
+                                        return "损坏 PNG（IDAT 扫描行滤波类型非法）"
                                     raw_len += len(out)
+                                    if raw_len > expect_raw:
+                                        return "损坏 PNG（IDAT 解压总量超出 IHDR 尺寸）"
                                     nxt = dec.unconsumed_tail
                                     if not out and nxt == tail:
                                         # 无进展的病态件：流已 eof 则滞留的 tail 即
@@ -163,12 +214,16 @@ def png_invalid_reason(path) -> "str | None":
                     if expect_raw is not None and raw_len != expect_raw:
                         return (f"损坏 PNG（IDAT 解压得 {raw_len} 字节，与 IHDR "
                                 f"{w}×{h} 应解出 {expect_raw} 字节不符）")
+                    if fh.read(1):
+                        return "损坏 PNG（IEND 后有尾随数据）"
+                    if _fingerprint is not None:
+                        _fingerprint.append(fh.digest.hexdigest())
                     return None
     except (OSError, struct.error) as e:
         return f"不可读或截断（{e}）"
 
 
-def verify_frames(outdir, frames):
+def verify_frames(outdir, frames, *, width=None, height=None):
     """批量校验目标帧 PNG → [(帧号, 原因)]（空列表 = 全部有效）。
 
     缓存命中/完成门的权威检查：缺失帧报「缺失」，零字节与魔数头不符的
@@ -177,24 +232,86 @@ def verify_frames(outdir, frames):
     outdir = Path(outdir)
     bad = []
     for i in frames:
-        reason = png_invalid_reason(outdir / f"f{i:04d}.png")
+        reason = png_invalid_reason(outdir / f"f{i:04d}.png", width=width, height=height)
         if reason is not None:
             bad.append((i, reason))
     return bad
 
 
-def require_frames(outdir, frames):
+def require_frames(outdir, frames, *, width=None, height=None):
     """校验目标帧 PNG，任一无效 → GfxCliError 逐帧列原因。
 
     渲染收尾门的替换实现：glob 计数只看得见文件数，本函数同时保证
     「一帧不缺、帧帧有效」。frames 为空时恒通过。
     """
     frames = list(frames)
-    bad = verify_frames(outdir, frames)
+    bad = verify_frames(outdir, frames, width=width, height=height)
     if bad:
         lines = "\n".join(f"  f{i:04d}.png: {reason}" for i, reason in sorted(bad))
         raise GfxCliError(f"{len(bad)} 帧缺失或损坏：\n{lines}")
     return len(list(frames))
+
+
+# Page completion is an integrity record, not a renderer/environment identity
+# or evidence of a fresh experimental run (those have separate contracts).
+COMPLETE_FILE = "complete.json"
+
+
+def _page_record(outdir, n, key, width, height):
+    digests, bad = [], []
+    for i in range(n):
+        got = []
+        reason = png_invalid_reason(Path(outdir) / f"f{i:04d}.png",
+                                    width=width, height=height, _fingerprint=got)
+        if reason:
+            bad.append((i, reason))
+        digests.append(got[0] if got else None)
+    return {"schema": 1, "key": key, "width": width, "height": height,
+            "frames": n, "sha256": digests}, bad
+
+
+def inspect_page(outdir, n, key, width, height):
+    """Return bad frames plus whether a completion record needs publication.
+
+    Missing/unreadable legacy markers never skip validation: complete valid
+    legacy frames can be certified without Chrome. Partial pages resume only
+    valid frames. A recognized marker with changed contract invalidates every
+    frame; changed valid PNG bytes invalidate that frame by SHA256. All hits
+    still undergo full PNG validation; the marker alone cannot certify a hit.
+    """
+    current, bad = _page_record(outdir, n, key, width, height)
+    try:
+        old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        old = None
+    if isinstance(old, dict) and old.get("schema") == 1:
+        if any(old.get(k) != current[k] for k in ("key", "width", "height", "frames")):
+            return [(i, "完成标记与页合同不符") for i in range(n)], True
+        if isinstance(old.get("sha256"), list) and len(old["sha256"]) == n:
+            bad_ids = {i for i, _ in bad}
+            bad.extend((i, "帧内容与完成标记不符") for i in range(n)
+                       if i not in bad_ids and old["sha256"][i] != current["sha256"][i])
+    return sorted(bad), old != current
+
+
+def invalidate_page(outdir):
+    """Revoke completion before modifying frames; no-op if already absent."""
+    (Path(outdir) / COMPLETE_FILE).unlink(missing_ok=True)
+
+
+def complete_page(outdir, n, key, width, height, *, verify_inputs):
+    """Validate the whole page and pin-input gate before atomic publication.
+
+    Caller invokes only on non-dry paths after all blocks/fallbacks finish.
+    Revalidation hashes the same bytes checked by the PNG parser. Interrupted
+    rendering cannot publish a partial frame list or bypass the input gate.
+    """
+    record, bad = _page_record(outdir, n, key, width, height)
+    if bad:
+        invalidate_page(outdir)
+        raise GfxCliError(f"gfx 完成检查失败：{bad}")
+    verify_inputs()
+    fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True))
 
 
 def _cli_shot_cmd(chrome, i, d, html, width, height):
@@ -233,7 +350,7 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
         png.unlink(missing_ok=True)
         raise GfxCliError(_rc_error(cmd, proc))
     png = Path(d) / f"f{i:04d}.png"
-    reason = png_invalid_reason(png)
+    reason = png_invalid_reason(png, width=width, height=height)
     if reason is not None:
         raise GfxCliError(
             f"Chrome CLI 截图产物无效（f{i:04d}.png：{reason}）：{' '.join(map(str, cmd))}")
