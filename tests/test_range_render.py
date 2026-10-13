@@ -259,7 +259,7 @@ class TestRangeIntegration(unittest.TestCase):
                  "-t", str(proj / "timeline.json"), "video", "--draft", "--range", "2", "5"],
                 capture_output=True, text=True, cwd=str(REPO))
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            out = proj / "cache" / "preview" / "range_2.0_5.0.mp4"
+            out = proj / "cache" / "preview" / "range_2.000_5.000.mp4"
             self.assertTrue(out.exists(), "产物应落在 cache/preview/")
             # 不写 out/ 与 receipt
             self.assertFalse((proj / "out" / "receipt.json").exists())
