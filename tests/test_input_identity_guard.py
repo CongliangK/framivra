@@ -7,6 +7,7 @@ import io
 import json
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest import mock
 
@@ -20,7 +21,11 @@ class InputIdentityGuard(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.path = self.root / 'timeline.json'
-        (self.root / 'media').write_bytes(b'old source')
+        with wave.open(str(self.root / 'media'), 'wb') as source:
+            source.setnchannels(2)
+            source.setsampwidth(2)
+            source.setframerate(48000)
+            source.writeframes(b'\0' * 480 * 4)
         (self.root / 'page.html').write_text('old html')
         (self.root / 'style.css').write_text('old style')
         self.tl = dict(project=dict(fps=30, width=640, height=360,
@@ -128,7 +133,11 @@ class InputIdentityGuard(unittest.TestCase):
     def test_prepare_source_swap_and_fresh_context_recovery(self):
         def extract(c, tasks, what):
             for _, cmd in tasks:
-                Path(cmd[-1]).write_bytes(b'extracted')
+                with wave.open(str(cmd[-1]), 'wb') as output:
+                    output.setnchannels(2)
+                    output.setsampwidth(2)
+                    output.setframerate(48000)
+                    output.writeframes(b'\0' * 480 * 4)
         def swap(c, tasks, what):
             extract(c, tasks, what)
             self.mutate('media')
