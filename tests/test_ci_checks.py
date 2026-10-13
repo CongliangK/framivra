@@ -100,6 +100,16 @@ class WorkflowContract(unittest.TestCase):
         self.assertEqual(dependencies,
                          {'numpy', 'pillow', 'jsonschema', 'pyyaml', 'requests'})
 
+    def test_core_installs_cpu_tools_and_isolates_private_configuration(self):
+        commands = '\n'.join(step.get('run', '') for step in
+                             self.workflow['jobs']['core']['steps'])
+        self.assertIn('sudo apt-get install -y ffmpeg fonts-noto-cjk', commands)
+        self.assertIn('export HOME="$RUNNER_TEMP/framivra-core-home"', commands)
+        self.assertIn('export XDG_CONFIG_HOME="$HOME/.config"', commands)
+        self.assertIn('export VTX_CONFIG="$HOME/config.json"', commands)
+        self.assertIn('unset PYTHONPATH PYTHONHOME BGM_CLI BGM_REPO', commands)
+        self.assertNotIn('apt-get install -y blender', commands)
+
     def test_actions_are_commit_pinned_and_checkout_drops_credentials(self):
         for job in self.workflow['jobs'].values():
             for step in job['steps']:
