@@ -223,12 +223,16 @@ def _gfx(c: Ctx):
             n = cl["dur"]
             d = gfx_dir(c, cl)
             # issue #28：逐一核验 [0,n)，f9999/空文件等不再冒充完整缓存。
-            bad = gfx_cli.verify_frames(d, range(n))
+            bad, needs_marker = gfx_cli.inspect_page(d, n, key, c.w, c.h)
             if not bad:
+                if needs_marker and not c.dry:
+                    gfx_cli.complete_page(d, n, key, c.w, c.h,
+                                          verify_inputs=lambda: c.verify_inputs("gfx"))
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
             # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
             if not c.dry:
                 d.mkdir(parents=True, exist_ok=True)
+                gfx_cli.invalidate_page(d)
                 for i, _ in bad:
                     (d / f"f{i:04d}.png").unlink(missing_ok=True)
             html = (c.root / cl["src"]).resolve()
@@ -243,7 +247,7 @@ def _gfx(c: Ctx):
             off, put = 0, 0
             for sz in sizes:
                 fb = list(range(off, off + sz)); off += sz
-                if not gfx_cli.verify_frames(d, fb):
+                if not gfx_cli.verify_frames(d, fb, width=c.w, height=c.h):
                     continue    # 整块已缓存 → 跳过（不起 Chrome、不占池槽）
                 jobs.append((cid, key, cl, n, d, html, fb)); put += 1
             if put == 0:        # 页级帧数门已滤全缓存，理论不可达；防御性兜底
@@ -289,7 +293,8 @@ def _gfx(c: Ctx):
         if frames is None:
             # —— 整页单块（SPLIT 关或页不超阈值）：日志格式与现行逐字节一致 ——
             rendered_via = "cli 6 并发" if st is None else _cdp_via(st)
-            gfx_cli.require_frames(d, range(n))
+            gfx_cli.complete_page(d, n, key, c.w, c.h,
+                                  verify_inputs=lambda: c.verify_inputs("gfx"))
             print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
             manifest_record(c, d, "gfx", key)
             return cid, rendered_via
@@ -313,7 +318,8 @@ def _gfx(c: Ctx):
                 rendered_via += f"，split×{k}"
         else:
             rendered_via = "cli 6 并发" + (f"（split×{k}）" if k > 1 else "")
-        gfx_cli.require_frames(d, range(n))
+        gfx_cli.complete_page(d, n, key, c.w, c.h,
+                              verify_inputs=lambda: c.verify_inputs("gfx"))
         print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
         manifest_record(c, d, "gfx", key)
         return cid, rendered_via
