@@ -61,7 +61,10 @@ def hammer(t):
     for j in range(iters):
         tag = f"w{wid}t{t}k{j}"
         if mode == "manifest":
-            fixture = c.cache / "fixtures" / f"{tag}.bin"
+            # Keep input fixtures outside cache/out: GC owns those directories
+            # and may remove them between mkdir and write. Ledger writes and GC
+            # still run concurrently against the same cache/manifest.json.
+            fixture = c.root / "fixtures" / f"{tag}.bin"
             fixture.parent.mkdir(parents=True, exist_ok=True)
             fixture.write_bytes(tag.encode())
             hygiene.manifest_record(c, fixture, tag, tag)
@@ -472,6 +475,21 @@ class GcResidueAndConcurrency(_ProjectCase):
         self.assertNotIn(v, listed)
         self.assertNotIn(m.parent / "manifest.json.lock", listed)
         self.assertNotIn(v.parent / "VERSIONS.json.lock", listed)
+
+    def test_worker_fixture_creation_survives_gc_between_mkdir_and_write(self):
+        # Force the hosted-CI race deterministically. This suite tests ledger
+        # transactions, not writing new artifacts into directories owned by GC.
+        worker = WORKER_LEDGER.replace(
+            "fixture.write_bytes(tag.encode())",
+            "hygiene.gc(c, do=True)\n            fixture.write_bytes(tag.encode())")
+        with mock.patch.dict(os.environ, {"VTX_NO_NVENC": "1"}):
+            run = subprocess.run(
+                ["env", "PYTHONDONTWRITEBYTECODE=1", "python3", "-X", "utf8",
+                 "-c", worker, str(REPO), str(self.tl), "manifest", "race", "1", "1"],
+                capture_output=True, text=True, cwd=str(REPO), timeout=120)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        entries = json.loads(self.manifest().read_text(encoding="utf-8"))["entries"]
+        self.assertEqual([e["stage"] for e in entries], ["wracet0k0"])
 
     def test_concurrent_gc_does_not_break_ledger(self):
         # 记账进程与 gc 并发：gc 绝不删账本/锁；已落账的笔一笔不丢；账本恒可解析
