@@ -882,7 +882,17 @@ def main():
         ensure_inside_project(c.out, c.root, what="out 写根")
     except ProjectPathError as e:
         print(f"✗ {e}"); sys.exit(1)
-    c.cache.mkdir(exist_ok=True); c.out.mkdir(exist_ok=True)
+    # B03（issue #27 / F-05，2026-10-13）：cache/out 布局创建延迟到实际写阶段——
+    # 此处不再无条件 mkdir（旧行为让 df/validate 只读部分等一切 EXECUTE 命令
+    # 都长出 cache/ 与 out/，命令执行前后项目树出现新目录即违例）。落点分工：
+    #   - 只读路径零建目录：df 在下方即刻返回（hygiene.df 不再 mkdir）；
+    #     validate 的契约校验段零写盘；dry-run 已在上方门之前返回。
+    #   - out/ 由首个真实写动作自建：回执链 begin_stage/receipt → fstxn 事务的
+    #     parents mkdir（subs check/preview 亦各自 mkdir）。
+    #   - cache/ 由各写侧自建：prepare（cache/audio）/gfx（cache/gfx）/subs
+    #     render/snapshot/range/qc 记账等落笔点 mkdir(parents=True)。
+    # A04 安全门语义与位置不动：门在校验（先行），mkdir 延迟到写侧——首个
+    # mkdir 仍发生在门之后，tests/safety 对抗用例不受影响。
     if a.command == "df":
         df(c); return
     if a.command == "snapshot":

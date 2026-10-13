@@ -540,7 +540,9 @@ class RenderPlan:
     def render_segmented(self, out_path, layer_set=None, with_subs=True, tag="vseg"):
         c, draft = self.c, self.draft
         lset = self.layers if layer_set is None else layer_set
-        vdir = c.cache / tag; vdir.mkdir(exist_ok=True)
+        # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
+        # 段目录自建（parents 兜底 fresh 项目直渲本目录的首个落笔点）。
+        vdir = c.cache / tag; vdir.mkdir(parents=True, exist_ok=True)
         bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in lset]
         cuts = choose_cutpoints(bounds, c.dur, self.nseg)
         edges = [0] + cuts + [c.dur]

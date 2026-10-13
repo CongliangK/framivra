@@ -175,7 +175,9 @@ def run_range(c, fa: int, fb: int):
 
     plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, layers=layers,
                       nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", "8")))
-    vdir = c.cache / "preview"; vdir.mkdir(exist_ok=True)
+    # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
+    # preview 目录自建（parents 兜底零音频事件、prepare_layers 未先建 cache 的边角）。
+    vdir = c.cache / "preview"; vdir.mkdir(parents=True, exist_ok=True)
     bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in layers]
     t = time.monotonic()
     cuts = choose_cutpoints(bounds, c.dur, plan.nseg)   # 与整片同一切点集

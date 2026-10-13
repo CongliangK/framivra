@@ -437,12 +437,16 @@ def df(c, quiet: bool = False):
     """体积体检：分项占用 + top-20 大文件 + tmp 孤儿。quiet=True（audit 内嵌）只算不打印，
     返回 {cache, out, total} 字节数。"""
     P = (lambda *a, **k: None) if quiet else print
-    c.cache.mkdir(parents=True, exist_ok=True)   # api.load_timeline_check 等不经 cli 的调用无 mkdir 兜底
+    # B03（issue #27 / F-05）：df 是只读体积体检——cache/ 不存在时按空布局报告，
+    # 绝不因体检创建目录（原 mkdir 兜底使 df/audit 内嵌路径长出 cache/，命令
+    # 执行前后项目树出现新目录即违例）。audit 内嵌（quiet）同口径零写盘。
     P("== cache/ ==")
     tcache = 0
-    entries = sorted(((x, dir_size(x)) for x in c.cache.iterdir()), key=lambda e: -e[1])
-    for x, s in entries:
-        P(f"  {x.name:24s} {gb(s):>10s}"); tcache += s
+    if c.cache.is_dir():
+        entries = sorted(((x, dir_size(x)) for x in c.cache.iterdir()),
+                         key=lambda e: -e[1])
+        for x, s in entries:
+            P(f"  {x.name:24s} {gb(s):>10s}"); tcache += s
     P(f"  cache 合计 {gb(tcache)}")
     tout = 0
     if c.out.exists():
