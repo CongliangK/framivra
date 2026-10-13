@@ -5,9 +5,9 @@ from pathlib import Path
 from unittest import mock
 
 try:
-    from ._support import A01_FIXED, A03_FIXED, SandboxCase
+    from ._support import A01_FIXED, SandboxCase
 except ImportError:  # unittest discover -s tests/safety
-    from _support import A01_FIXED, A03_FIXED, SandboxCase
+    from _support import A01_FIXED, SandboxCase
 
 from vtx import hygiene
 
@@ -180,9 +180,9 @@ class CleanupSafety(SandboxCase):
         self.assert_outside_unchanged()
 
     # 红队对抗复审（A01 波）：以下两个用例走 CLI 面（run_vtx gc），统一清理
-    # 路径已在 vtx/cli.py _cleanup_plan 拒绝符号链接根，转为常跑回归（不再
-    # A03 门控）；hygiene.snapshot 直调面的三个用例仍留 A03 门控（修在
-    # vtx/hygiene.py，不在 A01 波可改集内）。
+    # 路径已在 vtx/cli.py _cleanup_plan 拒绝符号链接根，转为常跑回归；A04
+    # （issue #23）落地 hygiene.snapshot 的写前校验后，直调面的三个用例同样
+    # 转为常跑回归（修在 vtx/hygiene.py，2026-10-13 随 A04 波合入）。
     def test_gc_symlinked_cache_root_cannot_delete_external_files(self):
         (self.root / "cache").symlink_to(self.outside, target_is_directory=True)
         before = self.tree(self.outside)
@@ -275,7 +275,6 @@ class SnapshotSafety(SandboxCase):
         self.assert_ok(self.run_vtx("snapshot", "--dry-run"))
         self.assertEqual(self.tree(), before)
 
-    @A03_FIXED
     def test_snapshot_dotdot_asset_is_rejected_without_overwrite(self):
         self.graphics("../payload.html")
         self.put(self.sandbox / "payload.html", b"attacker text")
@@ -286,7 +285,6 @@ class SnapshotSafety(SandboxCase):
         self.assertEqual(victim.read_bytes(), b"existing snapshot asset")
         self.assert_outside_unchanged()
 
-    @A03_FIXED
     def test_snapshot_absolute_asset_is_rejected_without_overwrite(self):
         self.graphics(str(self.sentinel))
         c = self.context()
@@ -296,7 +294,6 @@ class SnapshotSafety(SandboxCase):
         self.assertEqual(self.tree(self.sandbox), before,
                          "unsafe absolute input must be rejected before partial snapshot writes")
 
-    @A03_FIXED
     def test_snapshot_symlink_asset_outside_project_is_rejected(self):
         self.graphics("gfx/linked.html")
         (self.root / "gfx").mkdir()

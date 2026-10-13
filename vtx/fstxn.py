@@ -62,6 +62,14 @@ def _flock_for(path: Path):
         yield
         return
     path.parent.mkdir(parents=True, exist_ok=True)   # 锁文件须目录先在
+    # issue #23（A04）：锁文件同为写路径——open("a+b") 跟随符号链接、目标缺失
+    # 即创建，预置 <目标名>.lock → 根外 的符号链接会把锁文件创建/打开导出目标
+    # 目录（工单「锁路径也应受护」）。经 infra.ensure_inside_project 统一判定：
+    # 解析后必须仍落在目标父目录内（指向内的链接 = 允许）。延迟导入防模块期
+    # 环（infra 顶层已 import fstxn；调用期两模块均已初始化完毕，无半初始化面）。
+    from .infra import ensure_inside_project
+    ensure_inside_project(path.parent / (path.name + ".lock"), path.parent,
+                          what="事务锁文件")
     with open(path.parent / (path.name + ".lock"), "a+b") as lf:
         fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
         try:

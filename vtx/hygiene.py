@@ -13,7 +13,9 @@
 import fnmatch, hashlib, json, os, shutil, threading, time
 from pathlib import Path
 
+from . import fstxn
 from .encoders import seg_encoder_kind
+from .infra import ProjectPathError, ensure_inside_project
 from .pluginlib import hooks as _plugin_hooks
 
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
@@ -209,7 +211,11 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
                 "mtime": time.strftime("%F %T"), "tl": tl_md5(c)})
             if len(rec["entries"]) > 5000:      # 防无限膨胀：只留最近 5000 笔
                 rec["entries"] = rec["entries"][-4000:]
-            f.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
+            # issue #23（A04）：改走 fstxn 原子写（tmp+os.replace）——预置
+            # cache/manifest.json → 根外 的符号链接时 write_text 会跟随链接
+            # 覆盖链接目标；os.replace 只换目录项，不跟随末段符号链接（目标
+            # 侧免疫）。锁文件侧防护见 fstxn._flock_for。
+            fstxn.atomic_write(f, json.dumps(rec, ensure_ascii=False, indent=1))
     except Exception as e:
         print(f"⚠ manifest 记账失败（不影响渲染）: {e}")
 
@@ -229,6 +235,9 @@ def tmp_run(c, label: str):
       （D33 看门狗杀长命令有先例）由 gc 的 tmp_orphans（>24h）兜底清扫。
     """
     d = c.cache / TMP / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{label}"
+    # issue #23（A04）：tmp 也属衍生写路径——预置 cache/tmp → 根外 的符号链接
+    # 会把 GB 级中间物写穿到链接目标；解析后必须仍落在 cache 内。
+    ensure_inside_project(d, c.cache, what="tmp 中间物目录")
     d.mkdir(parents=True, exist_ok=True)
     return _TmpDir(d)
 
@@ -467,14 +476,30 @@ def df(c, quiet: bool = False):
 # ---------------------------------------------------------------- snapshot
 def snapshot(c, keep: int = None):
     """timeline.json + 其引用的全部文本资产 → cache/snapshots/<UTC>-<md5[:8]>/。
-    只收文本（html/js/json/ass，KB 级），媒体不入快照。只留最近 keep 份。"""
+    只收文本（html/js/json/ass，KB 级），媒体不入快照。只留最近 keep 份。
+
+    issue #23（A04 / P0，工单点名补齐）相对路径安全校验：资产引用串来自不可信
+    的 timeline，快照落点不得照搬引用串——「../」「绝对路径」「预置的 snapshots
+    子目录符号链接」都会把 mkdir/copy2 写到快照目录乃至项目根之外。三道写侧门
+    全部在**任何写动作之前**完成（含 dst.mkdir 之前——半途快照本身也是脏写）：
+      ① 快照目录门：dst 解析后必须落在 cache 内（防预置 cache/snapshots →
+         根外 的符号链接把整棵快照写穿到链接目标）；
+      ② 落点门：dst/<引用串> 解析后必须落在本次快照目录 dst 内（拒 ../ 穿越
+         与绝对路径——pathlib 拼接 ``dst / "/abs"`` 会整体替换左侧前缀）；
+      ③ 资产门：被引用的文本资产解析后必须落在项目根内——快照只收项目内文本
+         资产，根内符号链接指向根外 = 拒绝（报错含去向）。
+    素材「读取」的外部合法性不受影响：validate/gc 等读侧照常接受项目外素材
+    （tests/safety/test_timeline_escape_safety.py 对照组）。缺失资产仍按既有 UX
+    警告跳过（落点门先行，缺失不会放过越界引用）。"""
     keep = keep if keep is not None else int(os.environ.get("VTX_SNAPSHOT_KEEP", "2"))
     md5 = tl_md5(c)
     dst = c.cache / "snapshots" / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{md5[:8]}"
+    # ①（issue #23）：dst 自身先收口，且须在 dst.exists() 探测之前——预置的
+    # cache/snapshots 符号链接会把后续全部写动作导向链接目标，攻击者还可在
+    # 链接目标侧预建同名目录骗过「快照已存在」早退。
+    ensure_inside_project(dst, c.cache, what="快照目录")
     if dst.exists():
         print(f"✓ 快照已存在（同 timeline md5）：{dst.name}"); return dst
-    dst.mkdir(parents=True)
-    (dst / "timeline.json").write_text(c.tl_path.read_text(encoding="utf-8"), encoding="utf-8")
     texts = set()
     for tr in c.tl.get("video_tracks", []):
         for cl in tr.get("clips", []):
@@ -484,6 +509,25 @@ def snapshot(c, keep: int = None):
     _sub_src = c.tl.get("subtitles_src")
     if isinstance(_sub_src, str) and _sub_src:
         texts.add(_sub_src)
+    # ②③（issue #23）：全部资产先判定，任一拒绝即整体失败（不留半途快照）。
+    problems = []
+    for p in sorted(texts):
+        try:
+            ensure_inside_project(dst / p, dst, what="快照落点")
+        except ProjectPathError as e:
+            problems.append(str(e)); continue
+        src = c.root / p
+        if not src.exists():
+            continue   # 缺失资产按既有 UX 在写循环内警告跳过（落点已确认安全）
+        try:
+            ensure_inside_project(src, c.root, what="快照文本资产")
+        except ProjectPathError as e:
+            problems.append(str(e))
+    if problems:
+        raise ProjectPathError("快照拒绝不安全资产引用（issue #23）："
+                               + "；".join(sorted(set(problems))))
+    dst.mkdir(parents=True)
+    (dst / "timeline.json").write_text(c.tl_path.read_text(encoding="utf-8"), encoding="utf-8")
     for p in sorted(texts):
         src = c.root / p
         if not src.exists(): print(f"  ⚠ 快照跳过不存在的资产: {p}"); continue
@@ -519,7 +563,9 @@ def versions_check(c, product: Path) -> bool:
               f"旧版本已标记 superseded（历史见 out/history/）。")
         last["superseded"] = True
         last["superseded_note"] = f"{time.strftime('%F %T')} 覆盖前发现 md5 不符"
-        f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+        # issue #23（A04）：同 manifest_record——fstxn 原子写对末段符号链接
+        # 免疫（os.replace 不跟随），防预置 VERSIONS.json → 根外 链接覆盖目标。
+        fstxn.atomic_write(f, json.dumps(rec, ensure_ascii=False, indent=2))
         return True
     return False
 
@@ -538,13 +584,20 @@ def versions_record(c, product: Path, label: str):
         "timeline_md5": tl_md5(c),
         "audio_md5": _md5_file(c.out / "audio.wav")
         if (c.out / "audio.wav").exists() else None})
-    f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+    # issue #23（A04）：fstxn 原子写，同 versions_check 的符号链接免疫理由。
+    fstxn.atomic_write(f, json.dumps(rec, ensure_ascii=False, indent=2))
 
 
 def rotate_history(c, product: Path, keep: int):
-    """覆盖写 final 前把旧片轮转进 out/history/（硬链接优先，跨文件系统回落复制）。"""
+    """覆盖写 final 前把旧片轮转进 out/history/（硬链接优先，跨文件系统回落复制）。
+
+    issue #23（A04）：out/history 预置为指向根外的符号链接时轮转的 os.link/
+    copy2 会写穿链接目标——hdir 经 ensure_inside_project 收口在 out 内后才 mkdir
+    （指向内的链接 = 允许）。"""
     if not product.exists(): return
-    hdir = c.out / "history"; hdir.mkdir(exist_ok=True)
+    hdir = c.out / "history"
+    ensure_inside_project(hdir, c.out, what="历史轮转目录")
+    hdir.mkdir(exist_ok=True)
     md5 = _md5_file(product)[:8]
     dst = hdir / f"{product.stem}_{time.strftime('%Y%m%d-%H%M%S')}_{md5}{product.suffix}"
     try:
