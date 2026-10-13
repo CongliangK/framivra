@@ -4,7 +4,8 @@
 # `vt`（统一入口 doctor/list/check/version/init/--fix-links，vt:main）。
 # vt.py 在仓根（不在 vtx/ 包内），经 py-modules 以顶层模块身份进发行包。
 # pip 包只含内核（vtx/ 含 pluginlib + vt.py）；apps/plugins/skills/examples
-# 不进发行包。clone 即用与 pip 安装并存：repo 根可直接 `python3 vt.py` /
+# 执行代码不进 wheel；仅官方插件声明由 setup.py 从唯一源 registry.json 复制进包，
+# 让未安装插件键仍能明确失败（sdist 保留该声明源，以便重建 wheel）。clone 即用与 pip 安装并存：repo 根可直接 `python3 vt.py` /
 # `python3 vtx/vtx.py` / `python3 -m vtx`，与安装后同码同义。
 # 内核零第三方依赖（仅 python3 标准库 + 外部 ffmpeg/ffprobe/Chrome）。
 [build-system]
@@ -61,3 +62,4 @@ py-modules = ["vt"]
 # 读取通道（vtx._read_version 的第二优先级），当前源树不重复维护该文件（单一事实
 # 源在仓根）。
 vtx = ["timeline.schema.json", "preview.html", "VERSION"]
+"vtx.pluginlib" = ["builtin_registry.json"]
