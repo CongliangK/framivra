@@ -139,7 +139,7 @@ def _fp(p: Path) -> str:
 
 
 def tl_md5(c) -> str:
-    return c.timeline_md5
+    return hashlib.md5(c.tl_path.read_bytes()).hexdigest()
 
 
 def gfx_key(c, cl) -> str:
@@ -260,7 +260,7 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
             rec["entries"].append({
                 "path": str(p.relative_to(c.root)),
                 "stage": stage, "key": key, "bytes": size,
-                "mtime": time.strftime("%F %T"), "tl": tl_md5(c)})
+                "mtime": time.strftime("%F %T"), "tl": c.timeline_md5})
             if len(rec["entries"]) > 5000:      # 防无限膨胀：只留最近 5000 笔
                 rec["entries"] = rec["entries"][-4000:]
             return rec
@@ -673,7 +673,7 @@ def versions_record(c, product: Path, label: str):
             "time": time.strftime("%F %T"), "cmd": label, "product": product.name,
             "md5": _md5_file(product),
             "bytes": product.stat().st_size,
-            "timeline_md5": tl_md5(c),
+            "timeline_md5": c.timeline_md5,
             "audio_md5": _md5_file(audio)
             if audio.exists() else None})
         return rec
