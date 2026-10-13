@@ -10,7 +10,7 @@
     --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli.py）。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
-import fnmatch, hashlib, json, os, shutil, threading, time
+import fnmatch, hashlib, json, os, shutil, time
 from pathlib import Path
 
 from . import fstxn
@@ -103,9 +103,11 @@ def cleanup_entries(c, path, reason, *, nuke=False):
     return visit(Path(path))[0]
 
 
-# manifest 读-改-写串行锁（2026-09-11）：video 段间并行 worker 与 gfx 页级并行
-# 会并发调用 manifest_record，无锁时读-改-写竞态会互相覆盖丢笔。
-_MANIFEST_LOCK = threading.Lock()
+# （原 manifest 读-改-写进程内 _MANIFEST_LOCK 已随 issue #31 / B07 移除：线程锁
+# ≠跨进程锁（F-09/#9）——两个 vtx 进程并行渲染同一项目时各自基于旧快照回写
+# 仍会互相覆盖丢笔。串行化统一收口 fstxn 的两层锁序：进程内 per-path
+# threading.Lock 之上再加 <目标名>.lock 的 flock，manifest/VERSIONS 的全部
+# 「读-改-写」一律经 fstxn.locked_update 走该入口。）
 
 
 def _md5_file(p) -> str:
@@ -190,32 +192,86 @@ def _manifest_path(c) -> Path:
     return c.cache / "manifest.json"
 
 
+# issue #31（B07 / F-09）：manifest/VERSIONS 是**账本**（ledger），损坏语义与
+# receipt 的 default 恢复惯例刻意不同，取舍如下——receipt 是缓存身份门，损坏 =
+# 身份失效回空表安全且可自愈（cache_state.load_receipt）；账本若按同款惯例静默
+# 重建，等于整段历史凭空消失且无任何告警（丢了多少笔、谁的版本都无从追查，
+# F-09「写中断可损坏 JSON」一旦发生即被静默吞掉）。故账本读取取**显式失败**：
+# JSON 不可解析/形状不符 → 抛 ValueError（文案指引人工处置），文件本体保持
+# 损坏原样留作证据，绝不被空账本覆盖；由各调用方决定呈现方式——manifest_record
+# 既有「记账失败不影响渲染」外层兜底 → 降级为 ⚠ 警告，versions_* 直接上抛中断
+# mux（账本损坏在原子写落地后只可能来自外部干扰，正是应当大声失败的场景）。
+def _load_ledger(path, *, key: str, empty: dict) -> dict:
+    """账本严格读取（issue #31 / B07 / F-09）：缺失 → 全新空账本（首笔，正常
+    路径）；损坏/形状不符 → 显式 ValueError（不静默重建，取舍见上方注释）。
+    仅经 fstxn.locked_update 的 load 注入使用——调用点天然持两层锁，读到的
+    必是未被并发写撕裂的完整旧值（原子替换保证目标侧从无半写件）。"""
+    p = Path(path)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return empty   # 调用方每次传入现造字面量，无共享可变 default 串台面
+    except (OSError, ValueError) as e:   # ValueError 含 JSONDecodeError/UnicodeDecodeError
+        raise ValueError(
+            f"{p.name} 损坏（不可解析：{e}）——账本不静默重建（issue #31 / F-09）；"
+            f"请人工检查或移走 {p} 后重跑") from e
+    if not isinstance(data, dict) or not isinstance(data.get(key), list):
+        raise ValueError(
+            f"{p.name} 形状不符（顶层须为对象且含「{key}」记录列表）——账本不"
+            f"静默重建（issue #31）；请人工检查或移走 {p} 后重跑")
+    return data
+
+
+def _load_manifest(p) -> dict:
+    return _load_ledger(p, key="entries", empty={"entries": []})
+
+
+def _load_versions(p) -> dict:
+    return _load_ledger(p, key="versions", empty={"versions": []})
+
+
+def _dump_manifest(o) -> str:
+    # 既有 manifest 落盘格式（indent=1）原样保留：B07 只统一锁与原子性，不顺手
+    # 改格式——人工 diff 历史账本时不产生整文件噪声。
+    return json.dumps(o, ensure_ascii=False, indent=1)
+
+
+def _dump_versions(o) -> str:
+    # 既有 VERSIONS 格式（indent=2，与 fstxn 缺省 dump 逐字节同款；显式声明防
+    # 缺省值未来漂移）。
+    return json.dumps(o, ensure_ascii=False, indent=2)
+
+
 def manifest_record(c, path: Path, stage: str, key: str = ""):
     """写完一个产物后记一笔（路径/阶段/键/字节/mtime/timeline_md5）。只追加，不阻塞：
     记账失败绝不影响渲染主流程（gc 不依赖 manifest）。"""
+    p = Path(path)
     try:
-        with _MANIFEST_LOCK:   # 并发 worker（段编码/gfx 页）读-改-写串行化，防丢笔
-            f = _manifest_path(c)
+        def _mutate(rec):
             try:
-                rec = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
-                rec = {"entries": []}
-            try:
-                size = path.stat().st_size if path.is_file() else \
-                    sum(x.stat().st_size for x in path.rglob("*") if x.is_file())
+                size = p.stat().st_size if p.is_file() else \
+                    sum(x.stat().st_size for x in p.rglob("*") if x.is_file())
             except OSError:
                 size = 0
             rec["entries"].append({
-                "path": str(Path(path).relative_to(c.root)),
+                "path": str(p.relative_to(c.root)),
                 "stage": stage, "key": key, "bytes": size,
                 "mtime": time.strftime("%F %T"), "tl": tl_md5(c)})
             if len(rec["entries"]) > 5000:      # 防无限膨胀：只留最近 5000 笔
                 rec["entries"] = rec["entries"][-4000:]
-            # issue #23（A04）：改走 fstxn 原子写（tmp+os.replace）——预置
-            # cache/manifest.json → 根外 的符号链接时 write_text 会跟随链接
-            # 覆盖链接目标；os.replace 只换目录项，不跟随末段符号链接（目标
-            # 侧免疫）。锁文件侧防护见 fstxn._flock_for。
-            fstxn.atomic_write(f, json.dumps(rec, ensure_ascii=False, indent=1))
+            return rec
+
+        # issue #31（B07 / F-09）：读-改-写整段走 fstxn.locked_update——原实现只有
+        # 进程内 _MANIFEST_LOCK（线程锁≠跨进程锁），两个 vtx 进程并行渲染同一项目
+        # 时各自基于旧快照回写会互相覆盖丢笔；fstxn 两层锁序（per-path 线程锁 →
+        # cache/manifest.json.lock 的 flock）+ tmp→os.replace 原子落盘后，写中途
+        # 被 kill -9 目标要么旧值要么新值，永不为截断 JSON（残件 .manifest.json.*
+        # .tmp 由 gc 的 cache 根 legacy 规则清扫，见 gc_plan 注）。os.replace 不
+        # 跟随末段符号链接——issue #23（A04）的目标侧免疫保持；锁文件侧守卫见
+        # fstxn._flock_for。损坏账本经 _load_manifest 显式失败（取舍见其注释），
+        # 由下方既有外层兜底降级为 ⚠ 警告：渲染不受影响，账本不被静默清零。
+        fstxn.locked_update(_manifest_path(c), _mutate,
+                            load=_load_manifest, dump=_dump_manifest)
     except Exception as e:
         print(f"⚠ manifest 记账失败（不影响渲染）: {e}")
 
@@ -349,7 +405,15 @@ def gc_plan(c, keep_days: int = 0):
             if x.is_dir() and x.name not in dkeys:
                 add("plugin_cache", x, "键不在当前 timeline 键集（陈旧共享渲染缓存）")
     # 历史遗留目录（迁移期）：cache 根下非本方案布局的一级目录/文件 → 全部视为垃圾
-    # （subs*.ass/qc_clean/vseg* 另有专属类别，这里排除避免重复计数）
+    # （subs*.ass/qc_clean/vseg* 另有专属类别，这里排除避免重复计数）。
+    # issue #31（B07 / F-09）：fstxn 事务残件（.manifest.json.<rand>.tmp 等
+    # 「. 前缀 + .tmp 后缀」旁名件，写者被 kill -9 后 finally 不再运行而残留）
+    # 刻意**不进** known → 落本类 legacy 被清扫（out 侧同理由 out_keep 之外的
+    # out_intermediate 规则覆盖，见下方 out 循环）；其 .lock 伴生件则由
+    # cleanup_allowed 的 .lock 拒删守卫保留（issue #30，锁 inode 不得换新）。
+    # 注：gc 与在途写者并发时理论上有「恰好扫掉活 tmp」的微窗口（replace 因此
+    # FileNotFoundError）——后果只是那一笔记账显式失败（账本保持旧值，old-or-new
+    # 不变量不破），与 B06 receipt 同口径，不为它加年龄门。
     known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
              "subs.ass", "subs_draft.ass", "qc_clean.mp4",
              "vseg", "vseg_draft", "vseg_qc", "vseg_pass", "preview", "report_audio"} | set(KEEP_BASELINES)
@@ -370,6 +434,8 @@ def gc_plan(c, keep_days: int = 0):
         if x.is_dir() and cleanup_allowed(c, x) and x.stat().st_mtime < time.time() - 86400:
             add("tmp", x, "tmp 孤儿（>24h）")
     # out/ 一次性中间物（成片/回执/VERSIONS/history/reports 不动）
+    # issue #31（B07）：fstxn 残件 .VERSIONS.json.<rand>.tmp 同理不进 out_keep
+    # → 落本类被清扫（.lock 伴生件由 cleanup_allowed 保留），见上方 known 注。
     out_keep = {"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
                 "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
                 "audit_report.json", "qc_report.json", "history", "reports"}
@@ -469,11 +535,15 @@ def df(c, quiet: bool = False):
         P("  无")
     m = _manifest_path(c)
     if m.exists():
+        # issue #31（B07）：df 是纯读路径——容忍缺失（上方 exists 门）与损坏：
+        # 损坏时明确提示而非静默吞掉（与记账路径 _load_ledger 的显式失败同口径，
+        # 但体检不因此中断）；entries 结构不符的形状损坏同样落此分支。
         try:
             last = json.loads(m.read_text(encoding="utf-8"))["entries"][-1]
             P(f"最近一笔记账：{last['mtime']} {last['stage']} {last['path']}")
-        except Exception:
-            pass
+        except Exception as e:
+            P(f"⚠ {m.name} 不可解析（{e.__class__.__name__}）——账本疑似损坏，"
+              f"后续记账将显式失败（issue #31）；请人工检查或移走该文件")
     return {"cache": tcache, "out": tout, "total": total}
 
 
@@ -553,43 +623,59 @@ def versions_check(c, product: Path) -> bool:
     """覆盖前检测：现有文件 md5 与 VERSIONS 末条不符（被外部改动/并行工程改写）→
     显著告警并把旧条目标 superseded。返回是否告警。"""
     f = c.out / "VERSIONS.json"
-    try:
-        rec = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {"versions": []}
-    except Exception:
-        rec = {"versions": []}
+    product = Path(product)
     if not product.exists(): return False
+    # GB 级终片哈希在事务锁外算（advisory 比对用，不进账本），锁内只做账本
+    # 判定 + 落盘，最小化持锁窗口。
     old_md5 = _md5_file(product)
-    last = next((v for v in reversed(rec["versions"])
-                 if v.get("product") == product.name and v.get("md5")), None)
-    if last and last["md5"] != old_md5:
+
+    def _mutate(rec):
+        last = next((v for v in reversed(rec["versions"])
+                     if v.get("product") == product.name and v.get("md5")), None)
+        if not (last and last["md5"] != old_md5):
+            return None   # 无不符：中止事务不写（VERSIONS.json 原样不动）
         print(f"⚠⚠ 覆盖告警：将覆盖的 {product.name} md5={old_md5[:8]} 与 VERSIONS "
               f"末条 {last['md5'][:8]} 不符——文件曾被外部改动或并行工程改写！"
               f"旧版本已标记 superseded（历史见 out/history/）。")
         last["superseded"] = True
         last["superseded_note"] = f"{time.strftime('%F %T')} 覆盖前发现 md5 不符"
-        # issue #23（A04）：同 manifest_record——fstxn 原子写对末段符号链接
-        # 免疫（os.replace 不跟随），防预置 VERSIONS.json → 根外 链接覆盖目标。
-        fstxn.atomic_write(f, json.dumps(rec, ensure_ascii=False, indent=2))
-        return True
-    return False
+        return rec
+
+    # issue #31（B07 / F-09）：标 superseded 是 VERSIONS.json 的「读-改-写」，与
+    # versions_record 共用同一把 out/VERSIONS.json.lock 走 fstxn.locked_update
+    # （跨进程互斥 + tmp→os.replace 原子替换）——原实现读与写各自为政，并发
+    # mux 的另一进程可在「读 → 标记 → 写」间隙整份覆盖本进程判定。损坏账本经
+    # _load_versions 显式失败上抛（取舍见 _load_ledger 注释）；os.replace 不
+    # 跟随末段符号链接，issue #23（A04）目标侧免疫保持。
+    return fstxn.locked_update(f, _mutate, load=_load_versions,
+                               dump=_dump_versions) is not None
 
 
 def versions_record(c, product: Path, label: str):
     """mux 成功后追加一条 VERSIONS 记录（只记元数据，不复制全片）。"""
     f = c.out / "VERSIONS.json"
-    try:
-        rec = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {"versions": []}
-    except Exception:
-        rec = {"versions": []}
-    rec["versions"].append({
-        "time": time.strftime("%F %T"), "cmd": label, "product": product.name,
-        "md5": _md5_file(product),
-        "bytes": product.stat().st_size,
-        "timeline_md5": tl_md5(c),
-        "audio_md5": _md5_file(c.out / "audio.wav")
-        if (c.out / "audio.wav").exists() else None})
-    # issue #23（A04）：fstxn 原子写，同 versions_check 的符号链接免疫理由。
-    fstxn.atomic_write(f, json.dumps(rec, ensure_ascii=False, indent=2))
+    product = Path(product)
+    audio = c.out / "audio.wav"
+
+    def _mutate(rec):
+        # md5/字节数在锁内取自当前产物：记录值与账本提交点之间产物不再漂移
+        # （跨进程并发 mux 时本笔与账本同锁序提交，谁先谁后账本与终态一致）。
+        rec["versions"].append({
+            "time": time.strftime("%F %T"), "cmd": label, "product": product.name,
+            "md5": _md5_file(product),
+            "bytes": product.stat().st_size,
+            "timeline_md5": tl_md5(c),
+            "audio_md5": _md5_file(audio)
+            if audio.exists() else None})
+        return rec
+
+    # issue #31（B07 / F-09）：读-改-写走 fstxn.locked_update——flock 跨进程互斥
+    # （并行工程的两路 mux 不丢笔）+ tmp→os.replace（写中途被杀 VERSIONS.json
+    # 要么旧值要么新值，永不为截断 JSON；残件 .VERSIONS.json.*.tmp 由 gc 的
+    # out 一次性中间物规则清扫）。损坏账本经 _load_versions 显式失败上抛中断
+    # mux（取舍见 _load_ledger 注释）——终片已落盘不受影响，人工修复账本后
+    # 重跑 mux 即补记。A04 符号链接免疫同 versions_check。
+    fstxn.locked_update(f, _mutate, load=_load_versions, dump=_dump_versions)
 
 
 def rotate_history(c, product: Path, keep: int):

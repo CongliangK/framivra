@@ -1,4 +1,6 @@
 """Clean/gc/snapshot attacks, interruption, and repeated execution (no media tools)."""
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -223,6 +225,66 @@ class CleanupSafety(SandboxCase):
         before = self.tree()
         self.assert_ok(self.run_vtx("gc", "--dry-run"))
         self.assertEqual(self.tree(), before)
+
+
+class LedgerTxnLockSafety(SandboxCase):
+    """issue #31（B07，关联 F-09）：账本事务（fstxn.locked_update）与 A04 写路径
+    守卫（issue #23）的协同——预置 <账本>.lock → 根外 的符号链接时记账必须拒绝，
+    不得在根外制造锁文件，也不得把账本写到链接目标。"""
+
+    def test_manifest_lock_symlink_escape_is_refused(self):
+        # manifest_record 的外层兜底把 ProjectPathError 降级为 ⚠——渲染不中断，
+        # 但锁文件绝不在根外创建、账本绝不落盘（守卫在 tmp/写动作之前触发）。
+        c = self.context()
+        (c.cache / "manifest.json.lock").symlink_to(self.outside / "spawn.lock")
+        victim = self.put(self.root / "victim.bin", b"victim")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hygiene.manifest_record(c, victim, "video", "k")
+        self.assertIn("记账失败", out.getvalue())
+        self.assertIn("事务锁文件", out.getvalue())
+        self.assertIn("issue #23", out.getvalue())
+        self.assertFalse((self.outside / "spawn.lock").exists(),
+                         "锁文件不得在项目外被创建")
+        self.assertFalse((c.cache / "manifest.json").exists(),
+                         "锁守卫触发时账本不得落盘")
+        self.assert_outside_unchanged()
+
+    def test_versions_lock_symlink_escape_is_refused(self):
+        # versions_* 无兜底：ProjectPathError（ValueError 子类）直接上抛中断 mux
+        c = self.context()
+        (c.out / "VERSIONS.json.lock").symlink_to(self.outside / "spawn.lock")
+        prod = self.put(c.out / "final.mp4", b"final")
+        for name, call in (("versions_record",
+                            lambda: hygiene.versions_record(c, prod, "mux")),
+                           ("versions_check",
+                            lambda: hygiene.versions_check(c, prod))):
+            with self.subTest(fn=name):
+                with self.assertRaisesRegex(ValueError, "事务锁文件"):
+                    call()
+                self.assertFalse((self.outside / "spawn.lock").exists())
+                self.assertFalse((c.out / "VERSIONS.json").exists())
+        self.assert_outside_unchanged()
+
+    def test_manifest_target_symlink_replaced_not_followed(self):
+        # 对照组（A04 目标侧免疫，issue #23/#31）：预置 cache/manifest.json →
+        # 根外 的符号链接——os.replace 只换目录项，链接目标内容原样；账本在
+        # cache 内成为真身（读侧经链接摄入外部内容后落笔为本地新账本，无外泄）。
+        c = self.context()
+        # 链接目标用合法账本形状（形状不符会让记账显式失败，偏离本用例目标）
+        outside_ledger = self.put(self.outside / "stolen.json", b'{"entries": []}')
+        (c.cache / "manifest.json").symlink_to(outside_ledger)
+        victim = self.put(self.root / "victim.bin", b"victim")
+        with contextlib.redirect_stdout(io.StringIO()):
+            hygiene.manifest_record(c, victim, "video", "k")
+        self.assertFalse((c.cache / "manifest.json").is_symlink(),
+                         "replace 后 cache/manifest.json 应为真身而非链接")
+        self.assertEqual(outside_ledger.read_bytes(), b'{"entries": []}',
+                         "链接目标内容不得被跟随改写")
+        entries = json.loads((c.cache / "manifest.json")
+                             .read_text(encoding="utf-8"))["entries"]
+        self.assertEqual(entries[-1]["stage"], "video")
+        self.assert_outside_unchanged()
 
 
 class SnapshotSafety(SandboxCase):

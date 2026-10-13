@@ -16,8 +16,10 @@ API 不依赖 Ctx（scripts/content_gates.py 侧复用）：
   measure_and_store(path, run_fn, root=None) -> dict
 run_fn() -> (i_lufs, tp_dbfs)：实际测量由调用方组装（通常是一条 ffmpeg ebur128），
 模块只负责键计算/归档；i 或 tp 为 None（测量失败/缺峰）不入回执。写入原子
-（tmp + os.replace），进程内 threading.Lock 防并发读-改-写丢笔（对齐
-hygiene._MANIFEST_LOCK 惯例）；跨进程一致性由 replace 原子性兜底。
+（tmp + os.replace），进程内 threading.Lock 防并发读-改-写丢笔（原对齐
+hygiene._MANIFEST_LOCK 惯例——该锁已随 issue #31 / B07 移除，manifest/VERSIONS
+同类路径统一改走 fstxn.locked_update；本模块自带的线程锁+flock 结构与 fstxn
+同款，语义等价，暂不强制迁移）；跨进程一致性由 replace 原子性兜底。
 
 跨进程互斥（方案三阶段3，2026-09-13，M4 依赖编排核对的实质发现）：qc 与
 content_gates 是两个进程，都会对本文件做「读-改-写 + os.replace」——4K 导出与
