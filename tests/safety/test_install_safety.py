@@ -1,5 +1,8 @@
 """Offline installer adversarial tests using local payloads and a fail-closed curl.
 
+Entry = scripts/install.py invoked directly (install.sh has been rebuilt as the
+POSIX clone bootstrap; the release-channel installer under test here is install.py).
+
 No network, real HOME, live mounts, or repository cache/out are used. Even malicious
 archive link/traversal destinations are explicitly inside TemporaryDirectory.
 """
@@ -9,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 
 try:
@@ -79,10 +83,13 @@ with Path("calls.txt").open("a") as stream:
 
     def install(self, *args, target=None):
         target = self.checked(target or self.target)
+        # 发版通道直连 install.py(install.sh 已重构为克隆引导,见
+        # test_install_sh_bootstrap.py);安装器输出为 UTF-8,显式同口径解码。
         return subprocess.run(
-            ["bash", str(REPO / "scripts/install.sh"), "--dir", str(target),
+            [sys.executable, str(REPO / "scripts/install.py"), "--dir", str(target),
              "--version", "9.9.9", "--no-provenance", *args],
             cwd=self.root, env=self.env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=30)
 
     def assert_work_clean(self):
