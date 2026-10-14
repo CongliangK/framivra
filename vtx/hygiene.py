@@ -337,7 +337,7 @@ def tmp_run(c, label: str):
     # issue #23（A04）：tmp 也属衍生写路径——预置 cache/tmp → 根外 的符号链接
     # 会把 GB 级中间物写穿到链接目标；解析后必须仍落在 cache 内。
     ensure_inside_project(d, c.cache, what="tmp 中间物目录")
-    if fstxn.write_capability() == 'fd-anchored':
+    if not fstxn._legacy_guard():
         fstxn.mkdir(d)
     else:   # 降级平台（issue #59 返工）：基线安全等级 = 原 main 行为
         d.mkdir(parents=True, exist_ok=True)
@@ -669,7 +669,7 @@ def snapshot(c, keep: int = None):
             payloads[str(relative)] = src.read_bytes()
         except OSError as error:
             raise ProjectPathError(f'快照文本资产无法读取：{item!r}（{error}）') from error
-    if fstxn.write_capability() != 'fd-anchored':
+    if fstxn._legacy_guard():
         # 降级平台（issue #59 返工）：校验照旧，写机制回落 main 行为（路径形态
         # mkdir + 直接写 + rmtree 轮转）——无 fd 锚定，基线安全等级。
         if dst.exists():
@@ -830,7 +830,7 @@ def rotate_history(c, product: Path, keep: int):
     if not product.exists(): return
     hdir = c.out / "history"
     ensure_inside_project(hdir, c.out, what="历史轮转目录")
-    if fstxn.write_capability() != 'fd-anchored':
+    if fstxn._legacy_guard():
         # 降级平台（issue #59 返工）：基线安全等级 = 原 main 行为。
         hdir.mkdir(exist_ok=True)
         md5 = _md5_file(product)[:8]
