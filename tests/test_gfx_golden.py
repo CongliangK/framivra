@@ -2,14 +2,23 @@
 （无 chrome 依赖），覆盖 build 抽样/全帧、帧缺失报错、compare 全零/差异/帧缺失、
 同页双 dur 并列、名单逐项零匹配报错（B2）、缓存未重渲新鲜度防线（B1 默认警告/
 --strict 失败）、页 html 改键后 compare 显式失败（目录缺失，绝不静默错比）。
-golden 键与帧目录定位复用 vtx/hygiene.gfx_key（与渲染器同键）。"""
+golden 键与帧目录定位复用 vtx/hygiene.gfx_key（与渲染器同键）。
+
+#104 起扩展：analyze_frame_diff 三级像素裁决（Tier-1 Exact / Tier-2
+Premul-Equivalent / Tier-3 Failure+labels）——DoD 四类合成帧分类准确率 100%、
+残差 ≤1 容差边界、黑边/α 差异/全透明区差异反例、热力图（Tier-2/3 产 Tier-1
+不产、绿/红通道分工、原子写）、analyze CLI（目录/单文件/缺帧配对/退出码）与
+1080p 分析段性能门（中位 ≤15ms，解码外）。"""
 import contextlib
 import io
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+
+import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -257,6 +266,395 @@ class GfxGolden(unittest.TestCase):
         self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(g)]), 0)
         self.assertTrue(g.exists())
         self.assertFalse((self.root / "golden.json.tmp").exists())
+
+
+# --------------------------------- #104 三级像素裁决：合成帧构造器（DoD 四类）
+
+W2, H2 = 64, 48
+
+
+def _rhu(num, den):
+    """round-half-up(num/den)：与被测工具 _rdiv255 同口径的整数四舍五入。"""
+    return (2 * num + den) // (2 * den)
+
+
+def _save_png(arr, path: Path):
+    Image.fromarray(arr.astype(np.uint8), "RGBA").save(path, "PNG")
+
+
+def _pair_tier2(w=W2, h=H2):
+    """DoD-1：A∈[1,15] 半透明渐变；两后端 Premul→Straight 整数舍入不同
+    （甲=四舍五入 round(P·255/A)，乙=截断 floor）→ 同一预乘真值的两种直存。"""
+    A = np.broadcast_to(1 + (np.arange(w) % 15), (h, w))
+    P = np.arange(h)[:, None] % (A + 1)            # 每像素预乘真值 0..A
+    s_up = np.minimum(255, _rhu(P * 255, A))
+    s_dn = np.minimum(255, (P * 255) // A)
+    ref = np.dstack([s_up, s_up, s_up, A]).astype(np.uint8)
+    cand = np.dstack([s_dn, s_dn, s_dn, A]).astype(np.uint8)
+    assert (s_up != s_dn).any()                    # 保证确有差异像素（非 Tier-1）
+    return ref, cand
+
+
+def _pair_halo(w=W2, h=H2):
+    """DoD-2：预乘 RGB 未做除法直接写入 PNG（黑边/发黑签名）。"""
+    A = np.broadcast_to(30 + (np.arange(w) % 171), (h, w))    # α ∈ [30, 200]
+    C = np.broadcast_to(np.arange(h)[:, None] % 76 + 180, (h, w))  # 亮色 180..255
+    prem = _rhu(C * A, 255)                        # round(C·A/255)：被误当 Straight 直存
+    ref = np.dstack([C, C, C, A]).astype(np.uint8)
+    cand = np.dstack([prem, prem, prem, A]).astype(np.uint8)
+    return ref, cand
+
+
+def _pair_opaque_shift(w=W2, h=H2):
+    """DoD-3：A=255 纯色块 #1f6feb → #1f6fec（蓝通道 +1 色阶）。"""
+    ref = np.zeros((h, w, 4), np.uint8)
+    ref[..., 0], ref[..., 1], ref[..., 2], ref[..., 3] = 31, 111, 235, 255
+    cand = ref.copy()
+    cand[:, w // 2:, 2] = 236
+    return ref, cand
+
+
+class AnalyzeFrameDiffTiers(unittest.TestCase):
+    """#104 DoD：四类人工合成帧，分类准确率必须 100%。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _analyze(self, ref, cand, heatmap_out=None):
+        rp, cp = self.root / "ref.png", self.root / "cand.png"
+        _save_png(ref, rp)
+        _save_png(cand, cp)
+        return gg.analyze_frame_diff(rp, cp, heatmap_out=heatmap_out)
+
+    def test_dod1_premul_roundtrip_is_tier2(self):
+        """A∈[1,15] 渐变的两种 Premul→Straight 舍入 → premul_equivalent，
+        差异像素全落半透明区且全部计为逆预乘舍入点。"""
+        r = self._analyze(*_pair_tier2())
+        self.assertEqual(r["tier"], gg.TIER_PREMUL)
+        self.assertEqual(r["labels"], [])
+        self.assertEqual(r["max_abs_diff_alpha"], 0)
+        self.assertGreater(r["n_diff_pixels"], 0)
+        self.assertEqual(r["semi_diff_pixels"], r["n_diff_pixels"])
+        self.assertEqual(r["opaque_diff_pixels"], 0)
+        self.assertEqual(r["transparent_diff_pixels"], 0)
+        self.assertEqual(r["premul_rounding_pixel_count"], r["n_diff_pixels"])
+        self.assertLessEqual(r["max_premul_residual"], 1)
+        self.assertIsNone(r["heatmap"])
+
+    def test_dod2_double_blend_halo_is_tier3(self):
+        """预乘值未除 α 直存 → visual_failure 且标签含 premul_double_blend_halo
+        （半透明差异像素残差 >1 且全部命中 C_cand≈round(C_ref·A/255) 签名）。"""
+        r = self._analyze(*_pair_halo())
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertIn(gg.L_HALO, r["labels"])
+        self.assertGreater(r["max_premul_residual"], 1)
+        self.assertEqual(r["halo_signature_pixels"], r["semi_diff_pixels"])
+        self.assertEqual(r["max_abs_diff_alpha"], 0)
+
+    def test_dod3_opaque_shift_is_tier3(self):
+        """A=255 区 1 色阶偏移 → visual_failure，标签恰为 opaque_color_shift。"""
+        r = self._analyze(*_pair_opaque_shift())
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertEqual(r["labels"], [gg.L_OPAQUE])
+        self.assertEqual(r["max_abs_diff"], 1)
+        self.assertEqual(r["n_diff_pixels"], H2 * (W2 - W2 // 2))
+        self.assertEqual(r["opaque_diff_pixels"], r["n_diff_pixels"])
+
+    def test_dod4_identical_is_tier1(self):
+        """完全一致图像 → verified_exact（且即便给了 heatmap_out 也不产热力图）。"""
+        ref, _ = _pair_opaque_shift()
+        hm = self.root / "diff_f0000.png"
+        r = self._analyze(ref, ref.copy(), heatmap_out=hm)
+        self.assertEqual(r["tier"], gg.TIER_EXACT)
+        self.assertEqual(r["labels"], [])
+        self.assertEqual(r["max_abs_diff"], 0)
+        self.assertEqual(r["n_diff_pixels"], 0)
+        self.assertEqual(r["premul_rounding_pixel_count"], 0)
+        self.assertIsNone(r["heatmap"])
+        self.assertFalse(hm.exists())              # Tier-1 恒不产热力图
+
+
+class AnalyzeFrameDiffEdges(unittest.TestCase):
+    """#104 裁决边界：容差分界 / 反例 / 输入口径 / 异常。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _analyze(self, ref, cand):
+        rp, cp = self.root / "ref.png", self.root / "cand.png"
+        _save_png(ref, rp)
+        _save_png(cand, cp)
+        return gg.analyze_frame_diff(rp, cp)
+
+    @staticmethod
+    def _base(pair_pixel=(100, 100, 100, 128)):
+        b = np.zeros((8, 8, 4), np.uint8)
+        b[..., :3], b[..., 3] = (10, 20, 30), 255
+        b[4, 4] = pair_pixel
+        return b
+
+    def test_premul_residual_exactly_1_is_tier2(self):
+        """A=128、Straight 100 vs 101：重投影残差恰 1（50→51）→ Tier-2（容差上边界）。"""
+        cand = self._base()
+        cand[4, 4, :3] = 101
+        r = self._analyze(self._base(), cand)
+        self.assertEqual(r["tier"], gg.TIER_PREMUL)
+        self.assertEqual(r["max_premul_residual"], 1)
+        self.assertEqual(r["premul_rounding_pixel_count"], 1)
+
+    def test_premul_residual_2_is_tier3_unclassified(self):
+        """A=128、Straight 100 vs 103：残差 2 超容差 → Tier-3；无预乘签名、
+        max|Δ|=3 ≤5 → 四官方标签全不命中，兜底 unclassified_diff 且 labels 非空。"""
+        cand = self._base()
+        cand[4, 4, :3] = 103
+        r = self._analyze(self._base(), cand)
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertEqual(r["max_premul_residual"], 2)
+        self.assertEqual(r["labels"], [gg.L_UNCLASS])
+
+    def test_alpha_only_diff_is_tier3_alpha_label(self):
+        """仅 α 通道差（255→200）→ alpha_channel_diff；|ΔA|=55>5 同时命中 structural。"""
+        cand = self._base(pair_pixel=(100, 100, 100, 255))
+        cand[2, 2, 3] = 200
+        r = self._analyze(self._base(pair_pixel=(100, 100, 100, 255)), cand)
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertEqual(r["max_abs_diff_alpha"], 55)
+        self.assertEqual(r["labels"], [gg.L_ALPHA, gg.L_STRUCT])
+
+    def test_transparent_region_rgb_diff_is_failure(self):
+        """全透明区（A=0）RGB 差异：合成上不可见但违反「差异像素须在半透明区」
+        → Tier-3（tier2 判据不含此区），标签走兜底 unclassified_diff。"""
+        ref = np.zeros((8, 8, 4), np.uint8)
+        ref[..., :3] = 5
+        cand = ref.copy()
+        cand[1, 1, 0] = 8
+        r = self._analyze(ref, cand)
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertEqual(r["transparent_diff_pixels"], 1)
+        self.assertEqual(r["labels"], [gg.L_UNCLASS])
+
+    def test_structural_big_shift(self):
+        """不透明区大幅色差（255→0，撕裂/丢层形态）→ structural_or_missing_layer。"""
+        ref, _ = _pair_opaque_shift(32, 24)
+        cand = ref.copy()
+        cand[:, 8:, :3] = 0
+        r = self._analyze(ref, cand)
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertIn(gg.L_STRUCT, r["labels"])
+        self.assertGreater(r["max_abs_diff"], 5)
+
+    def test_rgb_png_input_normalized_to_rgba(self):
+        """无 α 的 RGB PNG 双方一致 → 统一 convert RGBA 口径后 Tier-1。"""
+        arr = np.zeros((16, 16, 3), np.uint8)
+        arr[..., 0] = np.arange(16 * 16).reshape(16, 16) % 256
+        rp, cp = self.root / "r.png", self.root / "c.png"
+        Image.fromarray(arr, "RGB").save(rp)
+        Image.fromarray(arr.copy(), "RGB").save(cp)
+        r = gg.analyze_frame_diff(rp, cp)
+        self.assertEqual(r["tier"], gg.TIER_EXACT)
+
+    def test_size_mismatch_raises_value_error(self):
+        """尺寸不一致 → ValueError（CLI 归入 errors，不静默错比）。"""
+        rp, cp = self.root / "r.png", self.root / "c.png"
+        _save_png(np.zeros((8, 8, 4), np.uint8), rp)
+        _save_png(np.zeros((9, 8, 4), np.uint8), cp)
+        with self.assertRaises(ValueError):
+            gg.analyze_frame_diff(rp, cp)
+
+    def test_corrupt_png_raises_value_error(self):
+        (self.root / "bad.png").write_bytes(b"not a png")
+        _save_png(np.zeros((8, 8, 4), np.uint8), self.root / "ok.png")
+        with self.assertRaises(ValueError):
+            gg.analyze_frame_diff(self.root / "ok.png", self.root / "bad.png")
+
+
+class AnalyzeHeatmap(unittest.TestCase):
+    """#104 热力图：Tier-2/3 产出、Tier-1 不产；绿/红分工；原子写。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.hm = self.root / "heat"
+        self.addCleanup(self._tmp.cleanup)
+
+    def _analyze(self, ref, cand, name="f0000"):
+        rp, cp = self.root / "ref.png", self.root / "cand.png"
+        _save_png(ref, rp)
+        _save_png(cand, cp)
+        return gg.analyze_frame_diff(rp, cp, heatmap_out=self.hm / f"diff_{name}.png")
+
+    def test_tier2_heatmap_green_only(self):
+        r = self._analyze(*_pair_tier2(), name="f0001")
+        self.assertEqual(r["heatmap"], str(self.hm / "diff_f0001.png"))
+        with Image.open(r["heatmap"]) as im:
+            self.assertEqual(im.mode, "RGB")
+            self.assertEqual(im.size, (2 * W2, H2))       # 双半幅：宽 2W
+            arr = np.asarray(im)
+        self.assertGreater(arr[:, :W2].max(), 0)          # 左半幅有原图内容
+        self.assertGreater(arr[:, W2:, 1].sum(), 0)       # 右半幅绿=Tier-2 舍入点
+        self.assertEqual(arr[:, W2:, 0].sum(), 0)         # 无红（无实质错误像素）
+
+    def test_tier3_heatmap_red_only(self):
+        r = self._analyze(*_pair_opaque_shift(), name="f0002")
+        with Image.open(r["heatmap"]) as im:
+            arr = np.asarray(im)
+        self.assertGreater(arr[:, W2:, 0].sum(), 0)       # 红=实质错误像素
+        self.assertEqual(arr[:, W2:, 1].sum(), 0)         # 无绿（无半透明舍入点）
+
+    def test_atomic_write_no_tmp_left(self):
+        self._analyze(*_pair_tier2(), name="f0003")
+        self._analyze(*_pair_opaque_shift(), name="f0004")
+        self.assertEqual(list(self.hm.glob("*.tmp")), [])  # tmp+replace，无残件
+        self.assertEqual(sorted(p.name for p in self.hm.glob("*.png")),
+                         ["diff_f0003.png", "diff_f0004.png"])
+
+
+class AnalyzeCli(unittest.TestCase):
+    """#104 analyze CLI：目录配对/单文件/缺帧/类型混用/退出码/报告与热力图。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _dirs(self, pairs):
+        """pairs = {帧号: (ref_arr, cand_arr)} → 写出 ref/ cand/ 两帧目录。"""
+        rd, cd = self.root / "ref", self.root / "cand"
+        rd.mkdir(parents=True, exist_ok=True)
+        cd.mkdir(parents=True, exist_ok=True)
+        for num, (ref, cand) in pairs.items():
+            _save_png(ref, rd / f"f{num:04d}.png")
+            _save_png(cand, cd / f"f{num:04d}.png")
+        return rd, cd
+
+    def test_dir_mode_report_heatmaps_and_rc(self):
+        """Tier-1/2/3 各一帧 + 一帧 ref 独有：rc 1；报告分档计数 + 缺帧错误；
+        热力图只产 Tier-2/3 两帧。"""
+        t2_ref, t2_cand = _pair_tier2()
+        t3_ref, t3_cand = _pair_opaque_shift()
+        rd, cd = self._dirs({0: (t3_ref, t3_ref.copy()),      # Tier-1
+                             1: (t2_ref, t2_cand),             # Tier-2
+                             2: (t3_ref, t3_cand)})            # Tier-3
+        _save_png(t3_ref, rd / "f0003.png")                    # ref 独有 → 配对错误
+        hm, rj = self.root / "heat", self.root / "report.json"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gg.main(["analyze", "--ref", str(rd), "--cand", str(cd),
+                          "--heatmap-dir", str(hm), "--report", str(rj)])
+        self.assertEqual(rc, 1)
+        rep = json.loads(rj.read_text(encoding="utf-8"))
+        self.assertFalse(rep["ok"])
+        self.assertEqual(rep["compared"], 3)
+        self.assertEqual(rep["tiers"], {"verified_exact": 1,
+                                        "premul_equivalent": 1,
+                                        "visual_failure": 1})
+        self.assertEqual(rep["frames"][0]["tier"], gg.TIER_EXACT)
+        self.assertEqual(rep["frames"][2]["labels"], [gg.L_OPAQUE])
+        self.assertEqual(rep["errors"][0]["frame"], "0003")
+        self.assertEqual(sorted(p.name for p in hm.glob("*.png")),
+                         ["diff_f0001.png", "diff_f0002.png"])  # Tier-1 不产
+        self.assertIn("帧错误", buf.getvalue())
+
+    def test_dir_mode_all_pass_rc0(self):
+        t2_ref, t2_cand = _pair_tier2()
+        rd, cd = self._dirs({0: (t2_ref, t2_ref.copy()),
+                             1: (t2_ref, t2_cand)})
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = gg.main(["analyze", "--ref", str(rd), "--cand", str(cd)])
+        self.assertEqual(rc, 0)                       # Tier-1/Tier-2 均为通过
+
+    def test_file_mode_tier2_pass_with_heatmap(self):
+        t2_ref, t2_cand = _pair_tier2()
+        rp, cp = self.root / "ref.png", self.root / "cand.png"
+        _save_png(t2_ref, rp)
+        _save_png(t2_cand, cp)
+        hm = self.root / "heat"
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = gg.main(["analyze", "--ref", str(rp), "--cand", str(cp),
+                          "--heatmap-dir", str(hm)])
+        self.assertEqual(rc, 0)
+        self.assertTrue((hm / "diff_f0000.png").is_file())   # 非 f 帧名 → 记 f0000
+
+    def test_file_mode_size_mismatch_rc1(self):
+        rp, cp = self.root / "r.png", self.root / "c.png"
+        _save_png(np.zeros((8, 8, 4), np.uint8), rp)
+        _save_png(np.zeros((9, 8, 4), np.uint8), cp)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = gg.main(["analyze", "--ref", str(rp), "--cand", str(cp)])
+        self.assertEqual(rc, 1)
+        self.assertIn("尺寸不一致", buf.getvalue())
+
+    def test_mixed_file_and_dir_rejected(self):
+        rd, _ = self._dirs({0: (np.zeros((8, 8, 4), np.uint8),) * 2})
+        f = self.root / "single.png"
+        _save_png(np.zeros((8, 8, 4), np.uint8), f)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gg.main(["analyze", "--ref", str(rd), "--cand", str(f)]), 1)
+
+    def test_missing_path_rejected(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                gg.main(["analyze", "--ref", str(self.root / "none"),
+                         "--cand", str(self.root / "none2")]), 1)
+
+    def test_empty_dirs_rejected(self):
+        rd, cd = self._dirs({})
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = gg.main(["analyze", "--ref", str(rd), "--cand", str(cd)])
+        self.assertEqual(rc, 1)                       # 无帧对≠通过（宁缺毋滥）
+
+
+class AnalyzePerf(unittest.TestCase):
+    """#104 性能门：1080p 分析段（解码外、纯裁决数学）中位 ≤15ms。
+
+    两条路径各测：Tier-1 快路径（xor+any 全帧扫描）与稀疏差异全分类路径
+    （预乘重投影数学）；heatmap 关闭（预算口径=纯比对，热力图是可选附加产物）。
+    """
+
+    def test_1080p_analysis_budget(self):
+        w, h = 1920, 1080
+        rng = np.random.default_rng(104)
+        ref = rng.integers(0, 256, (h, w, 4), dtype=np.uint8)
+
+        def median_ms(a, b, n=7):
+            for _ in range(2):                        # 预热（首次调用有惰性 import）
+                gg._analyze_arrays(a, b)
+            ts = []
+            for _ in range(n):
+                t0 = time.perf_counter()
+                r = gg._analyze_arrays(a, b)
+                ts.append((time.perf_counter() - t0) * 1000)
+            return sorted(ts)[n // 2], r
+
+        med_exact, r = median_ms(ref, ref.copy())
+        self.assertEqual(r["tier"], gg.TIER_EXACT)
+        self.assertLessEqual(med_exact, 15.0)
+
+        cand = ref.copy()                             # 稀疏差异：~2000 半透明像素
+        pos = rng.choice(h * w, size=2000, replace=False)
+        ys, xs = np.divmod(pos, w)
+        ref2 = ref.copy()
+        ref2[ys, xs, 3] = 128
+        cand[ys, xs, 3] = 128
+        cand[ys, xs, 0] = np.clip(cand[ys, xs, 0].astype(np.int32) + 1, 0, 255)
+        med_diff, r = median_ms(ref2, cand)
+        self.assertEqual(r["tier"], gg.TIER_PREMUL)   # A=128 下 +1 直存差 → 残差 ≤1
+        self.assertGreater(r["n_diff_pixels"], 0)
+        self.assertLessEqual(med_diff, 15.0)
+
+        with tempfile.TemporaryDirectory(prefix="gfx_analyze_perf_") as td:
+            # 端到端含 PNG 编解码：只做 sanity 断言（解码耗时另见 decode_ms 字段）
+            rp, cp = Path(td) / "ref.png", Path(td) / "cand.png"
+            _save_png(ref2, rp)
+            _save_png(cand, cp)
+            r2 = gg.analyze_frame_diff(rp, cp)
+            self.assertEqual(r2["tier"], gg.TIER_PREMUL)
+            self.assertLess(r2["decode_ms"], 1000.0)
 
 
 if __name__ == "__main__":

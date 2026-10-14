@@ -21,7 +21,23 @@ golden JSON 结构（自包含、无歧义）：
   env python3 scripts/gfx_golden.py build -t timeline.json --golden gfx_golden.json \
       [--full-pages c5a_main_path,c5b_hotkey] [--sample 5]
   env python3 scripts/gfx_golden.py compare -t timeline.json --golden gfx_golden.json \
-      [--report report.json] [--pages c5a_main_path]
+      [--report report.json] [--pages c5a_main_path] [--strict]
+  env python3 scripts/gfx_golden.py analyze --ref <png|帧目录> --cand <png|帧目录> \
+      [--heatmap-dir dir] [--report report.json]
+
+三级像素裁决（issue #104，analyze 子命令 / analyze_frame_diff）：
+  golden hash 只能说「有差异」；深度审计把一对帧（ref/cand，如 Chrome CDP 基线
+  vs CEF/Electron 候选）逐像素裁决为三级——
+  Tier-1 verified_exact：解码后 8-bit Straight RGBA 全画幅零差异；
+  Tier-2 premul_equivalent：仅半透明区（0<A<255）Straight RGB 差异，且黑底+白底
+  预乘重投影（C_comp=round((C·A+B·(255−A))/255)）残差 ≤1（逆预乘整数舍入等价，
+  视为通过），单列 premul_rounding_pixel_count / max_premul_residual；
+  Tier-3 visual_failure：实质失败，labels 细分（alpha_channel_diff /
+  premul_double_blend_halo / opaque_color_shift / structural_or_missing_layer，
+  可多标签共存）+ 兜底 unclassified_diff。
+  Tier-2/3 帧可产双半幅误差热力图 diff_f{:04d}.png（左=参照帧直投灰底；右=误差
+  放大 16× 伪彩，绿=Tier-2 舍入点、红=Tier-3 实质错误；tmp+replace 原子写）。
+  analyze 退出码：全部 Tier-1/Tier-2 → 0；任一 Tier-3 / 解码或配对错误 → 1。
 
 实现要点：
   - 缓存键/帧目录定位直接复用 vtx/hygiene.gfx_key（v2 §1.4 包导入，注入 repo 根）——
@@ -30,7 +46,8 @@ golden JSON 结构（自包含、无歧义）：
   - 帧缺失/目录缺失在 build 即报错退出非零（golden 必须完整，宁缺毋滥）。
   - 并行：ThreadPoolExecutor（PIL C 解码释放 GIL）；GFX_GOLDEN_WORKERS 可调，
     默认 min(8, cpu)。目标：3530 帧 1080p 解码 hash ≈ 2-3 分钟内。
-  - 纯标准库 + PIL；不改 vtx/（只读复用）。
+  - 纯标准库 + PIL；#104 深度审计另用 numpy（向量化；仓库既有依赖面——
+    vtx/gfx_render 可选加速与 apps/gates 均在用，非新引入）；不改 vtx/（只读复用）。
 """
 import argparse
 import hashlib
@@ -149,6 +166,214 @@ def chrome_version():
         except Exception:
             pass
     return None
+
+
+# ------------------------------------------------- 深度像素审计（issue #104：三级裁决 + 热力图）
+
+# Tier 词汇（跨后端 Golden 像素审计的裁决契约；下游 #107 基线 / #118 #119 审计消费）
+TIER_EXACT = "verified_exact"       # Tier-1：解码后 8-bit Straight RGBA 全画幅零差异
+TIER_PREMUL = "premul_equivalent"   # Tier-2：仅半透明区逆预乘整数舍入，重投影残差 ≤1
+TIER_FAIL = "visual_failure"        # Tier-3：实质视觉失败（labels 细分，可多标签）
+
+L_ALPHA = "alpha_channel_diff"            # α 通道有差（max|ΔA|>0）
+L_HALO = "premul_double_blend_halo"       # 半透明区二次预乘发黑（黑边签名）
+L_OPAQUE = "opaque_color_shift"           # 双方 A=255 区 RGB 色阶偏移（≥1）
+L_STRUCT = "structural_or_missing_layer"  # 大幅色差（max|Δ|>5：撕裂/丢层）
+L_UNCLASS = "unclassified_diff"           # 兜底：失败但上列四标签全未命中（保证 labels
+                                          # 恒非空；典型=全透明区 RGB 差异 / ≤5 色阶且
+                                          # 无预乘签名的半透明漂移——合成上近隐形但存储
+                                          # 语义确有差异，交人工裁决而非静默归零）
+
+_HEATMAP_GRAY_BG = 128   # 热力图左半幅投影底色（C_comp 公式的 B 值）
+_HEATMAP_AMP = 16        # 热力图右半幅误差放大倍数
+_STRUCT_MAX_ABS = 5      # structural 标签阈值：全画幅任一 RGBA 通道 max|Δ| > 5
+
+
+def _decode_rgba(path: Path):
+    """PNG → (h, w, 4) uint8（非 RGBA 模式统一 convert，与 hash_frame 同口径）。
+
+    解码失败抛 ValueError（CLI 归入 errors 列表而非崩栈）。
+    """
+    import numpy as np
+    from PIL import Image
+    try:
+        with Image.open(path) as im:
+            im.load()
+            if im.mode != "RGBA":
+                im = im.convert("RGBA")
+            return np.array(im, dtype=np.uint8)   # 显式拷贝：脱离 PIL 图像生命周期
+    except Exception as e:
+        raise ValueError(f"PNG 解码失败: {path}: {e}") from e
+
+
+def _rdiv255(q):
+    """round(q / 255)（半向上；纯整数向量化，q 为非负 int 数组，无浮点）。"""
+    return (2 * q + 255) // 510
+
+
+def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
+    """核心裁决（numpy 向量化；ref/cand 为同形 (h,w,4) uint8 Straight RGBA）。
+
+    性能设计（1080p 分析段 ≤15ms）：Tier-1 走 np.array_equal SIMD 快路径；
+    有差异时 uint32 视图 xor（4 字节/像素）稀疏化出差异像素集，
+    全部预乘/标签数学只在差异像素子集（n_diff ≪ h·w 是常态）上做。
+    返回 dict 字段契约见 analyze_frame_diff 文档。
+    """
+    import numpy as np
+    t0 = time.perf_counter()
+    h, w = ref.shape[:2]
+    ref = np.ascontiguousarray(ref)
+    cand = np.ascontiguousarray(cand)
+
+    if np.array_equal(ref, cand):                      # Tier-1 快路径（SIMD 级比较）
+        return {"tier": TIER_EXACT, "labels": [], "w": w, "h": h,
+                "max_abs_diff": 0, "max_abs_diff_rgb": 0, "max_abs_diff_alpha": 0,
+                "n_diff_pixels": 0, "semi_diff_pixels": 0, "opaque_diff_pixels": 0,
+                "transparent_diff_pixels": 0, "premul_rounding_pixel_count": 0,
+                "max_premul_residual": 0, "halo_signature_pixels": 0,
+                "heatmap": None,
+                "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2)}
+
+    # 差异像素稀疏化：uint32 视图 xor（4 字节/像素，比逐通道 uint8 快 ~7×）；
+    # 视图不合法（对齐/步长异常）时回落逐通道 any。
+    try:
+        x = np.bitwise_xor(ref.view(np.uint32), cand.view(np.uint32))
+        idx = np.flatnonzero(x.ravel())
+    except ValueError:
+        idx = np.flatnonzero(np.bitwise_xor(ref, cand).any(axis=2).ravel())
+    rp = ref.reshape(-1, 4)[idx].astype(np.int32)      # (n,4)
+    cp = cand.reshape(-1, 4)[idx].astype(np.int32)
+    dpx = np.abs(rp - cp)                              # (n,4) 差异像素 |Δ|
+    n_diff = int(idx.size)
+    mad = int(dpx.max())
+    mad_rgb = int(dpx[:, :3].max())
+    mad_a = int(dpx[:, 3].max())
+    alpha_identical = mad_a == 0
+
+    # 差异像素按 ref α 分区（α 全等时 ref/cand 分区同义；α 有差时 alpha 标签先兜底）
+    a_r, a_c = rp[:, 3], cp[:, 3]
+    semi = (a_r > 0) & (a_r < 255)
+    opaque = a_r == 255
+    transp = a_r == 0
+    n_semi, n_opq, n_tr = int(semi.sum()), int(opaque.sum()), int(transp.sum())
+
+    # 半透明差异像素：双方 Straight RGB 重投射黑底(B=0)/白底(B=255)预乘合成空间
+    #   C_comp(C,A,B) = round((C·A + B·(255−A))/255)；白底恒等式 round(C·A/255)+(255−A)
+    res_full = np.zeros(n_diff, dtype=np.int32)        # 对齐 idx 的每像素最大残差
+    halo_px = 0
+    if n_semi:
+        rps, cps = rp[semi], cp[semi]
+        cb_ref = _rdiv255(rps[:, :3] * a_r[semi][:, None])   # round(C_ref·A_ref/255)
+        cb_cnd = _rdiv255(cps[:, :3] * a_c[semi][:, None])
+        res_b = np.abs(cb_cnd - cb_ref).max(axis=1)
+        res_w = np.abs((cb_cnd + (255 - a_c[semi][:, None]))
+                       - (cb_ref + (255 - a_r[semi][:, None]))).max(axis=1)
+        np.maximum(res_b, res_w, out=res_b)
+        res_full[semi] = res_b
+        bad = res_b > 1
+        if bad.any():   # 二次预乘签名：C_cand ≈ round(C_ref·A_ref/255)（±1/通道）
+            sig = np.abs(cps[bad][:, :3] - cb_ref[bad]).max(axis=1) <= 1
+            halo_px = int(sig.sum())
+    max_premul_res = int(res_full.max())
+    premul_ok = int(((res_full <= 1) & semi & (dpx[:, 3] == 0)).sum())
+
+    # ---- 三级裁决（labels 仅 Tier-3 填充；Tier-2 是通过态，labels 恒空）
+    tier2 = (alpha_identical and n_opq == 0 and n_tr == 0 and max_premul_res <= 1)
+    tier = TIER_PREMUL if tier2 else TIER_FAIL
+    labels = []
+    if tier == TIER_FAIL:
+        if not alpha_identical:
+            labels.append(L_ALPHA)
+        if n_semi and halo_px and halo_px == int((res_full[semi] > 1).sum()):
+            labels.append(L_HALO)   # 残差>1 的半透明差异像素全部命中二次预乘签名
+        if int((opaque & (a_c == 255)).sum()):   # 双方均不透明的差异像素必有 RGB 差 ≥1
+            labels.append(L_OPAQUE)
+        if mad > _STRUCT_MAX_ABS:
+            labels.append(L_STRUCT)
+        if not labels:
+            labels.append(L_UNCLASS)
+
+    out = {"tier": tier, "labels": labels, "w": w, "h": h,
+           "max_abs_diff": mad, "max_abs_diff_rgb": mad_rgb,
+           "max_abs_diff_alpha": mad_a, "n_diff_pixels": n_diff,
+           "semi_diff_pixels": n_semi, "opaque_diff_pixels": n_opq,
+           "transparent_diff_pixels": n_tr,
+           "premul_rounding_pixel_count": premul_ok,
+           "max_premul_residual": max_premul_res,
+           "halo_signature_pixels": halo_px, "heatmap": None}
+    if heatmap_out is not None and tier != TIER_EXACT:
+        t2point = semi & (res_full <= 1) & (dpx[:, 3] == 0)   # Tier-2 逆预乘舍入点
+        _write_heatmap(ref, idx, dpx, t2point, Path(heatmap_out))
+        out["heatmap"] = str(heatmap_out)
+    out["elapsed_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    return out
+
+
+def _write_heatmap(ref, idx, dpx, t2point, path: Path):
+    """误差热力图（RGB PNG，宽 2W，高 H；tmp+os.replace 原子写，同 golden 落盘纪律）。
+
+    左半幅：参照帧按 C_comp 公式直投灰底 B=128（半透明区显灰、全透明区显底色，
+    α 结构一眼可辨）；右半幅：误差放大 16× 伪彩——绿=Tier-2 逆预乘舍入点，
+    红=Tier-3 实质错误像素，亮度 ∝ min(255, 16·该像素 max|Δ|)。
+    """
+    import numpy as np
+    from PIL import Image
+    h, w = ref.shape[:2]
+    canvas = np.zeros((h, 2 * w, 3), dtype=np.uint8)
+    a = ref[:, :, 3:4].astype(np.int32)
+    numer = ref[:, :, :3].astype(np.int32) * a + _HEATMAP_GRAY_BG * (255 - a)
+    canvas[:, :w] = _rdiv255(numer).astype(np.uint8)
+    amp = np.minimum(255, _HEATMAP_AMP * dpx.max(axis=1)).astype(np.uint8)  # (n,)
+    flat = canvas.reshape(-1, 3)
+    ridx = idx + w * (idx // w + 1)     # 左帧线性位置 → 右半幅对应线性位置
+    flat[ridx[~t2point], 0] = amp[~t2point]
+    flat[ridx[t2point], 1] = amp[t2point]
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp")
+    Image.fromarray(canvas, "RGB").save(str(tmp), format="PNG", compress_level=3)
+    os.replace(tmp, path)
+
+
+def analyze_frame_diff(ref_path, cand_path, heatmap_out=None) -> dict:
+    """三级像素比对裁决（issue #104；跨后端 Chrome CDP / CEF / Electron 审计底座）。
+
+    对一对已落盘 PNG（解码口径与 hash_frame 一致：统一 RGBA 8-bit Straight）：
+
+      Tier-1 verified_exact：全画幅 max_abs_diff == 0。
+      Tier-2 premul_equivalent：不满足 Tier-1 时，α 通道全等（max|ΔA|==0）、差异
+          像素全部位于半透明区（0<A<255，等价于 A=0/A=255 区零差异），且双方
+          Straight RGB 重投射回黑底与白底预乘合成空间
+          C_comp(C,A,B)=round((C·A+B·(255−A))/255) 后两种底色下
+          max|ΔC_comp| ≤ 1 → 判「逆预乘整数舍入等价」（通过）。
+      Tier-3 visual_failure：其余一律失败；labels 可多标签共存（按 issue 顺序）：
+          alpha_channel_diff / premul_double_blend_halo（半透明区 Δ_premul>1 且
+          这些像素全部满足 C_cand ≈ round(C_ref·A_ref/255)，±1/通道——把已预乘
+          BGRA 当非预乘直接存 PNG 的发黑签名）/ opaque_color_shift（双方 A=255
+          差异像素，RGB 差 ≥1）/ structural_or_missing_layer（max|Δ|>5）。四标签
+          全未命中时补 unclassified_diff 兜底，保证失败帧 labels 恒非空。
+
+    heatmap_out 给定且落入 Tier-2/Tier-3 时原子写热力图（diff_f{:04d}.png 由 CLI
+    命名）并回填 heatmap 字段；Tier-1 恒不产热力图。
+
+    返回 dict（JSON 可序列化）：tier / labels / w / h / max_abs_diff(_rgb,_alpha) /
+    n_diff_pixels / semi|opaque|transparent_diff_pixels（差异像素按 ref α 分区）/
+    premul_rounding_pixel_count / max_premul_residual（半透明差异像素的黑底+白底
+    重投影最大残差；Tier-2 定义上 ≤1）/ halo_signature_pixels / heatmap /
+    elapsed_ms（分析段，含热力图生成）/ decode_ms（PNG 解码段）。
+
+    尺寸不一致或解码失败抛 ValueError（CLI 归入 errors，不崩栈）。
+    """
+    t0 = time.perf_counter()
+    ref = _decode_rgba(Path(ref_path))
+    cand = _decode_rgba(Path(cand_path))
+    t1 = time.perf_counter()
+    if ref.shape != cand.shape:
+        raise ValueError(f"帧尺寸不一致: ref {ref.shape[1]}x{ref.shape[0]} vs "
+                         f"cand {cand.shape[1]}x{cand.shape[0]}（{cand_path}）")
+    out = _analyze_arrays(ref, cand, heatmap_out=heatmap_out)
+    out["decode_ms"] = round((t1 - t0) * 1000, 2)
+    return out
 
 
 # ---------------------------------------------------------------- build
@@ -381,11 +606,95 @@ def cmd_compare(args) -> int:
     return 0 if ok else 1
 
 
+# ---------------------------------------------------------------- analyze（#104 深度像素审计）
+
+def _frame_files(d: Path):
+    """目录内 f%04d.png 帧名集合（严格 f+4 位数字，防 f12a3.png/f0000x.png 混入）。"""
+    return {p.name for p in d.iterdir() if p.is_file() and len(p.name) == 9
+            and p.name[0] == "f" and p.name[1:5].isdigit() and p.name[5:] == ".png"}
+
+
+def _frame_no(stem: str) -> int:
+    """帧号：f0007 → 7；非帧命名 stem → 0（单文件模式热力图记 diff_f0000.png）。"""
+    return int(stem[1:]) if len(stem) == 5 and stem[0] == "f" and stem[1:].isdigit() else 0
+
+
+def cmd_analyze(args) -> int:
+    ref, cand = Path(args.ref), Path(args.cand)
+    for p, side in ((ref, "--ref"), (cand, "--cand")):
+        if not p.exists():
+            print(f"✗ {side} 路径不存在: {p}")
+            return 1
+    if ref.is_dir() != cand.is_dir():
+        print(f"✗ --ref 与 --cand 必须同为 PNG 文件或同为 f%04d.png 帧目录"
+              f"（ref={'目录' if ref.is_dir() else '文件'}，"
+              f"cand={'目录' if cand.is_dir() else '文件'}）")
+        return 1
+    hm_dir = Path(args.heatmap_dir) if args.heatmap_dir else None
+
+    if ref.is_file():
+        pairs = [(_frame_no(ref.stem), ref, cand)]
+        errors = []
+    else:
+        rn, cn = _frame_files(ref), _frame_files(cand)
+        pairs = [(int(n[1:5]), ref / n, cand / n) for n in sorted(rn & cn)]
+        errors = [{"frame": n[1:5], "ref": str(ref / n), "cand": "",
+                   "why": "cand 侧缺帧（不配对、不静默跳过）"} for n in sorted(rn - cn)]
+        errors += [{"frame": n[1:5], "ref": "", "cand": str(cand / n),
+                    "why": "ref 侧缺帧（不配对、不静默跳过）"} for n in sorted(cn - rn)]
+        if not pairs and not errors:
+            errors.append({"frame": "", "ref": str(ref), "cand": str(cand),
+                           "why": "两目录无同名 f%04d.png 帧对"})
+
+    frames = []
+    for num, rp, cp in pairs:
+        try:
+            r = analyze_frame_diff(
+                rp, cp, heatmap_out=(hm_dir / f"diff_f{num:04d}.png" if hm_dir else None))
+            frames.append({"frame": f"{num:04d}", **r})
+        except ValueError as e:
+            errors.append({"frame": f"{num:04d}", "ref": str(rp), "cand": str(cp),
+                           "why": str(e)})
+
+    n_t1 = sum(1 for f in frames if f["tier"] == TIER_EXACT)
+    n_t2 = sum(1 for f in frames if f["tier"] == TIER_PREMUL)
+    n_t3 = sum(1 for f in frames if f["tier"] == TIER_FAIL)
+    ok = not errors and n_t3 == 0 and bool(frames)
+
+    print(f"== gfx 帧深度审计（ref={ref} cand={cand}，{len(frames)} 对帧）==")
+    for f in frames:
+        hm = f" → {f['heatmap']}" if f["heatmap"] else ""
+        if f["tier"] == TIER_EXACT:
+            print(f"  ✓ Tier-1 f{f['frame']} 全画幅零差异")
+        elif f["tier"] == TIER_PREMUL:
+            print(f"  ≈ Tier-2 f{f['frame']} 逆预乘舍入 "
+                  f"{f['premul_rounding_pixel_count']} 点"
+                  f"（残差 ≤{f['max_premul_residual']}）{hm}")
+        else:
+            print(f"  ✗ Tier-3 f{f['frame']} {f['labels']} "
+                  f"max|Δ|={f['max_abs_diff']} 差异像素 {f['n_diff_pixels']}{hm}")
+    for e in errors:
+        print(f"  ✗ 帧错误  {e['frame']}: {e['why']}")
+    print(("✓ 通过" if ok else "✗ 未通过") +
+          f"：Tier-1 {n_t1} / Tier-2 {n_t2} / Tier-3 {n_t3} / 错误 {len(errors)}"
+          + ("（Tier-1/Tier-2 均为通过）" if ok else "（任一 Tier-3 或错误即失败）"))
+    if args.report:
+        report = {"ok": ok, "ref": str(ref), "cand": str(cand),
+                  "compared": len(frames),
+                  "tiers": {TIER_EXACT: n_t1, TIER_PREMUL: n_t2, TIER_FAIL: n_t3},
+                  "frames": frames, "errors": errors}
+        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1),
+                                     encoding="utf-8")
+        print(f"  报告已写入 {args.report}")
+    return 0 if ok else 1
+
+
 # ---------------------------------------------------------------- CLI
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        description="gfx 帧 golden 像素基线构建/比对（导出通道改造的像素一致性硬门槛）")
+        description="gfx 帧 golden 像素基线构建/比对 + 三级像素深度审计"
+                    "（Tier-1 Exact / Tier-2 Premul-Equivalent / Tier-3 Failure+热力图）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("build", help="从现有 cache/gfx 帧产物构建 golden 像素基线")
@@ -407,7 +716,19 @@ def main(argv=None) -> int:
                    help="新鲜度防线判失败：被比帧 mtime 全部 ≤ golden 构建时间（缓存未重渲）"
                         "时 exit 1（默认仅显式警告）")
 
+    a = sub.add_parser("analyze",
+                       help="深度像素审计：三级裁决 Tier-1/2/3 + 误差热力图（跨后端帧对帧比对）")
+    a.add_argument("--ref", required=True,
+                   help="参照帧：PNG 文件或 f{:04d}.png 帧目录（golden 基线侧）")
+    a.add_argument("--cand", required=True,
+                   help="候选帧：PNG 文件或帧目录（须与 --ref 同类型；被审后端侧）")
+    a.add_argument("--heatmap-dir", default="",
+                   help="Tier-2/Tier-3 帧热力图输出目录（diff_f{:04d}.png，tmp+replace 原子写）")
+    a.add_argument("--report", default="", help="审计结果 JSON 输出路径（可选）")
+
     args = ap.parse_args(argv)
+    if args.cmd == "analyze":
+        return cmd_analyze(args)
     return cmd_build(args) if args.cmd == "build" else cmd_compare(args)
 
 
