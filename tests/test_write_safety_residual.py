@@ -167,6 +167,33 @@ class WriteSafetyResidual(unittest.TestCase):
         self.assertFalse(any(p.name.endswith('.tmp') for p in
                              (self.root / 'cache/snapshots').iterdir()))
 
+    def test_snapshot_preplanted_staging_hardlink_refused_by_exclusive_create(self):
+        """issue #59 缺陷2 回归（红队 mut-hardlink-noexcl 演练固化）：staging
+        目录可被列目录发现、叶子名可猜，预置硬链接是普通文件、能穿过
+        O_NOFOLLOW——叶子 open 的 O_EXCL 是承载性防护：必须 EEXIST 干净拒绝
+        （ProjectPathError + FileExistsError 链），victim（硬链接目标 inode）
+        内容绝不被写入，且不留半途快照。"""
+        (self.root / 'page.html').write_text('<p>asset</p>')
+        self.gfx('page.html')
+        planted = []
+        real = hygiene._snapshot_write_at
+        def write(fd, relative, data):
+            # timeline.json 是首个载荷：借首个写窗把 victim 硬链接预置到后续
+            # 叶子 page.html（普通文件身份，O_NOFOLLOW 拦不住，唯 O_EXCL 可拒）
+            if not planted:
+                os.link(self.victim, 'page.html', dst_dir_fd=fd)
+                planted.append(True)
+            return real(fd, relative, data)
+        with mock.patch.object(hygiene, '_snapshot_write_at', side_effect=write):
+            with self.assertRaises(ProjectPathError) as raised:
+                hygiene.snapshot(self.c)
+        self.assertTrue(planted)
+        self.assertIsInstance(raised.exception.__cause__, FileExistsError)
+        self.assertEqual(self.victim.read_bytes(), b'unchanged')
+        self.assert_no_snapshot()
+        self.assertFalse(any(p.name.endswith('.tmp') for p in
+                             (self.root / 'cache/snapshots').iterdir()))
+
     def test_snapshot_final_write_root_exchange_does_not_write_outside(self):
         real = hygiene._snapshot_write_at
         snaps = self.root / 'cache/snapshots'
