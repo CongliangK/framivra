@@ -62,3 +62,4 @@ apps/matting/resolve_matte/uinject
 # tech-talk 模板包占位素材豁免（骨架开箱可 validate）
 !skills/tech-talk/assets/presets/placeholders/*.mp4
 !skills/tech-talk/assets/presets/placeholders/*.wav
+.agents/

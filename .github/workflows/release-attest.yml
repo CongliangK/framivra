@@ -1,0 +1,128 @@
+# 候选期注意（2026-10-14，编排轮 #16/#41）：
+# - verify-only 模式已获用户授权：对固定测试文件生成真实 attestation 并验证，
+#   不创建 tag、不发布 Release；测试证明进入公开透明日志已被告知接受。
+# - sign-release 模式是待授权骨架：真实正式发版前不得 dispatch；本模式
+#   只签名并核验证词，不自动发布任何内容。
+# - PR 事件绝无签名权限：本 workflow 仅 workflow_dispatch 触发，job 级最小授权。
+name: release-attest
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "verify-only(已授权) | sign-release(需正式发版授权)"
+        type: choice
+        default: verify-only
+        options: [verify-only, sign-release]
+      tag:
+        description: "sign-release 模式:待签名资产的既有 release tag(vX.Y.Z)"
+        default: ""
+      digest:
+        description: "可选:预期 source commit digest(40 位 sha)"
+        default: ""
+
+permissions: {}
+
+jobs:
+  verify-only:
+    # 用户授权的「仅验证模式」:对固定测试文件生成真 attestation,并用与
+    # scripts/verify_release.py 同款的严格策略链真实验证——这是 #16/#41
+    # 的真实正例来源(mock 不能充当)。零发布、零 tag、零正式资产。
+    if: inputs.mode == 'verify-only'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Create fixed test artifact
+        run: |
+          printf 'framivra provenance verify-only test\ncommit=%s\ndate=%s\n' \
+            "$(git rev-parse HEAD)" "$(date -u +%FT%TZ)" > "$RUNNER_TEMP/provenance-test.txt"
+          sha256sum "$RUNNER_TEMP/provenance-test.txt"
+      - uses: actions/attest-build-provenance@9d57eef8c06cd9d6b433effeeb7a6a77b3ff94ad # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/provenance-test.txt
+          show-snippet: false
+      - name: Verify with strict identity policy (same chain as scripts/verify_release.py)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "$RUNNER_TEMP/provenance-test.txt" \
+            --repo CongliangK/framivra \
+            --hostname github.com \
+            --cert-oidc-issuer https://token.actions.githubusercontent.com \
+            --signer-workflow github.com/CongliangK/framivra/.github/workflows/release-attest.yml \
+            --source-ref refs/heads/main \
+            --deny-self-hosted-runners \
+            --format json > /tmp/verified.json
+          python3 - <<'PY'
+          import json, sys
+          verified = json.load(open("/tmp/verified.json"))
+          assert isinstance(verified, list) and verified, "empty verification list"
+          for entry in verified:
+              vr = entry.get("verificationResult") or {}
+              assert (vr.get("signature") or {}).get("certificate"), "missing certificate"
+              assert vr.get("verifiedTimestamps"), "missing transparency-log witness"
+          print("policy check PASS: %d attestation(s), certificate + transparency log witnessed" % len(verified))
+          PY
+
+  sign-release:
+    # 待授权骨架:对既有 release tag 的四资产(SHA256SUMS/载荷/install.sh/
+    # releases.json)生成 attestation 并严格验证;成功前不进入任何 publish。
+    # dispatch 需同时给 mode=sign-release 与非空 tag,否则直接跳过。
+    if: inputs.mode == 'sign-release' && inputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+      - name: Download release assets and attest them
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          test "${TAG#v}" != "$TAG" || { echo "tag must be vX.Y.Z"; exit 2; }
+          mkdir -p "$RUNNER_TEMP/assets" && cd "$RUNNER_TEMP/assets"
+          gh release download "$TAG" --repo CongliangK/framivra \
+            --pattern 'SHA256SUMS' --pattern "video-tools-*.tar.gz" \
+            --pattern 'install.sh' --pattern 'releases.json' || {
+              echo "release assets not found (no release authorized yet?)"; exit 2; }
+      - uses: actions/attest-build-provenance@9d57eef8c06cd9d6b433effeeb7a6a77b3ff94ad # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/assets/*
+          show-snippet: false
+      - name: Verify all assets with strict policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/assets"
+          REF_ARGS=(--source-ref "refs/tags/$TAG")
+          if [ -n "$DIGEST" ]; then REF_ARGS+=(--source-digest "$DIGEST"); fi
+          for f in *; do
+            gh attestation verify "$f" \
+              --repo CongliangK/framivra \
+              --hostname github.com \
+              --cert-oidc-issuer https://token.actions.githubusercontent.com \
+              --signer-workflow github.com/CongliangK/framivra/.github/workflows/release-attest.yml \
+              --deny-self-hosted-runners "${REF_ARGS[@]}"
+            echo "verified: $f"
+          done
+      # 发布动作(draft→publish)仍在 scripts/release_github.py 链内;
+      # 本 job 只生成并核验证词,不发布——正式发版需用户另行授权。

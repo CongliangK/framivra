@@ -37,6 +37,8 @@ import io
 import json
 import math
 import os
+import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -71,16 +73,16 @@ case "$cmd" in
     done
     dur=$(cat "$(dirname "$proj")/duration.txt" 2>/dev/null || echo 4.0)
     mkdir -p "$out/stems"
-    ffmpeg -v error -y -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=$dur" \
+    ffmpeg -nostdin -v error -y -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=$dur" \
       -ac 2 "$out/mix_master.wav"
-    ffmpeg -v error -y -f lavfi -i "sine=frequency=330:sample_rate=44100:duration=$dur" \
+    ffmpeg -nostdin -v error -y -f lavfi -i "sine=frequency=330:sample_rate=44100:duration=$dur" \
       -ac 2 "$out/mix_premaster.wav"
     # bus stems：tracks.txt 每轨一个（48k f32 2ch，对齐 music_tools mixer 的
     # stems/<轨>.bus.wav 规格）；结果 JSON 的 stems 映射是引擎级路径（真实口径）。
     stems=""
     while read -r t; do
       [ -z "$t" ] && continue
-      ffmpeg -v error -y -f lavfi -i "sine=frequency=880:sample_rate=48000:duration=$dur" \
+      ffmpeg -nostdin -v error -y -f lavfi -i "sine=frequency=880:sample_rate=48000:duration=$dur" \
         -ac 2 -c:a pcm_f32le "$out/stems/$t.bus.wav"
       stems="$stems\"$t\": {\"path\": \"$out/stems/$t.sfz.wav\"},"
     done < "$(dirname "$proj")/tracks.txt"
@@ -305,6 +307,27 @@ class SharedRenderCache(_Base):
         self.assertTrue((shared / "_complete.json").is_file())
         self.assertTrue((shared / "stems" / "strings.bus.wav").is_file())
         self.assertTrue((shared / "stems" / "kick.bus.wav").is_file())
+
+    def test_fake_renderer_preserves_tracks_with_stdin_consuming_ffmpeg(self):
+        """FFmpeg stdin polling must not eat the next track in the shell read loop."""
+        real_ffmpeg = shutil.which("ffmpeg")
+        self.assertIsNotNone(real_ffmpeg, "fake renderer requires real FFmpeg")
+        tools = self.root / "stdin-polling-tools"
+        tools.mkdir()
+        wrapper = tools / "ffmpeg"
+        # Make the older FFmpeg interactive-stdin behaviour deterministic even
+        # on versions that do not poll stdin during these short fixture renders.
+        wrapper.write_text(
+            '#!/bin/bash\n'
+            'case " $* " in\n'
+            '  *" -nostdin "*) ;;\n'
+            '  *) dd bs=1 count=1 of=/dev/null 2>/dev/null ;;\n'
+            'esac\n'
+            f'exec {shlex.quote(real_ffmpeg)} "$@"\n', encoding="utf-8")
+        wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC)
+        with mock.patch.dict(os.environ, {"PATH": str(tools) + os.pathsep +
+                                         os.environ.get("PATH", "")}):
+            self.test_two_stem_sources_render_exactly_once()
 
     def test_master_and_stem_share_single_render(self):
         """master 与 stem 输出混排同工程：仍恰好一次渲染。"""

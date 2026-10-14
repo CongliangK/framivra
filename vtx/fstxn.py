@@ -32,10 +32,131 @@ API（上下文管理器 + mutator 两形态）：
 重入即死锁）；对其他路径的嵌套事务须保持全仓一致的获取顺序（receipt 主件
 先于 prev 伴生件）。
 """
-import contextlib, copy, json, os, tempfile, threading
+import contextlib, copy, json, os, stat, tempfile, threading
 from pathlib import Path
 
-__all__ = ["locked_write", "locked_update", "atomic_write"]
+__all__ = ["locked_write", "locked_update", "atomic_write",
+           "cleanup_identity", "remove_pinned"]
+
+# Capture the real APIs once: tests may instrument the final unlink syscall.
+_CLEANUP_DIR_FD_APIS = (os.open, os.stat, os.unlink, os.rmdir)
+
+
+def _cleanup_error(path, reason):
+    from .infra import ProjectPathError
+    return ProjectPathError(f"拒绝清理 {path}：{reason}")
+
+
+def _identity(info):
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))
+
+
+def cleanup_identity(path):
+    """Read-only plan token: identities of every ancestor and the leaf.
+
+    Never keep descriptors in a preview plan. Execution reopens the same inode
+    chain with O_NOFOLLOW; a missing candidate is harmless and never authorizes
+    deleting a replacement that appears later.
+    """
+    path = Path(os.path.abspath(path))
+    chain = list(reversed(path.parents)) + [path]
+    result = []
+    for component in chain:
+        try:
+            info = component.lstat()
+        except FileNotFoundError:
+            return None
+        if component != path and not stat.S_ISDIR(info.st_mode):
+            raise _cleanup_error(path, "计划祖先不是普通目录（不跟随符号链接）")
+        result.append(_identity(info))
+    return tuple(result)
+
+
+def remove_pinned(path, expected, *, preserve):
+    """Delete relative to pinned no-follow directory descriptors, never paths.
+
+    The plan binds the whole ancestry including the project/cache/out root.
+    Recursive traversal uses only dir_fd operations; replacing an ancestor after
+    the last identity check cannot redirect unlink into its new symlink target.
+    preserve(relative_path) is checked for every descendant, so newly created
+    locks survive even when their parent was planned as a whole-directory item.
+    POSIX fd primitives are mandatory; there is no unsafe path-based fallback.
+    This protects namespace substitution, not a hostile process physically
+    moving unrelated protected inodes into an authorized garbage directory.
+    """
+    if expected is None:
+        return
+    if (not getattr(os, 'O_NOFOLLOW', 0) or not getattr(os, 'O_DIRECTORY', 0)
+            or not all(api in os.supports_dir_fd for api in _CLEANUP_DIR_FD_APIS)
+            or os.stat not in os.supports_follow_symlinks
+            or os.listdir not in os.supports_fd):
+        raise _cleanup_error(path, "平台不支持安全 dir_fd/O_NOFOLLOW 清理")
+    path = Path(os.path.abspath(path))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptors = []
+    try:
+        fd = os.open(path.anchor, flags)
+        descriptors.append(fd)
+        if _identity(os.fstat(fd)) != expected[0]:
+            raise _cleanup_error(path, "计划根身份已变化")
+        for index, name in enumerate(path.parts[1:-1], 1):
+            fd = os.open(name, flags, dir_fd=fd)
+            descriptors.append(fd)
+            if _identity(os.fstat(fd)) != expected[index]:
+                raise _cleanup_error(path, "计划祖先身份已变化")
+        _remove_at(fd, path.name, path, expected[-1], flags, preserve)
+    except FileNotFoundError:
+        # Another collector already removed the entry/ancestor. No deletion is
+        # redirected to any later replacement, and idempotent cleanup is kept.
+        return
+    except OSError as error:
+        raise _cleanup_error(path, f"路径变化或安全删除失败（{error}）") from error
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _remove_at(parent_fd, name, path, expected, flags, preserve):
+    info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if _identity(info) != expected:
+        raise _cleanup_error(path, "计划条目身份已变化")
+    if preserve(path):
+        return False
+    if not stat.S_ISDIR(info.st_mode):
+        os.unlink(name, dir_fd=parent_fd)  # unlink never follows the leaf
+        return True
+    child_fd = os.open(name, flags, dir_fd=parent_fd)
+    try:
+        if _identity(os.fstat(child_fd)) != expected:
+            raise _cleanup_error(path, "目录在打开时被置换")
+        complete = True
+        for child in sorted(os.listdir(child_fd)):
+            try:
+                child_info = os.stat(child, dir_fd=child_fd, follow_symlinks=False)
+                removed = _remove_at(child_fd, child, path / child,
+                                     _identity(child_info), flags, preserve)
+                complete = complete and removed
+            except FileNotFoundError:
+                continue
+        if not complete:
+            return False
+        # The descriptor pins traversal, but rmdir still acts on a directory
+        # entry. Refuse a replaced entry instead of removing a new directory.
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if _identity(current) != expected:
+            raise _cleanup_error(path, "目录在删除时被置换")
+        try:
+            os.rmdir(name, dir_fd=parent_fd)
+        except OSError as error:
+            import errno
+            if error.errno == errno.ENOTEMPTY:
+                # Concurrent writer/new lock: keep the directory, never retry
+                # with an unbounded recursive delete of unexamined contents.
+                return False
+            raise
+        return True
+    finally:
+        os.close(child_fd)
 
 try:
     import fcntl    # POSIX 跨进程文件锁；Windows 缺该模块（降级见模块头注释）

@@ -275,7 +275,14 @@ class TestBuildAudioValidation(unittest.TestCase):
             def __exit__(self, *a): return False
             def getnframes(self): return self.n
 
-        with mock.patch.object(stages.wave, "open", lambda *a, **k: _FakeWave(expect + 500)):
+        real_open = stages.wave.open
+        def drift_only_final(path, *args, **kwargs):
+            # Do not replace recovery's independent staging-file integrity check.
+            if Path(path) == self.c.out / "audio.wav":
+                return _FakeWave(expect + 500)
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch.object(stages.wave, "open", drift_only_final):
             with self.assertRaises(SystemExit) as cm:
                 stages.build_audio(self.c)
         self.assertEqual(cm.exception.code, 1)
