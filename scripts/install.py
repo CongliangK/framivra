@@ -688,7 +688,8 @@ def install(args):
     version = (args.version or "").lstrip("v") or discover_version(latest_url)
     if not version or not re.fullmatch(r"[A-Za-z0-9.v_-]+", version):
         raise InstallError("版本串为空或含非法字符: %r" % version)
-    # 发布者身份策略先于任何载荷下载(快速失败,零网络依赖)。
+    # 发布者身份策略先于任何载荷下载(快速失败;版本发现的一次 releases.json
+    # 元数据读取除外——见上方 discover_version)。
     prov = _provenance_gate(args, base_url)
     log("安装根: %s" % target)
     log("安装版本: %s" % version)
