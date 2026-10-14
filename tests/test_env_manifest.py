@@ -48,8 +48,9 @@ NVIDIA_OK = {"nvidia-smi":
 FC_LINES = ("/usr/fake-fonts/NotoSansCJK-VF.ttc: Noto Sans CJK SC\n"
             "/usr/fake-fonts/Inter-Regular.otf: Inter,Inter\n"
             "/usr/fake-fonts/Inter-Bold.otf: Inter\n")
-FC_MATCH_SANS = ("/usr/fake-fonts/NotoSansCJK-VF.ttc: "
-                 '"Noto Sans CJK SC" "Regular"\n')
+FC_MATCH_FILE = "/usr/fake-fonts/NotoSansCJK-VF.ttc\n"          # --format %{file} 输出
+FC_MATCH_DEFAULT = ('/usr/fake-fonts/NotoSansCJK-VF.ttc: '
+                    '"Noto Sans CJK SC" "Regular"\n')            # 默认输出（回退解析路）
 XDPY_OK = {"xdpyinfo":
            "name of display:    :0\nversion number:    11.0\n"
            "vendor string:    The X.Org Foundation\n"
@@ -93,7 +94,12 @@ def patched_seams(*, cmds=None, texts=None, bytes_=None, servers=None,
 
     def run_cmd(argv, timeout):
         argv = list(argv)
-        key = "git " + " ".join(argv[3:]) if argv[0] == "git" else argv[0]
+        if argv[0] == "git":
+            key = "git " + " ".join(argv[3:])
+        elif argv[0] == "fc-match" and "--format" in argv:
+            key = "fc-match format"
+        else:
+            key = argv[0]
         canned = cmds.get(key)
         if canned is None:
             return None
@@ -123,7 +129,7 @@ def stub_cmds(**extra):
     cmds = dict(GIT_CLEAN_AT_BASELINE)
     cmds.update(NVIDIA_OK)
     cmds["fc-list"] = FC_LINES
-    cmds["fc-match"] = FC_MATCH_SANS
+    cmds["fc-match format"] = FC_MATCH_FILE
     cmds.update(XDPY_OK)
     cmds.update(extra)
     return cmds
@@ -334,7 +340,7 @@ class TestGpuDriverAndVram(unittest.TestCase):
 class TestFontsFingerprint(unittest.TestCase):
     def _fonts(self, cmds="DEFAULT", bytes_=None):
         if cmds == "DEFAULT":
-            cmds = {"fc-list": FC_LINES, "fc-match": FC_MATCH_SANS}
+            cmds = {"fc-list": FC_LINES, "fc-match format": FC_MATCH_FILE}
         seams = {"cmds": cmds,
                  "bytes_": bytes_ if bytes_ is not None else dict(FONT_BYTES)}
         with patched_seams(**seams):
@@ -343,12 +349,20 @@ class TestFontsFingerprint(unittest.TestCase):
     def test_family_match_case_insensitive(self):
         fp = self._fonts(cmds={
             "fc-list": "/usr/f/noto.ttc: noto sans cjk sc\n",
-            "fc-match": "/usr/f/noto.ttc: noto sans cjk sc\n",
+            "fc-match format": "/usr/f/noto.ttc\n",
         }, bytes_={"/usr/f/noto.ttc": b"cjk"})
         self.assertEqual(fp["required"]["Noto Sans CJK SC"]["status"], "ok")
         self.assertEqual(fp["required"]["Noto Sans CJK SC"]["files"],
                          {"/usr/f/noto.ttc": hashlib.sha256(b"cjk").hexdigest()})
         self.assertEqual(fp["required"]["Inter"]["status"], "missing")
+
+    def test_fc_match_default_output_fallback_path(self):
+        """--format %{file} 不被支持时回退解析默认输出 `<file>: <family>`
+        （真机踩坑：默认输出可能只给 basename，全路径以 --format 为权威）。"""
+        fp = self._fonts(cmds={"fc-list": FC_LINES, "fc-match": FC_MATCH_DEFAULT})
+        self.assertEqual(fp["sans-serif"]["status"], "ok")
+        self.assertEqual(fp["sans-serif"]["files"],
+                         {"/usr/fake-fonts/NotoSansCJK-VF.ttc": NOTO_SHA})
 
     def test_unreadable_font_file_flags_entry(self):
         """字体文件存在但读不到内容 → 该家族 entry 判 unreadable（宁缺毋造）。"""

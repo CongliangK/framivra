@@ -347,15 +347,24 @@ def _parse_fc_list(stdout: str) -> dict:
 
 
 def _fc_match_file(pattern: str):
-    """fc-match 解析泛型名（sans-serif）→ 具体字体文件；失败 → None。"""
+    """fc-match 解析泛型名（sans-serif）→ 具体字体文件全路径。
+
+    首选 `--format %{file}`（本机实测默认输出只给 basename——裸文件名相对
+    cwd 不可哈希，曾致 sans-serif 误判 unreadable）；--format 不可用/空输出时
+    回退解析默认输出 `<file>: <family>`。两路皆失效 → None。"""
+    r = _run_cmd(["fc-match", "--format", "%{file}", pattern], FC_TIMEOUT)
+    if r is not None and r.returncode == 0:
+        lines = (r.stdout or "").strip().splitlines()
+        if lines and lines[0].strip():
+            return lines[0].strip()
     r = _run_cmd(["fc-match", pattern], FC_TIMEOUT)
-    if r is None or r.returncode != 0:
-        return None
-    lines = (r.stdout or "").strip().splitlines()
-    if not lines:
-        return None
-    file_part, sep, _ = lines[0].partition(": ")
-    return file_part if sep and file_part else None
+    if r is not None and r.returncode == 0:
+        lines = (r.stdout or "").strip().splitlines()
+        if lines:
+            file_part, sep, _ = lines[0].partition(": ")
+            if sep and file_part:
+                return file_part
+    return None
 
 
 def _collect_fonts_fingerprint() -> dict:
