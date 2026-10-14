@@ -1,4 +1,4 @@
-# install_windows.ps1 —— Windows 原生一行安装引导(可审计小脚本,零业务逻辑)
+﻿# install_windows.ps1 —— Windows 原生一行安装引导(可审计小脚本,零业务逻辑)
 # 用法(PowerShell):
 #   powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing <raw-url>/scripts/install_windows.ps1 -OutFile $env:TEMP\vt-i.ps1; & $env:TEMP\vt-i.ps1"
 # 无人值守:引导脚本末尾追加参数 --non-interactive(透传给 install.py)。
