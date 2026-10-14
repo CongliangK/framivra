@@ -406,6 +406,16 @@ class AnalyzeFrameDiffEdges(unittest.TestCase):
         self.assertEqual(r["max_premul_residual"], 1)
         self.assertEqual(r["premul_rounding_pixel_count"], 1)
 
+    def test_white_bg_residual_computed_when_alpha_differs(self):
+        """α 不同的半透明像素：白底残差(44) > 黑底残差(28)，max_premul_residual
+        取双底色 max —— 锁定白底链语义（α 相等时白底≡黑底是数学恒等，不触发）。"""
+        cand = self._base()
+        cand[4, 4] = (100, 100, 100, 200)   # 黑底 50 vs 78=28；白底 177 vs 133=44
+        r = self._analyze(self._base(), cand)
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertIn(gg.L_ALPHA, r["labels"])
+        self.assertEqual(r["max_premul_residual"], 44)
+
     def test_premul_residual_2_is_tier3_unclassified(self):
         """A=128、Straight 100 vs 103：残差 2 超容差 → Tier-3；无预乘签名、
         max|Δ|=3 ≤5 → 四官方标签全不命中，兜底 unclassified_diff 且 labels 非空。"""
@@ -612,8 +622,9 @@ class AnalyzeCli(unittest.TestCase):
 class AnalyzePerf(unittest.TestCase):
     """#104 性能门：1080p 分析段（解码外、纯裁决数学）中位 ≤15ms。
 
-    两条路径各测：Tier-1 快路径（xor+any 全帧扫描）与稀疏差异全分类路径
-    （预乘重投影数学）；heatmap 关闭（预算口径=纯比对，热力图是可选附加产物）。
+    Tier-1 快路径与稀疏差异全分类路径按 #104 预算断言（≤15ms 中位）；
+    稠密 Tier-2（30% 像素低 α 舍入差异）另设 40ms 回归护栏（本机参考 ~18ms，
+    预算口径与实测包络见 scripts/gfx_golden.py 模块 docstring）。
     """
 
     def test_1080p_analysis_budget(self):
@@ -646,6 +657,19 @@ class AnalyzePerf(unittest.TestCase):
         self.assertEqual(r["tier"], gg.TIER_PREMUL)   # A=128 下 +1 直存差 → 残差 ≤1
         self.assertGreater(r["n_diff_pixels"], 0)
         self.assertLessEqual(med_diff, 15.0)
+
+        # 稠密 Tier-2（~30% 像素低 α 逆预乘舍入差异，全部走快速通道）：
+        # 本机参考 ~18ms，40ms 为回归护栏（非 15ms 预算口径，见模块 docstring 包络）
+        A = np.broadcast_to(1 + (np.arange(w) % 15), (h, w))
+        P = np.arange(h)[:, None] % (A + 1)
+        s_up = np.minimum(255, _rhu(P * 255, A))
+        s_dn = np.minimum(255, (P * 255) // A)
+        ref3 = np.dstack([s_up, s_up, s_up, A]).astype(np.uint8)
+        cand3 = np.dstack([s_dn, s_dn, s_dn, A]).astype(np.uint8)
+        med_dense, r3 = median_ms(ref3, cand3)
+        self.assertEqual(r3["tier"], gg.TIER_PREMUL)
+        self.assertEqual(r3["premul_rounding_pixel_count"], r3["n_diff_pixels"])
+        self.assertLessEqual(med_dense, 40.0)
 
         with tempfile.TemporaryDirectory(prefix="gfx_analyze_perf_") as td:
             # 端到端含 PNG 编解码：只做 sanity 断言（解码耗时另见 decode_ms 字段）

@@ -26,8 +26,10 @@ golden JSON 结构（自包含、无歧义）：
       [--heatmap-dir dir] [--report report.json]
 
 三级像素裁决（issue #104，analyze 子命令 / analyze_frame_diff）：
-  golden hash 只能说「有差异」；深度审计把一对帧（ref/cand，如 Chrome CDP 基线
-  vs CEF/Electron 候选）逐像素裁决为三级——
+  golden hash 只能说「有差异」，且 compare 时点手上只有 golden 的 hash、没有
+  参照像素（golden 不存图）；深度审计需要 ref/cand 两套帧产物并列，故独立成
+  analyze 子命令（--ref/--cand 各取 PNG 文件或 f{:04d}.png 帧目录），把一对帧
+  （如 Chrome CDP 基线 vs CEF/Electron 候选）逐像素裁决为三级——
   Tier-1 verified_exact：解码后 8-bit Straight RGBA 全画幅零差异；
   Tier-2 premul_equivalent：仅半透明区（0<A<255）Straight RGB 差异，且黑底+白底
   预乘重投影（C_comp=round((C·A+B·(255−A))/255)）残差 ≤1（逆预乘整数舍入等价，
@@ -214,9 +216,12 @@ def _rdiv255(q):
 def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
     """核心裁决（numpy 向量化；ref/cand 为同形 (h,w,4) uint8 Straight RGBA）。
 
-    性能设计（1080p 分析段 ≤15ms）：Tier-1 走 np.array_equal SIMD 快路径；
-    有差异时 uint32 视图 xor（4 字节/像素）稀疏化出差异像素集，
-    全部预乘/标签数学只在差异像素子集（n_diff ≪ h·w 是常态）上做。
+    性能设计（#104 预算 ≤15ms 指分析段常见路径；tests/test_gfx_golden.py 性能门）：
+    Tier-1 走 np.array_equal SIMD 快路径；有差异时 uint32 视图 xor + take 收集
+    稀疏化出差异像素集，预乘/标签数学只做在子集上，且低 α 舍入像素走数学上界
+    快速通道（免精确重投影）。实测 1080p 参考值（本机 numpy 2.5）：全等 ~2ms /
+    稀疏差异 ~3ms / 稠密 Tier-2（30% 像素舍入差异）~18ms / 全帧实质失败最重
+    ~260ms（精确重投影全量，失败帧离线诊断可接受）。
     返回 dict 字段契约见 analyze_frame_diff 文档。
     """
     import numpy as np
@@ -234,48 +239,94 @@ def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
                 "heatmap": None,
                 "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2)}
 
-    # 差异像素稀疏化：uint32 视图 xor（4 字节/像素，比逐通道 uint8 快 ~7×）；
-    # 视图不合法（对齐/步长异常）时回落逐通道 any。
+    # 差异像素稀疏化：uint32 视图 xor（4 字节/像素）+ take 收集（比逐行 fancy
+    # index 快一个量级）；视图不合法（对齐/步长异常）回落逐通道路径。
     try:
         x = np.bitwise_xor(ref.view(np.uint32), cand.view(np.uint32))
         idx = np.flatnonzero(x.ravel())
+        rp8 = (ref.view(np.uint32).ravel().take(idx)
+               .view(np.uint8).reshape(-1, 4))         # (n,4) uint8 免 int32 膨胀
+        cp8 = (cand.view(np.uint32).ravel().take(idx)
+               .view(np.uint8).reshape(-1, 4))
     except ValueError:
         idx = np.flatnonzero(np.bitwise_xor(ref, cand).any(axis=2).ravel())
-    rp = ref.reshape(-1, 4)[idx].astype(np.int32)      # (n,4)
-    cp = cand.reshape(-1, 4)[idx].astype(np.int32)
-    dpx = np.abs(rp - cp)                              # (n,4) 差异像素 |Δ|
+        rp8 = ref.reshape(-1, 4)[idx]
+        cp8 = cand.reshape(-1, 4)[idx]
     n_diff = int(idx.size)
+    dpx = rp8.astype(np.int16)
+    dpx -= cp8
+    np.abs(dpx, out=dpx)                              # (n,4) 差异像素 |Δ|
+    a_r, a_c = rp8[:, 3], cp8[:, 3]
     mad = int(dpx.max())
     mad_rgb = int(dpx[:, :3].max())
     mad_a = int(dpx[:, 3].max())
     alpha_identical = mad_a == 0
 
     # 差异像素按 ref α 分区（α 全等时 ref/cand 分区同义；α 有差时 alpha 标签先兜底）
-    a_r, a_c = rp[:, 3], cp[:, 3]
-    semi = (a_r > 0) & (a_r < 255)
+    # semi 单比较合成：(a_r−1) 在 uint8 回绕下恰为 [1,254] → 0..253，0/255 → 254/255
+    semi = (a_r - np.uint8(1)) < np.uint8(254)
     opaque = a_r == 255
-    transp = a_r == 0
-    n_semi, n_opq, n_tr = int(semi.sum()), int(opaque.sum()), int(transp.sum())
+    n_semi, n_opq, n_tr = (int(np.count_nonzero(v)) for v in
+                           (semi, opaque, a_r == 0))
 
-    # 半透明差异像素：双方 Straight RGB 重投射黑底(B=0)/白底(B=255)预乘合成空间
-    #   C_comp(C,A,B) = round((C·A + B·(255−A))/255)；白底恒等式 round(C·A/255)+(255−A)
-    res_full = np.zeros(n_diff, dtype=np.int32)        # 对齐 idx 的每像素最大残差
-    halo_px = 0
+    # 半透明差异像素：双方 Straight RGB 重投射预乘合成空间
+    #   黑底 B=0：C_comp = round(C·A/255)；白底 B=255：C_comp = round(C·A/255)+(255−A)
+    #   （round(x+k)=round(x)+k 对整数 k 成立 → α 相等的像素白底残差 ≡ 黑底残差，
+    #   故白底只在 α 不同处补算——数学等价，省一半残差链）
+    # 快速通道（数学上界）：α 相等且 max|ΔRGB|·A < 255 时 |u−v|<1（u,v 为双方
+    # C·A/255），则 |round(u)−round(v)| ≤ 1 恒成立 → 免精确重投影。低 α 大面积
+    # 逆预乘舍入（跨后端 Tier-2 稠密场景主力）全部命中此通道；其真实残差 ≤1
+    # 但未必为 0，max_premul_residual 按保守上界 1 计（Tier-2 语义不受影响）。
+    # （乘积用 uint16：255·255=65025 < 65536 恰不溢出，比 int32 省一半带宽）
+    alpha_eq = a_r == a_c
     if n_semi:
-        rps, cps = rp[semi], cp[semi]
-        cb_ref = _rdiv255(rps[:, :3] * a_r[semi][:, None])   # round(C_ref·A_ref/255)
-        cb_cnd = _rdiv255(cps[:, :3] * a_c[semi][:, None])
-        res_b = np.abs(cb_cnd - cb_ref).max(axis=1)
-        res_w = np.abs((cb_cnd + (255 - a_c[semi][:, None]))
-                       - (cb_ref + (255 - a_r[semi][:, None]))).max(axis=1)
-        np.maximum(res_b, res_w, out=res_b)
-        res_full[semi] = res_b
-        bad = res_b > 1
+        drgb8 = dpx[:, :3].max(axis=1).astype(np.uint8)   # 每像素 RGB 最大直存差 ≤255
+        quick = np.multiply(drgb8, a_r, dtype=np.uint16) < 255
+        quick &= semi
+        quick &= alpha_eq
+        exact = semi & ~quick                         # 新数组：勿原地改 semi
+    else:
+        exact = semi                                  # 空集（无半透明差异像素）
+    n_exact = int(np.count_nonzero(exact))
+    res_full = None                                   # 对齐 idx 的每像素最大残差
+    halo_px = 0
+    premul_ok = 0
+    if n_exact:
+        rgbs, cgbs = rp8[exact][:, :3], cp8[exact][:, :3]   # (m,3) uint8
+        ar = a_r[exact].astype(np.int32)
+        ac2 = a_c[exact].astype(np.int32)
+
+        def _premul(rgb8, a):                         # round(C·A/255)，原地省临时
+            q = np.multiply(rgb8, a[:, None], dtype=np.int32)  # 转型×乘法单趟融合
+            q += q                                    # ×2
+            q += 255
+            q //= 510
+            return q
+
+        cb_ref = _premul(rgbs, ar)                    # round(C_ref·A_ref/255)
+        cb_cnd = _premul(cgbs, ac2)
+        dev = np.subtract(cb_cnd, cb_ref, dtype=np.int16)     # 转型×减法单趟融合
+        np.abs(dev, out=dev)
+        res = dev.max(axis=1).astype(np.int32)        # 黑底残差
+        neq = ar != ac2
+        if neq.any():                                 # α 不同处补白底残差
+            wr = cb_ref[neq].astype(np.int16) + (255 - ar[neq])[:, None]
+            wc = cb_cnd[neq].astype(np.int16) + (255 - ac2[neq])[:, None]
+            res[neq] = np.maximum(res[neq], np.abs(wc - wr).max(axis=1))
+        res_full = np.zeros(n_diff, dtype=np.int32)
+        res_full[exact] = res
+        bad = res > 1
         if bad.any():   # 二次预乘签名：C_cand ≈ round(C_ref·A_ref/255)（±1/通道）
-            sig = np.abs(cps[bad][:, :3] - cb_ref[bad]).max(axis=1) <= 1
-            halo_px = int(sig.sum())
-    max_premul_res = int(res_full.max())
-    premul_ok = int(((res_full <= 1) & semi & (dpx[:, 3] == 0)).sum())
+            sig = np.abs(cgbs[bad].astype(np.int16)
+                         - cb_ref[bad].astype(np.int16)).max(axis=1) <= 1
+            halo_px = int(np.count_nonzero(sig))
+        max_premul_res = int(res_full.max())
+        if max_premul_res < 1 and quick.any():
+            max_premul_res = 1                        # 快速通道像素按上界 1 计
+        premul_ok = int(np.count_nonzero((res_full <= 1) & semi & alpha_eq))
+    else:
+        max_premul_res = 1 if n_semi else 0
+        premul_ok = n_semi                            # semi 全部命中快速通道（α 等价）
 
     # ---- 三级裁决（labels 仅 Tier-3 填充；Tier-2 是通过态，labels 恒空）
     tier2 = (alpha_identical and n_opq == 0 and n_tr == 0 and max_premul_res <= 1)
@@ -302,7 +353,10 @@ def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
            "max_premul_residual": max_premul_res,
            "halo_signature_pixels": halo_px, "heatmap": None}
     if heatmap_out is not None and tier != TIER_EXACT:
-        t2point = semi & (res_full <= 1) & (dpx[:, 3] == 0)   # Tier-2 逆预乘舍入点
+        if res_full is None:                          # 全部命中快速通道：semi 即绿点
+            t2point = semi & alpha_eq
+        else:
+            t2point = semi & alpha_eq & (res_full <= 1)   # Tier-2 逆预乘舍入点
         _write_heatmap(ref, idx, dpx, t2point, Path(heatmap_out))
         out["heatmap"] = str(heatmap_out)
     out["elapsed_ms"] = round((time.perf_counter() - t0) * 1000, 2)
