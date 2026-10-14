@@ -589,7 +589,7 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
 
     FAIL 门语义（§5.1 + Windows 适配 PR-A1）：**enabled 才 FAIL**——
     manifest 错误（builtin/external）、external enabled 件的 health 失败/
-    requires 缺失、builtin 件的 python_packages/platforms 缺失计 FAIL；
+    requires 缺失计 FAIL；builtin 件的全部 requires 缺失与 health 未就绪降 ℹ；
     builtin 件的 requires 缺二进制与 health 未就绪降 ℹ unavailable（可选
     能力面，硬门在依赖面 error 级与使用点 fail-hard）；未装/disabled 仅提示；
     registry 声明未落地件列「未安装（规划中）」。kind_filter="app"|"plugin"
@@ -620,14 +620,14 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
                     # 依赖面 error 级（python/ffmpeg/ffprobe/浏览器）；各能力在
                     # 使用点 fail-hard（渲染链/钩子；health 探针自述「允许
                     # unhealthy 不崩，安装期探测」）。python_packages/platforms
-                    # 缺失仍 FAIL：随仓分发的声明面，缺失=安装损坏。
-                    soft_bins = [m.split(":", 1)[1] for m in missing
-                                 if m.startswith("binary:")]
-                    unavailable.extend(f"缺 {b}" for b in soft_bins)
+                    # 缺失同样降 ℹ（hosted windows-2025 新 shell 实测：裸
+                    # Python 无 numpy/requests 属正常安装态而非损坏——vtx 内核
+                    # 纯 stdlib，numpy/requests 仅个别内置 app 声明；与缺
+                    # blender/node 同一「能力面」语义）。
+                    soft = [m.split(":", 1)[1] if ":" in m else m for m in missing]
+                    unavailable.extend(f"缺 {b}" for b in soft)
                     if h_ok is False:
                         unavailable.append("health 未就绪")
-                    if any(not m.startswith("binary:") for m in missing):
-                        entry_fail = True
                 else:
                     # external enabled 件维持严格 FAIL 门（§2.4 显式注册面）
                     if h_ok is False or not r_ok:
@@ -966,7 +966,7 @@ def cmd_doctor(a) -> int:
     if dependencies["errors"]:
         fails.append("依赖面存在 error（" + "；".join(dependencies["errors"]) + "）")
     if components["fail"]:
-        fails.append("组件段存在 FAIL（manifest 无效 / external enabled 件 health·requires 不通过 / builtin 声明面 python_packages·platforms 缺失）")
+        fails.append("组件段存在 FAIL（manifest 无效 / external enabled 件 health·requires 不通过）")
     if skills["fail"]:
         fails.append("skills 段存在 FAIL")
     print("doctor 结论：" + ("✅ 通过" if not fails else "❌ " + "；".join(fails)))

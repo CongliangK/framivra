@@ -9,7 +9,7 @@ B 站视频产线程序本体权威仓:内核 `vtx/`(timeline.json 契约+帧精
 - 统一入口:`python3 vt.py doctor|init|--fix-links`。doctor 例行跑用 `env VTX_DOCTOR_OFFLINE=1`(零写态);`--fix-links` 去 --dry 即实写(写操作,DOC-CHARTER §7a)。
 - 渲染:`vtx -t <timeline.json> all`(分阶段 validate/prepare/gfx/video/audio/mux/qc;子命令全集=skill/references/runbook.md「命令正字法」节)。
 - 门禁:`bash scripts/run_all_tests.sh`(集成需 VTX_TEST_CHROME/VTX_TEST_FFMPEG);`bash scripts/doc_gates.sh`(文档门聚合器,leaf 清单见脚本头注册面,任一 FAIL 总非零)。
-- 安装:GitHub Releases(https://github.com/CongliangK/framivra/releases);人面安装行→README.md,参数唯一 home=scripts/install.sh --help。
+- 安装:GitHub Releases(https://github.com/CongliangK/framivra/releases);人面安装行→README.md,参数唯一 home=scripts/install.py --help(install.sh 为薄转发;Windows 引导=scripts/install_windows.ps1)。
 
 ## 写态红线
 - 生成区禁手改:docs/catalog.md 生成区(变更走 `python3 scripts/gen_manifest_catalog.py` 重注);项目 cache/ 与 out/ 运行时产物(.gitignore 在册)。

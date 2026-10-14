@@ -1,192 +1,52 @@
 #!/usr/bin/env bash
-# install.sh —— GitHub Releases 安装入口(curl | bash)
-# 校验和仅保证传输完整性,不证明独立发布者身份(另见 #41)。
-# 设计要点(§3.1):零 git 零 sudo 依赖 / $0 无关 / 非交互安全 / 幂等复用 /
-#   ffmpeg≥5.1 下限 / --chrome 显式走 npmmirror / SHA256SUMS 校验 /
-#   --uninstall 标记门 / 版本源 releases.json(--version 可覆盖)。
-# 行为契约(§3.3):checkout 复用不覆盖 / 非 checkout 目标 die / 二次跑幂等 /
-#   --dry-run 零副作用 / stdin 非 TTY 零提示 / 缺 ffmpeg 提示+exit 0 /
-#   ffmpeg<5.1 警告 / 校验失败 die / --uninstall 无标记 die。
+# install.sh —— 一行安装入口(curl | bash 兼容)与本地薄转发双形态。
+# 业务权威=install.py(跨平台统一安装器);参数/退出码原样透传;
+# 安全契约(归档白名单/staging 事务/SHA256 门)见:python3 scripts/install.py --help
+# 校验和仅保证传输完整性,不证明独立发布者身份(#41:正式发布走 keyless
+# provenance,验证失败 fail-closed,绝不降级为「仅 hash 通过即装」)。
+#
+# 形态一·checkout 内运行(bash scripts/install.sh …):零下载,直接转发同目录
+#   install.py(BASH_SOURCE 可定位脚本自身)。
+# 形态二·curl | bash 管道(BASH_SOURCE 为空——set -u 下取值即炸,红队 pty
+#   探针实证):管道里没有本地 install.py,先经 curl 下载到临时文件再执行。
+#   下载地址:VTX_INSTALL_PY_URL 整体覆盖;默认 raw GitHub 的
+#   VTX_RAW_REF(候选期 README 钉 commit SHA,由入口命令带入;缺省 main)。
+#   信任边界:HTTPS 下载通道+仓库当前内容,不自称独立签名验证(#41 另行)。
+#
+# 交互向导保留(参考 ibus-voice-ime remote-install.sh 范式):管道 stdin 会被
+# install.py 判为非 tty 而误降级全默认;有可打开的 /dev/tty 时重挂回终端。
+# tty 切换与最终 exec 必须在同一复合语句内:bash 先从管道读完整个复合块再
+# 执行,否则切换后 bash 会去终端读脚本的「下一行」导致入口中断。无控制
+# 终端(真无人值守)保持原 stdin,由 install.py 自行非终端降级,不追加旗标。
 set -uo pipefail
 
-if [ -n "${VIDEO_TOOLS_DL_BASE:-}" ]; then
-  BASE_URL="${VIDEO_TOOLS_DL_BASE%/}"
-  case "$BASE_URL" in
-    https://github.com/*/*/releases/download)
-      LATEST_URL="${BASE_URL%/download}/latest/download/releases.json" ;;
-    *) LATEST_URL="$BASE_URL/releases.json" ;;  # 普通镜像保留旧发现布局
-  esac
+fail() { printf '[install] ✗ %s\n' "$1" >&2; exit 1; }
+
+run_py() {  # $1=install.py 路径,其余为透传参数
+  local py_script="$1"; shift
+  {
+    if [ -e /dev/tty ] && { true < /dev/tty; } 2>/dev/null; then
+      exec < /dev/tty
+    fi
+    exec python3 "$py_script" "$@"
+  }
+}
+
+if [ "${BASH_SOURCE[0]+x}" ] && [ -n "${BASH_SOURCE[0]}" ]; then
+  # 形态一:本地 checkout——零下载直转发。
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$here/install.py" ] || fail "checkout 内未找到 install.py(预期与 install.sh 同目录)"
+  run_py "$here/install.py" "$@"
 else
-  BASE_URL="https://github.com/CongliangK/framivra/releases/download"
-  LATEST_URL="https://github.com/CongliangK/framivra/releases/latest/download/releases.json"
+  # 形态二:curl | bash——下载 install.py 再执行。
+  command -v python3 >/dev/null 2>&1 || fail '缺少依赖: python3(≥3.9)'
+  command -v curl >/dev/null 2>&1 || fail '缺少依赖: curl'
+  ref="${VTX_RAW_REF:-main}"
+  url="${VTX_INSTALL_PY_URL:-https://raw.githubusercontent.com/CongliangK/framivra/${ref}/scripts/install.py}"
+  tmp="$(mktemp -t vt-install.XXXXXX)" || fail '临时文件创建失败'
+  if ! curl -fsSL "$url" -o "$tmp"; then
+    rm -f "$tmp"
+    fail "install.py 下载失败: $url(可设 VTX_INSTALL_PY_URL 指向可信镜像)"
+  fi
+  run_py "$tmp" "$@"
 fi
-CFT_MIRROR="${CHROME_CFT_MIRROR:-https://registry.npmmirror.com/-/binary/chrome-for-testing}"
-CHROME_VERSION="${CHROME_VERSION:-153.0.8010.52}"   # R-23 P1 定版:headless=new 渲染+CDP 端点实测通过(2026-09-20)
-DEFAULT_HOME="${HOME}/.local/share/video-tools"
-
-log()  { printf '[install] %s\n' "$*"; }
-die()  { printf '[install] ✗ %s\n' "$*" >&2; exit 1; }
-warn() { printf '[install] ⚠ %s\n' "$*"; }
-
-# ---- 参数解析(非交互安全:不 read,不依赖 TTY) ----
-VERSION="" ; TARGET_DIR="" ; CHROME=0 ; UNINSTALL=0 ; DRY_RUN=0
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --version)   VERSION="${2:-}"; [ -n "$VERSION" ] || die "--version 需要值"; VERSION="${VERSION#v}"; shift 2 ;;
-    --version=*) VERSION="${1#--version=}"; [ -n "$VERSION" ] || die "--version 需要值"; VERSION="${VERSION#v}"; shift ;;
-    --dir)       TARGET_DIR="${2:-}"; [ -n "$TARGET_DIR" ] || die "--dir 需要值"; shift 2 ;;
-    --dir=*)     TARGET_DIR="${1#--dir=}"; [ -n "$TARGET_DIR" ] || die "--dir 需要值"; shift ;;
-    --chrome)    CHROME=1; shift ;;
-    --uninstall) UNINSTALL=1; shift ;;
-    --uninstall=*) UNINSTALL=1; TARGET_DIR="${1#--uninstall=}"; shift ;;
-    --dry-run)   DRY_RUN=1; shift ;;
-    -h|--help)
-      cat <<USAGE
-用法: install.sh [--dir DIR] [--version vX.Y.Z] [--chrome] [--uninstall] [--dry-run]
-  --dir DIR      安装根(默认顺序: \$VT_HOME > 当前目录若为 checkout > $DEFAULT_HOME)
-  --version VER  安装指定版本(默认取 GitHub Latest Release 的 releases.json)
-  VIDEO_TOOLS_DL_BASE  GitHub .../releases/download 或用户镜像(根 releases.json,vVER/资产)
-  --chrome       同时下载 Chrome for Testing(npmmirror,~170MB)
-  --uninstall    卸载(仅限带 .vt-install.json 标记的安装目录)
-  --dry-run      演练:零下载零写入零修改
-USAGE
-      exit 0 ;;
-    *) die "未知参数: $1(见 --help)" ;;
-  esac
-done
-
-need() { command -v "$1" >/dev/null 2>&1 || die "缺少依赖: $1(本安装器需要 bash/curl/tar/python3)"; }
-need curl; need tar; need python3
-
-# ---- 卸载分支(标记门) ----
-if [ "$UNINSTALL" = 1 ]; then
-  [ -n "$TARGET_DIR" ] || TARGET_DIR="${VT_HOME:-$DEFAULT_HOME}"
-  [ -f "$TARGET_DIR/.vt-install.json" ] || die "拒绝卸载:$TARGET_DIR 无 .vt-install.json 标记(非本安装器所装,防误删)"
-  if [ "$DRY_RUN" = 1 ]; then log "[dry-run] 将删除 $TARGET_DIR(有标记,允许)"; exit 0; fi
-  rm -rf "$TARGET_DIR"
-  log "已卸载 $TARGET_DIR"
-  exit 0
-fi
-
-# ---- 安装根裁定(优先级:--dir > VT_HOME > 当前目录若 checkout > 默认) ----
-is_checkout() { [ -f "$1/vt.py" ] && [ -d "$1/vtx" ]; }
-if [ -z "$TARGET_DIR" ]; then
-  if [ -n "${VT_HOME:-}" ]; then TARGET_DIR="$VT_HOME"
-  elif is_checkout "$PWD"; then TARGET_DIR="$PWD"
-  else TARGET_DIR="$DEFAULT_HOME"; fi
-fi
-log "安装根: $TARGET_DIR"
-
-# ---- 复用检测(幂等) ----
-if is_checkout "$TARGET_DIR"; then
-  v_now="$(python3 - "$TARGET_DIR/VERSION" 2>/dev/null <<'PY' || echo unknown
-print(open(__import__("sys").argv[1]).read().strip())
-PY
-)"
-  if [ "$DRY_RUN" = 1 ]; then v_cur="未查询(dry-run)"
-  else v_cur="$(curl -fsSL "$LATEST_URL" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])' 2>/dev/null || echo unknown)"; fi
-  # rc 语义钉死(RECP-20260920-001):复用分支=检测+告知后干净返回 0;
-  # 历史缺陷=本赋值行与 log 行粘连,v_cur 沦为临时赋值永不持久,下一行 $v_cur 撞 set -u 崩溃 rc=1。
-  log "检测到既有 checkout($TARGET_DIR,VERSION=$v_now)——复用不覆盖。"
-  log "线上最新版本: $v_cur(如需升级请移除后重装或手动 git pull)"
-  exit 0
-fi
-if [ -e "$TARGET_DIR" ] && [ -n "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]; then
-  die "目标 $TARGET_DIR 已存在、非空且不是 video_tools checkout——拒绝覆盖(换 --dir 或清空后重试)"
-fi
-
-# ---- 版本解析 ----
-if [ "$DRY_RUN" = 1 ] && [ -z "$VERSION" ]; then
-  log "[dry-run] 将从 $LATEST_URL 发现版本;零下载零写入零修改"
-  exit 0
-fi
-if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsSL "$LATEST_URL" | python3 -c 'import json,sys;print(json.load(sys.stdin)["latest"])')" \
-    || die "releases.json 拉取/解析失败($LATEST_URL)"
-fi
-VERSION="${VERSION#v}"
-log "安装版本: $VERSION"
-[ -n "$VERSION" ] && [ "$VERSION" = "$(printf '%s' "$VERSION" | tr -cd 'A-Za-z0-9.v_-')" ] || die "版本串为空或含非法字符"
-
-# ---- ffmpeg 探测(≥5.1 下限;缺则提示+exit 0;旧版警告) ----
-FFMPEG_MAJOR=0
-if command -v ffmpeg >/dev/null 2>&1; then
-  FFMPEG_MAJOR="$(ffmpeg -version 2>/dev/null | head -1 | sed -n 's/.*version \([0-9]*\)\..*/\1/p')"
-  FFMPEG_MAJOR="${FFMPEG_MAJOR:-0}"
-fi
-if [ "$FFMPEG_MAJOR" -eq 0 ]; then
-  warn "未检测到 ffmpeg。video_tools 渲染链依赖 ffmpeg ≥5.1(-fps_mode)。"
-  log "安装仍将继续(内核 validate/subs 等非 ffmpeg 面可用);建议随后安装:"
-  log "  Debian/Ubuntu: sudo apt install ffmpeg   |  Fedora: sudo dnf install ffmpeg"
-  log "  (Arch: sudo pacman -S ffmpeg)"
-elif [ "$FFMPEG_MAJOR" -lt 5 ]; then
-  warn "ffmpeg 版本 $(ffmpeg -version | head -1 | awk '{print $3}') < 5.1:渲染链使用的 -fps_mode 参数为 5.1 引入,视频合成阶段将失败。"
-  warn "建议升级 ffmpeg 后重跑 vt.py doctor 复核。"
-fi
-
-# ---- 下载与校验(dry-run 零副作用) ----
-if [ "$DRY_RUN" = 1 ]; then
-  log "[dry-run] 将执行:下载 $BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz + 同 tag SHA256SUMS 校验 + 解包到 $TARGET_DIR + vt.py init + doctor"
-  log "[dry-run] 零下载零写入零修改——演练结束"
-  exit 0
-fi
-WORK="$(mktemp -d)" || die "创建临时下载目录失败"
-cleanup() { rm -rf -- "${WORK:?}"; }
-trap cleanup EXIT
-log "下载载荷…"
-curl -fsSL "$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz" -o "$WORK/video-tools-$VERSION.tar.gz" \
-  || die "载荷下载失败:$BASE_URL/v$VERSION/video-tools-$VERSION.tar.gz"
-curl -fsSL "$BASE_URL/v$VERSION/SHA256SUMS" -o "$WORK/SHA256SUMS" \
-  || die "SHA256SUMS 下载失败"
-python3 - "$WORK" "$VERSION" <<'PY'
-import hashlib, re, sys
-from pathlib import Path
-work, version = Path(sys.argv[1]), sys.argv[2]
-name = f"video-tools-{version}.tar.gz"
-rows = [line.split() for line in (work / "SHA256SUMS").read_text().splitlines()]
-entries = [row for row in rows if len(row) == 2 and row[1] == name]
-if len(entries) != 1 or not re.fullmatch(r"[0-9a-fA-F]{64}", entries[0][0]):
-    sys.exit(1)
-h = hashlib.sha256()
-with (work / name).open("rb") as stream:
-    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-        h.update(chunk)
-sys.exit(0 if h.hexdigest() == entries[0][0].lower() else 1)
-PY
-[ $? = 0 ] || die "SHA256 校验失败——载荷不落地(仅传输完整性,不证明发布者身份)"
-log "校验通过。"
-
-# ---- 解包安装 ----
-mkdir -p "$TARGET_DIR"
-tar -xzf "$WORK/video-tools-$VERSION.tar.gz" -C "$TARGET_DIR" || die "解包失败"
-cat > "$TARGET_DIR/.vt-install.json" <<MARK
-{"installed_by": "install.sh", "version": "$VERSION", "base_url": "$BASE_URL", "date": "$(date -Iseconds)"}
-MARK
-
-# ---- 初始化 + doctor 门 ----
-log "运行 vt.py init(非交互幂等)…"
-( cd "$TARGET_DIR" && python3 vt.py init ) || warn "vt.py init 非零退出(可随后手动补跑;config.local.json 已存在则不动)"
-log "运行 vt.py doctor(安装成功门)…"
-if ( cd "$TARGET_DIR" && python3 vt.py doctor ); then
-  log "✅ 安装完成:$TARGET_DIR(VERSION=$VERSION)"
-  log "常用入口: python3 vt.py doctor | python3 vt.py init --fix | python3 -m vtx"
-else
-  warn "doctor 未全绿——见上方输出(多为可选依赖缺省,基础渲染面不受影响;补依赖后重跑 doctor)"
-fi
-
-# ---- Chrome(显式开启;npmmirror CDN,绝不占自托管带宽) ----
-if [ "$CHROME" = 1 ]; then
-  log "下载 Chrome for Testing $CHROME_VERSION(npmmirror CDN,~195MB)…"
-  curl -fsSL "$CFT_MIRROR/$CHROME_VERSION/linux64/chrome-linux64.zip" -o "$WORK/chrome-linux64.zip" \
-    || die "Chrome for Testing 下载失败($CFT_MIRROR/$CHROME_VERSION)"
-  mkdir -p "$TARGET_DIR/chrome-for-testing"
-  ( cd "$TARGET_DIR/chrome-for-testing" && python3 -c "import zipfile;zipfile.ZipFile('$WORK/chrome-linux64.zip').extractall()" ) \
-    || die "Chrome 解包失败"
-  # python zipfile 不保留 unix 权限位:补主二进制与崩溃处理器执行位
-  chmod +x "$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome" \
-           "$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome_crashpad_handler" 2>/dev/null || true
-  log "✓ Chrome 就绪:$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome"
-  log "  启用方式(二选一): export VTX_CHROME=$TARGET_DIR/chrome-for-testing/chrome-linux64/chrome"
-  log "                    或将该路径加入 PATH(export PATH=\$PATH:$TARGET_DIR/chrome-for-testing/chrome-linux64)"
-fi
-exit 0

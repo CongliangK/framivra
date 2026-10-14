@@ -8,8 +8,8 @@
      走 find_chrome 解析链（env > PATH > Win 标准路径 > Edge 兜底）——win32 上
      shutil.which 找字面名永假的问题在此关门；非浏览器名仍走 which。
   ② `_doctor_components` 分级：builtin 件 requires 缺二进制 / health 未就绪 →
-     ℹ unavailable 不计 FAIL（可选能力面）；python_packages 缺失、external
-     enabled 件 health 失败仍 FAIL（安装损坏/严格门不回退）。
+     ℹ unavailable 不计 FAIL（可选能力面，含 python_packages）；external
+     enabled 件 health 失败与 requires 缺失仍 FAIL（严格门不回退）。
   ③ `_doctor_dependencies` + 子进程级：缺 ffmpeg 环境 doctor exit 1 且输出含
      error 行；核心齐备环境 exit 0（optional 件缺失只 warn）。
 
@@ -144,8 +144,26 @@ class ComponentGrading(unittest.TestCase):
         self.assertIn("health 未就绪", e["unavailable"])
         self.assertFalse(out["fail"])
 
-    def test_builtin_missing_python_package_still_fails(self):
+    def test_builtin_missing_python_package_is_unavailable_not_fail(self):
+        # hosted windows-2025 新 shell 实测：裸 Python 无 numpy/requests 属正常
+        # 安装态（vtx 内核纯 stdlib）；builtin 能力面缺声明依赖与缺 blender
+        # 同语义——ℹ unavailable，不计 FAIL。external 件不回退（见下）。
         entry = _builtin_entry(binaries=())
+        entry["manifest"]["requires"]["python_packages"] = ["numpy"]
+        with mock.patch.object(vt_mod._preg, "discover", return_value=[entry]), \
+                mock.patch.object(vt_mod._preg, "declared_plugins", return_value={}), \
+                mock.patch.object(vt_mod, "_probe_health", return_value=(True, "ok")), \
+                mock.patch.object(vt_mod.importlib.util, "find_spec", return_value=None):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                result = vt_mod._doctor_components(json_out=True)
+        e = result["entries"][0]
+        self.assertFalse(e["fail"], e)
+        self.assertIn("缺 numpy", e["unavailable"])
+        self.assertFalse(result["fail"])
+
+    def test_external_enabled_missing_package_still_fails(self):
+        entry = _builtin_entry(source="external", binaries=())
         entry["manifest"]["requires"]["python_packages"] = ["numpy"]
         with mock.patch.object(vt_mod._preg, "discover", return_value=[entry]), \
                 mock.patch.object(vt_mod._preg, "declared_plugins", return_value={}), \

@@ -32,7 +32,20 @@ python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/fin
 
 可选产线初始化：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等）；`bash apps/matting/init.sh --download`（抠像链权重）。live skill 挂载（如 `~/.agents/skills/video/`，为指向本仓的符号链接）可用 `vt.py --fix-links` 重建。
 
-**GitHub Releases 安装**（需已有完整发布资产）：`curl -fsSL https://github.com/CongliangK/framivra/releases/latest/download/install.sh | bash -s -- --dry-run --dir <目录>`；去掉 `--dry-run` 才下载并写入安装目录（可选 `--chrome`）。版本发现与载荷均来自 GitHub；`VIDEO_TOOLS_DL_BASE` 可覆盖为用户镜像（布局见 `scripts/install.sh --help`）。SHA256SUMS 仅校验传输完整性，不是独立发布者签名。
+**GitHub Releases 安装**（需已有完整发布资产）：`curl -fsSL https://github.com/CongliangK/framivra/releases/latest/download/install.sh | bash -s -- --dry-run --dir <目录>`；去掉 `--dry-run` 才下载并写入安装目录（可选 `--chrome`）。版本发现与载荷均来自 GitHub；`VIDEO_TOOLS_DL_BASE` 可覆盖为用户镜像（布局见 `scripts/install.py --help`，`install.sh` 为薄转发）。SHA256SUMS 仅校验传输完整性，不是独立发布者签名。
+
+**候选/预发布：Windows 与统一安装器（install.py）**——尚未正式发布，入口钉 commit SHA（`<SHA>` 处以实际合并提交替换）：
+
+```powershell
+# Windows 原生 PowerShell 一行(等价于 Linux 的 curl | bash;无需 WSL/Git Bash):
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/<SHA>/scripts/install_windows.ps1 -OutFile $env:TEMP\vt-i.ps1; & $env:TEMP\vt-i.ps1 -InstallPyUrl https://raw.githubusercontent.com/CongliangK/framivra/<SHA>/scripts/install.py"
+```
+
+- 自动完成：python≥3.9 检测（缺失时 winget 用户级安装）→ 下载载荷 + SHA256 校验 → 白名单安全解包（staging 事务，中断零污染）→ 写 `bin\vt.cmd/vtx.cmd` 并挂用户 PATH → `vt doctor` 成功门（新开 PowerShell 直接 `vt doctor`）。ffmpeg 缺失时 Windows 默认 winget 自动装（系统解析，不再分发）；失败即非零退出并给一行手动指引——缺依赖不再「警告后 exit 0」假装装好。
+- **交互向导**（默认）：有控制终端时逐项提问「描述 [Y/n]（回车=默认 Y）」——默认=执行，可输 `n` 主动跳过（跳过项在总结中列出手动指引）；所有提问集中在任何载荷下载/写盘之前（仅版本发现所需的 releases.json 元数据读取先于第一问）。`curl | bash` 管道下自动重挂 `/dev/tty` 保留交互；无控制终端自动降级全默认、不失败。
+- 幂等重跑说明：检测到既有 checkout（含 git clone）时复用不覆盖、干净返回——此复用分支**不**跑 `vt doctor` 成功门（避免无 ffmpeg 的开发机重跑被误拦），仅全新安装与 `--upgrade` 走完整安装门。
+- Linux/macOS 同一安装器：`curl -fsSL .../install.sh | bash`（交互向导）；`bash -s -- --non-interactive`（零提问，CI/管道）；`--defaults`（用默认值不提问）；`--dry-run`（零写入演练，打印实际选择与执行计划）；`--upgrade`（仅本安装器所装副本，旧版留 `.bak`）、`--rollback`、`--uninstall`、`--undo`（Windows PATH 恢复）。
+- 边界如实说明：本入口的首次信任是「HTTPS 下载通道 + 仓库当前内容」，不自称独立签名验证；正式发布身份链（keyless provenance）为 #41 后续项。企业域控无 winget 且无 Store 的机器需手动装 Python；隔离内网不在支持范围。
 
 维护者发布入口（仅查看参数；真实发布需 GitHub 仓库写权限）：
 
