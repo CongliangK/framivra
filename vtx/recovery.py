@@ -142,10 +142,13 @@ def atomic_ffmpeg(c, cmd, execute):
     target = media_output(c, cmd)
     if target is None or c.dry:
         return execute(cmd)
-    with fstxn.locked_write(target) as temporary:
+    # ffmpeg 经 argv 接收输出路径（子进程写者）——locked_staging 给同目录
+    # 随机名真实路径（/proc 锚定路径会被子进程拒开），提交前 inode 对账。
+    with fstxn.locked_staging(target) as temporary:
+        current = Path(temporary).resolve()
         for orphan in target.parent.glob('.' + target.name + '.*.tmp'):
-            if orphan != temporary:
-                orphan.unlink(missing_ok=True)
+            if orphan != current:
+                fstxn.unlink(orphan)
         # Keep the original argv and output format; only replace the destination.
         # -y: the mkstemp staging file already exists, so a caller that omitted
         # -y would otherwise hit FFmpeg's interactive overwrite prompt.

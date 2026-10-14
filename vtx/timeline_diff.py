@@ -19,6 +19,7 @@ project+video_tracks 特征键）时自动走本模块，否则回落报告 diff
 import json
 import sys
 from pathlib import Path
+from . import fstxn
 
 from .cache_state import declared_dependencies, file_digest
 from .composite import SEG_CUT_GUARD, choose_cutpoints
@@ -605,7 +606,6 @@ def run_timeline_diff(old_path, new_path, json_path=None, dry=False):
         rc = 0
     if json_path:
         jp = Path(json_path)
-        jp.parent.mkdir(parents=True, exist_ok=True)   # out/ 或嵌套目录可能尚不存在
-        jp.write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+        fstxn.atomic_write(jp, json.dumps(res, ensure_ascii=False, indent=1))
         print(f"✓ 机器可读结果已写入 {json_path}")
     return rc

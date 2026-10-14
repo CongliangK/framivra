@@ -528,11 +528,12 @@ class AtomicWriteAndResilienceMock(unittest.TestCase):
             page.write_text('<html></html>', encoding='utf-8')
             real_replace, calls = os.replace, [0]
 
-            def flaky_replace(src, dst):
+            def flaky_replace(src, dst, **kwargs):
+                # fstxn 的 dir_fd 原子替换带 src_dir_fd/dst_dir_fd 关键字（#59）
                 calls[0] += 1
                 if calls[0] <= 2:                        # 帧 0 前两个尝试注错
                     raise OSError(16, 'injected transient write failure')
-                return real_replace(src, dst)
+                return real_replace(src, dst, **kwargs)
 
             browser = _FakeBrowser('override', 1)
             with mock.patch.object(os, 'replace', flaky_replace), \

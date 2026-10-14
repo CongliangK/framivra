@@ -11,7 +11,7 @@ import json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import loudness_cache
+from . import loudness_cache, fstxn
 from .hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
@@ -122,11 +122,8 @@ def _write_qc_pass_record(c, frames_nb, checks):
                      "frames": frames_nb},
            "segs": segs, "checks": mem}
     try:
-        c.cache.mkdir(parents=True, exist_ok=True)
-        tmp = c.cache / (_QC_SEG_RECORD + ".tmp")
-        tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1),
-                       encoding="utf-8")
-        tmp.replace(c.cache / _QC_SEG_RECORD)
+        fstxn.atomic_write(c.cache / _QC_SEG_RECORD,
+                           json.dumps(rec, ensure_ascii=False, indent=1))
     except OSError:
         pass
 
@@ -524,7 +521,7 @@ def qc(c):
        f"mean {v1:.1f} dB"
        + (f" @frame {stacked[1]}" if stacked else "（无任何音频事件）"))
     rep["skipped_probes"] = skipped_probes
-    (c.out / "qc_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
+    fstxn.atomic_write(c.out / "qc_report.json", json.dumps(rep, ensure_ascii=False, indent=2))
     failed = [x for x in rep["checks"] if not x["pass"]]
     print(f"QC：{len(rep['checks']) - len(failed)}/{len(rep['checks'])} 通过")
     if skipped_probes:
