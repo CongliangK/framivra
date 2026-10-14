@@ -45,7 +45,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing htt
 - **交互向导**（默认）：有控制终端时逐项提问「描述 [Y/n]（回车=默认 Y）」——默认=执行，可输 `n` 主动跳过（跳过项在总结中列出手动指引）；所有提问集中在任何载荷下载/写盘之前（仅版本发现所需的 releases.json 元数据读取先于第一问）。`curl | bash` 管道下自动重挂 `/dev/tty` 保留交互；无控制终端自动降级全默认、不失败。
 - 幂等重跑说明：检测到既有 checkout（含 git clone）时复用不覆盖、干净返回——此复用分支**不**跑 `vt doctor` 成功门（避免无 ffmpeg 的开发机重跑被误拦），仅全新安装与 `--upgrade` 走完整安装门。
 - Linux/macOS 同一安装器：`curl -fsSL .../install.sh | bash`（交互向导）；`bash -s -- --non-interactive`（零提问，CI/管道）；`--defaults`（用默认值不提问）；`--dry-run`（零写入演练，打印实际选择与执行计划）；`--upgrade`（仅本安装器所装副本，旧版留 `.bak`）、`--rollback`、`--uninstall`、`--undo`（Windows PATH 恢复）。
-- 边界如实说明：本入口的首次信任是「HTTPS 下载通道 + 仓库当前内容」，不自称独立签名验证；正式发布身份链（keyless provenance）为 #41 后续项。企业域控无 winget 且无 Store 的机器需手动装 Python；隔离内网不在支持范围。
+- **发布者身份验证（keyless provenance，#16/#41）**：安装器已内置身份门——官方 GitHub Releases 源默认对已下载的确切 bytes 执行 `gh attestation verify`（锚定 issuer `https://token.actions.githubusercontent.com`、本仓精确 signer workflow、`--deny-self-hosted-runners`、正式版本锚定 `refs/tags/vX.Y.Z` 防降级；仅信 OIDC 证书与透明日志见证字段，predicate 不作身份依据），验证不过即非零退出，**无 hash-only 回退**；需要预装可信 gh（缺失时给安装指引，绝不自动下载未验证的验证器）。非 github.com 载荷源（候选/CI 本地载荷）默认拒绝，须显式 `--no-provenance`（仅剩 SHA256 传输完整性）或 `--verify-provenance`（证词按字节摘要从 GitHub 核验，镜像字节同可验）。
+- 边界如实说明：候选入口脚本的首次信任是「HTTPS 下载通道 + 仓库当前内容」——`curl|bash` / `iwr` 入口本身不经 gh 先验（预信任 gh 的用户可先取脚本验 hash 再执行）；真实 attestation 正例来自 `release-attest.yml` 的 workflow_dispatch「仅验证模式」（对固定测试文件生成并严格验证，日志留证）；正式发布资产的签名接入与 immutable releases 属 #41 后续（须另行授权真实发版）。企业域控无 winget 且无 Store 的机器需手动装 Python；隔离内网不在支持范围。
 
 维护者发布入口（仅查看参数；真实发布需 GitHub 仓库写权限）：
 

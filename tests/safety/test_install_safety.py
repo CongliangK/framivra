@@ -81,7 +81,7 @@ with Path("calls.txt").open("a") as stream:
         target = self.checked(target or self.target)
         return subprocess.run(
             ["bash", str(REPO / "scripts/install.sh"), "--dir", str(target),
-             "--version", "9.9.9", *args],
+             "--version", "9.9.9", "--no-provenance", *args],
             cwd=self.root, env=self.env, capture_output=True, text=True,
             stdin=subprocess.DEVNULL, timeout=30)
 

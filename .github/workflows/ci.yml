@@ -161,7 +161,7 @@ jobs:
             # 安装到中文+空格+& 目录:单命令端到端(真实 http 下载+SHA256+白名单解包+doctor 门)。
             $env:VIDEO_TOOLS_DL_BASE = "http://127.0.0.1:18742"
             $target = "$env:RUNNER_TEMP\Framivra 测试&A 目录"
-            python scripts\install.py --dir $target --version $ver --non-interactive
+            python scripts\install.py --dir $target --version $ver --non-interactive --no-provenance
             if ($LASTEXITCODE -ne 0) { throw "install.py failed" }
             if (-not (Test-Path "$target\.vt-install.json")) { throw "install marker missing" }
             # 新 shell 模拟:子进程内从 Machine+User 注册表重建 PATH(等价新开
