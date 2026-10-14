@@ -32,7 +32,7 @@
     升级=旧目录 rename→.bak-<pid>→新目录入位→成功删 .bak(win32 占用时
     回退逐文件覆盖+清单,不宣称原子);KeyboardInterrupt(Ctrl-C)→目标零污染
     +自有 staging 清理;SIGTERM(无 handler,进程直杀)→不保证清理,可能留
-    .staging-<pid> 残迹(--uninstall 可删);并发=install.lock 独占锁一胜一拒。
+    .staging-<pid> 残迹(--uninstall 不清理姊妹位残迹,需手动删除);并发=install.lock 独占锁一胜一拒。
   - 写点防预置:TARGET 或其已存在形态为符号链接时拒绝(绝不写穿)。
   - SHA256SUMS 同源校验:仅传输完整性,不证明发布者身份(#41 另行处理,
     正式发布走 keyless provenance,验证失败必须 fail-closed,不降级)。
@@ -665,7 +665,7 @@ def install(args):
         except BaseException:
             # KeyboardInterrupt:目标零污染,自有 staging 清理。SIGTERM 无
             # handler 时进程被直接终止、不经过本 except——可能留 staging
-            # 残迹(--uninstall 可删),文档已如实声明,不在此谎称同路径。
+            # 残迹(--uninstall 不清理,需手动删除),文档已如实声明,不在此谎称同路径。
             if staging.exists() and not staging.is_symlink():
                 shutil.rmtree(staging, ignore_errors=True)
             raise
