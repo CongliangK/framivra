@@ -165,14 +165,17 @@ def chrome_version():
 
 def load_env_manifest(path_str: str):
     """env manifest JSON 读取（issue #102 门禁入参）。空参 → (None, None)；
-    文件缺失/损坏 JSON → (None, 错误句)——门禁入参宁拒收不静默。"""
+    文件缺失/损坏 JSON/内容为 null → (None, 错误句)——门禁入参宁拒收不静默。"""
     if not path_str:
         return None, None
     p = Path(path_str)
     try:
-        return json.loads(p.read_text(encoding="utf-8")), None
+        data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         return None, f"env manifest 读取失败: {p}（{e}）"
+    if not isinstance(data, dict):
+        return None, f"env manifest 不是 JSON 对象: {p}（得到 {type(data).__name__}）"
+    return data, None
 
 
 def env_manifest_gate(meta: dict, path_str: str) -> dict:

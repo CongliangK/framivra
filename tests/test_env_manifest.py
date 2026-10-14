@@ -737,6 +737,19 @@ class TestGfxGoldenEnvGate(unittest.TestCase):
         self.assertIn("读取失败", text)
         self.assertFalse(self.golden.exists())
 
+    def test_gate_rejects_null_or_non_object_manifest(self):
+        """null/非对象 JSON 的门禁入参宁拒收不静默降级（红队补强）。"""
+        self._run(["build", "-t", str(self.tp), "--golden", str(self.golden),
+                   "--env-manifest", str(self.ma)])
+        for payload in ("null", "[]", '"x"'):
+            bad = self.root / "bad.json"
+            bad.write_text(payload, encoding="utf-8")
+            rc, text = self._run(["compare", "-t", str(self.tp),
+                                  "--golden", str(self.golden),
+                                  "--env-manifest", str(bad)])
+            self.assertEqual(rc, 1, payload)
+            self.assertIn("不是 JSON 对象", text)
+
 
 if __name__ == "__main__":
     unittest.main()
