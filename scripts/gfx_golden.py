@@ -11,7 +11,8 @@ hash 口径：PIL 解码 PNG → 统一 RGBA → 原始字节行主序 sha256。
 文件字节 hash——PNG 编码器（压缩级别/过滤策略）可变，像素不可变。
 
 golden JSON 结构（自包含、无歧义）：
-  meta:   构建时间/chrome 版本(可空)/fps/视口/hash 算法/抽样标记/键算法说明
+  meta:   构建时间/chrome 版本(可空)/fps/视口/hash 算法/抽样标记/键算法说明/
+          env_manifest(--env-manifest 嵌入的环境指纹，可空)
   pages:  { "<clip src 相对路径>":
               { "durs": { "<dur>": { "dur":…, "key":…, "mode":"sample|full",
                                      "frames": { "<帧号%04d>": <sha256hex> } } } } }
@@ -19,9 +20,19 @@ golden JSON 结构（自包含、无歧义）：
 
 用法（项目根；本机跑 python 必须加 env 前缀，见全局环境注意事项）：
   env python3 scripts/gfx_golden.py build -t timeline.json --golden gfx_golden.json \
-      [--full-pages c5a_main_path,c5b_hotkey] [--sample 5]
+      [--full-pages c5a_main_path,c5b_hotkey] [--sample 5] \
+      [--env-manifest env_manifest.json]
   env python3 scripts/gfx_golden.py compare -t timeline.json --golden gfx_golden.json \
-      [--report report.json] [--pages c5a_main_path]
+      [--report report.json] [--pages c5a_main_path] \
+      [--env-manifest env_manifest.json]
+
+跨后端环境前置门禁（issue #102）：build --env-manifest 把渲染运行产出的
+env_manifest.json（vtx/env_manifest.py，不可伪造的环境指纹）嵌入 golden.meta；
+compare --env-manifest 提供当前后端实测 manifest 时，先经
+vtx.env_manifest.verify_manifest_compatibility 比对 Chromium 主版本/生效后端
+（GPU 静默回退检出）/色彩空间/视口/字体 SHA256——任一不兼容即拒绝像素比对
+（exit 1，不比错环境下的像素）。golden 含 manifest 而 compare 未提供 → 显式
+警告门禁未激活（不阻断同机常规回环）；compare 提供而 golden 未嵌入 → 显式报错。
 
 实现要点：
   - 缓存键/帧目录定位直接复用 vtx/hygiene.gfx_key（v2 §1.4 包导入，注入 repo 根）——
@@ -47,6 +58,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))   # v2 §1.4 包化：注入 repo 根 + 包导入（不再注入 repo/vtx）
 from vtx.infra import Ctx   # noqa: E402
 from vtx import hygiene     # noqa: E402
+from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
 
 HASH_DESC = "sha256(PIL 解码 → RGBA 原始字节, 行主序) 每帧 64 hex"
 
@@ -151,6 +163,56 @@ def chrome_version():
     return None
 
 
+def load_env_manifest(path_str: str):
+    """env manifest JSON 读取（issue #102 门禁入参）。空参 → (None, None)；
+    文件缺失/损坏 JSON/内容为 null → (None, 错误句)——门禁入参宁拒收不静默。"""
+    if not path_str:
+        return None, None
+    p = Path(path_str)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return None, f"env manifest 读取失败: {p}（{e}）"
+    if not isinstance(data, dict):
+        return None, f"env manifest 不是 JSON 对象: {p}（得到 {type(data).__name__}）"
+    return data, None
+
+
+def env_manifest_gate(meta: dict, path_str: str) -> dict:
+    """跨后端环境前置门禁（issue #102）。返回 state 机：
+
+      error → 入参不可用（manifest 读不到 / 提供了当前 manifest 但 golden 未
+              嵌入基线 / golden 内嵌基线非 JSON 对象）→ compare exit 1，
+              绝不比错环境下的像素；
+      fail  → verify_manifest_compatibility 不兼容项非空 → exit 1 列全项；
+      pass  → 环境一致（Chromium 主版本/生效后端/色彩空间/视口/字体 SHA256）；
+      warn  → golden 嵌有 manifest 但本次未提供（同机常规回环不阻断，显式警告
+              门禁未激活）；off → 双方均无 manifest（存量 golden，行为同旧版）。
+    """
+    cur, err = load_env_manifest(path_str)
+    if err:
+        return {"state": "error", "error": err, "items": []}
+    if cur is None:
+        if meta.get("env_manifest"):
+            return {"state": "warn", "error": None, "items": []}
+        return {"state": "off", "error": None, "items": []}
+    ref = meta.get("env_manifest")
+    if ref is not None and not isinstance(ref, dict):
+        return {"state": "error",
+                "error": f"golden.meta.env_manifest 不是 JSON 对象（得到 "
+                         f"{type(ref).__name__}）——golden 损坏或被手改，环境门禁"
+                         "基线不可信，拒绝像素比对",
+                "items": []}
+    if not ref:
+        return {"state": "error",
+                "error": "golden 未嵌入环境 manifest（build 时未提供 --env-manifest），"
+                         "无法做跨后端环境门禁；请以 --env-manifest 重建 golden",
+                "items": []}
+    items = env_manifest.verify_manifest_compatibility(ref, cur)
+    state = "fail" if items else "pass"
+    return {"state": state, "error": None, "items": items}
+
+
 # ---------------------------------------------------------------- build
 
 def cmd_build(args) -> int:
@@ -161,6 +223,12 @@ def cmd_build(args) -> int:
         return 1
     full_names = _split_names(args.full_pages)
     sample = max(1, args.sample)
+
+    # ---- 环境指纹（issue #102）：嵌入 golden 供 compare 跨后端门禁（可空）
+    env_m, env_err = load_env_manifest(args.env_manifest)
+    if env_err:
+        print(f"✗ {env_err}")
+        return 1
 
     # ---- 名单防线（B2）：--full-pages 逐项必须至少命中一个 gfx 页，防拼错静默降级抽检
     unmatched = [n for n in full_names if not any(_match(n, src) for src, _ in clips)]
@@ -231,6 +299,7 @@ def cmd_build(args) -> int:
             "instances": len(plan),
             "frames_hashed": len(hashes),
             "elapsed_s": round(time.time() - t0, 1),
+            "env_manifest": env_m,   # None=构建时未提供（compare 门禁据此显形区分）
         },
         "pages": pages,
     }
@@ -255,6 +324,24 @@ def cmd_compare(args) -> int:
         return 1
     g = json.loads(gp.read_text(encoding="utf-8"))
     meta = g.get("meta", {})
+    # ---- 跨后端环境前置门禁（issue #102）：先证环境一致，再比像素。
+    # 任一不兼容（字体 SHA256/GPU 静默回退/Chromium 主版本/色彩空间/视口）即拒比。
+    gate = env_manifest_gate(meta, args.env_manifest)
+    if gate["state"] == "error":
+        print(f"✗ {gate['error']}")
+        return 1
+    if gate["state"] == "fail":
+        for it in gate["items"]:
+            print(f"  ✗ 环境门禁 {it}")
+        print(f"✗ 跨后端环境前置门禁未通过：{len(gate['items'])} 项不兼容，"
+              "拒绝像素比对（vtx/env_manifest，issue #102）")
+        return 1
+    if gate["state"] == "pass":
+        print("✓ 环境前置门禁通过：Chromium 主版本/生效后端/色彩空间/视口/"
+              "字体 SHA256 一致（vtx/env_manifest）")
+    elif gate["state"] == "warn":
+        print("⚠ golden 含环境 manifest 但未提供 --env-manifest：跨后端环境"
+              "一致性门禁未激活（跨后端比对务必提供）")
     # 基线同一性：fps/视口不一致说明 golden 不是本项目的（缓存键也必然对不上）
     if (str(meta.get("fps")) != str(c.fps)
             or str(meta.get("viewport")) != f"{c.w}x{c.h}"):
@@ -374,7 +461,7 @@ def cmd_compare(args) -> int:
         report = {"ok": ok, "stale": stale, "golden": str(gp), "timeline": str(Path(args.timeline)),
                   "compared_frames": n_cmp, "identical": identical, "differ": differ,
                   "dir_missing": dir_missing, "missing_or_unreadable": unreadable,
-                  "unrecorded": unrecorded}
+                  "unrecorded": unrecorded, "env_gate": gate}
         Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
         print(f"  报告已写入 {args.report}")
@@ -396,6 +483,9 @@ def main(argv=None) -> int:
                         "名单外页抽检")
     b.add_argument("--sample", type=int, default=5,
                    help="抽检页每 clip 帧数下限（默认 5；[0, dur//2, dur-1]+均匀补足）")
+    b.add_argument("--env-manifest", default="",
+                   help="环境指纹 manifest JSON（渲染运行产出，vtx/env_manifest.py 采集）；"
+                        "嵌入 golden.meta 供 compare 跨后端前置门禁（issue #102，可空）")
 
     p = sub.add_parser("compare", help="对当前 cache 重算 hash 并与 golden 逐帧比对")
     p.add_argument("-t", "--timeline", required=True, help="timeline.json 路径")
@@ -403,6 +493,9 @@ def main(argv=None) -> int:
     p.add_argument("--report", default="", help="比对结果 JSON 输出路径（可选）")
     p.add_argument("--pages", default="",
                    help="只比名单内页（逗号分隔，匹配规则同 --full-pages；缺省=golden 全部）")
+    p.add_argument("--env-manifest", default="",
+                   help="当前后端实测 env manifest JSON：与 golden 内嵌基线先过环境一致性"
+                        "门禁（任一不兼容拒绝像素比对，issue #102）")
     p.add_argument("--strict", action="store_true",
                    help="新鲜度防线判失败：被比帧 mtime 全部 ≤ golden 构建时间（缓存未重渲）"
                         "时 exit 1（默认仅显式警告）")
