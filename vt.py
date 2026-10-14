@@ -2,15 +2,24 @@
 """vt —— Framivra(video_tools 仓)v2 统一入口（ARCHITECTURE §5.1，吸收原 init.py 全部语义）。
 
 子命令：
-  doctor [--json] [--fix]  三检：①版本（本地 HEAD vs origin/HEAD 漂移；真 fetch
+  doctor [--json] [--fix]  五段：①版本（本地 HEAD vs origin/HEAD 漂移；真 fetch
                          5s 超时，VTX_DOCTOR_OFFLINE=1 或超时降级 WARN；
                          clean/dirty/ahead/behind；VERSION 展示，无 tag 不告警）
-                         ②组件（registry 全量 apps/plugins 的 manifest 有效 +
+                         ②依赖面（渲染核心分级，Windows 适配 PR-A1）：error=
+                         python<3.9 / ffmpeg / ffprobe / 浏览器（Chrome 与 Edge
+                         全缺）/ import vtx 断——doctor exit 1 的硬门；warn=
+                         blender / node / sox / libfdk_aac / nvenc 等可选件
+                         ③组件（registry 全量 apps/plugins 的 manifest 有效 +
                          health 探测 + requires 依赖；enabled 才 FAIL 门——未装/
-                         disabled 仅提示；附 `import vtx` 实际解析路径自检）
-                         ③skills（工作流包完好性；未注册包如 examples/skill-demo
+                         disabled 仅提示；附 `import vtx` 实际解析路径自检。
+                         官方内置件（source=builtin）requires 缺二进制与 health
+                         未就绪降 ℹ unavailable 不计 FAIL：内置 apps/plugins 是
+                         内核之上的可选能力面，缺件=未装该能力而非安装损坏，
+                         硬门在②依赖面与各使用点 fail-hard；external enabled
+                         件维持严格 FAIL 不回退）
+                         ④skills（工作流包完好性；未注册包如 examples/skill-demo
                          不在扫描面，不误报）
-  doctor --fix          修复三检中可自动修复项：挂载链接重建（联动 --fix-links
+  doctor --fix          修复体检中可自动修复项：挂载链接重建（联动 --fix-links
                          同表；live 挂载指向其他仓时只报人工项不自动改）+
                          plugins/registry.json 缺字段回填（manifest 为声明数据源，
                          §2.3）。无可自动修复项时明确说明。
@@ -115,6 +124,22 @@ def find_chrome():
                  "/Applications/Chromium.app/Contents/MacOS/Chromium",
                  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
     return find_binary([n for n in names if n], paths)
+
+
+# 浏览器类依赖名集合（Windows 适配 PR-A1）：manifest requires 里这些字面名在
+# win32 上 shutil.which 永远找不到（装的是 chrome.exe / msedge.exe），须走
+# find_chrome 解析链（env > PATH > Win 标准路径 > Edge 兜底）才算可用性事实。
+_BROWSER_BINARIES = frozenset({
+    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+    "chrome", "msedge", "chromium-headless-shell", "google-chrome-beta",
+})
+
+
+def _resolve_required_binary(name: str):
+    """requires 二进制解析：浏览器类名走 find_chrome 解析链，其余 shutil.which。"""
+    if name in _BROWSER_BINARIES:
+        return find_chrome()
+    return shutil.which(name)
 
 
 def ffmpeg_encoders():
@@ -415,14 +440,20 @@ def _doctor_version(json_out: bool) -> dict:
 
 
 def _probe_requires(manifest: dict) -> tuple:
-    """requires 依赖探测：binaries → shutil.which；python_packages → find_spec；
-    platforms → sys.platform；core → VERSION 约束对照。返回 (ok, findings)。"""
+    """requires 依赖探测：binaries → 浏览器类名走 find_chrome 解析链（Windows
+    适配 PR-A1：google-chrome 字面名在 win32 须解析到 chrome.exe/msedge.exe）、
+    其余 shutil.which；python_packages → find_spec；platforms → sys.platform；
+    core → VERSION 约束对照。返回 (ok, findings, missing)，missing 元素形如
+    "binary:<名>" / "py:<包>" / "platform"，供组件段分级（builtin 降 ℹ）使用。"""
     req = (manifest or {}).get("requires", {}) or {}
     findings, missing = [], []
     for b in req.get("binaries", []) or []:
-        found = shutil.which(b)
-        findings.append(f"binary {b}: {'✓ ' + found if found else '✗ 缺失'}")
-        if not found:
+        found = _resolve_required_binary(b)
+        if found:
+            via = "（浏览器解析链）" if b in _BROWSER_BINARIES else ""
+            findings.append(f"binary {b}: ✓ {found}{via}")
+        else:
+            findings.append(f"binary {b}: ✗ 缺失")
             missing.append(f"binary:{b}")
     for p in req.get("python_packages", []) or []:
         spec = importlib.util.find_spec(p)
@@ -438,7 +469,7 @@ def _probe_requires(manifest: dict) -> tuple:
     core = req.get("core")
     if isinstance(core, str) and core.strip():
         findings.append(f"core {core}: 当前 {_read_version()}（约束对照）")
-    return (not missing), findings
+    return (not missing), findings, missing
 
 
 def _probe_health(manifest: dict, comp_dir: Path) -> tuple:
@@ -482,12 +513,85 @@ def _probe_health(manifest: dict, comp_dir: Path) -> tuple:
     return None, f"health.type={htype!r} 未知，跳过探测"
 
 
+def _doctor_dependencies(json_out: bool) -> dict:
+    """依赖面分级（Windows 适配 PR-A1）：渲染核心链的 error/warn 两级。
+
+    error（doctor exit 1 的硬门）：python<3.9 / ffmpeg / ffprobe / 浏览器
+    （Chrome 与 Edge 全缺，经 find_chrome 解析链：env > PATH > Win 标准路径 >
+    Edge 兜底）/ import vtx 断。warn（仅提示）：blender / node / sox /
+    libfdk_aac / nvenc 等可选加速与外围件——它们对应的能力在使用点 fail-hard，
+    不阻断安装验收。探测 CPU-only：编码器能力读 `ffmpeg -hide_banner -encoders`
+    文本清单，不分配 GPU/VRAM。
+    """
+    out = {"errors": [], "warns": [], "items": {}}
+    _by_key = {}   # key → (error_message | None, warn_message | None)
+
+    def rec(key, ok, detail="", err=None, warn=None):
+        out["items"][key] = {"ok": bool(ok), "detail": detail}
+        _by_key[key] = (err, warn)
+        if err:
+            out["errors"].append(err)
+        if warn:
+            out["warns"].append(warn)
+
+    pyv = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    rec("python", sys.version_info >= (3, 9), pyv,
+        err=f"python {pyv} < 3.9（vt 需 3.9+，升级解释器）" if sys.version_info < (3, 9) else None)
+
+    ff_hint = {"win32": "winget install Gyan.FFmpeg",
+               "darwin": "brew install ffmpeg"}.get(OS, "dnf install ffmpeg | apt install ffmpeg")
+    ff, fp = shutil.which("ffmpeg"), shutil.which("ffprobe")
+    rec("ffmpeg", ff, ff or "", err=None if ff else f"ffmpeg 缺失（{ff_hint}）")
+    rec("ffprobe", fp, fp or "", err=None if fp else f"ffprobe 缺失（{ff_hint}）")
+
+    browser = find_chrome()
+    browser_hint = ("winget install Google.Chrome（或系统自带 Edge）" if OS == "win32"
+                    else "安装 Google Chrome / Chromium / Edge（gfx 渲染需要）")
+    rec("browser", browser, browser or "",
+        err=None if browser else f"浏览器缺失：Chrome/Chromium/Edge 均未发现（{browser_hint}）")
+
+    try:
+        import vtx
+        ok_import = str(Path(vtx.__file__).resolve()).startswith(str(ROOT))
+        rec("import_vtx", ok_import, str(vtx.__file__),
+            err=None if ok_import else f"import vtx 解析到仓外路径：{vtx.__file__}（安装损坏）")
+    except Exception as e:  # noqa: BLE001（诊断面：任何导入异常都是 error 事实）
+        rec("import_vtx", False, str(e), err=f"import vtx 失败：{e}（安装损坏）")
+
+    for name, hint in (("blender", "blender-bridge/审片工程需要；缺省可不用"),
+                       ("node", "apps/research 抓取脚本需要；缺省可不用"),
+                       ("sox", "部分音频外围脚本需要；缺省可不用")):
+        found = shutil.which(name)
+        rec(name, found, found or "",
+            warn=None if found else f"{name} 缺失（可选：{hint}）")
+    if ff:
+        encoders = ffmpeg_encoders()
+        rec("libfdk_aac", "libfdk_aac" in encoders, "ffmpeg -encoders 探测",
+            warn=None if "libfdk_aac" in encoders else "libfdk_aac 缺失（可选编码器，AAC 音质档）")
+        rec("nvenc", "h264_nvenc" in encoders, "ffmpeg -encoders 探测",
+            warn=None if "h264_nvenc" in encoders else "h264_nvenc 缺失（可选 GPU 加速，CPU 编码可用）")
+
+    if not json_out:
+        for key, it in out["items"].items():
+            err, warn = _by_key[key]
+            if it["ok"]:
+                print(f"  ✓ {key}：{it['detail'] or 'ok'}")
+            elif err:
+                print(f"  ✗ {err}")
+            else:
+                print(f"  ⚠ {warn}")
+    return out
+
+
 def _doctor_components(json_out: bool, kind_filter=None) -> dict:
     """组件段：registry 全量 apps/plugins manifest 有效 + health + requires +
     `import vtx` 实际解析路径自检（双模块裂分常驻哨兵）。
 
-    FAIL 门语义（§5.1）：**enabled 才 FAIL**——发现件（builtin/external enabled）
-    的 manifest 错误/health 失败/requires 缺失计 FAIL；未装/disabled 仅提示；
+    FAIL 门语义（§5.1 + Windows 适配 PR-A1）：**enabled 才 FAIL**——
+    manifest 错误（builtin/external）、external enabled 件的 health 失败/
+    requires 缺失计 FAIL；builtin 件的全部 requires 缺失与 health 未就绪降 ℹ；
+    builtin 件的 requires 缺二进制与 health 未就绪降 ℹ unavailable（可选
+    能力面，硬门在依赖面 error 级与使用点 fail-hard）；未装/disabled 仅提示；
     registry 声明未落地件列「未安装（规划中）」。kind_filter="app"|"plugin"
     供 `apps check` / `plugins check` 单层复用。
     """
@@ -500,18 +604,38 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
                 "enabled": e["enabled"], "manifest_ok": not e["manifest_errors"],
                 "manifest_errors": e["manifest_errors"]}
         entry_fail = False
+        unavailable = []
         if e["enabled"]:
             if e["manifest_errors"]:
                 entry_fail = True
             else:
                 h_ok, h_detail = _probe_health(e["manifest"], e["dir"])
                 item["health"] = {"ok": h_ok, "detail": h_detail}
-                r_ok, findings = _probe_requires(e["manifest"])
+                r_ok, findings, missing = _probe_requires(e["manifest"])
                 item["requires"] = {"ok": r_ok, "findings": findings}
-                if h_ok is False or not r_ok:
-                    entry_fail = True
+                if e["source"] == "builtin":
+                    # Windows 适配（PR-A1）：官方内置 apps/plugins 是内核之上的
+                    # 可选能力面——requires 缺二进制 / health 未就绪 = ℹ
+                    # unavailable（未装该能力），不计全局 FAIL。渲染核心硬门在
+                    # 依赖面 error 级（python/ffmpeg/ffprobe/浏览器）；各能力在
+                    # 使用点 fail-hard（渲染链/钩子；health 探针自述「允许
+                    # unhealthy 不崩，安装期探测」）。python_packages/platforms
+                    # 缺失同样降 ℹ（hosted windows-2025 新 shell 实测：裸
+                    # Python 无 numpy/requests 属正常安装态而非损坏——vtx 内核
+                    # 纯 stdlib，numpy/requests 仅个别内置 app 声明；与缺
+                    # blender/node 同一「能力面」语义）。
+                    soft = [m.split(":", 1)[1] if ":" in m else m for m in missing]
+                    unavailable.extend(f"缺 {b}" for b in soft)
+                    if h_ok is False:
+                        unavailable.append("health 未就绪")
+                else:
+                    # external enabled 件维持严格 FAIL 门（§2.4 显式注册面）
+                    if h_ok is False or not r_ok:
+                        entry_fail = True
         else:
             item["note"] = "disabled（external 注册默认禁用，§2.4）"
+        if unavailable:
+            item["unavailable"] = unavailable
         item["fail"] = entry_fail
         out["fail"] = out["fail"] or entry_fail
         out["entries"].append(item)
@@ -538,7 +662,12 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
         out["fail"] = True
     if not json_out:
         for it in out["entries"]:
-            flag = "✗" if it["fail"] else ("✓" if it["enabled"] else "ℹ")
+            if it["fail"]:
+                flag = "✗"
+            elif it.get("unavailable"):
+                flag = "ℹ"
+            else:
+                flag = "✓" if it["enabled"] else "ℹ"
             line = f"  {flag} [{it['kind']}:{it['source']}] {it['name']}"
             if it.get("manifest_errors"):
                 line += "｜manifest 无效：" + "；".join(it["manifest_errors"][:3])
@@ -551,6 +680,8 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
                     line += f"｜health {h_flag}（{it['health']['detail']}）"
                 if it.get("requires"):
                     line += f"｜requires {'✓' if it['requires']['ok'] else '✗'}"
+            if it.get("unavailable"):
+                line += "｜unavailable（" + "、".join(it["unavailable"]) + "）"
             if it.get("note"):
                 line += f"｜{it['note']}"
             print(line)
@@ -815,21 +946,27 @@ def cmd_doctor(a) -> int:
         print("== ① 版本 ==")
     version = _doctor_version(a.json)
     if not a.json:
-        print("== ② 组件（apps + plugins）==")
+        print("== ② 依赖面（渲染核心）==")
+    dependencies = _doctor_dependencies(a.json)
+    if not a.json:
+        print("== ③ 组件（apps + plugins）==")
     components = _doctor_components(a.json)
     if not a.json:
-        print("== ③ skills（工作流包）==")
+        print("== ④ skills（工作流包）==")
     skills = _doctor_skills(a.json)
     fix = _doctor_fix(a.json) if a.fix else None
     if a.json:
-        out = {"version": version, "components": components, "skills": skills}
+        out = {"version": version, "dependencies": dependencies,
+               "components": components, "skills": skills}
         if fix is not None:
             out["fix"] = fix
         print(json.dumps(out, ensure_ascii=False, indent=2))
-        return 1 if (components["fail"] or skills["fail"]) else 0
+        return 1 if (dependencies["errors"] or components["fail"] or skills["fail"]) else 0
     fails = []
+    if dependencies["errors"]:
+        fails.append("依赖面存在 error（" + "；".join(dependencies["errors"]) + "）")
     if components["fail"]:
-        fails.append("组件段存在 FAIL（enabled 件 manifest/health/requires 不通过）")
+        fails.append("组件段存在 FAIL（manifest 无效 / external enabled 件 health·requires 不通过）")
     if skills["fail"]:
         fails.append("skills 段存在 FAIL")
     print("doctor 结论：" + ("✅ 通过" if not fails else "❌ " + "；".join(fails)))

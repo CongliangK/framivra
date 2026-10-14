@@ -46,11 +46,117 @@ V1_INIT_KEYS = [
 ]
 
 
+def _isolated_env(root):
+    """Real CPU tools only; no developer HOME, configuration or optional CLIs."""
+    root = Path(root)
+    home = root / "home"; home.mkdir()
+    tools = root / "bin"; tools.mkdir()
+    for name in ("env", "bash", "git", "ffmpeg", "ffprobe", "node", "google-chrome"):
+        binary = shutil.which(name)
+        if not binary:
+            raise AssertionError(f"CLI fixture requires a real executable: {name}")
+        (tools / name).symlink_to(binary)
+    # Preserve the selected venv interpreter, not its resolved base executable.
+    (tools / "python3").symlink_to(sys.executable)
+    config = root / "config.json"
+    config.write_text(json.dumps({"bgm": {"enabled": True,
+                                        "cli": str(root / "missing-bgm")}}))
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("VTX_", "VT_", "SC_", "NANOBANANA", "IMGEN_", "ASR_", "TTS_"))
+           and k not in ("PYTHONPATH", "PYTHONHOME", "BGM_CLI", "BGM_REPO",
+                         "DENOISE_PY", "RESEMBLE_WEIGHTS")}
+    env.update(HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
+               PATH=str(tools), VTX_CONFIG=str(config), VTX_DOCTOR_OFFLINE="1",
+               PYTHONNOUSERSITE="1", VT_MOUNT_ROOT=str(home / "video"))
+    return env
+
+
 def _vt(*args, env_extra=None):
-    env = dict(os.environ)
-    env.update(env_extra or {})
-    return subprocess.run(["env", "python3", str(REPO / "vt.py"), *args],
-                          capture_output=True, text=True, cwd=str(REPO), env=env)
+    with tempfile.TemporaryDirectory(prefix="vt-entry-env-") as root:
+        env = _isolated_env(root)
+        env.update(env_extra or {})
+        return subprocess.run(["env", "python3", str(REPO / "vt.py"), *args],
+                              capture_output=True, text=True, cwd=str(REPO), env=env)
+
+
+def _assert_doctor_passes_with_optional_unavailable(case, result):
+    """核心依赖齐备 → doctor exit 0；builtin 可选面缺件降 ℹ unavailable 不 FAIL
+    （Windows 适配 PR-A1：blender 缺失、bgm/denoise health 未就绪均属未装可选
+    能力；渲染核心硬门在依赖面 error 级）。"""
+    case.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    data = json.loads(result.stdout)
+    case.assertEqual(data["dependencies"]["errors"], [], data["dependencies"])
+    entries = data["components"]["entries"]
+    for e in entries:
+        case.assertTrue(e["manifest_ok"], e)
+        case.assertFalse(e["fail"], e)              # builtin 件一律不再 FAIL
+    by_key = {(e["kind"], e["name"]): e for e in entries}
+    # blender 缺失 → requires ✗ + unavailable（app 与 plugin 两面）
+    for key in (("app", "blender-bridge"), ("plugin", "blender-bridge")):
+        e = by_key[key]
+        case.assertFalse(e["requires"]["ok"], e)
+        case.assertIn("缺 blender", e.get("unavailable", []), e)
+    # health 未就绪（可选 CLI/权重不在）→ unavailable，不 FAIL
+    for key in (("plugin", "bgm-render"), ("plugin", "denoise")):
+        e = by_key[key]
+        case.assertFalse(e["health"]["ok"], e)
+        case.assertIn("health 未就绪", e.get("unavailable", []), e)
+    # 其余件（含 google-chrome/node/numpy 依赖面）全就绪
+    for e in entries:
+        if not e.get("unavailable"):
+            case.assertTrue(e["requires"]["ok"], e)
+            case.assertIsNot(e["health"]["ok"], False, e)
+    case.assertFalse(data["components"]["fail"])
+    case.assertFalse(data["skills"]["fail"])
+    case.assertTrue(data["components"]["import_vtx"]["ok"])
+    # 依赖面：blender/sox 缺只 warn（本隔离环境无 blender/sox）
+    warns = " ".join(data["dependencies"]["warns"])
+    case.assertIn("blender 缺失", warns)
+    return data
+
+
+class DoctorComponentBranches(unittest.TestCase):
+    """Named fixtures exercise real health/FAIL gates, not global health mocks."""
+    def check_branch(self, enabled, health_exit):
+        import argparse
+        import contextlib
+        import io
+        import vt as vt_mod
+        with tempfile.TemporaryDirectory(prefix="vt-component-") as root:
+            root = Path(root)
+            (root / "health.py").write_text(f"raise SystemExit({health_exit})\n")
+            manifest = {"health": {"type": "command", "command": "health.py"},
+                        "requires": {"binaries": [], "python_packages": [], "platforms": []}}
+            entry = {"name": "controlled-health", "kind": "plugin", "source": "external",
+                     "dir": root, "enabled": enabled, "manifest_errors": [], "manifest": manifest}
+            output = io.StringIO()
+            with mock.patch.object(vt_mod._preg, "discover", return_value=[entry]), \
+                 mock.patch.object(vt_mod._preg, "declared_plugins", return_value={}), \
+                 mock.patch.object(vt_mod, "_doctor_version", return_value={"state": "clean"}), \
+                 mock.patch.object(vt_mod, "_doctor_skills", return_value={"fail": False}), \
+                 mock.patch.object(vt_mod, "_probe_health", wraps=vt_mod._probe_health) as health, \
+                 mock.patch.object(vt_mod, "_probe_requires", wraps=vt_mod._probe_requires) as requires, \
+                 contextlib.redirect_stdout(output):
+                exit_code = vt_mod.cmd_doctor(argparse.Namespace(json=True, fix=False))
+                if enabled:
+                    health.assert_called_once()
+                    requires.assert_called_once()
+                else:
+                    health.assert_not_called()
+                    requires.assert_not_called()
+            data = json.loads(output.getvalue())
+            self.assertEqual(exit_code, 1 if enabled and health_exit else 0)
+            self.assertEqual(data["components"]["fail"], bool(enabled and health_exit))
+            self.assertEqual(data["components"]["entries"][0]["fail"], bool(enabled and health_exit))
+
+    def test_healthy_enabled_exits_zero(self):
+        self.check_branch(True, 0)
+
+    def test_unavailable_enabled_exits_one(self):
+        self.check_branch(True, 1)
+
+    def test_disabled_is_not_probed_and_exits_zero(self):
+        self.check_branch(False, 1)
 
 
 class VersionCmd(unittest.TestCase):
@@ -65,10 +171,12 @@ class VersionCmd(unittest.TestCase):
 class DoctorJson(unittest.TestCase):
     def test_doctor_json_sections_complete(self):
         r = _vt("doctor", "--json", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        d = json.loads(r.stdout)
-        # 三段齐备（§5.1：版本/组件/skills）
-        self.assertEqual(sorted(d), ["components", "skills", "version"])
+        d = _assert_doctor_passes_with_optional_unavailable(self, r)
+        # 四段齐备（§5.1 + PR-A1：版本/依赖面/组件/skills）
+        self.assertEqual(sorted(d), ["components", "dependencies", "skills", "version"])
+        self.assertIn("errors", d["dependencies"])
+        self.assertIn("warns", d["dependencies"])
+        self.assertIn("items", d["dependencies"])
         # 版本段字段
         v = d["version"]
         for k in ("version", "head", "state", "notes"):
@@ -97,8 +205,14 @@ class DoctorJson(unittest.TestCase):
         plugins = [e for e in c["entries"] if e["kind"] == "plugin"]
         self.assertEqual({e["name"] for e in plugins},
                          {"denoise", "duck-static", "blender-bridge", "bgm-render"})
+        # builtin 可选面降 ℹ：三件 unavailable 但不 FAIL（PR-A1 分级）
         for e in plugins:
-            self.assertFalse(e["fail"], e)
+            if e["name"] == "duck-static":
+                self.assertFalse(e["fail"], e)
+                self.assertNotIn("unavailable", e)
+            else:
+                self.assertFalse(e["fail"], e)
+                self.assertTrue(e.get("unavailable"), e)
         self.assertTrue(c["import_vtx"]["ok"], c["import_vtx"])
         self.assertTrue(str(REPO) in c["import_vtx"]["path"])
         # skills 段（P3 起 tech-talk 落地：发现 + uses_apps 逐件在册）
@@ -114,26 +228,32 @@ class DoctorJson(unittest.TestCase):
     def test_doctor_human_readable_offline(self):
         r = _vt("doctor", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        for marker in ("① 版本", "② 组件", "③ skills", "doctor 结论"):
+        _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--json"))
+        for marker in ("① 版本", "② 依赖面", "③ 组件", "④ skills",
+                       "doctor 结论", "✅ 通过"):
             self.assertIn(marker, r.stdout)
+        self.assertIn("unavailable（缺 blender", r.stdout)
 
 
 class ListCheck(unittest.TestCase):
     def test_plugins_list_shows_declared(self):
         r = _vt("plugins", "list")
+        # builtin 可选面降 ℹ（PR-A1）：核心齐备 → list/check 不再 FAIL
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("denoise", r.stdout)
         self.assertIn("duck-static", r.stdout)
-        # P2b 两插件落地：list 展示 enabled 态与 registry 声明（1.0.0）
-        self.assertIn("✓ enabled denoise", r.stdout)
+        self.assertIn("✓ enabled duck-static", r.stdout)
         self.assertIn("duck-static@1.0.0", r.stdout)
         self.assertNotIn("✗ FAIL", r.stdout)
+        self.assertEqual([line for line in r.stdout.splitlines() if "✗" in line], [])
 
     def test_apps_and_skills_list_ok(self):
         for args in (("apps", "list"), ("skills", "list"),
                      ("apps", "check"), ("plugins", "check"), ("skills", "check")):
             r = _vt(*args)
             self.assertEqual(r.returncode, 0, f"{args}: {r.stdout}{r.stderr}")
+            if args[0] != "skills":
+                _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--json"))
 
     def test_bad_subcommand_usage_error(self):
         r = _vt("plugins", "bogus")
@@ -186,13 +306,18 @@ class FixLinks(unittest.TestCase):
 
 
 class InitForwarderParity(unittest.TestCase):
+    def setUp(self):
+        root = tempfile.TemporaryDirectory(prefix="vt-init-env-")
+        self.addCleanup(root.cleanup)
+        self.env = _isolated_env(root.name)
+
     def test_init_json_key_structure_matches_v1(self):
         cfg_file = REPO / "config.local.json"
         existed = cfg_file.exists()
         content = cfg_file.read_text(encoding="utf-8") if existed else None
         try:
             r = subprocess.run(["env", "python3", str(REPO / "init.py"), "--json"],
-                               capture_output=True, text=True, cwd=str(REPO))
+                               capture_output=True, text=True, cwd=str(REPO), env=self.env)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             d = json.loads(r.stdout)
             missing = [k for k in V1_INIT_KEYS if k not in d]
@@ -210,9 +335,10 @@ class InitForwarderParity(unittest.TestCase):
         cfg_file = REPO / "config.local.json"
         existed = cfg_file.exists()
         try:
-            r1 = _vt("init", "--json")
+            r1 = _vt("init", "--json", env_extra=self.env)
             r2 = subprocess.run(["env", "python3", str(REPO / "init.py"), "--json"],
-                                capture_output=True, text=True, cwd=str(REPO))
+                                capture_output=True, text=True, cwd=str(REPO), env=self.env)
+            self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
             self.assertEqual(r1.returncode, r2.returncode)
             self.assertEqual(json.loads(r1.stdout), json.loads(r2.stdout))  # 转发等价
         finally:
@@ -242,6 +368,7 @@ class DoctorFix(unittest.TestCase):
         env = {"VT_MOUNT_ROOT": str(self.mount), "VTX_DOCTOR_OFFLINE": "1"}
         r = _vt("doctor", "--fix", env_extra=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--fix", "--json", env_extra=env))
         for name in ("SKILL.md", "references", "assets", "vtx", "scripts", "skills"):
             link = self.mount / name
             self.assertTrue(link.is_symlink(), f"{name} 未建链")
@@ -256,8 +383,7 @@ class DoctorFix(unittest.TestCase):
     def test_doctor_fix_json_has_fix_section(self):
         env = {"VT_MOUNT_ROOT": str(self.mount), "VTX_DOCTOR_OFFLINE": "1"}
         r = _vt("doctor", "--fix", "--json", env_extra=env)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        d = json.loads(r.stdout)
+        d = _assert_doctor_passes_with_optional_unavailable(self, r)
         self.assertIn("fix", d)
         self.assertEqual(d["fix"]["mount"]["status"], "fixed")
         self.assertEqual(d["fix"]["registry"]["status"], "ok")
@@ -315,8 +441,7 @@ class DoctorSkillsSection(unittest.TestCase):
         # doctor skills 段扫描面——不误报（§5.1；P4 起 examples/ 有 skill.json）
         self.assertTrue((REPO / "examples" / "skill-demo" / "skill.json").is_file())
         r = _vt("doctor", "--json", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        d = json.loads(r.stdout)
+        d = _assert_doctor_passes_with_optional_unavailable(self, r)
         names = [s["name"] for s in d["skills"]["installed"]]
         self.assertEqual(names, ["tech-talk"])
         self.assertFalse(d["skills"]["fail"])

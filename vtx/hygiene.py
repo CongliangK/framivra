@@ -78,6 +78,43 @@ def cleanup_allowed(c, path: Path, *, nuke=False) -> bool:
     return False
 
 
+class CleanupPlan(dict):
+    """The existing category/three-tuple plan plus read-only identity tokens.
+
+    Metadata is not a category: previews and old iteration consumers still see
+    exactly the same dict shape. Only sealed plans authorize execution.
+    """
+    def __init__(self, c, items, *, nuke=False):
+        super().__init__(items)
+        self.root = Path(os.path.abspath(c.root))
+        self.nuke = nuke
+        self.identities = {}
+        for entries in self.values():
+            for path, _, _ in entries:
+                path = Path(os.path.abspath(path))
+                try:
+                    relative = path.relative_to(self.root)
+                except ValueError as error:
+                    raise ProjectPathError(f"拒绝清理 {path}：计划不在项目根内") from error
+                if not relative.parts or relative.parts[0] not in ('cache', 'out'):
+                    raise ProjectPathError(f"拒绝清理 {path}：计划不在 cache/out 内")
+                self.identities[path] = fstxn.cleanup_identity(path)
+
+    def preserve(self, path):
+        relative = path.relative_to(self.root)
+        return (path.name.endswith('.lock') or
+                (not self.nuke and relative.parts[0] == 'out' and
+                 len(relative.parts) > 1 and out_protected(relative.parts[1])))
+
+    def execute(self):
+        for entries in self.values():
+            for path, _, _ in entries:
+                path = Path(os.path.abspath(path))
+                if path not in self.identities:
+                    raise ProjectPathError(f"拒绝清理 {path}：条目不在原计划中")
+                fstxn.remove_pinned(path, self.identities[path], preserve=self.preserve)
+
+
 def cleanup_children(c, path):
     """issue #21：iterdir 前先挡住目录链接穿透，候选条目仍逐一校验。"""
     if not cleanup_allowed(c, path) or not path.is_dir():
@@ -315,9 +352,21 @@ class _TmpDir:
 
 
 def dir_size(p: Path) -> int:
+    # 计划扫描与并发回收者/记账 writer 竞态：条目在 exists/is_file 与 stat
+    # 之间消失属正常（hosted 3.12 实测 .manifest.json.*.tmp 命中）。消失=0 字节，
+    # 计划删除侧 remove_pinned 对缺失条目本就幂等跳过（#56 语义）。
     if not p.exists(): return 0
-    if p.is_file(): return p.stat().st_size
-    return sum(x.stat().st_size for x in p.rglob("*") if x.is_file())
+    try:
+        if p.is_file(): return p.stat().st_size
+    except OSError:
+        return 0
+    total = 0
+    for x in p.rglob("*"):
+        try:
+            if x.is_file(): total += x.stat().st_size
+        except OSError:
+            continue
+    return total
 
 
 def gb(n: int) -> str:
@@ -455,7 +504,7 @@ def gc_plan(c, keep_days: int = 0):
     if keep_days:
         for cat in ("gfx", "seg", "audio", "plugin_cache", "legacy", "vseg"):
             plan[cat] = [e for e in plan[cat] if not fresh(e[0])]
-    return plan
+    return CleanupPlan(c, plan)
 
 
 def _out_deliverable(name: str) -> bool:
