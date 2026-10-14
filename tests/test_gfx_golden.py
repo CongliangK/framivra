@@ -7,8 +7,12 @@ golden 键与帧目录定位复用 vtx/hygiene.gfx_key（与渲染器同键）�
 #104 起扩展：analyze_frame_diff 三级像素裁决（Tier-1 Exact / Tier-2
 Premul-Equivalent / Tier-3 Failure+labels）——DoD 四类合成帧分类准确率 100%、
 残差 ≤1 容差边界、黑边/α 差异/全透明区差异反例、热力图（Tier-2/3 产 Tier-1
-不产、绿/红通道分工、原子写）、analyze CLI（目录/单文件/缺帧配对/退出码）与
-1080p 分析段性能门（中位 ≤15ms，解码外）。"""
+不产、绿/红通道分工、原子写）、analyze CLI（目录/单文件/缺帧配对/退出码）。
+
+#104 返工（红队性能验收修复）追加：全部 Tier-1/Tier-2 通过态路径 1080p 分析段
+# 中位 ≤15ms 五路径性能门（全等/稀疏/30% 稠密/100% 稠密/全屏中 α=128·ΔRGB=2）；
+# 快速通道界 256 的健全+最紧锁定（走廊数学根基）；halo 签名 ±1 精度锁定
+# （M2b 变异 ±3 存活修复）；走廊≡一般路径全字段等价回归。"""
 import contextlib
 import io
 import json
@@ -457,6 +461,54 @@ class AnalyzeFrameDiffEdges(unittest.TestCase):
         self.assertIn(gg.L_STRUCT, r["labels"])
         self.assertGreater(r["max_abs_diff"], 5)
 
+    def test_quick_bound_256_sound_and_tight(self):
+        """快速通道界 α·ΔC ≤ 256 的健全性与最紧性（走廊/quick 通道的数学根基）。
+
+        健全：∀A∈[1,254]，取 ΔC=min(256//A,255)，∀C_r∈[0,255−ΔC] 残差 ≤1
+        （A∈[1,254]×C_r×C_c 全域穷举的边界行锁定）；最紧：积 258 即有反例
+        （A=2, C 63→192；A=129, C 84→86，残差恰 2）→ 界不可放宽；端到端反例
+        帧必须 Tier-3（防界放宽与 |Δ|>128 回绕陷阱双双回归）。"""
+        C = np.arange(256)
+        for a in range(1, 255):
+            dc = min(256 // a, 255)
+            f = (2 * C * a + 255) // 510           # round_hu(C·A/255) 契约公式
+            res = np.abs(f[dc:] - f[:256 - dc])     # 全部 C_r 的残差
+            self.assertLessEqual(int(res.max()), 1, f"A={a} ΔC={dc}")
+        for a, c0, c1 in ((2, 63, 192), (129, 84, 86)):
+            f = lambda c: (2 * c * a + 255) // 510  # noqa: E731
+            self.assertEqual(abs(f(c1) - f(c0)), 2)  # 积 258 反例：界 256 最紧
+        ref = np.zeros((4, 4, 4), np.uint8)         # 端到端：反例帧必须失败
+        ref[..., 3] = 2
+        ref[..., 0] = 63
+        cand = ref.copy()
+        cand[..., 0] = 192                          # |Δ|=129 → 积 258 > 256
+        r = self._analyze(ref, cand)
+        self.assertEqual(r["tier"], gg.TIER_FAIL)
+        self.assertEqual(r["max_premul_residual"], 2)
+        self.assertEqual(r["labels"], [gg.L_STRUCT])
+
+    def test_halo_signature_threshold_precision(self):
+        """halo 签名精度锁定 ±1（M2b 变异「阈值放宽 ±3 无测试击杀」修复）。
+
+        签名距离恰 1 → 命中（收紧到 0 即被本例杀死）；距离恰 2 → 不命中
+        （放宽到 ±2/±3 即被本例杀死）。A=128 时 round(100·128/255)=50：
+        cand C=51 距离 1、C=52 距离 2，两者残差均 24>1（同入签名判定集）。"""
+        def pair(cc):
+            ref = self._base(pair_pixel=(100, 100, 100, 128))
+            cand = self._base(pair_pixel=(100, 100, 100, 128))
+            cand[4, 4, :3] = cc
+            return ref, cand
+
+        r1 = self._analyze(*pair(51))
+        self.assertEqual(r1["tier"], gg.TIER_FAIL)
+        self.assertEqual(r1["halo_signature_pixels"], 1)
+        self.assertIn(gg.L_HALO, r1["labels"])      # 距离 1：±1 命中
+        r2 = self._analyze(*pair(52))
+        self.assertEqual(r2["tier"], gg.TIER_FAIL)
+        self.assertEqual(r2["halo_signature_pixels"], 0)   # 距离 2：±1 不命中
+        self.assertNotIn(gg.L_HALO, r2["labels"])
+        self.assertEqual(r2["labels"], [gg.L_STRUCT])      # mad=48>5，无 halo
+
     def test_rgb_png_input_normalized_to_rgba(self):
         """无 α 的 RGB PNG 双方一致 → 统一 convert RGBA 口径后 Tier-1。"""
         arr = np.zeros((16, 16, 3), np.uint8)
@@ -619,63 +671,162 @@ class AnalyzeCli(unittest.TestCase):
         self.assertEqual(rc, 1)                       # 无帧对≠通过（宁缺毋滥）
 
 
-class AnalyzePerf(unittest.TestCase):
-    """#104 性能门：1080p 分析段（解码外、纯裁决数学）中位 ≤15ms。
+class AnalyzeCorridorEquivalence(unittest.TestCase):
+    """#104 返工：全画幅快速走廊 ≡ 一般路径（同帧对强制两路，全字段一致）。
 
-    Tier-1 快路径与稀疏差异全分类路径按 #104 预算断言（≤15ms 中位）；
-    稠密 Tier-2（30% 像素低 α 舍入差异）另设 40ms 回归护栏（本机参考 ~18ms，
-    预算口径与实测包络见 scripts/gfx_golden.py 模块 docstring）。
+    heatmap_out 非 None 时走廊旁路、必走一般路径（xor+take 收集 + 精确重投影），
+    借此对同帧对分别取两路结果，断言除 heatmap/elapsed 外逐字段相等——锁死
+    走廊三条件化简（n_semi==n_diff / max_premul_residual 保守上界 1 / 计数
+    口径）不改变裁决语义。确定性形态 + 种子随机形态双覆盖。
     """
 
-    def test_1080p_analysis_budget(self):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    _EQ_FIELDS = ("tier", "labels", "w", "h", "max_abs_diff", "max_abs_diff_rgb",
+                  "max_abs_diff_alpha", "n_diff_pixels", "semi_diff_pixels",
+                  "opaque_diff_pixels", "transparent_diff_pixels",
+                  "premul_rounding_pixel_count", "max_premul_residual",
+                  "halo_signature_pixels")
+
+    def _assert_eq(self, ref, cand):
+        fast = gg._analyze_arrays(ref, cand)        # 走廊可命中
+        slow = gg._analyze_arrays(ref, cand, heatmap_out=self.root / "hm.png")
+        for f in self._EQ_FIELDS:
+            self.assertEqual(fast[f], slow[f], f"{f}: 走廊≠一般路径")
+
+    def test_deterministic_morphologies(self):
+        w, h = 24, 16
+        rng = np.random.default_rng(7)
+        base = rng.integers(0, 256, (h, w, 4), dtype=np.uint8)
+        cases = [_pair_tier2(w, h), _pair_halo(w, h), _pair_opaque_shift(w, h)]
+        # 全屏中 α=128·ΔRGB=2（走廊命中的红队核心场景）
+        r5 = rng.integers(0, 254, (h, w, 4), dtype=np.uint8)
+        r5[..., 3] = 128
+        c5 = r5.copy()
+        c5[..., 0] = r5[..., 0] + 2
+        cases.append((r5, c5))
+        # α·ΔC=258 反例（走廊必须拒绝 → 两路同 Tier-3）
+        r6 = np.zeros((h, w, 4), np.uint8)
+        r6[..., 3] = 2
+        r6[..., 1] = 63
+        c6 = r6.copy()
+        c6[..., 1] = 192
+        cases.append((r6, c6))
+        cases.append((base, base.copy()))           # Tier-1（两路同早退）
+        for ref, cand in cases:
+            self._assert_eq(ref, cand)
+
+    def test_seeded_random_pairs(self):
+        rng = np.random.default_rng(104)
+        for _ in range(30):
+            h, w = int(rng.integers(8, 40)), int(rng.integers(8, 48))
+            ref = rng.integers(0, 256, (h, w, 4), dtype=np.uint8)
+            cand = ref.copy()
+            if rng.random() < 0.7:                  # 大概率构造半透明差异
+                k = max(1, h * w // 8)
+                ys = rng.integers(0, h, k)
+                xs = rng.integers(0, w, k)
+                a = int(rng.integers(1, 255))
+                ref[ys, xs, 3] = a
+                cand[ys, xs, 3] = a
+                cand[ys, xs, :3] = np.clip(ref[ys, xs, :3].astype(int)
+                                           + int(rng.integers(-3, 4)), 0, 255)
+            if rng.random() < 0.3:                  # 混 α 差异 / 不透明差异
+                cand[..., 3] = np.clip(cand[..., 3].astype(int)
+                                       + int(rng.integers(-2, 3)), 0, 255)
+            self._assert_eq(ref, cand)
+
+
+class AnalyzePerf(unittest.TestCase):
+    """#104 返工性能门：全部 Tier-1/Tier-2 通过态路径 1080p 分析段中位 ≤15ms。
+
+    五路径：全等 / 稀疏 2000 半透明 / 稠密 Tier-2 30% / 稠密 Tier-2 100% /
+    全屏中 α=128·ΔRGB=2（工单核心场景的中 α 推广——红队复现的 167ms 无护栏
+    慢路径）。阈值按 15ms 预算断言，机器抖动由 2 次预热 + 7 轮取中位消化；
+    PNG 解码 1080p 实测 ~35-55ms 属 I/O，不在本门内（decode_ms 字段另行披露）。
+    """
+
+    def test_1080p_all_pass_state_paths_within_budget(self):
         w, h = 1920, 1080
         rng = np.random.default_rng(104)
-        ref = rng.integers(0, 256, (h, w, 4), dtype=np.uint8)
+        base = rng.integers(0, 256, (h, w, 4), dtype=np.uint8)
 
         def median_ms(a, b, n=7):
-            for _ in range(2):                        # 预热（首次调用有惰性 import）
+            for _ in range(2):                        # 预热（惰性 import+scratch 首配）
                 gg._analyze_arrays(a, b)
-            ts = []
+            ts, r = [], None
             for _ in range(n):
                 t0 = time.perf_counter()
                 r = gg._analyze_arrays(a, b)
                 ts.append((time.perf_counter() - t0) * 1000)
             return sorted(ts)[n // 2], r
 
-        med_exact, r = median_ms(ref, ref.copy())
-        self.assertEqual(r["tier"], gg.TIER_EXACT)
-        self.assertLessEqual(med_exact, 15.0)
+        cases = []                                    # (名, a, b, 中位 ms)
 
-        cand = ref.copy()                             # 稀疏差异：~2000 半透明像素
+        m, r = median_ms(base, base.copy())           # 1) 全等 Tier-1
+        self.assertEqual(r["tier"], gg.TIER_EXACT)
+        cases.append(("identical", base, base.copy(), m))
+
+        cand = base.copy()                            # 2) 稀疏 2000 半透明
+        ref2 = base.copy()
         pos = rng.choice(h * w, size=2000, replace=False)
         ys, xs = np.divmod(pos, w)
-        ref2 = ref.copy()
         ref2[ys, xs, 3] = 128
         cand[ys, xs, 3] = 128
         cand[ys, xs, 0] = np.clip(cand[ys, xs, 0].astype(np.int32) + 1, 0, 255)
-        med_diff, r = median_ms(ref2, cand)
-        self.assertEqual(r["tier"], gg.TIER_PREMUL)   # A=128 下 +1 直存差 → 残差 ≤1
+        m, r = median_ms(ref2, cand)
+        self.assertEqual(r["tier"], gg.TIER_PREMUL)
         self.assertGreater(r["n_diff_pixels"], 0)
-        self.assertLessEqual(med_diff, 15.0)
+        self.assertEqual(r["premul_rounding_pixel_count"], r["n_diff_pixels"])
+        cases.append(("sparse 2000 semi", ref2, cand, m))
 
-        # 稠密 Tier-2（~30% 像素低 α 逆预乘舍入差异，全部走快速通道）：
-        # 本机参考 ~18ms，40ms 为回归护栏（非 15ms 预算口径，见模块 docstring 包络）
-        A = np.broadcast_to(1 + (np.arange(w) % 15), (h, w))
+        A = np.broadcast_to(1 + (np.arange(w) % 15), (h, w))   # 3) 稠密 Tier-2 ~30%
         P = np.arange(h)[:, None] % (A + 1)
         s_up = np.minimum(255, _rhu(P * 255, A))
         s_dn = np.minimum(255, (P * 255) // A)
         ref3 = np.dstack([s_up, s_up, s_up, A]).astype(np.uint8)
         cand3 = np.dstack([s_dn, s_dn, s_dn, A]).astype(np.uint8)
-        med_dense, r3 = median_ms(ref3, cand3)
-        self.assertEqual(r3["tier"], gg.TIER_PREMUL)
-        self.assertEqual(r3["premul_rounding_pixel_count"], r3["n_diff_pixels"])
-        self.assertLessEqual(med_dense, 40.0)
+        self.assertGreater((ref3 != cand3).any(axis=2).mean(), 0.25)
+        m, r = median_ms(ref3, cand3)
+        self.assertEqual(r["tier"], gg.TIER_PREMUL)
+        cases.append(("dense T2 30%", ref3, cand3, m))
+
+        A4 = 2 * (1 + np.arange(h * w).reshape(h, w) % 3)      # 4) 稠密 Tier-2 100%
+        P4 = A4 // 2                    # P=A/2 → P·255/A=127.5 恰在舍入半界
+        su4 = np.minimum(255, _rhu(P4 * 255, A4))
+        sd4 = np.minimum(255, (P4 * 255) // A4)
+        ref4 = np.dstack([su4, su4, su4, A4]).astype(np.uint8)
+        cand4 = np.dstack([sd4, sd4, sd4, A4]).astype(np.uint8)
+        self.assertGreater((ref4 != cand4).any(axis=2).mean(), 0.99)  # 真 ~100%
+        m, r = median_ms(ref4, cand4)
+        self.assertEqual(r["tier"], gg.TIER_PREMUL)
+        cases.append(("dense T2 100%", ref4, cand4, m))
+
+        ref5 = rng.integers(0, 254, (h, w, 4), dtype=np.uint8)  # 5) 全屏中 α
+        ref5[..., 3] = 128                            # α=128 全屏
+        cand5 = ref5.copy()
+        cand5[..., 0] = ref5[..., 0].astype(np.int32) + 2   # 直存 ΔRGB=2（积 256）
+        m, r = median_ms(ref5, cand5)
+        self.assertEqual(r["tier"], gg.TIER_PREMUL)
+        self.assertEqual(r["max_abs_diff"], 2)
+        self.assertEqual(r["max_premul_residual"], 1)
+        self.assertEqual(r["premul_rounding_pixel_count"], r["n_diff_pixels"])
+        self.assertEqual(r["n_diff_pixels"], h * w)
+        cases.append(("full mid-alpha A=128 dRGB=2", ref5, cand5, m))
+
+        for name, a, b, ms in cases:
+            if ms > 15.0:                # 机器级瞬态重测一次（两次均超才判失败；
+                ms, _ = median_ms(a, b)  # 真回归如界放宽 ~50ms 两次必超，牙齿不变）
+            self.assertLessEqual(ms, 15.0, f"{name} 分析段中位 {ms:.2f}ms > 15ms")
 
         with tempfile.TemporaryDirectory(prefix="gfx_analyze_perf_") as td:
             # 端到端含 PNG 编解码：只做 sanity 断言（解码耗时另见 decode_ms 字段）
             rp, cp = Path(td) / "ref.png", Path(td) / "cand.png"
-            _save_png(ref2, rp)
-            _save_png(cand, cp)
+            _save_png(ref5, rp)
+            _save_png(cand5, cp)
             r2 = gg.analyze_frame_diff(rp, cp)
             self.assertEqual(r2["tier"], gg.TIER_PREMUL)
             self.assertLess(r2["decode_ms"], 1000.0)

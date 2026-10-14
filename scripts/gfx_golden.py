@@ -50,6 +50,14 @@ golden JSON 结构（自包含、无歧义）：
     默认 min(8, cpu)。目标：3530 帧 1080p 解码 hash ≈ 2-3 分钟内。
   - 纯标准库 + PIL；#104 深度审计另用 numpy（向量化；仓库既有依赖面——
     vtx/gfx_render 可选加速与 apps/gates 均在用，非新引入）；不改 vtx/（只读复用）。
+  - #104 性能包络（1080p 分析段中位，本机 numpy 2.5；PNG 解码 ~35-55ms 属 I/O，
+    不在预算内，见 decode_ms 字段）：全部 Tier-1/Tier-2 通过态路径 ≤15ms——
+    Tier-1 走 memcmp 级快路径；Tier-2 先试全画幅 uint8/uint16 快速走廊（三
+    条件可证 Tier-2 即免收集免重投影直裁，覆盖低 α 稠密舍入与全屏中
+    α=128·ΔRGB=2 的逆预乘舍入推广场景），不适用（混合形态/需热力图）走
+    xor+take 收集 + α·ΔC≤256 数学上界快速通道。α·ΔC>256 的稠密 Tier-2 与
+    Tier-3 失败帧需全量精确重投影（uint16 移位除法向量化），最重 ~300ms——
+    失败帧为离线诊断口径，非 #104 预算路径（超预算包络如实披露，docstring 同）。
 """
 import argparse
 import hashlib
@@ -190,6 +198,34 @@ _HEATMAP_GRAY_BG = 128   # 热力图左半幅投影底色（C_comp 公式的 B �
 _HEATMAP_AMP = 16        # 热力图右半幅误差放大倍数
 _STRUCT_MAX_ABS = 5      # structural 标签阈值：全画幅任一 RGBA 通道 max|Δ| > 5
 
+# 快速通道数学上界（#104 返工，255→256 收紧）：α·max|ΔRGB| ≤ 256 ⟹ 黑/白底预乘
+# 重投影残差 ≤1。证明要点：f(C)=round(C·A/255) 单调增，残差 ≥2 ⟺ q=C·A 轴开区间
+# (q_lo, q_hi] 内含 ≥2 个阶梯跳变（跳变位于 q≡128 (mod 255)，间距恒 510），两个
+# 跳变需区间长 2·(A·ΔC) ≥ 511；A·ΔC ≤ 255 时不可能，=256 时唯一形态解
+# C_lo = 255 − ΔC/2 恒出 C 域 [0, 255−ΔC]（ΔC≥2；A·ΔC=256 ⟹ A | 256）。
+# 全域穷举复核（红队同强度）：A∈[1,254] × C_r × C_c 共 16,646,144 组零违例；
+# 界最紧不可再宽：积 257 无整数分解，258 即有反例（A=2, C 63→192；A=129,
+# C 84→86，残差均 2）。
+_QUICK_PROD_BOUND = 256
+
+# 走廊中间缓冲池（按像素数缓存）：analyze 为单线程顺序调用（CLI/测试均串行），
+# 17MB 级临时若每次调用重新分配，glibc 混合尺寸 mmap/munmap 逐次触发 ~4.5k 次
+# 缺页（1080p 实测 +6ms）；复用后稳态零分配零缺页。
+_CORRIDOR_SCRATCH = {}
+
+
+def _corridor_scratch(np, n):
+    sc = _CORRIDOR_SCRATCH.get(n)
+    if sc is None:
+        sc = _CORRIDOR_SCRATCH[n] = {
+            "rgb16": np.empty(n, np.int16),   # 每像素 RGB 最大 |Δ|
+            "t16": np.empty(n, np.int16),     # 逐通道 |Δ| / 边缘乘积临时
+            "u8": np.empty(n, np.uint8),      # α 回绕差 / semi 构造临时
+            "semi": np.empty(n, bool),        # 半透明掩码（原地翻转复用）
+            "prod": np.empty(n, np.uint16),   # α·max|ΔRGB|
+        }
+    return sc
+
 
 def _decode_rgba(path: Path):
     """PNG → (h, w, 4) uint8（非 RGBA 模式统一 convert，与 hash_frame 同口径）。
@@ -213,15 +249,85 @@ def _rdiv255(q):
     return (2 * q + 255) // 510
 
 
+def _dense_pass_corridor(ref, cand):
+    """全画幅通过态快速走廊（#104 性能收口）：三条件全真时直接裁决 Tier-2。
+
+    免差异收集（uint32 xor + take）与子集预乘重投影。布局与数值口径注意：
+      - numpy 对 (N,3)/(N,4) 末轴 3/4 元素的运算/归约是标量慢循环（1080p 实测
+        ~12/33ms），全部改为 (N,) 平面运算 + 链式列 maximum（~0.1-0.7ms/步）；
+      - |Δ| 必须经 int16：uint8 回绕 min(d, −d) 在 |Δ|∈[129,255] 丢符号
+        （如 0↔129 回绕得 127），会低报 mad/prod 致 ③ 误放行（对抗验证拦截）；
+      - 中间缓冲走 _CORRIDOR_SCRATCH 复用（见其注释），稳态零分配。
+    三条件均可全画幅一次验证：
+      ① α 通道全等（⟹ alpha_identical 真，且白底残差≡黑底残差为数学恒等，
+         一般路径同此省略白底补算）；
+      ② 不透明/全透明区零 RGB 差异（⟹ n_opq==n_tr==0，差异像素全落半透明区，
+         且 n_semi==n_diff）；
+      ③ max(每像素 RGB 最大直存差 × α) ≤ _QUICK_PROD_BOUND（数学充分条件：
+         半透明差异像素预乘重投影残差全 ≤1）。
+    三条件成立 ⟹ Tier-2 判据全真，且输出与一般路径 n_exact==0 分支逐项一致
+    （premul_rounding_pixel_count=n_semi / max_premul_residual=1 保守上界口径 /
+    labels 恒空 / halo=0）。任一条件不满足返回 None，交一般路径（语义不变）。
+    需热力图时不走本走廊（热力图要差异索引与逐点误差，一般路径本就计算）。
+    """
+    import numpy as np
+    n = ref.shape[0] * ref.shape[1]
+    sc = _corridor_scratch(np, n)
+    rgb16, t16, u8, semi, prod = (sc[k] for k in ("rgb16", "t16", "u8", "semi", "prod"))
+    rf, cf = ref.reshape(-1, 4), cand.reshape(-1, 4)   # 零拷贝平面化视图
+    np.subtract(rf[:, 3], cf[:, 3], out=u8)            # uint8 回绕：非零 ⟺ α 有差
+    if u8.any():                                       # ① α 有差 → 必 Tier-3
+        return None
+    for k in (0, 1, 2):                                # 每像素 RGB 最大直存差
+        np.subtract(rf[:, k], cf[:, k], dtype=np.int16, out=t16)
+        np.abs(t16, out=t16)
+        if k:
+            np.maximum(rgb16, t16, out=rgb16)
+        else:
+            rgb16[...] = t16
+    mad_rgb = int(rgb16.max())
+    if mad_rgb == 0:                                   # 防御（array_equal 已拦截）
+        return None
+    a_r = rf[:, 3]
+    np.subtract(a_r, np.uint8(1), out=u8)
+    np.less(u8, np.uint8(254), out=semi)               # 半透明 0<A<255（回绕单比较）
+    su8 = semi.view(np.uint8)
+    np.bitwise_xor(su8, np.uint8(1), out=su8)          # 翻转为非半透明指示（原地）
+    np.multiply(rgb16, su8, dtype=np.int16, out=t16)
+    if int(t16.max()):                                 # ② α∈{0,255} 区有 RGB 差
+        return None
+    np.multiply(rgb16.view(np.uint16), a_r, dtype=np.uint16, out=prod)  # ≤255·254
+    if int(prod.max()) > _QUICK_PROD_BOUND:            # ③ 残差 ≤1 充分条件全域成立
+        return None
+    n_diff = int(np.count_nonzero(rgb16))              # ② ⟹ 差异像素全半透明，
+    h, w = ref.shape[:2]                               # 故 n_semi == n_diff
+    return {"tier": TIER_PREMUL, "labels": [], "w": w, "h": h,
+            "max_abs_diff": mad_rgb, "max_abs_diff_rgb": mad_rgb,
+            "max_abs_diff_alpha": 0, "n_diff_pixels": n_diff,
+            "semi_diff_pixels": n_diff, "opaque_diff_pixels": 0,
+            "transparent_diff_pixels": 0,
+            "premul_rounding_pixel_count": n_diff,
+            "max_premul_residual": 1,
+            "halo_signature_pixels": 0, "heatmap": None}
+
+
 def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
     """核心裁决（numpy 向量化；ref/cand 为同形 (h,w,4) uint8 Straight RGBA）。
 
-    性能设计（#104 预算 ≤15ms 指分析段常见路径；tests/test_gfx_golden.py 性能门）：
-    Tier-1 走 np.array_equal SIMD 快路径；有差异时 uint32 视图 xor + take 收集
-    稀疏化出差异像素集，预乘/标签数学只做在子集上，且低 α 舍入像素走数学上界
-    快速通道（免精确重投影）。实测 1080p 参考值（本机 numpy 2.5）：全等 ~2ms /
-    稀疏差异 ~3ms / 稠密 Tier-2（30% 像素舍入差异）~18ms / 全帧实质失败最重
-    ~260ms（精确重投影全量，失败帧离线诊断可接受）。
+    性能设计（#104 预算 ≤15ms 为分析段中位，五路径性能门见
+    tests/test_gfx_golden.py::AnalyzePerf；PNG 解码 ~35-55ms 属 I/O 不在预算内，
+    见 analyze_frame_diff 的 decode_ms 字段）：
+    Tier-1 走 np.array_equal SIMD 快路径；Tier-2 通过态先试 _dense_pass_corridor
+    全画幅走廊（三条件可证 Tier-2 即免差异收集、免重投影——覆盖低 α 舍入渐变、
+    全屏中 α=128·ΔRGB=2 逆预乘舍入推广等稠密与稀疏场景），不适用（如需热力图、
+    α 有差或 α·ΔRGB>256 混合形态）走 uint32 视图 xor + take 收集；
+    半透明差异像素先过 α·max|ΔRGB| ≤ 256 数学上界快速通道（免精确
+    重投影，见 _QUICK_PROD_BOUND 证明），其余走 uint16 移位除法精确重投影
+    （除法→移位恒等式 (q+127)//255 = ((q+128+((q+128)>>8))>>8)，全域验证）。
+    实测 1080p 参考值（本机 numpy 2.5）：全等 ~0.4ms / 走廊通过态（稀疏差异、
+    30%/100% 稠密差与全屏中 α）~5-7ms。超预算包络如实披露：
+    α·ΔRGB > 256 的稠密 Tier-2（罕见构造，需全量精确重投影）与全帧 Tier-3
+    失败帧同量级，最重 ~300ms（失败帧离线诊断口径，非 #104 预算路径）。
     返回 dict 字段契约见 analyze_frame_diff 文档。
     """
     import numpy as np
@@ -238,6 +344,12 @@ def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
                 "max_premul_residual": 0, "halo_signature_pixels": 0,
                 "heatmap": None,
                 "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2)}
+
+    if heatmap_out is None:                            # 热力图需差异索引 → 走一般路径
+        cor = _dense_pass_corridor(ref, cand)
+        if cor is not None:
+            cor["elapsed_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+            return cor
 
     # 差异像素稀疏化：uint32 视图 xor（4 字节/像素）+ take 收集（比逐行 fancy
     # index 快一个量级）；视图不合法（对齐/步长异常）回落逐通道路径。
@@ -257,9 +369,9 @@ def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
     dpx -= cp8
     np.abs(dpx, out=dpx)                              # (n,4) 差异像素 |Δ|
     a_r, a_c = rp8[:, 3], cp8[:, 3]
-    mad = int(dpx.max())
-    mad_rgb = int(dpx[:, :3].max())
-    mad_a = int(dpx[:, 3].max())
+    cmax = [int(dpx[:, k].max()) for k in range(4)]   # 列向归约；末轴 3/4 元素的行向
+    mad = max(cmax)                                   # 归约是 numpy 标量慢循环，
+    mad_rgb, mad_a = max(cmax[:3]), cmax[3]           # 大差异集上需避开（走廊同因）
     alpha_identical = mad_a == 0
 
     # 差异像素按 ref α 分区（α 全等时 ref/cand 分区同义；α 有差时 alpha 标签先兜底）
@@ -273,15 +385,18 @@ def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
     #   黑底 B=0：C_comp = round(C·A/255)；白底 B=255：C_comp = round(C·A/255)+(255−A)
     #   （round(x+k)=round(x)+k 对整数 k 成立 → α 相等的像素白底残差 ≡ 黑底残差，
     #   故白底只在 α 不同处补算——数学等价，省一半残差链）
-    # 快速通道（数学上界）：α 相等且 max|ΔRGB|·A < 255 时 |u−v|<1（u,v 为双方
-    # C·A/255），则 |round(u)−round(v)| ≤ 1 恒成立 → 免精确重投影。低 α 大面积
-    # 逆预乘舍入（跨后端 Tier-2 稠密场景主力）全部命中此通道；其真实残差 ≤1
-    # 但未必为 0，max_premul_residual 按保守上界 1 计（Tier-2 语义不受影响）。
+    # 快速通道（数学上界）：α 相等且 α·max|ΔRGB| ≤ _QUICK_PROD_BOUND(256) 时双方
+    # 黑底/白底重投影残差 ≤1 恒成立（证明与全域穷举见 _QUICK_PROD_BOUND 注释）→
+    # 免精确重投影。低 α 大面积逆预乘舍入（跨后端 Tier-2 稠密场景主力）与全屏中 α
+    # （如 α=128、直存差恰 2 级：128·2=256）全部命中此通道；其真实残差 ≤1 但未必
+    # 为 0，max_premul_residual 按保守上界 1 计（Tier-2 语义不受影响）。
     # （乘积用 uint16：255·255=65025 < 65536 恰不溢出，比 int32 省一半带宽）
     alpha_eq = a_r == a_c
     if n_semi:
-        drgb8 = dpx[:, :3].max(axis=1).astype(np.uint8)   # 每像素 RGB 最大直存差 ≤255
-        quick = np.multiply(drgb8, a_r, dtype=np.uint16) < 255
+        t = np.maximum(dpx[:, 0], dpx[:, 1])          # 每像素 RGB 最大直存差 ≤255
+        np.maximum(t, dpx[:, 2], out=t)               # （链式列运算，行向归约慢）
+        drgb8 = t.astype(np.uint8)
+        quick = np.multiply(drgb8, a_r, dtype=np.uint16) <= _QUICK_PROD_BOUND
         quick &= semi
         quick &= alpha_eq
         exact = semi & ~quick                         # 新数组：勿原地改 semi
@@ -293,14 +408,16 @@ def _analyze_arrays(ref, cand, heatmap_out=None) -> dict:
     premul_ok = 0
     if n_exact:
         rgbs, cgbs = rp8[exact][:, :3], cp8[exact][:, :3]   # (m,3) uint8
-        ar = a_r[exact].astype(np.int32)
-        ac2 = a_c[exact].astype(np.int32)
+        ar = a_r[exact]                                 # uint8（u16 乘法直用，省转型）
+        ac2 = a_c[exact]
 
-        def _premul(rgb8, a):                         # round(C·A/255)，原地省临时
-            q = np.multiply(rgb8, a[:, None], dtype=np.int32)  # 转型×乘法单趟融合
-            q += q                                    # ×2
-            q += 255
-            q //= 510
+        def _premul(rgb8, a):                         # round(C·A/255)，全 uint16 SIMD
+            # 除法→移位恒等式（全域 q∈[0,65025] 验证）：
+            #   (q+127)//255 == ((q+128+((q+128)>>8))>>8)，q+128≤65153 无 u16 溢出
+            q = np.multiply(rgb8, a[:, None], dtype=np.uint16)  # ≤65025，转型×乘法融合
+            q += np.uint16(128)
+            q += q >> np.uint16(8)
+            q >>= np.uint16(8)
             return q
 
         cb_ref = _premul(rgbs, ar)                    # round(C_ref·A_ref/255)
@@ -414,7 +531,8 @@ def analyze_frame_diff(ref_path, cand_path, heatmap_out=None) -> dict:
     n_diff_pixels / semi|opaque|transparent_diff_pixels（差异像素按 ref α 分区）/
     premul_rounding_pixel_count / max_premul_residual（半透明差异像素的黑底+白底
     重投影最大残差；Tier-2 定义上 ≤1）/ halo_signature_pixels / heatmap /
-    elapsed_ms（分析段，含热力图生成）/ decode_ms（PNG 解码段）。
+    elapsed_ms（分析段，含热力图生成）/ decode_ms（PNG 解码段；1080p 实测
+    ~35-55ms 属 I/O，issue #104 的 15ms 预算只约束分析段）。
 
     尺寸不一致或解码失败抛 ValueError（CLI 归入 errors，不崩栈）。
     """
