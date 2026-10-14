@@ -51,7 +51,16 @@ if (-not $py) {
 if (-not $InstallPyUrl) { throw '[bootstrap] 缺少 -InstallPyUrl(候选期应钉 commit SHA 的 raw 地址)' }
 $target = Join-Path $env:TEMP 'vt-install.py'
 Invoke-WebRequest -UseBasicParsing -Uri $InstallPyUrl -OutFile $target
-Write-Host "[bootstrap] 已下载 install.py($([math]::Round((Get-Item $target).Length/1KB,1)) KB),启动安装器..."
+# install.py 依赖同目录 verify_release(发布产物身份验证,fail-closed);单文件
+# 下载到 %TEMP% 的引导场景必须从同一 ref 一并取之,否则 import 即崩
+# (候选期 URL 钉同一 commit SHA,两文件天然同版本)。
+$verifyUrl = $InstallPyUrl -replace '/install\.py$', '/verify_release.py'
+if ($verifyUrl -eq $InstallPyUrl) {
+  throw '[bootstrap] -InstallPyUrl 须形如 .../scripts/install.py(无法推导同 ref 的 verify_release.py 地址)'
+}
+$verifyTarget = Join-Path $env:TEMP 'verify_release.py'
+Invoke-WebRequest -UseBasicParsing -Uri $verifyUrl -OutFile $verifyTarget
+Write-Host "[bootstrap] 已下载 install.py($([math]::Round((Get-Item $target).Length/1KB,1)) KB)与 verify_release.py,启动安装器..."
 # 同上:单元素候选($py=@('python'))时无守卫切片会带出 $null 杂散参数。
 $pyArgs = if ($py.Length -gt 1) { $py[1..($py.Length - 1)] } else { @() }
 & $py[0] $pyArgs $target @InstallArgs
