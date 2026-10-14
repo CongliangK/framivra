@@ -468,14 +468,9 @@ class ExecutionPolicy(Enum):
     def execute_cleanup(self, plan):
         if self.dry:
             return
-        for category, items in plan.items():
-            for path, _, _ in items:
-                # is_dir() 会跟随符号链接，rmtree 对链接本身会抛错——显式排除，
-                # 防止计划外条目经链接根越界删除（红队 A03×A01 对抗复审）
-                if path.is_dir() and not path.is_symlink():
-                    shutil.rmtree(path, ignore_errors=True)
-                else:
-                    path.unlink(missing_ok=True)
+        if not isinstance(plan, hygiene.CleanupPlan):
+            raise ProjectPathError("拒绝清理：执行需要计划阶段绑定身份的 CleanupPlan")
+        plan.execute()
 
 
 def _symlink_roots(c):
@@ -490,9 +485,12 @@ def _plan_without_linked_roots(plan, links):
     计划条目路径全部由 c.cache/c.out 拼接而来，无需 resolve）。"""
     if not links:
         return plan
-    return {cat: [e for e in items
-                  if not any(e[0] == l or l in e[0].parents for l in links)]
-            for cat, items in plan.items()}
+    # Filter only: keep the sealed plan and its original identity tokens. A
+    # replacement dict or a new seal here would lose/rebind plan-time identity.
+    for cat, items in plan.items():
+        plan[cat] = [e for e in items
+                     if not any(e[0] == l or l in e[0].parents for l in links)]
+    return plan
 
 
 def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
@@ -522,14 +520,14 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
                 if p.exists() and not p.is_symlink():
                     plan["clean"].extend(hygiene.cleanup_entries(
                         c, p, "全清空（危险旗标：含不可再生交付件，锁除外）", nuke=True))
-            return plan
+            return hygiene.CleanupPlan(c, plan, nuke=True)
         plan = {"cache": [], "out": []}
         if c.cache.exists() and not c.cache.is_symlink():
             plan["cache"].extend(hygiene.cleanup_entries(c, c.cache, "可再生缓存"))
         for p in hygiene.cleanup_children(c, c.out):
             if not hygiene.out_protected(p.name):
                 plan["out"].extend(hygiene.cleanup_entries(c, p, "可再生 out 条目"))
-        return plan
+        return hygiene.CleanupPlan(c, plan)
     if deep:
         plan = {"cache": [], "out": []}
         for root, category in ((c.cache, "cache"), (c.out, "out")):
@@ -545,7 +543,7 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
                                           or hygiene.out_protected(path.name)):
                     continue
                 plan[category].extend(hygiene.cleanup_entries(c, path, "深度回收"))
-        return _plan_without_linked_roots(plan, links)
+        return hygiene.CleanupPlan(c, _plan_without_linked_roots(plan, links))
     if c.cache.exists() and not c.cache.is_symlink():
         # gc_plan 会 iterdir cache/out：根为符号链接时同样不得进入（只列清单也算
         # 读穿链接目标）；cache 侧被拒后仅保留 out 的既有中间物规则
@@ -557,7 +555,7 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
     for p in hygiene.cleanup_children(c, c.out):
         if p.name not in out_keep and not hygiene.out_protected(p.name):
             plan["out_intermediate"].extend(hygiene.cleanup_entries(c, p, "out 一次性中间物"))
-    return plan
+    return hygiene.CleanupPlan(c, plan)
 
 
 def _clean_preview(c, nuke: bool):
