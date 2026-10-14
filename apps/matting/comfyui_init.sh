@@ -12,8 +12,14 @@
 #
 # 网络说明：github 克隆直连失败自动走代理 http://127.0.0.1:7890；pip 走清华源，
 # torch 走 pytorch 官方 cu130 源。模型 checkpoints（flux 等）不在本脚本范围——
-# 按需用 HF_ENDPOINT=https://hf-mirror.com 下载到 ComfyUI/models/ 对应子目录。
+# 权重须独立许可审查，不能用服务代码的许可覆盖；见 docs/third-party-licenses.md。
 set -u
+
+# Installing service code does not authorize arbitrary checkpoint downloads.
+if [ "${1:-}" = "--install" ]; then
+  LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
+  python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download comfyui || exit "$?"
+fi
 
 ROOT="${COMFYUI_ROOT:-$HOME/AI/ComfyUI}"
 CPY="${COMFYUI_PY:-$HOME/miniconda3/envs/comfyui/bin/python}"
