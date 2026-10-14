@@ -60,6 +60,15 @@ import tempfile
 import time
 from pathlib import Path, PurePosixPath
 
+# Windows 控制台常见 cp1252/GBK 代码页,直接 print 中文会 UnicodeEncodeError
+# 崩溃(hosted windows-2025 实测)。与 vt.py 同款 UTF-8 reconfigure;失败静默
+# 降级(极老解释器无 reconfigure),绝不因日志编码中断安装事务。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 WIN32 = sys.platform == "win32"
 IS_WINDOWS = os.name == "nt"
 DEFAULT_HOME = (Path(os.environ.get("LOCALAPPDATA", "")) / "framivra"
