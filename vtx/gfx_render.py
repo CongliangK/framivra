@@ -347,6 +347,22 @@ class Tab:
         return base64.b64decode(r["data"])
 
 
+_SUPERVISION_WARNED = False
+
+
+def _warn_supervision_degraded():
+    """O1（红队）：监管不可用 → 回落无监管路径的一次性显式 stderr 告警。
+    「一次性」= 每进程首个降级 Browser 打一条（hard_restart/多页多 Browser
+    场景不刷屏），但不静默——用户须知道本进程的 Chrome 无 kill -9 归零保障。"""
+    global _SUPERVISION_WARNED
+    if _SUPERVISION_WARNED:
+        return
+    _SUPERVISION_WARNED = True
+    print("⚠ proc_supervisor 监管不可用（非 Linux 或 /proc 缺失）：Chrome 回落"
+          "无监管路径（无 PDEATHSIG/守卫/账本，Profile 落系统临时目录；宿主被"
+          "kill -9 后浏览器进程树不会自动归零，需自行清理）", file=sys.stderr)
+
+
 class Browser:
     """惰性启动的常驻 headless Chrome。崩溃后 hard_restart() 重建（线程安全）。
 
@@ -355,8 +371,10 @@ class Browser:
     PDEATHSIG、父存活管道守卫、tmp_run PID 账本；Profile 落项目
     cache/tmp/<UTC>-gfx_cdp-*/ 下（杜绝写系统 /tmp tmpfs），宿主被 kill -9 时
     全树（Browser/GPU/Zygote/Renderer）由守卫 killpg 归零、残留账本由下一轮
-    gfx 阶段 reap_orphan_workers 收口。ctx=None（独立直跑入口）保持原
-    tempfile.mkdtemp + 裸 Popen 形态。"""
+    gfx 阶段 reap_orphan_workers 收口。监管不可用平台（非 Linux/无 /proc，
+    supervision_available()=False）真实降级：回落本类 #103 之前的无监管
+    形态（裸 Popen + tempfile.mkdtemp，与 ctx=None 同路径）并一次性 stderr
+    告警。ctx=None（独立直跑入口）保持原 tempfile.mkdtemp + 裸 Popen 形态。"""
 
     def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None):
         self.chrome = chrome_path
@@ -397,7 +415,17 @@ class Browser:
         s.bind(("127.0.0.1", 0))
         self.port = s.getsockname()[1]
         s.close()
-        if self.ctx is not None:
+        supervised = self.ctx is not None
+        if supervised:
+            # O1（红队）：非 Linux/无 /proc 平台监管器不可用（账本拒绝编造）。
+            # 真实降级 = 回落 #103 之前的无监管路径 + 一次性 stderr 告警
+            # （macOS 是 install.sh 官方支持平台，gfx 阶段不得硬失败），
+            # 而非让 _write_ledger 的 RuntimeError 打死整个 CDP 默认路径。
+            from .proc_supervisor import supervision_available
+            supervised = supervision_available()
+            if not supervised:
+                _warn_supervision_degraded()
+        if supervised:
             # issue #103：监管态——argv 由运行目录动态拼（--user-data-dir 落
             # tmp_run 的 profile/）；supervisor 尾追 --parent-alive-fd=<fd>
             # （Chrome 忽略未知开关，fd 由守卫持有强制全树归零，不依赖协作）。

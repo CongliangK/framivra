@@ -40,8 +40,13 @@ tests/test_hygiene_ledger_txn.py）——账本是 tmp_run 目录内的独立文
 运行目录纪律：工作目录与浏览器 --user-data-dir / root_cache_path 统一分配在
 hygiene.tmp_run(c, "gfx_<backend_id>") 创建的 cache/tmp/<UTC>-gfx_<backend_id>/
 下（unique=True 追加 -<pid>-<序号> 后缀，并行监管组不互撞）——杜绝写系统
-/tmp tmpfs 占内存。Linux /proc 缺失的平台自动降级（无 PDEATHSIG/守卫击杀面，
-正常 stop 路径仍完整），进程演练测试按平台跳过。
+/tmp tmpfs 占内存。平台能力：完整监管依赖 /proc（账本的 starttime/boot_id 与
+组成员扫描）；supervision_available()=False 的平台（非 Linux、无 /proc），
+SupervisedProcessGroup 不做「假装降级」——账本拒绝编造（_write_ledger 恒
+RuntimeError，宁可不起不可无账本裸奔），真实降级发生在接入点
+gfx_render.Browser.start：检测监管不可用即回落 #103 之前的无监管路径
+（裸 Popen + tempfile.mkdtemp，行为=main 基线）并一次性 stderr 告警。
+进程演练测试按平台跳过。
 
 纯标准库（ctypes 仅用于 prctl）。独立测试：python3 -m unittest
 tests.test_proc_supervisor -v（真实进程树演练，只杀本测试自起子进程）。
@@ -64,7 +69,7 @@ else:             # flat 直跑（python3 vtx/proc_supervisor.py）仅留最小�
 
 __all__ = ["SupervisedProcessGroup", "reap_orphan_workers", "reap_run_dir",
            "kill_group", "group_live_members", "proc_starttime", "boot_id",
-           "WORKER_LEDGER", "main"]
+           "supervision_available", "WORKER_LEDGER", "main"]
 
 # 伴生 PID 账本文件名（hygiene._sweep_tmp_worker_ledger 经本常量惰性取用，
 # 名字是两模块间的共享契约，改动须两侧同审）
@@ -83,7 +88,31 @@ try:
 except OSError:   # pragma: no cover - musl/无 libc 场景：降级为无 PDEATHSIG
     _LIBC = None
 
+# O2（红队）：prctl 函数指针在 import 期（单线程）预解析。若惰性解析，首次
+# `_LIBC.prctl` 属性求值（CDLL.__getattr__ → dlsym）会发生在 fork 出的子进程
+# 内（preexec 首调）——宿主 VTX_GFX_PAGES 默认 7 线程池，fork 瞬间其他线程
+# 若持动态加载器锁，子内 dlsym 即死锁。预绑定后 _preexec 只剩已绑定指针的
+# int 参数调用（libffi cif 随绑定预生成，无分配）+ getppid/kill 两个 syscall
+# 包装，不触碰任何懒加载/分配路径。
+# 方案取舍（为何保持 preexec_fn 而非 exec 包装器/守卫侧挂载）：prctl 只能对
+# 自身进程设置（无 Popen 等价参数），守卫无法替 Worker 挂 PDEATHSIG；exec
+# 包装器要彻底去掉 preexec_fn 须给每个 Worker 多付一次解释器启动并把 argv
+# 契约整体重排进包装脚本——相比已收窄到「纯 syscall 的 preexec」收益为负。
+try:
+    _PRCTL = _LIBC.prctl if _LIBC is not None else None
+except AttributeError:   # pragma: no cover - libc 未导出 prctl 的病态环境
+    _PRCTL = None
+
 _HAS_PROC = Path("/proc/self/stat").is_file()
+
+
+def supervision_available() -> bool:
+    """平台是否具备完整监管能力（issue #103 O1）：监管的击杀核验（账本
+    starttime/boot_id、组成员扫描）全部依赖 /proc，缺失即监管不可用。
+    接入点（gfx_render.Browser.start）据此分流——False 时回落 #103 之前的
+    无监管路径并一次性 stderr 告警，而非等 _write_ledger 抛 RuntimeError
+    把 gfx 阶段打死。测试可 monkeypatch 模块级 _HAS_PROC 模拟平台探测。"""
+    return _HAS_PROC
 
 
 # ---------------------------------------------------------------- /proc 只读探针
@@ -181,9 +210,10 @@ def _make_pdeathsig_preexec(expected_ppid: int):
     ① prctl(PR_SET_PDEATHSIG, SIGKILL)——宿主（确切说：fork 本 Worker 的宿主
     线程）死亡时内核补发 SIGKILL；② fork→prctl 间宿主可能已死（该窗口内死亡
     内核不会补发信号），prctl 后复读 getppid 兜底自杀，关死该竞态窗。
-    ctypes 在模块顶层预载（fork 后子进程不再走 import 机制，防多线程 fork 死锁）。"""
+    prctl 指针已在模块顶层预解析为 _PRCTL（见 O2 注）——fork 后子进程内
+    不走 CDLL 惰性属性查找/dlsym，防多线程 fork 死锁。"""
     def _preexec():   # pragma: no cover - fork 子进程内执行，覆盖工具看不见
-        if _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
+        if _PRCTL(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
             os._exit(126)
         if os.getppid() != expected_ppid:
             os.kill(os.getpid(), signal.SIGKILL)
@@ -272,7 +302,7 @@ class SupervisedProcessGroup:
             argv = self.argv(self.run_dir, self.profile_dir) \
                 if callable(self.argv) else [str(a) for a in self.argv]
             argv = [*argv, f"--parent-alive-fd={r_fd}"]
-            preexec = _make_pdeathsig_preexec(os.getpid()) if _LIBC is not None else None
+            preexec = _make_pdeathsig_preexec(os.getpid()) if _PRCTL is not None else None
             self.proc = subprocess.Popen(
                 argv, cwd=str(self.run_dir), start_new_session=True,
                 preexec_fn=preexec, pass_fds=(r_fd,),

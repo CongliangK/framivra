@@ -30,7 +30,7 @@ import zlib
 from pathlib import Path
 from unittest import mock
 
-from vtx import cli, gfx_cli, gfx_render, hygiene
+from vtx import cli, gfx_cli, gfx_render, hygiene, proc_supervisor
 from vtx.infra import Ctx
 from vtx.proc_supervisor import (SupervisedProcessGroup, WORKER_LEDGER,
                                  boot_id, group_live_members, proc_starttime,
@@ -357,6 +357,56 @@ class ProcStatHelperTests(unittest.TestCase):
         self.assertIsNone(proc_starttime(999_999_999))
         self.assertEqual(group_live_members(999_999_999), [])
 
+    def test_supervision_available_follows_platform_probe(self):
+        # O1：平台探测（/proc 缺失）→ 监管不可用（接入点据此降级分流）
+        self.assertTrue(proc_supervisor.supervision_available())
+        with mock.patch.object(proc_supervisor, '_HAS_PROC', False):
+            self.assertFalse(proc_supervisor.supervision_available())
+
+
+class SupervisionDegradationTests(_ProjectFixture):
+    """O1：监管不可用平台（非 Linux/无 /proc）真实降级——不硬失败（跨平台离线）。"""
+
+    def test_no_proc_platform_falls_back_to_unsupervised_with_warning(self):
+        # monkeypatch 平台探测 → Browser 接入点回落 #103 之前的无监管路径
+        # （裸 Popen + tempfile.mkdtemp，= main 基线），渲染启动照常成功 +
+        # 一次性 stderr 告警。修复前此处是 _write_ledger 的 RuntimeError
+        # 硬失败（macOS 官方支持平台上 gfx 阶段直接死）。
+        fake_proc = mock.Mock()
+        fake_proc.poll.return_value = None
+        fake_tab = {"webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/abc"}
+        err = io.StringIO()
+        with mock.patch.object(proc_supervisor, '_HAS_PROC', False), \
+                mock.patch.object(gfx_render, '_SUPERVISION_WARNED', False), \
+                mock.patch.object(gfx_render.Browser, '_find_chrome',
+                                  lambda self: None), \
+                mock.patch.object(gfx_render.subprocess, 'Popen',
+                                  return_value=fake_proc) as popen, \
+                mock.patch.object(gfx_render.urllib.request, 'urlopen',
+                                  return_value=mock.Mock()), \
+                mock.patch.object(gfx_render.json, 'load',
+                                  return_value=fake_tab), \
+                contextlib.redirect_stderr(err):
+            b = gfx_render.Browser(chrome_path='/nonexistent/chrome',
+                                   tabs=1, ctx=self.ctx())
+            b.start()                      # 降级路径：不抛即渲染启动成功
+            self.assertIsNone(b.group, '监管不可用时不得构造监管组')
+            self.assertIsNotNone(b.proc)
+            self.assertTrue(str(b.user_data_dir).startswith(
+                tempfile.gettempdir()), 'Profile 回落系统临时目录（#103 前基线）')
+            self.assertTrue(Path(b.user_data_dir).name.startswith('vtx_gfx_cdp_'))
+            self.assertEqual(b.tab_ws_urls, ['/devtools/page/abc'])
+            argv = popen.call_args[0][0]
+            self.assertFalse(
+                any(str(a).startswith('--parent-alive-fd=') for a in argv),
+                '无监管路径不得携带协作契约 fd')
+            self.assertIn('监管不可用', err.getvalue(), '须显式 stderr 告警')
+            b.hard_restart()               # 重起不刷屏：一次性告警
+            self.assertEqual(err.getvalue().count('监管不可用'), 1)
+            b.stop()
+            self.assertFalse(Path(b.user_data_dir).exists(),
+                             '无监管路径收尾清理临时 Profile')
+
 
 class SandboxCacheNamespaceTests(_ProjectFixture):
     """DoD ②：VTX_GFX_CACHE_NS 沙箱隔离（离线，无真实进程/浏览器）。"""
@@ -383,11 +433,16 @@ class SandboxCacheNamespaceTests(_ProjectFixture):
 
     def test_invalid_ns_rejected_loudly(self):
         # 注：含 NUL 的值 os.environ 本身拒绝设置（putenv 报错），到不了校验层
-        for bad in ('../evil', '/abs', 'a/b', '.hidden', 'a b'):
-            with self.subTest(ns=bad), \
+        for bad in ('../evil', '/abs', 'a/b', '.hidden', 'a b',
+                    'x' * 65, 'y' * 300):   # O3：长度超限（含红队 300 字符探针）
+            with self.subTest(ns=bad[:16]), \
                     mock.patch.dict(os.environ, {'VTX_GFX_CACHE_NS': bad}):
                 with self.assertRaises(ValueError):
                     hygiene.gfx_dir(self.c, self.clip)
+        # 长度上界本身合法（64 = _NS_MAX）：不抛
+        with mock.patch.dict(os.environ, {'VTX_GFX_CACHE_NS': 'z' * 64}):
+            self.assertEqual(hygiene.gfx_dir(self.c, self.clip),
+                             self.c.cache / 'gfx_exp' / ('z' * 64) / self.key)
         # 空串/空白 = 正式态（默认），不抛
         for blank in ('', '   '):
             with mock.patch.dict(os.environ, {'VTX_GFX_CACHE_NS': blank}):

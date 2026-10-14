@@ -202,6 +202,9 @@ def gfx_key(c, cl) -> str:
 # 的值（"../evil"、"/abs"、"a/b"、以 . 开头的隐藏名）。实验态词表（cef_a0/cef_a1/
 # elec_b0/elec_b1）不写死：双路线战役会追加新实验位，字符集校验是安全下限。
 _NS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+# O3（红队）：ns 是缓存路径段，除字符集外还须长度上限——超长合法字符值
+# 此前一路放到文件系统层 ENAMETOOLONG 裸 OSError，应在配置解析层显式 ValueError。
+_NS_MAX = 64
 
 
 def gfx_cache_ns() -> str:
@@ -214,11 +217,12 @@ def gfx_cache_ns() -> str:
     ns = os.environ.get("VTX_GFX_CACHE_NS", "").strip()
     if not ns:
         return ""
-    if not _NS_RE.fullmatch(ns):
+    if not _NS_RE.fullmatch(ns) or len(ns) > _NS_MAX:
+        shown = ns if len(ns) <= 32 else ns[:32] + "…"
         raise ValueError(
-            f"VTX_GFX_CACHE_NS 非法（{ns!r}）：只允许字母数字与 _.- 且不得以 . "
-            "开头——它将成为 cache/gfx_exp/<ns>/<key>/ 的路径段，路径逃逸值一律拒绝"
-            "（issue #103）")
+            f"VTX_GFX_CACHE_NS 非法（{shown!r}，共 {len(ns)} 字符）：只允许"
+            f"字母数字与 _.- 且不得以 . 开头、长度 ≤ {_NS_MAX}——它将成为 "
+            "cache/gfx_exp/<ns>/<key>/ 的路径段，路径逃逸值一律拒绝（issue #103）")
     return ns
 
 
