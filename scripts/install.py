@@ -201,7 +201,13 @@ def safe_extract(archive_path, destination):
                     continue
                 if member.issym():
                     if member.linkname.startswith(("/", "\\")) or re.match(
-                            r"^[A-Za-z]:", member.linkname) or ".." in member.linkname.split("/"):
+                            r"^[A-Za-z]:", member.linkname):
+                        raise InstallError("符号链接目标越出载荷根: %s -> %s"
+                                           % (member.name, member.linkname))
+                    # 官方载荷存在 scripts/x.py -> ../plugins/... 型合法链接:
+                    # 以规范化后是否仍在载荷根内为准(_resolve_within 单一语义),
+                    # 不按字面含 .. 拒绝(hosted windows-2025 端到端实测)。
+                    if _resolve_within(None, path, member.linkname) is None:
                         raise InstallError("符号链接目标越出载荷根: %s -> %s"
                                            % (member.name, member.linkname))
                     symlinks[member.name] = member.linkname
