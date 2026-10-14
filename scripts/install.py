@@ -59,6 +59,13 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
+
+try:  # 同目录模块;脚本直跑时 scripts/ 已在 sys.path,导入式测试需显式补
+    import verify_release
+except ImportError:  # pragma: no cover
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import verify_release
 
 # Windows 控制台常见 cp1252/GBK 代码页,直接 print 中文会 UnicodeEncodeError
 # 崩溃(hosted windows-2025 实测)。与 vt.py 同款 UTF-8 reconfigure;失败静默
@@ -147,6 +154,54 @@ def verify_sha256(payload_path, sums_path, expected_name):
     digest = hashlib.sha256(payload_path.read_bytes()).hexdigest()
     if digest != entries[0][0].lower():
         raise InstallError("SHA256 校验失败——载荷不落地(仅传输完整性,不证明发布者身份)")
+
+
+# ------------------------------------------------------- 发布者身份层 (#16/#41)
+def _provenance_gate(args, base_url):
+    """决定发布者身份验证策略(fail-closed,先于任何载荷下载执行):
+
+    - 官方 github.com 载荷源:验证是硬门,--no-provenance 被拒绝;
+    - 非 github 源(镜像/本地候选/CI fixture):默认拒绝继续,须显式
+      --no-provenance(只剩 SHA256 传输完整性)或 --verify-provenance
+      (证词仍按字节摘要从 GitHub API 核验,镜像字节同可验);
+    - 返回 'verify' | 'skip'。
+    """
+    host = (urlparse(base_url).hostname or "").lower()
+    official = host == "github.com"
+    if official and getattr(args, "no_provenance", False):
+        raise InstallError(
+            "正式 GitHub Releases 载荷源不接受 --no-provenance:"
+            "发布者身份验证(keyless provenance)是硬门,不提供降级")
+    if official or getattr(args, "verify_provenance", False):
+        return "verify"
+    if getattr(args, "no_provenance", False):
+        warn("已按 --no-provenance 跳过发布者身份验证"
+             "(仅剩 SHA256 传输完整性;候选/CI 本地载荷路径)")
+        return "skip"
+    raise InstallError(
+        "载荷源 %s 非 github.com,发布者身份(provenance)不可默认验证。\n"
+        "  - 候选/CI 本地载荷:加 --no-provenance 继续(仅 SHA256 完整性);\n"
+        "  - 镜像载荷:保留官方 Releases 源,或加 --verify-provenance"
+        "(证词按字节摘要从 GitHub 核验)" % base_url)
+
+
+def _enforce_provenance(prov, payload, sums, version):
+    """对已下载的确切 bytes 执行身份验证;verify_release 自身 fail-closed。"""
+    if prov != "verify":
+        return
+    log("发布者身份验证(keyless provenance;gh attestation)…")
+    expect_ref = None
+    # 官方正式版本对应 tag ref(防降级锚点);-ci/unknown 等候选版本不锚 ref。
+    if re.fullmatch(r"[0-9]+(\.[0-9]+){1,3}", version or ""):
+        expect_ref = "refs/tags/v%s" % version
+    for artifact in (payload, sums):
+        try:
+            verify_release.verify_artifact(
+                artifact, expect_ref=expect_ref,
+                gh=verify_release.find_gh())
+        except verify_release.ProvenanceError as error:
+            raise InstallError(str(error)) from error
+    log("发布者身份验证通过(载荷与 SHA256SUMS 均有有效证词)。")
 
 
 # ------------------------------------------------------------ 归档安全层 ----
@@ -633,6 +688,9 @@ def install(args):
     version = (args.version or "").lstrip("v") or discover_version(latest_url)
     if not version or not re.fullmatch(r"[A-Za-z0-9.v_-]+", version):
         raise InstallError("版本串为空或含非法字符: %r" % version)
+    # 发布者身份策略先于任何载荷下载(快速失败;版本发现的一次 releases.json
+    # 元数据读取除外——见上方 discover_version)。
+    prov = _provenance_gate(args, base_url)
     log("安装根: %s" % target)
     log("安装版本: %s" % version)
 
@@ -679,8 +737,10 @@ def install(args):
         elif ffmpeg_plan["major"] < FFMPEG_MIN_MAJOR:
             winget_note = " → ffmpeg %d.x 过旧将告警" % ffmpeg_plan["major"]
         log("[dry-run] 将执行:依赖自检%s → 下载 %s/v%s/video-tools-%s.tar.gz + SHA256SUMS "
-            "校验 → 白名单解包(staging) → 入位 → vt.py init+doctor 门 → 零写入演练结束"
-            % (winget_note, base_url, version, version))
+            "校验%s → 白名单解包(staging) → 入位 → vt.py init+doctor 门 → 零写入演练结束"
+            % (winget_note, base_url, version, version,
+               " → 发布者身份验证(gh attestation)" if prov == "verify"
+               else "(--no-provenance:仅传输完整性)"))
         return 0
     # 依赖自检放在复用判定之后:幂等重跑(复用分支)不因缺 ffmpeg 失败,
     # 真正要装时才触发 winget/报错。
@@ -698,6 +758,7 @@ def install(args):
             fetch("%s/v%s/SHA256SUMS" % (base_url, version), sums)
             verify_sha256(payload, sums, payload_name)
             log("校验通过。")
+            _enforce_provenance(prov, payload, sums, version)
             if staging.exists():
                 _remove_tree(staging)  # 同 pid 旧残迹;锁内安全
             log("白名单解包(staging=%s)…" % staging)
@@ -839,6 +900,12 @@ def main(argv=None):
                         help="升级本安装器所装的既有副本(需 .vt-install.json 标记;"
                              "旧目录留 .bak 可 --rollback;git clone 请用 git pull)")
     parser.add_argument("--dry-run", action="store_true", help="演练:零下载零写入零修改")
+    parser.add_argument("--verify-provenance", action="store_true",
+                        help="强制发布者身份验证(gh attestation;镜像载荷的字节"
+                             "仍按摘要从 GitHub 核验证词)")
+    parser.add_argument("--no-provenance", action="store_true",
+                        help="显式跳过发布者身份验证——仅限非 github.com 载荷源"
+                             "(候选/CI 本地载荷);正式 GitHub Releases 源拒绝此旗标")
     parser.add_argument("--uninstall", nargs="?", const="", metavar="DIR",
                         help="卸载(仅限带 .vt-install.json 标记的安装目录)")
     parser.add_argument("--rollback", nargs="?", const="", metavar="DIR",

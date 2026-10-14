@@ -101,7 +101,7 @@ class InstallerSandbox(SandboxCase):
         # (cp1252/GBK)下 text=True 默认本地解码会错乱/丢输出。
         return subprocess.run(
             [sys.executable, str(INSTALL_PY), "--dir", str(target),
-             "--version", "9.9.9", *args],
+             "--version", "9.9.9", "--no-provenance", *args],
             cwd=self.root, env=self.env, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=60)
@@ -246,7 +246,8 @@ class InstallerSandbox(SandboxCase):
                            "PATH": self.env["PATH"]})
         args = argparse.Namespace(
             dir=str(self.target), version="9.9.9", chrome=False,
-            non_interactive=False, defaults=False, dry_run=False, upgrade=False)
+            non_interactive=False, defaults=False, dry_run=False, upgrade=False,
+            verify_provenance=False, no_provenance=True)
         original = installer.safe_extract
 
         def interrupted(payload, destination):

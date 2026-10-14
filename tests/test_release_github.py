@@ -366,6 +366,21 @@ class GithubRelease(unittest.TestCase):
         self.assertEqual(self.state()['calls'], [])
 
 
+
+# fake gh 双打(#16/#41):记录完整 argv(策略参数可断言),输出最小合法证词
+# (certificate + transparency-log 见证)。仅测试;真实链路看 release-attest.yml。
+FAKE_GH_ATTEST = r'''#!/usr/bin/env python3
+import json, os, pathlib, sys
+log = os.environ.get('MOCK_GH_LOG')
+if log:
+    pathlib.Path(log).write_text(json.dumps(sys.argv) + "\n")
+if os.environ.get('MOCK_GH_FAIL'):
+    sys.stderr.write("attestation verification failed\n"); sys.exit(1)
+print(json.dumps([{"verificationResult": {
+    "signature": {"certificate": {"SAN": "fixture"}},
+    "verifiedTimestamps": [{"timestamp": "fixture"}]}}]))
+'''
+
 class GithubInstall(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='framivra-install-test-')
@@ -377,13 +392,16 @@ class GithubInstall(unittest.TestCase):
         self.bin.mkdir()
         (self.bin / 'curl').write_text(FAKE_CURL)
         (self.bin / 'curl').chmod(0o755)
+        (self.bin / 'gh').write_text(FAKE_GH_ATTEST)
+        (self.bin / 'gh').chmod(0o755)
         self.target = self.root / 'install'
         self.env = {'PATH': os.environ.get('PATH', os.defpath),
                     'LANG': 'C.UTF-8', 'PYTHONIOENCODING': 'utf-8'}
         self.env.update(HOME=str(self.root / 'home'),
                         PATH=str(self.bin) + os.pathsep + self.env['PATH'],
                         MOCK_CURL_FIXTURES=str(self.fixtures),
-                        MOCK_CURL_LOG=str(self.root / 'curl.log'))
+                        MOCK_CURL_LOG=str(self.root / 'curl.log'),
+                        VTX_GH_BIN=str(self.bin / 'gh'))
         archive_path = self.fixtures / 'video-tools-2.0.1.tar.gz'
         with tarfile.open(archive_path, 'w:gz') as archive:
             entries = {'VERSION': b'2.0.1\n', 'vtx/__init__.py': b'# fixture\n',
@@ -397,7 +415,8 @@ class GithubInstall(unittest.TestCase):
         (self.fixtures / 'releases.json').write_text('{"latest":"2.0.1"}')
 
     def install(self, *args, **env):
-        return subprocess.run(['bash', str(REPO / 'scripts/install.sh'), '--dir', str(self.target), *args],
+        extra = env.pop('args', [])
+        return subprocess.run(['bash', str(REPO / 'scripts/install.sh'), '--dir', str(self.target), *extra, *args],
             cwd=self.root, env={**self.env, **env}, stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=30)
 
@@ -422,7 +441,8 @@ class GithubInstall(unittest.TestCase):
 
     def test_user_mirror_retains_discovery_and_version_scoped_assets(self):
         result = self.install(VIDEO_TOOLS_DL_BASE='https://mirror.invalid/base/',
-                              MOCK_EXPECT_BASE='https://mirror.invalid/base/')
+                              MOCK_EXPECT_BASE='https://mirror.invalid/base/',
+                              **{'args': ['--no-provenance']})
         self.assertEqual(result.returncode, 0, result.stderr)
         urls = [arg for call in self.calls() for arg in call if arg.startswith('https://')]
         self.assertEqual(urls[0], 'https://mirror.invalid/base/releases.json')
