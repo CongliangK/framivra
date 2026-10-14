@@ -217,7 +217,16 @@ class HostSigkillDoD(_ProjectFixture):
         self.assertIsNotNone(rec,
                              f'宿主 20s 未就绪（stderr: {err.read_text(errors="replace")[-2000:] if err.exists() else "?"}）')
         self.assertEqual(rec['host_pid'], host.pid)
-        # 主进程 + 3 个子进程都进组，且子进程已锁住 user-data-dir 文件
+        # O4（红队）：就绪条件用确定性信号——「组员>=4」fork 瞬间即真，而
+        # lock_*.pid 须待子进程 exec + import + flock 之后才写；负载下两者
+        # 可相隔数秒，直接断言 lock 数=3 会 flake（run_all.log:1123）。这里
+        # 等 lock_*.pid 文件实际出现（带超时）后才算就绪。
+        run_dir = Path(rec['run_dir'])
+        self.assertTrue(_wait_until(
+            lambda: len(list((run_dir / 'profile').glob('lock_*.pid'))) >= 3,
+            timeout=20),
+            '3 个子进程未在 20s 内完成 exec+flock 并写出 lock_*.pid（确定性就绪信号未出现）')
+        # 树已凑齐（上面的 lock 等待强于组员计数，此处仅复核形状）
         self.assertTrue(_wait_until(
             lambda: len(group_live_members(rec['pgid'])) >= 4, timeout=20),
                         '模拟 Chromium 树未在 20s 内凑齐 4 个成员')
