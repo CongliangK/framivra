@@ -413,6 +413,12 @@ def reap_run_dir(run_dir, *, ledger_path=None) -> str:
         host_ticks = rec["host_start_time_ticks"]
         if not all(isinstance(v, int) for v in (pgid, ticks, host_pid, host_ticks)):
             raise KeyError("字段类型不符")
+        if pgid < 1:
+            # R103-1（红队）：pgid=0 使 proc_starttime(0)=None 绕过 starttime
+            # 核验、group_live_members(0) 把内核线程组（pgrp=0）误判为组内
+            # 残活 → killpg(0) 反杀调用方自己的进程组；负值同理。合法进程组
+            # 的 pgid 恒 ≥ 1（会话组长 pid），一律按损坏账本处理（只清目录）。
+            raise KeyError("pgid 非法（<1）")
     except (OSError, ValueError, KeyError, TypeError):
         return "broken_ledger"
     current_boot = boot_id()

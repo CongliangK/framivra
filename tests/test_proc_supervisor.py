@@ -325,6 +325,26 @@ class HostSigkillDoD(_ProjectFixture):
             self.assertFalse(d.exists())
         self.assertIsNone(victim.poll(), '无关存活进程毫发无损')
 
+    def test_forged_ledger_pgid_zero_is_clean_failure_never_kills_caller(self):
+        # R103-1 回归（红队 poc_e/poc_cli）：伪造 pgid=0 账本 → reap 按
+        # broken_ledger 干净失败（只清目录、killed=0），绝不 killpg(0)——
+        # 本测试进程能活着走到断言，本身即证明调用方进程组未被反向击杀。
+        tmp_root = self.root / 'cache' / hygiene.TMP
+        tmp_root.mkdir(parents=True)
+        d = tmp_root / '20260101T000000Z-gfx_sim-fake-pgid0'
+        d.mkdir()
+        (d / WORKER_LEDGER).write_text(json.dumps(
+            {'schema': 1, 'pgid': 0, 'start_time_ticks': 0,
+             'host_pid': 999_999_999, 'host_start_time_ticks': 1,
+             'boot_id': boot_id()}), encoding='utf-8')
+        my_group = os.getpgid(0)
+        stats = reap_orphan_workers(self.ctx())
+        self.assertEqual((stats['killed'], stats['stale'], stats['removed']),
+                         (0, 1, 1), 'pgid=0 须按损坏账本只清目录，零击杀')
+        self.assertFalse(d.exists())
+        self.assertIn(os.getpid(), group_live_members(my_group),
+                      '调用方进程组完好（未被 killpg(0) 反杀）')
+
 
 @unittest.skipUnless(_LINUX_PROC, '/proc 探针形状断言需要 Linux')
 class ProcStatHelperTests(unittest.TestCase):
