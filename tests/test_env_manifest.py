@@ -163,15 +163,17 @@ class TestCollectManifestStructure(unittest.TestCase):
         m = stub_collect()
         self.assertEqual(m["schema"], "vtx.env_manifest/1")
         self.assertEqual(m["backend_id"], "cdp-baseline")
-        for key in ("run_id", "collected_at_utc", "git", "os_kernel", "cpu_model",
+        for key in ("run_id", "collected_at_utc", "git_sha", "git_clean", "uncommitted",
+                    "baseline_sha", "baseline_deviation", "os_kernel", "cpu_model",
                     "ram_total_mib", "display_server", "gpu_driver_and_vram",
                     "fonts_fingerprint", "runtime_backend_truth"):
             self.assertIn(key, m, f"manifest 缺顶层键 {key}")
-        # git：基线 clean（at_baseline / 无未提交）
-        self.assertEqual(m["git"]["git_sha"], em.BASELINE_SHA)
-        self.assertTrue(m["git"]["git_clean"])
-        self.assertEqual(m["git"]["baseline_deviation"], "at_baseline")
-        self.assertEqual(m["git"]["uncommitted"], [])
+        # git（顶层平铺，工单字段口径）：基线 clean（at_baseline / 无未提交）
+        self.assertEqual(m["git_sha"], em.BASELINE_SHA)
+        self.assertTrue(m["git_clean"])
+        self.assertEqual(m["baseline_deviation"], "at_baseline")
+        self.assertEqual(m["uncommitted"], [])
+        self.assertEqual(m["baseline_sha"], em.BASELINE_SHA)
         # os/cpu/ram（/proc 桩）
         self.assertEqual(m["cpu_model"], "AMD Ryzen 9 7950X 16-Core Processor")
         self.assertEqual(m["ram_total_mib"], 16000)   # 16384000 KiB → 16000 MiB

@@ -8,13 +8,15 @@ Chromium 内部回退 SwiftShader）会导致像素级幽灵差异——本模�
 基准启动时产出**不可伪造**的 `env_manifest.json`，作为跨后端像素比对的
 环境一致性前置门禁证据（消费方：scripts/gfx_golden.py compare --env-manifest）。
 
-manifest 顶层 schema（"vtx.env_manifest/1"）：
+manifest 顶层 schema（"vtx.env_manifest/1"，字段名=issue #102 工单口径）：
   run_id                "YYYYMMDDTHHMMSSZ-<8位随机hex>"（UTC + secrets.token_hex）
   backend_id            调用方传入的后端路线标识（如 cef-route-a / electron-route-b）
   collected_at_utc      ISO 秒级 UTC
-  git                   {git_sha, git_clean, uncommitted, baseline_sha,
-                        baseline_deviation: at_baseline|descendant|diverged_or_unknown|
-                        unknown, git_error?}——基线 70b6853（v2.0.1）偏离状态在册
+  git_sha / git_clean / uncommitted / baseline_sha / baseline_deviation
+                        git rev-parse HEAD + 工作区 clean 校验；baseline_deviation
+                        = at_baseline|descendant|diverged_or_unknown|unknown
+                        （基线 70b6853=v2.0.1 偏离状态；git 不可得 → git_sha=None +
+                        git_error 显形，fail-open 不编造）
   os_kernel             platform.uname() 五字段 dict
   cpu_model             /proc/cpuinfo "model name"（回退 platform）
   ram_total_mib         /proc/meminfo MemTotal（回退 sysconf；再不可得 → None）
@@ -539,7 +541,8 @@ def collect_env_manifest(backend_id: str, runtime_gpu_info: dict | None = None) 
         "run_id": _new_run_id(),
         "backend_id": backend_id,
         "collected_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "git": _collect_git_state(repo),
+        **_collect_git_state(repo),   # 顶层平铺：git_sha/git_clean/uncommitted/
+        #                              baseline_sha/baseline_deviation（工单字段口径）
         "os_kernel": _collect_os_kernel(),
         "cpu_model": _collect_cpu_model(),
         "ram_total_mib": _collect_ram_total_mib(),
