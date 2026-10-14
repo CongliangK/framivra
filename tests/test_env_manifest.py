@@ -543,6 +543,18 @@ class TestVerifyCompatibility(unittest.TestCase):
         for kw in ("主版本", "生效后端", "视口", "字体指纹"):
             self.assertIn(kw, joined)
 
+    def test_non_object_manifest_rejected_as_valueerror(self):
+        """红队收口：str/list/float 非对象 manifest（手改/损坏）→ ValueError
+        干净拒收——assertRaises(ValueError) 即锁定不是 AttributeError 裸异常。"""
+        good = stub_collect()
+        for bad in ("x", [1, 2], 3.14):
+            with self.subTest(kind=type(bad).__name__):
+                for pair in ((bad, good), (good, bad)):
+                    with self.assertRaises(ValueError) as ctx:
+                        em.verify_manifest_compatibility(*pair)
+                    self.assertIn("不是 JSON 对象", str(ctx.exception))
+                    self.assertIn(type(bad).__name__, str(ctx.exception))
+
 
 class TestWriteManifest(unittest.TestCase):
     def setUp(self):
@@ -621,6 +633,20 @@ class TestCli(unittest.TestCase):
                               "--out", str(self.dir / "m.json")])
         self.assertEqual(rc, 1)
         self.assertIn("读取失败", text)
+
+    def test_verify_rejects_non_object_manifest_file(self):
+        """红队收口：CLI verify 对非对象 JSON 文件（str/list/float）→ 干净报错
+        （含类型名）+ 退出 1，两入参位皆拒，非裸 AttributeError 崩溃。"""
+        good = self.dir / "good.json"
+        good.write_text(json.dumps(stub_collect()), encoding="utf-8")
+        for payload in ('"x"', "[1]", "3.14"):
+            bad = self.dir / "bad.json"
+            bad.write_text(payload, encoding="utf-8")
+            for argv in (["verify", str(bad), str(good)],
+                         ["verify", str(good), str(bad)]):
+                rc, text = self._run(argv)
+                self.assertEqual(rc, 1, payload)
+                self.assertIn("不是 JSON 对象", text, payload)
 
 
 def _make_frame(path: Path, i: int):
@@ -749,6 +775,21 @@ class TestGfxGoldenEnvGate(unittest.TestCase):
                                   "--env-manifest", str(bad)])
             self.assertEqual(rc, 1, payload)
             self.assertIn("不是 JSON 对象", text)
+
+    def test_gate_rejects_non_object_embedded_manifest(self):
+        """红队收口：golden.meta.env_manifest 非对象（手改/损坏 golden）→ 门禁
+        error 干净报错（含实际类型名）exit 1，非裸 AttributeError 崩溃。"""
+        self._run(["build", "-t", str(self.tp), "--golden", str(self.golden),
+                   "--env-manifest", str(self.ma)])
+        g = json.loads(self.golden.read_text(encoding="utf-8"))
+        g["meta"]["env_manifest"] = "corrupted-by-hand"
+        self.golden.write_text(json.dumps(g), encoding="utf-8")
+        rc, text = self._run(["compare", "-t", str(self.tp),
+                              "--golden", str(self.golden),
+                              "--env-manifest", str(self.mb)])
+        self.assertEqual(rc, 1)
+        self.assertIn("不是 JSON 对象", text)
+        self.assertIn("str", text)
 
 
 if __name__ == "__main__":

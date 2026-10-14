@@ -182,7 +182,8 @@ def env_manifest_gate(meta: dict, path_str: str) -> dict:
     """跨后端环境前置门禁（issue #102）。返回 state 机：
 
       error → 入参不可用（manifest 读不到 / 提供了当前 manifest 但 golden 未
-              嵌入基线）→ compare exit 1，绝不比错环境下的像素；
+              嵌入基线 / golden 内嵌基线非 JSON 对象）→ compare exit 1，
+              绝不比错环境下的像素；
       fail  → verify_manifest_compatibility 不兼容项非空 → exit 1 列全项；
       pass  → 环境一致（Chromium 主版本/生效后端/色彩空间/视口/字体 SHA256）；
       warn  → golden 嵌有 manifest 但本次未提供（同机常规回环不阻断，显式警告
@@ -196,6 +197,12 @@ def env_manifest_gate(meta: dict, path_str: str) -> dict:
             return {"state": "warn", "error": None, "items": []}
         return {"state": "off", "error": None, "items": []}
     ref = meta.get("env_manifest")
+    if ref is not None and not isinstance(ref, dict):
+        return {"state": "error",
+                "error": f"golden.meta.env_manifest 不是 JSON 对象（得到 "
+                         f"{type(ref).__name__}）——golden 损坏或被手改，环境门禁"
+                         "基线不可信，拒绝像素比对",
+                "items": []}
     if not ref:
         return {"state": "error",
                 "error": "golden 未嵌入环境 manifest（build 时未提供 --env-manifest），"

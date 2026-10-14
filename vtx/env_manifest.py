@@ -589,8 +589,16 @@ def verify_manifest_compatibility(manifest_a: dict, manifest_b: dict) -> list:
     返回不兼容项列表（人读中文句子；空表=通过）。证据不可得（任一侧主版本/视口/
     字体指纹缺失）按不兼容处理——无法证明一致就不能比像素；双侧同缺某具体字体
     家族=兼容（回退路径一致）。消费方：scripts/gfx_golden.py compare --env-manifest
-    在跨后端像素比对前作前置门禁（非空 → 拒绝比对）。"""
-    a, b = manifest_a or {}, manifest_b or {}
+    在跨后端像素比对前作前置门禁（非空 → 拒绝比对）。
+
+    入参必须是 JSON 对象（dict）：null/字符串/列表/数字（手改或损坏的 manifest）
+    → ValueError 干净拒收（含实际类型名，fail-closed；对齐 gfx_golden
+    load_env_manifest 加载路对 null/非对象的拒收口径）。"""
+    for label, m in (("manifest_a", manifest_a), ("manifest_b", manifest_b)):
+        if not isinstance(m, dict):
+            raise ValueError(f"{label} 不是 JSON 对象（得到 {type(m).__name__}）——"
+                             "manifest 损坏或被手改，拒绝比对（fail-closed）")
+    a, b = manifest_a, manifest_b
     ta = a.get("runtime_backend_truth") or {}
     tb = b.get("runtime_backend_truth") or {}
     items = []
@@ -685,7 +693,11 @@ def main(argv=None) -> int:
     if err:
         print(f"✗ manifest_b {err}")
         return 1
-    items = verify_manifest_compatibility(a, b)
+    try:
+        items = verify_manifest_compatibility(a, b)
+    except ValueError as error:
+        print(f"✗ {error}")
+        return 1
     for it in items:
         print(f"  ✗ {it}")
     if items:
