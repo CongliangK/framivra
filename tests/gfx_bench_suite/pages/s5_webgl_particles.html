@@ -1,0 +1,207 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- S5 · WebGL 确定性粒子基准页 · gfx 基准套件 issue #106（冻结于 suite_manifest.json v1.0.0）
+     基于 motion.html（skills/tech-talk/assets/gfx-examples/）的 seeded 粒子范式新构：
+       ① 2,000 枚半透明粒子（GL_POINTS，alpha ∈ [0.25, 0.75]，固定混合序），
+          位置/幅度/相位/速率/尺寸/透明度全部由 Mulberry32 固定种子（SEED=106）派生；
+       ② WebGL 片元波纹背景：全屏三角形片元着色器，双波源干涉纹随 u_t 推进；
+       ③ 严格遵循 ?f=N 与 window.__vtx_render(N) 双契约：__vtx_render(f) 为同步
+          纯函数——幂等、与调用顺序无关、调用后视觉状态与以 ?f=f 新加载完全一致
+          （vtx/gfx_render.py 模块头契约；当前渲染主路径逐帧导航，本钩子供
+          CEF/Electron 双路线 (#115/#117) 与 navfree 实验消费）。
+     协议：1920x1080、30fps、N=300（10s）；动画状态 = f 的纯函数；
+     禁 CSS 动画属性 / 墙钟取态 / 非 seeded 随机 / rAF 时序（skill/references/gfx.md）。
+     画布 alpha:false（不透明暖白底，引擎单截直写）；着色器 precision highp。
+     跨引擎注记：SwiftShader（--disable-gpu）与硬件 GL 的浮点实现存在 ULP 级差异
+     可能，帧像素的确定性承诺域 = 单一引擎/驱动内（幂等门口径）；跨引擎对比由
+     消费 issue 自定容差档，本页不预支。
+     刻意不声明 __vtx_static_spans / __vtx_export_png（不绕过被测截图路径）。 -->
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC","Noto Sans SC",sans-serif;overflow:hidden}
+#gl{position:absolute;inset:0;width:1920px;height:1080px}
+#tag{position:absolute;top:36px;left:60px;padding:8px 22px;border:1px solid rgba(180,83,9,.45);
+  border-radius:999px;color:#b45309;font-size:22px;letter-spacing:4px;font-weight:600;
+  background:rgba(255,253,250,.72)}
+#title{position:absolute;top:96px;left:0;width:100%;text-align:center;font-size:64px;
+  font-weight:800;letter-spacing:4px;color:#1a1a1a;white-space:nowrap;opacity:0;
+  -webkit-mask-image:linear-gradient(100deg,transparent 6%,#000 20%,#000 80%,transparent 94%);
+  mask-image:linear-gradient(100deg,transparent 6%,#000 20%,#000 80%,transparent 94%)}
+#sub{position:absolute;top:196px;left:0;width:100%;text-align:center;color:#6b7280;
+  font-size:24px;letter-spacing:8px;white-space:nowrap;opacity:0}
+#counter{position:absolute;right:64px;bottom:44px;text-align:right;color:#1a1a1a;
+  font-variant-numeric:tabular-nums;opacity:0}
+#counter .lab{font-size:20px;color:#6b7280;letter-spacing:3px}
+#counter .big{font-size:74px;font-weight:800;line-height:1.1}
+#counter .big b{color:#b45309}
+#glerr{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  font-size:44px;font-weight:800;color:#b91c1c;white-space:nowrap;display:none}
+</style></head><body>
+<canvas id="gl" width="1920" height="1080"></canvas>
+<div id="tag">S5 · GPU 动态内容</div>
+<div id="title">2,000 半透明粒子 · WebGL 波纹场</div>
+<div id="sub">MULBERRY32 SEED = 106 · FIXED BLEND ORDER · HIGHP</div>
+<div id="counter"><div class="lab">FRAME</div><div class="big"><b id="cf">0000</b> / 0300</div></div>
+<div id="glerr">WebGL 上下文不可用（S5 页失效）</div>
+<script>
+"use strict";
+/* ===== 帧驱动协议（30fps；同 f 同像素） ===== */
+const FPS = 30, N = 300;                                  /* 冻结：300 帧（10s） */
+const SEED = 106;                                         /* 冻结种子 */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15,1|a);
+  x=x+Math.imul(x^x>>>7,61|x)^x;return((x^x>>>14)>>>0)/4294967296}}
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const seg = (t, a, b) => clamp01((t - a) / (b - a));
+const eoc = x => 1 - Math.pow(1 - x, 3);
+
+/* —— WebGL 初始化（alpha:false 不透明暖白底；antialias:false 求实现面最窄） —— */
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl", {alpha: false, antialias: false, depth: false,
+                                       stencil: false, preserveDrawingBuffer: false,
+                                       premultipliedAlpha: true});
+window.__s5_gl_ok = !!gl;
+if (!gl) { document.getElementById("glerr").style.display = "block"; }
+
+let progBG = null, progPT = null, bufBG = null, bufPT = null, nParticles = 2000;
+const VS_BG = `
+precision highp float;
+attribute vec2 a_pos;
+void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); }`;
+const FS_BG = `
+precision highp float;
+uniform float u_t;
+void main(){
+  vec2 uv = gl_FragCoord.xy / vec2(1920.0, 1080.0);
+  vec3 base = vec3(0.976, 0.969, 0.949);                       /* 暖白 #f9f7f2 */
+  vec2 c1 = vec2(0.30, 0.36), c2 = vec2(0.72, 0.66);           /* 双波源（冻结） */
+  float r1 = distance(uv, c1), r2 = distance(uv, c2);
+  float w1 = sin(34.0 * r1 - 5.2 * u_t) * exp(-3.1 * r1);
+  float w2 = sin(28.0 * r2 + 4.1 * u_t) * exp(-2.7 * r2);
+  float rip = 0.5 + 0.5 * (w1 + w2);                           /* 0..1 干涉纹 */
+  vec3 amber = vec3(0.937, 0.717, 0.329);                      /* #efb754 系 */
+  vec3 col = base + amber * (0.05 + 0.06 * rip) * exp(-1.8 * r1)
+                  + vec3(0.796, 0.639, 0.290) * 0.045 * (1.0 - rip) * exp(-2.2 * r2);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+const VS_PT = `
+precision highp float;
+attribute vec2 a_base;
+attribute vec4 a_motion;   /* amp, phase, speed, mix */
+attribute vec2 a_look;     /* size, alpha */
+uniform float u_t;
+varying float v_alpha;
+varying float v_mix;
+void main(){
+  float ang = 6.28318530718 * a_motion.z * u_t + a_motion.y;
+  vec2 pos = a_base + vec2(a_motion.x * sin(ang),
+                           a_motion.x * 0.82 * cos(ang * 1.31 + a_motion.y));
+  gl_Position = vec4(pos.x / 960.0 - 1.0, 1.0 - pos.y / 540.0, 0.0, 1.0);
+  gl_PointSize = a_look.x * (0.82 + 0.30 * sin(ang * 0.7 + 1.0));
+  v_alpha = a_look.y; v_mix = a_motion.w;
+}`;
+const FS_PT = `
+precision highp float;
+varying float v_alpha;
+varying float v_mix;
+void main(){
+  float d = length(gl_PointCoord - vec2(0.5));
+  float a = v_alpha * smoothstep(0.5, 0.18, d);
+  vec3 dark = vec3(0.102, 0.102, 0.102);                       /* #1a1a1a */
+  vec3 amber = vec3(0.706, 0.325, 0.035);                      /* #b45309 */
+  gl_FragColor = vec4(mix(dark, amber, v_mix), a);
+}`;
+function compile(type, src){
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+if (gl) {
+  progBG = program(VS_BG, FS_BG);
+  progPT = program(VS_PT, FS_PT);
+  /* 背景全屏三角形 */
+  bufBG = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufBG);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  /* 粒子属性：全部由 Mulberry32(SEED) 一次性派生（同种子同序列，跨会话确定） */
+  const rnd = mulberry32(SEED);
+  const arr = new Float32Array(nParticles * 8);
+  for (let i = 0; i < nParticles; i++) {
+    const o = i * 8;
+    arr[o]     = 90 + rnd() * 1740;                    /* base x ∈ [90, 1830) */
+    arr[o + 1] = 90 + rnd() * 900;                     /* base y ∈ [90, 990)  */
+    arr[o + 2] = 22 + rnd() * 74;                      /* amp ∈ [22, 96) px   */
+    arr[o + 3] = rnd() * 6.28318530718;                /* phase ∈ [0, 2π)     */
+    arr[o + 4] = 0.05 + rnd() * 0.22;                  /* speed（Hz）         */
+    arr[o + 5] = rnd();                                /* color mix           */
+    arr[o + 6] = 3.5 + rnd() * 6.0;                    /* size ∈ [3.5, 9.5)   */
+    arr[o + 7] = 0.25 + rnd() * 0.50;                  /* alpha ∈ [.25, .75)  */
+  }
+  bufPT = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufPT);
+  gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+  gl.disable(gl.DEPTH_TEST);
+  document.body.dataset.gl = "ok";
+}
+
+/* —— 帧应用：DOM 态 + 双通道 GL 绘制（同步完成；f 的纯函数） —— */
+function applyFrame(fRaw){
+  const f = Math.min(Math.max(fRaw | 0, 0), N - 1);
+  const t = f / FPS;
+  /* DOM 层（信息层随 f 演进；入场 0.6-1.6s，恒态后仅计数器/波纹在动） */
+  const tag = document.getElementById("tag");
+  tag.style.opacity = (0.55 + 0.45 * clamp01(1 - seg(t, 9.0, 9.6))).toFixed(3);
+  document.getElementById("title").style.opacity = eoc(seg(t, .5, 1.4)).toFixed(3);
+  document.getElementById("sub").style.opacity = (eoc(seg(t, .9, 1.8)) *
+    (1 - 0.85 * seg(t, 8.8, 9.5))).toFixed(3);
+  document.getElementById("cf").textContent = String(f).padStart(4, "0");
+  document.getElementById("counter").style.opacity = eoc(seg(t, 1.2, 2.0)).toFixed(3);
+  /* GL 层 */
+  if (!gl) return;
+  gl.viewport(0, 0, 1920, 1080);
+  gl.clearColor(0.976, 0.969, 0.949, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(progBG);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufBG);
+  const aPosBG = gl.getAttribLocation(progBG, "a_pos");
+  gl.enableVertexAttribArray(aPosBG);
+  gl.vertexAttribPointer(aPosBG, 2, gl.FLOAT, false, 0, 0);
+  gl.uniform1f(gl.getUniformLocation(progBG, "u_t"), t);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.useProgram(progPT);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufPT);
+  const stride = 32;
+  const locs = [gl.getAttribLocation(progPT, "a_base"),
+                gl.getAttribLocation(progPT, "a_motion"),
+                gl.getAttribLocation(progPT, "a_look")];
+  gl.enableVertexAttribArray(locs[0]);
+  gl.vertexAttribPointer(locs[0], 2, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(locs[1]);
+  gl.vertexAttribPointer(locs[1], 4, gl.FLOAT, false, stride, 8);
+  gl.enableVertexAttribArray(locs[2]);
+  gl.vertexAttribPointer(locs[2], 2, gl.FLOAT, false, stride, 24);
+  gl.uniform1f(gl.getUniformLocation(progPT, "u_t"), t);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.drawArrays(gl.POINTS, 0, nParticles);            /* 固定序单批次：混合序确定 */
+}
+
+/* —— 契约 ①：?f= 导航加载 —— */
+const f0 = parseInt(new URLSearchParams(location.search).get("f") || "0");
+applyFrame(f0);
+
+/* —— 契约 ②：window.__vtx_render(f) 同步纯函数（幂等、序无关；见页首注记） —— */
+window.__vtx_render = function (fRaw){
+  applyFrame(fRaw);
+  return 1;
+};
+</script></body></html>
