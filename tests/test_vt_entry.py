@@ -79,30 +79,39 @@ def _vt(*args, env_extra=None):
                               capture_output=True, text=True, cwd=str(REPO), env=env)
 
 
-def _assert_optional_unavailable(case, result):
-    """Only deliberately absent optional tools may fail; no blanket exit 0/1."""
-    case.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+def _assert_doctor_passes_with_optional_unavailable(case, result):
+    """核心依赖齐备 → doctor exit 0；builtin 可选面缺件降 ℹ unavailable 不 FAIL
+    （Windows 适配 PR-A1：blender 缺失、bgm/denoise health 未就绪均属未装可选
+    能力；渲染核心硬门在依赖面 error 级）。"""
+    case.assertEqual(result.returncode, 0, result.stdout + result.stderr)
     data = json.loads(result.stdout)
+    case.assertEqual(data["dependencies"]["errors"], [], data["dependencies"])
     entries = data["components"]["entries"]
-    expected = {("app", "blender-bridge"), ("plugin", "blender-bridge"),
-                ("plugin", "bgm-render"), ("plugin", "denoise")}
-    case.assertEqual({(e["kind"], e["name"]) for e in entries if e["fail"]}, expected)
     for e in entries:
         case.assertTrue(e["manifest_ok"], e)
-        if (e["kind"], e["name"]) not in expected:
-            case.assertFalse(e["fail"], e)
+        case.assertFalse(e["fail"], e)              # builtin 件一律不再 FAIL
+    by_key = {(e["kind"], e["name"]): e for e in entries}
+    # blender 缺失 → requires ✗ + unavailable（app 与 plugin 两面）
+    for key in (("app", "blender-bridge"), ("plugin", "blender-bridge")):
+        e = by_key[key]
+        case.assertFalse(e["requires"]["ok"], e)
+        case.assertIn("缺 blender", e.get("unavailable", []), e)
+    # health 未就绪（可选 CLI/权重不在）→ unavailable，不 FAIL
+    for key in (("plugin", "bgm-render"), ("plugin", "denoise")):
+        e = by_key[key]
+        case.assertFalse(e["health"]["ok"], e)
+        case.assertIn("health 未就绪", e.get("unavailable", []), e)
+    # 其余件（含 google-chrome/node/numpy 依赖面）全就绪
+    for e in entries:
+        if not e.get("unavailable"):
             case.assertTrue(e["requires"]["ok"], e)
             case.assertIsNot(e["health"]["ok"], False, e)
-        elif e["name"] in {"bgm-render", "denoise"}:
-            case.assertFalse(e["health"]["ok"], e)
-            case.assertTrue(e["requires"]["ok"], e)
-        else:
-            case.assertFalse(e["requires"]["ok"], e)
-            case.assertTrue(any("blender" in f and "缺失" in f
-                                for f in e["requires"]["findings"]), e)
-    case.assertTrue(data["components"]["fail"])
+    case.assertFalse(data["components"]["fail"])
     case.assertFalse(data["skills"]["fail"])
     case.assertTrue(data["components"]["import_vtx"]["ok"])
+    # 依赖面：blender/sox 缺只 warn（本隔离环境无 blender/sox）
+    warns = " ".join(data["dependencies"]["warns"])
+    case.assertIn("blender 缺失", warns)
     return data
 
 
@@ -162,9 +171,12 @@ class VersionCmd(unittest.TestCase):
 class DoctorJson(unittest.TestCase):
     def test_doctor_json_sections_complete(self):
         r = _vt("doctor", "--json", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
-        d = _assert_optional_unavailable(self, r)
-        # 三段齐备（§5.1：版本/组件/skills）
-        self.assertEqual(sorted(d), ["components", "skills", "version"])
+        d = _assert_doctor_passes_with_optional_unavailable(self, r)
+        # 四段齐备（§5.1 + PR-A1：版本/依赖面/组件/skills）
+        self.assertEqual(sorted(d), ["components", "dependencies", "skills", "version"])
+        self.assertIn("errors", d["dependencies"])
+        self.assertIn("warns", d["dependencies"])
+        self.assertIn("items", d["dependencies"])
         # 版本段字段
         v = d["version"]
         for k in ("version", "head", "state", "notes"):
@@ -193,8 +205,14 @@ class DoctorJson(unittest.TestCase):
         plugins = [e for e in c["entries"] if e["kind"] == "plugin"]
         self.assertEqual({e["name"] for e in plugins},
                          {"denoise", "duck-static", "blender-bridge", "bgm-render"})
+        # builtin 可选面降 ℹ：三件 unavailable 但不 FAIL（PR-A1 分级）
         for e in plugins:
-            self.assertEqual(e["fail"], e["name"] in {"bgm-render", "blender-bridge", "denoise"}, e)
+            if e["name"] == "duck-static":
+                self.assertFalse(e["fail"], e)
+                self.assertNotIn("unavailable", e)
+            else:
+                self.assertFalse(e["fail"], e)
+                self.assertTrue(e.get("unavailable"), e)
         self.assertTrue(c["import_vtx"]["ok"], c["import_vtx"])
         self.assertTrue(str(REPO) in c["import_vtx"]["path"])
         # skills 段（P3 起 tech-talk 落地：发现 + uses_apps 逐件在册）
@@ -209,36 +227,33 @@ class DoctorJson(unittest.TestCase):
 
     def test_doctor_human_readable_offline(self):
         r = _vt("doctor", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
-        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        _assert_optional_unavailable(self, _vt("doctor", "--json"))
-        for marker in ("① 版本", "② 组件", "③ skills", "doctor 结论"):
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--json"))
+        for marker in ("① 版本", "② 依赖面", "③ 组件", "④ skills",
+                       "doctor 结论", "✅ 通过"):
             self.assertIn(marker, r.stdout)
+        self.assertIn("unavailable（缺 blender", r.stdout)
 
 
 class ListCheck(unittest.TestCase):
     def test_plugins_list_shows_declared(self):
         r = _vt("plugins", "list")
-        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        # builtin 可选面降 ℹ（PR-A1）：核心齐备 → list/check 不再 FAIL
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("denoise", r.stdout)
         self.assertIn("duck-static", r.stdout)
-        # P2b 两插件落地：list 展示 enabled 态与 registry 声明（1.0.0）
-        self.assertIn("✗ FAIL    denoise", r.stdout)
         self.assertIn("✓ enabled duck-static", r.stdout)
         self.assertIn("duck-static@1.0.0", r.stdout)
-        failures = [line for line in r.stdout.splitlines() if "✗ FAIL" in line]
-        self.assertEqual(len(failures), 3, r.stdout)
-        self.assertTrue(any("denoise" in line for line in failures))
-        self.assertTrue(any("bgm-render" in line for line in failures))
-        self.assertTrue(any("blender-bridge" in line for line in failures))
+        self.assertNotIn("✗ FAIL", r.stdout)
+        self.assertEqual([line for line in r.stdout.splitlines() if "✗" in line], [])
 
     def test_apps_and_skills_list_ok(self):
         for args in (("apps", "list"), ("skills", "list"),
                      ("apps", "check"), ("plugins", "check"), ("skills", "check")):
             r = _vt(*args)
-            self.assertEqual(r.returncode, 0 if args[0] == "skills" else 1,
-                             f"{args}: {r.stdout}{r.stderr}")
+            self.assertEqual(r.returncode, 0, f"{args}: {r.stdout}{r.stderr}")
             if args[0] != "skills":
-                _assert_optional_unavailable(self, _vt("doctor", "--json"))
+                _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--json"))
 
     def test_bad_subcommand_usage_error(self):
         r = _vt("plugins", "bogus")
@@ -352,15 +367,15 @@ class DoctorFix(unittest.TestCase):
         # 隔离挂载根（绝不触 live ~/.agents/skills/video/）：缺失 → 自动重建
         env = {"VT_MOUNT_ROOT": str(self.mount), "VTX_DOCTOR_OFFLINE": "1"}
         r = _vt("doctor", "--fix", env_extra=env)
-        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        _assert_optional_unavailable(self, _vt("doctor", "--fix", "--json", env_extra=env))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--fix", "--json", env_extra=env))
         for name in ("SKILL.md", "references", "assets", "vtx", "scripts", "skills"):
             link = self.mount / name
             self.assertTrue(link.is_symlink(), f"{name} 未建链")
             self.assertFalse(Path(os.readlink(link)).is_absolute())
         # 幂等：再跑 → 全健康 + 「无可自动修复项」明确说明
         r2 = _vt("doctor", "--fix", env_extra=env)
-        self.assertEqual(r2.returncode, 1)
+        self.assertEqual(r2.returncode, 0)
         self.assertIn("挂载链接全部健康", r2.stdout)
         self.assertIn("registry.json 无缺字段", r2.stdout)
         self.assertIn("无可自动修复项", r2.stdout)
@@ -368,7 +383,7 @@ class DoctorFix(unittest.TestCase):
     def test_doctor_fix_json_has_fix_section(self):
         env = {"VT_MOUNT_ROOT": str(self.mount), "VTX_DOCTOR_OFFLINE": "1"}
         r = _vt("doctor", "--fix", "--json", env_extra=env)
-        d = _assert_optional_unavailable(self, r)
+        d = _assert_doctor_passes_with_optional_unavailable(self, r)
         self.assertIn("fix", d)
         self.assertEqual(d["fix"]["mount"]["status"], "fixed")
         self.assertEqual(d["fix"]["registry"]["status"], "ok")
@@ -426,7 +441,7 @@ class DoctorSkillsSection(unittest.TestCase):
         # doctor skills 段扫描面——不误报（§5.1；P4 起 examples/ 有 skill.json）
         self.assertTrue((REPO / "examples" / "skill-demo" / "skill.json").is_file())
         r = _vt("doctor", "--json", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
-        d = _assert_optional_unavailable(self, r)
+        d = _assert_doctor_passes_with_optional_unavailable(self, r)
         names = [s["name"] for s in d["skills"]["installed"]]
         self.assertEqual(names, ["tech-talk"])
         self.assertFalse(d["skills"]["fail"])
