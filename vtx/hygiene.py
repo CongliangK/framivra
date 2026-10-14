@@ -352,9 +352,21 @@ class _TmpDir:
 
 
 def dir_size(p: Path) -> int:
+    # 计划扫描与并发回收者/记账 writer 竞态：条目在 exists/is_file 与 stat
+    # 之间消失属正常（hosted 3.12 实测 .manifest.json.*.tmp 命中）。消失=0 字节，
+    # 计划删除侧 remove_pinned 对缺失条目本就幂等跳过（#56 语义）。
     if not p.exists(): return 0
-    if p.is_file(): return p.stat().st_size
-    return sum(x.stat().st_size for x in p.rglob("*") if x.is_file())
+    try:
+        if p.is_file(): return p.stat().st_size
+    except OSError:
+        return 0
+    total = 0
+    for x in p.rglob("*"):
+        try:
+            if x.is_file(): total += x.stat().st_size
+        except OSError:
+            continue
+    return total
 
 
 def gb(n: int) -> str:
