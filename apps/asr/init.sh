@@ -10,8 +10,8 @@ set -euo pipefail
 usage() {
   echo "用法：bash apps/asr/init.sh [--download|--help]"
   echo "  默认：仅本地探测和 sidecar 冒烟，不创建 venv、不联网；缺失项告警并汇总。"
-  echo "  --download：显式允许创建 venv、pip 安装缺失包及 ModelScope 下载缺失模型（可能数 GB）。"
-  echo "              复用已有资产；执行前打印完整网络命令，pip --timeout 60 --retries 2。"
+  echo "  --download：旧 ModelScope 混合下载链未审查，前置明确 BLOCKED，不建环境或联网。"
+  echo "              官方固定快照 opt-in 与证据请看 scripts/model_license_policy.py --help。"
   echo "  --help, -h：显示本帮助（不探测、不联网）。"
 }
 DOWNLOAD=0
@@ -22,6 +22,12 @@ for arg in "$@"; do
     *) echo "✗ 未知参数：$arg" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# Gate before config/venv/pip: ModelScope latest is not reviewed HF evidence.
+if [[ "$DOWNLOAD" == "1" ]]; then
+  LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
+  python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download asr || exit "$?"
+fi
 
 FAIL=0
 ok()   { echo "✓ $*"; }

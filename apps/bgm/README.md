@@ -21,9 +21,9 @@
 
 manifest health 为 **config_key 型**（`bgm.enabled`）：读 config 判断路由声明是否已配置（`vt doctor` / `vt apps check` 消费）。`config.local.json` 含 `bgm` 节（`vt init` 从 `config.example.json` 生成的模板自带）即「已配置」；enabled 布尔仅作人工开关标记，不影响本 app 行为（无代码可开关）。
 
-## 开启步骤（默认关闭）
+## 路由配置
 
 1. 确认姊妹仓就位：`~/文档/01_活跃项目/music_tools/`（缺则按 music skill 指引拉起）。
-2. `config.local.json` 的 `bgm.enabled` 置 `true`（模板缺省 `false`；仅标记路由已知晓，无行为开关）。
+2. 按 `config.example.json` 的 `bgm` 节配置路由；启用标记以模板为准，不是本 app 的模型执行或下载开关。
 3. BGM 需求直接说给 **music skill**（触发词见 skill 描述）；产出挂载 timeline 后跑交付门：
    `env python3 apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]`。

@@ -16,13 +16,13 @@
 | `edge_worker.py` | edge-tts 兜底引擎（晓晓 zh-CN-XiaoxiaoNeural，免 GPU 免模型，subprocess 二进制 + 同 atempo/归一链） |
 | `atempo.py` | atempo 参数纯函数（`atempo_chain(raw_s, budget_s)`，方向 raw/budget + 域外 √ 双级链）+ ffmpeg 应用器 |
 | `levelnorm.py` | 峰值归一 -6dBFS（ffmpeg volumedetect + volume，幂等） |
-| `init.sh` | 幂等资产探测（repo/解释器/音色参考/edge-tts/GPU；复用本机已有资产优先）；`--download` 补齐代码克隆 + 11GB 权重（ModelScope 国内直连，确认后再跑） |
+| `init.sh` | 默认本地资产探测；未审查的混合下载明确阻断，许可与恢复边界见 [第三方许可](../../docs/third-party-licenses.md) |
 | `tests/` | unittest（atempo golden / spec 预算 / levelnorm / manifest+final 格式；零模型零 GPU 零网络） |
 
 ## 依赖
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（atempo 应用器、时长实测、峰值归一、volumedetect）；CLI 面（tts_cli/spec）系统 python3 stdlib 零第三方依赖。
-- **indextts 引擎（conda/venv 级，不进 requires）**：IndexTTS-2.5 repo + 11GB 权重 + conda `indextts` py3.10（或 repo `.venv` py3.11）——`bash apps/tts/init.sh` 探测，`--download` 补齐。
+- **indextts 引擎（conda/venv 级，不进 requires）**：IndexTTS-2.5 repo + 11GB 权重 + conda `indextts` py3.10（或 repo `.venv` py3.11）——`bash apps/tts/init.sh` 仅探测；未知辅助链在下载和 worker 构造前阻断。
 - **edge 兜底引擎**：`edge-tts` 二进制（默认 `~/miniconda3/bin/edge-tts`，`tts.edge_bin` 可改；pip 安装）。
 
 ## 健康检查
@@ -30,6 +30,8 @@
 `env python3 apps/tts/tts_cli.py --help` 退出码 0（app.json health.command；CLI 面系统 python3 即可跑，不涉模型/解释器）。资产态另探：`tts_cli.py probe` / `bash apps/tts/init.sh`。
 
 ## 开启步骤
+
+先读 [第三方许可与运行边界](../../docs/third-party-licenses.md)：存在权重不等于已审查权利，IndexTTS 辅助链未解除阻断时 worker 退出非零且不创建产物。下列生成步骤并不是未知权重的许可授权；edge 客户端许可与服务/输出权利也须分开。
 
 ```bash
 bash apps/tts/init.sh                                        # 1) 资产探测（幂等，只打印）
