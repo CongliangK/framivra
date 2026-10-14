@@ -105,10 +105,13 @@ else:
 
     def run_install(self, *args, target=None):
         target = self.checked(target or self.target)
+        # 安装器已 reconfigure 为 UTF-8 输出;显式同口径解码,Windows 代码页
+        # (cp1252/GBK)下 text=True 默认本地解码会错乱/丢输出。
         return subprocess.run(
             [sys.executable, str(INSTALL_PY), "--dir", str(target),
              "--version", "9.9.9", *args],
             cwd=self.root, env=self.env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=60)
 
     def test_official_payload_with_internal_symlinks_installs(self):
@@ -129,7 +132,8 @@ else:
     # ---- 恶意归档矩阵:每项断言非零退出 + 目标不被标记为成功安装 ----
     def _assert_rejected(self, expect_marker=False):
         result = self.run_install()
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotEqual(result.returncode, 0,
+                            (result.stdout or "") + (result.stderr or ""))
         self.assertEqual((self.target / ".vt-install.json").exists(), expect_marker)
         self.assert_outside_unchanged()
 
@@ -208,7 +212,8 @@ else:
         # 升级成功后备份已清;无备份时 --rollback 报错且不乱动。
         rollback = subprocess.run(
             [sys.executable, str(INSTALL_PY), "--rollback", str(self.target)],
-            cwd=self.root, env=self.env, capture_output=True, text=True)
+            cwd=self.root, env=self.env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace")
         self.assertNotEqual(rollback.returncode, 0)
         self.assertEqual((self.target / "VERSION").read_bytes(), b"9.9.9\n")
 
@@ -235,7 +240,8 @@ else:
         os.rename(self.target, self.target.with_name(self.target.name + ".bak-1"))
         rollback = subprocess.run(
             [sys.executable, str(INSTALL_PY), "--rollback", str(self.target)],
-            cwd=self.root, env=self.env, capture_output=True, text=True)
+            cwd=self.root, env=self.env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace")
         self.assert_ok(rollback)
         self.assertEqual((self.target / "vt.py").read_bytes(), b"# old\n")
 
@@ -270,7 +276,8 @@ else:
         with lock:
             result = self.run_install()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("另一安装正在进行", result.stdout + result.stderr)
+        self.assertIn("另一安装正在进行",
+                      (result.stdout or "") + (result.stderr or ""))
         self.assertFalse(self.target.exists())
         # 锁释放后安装可正常进行。
         self.assert_ok(self.run_install())
