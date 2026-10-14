@@ -124,6 +124,43 @@ class ModeSelection(SandboxCase):
             self.assertFalse(self.installer._make_wizard(self._args()).enabled)
 
 
+class StdinConsoleDetection(SandboxCase):
+    """_stdin_is_console 语义(hosted windows-2025 实测根因 A:win32 CRT 对
+    NUL 字符设备 isatty()=True,DEVNULL 子进程误入向导)。
+
+    本机为 POSIX:win32 分支用形参模拟——isatty True 后进入 GetConsoleMode
+    复核,POSIX 上无 ctypes.windll 必然异常→False,与「NUL 设备在 win32
+    上无控制台模式」同收敛(fail-closed)。真实 win32 控制台行为由 hosted
+    Windows job 端到端验证,此处不谎称实机。"""
+
+    def setUp(self):
+        super().setUp()
+        self.installer = _load_installer()
+
+    def test_posix_isatty_true_is_console(self):
+        with mock.patch("sys.stdin") as stdin:
+            stdin.isatty.return_value = True
+            self.assertTrue(self.installer._stdin_is_console(win32=False))
+
+    def test_isatty_false_never_console(self):
+        with mock.patch("sys.stdin") as stdin:
+            stdin.isatty.return_value = False
+            self.assertFalse(self.installer._stdin_is_console(win32=False))
+            self.assertFalse(self.installer._stdin_is_console(win32=True))
+
+    def test_win32_nul_like_device_fails_closed(self):
+        # NUL 语义模拟:isatty 谎报 True,但 win32 复核无 windll→False。
+        with mock.patch("sys.stdin") as stdin:
+            stdin.isatty.return_value = True
+            stdin.fileno.return_value = 0
+            self.assertFalse(self.installer._stdin_is_console(win32=True))
+
+    def test_isatty_raising_fails_closed(self):
+        with mock.patch("sys.stdin") as stdin:
+            stdin.isatty.side_effect = ValueError("closed")
+            self.assertFalse(self.installer._stdin_is_console(win32=False))
+
+
 class WizardIntegration(SandboxCase):
     """进程内集成:mock tty + input,断言决定被执行层消费、跳过有指引。"""
 

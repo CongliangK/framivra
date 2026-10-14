@@ -12,6 +12,7 @@
 由设计保证(win32 分支零 os.symlink 调用)+本单测兜底,如实标注为边界。
 """
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -25,9 +26,9 @@ import tarfile
 from unittest import mock
 
 try:
-    from ._support import REPO, SandboxCase
+    from ._support import REPO, SandboxCase, serve_fixtures, windows_full_path
 except ImportError:
-    from _support import REPO, SandboxCase
+    from _support import REPO, SandboxCase, serve_fixtures, windows_full_path
 
 INSTALL_PY = REPO / "scripts" / "install.py"
 
@@ -49,34 +50,25 @@ class InstallerSandbox(SandboxCase):
         self.fixtures.mkdir()
         self.payload = self.fixtures / "video-tools-9.9.9.tar.gz"
         self.checksums = self.fixtures / "SHA256SUMS"
-        curl = self.put(self.bin / "curl", b'''#!/usr/bin/env python3
-import json, os, pathlib, sys
-args = sys.argv[1:]
-with open(os.environ["SAFETY_CURL_LOG"], "a") as stream:
-    stream.write(json.dumps(args) + "\\n")
-urls = [x for x in args if x.startswith(("https://", "http://"))]
-if len(urls) != 1:
-    sys.exit(91)
-name = urls[0].rsplit("/", 1)[-1]
-fixtures = pathlib.Path(os.environ["SAFETY_FIXTURES"])
-if name == "releases.json":
-    data = b'{"latest":"9.9.9"}'
-elif name in ("SHA256SUMS", "video-tools-9.9.9.tar.gz"):
-    data = (fixtures / name).read_bytes()
-else:
-    sys.exit(92)
-if "-o" in args:
-    pathlib.Path(args[args.index("-o") + 1]).write_bytes(data)
-else:
-    sys.stdout.buffer.write(data)
-''')
-        curl.chmod(0o755)
-        ffmpeg = self.put(self.bin / "ffmpeg", b"#!/bin/sh\nprintf 'ffmpeg version 6.1 fixture\\n'\n")
-        ffmpeg.chmod(0o755)
-        self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"],
+        # 下载假体 = 本地 http.server + 真实 curl 打 127.0.0.1(PATH 假 curl
+        # 是 shebang 脚本,win32 CreateProcess 无法执行会回退真 curl 打外网;
+        # 本地方保真全链路:真实下载+SHA256 校验+解包)。每次 GET(含 404)
+        # 追加 jsonl 到 SAFETY_CURL_LOG——「零下载」负例断言=日志不存在。
+        self._fixtures_stack = contextlib.ExitStack()
+        self.addCleanup(self._fixtures_stack.close)
+        base_url, self._server_holder = self._fixtures_stack.enter_context(
+            serve_fixtures(self.fixtures, self.sandbox / "curl-calls.jsonl"))
+        self._server_holder["releases_json"] = b'{"latest":"9.9.9"}'
+        # ffmpeg 假体仅 POSIX(sh shim);win32 走注册表合并后的真 ffmpeg
+        # (Windows CI 在本套件前 choco install ffmpeg;进程 PATH 可能滞后)。
+        if os.name != "nt":
+            ffmpeg = self.put(self.bin / "ffmpeg",
+                              b"#!/bin/sh\nprintf 'ffmpeg version 6.1 fixture\\n'\n")
+            ffmpeg.chmod(0o755)
+        self.env.update({"PATH": str(self.bin) + os.pathsep +
+                         windows_full_path(self.env["PATH"]),
                          "SAFETY_CURL_LOG": str(self.sandbox / "curl-calls.jsonl"),
-                         "SAFETY_FIXTURES": str(self.fixtures),
-                         "VIDEO_TOOLS_DL_BASE": "https://safety.invalid"})
+                         "VIDEO_TOOLS_DL_BASE": base_url})
         self.base_archive()
 
     def base_archive(self, extra=(), symlinks=()):
@@ -247,11 +239,11 @@ else:
 
     def test_interrupt_leaves_target_unpolluted_and_staging_cleaned(self):
         installer = _load_installer()
-        # 进程内路径读 os.environ(快照早于本类 setUp 后半段),此处显式补齐。
-        os.environ.update({"VIDEO_TOOLS_DL_BASE": "https://safety.invalid",
-                           "SAFETY_CURL_LOG": str(self.sandbox / "curl-calls.jsonl"),
-                           "SAFETY_FIXTURES": str(self.fixtures),
-                           "PATH": str(self.bin) + os.pathsep + os.environ.get("PATH", "")})
+        # 进程内路径读 os.environ(快照早于本类 setUp 后半段),此处显式补齐:
+        # 指向 setUp 起的本地 fixture 服务(真 curl 下载),禁止外网。
+        os.environ.update({"VIDEO_TOOLS_DL_BASE":
+                           self.env["VIDEO_TOOLS_DL_BASE"],
+                           "PATH": self.env["PATH"]})
         args = argparse.Namespace(
             dir=str(self.target), version="9.9.9", chrome=False,
             non_interactive=False, defaults=False, dry_run=False, upgrade=False)
@@ -339,12 +331,11 @@ else:
         self.assertIn("doctor", result.stderr)
 
     def test_missing_ffmpeg_is_error_not_warning(self):
-        # 仅含 curl 的 PATH(无 ffmpeg):失败必须发生在下载之前。
-        only_curl = self.sandbox / "curl-only"
-        only_curl.mkdir()
-        shutil.copy(self.bin / "curl", only_curl / "curl")
-        (only_curl / "curl").chmod(0o755)
-        self.env["PATH"] = str(only_curl)
+        # 无 ffmpeg 的 PATH(整段替换,win32 也随之失去 winget/系统 ffmpeg):
+        # 失败必须发生在下载之前——零下载请求(本地服务零命中)、目标未创建。
+        bare = self.sandbox / "bare-path"
+        bare.mkdir()
+        self.env["PATH"] = str(bare)
         result = self.run_install()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ffmpeg", result.stderr)

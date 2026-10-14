@@ -324,17 +324,48 @@ class Wizard:
             log("⚠ 已跳过:%s(手动指引见上方各行)" % description)
 
 
-def _make_wizard(args):
-    """交互模式判定:--non-interactive/--defaults 显式零提问;否则 tty 才提问。
+def _stdin_is_console(win32=None):
+    """真实控制台检测(向导模式判定的唯一依据)。
 
-    子进程/管道(stdin 非 tty)自动全默认,不失败——CI 与 curl|bash 无终端
-    场景等价 --defaults。install.sh 侧负责 curl|bash 下重挂 /dev/tty 保留
-    真终端交互(见其注释);Windows PowerShell 引导脚本保存后执行,stdin
-    即控制台,无需重挂。
+    win32 CRT 对 NUL 字符设备 isatty() 返回 True(经典陷阱):stdin=DEVNULL
+    的子进程会误入交互向导(hosted windows-2025 实测 [Y/n] 出现在无终端
+    子进程)。win32 追加 GetConsoleMode 复核——只有真实控制台才通过;
+    管道/重定向/NUL 一律 False。POSIX isatty 即可。任何异常按非控制台
+    (fail-closed:宁可不提问,不在无终端环境挂起等输入)。win32 形参供
+    单测在 POSIX 上模拟 win32 分支。
+    """
+    if win32 is None:
+        win32 = (os.name == "nt")
+    try:
+        if not sys.stdin.isatty():
+            return False
+    except Exception:
+        return False
+    if not win32:
+        return True
+    try:
+        import ctypes
+        import msvcrt
+        mode = ctypes.c_uint32()
+        handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+        return bool(ctypes.windll.kernel32.GetConsoleMode(handle,
+                                                          ctypes.byref(mode)))
+    except Exception:
+        return False
+
+
+def _make_wizard(args):
+    """交互模式判定:--non-interactive/--defaults 显式零提问;否则真控制台才提问。
+
+    子进程/管道/重定向(stdin 非真实控制台)自动全默认,不失败——CI 与
+    curl|bash 无终端场景等价 --defaults。install.sh 侧负责 curl|bash 下
+    重挂 /dev/tty 保留真终端交互(见其注释);Windows PowerShell 引导脚本
+    保存后执行,stdin 即控制台,无需重挂;win32 的 NUL 设备陷阱由
+    _stdin_is_console 的 GetConsoleMode 复核拦下。
     """
     quiet = bool(getattr(args, "non_interactive", False)) or bool(
         getattr(args, "defaults", False))
-    enabled = (not quiet) and sys.stdin.isatty()
+    enabled = (not quiet) and _stdin_is_console()
     return Wizard(enabled)
 
 

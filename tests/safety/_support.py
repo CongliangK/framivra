@@ -1,10 +1,14 @@
 """Sandbox helpers; all writable paths (including escape targets) are temporary."""
+import contextlib
+import http.server
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -113,3 +117,73 @@ class SandboxCase(unittest.TestCase):
                 else:
                     result[rel] = ("file", path.read_bytes())
         return result
+
+
+def windows_full_path(current):
+    """win32:合并注册表 Machine+User PATH(choco/winget 装后当前进程环境
+    可能滞后,Windows CI job 自述此坑)。读不到注册表时原样返回。"""
+    if os.name != "nt":
+        return current
+    parts = []
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as key:
+            parts.append(winreg.QueryValueEx(key, "Path")[0])
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            parts.append(winreg.QueryValueEx(key, "Path")[0])
+    except OSError:
+        return current
+    parts.append(current or "")
+    return os.pathsep.join(p for p in parts if p)
+
+
+@contextlib.contextmanager
+def serve_fixtures(directory, log_path):
+    """本地 fixture 下载服务:真实 curl 打 127.0.0.1 下载,全链路(下载+SHA+
+    解包)保真——替代 PATH 假 curl(shebang 脚本 win32 CreateProcess 无法
+    执行,会回退真 curl 打外网)。每次 GET(含 404)按序追加 jsonl 到
+    log_path,保持「零下载」负例断言(日志文件不存在=零请求)。
+    /releases.json 由 releases_json 形参内容直接提供;其余按相对路径映射
+    directory 内文件。"""
+    holder = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 (http.server 约定)
+            with open(log_path, "a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"path": self.path}) + "\n")
+            if self.path == "/releases.json":
+                body = holder.get("releases_json", b'{"latest":"9.9.9"}')
+                status = 200
+            else:
+                # 版本目录段(/v9.9.9/<name>)按 basename 映射 fixtures 平铺
+                # 文件(与原 PATH 假 curl 的文件名匹配语义一致)。
+                name = self.path.rsplit("/", 1)[-1]
+                target = Path(directory) / (name or "")
+                if name and ".." not in name and target.is_file():
+                    body, status = target.read_bytes(), 200
+                else:
+                    body, status = b"not found", 404
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass  # 静默:测试日志由 jsonl 承担
+
+    class Server(http.server.ThreadingHTTPServer):
+        def server_bind(self):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            super().server_bind()
+
+    server = Server(("127.0.0.1", 0), Handler)
+    holder["server"] = server
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield "http://127.0.0.1:%d" % server.server_address[1], holder
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
