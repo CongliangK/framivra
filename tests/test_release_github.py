@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -416,9 +417,13 @@ class GithubInstall(unittest.TestCase):
 
     def install(self, *args, **env):
         extra = env.pop('args', [])
-        return subprocess.run(['bash', str(REPO / 'scripts/install.sh'), '--dir', str(self.target), *extra, *args],
+        # 发版通道直连 install.py(install.sh 已重构为 Linux/macOS 克隆引导,
+        # 不再薄转发 install.py);UTF-8 显式解码与安装器口径一致。
+        return subprocess.run([sys.executable, str(REPO / 'scripts/install.py'),
+                               '--dir', str(self.target), *extra, *args],
             cwd=self.root, env={**self.env, **env}, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=30)
 
     def calls(self):
         log = self.root / 'curl.log'

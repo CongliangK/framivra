@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 """install.py —— 跨平台统一安装器（Linux/macOS/Windows,纯标准库）。
 
-入口范式:
-  Linux/macOS: curl -fsSL <raw-url>/scripts/install.sh | bash
-               (install.sh 为薄转发,零业务逻辑,兼容既有 curl|bash 习惯;
-               curl|bash 管道下自动重挂 /dev/tty 保留交互向导,无控制终端
-               则自动降级全默认)
-  Windows    : PowerShell 引导下载本文件后 python install.py(见 install_windows.ps1)
+入口范式(现状:一键安装=克隆模式引导,Linux/macOS=scripts/install.sh、
+  Windows=scripts/install_windows.ps1,见 README;本文件是未来的 Releases
+  发版通道安装器,仓内尚未发版,接入跟踪=#94):
+  发版通道启用前,本文件仅由 CI 与本地 checkout 直跑(python3 scripts/install.py
+  --help 为参数唯一 home);入口接线随 #94 落地后回填此处。
   交互向导   : 有控制终端且未给 --non-interactive/--defaults 时逐项提问,
                每题「描述 [Y/n](回车=默认 Y)」——默认=执行(用户裁决),
                输 n 跳过该项并在总结中给出手动指引;所有提问集中在任何
@@ -419,9 +418,10 @@ def _make_wizard(args):
     """交互模式判定:--non-interactive/--defaults 显式零提问;否则真控制台才提问。
 
     子进程/管道/重定向(stdin 非真实控制台)自动全默认,不失败——CI 与
-    curl|bash 无终端场景等价 --defaults。install.sh 侧负责 curl|bash 下
-    重挂 /dev/tty 保留真终端交互(见其注释);Windows PowerShell 引导脚本
-    保存后执行,stdin 即控制台,无需重挂;win32 的 NUL 设备陷阱由
+    curl|bash 无终端场景等价 --defaults。Linux/macOS 克隆引导(scripts/
+    install.sh)自身负责 curl|bash 下的 /dev/tty 重挂——服务其调用的
+    vt.py init,不经本文件;Windows PowerShell 引导脚本保存后执行,
+    stdin 即控制台,无需重挂;win32 的 NUL 设备陷阱由
     _stdin_is_console 的 GetConsoleMode 复核拦下。
     """
     quiet = bool(getattr(args, "non_interactive", False)) or bool(
