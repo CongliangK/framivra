@@ -51,8 +51,13 @@ def ensure_inside_project(path, root, *, what: str = "写路径") -> Path:
     那里管「删除不得穿链接」，本门管「写入不得逃根」——同一白名单根思想、
     方向相反的两面，共用 resolve 判据。
     """
-    root_real = Path(root).resolve()
-    target = Path(path).resolve()
+    try:
+        if '\x00' in str(path) or '\x00' in str(root):
+            raise ValueError('NUL 字符')
+        root_real = Path(root).resolve()
+        target = Path(path).resolve()
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ProjectPathError(f"{what}非法路径：{path!r}（{error}）") from error
     if target != root_real and root_real not in target.parents:
         raise ProjectPathError(
             f"{what}逃逸安全根（issue #23）：{path} 解析为 {target}，"
@@ -107,6 +112,10 @@ class Ctx:
         self.spf = 1.0 / self.fps
         self.spf_samples = AUDIO_SAMPLE_RATE // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
         self.cache = self.root / "cache"; self.out = self.root / "out"
+        # issue #59（返工项）：写目标的符号链接解析边界显式注册给 fstxn——
+        # 唯一权威 = c.root（timeline 所在目录），取代按 cache/out 目录名猜测。
+        # 见 fstxn.bind_project_root 契约；无 Ctx 的库级调用不受影响。
+        fstxn.bind_project_root(self.root)
         # v2 subtitles_src（§1.1 条目 6）：timeline 加载点解析——load 后 self.tl
         # ["subtitles"] 即为解析结果（各阶段无感）；解析失败/互斥错误记入
         # self.subtitles_errors 由 validate FAIL。subtitles_src 原文已参与输入

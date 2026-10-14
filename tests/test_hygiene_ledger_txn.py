@@ -125,9 +125,9 @@ from vtx import hygiene
 c = Ctx(Path(sys.argv[2]))
 real_replace = os.replace
 
-def kill_before(a, b):
+def kill_before(a, b, **kwargs):
     os.kill(os.getpid(), signal.SIGKILL)   # 时机②：tmp 落盘后、replace 前
-    real_replace(a, b)
+    real_replace(a, b, **kwargs)
 
 os.replace = kill_before
 ''' + CRASH_RUN
@@ -142,8 +142,8 @@ from vtx import hygiene
 c = Ctx(Path(sys.argv[2]))
 real_replace = os.replace
 
-def kill_after(a, b):
-    real_replace(a, b)
+def kill_after(a, b, **kwargs):
+    real_replace(a, b, **kwargs)
     os.kill(os.getpid(), signal.SIGKILL)   # 时机③：replace 已完成
 
 os.replace = kill_after
