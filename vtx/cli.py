@@ -99,7 +99,7 @@ from pathlib import Path
 from .composite import build_video, prepare_layers
 from .encoders import find_chrome
 from . import gfx_cli, hygiene
-from .hygiene import budget_gate, df, gfx_key, gfx_dir, manifest_record, snapshot
+from .hygiene import budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns, manifest_record, snapshot
 from .infra import (Ctx, ProjectPathError, ensure_inside_project,
                     run_wave)
 from .qc import qc
@@ -188,6 +188,16 @@ def gfx(c: Ctx):
 
 def _gfx(c: Ctx):
     budget_gate(c, "gfx")
+    # issue #103：gfx 阶段开工前清扫上次崩溃残留的监管 Worker 孤儿组（只杀
+    # 账本核验过、宿主已死的组；并行 vtx 进程的活动组由账本 host 字段跳过）。
+    # dry 零写态纪律：dry 跳过（reap 有目录移除动作）。
+    if not c.dry:
+        from .proc_supervisor import reap_orphan_workers
+        reap_orphan_workers(c)
+    # issue #103：实验命名空间（VTX_GFX_CACHE_NS）——整阶段取一次：gfx_dir 路由
+    # 与 complete.json 的 backend_ns 元数据同源；非法值在此显式失败（不静默落
+    # 正式缓存破坏隔离）。
+    backend_ns = gfx_cache_ns()
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
     use_cdp = os.environ.get("VTX_GFX", "cdp").lower() != "cli"
@@ -223,11 +233,13 @@ def _gfx(c: Ctx):
             n = cl["dur"]
             d = gfx_dir(c, cl)
             # issue #28：逐一核验 [0,n)，f9999/空文件等不再冒充完整缓存。
-            bad, needs_marker = gfx_cli.inspect_page(d, n, key, c.w, c.h)
+            bad, needs_marker = gfx_cli.inspect_page(d, n, key, c.w, c.h,
+                                                     backend_ns=backend_ns)
             if not bad:
                 if needs_marker and not c.dry:
                     gfx_cli.complete_page(d, n, key, c.w, c.h,
-                                          verify_inputs=lambda: c.verify_inputs("gfx"))
+                                          verify_inputs=lambda: c.verify_inputs("gfx"),
+                                          backend_ns=backend_ns)
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
             # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
             if not c.dry:
@@ -272,9 +284,12 @@ def _gfx(c: Ctx):
         st = None
         if cdp_mod is not None:
             try:
-                # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）
+                # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）。
+                # ctx 透传（issue #103）：CDP 常驻 Chrome 交 proc_supervisor 监管
+                # （独立进程组 + PDEATHSIG + 守卫 + tmp_run 账本，Profile 不再落系统 /tmp）。
                 st = cdp_mod.render_page(html, d, n, chrome_path=find_chrome(),
-                                         width=c.w, height=c.h, frames=frames)
+                                         width=c.w, height=c.h, frames=frames,
+                                         ctx=c)
             except Exception as e:
                 # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
                 fb = range(n) if frames is None else frames
@@ -294,7 +309,8 @@ def _gfx(c: Ctx):
             # —— 整页单块（SPLIT 关或页不超阈值）：日志格式与现行逐字节一致 ——
             rendered_via = "cli 6 并发" if st is None else _cdp_via(st)
             gfx_cli.complete_page(d, n, key, c.w, c.h,
-                                  verify_inputs=lambda: c.verify_inputs("gfx"))
+                                  verify_inputs=lambda: c.verify_inputs("gfx"),
+                                  backend_ns=backend_ns)
             print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
             manifest_record(c, d, "gfx", key)
             return cid, rendered_via
@@ -319,7 +335,8 @@ def _gfx(c: Ctx):
         else:
             rendered_via = "cli 6 并发" + (f"（split×{k}）" if k > 1 else "")
         gfx_cli.complete_page(d, n, key, c.w, c.h,
-                              verify_inputs=lambda: c.verify_inputs("gfx"))
+                              verify_inputs=lambda: c.verify_inputs("gfx"),
+                              backend_ns=backend_ns)
         print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
         manifest_record(c, d, "gfx", key)
         return cid, rendered_via

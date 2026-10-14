@@ -257,7 +257,7 @@ def require_frames(outdir, frames, *, width=None, height=None):
 COMPLETE_FILE = "complete.json"
 
 
-def _page_record(outdir, n, key, width, height):
+def _page_record(outdir, n, key, width, height, backend_ns=None):
     digests, bad = [], []
     for i in range(n):
         got = []
@@ -266,11 +266,18 @@ def _page_record(outdir, n, key, width, height):
         if reason:
             bad.append((i, reason))
         digests.append(got[0] if got else None)
-    return {"schema": 1, "key": key, "width": width, "height": height,
-            "frames": n, "sha256": digests}, bad
+    record = {"schema": 1, "key": key, "width": width, "height": height,
+              "frames": n, "sha256": digests}
+    # issue #103：实验命名空间可选元数据（VTX_GFX_CACHE_NS 路由 gfx_exp 的页
+    # 打来源标）。缺省（正式态）不写字段——complete.json 字节形状与既有完全
+    # 一致；ns 本身决定目录（gfx_exp/<ns>/<key>），故它不进 inspect_page 的
+    # 失效合同字段，只作审计溯源。
+    if backend_ns:
+        record["backend_ns"] = backend_ns
+    return record, bad
 
 
-def inspect_page(outdir, n, key, width, height):
+def inspect_page(outdir, n, key, width, height, backend_ns=None):
     """Return bad frames plus whether a completion record needs publication.
 
     Missing/unreadable legacy markers never skip validation: complete valid
@@ -279,7 +286,7 @@ def inspect_page(outdir, n, key, width, height):
     frame; changed valid PNG bytes invalidate that frame by SHA256. All hits
     still undergo full PNG validation; the marker alone cannot certify a hit.
     """
-    current, bad = _page_record(outdir, n, key, width, height)
+    current, bad = _page_record(outdir, n, key, width, height, backend_ns)
     try:
         old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -299,14 +306,16 @@ def invalidate_page(outdir):
     (Path(outdir) / COMPLETE_FILE).unlink(missing_ok=True)
 
 
-def complete_page(outdir, n, key, width, height, *, verify_inputs):
+def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None):
     """Validate the whole page and pin-input gate before atomic publication.
 
     Caller invokes only on non-dry paths after all blocks/fallbacks finish.
     Revalidation hashes the same bytes checked by the PNG parser. Interrupted
     rendering cannot publish a partial frame list or bypass the input gate.
+    backend_ns（issue #103 可选）：实验命名空间页打元数据标（缺省字段不写，
+    正式态字节不变）。
     """
-    record, bad = _page_record(outdir, n, key, width, height)
+    record, bad = _page_record(outdir, n, key, width, height, backend_ns)
     if bad:
         invalidate_page(outdir)
         raise GfxCliError(f"gfx 完成检查失败：{bad}")

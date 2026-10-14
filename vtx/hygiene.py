@@ -10,7 +10,7 @@
     --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli.py）。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
-import fnmatch, hashlib, json, os, shutil, time
+import fnmatch, hashlib, itertools, json, os, re, shutil, time
 from pathlib import Path
 
 from . import fstxn
@@ -21,6 +21,9 @@ from .pluginlib import hooks as _plugin_hooks
 
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
 TMP = "tmp"                  # cache/tmp/<runid>/：一次性中间物，gc 清扫孤儿
+# issue #103：实验态 gfx 缓存根（VTX_GFX_CACHE_NS 路由目标 cache/gfx_exp/<ns>/<key>/，
+# 见 gfx_cache_ns/gfx_dir）。与正式 cache/gfx/ 物理隔离——实验渲染绝不命中/污染正式键轴。
+GFX_EXP = "gfx_exp"
 KEEP_BASELINES = ("manifest.json", "qc_pass_segs.json")   # cache 根下永不删的记账/状态件
 # cache/audio/ 下不回收的状态件（方案三阶段1审查 P1-2）：loudness_receipts.json 是
 # 响度测量回执（loudness_cache，qc/gates 免重测依据）——语义同 manifest（报告/回执/
@@ -195,7 +198,36 @@ def gfx_key(c, cl) -> str:
     return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
 
 
+# issue #103：命名空间合法性——ns 进入缓存路径段，拒绝一切可造成路径逃逸/穿越
+# 的值（"../evil"、"/abs"、"a/b"、以 . 开头的隐藏名）。实验态词表（cef_a0/cef_a1/
+# elec_b0/elec_b1）不写死：双路线战役会追加新实验位，字符集校验是安全下限。
+_NS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def gfx_cache_ns() -> str:
+    """VTX_GFX_CACHE_NS（issue #103，默认空 = 正式态）：实验渲染缓存命名空间。
+
+    非空 → gfx_dir 路由 cache/gfx_exp/<ns>/<key>/（与正式 cache/gfx/ 物理隔离，
+    gfx_key 算法一字不动——键轴纪律 R12-G1-037 与 docs/cache-provenance.md 不受
+    影响，同一页在两个 ns 下同键异目录）。非法值显式 ValueError：实验配置写错
+    宁可大声失败，绝不静默回落正式缓存破坏隔离。"""
+    ns = os.environ.get("VTX_GFX_CACHE_NS", "").strip()
+    if not ns:
+        return ""
+    if not _NS_RE.fullmatch(ns):
+        raise ValueError(
+            f"VTX_GFX_CACHE_NS 非法（{ns!r}）：只允许字母数字与 _.- 且不得以 . "
+            "开头——它将成为 cache/gfx_exp/<ns>/<key>/ 的路径段，路径逃逸值一律拒绝"
+            "（issue #103）")
+    return ns
+
+
 def gfx_dir(c, cl) -> Path:
+    # issue #103：实验态（VTX_GFX_CACHE_NS 非空）整树路由 cache/gfx_exp/<ns>/<key>/，
+    # 与正式 cache/gfx/<key> 物理隔离；默认空 = 原路径逐字节不变。
+    ns = gfx_cache_ns()
+    if ns:
+        return c.cache / GFX_EXP / ns / gfx_key(c, cl)
     return c.cache / "gfx" / gfx_key(c, cl)
 
 
@@ -320,7 +352,7 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
 
 
 # ---------------------------------------------------------------- 体积统计
-def tmp_run(c, label: str):
+def tmp_run(c, label: str, *, unique: bool = False):
     """一次性中间物目录上下文（tmp 纪律，2026-09-11 定）：
 
     with hygiene.tmp_run(c, "qc_frames") as d:
@@ -332,13 +364,25 @@ def tmp_run(c, label: str):
       /tmp 享受 tmpfs 速度。
     - with 正常/异常退出都删除目录（阶段结束即删）；被 kill -9 留下的孤儿
       （D33 看门狗杀长命令有先例）由 gc 的 tmp_orphans（>24h）兜底清扫。
+    - unique=True（issue #103，监管组专用）：目录名追加 -<pid>-<序号> 后缀——
+      并行监管组（VTX_GFX_PAGES 多浏览器/跨进程同项目同秒启动）不再互撞同一
+      目录；默认 False 命名与既有调用方逐字节一致。
+    - issue #103：退出时先做伴生 PID 账本清扫（见 _sweep_tmp_worker_ledger），
+      杜绝「删了 Profile 目录、留下持锁孤儿进程」的半清理。
     """
-    d = c.cache / TMP / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{label}"
+    name = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{label}"
+    if unique:
+        name = f"{name}-{os.getpid()}-{next(_TMP_UNIQUE_SEQ)}"
+    d = c.cache / TMP / name
     # issue #23（A04）：tmp 也属衍生写路径——预置 cache/tmp → 根外 的符号链接
     # 会把 GB 级中间物写穿到链接目标；解析后必须仍落在 cache 内。
     ensure_inside_project(d, c.cache, what="tmp 中间物目录")
     d.mkdir(parents=True, exist_ok=True)
     return _TmpDir(d)
+
+
+# issue #103：同进程同秒多次 tmp_run(unique=True) 的序号源（跨进程由 pid 区分）
+_TMP_UNIQUE_SEQ = itertools.count()
 
 
 class _TmpDir:
@@ -347,8 +391,33 @@ class _TmpDir:
     def __enter__(self): return self.path
 
     def __exit__(self, et, ev, tb):
+        _sweep_tmp_worker_ledger(self.path)
         shutil.rmtree(self.path, ignore_errors=True)
         return False
+
+
+def _sweep_tmp_worker_ledger(path: Path):
+    """issue #103：tmp_run 伴生 PID 账本清扫——目录内若有 .worker_pgid.json
+    且其进程组仍有存活成员（宿主已死），先 killpg 等进程表清空，再让调用方
+    删目录。正常监管收尾（SupervisedProcessGroup.stop）已先删账本，此处恒为
+    no-op；本清扫只兜「删目录与杀进程被拆开」的异常/旁路路径（如 stop 中途
+    崩溃、外部直接 rmtree 前）。惰性导入 proc_supervisor（它正向依赖本模块，
+    顶层互引会环）；失败只告警，不阻断目录删除——Linux 上 unlink 不受打开
+    文件影响，真正的残员由 reap_orphan_workers 下轮收口。"""
+    try:
+        from . import proc_supervisor as _ps
+        ledger = Path(path) / _ps.WORKER_LEDGER
+        if not ledger.is_file():
+            return
+        status = _ps.reap_run_dir(path, ledger_path=ledger)
+        if status == "live_host":
+            # 宿主仍存活却走到了 tmp_run 删除（supervisor.stop 中途崩溃等旁路）：
+            # 删目录可能留下持锁残员——只告警不阻断，reap_orphan_workers 下轮兜底。
+            # killed/already_dead 已等进程表清空，删除是安全收尾，无需告警。
+            print(f"⚠ tmp_run 清扫：目录 {Path(path).name} 的 Worker 组宿主仍存活，"
+                  f"目录删除可能留下持锁残员（issue #103）")
+    except Exception as e:   # 清扫是防御层，任何失败不伤 tmp_run 主语义
+        print(f"⚠ tmp_run PID 账本清扫失败（不影响目录删除）: {e}")
 
 
 def dir_size(p: Path) -> int:
@@ -471,7 +540,11 @@ def gc_plan(c, keep_days: int = 0):
     # 不变量不破），与 B06 receipt 同口径，不为它加年龄门。
     known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
              "subs.ass", "subs_draft.ass", "qc_clean.mp4",
-             "vseg", "vseg_draft", "vseg_qc", "vseg_pass", "preview", "report_audio"} | set(KEEP_BASELINES)
+             "vseg", "vseg_draft", "vseg_qc", "vseg_pass", "preview", "report_audio",
+             # issue #103：实验缓存根并入已知布局——不经键集判活（实验键集不在
+             # 当前 timeline 键轴内），否则整树被误判 legacy 垃圾、budget_gate
+             # 自动 gc 会中途清掉在跑实验的隔离缓存。实验目录由实验 harness 自管。
+             GFX_EXP} | set(KEEP_BASELINES)
     # v2 §2.1 不变量 ①：插件声明的 cache 子目录并入白名单（自立目录型插件产物
     # 不再判 legacy 垃圾）；P1-2 空转 = 空集，白名单零变化。传 c 使「仅对本
     # timeline 生效的插件」过滤生效（与 get_cache_dirs docstring 口径一致）。
