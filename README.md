@@ -34,11 +34,11 @@ python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/fin
 
 **GitHub Releases 安装**（需已有完整发布资产）：`curl -fsSL https://github.com/CongliangK/framivra/releases/latest/download/install.sh | bash -s -- --dry-run --dir <目录>`；去掉 `--dry-run` 才下载并写入安装目录（可选 `--chrome`）。版本发现与载荷均来自 GitHub；`VIDEO_TOOLS_DL_BASE` 可覆盖为用户镜像（布局见 `scripts/install.py --help`，`install.sh` 为薄转发）。SHA256SUMS 仅校验传输完整性，不是独立发布者签名。
 
-**候选/预发布：Windows 与统一安装器（install.py）**——尚未正式发布，入口钉 commit SHA（`<SHA>` 处以实际合并提交替换）：
+**候选/预发布：Windows 与统一安装器（install.py）**——尚未正式发布，入口钉 commit `861a689c6a093d50600a25485fbf4fee7583e1c6`（hosted windows-2025 九项检查全绿批次；换版本时同步更新此 SHA）：
 
 ```powershell
 # Windows 原生 PowerShell 一行(等价于 Linux 的 curl | bash;无需 WSL/Git Bash):
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/<SHA>/scripts/install_windows.ps1 -OutFile $env:TEMP\vt-i.ps1; & $env:TEMP\vt-i.ps1 -InstallPyUrl https://raw.githubusercontent.com/CongliangK/framivra/<SHA>/scripts/install.py"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/CongliangK/framivra/861a689c6a093d50600a25485fbf4fee7583e1c6/scripts/install_windows.ps1 -OutFile $env:TEMP\vt-i.ps1; & $env:TEMP\vt-i.ps1 -InstallPyUrl https://raw.githubusercontent.com/CongliangK/framivra/861a689c6a093d50600a25485fbf4fee7583e1c6/scripts/install.py"
 ```
 
 - 自动完成：python≥3.9 检测（缺失时 winget 用户级安装）→ 下载载荷 + SHA256 校验 → 白名单安全解包（staging 事务，中断零污染）→ 写 `bin\vt.cmd/vtx.cmd` 并挂用户 PATH → `vt doctor` 成功门（新开 PowerShell 直接 `vt doctor`）。ffmpeg 缺失时 Windows 默认 winget 自动装（系统解析，不再分发）；失败即非零退出并给一行手动指引——缺依赖不再「警告后 exit 0」假装装好。
