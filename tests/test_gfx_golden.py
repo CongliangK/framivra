@@ -747,9 +747,83 @@ class AnalyzePerf(unittest.TestCase):
     全屏中 α=128·ΔRGB=2（工单核心场景的中 α 推广——红队复现的 167ms 无护栏
     慢路径）。阈值按 15ms 预算断言，机器抖动由 2 次预热 + 7 轮取中位消化；
     PNG 解码 1080p 实测 ~35-55ms 属 I/O，不在本门内（decode_ms 字段另行披露）。
+
+    环境校准（慢 runner 修复）：15ms 是本机绝对值口径，GitHub 共享 runner 慢
+    数倍曾以 15.28ms 误红。故测试开头跑一段固定纯 numpy 参考工作量（走廊同款
+    原语混合，但与 gfx_golden 零代码共用），预算按 max(1.0, ref/_LOCAL_REF_MS)
+    等比缩放：本机 ref≈_LOCAL_REF_MS ⟹ 系数 1.0、语义不变；慢机按实测机器
+    速度等比放宽。护栏硬约束（变异验证锁定）：参考工作量必须独立于被测代码——
+    若用 _analyze_arrays 自校准，走廊被移除（返工前 ~150-167ms 慢路径）会同步
+    抬高预算、回归自掩蔽；纯 numpy 工作量不受实现回归影响，走廊禁用时本机
+    系数仍 ≈1.0、预算仍 15ms，慢路径两次必超 → 本测试必须 FAIL（已在
+    /tmp 副本把 _dense_pass_corridor 改为永不触发验证击杀）。
     """
 
+    # 本机校准常数：AMD Ryzen 9 7950X（32 线程、空载），Python 3.13.11 +
+    # numpy 2.5.1，9 组「2 预热+5 轮取中位」实测 4.93-5.19ms，取 5.1。
+    _LOCAL_REF_MS = 5.1
+    _BASE_BUDGET_MS = 15.0
+
+    @classmethod
+    def _ref_workload_ms(cls):
+        """固定参考工作量中位耗时（ms）：纯 numpy，禁 import/调用 gfx_golden。
+
+        与走廊同量级同原语混合（(n,4) uint8 列 strided subtract+abs+maximum、
+        uint8 回绕差、bool 翻转、int16/uint16 乘、max/count_nonzero 归约，
+        n=1080p 像素数），保证参考/被测的机器速度比跨机可迁移；数据 arange
+        确定性构造（无 RNG），输出缓冲预分配（稳态零分配）。
+        """
+        n = 1920 * 1080
+        pix = np.arange(n, dtype=np.int64) % 251
+        f8 = np.empty((n, 4), np.uint8)
+        f8[:, 0] = pix
+        f8[:, 1] = pix + 250
+        f8[:, 2] = (pix * 3) % 256
+        f8[:, 3] = (pix % 254) + 1          # α ∈ [1,254]
+        g8 = np.empty((n, 4), np.uint8)
+        g8[:, 0] = pix + 1
+        g8[:, 1] = pix
+        g8[:, 2] = (pix * 3 + 2) % 256
+        g8[:, 3] = f8[:, 3]                 # α 全等
+        t16 = np.empty(n, np.int16)
+        acc = np.empty(n, np.int16)
+        prod = np.empty(n, np.uint16)
+        u8 = np.empty(n, np.uint8)
+
+        def one_round():
+            t0 = time.perf_counter()
+            np.subtract(f8[:, 3], g8[:, 3], out=u8)
+            u8.any()
+            for k in (0, 1, 2):
+                np.subtract(f8[:, k], g8[:, k], dtype=np.int16, out=t16)
+                np.abs(t16, out=t16)
+                if k:
+                    np.maximum(acc, t16, out=acc)
+                else:
+                    acc[...] = t16
+            semi = (u8 - np.uint8(1)) < np.uint8(254)
+            su8 = semi.view(np.uint8)
+            np.bitwise_xor(su8, np.uint8(1), out=su8)
+            np.multiply(acc, su8, dtype=np.int16, out=t16)
+            int(t16.max())
+            np.multiply(acc.view(np.uint16), f8[:, 3], dtype=np.uint16, out=prod)
+            int(prod.max())
+            int(np.count_nonzero(acc))
+            return (time.perf_counter() - t0) * 1000
+
+        one_round(); one_round()            # 预热
+        ts = [one_round() for _ in range(5)]
+        return sorted(ts)[2]
+
+    @classmethod
+    def _calibrated_budget_ms(cls):
+        """→ (预算 ms, 参考 ms, 缩放系数)：快机系数钉 1.0（不收紧），慢机等比放宽。"""
+        ref = cls._ref_workload_ms()
+        scale = max(1.0, ref / cls._LOCAL_REF_MS)
+        return cls._BASE_BUDGET_MS * scale, ref, scale
+
     def test_1080p_all_pass_state_paths_within_budget(self):
+        budget, ref_ms, scale = self._calibrated_budget_ms()
         w, h = 1920, 1080
         rng = np.random.default_rng(104)
         base = rng.integers(0, 256, (h, w, 4), dtype=np.uint8)
@@ -818,9 +892,13 @@ class AnalyzePerf(unittest.TestCase):
         cases.append(("full mid-alpha A=128 dRGB=2", ref5, cand5, m))
 
         for name, a, b, ms in cases:
-            if ms > 15.0:                # 机器级瞬态重测一次（两次均超才判失败；
-                ms, _ = median_ms(a, b)  # 真回归如界放宽 ~50ms 两次必超，牙齿不变）
-            self.assertLessEqual(ms, 15.0, f"{name} 分析段中位 {ms:.2f}ms > 15ms")
+            if ms > budget:             # 机器级瞬态重测一次（两次均超才判失败；
+                ms, _ = median_ms(a, b)  # 真回归（如走廊禁用 ~150ms）远超任何
+            self.assertLessEqual(        # 校准预算，两次必超，牙齿不变）
+                ms, budget,
+                f"{name} 分析段中位 {ms:.2f}ms > 预算 {budget:.1f}ms"
+                f"（校准: ref={ref_ms:.2f}ms, _LOCAL_REF_MS="
+                f"{self._LOCAL_REF_MS}, scale={scale:.2f}）")
 
         with tempfile.TemporaryDirectory(prefix="gfx_analyze_perf_") as td:
             # 端到端含 PNG 编解码：只做 sanity 断言（解码耗时另见 decode_ms 字段）
