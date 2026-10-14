@@ -21,7 +21,11 @@ $ErrorActionPreference = 'Stop'
 function Find-Python {
   foreach ($candidate in @(@('py', '-3'), @('python'))) {
     try {
-      $version = & $candidate[0] $candidate[1..($candidate.Length - 1)] --version 2>$null
+      # 单元素候选(@('python'))时 1..0 是降序区间 @(1,0),无守卫切片会带出
+      # $null 杂散参数——必须先判长度(PowerShell 越界切片语义确定;
+      # hosted Windows job 实测执行)。
+      $probeArgs = if ($candidate.Length -gt 1) { $candidate[1..($candidate.Length - 1)] } else { @() }
+      $version = & $candidate[0] $probeArgs --version 2>$null
       if ($LASTEXITCODE -eq 0 -and $version -match 'Python 3\.(\d+)') {
         # 防 Microsoft Store stub:stub 的 --version 非零或无输出,已被上式过滤。
         if ([int]$Matches[1] -ge 9) { return $candidate }
@@ -48,5 +52,7 @@ if (-not $InstallPyUrl) { throw '[bootstrap] 缺少 -InstallPyUrl(候选期应�
 $target = Join-Path $env:TEMP 'vt-install.py'
 Invoke-WebRequest -UseBasicParsing -Uri $InstallPyUrl -OutFile $target
 Write-Host "[bootstrap] 已下载 install.py($([math]::Round((Get-Item $target).Length/1KB,1)) KB),启动安装器..."
-& $py[0] $py[1..($py.Length - 1)] $target @InstallArgs
+# 同上:单元素候选($py=@('python'))时无守卫切片会带出 $null 杂散参数。
+$pyArgs = if ($py.Length -gt 1) { $py[1..($py.Length - 1)] } else { @() }
+& $py[0] $pyArgs $target @InstallArgs
 exit $LASTEXITCODE

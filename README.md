@@ -42,7 +42,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing htt
 ```
 
 - 自动完成：python≥3.9 检测（缺失时 winget 用户级安装）→ 下载载荷 + SHA256 校验 → 白名单安全解包（staging 事务，中断零污染）→ 写 `bin\vt.cmd/vtx.cmd` 并挂用户 PATH → `vt doctor` 成功门（新开 PowerShell 直接 `vt doctor`）。ffmpeg 缺失时 Windows 默认 winget 自动装（系统解析，不再分发）；失败即非零退出并给一行手动指引——缺依赖不再「警告后 exit 0」假装装好。
-- **交互向导**（默认）：有控制终端时逐项提问「描述 [Y/n]（回车=默认 Y）」——默认=执行，可输 `n` 主动跳过（跳过项在总结中列出手动指引）；所有提问集中在任何下载/写盘之前。`curl | bash` 管道下自动重挂 `/dev/tty` 保留交互；无控制终端自动降级全默认、不失败。
+- **交互向导**（默认）：有控制终端时逐项提问「描述 [Y/n]（回车=默认 Y）」——默认=执行，可输 `n` 主动跳过（跳过项在总结中列出手动指引）；所有提问集中在任何载荷下载/写盘之前（仅版本发现所需的 releases.json 元数据读取先于第一问）。`curl | bash` 管道下自动重挂 `/dev/tty` 保留交互；无控制终端自动降级全默认、不失败。
+- 幂等重跑说明：检测到既有 checkout（含 git clone）时复用不覆盖、干净返回——此复用分支**不**跑 `vt doctor` 成功门（避免无 ffmpeg 的开发机重跑被误拦），仅全新安装与 `--upgrade` 走完整安装门。
 - Linux/macOS 同一安装器：`curl -fsSL .../install.sh | bash`（交互向导）；`bash -s -- --non-interactive`（零提问，CI/管道）；`--defaults`（用默认值不提问）；`--dry-run`（零写入演练，打印实际选择与执行计划）；`--upgrade`（仅本安装器所装副本，旧版留 `.bak`）、`--rollback`、`--uninstall`、`--undo`（Windows PATH 恢复）。
 - 边界如实说明：本入口的首次信任是「HTTPS 下载通道 + 仓库当前内容」，不自称独立签名验证；正式发布身份链（keyless provenance）为 #41 后续项。企业域控无 winget 且无 Store 的机器需手动装 Python；隔离内网不在支持范围。
 

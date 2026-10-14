@@ -30,8 +30,9 @@
     os.symlink(设计保证,单测以 monkeypatch 抛错兜底)。
   - 事务:staging=TARGET 同目录 .staging-<pid>(同卷,结构性消除 EXDEV);
     升级=旧目录 rename→.bak-<pid>→新目录入位→成功删 .bak(win32 占用时
-    回退逐文件覆盖+清单,不宣称原子);中断(KeyboardInterrupt/SIGTERM)→
-    目标零污染+自有 staging 清理;并发=install.lock 独占锁一胜一拒。
+    回退逐文件覆盖+清单,不宣称原子);KeyboardInterrupt(Ctrl-C)→目标零污染
+    +自有 staging 清理;SIGTERM(无 handler,进程直杀)→不保证清理,可能留
+    .staging-<pid> 残迹(--uninstall 可删);并发=install.lock 独占锁一胜一拒。
   - 写点防预置:TARGET 或其已存在形态为符号链接时拒绝(绝不写穿)。
   - SHA256SUMS 同源校验:仅传输完整性,不证明发布者身份(#41 另行处理,
     正式发布走 keyless provenance,验证失败必须 fail-closed,不降级)。
@@ -486,16 +487,28 @@ def undo_path():
 
 
 # ---------------------------------------------------------------- 依赖面 ----
-def check_ffmpeg(wizard):
-    """ffmpeg 缺失:win32 默认 winget 装(交互向导可跳过);失败/缺失 → error。
+def plan_ffmpeg(wizard):
+    """ffmpeg 探测+向导提问(不执行安装):返回 {major, asked_winget}。
+
+    提问必须在 wizard.summary() 之前(M3:dry-run 反映 winget 选择);
+    本函数只做本地 ffmpeg -version 探测,零下载零写盘。
+    """
+    major = _ffmpeg_major()
+    asked = (major == 0 and IS_WINDOWS and shutil.which("winget") is not None)
+    if asked:
+        wizard.ask("winget_ffmpeg",
+                   "未检测到 ffmpeg——使用 winget 安装 Gyan.FFmpeg(用户级)")
+    return {"major": major, "asked_winget": asked}
+
+
+def enforce_ffmpeg(wizard, plan):
+    """执行阶段:消费 plan_ffmpeg 的探测结果与向导选择。
 
     跳过 winget 或非 win32 缺失都走同一条手动指引 error(G3:不装假)。
     """
-    major = _ffmpeg_major()
+    major = plan["major"]
     if major == 0:
-        if IS_WINDOWS and shutil.which("winget") is not None:
-            wizard.ask("winget_ffmpeg",
-                       "未检测到 ffmpeg——使用 winget 安装 Gyan.FFmpeg(用户级)")
+        if plan["asked_winget"]:
             if not wizard.choice("winget_ffmpeg"):
                 log("已跳过 winget 安装;手动指引: winget install Gyan.FFmpeg "
                     "(装好后新开终端重跑本安装器)")
@@ -605,15 +618,27 @@ def install(args):
         wizard.ask("shims_path", "写 vt/vtx shim 并加入用户 PATH(新开终端生效;--undo 可逆)")
     if args.chrome:
         wizard.ask("chrome_cft", "下载 Chrome for Testing(~195MB,npmmirror 镜像)")
+    # M3:ffmpeg 探测+winget 提问必须在 summary 之前,dry-run 才能反映选择。
+    ffmpeg_plan = plan_ffmpeg(wizard)
     wizard.summary()
     if args.dry_run:
-        log("[dry-run] 将执行:依赖自检 → 下载 %s/v%s/video-tools-%s.tar.gz + SHA256SUMS "
+        winget_note = ""
+        if ffmpeg_plan["major"] == 0:
+            if ffmpeg_plan["asked_winget"]:
+                winget_note = (" → winget 安装 ffmpeg"
+                               if wizard.choice("winget_ffmpeg")
+                               else " → ffmpeg 已选跳过(执行将按手动指引报错)")
+            else:
+                winget_note = " → ffmpeg 缺失(执行将按手动指引报错)"
+        elif ffmpeg_plan["major"] < FFMPEG_MIN_MAJOR:
+            winget_note = " → ffmpeg %d.x 过旧将告警" % ffmpeg_plan["major"]
+        log("[dry-run] 将执行:依赖自检%s → 下载 %s/v%s/video-tools-%s.tar.gz + SHA256SUMS "
             "校验 → 白名单解包(staging) → 入位 → vt.py init+doctor 门 → 零写入演练结束"
-            % (base_url, version, version))
+            % (winget_note, base_url, version, version))
         return 0
     # 依赖自检放在复用判定之后:幂等重跑(复用分支)不因缺 ffmpeg 失败,
     # 真正要装时才触发 winget/报错。
-    check_ffmpeg(wizard)
+    enforce_ffmpeg(wizard, ffmpeg_plan)
 
     with InstallLock(target):
         payload_name = "video-tools-%s.tar.gz" % version
@@ -638,7 +663,9 @@ def install(args):
                 "prev_version": marker.get("version"),
                 "base_url": base_url, "date": datetime.datetime.now().isoformat()}, ensure_ascii=False), encoding="utf-8")
         except BaseException:
-            # KeyboardInterrupt/SIGTERM 同路径:目标零污染,自有 staging 清理。
+            # KeyboardInterrupt:目标零污染,自有 staging 清理。SIGTERM 无
+            # handler 时进程被直接终止、不经过本 except——可能留 staging
+            # 残迹(--uninstall 可删),文档已如实声明,不在此谎称同路径。
             if staging.exists() and not staging.is_symlink():
                 shutil.rmtree(staging, ignore_errors=True)
             raise
