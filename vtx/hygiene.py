@@ -10,7 +10,7 @@
     --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli.py）。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
-import fnmatch, hashlib, json, os, shutil, time
+import fnmatch, hashlib, json, os, shutil, time, stat, secrets
 from pathlib import Path
 
 from . import fstxn
@@ -337,17 +337,28 @@ def tmp_run(c, label: str):
     # issue #23（A04）：tmp 也属衍生写路径——预置 cache/tmp → 根外 的符号链接
     # 会把 GB 级中间物写穿到链接目标；解析后必须仍落在 cache 内。
     ensure_inside_project(d, c.cache, what="tmp 中间物目录")
-    d.mkdir(parents=True, exist_ok=True)
+    if fstxn.write_capability() == 'fd-anchored':
+        fstxn.mkdir(d)
+    else:   # 降级平台（issue #59 返工）：基线安全等级 = 原 main 行为
+        d.mkdir(parents=True, exist_ok=True)
     return _TmpDir(d)
 
 
 class _TmpDir:
-    def __init__(self, p: Path): self.path = p
+    def __init__(self, p: Path):
+        self.path = p
+        # fd 锚定平台按身份计划清理（#56 判据）；降级平台回落 shutil.rmtree
+        self.identity = (fstxn.cleanup_identity(p)
+                         if fstxn.write_capability() == 'fd-anchored' else None)
 
     def __enter__(self): return self.path
 
     def __exit__(self, et, ev, tb):
-        shutil.rmtree(self.path, ignore_errors=True)
+        if self.identity is not None:
+            fstxn.remove_pinned(self.path, self.identity,
+                                preserve=lambda p: p.name.endswith('.lock'))
+        else:
+            shutil.rmtree(self.path, ignore_errors=True)
         return False
 
 
@@ -621,56 +632,127 @@ def snapshot(c, keep: int = None):
     （tests/safety/test_timeline_escape_safety.py 对照组）。缺失资产仍按既有 UX
     警告跳过（落点门先行，缺失不会放过越界引用）。"""
     keep = keep if keep is not None else int(os.environ.get("VTX_SNAPSHOT_KEEP", "2"))
+    if keep < 0:
+        raise ProjectPathError('快照保留数不能为负')
     md5 = tl_md5(c)
-    dst = c.cache / "snapshots" / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{md5[:8]}"
-    # ①（issue #23）：dst 自身先收口，且须在 dst.exists() 探测之前——预置的
-    # cache/snapshots 符号链接会把后续全部写动作导向链接目标，攻击者还可在
-    # 链接目标侧预建同名目录骗过「快照已存在」早退。
-    ensure_inside_project(dst, c.cache, what="快照目录")
-    if dst.exists():
-        print(f"✓ 快照已存在（同 timeline md5）：{dst.name}"); return dst
+    dst = c.cache / 'snapshots' / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{md5[:8]}"
+    ensure_inside_project(dst, c.cache, what='快照目录')
     texts = set()
-    for tr in c.tl.get("video_tracks", []):
-        for cl in tr.get("clips", []):
-            if tr.get("kind") == "gfx": texts.add(cl["src"])
-    # v2 subtitles_src（§1.1 条目 6）：引用的字幕文件同为文本资产（KB 级）——快照
-    # 含它才有完整回滚锚点；仅影响声明了 subtitles_src 的 timeline（v1 零变化）。
-    _sub_src = c.tl.get("subtitles_src")
-    if isinstance(_sub_src, str) and _sub_src:
-        texts.add(_sub_src)
-    # ②③（issue #23）：全部资产先判定，任一拒绝即整体失败（不留半途快照）。
-    problems = []
-    for p in sorted(texts):
-        try:
-            ensure_inside_project(dst / p, dst, what="快照落点")
-        except ProjectPathError as e:
-            problems.append(str(e)); continue
-        src = c.root / p
+    for tr in c.tl.get('video_tracks', []):
+        if tr.get('kind') == 'gfx':
+            texts.update(cl['src'] for cl in tr.get('clips', []))
+    # v2 subtitles_src（§1.1 条目 6）：引用的字幕文件同为文本资产——快照含它
+    # 才有完整回滚锚点。空串 = 未声明（tests/test_subtitles_src.py 契约），
+    # 不得当作非法引用拒绝。
+    sub_src = c.tl.get('subtitles_src')
+    if isinstance(sub_src, str) and sub_src:
+        texts.add(sub_src)
+    # issue #59：先校验并读完一切，再建任何 staging——空串/'.'/目录 src、
+    # 读取失败都发生在首个写动作之前（不留半途快照）。
+    payloads = {'timeline.json': c.tl_path.read_bytes()}
+    for item in sorted(texts):
+        if not isinstance(item, str) or not item or '\x00' in item:
+            raise ProjectPathError(f'快照拒绝非法文本资产：{item!r}')
+        relative = Path(item)
+        if relative.is_absolute() or '..' in relative.parts or not relative.parts:
+            raise ProjectPathError(f'快照落点拒绝不安全资产引用（issue #23/#59）：{item!r}')
+        ensure_inside_project(dst / relative, dst, what='快照落点')
+        src = ensure_inside_project(c.root / relative, c.root, what='快照文本资产')
         if not src.exists():
-            continue   # 缺失资产按既有 UX 在写循环内警告跳过（落点已确认安全）
+            print(f'  ⚠ 快照跳过不存在的资产: {item}')
+            continue
+        if not src.is_file():
+            raise ProjectPathError(f'快照文本资产不是文件：{item!r}')
+        if str(relative) == 'timeline.json':
+            continue
         try:
-            ensure_inside_project(src, c.root, what="快照文本资产")
-        except ProjectPathError as e:
-            problems.append(str(e))
-    if problems:
-        raise ProjectPathError("快照拒绝不安全资产引用（issue #23）："
-                               + "；".join(sorted(set(problems))))
-    dst.mkdir(parents=True)
-    (dst / "timeline.json").write_text(c.tl_path.read_text(encoding="utf-8"), encoding="utf-8")
-    for p in sorted(texts):
-        src = c.root / p
-        if not src.exists(): print(f"  ⚠ 快照跳过不存在的资产: {p}"); continue
-        op = dst / p
-        op.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, op)
-    snaps = sorted((c.cache / "snapshots").iterdir())
-    # 注意切片写法：snaps[:-keep] 在 keep=0 时是 snaps[:0]（语义反转为全保留），
-    # 显式 len(snaps)-keep 才是「保留最近 keep 份、其余全删」。
-    for old in snaps[:len(snaps) - keep] if len(snaps) > keep else []:
-        shutil.rmtree(old, ignore_errors=True)
-    n = len(texts) + 1
-    print(f"✓ 快照 {dst.name}（{n} 个文本文件，{gb(dir_size(dst))}；保留最近 {keep} 份）")
+            payloads[str(relative)] = src.read_bytes()
+        except OSError as error:
+            raise ProjectPathError(f'快照文本资产无法读取：{item!r}（{error}）') from error
+    if fstxn.write_capability() != 'fd-anchored':
+        # 降级平台（issue #59 返工）：校验照旧，写机制回落 main 行为（路径形态
+        # mkdir + 直接写 + rmtree 轮转）——无 fd 锚定，基线安全等级。
+        if dst.exists():
+            print(f"✓ 快照已存在（同 timeline md5）：{dst.name}"); return dst
+        dst.mkdir(parents=True)
+        for relative, data in payloads.items():
+            op = dst / relative
+            op.parent.mkdir(parents=True, exist_ok=True)
+            op.write_bytes(data)
+        snaps = sorted((c.cache / "snapshots").iterdir())
+        for old in snaps[:len(snaps) - keep] if len(snaps) > keep else []:
+            shutil.rmtree(old, ignore_errors=True)
+        print(f'✓ 快照 {dst.name}（{len(payloads)} 个文本文件；保留最近 {keep} 份）')
+        return dst
+    # fd 锚定平台：父目录锚定 + 未发布 staging 树——写窗与失败清理都不依赖
+    # 可被置换的 snapshots/cache 祖先路径（issue #59 快照 TOCTOU 写窗）。
+    with fstxn.pinned_parent(dst) as (parent, name, target):
+        with fstxn.flock_at(parent, '.publish', what=dst.parent / '.publish'):
+            try:
+                existing = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                if not stat.S_ISDIR(existing.st_mode):
+                    raise ProjectPathError('快照目标不是普通目录')
+                print(f'✓ 快照已存在（同 timeline md5）：{dst.name}')
+                return dst
+            stage = '.' + name + '.' + secrets.token_hex(16) + '.tmp'
+            os.mkdir(stage, dir_fd=parent)
+            stagefd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                              dir_fd=parent)
+            identity = fstxn.entry_identity(os.fstat(stagefd))
+            try:
+                try:
+                    for relative, data in payloads.items():
+                        _snapshot_write_at(stagefd, relative, data)
+                except OSError as error:
+                    # staging 写失败属安全域失败（issue #59）：不留半途快照，
+                    # 以 ProjectPathError 呈现（staging 由 finally 按 fd 清理）
+                    raise ProjectPathError(f'快照写入失败：{error}') from error
+                if fstxn.entry_identity(os.stat(stage, dir_fd=parent, follow_symlinks=False)) != identity:
+                    raise ProjectPathError('快照 staging 身份已变化')
+                os.rename(stage, name, src_dir_fd=parent, dst_dir_fd=parent)
+            finally:
+                os.close(stagefd)
+                try:
+                    fstxn.remove_at(parent, stage, identity, what=dst.parent / stage,
+                                    preserve=lambda p: False)
+                except FileNotFoundError:
+                    pass
+            snaps = []
+            for oldname in sorted(os.listdir(parent)):
+                info = os.stat(oldname, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode) and not oldname.startswith('.'):
+                    snaps.append((oldname, fstxn.entry_identity(info)))
+            for oldname, oldidentity in snaps[:max(0, len(snaps) - keep)]:
+                fstxn.remove_at(parent, oldname, oldidentity, what=dst.parent / oldname,
+                                preserve=lambda p: p.name.endswith('.lock'))
+    print(f'✓ 快照 {dst.name}（{len(payloads)} 个文本文件；保留最近 {keep} 份）')
     return dst
+
+
+def _snapshot_write_at(rootfd, relative, data):
+    """Exclusive no-follow writes below an already pinned private staging fd."""
+    parts = Path(relative).parts
+    descriptors = []
+    parent = rootfd
+    try:
+        for name in parts[:-1]:
+            try:
+                os.mkdir(name, dir_fd=parent)
+            except FileExistsError:
+                pass
+            parent = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                             dir_fd=parent)
+            descriptors.append(parent)
+        fd = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=parent)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
 
 
 # ---------------------------------------------------------------- VERSIONS（out 产物记账）
@@ -748,18 +830,40 @@ def rotate_history(c, product: Path, keep: int):
     if not product.exists(): return
     hdir = c.out / "history"
     ensure_inside_project(hdir, c.out, what="历史轮转目录")
-    hdir.mkdir(exist_ok=True)
+    if fstxn.write_capability() != 'fd-anchored':
+        # 降级平台（issue #59 返工）：基线安全等级 = 原 main 行为。
+        hdir.mkdir(exist_ok=True)
+        md5 = _md5_file(product)[:8]
+        dst = hdir / f"{product.stem}_{time.strftime('%Y%m%d-%H%M%S')}_{md5}{product.suffix}"
+        try:
+            os.link(product, dst)
+        except OSError:
+            shutil.copy2(product, dst)
+        keep = max(0, keep)
+        olds = sorted(hdir.glob(f"{product.stem}_*{product.suffix}"))
+        for old in olds[:len(olds) - keep] if len(olds) > keep else []:
+            old.unlink()
+        return
+    fstxn.mkdir(hdir)
     md5 = _md5_file(product)[:8]
     dst = hdir / f"{product.stem}_{time.strftime('%Y%m%d-%H%M%S')}_{md5}{product.suffix}"
-    try:
-        os.link(product, dst)
-    except OSError:
-        shutil.copy2(product, dst)
-    keep = max(0, keep)
-    olds = sorted(hdir.glob(f"{product.stem}_*{product.suffix}"))
-    # 同 snapshot：olds[:-keep] 在 keep=0 时语义反转（全保留），显式 len(olds)-keep。
-    for old in olds[:len(olds) - keep] if len(olds) > keep else []:
-        old.unlink()
+    with fstxn.pinned_parent(product, create=False) as (srcfd, srcname, source):
+        with fstxn.pinned_parent(dst) as (dstfd, dstname, target):
+            fstxn.check_regular_at(srcfd, srcname, what=source)
+            fstxn.check_regular_at(dstfd, dstname, what=target)
+            try:
+                os.link(srcname, dstname, src_dir_fd=srcfd, dst_dir_fd=dstfd,
+                        follow_symlinks=False)
+            except OSError:
+                inputfd = os.open(srcname, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=srcfd)
+                with os.fdopen(inputfd, 'rb') as stream, fstxn.locked_write(dst) as tmp:
+                    with tmp.open('wb') as output:
+                        shutil.copyfileobj(stream, output)
+            keep = max(0, keep)
+            olds = sorted(name for name in os.listdir(dstfd)
+                          if name.startswith(product.stem + '_') and name.endswith(product.suffix))
+            for name in olds[:max(0, len(olds) - keep)]:
+                os.unlink(name, dir_fd=dstfd)
 
 
 # ---------------------------------------------------------------- 预算门

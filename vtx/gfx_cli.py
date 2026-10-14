@@ -296,7 +296,7 @@ def inspect_page(outdir, n, key, width, height):
 
 def invalidate_page(outdir):
     """Revoke completion before modifying frames; no-op if already absent."""
-    (Path(outdir) / COMPLETE_FILE).unlink(missing_ok=True)
+    fstxn.unlink(Path(outdir) / COMPLETE_FILE)
 
 
 def complete_page(outdir, n, key, width, height, *, verify_inputs):
@@ -341,19 +341,25 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
     cmd = _cli_shot_cmd(chrome, i, d, html, width, height)
     png = Path(d) / f"f{i:04d}.png"
     try:
-        # issue #28：旧帧不能替失败命令背书，非零命令产物也不得成为下次缓存。
-        png.unlink(missing_ok=True)
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as e:            # 可执行不存在/无执行位等：显式失败而非崩栈
+        # 撤销旧帧也走安全 unlink（预置链接不跟随）。chrome 是子进程，不能拿
+        # /proc 锚定路径（沙箱/yama 拒开他人 fd 项），故走 locked_staging：
+        # 同目录随机名真实路径（不可预置），提交前 inode 对账，无效产物
+        # 永不占住固定名（issue #59）。
+        fstxn.unlink(png)
+        with fstxn.locked_staging(png) as tmp:
+            staged = [f'--screenshot={tmp}' if str(arg).startswith('--screenshot=') else arg
+                      for arg in cmd]
+            proc = subprocess.run(staged, capture_output=True, timeout=timeout)
+            if proc.returncode != 0:
+                raise GfxCliError(_rc_error(staged, proc) + f'\n    原目标：--screenshot={png}')
+            reason = png_invalid_reason(tmp, width=width, height=height)
+            if reason == '零字节':
+                reason = '零字节（截图缺失或未写入有效产物）'
+            if reason is not None:
+                raise GfxCliError(
+                    f"Chrome CLI 截图产物无效（f{i:04d}.png：{reason}）：{' '.join(map(str, cmd))}")
+    except (OSError, subprocess.TimeoutExpired) as e:
         raise GfxCliError(f"Chrome CLI 截图命令无法执行：{' '.join(map(str, cmd))}\n    {e}")
-    if proc.returncode != 0:
-        png.unlink(missing_ok=True)
-        raise GfxCliError(_rc_error(cmd, proc))
-    png = Path(d) / f"f{i:04d}.png"
-    reason = png_invalid_reason(png, width=width, height=height)
-    if reason is not None:
-        raise GfxCliError(
-            f"Chrome CLI 截图产物无效（f{i:04d}.png：{reason}）：{' '.join(map(str, cmd))}")
     return png
 
 
