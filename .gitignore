@@ -63,3 +63,9 @@ apps/matting/resolve_matte/uinject
 !skills/tech-talk/assets/presets/placeholders/*.mp4
 !skills/tech-talk/assets/presets/placeholders/*.wav
 .agents/
+
+# experiments 第三方二进制与构建产物（#108：CEF worker 构建系统落位；
+# 防 scripts/ci_checks.py 静态门 git ls-files 扫入数百 MB cef_binary 产物）
+experiments/gfx_cef_worker/build/
+experiments/gfx_cef_worker/cef_binary*/
+experiments/gfx_electron_worker/node_modules/
