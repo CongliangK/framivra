@@ -6,8 +6,8 @@
 #       libcef_dll_wrapper + vtx_cef_worker（C++20），把 CEF 运行时布置到 build/bin
 #       与可执行同目录（RPATH=$ORIGIN），最后 ldd 无未解析 + sanity 自检。
 #
-# 用法：bash experiments/gfx_cef_worker/build_cef_worker.sh
-# 幂等：缓存命中不重复下载；已解包不重复解包；重复构建走 Ninja 增量。
+# 用法：bash experiments/gfx_cef_worker/build_cef_worker.sh [-h]（未知参数 exit 2 拒绝）
+# 幂等：缓存命中不重复下载；已解包（目录名与锁 cef_version 一致）不重复解包；重复构建走 Ninja 增量。
 #
 # 环境变量：
 #   CEF_CACHE_DIR  tarball 缓存目录（默认 ~/.cache/cef，仓外，不污染检出）
@@ -22,6 +22,35 @@ CACHE_DIR="${CEF_CACHE_DIR:-$HOME/.cache/cef}"
 
 log() { printf '[build_cef_worker] %s\n' "$*"; }
 fail() { printf '[build_cef_worker] FAIL: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+用法: bash experiments/gfx_cef_worker/build_cef_worker.sh [-h]
+
+按 cef_lock.json 可复现构建 vtx_cef_worker：
+校验锁 → 下载（仓外缓存）→ 解包 → CMake+Ninja → 布置运行时 → ldd+sanity。
+
+选项:
+  -h, --help   显示本帮助并退出
+
+环境变量:
+  CEF_CACHE_DIR  tarball 缓存目录（默认 ~/.cache/cef，仓外，不污染检出）
+  CEF_DL_PROXY   直连失败时设为代理，如 http://127.0.0.1:7890
+EOF
+}
+
+# 未知参数一律拒绝（exit 2），不静默按默认面执行
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    *)
+      printf '[build_cef_worker] FAIL: 未知参数: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 for tool in python3 cmake ninja curl sha256sum sha1sum; do
   command -v "$tool" >/dev/null 2>&1 || fail "缺少工具: $tool"
@@ -70,18 +99,30 @@ fi
 echo "$SHA1  $ARCHIVE_PATH" | sha1sum -c --quiet \
   || fail "sha1 交叉校验失败（与 cef-builds 官方索引不一致）"
 
-# ---------- 3. 解包（幂等：已有 cef_binary*/ 且含 libcef.so 即跳过）----------
+# ---------- 3. 解包（幂等复用前提：目录名与锁 cef_version 精确一致）----------
+# 红队 t4b：复用曾按 glob 取首个含 Release/libcef.so 的 cef_binary*/，不核对
+# 锁版本，重锁/多版本累积后会静默编错版本。现强制断言目录名含锁 cef_version
+# 的精确分量（cef_binary_{cef_version}，后随目录名结尾或 "_"），不匹配即拒绝。
+EXPECTED_DIR_PREFIX="cef_binary_${CEF_VERSION}"
 shopt -s nullglob
 CEF_ROOT=""
+STALE_DIRS=""
 for candidate in "$SCRIPT_DIR"/cef_binary*/; do
-  if [ -f "$candidate/Release/libcef.so" ]; then
+  [ -f "$candidate/Release/libcef.so" ] || continue
+  base="$(basename -- "${candidate%/}")"
+  if [[ "$base" == "$EXPECTED_DIR_PREFIX" || "$base" == "${EXPECTED_DIR_PREFIX}_"* ]]; then
     CEF_ROOT="${candidate%/}"
     break
+  else
+    STALE_DIRS="${STALE_DIRS:+$STALE_DIRS }$base"
   fi
 done
 if [ -n "$CEF_ROOT" ]; then
-  log "已解包，跳过: $CEF_ROOT"
+  log "已解包且目录名与锁 cef_version 一致，跳过: $CEF_ROOT"
 else
+  if [ -n "$STALE_DIRS" ]; then
+    fail "存在版本不匹配的解包目录: $STALE_DIRS（锁 cef_version=$CEF_VERSION，要求 ${EXPECTED_DIR_PREFIX} 或 ${EXPECTED_DIR_PREFIX}_*）——请清理旧解包目录，或整包重锁对齐后重试"
+  fi
   log "解包: $ARCHIVE_PATH"
   top_dir="$(python3 - "$ARCHIVE_PATH" <<'PY'
 import tarfile, sys
@@ -91,6 +132,8 @@ print(name.split("/")[0])
 PY
 )"
   [ -n "$top_dir" ] && [ "$top_dir" != "." ] || fail "无法确定分发包顶层目录"
+  [[ "$top_dir" == "$EXPECTED_DIR_PREFIX" || "$top_dir" == "${EXPECTED_DIR_PREFIX}_"* ]] \
+    || fail "分发包顶层目录与锁 cef_version 不符: 期望 ${EXPECTED_DIR_PREFIX}*, 实际 $top_dir"
   tar -xjf "$ARCHIVE_PATH" -C "$SCRIPT_DIR"
   CEF_ROOT="$SCRIPT_DIR/$top_dir"
   [ -f "$CEF_ROOT/Release/libcef.so" ] || fail "解包不完整: 缺 Release/libcef.so"

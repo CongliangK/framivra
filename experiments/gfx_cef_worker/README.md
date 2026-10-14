@@ -34,12 +34,20 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
 # SANITY OK ... —— 编译期宏与 libcef.so 运行时版本逐项比对全部一致才退出 0
 ```
 
+入口脚本不接收构建选项：未知参数以退出码 2 拒绝（`-h`/`--help` 查看用法）。
+
 ## 版本锁策略
 
 - 锁定对象 = 官方 **Minimal Distribution**（`cef-builds.spotifycdn.com`），
   Linux x86_64，stable 通道；改版本必须整包重锁（url/size/sha256/sha1 联动）。
 - `sha256` 为主校验（下载后强制比对）；`sha1_official_index` 与官方索引
-  交叉验证，防"锁文件本身被篡改后自洽"的假锁。
+  交叉校验。注意两个校验和同记于锁文件，对同一分发包同步篡改即可自洽，
+  单靠锁内字段防不住假锁——实际防线是官方索引交叉核对 + git 对锁变更的
+  审计。
+- 解包复用强制版本核对：已解包的 `cef_binary*/` 目录名必须含锁
+  `cef_version` 精确分量（`cef_binary_{cef_version}`）才可复用；存在版本
+  不匹配的解包目录时拒绝构建（exit 1，提示清理或重锁对齐），防重锁/多版本
+  累积后静默编错版本。
 - Chromium 大版本对齐宿主 Chrome（消除跨大版本 Blink 排版差异）。锁定时的
   对齐决策与查证记录见 `cef_lock.json` 的 `alignment_note`。
 - 二进制永不入库：tarball 缓存在 `~/.cache/cef/`（可用 `CEF_CACHE_DIR`
