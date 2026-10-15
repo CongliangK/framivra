@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "app_handler.h"
+#include "frame_pipeline.h"
 #include "png_writer.h"
 #include "serve.h"
 
@@ -81,6 +82,10 @@ struct RunOptions {
   int slot_wait_timeout_ms = 15000;    // 背压等空槽上限
   int serve_idle_timeout_ms = 120000;  // 无请求空闲上限
   int encode_threads = 2;              // 模式 1 编码线程池
+  // ---- #111 双 PNG 编码后端（--png-encoder/--png-level/--png-filter）----
+  std::string png_encoder = "spng";    // 默认推荐 libspng（对照 fpng/zlib）
+  int png_level = 1;                   // spng SPNG_IMG_COMPRESSION_LEVEL 1..3
+  std::string png_filter = "sub_up";   // 工单口径 SUB|UP（可改 none/sub/up/all）
 };
 
 void Usage(const char* argv0) {
@@ -115,7 +120,16 @@ void Usage(const char* argv0) {
       "  --fault-abort-after-frames=N  abort_after_frame 的 N（默认 1）\n"
       "  --slot-wait-timeout-ms=N      4 槽全满背压等待上限（默认 15000）\n"
       "  --serve-idle-timeout-ms=N     无请求空闲上限（默认 120000）\n"
-      "  --encode-threads=N            模式 1 编码线程池大小（默认 2）\n",
+      "  --encode-threads=N            模式 1 编码线程池大小（默认 2）\n"
+      "\n"
+      "#111 PNG 编码后端（模式 1 落盘与 --out-png 共用；详见 README「双 PNG 编码后端」）:\n"
+      "  --png-encoder=spng|fpng|zlib  spng=libspng v0.7.3 SUB|UP 滤波（默认，推荐）；\n"
+      "                                fpng=极速对照（SSE4.1/PCLMUL，私有 fdEC 块）；\n"
+      "                                zlib=#109/#110 遗留基线（filter-0+Z_DEFAULT）\n"
+      "  --png-level=1..3              spng SPNG_IMG_COMPRESSION_LEVEL（默认 1；\n"
+      "                                3 对齐 VTX_GFX_PNG_LEVEL；fpng/zlib 忽略）\n"
+      "  --png-filter=none|sub|up|sub_up|all  spng 滤波选择（默认 sub_up=工单\n"
+      "                                口径；none 最快文件较大——见 README 性能实测）\n",
       CEF_VERSION, VTX_CHROME_VERSION_STRING, argv0, argv0);
 }
 
@@ -167,6 +181,11 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
     } else if (num("--slot-wait-timeout-ms=", &opt->slot_wait_timeout_ms)) {
     } else if (num("--serve-idle-timeout-ms=", &opt->serve_idle_timeout_ms)) {
     } else if (num("--encode-threads=", &opt->encode_threads)) {
+    } else if (num("--png-level=", &opt->png_level)) {
+    } else if (const std::string v = value("--png-encoder="); !v.empty()) {
+      opt->png_encoder = v;
+    } else if (const std::string v = value("--png-filter="); !v.empty()) {
+      opt->png_filter = v;
     } else if (num("--fault-abort-after-frames=",
                    &opt->fault_abort_after_frames)) {
     } else if (arg == "--serve") {
@@ -193,6 +212,23 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
   if (opt->cef.mode != "a0" && opt->cef.mode != "a1") {
     std::fprintf(stderr, "--mode 只接受 a0|a1，得到 %s\n",
                  opt->cef.mode.c_str());
+    return false;
+  }
+  // #111：编码后端名与级别在参数面即拒非法值（exit 2，不静默回落）。
+  if (!vtx_cef::ParsePngEncoderName(opt->png_encoder, nullptr)) {
+    std::fprintf(stderr,
+                 "--png-encoder 只接受 spng|fpng|zlib，得到 %s\n",
+                 opt->png_encoder.c_str());
+    return false;
+  }
+  if (opt->png_level < 1 || opt->png_level > 3) {
+    std::fprintf(stderr, "--png-level 只接受 1..3，得到 %d\n", opt->png_level);
+    return false;
+  }
+  if (!vtx_cef::ParseSpngFilterName(opt->png_filter, nullptr)) {
+    std::fprintf(stderr,
+                 "--png-filter 只接受 none|sub|up|sub_up|all，得到 %s\n",
+                 opt->png_filter.c_str());
     return false;
   }
   if (opt->serve) {
@@ -290,14 +326,8 @@ std::string EmbedProbePayload(const std::string& payload) {
   return "\"" + JsonEscape(payload) + "\"";
 }
 
-// 预乘 BGRA → 直通 RGBA 的通道解预乘（PNG 语义；不透明像素恒等变换）。
-inline uint8_t Unpremultiply(uint8_t c, uint8_t a) {
-  if (a == 0 || a == 255) {
-    return a == 0 ? 0 : c;
-  }
-  const uint32_t v = (static_cast<uint32_t>(c) * 255u + a / 2u) / a;
-  return v > 255u ? 255u : static_cast<uint8_t>(v);
-}
+// 预乘 BGRA → 直通 RGBA：#111 起统一走 frame_pipeline→pixel_ops SIMD 算子
+// （本文件历史内联标量实现已删；公式同源由 selftest 穷举保证）。
 
 // ---------------------------------------------------------------- sanity（#108 原样）
 
@@ -380,6 +410,19 @@ int main(int argc, char* argv[]) {
     Usage(argv[0]);
     return 2;
   }
+  // #111：fpng 硬件加速初始化（SSE4.1/PCLMUL CRC32/Adler32；幂等）——
+  // 工单要求启动时调用（早于任何编码请求；spng/zlib 无全局态）。
+  vtx_cef::PngEncoderGlobalInit();
+  vtx_cef::PngEncoder png_backend = vtx_cef::PngEncoder::kSpng;
+  if (!vtx_cef::ParsePngEncoderName(opt.png_encoder, &png_backend)) {
+    return 2;  // ParseArgs 已拒非法值；此处仅防御
+  }
+  vtx_cef::PngEncodeOptions png_opt;
+  png_opt.encoder = png_backend;
+  png_opt.level = opt.png_level;
+  if (!vtx_cef::ParseSpngFilterName(opt.png_filter, &png_opt.spng_filter)) {
+    return 2;  // 同上
+  }
   if (sanity) {
     return Sanity();
   }
@@ -432,6 +475,7 @@ int main(int argc, char* argv[]) {
     sopt.slot_wait_timeout_ms = opt.slot_wait_timeout_ms;
     sopt.idle_timeout_ms = opt.serve_idle_timeout_ms;
     sopt.encode_threads = opt.encode_threads;
+    sopt.png = png_opt;              // #111 模式 1 编码后端/级别/滤波
     if (opt.fault_inject == "abort_after_frame") {
       sopt.fault_abort_after_frames = opt.fault_abort_after_frames;
     }
@@ -569,7 +613,8 @@ int main(int argc, char* argv[]) {
                                        t_first_paint - t0).count())
                 : -1;
 
-    // 阶段 4：OnPaint 全帧 BGRA（预乘）→ 直通 RGBA → PNG
+    // 阶段 4：OnPaint 全帧 BGRA（预乘）→ SIMD 逆预乘 → 直通 RGBA → PNG
+    //         （#111：编码后端按 --png-encoder/--png-level 选用，默认 spng）
     int64_t png_bytes = 0;
     bool png_ok = false;
     if (!opt.out_png.empty()) {
@@ -582,16 +627,8 @@ int main(int argc, char* argv[]) {
         h = state.height;
         if (!state.buffer.empty()) {
           rgba.resize(state.buffer.size());
-          for (size_t i = 0; i + 3 < state.buffer.size(); i += 4) {
-            const uint8_t b = state.buffer[i];
-            const uint8_t g = state.buffer[i + 1];
-            const uint8_t r = state.buffer[i + 2];
-            const uint8_t a = state.buffer[i + 3];
-            rgba[i] = Unpremultiply(r, a);
-            rgba[i + 1] = Unpremultiply(g, a);
-            rgba[i + 2] = Unpremultiply(b, a);
-            rgba[i + 3] = a;
-          }
+          vtx_cef::UnpremultiplyToRgba(state.buffer.data(),
+                                       state.buffer.size(), rgba.data());
         }
       }
       if (rgba.empty()) {
@@ -602,7 +639,8 @@ int main(int argc, char* argv[]) {
         exit_reason = "OnPaint 尺寸不符: " + std::to_string(w) + "x" +
                       std::to_string(h);
       } else {
-        png_ok = vtx_cef::WritePngRgba(opt.out_png, rgba.data(), w, h);
+        png_ok = vtx_cef::WritePngRgba(opt.out_png, rgba.data(), w, h,
+                                       png_opt);
         if (!png_ok) {
           exit_code = 1;
           exit_reason = "PNG 写入失败: " + opt.out_png;
