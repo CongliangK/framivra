@@ -94,7 +94,7 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
 | --- | --- | --- |
 | ① `env -u DISPLAY -u WAYLAND_DISPLAY` | A0 / A1-headless | `swiftshader`（纯无头 → SwiftShader 回退） |
 | ① 纯无头 | A1-x11 | 启动失败（ozone x11 无 X server，~60ms 快速失败） |
-| ② `xvfb-run -a` | A0 / A1-headless | `swiftshader` |
+| ② `xvfb-run -a` | A0 | `swiftshader`（A1-headless 在本机归入下行泄漏场景，实测 `nvidia_egl`） |
 | ② Xvfb | A1-x11 | `software_skia`（**llvmpipe 陷阱**：Xvfb 无 NVIDIA GLX/EGL） |
 | ② Xvfb（WAYLAND_DISPLAY 泄漏在场） | A1-headless/wayland | `nvidia_egl`（ANGLE 经真 wayland-0 上 NVIDIA） |
 | ③ 真实 `DISPLAY=:0`（XWayland） | A1-x11 | `nvidia_egl`（RTX 4080 硬件合成） |
