@@ -348,13 +348,41 @@ class Tab:
         return base64.b64decode(r["data"])
 
 
-class Browser:
-    """惰性启动的常驻 headless Chrome。崩溃后 hard_restart() 重建（线程安全）。"""
+_SUPERVISION_WARNED = False
 
-    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080):
+
+def _warn_supervision_degraded():
+    """O1（红队）：监管不可用 → 回落无监管路径的一次性显式 stderr 告警。
+    「一次性」= 每进程首个降级 Browser 打一条（hard_restart/多页多 Browser
+    场景不刷屏），但不静默——用户须知道本进程的 Chrome 无 kill -9 归零保障。"""
+    global _SUPERVISION_WARNED
+    if _SUPERVISION_WARNED:
+        return
+    _SUPERVISION_WARNED = True
+    print("⚠ proc_supervisor 监管不可用（非 Linux 或 /proc 缺失）：Chrome 回落"
+          "无监管路径（无 PDEATHSIG/守卫/账本，Profile 落系统临时目录；宿主被"
+          "kill -9 后浏览器进程树不会自动归零，需自行清理）", file=sys.stderr)
+
+
+class Browser:
+    """惰性启动的常驻 headless Chrome。崩溃后 hard_restart() 重建（线程安全）。
+
+    ctx 透传（issue #103）：渲染走 vtx gfx 阶段时传入 Ctx，Chrome 交
+    proc_supervisor.SupervisedProcessGroup 监管——独立会话/进程组（pgid==pid）、
+    PDEATHSIG、父存活管道守卫、tmp_run PID 账本；Profile 落项目
+    cache/tmp/<UTC>-gfx_cdp-*/ 下（杜绝写系统 /tmp tmpfs），宿主被 kill -9 时
+    全树（Browser/GPU/Zygote/Renderer）由守卫 killpg 归零、残留账本由下一轮
+    gfx 阶段 reap_orphan_workers 收口。监管不可用平台（非 Linux/无 /proc，
+    supervision_available()=False）真实降级：回落本类 #103 之前的无监管
+    形态（裸 Popen + tempfile.mkdtemp，与 ctx=None 同路径）并一次性 stderr
+    告警。ctx=None（独立直跑入口）保持原 tempfile.mkdtemp + 裸 Popen 形态。"""
+
+    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None):
         self.chrome = chrome_path
         self.tabs_n = max(1, tabs)
         self.width, self.height = width, height
+        self.ctx = ctx
+        self.group = None       # SupervisedProcessGroup（ctx 模式独有）
         self.proc = None
         self.port = None
         self.user_data_dir = None
@@ -388,13 +416,40 @@ class Browser:
         s.bind(("127.0.0.1", 0))
         self.port = s.getsockname()[1]
         s.close()
-        self.user_data_dir = tempfile.mkdtemp(prefix="vtx_gfx_cdp_")
-        self.proc = subprocess.Popen(
-            [self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
-             f"--remote-debugging-port={self.port}",
-             f"--user-data-dir={self.user_data_dir}",
-             "--no-first-run", "--no-default-browser-check", "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        supervised = self.ctx is not None
+        if supervised:
+            # O1（红队）：非 Linux/无 /proc 平台监管器不可用（账本拒绝编造）。
+            # 真实降级 = 回落 #103 之前的无监管路径 + 一次性 stderr 告警
+            # （macOS 是 install.sh 官方支持平台，gfx 阶段不得硬失败），
+            # 而非让 _write_ledger 的 RuntimeError 打死整个 CDP 默认路径。
+            from .proc_supervisor import supervision_available
+            supervised = supervision_available()
+            if not supervised:
+                _warn_supervision_degraded()
+        if supervised:
+            # issue #103：监管态——argv 由运行目录动态拼（--user-data-dir 落
+            # tmp_run 的 profile/）；supervisor 尾追 --parent-alive-fd=<fd>
+            # （Chrome 忽略未知开关，fd 由守卫持有强制全树归零，不依赖协作）。
+            from .proc_supervisor import SupervisedProcessGroup
+            self.group = SupervisedProcessGroup(
+                self.ctx,
+                lambda run_dir, profile: [
+                    self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+                    f"--remote-debugging-port={self.port}",
+                    f"--user-data-dir={profile}",
+                    "--no-first-run", "--no-default-browser-check", "about:blank"],
+                backend_id="cdp")
+            self.group.start()
+            self.proc = self.group.proc
+            self.user_data_dir = self.group.profile_dir
+        else:
+            self.user_data_dir = tempfile.mkdtemp(prefix="vtx_gfx_cdp_")
+            self.proc = subprocess.Popen(
+                [self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+                 f"--remote-debugging-port={self.port}",
+                 f"--user-data-dir={self.user_data_dir}",
+                 "--no-first-run", "--no-default-browser-check", "about:blank"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             try:
@@ -429,6 +484,14 @@ class Browser:
         return tabs
 
     def stop(self):
+        # issue #103：监管态收尾统一走组停机（SIGTERM 主进程 → 宽限 → 组残员
+        # killpg → 删账本 → 关管道收守卫 → tmp_run rmtree 运行目录含 Profile）。
+        if self.group is not None:
+            group, self.group = self.group, None
+            group.stop()
+            self.proc = None
+            self.user_data_dir = None
+            return
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -439,7 +502,8 @@ class Browser:
             shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
     def hard_restart(self):
-        """杀进程重起 + 重建 tab 池 URL（连接方需重开 Tab）。"""
+        """杀进程重起 + 重建 tab 池 URL（连接方需重开 Tab）。监管态下重起 =
+        新监管组（新 tmp_run 目录/账本/守卫），旧组完整停机清场。"""
         self.stop()
         self.start()
         self.generation += 1
@@ -644,8 +708,13 @@ def _atomic_write_bytes(path, data):
 
 
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
-                width=1920, height=1080, progress=None, frames=None):
+                width=1920, height=1080, progress=None, frames=None, ctx=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
+
+    ctx（issue #103 可选）：vtx gfx 阶段传入 Ctx 后，常驻 Chrome 交
+    proc_supervisor 监管（独立进程组/PDEATHSIG/守卫/tmp_run 账本，Profile 落
+    项目 cache/tmp/ 而非系统 /tmp；宿主被 kill -9 全树归零）。缺省 None =
+    独立直跑形态（tempfile.mkdtemp + 裸 Popen）不变。
 
     frames=None（默认）= 现行语义：work=全部 n 帧里的缺失帧；显式传帧号列表
     （页内分片，方案 v2 阶段 1）= work=frames 与缺失帧的交集，frames 之外的
@@ -690,7 +759,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 "timings_ms": {c: _timings_summary([]) for c in _TIME_CATS}}
     # Browser 构造/启动放在 work 空判之后（v2 阶段 1 页内分片）：全缓存块零
     # Chrome；ms_total 仍从启动完成后起算（与旧语义一致，不含浏览器启动耗时）
-    browser = Browser(chrome_path, tabs_n, width, height)
+    browser = Browser(chrome_path, tabs_n, width, height, ctx=ctx)
     try:
         browser.start()
     except BaseException:
