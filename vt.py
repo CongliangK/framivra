@@ -242,7 +242,7 @@ def cmd_init(a):
     rec("nvenc", "h264_nvenc" in encs, "" if "h264_nvenc" in encs else HINTS["nvenc"])
 
     say("--- 3/5 可选工具 ---")
-    rec("blender", bool(find_binary(["blender"])), "预览桥 blender_bridge/ 需要")
+    rec("blender", bool(find_binary(["blender"])), "预览桥 apps/blender-bridge/ 需要")
     rec("sox", bool(find_binary(["sox"])), "部分音频后处理")
 
     say("--- 3b/5 程序自检（本仓组件可运行性）---")

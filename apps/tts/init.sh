@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tts/init.sh · TTS 模块幂等初始化探测（方案 §6.3；2026-09-11）
+# apps/tts/init.sh · TTS 模块幂等初始化探测（方案 §6.3；2026-09-11）
 #
 # 探测顺序（复用优先，绝不重复下载 11GB 模型）：
 #   1. repo        config.tts.repo ?: ~/AI/IndexTTS/repo（校验 checkpoints 五件齐）
@@ -56,7 +56,7 @@ mark() { # mark <ok|warn|fail> <条目> <详情>
   esac
 }
 
-echo "=== tts/init.sh（幂等探测，只打印不安装）==="
+echo "=== apps/tts/init.sh（幂等探测，只打印不安装）==="
 
 # ---- 1. repo（IndexTTS 代码 + 权重，复用优先）----
 REPO="$(cfg tts.repo "$DEFAULT_REPO")"
@@ -117,13 +117,13 @@ fi
 
 echo "--- 汇总：✓ $OK / ⚠ $WARN / ✗ $FAIL ---"
 if [ "$OK" -ge 4 ]; then
-  echo "✅ indextts 主引擎就绪（bash tts/init.sh 幂等，可重复跑）"
+  echo "✅ indextts 主引擎就绪（bash apps/tts/init.sh 幂等，可重复跑）"
 elif [ "$OK" -ge 1 ]; then
   echo "⚠ 部分就绪——edge 兜底可用性见上；配置后把 config.local.json tts.enabled 置 true"
 fi
 
 # ---- 可选 --download：补齐 repo / checkpoints（11GB 权重，确认后再跑）----
-# 用法：bash tts/init.sh --download
+# 用法：bash apps/tts/init.sh --download
 # 渠道定案（2026-09-11）：权重走 ModelScope 国内镜像直连；代码克隆 github 直连失败自动换代理
 #（公共 gitclone/ghproxy 镜像实测不可用）。
 if [ "${1:-}" = "--download" ] || [ "${2:-}" = "--download" ]; then
@@ -144,7 +144,7 @@ if [ "${1:-}" = "--download" ] || [ "${2:-}" = "--download" ]; then
     command -v modelscope >/dev/null 2>&1 \
       || pip install -i https://pypi.tuna.tsinghua.edu.cn/simple modelscope
     modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir "$CKPT" \
-      && echo "✓ 权重 → $CKPT（重跑 tts/init.sh 复核）" \
+      && echo "✓ 权重 → $CKPT（重跑 apps/tts/init.sh 复核）" \
       || { echo "下载失败，手动：modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir $CKPT"; exit 1; }
   else
     echo "[2/2] checkpoints 五件已齐，跳过"

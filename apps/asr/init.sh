@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # asr 模块初始化：qwen-asr 解释器与模型探测/下载（ModelScope 国内直连）+ sidecar 冒烟。
 # 幂等：已有资产一律复用（探测+引用，不重复下载）；只补缺失项。
-# 用法：bash apps/asr/init.sh [--download|--help]（旧路径 bash asr/init.sh 同样可达）。
+# 用法：bash apps/asr/init.sh [--download|--help]。
 # 默认只做本地探测/sidecar 冒烟，不建 venv、不联网；--download 才安装缺失包/下载缺失模型。
 # 网络命令执行前完整打印；pip 单次连接超时 60 秒、最多重试 2 次（无需系统 timeout）。
 # 设计：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §6.2/§6.5（复用优先链）。
@@ -89,14 +89,14 @@ elif [[ -x "$IME/.venv-qwen-asr/bin/python" ]]; then
   ok "解释器（复用 IME .venv-qwen-asr）：$PY"
 elif [[ -x "$ASR/.venv/bin/python" ]]; then
   PY="$ASR/.venv/bin/python"
-  ok "解释器（本模块 asr/.venv）：$PY"
+  ok "解释器（本模块 apps/asr/.venv）：$PY"
 fi
 
 if [[ -z "$PY" ]]; then
   if [[ "$DOWNLOAD" != "1" ]]; then
-    bad "探测链无解释器（config → IME .venv-qwen-asr → asr/.venv）；本地模式不创建环境、不安装包。请运行 bash apps/asr/init.sh --download，或配置已有 asr.python。"
+    bad "探测链无解释器（config → IME .venv-qwen-asr → apps/asr/.venv）；本地模式不创建环境、不安装包。请运行 bash apps/asr/init.sh --download，或配置已有 asr.python。"
   else
-    warn "探测链无解释器 → 自建 asr/.venv（已显式 --download）"
+    warn "探测链无解释器 → 自建 apps/asr/.venv（已显式 --download）"
     # Windows/Git Bash 无 python3 别名 → 回退 python；失败仍走汇总。
     SYS_PY="$(command -v python3 || command -v python || true)"
     if [[ -z "$SYS_PY" ]]; then
@@ -107,9 +107,9 @@ if [[ -z "$PY" ]]; then
         bad "系统 python3 版本 $PYVER < 3.10，无法自建 venv（官方建议 3.12）"
       elif "$SYS_PY" -m venv "$ASR/.venv"; then
         PY="$ASR/.venv/bin/python"; [[ -x "$ASR/.venv/Scripts/python.exe" ]] && PY="$ASR/.venv/Scripts/python.exe"
-        ok "解释器（新建 asr/.venv）：$PY"
+        ok "解释器（新建 apps/asr/.venv）：$PY"
       else
-        bad "自建 asr/.venv 失败；请修复 Python venv 支持后重跑 --download"
+        bad "自建 apps/asr/.venv 失败；请修复 Python venv 支持后重跑 --download"
       fi
     fi
   fi
@@ -207,7 +207,7 @@ for name in Qwen3-ASR-1.7B Qwen3-ASR-0.6B Qwen3-ForcedAligner-0.6B; do
     if download_model "$name"; then
       rev="$(run_network curl -fSL --connect-timeout 10 --max-time 10 "https://modelscope.cn/api/v1/models/Qwen/$name" \
              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Data",{}).get("Revision","unknown"))' 2>/dev/null || echo unknown)"
-      ok "模型 $name（新下载）：$MODELS_HOME/$name（ModelScope revision $rev —— 请抄录进 asr/README.md「已验证版本」节）"
+      ok "模型 $name（新下载）：$MODELS_HOME/$name（ModelScope revision $rev —— 请抄录进 apps/asr/README.md「已验证版本」节）"
     fi
   fi
 done
@@ -233,9 +233,9 @@ echo "== init 汇总 =="
 if [[ "$FAIL" == "0" ]]; then
   echo "✓ asr 模块就绪。建议把解释器路径写进仓库根 config.local.json（不自动改用户配置）："
   [[ -n "$PY" ]] && echo "    \"asr\": { \"python\": \"$PY\", \"model_dir\": \"$MODELS_HOME\" }"
-  echo "  之后：python3 asr/asr_cli.py sidecar start → srt/timeline 子命令自动复用。"
+  echo "  之后：python3 apps/asr/asr_cli.py sidecar start → srt/timeline 子命令自动复用。"
   echo "  注：18081 为 IME 输入法 sidecar 既有端口；本模块 sidecar 默认 18085。"
 else
-  echo "✗ 存在失败项（见上）；修复后重跑 bash asr/init.sh（幂等，已就绪项不会重做）。"
+  echo "✗ 存在失败项（见上）；修复后重跑 bash apps/asr/init.sh（幂等，已就绪项不会重做）。"
 fi
 exit "$FAIL"

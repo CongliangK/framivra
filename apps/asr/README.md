@@ -1,6 +1,6 @@
 # asr —— Qwen3-ASR + ForcedAligner 字幕产线
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/asr/`）**：manifest 见 `app.json`（kind=app；健康检查 = `asr_cli.py --help`）；兼容 symlink：仓库根 `asr → apps/asr`（目录级，旧路径引用仍可达）。随迁参数化收编：IME 仓根三处本机用户名绝对路径硬编码（client.py / sidecar_server.py / init.sh）改为 `~` 展开型默认值 `~/文档/01_活跃项目/type/ibus-voice-ime-github`，覆盖链 **env `VT_ASR_IME_ROOT` > config `asr.ime_root` > 默认**（`asr.ime_root` 已入 config 路径型键清单自动 ~ 展开）。
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/asr/`）**：manifest 见 `app.json`（kind=app；健康检查 = `asr_cli.py --help`）。随迁参数化收编：IME 仓根三处本机用户名绝对路径硬编码（client.py / sidecar_server.py / init.sh）改为 `~` 展开型默认值 `~/文档/01_活跃项目/type/ibus-voice-ime-github`，覆盖链 **env `VT_ASR_IME_ROOT` > config `asr.ime_root` > 默认**（`asr.ime_root` 已入 config 路径型键清单自动 ~ 展开）。
 
 音频/视频 → sidecar 转写（字级时间戳）→ 文本规范化 → 锚定式断句聚合 → 帧级
 `timeline.json subtitles[]` 合并（保护其他字段、写前备份）+ 独立 SRT。模块自有轻量
@@ -26,7 +26,7 @@ sidecar（stdlib http.server，默认 **127.0.0.1:18085**，与 IME 输入法 si
 ## 用法
 
 ```bash
-bash apps/asr/init.sh                                        # 一次性初始化（幂等；旧路径 bash asr/init.sh 经 symlink 同样可达）
+bash apps/asr/init.sh                                        # 一次性初始化（幂等）
 env python3 apps/asr/asr_cli.py sidecar start                # 拉起 sidecar（日志 ~/.local/state/video_tools/asr_sidecar.log）
 env python3 apps/asr/asr_cli.py transcribe 口播.wav --timestamps --json
 env python3 apps/asr/asr_cli.py srt 口播.mp4 -o out.srt      # 音视频皆可（自动抽 16k wav）

@@ -770,9 +770,9 @@ _KIND_MATRIX = """\
   env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5 --ratio 16:9 --yes
   env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --model gpt-2.5-sunburst --quality high --yes
   env python3 apps/imgen/imgen_cli.py gen "..." --out <项目> --ref ref1.png https://.../r2.jpg
-  python3 imgen/imgen_cli.py batch prompts.json --out <项目> --yes
-  python3 imgen/imgen_cli.py postprocess raw.png --kind bg4k -o assets/bg/background_4k.png
-  python3 imgen/imgen_cli.py key status
+  python3 apps/imgen/imgen_cli.py batch prompts.json --out <项目> --yes
+  python3 apps/imgen/imgen_cli.py postprocess raw.png --kind bg4k -o assets/bg/background_4k.png
+  python3 apps/imgen/imgen_cli.py key status
 
 付费纪律：按模型单价 0.1 / 0.3 元/张；审核拒绝（status=3）不退款不重试；
 无 --yes 时需交互确认，非交互终端必须 --yes。"""

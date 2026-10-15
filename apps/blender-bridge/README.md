@@ -1,6 +1,6 @@
 # blender_bridge — timeline.json → Blender VSE 预览前端
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/blender-bridge/`）**：manifest 见 `app.json`（kind=app；健康检查 = `audit_bundle.py --help`）；兼容 symlink：仓库根 `blender_bridge → apps/blender-bridge`（目录级，旧路径引用仍可达——music skill 跨仓引用的保命线，§6.1/§6.3）。随迁定位改写：audit_bundle.py 的 vtx 解析链重算为 **repo 根锚定**（自本文件向上找含 `vt.py`+`vtx/vtx.py` 的祖先；原「上级目录」在迁移后是 `apps/` 而非仓根，§6.2）；`tests/test_audio_audit.py` 随迁并清除 spec_from_file_location（app 根注入 + 普通 import，§1.4）。
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/blender-bridge/`）**：manifest 见 `app.json`（kind=app；健康检查 = `audit_bundle.py --help`）。随迁定位改写：audit_bundle.py 的 vtx 解析链重算为 **repo 根锚定**（自本文件向上找含 `vt.py`+`vtx/vtx.py` 的祖先；原「上级目录」在迁移后是 `apps/` 而非仓根，§6.2）；`tests/test_audio_audit.py` 随迁并清除 spec_from_file_location（app 根注入 + 普通 import，§1.4）。
 
 > **使用者向**：Blender 预览桥用法与 VSE 坑表。历史校验记录与实测数据见 `../../docs/DEV.md`。
 
@@ -29,7 +29,7 @@
 ## 用法（对一个项目生成预览工程）
 
 ```bash
-cd apps/blender-bridge   # （旧路径 blender_bridge/ 经 symlink 同样可达；外部 `_library` 资产一律以工作区绝对路径引用，见文末编排方法论条目）
+cd apps/blender-bridge   # （外部 `_library` 资产一律以工作区绝对路径引用，见文末编排方法论条目）
 env python3 subs_alpha.py <项目>/timeline.json      # ① 字幕透明轨（需先有 cache/subs.ass，vtx 字幕阶段产物）
 blender --background --factory-startup --python json2blend.py -- <项目>/timeline.json <项目>/preview.blend   # ② 生成
 blender --background --python verify_blend.py -- <项目>/timeline.json <项目>/preview.blend                   # ③ 结构校验（退出码 0=全过）

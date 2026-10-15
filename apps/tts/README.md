@@ -1,6 +1,6 @@
 # tts/ · IndexTTS-2.5 口播占位语音产线 + edge-tts 兜底
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）；兼容 symlink：仓库根 `tts → apps/tts`（目录级，旧路径引用仍可达）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
 
 口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版；旧路径 `scripts/repack_voice.py` 经 symlink 可达）**。
 来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）

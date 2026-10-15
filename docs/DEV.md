@@ -151,7 +151,7 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
   2. `env python3 vt.py init` 在 UTF-8 控制台跑通（Python/ffmpeg/Chrome 三探测全绿）；
   3. Edge x86 路径与 conda 钩子在 Windows 布局下可被探测；
   4. `python3 tests/run_e2e.py` 全链（显式指定 VTX_TEST_PYTHON/VTX_TEST_CHROME/VTX_TEST_FFMPEG）。
-- **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；asr/README 手动路线兜底。
+- **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；apps/asr/README.md 手动路线兜底。
 - **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。
 - **cache_dependencies 未声明依赖的外链变更不触发重渲**：当前全部工程未声明，属声明式契约的已知边界（docs/cache-provenance.md 有口径）。
 

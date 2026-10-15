@@ -1,6 +1,6 @@
 # matting —— A-roll 抠像 / 背景替换链
 
-> **v2 结构（P2a 批次 3 起本目录迁入 `apps/matting/`）**：manifest 见 `app.json`（kind=app；健康检查 = `health_check.py` 语法探针，compile() 全部 21 个 .py 零执行零副作用）；兼容 symlink：仓库根 `matting → apps/matting`（目录级，旧路径引用仍可达）。随迁参数化收编（§3.1）：resolve_matte 8 件 `sys.path.insert` 硬编码改 HERE 相对；voice-ime 素材/微信收稿/ComfyUI 输出等项目路径改 **CLI 参数 / env（`MATTE_BASE`/`MATTE_SRC`/`MATTE_OUT`/`MATTE_DRX`/`RESOLVE_DEBUG_LOG`/`VOICE_IME`/`WORKS`/`SRC`/`COMFYUI_OUT`/`VIDEOS`）> `~` 展开默认**，无参无 env 时展开值与原硬编码逐字节同。
+> **v2 结构（P2a 批次 3 起本目录迁入 `apps/matting/`）**：manifest 见 `app.json`（kind=app；健康检查 = `health_check.py` 语法探针，compile() 全部 21 个 .py 零执行零副作用）。随迁参数化收编（§3.1）：resolve_matte 8 件 `sys.path.insert` 硬编码改 HERE 相对；voice-ime 素材/微信收稿/ComfyUI 输出等项目路径改 **CLI 参数 / env（`MATTE_BASE`/`MATTE_SRC`/`MATTE_OUT`/`MATTE_DRX`/`RESOLVE_DEBUG_LOG`/`VOICE_IME`/`WORKS`/`SRC`/`COMFYUI_OUT`/`VIDEOS`）> `~` 展开默认**，无参无 env 时展开值与原硬编码逐字节同。
 
 真人出镜视频的背景替换管线（bg_test 实测定稿路线）：**BiRefNet_HR@2048 生成首帧 mask → MatAnyone2 视频抠像 → guided filter 收边 → 与新背景合成**。另有 `resolve_matte/` 子链（DaVinci Resolve 21 Studio Magic Mask 命令行驱动，见 `resolve_matte/README.md`）。
 
@@ -26,7 +26,7 @@
 
 1. 一键探测/补齐：`bash apps/matting/init.sh --download`（幂等；探测 conda env `comfyui`、
    两个平级克隆、torch hub ResNet18，缺失项实际下载——HF 权重走 hf-mirror，github 克隆
-   失败自动换代理；旧路径 `bash matting/init.sh` 经 symlink 同样可达）。
+   失败自动换代理）。
    ComfyUI 背景图服务另跑 `bash apps/matting/comfyui_init.sh`（--install/--start）。
 2. **两个外部 git 克隆，必须与本目录平级**（脚本用相对路径 `sys.path` 引入）：
    - `MatAnyone2/`（含官方代码 + `pretrained_models/hf2/model.safetensors` 权重）
