@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# matting/init.sh · 抠像链幂等初始化探测（2026-09-11）
+# apps/matting/init.sh · 抠像链幂等初始化探测（2026-09-11）
 #
 # 链路：BiRefNet_HR@2048 首帧 mask → MatAnyone2 视频抠像 → guided filter 收边。
 # 三项硬依赖（README「依赖与开启步骤」的探测化）：
@@ -38,7 +38,7 @@ OK=0; MISS=0
 ok()   { OK=$((OK+1));   echo "  ✓ $*"; }
 miss() { MISS=$((MISS+1)); echo "  ✗ $*"; }
 
-echo "=== matting/init.sh（幂等探测；--download 补缺失项）==="
+echo "=== apps/matting/init.sh（幂等探测；--download 补缺失项）==="
 
 # ---- 1. conda env comfyui ----
 if [ -x "$CPY" ]; then

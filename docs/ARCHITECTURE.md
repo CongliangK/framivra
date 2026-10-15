@@ -405,7 +405,7 @@ examples 本身走 external 注册路径安装（默认 disabled，§2.4）—�
 
 ### 6.1 symlink 兼容层
 
-六目录 + 迁走脚本**原位置留相对 symlink**：`asr → ../apps/asr`、`tts → ../apps/tts`、`imgen → ../apps/imgen`、`matting → ../apps/matting`、`aroll → ../apps/aroll`、`blender_bridge → ../apps/blender-bridge`；scripts/ 下迁走件同理（`scripts/content_gates.py → ../apps/gates/content_gates.py` 等）。live 挂载（`~/.agents/skills/video/` 五项、`_library/blender_bridge/`）在过渡期继续经旧路径解析成功〔代码现状挂载清单 skill/SKILL.md:108〕;行号为定稿时点存档,现 skill/SKILL.md=103 行。
+根部 `asr`、`tts`、`imgen`、`matting`、`aroll`、`blender_bridge` 六个 apps 目录别名不提供，消费路径使用 `apps/` 下真实目录。scripts/ 下迁走件的相对 symlink 独立保留（`scripts/content_gates.py → ../apps/gates/content_gates.py` 等）；技能六项 live 挂载及 `--fix-links` / doctor `--fix` 不受根别名清理影响。安装器保留通用仓内相对链接解包与 Windows 文件/目录物化能力。
 
 ### 6.2 定位改写
 
@@ -415,15 +415,15 @@ examples 本身走 external 注册路径安装（默认 disabled，§2.4）—�
 
 ### 6.3 外部三载体核销清单（文件级）
 
-1. `music_tools/skill/SKILL.md:35`：audit_bundle 路径引用〔代码现状已核：`~/文档/01_活跃项目/video_tools/blender_bridge/audit_bundle.py`〕。
-2. `~/文档/04_bilibili视频/AGENTS.md`：video_tools 目录表多处（行 11/21-26/40 等：scripts 15 件清单、blender_bridge、skill 五链接）。
-3. `~/文档/04_bilibili视频/_library/blender_bridge/`：六条符号链接（audit_bundle/blend2json/json2blend/subs_alpha/verify_blend/README）目标为旧路径〔P0 复审 P2-2 勘误：实测六条非三条〕。
+1. `music_tools/skill/SKILL.md` 源件缺失，music 技能挂载悬空：不是迁移成功；退役/恢复由其维护方处置。
+2. `~/文档/04_bilibili视频/AGENTS.md` 路径表使用 apps 真实目录；第 23 行仍泛称旧路径有兼容 symlink，属外部待限定叙述，本单只读不改。
+3. `~/文档/04_bilibili视频/_library/blender_bridge/` 六条符号链接（audit_bundle/blend2json/json2blend/subs_alpha/verify_blend/README）均直指 `video_tools/apps/blender-bridge/` 且目标存在，不经根别名；该 checkout 并非本次工作树。
 
-核销 = 逐文件改为新路径（symlink 兼容层兜底期间也要改，兼容层是给未知消费者的，已知载体直接收敛）。
+核销按载体逐件记录，缺失与外部待办不得记作已迁移；只读核验与消费面公告/预审凭据随 #98 提交正文登记。
 
 ### 6.4 一组件一提交纪律
 
-每迁移一个组件一个提交，提交内完成：
+组件迁移阶段每组件一个提交，提交内完成（兼容入口要求仅适用于 §6.1 保留入口，不要求建立根六别名）：
 
 1. `git mv` 至新位置 + manifest（app.json / 并入 registry.json）；
 2. 定位改写（§6.2 该组件相关的全部 `from vtx import` 化）；

@@ -2,7 +2,7 @@
 # comfyui_init.sh · ComfyUI 服务快速配置（2026-09-11）
 #
 # ComfyUI 是独立的图像生成服务（127.0.0.1:8188），video_tools 仅消费其 HTTP API
-# （matting/post_h3.sh 取背景图输出）；与 matting/init.sh 探测的 conda env `comfyui`
+# （apps/matting/post_h3.sh 取背景图输出）；与 apps/matting/init.sh 探测的 conda env `comfyui`
 # （抠像推理环境）是两回事——本脚本负责服务本体。
 #
 # 用法：

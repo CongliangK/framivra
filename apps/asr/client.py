@@ -17,7 +17,7 @@
 机制：
   - cfg_get：容错读 config.local.json（§7.2，缺键/类型不符 → 默认值，~ 展开）；
   - 探测链（复用本机资产优先）：解释器 config.asr.python → IME .venv-qwen-asr →
-    asr/.venv；模型根 config.asr.model_dir → IME vendor/models/qwen3-asr →
+    apps/asr/.venv；模型根 config.asr.model_dir → IME vendor/models/qwen3-asr →
     ~/models/qwen3-asr；
   - sidecar 日志 ~/.local/state/video_tools/asr_sidecar.log，pid 文件 /tmp/asr_sidecar_<port>.pid
     （stop 按 pid SIGTERM）；
@@ -135,7 +135,7 @@ def _py_imports(py_bin, module):
 
 
 def probe_python(cfg=None):
-    """qwen-asr 解释器：config.asr.python → IME .venv-qwen-asr → asr/.venv；
+    """qwen-asr 解释器：config.asr.python → IME .venv-qwen-asr → apps/asr/.venv；
     候选必须能 import qwen_asr（PYTHONPATH 补齐后验证）。"""
     cfg = cfg if cfg is not None else load_config()
     cands = [cfg_get(cfg, "asr.python", None)]
@@ -286,7 +286,7 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
     model = pick_model(cfg)
     aligner = probe_aligner(cfg)
     if py is None or model is None:
-        print("✗ 探测不到 qwen-asr 解释器或模型——先跑 bash asr/init.sh（python=%s, model=%s）"
+        print("✗ 探测不到 qwen-asr 解释器或模型——先跑 bash apps/asr/init.sh（python=%s, model=%s）"
               % (py or "缺", model or "缺"), file=sys.stderr)
         return False
     port = _port_of(base_url)
@@ -295,7 +295,7 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
     if aligner:
         cmd += ["--aligner", aligner]
     else:
-        print("⚠ 未找到 ForcedAligner：字级时间戳（srt/timeline）将不可用——跑 bash asr/init.sh 下载", file=sys.stderr)
+        print("⚠ 未找到 ForcedAligner：字级时间戳（srt/timeline）将不可用——跑 bash apps/asr/init.sh 下载", file=sys.stderr)
     if verbose:
         print("… 拉起 sidecar：%s（日志 %s）" % (" ".join(cmd), SIDECAR_LOG), file=sys.stderr)
     with open(SIDECAR_LOG, "a", encoding="utf-8") as log:

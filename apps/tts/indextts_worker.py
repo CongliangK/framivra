@@ -102,7 +102,7 @@ def main():
     cfg_yaml = os.path.join(ckpt, "config.yaml")
     for p in (cfg_yaml, a.voice_ref):
         if not os.path.exists(p):
-            print(f"✗ 缺文件：{p}（跑 bash tts/init.sh 核对资产）")
+            print(f"✗ 缺文件：{p}（跑 bash apps/tts/init.sh 核对资产）")
             sys.exit(2)
 
     with open(a.spec, encoding="utf-8") as f:
@@ -123,7 +123,7 @@ def main():
         from indextts.infer_v2_5 import IndexTTS2
     except ImportError as e:
         print(f"✗ 解释器无法 import indextts（{e}）——请用 conda indextts env "
-              f"或 repo/.venv 解释器（config.tts.python），跑 bash tts/init.sh 核对")
+              f"或 repo/.venv 解释器（config.tts.python），跑 bash apps/tts/init.sh 核对")
         sys.exit(2)
 
     print("加载 IndexTTS-2.5（bf16/cuda:0，单次加载多窗串行）…", flush=True)
@@ -134,7 +134,7 @@ def main():
         msg = str(e)
         print(f"✗ 模型加载失败：{msg[:300]}")
         if "out of memory" in msg.lower() or "OOM" in msg:
-            print("  显存不足（同卡或有大模型 sidecar 共驻）→ 降级：python3 tts/tts_cli.py gen <spec> --engine edge")
+            print("  显存不足（同卡或有大模型 sidecar 共驻）→ 降级：python3 apps/tts/tts_cli.py gen <spec> --engine edge")
             sys.exit(EXIT_OOM)
         sys.exit(2)
 
@@ -157,7 +157,7 @@ def main():
             msg = str(e)
             print(f"✗ [{wid}] 推理失败：{msg[:300]}")
             if "out of memory" in msg.lower():
-                print("  显存不足 → 降级：python3 tts/tts_cli.py gen <spec> --engine edge")
+                print("  显存不足 → 降级：python3 apps/tts/tts_cli.py gen <spec> --engine edge")
                 sys.exit(EXIT_OOM)
             sys.exit(2)
         d1 = atempo.probe_duration(raw)
@@ -171,7 +171,7 @@ def main():
                 msg = str(e)
                 print(f"✗ [{wid}] 重生成失败：{msg[:300]}")
                 if "out of memory" in msg.lower():
-                    print("  显存不足 → 降级：python3 tts/tts_cli.py gen <spec> --engine edge")
+                    print("  显存不足 → 降级：python3 apps/tts/tts_cli.py gen <spec> --engine edge")
                     sys.exit(EXIT_OOM)
                 sys.exit(2)
             print(f"[{wid}] 自然 {d1:.1f}s → factor {factor:.3f} 重生成 "

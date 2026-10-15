@@ -495,7 +495,7 @@ def _handle_transcribe(handler):
     if isinstance(language, str) and not language.strip():
         language = None
     if timestamps and _HOLDER.aligner_path is None:
-        raise RequestError(409, "字级时间戳需要 Qwen3-ForcedAligner（未加载）——先跑 bash asr/init.sh 下载，或去掉 timestamps")
+        raise RequestError(409, "字级时间戳需要 Qwen3-ForcedAligner（未加载）——先跑 bash apps/asr/init.sh 下载，或去掉 timestamps")
     model = _HOLDER.acquire()
     try:
         t0 = time.monotonic()
@@ -608,7 +608,7 @@ def main():
     model_path, explicit = resolve_model_dir(args.model, args.models_root)
     if model_path is None:
         if explicit:
-            print("✗ 未找到指定模型目录：%s（先跑 bash asr/init.sh）" % args.model)
+            print("✗ 未找到指定模型目录：%s（先跑 bash apps/asr/init.sh）" % args.model)
             return 2
         if _ime_sidecar_alive():
             cand = resolve_model_dir("0.6b", args.models_root)[0]
@@ -618,7 +618,7 @@ def main():
         if model_path is None:
             model_path = resolve_model_dir("1.7b", args.models_root)[0]
         if model_path is None:
-            print("✗ 探测链上没有 Qwen3-ASR 模型（~/models/qwen3-asr 或 IME vendor）——先跑 bash asr/init.sh")
+            print("✗ 探测链上没有 Qwen3-ASR 模型（~/models/qwen3-asr 或 IME vendor）——先跑 bash apps/asr/init.sh")
             return 2
     elif args.model == "auto" and _ime_sidecar_alive() and "1.7" in model_path:
         cand = resolve_model_dir("0.6b", args.models_root)[0]
@@ -632,7 +632,7 @@ def main():
     elif args.aligner == "auto":
         aligner_path = resolve_aligner_dir(args.models_root)
         if aligner_path is None:
-            print("⚠ 未找到 %s——timestamps 请求将返回 409；跑 bash asr/init.sh 下载" % ALIGNER_DIR)
+            print("⚠ 未找到 %s——timestamps 请求将返回 409；跑 bash apps/asr/init.sh 下载" % ALIGNER_DIR)
     else:
         p = str(Path(args.aligner).expanduser())
         if Path(p).exists():

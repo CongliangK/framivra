@@ -108,18 +108,26 @@ class InstallerSandbox(SandboxCase):
 
     def test_official_payload_with_internal_symlinks_installs(self):
         self.base_archive(
-            extra=[("apps/tool/run.py", b"print('tool')\n")],
-            symlinks=[("aroll", "apps/tool")])
+            extra=[("apps/tool/run.py", b"print('tool')\n"),
+                   ("plugins/tool/run.py", b"print('plugin')\n")],
+            symlinks=[("tool-dir", "apps/tool"),
+                      ("scripts/tool.py", "../plugins/tool/run.py")])
         result = self.run_install()
         self.assert_ok(result)
         self.assertTrue((self.target / ".vt-install.json").is_file())
-        link = self.target / "aroll"
+        link = self.target / "tool-dir"
         if os.name == "nt":
             self.assertFalse(link.is_symlink())
             self.assertEqual((link / "run.py").read_bytes(), b"print('tool')\n")
         else:
             self.assertTrue(link.is_symlink())
             self.assertEqual(os.readlink(link), "apps/tool")
+        script = self.target / "scripts/tool.py"
+        self.assertEqual(script.read_bytes(), b"print('plugin')\n")
+        if os.name != "nt":
+            self.assertEqual(os.readlink(script), "../plugins/tool/run.py")
+        for name in ("aroll", "asr", "blender_bridge", "imgen", "matting", "tts"):
+            self.assertFalse(os.path.lexists(self.target / name), name)
 
     # ---- 恶意归档矩阵:每项断言非零退出 + 目标不被标记为成功安装 ----
     def _assert_rejected(self, expect_marker=False):
@@ -279,15 +287,17 @@ class InstallerSandbox(SandboxCase):
     def test_win32_branch_never_calls_symlink_and_materializes(self):
         installer = _load_installer()
         self.base_archive(
-            extra=[("apps/tool/run.py", b"print('tool')\n")],
-            symlinks=[("aroll", "apps/tool"), ("dangling", "apps/missing")])
+            extra=[("apps/tool/run.py", b"print('tool')\n"),
+                   ("plugins/tool/run.py", b"print('plugin')\n")],
+            symlinks=[("tool-dir", "apps/tool"),
+                      ("scripts/tool.py", "../plugins/tool/run.py"), ("dangling", "apps/missing")])
         staging = self.root / "win32-staging"
         with mock.patch.object(installer, "IS_WINDOWS", True), \
                 mock.patch.object(installer, "os") as fake_os, \
                 mock.patch.object(installer.shutil, "copytree",
                                   wraps=installer.shutil.copytree) as copytree, \
                 mock.patch.object(installer.shutil, "copyfile",
-                                  wraps=installer.shutil.copyfile):
+                                  wraps=installer.shutil.copyfile) as copyfile:
             fake_os.name = "nt"
             fake_os.symlink.side_effect = AssertionError(
                 "win32 分支绝不允许调用 os.symlink")
@@ -297,9 +307,12 @@ class InstallerSandbox(SandboxCase):
             self.assertIn("目标缺失", str(caught.exception))
             # 复制原语确被用于物化(目录树/文件)。
             copytree.assert_called()
+            copyfile.assert_called()
         # 去掉悬空链接后:纯仓内链接在 win32 分支完整物化。
-        self.base_archive(extra=[("apps/tool/run.py", b"print('tool')\n")],
-                          symlinks=[("aroll", "apps/tool")])
+        self.base_archive(extra=[("apps/tool/run.py", b"print('tool')\n"),
+                   ("plugins/tool/run.py", b"print('plugin')\n")],
+                          symlinks=[("tool-dir", "apps/tool"),
+                      ("scripts/tool.py", "../plugins/tool/run.py")])
         staging2 = self.root / "win32-staging-2"
         with mock.patch.object(installer, "IS_WINDOWS", True), \
                 mock.patch.object(installer, "os") as fake_os:
@@ -307,9 +320,25 @@ class InstallerSandbox(SandboxCase):
             fake_os.symlink.side_effect = AssertionError(
                 "win32 分支绝不允许调用 os.symlink")
             installer.safe_extract(self.payload, staging2)
-        self.assertFalse((staging2 / "aroll").is_symlink())
-        self.assertEqual((staging2 / "aroll" / "run.py").read_bytes(),
+        self.assertFalse((staging2 / "tool-dir").is_symlink())
+        self.assertEqual((staging2 / "tool-dir" / "run.py").read_bytes(),
                          b"print('tool')\n")
+        script = staging2 / "scripts/tool.py"
+        self.assertFalse(script.is_symlink())
+        self.assertEqual(script.read_bytes(), b"print('plugin')\n")
+
+    def test_preoccupied_link_destination_is_rejected(self):
+        installer = _load_installer()
+        self.base_archive(extra=[("plugins/tool/run.py", b"# tool\n")],
+                          symlinks=[("scripts/tool.py", "../plugins/tool/run.py")])
+        for windows in (False, True):
+            with self.subTest(windows=windows):
+                staging = self.root / ("occupied-win" if windows else "occupied-posix")
+                self.put(staging / "scripts/tool.py", b"user file\n")
+                with mock.patch.object(installer, "IS_WINDOWS", windows):
+                    with self.assertRaisesRegex(installer.InstallError, "已被占用"):
+                        installer.safe_extract(self.payload, staging)
+                self.assertEqual((staging / "scripts/tool.py").read_bytes(), b"user file\n")
 
     def test_doctor_failure_fails_install_gate(self):
         program = (b'import sys\n'

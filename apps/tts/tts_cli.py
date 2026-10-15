@@ -122,7 +122,7 @@ def cmd_gen(a):
             edge_bin = shutil.which("edge-tts")
         if not os.path.exists(edge_bin):
             raise SystemExit(f"✗ edge-tts 未找到（config tts.edge_bin / PATH），"
-                             f"跑 bash tts/init.sh")
+                             f"跑 bash apps/tts/init.sh")
         edge_worker.run(windows, project, runid, edge_bin,
                         voice=a.edge_voice, only_missing=a.only_missing)
         print_followups(project)
@@ -133,7 +133,7 @@ def cmd_gen(a):
             py = alt if os.path.exists(alt) else py
         if not os.path.exists(py):
             raise SystemExit("✗ indextts 解释器未找到（config tts.python / "
-                             "conda env / repo/.venv），跑 bash tts/init.sh；"
+                             "conda env / repo/.venv），跑 bash apps/tts/init.sh；"
                              "或先兜底：--engine edge")
         cmd = [py, os.path.join(HERE, "indextts_worker.py"),
                "--spec", a.spec, "--project", project, "--runid", runid,
@@ -174,14 +174,14 @@ def cmd_probe(a):
     missing = [n for n in need
                if not os.path.exists(os.path.join(ck, n))]
     rec("repo", not missing,
-        f"{repo}" if not missing else f"checkpoints 缺 {missing}（跑 bash tts/init.sh）")
+        f"{repo}" if not missing else f"checkpoints 缺 {missing}（跑 bash apps/tts/init.sh）")
 
     py = tts_cfg("python", DEFAULT_TTS_PY)
     if not os.path.exists(py):
         alt = os.path.join(repo, ".venv/bin/python")
         py = f"{py} → {alt}" if os.path.exists(alt) else py
     rec("解释器", os.path.exists(py), py if os.path.exists(py)
-        else f"{py} 不存在（跑 bash tts/init.sh）")
+        else f"{py} 不存在（跑 bash apps/tts/init.sh）")
 
     vr = tts_cfg("voice_ref", DEFAULT_VOICE_REF)
     rec("音色参考", os.path.exists(vr),

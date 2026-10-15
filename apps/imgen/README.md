@@ -1,9 +1,9 @@
 # imgen —— 生图 API 生图 + cover-crop 后处理
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/imgen/`）**：manifest 见 `app.json`（kind=app；健康检查 = `imgen_cli.py --help`）；兼容 symlink：仓库根 `imgen → apps/imgen`（目录级，旧路径引用仍可达）。随迁清除 `spec_from_file_location`（v2 §1.4 冻结禁令）：imgen_cli.py 加载 secrets.py 与 tests/_loader.py、init.sh 探测内嵌加载统一改为 **app 根 sys.path 注入 + 普通 import**（app 目录注入不涉内核双模块，允许；保留解析落点校验哨兵防 stdlib 同名 secrets 串味）。
+> **v2 结构（P2a 批次 2 起本目录迁入 `apps/imgen/`）**：manifest 见 `app.json`（kind=app；健康检查 = `imgen_cli.py --help`）。随迁清除 `spec_from_file_location`（v2 §1.4 冻结禁令）：imgen_cli.py 加载 secrets.py 与 tests/_loader.py、init.sh 探测内嵌加载统一改为 **app 根 sys.path 注入 + 普通 import**（app 目录注入不涉内核双模块，允许；保留解析落点校验哨兵防 stdlib 同名 secrets 串味）。
 
 脚本阶段写 prompt → 生图 API（api.wuyinkeji.com，nano / gpt-image / GPT-Image-2.5 三系五模型）付费生图（0.1 或 0.3 元/张按模型）→ 原图即下（URL 2 小时失效）→ ffmpeg lanczos cover-crop 到**精确尺寸** → 硬对接下游：
-- `assets/bg/background_4k.png`（3840×2160 8-bit RGB PNG）→ `matting/run_full_bg.sh` 抠像逐像素合成（cv2.imread 直读、无 resize，**像素契约不过即崩**）；
+- `assets/bg/background_4k.png`（3840×2160 8-bit RGB PNG）→ `apps/matting/run_full_bg.sh` 抠像逐像素合成（cv2.imread 直读、无 resize，**像素契约不过即崩**）；
 - `assets/bg/background_1080p.png`（1920×1080）/ `background_vertical.png`（1080×1920）→ 口播链 / gfx 底图；
 - `assets/imgen/<UTC>-<n>.png` → 原图留档（API 原图不可再生，属资产非缓存，不入 cache/）。
 

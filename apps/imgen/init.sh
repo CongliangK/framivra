@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# imgen/init.sh · 生图 API 生图模块初始化（幂等，秒级完成，无模型下载）
+# apps/imgen/init.sh · 生图 API 生图模块初始化（幂等，秒级完成，无模型下载）
 # 探测：requests（系统 python3）→ API key 解析链（本地，不触网）→ 网络连通（可选 --net，仅 GET 不扣费）→ ffmpeg/ffprobe（postprocess 依赖，沿用根 init 语义）
-# 用法：bash imgen/init.sh [--net]
+# 用法：bash apps/imgen/init.sh [--net]
 set -euo pipefail
 cd "$(dirname "$0")"
 

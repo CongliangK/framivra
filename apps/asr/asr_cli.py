@@ -2,15 +2,15 @@
 """asr_cli —— Qwen3-ASR 字幕产线总入口（系统 python3 ≥3.9 stdlib）
 
 用法：
-  python3 asr/asr_cli.py sidecar start|stop|status|health   # 服务管理（start 自动拉起+等健康）
-  python3 asr/asr_cli.py transcribe <输入.wav|mp4|...> [--timestamps] [--json]
+  python3 apps/asr/asr_cli.py sidecar start|stop|status|health   # 服务管理（start 自动拉起+等健康）
+  python3 apps/asr/asr_cli.py transcribe <输入.wav|mp4|...> [--timestamps] [--json]
       # 默认打印纯文本；--timestamps --json 附 words[]（字级秒，3 位小数）
-  python3 asr/asr_cli.py srt <输入> -o <out.srt>
+  python3 apps/asr/asr_cli.py srt <输入> -o <out.srt>
       [--limit 18] [--rate-cap 9] [--no-filler] [--t2s] [--language Chinese]
-  python3 asr/asr_cli.py timeline <输入> -t <timeline.json>
+  python3 apps/asr/asr_cli.py timeline <输入> -t <timeline.json>
       [--offset-frames 0] [--min-dur-frames 18] [--gap-frames 2] [--limit 18]
       [--rate-cap 9] [--no-filler] [--t2s] [--dry-run] [--append]
-  python3 asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>   # 逐文件 srt + 汇总 json 报告
+  python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>   # 逐文件 srt + 汇总 json 报告
 
 机制（方案 §3.2，链路：client 抽 16k wav → sidecar 转写+words[] → textnorm 规范化 →
 segline 锚定断句 → srt_out / tl_merge）：

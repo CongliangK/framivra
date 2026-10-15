@@ -7,7 +7,7 @@ description: 科技口播 B 站视频制作工作流范本（video 内核之上�
 
 > **本包是 video 内核之上的工作流范本**：科技口播视频从选题调研到 4K 投稿的全链路 SOP、阶段配方与已验收模板资产。
 > **机制契约见内核 skill**（`skill/SKILL.md` 路由索引 + `skill/references/`）：timeline.json 契约、vtx CLI 全阶段、gfx 帧驱动协议、D22 设计铁律、渲染坑表、缓存治理等机制文档一律不在本包重复——本包只回答「这条产线按什么顺序用哪些件」。
-> 调用约定：内核命令 `python3 <video_tools>/vtx/vtx.py …`（或挂载路径 `~/.agents/skills/video/vtx/vtx.py`）；产线 app 一律走 `apps/<name>/`、插件走 `plugins/<name>/` 新权威路径（仓根兼容 symlink 只是给未知消费者的兜底）。
+> 调用约定：内核命令 `python3 <video_tools>/vtx/vtx.py …`（或挂载路径 `~/.agents/skills/video/vtx/vtx.py`）；产线 app 一律走 `apps/<name>/`、插件走 `plugins/<name>/` 新权威路径（scripts/ 兼容入口只是给未知消费者的兜底）。
 
 ## 制作范本总览
 

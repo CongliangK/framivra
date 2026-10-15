@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """postprocess.py · ffmpeg lanczos cover-crop 后处理（方案 §5.3，离线免 API）
 
-问题：生图 nano 2K 16:9 实出 ~2752×1536 ≠ 3840×2160，而 matting/run_full_bg.sh
+问题：生图 nano 2K 16:9 实出 ~2752×1536 ≠ 3840×2160，而 apps/matting/run_full_bg.sh
 的 cv2.imread 直读逐像素合成、无 resize——错尺寸图进抠像链会崩或比例失真。
 
 滤镜链（方案 §5.3 定稿）：

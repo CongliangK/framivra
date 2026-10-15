@@ -73,7 +73,7 @@ video_tools/
 7. 时间量一律**整数帧**；时基 30fps（≠29.97）、48kHz（每帧整 1600 采样）；区间 `[in, out)` 左闭右开。
 8. **修改任何程序或文档一律改 video_tools 仓**（live 挂载点全是符号链接）。
 
-## CLI 速查（新权威路径；仓根兼容 symlink 仅为未知消费者兜底）
+## CLI 速查（新权威路径；scripts/ 兼容入口仅为未知消费者兜底）
 | 操作 | 命令 |
 |---|---|
 | 渲染前校验（必跑） | `python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json validate` |
