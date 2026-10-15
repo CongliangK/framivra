@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace vtx_cef {
 
@@ -15,6 +16,15 @@ namespace vtx_cef {
 // 成功写入返回 true；失败返回 false（含 I/O 错误与 zlib 失败）。
 bool WritePngRgba(const std::string& path, const uint8_t* rgba, int width,
                   int height);
+
+// #110：编码/落盘分步（模式 1 计时回执需要 t_png_encode_us 与
+// t_disk_commit_us 分列；WritePngRgba 行为不变）。
+// 编码到内存（内容与 WritePngRgba 落盘字节完全一致）。
+bool EncodePngRgba(const uint8_t* rgba, int width, int height,
+                   std::vector<uint8_t>* png);
+// .tmp + rename 原子落盘（同目录同名 .tmp，可见性原子；内容完成后才改名）。
+bool AtomicWriteBytes(const std::string& final_path, const uint8_t* data,
+                      size_t len);
 
 }  // namespace vtx_cef
 

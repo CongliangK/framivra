@@ -1,4 +1,5 @@
-// vtx_cef_worker — CEF Native OSR Worker（issue #109 CEF-01b）。
+// vtx_cef_worker — CEF Native OSR Worker（issue #109 CEF-01b；
+// #110 CEF-02a 增帧服务模式）。
 //
 // 在 #108 构建骨架上交付双模式 OSR 启动与进程组自毁守卫：
 //   - main() 第一行 prctl(PR_SET_PDEATHSIG, SIGKILL)（安全铁律）；
@@ -17,7 +18,10 @@
 //     WEBGL_debug_renderer_info + WebGPU adapter info；chrome://gpu 特性
 //     提取；结果随 --out-json 落档（供 env_manifest 采集消费）。
 //
-// --sanity 自检沿用 #108（版本锁运行时自证），行为不变。
+// #110 帧服务模式（--serve，见 serve.h/IPC_PROTOCOL.md）：
+//   - 模式 1（Worker 原地落盘）/ 模式 2（4-Slot SHM 环零拷贝）双协议；
+//   - --fault-inject 故障注入面（size_mismatch / abort_after_frame）；
+//   - --sanity 自检沿用 #108（版本锁运行时自证），行为不变。
 #include <sys/prctl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -39,6 +43,7 @@
 
 #include "app_handler.h"
 #include "png_writer.h"
+#include "serve.h"
 
 #include "include/cef_api_hash.h"
 #include "include/cef_app.h"
@@ -67,6 +72,15 @@ struct RunOptions {
   int timeout_ms = 45000;        // 阶段等待上限
   int hold_ms = 0;               // 出帧后保持渲染的时长（kill 演练用）
   int parent_alive_fd = -1;      // 监管器父存活管道读端
+  // ---- #110 帧服务模式（--serve）----
+  bool serve = false;
+  std::string ipc_socket;              // Unix socket 路径
+  std::string url_template;            // 含 {f} 占位
+  std::string fault_inject;            // none|size_mismatch|abort_after_frame
+  int fault_abort_after_frames = 1;    // abort_after_frame 的 N
+  int slot_wait_timeout_ms = 15000;    // 背压等空槽上限
+  int serve_idle_timeout_ms = 120000;  // 无请求空闲上限
+  int encode_threads = 2;              // 模式 1 编码线程池
 };
 
 void Usage(const char* argv0) {
@@ -91,7 +105,17 @@ void Usage(const char* argv0) {
       "  --begin-frames=N        load 后驱动的 external begin frame 数（默认 6）\n"
       "  --hold-ms=N             出帧后保持渲染循环 N ms（监管 kill 演练）\n"
       "  --timeout-ms=N          阶段等待上限（默认 45000）\n"
-      "  --parent-alive-fd=N     监管器父存活管道读端（EOF 即组杀，监管契约）\n",
+      "  --parent-alive-fd=N     监管器父存活管道读端（EOF 即组杀，监管契约）\n"
+      "\n"
+      "帧服务模式（#110，协议详见 experiments/gfx_cef_worker/IPC_PROTOCOL.md）:\n"
+      "  --serve                 进入帧服务循环（Unix Socket 定长协议 + 4-Slot SHM 环）\n"
+      "  --ipc-socket=<path>     服务 Unix socket 路径（宿主目录；就绪行 VTXCEF_SERVE_READY）\n"
+      "  --url-template=<tpl>    帧页模板，须含 {f} 占位（每请求代入帧号导航）\n"
+      "  --fault-inject=<mode>   none|size_mismatch|abort_after_frame（DoD 故障注入）\n"
+      "  --fault-abort-after-frames=N  abort_after_frame 的 N（默认 1）\n"
+      "  --slot-wait-timeout-ms=N      4 槽全满背压等待上限（默认 15000）\n"
+      "  --serve-idle-timeout-ms=N     无请求空闲上限（默认 120000）\n"
+      "  --encode-threads=N            模式 1 编码线程池大小（默认 2）\n",
       CEF_VERSION, VTX_CHROME_VERSION_STRING, argv0, argv0);
 }
 
@@ -140,6 +164,19 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
     } else if (num("--timeout-ms=", &opt->timeout_ms)) {
     } else if (num("--hold-ms=", &opt->hold_ms)) {
     } else if (num("--parent-alive-fd=", &opt->parent_alive_fd)) {
+    } else if (num("--slot-wait-timeout-ms=", &opt->slot_wait_timeout_ms)) {
+    } else if (num("--serve-idle-timeout-ms=", &opt->serve_idle_timeout_ms)) {
+    } else if (num("--encode-threads=", &opt->encode_threads)) {
+    } else if (num("--fault-abort-after-frames=",
+                   &opt->fault_abort_after_frames)) {
+    } else if (arg == "--serve") {
+      opt->serve = true;
+    } else if (const std::string v = value("--ipc-socket="); !v.empty()) {
+      opt->ipc_socket = v;
+    } else if (const std::string v = value("--url-template="); !v.empty()) {
+      opt->url_template = v;
+    } else if (const std::string v = value("--fault-inject="); !v.empty()) {
+      opt->fault_inject = v;
     } else if (arg == "--probe") {
       opt->cef.probe = true;
     } else if (arg == "--probe-gpu-page") {
@@ -157,6 +194,27 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
     std::fprintf(stderr, "--mode 只接受 a0|a1，得到 %s\n",
                  opt->cef.mode.c_str());
     return false;
+  }
+  if (opt->serve) {
+    if (opt->ipc_socket.empty() || opt->url_template.empty()) {
+      std::fprintf(stderr,
+                   "--serve 需要 --ipc-socket=<path> 与 --url-template=<tpl>\n");
+      return false;
+    }
+    if (opt->fault_inject.empty() || opt->fault_inject == "none") {
+      // 正常面
+    } else if (opt->fault_inject == "size_mismatch") {
+      // DoD①：视图实际渲染高 = 期望高-1（GetViewRect 与捕获卫兵错位）。
+      opt->cef.render_width = opt->cef.width;
+      opt->cef.render_height = opt->cef.height - 1;
+    } else if (opt->fault_inject == "abort_after_frame") {
+      // DoD③：RunServe 内部按 --fault-abort-after-frames 触发 abort()。
+    } else {
+      std::fprintf(stderr, "--fault-inject 只接受 none|size_mismatch|"
+                           "abort_after_frame，得到 %s\n",
+                   opt->fault_inject.c_str());
+      return false;
+    }
   }
   return true;
 }
@@ -325,7 +383,7 @@ int main(int argc, char* argv[]) {
   if (sanity) {
     return Sanity();
   }
-  if (opt.url.empty()) {
+  if (!opt.serve && opt.url.empty()) {
     std::fprintf(stderr, "缺少 --url（-h 查看用法）\n");
     return 2;
   }
@@ -363,6 +421,23 @@ int main(int argc, char* argv[]) {
     }).detach();
   }
 
+  // ===== #110 帧服务模式：自持 CEF/Socket/SHM 环/编码池生命周期
+  //        （守卫已武装，覆盖其 CEF 初始化窗口；见 serve.h）。
+  if (opt.serve) {
+    vtx_cef::ServeOptions sopt;
+    sopt.cef = opt.cef;
+    sopt.ipc_socket = opt.ipc_socket;
+    sopt.url_template = opt.url_template;
+    sopt.root_cache_path = opt.root_cache_path;
+    sopt.slot_wait_timeout_ms = opt.slot_wait_timeout_ms;
+    sopt.idle_timeout_ms = opt.serve_idle_timeout_ms;
+    sopt.encode_threads = opt.encode_threads;
+    if (opt.fault_inject == "abort_after_frame") {
+      sopt.fault_abort_after_frames = opt.fault_abort_after_frames;
+    }
+    return vtx_cef::RunServe(sopt, argc, argv);
+  }
+
   // ===== root_cache_path：监管路径由参数指定；缺省建临时目录退出即删。
   std::filesystem::path root_cache(opt.root_cache_path);
   const bool owns_cache = opt.root_cache_path.empty();
@@ -388,15 +463,10 @@ int main(int argc, char* argv[]) {
   const std::map<std::string, std::string> launch_env = LaunchEnvSnapshot();
 
   // ===== CEF 初始化（工单口径：windowless + no_sandbox + 单线程消息循环
-  //        + external_message_pump 外置泵）。
+  //        + external_message_pump 外置泵；#110 起经共享装配，与 serve 模式
+  //        同源，防配置漂移）。
   CefMainArgs main_args(argc, argv);
-  CefSettings settings;
-  settings.no_sandbox = true;
-  settings.multi_threaded_message_loop = false;
-  settings.external_message_pump = true;
-  settings.windowless_rendering_enabled = true;
-  settings.log_severity = LOGSEVERITY_WARNING;  // 证据可读：保留警告去噪声
-  CefString(&settings.root_cache_path).FromString(root_cache.string());
+  CefSettings settings = vtx_cef::MakeWorkerSettings(root_cache.string());
 
   CefRefPtr<vtx_cef::WorkerApp> app = new vtx_cef::WorkerApp(&opt.cef, &state);
   if (!CefInitialize(main_args, settings, app, nullptr)) {
@@ -411,45 +481,21 @@ int main(int argc, char* argv[]) {
   int exit_code = 0;
   std::string exit_reason = "ok";
   do {
-    // ===== 外置泵：OnScheduleMessagePumpWork 唤醒即时干活；空闲保底每
-    //        ~8ms 干一拍（CEF 计时器任务依赖周期驱动）。
-    const auto pump_once = [&]() {
-      state.pump_scheduled.store(false, std::memory_order_relaxed);
-      CefDoMessageLoopWork();
-    };
+    // ===== 外置泵（#110 抽提为 PumpDriver，语义与 #109 逐拍一致）。
+    vtx_cef::PumpDriver pump{&state};
+    const auto pump_once = [&]() { pump.Once(); };
     const auto pump_until = [&](const std::function<bool()>& done,
                                 int timeout_ms) -> bool {
-      const auto deadline =
-          Clock::now() + std::chrono::milliseconds(timeout_ms);
-      int idle = 0;
-      while (!done()) {
-        if (Clock::now() >= deadline) {
-          return false;
-        }
-        if (state.pump_scheduled.load(std::memory_order_relaxed) ||
-            ++idle >= 4) {
-          idle = 0;
-          pump_once();
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-      }
-      pump_once();
-      return true;
+      return pump.Until(done, timeout_ms);
     };
 
     // ===== 建窗：OSR（windowless + external begin frame + 非 shared texture）
     CefRefPtr<vtx_cef::WorkerClient> client =
         new vtx_cef::WorkerClient(&opt.cef, &state);
-    CefWindowInfo window_info;
-    window_info.SetAsWindowless(0);
-    window_info.shared_texture_enabled = false;
-    window_info.external_begin_frame_enabled = true;
-    CefBrowserSettings browser_settings;
-    browser_settings.background_color = 0;  // 透明（gfxA 协议要求 alpha 通道）
     CefString url_str;
     url_str.FromString(opt.url);
-    if (!CefBrowserHost::CreateBrowser(window_info, client, url_str,
-                                       browser_settings, nullptr, nullptr)) {
+    if (!vtx_cef::CreateOsrBrowser(client, url_str, opt.cef.width,
+                                   opt.cef.height)) {
       exit_code = 1;
       exit_reason = "CreateBrowser 失败";
       break;

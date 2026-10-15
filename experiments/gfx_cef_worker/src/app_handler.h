@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -32,6 +33,14 @@ struct Options {
   int height = 1080;
   bool probe = false;                  // 注入 WebGL/WebGPU 探针
   bool probe_gpu_page = false;         // 额外导航 chrome://gpu 提取特性
+  // #110 serve/故障注入：视图实际渲染尺寸（GetViewRect 取此值；0=width/
+  // height）。捕获卫兵仍按 width/height 期望 → 两者不一致即 SIZE_MISMATCH
+  // 故障注入路径（DoD① width=1920,height=1079）。
+  int render_width = 0;
+  int render_height = 0;
+  // #110 serve 模式标记：注入 --disable-crash-reporter（abort 故障注入
+  // 演练不落 crashpad 副本/不挂崩溃处理器），一次性渲染路径不受影响。
+  bool serve_mode = false;
 };
 
 // 单次运行状态。CEF 回调与主循环同在 UI/主线程（external_message_pump +
@@ -51,6 +60,22 @@ struct RunState {
   std::string page_probe;                 // WebGL/WebGPU 探针 JSON（首个为准）
   std::string gpu_page_probe;             // chrome://gpu 提取 JSON（首个为准）
   std::string last_error;                 // 探针/渲染链路错误显形
+
+  // —— #110 serve 逐请求捕获（serve 循环装配，OnPaint 同线程消费）——
+  // capture_armed 仅在 serve 模式置位； armed=false 的 OnPaint 走 #109
+  // 全帧缓存路径（一次性渲染模式行为不变）。
+  bool capture_armed = false;
+  uint32_t cap_expected_w = 0;        // 尺寸卫兵期望（不符→SIZE_MISMATCH）
+  uint32_t cap_expected_h = 0;
+  int32_t cap_target_f = -1;          // 金丝雀目标帧号
+  uint8_t* cap_dst = nullptr;         // 紧凑拷贝目标（SHM 槽数据/暂存）
+  bool cap_captured = false;          // 金丝雀命中
+  bool cap_size_mismatch = false;     // 尺寸不符（记录实际值，不拷贝）
+  uint32_t cap_actual_w = 0;
+  uint32_t cap_actual_h = 0;
+  uint32_t cap_rejected = 0;          // 陈旧 OnPaint 拒绝计数
+  uint64_t cap_last_capture_us = 0;   // 最近一次 OnPaint→目标拷贝耗时
+  std::vector<uint8_t> cap_staging;   // 模式 1 暂存区（serve 预留容量）
 };
 
 // 探针回传 marker（console.log 通道；JSON 体不得超过控制台行限制，
@@ -70,6 +95,25 @@ void AppendA1Switches(CefRefPtr<CefCommandLine> command_line,
 std::string BuildPageProbeJs();
 // chrome://gpu 特性提取 JS（穿 shadow DOM 收集文本 + 特性行正则）。
 std::string BuildGpuPageProbeJs();
+
+// —— #110 共享装配件（一次性渲染与 serve 两模式共用，防配置漂移）——
+
+// CefSettings 公共面（no_sandbox/单线程消息循环/外置泵/windowless/警告级
+// 日志/root_cache_path）。
+CefSettings MakeWorkerSettings(const std::string& root_cache_path);
+// OSR 建窗（SetAsWindowless(0) + 非 shared texture + external begin frame +
+// 透明背景），返回 CreateBrowser 同步结果（浏览器实例经 OnAfterCreated
+// 异步送达 RunState::browser）。
+bool CreateOsrBrowser(CefRefPtr<CefClient> client, const CefString& url,
+                      int width, int height);
+
+// 外置泵驱动器（#109 main.cpp 泵语义原样抽提）：OnScheduleMessagePumpWork
+// 唤醒即时干活；空闲保底每 ~8ms 一拍；Until 完成后补一拍。
+struct PumpDriver {
+  RunState* state = nullptr;
+  void Once();
+  bool Until(const std::function<bool()>& done, int timeout_ms);
+};
 
 class WorkerApp : public CefApp, public CefBrowserProcessHandler {
  public:

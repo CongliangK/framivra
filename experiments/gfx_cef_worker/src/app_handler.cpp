@@ -1,7 +1,13 @@
-// app_handler.cpp — CEF App/Client/OSR 渲染与后端探针实现（issue #109）。
+// app_handler.cpp — CEF App/Client/OSR 渲染与后端探针实现（issue #109，
+// #110 增 serve 捕获路径与共享装配件）。
 #include "app_handler.h"
 
+#include <chrono>
 #include <cstring>
+#include <thread>
+
+#include "frame_pipeline.h"
+#include "shm_ring.hpp"
 
 #include "include/cef_command_line.h"
 
@@ -50,6 +56,11 @@ void WorkerApp::OnBeforeCommandLineProcessing(
   // ——对子进程改参是未定义行为（cef_app.h 文档）。
   if (options_ == nullptr || !process_type.empty()) {
     return;
+  }
+  if (options_->serve_mode) {
+    // serve 模式：DoD③ abort() 演练需原生 SIGABRT 语义（无崩溃副本/无
+    // 崩溃处理器拦截），一次性渲染路径不注入。
+    command_line->AppendSwitch("disable-crash-reporter");
   }
   if (options_->mode == "a0") {
     AppendA0Switches(command_line);
@@ -189,7 +200,13 @@ void WorkerClient::OnLoadError(CefRefPtr<CefBrowser> /*browser*/,
 
 void WorkerClient::GetViewRect(CefRefPtr<CefBrowser> /*browser*/,
                                CefRect& rect) {
-  rect = CefRect(0, 0, options_->width, options_->height);
+  // 视图实际尺寸：故障注入可用 render_* 偏离 width/height（DoD① 尺寸
+  // 不符帧路径）；缺省与期望一致。
+  const int w = options_->render_width > 0 ? options_->render_width
+                                           : options_->width;
+  const int h = options_->render_height > 0 ? options_->render_height
+                                            : options_->height;
+  rect = CefRect(0, 0, w, h);
 }
 
 void WorkerClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
@@ -199,11 +216,44 @@ void WorkerClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
   if (type != PET_VIEW) {
     return;  // 弹出层不入帧
   }
-  const size_t bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+  const auto* src = static_cast<const uint8_t*>(buffer);
   std::lock_guard<std::mutex> lock(state_->mu);
+
+  if (state_->capture_armed) {
+    // ===== #110 serve 逐请求捕获：尺寸卫兵 → 紧凑拷贝 → 金丝雀核实 =====
+    if (static_cast<uint32_t>(width) != state_->cap_expected_w ||
+        static_cast<uint32_t>(height) != state_->cap_expected_h) {
+      // 尺寸不符帧：拒收不拷贝，记录实际尺寸（DoD①：回执 SIZE_MISMATCH +
+      // 实测 w/h 显形）。
+      state_->cap_size_mismatch = true;
+      state_->cap_actual_w = static_cast<uint32_t>(width);
+      state_->cap_actual_h = static_cast<uint32_t>(height);
+      return;
+    }
+    const uint64_t t0 = NowUs();
+    // 逐行紧凑拷贝：源步长任意（CEF OSR 紧凑缓冲步长 = width*4；对齐/
+    // 外包框缓冲更宽时同一路径逐行收紧行距，杜绝斜纹）。
+    CopyCompactRows(src, static_cast<size_t>(width) * 4u, state_->cap_dst,
+                    static_cast<uint32_t>(width),
+                    static_cast<uint32_t>(height));
+    state_->cap_last_capture_us = NowUs() - t0;
+    int32_t canary = -1;
+    if (DecodeCanaryFrameIndex(state_->cap_dst, static_cast<uint32_t>(width),
+                               static_cast<uint32_t>(height), &canary) &&
+        canary == state_->cap_target_f) {
+      state_->cap_captured = true;  // 金丝雀核实：确系请求帧
+    } else {
+      ++state_->cap_rejected;  // 陈旧/异帧 OnPaint 拒绝计数
+    }
+    state_->paints.store(state_->paints.load(std::memory_order_relaxed) + 1,
+                         std::memory_order_relaxed);
+    return;
+  }
+
+  // ===== #109 一次性渲染路径（行为不变）：全帧缓存 =====
+  const size_t bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
   // buffer 生命周期仅限回调内 —— 立即整帧拷贝（CEF 给的是全视图尺寸，
   // dirtyRects 只是变化区提示）。
-  const auto* src = static_cast<const uint8_t*>(buffer);
   state_->buffer.assign(src, src + bytes);
   state_->width = width;
   state_->height = height;
@@ -231,6 +281,57 @@ bool WorkerClient::OnConsoleMessage(CefRefPtr<CefBrowser> /*browser*/,
     return true;
   }
   return false;
+}
+
+// ---------------------------------------------------------------- #110 共享装配件
+
+CefSettings MakeWorkerSettings(const std::string& root_cache_path) {
+  CefSettings settings;
+  settings.no_sandbox = true;
+  settings.multi_threaded_message_loop = false;
+  settings.external_message_pump = true;
+  settings.windowless_rendering_enabled = true;
+  settings.log_severity = LOGSEVERITY_WARNING;  // 证据可读：保留警告去噪声
+  CefString(&settings.root_cache_path).FromString(root_cache_path);
+  return settings;
+}
+
+bool CreateOsrBrowser(CefRefPtr<CefClient> client, const CefString& url,
+                      int width, int height) {
+  CefWindowInfo window_info;
+  window_info.SetAsWindowless(0);
+  window_info.shared_texture_enabled = false;
+  window_info.external_begin_frame_enabled = true;
+  CefBrowserSettings browser_settings;
+  browser_settings.background_color = 0;  // 透明（gfxA 协议要求 alpha 通道）
+  (void)width;  // OSR 视口由 GetViewRect 提供（client 持有 Options）
+  (void)height;
+  return CefBrowserHost::CreateBrowser(window_info, client, url,
+                                       browser_settings, nullptr, nullptr);
+}
+
+void PumpDriver::Once() {
+  state->pump_scheduled.store(false, std::memory_order_relaxed);
+  CefDoMessageLoopWork();
+}
+
+bool PumpDriver::Until(const std::function<bool()>& done, int timeout_ms) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  int idle = 0;
+  while (!done()) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return false;
+    }
+    if (state->pump_scheduled.load(std::memory_order_relaxed) ||
+        ++idle >= 4) {
+      idle = 0;
+      Once();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Once();
+  return true;
 }
 
 }  // namespace vtx_cef
