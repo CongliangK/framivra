@@ -22,6 +22,25 @@
    与 #109 标量公式逐值一致由 selftest 穷举 (c,a) 全组合保证
    （libspng/fpng 未引入——PNG 仍走 #109 zlib 编码器，K1 帧耗时优化
    属下游工单）。
+   **#111 更新**：已升级为 `src/pixel_ops.{h,cpp}` 正式算子
+   `unpremultiply_bgra_to_rgba`（65,536 项 LUT + AVX2 单遍混合式 +
+   NEON 门控 + 标量兜底，全域穷举零失配）+ libspng/fpng 双编码后端
+   （见下方 #111 偏差项）；模式 1 落盘编码默认 spng(L1, SUB|UP)。
+5. **#111 libspng v0.7.3 编码 fmt**：工单未指定 fmt；v0.7.3 的
+   `spng_encode_image` 仅接受 `SPNG_FMT_PNG`/`SPNG_FMT_RAW`（无
+   `SPNG_FMT_RGBA8` 编码支持）。8-bit RGBA 输入布局与 `SPNG_FMT_PNG`
+   逐字节一致（行内像素字节、无滤波字节），滤波由 `SPNG_FILTER_CHOICE`
+   选项驱动——工单语义（SUB|UP + level 1..3）完整达成。
+6. **#111 `--png-filter` 扩展参数**：工单 CLI 面仅定义
+   `--png-encoder`/`--png-level`；实测 v0.7.3 的 SUB|UP 行滤波选择使
+   编码耗时 3-14×于禁滤波（与工单 DoD「单帧 ≤8ms / 4 线程 ≥300fps」
+   在渐变/噪声类内容上冲突，数字见 README「双 PNG 编码后端」），故增
+   `--png-filter=none|sub|up|sub_up|all`（默认 `sub_up`=工单口径）作为
+   逃生档；协议本身零改动（回执计时字段不变）。
+7. **#111 原子落盘临时名**：工单口径 `.f{:04d}.png.tmp.<pid>.<tid>`
+   （`vtx/fstxn.py` 语义的 C++ 镜像）已按此实现（#110 的裸 `.tmp` 后缀
+   升级）；写者 SIGKILL 崩溃窗口内目标恒完整或不存在，`*.tmp.<pid>.*`
+   残件为可辨识可清扫模式。
 
 ## §1 传输与字节序
 
@@ -116,7 +135,11 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 **模式 1（Worker 原地落盘，首选零 IPC 像素传输）**：
 请求(64B) → 导航(`--url-template` 的 `{f}` 代入) → external begin frame
 驱动 OnPaint（尺寸卫兵→紧凑拷贝→1px 金丝雀核实；陈旧帧拒绝计数）→
-编码线程池：SIMD 逆预乘 → PNG → `.tmp`+`rename` 原子落盘 → 回执(128B)。
+编码线程池：SIMD 逆预乘（pixel_ops）→ PNG（#111 双后端
+`--png-encoder=spng|fpng|zlib` × `--png-level` × `--png-filter`，默认
+spng L1 SUB|UP）→ `.tmp.<pid>.<tid>`+`rename` 原子落盘 → 回执(128B)。
+回执计时字段语义不变：`t_png_encode_us` 为所选后端编码段耗时
+（跨后端对比时注意口径一致）。
 
 **模式 2（SHM 环跨进程传输，为 #68 直通 FFmpeg 预研）**：
 请求(64B) → **先取空槽**（4 槽全满=背压：暂停发起下一帧 BeginFrame，

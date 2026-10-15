@@ -84,26 +84,53 @@ def _vm_rss_kb(pid):
 
 
 def decode_png_rgba(path):
-    """纯解码本仓 png_writer 产物（filter 恒 0），返回 (w, h, rgba bytes)。"""
+    """纯解码本仓 png_writer 产物（#111 起默认 spng 后端行滤波 SUB/UP，
+    故按 PNG 全滤波类型重建；zlib/fpng 后端 filter-0 行为子集），返回
+    (w, h, rgba bytes)。"""
     data = Path(path).read_bytes()
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
-    pos, idat, w, h = 8, b"", 0, 0
+    pos, idat, w, h, bpc, color = 8, b"", 0, 0, 8, 6
     while pos < len(data):
         (length,) = struct.unpack(">I", data[pos:pos + 4])
         tag = data[pos + 4:pos + 8]
         body = data[pos + 8:pos + 8 + length]
         if tag == b"IHDR":
-            w, h = struct.unpack(">II", body[:8])
+            w, h, bpc, color = struct.unpack(">IIBB", body[:10])
         elif tag == b"IDAT":
             idat += body
         pos += 12 + length
     raw = zlib.decompress(idat)
+    assert bpc == 8 and color == 6, "8-bit RGBA 假设"
     stride = w * 4 + 1
     assert len(raw) == stride * h, "IDAT 总量与 IHDR 尺寸不符"
     out = bytearray(w * h * 4)
+    prev = bytearray(w * 4)
     for y in range(h):
-        assert raw[y * stride] == 0, "非 filter-0 行（本测试假设）"
-        out[y * w * 4:(y + 1) * w * 4] = raw[y * stride + 1:(y + 1) * stride]
+        ftype = raw[y * stride]
+        row = bytearray(raw[y * stride + 1:(y + 1) * stride])
+        if ftype == 1:  # Sub
+            for i in range(4, len(row)):
+                row[i] = (row[i] + row[i - 4]) & 255
+        elif ftype == 2:  # Up
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif ftype == 3:  # Average
+            for i in range(len(row)):
+                left = row[i - 4] if i >= 4 else 0
+                row[i] = (row[i] + (left + prev[i]) // 2) & 255
+        elif ftype == 4:  # Paeth
+            for i in range(len(row)):
+                a = row[i - 4] if i >= 4 else 0
+                b = prev[i]
+                c = prev[i - 4] if i >= 4 else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                row[i] = (row[i] + pred) & 255
+        else:
+            assert ftype == 0, f"非法定行滤波类型 {ftype}"
+        out[y * w * 4:(y + 1) * w * 4] = row
+        prev = row
     return w, h, bytes(out)
 
 
