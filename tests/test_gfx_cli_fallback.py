@@ -181,8 +181,10 @@ class GfxCliFallbackTests(unittest.TestCase):
         self.assertIn("1/1 帧失败", msg)
         self.assertIn("零字节", msg)
         self.assertIn("f0000.png", msg)
-        # 零字节产物在盘上也不得被后续当作缓存命中
-        self.assertEqual([(0, "零字节")], verify_frames(self.out, range(1)))
+        # Invalid staging is never published; the subsequent cache probe must
+        # still reject it, now as missing rather than a published zero-byte PNG.
+        self.assertEqual([(0, "缺失")], verify_frames(self.out, range(1)))
+        self.assertFalse((self.out / 'f0000.png').exists())
 
     # ------------------------------------------------------ ④ 非 PNG 内容
     def test_non_png_content_fails(self):

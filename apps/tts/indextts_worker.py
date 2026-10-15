@@ -84,6 +84,20 @@ def main():
     ap.add_argument("--only-missing", action="store_true", help="final 已存在的窗跳过")
     a = ap.parse_args()
 
+    # Check before importing upstream code, reading private assets or making any
+    # project directories: its constructor downloads independently licensed auxiliaries.
+    import importlib.util
+    from pathlib import Path
+    policy_path = Path(__file__).resolve().parents[2] / "scripts" / "model_license_policy.py"
+    policy_spec = importlib.util.spec_from_file_location("framivra_model_license_policy", policy_path)
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
+    try:
+        policy.block_legacy_download("indextts")
+    except policy.LicensePolicyError as error:
+        print("✗ " + str(error), file=sys.stderr)
+        return 4
+
     ckpt = os.path.join(a.repo, "checkpoints")
     cfg_yaml = os.path.join(ckpt, "config.yaml")
     for p in (cfg_yaml, a.voice_ref):
@@ -184,4 +198,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

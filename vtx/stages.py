@@ -11,6 +11,7 @@ from pathlib import Path
 from .hygiene import (audio_key, manifest_record, rotate_history, versions_check,
                      versions_record)
 from .infra import Ctx, run_parallel
+from . import fstxn
 from .pluginlib import hooks as _plugin_hooks
 from .pluginlib import registry as _plugin_registry
 
@@ -304,7 +305,7 @@ def audit(c: Ctx):
                      "tmp_orphans": [str(x) for x in tmp_orphans(c)],
                      "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry`"}
     if not c.dry:   # dry-run 不落 out/ 产物（audit_report 属交付诊断件，2026-09-11 门控）
-        (c.out / "audit_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
+        fstxn.atomic_write(c.out / "audit_report.json", json.dumps(rep, ensure_ascii=False, indent=2))
     warns = sum(1 for x in lines if x["status"] == "warn")
     print(f"审计：{len(lines)} 项指标，{warns} 条建议"
           + ("（dry-run，报告未落盘）" if c.dry else "（详见 out/audit_report.json，建议性不阻断）"))
@@ -333,14 +334,14 @@ def source_audio_extraction(c: Ctx, sid: str):
     p = _plugin_hooks.run_prepare_source(c, sid)
     if p is not None:
         return p, None         # 缝 A：源声明了插件键（如 denoise）→ 插件产物
-    wav.parent.mkdir(parents=True, exist_ok=True)
+    fstxn.mkdir(wav.parent)
     cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(sid)),
            "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]
     return wav, cmd
 
 
 def prepare(c: Ctx):
-    (c.cache / "audio").mkdir(parents=True, exist_ok=True)
+    fstxn.mkdir(c.cache / "audio")
     tasks = []
     for s in c.tl["sources"]:
         # 内容寻址键（2026-09-11 治理升级）：源变了键就变，旧 wav 由 gc 回收；
@@ -648,13 +649,12 @@ def post_loudness_compat(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
         print(f"⚠ 本次将再施加 {gain:+.1f}dB 增益（v1 旧语义：把当前响度推回 target）——"
               "对限幅损耗产物重跑会改变交付响度；v2 正常链路（vtx audio）已内置限幅，"
               "如需调整响度请改 timeline 后重渲")
-    fd, name = tempfile.mkstemp(prefix=".post-audio-", suffix=".wav", dir=source.parent)
-    os.close(fd)
-    candidate = Path(name)
-    try:
+    # ffmpeg 子进程写者：locked_staging 给同目录随机名真实路径（子进程不能
+    # 经 /proc 锚定），成功后原子替换回 source。
+    with fstxn.locked_staging(source) as candidate:
         r = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", str(source), "-af",
                             f"volume={gain:.3f}dB,alimiter=limit=0.599:level=false:latency=true",
-                            "-c:a", "pcm_s16le", "-ar", "48000", str(candidate)],
+                            "-c:a", "pcm_s16le", "-ar", "48000", '-f', 'wav', str(candidate)],
                            capture_output=True, text=True,
                            encoding="utf-8", errors="replace")
         if r.returncode:
@@ -667,10 +667,7 @@ def post_loudness_compat(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
         result = {"input_i": before, "output_i": after, "gain_db": gain, "target": target,
                   "tp_dbfs": round(after_tp, 2) if after_tp is not None else None,
                   "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest()}
-        os.replace(candidate, source)
-        return result
-    finally:
-        candidate.unlink(missing_ok=True)
+    return result
 
 
 def load_timeline_check(timeline_path):
@@ -718,10 +715,10 @@ def mux(c: Ctx):
     try:
         c.run(mux_cmd)
         if not c.dry:   # dry-run 不落产物：不做 replace（tmp 只存在于 [dry-run] 打印）
-            os.replace(tmp, final)
+            fstxn.replace(tmp, final)
     finally:
         if not c.dry:
-            tmp.unlink(missing_ok=True)   # 成功路径 tmp 已被 replace 移走（无操作）；
+            fstxn.unlink(tmp)   # 成功路径 tmp 已被 replace 移走（无操作）；
                                           # 失败路径清理半写 tmp，不留占 out/ 的残件
     if not c.dry:   # dry-run 无产物可记账（versions_record 读 final.mp4，2026-09-11 门控）
         versions_record(c, final, "mux")

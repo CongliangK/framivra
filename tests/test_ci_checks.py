@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -18,33 +19,107 @@ ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
 
 
-class StrictMediaGate(unittest.TestCase):
-    def suite_exit(self, suite):
-        with mock.patch.object(unittest.TestLoader, 'loadTestsFromNames', return_value=suite), \
-                contextlib.redirect_stderr(io.StringIO()):
-            return ci.strict_suite(['fixture'], stream=io.StringIO())
+def tests_of(case):
+    return list(unittest.defaultTestLoader.loadTestsFromTestCase(case))
 
-    def test_success_executes(self):
+
+class StrictMediaGate(unittest.TestCase):
+    def suite_exit(self, by_name, names=('fixture',), runner_spy=None):
+        """by_name maps each selector to the suite discovery must return."""
+        real_load = unittest.TestLoader.loadTestsFromNames
+
+        def fake_load(selected, *args, **kwargs):
+            mocked = [name for name in selected if name in by_name]
+            if len(mocked) != len(selected):
+                return real_load(unittest.defaultTestLoader, selected)
+            return unittest.TestSuite(
+                test for name in selected for test in by_name[name])
+
+        patches = [mock.patch.object(unittest.TestLoader, 'loadTestsFromNames',
+                                     side_effect=fake_load),
+                   contextlib.redirect_stderr(io.StringIO())]
+        if runner_spy is not None:
+            patches.append(mock.patch.object(ci.unittest, 'TextTestRunner',
+                                             side_effect=runner_spy))
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            return ci.strict_suite(list(names), stream=io.StringIO())
+
+    @staticmethod
+    def healthy_suite(ran=None):
         class Case(unittest.TestCase):
             def test_ok(self):
-                pass
-        self.assertEqual(self.suite_exit(unittest.defaultTestLoader.loadTestsFromTestCase(Case)), 0)
+                if ran is not None:
+                    ran.append(True)
+        return tests_of(Case)
+
+    def test_success_executes(self):
+        self.assertEqual(self.suite_exit({'fixture': self.healthy_suite()}), 0)
 
     def test_skip_fails_even_when_unittest_was_successful(self):
         class Case(unittest.TestCase):
             @unittest.skip('tool unavailable')
             def test_skipped(self):
                 pass
-        self.assertEqual(self.suite_exit(unittest.defaultTestLoader.loadTestsFromTestCase(Case)), 1)
+        self.assertEqual(self.suite_exit({'fixture': tests_of(Case)}), 1)
 
     def test_empty_suite_fails(self):
-        self.assertEqual(self.suite_exit(unittest.TestSuite()), 1)
+        self.assertEqual(self.suite_exit({'fixture': []}), 1)
 
     def test_test_error_fails(self):
         class Case(unittest.TestCase):
             def test_broken(self):
                 raise RuntimeError('intentional')
-        self.assertEqual(self.suite_exit(unittest.defaultTestLoader.loadTestsFromTestCase(Case)), 1)
+        self.assertEqual(self.suite_exit({'fixture': tests_of(Case)}), 1)
+
+    def test_empty_selector_alongside_healthy_is_refused_either_order(self):
+        for names in (['empty', 'healthy'], ['healthy', 'empty']):
+            ran = []
+            by_name = {'empty': [], 'healthy': self.healthy_suite(ran)}
+            spy = mock.Mock()
+            with self.subTest(order=names):
+                self.assertEqual(
+                    self.suite_exit(by_name, names=names, runner_spy=spy), 1)
+                # Refusal happens before the runner: no remaining body runs.
+                self.assertEqual(ran, [])
+                spy.assert_not_called()
+
+    def test_empty_selector_message_names_the_selector(self):
+        stderr = io.StringIO()
+        with mock.patch.object(unittest.TestLoader, 'loadTestsFromNames',
+                               return_value=unittest.TestSuite()), \
+                contextlib.redirect_stderr(stderr):
+            code = ci.strict_suite(['tests.test_missing.Selector'],
+                                   stream=io.StringIO())
+        self.assertEqual(code, 1)
+        self.assertIn('tests.test_missing.Selector', stderr.getvalue())
+
+    def test_real_range_class_emptied_in_memory_is_refused_with_healthy(self):
+        sys.path.insert(0, str(ROOT))
+        import tests.test_range_render as range_tests
+        target = range_tests.TestRangeIntegration
+        original = target.__dict__['test_range_render']
+        healthy = self.healthy_suite()
+        delattr(target, 'test_range_render')
+        try:
+            for names in (['tests.test_range_render.TestRangeIntegration',
+                           'fixture'],
+                          ['fixture',
+                           'tests.test_range_render.TestRangeIntegration']):
+                with self.subTest(order=names):
+                    self.assertEqual(
+                        self.suite_exit({'fixture': healthy}, names=names), 1)
+        finally:
+            setattr(target, 'test_range_render', original)
+
+    def test_multiple_healthy_selectors_pass(self):
+        class Second(unittest.TestCase):
+            def test_other(self):
+                pass
+        by_name = {'first': self.healthy_suite(),
+                   'second': tests_of(Second)}
+        self.assertEqual(self.suite_exit(by_name, names=('first', 'second')), 0)
 
     def test_missing_executable_is_not_a_skip(self):
         with mock.patch.object(ci.shutil, 'which', return_value=None):

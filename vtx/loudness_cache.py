@@ -34,11 +34,7 @@ import hashlib, json, os, threading, time
 from pathlib import Path
 
 from .cache_state import media_stat_digest
-
-try:
-    import fcntl    # POSIX 跨进程文件锁；Windows 缺该模块（降级见模块头注释）
-except ImportError:   # pragma: no cover - Windows 主战场外的降级路径
-    fcntl = None
+from . import fstxn
 
 _LOCK = threading.Lock()
 
@@ -71,42 +67,20 @@ def _load(rp: Path) -> dict:
         return {"entries": {}}
 
 
-def _flock_path(rp: Path) -> Path:
-    """跨进程锁文件路径（随回执目录存在，见模块头注释）。"""
-    return rp.parent / (rp.name + ".lock")
-
-
 def _write_entry_locked(rp: Path, key: str, entry: dict):
     """跨进程互斥的读-改-写（方案三阶段3）：threading.Lock 管进程内并发（同进程
     qc 与 gates 不会并存，此锁防的是未来进程内多线程消费），flock 管跨进程——
     qc 与 content_gates 两进程同时归档时，无 flock 则后写者基于旧快照回写会丢
     对方的笔。锁获取-写-释放全在 with 块内；flock 随 fd 关闭自动释放，异常路径
     也不残留锁态。落盘失败（OSError）不影响测量主流程（下次重测而已）。"""
-    with _LOCK:
-        if fcntl is not None:
-            rp.parent.mkdir(parents=True, exist_ok=True)   # 锁文件须目录先在
-            with open(_flock_path(rp), "a+b") as lf:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-                try:
-                    _store(rp, key, entry)
-                finally:
-                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
-        else:
-            _store(rp, key, entry)
-
-
-def _store(rp: Path, key: str, entry: dict):
-    """无锁回执写入（调用方 _write_entry_locked 已持锁）：读-改-写 + tmp+replace。"""
-    data = _load(rp)
-    data["entries"][key] = entry
+    def mutate(data):
+        data['entries'][key] = entry
+        return data
     try:
-        rp.parent.mkdir(parents=True, exist_ok=True)
-        tmp = rp.parent / (rp.name + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1),
-                       encoding="utf-8")
-        os.replace(tmp, rp)
+        fstxn.locked_update(rp, mutate, load=_load,
+                            dump=lambda data: json.dumps(data, ensure_ascii=False, indent=1))
     except OSError:
-        pass   # 回执落盘失败不影响测量主流程（下次重测而已）
+        pass  # Ordinary storage failures remain advisory; safety errors propagate.
 
 
 def lookup(path, root=None):

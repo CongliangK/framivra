@@ -100,9 +100,13 @@ class LockedWriteBasics(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "state.json"
             with fstxn.locked_write(p) as tmp:
-                self.assertEqual(tmp.parent, p.parent)
-                self.assertTrue(tmp.name.startswith(".state.json."))
-                self.assertTrue(tmp.name.endswith(".tmp"))
+                # The public handle pins the already-open inode, not a path
+                # that an attacker could exchange before its second open.
+                actual = tmp.resolve()
+                self.assertEqual(actual.parent, p.parent)
+                self.assertTrue(actual.name.startswith(".state.json."))
+                self.assertTrue(actual.name.endswith(".tmp"))
+                self.assertEqual(tmp.stat().st_ino, actual.stat().st_ino)
                 tmp.write_text('{"v": 1}', encoding="utf-8")
             self.assertEqual(json.loads(p.read_text(encoding="utf-8")), {"v": 1})
             with fstxn.locked_write(p) as tmp:

@@ -16,6 +16,8 @@ ffprobe 段文件帧数占 8.7s（83%）。ffprobe 结论在同一 (路径, mtim
 - 只缓存「ffprobe 成功返回的 nb_frames 整数」，失败/异常结果不入缓存（下次重试）。
 """
 import json, subprocess, threading
+from . import fstxn
+from .infra import ProjectPathError
 
 _CACHE_LOCK = threading.Lock()
 _MEM = {}          # (path, mtime_ns, size) -> int(nb_frames)
@@ -36,10 +38,9 @@ def _load_disk(disk):
 
 def _save_disk(disk, d):
     try:
-        disk.parent.mkdir(parents=True, exist_ok=True)
-        tmp = disk.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-        tmp.replace(disk)
+        fstxn.atomic_write(disk, json.dumps(d, ensure_ascii=False, sort_keys=True))
+    except ProjectPathError:
+        raise
     except Exception:
         pass   # 缓存落盘失败绝不影响渲染主流程（下次冷查而已）
 
