@@ -183,12 +183,16 @@ class Evidence(unittest.TestCase):
 
     def test_hardlink_and_symlink_aliases(self):
         p = self.root / 'candidate/f0001.png'
-        p.unlink()
-        p.hardlink_to(self.root / 'baseline/f0001.png')
-        self.reject()
-        p.unlink()
-        p.symlink_to(self.root / 'baseline/f0001.png')
-        self.reject()
+        original = p.read_bytes()
+        for link in (os.link, os.symlink):
+            with self.subTest(link=link.__name__):
+                try:
+                    p.unlink()
+                    link(self.root / 'baseline/f0001.png', p)
+                    self.assertIn('aliases baseline frame', self.reject()['errors'][0])
+                finally:
+                    p.unlink(missing_ok=True)
+                    p.write_bytes(original)
 
     def backend_change(self):
         self.plan['arms']['candidate']['effective_backend'] = 'swiftshader'
@@ -278,13 +282,19 @@ class Evidence(unittest.TestCase):
         self.assertIn('version evidence mismatch', self.reject()['errors'][0])
 
     def test_cross_frame_baseline_aliases_rejected(self):
-        for link in ('hardlink_to', 'symlink_to'):
-            with self.subTest(link=link):
-                for i in range(4):
-                    p = self.root / f'candidate/f{i:04d}.png'
-                    p.unlink()
-                    getattr(p, link)(self.root / f'baseline/f{(i+1)%4:04d}.png')
-                self.reject()
+        originals = {self.root / f'candidate/f{i:04d}.png':
+                     (self.root / f'candidate/f{i:04d}.png').read_bytes() for i in range(4)}
+        for link in (os.link, os.symlink):
+            with self.subTest(link=link.__name__):
+                try:
+                    for i, p in enumerate(originals):
+                        p.unlink()
+                        link(self.root / f'baseline/f{(i+1)%4:04d}.png', p)
+                    self.assertIn('aliases baseline frame set', self.reject()['errors'][0])
+                finally:
+                    for p, data in originals.items():
+                        p.unlink(missing_ok=True)
+                        p.write_bytes(data)
 
     def test_claimed_gpu_with_software_observations_rejected(self):
         self.plan['variable_axes'] = ['effective_backend']
@@ -400,16 +410,45 @@ class Evidence(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(gg.main(argv), 0)
                 ri = self.runs[side]['instances'][0]
-                original = ri['frame_dir']
-                ri['frame_dir'] = str(loop)
-                argv = self._strict_cli_files()
-                with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(gg.main(argv), 1)
-                report = json.loads((self.root / 'report.json').read_text())
-                self.assertFalse(report['ok'])
-                self.assertTrue(report['report_written'])
-                self.assertIn('cannot resolve evidence path', report['errors'][0])
-                ri['frame_dir'] = original
+                with mock.patch.dict(ri, frame_dir=str(loop)):
+                    argv = self._strict_cli_files()
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(gg.main(argv), 1)
+                    report = json.loads((self.root / 'report.json').read_text())
+                    self.assertFalse(report['ok'])
+                    self.assertTrue(report['report_written'])
+                    self.assertIn('cannot resolve evidence path', report['errors'][0])
+        self.assertTrue(self.check()['ok'])
+
+    def test_missing_frame_roots_fail_closed(self):
+        missing = self.root / 'missing'
+        broken = self.root / 'broken'
+        broken.symlink_to(missing)
+        for side in ('baseline', 'candidate'):
+            for path in (missing, broken):
+                with self.subTest(side=side, path=path.name):
+                    with mock.patch.dict(self.runs[side]['instances'][0], frame_dir=str(path)):
+                        report = self.reject()
+                        self.assertIn('cannot resolve evidence path', report['errors'][0])
+                        self.assertFalse(report['same_version_causal'])
+        self.assertTrue(self.check()['ok'])
+
+    def test_valid_symlink_frame_roots_pass(self):
+        for side in ('baseline', 'candidate'):
+            link = self.root / (side + '-link')
+            link.symlink_to(self.root / side, target_is_directory=True)
+            self.runs[side]['instances'][0]['frame_dir'] = str(link)
+        self.assertTrue(self.check()['ok'])
+
+    def test_new_report_parent_and_leaf_are_created(self):
+        argv = self._strict_cli_files()
+        report_path = self.root / 'new' / 'reports' / 'report.json'
+        argv[argv.index('--report') + 1] = str(report_path)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gg.main(argv), 0)
+        report = json.loads(report_path.read_text())
+        self.assertTrue(report['ok'])
+        self.assertTrue(report['report_written'])
 
     def test_looping_timeline_replaces_prior_success(self):
         argv = self._strict_cli_files()

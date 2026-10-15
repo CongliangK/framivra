@@ -23,9 +23,11 @@ def digest(value):
 
 
 def resolve_evidence_path(path):
-    """Normalize path-specific resolve failures without hiding arbitrary RuntimeError."""
+    """Resolve required inputs, normalizing path-specific failures across Python versions."""
     try:
-        return Path(path).resolve()
+        # Inputs must already exist. Non-strict resolution silently accepts symlink
+        # loops on Python 3.13+, unlike earlier versions. Output paths use atomic_write.
+        return Path(path).resolve(strict=True)
     except (OSError, RuntimeError) as error:
         raise ValueError(f"cannot resolve evidence path {path}: {error}") from error
 
