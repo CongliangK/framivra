@@ -1,0 +1,165 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- S3 · 光栅/合成极限基准页 · gfx 基准套件 issue #106（冻结于 suite_manifest.json v1.0.0）
+     基于 chart_curve.html（skills/tech-talk/assets/gfx-templates/）新构：保留「标题逐字 +
+     曲线按讲述节奏生长 + 曲线头读数 + 右下小表」骨架，叠加三类合成极限负载——
+       ① backdrop-filter: blur(80px) 毛玻璃面板 ×2（在渐变斑之上缓慢漂移，每帧重采样）；
+       ② 多层大半径径向渐变：3 层 wash 渐变底 + 2 枚 blur(140px) 千像素级渐变斑
+          （复刻曾令 foreignObject 快照通道 max|Δ|=61 判死的径向渐变 dithering 杀手形态，
+          见 docs/DEV.md「foreignObject 快照批量导出通道判死」节，本 checkout L95-97）；
+       ③ drop-shadow() 滤镜：标题组与曲线组随呼吸连续变参（半径/偏移随 sin(t) 变化）。
+     协议：1920x1080、30fps、N=300（10s）；动画状态 = f 的纯函数（?f= 查询参数）；
+     禁 CSS 动画属性 / 墙钟取态 / 非 seeded 随机 / rAF 时序（skill/references/gfx.md）。
+     刻意不声明 __vtx_static_spans / __vtx_export_png / __vtx_render（不绕过被测截图路径）。
+     D22 配色纪律：白底 + 近黑字 + 卡其/琥珀点缀，零蓝紫渐变。 -->
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC","Noto Sans SC",sans-serif;overflow:hidden}
+#stage{position:absolute;inset:0}
+#bg{position:absolute;inset:0;background:#ffffff}          /* gfx-full 无下层：瞬显无淡入 */
+/* ②-1 三层大半径径向渐变 wash（静态叠层，随内容动势每帧参与合成） */
+#wash{position:absolute;inset:0;background:
+  radial-gradient(1200px 900px at 22% 30%, rgba(200,162,74,.16), transparent 62%),
+  radial-gradient(1500px 1100px at 78% 68%, rgba(217,119,6,.12), transparent 65%),
+  radial-gradient(1000px 800px at 55% 12%, rgba(245,158,11,.08), transparent 60%)}
+/* ②-2 两枚千像素级径向渐变斑 + blur(140px)（JS 随 t 漂移） */
+.blob{position:absolute;border-radius:50%;filter:blur(140px)}
+#b1{width:1250px;height:1250px;background:radial-gradient(circle,#c8a24a 0%,transparent 66%);opacity:.34}
+#b2{width:1400px;height:1400px;background:radial-gradient(circle,#d97706 0%,transparent 64%);opacity:.26}
+/* ① backdrop-filter: blur(80px) 毛玻璃面板 ×2（JS 随 t 漂移，压在渐变斑上） */
+.glass{position:absolute;border-radius:20px;
+  background:rgba(255,253,250,.52);border:1.5px solid rgba(180,83,9,.18);
+  backdrop-filter:blur(80px);-webkit-backdrop-filter:blur(80px)}
+#g1{left:118px;top:262px;width:520px;height:300px;
+  box-shadow:0 16px 46px rgba(26,26,26,.10)}
+#g2{left:1210px;top:236px;width:560px;height:270px;
+  box-shadow:0 16px 46px rgba(26,26,26,.10)}
+#titlewrap{position:absolute;top:64px;left:0;width:100%;text-align:center;overflow:hidden;padding:0 40px}
+#title{font-size:54px;font-weight:800;letter-spacing:5px;display:inline-block;white-space:nowrap}
+#title .ch{display:inline-block;opacity:0;color:#1a1a1a}
+#sub{position:absolute;top:138px;width:100%;text-align:center;color:#6b7280;
+  font-size:20px;letter-spacing:8px;opacity:0;white-space:nowrap}
+#g1 .cap,#g2 .cap{position:absolute;left:26px;top:22px;font-size:20px;font-weight:800;
+  color:#b45309;letter-spacing:3px}
+#g1 .big,#g2 .big{position:absolute;left:26px;bottom:22px;font-size:58px;font-weight:800;color:#1a1a1a}
+#g1 .sm,#g2 .sm{position:absolute;right:26px;bottom:30px;font-size:19px;color:#6b7280;letter-spacing:2px}
+#plot{position:absolute;left:0;top:0}
+#headval{position:absolute;transform:translate(-50%,-100%);font-size:24px;font-weight:800;color:#1a1a1a;
+  background:rgba(255,253,250,.92);border:1.5px solid rgba(217,119,6,.65);border-radius:10px;
+  padding:6px 16px;white-space:nowrap;opacity:0;text-align:center;
+  box-shadow:0 6px 18px rgba(26,26,26,.10)}
+#tbl{position:absolute;left:1566px;top:884px;width:312px;border-radius:14px;opacity:0;
+  background:#ffffff;border:1.5px solid #a8a29e;
+  box-shadow:0 8px 26px rgba(26,26,26,.10);padding:16px 22px}
+#tbl .th{font-size:17px;font-weight:800;color:#6b7280;letter-spacing:4px;margin-bottom:8px}
+#tbl .tr{display:flex;justify-content:space-between;align-items:baseline;height:38px}
+#tbl .tl{font-size:21px;font-weight:600;color:#3f3f46}
+#tbl .tv{font-size:25px;font-weight:800;color:#b45309}
+</style></head><body>
+<div id="stage">
+  <div id="bg"></div>
+  <div id="wash"></div>
+  <div class="blob" id="b1"></div><div class="blob" id="b2"></div>
+  <svg id="plot" width="1920" height="1080"></svg>
+  <div class="glass" id="g1"><div class="cap">合成层 A · BLUR 80PX</div><div class="big" id="g1v">0.0</div><div class="sm">GB/S</div></div>
+  <div class="glass" id="g2"><div class="cap">合成层 B · BLUR 80PX</div><div class="big" id="g2v">0.0</div><div class="sm">MS/FRAME</div></div>
+  <div id="titlewrap"><div id="title"></div></div>
+  <div id="sub"></div>
+  <div id="headval"></div>
+  <div id="tbl"><div class="th">实测</div><div id="tblrows"></div></div>
+</div>
+<script>
+/* ===== 帧驱动协议（30fps；同 f 同像素） ===== */
+const FPS = 30, N = 300;                                  /* 冻结：300 帧（10s） */
+const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
+const t = Math.min(f / FPS, N / FPS);
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const seg = (t, a, b) => clamp01((t - a) / (b - a));
+const eoc = x => 1 - Math.pow(1 - x, 3);
+const eoe = x => x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+document.body.style.opacity = 1;                          /* gfx-full：全局 opacity 恒 1，交界硬切 */
+
+/* —— 渐变斑漂移（大半径 + blur(140px)：每帧整斑重光栅） —— */
+document.getElementById("b1").style.transform =
+  `translate(${340 + Math.sin(t * .21) * 150}px, ${-260 + Math.cos(t * .17) * 110}px)`;
+document.getElementById("b2").style.transform =
+  `translate(${430 + Math.cos(t * .16) * 170}px, ${180 + Math.sin(t * .24) * 90}px)`;
+
+/* —— 标题逐字（chart_curve 骨架；drop-shadow() 呼吸半径随 t 连续变参） —— */
+const TXT = "S3 · 光栅合成极限";
+const titleEl = document.getElementById("title");
+[...TXT].forEach((c, i) => {
+  const s = document.createElement("span"); s.className = "ch"; s.textContent = c;
+  const p = eoc(seg(t, .12 + i * .05, .85 + i * .05));
+  s.style.opacity = p; s.style.transform = `translateY(${(1 - p) * 110}%)`;
+  titleEl.appendChild(s);
+});
+const breathe = .5 + .5 * Math.sin(t * 2.0);              /* 呼吸周期 ≈3.1s（2-4s 带内） */
+titleEl.style.filter =
+  `drop-shadow(0 ${(6 + 6 * breathe).toFixed(2)}px ${(14 + 10 * breathe).toFixed(2)}px rgba(180,83,9,.30))`;
+document.getElementById("sub").textContent = "HEAVY BLUR · RADIAL GRADIENTS · DROP-SHADOW";
+document.getElementById("sub").style.opacity = eoc(seg(t, .85, 1.45));
+
+/* —— 毛玻璃面板漂移（backdrop-filter: blur(80px) 对渐变斑每帧重采样） —— */
+const g1 = document.getElementById("g1"), g2 = document.getElementById("g2");
+g1.style.transform = `translate(${Math.sin(t * .30) * 26}px, ${Math.cos(t * .23) * 18}px)`;
+g2.style.transform = `translate(${Math.cos(t * .27) * 30}px, ${Math.sin(t * .31) * 16}px)`;
+document.getElementById("g1v").textContent = (7.5 * eoe(seg(t, 1.2, 6.5))).toFixed(1);
+document.getElementById("g2v").textContent = (214 - 96 * eoe(seg(t, 1.6, 7.2))).toFixed(1);
+
+/* —— 曲线（KV 分段线性 + 讲述节拍 TP，chart_curve 机制；drop-shadow 随呼吸） —— */
+const KV = [[0,0],[.04,.5],[.16,3.6],[.38,3.6],[.46,1.8],[.62,1.8],[.70,.4],[.82,.4],[.86,4.4],[.97,4.4]];
+const TP = [[1.4,0],[2.6,.16],[3.0,.16],[4.6,.38],[5.0,.38],[6.4,.62],[6.8,.62],[7.6,.82],[8.0,.82],[8.4,.97],[999,.97]];
+function vAt(x){for(let i=0;i<KV.length-1;i++){const[a,va]=KV[i],[b,vb]=KV[i+1];
+  if(x<=b)return vb===va?va:va+(vb-va)*((x-a)/(b-a));}return KV[KV.length-1][1];}
+function xAt(tt){if(tt<=TP[0][0])return TP[0][1];
+  for(let i=0;i<TP.length-1;i++){const[ta,xa]=TP[i],[tb,xb]=TP[i+1];
+    if(tt<tb)return xa+(xb-xa)*((tt-ta)/(tb-ta));}return TP[TP.length-1][1];}
+const PL = {x0:210,x1:1730,y0:330,y1:860}, VMAX = 5;
+const X = v => PL.x0 + (PL.x1 - PL.x0) * v, Y = v => PL.y1 - (PL.y1 - PL.y0) * (v / VMAX);
+const svg = document.getElementById("plot"), NS = "http://www.w3.org/2000/svg";
+const el = (n, a) => { const e = document.createElementNS(NS, n);
+  for (const k in a) e.setAttribute(k, a[k]); svg.appendChild(e); return e; };
+for (let g = 1; g <= VMAX; g++)
+  el("line", {x1:PL.x0, y1:Y(g), x2:PL.x1, y2:Y(g), stroke:"rgba(107,114,128,.25)",
+              "stroke-width":1, "stroke-dasharray":"2 10"});
+el("line", {x1:PL.x0, y1:PL.y1, x2:PL.x1, y2:PL.y1, stroke:"#1a1a1a", "stroke-width":2.5});
+el("line", {x1:PL.x0, y1:PL.y1, x2:PL.x0, y2:PL.y0, stroke:"#1a1a1a", "stroke-width":2.5});
+const gA = eoc(seg(t, .7, 1.5));
+svg.querySelectorAll("line").forEach(l => l.style.opacity = gA);
+const hx = xAt(t), XEND = .97;
+const area = el("polygon", {fill:"rgba(217,119,6,.07)"});
+const line = el("polyline", {fill:"none", stroke:"#d97706", "stroke-width":6,
+  "stroke-linejoin":"round", "stroke-linecap":"round"});
+const SAMPLES = 360;
+{
+  let sp = "", sa = "";
+  const n = Math.floor(SAMPLES * Math.min(hx, XEND) / XEND);
+  for (let i = 0; i <= n; i++) {
+    const x = (i / SAMPLES) * XEND, px = X(x), py = Y(vAt(x));
+    sp += px + "," + py + " "; if (i === 0) sa += px + "," + PL.y1 + " "; sa += px + "," + py + " ";
+  }
+  if (n >= 0) sa += X((n / SAMPLES) * XEND) + "," + PL.y1;
+  line.setAttribute("points", sp); area.setAttribute("points", sa);
+}
+/* 曲线组 drop-shadow（半径/偏移随呼吸连续变参——每帧重算整组滤镜） */
+svg.style.filter =
+  `drop-shadow(0 ${(5 + 5 * breathe).toFixed(2)}px ${(10 + 9 * breathe).toFixed(2)}px rgba(217,119,6,.32))`;
+const headX = X(Math.min(hx, XEND)), headV = vAt(Math.min(hx, XEND)), headY = Y(headV);
+el("circle", {cx:headX, cy:headY, r:8, fill:"#d97706", stroke:"#ffffff", "stroke-width":2.5});
+const hv = document.getElementById("headval");
+hv.style.opacity = clamp01(seg(t, 1.8, 2.2));
+hv.style.left = headX + "px"; hv.style.top = (headY - 26) + "px";
+hv.textContent = headV.toFixed(1) + " GB";
+
+/* —— 右下实测小表（收尾入场） —— */
+const ROWS = [["重光栅层", "2+1"], ["毛玻璃面板", "×2"], ["drop-shadow 组", "×2"]];
+ROWS.forEach(r => {
+  const d = document.createElement("div"); d.className = "tr";
+  d.innerHTML = `<span class="tl">${r[0]}</span><span class="tv">${r[1]}</span>`;
+  document.getElementById("tblrows").appendChild(d);
+});
+const tbl = document.getElementById("tbl");
+tbl.style.opacity = clamp01(seg(t, 8.6, 9.0));
+tbl.style.transform = `translateY(${(1 - eoc(seg(t, 8.6, 9.4))) * 18}px)`;
+</script></body></html>
