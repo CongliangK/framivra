@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<!-- frame_canary.html —— #110 CEF-02a 帧服务模式专用金丝雀页（serve 模式
+     --url-template 指向本页）。纪律沿用 gfx 协议：全部状态 = f 的纯函数，
+     禁 CSS animation/transition、Date.now、Math.random、rAF 时序。
+     约定（src/frame_pipeline.cpp:DecodeCanaryFrameIndex）：
+       像素 (0,0) 不透明，RGBA 直通 R=0x43('C')，G=f&0xFF，B=(f>>8)&0xFF；
+     OnPaint BGRA 预乘面（不透明像素预乘==直通）解码核实帧号。
+     画面内容按 f 起条纹渐变 + 变宽横条 + 帧号大字：行/列均有丰富变化，
+     行步长错位（斜纹）与陈旧帧（内容不同）均可被逐字节比对发现。 -->
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden;
+               background: #241a12;
+               font-family: "Noto Sans CJK SC", sans-serif; }
+  #stripes { position: fixed; left: 0; top: 0; right: 0; bottom: 0; }
+  #canary { position: fixed; left: 0; top: 0; width: 1px; height: 1px;
+            z-index: 99; }
+  #bar { position: fixed; left: 120px; top: 120px; height: 40px;
+         background: #f5efe6; border-radius: 6px; }
+  #label { position: fixed; left: 118px; top: 200px; font-size: 64px;
+           font-weight: 700; color: #ffffff; text-shadow: 0 3px 12px #000; }
+</style>
+</head>
+<body>
+<div id="stripes"></div>
+<div id="bar"></div>
+<div id="label"></div>
+<div id="canary"></div>
+<script>
+const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
+// 金丝雀像素：(0,0) = rgb(67, f&255, f>>8&255)（不透明 → 预乘==直通）
+document.getElementById("canary").style.background =
+    "rgb(67," + (f & 255) + "," + ((f >> 8) & 255) + ")";
+// f 驱动的水平条纹（行间丰富变化：步长错位→斜纹可检）
+const h1 = (f * 7) % 360, h2 = (f * 13 + 180) % 360;
+document.getElementById("stripes").style.background =
+    "repeating-linear-gradient(0deg, hsl(" + h1 + ",80%,55%) 0px, hsl(" + h1 +
+    ",80%,55%) 12px, hsl(" + h2 + ",70%,35%) 12px, hsl(" + h2 +
+    ",70%,35%) 24px)";
+// f 驱动的变宽横条 + 帧号大字（陈旧帧→内容差异可检）
+document.getElementById("bar").style.width = (40 + (f % 400)) + "px";
+document.getElementById("label").textContent = "f=" + f;
+</script>
+</body>
+</html>

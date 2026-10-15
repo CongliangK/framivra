@@ -1,0 +1,158 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- S6 · 时序对抗基准页 · gfx 基准套件 issue #106（冻结于 suite_manifest.json v1.0.0）
+     分段（冻结，帧号左闭右开）：
+       PHASE A [0,120)   正常逐帧动画；
+       PHASE B [120,240) 连续 120 帧画面 100% 静止（视觉时钟冻结于 t=4.00s，
+                         本页【刻意不声明 __vtx_static_spans】——渲染器必须逐帧
+                         走完整导航+截图，测 Dirty-Rect 合成器短路是否卡死 Worker）；
+       PHASE C [240,300) 每逢 f ≡ 0 (mod 10) 注入 55ms 延迟（见下），
+                         诱发 CEF #4166 提前读取未完成帧与 Electron 旧帧抢跑；
+       PHASE D [300,600) 恢复段：issue 表格未指定（总帧数 600 的补齐段，冻结决策：
+                         恢复正常逐帧动画，用于测对抗注入后的恢复行为）。
+     延迟注入（仅 PHASE C 且 f%10==0，对 ?f= 加载路径与 __vtx_render(f) 一致生效）：
+       默认 sync：状态先落定，再同步 CPU 忙等 55ms——调用耗时 ≥55ms，截图得到完成帧
+                 （黄金确定态；冒烟/幂等按此口径）；
+       ?delay=async：状态经 55ms 宏任务延迟后落定（上一帧视觉暂留 55ms）——
+                 刻意的「未完成帧」诱饵，供 #115/#117 生死线压测消费；
+                 该模式【非】像素确定态，禁止用于 golden/幂等比对。
+     performance.now() 例外声明：仅用于同步忙等的时长计量，不参与任何动画状态——
+     动画状态仍是 f 的纯函数（帧驱动铁律，skill/references/gfx.md）。
+     协议：1920x1080、30fps、N=600（20s）、不透明整幅白底（引擎单截直写路径，
+     保证 B 段 120 帧逐字节全等）；禁 CSS 动画属性 / 墙钟取态 / 非 seeded 随机 / rAF。
+     window.__vtx_render(f) 已实现（同步纯函数契约，vtx/gfx_render.py 模块头）。 -->
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;
+  font-family:"Noto Sans CJK SC","Noto Sans SC",sans-serif;overflow:hidden}
+#bg{position:absolute;inset:0;background:#ffffff}         /* gfx-full 无下层：不透明白底 */
+#tag{position:absolute;top:36px;left:60px;padding:8px 22px;border:1px solid rgba(180,83,9,.45);
+  border-radius:999px;color:#b45309;font-size:22px;letter-spacing:4px;font-weight:600}
+#title{position:absolute;top:92px;left:0;width:100%;text-align:center;font-size:56px;
+  font-weight:800;letter-spacing:5px;color:#1a1a1a;white-space:nowrap}
+#phase{position:absolute;top:186px;left:0;width:100%;text-align:center;font-size:34px;
+  font-weight:800;letter-spacing:10px;color:#b45309;white-space:nowrap}
+#clock{position:absolute;top:400px;left:0;width:100%;text-align:center;
+  font-size:150px;font-weight:800;color:#1a1a1a;font-variant-numeric:tabular-nums;
+  letter-spacing:4px}
+#clock .u{font-size:56px;color:#6b7280;font-weight:600;margin-left:18px}
+#rotor{position:absolute;left:50%;top:772px;width:120px;height:120px;margin-left:-60px;
+  border-radius:22px;background:linear-gradient(135deg,#c8a24a,#d97706)}
+#orbit{position:absolute;left:50%;top:772px;width:22px;height:22px;border-radius:50%;
+  background:#1a1a1a}
+#prog{position:absolute;left:510px;bottom:150px;height:10px;width:900px;border-radius:5px;
+  background:rgba(26,26,26,.10);overflow:hidden}
+#prog .fill{position:absolute;inset:0;transform-origin:left;transform:scaleX(0);
+  background:linear-gradient(90deg,#c8a24a,#d97706)}
+#map{position:absolute;left:510px;bottom:96px;width:900px;height:34px;
+  display:flex;gap:8px}
+#map .blk{border-radius:8px;background:rgba(26,26,26,.08);
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;font-weight:700;color:#6b7280;letter-spacing:2px}
+#map .on{background:#b45309;color:#ffffff}
+#mode{position:absolute;right:64px;bottom:34px;font-size:22px;font-weight:700;
+  color:#9ca3af;letter-spacing:2px;text-align:right;font-variant-numeric:tabular-nums}
+</style></head><body>
+<div id="bg"></div>
+<div id="tag">S6 · 时序对抗</div>
+<div id="title">TIMING ADVERSARIAL · 600F</div>
+<div id="phase">PHASE A · 正常逐帧</div>
+<div id="clock">4.00<span class="u">s</span></div>
+<div id="rotor"></div><div id="orbit"></div>
+<div id="prog"><div class="fill" id="fill"></div></div>
+<div id="map">
+  <div class="blk" style="flex:120">A</div>
+  <div class="blk" style="flex:120">B</div>
+  <div class="blk" style="flex:60">C</div>
+  <div class="blk" style="flex:300">D</div>
+</div>
+<div id="mode">DELAY sync · 注入 0/6</div>
+<script>
+"use strict";
+/* ===== 帧驱动协议（30fps；同 f 同像素） ===== */
+const FPS = 30, N = 600;                                  /* 冻结：600 帧（20s） */
+const DELAY_MS = 55;                                      /* 冻结：55ms */
+const SEG_A = [0, 120], SEG_B = [120, 240], SEG_C = [240, 300], SEG_D = [300, 600];
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const seg = (t, a, b) => clamp01((t - a) / (b - a));
+const eoc = x => 1 - Math.pow(1 - x, 3);
+
+/* 延迟模式：默认 sync；?delay=async 为压测专用非确定态（见页首注记） */
+const DELAY_MODE =
+  (new URLSearchParams(location.search).get("delay") === "async") ? "async" : "sync";
+
+/* —— 状态机：全部视觉状态 = f 的纯函数（B 段冻结视觉时钟 → 120 帧逐字节全等） —— */
+function effT(f){
+  if (f < SEG_B[0]) return f / FPS;                       /* A：正常推进 */
+  if (f < SEG_B[1]) return SEG_B[0] / FPS;                /* B：冻结于 4.00s */
+  return f / FPS;                                         /* C/D：解冻续推（4.00→8.00 跳切） */
+}
+function phaseId(f){
+  return f < 120 ? "A" : f < 240 ? "B" : f < 300 ? "C" : "D";
+}
+const PHASE_TEXT = {
+  A: "PHASE A · 正常逐帧",
+  B: "PHASE B · 静止 120F（未声明跨度）",
+  C: "PHASE C · 每 10 帧注入 55MS",
+  D: "PHASE D · 恢复逐帧",
+};
+function applyState(f){
+  const t = effT(f), ph = phaseId(f);
+  document.getElementById("phase").textContent = PHASE_TEXT[ph];
+  document.getElementById("clock").innerHTML =
+    t.toFixed(2) + '<span class="u">s</span>';
+  document.getElementById("rotor").style.transform = `rotate(${(t * 46).toFixed(2)}deg)`;
+  const oa = t * 1.35;
+  document.getElementById("orbit").style.transform =
+    `translate(${(300 * Math.cos(oa)).toFixed(2)}px, ${(96 + 62 * Math.sin(oa * 1.7)).toFixed(2)}px)`;
+  document.getElementById("fill").style.transform = `scaleX(${(t / (N / FPS)).toFixed(4)})`;
+  const blks = document.querySelectorAll("#map .blk");
+  blks.forEach((b, i) => {
+    const on = ["A", "B", "C", "D"][i] === ph;
+    b.className = "blk" + (on ? " on" : "");
+  });
+  const injected = countInjections();
+  document.getElementById("mode").textContent =
+    "DELAY " + DELAY_MODE + " · 注入帧 " + injected + "/6 · 此帧" +
+    (shouldInject(f) ? "注入" : "不注入");
+}
+function countInjections(){
+  /* PHASE C 内 f≡0(mod 10) 的帧数 = 240,250,260,270,280,290 → 6（冻结数学） */
+  let n = 0;
+  for (let f = SEG_C[0]; f < SEG_C[1]; f++) if (f % 10 === 0) n++;
+  return n;
+}
+
+/* —— 时序对抗注入（PHASE C ∧ f%10==0；加载路径与 __vtx_render 共用） —— */
+let pendingTimer = null;
+function busyWait55(){
+  /* performance.now() 仅做时长计量（页首例外声明），不参与任何动画状态 */
+  const t0 = performance.now();
+  while (performance.now() - t0 < DELAY_MS) { /* 同步 CPU 忙等 */ }
+}
+function shouldInject(f){
+  return f >= SEG_C[0] && f < SEG_C[1] && f % 10 === 0;
+}
+function settle(fRaw){
+  const f = Math.min(Math.max(fRaw | 0, 0), N - 1);
+  if (pendingTimer !== null) { clearTimeout(pendingTimer); pendingTimer = null; }
+  const inject = shouldInject(f);
+  if (DELAY_MODE === "async" && inject) {
+    /* 异步宏任务延迟落定：本函数立即返回，视觉状态 55ms 后才就位——
+       刻意的未完成帧诱饵（非确定态，禁用于 golden/幂等比对） */
+    pendingTimer = setTimeout(() => { pendingTimer = null; applyState(f); }, DELAY_MS);
+    return;
+  }
+  applyState(f);
+  if (inject) busyWait55();                               /* sync：状态落定后忙等 */
+}
+
+/* —— 契约 ①：?f= 导航加载 —— */
+const f0 = parseInt(new URLSearchParams(location.search).get("f") || "0");
+settle(f0);
+
+/* —— 契约 ②：window.__vtx_render(f)（同步纯函数；async 模式例外见页首注记） —— */
+window.__vtx_render = function (fRaw){
+  settle(fRaw);
+  return 1;
+};
+</script></body></html>

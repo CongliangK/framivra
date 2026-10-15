@@ -76,15 +76,29 @@ set_target_properties(libcef PROPERTIES
 
 # ---- vtx_cef_worker 可执行 ----
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_executable(vtx_cef_worker src/main.cpp)
+# issue #109：app_handler（A0/A1 开关注入 + OSR Client + 后端探针）、
+# png_writer（最小 PNG 编码，系统 zlib）。
+# issue #110：ipc_protocol/shm_ring（4-Slot SHM 环 + 定长协议，头文件库）、
+# frame_pipeline（紧凑拷贝/金丝雀解码/SIMD 逆预乘）、serve（帧服务模式）。
+add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
+                             src/frame_pipeline.cpp src/png_writer.cpp
+                             src/serve.cpp)
 # CEF 官方 exe 属性宏：CEF flag 集（含 -std=c++20 -O3 -Wall -Wextra -Werror，
 # 与目录级工单 flag 同语义）+ include 路径。
 SET_EXECUTABLE_TARGET_PROPERTIES(vtx_cef_worker)
 find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
 target_link_libraries(vtx_cef_worker PRIVATE
-                      libcef_dll_wrapper libcef Threads::Threads ${CMAKE_DL_LIBS})
+                      libcef_dll_wrapper libcef Threads::Threads
+                      ZLIB::ZLIB ${CMAKE_DL_LIBS})
 # RPATH=$ORIGIN：与可执行同目录的 CEF 运行时优先于系统路径。
 # BUILD_WITH_INSTALL_RPATH：以 INSTALL_RPATH 替代 build RPATH，避免链接
 # 解包目录内 libcef.so 时 CMake 把该目录的本机绝对路径写入产物。
 set_target_properties(vtx_cef_worker PROPERTIES
                       BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
+
+# ---- shm_ring_selftest：4-Slot 环/协议原生自检（无 CEF 依赖；tests 门控
+#      消费，亦支持 --dump-ring 供 Python 解析器跨语言锁定偏移表）。----
+add_executable(shm_ring_selftest src/shm_ring_selftest.cpp
+                                src/frame_pipeline.cpp)
+target_link_libraries(shm_ring_selftest PRIVATE Threads::Threads)
