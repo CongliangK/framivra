@@ -910,5 +910,26 @@ class AnalyzePerf(unittest.TestCase):
             self.assertLess(r2["decode_ms"], 1000.0)
 
 
+class CompareCountRegression(unittest.TestCase):
+    def test_difference_and_missing_count_only_successful_comparisons(self):
+        with tempfile.TemporaryDirectory() as td, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(td)
+            clips = [("a.html", 4)]
+            tp = _project(root, clips)
+            _fill_cache(tp, clips)
+            golden, report = root / "golden.json", root / "report.json"
+            self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(golden),
+                                      "--full-pages", "a.html"]), 0)
+            d = gg.hygiene.gfx_dir(gg.make_ctx(tp), {"src": "a.html", "dur": 4})
+            _make_frame(d / "f0001.png", 1, tamper=True)
+            argv = ["compare", "-t", str(tp), "--golden", str(golden), "--report", str(report)]
+            self.assertEqual(gg.main(argv), 1)
+            self.assertEqual(json.loads(report.read_text())["compared_frames"], 4)
+            (d / "f0002.png").unlink()
+            self.assertEqual(gg.main(argv), 1)
+            self.assertEqual(json.loads(report.read_text())["compared_frames"], 3)
+            self.assertEqual(list(root.glob("*.tmp")), [])
+
+
 if __name__ == "__main__":
     unittest.main()
