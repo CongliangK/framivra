@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- S1 · 纯色无动画基准页 · gfx 基准套件 issue #106（冻结于 tests/gfx_bench_suite/suite_manifest.json v1.0.0）
+     用途：纯 IPC + PNG 编码底噪——画面恒定，每帧成本 ≈ 导航 + 截图 + PNG 编码，
+     作为其余场景吞吐数字的减数底噪。
+     协议：1920x1080、body 透明、整幅不透明纯色内容（引擎单截直写路径）；
+     帧驱动铁律：动画状态 = 帧号 f 的纯函数——本页为常函数（任意 f 同画面），
+     天然满足幂等与同帧异序一致。禁 CSS 动画属性 / 墙钟取态 / 非 seeded 随机 / rAF 时序。
+     刻意不声明 __vtx_static_spans / __vtx_export_png / __vtx_render：
+     任何声明都会让渲染器绕过本场景要测的逐帧截图代码路径。 -->
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;overflow:hidden}
+#solid{position:absolute;inset:0;background:#f5f0e8}   /* 暖白纯色：D22 白底基调 */
+</style></head><body>
+<div id="solid"></div>
+<script>
+const FPS = 30, N = 100;                    /* 冻结：100 帧（S1 第二页） */
+const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
+document.body.dataset.f = f;                /* 调试辅助：不产生像素差异 */
+/* 无动画：输出与 f 无关（常函数）。f>99 时同 f=99 态，保持纯函数与可调度性。 */
+</script></body></html>

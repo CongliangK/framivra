@@ -1,0 +1,18 @@
+{
+  "name": "gfx-electron-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "vtx GFX route B: minimal Electron Offscreen Rendering host (issue #112, ELEC-01)",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron main.mjs",
+    "start:b0": "electron main.mjs --mode=b0",
+    "start:b1": "electron main.mjs --mode=b1",
+    "postinstall": "node node_modules/electron/install.js"
+  },
+  "devDependencies": {
+    "electron": "44.7.2"
+  }
+}
