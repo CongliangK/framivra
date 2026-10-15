@@ -20,20 +20,51 @@ issue #106 验证门 2 的执行器：S1–S8 每个场景在 Chrome CDP 下真�
                16746 帧；bench_p2 目录应不存在=存档口径）＋3 个代表页抽样渲；
   report       汇总 evidence/report.json + report.md。
 
+看门狗（2026-10-15 加固，issue #106 续作）：每次 render_page/浏览器会话在
+独立子进程（新进程组）内执行；父进程轮询帧产物目录做逐帧进度输出，并以两道
+墙钟闸收割任何「单场景拖死整套」的形态——
+  · stall 闸：--stall-s 秒（默认 300）内无任何新帧落盘 → 判「停滞」整组击杀；
+  · budget 闸：单页墙钟超 budget（默认 120s + 10s×work帧数/tabs，可
+    --page-budget 绝对值覆盖）→ 判「超预算」整组击杀。
+击杀 = killpg(SIGKILL) 连同 Chrome 子进程一并回收，记录 {reason, budget_s,
+elapsed_s, frames_done, est_ms_per_frame} 事实后跳过继续；引擎 gfx_render.py
+与冻结规格（帧数/尺寸/页面）零改动。超时不是 FAIL：其缺帧/分段断言降级为
+事实记录，最终以退出码 3 区分（见下）。
+
+背景（2026-10-14 23:54 S3 停摆终裁；证据 /tmp/framivra-evidence/issue-106b*）：
+  · 物证：S1/S2 正常跑完（39/34/57ms/帧）后 S3 于 23:54:32 进入即零输出，
+    产物目录 0 帧落地（issue-106/smoke/S3__heavy_blur/ 空目录为证）；
+  · 基线：干净环境 S3 全量 300 帧 98.97s（317ms/帧，304 截 p99=1.45s/
+    max=1.49s，0 异常，probe_s3_full300.log）；28 核合成饱和争用下
+    6.9s/帧仍 300/300 完成（probe_s3_contention.log）——S3 本身不慢、
+    非真挂死；
+  · 推证（引擎结构 + 零帧物证收敛）：重度争用（#102 全量测试等并发
+    Chrome 舰队）把 SwiftShader 重 blur 单帧光栅推过引擎 WS socket 20s
+    硬超时 → socket.timeout → heal 整浏览器冷重启 → 每帧重试≤2 败→帧弃
+    （不落盘）→ 下一帧重复，≈75 帧/tab × ~100s/帧 ≈ 2h+ 零帧；旧
+    harness 逐页完成才打一行，长静默即「停摆」观感。「单帧>20s」未在
+    受控探针中直接复现（28 核合成争用只到 ~7s/帧），该环节属结构推证。
+    看门狗以预算/停滞双闸把此形态收割为有界受控超时（exit 3）并继续套件。
+
 用法（仓根；本机 python 须 env 前缀）：
   env VTX_TEST_CHROME=/usr/bin/google-chrome python3 tests/gfx_bench_suite/smoke.py \
       [--evidence /tmp/framivra-evidence/issue-106] [--phase all|manifest,render,...]
       [--keep-frames] [--skip-external]
+      [--page-budget 秒] [--per-frame-budget 秒] [--budget-base 秒] [--stall-s 秒]
 
-退出码：0=全部执行阶段 PASS（--skip-external 时 S8 记 SKIP 不计败）；
-        1=任一门 FAIL；2=环境缺置（chrome/numpy）。
+退出码：0=全部执行阶段 PASS；
+        1=任一门 FAIL（真实门失败，非超时）；
+        2=环境缺置（chrome/numpy）；
+        3=完成但存在受控超时（timeout 事实已记录、场景已跳过——「部分超时」）。
 帧产物默认在 hashing 后清理（保留每页首/中/尾 3 帧样本），--keep-frames 保留全量。
 """
 import argparse
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
+import signal
 import sys
 import time
 from pathlib import Path
@@ -47,22 +78,47 @@ from vtx.gfx_cli import verify_frames           # noqa: E402
 MANIFEST_PATH = REPO / "tests" / "gfx_bench_suite" / "suite_manifest.json"
 DEFAULT_EVIDENCE = Path("/tmp/framivra-evidence/issue-106")
 
+EXIT_OK, EXIT_FAIL, EXIT_ENV, EXIT_TIMEOUT = 0, 1, 2, 3
+
 # 引擎环境口径（suite_manifest.json protocol.engine_env_recommendations）
 os.environ.setdefault("VTX_GFX_STATIC", "0")
 os.environ.setdefault("VTX_GFX_NAVFREE", "0")
 
 
+# ---------------------------------------------------------------- 看门狗执行器
+def _deadline_child(q, fn):
+    """子进程入口：自建进程组（Chrome 子进程同组），fn() 结果/异常经队列回传。"""
+    try:
+        os.setpgid(0, 0)
+    except OSError:
+        pass                                   # 已是组长等边缘：尽力而为
+    try:
+        q.put(("ok", fn()))
+    except BaseException as e:                  # noqa: BLE001
+        q.put(("exc", f"{type(e).__name__}: {e}"))
+
+
 class Smoke:
-    def __init__(self, chrome, evidence, keep_frames=False, skip_external=False):
+    def __init__(self, chrome, evidence, keep_frames=False, skip_external=False,
+                 page_budget=None, per_frame_budget=10.0, budget_base=120.0,
+                 stall_s=300.0):
         self.chrome = chrome
         self.ev = Path(evidence)
         self.keep = keep_frames
         self.skip_external = skip_external
+        self.page_budget = page_budget
+        self.per_frame_budget = per_frame_budget
+        self.budget_base = budget_base
+        self.stall_s = stall_s
         self.man = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
         self.report = {"phases": {}, "env": {
             "chrome": chrome, "evidence": str(self.ev),
+            "watchdog": {"page_budget": page_budget,
+                         "per_frame_budget": per_frame_budget,
+                         "budget_base": budget_base, "stall_s": stall_s},
             "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}}
         self.failures = []
+        self.timeouts = []          # 受控超时登记（退出码 3 的依据，非 FAIL）
 
     # ---------------------------------------------------------- 通用工具
     def scenario(self, sid):
@@ -78,12 +134,111 @@ class Smoke:
         self.failures.append(f"[{phase}] {msg}")
         self.note(f"FAIL {phase}: {msg}")
 
+    def timeout(self, phase, rec):
+        self.timeouts.append(f"[{phase}] {rec['page']}: {rec['reason']} "
+                             f"{rec['elapsed_s']}s/{rec['budget_s']}s "
+                             f"已落 {rec.get('frames_done', '?')} 帧")
+        self.note(f"TIMEOUT {phase} {rec['page']}: reason={rec['reason']} "
+                  f"elapsed={rec['elapsed_s']}s budget={rec['budget_s']}s "
+                  f"frames_done={rec.get('frames_done')}——记录事实，受控跳过")
+
     def render(self, html, outdir, n_frames, frames=None, tabs=4):
         """render_page 薄封装：相对路径按仓根解析；异常上抛由调用方判 FAIL。"""
         html = html if Path(html).is_absolute() else str(REPO / html)
         return gfx_render.render_page(html, str(outdir), n_frames,
                                        chrome_path=self.chrome, tabs=tabs,
                                        frames=frames)
+
+    def budget_for(self, work_n, tabs):
+        """单页墙钟预算：--page-budget 绝对值优先，否则 base+每帧配额/tabs。"""
+        if self.page_budget:
+            return float(self.page_budget)
+        return self.budget_base + self.per_frame_budget * max(1, work_n) / max(1, tabs)
+
+    def run_guarded(self, fn, tag, outdir, work_n, tabs, phase):
+        """fn()（通常含 render_page/浏览器会话）置于子进程组执行，两道闸收割。
+
+        返回 (status, payload, info)：
+          ("ok", fn 返回值, {"wall_s", "frames_done"})
+          ("exc", "异常描述", ...)
+          ("timeout", None, {"reason": stall|budget, "budget_s", "elapsed_s",
+                             "frames_done", "est_ms_per_frame"})
+        超时击杀 = killpg(SIGKILL)（Python 子进程＋其 Chrome 族整组回收）——
+        这是「任何单场景挂死不再拖死整套」的硬保证，独立于引擎内部一切超时。
+        """
+        d = Path(outdir)
+        # 计数 *.png（非 f*.png）：s7 mini_run 腿的产物名是 p{pi}_f{fi}.png，
+        # 进度/停滞闸若只认 f* 前缀会对该腿失明（健康慢腿被误判停滞）。
+        base = len(list(d.glob("*.png"))) if d.is_dir() else 0
+        budget = self.budget_for(work_n, tabs)
+        self.note(f"{phase} {tag}: 开工 {work_n} 帧·tabs={tabs}·"
+                  f"预算 {budget:.0f}s"
+                  + (f"·停滞闸 {self.stall_s:.0f}s" if self.stall_s else ""))
+        # 轮询步距自适应：预算/停滞闸越紧检查越密（生产缺省钳回 5s）
+        poll = max(0.2, min(5.0, budget / 3.0,
+                            (self.stall_s / 3.0) if self.stall_s else 5.0))
+        ctx = multiprocessing.get_context("fork")
+        q = ctx.SimpleQueue()
+        p = ctx.Process(target=_deadline_child, args=(q, fn), daemon=True)
+        p.start()
+        t0 = time.monotonic()
+        last_cnt, last_change, last_note = 0, t0, t0
+        reason = None
+        while True:
+            p.join(poll)
+            if not p.is_alive():
+                break
+            now = time.monotonic()
+            elapsed = now - t0
+            cnt = len(list(d.glob("*.png"))) - base if d.is_dir() else 0
+            if cnt != last_cnt:
+                last_cnt, last_change = cnt, now
+            if work_n >= 16 and elapsed >= 15 and now - last_note >= 15:
+                self.note(f"{phase} {tag}: 进度 {last_cnt}/{work_n} 帧 "
+                          f"({100 * last_cnt / work_n:.0f}%) · {elapsed:.0f}s")
+                last_note = now
+            if self.stall_s and elapsed > self.stall_s and \
+                    (now - last_change) > self.stall_s:
+                reason = "stall"                    # 有预算但零新帧 = 停滞/挂死形态
+                break
+            if elapsed > budget:
+                reason = "budget"                   # 慢但在动 = 超预算形态
+                break
+        info = {"budget_s": round(budget, 1), "frames_done": last_cnt}
+        if reason:
+            for kill in (lambda: os.killpg(p.pid, signal.SIGKILL), p.kill):
+                try:
+                    kill()                      # 双保险：组杀 + 本体杀（setpgid 竞态兜底）
+                except (ProcessLookupError, PermissionError, ValueError):
+                    pass                        # 刚好自然退出：按结果收
+            p.join(10)
+            if p.is_alive():
+                self.note(f"{phase} {tag}: WARN 击杀后 10s 仍存活"
+                          f"（daemon 子进程，父进程退出时强制回收）")
+            info.update({"reason": reason,
+                         "elapsed_s": round(time.monotonic() - t0, 1),
+                         "frames_done": len(list(d.glob("*.png"))) - base
+                         if d.is_dir() else 0})
+            if info["frames_done"]:
+                info["est_ms_per_frame"] = round(
+                    info["elapsed_s"] * 1000 / info["frames_done"] / max(1, tabs), 1)
+            return ("timeout", None, info)
+        p.join()
+        if q.empty():
+            return ("exc", "子进程无返回（异常死亡）", info)
+        kind, payload = q.get()
+        info["wall_s"] = round(time.monotonic() - t0, 1)
+        info["frames_done"] = len(list(d.glob("*.png"))) - base if d.is_dir() else 0
+        return (kind, payload, info)
+
+    def render_guarded(self, html, outdir, n_frames, frames=None, tabs=4,
+                       tag="", phase="render"):
+        """render_page 的看门狗版本：超时/异常都收割为结构化记录，不上抛。"""
+        html_abs = html if Path(html).is_absolute() else str(REPO / html)
+        work_n = len(frames) if frames is not None else n_frames
+        return self.run_guarded(
+            lambda: self.render(html_abs, outdir, n_frames, frames=frames, tabs=tabs),
+            tag, outdir, work_n, tabs, phase)
 
     def frame_sha(self, path):
         return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -128,7 +283,8 @@ class Smoke:
 
     # ---------------------------------------------------------- phase: render
     def phase_render(self):
-        out = {"scenarios": {}, "total_frames": 0, "total_ms": 0.0}
+        out = {"scenarios": {}, "total_frames": 0, "total_frames_done": 0,
+               "total_ms": 0.0, "timeout_wall_s": 0.0}
         root = self.ev / "smoke"
         root.mkdir(parents=True, exist_ok=True)
         for sid in ("S1", "S2", "S3", "S4a", "S4b", "S5", "S6"):
@@ -140,13 +296,37 @@ class Smoke:
                 if d.exists():
                     shutil.rmtree(d)            # 冷跑口径：不留旧帧
                 n = p["frames"]
-                t0 = time.time()
-                try:
-                    st = self.render(p["path"], d, n, tabs=4)
-                except Exception as e:                          # noqa: BLE001
-                    self.fail("render", f"{tag}: 渲染异常 {type(e).__name__}: {e}")
+                status, st, info = self.render_guarded(
+                    p["path"], d, n, tabs=4, tag=tag, phase="render")
+                if status == "timeout":
+                    rec = {"phase": "render", "page": tag, **info}
+                    self.timeout("render", rec)
+                    present = sorted(int(fp.stem[1:]) for fp in d.glob("f*.png")) \
+                        if d.exists() else []
+                    if present:
+                        bad = verify_frames(str(d), present,
+                                            width=self.man["global_spec"]["width"],
+                                            height=self.man["global_spec"]["height"])
+                        rec["bad_frames_present"] = bad[:5]
+                    rec["missing_frames"] = n - len(present)
+                    sc_out["pages"].append({
+                        "role": p["role"], "path": p["path"], "frames": n,
+                        "status": "timeout", "reason": info["reason"],
+                        "frames_done": len(present),
+                        "elapsed_s": info["elapsed_s"], "budget_s": info["budget_s"],
+                        "est_ms_per_frame": info.get("est_ms_per_frame"),
+                        "missing_frames": n - len(present)})
+                    out["total_frames"] += n
+                    out["total_frames_done"] += len(present)
+                    out["timeout_wall_s"] += info["elapsed_s"]
                     continue
-                wall = time.time() - t0
+                if status == "exc":
+                    self.fail("render", f"{tag}: 渲染异常 {st}")
+                    sc_out["pages"].append({"role": p["role"], "path": p["path"],
+                                            "frames": n, "status": "exc",
+                                            "error": st})
+                    continue
+                wall = info["wall_s"]
                 bad = verify_frames(str(d), range(n),
                                     width=self.man["global_spec"]["width"],
                                     height=self.man["global_spec"]["height"])
@@ -161,12 +341,14 @@ class Smoke:
                     self.fail("render", f"{tag}: 缺帧 {missing[:5]}")
                 sc_out["pages"].append({
                     "role": p["role"], "path": p["path"], "frames": n,
+                    "status": "ok",
                     "rendered": st["rendered"], "ms_total": round(st["ms_total"], 1),
                     "ms_per_frame": round(st["ms_per_frame"], 2),
-                    "wall_s": round(wall, 1), "transparent": st["transparent"],
+                    "wall_s": wall, "transparent": st["transparent"],
                     "path_counts": {k: v for k, v in st["path_counts"].items() if v},
                     "frame_sha256": shas})
                 out["total_frames"] += n
+                out["total_frames_done"] += n
                 out["total_ms"] += st["ms_total"]
                 # S6 分段断言（必须在清帧前——用刚采集的哈希清单，不回读文件）
                 if sid == "S6":
@@ -181,8 +363,11 @@ class Smoke:
                           f"paths={ {k: v for k, v in st['path_counts'].items() if v} }")
             out["scenarios"][sid] = sc_out
         self.report["phases"]["render"] = out
-        self.note(f"render: 合计 {out['total_frames']} 帧，"
-                  f"引擎耗时 {out['total_ms'] / 1000:.1f}s")
+        self.note(f"render: 冻结口径 {out['total_frames']} 帧 / 实落 "
+                  f"{out['total_frames_done']} 帧，引擎耗时 "
+                  f"{out['total_ms'] / 1000:.1f}s"
+                  + (f"，超时墙钟 {out['timeout_wall_s']:.0f}s"
+                     if out["timeout_wall_s"] else ""))
 
     def _assert_s6_segments(self, shas_by_idx):
         """shas_by_idx: {帧号str: sha256}（render 阶段清帧前采集）。"""
@@ -216,7 +401,7 @@ class Smoke:
         return pages
 
     def phase_idempotency(self):
-        out = {"pages": [], "tier1_pass": 0, "tier1_fail": 0}
+        out = {"pages": [], "tier1_pass": 0, "tier1_fail": 0, "tier1_skip": 0}
         root = self.ev / "idempotency"
         if root.exists():
             shutil.rmtree(root)
@@ -224,12 +409,35 @@ class Smoke:
             stem = Path(path).stem
             da = root / "a" / f"{sid}__{stem}"      # sid 前缀防同名页冲突（两份 gfxA.html）
             db = root / "b" / f"{sid}__{stem}"
+            sa, pa, ia = self.render_guarded(path, da, 4, frames=[0, 1, 2, 3], tabs=1,
+                                             tag=f"{sid}__{stem}#a", phase="idempotency")
+            sb, pb, ib = self.render_guarded(path, db, 100, frames=[99, 2], tabs=1,
+                                             tag=f"{sid}__{stem}#b", phase="idempotency")
+            if "timeout" in (sa, sb):
+                legs = {"a": ia, "b": ib}
+                which = "a" if sa == "timeout" else "b" if sb == "timeout" else "a+b"
+                rec = {"phase": "idempotency", "page": f"{sid} {path} (leg {which})",
+                       **legs[which if which in legs else "a"]}
+                self.timeout("idempotency", rec)
+                out["pages"].append({"scenario": sid, "path": path,
+                                     "tier1": "SKIP_TIMEOUT", "leg": which})
+                out["tier1_skip"] += 1
+                continue
+            if "exc" in (sa, sb):
+                detail = pa if sa == "exc" else pb
+                if sa == "exc" and sb == "exc":
+                    detail = f"{pa} / {pb}"
+                self.fail("idempotency", f"{path}: 渲染异常 {detail}")
+                out["pages"].append({"scenario": sid, "path": path,
+                                     "tier1": "FAIL", "error": detail})
+                out["tier1_fail"] += 1
+                continue
             try:
-                self.render(path, da, 4, frames=[0, 1, 2, 3], tabs=1)
-                self.render(path, db, 100, frames=[99, 2], tabs=1)
                 diff, pixel_equal = self.frame_diff(da / "f0002.png", db / "f0002.png")
             except Exception as e:                              # noqa: BLE001
-                self.fail("idempotency", f"{path}: {type(e).__name__}: {e}")
+                self.fail("idempotency", f"{path}: 比对异常 {type(e).__name__}: {e}")
+                out["pages"].append({"scenario": sid, "path": path, "tier1": "FAIL"})
+                out["tier1_fail"] += 1
                 continue
             ok = diff == 0
             out["pages"].append({"scenario": sid, "path": path,
@@ -241,37 +449,65 @@ class Smoke:
                           f"{path}: f0002 异序 max_abs_diff={diff}（Tier-1 要求 0）")
         self.report["phases"]["idempotency"] = out
         self.note(f"idempotency: {out['tier1_pass']} 页 Tier-1 PASS / "
-                  f"{out['tier1_fail']} FAIL")
+                  f"{out['tier1_fail']} FAIL / {out['tier1_skip']} SKIP(timeout)")
 
     # ---------------------------------------------------------- phase: s6seq
     def phase_s6seq(self):
-        out = {}
+        out = {"skipped_refs": []}
         s6p = None
         for p in self.scenario("S6")["pages"]:
             s6p = p
         full = self.ev / "smoke" / "S6__timing_adversarial"
-        if not (full / "f0599.png").is_file():
-            # render 阶段清帧后仅存样本——random_jump/reverse 的对账帧需在场：
-            # f0000/f0300 样本在，其余对账帧重渲缺哪些补哪些（保持 Tier-1 同口径）
-            need = {0, 12, 13, 200, 201, 450, 599}
-            need |= set(range(100))
-            have = {int(fp.stem[1:]) for fp in full.glob("f*.png")}
-            missing = sorted(need - have)
-            if missing:
-                self.render(s6p["path"], full, 900, frames=missing, tabs=1)
+        # 对账帧补齐：render 阶段默认清帧后仅存首/中/尾样本（f0000/f0300/f0599），
+        # random_jump/reverse_100 的其余对账帧「缺哪些补哪些」（Tier-1 同口径；
+        # 幂等门已证帧态纯函数，补渲帧与全量渲帧逐像素等值）。注意不能以
+        # f0599 缺席为补渲条件——成功跑恰留 f0599 样本，会把 108 帧对账
+        # 静默降级为 3 帧（Phase-0 缺陷，2026-10-15 修正：按 need-have 补）。
+        need = {0, 12, 13, 200, 201, 450, 599}
+        need |= set(range(100))
+        have = {int(fp.stem[1:]) for fp in full.glob("f*.png")} \
+            if full.is_dir() else set()
+        missing = sorted(need - have)
+        if missing:
+            status, _, info = self.render_guarded(
+                s6p["path"], full, 900, frames=missing, tabs=1,
+                tag="S6__catchup", phase="s6seq")
+            if status == "timeout":
+                self.timeout("s6seq", {"phase": "s6seq", "page": "S6 catch-up",
+                                       **info})
+            elif status == "exc":
+                self.fail("s6seq", f"S6 catch-up 渲染异常 {info.get('wall_s')}s")
         seqs = self.scenario("S6")["sequences"]
         # random_jump（含重复帧去重渲染）
         rj = seqs["random_jump"]["frames"]
         d = self.ev / "s6seq" / "random_jump"
         if d.exists():
             shutil.rmtree(d)
-        st = self.render(s6p["path"], d, 900, frames=sorted(set(rj)), tabs=1)
-        if st["failed"]:
-            self.fail("s6seq", f"random_jump failed={st['failed']}")
+        status, st, info = self.render_guarded(s6p["path"], d, 900,
+                                               frames=sorted(set(rj)), tabs=1,
+                                               tag="S6__random_jump", phase="s6seq")
+        if status == "timeout":
+            self.timeout("s6seq", {"phase": "s6seq", "page": "random_jump", **info})
+        elif status == "exc" or (status == "ok" and st["failed"]):
+            self.fail("s6seq", f"random_jump status={status} failed="
+                              f"{st.get('failed') if status == 'ok' else st}")
         diffs = {}
         for fi in sorted(set(rj)):
             ref = fi if fi < 600 else 599       # 页内钳制：f≥N 定格终态
-            diff, _ = self.frame_diff(d / f"f{fi:04d}.png", full / f"f{ref:04d}.png")
+            if not (full / f"f{ref:04d}.png").is_file():
+                out["skipped_refs"].append(f"f{fi:04d}(ref f{ref:04d} 缺席)")
+                continue
+            fp = d / f"f{fi:04d}.png"
+            if not fp.is_file():
+                if status == "ok":
+                    self.fail("s6seq", f"random_jump f{fi:04d} 未产出")
+                continue
+            try:
+                diff, _ = self.frame_diff(fp, full / f"f{ref:04d}.png")
+            except Exception as e:                              # noqa: BLE001
+                self.fail("s6seq", f"random_jump f{fi:04d} 比对异常 "
+                                   f"{type(e).__name__}: {e}")
+                continue
             diffs[str(fi)] = diff
             if diff != 0:
                 self.fail("s6seq", f"random_jump f{fi:04d} vs 全量渲 f{ref:04d} "
@@ -283,19 +519,40 @@ class Smoke:
         d2 = self.ev / "s6seq" / "reverse_100"
         if d2.exists():
             shutil.rmtree(d2)
-        st2 = self.render(s6p["path"], d2, 100, frames=rev, tabs=1)
-        if st2["failed"]:
-            self.fail("s6seq", f"reverse_100 failed={st2['failed']}")
+        status2, st2, info2 = self.render_guarded(s6p["path"], d2, 100, frames=rev,
+                                                  tabs=1, tag="S6__reverse_100",
+                                                  phase="s6seq")
+        if status2 == "timeout":
+            self.timeout("s6seq", {"phase": "s6seq", "page": "reverse_100", **info2})
+        elif status2 == "exc" or (status2 == "ok" and st2["failed"]):
+            self.fail("s6seq", f"reverse_100 status={status2} failed="
+                              f"{st2.get('failed') if status2 == 'ok' else st2}")
         md = 0
         for fi in rev:
-            diff, _ = self.frame_diff(d2 / f"f{fi:04d}.png", full / f"f{fi:04d}.png")
+            ref = full / f"f{fi:04d}.png"
+            fp = d2 / f"f{fi:04d}.png"
+            if not ref.is_file():
+                out["skipped_refs"].append(f"rev f{fi:04d}(ref 缺席)")
+                continue
+            if not fp.is_file():
+                if status2 == "ok":
+                    self.fail("s6seq", f"reverse_100 f{fi:04d} 未产出")
+                continue
+            try:
+                diff, _ = self.frame_diff(fp, ref)
+            except Exception as e:                              # noqa: BLE001
+                self.fail("s6seq", f"reverse_100 f{fi:04d} 比对异常 "
+                                   f"{type(e).__name__}: {e}")
+                continue
             md = max(md, diff if diff is not None else 9999)
             if diff != 0:
                 self.fail("s6seq", f"reverse_100 f{fi:04d} max_abs_diff={diff}")
         out["reverse_100"] = {"length": 100, "max_diff_vs_full": md}
         self.report["phases"]["s6seq"] = out
         self.note(f"s6seq: random_jump max_diff={out['random_jump']['max_diff']} "
-                  f"reverse_100 max_diff={md}")
+                  f"reverse_100 max_diff={md}"
+                  + (f"；跳过对账帧 {len(out['skipped_refs'])} 个（ref 缺席）"
+                     if out["skipped_refs"] else ""))
 
     # ---------------------------------------------------------- phase: s7
     def phase_s7(self):
@@ -309,10 +566,16 @@ class Smoke:
             d = root / "sample" / tag
             visit = p["visit_frames"]
             probe = sorted({0, visit // 2, visit - 1})
-            try:
-                st = self.render(p["path"], d, visit, frames=probe, tabs=1)
-            except Exception as e:                              # noqa: BLE001
-                self.fail("s7", f"{p['path']}: {type(e).__name__}: {e}")
+            status, st, info = self.render_guarded(
+                p["path"], d, visit, frames=probe, tabs=1,
+                tag=f"S7__{tag}", phase="s7")
+            if status == "timeout":
+                self.timeout("s7", {"phase": "s7", "page": p["path"], **info})
+                out["pages"].append({"path": p["path"], "probe_frames": probe,
+                                     "ok": False, "status": "timeout"})
+                continue
+            if status == "exc":
+                self.fail("s7", f"{p['path']}: 渲染异常 {st}")
                 continue
             bad = verify_frames(str(d), probe,
                                 width=self.man["global_spec"]["width"],
@@ -327,32 +590,48 @@ class Smoke:
                       self.scenario("S7")["pages"][13]["path"]]
         md = root / "mini_run"
         md.mkdir(parents=True)
-        browser = gfx_render.Browser(self.chrome, 1)
-        t0 = time.time()
-        shots = 0
-        try:
-            browser.start()
-            tab = browser.open_tabs()[0]
-            tab.call("Emulation.setDefaultBackgroundColorOverride",
-                     color={"r": 0, "g": 0, "b": 0, "a": 0})
-            for pi, path in enumerate(mini_pages):
-                uri = (REPO / path).resolve().as_uri()
-                for fi in range(10):
-                    tab.navigate(f"{uri}?f={fi}")
-                    data = tab.shot()
-                    (md / f"p{pi}_f{fi:02d}.png").write_bytes(data)
-                    if not data.startswith(b"\x89PNG"):
-                        self.fail("s7", f"mini_run p{pi} f{fi} 非 PNG")
-                    shots += 1
-            tab.close()
-        finally:
-            browser.stop()
-        out["mini_run"] = {"pages": mini_pages, "frames": shots,
-                           "browser_restarts": 0,
-                           "wall_s": round(time.time() - t0, 1)}
+
+        def _mini_run():
+            shots = 0
+            non_png = 0
+            browser = gfx_render.Browser(self.chrome, 1)
+            t0 = time.time()
+            try:
+                browser.start()
+                tab = browser.open_tabs()[0]
+                tab.call("Emulation.setDefaultBackgroundColorOverride",
+                         color={"r": 0, "g": 0, "b": 0, "a": 0})
+                for pi, path in enumerate(mini_pages):
+                    uri = (REPO / path).resolve().as_uri()
+                    for fi in range(10):
+                        tab.navigate(f"{uri}?f={fi}")
+                        data = tab.shot()
+                        (md / f"p{pi}_f{fi:02d}.png").write_bytes(data)
+                        if not data.startswith(b"\x89PNG"):
+                            non_png += 1
+                        shots += 1
+                tab.close()
+            finally:
+                browser.stop()
+            # 本函数跑在 fork 子进程内：self.fail() 的变更随子进程消亡，
+            # 失败事实必须经返回值带回父进程裁决。
+            return {"pages": mini_pages, "frames": shots, "non_png": non_png,
+                    "browser_restarts": 0,
+                    "wall_s": round(time.time() - t0, 1)}
+
+        status, payload, info = self.run_guarded(
+            _mini_run, "S7__mini_run", md, 30, 1, "s7")
+        if status == "timeout":
+            self.timeout("s7", {"phase": "s7", "page": "mini_run", **info})
+        elif status == "exc":
+            self.fail("s7", f"mini_run: {payload}")
+        else:
+            out["mini_run"] = payload
+            if payload["non_png"]:
+                self.fail("s7", f"mini_run: {payload['non_png']} 帧非 PNG")
+            self.note(f"s7: {len(out['pages'])} 页抽样；mini_run "
+                      f"{payload['frames']} 帧单会话 {payload['wall_s']}s")
         self.report["phases"]["s7"] = out
-        self.note(f"s7: {len(out['pages'])} 页抽样 OK；mini_run {shots} 帧 "
-                  f"单会话 {out['mini_run']['wall_s']}s")
 
     # ---------------------------------------------------------- phase: s8
     def phase_s8(self):
@@ -401,13 +680,17 @@ class Smoke:
             if not src.is_file():
                 self.fail("s8", f"voice-ime gfx/{page} 缺席")
                 continue
-            try:
-                st = self.render(src, d / Path(page).stem, 1, frames=[0], tabs=1)
-                if st["failed"]:
-                    self.fail("s8", f"{page} 抽样渲 failed={st['failed']}")
+            status, st, info = self.render_guarded(
+                src, d / Path(page).stem, 1, frames=[0], tabs=1,
+                tag=f"S8__{Path(page).stem}", phase="s8")
+            if status == "timeout":
+                self.timeout("s8", {"phase": "s8", "page": page, **info})
+            elif status == "exc":
+                self.fail("s8", f"{page}: 渲染异常 {st}")
+            elif st["failed"]:
+                self.fail("s8", f"{page} 抽样渲 failed={st['failed']}")
+            else:
                 out["checks"][f"sample_{page}"] = "ok"
-            except Exception as e:                              # noqa: BLE001
-                self.fail("s8", f"{page}: {type(e).__name__}: {e}")
         out["status"] = "PASS"
         self.report["phases"]["s8"] = out
         self.note(f"s8: {out['checks']}")
@@ -415,32 +698,54 @@ class Smoke:
     # ---------------------------------------------------------- report + main
     def write_report(self):
         self.report["env"]["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        self.report["result"] = "PASS" if not self.failures else "FAIL"
+        if self.failures:
+            result = "FAIL"
+        elif self.timeouts:
+            result = "PARTIAL_TIMEOUT"
+        else:
+            result = "PASS"
+        self.report["result"] = result
         self.report["failures"] = self.failures
+        self.report["timeouts"] = self.timeouts
         self.ev.mkdir(parents=True, exist_ok=True)
         (self.ev / "report.json").write_text(
             json.dumps(self.report, ensure_ascii=False, indent=1), encoding="utf-8")
-        lines = [f"# gfx_bench_suite smoke 报告（{self.report['result']}）", "",
+        lines = [f"# gfx_bench_suite smoke 报告（{result}）", "",
                  f"- chrome: `{self.chrome}`",
                  f"- evidence: `{self.ev}`",
-                 f"- failures: {len(self.failures)}", ""]
+                 f"- 看门狗: page_budget={self.page_budget or '公式'} "
+                 f"per_frame={self.per_frame_budget}s base={self.budget_base}s "
+                 f"stall={self.stall_s}s",
+                 f"- failures: {len(self.failures)} · timeouts: {len(self.timeouts)}",
+                 ""]
         ph = self.report["phases"]
         if "render" in ph:
             lines.append("## render（S1–S6 全量实渲）")
             lines.append("")
-            lines.append("| 场景 | 页 | 帧数 | ms/帧 | 路径 |")
-            lines.append("|---|---|---|---|---|")
+            lines.append("| 场景 | 页 | 状态 | 帧数 | ms/帧 | 备注 |")
+            lines.append("|---|---|---|---|---|---|")
             for sid, sc in ph["render"]["scenarios"].items():
                 for p in sc["pages"]:
-                    lines.append(f"| {sid} | {p['role']} | {p['frames']} | "
-                                 f"{p['ms_per_frame']} | {p['path_counts']} |")
+                    if p["status"] == "ok":
+                        note = f"paths={p['path_counts']}"
+                        ms = p["ms_per_frame"]
+                    elif p["status"] == "timeout":
+                        ms = p.get("est_ms_per_frame")
+                        note = (f"TIMEOUT({p['reason']}) {p['elapsed_s']}s/"
+                                f"{p['budget_s']}s 已落 {p['frames_done']}/{p['frames']}"
+                                f" 缺 {p['missing_frames']}")
+                    else:
+                        ms = "-"
+                        note = f"EXC {p.get('error', '')}"
+                    lines.append(f"| {sid} | {p['role']} | {p['status']} | "
+                                 f"{p['frames']} | {ms} | {note} |")
             lines.append("")
         if "idempotency" in ph:
             lines.append("## idempotency（DoD Tier-1）")
             lines.append("")
             for p in ph["idempotency"]["pages"]:
                 lines.append(f"- {p['scenario']} `{p['path']}`: "
-                             f"max_abs_diff={p['max_abs_diff']} → {p['tier1']}")
+                             f"max_abs_diff={p.get('max_abs_diff')} → {p['tier1']}")
             lines.append("")
         if "s6seq" in ph:
             rj = ph["s6seq"]["random_jump"]
@@ -449,11 +754,30 @@ class Smoke:
             lines.append(f"- random_jump diffs_vs_full: {rj['diffs_vs_full']}")
             lines.append(f"- reverse_100 max_diff_vs_full: "
                          f"{ph['s6seq']['reverse_100']['max_diff_vs_full']}")
+            if ph["s6seq"].get("skipped_refs"):
+                lines.append(f"- 跳过对账帧（ref 缺席）: "
+                             f"{ph['s6seq']['skipped_refs'][:10]}…")
+            lines.append("")
+        if "s7" in ph:
+            lines.append("## s7")
+            lines.append("")
+            lines.append(f"- 抽样: {sum(1 for p in ph['s7']['pages'] if p.get('ok'))}"
+                         f"/{len(ph['s7']['pages'])} 页 OK")
+            if ph["s7"].get("mini_run"):
+                mr = ph["s7"]["mini_run"]
+                lines.append(f"- mini_run: {mr['frames']} 帧单会话 {mr['wall_s']}s"
+                             f"（browser_restarts=0）")
             lines.append("")
         if "s8" in ph:
             lines.append("## s8")
             lines.append("")
             lines.append(f"- status={ph['s8']['status']} checks={ph['s8'].get('checks')}")
+            lines.append("")
+        if self.timeouts:
+            lines.append("## 受控超时登记（退出码 3 依据）")
+            lines.append("")
+            for t in self.timeouts:
+                lines.append(f"- {t}")
             lines.append("")
         (self.ev / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
@@ -477,9 +801,15 @@ class Smoke:
             print(f"\nRESULT: FAIL（{len(self.failures)} 项）", file=sys.stderr)
             for f in self.failures:
                 print(f"  - {f}", file=sys.stderr)
-            return 1
+            return EXIT_FAIL
+        if self.timeouts:
+            print(f"\nRESULT: PARTIAL_TIMEOUT（{len(self.timeouts)} 项受控超时，"
+                  f"事实已记录）", file=sys.stderr)
+            for t in self.timeouts:
+                print(f"  - {t}", file=sys.stderr)
+            return EXIT_TIMEOUT
         print("\nRESULT: PASS")
-        return 0
+        return EXIT_OK
 
 
 def find_chrome():
@@ -499,18 +829,29 @@ def main():
                     help="保留全部帧产物（默认 hashing 后清理，仅留每页首/中/尾样本）")
     ap.add_argument("--skip-external", action="store_true",
                     help="S8 外部生产基线缺席时记 SKIP 不计败")
+    ap.add_argument("--page-budget", type=float, default=None,
+                    help="单页绝对墙钟预算（秒）；缺省=base+per_frame×work/tabs")
+    ap.add_argument("--per-frame-budget", type=float, default=10.0,
+                    help="每帧墙钟配额（秒，按 tabs 摊薄进预算公式；默认 10）")
+    ap.add_argument("--budget-base", type=float, default=120.0,
+                    help="单页预算基数（秒；默认 120，覆盖浏览器启动/探针）")
+    ap.add_argument("--stall-s", type=float, default=300.0,
+                    help="停滞闸：N 秒无新帧落盘即提前击杀（默认 300；0=关）")
     args = ap.parse_args()
     if not gfx_render.available():
         print("numpy 不可用（vtx.gfx_render.available()=False）", file=sys.stderr)
-        return 2
+        return EXIT_ENV
     chrome = find_chrome()
     if not chrome:
         print("chrome 未找到：设 VTX_TEST_CHROME=/usr/bin/google-chrome", file=sys.stderr)
-        return 2
+        return EXIT_ENV
     phases = (["manifest", "render", "idempotency", "s6seq", "s7", "s8"]
               if args.phase == "all" else args.phase.split(","))
     smoke = Smoke(chrome, args.evidence, keep_frames=args.keep_frames,
-                  skip_external=args.skip_external)
+                  skip_external=args.skip_external,
+                  page_budget=args.page_budget,
+                  per_frame_budget=args.per_frame_budget,
+                  budget_base=args.budget_base, stall_s=args.stall_s)
     return smoke.run(phases)
 
 
