@@ -116,6 +116,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))   # v2 §1.4 包化：注入 repo 根 + 包导入（不再注入 repo/vtx）
 from vtx.infra import Ctx   # noqa: E402
+from vtx.fstxn import atomic_write
 from vtx import hygiene     # noqa: E402
 from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
 from vtx import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
@@ -739,6 +740,12 @@ def cmd_build(args) -> int:
         },
         "pages": pages,
     }
+    if args.run_evidence:
+        try:
+            golden["meta"]["run_evidence"] = json.loads(Path(args.run_evidence).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            print(f"✗ run evidence: {error}")
+            return 1
     out = Path(args.golden)
     # 落盘原子化（B4）：同目录 tmp + os.replace，杜绝半份 golden 被下次 compare 读到
     tmp = out.parent / (out.name + ".tmp")
@@ -864,11 +871,11 @@ def cmd_compare(args) -> int:
                                "current": diffs[0][2], "n_diff_frames": len(diffs)})
             else:
                 identical.append({"src": src, "dur": dur, "mode": inst.get("mode"),
-                                  "n_frames": len(inst.get("frames", {}))})
+                                  "n_frames": sum((src, dur, fk) in cur for fk in inst.get("frames", {}))})
 
     ok = not (differ or dir_missing or unreadable)
     n_full = sum(1 for x in identical if x.get("mode") == "full")
-    n_cmp = sum(x["n_frames"] for x in identical) + sum(x["n_diff_frames"] for x in differ)
+    n_cmp = len(cur)  # successful hashes/comparisons, including matching frames in differing instances
     print(f"== gfx golden 比对（{len(sel)} 页，{n_cmp} 帧，golden 构建于 "
           f"{meta.get('built', '?')}）==")
     for x in identical:
@@ -898,8 +905,7 @@ def cmd_compare(args) -> int:
                   "compared_frames": n_cmp, "identical": identical, "differ": differ,
                   "dir_missing": dir_missing, "missing_or_unreadable": unreadable,
                   "unrecorded": unrecorded, "env_gate": gate}
-        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1),
-                                     encoding="utf-8")
+        atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
     return 0 if ok else 1
 
@@ -981,8 +987,7 @@ def cmd_analyze(args) -> int:
                   "compared": len(frames),
                   "tiers": {TIER_EXACT: n_t1, TIER_PREMUL: n_t2, TIER_FAIL: n_t3},
                   "frames": frames, "errors": errors}
-        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1),
-                                     encoding="utf-8")
+        atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
     return 0 if ok else 1
 
@@ -1080,8 +1085,7 @@ def cmd_verify_canary(args) -> int:
                                "no_canary": buckets[fc.ST_NO_CANARY],
                                "ambiguous_signature": buckets[fc.ST_AMBIGUOUS],
                                "errors": len(errors)}}
-        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1),
-                                     encoding="utf-8")
+        atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
     return 0 if ok else 1
 
@@ -1105,6 +1109,12 @@ def main(argv=None) -> int:
     b.add_argument("--env-manifest", default="",
                    help="环境指纹 manifest JSON（渲染运行产出，vtx/env_manifest.py 采集）；"
                         "嵌入 golden.meta 供 compare 跨后端前置门禁（issue #102，可空）")
+
+    b.add_argument("--run-evidence", default="", help="embed baseline run receipt for verify-experiment; does not certify it")
+
+    e = sub.add_parser("verify-experiment", help="strict plan-bound full-frame independent-run evidence (#62)")
+    for flag in ("timeline", "golden", "plan", "candidate-run", "report"):
+        e.add_argument("--" + flag, required=True)
 
     p = sub.add_parser("compare", help="对当前 cache 重算 hash 并与 golden 逐帧比对")
     p.add_argument("-t", "--timeline", required=True, help="timeline.json 路径")
@@ -1145,6 +1155,27 @@ def main(argv=None) -> int:
     v.add_argument("--report", default="", help="校验结果 JSON 输出路径（可选）")
 
     args = ap.parse_args(argv)
+    if args.cmd == "verify-experiment":
+        from gfx_evidence import resolve_evidence_path, verify
+        try:
+            load = lambda p: json.loads(Path(p).read_text(encoding="utf-8"))
+            c = make_ctx(resolve_evidence_path(args.timeline))
+            report = verify(c, gfx_clips(c), load(args.golden), load(args.plan),
+                            load(args.candidate_run))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError) as error:
+            report = {"ok": False, "errors": [str(error)]}
+        report["report_written"] = True
+        try:
+            atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
+        except (OSError, ValueError) as error:
+            # The shared writer normalizes invalid/looping report paths to ValueError.
+            # No fallback destination or claim of replacing an inaccessible old report.
+            report["ok"] = False
+            report["same_version_causal"] = False
+            report["report_written"] = False
+            report.setdefault("errors", []).append(f"cannot write report {args.report}: {error}")
+        print(json.dumps(report, ensure_ascii=False))
+        return 0 if report["ok"] else 1
     if args.cmd == "analyze":
         return cmd_analyze(args)
     if args.cmd == "verify-canary":
