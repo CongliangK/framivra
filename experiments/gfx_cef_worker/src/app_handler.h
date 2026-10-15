@@ -23,6 +23,8 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 
+#include "frame_sync_machine.hpp"
+
 namespace vtx_cef {
 
 // 启动选项（main.cpp 解析；生命周期须覆盖 CefInitialize→CefShutdown）。
@@ -76,12 +78,28 @@ struct RunState {
   uint32_t cap_rejected = 0;          // 陈旧 OnPaint 拒绝计数
   uint64_t cap_last_capture_us = 0;   // 最近一次 OnPaint→目标拷贝耗时
   std::vector<uint8_t> cap_staging;   // 模式 1 暂存区（serve 预留容量）
+
+  // —— #114 sync 模式（FrameSyncStateMachine 驱动；OnPaint 与请求循环
+  //    同在 UI 线程，装配无跨线程竞态）。sync_machine 非空且
+  //    sync_capture_armed 时 OnPaint 走状态机闸门（早期丢弃/拒收/接受+
+  //    原像素恢复），不再走 #110 金丝雀路径。——
+  fsync::FrameSyncStateMachine* sync_machine = nullptr;
+  bool sync_capture_armed = false;
+  uint8_t* sync_dst = nullptr;             // 接受帧紧凑拷贝目标
+  bool sync_captured = false;              // S5 接受
+  bool sync_size_mismatch = false;         // 尺寸不符（记录实际值）
+  uint32_t sync_actual_w = 0;
+  uint32_t sync_actual_h = 0;
+  fsync::PaintVerdict sync_last_verdict;   // 最近一次 FeedPaint 判定
+  std::vector<std::string> sync_ready_queue;  // __VTX_READY__ 待消费事件
 };
 
 // 探针回传 marker（console.log 通道；JSON 体不得超过控制台行限制，
 // gpu 页文本摘要截断到 1500 字符）。
 inline constexpr const char kPageProbeMarker[] = "VTXCEFPROBE:";
 inline constexpr const char kGpuPageProbeMarker[] = "VTXGPUJSON:";
+// #114 注入桥就绪通道 marker（console.debug；工单口径通知通道）。
+inline constexpr const char kSyncReadyMarker[] = "__VTX_READY__:";
 
 // 工单 A0 注入（Software OSR）：禁 GPU 全链，纯 CPU 光栅。
 void AppendA0Switches(CefRefPtr<CefCommandLine> command_line);

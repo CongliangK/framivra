@@ -41,6 +41,12 @@
    （`vtx/fstxn.py` 语义的 C++ 镜像）已按此实现（#110 的裸 `.tmp` 后缀
    升级）；写者 SIGKILL 崩溃窗口内目标恒完整或不存在，`*.tmp.<pid>.*`
    残件为可辨识可清扫模式。
+8. **#114 status_code 增补 4 号档（DUPLICATE）**：工单冻结语义仅
+   0/1/2/3；#114 状态机引入 request_id 重放守卫（重复请求拒绝，不静默
+   重渲），错误回执需要独立档位区分「超时/尺寸/JS 错」与「请求序号
+   重放」。`canary_frame_index` 语义在 `--sync` 路径下取自**双像素联合
+   解码结果**（非请求值回显，#136 红队缺口闭合）；`--sync` 模式下
+   `document_gen` 为导航计数（Mode N 每请求自增；Mode P 常驻页恒 1）。
 
 ## §1 传输与字节序
 
@@ -112,7 +118,7 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 | --- | --- | --- | --- |
 | 0 | u32 | magic | `0x56545846`（"VTXF"） |
 | 4 | u16 | protocol_version | 1 |
-| 6 | u16 | status_code | 0=OK 1=TIMEOUT 2=SIZE_MISMATCH 3=JS_ERR |
+| 6 | u16 | status_code | 0=OK 1=TIMEOUT 2=SIZE_MISMATCH 3=JS_ERR 4=DUPLICATE（#114，见 §0-8） |
 | 8 | u64 | run_id | 与环 run_id 一致（不符=陈旧残帧，消费端拒收） |
 | 16 | u32 | document_gen | 每次导航自增 |
 | 20 | u32 | request_id | 请求序号（回显） |

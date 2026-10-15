@@ -84,6 +84,12 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # 后端 —— 内嵌第三方源码 third_party/spng（libspng v0.7.3，C 源）与
 # third_party/fpng（fpng，C++ 源）：单文件上游源、以 -w 关上游告警面
 # （上游代码不按本仓 -Werror 纪律维护；版本/哈希锚定 third_party_locks.json）。
+# issue #111：pixel_ops（AVX2/NEON 逆预乘正式算子）、png_writer 升级双编码
+#   后端 —— 内嵌第三方源码 third_party/spng（libspng v0.7.3，C 源）与
+#   third_party/fpng（fpng，C++ 源）：单文件上游源、以 -w 关上游告警面
+#   （上游代码不按本仓 -Werror 纪律维护；版本/哈希锚定 third_party_locks.json）。
+# issue #114：frame_sync_machine（五阶段单调世代状态机 + v2 双像素 Canary
+#   闸门，无 CEF 依赖 —— serve 与原生自检共用同一判定核心）。
 set(VTX_THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 set(SPNG_SOURCES "${VTX_THIRD_PARTY}/spng/spng.c")
 set(FPNG_SOURCES "${VTX_THIRD_PARTY}/fpng/fpng.cpp")
@@ -96,6 +102,7 @@ set_source_files_properties(${FPNG_SOURCES}
 add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
                              src/frame_pipeline.cpp src/pixel_ops.cpp
                              src/png_writer.cpp src/serve.cpp
+                             src/frame_sync_machine.cpp
                              ${SPNG_SOURCES} ${FPNG_SOURCES})
 # CEF 官方 exe 属性宏：CEF flag 集（含 -std=c++20 -O3 -Wall -Wextra -Werror，
 # 与目录级工单 flag 同语义）+ include 路径。
@@ -129,3 +136,12 @@ target_include_directories(pixel_ops_selftest PRIVATE
                           "${VTX_THIRD_PARTY}/spng" "${VTX_THIRD_PARTY}/fpng")
 target_link_libraries(pixel_ops_selftest PRIVATE Threads::Threads
                                                  ZLIB::ZLIB)
+
+# ---- frame_sync_selftest：#114 状态机原生对抗自检（无 CEF 依赖；强制注入
+#      旧 paint/跨世代同帧/重复请求/签名半更新/超时等确定性 fixture；
+#      --jsonl-out 供 Python 跨语言全量 JSON 校验；
+#      tests/test_cef_frame_sync.py 门控消费）。----
+add_executable(frame_sync_selftest src/frame_sync_selftest.cpp
+                                  src/frame_sync_machine.cpp
+                                  src/frame_pipeline.cpp src/pixel_ops.cpp)
+target_link_libraries(frame_sync_selftest PRIVATE Threads::Threads)

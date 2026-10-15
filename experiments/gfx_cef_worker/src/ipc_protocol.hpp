@@ -30,12 +30,14 @@ inline constexpr uint32_t kNoticeMagic = 0x5654584E;   // "VTXN" 槽索引通知
 inline constexpr uint32_t kHelloMagic = 0x56545848u;   // "VTXH" 连接问候
 inline constexpr uint16_t kProtocolVersion = 1;
 
-// FrameSlotHeader::status_code（工单冻结语义）。
+// FrameSlotHeader::status_code（工单冻结语义；#114 增补 4 号档，见
+// IPC_PROTOCOL.md §0 偏差记录）。
 enum StatusCode : uint16_t {
   kStatusOk = 0,
   kStatusTimeout = 1,
   kStatusSizeMismatch = 2,
   kStatusJsErr = 3,
+  kStatusDuplicate = 4,  // #114：request_id 重放（状态机重复请求守卫）
 };
 
 // FrameSlotHeader::pixel_format（工单冻结语义）。

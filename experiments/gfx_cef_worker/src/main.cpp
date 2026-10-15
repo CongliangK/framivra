@@ -29,6 +29,7 @@
 #include <cerrno>
 #include <signal.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -86,6 +87,14 @@ struct RunOptions {
   std::string png_encoder = "spng";    // 默认推荐 libspng（对照 fpng/zlib）
   int png_level = 1;                   // spng SPNG_IMG_COMPRESSION_LEVEL 1..3
   std::string png_filter = "sub_up";   // 工单口径 SUB|UP（可改 none/sub/up/all）
+  // ---- #114 帧同步状态机（--sync；详见 frame_sync_machine.h）----
+  bool sync = false;                   // 启用五阶段状态机驱动
+  std::string sync_mode = "n";         // n = 逐帧导航（?f=N）| p = 常驻页
+  std::string sync_log;                // JSONL 全事件日志路径
+  std::string sync_canary = "clean";   // clean | diagnostic
+  std::string sync_fault = "none";     // 对抗注入面（见 Usage）
+  int sync_pump_timeout_ms = 5000;     // S4 泵送硬超时（工单冻结 5000ms）
+  int sync_ready_timeout_ms = 20000;   // S1→S3 就绪信号等待上限
 };
 
 void Usage(const char* argv0) {
@@ -129,7 +138,17 @@ void Usage(const char* argv0) {
       "  --png-level=1..3              spng SPNG_IMG_COMPRESSION_LEVEL（默认 1；\n"
       "                                3 对齐 VTX_GFX_PNG_LEVEL；fpng/zlib 忽略）\n"
       "  --png-filter=none|sub|up|sub_up|all  spng 滤波选择（默认 sub_up=工单\n"
-      "                                口径；none 最快文件较大——见 README 性能实测）\n",
+      "                                口径；none 最快文件较大——见 README 性能实测）\n"
+      "\n"
+      "#114 帧同步状态机（五阶段 S0→S5 + v2 双像素 Canary；搭配 --serve）:\n"
+      "  --sync                  启用 FrameSyncStateMachine（替代固定 settle 等待）\n"
+      "  --sync-mode=n|p         n = 逐帧导航 ?f=N（默认）；p = 常驻页 __vtx_render(N)\n"
+      "  --sync-log=<path>       JSONL 全事件日志（状态转移/paint 判定/时序/计数）\n"
+      "  --sync-canary=clean|diagnostic  clean = v2 双像素（默认）；diagnostic = 8x8\n"
+      "  --sync-fault=<mode>     none|stale_canary（恒画 f-1 签名）|no_canary（不画）|\n"
+      "                          no_ready（不发就绪信号）|early_burst（S1 突发泵送）\n"
+      "  --sync-pump-timeout-ms=N        S4 泵送硬超时（默认 5000，工单口径）\n"
+      "  --sync-ready-timeout-ms=N       S1→S3 就绪等待上限（默认 20000）\n",
       CEF_VERSION, VTX_CHROME_VERSION_STRING, argv0, argv0);
 }
 
@@ -182,6 +201,18 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
     } else if (num("--serve-idle-timeout-ms=", &opt->serve_idle_timeout_ms)) {
     } else if (num("--encode-threads=", &opt->encode_threads)) {
     } else if (num("--png-level=", &opt->png_level)) {
+    } else if (num("--sync-pump-timeout-ms=", &opt->sync_pump_timeout_ms)) {
+    } else if (num("--sync-ready-timeout-ms=", &opt->sync_ready_timeout_ms)) {
+    } else if (arg == "--sync") {
+      opt->sync = true;
+    } else if (const std::string v = value("--sync-mode="); !v.empty()) {
+      opt->sync_mode = v;
+    } else if (const std::string v = value("--sync-log="); !v.empty()) {
+      opt->sync_log = v;
+    } else if (const std::string v = value("--sync-canary="); !v.empty()) {
+      opt->sync_canary = v;
+    } else if (const std::string v = value("--sync-fault="); !v.empty()) {
+      opt->sync_fault = v;
     } else if (const std::string v = value("--png-encoder="); !v.empty()) {
       opt->png_encoder = v;
     } else if (const std::string v = value("--png-filter="); !v.empty()) {
@@ -236,6 +267,33 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
       std::fprintf(stderr,
                    "--serve 需要 --ipc-socket=<path> 与 --url-template=<tpl>\n");
       return false;
+    }
+    // #114：sync 参数面校验（非法值 exit 2，不静默回落）。
+    if (opt->sync) {
+      if (opt->sync_mode != "n" && opt->sync_mode != "p") {
+        std::fprintf(stderr, "--sync-mode 只接受 n|p，得到 %s\n",
+                     opt->sync_mode.c_str());
+        return false;
+      }
+      if (opt->sync_canary != "clean" && opt->sync_canary != "diagnostic") {
+        std::fprintf(stderr, "--sync-canary 只接受 clean|diagnostic，得到 %s\n",
+                     opt->sync_canary.c_str());
+        return false;
+      }
+      const std::vector<std::string> faults = {
+          "none", "stale_canary", "no_canary", "no_ready", "early_burst"};
+      if (std::find(faults.begin(), faults.end(), opt->sync_fault) ==
+          faults.end()) {
+        std::fprintf(stderr,
+                     "--sync-fault 只接受 none|stale_canary|no_canary|no_ready|"
+                     "early_burst，得到 %s\n",
+                     opt->sync_fault.c_str());
+        return false;
+      }
+      if (opt->sync_pump_timeout_ms <= 0 || opt->sync_ready_timeout_ms <= 0) {
+        std::fprintf(stderr, "--sync-*-timeout-ms 须为正\n");
+        return false;
+      }
     }
     if (opt->fault_inject.empty() || opt->fault_inject == "none") {
       // 正常面
@@ -476,6 +534,13 @@ int main(int argc, char* argv[]) {
     sopt.idle_timeout_ms = opt.serve_idle_timeout_ms;
     sopt.encode_threads = opt.encode_threads;
     sopt.png = png_opt;              // #111 模式 1 编码后端/级别/滤波
+    sopt.sync = opt.sync;            // #114 五阶段状态机
+    sopt.sync_mode = opt.sync_mode;
+    sopt.sync_log = opt.sync_log;
+    sopt.sync_canary = opt.sync_canary;
+    sopt.sync_fault = opt.sync_fault;
+    sopt.sync_pump_timeout_ms = opt.sync_pump_timeout_ms;
+    sopt.sync_ready_timeout_ms = opt.sync_ready_timeout_ms;
     if (opt.fault_inject == "abort_after_frame") {
       sopt.fault_abort_after_frames = opt.fault_abort_after_frames;
     }

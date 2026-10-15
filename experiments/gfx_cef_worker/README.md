@@ -1,14 +1,16 @@
-# gfx_cef_worker — CEF Native OSR Worker 构建系统与双模式 Worker（#108/#109/#110/#111）
+# gfx_cef_worker — CEF Native OSR Worker 构建系统与双模式 Worker（#108/#109/#110/#111/#114）
 
 路线 A（CEF Native OSR）阶段 1（#108，构建系统与版本锁）+ 阶段 1b（#109，
 CEF-01b：Linux Headless 显示环境矩阵探测、A0/A1 双模式启动与进程组自毁
 守卫）+ 阶段 2a（#110，CEF-02a：OnPaint 4-Slot 共享内存环形池与定长二进制
 IPC 协议）+ 阶段 2b（#111，CEF-02b：AVX2/NEON SIMD BGRA 逆预乘算子与
-libspng/fpng 双编码原子落盘适配器）。目标：可复现地取得 CEF 二进制 →
-C++20 编译 `libcef_dll_wrapper` + `vtx_cef_worker`（双模式 OSR 渲染 + 后端
-探针 + 监管契约 + 帧服务协议 + 双 PNG 编码后端）→ 产物全部隔离在本目录，
-绝不污染仓库打包面（`pyproject.toml` / `setup.py` / `MANIFEST.in` /
-`scripts/package_smoke.py`）。不接线 `vtx/` 生产代码（后续工单的事）。
+libspng/fpng 双编码原子落盘适配器）+ 阶段 3a（#114，CEF-03a：五阶段单调
+世代状态机与 v2 双像素 Canary 原地无损还原）。目标：可复现地取得 CEF
+二进制 → C++20 编译 `libcef_dll_wrapper` + `vtx_cef_worker`（双模式 OSR
+渲染 + 后端探针 + 监管契约 + 帧服务协议 + 双 PNG 编码后端 + 帧同步状态
+机）→ 产物全部隔离在本目录，绝不污染仓库打包面（`pyproject.toml` /
+`setup.py` / `MANIFEST.in` / `scripts/package_smoke.py`）。不接线 `vtx/`
+生产代码（后续工单的事）。
 
 ## 目录
 
@@ -29,6 +31,10 @@ C++20 编译 `libcef_dll_wrapper` + `vtx_cef_worker`（双模式 OSR 渲染 + �
 | `src/pixel_ops_selftest.cpp` | #111 原生自检与基准：(c,a)∈[0,255]² 全域穷举（LUT/SIMD 双分支）+ 双编码器往返/互证 + 原子写语义 + `--bench`/`--bench-json` 1080p 性能证据面（无 CEF 依赖） |
 | `third_party/spng/`、`third_party/fpng/` | #111 内嵌第三方源码：libspng v0.7.3（`spng.c`+`spng.h`，BSD-2-Clause）与 fpng（`fpng.cpp`+`fpng.h`，Unlicense）单文件上游源，随 git 入库 |
 | `third_party_locks.json` | #111 第三方源码版本锁：精确版本/来源 URL/size/sha256 哈希锚定（CEF 锁同纪律；改版本必须整包重锁） |
+| `src/frame_sync_machine.hpp` | #114 五阶段单调世代状态机 `FrameSyncStateMachine`：`(document_gen, request_id, target_frame_index)` 三元组 + S0→S5 严格序 + v2 双像素 Canary 闸门（早期丢弃/陈旧与半更新拒收/精确匹配接受+原地恢复）+ JSONL 全事件面（无 CEF 依赖） |
+| `src/frame_sync_machine.cpp` | #114 状态机实现：vtx/frame_canary.py 冻结公式的 C++ 消费镜像（P1 xor 0x5A / P2 加性 0x3C×(16,22) / α=254 / 预乘精确反像）；自检与 serve 共用同一判定核心 |
+| `src/frame_sync_selftest.cpp` | #114 原生对抗自检：旧 paint/跨世代同帧/重复请求/签名半更新/超时/早期 paint/尺寸不符/晚到回调等确定性 fixture（无 CEF 依赖；`--jsonl-out` 供 Python 跨语言校验） |
+| `pages/frame_sync_v2.html` | #114 状态机验收页：透明底 canvas（f 纯函数）+ `?f=`（Mode N）+ `__vtx_render(f)`（Mode P）+ `__vtx_originals()`（canary 位原像素上报钩子） |
 | `cef_client.py` | #110 Python 消费端（工单落点 `vtx/cef_client.py` 因本单边界禁改 `vtx/` 而随 worker 同目录交付；协议镜像见 `IPC_PROTOCOL.md`） |
 | `pages/frame_canary.html` | #110 金丝雀帧页：f 纯函数（(0,0) 像素编码帧号 + 硬边条纹防步长错位） |
 | `IPC_PROTOCOL.md` | #110 协议权威文档（环布局/偏移表/状态机/双模式时序/故障注入面/工单偏差记录） |
@@ -66,9 +72,15 @@ VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
 VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
   python3 -m unittest tests.test_cef_worker_pixel_ops -v
 
+# #114 帧同步状态机 DoD 验收（原生对抗自检 + 真实 CEF Mode N/P +
+# 全故障注入 + JSONL 跨语言校验；frame_sync_selftest 须在同目录）
+VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
+  python3 -m unittest tests.test_cef_frame_sync -v
+
 # 原生自检（无 CEF 依赖，可独立跑）
 experiments/gfx_cef_worker/build/bin/shm_ring_selftest
 experiments/gfx_cef_worker/build/bin/pixel_ops_selftest [--bench|--bench-json]
+experiments/gfx_cef_worker/build/bin/frame_sync_selftest [--jsonl-out=<path>]
 ```
 
 worker 常用参数：`--mode=a0|a1`（A0=Software OSR：`--disable-gpu
@@ -231,3 +243,100 @@ SUB|UP` 与（b）`unpremultiply + spng(level=1)` 单帧单核 ≤8ms、4 线程
 当前 283ms/帧全链含每帧导航与固定 250ms 落定余量（防字体/布局抖动的
 保守值），稳态优化（页面状态化替代逐帧导航、settle 自适应、编码流水线）
 属后续工单；编码面（libspng/fpng 双后端 + `--png-filter`）已由 #111 交付。
+
+## 五阶段帧同步状态机与 v2 双像素 Canary（#114 CEF-03a）
+
+正面解决 CEF Issue #4166 的两大死穴：① 页面 JS Ready 后首个 `OnPaint`
+可能是旧帧或半合成中间帧；② 静态画面 Viz 短路不触发 `OnPaint`。**不靠
+固定 `sleep(40ms)` 碰运气** —— #110 的 250ms 固定 settle 在 `--sync`
+路径下被就绪信号驱动完全替代（实测 Mode N 全链 ~90ms/帧 vs 旧路径
+283ms/帧，见下方实测）。核心组件：
+
+- **`FrameSyncStateMachine`**（`src/frame_sync_machine.{hpp,cpp}`，无 CEF
+  依赖）：三元组 `(document_gen, request_id, target_frame_index)` + 五个
+  严格有序状态 `S0_IDLE → S1_NAV_OR_EVAL_ISSUED → S2_ASSETS_FONTS_READY
+  → S3_JS_FRAME_APPLIED_AND_CANARY_SET → S4_COMPOSITOR_PUMPING →
+  S5_ONPAINT_VERIFIED`。非法转移一律拒绝并计数（严格单调性）。
+- **注入桥 JS**（serve 内建，`BuildSyncBridgeJs`）：S2 就绪收集
+  （`readyState==='complete'` + `document.fonts.ready` + 全部 `<img>`
+  `decode()`）→ 帧状态施加（Mode P `__vtx_render(N)`；Mode N 由 `?f=`
+  导航完成）→ **rAF → rAF → MessageChannel task**（只作就绪候选，不构成
+  提交完成证明）→ v2 双像素 Canary（Clean：P1@(0,0)+P2@(1,0) 同扫描线，
+  rgba(·,254/255)；Diagnostic：双对角 8×8）→ `console.debug
+  ("__VTX_READY__:"+json)` 通知宿主（三元组随装配注入，晚到/异世代回调
+  在宿主侧拒收计数）。
+- **S4 外部帧泵**：`Invalidate(PET_VIEW)` + `SendExternalBeginFrame()` +
+  `CefDoMessageLoopWork()`，1ms 轮询间隔，单帧硬超时 5000ms（工单冻结值，
+  `--sync-pump-timeout-ms` 可调）。S1–S3 期间同样泵送（推进 rAF）——期间
+  到达的 OnPaint 全部早期丢弃（`early_paint_dropped`）。
+- **S5 验签闸门**（`FeedPaint`）：尺寸卫兵 → Clean 双像素与期望帧预乘
+  签名**逐字节全等**才匹配（对齐 `vtx/frame_canary.py` 的
+  `accept_paint_bgra_inplace` 口径；Diagnostic 走双角 8×8 uniform 解码）。
+  陈旧帧拒收并归因（双像素候选交集单例 → `stale_paint:rendered=N`）、
+  半更新签名拒收（P1 新 P2 旧 → `half_signature`）、无签名/歧义拒收
+  （宁拒不猜）。**接受后原地恢复两个与请求绑定且已验证的原像素**
+  （canary_set 事件页面上报、经同帧验签绑定世代；无上报时行 1 邻域兜底
+  显形 `restore_source="neighbor_row1"` —— 仅 fixture 证明等值时成立，
+  不作通用恢复法），随后推入 #110 编码落盘队列。
+- **世代隔离**（帧号签名不编码 document_gen/request_id，故由宿主侧机制
+  承担并有证据）：① S4 前早期围栏（旧世代字节重放即丢弃）；② 请求间
+  S0 缴械（无在途请求时 paint 一律丢弃）；③ 晚到就绪回调三元组核对
+  拒收（`late_ready_cb_rejected`）；④ S4 泵送归属构造性绑定。残余理论
+  窗口（旧世代同帧号 paint 恰落在新请求 S4 中段）要求旧文档在已失去
+  compositing 归属后仍产出新帧 —— CEF 导航 commit 语义下不可达；同帧号
+  重请求的逐字节一致性由 f 纯函数页面保证（tests 实证）。
+- **JSONL 全事件日志**（`--sync-log=<path>`，无缓冲落盘）：`request_begin/
+  state_transition/paint/ready_cb_rejected/duplicate_request_rejected/
+  request_end` 逐事件携带 `document_gen/request_id/target_frame_index`、
+  `rejected_stale_paint_count`（请求作用域）、`accepted_elapsed_us_since_
+  ready`（S3→S5）等字段 —— 工单 DoD「清晰观测每一帧从 S3 到 S5 经历的
+  拒收计数与接受时延」的数据面。
+
+驱动模式与故障注入（`--sync` 系列参数，见 `-h`）：
+
+```bash
+# Mode N（逐帧导航 ?f=N，默认）
+vtx_cef_worker --mode=a0 --serve --ipc-socket=<sock> \
+  --url-template="file://…/frame_sync_v2.html?f={f}" \
+  --sync --sync-mode=n --sync-log=<path>.jsonl
+# Mode P（常驻页 __vtx_render(N)；url_template 为固定页地址）
+vtx_cef_worker … --sync --sync-mode=p --url-template="file://…/frame_sync_v2.html"
+# 对抗注入：stale_canary（恒画 f-1）/no_canary/no_ready/early_burst
+vtx_cef_worker … --sync --sync-fault=stale_canary --sync-pump-timeout-ms=3000
+```
+
+验收（门控测试 `tests/test_cef_frame_sync.py`，`VTX_TEST_CEF_WORKER` 同
+#109；#115 契约：不使用 MEDIA_CONDITIONS 保留字）：
+
+- **原生对抗自检** `frame_sync_selftest`（108 项断言全 PASS）：旧 paint、
+  跨世代同帧（旧世代字节在 S1 窗口重放被围栏丢弃 + 旧回调拒收）、重复
+  请求、签名半更新（P1新P2旧/P1旧P2新）、泵送超时、尺寸不符、早期/
+  晚到 paint、非法转移、公式已知值向量（f=0/0xFFFF 预乘字节）、双像素
+  联合解码全域探针单例闭环（含 P1 孪生帧 23167/23168）、恢复 ≠ 邻域
+  复制证明（上报原像素 ≠ 行 1 底纹时恢复取上报值）。
+- **真实 CEF（A0 软件路径实测，2026-10-15，RTX 4080 机器）**：
+  - Mode N 帧序列 `[0, 450, 899, 0(跨世代同帧)]`：全部 S0→S5 严格序、
+    receipt `canary_frame_index` == 解码结果、交付 PNG `(0,0)/(0,1)` ==
+    恢复后的透明真值（canary 字节不在）、跨世代同帧两次交付逐字节一致；
+  - Mode P 帧序列 `[0, 450, 12, 12, 899]`：常驻页 `document_gen` 恒 1，
+    请求 2（目标 450）的 S4 拒收归因 `stale_paint:rendered=0` ——
+    **真实 CEF #4166 旧 canary 尾随 Paint 被捕获并归因的证据**；
+  - 故障注入：`stale_canary` → S4 持续拒收 2700+ 次（rendered=f-1）后
+    5000ms 硬超时（TIMEOUT 回执 + JSONL `pump_timeout`）；`no_ready` →
+    S1→S3 超时（无 settle 碰运气）；重复 request_id → status=4
+    DUPLICATE；`size_mismatch` → status=2 + 实测 1920x1079 显形；
+  - A1（GPU 合成→CPU Buffer，ozone=headless）：状态机口径同构
+    （严格序/解码 canary/恢复源=reported_original）。
+- **性能**：Mode N 全链（导航→S2/S3 就绪→S4 泵送→验签→恢复→spng PNG
+  落盘）实测 ~90ms/帧（旧路径 283ms/帧，固定 settle 消除）；Mode P
+  常驻页 ~50ms/帧。静态画面饥饿问题在本通路未复现（Invalidate+
+  SendExternalBeginFrame 每毫秒泵送强制重合成，每泵必有 OnPaint）——
+  该结论仅对本实测环境成立，S6 高压对抗（2000 帧/120 帧静态跨度）属
+  #115 裁决范围。
+
+遗留边界（诚实清单）：诊断轨 8×8 验签为 uniform 块解码（块内撕裂带
+拒收），跨区域对角撕裂的全画幅裁决（TL vs BR 双角帧号比对）已实现归因
+方向但高压统计口径归 #115；receipt 128B 冻结结构无 `early_paint_dropped`
+字段位，该计数仅入 JSONL（DoD 口径即 JSONL）；「无上报原像素的任意
+HTML 恢复」仍为开放问题（本单交付请求绑定上报机制 + 邻域兜底显形，
+通用 DOM 页的验证式原像素获取留待下游）。
