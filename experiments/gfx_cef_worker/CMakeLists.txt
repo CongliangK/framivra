@@ -80,14 +80,30 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # png_writer（最小 PNG 编码，系统 zlib）。
 # issue #110：ipc_protocol/shm_ring（4-Slot SHM 环 + 定长协议，头文件库）、
 # frame_pipeline（紧凑拷贝/金丝雀解码/SIMD 逆预乘）、serve（帧服务模式）。
+# issue #111：pixel_ops（AVX2/NEON 逆预乘正式算子）、png_writer 升级双编码
+# 后端 —— 内嵌第三方源码 third_party/spng（libspng v0.7.3，C 源）与
+# third_party/fpng（fpng，C++ 源）：单文件上游源、以 -w 关上游告警面
+# （上游代码不按本仓 -Werror 纪律维护；版本/哈希锚定 third_party_locks.json）。
+set(VTX_THIRD_PARTY "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+set(SPNG_SOURCES "${VTX_THIRD_PARTY}/spng/spng.c")
+set(FPNG_SOURCES "${VTX_THIRD_PARTY}/fpng/fpng.cpp")
+# 上游源按其自述要求补指令集（fpng 的 SSE4.1/PCLMUL intrinsic 运行时分派，
+# 但编译 TU 需 -msse4.1 -mpclmul；二者不在 -march=x86-64-v3 集合内）；
+# -w 关上游告警面（上游不按本仓 -Werror 纪律维护）。
+set_source_files_properties(${SPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(${FPNG_SOURCES}
+                            PROPERTIES COMPILE_OPTIONS "-w;-msse4.1;-mpclmul")
 add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
-                             src/frame_pipeline.cpp src/png_writer.cpp
-                             src/serve.cpp)
+                             src/frame_pipeline.cpp src/pixel_ops.cpp
+                             src/png_writer.cpp src/serve.cpp
+                             ${SPNG_SOURCES} ${FPNG_SOURCES})
 # CEF 官方 exe 属性宏：CEF flag 集（含 -std=c++20 -O3 -Wall -Wextra -Werror，
 # 与目录级工单 flag 同语义）+ include 路径。
 SET_EXECUTABLE_TARGET_PROPERTIES(vtx_cef_worker)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
+target_include_directories(vtx_cef_worker PRIVATE
+                          "${VTX_THIRD_PARTY}/spng" "${VTX_THIRD_PARTY}/fpng")
 target_link_libraries(vtx_cef_worker PRIVATE
                       libcef_dll_wrapper libcef Threads::Threads
                       ZLIB::ZLIB ${CMAKE_DL_LIBS})
@@ -100,5 +116,16 @@ set_target_properties(vtx_cef_worker PROPERTIES
 # ---- shm_ring_selftest：4-Slot 环/协议原生自检（无 CEF 依赖；tests 门控
 #      消费，亦支持 --dump-ring 供 Python 解析器跨语言锁定偏移表）。----
 add_executable(shm_ring_selftest src/shm_ring_selftest.cpp
-                                src/frame_pipeline.cpp)
+                                src/frame_pipeline.cpp src/pixel_ops.cpp)
 target_link_libraries(shm_ring_selftest PRIVATE Threads::Threads)
+
+# ---- pixel_ops_selftest：#111 算子/双编码器/原子落盘原生自检与基准
+#      （无 CEF 依赖；(c,a) 全域穷举 + 双编码器往返 + --bench 性能证据；
+#      tests/test_cef_worker_pixel_ops.py 门控消费）。----
+add_executable(pixel_ops_selftest src/pixel_ops_selftest.cpp
+                                 src/pixel_ops.cpp src/png_writer.cpp
+                                 ${SPNG_SOURCES} ${FPNG_SOURCES})
+target_include_directories(pixel_ops_selftest PRIVATE
+                          "${VTX_THIRD_PARTY}/spng" "${VTX_THIRD_PARTY}/fpng")
+target_link_libraries(pixel_ops_selftest PRIVATE Threads::Threads
+                                                 ZLIB::ZLIB)

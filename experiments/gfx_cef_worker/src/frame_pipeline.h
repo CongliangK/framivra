@@ -6,8 +6,9 @@
 //   2) DecodeCanaryFrameIndex —— (0,0) 像素金丝雀帧号核实（工单
 //      canary_frame_index 的数据面）；
 //   3) UnpremultiplyToRgba —— 预乘 BGRA → 直通 RGBA 的 SIMD 逆预乘
-//      （256×256 精确 LUT + AVX2 gather；与 #109 标量公式逐值一致，
-//      selftest 穷举 (c,a) 全组合验证；整帧不透明走纯通道交换快路径）。
+//      （#111 起实现在 pixel_ops.{h,cpp}：65,536 项精确 LUT + AVX2 单遍
+//      混合式/NEON 结构交换；与 #109 标量公式逐值一致，selftest 穷举
+//      (c,a) 全组合验证；本符号保留为 byte_len 口径的兼容包装）。
 #ifndef GFX_CEF_WORKER_FRAME_PIPELINE_H_
 #define GFX_CEF_WORKER_FRAME_PIPELINE_H_
 

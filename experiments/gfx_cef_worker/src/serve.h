@@ -20,6 +20,7 @@
 #include <string>
 
 #include "app_handler.h"
+#include "png_writer.h"
 
 namespace vtx_cef {
 
@@ -34,6 +35,7 @@ struct ServeOptions {
   int ready_settle_ms = 250;         // 加载落定后余量
   int encode_threads = 2;            // 本地编码线程池大小
   int fault_abort_after_frames = -1; // >=0：成功交付 N 帧后 abort()（DoD③）
+  PngEncodeOptions png;              // #111 模式 1 编码后端/级别（默认 spng L1）
 };
 
 // 阻塞服务直至宿主断开/空闲超时/致命错误；返回进程退出码。

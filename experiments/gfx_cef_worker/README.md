@@ -1,13 +1,14 @@
-# gfx_cef_worker — CEF Native OSR Worker 构建系统与双模式 Worker（#108/#109/#110）
+# gfx_cef_worker — CEF Native OSR Worker 构建系统与双模式 Worker（#108/#109/#110/#111）
 
 路线 A（CEF Native OSR）阶段 1（#108，构建系统与版本锁）+ 阶段 1b（#109，
 CEF-01b：Linux Headless 显示环境矩阵探测、A0/A1 双模式启动与进程组自毁
 守卫）+ 阶段 2a（#110，CEF-02a：OnPaint 4-Slot 共享内存环形池与定长二进制
-IPC 协议）。目标：可复现地取得 CEF 二进制 → C++20 编译 `libcef_dll_wrapper` +
-`vtx_cef_worker`（双模式 OSR 渲染 + 后端探针 + 监管契约 + 帧服务协议）→
-产物全部隔离在本目录，绝不污染仓库打包面（`pyproject.toml` / `setup.py` /
-`MANIFEST.in` / `scripts/package_smoke.py`）。不接线 `vtx/` 生产代码（后续
-工单的事）。
+IPC 协议）+ 阶段 2b（#111，CEF-02b：AVX2/NEON SIMD BGRA 逆预乘算子与
+libspng/fpng 双编码原子落盘适配器）。目标：可复现地取得 CEF 二进制 →
+C++20 编译 `libcef_dll_wrapper` + `vtx_cef_worker`（双模式 OSR 渲染 + 后端
+探针 + 监管契约 + 帧服务协议 + 双 PNG 编码后端）→ 产物全部隔离在本目录，
+绝不污染仓库打包面（`pyproject.toml` / `setup.py` / `MANIFEST.in` /
+`scripts/package_smoke.py`）。不接线 `vtx/` 生产代码（后续工单的事）。
 
 ## 目录
 
@@ -20,10 +21,14 @@ IPC 协议）。目标：可复现地取得 CEF 二进制 → C++20 编译 `libc
 | `src/app_handler.{h,cpp}` | `WorkerApp`（OnBeforeCommandLineProcessing 按 A0/A1 注入开关 + OnScheduleMessagePumpWork）与 `WorkerClient`（OSR OnPaint 全帧 BGRA→RGBA、#110 serve 捕获路径、GetViewRect、console marker 探针通道）+ 共享装配（MakeWorkerSettings/CreateOsrBrowser/PumpDriver） |
 | `src/ipc_protocol.hpp` | #110 定长二进制协议：工单冻结 `FrameSlotHeader`（偏移静态断言=线上规范）+ 64B `FrameRequest` + 32B `SlotNotice` + 64B `HelloInfo`（SCM_RIGHTS 随带 SHM fd） |
 | `src/shm_ring.hpp` | #110 4-Slot POSIX SHM 环：`shm_open`→`ftruncate`→`mmap`→**立即 `shm_unlink` 零残留**；EMPTY/WRITING/READY 门（acquire/release 跨进程同步）；满环背压等待入账 |
-| `src/frame_pipeline.{h,cpp}` | 帧原语：任意行步长逐行紧凑拷贝（防斜纹）、(0,0) 金丝雀解码、AVX2 LUT 逆预乘（与 #109 标量公式穷举一致 + 不透明快路径） |
-| `src/serve.{h,cpp}` | #110 帧服务模式：模式 1（线程池逆预乘+PNG+`.tmp`+rename 原子落盘，回 128B 计时回执）/ 模式 2（先取空槽再生产；满环背压停发 BeginFrame；槽索引通知） |
+| `src/frame_pipeline.{h,cpp}` | 帧原语：任意行步长逐行紧凑拷贝（防斜纹）、(0,0) 金丝雀解码；#111 起逆预乘迁至 pixel_ops（本文件保留 byte_len 口径兼容包装） |
+| `src/pixel_ops.{h,cpp}` | #111 正式算子 `unpremultiply_bgra_to_rgba`：65,536 项精确 LUT + AVX2 单遍混合式（块级不透明 shuffle 快路径 / gather 通用路径）+ NEON 结构交换（aarch64 编译期门控）+ 标量兜底；与 #109 标量公式逐值一致（selftest 全域穷举） |
+| `src/serve.{h,cpp}` | #110 帧服务模式：模式 1（线程池逆预乘+双后端 PNG+`.tmp.<pid>.<tid>`+rename 原子落盘，回 128B 计时回执）/ 模式 2（先取空槽再生产；满环背压停发 BeginFrame；槽索引通知） |
 | `src/shm_ring_selftest.cpp` | 原生自检（状态机/背压/步长紧凑/陈旧 run_id/SIMD 穷举/金丝雀）+ `--dump-ring` 跨语言偏移锁定（无 CEF 依赖） |
-| `src/png_writer.{h,cpp}` | 最小 PNG(RGBA/8bit) 编码器（zlib），产物过 `vtx/gfx_cli.py:png_invalid_reason()`；#110 增 `EncodePngRgba`+`AtomicWriteBytes` 分步计时件（原函数行为不变） |
+| `src/png_writer.{h,cpp}` | #111 双后端 PNG(RGBA/8bit) 编码：`--png-encoder=spng\|fpng\|zlib` × `--png-level=1..3` × `--png-filter=none\|sub\|up\|sub_up\|all`（默认 spng L1 SUB\|UP=工单口径）；原子落盘 `AtomicWriteBytes`（fwrite+fflush+fclose 全零校验 + rename；异常 unlink） |
+| `src/pixel_ops_selftest.cpp` | #111 原生自检与基准：(c,a)∈[0,255]² 全域穷举（LUT/SIMD 双分支）+ 双编码器往返/互证 + 原子写语义 + `--bench`/`--bench-json` 1080p 性能证据面（无 CEF 依赖） |
+| `third_party/spng/`、`third_party/fpng/` | #111 内嵌第三方源码：libspng v0.7.3（`spng.c`+`spng.h`，BSD-2-Clause）与 fpng（`fpng.cpp`+`fpng.h`，Unlicense）单文件上游源，随 git 入库 |
+| `third_party_locks.json` | #111 第三方源码版本锁：精确版本/来源 URL/size/sha256 哈希锚定（CEF 锁同纪律；改版本必须整包重锁） |
 | `cef_client.py` | #110 Python 消费端（工单落点 `vtx/cef_client.py` 因本单边界禁改 `vtx/` 而随 worker 同目录交付；协议镜像见 `IPC_PROTOCOL.md`） |
 | `pages/frame_canary.html` | #110 金丝雀帧页：f 纯函数（(0,0) 像素编码帧号 + 硬边条纹防步长错位） |
 | `IPC_PROTOCOL.md` | #110 协议权威文档（环布局/偏移表/状态机/双模式时序/故障注入面/工单偏差记录） |
@@ -56,8 +61,14 @@ VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
 VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
   python3 -m unittest tests.test_cef_worker_shm -v
 
+# #111 算子/双编码器 DoD 验收（全域穷举/双后端 Tier-1 互证/崩溃窗口/
+# 性能证据采集；同门控变量，pixel_ops_selftest 须在同目录）
+VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
+  python3 -m unittest tests.test_cef_worker_pixel_ops -v
+
 # 原生自检（无 CEF 依赖，可独立跑）
 experiments/gfx_cef_worker/build/bin/shm_ring_selftest
+experiments/gfx_cef_worker/build/bin/pixel_ops_selftest [--bench|--bench-json]
 ```
 
 worker 常用参数：`--mode=a0|a1`（A0=Software OSR：`--disable-gpu
@@ -96,6 +107,9 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
   对齐决策与查证记录见 `cef_lock.json` 的 `alignment_note`。
 - 二进制永不入库：tarball 缓存在 `~/.cache/cef/`（可用 `CEF_CACHE_DIR`
   改道），解包物由 `.gitignore` 的 `cef_binary*/` 规则隔离。
+- #111 第三方**源码**（libspng/fpng 单文件）随 git 入库（上游即单文件
+  发布形态，构建零网络依赖）；版本/URL/sha256 锚定于
+  `third_party_locks.json`（同 CEF 锁纪律：改版本必须整包重锁）。
 - 运行时布置以分发包实际清单为准（= CEF 官方 `CEF_BINARY_FILES` /
   `CEF_RESOURCE_FILES`：libcef.so、libvk_swiftshader.so、libvulkan.so.1、
   v8_context_snapshot.bin、vk_swiftshader_icd.json、chrome-sandbox、
@@ -154,11 +168,66 @@ kill -9 宿主→105ms 树归零 + reap 后临时目录零残留。
 （槽发布→通知→mmap 读→门释放，不含渲染）为微秒级——K1 熔断门的
 18ms 单帧预算约束的是稳态帧管线（settle 自适应/编码流水化属下游工单）。
 
-## 下游熔断门提醒（#108/#109/#110 范围外，承接自工单）
+## 双 PNG 编码后端与 SIMD 逆预乘（#111 CEF-02b）
+
+`--png-encoder=spng|fpng|zlib`（默认 `spng`，工单推荐）× `--png-level=1..3`
+（仅 spng 生效；3 对齐 `VTX_GFX_PNG_LEVEL=3`）× `--png-filter=none|sub|up|
+sub_up|all`（仅 spng 生效；默认 `sub_up`=工单口径 `SPNG_FILTER_CHOICE =
+SPNG_FILTER_CHOICE_SUB | SPNG_FILTER_CHOICE_UP`）。模式 1 落盘与一次性
+`--out-png` 共用同一编码面；`t_png_encode_us` 回执字段语义不变。
+
+- **spng**：内嵌 libspng v0.7.3（third_party/spng/，锁 third_party_locks.json）。
+  编码入口 `spng_encode_image(SPNG_FMT_PNG)`——v0.7.3 编码面仅接受
+  `SPNG_FMT_PNG`/`SPNG_FMT_RAW`（无 `SPNG_FMT_RGBA8` 编码支持），8-bit
+  RGBA 输入布局与 `SPNG_FMT_PNG` 逐字节一致，工单语义完整达成（偏差
+  记录见 IPC_PROTOCOL.md §0）。
+- **fpng**：内嵌 fpng（third_party/fpng/）；启动时 `fpng::fpng_init()`
+  开启 SSE4.1/PCLMUL 硬件 CRC32/Adler32；无压缩级别/滤波概念（flags=0）。
+  产物为标准 PNG（私有 `fdEC` ancillary 块置 IDAT 前，标准解码器按规范
+  跳过；实测过 `png_invalid_reason` 与 PIL/libspng 解码）。
+- **zlib**：#109/#110 遗留最小编码器（filter-0 + `Z_DEFAULT_COMPRESSION`），
+  字节口径与 #110 产物一致，保留作基线对照与回落面。
+- **原子落盘**：`AtomicWriteBytes` —— 同目录 `<final>.tmp.<pid>.<tid>` →
+  `fwrite`+`fflush`+`fclose` 返回值全零校验 → `rename()` 原子替换；异常
+  路径 `unlink` 临时件。写者被 SIGKILL 的崩溃窗口内：目标 `f*.png` 恒为
+  完整件或不存在（绝无半件），可能残留的 `*.tmp.<pid>.*` 为可辨识可清扫
+  模式（tests/test_cef_worker_pixel_ops.py::AtomicWriteKillWindow 实证）。
+- **正确性**：逆预乘算子与 #109 标量公式 (c,a)∈[0,255]² **全域穷举**
+  零失配（LUT 与 SIMD 双分支分别穷举）；双编码器产物解码回 RGBA 与输入
+  逐字节一致，spng/fpng 两路像素 Tier-1 全等（#104 `analyze_frame_diff`）。
+
+### 性能实测（1080p，7950X 单核中位数，2026-10-15）
+
+逆预乘（AVX2）：不透明帧 0.36-0.43ms（≈19-23GB/s；标量参考 6.1-6.6ms，
+**15-17×**）；混合 alpha 帧 1.9ms（3.9×）。工单「全不透明页 <0.3ms」
+在 0.36-0.43ms 量级达成率未满（差距 <50%，见遗留风险）。
+
+单帧管线（unpremul + encode）与 4 线程并发编码吞吐：
+
+| 内容类 | spng L1 sub_up（默认） | spng L1 none | fpng | 4线程 spng sub_up | 4线程 spng none | 4线程 fpng |
+| --- | --- | --- | --- | --- | --- | --- |
+| 全平色 | 13.0ms | 1.3ms | 1.7ms | 303fps | 3147fps | 1156fps |
+| 条纹页（canary 同族） | 13.1ms | 1.5ms | 2.0ms | 301fps | 2969fps | 1258fps |
+| 径向渐变（fpng 弱项） | 22.6ms | 9.6ms | 5.2ms | 173fps | 412fps | 674fps |
+| LCG 噪声（上界） | 96.5ms | 84.7ms | 5.4ms | 40fps | 46fps | 673fps |
+
+**工单 DoD 冲突显形**：工单同时要求（a）默认 `SPNG_FILTER_CHOICE =
+SUB|UP` 与（b）`unpremultiply + spng(level=1)` 单帧单核 ≤8ms、4 线程
+≥300fps。实测 libspng v0.7.3 的 SUB|UP **行滤波选择**（每行对候选滤波
+求和启发式）在本机使编码耗时 3-14×于禁滤波（见上表），两要求在渐变/
+噪声类内容上不可同时成立。本实现以工单口径为默认（sub_up），提供
+`--png-filter=none` 逃生档（全平/条纹类 1.3-1.5ms 满足 ≤8ms 与 ≥300fps；
+渐变类 9.6ms/412fps 仍越 8ms 单核线但过 300fps 线）；fpng 全内容类满足
+两线（≤5.4ms、≥673fps）但文件体积在渐变类为 spng 的 2.4×（1476KB vs
+611KB——正是工单背景所述矛盾）。编码后端选型归 #113 桥接工单/产线调参
+决策，本单以可切换 + 全数字交付。
+
+## 下游熔断门提醒（#108-#111 范围外，承接自工单）
 
 #109 只保证"能起、能渲一帧、能探明环境、死得干净"；#110 保证"帧能经
-定长协议 + SHM 环正确、有背压、死得干净地交付到消费端"。单帧 IPC +
-PNG 编码耗时 > 18ms 或强杀出现孤儿进程即触发 K1 熔断 —— 当前 283ms/
-帧全链含每帧导航与固定 250ms 落定余量（防字体/布局抖动的保守值），
-稳态优化（页面状态化替代逐帧导航、settle 自适应、编码流水线、libspng/
-fpng）属后续工单。
+定长协议 + SHM 环正确、有背压、死得干净地交付到消费端"；#111 保证
+"逆预乘算子确定性等价 + 双 PNG 编码可切换且产物全过校验 + 落盘原子"。
+单帧 IPC + PNG 编码耗时 > 18ms 或强杀出现孤儿进程即触发 K1 熔断 ——
+当前 283ms/帧全链含每帧导航与固定 250ms 落定余量（防字体/布局抖动的
+保守值），稳态优化（页面状态化替代逐帧导航、settle 自适应、编码流水线）
+属后续工单；编码面（libspng/fpng 双后端 + `--png-filter`）已由 #111 交付。

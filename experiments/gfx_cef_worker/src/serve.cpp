@@ -529,7 +529,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
           t3 = NowUs();
           const bool enc =
               EncodePngRgba(rgba.data(), static_cast<int>(r.width),
-                            static_cast<int>(r.height), &png);
+                            static_cast<int>(r.height), opt.png, &png);
           t_png = NowUs() - t3;
           t4 = NowUs();
           deliver_ok = enc && AtomicWriteBytes(out_path, png.data(), png.size());
