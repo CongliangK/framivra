@@ -34,10 +34,24 @@ Worker 又失去帧同步锚点」的逻辑悖论（对齐 CEF Issue #4166 的 M
   相邻对 + 32602/32858、32640/32895、32639/32896、32677/32933 四远对）。当
   期望帧的签名处于该塌缩（孪生在世）且观测签名恰为塌缩签名时，**任何**比对
   ——包括与期望帧签名的精确比对——都无法区分「期望帧真迹」与「孪生陈旧
-  帧」：闸门与剥离侧一律显式拒绝并上报 ``ambiguous_signature``（宁拒不剥，
-  不猜帧号；等待后续 Paint 也不会收敛，同帧号签名恒同）。这 12 个帧号在本
-  签名方案下不可阳性确认，是显式化的协议物理边界而非可实现性缺陷（区分需
-  协议升级，如双像素签名——代价见 issue #105 r2 评审记录）。
+  帧」。已显式拒绝 ``ambiguous_signature``（宁拒不剥，不猜帧号；等待后续
+  Paint 也不会收敛，同帧号签名恒同）的侧面：BGRA 闸门
+  ``accept_paint_bgra_inplace``（含 expected=None 的 skip-gate 支，r2）与
+  PNG/CDP 通路的 ±1 多候选支（r2）+ **精确解码支（r3 补齐）**——r2 的 PNG
+  侧曾漏查精确支：孪生对高侧帧陈旧绘制的黑底混合观感
+  round(C·254/255) 在 3 对方向上恰为低侧帧的**精确直向签名**
+  （23168→23167、32858→32602、32896→32639，通道全 ≤127 时预乘恒等回落），
+  从精确支伪报 ok 并照常剥离（红队 #105 r2 证据）；r3 起凡精确命中帧孪生
+  在世即拒（通用规则，不硬编码 3 对；孪生直向签名全域互异，非孪生帧精确
+  命中不受影响）。故这 12 个帧号在本签名方案下于**两通路均不可阳性确认**
+  （含真迹同拒），是显式化的协议物理边界而非可实现性缺陷（区分需协议
+  升级，如双像素签名——代价见 issue #105 r2 评审记录）。剩余物理边界如实
+  清单：① PNG 通路精确命中帧 ≠ 请求帧时仍按「精确签名帧号说了算」判
+  wrong_frame_*（永不放行剥离，但 rendered 归属不保证可靠——真 23168 的
+  黑底观感即精确解到 23167，同 65535→65278 塌缩口径）；② ±1 唯一候选/
+  非孪生多候选（如 f=4095）按抗舍入容差放行（原生通路字节可区分），撕裂
+  观感由事后 Tier-1 仲裁；③ 消费方选帧可先经 ``premul_twin_frames`` 预避开
+  这 12 个帧号（r3 起 gfx_golden 再导出）。
 
 帧号域：16-bit [0, 65535]（R 高 8 位 / G 低 8 位）；0xA5/0x5A 两模式异或键
 互不相同，同帧号双模式签名必然不同（模式混注不会互相误判）。
@@ -64,7 +78,9 @@ BeginFrame 驱动，消费 harness 以 throwaway 截图兜底触发）；页面�
   - DOM/CSS 叠层在**不透明**合成输出（CDP 截图）中 α 恒拍平为 255，且
     rgba(254/255) 签名与底层页面像素按 α 混合 → RGB 偏差 |Δ|≤1/通道。故 PNG
     通路校验（``verify_clean_pixel``）不查 α，按强度递降判定：精确解码（直向
-    签名全域单射，无歧义）→ ±1 立方候选唯一解码（抗舍入策略）→ 多候选且
+    签名全域单射；**命中帧孪生在世且 == 请求帧 → ``ambiguous_signature``
+    显式拒绝**——孪生高侧帧的黑底混合观感恰为低侧精确直向签名，r3 前此处
+    曾穿透，红队 #105 r2）→ ±1 立方候选唯一解码（抗舍入策略）→ 多候选且
     含请求帧的**预乘孪生** = ``ambiguous_signature`` 显式拒绝（协议固有塌缩
     族，宁拒不猜）；多候选但仅为 ±1 舍入邻居（原生通路字节可区分）按对靶
     容差放行；不含请求帧的多候选同样 ``ambiguous_signature``（帧号不可
@@ -300,9 +316,16 @@ def verify_clean_pixel(px, requested_frame: int) -> dict:
 
     PNG 通路 A 实现为 255（CDP 截图不透明合成），故 α 不参与判据；注入桥以
     rgba(...,254/255) 绘制，不透明合成下 RGB 与底层页面像素按 α=254/255 混合
-    （|偏差| ≤ 1/通道，抗舍入策略）。判定按强度递降（issue #105 r2）：
+    （|偏差| ≤ 1/通道，抗舍入策略）。判定按强度递降（issue #105 r2；r3 补 ①
+    的孪生拒绝）：
       ① 精确解码：RGB 直读帧号 + 校验和全等（两探针解算/同色底时成立，最强；
-        直向签名全域单射，精确解码无歧义）；
+        直向签名全域单射，非孪生帧无歧义）→ 按该帧号分类。**但命中帧孪生
+        在世（premul_twin_frames 非空）且 == 请求帧 → ``ambiguous_signature``
+        显式拒绝**：黑底混合下孪生对高侧帧（如 23168）的陈旧绘制观感
+        round(C·254/255) 恰为低侧帧（23167）的精确直向签名，真迹与陈旧观感
+        不可分（红队 #105 r2 穿透主因；与 BGRA 闸门同状态词，宁拒不猜）；
+        命中帧 ≠ 请求帧时按「精确签名帧号说了算」走 wrong_frame_* 拒绝（宁拒
+        不剥，rendered 归属不保证可靠——同 65535→65278 塌缩口径）；
       ② ±1 立方候选唯一解码（_clean_blend_candidates）→ 按该帧号分类；
       ③ 多候选且含请求帧：**候选集含请求帧的预乘孪生**（premul_twin_frames，
         即原生通路字节也不可区分的协议固有塌缩族）→ ``ambiguous_signature``
@@ -316,6 +339,17 @@ def verify_clean_pixel(px, requested_frame: int) -> dict:
     """
     req = _check_frame(requested_frame)
     r, g, b = int(px[0]) & 0xFF, int(px[1]) & 0xFF, int(px[2]) & 0xFF
+    frame, exact = decode_pixel(MODE_CLEAN, r, g, b)
+    if exact:
+        twins = premul_twin_frames(MODE_CLEAN, frame)
+        if frame == req and twins:
+            return {"status": ST_AMBIGUOUS, "rendered_frame": None,
+                    "detail": f"精确命中请求帧 {req} 直向签名但预乘孪生在世"
+                              f"（twin={'|'.join(map(str, twins))}）——孪生陈旧"
+                              "帧的黑底混合观感与真迹不可分，宁拒不猜"}
+        return {"status": classify_frame(frame, req), "rendered_frame": frame,
+                "detail": "" if frame == req else
+                f"rendered={frame} requested={req}"}
     cands = _clean_blend_candidates(r, g, b)
     if len(cands) == 1:
         frame = next(iter(cands))
@@ -500,9 +534,14 @@ def accept_paint_bgra_inplace(buf: bytearray, width: int, expected_frame: int,
 def _clean_matches_expected(px, exp: int) -> bool:
     """剥离侧对靶判定（「宁拒不剥」双战线：陈旧帧鉴别保守 + 孪生歧义拒绝）：
 
-      ① obs 是某帧的**精确合法签名** → 帧号说了算：仅 exp == 该帧号才放行
-         （陈旧帧鉴别是生死线——CEF #4166 场景＝旧帧签名原样在缓冲区里，
-         ±1 放行会静默把旧帧当新帧剥离落盘，Tier-1 之前无人兜底）；
+      ① obs 是某帧的**精确合法签名** → 仅 exp == 该帧号**且该帧孪生不在世**
+         （premul_twin_frames(exp) 为空）才放行：孪生在世时观测也可能来自其
+         孪生帧的黑底混合（round(C·254/255) 在 3 对方向上恰为 exp 的精确直向
+         签名，如 stale 23168 → expected 23167——红队 #105 r2 穿透，r3 拒），
+         真迹与陈旧观感不可分 → 拒绝（verify 侧上报 ambiguous_signature，
+         宁拒不剥；陈旧帧鉴别是生死线——CEF #4166 场景＝旧帧签名原样在缓冲
+         区里，±1 放行会静默把旧帧当新帧剥离落盘，Tier-1 之前无人兜底）；
+         非孪生帧直向签名全域单射，精确命中即无歧义；
       ② obs 非精确签名（混合/撕裂观感）→ exp ∈ ±1 立方候选才可能放行，且
          候选集**不得含 exp 的预乘孪生**（premul_twin_frames——原生 BGRA
          通路字节也不可区分的协议固有塌缩族，与闸门 ambiguous_signature 同
@@ -518,7 +557,9 @@ def _clean_matches_expected(px, exp: int) -> bool:
     r, g, b = int(px[0]) & 0xFF, int(px[1]) & 0xFF, int(px[2]) & 0xFF
     frame, ok = decode_pixel(MODE_CLEAN, r, g, b)
     if ok:
-        return frame == exp
+        # r3：精确直向命中且该帧孪生在世 → 同闸门 ambiguous 规则的 PNG 投影
+        #（孪生高侧帧的黑底混合观感恰为低侧精确签名），宁拒不剥。
+        return frame == exp and not premul_twin_frames(MODE_CLEAN, exp)
     cands = _clean_blend_candidates(r, g, b)
     if exp not in cands:
         return False
@@ -531,10 +572,13 @@ def restore_clean_1px_rgba_inplace(arr, expected_frame=None,
     gfx_golden._decode_rgba 的返回或 PIL 转 numpy 的帧）。
 
     先校验 (0,0)（expected_frame 给出且连宽松对靶都不中、或观测处于多候选
-    歧义（孪生撕裂中点）→ 拒绝剥离，返回 {"restored": False, ...}，宁拒不
+    歧义（孪生撕裂中点/孪生精确直向命中——后者观测也可能来自孪生帧的黑底
+    混合，r3）→ 拒绝剥离，返回 {"restored": False, ...}，宁拒不
     错，status=ambiguous_signature 时帧号不可归属；expected_frame=None 时
-    要求候选解码唯一）；随后 (0,0) ← original_rgba（宿主上报原始色，优先）
-    或相邻像素 (1,0)。返回 restored/rendered_frame/restore_source/status。
+    要求候选解码唯一，且唯一候选系孪生帧的精确直向签名时同样宁拒不剥——
+    与 accept_paint_bgra_inplace 的 skip-gate 同规则，帧号不可归属不猜测）；
+    随后 (0,0) ← original_rgba（宿主上报原始色，优先）或相邻像素 (1,0)。
+    返回 restored/rendered_frame/restore_source/status。
     剥离后帧与无 Canary 原生 Golden 的 Tier-1 全等由调用方用
     gfx_golden.analyze_frame_diff 验证（DoD 口径）。
     """
@@ -555,6 +599,13 @@ def restore_clean_1px_rgba_inplace(arr, expected_frame=None,
             return {"restored": False, "status": ST_CHECKSUM,
                     "rendered_frame": None}
         frame = next(iter(cands))
+        # r3：唯一候选系精确直向签名且该帧孪生在世 → 帧号不可归属（观测
+        # 也可能来自孪生帧的黑底混合），skip 管道同规则宁拒不剥。
+        if (decode_pixel(MODE_CLEAN, px[0] & 0xFF, px[1] & 0xFF,
+                         px[2] & 0xFF)[1]
+                and premul_twin_frames(MODE_CLEAN, frame)):
+            return {"restored": False, "status": ST_AMBIGUOUS,
+                    "rendered_frame": None}
     src = tuple(int(v) for v in original_rgba) if original_rgba is not None \
         else tuple(int(v) for v in arr[0][1])
     arr[0][0] = src

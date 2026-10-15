@@ -30,10 +30,13 @@ Clean 1px 原地无损剥离）全链验收。
      CDP addScriptToEvaluateOnNewDocument 注入 → 合成帧驱动页 + 仓内真实页
      gfxA.html 双轨解码 100%；clean 1px 剥离后与无注入基准 Tier-1 全等；
      __vtx_render(f) 桥接重绘换帧签名（#105b 陈旧色回归）。
-  ⑧ 孪生帧穿透回归（红队 #105 r1 FAIL 主因，r2 修复锁）：预乘塌缩孪生 6 对
+  ⑧ 孪生帧穿透回归（红队 #105 r1 FAIL 主因，r2 修复锁；r3 补 PNG/CDP 精确
+     解码支——红队 r2 证据：孪生高侧帧黑底混合观感恰为低侧精确直向签名的
+     3 对方向曾从精确支伪报 ok 并照常剥离）：预乘塌缩孪生 6 对
      全测（双向陈旧伪装必拒 + 真迹同拒——协议物理边界显式化而非可实现性
      缺陷）、相邻对 lag 场景单列（stale==expected-1，CEF #4166 典型形态）、
-     skip-gate 与 PNG 剥离侧同规则宁拒不剥、孪生撕裂中点 → 七态
+     skip-gate 与 PNG 剥离侧（含 expected=None 管道）同规则宁拒不剥、孪生
+     撕裂中点与精确直向命中 → 七态
      ambiguous_signature（CLI 单列计数、不进 wrong_frame_count）。
 """
 import io
@@ -615,6 +618,77 @@ class TestCleanRestoreTier1(unittest.TestCase):
         v2 = fc.verify_clean_pixel((90, 128, 127, 255), 50)
         self.assertEqual(v2["status"], fc.ST_AMBIGUOUS)
         self.assertIn("False", v2["detail"])
+
+    def test_png_exact_decode_twin_penetration_rejected(self):
+        """红队 #105 r2 PNG/CDP 精确解码支穿透回归（r3 修复锁）。
+
+        孪生对高侧帧陈旧绘制的黑底混合观感 round(C·254/255)（通道全 ≤127 时
+        预乘恒等回落）恰为低侧帧的**精确直向签名**——红队证实 3 对方向
+        （23168→23167、32858→32602、32896→32639）：verify 必判
+        ambiguous_signature（r3 前曾伪报 ok）、strip 必宁拒不剥且零改动
+        （r3 前曾伪报 restored=True 并伪报帧号）。通用规则锁：6 对/12 帧凡
+        精确直向命中且孪生在世即拒（真迹同拒，不硬编码 3 对——孪生直向签名
+        全域互异，非孪生帧不受影响）；expected=None 剥离管道同规则；CLI 七态
+        ambiguous 单列计数覆盖新拒绝路径；f=4095 类非孪生与 65535 宁拒保持。"""
+        base = _base_arr(corner=(16, 20, 24))
+        k = 254.0 / 255.0
+        # ① 红队三对：stale 高侧黑底绘制观感 == 低侧精确直向签名（前提锚定）
+        for stale, low in ((23168, 23167), (32858, 32602), (32896, 32639)):
+            sr, sg, sb = fc.signature_rgb(fc.MODE_CLEAN, stale)
+            obs = (int(sr * k + 0.5), int(sg * k + 0.5), int(sb * k + 0.5), 255)
+            self.assertEqual(obs[:3], fc.signature_rgb(fc.MODE_CLEAN, low),
+                             (stale, low))
+            v = fc.verify_clean_pixel(obs, low)
+            self.assertEqual(v["status"], fc.ST_AMBIGUOUS, (stale, low, v))
+            self.assertIsNone(v["rendered_frame"])
+            self.assertIn("预乘孪生", v["detail"])
+            cand = base.copy()
+            cand[0, 0] = np.array(obs, np.uint8)
+            r = fc.restore_clean_1px_rgba_inplace(cand, expected_frame=low)
+            self.assertFalse(r["restored"], (stale, low, r))
+            self.assertEqual(r["status"], fc.ST_AMBIGUOUS)
+            self.assertEqual(tuple(int(x) for x in cand[0, 0]), obs)  # 零改动
+        # ② 通用规则（6 对全测，真迹同拒——12 帧不可阳性确认）
+        for a, b in _TWIN_PAIRS:
+            for f in (a, b):
+                sig = fc.signature_rgb(fc.MODE_CLEAN, f) + (255,)
+                self.assertEqual(
+                    fc.verify_clean_pixel(sig, f)["status"], fc.ST_AMBIGUOUS, f)
+                cand = base.copy()
+                cand[0, 0] = np.array(sig, np.uint8)
+                r = fc.restore_clean_1px_rgba_inplace(cand, expected_frame=f)
+                self.assertFalse(r["restored"], f)
+                self.assertEqual(r["status"], fc.ST_AMBIGUOUS, f)
+        # ③ expected=None 剥离管道：唯一候选系孪生帧精确签名 → 宁拒不剥
+        cand = base.copy()
+        cand[0, 0] = np.array(fc.signature_rgb(fc.MODE_CLEAN, 23167) + (255,),
+                              np.uint8)
+        r = fc.restore_clean_1px_rgba_inplace(cand)
+        self.assertFalse(r["restored"])
+        self.assertEqual(r["status"], fc.ST_AMBIGUOUS)
+        # ④ 对照（既有 DoD 保持）：非孪生精确签名 f=4095 verify ok + 剥离放行；
+        #    65535 黑底塌缩=65278 精确签名仍按「帧号说了算」宁拒判 other
+        sig = fc.signature_rgb(fc.MODE_CLEAN, 4095) + (255,)
+        self.assertEqual(fc.verify_clean_pixel(sig, 4095)["status"], fc.ST_OK)
+        cand = base.copy()
+        cand[0, 0] = np.array(sig, np.uint8)
+        self.assertTrue(fc.restore_clean_1px_rgba_inplace(
+            cand, expected_frame=4095)["restored"])
+        s6 = fc.signature_rgb(fc.MODE_CLEAN, 65535)
+        obs6 = tuple(int(c * k + 0.5) for c in s6) + (255,)
+        self.assertEqual(fc.verify_clean_pixel(obs6, 65535)["status"],
+                         fc.ST_OTHER)
+        # ⑤ CLI 七态：精确命中孪生帧 → ambiguous 单列计数（不进 wrong_frame）
+        p = self.d / "twin_exact.png"
+        _arr_to_png(_clean_frame_arr(base, 23167), p)
+        rep = self.d / "twin_exact.json"
+        rc = gg.main(["verify-canary", "--png", str(p), "--frame", "23167",
+                      "--mode", "clean_1px_restore", "--report", str(rep)])
+        self.assertEqual(rc, 1)
+        r = json.loads(rep.read_text(encoding="utf-8"))
+        self.assertEqual(r["counters"]["ambiguous_signature"], 1)
+        self.assertEqual(r["counters"]["wrong_frame_count"], 0)
+        self.assertIn("预乘孪生", r["frames"][0]["detail"])
 
     def test_cli_clean_ambiguous_seventh_state(self):
         """CLI 七态：歧义观测 → ambiguous_signature 单列计数（不进

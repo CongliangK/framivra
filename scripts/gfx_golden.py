@@ -40,7 +40,9 @@ golden JSON 结构（自包含、无歧义）：
   左上+右下双 Canary 帧号相异或块内水平双色带）/ 其余（wrong_frame_other）/
   no_canary（左上无水印结构）/ ambiguous_signature（候选解码不唯一：观测
   同时落在多个合法签名的 ±1 容差球内，协议无法归属帧号——含预乘塌缩孪生
-  对的撕裂中点；显式拒绝而非猜测，issue #105 r2）」。diagnostic_8x8 读左上
+  对的撕裂中点；r3 起精确解码支同规则：精确命中帧孪生在世且 == 请求帧
+  ——孪生高侧帧的黑底混合观感恰为低侧精确直向签名（如 23168→23167）
+  ——同样显式拒绝而非猜测，issue #105 r2/r3）」。diagnostic_8x8 读左上
   8x8（附右下 8x8 撕裂对账）；clean_1px_restore 读单像素 (0,0)（PNG 通路
   A 拍平为 255，按 RGB+校验和判定并容忍 ±1 混合——注入桥以
   rgba(...,254/255) 绘制，像素物理口径见 vtx/frame_canary.py 模块头）。
@@ -115,6 +117,11 @@ from vtx.infra import Ctx   # noqa: E402
 from vtx import hygiene     # noqa: E402
 from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
 from vtx import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
+
+# 纯导出（issue #105 r3，红队建议）：消费方（选帧/抽样管道）经本模块预避开
+# 预乘塌缩孪生帧号——该 12 帧在两通路均不可阳性确认（见 frame_canary 模块头
+# 「预乘塌缩孪生边界」）。别名不改任何语义。
+premul_twin_frames = fc.premul_twin_frames
 
 HASH_DESC = "sha256(PIL 解码 → RGBA 原始字节, 行主序) 每帧 64 hex"
 
