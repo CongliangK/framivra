@@ -12,6 +12,11 @@
   2. 沙箱缓存隔离（离线）：VTX_GFX_CACHE_NS 路由 cache/gfx_exp/<ns>/<key>/、
      gfx_key 一字不动、跨 ns 不命中彼此缓存（经 cli.gfx 端到端）、complete.json
      可选 backend_ns 元数据（正式态缺省字段=既有字节形状）。
+  3. R3 谱系白名单（kill_group 最内层硬防护）三态演练：①伪造账本
+     pgid=调用方自身组 → 拒杀+清目录+零击杀+调用方存活；②伪造账本
+     pgid=真实祖先（mid→leaf 子进程树的中间祖先）组 → 拒杀；③自己的
+     子进程组不受影响仍可杀。一切被测 kill 路径都在 start_new_session=True
+     的隔离子进程内执行（09:22 事故铁律：子进程自杀也不许波及本测试）。
 
 独立运行：python3 -m unittest tests.test_proc_supervisor -v
 """
@@ -353,6 +358,221 @@ class HostSigkillDoD(_ProjectFixture):
         self.assertFalse(d.exists())
         self.assertIn(os.getpid(), group_live_members(my_group),
                       '调用方进程组完好（未被 killpg(0) 反杀）')
+
+
+# R3 谱系白名单三态演练程序（self=自身组拒绝 / mid+leaf=真实祖先组拒绝 /
+# normal=自己子组放行）。铁律：一切被测 kill 路径（kill_group/reap_run_dir/
+# reap_orphan_workers）只在本程序进程内执行，而本程序由测试以
+# start_new_session=True 拉起——即使白名单失效、子进程「自杀」，SIGKILL
+# 也只落在隔离子进程自己的组里，绝不波及测试进程与宿主会话（09:22 事故）。
+WHITELIST_DRILL_PROGRAM = r'''
+import json, os, shutil, subprocess, sys
+from pathlib import Path
+
+ROOT, role = Path(sys.argv[1]), sys.argv[2]
+scratch, out, timeline_src = Path(sys.argv[3]), Path(sys.argv[4]), Path(sys.argv[5])
+mid_pid = int(sys.argv[6]) if len(sys.argv) > 6 else None
+sys.path.insert(0, str(ROOT))
+from vtx import hygiene
+from vtx.infra import Ctx
+from vtx.proc_supervisor import (WORKER_LEDGER, LineageKillDenied, boot_id,
+                                 group_live_members, kill_group,
+                                 proc_starttime, reap_orphan_workers,
+                                 reap_run_dir)
+
+if role == "mid":
+    # 中间祖先：自成会话（pgid==mid.pid），派生 leaf（自成会话）执行被测
+    # 代码。白名单若失效，killpg(mid.pid) 会先杀死本进程——mid 报告缺失
+    # 或 leaf 报告异常即测试失败，而测试进程因会话隔离毫发无损。
+    leaf_out = scratch / "leaf_report.json"
+    leaf = subprocess.Popen(
+        [sys.executable, __file__, str(ROOT), "leaf", str(scratch),
+         str(leaf_out), str(timeline_src), str(os.getpid())],
+        start_new_session=True)
+    leaf.wait(90)
+    try:
+        leaf_rep = json.loads(leaf_out.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        leaf_rep = None
+    out.write_text(json.dumps({
+        "leaf_rc": leaf.returncode, "leaf_report": leaf_rep,
+        "mid_pid": os.getpid(), "mid_pgid": os.getpgid(0),
+        "mid_group_after": group_live_members(os.getpgid(0))},
+        ensure_ascii=False), encoding="utf-8")
+    raise SystemExit(0)
+
+# —— 以下角色即被测代码执行者（各自在隔离子进程内）——
+scratch.mkdir(parents=True, exist_ok=True)
+tl = scratch / "timeline.json"
+shutil.copyfile(timeline_src, tl)
+c = Ctx(tl)
+tmp_root = scratch / "cache" / hygiene.TMP
+
+
+def forge(name, pgid, ticks):
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    d = tmp_root / ("20260101T000000Z-gfx_sim-fake-" + name)
+    d.mkdir()
+    (d / WORKER_LEDGER).write_text(json.dumps(
+        {"schema": 1, "pgid": pgid, "start_time_ticks": ticks,
+         "host_pid": 999_999_999, "host_start_time_ticks": 1,
+         "boot_id": boot_id()}), encoding="utf-8")
+    return d
+
+
+def try_kill(pgid):
+    try:
+        kill_group(pgid)
+        return "NOT-DENIED(BUG)"
+    except LineageKillDenied:
+        return "denied"
+
+
+if role == "self":
+    # 态①：伪造账本 pgid=调用方自身组——须零击杀+目录清理+调用方存活
+    canary = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"])  # 同组金丝雀
+    try:
+        my_pgid = os.getpgid(0)
+        d = forge("lineage-self", my_pgid, proc_starttime(os.getpid()))
+        out.write_text(json.dumps({
+            "role": "self", "direct": try_kill(my_pgid),
+            "reap_status": reap_run_dir(d),
+            "stats": reap_orphan_workers(c),
+            "canary_alive": canary.poll() is None,
+            "ledger_dir_exists": d.exists()}, ensure_ascii=False),
+            encoding="utf-8")
+    finally:
+        canary.kill()
+        canary.wait(10)
+    raise SystemExit(0)
+
+if role == "normal":
+    # 态③：自己的子进程组（victim 自成会话）不受白名单影响，仍可杀
+    victim = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True)
+    try:
+        try:
+            kill_ok, denied = kill_group(victim.pid), False
+        except LineageKillDenied:
+            kill_ok, denied = False, True
+        out.write_text(json.dumps({
+            "role": "normal", "victim_pgid": victim.pid, "denied": denied,
+            "kill_group_ok": kill_ok,
+            "victim_members_after": group_live_members(victim.pid)},
+            ensure_ascii=False), encoding="utf-8")
+    finally:
+        try:
+            victim.wait(10)
+        except subprocess.TimeoutExpired:
+            victim.kill()
+            victim.wait(10)
+    raise SystemExit(0)
+
+# role == "leaf"：态②——伪造账本 pgid=真实祖先（父进程 mid）的进程组
+d = forge("lineage-anc", mid_pid, proc_starttime(mid_pid))
+out.write_text(json.dumps({
+    "role": "leaf", "direct": try_kill(mid_pid),
+    "reap_status": reap_run_dir(d),
+    "anc_group_alive": group_live_members(mid_pid) != []},
+    ensure_ascii=False), encoding="utf-8")
+raise SystemExit(0)
+'''
+
+
+@unittest.skipUnless(_LINUX_PROC, '谱系白名单演练需要 Linux /proc')
+class LineageWhitelistDrillTests(_ProjectFixture):
+    """R3 硬防护三态：kill_group 谱系白名单——自身组/真实祖先组拒杀（零击杀
+    +账本目录按陈旧语义清理）、自己的子进程组照常可杀。
+
+    演练程序在自有 scratch 项目副本里伪造账本（与本夹具项目物理隔离，
+    夹具收尾的兜底 reap 永远扫不到演练账本）；测试进程只编排与断言，
+    不触碰任何 kill 路径（09:22 事故铁律）。"""
+
+    def setUp(self):
+        super().setUp()
+        self.drill = self.root / 'whitelist_drill.py'
+        self.drill.write_text(WHITELIST_DRILL_PROGRAM, encoding='utf-8')
+
+    def _err_tail(self, err):
+        try:
+            return err.read_text(errors='replace')[-1500:]
+        except OSError:
+            return '?'
+
+    def _run_drill(self, role, tag):
+        scratch = self.root / f'{tag}_scratch'
+        out = self.root / f'{tag}_report.json'
+        err = self.root / f'{tag}.stderr'
+        with err.open('wb') as err_fh:
+            proc = subprocess.Popen(
+                [sys.executable, str(self.drill), str(ROOT), role,
+                 str(scratch), str(out), str(self.timeline)],
+                cwd=str(ROOT), env={**os.environ, 'PYTHONPATH': str(ROOT)},
+                stdout=subprocess.DEVNULL, stderr=err_fh,
+                start_new_session=True)   # 铁律：被测代码必在隔离子进程内
+        self.hosts.append(proc)
+
+        def _load():
+            try:
+                return json.loads(out.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                return None
+        return proc, _load, err
+
+    def test_self_group_ledger_denied_zero_kill_dir_cleaned_caller_alive(self):
+        # 态①：伪造账本 pgid=调用方自身组 → 拒杀、清目录、调用方/金丝雀存活
+        proc, load, err = self._run_drill('self', 'wl_self')
+        rc = proc.wait(90)
+        self.assertEqual(
+            rc, 0, f'隔离子进程异常退出 rc={rc}（被组杀？stderr 尾：'
+                   f'{self._err_tail(err)}）')
+        rep = load()
+        self.assertIsNotNone(rep, '演练报告缺失（子进程未活到写报告）')
+        self.assertEqual(rep['direct'], 'denied',
+                         'kill_group 最内层入口必须拒调用方自身组')
+        self.assertEqual(rep['reap_status'], 'lineage_denied')
+        self.assertEqual(rep['stats'], {'ledgers': 1, 'killed': 0,
+                                        'live_host': 0, 'stale': 1,
+                                        'removed': 1})
+        self.assertFalse(rep['ledger_dir_exists'], '账本目录须按陈旧语义清理')
+        self.assertTrue(rep['canary_alive'], '同组金丝雀存活=零击杀铁证')
+        self.assertIn(os.getpid(), group_live_members(os.getpgid(0)),
+                      '测试进程组完好（隔离子进程「自杀」也未波及本进程）')
+
+    def test_ancestor_group_ledger_denied_mid_tree_intact(self):
+        # 态②：mid(自成会话)→leaf(自成会话) 树，leaf 对真实祖先（mid）的组
+        # 伪造账本 → 拒杀；mid 全须活着交回报告，leaf 报告拒杀铁证
+        proc, load, err = self._run_drill('mid', 'wl_mid')
+        rc = proc.wait(120)
+        self.assertEqual(
+            rc, 0, f'mid 异常退出 rc={rc}（中间祖先被误杀=白名单失效；'
+                   f'stderr 尾：{self._err_tail(err)}）')
+        rep = load()
+        self.assertIsNotNone(rep, 'mid 报告缺失（中间祖先被误杀=白名单失效）')
+        self.assertEqual(rep['mid_group_after'], [rep['mid_pid']],
+                         '中间祖先组在演练后必须原样存活')
+        self.assertEqual(rep['leaf_rc'], 0, 'leaf（被测代码执行者）异常退出')
+        leaf = rep['leaf_report']
+        self.assertIsNotNone(leaf, 'leaf 报告缺失')
+        self.assertEqual(leaf['direct'], 'denied',
+                         'kill_group 必须拒真实祖先进程的进程组')
+        self.assertEqual(leaf['reap_status'], 'lineage_denied')
+        self.assertTrue(leaf['anc_group_alive'], '祖先组未被击杀')
+
+    def test_own_child_group_still_killable(self):
+        # 态③：正常监管组（自己的子进程组）不受白名单影响，仍可杀
+        proc, load, err = self._run_drill('normal', 'wl_normal')
+        rc = proc.wait(90)
+        self.assertEqual(rc, 0, f'隔离子进程异常退出 rc={rc}（stderr 尾：'
+                                f'{self._err_tail(err)}）')
+        rep = load()
+        self.assertIsNotNone(rep, '演练报告缺失')
+        self.assertFalse(rep['denied'], '自己的子进程组被白名单误拒')
+        self.assertTrue(rep['kill_group_ok'], '子进程组击杀须照常成功')
+        self.assertEqual(rep['victim_members_after'], [],
+                         '击杀后进程表必须归零')
 
 
 @unittest.skipUnless(_LINUX_PROC, '/proc 探针形状断言需要 Linux')

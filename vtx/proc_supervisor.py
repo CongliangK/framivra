@@ -27,6 +27,13 @@ Chromium/CEF/Electron 会派生 Browser、GPU、Zygote、Renderer 多级子进�
      账本：核对 /proc/<pid>/stat 第 22 字段 starttime（防 PID 回绕误杀）与
      boot_id 后 killpg，等进程表清空再安全移除临时 Profile 目录。
 
+R3 谱系白名单（硬防护，09:22 红队事故用户处方）：kill_group 与 _guard_main
+是全模块仅有的两处 killpg 落点，二者最内层入口必经
+_assert_kill_whitelisted——pgid<=1、调用方自身进程组、任一祖先进程的
+进程组（沿 /proc 父链，systemd --user 与桌面会话全在此链）一律
+LineageKillDenied 拒杀：零击杀、干净报错，账本目录按 broken/stale 语义
+清理。「即使测试者犯错，也不允许掀翻宿主」。
+
 Worker 侧协作契约（CEF/Electron 路线实现方须遵守，守卫使其成为「锦上添花」
 而非「必需」）：宿主在 argv 尾部追加 --parent-alive-fd=<fd>（读端 fd 原号透传）。
 Worker 起一个后台线程阻塞 read(fd)；EOF 后 50ms 内向自身进程组
@@ -69,7 +76,8 @@ else:             # flat 直跑（python3 vtx/proc_supervisor.py）仅留最小�
 
 __all__ = ["SupervisedProcessGroup", "reap_orphan_workers", "reap_run_dir",
            "kill_group", "group_live_members", "proc_starttime", "boot_id",
-           "supervision_available", "WORKER_LEDGER", "main"]
+           "supervision_available", "WORKER_LEDGER", "LineageKillDenied",
+           "main"]
 
 # 伴生 PID 账本文件名（hygiene._sweep_tmp_worker_ledger 经本常量惰性取用，
 # 名字是两模块间的共享契约，改动须两侧同审）
@@ -113,6 +121,13 @@ def supervision_available() -> bool:
     无监管路径并一次性 stderr 告警，而非等 _write_ledger 抛 RuntimeError
     把 gfx 阶段打死。测试可 monkeypatch 模块级 _HAS_PROC 模拟平台探测。"""
     return _HAS_PROC
+
+
+class LineageKillDenied(Exception):
+    """kill_group 谱系白名单拒绝（issue #103 R3 硬防护）：目标进程组疑似指向
+    调用方谱系（pgid<=1 / 调用方自身组 / 任一祖先进程组）。零击杀、干净报错
+    ——宁可放过残员交账本下轮清扫，也绝不把 SIGKILL 广播进调用方谱系
+    （09:22 事故：未隔离 PoC 掀翻宿主 systemd --user 与整个桌面会话）。"""
 
 
 # ---------------------------------------------------------------- /proc 只读探针
@@ -188,10 +203,64 @@ def wait_group_empty(pgid, timeout: float = 10.0) -> bool:
         time.sleep(0.02)
 
 
+def _caller_lineage_pgids() -> set:
+    """调用方自身与全部祖先进程（沿 /proc/<pid>/stat 的 ppid 链上溯，含 1 号
+    前全部祖先）的 pgid 集合——白名单的「谱系」判据。祖先中途消亡/不可读
+    （退出被收尸）只截断遍历：少收集仅缩小拒杀面，且死亡祖先的旧组要么已
+    无存活成员（killpg 落空）、要么 pid 已复用（由账本 starttime 核验拦截），
+    不构成谱系威胁。/proc 不可用平台退化为仅自身组（规则②仍可判；
+    supervision_available()=False 的平台本就不允许走监管路径）。"""
+    pgids = set()
+    try:
+        pgids.add(os.getpgid(0))     # 规则②判据：非 /proc 平台也恒可获取
+    except OSError:   # pragma: no cover - getpgid(0) 对自身恒成功
+        pass
+    if not _HAS_PROC:
+        return pgids
+    pid, seen = os.getpid(), set()
+    for _ in range(4096):            # 环/病态深链保险丝（正常谱系 <20 层）
+        if pid in seen:
+            break
+        seen.add(pid)
+        tail = _proc_stat_tail(pid)
+        if tail is None or len(tail) < 3:
+            break                    # 该祖先已消亡且被收尸：截断上溯
+        try:
+            pgids.add(int(tail[2]))  # pgrp 字段（stat 第 5 列）
+            ppid = int(tail[1])      # ppid 字段（stat 第 4 列）
+        except (IndexError, ValueError):
+            break
+        if ppid <= 0:
+            break                    # 1 号已入集，0 号（内核）之上无祖先
+        pid = ppid
+    return pgids
+
+
+def _assert_kill_whitelisted(pgid) -> None:
+    """组杀白名单（issue #103 R3 用户处方；kill_group 与 _guard_main 的一切
+    killpg 必经，任何调用路径无法绕过）：
+      ① pgid <= 1 一律拒——0/负值会把信号广播回调用方自己的进程组，
+         1 是 init/systemd 主组；
+      ② 目标 == 调用方自身进程组（os.getpgid(0)）拒；
+      ③ 目标 ∈ 调用方任一祖先进程的进程组拒——systemd --user、桌面会话
+         与监管器宿主全在这条父链上。
+    违反 → 抛 LineageKillDenied（不杀、明确报错文案）；调用方按 broken/
+    stale 语义清理账本目录，零击杀。"""
+    lineage = _caller_lineage_pgids()
+    if pgid <= 1 or pgid in lineage:
+        raise LineageKillDenied(
+            f"疑似指向调用方谱系的进程组，拒绝组杀：killpg({pgid}) 被白名单"
+            f"拦截（规则：pgid<=1 一律拒；调用方自身/祖先 pgid 集="
+            f"{sorted(lineage)}）")
+
+
 def kill_group(pgid, *, timeout: float = 10.0) -> bool:
-    """身份核验后的组击杀：killpg(SIGKILL) + 等进程表清空。组已消亡
-    （ESRCH）视作成功。Linux 语义：unlink 不受打开文件影响，等待只为满足
-    「先清进程再移除目录」的账目顺序与日志确定性。"""
+    """身份核验后的组击杀：谱系白名单（_assert_kill_whitelisted，最内层
+    必经入口——任何调用路径都绕不过）→ killpg(SIGKILL) → 等进程表清空。
+    组已消亡（ESRCH）视作成功；白名单拒绝 → LineageKillDenied（零击杀，
+    调用方按 broken/stale 语义只清账本目录）。Linux 语义：unlink 不受打开
+    文件影响，等待只为满足「先清进程再移除目录」的账目顺序与日志确定性。"""
+    _assert_kill_whitelisted(pgid)
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
@@ -240,6 +309,10 @@ def _guard_main(pgid: int, alive_fd: int):
         os.close(alive_fd)
     except OSError:
         pass
+    try:
+        _assert_kill_whitelisted(pgid)   # R3：守卫侧 killpg 同受白名单约束
+    except LineageKillDenied:
+        os._exit(0)   # 宁可放过（身后还有账本+reap 兜底），绝不反杀谱系
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
@@ -361,7 +434,12 @@ class SupervisedProcessGroup:
             except (subprocess.TimeoutExpired, OSError):
                 pass
         if self.pgid is not None and group_live_members(self.pgid):
-            kill_group(self.pgid)   # 残员兜底（僵尸不计）
+            try:
+                kill_group(self.pgid)   # 残员兜底（僵尸不计）
+            except LineageKillDenied as e:
+                # 自起子会话 Worker 组不可能命中白名单；真命中说明谱系被
+                # 异常改写——告警并继续收尾（删账本/清目录），零击杀。
+                print(f"⚠ 监管器：{e}——Worker 组拒杀，残员交 reap 按账本处理")
 
     def _ledger_path(self) -> Path:
         return self.run_dir / WORKER_LEDGER
@@ -423,6 +501,8 @@ class SupervisedProcessGroup:
 #   pid_reuse      组长 pid 已被无关进程复用（starttime 不符）——只清目录不杀
 #   stale_boot     账本属旧开机（boot_id 不符）——只清目录不杀
 #   broken_ledger  账本不可解析/形状不符——只清目录不杀
+#   lineage_denied 白名单拒绝（组疑似指向调用方自身/祖先谱系）——零击杀
+#                  只清目录（R3，09:22 事故处方；pgid<=1 亦并入 broken_ledger）
 _LIVE_STATUSES = ("killed", "already_dead")
 
 
@@ -430,7 +510,9 @@ def reap_run_dir(run_dir, *, ledger_path=None) -> str:
     """单个 tmp_run 目录的账本清扫（不删目录，删留归调用方）：
     校验 boot_id → 宿主存活（跳过）→ 组长 starttime 吻合（防 PID 回绕误杀）
     → killpg + 等进程表清空。组长已消亡但组内仍有孤儿子进程时同样击杀——
-    无关进程无法自然加入死组长的进程组，killpg 只会命中本 Worker 树残员。"""
+    无关进程无法自然加入死组长的进程组，killpg 只会命中本 Worker 树残员。
+    击杀必经 kill_group 谱系白名单（R3）：目标组疑似调用方自身/祖先谱系时
+    返回 lineage_denied——零击杀，调用方按 broken/stale 语义清目录。"""
     run_dir = Path(run_dir)
     ledger = Path(ledger_path) if ledger_path else run_dir / WORKER_LEDGER
     if not ledger.is_file():
@@ -443,12 +525,14 @@ def reap_run_dir(run_dir, *, ledger_path=None) -> str:
         host_ticks = rec["host_start_time_ticks"]
         if not all(isinstance(v, int) for v in (pgid, ticks, host_pid, host_ticks)):
             raise KeyError("字段类型不符")
-        if pgid < 1:
-            # R103-1（红队）：pgid=0 使 proc_starttime(0)=None 绕过 starttime
-            # 核验、group_live_members(0) 把内核线程组（pgrp=0）误判为组内
-            # 残活 → killpg(0) 反杀调用方自己的进程组；负值同理。合法进程组
-            # 的 pgid 恒 ≥ 1（会话组长 pid），一律按损坏账本处理（只清目录）。
-            raise KeyError("pgid 非法（<1）")
+        if pgid <= 1:
+            # R103-1（红队）+ R3 收紧（用户处方，覆盖 <=1）：pgid=0 使
+            # proc_starttime(0)=None 绕过 starttime 核验、
+            # group_live_members(0) 把内核线程组（pgrp=0）误判为组内
+            # 残活 → killpg(0) 反杀调用方自己的进程组；负值同理，pgid=1
+            # 是 init/systemd 主组。合法 Worker 组的 pgid 是自起子会话组长
+            # pid，一律按损坏账本处理（只清目录）。
+            raise KeyError("pgid 非法（<=1）")
     except (OSError, ValueError, KeyError, TypeError):
         return "broken_ledger"
     current_boot = boot_id()
@@ -460,7 +544,11 @@ def reap_run_dir(run_dir, *, ledger_path=None) -> str:
     if leader is not None and leader != ticks:
         return "pid_reuse"   # pid 已归无关进程：宁可放过，绝不误杀
     if leader is not None or group_live_members(pgid):
-        kill_group(pgid)
+        try:
+            kill_group(pgid)   # 白名单在最内层入口拦截谱系组（R3 必经）
+        except LineageKillDenied as e:
+            print(f"⚠ 监管器：{e}——按 broken/stale 语义只清目录（零击杀）")
+            return "lineage_denied"
         return "killed"
     return "already_dead"
 
