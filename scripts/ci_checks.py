@@ -46,6 +46,7 @@ MEDIA_TESTS = {
         'tests.test_pipeline.TestPipelineIntegration',
         'tests.test_gfx_cache_integrity.RealBrowserIntegrity',
         'tests.test_failure_recovery.RealChromeRecovery',
+        'tests.test_frame_canary.TestChromeCanary',
     ),
 }
 
