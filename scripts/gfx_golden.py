@@ -31,28 +31,30 @@ golden JSON 结构（自包含、无歧义）：
   env python3 scripts/gfx_golden.py verify-canary --png f0013.png [--frame 13] \
       [--mode ...]                       # 单帧模式；--frame 缺省取文件名帧号
 
-双轨帧同步水印校验（issue #105，vtx/frame_canary.py 协议实现）：
+双轨帧同步水印校验（issue #105 r4，vtx/frame_canary.py v2 双像素签名协议）：
   verify-canary 读取落盘 PNG 的 Canary 水印解码 rendered_frame_index 并核验
   校验和；rendered_frame_index != requested_frame_index（帧目录模式
   requested = 文件名帧号）立即计入 wrong_frame_count，并区分七态「滞后 1 帧
   旧帧（wrong_frame_lag1）/ 静态首帧残留（wrong_frame_static_first）/
   校验和撕裂（checksum_mismatch）/ 上下撕裂（torn_frame：diagnostic_8x8
   左上+右下双 Canary 帧号相异或块内水平双色带）/ 其余（wrong_frame_other）/
-  no_canary（左上无水印结构）/ ambiguous_signature（候选解码不唯一：观测
-  同时落在多个合法签名的 ±1 容差球内，协议无法归属帧号——含预乘塌缩孪生
-  对的撕裂中点；r3 起精确解码支同规则：精确命中帧孪生在世且 == 请求帧
-  ——孪生高侧帧的黑底混合观感恰为低侧精确直向签名（如 23168→23167）
-  ——同样显式拒绝而非猜测，issue #105 r2/r3）」。diagnostic_8x8 读左上
-  8x8（附右下 8x8 撕裂对账）；clean_1px_restore 读单像素 (0,0)（PNG 通路
-  A 拍平为 255，按 RGB+校验和判定并容忍 ±1 混合——注入桥以
-  rgba(...,254/255) 绘制，像素物理口径见 vtx/frame_canary.py 模块头）。
+  no_canary（左上无水印结构）/ ambiguous_signature（双像素候选交集空/多
+  候选/单像素确认不可能——帧号不可归属，宁拒不猜）」。v2 双像素语义
+  （r4，全域穷举背书 /tmp/framivra-evidence/issue-105-r4/）：diagnostic_8x8
+  读左上 8x8（P1 公式）+右下 8x8（P2 公式：通道互换 + 独立加性校验和
+  (16R+22G+K2)&0xFF），两角同帧号才 ok；clean_1px_restore 读同一扫描线
+  双像素 (0,0)+(0,1)（P1/P2 两套独立签名，PNG 通路 A 拍平为 255，按
+  RGB+校验和 ±1 抗舍入解码取交集——阳性确认当且仅当 S1∩S2 单例）。
+  陈旧帧观感恒含自身帧号于交集 → 单例归因必真：全域 65536 帧 PNG/BGRA
+  通路穿透对 0、真迹不可确认 0（v1 为 12 帧）、wrong_frame_* 为可靠归因
+  口径（红队 #105 r1/r2/r3 三案 129→128 等在 v2 全部正确归因拒绝）。
   退出码：全部 ok → 0；任一非 ok（含 ambiguous_signature）/ 解码错误 → 1。
   「帧缺失 → 1」仅指单帧模式（--png 文件不存在/不可解码）；帧目录模式只
   校验在册的 f%04d.png，**帧号空洞 ≠ 缺失**（golden 抽样目录 [0, dur//2,
   dur-1]+均匀补足天然带空洞，不据此判失败——与单帧模式的缺失契约差异系
   显式声明），但目录不存在/无帧文件 → 1。
   clean 模式的「原地剥离还原 Tier-1」不在本子命令（剥离在渲染侧
-  restore_clean_1px_rgba_inplace / Native 侧 accept_paint_bgra_inplace，
+  restore_clean_2px_rgba_inplace / Native 侧 accept_paint_bgra_inplace，
   还原帧再用 analyze 对无水印基准证 Tier-1）。
 
 三级像素裁决（issue #104，analyze 子命令 / analyze_frame_diff）：
@@ -118,9 +120,11 @@ from vtx import hygiene     # noqa: E402
 from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
 from vtx import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
 
-# 纯导出（issue #105 r3，红队建议）：消费方（选帧/抽样管道）经本模块预避开
-# 预乘塌缩孪生帧号——该 12 帧在两通路均不可阳性确认（见 frame_canary 模块头
-# 「预乘塌缩孪生边界」）。别名不改任何语义。
+# 纯导出（issue #105 r4 v2 语义）：v1 时消费方（选帧/抽样管道）经本模块
+# 预避开预乘塌缩孪生帧号（12 帧不可确认）；v2 双像素联合孪生全域空、全帧
+# 号可阳性确认 → **无需避开任何帧号**。导出保留以稳定调用面，语义升级为
+# 联合孪生（双像素预乘签名均逐字节相同的他帧，恒空元组）；单像素等价类
+# 用 frame_canary.premul_twin_frames_pixel。
 premul_twin_frames = fc.premul_twin_frames
 
 HASH_DESC = "sha256(PIL 解码 → RGBA 原始字节, 行主序) 每帧 64 hex"
@@ -994,7 +998,9 @@ def _verify_one_canary(path: Path, requested: int, mode: str) -> dict:
     if mode == fc.MODE_DIAGNOSTIC:
         r = fc.verify_diagnostic_corners(arr, requested)
     else:
-        r = fc.verify_clean_pixel(arr[0][0], requested)
+        # v2 双像素：clean 轨读同一扫描线 (0,0)+(0,1)（P1/P2 独立签名），
+        # S1∩S2 单例才阳性确认（单像素入口已在 v2 移除——v1 的穿透面）。
+        r = fc.verify_clean_pixels(arr[0][0], arr[0][1], requested)
     return {"frame": f"{requested:04d}", "requested": requested, "path": str(path), **r}
 
 
@@ -1134,8 +1140,8 @@ def main(argv=None) -> int:
                    help="单帧模式的请求帧号（缺省取 f{:04d}.png 文件名）")
     v.add_argument("--mode", default=fc.MODE_DIAGNOSTIC,
                    choices=list(fc.MODES),
-                   help="水印模式：diagnostic_8x8（左上 8x8+右下对账块）/ "
-                        "clean_1px_restore（单像素 (0,0)）")
+                   help="水印模式：diagnostic_8x8（左上 8x8 P1+右下 8x8 P2）/ "
+                        "clean_1px_restore（双像素 (0,0)+(0,1)，v2 双签名）")
     v.add_argument("--report", default="", help="校验结果 JSON 输出路径（可选）")
 
     args = ap.parse_args(argv)
