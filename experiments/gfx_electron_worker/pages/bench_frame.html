@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<!-- bench_frame.html —— #113 ELEC-02 输出桥基准页（gfx 协议纪律：全部状态
+     = f 的纯函数；禁 CSS animation/transition、Date.now、Math.random、rAF 时序）。
+
+     与 #110 pages/frame_canary.html 的差异：本页服务 Electron 输出桥基准——
+     ① 实现 window.__vtx_render(f)（Mode P 常驻页协议，skill gfx.md 口径），
+       且以 configurable:false 定义——canary 注入桥的 defineProperty 包装因此
+       走 throw→catch 分支（模板自身兜底），页函数保持完好；基准驱动在每次
+       __vtx_render(f) 后自行重绘 canary 双像素（公式常数由驱动侧 CANARY2
+       生成注入，勿在本页手抄）；
+     ② 透明页物理（v2 协议硬口径，vtx/frame_canary.py「像素物理口径」）：
+       html/body 背景透明、内容层自 top:4px 起排——顶部 4 行是纯透明区。
+       canary 双像素 rgba(...,254/255) 只有合成在透明底上，OSR BGRA_PREMUL
+       缓冲区里才各自携带协议签名 A=254、RGB=round(C·254/255)；不透明底会把
+       α 拍平为 255、RGB 与底色 ±1 混合——那是 PNG/CDP 不透明合成通路的
+       物理，不是 BGRA 原生通路的；
+     ③ fixture 等值证明：顶部 4 行纯透明 → canary 位 (0,0)/(0,1) 被覆盖前的
+       原像素与邻域恢复源 (1,0)/(1,1)（及行 2/3）严格等值 =(0,0,0,0) BGRA；
+       生产通路仍上报宿主原像素（reported_original），neighbor_row1 仅为
+       经 fixture 证明等值时的精确回落面；
+     ④ 内容按 f 起径向渐变+条纹+进度条+帧号大字：渐变富内容使编码器差异
+       （spng 滤波 vs fpng 体积）在真实页面上显形。 -->
+<style>
+  html, body { margin: 0; width: 1920px; height: 1080px;
+               background: transparent; overflow: hidden;
+               font-family: "Noto Sans CJK SC", sans-serif; }
+  #stage { position: absolute; left: 0; top: 4px; width: 1920px; height: 1076px; }
+  #grad { position: absolute; left: 0; top: 0; width: 1920px; height: 1076px; }
+  #stripes { position: absolute; left: 0; top: 0; width: 1920px; height: 1076px; }
+  #label { position: absolute; left: 120px; top: 156px; font-size: 96px;
+           font-weight: 700; color: #fff; text-shadow: 0 4px 16px #000; }
+  #sub { position: absolute; left: 124px; top: 296px; font-size: 36px;
+         color: #f5efe6; }
+  #bar { position: absolute; left: 120px; top: 376px; height: 24px; width: 0;
+         border-radius: 12px; background: linear-gradient(90deg, #ff8a3d, #ffd166); }
+  #ring { position: absolute; left: 1450px; top: 116px; width: 320px;
+          height: 320px; border-radius: 160px; border: 18px solid #44c;
+          border-top-color: #f5efe6; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="grad"></div>
+  <div id="stripes"></div>
+  <div id="label"></div>
+  <div id="sub"></div>
+  <div id="bar"></div>
+  <div id="ring"></div>
+</div>
+<script>
+"use strict";
+const FPS = 30;
+function setFrame(f) {
+  f = parseInt(f, 10) & 0xFFFF;
+  const t = f / FPS;
+  const h1 = (f * 7) % 360, h2 = (f * 13 + 120) % 360;
+  // 径向渐变（渐变富内容：编码器滤波/体积差异显形面）
+  document.getElementById("grad").style.background =
+      "radial-gradient(circle at " + (30 + 40 * Math.sin(t * 0.7)) + "% " +
+      (40 + 30 * Math.cos(t * 0.5)) + "%, hsl(" + h1 + ",72%,52%), hsl(" + h2 +
+      ",64%,22%) 70%, #101010)";
+  // 水平条纹（行间变化：行步长/斜纹可检）
+  document.getElementById("stripes").style.background =
+      "repeating-linear-gradient(0deg, rgba(255,255,255,0.05) 0px," +
+      "rgba(255,255,255,0.05) " + (6 + (f & 7)) + "px, rgba(0,0,0,0.12) " +
+      (6 + (f & 7)) + "px, rgba(0,0,0,0.12) " + (14 + (f & 7)) + "px)";
+  document.getElementById("label").textContent = "FRAME " + String(f).padStart(5, "0");
+  document.getElementById("sub").textContent =
+      "vtx elec output bridge bench · t=" + t.toFixed(2) + "s";
+  document.getElementById("bar").style.width = (1680 * ((f % 1000) / 1000)) + "px";
+  document.getElementById("ring").style.transform =
+      "rotate(" + (f * 6) + "deg)";
+  return f;
+}
+const f0 = parseInt(new URLSearchParams(location.search).get("f") || "0", 10);
+setFrame(f0);
+// __vtx_render：非 configurable（canary 注入桥的包装 defineProperty 会走
+// throw→catch，页函数保持完好；桥接重绘由注入侧自行负责）。
+Object.defineProperty(window, "__vtx_render", {
+  value: function (f2) { return setFrame(f2); },
+  writable: true, configurable: false,
+});
+</script>
+</body>
+</html>
