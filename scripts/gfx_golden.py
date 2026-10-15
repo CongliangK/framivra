@@ -26,6 +26,26 @@ golden JSON 结构（自包含、无歧义）：
       [--report report.json] [--pages c5a_main_path] [--strict]
   env python3 scripts/gfx_golden.py analyze --ref <png|帧目录> --cand <png|帧目录> \
       [--heatmap-dir dir] [--report report.json]
+  env python3 scripts/gfx_golden.py verify-canary --frames <f{:04d}.png 帧目录> \
+      [--mode diagnostic_8x8|clean_1px_restore] [--report report.json]
+  env python3 scripts/gfx_golden.py verify-canary --png f0013.png [--frame 13] \
+      [--mode ...]                       # 单帧模式；--frame 缺省取文件名帧号
+
+双轨帧同步水印校验（issue #105，vtx/frame_canary.py 协议实现）：
+  verify-canary 读取落盘 PNG 的 Canary 水印解码 rendered_frame_index 并核验
+  校验和；rendered_frame_index != requested_frame_index（帧目录模式
+  requested = 文件名帧号）立即计入 wrong_frame_count，并区分「滞后 1 帧旧帧
+  （wrong_frame_lag1）/ 静态首帧残留（wrong_frame_static_first）/ 校验和撕裂
+  （checksum_mismatch）/ 上下撕裂（torn_frame：diagnostic_8x8 左上+右下双
+  Canary 帧号相异或块内水平双色带）/ 其余（wrong_frame_other）/
+  no_canary（左上无水印结构）」。diagnostic_8x8 读左上 8x8（附右下 8x8 撕裂
+  对账）；clean_1px_restore 读单像素 (0,0)（PNG 通路 A 拍平为 255，按
+  RGB+校验和判定并容忍 ±1 混合——注入桥以 rgba(...,254/255) 绘制，像素物理
+  口径见 vtx/frame_canary.py 模块头）。
+  退出码：全部 ok → 0；任一非 ok / 解码错误 / 帧缺失 → 1。
+  clean 模式的「原地剥离还原 Tier-1」不在本子命令（剥离在渲染侧
+  restore_clean_1px_rgba_inplace / Native 侧 accept_paint_bgra_inplace，
+  还原帧再用 analyze 对无水印基准证 Tier-1）。
 
 三级像素裁决（issue #104，analyze 子命令 / analyze_frame_diff）：
   golden hash 只能说「有差异」，且 compare 时点手上只有 golden 的 hash、没有
@@ -88,6 +108,7 @@ sys.path.insert(0, str(REPO))   # v2 §1.4 包化：注入 repo 根 + 包导入�
 from vtx.infra import Ctx   # noqa: E402
 from vtx import hygiene     # noqa: E402
 from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
+from vtx import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
 
 HASH_DESC = "sha256(PIL 解码 → RGBA 原始字节, 行主序) 每帧 64 hex"
 
@@ -949,6 +970,100 @@ def cmd_analyze(args) -> int:
     return 0 if ok else 1
 
 
+# ------------------------------------------------ verify-canary（issue #105 帧同步水印校验）
+
+def _verify_one_canary(path: Path, requested: int, mode: str) -> dict:
+    """单帧 Canary 校验（PNG 解码 → vtx/frame_canary 帧级裁决）。
+
+    返回 {"frame": "0013", "requested": 13, **裁决dict}；解码失败抛 ValueError
+    （CLI 归入 errors，不崩栈）。"""
+    arr = _decode_rgba(path)   # 与 analyze 同解码口径：统一 RGBA 8-bit
+    if mode == fc.MODE_DIAGNOSTIC:
+        r = fc.verify_diagnostic_corners(arr, requested)
+    else:
+        r = fc.verify_clean_pixel(arr[0][0], requested)
+    return {"frame": f"{requested:04d}", "requested": requested, "path": str(path), **r}
+
+
+def cmd_verify_canary(args) -> int:
+    mode = args.mode
+    if mode not in fc.MODES:
+        print(f"✗ 未知 --mode: {mode!r}（合法: {list(fc.MODES)}）")
+        return 1
+    if args.frames:
+        d = Path(args.frames)
+        if not d.is_dir():
+            print(f"✗ --frames 目录不存在: {d}")
+            return 1
+        names = _frame_files(d)
+        if not names:
+            print(f"✗ 目录内无 f%04d.png 帧文件: {d}")
+            return 1
+        jobs = [(int(n[1:5]), d / n) for n in sorted(names)]
+    else:
+        p = Path(args.png)
+        if not p.is_file():
+            print(f"✗ --png 文件不存在: {p}")
+            return 1
+        requested = args.frame
+        if requested is None:
+            stem = p.stem
+            if len(stem) == 5 and stem[0] == "f" and stem[1:].isdigit():
+                requested = int(stem[1:])
+            else:
+                print(f"✗ 文件名 {p.name} 非帧命名且未提供 --frame")
+                return 1
+        jobs = [(int(requested), p)]
+
+    frames, errors = [], []
+    for requested, p in jobs:
+        try:
+            frames.append(_verify_one_canary(p, requested, mode))
+        except ValueError as e:
+            errors.append({"frame": f"{requested:04d}", "path": str(p), "why": str(e)})
+
+    n = len(frames)
+    buckets = {s: 0 for s in (fc.ST_OK, fc.ST_LAG1, fc.ST_STATIC_FIRST, fc.ST_OTHER,
+                              fc.ST_TORN, fc.ST_CHECKSUM, fc.ST_NO_CANARY)}
+    for f in frames:
+        buckets[f["status"]] += 1
+    wrong_frame_count = buckets[fc.ST_LAG1] + buckets[fc.ST_STATIC_FIRST] + buckets[fc.ST_OTHER]
+    ok = not errors and n > 0 and all(v == 0 for s, v in buckets.items() if s != fc.ST_OK)
+
+    print(f"== gfx 帧同步水印校验（mode={mode}，{n} 帧"
+          f"{'，目录 ' + str(args.frames) if args.frames else '，单帧 ' + str(args.png)}）==")
+    for f in frames:
+        if f["status"] == fc.ST_OK:
+            print(f"  ✓ f{f['frame']} rendered==requested=={f['requested']}")
+        else:
+            extra = f" rendered={f.get('rendered_frame')}" if f.get("rendered_frame") is not None else ""
+            extra += f" br={f.get('rendered_frame_br')}" if f.get("rendered_frame_br") is not None else ""
+            print(f"  ✗ f{f['frame']} {f['status']}{extra} {f.get('detail', '')}".rstrip())
+    for e in errors:
+        print(f"  ✗ 帧错误  {e['frame']}: {e['why']}")
+    print(("✓ 通过" if ok else "✗ 未通过") +
+          f"：ok {buckets[fc.ST_OK]} / wrong_frame {wrong_frame_count}"
+          f"（lag1 {buckets[fc.ST_LAG1]} / static_first {buckets[fc.ST_STATIC_FIRST]}"
+          f" / other {buckets[fc.ST_OTHER]}）/ torn {buckets[fc.ST_TORN]}"
+          f" / checksum {buckets[fc.ST_CHECKSUM]} / no_canary {buckets[fc.ST_NO_CANARY]}"
+          f" / 错误 {len(errors)}")
+    if args.report:
+        report = {"ok": ok, "mode": mode, "frames": frames, "errors": errors,
+                  "counters": {"total": n, "ok": buckets[fc.ST_OK],
+                               "wrong_frame_count": wrong_frame_count,
+                               "wrong_frame_lag1": buckets[fc.ST_LAG1],
+                               "wrong_frame_static_first": buckets[fc.ST_STATIC_FIRST],
+                               "wrong_frame_other": buckets[fc.ST_OTHER],
+                               "torn_frame": buckets[fc.ST_TORN],
+                               "checksum_mismatch": buckets[fc.ST_CHECKSUM],
+                               "no_canary": buckets[fc.ST_NO_CANARY],
+                               "errors": len(errors)}}
+        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=1),
+                                     encoding="utf-8")
+        print(f"  报告已写入 {args.report}")
+    return 0 if ok else 1
+
+
 # ---------------------------------------------------------------- CLI
 
 def main(argv=None) -> int:
@@ -992,9 +1107,25 @@ def main(argv=None) -> int:
                    help="Tier-2/Tier-3 帧热力图输出目录（diff_f{:04d}.png，tmp+replace 原子写）")
     a.add_argument("--report", default="", help="审计结果 JSON 输出路径（可选）")
 
+    v = sub.add_parser("verify-canary",
+                       help="帧同步水印校验（issue #105）：解码 Canary 帧号并分类错帧")
+    v.add_argument("--frames", default="",
+                   help="f{:04d}.png 帧目录（requested = 文件名帧号）")
+    v.add_argument("--png", default="",
+                   help="单帧 PNG（与 --frames 互斥；--frame 缺省取文件名帧号）")
+    v.add_argument("--frame", type=int, default=None,
+                   help="单帧模式的请求帧号（缺省取 f{:04d}.png 文件名）")
+    v.add_argument("--mode", default=fc.MODE_DIAGNOSTIC,
+                   choices=list(fc.MODES),
+                   help="水印模式：diagnostic_8x8（左上 8x8+右下对账块）/ "
+                        "clean_1px_restore（单像素 (0,0)）")
+    v.add_argument("--report", default="", help="校验结果 JSON 输出路径（可选）")
+
     args = ap.parse_args(argv)
     if args.cmd == "analyze":
         return cmd_analyze(args)
+    if args.cmd == "verify-canary":
+        return cmd_verify_canary(args)
     return cmd_build(args) if args.cmd == "build" else cmd_compare(args)
 
 
