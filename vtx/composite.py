@@ -12,7 +12,7 @@ from pathlib import Path
 from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
 from .hygiene import budget_gate, gfx_dir, manifest_record, seg_key
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
-from . import probe_cache
+from . import probe_cache, fstxn
 from .recovery import media_cache_valid
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
@@ -151,7 +151,7 @@ class RenderPlan:
         lines = self.ass_head()
         for s in c.tl["subtitles"]:
             lines.append(f"Dialogue: 0,{self._fc(s['in'])},{self._fc(s['out'])},Def,,0,0,0,,{s['text']}")
-        path.write_text("\n".join(lines), encoding="utf-8")
+        fstxn.atomic_write(path, "\n".join(lines))
 
     # 段级字幕（阶段二 2026-09-10）：每段一份 ass，Dialogue 帧号换算 =「全局 fc 的
     # cs − 段起点 fc 的 cs」（整数 cs 相减，与全局量化逐位一致；直接对相对帧取整
@@ -169,7 +169,7 @@ class RenderPlan:
                 hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
                 fout = f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
                 lines.append(f"Dialogue: 0,{fin},{fout},Def,,0,0,0,,{s['text']}")
-        path.write_text("\n".join(lines), encoding="utf-8")
+        fstxn.atomic_write(path, "\n".join(lines))
 
     # ---------------------------------------------------------------- 单 graph / 逐层 pass 合成
     def composite(self, layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
@@ -388,7 +388,7 @@ class RenderPlan:
         """
         c = self.c
         seglen = b - a
-        pdir = c.cache / "vseg_pass"; pdir.mkdir(parents=True, exist_ok=True)
+        pdir = c.cache / "vseg_pass"; fstxn.mkdir(pdir)
         prev_key = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
         prev = None            # None = 主输入用 canvas（pass0）
         n = len(layers_subset)
@@ -481,7 +481,7 @@ class RenderPlan:
                 prev = target
                 continue
             if not last:
-                os.replace(target.with_name(target.stem + ".part" + target.suffix),
+                fstxn.replace(target.with_name(target.stem + ".part" + target.suffix),
                            target)
             if not self._pass_fresh(target, seglen):
                 print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
@@ -490,7 +490,7 @@ class RenderPlan:
             if not last:
                 # 帧数硬校验通过后落旁车（_pass_fresh sidecar 快路径的凭据，
                 # 见其 docstring；截断/中断产物到不了这里，不会误发旁车）
-                target.with_suffix(target.suffix + ".n").write_text(str(seglen))
+                fstxn.atomic_write(target.with_suffix(target.suffix + ".n"), str(seglen))
             prev = target
         return enc
 
@@ -532,7 +532,7 @@ class RenderPlan:
         lset = self.layers if layer_set is None else layer_set
         # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
         # 段目录自建（parents 兜底 fresh 项目直渲本目录的首个落笔点）。
-        vdir = c.cache / tag; vdir.mkdir(parents=True, exist_ok=True)
+        vdir = c.cache / tag; fstxn.mkdir(vdir)
         bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in lset]
         cuts = choose_cutpoints(bounds, c.dur, self.nseg)
         edges = [0] + cuts + [c.dur]
@@ -577,12 +577,12 @@ class RenderPlan:
         def concat_entry(path):
             name = path.resolve().as_posix().replace("'", "'\\''")
             return f"file '{name}'\n"
-        lst.write_text("".join(concat_entry(s) for s in segs), encoding="utf-8")
+        fstxn.atomic_write(lst, "".join(concat_entry(s) for s in segs))
         # 记录本代段缓存对应的合成代码摘要（R7）：vtx diff 据此在 timeline 侧 0 失效
         # 时仍能提示「代码摘要已漂移 → 磁盘段缓存全冷重建」，避免影响面误报温态。
         if not c.dry:
             try:
-                (vdir / ".graph_digest").write_text(_graph_code_digest(), encoding="utf-8")
+                fstxn.atomic_write(vdir / ".graph_digest", _graph_code_digest())
             except OSError:
                 pass
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
@@ -612,7 +612,7 @@ def prepare_layers(c: Ctx):
     整片与区间共用同一份 cache/seg——区间渲染不得另造键或另写命名空间。本函数只做
     seg/gfx 缓存侧副作用；manifest 记账与回执由调用方负责（区间渲染不记账不写回执）。
     """
-    (c.cache / "seg").mkdir(parents=True, exist_ok=True)
+    fstxn.mkdir(c.cache / "seg")
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
     # 需要 alpha（opacity<1 或 fade）→ ProRes 4444；纯不透明全屏 → libx264。所有轨道等价。

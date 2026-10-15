@@ -98,8 +98,9 @@ from pathlib import Path
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
 from .composite import build_video, prepare_layers
 from .encoders import find_chrome
-from . import gfx_cli, hygiene
-from .hygiene import budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns, manifest_record, snapshot
+from . import gfx_cli, hygiene, fstxn
+from .hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
+                      manifest_record, snapshot)
 from .infra import (Ctx, ProjectPathError, ensure_inside_project,
                     run_wave)
 from .qc import qc
@@ -243,10 +244,10 @@ def _gfx(c: Ctx):
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
             # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
             if not c.dry:
-                d.mkdir(parents=True, exist_ok=True)
+                fstxn.mkdir(d)
                 gfx_cli.invalidate_page(d)
                 for i, _ in bad:
-                    (d / f"f{i:04d}.png").unlink(missing_ok=True)
+                    fstxn.unlink(d / f"f{i:04d}.png")
             html = (c.root / cl["src"]).resolve()
             # 页内分片（方案 v2 阶段 1，默认关）：SPLIT_FRAMES>0 且页帧数超阈值时把
             # [0,n) 切成 min(SPLIT_MAX, ceil(n/阈值)) 个连续块，每块独立一次
@@ -696,6 +697,15 @@ def _preview_command(c, a):
 
 
 def main():
+    """Safety failures are user errors, including failures in worker dispatch."""
+    try:
+        return _main()
+    except ProjectPathError as error:
+        print(f'✗ {error}', file=sys.stderr)
+        return 1
+
+
+def _main():
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
     ap.add_argument("--until", metavar="STAGE", default=None,
@@ -1015,4 +1025,4 @@ def main():
     print("完成：", c.out / "final.mp4" if final_ready else names)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

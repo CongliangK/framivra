@@ -27,6 +27,7 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 独立测试：python3 gfx_render.py <html> <outdir> <N帧> [--tabs 4] [--opaque-check]
 """
 import base64
+from . import fstxn
 import hashlib
 from pathlib import Path
 import json
@@ -703,19 +704,7 @@ def _atomic_write_bytes(path, data):
     字节内容与直接 write 完全一致（像素零影响）；tmp 名由 mkstemp 保证同目录
     唯一（O_EXCL），成功路径 tmp 已被 replace 移走、异常路径 finally 清理，
     两种路径均不留 tmp 残留。"""
-    fd, tmp = tempfile.mkstemp(
-        prefix="." + os.path.basename(path) + ".tmp.",
-        dir=os.path.dirname(path) or ".")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+    fstxn.atomic_write(path, data)
 
 
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
@@ -758,7 +747,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     tabs_n = tabs or int(os.environ.get("VTX_GFX_TABS", "4"))
     html_path = os.path.abspath(html_path)
     outdir = os.path.abspath(outdir)
-    os.makedirs(outdir, exist_ok=True)
+    fstxn.mkdir(outdir)
     base_uri = Path(html_path).resolve().as_uri()
     requested = list(range(n_frames) if frames is None else frames)
     work = [i for i, _ in verify_frames(outdir, requested, width=width, height=height)]

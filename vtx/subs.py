@@ -7,6 +7,7 @@ check_subtitles(subs, voice_windows, fps)——可脱离视频/音频产物独�
 import hashlib, json, re, sys
 from pathlib import Path
 
+from . import fstxn
 from .composite import RenderPlan
 from .encoders import seg_encoder_kind
 from .hygiene import gfx_dir, manifest_record, seg_key, tmp_run
@@ -158,8 +159,7 @@ def run_check(c: Ctx, align_fail: float, dry: bool):
     if dry:
         print(f"[dry-run] 将写报告：{out}")
     else:
-        c.out.mkdir(exist_ok=True)
-        out.write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
+        fstxn.atomic_write(out, json.dumps(rep, ensure_ascii=False, indent=2))
     print(("PASS" if rep["summary"] == "PASS" else "FAIL") + f"｜报告：{out}")
     if rep["summary"] != "PASS":
         sys.exit(1)   # 与 validate 同语义：FAIL 即非零退出，可直接做 CI 门
@@ -175,7 +175,7 @@ def run_render(c: Ctx, dry: bool):
         print(f"[dry-run] 将用 RenderPlan.write_global_ass 生成字幕 ass → {dst}（{act}）")
         print(f"PASS（dry-run）｜产物：{dst}")
         return
-    c.cache.mkdir(exist_ok=True)
+    fstxn.mkdir(c.cache)
     with tmp_run(c, "subs_render") as d:
         tmp = d / "subs.ass"
         RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h, nframes=None,
@@ -184,7 +184,7 @@ def run_render(c: Ctx, dry: bool):
     if dst.exists() and dst.read_bytes() == new:
         print(f"✓ cache/subs.ass 已缓存（字节一致），跳过")
     else:
-        dst.write_bytes(new)
+        fstxn.atomic_write(dst, new)
         key = hashlib.sha1(new).hexdigest()[:12]
         print(f"✓ 写入 cache/subs.ass（内容键 {key}）")
         manifest_record(c, dst, "subs", key)
@@ -227,7 +227,7 @@ def _write_point_ass(c: Ctx, path: Path, subs):
     lines = plan.ass_head()
     for s in subs:
         lines.append(f"Dialogue: 0,{plan._fc(0)},{plan._fc(c.fps)},Def,,0,0,0,,{s['text']}")
-    path.write_text("\n".join(lines), encoding="utf-8")
+    fstxn.atomic_write(path, "\n".join(lines))
 
 
 def _layer_ready(c: Ctx, f: int):
