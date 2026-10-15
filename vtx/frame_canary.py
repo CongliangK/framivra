@@ -29,6 +29,16 @@ Worker 又失去帧同步锚点」的逻辑悖论（对齐 CEF Issue #4166 的 M
   落盘——还原帧与从未注入 Canary 的原生 Golden 图 Tier-1 全等
   （max_abs_diff == 0，scripts/gfx_golden.analyze_frame_diff 口径）。
 
+预乘塌缩孪生边界（协议物理边界，诚实声明而非兜底承诺）：A=254 单像素签名
+  的预乘存储在全域有 **6 对帧号逐字节相同**（23167/23168、42367/42368 两
+  相邻对 + 32602/32858、32640/32895、32639/32896、32677/32933 四远对）。当
+  期望帧的签名处于该塌缩（孪生在世）且观测签名恰为塌缩签名时，**任何**比对
+  ——包括与期望帧签名的精确比对——都无法区分「期望帧真迹」与「孪生陈旧
+  帧」：闸门与剥离侧一律显式拒绝并上报 ``ambiguous_signature``（宁拒不剥，
+  不猜帧号；等待后续 Paint 也不会收敛，同帧号签名恒同）。这 12 个帧号在本
+  签名方案下不可阳性确认，是显式化的协议物理边界而非可实现性缺陷（区分需
+  协议升级，如双像素签名——代价见 issue #105 r2 评审记录）。
+
 帧号域：16-bit [0, 65535]（R 高 8 位 / G 低 8 位）；0xA5/0x5A 两模式异或键
 互不相同，同帧号双模式签名必然不同（模式混注不会互相误判）。
 
@@ -49,11 +59,16 @@ BeginFrame 驱动，消费 harness 以 throwaway 截图兜底触发）；页面�
     ``match_bgra_premul``（±1/通道容忍）按此比对，``decode_bgra_premul``
     用**精确反像区间**（``_premul_cands``）反解——朴素 floor/ceil 直除法会让
     约半数帧号的签名校验和碰撞歧义（65536 帧实测 32773 帧，#105b 复审拦截）。
+    精确反像消除数值假阳性后，残余歧义恰为上述 6 对孪生（12 帧）——真塌缩，
+    非算法可修，消费面按 ``ambiguous_signature`` 显式拒绝。
   - DOM/CSS 叠层在**不透明**合成输出（CDP 截图）中 α 恒拍平为 255，且
     rgba(254/255) 签名与底层页面像素按 α 混合 → RGB 偏差 |Δ|≤1/通道。故 PNG
-    通路校验（``verify_clean_pixel``）不查 α，按三段递降判定：精确解码 →
-    ±1 立方候选唯一解码 → 期望帧签名 ±1 对靶匹配（抗舍入策略）。
-    诊断轨 ``rgb()`` 不透明纯色块不受此影响（8x8 块内 RGB 精确）。
+    通路校验（``verify_clean_pixel``）不查 α，按强度递降判定：精确解码（直向
+    签名全域单射，无歧义）→ ±1 立方候选唯一解码（抗舍入策略）→ 多候选且
+    含请求帧的**预乘孪生** = ``ambiguous_signature`` 显式拒绝（协议固有塌缩
+    族，宁拒不猜）；多候选但仅为 ±1 舍入邻居（原生通路字节可区分）按对靶
+    容差放行；不含请求帧的多候选同样 ``ambiguous_signature``（帧号不可
+    归属）。诊断轨 ``rgb()`` 不透明纯色块不受此影响（8x8 块内 RGB 精确）。
 
 本模块纯标准库（验证/剥离只碰 ≤2 像素邻域 + 8x8 块，无需 numpy/PIL；PNG
 解码由调用方负责——scripts/gfx_golden._decode_rgba、测试 PIL 均可）。
@@ -81,6 +96,10 @@ ST_TORN = "torn_frame"                # 上下撕裂：TL 与 BR 双 Canary 帧�
                                       # 呈两条均合法签名的水平色带（半帧新/半帧旧）
 ST_CHECKSUM = "checksum_mismatch"     # 校验和撕裂：块结构在但 B 通道对不上
 ST_NO_CANARY = "no_canary"            # 左上区域无 Canary 结构（未注入/被遮挡/尺寸不符）
+ST_AMBIGUOUS = "ambiguous_signature"  # 候选解码不唯一：观测与多个合法签名相容（BGRA
+                                      # 通路=预乘塌缩孪生在世；PNG 通路=±1 容差球交集
+                                      # 内的撕裂/混合观测）。协议无法归属帧号 → 显式
+                                      # 拒绝而非猜测（宁拒不剥，issue #105 r2）
 
 _WRONG_STATES = (ST_LAG1, ST_STATIC_FIRST, ST_OTHER)
 
@@ -281,14 +300,19 @@ def verify_clean_pixel(px, requested_frame: int) -> dict:
 
     PNG 通路 A 实现为 255（CDP 截图不透明合成），故 α 不参与判据；注入桥以
     rgba(...,254/255) 绘制，不透明合成下 RGB 与底层页面像素按 α=254/255 混合
-    （|偏差| ≤ 1/通道，抗舍入策略）：判定按强度递降三段——
-      ① 精确解码：RGB 直读帧号 + 校验和全等（两探针解算/同色底时成立，最强）；
-      ② ±1 立方候选解码（_clean_blend_candidates）：唯一候选 → 按该帧号分类；
-      ③ 期望帧签名 ±1 匹配：|px.rgb − signature_rgb(clean, requested)|∞ ≤ 1
-        → ok（校验器已知请求帧号，直接对靶）。
-    三段皆不中 → checksum_mismatch。返回词汇同 verify_diagnostic_corners
-    （单像素无块结构，不存在 no_canary 的可靠区分——模式 B 由宿主保证 (0,0)
-    必为签名位）。
+    （|偏差| ≤ 1/通道，抗舍入策略）。判定按强度递降（issue #105 r2）：
+      ① 精确解码：RGB 直读帧号 + 校验和全等（两探针解算/同色底时成立，最强；
+        直向签名全域单射，精确解码无歧义）；
+      ② ±1 立方候选唯一解码（_clean_blend_candidates）→ 按该帧号分类；
+      ③ 多候选且含请求帧：**候选集含请求帧的预乘孪生**（premul_twin_frames，
+        即原生通路字节也不可区分的协议固有塌缩族）→ ``ambiguous_signature``
+        显式拒绝，不猜帧号；否则（候选仅为 ±1 舍入邻居——原生 BGRA 通路字
+        节可区分，本通路容差系渲染舍中考量）→ ok（blend±1 对靶匹配）；
+      ④ 多候选且不含请求帧 → ``ambiguous_signature``（帧号不可归属，detail
+        如实标注）；
+      ⑤ 全不中 → checksum_mismatch。
+    返回词汇同 verify_diagnostic_corners 加 ambiguous_signature（单像素无块
+    结构，不存在 no_canary 的可靠区分——模式 B 由宿主保证 (0,0) 必为签名位）。
     """
     req = _check_frame(requested_frame)
     r, g, b = int(px[0]) & 0xFF, int(px[1]) & 0xFF, int(px[2]) & 0xFF
@@ -297,10 +321,16 @@ def verify_clean_pixel(px, requested_frame: int) -> dict:
         frame = next(iter(cands))
         return {"status": classify_frame(frame, req), "rendered_frame": frame,
                 "detail": "" if frame == req else f"rendered={frame} requested={req}"}
-    sr, sg, sb = signature_rgb(MODE_CLEAN, req)
-    if max(abs(r - sr), abs(g - sg), abs(b - sb)) <= 1:
-        return {"status": ST_OK, "rendered_frame": req,
-                "detail": "blend±1 对靶匹配"}
+    if cands:
+        if req in cands and not (cands & set(premul_twin_frames(MODE_CLEAN, req))):
+            return {"status": ST_OK, "rendered_frame": req,
+                    "detail": f"blend±1 对靶匹配（{len(cands)} 候选相容，"
+                              "均非预乘孪生）"}
+        return {"status": ST_AMBIGUOUS, "rendered_frame": None,
+                "detail": f"±1 候选不唯一（{len(cands)} 个合法签名相容，"
+                          f"含请求帧={req in cands}"
+                          + ("，且含预乘孪生——协议固有塌缩" if req in cands else "")
+                          + "）——帧号不可归属，宁拒不猜"}
     return {"status": ST_CHECKSUM, "rendered_frame": None,
             "detail": "(0,0) 校验和不符（无签名或撕裂）"}
 
@@ -346,15 +376,13 @@ def _premul_cands(v: int) -> list[int]:
     return [c for c in range(max(0, lo), min(255, hi) + 1)]
 
 
-def decode_bgra_premul(px_bgra) -> tuple[int, bool]:
-    """预乘首像素反解帧号：三通道直存值各取精确反像集（每通道 1-2 个 C）做
-    笛卡尔组合，校验和过滤。
+def _premul_decode_matches(px_bgra) -> set:
+    """预乘首像素反解的完整候选帧集合（decode_bgra_premul 底层；纯函数）。
 
-    返回 (frame, ok)；零候选或候选不唯一（相邻 C 预乘塌缩 + 校验和补偿的
-    真碰撞；精确反像后 65536 帧实测仅 12 帧歧义，测试锁定占比与兜底）时
-    ok=False——此时调用方（如 accept_paint_bgra_inplace 的闸门）应改用
-    「px == signature_bgra_premul(clean, expected)」的期望帧精确比对为准，
-    不信任反解值。"""
+    三通道直存值各取精确反像集（每通道 1-2 个 C）做笛卡尔组合，校验和过滤。
+    返回候选帧号集合：空 = 无合法签名结构；1 个 = 可唯一归属；≥2 个 = 真歧义
+    （预乘塌缩孪生在世：观测与多个帧号的签名逐字节相容）。
+    """
     matches = set()
     for r in _premul_cands(int(px_bgra[2])):
         for g in _premul_cands(int(px_bgra[1])):
@@ -362,6 +390,40 @@ def decode_bgra_premul(px_bgra) -> tuple[int, bool]:
                 f, ok = decode_pixel(MODE_CLEAN, r, g, b)
                 if ok:
                     matches.add(f)
+    return matches
+
+
+def premul_twin_frames(mode: str, f: int) -> tuple:
+    """帧 f 的预乘孪生帧号（与 f 的 signature_bgra_premul **逐字节相同**的
+    其他帧，升序元组）。
+
+    clean 模式全域恰 6 对/12 帧（模块头「预乘塌缩孪生边界」：23167/23168、
+    42367/42368 相邻对 + 32602/32858、32640/32895、32639/32896、32677/32933
+    远对）；diagnostic 模式 A=255 预乘为恒等变换，无孪生。消费面在期望帧
+    孪生在世时必须按 ``ambiguous_signature`` 显式拒绝——孪生签名不可区分是
+    单像素签名方案的协议物理边界。
+    """
+    _check_mode(mode)
+    f = _check_frame(f)
+    if mode == MODE_DIAGNOSTIC:
+        return ()     # A=255：预乘恒等，签名无塌缩
+    return tuple(sorted(_premul_decode_matches(signature_bgra_premul(mode, f))
+                        - {f}))
+
+
+def decode_bgra_premul(px_bgra) -> tuple[int, bool]:
+    """预乘首像素反解帧号（唯一候选时 (frame, True)，否则 (0, False)）。
+
+    ok=False 有两种诚实战况，调用方须区分处理而非「换个比对兜底」：
+      零候选 = 无合法签名结构；
+      多候选 = 预乘塌缩孪生在世（全域恰 6 对/12 帧，见模块头）——观测签名与
+      多个帧号的签名**逐字节相同**，任何比对（包括与期望帧签名的精确比对）
+      都无法区分期望帧真迹与孪生陈旧帧。accept_paint_bgra_inplace 闸门对此
+      显式拒绝（``ambiguous_signature``，宁拒不剥），不做帧号猜测——曾有的
+      「以期望帧精确比对为准」说法对孪生帧是伪兜底（红队 #105 r1 复现：
+      陈旧帧 23167 签名冒充 expected=23168 被放行），r2 起废除。
+    """
+    matches = _premul_decode_matches(px_bgra)
     if len(matches) != 1:
         return 0, False
     return matches.pop(), True
@@ -372,34 +434,58 @@ def accept_paint_bgra_inplace(buf: bytearray, width: int, expected_frame: int,
     """Native Worker 的 OnPaint/paint 帧闸门（模式 B 核心消费面，issue 原文语义）。
 
     buf：整帧 BGRA_PREMUL 缓冲区（bytearray，行主序，首像素 (0,0) 在
-    buf[0:4]；buf[4:8] 为 (1,0)）。语义：
+    buf[0:4]；buf[4:8] 为 (1,0)）。三态语义：
       首像素不匹配请求帧号 f → 判陈旧/中间帧（如 CEF #4166 软件路径同步重放
         帧），**不改动 buf**，返回 {"accepted": False, "reason":
         "stale_paint:rendered=N", "rejected_stale_paint": True}——调用方丢弃
-        本缓冲区继续等下一次 Paint，并自行累加 rejected_stale_paint_count；
-      匹配 → 原地把 (0,0) 覆写为 (1,0) 的 BGRA 值（original_bgra 四元组给出
-        时优先用宿主上报原始值），返回 accepted=True + rendered_frame，调用方
-        随后执行逆预乘与 PNG 编码落盘。
-    匹配主判据 = 精确判据（陈旧帧鉴别是本闸门的生死线，CEF #4166 场景＝恰好
-    滞后 1 帧的旧帧，±1 球面容忍会把相邻帧签名 G/B ±1 互相放行）：
-    ``px == signature_bgra_premul(clean, f)`` **或** 预乘精确反像解码
-    decode_bgra_premul(px) == f（覆盖他引擎预乘舍入约定差异的等价存储）。
-    match_bgra_premul(±1) 保留为显式 opt-in API，供宿主引擎校准后使用。
+        本缓冲区继续等下一次 Paint，并自行累加 rejected_stale_paint_count
+        （rendered 为反解唯一帧号，零候选/歧义时 None）；
+      首像素 == 期望帧的预乘签名，但期望帧**孪生在世**（premul_twin_frames
+        非空——观测与孪生帧签名逐字节相同）→ **同样不改动 buf**，返回
+        {"accepted": False, "reason": "ambiguous_signature:twin=…",
+        "status": "ambiguous_signature", "rejected_stale_paint": True,
+        "twin_frames": […]}。协议物理边界：该观测永远无法区分期望帧真迹与
+        孪生陈旧帧，等待后续 Paint 也不收敛（同帧号签名恒同），调用方须按
+        歧义处置（换帧号重渲/邻帧佐证/上报），**不得猜测帧号**（红队 #105
+        r1：陈旧 23167 签名冒充 expected=23168 曾被「精确比对」放行）；
+      匹配（精确逐字节相等，含 A=254）→ 原地把 (0,0) 覆写为 (1,0) 的 BGRA
+        值（original_bgra 四元组给出时优先用宿主上报原始值），返回
+        accepted=True + rendered_frame，调用方随后执行逆预乘与 PNG 编码落盘。
+    匹配主判据 = 精确逐字节相等 ``px == signature_bgra_premul(clean, f)``：
+    陈旧帧鉴别是本闸门的生死线（CEF #4166 场景＝恰好滞后 1 帧的旧帧，±1
+    球面容忍会把相邻帧签名 G/B ±1 互相放行）。诚实说明（r2）：``_premul_cands``
+    是「round(C·254/255)==v」的精确等价类，**不存在**「字节不同却反解到期望
+    帧」的等价存储——他引擎预乘舍入约定不同时字节必不匹配，宿主须先校准
+    （match_bgra_premul(±1) 保留为显式 opt-in API，供宿主引擎校准后使用，
+    本闸门不默认采用）。
     expected_frame 为 None 时跳过帧号闸门但仍要求 (0,0) 是可唯一反解的合法
-    签名（无签名结构宁拒不剥）。
+    签名（无签名结构或孪生歧义均宁拒不剥，后者上报 ambiguous_signature）。
     """
     px = tuple(buf[0:4])
-    rendered, ok = decode_bgra_premul(px)
+    matches = _premul_decode_matches(px)
+    ok = len(matches) == 1
+    rendered = next(iter(matches)) if ok else None
     if expected_frame is not None:
         exp = _check_frame(expected_frame)
         exp_px = signature_bgra_premul(MODE_CLEAN, exp)
-        if px != exp_px and not (ok and rendered == exp):
-            alt = rendered if ok else None
+        if px != exp_px:
             return {"accepted": False, "rejected_stale_paint": True,
-                    "reason": f"stale_paint:rendered={alt}",
-                    "rendered_frame": alt, "restored": False}
+                    "reason": f"stale_paint:rendered={rendered}",
+                    "rendered_frame": rendered, "restored": False}
+        twins = premul_twin_frames(MODE_CLEAN, exp)
+        if twins:
+            return {"accepted": False, "rejected_stale_paint": True,
+                    "reason": "ambiguous_signature:twin=" + "|".join(map(str, twins)),
+                    "status": ST_AMBIGUOUS, "rendered_frame": None,
+                    "restored": False, "twin_frames": list(twins)}
         rendered = exp
     elif not ok:
+        if matches:
+            twins = sorted(matches)
+            return {"accepted": False, "rejected_stale_paint": False,
+                    "reason": "ambiguous_signature:twin=" + "|".join(map(str, twins)),
+                    "status": ST_AMBIGUOUS, "rendered_frame": None,
+                    "restored": False, "twin_frames": twins}
         return {"accepted": False, "rejected_stale_paint": False,
                 "reason": "no_signature", "rendered_frame": None,
                 "restored": False}
@@ -412,26 +498,31 @@ def accept_paint_bgra_inplace(buf: bytearray, width: int, expected_frame: int,
 
 
 def _clean_matches_expected(px, exp: int) -> bool:
-    """剥离侧对靶判定（渲染侧宽松 + 陈旧帧鉴别保守的混合语义）：
+    """剥离侧对靶判定（「宁拒不剥」双战线：陈旧帧鉴别保守 + 孪生歧义拒绝）：
 
       ① obs 是某帧的**精确合法签名** → 帧号说了算：仅 exp == 该帧号才放行
          （陈旧帧鉴别是生死线——CEF #4166 场景＝旧帧签名原样在缓冲区里，
          ±1 放行会静默把旧帧当新帧剥离落盘，Tier-1 之前无人兜底）；
-      ② obs 非精确签名（混合/撕裂观感）→ exp ∈ ±1 立方候选 或
-         |px.rgb − sig(exp)|∞ ≤ 1 才放行（rgba(254/255) 在不透明合成下与
-         底色 ±1 混合的抗舍入路径）。
+      ② obs 非精确签名（混合/撕裂观感）→ exp ∈ ±1 立方候选才可能放行，且
+         候选集**不得含 exp 的预乘孪生**（premul_twin_frames——原生 BGRA
+         通路字节也不可区分的协议固有塌缩族，与闸门 ambiguous_signature 同
+         规则的 PNG 通路投影，宁拒不剥）；候选仅为 ±1 舍入邻居（原生通路
+         字节可区分）时按抗舍入容差放行，事后 Tier-1 仲裁。
 
-    与审计侧 verify_clean_pixel 的输出语义互补：verify 判状态分类（保守，
-    宁可误报），本函数只答放行与否（①②都能自证时放行，事后 Tier-1 仲裁）。
+    数学注：|px.rgb − sig(exp)|∞ ≤ 1 ⟺ sig(exp) ∈ px 的 ±1 立方候选（签名
+    校验和恒真），故旧「对靶 ±1 匹配」路径被②完全包含——多候选时只在无孪生
+    在世的容差语义下放行（issue #105 r2）。与审计侧 verify_clean_pixel 的
+    输出语义互补：verify 判状态分类（孪生在世 → ambiguous_signature），
+    本函数只答放行与否。
     """
     r, g, b = int(px[0]) & 0xFF, int(px[1]) & 0xFF, int(px[2]) & 0xFF
     frame, ok = decode_pixel(MODE_CLEAN, r, g, b)
     if ok:
         return frame == exp
-    if exp in _clean_blend_candidates(r, g, b):
-        return True
-    sr, sg, sb = signature_rgb(MODE_CLEAN, exp)
-    return max(abs(r - sr), abs(g - sg), abs(b - sb)) <= 1
+    cands = _clean_blend_candidates(r, g, b)
+    if exp not in cands:
+        return False
+    return not (cands & set(premul_twin_frames(MODE_CLEAN, exp)))
 
 
 def restore_clean_1px_rgba_inplace(arr, expected_frame=None,
@@ -439,12 +530,13 @@ def restore_clean_1px_rgba_inplace(arr, expected_frame=None,
     """PNG/Raster 通路的原地剥离（模式 B；arr 为可写 (h,w,4) uint8 数组，如
     gfx_golden._decode_rgba 的返回或 PIL 转 numpy 的帧）。
 
-    先校验 (0,0)（expected_frame 给出且连宽松对靶都不中 → 拒绝剥离，返回
-    {"restored": False, ...}，宁拒不错；expected_frame=None 时要求候选解码
-    唯一）；随后 (0,0) ← original_rgba（宿主上报原始色，优先）或相邻像素
-    (1,0)。返回 restored/rendered_frame/restore_source/status。剥离后帧与无
-    Canary 原生 Golden 的 Tier-1 全等由调用方用 gfx_golden.analyze_frame_diff
-    验证（DoD 口径）。
+    先校验 (0,0)（expected_frame 给出且连宽松对靶都不中、或观测处于多候选
+    歧义（孪生撕裂中点）→ 拒绝剥离，返回 {"restored": False, ...}，宁拒不
+    错，status=ambiguous_signature 时帧号不可归属；expected_frame=None 时
+    要求候选解码唯一）；随后 (0,0) ← original_rgba（宿主上报原始色，优先）
+    或相邻像素 (1,0)。返回 restored/rendered_frame/restore_source/status。
+    剥离后帧与无 Canary 原生 Golden 的 Tier-1 全等由调用方用
+    gfx_golden.analyze_frame_diff 验证（DoD 口径）。
     """
     h, w = arr.shape[0], arr.shape[1]
     if h < 1 or w < 2:

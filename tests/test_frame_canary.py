@@ -6,7 +6,9 @@ Clean 1px 原地无损剥离）全链验收。
   ① 协议纯函数：冻结签名公式（R=hi,G=lo,B=hi^lo^键；A=255/254）、16-bit 帧号
      域、双模式键互斥（同帧号两轨签名必不同）、decode/classify 全域正确性；
   ② 预乘原生通路（CEF/Electron OnPaint BGRA_PREMUL）：精确反像区间、65536 帧
-     roundtrip（相邻 C 塌缩真歧义的占比与 match 兜底）、±1 扰动匹配、
+     roundtrip（歧义恰为预乘塌缩孪生 6 对/12 帧——真塌缩，任何比对不可区分，
+     闸门按 ambiguous_signature 显式拒绝；match_bgra_premul 仅为宿主 ±1 校准
+     API，非闸门兜底）、±1 扰动匹配、
      accept_paint_bgra_inplace 闸门（匹配接受+原地剥离(1,0)、陈旧帧拒收不改
      缓冲区、宿主上报原始值优先、rejected_stale_paint 旗标）；
   ③ 合成 PNG DoD：「帧 12 的图像贴在 f0013.png」→ wrong_frame_lag1 100%
@@ -15,7 +17,9 @@ Clean 1px 原地无损剥离）全链验收。
      两形态 + BR 块内双色带）→ torn_frame 100%（0..254 全扫）；
   ④ CLI verify-canary：帧目录全 ok exit 0 / 混合错帧 exit 1 + 计数器与
      wrong_frame_count、单帧 --png/--frame、clean 模式、缺文件/缺参 exit 1、
-     report JSON 落盘；
+     report JSON 落盘、七态 ambiguous_signature 单列计数（帧目录模式帧号
+     空洞≠缺失——与单帧模式「帧缺失→1」的契约差异由 gfx_golden 模块头显式
+     声明，抽样目录合法）；
   ⑤ Clean 剥离 Tier-1（DoD）：合成基准帧（角均匀）邻域 (1,0) 剥离 →
      analyze_frame_diff Tier-1 max_abs_diff==0；预乘混合 ±1 像素同样过闸；
      角非均匀 + 宿主上报原始色 → Tier-1；错帧签名 → 宁拒不错；邻域剥离在
@@ -26,6 +30,11 @@ Clean 1px 原地无损剥离）全链验收。
      CDP addScriptToEvaluateOnNewDocument 注入 → 合成帧驱动页 + 仓内真实页
      gfxA.html 双轨解码 100%；clean 1px 剥离后与无注入基准 Tier-1 全等；
      __vtx_render(f) 桥接重绘换帧签名（#105b 陈旧色回归）。
+  ⑧ 孪生帧穿透回归（红队 #105 r1 FAIL 主因，r2 修复锁）：预乘塌缩孪生 6 对
+     全测（双向陈旧伪装必拒 + 真迹同拒——协议物理边界显式化而非可实现性
+     缺陷）、相邻对 lag 场景单列（stale==expected-1，CEF #4166 典型形态）、
+     skip-gate 与 PNG 剥离侧同规则宁拒不剥、孪生撕裂中点 → 七态
+     ambiguous_signature（CLI 单列计数、不进 wrong_frame_count）。
 """
 import io
 import json
@@ -51,6 +60,13 @@ W, H = 64, 48
 # 合法签名（审计侧 verify 保守判 other，见 TestCleanRestoreTier1 的边界用例）
 _DIAG_FRAMES = [0, 1, 2, 3, 12, 13, 90, 255, 256, 511, 4095, 65535]
 _CLEAN_FRAMES = [0, 1, 90, 4095]
+
+# 预乘塌缩孪生对（红队 #105 r1 证据 + 全域数值复核锁定）：signature_bgra_premul
+# 逐字节相同的帧号对，clean 模式全域恰此 6 对/12 帧。协议物理边界——单像素
+# A=254 签名下不可区分，闸门/剥离侧一律 ambiguous_signature 显式拒绝。
+_TWIN_PAIRS = ((23167, 23168), (32602, 32858), (32639, 32896),
+               (32640, 32895), (32677, 32933), (42367, 42368))
+_ADJACENT_TWIN_PAIRS = ((23167, 23168), (42367, 42368))   # 恰滞后 1 帧（lag 形态）
 
 # 合成帧驱动页：不透明深色底（左上角均匀 → 邻域剥离 Tier-1 可证）、随 f 移动
 # 的条与数字（画面内容=帧号纯函数，帧驱动铁律）
@@ -173,18 +189,21 @@ class TestPremulNative(unittest.TestCase):
         self.assertEqual(fc.signature_bgra_premul(fc.MODE_DIAGNOSTIC, 0)[3], 255)
 
     def test_decode_roundtrip_full_domain(self):
-        """65536 帧 roundtrip：唯一反解率 ≥ 99.95%；歧义帧（预乘相邻 C 塌缩
-        真碰撞）逐帧有 match_bgra_premul 期望帧兜底——原生闸门不受影响。"""
+        """65536 帧 roundtrip：唯一反解 65524 帧；歧义帧恰为预乘塌缩孪生
+        6 对/12 帧（真塌缩——孪生签名逐字节相同，**任何**比对不可区分）。
+        闸门对此按 ambiguous_signature 显式拒绝（test_accept_paint_twin_*），
+        无「期望帧精确比对」伪兜底；match_bgra_premul 仅为宿主 ±1 校准 API。"""
         ambiguous = []
         for f in range(65536):
             px = fc.signature_bgra_premul(fc.MODE_CLEAN, f)
             got, ok = fc.decode_bgra_premul(px)
             if not ok or got != f:
                 ambiguous.append(f)
-                # 兜底判据：期望帧对靶匹配必须放行（±1/通道 + A 精确）
-                self.assertTrue(fc.match_bgra_premul(px, f), f"match 兜底失败 @f={f}")
-        self.assertLessEqual(len(ambiguous), 32,
-                             f"歧义帧超预算: {len(ambiguous)} 例 {ambiguous[:8]}")
+                # ±1 校准 API 自洽性（非兜底）：帧自身签名必在 ±1 球内
+                self.assertTrue(fc.match_bgra_premul(px, f), f"match 自洽失败 @f={f}")
+        self.assertEqual(sorted(ambiguous),
+                         sorted({f for pair in _TWIN_PAIRS for f in pair}),
+                         "歧义帧清单必须恰为孪生 6 对/12 帧（协议物理边界锁定）")
 
     def test_match_perturbation(self):
         import random
@@ -248,6 +267,89 @@ class TestPremulNative(unittest.TestCase):
         garbage = bytearray((200, 100, 50, 254) * 32)
         r3 = fc.accept_paint_bgra_inplace(garbage, 8, expected_frame=None)
         self.assertFalse(r3["restored"])  # 无签名结构宁拒不剥
+
+    # -------------------------------- 孪生帧穿透回归（红队 #105 r1 → r2）
+
+    def test_premul_twin_inventory_locked(self):
+        """孪生清单全域锁定：预乘签名分组恰为红队证实的 6 对；
+        premul_twin_frames 双向互指、逐字节相同、反解必不唯一；直向（PNG
+        通路）签名全域单射无孪生；diagnostic A=255 预乘恒等无孪生。"""
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for f in range(65536):
+            groups[fc.signature_bgra_premul(fc.MODE_CLEAN, f)].append(f)
+        derived = sorted(tuple(v) for v in groups.values() if len(v) > 1)
+        self.assertEqual(derived, sorted(_TWIN_PAIRS))
+        for a, b in _TWIN_PAIRS:
+            self.assertEqual(fc.premul_twin_frames(fc.MODE_CLEAN, a), (b,))
+            self.assertEqual(fc.premul_twin_frames(fc.MODE_CLEAN, b), (a,))
+            _, ok = fc.decode_bgra_premul(fc.signature_bgra_premul(fc.MODE_CLEAN, a))
+            self.assertFalse(ok)
+            self.assertNotEqual(fc.signature_rgb(fc.MODE_CLEAN, a),
+                                fc.signature_rgb(fc.MODE_CLEAN, b))
+        for f in (0, 12, 258, 32601, 32603, 42366):   # 孪生近邻也非孪生
+            self.assertEqual(fc.premul_twin_frames(fc.MODE_CLEAN, f), ())
+        self.assertEqual(fc.premul_twin_frames(fc.MODE_DIAGNOSTIC, 23167), ())
+
+    def test_accept_paint_twin_stale_rejected_all_six_pairs(self):
+        """红队 #105 r1 复现锁（FAIL 主因）：陈旧缓冲区装孪生帧签名、期望帧
+        为其孪生（字节完全相同）→ 必须拒绝（ambiguous_signature），不伪报
+        expected 帧号；6 对双向全测，缓冲区零改动（宁拒不剥）。"""
+        for a, b in _TWIN_PAIRS:
+            for stale, exp in ((a, b), (b, a)):
+                buf, _ = self._buf(stale)
+                before = bytes(buf)
+                r = fc.accept_paint_bgra_inplace(buf, 8, expected_frame=exp)
+                self.assertFalse(r["accepted"], f"孪生穿透 @stale={stale} exp={exp}")
+                self.assertEqual(r["status"], fc.ST_AMBIGUOUS)
+                self.assertIn("ambiguous_signature", r["reason"])
+                self.assertTrue(r["rejected_stale_paint"])
+                self.assertIsNone(r["rendered_frame"])   # 帧号不可归属，不猜
+                self.assertEqual(r["twin_frames"], [stale])   # 歧义源=孪生帧
+                self.assertEqual(bytes(buf), before)
+
+    def test_accept_paint_twin_expected_genuine_also_rejected(self):
+        """协议物理边界（诚实断言）：期望帧孪生在世时其**真迹**同样无法阳性
+        确认——闸门一律 ambiguous_signature 拒绝。等待后续 Paint 不收敛（同
+        帧号签名恒同），调用方须换帧号重渲/邻帧佐证；这是显式化的物理边界，
+        非可实现性缺陷（区分需双像素签名等协议升级）。"""
+        for f in (23167, 23168, 32858, 42368):
+            buf, _ = self._buf(f)
+            before = bytes(buf)
+            r = fc.accept_paint_bgra_inplace(buf, 8, expected_frame=f)
+            self.assertFalse(r["accepted"], f)
+            self.assertEqual(r["status"], fc.ST_AMBIGUOUS)
+            self.assertEqual(bytes(buf), before)
+
+    def test_accept_paint_adjacent_twin_lag_scenario(self):
+        """lag 场景单列：孪生恰为相邻帧（stale == expected - 1）——CEF #4166
+        软件路径同步重放的最典型形态，恰是「精确比对」最危险的伪匹配区。"""
+        for stale, exp in _ADJACENT_TWIN_PAIRS:
+            self.assertEqual(exp - stale, 1)
+            buf, _ = self._buf(stale)
+            r = fc.accept_paint_bgra_inplace(buf, 8, expected_frame=exp)
+            self.assertFalse(r["accepted"])
+            self.assertTrue(r["rejected_stale_paint"])   # 仍计入拒收计数
+            self.assertEqual(r["status"], fc.ST_AMBIGUOUS)
+        # 对照：非孪生相邻陈旧（257→258）仍走 stale_paint 拒收
+        buf, _ = self._buf(257)
+        r2 = fc.accept_paint_bgra_inplace(buf, 8, expected_frame=258)
+        self.assertFalse(r2["accepted"])
+        self.assertIn("stale_paint", r2["reason"])
+        self.assertEqual(r2["rendered_frame"], 257)
+
+    def test_accept_paint_skip_gate_twin_ambiguous(self):
+        """expected=None（离线剥离管道）：孪生签名歧义 → 宁拒不剥并如实上报
+        ambiguous_signature（区别于 no_signature——签名结构在，帧号不可归属）。"""
+        for f in (23167, 23168, 32858):
+            buf, _ = self._buf(f)
+            before = bytes(buf)
+            r = fc.accept_paint_bgra_inplace(buf, 8, expected_frame=None)
+            self.assertFalse(r["accepted"])
+            self.assertFalse(r["restored"])
+            self.assertEqual(r["status"], fc.ST_AMBIGUOUS)
+            self.assertIn("ambiguous_signature", r["reason"])
+            self.assertEqual(bytes(buf), before)
 
 
 class TestSyntheticDiagnostic(unittest.TestCase):
@@ -490,6 +592,65 @@ class TestCleanRestoreTier1(unittest.TestCase):
         self.assertEqual(r2["status"], fc.ST_CHECKSUM)
         with self.assertRaises(ValueError):
             fc.restore_clean_1px_rgba_inplace(_base_arr(w=1, h=1), expected_frame=0)
+
+    def test_verify_and_restore_reject_blend_ambiguous_midpoint(self):
+        """孪生对撕裂中点（观测同时落在两帧合法签名的 ±1 容差球内，且非任何
+        帧的精确签名）：verify → 七态 ambiguous_signature（不猜帧号，无论请求
+        帧是否在候选集）；剥离 → 宁拒不剥 + 零改动（与原生闸门同规则的 PNG
+        通路投影，issue #105 r2）。"""
+        base = _base_arr(corner=(16, 20, 24))
+        for obs, exp in (((90, 128, 127), 23168),    # 23167/23168 撕裂中点
+                         ((127, 90, 128), 32858)):    # 32602/32858 撕裂中点
+            v = fc.verify_clean_pixel(obs + (255,), exp)
+            self.assertEqual(v["status"], fc.ST_AMBIGUOUS, (obs, exp, v))
+            self.assertIsNone(v["rendered_frame"])
+            cand = base.copy()
+            cand[0, 0] = np.array(obs + (255,), np.uint8)
+            r = fc.restore_clean_1px_rgba_inplace(cand, expected_frame=exp)
+            self.assertFalse(r["restored"])
+            self.assertEqual(r["status"], fc.ST_AMBIGUOUS)
+            self.assertEqual(tuple(int(x) for x in cand[0, 0]), obs + (255,))
+        # 请求帧不在候选集的多候选观测：帧号同样不可归属 → ambiguous（detail
+        # 如实标注「含请求帧=False」，不武断报 other）
+        v2 = fc.verify_clean_pixel((90, 128, 127, 255), 50)
+        self.assertEqual(v2["status"], fc.ST_AMBIGUOUS)
+        self.assertIn("False", v2["detail"])
+
+    def test_cli_clean_ambiguous_seventh_state(self):
+        """CLI 七态：歧义观测 → ambiguous_signature 单列计数（不进
+        wrong_frame_count）、exit 1。目录模式帧号域 f%04d=0..9999，孪生帧号
+        (≥23167) 只能经单帧 --frame 进入——两形态各测：①目录模式多候选不含
+        请求帧（帧号不可归属，宁拒不猜 other）；②单帧模式孪生撕裂中点（含
+        请求帧且候选含其预乘孪生——协议固有塌缩）。附带锁定目录模式帧号
+        空洞语义：f0000/f0050 之间全缺 ≠ 缺失（本例因 ambiguous 判 1；全 ok
+        的空洞目录 exit 0 见 test_cli_directory_all_ok_and_mixed 的抽样洞）。"""
+        base = _base_arr(corner=(16, 20, 24))
+        d = self.d / "amb"
+        d.mkdir()
+        a = base.copy()
+        a[0, 0] = np.array((90, 128, 127, 255), np.uint8)   # ±1 邻域 4 候选
+        _arr_to_png(a, d / "f0050.png")
+        _arr_to_png(_clean_frame_arr(base, 0), d / "f0000.png")
+        rep = self.d / "amb.json"
+        rc = gg.main(["verify-canary", "--frames", str(d),
+                      "--mode", "clean_1px_restore", "--report", str(rep)])
+        self.assertEqual(rc, 1)
+        r = json.loads(rep.read_text(encoding="utf-8"))
+        c = r["counters"]
+        self.assertFalse(r["ok"])
+        self.assertEqual(c["ok"], 1)
+        self.assertEqual(c["ambiguous_signature"], 1)
+        self.assertEqual(c["wrong_frame_count"], 0)
+        # 单帧模式：孪生撕裂中点 + 显式 --frame 23168 → ambiguous（含孪生）
+        p = self.d / "twinmid.png"
+        _arr_to_png(a, p)
+        rep2 = self.d / "amb2.json"
+        rc2 = gg.main(["verify-canary", "--png", str(p), "--frame", "23168",
+                       "--mode", "clean_1px_restore", "--report", str(rep2)])
+        self.assertEqual(rc2, 1)
+        r2 = json.loads(rep2.read_text(encoding="utf-8"))
+        self.assertEqual(r2["counters"]["ambiguous_signature"], 1)
+        self.assertIn("预乘孪生", r2["frames"][0]["detail"])
 
 
 class TestJsBridge(unittest.TestCase):
