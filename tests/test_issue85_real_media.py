@@ -853,3 +853,57 @@ class RevisionResolution(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HostedToolPreparation(unittest.TestCase):
+    def test_official_media_install_precedes_preflight_and_preserves_gates(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/issue85-real-media.yml').read_text()
+        start = workflow.index('      - name: Install official Ubuntu CPU media tools')
+        end = workflow.index('      - name: Tiny harness tests', start)
+        step = workflow[start:end]
+        self.assertIn('sudo apt-get update', step)
+        self.assertIn('sudo apt-get install -y --no-install-recommends ffmpeg', step)
+        self.assertIn('command -v ffmpeg', step)
+        self.assertIn('command -v ffprobe', step)
+        self.assertIn('ffmpeg -version', step)
+        self.assertIn('ffprobe -version', step)
+        self.assertIn('tee "$OUTPUT/media-tool-versions.log"', step)
+        for forbidden in ('add-apt-repository', 'apt-key', 'curl', 'wget', 'continue-on-error', '|| true'):
+            self.assertNotIn(forbidden, step)
+        self.assertIn('timeout-minutes: 120', workflow)
+        self.assertIn('permissions:\n  contents: read', workflow)
+        self.assertIn('if: always()', workflow)
+        self.assertLess(end, workflow.index('      - name: Qualify fixed NASA original'))
+
+    @unittest.skipUnless(sys.platform == "linux", "dedicated workflow requires Linux bash")
+    def test_actual_version_shell_failures_stop_before_following_preflight(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/issue85-real-media.yml').read_text()
+        start = workflow.index('      - name: Install official Ubuntu CPU media tools')
+        end = workflow.index('      - name: Tiny harness tests', start)
+        step = workflow[start:end]
+        self.assertIn('        shell: bash\n', step)
+        body = '\n'.join(line[10:] for line in step.split('        run: |\n', 1)[1].splitlines())
+        for missing, failed, expected in [(None, None, 0), ('ffprobe', None, 1),
+                                          ('ffmpeg', None, 1), (None, 'ffprobe', 23),
+                                          (None, 'ffmpeg', 24)]:
+            with self.subTest(missing=missing, failed=failed), tempfile.TemporaryDirectory() as root:
+                root = Path(root); bins = root / 'bin'; bins.mkdir()
+                for name in ('mkdir', 'tee'):
+                    (bins / name).symlink_to('/usr/bin/' + name)
+                commands = {'sudo': '#!/bin/sh\nexit 0\n'}
+                for name in ('ffmpeg', 'ffprobe'):
+                    if name != missing:
+                        code = (23 if name == 'ffprobe' else 24) if name == failed else 0
+                        commands[name] = '#!/bin/sh\necho fake-version\nexit ' + str(code) + '\n'
+                for name, contents in commands.items():
+                    path = bins / name; path.write_text(contents); path.chmod(0o755)
+                marker = root / 'subsequent-preflight'
+                # Explicit Actions shell: bash uses -e -o pipefail. Fake sudo
+                # never invokes apt; the isolated PATH cannot reach media tools.
+                result = subprocess.run(['/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
+                                         body + '\nprintf reached > "$MARKER"\n'],
+                                        env={**os.environ, 'PATH': str(bins), 'OUTPUT': str(root / 'evidence'),
+                                             'MARKER': str(marker)}, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertEqual(marker.exists(), expected == 0)
+                self.assertTrue((root / 'evidence' / 'media-tool-versions.log').exists())

@@ -24,13 +24,13 @@ import threading
 import time
 import traceback
 
-BASELINE = "91f39e38407b395b04a4f5dc6defa3a5fa80e6be"
-CANDIDATE = "3a137911e0a5d186e1bfd8df05388498b4152975"
-BASELINE_TREE = "346225d613a8d49d32403e96388b9ac8a0f6059f"
-INITIAL_PRODUCTION_TREE = "254c5c65297cea107a167fa07fef5698505c1ec2"
-CANDIDATE_TREE = "301cbc9eb82b57ab0411226b38e56fd50dad2c30"
-REVIEWED_HARNESS_TREES = ("d6a80f4d715f209168e0e6d9f9d5e1f07258342b",
-                          "ce0bed52aa2fd0e67ba307190448c0d3229ee9ef")
+BASELINE = "3b562f0ee70fe09b5366e6e300c1a31ac3416323"
+CANDIDATE = "a0a1378ff0aabb5a9b78d5490b24b2d53df6a60f"
+BASELINE_TREE = "bc8ccd11583611d6c5577dee3871ebf41244a569"
+INITIAL_PRODUCTION_TREE = "586aee590da7dc45b75e056f5f94e4c98f8ce549"
+CANDIDATE_TREE = "e33eb3c06ebb1a3a55ca7b6174417ffcf2f2856d"
+REVIEWED_HARNESS_TREES = ("f415b847656171af4ceea344883cffcfbae200f4",
+                          "4d82802216f3788edeeede480a4000821d1886bc")
 HARNESS_PATHS = frozenset({"scripts/issue85_media_runner.py", "scripts/issue85_real_media.py",
                          "tests/test_issue85_real_media.py", ".github/workflows/issue85-real-media.yml"})
 
