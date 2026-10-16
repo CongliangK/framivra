@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "observed_at_utc": "2026-10-16T06:46:50Z",
+  "observed_at_utc": "2026-10-16T07:00:23Z",
   "repository": "CongliangK/framivra",
-  "publication_status": "draft_not_published",
+  "publication_status": "refreshed_draft_not_published",
   "proposed_branch": "meta/cloud-orchestration-ledger",
   "main": {
     "sha": "d9ce4aab52fec57b770f689550fbbde1a860243b",
@@ -13,75 +13,20 @@
     "target_real_closures": 20,
     "verified_completed": [
       44,
-      49
+      49,
+      53
     ],
-    "completed_count": 2,
-    "ordinary_open": 49,
+    "completed_count": 3,
+    "ordinary_open": 48,
     "open_prs": [],
-    "aggregate_open_issues_including_prs": 49,
+    "aggregate_open_issues_including_prs": 48,
     "added_issue_since_baseline": 153
   },
   "active": [
     {
-      "issue": 53,
-      "issue_url": "https://github.com/CongliangK/framivra/issues/53",
-      "state": "merged_postmerge_ci_running_issue_open",
-      "owner_role": "Acceptance-package implementer; independent reviewer; integration maintainer",
-      "branch": "dot/project-acceptance-53-ci-registration",
-      "base": "d17d07e955153dddb0e20596d6f29e393bc38701",
-      "local_candidate": "3edcd5ba390629fa22957ebbdd7474215d6c6d7a",
-      "published_head": "c353fae63866fa986f73460ab541d683d89bbcc5",
-      "tree": "4efc0290ac73bec2a59299386bcb9197760f5374",
-      "repair_rounds_used": 3,
-      "pending_approval": null,
-      "pr_url": "https://github.com/CongliangK/framivra/pull/154",
-      "ci_url": "https://github.com/CongliangK/framivra/actions/runs/38861826658",
-      "ci_status": "completed_success",
-      "worktree_relative": "development/worktrees/framivra-acceptance-53-ci-registration",
-      "write_scope": [
-        "docs/project-acceptance.md",
-        "scripts/acceptance_fixture.py",
-        "tests/test_acceptance.py",
-        "vtx/acceptance.py",
-        "scripts/ci_checks.py"
-      ],
-      "ci_jobs": {
-        "failed": 0,
-        "success": 9
-      },
-      "evidence_relative": [
-        "outputs/acceptance-53-publication/terminal-proof.json",
-        "outputs/acceptance-53-publication/proof.json",
-        "outputs/framivra-acceptance-53-redteam/transplant-review/identity.txt",
-        "outputs/acceptance-53-ci-registration/freeze.json",
-        "outputs/acceptance-53-ci-registration/independent-review/review.md",
-        "outputs/acceptance-53-ci-registration/publication-proof.json",
-        "outputs/acceptance-53-ci-registration/final-gate-proof.json"
-      ],
-      "published_branch": "dot/project-acceptance-53-final",
-      "parent": "897edd6606155abb7a3da797f5d1d0951245be00",
-      "published_tree": "4efc0290ac73bec2a59299386bcb9197760f5374",
-      "repair_count_detail": "2 automatic rounds plus 1 explicit user-approved CI-registration-only exception",
-      "approval": "User approved the single bounded extra CI-registration round at 2026-10-16 06:25 UTC; no further exception inferred",
-      "repair_review": "PASS exact selector-only candidate; 12-worktree local-overlap clearance reported 06:29:56 UTC",
-      "repair_checks": {
-        "static": "pass",
-        "ci_contract": "23 passed",
-        "strict_selector": "1 passed, zero skips"
-      },
-      "remote_update_performed": true,
-      "repair_delta": {
-        "scripts/ci_checks.py": "one added strict FFmpeg selector; four acceptance blobs unchanged"
-      },
-      "merge_gate": "Merged as d9ce4aab52fec57b770f689550fbbde1a860243b; exact postmerge CI running; Issue53 open pending CI and fresh DoD",
-      "merge": "d9ce4aab52fec57b770f689550fbbde1a860243b",
-      "postmerge_ci_url": "https://github.com/CongliangK/framivra/actions/runs/38862855114",
-      "postmerge_ci_status": "in_progress"
-    },
-    {
       "issue": 100,
       "issue_url": "https://github.com/CongliangK/framivra/issues/100",
-      "state": "round2_integrated_formally_failed_extra_repair_approval_pending",
+      "state": "bounded_attribution_repair_exception_active_no_new_candidate",
       "owner_role": "Diagnostics implementer; independent reviewer; integration maintainer",
       "branch": "dot/agent-diagnostics-100-integrated",
       "base": "d17d07e955153dddb0e20596d6f29e393bc38701",
@@ -136,10 +81,10 @@
         "development/evidence/framivra-agent-diagnostics-100/round2-review-summary.md",
         "outputs/framivra-diagnostics-100-final-review/review.md"
       ],
-      "repair_count_detail": "Final automatic round 2 frozen; zero automatic rounds remain; third repair unapproved",
-      "successor_frozen": true,
-      "successor_candidate": "f48c877c512765fd7713013430318acc27b19049",
-      "candidate_identity_scope": "local_candidate/tree identify the clean frozen round-2 integration candidate on d17d07e; no publication or closure approval",
+      "repair_count_detail": "2 automatic rounds completed; exactly 1 additional user-approved bounded attribution repair active; no further exception inferred",
+      "successor_frozen": false,
+      "successor_candidate": null,
+      "candidate_identity_scope": "local_candidate/tree identify the historical frozen round-2 candidate f48c877, independently FAIL; no new exception candidate is frozen or approved for publication",
       "prior_round1_review_findings": [
         "Known source-structure errors bypass explicit producer checks during constructor fingerprint and return runtime.unknown at $.",
         "Injected plugin callback ImportError/OverflowError/string SystemExit escape JSON with empty stdout."
@@ -153,12 +98,20 @@
       "review_findings": [
         "A missing source id can mark a different video-track/gfx/plugin-digest failure handled, suppressing its precise diagnostic or runtime interruption; all reproduced exits remain 1."
       ],
-      "pending_approval": "One additional bounded attribution-repair exception requested from user at 06:44:57 UTC; awaiting answer. No further implementation authorized.",
+      "pending_approval": null,
       "review_checks": {
         "focused": "85 passed, zero skips",
         "protocol": "26 passed, zero skips",
         "qc_parity": "9 scenarios plus 6 warm exemptions passed",
         "paired_failure_controls": "24 executions, all exit 1; hidden unrelated failure reproduced"
+      },
+      "approval": "User approved exactly one additional bounded attribution-repair exception at 2026-10-16 06:58:24 UTC",
+      "repair_exception": {
+        "approved_at_utc": "2026-10-16T06:58:24Z",
+        "approved_additional_rounds": 1,
+        "state": "active",
+        "new_candidate": null,
+        "scope": "Actual failing-access attribution and regression controls; preserve original issue DoD, human and baseline acceptance semantics, fingerprint identity, PR152 guards and PR154 selector integration"
       }
     }
   ],
@@ -182,6 +135,74 @@
       "merge": "d17d07e955153dddb0e20596d6f29e393bc38701",
       "postmerge_ci": 38858297056,
       "passed_jobs": 9
+    },
+    {
+      "issue": 53,
+      "issue_url": "https://github.com/CongliangK/framivra/issues/53",
+      "state": "merged_postmerge_ci_success_issue_closed_completed",
+      "owner_role": "Acceptance-package implementer; independent reviewer; integration maintainer",
+      "branch": "dot/project-acceptance-53-ci-registration",
+      "base": "d17d07e955153dddb0e20596d6f29e393bc38701",
+      "local_candidate": "3edcd5ba390629fa22957ebbdd7474215d6c6d7a",
+      "published_head": "c353fae63866fa986f73460ab541d683d89bbcc5",
+      "tree": "4efc0290ac73bec2a59299386bcb9197760f5374",
+      "repair_rounds_used": 3,
+      "pending_approval": null,
+      "pr_url": "https://github.com/CongliangK/framivra/pull/154",
+      "ci_url": "https://github.com/CongliangK/framivra/actions/runs/38861826658",
+      "ci_status": "completed_success",
+      "worktree_relative": "development/worktrees/framivra-acceptance-53-ci-registration",
+      "write_scope": [
+        "docs/project-acceptance.md",
+        "scripts/acceptance_fixture.py",
+        "tests/test_acceptance.py",
+        "vtx/acceptance.py",
+        "scripts/ci_checks.py"
+      ],
+      "ci_jobs": {
+        "failed": 0,
+        "success": 9
+      },
+      "evidence_relative": [
+        "outputs/acceptance-53-publication/terminal-proof.json",
+        "outputs/acceptance-53-publication/proof.json",
+        "outputs/framivra-acceptance-53-redteam/transplant-review/identity.txt",
+        "outputs/acceptance-53-ci-registration/freeze.json",
+        "outputs/acceptance-53-ci-registration/independent-review/review.md",
+        "outputs/acceptance-53-ci-registration/publication-proof.json",
+        "outputs/acceptance-53-ci-registration/final-gate-proof.json",
+        "outputs/acceptance-53-ci-registration/completion-proof.json"
+      ],
+      "published_branch": "dot/project-acceptance-53-final",
+      "parent": "897edd6606155abb7a3da797f5d1d0951245be00",
+      "published_tree": "4efc0290ac73bec2a59299386bcb9197760f5374",
+      "repair_count_detail": "2 automatic rounds plus 1 explicit user-approved CI-registration-only exception",
+      "approval": "User approved the single bounded extra CI-registration round at 2026-10-16 06:25 UTC; no further exception inferred",
+      "repair_review": "PASS exact selector-only candidate; 12-worktree local-overlap clearance reported 06:29:56 UTC",
+      "repair_checks": {
+        "static": "pass",
+        "ci_contract": "23 passed",
+        "strict_selector": "1 passed, zero skips"
+      },
+      "remote_update_performed": true,
+      "repair_delta": {
+        "scripts/ci_checks.py": "one added strict FFmpeg selector; four acceptance blobs unchanged"
+      },
+      "merge_gate": "Merged exact reviewed tree; all nine postmerge CI jobs PASS; fresh DoD decision recorded and Issue53 closed completed",
+      "merge": "d9ce4aab52fec57b770f689550fbbde1a860243b",
+      "postmerge_ci_url": "https://github.com/CongliangK/framivra/actions/runs/38862855114",
+      "postmerge_ci_status": "completed_success",
+      "postmerge_ci_jobs": {
+        "success": 9,
+        "failed": 0
+      },
+      "closed_at_utc": "2026-10-16T06:54:57Z",
+      "state_reason": "completed",
+      "prs": [
+        154
+      ],
+      "postmerge_ci": 38862855114,
+      "passed_jobs": 9
     }
   ],
   "deferred_issues": [
@@ -195,13 +216,14 @@
     "state": "merged_docs_only"
   },
   "availability": "Worktree paths are relative to the temporary cloud project workspace; availability is not guaranteed after workspace retirement. Commit identities and GitHub links are durable only where published.",
-  "observation_notes": "GitHub main/PR154/postmerge CI/open issue list rechecked 06:46 UTC: PR154 merged, postmerge CI running, Issue53 remains open. Exact #100 integrated HEAD/tree and clean worktree checked 06:43 UTC; formal independent FAIL read at 06:46:50 UTC; additional bounded repair approval pending. Historical snapshot; recheck moving facts before publication.",
+  "observation_notes": "GitHub main, metadata branch ref, open issue collection and Issue53 closure rechecked 07:00:23 UTC: 48 ordinary open issues, no open PRs, Issue53 closed completed, Issue100 open. Issue53 completion proof establishes exact postmerge CI all nine PASS. Historical #100 f48c877 formal FAIL retained; parent reports one bounded attribution repair approved 06:58:24 UTC and active, with no new frozen candidate. Recheck moving facts before publication.",
   "publication_plan": {
-    "branch_exists": false,
-    "branch_read_result": "404 at 06:42 UTC",
+    "branch_exists": true,
+    "branch_read_result": "Verified predecessor 332b1fd4a9b103d10e4aba1eff0f22145ccca0b9 at 07:00:23 UTC",
     "root_commit_supported_by_connector": false,
-    "proposed_commit_parent": "d9ce4aab52fec57b770f689550fbbde1a860243b",
+    "proposed_commit_parent": "332b1fd4a9b103d10e4aba1eff0f22145ccca0b9",
     "proposed_tree": "Only orchestration-ledger.md and orchestration-facts.json, created without base tree",
-    "gate": "Fresh independent file review and root publication approval required; never merge metadata branch into main"
-  }
+    "gate": "Fresh independent review and publication approval required for these refreshed bytes; compare expected predecessor before ref update; never merge metadata branch into main"
+  },
+  "published_predecessor": "332b1fd4a9b103d10e4aba1eff0f22145ccca0b9"
 }
