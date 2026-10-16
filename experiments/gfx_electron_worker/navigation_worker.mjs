@@ -6,6 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { decodeNativePng, markerMatches, markerRanges, mergeWitnesses } from './pixel_codec.mjs';
+import { installPageErrorGate, PAGE_ERROR_GATE } from './page_error_gate.mjs';
 function samePhase(a,b,phase,width,height) {
   let pos=0;
   for (const [start,end] of [...markerRanges(width,height,phase),[a.length,a.length]]) {
@@ -78,7 +79,7 @@ function checkDocumentCode(url, f) { return `(() => {
   if (location.href !== ${JSON.stringify(url)} || new URL(location.href).searchParams.get('f') !== ${JSON.stringify(String(f))}) throw Error('wrong_document');
   if (devicePixelRatio !== 1 || innerWidth !== ${width} || innerHeight !== ${height}) throw Error('viewport_mismatch');
 })()`; }
-async function renderFrame(f, generation, ses) {
+async function renderFrame(f, generation, ses, pageErrors) {
   const start = Date.now();
   const url = pathToFileURL(job.page); url.searchParams.set('f', String(f));
   const expectedUrl = url.href;
