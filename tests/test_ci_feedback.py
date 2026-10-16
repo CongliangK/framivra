@@ -1,5 +1,6 @@
 """Fail-closed path/layer contracts for the latency candidate (#87)."""
 import contextlib
+import copy
 import io
 import os
 from pathlib import Path
@@ -356,6 +357,68 @@ class WorkflowLatencyContract(unittest.TestCase):
                 self.assertNotIn('if', install)
             self.assertLess(steps.index(restore), steps.index(install))
             self.assertLess(steps.index(install), steps.index(save))
+
+    def assert_docs_setup_contract(self, core):
+        steps = core['steps']
+        scope = next(s for s in steps if s.get('id') == 'scope')
+        setup = next(s for s in steps if
+                     s.get('uses', '').startswith('actions/setup-python@'))
+        install = next(s for s in steps if s.get('name') == 'Install test-only dependencies')
+        run = next(s for s in steps if s.get('name') ==
+                   'Run kernel, app, plugin and example unittest batches')
+        self.assertNotIn('if', core)
+        self.assertNotIn('if', scope)
+        self.assertEqual(scope['run'], 'python3 tests/ci_partition.py classify')
+        self.assertLess(steps.index(scope), steps.index(setup))
+        for step in (setup, install, run):
+            self.assertEqual(step.get('if'), "steps.scope.outputs.scope != 'docs'")
+        self.assertEqual(setup['with']['cache'], 'pip')
+        self.assertNotIn('continue-on-error', setup)
+        return setup, install, run
+
+    def test_docs_core_has_no_python_setup_or_pip_cache_lifecycle(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
+                             Loader=yaml.BaseLoader)
+        core = workflow['jobs']['core']
+        guarded = self.assert_docs_setup_contract(core)
+        report = next(s for s in core['steps'] if s.get('name') ==
+                      'Report documentation-only core decision')
+        self.assertEqual(report['if'], "steps.scope.outputs.scope == 'docs'")
+        # The docs report works with no selected interpreter or external PATH.
+        proc = subprocess.run(['/bin/bash', '-e', '-c', report['run']],
+                              env={'PATH': ''}, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        fixtures = (['README.md'], ['scripts/templates/gfx-starter.html'],
+                    ['vtx/core.py'], ['README.md', 'vtx/core.py'], [])
+        for event in ('pull_request', 'push', 'schedule', 'workflow_dispatch', 'unknown'):
+            for paths in fixtures:
+                scope = ('docs' if event in ('pull_request', 'push') and
+                         ci.docs_only(paths) else 'full')
+                for version in core['strategy']['matrix']['python']:
+                    for cache_state in ('cold', 'warm'):
+                        with self.subTest(event=event, paths=paths, version=version,
+                                          cache=cache_state):
+                            # Exact guard equality above makes this a structural
+                            # route check, not a simulation of hosted action code.
+                            enabled = [scope != 'docs' for step in guarded]
+                            self.assertEqual(enabled, [scope == 'full'] * 3)
+                            self.assertEqual(scope == 'docs', not any(enabled))
+        slow = workflow['jobs']['slow-integration']
+        self.assertNotIn('if', slow)
+        self.assertNotIn('needs', slow)
+        slow_setup = next(s for s in slow['steps'] if
+                          s.get('uses', '').startswith('actions/setup-python@'))
+        self.assertNotIn('if', slow_setup)
+
+    def test_removing_docs_setup_guard_is_detected(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
+                             Loader=yaml.BaseLoader)
+        core = copy.deepcopy(workflow['jobs']['core'])
+        setup = next(s for s in core['steps'] if
+                     s.get('uses', '').startswith('actions/setup-python@'))
+        setup.pop('if', None)
+        with self.assertRaises(AssertionError):
+            self.assert_docs_setup_contract(core)
 
     def test_existing_contexts_permissions_and_strict_lanes_preserved(self):
         workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
