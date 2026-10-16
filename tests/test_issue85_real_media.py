@@ -656,12 +656,12 @@ class RevisionResolution(unittest.TestCase):
             with self.subTest(executable=executable):
                 self.checkout(self.commits[-1])
                 if executable:
-                    self.git('update-index', '--chmod=+x', self.paths[0])
-                    self.git('commit', '-q', '-m', 'changed harness mode')
+                    (self.repo / self.paths[0]).chmod(0o755)
                 else:
                     (self.repo / self.paths[0]).unlink()
-                    self.commit()
-                with self.assertRaises(ValueError):
+                self.commit()
+                self.assertEqual(self.git('diff', '--exit-code', 'HEAD', '--'), '')
+                with self.assertRaisesRegex(ValueError, 'Harness paths require'):
                     self.r.resolve_candidate(self.repo)
 
     def test_rejects_symlink_or_submodule_harness_path(self):
@@ -677,7 +677,11 @@ class RevisionResolution(unittest.TestCase):
                     self.git('update-index', '--cacheinfo', '160000',
                              self.commits[2], self.paths[0])
                     self.git('commit', '-q', '-m', 'changed harness to gitlink')
-                with self.assertRaises(ValueError):
+                    path = self.repo / self.paths[0]
+                    path.unlink()
+                    path.mkdir()  # Uninitialized gitlink, with a clean worktree.
+                self.assertEqual(self.git('diff', '--exit-code', 'HEAD', '--'), '')
+                with self.assertRaisesRegex(ValueError, 'Harness paths require'):
                     self.r.resolve_candidate(self.repo)
 
     def test_checked_revision_accepts_exact_baseline_and_candidate(self):
