@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -35,6 +36,8 @@ CASES = {
     'suppressed_rejection': ("addEventListener('unhandledrejection',e=>{e.preventDefault();e.stopImmediatePropagation()});Promise.reject('SUPPRESSED_REAL');" + GREEN, False),
     'capture_throw': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]'))throw Error('DURING_CAPTURE')}).observe(document.documentElement,{childList:true});" + GREEN, False),
     'capture_rejection': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]'))Promise.reject('CAPTURE_REJECTION')}).observe(document.documentElement,{childList:true});" + GREEN, False),
+    'observer_api_spoof': ("console.error=()=>{};EventTarget.prototype.addEventListener=()=>{};window.MessageChannel=function(){throw 'FAKE'};" + GREEN, True),
+    'capture_suppressed': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]')){onerror=()=>true;throw Error('LATE_SUPPRESSED')}}).observe(document.documentElement,{childList:true});" + GREEN, False),
     'transparent': ("document.querySelector('#content').style.background='transparent';", True),
     'document_mismatch': ("if(!location.hash)location.replace(location.href+'#wrong');" + GREEN, False),
     'cross_request': ("if(new URLSearchParams(location.search).get('f')==='0')throw Error('FIRST_ONLY');" + GREEN, False),
@@ -111,13 +114,19 @@ def main():
     p.add_argument('--reproduce', action='store_true')
     args = p.parse_args()
     args.evidence.mkdir(parents=True, exist_ok=True)
-    results = []
+    results, failures = [], []
     for name in args.cases.split(','):
-        result = run_case(args.worker.resolve(), args.evidence.resolve(), name, args.reproduce)
-        results.append(result)
-        print(f'PASS {name}', flush=True)
-    (args.evidence / 'matrix.json').write_text(json.dumps(results, indent=2, ensure_ascii=False))
-    print(f'ALL PASS ({len(results)} cases)', flush=True)
+        try:
+            result = run_case(args.worker.resolve(), args.evidence.resolve(), name, args.reproduce)
+            results.append(result)
+            print(f'PASS {name}', flush=True)
+        except Exception:
+            failure = {'case': name, 'traceback': traceback.format_exc()}
+            failures.append(failure)
+            print(f"FAIL {name}\n{failure['traceback']}", flush=True)
+    (args.evidence / 'matrix.json').write_text(json.dumps({'passed': results, 'failures': failures}, indent=2, ensure_ascii=False))
+    print(f'{len(results)} PASS / {len(failures)} FAIL', flush=True)
+    return bool(failures)
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
