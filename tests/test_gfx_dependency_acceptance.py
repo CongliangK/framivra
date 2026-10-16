@@ -1,11 +1,12 @@
 """Harness source/file mocks only: never starts Chrome or FFmpeg."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE
+from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice
 from vtx.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
@@ -15,10 +16,65 @@ class AcceptanceContracts(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        font = self.root/'source.ttf'; font.write_bytes(b'unit-only-font-not-render-proof')
-        self.project = self.root/'project'; self.tl = fixture(self.project,font)
+        font = self.root/'DejaVuSans.ttf'; font.write_bytes(b'unit-only-font-not-render-proof')
+        notice = self.root/'copyright'
+        notice.write_text('Format: test-only package manifest fixture\n\nFiles: *\nLicense: bitstream-vera\n Permission is hereby granted (synthetic unit fixture, not a real font).\n')
+        self.font, self.notice = font, notice
+        self.package_rows = self.package_fixture(font, notice)
+        self.provenance = font_provenance(font,notice=notice,query=self.query)
+        self.project = self.root/'project'; self.tl = fixture(self.project,font,self.provenance)
         timeline=self.project/'timeline.json';timeline.write_text(json.dumps(self.tl))
         self.c=Ctx(timeline)
+
+    @staticmethod
+    def package_fixture(font, notice):
+        package='fonts-dejavu-core'
+        return {
+            ('-S',str(font)):package+': '+str(font)+'\n',
+            ('-S',str(notice)):package+': '+str(notice)+'\n',
+            ('-W','-f=${Package}\t${Version}\t${Status}\n',package):package+'\t2.37-test\tinstall ok installed\n',
+            ('-L',package):str(font)+'\n'+str(notice)+'\n',
+            ('--control-show',package,'md5sums'):'\n'.join(
+                hashlib.md5(p.read_bytes(),usedforsecurity=False).hexdigest()+'  '+str(p).lstrip('/')
+                for p in (font,notice))}
+
+    def query(self,*args):
+        return self.package_rows[args]
+
+    def test_font_notice_complete_positive_and_metadata_only_boundary(self):
+        record=font_provenance(self.font,notice=self.notice,query=self.query)
+        self.assertEqual(record['package'],'fonts-dejavu-core')
+        self.assertEqual(record['version'],'2.37-test')
+        self.assertFalse(record['artifact_font_bytes'])
+        self.assertEqual((self.project/'font-LICENSE.txt').read_bytes(),self.notice.read_bytes())
+        self.assertEqual((self.project/'font.ttf').read_bytes(),self.font.read_bytes())
+
+    def test_font_missing_notice_or_unmatched_package_fails_closed(self):
+        with self.assertRaises(FileNotFoundError):
+            font_provenance(self.font,notice=self.root/'absent',query=self.query)
+        for key,value in [
+            (('-S',str(self.notice)),'unrelated-font-package: '+str(self.notice)),
+            (('-L','fonts-dejavu-core'),str(self.font)),
+            (('--control-show','fonts-dejavu-core','md5sums'),'')]:
+            with self.subTest(key=key):
+                old=self.package_rows[key];self.package_rows[key]=value
+                with self.assertRaises(ValueError):
+                    font_provenance(self.font,notice=self.notice,query=self.query)
+                self.package_rows[key]=old
+
+    def test_font_changed_bytes_or_wrong_applicable_notice_is_not_assumed(self):
+        original=self.font.read_bytes();self.font.write_bytes(original+b'changed')
+        with self.assertRaisesRegex(ValueError,'manifest'):
+            font_provenance(self.font,notice=self.notice,query=self.query)
+        self.font.write_bytes(original)
+        self.notice.write_text('Files: *\nLicense: unrelated\n Permission is hereby granted\n')
+        self.package_rows=self.package_fixture(self.font,self.notice)
+        with self.assertRaisesRegex(ValueError,'license stanza'):
+            font_provenance(self.font,notice=self.notice,query=self.query)
+        bad=copy.deepcopy(self.provenance);bad['notice_text']='altered notice'
+        root=self.root/'bad-copy';root.mkdir()
+        with self.assertRaises(ValueError):copy_font_with_notice(root,self.font,bad)
+        self.assertFalse((root/'font.ttf').exists())
 
     def test_formal_shape_two_aliases_nested_imports_and_direct_image(self):
         from PIL import Image
@@ -139,8 +195,9 @@ class AcceptanceContracts(unittest.TestCase):
         self.assertIn("'dot/issue47-html-validation-'",workflow)
         self.assertIn('ref: ${{ github.event.pull_request.head.sha }}',workflow)
         self.assertIn('timeout-minutes: 10',workflow)
-        for forbidden in ('pull_request_target','secrets.','--no-sandbox','sudo','workflow_dispatch'):
+        for forbidden in ('pull_request_target','secrets.','--no-sandbox','add-apt-repository','apt-key','workflow_dispatch'):
             self.assertNotIn(forbidden,workflow)
+        self.assertIn('sudo apt-get install -y --no-install-recommends fonts-dejavu-core',workflow)
         self.assertEqual(MAX_EVIDENCE,20*1024*1024)
 
 

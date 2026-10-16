@@ -18,12 +18,68 @@ MAX_EVIDENCE = 20 * 1024 * 1024
 MAX_LOG = 128 * 1024
 
 
-def fixture(root, font):
+def font_provenance(font, *, query=None, notice=None):
+    """Bind this exact font and notice to the same installed Debian package.
+
+    This is installed-package provenance, not a claim of registry signature
+    verification. Missing ownership/manifests/notice or modified bytes fail.
+    """
+    font = Path(font).resolve(strict=True)
+    notice = Path(notice or '/usr/share/doc/fonts-dejavu-core/copyright').resolve(strict=True)
+    if query is None:
+        def query(*args):
+            return subprocess.check_output(['dpkg-query', *args], text=True, timeout=10)
+    package = 'fonts-dejavu-core'
+    for path in (font, notice):
+        expected = package + ': ' + str(path)
+        if query('-S', str(path)).strip().splitlines() != [expected]:
+            raise ValueError('font/notice package ownership mismatch: ' + str(path))
+    fields = query('-W', '-f=${Package}\t${Version}\t${Status}\n', package).strip().split('\t')
+    if len(fields) != 3 or fields[0] != package or not fields[1] or fields[2] != 'install ok installed':
+        raise ValueError('font package installation/version unproven')
+    files = set(query('-L', package).splitlines())
+    if str(font) not in files or str(notice) not in files:
+        raise ValueError('font/notice absent from matching package file list')
+    manifest = {}
+    for line in query('--control-show', package, 'md5sums').splitlines():
+        digest, relative = line.split(None, 1)
+        manifest['/' + relative.lstrip('/')] = digest
+    for path in (font, notice):
+        if manifest.get(str(path)) != hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest():
+            raise ValueError('font/notice bytes do not match installed package manifest: ' + str(path))
+    text = notice.read_text()
+    stanzas = text.split('\n\n')
+    if not any(stanza.startswith('Files: *\n') and '\nLicense: bitstream-vera\n' in stanza
+               and 'Permission is hereby granted' in stanza for stanza in stanzas):
+        raise ValueError('applicable font license stanza unproven')
+    if font.name != 'DejaVuSans.ttf':
+        raise ValueError('this bounded case only supports the selected DejaVuSans.ttf')
+    return dict(source_path=str(font), package=package, version=fields[1],
+        font_sha256=hashlib.sha256(font.read_bytes()).hexdigest(),
+        notice_path=str(notice), notice_sha256=hashlib.sha256(notice.read_bytes()).hexdigest(),
+        notice_text=text, applicable_license='bitstream-vera (font Files: * stanza)',
+        verification='dpkg ownership + installed version + file list + package md5 manifest',
+        artifact_font_bytes=False)
+
+
+def copy_font_with_notice(root, font, provenance):
+    """No temporary font copy without the verified corresponding notice."""
+    data = Path(font).read_bytes()
+    notice = provenance['notice_text'].encode()
+    if (hashlib.sha256(data).hexdigest() != provenance['font_sha256'] or
+            hashlib.sha256(notice).hexdigest() != provenance['notice_sha256']):
+        raise ValueError('font or corresponding notice changed after provenance check')
+    # Notice precedes font creation; never leave a new font without its notice.
+    (root / 'font-LICENSE.txt').write_bytes(notice)
+    (root / 'font.ttf').write_bytes(data)
+
+
+def fixture(root, font, provenance):
     from PIL import Image
     root.mkdir(parents=True, exist_ok=True)
     for name in ('left', 'right', 'shared'):
         (root / name).mkdir()
-    shutil.copyfile(font, root / 'font.ttf')
+    copy_font_with_notice(root, font, provenance)
     for name, color in [('left/image.png', '#ee2211'), ('right/image.png', '#1144ee'),
                         ('direct.png', '#22cc44')]:
         Image.new('RGB', (8, 8), color).save(root / name)
@@ -189,6 +245,7 @@ def main():
     env.pop('VTX_GFX_CACHE_NS', None)
     def save():
         (evidence / 'report.json').write_text(json.dumps(report, indent=2))
+        assert not any(p.suffix.lower() in ('.ttf','.otf','.woff','.woff2') for p in evidence.rglob('*')), 'font bytes are not artifact evidence'
         assert sum(p.stat().st_size for p in evidence.rglob('*') if p.is_file()) <= MAX_EVIDENCE
     def run(argv, label, expect_failure=False, limit=90):
         remaining = deadline - time.monotonic()
@@ -225,6 +282,9 @@ def main():
         chrome = shutil.which('google-chrome') or shutil.which('google-chrome-stable')
         font = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
         assert chrome and font.is_file(), 'preinstalled official Chrome and DejaVu font required'
+        provenance = font_provenance(font)
+        (evidence/'font-provenance.json').write_text(json.dumps(provenance,indent=2))
+        (evidence/'font-LICENSE.txt').write_text(provenance['notice_text'])
         env['VTX_CHROME'] = chrome
         report['identity'] = {k: run(['git', *cmd], k, limit=10).strip() for k, cmd in [
             ('head', ['rev-parse', 'HEAD']), ('tree', ['rev-parse', 'HEAD^{tree}']),
@@ -235,10 +295,10 @@ def main():
              '--user-data-dir=' + str(root/'preflight-profile'), '--dump-dom', 'about:blank'],
             'sandbox-preflight', limit=30)
         project = root / 'project'
-        tl = fixture(project, font)
+        tl = fixture(project, font, provenance)
         timeline = project / 'timeline.json'; timeline.write_text(json.dumps(tl))
         (project / 'undeclared.html').write_text('<p>Forbidden</p>')
-        report['font_sha256'] = hashlib.sha256(font.read_bytes()).hexdigest()
+        report['font'] = {k:v for k,v in provenance.items() if k != 'notice_text'}
         expected_shared = (34, 68, 102); expected_left = (238, 34, 17)
         previous = {}; before = None
         def render(label, changed):
@@ -358,7 +418,7 @@ def main():
                            ('unknown-nested','<table><style/></table>'),
                            ('undeclared','<img src="missing.png">'),
                            ('external','<img src="https://dependency-control.invalid/x.png">')]:
-            neg=root/case; negative=fixture(neg,font); (neg/'a.html').write_text(html)
+            neg=root/case; negative=fixture(neg,font,provenance); (neg/'a.html').write_text(html)
             negative['video_tracks'][0]['clips'] = negative['video_tracks'][0]['clips'][:1]
             negative['project']['duration_frames'] = 2
             nt=neg/'timeline.json';nt.write_text(json.dumps(negative))
@@ -368,7 +428,7 @@ def main():
             assert tr['requests']==[] and tr['fallback_calls']==0 and original==(neg/'a.html').read_bytes()
             assert not list(neg.rglob('complete.json'))
         for case in ('local','external'):
-            neg=root/('runtime-'+case);negative=fixture(neg,font)
+            neg=root/('runtime-'+case);negative=fixture(neg,font,provenance)
             negative['video_tracks'][0]['clips'] = negative['video_tracks'][0]['clips'][:1]
             negative['project']['duration_frames'] = 2
             (neg/'undeclared.html').write_text('<p>Forbidden</p>')
