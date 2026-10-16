@@ -187,12 +187,12 @@ def gfx_key(c, cl) -> str:
 
     PR#1 合入：project.cache_dependencies 声明的本地资产（HTML/CSS/JS 引用的
     图片/字体/样式/脚本）内容入键——改依赖即重渲；未声明/网络资产不追踪
-    （cache-provenance.md）。声明属项目级，所有 gfx 页共享（保守过失效，可接受）。
+    （cache-provenance.md）。项目级依赖与可选 clip.cache_dependencies 合并；片段依赖只影响声明页。
     """
     html = (c.root / cl["src"]).resolve()
     blob = html.read_bytes()
     from .cache_state import declared_dependencies, file_digest
-    for dep in declared_dependencies(c):
+    for dep in declared_dependencies(c, cl):
         blob += b"|" + str((c.root / dep).resolve()).encode() + b"\0" \
                 + file_digest(c.root / dep).encode()
     return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())

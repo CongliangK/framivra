@@ -149,6 +149,34 @@ def choose_cutpoints(bounds, dur: int, n: int, guard: int = SEG_CUT_GUARD, radiu
     return cuts
 
 
+def pass_content_key(previous, index, layer, graph_digest):
+    """Exact chained intermediate identity for rendering and impact analysis."""
+    ident, clip, x, y, w2, h2 = layer
+    h = hashlib.sha1()
+    h.update(f"{previous}|pass{index}\n".encode())
+    h.update(f"passgraph={graph_digest}\n".encode())
+    h.update((ident + "|" + json.dumps(clip, sort_keys=True, ensure_ascii=False)
+              + f"|{x}|{y}|{w2}|{h2}\n").encode())
+    return h.hexdigest()[:12]
+
+
+def segment_content_key(a, b, width, height, draft, gpu, layers, subtitle_bytes,
+                        graph_digest):
+    """Pure cache identity shared by rendering and impact snapshots.
+
+    Layers are ordered (identity, clip, x, y, width, height) tuples. Identity
+    remains the renderer's upstream cache basename, including media suffix.
+    """
+    h = hashlib.sha1()
+    h.update(f"{a}|{b}|{width}x{height}|{int(bool(draft))}|{int(bool(gpu))}\n".encode())
+    h.update(f"graph={graph_digest}\n".encode())
+    for ident, clip, x, y, w2, h2 in layers:
+        h.update((ident + "|" + json.dumps(clip, sort_keys=True, ensure_ascii=False)
+                  + f"|{x}|{y}|{w2}|{h2}\n").encode())
+    h.update(subtitle_bytes)
+    return h.hexdigest()[:12]
+
+
 # ---------------------------------------------------------------- 渲染计划（原 build_video 闭包巢的显式参数对象）
 @dataclass
 class RenderPlan:
@@ -186,7 +214,8 @@ class RenderPlan:
     # 段级字幕（阶段二 2026-09-10）：每段一份 ass，Dialogue 帧号换算 =「全局 fc 的
     # cs − 段起点 fc 的 cs」（整数 cs 相减，与全局量化逐位一致；直接对相对帧取整
     # 会因舍入方向差 ±1cs）；负值（段前已开始的字幕）钳 0。
-    def write_seg_ass(self, path, a, b):
+    def segment_ass_bytes(self, a, b):
+        """Exact UTF-8 bytes used by render and read-only impact analysis."""
         c = self.c
         cs_a = round(a * 100 / c.fps)
         lines = self.ass_head()
@@ -199,7 +228,10 @@ class RenderPlan:
                 hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
                 fout = f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
                 lines.append(f"Dialogue: 0,{fin},{fout},Def,,0,0,0,,{s['text']}")
-        fstxn.atomic_write(path, "\n".join(lines))
+        return "\n".join(lines).encode("utf-8")
+
+    def write_seg_ass(self, path, a, b):
+        fstxn.atomic_write(path, self.segment_ass_bytes(a, b).decode("utf-8"))
 
     # ---------------------------------------------------------------- 单 graph / 逐层 pass 合成
     def composite(self, layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
@@ -429,12 +461,9 @@ class RenderPlan:
         for k, L in enumerate(layers_subset):
             last = k == n - 1
             ident = L["source"].identity if L["gfx"] else L["seg"].name
-            h = hashlib.sha1()
-            h.update(f"{prev_key}|pass{k}\n".encode())
-            h.update(f"passgraph={_graph_code_digest()}\n".encode())
-            h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
-                      + f"|{L['x']}|{L['y']}|{L['w2']}|{L['h2']}\n").encode())
-            pkey = h.hexdigest()[:12]
+            pkey = pass_content_key(prev_key, k,
+                (ident, L["cl"], L["x"], L["y"], L["w2"], L["h2"]),
+                _graph_code_digest())
             prev_key = pkey
             target = out_path if last else pdir / f"p{k}_{pkey}.mkv"
             if not last:
@@ -548,17 +577,13 @@ class RenderPlan:
         （如 tpad 尾垫策略）不再依赖手工清段缓存，旧段自动键漂移失效（防洗白，
         见该函数 docstring）。
         """
-        h = hashlib.sha1()
-        h.update(f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}"
-                 f"|{int(bool(getattr(self.c, 'gpu', False)))}\n".encode())
-        h.update(f"graph={_graph_code_digest()}\n".encode())
-        for L in sl:
-            ident = L["source"].identity if L["gfx"] else L["seg"].name   # 上游内容键
-            h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
-                      + f"|{L['x']}|{L['y']}|{L['w2']}|{L['h2']}\n").encode())
-        if with_subs and sfile is not None and sfile.exists():
-            h.update(sfile.read_bytes())
-        return h.hexdigest()[:12]
+        layers = [(L["source"].identity if L["gfx"] else L["seg"].name,
+                   L["cl"], L["x"], L["y"], L["w2"], L["h2"]) for L in sl]
+        subtitles = (sfile.read_bytes() if with_subs and sfile is not None
+                     and sfile.exists() else b"")
+        return segment_content_key(a, b, self.W, self.H, self.draft,
+                                   getattr(self.c, "gpu", False), layers, subtitles,
+                                   _graph_code_digest())
 
     def render_segmented(self, out_path, layer_set=None, with_subs=True, tag="vseg"):
         c, draft = self.c, self.draft

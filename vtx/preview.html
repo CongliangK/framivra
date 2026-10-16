@@ -304,6 +304,11 @@ function validate(tl){
       if(!allF(c.dst_in)||!allF(c.dur)) err(`轨 ${t.name}[${i}]: 非整数帧`);
       if(dur&&c.dst_in+c.dur>dur) err(`轨 ${t.name}[${i}] 超出总时长`);
       if(c.dst_in<0||c.dur<1) err(`轨 ${t.name}[${i}] 区间非法`);
+      if(c.cache_dependencies!==undefined){
+        if(t.kind!=="gfx") err(`轨 ${t.name}[${i}]: cache_dependencies 仅适用 gfx`);
+        if(!Array.isArray(c.cache_dependencies)||!c.cache_dependencies.every(p=>typeof p==="string"&&p.trim()&&!p.includes("\0")))
+          err(`轨 ${t.name}[${i}]: cache_dependencies 须为非空文件路径数组`);
+      }
       if(t.kind==="gfx") return;
       if(!srcIds.has(c.src)) err(`轨 ${t.name}[${i}] 引用不存在的源 ${c.src}`);
       if(c.src_in!==undefined&&!allF(c.src_in)) err(`轨 ${t.name}[${i}]: src_in 非整数`);

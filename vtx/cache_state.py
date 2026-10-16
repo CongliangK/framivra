@@ -16,6 +16,8 @@
 """
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 
 SAMPLE_BYTES = 65536   # 源媒体首/尾采样字节数（stat 身份的内容成分）
@@ -23,11 +25,22 @@ SAMPLE_BYTES = 65536   # 源媒体首/尾采样字节数（stat 身份的内容�
 
 def file_digest(path) -> str:
     """小文件全量 sha256（html/依赖等 KB 级资产）。"""
-    digest = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
+    p = Path(path)
+    if not stat.S_ISREG(p.stat().st_mode):
+        raise ValueError(f'content hash input is not a regular file: {p}')
+    # A precheck gives a clear error; nonblocking open plus fstat also prevents
+    # a regular-file-to-FIFO replacement from hanging between check and open.
+    fd = os.open(p, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) |
+                 getattr(os, 'O_BINARY', 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f'content hash input is not a regular file: {p}')
+        digest = hashlib.sha256()
+        for block in iter(lambda: os.read(fd, 1024 * 1024), b''):
             digest.update(block)
-    return digest.hexdigest()
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
 
 
 def media_stat_digest(path) -> str:
@@ -51,17 +64,45 @@ def media_stat_digest(path) -> str:
     return f"{st.st_size}:{st.st_mtime_ns}:{h.hexdigest()[:16]}"
 
 
-def declared_dependencies(c):
-    """project.cache_dependencies 声明表（list[str]，相对项目根）。"""
-    deps = c.tl.get("project", {}).get("cache_dependencies", [])
-    if not isinstance(deps, list) or not all(isinstance(p, str) for p in deps):
-        raise ValueError('project.cache_dependencies must be a list of file paths')
+def _dependency_list(owner, label):
+    deps = owner.get("cache_dependencies", [])
+    if not isinstance(deps, list) or not all(
+            isinstance(p, str) and p.strip() and "\0" not in p for p in deps):
+        raise ValueError(f'{label}.cache_dependencies must be a list of nonempty file paths')
     return deps
 
 
+def declared_dependencies(c, clip=None):
+    """Project declarations, or project/clip union, relative to timeline root.
+
+    Project-only ordering remains compatible with existing cache identities.
+    With clip declarations, canonical paths deduplicate aliases and sort the union.
+    No HTML parsing or transitive/network closure is implied.
+    """
+    deps = _dependency_list(c.tl.get("project", {}), 'project')
+    if clip is None or "cache_dependencies" not in clip:
+        return deps
+    local = _dependency_list(clip, 'clip')
+    if not local:
+        return deps
+    return sorted({str((c.root / item).resolve()) for item in deps + local})
+
+
+def all_declared_dependencies(c):
+    """Every declaration for receipt validation and portable input collection."""
+    deps = list(declared_dependencies(c))
+    for track in c.tl.get('video_tracks', []):
+        for clip in track.get('clips', []):
+            if 'cache_dependencies' in clip:
+                if track.get('kind') != 'gfx':
+                    raise ValueError('clip.cache_dependencies is only valid on gfx tracks')
+                deps.extend(_dependency_list(clip, 'clip'))
+    return list(dict.fromkeys(deps))
+
+
 def validate_cache_dependencies(c):
-    """PR#1：声明的本地依赖必须存在且是文件——Ctx 构造即快速失败。"""
-    for item in declared_dependencies(c):
+    """Declared local dependencies must exist and be regular files."""
+    for item in all_declared_dependencies(c):
         path = c.root / item
         if not path.is_file():
             raise ValueError(f'cache dependency is not a file: {item}')
@@ -112,6 +153,13 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
                       (file_digest(p) if p.is_file() else "MISSING") + "\n").encode())
     for item in declared_dependencies(c):
         h.update((item + ":" + file_digest(c.root / item) + "\n").encode())
+    for ti, track in enumerate(c.tl.get('video_tracks', [])):
+        for ci, clip in enumerate(track.get('clips', [])):
+            if 'cache_dependencies' not in clip:
+                continue
+            for item in _dependency_list(clip, 'clip'):
+                h.update((f"clip_dependency:{ti}:{ci}:" + item + ":" +
+                          file_digest(c.root / item) + "\n").encode())
     # v2 §1.1 条目 6：subtitles_src 文件内容并入（缺失记 MISSING——validate 侧 FAIL）
     src = c.tl.get("subtitles_src")
     if isinstance(src, str) and src:

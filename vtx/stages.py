@@ -109,6 +109,11 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
 def validate(c: Ctx):
     errs = []
     def err(m): errs.append(m)
+    from .cache_state import validate_cache_dependencies
+    try:
+        validate_cache_dependencies(c)
+    except (ValueError, OSError) as error:
+        err(str(error))
     srcs = {}
     for si, s in enumerate(c.tl["sources"]):
         if (not isinstance(s, dict) or not isinstance(s.get("id"), str) or not s["id"]
