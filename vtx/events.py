@@ -285,6 +285,18 @@ def open_sink(path):
         os.close(parent)
 
 
+def observation_warning(message):
+    """Best-effort observation diagnostics must never replace business results.
+
+    Callers supply fixed, private-data-free text. Process-control exceptions are
+    deliberately not caught; a failed ordinary stderr write has no fallback I/O.
+    """
+    try:
+        print(message, file=sys.stderr)
+    except Exception:
+        pass
+
+
 class ExecutionContext:
     def __init__(self, stream=None, request=None, *, resumed_from_run_id=None,
                  replay_of_run_id=None, clock=time.monotonic):
@@ -340,8 +352,7 @@ class ExecutionContext:
         self.incomplete = True
         if not self._warned:
             self._warned = True
-            print('Warning: execution evidence incomplete; rendering status unchanged.',
-                  file=sys.stderr)
+            observation_warning('Warning: execution evidence incomplete; rendering status unchanged.')
 
     def activate(self, stream, request=None):
         if self.stream is not None or self.finished:

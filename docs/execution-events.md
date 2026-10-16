@@ -32,7 +32,10 @@ A non-callable injected clock is a configuration error. A callable that fails
 with an ordinary exception or returns invalid samples, initially or later, makes
 observation incomplete for the rest of that invocation. It does not change task
 results, replace business exceptions or retry using a different clock. An active
-sink receives one bounded warning; disabled observation stays quiet. Clock error
+sink attempts one bounded warning; disabled observation stays quiet. Ordinary
+stderr write failures (including closed streams and encoding errors) are ignored
+without fallback output, while incomplete remains sticky. The same best-effort
+diagnostic boundary covers event-sink and acceptance-bridge degradation. Clock error
 messages and values are not exported. Process-control exceptions still propagate.
 Overlapping task costs must not be summed as run wall-time. Unmeasured
 CPU/RSS/GPU/VRAM resources are null with a reason. Errors omit free text, argv,

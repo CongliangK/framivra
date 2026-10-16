@@ -9,8 +9,9 @@ import json
 import os
 from pathlib import Path
 import stat
-import sys
 import uuid
+
+from .events import observation_warning
 
 REQUEST_SCHEMA = 'vtx.observation-request/1'
 SCHEMA = 'vtx.execution-links/1'
@@ -126,7 +127,7 @@ def initialize(project):
         _initialize(project)
         return True
     except (OSError, ValueError):
-        print('[vtx] observation bridge unavailable; execution linkage incomplete', file=sys.stderr)
+        observation_warning('[vtx] observation bridge unavailable; execution linkage incomplete')
         return False
 
 
@@ -155,7 +156,7 @@ def prepare_request(project, export_id, index, *, enabled=True):
             stream.write('\n')
         os.replace(temporary, 'request.json', src_dir_fd=fd, dst_dir_fd=fd)
     except (OSError, ValueError):
-        print('[vtx] observation request unavailable; execution linkage incomplete', file=sys.stderr)
+        observation_warning('[vtx] observation request unavailable; execution linkage incomplete')
     finally:
         if fd is not None:
             os.close(fd)
@@ -188,7 +189,7 @@ def open_response(timeline_path, command_role, *, dry=False):
     except FileNotFoundError:
         return None, None
     except (OSError, ValueError, TypeError, AttributeError):
-        print("[vtx] observation request unavailable; execution linkage incomplete", file=sys.stderr)
+        observation_warning("[vtx] observation request unavailable; execution linkage incomplete")
         return None, None
     finally:
         if responses is not None:
@@ -245,7 +246,7 @@ def retain_attempt(project, output, request, launch_status, exit_code, *, enable
     try:
         data = response_bytes(project, request) if enabled else None
     except (OSError, ValueError):
-        print('[vtx] observation response unavailable; execution linkage incomplete', file=sys.stderr)
+        observation_warning('[vtx] observation response unavailable; execution linkage incomplete')
         data = None
     response = None
     if data is not None:
