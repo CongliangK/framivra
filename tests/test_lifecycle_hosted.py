@@ -224,6 +224,20 @@ class HostedEvidenceTests(unittest.TestCase):
         self.write(arm / 'gfx-run.json', run)
         self.assertFalse(packer.pack(self.parent, self.output)['partial_acceptance'])
 
+    def test_runner_path_binding_uses_runtime_environment(self):
+        import os, subprocess
+        path = Path(__file__).resolve().parents[1] / '.github/workflows/lifecycle-63.yml'
+        job = yaml.load(path.read_text(), Loader=yaml.BaseLoader)['jobs']['paired']
+        script = job['steps'][1]['run']
+        target = self.root / 'github-env'
+        temp = self.root / 'runner temp'
+        env = {**os.environ, 'RUNNER_TEMP': str(temp), 'GITHUB_RUN_ID': '123',
+               'GITHUB_RUN_ATTEMPT': '2', 'GITHUB_ENV': str(target)}
+        subprocess.run(['bash', '-euc', script], env=env, check=True)
+        self.assertEqual(target.read_text().splitlines(), [
+            'EVIDENCE_PARENT=' + str(temp / 'lifecycle-evidence-123-2'),
+            'EVIDENCE_BUNDLE=' + str(temp / 'lifecycle-bundle-123-2')])
+
     def test_workflow_is_same_repo_head_bound_narrow_and_fail_closed(self):
         path = Path(__file__).resolve().parents[1] / '.github/workflows/lifecycle-63.yml'
         text = path.read_text()
@@ -234,6 +248,12 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertIn('head.repo.full_name == github.repository', job['if'])
         self.assertIn("startsWith(github.head_ref, 'acceptance/lifecycle-63/')", job['if'])
         self.assertEqual(job['timeout-minutes'], '35')
+        # Job env is evaluated before runner context exists (GitHub schema).
+        self.assertNotIn('runner.', str(job['env']))
+        paths = job['steps'][1]
+        self.assertEqual(paths['name'], 'Bind runner-local evidence paths')
+        self.assertIn('"$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"', paths['run'])
+        self.assertEqual(paths['run'].count('>> "$GITHUB_ENV"'), 2)
         self.assertEqual(job['steps'][0]['with']['ref'], '${{ github.event.pull_request.head.sha }}')
         self.assertEqual(job['steps'][0]['with']['persist-credentials'], 'false')
         commands = '\n'.join(step.get('run', '') for step in job['steps'])
