@@ -43,7 +43,7 @@ jobs:
           PYCODE
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: b8820dbba6989dd216c8fa519633371e3d380cb6
+          ref: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
           path: baseline
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

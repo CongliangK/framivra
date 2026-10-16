@@ -230,6 +230,114 @@ class RunnerContracts(unittest.TestCase):
               {'monotonic_start':5,'monotonic_end':6}]
         self.assertEqual(self.r.interval_union_seconds(rows),4)
 
+    def test_digest_meter_counts_current_production_reads_and_eof(self):
+        import hashlib
+        from vtx import cache_state
+        original_read, original_digest = os.read, cache_state.file_digest
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tiny'
+            payload = b'x' * (1024 * 1024 + 17)
+            path.write_bytes(payload)
+            empty = Path(directory) / 'empty'; empty.write_bytes(b'')
+            meter = self.r.DigestMeter()
+            meter.install()
+            try:
+                self.assertEqual(cache_state.file_digest(path), hashlib.sha256(payload).hexdigest())
+                self.assertEqual(cache_state.file_digest(empty), hashlib.sha256(b'').hexdigest())
+                self.assertEqual([(row['bytes_read'], row['read_calls'], row['completed'])
+                                  for row in meter.rows], [(len(payload), 3, True), (0, 1, True)])
+                self.assertEqual(meter.summary()['file_digest_bytes'], len(payload))
+            finally:
+                meter.restore()
+        self.assertIs(os.read, original_read)
+        self.assertIs(cache_state.file_digest, original_digest)
+
+    def test_digest_meter_preserves_legacy_stream_read_accounting(self):
+        import hashlib
+        from vtx import cache_state, recovery, hygiene
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tiny'; path.write_bytes(b'abc')
+            meter = self.r.DigestMeter()
+            meter.install()
+            try:
+                self.assertEqual(recovery._digest(path), hashlib.sha256(b'abc').hexdigest())
+                self.assertEqual(hygiene._md5_file(path), hashlib.md5(b'abc').hexdigest())
+                self.assertTrue(cache_state.media_stat_digest(path).endswith(
+                    hashlib.sha1(b'abc').hexdigest()[:16]))
+                self.assertEqual([(row['bytes_read'], row['read_calls']) for row in meter.rows],
+                                 [(3, 2), (3, 2), (3, 1)])
+                self.assertEqual(meter.summary()['all_instrumented_digest_bytes'], 9)
+            finally:
+                meter.restore()
+
+    def test_digest_meter_os_read_error_keeps_partial_bytes_and_restores(self):
+        import builtins
+        from vtx import cache_state
+        original_read, original_open = os.read, Path.open
+        original_builtin_open, original_digest = builtins.open, cache_state.file_digest
+        failure = OSError('read failed')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tiny'; path.write_bytes(b'abcdef')
+            calls = []
+            def failing_read(fd, size):
+                calls.append((fd, size))
+                if len(calls) == 1:
+                    return original_read(fd, 3)
+                raise failure
+            with patch.object(os, 'read', side_effect=failing_read) as delegate:
+                meter = self.r.DigestMeter()
+                meter.install()
+                try:
+                    with self.assertRaises(OSError) as caught:
+                        cache_state.file_digest(path)
+                    self.assertIs(caught.exception, failure)
+                    self.assertEqual(len(calls), 2)
+                    self.assertEqual([(row['bytes_read'], row['read_calls'], row['completed'])
+                                      for row in meter.rows], [(3, 1, False)])
+                    self.assertIsNone(getattr(meter.local, 'row', None))
+                finally:
+                    meter.restore()
+                self.assertIs(os.read, delegate)
+                self.assertIs(Path.open, original_open)
+                self.assertIs(builtins.open, original_builtin_open)
+                self.assertIs(cache_state.file_digest, original_digest)
+            self.assertIs(os.read, original_read)
+            cache_state.file_digest(path)
+            self.assertEqual(len(meter.rows), 1)
+
+    def test_digest_meter_excludes_unscoped_and_other_thread_os_reads(self):
+        import threading
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tiny'; path.write_bytes(b'abcdef')
+            def read_three():
+                fd = os.open(path, os.O_RDONLY)
+                try:
+                    return os.read(fd, 3)
+                finally:
+                    os.close(fd)
+            def digest(_path):
+                values = []
+                worker = threading.Thread(target=lambda: values.append(read_three()))
+                worker.start(); worker.join(timeout=2)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(values, [b'abc'])
+                return read_three()
+            module = SimpleNamespace(__name__='digest_fixture', digest=digest)
+            meter = self.r.DigestMeter()
+            meter.install()
+            meter.patch(module, 'digest')
+            try:
+                self.assertEqual(read_three(), b'abc')
+                self.assertEqual(meter.rows, [])
+                self.assertEqual(module.digest(path), b'abc')
+                self.assertEqual(read_three(), b'abc')
+                self.assertEqual([(row['bytes_read'], row['read_calls'], row['completed'])
+                                  for row in meter.rows], [(3, 1, True)])
+            finally:
+                meter.restore()
+            self.assertIs(module.digest, digest)
+
     @unittest.skipUnless(sys.platform.startswith('linux'),'Linux resource monitor')
     def test_owned_tiny_process_and_budget_refusal(self):
         with tempfile.TemporaryDirectory() as directory:
