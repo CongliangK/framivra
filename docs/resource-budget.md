@@ -79,3 +79,22 @@ env python3 -m unittest tests.test_resource_budget -v
 ```
 
 上述测试命令会写临时目录，属于显式测试写操作。该 unittest 模块命令不在当前 docs_smoke 的仓路径匹配面，必须实际运行；文档门通过不代表测试已执行，更不代表真实 GPU 或全平台验收。独立测试覆盖多进程/线程竞争、四维原子性、超额/资源缺失、取消/超时、锁等待、异常退出/僵尸/PID 复用、坏状态和失败写入。全仓回归与独立评审仍是合入前提。
+
+### 保留跨项目验收证据
+
+自包含 fixture 为 [scripts/resource_budget_fixture.py](../scripts/resource_budget_fixture.py)，回归为 [tests/test_resource_budget_fixture.py](../tests/test_resource_budget_fixture.py)。在 checkout 根目录先查看零写态帮助：
+
+```bash
+env python3 -B scripts/resource_budget_fixture.py --help
+```
+
+以下为**显式写操作**：先把 OUTPUT 改为已有、可信、本地目录下尚不存在的子目录；拒绝已有文件/目录、路径中的符号链接和 `..`，不创建父目录，不清理失败证据。仅适用于上述 Linux 同机运行条件。
+
+```bash
+OUTPUT=/tmp/my-new-budget-evidence
+env python3 -B scripts/resource_budget_fixture.py --output "$OUTPUT"
+```
+
+输出包含当前机器 inventory/config、主 events.jsonl、各 project-* 目录的事件与 stderr、崩溃回收前账本、最终 pool.json 和 result.json。正常返回零且 result 为 PASS 才算本次通过；失败时返回非零并保留已写文件，启动前的路径拒绝不写证据。再次执行须选新目录。进程仅自行退出，不发送信号；存储系统调用挂死仍不保证硬超时。不要在运行中移动或篡改可信输出目录。
+
+fixture 以独立项目工作目录竞争同一池，检查四维超额的全成或全败、满池/等待超时/等待取消、崩溃后重新打开回收及全量再申请，结束时检查零占用。CPU 只做合成计算；VRAM 为模拟 token，RAM/磁盘只记账，不分配对应大小。配置按本次库存生成，事件含本机身份/时序；分享前自行检查，不能把一次日志提交为通用性能数据。保留这些文件可复核 F13-B2，但不测量物理峰值，不替代 F13-B3 的真实后端验收。docs_smoke 仅检查帮助入口，不代跑 fixture。
