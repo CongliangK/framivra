@@ -128,6 +128,76 @@ class Routing(unittest.TestCase):
 
 @unittest.skipUnless(WORKER and Path(WORKER).is_file(), 'requires VTX_TEST_CEF_WORKER')
 class NativeProduction(unittest.TestCase):
+    def _assert_structure_css_veto(self, name, css):
+        from vtx.cef_client import CefWorkerError
+        from vtx.proc_supervisor import SupervisedProcessGroup
+        with tempfile.TemporaryDirectory(prefix=f'cef_dom_{name}_') as td:
+            root = Path(td)
+            p = project(root, n=1)
+            page = root / 'page.html'
+            page.write_text('''<!doctype html><html><head><style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+#content{position:fixed;inset:0}''' + css + '''
+</style></head><body><div id="content"></div></body></html>''')
+            env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                       VTX_CEF_MODE='a0', VTX_GFX_CACHE_NS='')
+            with mock.patch.dict(os.environ, env):
+                c = Ctx(p)
+                fds, worker_env = [], dict(os.environ)
+                def argv(run, profile):
+                    fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                    fds.append(fd)
+                    worker_env['TMPDIR'] = f'/proc/{os.getpid()}/fd/{fd}'
+                    return [WORKER, '--mode=a0', f'--url={page.as_uri()}?f=0',
+                            '--width=64', '--height=48', '--begin-frames=12',
+                            '--out-png=baseline.png', '--out-json=baseline.json',
+                            f'--root-cache-path={profile}']
+                try:
+                    with (root/'baseline.worker.log').open('wb') as log:
+                        with SupervisedProcessGroup(c, argv, backend_id='cef_dom_baseline',
+                                                    env=worker_env, stdout=log, stderr=log) as group:
+                            self.assertEqual(group.proc.wait(timeout=60), 0)
+                            shutil.copyfile(group.run_dir/'baseline.png', root/'baseline.png')
+                finally:
+                    for fd in fds:
+                        os.close(fd)
+                w, h, baseline = decode_png_rgba(root/'baseline.png')
+                self.assertEqual((w, h), (64, 48))
+                self.assertEqual(baseline, bytes((17, 231, 47, 255)) * (w * h))
+                out = hygiene.gfx_dir(c, c.tl['video_tracks'][0]['clips'][0])
+                out.mkdir(parents=True)
+                with self.assertRaises(CefWorkerError):
+                    gfx_cef.render_page(page, out, 1, ctx=c, width=w, height=h)
+                self.assertFalse((out/'f0000.png').exists(), 'vetoed pixels published')
+                events = [json.loads(line) for path in (c.cache/'reports/cef').glob('*.sync.jsonl')
+                          for line in path.read_text().splitlines()]
+                self.assertTrue(any(e['event'] == 'exact_first_verified' for e in events))
+                self.assertTrue(any(e['event'] == 'exact_baseline_veto_armed' and
+                                    e['role'] == 'equality_veto_only' and
+                                    e['restoration_source'] is False for e in events))
+                self.assertTrue(any(e['event'] == 'exact_baseline_mismatch' and
+                                    e['reason'] == 'probe_content_perturbation' for e in events))
+                self.assertFalse(any(e.get('to') == 'S5_ONPAINT_VERIFIED' for e in events))
+                self.assertTrue(any(e['event'] == 'request_end' and e['status'] == 'failed'
+                                    for e in events))
+                receipts = [json.loads(path.read_text())
+                            for path in (c.cache/'reports/cef').glob('*.receipts.json')]
+                self.assertEqual(receipts, [[]])
+                self.assertFalse(any((c.cache/'tmp').iterdir()), 'supervised worker leaked')
+            evidence = os.environ.get('VTX_CEF_EVIDENCE_DIR')
+            if evidence:
+                shutil.copytree(root, Path(evidence)/f'dom-{name}', dirs_exist_ok=True)
+
+    def test_structure_css_body_last_child_is_vetoed(self):
+        self._assert_structure_css_veto('last_child',
+            '#content{background:rgb(231,17,31)}'
+            'body:last-child #content{background:rgb(17,231,47)}')
+
+    def test_structure_css_html_has_third_child_is_vetoed(self):
+        self._assert_structure_css_veto('has_third_child',
+            '#content{background:rgb(17,231,47)}'
+            'html:has(> :nth-child(3)) #content{background:rgb(231,17,31)}')
+
     def test_page_protocol_failures_are_native_timeouts(self):
         from vtx.cef_client import CefWorkerClient, CefWorkerError
         from vtx.proc_supervisor import SupervisedProcessGroup
