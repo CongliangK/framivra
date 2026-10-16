@@ -18,6 +18,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MEDIA_TESTS = {
     'ffmpeg': (
+        'tests.test_qc_probe_ownership.ProbeOwnership.test_real_ffmpeg_parallel_raw_outputs',
         'tests.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
         'tests.test_agent_diagnostics_qc.TestQCDiagnosticsCPU',
         'tests.test_agent_diagnostics_loading.Loading.test_invalid_media_probe_is_structured',

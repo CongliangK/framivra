@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation
+from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation, check_gc_contract
 from vtx.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
@@ -520,6 +520,45 @@ class AcceptanceContracts(unittest.TestCase):
         self.assertLess(sent.index('Fetch.enable'),sent.index('Page.navigate'))
         self.assertEqual(json.loads(path.read_text())['font_observation_targets'],
                          [dict(target_id='owned',frame_id='owned',url='about:blank')])
+
+    def test_gc_contract_distinguishes_current_keys_and_disposable_vseg(self):
+        from tests.impact_inventory import observe
+        from vtx.hygiene import gfx_dir, gc_plan
+        from vtx import cli
+        import os
+        current = [gfx_dir(self.c, cl).relative_to(self.project).as_posix()
+                   for cl in self.tl['video_tracks'][0]['clips']]
+        files = [*(root+'/f0000.png' for root in current),
+                 *(root+'/f0001.png' for root in current),
+                 *(root+'/complete.json' for root in current),
+                 'cache/gfx/ffffffffffff/f0000.png',
+                 'cache/vseg/seg00_current.mp4', 'cache/vseg_qc/seg00_current.mp4',
+                 'cache/vseg_pass/p0_123456789abc.mkv', 'cache/vseg_pass/p0_123456789abc.mkv.n',
+                 'out/video_noaudio.mp4', 'out/receipt.json']
+        for name in files:
+            path = self.project/name; path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_bytes(b'file-only-gc-fixture')
+        before = observe(self.project)
+        with patch.dict(os.environ, {'VTX_SEG_NVENC':'0'}):
+            plan = gc_plan(self.c)
+            planned = [p.relative_to(self.project).as_posix() for rows in plan.values() for p,_,_ in rows]
+            with patch('sys.argv',['vtx','-t',str(self.c.tl_path),'gc']):
+                self.assertIsNone(cli.main())
+        after = observe(self.project)
+        result = check_gc_contract(before,after,planned,current)
+        self.assertIn('cache/vseg/seg00_current.mp4',result['removed_products'])
+        self.assertIn(current[0]+'/f0001.png',result['protected'])
+        for name in (current[0]+'/f0000.png','out/video_noaudio.mp4','out/receipt.json'):
+            bad = copy.deepcopy(after)
+            for group in bad.values(): group.pop(name,None)
+            with self.assertRaises(AssertionError): check_gc_contract(before,bad,planned,current)
+        bad = copy.deepcopy(after);bad['products'][current[0]+'/f0001.png']['sha256']='changed'
+        with self.assertRaises(AssertionError): check_gc_contract(before,bad,planned,current)
+        with self.assertRaises(AssertionError): check_gc_contract(before,after,planned+[current[0]],current)
+        bad = copy.deepcopy(after);bad['products']['cache/vseg/seg00_current.mp4']=before['products']['cache/vseg/seg00_current.mp4']
+        with self.assertRaises(AssertionError): check_gc_contract(before,bad,planned,current)
+        bad = copy.deepcopy(after);bad['products'].pop('cache/vseg_pass/p0_123456789abc.mkv.n')
+        with self.assertRaises(AssertionError): check_gc_contract(before,bad,planned,current)
 
     def test_workflow_scope_and_budget(self):
         root=Path(__file__).resolve().parents[1]

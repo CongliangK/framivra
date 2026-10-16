@@ -178,6 +178,40 @@ class ProtocolObserver:
             self.append('protocol', row)
 
 
+def check_gc_contract(before, after, planned, current_keys):
+    """#47 protects current keyed gfx/seg/audio; native GC reclaims vseg intermediates."""
+    def under(name, roots):
+        return any(name == root or name.startswith(root + '/') for root in roots)
+    protected_outputs = {'out/video_noaudio.mp4', 'out/receipt.json'}
+    assert protected_outputs <= {name for group in before.values() for name in group}
+    assert current_keys and all(root.startswith(('cache/gfx/', 'cache/seg/', 'cache/audio/'))
+                                for root in current_keys)
+    protected = set()
+    for group in before.values():
+        for name, identity in group.items():
+            if name in protected_outputs or under(name, current_keys):
+                protected.add(name)
+                assert not under(name, planned), ('GC plans protected artifact', name)
+                found = [g[name] for g in after.values() if name in g]
+                assert found == [identity], ('GC changed protected artifact', name)
+    for root in current_keys:
+        assert under(root, protected) or any(name.startswith(root + '/') for name in protected), root
+    old_products, new_products = before['products'], after['products']
+    assert not set(new_products) - set(old_products), 'GC created unexpected products'
+    removed = []
+    for name, identity in old_products.items():
+        if under(name, planned):
+            assert name.startswith(('cache/gfx/', 'cache/seg/', 'cache/audio/',
+                                    'cache/vseg/', 'cache/vseg_qc/', 'cache/vseg_draft/')), name
+            assert name not in new_products, ('GC retained planned product', name)
+            removed.append(name)
+        else:
+            assert new_products.get(name) == identity, ('GC changed unplanned product', name)
+    assert any(name.startswith('cache/gfx/') for name in removed), 'no stale gfx actually reclaimed'
+    return dict(protected=sorted(protected), removed_products=sorted(removed),
+                disposable_namespaces=['cache/vseg', 'cache/vseg_qc', 'cache/vseg_draft'])
+
+
 def prepare_font_observation(tab, call, owned_target):
     """Enable inspector sources only on this newly owned, proven-empty target."""
     assert owned_target, 'unowned target cannot prepare font observation'
@@ -643,16 +677,21 @@ def main():
         plan = gc_plan(Ctx(timeline))
         planned = [str(p.relative_to(project)) for entries in plan.values() for p,_,_ in entries]
         assert any(p.startswith('cache/gfx/') for p in planned), planned
+        before_gc = observe(project)
+        (evidence/'gc-before.json').write_text(json.dumps(before_gc,indent=2))
+        (evidence/'gc-plan.json').write_text(json.dumps(planned,indent=2))
         run([sys.executable,'-m','vtx','-t',timeline,'gc'],'gc')
-        after_gc = observe(project)['products']
+        after_gc = observe(project)
+        (evidence/'gc-after.json').write_text(json.dumps(after_gc,indent=2))
         assert all(not (project/p).exists() for p in planned)
         c=Ctx(timeline)
         assert all((gfx_dir(c,cl)/'f0000.png').is_file() for cl in tl['video_tracks'][0]['clips'])
-        for node in before['nodes'].values():
-            artifact = node['artifact']
-            if artifact:
-                assert (project/artifact).exists(), ('GC removed live artifact', artifact)
-        report['gc'] = dict(planned=planned, remaining=after_gc)
+        current_keys = [node['artifact'] for node in before['nodes'].values()
+                        if node['artifact'] and node['artifact'].startswith(
+                            ('cache/gfx/', 'cache/seg/', 'cache/audio/'))]
+        gc_checks = check_gc_contract(before_gc, after_gc, planned, current_keys)
+        report['gc'] = dict(planned=planned, remaining=after_gc['products'], **gc_checks)
+        save()
         # Failures use separate project directories, never warm cache bypass.
         for case, html in [('unknown','<style/>body{color:red}'),
                            ('unknown-space','<style />body{color:red}'),
