@@ -111,3 +111,48 @@ Windows 实测旧候选版本暖/冷最大单帧平均差 100.64/255、音频不
 voice-ime 真实工程 E2E 复验（合并裁定见 merge commit f0c98dd 与
 `vtx/cache_state.py` 模块头）。这是确定性合成用例的正确性结果，
 不是长视频或跨平台性能结论。
+
+## 质量与证据标签（#90，契约评审候选）
+
+本节为 DOC-CHARTER §25 的待维护方评审候选，合入前须取得文档及契约维护方同意；
+自动测试不代替该评审。实现 `vtx/quality.py` 输出附加 `vtx.quality/1` 对象，
+只标注，不改变现有退出码、验收门或缓存身份。用途与证据是独立轴，不是天然全序。
+
+| 标签 | 保证 | 不保证 |
+|---|---|---|
+| Preview | 明确标识的草稿/近似用途 | 完整质量门、复现或像素一致 |
+| Production | production_gates 与 visual_content 均显式 passed | 输入身份、重复构建、逐像素一致 |
+| Reproducible | Verified 内容身份、已验证环境身份、固定环境独立重复比较均 passed | 视觉意图正确、跨环境一致 |
+| Verified Exact | #62 严格独立 Golden 验证通过，内容/环境身份齐全，限定范围逐帧 RGBA8 像素一致 | 最终 MP4 字节、音频、未声明依赖、范围外内容正确 |
+
+规范化 evidence 含 production_gates、visual_content、content_identity、
+environment_identity、repeat_comparison、strict_exact；值仅为 passed、failed、partial、
+unknown。缺失、未执行、未知值均归 unknown；partial 不等于 passed。
+content_identity=passed 表示所述 scope 内 Verified 完整内容身份，不是 Fast 采样身份。
+分类器消费可信生产者的规范化观察，不认证任意 JSON 的真实性；旁车没有签名。
+
+唯一 display 优先规则为 Verified Exact → Reproducible → purpose → unknown。
+purpose 独立保留 Preview / Production / unknown；reproducible 与 verified_exact 分别
+保留布尔资格。Exact 须 strict_exact、content_identity、environment_identity 全 passed；
+Reproducible 须后三者中的 strict_exact 换为 repeat_comparison 后全 passed。
+Production 须两个质量门全 passed。显式 preview 优先决定用途；证据标签不抹去用途。
+
+普通阶段回执绑定 final_movie 范围，每次落笔/撤销阶段重算标签，不继承旧最高标签。
+草稿成功可标 Preview；正式 mux/qc 存在时不用保留的草稿替代正式结论。
+运行时身份仍为 Fast（content_identity=partial）。QC 报告和回执中的技术门可以 passed，
+但 visual_content 保持 unknown，因此即使 QC 8/8 也不自动成为 Production。
+包含缓存免检探针的质量门标 partial，失败仍为 failed；不更改既有 QC 放行行为。
+帧数正确只属技术门，不能证明帧内容；CFR 补帧不能据帧数自动授予复现或 Exact。
+#53 的 accepted=false 与 visual_content=unknown 不被标签改写；导出的 receipt/qc
+保留相同标签，验收包的既有独立验证规则不变。
+
+#62 verify-experiment 通过时只给 declared_gfx_instances:decoded_RGBA8 范围 Exact；
+计划摘要、实例、运行身份与实际环境仍由原报告记录。固定配置/后端/版本的独立比较
+另可满足 Reproducible；受控的不同后端或配置比较可以 Exact，但不自动标复现。
+普通 compare（包括旧 --strict）、analyze 的 Tier-1/Tier-2、canary 均不提供该严格
+证据，标签保持 unknown，Tier-2 预乘等价尤其不能成为 Exact。
+生产运行器尚未生成严格证据的限制见 [Golden 证据](gfx-evidence.md)。
+
+成本归因：严格 Golden 报告 quality_cost 单列 strict_golden_verification 的 wall_seconds；
+它只计本次校验，不是渲染成本或后端性能，render_seconds 缺证据为 null。
+用途/等级不能作为性能提升证据；#63 的渲染成本归因仍须实际运行测量。

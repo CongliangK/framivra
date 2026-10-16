@@ -905,6 +905,8 @@ def cmd_compare(args) -> int:
                   "compared_frames": n_cmp, "identical": identical, "differ": differ,
                   "dir_missing": dir_missing, "missing_or_unreadable": unreadable,
                   "unrecorded": unrecorded, "env_gate": gate}
+        from vtx.quality import classify
+        report["quality"] = classify(scope="legacy_golden_comparison")
         atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
     return 0 if ok else 1
@@ -987,6 +989,8 @@ def cmd_analyze(args) -> int:
                   "compared": len(frames),
                   "tiers": {TIER_EXACT: n_t1, TIER_PREMUL: n_t2, TIER_FAIL: n_t3},
                   "frames": frames, "errors": errors}
+        from vtx.quality import classify
+        report["quality"] = classify(scope="legacy_golden_comparison")
         atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
     return 0 if ok else 1
@@ -1085,6 +1089,8 @@ def cmd_verify_canary(args) -> int:
                                "no_canary": buckets[fc.ST_NO_CANARY],
                                "ambiguous_signature": buckets[fc.ST_AMBIGUOUS],
                                "errors": len(errors)}}
+        from vtx.quality import classify
+        report["quality"] = classify(scope="legacy_golden_comparison")
         atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
     return 0 if ok else 1
@@ -1164,6 +1170,8 @@ def main(argv=None) -> int:
                             load(args.candidate_run))
         except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError) as error:
             report = {"ok": False, "errors": [str(error)]}
+        from vtx.quality import classify
+        report.setdefault("quality", classify(scope="declared_gfx_instances:decoded_RGBA8"))
         report["report_written"] = True
         try:
             atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
@@ -1171,6 +1179,7 @@ def main(argv=None) -> int:
             # The shared writer normalizes invalid/looping report paths to ValueError.
             # No fallback destination or claim of replacing an inaccessible old report.
             report["ok"] = False
+            report["quality"] = classify(scope="declared_gfx_instances:decoded_RGBA8")
             report["same_version_causal"] = False
             report["report_written"] = False
             report.setdefault("errors", []).append(f"cannot write report {args.report}: {error}")
