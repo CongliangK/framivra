@@ -8,6 +8,7 @@ v2 §1.3（2026-09-13）新增：解码域真峰 TP 判定项（阈 -1.0 dBFS，
 削波/限幅失效，属产物可信度问题，归内核 qc。
 """
 import json, re, sys
+from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -431,11 +432,11 @@ def qc(c):
                 # 每任务独立 ffmpeg 子进程；结果按 key 回填 dict，报告顺序不受并发影响
                 # （免检项在生成阶段已被剔除，此处全部为需实测任务）
                 with ThreadPoolExecutor(8) as pex:
-                    futs = [pex.submit(fn) for _, fn in tasks]
+                    futs = [pex.submit(copy_context().run, fn) for _, fn in tasks]
                     for f in futs: f.result()
-            fp = gex.submit(run_probes)
-            fl = gex.submit(loudness)
-            fv = gex.submit(lambda: vol(*vol_span) if vol_span else -999)
+            fp = gex.submit(copy_context().run, run_probes)
+            fl = gex.submit(copy_context().run, loudness)
+            fv = gex.submit(copy_context().run, lambda: vol(*vol_span) if vol_span else -999)
             loud_v, loud_tp, loud_hit = fl.result(); v1 = fv.result(); fp.result()
 
     # ---- 按原顺序回填 checks（内容/顺序/名称与旧版一致）----

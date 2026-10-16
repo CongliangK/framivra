@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
 from .hygiene import budget_gate, manifest_record, seg_key
+from . import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
 from . import probe_cache, fstxn
 from .recovery import media_cache_valid
@@ -571,7 +572,12 @@ class RenderPlan:
         print(f"  分段渲染：{len(edges) - 1} 段，切点 {cuts}"
               f"（VTX_VIDEO_SEGMENTS={self.nseg}，guard=±{SEG_CUT_GUARD} 帧）")
         vcodec, enc = pick_vcodec(c, draft)
+        observations = [events.task(c, kind="video_segment",
+                                    metadata={"frame_range": [a, b]})
+                        for a, b in zip(edges, edges[1:])]
         def render_one(si):
+            return observations[si].call(render_segment, si)
+        def render_segment(si):
             a, b = edges[si], edges[si + 1]
             sfile = None
             if with_subs:
@@ -583,6 +589,7 @@ class RenderPlan:
             # 段缓存（PR#1 内容键化）：存在且流头帧数==段长即跳过——键已含全部内容
             # 决定因素（字幕/图层/上游内容/参数），命中即安全；帧数检查是便宜兜底。
             if media_cache_valid(segp, b - a):
+                events.cache_hit(c, "media_cache_valid", frames=[a, b])
                 print(f"  ✓ 段 {si} [{a},{b}) 已缓存"); return segp
             self.composite(sl, segp, with_subs, a=a, b=b, sub_file=sfile)
             return segp
@@ -708,6 +715,7 @@ def prepare_layers(c: Ctx):
             # Verify a successful decode's digest/frame record, or fully decode
             # legacy media. Container header counts alone cannot certify a hit.
             if media_cache_valid(seg, cl['dur'], allow_short_verified=True):
+                events.cache_hit(c, "media_cache_valid", frames=[0, cl['dur']])
                 layers.append({"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2,
                                "gfx": False, "ti": ti})
                 continue

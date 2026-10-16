@@ -9,7 +9,7 @@ from pathlib import Path
 
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
-from . import fstxn
+from . import fstxn, events
 from .cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
                          receipt_fingerprint, validate_cache_dependencies,
                          verify_input_identity)
@@ -88,7 +88,8 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
 
 
 class Ctx:
-    def __init__(self, timeline_path: Path):
+    def __init__(self, timeline_path: Path, *, execution=None):
+        self.execution = execution if execution is not None else events.ExecutionContext()
         self.tl_path = timeline_path
         self.root = timeline_path.parent
         self.timeline_bytes = timeline_path.read_bytes()
@@ -156,11 +157,15 @@ class Ctx:
             print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
             return ""
         from .recovery import atomic_ffmpeg
+        observation = events.task(self, kind="process")
         def execute(argv):
-            return subprocess.run(argv, capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace")
+            return observation.attempt(subprocess.run, argv, capture_output=True, text=True,
+                                       encoding="utf-8", errors="replace")
         try:
-            r = atomic_ffmpeg(self, cmd, execute) if need else execute(cmd)
+            with observation.scope():
+                r = atomic_ffmpeg(self, cmd, execute) if need else execute(cmd)
+                if r.returncode:
+                    observation.finish(r.returncode, RuntimeError())
         except RuntimeError as error:
             print(f"CMD FAILED: {error}", file=sys.stderr)
             sys.exit(1)
@@ -245,6 +250,8 @@ class Ctx:
             return   # dry-run 不落回执（PR#1：预览运行不得改写真实阶段状态）——锁外早退
         f = self.out / "receipt.json"
 
+        observation = None
+
         def _mutate(rec):
             _archive_stale_receipt(f, self.input_fingerprint)   # ⑮ 指纹翻转旁证轮转
             if ok:
@@ -252,6 +259,8 @@ class Ctx:
             rec["timeline"] = self.timeline_sha256
             rec["updated"] = time.strftime("%F %T")
             rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
+            if observation is not None:
+                rec["stages"][stage]["observed_by"] = observation
             if extra:
                 rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
             from .quality import receipt_quality
@@ -263,9 +272,14 @@ class Ctx:
         # 之外另一 vtx 进程的并行落笔也串行化；写入 tmp+os.replace，中断/被杀后
         # receipt.json 要么旧值要么新值，永不为截断 JSON。load 注入指纹门
         # （load_receipt 语义原样：身份不符/损坏 → 空阶段表，不继承旧成功）。
+        def write(ref):
+            nonlocal observation
+            observation = ref
+            return fstxn.locked_update(f, _mutate,
+                                      load=lambda p: load_receipt(p, self.input_fingerprint))
+
         try:
-            fstxn.locked_update(f, _mutate,
-                                load=lambda p: load_receipt(p, self.input_fingerprint))
+            self.execution.receipt(stage, ok, write)
         except InputIdentityError as e:
             # Release the ledger lock before writing failure (no nested lock).
             self.reject_input_identity(stage, e)
@@ -351,9 +365,11 @@ def filter_threads() -> int:
         return min(int(v), max(1, os.cpu_count() or 8))
     return 1
 
-def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
+def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False, *, observation=None):
     from .recovery import atomic_ffmpeg
-    return atomic_ffmpeg(c, cmd, lambda argv: _run_ffmpeg_task(c, label, argv, nvenc))
+    observation = observation or events.task(c, kind='ffmpeg')
+    with observation.scope():
+        return atomic_ffmpeg(c, cmd, lambda argv: _run_ffmpeg_task(c, label, argv, nvenc))
 
 
 def _run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
@@ -370,8 +386,10 @@ def _run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
         # 现行 fail-fast 语义（RuntimeError → run_parallel failed 收集 → rc=1 零变化）。
         def _attempt(_no):
             with nvenc_budget(c):   # 每次尝试独立占槽
-                return subprocess.run(cmd, capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace")
+                observe = events.current(c)
+                invoke = observe.attempt if observe else lambda fn, *a, **kw: fn(*a, **kw)
+                return invoke(subprocess.run, cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
         ok, attempts, r = nvenc_retry_run(_attempt, label)
         if not ok:
             nvenc_guard_note("exhausted")
@@ -386,8 +404,10 @@ def _run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
         return
     # 非 nvenc 任务（方案二阶段3 起 x264/prores/抽音频不占 NVENC 预算槽——占槽域零
     # 触达，S5 零武装；语义与原 nvenc=False 分支逐字等价）。
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    observe = events.current(c)
+    invoke = observe.attempt if observe else lambda fn, *a, **kw: fn(*a, **kw)
+    r = invoke(subprocess.run, cmd, capture_output=True, text=True,
+               encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError(f"{label}: " + r.stderr[-1500:])
 
@@ -395,28 +415,32 @@ def run_parallel(c: Ctx, tasks, what: str):
     """tasks = [(label, cmd)]（或 (label, cmd, nvenc)），全部执行；任一失败打印并退出。
     进度按完成序打印（带标签）。nvenc 标志见 run_ffmpeg_task（方案二阶段3）。"""
     if not tasks: return
+    observations = [events.task(c, kind="ffmpeg") for _ in tasks]
     workers = min(io_workers(), len(tasks))
     t0 = time.time()
     print(f"  {what}：{len(tasks)} 个任务，{workers} 线程并行")
     failed = None
     if workers == 1 or c.dry:      # 串行保底 / dry-run 只打印
-        for t in tasks:
+        for t, observation in zip(tasks, observations):
             label, cmd = t[0], t[1]
-            try: run_ffmpeg_task(c, label, cmd, t[2] if len(t) > 2 else False)
-            except RuntimeError as e: failed = failed or (label, str(e))
+            try: run_ffmpeg_task(c, label, cmd, t[2] if len(t) > 2 else False,
+                                 observation=observation)
+            except RuntimeError as e: failed = failed or (label, str(e), e)
             print(f"    · {label}")
     else:
         with ThreadPoolExecutor(workers) as ex:
-            futs = {ex.submit(run_ffmpeg_task, c, t[0], t[1], t[2] if len(t) > 2 else False): t[0]
-                    for t in tasks}
+            futs = {ex.submit(run_ffmpeg_task, c, t[0], t[1], t[2] if len(t) > 2 else False,
+                              observation=observation): t[0]
+                    for t, observation in zip(tasks, observations)}
             for fu in as_completed(futs):
                 label = futs[fu]
                 try:
                     fu.result(); print(f"    ✓ {label}（+{time.time() - t0:.0f}s）")
                 except RuntimeError as e:
-                    failed = failed or (label, str(e)); print(f"    ✗ {label} 失败")
+                    failed = failed or (label, str(e), e); print(f"    ✗ {label} 失败")
     if failed:
-        print(f"✗ {what}失败（{failed[0]}）：\n{failed[1]}", file=sys.stderr); sys.exit(1)
+        print(f"✗ {what}失败（{failed[0]}）：\n{failed[1]}", file=sys.stderr)
+        raise SystemExit(1) from failed[2]
     print(f"  ✓ {what}完成（{time.time() - t0:.0f}s）")
 
 
@@ -447,11 +471,13 @@ def run_wave(c: Ctx, jobs):
                   # （P2-1，p2 审查报告：报告「首个失败」须取提交序而非完成序——
                   # 多路同败时完成序取值非确定，带 idx 后 min 即 STAGES 提交序）
 
+    observations = [events.task(c, kind="wave_job") for _ in jobs]
+
     def _worker(idx, label, fn):
         t1 = time.monotonic()
         print(f"== {label} ==")
         try:
-            fn()
+            observations[idx].call(fn)
         except BaseException as e:   # 含 SystemExit：sys.exit 在线程内只杀线程，必须捕获
             failed.append((idx, label, e))
             if isinstance(e, SystemExit):
@@ -471,7 +497,7 @@ def run_wave(c: Ctx, jobs):
             print(f"✗ 并行波失败（首个失败：{label}）：{e!r}", file=sys.stderr)
         else:
             print(f"✗ 并行波失败（首个失败：{label}，exit {e.code}）", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(1) from e
     print(f"✓ 并行波完成 [timing] 总耗时 {time.monotonic() - t0:.1f}s"
           f"（{time.strftime('%H:%M:%S')}）")
 

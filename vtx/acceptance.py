@@ -21,6 +21,7 @@ import tempfile
 import uuid
 
 from .cache_state import file_digest, media_stat_digest
+from . import execution_links
 
 SCHEMA = 'vtx.acceptance/1'
 STAGES = ('validate', 'audit', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
@@ -180,6 +181,8 @@ def build(timeline, output):
     timeline = regular(timeline)
     output = safe_path(output)
     names = collect_inputs(timeline)
+    if any(name.split('/')[0] == execution_links.DIRECTORY for name in names):
+        raise ValueError('input cannot occupy reserved observation directory')
     sources = {n: regular(timeline.parent / n) for n in names}
     # No overwrite, reuse, or writing under the source project.
     if output == timeline.parent or timeline.parent in output.parents:
@@ -200,6 +203,7 @@ def build(timeline, output):
                         'identity_level': 'Verified', **before,
                         'runtime_identity_level': 'Fast' if role == 'source' else 'Verified',
                         'runtime_identity': media_stat_digest(src) if role == 'source' else before['sha256']})
+    export_id = str(uuid.uuid4())
     env = environment()
     write_json(output / 'environment.json', env)
     policy = {'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0', 'VTX_PIPELINE': '0',
@@ -207,6 +211,7 @@ def build(timeline, output):
     with tempfile.TemporaryDirectory(prefix='vtx-acceptance-') as temp:
         project = Path(temp) / 'project'
         shutil.copytree(output / 'inputs', project)
+        observation_enabled = execution_links.initialize(project)
         config = Path(temp) / 'empty-config.json'
         write_json(config, {})
         config_digest = file_digest(config)
@@ -216,21 +221,27 @@ def build(timeline, output):
         child_env = safe_environment(temp, policy)
         commands = [prefix + ['all', '--until', 'mux'], prefix + ['qc', '--strict']]
         executions = []
+        links = [execution_links.not_attempted(i) for i in range(2)]
         with (output / 'build.log').open('xb') as log:
-            try:
-                for command in commands:
-                    log.write((json.dumps({'argv': command}) + '\n').encode())
-                    log.flush()
+            for index, command in enumerate(commands):
+                request = execution_links.prepare_request(project, export_id, index, enabled=observation_enabled)
+                log.write((json.dumps({'argv': command}) + '\n').encode())
+                log.flush()
+                try:
                     result = subprocess.run(command, cwd=REPO, env=child_env,
                                             stdout=log, stderr=subprocess.STDOUT)
+                except OSError as e:
+                    log.write(str(e).encode())
+                    code = -1
+                    launch_status = 'launch_error'
+                else:
                     code = result.returncode
-                    executions.append({'argv': command, 'exit_code': code})
-                    if code != 0:
-                        break
-            except OSError as e:
-                log.write(str(e).encode())
-                code = -1
+                    launch_status = 'returned'
                 executions.append({'argv': command, 'exit_code': code})
+                links[index] = execution_links.retain_attempt(project, output, request, launch_status, code, enabled=observation_enabled)
+                if code != 0:
+                    break
+        execution_links.seal(output, export_id, links)
         stable = inputs_match(project, records)
         for name in ('final.mp4', 'receipt.json', 'qc_report.json', 'audio_report.json'):
             src = project / 'out' / name
@@ -250,7 +261,7 @@ def build(timeline, output):
         return command[:4] + ['$PROJECT/' + timeline.name] + command[5:]
     commands = [logical(command) for command in commands]
     executions = [{**row, 'argv': logical(row['argv'])} for row in executions]
-    manifest = {'schema': SCHEMA, 'run_id': str(uuid.uuid4()),
+    manifest = {'schema': SCHEMA, 'run_id': export_id,
         'created_at_utc': datetime.now(timezone.utc).isoformat(),
         'timeline': 'inputs/' + timeline.name, 'inputs': records,
         'dependency_closure': {'status': 'unknown', 'self_contained': False,
@@ -482,7 +493,8 @@ def verify(package, expected_manifest_sha256, source_root=None):
         raise ValueError('acceptance claim disagrees with gates')
     return {'integrity_verified': True, 'accepted': accepted, 'run_id': m['run_id'],
             'gates': expected_gates, 'live_inputs_checked': source_root is not None,
-            'dependency_closure': m['dependency_closure']}
+            'dependency_closure': m['dependency_closure'],
+            'execution_linkage': execution_links.verify_links(package, m, receipt)}
 
 
 def main(argv=None):
