@@ -1,8 +1,8 @@
 """CI-only conservative path classification and exhaustive core test layers.
 
-Slow modules are the measured dry-run, composite re-render, and ledger stress
-families. New tests in those modules stay slow; every other discovered test is
-fast. Partitioning never changes the strict media selectors in ci_checks.py.
+Slow selectors are the measured dry-run, composite re-render, and ledger
+concurrency families. New tests in selected classes stay slow; every other
+discovered test is fast. Cheap crash/residue checks retain all-version coverage. Partitioning never changes the strict media selectors in ci_checks.py.
 """
 import argparse
 import os
@@ -12,10 +12,11 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SLOW_MODULES = (
-    'tests.test_dry_run',
-    'tests.test_composite_determinism',
-    'tests.test_hygiene_ledger_txn',
+SLOW_SELECTORS = (
+    'tests.test_dry_run.DryRunRegression',
+    'tests.test_composite_determinism.TestCrossRunDeterminism',
+    'tests.test_hygiene_ledger_txn.MultiProcessConcurrency',
+    'tests.test_hygiene_ledger_txn.GcResidueAndConcurrency.test_concurrent_gc_does_not_break_ledger',
 )
 # Cheap identity/invalidation contracts must run on every supported Python.
 FAST_CLASSES = (
@@ -34,7 +35,11 @@ def leaves(suite):
             yield test
 
 
-def partition(suite, slow_modules=SLOW_MODULES, fast_classes=FAST_CLASSES):
+def matches(name, selector):
+    return name == selector or name.startswith(selector + '.')
+
+
+def partition(suite, slow_modules=SLOW_SELECTORS, fast_classes=FAST_CLASSES):
     """Refuse empty/stale selectors, duplicate IDs, or discovery errors."""
     tests = list(leaves(suite))
     ids = [test.id() for test in tests]
@@ -43,12 +48,12 @@ def partition(suite, slow_modules=SLOW_MODULES, fast_classes=FAST_CLASSES):
     if any(isinstance(test, unittest.loader._FailedTest) for test in tests):
         raise RuntimeError('test discovery failed; refusing partial inventory')
     for selector in slow_modules + fast_classes:
-        if not any(name.startswith(selector + '.') for name in ids):
+        if not any(matches(name, selector) for name in ids):
             raise RuntimeError('empty or stale selector: ' + selector)
     fast, slow = [], []
     for test in tests:
         name = test.id()
-        is_slow = any(name.startswith(module + '.') for module in slow_modules)
+        is_slow = any(matches(name, module) for module in slow_modules)
         is_fast = any(name.startswith(case + '.') for case in fast_classes)
         (slow if is_slow and not is_fast else fast).append(test)
     if not fast or not slow:
@@ -57,6 +62,38 @@ def partition(suite, slow_modules=SLOW_MODULES, fast_classes=FAST_CLASSES):
     if len(fast) + len(slow) != len(tests):
         raise RuntimeError('partition lost tests')
     return fast, slow
+
+
+class ExecutionResult(unittest.TextTestResult):
+    """Observe each started leaf, including duplicate and missing execution."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.started_ids = []
+
+    def startTest(self, test):
+        self.started_ids.append(test.id())
+        super().startTest(test)
+
+
+def run_layer(tests, mandatory=False, stream=None):
+    expected = [test.id() for test in tests]
+    if not expected or len(expected) != len(set(expected)):
+        print('empty or duplicate execution inventory', file=sys.stderr)
+        return 1
+    result = unittest.TextTestRunner(
+        verbosity=2, resultclass=ExecutionResult, stream=stream).run(
+            unittest.TestSuite(tests))
+    print('Layer execution: selected=%d started=%d skipped=%d' %
+          (len(expected), len(result.started_ids), len(result.skipped)), flush=True)
+    exact = (len(result.started_ids) == len(expected) and
+             set(result.started_ids) == set(expected) and
+             len(set(result.started_ids)) == len(result.started_ids) and
+             result.testsRun == len(expected))
+    if mandatory and (result.skipped or not exact):
+        print('mandatory slow layer did not execute every selected leaf exactly '
+              'once without skips', file=sys.stderr)
+        return 1
+    return 0 if result.wasSuccessful() else 1
 
 
 def docs_only(paths):
@@ -138,9 +175,8 @@ def main(argv=None):
             for test in tests:
                 print(label + '\t' + test.id())
         return 0
-    result = unittest.TextTestRunner(verbosity=2).run(
-        unittest.TestSuite(fast if args.mode == 'fast' else slow))
-    return 0 if result.wasSuccessful() else 1
+    return run_layer(fast if args.mode == 'fast' else slow,
+                     mandatory=args.mode == 'slow')
 
 
 if __name__ == '__main__':

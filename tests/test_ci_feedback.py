@@ -66,6 +66,101 @@ class PartitionContract(unittest.TestCase):
                 self.assertIn(name, f)
 
 
+class MandatorySlowExecution(unittest.TestCase):
+    def run_cases(self, case, mandatory=True):
+        tests = list(unittest.defaultTestLoader.loadTestsFromTestCase(case))
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            return ci.run_layer(tests, mandatory=mandatory, stream=io.StringIO())
+
+    def test_success_and_ordinary_failures_keep_unittest_semantics(self):
+        class Good(unittest.TestCase):
+            def test_body(self):
+                pass
+        class Bad(unittest.TestCase):
+            def test_body(self):
+                self.fail('intentional')
+        class Error(unittest.TestCase):
+            def test_body(self):
+                raise RuntimeError('intentional')
+        self.assertEqual(self.run_cases(Good), 0)
+        self.assertEqual(self.run_cases(Bad), 1)
+        self.assertEqual(self.run_cases(Error), 1)
+
+    def test_skipped_method_subtest_and_class_are_failures(self):
+        class Method(unittest.TestCase):
+            @unittest.skip('intentional')
+            def test_body(self):
+                pass
+        class Class(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                raise unittest.SkipTest('class skips all bodies')
+            def test_body(self):
+                self.fail('must not run')
+        class Subtest(unittest.TestCase):
+            def test_body(self):
+                with self.subTest():
+                    self.skipTest('subtest skip')
+        for case in (Method, Class, Subtest):
+            with self.subTest(case=case):
+                self.assertEqual(self.run_cases(case), 1)
+                self.assertEqual(self.run_cases(case, mandatory=False), 0)
+
+    def test_reviewer_reproduction_main_rejects_all_class_skips(self):
+        class Skipped(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                raise unittest.SkipTest('mandatory fixture never executes')
+            def test_body(self):
+                self.fail('must not run')
+        names = [selector + '.test_body' for selector in ci.SLOW_SELECTORS]
+        names += [case + '.test_body' for case in ci.FAST_CLASSES]
+        tests = []
+        for name in names:
+            test = Skipped('test_body')
+            test.id = lambda name=name: name
+            tests.append(test)
+        with mock.patch.object(unittest.TestLoader, 'discover',
+                               return_value=unittest.TestSuite(tests)), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ci.main(['slow']), 1)
+
+    def test_discovered_leaf_that_never_executes_fails(self):
+        class NeverRun(unittest.TestCase):
+            def test_body(self):
+                pass
+            def run(self, result=None):
+                return result
+        self.assertEqual(self.run_cases(NeverRun), 1)
+
+    def test_duplicate_execution_is_rejected(self):
+        class Twice(unittest.TestCase):
+            def test_body(self):
+                pass
+            def run(self, result=None):
+                super().run(result)
+                return super().run(result)
+        self.assertEqual(self.run_cases(Twice), 1)
+
+    def test_empty_and_duplicate_selected_leaves_are_rejected(self):
+        test = unittest.FunctionTestCase(lambda: None)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ci.run_layer([], mandatory=True), 1)
+            self.assertEqual(ci.run_layer([test, test], mandatory=True), 1)
+
+    def test_hygiene_cheap_cases_remain_fast(self):
+        names = [
+            'tests.test_hygiene_ledger_txn.CrashSafety.test_kill_after_replace_leaves_new_value',
+            'tests.test_hygiene_ledger_txn.GcResidueAndConcurrency.test_gc_plan_does_not_list_ledger_or_lock',
+            'tests.test_hygiene_ledger_txn.GcResidueAndConcurrency.test_worker_fixture_creation_survives_gc_between_mkdir_and_write',
+        ]
+        for name in names:
+            self.assertFalse(any(ci.matches(name, selector) for selector in ci.SLOW_SELECTORS))
+
+
+
 class PathClassification(unittest.TestCase):
     def test_required_path_fixtures(self):
         fixtures = [
@@ -165,6 +260,38 @@ class RunnerAggregate(unittest.TestCase):
 
 
 class WorkflowLatencyContract(unittest.TestCase):
+    def test_actual_shell_routes_docs_slow_and_weekly_full(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
+                             Loader=yaml.BaseLoader)
+        step = [s for s in workflow['jobs']['core']['steps']
+                if s.get('name') == 'Run kernel, app, plugin and example unittest batches'][0]
+        self.assertEqual(step['if'],
+                         "steps.scope.outputs.scope != 'docs' || matrix.python == '3.13'")
+        for event, scope, version, mode in (
+            ('pull_request', 'docs', '3.13', '--slow'),
+            ('push', 'docs', '3.13', '--slow'),
+            ('pull_request', 'full', '3.13', '--layered'),
+            ('push', 'full', '3.9', '--fast'),
+            ('pull_request', 'full', '3.12', '--fast'),
+            ('schedule', 'full', '3.9', '--all'),
+            ('schedule', 'full', '3.13', '--all'),
+            ('workflow_dispatch', 'full', '3.13', '--all'),
+        ):
+            with self.subTest(event=event, scope=scope, version=version), \
+                    tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                fake = root / 'bash'
+                fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$CALLS"\n')
+                fake.chmod(0o755)
+                calls = root / 'calls'
+                env = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'],
+                           CALLS=str(calls), RUNNER_TEMP=directory,
+                           GITHUB_EVENT_NAME=event, CI_SCOPE=scope, CI_PYTHON=version)
+                proc = subprocess.run(['/bin/bash', '-e', '-c', step['run']], env=env,
+                                      capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(calls.read_text().strip(), 'scripts/run_all_tests.sh ' + mode)
+
     def test_existing_contexts_permissions_and_strict_lanes_preserved(self):
         workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
                              Loader=yaml.BaseLoader)
@@ -180,7 +307,7 @@ class WorkflowLatencyContract(unittest.TestCase):
         self.assertIn('"$GITHUB_EVENT_NAME" == schedule', commands)
         self.assertIn('"$GITHUB_EVENT_NAME" == workflow_dispatch', commands)
         self.assertIn('"$CI_PYTHON" == 3.13', commands)
-        for mode in ('--all', '--fast', '--layered'):
+        for mode in ('--all', '--fast', '--layered', '--slow'):
             self.assertIn('bash scripts/run_all_tests.sh ' + mode, commands)
         for kind in ('ffmpeg', 'chrome'):
             job = workflow['jobs'][kind]
@@ -197,7 +324,7 @@ class WorkflowLatencyContract(unittest.TestCase):
         self.assertNotIn('if', scope)
         for s in core['steps']:
             if 'if' in s:
-                self.assertIn(s['if'], ("steps.scope.outputs.scope != 'docs'",
+                self.assertIn(s['if'], ("steps.scope.outputs.scope != 'docs' || matrix.python == '3.13'",
                                        "steps.scope.outputs.scope == 'docs'"))
 
 
