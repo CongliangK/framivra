@@ -81,7 +81,7 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
     无阶段记录/读写失败均静默直过（旁证尽力而为，不进主链失败路径）。"""
     try:
         old = json.loads(f.read_text(encoding="utf-8"))
-        if (old.get("input_fingerprint") not in (None, fingerprint)
+        if (isinstance(old, dict) and old.get("input_fingerprint") not in (None, fingerprint)
                 and old.get("stages")):
             # B06：旁证轮转同样走 fstxn 原子写（tmp+os.replace）——调用方已持
             # receipt.json 事务锁，prev 伴生件无须再拿第二把锁文件；写一半被杀
@@ -151,8 +151,9 @@ class Ctx:
         # Pin before resolving external subtitles so changes during loading are
         # caught too. Hash exactly the bytes parsed above, not a second read.
         validate_cache_dependencies(self)
+        self.source_identities = {}
         self.input_fingerprint = receipt_fingerprint(
-            self, timeline_bytes=self.timeline_bytes)
+            self, timeline_bytes=self.timeline_bytes, source_identities=self.source_identities)
         from .subtitles_src import resolve_subtitles_src
         resolve_subtitles_src(self)
         verify_input_identity(self)
@@ -329,6 +330,9 @@ class Ctx:
             _archive_stale_receipt(f, self.input_fingerprint)   # ⑮ 指纹翻转旁证轮转
             if ok:
                 verify_input_identity(self)
+            # Persist the pinned source manifest atomically with the receipt.
+            # Provenance only: every verification still rereads mutable inputs.
+            rec["source_identities"] = self.source_identities
             rec["timeline"] = self.timeline_sha256
             rec["updated"] = time.strftime("%F %T")
             rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
@@ -387,6 +391,7 @@ class Ctx:
                      suggested_actions=[{'op': 'run_pipeline', 'params': {'command': 'vtx all'}}])
                 mark_handled(error)
                 raise error
+            rec['source_identities'] = self.source_identities
             for name in DOWNSTREAM.get(stage, []) + [stage]:
                 rec['stages'].pop(name, None)
             from .quality import receipt_quality

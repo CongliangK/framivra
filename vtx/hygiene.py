@@ -163,19 +163,15 @@ def _md5_file(p) -> str:
 
 # ---------------------------------------------------------------- 内容寻址键
 # 键变即新条目，旧键自然成为垃圾由 gc 回收——D29（源改缓存不重渲）与
-# D38（同索引误命中旧内容）从机制上消失。源视频不整文件哈希（GB 级太贵），
-# 用 stat 指纹 + 首/尾 64KB 采样哈希（PR#1 合入补强：同尺寸 + 恢复时间戳的
-# 同路径替换不再误命中——媒体重编码首尾字节必变；与 cache_state.media_stat_digest
-# 同一判据，保持回执敏感度 == 缓存键敏感度）。
+# D38（同索引误命中旧内容）由内容键隔离。正式媒体身份见 cache-provenance.md。
 
 def _sha1(b) -> str:
     return hashlib.sha1(b).hexdigest()[:12]
 
 
 def _fp(p: Path) -> str:
-    from .cache_state import media_stat_digest
-    st = p.stat()
-    return f"{p}:{st.st_size}:{st.st_mtime_ns}:{media_stat_digest(p)}"
+    from .cache_state import verified_media_token
+    return f"{p}:{verified_media_token(p)}"
 
 
 def tl_md5(c) -> str:

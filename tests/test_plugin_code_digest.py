@@ -148,6 +148,7 @@ class PluginCodeDigest(unittest.TestCase):
         context = SimpleNamespace(
             tl={"sources": [{"id": "s1", "path": "a.wav", "denoise": True}]},
             tl_path=timeline, root=self.root.parent, cache=self.root.parent / "cache")
+        (self.root.parent / "a.wav").write_bytes(b"source fixture")
         active = [{"name": "denoise", "version": "unchanged"}]
         with mock.patch.object(hooks, "active_plugins", return_value=active), \
              mock.patch.object(hooks._registry, "key_map", return_value={}), \
@@ -162,15 +163,15 @@ class PluginCodeDigest(unittest.TestCase):
             self.assertNotEqual(product, denoise.product_path(context, "s1"))
             self.assertNotEqual(receipt, receipt_fingerprint(context))
 
-    def test_no_active_plugins_preserves_receipt_fingerprint(self):
-        from vtx.cache_state import receipt_fingerprint
+    def test_no_active_plugins_preserves_versioned_receipt_domain(self):
+        from vtx.cache_state import receipt_fingerprint, RECEIPT_SCHEMA
 
         timeline = self.root.parent / "timeline.json"
         timeline.write_bytes(b"{}")
         context = SimpleNamespace(tl={}, tl_path=timeline, root=self.root.parent)
         with mock.patch.object(hooks, "active_plugins", return_value=[]):
             self.assertEqual(hooks.active_plugins_digest(context), "")
-            self.assertEqual(receipt_fingerprint(context), hashlib.sha256(b"{}").hexdigest())
+            self.assertEqual(receipt_fingerprint(context), hashlib.sha256((RECEIPT_SCHEMA + "\0").encode() + b"{}").hexdigest())
 
 
 if __name__ == "__main__":

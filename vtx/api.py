@@ -7,7 +7,7 @@ sys.path hack（§1.4 双模块裂分防护）。
 
 导出分组：
   Ctx                     渲染上下文（timeline 加载/fps 契约/回执读写入口）
-  media_stat_digest       源媒体 stat 身份（缓存键/回执指纹的公共判据）
+  media_stat_digest       Fast 采样身份（兼容 API；不授权正式缓存/回执）
   audio_key               prepare 裸提取音频的内容寻址键（缝 A 插件产物路径的锚）
   plugin_code_digest      插件代码内容摘要（产物键掺入——改代码不 bump version 时
                           产物键也翻转，防旧产物被缓存命中「洗白」，P6 A-P1-1）
