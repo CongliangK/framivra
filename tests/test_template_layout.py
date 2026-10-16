@@ -30,6 +30,14 @@ class TemplateLayout(unittest.TestCase):
         for name in ("title-card", "lower-third"):
             self.assertTrue((skill / "assets" / (name + ".html")).is_file())
 
+    def test_tool_skill_documents_canonical_mounts(self):
+        text = (REPO / "docs/skill/SKILL.md").read_text()
+        self.assertIn("~/.agents/skills/video/", text)
+        self.assertIn("`SKILL.md`、`references`、`assets`", text)
+        self.assertIn("`vtx`、`scripts`、`templates`", text)
+        self.assertNotIn("历史路径继续可用", text)
+        self.assertNotIn("vtx/references/assets/scripts/skills", text)
+
     def test_workflow_manifests_and_tech_talk_internal_templates(self):
         for name in ("tech-talk", "skill-demo"):
             root = REPO / "templates" / name

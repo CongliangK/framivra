@@ -95,7 +95,7 @@ video_tools/
 | 时间线人审预览 | 浏览器打开 `<video_tools>/vtx/preview.html` |
 | 环境三检 / 分层清单 | `env python3 <video_tools>/vt.py doctor` / `vt.py apps|plugins|skills list` |
 
-`<video_tools>` = 本仓根（live 挂载 `~/.agents/skills/video/` 为符号链接，历史路径继续可用——vtx/references/assets/scripts/skills 五+一链接）。完整语义与坑表 → `references/edit.md`，各脚本 → `--help`。
+`<video_tools>` = 本仓根（live 注册根 `~/.agents/skills/video/` 下六件链接：`SKILL.md`、`references`、`assets` 指向本仓 `docs/skill/` 对应件，`vtx`、`scripts`、`templates` 指向本仓同名目录）。完整语义与坑表 → `references/edit.md`，各脚本 → `--help`。
 
 ## 产线衔接
 - 科技口播产线（调研→实拍→动效→渲染→发布）完整 SOP → `templates/tech-talk/SKILL.md`；视频项目工作区在 `~/文档/04_bilibili视频/`（各期项目文件夹 + `_library/` 方法论/资产 + `_archive/`）。
