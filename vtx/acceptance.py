@@ -20,10 +20,11 @@ import sys
 import tempfile
 import uuid
 
-from .cache_state import file_digest, media_stat_digest
+from .cache_state import file_digest, media_stat_digest, IDENTITY_SCHEMA, RECEIPT_SCHEMA
 from . import execution_links
 
-SCHEMA = 'vtx.acceptance/1'
+SCHEMA = 'vtx.acceptance/2'
+LEGACY_SCHEMA = 'vtx.acceptance/1'
 STAGES = ('validate', 'audit', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
 STATUSES = {'passed', 'failed', 'skipped', 'unknown'}
 RESERVED_GATES = {'process', 'input_stability', 'tool_versions', 'visual_content', 'media'}
@@ -203,8 +204,8 @@ def build(timeline, output):
             raise ValueError(f'input changed during snapshot: {name}')
         records.append({'path': 'inputs/' + name, 'source_path': name, 'role': role,
                         'identity_level': 'Verified', **before,
-                        'runtime_identity_level': 'Fast' if role == 'source' else 'Verified',
-                        'runtime_identity': media_stat_digest(src) if role == 'source' else before['sha256']})
+                        'runtime_identity_level': 'Verified',
+                        'runtime_identity': before['sha256']})
     export_id = str(uuid.uuid4())
     env = environment()
     write_json(output / 'environment.json', env)
@@ -268,7 +269,8 @@ def build(timeline, output):
         'timeline': 'inputs/' + timeline.name, 'inputs': records,
         'dependency_closure': {'status': 'unknown', 'self_contained': False,
             'reason': 'Declared receipt dependencies only; HTML imports, system fonts, plugins and external resources are not exhaustively discovered.'},
-        'receipt_identity_level': 'Fast', 'receipt_input_fingerprint': receipt.get('input_fingerprint'),
+        'receipt_identity_level': 'Verified', 'receipt_identity_scope': 'declared-source-files',
+        'receipt_input_fingerprint': receipt.get('input_fingerprint'),
         'build': {'workspace_timeline': timeline.name, 'commands': commands, 'executions': executions, 'environment_overrides': policy,
                   'plugin_config': {'content': {}, 'sha256': config_digest},
                   'environment_policy': ENV_POLICY, 'exit_code': code,
@@ -425,9 +427,11 @@ def verify(package, expected_manifest_sha256, source_root=None):
     m = read_json(package / 'manifest.json')
     fields = {'schema', 'run_id', 'created_at_utc', 'timeline', 'inputs', 'dependency_closure',
               'receipt_identity_level', 'receipt_input_fingerprint', 'build', 'gates', 'files', 'accepted'}
+    if isinstance(m, dict) and m.get('schema') == SCHEMA:
+        fields.add('receipt_identity_scope')
     if not isinstance(m, dict) or set(m) != fields:
         raise ValueError('missing or unknown manifest fields')
-    if m.get('schema') != SCHEMA or not isinstance(m.get('run_id'), str):
+    if m.get('schema') not in (SCHEMA, LEGACY_SCHEMA) or not isinstance(m.get('run_id'), str):
         raise ValueError('unsupported package schema or missing run_id')
     uuid.UUID(m['run_id'])
     actual = set()
@@ -447,7 +451,10 @@ def verify(package, expected_manifest_sha256, source_root=None):
             raise ValueError(f'missing required evidence: {required}')
     env = read_json(package / 'environment.json')
     validate_metadata(m, env)
-    if m['dependency_closure'].get('self_contained') is not False or m['receipt_identity_level'] != 'Fast':
+    legacy = m['schema'] == LEGACY_SCHEMA
+    if not legacy and m.get('receipt_identity_scope') != 'declared-source-files':
+        raise ValueError('unsupported receipt identity scope')
+    if m['dependency_closure'].get('self_contained') is not False or m['receipt_identity_level'] != ('Fast' if legacy else 'Verified'):
         raise ValueError('unsupported dependency or runtime identity claim')
     timeline = package / relative(m['timeline'])
     expected_inputs = collect_inputs(timeline)
@@ -457,7 +464,7 @@ def verify(package, expected_manifest_sha256, source_root=None):
         if name in seen or row['path'] != 'inputs/' + name or row['role'] != expected_inputs.get(name):
             raise ValueError('input inventory mismatch')
         seen[name] = row
-        level = 'Fast' if row['role'] == 'source' else 'Verified'
+        level = 'Fast' if legacy and row['role'] == 'source' else 'Verified'
         if row.get('runtime_identity_level') != level:
             raise ValueError('runtime identity level mismatch')
         token = row.get('runtime_identity')
@@ -481,6 +488,15 @@ def verify(package, expected_manifest_sha256, source_root=None):
     if 'artifacts/receipt.json' in m['files'] and (receipt.get('timeline') != m['files'][m['timeline']]['sha256'] or
                     receipt.get('input_fingerprint') != m['receipt_input_fingerprint']):
         raise ValueError('receipt is not bound to the packaged timeline/build')
+    if receipt and not legacy and receipt.get('schema') != RECEIPT_SCHEMA:
+        raise ValueError('receipt identity schema mismatch')
+    if receipt and not legacy:
+        expected_sources = {row['source_path']: {
+            'schema': IDENTITY_SCHEMA, 'level': 'Verified', 'algorithm': 'sha256',
+            'scope': 'complete-file', 'digest': row['sha256']}
+            for row in m['inputs'] if row['role'] == 'source'}
+        if receipt.get('source_identities') != expected_sources:
+            raise ValueError('receipt source identities disagree with snapshot')
     if not receipt and m['build']['exit_code'] == 0:
         raise ValueError('successful build lacks receipt')
     env = read_json(package / 'environment.json')

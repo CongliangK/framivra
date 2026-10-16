@@ -6,10 +6,8 @@ bench_p2 各 ~0.4-5s）——按输入内容键存档回执后，先测者归档
 wav 域 TP 不算数（原生 aac 真峰过冲教训），跨域共享危险且它只 2.5s。
 
 回执文件：<项目>/cache/audio/loudness_receipts.json
-  {"entries": {key: {"path","size","mtime_ns","digest","i_lufs","tp_dbfs","when"}}}
-键 = sha1(f"{path}|{size}|{mtime_ns}|{digest}")[:12]——digest 用
-cache_state.media_stat_digest（首尾 64KB 采样哈希，与 hygiene._fp 同判据）。
-文件任何变动（size/mtime_ns/内容采样）→ 键变 → 自然失效重测，不跨版本复用数字。
+  {"entries": {key: {"path","size","mtime_ns","identity","i_lufs","tp_dbfs","when"}}}
+键使用完整 Verified 媒体身份，语义见 docs/cache-provenance.md。
 
 API 不依赖 Ctx（scripts/content_gates.py 侧复用）：
   lookup(path, root=None) -> dict|None
@@ -33,7 +31,7 @@ root 缺省 = media 父目录的父目录（out/final.mp4 → 项目根）。
 import hashlib, json, os, threading, time
 from pathlib import Path
 
-from .cache_state import media_stat_digest
+from .cache_state import verified_media_identity
 from . import fstxn
 
 _LOCK = threading.Lock()
@@ -48,14 +46,15 @@ def _key_of(path: Path):
     """(key, entry 素材) 或 None（文件不存在/不可 stat——无结论可言）。"""
     try:
         st = path.stat()
-        digest = media_stat_digest(path)
+        identity = verified_media_identity(path)
     except OSError:
         return None
     key = hashlib.sha1(
-        f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|{digest}".encode()
+        json.dumps(["framivra.loudness.v2", str(path.resolve()), identity],
+                   sort_keys=True).encode()
     ).hexdigest()[:12]
     return key, {"path": str(path.resolve()), "size": st.st_size,
-                 "mtime_ns": st.st_mtime_ns, "digest": digest}
+                 "mtime_ns": st.st_mtime_ns, "identity": identity}
 
 
 def _load(rp: Path) -> dict:
@@ -93,7 +92,8 @@ def lookup(path, root=None):
         return None
     with _LOCK:
         e = _load(_receipts_path(path, root))["entries"].get(k[0])
-    if isinstance(e, dict) and isinstance(e.get("i_lufs"), (int, float)) \
+    if isinstance(e, dict) and e.get("identity") == k[1]["identity"] \
+            and isinstance(e.get("i_lufs"), (int, float)) \
             and isinstance(e.get("tp_dbfs"), (int, float)):
         return e
     return None
@@ -105,7 +105,7 @@ def measure_and_store(path, run_fn, root=None):
     path = Path(path)
     k = _key_of(path)
     i, tp = run_fn()
-    if k is None or i is None or tp is None:
+    if k is None or i is None or tp is None or _key_of(path) != k:
         return {"i_lufs": i, "tp_dbfs": tp}
     entry = dict(k[1], i_lufs=float(i), tp_dbfs=float(tp),
                  when=time.strftime("%F %T"))
