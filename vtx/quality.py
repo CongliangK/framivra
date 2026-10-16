@@ -37,11 +37,17 @@ def classify(*, scope, preview=False, evidence=None):
 def receipt_quality(record):
     """Runtime Fast identity and stage success do not establish visual acceptance."""
     stages = record.get('stages', {})
-    qc = stages.get('qc', {})
+    stages = stages if isinstance(stages, dict) else {}
+    # Old/current-fingerprint receipts can contain malformed observations.
+    # Annotation must neither repair those records nor break an unrelated write.
+    def observation(name):
+        value = stages.get(name)
+        return value if isinstance(value, dict) else {}
+    qc = observation('qc')
     status = 'passed' if qc.get('ok') is True else 'failed' if qc.get('ok') is False else 'unknown'
     if status == 'passed' and qc.get('skipped_probes'):
         status = 'partial'
-    preview = any(stages.get(k, {}).get('ok') is True for k in ('video_draft', 'mux_draft'))
+    preview = any(observation(k).get('ok') is True for k in ('video_draft', 'mux_draft'))
     # A formal mux/QC takes display precedence over an unrelated retained draft.
     preview = preview and not any(k in stages for k in ('mux', 'qc'))
     return classify(scope='final_movie', preview=preview,

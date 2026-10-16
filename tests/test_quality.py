@@ -83,3 +83,34 @@ class Quality(unittest.TestCase):
             record = json.loads((root / 'out/receipt.json').read_text())
             self.assertEqual(record['quality']['display'], 'unknown')
             self.assertNotIn('video_draft', record['stages'])
+
+    def test_malformed_prior_observations_do_not_break_receipt_mutations(self):
+        # The twelve malformed cases also run against unchanged base externally.
+        missing = object()
+        for stage, value, operation in itertools.product(
+                ('qc', 'video_draft', 'mux_draft'),
+                (None, [], 'corrupt', 1, {}, missing), ('receipt', 'begin_stage')):
+            with self.subTest(stage=stage, value=value, operation=operation):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    p = root / 'timeline.json'
+                    p.write_text(json.dumps({'project': {'fps': 30, 'width': 64,
+                        'height': 48, 'duration_frames': 4},
+                        'sources': [], 'video_tracks': []}))
+                    c = Ctx(p)
+                    c.receipt('validate', True)
+                    rp = root / 'out/receipt.json'
+                    record = json.loads(rp.read_text())
+                    if value is not missing:
+                        record['stages'][stage] = value
+                    rp.write_text(json.dumps(record))
+                    if operation == 'receipt':
+                        c.receipt('validate', True)
+                    else:
+                        c.begin_stage('audit')
+                    after = json.loads(rp.read_text())
+                    self.assertEqual(after['quality']['display'], 'unknown')
+                    self.assertEqual(after['quality']['evidence']['production_gates'], 'unknown')
+                    if value is not missing:
+                        self.assertEqual(after['stages'].get(stage), value)
+                    self.assertTrue(after['stages']['validate']['ok'])
