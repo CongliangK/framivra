@@ -21,6 +21,7 @@ MEDIA_TESTS = {
         'tests.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
         'tests.test_filter_threads',
         'tests.test_composite_determinism',
+        'tests.test_frame_source',
         'tests.test_post_loudness',
         'tests.test_mux_history',
         'tests.test_audio_report.TestEndToEndSynthetic',
