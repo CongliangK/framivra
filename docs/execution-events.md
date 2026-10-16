@@ -334,3 +334,20 @@ the frozen input fingerprint and retains that hash, but never includes media
 bytes or reads PNGs. Missing media at packing time is insufficient evidence.
 These are local consistency checks, not remote attestation or independent pixel
 recomputation from a PNG-free bundle.
+
+Preflight also writes `runtime-preflight-status.json` before strict runtime
+identity validation. This diagnostic-only record contains a fixed whitelist of
+field presence/shape states and fixed error categories, never provider values,
+argv, paths, exception text, headers or environment. Unknown categories remain
+`unrecognized_error`; they do not become valid observations. Thus rejected
+preflight keeps a small failure classification in the owned experiment root;
+it still fails the runner and packer and cannot establish any arm acceptance.
+The existing successful runtime/environment receipt and observation budgets
+are unchanged. Fixture pages use shapes without text; this diagnostic adds no
+font or backend inference and does not claim a font fallback closure.
+
+If diagnostic summarization or persistence also fails, the original identity
+rejection remains the primary exception, with only a fixed sanitized diagnostic
+failure as its explicit cause. If identity succeeds but required diagnostic
+persistence fails, preflight still fails with that fixed diagnostic error before
+any arm. Neither path exposes diagnostic exception text or grants acceptance.

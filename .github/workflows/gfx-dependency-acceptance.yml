@@ -1,0 +1,70 @@
+name: Issue 47 bounded strict HTML acceptance
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gfx-dependency-acceptance.yml'
+      - 'tests/run_gfx_dependency_acceptance.py'
+      - 'tests/test_gfx_dependency_acceptance.py'
+permissions:
+  contents: read
+concurrency:
+  group: issue47-strict-html-acceptance
+  cancel-in-progress: false
+jobs:
+  acceptance:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'dot/issue47-html-validation-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUNBUFFERED: '1'
+      VTX_DOCTOR_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Check official tools and prepare distro font plus test libraries
+        run: |
+          command -v google-chrome
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+          command -v ffmpeg
+          command -v ffprobe
+          ffmpeg -version
+          ffprobe -version
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      - name: Strict closure and actual pixel/cache acceptance
+        run: |
+          export HOME="$RUNNER_TEMP/issue47-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export VTX_CONFIG="$HOME/config.json"
+          mkdir -p "$XDG_CONFIG_HOME"
+          printf '{}\n' > "$VTX_CONFIG"
+          python tests/run_gfx_dependency_acceptance.py --output "$RUNNER_TEMP/issue47-dependencies"
+      - name: Enforce artifact byte budget even on failure
+        id: evidence_budget
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'issue47-dependencies' / 'evidence'
+          assert root.is_dir(), 'required evidence missing'
+          assert not any(p.suffix.lower() in ('.ttf', '.otf', '.woff', '.woff2') for p in root.rglob('*')), 'artifact unexpectedly contains font bytes'
+          assert sum(p.stat().st_size for p in root.rglob('*') if p.is_file()) <= 20*1024*1024, 'evidence over 20 MiB; acceptance insufficient'
+          PY
+      - name: Upload bounded positive and failure evidence
+        if: always() && steps.evidence_budget.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue47-dependencies-${{ github.event.pull_request.head.sha }}
+          retention-days: 7
+          if-no-files-found: error
+          path: ${{ runner.temp }}/issue47-dependencies/evidence/

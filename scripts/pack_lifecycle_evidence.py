@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 LIMIT = 32 * 1024 * 1024
-TOP = {'owner.json', 'preflight.json', 'summary.json'}
+TOP = {'owner.json', 'preflight.json', 'summary.json', 'runtime-preflight-status.json'}
 ARM = {'timeline.json', 'events.jsonl', 'runtime-raw.json', 'gfx-run.json',
        'command-result.json', 'lifecycle-summary.json'}
 

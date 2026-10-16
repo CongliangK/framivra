@@ -165,13 +165,97 @@ def stable_host(manifest):
         'font_environment', 'git_sha', 'git_clean')}
 
 
-def preflight(chrome, font_configs):
+def runtime_preflight_status(raw):
+    """Fixed-size diagnostic only; never serialize provider values or exceptions."""
+    fields = {'browser_version': dict, 'system_info': dict,
+              'actual_executable': dict, 'effective_argv': list,
+              'process_binding': dict, 'viewport': dict,
+              'color_space': str, 'alpha_path': str}
+    reasons = ('probe_failed', 'process_identity_unavailable',
+               'root_session_unavailable', 'close_failed',
+               'page_observation_required', 'not_observed')
+    value = raw if type(raw) is dict else {}
+    errors = value.get('errors')
+    errors = errors if type(errors) is dict else {}
+    status = {}
+    for field, expected in fields.items():
+        item = value.get(field)
+        status[field] = ('missing' if item is None else
+                         'present' if type(item) is expected else 'invalid_shape')
+    # No provider-controlled keys/values, argv, paths, headers or environment.
+    classified = {}
+    for field in (*fields, 'session_close'):
+        if field in errors:
+            reason = errors[field]
+            classified[field] = reason if type(reason) is str and reason in reasons else 'unrecognized_error'
+    return {'schema': 'issue63.runtime_preflight_status/1',
+            'diagnostic_only': True, 'raw_shape_valid': type(raw) is dict,
+            'schema_valid': type(value.get('schema')) is int and value.get('schema') == 1,
+            'source_valid': value.get('source') == 'live-cdp',
+            'errors_shape_valid': type(value.get('errors')) is dict,
+            'unrecognized_error_fields': any(key not in (*fields, 'session_close') for key in errors),
+            'fields': status, 'errors': classified}
+
+
+
+def runtime_observation_status(observations):
+    """Bounded diagnostic projection of existing ledger data, without raw keys."""
+    if type(observations) is not dict or len(observations) > 256:
+        return {'schema': 'issue63.runtime_observation_status/1',
+                'state': 'invalid_or_overbound', 'observations': []}
+    return {'schema': 'issue63.runtime_observation_status/1', 'state': 'observed',
+            'observations': [runtime_preflight_status(raw) for raw in observations.values()]}
+
+
+def validate_runtime_observation_status(value):
+    """Accept only the same finite projection, never provider strings or keys."""
+    if type(value) is not dict or set(value) != {'schema', 'state', 'observations'}:
+        raise ValueError('invalid runtime diagnostic')
+    if value['schema'] != 'issue63.runtime_observation_status/1' or value['state'] not in (
+            'observed', 'invalid_or_overbound', 'unavailable'):
+        raise ValueError('invalid runtime diagnostic schema/state')
+    rows = value['observations']
+    if type(rows) is not list or len(rows) > 256 or (value['state'] != 'observed' and rows):
+        raise ValueError('invalid runtime diagnostic rows')
+    template = runtime_preflight_status({})
+    reasons = {'probe_failed', 'process_identity_unavailable', 'root_session_unavailable',
+               'close_failed', 'page_observation_required', 'not_observed', 'unrecognized_error'}
+    for row in rows:
+        if type(row) is not dict or set(row) != set(template):
+            raise ValueError('invalid runtime diagnostic row')
+        for key, default in template.items():
+            if type(default) is bool and type(row[key]) is not bool:
+                raise ValueError('invalid runtime diagnostic flag')
+        if row['schema'] != template['schema'] or row['diagnostic_only'] is not True:
+            raise ValueError('invalid runtime diagnostic identity')
+        fields, errors = row['fields'], row['errors']
+        if (type(fields) is not dict or set(fields) != set(template['fields']) or
+                any(type(v) is not str or v not in ('missing','present','invalid_shape') for v in fields.values()) or
+                type(errors) is not dict or set(errors) - (set(fields) | {'session_close'}) or
+                any(type(v) is not str or v not in reasons for v in errors.values())):
+            raise ValueError('invalid runtime diagnostic categories')
+    return value
+
+def preflight(chrome, font_configs, *, diagnostic_root=None):
     from vtx.gfx_render import Browser
     browser = Browser(str(chrome), tabs=1, width=1920, height=1080, experiment_color_profile="srgb")
     try:
         browser.start()
         raw = gfx_runtime.collect(browser.port, run_id=str(uuid.uuid4()))
-        identity = gfx_runtime.identity(raw)
+        diagnostic_failed = False
+        if diagnostic_root is not None:
+            try:
+                write_json(diagnostic_root / 'runtime-preflight-status.json', runtime_preflight_status(raw))
+            except Exception:
+                diagnostic_failed = True
+        try:
+            identity = gfx_runtime.identity(raw)
+        except Exception as failure:
+            if diagnostic_failed:
+                raise failure from RuntimeError('runtime preflight diagnostic unavailable')
+            raise
+        if diagnostic_failed:
+            raise RuntimeError('runtime preflight diagnostic unavailable') from None
     finally:
         browser.stop()
     manifest = host_manifest(identity, str(uuid.uuid4()), font_configs)
@@ -297,7 +381,7 @@ def run_experiment(parent, chrome, font_configs, *, rounds=3, scopes=('gfx', 'ch
         template = root / 'fixture'
         timeline = fixture(template)
         c = Ctx(timeline)
-        identity, manifest, raw = preflight(chrome, font_configs)
+        identity, manifest, raw = preflight(chrome, font_configs, diagnostic_root=root)
         write_json(root / 'preflight.json', {'runtime': raw, 'environment': manifest})
         plans = {(round_index, scope): make_plan(c, identity, stable_host(manifest), scope)
                  for round_index in range(rounds) for scope in scopes}

@@ -18,6 +18,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 rc=0
+# tests/test_gfx_dependencies.py is included by root discovery (no Chrome required).
 env python3 -m unittest discover -s tests -t . -v || rc=$?
 for d in apps/*/tests plugins/*/tests templates/*/tests; do
   [ -d "$d" ] || continue

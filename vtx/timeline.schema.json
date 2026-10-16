@@ -42,6 +42,7 @@
           "minimum": 1,
           "description": "成片总帧数（画布时长）。任何帧都可能无内容而显示黑场——这是合法输出，语义层规划负责避免"
         },
+        "gfx_dependency_policy": {"type": "string", "enum": ["legacy", "strict"]},
         "cache_dependencies": {
           "type": "array",
           "items": {

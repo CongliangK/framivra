@@ -34,11 +34,25 @@ def resolve_evidence_path(path):
 
 
 def input_fingerprint(c, clips):
-    paths = sorted(set([s for s, _ in clips] + declared_dependencies(c)))
+    from scripts.gfx_golden import full_gfx_clip
+    paths = set([s for s, _ in clips] + declared_dependencies(c))
+    for src, dur in clips:
+        paths.update(declared_dependencies(c, full_gfx_clip(c, src, dur)))
+    # Page declarations are canonical absolute paths. Preserve equivalent
+    # isolated-root inputs without changing the resolver's logical URL bases.
+    normalized = {}
+    for name in paths:
+        path = (c.root / name).resolve()
+        try:
+            label = str(path.relative_to(c.root.resolve()))
+        except ValueError:
+            label = str(path)
+        normalized[label] = path
     timeline_bytes = c.tl_path.read_bytes()
     require(timeline_bytes == c.timeline_bytes, "on-disk timeline changed since context creation")
     return digest({"timeline_sha256": hashlib.sha256(timeline_bytes).hexdigest(), "files": [
-        [p, hashlib.sha256((c.root / p).read_bytes()).hexdigest()] for p in paths]})
+        [label, hashlib.sha256(path.read_bytes()).hexdigest()]
+        for label, path in sorted(normalized.items())]})
 
 
 def require(condition, message):
@@ -247,7 +261,9 @@ def _producer_binding(run, plan, viewport):
         require(fields.get('runtime_sha256') in runtimes and fields.get('page_witness_sha256') in witnesses,
                 'unbound publication observation')
     for instance in run['instances']:
-        expected_key = gfx_key(producer_context, {'src': instance['src'], 'dur': instance['dur']})
+        from scripts.gfx_golden import full_gfx_clip
+        expected_key = gfx_key(producer_context, full_gfx_clip(
+            producer_context, instance['src'], instance['dur']))
         for frame, record in instance['frames'].items():
             fields = commits.get(record.get('publication_seq'))
             require(isinstance(fields, dict) and fields['gfx_key'] == expected_key and

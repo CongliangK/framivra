@@ -158,19 +158,57 @@ def _dependency_list(owner, label, *, c=None, origin='$'):
     return deps
 
 
-def declared_dependencies(c, clip=None):
-    """Project declarations or canonical project/clip union; no inferred closure."""
-    deps = _dependency_list(_get(c, c.tl, "project", '$', {}), 'project',
-                            c=c, origin='$.project')
-    if clip is None or not _native_operation(c, clip, lambda: "cache_dependencies" in clip,
-                                            '$', 'clip_dependency_membership'):
-        return deps
-    # Public callers provide a clip object, not its timeline location. Do not
-    # scan/re-read the timeline just to invent an index for this entry point.
-    local = _dependency_list(clip, 'clip', c=c)
+def _declaration_inputs(c, clip, *, origin='$'):
+    """Read each owner once; do not replay native operations for attribution."""
+    project = _dependency_list(_get(c, c.tl, "project", '$', {}), 'project',
+                               c=c, origin='$.project')
+    local = []
+    if clip is not None and _native_operation(c, clip, lambda: "cache_dependencies" in clip,
+                                              origin, "clip_dependency_membership"):
+        local = _dependency_list(clip, 'clip', c=c, origin=origin)
+    return project, local
+
+
+def _declaration_paths(c, project, local):
     if not local:
-        return deps
-    return sorted({str((c.root / item).resolve()) for item in deps + local})
+        return project
+    return sorted({str((c.root / item).resolve()) for item in project + local})
+
+
+def declared_dependencies(c, clip=None):
+    """Compatibility path adapter from the shared declaration resolver.
+
+    Project-only ordering is historical; nonempty clip lists use canonical union.
+    No HTML parsing or transitive/network closure is implied by this adapter.
+    """
+    project, local = _declaration_inputs(c, clip)
+    return _declaration_paths(c, project, local)
+
+
+def resolved_declarations(c, clip=None, *, origin='$'):
+    """Resolve declared identity with explicit origins and full content hashes.
+
+    Native field/list operations remain here for operation-level diagnostics;
+    file I/O is deliberately separate from native operation attribution.
+    """
+    project, local = _declaration_inputs(c, clip, origin=origin)
+    paths = _declaration_paths(c, project, local)
+    origins = {}
+    for scope, items in [('project', project), ('clip', local)]:
+        for index, item in enumerate(items):
+            path = str((c.root / item).resolve())
+            origins.setdefault(path, []).append({'scope': scope, 'index': index, 'declaration': item})
+    entries = []
+    for item in paths:
+        path = str((c.root / item).resolve())
+        try:
+            value = file_digest(c.root / item)
+        except (OSError, ValueError) as error:
+            from .gfx_dependencies import DependencyError
+            raise DependencyError('declared dependency unreadable', path, origins[path], detail=str(error)) from error
+        entries.append({'path': path, 'sha256': value, 'origins': origins[path], 'declaration': item})
+    return entries
+
 
 
 class _DependencyValues:
@@ -229,6 +267,14 @@ def validate_cache_dependencies(c):
             mark_handled(error)
             raise error
 
+    from .gfx_dependencies import policy, resolve
+    if policy(c) == 'strict':
+        for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
+            track_origin = f'$.video_tracks[{ti}]'
+            if _get(c, track, 'kind', track_origin) == 'gfx':
+                for ci, clip in _indexed(c, _get(c, track, 'clips', track_origin, []), track_origin + '.clips'):
+                    resolve(c, clip, origin=f'{track_origin}.clips[{ci}]')
+
 
 class InputIdentityError(RuntimeError):
     """A build cannot certify products after its pinned inputs have changed."""
@@ -253,6 +299,17 @@ def verify_input_identity(c):
              suggested_actions=[{'op': 'restore_or_restart_inputs', 'params': {}}])
         mark_handled(error)
         raise error
+
+
+def _append_gfx_dependency_identity(c, h, gfx_inputs):
+    """Versioned #47 suffix; historical serialization stays an explicit adapter."""
+    from .gfx_dependencies import resolve, identity, policy
+    for clip, path, origin, exists in gfx_inputs:
+        if not exists and policy(c) == 'legacy':
+            continue
+        record = resolve(c, clip, html_path=path, origin=origin)
+        if record['policy'] != 'legacy' or not record['legacy_key_safe']:
+            h.update(b'gfx-dependencies-v1|' + identity(record))
 
 
 def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
@@ -283,6 +340,7 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         prefix = _text(c, _get(c, s, 'path', origin, ''), origin + '.path') + ':'
         digest = media_stat_digest(p) if p.is_file() else 'MISSING'
         h.update(_encode(c, prefix + digest + '\n', origin + '.path'))
+    gfx_inputs = []
     tracks = _get(c, c.tl, 'video_tracks', '$', [])
     for ti, tr in _indexed(c, tracks, '$.video_tracks'):
         track_origin = f'$.video_tracks[{ti}]'
@@ -293,8 +351,10 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
             origin = f'{track_origin}.clips[{ci}]'
             p = _path(c, _field(c, cl, 'src', origin), origin + '.src')
             prefix = _text(c, _field(c, cl, 'src', origin), origin + '.src') + ':'
-            digest = file_digest(p) if p.is_file() else 'MISSING'
+            exists = p.is_file()
+            digest = file_digest(p) if exists else 'MISSING'
             h.update(_encode(c, prefix + digest + '\n', origin + '.src'))
+            gfx_inputs.append((cl, p, origin, exists))
     for index, item in enumerate(declared_dependencies(c)):
         origin = f'$.project.cache_dependencies[{index}]'
         prefix = item + ':'
@@ -328,6 +388,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         h.update(_encode(c, _pdigest, '$', status='unknown', source={
             'domain': 'provider', 'provider': 'active_plugins_digest',
             'field': 'return_value'}))
+    # Append only after all historical producer operations succeed. The shared
+    # #47 record adds path/closure identity without reordering native failures.
+    _append_gfx_dependency_identity(c, h, gfx_inputs)
     return h.hexdigest()
 
 

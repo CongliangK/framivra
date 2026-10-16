@@ -10,6 +10,10 @@ on:
       - 'tests/test_gfx_*.py'
       - 'tests/test_process_samples.py'
       - 'tests/test_lifecycle_hosted.py'
+      - 'tests/run_lifecycle_strict_smoke.py'
+      - 'tests/run_gfx_dependency_acceptance.py'
+      - 'tests/test_lifecycle_dependencies.py'
+      - 'tests/test_lifecycle_strict_smoke.py'
       - 'docs/execution-events.md'
 permissions:
   contents: read
@@ -44,8 +48,30 @@ jobs:
         timeout-minutes: 3
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk fonts-inter fonts-jetbrains-mono
+          sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk fonts-inter fonts-jetbrains-mono fonts-dejavu-core
           python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13' 'jsonschema>=4.18,<5'
+      - name: Separate cold strict publication smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_PARENT-strict/evidence"
+          export HOME="$EVIDENCE_PARENT-strict/home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export VTX_CONFIG="$HOME/config.json"
+          mkdir -p "$XDG_CONFIG_HOME"
+          printf '{}\n' > "$VTX_CONFIG"
+          printf '125\n' > "$EVIDENCE_PARENT-strict/evidence/exit-code.txt"
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          set +e
+          timeout --signal=TERM --kill-after=10s 60s python tests/run_lifecycle_strict_smoke.py \
+            --output "$EVIDENCE_PARENT-strict" > "$EVIDENCE_PARENT-strict/smoke.raw.log" 2>&1
+          rc=$?
+          printf '%s\n' "$rc" > "$EVIDENCE_PARENT-strict/evidence/exit-code.txt"
+          exit "$rc"
+      - name: Audit separate strict smoke artifact budget
+        id: strict_budget
+        if: always()
+        run: python tests/run_lifecycle_strict_smoke.py --seal --output "$EVIDENCE_PARENT-strict"
       - name: Three paired cold rounds in both scopes
         shell: bash
         run: |
@@ -80,12 +106,16 @@ jobs:
       - name: Package bounded evidence without success trimming
         if: always()
         run: python scripts/pack_lifecycle_evidence.py --parent "$EVIDENCE_PARENT" --output "$EVIDENCE_BUNDLE"
-      - name: Upload private bounded evidence
+      - name: Enforce shared evidence upload budget
+        id: evidence_total
+        if: always()
+        run: python tests/run_lifecycle_strict_smoke.py --select-uploads --output "$EVIDENCE_PARENT-strict" --bundle "$EVIDENCE_BUNDLE" --legacy-parent "$EVIDENCE_PARENT"
+      - name: Upload bounded combined evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lifecycle-63-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-          path: ${{ env.EVIDENCE_BUNDLE }}
+          path: ${{ env.EVIDENCE_PARENT }}-strict/selected-upload
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
