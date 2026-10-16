@@ -7,7 +7,7 @@ v2 §1.3（2026-09-13）新增：解码域真峰 TP 判定项（阈 -1.0 dBFS，
 权威值、同一回执不重测）——limiter 恒在 build_audio 尾部后，成片 TP 超阈 = 上游
 削波/限幅失效，属产物可信度问题，归内核 qc。
 """
-import json, re, sys
+import json, re, sys, tempfile
 from contextvars import copy_context
 import operator
 from concurrent.futures import ThreadPoolExecutor
@@ -321,7 +321,6 @@ def qc(c):
     # 已对 final/qc_clean/4 个源 × 多帧位验证与旧 select=eq(n,N) 提帧逐字节一致。
     def gray_frame(path: Path, n: int, pre_crop: str = "", tag: str = "", *, origin="$") -> bytes:
         vf = (f"{pre_crop}," if pre_crop else "") + "scale=48:27,format=gray"
-        tmp = c.cache / f"qc_probe_{tag}.raw"
         if n:
             offset = native("subtract", n, 0.2, path=origin)
             seconds = native("divide", offset, c.fps, path=origin,
@@ -330,10 +329,21 @@ def qc(c):
             ss = f"{seek:.6f}"
         else:
             ss = "0"
-        c.run(["ffmpeg", "-v", "error", "-y", "-ss", ss,
-               "-i", str(path), "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo", str(tmp)])
-        b = tmp.read_bytes(); tmp.unlink()
-        return b
+        # Tags identify sample points, not unique concurrent calls. Each probe
+        # owns its directory; equal frame/tag probes must never share output.
+        temporary = tempfile.TemporaryDirectory(prefix="qc_probe_", dir=c.cache)
+        tmp = Path(temporary.name) / "qc_probe_frame.raw"
+        try:
+            c.run(["ffmpeg", "-v", "error", "-y", "-ss", ss,
+                   "-i", str(path), "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo", str(tmp)])
+            return tmp.read_bytes()
+        finally:
+            failed = sys.exc_info()[0] is not None
+            try:
+                temporary.cleanup()
+            except Exception:
+                if not failed:
+                    raise  # A cleanup failure cannot replace a producer/I/O failure.
     # 底轨基准帧（等价于全片 qc_clean.mp4 在该帧的像素）：qc_clean 本就是 tracks[0]
     # 底轨 clip 全屏无叠层的第二遍合成，探测帧现场从源视频提帧（src_in + 帧偏移，
     # 输入 seek）过同一 crop169+scale 链即等价；无 clip 覆盖 → 黑帧（画布为黑场）。
