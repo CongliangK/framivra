@@ -25,7 +25,16 @@ before retries/fallbacks.
 Validated cache hits have unknown original producers unless separately proven.
 
 Durations are monotonic milliseconds, with clock metadata and run-relative
-positions. Overlapping task costs must not be summed as run wall-time. Unmeasured
+positions. Raw clock readings must be finite numbers and nondecreasing, including
+samples taken for task/attempt starts. Equal readings legitimately cost zero;
+invalid values or backwards readings are never clamped into credible zero costs.
+A non-callable injected clock is a configuration error. A callable that fails
+with an ordinary exception or returns invalid samples, initially or later, makes
+observation incomplete for the rest of that invocation. It does not change task
+results, replace business exceptions or retry using a different clock. An active
+sink receives one bounded warning; disabled observation stays quiet. Clock error
+messages and values are not exported. Process-control exceptions still propagate.
+Overlapping task costs must not be summed as run wall-time. Unmeasured
 CPU/RSS/GPU/VRAM resources are null with a reason. Errors omit free text, argv,
 paths, environment and source text. A bounded chain of fixed exception-type
 labels retains underlying causes, including errors translated to CLI exits.

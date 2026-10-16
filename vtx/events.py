@@ -294,8 +294,10 @@ class ExecutionContext:
         self.run_id = str(uuid.uuid4())
         self.resumed_from_run_id = resumed_from_run_id
         self.replay_of_run_id = replay_of_run_id
-        self.clock = clock
-        self.origin = clock()
+        if not callable(clock):
+            raise ValueError('invalid observation clock configuration')
+        self._clock = clock
+        self._last_clock = None
         self.lock = threading.RLock()
         self.seq = 0
         self.stream = None
@@ -304,8 +306,31 @@ class ExecutionContext:
         self._warned = False
         self.request = None
         self.cancellation = None
+        self.origin = self.clock()
         if stream is not None:
             self.activate(stream, request)
+
+    def clock(self):
+        """Sample without inventing timings or disrupting ordinary task results.
+
+        Serialize all reads, including task/attempt starts, so a backwards sample
+        cannot hide behind a later valid event. Failure is sticky for this run.
+        """
+        with self.lock:
+            if self.incomplete or self.finished:
+                return None
+            try:
+                value = self._clock()
+                if (type(value) not in (int, float) or not math.isfinite(value) or
+                        self._last_clock is not None and value < self._last_clock):
+                    raise ValueError('invalid monotonic observation')
+            except Exception:
+                self.incomplete = True
+                if self.stream is not None:
+                    self._warn()
+                return None
+            self._last_clock = value
+            return value
 
     @property
     def enabled(self):
@@ -322,6 +347,8 @@ class ExecutionContext:
         if self.stream is not None or self.finished:
             raise ValueError('execution sink already selected')
         self.stream, self.request = stream, request
+        if self.incomplete:
+            self._warn()
         self.emit('run_start', started=self.origin, extensions={'observation': request,
                   'resumed_from_run_id': self.resumed_from_run_id,
                   'replay_of_run_id': self.replay_of_run_id})
@@ -337,9 +364,19 @@ class ExecutionContext:
                 self._warn()
                 return None
             now = self.clock()
-            offset = max(0.0, (now - self.origin) * 1000)
-            duration = (None if started is None or event.endswith('_start') else
-                        max(0.0, (now - started) * 1000))
+            if now is None:
+                return None
+            try:
+                if started is not None and (type(started) not in (int, float) or
+                        not math.isfinite(started) or not self.origin <= started <= now):
+                    raise ValueError('invalid observation start')
+                offset = (now - self.origin) * 1000
+                start_offset = None if started is None else (started - self.origin) * 1000
+                duration = (None if started is None or event.endswith('_start') else
+                            (now - started) * 1000)
+            except Exception:
+                self._warn()
+                return None
             seq = self.seq + 1
             row = {'schema_version': SCHEMA, 'run_id': self.run_id, 'seq': seq,
                    'event_id': [self.run_id, seq], 'event': event,
@@ -350,8 +387,7 @@ class ExecutionContext:
                    'attempt': attempt if attempt is not None else (1 if task else None),
                    'monotonic_duration': duration, 'outcome': outcome,
                    'exit_code': exit_code, 'error': safe_error(error) if outcome != 'succeeded' else None,
-                   'timing': {'offset_ms': offset, 'start_ms': None if started is None else
-                              max(0.0, (started - self.origin) * 1000),
+                   'timing': {'offset_ms': offset, 'start_ms': start_offset,
                               'unit': 'ms', 'method': 'monotonic',
                               'resolution_seconds': time.get_clock_info('monotonic').resolution,
                               'unavailable_reason': 'not_terminal' if duration is None else None},
