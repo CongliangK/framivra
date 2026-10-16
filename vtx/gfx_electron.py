@@ -17,6 +17,7 @@ from .gfx_cli import png_invalid_reason
 from .proc_supervisor import SupervisedProcessGroup, supervision_available
 
 WORKER_DIR = Path(__file__).resolve().parents[1] / "experiments/gfx_electron_worker"
+PAGE_ERROR_GATE = "cdp-uncaught-exceptions/1"
 
 
 class ElectronRenderError(RuntimeError):
@@ -96,13 +97,19 @@ def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
                  and raw.get("schema") == "vtx.electron.navigation/1"
                  and raw.get("requested_backend") == "electron"
                  and raw.get("effective_backend") == "electron"
-                 and raw.get("output") == output and raw.get("mode") == "N")
+                 and raw.get("output") == output and raw.get("mode") == "N"
+                 and raw.get("page_error_gate") == PAGE_ERROR_GATE)
     receipts = raw.get("frames", []) if valid_run else []
     errors = dict(raw.get("errors", {})) if valid_run else {}
+    page_errors = raw.get("page_errors", {}) if valid_run else {}
     successful = set()
     for receipt in receipts:
         f = receipt.get("frame")
         if f not in requested or f in successful:
+            continue
+        if (receipt.get("page_error_fence_passed") is not True
+                or page_errors.get(str(f)) or f in raw.get("failed", [])):
+            errors.setdefault(str(f), "page_error_gate:unattested_or_failed")
             continue
         target = outdir / f"f{f:04d}.png"
         try:
@@ -129,6 +136,7 @@ def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
                "requested_backend": "electron", "effective_backend": "electron" if valid_run else None,
                "path_counts": {output: len(successful), "failed": len(failed)},
                "run_id": run_id, "exit_code": rc, "errors": errors,
+               "page_error_gate": raw.get("page_error_gate"), "page_errors": page_errors,
                "evidence_dir": str(evidence), "versions": raw.get("versions", {}),
                "ms_total": elapsed, "ms_per_frame": elapsed / max(1, len(requested)),
                "mode": "N", "raster_mode": mode, "max_inflight": 1}

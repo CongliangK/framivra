@@ -90,7 +90,17 @@ async function renderFrame(f, generation, ses, pageErrors) {
   wc.setFrameRate(60);
   wc.setWindowOpenHandler(() => ({action:'deny'}));
   let fatal = null, paints = 0, rejected = 0, active = null;
-  const fail = reason => { fatal = Error(reason); active?.reject(fatal); };
+  const fail = reason => { fatal ||= Error(reason); active?.reject(fatal); };
+  let errorGate;
+  async function checkPageErrors() {
+    if (fatal) throw fatal;
+    // A renderer task/microtask checkpoint lets unhandled promise rejections
+    // surface before the ordered CDP fence. No page-world hook is involved.
+    await isolated(wc, `${checkDocumentCode(expectedUrl,f)};
+      new Promise(resolve => setTimeout(resolve, 0))`);
+    await errorGate.fence();
+    if (fatal) throw fatal;
+  }
   wc.on('render-process-gone', (_e,d) => fail(`renderer_gone:${d.reason}`));
   wc.on('will-navigate', e => { e.preventDefault(); fail('unexpected_navigation'); });
   wc.on('will-redirect', e => { e.preventDefault(); fail('unexpected_redirect'); });
@@ -145,7 +155,15 @@ async function renderFrame(f, generation, ses, pageErrors) {
     } finally { clearInterval(pulse); active = null; }
   }
   try {
+    // Materialize a script-free renderer before issuing Runtime commands; a
+    // brand-new WebContents has no live CDP Runtime target yet in Electron 44.
+    // Explicit transparency avoids about:blank's opaque OSR backdrop surviving
+    // the next navigation. The original HTML is never modified or hooked.
+    await deadline(wc.loadURL('data:text/html,<style>html,body{background:transparent}</style>'), timeoutMs, 'blank_target');
+    errorGate = await installPageErrorGate(wc, pageErrors, fail);
+    if (fatal) throw fatal;
     await deadline(wc.loadURL(expectedUrl), timeoutMs, 'navigation');
+    if (fatal) throw fatal;
     await deadline(isolated(wc, `${checkDocumentCode(expectedUrl,f)};
       (async () => {
         await document.fonts.ready;
@@ -162,6 +180,7 @@ async function renderFrame(f, generation, ses, pageErrors) {
       while (ses._vtxPending.size || Date.now()-ses._vtxChanged < 100) { if (fatal) throw fatal; await delay(20); }
     })(), timeoutMs, 'resource_quiet');
     if (ses._vtxErrors.length) throw Error(`resource_error:${ses._vtxErrors.join(';').slice(0,1000)}`);
+    await checkPageErrors();
     const resourceEpoch = ses._vtxEpoch;
     // An untagged snapshot is ONLY a veto against DOM-marker side effects
     // (:last-child/:has/etc.). It is NEVER a source for recovered pixels, nor
@@ -189,13 +208,17 @@ async function renderFrame(f, generation, ses, pageErrors) {
     // Bitmap roundtrip alone misses alpha/color normalization regressions.
     // Guard the entire decoded output against *native witness PNGs*, every frame.
     if (!decodeNativePng(png,width,height).equals(expected)) throw Error('native_png_semantics_mismatch');
+    // Keep monitoring through all witnesses and PNG reconstruction. No await
+    // between this final fence/veto and the atomic publication/receipt.
+    await checkPageErrors();
+    if (ses._vtxEpoch !== resourceEpoch || ses._vtxPending.size || ses._vtxErrors.length) throw Error('resource_changed_during_capture');
     const out = path.join(job.out_dir, `f${String(f).padStart(4,'0')}.png`);
     atomicWrite(out,png);
     return {frame:f,generation,url:expectedUrl,paints,rejected_paints:rejected,witnesses:4,
       png_bytes:png.length,sha256:crypto.createHash('sha256').update(png).digest('hex'),
       path:'electron_native_topng',baseline_veto_passed:true,png_semantics_passed:true,
-      elapsed_ms:Date.now()-start,output:out};
-  } finally { if (!win.isDestroyed()) win.destroy(); }
+      page_error_fence_passed:true,elapsed_ms:Date.now()-start,output:out};
+  } finally { errorGate?.close(); if (!win.isDestroyed()) win.destroy(); }
 }
 async function main() {
   fs.mkdirSync(job.out_dir,{recursive:true});
@@ -217,17 +240,21 @@ async function main() {
   const result = {schema:'vtx.electron.navigation/1',run_id:runId,requested_backend:'electron',effective_backend:'electron',
     mode:'N',raster_mode:job.mode,output:job.output,versions:process.versions,
     viewport:{width,height,device_scale_factor:1},gpu_feature_status:app.getGPUFeatureStatus(),
-    max_inflight:1,shared_memory:false,frames:[],failed:[],errors:{}};
+    max_inflight:1,shared_memory:false,frames:[],failed:[],errors:{},
+    page_error_gate:PAGE_ERROR_GATE,page_errors:{}};
   let generation=0;
   for (const f of frames) {
     ses._vtxErrors=[]; ses._vtxRequests=0;
     // The total per-frame timer also bounds multi-step awaits and stuck scripts.
     const watchdog = setTimeout(() => { result.failed.push(f); result.errors[f]='timeout:frame';
       atomicWrite(job.result,JSON.stringify(result,null,2)); app.exit(72); }, timeoutMs);
-    try { result.frames.push(await renderFrame(f,++generation,ses)); }
+    result.page_errors[f]=[];
+    try { result.frames.push(await renderFrame(f,++generation,ses,result.page_errors[f])); }
     catch (e) {
-      result.failed.push(f);
-      result.errors[f]=(String(e?.stack||e?.message||JSON.stringify(e)) +
+      // app.exit's target teardown can reject a pending await after the watchdog
+      // recorded timeout: do not replace that cause with debugger detachment.
+      if (!result.failed.includes(f)) result.failed.push(f);
+      result.errors[f] ||= (String(e?.stack||e?.message||JSON.stringify(e)) +
         (ses._vtxErrors.length ? `; resource_error:${ses._vtxErrors.join(';')}` : '')).slice(0,4000);
     }
     finally { clearTimeout(watchdog); }
