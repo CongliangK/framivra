@@ -18,7 +18,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 # The default remains a full reconciliation. CI runs fast on every version,
-# and fast+slow on 3.13; no fast success alone certifies the complete CI run.
+# and an independent mandatory slow job on 3.13; no fast success alone certifies the complete CI run.
 mode="${1:---all}"
 if [ "$#" -gt 1 ]; then echo "usage: $0 [--all|--fast|--slow|--layered]" >&2; exit 2; fi
 case "$mode" in

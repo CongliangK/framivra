@@ -260,23 +260,18 @@ class RunnerAggregate(unittest.TestCase):
 
 
 class WorkflowLatencyContract(unittest.TestCase):
-    def test_actual_shell_routes_docs_slow_and_weekly_full(self):
+    def test_actual_core_shell_routes_fast_and_weekly_full(self):
         workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
                              Loader=yaml.BaseLoader)
         step = [s for s in workflow['jobs']['core']['steps']
                 if s.get('name') == 'Run kernel, app, plugin and example unittest batches'][0]
         self.assertEqual(step['if'],
-                         "steps.scope.outputs.scope != 'docs' || matrix.python == '3.13'")
-        for event, scope, version, mode in (
-            ('pull_request', 'docs', '3.13', '--slow'),
-            ('push', 'docs', '3.13', '--slow'),
-            ('pull_request', 'full', '3.13', '--layered'),
-            ('push', 'full', '3.9', '--fast'),
-            ('pull_request', 'full', '3.12', '--fast'),
-            ('schedule', 'full', '3.9', '--all'),
-            ('schedule', 'full', '3.13', '--all'),
-            ('workflow_dispatch', 'full', '3.13', '--all'),
-        ):
+                         "steps.scope.outputs.scope != 'docs'")
+        cases = [(event, 'full', version,
+                  '--all' if event in ('schedule', 'workflow_dispatch') else '--fast')
+                 for event in ('pull_request', 'push', 'schedule', 'workflow_dispatch')
+                 for version in ('3.9', '3.10', '3.11', '3.12', '3.13')]
+        for event, scope, version, mode in cases:
             with self.subTest(event=event, scope=scope, version=version), \
                     tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -292,12 +287,93 @@ class WorkflowLatencyContract(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertEqual(calls.read_text().strip(), 'scripts/run_all_tests.sh ' + mode)
 
+    def test_separate_slow_runs_even_for_docs_or_failed_fast_jobs(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
+                             Loader=yaml.BaseLoader)
+        job = workflow['jobs']['slow-integration']
+        self.assertEqual(job['name'], 'Slow integration Python 3.13 (no skips)')
+        self.assertNotIn('needs', job)
+        self.assertNotIn('if', job)
+        self.assertNotIn('continue-on-error', job)
+        gate = [s for s in job['steps'] if
+                'bash scripts/run_all_tests.sh --slow' in s.get('run', '')]
+        self.assertEqual(len(gate), 1)
+        self.assertNotIn('if', gate[0])
+        self.assertNotIn('continue-on-error', gate[0])
+        # All workflow events include this same unconditional job. In particular
+        # neither docs classification nor another job failure can remove it.
+        self.assertEqual(set(workflow['on']),
+                         {'pull_request', 'push', 'schedule', 'workflow_dispatch'})
+        self.assertEqual(len(workflow['jobs']) - 1 + 5, 10)
+        self.assertEqual(workflow['jobs']['core']['strategy']['fail-fast'], 'false')
+
+    def test_actual_slow_shell_failure_is_fatal_on_every_event(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
+                             Loader=yaml.BaseLoader)
+        step = [s for s in workflow['jobs']['slow-integration']['steps']
+                if 'bash scripts/run_all_tests.sh --slow' in s.get('run', '')][0]
+        for event in ('pull_request', 'push', 'schedule', 'workflow_dispatch'):
+            for status in (0, 1, 2):
+                with self.subTest(event=event, status=status), \
+                        tempfile.TemporaryDirectory() as directory:
+                    fake = Path(directory) / 'bash'
+                    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$CALLS"\nexit "$STATUS"\n')
+                    fake.chmod(0o755)
+                    calls = Path(directory) / 'calls'
+                    env = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'],
+                               RUNNER_TEMP=directory, CALLS=str(calls), STATUS=str(status),
+                               GITHUB_EVENT_NAME=event, CI_SCOPE='docs')
+                    proc = subprocess.run(['/bin/bash', '-e', '-c', step['run']],
+                                          env=env, capture_output=True, text=True)
+                    self.assertEqual(proc.returncode, status, proc.stderr)
+                    self.assertEqual(calls.read_text().strip(), 'scripts/run_all_tests.sh --slow')
+
+    def test_cache_failure_cannot_mask_install_or_media_failure(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
+                             Loader=yaml.BaseLoader)
+        pin = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        for name in ('core', 'slow-integration', 'ffmpeg', 'chrome'):
+            job = workflow['jobs'][name]
+            steps = job['steps']
+            restore = [s for s in steps if s.get('id') == 'apt-restore'][0]
+            install = [s for s in steps if s.get('id') == 'apt-install'][0]
+            save = [s for s in steps if s.get('uses', '').startswith('actions/cache/save@')][0]
+            self.assertEqual(restore['uses'], 'actions/cache/restore@' + pin)
+            self.assertEqual(save['uses'], 'actions/cache/save@' + pin)
+            for cache in (restore, save):
+                self.assertEqual(cache['continue-on-error'], 'true')
+                self.assertNotIn('restore-keys', cache['with'])
+                self.assertEqual(cache['with']['key'], '${{ steps.apt-key.outputs.key }}')
+                self.assertEqual(cache['with']['path'], '${{ steps.apt-key.outputs.path }}')
+            self.assertIn("steps.apt-key.outputs.cacheable == 'true'", restore['if'])
+            self.assertIn("steps.apt-install.outputs.cacheable == 'true'", save['if'])
+            self.assertEqual(install['run'], 'python scripts/ci_apt_cache.py install')
+            self.assertNotIn('continue-on-error', install)
+            self.assertNotIn('cache-hit', install.get('if', ''))
+            if name == 'core':
+                self.assertEqual(install['if'], "steps.scope.outputs.scope != 'docs'")
+            else:
+                self.assertNotIn('if', install)
+            self.assertLess(steps.index(restore), steps.index(install))
+            self.assertLess(steps.index(install), steps.index(save))
+
     def test_existing_contexts_permissions_and_strict_lanes_preserved(self):
         workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(),
                              Loader=yaml.BaseLoader)
         self.assertEqual(set(workflow['jobs']),
-                         {'core', 'contracts', 'ffmpeg', 'chrome', 'windows-install'})
+                         {'core', 'slow-integration', 'contracts', 'ffmpeg', 'chrome', 'windows-install'})
         self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        names = {job['name'] for key, job in workflow['jobs'].items() if key != 'core'}
+        names.update('Core Python ' + version for version in
+                     workflow['jobs']['core']['strategy']['matrix']['python'])
+        self.assertEqual(names, {
+            'Core Python 3.9', 'Core Python 3.10', 'Core Python 3.11',
+            'Core Python 3.12', 'Core Python 3.13',
+            'Documentation and static syntax', 'FFmpeg CPU integration (no skips)',
+            'Chrome and pipeline CPU integration (no skips)',
+            'Windows one-command install candidate',
+            'Slow integration Python 3.13 (no skips)',
+        })
         self.assertFalse(workflow['on']['pull_request'])
         core = workflow['jobs']['core']
         self.assertEqual(core['name'], 'Core Python ${{ matrix.python }}')
@@ -306,8 +382,9 @@ class WorkflowLatencyContract(unittest.TestCase):
         commands = '\n'.join(step.get('run', '') for step in core['steps'])
         self.assertIn('"$GITHUB_EVENT_NAME" == schedule', commands)
         self.assertIn('"$GITHUB_EVENT_NAME" == workflow_dispatch', commands)
-        self.assertIn('"$CI_PYTHON" == 3.13', commands)
-        for mode in ('--all', '--fast', '--layered', '--slow'):
+        self.assertNotIn('--layered', commands)
+        self.assertNotIn('--slow', commands)
+        for mode in ('--all', '--fast'):
             self.assertIn('bash scripts/run_all_tests.sh ' + mode, commands)
         for kind in ('ffmpeg', 'chrome'):
             job = workflow['jobs'][kind]
@@ -323,8 +400,8 @@ class WorkflowLatencyContract(unittest.TestCase):
         scope = [s for s in core['steps'] if s.get('id') == 'scope'][0]
         self.assertNotIn('if', scope)
         for s in core['steps']:
-            if 'if' in s:
-                self.assertIn(s['if'], ("steps.scope.outputs.scope != 'docs' || matrix.python == '3.13'",
+            if 'if' in s and not s.get('uses', '').startswith('actions/cache/'):
+                self.assertIn(s['if'], ("steps.scope.outputs.scope != 'docs'",
                                        "steps.scope.outputs.scope == 'docs'"))
 
 

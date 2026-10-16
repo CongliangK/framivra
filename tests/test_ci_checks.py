@@ -280,7 +280,7 @@ class WorkflowContract(unittest.TestCase):
     def test_core_installs_cpu_tools_and_isolates_private_configuration(self):
         commands = '\n'.join(step.get('run', '') for step in
                              self.workflow['jobs']['core']['steps'])
-        self.assertIn('sudo apt-get install -y ffmpeg fonts-noto-cjk', commands)
+        self.assertIn('python scripts/ci_apt_cache.py install', commands)
         self.assertIn('export HOME="$RUNNER_TEMP/framivra-core-home"', commands)
         self.assertIn('export XDG_CONFIG_HOME="$HOME/.config"', commands)
         self.assertIn('export VTX_CONFIG="$HOME/config.json"', commands)
@@ -294,7 +294,10 @@ class WorkflowContract(unittest.TestCase):
                     self.assertRegex(step['uses'], r'^[\w/-]+@[0-9a-f]{40}$')
                     if step['uses'].startswith('actions/checkout@'):
                         self.assertEqual(step['with']['persist-credentials'], 'false')
-                self.assertNotIn('continue-on-error', step)
+                if step.get('uses', '').startswith(('actions/cache/restore@', 'actions/cache/save@')):
+                    self.assertEqual(step.get('continue-on-error'), 'true')
+                else:
+                    self.assertNotIn('continue-on-error', step)
             self.assertNotIn('continue-on-error', job)
 
     def test_core_docs_static_and_separate_strict_media_commands(self):
