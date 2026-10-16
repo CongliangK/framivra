@@ -17,6 +17,9 @@
 #include <functional>
 #include <mutex>
 #include <memory>
+#include <map>
+
+#include "include/cef_render_process_handler.h"
 #include <string>
 #include <vector>
 
