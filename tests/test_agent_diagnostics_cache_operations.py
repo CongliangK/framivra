@@ -130,6 +130,7 @@ class CacheOperations(unittest.TestCase):
             def __len__(self):
                 events.append('len')
                 return super().__len__()
+        (self.root / 'a').write_bytes(b'actual tiny source')
         c = self.context(sources=Sources([{'path': 'a'}]))
         self.fingerprint(c)
         self.assertEqual(events, ['iter', 'len'])
@@ -171,7 +172,7 @@ class CacheOperations(unittest.TestCase):
         for field in ('sources', 'video_tracks'):
             for empty in ([], {}, ''):
                 c = self.context(**{field: empty})
-                self.assertEqual(self.fingerprint(c), hashlib.sha256(b'timeline').hexdigest())
+                self.assertEqual(self.fingerprint(c), hashlib.sha256((cache_state.RECEIPT_SCHEMA + '\0').encode() + b'timeline').hexdigest())
                 self.assertEqual(c.diagnostics, [])
         # #52 now traverses every track for clip dependency declarations.
         c = self.context(video_tracks=[{'kind': 'ordinary', 'clips': None}])
@@ -197,7 +198,9 @@ class CacheOperations(unittest.TestCase):
     def test_surrogate_encode_precedes_unreachable_unrelated_defects(self):
         for tracks in ([], [None]):
             c = self.context(sources=[{'path': '\ud800'}], video_tracks=tracks)
-            with self.assertRaises(UnicodeEncodeError) as caught:
+            # Isolate receipt text encoding after a successful identity provider.
+            with patch.object(cache_state, 'verified_media_identity', return_value={'digest': 'tiny'}), \
+                    self.assertRaises(UnicodeEncodeError) as caught:
                 self.fingerprint(c)
             record = self.assert_record(c, 'load.operation', '$.sources[0].path')
             self.assertEqual(record['message'], str(caught.exception))
@@ -217,7 +220,8 @@ class CacheOperations(unittest.TestCase):
     def test_plugin_result_encode_is_provider_metadata_not_input_defect(self):
         for value in (1, True, ['digest'], '\ud800'):
             with self.subTest(value=value):
-                c = self.context(sources=[{'path': 'missing'}])
+                (self.root / 'source').write_bytes(b'actual tiny source')
+                c = self.context(sources=[{'path': 'source'}])
                 with patch('vtx.pluginlib.hooks.active_plugins_digest', return_value=value) as callback, \
                         self.assertRaises((AttributeError, UnicodeEncodeError)) as caught:
                     cache_state.receipt_fingerprint(c)
@@ -230,7 +234,7 @@ class CacheOperations(unittest.TestCase):
             c = self.context()
             with patch('vtx.pluginlib.hooks.active_plugins_digest', return_value=value):
                 self.assertEqual(cache_state.receipt_fingerprint(c),
-                                 hashlib.sha256(b'timeline').hexdigest())
+                                 hashlib.sha256((cache_state.RECEIPT_SCHEMA + '\0').encode() + b'timeline').hexdigest())
             self.assertEqual(c.diagnostics, [])
 
     def test_opaque_plugin_callbacks_and_custom_encode_keep_same_error(self):
@@ -276,7 +280,7 @@ class CacheOperations(unittest.TestCase):
 
     def test_io_and_digest_failures_stay_unknown_at_every_resource(self):
         cases = (
-            ({'sources': [{'path': 'source'}]}, 'media_stat_digest'),
+            ({'sources': [{'path': 'source'}]}, 'verified_media_identity'),
             ({'video_tracks': [{'kind': 'gfx', 'clips': [{'src': 'graphic'}]}]}, 'file_digest'),
             ({'project': {'cache_dependencies': ['dependency']}}, 'file_digest'),
             ({'subtitles_src': 'subtitle'}, 'file_digest'),
@@ -291,7 +295,7 @@ class CacheOperations(unittest.TestCase):
                     self.assertEqual(callback.call_count, 1)
         c = self.context(sources=[{'path': 'source'}], video_tracks=[None])
         error = PermissionError('source stat')
-        with patch.object(Path, 'is_file', side_effect=error) as callback:
+        with patch.object(cache_state, 'verified_media_identity', side_effect=error) as callback:
             self.assert_opaque(c, error, lambda: self.fingerprint(c))
         self.assertEqual(callback.call_count, 1)
 
@@ -332,18 +336,26 @@ class CacheOperations(unittest.TestCase):
                         return True
                     def media(path):
                         events.append(('media', path.name))
-                        return 'media:' + path.name
+                        return {'schema': cache_state.IDENTITY_SCHEMA, 'level': 'Verified',
+                                'algorithm': 'sha256', 'scope': 'complete-file',
+                                'digest': 'media:' + path.name}
                     def file(path):
                         events.append(('file', path.name))
                         return 'file:' + path.name
                     with patch.object(cache_state.hashlib, 'sha256', Hash), \
                             patch.object(Path, 'is_file', is_file), \
-                            patch.object(cache_state, 'media_stat_digest', side_effect=media), \
+                            patch.object(cache_state, 'verified_media_identity', side_effect=media), \
                             patch.object(cache_state, 'file_digest', side_effect=file), \
                             patch('vtx.pluginlib.hooks.active_plugins_digest', return_value='plugins') as callback:
                         fingerprint = cache_state.receipt_fingerprint(c, **(
                             {'timeline_bytes': b'timeline'} if supplied else {}))
-                    expected = [b'timeline', b'a:media:a\n', b'a:media:a\n', b'z:media:z\n',
+                    def encoded_source(name):
+                        identity = {'schema': cache_state.IDENTITY_SCHEMA, 'level': 'Verified',
+                                    'algorithm': 'sha256', 'scope': 'complete-file',
+                                    'digest': 'media:' + name}
+                        return (name + ':' + json.dumps(identity, sort_keys=True, separators=(',', ':')) + '\n').encode()
+                    expected = [(cache_state.RECEIPT_SCHEMA + '\0').encode(), b'timeline',
+                                encoded_source('a'), encoded_source('a'), encoded_source('z'),
                                 b'graphic:file:graphic\n', b'second:file:second\n',
                                 b'first:file:first\n', b'subtitles_src:file:subtitle\n', b'plugins']
                     self.assertEqual(updates, expected)
@@ -354,11 +366,11 @@ class CacheOperations(unittest.TestCase):
                         ('get', 'z', ('path', '')), ('get', 'a1', ('path', '')),
                         ('get', 'a2', ('path', '')),
                         ('field', 'a1', 'path'), ('get', 'a1', ('path', '')),
-                        ('is_file', 'a'), ('media', 'a'),
+                        ('media', 'a'),
                         ('field', 'a2', 'path'), ('get', 'a2', ('path', '')),
-                        ('is_file', 'a'), ('media', 'a'),
+                        ('media', 'a'),
                         ('field', 'z', 'path'), ('get', 'z', ('path', '')),
-                        ('is_file', 'z'), ('media', 'z'),
+                        ('media', 'z'),
                         ('is_file', 'graphic'), ('file', 'graphic'),
                         ('file', 'second'), ('file', 'first'),
                         ('is_file', 'subtitle'), ('file', 'subtitle')])
@@ -366,7 +378,7 @@ class CacheOperations(unittest.TestCase):
 
     def test_surrogate_subtitle_path_is_not_eagerly_encoded_or_rejected(self):
         c = self.context(subtitles_src='\ud800')
-        expected = hashlib.sha256(b'timeline' + b'subtitles_src:MISSING\n').hexdigest()
+        expected = hashlib.sha256((cache_state.RECEIPT_SCHEMA + '\0').encode() + b'timeline' + b'subtitles_src:MISSING\n').hexdigest()
         self.assertEqual(self.fingerprint(c), expected)
         self.assertEqual(c.diagnostics, [])
 

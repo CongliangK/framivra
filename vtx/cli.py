@@ -38,7 +38,7 @@
 键变即新条目，旧键由 gc 回收）；mux 每次成功追加 out/VERSIONS.json（覆盖检测 + superseded
 留痕 + out/history/ 保留最近 N 版，--keep-versions 默认 2）；环境变量 VTX_CACHE_BUDGET_GB
 设预算时 gfx/video 阶段前超限自动跑 gc 清单（VTX_GC_AUTO=1 直接回收）。
-阶段回执（PR#1 合入）：receipt.json 绑定输入身份（timeline + 源 stat 指纹 + gfx html +
+阶段回执（PR#1 合入）：receipt.json 绑定输入身份（timeline + 源 Verified 身份 + gfx html +
 声明的 cache_dependencies）——输入变化不继承旧阶段成功；每阶段运行前做依赖门（audio 需
 prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux）并撤销下游成功。
 单跑某阶段前置不满足会直接拒绝；编辑输入后请按序重跑或直接 `all`。详见 docs/cache-provenance.md。
@@ -175,6 +175,8 @@ def _merge_cdp_stats(stats_list):
 
 def gfx(c: Ctx):
     # issue #28：任何渲染/有效性门失败均写失败回执，不允许静默计完成。
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     try:
         _gfx(c)
     except SystemExit as e:
@@ -930,8 +932,12 @@ def _main(execution=None):
         print(f"timeline 不存在: {tp}")
         raise SystemExit(1) from FileNotFoundError()
     try:
-        c = Ctx(tp, execution=execution)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
-    except (ValueError, KeyError, TypeError, ZeroDivisionError, FileNotFoundError) as e:
+        c = Ctx(tp, execution=execution,
+                verify_sources=not (policy.dry or a.command == "df"),
+                allow_unverified_validation=a.command == "validate" and not policy.dry)
+        # Inspection/planning never needs a trusted source pin. Formal builds
+        # retain eager full verification; direct key consumers still fail closed.
+    except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
         # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
         print(f"✗ timeline 无效：{e}"); sys.exit(1)

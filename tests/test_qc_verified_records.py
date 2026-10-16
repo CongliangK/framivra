@@ -130,6 +130,39 @@ class VerifiedQCRecordsTest(unittest.TestCase):
                 self.lst.write_text(text)
                 self.assertIsNone(qc._load_qc_pass_record(self.c))
 
+    def test_absolute_and_writer_escaped_paths_are_supported(self):
+        destination = self.c.root / "cache ' # \\ quoted"
+        self.c.cache.rename(destination)
+        self.c.cache = destination
+        self.seg = destination / 'vseg' / self.seg.name
+        self.other = destination / 'vseg' / self.other.name
+        self.lst = destination / 'vseg' / 'list.txt'
+        self.record = destination / qc._QC_SEG_RECORD
+        def entry(path):
+            name = path.resolve().as_posix().replace("'", "'\\''")
+            return f"file '{name}'\n"
+        self.lst.write_text(entry(self.seg) + entry(self.other))
+        saved = self.write_record()
+        self.assertEqual(qc._load_qc_pass_record(self.c), saved)
+        self.assertEqual(saved['segs'][1]['path'], str(self.other.resolve()))
+        self.run_qc()
+        self.assertEqual(len(self.run_qc()['skipped_probes']), 1)
+
+    def test_same_basename_other_target_or_missing_target_is_not_exempt(self):
+        self.run_qc()
+        self.assertEqual(len(self.run_qc()['skipped_probes']), 1)
+        alternate = self.c.root / 'alternate' / self.other.name
+        alternate.parent.mkdir()
+        for exists in (True, False):
+            with self.subTest(exists=exists):
+                if exists:
+                    alternate.write_bytes(b'different active target')
+                else:
+                    alternate.unlink()
+                self.lst.write_text(f"file '{self.seg}'\nfile '{alternate}'\n")
+                self.assertIsNone(qc._load_qc_pass_record(self.c))
+                self.assertEqual(self.run_qc()['skipped_probes'], [])
+
     def test_duplicate_failed_check_never_becomes_pass(self):
         qc._write_qc_pass_record(self.c, 20, [
             {'name': 'sample', 'pass': True}, {'name': 'sample', 'pass': False}])

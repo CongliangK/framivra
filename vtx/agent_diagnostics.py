@@ -32,7 +32,8 @@ def main(argv=None):
             stack.enter_context(contextlib.redirect_stderr(errors))
         try:
             path = Path(os.path.abspath(os.path.expanduser(args.timeline)))
-            c = Ctx(path, diagnostics=records if structured else None)
+            c = Ctx(path, diagnostics=records if structured else None,
+                    allow_unverified_validation=args.command == 'validate')
             c.strict = args.strict
             c.draft = False
             c.frames = None

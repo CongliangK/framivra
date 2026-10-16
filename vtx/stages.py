@@ -272,6 +272,15 @@ def validate(c: Ctx):
         failure = SystemExit(1)
         mark_handled(failure)
         raise failure
+    if getattr(c, '_unverified_validation', False):
+        message = '源身份不可用；仅报告未验证的失败证据，不能认证校验成功'
+        emit(c, message, rule_id='validate.source_identity', status='unknown',
+             measured={'unavailable_sources': c.unavailable_sources},
+             threshold={'identity_level': 'Verified'})
+        print('✗ ' + message)
+        failure = SystemExit(1)
+        mark_handled(failure)
+        raise failure
     for w in _plugin_warns:
         print("  ⚠", w)
     nclips = sum((len(t['clips']) for t in field(c.tl, 'video_tracks', '$')))
@@ -298,6 +307,8 @@ def _complement(wins, total):
     return out
 
 def audit(c: Ctx):
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     def field(obj, key, parent):
         return required_field(c, obj, key, parent, rule='audit.required_field')
     def calc(path, fn, expression, source=None):
@@ -480,6 +491,8 @@ def source_audio_extraction(c: Ctx, sid: str):
     实现并在此生效，§2.2）。插件产物**串行内联产出**（conda 推理链非单条 ffmpeg
     命令，不入 run_parallel 任务表；降噪是瓶颈本身，串行可接受）。
     """
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
     from .recovery import audio_cache_valid
     if audio_cache_valid(c, wav, sid):
@@ -496,6 +509,8 @@ def source_audio_extraction(c: Ctx, sid: str):
 
 
 def prepare(c: Ctx):
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     fstxn.mkdir(c.cache / "audio")
     tasks = []
     for s in c.tl["sources"]:
@@ -662,6 +677,8 @@ def mix_audio_wav(c: Ctx, out_wav: Path, win=None, gain_override=None):
     gain_override：外部指定静态增益（区间预览用——窗口局部内容响度 ≠ 全片响度，
     窗口自测增益会把安静段放大到削波；复用整片回执里的 gain_db 保持听感一致，
     且省一遍 ebur128 测量）。返回 (gain, raw_i, n_ev, duck_used)。win 语义见 _audio_graph。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     cmd, chains, n_ev, duck_used = _audio_graph(c, win)
     gain = 0.0
     raw_i = None
@@ -696,6 +713,8 @@ def _wav_seconds(path: Path) -> float:
 
 
 def build_audio(c: Ctx):
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     atracks = c.tl["audio_tracks"]
     out_wav = c.out / "audio.wav"
     gain, raw_i, _n_ev, duck_used = mix_audio_wav(c, out_wav)
@@ -836,6 +855,8 @@ def load_timeline_check(timeline_path):
 
 
 def mux(c: Ctx):
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if getattr(c, "draft", False):
         c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.out / "draft.mp4"),
                "-i", str(c.out / "audio.wav"), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",

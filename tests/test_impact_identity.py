@@ -147,19 +147,27 @@ class SnapshotImpact(unittest.TestCase):
         self.assertFalse((self.root / 'cache').exists())
         self.assertFalse((self.root / 'out').exists())
 
-    def test_fast_media_blind_spot_is_explicit(self):
+    def test_fast_media_blind_spot_and_verified_artifact_invalidation_are_distinct(self):
         import os
         from vtx.impact import capture, compare
+        from vtx.cache_state import media_stat_digest
         path = self.root / 'large.media'
         path.write_bytes(b'a' * 262144)
         tl = {'project': self.tl['project'],
               'sources': [{'id': 's', 'path': 'large.media'}],
               'video_tracks': [], 'subtitles': [], 'audio_tracks': []}
         before = capture(tl, self.root)
+        fast_before = media_stat_digest(path)
         st = path.stat(); data = bytearray(path.read_bytes()); data[131072] = 98
         path.write_bytes(data); os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
-        result = compare(before, capture(tl, self.root))
-        self.assertEqual(result['new_artifacts'], [])
+        after = capture(tl, self.root)
+        result = compare(before, after)
+        # Public Fast compatibility remains sampled; actual audio keys are Verified.
+        self.assertEqual(media_stat_digest(path), fast_before)
+        self.assertEqual(before['nodes']['audio:s']['inputs']['identity'],
+                         after['nodes']['audio:s']['inputs']['identity'])
+        self.assertNotEqual(before['nodes']['audio:s']['key'], after['nodes']['audio:s']['key'])
+        self.assertEqual(result['new_artifacts'], [after['nodes']['audio:s']['artifact']])
         self.assertIn('source_media_fast_sampled_identity_not_verified', result['limitations'])
 
     def test_windowed_media_without_probe_is_unknown(self):

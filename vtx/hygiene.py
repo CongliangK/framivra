@@ -127,6 +127,8 @@ def cleanup_children(c, path):
 
 def cleanup_entries(c, path, reason, *, nuke=False):
     """issue #21/#30：安全子树压成一项；含锁/危险链接的祖先保留，安全兄弟照常清。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     def visit(p):
         if not cleanup_allowed(c, p, nuke=nuke):
             return [], False
@@ -175,6 +177,8 @@ def _fp(p: Path) -> str:
 
 
 def tl_md5(c) -> str:
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     return hashlib.md5(c.tl_path.read_bytes()).hexdigest()
 
 
@@ -185,6 +189,8 @@ def gfx_key(c, cl) -> str:
     图片/字体/样式/脚本）内容入键——改依赖即重渲；未声明/网络资产不追踪
     （cache-provenance.md）。项目级依赖与可选 clip.cache_dependencies 合并；片段依赖只影响声明页。
     """
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     html = (c.root / cl["src"]).resolve()
     blob = html.read_bytes()
     from .cache_state import declared_dependencies, file_digest
@@ -241,6 +247,8 @@ def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: 
     编码不变，但键加 token 使格式变更在未来也能自然分键）。键变 → 旧 seg 一次性
     失效由 gc 回收（内容寻址设计使然，正常）。
     """
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     src = c.src_path(cl["src"])
     spec = ["seg", _fp(src), str(cl["src_in"]), str(cl["src_out"]), str(cl["dur"]),
             repr(cl.get("scale")), repr(cl.get("x")), repr(cl.get("y")),
@@ -254,6 +262,8 @@ def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: 
 
 def audio_key(c, sid) -> str:
     """prepare 抽音频键 = sha1(源指纹 + 提取参数)[:12]。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     return _sha1(("audio|" + _fp(c.src_path(sid)) + "|48000stereo").encode())
 
 
@@ -315,6 +325,8 @@ def _dump_versions(o) -> str:
 def manifest_record(c, path: Path, stage: str, key: str = ""):
     """写完一个产物后记一笔（路径/阶段/键/字节/mtime/timeline_md5）。只追加，不阻塞：
     记账失败绝不影响渲染主流程（gc 不依赖 manifest）。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if c.dry:
         return
     p = Path(path)
@@ -370,6 +382,8 @@ def tmp_run(c, label: str, *, unique: bool = False):
     - issue #103：退出时先做伴生 PID 账本清扫（见 _sweep_tmp_worker_ledger），
       杜绝「删了 Profile 目录、留下持锁孤儿进程」的半清理。
     """
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     name = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{label}"
     if unique:
         name = f"{name}-{os.getpid()}-{next(_TMP_UNIQUE_SEQ)}"
@@ -607,6 +621,8 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     单源判据，与 cli 的 gc --all 白名单同一权威；cache 侧仍留 reports/tmp/
     snapshots/记账基线）。注：CLI 的 gc/clean 统一走 vtx/cli.py _cleanup_plan
     （计划-预览-执行三段），本函数供 budget_gate 与直调方使用。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if deep:
         # issue #21/#30：预算门/直调与 CLI 复用同一安全计划，不保留绕过入口。
         from .cli import ExecutionPolicy, _cleanup_plan
@@ -704,6 +720,8 @@ def snapshot(c, keep: int = None):
     素材「读取」的外部合法性不受影响：validate/gc 等读侧照常接受项目外素材
     （tests/safety/test_timeline_escape_safety.py 对照组）。缺失资产仍按既有 UX
     警告跳过（落点门先行，缺失不会放过越界引用）。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     keep = keep if keep is not None else int(os.environ.get("VTX_SNAPSHOT_KEEP", "2"))
     if keep < 0:
         raise ProjectPathError('快照保留数不能为负')
@@ -830,6 +848,8 @@ def _snapshot_write_at(rootfd, relative, data):
 
 # ---------------------------------------------------------------- VERSIONS（out 产物记账）
 def versions_check(c, product: Path) -> bool:
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     """覆盖前检测：现有文件 md5 与 VERSIONS 末条不符（被外部改动/并行工程改写）→
     显著告警并把旧条目标 superseded。返回是否告警。"""
     f = c.out / "VERSIONS.json"
@@ -863,6 +883,8 @@ def versions_check(c, product: Path) -> bool:
 
 def versions_record(c, product: Path, label: str):
     """mux 成功后追加一条 VERSIONS 记录（只记元数据，不复制全片）。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if c.dry:
         return
     f = c.out / "VERSIONS.json"
@@ -900,6 +922,8 @@ def rotate_history(c, product: Path, keep: int):
     issue #23（A04）：out/history 预置为指向根外的符号链接时轮转的 os.link/
     copy2 会写穿链接目标——hdir 经 ensure_inside_project 收口在 out 内后才 mkdir
     （指向内的链接 = 允许）。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if not product.exists(): return
     hdir = c.out / "history"
     ensure_inside_project(hdir, c.out, what="历史轮转目录")
@@ -943,6 +967,8 @@ def rotate_history(c, product: Path, keep: int):
 def budget_gate(c, stage: str):
     """VTX_CACHE_BUDGET_GB（默认不设）：阶段开始前 cache 超预算 → 跑 gc 清单提示；
     VTX_GC_AUTO=1 时直接回收。"""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     budget = os.environ.get("VTX_CACHE_BUDGET_GB", "")
     if not budget or not budget.replace(".", "", 1).isdigit(): return
     limit = float(budget) * 1024**3
