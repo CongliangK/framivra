@@ -82,7 +82,7 @@ jobs:
           unset PYTHONPATH PYTHONHOME
           python harness/scripts/issue85_real_media.py --execute-hosted \
             --baseline "$GITHUB_WORKSPACE/baseline" \
-            --candidate "$GITHUB_WORKSPACE/candidate" --output "$OUTPUT"
+            --candidate "$GITHUB_WORKSPACE/candidate" --output "$OUTPUT/experiment"
       - name: Retain small evidence only, never media
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

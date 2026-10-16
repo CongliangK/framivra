@@ -907,3 +907,72 @@ class HostedToolPreparation(unittest.TestCase):
                 self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
                 self.assertEqual(marker.exists(), expected == 0)
                 self.assertTrue((root / 'evidence' / 'media-tool-versions.log').exists())
+
+
+class HostedEvidenceLayout(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux", "dedicated workflow requires Linux bash")
+    def test_version_evidence_parent_does_not_collide_with_experiment_root(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/issue85-real-media.yml').read_text()
+        self.assertIn('--output "$OUTPUT/experiment"', workflow)
+        self.assertIn('tee "$OUTPUT/media-tool-versions.log"', workflow)
+        self.assertIn('/**/*.json', workflow)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'evidence'
+            versions = root / 'media-tool-versions.log'
+            output = root / 'experiment'
+            bins = Path(temporary) / 'bin'; bins.mkdir()
+            for name in ('mkdir', 'tee'):
+                (bins / name).symlink_to('/usr/bin/' + name)
+            commands = {'sudo': '#!/bin/sh\nexit 0\n',
+                        'ffmpeg': '#!/bin/sh\necho fake-ffmpeg-version\n',
+                        'ffprobe': '#!/bin/sh\necho fake-ffprobe-version\n',
+                        'python': '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n'}
+            for name, contents in commands.items():
+                path = bins / name; path.write_text(contents); path.chmod(0o755)
+            capture = Path(temporary) / 'args.txt'
+            env = {**os.environ, 'PATH': str(bins), 'OUTPUT': str(root),
+                   'GITHUB_WORKSPACE': str(Path(temporary) / 'workspace'), 'CAPTURE': str(capture)}
+            def body(label, next_label):
+                step = workflow[workflow.index('      - name: ' + label):workflow.index('      - name: ' + next_label)]
+                return '\n'.join(line[10:] for line in step.split('        run: |\n', 1)[1].splitlines())
+            for script in [body('Install official Ubuntu CPU media tools', 'Tiny harness tests'),
+                           body('Qualify fixed NASA original', 'Retain small evidence')]:
+                subprocess.run(['/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script],
+                               env=env, check=True, capture_output=True, text=True, timeout=5)
+            argv = capture.read_text().splitlines()
+            self.assertEqual(argv[-1], str(output))
+            self.assertFalse(output.exists())
+            version_bytes = versions.read_bytes()
+            self.assertIn(b'fake-ffprobe-version', version_bytes)
+            old_budget = h.BUDGET_ROOT
+            try:
+                with patch.object(sys, 'argv', argv), \
+                     patch.object(h.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 6 * 1024**3})()), \
+                     patch.object(h, 'command', return_value='fake tool version'), \
+                     patch.object(h, 'head', side_effect=h.Blocked('controlled qualification refusal')) as head, \
+                     patch.object(h, 'acquire', side_effect=AssertionError('download forbidden')):
+                    self.assertEqual(h.main(), 2)
+                    head.assert_called_once()
+                    self.assertEqual(versions.read_bytes(), version_bytes)
+                    report = json.loads((output / 'summary.json').read_text())
+                    self.assertEqual(report['status'], 'BLOCKED')
+                    self.assertEqual(report['blocker'], 'controlled qualification refusal')
+                    before = (output / 'summary.json').read_bytes()
+                    # A repeat still refuses an existing experiment, without erasing evidence.
+                    with self.assertRaises(FileExistsError):
+                        h.main()
+                    self.assertEqual((output / 'summary.json').read_bytes(), before)
+                    head.assert_called_once()
+                    self.assertEqual(versions.read_bytes(), version_bytes)
+                    (output / 'original.mov').write_bytes(b'tiny stand-in, never upload media')
+                    selected = set()
+                    artifact = workflow.split('          path: |\n', 1)[1].split('          if-no-files-found:', 1)[0]
+                    for pattern in artifact.splitlines():
+                        pattern = pattern.strip()
+                        suffix = pattern.split('/**/', 1)[1]
+                        selected.update(root.rglob(suffix))
+                    self.assertIn(versions, selected)
+                    self.assertIn(output / 'summary.json', selected)
+                    self.assertNotIn(output / 'original.mov', selected)
+            finally:
+                h.BUDGET_ROOT = old_budget
