@@ -330,6 +330,8 @@ def source_audio_extraction(c: Ctx, sid: str):
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
     from .recovery import audio_cache_valid
     if audio_cache_valid(c, wav, sid):
+        from .events import cache_hit
+        cache_hit(c, "audio_cache_valid")
         return wav, None
     p = _plugin_hooks.run_prepare_source(c, sid)
     if p is not None:
