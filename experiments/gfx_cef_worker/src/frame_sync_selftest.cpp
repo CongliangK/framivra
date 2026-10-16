@@ -667,6 +667,49 @@ void TestIllegalTransitions() {
   Check(!t.m.BeginRequest(small, 40), "illegal: 诊断轨画幅不足拒绝");
 }
 
+void TestNativeExact() {
+  Harness t;
+  RequestDesc d;
+  d.document_gen = 9; d.request_id = 7; d.target_frame_index = 258;
+  d.canary = CanaryMode::kExact; d.expected_w = 64; d.expected_h = 48;
+  Check(t.AdvanceToS3(d, nullptr, 1000), "exact: S3 without page originals");
+  Check(t.m.EnterPumping(1300), "exact: S4");
+  FrameBuf original(64, 48), first = original, second = original;
+  first.DrawCanaryDiag(258);
+  uint8_t p1[3], p2[3];
+  SignatureRgbP1(true, 258 ^ 65535, p1);
+  SignatureRgbP2(true, 258 ^ 65535, p2);
+  for (uint32_t y = 0; y < 8; ++y) {
+    for (uint32_t x = 0; x < 8; ++x) {
+      second.SetPx(64 - 8 + x, y, Bgra{p1[2], p1[1], p1[0], 255});
+      second.SetPx(x, 48 - 8 + y, Bgra{p2[2], p2[1], p2[0], 255});
+    }
+  }
+  std::vector<uint8_t> dst(original.px.size(), 0xAA);
+  auto feed = [&](FrameBuf& b) {
+    return t.m.FeedPaint(b.px.data(), 64 * 4, 64, 48, dst.data(), 1500);
+  };
+  Check(feed(first).disposition != PaintDisposition::kAccepted,
+        "exact: first verified paint NOT deliverable");
+  Check(t.m.needs_relocation(), "exact: native relocation requested");
+  Check(feed(first).disposition == PaintDisposition::kRejectedStale,
+        "exact: queued first-paint replay rejected");
+  auto drift = second;
+  drift.SetPx(20, 20, Bgra{123, 45, 67, 255});
+  Check(feed(drift).disposition == PaintDisposition::kRejectedStale,
+        "exact: unoccluded content drift rejected");
+  auto torn = second;
+  torn.SetPx(63, 0, Bgra{1, 2, 3, 255});
+  Check(feed(torn).disposition == PaintDisposition::kRejectedStale,
+        "exact: half-updated second probe rejected");
+  auto v = feed(second);
+  Check(v.disposition == PaintDisposition::kAccepted && v.decoded_frame == 258,
+        "exact: both decoded tokens establish original frame");
+  Check(v.restored && !v.restore_from_reported, "exact: native restoration only");
+  Check(dst == original.px, "exact: EVERY BGRA byte restored (nonuniform corners)");
+  t.m.Reset(1600, "done");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -703,6 +746,7 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
+  TestNativeExact();
   TestHappyPathClean();
   TestEarlyPaintDropped();
   TestStalePaintReject();

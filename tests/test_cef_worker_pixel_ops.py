@@ -52,7 +52,7 @@ from tests.test_cef_worker_shm import _ServeFixture  # noqa: E402
 
 _SELFTEST = (Path(_WORKER).resolve().parent / "pixel_ops_selftest"
              if _GATE else None)
-_EVIDENCE = Path("/tmp/framivra-evidence/issue-111")
+_EVIDENCE = Path(os.environ.get("VTX_CEF_EVIDENCE_DIR", "/tmp/framivra-evidence/issue-111"))
 _TMP_RE = re.compile(r"\.tmp\.\d+\.\d+$")
 
 

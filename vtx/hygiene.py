@@ -183,7 +183,7 @@ def tl_md5(c) -> str:
 
 
 def gfx_key(c, cl) -> str:
-    """gfx 页缓存键 = sha1(html 字节 + 显式依赖内容 + fps + 视口 + 时长)[:12]。
+    """gfx 页缓存键 = sha1(html/依赖 + 生效 CEF 身份 + fps/视口/时长)[:12]。
 
     PR#1 合入：project.cache_dependencies 声明的本地资产（HTML/CSS/JS 引用的
     图片/字体/样式/脚本）内容入键——改依赖即重渲；未声明/网络资产不追踪
@@ -195,6 +195,10 @@ def gfx_key(c, cl) -> str:
     for dep in declared_dependencies(c):
         blob += b"|" + str((c.root / dep).resolve()).encode() + b"\0" \
                 + file_digest(c.root / dep).encode()
+    from .gfx_backend import identity
+    backend = identity()
+    if backend:
+        blob += b"|backend:" + backend.encode()
     return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
 
 
@@ -208,15 +212,16 @@ _NS_MAX = 64
 
 
 def gfx_cache_ns() -> str:
-    """VTX_GFX_CACHE_NS（issue #103，默认空 = 正式态）：实验渲染缓存命名空间。
+    """实验缓存命名空间；未显式设置时 CEF 用 cef-alpha，CDP/CLI 用正式态。
 
     非空 → gfx_dir 路由 cache/gfx_exp/<ns>/<key>/（与正式 cache/gfx/ 物理隔离，
-    gfx_key 算法一字不动——键轴纪律 R12-G1-037 与 docs/cache-provenance.md 不受
-    影响，同一页在两个 ns 下同键异目录）。非法值显式 ValueError：实验配置写错
+    命名空间本身不入 gfx_key，同一后端页面在两个 ns 下同键异目录；CEF 身份
+    另入键，详见 docs/cache-provenance.md）。非法值显式 ValueError：实验配置写错
     宁可大声失败，绝不静默回落正式缓存破坏隔离。"""
     ns = os.environ.get("VTX_GFX_CACHE_NS", "").strip()
     if not ns:
-        return ""
+        from .gfx_backend import selected
+        return "cef-alpha" if selected() == "cef" else ""
     if not _NS_RE.fullmatch(ns) or len(ns) > _NS_MAX:
         shown = ns if len(ns) <= 32 else ns[:32] + "…"
         raise ValueError(

@@ -244,14 +244,18 @@ bool FrameSyncStateMachine::BeginRequest(const RequestDesc& desc,
   if (desc.target_frame_index < 0 ||
       static_cast<uint32_t>(desc.target_frame_index) > kFrameMax ||
       desc.expected_w < 2 || desc.expected_h < 2 ||
-      (desc.canary == CanaryMode::kDiagnostic &&
+      (desc.canary != CanaryMode::kClean &&
        (desc.expected_w < static_cast<uint32_t>(kDiagSize) ||
-        desc.expected_h < static_cast<uint32_t>(kDiagSize)))) {
+        desc.expected_h < static_cast<uint32_t>(kDiagSize))) ||
+      (desc.canary == CanaryMode::kExact &&
+       (desc.expected_w < 2 * kDiagSize || desc.expected_h < 2 * kDiagSize))) {
     Emit("invalid_request", now_us, nullptr, nullptr,
          "\"reason\":\"frame/w/h out of domain\"");
     return false;
   }
   desc_ = desc;
+  exact_first_verified_ = false;
+  exact_first_.clear();
   state_ = State::S1_NAV_OR_EVAL_ISSUED;
   t_begin_us_ = now_us;
   t_assets_us_ = 0;
@@ -393,15 +397,20 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
   const int want = desc_.target_frame_index;
   std::string reject_reason;
 
-  if (desc_.canary == CanaryMode::kDiagnostic) {
-    // —— 诊断轨：双对角 8×8 块核验（块内杂色=半更新/撕裂 → 拒收）——
+  if (desc_.canary != CanaryMode::kClean) {
+    // Exact phase two moves P1 to TR and P2 to BL, and inverts the frame
+    // token: queued phase-one paints cannot satisfy phase two.
+    const bool second = desc_.canary == CanaryMode::kExact && exact_first_verified_;
+    const int token = second ? (want ^ 0xFFFF) : want;
     int32_t tl = -1;
     int32_t br = -1;
-    const bool tl_ok =
-        DecodeDiagBlock(src, stride, width, height, false, &tl);
-    const bool br_ok =
-        DecodeDiagBlock(src, stride, width, height, true, &br);
-    if (tl_ok && br_ok && tl == want && br == want) {
+    const bool tl_ok = second
+        ? DecodeDiagBlock(src + (width - kDiagSize) * 4u, stride,
+                          kDiagSize, height, false, &tl)
+        : DecodeDiagBlock(src, stride, width, height, false, &tl);
+    const bool br_ok = DecodeDiagBlock(src, stride,
+        second ? kDiagSize : width, height, true, &br);
+    if (tl_ok && br_ok && tl == token && br == token) {
       v.disposition = PaintDisposition::kAccepted;
       v.decoded_frame = tl;  // 取自解码结果（非请求值回显）
     } else {
@@ -495,10 +504,54 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     v.decoded_frame = inter[0];  // receipt canary 来源：真实解码结果
   }
 
+  if (desc_.canary == CanaryMode::kExact) {
+    if (!exact_first_verified_) {
+      exact_first_.resize(static_cast<size_t>(width) * height * 4u);
+      CopyCompactRows(src, stride, exact_first_.data(), width, height);
+      exact_first_verified_ = true;
+      v.disposition = PaintDisposition::kEarlyDropped;  // not deliverable yet
+      Emit("exact_first_verified", now_us, nullptr, nullptr,
+           "\"decoded_frame\":" + std::to_string(v.decoded_frame));
+      return v;
+    }
+    // Compare every byte outside the FOUR probe rectangles. A changing page
+    // (CSS animation, asynchronous DOM, backdrop interaction, etc.) fails closed.
+    for (uint32_t y = 0; y < height; ++y) {
+      const bool edge = y < kDiagSize || y >= height - kDiagSize;
+      const size_t left = edge ? kDiagSize * 4u : 0;
+      const size_t count = (edge ? width - 2 * kDiagSize : width) * 4u;
+      if (std::memcmp(src + y * stride + left,
+                      exact_first_.data() + static_cast<size_t>(y) * width * 4u + left,
+                      count) != 0) {
+        v.disposition = PaintDisposition::kRejectedStale;
+        ++req_rejected_;
+        ++counters_.rejected_stale_paint;
+        Emit("exact_content_mismatch", now_us, nullptr, nullptr);
+        return v;
+      }
+    }
+    // First paint owns the unoccluded TR/BL pixels; second owns TL/BR.
+    // Restore actual BGRA_PREMUL bytes before the existing alpha/PNG pipeline.
+    if (dst != nullptr) {
+      std::memcpy(dst, exact_first_.data(), exact_first_.size());
+      for (uint32_t y = 0; y < height; ++y) {
+        if (y < kDiagSize || y >= height - kDiagSize) {
+          const size_t x = y < kDiagSize ? 0 : width - kDiagSize;
+          std::memcpy(dst + (static_cast<size_t>(y) * width + x) * 4u,
+                      src + y * stride + x * 4u, kDiagSize * 4u);
+        }
+      }
+    }
+    v.decoded_frame ^= 0xFFFF;  // first frame identity, decoded in BOTH phases
+    v.restored = true;
+  }
+
   // ================= 接受路径：紧凑拷贝 + 原地恢复两个绑定原像素 ==========
   const uint64_t t0 = NowUs();
   if (dst != nullptr) {
-    CopyCompactRows(src, stride, dst, width, height);
+    if (desc_.canary != CanaryMode::kExact) {
+      CopyCompactRows(src, stride, dst, width, height);
+    }
     if (desc_.canary == CanaryMode::kClean) {
       // 恢复源优先级（工单）：1) 与本请求绑定、canary_set 时页面上报并经
       // 双像素验签绑定世代的原像素；2) 行 1 邻域兜底（仅 fixture 证明等值
@@ -528,7 +581,7 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
            std::to_string(v.accepted_elapsed_us_since_ready) +
            ",\"rejected_stale_paint_count\":" + std::to_string(req_rejected_) +
            ",\"restore_source\":" +
-           std::string(v.restore_from_reported ? "\"reported_original\""
+           std::string(desc_.canary == CanaryMode::kExact ? "\"native_cross_capture\"" : v.restore_from_reported ? "\"reported_original\""
                                                : "\"neighbor_row1\""));
   return v;
 }

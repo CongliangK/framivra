@@ -395,7 +395,8 @@ class RenderPlan:
         vcodec, enc = pick_vcodec(c, self.draft)
         for k, L in enumerate(layers_subset):
             last = k == n - 1
-            ident = L["pngdir"].name if L["gfx"] else L["seg"].name
+            ident = (os.path.relpath(L["pngdir"], c.cache)
+                     if L["gfx"] else L["seg"].name)
             h = hashlib.sha1()
             h.update(f"{prev_key}|pass{k}\n".encode())
             h.update(f"passgraph={_graph_code_digest()}\n".encode())
@@ -520,7 +521,10 @@ class RenderPlan:
                  f"|{int(bool(getattr(self.c, 'gpu', False)))}\n".encode())
         h.update(f"graph={_graph_code_digest()}\n".encode())
         for L in sl:
-            ident = L["pngdir"].name if L["gfx"] else L["seg"].name   # 上游内容键
+            # Include the namespace route, not just the leaf content key:
+            # gfx_exp/<backend-or-experiment>/<key> must never hit legacy vseg.
+            ident = (os.path.relpath(L["pngdir"], self.c.cache)
+                     if L["gfx"] else L["seg"].name)
             h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
                       + f"|{L['x']}|{L['y']}|{L['w2']}|{L['h2']}\n").encode())
         if with_subs and sfile is not None and sfile.exists():

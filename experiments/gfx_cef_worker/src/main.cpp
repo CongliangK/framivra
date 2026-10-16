@@ -91,7 +91,7 @@ struct RunOptions {
   bool sync = false;                   // 启用五阶段状态机驱动
   std::string sync_mode = "n";         // n = 逐帧导航（?f=N）| p = 常驻页
   std::string sync_log;                // JSONL 全事件日志路径
-  std::string sync_canary = "clean";   // clean | diagnostic
+  std::string sync_canary = "clean";   // clean | diagnostic | exact (Alpha production)
   std::string sync_fault = "none";     // 对抗注入面（见 Usage）
   int sync_pump_timeout_ms = 5000;     // S4 泵送硬超时（工单冻结 5000ms）
   int sync_ready_timeout_ms = 20000;   // S1→S3 就绪信号等待上限
@@ -144,7 +144,8 @@ void Usage(const char* argv0) {
       "  --sync                  启用 FrameSyncStateMachine（替代固定 settle 等待）\n"
       "  --sync-mode=n|p         n = 逐帧导航 ?f=N（默认）；p = 常驻页 __vtx_render(N)\n"
       "  --sync-log=<path>       JSONL 全事件日志（状态转移/paint 判定/时序/计数）\n"
-      "  --sync-canary=clean|diagnostic  clean = v2 双像素（默认）；diagnostic = 8x8\n"
+      "  --sync-canary=clean|diagnostic|exact  exact = native cross-capture (production Alpha)\n"
+      "                          clean = v2 双像素（默认）；diagnostic = 8x8\n"
       "  --sync-fault=<mode>     none|stale_canary（恒画 f-1 签名）|no_canary（不画）|\n"
       "                          no_ready（不发就绪信号）|early_burst（S1 突发泵送）\n"
       "  --sync-pump-timeout-ms=N        S4 泵送硬超时（默认 5000，工单口径）\n"
@@ -275,8 +276,9 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
                      opt->sync_mode.c_str());
         return false;
       }
-      if (opt->sync_canary != "clean" && opt->sync_canary != "diagnostic") {
-        std::fprintf(stderr, "--sync-canary 只接受 clean|diagnostic，得到 %s\n",
+      if (opt->sync_canary != "clean" && opt->sync_canary != "diagnostic" &&
+          opt->sync_canary != "exact") {
+        std::fprintf(stderr, "--sync-canary 只接受 clean|diagnostic|exact，得到 %s\n",
                      opt->sync_canary.c_str());
         return false;
       }

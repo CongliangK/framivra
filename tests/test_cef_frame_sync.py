@@ -56,8 +56,8 @@ _GATE = _LINUX_PROC and _WORKER and Path(_WORKER).is_file()
 _BIN_DIR = Path(_WORKER).resolve().parent if _GATE else None
 _SELFTEST = _BIN_DIR / "frame_sync_selftest" if _BIN_DIR else None
 _PAGE = (ROOT / "experiments/gfx_cef_worker/pages/frame_sync_v2.html").as_uri()
-_EVIDENCE = Path(
-    "/home/liangruochong/.local/state/framivra-orchestrate/evidence/issue-114")
+_EVIDENCE = Path(os.environ.get("VTX_CEF_EVIDENCE_DIR",
+    "/home/liangruochong/.local/state/framivra-orchestrate/evidence/issue-114"))
 
 
 def _wait_until(pred, timeout=30.0, interval=0.05):

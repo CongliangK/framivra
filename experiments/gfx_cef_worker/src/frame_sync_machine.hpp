@@ -57,7 +57,10 @@ enum class DriveMode : uint8_t { kModeN = 0, kModeP = 1 };
 const char* DriveModeName(DriveMode m);
 
 // Canary 模式：Clean = v2 双像素（验收主轨）；Diagnostic = 双对角 8×8。
-enum class CanaryMode : uint8_t { kClean = 0, kDiagnostic = 1 };
+// kExact: two opaque, disjoint corner probes in the SAME document. Both
+// paints must verify; all unoccluded bytes must agree. Cross-copy restores the
+// actual covered pixels (including alpha), without page hooks or neighbors.
+enum class CanaryMode : uint8_t { kClean = 0, kDiagnostic = 1, kExact = 2 };
 
 // ---------------------------------------------------------------- 计数器面
 
@@ -168,6 +171,7 @@ class FrameSyncStateMachine {
   bool accepted() const {
     return state_ == State::S5_ONPAINT_VERIFIED;
   }
+  bool needs_relocation() const { return exact_first_verified_; }
   uint64_t t_request_begin_us() const { return t_begin_us_; }
   uint64_t t_ready_us() const { return t_canary_set_us_; }  // S3 时点
   const Counters& counters() const { return counters_; }
@@ -209,6 +213,8 @@ class FrameSyncStateMachine {
   uint64_t req_rejected_ = 0;
   uint64_t req_paints_ = 0;
   uint64_t last_accepted_elapsed_us_ = 0;
+  bool exact_first_verified_ = false;
+  std::vector<uint8_t> exact_first_;
   EventSink sink_;
 };
 

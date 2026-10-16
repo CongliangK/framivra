@@ -11,6 +11,7 @@
 // （magic/版本/路径非法）；4 = 请求中途连接断裂；5 = 空闲超时。
 #include "serve.h"
 
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -388,14 +389,14 @@ void DrainSyncReadyQueue(RunState& state, fsync::FrameSyncStateMachine& m) {
 //    task → v2 双像素 Canary 绘制 → console.debug("__VTX_READY__:"+json)。
 //    三元组（gen/req/f）随装配注入 —— 晚到/异世代回调在宿主侧被拒收。
 std::string BuildSyncBridgeJs(uint32_t gen, uint32_t request_id, int32_t f,
-                              bool mode_n, bool clean,
+                              bool mode_n, bool clean, bool exact,
                               const std::string& fault) {
-  char header[160];
+  char header[200];
   std::snprintf(header, sizeof(header),
                 "(function(){\"use strict\";var GEN=%u,REQ=%u,F=%d,"
-                "MODE_N=%s,CLEAN=%s,FAULT=\"%s\";",
+                "MODE_N=%s,CLEAN=%s,EXACT=%s,FAULT=\"%s\";",
                 gen, request_id, f, mode_n ? "true" : "false",
-                clean ? "true" : "false", fault.c_str());
+                clean ? "true" : "false", exact ? "true" : "false", fault.c_str());
   // 注：FAULT 名单由 main.cpp 参数面锁定（none|stale_canary|no_canary|
   // no_ready|early_burst），此处字符串只来自受信配置面。
   return std::string(header) + R"VTXSYNC(
@@ -429,9 +430,15 @@ var loadP = (document.readyState === "complete") ? { then: function (cb) { cb();
 //    Mode N 的帧状态已由 ?f= 导航期间的页面自身脚本施加。——
 function applyState() {
   if (!MODE_N) {
-    try {
-      if (typeof window.__vtx_render === "function") { window.__vtx_render(F); }
-    } catch (e) {}
+    if (typeof window.__vtx_render !== "function") {
+      throw new Error("Mode P requires synchronous __vtx_render(f)");
+    }
+    var result = window.__vtx_render(F);
+    if (result && typeof result.then === "function") {
+      throw new Error("Mode P requires synchronous __vtx_render(f)");
+    }
+  } else if (Number(new URLSearchParams(location.search).get("f")) !== F) {
+    throw new Error("Mode N document frame mismatch");
   }
 }
 // —— v2 双像素 Canary（vtx/frame_canary.py 冻结公式镜像）——
@@ -448,13 +455,20 @@ function cP2(fr) {
   return CLEAN ? "rgba(" + rgb + ",0.996078431372549)" : "rgb(" + rgb + ")";
 }
 function makeEl(pos, size, color) {
-  var d = document.createElement("div");
+  // Isolate probes from generic page selectors (e.g. div{top:60px}).
+  var d = document.createElement("vtx-frame-canary");
   d.setAttribute("data-vtx-sync-canary", "1");
-  d.style.cssText = "position:fixed;margin:0;padding:0;border:0;outline:0;" +
-    "z-index:2147483647;pointer-events:none;visibility:visible!important;" +
-    "display:block!important;transform:none!important;filter:none!important;" +
-    "mix-blend-mode:normal!important;" + pos + "width:" + size +
-    "px;height:" + size + "px;background:" + color + ";";
+  d.style.cssText = "all:initial;";
+  var styles = {position:"fixed",display:"block",left:"auto",right:"auto",
+    top:"auto",bottom:"auto",width:size+"px",height:size+"px",margin:"0",
+    padding:"0",border:"0",outline:"0",opacity:"1",filter:"none",transform:"none",
+    "box-shadow":"none","mix-blend-mode":"normal","box-sizing":"content-box",
+    "z-index":"2147483647","pointer-events":"none",visibility:"visible",
+    background:color};
+  pos.split(";").forEach(function(s){
+    var p=s.split(":"); if(p.length===2)styles[p[0]]=p[1];
+  });
+  Object.keys(styles).forEach(function(k){d.style.setProperty(k,styles[k],"important");});
   return d;
 }
 function clearCanary() {
@@ -479,6 +493,18 @@ function drawCanary(fr) {
     root.appendChild(makeEl("right:0;bottom:0;", 8, cP2(fr))); // 右下 8x8
   }
 }
+// Only the native first-paint verifier may trigger relocation. A new token
+// rejects queued old paints. Keep the same document, viewport and page frame.
+window.__VTX_RELOCATE = function () {
+  if (!EXACT || window.__VTX_SYNC_TAG !== GEN + ":" + REQ) { return; }
+  clearCanary();
+  var fr = F ^ 65535;
+  if (FAULT === "stale_canary") { fr = (fr - 1 + 65536) & 65535; }
+  if (FAULT === "no_canary") { return; }
+  var root = document.documentElement;
+  root.appendChild(makeEl("right:0;top:0;", 8, cP1(fr)));
+  root.appendChild(makeEl("left:0;bottom:0;", 8, cP2(fr)));
+};
 function originals() {
   try {
     if (typeof window.__vtx_originals === "function") {
@@ -529,13 +555,15 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
   r.request_id = request_id;
   r.target_f = frame;
   const bool mode_n = opt.sync_mode != "p";
-  const bool clean = opt.sync_canary != "diagnostic";
+  const bool clean = opt.sync_canary == "clean";
+  const bool exact = opt.sync_canary == "exact";
   fsync::RequestDesc d;
   d.document_gen = document_gen;
   d.request_id = request_id;
   d.target_frame_index = frame;
   d.drive = mode_n ? fsync::DriveMode::kModeN : fsync::DriveMode::kModeP;
-  d.canary = clean ? fsync::CanaryMode::kClean : fsync::CanaryMode::kDiagnostic;
+  d.canary = exact ? fsync::CanaryMode::kExact
+                   : clean ? fsync::CanaryMode::kClean : fsync::CanaryMode::kDiagnostic;
   d.expected_w = expected_w;
   d.expected_h = expected_h;
   const uint64_t dup_before = machine.counters().duplicate_request_rejected;
@@ -577,7 +605,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
   }
   // 注入桥（Mode N：加载完成后注入新文档；Mode P：常驻页每请求重放）。
   browser->GetMainFrame()->ExecuteJavaScript(
-      BuildSyncBridgeJs(document_gen, request_id, frame, mode_n, clean,
+      BuildSyncBridgeJs(document_gen, request_id, frame, mode_n, clean, exact,
                         opt.sync_fault),
       "vtx_sync_bridge", 0);
 
@@ -618,7 +646,13 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
   bool size_mismatch = false;
   uint32_t actual_w = 0;
   uint32_t actual_h = 0;
+  bool relocated = false;
   while (NowUs() < pump_deadline) {
+    if (exact && machine.needs_relocation() && !relocated) {
+      browser->GetMainFrame()->ExecuteJavaScript(
+          "window.__VTX_RELOCATE();", "vtx_sync_relocate", 0);
+      relocated = true;
+    }
     browser->GetHost()->Invalidate(PET_VIEW);
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
@@ -708,9 +742,21 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     std::fprintf(stderr, "vtx_cef_worker: --url-template 缺 {f} 占位\n");
     return 2;
   }
+  struct SocketDirFd {
+    int fd = -1;
+    ~SocketDirFd() { if (fd >= 0) ::close(fd); }
+  } socket_dir;
+  std::string socket_address = opt.ipc_socket;
   struct sockaddr_un sun_probe;
-  if (opt.ipc_socket.empty() ||
-      opt.ipc_socket.size() + 1 > sizeof(sun_probe.sun_path)) {
+  if (socket_address.size() + 1 > sizeof(sun_probe.sun_path)) {
+    const std::filesystem::path p(socket_address);
+    socket_dir.fd = ::open(p.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (socket_dir.fd < 0) return 2;
+    socket_address = "/proc/" + std::to_string(::getpid()) + "/fd/" +
+                     std::to_string(socket_dir.fd) + "/" + p.filename().string();
+  }
+  if (socket_address.empty() ||
+      socket_address.size() + 1 > sizeof(sun_probe.sun_path)) {
     std::fprintf(stderr, "vtx_cef_worker: --ipc-socket 缺失或超长\n");
     return 2;
   }
@@ -749,7 +795,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   struct sockaddr_un addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
-  std::strncpy(addr.sun_path, opt.ipc_socket.c_str(),
+  std::strncpy(addr.sun_path, socket_address.c_str(),
                sizeof(addr.sun_path) - 1);
   ::unlink(opt.ipc_socket.c_str());  // 同名残骸（崩溃遗留）先行清扫
   if (::bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr),

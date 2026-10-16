@@ -9,8 +9,47 @@ libspng/fpng 双编码原子落盘适配器）+ 阶段 3a（#114，CEF-03a：五
 二进制 → C++20 编译 `libcef_dll_wrapper` + `vtx_cef_worker`（双模式 OSR
 渲染 + 后端探针 + 监管契约 + 帧服务协议 + 双 PNG 编码后端 + 帧同步状态
 机）→ 产物全部隔离在本目录，绝不污染仓库打包面（`pyproject.toml` /
-`setup.py` / `MANIFEST.in` / `scripts/package_smoke.py`）。不接线 `vtx/`
-生产代码（后续工单的事）。
+`setup.py` / `MANIFEST.in` / `scripts/package_smoke.py`）。Python 生产接线为
+`vtx/gfx_cef.py`，显式 `VTX_GFX=cef` 选择实验性 Alpha（见下节）；原生二进制不随
+Python wheel 分发。
+
+## 生产接线（实验性 Alpha）
+
+`VTX_GFX` 只接受 `cdp|cli|cef`；未知值（含 Electron）拒绝执行。CEF 初始化、
+验签或输出失败直接使 gfx 阶段失败，**不回落 CDP/CLI**。Python 客户端在 `vtx/`，
+worker 及同目录锁定 CEF 运行库须另行构建。仅 Linux `/proc` 监管可用时启动；
+worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处理不可信页面**。
+
+生产 CEF 固定使用 **Mode N**：每帧导航原页面 `?f=N`，不要求页面实现
+`__vtx_render` 或 `__vtx_originals`，不修改项目 HTML。原生 `--sync-canary=exact`
+在同一文档中先验 TL/BR 不透明探针，再移至 TR/BL（反转帧号 token）复验；
+两次捕获的非覆盖区域须逐字节一致，再交叉恢复实际遮挡像素。输出为原生
+BGRA 预乘像素经现有逆预乘/PNG 链的结果，**不使用邻行像素猜测**。
+页面仍须遵守帧纯函数协议；异步视觉变化、根元素特效或影响探针的特殊选择器
+可能导致显式超时，不承诺任意网页兼容。`clean` 旧实验通道的邻域兜底不用于生产。
+
+缓存身份与路由权威见 [cache-provenance](../../docs/cache-provenance.md)。
+原生逐事件日志、进程日志、逐帧回执保留在项目 `cache/reports/cef/`；失败亦保留。
+所有运行 scratch/profile 落监管 `cache/tmp/`，长路径通过父 fd 别名访问。
+
+下例为**实际写操作**，仅在已确认允许写入且 `cache/`、`out/` 全新的项目副本执行；
+不要把 `PROJECT_COPY` 指向原项目。全片验收还须检查内容门、外引 BGM 与 Blender 收尾，
+不能以小 fixture 通过替代完整视频验收。没有上传步骤。
+
+```bash
+# PROJECT_COPY 由验收主控设置；worker 旁须有锁定运行库与资源文件。
+env VTX_GFX=cef VTX_CEF_MODE=a0 VTX_GFX_PAGES=2 \
+  VTX_GFX_CACHE_NS=cef-alpha-20261016 \
+  VTX_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker" \
+  python3 vtx/vtx.py -t "${PROJECT_COPY:?}/timeline.json" all
+```
+
+真实后端、全像素透明/不透明恢复、缓存补帧和短片全链 fixture：
+
+```bash
+env VTX_TEST_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker" \
+  python3 -m unittest tests.test_gfx_cef_alpha -v
+```
 
 ## 目录
 
@@ -35,7 +74,7 @@ libspng/fpng 双编码原子落盘适配器）+ 阶段 3a（#114，CEF-03a：五
 | `src/frame_sync_machine.cpp` | #114 状态机实现：vtx/frame_canary.py 冻结公式的 C++ 消费镜像（P1 xor 0x5A / P2 加性 0x3C×(16,22) / α=254 / 预乘精确反像）；自检与 serve 共用同一判定核心 |
 | `src/frame_sync_selftest.cpp` | #114 原生对抗自检：旧 paint/跨世代同帧/重复请求/签名半更新/超时/早期 paint/尺寸不符/晚到回调等确定性 fixture（无 CEF 依赖；`--jsonl-out` 供 Python 跨语言校验） |
 | `pages/frame_sync_v2.html` | #114 状态机验收页：透明底 canvas（f 纯函数）+ `?f=`（Mode N）+ `__vtx_render(f)`（Mode P）+ `__vtx_originals()`（canary 位原像素上报钩子） |
-| `cef_client.py` | #110 Python 消费端（工单落点 `vtx/cef_client.py` 因本单边界禁改 `vtx/` 而随 worker 同目录交付；协议镜像见 `IPC_PROTOCOL.md`） |
+| `cef_client.py` | 兼容导入；唯一 Python 协议客户端为 `../../vtx/cef_client.py`（协议镜像见 `IPC_PROTOCOL.md`） |
 | `pages/frame_canary.html` | #110 金丝雀帧页：f 纯函数（(0,0) 像素编码帧号 + 硬边条纹防步长错位） |
 | `IPC_PROTOCOL.md` | #110 协议权威文档（环布局/偏移表/状态机/双模式时序/故障注入面/工单偏差记录） |
 | `probe_display_matrix.py` | 三态显示环境 × A0/A1 × ozone 矩阵探测（#109）：每格独立 worker 跑 `gfxA.html?f=0` 出 PNG + 内部探针（WEBGL_debug_renderer_info + chrome://gpu）→ 归类生效后端 → 落 `env_manifest.json` |
@@ -337,6 +376,7 @@ vtx_cef_worker … --sync --sync-fault=stale_canary --sync-pump-timeout-ms=3000
 遗留边界（诚实清单）：诊断轨 8×8 验签为 uniform 块解码（块内撕裂带
 拒收），跨区域对角撕裂的全画幅裁决（TL vs BR 双角帧号比对）已实现归因
 方向但高压统计口径归 #115；receipt 128B 冻结结构无 `early_paint_dropped`
-字段位，该计数仅入 JSONL（DoD 口径即 JSONL）；「无上报原像素的任意
-HTML 恢复」仍为开放问题（本单交付请求绑定上报机制 + 邻域兜底显形，
-通用 DOM 页的验证式原像素获取留待下游）。
+字段位，该计数仅入 JSONL（DoD 口径即 JSONL）。生产 Alpha 的无钩子帧驱动
+DOM 恢复走上方 `exact` 双位置原生捕获；旧 `clean` 模式仍不支持通用原像素获取。
+跨引擎光栅等价、完整 voice-ime 成片和长时高压统计须由各自验收证明，不能从
+短片 fixture 或旧实验帧率数据推导。

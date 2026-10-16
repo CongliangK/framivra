@@ -43,7 +43,7 @@ struct ServeOptions {
   bool sync = false;                 // --sync：启用 FrameSyncStateMachine
   std::string sync_mode = "n";       // n = 逐帧导航（?f=N）；p = 常驻页
   std::string sync_log;              // --sync-log：JSONL 全事件日志路径
-  std::string sync_canary = "clean"; // clean | diagnostic
+  std::string sync_canary = "clean"; // clean | diagnostic | exact (Alpha production)
   std::string sync_fault = "none";   // none|stale_canary|no_canary|no_ready|
                                      // early_burst（对抗注入面）
   int sync_pump_timeout_ms = 5000;   // S4 泵送硬超时（工单冻结 5000ms）

@@ -12,9 +12,8 @@
    （`alignas(64)` 后结构体 128B），无法装入「64 字节回执」。本实现以
    **冻结字段集为准**：模式 1 回执 = 完整 `FrameSlotHeader`（128B 原生
    布局）。64B 定长仅 `FrameRequest`（可达）。
-2. **`vtx/cef_client.py` 改道**：工单落点 `vtx/` 属生产面，#110 边界
-   禁改（本单仍属 experiments 面），消费端随 worker 同目录交付为
-   `experiments/gfx_cef_worker/cef_client.py`；接线 `vtx/` 留待后续工单。
+2. **Python 客户端**：唯一实现为 `vtx/cef_client.py`；本目录 `cef_client.py`
+   为实验自检兼容导入。生产 Alpha 使用同一协议，无另一套解析器。
 3. **槽位状态机位置**：冻结字段集无空闲字承载生命周期状态，EMPTY/
    WRITING/READY 门置于环控制块 `SlotGate`（专享缓存行），槽头保持
    工单原样作帧描述/计时面。

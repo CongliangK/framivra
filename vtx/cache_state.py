@@ -126,6 +126,13 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     _pdigest = active_plugins_digest(c)
     if _pdigest:
         h.update(_pdigest.encode())
+    # Rendering configuration is input identity too. Changing CEF/backend/ns
+    # must revoke downstream success, not merely route a different PNG folder.
+    from .gfx_backend import identity
+    from .hygiene import gfx_cache_ns
+    backend, namespace = identity(), gfx_cache_ns()
+    if backend or namespace:
+        h.update(f"gfx-backend:{backend}|ns:{namespace}\n".encode())
     return h.hexdigest()
 
 
