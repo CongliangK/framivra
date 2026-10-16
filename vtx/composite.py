@@ -93,7 +93,7 @@ def _graph_code_digest() -> str:
     source += _normalized_ast_src(inspect.getsource(frame_source))
     source += _normalized_ast_src(inspect.getsource(gfx_cli))
     fingerprint = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    if fingerprint == "9cade326bee042e1c8501f8db634e1369fdf8079feb993c1abea6ed671b88938":
+    if fingerprint == "a290aa906f6c0ee53aa5c6af81152eeeadeaddbac8d9b1a22040eefba99efe1e":
         return "e94c2171a336"
     return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
 
@@ -274,11 +274,15 @@ class RenderPlan:
         最小复现定位）：不得把次输入 setpts 到负时间——负 PTS 下 overlay framesync
         在输入 EOF 附近渐暗、repeat 失效透传主帧（u2_backends 跨 2791 切点复现，
         3033-3364 帧 gfx 层塌暗）。topts：头窗草稿的 -t 截短（仅旧单 graph 回落路径）。
+        source_stop is an explicit subtitle-preview readiness bound; ordinary
+        layers omit it and validate the complete remaining PNG sequence. The
+        compositor still owns output trimming, so FFmpeg arguments are unchanged.
         """
         c = self.c
         rel_in = L["cl"]["dst_in"] - a   # 段内相对起点（可负 = 跨段界的层）
         if L["gfx"]:
-            return L["source"].input_args(max(0, -rel_in), options=topts, ready=not c.dry)
+            return L["source"].input_args(max(0, -rel_in), L.get("source_stop"),
+                                          options=topts, ready=not c.dry)
         ss = ["-ss", f"{max(0, -rel_in) / c.fps:.6f}"] if rel_in < 0 else []
         return [*ss, *topts, "-i", str(L["seg"])]
 

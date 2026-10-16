@@ -123,7 +123,7 @@ class TestMigrationIdentity(unittest.TestCase):
 
 class TestGeneratedPngConsumerIntegration(unittest.TestCase):
     """CPU consumer coverage; generated PNGs deliberately need no browser."""
-    @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG') == '1', 'set VTX_TEST_FFMPEG=1')
+    @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
     def test_full_warm_draft_range_and_missing_frame_failure(self):
         import json
         import os
@@ -172,3 +172,58 @@ class TestGeneratedPngConsumerIntegration(unittest.TestCase):
             failure = run('video', '--draft', '--range', '0f', '10f', ok=False)
             self.assertIn('gfx', failure.stdout)
             self.assertEqual(receipt, (root / 'out/receipt.json').read_bytes())
+
+
+class TestSubtitleReadiness(unittest.TestCase):
+    def test_preview_checks_only_requested_frame_and_full_consumer_still_fails(self):
+        from vtx import subs
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = PngSequence(root, 'partial', 24, 30, 16, 16)
+            write_png(source.frame_path(0))
+            c = SimpleNamespace(fps=30, w=16, h=16, dry=False,
+                                tl={'video_tracks': [{'kind': 'gfx', 'clips': [
+                                    {'src': 'page.html', 'dst_in': 0, 'dur': 24}]}]})
+            with mock.patch.object(subs, 'png_source', return_value=source), \
+                 mock.patch.object(subs, 'seg_encoder_kind', return_value='x264'):
+                layers = subs._layer_ready(c, 0)
+                self.assertIsNotNone(layers)
+                plan = composite.RenderPlan(c=c, draft=False, f=1, W=16, H=16)
+                self.assertEqual(plan._layer_input_args(layers[0], 0),
+                                 source.input_args(0, 1))
+                full_layer = dict(layers[0])
+                full_layer.pop('source_stop')
+                with self.assertRaisesRegex(ValueError, 'f0001.png'):
+                    plan._layer_input_args(full_layer, 0)
+                source.frame_path(0).unlink()
+                self.assertIsNone(subs._layer_ready(c, 0))
+
+    @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
+    def test_partial_preview_renders_and_missing_current_uses_black_fallback(self):
+        import subprocess
+        from vtx import subs
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            sequence = root / 'partial'
+            sequence.mkdir()
+            source = PngSequence(sequence, 'partial', 24, 30, 16, 16)
+            write_png(source.frame_path(0), frame=10)
+            c = SimpleNamespace(cache=root / 'cache', fps=30, spf=1/30, dur=24,
+                                w=16, h=16, dry=False, gpu=False,
+                                run=lambda cmd: subprocess.run(cmd, check=True, capture_output=True),
+                                tl={'video_tracks': [{'kind': 'gfx', 'clips': [
+                                    {'src': 'page.html', 'dst_in': 0, 'dur': 24}]}]})
+            with mock.patch.object(subs, 'png_source', return_value=source), \
+                 mock.patch.object(subs, 'seg_encoder_kind', return_value='x264'):
+                preview = root / 'preview'
+                preview.mkdir()
+                path, description = subs._bg_frame(c, 0, preview, False)
+                self.assertTrue(path.is_file())
+                self.assertIn('图层单帧', description)
+                source.frame_path(0).unlink()
+                path, description = subs._bg_frame(c, 0, preview, False)
+                self.assertTrue(path.is_file())
+                self.assertIn('兜底', description)
+                rgba = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(path),
+                                                '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
+                self.assertEqual(rgba, b'\0\0\0\xff' * (16 * 16))

@@ -251,7 +251,10 @@ def _layer_ready(c: Ctx, f: int):
                     source.require_ready(rel, rel + 1)
                 except ValueError:
                     return None
-                layers.append({"cl": cl, "source": source, "x": cl.get("x", 0), "y": cl.get("y", 0),
+                # The preview consumes one output frame. Keep readiness at the
+                # same clip-local boundary; later PNGs need not exist yet.
+                layers.append({"cl": cl, "source": source, "source_stop": rel + 1,
+                               "x": cl.get("x", 0), "y": cl.get("y", 0),
                                "w2": None, "h2": None, "gfx": True, "ti": ti})
             else:
                 windowed = any(k in cl for k in ("scale", "x", "y"))
