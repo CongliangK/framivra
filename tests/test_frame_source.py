@@ -1,6 +1,8 @@
 """PNG FrameSource contracts and the exact, one-time cache identity migration."""
 import dataclasses
 import inspect
+import hashlib
+import json
 import os
 import struct
 import tempfile
@@ -90,8 +92,15 @@ class TestMigrationIdentity(unittest.TestCase):
         composite._graph_code_digest.cache_clear()
 
     def test_exact_baseline_and_mutation_invalidation(self):
+        # Hash the pinned pre-migration source on THIS interpreter. ast.dump
+        # itself changed across supported Python versions before this feature.
+        fixture = json.loads((Path(__file__).parent / 'fixtures/png_graph_d9ce4aa.json').read_text())
+        self.assertEqual(fixture['baseline_commit'], 'd9ce4aab52fec57b770f689550fbbde1a860243b')
+        self.assertEqual([m['name'] for m in fixture['methods']], list(composite._SYNTH_FUNCS))
+        legacy_source = ''.join(composite._normalized_ast_src(m['source']) for m in fixture['methods'])
+        expected = hashlib.sha1(legacy_source.encode('utf-8')).hexdigest()[:12]
         composite._graph_code_digest.cache_clear()
-        self.assertEqual(composite._graph_code_digest(), 'e94c2171a336')
+        self.assertEqual(composite._graph_code_digest(), expected)
         original = inspect.getsource
         for target, before, after in (
             (frame_source, '"-framerate"', '"-r"'),
@@ -107,7 +116,14 @@ class TestMigrationIdentity(unittest.TestCase):
                     return text
                 with mock.patch.object(inspect, 'getsource', side_effect=changed):
                     composite._graph_code_digest.cache_clear()
-                    self.assertNotEqual(composite._graph_code_digest(), 'e94c2171a336')
+                    self.assertNotIn(composite._graph_code_digest(), composite._PNG_MIGRATION_DIGESTS.values())
+
+    def test_unknown_ast_form_cannot_use_any_migration_alias(self):
+        normalize = composite._normalized_ast_src
+        with mock.patch.object(composite, '_normalized_ast_src',
+                               side_effect=lambda source: normalize(source) + 'UNKNOWN_AST_FORM'):
+            composite._graph_code_digest.cache_clear()
+            self.assertNotIn(composite._graph_code_digest(), composite._PNG_MIGRATION_DIGESTS.values())
 
     def test_identity_ignores_location_but_not_content(self):
         c = SimpleNamespace(gpu=False)

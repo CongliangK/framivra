@@ -28,6 +28,20 @@ _SYNTH_FUNCS = ("composite", "_composite_graph", "_composite_passes",
                 "_layer_chain", "_layer_input_args")
 
 
+# Exact migration fingerprints of the same implementation under supported AST
+# dump families. Values are d9ce4aa's own graph digests on those interpreters,
+# not one universal cache identity. No version-number or unknown-form fallback:
+# any changed implementation/dependency/AST form misses every entry.
+_PNG_MIGRATION_DIGESTS = {
+    # Python 3.9–3.11: no FunctionDef.type_params field.
+    "0991c5b805084f73d16331cd26fa2066c156953854b2a3ea8ebd106c1f6dfb55": "7d07b1d0d495",
+    # Python 3.12: type_params=[], empty fields retained by ast.dump.
+    "a290aa906f6c0ee53aa5c6af81152eeeadeaddbac8d9b1a22040eefba99efe1e": "e94c2171a336",
+    # Python 3.13: ast.dump defaults to omitting empty fields.
+    "d3b191ebd22f54a07641342f913e4d4a0bc5d474ad8c7a2e9e3fbfa354e8ec06": "e2cacafd30eb",
+}
+
+
 def _normalized_ast_src(source: str) -> str:
     """源码 → 去注释/去 docstring/去格式的 AST 归一化文本。
 
@@ -85,7 +99,7 @@ def _graph_code_digest() -> str:
     source = "".join(
         _normalized_ast_src(inspect.getsource(getattr(RenderPlan, n))) for n in _SYNTH_FUNCS
     )
-    # Issue #68: one exact migration fingerprint preserves existing PNG cache
+    # Issue #68: exact migration fingerprints preserve existing PNG cache
     # identities. Include the whole new descriptor and its PNG validator module,
     # so later helper/contract/validation edits cannot silently reuse this alias.
     # This is source identity, not a proof of runtime/library equivalence; the
@@ -93,8 +107,9 @@ def _graph_code_digest() -> str:
     source += _normalized_ast_src(inspect.getsource(frame_source))
     source += _normalized_ast_src(inspect.getsource(gfx_cli))
     fingerprint = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    if fingerprint == "a290aa906f6c0ee53aa5c6af81152eeeadeaddbac8d9b1a22040eefba99efe1e":
-        return "e94c2171a336"
+    migration = _PNG_MIGRATION_DIGESTS.get(fingerprint)
+    if migration is not None:
+        return migration
     return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
 
 
