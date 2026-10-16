@@ -256,6 +256,8 @@ bool FrameSyncStateMachine::BeginRequest(const RequestDesc& desc,
   desc_ = desc;
   exact_first_verified_ = false;
   exact_first_.clear();
+  exact_baseline_.clear();
+  exact_candidate_.clear();
   state_ = State::S1_NAV_OR_EVAL_ISSUED;
   t_begin_us_ = now_us;
   t_assets_us_ = 0;
@@ -347,6 +349,23 @@ bool FrameSyncStateMachine::EnterPumping(uint64_t now_us) {
   Emit("state_transition", now_us,
        StateName(State::S3_JS_FRAME_APPLIED_AND_CANARY_SET),
        StateName(State::S4_COMPOSITOR_PUMPING));
+  return true;
+}
+
+bool FrameSyncStateMachine::SetExactBaseline(const uint8_t* src, size_t stride,
+                                              uint32_t width, uint32_t height,
+                                              uint64_t now_us) {
+  if (state_ != State::S1_NAV_OR_EVAL_ISSUED ||
+      desc_.canary != CanaryMode::kExact || !exact_baseline_.empty() ||
+      src == nullptr || width != desc_.expected_w || height != desc_.expected_h ||
+      stride < static_cast<size_t>(width) * 4u) {
+    Emit("exact_baseline_rejected", now_us, nullptr, nullptr);
+    return false;
+  }
+  exact_baseline_.resize(static_cast<size_t>(width) * height * 4u);
+  CopyCompactRows(src, stride, exact_baseline_.data(), width, height);
+  Emit("exact_baseline_veto_armed", now_us, nullptr, nullptr,
+       "\"role\":\"equality_veto_only\",\"restoration_source\":false");
   return true;
 }
 
@@ -532,15 +551,35 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     }
     // First paint owns the unoccluded TR/BL pixels; second owns TL/BR.
     // Restore actual BGRA_PREMUL bytes before the existing alpha/PNG pipeline.
-    if (dst != nullptr) {
-      std::memcpy(dst, exact_first_.data(), exact_first_.size());
-      for (uint32_t y = 0; y < height; ++y) {
-        if (y < kDiagSize || y >= height - kDiagSize) {
-          const size_t x = y < kDiagSize ? 0 : width - kDiagSize;
-          std::memcpy(dst + (static_cast<size_t>(y) * width + x) * 4u,
-                      src + y * stride + x * 4u, kDiagSize * 4u);
-        }
+    exact_candidate_ = exact_first_;
+    for (uint32_t y = 0; y < height; ++y) {
+      if (y < kDiagSize || y >= height - kDiagSize) {
+        const size_t x = y < kDiagSize ? 0 : width - kDiagSize;
+        std::memcpy(exact_candidate_.data() +
+                        (static_cast<size_t>(y) * width + x) * 4u,
+                    src + y * stride + x * 4u, kDiagSize * 4u);
       }
+    }
+    // Moving probes can perturb structure CSS identically in BOTH signed
+    // phases. Cross-agreement alone cannot certify noninterference. Compare
+    // the ENTIRE reconstruction, including all four corners, with the native
+    // never-instrumented baseline. Missing baseline is also a hard veto.
+    // Critically: no byte is restored/copied FROM this unbound baseline.
+    if (exact_baseline_ != exact_candidate_) {
+      v.disposition = PaintDisposition::kRejectedStale;
+      ++req_rejected_;
+      ++counters_.rejected_stale_paint;
+      Emit("exact_baseline_mismatch", now_us, nullptr, nullptr,
+           std::string("\"reason\":\"") +
+               (exact_baseline_.empty() ? "missing_baseline" : "probe_content_perturbation") +
+               "\"");
+      return v;
+    }
+    Emit("exact_baseline_equal", now_us, nullptr, nullptr,
+         "\"role\":\"equality_veto_only\",\"compared_bytes\":" +
+             std::to_string(exact_candidate_.size()));
+    if (dst != nullptr) {
+      std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());
     }
     v.decoded_frame ^= 0xFFFF;  // first frame identity, decoded in BOTH phases
     v.restored = true;

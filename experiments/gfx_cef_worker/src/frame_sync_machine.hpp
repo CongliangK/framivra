@@ -60,6 +60,8 @@ const char* DriveModeName(DriveMode m);
 // kExact: two opaque, disjoint corner probes in the SAME document. Both
 // paints must verify; all unoccluded bytes must agree. Cross-copy restores the
 // actual covered pixels (including alpha), without page hooks or neighbors.
+// A separate never-instrumented navigation supplies a mandatory full-frame
+// equality VETO only. It supplies neither target identity nor restoration bytes.
 enum class CanaryMode : uint8_t { kClean = 0, kDiagnostic = 1, kExact = 2 };
 
 // ---------------------------------------------------------------- 计数器面
@@ -150,6 +152,12 @@ class FrameSyncStateMachine {
   // 证明 —— 提交完成只能由 S5 真实像素验签确立）。
   bool EnterPumping(uint64_t now_us);
 
+  // Only in exact S1: native pixels from a separate fresh navigation that has
+  // NEVER had witness DOM. Equality can veto the signed reconstruction, never
+  // establish its frame identity or contribute output/restoration bytes.
+  bool SetExactBaseline(const uint8_t* src, size_t stride, uint32_t width,
+                        uint32_t height, uint64_t now_us);
+
   // OnPaint 喂入（UI 线程同步调用）。
   //   src：CEF OnPaint 原始 BGRA_PREMUL 缓冲（行步长 stride 字节）；
   //   dst：接受帧紧凑拷贝目标（可空 = 只判定不拷贝，供早期丢弃/拒收路径
@@ -215,6 +223,8 @@ class FrameSyncStateMachine {
   uint64_t last_accepted_elapsed_us_ = 0;
   bool exact_first_verified_ = false;
   std::vector<uint8_t> exact_first_;
+  std::vector<uint8_t> exact_baseline_;
+  std::vector<uint8_t> exact_candidate_;
   EventSink sink_;
 };
 
