@@ -344,30 +344,42 @@ def contribute_keys(c) -> set:
     return keys
 
 
+# Algorithm namespace, independent of plugin/package release versions (#86).
+_PLUGIN_CODE_DIGEST_VERSION = b"vtx-plugin-code-v2\0"
+
+
 def plugin_code_digest(name: str, repo_root=None) -> str:
     """插件代码内容摘要（红队终审 P1-1 裁定 2026-09-14；P6 公共化经 vtx.api 供
     插件产物键复用——A-P1-1：产物键侧同样要掺代码摘要，否则改代码不 bump
     version 时回执指纹翻转但旧产物被缓存命中「洗白」）：插件目录全部 .py 文件
     （rglob 递归含子目录/子包，排除 __pycache__ 与 **tests/ 子目录**——R1-F F5：
     改一行测试 ≠ 插件行为变化，掺入会使产物键/回执无谓翻转触发真工程整轮重渲；
-    口径统一对全部插件生效，见 ARCHITECTURE §2.5 条 9；排序 文件名+字节）的
+    口径统一对全部插件生效，见 ARCHITECTURE §2.5 条 9；按插件根相对 POSIX
+    路径排序，路径与内容以长度前缀分界，独立算法版本入摘要；迁移说明见
+    docs/cache-provenance.md）的
     sha1 前 12 位——改默认参/改代码不 bump version 的场景一律翻转。模块加载
     成功后文件必在；读不到按 MISSING 计（fail-方向：摘要必变）。"""
     d, _origin = _registry.plugin_module_dir(name, repo_root)
-    h = hashlib.sha1()
+    h = hashlib.sha1(_PLUGIN_CODE_DIGEST_VERSION)
     if d is None or not d.is_dir():
-        h.update(b"NO-DIR")
+        h.update(b"NO-DIR\0")
         return h.hexdigest()[:12]
-    for f in sorted(d.rglob("*.py"), key=lambda x: x.name):
-        if "__pycache__" in f.parts:
-            continue
-        if "tests" in f.relative_to(d).parts:
+    h.update(b"DIR\0")
+    for f in sorted(d.rglob("*.py"), key=lambda x: x.relative_to(d).as_posix()):
+        relative = f.relative_to(d)
+        if any(part in {"tests", "__pycache__"} for part in relative.parts):
             continue       # tests/ 不进代码摘要（R1-F F5，docstring 见口径）
-        h.update(f.name.encode())
+        path_bytes = relative.as_posix().encode("utf-8")
+        h.update(len(path_bytes).to_bytes(8, "big"))
+        h.update(path_bytes)
         try:
-            h.update(f.read_bytes())
+            content = f.read_bytes()
         except OSError:
-            h.update(b"MISSING")
+            h.update(b"MISSING\0")
+        else:
+            h.update(b"CONTENT\0")
+            h.update(len(content).to_bytes(8, "big"))
+            h.update(content)
     return h.hexdigest()[:12]
 
 
