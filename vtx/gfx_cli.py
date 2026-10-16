@@ -306,7 +306,8 @@ def invalidate_page(outdir):
     fstxn.unlink(Path(outdir) / COMPLETE_FILE)
 
 
-def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None):
+def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None,
+                  backend_identity=None, render_runs=None):
     """Validate the whole page and pin-input gate before atomic publication.
 
     Caller invokes only on non-dry paths after all blocks/fallbacks finish.
@@ -320,6 +321,9 @@ def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=No
         invalidate_page(outdir)
         raise GfxCliError(f"gfx 完成检查失败：{bad}")
     verify_inputs()
+    if backend_identity is not None:
+        record["backend_identity"] = backend_identity
+        record["render_runs"] = render_runs
     fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True))
 
 

@@ -195,6 +195,10 @@ def gfx_key(c, cl) -> str:
     for dep in declared_dependencies(c):
         blob += b"|" + str((c.root / dep).resolve()).encode() + b"\0" \
                 + file_digest(c.root / dep).encode()
+    from .gfx_backend import identity
+    backend, ns = identity(), gfx_cache_ns()
+    if backend or ns:
+        blob += b"|gfx_backend=" + json.dumps([backend, ns], separators=(",", ":")).encode()
     return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
 
 
@@ -214,7 +218,11 @@ def gfx_cache_ns() -> str:
     gfx_key 算法一字不动——键轴纪律 R12-G1-037 与 docs/cache-provenance.md 不受
     影响，同一页在两个 ns 下同键异目录）。非法值显式 ValueError：实验配置写错
     宁可大声失败，绝不静默回落正式缓存破坏隔离。"""
+    from .gfx_backend import selected
+    backend = selected()  # unknown selectors fail even on a warm cache
     ns = os.environ.get("VTX_GFX_CACHE_NS", "").strip()
+    if not ns and backend == "electron":
+        ns = "electron_b0"
     if not ns:
         return ""
     if not _NS_RE.fullmatch(ns) or len(ns) > _NS_MAX:

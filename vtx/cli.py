@@ -201,7 +201,12 @@ def _gfx(c: Ctx):
     backend_ns = gfx_cache_ns()
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
-    use_cdp = os.environ.get("VTX_GFX", "cdp").lower() != "cli"
+    from .gfx_backend import selected
+    backend = selected()
+    if backend == "electron":
+        from .gfx_electron_stage import render_stage
+        return render_stage(c, _split_page)
+    use_cdp = backend == "cdp"
     cdp_mod = None
     if use_cdp:
         try:

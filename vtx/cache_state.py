@@ -126,6 +126,13 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     _pdigest = active_plugins_digest(c)
     if _pdigest:
         h.update(_pdigest.encode())
+    from .gfx_backend import selected, identity
+    from .hygiene import gfx_cache_ns
+    selected()  # reject unknown values regardless of cache warmth
+    if any(t.get("kind") == "gfx" for t in c.tl.get("video_tracks", [])):
+        backend, ns = identity(), gfx_cache_ns()
+        if backend or ns:
+            h.update(b"gfx_backend:" + json.dumps([backend, ns], separators=(",", ":")).encode())
     return h.hexdigest()
 
 

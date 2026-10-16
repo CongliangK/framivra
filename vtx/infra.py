@@ -123,6 +123,11 @@ class Ctx:
         # Pin before resolving external subtitles so changes during loading are
         # caught too. Hash exactly the bytes parsed above, not a second read.
         validate_cache_dependencies(self)
+        from .gfx_backend import selected, identity
+        from .hygiene import gfx_cache_ns
+        self.gfx_backend = {"requested_backend": selected(), "identity": identity(),
+                            "namespace": gfx_cache_ns()} if any(
+            t.get("kind") == "gfx" for t in self.tl.get("video_tracks", [])) else None
         self.input_fingerprint = receipt_fingerprint(
             self, timeline_bytes=self.timeline_bytes)
         from .subtitles_src import resolve_subtitles_src
@@ -252,6 +257,9 @@ class Ctx:
             rec["timeline"] = self.timeline_sha256
             rec["updated"] = time.strftime("%F %T")
             rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
+            if self.gfx_backend is not None:
+                rec["gfx_backend"] = self.gfx_backend
+                rec["stages"][stage]["gfx_backend"] = self.gfx_backend
             if extra:
                 rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
             return rec
