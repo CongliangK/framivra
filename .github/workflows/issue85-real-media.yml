@@ -28,17 +28,19 @@ jobs:
           path: harness
           fetch-depth: 0
           persist-credentials: false
-      - name: Confirm harness-only delta and exact frozen objects
+      - name: Resolve reviewed candidate from checked-out PR head
+        id: resolve
         working-directory: harness
         run: |
-          python - <<'PY'
-          import subprocess
-          allowed = {'.github/workflows/issue85-real-media.yml', 'scripts/issue85_real_media.py', 'scripts/issue85_media_runner.py', 'tests/test_issue85_real_media.py'}
-          candidate = '68e94cae8afd5519737fa3fce250bfb045c75dfc'
-          changed = set(subprocess.check_output(['git','diff','--name-only',candidate,'HEAD'],text=True).splitlines())
-          assert changed and changed <= allowed, changed
-          subprocess.run(['git','merge-base','--is-ancestor',candidate,'HEAD'],check=True)
-          PY
+          python - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          from scripts.issue85_media_runner import resolve_candidate
+          result = resolve_candidate(Path.cwd())
+          print(json.dumps(result, indent=2))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('candidate_sha=' + result['commit'] + '\n')
+          PYCODE
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: b8820dbba6989dd216c8fa519633371e3d380cb6
@@ -46,8 +48,9 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 68e94cae8afd5519737fa3fce250bfb045c75dfc
+          ref: ${{ steps.resolve.outputs.candidate_sha }}
           path: candidate
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:

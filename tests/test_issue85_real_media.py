@@ -6,6 +6,7 @@ import sys
 import time
 import signal
 import struct
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -349,7 +350,7 @@ class RunnerContracts(unittest.TestCase):
                 r.write_json(evidence/'result.json',{'passed':True,'render_wall_seconds':100,
                     'decoded_identity':{'v':'same','a':'same'},'cache_hits':0})
                 return {'exit_code':0,'timed_out':False,'budget_exceeded':None}
-            with patch.object(r,'checked_revision',side_effect=lambda p,e:{'path':str(p),'commit':e}), patch.object(r,'monitored_run',side_effect=fake_run):
+            with patch.object(r,'resolve_candidate',return_value={'commit':r.CANDIDATE, 'tree':r.CANDIDATE_TREE, 'baseline':r.BASELINE, 'head':'f'*40, 'chain':[]}), patch.object(r,'checked_revision',side_effect=lambda p,e:{'path':str(p),'commit':e}), patch.object(r,'monitored_run',side_effect=fake_run):
                 result=r.run_experiment(root,root,source,root/'runs')
             self.assertIn('warm',seen)
             self.assertEqual(result['status'],'FAIL')
@@ -381,7 +382,7 @@ class RunnerContracts(unittest.TestCase):
                     if action=='negative': child['negative']={'passed':True}
                     r.write_json(evidence/'result.json',child)
                     return {'exit_code':0,'timed_out':False,'budget_exceeded':None}
-                with patch.object(r,'checked_revision',side_effect=lambda p,e:{'path':str(p),'commit':e}), patch.object(r,'monitored_run',side_effect=fake_run):
+                with patch.object(r,'resolve_candidate',return_value={'commit':r.CANDIDATE, 'tree':r.CANDIDATE_TREE, 'baseline':r.BASELINE, 'head':'f'*40, 'chain':[]}), patch.object(r,'checked_revision',side_effect=lambda p,e:{'path':str(p),'commit':e}), patch.object(r,'monitored_run',side_effect=fake_run):
                     result=r.run_experiment(root,root,source,root/'runs')
                 self.assertEqual(result['status'],'PASS' if rejected is None else 'FAIL')
                 if rejected is None:
@@ -528,6 +529,214 @@ class RunnerContracts(unittest.TestCase):
         self.assertFalse(self.r.compare_identities([make({'v':'same'}),make({'v':'other'})]))
         self.assertFalse(self.r.compare_identities([make({'v':'same'}),{}]))
         self.assertFalse(self.r.compare_identities([]))
+
+
+class RevisionResolution(unittest.TestCase):
+    """Real tiny local Git graphs; no media, remotes or server metadata."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            'issue85_revision_contracts', SCRIPT.with_name('issue85_media_runner.py'))
+        cls.r = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.r)
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = Path(temporary.name)
+        self.env = {'PATH': os.environ.get('PATH', os.defpath), 'HOME': temporary.name,
+                    'LC_ALL': 'C', 'GIT_CONFIG_NOSYSTEM': '1',
+                    'GIT_CONFIG_GLOBAL': os.devnull,
+                    'GIT_AUTHOR_NAME': 'Offline test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
+                    'GIT_COMMITTER_NAME': 'Offline test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
+        self.git('init', '-q')
+        self.paths = ('scripts/issue85_media_runner.py', 'scripts/issue85_real_media.py',
+                      'tests/test_issue85_real_media.py', '.github/workflows/issue85-real-media.yml')
+        for name in (*self.paths, 'vtx/tiny.py'):
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('baseline\n')
+        self.commits = [self.commit()]
+        for name, content in (('vtx/tiny.py', 'initial\n'), ('vtx/tiny.py', 'candidate\n'),
+                              (self.paths[0], 'harness one\n'), (self.paths[1], 'harness two\n'),
+                              (self.paths[2], 'binding\n')):
+            (self.repo / name).write_text(content)
+            self.commits.append(self.commit())
+        self.trees = [self.git('rev-parse', f'{commit}^{{tree}}') for commit in self.commits]
+        pins = patch.multiple(self.r, BASELINE=self.commits[0], BASELINE_TREE=self.trees[0],
+                              INITIAL_PRODUCTION_TREE=self.trees[1], CANDIDATE_TREE=self.trees[2],
+                              REVIEWED_HARNESS_TREES=tuple(self.trees[3:5]))
+        pins.start()
+        self.addCleanup(pins.stop)
+
+    def git(self, *args):
+        result = subprocess.run(['git', '-C', str(self.repo), *args], env=self.env,
+                                capture_output=True, text=True, timeout=10, check=True)
+        return result.stdout.strip()
+
+    def commit(self):
+        self.git('add', '--all')
+        self.git('commit', '-q', '-m', 'tiny offline fixture')
+        return self.git('rev-parse', 'HEAD')
+
+    def synthetic_commit(self, tree, *parents):
+        args = ['commit-tree', tree, '-m', 'synthetic offline fixture']
+        for parent in parents:
+            args += ['-p', parent]
+        return self.git(*args)
+
+    def checkout(self, commit):
+        self.git('checkout', '-q', '--detach', commit)
+
+    def test_resolves_actual_second_commit_without_commit_alias(self):
+        with patch.object(self.r, 'CANDIDATE', 'e' * 40):
+            result = self.r.resolve_candidate(self.repo)
+        self.assertEqual(result['commit'], self.commits[2])
+        self.assertEqual(result['tree'], self.trees[2])
+        self.assertEqual(result['baseline'], self.commits[0])
+        self.assertEqual(result['head'], self.commits[-1])
+        self.assertEqual(len(result['chain']), 5)
+
+    def test_changed_commit_metadata_preserves_verified_tree_sequence(self):
+        rewritten = [self.commits[0]]
+        for tree in self.trees[1:]:
+            rewritten.append(self.synthetic_commit(tree, rewritten[-1]))
+        self.assertNotEqual(rewritten[2], self.commits[2])
+        self.checkout(rewritten[-1])
+        result = self.r.resolve_candidate(self.repo)
+        self.assertEqual(result['commit'], rewritten[2])
+        self.assertEqual(result['head'], rewritten[-1])
+        self.checkout(rewritten[2])
+        self.assertEqual(self.r.checked_revision(self.repo, rewritten[2])['commit'], rewritten[2])
+
+    def test_requires_binding_commit_after_four_frozen_commits(self):
+        self.checkout(self.commits[4])
+        with self.assertRaises(ValueError):
+            self.r.resolve_candidate(self.repo)
+
+    def test_refuses_absent_baseline(self):
+        with patch.object(self.r, 'BASELINE', 'f' * 40), self.assertRaises(ValueError):
+            self.r.resolve_candidate(self.repo)
+
+    def test_checks_each_frozen_tree(self):
+        wrong = 'f' * 40
+        for changes in ({'BASELINE_TREE': wrong}, {'INITIAL_PRODUCTION_TREE': wrong},
+                        {'CANDIDATE_TREE': wrong},
+                        {'REVIEWED_HARNESS_TREES': (wrong, self.trees[4])},
+                        {'REVIEWED_HARNESS_TREES': (self.trees[3], wrong)},
+                        {'REVIEWED_HARNESS_TREES': (self.trees[4], self.trees[3])}):
+            with self.subTest(changes=changes), patch.multiple(self.r, **changes):
+                with self.assertRaises(ValueError):
+                    self.r.resolve_candidate(self.repo)
+
+    def test_rejects_merge_even_when_head_tree_is_unchanged(self):
+        merge = self.synthetic_commit(self.trees[-1], self.commits[-1], self.commits[0])
+        self.checkout(merge)
+        with self.assertRaises(ValueError):
+            self.r.resolve_candidate(self.repo)
+
+    def test_rejects_second_candidate_tree(self):
+        duplicate = self.synthetic_commit(self.trees[2], self.commits[-1])
+        self.checkout(duplicate)
+        with self.assertRaises(ValueError):
+            self.r.resolve_candidate(self.repo)
+
+    def test_rejects_out_of_scope_change_even_after_revert(self):
+        (self.repo / 'README.md').write_text('unauthorized change\n')
+        self.commit()
+        (self.repo / 'README.md').unlink()
+        self.commit()
+        self.assertEqual(self.git('rev-parse', 'HEAD^{tree}'), self.trees[-1])
+        with self.assertRaises(ValueError):
+            self.r.resolve_candidate(self.repo)
+
+    def test_rejects_removed_or_executable_harness_path(self):
+        for executable in (False, True):
+            with self.subTest(executable=executable):
+                self.checkout(self.commits[-1])
+                if executable:
+                    self.git('update-index', '--chmod=+x', self.paths[0])
+                    self.git('commit', '-q', '-m', 'changed harness mode')
+                else:
+                    (self.repo / self.paths[0]).unlink()
+                    self.commit()
+                with self.assertRaises(ValueError):
+                    self.r.resolve_candidate(self.repo)
+
+    def test_rejects_symlink_or_submodule_harness_path(self):
+        for kind in ('symlink', 'submodule'):
+            with self.subTest(kind=kind):
+                self.checkout(self.commits[-1])
+                if kind == 'symlink':
+                    path = self.repo / self.paths[0]
+                    path.unlink()
+                    path.symlink_to('../vtx/tiny.py')
+                    self.commit()
+                else:
+                    self.git('update-index', '--cacheinfo', '160000',
+                             self.commits[2], self.paths[0])
+                    self.git('commit', '-q', '-m', 'changed harness to gitlink')
+                with self.assertRaises(ValueError):
+                    self.r.resolve_candidate(self.repo)
+
+    def test_checked_revision_accepts_exact_baseline_and_candidate(self):
+        for index in (0, 2):
+            with self.subTest(index=index):
+                self.checkout(self.commits[index])
+                result = self.r.checked_revision(self.repo, self.commits[index])
+                self.assertEqual(result['commit'], self.commits[index])
+
+    def test_checked_revision_rejects_other_commit_and_symbolic_ref(self):
+        self.checkout(self.commits[2])
+        for expected in (self.commits[1], 'HEAD', self.commits[2][:12]):
+            with self.subTest(expected=expected), self.assertRaises(ValueError):
+                self.r.checked_revision(self.repo, expected)
+
+    def test_checked_revision_rejects_wrong_candidate_or_parent_tree(self):
+        cases = ((self.trees[1], self.commits[1]),
+                 (self.trees[2], self.commits[0]))
+        for tree, parent in cases:
+            with self.subTest(tree=tree, parent=parent):
+                commit = self.synthetic_commit(tree, parent)
+                self.checkout(commit)
+                with self.assertRaises(ValueError):
+                    self.r.checked_revision(self.repo, commit)
+
+    def test_checked_revision_rejects_unrelated_grandparent_with_same_tree(self):
+        other_base = self.synthetic_commit(self.trees[0])
+        self.assertNotEqual(other_base, self.commits[0])
+        parent = self.synthetic_commit(self.trees[1], other_base)
+        candidate = self.synthetic_commit(self.trees[2], parent)
+        self.checkout(candidate)
+        with self.assertRaises(ValueError):
+            self.r.checked_revision(self.repo, candidate)
+
+    def test_checked_revision_rejects_candidate_or_parent_merge(self):
+        parent_merge = self.synthetic_commit(self.trees[1], self.commits[0], self.commits[-1])
+        cases = (self.synthetic_commit(self.trees[2], self.commits[1], self.commits[0]),
+                 self.synthetic_commit(self.trees[2], parent_merge))
+        for candidate in cases:
+            with self.subTest(candidate=candidate):
+                self.checkout(candidate)
+                with self.assertRaises(ValueError):
+                    self.r.checked_revision(self.repo, candidate)
+
+    def test_checked_revision_checks_baseline_tree(self):
+        self.checkout(self.commits[0])
+        with patch.object(self.r, 'BASELINE_TREE', self.trees[1]), self.assertRaises(ValueError):
+            self.r.checked_revision(self.repo, self.commits[0])
+
+    def test_checked_revision_still_rejects_dirty_and_untracked_production(self):
+        self.checkout(self.commits[2])
+        production = self.repo / 'vtx/tiny.py'
+        production.write_text('dirty\n')
+        with self.assertRaises(ValueError):
+            self.r.checked_revision(self.repo, self.commits[2])
+        self.git('checkout', '--', 'vtx/tiny.py')
+        (self.repo / 'vtx/untracked.py').write_text('untracked\n')
+        with self.assertRaises(ValueError):
+            self.r.checked_revision(self.repo, self.commits[2])
 
 
 if __name__ == '__main__':

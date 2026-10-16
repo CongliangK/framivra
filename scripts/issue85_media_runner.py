@@ -26,6 +26,14 @@ import traceback
 
 BASELINE = "b8820dbba6989dd216c8fa519633371e3d380cb6"
 CANDIDATE = "68e94cae8afd5519737fa3fce250bfb045c75dfc"
+BASELINE_TREE = "6df9c550d3cd00e2e13717c36f09bb711bf41d98"
+INITIAL_PRODUCTION_TREE = "d4c46af70a9ca1adb0d06dd7d60e49357ae82a20"
+CANDIDATE_TREE = "be85ab0d07056c6ee2e9c52c29db309ac22cdebe"
+REVIEWED_HARNESS_TREES = ("3ed50c17f8e6959224e66b5c1be0412ce5ae9216",
+                          "db29fce49b71bc4c5e22addcbdc473e107e495bf")
+HARNESS_PATHS = frozenset({"scripts/issue85_media_runner.py", "scripts/issue85_real_media.py",
+                         "tests/test_issue85_real_media.py", ".github/workflows/issue85-real-media.yml"})
+
 PAIR_ORDER = (("baseline", "candidate"), ("candidate", "baseline"),
               ("baseline", "candidate"))
 RUN_SECONDS = 900
@@ -83,29 +91,108 @@ def isolated_environment(project):
             "VTX_CONFIG": str(Path(project) / "config.json"), **CPU_POLICY}
 
 
-def checked_revision(repository, expected):
-    """Refuse drift in production trees, including ignored/untracked code."""
+def git_output(repository, *args):
+    """Read local Git without replacement objects or inherited Git overrides."""
+    env = {'PATH':os.environ.get('PATH',os.defpath), 'LC_ALL':'C.UTF-8',
+           'GIT_CONFIG_NOSYSTEM':'1', 'GIT_CONFIG_GLOBAL':os.devnull,
+           'GIT_NO_REPLACE_OBJECTS':'1'}
+    result = subprocess.run(['git','--no-replace-objects','-c','core.fsmonitor=false',
+                             '-C',str(repository),*args],capture_output=True,text=True,
+                            env=env,timeout=30)
+    if result.returncode:
+        raise ValueError(f'revision verification failed: {result.stderr.strip()}')
+    return result.stdout.strip()
+
+
+def commit_identity(repository, revision):
+    fields = git_output(repository,'show','-s','--format=%H %T %P',revision).split()
+    if len(fields) < 2 or any(len(value)!=40 or any(c not in '0123456789abcdef' for c in value)
+                              for value in fields):
+        raise ValueError('Malformed commit identity')
+    return {'commit':fields[0],'tree':fields[1],'parents':fields[2:]}
+
+
+def verify_production_identity(repository, revision):
+    """Bind the complete candidate tree to the exact reviewed two-step base."""
+    identity = commit_identity(repository,revision)
+    if identity['commit'] == BASELINE:
+        if identity['tree'] != BASELINE_TREE:
+            raise ValueError('Baseline complete tree mismatch')
+        return identity
+    if identity['tree'] != CANDIDATE_TREE or len(identity['parents']) != 1:
+        raise ValueError('Candidate complete tree or parent cardinality mismatch')
+    parent = commit_identity(repository,identity['parents'][0])
+    if parent['tree'] != INITIAL_PRODUCTION_TREE or parent['parents'] != [BASELINE]:
+        raise ValueError('Candidate is not the reviewed ordered production chain from baseline')
+    verify_production_identity(repository,BASELINE)
+    return identity
+
+
+def resolve_candidate(repository):
+    """Resolve only the unique reviewed production ancestor of checked-out HEAD.
+
+    Metadata may differ after GitHub object creation; full trees, fixed baseline,
+    parent order, and all subsequent harness paths/modes remain mandatory.
+    No caller-selected external ref or arbitrary same-tree commit is accepted.
+    """
     repository = safe_directory(repository)
-    env = {"PATH": os.environ.get("PATH", os.defpath), "LC_ALL": "C.UTF-8",
-           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
-    def git(*args):
-        result = subprocess.run(["git", "-C", str(repository), *args],
-                                capture_output=True, text=True, env=env, timeout=30)
-        if result.returncode:
-            raise ValueError(f"revision verification failed: {result.stderr.strip()}")
-        return result.stdout.strip()
-    actual = git("rev-parse", "HEAD")
+    head = commit_identity(repository,'HEAD')
+    git_output(repository,'diff','--no-ext-diff','--no-textconv','--exit-code','HEAD','--')
+    reverse, seen, node = [], set(), head
+    while node['commit'] != BASELINE:
+        if node['commit'] in seen or len(node['parents']) != 1:
+            raise ValueError('Review chain must be linear and end at the fixed baseline')
+        seen.add(node['commit'])
+        reverse.append(node)
+        if len(reverse) > 16:
+            raise ValueError('Unexpected review chain length')
+        node = commit_identity(repository,node['parents'][0])
+    if node['tree'] != BASELINE_TREE:
+        raise ValueError('Baseline complete tree mismatch')
+    chain = list(reversed(reverse))
+    expected_trees = [INITIAL_PRODUCTION_TREE,CANDIDATE_TREE,*REVIEWED_HARNESS_TREES]
+    if len(chain) < len(expected_trees)+1:
+        raise ValueError('Missing reviewed harness or binding successor')
+    if [item['tree'] for item in chain[:len(expected_trees)]] != expected_trees:
+        raise ValueError('Reviewed full tree sequence mismatch')
+    candidates = [item for item in chain if item['tree']==CANDIDATE_TREE]
+    if len(candidates)!=1 or candidates[0]['commit']!=chain[1]['commit']:
+        raise ValueError('Candidate ancestor is absent or ambiguous')
+    candidate = verify_production_identity(repository,chain[1]['commit'])
+    for item in chain[2:]:
+        changed = set(git_output(repository,'diff-tree','--no-commit-id','--name-only',
+                                '--no-renames','-r',item['parents'][0],item['commit']).splitlines())
+        if not changed or not changed <= HARNESS_PATHS:
+            raise ValueError('Post-production commit changes paths outside the harness contract')
+        entries = git_output(repository,'ls-tree','-r',item['commit'],'--',*sorted(HARNESS_PATHS))
+        found = {}
+        for line in entries.splitlines():
+            header,path = line.split('\t',1)
+            mode,kind,sha = header.split()
+            found[path] = (mode,kind)
+        if set(found)!=HARNESS_PATHS or any(value!=('100644','blob') for value in found.values()):
+            raise ValueError('Harness paths require complete regular 100644 blobs; no deletion/submodule/symlink')
+    git_output(repository,'merge-base','--is-ancestor',candidate['commit'],head['commit'])
+    return {'commit':candidate['commit'],'tree':CANDIDATE_TREE,'baseline':BASELINE,
+            'baseline_tree':BASELINE_TREE,'head':head['commit'],'head_tree':head['tree'],
+            'chain':chain,'source_review_anchor':CANDIDATE}
+
+
+def checked_revision(repository, expected):
+    """Exact resolved SHA plus complete tree/base/ancestry and working-tree checks."""
+    repository = safe_directory(repository)
+    actual = git_output(repository,'rev-parse','HEAD')
     if actual != expected:
-        raise ValueError(f"expected exact revision {expected}; found {actual}")
-    production = ("vtx", "plugins", "apps", "pyproject.toml", "vt.py")
-    git("diff", "--exit-code", expected, "--", *production)
-    extras = git("ls-files", "--others", "--", *production).splitlines()
-    # Bytecode is not imported: each child has an empty private pycache_prefix.
-    extras = [p for p in extras if "__pycache__" not in Path(p).parts]
+        raise ValueError(f'expected exact revision {expected}; found {actual}')
+    identity = verify_production_identity(repository,actual)
+    git_output(repository,'diff','--no-ext-diff','--no-textconv','--exit-code',expected,'--')
+    production = ('vtx','plugins','apps','pyproject.toml','vt.py')
+    extras = git_output(repository,'ls-files','--others','--',*production).splitlines()
+    extras = [path for path in extras if '__pycache__' not in Path(path).parts]
     if extras:
-        raise ValueError(f"untracked production files refused: {extras[:8]}")
-    return {"path": str(repository), "commit": actual,
-            "tracked_production_diff": "clean", "untracked_production": []}
+        raise ValueError(f'untracked production files refused: {extras[:8]}')
+    return {'path':str(repository),'commit':actual,'tree':identity['tree'],
+            'baseline':BASELINE,'tracked_production_diff':'clean','untracked_production':[]}
 
 
 def allocated_bytes(root):
@@ -504,7 +591,7 @@ class CacheMeter:
             setattr(module, name, original)
 
 
-def warm_cache_assessment(cold, warm, revision):
+def warm_cache_assessment(cold, warm, revision, candidate_revision=CANDIDATE):
     """Fail closed per sample; baseline remux invalidation is explicit and proven.
 
     The fixed fixture has one extracted source, three preencoded clips and all
@@ -589,7 +676,7 @@ def warm_cache_assessment(cold, warm, revision):
             result["errors"].append("changed final content lacks observed remux and unchanged-input proof")
         if before != cm["final_after"] or before is None:
             result["errors"].append("warm final identity does not start at its own cold output")
-        if revision not in (BASELINE, CANDIDATE):
+        if revision not in (BASELINE, candidate_revision):
             result["errors"].append("unknown frozen production revision")
         expected_probes = {f"底轨切点帧比对 dst={cl['dst_in']} src=source:{cl['src_in'] + 2}"
                            for cl in timeline_spec()["video_tracks"][0]["clips"]}
@@ -831,6 +918,7 @@ def child_main(repository, project, evidence, action, revision):
     cache_meter = None
     report = {"action": action, "revision": revision, "passed": False}
     try:
+        report["checked_revision"] = checked_revision(repository, revision)
         meter.install()
         if action == "render":
             meter.phase = "cache_evidence_before"
@@ -859,7 +947,7 @@ def child_main(repository, project, evidence, action, revision):
             report["passed"] = True
         elif action == "negative":
             report["negative"] = identity_negatives(project, evidence, meter,
-                                                      candidate=revision == CANDIDATE)
+                                                      candidate=revision != BASELINE)
             report["passed"] = report["negative"]["passed"]
         else:
             raise ValueError(f"unknown child action: {action}")
@@ -961,12 +1049,14 @@ def run_experiment(baseline: Path, candidate: Path, source: Path, root: Path) ->
         raise ValueError("qualified source must be a regular non-symlink file larger than 128 KiB")
     if budget_root not in source.parents or source.stat().st_nlink != 1:
         raise ValueError("normalized source must be an unshared owned file under the scratch budget root")
+    resolution = resolve_candidate(Path(__file__).resolve().parents[1])
     repos = {"baseline": checked_revision(baseline, BASELINE),
-             "candidate": checked_revision(candidate, CANDIDATE)}
+             "candidate": checked_revision(candidate, resolution["commit"])}
     output = root / "benchmark"
     output.mkdir(mode=0o700)
     report = {"schema": "framivra.issue85.real-media-benchmark.v1", "passed": False, "status": "FAIL",
         "baseline": repos["baseline"], "candidate": repos["candidate"],
+        "candidate_resolution": resolution,
         "pair_order": [list(pair) for pair in PAIR_ORDER],
         "run_limit_seconds": RUN_SECONDS, "total_limit_seconds": TOTAL_SECONDS,
         "rss_limit_bytes": RSS_LIMIT_BYTES, "scratch_limit_bytes": SCRATCH_LIMIT_BYTES,
@@ -1035,7 +1125,8 @@ def run_experiment(baseline: Path, candidate: Path, source: Path, root: Path) ->
                                     if sample["pair"] == pair_number and sample["label"] == label
                                     and sample["phase"] == "cold")
                         result["warm_cache_gate"] = warm_cache_assessment(
-                            cold.get("child", {}), result.get("child", {}), repos[label]["commit"])
+                            cold.get("child", {}), result.get("child", {}), repos[label]["commit"],
+                            candidate_revision=resolution["commit"])
                         result["passed"] = result["passed"] and result["warm_cache_gate"]["passed"]
                     if not result["passed"]:
                         raise RuntimeError(f"pair {pair_number} {label} {phase} failed; inspect {result['evidence']}")
