@@ -316,7 +316,8 @@ bool ParseJsonInt(const std::string& js, const char* key, int64_t* out) {
 
 }  // namespace
 
-bool ParseSyncReadyJson(const std::string& js, fsync::PageEvent* ev) {
+bool ParseSyncReadyJson(const std::string& js, fsync::PageEvent* ev,
+                        bool baseline_only = false) {
   int64_t gen = 0, req = 0, f = 0;
   if (!ParseJsonInt(js, "gen", &gen) || !ParseJsonInt(js, "req", &req) ||
       !ParseJsonInt(js, "f", &f)) {
@@ -335,6 +336,12 @@ bool ParseSyncReadyJson(const std::string& js, fsync::PageEvent* ev) {
     return false;
   }
   const std::string phase = js.substr(phase_val, phase_end - phase_val);
+  // Baseline readiness is a separate channel, never a canary_set candidate.
+  // In particular, a late baseline callback must not advance signed S2 -> S3.
+  if (baseline_only ? phase != "baseline_ready"
+                    : (phase != "assets_ready" && phase != "canary_set")) {
+    return false;
+  }
   ev->phase = phase == "assets_ready" ? fsync::PageEvent::Phase::kAssetsReady
                                       : fsync::PageEvent::Phase::kCanarySet;
   // orig：[[r,g,b,a],[r,g,b,a]] 或 null（无上报 → 邻域兜底显形）。
@@ -584,8 +591,7 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
       std::lock_guard<std::mutex> lock(state.mu);
       for (const auto& js : state.sync_ready_queue) {
         fsync::PageEvent ev;
-        if (js.find("\"phase\":\"baseline_ready\"") != std::string::npos &&
-            ParseSyncReadyJson(js, &ev) && ev.document_gen == gen &&
+        if (ParseSyncReadyJson(js, &ev, true) && ev.document_gen == gen &&
             ev.request_id == req && ev.target_frame_index == frame) {
           ready = true;
           last_paint = state.paints.load(std::memory_order_relaxed);

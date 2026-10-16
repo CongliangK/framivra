@@ -95,8 +95,12 @@ struct Harness {
 
   // 标准推进：S1 →（assets）→ S2 →（canary+原像素）→ S3。
   bool AdvanceToS3(const RequestDesc& d, const uint8_t orig_rgba[2][4],
-                   uint64_t now) {
+                   uint64_t now, const FrameBuf* baseline = nullptr) {
     if (!m.BeginRequest(d, now)) return false;
+    if (baseline != nullptr && !m.SetExactBaseline(baseline->px.data(),
+        static_cast<size_t>(baseline->w) * 4u, baseline->w, baseline->h, now + 1)) {
+      return false;
+    }
     PageEvent a;
     a.phase = PageEvent::Phase::kAssetsReady;
     a.document_gen = d.document_gen;
@@ -672,9 +676,11 @@ void TestNativeExact() {
   RequestDesc d;
   d.document_gen = 9; d.request_id = 7; d.target_frame_index = 258;
   d.canary = CanaryMode::kExact; d.expected_w = 64; d.expected_h = 48;
-  Check(t.AdvanceToS3(d, nullptr, 1000), "exact: S3 without page originals");
-  Check(t.m.EnterPumping(1300), "exact: S4");
   FrameBuf original(64, 48), first = original, second = original;
+  Check(t.AdvanceToS3(d, nullptr, 1000, &original), "exact: S3 without page originals");
+  Check(!t.m.SetExactBaseline(original.px.data(), 64 * 4, 64, 48, 1250),
+        "exact: baseline cannot be replaced after S1");
+  Check(t.m.EnterPumping(1300), "exact: S4");
   first.DrawCanaryDiag(258);
   uint8_t p1[3], p2[3];
   SignatureRgbP1(true, 258 ^ 65535, p1);
@@ -689,6 +695,8 @@ void TestNativeExact() {
   auto feed = [&](FrameBuf& b) {
     return t.m.FeedPaint(b.px.data(), 64 * 4, 64, 48, dst.data(), 1500);
   };
+  Check(feed(original).disposition == PaintDisposition::kRejectedStale,
+        "exact: equal unbound baseline is NOT target-frame proof");
   Check(feed(first).disposition != PaintDisposition::kAccepted,
         "exact: first verified paint NOT deliverable");
   Check(t.m.needs_relocation(), "exact: native relocation requested");
@@ -708,6 +716,30 @@ void TestNativeExact() {
   Check(v.restored && !v.restore_from_reported, "exact: native restoration only");
   Check(dst == original.px, "exact: EVERY BGRA byte restored (nonuniform corners)");
   t.m.Reset(1600, "done");
+
+  // The equality veto must cover ALL corners too, and never supply a single
+  // output byte. Both signed phases agree in every case below.
+  const uint32_t points[][2] = {{0, 0}, {63, 0}, {0, 47}, {63, 47}, {20, 20}};
+  for (size_t i = 0; i <= 5; ++i) {
+    Harness reject;
+    FrameBuf wrong = original;
+    if (i < 5) {
+      wrong.px[wrong.Off(points[i][0], points[i][1])] ^= 1;
+    }
+    Check(reject.AdvanceToS3(d, nullptr, 2000, i < 5 ? &wrong : nullptr),
+          "exact veto: S3 with mismatched or absent baseline");
+    Check(reject.m.EnterPumping(2300), "exact veto: S4");
+    std::vector<uint8_t> untouched(original.px.size(), 0xAA);
+    reject.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, untouched.data(), 2400);
+    const auto denied = reject.m.FeedPaint(second.px.data(), 64 * 4, 64, 48,
+                                           untouched.data(), 2500);
+    Check(denied.disposition == PaintDisposition::kRejectedStale &&
+              !reject.m.accepted(), "exact veto: matching signatures cannot bypass baseline");
+    Check(untouched == std::vector<uint8_t>(original.px.size(), 0xAA),
+          "exact veto: neither candidate nor baseline published on rejection");
+    Check(reject.m.counters().requests_accepted == 0,
+          "exact veto: zero S5 acceptances");
+  }
 }
 
 }  // namespace

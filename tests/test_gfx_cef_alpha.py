@@ -301,6 +301,15 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
             self.assertEqual(len(accepted), 3)
             self.assertTrue(all(e['drive_mode'] == 'n' and
                                 e['restore_source'] == 'native_cross_capture' for e in accepted))
+            for accepted_event in accepted:
+                request = [e for e in events if e['request_id'] == accepted_event['request_id']]
+                baseline = [e for e in request if e['event'] == 'exact_baseline_veto_armed']
+                equal = [e for e in request if e['event'] == 'exact_baseline_equal']
+                self.assertEqual(len(baseline), 1)
+                self.assertEqual(len(equal), 1)
+                self.assertIs(baseline[0]['restoration_source'], False)
+                self.assertEqual(equal[0]['compared_bytes'], 64 * 48 * 4)
+                self.assertLess(equal[0]['seq'], accepted_event['seq'])
             cached = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
             self.assertEqual(cached.returncode, 0, cached.stdout + cached.stderr)
             self.assertIn('已缓存', cached.stdout)
