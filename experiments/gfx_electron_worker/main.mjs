@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..');
-const DEFAULT_PAGE = path.join(REPO_ROOT, 'examples', 'skill-demo', 'gfxA.html');
+const DEFAULT_PAGE = path.join(REPO_ROOT, 'templates', 'skill-demo', 'gfxA.html');
 
 // ---------------------------------------------------------------- 参数解析
 function parseArgs(argv) {

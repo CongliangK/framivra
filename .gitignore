@@ -60,8 +60,8 @@ apps/matting/resolve_matte/uinject
 .zcode/
 
 # tech-talk 模板包占位素材豁免（骨架开箱可 validate）
-!skills/tech-talk/assets/presets/placeholders/*.mp4
-!skills/tech-talk/assets/presets/placeholders/*.wav
+!templates/tech-talk/assets/presets/placeholders/*.mp4
+!templates/tech-talk/assets/presets/placeholders/*.wav
 .agents/
 
 # experiments 第三方二进制与构建产物（#108：CEF worker 构建系统落位；

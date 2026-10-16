@@ -47,7 +47,7 @@ bash scripts/doc_gates.sh
 
    再跑 `bash scripts/doc_gates.sh` 确认全绿。
 3. **docs/plans\* 三目录为只读历史层**，请勿改动其中内容。
-4. **`skill/` 与 `skills/**` 属挂载消费面**，其文档修订影响下游技能挂载，非明确指派请勿触碰。
+4. **`docs/skill/` 与 `templates/**` 属挂载消费面**，其文档修订影响下游技能挂载，非明确指派请勿触碰。
 
 ## AGENTS.md 与 AI 协作智能体
 

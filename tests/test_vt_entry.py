@@ -7,15 +7,15 @@
      跳过 fetch，测试确定性）；
   ③ `vt.py plugins list`：registry 声明两插件 + 未安装态；
   ④ `vt.py --fix-links`：VT_MOUNT_ROOT 隔离（绝不触 live ~/.agents/skills/video/）——
-     dry 只报告；真实修复产出**相对**符号链接指向本仓对应目录；skills 链接目标
+     dry 只报告；真实修复产出**相对**符号链接指向本仓对应目录；templates 链接目标
      不存在时跳过并提示；
   ⑤ init 薄转发等价：`init.py --json` 输出键结构与 v1 对齐（七小节自检键齐全，
      32 键全集）——init 在 repo 根生成 config.local.json 的副作用在测试内复原。
   ⑥ doctor --fix（P4）：挂载链接联动重建（VT_MOUNT_ROOT 隔离）+ 无可修复项时
      明确说明 + live 挂载属其他仓只报人工项（安全门）+ registry.json 缺字段
      回填幂等；--json 输出含 fix 段。
-  ⑦ skills 段对未注册包（examples/skill-demo，不在 skills/ 也不在 external）
-     不扫描不误报。
+  ⑦ skills 兼容段发现 templates/tech-talk 与 skill-demo；app/plugin 示例不激活、
+     不探测；坏 workflow 明确 FAIL；退役 skills 挂载只清理可证明属于本仓的链接。
 运行：bash scripts/run_all_tests.sh。子进程一律 env python3（argv[0] 劫持纪律）。
 """
 import json
@@ -229,7 +229,7 @@ class DoctorJson(unittest.TestCase):
         r = _vt("doctor", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--json"))
-        for marker in ("① 版本", "② 依赖面", "③ 组件", "④ skills",
+        for marker in ("① 版本", "② 依赖面", "③ 组件", "④ 模板/工作流",
                        "doctor 结论", "✅ 通过"):
             self.assertIn(marker, r.stdout)
         self.assertIn("unavailable（缺 blender", r.stdout)
@@ -248,11 +248,12 @@ class ListCheck(unittest.TestCase):
         self.assertEqual([line for line in r.stdout.splitlines() if "✗" in line], [])
 
     def test_apps_and_skills_list_ok(self):
-        for args in (("apps", "list"), ("skills", "list"),
-                     ("apps", "check"), ("plugins", "check"), ("skills", "check")):
+        for args in (("apps", "list"), ("templates", "list"), ("skills", "list"),
+                     ("apps", "check"), ("plugins", "check"),
+                     ("templates", "check"), ("skills", "check")):
             r = _vt(*args)
             self.assertEqual(r.returncode, 0, f"{args}: {r.stdout}{r.stderr}")
-            if args[0] != "skills":
+            if args[0] not in ("templates", "skills"):
                 _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--json"))
 
     def test_bad_subcommand_usage_error(self):
@@ -278,16 +279,16 @@ class FixLinks(unittest.TestCase):
         self.assertFalse(self.mount.exists())          # dry 不落任何东西
         r2 = _vt("--fix-links", env_extra=env)
         self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
-        for name, rel in (("SKILL.md", "skill/SKILL.md"), ("references", "skill/references"),
-                          ("assets", "skill/assets"), ("vtx", "vtx"), ("scripts", "scripts"),
-                          ("skills", "skills")):
+        for name, rel in (("SKILL.md", "docs/skill/SKILL.md"), ("references", "docs/skill/references"),
+                          ("assets", "docs/skill/assets"), ("vtx", "vtx"), ("scripts", "scripts"),
+                          ("templates", "templates")):
             link = self.mount / name
             self.assertTrue(link.is_symlink(), f"{name} 未建链")
             target = Path(os.readlink(link))
             self.assertFalse(target.is_absolute(), f"{name} 应为相对链接")
             self.assertEqual((link.parent / target).resolve(), (REPO / rel).resolve())
-        # P3 起 skills/tech-talk 落地：第 6 条 skills 链接照常建立（过渡期断言已随包成立退役）
-        self.assertTrue((self.mount / "skills" / "tech-talk" / "SKILL.md").is_file())
+        # 两个 workflow 均经 canonical templates 挂载可读；不创建旧 skills 子链接。
+        self.assertTrue((self.mount / "templates" / "tech-talk" / "SKILL.md").is_file())
         # 幂等：再跑一遍全 ✓ 零变更
         r3 = _vt("--fix-links", env_extra=env)
         self.assertEqual(r3.returncode, 0)
@@ -369,7 +370,7 @@ class DoctorFix(unittest.TestCase):
         r = _vt("doctor", "--fix", env_extra=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--fix", "--json", env_extra=env))
-        for name in ("SKILL.md", "references", "assets", "vtx", "scripts", "skills"):
+        for name in ("SKILL.md", "references", "assets", "vtx", "scripts", "templates"):
             link = self.mount / name
             self.assertTrue(link.is_symlink(), f"{name} 未建链")
             self.assertFalse(Path(os.readlink(link)).is_absolute())
@@ -435,16 +436,345 @@ class DoctorFix(unittest.TestCase):
         self.assertEqual(fixes2, [])                       # 幂等
 
 
-class DoctorSkillsSection(unittest.TestCase):
-    def test_unregistered_skill_packages_not_misreported(self):
-        # examples/skill-demo 这类未注册包（不在 skills/ 也不在 external）不进
-        # doctor skills 段扫描面——不误报（§5.1；P4 起 examples/ 有 skill.json）
-        self.assertTrue((REPO / "examples" / "skill-demo" / "skill.json").is_file())
-        r = _vt("doctor", "--json", env_extra={"VTX_DOCTOR_OFFLINE": "1"})
-        d = _assert_doctor_passes_with_optional_unavailable(self, r)
-        names = [s["name"] for s in d["skills"]["installed"]]
-        self.assertEqual(names, ["tech-talk"])
-        self.assertFalse(d["skills"]["fail"])
+class IsolatedTemplateCase(unittest.TestCase):
+    """Migration checks are read-only except for their own temporary mount fixtures.
+
+    No optional health command, network request, browser/native tool or model may run.
+    The existing broader CLI smoke cases above retain their own runtime requirements.
+    """
+
+    def setUp(self):
+        import vt
+        self.vt = vt
+        tmp = tempfile.TemporaryDirectory(prefix="vt-template-")
+        self.addCleanup(tmp.cleanup)
+        self.temp = Path(tmp.name)
+        home = self.temp / "home"
+        home.mkdir()
+        self.mount = home / "video"
+        config = self.temp / "config.json"
+        config.write_text("{}", encoding="utf-8")
+        self.patch(mock.patch.dict(os.environ, {
+            "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
+            "VT_MOUNT_ROOT": str(self.mount), "VTX_CONFIG": str(config),
+            "VTX_DOCTOR_OFFLINE": "1", "PYTHONNOUSERSITE": "1", "PATH": "",
+        }, clear=True))
+        for target in ("sh", "_probe_health", "_probe_requires"):
+            self.patch(mock.patch.object(vt, target, side_effect=AssertionError(
+                f"migration test must not invoke {target}")))
+        self.patch(mock.patch.object(subprocess, "run", side_effect=AssertionError(
+            "migration test must not launch subprocesses")))
+        self.patch(mock.patch.object(vt.urllib.request, "urlopen", side_effect=AssertionError(
+            "migration test must not use network")))
+
+    def patch(self, patcher):
+        value = patcher.start()
+        self.addCleanup(patcher.stop)
+        return value
+
+    def invoke(self, *args):
+        import contextlib
+        import io
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["vt.py", *args]), \
+             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = self.vt.main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def mock_doctor_runtime(self):
+        self.patch(mock.patch.object(self.vt, "_doctor_version", return_value={
+            "version": "fixture", "head": "fixture", "state": "clean", "notes": []}))
+        self.patch(mock.patch.object(self.vt, "_doctor_dependencies", return_value={
+            "errors": [], "warns": [], "items": {}}))
+        self.patch(mock.patch.object(self.vt, "_doctor_components", return_value={
+            "entries": [], "declared": [], "import_vtx": {"ok": True}, "fail": False}))
+        # Mount repair must never write the real registry as a side effect.
+        self.patch(mock.patch.object(self.vt, "_registry_fix_plan", return_value=([], [])))
+        self.patch(mock.patch.object(self.vt, "_apply_registry_fixes", side_effect=AssertionError(
+            "migration test must not modify registry")))
+
+
+class DoctorSkillsSection(IsolatedTemplateCase):
+    def test_peer_workflows_keep_legacy_json_schema(self):
+        self.mock_doctor_runtime()
+        code, output, errors = self.invoke("doctor", "--json")
+        self.assertEqual(code, 0, output + errors)
+        data = json.loads(output)
+        self.assertEqual(set(data), {"version", "dependencies", "components", "skills"})
+        self.assertEqual(set(data["skills"]), {"installed", "fail"})
+        self.assertFalse(data["skills"]["fail"])
+        installed = data["skills"]["installed"]
+        self.assertEqual([item["name"] for item in installed], ["skill-demo", "tech-talk"])
+        for item in installed:
+            self.assertEqual(set(item), {"name", "ok", "version", "uses_apps",
+                                         "uses_plugins", "optional_plugins"})
+            self.assertTrue(item["ok"], item)
+        self.assertEqual(installed[0]["uses_apps"], [])
+        self.assertEqual(len(installed[1]["uses_apps"]), 12)
+        self.assertFalse(self.mount.exists())
+
+    def test_templates_cli_and_skills_alias_have_identical_results(self):
+        for command in ("list", "check"):
+            with self.subTest(command=command):
+                canonical = self.invoke("templates", command)
+                alias = self.invoke("skills", command)
+                self.assertEqual(canonical, alias)
+                self.assertEqual(canonical[0], 0, canonical)
+                self.assertIn("templates/tech-talk@1.0.0", canonical[1])
+                self.assertIn("templates/skill-demo@0.1.0", canonical[1])
+                self.assertNotIn("hello-app", canonical[1])
+                self.assertNotIn("hello-plugin", canonical[1])
+        self.assertEqual(self.invoke("templates", "bogus")[0], 2)
+
+    def test_app_plugin_examples_are_not_registered_or_probed(self):
+        for folder, manifest in (("hello-app", "app.json"), ("hello-plugin", "plugin.json")):
+            self.assertTrue((REPO / "templates" / folder / manifest).is_file())
+        entries = self.vt._preg.discover(REPO)
+        self.assertFalse({"hello-app", "hello-plugin"} & {entry["name"] for entry in entries})
+        with mock.patch.object(self.vt, "_probe_health", return_value=(True, "fixture")) as health, \
+             mock.patch.object(self.vt, "_probe_requires", return_value=(True, [], [])) as requires:
+            report = self.vt._doctor_components(json_out=True)
+        self.assertFalse(report["fail"], report)
+        self.assertTrue(health.call_args_list)
+        self.assertEqual(health.call_count, requires.call_count)
+        for call in health.call_args_list:
+            self.assertIn(call.args[1].parent.name, ("apps", "plugins"))
+        self.assertFalse({"hello-app", "hello-plugin"} &
+                         {entry["name"] for entry in report["entries"]})
+
+
+class TemplateMalformedFixtures(IsolatedTemplateCase):
+    def setUp(self):
+        super().setUp()
+        self.root = self.temp / "repo"
+        self.workflow = self.root / "templates" / "broken"
+        self.workflow.mkdir(parents=True)
+        self.patch(mock.patch.object(self.vt, "ROOT", self.root))
+        self.patch(mock.patch.object(self.vt._preg, "discover", return_value=[]))
+        self.patch(mock.patch.object(self.vt._preg, "load_static_registry", return_value={"plugins": {}}))
+        self.mock_doctor_runtime()
+        self.meta = {"name": "broken", "version": "1", "kind": "skill",
+                     "uses_apps": [], "uses_plugins": [], "optional_plugins": []}
+        self.write_workflow(self.meta)
+
+    def write_workflow(self, meta):
+        (self.workflow / "skill.json").write_text(json.dumps(meta), encoding="utf-8")
+        (self.workflow / "SKILL.md").write_text("# fixture", encoding="utf-8")
+
+    def assert_broken(self, message):
+        report = self.vt._doctor_skills(json_out=True)
+        self.assertTrue(report["fail"], report)
+        self.assertEqual(len(report["installed"]), 1, report)
+        item = report["installed"][0]
+        self.assertFalse(item["ok"], item)
+        self.assertIn(message, item["error"])
+        for kind in ("templates", "skills"):
+            for command in ("list", "check"):
+                result = self.invoke(kind, command)
+                self.assertEqual(result[0], 1, result)
+                self.assertIn(message, result[1])
+        code, output, errors = self.invoke("doctor", "--json")
+        self.assertEqual(code, 1, output + errors)
+        self.assertEqual(json.loads(output)["skills"], report)
+
+    def test_malformed_json_fails_clearly(self):
+        (self.workflow / "skill.json").write_text("{", encoding="utf-8")
+        self.assert_broken("skill.json 缺失/损坏")
+
+    def test_nonobject_json_fails_clearly(self):
+        for value in ([], ["value"], None, True, 17, "value"):
+            with self.subTest(value=value):
+                self.write_workflow(value)
+                self.assert_broken("顶层须为 JSON 对象")
+
+    def test_missing_counterpart_fails_in_either_direction(self):
+        for missing in ("skill.json", "SKILL.md"):
+            with self.subTest(missing=missing):
+                self.write_workflow(self.meta)
+                (self.workflow / missing).unlink()
+                self.assert_broken(missing)
+
+    def test_malformed_uses_declarations_fail(self):
+        malformed = (None, "app", {}, 3, [None], [False], [5], [[]], [{}],
+                     [{"name": None}], [{"name": []}], [{"name": ""}], [""], [" "])
+        for field in ("uses_apps", "uses_plugins", "optional_plugins"):
+            for value in malformed:
+                with self.subTest(field=field, value=value):
+                    self.write_workflow(dict(self.meta, **{field: value}))
+                    self.assert_broken(field)
+
+    def test_existing_string_and_object_names_remain_supported(self):
+        self.patch(mock.patch.object(self.vt._preg, "discover", return_value=[{"kind": "app", "name": "a"}]))
+        self.patch(mock.patch.object(self.vt._preg, "load_static_registry", return_value={
+            "plugins": {"p": {}, "optional": {}}}))
+        self.write_workflow(dict(self.meta, uses_apps=[{"name": "a", "role": "fixture"}],
+                                 uses_plugins=["p"], optional_plugins=[{"name": "optional"}]))
+        report = self.vt._doctor_skills(json_out=True)
+        self.assertFalse(report["fail"], report)
+        item = report["installed"][0]
+        self.assertEqual(item["uses_apps"], ["a"])
+        self.assertEqual(item["uses_plugins"], ["p"])
+        self.assertEqual(item["optional_plugins"], ["optional"])
+
+    def test_unknown_dependencies_and_overlap_still_fail(self):
+        for field in ("uses_apps", "uses_plugins", "optional_plugins"):
+            with self.subTest(field=field):
+                self.write_workflow(dict(self.meta, **{field: ["unregistered"]}))
+                self.assert_broken(field)
+        self.patch(mock.patch.object(self.vt._preg, "load_static_registry", return_value={"plugins": {"p": {}}}))
+        self.write_workflow(dict(self.meta, uses_plugins=["p"], optional_plugins=["p"]))
+        self.assert_broken("重复声明")
+
+    def test_app_manifest_cannot_hide_broken_workflow_marker(self):
+        (self.workflow / "app.json").write_text("{}", encoding="utf-8")
+        (self.workflow / "skill.json").unlink()
+        self.assert_broken("skill.json")
+
+
+class TemplateMountMigration(IsolatedTemplateCase):
+    def setUp(self):
+        super().setUp()
+        self.mock_doctor_runtime()
+
+    def assert_canonical_mounts(self):
+        expected = (("SKILL.md", "docs/skill/SKILL.md"),
+                    ("references", "docs/skill/references"), ("assets", "docs/skill/assets"),
+                    ("vtx", "vtx"), ("scripts", "scripts"), ("templates", "templates"))
+        self.assertEqual(self.vt.MOUNT_LINKS, expected)
+        for name, target in expected:
+            link = self.mount / name
+            self.assertTrue(link.is_symlink(), link)
+            self.assertFalse(Path(os.readlink(link)).is_absolute())
+            self.assertEqual(link.resolve(), (REPO / target).resolve())
+            self.assertTrue(link.exists(), link)
+        for workflow in ("tech-talk", "skill-demo"):
+            self.assertTrue((self.mount / "templates" / workflow / "SKILL.md").is_file())
+
+    def test_new_mount_dry_run_is_write_free_and_fix_is_idempotent(self):
+        code, output, errors = self.invoke("--fix-links", "--dry")
+        self.assertEqual(code, 0, output + errors)
+        self.assertIn("templates", output)
+        self.assertFalse(self.mount.exists())
+        self.assertEqual(len(self.vt._mount_link_state()), 6)
+        self.assertFalse(self.mount.exists())
+        self.assertEqual(self.invoke("--fix-links")[0], 0)
+        self.assert_canonical_mounts()
+        self.assertFalse((self.mount / "skills").is_symlink())
+        self.assertEqual(self.vt._mount_link_state(), [])
+        self.assertIn("0 处变更", self.invoke("--fix-links")[1])
+
+    def test_owned_retired_link_dry_run_then_explicit_or_doctor_repair(self):
+        for relative in (False, True):
+            for command in (("--fix-links",), ("doctor", "--fix", "--json")):
+                with self.subTest(relative=relative, command=command):
+                    self.mount = self.temp / ("mount-" + str(relative) + command[0])
+                    with mock.patch.dict(os.environ, {"VT_MOUNT_ROOT": str(self.mount)}):
+                        self.mount.mkdir()
+                        legacy = self.mount / "skills"
+                        target = REPO / "skills"
+                        legacy.symlink_to(os.path.relpath(target, self.mount) if relative else target)
+                        before = os.readlink(legacy)
+                        self.assertEqual(self.vt._retired_skills_mount()[2], "retired")
+                        self.assertIn("将移除退役 skills", self.invoke("--fix-links", "--dry")[1])
+                        self.assertEqual(os.readlink(legacy), before)
+                        self.assertEqual(list(self.mount.iterdir()), [legacy])
+                        code, output, errors = self.invoke(*command)
+                        self.assertEqual(code, 0, output + errors)
+                        self.assertFalse(legacy.is_symlink())
+                        self.assert_canonical_mounts()
+                        self.assertEqual(self.vt._mount_link_state(), [])
+                        if command[0] == "doctor":
+                            report = json.loads(output)["fix"]
+                            self.assertEqual(report["mount"]["status"], "fixed")
+                            self.assertTrue(any("已移除本仓退役链接" in item
+                                                for item in report["mount"]["applied"]))
+                        self.assertIn("0 处变更", self.invoke("--fix-links")[1])
+
+    def test_unknown_retired_content_is_preserved_in_every_repair_mode(self):
+        indirect = self.temp / "indirect"
+        indirect.symlink_to(REPO / "skills")
+        foreign_live = self.temp / "other-live-repo" / "skills"
+        foreign_live.mkdir(parents=True)
+        (foreign_live / "keep").write_text("foreign-checkout", encoding="utf-8")
+        cases = {"foreign": self.temp / "other-repo" / "skills",
+                 "foreign-live": foreign_live,
+                 "retired-child": REPO / "skills" / "tech-talk",
+                 "retired-traversal": REPO / "skills" / ".." / "vtx",
+                 "sibling": REPO.parent / (REPO.name + "-other") / "skills",
+                 "repo-unrelated": REPO / "vtx", "indirect": indirect,
+                 "loop": "skills", "file": None, "directory": None}
+        for name, target in cases.items():
+            with self.subTest(name=name):
+                self.mount = self.temp / ("preserve-" + name)
+                with mock.patch.dict(os.environ, {"VT_MOUNT_ROOT": str(self.mount)}):
+                    self.assertEqual(self.invoke("--fix-links")[0], 0)
+                    legacy = self.mount / "skills"
+                    if name == "file":
+                        legacy.write_text("user-owned", encoding="utf-8")
+                    elif name == "directory":
+                        legacy.mkdir()
+                        (legacy / "keep").write_text("user-owned", encoding="utf-8")
+                    else:
+                        legacy.symlink_to(target)
+                    for command in (("--fix-links", "--dry"), ("--fix-links",),
+                                    ("doctor", "--fix", "--json")):
+                        code, output, errors = self.invoke(*command)
+                        self.assertEqual(code, 0, output + errors)
+                        if target is not None:
+                            self.assertTrue(legacy.is_symlink())
+                            self.assertEqual(os.readlink(legacy), str(target))
+                        else:
+                            preserved = legacy / "keep" if name == "directory" else legacy
+                            self.assertEqual(preserved.read_text(encoding="utf-8"), "user-owned")
+                        if command[0] == "doctor":
+                            report = json.loads(output)["fix"]
+                            self.assertEqual(report["mount"]["status"], "manual")
+                            self.assertTrue(any("skills" in item for item in report["manual"]))
+                        else:
+                            self.assertIn("保留，请人工处理", output)
+                        self.assert_canonical_mounts()
+        self.assertEqual((foreign_live / "keep").read_text(encoding="utf-8"), "foreign-checkout")
+
+    def test_default_mount_guard_preserves_foreign_retired_symlink(self):
+        self.mount.mkdir()
+        legacy = self.mount / "skills"
+        legacy.symlink_to("skills")  # Unknown cyclic links must be preserved without resolve().
+        with mock.patch.object(self.vt, "mount_root", return_value=self.mount), \
+             mock.patch.dict(os.environ, {"VT_MOUNT_ROOT": ""}):
+            report = self.vt._doctor_fix(json_out=True)
+        self.assertEqual(report["mount"]["status"], "manual")
+        self.assertEqual(os.readlink(legacy), "skills")
+        self.assertEqual(list(self.mount.iterdir()), [legacy])
+
+    def test_parent_symlink_traversal_cannot_fake_retired_ownership(self):
+        root = self.temp / "repo"
+        root.mkdir()
+        foreign = self.temp / "foreign" / "nested"
+        foreign.mkdir(parents=True)
+        (root / "redirect").symlink_to(foreign)
+        self.mount.mkdir()
+        legacy = self.mount / "skills"
+        raw_target = root / "redirect" / ".." / "skills"
+        legacy.symlink_to(raw_target)
+        # Lexical normalization alone would incorrectly call this repo/skills.
+        self.assertEqual(Path(os.path.abspath(raw_target)), root / "skills")
+        with mock.patch.object(self.vt, "ROOT", root):
+            self.assertEqual(self.vt._retired_skills_mount()[2], "retired_foreign")
+            for command in (("--fix-links", "--dry"), ("--fix-links",),
+                            ("doctor", "--fix", "--json")):
+                self.assertEqual(self.invoke(*command)[0], 0)
+                self.assertEqual(os.readlink(legacy), str(raw_target))
+
+    def test_retired_ownership_is_rechecked_before_removal(self):
+        self.mount.mkdir()
+        legacy = self.mount / "skills"
+        legacy.symlink_to(REPO / "skills")
+        plan = [self.vt._retired_skills_mount()]
+        legacy.unlink()
+        replacement = self.temp / "foreign"
+        legacy.symlink_to(replacement)
+        self.assertEqual(self.vt._apply_mount_link_fixes(plan), [])
+        self.assertEqual(os.readlink(legacy), str(replacement))
 
 
 if __name__ == "__main__":
