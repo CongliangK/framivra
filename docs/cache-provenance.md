@@ -1,9 +1,6 @@
 # 缓存与回执：输入变化必须使旧结果失效
 
-> 本文描述 PR#1（Windows 适配）合入 main 后的实际语义。PR 原始方案（项目级全量
-> 指纹 + `cache/<input-fingerprint>/` 整仓布局）在合并中被 main 13bed7a 的
-> per-产物内容寻址缓存取代，回执侧价值全部保留——合并裁定见 merge commit
-> f0c98dd 与 `vtx/cache_state.py` 模块头。
+> 本文是运行时媒体身份、缓存失效与回执语义的唯一 home。
 
 ## 修复的问题
 
@@ -11,7 +8,7 @@
 或两个目录使用同名 HTML 时，旧声音/画面可能继续被输出。失败的重跑也可能留下
 旧 QC 成功回执。
 
-合入后的机制（main 13bed7a 架构 + PR#1 补强）：
+当前机制：
 
 - **gfx 页缓存** `cache/gfx/<key>/`：键 = sha1(html 字节 + 显式依赖内容 + fps +
   视口 + 时长)。同内容跨路径复用；同名页不同内容、同页换时长自然分键。
@@ -20,15 +17,66 @@
   `vtx clean`/`vtx gc` 为补救（R12-G1-037 交界认知在案）；段中间物 `vseg_pass` 已入
   gc 白名单（commit fa650ad）。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
-  键 = sha1(源 stat 身份 + 切片/窗口/fade/编码参数)。源 stat 身份 = path + size +
-  mtime_ns + **首/尾 64KB 采样哈希**（PR#1 补强：同尺寸 + 恢复时间戳的同路径替换
-  不再误命中——媒体重编码首尾字节必变）。
+  键 = sha1(路径 + Verified 完整内容身份 + 切片/窗口/fade/编码参数)。
+  媒体身份使用下节定义的独立 schema/domain，不沿用 Fast 键。
 - **分段渲染段缓存** `cache/vseg*/seg…_<内容键>.mp4`（PR#1 合入融合）：段文件名
   携带内容键（段区间 + 画布/模式/gpu + 每层上游内容键与参数 + 段字幕 ass 字节）。
   改字幕/改图层/换 gfx 内容后旧段不再命中——PR 回归场景「改字幕不重渲」关闭。
   段数（nseg）与 GPU 开关由区间和键内 gpu 位天然隔离（PR 的 tag 变体方案被此取代）。
 - 键变即新条目，旧键是垃圾由 `vtx gc` 回收；`vtx df`/`vtx snapshot`/VERSIONS
   记账不受影响。
+
+## 媒体身份等级与复用边界（#85）
+
+- Fast：公开 `media_stat_digest` 保留 size:mtime_ns:首尾采样摘要格式；适用快速
+  交互预判，不给正式 seg/audio、响度、阶段回执或 QC 免检授权。
+- Verified：`framivra.media-identity.v1` 记录 level=Verified、algorithm=sha256、
+  scope=complete-file、digest；按块完整读取当前文件，不以 stat 或旁车证明内容不变。
+  完整摘要仅说明读取范围的字节身份，不证明视觉质量、环境一致或并发不可变性。
+- Reproducible 还需环境身份及独立重复比较，不能从 Verified 自动推导。
+
+选择 Issue #85 后续澄清允许的全量重读正确性路径，不建设受控不可变导入平台。
+每个源回执指纹、seg/audio 键、响度查找与 QC 免检边界均重读；同一次读取所得摘要
+可供该快照的身份和序列化使用，不跨可变文件边界缓存。Ctx 锁定源身份并在现有阶段、
+成功回执、发布等复核点比较；不删除原完成凭据或输入校验。项目输入在命令期间应
+保持不变，遵循 SECURITY.md 的单用户本地边界，不扩展 #59/#97 的并发安全范围。
+
+源 manifest 随 `framivra.receipt.v2` 回执的 source_identities 原子持久化，含各路径
+完整身份；这是绑定 input_fingerprint 的溯源，不是免读令牌。只读和 dry-run 不为身份
+另写旁车。df 与所有 dry-run 使用未激活身份的只读/规划上下文，离线或不可读源不
+妨碍这些命令；其 input_fingerprint 为 None，不得继承回执或认证产物。正式构建仍
+在 Ctx 初始化时验证；源缺失或读取失败拒绝可信键，不能编码为“确认无依赖”。空 sources 才是
+明确无源媒体；未声明依赖仍未获证明。旧 schema 回执清空阶段表，旧 Fast 键失效重建。
+
+**validate 失败证据边界**：普通 text CLI 与 agent-json 的直接 validate 可在同一次
+加载遍历中收集缺失/不可读取源，继续原生校验以报告其它真实错误。该上下文没有
+input_fingerprint 或 Verified manifest，永久仅可报告失败；不会开启正式阶段事务，
+也不写失败 receipt、receipt.prev、QC 记忆或响度回执。原有成功回执不会被这条失败
+报告路径改写，但后续正式命令必须独立重读身份，不能据此继承。其它检查全部通过
+仍非零拒绝认证，源随后出现也须重新创建正常上下文，不能原地升级。缓存键、其它
+正式阶段及成功回执均拒绝此上下文；插件回调仍遵循本地单用户信任边界，并非沙箱。
+不新增公开诊断模式，不按 diagnostics 开关降级：完整输入的正式命令仍为 Verified。
+
+**兼容取舍**：audit/QC 不享有此失败证据例外。旧版声明缺失但未使用源时可能以
+MISSING 指纹完成 audit；现在拒绝该不可信成功。未知源的 validate 失败不再留下
+正式失败回执/撤销交易。此为 #85 的明确迁移，不承诺未知输入上的所有旧退出码、
+副作用或 audit/QC 诊断顺序相同。公开 Fast 仍有中部字节盲区；#52 impact 快照的
+输入摘要仍标 Fast，但其调用的正式 audio/seg 键现在能识别该变化，预测的新缓存
+产物应随之改变，不能把 Fast 限制误当成正式键仍可复用。
+
+响度使用独立 framivra.loudness.v2 键域及完整 identity；缺失/旧身份不命中，读取失败
+不存回执，测量前后身份不一致不存结果。QC version=2 记录完整 final 与当前生效段
+身份及实际解析路径；concat 路径按现有生产 writer 的绝对 POSIX/引号转义格式
+解析，相对路径以清单目录为基准，非预期本地段目标拒绝免检，不用 basename 替代
+实际目标。旧/损坏/不可读记录全检；免检仍需该检查上轮 pass 及相关段内容一致。
+验收包 vtx.acceptance/2 的 receipt_identity_scope 限定 declared-source-files；
+v1 包只按其 Fast 声明独立验证，不升级。
+最终成片 scope 的 content_identity 仍为 partial，未声明依赖及其他输出未被统一证明。
+
+**未满足的验收项**：原“非每次渲染全文件读取”要求在本实现中未满足；真实 ≥1GB
+项目冷启动成本门尚未测量，不能以单测或单次 SHA 吞吐宣称通过。须在独立审查后按
+实际渲染全路径记录重复读取次数、字节、关键路径增量及持久化成本，再决定性能或
+受控导入后续工作。这里的正确性候选不构成 #85 完成或性能验收。
 
 ## 插件代码身份与升级说明（#86）
 
@@ -94,17 +142,16 @@ Golden 使用原始完整 clip 重建身份；旧 Golden schema 无法表达同 
 
 ## 阶段回执（PR#1）
 
-`receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
+`receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 Verified 身份 +
 gfx html 字节 + 声明依赖内容)——与缓存键同等敏感（任何缓存键会变的输入变化，
-回执门同样重置），但不做全量媒体哈希（GB 级 I/O 不可接受）。输入变化不继承旧的
+回执门同样重置）。输入变化不继承旧的
 成功状态。CLI 在阶段开始前撤销其旧成功及下游成功，失败重跑不能保留旧 QC PASS。
 audio 要求当前 prepare，video（有 gfx 时）要求当前 gfx，mux 要求当前 video/audio，
 qc 要求当前 mux；单跑某阶段前置不满足会直接拒绝。可以直接运行 `all` 完成依赖顺序。
 旧工程首次需完整重建一次；不直接认领旧产物。
 
 历史缓存保留以便恢复和审计；工具的显式 `clean` 仍删除项目 cache/ 与 out/。本次不
-自动删除用户旧工程或媒体。回执是流程来源检查，不是对最终文件外部篡改的完整性证明
-（源指纹的采样哈希亦非对抗性保证）。
+自动删除用户旧工程或媒体。回执是流程来源检查，不是对最终文件外部篡改的完整性证明。
 
 ## 中断与恢复
 
@@ -166,7 +213,8 @@ Production 须两个质量门全 passed。显式 preview 优先决定用途；�
 
 普通阶段回执绑定 final_movie 范围，每次落笔/撤销阶段重算标签，不继承旧最高标签。
 草稿成功可标 Preview；正式 mux/qc 存在时不用保留的草稿替代正式结论。
-运行时身份仍为 Fast（content_identity=partial）。QC 报告和回执中的技术门可以 passed，
+运行时源媒体采用上述 Verified 身份；final_movie 的 content_identity 仍为 partial。
+QC 报告和回执中的技术门可以 passed，
 但 visual_content 保持 unknown，因此即使 QC 8/8 也不自动成为 Production。
 包含缓存免检探针的质量门标 partial，失败仍为 failed；不更改既有 QC 放行行为。
 帧数正确只属技术门，不能证明帧内容；CFR 补帧不能据帧数自动授予复现或 Exact。

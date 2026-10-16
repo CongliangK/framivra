@@ -170,7 +170,7 @@ class StaleReceiptArchive(unittest.TestCase):
             c = Ctx(p)
             out = root / 'out'; out.mkdir(parents=True)
             (out / 'receipt.json').write_text(json.dumps(
-                {'input_fingerprint': c.input_fingerprint,
+                {'schema': 'framivra.receipt.v2', 'input_fingerprint': c.input_fingerprint,
                  'stages': {'validate': {'ok': True}, 'qc': {'ok': True}}}))
             c.receipt('qc', True, '温态复跑')
             self.assertFalse((out / 'receipt.prev.json').exists(),

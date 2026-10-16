@@ -123,6 +123,7 @@ class ProbeBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'timeline.json';t=timeline()
             t['sources']=[{'id':'s','path':'asset.mp4'}];path.write_text(json.dumps(t))
+            (path.parent/'asset.mp4').write_bytes(b'tiny identity fixture; provider mocked')
             cases=[
                 ({'streams':[{'codec_type':'video','r_frame_rate':'n/a','width':160,'height':90}], 'format':{}}, 'probe.fps'),
                 ({'streams':[{'codec_type':'audio'}], 'format':{}}, 'probe.audio_duration'),

@@ -13,7 +13,7 @@ from pathlib import Path
 from . import fstxn, events
 from .cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
                          receipt_fingerprint, validate_cache_dependencies,
-                         verify_input_identity)
+                         verify_input_identity, _receipt_fingerprint, require_trusted_context)
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
 from .diagnostics import emit, key_path, required_field, mark_handled, producer_exit, operation, indexed
 from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
@@ -81,7 +81,7 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
     无阶段记录/读写失败均静默直过（旁证尽力而为，不进主链失败路径）。"""
     try:
         old = json.loads(f.read_text(encoding="utf-8"))
-        if (old.get("input_fingerprint") not in (None, fingerprint)
+        if (isinstance(old, dict) and old.get("input_fingerprint") not in (None, fingerprint)
                 and old.get("stages")):
             # B06：旁证轮转同样走 fstxn 原子写（tmp+os.replace）——调用方已持
             # receipt.json 事务锁，prev 伴生件无须再拿第二把锁文件；写一半被杀
@@ -93,7 +93,8 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
 
 
 class Ctx:
-    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None):
+    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None, verify_sources=True,
+                 allow_unverified_validation=False):
         self.execution = execution if execution is not None else events.ExecutionContext()
         if diagnostics is not None:
             self.diagnostics = diagnostics
@@ -151,11 +152,23 @@ class Ctx:
         # Pin before resolving external subtitles so changes during loading are
         # caught too. Hash exactly the bytes parsed above, not a second read.
         validate_cache_dependencies(self)
-        self.input_fingerprint = receipt_fingerprint(
-            self, timeline_bytes=self.timeline_bytes)
+        self.source_identities = {}
+        self._unverified_validation = False
+        self.unavailable_sources = []
+        # Planning/inspection contexts have no trusted pin. They must never
+        # inherit a receipt or certify a product, even when sources are offline.
+        self.input_fingerprint = None
+        if verify_sources:
+            self.input_fingerprint = _receipt_fingerprint(
+                self, timeline_bytes=self.timeline_bytes, source_identities=self.source_identities,
+                unavailable_sources=self.unavailable_sources if allow_unverified_validation else None)
+            if self.unavailable_sources:
+                self._unverified_validation = True
+                self.source_identities = {}
         from .subtitles_src import resolve_subtitles_src
         resolve_subtitles_src(self)
-        verify_input_identity(self)
+        if verify_sources and not self._unverified_validation:
+            verify_input_identity(self)
         # PR#1 合入：声明依赖快速失败 + 回执输入身份（注意：不是缓存目录键——
         # 缓存布局维持 main 的 per-产物内容寻址，见 cache_state.py 合并裁定）。
         self.probes = {}
@@ -177,6 +190,8 @@ class Ctx:
 
     # ---- 基础设施 ----
     def run(self, cmd, need=True):
+        if getattr(self, '_unverified_validation', False) and Path(str(cmd[0])).name not in ('ffprobe', 'ffprobe.exe'):
+            require_trusted_context(self)
         # 与 run_ffmpeg_task 的关系（两种失败语义，不可合一）：本方法面向编排主线程，
         # 失败打印 + sys.exit 立即终止；run_ffmpeg_task 面向并行 worker 线程——线程内
         # sys.exit 不生效，改为抛 RuntimeError 由主线程统一收集后退出。
@@ -319,8 +334,14 @@ class Ctx:
             self.reject_input_identity(stage, e)
 
     def receipt(self, stage, ok, detail="", extra=None):
+        if getattr(self, '_unverified_validation', False):
+            if stage == 'validate' and ok is False:
+                return  # Failure evidence stays in existing output, never a ledger.
+            require_trusted_context(self)
         if self.dry:
             return   # dry-run 不落回执（PR#1：预览运行不得改写真实阶段状态）——锁外早退
+        if self.input_fingerprint is None:
+            raise InputIdentityError('inspection context has no verified input identity')
         f = self.out / "receipt.json"
 
         observation = None
@@ -329,6 +350,9 @@ class Ctx:
             _archive_stale_receipt(f, self.input_fingerprint)   # ⑮ 指纹翻转旁证轮转
             if ok:
                 verify_input_identity(self)
+            # Persist the pinned source manifest atomically with the receipt.
+            # Provenance only: every verification still rereads mutable inputs.
+            rec["source_identities"] = self.source_identities
             rec["timeline"] = self.timeline_sha256
             rec["updated"] = time.strftime("%F %T")
             rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
@@ -363,8 +387,14 @@ class Ctx:
 
     def begin_stage(self, stage):
         """PR#1：拒绝过期前置 + 运行前撤销下游旧成功回执（失败重跑不留旧 QC PASS）。"""
+        if getattr(self, '_unverified_validation', False):
+            if stage == 'validate':
+                return  # No formal prerequisite/revocation transaction is permitted.
+            require_trusted_context(self)
         if self.dry:
             return
+        if self.input_fingerprint is None:
+            raise InputIdentityError('inspection context has no verified input identity')
         f = self.out / 'receipt.json'
 
         def _mutate(rec):
@@ -387,6 +417,7 @@ class Ctx:
                      suggested_actions=[{'op': 'run_pipeline', 'params': {'command': 'vtx all'}}])
                 mark_handled(error)
                 raise error
+            rec['source_identities'] = self.source_identities
             for name in DOWNSTREAM.get(stage, []) + [stage]:
                 rec['stages'].pop(name, None)
             from .quality import receipt_quality
@@ -447,6 +478,8 @@ def filter_threads() -> int:
     return 1
 
 def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False, *, observation=None):
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     from .recovery import atomic_ffmpeg
     observation = observation or events.task(c, kind='ffmpeg')
     with observation.scope():
@@ -456,6 +489,8 @@ def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False, *, observation
 def _run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False):
     # 并行 worker 内不用 c.run：其失败路径 sys.exit 在线程中不生效，改为抛异常
     # 由主线程统一收集传播（任一任务失败 → 整阶段失败）。
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if c.dry and is_ffmpeg_cmd(cmd):
         print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
         return

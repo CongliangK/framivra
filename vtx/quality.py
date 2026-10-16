@@ -35,7 +35,7 @@ def classify(*, scope, preview=False, evidence=None):
 
 
 def receipt_quality(record):
-    """Runtime Fast identity and stage success do not establish visual acceptance."""
+    """Verified source identity alone does not establish full-movie or visual acceptance."""
     stages = record.get('stages', {})
     stages = stages if isinstance(stages, dict) else {}
     # Old/current-fingerprint receipts can contain malformed observations.

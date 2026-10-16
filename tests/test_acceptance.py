@@ -43,8 +43,10 @@ class AcceptanceTests(unittest.TestCase):
         out = project / 'out'
         out.mkdir(exist_ok=True)
         if not (out / 'receipt.json').exists():
-            a.write_json(out / 'receipt.json', {'timeline': a.file_digest(project / 'timeline.json'),
+            a.write_json(out / 'receipt.json', {'schema': 'framivra.receipt.v2', 'timeline': a.file_digest(project / 'timeline.json'),
                 'input_fingerprint': 'f' * 64,
+                'source_identities': {'media.bin': {'schema': a.IDENTITY_SCHEMA, 'level': 'Verified',
+                    'algorithm': 'sha256', 'scope': 'complete-file', 'digest': a.file_digest(project / 'media.bin')}},
                 'stages': {n: {'ok': True, 'detail': 'unit test'} for n in a.STAGES}})
             a.write_json(out / 'qc_report.json', {'checks': [{'name': 'unit', 'pass': True}], 'skipped_probes': []})
             (out / 'final.mp4').write_bytes(b'unit test, not real video')
@@ -197,15 +199,34 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown manifest'):
             self.verify()
 
-    def test_source_also_declared_remains_fast(self):
+    def test_source_also_declared_is_verified(self):
         tl = a.read_json(self.timeline)
         tl['project']['cache_dependencies'] = ['media.bin']
         self.timeline.write_text(json.dumps(tl))
         self.build()
         m = a.read_json(self.package / 'manifest.json')
         row = next(x for x in m['inputs'] if x['source_path'] == 'media.bin')
-        self.assertEqual(row['runtime_identity_level'], 'Fast')
+        self.assertEqual(row['runtime_identity_level'], 'Verified')
         self.verify()
+
+    def test_legacy_package_stays_fast(self):
+        self.build()
+        m = a.read_json(self.package / 'manifest.json')
+        m['schema'] = a.LEGACY_SCHEMA
+        m.pop('receipt_identity_scope')
+        m['receipt_identity_level'] = 'Fast'
+        for row in m['inputs']:
+            if row['role'] == 'source':
+                row['runtime_identity_level'] = 'Fast'
+                row['runtime_identity'] = a.media_stat_digest(self.package / row['path'])
+        self.rewrite('manifest.json', m)
+        self.reseal()
+        self.assertTrue(self.verify()['integrity_verified'])
+        m['receipt_identity_level'] = 'Verified'
+        self.rewrite('manifest.json', m)
+        self.reseal()
+        with self.assertRaisesRegex(ValueError, 'runtime identity claim'):
+            self.verify()
 
     def test_unexpected_receipt_stage_is_preserved(self):
         rows = a.gates({'stages': {'extension_gate': {'ok': False}}}, {}, 0, True, self.env)
@@ -226,6 +247,7 @@ class AcceptanceTests(unittest.TestCase):
             'wrong exit': lambda m: m['build']['executions'][0].update(exit_code=7),
             'unknown build': lambda m: m['build'].update(extra=True),
             'unknown input': lambda m: m['inputs'][0].update(extra=True),
+            'overbroad identity scope': lambda m: m.update(receipt_identity_scope='all-content'),
             'closure pass': lambda m: m['dependency_closure'].update(status='passed'),
             'false Fast token': lambda m: next(r for r in m['inputs'] if r['role'] == 'source').update(runtime_identity='0:0:0000000000000000'),
         }

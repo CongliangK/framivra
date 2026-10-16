@@ -1,0 +1,96 @@
+name: Issue85 dedicated real-media acceptance
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/issue85-real-media.yml'
+      - 'scripts/issue85_real_media.py'
+      - 'scripts/issue85_media_runner.py'
+      - 'tests/test_issue85_real_media.py'
+# First execution uses a reviewed same-repository dedicated PR; no default-branch
+# registration trick, pull_request_target, secrets, or permission expansion.
+permissions:
+  contents: read
+concurrency:
+  group: issue85-real-media-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'work/issue85-real-media-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: harness
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve reviewed candidate from checked-out PR head
+        id: resolve
+        working-directory: harness
+        run: |
+          python - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          from scripts.issue85_media_runner import resolve_candidate
+          result = resolve_candidate(Path.cwd())
+          print(json.dumps(result, indent=2))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('candidate_sha=' + result['commit'] + '\n')
+          PYCODE
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 3b562f0ee70fe09b5366e6e300c1a31ac3416323
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.resolve.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install official Ubuntu CPU media tools and retain versions
+        shell: bash
+        env:
+          OUTPUT: ${{ runner.temp }}/issue85-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          mkdir -p "$OUTPUT"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          {
+            command -v ffmpeg
+            command -v ffprobe
+            ffmpeg -version
+            ffprobe -version
+          } 2>&1 | tee "$OUTPUT/media-tool-versions.log"
+      - name: Tiny harness tests, then ordinary hosted tool preflight
+        working-directory: harness
+        run: |
+          python -m unittest tests.test_issue85_real_media -v
+          command -v ffmpeg
+          command -v ffprobe
+      - name: Qualify fixed NASA original and execute bounded paired experiment
+        env:
+          OUTPUT: ${{ runner.temp }}/issue85-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          unset PYTHONPATH PYTHONHOME
+          python harness/scripts/issue85_real_media.py --execute-hosted \
+            --baseline "$GITHUB_WORKSPACE/baseline" \
+            --candidate "$GITHUB_WORKSPACE/candidate" --output "$OUTPUT/experiment"
+      - name: Retain small evidence only, never media
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue85-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/issue85-${{ github.run_id }}-${{ github.run_attempt }}/**/*.json
+            ${{ runner.temp }}/issue85-${{ github.run_id }}-${{ github.run_attempt }}/**/*.log
+            ${{ runner.temp }}/issue85-${{ github.run_id }}-${{ github.run_attempt }}/**/*.txt
+          if-no-files-found: warn
+          retention-days: 14

@@ -12,6 +12,7 @@ from pathlib import Path
 from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
 from .hygiene import budget_gate, manifest_record, seg_key
 from . import events
+from .cache_state import require_trusted_context
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
 from . import probe_cache, fstxn
 from .recovery import media_cache_valid
@@ -205,6 +206,7 @@ class RenderPlan:
                 "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
 
     def write_global_ass(self, path):
+        require_trusted_context(self.c)
         c = self.c
         lines = self.ass_head()
         for s in c.tl["subtitles"]:
@@ -231,6 +233,7 @@ class RenderPlan:
         return "\n".join(lines).encode("utf-8")
 
     def write_seg_ass(self, path, a, b):
+        require_trusted_context(self.c)
         fstxn.atomic_write(path, self.segment_ass_bytes(a, b).decode("utf-8"))
 
     # ---------------------------------------------------------------- 单 graph / 逐层 pass 合成
@@ -243,6 +246,7 @@ class RenderPlan:
           每 pass ≤2 输入（主=canvas 或上游中间物 + 次=1 层），中间物无损落 cache
           复用段缓存体系。确定性依据见 _composite_passes docstring。
         """
+        require_trusted_context(self.c)
         if b is None or len(layers_subset) <= 1:
             return self._composite_graph(layers_subset, out_path, with_subs, a, b, sub_file)
         return self._composite_passes(layers_subset, out_path, with_subs, a, b, sub_file)
@@ -258,6 +262,7 @@ class RenderPlan:
         # 已被复渲数据证伪：seg00/01/02 修复后隔离复渲 4 次仍各得 4 个 md5
         # （/tmp/vtx_r4/repro_seg0{0,1,2}_new.log）——尾垫只消除段内 EOF 裁决这一族，
         # 非确定性主因未除，最终机制与修复口径以本函数 pad 注释的最新修订为准。
+        require_trusted_context(self.c)
         c, draft, f = self.c, self.draft, self.f
         W, H, nframes = self.W, self.H, self.nframes
         b = c.dur if b is None else b
@@ -451,6 +456,7 @@ class RenderPlan:
         -fps_mode cfr 只在最终 pass（正式段文件）：帧数/时基安全网 + 拼接自检
         （render_segmented 总帧数硬门），语义见 _composite_graph 同名注释。
         """
+        require_trusted_context(self.c)
         c = self.c
         seglen = b - a
         pdir = c.cache / "vseg_pass"; fstxn.mkdir(pdir)
@@ -577,6 +583,7 @@ class RenderPlan:
         （如 tpad 尾垫策略）不再依赖手工清段缓存，旧段自动键漂移失效（防洗白，
         见该函数 docstring）。
         """
+        require_trusted_context(self.c)
         layers = [(L["source"].identity if L["gfx"] else L["seg"].name,
                    L["cl"], L["x"], L["y"], L["w2"], L["h2"]) for L in sl]
         subtitles = (sfile.read_bytes() if with_subs and sfile is not None
@@ -586,6 +593,7 @@ class RenderPlan:
                                    _graph_code_digest())
 
     def render_segmented(self, out_path, layer_set=None, with_subs=True, tag="vseg"):
+        require_trusted_context(self.c)
         c, draft = self.c, self.draft
         lset = self.layers if layer_set is None else layer_set
         # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
@@ -676,6 +684,8 @@ def prepare_layers(c: Ctx):
     整片与区间共用同一份 cache/seg——区间渲染不得另造键或另写命名空间。本函数只做
     seg/gfx 缓存侧副作用；manifest 记账与回执由调用方负责（区间渲染不记账不写回执）。
     """
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     fstxn.mkdir(c.cache / "seg")
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
@@ -766,6 +776,8 @@ def build_video(c: Ctx, layers=None):
     重复扫描——layers 是纯数据（clip→缓存路径映射 + 参数），先算后用无时序风险
     （seg 内容寻址键与渲染时机无关，波内先行写入的段文件 video 阶段直接命中）。
     """
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     draft = getattr(c, "draft", False); nframes = getattr(c, "frames", None)
     # budget_gate 仍在 video 阶段开头执行（流水线下为提示性门）：seg 预编码已在波内
     # 先行落盘，但 gc 只回收「键集外」条目——先行写入的当前键 seg 不在回收集，

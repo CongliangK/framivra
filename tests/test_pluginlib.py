@@ -407,8 +407,7 @@ class InvariantsIdle(unittest.TestCase):
             self.assertNotEqual(fp1, fp2)
             # 空转稳定（幂等）
             self.assertEqual(fp1, receipt_fingerprint(c))
-            # 空段显式省略：digest="" 时指纹与空转逐字节一致——v1 回执在 v2 下
-            # 继续有效（无插件时间线指纹与 v1 相同），影子基线温态复验依赖此。
+            # 空插件段显式省略，同一 receipt schema 内空转逐字节一致。
             with mock.patch("vtx.pluginlib.hooks.active_plugins_digest",
                             return_value=""):
                 self.assertEqual(receipt_fingerprint(c), fp1)
@@ -763,6 +762,8 @@ class FakePluginBus(unittest.TestCase):
         """P1 对抗审查 F2：多实例参数全收集——改第二例参数 digest 必须变。"""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
+            (root / "a.mp4").write_bytes(b"source a")
+            (root / "b.mp4").write_bytes(b"source b")
             tl1 = _tl(root, sources=[{"id": "a", "path": "a.mp4", "denoise": {"x": 0.2}},
                                      {"id": "b", "path": "b.mp4", "denoise": {"x": 0.2}}])
             c1 = Ctx(tl1)

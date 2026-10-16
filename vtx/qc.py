@@ -7,13 +7,13 @@ v2 §1.3（2026-09-13）新增：解码域真峰 TP 判定项（阈 -1.0 dBFS，
 权威值、同一回执不重测）——limiter 恒在 build_audio 尾部后，成片 TP 超阈 = 上游
 削波/限幅失效，属产物可信度问题，归内核 qc。
 """
-import json, re, sys, tempfile
+import json, re, shlex, sys, tempfile
 from contextvars import copy_context
 import operator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import loudness_cache, fstxn
+from . import cache_state, loudness_cache, fstxn
 from .diagnostics import (emit, producer_exit, required_field, operation,
                           key_path, subtitle_location)
 from .hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
@@ -36,12 +36,9 @@ TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_
 QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
 # ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
-# 记录 cache/qc_pass_segs.json：{"version":1,"final":{size,mtime_ns,frames},
-# "segs":[{name,a,b,key,size,mtime_ns}],"checks":{检查名:上轮是否 pass}}。
-# 免检判定（非 --strict，见 qc() 内）：final (size,mtime_ns) 与记录一致 + 检查项
-# 上轮 pass + 探测帧全部落在 stat 一致的记录段 [a,b) 内 → 跳过实际探测（仍占
-# checks 位，pass=True，detail 前缀「免检」——检查项数量不减少）。final 重封装
-# （stat 变）→ 记录整体失效全检；段文件被换/重写（stat 变）→ 该段失配实测。
+# version 2 记录 final 与 active segments 的完整文件 SHA-256 Verified 身份。
+# 非 --strict 仅复用上轮 pass 且完整身份一致的检查；旧 stat-only 记录全检升级。
+# final 变化使记录整体失效；单段变化只使该段探测失效。active list 变化全检。
 # 全局元数据项（帧数/时长/分辨率/响度/并发窗能量）不在此机制内，永远实测。
 # 裁定记录（与方案原文的偏差，总控未应答现场问询、子代理按验收一致性裁定）：
 # 原文「全检全过才写记录，有 ✗ 删记录」在存在持续假阴性 ✗ 的项目（bench_p2 恒
@@ -52,80 +49,123 @@ _QC_SEG_RECORD = "qc_pass_segs.json"
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
 
 
+def _verified_identity(value):
+    """Only complete-file Verified SHA-256 identities can authorize reuse."""
+    return (isinstance(value, dict)
+            and set(value) == {"schema", "level", "algorithm", "scope", "digest"}
+            and value.get("schema") == cache_state.IDENTITY_SCHEMA
+            and value.get("level") == "Verified"
+            and value.get("algorithm") == "sha256"
+            and value.get("scope") == "complete-file"
+            and isinstance(value.get("digest"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["digest"]) is not None)
+
+
 def _load_qc_pass_record(c):
-    """读免检记录；缺失/损坏/version 不符/final stat 失配/segs 空 → None（全检）。"""
+    """Reject legacy, malformed or unreadable records; re-read all active media."""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     try:
         rec = json.loads((c.cache / _QC_SEG_RECORD).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(rec, dict) or rec.get("version") != 1:
+    if not isinstance(rec, dict) or type(rec.get("version")) is not int or rec["version"] != 2:
         return None
-    fin = rec.get("final") or {}
+    fin = rec.get("final")
+    segs, checks = rec.get("segs"), rec.get("checks")
+    if (not isinstance(fin, dict) or not _verified_identity(fin.get("content_identity"))
+            or type(fin.get("frames")) is not int or fin["frames"] != c.dur
+            or not isinstance(segs, list) or not segs
+            or not isinstance(checks, dict)
+            or any(not isinstance(k, str) or type(v) is not bool for k, v in checks.items())):
+        return None
+    for seg in segs:
+        if (not isinstance(seg, dict) or not isinstance(seg.get("name"), str)
+                or not _VSEG_NAME.fullmatch(seg["name"])
+                or type(seg.get("a")) is not int or type(seg.get("b")) is not int
+                or not isinstance(seg.get("path"), str)
+                or not isinstance(seg.get("key"), str)
+                or not _verified_identity(seg.get("content_identity"))):
+            return None
     try:
-        st = (c.out / "final.mp4").stat()
-    except OSError:
+        if fin["content_identity"] != cache_state.verified_media_identity(c.out / "final.mp4"):
+            return None
+    except (OSError, ValueError, RuntimeError):
         return None
-    ops = _QCOperations(c)
-    source = {"provider": "qc_pass_record", "resource": str(c.cache / _QC_SEG_RECORD)}
-    if ops.get(fin, "size", "$.final", source=source) != st.st_size or ops.get(fin, "mtime_ns", "$.final", source=source) != st.st_mtime_ns:
-        return None   # final 重封装（stat 变）→ 记录整体失效
-    if not isinstance(rec.get("segs"), list) or not rec["segs"] \
-            or not isinstance(rec.get("checks"), dict):
+    current = _collect_active_segs(c)
+    topology = lambda items: [(s["name"], s["path"], s["a"], s["b"], s["key"]) for s in items]
+    if current is None or topology(current) != topology(segs):
         return None
-    return rec
+    # Keep only unchanged active segments; never hash once per probe.
+    return {**rec, "segs": [old for old, now in zip(segs, current)
+                            if old["content_identity"] == now["content_identity"]]}
 
 
 def _collect_active_segs(c):
-    """当前生效段序列 → [{name,a,b,key,size,mtime_ns}]；不可得 → None（机制不生效）。
-    段文件名只带段起点（seg{si}_{a:06d}_{key}.mp4），b = 下一段起点（末段 = c.dur）。
-    以 cache/vseg/list.txt（最近一次段渲染的拼接清单）为准——直接 glob seg* 会把
-    同槽旧键残留也当成生效段，产生重叠 [a,b) 区间：stat 未变的陈旧段可错误豁免
-    被篡改的现役段所在帧（清单之外的一切不参与免检，见实现报告）。"""
+    """Read the active concat list and complete content identities, or fail closed."""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     vdir = c.cache / "vseg"
-    lst = vdir / "list.txt"
-    if not lst.exists():
+    try:
+        lines = (vdir / "list.txt").read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
         return None
-    names = []
-    for line in lst.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"^file '(.+)'$", line.strip())
-        if m:
-            names.append(Path(m.group(1)).name)
     parsed = []
-    for nm in names:
-        m = _VSEG_NAME.match(nm)
-        if not m:
-            return None   # 清单含非标准段名（理论不可达）→ 放弃，全检
-        parsed.append((nm, int(m.group(2)), m.group(3)))
-    if not parsed or parsed[0][1] != 0 \
-            or any(parsed[i][1] >= parsed[i + 1][1] for i in range(len(parsed) - 1)):
-        return None   # 段序列须从 0 起且起点严格递增（连续覆盖 [0,c.dur)）
-    segs = []
-    for i, (nm, a, key) in enumerate(parsed):
+    for line in lines:
+        if not line.strip():
+            continue
+        # Match the production concat writer's POSIX quoting, including '\''.
+        # Relative paths are relative to list.txt, not the working directory.
         try:
-            st = (vdir / nm).stat()
-        except OSError:
+            fields = shlex.split(line, comments=False, posix=True)
+            if len(fields) != 2 or fields[0] != "file":
+                return None
+            target = Path(fields[1])
+            if not target.is_absolute():
+                target = vdir / target
+            target = target.resolve()
+            nm = target.name
+            m = _VSEG_NAME.fullmatch(nm)
+            if not m or target != (vdir / nm).resolve():
+                return None
+        except (OSError, ValueError, RuntimeError):
             return None
-        segs.append({"name": nm, "a": a,
+        parsed.append((nm, int(m.group(2)), m.group(3), target))
+    if (not parsed or parsed[0][1] != 0 or parsed[-1][1] >= c.dur
+            or any(parsed[i][1] >= parsed[i + 1][1] for i in range(len(parsed) - 1))):
+        return None
+    segs = []
+    for i, (nm, a, key, target) in enumerate(parsed):
+        try:
+            identity = cache_state.verified_media_identity(target)
+        except (OSError, ValueError, RuntimeError):
+            return None
+        if not _verified_identity(identity):
+            return None
+        segs.append({"name": nm, "path": str(target), "a": a,
                      "b": parsed[i + 1][1] if i + 1 < len(parsed) else c.dur,
-                     "key": key, "size": st.st_size, "mtime_ns": st.st_mtime_ns})
+                     "key": key, "content_identity": identity})
     return segs
 
 
 def _write_qc_pass_record(c, frames_nb, checks):
-    """每轮非 dry qc 结束刷新记录：segs/final 重新绑定当前 stat；checks 按检查名
-    记忆（同名多项须全部 pass 才可免检——防同名 gfx 页一项假阴性被另一项真过
-    掩盖成免检）。落盘失败不影响 qc 主流程（下轮全检而已）。"""
+    """Refresh full identities; duplicate check names require every result to pass."""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     mem = {}
     for x in checks:
         mem[x["name"]] = mem.get(x["name"], True) and bool(x["pass"])
-    segs = _collect_active_segs(c) or []
-    try:
-        st = (c.out / "final.mp4").stat()
-    except OSError:
+    segs = _collect_active_segs(c)
+    if segs is None:
         return
-    rec = {"version": 1,
-           "final": {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
-                     "frames": frames_nb},
+    try:
+        identity = cache_state.verified_media_identity(c.out / "final.mp4")
+    except (OSError, ValueError, RuntimeError):
+        return
+    if not _verified_identity(identity):
+        return
+    rec = {"version": 2,
+           "final": {"content_identity": identity, "frames": frames_nb},
            "segs": segs, "checks": mem}
     try:
         fstxn.atomic_write(c.cache / _QC_SEG_RECORD,
@@ -240,6 +280,8 @@ class _QCOperations:
 def qc(c):
     # dry-run 无产物可检（ffprobe 不在 dry 门控内，探测不存在的 final.mp4 会误报退出）
     # —— 整阶段跳过，真实运行时逐项检查（2026-09-11 门控）
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if getattr(c, "dry", False):
         print("  [dry-run] qc：产物未产出，跳过探测（命令预览模式不做质量检查）")
         emit(c, "qc：dry-run 跳过产物探测", rule_id="qc.dry_run",
@@ -406,12 +448,12 @@ def qc(c):
 
     # ---- 命中段免检（方案三阶段1）：--strict 整体禁用；记录不可用 → 全检 ----
     # 判定在任务生成阶段做：免检项不 submit 探测但仍占 checks 位（输出顺序/名称
-    # 与全检完全一致）。_seg_rec 由 _load_qc_pass_record 校验过 final stat 绑定。
+    # 与全检完全一致）。_seg_rec 由 _load_qc_pass_record 校验过 final 与 active segments 的完整内容身份。
     _seg_rec = None if getattr(c, "strict", False) else _load_qc_pass_record(c)
     exempt = {}    # 任务键 -> 覆盖段区间 (a,b)（免测项）
     cut_sf = {}    # cut 免测项的比对帧 sf（检查名要显示 src:帧号）
     def seg_span_of(f0):
-        """f0 是否落在某 stat 与记录一致的段 [a,b) 内；是 → (a,b)，否 → None。"""
+        """Return the span of a re-read, content-verified active segment."""
         if _seg_rec is None:
             return None
         provider = {"provider": "qc_pass_record", "resource": str(c.cache / _QC_SEG_RECORD)}
@@ -421,18 +463,11 @@ def qc(c):
                        path="$", source=dict(provider, provider_path=record_path + ".a"))
                     and native("less_than", f0, field(s, "b", record_path, source=provider),
                                path="$", source=dict(provider, provider_path=record_path + ".b"))):
-                try:
-                    segment = native("divide", c.cache / "vseg", field(s, "name", record_path, source=provider),
-                                     path="$", source=dict(provider, provider_path=record_path + ".name"))
-                    st = segment.stat()
-                except OSError:
-                    return None
-                if st.st_size == field(s, "size", record_path, source=provider) and st.st_mtime_ns == field(s, "mtime_ns", record_path, source=provider):
-                    return (field(s, "a", record_path, source=provider), field(s, "b", record_path, source=provider))
-                return None   # 段文件被换/重写（stat 变）→ 该段失配实测
+                return (field(s, "a", record_path, source=provider),
+                        field(s, "b", record_path, source=provider))
         return None
     def check_exempt(frames, name):
-        """检查项免测判定：上轮该名 pass 且全部探测帧都在 stat 一致段内 →
+        """检查项免测判定：上轮该名 pass 且全部探测帧都在完整内容身份一致段内 →
         合并覆盖区间 (min_a, max_b)；否则 None。"""
         if _seg_rec is None or not _seg_rec["checks"].get(name):
             return None
@@ -920,11 +955,11 @@ def qc(c):
     print("质量标签：" + rep["quality"]["display"] + "（visual_content=unknown）")
     print(f"QC：{len(rep['checks']) - len(failed)}/{len(rep['checks'])} 通过")
     if skipped_probes:
-        print(f"⚠ 免检 {len(skipped_probes)} 项（内容键命中段，stat 绑定一致）："
-              "段内像素级篡改若同时保持段文件 stat 不变则本模式不查——--strict 恢复全检")
+        print(f"⚠ 免检 {len(skipped_probes)} 项（完整文件 SHA-256 Verified 身份一致）；"
+              "--strict 恢复逐项探测")
     c.receipt("qc", not failed, f"{len(rep['checks'])-len(failed)}/{len(rep['checks'])}",
               extra={"skipped_probes": skipped_probes})
-    # 免检记录每轮刷新（方案三阶段1）：segs/final 重绑当前 stat，checks 按名记忆
+    # 免检记录每轮刷新（方案三阶段1）：segs/final 重绑完整内容身份，checks 按名记忆
     # pass——✗ 项下轮必复测；记录在 exit 判定前写（失败轮同样刷新，失败项记忆
     # 为 False 即「不可免检」，安全性不受影响）。
     _write_qc_pass_record(c, nb, rep["checks"])
