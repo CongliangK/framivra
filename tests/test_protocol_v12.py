@@ -242,12 +242,13 @@ class RangeStaleReceipt(unittest.TestCase):
     def test_stale_fingerprint_returns_none(self):
         from vtx.range import _receipt_audio_gain
         from vtx.infra import Ctx
+        from vtx.cache_state import RECEIPT_SCHEMA
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "out").mkdir()
             c = Ctx(_write(root, _tl()))
             (root / "out" / "receipt.json").write_text(json.dumps(
-                {"input_fingerprint": "STALE",
+                {"schema": RECEIPT_SCHEMA, "input_fingerprint": "STALE",
                  "stages": {"audio": {"gain_db": 2.5, "ok": True}}}), encoding="utf-8")
             self.assertIsNone(_receipt_audio_gain(c),
                               "指纹失配的陈旧回执不得供给区间增益（B-P2-2）")
@@ -255,14 +256,29 @@ class RangeStaleReceipt(unittest.TestCase):
     def test_fresh_receipt_supplies_gain(self):
         from vtx.range import _receipt_audio_gain
         from vtx.infra import Ctx
+        from vtx.cache_state import RECEIPT_SCHEMA
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "out").mkdir()
             c = Ctx(_write(root, _tl()))
             (root / "out" / "receipt.json").write_text(json.dumps(
-                {"input_fingerprint": c.input_fingerprint,
+                {"schema": RECEIPT_SCHEMA, "input_fingerprint": c.input_fingerprint,
                  "stages": {"audio": {"gain_db": 2.5, "ok": True}}}), encoding="utf-8")
             self.assertEqual(_receipt_audio_gain(c), 2.5)
+
+    def test_missing_or_legacy_schema_cannot_supply_verified_gain(self):
+        from vtx.range import _receipt_audio_gain
+        from vtx.infra import Ctx
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / "out").mkdir()
+            c = Ctx(_write(root, _tl()))
+            for schema in (None, "framivra.receipt.v1"):
+                record = {"input_fingerprint": c.input_fingerprint,
+                          "stages": {"audio": {"gain_db": 2.5, "ok": True}}}
+                if schema is not None:
+                    record["schema"] = schema
+                (root / "out" / "receipt.json").write_text(json.dumps(record), encoding="utf-8")
+                self.assertIsNone(_receipt_audio_gain(c))
 
 
 class DenoiseProductKeyDigest(unittest.TestCase):

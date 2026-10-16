@@ -28,7 +28,7 @@ class Diagnostics(unittest.TestCase):
     def context(self, tl):
         p = self.root / 'timeline.json'
         p.write_text(json.dumps(tl))
-        c = Ctx(p, diagnostics=[])
+        c = Ctx(p, diagnostics=[], allow_unverified_validation=True)
         c.dry = True
         return c
 

@@ -1,5 +1,7 @@
 """Issue85 cheap boundary regressions; no decoder or real-media performance claim."""
 import json
+import io
+from contextlib import redirect_stdout, redirect_stderr
 import os
 from pathlib import Path
 import sys
@@ -7,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from vtx import cache_state as cs, hygiene, loudness_cache as lc
+from vtx import cache_state as cs, hygiene, loudness_cache as lc, cli
 from vtx.infra import Ctx
 
 
@@ -79,6 +81,46 @@ class VerifiedMediaIdentity(unittest.TestCase):
                        {'schema': cs.RECEIPT_SCHEMA, 'input_fingerprint': self.c.input_fingerprint, 'stages': []}):
             path.write_text(json.dumps(record))
             self.assertEqual(cs.load_receipt(path, self.c.input_fingerprint)['stages'], {})
+
+    def test_offline_and_unreadable_sources_allow_inspection_plans_only(self):
+        commands = [('df',), ('snapshot', '--dry'), ('clean', '--dry'),
+                    ('subs', 'check', '--dry'), ('all', '--dry')]
+        original_open = os.open
+        def deny_media(path, *args, **kwargs):
+            if Path(path) == self.media:
+                raise PermissionError('source offline')
+            return original_open(path, *args, **kwargs)
+        for missing in (False, True):
+            if missing:
+                self.media.unlink()
+            with patch.object(os, 'open', deny_media if not missing else original_open):
+                before = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
+                for args in commands:
+                    with self.subTest(missing=missing, args=args), \
+                         patch.object(sys, 'argv', ['vtx', '-t', str(self.tl), *args]), \
+                         redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        self.assertIn(cli.main(), (None, 0))
+                self.assertEqual(before, sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')))
+                with self.assertRaises(OSError):
+                    Ctx(self.tl)
+                with self.assertRaises(OSError):
+                    hygiene.audio_key(self.c, 's')
+                with self.assertRaises(OSError):
+                    self.seg()
+
+    def test_inspection_context_cannot_certify_or_inherit_receipt(self):
+        c = Ctx(self.tl, verify_sources=False)
+        self.assertIsNone(c.input_fingerprint)
+        self.assertEqual(c.source_identities, {})
+        for call in (lambda: cs.verify_input_identity(c), lambda: c.begin_stage('prepare'),
+                     lambda: c.receipt('prepare', True), lambda: c.receipt('prepare', False)):
+            with self.assertRaises(cs.InputIdentityError):
+                call()
+        self.assertFalse((c.out / 'receipt.json').exists())
+        path = self.root / 'untrusted.json'
+        path.write_text(json.dumps({'schema': cs.RECEIPT_SCHEMA, 'input_fingerprint': None,
+                                    'stages': {'qc': {'ok': True}}}))
+        self.assertEqual(cs.load_receipt(path, None)['stages'], {})
 
     def test_loudness_invalidates_and_remeasures(self):
         calls = []

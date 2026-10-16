@@ -14,7 +14,7 @@
      a) 首轮全过→记录生成；第二轮 qc 检查项数/顺序不变、4 项像素探测免检；
      b) 改写一个 vseg 段文件（同名字不同内容，stat 失配）→ 该段探测项实测、
         其他段项仍免检；
-     c) final.mp4 stat 变（utime）→ 记录整体失效全检；
+     c) final.mp4 仅 stat 变（utime）保持内容身份；实际字节变→ 记录整体失效全检；
      d) --strict 免检禁用，检查项数与全检一致；
   ⑤ G7 黑场灵敏度回归：含 ≥0.03s 全黑段视频两口径（无回执合并 pass / 有回执
      blackdetect 单链）都须检出 ≥1 处——G7 逻辑未动，验证响度回执命中路径
@@ -72,13 +72,35 @@ class TestLoudnessReceipt(unittest.TestCase):
         ent = json.loads(rp.read_text(encoding="utf-8"))["entries"]
         self.assertEqual(len(ent), 1)
         e = next(iter(ent.values()))
-        self.assertEqual({"path", "size", "mtime_ns", "digest",
+        self.assertEqual({"path", "size", "mtime_ns", "identity",
                           "i_lufs", "tp_dbfs", "when"}, set(e))
-        # 同尺寸换内容：首尾 64KB 采样哈希变 → 键失配 → miss
+        # 同尺寸换内容：完整内容身份变 → 键失配 → miss
         self.media.write_bytes(b"\1" * 100)
         self.assertIsNone(loudness_cache.lookup(self.media))
         # 改 size：stat 变 → 键失配 → miss
         self.media.write_bytes(b"\2" * 128)
+        self.assertIsNone(loudness_cache.lookup(self.media))
+
+    def test_middle_change_restored_stat_misses_and_legacy_receipt_is_cold(self):
+        from vtx.cache_state import verified_media_identity
+        self.media.write_bytes(b"a" * 200000)
+        loudness_cache.measure_and_store(self.media, lambda: (-14.2, -1.3))
+        self.assertIsNotNone(loudness_cache.lookup(self.media))
+        st = self.media.stat()
+        with self.media.open("r+b") as stream:
+            stream.seek(100000); stream.write(b"b")
+        os.utime(self.media, ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assertEqual(self.media.stat().st_size, st.st_size)
+        self.assertEqual(self.media.stat().st_mtime_ns, st.st_mtime_ns)
+        self.assertIsNone(loudness_cache.lookup(self.media))
+        loudness_cache.measure_and_store(self.media, lambda: (-14.2, -1.3))
+        rp = self.root / "cache" / "audio" / "loudness_receipts.json"
+        data = json.loads(rp.read_text())
+        current = loudness_cache._key_of(self.media)[0]
+        self.assertEqual(data["entries"][current]["identity"], verified_media_identity(self.media))
+        entry = data["entries"][current]
+        entry["digest"] = entry.pop("identity")["digest"]
+        rp.write_text(json.dumps(data))
         self.assertIsNone(loudness_cache.lookup(self.media))
 
     def test_failed_measure_not_stored(self):
@@ -277,7 +299,7 @@ class TestQcSegmentExemption(unittest.TestCase):
         # 首轮全过 → 记录已生成（segs ≥2、checks 全 True）
         rec = json.loads((self.proj / "cache" / "qc_pass_segs.json")
                          .read_text(encoding="utf-8"))
-        self.assertEqual(rec["version"], 1)
+        self.assertEqual(rec["version"], 2)
         self.assertGreaterEqual(len(rec["segs"]), 2)
         self.assertTrue(all(rec["checks"].values()))
         self.assertEqual(self.first_report.get("skipped_probes"), [])
@@ -319,15 +341,50 @@ class TestQcSegmentExemption(unittest.TestCase):
         cut0 = next(x for x in rep["checks"] if "dst=0" in x["name"])
         self.assertIn("平均像素差", cut0["detail"])   # 实测路径 detail 恢复旧格式
 
-    def test_03_final_stat_change_invalidates_all(self):
+    def test_03_final_stat_only_reuses_but_restored_stat_content_change_invalidates(self):
+        from vtx.infra import Ctx
+        from vtx.qc import _load_qc_pass_record
         final = self.proj / "out" / "final.mp4"
-        os.utime(final, times=(1600000000, 1600000000))   # mtime_ns 必变
+        r = self._qc()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        before = self._report()
+        self.assertTrue(before["skipped_probes"])
+        os.utime(final, times=(1600000000, 1600000000))
         r = self._qc()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         rep = self._report()
-        self.assertEqual(rep["skipped_probes"], [], "final stat 失配 → 记录整体失效全检")
+        self.assertEqual(rep["skipped_probes"], before["skipped_probes"],
+                         "unchanged bytes retain content-based exemptions despite mtime change")
         self.assertEqual([x["name"] for x in rep["checks"]], self.first_names)
-        self.assertFalse(any("免检" in x["detail"] for x in rep["checks"]))
+        c = Ctx(self.tl)
+        self.assertIsNotNone(_load_qc_pass_record(c))
+        original = final.read_bytes(); st = final.stat()
+        changed = bytearray(original); changed[len(changed) // 2] ^= 1
+        try:
+            final.write_bytes(changed)
+            os.utime(final, ns=(st.st_atime_ns, st.st_mtime_ns))
+            self.assertEqual(final.stat().st_size, len(original))
+            self.assertEqual(final.stat().st_mtime_ns, st.st_mtime_ns)
+            # Exercise the real reuse decision; never decode intentionally damaged media.
+            self.assertIsNone(_load_qc_pass_record(c),
+                              "same-size restored-mtime changed bytes must invalidate all exemptions")
+        finally:
+            final.write_bytes(original)
+            os.utime(final, ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assertIsNotNone(_load_qc_pass_record(c))
+
+    def test_03_legacy_v1_record_requires_full_validation(self):
+        record = self.proj / "cache" / "qc_pass_segs.json"
+        rec = json.loads(record.read_text(encoding="utf-8"))
+        rec["version"] = 1
+        record.write_text(json.dumps(rec), encoding="utf-8")
+        r = self._qc()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        rep = self._report()
+        self.assertEqual(rep["skipped_probes"], [])
+        self.assertEqual([x["name"] for x in rep["checks"]], self.first_names)
+        self.assertTrue(all(x["pass"] for x in rep["checks"]))
+        self.assertEqual(json.loads(record.read_text(encoding="utf-8"))["version"], 2)
 
     def test_04_strict_disables_exempt(self):
         r = self._qc("--strict")

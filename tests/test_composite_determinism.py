@@ -92,7 +92,7 @@ class TestGraphCodeDigest(unittest.TestCase):
         class _P:
             pass
         p = _P(); p.W, p.H, p.draft = 1920, 1080, False
-        p.c = mock.MagicMock(gpu=False)
+        p.c = mock.MagicMock(gpu=False, _unverified_validation=False)
         sl = [{"cl": {"dst_in": 5, "dur": 30}, "gfx": False,
                "seg": Path("/cache/seg/abc123.mov"), "source": PngSequence(Path("/cache/gfx/x"), "x", 30, 30, 64, 64),
                "x": 0, "y": 0, "w2": None, "h2": None}]

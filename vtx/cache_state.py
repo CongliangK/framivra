@@ -86,20 +86,39 @@ def _encode(c, value, path, *, source=None, status='fail'):
                              source=source, status=status)
 
 
+def _identity_io(function, *args):
+    """Tag only failures at concrete file-I/O calls, preserving the exception."""
+    try:
+        return function(*args)
+    except OSError as error:
+        error._vtx_identity_io_unavailable = True
+        raise
+
+
+def require_trusted_context(c):
+    """Failure-evidence contexts never acquire formal capabilities in place."""
+    if getattr(c, '_unverified_validation', False):
+        raise InputIdentityError('unverified validation context cannot certify or reuse products')
+
+
 def file_digest(path) -> str:
     """Stream complete SHA-256 content in bounded blocks; require a regular file."""
     p = Path(path)
-    if not stat.S_ISREG(p.stat().st_mode):
-        raise ValueError(f'content hash input is not a regular file: {p}')
+    if not stat.S_ISREG(_identity_io(p.stat).st_mode):
+        error = ValueError(f'content hash input is not a regular file: {p}')
+        error._vtx_identity_io_unavailable = True
+        raise error
     # A precheck gives a clear error; nonblocking open plus fstat also prevents
     # a regular-file-to-FIFO replacement from hanging between check and open.
-    fd = os.open(p, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) |
+    fd = _identity_io(os.open, p, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) |
                  getattr(os, 'O_BINARY', 0))
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise ValueError(f'content hash input is not a regular file: {p}')
+        if not stat.S_ISREG(_identity_io(os.fstat, fd).st_mode):
+            error = ValueError(f'content hash input is not a regular file: {p}')
+            error._vtx_identity_io_unavailable = True
+            raise error
         digest = hashlib.sha256()
-        for block in iter(lambda: os.read(fd, 1024 * 1024), b''):
+        for block in iter(lambda: _identity_io(os.read, fd, 1024 * 1024), b''):
             digest.update(block)
         return digest.hexdigest()
     finally:
@@ -284,6 +303,8 @@ class InputIdentityError(RuntimeError):
 
 def verify_input_identity(c):
     """Re-read inputs; never adopt the current identity for an in-flight build."""
+    if c.input_fingerprint is None:
+        raise InputIdentityError('inspection context has no verified input identity')
     try:
         current = receipt_fingerprint(c)
     except (OSError, ValueError, RuntimeError) as e:
@@ -315,6 +336,13 @@ def _append_gfx_dependency_identity(c, h, gfx_inputs):
 
 
 def receipt_fingerprint(c, *, timeline_bytes=None, source_identities=None) -> str:
+    require_trusted_context(c)
+    return _receipt_fingerprint(c, timeline_bytes=timeline_bytes,
+                                source_identities=source_identities)
+
+
+def _receipt_fingerprint(c, *, timeline_bytes=None, source_identities=None,
+                         unavailable_sources=None):
     """Full source identities plus timeline and existing declared dependencies.
 
     source_identities optionally collects this read's provenance. It is never
@@ -335,10 +363,25 @@ def receipt_fingerprint(c, *, timeline_bytes=None, source_identities=None) -> st
         origin = f'$.sources[{index}]'
         p = _path(c, _field(c, s, 'path', origin), origin + '.path')
         prefix = _text(c, _get(c, s, 'path', origin, ''), origin + '.path') + ':'
-        identity = verified_media_identity(p)
-        if source_identities is not None:
+        identity = None
+        try:
+            available = True
+            if unavailable_sources is not None:
+                available = (_identity_io(p.is_file) if type(p) in (Path, PosixPath, WindowsPath)
+                             else p.is_file())
+            if available:
+                identity = verified_media_identity(p)
+            else:
+                unavailable_sources.append(prefix[:-1])
+        except (OSError, ValueError) as error:
+            if unavailable_sources is None or not getattr(error, '_vtx_identity_io_unavailable', False):
+                raise
+            unavailable_sources.append(prefix[:-1])
+        if source_identities is not None and identity is not None:
             source_identities[prefix[:-1]] = identity
-        digest = json.dumps(identity, sort_keys=True, separators=(',', ':'))
+        # This marker is traversal-only: an unavailable source forces None below.
+        digest = (json.dumps(identity, sort_keys=True, separators=(',', ':'))
+                  if identity is not None else 'UNVERIFIED')
         h.update(_encode(c, prefix + digest + '\n', origin + '.path'))
     gfx_inputs = []
     tracks = _get(c, c.tl, 'video_tracks', '$', [])
@@ -389,7 +432,7 @@ def receipt_fingerprint(c, *, timeline_bytes=None, source_identities=None) -> st
     # Append only after all historical producer operations succeed. The shared
     # #47 record adds path/closure identity without reordering native failures.
     _append_gfx_dependency_identity(c, h, gfx_inputs)
-    return h.hexdigest()
+    return None if unavailable_sources else h.hexdigest()
 
 
 # 生产者运行前撤销其下游旧成功（含失败重跑场景——PR#1 的核心回归修复之一）。
@@ -408,7 +451,7 @@ def load_receipt(path, fingerprint):
     # OSError（P6 修复 B-P3-5d）：权限类读失败与缺失/损坏同语义（空表），不裸栈
     except (OSError, ValueError):
         record = {}
-    if (not isinstance(record, dict) or record.get('schema') != RECEIPT_SCHEMA
+    if (fingerprint is None or not isinstance(record, dict) or record.get('schema') != RECEIPT_SCHEMA
             or record.get('input_fingerprint') != fingerprint
             or not isinstance(record.get('stages'), dict)):
         record = {'schema': RECEIPT_SCHEMA, 'input_fingerprint': fingerprint, 'stages': {}}

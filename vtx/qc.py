@@ -7,7 +7,7 @@ v2 §1.3（2026-09-13）新增：解码域真峰 TP 判定项（阈 -1.0 dBFS，
 权威值、同一回执不重测）——limiter 恒在 build_audio 尾部后，成片 TP 超阈 = 上游
 削波/限幅失效，属产物可信度问题，归内核 qc。
 """
-import json, re, sys, tempfile
+import json, re, shlex, sys, tempfile
 from contextvars import copy_context
 import operator
 from concurrent.futures import ThreadPoolExecutor
@@ -63,6 +63,8 @@ def _verified_identity(value):
 
 def _load_qc_pass_record(c):
     """Reject legacy, malformed or unreadable records; re-read all active media."""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     try:
         rec = json.loads((c.cache / _QC_SEG_RECORD).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -81,6 +83,7 @@ def _load_qc_pass_record(c):
         if (not isinstance(seg, dict) or not isinstance(seg.get("name"), str)
                 or not _VSEG_NAME.fullmatch(seg["name"])
                 or type(seg.get("a")) is not int or type(seg.get("b")) is not int
+                or not isinstance(seg.get("path"), str)
                 or not isinstance(seg.get("key"), str)
                 or not _verified_identity(seg.get("content_identity"))):
             return None
@@ -90,7 +93,7 @@ def _load_qc_pass_record(c):
     except (OSError, ValueError, RuntimeError):
         return None
     current = _collect_active_segs(c)
-    topology = lambda items: [(s["name"], s["a"], s["b"], s["key"]) for s in items]
+    topology = lambda items: [(s["name"], s["path"], s["a"], s["b"], s["key"]) for s in items]
     if current is None or topology(current) != topology(segs):
         return None
     # Keep only unchanged active segments; never hash once per probe.
@@ -100,6 +103,8 @@ def _load_qc_pass_record(c):
 
 def _collect_active_segs(c):
     """Read the active concat list and complete content identities, or fail closed."""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     vdir = c.cache / "vseg"
     try:
         lines = (vdir / "list.txt").read_text(encoding="utf-8").splitlines()
@@ -109,26 +114,35 @@ def _collect_active_segs(c):
     for line in lines:
         if not line.strip():
             continue
-        match = re.fullmatch(r"file '(.+)'", line.strip())
-        if not match:
+        # Match the production concat writer's POSIX quoting, including '\''.
+        # Relative paths are relative to list.txt, not the working directory.
+        try:
+            fields = shlex.split(line, comments=False, posix=True)
+            if len(fields) != 2 or fields[0] != "file":
+                return None
+            target = Path(fields[1])
+            if not target.is_absolute():
+                target = vdir / target
+            target = target.resolve()
+            nm = target.name
+            m = _VSEG_NAME.fullmatch(nm)
+            if not m or target != (vdir / nm).resolve():
+                return None
+        except (OSError, ValueError, RuntimeError):
             return None
-        nm = Path(match.group(1)).name
-        m = _VSEG_NAME.fullmatch(nm)
-        if not m:
-            return None
-        parsed.append((nm, int(m.group(2)), m.group(3)))
+        parsed.append((nm, int(m.group(2)), m.group(3), target))
     if (not parsed or parsed[0][1] != 0 or parsed[-1][1] >= c.dur
             or any(parsed[i][1] >= parsed[i + 1][1] for i in range(len(parsed) - 1))):
         return None
     segs = []
-    for i, (nm, a, key) in enumerate(parsed):
+    for i, (nm, a, key, target) in enumerate(parsed):
         try:
-            identity = cache_state.verified_media_identity(vdir / nm)
+            identity = cache_state.verified_media_identity(target)
         except (OSError, ValueError, RuntimeError):
             return None
         if not _verified_identity(identity):
             return None
-        segs.append({"name": nm, "a": a,
+        segs.append({"name": nm, "path": str(target), "a": a,
                      "b": parsed[i + 1][1] if i + 1 < len(parsed) else c.dur,
                      "key": key, "content_identity": identity})
     return segs
@@ -136,6 +150,8 @@ def _collect_active_segs(c):
 
 def _write_qc_pass_record(c, frames_nb, checks):
     """Refresh full identities; duplicate check names require every result to pass."""
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     mem = {}
     for x in checks:
         mem[x["name"]] = mem.get(x["name"], True) and bool(x["pass"])
@@ -264,6 +280,8 @@ class _QCOperations:
 def qc(c):
     # dry-run 无产物可检（ffprobe 不在 dry 门控内，探测不存在的 final.mp4 会误报退出）
     # —— 整阶段跳过，真实运行时逐项检查（2026-09-11 门控）
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     if getattr(c, "dry", False):
         print("  [dry-run] qc：产物未产出，跳过探测（命令预览模式不做质量检查）")
         emit(c, "qc：dry-run 跳过产物探测", rule_id="qc.dry_run",

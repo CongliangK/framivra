@@ -91,6 +91,8 @@ def audio_cache_valid(c, path, sid):
     Older files with unknown/inexact source duration are conservatively rebuilt
     once; their new record then permits warm reuse without source probing.
     """
+    from .cache_state import require_trusted_context
+    require_trusted_context(c)
     path = Path(path)
     if not media_cache_valid(path):
         return False
@@ -140,6 +142,9 @@ def atomic_ffmpeg(c, cmd, execute):
     leaves valid legacy media, which must be decoded again before reuse.
     """
     target = media_output(c, cmd)
+    if target is not None:
+        from .cache_state import require_trusted_context
+        require_trusted_context(c)
     if target is None or c.dry:
         return execute(cmd)
     # ffmpeg 经 argv 接收输出路径（子进程写者）——locked_staging 给同目录

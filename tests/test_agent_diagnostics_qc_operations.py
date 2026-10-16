@@ -357,12 +357,16 @@ class TestQCActualOperations(unittest.TestCase):
                 qc.qc(context)
         self.assertEqual(normalized(context.diagnostics[-1]['source']['provider_path']), '$.tp_dbfs')
 
-    def test_malformed_warm_record_uses_cache_origin(self):
-        for location, value, pointer in [('final', 7, '$.final.size'),
-                                         ('segment_start', 'bad', '$.segs[0].a')]:
+    def test_malformed_warm_record_is_cold_and_preserves_provider_diagnostics(self):
+        for location, value in [('final', 7), ('segment_start', 'bad')]:
             with self.subTest(location=location):
                 context = self.context()
                 self.execute(context)
+                report_path = context.out / 'qc_report.json'
+                cold_report = json.loads(report_path.read_text())
+                cold_diagnostics = list(context.diagnostics)
+                cold_probes = sum('rawvideo' in cmd for cmd in context.commands)
+                self.assertGreater(cold_probes, 0)
                 path = context.cache / qc._QC_SEG_RECORD
                 record = json.loads(path.read_text())
                 if location == 'final':
@@ -370,12 +374,30 @@ class TestQCActualOperations(unittest.TestCase):
                 else:
                     record['segs'][0]['a'] = value
                 path.write_text(json.dumps(record))
+                self.assertIsNone(qc._load_qc_pass_record(context))
                 context.commands.clear(); context.diagnostics.clear()
-                _, diagnostic = self.fault(context, AttributeError if location == 'final' else TypeError)
+                self.execute(context)
+                report = json.loads(report_path.read_text())
+                self.assertEqual(report['skipped_probes'], [])
+                self.assertEqual(report, cold_report)
+                self.assertEqual(context.diagnostics, cold_diagnostics)
+                self.assertEqual(sum('rawvideo' in cmd for cmd in context.commands), cold_probes)
+
+                # A rejected cache must not mask an actual provider failure or
+                # replace its provenance with the malformed record's fields.
+                path.write_text(json.dumps(record))
+                context.metadata = {'streams': [{'nb_frames': '24', 'height': 1080}]}
+                context.commands.clear(); context.diagnostics.clear()
+                _, diagnostic = self.fault(context, KeyError)
                 self.assertEqual(diagnostic['rule_id'], 'qc.metadata_operation')
-                self.assertEqual(diagnostic['source']['provider'], 'qc_pass_record')
-                self.assertEqual(normalized(diagnostic['source']['provider_path']), pointer)
-                self.assertEqual(len(context.commands), 1)
+                self.assertEqual(diagnostic['status'], 'unknown')
+                self.assertEqual(diagnostic['source']['provider'], 'ffprobe')
+                self.assertEqual(normalized(diagnostic['source']['provider_path']), '$.streams[0].width')
+                self.assertEqual([item['rule_id'] for item in context.diagnostics[:2]],
+                                 ['qc.frame_count', 'qc.duration'])
+                self.assertTrue(any('rawvideo' in cmd for cmd in context.commands))
+                self.assertFalse(any(item.get('source', {}).get('provider') == 'qc_pass_record'
+                                     for item in context.diagnostics))
 
     def test_incomplete_containers_stop_at_executed_access(self):
         cases = [('video_tracks', None, TypeError, '$.video_tracks'),

@@ -43,12 +43,32 @@
 
 源 manifest 随 `framivra.receipt.v2` 回执的 source_identities 原子持久化，含各路径
 完整身份；这是绑定 input_fingerprint 的溯源，不是免读令牌。只读和 dry-run 不为身份
-另写旁车。源缺失或读取失败拒绝可信键，不能编码为“确认无依赖”。空 sources 才是
+另写旁车。df 与所有 dry-run 使用未激活身份的只读/规划上下文，离线或不可读源不
+妨碍这些命令；其 input_fingerprint 为 None，不得继承回执或认证产物。正式构建仍
+在 Ctx 初始化时验证；源缺失或读取失败拒绝可信键，不能编码为“确认无依赖”。空 sources 才是
 明确无源媒体；未声明依赖仍未获证明。旧 schema 回执清空阶段表，旧 Fast 键失效重建。
+
+**validate 失败证据边界**：普通 text CLI 与 agent-json 的直接 validate 可在同一次
+加载遍历中收集缺失/不可读取源，继续原生校验以报告其它真实错误。该上下文没有
+input_fingerprint 或 Verified manifest，永久仅可报告失败；不会开启正式阶段事务，
+也不写失败 receipt、receipt.prev、QC 记忆或响度回执。原有成功回执不会被这条失败
+报告路径改写，但后续正式命令必须独立重读身份，不能据此继承。其它检查全部通过
+仍非零拒绝认证，源随后出现也须重新创建正常上下文，不能原地升级。缓存键、其它
+正式阶段及成功回执均拒绝此上下文；插件回调仍遵循本地单用户信任边界，并非沙箱。
+不新增公开诊断模式，不按 diagnostics 开关降级：完整输入的正式命令仍为 Verified。
+
+**兼容取舍**：audit/QC 不享有此失败证据例外。旧版声明缺失但未使用源时可能以
+MISSING 指纹完成 audit；现在拒绝该不可信成功。未知源的 validate 失败不再留下
+正式失败回执/撤销交易。此为 #85 的明确迁移，不承诺未知输入上的所有旧退出码、
+副作用或 audit/QC 诊断顺序相同。公开 Fast 仍有中部字节盲区；#52 impact 快照的
+输入摘要仍标 Fast，但其调用的正式 audio/seg 键现在能识别该变化，预测的新缓存
+产物应随之改变，不能把 Fast 限制误当成正式键仍可复用。
 
 响度使用独立 framivra.loudness.v2 键域及完整 identity；缺失/旧身份不命中，读取失败
 不存回执，测量前后身份不一致不存结果。QC version=2 记录完整 final 与当前生效段
-身份，旧/损坏/不可读记录全检；免检仍需该检查上轮 pass 及相关段内容一致。
+身份及实际解析路径；concat 路径按现有生产 writer 的绝对 POSIX/引号转义格式
+解析，相对路径以清单目录为基准，非预期本地段目标拒绝免检，不用 basename 替代
+实际目标。旧/损坏/不可读记录全检；免检仍需该检查上轮 pass 及相关段内容一致。
 验收包 vtx.acceptance/2 的 receipt_identity_scope 限定 declared-source-files；
 v1 包只按其 Fast 声明独立验证，不升级。
 最终成片 scope 的 content_identity 仍为 partial，未声明依赖及其他输出未被统一证明。
