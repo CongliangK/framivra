@@ -24,13 +24,13 @@ import threading
 import time
 import traceback
 
-BASELINE = "b8820dbba6989dd216c8fa519633371e3d380cb6"
-CANDIDATE = "68e94cae8afd5519737fa3fce250bfb045c75dfc"
-BASELINE_TREE = "6df9c550d3cd00e2e13717c36f09bb711bf41d98"
-INITIAL_PRODUCTION_TREE = "d4c46af70a9ca1adb0d06dd7d60e49357ae82a20"
-CANDIDATE_TREE = "be85ab0d07056c6ee2e9c52c29db309ac22cdebe"
-REVIEWED_HARNESS_TREES = ("3ed50c17f8e6959224e66b5c1be0412ce5ae9216",
-                          "db29fce49b71bc4c5e22addcbdc473e107e495bf")
+BASELINE = "91f39e38407b395b04a4f5dc6defa3a5fa80e6be"
+CANDIDATE = "3a137911e0a5d186e1bfd8df05388498b4152975"
+BASELINE_TREE = "346225d613a8d49d32403e96388b9ac8a0f6059f"
+INITIAL_PRODUCTION_TREE = "254c5c65297cea107a167fa07fef5698505c1ec2"
+CANDIDATE_TREE = "301cbc9eb82b57ab0411226b38e56fd50dad2c30"
+REVIEWED_HARNESS_TREES = ("d6a80f4d715f209168e0e6d9f9d5e1f07258342b",
+                          "ce0bed52aa2fd0e67ba307190448c0d3229ee9ef")
 HARNESS_PATHS = frozenset({"scripts/issue85_media_runner.py", "scripts/issue85_real_media.py",
                          "tests/test_issue85_real_media.py", ".github/workflows/issue85-real-media.yml"})
 
@@ -384,8 +384,9 @@ def monitored_run(args, cwd, env, log, timeout, budget_root):
 class DigestMeter:
     """Observe original functions and actual returned read bytes, not estimates.
 
-    Path.open/open are transparently delegated except inside an instrumented digest
-    call. The original hash function runs unchanged. Thread-local scope ensures
+    Path.open/open/os.read are transparently delegated, with returned bytes counted
+    only inside an instrumented digest call. The hash function runs unchanged.
+    Thread-local scope ensures
     the production pipeline's concurrent calls do not mix byte accounting.
     This measures Python hashing I/O only, not FFmpeg reads or physical disk I/O.
     Instrumentation time is included in all measured wall-clock times.
@@ -397,6 +398,7 @@ class DigestMeter:
         self.phase = "initialization"
         self.original_open = Path.open
         self.original_builtin_open = builtins.open
+        self.original_os_read = os.read
         self.patches = []
 
     def install(self):
@@ -426,8 +428,16 @@ class DigestMeter:
             return wrap_stream(meter.original_open(path, *args, **kwargs), args, kwargs)
         def counted_builtin_open(path, *args, **kwargs):
             return wrap_stream(meter.original_builtin_open(path, *args, **kwargs), args, kwargs)
+        def counted_os_read(*args, **kwargs):
+            data = meter.original_os_read(*args, **kwargs)
+            row = getattr(meter.local, "row", None)
+            if row is not None:
+                row["read_calls"] += 1
+                row["bytes_read"] += len(data)
+            return data
         Path.open = counted_open
         builtins.open = counted_builtin_open
+        os.read = counted_os_read
         from vtx import cache_state
         self.patch(cache_state, "file_digest")
         self.patch(cache_state, "media_stat_digest")
@@ -473,7 +483,7 @@ class DigestMeter:
             total["read_calls"] += row["read_calls"]
             total["bytes_read"] += row["bytes_read"]
             total["wall_seconds_sum"] += row["wall_seconds"]
-        return {"scope": "actual Python read() bytes inside original digest functions; "
+        return {"scope": "actual Python read()/os.read() returned bytes inside original digest functions; "
                 "not physical disk I/O; concurrent call times may overlap",
                 "file_digest_calls": sum(x["function"] == "vtx.cache_state.file_digest"
                                          for x in self.rows),
@@ -490,6 +500,7 @@ class DigestMeter:
             setattr(module, name, original)
         Path.open = self.original_open
         builtins.open = self.original_builtin_open
+        os.read = self.original_os_read
 
 
 class CacheMeter:
