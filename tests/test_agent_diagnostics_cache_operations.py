@@ -336,13 +336,21 @@ class CacheOperations(unittest.TestCase):
                     def file(path):
                         events.append(('file', path.name))
                         return 'file:' + path.name
-                    with patch.object(cache_state.hashlib, 'sha256', Hash), \
+                    # #47 adds a real HTML scan after this historical producer.
+                    # Isolate that separate phase: these deliberately nonexistent
+                    # files/digest strings test only native ordering and callbacks.
+                    with patch.object(cache_state, '_append_gfx_dependency_identity') as gfx_identity, \
+                            patch.object(cache_state.hashlib, 'sha256', Hash), \
                             patch.object(Path, 'is_file', is_file), \
                             patch.object(cache_state, 'media_stat_digest', side_effect=media), \
                             patch.object(cache_state, 'file_digest', side_effect=file), \
                             patch('vtx.pluginlib.hooks.active_plugins_digest', return_value='plugins') as callback:
                         fingerprint = cache_state.receipt_fingerprint(c, **(
                             {'timeline_bytes': b'timeline'} if supplied else {}))
+                    gfx_identity.assert_called_once()
+                    self.assertEqual(gfx_identity.call_args.args[2], [
+                        (c.tl['video_tracks'][1]['clips'][0], self.root / 'graphic',
+                         '$.video_tracks[1].clips[0]', True)])
                     expected = [b'timeline', b'a:media:a\n', b'a:media:a\n', b'z:media:z\n',
                                 b'graphic:file:graphic\n', b'second:file:second\n',
                                 b'first:file:first\n', b'subtitles_src:file:subtitle\n', b'plugins']

@@ -277,7 +277,7 @@ def _page_record(outdir, n, key, width, height, backend_ns=None):
     return record, bad
 
 
-def inspect_page(outdir, n, key, width, height, backend_ns=None):
+def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_digest=None):
     """Return bad frames plus whether a completion record needs publication.
 
     Missing/unreadable legacy markers never skip validation: complete valid
@@ -291,6 +291,12 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None):
         old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         old = None
+    if dependency_digest is not None:
+        current['dependency_digest'] = dependency_digest
+        current['dependency_enforcement'] = 'fetch-pinned-local-v1'
+        if not isinstance(old, dict) or any(old.get(k) != current[k] for k in
+                ('dependency_digest', 'dependency_enforcement')):
+            return [(i, 'strict dependency enforcement certificate missing') for i in range(n)], True
     if isinstance(old, dict) and old.get("schema") == 1:
         if any(old.get(k) != current[k] for k in ("key", "width", "height", "frames")):
             return [(i, "完成标记与页合同不符") for i in range(n)], True
@@ -298,6 +304,13 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None):
             bad_ids = {i for i, _ in bad}
             bad.extend((i, "帧内容与完成标记不符") for i in range(n)
                        if i not in bad_ids and old["sha256"][i] != current["sha256"][i])
+    if dependency_digest is not None:
+        observed = old.get('dependency_observed')
+        if not isinstance(observed, list) or not observed or any(not isinstance(p, str) for p in observed):
+            return [(i, 'strict observed request evidence missing') for i in range(n)], True
+        current['dependency_observed'] = observed  # retain historical observations, never invent them
+        if old != current:
+            return [(i, 'strict page contract changed') for i in range(n)], True
     return sorted(bad), old != current
 
 
@@ -306,7 +319,8 @@ def invalidate_page(outdir):
     fstxn.unlink(Path(outdir) / COMPLETE_FILE)
 
 
-def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None):
+def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None,
+                  dependency_digest=None, dependency_enforcement=None, dependency_observed=None):
     """Validate the whole page and pin-input gate before atomic publication.
 
     Caller invokes only on non-dry paths after all blocks/fallbacks finish.
@@ -319,6 +333,16 @@ def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=No
     if bad:
         invalidate_page(outdir)
         raise GfxCliError(f"gfx 完成检查失败：{bad}")
+    if dependency_digest is not None:
+        if dependency_enforcement != 'fetch-pinned-local-v1':
+            invalidate_page(outdir)
+            raise GfxCliError('strict completion requires runtime enforcement evidence')
+        record['dependency_digest'] = dependency_digest
+        record['dependency_enforcement'] = dependency_enforcement
+        if not isinstance(dependency_observed, list) or not dependency_observed:
+            invalidate_page(outdir)
+            raise GfxCliError('strict completion requires observed local requests')
+        record['dependency_observed'] = dependency_observed
     verify_inputs()
     fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True))
 

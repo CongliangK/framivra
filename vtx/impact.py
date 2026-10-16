@@ -74,20 +74,23 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                 if not gfx and 'cache_dependencies' in clip:
                     raise ValueError('clip.cache_dependencies is only valid on gfx tracks')
                 if gfx:
-                    dependencies = {}
-                    for dep in declared_dependencies(c, clip):
-                        path = (root / dep).resolve()
-                        dependencies[str(path)] = file_digest(path)
-                        observed_files[path] = dependencies[str(path)]
-                    inputs.update(html=file_digest(root / clip['src']),
-                                  dependencies=dependencies)
+                    from .gfx_dependencies import resolve
+                    dependency_record = resolve(c, clip)
+                    dependencies = {entry['path']: entry['sha256']
+                                    for entry in dependency_record['dependencies']}
+                    for path, value in dependencies.items():
+                        observed_files[Path(path)] = value
+                    inputs.update(html=dependency_record['html_sha256'],
+                                  dependencies=dependencies,
+                                  dependency_record=dependency_record)
                     observed_files[root / clip['src']] = inputs['html']
                     key = gfx_key(c, clip)
                     ns = gfx_cache_ns()
                     artifact = f'cache/gfx_exp/{ns}/{key}' if ns else f'cache/gfx/{key}'
                     upstream = key
                     # Declared closure is not runtime proof of dynamic JS/network.
-                    warnings.append({'node': ident, 'reason': 'gfx_dependency_closure_unproven'})
+                    if dependency_record['closure'] == 'unproven':
+                        warnings.append({'node': ident, 'reason': 'gfx_dependency_closure_unproven'})
                 else:
                     windowed = any(k in clip for k in ('scale', 'x', 'y'))
                     alpha = bool(clip.get('opacity', 1) < 1 or

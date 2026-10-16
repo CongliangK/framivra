@@ -199,6 +199,9 @@ def _gfx(c: Ctx):
     # 与 complete.json 的 backend_ns 元数据同源；非法值在此显式失败（不静默落
     # 正式缓存破坏隔离）。
     backend_ns = gfx_cache_ns()
+    from .gfx_dependencies import policy, resolve, digest, DependencyError
+    strict = policy(c) == 'strict'
+    dependency_records = {}
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
     use_cdp = os.environ.get("VTX_GFX", "cdp").lower() != "cli"
@@ -211,6 +214,9 @@ def _gfx(c: Ctx):
         except Exception as e:
             print(f"⚠ CDP 渲染器不可用（{e}），回落 CLI 截图路径")
             cdp_mod = None
+
+    if strict and cdp_mod is None:
+        raise DependencyError('strict dependencies require CDP; CLI downgrade forbidden')
 
     def render_cli(i_range, d, html, chrome):
         # issue #28：强制 CLI、整页回落、帧级补渲共用退出码与产物双重校验。
@@ -237,11 +243,14 @@ def _gfx(c: Ctx):
             # 误命中从机制上消失，故此处不再有任何 mtime 比对。
             key = gfx_key(c, cl)
             page_id = str(events.uuid.uuid4())
+            dependency_records[key] = resolve(c, cl) if strict else None
+            dependency_digest = digest(dependency_records[key]) if strict else None
             n = cl["dur"]
             d = gfx_dir(c, cl)
             # issue #28：逐一核验 [0,n)，f9999/空文件等不再冒充完整缓存。
             bad, needs_marker = gfx_cli.inspect_page(d, n, key, c.w, c.h,
-                                                     backend_ns=backend_ns)
+                                                     backend_ns=backend_ns,
+                                                     dependency_digest=dependency_digest)
             if not bad:
                 if needs_marker and not c.dry:
                     gfx_cli.complete_page(d, n, key, c.w, c.h,
@@ -259,7 +268,7 @@ def _gfx(c: Ctx):
             # 页内分片（方案 v2 阶段 1，默认关）：SPLIT_FRAMES>0 且页帧数超阈值时把
             # [0,n) 切成 min(SPLIT_MAX, ceil(n/阈值)) 个连续块，每块独立一次
             # render_page（独立 Chrome 实例）；dry-run / CLI 回落态不拆。
-            sizes = (None if (c.dry or cdp_mod is None)
+            sizes = (None if (c.dry or cdp_mod is None or strict)
                      else _split_page(n, split_frames, split_max))
             if sizes is None:
                 jobs.append((cid, key, cl, n, d, html, None,
@@ -305,8 +314,12 @@ def _gfx(c: Ctx):
                 # （独立进程组 + PDEATHSIG + 守卫 + tmp_run 账本，Profile 不再落系统 /tmp）。
                 st = observation.attempt(cdp_mod.render_page, html, d, n, chrome_path=find_chrome(),
                                          width=c.w, height=c.h, frames=frames,
-                                         ctx=c)
+                                         ctx=c,
+                                         **({"dependency_record": dependency_records[key]} if strict else {}))
             except Exception as e:
+                if strict:
+                    gfx_cli.invalidate_page(d)
+                    raise
                 # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
                 fb = range(n) if frames is None else frames
                 print(f"⚠ {cid}: CDP 渲染失败（{e}），"
@@ -315,6 +328,9 @@ def _gfx(c: Ctx):
                 st = None
             else:
                 if st["failed"]:
+                    if strict:
+                        gfx_cli.invalidate_page(d)
+                        raise DependencyError('strict CDP frame failure; CLI downgrade forbidden')
                     print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
                     # issue #28：补渲失败不可被 CDP 的 except 吞掉后重试成成功。
                     render_cli(st["failed"], d, html, find_chrome())
@@ -326,7 +342,11 @@ def _gfx(c: Ctx):
             rendered_via = "cli 6 并发" if st is None else _cdp_via(st)
             gfx_cli.complete_page(d, n, key, c.w, c.h,
                                   verify_inputs=lambda: c.verify_inputs("gfx"),
-                                  backend_ns=backend_ns)
+                                  backend_ns=backend_ns,
+                                  **({'dependency_digest': digest(dependency_records[key]),
+                                      'dependency_enforcement': st.get('dependency_enforcement'),
+                                      'dependency_observed': st.get('dependency_observed')}
+                                     if strict else {}))
             print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
             manifest_record(c, d, "gfx", key)
             return cid, rendered_via
