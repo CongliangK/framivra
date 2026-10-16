@@ -453,15 +453,22 @@ int main(int argc, char* argv[]) {
   // ===== CEF 子进程路径：同一可执行以 --type=* 再入（zygote/GPU/renderer/
   //        utility），必须先交 CefExecuteProcess 接管，返回值 >= 0 即子进程
   //        已走完（其 argv 是 Chromium 参数面，不进本 worker 参数解析）。
+  int subprocess_exit = -1;
   {
     CefMainArgs subprocess_args(argc, argv);
     CefRefPtr<vtx_cef::WorkerApp> subprocess_app =
         new vtx_cef::WorkerApp(nullptr, nullptr);
-    const int subprocess_exit = CefExecuteProcess(subprocess_args,
-                                                  subprocess_app, nullptr);
-    if (subprocess_exit >= 0) {
-      return subprocess_exit;
-    }
+    subprocess_exit = CefExecuteProcess(subprocess_args, subprocess_app, nullptr);
+  }  // Release the application reference before terminating the subprocess.
+  if (subprocess_exit >= 0) {
+    // Chromium rotates the stack guard in zygote-forked children. Returning
+    // through this pre-fork main frame would check its stale saved guard
+    // (__stack_chk_fail, confirmed in a utility core). Keep stack protection
+    // and guard rotation enabled; only bypass this obsolete frame's epilogue.
+    // Unlike _exit/quick_exit, exit retains normal stdio flushing and atexit/
+    // static destruction, just like returning from main. Worker/browser RAII
+    // and CefShutdown remain on the unchanged browser-only path below.
+    std::exit(subprocess_exit);
   }
 
   bool sanity = false;
