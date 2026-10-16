@@ -53,7 +53,7 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 - clip：`frame_final_start=dst_in`，`frame_final_end=dst_in+dur`（右开区间语义一致）；源偏移＝src_in
 - 全屏 clip：crop169（16:9 中心裁切）+ 等比拉满（vtx L313）
 - 窗口 clip（scale/x/y 任一存在）：scale 相对**源原始尺寸**（vtx L306-311，非画布 fit）、x/y=左上角像素
-- gfx：读 vtx 帧缓存 `cache/gfx/<内容寻址键>/f*.png` 图像序列（旧版 `cache/<stem>/` 布局作回落）
+- gfx：复用内核只读解析器 `vtx/gfx_cache_reader.py`，按当前 `VTX_GFX`、worker 身份、`VTX_GFX_CACHE_NS` 与内容键定位，逐帧校验连续编号/PNG/完成摘要。CEF 或非空 namespace 必须已有匹配 `complete.json`，不搜索其它 namespace 或旧键；默认 CDP/CLI 保留无标记缓存及 `cache/<stem>/` 回落兼容（仍校验帧覆盖）。Blender 进程继承同一渲染环境，独立调用须使用生成缓存时的环境。
 - 字幕：**不经 Blender 文字渲染**——vtx 的 subs.ass 经 `alphamerge 透明画布 + ass:alpha=1` 渲成
   透明视频轨叠加，与终渲像素同源（libass 同库同字体）
 - fade_in/out：blend_alpha/volume 关键帧（插值取默认，预览近似）

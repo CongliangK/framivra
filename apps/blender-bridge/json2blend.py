@@ -9,7 +9,7 @@
 - clip: frame_final_start=dst_in, frame_final_end=dst_in+dur；源偏移=src_in
 - 全屏 clip: crop169 语义（16:9 中心裁切）+ 等比拉满画布（vtx L313）
 - 窗口 clip(scale/x/y): scale 相对【源原始尺寸】直接缩放（vtx L307-311），x/y=左上角
-- gfx clip: vtx 帧缓存 cache/<stem>/f*.png 图像序列条
+- gfx clip: 当前后端/namespace/内容键的 vtx 帧缓存（只读校验后使用）
 - 字幕: 不经 Blender 文字渲染——subs_alpha.py 产出的 cache/subs_alpha.mov
   （ASS+libass 透明轨，与终渲同源）作为最上层普通视频条叠加
 - fade_*: blend_alpha / volume 关键帧（预览近似）
@@ -17,9 +17,9 @@
 - 条命名 {track}|{idx}[|{src}]；scene 记录来源 json（回写桥钩子）
 - 顺序铁律: 先 trim 再设 channel（源全长重叠时 channel 赋值会被自动顶替）
 """
-import hashlib
 import json, subprocess, sys
 from pathlib import Path
+from types import SimpleNamespace
 
 try:
     import bpy
@@ -148,25 +148,16 @@ def crop169_dims(w, h):
     return cw, ch
 
 
-def _file_sha256(path):
-    """小文件全量 sha256，1MB 块流式（与 vtx cache_state.file_digest 同式）。"""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(block)
-    return h.hexdigest()
+# Blender's --python does not add the script's repository to sys.path. Anchor
+# this entry point to its own checkout and use the canonical vtx package (no
+# copied key formula, alternate module name or global installed checkout).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from vtx import gfx_cache_reader
 
-
-def gfx_cache_key(html_path, clip):
-    """与 vtx hygiene.gfx_key 同键（D44 漂移修复，2026-09-11）：
-    sha1(html 字节 + 逐依赖 str(resolve路径)+\\0+sha256 内容 + f"|{FPS}|{W}x{H}|{dur}")[:12]。
-    json2blend 由 blender 解释器运行、不能 import 仓内模块，就地复刻；
-    cache_dependencies 缺省（老 timeline 无此键）= 无依赖不加料，与 hygiene 行为一致。"""
-    blob = html_path.read_bytes()
-    for dep in tl.get("project", {}).get("cache_dependencies", []):
-        p = (base / dep).resolve()
-        blob += b"|" + str(p).encode() + b"\0" + _file_sha256(p).encode()
-    return hashlib.sha1(blob + f"|{FPS}|{W}x{H}|{clip['dur']}".encode()).hexdigest()[:12]
+# Only the fields consumed by the read-only production cache resolver; do not
+# construct a new pipeline Ctx or run prepare/render/receipt writers in Blender.
+_GFX_CONTEXT = SimpleNamespace(root=base, cache=base / "cache", tl=tl,
+                               fps=FPS, w=W, h=H)
 
 def place(strip, track_i, ch_base, clip, src_w, src_h):
     """视频条：trim→channel→变换（顺序不可换）。
@@ -236,17 +227,10 @@ for ti, tr in enumerate(tl["video_tracks"]):
     for i, clip in enumerate(tr["clips"]):
         name, ch = f"{tr['name']}|{i}", CH_V + ti
         if tr["kind"] == "gfx":  # HTML → vtx 帧缓存
-            # 缓存目录解析：旧版 cache/<stem>/，2026-09-11 起内容寻址 cache/gfx/<sha1[:12]>
-            # （键式与 vtx hygiene.gfx_key 一致：html 字节+声明的 cache_dependencies 内容
-            # +fps+视口+时长；D44——两实现必须同键，见上方 gfx_cache_key）
-            _html = (base / clip["src"]).resolve()
-            _key = gfx_cache_key(_html, clip)
-            pngdir = (base / "cache" / "gfx" / _key).resolve()
-            if not pngdir.is_dir():  # 回落旧版布局 cache/<stem>/
-                pngdir = (base / "cache" / Path(clip["src"]).stem).resolve()
-            files = sorted(pngdir.glob("f*.png")) if pngdir.is_dir() else []
-            if len(files) < clip["dur"]:
-                errors.append(f"gfx 缓存不足 {name}: {pngdir} 有 {len(files)} 帧 < dur {clip['dur']}")
+            try:
+                files = gfx_cache_reader.resolve_frames(_GFX_CONTEXT, clip)
+            except (OSError, ValueError) as exc:
+                errors.append(f"gfx 缓存解析失败 {name}: {exc}")
                 continue
             st = seq.new_image(name, str(files[0]), ch, clip["dst_in"])
             for f in files[1:clip["dur"]]:
