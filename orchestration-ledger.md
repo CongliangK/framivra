@@ -1,11 +1,11 @@
 # Framivra orchestration ledger
 
-Frozen local draft, not published. Snapshot 2026-10-16T09:21:15Z; GitHub observations through 2026-10-16T09:18:31Z. Historical handoff, not a live dashboard.
-Repository: https://github.com/CongliangK/framivra. Metadata predecessor: 743bcae2c08d4ba12633122ffea230a2f8643360.
+Frozen local draft, not published. Snapshot 2026-10-16T10:51:36Z; GitHub observations through 2026-10-16T10:51:13.898Z. Historical handoff, not a live dashboard.
+Repository: https://github.com/CongliangK/framivra. Metadata predecessor: 6157014bfe3866c2f17ddfff38dea280c0df8174.
 
 ## Goal and verified remote state
 
-Verified original-goal completion: **5/20: #44, #49, #53, #144, #68**. 47 ordinary open issues plus one open draft PR #156 = 48 aggregate. Baseline 50 - 5 closures + new issues #153/#155 = 47. New issues do not count toward original goal.
+Verified original-goal completion: **5/20: #44, #49, #53, #144, #68**. 47 ordinary open issues plus three open draft PRs #156/#159/#160 = 50 aggregate. PRs #159/#160 are validation-only and must not merge. Baseline 50 - 5 closures + new issues #153/#155 = 47. New issues do not count toward original goal.
 Main e928657f2833155423f6ccfca4869a1805b34bde; tree acc8a2ef5776614927f4e93f03e37d062eec4445. No rapid-completion or continuous-execution guarantee.
 
 ## Scope and decisions
@@ -13,6 +13,8 @@ Main e928657f2833155423f6ccfca4869a1805b34bde; tree acc8a2ef5776614927f4e93f03e3
 Cloud-only. User-local Codex publication withdrawn. No credential-invalid claim is made.
 Independent changes may overlap; integrate serially and reverify exact trees. Preserve original contracts, user-local work and all prior failures. No security-setting changes. Coagentdraw remains paused after its docs-only archive.
 08:36 UTC decision batch remains pending: #90 human §25 contract, #52 optional clip.cache_dependencies, one extra mechanism-adjusted repair round each #100/#18, #155 cloud publication retry. #45 ownership/lease decision is still needed but has not yet been asked.
+
+Issue #87: one extra bounded repair round requested at 10:48 UTC; pending, not authorized. Existing 08:36 batch is unchanged.
 
 ## Active
 
@@ -191,30 +193,37 @@ Independent changes may overlap; integrate serially and reverify exact trees. Pr
 
 ### #87: CI feedback and coverage partition
 - Issue: https://github.com/CongliangK/framivra/issues/87
-- published_head: None
-- published_tree: None
-- pr_url: None
-- ci_url: None
-- branch: None
-- state: repair1_technical_review_pass_objective_verification_pending
+- published_head: 543995e470c0c32eb08fad7208dac7bfb82aa6f0
+- published_tree: ce67ae27d7914416a9cec13bf24d9ac71673d8f7
+- pr_url: https://github.com/CongliangK/framivra/pull/160
+- ci_url: https://github.com/CongliangK/framivra/actions/runs/38888891363
+- branch: cloud/issue87-ci-feedback-repair2-20261016
+- state: repair2_hosted_docs_failed_extra_round_pending
 - owner_role: Workstream implementer; independent reviewer; objective verifier
 - environment: Temporary cloud Linux workspace
-- worktree_relative: development/worktrees/framivra-ci-feedback-87-repair1
-- repair_rounds_used: 1
-- ci_status: not_run_for_candidate
-- pending_approval: No publication authorization; owner-supplied required-context verification needed
-- checks: {"focused_py312": "42 pass", "focused_py313": "42 pass", "base_environment_attribution": "Unchanged base reproduces installed Blender 4.3.2 incompatibility; 36 CLI tests pass with real Chromium PATH alias. These are not hosted Chrome evidence."}
-- independent_review: TECHNICAL PASS on exact repair1; EVIDENCE INSUFFICIENT to close original Issue87
-- next_gate: Finish objective/layered strict-media verification; authorized hosted controlled before/after runs and required-context confirmation
-- limits: No proven <=4.5m target, P50/P95 or cost reduction; n=1 baseline. No separate slow context; no apt cache. Branch protection GET403 respected; no settings changes
+- worktree_relative: development/worktrees/framivra-ci-feedback-87-repair2
+- repair_rounds_used: 2
+- ci_status: completed_failure_on_docs_validation_fixture
+- pending_approval: At 2026-10-16 10:48 UTC one additional bounded setup/cache-guard repair round was requested; no answer or additional authorization recorded.
+- checks: {"focused_python312": "68 pass", "focused_python313": "68 pass", "independent": "68 focused + five adversarial probes pass; 1224 fast + 15 slow = 1239 discovered unique core leaves", "docs_static": "Seven documentation leaves and static checks pass locally", "hosted_docs": "Run38888891363: 10 terminal jobs; six success, four failure in core 3.10–3.13 setup-python pip-cache post hooks; no reruns", "hosted_slow": "Separate slow integration Py3.13: 15 selected, 15 started, 15 explicit ok exactly once, zero skips", "hosted_strict": "FFmpeg90 and Chrome/pipeline14 tests OK/no skips; seven docs leaves and static pass; Windows installer succeeds", "apt": "Cold transport misses, zero verified reused archives, reviewed helper fresh installation/preflight succeeds; no independent hosted package-byte rehash or positive warm reuse proof"}
+- independent_review: Bounded local technical PASS on exact repair2; later hosted docs FAIL. Independent read-only diagnosis PASS confirms a cold pip-cache finalization defect, not acceptance or further repair approval.
+- next_gate: Await explicit extra-round decision. Any authorized repair requires new exact-candidate review and rebound hosted fixtures. Preserve original issue acceptance, owner-supplied required-context evidence and separate publication/merge/closure decisions.
+- limits: No original Issue87 closure. Final docs fixture does not execute fast core tests. No hosted repair2 HTML/mixed/code execution, production main-push proof, warm APT reuse, P50/P95, causal savings or reliable <=4.5m guarantee. Branch-protection GET403 remains respected and settings unchanged.
 - required_context_verification: {"state": "unverified_access_denied", "url": "https://api.github.com/repos/CongliangK/framivra/branches/main/protection", "http_status": 403, "error": "Resource not accessible by integration", "changes_made": false}
-- evidence_relative: ["outputs/issue87-repair1/manifest.json", "outputs/issue87-repair1-review/review.txt"]
-- local_candidate: 391a0861fab5d48a0858cfecd3084f9fd334090f
+- evidence_relative: ["outputs/issue87-pilot/report.md", "outputs/issue87-pilot/analysis.json", "outputs/issue87-repair2/manifest.json", "outputs/issue87-repair2-independent-review/report.md", "outputs/issue87-remaining-fixtures-repair2/fixtures.json", "outputs/issue87-repair2-hosted/report.md", "outputs/issue87-repair2-hosted/commit-mapping.json", "outputs/issue87-repair2-hosted/docs-run.json", "outputs/issue87-repair2-hosted/docs-jobs.json", "outputs/issue87-docs-cache-failure-review/review.md", "outputs/issue87-docs-cache-failure-review/evidence.json"]
+- local_candidate: 81b9556adfe9ed86565e91fe531f4c4d9f3b084e
 - base: e928657f2833155423f6ccfca4869a1805b34bde
-- tree: a9be67c90a462f77dab4131b77ec3a6e158a83bb
-- parent: 2a804f23366cb584174e3b6f1b0facfb9c0731bc
-- ordered_parents: ["2a804f23366cb584174e3b6f1b0facfb9c0731bc"]
-- write_scope: [".github/workflows/ci.yml", "scripts/run_all_tests.sh", "tests/ci_partition.py", "tests/test_ci_feedback.py"]
+- tree: ce67ae27d7914416a9cec13bf24d9ac71673d8f7
+- parent: 391a0861fab5d48a0858cfecd3084f9fd334090f
+- ordered_parents: ["391a0861fab5d48a0858cfecd3084f9fd334090f"]
+- write_scope: [".github/workflows/ci.yml", "scripts/ci_apt_cache.py", "scripts/run_all_tests.sh", "tests/ci_partition.py", "tests/test_ci_apt_cache.py", "tests/test_ci_checks.py", "tests/test_ci_feedback.py"]
+- repair_rounds_remaining: 0
+- repair_count_detail: Both authorized automatic repair rounds exhausted; proposed extra round is not authorized.
+- observed_at_utc: 2026-10-16T10:51:36Z
+- historical_pilot: {"observed_interval_utc": "2026-10-16T09:37:51Z to 2026-10-16T09:55:26Z", "pr": 159, "validation_only": true, "target_branch": "dot/validation-issue87-base-391a086", "fixture_branch": "dot/validation-issue87-code-391a086", "control_branch": "dot/validation-issue87-baseline-391a086", "product_local": "391a0861fab5d48a0858cfecd3084f9fd334090f", "product_remote": "14f56a3aeb35b37a43bce23136d56038266b45cd", "product_tree": "a9be67c90a462f77dab4131b77ec3a6e158a83bb", "fixture_local": "a54d1b1bfc379390f89cec21db24e68195c69e98", "fixture_remote": "ad72dfaa158988081cc92d2a2e72c73ecbe605a1", "fixture_tree": "48d9096a38883dcd4e96d8e14421b77ee3276b9a", "synthetic_merge": "1fe86be67b885fdc96e8adc271f6c7f0634e3093", "control_local": "980ad8b4e2636700d4639469a5aba75d6ad41aa6", "control_remote": "b0a945e86bc119da00b17092baa3bd80901edee7", "control_tree": "a353766cccb2f79303000ca01205d560d56b8680", "candidate_run_url": "https://github.com/CongliangK/framivra/actions/runs/38881769597", "control_run_url": "https://github.com/CongliangK/framivra/actions/runs/38882711639", "result": "Both9/9 successful, attempt1; n=1 per arm; no rerun", "coverage": "1198 fast started on each candidate version, ordinary36 skips; candidate3.13 slow15/15 zero skips; control all15 slow IDs once on each of five versions; strictFFmpeg90/Chrome14 no skips both arms", "timing_seconds": {"first_fast_success": 262, "all_four_fast_success": 379, "candidate_all_green": 416, "control_all_green": 560, "candidate_runner": 2137, "control_runner": 2877}, "limits": "Descriptive single pair only; source/test equivalence does not establish complete-tree/event equivalence. No percentile, causal savings, billing-dollar, protection or stable latency claim. Superseded product, not repair2 evidence."}
+- validation_fixtures: {"docs": {"branch": "dot/validation-issue87-docs-81b9556", "base": "81b9556adfe9ed86565e91fe531f4c4d9f3b084e", "commit": "8966536c516467d25bd12ce9edad0efaecd92a88", "tree": "92d007fe8bb00a9a80e0967fa5dd5e1fa64f1617", "files": ["README.md"], "expected_scope": "docs", "published_head": "4a2a12124214eea055e7d9856aaa80f2d6a921e2", "published_parent": "543995e470c0c32eb08fad7208dac7bfb82aa6f0", "state": "completed_failure", "pr": 160}, "html": {"branch": "dot/validation-issue87-html-81b9556", "base": "81b9556adfe9ed86565e91fe531f4c4d9f3b084e", "commit": "30e2ba457219670db695a1db3c83ea7d9a7d6755", "tree": "d894c295b13b065863ff7f7a21baef846f23d51e", "files": ["scripts/templates/gfx-starter.html"], "expected_scope": "full", "published_head": "9b21c5ce8f2dfff3d879ce97e8cdd8acbc99a834", "published_parent": "543995e470c0c32eb08fad7208dac7bfb82aa6f0", "state": "published_ref_no_pr_no_run", "pr": null}, "mixed": {"branch": "dot/validation-issue87-mixed-81b9556", "base": "81b9556adfe9ed86565e91fe531f4c4d9f3b084e", "commit": "05e55d74ce7e63b5a08d78d1ad146b4c0e4f1681", "tree": "f902363d038f4111f71e2d272ff5ea908cbcc9da", "files": ["README.md", "scripts/templates/gfx-starter.html", "vtx/__init__.py"], "expected_scope": "full", "published_head": "82e3c07a065add96171b7f2b1988446991ff669b", "published_parent": "543995e470c0c32eb08fad7208dac7bfb82aa6f0", "state": "published_ref_no_pr_no_run", "pr": null}, "code": {"branch": "dot/validation-issue87-code-81b9556", "base": "81b9556adfe9ed86565e91fe531f4c4d9f3b084e", "commit": "d520c2b79375990c19c2b4ded2f887158d36c4f1", "tree": "3571e230342adbfcb297a4f8faf5cf5334e454eb", "files": ["vtx/__init__.py"], "expected_scope": "full", "published_head": "7f3ef2bb249290c3dbea0d9112f6a52326ae29e8", "published_parent": "543995e470c0c32eb08fad7208dac7bfb82aa6f0", "state": "published_ref_no_pr_no_run", "pr": null}}
+- hosted_docs: {"validation_only": true, "base_branch": "dot/validation-issue87-base-81b9556", "product_remote_parent": "14f56a3aeb35b37a43bce23136d56038266b45cd", "run_id": 38888891363, "event": "pull_request", "attempt": 1, "synthetic_merge": "a0e076ff6c5b39c60d434b1443e129739d615810", "executed_tree": "92d007fe8bb00a9a80e0967fa5dd5e1fa64f1617", "workflow_blob": "21fb1bea00e022491df71234bd6e2c3b9ba86b27", "created_at_utc": "2026-10-16T10:41:31Z", "terminal_at_utc": "2026-10-16T10:44:48Z", "jobs": {"success": 6, "failure": 4, "cancelled": 0, "skipped": 0}, "failure": "Unconditional core setup-python cache=pip post save fails when docs skips dependency installs and pip cache directory is absent. Core3.9 bootstrap populated its cache; this does not prove general safety.", "first_error_at_utc": "2026-10-16T10:41:37.7276970Z", "first_error_job_url": "https://github.com/CongliangK/framivra/actions/runs/38888891363/job/116933289442", "runner_seconds": 587, "all_terminal_seconds": 197, "all_green_seconds": null, "stopped_after_docs": true, "remaining_three_not_launched": true, "cleanup": "PR159/160 and temporary refs retained; no cleanup authorization inferred"}
+- Prior repair1 checkpoint preserved in companion JSON at its original timestamp; pilot results are historical and do not apply to repair2.
 
 ## Completed
 
@@ -342,12 +351,16 @@ Independent changes may overlap; integrate serially and reverify exact trees. Pr
 - closure_comment_url: https://github.com/CongliangK/framivra/issues/68#issuecomment-6212133080
 - Prior checkpoint preserved verbatim under historical_checkpoint in companion JSON; older test claims are not reassigned to current SHA.
 
+## Local proposal under review
+
+{"issue": 50, "issue_url": "https://github.com/CongliangK/framivra/issues/50", "state": "local_design_draft_under_review_not_implementation", "base": "e928657f2833155423f6ccfca4869a1805b34bde", "artifact_sha256": "d20bf4cef2a95db07672ab3ce00cd61f9787472f37b265fa46f0bf19f1d78885", "evidence_relative": ["outputs/issue50-execution-identity-proposal.md", "outputs/issue50-design-independent-review.md"], "review": "Initial review required bounded contract corrections; corrected round1 draft awaits fresh review. No implementation, approval, publication or closure."}
+
 ## Recovery and historical evidence
 
 {"classification": "private owner recovery artifact; not public proof", "library_file_id": "libfile_60e26eebd7c4819195f5f2ac2e96fefd", "sha256": "89669712ff13ef9b6b4cc997e43fc5a754f191364ac6cfb2584466f70a6cd2d3", "bytes": 129650, "preserves_historical_heads": [100, 45, 18, 52], "delivered_at_utc": "2026-10-16T09:11:00Z", "does_not_prove": "current acceptance, public availability or newer integration state"}
-Previous immutable snapshot: https://github.com/CongliangK/framivra/blob/743bcae2c08d4ba12633122ffea230a2f8643360/orchestration-facts.json
+Immediate predecessor immutable snapshot: https://github.com/CongliangK/framivra/blob/6157014bfe3866c2f17ddfff38dea280c0df8174/orchestration-facts.json
 Relative evidence paths refer to temporary cloud project workspace; availability is not guaranteed. Private recovery archive is not public acceptance proof. Unknown/null values are not PASS.
 
 ## Publication gate
 
-Only these two sanitized files are candidates. No remote writes performed. Fresh independent review and explicit publication authorization required; compare expected predecessor 743bcae2c08d4ba12633122ffea230a2f8643360; never merge metadata into main.
+Only these two sanitized files are candidates. No remote writes performed. Fresh independent review and explicit publication authorization required; compare expected predecessor 6157014bfe3866c2f17ddfff38dea280c0df8174; never merge metadata into main.
