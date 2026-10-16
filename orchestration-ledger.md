@@ -1,18 +1,17 @@
 # Framivra orchestration ledger
 
-Snapshot: 2026-10-16T19:47:53.295191+00:00.
-Candidate preparation status: UNPUBLISHED at this freeze. Fresh independent review and separate exact-byte publication/readback are required. If later read from a remote commit, that immutable commit and its publication proof establish publication; this preparation label is not a claim about future remote state.
-Published predecessor: https://github.com/CongliangK/framivra/commit/491d1c0e073c38163cde946e3f934c00311b65d1 (19:03 historical snapshot, verified published). Its old draft label was stale after publication; original bytes are preserved.
+Snapshot: 2026-10-16T21:11:09.181767+00:00.
+Remote fields captured: 2026-10-16T21:09:05.887Z. Local evidence copied at snapshot time unless separately marked.
+Candidate preparation status: UNPUBLISHED at freeze; independent review and subsequent exact-byte remote readback required. If later read from a published commit, use that commit and publication proof to establish actual publication.
+Published historical predecessor: https://github.com/CongliangK/framivra/commit/8433fe64e3a9366f9151947c8dcf55361b8d64f7.
 
-## Corrected goal
+## Correct original-ranked progress
+**Original ranked9/20; additional#144=1; cumulative10.**
+Original completed: #44, #49, #53, #68, #90, #50, #52, #100, #47. #144doesnot replace#150.
+Live main 3b562f0ee70fe09b5366e6e300c1a31ac3416323;tree bc8ccd11583611d6c5577dee3871ebf41244a569. 42 ordinaryopenIssues+9 openPR=51 aggregate.
+PR170 ordinarymerged;#47closed/completed21:06:20UTC;originalbody unchanged;postmain9/9 actualcheckout3b562PASS. Earlier failed attempts retained. Old2700-frame QC900s timeout remainsFAIL.
 
-**Original ranked manifest: 8/20. Additional completed #144: 1. Cumulative completed: 9.**
-Original sequence: #44, #150, #49, #53, #52, #87, #100, #50, #89, #90, #68, #101, #67, #64, #48, #47, #46, #18, #91, #63.
-Original completed: #44, #49, #53, #68, #90, #50, #52, #100. No evidence authorizes replacing #150 with #144.
-Manifest07:40:45UTC SHA25640d5a4c26e24d7e979b8e0faf471aca2e09678036abe4c259bbfebcd4dc48037.
-Current main 31a3c8be20b5655c80606d0cf245f648e5005835;43 ordinary open issues+9openPR=52aggregate. PR168 postmerge9/9 and48-frame/page correctness acceptance remain bounded;old2700-frame QC900s timeout remains FAIL.
-
-## Current work and acceptance gates
+## Active and completed work
 
 ## Active
 
@@ -56,35 +55,33 @@ Original DoD: https://github.com/CongliangK/framivra/issues/155
 
 ### #45: F12 cancellation and F13 adaptive concurrency
 Original DoD: https://github.com/CongliangK/framivra/issues/45
-- state: frozen_repair2_independent_blocked_fail
+- state: partial_owned_group_source_PASS_R4_reproduced_publication_BLOCKED
 - owner_role: Workstream implementer; independent reviewer; integration maintainer
 - environment: Temporary cloud Linux workspace
-- branch: cloud/issue45-runtime-cancellation-20261016
-- base: d9ce4aab52fec57b770f689550fbbde1a860243b
-- local_candidate: 91b3783269c3164d12bdb999cf4918440be9961a
-- tree: fc8ce6f0eeffb3476b2aafa3ab9368782c26d1e6
-- parent: 581d059fd334eedd20ae7ced734f5f1b9c84178a
+- branch: repair/issue45-owned-success-20261016
+- base: 31a3c8be20b5655c80606d0cf245f648e5005835
+- local_candidate: 4d9d7c89bd50b2929e6c5c63cefee50381e38464
+- tree: 3c68f652ebd31d482643746b73b53a488cfd23ff
+- parent: d65f390c238c588fa808ac71e8c69b3b7910d2c6
 - published_head: None
 - published_tree: None
 - pr_url: None
 - ci_url: None
 - ci_status: not_run_for_candidate
-- worktree_relative: development/worktrees/framivra-issue45
-- write_scope: ["docs/cancellation-resource-ownership.md", "docs/runtime-cancellation.md", "tests/test_nvenc_oom_guard.py", "tests/test_runtime_cancellation.py", "vtx/cli.py", "vtx/composite.py", "vtx/encoders.py", "vtx/gfx_cli.py", "vtx/gfx_render.py", "vtx/infra.py", "vtx/proc_supervisor.py", "vtx/recovery.py", "vtx/runtime.py"]
-- repair_rounds_used: 2
+- worktree_relative: development/worktrees/framivra-issue45-owned-success
+- write_scope: ["docs/cancellation-resource-ownership.md", "docs/runtime-cancellation.md", "tests/test_execution_events.py", "tests/test_failure_recovery.py", "tests/test_nvenc_oom_guard.py", "tests/test_runtime_cancellation.py", "tests/test_runtime_completion.py", "vtx/cli.py", "vtx/composite.py", "vtx/encoders.py", "vtx/gfx_cli.py", "vtx/gfx_render.py", "vtx/infra.py", "vtx/proc_supervisor.py", "vtx/recovery.py", "vtx/runtime.py"]
 - pending_approval: Ownership/lease architecture decision remains unresolved
-- checks: {"author_focused": "136 run: 128 passed, 8 skipped; exit0 in 69.054s", "docs": "7/7 passed, exit0", "R4": "BLOCKING, reproduced unchanged: child alive, NVENC slot available, #44 used CPU=0 and active_leases=0. No budget schema or reclamation changes authorized or made.", "timing_gate": "Independent 3.187738266s miss of 3s gate retained as failure. Three observed current runs pass with load/affinity recorded, but do not explain historical failure or prove a hard bound. Threshold unchanged.", "aggregate": "Full final aggregate not run"}
-- independent_review: BLOCKED / FAIL on exact repair2; formal report now present
-- evidence_relative: ["outputs/issue45-runtime-repair2/manifest.json", "outputs/issue45-runtime-repair2-independent/review.md", "outputs/issue45-runtime-repair1-independent/review.md"]
-- next_gate: Resolve owned-child/resource lease lifetime within original scope; fresh candidate, independent review, original timing/full-tree/#51/F13 acceptance
+- checks: {"bounded": "36+53=89independenttestsPASS;ownedprocess completionreplayPASS", "R4": "Exact candidate reproduced resource-accounting failure; no wholeissuePASS"}
+- independent_review: Bounded ordinary-success original-process-group teardown andCtx CleanupIncompletePASS; safe-partial publicationblocked
+- evidence_relative: ["outputs/framivra-ledger-2110-evidence/issue45-review.md", "outputs/framivra-ledger-2110-evidence/issue45-ownership.md"]
+- next_gate: Resolve ownership/accounting design; no publication whileR4 remains. Then currentmain reintegration,fresh review andactual acceptance.
 - limits: R4 remains: owned child alive while NVENC slot and #44 capacity are released. R5–R7 bounded corrections do not resolve ownership architecture. Full-tree cleanup, #51, F13, target backend and timing acceptance unmet; no publication.
-- candidate_identity_scope: Exact final automatic repair2 candidate; independently BLOCKED / FAIL
-- repair_round_active: None
-- successor_candidate: None
-- repair_count_detail: Two prior rounds retained; R4 unresolved. Historical round cap is not current status.
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/45
 - dependencies: []
-- phase: retained_checkpoint_gate_pending
+- phase: ownership_decision_required
+- ordered_parents: ["d65f390c238c588fa808ac71e8c69b3b7910d2c6"]
+- captured_at_utc: 2026-10-16T21:11:09.181767+00:00
+- candidate_identity_scope: Partial4d9 ordinary-success boundedPASS;R4reproduced andpublicationblocked
 
 ### #18: Distribution model-license inventory
 Original DoD: https://github.com/CongliangK/framivra/issues/18
@@ -125,55 +122,32 @@ Original DoD: https://github.com/CongliangK/framivra/issues/18
 
 ### #87: CI feedback and coverage partition
 Original DoD: https://github.com/CongliangK/framivra/issues/87
-- published_head: 93da8899bc82538cb9f7333a67d8c920f2d96f16
-- published_tree: 9972e499e9dcbca9bf041a8174695bc0efa0f8f3
 - pr_url: None
 - ci_url: None
-- branch: cloud/issue87-ci-feedback-repair3-20261016
-- state: old_base_product_four_hosted_fixtures_pass_unmerged
+- branch: cloud/issue87-main91-source-20261016
+- state: main91_bounded_source_PASS_original_acceptance_UNMET
 - owner_role: Workstream implementer; independent reviewer; objective verifier
 - environment: Temporary cloud Linux workspace
-- worktree_relative: development/worktrees/framivra-ci-feedback-87-repair3
-- repair_rounds_used: 3
-- ci_status: four_validation_fixtures_success_not_production_main
+- worktree_relative: development/worktrees/framivra-ci-feedback-87-main91-source
+- ci_status: No fresh candidatehead hosted acceptance; older validation fixtures historicalonly
 - pending_approval: None
-- checks: {"hosted": "Four fixture runs PASS, ten original jobs each; one selected Core3.11 warm rerun executed; wrapper IDs are not executions", "warm": "100 verified current APT archives; 0 B/155 MB archive download; pip cached-wheel use", "performance": "Zero speedup claim; warm selected job298s versus prior249s; no P50/P95 or causal savings"}
-- independent_review: Bounded repair3 PASS on exact old-base product; not current-main integration review
-- next_gate: Rebase/integrate serially on new main and reverify; resolve policy evidence and original main/schedule/manual/performance acceptance. Do not merge validation PRs or retry denied protection access.
-- limits: Old-base fixture evidence only. No main production merge, issue closure, required-context proof or reliable <=4.5m claim.
+- checks: {"independent": "70focusedcontractsPASS0skip; no real slowbody/media/package-install", "coverage": "Exactmain91:1550leaves1548unique;candidate1595unique=1548+47newCIcontracts;2duplicatealiasesremoved. Not1595actualhostedtests.", "static": "327Pythoncompiled,28Bashsyntax,6Nodesyntax,33mediaselectorscovered"}
+- independent_review: Exact main91 bd69 bounded source integrationPASS; not wholeIssue87 acceptance orpublicationeligibility
+- next_gate: Currentmain integration/review; sourcePASS doesnot prove requiredpolicy,actualtiming/cachecost orwholeIssue87. Protectedendpoint denialunchanged;validation-only159–164not mergeeligible.
+- limits: No requiredpolicy enforcement,timing/cost/P50/P95 orwholeIssue87 completion. Currentmain3b integration stillrequired.
 - required_context_verification: {"state": "unverified_access_denied", "url": "https://api.github.com/repos/CongliangK/framivra/branches/main/protection", "http_status": 403, "error": "Resource not accessible by integration", "changes_made": false}
-- evidence_relative: ["outputs/issue87-repair3/manifest.json", "outputs/issue87-repair3-independent-review/report.md", "outputs/issue87-warm-job/report.md", "outputs/issue87-warm-job/final-census.json"]
-- local_candidate: 96b9613b72dd0b84cbc1c87f94851bb4d57d514c
-- base: e928657f2833155423f6ccfca4869a1805b34bde
-- tree: 9972e499e9dcbca9bf041a8174695bc0efa0f8f3
-- parent: 81b9556adfe9ed86565e91fe531f4c4d9f3b084e
-- ordered_parents: ["81b9556adfe9ed86565e91fe531f4c4d9f3b084e"]
-- write_scope: [".github/workflows/ci.yml", "scripts/ci_apt_cache.py", "scripts/run_all_tests.sh", "tests/ci_partition.py", "tests/test_ci_apt_cache.py", "tests/test_ci_checks.py", "tests/test_ci_feedback.py"]
-- hosted_runs: [{"url": "https://github.com/CongliangK/framivra/actions/runs/38899676429", "head": "5971b792ecf48fc16181a09f9595f93371ce53a3", "attempt": 2, "conclusion": "success"}, {"url": "https://github.com/CongliangK/framivra/actions/runs/38898678571", "head": "883ef9354698b9b4a1d6f08441c3e4b914cee89f", "attempt": 1, "conclusion": "success"}, {"url": "https://github.com/CongliangK/framivra/actions/runs/38897668067", "head": "7b233b97557f6233e7bfb25c5a947675cda61e27", "attempt": 1, "conclusion": "success"}, {"url": "https://github.com/CongliangK/framivra/actions/runs/38897111177", "head": "d2cbdf0d786ff02f86e1672fe789129a4f461002", "attempt": 1, "conclusion": "success"}]
+- evidence_relative: ["outputs/framivra-ledger-2110-evidence/issue87-review.md", "outputs/framivra-ledger-2110-evidence/issue87-binding.json"]
+- local_candidate: bd69db421d943d0e8f327688b7d06445acbfa192
+- base: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
+- tree: f06a08ced1bec6b996e94b0c39f9f0483047f0b9
+- parent: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
+- ordered_parents: ["91f39e38407b395b04a4f5dc6defa3a5fa80e6be"]
+- write_scope: [".github/workflows/ci.yml", "scripts/ci_apt_cache.py", "scripts/run_all_tests.sh", "tests/ci_partition.py", "tests/test_agent_diagnostics_evaluation.py", "tests/test_ci_apt_cache.py", "tests/test_ci_checks.py", "tests/test_ci_feedback.py"]
 - validation_prs: ["https://github.com/CongliangK/framivra/pull/159", "https://github.com/CongliangK/framivra/pull/160", "https://github.com/CongliangK/framivra/pull/161", "https://github.com/CongliangK/framivra/pull/162", "https://github.com/CongliangK/framivra/pull/163", "https://github.com/CongliangK/framivra/pull/164"]
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/87
 - dependencies: []
-- published_source_url: https://github.com/CongliangK/framivra/tree/93da8899bc82538cb9f7333a67d8c920f2d96f16
-- phase: retained_checkpoint_gate_pending
-
-### #47: Declared HTML dependency closure
-Original DoD: https://github.com/CongliangK/framivra/issues/47
-- owner_role: Workstream implementer; independent reviewer; integration maintainer
-- environment: Temporary cloud Linux workspace
-- dependencies: ["Integrate #52 resolver/clip-dependency implementation first; coordinate #85 and #48"]
-- state: PR170_open_actual_hosted_FAIL
-- phase: actual_hosted_diagnosis
-- published_head: eb8e5722b849ac483b754e271683de03c998af95
-- published_tree: 3cb0df3552c7fb2fe9376adec77849251a55e6f7
-- pr_url: https://github.com/CongliangK/framivra/pull/170
-- checks: {"first_hosted": "Preparation lackedffmpeg; actual steps skipped, not product acceptance", "second_hosted": "run38956682553 failure; cold-gfx exit1. Author diagnosis: observing CDP caused an Other request; locating cause, no successful acceptance.", "regular": "run38956682537 in_progress at capture"}
-- next_gate: Repair and independently review diagnosed behavior; exact final hosted normal-sandbox acceptance must pass before merge/closure.
-- evidence_relative: ["outputs/framivra-ledger-1945-evidence/pr170-runs.json", "outputs/framivra-ledger-1945-evidence/issue47-attempt2.log", "outputs/framivra-ledger-1945-evidence/issue47-repair-mapping.json"]
-- captured_at_utc: 2026-10-16T19:47:53.295191+00:00
-- branch: dot/issue47-html-validation-997173a
-- worktree_relative: development/worktrees/framivra-issue47-font-notice
-- write_scope: [".github/workflows/gfx-dependency-acceptance.yml", "docs/cache-provenance.md", "scripts/gfx_golden.py", "scripts/run_all_tests.sh", "tests/prepare_gfx_dependency_fixture.py", "tests/run_gfx_dependency_acceptance.py", "tests/test_agent_diagnostics_cache_operations.py", "tests/test_gfx_dependencies.py", "tests/test_gfx_dependency_acceptance.py", "tests/test_gfx_dependency_integration.py", "vtx/cache_state.py", "vtx/cli.py", "vtx/gfx_cli.py", "vtx/gfx_dependencies.py", "vtx/gfx_render.py", "vtx/hygiene.py", "vtx/impact.py", "vtx/stages.py", "vtx/timeline.schema.json"]
-- write_scope_note: Cumulative original implementation area plus hosted repair in mapping evidence.
+- phase: source_checkpoint_no_publication_eligibility
+- captured_at_utc: 2026-10-16T21:11:09.181767+00:00
 
 ### #141: ASR isolated environment and assets
 Original DoD: https://github.com/CongliangK/framivra/issues/141
@@ -204,27 +178,31 @@ Original DoD: https://github.com/CongliangK/framivra/issues/141
 - limits: 25 blobs uploaded/read back;zero trees,commits,refs/branches,PRs or CI runs created. No source/runtime acceptance from uploaded blobs. Prior actual socket-creation denial remains; no alternate route, author, deleted fields, payload/history rewrite or environment workaround.
 - evidence_relative: ["outputs/framivra-ledger-1900-evidence/asr-publication-blocker.md", "outputs/framivra-ledger-1900-evidence/asr-stopped-progress.json", "outputs/framivra-ledger-1740-evidence/asr-integrated-review.md", "outputs/framivra-ledger-1740-evidence/asr-publication-blocker.md", "outputs/framivra-ledger-1740-evidence/asr-stopped-progress.json"]
 - review_findings: {"prior_R1_R2": "Historical50458a defects repaired in later reviewed chain; afce bounded PASS does not establish real runtime"}
-- current_main_integration_limit: afce bounded PASS remains based on b882, not new main31a3. New-base integration and review would be additional gates after explicit publication-block resolution.
+- current_main_integration_limit: afce bounded sourcePASS onb882 is historical; not integration acceptance oncurrent3b562. Publicationstop remains; no retry or routechange.
 
 ### #63: Graphics lifecycle and frame provenance
 Original DoD: https://github.com/CongliangK/framivra/issues/63
 - owner_role: Workstream implementer; independent reviewer; integration maintainer
 - environment: Temporary cloud Linux workspace
 - dependencies: [62, 50]
-- state: PR169_open_regular_CI_success_dedicated_acceptance_FAIL
-- phase: actual_acceptance_failure_diagnosis
-- published_head: fc04786c240f52c3f99dc41f7dc1c5be60bfd15a
-- published_tree: 0448cb4113d7b2e88296095196c88230b239142a
+- state: PR169_regular_CI_success_dedicated_preflight_FAIL_unpublished_reintegration
+- phase: unpublished_main3b_integration_not_final_actual_acceptance
+- published_head: ebf62c635bb72a6e660562ea9872d0f12c9029d3
+- published_tree: 788ebfb0d1246b2c3de97e91a9a4a684964bd51b
 - pr_url: https://github.com/CongliangK/framivra/pull/169
-- base: 31a3c8be20b5655c80606d0cf245f648e5005835
-- checks: {"regular": "run38955431490 nine jobs success, exactfc047", "dedicated": "run38955431506 failure; firstGFX pair passed, firstchain baseline failed QC concurrent temporary-file race. Partial artifacts do not establish complete paired acceptance."}
-- next_gate: Independently review QC repair, ordinary PR/CI merge, integrate both paired arms on same accepted base, rerun exact-head full experiment.
-- evidence_relative: ["outputs/framivra-ledger-1945-evidence/github-readback.json", "outputs/framivra-ledger-1945-evidence/ci169-jobs.json", "outputs/framivra-ledger-1945-evidence/qc-independent-review.md"]
-- captured_at_utc: 2026-10-16T19:47:53.295191+00:00
-- branch: acceptance/lifecycle-63/main31-ec682-reviewed
-- worktree_relative: development/worktrees/framivra-lifecycle-63-main31
-- write_scope: [".github/workflows/lifecycle-63.yml", "docs/execution-events.md", "scripts/bench_lifecycle.py", "scripts/gfx_evidence.py", "scripts/pack_lifecycle_evidence.py", "tests/test_composite_determinism.py", "tests/test_frame_source.py", "tests/test_gfx_experiment.py", "tests/test_gfx_lifecycle_events.py", "tests/test_gfx_page_observation.py", "tests/test_gfx_provenance.py", "tests/test_gfx_runtime.py", "tests/test_lifecycle_hosted.py", "tests/test_pass_certificates.py", "tests/test_process_samples.py", "vtx/cli.py", "vtx/composite.py", "vtx/env_manifest.py", "vtx/events.py", "vtx/gfx_cli.py", "vtx/gfx_observation.py", "vtx/gfx_provenance.py", "vtx/gfx_render.py", "vtx/gfx_runtime.py", "vtx/gfx_runtime_executable.py", "vtx/infra.py", "vtx/process_samples.py"]
+- base: 3b562f0ee70fe09b5366e6e300c1a31ac3416323
+- checks: {"remote": "run38963261062 ordinary9/9 success on ebf62; dedicated38963261028 preflightFAIL before anyarm:incomplete runtime observation, unknown offendingfield; no raw preflight record inoldrun.", "diagnostic": "254fe6aab5a08265dca19c40f8e522f5d49e7933/tree8cdc33d4fa1f5e0838eff2d4923f455381687a01 bounded independentPASS; unpublished andnot actualhosted success.", "integration": "77e644ca20ce53d3d1991bff8c398f05a499575a/treef17489edda9c2d425d9d23cd30af5110c17aeef0 main3b sourcepartial; strictledger actualsmoke beingadded, notfrozen acceptance."}
+- next_gate: Finish strict-ledger actualsmoke and freeze combinedmain3b candidate; fresh review; authorized PRupdate andexacthead preflight/pairedactual acceptance. Earlier preflightFAIL isnot solvedby source tests.
+- evidence_relative: ["outputs/framivra-ledger-2110-evidence/github-readback.json", "outputs/framivra-ledger-2110-evidence/issue63-diagnostic-review.md", "outputs/framivra-ledger-2110-evidence/issue63-main3b.md", "outputs/framivra-ledger-2110-evidence/issue63-main3b-binding.json"]
+- captured_at_utc: 2026-10-16T21:11:09.181767+00:00
+- branch: acceptance/lifecycle-63/main3b
+- worktree_relative: development/worktrees/framivra-lifecycle-63-main3b
+- write_scope: [".github/workflows/lifecycle-63.yml", "docs/execution-events.md", "scripts/bench_lifecycle.py", "scripts/gfx_evidence.py", "scripts/pack_lifecycle_evidence.py", "tests/test_composite_determinism.py", "tests/test_failure_recovery.py", "tests/test_frame_source.py", "tests/test_gfx_experiment.py", "tests/test_gfx_lifecycle_events.py", "tests/test_gfx_page_observation.py", "tests/test_gfx_provenance.py", "tests/test_gfx_runtime.py", "tests/test_lifecycle_dependencies.py", "tests/test_lifecycle_hosted.py", "tests/test_pass_certificates.py", "tests/test_process_samples.py", "tests/test_runtime_preflight_status.py", "vtx/cli.py", "vtx/composite.py", "vtx/env_manifest.py", "vtx/events.py", "vtx/gfx_cli.py", "vtx/gfx_observation.py", "vtx/gfx_provenance.py", "vtx/gfx_render.py", "vtx/gfx_runtime.py", "vtx/gfx_runtime_executable.py", "vtx/infra.py", "vtx/process_samples.py"]
 - write_scope_note: Historical cumulative implementation area; exact remote delta separately bound by head/tree.
+- local_candidate: 77e644ca20ce53d3d1991bff8c398f05a499575a
+- tree: f17489edda9c2d425d9d23cd30af5110c17aeef0
+- parent: 8f535627f07001266e855d3cce27db7a3242f1b2
+- ordered_parents: ["8f535627f07001266e855d3cce27db7a3242f1b2"]
 
 ### #48: Graphics environment identity foundation
 Original DoD: https://github.com/CongliangK/framivra/issues/48
@@ -275,27 +253,33 @@ Original DoD: https://github.com/CongliangK/framivra/issues/142
 - evidence_relative: ["outputs/framivra-ledger-1900-evidence/asr-publication-blocker.md", "outputs/framivra-ledger-1900-evidence/asr-stopped-progress.json", "outputs/framivra-ledger-1740-evidence/asr-integrated-review.md", "outputs/framivra-ledger-1740-evidence/asr-publication-blocker.md", "outputs/framivra-ledger-1740-evidence/asr-stopped-progress.json"]
 - platform_boundary: {"denied_operation": "AF_UNIX SOCK_STREAM socket creation in temporary fake worker", "exception": "PermissionError errno1 Operation not permitted", "before_bind": true, "proc_path_cause_established": false, "actual_path_state": "Stopped after one in-place diagnostic", "workarounds_used": false, "restrictions": "No escalation, path change, TCP substitute or environment switch. Source/mock/document work only until separately authorized supported-platform runtime acceptance."}
 - review_findings: {"prior_R1_R2": "Historical50458a defects repaired in later reviewed chain; afce bounded PASS does not establish real runtime"}
-- current_main_integration_limit: afce bounded PASS remains based on b882, not new main31a3. New-base integration and review would be additional gates after explicit publication-block resolution.
+- current_main_integration_limit: afce bounded sourcePASS onb882 is historical; not integration acceptance oncurrent3b562. Publicationstop remains; no retry or routechange.
 
 ### #85: Verified media identity and QC reuse
 Original DoD: https://github.com/CongliangK/framivra/issues/85
 - owner_role: Workstream implementer; independent reviewer; integration maintainer
 - environment: Temporary cloud Linux workspace
 - dependencies: [97]
-- state: reviewed_source_objects_uploaded_paused_before_tree_commit_ref_PR
-- phase: waiting_for_accepted_QC_base
-- local_candidate: 0cc151526e8cea666855a0e3bedd10cd87464b68
-- tree: 8b0ef0131e5d860a656e7cea200cf79f186a64ba
-- base: 31a3c8be20b5655c80606d0cf245f648e5005835
-- independent_review: Bounded source/final binding PASS, not >=1GB runtime/performance acceptance
-- publication: {"blobs": 47, "trees": 0, "commits": 0, "refs": 0, "prs": 0, "state": "Paused for QC new base; earlier exact blob retry succeeded, no current permission block"}
-- next_gate: Accepted QC base, reintegration and fresh exact-head review; then permitted publication/CI and actual>=1GB cold/warm/mutation/performance gates.
+- state: PR172_oldbase_CI_and_preflight_FAIL_newmain_source_PASS_successor_not_observed
+- phase: reviewed_reintegration_pending_remote_verification
+- local_candidate: 97b7ede320c43755aa34ddc32ada885378571a31
+- tree: b643a44457a4f08d3e9adb681a64ed942075c0f4
+- base: 3b562f0ee70fe09b5366e6e300c1a31ac3416323
+- independent_review: 97b7ede main3b source/HTML joint integration boundedPASS;3026 fixture/preflightrepair reviewPASS is predecessor, not real acceptance
+- publication: {"observed_pr": 172, "remote_head": "8792a05b6497df60e20df14abc148ba152dba3f1", "new_successor_pr": "Not present in captured openPR GET; no new publication inferred", "old_47blob_pause": "Historical stage superseded by PR172, retained in nested checkpoint"}
+- next_gate: Verify successor remote exacthead/tree/PR; ordinary CI andfataltoolpreflight; onlythen authorizedNASA qualification and>=1GB actualcold/warm/mutation/performance.
 - limits: Original no-full-reread goal remains unproved; validate-only failure context cannot certify success. Audit/QC remain strict Verified. No actual>=1GB performance PASS.
-- evidence_relative: ["outputs/framivra-ledger-1945-evidence/issue85-review.md", "outputs/framivra-ledger-1945-evidence/issue85-paused.json"]
-- captured_at_utc: 2026-10-16T19:47:53.295191+00:00
-- branch: work/issue85-real-media-integrated-final-20261016
-- worktree_relative: repos/framivra/development/worktrees/framivra-issue85-integrated-final
-- write_scope: [".github/workflows/issue85-real-media.yml", "docs/cache-provenance.md", "scripts/issue85_media_runner.py", "scripts/issue85_real_media.py", "tests/test_acceptance.py", "tests/test_agent_diagnostics.py", "tests/test_agent_diagnostics_cache_operations.py", "tests/test_agent_diagnostics_loading.py", "tests/test_agent_diagnostics_qc_operations.py", "tests/test_cache_state.py", "tests/test_impact_identity.py", "tests/test_issue85_real_media.py", "tests/test_plugin_code_digest.py", "tests/test_pluginlib.py", "tests/test_qc_verified_records.py", "tests/test_verified_failure_evidence.py", "tests/test_verified_media_identity.py", "vtx/acceptance.py", "vtx/agent_diagnostics.py", "vtx/api.py", "vtx/cache_state.py", "vtx/cli.py", "vtx/composite.py", "vtx/hygiene.py", "vtx/infra.py", "vtx/loudness_cache.py", "vtx/qc.py", "vtx/quality.py", "vtx/recovery.py", "vtx/stages.py"]
+- evidence_relative: ["outputs/framivra-ledger-2110-evidence/github-readback.json", "outputs/framivra-ledger-2110-evidence/issue85-main3b-review.md", "outputs/framivra-ledger-2110-evidence/issue85-main3b.md"]
+- captured_at_utc: 2026-10-16T21:11:09.181767+00:00
+- branch: work/issue85-real-media-main3b-20261016
+- worktree_relative: repos/framivra/development/worktrees/framivra-issue85-main3b
+- write_scope: [".github/workflows/issue85-real-media.yml", "apps/gates/tests/test_qc_gates_opt.py", "docs/cache-provenance.md", "scripts/issue85_media_runner.py", "scripts/issue85_real_media.py", "tests/test_acceptance.py", "tests/test_agent_diagnostics.py", "tests/test_agent_diagnostics_cache_operations.py", "tests/test_agent_diagnostics_loading.py", "tests/test_agent_diagnostics_qc_operations.py", "tests/test_cache_state.py", "tests/test_composite_determinism.py", "tests/test_impact_identity.py", "tests/test_issue85_real_media.py", "tests/test_plugin_code_digest.py", "tests/test_pluginlib.py", "tests/test_protocol_v12.py", "tests/test_qc_verified_records.py", "tests/test_verified_failure_evidence.py", "tests/test_verified_media_identity.py", "vtx/acceptance.py", "vtx/agent_diagnostics.py", "vtx/api.py", "vtx/cache_state.py", "vtx/cli.py", "vtx/composite.py", "vtx/hygiene.py", "vtx/infra.py", "vtx/loudness_cache.py", "vtx/qc.py", "vtx/quality.py", "vtx/recovery.py", "vtx/stages.py"]
+- production_source: {"head": "a0a1378ff0aabb5a9b78d5490b24b2d53df6a60f", "tree": "e33eb3c06ebb1a3a55ca7b6174417ffcf2f2856d"}
+- published_head: 8792a05b6497df60e20df14abc148ba152dba3f1
+- pr_url: https://github.com/CongliangK/framivra/pull/172
+- checks: {"PR172": "Old91base ordinaryCI38962741920 failure (3green6red coordinator report);dedicated38962742247 failed missingffmpeg preflight;noNASA access", "newmain_source": "314executions305PASS9SKIP;125diagnosticPASS;10fixturePASS;4jointprobesPASS;3mocked install-block shell simulationsPASS. No actual media orpackage installation."}
+- parent: 91cca57f961db31c41c5e3e23169ce304301cd23
+- ordered_parents: ["91cca57f961db31c41c5e3e23169ce304301cd23"]
 
 ## Completed
 
@@ -629,16 +613,44 @@ Original DoD: https://github.com/CongliangK/framivra/issues/100
 - original_body_unchanged_verified: True
 - counts_toward_original_goal: True
 
+### #47: Declared HTML dependency closure
+Original DoD: https://github.com/CongliangK/framivra/issues/47
+- owner_role: Workstream implementer; independent reviewer; integration maintainer
+- environment: Temporary cloud Linux workspace
+- dependencies: ["Integrate #52 resolver/clip-dependency implementation first; coordinate #85 and #48"]
+- state: completed_ordinary_merge_postmain_CI_verified
+- phase: completed_original_issue
+- published_head: cce6927f492df09905abe060b701504e7c5a8746
+- published_tree: bc8ccd11583611d6c5577dee3871ebf41244a569
+- pr_url: https://github.com/CongliangK/framivra/pull/170
+- checks: {"actual_hosted": "Exact final cce692 head:21 mandatory native invocations12success+7staticreject+2runtime rejects; nativeGC additional. Full artifacts independently accepted; normal browser fixture, no broad browser/JS closure claim.", "postmerge": "run38965293693 nine jobs success actual3b562. Python3.9–3.13 each1992total1949PASS43skip (overlapping executions); Windows24,FFmpeg94,Chrome14 allPASS0skip;docs7gates.", "historical_failures": "Earlier missingffmpeg,observer Other-request and subsequent failed attempts remain historicalFAIL; final accepted run does not rewrite them."}
+- next_gate: Original#47 completed within strict/static dependency scope; #48 environment/reuse acceptance remains separate.
+- evidence_relative: ["outputs/framivra-ledger-2110-evidence/issue47-final-independent.md", "outputs/framivra-ledger-2110-evidence/issue47-hosted.md", "outputs/framivra-ledger-2110-evidence/issue47-postmain-binding.json", "outputs/framivra-ledger-2110-evidence/issue47-closure.json"]
+- captured_at_utc: 2026-10-16T21:11:09.181767+00:00
+- branch: dot/issue47-html-validation-997173a
+- worktree_relative: development/worktrees/framivra-issue47-font-notice
+- write_scope: [".github/workflows/gfx-dependency-acceptance.yml", "docs/cache-provenance.md", "scripts/gfx_golden.py", "scripts/run_all_tests.sh", "tests/prepare_gfx_dependency_fixture.py", "tests/run_gfx_dependency_acceptance.py", "tests/test_agent_diagnostics_cache_operations.py", "tests/test_gfx_dependencies.py", "tests/test_gfx_dependency_acceptance.py", "tests/test_gfx_dependency_integration.py", "vtx/cache_state.py", "vtx/cli.py", "vtx/gfx_cli.py", "vtx/gfx_dependencies.py", "vtx/gfx_render.py", "vtx/hygiene.py", "vtx/impact.py", "vtx/stages.py", "vtx/timeline.schema.json"]
+- write_scope_note: Cumulative original implementation area plus hosted repair in mapping evidence.
+- merge: 3b562f0ee70fe09b5366e6e300c1a31ac3416323
+- merge_url: https://github.com/CongliangK/framivra/commit/3b562f0ee70fe09b5366e6e300c1a31ac3416323
+- base: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
+- issue_state: closed
+- state_reason: completed
+- closed_at_utc: 2026-10-16T21:06:20Z
+- closure_comment_url: https://github.com/CongliangK/framivra/issues/47#issuecomment-6224694104
+- counts_toward_original_goal: True
+- original_body_unchanged_verified: True
+- independent_review: FINAL_ACCEPTANCE bounded actual hosted evidence PASS before ordinary PR170 merge
+- limits: No arbitraryJavaScript complete closure,universalbrowser/font/backend equivalence,or#48 productionreuse claim.
+
 ## Qc Repair
 
-- head: f7a8f033186167d93f07cbbcd2070e710521714f
-- tree: e0c4e62b12c6262a0e616e8836f282bb94fdcd16
-- base: 31a3c8be20b5655c80606d0cf245f648e5005835
-- state: Bounded independent production-path PASS; not merged
-- review: Fake-provider concurrent race baseline3/3fails,candidate3/3passes;27total26PASS1skip;separate actualFFmpeg1PASS and CPUfixture1PASS. Not hosted lifecycle acceptance.
-- caveat: Ambient caller exception can suppress cleanup failure in helper; independent review deems unreachable in current production thread call graph. Author repairing; no unreviewed successor promoted.
-- next_gate: Fresh exact repaired-head review,ordinaryPR/CI/merge then dependent actual experiments
-- evidence_relative: ["outputs/framivra-ledger-1945-evidence/qc-independent-review.md"]
+- state: PR171 ordinarymerged acceptedmain91 historical milestone; noextraIssuecompletion
+- merge: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
+- pr_url: https://github.com/CongliangK/framivra/pull/171
+- next_gate: Accepted QC implementation inherited bymain3b; dependent lifecycle/85 actual acceptance remainseparate.
+- accepted_base: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
+- evidence_relative: ["outputs/framivra-ledger-2110-evidence/github-readback.json"]
 
 ## Issue46 Investigation
 
@@ -648,6 +660,14 @@ Original DoD: https://github.com/CongliangK/framivra/issues/100
 - limits: Compositor-level synthetic fixture, not completeCLI/QC pipeline or performance benchmark. No original failing negative control. Initial72-frame-every-source fixture retained but not intendedEOF evidence.
 - next_gate: Obtain actual minimal failing project slice and divergent outputs before proposing fix.
 - evidence_relative: ["outputs/framivra-ledger-1945-evidence/issue46-report.md", "outputs/framivra-ledger-1945-evidence/issue46-source.txt", "outputs/framivra-ledger-1945-evidence/issue46-SHA256SUMS"]
+
+## Issue64 Contract
+
+- state: Read-only experiment contract saved; noimplementation/test/acceptance
+- original_DoD: https://github.com/CongliangK/framivra/issues/64
+- inspected_base: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
+- next_gate: Defaultoff Tab/Browser configuration,capability/strictunsupported downgrade,all screenshotpaths;paired>=3coldfullframeRGBA/memory/size/FFmpegtail#63measurements; no mock-only completion
+- evidence_relative: ["outputs/framivra-ledger-2110-evidence/issue64-contract.md"]
 
 ## Asr Publication Stop
 
@@ -669,9 +689,9 @@ Original DoD: https://github.com/CongliangK/framivra/issues/100
 ## Pending Decisions
 
 - issue18_issue155: Issue closure attempts denied and stopped at 14:24 UTC. Both issues remain OPEN. New explicit user confirmation required before retry; do not retry or bypass denial.
-- issue45: Ownership/lease architecture and actual timing/isolation gates unresolved; preserve original DoD.
+- issue45: R4accounting reproduced;publicationblocked; ownershipdecision report retained.
 - issue87: Required-context policy remains unverified after access denial; do not retry protected access or change settings. Performance protocol and remaining original acceptance unresolved.
-- issue85: Source reviewed;47blobs uploaded, no tree/commit/ref/PR. Wait acceptedQC base andfresh integrationreview;actual>=1GBperformance absent.
+- issue85: PR172oldbasefailed;newmain97b7ede sourcePASS, successor remote not observed atcapture; actual>=1GBperformance absent.
 - asr_publication: Await exact user/platform resolution; no retry/transport/author/payload/history workaround
 
 ## Local Native Boundary
@@ -684,7 +704,7 @@ Original DoD: https://github.com/CongliangK/framivra/issues/100
 
 ## Four Repository Audit
 
-- state: Historical read-only review19:31–19:38; later Framivra states updated separately at current capture
+- state: Historical read-only19:31–19:38 report only; Framivra superseded bycurrent dated records
 - evidence_relative: ["outputs/framivra-ledger-1945-evidence/four-repo-review.md"]
 - coagentdraw: Paused;mainf4b4d9d18fd3c9ce9dc87912bbfdbe0d46d6893c;offline work is not realKrita/creative acceptance
 - router: maina94fec244669550f219b3d9c376adefd4f9d489b PR40 postCI success;#2 remainsopen,no training acceptance
@@ -692,28 +712,32 @@ Original DoD: https://github.com/CongliangK/framivra/issues/100
 
 ## Recovery Archive
 
-- classification: Owner-only historical recovery artifact, reported delivered at18:47 UTC; not public proof or a release channel.
-- snapshot_utc: 2026-10-16T18:36:01+00:00
-- sha256: e9680a401429290910f055d3e051f3e5467965e9bbf103c0d4c6b694bf3d019c
-- does_not_prove: README marks a historical snapshot. Later moving integrations and unsaved work are excluded.
+- classification: Owner-only historicaleighthead recovery archive; coordinatorreports native delivery21:07UTC
+- snapshot_label: 2026-10-16 20:44 UTC
+- created_utc: 2026-10-16T20:45:01.743883+00:00
+- sha256: 43d5f34ab0a88f1ba64cf8b633d77fee0df63d8a4d6c0398d31c780de22e7f38
+- required_public_baseline: 91f39e38407b395b04a4f5dc6defa3a5fa80e6be
+- heads: [{"name": "partial-45", "commit": "4d9d7c89bd50b2929e6c5c63cefee50381e38464", "full_tree": "3c68f652ebd31d482643746b73b53a488cfd23ff", "parents": ["d65f390c238c588fa808ac71e8c69b3b7910d2c6"]}, {"name": "partial-48", "commit": "7d6213e6001628a82cbc5f7799776f19b5251237", "full_tree": "d6601e55d8714fed3557c98c99d434167a036db3", "parents": ["b271b96b21f9605396b7ca27a6d25a30f3ae408f"]}, {"name": "partial-87", "commit": "bd69db421d943d0e8f327688b7d06445acbfa192", "full_tree": "f06a08ced1bec6b996e94b0c39f9f0483047f0b9", "parents": ["91f39e38407b395b04a4f5dc6defa3a5fa80e6be"]}, {"name": "source-63", "commit": "c41d758d1504c7a9db0c817911ec7e174239203d", "full_tree": "788ebfb0d1246b2c3de97e91a9a4a684964bd51b", "parents": ["d2d162b057a203e7b5e9ff37c5f25bf2b1ac9270"]}, {"name": "historymerge-63", "commit": "97cd82c67fcdc66c4dc2b0e68326655175e977f6", "full_tree": "788ebfb0d1246b2c3de97e91a9a4a684964bd51b", "parents": ["6b9e9de1a725eb84ca79ae679bc5315363217378", "91f39e38407b395b04a4f5dc6defa3a5fa80e6be"]}, {"name": "source-47", "commit": "a80c195bb9c369f2be2cb5f4ca7d71e0e3673e35", "full_tree": "bc8ccd11583611d6c5577dee3871ebf41244a569", "parents": ["9746dd11786d30507fe2142a7ecfe324f6a15199", "91f39e38407b395b04a4f5dc6defa3a5fa80e6be"]}, {"name": "reviewed-85", "commit": "200e1b97f1d4696aafff271e8356165ec1e79086", "full_tree": "50aac04f660f5a83c8697c727feca226266199c6", "parents": ["5372a34118220f2e5b82dfe537de525a109b14fe"]}, {"name": "owner-only-asr", "commit": "afce2ad105b1df318eba6844548fcb26f64c72ac", "full_tree": "5bca104679262968131e32b143fddcc9aec03cd3", "parents": ["6e8bafe8868906b06be757bad82948803ee15499"]}]
+- validation: Independent restore verified all8heads/fulltrees/parents/baseline relationships;not acceptance orpublic release
+- limits: Only frozencommits andnecessaryhistory;moving/uncommitted work excluded. Archive itself andprivate deliveryidentifiers notpublished.
 
 ## Publication Plan
 
 - branch_exists: True
-- branch_read_result: Fresh GET matched491d1c0e; no remote writes in this preparation
+- branch_read_result: LiveGET matched8433fe64;candidate preparation no remote writes
 - root_commit_supported_by_connector: False
-- proposed_commit_parent: 491d1c0e073c38163cde946e3f934c00311b65d1
+- proposed_commit_parent: 8433fe64e3a9366f9151947c8dcf55361b8d64f7
 - proposed_tree: Only orchestration-ledger.md and orchestration-facts.json, created without base tree
 - gate: Fresh independent exact-byte review then separate publication authorization. Expected predecessor must match; force=false; only two files,100644; verify full tree, unique parent, bytes and ref.
 
 ## Metadata Review
 
-- state: UNPUBLISHED new candidate awaiting fresh independent review
-- published_predecessor: 491d1c0e073c38163cde946e3f934c00311b65d1
+- state: UNPUBLISHED new candidate awaiting independentexactbyte review
+- published_predecessor: 8433fe64e3a9366f9151947c8dcf55361b8d64f7
 - source_code_changes: False
 - remote_actions: False
 - read_only_github_checks: True
-- corrections: ["Original ranked progress8/20 plus extra144; cumulative9", "Historical19:03 snapshot actually published491d1c0e; old draft label not current truth", "PR169 regular9/9 does not supersede dedicatedFAIL; PR170 actual acceptanceFAIL", "Bounded48 and46 findings do not close original issues"]
+- corrections: ["Original ranked9/20plusadditional144=10cumulative afterverified47closure", "Actualmain3b PR170 ordinarymerge/post9CI", "SourcePASS never substitutes dedicatedpreflightfail oractualmedia acceptance"]
 
 ## Historical Count Corrections
 
@@ -722,21 +746,24 @@ Original DoD: https://github.com/CongliangK/framivra/issues/100
 - original20: The prior 9/20 conflated eight original-ranked entries with additional #144. Original ranked manifest never included #144 and no replacement of #150 is established. All historical counts containing #144 require this correction; history is retained, not rewritten.
 
 ## Evidence and history
-Raw evidence copies are local review material, not approved public uploads. Only these two metadata files are candidates. Prior records and per-issue original checkpoints remain in companion JSON and immutable published predecessors. Later results are not backdated.
-- outputs/framivra-ledger-1945-evidence/ci169-jobs.json SHA256 ee6ab274a33031d3a464641103412291f9c5918a5def4e8c1eeb514f7010b332 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/four-repo-review.md SHA256 45583d8d47a0ce2b262eb4388bb8d133a95bb6a4e8586a13371f84562ef0295d captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/github-readback.json SHA256 37426feaeecffbe6cb81e70b1c48f9d3189b3cb49f30c144bce5488d5fb636ea captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue46-SHA256SUMS SHA256 4e36a890a558fc6db002192278436b35c889ae866bb2a04c3a6da4b9fd01957b captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue46-report.md SHA256 3a907ccd27a24eaf7d6a7efddc70ca3f6e28bcc03267623df2bb4c5cf9831136 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue46-source.txt SHA256 79d4492ca47ce11a8208ab444040a8e4c3231efdeec1ddb69742aea16f38caab captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue47-attempt2.log SHA256 0ab7baab273e6ab5fbbfe2ebaec0fed761cb4a5e0578135b9103f75b41f1f77f captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue47-repair-mapping.json SHA256 d339d9670a20ea28d5d8323e94ac79472c0a6dceb15e34c7cd0e60c1abfdd39c captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue48-binding.json SHA256 eda64419709acb97285d0b61004c7dd552dece797a993e5b752e03caa201e791 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue48-review.md SHA256 1d55eb9935ff371090eb52e7ff19ea282f6a0ce4d5d67b2a0cb53e5d5e969761 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue85-paused.json SHA256 17561780760425db52297656b55c4d945909ff73fe8b867451140db7002a474b captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/issue85-review.md SHA256 2437b0523679f911ed23281fe66a0ad0205f4632950ca7e63bca4f21a52cfaf0 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/original-ranked-20.json SHA256 40d5a4c26e24d7e979b8e0faf471aca2e09678036abe4c259bbfebcd4dc48037 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/pr170-runs.json SHA256 b949203dc2ccc0586c25c64dd0e8701dc3b51678626ea856fb3f0a2c99145577 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/prior-publication-proof.json SHA256 683ac285ae8653c09cfd521774f7426c46d994aeacde80a5fc7a2e13b4b9c5b0 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/qc-independent-review.md SHA256 2b89b553768f4d59b746d75217e22e03dd4441f48a4d6299055b80ef5ea8dd60 captured 2026-10-16T19:47:53.295191+00:00
-- outputs/framivra-ledger-1945-evidence/pr169-commit.json SHA256 beacbb5c03009ad0dffd3bf153efbad40eb7608f21bea9a6996f7fd8b3bb4581 captured 2026-10-16T19:48:22.918917+00:00
+Raw evidence copies are local review material, not public upload candidates. Only the two metadata files are candidates. Older state remains in JSON historical checkpoints and immutable predecessors; no later evidence is backdated.
+- outputs/framivra-ledger-2110-evidence/github-readback.json SHA256 849efe31cd1ba327d7ce9f7a0a11dccfa531ef5f288dc1602fcc1e9f4f346df3 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue45-ownership.md SHA256 d2f0ea5c3f2fc9c014ff651925125d53517e4a1d8e86a513c5539bb0c0fc44e4 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue45-review.md SHA256 b8ce12ae19e58e13ca6671a9770cc08141d5dc1d5e70fea497f4dd9664d225f5 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue47-closure.json SHA256 07fb6e66f9cefcd926fe47613abebcbe25d615eb58700d45829f6e6408806664 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue47-final-independent.md SHA256 763e312ff63f790f7693396d205cc683e527411f62fea634cf007ae97e331d6b captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue47-hosted.md SHA256 4c0036cc4916dec1b1c9c97023314e98b7836b2dddda59b3fa1442b2e3b7c343 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue47-postmain-binding.json SHA256 53f61f6c3a8f77038f4ad11ac8926958494c70fe26beceae56ced2c47baf316b captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue47-postmain-status.json SHA256 a02396a48f5123e874053549cf74d1e52a8b55488085dbaa35e777f7cf936ef6 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue63-diagnostic-review.md SHA256 dc436d05d08d7e6f6888df8f43d650fbf473390a5a4701a7ac8185d69a64b87e captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue63-main3b-binding.json SHA256 8e3941c75a157a19d7fb0b27853099462af5a43621bc9ab01584cf10bbc871a4 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue63-main3b.md SHA256 76fbc16dc302e5e8cd77feba6f7195bc59bdf80c3a1077e625369a20131ea6a0 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue64-contract.md SHA256 299b416567e2d5c7f448bd6d54b09408b82cff1e7ce4b3f8bda9eae204a0b8c8 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue85-main3b-review.md SHA256 15624d41395169f6721875c922609f0f10e0f57cbfaf987ac63483e639f0126f captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue85-main3b.md SHA256 cc6b3cd0adc3cc89548355cd2fbbddee7e02eb61e1d848fbe0325c175d0e3445 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue87-binding.json SHA256 9506527450bc9081d2df53f7e84fc0012306f796822b54889aef828366b86a20 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/issue87-review.md SHA256 9be052d80df104e73b5728ab06a571466576d2027c33b8809893e50022340bb8 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/previous-publication-proof.json SHA256 1cac04757ef7b2e901d1312367c119459b71f1dc32b4c82154d1077d21c1420e captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/recovery-build.json SHA256 cdae3a664e2ef0a6e25b3d1de6ce53fbc35b8a0c6e8a3e87d0e5f05532f74b34 captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/recovery-review.json SHA256 cb523ebb15c8eb0c0b4bf3c15a78265ad3bc61baf87276497fc3ff36f70e9b0e captured 2026-10-16T21:11:09.181767+00:00
+- outputs/framivra-ledger-2110-evidence/final-readonly-supplement.json SHA256 61b54c6782679d55726ef75a02056d22cbec188a157dda826246ab3b2b1dc011 captured 2026-10-16T21:11:28.664Z
