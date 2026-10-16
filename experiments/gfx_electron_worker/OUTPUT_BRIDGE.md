@@ -1,5 +1,10 @@
 # OUTPUT_BRIDGE.md — Electron NativeImage 双路径输出桥契约（#113 ELEC-02）
 
+> 范围警告：本件是 #113 实验桥的规格，不是 Alpha 导航适配的验收结论。
+> 文中 `tests/test_elec_output_bridge.py` 在本检出不存在，不能据此宣称跨语言门已过。
+> 邻行恢复/页面 originals 路径不满足 Alpha 规则，专用适配不调用本桥；
+> 共享助手输出在本棒未测且明确不支持。已验证的原生 PNG 路线见 [README](README.md)。
+>
 > 权威规格（issue #113「本轮就绪审计」要求冻结的调用边界）。实现面：
 > `output_bridge.mjs`（Node/Electron 侧）+ `native/`（原生编码助手
 > `vtx_elec_output_helper`，复用 #111 `gfx_cef_worker/src/pixel_ops|png_writer`

@@ -27,7 +27,7 @@ export function decodeNativePng(png, width, height) {
     for (let x = 0; x < stride; x++) {
       const i = y * stride + x, a = x >= channels ? decoded[i-channels] : 0;
       const b = y ? decoded[i-stride] : 0, c = y && x>=channels ? decoded[i-stride-channels] : 0;
-      const predictor = [0, a, b, Math.floor((a+b)/2), paeth(a,b,c)][f];
+      const predictor = f === 0 ? 0 : f === 1 ? a : f === 2 ? b : f === 3 ? Math.floor((a+b)/2) : paeth(a,b,c);
       decoded[i] = (raw[y*(stride+1)+1+x] + predictor) & 255;
     }
   }
@@ -38,13 +38,14 @@ export function decodeNativePng(png, width, height) {
 }
 
 export function markerRanges(width, height, phase) {
-  if (width < 64 || height < 2) throw new Error('marker viewport requires width>=64 height>=2');
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 2 || !['a','b'].includes(phase)) throw new Error('invalid marker geometry/phase');
   const dx = phase === 'a' ? 0 : 16;
   return [[dx*4, (dx+16)*4], [((height-1)*width+width-16-dx)*4, ((height-1)*width+width-dx)*4]];
 }
 
 export function markerMatches(bitmap, width, height, phase, token) {
   const ranges = markerRanges(width, height, phase);
+  if (bitmap.length !== width*height*4 || token.length !== 48) return false;
   return ranges.every(([start]) => {
     for (let p=0; p<16; p++) {
       const i = start+p*4, t = p*3;
@@ -57,6 +58,7 @@ export function markerMatches(bitmap, width, height, phase, token) {
 // The original pixels come from a second *verified compositor bitmap*, never
 // page-provided originals, a neighbor row, or an untagged capturePage snapshot.
 export function mergeWitnesses(a, b, width, height) {
+  if (a.length !== width*height*4 || b.length !== a.length) throw new Error('witness buffer geometry');
   const ar = markerRanges(width, height, 'a'), br = markerRanges(width, height, 'b');
   const excluded = [...ar, ...br].sort((x,y)=>x[0]-y[0]);
   let pos = 0;

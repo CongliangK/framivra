@@ -8,6 +8,41 @@ GPU 内部接口实测）→ 干净退出；严格锁定 Electron 版本；B0/B1
 gfx 管线**（那是后续工单的事）；下游熔断门 K1（单帧 IPC + PNG 编码 > 18ms 熔断）
 的测量也不在本目录范围。
 
+## Alpha 专用导航适配（可审查候选，非全片验收）
+
+入口为 [gfx_electron.py](../../vtx/gfx_electron.py) 的
+`render_page(html_path, outdir, n_frames, *, width=1920, height=1080, frames=None, ctx=None, timeout_s=15, electron_path=None, mode="b0", output="electron_native_topng", progress=None)`。
+`ctx` 必填，以现有监管器分配项目内 profile/账本并回收进程组。输出
+`f{frame:04d}.png`；结果含 `failed`、`path_counts`、requested/effective backend、
+run_id、退出码与逐次证据目录。**调用方必须把非空 failed 当硬失败**；不读取旧帧作成功证据，
+不静默回落，不接公共路由/缓存身份。空闲无需常驻服务；目前需可用的本地图形显示环境。
+
+[导航 worker](navigation_worker.mjs) 仅实现 Mode N：每帧全新 WebContents
+真实导航原 HTML 的 `?f=`，不依赖页面 opt-in API。页面世界无 Node/IPC/bridge；
+宿主在隔离世界检查 URL/尺寸、等待 load、fonts、image decode 及真实请求静默，
+再插入闭合 shadow canvas 的随机 nonce 标记。A/B/A/B 两个互斥位置的真实 OSR
+paint 逐次验证 nonce，排除延迟 paint；同位置重复及非遮挡全图字节相等后，
+从另一张已验证 compositor 图恢复原像素。另以插入标记前的无标记 snapshot
+做全图否决门，防 DOM 标记影响 `:last-child` 等页面选择器；该 snapshot
+**绝不作恢复源或目标帧绑定证据**。静态页以 invalidate 防饥饿。
+输出通过 createFromBitmap→toPNG，并对**整张 decoded RGBA**与原生 witness PNG
+交叉恢复结果逐字节对比，拒绝 alpha/颜色重建偏差；不猜邻行、不信 originals。
+
+仅 `electron_native_topng` 为本适配支持的输出，`bitmap_shared_encoder` 显式拒绝。
+[旧输出桥规格](OUTPUT_BRIDGE.md) 与目录下旧实验并非本入口的生产依赖。
+B0 是默认软件输出；B1 选项不代表本棒已测 GPU 或全片。资源有界为单帧串行、
+固定视口上限、请求数量上限、每帧硬超时；不用 SHM/助手队列。临时 PNG 同目录
+独占创建、fsync 后 rename，失败无新半帧。覆盖不到恶意页面的任意未来延迟脚本，
+四张见证是稳定性观测门而非任意 JavaScript 确定性的数学证明；不稳定/被遮挡页面保守拒绝。
+
+[专用测试](test_navigation.py) 默认仅运行契约/像素单元测试；真实测试显式 opt-in。
+下列命令**会写测试证据**（不渲视频、不访问原项目输出）；可设置
+`VTX_ELECTRON_EVIDENCE_DIR` 将完整 fixture/PNG/log/receipt 留在检出外：
+
+```bash
+env VTX_TEST_ELECTRON=1 python3 -m unittest experiments.gfx_electron_worker.test_navigation -v
+```
+
 ## 目录
 
 | 文件 | 职责 |
@@ -24,7 +59,7 @@ gfx 管线**（那是后续工单的事）；下游熔断门 K1（单帧 IPC + P
 ## 版本锁策略
 
 - **锁定 `electron@44.7.2`（精确，禁 `^`/`~`）**，Chromium **152.0.7977.149**、
-  Node 22.x、V8 15.2.124.37-electron.0——2026-10-15 查证
+  Node 24.21.0（本机 probe 实测）、V8 15.2.124.37-electron.0——2026-10-15 查证
   `releases.electronjs.org/releases.json`：44.7.2 为最新 stable（2026-10-13 发布）。
 - **与宿主 Chrome 155 的对齐决策**（沿用 #108 `cef_lock.json` alignment_note 先例）：
   本机宿主 `google-chrome` stable=155；Electron stable 通道**没有** Chromium 155

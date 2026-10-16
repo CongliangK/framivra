@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><style>
+html,body{margin:0;background:transparent;overflow:hidden}canvas{display:block}
+#label{position:absolute;left:40px;top:30px;color:#16381f;font:16px sans-serif}
+</style><canvas id="c"></canvas><span id="label">中文 · frame</span><script>
+// Ordinary ?f= HTML: deliberately no __vtx_render/export/originals/canary API.
+const f=Number(new URL(location.href).searchParams.get('f')||0);
+c.width=innerWidth;c.height=innerHeight;
+const g=c.getContext('2d'), im=g.createImageData(c.width,c.height);
+for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++){
+ const i=(y*c.width+x)*4;
+ if(y===0||y===c.height-1){im.data.set([(x+f*17)%256,(y*7+f)%256,(x+y)%256,255],i);}
+ else if(x<24&&y<24){im.data.set([200,100,40,128],i);}
+}
+g.putImageData(im,0,0);
+label.textContent='中文 · '+f;
+</script>
