@@ -333,12 +333,14 @@ def qc(c):
         # owns its directory; equal frame/tag probes must never share output.
         temporary = tempfile.TemporaryDirectory(prefix="qc_probe_", dir=c.cache)
         tmp = Path(temporary.name) / "qc_probe_frame.raw"
+        failed = True  # Local outcome, independent of a caller's handled exception.
         try:
             c.run(["ffmpeg", "-v", "error", "-y", "-ss", ss,
                    "-i", str(path), "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo", str(tmp)])
-            return tmp.read_bytes()
+            data = tmp.read_bytes()
+            failed = False
+            return data
         finally:
-            failed = sys.exc_info()[0] is not None
             try:
                 temporary.cleanup()
             except Exception:

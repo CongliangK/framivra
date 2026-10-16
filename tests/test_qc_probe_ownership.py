@@ -1,4 +1,5 @@
 """QC concurrent probe ownership; fake-provider race and opt-in real FFmpeg raw output."""
+import ast
 import contextlib
 import io
 import os
@@ -118,6 +119,43 @@ class ProbeOwnership(unittest.TestCase):
         self.assertIs(caught.exception, failure)
         self.assertEqual(c.diagnostics, [])
         self.assertFalse(list(c.cache.glob('qc_probe*')))
+
+    def test_direct_helper_inside_ambient_exception(self):
+        # Extract the exact nested production helper: executor workers normally
+        # have no ambient exception, so whole-QC tests cannot expose this edge.
+        tree = ast.parse(Path(qc.__file__).read_text())
+        helper = next(node for node in ast.walk(tree)
+                      if isinstance(node, ast.FunctionDef) and node.name == 'gray_frame')
+        module = ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[]))
+        for producer_fails in (False, True):
+            with self.subTest(producer_fails=producer_fails):
+                c = self.context()
+                primary = PermissionError('producer failure')
+                cleanup = PermissionError('cleanup failure')
+                actual_temp = tempfile.TemporaryDirectory
+                class Temp:
+                    def __init__(self, **kw):
+                        self.inner = actual_temp(**kw); self.name = self.inner.name
+                    def cleanup(self):
+                        self.inner.cleanup()
+                        raise cleanup
+                if producer_fails:
+                    def run(*args, **kwargs):
+                        raise primary
+                    c.run = run
+                env = dict(qc.__dict__, c=c)
+                exec(compile(module, 'production-gray-frame', 'exec'), env)
+                sibling = c.cache / 'qc_probe_sibling'
+                sibling.mkdir(); (sibling / 'keep').write_bytes(b'keep')
+                try:
+                    raise ValueError('unrelated caller exception')
+                except ValueError:
+                    with patch.object(qc.tempfile, 'TemporaryDirectory', Temp):
+                        with self.assertRaises(PermissionError) as caught:
+                            env['gray_frame'](c.out / 'final.mp4', 0)
+                self.assertIs(caught.exception, primary if producer_fails else cleanup)
+                self.assertEqual((sibling / 'keep').read_bytes(), b'keep')
+                self.assertEqual(list(c.cache.glob('qc_probe*')), [sibling])
 
     def test_temporary_directory_create_failure_propagates(self):
         c = self.context(); failure = PermissionError('create failure')
