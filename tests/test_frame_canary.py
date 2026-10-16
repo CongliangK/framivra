@@ -818,7 +818,7 @@ class TestChromeCanary(unittest.TestCase):
         cls.d = Path(tempfile.mkdtemp(prefix="fc_chrome_"))
         cls.page = cls.d / "page.html"
         cls.page.write_text(_PAGE, encoding="utf-8")
-        cls.real_page = REPO / "examples" / "skill-demo" / "gfxA.html"
+        cls.real_page = REPO / "templates" / "skill-demo" / "gfxA.html"
         cls.browser = gfx_render.Browser(os.environ["VTX_TEST_CHROME"], tabs=3,
                                          width=cls.VW, height=cls.VH)
         cls.browser.start()

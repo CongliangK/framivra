@@ -34,7 +34,7 @@ from vtx.proc_supervisor import (WORKER_LEDGER,                  # noqa: E402
                                  group_live_members, reap_orphan_workers)
 
 DRIVER = EXP_DIR / "run_gfx_electron_worker.py"
-PAGE_SRC = REPO_ROOT / "examples" / "skill-demo" / "gfxA.html"
+PAGE_SRC = REPO_ROOT / "templates" / "skill-demo" / "gfxA.html"
 
 # gfxA.html 帧驱动协议（f 纯函数、1920x1080、N=90）——演练页与正式验证同源
 TIMELINE_TMPL = {

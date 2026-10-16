@@ -79,7 +79,7 @@ class TestIssueTableSpec(unittest.TestCase):
     def test_s1_basic_throughput(self):
         s = scenario(load_manifest(), "S1")
         pages = {p["role"]: p for p in s["pages"]}
-        self.assertEqual(pages["gfxA"]["path"], "examples/skill-demo/gfxA.html")
+        self.assertEqual(pages["gfxA"]["path"], "templates/skill-demo/gfxA.html")
         self.assertEqual(pages["gfxA"]["frames"], 90)
         self.assertIn("s1_solid_static.html", pages["solid_static"]["path"])
         self.assertEqual(pages["solid_static"]["frames"], 100)
@@ -88,8 +88,8 @@ class TestIssueTableSpec(unittest.TestCase):
     def test_s2_cjk_svg(self):
         s = scenario(load_manifest(), "S2")
         paths = {p["path"] for p in s["pages"]}
-        self.assertIn("skills/tech-talk/assets/gfx-templates/data_table_grouped.html", paths)
-        self.assertIn("skills/tech-talk/assets/gfx-templates/nav_card.html", paths)
+        self.assertIn("templates/tech-talk/assets/gfx-templates/data_table_grouped.html", paths)
+        self.assertIn("templates/tech-talk/assets/gfx-templates/nav_card.html", paths)
         self.assertEqual([p["frames"] for p in s["pages"]], [180, 180])
         self.assertEqual(s["total_frames"], 360)
 
@@ -199,7 +199,7 @@ class TestS7Workload(unittest.TestCase):
     def test_fourteen_pages_exact_order(self):
         s = scenario(load_manifest(), "S7")
         self.assertEqual(len(s["pages"]), 14)
-        self.assertEqual(s["pages"][0]["path"], "examples/skill-demo/gfxA.html")
+        self.assertEqual(s["pages"][0]["path"], "templates/skill-demo/gfxA.html")
         self.assertIn("placeholder_gfx.html", s["pages"][-1]["path"])
 
     def test_round_frames_1920(self):

@@ -8,7 +8,7 @@
      DISPLAY=:0 即 XWayland）
 
 每个矩阵格（cell）独立起一个 vtx_cef_worker（隔离会话 + 独立临时
-root_cache_path），加载 examples/skill-demo/gfxA.html?f=0 出一张
+root_cache_path），加载 templates/skill-demo/gfxA.html?f=0 出一张
 1920x1080 PNG，并用内部探针（WEBGL_debug_renderer_info + chrome://gpu）
 记录真实生效后端；后端可归类时按 vtx/env_manifest 的不可伪造契约落
 env_manifest.json（runtime_gpu_info.source=cef）。
@@ -113,7 +113,7 @@ def run_cell(cell: dict, args) -> dict:
     result_json = out_dir / "result.json"
     log_path = out_dir / "worker.log"
 
-    url = (f"file://{REPO_ROOT}/examples/skill-demo/gfxA.html?f=0")
+    url = (f"file://{REPO_ROOT}/templates/skill-demo/gfxA.html?f=0")
     argv, env = build_cmd(cell, Path(args.worker), Path(args.xvfb_prefix))
     argv += [f"--url={url}", f"--out-png={png}",
              f"--out-json={result_json}",

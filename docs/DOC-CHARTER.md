@@ -1,20 +1,20 @@
-# video_tools 文档架构宪章(DOC-CHARTER)v1.1
+# video_tools 文档架构宪章(DOC-CHARTER)v1.2
 
-> 版本:v1.0(条款 1~26,2026-09-16 定稿)+v1.1(条款 27~35,2026-09-21 纯增补,现行条款 1~26 一字不改)。
-> 事实基础:条款 1~26 的现状数据采用 2026-09-16 文档层级现状清单实测结论,v1.0 部分不新增事实。
+> 版本:v1.0(条款 1~26,2026-09-16 定稿)+v1.1(条款 27~35,2026-09-21 纯增补)+v1.2(2026-10-16 目录与挂载路径修订，职责与写入权不变)。
+> 事实基础:条款 1~26 的现状数据采用 2026-09-16 文档层级现状清单实测结论,v1.2 的当前目录/挂载事实按已审查模板迁移更新。
 
 ## 0. 总则
 
-1. 本宪章划定 video_tools 产品仓文档四层(SKILL / ARCHITECTURE / README / docs)的职责、读者、写入权与命名约定;四层之外不设第五层。skills/** 文档面不另设层(仍非第五层),其挂载消费面/知会义务/写入权规则见第 7b 条,随 SKILL 层条款约束。
+1. 本宪章划定 video_tools 产品仓文档四层(SKILL / ARCHITECTURE / README / docs)的职责、读者、写入权与命名约定;四层之外不设第五层。templates/** 文档面不另设层(仍非第五层),其挂载消费面/知会义务/写入权规则见第 7b 条,随 SKILL 层条款约束。
 2. 各条为硬约束;现状与条文冲突时以条文为目标态,按第 6 节流程修订,不溯及既往归档件。
 
 ## 1. SKILL 层(操作路由层)
 
 3. 职责:操作路由层——SKILL.md 路由索引+references 机制文档+assets 模板,回答「接到任务先读哪份 reference、用哪块模板」。
 4. 读者:执行席/接棒子智能体(技能消费者),按路由「只读这一份就开工」。
-5. 写入权:本层及 skills/** 文档面(见第 7b 条)修订即改写挂载消费面,任何改动落笔前须先发出消费面变更公告并经评审。
+5. 写入权:本层及 templates/** 文档面(见第 7b 条)修订即改写挂载消费面,任何改动落笔前须先发出消费面变更公告并经评审。
 6. 命名约定:SKILL.md 大写固定名(技能注册约定);references 单词小写(edit/gfx/runbook);assets 小写 kebab(lower-third/title-card)。
-7. 挂载消费面实况(实测):`~/.agents/skills/video/` 下六件符号链接,名字逐一为 SKILL.md、assets、references、scripts、skills、vtx,全部指向本仓。其中 SKILL.md、assets、references 与 skills/** 文档面直接构成执行席消费文本——本层修订即改写执行席所见内容。每次修订合入后以挂载复核命令(见第 7a 条操作示例)复核六件链接完好;docs/ 不在挂载面,治辖文档不经 live skill 通道对外暴露。
+7. 挂载消费面实况(实测):`~/.agents/skills/video/` 下六件符号链接,名字逐一为 SKILL.md、assets、references、scripts、templates、vtx,全部指向本仓。其中 SKILL.md、assets、references 与 templates/** 文档面直接构成执行席消费文本——本层修订即改写执行席所见内容。每次修订合入后以挂载复核命令(见第 7a 条操作示例)复核六件链接完好;SKILL.md、assets、references 指向 `docs/skill/`，templates 指向 `templates/`；其余 docs 治辖与历史文档不经 live skill 通道对外暴露。
 7a. 操作示例(本宪章自身文档化命令,按第 21 条以 bash 栅栏书写,属冒烟面活条目;**零写态形态**):
 
 ```bash
@@ -22,7 +22,7 @@ env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor  # 挂载/组件/版本体检(零�
 env python3 vt.py --fix-links --dry            # 挂载链接重建预演(去 --dry 方为实际重建,属写操作,审慎执行)
 ```
 
-7b. **skills/** 文档面条款(挂载消费面维度)**:六件挂载中的 skills 链接指向本仓 `skills/`(现 tech-talk 工作流包:SKILL.md+references/**+assets/**),其文档与 skill/ 层文档同为执行席 live 消费文本,适用以下三条红线——①本条即其挂载消费面条款,与 §7 同等约束,层属判定=不作第五层、随 SKILL 层消费面条款约束;②对该面的任何文档修订,落笔前须先发出消费面变更公告并经评审(与第 5 条同责);③其写入权归本仓文档维护者统一行使,任何改动须经评审合入,破除无主态;其冒烟扫描面门口健康随本仓门禁认领维护。本条修订本身涉挂载消费面,亦须先经消费面评审。
+7b. **templates/** 文档面条款(挂载消费面维度)**:六件挂载中的 templates 链接指向本仓 `templates/`(tech-talk、skill-demo 工作流与 hello-app、hello-plugin 开发范本),其文档与 docs/skill/ 操作路由层文档同为执行席 live 消费文本,适用以下三条红线——①本条即其挂载消费面条款,与 §7 同等约束,层属判定=不作第五层、随 SKILL 层消费面条款约束;②对该面的任何文档修订,落笔前须先发出消费面变更公告并经评审(与第 5 条同责);③其写入权归本仓文档维护者统一行使,任何改动须经评审合入,破除无主态;其冒烟扫描面门口健康随本仓门禁认领维护。本条修订本身涉挂载消费面,亦须先经消费面评审。
 
 ## 2. ARCHITECTURE 层(契约权威层)
 
@@ -50,12 +50,12 @@ env python3 vt.py --fix-links --dry            # 挂载链接重建预演(去 --
 
 ## 5. 层间关系
 
-23. 路由顺序:clone 新接手者→README;执行席/接棒子智能体→SKILL 层路由→references;工作流配方→skills/tech-talk(见第 7b 条);契约争议→ARCHITECTURE;专题与历史→docs。
-24. 六件挂载(`~/.agents/skills/video`,含 skills/** 文档面)是唯一 live 对外面;skills/** 文档面受第 7b 条约束;docs 层仅在产品仓内,不入挂载消费面。
+23. 路由顺序:clone 新接手者→README;执行席/接棒子智能体→SKILL 层路由→references;工作流配方→templates/tech-talk(见第 7b 条);契约争议→ARCHITECTURE;专题与历史→docs。
+24. 六件挂载(`~/.agents/skills/video`,含 templates/** 文档面)是唯一 live 对外面;templates/** 文档面受第 7b 条约束;职责层不等于物理目录：docs/skill 属 SKILL 层并在挂载面，其余 docs 专题/历史层仅在产品仓内。
 
 ## 6. 附则:解释权与修订流程
 
-25. 本宪章解释权归文档维护者;修订经文档维护者审核,涉契约语义须征得契约维护方评审同意,涉挂载消费面(含 skills/** 文档面)须先发出消费面变更公告并经评审,而后定稿签发。
+25. 本宪章解释权归文档维护者;修订经文档维护者审核,涉契约语义须征得契约维护方评审同意,涉挂载消费面(含 templates/** 文档面)须先发出消费面变更公告并经评审,而后定稿签发。
 26. 定稿落地:评审通过后本稿落产品仓 docs/DOC-CHARTER.md,居 docs/ 顶层,天然处于 docs_smoke「docs/*.md」非递归 glob 扫描面内;§7a 操作示例两条命令(均零写态/预演形态)即成为冒烟面活条目,随本宪章 commit 一并受守护。
 
 ## 7. 保鲜机制条款(v1.1 增补)
@@ -65,8 +65,8 @@ env python3 vt.py --fix-links --dry            # 挂载链接重建预演(去 --
 27. **归属唯一(one home per fact)**:每一事实只有一个家=其职责所属层;他处只准链接,链接须可解析。同一事实在两处以上重复表述=可审查缺陷。叙事时态清理:当前状态是唯一合法时态,历史演变留给 commit/台账/ERRATUM,禁 previously/now/no longer/renamed 式叙述。口诀:bug→postmortem/台账,理由→决策记录,操作→references,契约→ARCHITECTURE 与 schema,安装态事实→catalog 区,数值政策→预算源件,常备指令→根 README 与 SKILL 路由。机检:重复锚检查(leaf_3,登记词族对照);语义全量查重=review(散文抽查)——门只保已登记词族。
 28. **数值型政策只许一处 home(硬条款)**:数值型政策(字数/条数/编制/配额/版本类上限与同值约束)只允许一处 home;散文只许链接+提取命令,复述数值=可审查缺陷。预算唯一 home=仓内 scripts/doc_budget.snapshot.json 快照(单一来源,单位逐件显式 word|char 禁字节,口径命令随件);快照修订须过评审并载实测依据,换锚登记(旧锚/新锚/归因/申请人/复核可五字段)随修订强制。机检:预算门 leaf_2(`python3 scripts/verify_doc_budget.py`)。
 29. **冻结文书封印(分级)**:冻结类文书实行分级封印——A 类(签发令/封盘件/总验收单)整件 SHA-256;B 类 append 族(台账/回执册/批台账)以节哈希封冻结节(合法追加不触节锚),节哈希细则与过渡态人工核归质量复核(review);C 类机制件不入封印面,走普通 review+负例交叉;A 类封印面清单闭合程序=封印申报+复核双载。封印程序:签发令生效后 T+1 工作日内,封印席对 A 类逐件双录(收档哈希=宣称哈希),侧车 manifest 自身内容哈希载入签发令追注行作外部锚;换锚=换锚登记五字段+合法追注重录;封印哈希对原样字节流零规范化。角色分工:封印席(文书产出方)/verifier(独立复核)/外部锚(签发令)。机检:封印 verifier(候机制件落地;落地前过渡态=双录留痕+人工核,本条以纪律条款效力先行——极限诚实声明)。
-30. **挂载消费面清单表(唯一 home)**:挂载消费面清单表=消费面构成事实的唯一 home:六件挂载+skill/ 全件+skills/** 文档面逐件钉名(路径+字节+锚定日),登记件随仓 docs 留档;件增减与表不符即红。**「字节」列显式标注为落表时点快照列,非对账维度——对账维度=路径与存在性。**消费面语义事实仍归各写入权方(§5/§7b),本表只保构成完整。机检:清单表对账(候机制件落地;过渡=readlink 六件 BAD=0 手动锚,§7a 同款)。
-31. **变更联动判据**:①挂载消费面(skill/ 或 skills/** 文档面)任何 commit 必携:挂载复核输出(六件 BAD=0)+消费面变更公告登记行;②组件 manifest(app.json/plugin.json)或 plugins/registry.json 任何变更 commit 必携 catalog 重注(`python3 scripts/gen_manifest_catalog.py --inject docs/catalog.md`),否则文档门红=变更联动失职;③登记行与重注随 commit 三证,commit 面抽检归 review 分工。机检:②已落地(catalog_check leaf_5);①=抽检+本地纪律。
+30. **挂载消费面清单表(唯一 home)**:挂载消费面清单表=消费面构成事实的唯一 home:六件挂载+docs/skill/ 全件+templates/** 文档面逐件钉名(路径+字节+锚定日),登记件随仓 docs 留档;件增减与表不符即红。**「字节」列显式标注为落表时点快照列,非对账维度——对账维度=路径与存在性。**消费面语义事实仍归各写入权方(§5/§7b),本表只保构成完整。机检:清单表对账(候机制件落地;过渡=readlink 六件 BAD=0 手动锚,§7a 同款)。
+31. **变更联动判据**:①挂载消费面(docs/skill/ 或 templates/** 文档面)任何 commit 必携:挂载复核输出(六件 BAD=0)+消费面变更公告登记行;②组件 manifest(app.json/plugin.json)或 plugins/registry.json 任何变更 commit 必携 catalog 重注(`python3 scripts/gen_manifest_catalog.py --inject docs/catalog.md`),否则文档门红=变更联动失职;③登记行与重注随 commit 三证,commit 面抽检归 review 分工。机检:②已落地(catalog_check leaf_5);①=抽检+本地纪律。
 32. **挂载通道极限声明**:挂载消费面保鲜通道保:链路完好(六件 BAD=0)+构成完整(清单表对账)+公告留痕;不保:消费文本语义质量(=review 分工)与版本缓冲(结构缺口,待补)。
 33. **机器不覆盖的判断清单**:以下五项为机器不覆盖的判断,配 review 分工,门禁不得宣示覆盖:①散文语义准确性(与源码行为一致性)=散文抽查 review;②该不该写/该不该归档=维护者评审挑刺制;③教程前置顺序与读者起点适配=文档 review;④挂载消费文本语义质量=消费面 review;⑤契约语义正确性(schema 应然值、判据语义)=契约维护方 review。清单变更随第 25 条修订流程。机检:清单存在性(「机器不覆盖」字样在册)+内容质量=review(双载,防字样门被读作语义门)。
 34. **gate 极限诚实声明**:每个文档门 verifier 落地 commit 必须同 commit 携极限声明行,以「保什么/不保什么」**对偶形态为基准**,声明=存在性〔门〕+内容〔review〕双载;聚合门 leaf 清单变更(增 leaf/扩容)须同 commit 同步头注计数与注册面,三数对账红=门自伤即回炉。机检:声明行 grep≥1(逐一在案);三数对账=doc_gates 尾行。
@@ -74,3 +74,5 @@ env python3 vt.py --fix-links --dry            # 挂载链接重建预演(去 --
 
 ——v1.0 条款 1~26:2026-09-16 定稿落盘。
 ——v1.1 条款 27~35:2026-09-21 增补落盘。
+
+——v1.2 目录修订:2026-10-16，消费面公告见 templates/README.md；工具技能进入 docs/skill，完整工作流与范本平级进入 templates，职责分层与既有写入权保持。旧仓根不留别名；旧挂载修复先预演，仅可清理本仓已确认拥有的退役符号链接。
