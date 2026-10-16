@@ -17,8 +17,28 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
+# The default remains a full reconciliation. CI runs fast on every version,
+# and fast+slow on 3.13; no fast success alone certifies the complete CI run.
+mode="${1:---all}"
+if [ "$#" -gt 1 ]; then echo "usage: $0 [--all|--fast|--slow|--layered]" >&2; exit 2; fi
+case "$mode" in
+  --all|--fast|--slow|--layered) ;;
+  *) echo "unknown test mode: $mode" >&2; exit 2 ;;
+esac
 rc=0
-env python3 -m unittest discover -s tests -t . -v || rc=$?
+if [ "$mode" = --layered ]; then
+  # Always wait for both layers, including after a fast failure.
+  bash "$0" --fast || rc=$?
+  bash "$0" --slow || rc=$?
+  exit "$rc"
+fi
+if [ "$mode" = --all ]; then
+  env python3 -m unittest discover -s tests -t . -v || rc=$?
+else
+  env python3 tests/ci_partition.py "${mode#--}" || rc=$?
+fi
+# Component batches are fast and run once per supported version.
+if [ "$mode" = --slow ]; then exit "$rc"; fi
 for d in apps/*/tests plugins/*/tests templates/*/tests; do
   [ -d "$d" ] || continue
   env python3 -m unittest discover -s "$d" -t "${d%/tests}" -v || rc=$?
