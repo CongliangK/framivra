@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from unittest.mock import patch
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -116,6 +117,23 @@ faces:Array.from(document.fonts).map(f=>({family:f.family,status:f.status})),
 family:getComputedStyle(document.querySelector('p')).fontFamily}))()'''
 
 
+def evidence_url(value):
+    """Keep fixture routes/frame query only; other URL values are digest-only."""
+    if value is None:
+        return None
+    def digest(text):
+        return 'sha256:' + hashlib.sha256(text.encode()).hexdigest()
+    try:
+        parsed = urlsplit(value)
+        authority = parsed.netloc.rsplit('@', 1)[-1]
+        query = [(key, val if key == 'f' and val.isascii() and val.isdecimal()
+                  else digest(val)) for key, val in parse_qsl(parsed.query, keep_blank_values=True)]
+        return urlunsplit((parsed.scheme, authority, parsed.path, urlencode(query),
+                           digest(parsed.fragment) if parsed.fragment else ''))
+    except ValueError:
+        return digest(value)
+
+
 class ProtocolObserver:
     """Passive, allowlisted transport metadata; no CDP calls or request mutation."""
     def __init__(self, append):
@@ -125,7 +143,11 @@ class ProtocolObserver:
         self.sequence = 0
 
     def observe(self, ws, direction, msg):
-        connection = self.connections.setdefault(id(ws), len(self.connections) + 1)
+        # Retain the object for this bounded worker; id cannot be reused while
+        # registered. This does not open/close or otherwise operate the socket.
+        if id(ws) not in self.connections:
+            self.connections[id(ws)] = (ws, len(self.connections) + 1)
+        connection = self.connections[id(ws)][1]
         key = (connection, msg.get('id'))
         method = msg.get('method')
         row = None
@@ -133,14 +155,14 @@ class ProtocolObserver:
             self.pending[key] = method
             row = dict(method=method, command_id=msg.get('id'))
             if method == 'Page.navigate':
-                row['url'] = msg.get('params', {}).get('url')
+                row['url'] = evidence_url(msg.get('params', {}).get('url'))
         elif direction == 'recv' and method in ('Fetch.requestPaused', 'Network.requestWillBeSent'):
             params = msg.get('params', {})
             request = params.get('request', {})
             row = dict(event=method, request_id=params.get('requestId'),
                 frame_id=params.get('frameId'), network_id=params.get('networkId'),
                 resource_type=params.get('resourceType', params.get('type')),
-                request_method=request.get('method'), url=request.get('url'),
+                request_method=request.get('method'), url=evidence_url(request.get('url')),
                 pending_commands=[dict(command_id=k[1], method=v)
                     for k, v in self.pending.items() if k[0] == connection])
         elif direction == 'recv' and key in self.pending:
@@ -199,7 +221,7 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
     protocol = ProtocolObserver(append)
     def response(policy, params):
         method, args = original_response(policy, params)
-        append('requests', dict(url=params['request']['url'], kind=params.get('resourceType'),
+        append('requests', dict(url=evidence_url(params['request']['url']), kind=params.get('resourceType'),
                                decision=method, request_id=params['requestId']))
         return method, args
     def send(ws, data):

@@ -1,12 +1,14 @@
 """Harness source/file mocks only: never starts Chrome or FFmpeg."""
 import copy
+import gc
+import weakref
 import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver
+from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url
 from vtx.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
@@ -405,6 +407,43 @@ class AcceptanceContracts(unittest.TestCase):
         self.assertEqual([r['sequence'] for _, r in rows], list(range(1, 6)))
         self.assertEqual(rows[0][1]['connection'], rows[2][1]['connection'])
         self.assertNotEqual(rows[0][1]['connection'], rows[1][1]['connection'])
+
+    def test_protocol_connection_survives_close_and_rebuild(self):
+        class Socket:
+            def close(self):
+                self.closed = True
+        rows = []
+        observer = ProtocolObserver(lambda key, row: rows.append(row))
+        old = Socket(); ref = weakref.ref(old)
+        observer.observe(old, 'send', dict(id=1, method='CSS.enable'))
+        old.close(); del old; gc.collect()
+        self.assertIsNotNone(ref())
+        self.assertTrue(ref().closed)
+        self.assertIs(observer.connections[id(ref())][0], ref())
+        for _ in range(50):
+            new = Socket()
+            observer.observe(new, 'recv', dict(method='Fetch.requestPaused', params=dict(
+                requestId='r', request={'url':'file:///fixture/a.html'}, resourceType='Other')))
+            self.assertEqual(rows[-1]['pending_commands'], [])
+            new.close(); del new
+        self.assertEqual(len({row['connection'] for row in rows}), 51)
+
+    def test_evidence_url_redacts_values_without_mutating_requests(self):
+        url = 'https://user:PASSWORD@remote.invalid/a?f=12&access_token=SECRET#CREDENTIAL'
+        safe = evidence_url(url)
+        for secret in ('PASSWORD', 'SECRET', 'CREDENTIAL', 'user:'):
+            self.assertNotIn(secret, safe)
+        self.assertIn('/a?f=12&access_token=sha256', safe)
+        self.assertEqual(evidence_url('file:///fixture/a.html?f=0'), 'file:///fixture/a.html?f=0')
+        self.assertNotIn('SECRET', evidence_url('file:///fixture/a.html?f=SECRET'))
+        self.assertNotIn('SECRET', evidence_url('https://[SECRET'))
+        self.assertIsNone(evidence_url(None))
+        rows = []; observer = ProtocolObserver(lambda key, row: rows.append(row))
+        message = dict(method='Fetch.requestPaused', params=dict(request={'url':url}))
+        original = copy.deepcopy(message)
+        observer.observe(object(), 'recv', message)
+        self.assertEqual(message, original)
+        self.assertEqual(rows[0]['url'], safe)
 
     def test_workflow_scope_and_budget(self):
         root=Path(__file__).resolve().parents[1]
