@@ -46,6 +46,8 @@ import sys
 from pathlib import Path
 
 from . import registry as _registry
+from .manifest import load_manifest
+from .compatibility import require_compatible_core
 
 HOOK_NAMES = ("prepare_source", "audio_events", "validate",
               "probe_source", "finish")   # v1.1 + validate；v1.2 + 缝 C/D（§2.2）
@@ -175,6 +177,14 @@ def _load_plugin_module(name: str):
     不参与对账。"""
     try:
         d, origin = _registry.plugin_module_dir(name)
+        if d is None:
+            raise RuntimeError(f"插件 {name} 缺少有效 manifest 导入锚，拒绝加载")
+        manifest, errors = load_manifest(d)
+        if errors:
+            from vtx import __version__
+            raise RuntimeError(f"插件 {name}: 检测内核版本 {__version__!r}; "
+                               f"manifest 无效：{'; '.join(errors)}")
+        require_compatible_core(name, manifest)
         if origin == "external":
             # P4 审查 P1-1 修正：append（官方包/stdlib 优先）+ 导入后即摘除 +
             # mod.__file__ 落点断言——insert(0) 且常驻会让 external 父目录下的

@@ -25,6 +25,8 @@ from pathlib import Path
 
 import re
 
+from .compatibility import core_requirement_error
+
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 # §2.2 v1 两缝 + v1.1 validate + v1.2 缝 C/D（probe_source/finish，2026-09-14
 # P6 增补——扩展点冻结面，与 pluginlib.hooks.HOOK_NAMES 同一值域）
@@ -132,8 +134,10 @@ def validate_manifest(dir_path: Path, data) -> list:
     if not isinstance(requires, dict):
         errors.append("requires 必须为对象（core/binaries/python_packages/platforms）")
     else:
-        if "core" in requires and not isinstance(requires["core"], str):
-            errors.append("requires.core 必须为字符串（内核版本约束，如 >=2.0.0）")
+        if "core" in requires:
+            error = core_requirement_error(requires["core"])
+            if error:
+                errors.append(error)
         for field in ("binaries", "python_packages", "platforms"):
             v = requires.get(field)
             if v is None:

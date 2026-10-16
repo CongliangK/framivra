@@ -61,7 +61,7 @@ def _read_version(here=None) -> str:
     （clone 即用，单一事实源）→ 包内 VERSION（pip 安装布局，pyproject
     package-data 预留通道）→ pyproject.toml version 行（源树缺 VERSION 时与
     三源纪律一致）→ importlib.metadata（wheel 安装布局权威源）→ 内置字面量
-    （与三源同步）。版本串只用于标识，不参与任何门控（P0 复审口径）。
+    （与三源同步）。版本串供标识及显式 requires.core 兼容门使用。
     here=包目录，默认本包；测试注入模拟布局（tests/test_version_sources.py）。"""
     here = Path(here) if here is not None else Path(__file__).resolve().parent
     for candidate in (here.parent / "VERSION", here / "VERSION"):
