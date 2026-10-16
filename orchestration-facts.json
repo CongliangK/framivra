@@ -20,9 +20,10 @@
     "evidence_relative": [
       "outputs/framivra-ledger-2110-evidence/github-readback.json",
       "outputs/framivra-ledger-2110-evidence/issue47-postmain-binding.json",
-      "outputs/framivra-ledger-20261016T2225Z/evidence/github-ci-supplement.json"
+      "outputs/framivra-ledger-20261016T2225Z/evidence/github-ci-supplement.json",
+      "outputs/framivra-ledger-20261016T2340Z/evidence/live-github.json"
     ],
-    "live_recheck": "Main ref/tree unchanged; post-main run38965293693 remains completed/success with all 9 jobs successful."
+    "live_recheck": "Fresh main ref/tree unchanged at3b562f0/bc8ccd11. Earlier exact-main CI success remains separately timed historical evidence."
   },
   "goal": {
     "baseline_ordinary_open": 50,
@@ -60,7 +61,7 @@
     "new_issues_count_toward_original_goal": false,
     "open_pr_count": 9,
     "count_evidence_relative": [
-      "outputs/framivra-ledger-20261016T2225Z/evidence/github-readback.json"
+      "outputs/framivra-ledger-20261016T2340Z/evidence/live-github.json"
     ],
     "original_ranked_manifest": [
       44,
@@ -431,34 +432,42 @@
         62,
         50
       ],
-      "state": "main3b_strict_diagnostics_candidate_frozen_fresh_independent_review_pending",
-      "phase": "local_source_candidate_no_final_head_hosted_acceptance",
-      "published_head": "ebf62c635bb72a6e660562ea9872d0f12c9029d3",
-      "published_tree": "788ebfb0d1246b2c3de97e91a9a4a684964bd51b",
+      "state": "local_f797_author_tests_only_independent_review_blocked_unpublished",
+      "phase": "frozen_local_candidate_pending_review_block_resolution",
+      "published_head": "b8ca357df34ad8972b18e394c3e68c562c20afb0",
+      "published_tree": "ec15f5e2de57600ef6b12b1fc60fd6d0090d08df",
       "pr_url": "https://github.com/CongliangK/framivra/pull/169",
       "base": "3b562f0ee70fe09b5366e6e300c1a31ac3416323",
       "checks": {
-        "author_final_guarded": "81/81 tests PASS; 0 skips/failures/errors; 62.731 seconds; exit 0; unexpected prohibited attempts []. 70-test initial narrower run is retained separately, not added to 81.",
-        "source_binding": "Clean frozen local head/tree and all 858 Git entries independently compared to retained source-binding map; 824 accepted-main-identical, 23 prior-diagnostic-identical, 11 merged/repaired.",
-        "review": "PENDING fresh combined independent review",
-        "final_head_actual": "NOT RUN",
-        "historical_remote": "PR169 remains draft/open at ebf62c635bb72a6e660562ea9872d0f12c9029d3. Prior ordinary CI success and dedicated preflight failure remain historical, not b79a80a acceptance."
+        "author_functional": "108 existing guarded ordinary methods PASS, zero failures/errors/skips, exit0,103.836s; read existing log only.",
+        "author_existing_key_namespace": "5 existing methods PASS, zero failures/errors/skips, exit0,0.655s; read existing log only.",
+        "total_author_only": 113,
+        "new_tree_independent": "NOT REVIEWED; review blocked",
+        "new_tree_actual_media": "NOT RUN; old media evidence inapplicable after production helper change",
+        "new_tree_hosted": "NOT RUN",
+        "published_b8ca_ordinary": "Run38977046608 completed/success,9/9 jobs; synthetic merge checkoutd476a5a303d936f4f884fabb58c27ea8f0d76604, tree matches b8ca per retained audit.",
+        "published_b8ca_hosted": "Run38977046631 completed/success on direct b8ca head; artifact audit CHANGES_REQUIRED: all4 strict PNGs and authored fixture bytes absent.",
+        "development_failures": "Initial and c9f9542 frozen development logs have18 NameError subcase errors. They remain failures; final f797 repaired suite does not erase them."
       },
-      "next_gate": "Independent exact final-head review, then authorized publication; actual strict smoke and original same-source hosted toggle experiment; separate-source accepted-main versus candidate media verification. No merge or closure readiness.",
+      "next_gate": "Preserve frozen candidate and recovery package. Reconcile the independent-review platform block before any new code/security review or publication. Then still require new-tree independent review, new-tree actual media, exact-head ordinary/hosted CI, retained four-PNG artifact audit, normal PR merge and post-merge verification.",
       "evidence_relative": [
-        "outputs/framivra-ledger-20261016T2225Z/evidence/github-readback.json",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-repair-report.md",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-source-binding.json",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-repair-binding.json",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-tests.log",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-tests.exit",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-ancestry.txt",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-integration.patch",
-        "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-diagnostic-repair.patch"
+        "outputs/framivra-ledger-20261016T2340Z/evidence/live-github.json",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/owner2328-status.json",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/owner2328-handoff.md",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/owner2337-status.json",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/owner2337-handoff.md",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-report.md",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-source-binding.json",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-remote-base-binding.json",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-functional.log",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-functional.exit",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-key-tests.log",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-key-tests.exit",
+        "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-hosted-artifact-audit.md"
       ],
-      "captured_at_utc": "2026-10-16T22:23:42.409147+00:00",
-      "branch": "acceptance/lifecycle-63/strict-diagnostics",
-      "worktree_relative": "development/worktrees/framivra-lifecycle-63-strict-diagnostics",
+      "captured_at_utc": "2026-10-16T23:42:05.690564+00:00",
+      "branch": null,
+      "worktree_relative": "development/worktrees/framivra-lifecycle-63-owned-snapshot-final",
       "write_scope": [
         ".github/workflows/lifecycle-63.yml",
         "docs/execution-events.md",
@@ -492,30 +501,58 @@
         "vtx/gfx_render.py",
         "vtx/gfx_runtime.py",
         "vtx/gfx_runtime_executable.py",
+        "vtx/hygiene.py",
         "vtx/infra.py",
         "vtx/process_samples.py"
       ],
       "write_scope_note": "Historical cumulative implementation area; exact remote delta separately bound by head/tree.",
-      "local_candidate": "b79a80aea6f201aee8d52c7d931549cfc9faa255",
-      "tree": "ec15f5e2de57600ef6b12b1fc60fd6d0090d08df",
-      "parent": "39d645f3f1373a061b46536ca4c5c960e8455c6a",
+      "local_candidate": "f797b17d330658b593a85a08cde0065fd02b0221",
+      "tree": "1eeea982269daabeaacbfa24f64fc2f9ad8fd9e5",
+      "parent": "c9f9542fa0d86e8c8ed6f77a7a3231d26925379a",
       "ordered_parents": [
-        "39d645f3f1373a061b46536ca4c5c960e8455c6a"
+        "c9f9542fa0d86e8c8ed6f77a7a3231d26925379a"
       ],
       "issue_state": "open",
       "source_checkpoint_policy": "Unchanged earlier source/review assertions remain historical evidence; an open issue or a fresh issue read does not establish a new source/runtime pass.",
       "counts_toward_original_goal": false,
-      "independent_review": "Fresh combined independent review PENDING at snapshot freeze. Earlier bounded reviews do not certify b79a80a.",
-      "limits": "81 guarded mock/file/source tests are not actual Chrome or media acceptance. Historical dedicated preflight failure remains failed. Same-source instrumentation toggle is not a main-versus-candidate implementation comparison.",
-      "published_head_scope": "Historical PR169 head only; b79a80a is local and unpublished at this snapshot.",
+      "independent_review": "NOT independently reviewed. Prior32175 independent review was terminated by platform security filter before a final report. No retry, rephrasing, replacement probe or bypass; intermediate findings/logs are not a final PASS.",
+      "limits": "Only113 existing ordinary author tests passed. No new-tree browser/media/hosted acceptance or independent source review. Production vtx/hygiene.py helper extraction changed source bytes; old source-media evidence does not cover this tree. PR169 hosted green does not override missing-PNG artifact audit failure.",
+      "published_head_scope": "Published b8ca357/tree ec15f5e only. Final f797b17/tree1eeea98 remains local and unpublished.",
       "diagnostic_repair_paths": [
-        ".github/workflows/lifecycle-63.yml",
-        "scripts/bench_lifecycle.py",
+        "scripts/gfx_evidence.py",
         "tests/run_gfx_dependency_acceptance.py",
         "tests/run_lifecycle_strict_smoke.py",
-        "tests/test_lifecycle_strict_smoke.py",
-        "tests/test_strict_smoke_artifacts.py"
-      ]
+        "tests/test_strict_smoke_artifacts.py",
+        "vtx/hygiene.py"
+      ],
+      "branch_note": "Branch name not established by this metadata-only pass; exact head/tree/worktree are retained from author binding.",
+      "published_artifact_audit": {
+        "id": 12079399400,
+        "bytes": 2367570,
+        "sha256": "b92b1101486d6dcbe96f8a1999a7418653e3f05e70efed8e82981cff522f1d2d",
+        "api_expiry": "2026-10-23T22:50:05Z",
+        "original_bytes_retained_locally": true,
+        "verdict": "CHANGES_REQUIRED",
+        "missing": "All four strict PNGs and authored fixture bytes",
+        "independent_pixel_redecode_possible": false
+      },
+      "superseded_local_candidates": [
+        {
+          "head": "7f499062e3c2ed3284617cc733a986a8e934de40",
+          "tree": "4074704a7bc661cd1544893bf0969c4cba0dcf86",
+          "accepted": false,
+          "review": "CHANGES_REQUIRED; existing report only, not repeated by this task."
+        },
+        {
+          "head": "32175e658eae5afbcd8713c88e4e5daee60d99ad",
+          "tree": "9fa0628eea9fa4194f4a044ac12a28cd284074c0",
+          "accepted": false,
+          "review": "INTERRUPTED_PLATFORM_SECURITY_FILTER_NO_FINAL_VERDICT; no retry/rephrase/bypass."
+        }
+      ],
+      "production_source_changed": true,
+      "old_media_evidence_covers_new_tree": false,
+      "source_binding_scope": "858-path map is retained author-produced metadata, not a new independent source/security review by this snapshot preparer."
     },
     {
       "issue": 48,
@@ -661,8 +698,8 @@
       "dependencies": [
         97
       ],
-      "state": "PR173_qualified_hosted_experiment_PASS_original_no_reread_DoD_UNMET",
-      "phase": "qualified_actual_evidence_reviewed_no_merge_or_closure",
+      "state": "qualified_experiment_PASS_original_no_reread_DoD_UNMET_architecture_blocked",
+      "phase": "architecture_decision_required_no_merge",
       "local_candidate": "0674d4110387d9b3b659532063fd5f0d24d66700",
       "tree": "dba65f1e916dc454ce38f2ece30b61a9f9c521c4",
       "base": "3b562f0ee70fe09b5366e6e300c1a31ac3416323",
@@ -680,7 +717,7 @@
         },
         "no_remote_mutation_by_this_snapshot": true
       },
-      "next_gate": "Resolve original persisted-identity reuse/no-full-reread design within its unchanged trust boundary; retain actual performance costs and independent review. Do not merge PR173 or close #85 on this qualified experiment pass.",
+      "next_gate": "Resolve explicit immutable-import/versioned-storage or authoritative content-version semantics before no-reread acceptance; do not silently substitute stat/Ctx memoization. No safe material micro-optimization proven. No repeat of identical hosted experiment or duplicate research brief.",
       "limits": "Full source rereads remain: 47 cold and 34 warm. Cold +40.22%, warm 2.849x; no no-regression claim. Evidence applies only to this hosted fixture. Raw media excluded, so independent audit did not rehash or re-decode actual media bytes. Pixel format is decoded yuv420p, not RGBA.",
       "evidence_relative": [
         "outputs/framivra-ledger-20261016T2225Z/evidence/github-readback.json",
@@ -801,7 +838,15 @@
         ],
         "branch": "work/issue85-real-media-main3b-reviewed-20261016",
         "pr": 173
-      }
+      },
+      "research_delivery": {
+        "state": "One research brief already delivered to owner",
+        "reported_delivered_at_utc": "2026-10-16T22:46:00Z",
+        "source": "outputs/framivra-ledger-20261016T2340Z/evidence/owner2328-status.json",
+        "resend": false,
+        "source_changed": false
+      },
+      "observed_read_count_qualification": "47 cold/34 warm are observed totals, not proved mandatory lower bounds. Attribution of13 extra cold scans remains inference."
     }
   ],
   "completed": [
@@ -1664,9 +1709,9 @@
     "issue18_issue155": "Issue closure attempts denied and stopped at 14:24 UTC. Both issues remain OPEN. New explicit user confirmation required before retry; do not retry or bypass denial.",
     "issue45": "R4accounting reproduced;publicationblocked; ownershipdecision report retained.",
     "issue87": "Required-context policy remains unverified after access denial; do not retry protected access or change settings. Performance protocol and remaining original acceptance unresolved.",
-    "issue85": "Qualified >=1GB hosted experiment and independent evidence audit PASS; original persisted-identity reuse/no-full-reread DoD UNMET. PR173 remains draft/open; no merge or closure.",
+    "issue85": "Architecture blocked: original no-reread requirement unmet; source unchanged; one research brief already delivered. No merge/closure or repeated same experiment.",
     "asr_publication": "Await exact user/platform resolution; no retry/transport/author/payload/history workaround",
-    "issue63": "b79a80a frozen with 81 guarded tests; fresh independent review pending; final-head actual runtime/paired acceptance unrun."
+    "issue63": "Final f797/1eeea98:113 author-only ordinary tests; not independently reviewed or published. Prior review interrupted by platform security filter; no retry/rephrase/bypass. Published b8ca green runs fail retained-pixel artifact acceptance."
   },
   "conditional_queue": {
     "state": "Historical planning queue with current active/completed state overlay; no additional closures implied.",
@@ -1818,11 +1863,11 @@
         "write_scope": "Add the single versioned lifecycle-event producer with run/key/page/block/frame/backend identity; keep legacy statistics. Cover startup, tabs, setup, retries, healing, copies and stop; record composite CDP RPC honestly. Build safe isolated benchmark wrapper.",
         "original_dod": "platform-issues-live.json",
         "original_dod_assessment": "Current status in active/completed record; prior assessment preserved as historical_queue_entry.",
-        "next_gate": "Independent exact final-head review, then authorized publication; actual strict smoke and original same-source hosted toggle experiment; separate-source accepted-main versus candidate media verification. No merge or closure readiness.",
+        "next_gate": "Preserve frozen candidate and recovery package. Reconcile the independent-review platform block before any new code/security review or publication. Then still require new-tree independent review, new-tree actual media, exact-head ordinary/hosted CI, retained four-PNG artifact audit, normal PR merge and post-merge verification.",
         "acceptance": "At least three paired same-target cold runs on hosted real Chrome, pre-frozen #62 plan/producer provenance, decoded full-frame zero differences, complete wall/critical path/tree RSS, trace overhead, real strict Chrome/pipeline suites. GPU fields null with reason are allowed here.",
         "owner_role": "Workstream implementer; independent reviewer; integration maintainer",
         "environment": "Cloud, excluding local CEF/Electron",
-        "state": "main3b_strict_diagnostics_candidate_frozen_fresh_independent_review_pending",
+        "state": "local_f797_author_tests_only_independent_review_blocked_unpublished",
         "original_dod_reference": "https://github.com/CongliangK/framivra/issues/63"
       },
       {
@@ -1894,11 +1939,11 @@
         "write_scope": "Formal Verified identity and explicit trust model shared by receipt, seg/audio/loudness and QC. Prefer full verified reads at declared trust boundaries plus within-run reuse, or genuinely controlled immutable ingestion; never stat-only sidecars.",
         "original_dod": "platform-issues-live.json",
         "original_dod_assessment": "Current status in active/completed record; prior assessment preserved as historical_queue_entry.",
-        "next_gate": "Resolve original persisted-identity reuse/no-full-reread design within its unchanged trust boundary; retain actual performance costs and independent review. Do not merge PR173 or close #85 on this qualified experiment pass.",
+        "next_gate": "Resolve explicit immutable-import/versioned-storage or authoritative content-version semantics before no-reread acceptance; do not silently substitute stat/Ctx memoization. No safe material micro-optimization proven. No repeat of identical hosted experiment or duplicate research brief.",
         "acceptance": "Same-size restored-mtime middle mutation must invalidate all keys, receipts and QC exemptions. Actual >=1GB media project cold identity overhead <=max(60s,10% total cold time), repeated warm behavior and identity failure negatives; full CPU pipeline and independent audit.",
         "owner_role": "Workstream implementer; independent reviewer; integration maintainer",
         "environment": "Cloud, excluding local CEF/Electron",
-        "state": "PR173_qualified_hosted_experiment_PASS_original_no_reread_DoD_UNMET",
+        "state": "qualified_experiment_PASS_original_no_reread_DoD_UNMET_architecture_blocked",
         "original_dod_reference": "https://github.com/CongliangK/framivra/issues/85"
       },
       {
@@ -2294,61 +2339,62 @@
     "original20": "The prior 9/20 conflated eight original-ranked entries with additional #144. Original ranked manifest never included #144 and no replacement of #150 is established. All historical counts containing #144 require this correction; history is retained, not rewritten."
   },
   "schema_version": 2,
-  "observed_at_utc": "2026-10-16T22:25:10.396065+00:00",
+  "observed_at_utc": "2026-10-16T23:42:05.690564+00:00",
   "remote_capture": {
-    "first_started_at_utc": "2026-10-16T22:18:27.713Z",
-    "last_completed_at_utc": "2026-10-16T22:20:49.804Z",
+    "first_started_at_utc": "2026-10-16T23:39:16.241Z",
+    "last_completed_at_utc": "2026-10-16T23:40:11.862Z",
     "non_atomic": true,
-    "note": "Read-only endpoints observed separately. This is a point-in-time record, not a guarantee that remote state cannot later change."
+    "note": "Separately timed read-only project metadata; no source/security review, tests or probes."
   },
-  "publication_status": "UNPUBLISHED_LOCAL_CANDIDATE; independent exact-byte review pending; no GitHub writes performed",
+  "publication_status": "UNPUBLISHED_LOCAL_SUCCESSOR; independent metadata review pending; no GitHub writes",
   "proposed_branch": "meta/cloud-orchestration-ledger",
-  "published_predecessor": "7abea17c8938f52fbc224805daafcb3481bc4b30",
+  "published_predecessor": "0724aab5c695f273c60e5abd6bcfecf8f71703fe",
   "historical_predecessor": {
-    "commit": "7abea17c8938f52fbc224805daafcb3481bc4b30",
-    "tree": "22f8bdd51ae7e9ce045408007ba9621e56bde708",
-    "snapshot_utc": "2026-10-16T21:11:09.181767+00:00",
-    "url": "https://github.com/CongliangK/framivra/tree/7abea17c8938f52fbc224805daafcb3481bc4b30",
+    "commit": "0724aab5c695f273c60e5abd6bcfecf8f71703fe",
+    "tree": "652b79b3beba95ded09b3bc555b83d3a84419309",
+    "snapshot_utc": "2026-10-16T22:25:10.396065+00:00",
+    "url": "https://github.com/CongliangK/framivra/tree/0724aab5c695f273c60e5abd6bcfecf8f71703fe",
     "source_files": [
       {
         "path": "orchestration-facts.json",
-        "bytes": 393044,
-        "sha256": "623427b0069a8f0ee9b197c60e78c18cfc2916f5cb56113ce1098687c506f162",
-        "sha": "5ec1ca474f00d99fa975e992402bebffa668dc60",
+        "bytes": 151011,
+        "sha": "de853a8695567112b12485dff6f5c03d5ac1d764",
         "mode": "100644",
         "type": "blob",
-        "byte_equal": true
+        "byte_equal": true,
+        "sha256": "db40895137215d82779c9ab5ca9390f821d2f5512c2a487a01c1878f03b8b2d3"
       },
       {
         "path": "orchestration-ledger.md",
-        "bytes": 76080,
-        "sha256": "3715e42e56f8246d7ee68dcd76d2e57cc6ea9236736c4ae60509c08ab2119898",
-        "sha": "8a716a78d277334cf1ae1f435f58ee45afc06487",
+        "bytes": 14462,
+        "sha": "82fa287085f658d255ffcbbfc8e35c619b127e85",
         "mode": "100644",
         "type": "blob",
-        "byte_equal": true
+        "byte_equal": true,
+        "sha256": "eb71e8b33a49aaf8d76a137f5adb4a5af2d6f6b39c90c771aa46e0a731011df0"
       }
     ],
-    "proof_relative": "outputs/framivra-ledger-20261016T2225Z/evidence/previous-publication-proof.json",
-    "retention": "The predecessor remains immutable. Earlier nested histories are retained there rather than duplicated as current facts."
+    "proof_relative": "outputs/framivra-ledger-20261016T2340Z/evidence/previous-publication-proof.json",
+    "retention": "Published22:25 snapshot remains immutable. Its historical unpublished and pending-review wording is not current publication status."
   },
   "metadata_review": {
-    "state": "PENDING_INDEPENDENT_REVIEW",
+    "state": "PENDING_INDEPENDENT_METADATA_REVIEW",
+    "scope": "Metadata/evidence bookkeeping only. No code/security review or blocked probes.",
     "source_code_changes": false,
     "remote_writes": false,
     "read_only_github_checks": true,
     "permission_denial_retries": 0
   },
   "publication_plan": {
-    "proposed_commit_parent": "7abea17c8938f52fbc224805daafcb3481bc4b30",
-    "expected_previous_tree": "22f8bdd51ae7e9ce045408007ba9621e56bde708",
+    "proposed_commit_parent": "0724aab5c695f273c60e5abd6bcfecf8f71703fe",
+    "expected_previous_tree": "652b79b3beba95ded09b3bc555b83d3a84419309",
     "intended_files": [
       "orchestration-facts.json",
       "orchestration-ledger.md"
     ],
     "mode": "100644",
     "tree_creation": "Complete two-file tree without a source base tree",
-    "gate": "Prepare only. Fresh independent exact-byte review and a separate authorized publication step are required. Re-read expected parent; force=false; verify tree, ordered single parent, blob bytes and final ref."
+    "gate": "Prepare only. Independent metadata review and separately authorized publication required. No blocked code/security review may be rerun or rephrased. Any later metadata publication must recheck the expected parent and verify exact two-file bytes/tree/single parent/ref with force=false."
   },
   "permission_stops": {
     "asr": {
@@ -2372,15 +2418,16 @@
     },
     "issue18_issue155": "Issue closure attempts denied and stopped at 14:24 UTC. Both issues remain OPEN. New explicit user confirmation required before retry; do not retry or bypass denial.",
     "issue87": "Required-context policy remains unverified after access denial; do not retry protected access or change settings. Performance protocol and remaining original acceptance unresolved.",
-    "no_retries_or_workarounds_performed": true
+    "no_retries_or_workarounds_performed": true,
+    "issue63_independent_review": "Stopped after platform security-filter interruption; no final report/PASS; do not rerun or rephrase blocked review or probes. No substitute route."
   },
   "four_repository_audit": {
-    "state": "Fresh read-only ref/open-issue/PR/main-CI observations; implementation acceptance remains separately bounded.",
+    "state": "Fresh read-only main/open-issue/PR capture; latest actual acceptance limits unchanged.",
     "capture": {
-      "first_started_at_utc": "2026-10-16T22:18:27.713Z",
-      "last_completed_at_utc": "2026-10-16T22:20:49.804Z",
+      "first_started_at_utc": "2026-10-16T23:39:16.241Z",
+      "last_completed_at_utc": "2026-10-16T23:40:11.862Z",
       "non_atomic": true,
-      "note": "Read-only endpoints observed separately. This is a point-in-time record, not a guarantee that remote state cannot later change."
+      "note": "Separately timed read-only project metadata; no source/security review, tests or probes."
     },
     "repositories": [
       {
@@ -2500,138 +2547,364 @@
       }
     ],
     "evidence_relative": [
-      "outputs/framivra-ledger-20261016T2225Z/evidence/github-readback.json",
-      "outputs/framivra-ledger-20261016T2225Z/evidence/github-ci-supplement.json"
-    ]
+      "outputs/framivra-ledger-20261016T2340Z/evidence/live-github.json",
+      "outputs/framivra-ledger-20261016T2340Z/evidence/owner2328-status.json"
+    ],
+    "fresh_repository_counts": [
+      {
+        "repository": "CongliangK/framivra",
+        "main": {
+          "sha": "3b562f0ee70fe09b5366e6e300c1a31ac3416323",
+          "tree": {
+            "sha": "bc8ccd11583611d6c5577dee3871ebf41244a569",
+            "url": "https://api.github.com/repos/CongliangK/framivra/git/trees/bc8ccd11583611d6c5577dee3871ebf41244a569"
+          },
+          "parents": [
+            {
+              "sha": "91f39e38407b395b04a4f5dc6defa3a5fa80e6be",
+              "url": "https://api.github.com/repos/CongliangK/framivra/commits/91f39e38407b395b04a4f5dc6defa3a5fa80e6be",
+              "html_url": "https://github.com/CongliangK/framivra/commit/91f39e38407b395b04a4f5dc6defa3a5fa80e6be"
+            },
+            {
+              "sha": "cce6927f492df09905abe060b701504e7c5a8746",
+              "url": "https://api.github.com/repos/CongliangK/framivra/commits/cce6927f492df09905abe060b701504e7c5a8746",
+              "html_url": "https://github.com/CongliangK/framivra/commit/cce6927f492df09905abe060b701504e7c5a8746"
+            }
+          ]
+        },
+        "ordinary_open": 42,
+        "open_prs": [
+          159,
+          160,
+          161,
+          162,
+          163,
+          164,
+          166,
+          169,
+          173
+        ],
+        "source": "Fresh GitHub GET; issue and PR collections agree; each page below100 entries."
+      },
+      {
+        "repository": "CongliangK/Coagentdraw",
+        "main": {
+          "sha": "f4b4d9d18fd3c9ce9dc87912bbfdbe0d46d6893c",
+          "tree": {
+            "sha": "1d7292325096eb1587a1f1548390cf28e47ce344",
+            "url": "https://api.github.com/repos/CongliangK/Coagentdraw/git/trees/1d7292325096eb1587a1f1548390cf28e47ce344"
+          },
+          "parents": [
+            {
+              "sha": "bc4cbdc87661dc8fc1bb2562709232fb39127f70",
+              "url": "https://api.github.com/repos/CongliangK/Coagentdraw/commits/bc4cbdc87661dc8fc1bb2562709232fb39127f70",
+              "html_url": "https://github.com/CongliangK/Coagentdraw/commit/bc4cbdc87661dc8fc1bb2562709232fb39127f70"
+            },
+            {
+              "sha": "342e64b8902695d0773405b0a37afb9947d7f497",
+              "url": "https://api.github.com/repos/CongliangK/Coagentdraw/commits/342e64b8902695d0773405b0a37afb9947d7f497",
+              "html_url": "https://github.com/CongliangK/Coagentdraw/commit/342e64b8902695d0773405b0a37afb9947d7f497"
+            }
+          ]
+        },
+        "ordinary_open": 29,
+        "open_prs": [],
+        "source": "Fresh GitHub GET; issue and PR collections agree; each page below100 entries."
+      },
+      {
+        "repository": "CongliangK/router-training",
+        "main": {
+          "sha": "a94fec244669550f219b3d9c376adefd4f9d489b",
+          "tree": {
+            "sha": "2d0e78f217e1eda8beeb1d7f7fe838c07b3b1439",
+            "url": "https://api.github.com/repos/CongliangK/router-training/git/trees/2d0e78f217e1eda8beeb1d7f7fe838c07b3b1439"
+          },
+          "parents": [
+            {
+              "sha": "da7a7d06b2d1e9a5f4abb30479bc7b3aeb3d6de7",
+              "url": "https://api.github.com/repos/CongliangK/router-training/commits/da7a7d06b2d1e9a5f4abb30479bc7b3aeb3d6de7",
+              "html_url": "https://github.com/CongliangK/router-training/commit/da7a7d06b2d1e9a5f4abb30479bc7b3aeb3d6de7"
+            },
+            {
+              "sha": "8a13a67135ff807d684241bfadd691800da18826",
+              "url": "https://api.github.com/repos/CongliangK/router-training/commits/8a13a67135ff807d684241bfadd691800da18826",
+              "html_url": "https://github.com/CongliangK/router-training/commit/8a13a67135ff807d684241bfadd691800da18826"
+            }
+          ]
+        },
+        "ordinary_open": 11,
+        "open_prs": [
+          38
+        ],
+        "source": "Fresh GitHub GET; issue and PR collections agree; each page below100 entries."
+      },
+      {
+        "repository": "CongliangK/ibus-voice-ime",
+        "main": {
+          "sha": "664c9442d79ee2207cbe87fc1cb5fffec4073336",
+          "tree": {
+            "sha": "728783346617847262eaf07fb041d96313690134",
+            "url": "https://api.github.com/repos/CongliangK/ibus-voice-ime/git/trees/728783346617847262eaf07fb041d96313690134"
+          },
+          "parents": [
+            {
+              "sha": "ade22f05d88cce41bae0551c9a019bf395d6b2f7",
+              "url": "https://api.github.com/repos/CongliangK/ibus-voice-ime/commits/ade22f05d88cce41bae0551c9a019bf395d6b2f7",
+              "html_url": "https://github.com/CongliangK/ibus-voice-ime/commit/ade22f05d88cce41bae0551c9a019bf395d6b2f7"
+            },
+            {
+              "sha": "ba5282cbbe4622c6a0252559204762a2397d4343",
+              "url": "https://api.github.com/repos/CongliangK/ibus-voice-ime/commits/ba5282cbbe4622c6a0252559204762a2397d4343",
+              "html_url": "https://github.com/CongliangK/ibus-voice-ime/commit/ba5282cbbe4622c6a0252559204762a2397d4343"
+            }
+          ]
+        },
+        "ordinary_open": 0,
+        "open_prs": [],
+        "source": "Fresh GitHub GET; issue and PR collections agree; each page below100 entries."
+      }
+    ],
+    "ordinary_open_total": 82,
+    "open_pr_total": 10
   },
   "evidence_policy": "Frozen source reports, selected live records and SHA256 references only. No raw internal prompts or private orchestration transcripts are included. Source/actual acceptance/issue completion are distinct.",
   "frozen_evidence_snapshots": {
-    "asr-publication-blocker.md": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/asr-publication-blocker.md",
-      "bytes": 2427,
-      "sha256": "c9ba56c63425f928ae5726ac16fdf3b323520b42f0e60922b7298b3246c53ff8",
-      "source": "outputs/framivra-ledger-1900-evidence/asr-publication-blocker.md"
-    },
-    "asr-stopped-progress.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/asr-stopped-progress.json",
-      "bytes": 2552,
-      "sha256": "c03577840ef8ae7e7064ea5a720bed2c0403a693f52922a42fa69d7aecf91443",
-      "source": "outputs/framivra-ledger-1900-evidence/asr-stopped-progress.json"
-    },
-    "github-ci-supplement.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/github-ci-supplement.json",
-      "bytes": 7254,
-      "sha256": "77b575f53312eed2c79d1fa8729cdf70bf7c922263583509308cc38222c91eca",
-      "source": "Fresh read-only GitHub capture"
-    },
-    "github-readback.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/github-readback.json",
-      "bytes": 122846,
-      "sha256": "35aeacd61065c38fa2fbb314daf6b7e1d9c8bf275e0d3cb50ae56ff74165bdbd",
-      "source": "Fresh read-only GitHub capture"
-    },
-    "issue18-155-closure-readback.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue18-155-closure-readback.json",
-      "bytes": 15250,
-      "sha256": "be81b0c9c9d7329b798304bf19cc8f6a9ce902b6c4630943be24725a8efb0bbe",
-      "source": "outputs/issue18-155-publication-plan/closure-readback.json"
-    },
-    "issue45-ownership.md": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue45-ownership.md",
-      "bytes": 8688,
-      "sha256": "d2f0ea5c3f2fc9c014ff651925125d53517e4a1d8e86a513c5539bb0c0fc44e4",
-      "source": "outputs/framivra-ledger-2110-evidence/issue45-ownership.md"
-    },
-    "issue45-review.md": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue45-review.md",
-      "bytes": 7742,
-      "sha256": "b8ce12ae19e58e13ca6671a9770cc08141d5dc1d5e70fea497f4dd9664d225f5",
-      "source": "outputs/framivra-ledger-2110-evidence/issue45-review.md"
-    },
-    "issue63-ancestry.txt": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-ancestry.txt",
-      "bytes": 2806,
-      "sha256": "d4123b92b66f00d586e9b2ef077726fdc223a5402976ea18d44983a92b7d6685",
-      "source": "outputs/issue63-strict-diagnostics/ancestry.txt"
-    },
-    "issue63-diagnostic-repair.patch": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-diagnostic-repair.patch",
-      "bytes": 18545,
-      "sha256": "854e77da2aaf2d4123b4854c5c120823d9e898cd7babeb6f03b14349ddb435fd",
-      "source": "outputs/issue63-strict-diagnostics/diagnostic-repair.patch"
-    },
-    "issue63-integration.patch": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-integration.patch",
-      "bytes": 396938,
-      "sha256": "74641a04d8b3fd832c83bcf2bde078e4355f1fa0ab3b00a39cfa805d06a2530e",
-      "source": "outputs/issue63-strict-diagnostics/integration.patch"
-    },
-    "issue63-repair-binding.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-repair-binding.json",
-      "bytes": 571,
-      "sha256": "377d6f719f6bfef07eab0fdc3e977569edda0c3fdb2a0ed1e279a4c01cf008a6",
-      "source": "outputs/issue63-strict-diagnostics/repair-binding.json"
-    },
-    "issue63-repair-report.md": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-repair-report.md",
-      "bytes": 5899,
-      "sha256": "db4f5ff361648a6f3554263f4204b01dd3e67182c71acdd0d0f93b2763465d2d",
-      "source": "outputs/issue63-strict-diagnostics/REPORT.md"
-    },
-    "issue63-source-binding.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-source-binding.json",
-      "bytes": 245133,
-      "sha256": "8a7b49b14c8b66631d6a6f0a7ba4a9522e6244c93cee9906b1d2dc8e8fab4354",
-      "source": "outputs/issue63-strict-diagnostics/source-binding.json"
-    },
-    "issue63-tests.exit": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-tests.exit",
+    "issue63-author-functional.exit": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-functional.exit",
       "bytes": 2,
       "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
-      "source": "outputs/issue63-strict-diagnostics/tests.exit"
+      "source": "outputs/issue63-owned-snapshot-unreviewed/repaired-final-tests.exit"
     },
-    "issue63-tests.log": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-tests.log",
-      "bytes": 14763,
-      "sha256": "698d45dad0b1ad8bdcde0207bb4df5c2c3aad0c4cd719b89572db406674d1b66",
-      "source": "outputs/issue63-strict-diagnostics/tests.log"
+    "issue63-author-functional.log": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-functional.log",
+      "bytes": 20031,
+      "sha256": "a422f75cb712daefcf4afee1d718205e85cdd599a256a99f1562648719ee4b58",
+      "source": "outputs/issue63-owned-snapshot-unreviewed/repaired-final-tests.log"
     },
-    "issue85-independent-audit.md": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-independent-audit.md",
-      "bytes": 7685,
-      "sha256": "2ffd95a24d850c790b3e11ac40cfdd2ac223c164dccf24e983109a6bd95bbcf1",
-      "source": "outputs/issue85-experiment-independent-20261016T221137Z/AUDIT.md"
+    "issue63-author-key-tests.exit": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-key-tests.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "outputs/issue63-owned-snapshot-unreviewed/key-tests.exit"
     },
-    "issue85-recomputed-audit.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-recomputed-audit.json",
-      "bytes": 29750,
-      "sha256": "5989db22e0dc81567d03d92ef026ba74ef3216d0a94d12d686978f794328c71e",
-      "source": "outputs/issue85-experiment-independent-20261016T221137Z/recomputed-audit.json"
+    "issue63-author-key-tests.log": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-key-tests.log",
+      "bytes": 884,
+      "sha256": "6c1f48b2862247e255d410a8b1dfc4cb49e3182fc7f187d49b63bb055ef0c1f9",
+      "source": "outputs/issue63-owned-snapshot-unreviewed/key-tests.log"
     },
-    "issue85-retained-file-sha256.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-retained-file-sha256.json",
-      "bytes": 34938,
-      "sha256": "cbcc915077164923af284baaf956946e2875f9cd3a3e0a8cc337e58b8e3db919",
-      "source": "outputs/issue85-experiment-independent-20261016T221137Z/retained-file-sha256.json"
+    "issue63-author-report.md": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-author-report.md",
+      "bytes": 4850,
+      "sha256": "c0d23535df9d300d9f359575236fbe49990ab03370bfbfcdabd4bc9201ce1a1a",
+      "source": "outputs/issue63-owned-snapshot-unreviewed/REPORT.md"
+    },
+    "issue63-hosted-artifact-audit.md": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-hosted-artifact-audit.md",
+      "bytes": 18420,
+      "sha256": "0151dde4ebe027cc8a8745f289f4a2025cc8b742e2aa69083860c82aa90ec62f",
+      "source": "outputs/review63-hosted-b8ca-independent/REPORT.md"
+    },
+    "issue63-remote-base-binding.json": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-remote-base-binding.json",
+      "bytes": 243448,
+      "sha256": "e26bf79f3bdb3bcc44437476566f6bbedc192e1004987f6f18396010ce7cecff",
+      "source": "outputs/issue63-owned-snapshot-unreviewed/remote-base-binding.json"
+    },
+    "issue63-source-binding.json": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/issue63-source-binding.json",
+      "bytes": 245138,
+      "sha256": "1283b943f3eed3c7b1adeae303a5177dab773271a0ac0ec58858e6b4026dceb0",
+      "source": "outputs/issue63-owned-snapshot-unreviewed/source-binding.json"
+    },
+    "live-github.json": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/live-github.json",
+      "bytes": 65551,
+      "sha256": "418e4bb9d8c1f5de21138c2f9540b0fad73a2153107748acd8b4a5810a2c3227",
+      "source": "Fresh read-only GitHub metadata"
+    },
+    "owner2328-handoff.md": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/owner2328-handoff.md",
+      "bytes": 6059,
+      "sha256": "613f692e9ce8d6f65cbb02645b156aaa5e22fc41ce66d9bc9e51b11cc6c7577b",
+      "source": "outputs/overnight-handoff-20261016T2328Z/四仓库夜间进度.md"
+    },
+    "owner2328-status.json": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/owner2328-status.json",
+      "bytes": 6292,
+      "sha256": "64a8b1216fc2db010be2e1e11f5e4d5c807d9608988c9d7772ef340fe60493b1",
+      "source": "outputs/overnight-handoff-20261016T2328Z/status-supplement.json"
+    },
+    "owner2337-handoff.md": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/owner2337-handoff.md",
+      "bytes": 1192,
+      "sha256": "515d74c12500ea07846d4ceffb89009ac9b2a971efa0003ff9b76b3cc0ff55d5",
+      "source": "outputs/overnight-handoff-20261016T2337Z/生命周期修复进度补充.md"
+    },
+    "owner2337-status.json": {
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/owner2337-status.json",
+      "bytes": 2457,
+      "sha256": "5ce480fa1a77ee9143b6bfa06d85e0564534adc62cef84e376c66cb9ef71da8a",
+      "source": "outputs/overnight-handoff-20261016T2337Z/status-supplement.json"
     },
     "previous-publication-proof.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/previous-publication-proof.json",
-      "bytes": 1749,
-      "sha256": "c5b6a2f01ff4412d914c3d3e14973fa13d634e213f99e7717cd260e322dc9543",
-      "source": "outputs/framivra-ledger-2110-publication/publication-proof.json"
-    },
-    "issue85-local-published-binding.json": {
-      "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-local-published-binding.json",
-      "bytes": 883,
-      "sha256": "3240829584d7fd061e2242cf1ca67ff5a54ce835bd3c4807ab15e3f30f219f89",
-      "source": "Fresh local Git identity read plus earlier separately timed remote capture"
+      "path": "outputs/framivra-ledger-20261016T2340Z/evidence/previous-publication-proof.json",
+      "bytes": 1916,
+      "sha256": "3ed4b177acfc8ed8d136c8cdbe805a0fbdf2decb38f2c85a11ed01b1f601cfc7",
+      "source": "outputs/framivra-ledger-20261016T2225Z-publication/publication-proof.json"
     }
   },
-  "local_preparation_correction": {
-    "previous_local_freeze": "outputs/framivra-ledger-20261016T2220Z",
-    "previous_snapshot_utc": "2026-10-16T22:23:42.409147+00:00",
-    "previous_facts_sha256": "34f8f9a2df89964bb46ddb80f797a274c2f4e61768db7b547b740ba2259fad39",
-    "previous_ledger_sha256": "501d86d5418112d78ae063207553fe49f130adea17dc47d50e9ff0033ff61f35",
-    "reason": "Correct Issue85 local/published commit, parent, branch and worktree mapping. Preserve earlier local freeze bytes. Remote capture window is unchanged. Later design/attribution findings are in a separate supplement and are not backdated into either candidate."
-  }
+  "recovery_package_latest": {
+    "kind": "Owner recovery ZIP, not publication or acceptance",
+    "path": "outputs/framivra-issue63-f797b17-recovery.zip",
+    "bytes": 26605,
+    "sha256": "a4e1e44763587eaf61201666a0eb649a32081bd33d0b8813fd8f72ae3e9c58ce",
+    "candidate_head": "f797b17d330658b593a85a08cde0065fd02b0221",
+    "candidate_tree": "1eeea982269daabeaacbfa24f64fc2f9ad8fd9e5",
+    "owner_delivery": "PENDING at handoff assignment; no delivery claimed by this metadata task",
+    "delivery_status_source": "Parent task handoff at2026-10-16T23:38:42Z",
+    "verification": "Exact local ZIP SHA256 checked; no restoration, source review or code execution performed",
+    "sensitivity": "Owner-only recovery package; ZIP itself and private delivery identifiers excluded from proposed GitHub payload."
+  },
+  "snapshot_sources": [
+    {
+      "path": "outputs/overnight-handoff-20261016T2328Z",
+      "snapshot_utc": "2026-10-16T23:29:14Z",
+      "role": "Historical owner handoff; final candidate still in progress then"
+    },
+    {
+      "path": "outputs/overnight-handoff-20261016T2337Z",
+      "snapshot_utc": "2026-10-16T23:37:00Z",
+      "role": "Later frozen f797 author-only test supplement; no old timestamp rewritten"
+    }
+  ],
+  "preparation_scope": "Metadata only. Read existing owner/status/author reports and test logs; verify local hashes and fresh GitHub metadata. No source/security review, execution, tests, blocked probes, review retry/rephrase, source edits or remote writes.",
+  "frozen_evidence_snapshot_history": [
+    {
+      "snapshot_utc": "2026-10-16T22:25:10.396065+00:00",
+      "published_commit": "0724aab5c695f273c60e5abd6bcfecf8f71703fe",
+      "manifest": {
+        "asr-publication-blocker.md": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/asr-publication-blocker.md",
+          "bytes": 2427,
+          "sha256": "c9ba56c63425f928ae5726ac16fdf3b323520b42f0e60922b7298b3246c53ff8",
+          "source": "outputs/framivra-ledger-1900-evidence/asr-publication-blocker.md"
+        },
+        "asr-stopped-progress.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/asr-stopped-progress.json",
+          "bytes": 2552,
+          "sha256": "c03577840ef8ae7e7064ea5a720bed2c0403a693f52922a42fa69d7aecf91443",
+          "source": "outputs/framivra-ledger-1900-evidence/asr-stopped-progress.json"
+        },
+        "github-ci-supplement.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/github-ci-supplement.json",
+          "bytes": 7254,
+          "sha256": "77b575f53312eed2c79d1fa8729cdf70bf7c922263583509308cc38222c91eca",
+          "source": "Fresh read-only GitHub capture"
+        },
+        "github-readback.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/github-readback.json",
+          "bytes": 122846,
+          "sha256": "35aeacd61065c38fa2fbb314daf6b7e1d9c8bf275e0d3cb50ae56ff74165bdbd",
+          "source": "Fresh read-only GitHub capture"
+        },
+        "issue18-155-closure-readback.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue18-155-closure-readback.json",
+          "bytes": 15250,
+          "sha256": "be81b0c9c9d7329b798304bf19cc8f6a9ce902b6c4630943be24725a8efb0bbe",
+          "source": "outputs/issue18-155-publication-plan/closure-readback.json"
+        },
+        "issue45-ownership.md": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue45-ownership.md",
+          "bytes": 8688,
+          "sha256": "d2f0ea5c3f2fc9c014ff651925125d53517e4a1d8e86a513c5539bb0c0fc44e4",
+          "source": "outputs/framivra-ledger-2110-evidence/issue45-ownership.md"
+        },
+        "issue45-review.md": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue45-review.md",
+          "bytes": 7742,
+          "sha256": "b8ce12ae19e58e13ca6671a9770cc08141d5dc1d5e70fea497f4dd9664d225f5",
+          "source": "outputs/framivra-ledger-2110-evidence/issue45-review.md"
+        },
+        "issue63-ancestry.txt": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-ancestry.txt",
+          "bytes": 2806,
+          "sha256": "d4123b92b66f00d586e9b2ef077726fdc223a5402976ea18d44983a92b7d6685",
+          "source": "outputs/issue63-strict-diagnostics/ancestry.txt"
+        },
+        "issue63-diagnostic-repair.patch": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-diagnostic-repair.patch",
+          "bytes": 18545,
+          "sha256": "854e77da2aaf2d4123b4854c5c120823d9e898cd7babeb6f03b14349ddb435fd",
+          "source": "outputs/issue63-strict-diagnostics/diagnostic-repair.patch"
+        },
+        "issue63-integration.patch": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-integration.patch",
+          "bytes": 396938,
+          "sha256": "74641a04d8b3fd832c83bcf2bde078e4355f1fa0ab3b00a39cfa805d06a2530e",
+          "source": "outputs/issue63-strict-diagnostics/integration.patch"
+        },
+        "issue63-repair-binding.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-repair-binding.json",
+          "bytes": 571,
+          "sha256": "377d6f719f6bfef07eab0fdc3e977569edda0c3fdb2a0ed1e279a4c01cf008a6",
+          "source": "outputs/issue63-strict-diagnostics/repair-binding.json"
+        },
+        "issue63-repair-report.md": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-repair-report.md",
+          "bytes": 5899,
+          "sha256": "db4f5ff361648a6f3554263f4204b01dd3e67182c71acdd0d0f93b2763465d2d",
+          "source": "outputs/issue63-strict-diagnostics/REPORT.md"
+        },
+        "issue63-source-binding.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-source-binding.json",
+          "bytes": 245133,
+          "sha256": "8a7b49b14c8b66631d6a6f0a7ba4a9522e6244c93cee9906b1d2dc8e8fab4354",
+          "source": "outputs/issue63-strict-diagnostics/source-binding.json"
+        },
+        "issue63-tests.exit": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-tests.exit",
+          "bytes": 2,
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+          "source": "outputs/issue63-strict-diagnostics/tests.exit"
+        },
+        "issue63-tests.log": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue63-tests.log",
+          "bytes": 14763,
+          "sha256": "698d45dad0b1ad8bdcde0207bb4df5c2c3aad0c4cd719b89572db406674d1b66",
+          "source": "outputs/issue63-strict-diagnostics/tests.log"
+        },
+        "issue85-independent-audit.md": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-independent-audit.md",
+          "bytes": 7685,
+          "sha256": "2ffd95a24d850c790b3e11ac40cfdd2ac223c164dccf24e983109a6bd95bbcf1",
+          "source": "outputs/issue85-experiment-independent-20261016T221137Z/AUDIT.md"
+        },
+        "issue85-recomputed-audit.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-recomputed-audit.json",
+          "bytes": 29750,
+          "sha256": "5989db22e0dc81567d03d92ef026ba74ef3216d0a94d12d686978f794328c71e",
+          "source": "outputs/issue85-experiment-independent-20261016T221137Z/recomputed-audit.json"
+        },
+        "issue85-retained-file-sha256.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-retained-file-sha256.json",
+          "bytes": 34938,
+          "sha256": "cbcc915077164923af284baaf956946e2875f9cd3a3e0a8cc337e58b8e3db919",
+          "source": "outputs/issue85-experiment-independent-20261016T221137Z/retained-file-sha256.json"
+        },
+        "previous-publication-proof.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/previous-publication-proof.json",
+          "bytes": 1749,
+          "sha256": "c5b6a2f01ff4412d914c3d3e14973fa13d634e213f99e7717cd260e322dc9543",
+          "source": "outputs/framivra-ledger-2110-publication/publication-proof.json"
+        },
+        "issue85-local-published-binding.json": {
+          "path": "outputs/framivra-ledger-20261016T2225Z/evidence/issue85-local-published-binding.json",
+          "bytes": 883,
+          "sha256": "3240829584d7fd061e2242cf1ca67ff5a54ce835bd3c4807ab15e3f30f219f89",
+          "source": "Fresh local Git identity read plus earlier separately timed remote capture"
+        }
+      }
+    }
+  ]
 }
