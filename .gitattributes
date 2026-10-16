@@ -1,5 +1,0 @@
-# 强制 LF：Git for Windows 默认 autocrlf=true 会把 .sh/.py 检出成 CRLF，
-# bash 脚本直接死于 '\r'、python shebang 同炸（2026-09-11 跨平台体检定案）
-*.sh text eol=lf
-*.py text eol=lf
-*.mjs text eol=lf

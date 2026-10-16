@@ -1,1 +1,0 @@
-../apps/research/score_topic.py

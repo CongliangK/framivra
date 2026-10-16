@@ -1,8 +1,0 @@
-SKIP G1（无 timeline）
-[timing] 全片解码黑场 pass（G7，响度回执命中免音频测量）: 0.2s
-✗ G2 全片响度: I=-21.8 LUFS（门 [-15.5,-14.0]，回执命中免测）
-✓ G3 解码真峰: TP=-13.5 dBFS（门 ≤-1.0，解码域回执命中免测 out/final.mp4——不信 wav 域）
-✗ G7 零黑帧: blackdetect(d=0.02,pix_th=0.08) 命中 1 处：t=['2']
-SKIP G10（须 timeline+成片齐备）
-FAIL
-EXIT=1

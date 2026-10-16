@@ -1,1 +1,0 @@
-../apps/gates/content_gates.py

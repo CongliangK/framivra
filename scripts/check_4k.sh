@@ -1,1 +1,0 @@
-../apps/publish/check_4k.sh

@@ -1,1 +1,0 @@
-../apps/publish/export_4k.py

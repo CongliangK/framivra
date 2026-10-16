@@ -1,1 +1,0 @@
-../plugins/duck-static/bed_static_duck.py

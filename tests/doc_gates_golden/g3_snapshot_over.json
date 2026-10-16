@@ -1,1 +1,0 @@
-{"version":1,"generated_at":"2026-09-20T01:14:19Z","anchor_head":"golden","budget_items":[{"id":"charter","path_company":"x.md","ceiling":2000,"unit":"char","extract_cmd":"true","warning":1800,"headroom_min":0.1,"generated_budget":null,"measured":2001,"measured_at":"2026-09-20T01:14:19Z","state":"GOLDEN"}],"repeat_anchors":[]}

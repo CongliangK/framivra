@@ -1,1 +1,0 @@
-../apps/research/fetch-site-assets.py

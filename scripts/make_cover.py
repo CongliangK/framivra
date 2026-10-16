@@ -1,1 +1,0 @@
-../apps/cover/make_cover.py

@@ -1,3 +1,0 @@
-golden fixture: plain prose only.
-This file intentionally avoids the reserved marker used by negative gate g2.
-Third line keeps the fixture non-empty so line-oriented tools see real content.

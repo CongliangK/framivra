@@ -1,1 +1,0 @@
-../apps/publish/compare_4k_quality.py

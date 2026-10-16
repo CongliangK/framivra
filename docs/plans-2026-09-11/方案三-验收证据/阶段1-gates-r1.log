@@ -1,9 +1,0 @@
-[timing] G1 批量测量（38 窗 4 批）: 1.8s
-✓ G1 口播窗−间隙窗+均匀: 中位 -15.6 vs -70.0 = +54.4 dB（门 +4.5）；口播窗极差 2.9 dB（门 ≤8.0）；音频源=out/audio.wav
-[timing] 全片解码合并 pass（G2/G3+G7）: 5.4s
-✓ G2 全片响度: I=-15.5 LUFS（门 [-15.5,-14.0]）
-✓ G3 解码真峰: TP=-3.6 dBFS（门 ≤-1.0，解码域测 out/final.mp4——不信 wav 域）
-✓ G7 零黑帧: blackdetect(d=0.02,pix_th=0.08) 命中 0 处
-✓ G10 帧数+封装: 16746f/558.200000s/30/1（门 16746f/558.200s/30/1；计数口径 nb_read_packets）；[信息] enc=Lavc62.28.102 libx264 / aac-LC 192k 48000Hz 2ch / faststart=True
-PASS
-7.48s
