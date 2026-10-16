@@ -81,3 +81,5 @@ def _read_version(here=None) -> str:
 __version__ = _read_version()
 
 from .cli import main, _stage_receipt_name   # noqa: E402（需在 __version__ 后无依赖序，cli 为纯相对导入）
+
+# Issue 87 validation-only mixed source path fixture; never merge.
