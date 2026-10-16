@@ -20,6 +20,10 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = ROOT / "docs" / "model-license-inventory.json"
 NOTICE = "FRAMIVRA-LICENSE-NOTICE.json"
+# Conventional media/font files need individual provenance entries. This does
+# not recognize arbitrary renamed binaries or classify every possible format.
+MEDIA_FONT_SUFFIXES = {".ttf", ".otf", ".woff", ".woff2", ".png", ".jpg", ".jpeg",
+                       ".webp", ".gif", ".wav", ".mp3", ".flac", ".mp4", ".mov", ".mkv"}
 
 
 class LicensePolicyError(RuntimeError):
@@ -34,9 +38,11 @@ def load_inventory(path=INVENTORY):
         raise LicensePolicyError("invalid inventory")
     for ident, evidence in data["evidence"].items():
         if evidence.get("local_path"):
-            if evidence["local_path"] != "LICENSE":
+            relative = Path(evidence["local_path"])
+            path = ROOT / relative
+            if relative.is_absolute() or ".." in relative.parts or path.is_symlink() or not path.resolve().is_relative_to(ROOT.resolve()):
                 raise LicensePolicyError("unsupported local evidence home")
-            text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         else:
             text = evidence.get("text")
         if not isinstance(text, str) or not text or hashlib.sha256(text.encode("utf-8")).hexdigest() != evidence.get("sha256"):
@@ -48,8 +54,16 @@ def load_inventory(path=INVENTORY):
             raise LicensePolicyError("asset lacks source/status/payload scope: " + ident)
         if asset.get("evidence") and asset["evidence"] not in data["evidence"]:
             raise LicensePolicyError("missing evidence reference: " + ident)
+        for ref in asset.get("additional_evidence", []):
+            if ref not in data["evidence"]:
+                raise LicensePolicyError("missing additional evidence reference: " + ident)
         if asset["default_payload"] and (asset["license_status"] != "DECLARED" or not asset.get("evidence")):
-            raise LicensePolicyError("unreviewed default payload: " + ident)
+            # Existing source/data conflicts must be visible as blockers, not
+            # omitted to manufacture a clean inventory. Never permits weights.
+            if not (asset.get("kind") in ("authored-code", "data")
+                    and asset.get("distribution") == ["git-source"]
+                    and asset.get("distribution_blocker")):
+                raise LicensePolicyError("unreviewed default payload: " + ident)
     return data
 
 
@@ -163,7 +177,24 @@ def audit_payload(root=ROOT, *, inventory=None, tracked=None):
     unexpected = [name for name in tracked if name and Path(name).suffix.lower() in banned]
     if unexpected:
         raise LicensePolicyError("unreviewed model/binary payload: " + ", ".join(unexpected))
-    return dict(ok=True, scope="declared default source/kernel payload only; no clearance of optional external assets",
+    registered_files = {name for asset in data["assets"].values() for name in asset.get("files_sha256", {})}
+    unregistered = [name for name in tracked if Path(name).suffix.lower() in MEDIA_FONT_SUFFIXES and name not in registered_files]
+    if unregistered:
+        raise LicensePolicyError("unregistered media/font payload: " + ", ".join(unregistered))
+    for ident, asset in data["assets"].items():
+        for name, expected in asset.get("files_sha256", {}).items():
+            path = root / name
+            if Path(name).is_absolute() or ".." in Path(name).parts or path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+                raise LicensePolicyError("unsafe inventoried file: " + name)
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                raise LicensePolicyError("inventoried payload changed: " + ident + ": " + name)
+        if asset.get("version_home") and asset.get("lock_sha256"):
+            if hashlib.sha256((root / asset["version_home"]).read_bytes()).hexdigest() != asset["lock_sha256"]:
+                raise LicensePolicyError("external dependency lock changed: " + ident)
+    return dict(ok=True, scope="inventory integrity only; no clearance of source redistribution or optional external assets",
+                release_eligible=False,
+                release_blockers={k: v["distribution_blocker"] for k, v in data["assets"].items() if v.get("distribution_blocker")},
+                distribution_policy=data.get("distribution_policy", {}),
                 default_assets=[k for k, v in data["assets"].items() if v["default_payload"]],
                 provenance_warnings=data.get("provenance_warnings", []),
                 unknown_or_restricted=[k for k, v in data["assets"].items() if v["license_status"] != "DECLARED"])

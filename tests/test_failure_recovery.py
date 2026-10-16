@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import unittest
 from unittest import mock
 import wave
@@ -94,6 +95,100 @@ class MediaRecovery(unittest.TestCase):
         recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
         self.assertFalse(orphan.exists())
         self.assertTrue(other.exists())
+
+    def test_marker_published_after_media_while_target_lock_held(self):
+        original = recovery.fstxn.atomic_write
+        def checked(path, data):
+            self.assertTrue(self.target.exists())
+            self.assertTrue(recovery.fstxn._thread_lock_for(self.target).locked())
+            self.assertEqual(json.loads(data)['sha256'], recovery._digest(self.target))
+            return original(path, data)
+        with mock.patch.object(recovery.fstxn, 'atomic_write', checked):
+            recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
+
+    def test_legacy_marker_publication_retains_target_lock(self):
+        with mock.patch.object(recovery.fstxn, '_legacy_guard', return_value=True):
+            self.test_marker_published_after_media_while_target_lock_held()
+
+    def test_marker_failure_releases_target_lock_for_retry(self):
+        with mock.patch.object(recovery.fstxn, 'atomic_write', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
+        self.assertFalse(recovery.fstxn._thread_lock_for(self.target).locked())
+        recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
+        self.assertTrue(recovery.media_cache_valid(self.target))
+
+    def test_orphan_cleanup_preserves_companion_temporary(self):
+        companion = self.target.parent / ('.' + self.target.name + '.complete.json.active.tmp')
+        companion.write_bytes(b'active companion')
+        recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
+        self.assertEqual(companion.read_bytes(), b'active companion')
+
+    def test_orphan_target_names_are_literal_in_both_platform_paths(self):
+        for legacy in (False, True):
+            for name, other_name in [('a[1].wav', 'a1.wav'),
+                                     ('a*.wav', 'ab.wav'),
+                                     ('a?.wav', 'ab.wav'),
+                                     ('plain.wav', 'other.wav')]:
+                with self.subTest(legacy=legacy, name=name):
+                    target = self.target.parent / name
+                    own = target.parent / ('.' + name + '.12345678.tmp')
+                    other = target.parent / ('.' + other_name + '.12345678.tmp')
+                    companion = target.parent / ('.' + name + '.complete.json.active.tmp')
+                    own.write_bytes(b'owned orphan')
+                    other.write_bytes(b'other active writer')
+                    companion.write_bytes(b'active companion')
+                    mode = (mock.patch.object(recovery.fstxn, '_legacy_guard', return_value=True)
+                            if legacy else contextlib.nullcontext())
+                    with mode:
+                        recovery.atomic_ffmpeg(self.c, ['ffmpeg', '-y', str(target)], self.encode)
+                    self.assertFalse(own.exists())
+                    self.assertEqual(other.read_bytes(), b'other active writer')
+                    self.assertEqual(companion.read_bytes(), b'active companion')
+                    self.assertTrue(recovery.media_cache_valid(target))
+
+    def test_same_target_writer_cannot_enter_during_marker_publication(self):
+        marker_entered = threading.Event()
+        second_lock_attempt = threading.Event()
+        second_encoded = threading.Event()
+        original_write = recovery.fstxn.atomic_write
+        original_lock = recovery.fstxn._thread_lock_for
+        errors = []
+        def lock(path):
+            if threading.current_thread().name == 'second' and Path(path) == self.target:
+                second_lock_attempt.set()
+            return original_lock(path)
+        def write(path, data):
+            if threading.current_thread().name == 'first':
+                marker_entered.set()
+                if not second_lock_attempt.wait(5):
+                    raise RuntimeError('second writer never attempted target lock')
+                self.assertTrue(original_lock(self.target).locked())
+                self.assertFalse(second_encoded.is_set())
+            return original_write(path, data)
+        def encode(argv):
+            if threading.current_thread().name == 'second':
+                second_encoded.set()
+            return self.encode(argv)
+        def worker():
+            try:
+                recovery.atomic_ffmpeg(self.c, self.cmd, encode)
+            except BaseException as exc:
+                errors.append(exc)
+        with mock.patch.object(recovery.fstxn, 'atomic_write', write), \
+                mock.patch.object(recovery.fstxn, '_thread_lock_for', lock):
+            first = threading.Thread(target=worker, name='first')
+            second = threading.Thread(target=worker, name='second')
+            first.start()
+            self.assertTrue(marker_entered.wait(5))
+            second.start()
+            first.join(10)
+            second.join(10)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(second_encoded.is_set())
+        self.assertTrue(recovery.media_cache_valid(self.target))
+        self.assertEqual(list(self.target.parent.glob('.*.tmp')), [])
 
     def test_legacy_and_digest_mismatch_require_actual_complete_wav(self):
         wav(self.target)
