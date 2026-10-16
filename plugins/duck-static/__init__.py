@@ -85,8 +85,8 @@ def validate(c) -> list:
         vt = v.get("voice_track", DEFAULTS["voice_track"])
         if not isinstance(vt, str) or vt not in names:
             errs.append(DiagnosticMessage(f"{label}: duck_strategy.voice_track {vt!r} 不是本 timeline 的音轨名"
-                        f"（现有：{(known_names := operation(c, lambda: sorted(n for n in names if n), path='$.audio_tracks',
-                        rule='plugin.duck.operation', operands={'operation': 'sort track names for error message'}))}）", json_path=f'$.audio_tracks[{i}].duck_strategy.voice_track', rule_id='plugin.duck.voice_track', measured={'value': vt}, threshold={'allowed': known_names}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': f'$.audio_tracks[{i}].duck_strategy.voice_track'}}]))
+                        f"""（现有：{(known_names := operation(c, lambda: sorted(n for n in names if n), path='$.audio_tracks',
+                        rule='plugin.duck.operation', operands={'operation': 'sort track names for error message'}))}）""", json_path=f'$.audio_tracks[{i}].duck_strategy.voice_track', rule_id='plugin.duck.voice_track', measured={'value': vt}, threshold={'allowed': known_names}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': f'$.audio_tracks[{i}].duck_strategy.voice_track'}}]))
     return errs
 
 
