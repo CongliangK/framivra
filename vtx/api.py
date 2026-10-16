@@ -2,7 +2,7 @@
 
 稳定性承诺：本模块的每个导出都是**内核 API 面**——签名与语义变更须过对抗审查
 （ARCHITECTURE §0 修改纪律），不做静默破坏性变更。外部组件（apps/plugins/
-skills/tests）一律经本模块或 `from vtx import ...` 使用内核能力，禁止各自
+templates/tests）一律经本模块或 `from vtx import ...` 使用内核能力，禁止各自
 sys.path hack（§1.4 双模块裂分防护）。
 
 导出分组：

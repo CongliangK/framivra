@@ -154,7 +154,8 @@ class SdistSafetyTest(unittest.TestCase):
             self.assertFalse((target / ".git").exists())
             self.assertFalse((target / "apps").exists())
             self.assertFalse((target / "tests").exists())
-            self.assertFalse((target / "skills").exists())
+            self.assertFalse((target / "templates").exists())
+            self.assertFalse((target / "docs" / "skill").exists())
             self.assertEqual((target / "plugins/registry.json").read_bytes(),
                              (REPO / "plugins/registry.json").read_bytes())
 

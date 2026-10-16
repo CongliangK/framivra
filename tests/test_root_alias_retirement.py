@@ -76,7 +76,7 @@ class IsolatedSkillMounts(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertFalse(Path(os.readlink(link)).is_absolute())
             self.assertEqual(link.resolve(), (REPO / target).resolve())
-        self.assertTrue((self.mount / "skills/tech-talk/SKILL.md").read_text())
+        self.assertTrue((self.mount / "templates/tech-talk/SKILL.md").read_text())
         self.assertEqual(vt._mount_link_state(), [])
         self.assertEqual(self.doctor()["fix"]["mount"]["status"], "ok")
         self.assertIn("无可自动修复项", self.doctor(False))

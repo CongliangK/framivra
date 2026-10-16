@@ -5,7 +5,7 @@
 本测试需要真实 CEF 二进制与多进程树，不属 CPU CI 媒体面。
 
 三组验收（工单 DoD 逐条）：
-  1. A0（Software OSR）命令行独立加载 examples/skill-demo/gfxA.html?f=0
+  1. A0（Software OSR）命令行独立加载 templates/skill-demo/gfxA.html?f=0
      → 1920x1080 PNG 过 gfx_cli.png_invalid_reason()；
   2. A1（GPU 合成→CPU Buffer，纯无头 ozone=headless，任何显示环境可跑）
      → 同上；
@@ -41,7 +41,7 @@ from vtx.proc_supervisor import (WORKER_LEDGER, SupervisedProcessGroup,
 ROOT = Path(__file__).resolve().parents[1]
 _LINUX_PROC = Path("/proc/self/stat").is_file()
 _WORKER = os.environ.get("VTX_TEST_CEF_WORKER", "")
-GFAX_URL = (ROOT / "examples/skill-demo/gfxA.html").as_uri() + "?f=0"
+GFAX_URL = (ROOT / "templates/skill-demo/gfxA.html").as_uri() + "?f=0"
 
 _GATE = _LINUX_PROC and _WORKER and Path(_WORKER).is_file()
 

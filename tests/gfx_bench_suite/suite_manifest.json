@@ -14,7 +14,7 @@
       "本文件是 S1–S8 场景定义的唯一权威（one home per fact）。自冻结 commit 起，",
       "场景输入页面、分辨率、帧率、总帧数、调度帧序列与特性标签不再变更。",
       "消费方（#107 铁基线 / #115 #117 生死线压测 / #118–#121 审计）以冻结 commit sha 锁定本文件。",
-      "上游模板页（skills/** 与 examples/**）演化导致的漂移由下方 pages[].sha256_16 指纹暴露：",
+      "上游模板页（templates/**）演化导致的漂移由下方 pages[].sha256_16 指纹暴露：",
       "指纹失配＝输入变更＝必须开新 issue 重冻结，禁止就地改数。",
       "勘误只允许改非场景定义字段（注释/文档指针），不允许动帧数/序列/页面/标签。"
     ]
@@ -31,7 +31,7 @@
   },
 
   "protocol": {
-    "frame_driven_iron_law": "动画状态 = 帧号 f 的纯函数；禁 CSS animation/transition 属性、墙钟取态（Date 等）、非 seeded 随机、rAF 时序（权威：skill/references/gfx.md 帧驱动协议节）",
+    "frame_driven_iron_law": "动画状态 = 帧号 f 的纯函数；禁 CSS animation/transition 属性、墙钟取态（Date 等）、非 seeded 随机、rAF 时序（权威：docs/skill/references/gfx.md 帧驱动协议节）",
     "query_param": "?f=<帧号>（CDP 引擎以 location.search 变更确认新文档）",
     "page_internal_time": "复用页遵循各自页内协议 t=min(f/FPS_page, N_page/FPS_page)：套件按帧号调度（30fps 契约），页面内部自行钳制，f≥N 时定格终态，保持纯函数与可调度性",
     "hooks": {
@@ -87,7 +87,7 @@
       "pages": [
         {
           "role": "gfxA",
-          "path": "examples/skill-demo/gfxA.html",
+          "path": "templates/skill-demo/gfxA.html",
           "origin": "复用（issue 指定 examples 版；与 gfx-examples 版内容不同源）",
           "sha256_16": "663ca3ba9c233f20",
           "frames": 90,
@@ -112,7 +112,7 @@
       "pages": [
         {
           "role": "data_table_grouped",
-          "path": "skills/tech-talk/assets/gfx-templates/data_table_grouped.html",
+          "path": "templates/tech-talk/assets/gfx-templates/data_table_grouped.html",
           "origin": "复用",
           "sha256_16": "85b338ee32e4af45",
           "frames": 180,
@@ -120,7 +120,7 @@
         },
         {
           "role": "nav_card",
-          "path": "skills/tech-talk/assets/gfx-templates/nav_card.html",
+          "path": "templates/tech-talk/assets/gfx-templates/nav_card.html",
           "origin": "复用",
           "sha256_16": "07dba14f9bba7129",
           "frames": 180,
@@ -158,7 +158,7 @@
       "pages": [
         {
           "role": "overlay_card_bottom",
-          "path": "skills/tech-talk/assets/gfx-templates/overlay_card_bottom.html",
+          "path": "templates/tech-talk/assets/gfx-templates/overlay_card_bottom.html",
           "origin": "复用",
           "sha256_16": "3a61ad38aa958692",
           "frames": 150,
@@ -166,7 +166,7 @@
         },
         {
           "role": "overlay_card_top",
-          "path": "skills/tech-talk/assets/gfx-templates/overlay_card_top.html",
+          "path": "templates/tech-talk/assets/gfx-templates/overlay_card_top.html",
           "origin": "复用",
           "sha256_16": "8c152cfcbe62200c",
           "frames": 150,
@@ -174,7 +174,7 @@
         },
         {
           "role": "lower_third",
-          "path": "skill/assets/lower-third.html",
+          "path": "docs/skill/assets/lower-third.html",
           "origin": "复用（内核起手模板）",
           "sha256_16": "7712bcac4a1500f5",
           "frames": 150,
@@ -279,22 +279,22 @@
       "name": "高压并发 / 长稳（模板全语料）",
       "features": ["14 模板交替 × 4/7 页级并发", "单 Worker 连续 5,000 帧不重启", "RSS 内存预算"],
       "pages": [
-        {"path": "examples/skill-demo/gfxA.html",                    "sha256_16": "663ca3ba9c233f20", "visit_frames": 90,  "page_protocol": {"fps": 30, "N": 90},  "visit_basis": "S1 角色"},
-        {"path": "skill/assets/lower-third.html",                    "sha256_16": "7712bcac4a1500f5", "visit_frames": 150, "page_protocol": {"fps": 24, "N": 192}, "visit_basis": "S4a 角色"},
-        {"path": "skill/assets/title-card.html",                     "sha256_16": "f17019e7ae5a23bd", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 192}, "visit_basis": "默认 120（无 S1–S6 角色）"},
-        {"path": "skills/tech-talk/assets/gfx-examples/gfxA.html",   "sha256_16": "ca26519e8fe0b98c", "visit_frames": 90,  "page_protocol": {"fps": 24, "N": 90},  "visit_basis": "自然 N=90"},
-        {"path": "skills/tech-talk/assets/gfx-examples/gfxB.html",   "sha256_16": "7351429535c8193d", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 192}, "visit_basis": "默认 120"},
-        {"path": "skills/tech-talk/assets/gfx-examples/gfxC.html",   "sha256_16": "f67b304a00e00ce5", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 168}, "visit_basis": "默认 120"},
-        {"path": "skills/tech-talk/assets/gfx-examples/motion.html", "sha256_16": "fddadad2af4f38f3", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 120}, "visit_basis": "自然 N=120"},
-        {"path": "skills/tech-talk/assets/gfx-templates/chart_curve.html",           "sha256_16": "a4963d195649d7e3", "visit_frames": 300, "page_protocol": {"fps": 30, "N": 600}, "visit_basis": "S3 基页角色"},
-        {"path": "skills/tech-talk/assets/gfx-templates/data_table_grouped.html",    "sha256_16": "85b338ee32e4af45", "visit_frames": 180, "page_protocol": {"fps": 30, "N": 896}, "visit_basis": "S2 角色"},
-        {"path": "skills/tech-talk/assets/gfx-templates/endboard.html",              "sha256_16": "91f8d70634047884", "visit_frames": 120, "page_protocol": {"fps": 30, "N": 765}, "visit_basis": "默认 120"},
-        {"path": "skills/tech-talk/assets/gfx-templates/nav_card.html",              "sha256_16": "07dba14f9bba7129", "visit_frames": 180, "page_protocol": {"fps": 30, "N": 155}, "visit_basis": "S2 角色"},
-        {"path": "skills/tech-talk/assets/gfx-templates/overlay_card_bottom.html",   "sha256_16": "3a61ad38aa958692", "visit_frames": 150, "page_protocol": {"fps": 30, "N": 720}, "visit_basis": "S4a 角色"},
-        {"path": "skills/tech-talk/assets/gfx-templates/overlay_card_top.html",      "sha256_16": "8c152cfcbe62200c", "visit_frames": 150, "page_protocol": {"fps": 30, "N": 324}, "visit_basis": "S4a 角色"},
-        {"path": "skills/tech-talk/assets/presets/placeholders/placeholder_gfx.html","sha256_16": "4361fb9e8864bacc", "visit_frames": 30,  "page_protocol": {"fps": 30, "N": 30},  "visit_basis": "自然 N=30"}
+        {"path": "templates/skill-demo/gfxA.html",                    "sha256_16": "663ca3ba9c233f20", "visit_frames": 90,  "page_protocol": {"fps": 30, "N": 90},  "visit_basis": "S1 角色"},
+        {"path": "docs/skill/assets/lower-third.html",                    "sha256_16": "7712bcac4a1500f5", "visit_frames": 150, "page_protocol": {"fps": 24, "N": 192}, "visit_basis": "S4a 角色"},
+        {"path": "docs/skill/assets/title-card.html",                     "sha256_16": "f17019e7ae5a23bd", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 192}, "visit_basis": "默认 120（无 S1–S6 角色）"},
+        {"path": "templates/tech-talk/assets/gfx-examples/gfxA.html",   "sha256_16": "ca26519e8fe0b98c", "visit_frames": 90,  "page_protocol": {"fps": 24, "N": 90},  "visit_basis": "自然 N=90"},
+        {"path": "templates/tech-talk/assets/gfx-examples/gfxB.html",   "sha256_16": "7351429535c8193d", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 192}, "visit_basis": "默认 120"},
+        {"path": "templates/tech-talk/assets/gfx-examples/gfxC.html",   "sha256_16": "f67b304a00e00ce5", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 168}, "visit_basis": "默认 120"},
+        {"path": "templates/tech-talk/assets/gfx-examples/motion.html", "sha256_16": "fddadad2af4f38f3", "visit_frames": 120, "page_protocol": {"fps": 24, "N": 120}, "visit_basis": "自然 N=120"},
+        {"path": "templates/tech-talk/assets/gfx-templates/chart_curve.html",           "sha256_16": "a4963d195649d7e3", "visit_frames": 300, "page_protocol": {"fps": 30, "N": 600}, "visit_basis": "S3 基页角色"},
+        {"path": "templates/tech-talk/assets/gfx-templates/data_table_grouped.html",    "sha256_16": "85b338ee32e4af45", "visit_frames": 180, "page_protocol": {"fps": 30, "N": 896}, "visit_basis": "S2 角色"},
+        {"path": "templates/tech-talk/assets/gfx-templates/endboard.html",              "sha256_16": "91f8d70634047884", "visit_frames": 120, "page_protocol": {"fps": 30, "N": 765}, "visit_basis": "默认 120"},
+        {"path": "templates/tech-talk/assets/gfx-templates/nav_card.html",              "sha256_16": "07dba14f9bba7129", "visit_frames": 180, "page_protocol": {"fps": 30, "N": 155}, "visit_basis": "S2 角色"},
+        {"path": "templates/tech-talk/assets/gfx-templates/overlay_card_bottom.html",   "sha256_16": "3a61ad38aa958692", "visit_frames": 150, "page_protocol": {"fps": 30, "N": 720}, "visit_basis": "S4a 角色"},
+        {"path": "templates/tech-talk/assets/gfx-templates/overlay_card_top.html",      "sha256_16": "8c152cfcbe62200c", "visit_frames": 150, "page_protocol": {"fps": 30, "N": 324}, "visit_basis": "S4a 角色"},
+        {"path": "templates/tech-talk/assets/presets/placeholders/placeholder_gfx.html","sha256_16": "4361fb9e8864bacc", "visit_frames": 30,  "page_protocol": {"fps": 30, "N": 30},  "visit_basis": "自然 N=30"}
       ],
-      "page_count_note": "14 页 = issue 背景口径：examples/skill-demo/gfxA.html + skill/assets/** + skills/tech-talk/assets/**（含 presets/placeholders）下的全部 HTML，本清单即权威枚举（顺序即交替顺序）",
+      "page_count_note": "14 页 = issue 背景口径：templates/skill-demo/gfxA.html + docs/skill/assets/** + templates/tech-talk/assets/**（含 presets/placeholders）下的全部 HTML，本清单即权威枚举（顺序即交替顺序）",
       "legs": {
         "alternating_concurrency": {
           "description": "14 页按上表顺序交替轮转，页级并发分别取 4 与 7",
@@ -311,15 +311,15 @@
           "allocation": [
             {"rounds": 2, "pages": "ALL_14", "frames_per_page": "visit_frames（各页见上表）", "frames": 3840},
             {"rounds": 1, "partial": [
-              {"path": "examples/skill-demo/gfxA.html", "frames": 90},
-              {"path": "skill/assets/lower-third.html", "frames": 150},
-              {"path": "skill/assets/title-card.html", "frames": 120},
-              {"path": "skills/tech-talk/assets/gfx-examples/gfxA.html", "frames": 90},
-              {"path": "skills/tech-talk/assets/gfx-examples/gfxB.html", "frames": 120},
-              {"path": "skills/tech-talk/assets/gfx-examples/gfxC.html", "frames": 120},
-              {"path": "skills/tech-talk/assets/gfx-examples/motion.html", "frames": 120},
-              {"path": "skills/tech-talk/assets/gfx-templates/chart_curve.html", "frames": 300},
-              {"path": "skills/tech-talk/assets/gfx-templates/data_table_grouped.html", "frames": 50}
+              {"path": "templates/skill-demo/gfxA.html", "frames": 90},
+              {"path": "docs/skill/assets/lower-third.html", "frames": 150},
+              {"path": "docs/skill/assets/title-card.html", "frames": 120},
+              {"path": "templates/tech-talk/assets/gfx-examples/gfxA.html", "frames": 90},
+              {"path": "templates/tech-talk/assets/gfx-examples/gfxB.html", "frames": 120},
+              {"path": "templates/tech-talk/assets/gfx-examples/gfxC.html", "frames": 120},
+              {"path": "templates/tech-talk/assets/gfx-examples/motion.html", "frames": 120},
+              {"path": "templates/tech-talk/assets/gfx-templates/chart_curve.html", "frames": 300},
+              {"path": "templates/tech-talk/assets/gfx-templates/data_table_grouped.html", "frames": 50}
             ], "frames": 1160}
           ],
           "total_frames": 5000

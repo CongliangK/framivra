@@ -6,7 +6,7 @@
 固化 voice-ime/cover 全链路的实测命令与定稿参数，重跑可复现（确定性优先，零外部
 Python 依赖：stdlib + ffmpeg/ffprobe + Chrome）。
 
-规格依据（2026-09-13 调研实证，详见 skill/references/cover.md）：
+规格依据（2026-09-13 调研实证，详见 templates/tech-talk/references/cover.md）：
   · 上传 16:10（推荐 1920×1200；官方下限 1146×717）；
   · 电脑端全入口 16:9 容器=居中裁上下各 5%；App 首页双列 ≈1.38:1=裁左右各 ~7%；
   · 文字安全区=水平 12%~88%、垂直 10%~80%（右下 ~18%×13% 为时长角标禁区）；
@@ -29,7 +29,7 @@ Python 依赖：stdlib + ffmpeg/ffprobe + Chrome）。
 且字号为主字 55%（voice-ime 定稿形态：「说话 就是 打字」= 重-细-重）。
 
 背景图生成不在本脚本内（付费动作保持人工授权）：用 imgen/ 的 GPT 系端点，命令与
-提示词原则见 skill/references/cover.md（坑位：flare 对抽象画提示词有审核误杀记录，
+提示词原则见 templates/tech-talk/references/cover.md（坑位：flare 对抽象画提示词有审核误杀记录，
 优先 sunburst；sunburst 忽略 aspectRatio 出 1K 方图，prep-bg 负责裁切）。
 
 来源项目：voice-ime/cover（决策 D50；QC 记录=该项目 COVER-REPORT.md）。
