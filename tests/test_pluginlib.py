@@ -630,7 +630,12 @@ class FakePluginBus(unittest.TestCase):
         self._fake_mod = mod
         reg = {"fakeplug": {"version": "0.1.0",
                             "hooks": ["prepare_source", "audio_events"]}}
+        self._manifest_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._manifest_tmp.cleanup)
+        fixture_dir, _ = _make_plugin_dir(Path(self._manifest_tmp.name))
         self._patches = [
+            mock.patch("vtx.pluginlib.registry.plugin_module_dir",
+                       return_value=(fixture_dir, "builtin")),
             mock.patch("vtx.pluginlib.registry.declared_plugins", return_value=reg),
             mock.patch("vtx.pluginlib.registry.plugin_state", return_value="active"),
         ]
