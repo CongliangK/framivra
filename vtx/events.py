@@ -996,6 +996,17 @@ def lifecycle_summary(data):
     """
     result = read_events(data)
     starts = {r['task_id']: r for r in result['events'] if r['event'] == 'task_start'}
+    # A terminal alone cannot establish an operation/page identity. Preserve
+    # independently linked observations without inventing the missing task.
+    terminals = [r for r in result['events'] if r['event'] == 'task_terminal']
+    missing_tasks = {r['task_id'] for r in result['events']
+                     if r['task_id'] is not None and r['task_id'] not in starts}
+    missing_parents = {r['parent_task_id'] for r in starts.values()
+                       if r['parent_task_id'] is not None and r['parent_task_id'] not in starts}
+    linkage = {'missing_task_starts': len(missing_tasks),
+               'missing_parent_starts': len(missing_parents),
+               'ignored_unlinked_terminals': sum(r['task_id'] not in starts for r in terminals),
+               'unterminated_tasks': len(set(starts) - {r['task_id'] for r in terminals})}
     groups = {}
     for row in result['events']:
         if row['event'] != 'task_terminal':
@@ -1037,14 +1048,15 @@ def lifecycle_summary(data):
         tree['limitations'] = ['shared_rss_double_counted', 'short_lived_processes_may_be_missed',
                                'exited_process_final_cpu_increments_may_be_missed']
     terminal = next((r for r in result['events'] if r['event'] == 'run_terminal'), None)
-    return {'complete': result['complete'], 'quantile_method': 'nearest_rank',
+    return {'complete': result['complete'], 'linkage': linkage,
+            'incomplete_reason': result['reason'], 'quantile_method': 'nearest_rank',
             'command_wall_ms': terminal['monotonic_duration'] if terminal else None,
             'operations': groups, 'process_trees': trees,
             'pages': [{'task_id': row['task_id'], **starts[row['task_id']]['extensions'],
                        'elapsed_ms': row['monotonic_duration'], 'outcome': row['outcome'],
                        'block_count': sum(start['parent_task_id'] == row['task_id'] and
                                           start['scope'] == 'gfx_block' for start in starts.values())}
-                      for row in result['events'] if row['event'] == 'task_terminal' and
+                      for row in terminals if row['task_id'] in starts and
                       starts[row['task_id']]['extensions'].get('operation') == 'page_job'],
             'browser_internal_timings': {name: {'value': None, 'unit': 'ms',
                 'unavailable_reason': 'not_independently_observed'}

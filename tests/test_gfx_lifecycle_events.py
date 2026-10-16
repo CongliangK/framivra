@@ -87,6 +87,52 @@ class LifecycleTests(unittest.TestCase):
         data = self.fixture()
         self.assertFalse(events.lifecycle_summary(data.rsplit('\n', 2)[0] + '\n')['complete'])
 
+    def test_missing_start_retains_only_linked_samples(self):
+        rows = events.read_events(self.fixture())['events']
+        missing = next(r for r in rows if r['event'] == 'task_start' and
+                       r['extensions'].get('operation') == 'capture_rpc')
+        rows.remove(missing)
+        result = events.lifecycle_summary(encode(rows))
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['incomplete_reason'], 'incomplete_events')
+        self.assertEqual(result['linkage']['missing_task_starts'], 1)
+        self.assertEqual(result['linkage']['ignored_unlinked_terminals'], 1)
+        self.assertEqual(result['operations']['capture_rpc']['count'], 1)
+        self.assertEqual(result['operations']['capture_rpc']['failed'], 1)
+        self.assertEqual(result['pages'], [])
+        self.assertIsNone(result['critical_path_ms'])
+
+    def test_missing_parent_is_counted_without_inventing_page(self):
+        rows = events.read_events(self.fixture())['events']
+        missing = next(r for r in rows if r['event'] == 'task_start' and
+                       r['extensions'].get('operation') == 'page_lifecycle')
+        rows.remove(missing)
+        result = events.lifecycle_summary(encode(rows))
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['linkage']['missing_parent_starts'], 1)
+        self.assertNotIn('page_lifecycle', result['operations'])
+        self.assertEqual(result['operations']['capture_rpc']['count'], 2)
+
+    def test_sequence_gap_without_missing_linkage_stays_incomplete(self):
+        rows = events.read_events(self.fixture())['events']
+        for row in rows[2:]:
+            row['seq'] += 1
+            row['event_id'] = [row['run_id'], row['seq']]
+        result = events.lifecycle_summary(encode(rows))
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['operations']['capture_rpc']['count'], 2)
+        self.assertEqual(set(result['linkage'].values()), {0})
+
+    def test_complete_summary_has_no_linkage_gaps_and_corruption_rejects(self):
+        result = events.lifecycle_summary(self.fixture())
+        self.assertTrue(result['complete'])
+        self.assertIsNone(result['incomplete_reason'])
+        self.assertEqual(set(result['linkage'].values()), {0})
+        rows = events.read_events(self.fixture())['events']
+        rows.insert(3, copy.deepcopy(rows[2]))
+        with self.assertRaisesRegex(ValueError, 'duplicate'):
+            events.lifecycle_summary(encode(rows))
+
     def test_duplicate_and_replay_semantics_preserved(self):
         rows = events.read_events(self.fixture())['events']
         rows.insert(3, copy.deepcopy(rows[2]))

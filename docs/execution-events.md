@@ -129,6 +129,15 @@ current-run provenance or a decoded-pixel equality verdict.
 
 `lifecycle_summary` retains raw samples, failure/success counts, cumulative work
 and exact nearest-rank P50/P95 for each operation, plus invocation wall time.
+For incomplete streams, `linkage` counts distinct referenced tasks without starts,
+distinct missing parent starts, ignored unlinked task terminals and unterminated
+started tasks. Unlinked terminals cannot establish an operation or page and are
+excluded from those aggregates; valid independently linked samples remain visible.
+Page block counts count only observed starts. No missing task or parent is invented.
+A sequence gap remains `complete=false` even when every linkage count is zero;
+`incomplete_reason` retains the parser's reason. Unsupported contradictory records
+still raise the parser's contextual ValueError. Strict receipt/runner/packer closure
+gates are unchanged; a partial summary is never acceptance evidence.
 Nested operation work overlaps and must not be added as wall time. No reconstructed
 DAG critical path is claimed. Page.captureScreenshot RPC timing includes capture,
 browser PNG encoding and response transfer; those browser-internal components
