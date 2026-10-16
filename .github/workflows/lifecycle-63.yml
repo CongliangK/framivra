@@ -1,0 +1,121 @@
+name: Issue 63 bounded lifecycle evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lifecycle-63.yml'
+      - 'scripts/bench_lifecycle.py'
+      - 'scripts/pack_lifecycle_evidence.py'
+      - 'scripts/gfx_evidence.py'
+      - 'vtx/**'
+      - 'tests/test_gfx_*.py'
+      - 'tests/test_process_samples.py'
+      - 'tests/test_lifecycle_hosted.py'
+      - 'tests/run_lifecycle_strict_smoke.py'
+      - 'tests/run_gfx_dependency_acceptance.py'
+      - 'tests/test_lifecycle_dependencies.py'
+      - 'tests/test_lifecycle_strict_smoke.py'
+      - 'docs/execution-events.md'
+permissions:
+  contents: read
+concurrency:
+  group: lifecycle-63-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  paired:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'acceptance/lifecycle-63/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONUNBUFFERED: '1'
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Bind runner-local evidence paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'EVIDENCE_PARENT=%s/lifecycle-evidence-%s-%s\n' "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_BUNDLE=%s/lifecycle-bundle-%s-%s\n' "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install finite profile dependencies
+        timeout-minutes: 3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fontconfig fonts-noto-cjk fonts-inter fonts-jetbrains-mono fonts-dejavu-core
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13' 'jsonschema>=4.18,<5'
+      - name: Separate cold strict publication smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_PARENT-strict/evidence"
+          export HOME="$EVIDENCE_PARENT-strict/home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export VTX_CONFIG="$HOME/config.json"
+          mkdir -p "$XDG_CONFIG_HOME"
+          printf '{}\n' > "$VTX_CONFIG"
+          printf '125\n' > "$EVIDENCE_PARENT-strict/evidence/exit-code.txt"
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          set +e
+          timeout --signal=TERM --kill-after=10s 60s python tests/run_lifecycle_strict_smoke.py \
+            --output "$EVIDENCE_PARENT-strict" > "$EVIDENCE_PARENT-strict/smoke.raw.log" 2>&1
+          rc=$?
+          printf '%s\n' "$rc" > "$EVIDENCE_PARENT-strict/evidence/exit-code.txt"
+          exit "$rc"
+      - name: Audit separate strict smoke artifact budget
+        id: strict_budget
+        if: always()
+        run: python tests/run_lifecycle_strict_smoke.py --seal --output "$EVIDENCE_PARENT-strict"
+      - name: Three paired cold rounds in both scopes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$EVIDENCE_PARENT"
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          clean = not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
+          Path(os.environ['EVIDENCE_PARENT'], 'source.json').write_text(json.dumps({
+              'head_sha': sha, 'expected_head_sha': os.environ['EXPECTED_HEAD'], 'clean': clean}) + '\n')
+          if sha != os.environ['EXPECTED_HEAD'] or not clean:
+              raise SystemExit('actual head checkout is not clean/bound')
+          PY
+          chrome="$(command -v google-chrome || command -v google-chrome-stable)"
+          command -v ffmpeg
+          command -v timeout
+          test -x "$chrome"
+          test -r /etc/fonts/fonts.conf
+          # Normal installed Chrome sandbox. No --no-sandbox or host settings.
+          # timeout owns this one runner process group; supervisor parent-pipe
+          # cleanup remains authoritative for its separate owned Chrome groups.
+          set +e
+          timeout --signal=TERM --kill-after=10s 30m python scripts/bench_lifecycle.py \
+            --output-parent "$EVIDENCE_PARENT" --chrome "$chrome" \
+            --font-config /etc/fonts/fonts.conf --rounds 3 --scope both \
+            > "$EVIDENCE_PARENT/runner.log" 2>&1
+          rc=$?
+          printf '{"return_code":%s,"deadline_seconds":1800,"kill_grace_seconds":10}\n' "$rc" > "$EVIDENCE_PARENT/runner-result.json"
+          exit "$rc"
+      - name: Package bounded evidence without success trimming
+        if: always()
+        run: python scripts/pack_lifecycle_evidence.py --parent "$EVIDENCE_PARENT" --output "$EVIDENCE_BUNDLE"
+      - name: Enforce shared evidence upload budget
+        id: evidence_total
+        if: always()
+        run: python tests/run_lifecycle_strict_smoke.py --select-uploads --output "$EVIDENCE_PARENT-strict" --bundle "$EVIDENCE_BUNDLE" --legacy-parent "$EVIDENCE_PARENT"
+      - name: Upload bounded combined evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lifecycle-63-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_PARENT }}-strict/selected-upload
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

@@ -273,7 +273,9 @@ def _gfx(c: Ctx):
             if sizes is None:
                 jobs.append((cid, key, cl, n, d, html, None,
                              events.task(c, "gfx", kind="gfx_block",
-                                         metadata={"page_id": page_id, "backend": "cdp" if cdp_mod else "cli", "frame_range": [0, n]})))
+                                         metadata={**({"gfx_key": key} if events.context(c) is not None and
+                                             events.context(c).schema == events.LIFECYCLE_SCHEMA else {}),
+                                                   "page_id": page_id, "backend": "cdp" if cdp_mod else "cli", "frame_range": [0, n]})))
                 continue
             off, put = 0, 0
             for sz in sizes:
@@ -283,7 +285,9 @@ def _gfx(c: Ctx):
                     continue    # 整块已缓存 → 跳过（不起 Chrome、不占池槽）
                 jobs.append((cid, key, cl, n, d, html, fb,
                              events.task(c, "gfx", kind="gfx_block",
-                                         metadata={"page_id": page_id, "backend": "cdp", "frame_range": [fb[0], fb[-1] + 1]}))); put += 1
+                                         metadata={**({"gfx_key": key} if events.context(c) is not None and
+                                             events.context(c).schema == events.LIFECYCLE_SCHEMA else {}),
+                                                   "page_id": page_id, "backend": "cdp", "frame_range": [fb[0], fb[-1] + 1]}))); put += 1
             if put == 0:        # 页级帧数门已滤全缓存，理论不可达；防御性兜底
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1
 
@@ -301,7 +305,11 @@ def _gfx(c: Ctx):
         if j[6] is not None:
             page_agg.setdefault((j[0], j[1]), {"left": 0, "blocks": []})["left"] += 1
 
+    page_observations = None
+
     def render_one(job):
+        if page_observations is not None:
+            return page_observations.call(render_block, job)
         return job[7].call(render_block, job)
 
     def render_block(job):
@@ -385,6 +393,9 @@ def _gfx(c: Ctx):
                 print(f"  [dry-run] gfx {cid}[{key}]: 将渲染 {n} 帧（Chrome {c.w}×{c.h}）")
             total += len(jobs)
         else:
+            if events.lifecycle_enabled():
+                from .gfx_observation import PageJobs
+                page_observations = PageJobs(jobs)
             with ThreadPoolExecutor(min(page_workers, len(jobs))) as pex:
                 for cid, rendered_via in pex.map(render_one, jobs):
                     if rendered_via is None:
@@ -759,6 +770,10 @@ def _main(execution=None):
     execution = execution if execution is not None else events.ExecutionContext()
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
+    ap.add_argument("--lifecycle-process-samples", action="store_true",
+                    help="sample the CDP process tree every 200 ms (requires lifecycle events)")
+    ap.add_argument("--lifecycle-events", action="store_true",
+                    help="opt in to v2 host lifecycle observations in the execution sink")
     ap.add_argument("--events-jsonl", metavar="PATH",
                     help="optional exclusive JSONL execution evidence; independent of stdout")
     ap.add_argument("--resumed-from-run-id", metavar="UUID",
@@ -880,6 +895,9 @@ def _main(execution=None):
         sug = difflib.get_close_matches(a.command, valid_names, n=3, cutoff=0.6)
         hint = f"，最接近：{' | '.join(sug)}" if sug else ""
         print(f"✗ 未知命令：{a.command!r}（可用：{' | '.join(valid_names)}）{hint}"); sys.exit(2)
+    if a.lifecycle_process_samples and not a.lifecycle_events:
+        ap.error("--lifecycle-process-samples requires --lifecycle-events")
+    execution.process_samples = a.lifecycle_process_samples
     if a.resumed_from_run_id:
         try:
             valid = events.canonical_uuid(a.resumed_from_run_id)
@@ -940,9 +958,11 @@ def _main(execution=None):
         from .execution_links import open_response
         stream, request = open_response(tp, role)
         if stream is not None:
+            execution.schema = events.LIFECYCLE_SCHEMA if a.lifecycle_events else events.SCHEMA
             execution.activate(stream, request)
         elif a.events_jsonl:
             try:
+                execution.schema = events.LIFECYCLE_SCHEMA if a.lifecycle_events else events.SCHEMA
                 execution.activate(events.open_sink(a.events_jsonl))
             except (OSError, ValueError):
                 execution._warn()

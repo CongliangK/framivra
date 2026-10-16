@@ -6,6 +6,7 @@ This is observation, not a cancellation owner or an authenticity mechanism.
 """
 import contextlib
 import contextvars
+import functools
 import json
 import math
 import os
@@ -17,10 +18,20 @@ import uuid
 from pathlib import Path
 
 SCHEMA = 'vtx.events/1'
+LIFECYCLE_SCHEMA = 'vtx.events/2'
+SCHEMAS = frozenset((SCHEMA, LIFECYCLE_SCHEMA))
+# Fixed host-observable operations only: CDP capture is intentionally composite.
+OPERATIONS = frozenset(('page_lifecycle', 'browser_start', 'browser_spawn',
+    'browser_ready', 'target_create', 'tab_initialize', 'tab_close', 'browser_stop',
+    'setup', 'navigate', 'capture_rpc', 'canvas_export_rpc', 'base64_decode',
+    'png_decode', 'alpha_compute', 'png_encode', 'atomic_commit', 'frame',
+    'static_copy', 'final_validation', 'heal_wait', 'heal', 'dispatch', 'queue',
+    'tabs_open', 'tab_slot', 'evaluate_rpc', 'override_rpc', 'process_samples',
+    'browser_restart', 'heal_backoff', 'page_job', 'static_read', 'wave'))
 EVENTS = frozenset(('run_start', 'run_terminal', 'task_start', 'task_terminal',
                     'attempt_start', 'attempt_terminal', 'receipt_commit',
                     'cache_hit', 'retry_requested', 'diagnostic',
-                    'cancel_requested', 'cancelled', 'cleanup_failed', 'progress'))
+                    'cancel_requested', 'cancelled', 'cleanup_failed', 'progress', 'resource_sample', 'frame_commit'))
 STAGES = frozenset(('validate', 'audit', 'prepare', 'gfx', 'video', 'audio', 'mux',
                     'qc', 'finish', 'video_draft', 'mux_draft', 'load'))
 _ACTIVE = contextvars.ContextVar('vtx_execution_task', default=None)
@@ -109,7 +120,7 @@ def frame_metadata(frames):
     return {'frame_ranges': ranges}
 
 
-def _metadata(event, metadata, *, strict):
+def _metadata(event, metadata, *, strict, schema=SCHEMA):
     """One allowlist at production and replay boundaries; no arbitrary namespaces.
 
     Unknown/invalid producer fields are dropped with a fixed redaction marker;
@@ -125,6 +136,14 @@ def _metadata(event, metadata, *, strict):
         'cancel_requested': {'source'}, 'cancelled': {'source'}, 'cleanup_failed': {'source'},
         'progress': {'completed', 'total'},
     }.get(event, set()) | {'metadata_redacted'}
+    if schema == LIFECYCLE_SCHEMA and event == 'frame_commit':
+        allowed |= {'gfx_key', 'frame_index', 'frame_origin', 'copy_head', 'copy_source_seq', 'png_sha256', 'runtime_sha256', 'page_witness_sha256'}
+    if schema == LIFECYCLE_SCHEMA and event == 'resource_sample':
+        allowed |= {'sample_index', 'interval_ms', 'missed_intervals',
+                    'process_count', 'sample_status'}
+    if schema == LIFECYCLE_SCHEMA and event in ('task_start', 'attempt_start', 'attempt_terminal'):
+        allowed |= {'operation', 'gfx_key', 'browser_id', 'generation', 'tab_index',
+                    'frame_index', 'copy_head', 'frame_origin', 'block_id', 'attempt_index', 'validation_group_id'}
     if not isinstance(metadata, dict):
         if strict:
             raise ValueError('invalid event metadata')
@@ -133,7 +152,27 @@ def _metadata(event, metadata, *, strict):
     for key, value in metadata.items():
         valid = key in allowed
         if valid:
-            if key == 'observation':
+            if key in ('png_sha256', 'runtime_sha256', 'page_witness_sha256'):
+                valid = isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
+            elif key in ('sample_index', 'missed_intervals', 'copy_source_seq'):
+                valid = _integer(value)
+            elif key == 'process_count':
+                valid = value is None or _integer(value, 4096)
+            elif key == 'interval_ms':
+                valid = value is None or _number(value)
+            elif key == 'sample_status':
+                valid = value in ('sampled', 'partial', 'unavailable', 'not_started', 'limit_reached')
+            elif key == 'operation':
+                valid = isinstance(value, str) and value in OPERATIONS
+            elif key == 'gfx_key':
+                valid = isinstance(value, str) and re.fullmatch(r'[0-9a-f]{8,64}', value) is not None
+            elif key in ('browser_id', 'block_id', 'validation_group_id'):
+                valid = _id(value)
+            elif key in ('generation', 'tab_index', 'frame_index', 'copy_head', 'attempt_index'):
+                valid = _integer(value, MAX_FRAME)
+            elif key == 'frame_origin':
+                valid = value in ('rendered', 'static_copy', 'cache_hit')
+            elif key == 'observation':
                 try:
                     if value is not None:
                         from .execution_links import validate_request
@@ -191,6 +230,8 @@ def _metadata(event, metadata, *, strict):
 def _validate_values(row):
     if not isinstance(row['event'], str) or row['event'] not in EVENTS:
         raise ValueError('invalid event vocabulary')
+    if row['event'] == 'resource_sample' and row['schema_version'] != LIFECYCLE_SCHEMA:
+        raise ValueError('resource samples require lifecycle schema')
     if not isinstance(row['scope'], str) or row['scope'] not in SCOPES:
         raise ValueError('invalid event scope')
     if row['outcome'] is not None and (not isinstance(row['outcome'], str) or
@@ -237,6 +278,41 @@ def _validate_measurements(row):
           not math.isclose(duration, offset - start, rel_tol=1e-12,
                            abs_tol=max(1e-6, resolution * 4000))):
         raise ValueError('contradictory monotonic duration')
+    if not isinstance(row['resources'], dict):
+        raise ValueError('invalid resource measurements')
+    if row['event'] == 'frame_commit':
+        metadata = row['extensions']
+        fields = {'gfx_key', 'frame_index', 'frame_origin', 'png_sha256'}
+        if (row['schema_version'] != LIFECYCLE_SCHEMA or row['task_id'] is None or
+                row['outcome'] is not None or row['exit_code'] is not None or
+                not isinstance(metadata, dict)):
+            raise ValueError('invalid frame publication')
+        if metadata.get('frame_origin') == 'static_copy':
+            fields.update(('copy_head', 'copy_source_seq'))
+            if not _integer(metadata.get('copy_source_seq')) or not 0 < metadata['copy_source_seq'] < row['seq']:
+                raise ValueError('invalid static publication source')
+            if (not _integer(metadata.get('copy_head'), MAX_FRAME) or
+                    not _integer(metadata.get('frame_index'), MAX_FRAME) or
+                    metadata['copy_head'] >= metadata['frame_index']):
+                raise ValueError('invalid static publication head')
+        elif metadata.get('frame_origin') != 'rendered':
+            raise ValueError('invalid publication origin')
+        if 'runtime_sha256' in metadata or 'page_witness_sha256' in metadata:
+            fields.update(('runtime_sha256', 'page_witness_sha256'))
+        if set(metadata) != fields:
+            raise ValueError('invalid publication metadata')
+    if row['event'] == 'resource_sample':
+        metadata = row['extensions']
+        fields = {'sample_index', 'interval_ms', 'missed_intervals', 'process_count', 'sample_status'}
+        if set(metadata) != fields or not _integer(metadata.get('sample_index')) or metadata['sample_index'] < 1:
+            raise ValueError('invalid process sample metadata')
+        measured = metadata['sample_status'] == 'sampled'
+        if measured != (metadata['process_count'] is not None):
+            raise ValueError('invalid process sample count availability')
+        for name in RESOURCE_UNITS:
+            value = row['resources'].get(name, {})
+            if not isinstance(value, dict) or value.get('scope') != 'process_tree' or (value.get('value') is not None) != (measured and name in ('cpu', 'rss')):
+                raise ValueError('invalid process sample availability')
     resources = row['resources']
     if not isinstance(resources, dict) or set(resources) != set(RESOURCE_UNITS):
         raise ValueError('invalid resource measurements')
@@ -244,13 +320,22 @@ def _validate_measurements(row):
         value = resources[name]
         if not isinstance(value, dict) or set(value) != {'value', 'unit', 'method', 'scope', 'unavailable_reason'}:
             raise ValueError('invalid resource measurement fields')
-        if value['unit'] != unit or value['scope'] not in ('process', 'task', 'run'):
+        scopes = ('process', 'task', 'run')
+        if row['schema_version'] == LIFECYCLE_SCHEMA and row['event'] == 'resource_sample':
+            scopes += ('process_tree',)
+        if value['unit'] != unit or value['scope'] not in scopes:
             raise ValueError('invalid resource measurement unit/scope')
+        if (value['scope'] == 'process_tree' or value['method'] == 'proc_stat_tree_snapshot') and (
+                row['schema_version'] != LIFECYCLE_SCHEMA or row['event'] != 'resource_sample' or
+                value['scope'] != 'process_tree' or
+                value['value'] is not None and value['method'] != 'proc_stat_tree_snapshot'):
+            raise ValueError('invalid process tree measurement context')
         if value['value'] is None:
             if value['method'] is not None or value['unavailable_reason'] not in ('not_measured', 'not_supported', 'unavailable'):
                 raise ValueError('invalid unavailable resource measurement')
         elif (not (_integer(value['value'], MAX_BYTES) if unit == 'bytes' else _number(value['value'])) or
-              value['method'] not in ('process_time', 'getrusage', 'resource_snapshot', 'owner_observation') or
+              value['method'] not in ('process_time', 'getrusage', 'resource_snapshot', 'owner_observation',
+                                     'proc_stat_tree_snapshot') or
               value['unavailable_reason'] is not None):
             raise ValueError('invalid measured resource value')
 
@@ -299,10 +384,12 @@ def observation_warning(message):
 
 class ExecutionContext:
     def __init__(self, stream=None, request=None, *, resumed_from_run_id=None,
-                 replay_of_run_id=None, clock=time.monotonic):
+                 replay_of_run_id=None, clock=time.monotonic, lifecycle=False, lifecycle_operations=True):
         for value in (resumed_from_run_id, replay_of_run_id):
             if value is not None and not canonical_uuid(value):
                 raise ValueError('invalid predecessor UUID')
+        self.schema = LIFECYCLE_SCHEMA if lifecycle else SCHEMA
+        self.lifecycle_operations = lifecycle_operations
         self.run_id = str(uuid.uuid4())
         self.resumed_from_run_id = resumed_from_run_id
         self.replay_of_run_id = replay_of_run_id
@@ -314,6 +401,7 @@ class ExecutionContext:
         self.seq = 0
         self.stream = None
         self.incomplete = False
+        self.coverage_incomplete = False
         self.finished = False
         self._warned = False
         self.request = None
@@ -365,7 +453,7 @@ class ExecutionContext:
                   'replay_of_run_id': self.replay_of_run_id})
 
     def emit(self, event, *, task=None, scope=None, attempt=None, started=None,
-             outcome=None, error=None, exit_code=None, extensions=None):
+             outcome=None, error=None, exit_code=None, extensions=None, resources=None):
         if not self.enabled:
             return None
         with self.lock:
@@ -389,7 +477,7 @@ class ExecutionContext:
                 self._warn()
                 return None
             seq = self.seq + 1
-            row = {'schema_version': SCHEMA, 'run_id': self.run_id, 'seq': seq,
+            row = {'schema_version': self.schema, 'run_id': self.run_id, 'seq': seq,
                    'event_id': [self.run_id, seq], 'event': event,
                    'scope': scope or ('task' if task else 'run'),
                    'stage': task.stage if task else None,
@@ -406,7 +494,12 @@ class ExecutionContext:
                                  'method': None, 'scope': 'process',
                                  'unavailable_reason': 'not_measured'} for name, unit in
                                  (('cpu', 'ms'), ('rss', 'bytes'), ('gpu', 'ms'), ('vram', 'bytes'))},
-                   'extensions': _metadata(event, extensions or {}, strict=False)}
+                   'extensions': _metadata(event, extensions or {}, strict=False, schema=self.schema)}
+            if resources is not None:
+                row['resources'] = resources
+            if self.schema == LIFECYCLE_SCHEMA and row['extensions'].get('metadata_redacted'):
+                # Keep emitting useful observations, but never certify lost attribution.
+                self.coverage_incomplete = True
             try:
                 _validate_values(row)
                 _validate_measurements(row)
@@ -471,7 +564,7 @@ class ExecutionContext:
                       outcome=('succeeded' if code == 0 else
                                'cancelled' if self.cancellation == 'cancelled' else 'failed'),
                       error=error, exit_code=code,
-                      extensions={'evidence_complete': not self.incomplete})
+                      extensions={'evidence_complete': not (self.incomplete or self.coverage_incomplete)})
             self.finished = True
             if self.stream is not None:
                 try:
@@ -506,7 +599,7 @@ class Task:
         self.task_id = str(uuid.uuid4())
         self.parent_task_id = parent.task_id if parent else None
         self.kind = kind if isinstance(kind, str) and kind in SCOPES - {'run'} else 'task'
-        self.metadata = _metadata('task_start', metadata or {}, strict=False)
+        self.metadata = _metadata('task_start', metadata or {}, strict=False, schema=execution.schema)
         if self.kind != kind:
             self.metadata['metadata_redacted'] = True
         self.started = None
@@ -635,7 +728,8 @@ def read_events(data, replay=False):
             if truncated and index == len(lines) - 1:
                 break
             raise ValueError('invalid event JSON') from None
-        if not isinstance(row, dict) or row.get('schema_version') != SCHEMA:
+        if (not isinstance(row, dict) or not isinstance(row.get('schema_version'), str) or
+                row['schema_version'] not in SCHEMAS):
             raise ValueError('unsupported event schema')
         try:
             valid_id = canonical_uuid(row.get('run_id'))
@@ -646,6 +740,8 @@ def read_events(data, replay=False):
             raise ValueError('invalid event identity')
         if row.get('event_id') != [row['run_id'], seq] or not isinstance(row.get('event'), str) or row['event'] not in EVENTS:
             raise ValueError('invalid event identity/type')
+        if rows and row['schema_version'] != rows[0]['schema_version']:
+            raise ValueError('mixed event schemas')
         if rows and row['run_id'] != rows[0]['run_id']:
             raise ValueError('mixed execution IDs')
         if seq in by_seq:
@@ -671,7 +767,7 @@ def read_events(data, replay=False):
         _validate_values(row)
         _validate_measurements(row)
         _validate_error(row['error'])
-        _metadata(row['event'], row['extensions'], strict=True)
+        _metadata(row['event'], row['extensions'], strict=True, schema=row['schema_version'])
         offset = row['timing']['offset_ms']
         if rows and offset < rows[-1]['timing']['offset_ms']:
             raise ValueError('backwards monotonic clock')
@@ -685,6 +781,9 @@ def read_events(data, replay=False):
         by_seq[seq] = row
         rows.append(row)
     complete = bool(rows) and not truncated
+    if any(r['schema_version'] == LIFECYCLE_SCHEMA and
+           r['extensions'].get('metadata_redacted') for r in rows):
+        complete = False
     contiguous = [r['seq'] for r in rows] == list(range(1, len(rows) + 1))
     complete = complete and contiguous
     starts = [r for r in rows if r['event'] == 'run_start']
@@ -707,15 +806,36 @@ def read_events(data, replay=False):
     last_attempt, active_attempt, pending_retry = {}, {}, {}
     task_terminals, attempt_terminals = {}, {}
     cancel_state = None
+    sample_indexes = {}
+    publications = {}
     for row in rows:
         event, tid = row['event'], row['task_id']
         if tid is not None and event != 'task_start' and (tid not in task_starts or tid in task_ends):
             complete = False
+        if event == 'resource_sample':
+            index = row['extensions']['sample_index']
+            if tid is None or index <= sample_indexes.get(tid, 0):
+                raise ValueError('invalid process sample ordering')
+            if index != sample_indexes.get(tid, 0) + 1:
+                complete = False
+            sample_indexes[tid] = index
         if event == 'receipt_commit':
             if (tid is None or row['scope'] != 'stage' or row['stage'] is None or
                     row['extensions'].get('receipt_stage') != row['stage'] or
                     row['outcome'] not in ('succeeded', 'failed')):
                 raise ValueError('invalid receipt commit stage/scope/outcome')
+        if event == 'frame_commit':
+            metadata = row['extensions']
+            if metadata['frame_origin'] == 'static_copy':
+                source = publications.get(metadata['copy_source_seq'])
+                if source is None:
+                    complete = False
+                elif (source['frame_origin'] != 'rendered' or source['gfx_key'] != metadata['gfx_key'] or
+                      source['frame_index'] != metadata['copy_head'] or
+                      source['png_sha256'] != metadata['png_sha256'] or
+                      any(source.get(k) != metadata.get(k) for k in ('runtime_sha256', 'page_witness_sha256'))):
+                    raise ValueError('static copy contradicts source publication')
+            publications[row['seq']] = metadata
         if event == 'task_start':
             if tid is None or tid in task_starts:
                 raise ValueError('duplicate/missing task start identity')
@@ -847,3 +967,133 @@ def read_events(data, replay=False):
             'complete': bool(complete), 'events': rows,
             'exit_code': terminals[0]['exit_code'] if terminals else None,
             'reason': None if complete else 'incomplete_events'}
+
+
+@contextlib.contextmanager
+def operation(name, **metadata):
+    """Observe an existing host operation; disabled paths allocate no task/UUID.
+
+    The caller must capture/bind the existing parent task before worker dispatch.
+    Operation failures are retained even when an outer owner later recovers.
+    """
+    parent = _ACTIVE.get()
+    if (parent is None or not parent.execution.enabled or
+            parent.execution.schema != LIFECYCLE_SCHEMA or not parent.execution.lifecycle_operations):
+        yield None
+        return
+    # Validation failure degrades observations, never changes rendering behavior.
+    metadata = dict(metadata, operation=name)
+    with parent.execution.task(parent=parent, metadata=metadata).scope() as span:
+        yield span
+
+
+def lifecycle_summary(data):
+    """Exact raw host samples, never a sum mislabeled concurrent wall time.
+
+    Quantiles use the nearest-rank convention. Parent and child operation sums
+    overlap and cannot be added to reconstruct a critical path. Incomplete
+    streams expose observed samples but do not claim complete coverage.
+    """
+    result = read_events(data)
+    starts = {r['task_id']: r for r in result['events'] if r['event'] == 'task_start'}
+    # A terminal alone cannot establish an operation/page identity. Preserve
+    # independently linked observations without inventing the missing task.
+    terminals = [r for r in result['events'] if r['event'] == 'task_terminal']
+    missing_tasks = {r['task_id'] for r in result['events']
+                     if r['task_id'] is not None and r['task_id'] not in starts}
+    missing_parents = {r['parent_task_id'] for r in starts.values()
+                       if r['parent_task_id'] is not None and r['parent_task_id'] not in starts}
+    linkage = {'missing_task_starts': len(missing_tasks),
+               'missing_parent_starts': len(missing_parents),
+               'ignored_unlinked_terminals': sum(r['task_id'] not in starts for r in terminals),
+               'unterminated_tasks': len(set(starts) - {r['task_id'] for r in terminals})}
+    groups = {}
+    for row in result['events']:
+        if row['event'] != 'task_terminal':
+            continue
+        start = starts.get(row['task_id'])
+        if start is None or start['schema_version'] != LIFECYCLE_SCHEMA:
+            continue
+        name = start['extensions'].get('operation')
+        if name is None:
+            continue
+        group = groups.setdefault(name, {'samples_ms': [], 'succeeded': 0, 'failed': 0})
+        group['samples_ms'].append(row['monotonic_duration'])
+        group[row['outcome']] += 1
+    for group in groups.values():
+        values = sorted(group['samples_ms'])
+        group.update(count=len(values), cumulative_work_ms=sum(values),
+                     p50_ms=values[math.ceil(len(values) * .50) - 1],
+                     p95_ms=values[math.ceil(len(values) * .95) - 1])
+    trees = {}
+    for row in result['events']:
+        if row['event'] != 'resource_sample':
+            continue
+        tree = trees.setdefault(row['task_id'], {'samples': [], 'sampled_peak_rss_bytes': None,
+            'sampled_cumulative_cpu_ms': None, 'sampling_complete': result['complete']})
+        metadata = row['extensions']
+        tree['samples'].append({'offset_ms': row['timing']['offset_ms'], **metadata,
+                               'resources': row['resources']})
+        if metadata['missed_intervals'] or metadata['sample_status'] not in ('sampled', 'not_started'):
+            tree['sampling_complete'] = False
+        if metadata['sample_status'] == 'sampled':
+            for key, resource in (('sampled_peak_rss_bytes', 'rss'), ('sampled_cumulative_cpu_ms', 'cpu')):
+                value = row['resources'][resource]['value']
+                tree[key] = value if tree[key] is None else max(tree[key], value)
+    for task_id, tree in trees.items():
+        tree['observed_window_ms'] = [tree['samples'][0]['offset_ms'], tree['samples'][-1]['offset_ms']]
+        tree['sampling_complete_meaning'] = 'no_reported_gaps_within_observed_window'
+        if tree['sampled_peak_rss_bytes'] is None:
+            tree['sampling_complete'] = False
+        tree['limitations'] = ['shared_rss_double_counted', 'short_lived_processes_may_be_missed',
+                               'exited_process_final_cpu_increments_may_be_missed']
+    terminal = next((r for r in result['events'] if r['event'] == 'run_terminal'), None)
+    return {'complete': result['complete'], 'linkage': linkage,
+            'incomplete_reason': result['reason'], 'quantile_method': 'nearest_rank',
+            'command_wall_ms': terminal['monotonic_duration'] if terminal else None,
+            'operations': groups, 'process_trees': trees,
+            'pages': [{'task_id': row['task_id'], **starts[row['task_id']]['extensions'],
+                       'elapsed_ms': row['monotonic_duration'], 'outcome': row['outcome'],
+                       'block_count': sum(start['parent_task_id'] == row['task_id'] and
+                                          start['scope'] == 'gfx_block' for start in starts.values())}
+                      for row in terminals if row['task_id'] in starts and
+                      starts[row['task_id']]['extensions'].get('operation') == 'page_job'],
+            'browser_internal_timings': {name: {'value': None, 'unit': 'ms',
+                'unavailable_reason': 'not_independently_observed'}
+                for name in ('capture_raw', 'browser_png_encode', 'ipc_transfer', 'gpu')},
+            'critical_path_ms': None,
+            'critical_path_unavailable_reason': 'dependency_edges_not_observed'}
+
+
+def lifecycle_enabled():
+    parent = _ACTIVE.get()
+    return bool(parent is not None and parent.execution.enabled and
+                parent.execution.schema == LIFECYCLE_SCHEMA and parent.execution.lifecycle_operations)
+
+
+def observed(name, metadata=None, failed=None):
+    """Wrap a host boundary without changing its arguments or return contract."""
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapped(*args, **kwargs):
+            if not lifecycle_enabled():
+                return fn(*args, **kwargs)
+            fields = metadata(*args, **kwargs) if metadata is not None else {}
+            with operation(name, **fields) as span:
+                result = fn(*args, **kwargs)
+                if span is not None and failed is not None and failed(result):
+                    span.finish(1, RuntimeError())
+                return result
+        return wrapped
+    return decorate
+
+
+@contextlib.contextmanager
+def observed_lock(lock):
+    """Measure only waiting for the existing heal lock; never replace its policy."""
+    with operation('heal_wait'):
+        lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()

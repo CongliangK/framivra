@@ -231,7 +231,7 @@ def prepare_font_observation(tab, call, owned_target):
     return dict(target_id=owned_target, frame_id=frame['id'], url='about:blank')
 
 
-def worker(timeline, trace_path, injection=None, stage="gfx"):
+def worker(timeline, trace_path, injection=None, stage="gfx", *, publication_evidence=None):
     """Observe actual production calls; never fabricate a Fetch result or pixels."""
     from vtx import cli, gfx_render, gfx_cli, events, gfx_dependencies
     from vtx.gfx_dependencies import RequestPolicy
@@ -245,9 +245,32 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
     original_check = RequestPolicy.check
     original_resolve = gfx_dependencies.resolve
     original_init = events.ExecutionContext.__init__
+    publication = {}
+    if publication_evidence is not None:
+        from vtx.infra import Ctx
+        from vtx.hygiene import gfx_key, gfx_dir
+        from vtx import gfx_provenance, gfx_runtime
+        if stage != 'gfx' or injection is not None:
+            raise ValueError('publication smoke requires a cold successful gfx invocation')
+        context = Ctx(timeline)
+        if context.tl['project'].get('gfx_dependency_policy') != 'strict':
+            raise ValueError('publication smoke requires strict fixture')
+        targets = [{'src':cl['src'], 'dur':cl['dur'], 'gfx_key':gfx_key(context,cl),
+                    'frame_dir':str(gfx_dir(context,cl))}
+                   for track in context.tl['video_tracks'] if track.get('kind')=='gfx'
+                   for cl in track['clips']]
+        if not targets or any(Path(t['frame_dir']).exists() for t in targets):
+            raise ValueError('publication smoke requires fresh targets')
     def observe_init(context, *args, **kwargs):
+        if publication_evidence is not None:
+            if publication:
+                raise ValueError('publication smoke requires exactly one execution')
+            kwargs.update(lifecycle=True, lifecycle_operations=True)
         original_init(context, *args, **kwargs)
         trace['execution_run_id'] = context.run_id
+        if publication_evidence is not None:
+            publication['ledger'] = gfx_provenance.PublicationLedger(
+                context, str(events.uuid.uuid4()), targets, require_runtime=True, color_profile='srgb')
     def observe_failure(fn, *args, **kwargs):
         try:
             return fn(*args, **kwargs)
@@ -345,10 +368,29 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
              patch.object(gfx_render.Tab, '__init__', tab_init), \
              patch.object(gfx_render.Tab, 'call', call), \
              patch.object(gfx_cli, 'render_cli', fallback), \
-             patch.object(sys, 'argv', ['vtx', '-t', str(timeline), '--events-jsonl', str(trace_path.with_suffix('.events.jsonl')), stage]):
+             patch.object(sys, 'argv', ['vtx', '-t', str(timeline), '--events-jsonl', str(trace_path.with_suffix('.events.jsonl')),
+                 *(['--lifecycle-events'] if publication_evidence is not None else []), stage]):
             code = cli.main()
             if code:
                 raise SystemExit(code)
+            if publication_evidence is not None:
+                ledger = publication['ledger']
+                data = trace_path.with_suffix('.events.jsonl').read_text()
+                records = ledger.completion_records(width=context.w, height=context.h, events_data=data)
+                identity = gfx_runtime.identity(next(iter(ledger.browser_observations.values())))
+                bundle = ledger.runtime_bundle(width=context.w, height=context.h, expected=identity)
+                from scripts import bench_lifecycle as bench, gfx_evidence
+                manifest = bench.host_manifest(identity, ledger.run_id, ['/etc/fonts/fonts.conf'])
+                fingerprint = gfx_evidence.input_fingerprint(context, [(t['src'],t['dur']) for t in targets])
+                publication_evidence.write_text(json.dumps(dict(
+                    schema='vtx.strict_publication_smoke/1', complete=True,
+                    invocation=trace['invocation'], execution_run_id=ledger.execution.run_id,
+                    run_id=ledger.run_id, events_sha256=hashlib.sha256(data.encode()).hexdigest(),
+                    instances=records, producer_binding=bundle, env_manifest=manifest,
+                    input_fingerprint=fingerprint, runtime_identity=identity,
+                    host_identity=bench.stable_host(manifest),
+                    timeline_path=str(timeline), events_path=str(trace_path.with_suffix('.events.jsonl')),
+                    config={'scope':'strict_smoke','lifecycle':True,'process_samples':False,'trace':False}), indent=2))
     except BaseException as error:
         trace['native_error'] = events.safe_error(error)
         trace['terminal_exception_type'] = type(error).__name__
@@ -364,6 +406,23 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
     finally:
         trace['pending_acknowledgements'] = list(pending.values())
         save()
+        if publication_evidence is not None and publication:
+            failure_active = sys.exc_info()[0] is not None
+            diagnostic_failed = False
+            try:
+                from scripts.bench_lifecycle import runtime_observation_status
+                publication_evidence.with_suffix('.status.json').write_text(json.dumps(
+                    runtime_observation_status(publication['ledger'].browser_observations)))
+            except Exception:
+                diagnostic_failed = True
+            try:
+                publication_evidence.with_suffix('.runtime.json').write_text(json.dumps(
+                    publication['ledger'].browser_observations, indent=2))
+            except Exception:
+                if not failure_active:
+                    raise RuntimeError('strict smoke runtime artifact unavailable') from None
+            if diagnostic_failed and not failure_active:
+                raise RuntimeError('strict smoke runtime diagnostic unavailable') from None
 
 
 def check_trace(trace, expected_urls, *, rejected=False, target=None):

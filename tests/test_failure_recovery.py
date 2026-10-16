@@ -338,8 +338,8 @@ class RealChromeRecovery(unittest.TestCase):
                 original_start(browser)
                 browsers.append(browser)
             killed = []
-            def interrupt(path, data):
-                original_write(path, data)
+            def interrupt(path, data, **metadata):
+                original_write(path, data, **metadata)
                 if not killed:
                     proc = browsers[-1].proc
                     killed.append(proc.pid)
@@ -354,6 +354,7 @@ class RealChromeRecovery(unittest.TestCase):
                     html, out, 3, chrome_path=os.environ['VTX_TEST_CHROME'],
                     tabs=1, width=64, height=48)
             self.assertTrue(interrupted['failed'])
+            self.assertEqual(len(killed), 1, 'must exercise the real owned-browser kill')
             kept = {p.name: p.read_bytes() for p in out.glob('f*.png')}
             self.assertTrue(kept)
             self.assertLess(len(kept), 3)

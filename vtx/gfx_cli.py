@@ -25,14 +25,16 @@
 """
 import hashlib
 import json
+import contextvars
 import struct
 import subprocess
 import zlib
 
 if __package__:
-    from . import fstxn
+    from . import fstxn, gfx_provenance
 else:
     import fstxn
+    gfx_provenance = None
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -373,6 +375,7 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
     """
     cmd = _cli_shot_cmd(chrome, i, d, html, width, height)
     png = Path(d) / f"f{i:04d}.png"
+    publication_data = None
     try:
         # 撤销旧帧也走安全 unlink（预置链接不跟随）。chrome 是子进程，不能拿
         # /proc 锚定路径（沙箱/yama 拒开他人 fd 项），故走 locked_staging：
@@ -391,8 +394,11 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
             if reason is not None:
                 raise GfxCliError(
                     f"Chrome CLI 截图产物无效（f{i:04d}.png：{reason}）：{' '.join(map(str, cmd))}")
+            publication_data = gfx_provenance.staged_bytes(tmp) if gfx_provenance is not None else None
     except (OSError, subprocess.TimeoutExpired) as e:
         raise GfxCliError(f"Chrome CLI 截图命令无法执行：{' '.join(map(str, cmd))}\n    {e}")
+    if publication_data is not None:
+        gfx_provenance.published(png, publication_data)
     return png
 
 
@@ -416,7 +422,11 @@ def render_cli(i_range, d, html, chrome, width=1920, height=1080,
             errs.append((i, str(e)))
 
     with ThreadPoolExecutor(max(1, workers)) as ex:
-        list(ex.map(one, frames))
+        if gfx_provenance is not None and gfx_provenance.enabled():
+            work = [(contextvars.copy_context(), index) for index in frames]
+            list(ex.map(lambda item: item[0].run(one, item[1]), work))
+        else:
+            list(ex.map(one, frames))
     if errs:
         errs.sort()
         lines = "\n".join(f"  [{i:04d}] {msg}" for i, msg in errs)

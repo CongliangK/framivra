@@ -526,6 +526,14 @@ def run_parallel(c: Ctx, tasks, what: str):
 
 
 def run_wave(c: Ctx, jobs):
+    execution = events.context(c)
+    if (jobs and execution is not None and execution.enabled and
+            execution.schema == events.LIFECYCLE_SCHEMA and execution.lifecycle_operations):
+        return events.task(c, metadata={'operation': 'wave'}).call(_run_wave, c, jobs)
+    return _run_wave(c, jobs)
+
+
+def _run_wave(c: Ctx, jobs):
     """jobs = [(label, fn)] 的 Python 可调用并行波执行器（方案二阶段2，2026-09-12，
     `vtx all` 依赖图流水线）：gfx / audio / video 预编码三路零数据依赖任务重叠执行。
     与 run_parallel 的分工：后者面向「ffmpeg 子进程任务」（label+cmd，io_workers 限流），
