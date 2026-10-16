@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts
+from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver
 from vtx.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
@@ -377,6 +377,34 @@ class AcceptanceContracts(unittest.TestCase):
             check_round_counts(row,changed)
             row['screenshot_attempts']+=1;row['metrics'].append({})
             with self.assertRaises(AssertionError):check_round_counts(row,changed)
+
+    def test_protocol_observer_is_passive_and_allowlisted(self):
+        rows = []
+        observer = ProtocolObserver(lambda key, row: rows.append((key, row)))
+        ws, other = object(), object()
+        command = dict(id=3, method='CSS.enable', params={'headers': {'Cookie': 'secret'}})
+        event = dict(method='Fetch.requestPaused', params=dict(requestId='fetch-1',
+            frameId='frame-1', networkId='net-1', resourceType='Other',
+            request=dict(url='file:///fixture/a.html?f=0', method='GET',
+                         headers={'Authorization': 'secret'}, postData='secret'),
+            responseHeaders=[{'name': 'cookie', 'value': 'secret'}]))
+        originals = copy.deepcopy((command, event))
+        observer.observe(ws, 'send', command)
+        observer.observe(other, 'send', dict(id=3, method='Page.navigate', params={'url':'file:///fixture/b.html'}))
+        observer.observe(ws, 'recv', event)
+        observer.observe(ws, 'recv', dict(id=3, result={}))
+        observer.observe(ws, 'recv', event)
+        self.assertEqual((command, event), originals)
+        self.assertNotIn('secret', json.dumps(rows))
+        request = rows[2][1]
+        self.assertEqual(request['pending_commands'], [dict(command_id=3, method='CSS.enable')])
+        self.assertEqual(request['frame_id'], 'frame-1')
+        self.assertEqual(request['network_id'], 'net-1')
+        self.assertEqual(request['resource_type'], 'Other')
+        self.assertEqual(rows[-1][1]['pending_commands'], [])
+        self.assertEqual([r['sequence'] for _, r in rows], list(range(1, 6)))
+        self.assertEqual(rows[0][1]['connection'], rows[2][1]['connection'])
+        self.assertNotEqual(rows[0][1]['connection'], rows[1][1]['connection'])
 
     def test_workflow_scope_and_budget(self):
         root=Path(__file__).resolve().parents[1]

@@ -116,11 +116,51 @@ faces:Array.from(document.fonts).map(f=>({family:f.family,status:f.status})),
 family:getComputedStyle(document.querySelector('p')).fontFamily}))()'''
 
 
+class ProtocolObserver:
+    """Passive, allowlisted transport metadata; no CDP calls or request mutation."""
+    def __init__(self, append):
+        self.append = append
+        self.connections = {}
+        self.pending = {}
+        self.sequence = 0
+
+    def observe(self, ws, direction, msg):
+        connection = self.connections.setdefault(id(ws), len(self.connections) + 1)
+        key = (connection, msg.get('id'))
+        method = msg.get('method')
+        row = None
+        if direction == 'send' and method and not method.startswith('Fetch.'):
+            self.pending[key] = method
+            row = dict(method=method, command_id=msg.get('id'))
+            if method == 'Page.navigate':
+                row['url'] = msg.get('params', {}).get('url')
+        elif direction == 'recv' and method in ('Fetch.requestPaused', 'Network.requestWillBeSent'):
+            params = msg.get('params', {})
+            request = params.get('request', {})
+            row = dict(event=method, request_id=params.get('requestId'),
+                frame_id=params.get('frameId'), network_id=params.get('networkId'),
+                resource_type=params.get('resourceType', params.get('type')),
+                request_method=request.get('method'), url=request.get('url'),
+                pending_commands=[dict(command_id=k[1], method=v)
+                    for k, v in self.pending.items() if k[0] == connection])
+        elif direction == 'recv' and key in self.pending:
+            command = self.pending.pop(key)
+            row = dict(method=command, command_id=msg.get('id'), completed=True,
+                       error_present='error' in msg)
+            if command == 'Page.navigate':
+                row['frame_id'] = msg.get('result', {}).get('frameId')
+        if row is not None:
+            self.sequence += 1
+            row.update(sequence=self.sequence, connection=connection, direction=direction,
+                       monotonic_ns=time.monotonic_ns())
+            self.append('protocol', row)
+
+
 def worker(timeline, trace_path, injection=None, stage="gfx"):
     """Observe actual production calls; never fabricate a Fetch result or pixels."""
     from vtx import cli, gfx_render, gfx_cli, events, gfx_dependencies
     from vtx.gfx_dependencies import RequestPolicy
-    trace = dict(requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False,
+    trace = dict(protocol=[], requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False,
         screenshot_attempts=0, production_failures=[], propagated_production_failure=False,
         invocation=dict(stage=stage, timeline=str(timeline),
             timeline_sha256=hashlib.sha256(timeline.read_bytes()).hexdigest(),
@@ -156,6 +196,7 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
         if len(trace[key]) >= 2048:
             raise RuntimeError('bounded trace capacity exceeded')
         trace[key].append(row)
+    protocol = ProtocolObserver(append)
     def response(policy, params):
         method, args = original_response(policy, params)
         append('requests', dict(url=params['request']['url'], kind=params.get('resourceType'),
@@ -163,6 +204,7 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
         return method, args
     def send(ws, data):
         msg = json.loads(data)
+        protocol.observe(ws, 'send', msg)
         if msg.get('method') in ('Fetch.fulfillRequest', 'Fetch.failRequest'):
             pending[(id(ws), msg['id'])] = dict(id=msg['id'], method=msg['method'],
                                                request_id=msg['params']['requestId'])
@@ -171,6 +213,7 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
         op, data = original_recv(ws)
         if op != 0x8:
             msg = json.loads(data)
+            protocol.observe(ws, 'recv', msg)
             row = pending.pop((id(ws), msg.get('id')), None)
             if row is not None:
                 append('acknowledgements', dict(row, error=msg.get('error')))
