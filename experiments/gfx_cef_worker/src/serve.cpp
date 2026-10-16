@@ -582,6 +582,9 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
       static_cast<uint64_t>(opt.sync_ready_timeout_ms) * 1000ull;
   bool ready = false;
   uint64_t last_paint = 0;
+  uint64_t ready_us = 0;
+  unsigned observed = 0;
+  const bool observe = std::getenv("VTX_CEF_BASELINE_OBSERVE") != nullptr;
   std::vector<uint8_t> previous;
   while (NowUs() < deadline) {
     browser->GetHost()->Invalidate(PET_VIEW);
@@ -594,6 +597,7 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
         if (ParseSyncReadyJson(js, &ev, true) && ev.document_gen == gen &&
             ev.request_id == req && ev.target_frame_index == frame) {
           ready = true;
+          ready_us = NowUs();
           last_paint = state.paints.load(std::memory_order_relaxed);
           previous.clear();
         }
@@ -602,7 +606,16 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
       const uint64_t paints = state.paints.load(std::memory_order_relaxed);
       if (ready && paints > last_paint && !state.buffer.empty()) {
         last_paint = paints;
-        if (previous == state.buffer) {
+        if (observe && observed++ < 64) {
+          uint64_t hash = 14695981039346656037ull;
+          for (uint8_t b : state.buffer) { hash = (hash ^ b) * 1099511628211ull; }
+          std::fprintf(stderr, "BASELINE_OBSERVE elapsed_us=%llu paints=%llu hash=%016llx equal=%d first_bgra=%u,%u,%u,%u\n",
+              static_cast<unsigned long long>(NowUs() - ready_us),
+              static_cast<unsigned long long>(paints),
+              static_cast<unsigned long long>(hash), previous == state.buffer,
+              state.buffer[0], state.buffer[1], state.buffer[2], state.buffer[3]);
+        }
+        if (previous == state.buffer && (!observe || NowUs() - ready_us >= 250000)) {
           return machine.SetExactBaseline(state.buffer.data(),
               static_cast<size_t>(state.width) * 4u, state.width, state.height,
               NowUs());

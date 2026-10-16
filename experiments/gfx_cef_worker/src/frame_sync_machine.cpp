@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "frame_pipeline.h"  // CopyCompactRows（紧凑拷贝，CEF 无关）
@@ -566,6 +567,21 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     // never-instrumented baseline. Missing baseline is also a hard veto.
     // Critically: no byte is restored/copied FROM this unbound baseline.
     if (exact_baseline_ != exact_candidate_) {
+      // Temporary opt-in causal diagnostic: at most one pair per process.
+      static bool dumped = false;
+      const char* debug_dir = std::getenv("VTX_CEF_EXACT_DEBUG_DIR");
+      if (!dumped && debug_dir && debug_dir[0] == '/') {
+        dumped = true;
+        const auto dump = [&](const char* label, const std::vector<uint8_t>& bytes) {
+          const std::string path = std::string(debug_dir) + "/" + label + ".bgra";
+          if (FILE* file = std::fopen(path.c_str(), "wb")) {
+            std::fwrite(bytes.data(), 1, bytes.size(), file);
+            std::fclose(file);
+          }
+        };
+        dump("baseline", exact_baseline_);
+        dump("candidate", exact_candidate_);
+      }
       v.disposition = PaintDisposition::kRejectedStale;
       ++req_rejected_;
       ++counters_.rejected_stale_paint;
