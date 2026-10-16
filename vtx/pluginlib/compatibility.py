@@ -1,4 +1,4 @@
-"""Explicit requires.core minimum gate; no third-party version parser.
+"""Core minimum and explicit plugin protocol gates; no third-party parser.
 
 The manifest contract spells >=version. Only stable MAJOR.MINOR.PATCH minimums
 are supported; this is not a general SemVer/PEP 440 range implementation.
@@ -40,3 +40,37 @@ def require_compatible_core(name, manifest):
     minimum_parts = tuple((len(x), x) for x in minimum.groups())
     if current_parts < minimum_parts:
         raise RuntimeError(prefix + "不兼容，拒绝加载；" + _UPGRADE)
+
+
+# Protocol identifiers refer to ARCHITECTURE §2.2/§2.5, not package versions.
+PLUGIN_PROTOCOL_HOOKS = {
+    "1.1": frozenset(("prepare_source", "audio_events", "validate")),
+    "1.2": frozenset(("prepare_source", "audio_events", "validate",
+                      "probe_source", "finish")),
+}
+
+
+def require_compatible_protocol(name, manifest, declared_hooks=()):
+    """Check explicit declarations before import, including cached modules.
+
+    Unknown/malformed values are runtime errors, not discovery filters: an
+    enabled external plugin must not disappear silently from the execution bus.
+    The absent field retains the existing unversioned policy.
+    """
+    requires = manifest["requires"]
+    if "plugin_protocol" not in requires:
+        return
+    from vtx import __version__
+    protocol = requires["plugin_protocol"]
+    prefix = (f"插件 {name}: 检测内核版本 {__version__!r}, "
+              f"requires.plugin_protocol={protocol!r}；"
+              f"允许协议 {', '.join(PLUGIN_PROTOCOL_HOOKS)}；")
+    if not isinstance(protocol, str) or protocol not in PLUGIN_PROTOCOL_HOOKS:
+        raise RuntimeError(prefix + "未知或格式错误的插件协议，拒绝加载；" + _UPGRADE)
+    # Check both the physical manifest and effective registry declaration before
+    # importing implementation code. Registry drift cannot widen the protocol.
+    hooks = set(manifest["extends"]["hooks"]) | set(declared_hooks)
+    unsupported = hooks - PLUGIN_PROTOCOL_HOOKS[protocol]
+    if unsupported:
+        raise RuntimeError(prefix + f"协议不支持 hooks {sorted(unsupported)!r}，拒绝加载；"
+                           + _UPGRADE)

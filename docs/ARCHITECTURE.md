@@ -176,6 +176,12 @@ plugin 额外：
 - manifest 只**静态登记** kind + schema_keys（registry.json 的数据源）；**hooks 由代码注册为单一事实源**，加载时与 manifest 声明做一致性校验（声明了没注册 / 注册了没声明都报错）。
 - 插件加载走**包导入**（`importlib.import_module`），**禁 `spec_from_file_location`**（绕过包语义，是双模块裂分的另一入口）。
 
+#### 显式插件协议与 Core API 兼容门（Issue #49）
+
+Core API 版本使用 `vtx.__version__` 的内核发行版本；`requires.core` 是稳定三段版本最低要求（`>=MAJOR.MINOR.PATCH`），不另设 API epoch。插件可额外声明 `requires.plugin_protocol`，只接受精确字符串 `"1.1"` / `"1.2"`：前者使用 §2.2 的 `prepare_source` / `audio_events` / `validate`，后者另含 §2.5 的 `probe_source` / `finish`。显式 `"1.0"` 不受支持（§2.2 的旧 prepare 草案签名已废弃）；其他版本、空串或非字符串均拒绝，不推断版本、不做范围协商。
+
+加载实体 manifest 后先判 `requires.core`，再判显式协议及 manifest/有效 registry hooks 是否属于该协议，最后才允许包导入与既有 hooks 对账。缓存模块也逐次检查，错误须含检测内核版本、声明值、允许协议及升级入口。协议值保留在 discovery 数据中，在运行时拒绝，避免不兼容 external 件被静默漏掉。缺少 `requires.core` 或 `requires.plugin_protocol` 各自保留遗留策略，不代表已认证；`requires` 对象本身仍必需。顶层未知 `protocol` 字段没有协议协商语义，插件 `version` 仍为插件发行版本。支持矩阵及验证边界见 [兼容性专题](plugin-core-compatibility.md)。
+
 ### 2.4 安全节
 
 - external 插件/应用注册**默认 disabled**（config 的 `external_plugins[]`/`external_apps[]` 条目 `enabled: true` 才生效——路径含 `..` 一律拒绝；官方内置件的启停走 `plugins/registry.json`）〔P4 审查 P2-6 调和：实现即 config 条目开关，原文"registry.json 显式 enable"为设计稿笔误〕。
