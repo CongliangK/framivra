@@ -223,18 +223,13 @@ void WorkerClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
     // ===== #114 sync 模式：五阶段状态机闸门（同 UI 线程调用）。
     // S4 前早期丢弃 / 尺寸不符 / 陈旧与半更新签名拒收 / 精确匹配接受并
     // 原地恢复两个绑定原像素 —— 判定细节见 frame_sync_machine.cpp。
-    const fsync::PaintVerdict v = state_->sync_machine->FeedPaint(
-        src, static_cast<size_t>(width) * 4u, static_cast<uint32_t>(width),
-        static_cast<uint32_t>(height), state_->sync_dst, NowUs());
-    if (v.disposition == fsync::PaintDisposition::kSizeMismatch) {
-      state_->sync_size_mismatch = true;
-      state_->sync_actual_w = static_cast<uint32_t>(width);
-      state_->sync_actual_h = static_cast<uint32_t>(height);
-    } else if (v.disposition == fsync::PaintDisposition::kAccepted) {
-      // 仅接受判定写入 verdict 快照：S5 后同泵批次的 trailing paint
-      // 不得覆盖回执数据源（decoded_frame/capture_us/恢复源）。
-      state_->sync_last_verdict = v;
-      state_->sync_captured = true;
+    // A paint is only a candidate. FeedPaint can emit S5, so it must run
+    // outside this callback AFTER a renderer error fence for these bytes.
+    if (!state_->js_error.failed && !state_->js_paint_pending) {
+      state_->js_paint_candidate.assign(src, src + static_cast<size_t>(width) * height * 4u);
+      state_->js_paint_w = width;
+      state_->js_paint_h = height;
+      state_->js_paint_pending = true;
     }
     state_->paints.store(state_->paints.load(std::memory_order_relaxed) + 1,
                          std::memory_order_relaxed);
@@ -310,6 +305,13 @@ bool WorkerClient::OnConsoleMessage(CefRefPtr<CefBrowser> /*browser*/,
     return true;
   }
   return false;
+}
+
+bool WorkerClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame, CefProcessId source,
+    CefRefPtr<CefProcessMessage> message) {
+  if (source != PID_RENDERER) return false;
+  return ReceiveJsErrorMessage(*state_, browser, frame, message);
 }
 
 // ---------------------------------------------------------------- #110 共享装配件

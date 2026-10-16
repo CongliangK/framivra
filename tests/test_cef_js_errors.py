@@ -22,6 +22,7 @@ from vtx.cef_client import CefWorkerClient, CefWorkerError
 
 GREEN = "document.querySelector('#content').style.background='rgb(17,231,47)';"
 CASES = {
+    'normal_green': (GREEN, True),
     'sync_throw': ("throw Error('CEF_BOUNDARY_PROBE');" + GREEN, False),
     'syntax_error': ("const broken = ;" + GREEN, False),
     'unhandled': ("Promise.reject(Error('TRUE_UNHANDLED'));" + GREEN, False),
@@ -50,8 +51,19 @@ def run_case(worker, root, name, reproduce=False):
     source, want_ok = CASES[name]
     page = folder / 'page.html'
     page.write_text(f'<!doctype html><style>{STYLE}</style><div id="content"></div><script>{source}</script>')
-    return run_page(worker, folder, page, [0, 1, 0] if name == 'cross_request' else [0],
+    result = run_page(worker, folder, page, [0, 1, 0] if name == 'cross_request' else [0],
                     [False, True, False] if name == 'cross_request' else [want_ok], reproduce)
+    if name == 'normal_green':
+        from PIL import Image
+        with Image.open(folder / 'r1.png') as im:
+            rgba = im.convert('RGBA')
+            pixels = list(rgba.getdata())
+            assert rgba.size == (64, 48)
+            assert all(p == (17, 231, 47, 255) for p in pixels), set(pixels)
+            (folder / 'pixels.json').write_text(json.dumps({
+                'size': list(rgba.size), 'unique_rgba': sorted(set(pixels)),
+                'all_pixels_green': True}))
+    return result
 
 def run_page(worker, folder, page, frames, expectations, reproduce=False, width=64, height=48):
     sock = folder / 'ipc.sock'

@@ -102,7 +102,7 @@ set_source_files_properties(${FPNG_SOURCES}
 add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
                              src/frame_pipeline.cpp src/pixel_ops.cpp
                              src/png_writer.cpp src/serve.cpp
-                             src/frame_sync_machine.cpp
+                             src/frame_sync_machine.cpp src/js_error_observer.cpp
                              ${SPNG_SOURCES} ${FPNG_SOURCES})
 # CEF 官方 exe 属性宏：CEF flag 集（含 -std=c++20 -O3 -Wall -Wextra -Werror，
 # 与目录级工单 flag 同语义）+ include 路径。

@@ -201,12 +201,16 @@ ProduceResult ProduceFrame(RunState& state, PumpDriver& pump,
   ProduceResult r;
   r.document_gen = document_gen;
   state.loaded.store(false, std::memory_order_relaxed);
+  PrepareJsDocument(state, ExpandUrlTemplate(url_template, frame));
   browser->GetMainFrame()->LoadURL(ExpandUrlTemplate(url_template, frame));
   const uint64_t t0 = NowUs();
   if (!pump.Until([&] { return state.loaded.load(std::memory_order_relaxed); },
                   opt.frame_budget_ms)) {
     r.status = kStatusTimeout;
     return r;
+  }
+  if (!CheckJsCheckpoint(state, pump, browser, t0 + static_cast<uint64_t>(opt.frame_budget_ms) * 1000ull)) {
+    r.status = kStatusJsErr; return r;
   }
   pump.Until([] { return false; }, opt.ready_settle_ms);  // 字体/布局余量
   r.t_ready_wait_us = NowUs() - t0;
@@ -234,6 +238,9 @@ ProduceResult ProduceFrame(RunState& state, PumpDriver& pump,
           return state.cap_captured || state.cap_size_mismatch;
         },
         200);
+    if (!CheckJsCheckpoint(state, pump, browser, t1 + budget_us)) {
+      state.capture_armed = false; r.status = kStatusJsErr; return r;
+    }
     std::lock_guard<std::mutex> lock(state.mu);
     if (state.cap_size_mismatch) {
       state.capture_armed = false;
@@ -570,11 +577,15 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
     state.buffer.clear();
   }
   state.loaded.store(false, std::memory_order_relaxed);
-  browser->GetMainFrame()->LoadURL(ExpandUrlTemplate(opt.url_template, frame));
+  const auto url = ExpandUrlTemplate(opt.url_template, frame);
+  PrepareJsDocument(state, url);
+  const uint64_t load_deadline = NowUs() + static_cast<uint64_t>(opt.frame_budget_ms) * 1000ull;
+  browser->GetMainFrame()->LoadURL(url);
   if (!pump.Until([&] { return state.loaded.load(std::memory_order_relaxed); },
                   opt.frame_budget_ms)) {
     return false;
   }
+  if (!CheckJsCheckpoint(state, pump, browser, load_deadline)) return false;
   browser->GetMainFrame()->ExecuteJavaScript(
       BuildSyncBridgeJs(gen, req, frame, mode_n, false, true, opt.sync_fault, true),
       "vtx_baseline_readiness", 0);
@@ -584,9 +595,13 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
   uint64_t last_paint = 0;
   std::vector<uint8_t> previous;
   while (NowUs() < deadline) {
+    if (state.js_error.failed) return false;
     browser->GetHost()->Invalidate(PET_VIEW);
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
+    bool equal = false;
+    std::vector<uint8_t> candidate;
+    int candidate_w = 0, candidate_h = 0;
     {
       std::lock_guard<std::mutex> lock(state.mu);
       for (const auto& js : state.sync_ready_queue) {
@@ -603,12 +618,17 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
       if (ready && paints > last_paint && !state.buffer.empty()) {
         last_paint = paints;
         if (previous == state.buffer) {
-          return machine.SetExactBaseline(state.buffer.data(),
-              static_cast<size_t>(state.width) * 4u, state.width, state.height,
-              NowUs());
+          equal = true;
+          candidate = state.buffer;
+          candidate_w = state.width; candidate_h = state.height;
         }
         previous = state.buffer;
       }
+    }
+    if (equal) {
+      if (!CheckJsCheckpoint(state, pump, browser, deadline)) return false;
+      return machine.SetExactBaseline(candidate.data(),
+          static_cast<size_t>(candidate_w) * 4u, candidate_w, candidate_h, NowUs());
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -633,6 +653,7 @@ static bool ResampleExactBaseline(RunState& signed_state, PumpDriver& pump,
   settings.background_color = 0;
   const auto request = machine.request();
   const std::string url = ExpandUrlTemplate(opt.url_template, request.target_frame_index);
+  PrepareJsDocument(*state, url);
   CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
       window, client, url, settings, nullptr, nullptr);
   if (!browser) return false;
@@ -642,8 +663,10 @@ static bool ResampleExactBaseline(RunState& signed_state, PumpDriver& pump,
   fsync::PageEvent identity;
   bool accepted = false;
   while (NowUs() < deadline) {
+    if (state->js_error.failed || signed_state.js_error.failed) break;
     if (!injected && state->loaded.load(std::memory_order_relaxed) &&
         browser->GetMainFrame()->GetURL().ToString() == url) {
+      if (!CheckJsCheckpoint(*state, pump, browser, deadline)) break;
       browser->GetMainFrame()->ExecuteJavaScript(BuildSyncBridgeJs(
           request.document_gen, request.request_id, request.target_frame_index,
           request.drive == fsync::DriveMode::kModeN, false, true,
@@ -653,6 +676,8 @@ static bool ResampleExactBaseline(RunState& signed_state, PumpDriver& pump,
     browser->GetHost()->Invalidate(PET_VIEW);
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
+    std::vector<uint8_t> candidate;
+    int candidate_w = 0, candidate_h = 0;
     {
       std::lock_guard<std::mutex> lock(state->mu);
       for (const auto& js : state->sync_ready_queue) {
@@ -670,24 +695,56 @@ static bool ResampleExactBaseline(RunState& signed_state, PumpDriver& pump,
       const uint64_t paints = state->paints.load(std::memory_order_relaxed);
       if (ready && paints > last_paint && !state->buffer.empty()) {
         last_paint = paints;
-        const auto verdict = machine.FeedExactBaselinePaint(identity,
-            state->buffer.data(), static_cast<size_t>(state->width) * 4u,
-            state->width, state->height, dst, NowUs());
-        if (verdict.disposition == fsync::PaintDisposition::kAccepted) {
-          std::lock_guard<std::mutex> signed_lock(signed_state.mu);
-          signed_state.sync_last_verdict = verdict;
-          signed_state.sync_captured = true;
-          accepted = true;
-          break;
-        }
+        candidate = state->buffer;
+        candidate_w = state->width; candidate_h = state->height;
+      }
+    }
+    if (!candidate.empty()) {
+      // Neither the signed document nor the fresh reference may pass S5 with
+      // an unchecked error. Both fences stay inside the original pump budget.
+      if (!CheckJsCheckpoint(*state, pump, browser, deadline) ||
+          !CheckJsCheckpoint(signed_state, pump, signed_state.browser, deadline)) break;
+      const auto verdict = machine.FeedExactBaselinePaint(identity,
+          candidate.data(), static_cast<size_t>(candidate_w) * 4u,
+          candidate_w, candidate_h, dst, NowUs());
+      if (verdict.disposition == fsync::PaintDisposition::kAccepted) {
+        signed_state.sync_last_verdict = verdict;
+        signed_state.sync_captured = true;
+        accepted = true;
+        break;
       }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  if (state->js_error.failed) {
+    signed_state.js_error.failed = true;
+    signed_state.last_error = state->last_error;
   }
   browser->GetHost()->CloseBrowser(true);
   // Cleanup time is not capture time and cannot turn a failed veto into success.
   const bool closed = pump.Until([&] { return state->closed.load(); }, 5000);
   return accepted && closed;
+}
+
+// Only this consumer may feed a signed OnPaint candidate into the verifier.
+// Pumping the fence cannot overwrite these bytes or advance the machine to S5.
+static bool ConsumeJsPaint(RunState& state, PumpDriver& pump,
+    CefRefPtr<CefBrowser> browser, uint64_t deadline) {
+  if (!state.js_paint_pending) return !state.js_error.failed;
+  auto candidate = std::move(state.js_paint_candidate);
+  const int w = state.js_paint_w, h = state.js_paint_h;
+  state.js_paint_pending = false;
+  if (!CheckJsCheckpoint(state, pump, browser, deadline)) return false;
+  const auto verdict = state.sync_machine->FeedPaint(candidate.data(),
+      static_cast<size_t>(w) * 4u, w, h, state.sync_dst, NowUs());
+  if (verdict.disposition == fsync::PaintDisposition::kSizeMismatch) {
+    state.sync_size_mismatch = true;
+    state.sync_actual_w = w; state.sync_actual_h = h;
+  } else if (verdict.disposition == fsync::PaintDisposition::kAccepted) {
+    state.sync_last_verdict = verdict;
+    state.sync_captured = true;
+  }
+  return true;
 }
 
 // 状态机驱动的帧生产：S0→S1（导航/注入）→ S2/S3（就绪信号，泵送推进
@@ -735,6 +792,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     state.sync_actual_h = 0;
     state.sync_last_verdict = fsync::PaintVerdict{};
     state.sync_capture_armed = true;
+    state.js_paint_pending = false;
   }
   const auto disarm = [&]() {
     std::lock_guard<std::mutex> lock(state.mu);
@@ -745,8 +803,8 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     if (!CaptureExactBaseline(state, pump, browser, machine, opt,
                               document_gen, request_id, frame, mode_n)) {
       disarm();
-      r.status = kStatusTimeout;
-      machine.FailRequest("uninstrumented_baseline_unavailable", NowUs());
+      r.status = state.js_error.failed ? kStatusJsErr : kStatusTimeout;
+      machine.FailRequest(state.js_error.failed ? "JS_ERR_baseline" : "uninstrumented_baseline_unavailable", NowUs());
       return r;
     }
     // The signed document must be NEW: no post-removal DOM, mutation side
@@ -757,8 +815,10 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
   }
   // Mode N navigates per frame. Exact additionally isolates its unsigned
   // reference from its signed document (Mode P re-applies its pure frame hook).
+  const uint64_t load_deadline = NowUs() + static_cast<uint64_t>(opt.frame_budget_ms) * 1000ull;
   if (mode_n || exact) {
     state.loaded.store(false, std::memory_order_relaxed);
+    PrepareJsDocument(state, ExpandUrlTemplate(opt.url_template, frame));
     browser->GetMainFrame()->LoadURL(
         ExpandUrlTemplate(opt.url_template, frame));
     if (!pump.Until([&] { return state.loaded.load(std::memory_order_relaxed); },
@@ -769,6 +829,12 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
       return r;
     }
   }
+  const auto js_fail = [&]() {
+    disarm(); r.status = kStatusJsErr;
+    machine.FailRequest("JS_ERR_observer_fence", NowUs());
+    return r;
+  };
+  if (!CheckJsCheckpoint(state, pump, browser, load_deadline)) return js_fail();
   // 注入桥（Mode N：加载完成后注入新文档；Mode P：常驻页每请求重放）。
   browser->GetMainFrame()->ExecuteJavaScript(
       BuildSyncBridgeJs(document_gen, request_id, frame, mode_n, clean, exact,
@@ -793,6 +859,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
     DrainSyncReadyQueue(state, machine);
+    if (!ConsumeJsPaint(state, pump, browser, ready_deadline)) return js_fail();
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   DrainSyncReadyQueue(state, machine);
@@ -802,6 +869,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     machine.FailRequest("ready_timeout", NowUs());
     return r;
   }
+  if (!CheckJsCheckpoint(state, pump, browser, ready_deadline)) return js_fail();
   r.t_ready_wait_us = NowUs() - t0;
 
   // —— S4：外部帧泵（就绪信号只是候选；提交完成只能由 S5 验签确立）——
@@ -830,6 +898,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
     DrainSyncReadyQueue(state, machine);
+    if (!ConsumeJsPaint(state, pump, browser, pump_deadline)) return js_fail();
     {
       std::lock_guard<std::mutex> lock(state.mu);
       if (state.sync_size_mismatch) {
@@ -847,6 +916,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   disarm();
+  if (state.js_error.failed) return js_fail();
   const fsync::FrameSyncStateMachine::RequestStats stats =
       machine.request_stats();
   r.early_paint_dropped = static_cast<uint32_t>(stats.early_paint_dropped);
@@ -1052,6 +1122,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       state.loaded.store(false, std::memory_order_relaxed);
       CefString resident_url;
       resident_url.FromString(opt.url_template);
+      PrepareJsDocument(state, opt.url_template);
       browser->GetMainFrame()->LoadURL(resident_url);
       if (!pump.Until(
               [&] { return state.loaded.load(std::memory_order_relaxed); },

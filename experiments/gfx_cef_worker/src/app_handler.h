@@ -28,6 +28,7 @@
 #include "include/cef_client.h"
 
 #include "frame_sync_machine.hpp"
+#include "js_error_observer.h"
 
 namespace vtx_cef {
 
@@ -65,6 +66,10 @@ struct RunState {
   CefRefPtr<CefBrowser> browser;          // OnAfterCreated 捕获（异步建窗）
   std::string page_probe;                 // WebGL/WebGPU 探针 JSON（首个为准）
   std::string gpu_page_probe;             // chrome://gpu 提取 JSON（首个为准）
+  JsErrorGate js_error;
+  bool js_paint_pending = false;
+  std::vector<uint8_t> js_paint_candidate;
+  int js_paint_w = 0, js_paint_h = 0;
   std::string last_error;                 // 探针/渲染链路错误显形
 
   // —— #110 serve 逐请求捕获（serve 循环装配，OnPaint 同线程消费）——
@@ -146,6 +151,11 @@ class WorkerApp : public CefApp, public CefBrowserProcessHandler {
     return this;
   }
 
+  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override {
+    if (!renderer_) renderer_ = MakeJsErrorObserver();
+    return renderer_;
+  }
+
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
       CefRefPtr<CefCommandLine> command_line) override;
@@ -158,6 +168,7 @@ class WorkerApp : public CefApp, public CefBrowserProcessHandler {
 
   const Options* options_;
   RunState* state_;
+  CefRefPtr<CefRenderProcessHandler> renderer_;
 };
 
 class WorkerClient : public CefClient,
@@ -178,6 +189,10 @@ class WorkerClient : public CefClient,
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame, CefProcessId source,
+      CefRefPtr<CefProcessMessage> message) override;
 
   // CefLifeSpanHandler
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
