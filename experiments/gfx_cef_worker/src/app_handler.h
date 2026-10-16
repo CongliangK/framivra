@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -164,6 +165,10 @@ class WorkerClient : public CefClient,
  public:
   WorkerClient(const Options* options, RunState* state)
       : options_(options), state_(state) {}
+  // A short-lived unsigned browser may finish closing asynchronously. Keep its
+  // callback storage alive independently of the caller's stack.
+  WorkerClient(const Options* options, std::shared_ptr<RunState> state)
+      : options_(options), state_(state.get()), owned_state_(std::move(state)) {}
 
   // CefClient
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
@@ -199,6 +204,7 @@ class WorkerClient : public CefClient,
 
   const Options* options_;
   RunState* state_;
+  std::shared_ptr<RunState> owned_state_;
 };
 
 }  // namespace vtx_cef

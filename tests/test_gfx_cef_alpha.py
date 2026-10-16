@@ -198,6 +198,46 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
             '#content{background:rgb(17,231,47)}'
             'html:has(> :nth-child(3)) #content{background:rgb(231,17,31)}')
 
+    def test_large_blurred_page_does_not_certify_initial_blank(self):
+        # Real original-page failure shape: full-size opaque background behind
+        # large software-rasterized blurred gradients. NO page render/originals
+        # hooks; capture may first receive several identical transparent paints.
+        with tempfile.TemporaryDirectory(prefix='cef_blur_') as td:
+            root = Path(td)
+            p = project(root, n=1)
+            data = json.loads(p.read_text())
+            data['project'].update(width=1920, height=1080)
+            p.write_text(json.dumps(data))
+            (root/'page.html').write_text('''<!doctype html><html><head><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:transparent;overflow:hidden}
+#bg{position:absolute;inset:0;background:#faf9f6}
+.blob{position:absolute;width:980px;height:980px;border-radius:50%;filter:blur(150px);opacity:.10}
+.b1{left:-220px;top:-280px;background:radial-gradient(circle,#c8a24a,transparent 65%)}
+.b2{right:-260px;bottom:-320px;background:radial-gradient(circle,#d97706,transparent 65%);opacity:.07}
+</style></head><body><div id="bg"></div><div class="blob b1"></div><div class="blob b2"></div></body></html>''')
+            env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                       VTX_CEF_MODE='a0', VTX_GFX_CACHE_NS='')
+            with mock.patch.dict(os.environ, env):
+                c = Ctx(p)
+                out = root/'frames'
+                out.mkdir()
+                gfx_cef.render_page(root/'page.html', out, 1, ctx=c,
+                                    width=1920, height=1080)
+                w, h, rgba = decode_png_rgba(out/'f0000.png')
+                self.assertEqual((w,h), (1920,1080))
+                self.assertEqual(rgba[3::4], b'\xff' * (w*h), 'initial blank accepted')
+                self.assertGreater(len(set(zip(rgba[0::4],rgba[1::4],rgba[2::4]))), 20)
+                events = [json.loads(line) for path in (c.cache/'reports/cef').glob('*.sync.jsonl')
+                          for line in path.read_text().splitlines()]
+                self.assertEqual(sum(e.get('to') == 'S5_ONPAINT_VERIFIED' for e in events), 1)
+                self.assertEqual(sum(e['event'] == 'exact_baseline_equal' and
+                                     e['compared_bytes'] == w*h*4 for e in events), 1)
+                self.assertFalse(any((c.cache/'tmp').iterdir()), 'unsigned browser leaked')
+            evidence = os.environ.get('VTX_CEF_EVIDENCE_DIR')
+            if evidence:
+                shutil.copytree(root, Path(evidence)/'large-blur', dirs_exist_ok=True)
+
     def test_page_protocol_failures_are_native_timeouts(self):
         from vtx.cef_client import CefWorkerClient, CefWorkerError
         from vtx.proc_supervisor import SupervisedProcessGroup

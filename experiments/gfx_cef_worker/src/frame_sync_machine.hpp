@@ -167,6 +167,18 @@ class FrameSyncStateMachine {
   PaintVerdict FeedPaint(const uint8_t* src, size_t stride, uint32_t width,
                          uint32_t height, uint8_t* dst, uint64_t now_us);
 
+  // Only after BOTH signed phases and an initial baseline mismatch. Adapter
+  // must use a fresh browser that has NEVER received witness DOM, validate its
+  // baseline-ready identity, and feed distinct native paints after readiness.
+  // Two consecutive full-byte equalities veto the frozen candidate; baseline
+  // bytes NEVER supply output or frame identity. Other calls leave dst intact.
+  PaintVerdict FeedExactBaselinePaint(const PageEvent& identity,
+      const uint8_t* src, size_t stride, uint32_t width, uint32_t height,
+      uint8_t* dst, uint64_t now_us);
+  bool needs_baseline_resample() const {
+    return state_ == State::S4_COMPOSITOR_PUMPING && exact_candidate_pending_;
+  }
+
   // 终态失败（泵送超时等）：记录 request_end(failed) 并回到 S0（可复用）。
   bool FailRequest(const char* reason, uint64_t now_us);
 
@@ -201,6 +213,7 @@ class FrameSyncStateMachine {
   }
 
  private:
+  PaintVerdict FinalizeAccepted(PaintVerdict verdict, uint64_t now_us);
   void Emit(const std::string& event, uint64_t now_us, const char* from,
             const char* to, const std::string& extra_json_fields = {});
 
@@ -222,6 +235,9 @@ class FrameSyncStateMachine {
   uint64_t req_paints_ = 0;
   uint64_t last_accepted_elapsed_us_ = 0;
   bool exact_first_verified_ = false;
+  bool exact_candidate_pending_ = false;
+  int32_t exact_candidate_decoded_frame_ = -1;
+  unsigned exact_baseline_equal_paints_ = 0;
   std::vector<uint8_t> exact_first_;
   std::vector<uint8_t> exact_baseline_;
   std::vector<uint8_t> exact_candidate_;

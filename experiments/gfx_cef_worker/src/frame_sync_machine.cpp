@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 #include "frame_pipeline.h"  // CopyCompactRows（紧凑拷贝，CEF 无关）
@@ -256,6 +255,9 @@ bool FrameSyncStateMachine::BeginRequest(const RequestDesc& desc,
   }
   desc_ = desc;
   exact_first_verified_ = false;
+  exact_candidate_pending_ = false;
+  exact_candidate_decoded_frame_ = -1;
+  exact_baseline_equal_paints_ = 0;
   exact_first_.clear();
   exact_baseline_.clear();
   exact_candidate_.clear();
@@ -414,6 +416,10 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     return v;
   }
 
+  if (exact_candidate_pending_) {
+    v.disposition = PaintDisposition::kEarlyDropped;
+    return v;  // freeze the signed reconstruction while independently resampling
+  }
   const int want = desc_.target_frame_index;
   std::string reject_reason;
 
@@ -567,21 +573,11 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     // never-instrumented baseline. Missing baseline is also a hard veto.
     // Critically: no byte is restored/copied FROM this unbound baseline.
     if (exact_baseline_ != exact_candidate_) {
-      // Temporary opt-in causal diagnostic: at most one pair per process.
-      static bool dumped = false;
-      const char* debug_dir = std::getenv("VTX_CEF_EXACT_DEBUG_DIR");
-      if (!dumped && debug_dir && debug_dir[0] == '/') {
-        dumped = true;
-        const auto dump = [&](const char* label, const std::vector<uint8_t>& bytes) {
-          const std::string path = std::string(debug_dir) + "/" + label + ".bgra";
-          if (FILE* file = std::fopen(path.c_str(), "wb")) {
-            std::fwrite(bytes.data(), 1, bytes.size(), file);
-            std::fclose(file);
-          }
-        };
-        dump("baseline", exact_baseline_);
-        dump("candidate", exact_candidate_);
-      }
+      // A stable initial blank can precede the first rasterized page. Freeze
+      // this fully signed candidate; only a NEW never-instrumented browser may
+      // veto it again. No output is written while that veto is outstanding.
+      exact_candidate_pending_ = !exact_baseline_.empty();
+      exact_candidate_decoded_frame_ = v.decoded_frame ^ 0xFFFF;
       v.disposition = PaintDisposition::kRejectedStale;
       ++req_rejected_;
       ++counters_.rejected_stale_paint;
@@ -624,6 +620,51 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     }
   }
   v.capture_us = NowUs() - t0;
+  return FinalizeAccepted(v, now_us);
+}
+
+PaintVerdict FrameSyncStateMachine::FeedExactBaselinePaint(
+    const PageEvent& identity, const uint8_t* src, size_t stride,
+    uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us) {
+  PaintVerdict v;
+  v.disposition = PaintDisposition::kRejectedStale;
+  if (!needs_baseline_resample() || desc_.canary != CanaryMode::kExact ||
+      identity.document_gen != desc_.document_gen ||
+      identity.request_id != desc_.request_id ||
+      identity.target_frame_index != desc_.target_frame_index ||
+      !src || width != desc_.expected_w || height != desc_.expected_h ||
+      stride < static_cast<size_t>(width) * 4u) {
+    exact_baseline_equal_paints_ = 0;
+    return v;
+  }
+  for (uint32_t y = 0; y < height; ++y) {
+    if (std::memcmp(src + y * stride,
+        exact_candidate_.data() + static_cast<size_t>(y) * width * 4u,
+        static_cast<size_t>(width) * 4u) != 0) {
+      exact_baseline_equal_paints_ = 0;
+      ++req_rejected_;
+      ++counters_.rejected_stale_paint;
+      return v;
+    }
+  }
+  if (++exact_baseline_equal_paints_ < 2) {
+    return v;
+  }
+  Emit("exact_baseline_equal", now_us, nullptr, nullptr,
+       "\"role\":\"equality_veto_only\",\"resampled_fresh_browser\":true,"
+       "\"consecutive_equal_paints\":2,\"compared_bytes\":" +
+       std::to_string(exact_candidate_.size()));
+  const uint64_t t0 = NowUs();
+  if (dst) std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());
+  v.disposition = PaintDisposition::kAccepted;
+  v.decoded_frame = exact_candidate_decoded_frame_;
+  v.restored = true;
+  v.capture_us = NowUs() - t0;
+  exact_candidate_pending_ = false;
+  return FinalizeAccepted(v, now_us);
+}
+
+PaintVerdict FrameSyncStateMachine::FinalizeAccepted(PaintVerdict v, uint64_t now_us) {
   v.accepted_elapsed_us_since_ready = now_us - t_canary_set_us_;
   last_accepted_elapsed_us_ = v.accepted_elapsed_us_since_ready;
   state_ = State::S5_ONPAINT_VERIFIED;

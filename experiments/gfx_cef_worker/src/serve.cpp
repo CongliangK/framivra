@@ -582,9 +582,6 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
       static_cast<uint64_t>(opt.sync_ready_timeout_ms) * 1000ull;
   bool ready = false;
   uint64_t last_paint = 0;
-  uint64_t ready_us = 0;
-  unsigned observed = 0;
-  const bool observe = std::getenv("VTX_CEF_BASELINE_OBSERVE") != nullptr;
   std::vector<uint8_t> previous;
   while (NowUs() < deadline) {
     browser->GetHost()->Invalidate(PET_VIEW);
@@ -597,7 +594,6 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
         if (ParseSyncReadyJson(js, &ev, true) && ev.document_gen == gen &&
             ev.request_id == req && ev.target_frame_index == frame) {
           ready = true;
-          ready_us = NowUs();
           last_paint = state.paints.load(std::memory_order_relaxed);
           previous.clear();
         }
@@ -606,16 +602,7 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
       const uint64_t paints = state.paints.load(std::memory_order_relaxed);
       if (ready && paints > last_paint && !state.buffer.empty()) {
         last_paint = paints;
-        if (observe && observed++ < 64) {
-          uint64_t hash = 14695981039346656037ull;
-          for (uint8_t b : state.buffer) { hash = (hash ^ b) * 1099511628211ull; }
-          std::fprintf(stderr, "BASELINE_OBSERVE elapsed_us=%llu paints=%llu hash=%016llx equal=%d first_bgra=%u,%u,%u,%u\n",
-              static_cast<unsigned long long>(NowUs() - ready_us),
-              static_cast<unsigned long long>(paints),
-              static_cast<unsigned long long>(hash), previous == state.buffer,
-              state.buffer[0], state.buffer[1], state.buffer[2], state.buffer[3]);
-        }
-        if (previous == state.buffer && (!observe || NowUs() - ready_us >= 250000)) {
+        if (previous == state.buffer) {
           return machine.SetExactBaseline(state.buffer.data(),
               static_cast<size_t>(state.width) * 4u, state.width, state.height,
               NowUs());
@@ -626,6 +613,81 @@ static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   return false;
+}
+
+// Re-evaluate a veto that may have sampled the initial stable blank before
+// rasterization. NEVER reuse the signed browser: even its late queued paints
+// must not contaminate this reference. The fresh browser gets readiness JS
+// only, no witness DOM, no page originals, and no output/corner reconstruction.
+// The existing pump deadline bounds this one attempt (not a timeout extension).
+static bool ResampleExactBaseline(RunState& signed_state, PumpDriver& pump,
+    fsync::FrameSyncStateMachine& machine, const ServeOptions& opt,
+    uint64_t deadline, uint8_t* dst) {
+  auto state = std::make_shared<RunState>();
+  CefRefPtr<WorkerClient> client = new WorkerClient(&opt.cef, state);
+  CefWindowInfo window;
+  window.SetAsWindowless(0);
+  window.shared_texture_enabled = false;
+  window.external_begin_frame_enabled = true;
+  CefBrowserSettings settings;
+  settings.background_color = 0;
+  const auto request = machine.request();
+  const std::string url = ExpandUrlTemplate(opt.url_template, request.target_frame_index);
+  CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
+      window, client, url, settings, nullptr, nullptr);
+  if (!browser) return false;
+  state->browser = nullptr;  // no client -> owned state -> browser reference cycle
+  bool injected = false, ready = false;
+  uint64_t last_paint = 0;
+  fsync::PageEvent identity;
+  bool accepted = false;
+  while (NowUs() < deadline) {
+    if (!injected && state->loaded.load(std::memory_order_relaxed) &&
+        browser->GetMainFrame()->GetURL().ToString() == url) {
+      browser->GetMainFrame()->ExecuteJavaScript(BuildSyncBridgeJs(
+          request.document_gen, request.request_id, request.target_frame_index,
+          request.drive == fsync::DriveMode::kModeN, false, true,
+          opt.sync_fault, true), "vtx_baseline_resample_readiness", 0);
+      injected = true;
+    }
+    browser->GetHost()->Invalidate(PET_VIEW);
+    browser->GetHost()->SendExternalBeginFrame();
+    pump.Once();
+    {
+      std::lock_guard<std::mutex> lock(state->mu);
+      for (const auto& js : state->sync_ready_queue) {
+        fsync::PageEvent ev;
+        if (ParseSyncReadyJson(js, &ev, true) &&
+            ev.document_gen == request.document_gen &&
+            ev.request_id == request.request_id &&
+            ev.target_frame_index == request.target_frame_index) {
+          identity = ev;
+          ready = true;
+          last_paint = state->paints.load(std::memory_order_relaxed);
+        }
+      }
+      state->sync_ready_queue.clear();
+      const uint64_t paints = state->paints.load(std::memory_order_relaxed);
+      if (ready && paints > last_paint && !state->buffer.empty()) {
+        last_paint = paints;
+        const auto verdict = machine.FeedExactBaselinePaint(identity,
+            state->buffer.data(), static_cast<size_t>(state->width) * 4u,
+            state->width, state->height, dst, NowUs());
+        if (verdict.disposition == fsync::PaintDisposition::kAccepted) {
+          std::lock_guard<std::mutex> signed_lock(signed_state.mu);
+          signed_state.sync_last_verdict = verdict;
+          signed_state.sync_captured = true;
+          accepted = true;
+          break;
+        }
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  browser->GetHost()->CloseBrowser(true);
+  // Cleanup time is not capture time and cannot turn a failed veto into success.
+  const bool closed = pump.Until([&] { return state->closed.load(); }, 5000);
+  return accepted && closed;
 }
 
 // 状态机驱动的帧生产：S0→S1（导航/注入）→ S2/S3（就绪信号，泵送推进
@@ -752,6 +814,13 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
   uint32_t actual_h = 0;
   bool relocated = false;
   while (NowUs() < pump_deadline) {
+    if (exact && machine.needs_baseline_resample()) {
+      disarm();
+      if (!ResampleExactBaseline(state, pump, machine, opt, pump_deadline, dst)) {
+        machine.FailRequest("uninstrumented_baseline_resample_failed", NowUs());
+      }
+      break;  // at most ONE fresh-browser resample, inside the original budget
+    }
     if (exact && machine.needs_relocation() && !relocated) {
       browser->GetMainFrame()->ExecuteJavaScript(
           "window.__VTX_RELOCATE();", "vtx_sync_relocate", 0);

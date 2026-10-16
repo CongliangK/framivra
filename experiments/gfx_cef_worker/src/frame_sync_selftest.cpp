@@ -739,7 +739,75 @@ void TestNativeExact() {
           "exact veto: neither candidate nor baseline published on rejection");
     Check(reject.m.counters().requests_accepted == 0,
           "exact veto: zero S5 acceptances");
+    PageEvent identity;
+    identity.document_gen = d.document_gen;
+    identity.request_id = d.request_id;
+    identity.target_frame_index = d.target_frame_index;
+    for (int sample = 0; sample < 3; ++sample) {
+      const auto veto = reject.m.FeedExactBaselinePaint(identity,
+          wrong.px.data(), 64 * 4, 64, 48, untouched.data(), 2600 + sample);
+      Check(veto.disposition != PaintDisposition::kAccepted &&
+            untouched == std::vector<uint8_t>(original.px.size(), 0xAA),
+            "exact resample: persistent one-byte/corner veto or missing baseline stays closed");
+    }
   }
+
+  Harness resample;
+  FrameBuf blank(64, 48);
+  std::fill(blank.px.begin(), blank.px.end(), 0);
+  Check(resample.AdvanceToS3(d, nullptr, 3000, &blank), "resample: initial blank baseline");
+  Check(resample.m.EnterPumping(3300), "resample: S4");
+  PageEvent identity;
+  identity.document_gen = d.document_gen;
+  identity.request_id = d.request_id;
+  identity.target_frame_index = d.target_frame_index;
+  std::fill(dst.begin(), dst.end(), 0xAA);
+  auto sample = [&](const PageEvent& id, const FrameBuf& b) {
+    return resample.m.FeedExactBaselinePaint(id, b.px.data(), 64 * 4,
+                                            64, 48, dst.data(), 3600);
+  };
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
+        "resample: unsigned equality before signed phases cannot accept");
+  resample.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, dst.data(), 3400);
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
+        "resample: first signature only cannot accept");
+  resample.m.FeedPaint(second.px.data(), 64 * 4, 64, 48, dst.data(), 3500);
+  Check(resample.m.needs_baseline_resample(), "resample: freeze fully signed mismatched candidate");
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
+        "resample: one equal paint insufficient");
+  auto stale = identity;
+  ++stale.document_gen;
+  Check(sample(stale, original).disposition != PaintDisposition::kAccepted,
+        "resample: foreign identity rejected and consecutive equality reset");
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
+        "resample: equality restarts after foreign identity");
+  Check(sample(identity, blank).disposition != PaintDisposition::kAccepted,
+        "resample: stale blank resets consecutive equality");
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
+        "resample: equality restarts after differing paint");
+  Check(resample.m.FeedExactBaselinePaint(identity, nullptr, 64 * 4,
+      64, 48, dst.data(), 3600).disposition != PaintDisposition::kAccepted,
+        "resample: bad buffer cannot accept");
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted &&
+        dst == std::vector<uint8_t>(original.px.size(), 0xAA),
+        "resample: destination untouched until TWO consecutive full equalities");
+  const auto accepted = sample(identity, original);
+  Check(accepted.disposition == PaintDisposition::kAccepted &&
+        accepted.decoded_frame == 258 && accepted.restored &&
+        !accepted.restore_from_reported && dst == original.px,
+        "resample: exact signed output/frame identity, not baseline bytes or neighbors");
+  std::fill(dst.begin(), dst.end(), 0xAA);
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted &&
+        dst == std::vector<uint8_t>(original.px.size(), 0xAA),
+        "resample: late S5 baseline cannot republish");
+  resample.m.Reset(3700, "done");
+  ++d.request_id;
+  Check(resample.AdvanceToS3(d, nullptr, 4000, &blank), "resample: new request");
+  Check(resample.m.EnterPumping(4300) && !resample.m.needs_baseline_resample(),
+        "resample: pending candidate cleared across request");
+  Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
+        "resample: previous candidate/identity cannot accept new request");
+  resample.m.FailRequest("done", 4400);
 }
 
 }  // namespace
