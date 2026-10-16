@@ -10,7 +10,8 @@ from pathlib import Path
 from . import fstxn
 from .composite import RenderPlan
 from .encoders import seg_encoder_kind
-from .hygiene import gfx_dir, manifest_record, seg_key, tmp_run
+from .frame_source import png_source
+from .hygiene import manifest_record, seg_key, tmp_run
 from .infra import Ctx, filter_filename
 
 # ---- 阈值常量（与 stages.audit 字幕基准对齐；2026-08-21 实测，见 stages 注释）----
@@ -244,11 +245,16 @@ def _layer_ready(c: Ctx, f: int):
             if not (cl["dst_in"] <= f < cl["dst_in"] + cl["dur"]):
                 continue
             if tr.get("kind") == "gfx":
-                d = gfx_dir(c, cl)
+                source = png_source(c, cl)
                 rel = max(0, f - cl["dst_in"])
-                if not (d / f"f{rel:04d}.png").exists():
+                try:
+                    source.require_ready(rel, rel + 1)
+                except ValueError:
                     return None
-                layers.append({"cl": cl, "pngdir": d, "x": cl.get("x", 0), "y": cl.get("y", 0),
+                # The preview consumes one output frame. Keep readiness at the
+                # same clip-local boundary; later PNGs need not exist yet.
+                layers.append({"cl": cl, "source": source, "source_stop": rel + 1,
+                               "x": cl.get("x", 0), "y": cl.get("y", 0),
                                "w2": None, "h2": None, "gfx": True, "ti": ti})
             else:
                 windowed = any(k in cl for k in ("scale", "x", "y"))
