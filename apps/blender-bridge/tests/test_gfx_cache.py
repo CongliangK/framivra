@@ -42,8 +42,8 @@ class CacheFixture(unittest.TestCase):
         self.worker = self.root / 'worker'
         self.worker.write_bytes(b'identity-only-worker-v1')
         self.worker.chmod(0o700)
-        self.env.update(VTX_GFX='cef', VTX_CEF_MODE='a0',
-                        VTX_CEF_WORKER=str(self.worker), VTX_GFX_CACHE_NS='selected-ns')
+        self.env.update(VTX_GFX='electron', VTX_ELECTRON_MODE='b0',
+                        VTX_ELECTRON_BIN=str(self.worker), VTX_GFX_CACHE_NS='selected-ns')
         self.patch = mock.patch.dict(os.environ, self.env, clear=True)
         self.patch.start()
         self.addCleanup(self.patch.stop)
@@ -66,8 +66,14 @@ class CacheFixture(unittest.TestCase):
         for i in range(3):
             (directory / f'f{i:04d}.png').write_bytes(png_bytes(i))
         if marker:
+            from vtx.gfx_backend import identity, selected
+            extra = {}
+            if selected() == 'electron':
+                extra = dict(backend_identity=identity(), render_runs=[dict(
+                    run_id='a' * 32, frames=[0, 1, 2],
+                    requested_backend='electron', effective_backend='electron')])
             gfx_cli.complete_page(directory, 3, gfx_key(self.c, self.clip), 8, 6,
-                                  verify_inputs=lambda: None, backend_ns=ns)
+                                  verify_inputs=lambda: None, backend_ns=ns, **extra)
         return directory
 
 
@@ -120,7 +126,7 @@ class ReadOnlyCache(CacheFixture):
 
     def test_wrong_worker_mode_or_html_never_reuses_stale_page(self):
         self.seed()
-        for name, value in [('VTX_CEF_MODE', 'a1'), ('VTX_CEF_WORKER', str(self.root / 'worker2'))]:
+        for name, value in [('VTX_ELECTRON_TIMEOUT', '16'), ('VTX_ELECTRON_BIN', str(self.root / 'worker2'))]:
             (self.root / 'worker2').write_bytes(b'other worker')
             (self.root / 'worker2').chmod(0o700)
             with self.subTest(name=name), mock.patch.dict(os.environ, {name: value}):
@@ -155,7 +161,7 @@ class ReadOnlyCache(CacheFixture):
         (d / 'f0001.png').write_bytes(gfx_cli.PNG_SIGNATURE + b'broken')
         self.assert_rejected()
 
-    def test_cef_never_falls_back_to_formal_or_stem_cache(self):
+    def test_electron_never_falls_back_to_formal_or_stem_cache(self):
         self.seed(self.c.cache / 'page', marker=False)
         with mock.patch.dict(os.environ, {'VTX_GFX': 'cdp', 'VTX_GFX_CACHE_NS': ''}):
             self.seed(marker=False)
@@ -212,7 +218,7 @@ class RealBlenderCache(CacheFixture):
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return out
 
-    def test_current_cef_namespace_exports_and_verifies(self):
+    def test_current_electron_namespace_exports_and_verifies(self):
         self.seed()
         out = self.export()
         result = subprocess.run([shutil.which('blender'), '--background', '--factory-startup',

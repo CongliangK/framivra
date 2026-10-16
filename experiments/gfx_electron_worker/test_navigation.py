@@ -145,6 +145,18 @@ class RealNavigationTests(unittest.TestCase):
         </style></head><body></body></html>''')
         r=self.render(page);self.assertEqual(r['failed'],[0],r)
         self.assertIn('marker_side_effect',str(r['errors']))
+        self.assertFalse((Path(r['evidence_dir']).parents[1]/'f0000.png').exists())
+        self.assertEqual(json.loads((Path(r['evidence_dir'])/'result.json').read_text())['frames'], [])
+
+    def test_marker_has_third_child_is_rejected(self):
+        page=self.page('''<!doctype html><html><head><style>
+        html{background:rgb(1,2,3)}body{margin:0;width:192px;height:96px;background:rgb(12,35,78)}
+        html:has(> :nth-child(3)) body{background:rgb(200,3,4)}
+        </style></head><body></body></html>''')
+        r=self.render(page);self.assertEqual(r['failed'],[0],r)
+        self.assertIn('marker_side_effect',str(r['errors']))
+        self.assertFalse((Path(r['evidence_dir']).parents[1]/'f0000.png').exists())
+        self.assertEqual(json.loads((Path(r['evidence_dir'])/'result.json').read_text())['frames'], [])
 
     def test_marker_occlusion_timeout(self):
         page=self.page('<style>html{opacity:0!important}</style>never produces a valid marker')

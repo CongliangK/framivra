@@ -130,6 +130,26 @@ class IntegrationGates(unittest.TestCase):
         self.assertEqual(rec['gfx_backend'], rec['stages']['gfx']['gfx_backend'])
         self.assertEqual(len(rec['stages']['gfx']['cached_page_keys']), 1)
 
+    def test_blender_reader_uses_exact_completed_electron_cache(self):
+        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        self.run_gfx()
+        expected = [self.d / f'f{f:04d}.png' for f in range(3)]
+        self.assertEqual(resolve_frames(self.c, self.cl), expected)
+        marker = self.d / gfx_cli.COMPLETE_FILE
+        original = json.loads(marker.read_text())
+        for change in ({'backend_identity': 'stale'}, {'render_runs': []},
+                       {'backend_ns': 'other'}, {'key': 'stale'}, {'sha256': []}):
+            with self.subTest(change=change):
+                marker.write_text(json.dumps(dict(original, **change)))
+                before = marker.read_bytes()
+                with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
+                self.assertEqual(marker.read_bytes(), before)
+        marker.write_text(json.dumps(original))
+        with mock.patch.dict(os.environ, VTX_GFX_CACHE_NS='other'):
+            with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
+        self.binary.write_bytes(b'changed executable')
+        with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
+
     def test_failed_or_incomplete_new_receipt_cannot_use_old_png(self):
         for kind in ('failed', 'missing-run', 'missing-frame', 'wrong-backend', 'exception'):
             with self.subTest(kind=kind):
@@ -180,10 +200,14 @@ class IntegrationGates(unittest.TestCase):
         self.binary.write_bytes(b'unit fixture B')
         d = keys()
         original = gfx_backend.content_digest
-        with mock.patch.object(gfx_backend, 'content_digest', side_effect=lambda p:
-                               'changed-gate' if Path(p).name == 'page_error_gate.mjs' else original(p)):
-            g = keys()
-        for newer in (b, n, d, g):
+        implementations = []
+        for name in ('page_error_gate.mjs', 'navigation_worker.mjs', 'pixel_codec.mjs'):
+            with mock.patch.object(gfx_backend, 'content_digest', side_effect=lambda p:
+                                   'changed-implementation' if Path(p).name == name else original(p)):
+                implementations.append(keys())
+        with mock.patch.dict(os.environ, VTX_ELECTRON_TIMEOUT='16'):
+            settings = keys()
+        for newer in (b, n, d, settings, *implementations):
             for old, new in zip(a, newer): self.assertNotEqual(old, new)
         with self.assertRaises(InputIdentityError): verify_input_identity(self.c)
         with mock.patch.dict(os.environ, VTX_GFX='cdp'):
@@ -239,6 +263,7 @@ class RealPublicIntegration(unittest.TestCase):
     def test_one_second_all_qc_new_movie(self):
         p = project(self.root, 30)
         tl = json.loads(p.read_text())
+        tl['blender_bridge'] = True
         (self.root / 'overlay.html').write_text('''<!doctype html><style>html,body{margin:0;background:transparent}
 div{position:absolute;left:50px;top:20px;width:100px;height:50px;background:rgba(230,140,40,.8)}</style><div></div>''')
         tl['video_tracks'].append(dict(name='overlay', kind='gfx', clips=[dict(src='overlay.html', dst_in=0, dur=30)]))
@@ -271,6 +296,43 @@ div{position:absolute;left:50px;top:20px;width:100px;height:50px;background:rgba
         for stage in receipt['stages'].values(): self.assertEqual(stage['gfx_backend']['namespace'], 'integration_b0')
         self.assertTrue(list((self.root / 'cache/vseg_pass').glob('*.mkv')))
         self.assertTrue((self.root / 'out/qc_report.json').is_file())
+        blend = self.root / 'preview.blend'
+        self.assertTrue(blend.is_file(), 'all must execute the real finish hook')
+        bridge = Path(__file__).resolve().parents[1] / 'apps/blender-bridge'
+        verify_cmd = ['blender', '--background', '--factory-startup', '--python',
+                      str(bridge / 'verify_blend.py'), '--', str(p), str(blend)]
+        verify = subprocess.run(verify_cmd, capture_output=True, timeout=60)
+        (self.root / 'verify.log').write_bytes(verify.stdout + verify.stderr)
+        (self.root / 'verify.exitcode').write_text(str(verify.returncode))
+        self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+        # Read actual saved ImageStrip elements, not resolver-only/mock evidence.
+        audit_code = f'''import bpy,json,sys
+from pathlib import Path
+from types import SimpleNamespace
+sys.path.insert(0,{str(bridge.parents[1])!r})
+from vtx.gfx_cache_reader import resolve_frames
+root=Path({str(self.root)!r}); tl=json.loads((root/'timeline.json').read_text())
+c=SimpleNamespace(root=root,cache=root/'cache',tl=tl,fps=30,w=192,h=96)
+bpy.ops.wm.open_mainfile(filepath={str(blend)!r})
+seq=bpy.context.scene.sequence_editor.strips
+rows=[]
+for track in tl['video_tracks']:
+ for i,clip in enumerate(track['clips']):
+  st=seq.get(track['name']+'|'+str(i)); assert st is not None
+  actual=[(Path(st.directory)/e.filename).resolve() for e in st.elements]
+  expected=[p.resolve() for p in resolve_frames(c,clip)]
+  assert actual==expected,(actual,expected)
+  assert st.frame_final_start==clip['dst_in'] and st.frame_final_end==clip['dst_in']+clip['dur']
+  rows.append(dict(name=st.name,directory=st.directory,frames=len(actual),first=str(actual[0]),last=str(actual[-1])))
+(root/'blender-path-audit.json').write_text(json.dumps(rows,indent=2))
+'''
+        audit_cmd = ['blender', '--background', '--factory-startup', '--python-expr', audit_code]
+        audit = subprocess.run(audit_cmd, capture_output=True, timeout=60)
+        (self.root / 'path-audit.log').write_bytes(audit.stdout + audit.stderr)
+        (self.root / 'path-audit.exitcode').write_text(str(audit.returncode))
+        (self.root / 'bridge-commands.json').write_text(json.dumps([verify_cmd, audit_cmd], indent=2))
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+        self.assertEqual(len(json.loads((self.root / 'blender-path-audit.json').read_text())), 2)
 
 
 if __name__ == '__main__':

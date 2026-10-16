@@ -1,7 +1,7 @@
 """Read-only gfx consumer for bridges: production routing and PNG integrity.
 
-No rendering, certification, marker publication or directory discovery. CEF and
-experimental namespaces require an existing exact completion record. Only the
+No rendering, certification, marker publication or directory discovery. Electron
+and experimental namespaces require an existing exact completion record. Only the
 default CDP/CLI route retains legacy unmarked/stem-directory compatibility.
 """
 from pathlib import Path
@@ -29,7 +29,15 @@ def resolve_frames(c, clip):
         directory = c.cache / Path(clip['src']).stem
     n = clip['dur']
     marker = directory / gfx_cli.COMPLETE_FILE
-    if namespace or marker.exists():
+    from .gfx_backend import selected, identity
+    if selected() == 'electron':
+        # Electron completion extends the canonical page record with producer
+        # identity/runs. Reuse the renderer's strict read-only warm-cache gate;
+        # inspect_page alone treats those extra fields as needing publication.
+        from .gfx_electron_stage import cached_runs
+        if cached_runs(directory, n, key, c.w, c.h, identity(), namespace) is None:
+            raise GfxCacheError(f'Electron gfx 完成记录/身份/PNG 无效: {directory}')
+    elif namespace or marker.exists():
         # inspect_page's second result also detects absent/malformed records,
         # unsupported schemas, missing hashes and mismatched backend_ns. Unlike
         # a renderer, a read-only consumer must not recertify any of these.

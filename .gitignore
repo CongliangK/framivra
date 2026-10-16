@@ -68,4 +68,4 @@ apps/matting/resolve_matte/uinject
 # 防 scripts/ci_checks.py 静态门 git ls-files 扫入数百 MB cef_binary 产物）
 experiments/gfx_cef_worker/build/
 experiments/gfx_cef_worker/cef_binary*/
-experiments/gfx_electron_worker/node_modules/
+experiments/gfx_electron_worker/node_modules
