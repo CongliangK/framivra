@@ -5,6 +5,10 @@ Only the exact publisher object below is eligible. Exit 2 means BLOCKED, never
 acceptance. App-cache cold is not OS-cache cold. Original no-reread remains unmet.
 """
 import argparse
+import contextlib
+import signal
+import sys
+import threading
 import hashlib
 import json
 import math
@@ -26,12 +30,42 @@ PROVENANCE = {
 }
 MIN_BYTES, MAX_BYTES = 1_000_000_000, 1_300_000_000
 META_CAP = 8 * 1024 * 1024
+METADATA_SECONDS = 180
+ACQUIRE_SECONDS = 1200
 BUDGET_ROOT = None
 COMMAND_REPORTS = []
 
 
 class Blocked(RuntimeError):
     pass
+
+
+@contextlib.contextmanager
+def operation_deadline(deadline):
+    """Interrupt blocking HTTP reads on the Linux main thread, including EOF.
+
+    Refuse an existing alarm rather than replacing another operation's watchdog.
+    The socket inactivity timeout is supplemental, not the transfer deadline.
+    """
+    if not sys.platform.startswith('linux') or threading.current_thread() is not threading.main_thread():
+        raise Blocked('HTTP deadline requires the Linux main thread')
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise Blocked('An existing process alarm prevents isolated HTTP watchdog use')
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise Blocked('HTTP operation deadline exceeded')
+    previous = signal.getsignal(signal.SIGALRM)
+    def expired(signum, frame):
+        raise Blocked('HTTP operation deadline exceeded during blocking I/O')
+    signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, remaining)
+    try:
+        yield
+        if time.monotonic() >= deadline:
+            raise Blocked('HTTP operation deadline exceeded at completion')
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -44,8 +78,10 @@ def request(method='GET', headers=None):
         urllib.request.Request(URL, method=method, headers=headers or {}), timeout=30)
 
 
-def head():
-    with request('HEAD') as response:
+def head(deadline=None):
+    if deadline is None:
+        deadline = time.monotonic() + METADATA_SECONDS
+    with operation_deadline(deadline), request('HEAD') as response:
         headers = dict(response.headers.items())
         size = int(response.headers.get('Content-Length', '0'))
         if response.status != 200 or not MIN_BYTES <= size <= MAX_BYTES:
@@ -58,9 +94,9 @@ def head():
 
 
 class Ranges:
-    def __init__(self, info):
+    def __init__(self, info, deadline=None):
         self.info, self.total = info, 0
-        self.deadline = time.monotonic() + 180
+        self.deadline = time.monotonic() + METADATA_SECONDS if deadline is None else deadline
 
     def get(self, start, length):
         if length <= 0 or start < 0 or start + length > self.info['bytes']:
@@ -72,7 +108,7 @@ class Ranges:
         headers = {'Range': f'bytes={start}-{start+length-1}'}
         if self.info['etag']:
             headers['If-Match'] = self.info['etag']
-        with request(headers=headers) as response:
+        with operation_deadline(self.deadline), request(headers=headers) as response:
             expected = f"bytes {start}-{start+length-1}/{self.info['bytes']}"
             if response.status != 206 or response.headers.get('Content-Range') != expected:
                 raise Blocked('Server did not honor bounded range')
@@ -175,7 +211,7 @@ def sha(path):
 def acquire(info, path):
     started, count, digest = time.monotonic(), 0, hashlib.sha256()
     headers = {'If-Match':info['etag']} if info['etag'] else {}
-    with request(headers=headers) as response, path.open('xb') as output:
+    with operation_deadline(started + ACQUIRE_SECONDS), request(headers=headers) as response, path.open('xb') as output:
         if response.status != 200 or (info['etag'] and response.headers.get('ETag') != info['etag']):
             raise Blocked('Object changed before acquisition')
         if int(response.headers.get('Content-Length', '0')) != info['bytes']:
@@ -185,7 +221,7 @@ def acquire(info, path):
             if not block:
                 break
             count += len(block)
-            if count > info['bytes'] or time.monotonic() - started > 1200:
+            if count > info['bytes'] or time.monotonic() - started >= ACQUIRE_SECONDS:
                 raise Blocked('Acquisition budget exceeded')
             output.write(block)
             digest.update(block)
@@ -240,8 +276,9 @@ def main():
         for tool in ('ffmpeg','ffprobe'):
             report[tool] = command([tool,'-version'])
         qualification_start = time.monotonic()
-        info = report['head'] = head()
-        ranges = Ranges(info)
+        metadata_deadline = qualification_start + METADATA_SECONDS
+        info = report['head'] = head(deadline=metadata_deadline)
+        ranges = Ranges(info, deadline=metadata_deadline)
         sparse = args.output / 'metadata-only.mov'
         # Ranged metadata is only a preliminary screen, never final qualification.
         # HTTP access denials propagate; unsupported ranges/metadata can fall back

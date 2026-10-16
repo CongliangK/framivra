@@ -126,96 +126,172 @@ def allocated_bytes(root):
     return total
 
 
-def process_tree_rss(leader):
-    """Linux RSS for our session and any descendants, not unrelated processes."""
+def process_records():
     records = {}
-    for entry in Path("/proc").iterdir():
+    for entry in Path('/proc').iterdir():
         if not entry.name.isdigit():
             continue
         try:
-            # comm can contain spaces and parentheses; fields begin after its last ')'.
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            records[int(entry.name)] = (int(fields[1]), int(fields[3]),
-                                        int(fields[21]) * os.sysconf("SC_PAGE_SIZE"))
+            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+            records[int(entry.name)] = {'parent':int(fields[1]), 'session':int(fields[3]),
+                'start':int(fields[19]), 'state':fields[0],
+                'rss':max(0,int(fields[21])) * os.sysconf('SC_PAGE_SIZE')}
         except (OSError, ValueError, IndexError):
-            continue  # process exited between directory enumeration and stat
-    owned = {leader} | {pid for pid, (_, session, _) in records.items() if session == leader}
-    while True:
-        descendants = {pid for pid, (parent, _, _) in records.items() if parent in owned}
-        if descendants <= owned:
-            break
-        owned.update(descendants)
-    return sum(max(0, records[pid][2]) for pid in owned if pid in records)
+            continue
+    return records
 
 
 def monitored_run(args, cwd, env, log, timeout, budget_root):
-    """Bound an owned Linux process tree: elapsed time, RSS and allocated scratch.
+    """Linux-only owned-tree monitor, with pidfd signalling and scoped adoption.
 
-    Polling is observational (0.2 s), not an OS hard resource reservation. Peak
-    values are sampled upper sums of per-process RSS, including shared pages.
-    Only the newly started process group is ever signalled.
+    A process-local subreaper keeps orphaned descendants attributable until they
+    finish. Existing direct children are excluded. No bare PID is signalled.
+    This synchronous helper refuses other Python threads and existing own child
+    processes, avoiding ambiguous adoption of concurrent work. RSS/allocated
+    blocks are sampled, not kernel hard reservations.
     """
+    import ctypes
     command = list(map(str, args))
-    if not sys.platform.startswith("linux"):
-        raise RuntimeError("RSS monitoring requires Linux /proc")
+    if (not sys.platform.startswith('linux') or not hasattr(os, 'pidfd_open')
+            or not hasattr(signal, 'pidfd_send_signal') or threading.active_count() != 1):
+        raise RuntimeError('Owned-tree monitoring requires single-threaded Linux with pidfds')
+    owner = os.getpid()
+    probe_fd = os.pidfd_open(owner)
+    try:
+        signal.pidfd_send_signal(probe_fd, 0)  # Capability check; no signal delivered.
+    finally:
+        os.close(probe_fd)
+    if any(r['parent'] == owner for r in process_records().values()):
+        raise RuntimeError('Concurrent existing child processes prevent isolated ownership')
     if timeout <= 0:
-        return {"exit_code": None, "timed_out": True, "wall_seconds": 0.0,
-                "started": False, "argv": command, "budget_exceeded": None}
+        return {'exit_code':None, 'timed_out':True, 'wall_seconds':0.0,
+                'started':False, 'argv':command, 'budget_exceeded':None}
     started = time.monotonic()
     peak_scratch = allocated_bytes(budget_root)
     if peak_scratch > SCRATCH_LIMIT_BYTES:
-        return {"exit_code": None, "timed_out": False, "wall_seconds": 0.0,
-                "started": False, "argv": command, "budget_exceeded": "scratch",
-                "peak_scratch_allocated_bytes": peak_scratch,
-                "peak_process_tree_rss_bytes": 0}
-    peak_rss, exceeded, expired = 0, None, False
-    with Path(log).open("xb") as stream:
-        process = subprocess.Popen(command, cwd=cwd, env=env,
-                                   stdin=subprocess.DEVNULL, stdout=stream,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
-        def stop():
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                pass
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-        try:
-            while process.poll() is None:
-                peak_rss = max(peak_rss, process_tree_rss(process.pid))
-                peak_scratch = max(peak_scratch, allocated_bytes(budget_root))
-                expired = time.monotonic() - started >= timeout
-                exceeded = ("rss" if peak_rss > RSS_LIMIT_BYTES else
-                            "scratch" if peak_scratch > SCRATCH_LIMIT_BYTES else None)
-                if expired or exceeded:
-                    stop()
-                    break
+        return {'exit_code':None,'timed_out':False,'wall_seconds':0.0,
+                'started':False,'argv':command,'budget_exceeded':'scratch',
+                'peak_scratch_allocated_bytes':peak_scratch,'peak_process_tree_rss_bytes':0}
+    libc = ctypes.CDLL(None, use_errno=True)
+    previous = ctypes.c_int()
+    if libc.prctl(37, ctypes.byref(previous), 0, 0, 0) != 0:
+        raise RuntimeError('Cannot inspect process-local child subreaper state')
+    if libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise RuntimeError('Cannot adopt owned orphan descendants')
+    process, owned, reaped = None, {}, []
+    peak_rss, exceeded, expired, descendants_after_exit = 0, None, False, False
+    cleanup_confirmed = False
+
+    def observe():
+        nonlocal peak_rss, peak_scratch, descendants_after_exit
+        records = process_records()
+        if process is None:
+            return []
+        # Direct adopted children belong to this isolated invocation; descendants
+        # are also discovered before adoption, even if they start a new session.
+        selected = {pid for pid,r in records.items() if r['parent'] == owner}
+        if (process.pid in records and (process.pid not in owned or
+                records[process.pid]['start'] == owned[process.pid]['start'])):
+            selected.add(process.pid)
+        selected |= {pid for pid, value in owned.items()
+                     if pid in records and records[pid]['start'] == value['start']}
+        while True:
+            more = {pid for pid,r in records.items() if r['parent'] in selected}
+            if more <= selected:
+                break
+            selected.update(more)
+        live = []
+        for pid in selected:
+            record = records.get(pid)
+            if record is None:
+                continue
+            if pid not in owned:
                 try:
-                    process.wait(timeout=min(POLL_SECONDS,
-                        max(0.001, timeout - (time.monotonic() - started))))
-                except subprocess.TimeoutExpired:
-                    pass
-            peak_scratch = max(peak_scratch, allocated_bytes(budget_root))
-            if peak_scratch > SCRATCH_LIMIT_BYTES:
-                exceeded = "scratch"
-        except BaseException:
-            stop()
-            raise
-    return {"exit_code": process.returncode, "timed_out": expired,
-            "wall_seconds": time.monotonic() - started, "started": True,
-            "argv": command, "log": str(log), "budget_exceeded": exceeded,
-            "peak_process_tree_rss_bytes": peak_rss,
-            "peak_scratch_allocated_bytes": peak_scratch,
-            "poll_seconds": POLL_SECONDS,
-            "rss_limit_bytes": RSS_LIMIT_BYTES,
-            "scratch_limit_bytes": SCRATCH_LIMIT_BYTES}
+                    fd = os.pidfd_open(pid)
+                except ProcessLookupError:
+                    continue
+                again = process_records().get(pid)
+                if again is None or again['start'] != record['start']:
+                    os.close(fd)
+                    continue
+                owned[pid] = {'fd':fd,'start':record['start']}
+            if record['start'] != owned[pid]['start']:
+                raise RuntimeError('Owned process identity changed unexpectedly')
+            if record['state'] != 'Z':
+                live.append(pid)
+            elif pid != process.pid:
+                try:
+                    child, status = os.waitpid(pid, os.WNOHANG)
+                    if child:
+                        reaped.append({'pid':child,'status':status})
+                except ChildProcessError:
+                    pass  # Still reaped by its live original parent.
+        peak_rss = max(peak_rss, sum(records[pid]['rss'] for pid in live))
+        peak_scratch = max(peak_scratch, allocated_bytes(budget_root))
+        if process.poll() is not None and any(pid != process.pid for pid in live):
+            descendants_after_exit = True
+        return live
+
+    def signal_owned(signum):
+        for pid in observe():
+            try:
+                signal.pidfd_send_signal(owned[pid]['fd'], signum)
+            except ProcessLookupError:
+                pass
+
+    def stop():
+        end = time.monotonic() + 3
+        signal_owned(signal.SIGTERM)
+        while observe() and time.monotonic() < end:
+            signal_owned(signal.SIGKILL)
+            time.sleep(.02)
+        live = observe()
+        if process is not None:
+            process.wait(timeout=1)
+        if live:
+            raise RuntimeError('Owned descendant termination could not be confirmed')
+        # Reap adopted zombies after their final exit; only known children.
+        observe()
+        return True
+
+    try:
+        with Path(log).open('xb') as stream:
+            process = subprocess.Popen(command,cwd=cwd,env=env,stdin=subprocess.DEVNULL,
+                stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
+            try:
+                leader = process_records().get(process.pid)
+                if leader is None:
+                    raise RuntimeError('Could not establish owned leader identity')
+                owned[process.pid] = {'fd':os.pidfd_open(process.pid), 'start':leader['start']}
+                while True:
+                    live = observe()
+                    expired = time.monotonic() - started >= timeout
+                    exceeded = ('rss' if peak_rss > RSS_LIMIT_BYTES else
+                                'scratch' if peak_scratch > SCRATCH_LIMIT_BYTES else None)
+                    if expired or exceeded:
+                        cleanup_confirmed = stop()
+                        break
+                    if process.poll() is not None and not live:
+                        cleanup_confirmed = True
+                        break
+                    time.sleep(min(POLL_SECONDS,max(.001,timeout-(time.monotonic()-started))))
+            except BaseException:
+                cleanup_confirmed = stop()
+                raise
+    finally:
+        for value in owned.values():
+            os.close(value['fd'])
+        if libc.prctl(36, previous.value, 0, 0, 0) != 0:
+            raise RuntimeError('Could not restore process-local subreaper state')
+    return {'exit_code':process.returncode,'timed_out':expired,
+        'wall_seconds':time.monotonic()-started,'started':True,'argv':command,'log':str(log),
+        'budget_exceeded':exceeded,'peak_process_tree_rss_bytes':peak_rss,
+        'peak_scratch_allocated_bytes':peak_scratch,'poll_seconds':POLL_SECONDS,
+        'rss_limit_bytes':RSS_LIMIT_BYTES,'scratch_limit_bytes':SCRATCH_LIMIT_BYTES,
+        'owned_processes_observed':len(owned),
+        'owned_identities':[{'pid':pid,'start_ticks':value['start']} for pid,value in owned.items()],
+        'cleanup_grace_seconds':3, 'descendants_after_leader_exit':descendants_after_exit,
+        'owned_tree_finished':cleanup_confirmed,'adopted_children_reaped':reaped}
 
 
 class DigestMeter:
@@ -327,6 +403,228 @@ class DigestMeter:
             setattr(module, name, original)
         Path.open = self.original_open
         builtins.open = self.original_builtin_open
+
+
+class CacheMeter:
+    """Observe real production decisions and writes; never authorize cache reuse.
+
+    Wrappers delegate unchanged, including failed decisions and commands. Only
+    calls made during the measured `vtx all` are included. QC's own receipt is
+    the evidence of skipped probes; a usable record alone is not a cache hit.
+    """
+    def __init__(self, project):
+        self.project = Path(project).resolve()
+        self.rows = []
+        self.patches = []
+        self.lock = threading.Lock()
+        self.final_before = self.final_stat()
+        self.identity_proof_wall_seconds = 0.0
+        self.identity_before = self.identities()
+
+    def identities(self):
+        from vtx import cache_state
+        timeline = self.project / "timeline.json"
+        value = read_json(timeline)
+        final = self.project / "out/final.mp4"
+        started = time.monotonic()
+        result = {"timeline_sha256": cache_state.file_digest(timeline),
+                "config_sha256": cache_state.file_digest(self.project / "config.json"),
+                "sources_sha256": {source["id"]: cache_state.file_digest(
+                    self.project / source["path"]) for source in value["sources"]},
+                "final_sha256": cache_state.file_digest(final) if final.exists() else None}
+        self.identity_proof_wall_seconds += time.monotonic() - started
+        return result
+
+    def final_stat(self):
+        try:
+            value = (self.project / "out/final.mp4").stat()
+        except FileNotFoundError:
+            return None
+        return {"size": value.st_size, "mtime_ns": value.st_mtime_ns}
+
+    def path(self, path):
+        resolved = Path(path).resolve()
+        try:
+            return str(resolved.relative_to(self.project))
+        except ValueError:
+            return str(resolved)
+
+    def patch(self, module, name, observe):
+        original = getattr(module, name)
+        @functools.wraps(original)
+        def wrapper(*args, **kwargs):
+            row = observe(*args, **kwargs)
+            row["completed"] = False
+            with self.lock:
+                self.rows.append(row)
+            result = original(*args, **kwargs)
+            row["completed"] = True
+            if row["kind"] == "audio":
+                row.update(path=self.path(result[0]), hit=result[1] is None)
+            elif row["kind"] in ("video", "qc_record", "loudness_lookup"):
+                row["hit"] = result is not None if row["kind"] != "video" else result is True
+            return result
+        self.patches.append((module, name, original))
+        setattr(module, name, wrapper)
+
+    def install(self):
+        from vtx import stages, composite, events, recovery, qc, loudness_cache
+        self.patch(stages, "source_audio_extraction", lambda c, sid:
+                   {"kind": "audio", "source": sid})
+        self.patch(composite, "media_cache_valid", lambda path, *a, **kw:
+                   {"kind": "video", "path": self.path(path)})
+        self.patch(events, "cache_hit", lambda c, method, **kw:
+                   {"kind": "cache_event", "validator": method, **kw})
+        self.patch(recovery, "atomic_ffmpeg", lambda c, cmd, execute:
+                   {"kind": "command", "argv": list(map(str, cmd)),
+                    "target": self.path(cmd[-1]) if Path(str(cmd[-1])).is_absolute() else str(cmd[-1])})
+        self.patch(qc, "_load_qc_pass_record", lambda c: {"kind": "qc_record"})
+        self.patch(loudness_cache, "lookup", lambda path, *a, **kw:
+                   {"kind": "loudness_lookup", "path": self.path(path)})
+        self.patch(loudness_cache, "measure_and_store", lambda path, *a, **kw:
+                   {"kind": "loudness_measure", "path": self.path(path)})
+
+    def summary(self):
+        identity_after = self.identities()
+        return {"schema": "framivra.issue85.cache-observations.v1",
+                "scope": "unchanged production calls during vtx all only; no synthetic hits",
+                "final_before": self.final_before, "final_after": self.final_stat(),
+                "identity_before": self.identity_before, "identity_after": identity_after,
+                "identity_proof_wall_seconds": self.identity_proof_wall_seconds,
+                "identity_proof_scope": "extra harness full-file reads; excluded only from render_wall_seconds; "
+                    "included in child/process bounds and separately phased digest accounting",
+                "calls": self.rows,
+                "always_recomputed": ["audio mix and WAV-domain loudness checks",
+                    "video concatenation and final mux", "QC frame/duration/resolution metadata",
+                    "QC concurrent-audio-window energy"],
+                "qc_cache_record_refresh_is_not_probe_recomputation": True}
+
+    def restore(self):
+        for module, name, original in reversed(self.patches):
+            setattr(module, name, original)
+
+
+def warm_cache_assessment(cold, warm, revision):
+    """Fail closed per sample; baseline remux invalidation is explicit and proven.
+
+    The fixed fixture has one extracted source, three preencoded clips and all
+    active composed segments. Every warm lookup must hit, and none of those
+    caches may be rebuilt. Unchanged candidate output must reuse QC/loudness.
+    A genuine content-changing remux, or baseline stat-changing remux, is an
+    explicit non-applicable case only with full input/output identity evidence.
+    """
+    result = {"passed": False, "caches": {}, "errors": []}
+    try:
+        cm, wm = cold["cache_observations"], warm["cache_observations"]
+        if cm["schema"] != "framivra.issue85.cache-observations.v1" or wm["schema"] != cm["schema"]:
+            raise ValueError("missing or unsupported cache observation schema")
+        cc, wc = cm["calls"], wm["calls"]
+        identities = [cm["identity_before"], cm["identity_after"],
+                      wm["identity_before"], wm["identity_after"]]
+        inputs = [{key: value for key, value in identity.items() if key != "final_sha256"}
+                  for identity in identities]
+        digest_ok = lambda value: (isinstance(value, str) and len(value) == 64
+                                   and all(ch in "0123456789abcdef" for ch in value))
+        inputs_ok = (set(inputs[0]) == {"timeline_sha256", "config_sha256", "sources_sha256"}
+                     and set(inputs[0]["sources_sha256"]) == {"source"}
+                     and all(digest_ok(value) for value in [inputs[0]["timeline_sha256"],
+                         inputs[0]["config_sha256"], *inputs[0]["sources_sha256"].values()])
+                     and all(value == inputs[0] for value in inputs))
+        if not inputs_ok:
+            result["errors"].append("complete source/timeline/config identities changed or are missing across cold/warm")
+        finals = [identity["final_sha256"] for identity in identities[1:]]
+        finals_ok = all(digest_ok(value) for value in finals) and finals[0] == finals[1]
+        final_unchanged = finals_ok and finals[1] == finals[2]
+        result["final_complete_sha256_unchanged"] = final_unchanged
+        if not finals_ok:
+            result["errors"].append("warm initial complete-file SHA-256 does not match its own cold output")
+        if not cc or not wc or any(row.get("completed") is not True for row in cc + wc):
+            raise ValueError("missing or incomplete production cache observations")
+        def calls(rows, kind):
+            return [row for row in rows if row["kind"] == kind]
+        commands = calls(wc, "command")
+        cache_writes = [row["target"] for row in commands
+                        if row["target"].startswith(("cache/audio/", "cache/seg/", "cache/vseg/",
+                                                     "cache/vseg_pass/"))]
+        audio = calls(wc, "audio")
+        cold_audio = calls(cc, "audio")
+        expected_audio = {row["path"] for row in cold_audio}
+        audio_events = [row for row in calls(wc, "cache_event")
+                        if row["validator"] == "audio_cache_valid"]
+        audio_ok = (len(expected_audio) == 1 and {row["source"] for row in cold_audio} == {"source"}
+                    and {row["path"] for row in audio} == expected_audio
+                    and {row["source"] for row in audio} == {"source"}
+                    and bool(audio) and all(row["hit"] is True for row in audio)
+                    and len(audio_events) == len(audio) and not cache_writes)
+        result["caches"]["source_audio"] = {"applicable": True, "passed": audio_ok,
+            "expected_paths": sorted(expected_audio), "hits": sum(row["hit"] is True for row in audio),
+            "lookups": len(audio), "production_hit_events": len(audio_events)}
+        for domain, minimum in (("seg", 3), ("vseg", 1)):
+            prefix = f"cache/{domain}/"
+            expected = {row["path"] for row in calls(cc, "video") if row["path"].startswith(prefix)}
+            observed = [row for row in calls(wc, "video") if row["path"].startswith(prefix)]
+            passed = (len(expected) >= minimum and {row["path"] for row in observed} == expected
+                      and all(row["hit"] is True for row in observed) and not cache_writes)
+            result["caches"][domain] = {"applicable": True, "passed": passed,
+                "expected_paths": sorted(expected), "lookups": len(observed),
+                "hits": sum(row["hit"] is True for row in observed)}
+        result["cache_rebuild_targets"] = cache_writes
+        if cache_writes:
+            result["errors"].append("warm invocation wrote extracted-audio or video caches")
+        before, after = wm["final_before"], wm["final_after"]
+        if any(not isinstance(value, dict) or set(value) != {"size", "mtime_ns"}
+               or type(value["size"]) is not int or value["size"] <= 0
+               or type(value["mtime_ns"]) is not int for value in (before, after)):
+            raise ValueError("missing or invalid final stat snapshots")
+        remuxed = any(row["target"] == "out/.final.tmp.mp4" for row in commands)
+        baseline_remux = (revision == BASELINE and isinstance(before, dict) and isinstance(after, dict)
+                          and before == cm["final_after"] and before["size"] == after["size"]
+                          and before["mtime_ns"] != after["mtime_ns"] and remuxed and finals_ok and inputs_ok)
+        content_changed = (finals_ok and not final_unchanged and remuxed and inputs_ok
+                           and before == cm["final_after"] and before is not None and after is not None)
+        no_final_reuse = baseline_remux or content_changed
+        result["baseline_stat_cache_remux_exception"] = baseline_remux
+        result["remux_changed_final_content"] = content_changed
+        if not final_unchanged and not no_final_reuse:
+            result["errors"].append("changed final content lacks observed remux and unchanged-input proof")
+        if before != cm["final_after"] or before is None:
+            result["errors"].append("warm final identity does not start at its own cold output")
+        if revision not in (BASELINE, CANDIDATE):
+            result["errors"].append("unknown frozen production revision")
+        expected_probes = {f"底轨切点帧比对 dst={cl['dst_in']} src=source:{cl['src_in'] + 2}"
+                           for cl in timeline_spec()["video_tracks"][0]["clips"]}
+        expected_probes.add("空窗无叠加泄漏 @frame 359")
+        qc = warm["qc_report"]
+        skipped = [row["name"] for row in qc["skipped_probes"]]
+        qc_lookups = calls(wc, "qc_record")
+        qc_probes = [row["target"] for row in commands if row["target"].startswith("cache/qc_probe_")]
+        qc_hits = sum(row["hit"] is True for row in qc_lookups)
+        cold_checks = {row["name"] for row in cold["qc_report"]["checks"] if row["pass"] is True}
+        warm_checks = {row["name"] for row in qc["checks"] if row["pass"] is True}
+        qc_ok = (expected_probes <= cold_checks and expected_probes <= warm_checks
+                 and len(qc_lookups) == 1
+                 and ((not skipped and qc_hits == 0 and bool(qc_probes)) if no_final_reuse else
+                      (set(skipped) == expected_probes and len(skipped) == len(expected_probes)
+                       and qc_hits == 1 and not qc_probes)))
+        reason = ("complete final SHA-256 changed after observed atomic remux despite unchanged inputs"
+                  if content_changed else
+                  "baseline stat-bound records invalidated by observed atomic remux and changed final mtime"
+                  if baseline_remux else "unchanged warm output must reuse existing production records")
+        result["caches"]["qc_probes"] = {"applicable": not no_final_reuse, "reason": reason,
+            "passed": qc_ok, "expected_probes": sorted(expected_probes), "skipped_probes": skipped,
+            "record_hits": qc_hits, "probe_commands": len(qc_probes)}
+        lookup, measure = calls(wc, "loudness_lookup"), calls(wc, "loudness_measure")
+        loud_hits = sum(row["hit"] is True for row in lookup)
+        loud_ok = (len(lookup) == 1 and lookup[0]["path"] == "out/final.mp4"
+                   and ((loud_hits == 0 and len(measure) == 1 and measure[0]["path"] == "out/final.mp4")
+                        if no_final_reuse else (loud_hits == 1 and not measure)))
+        result["caches"]["final_loudness"] = {"applicable": not no_final_reuse, "reason": reason,
+            "passed": loud_ok, "lookups": len(lookup), "hits": loud_hits, "measurements": len(measure)}
+        result["always_recomputed"] = wm["always_recomputed"]
+        result["passed"] = not result["errors"] and all(row["passed"] for row in result["caches"].values())
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        result["errors"].append(f"incomplete cache evidence: {error}")
+    return result
 
 
 def interval_union_seconds(rows):
@@ -530,10 +828,14 @@ def child_main(repository, project, evidence, action, revision):
     sys.pycache_prefix = str(project / "home/unused-bytecode")
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(TimeoutError("parent deadline")))
     meter = DigestMeter()
+    cache_meter = None
     report = {"action": action, "revision": revision, "passed": False}
     try:
         meter.install()
         if action == "render":
+            meter.phase = "cache_evidence_before"
+            cache_meter = CacheMeter(project)
+            cache_meter.install()
             from vtx.cli import main
             meter.phase = "production_all"
             sys.argv = ["vtx", "-t", str(project / "timeline.json"), "all"]
@@ -541,8 +843,14 @@ def child_main(repository, project, evidence, action, revision):
                 code = main() or 0
             except SystemExit as error:
                 code = error.code if isinstance(error.code, int) else 1
-            report["render_wall_seconds"] = time.monotonic() - start
             report["render_exit_code"] = code
+            meter.phase = "cache_evidence_after"
+            report["cache_observations"] = cache_meter.summary()
+            report["render_wall_seconds"] = (time.monotonic() - start
+                                               - cache_meter.identity_proof_wall_seconds)
+            report["harness_identity_proof_wall_seconds"] = cache_meter.identity_proof_wall_seconds
+            cache_meter.restore()
+            cache_meter = None
             if code != 0:
                 raise RuntimeError(f"production vtx all exited {code}")
             report.update(validate_receipts(project))
@@ -559,9 +867,15 @@ def child_main(repository, project, evidence, action, revision):
         report["error"] = {"type": type(error).__name__, "message": str(error)}
         traceback.print_exc()
     finally:
-        report["child_wall_seconds"] = time.monotonic() - start
+        if cache_meter is not None:
+            meter.phase = "cache_evidence_after"
+            report["cache_observations"] = cache_meter.summary()
+            cache_meter.restore()
         report["digest_meter"] = meter.summary()
+        report["harness_identity_proof_bytes"] = sum(row["bytes_read"] for row in meter.rows
+            if row["phase"] in ("cache_evidence_before", "cache_evidence_after"))
         meter.restore()
+        report["child_wall_seconds"] = time.monotonic() - start
         write_json(evidence / "result.json", report)
     return 0 if report["passed"] else 1
 
@@ -662,10 +976,13 @@ def run_experiment(baseline: Path, candidate: Path, source: Path, root: Path) ->
         "production_command": ["vtx", "-t", "timeline.json", "all"],
         "environment_policy": CPU_POLICY,
         "cache_policy": "new project/application caches for each cold run; warm reuses its "
-            "own cold project's caches; OS page cache is uncontrolled (not disk-cold)",
+            "own cold project's caches; every warm sample gates actual applicable reuse and no cache rebuild; "
+            "OS page cache is uncontrolled (not disk-cold); identity-proof scans can affect page residency",
         "measurement_scope": "child setup/imports plus full production all wall time, unchanged QC, instrumentation "
             "and production imports included from child_main entry; Python interpreter launch "
-            "before that entry is excluded; monitored process wall also includes launch and decoded hashes",
+            "before that entry is excluded; only separately reported extra harness identity-proof full reads "
+            "are subtracted from render_wall_seconds; normal production digest costs remain included; "
+            "monitored process wall includes launch, proof reads and decoded hashes",
         "source_acquisition_and_normalization_included": False,
         "source": str(source), "source_bytes": source.stat().st_size,
         "samples": [], "negatives": [], "output": str(output)}
@@ -713,6 +1030,13 @@ def run_experiment(baseline: Path, candidate: Path, source: Path, root: Path) ->
                     result = execute(label, projects[(pair_number, label)], phase, "render")
                     result["pair"] = pair_number
                     report["samples"].append(result)
+                    if phase == "warm":
+                        cold = next(sample for sample in report["samples"]
+                                    if sample["pair"] == pair_number and sample["label"] == label
+                                    and sample["phase"] == "cold")
+                        result["warm_cache_gate"] = warm_cache_assessment(
+                            cold.get("child", {}), result.get("child", {}), repos[label]["commit"])
+                        result["passed"] = result["passed"] and result["warm_cache_gate"]["passed"]
                     if not result["passed"]:
                         raise RuntimeError(f"pair {pair_number} {label} {phase} failed; inspect {result['evidence']}")
         report["decoded_output_equivalence"] = compare_identities(report["samples"])

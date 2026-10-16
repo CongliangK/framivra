@@ -3,6 +3,8 @@ import importlib.util
 import json
 import os
 import sys
+import time
+import signal
 import struct
 import tempfile
 import unittest
@@ -109,6 +111,75 @@ class Qualification(unittest.TestCase):
         with patch.object(h,'request',return_value=Response()), self.assertRaises(h.Blocked):
             h.Ranges({'bytes':h.MIN_BYTES,'etag':'"original"'}).get(0,16)
 
+    def test_acquisition_checks_delayed_eof(self):
+        now=[0]
+        class Response:
+            status=200
+            headers={'Content-Length':'3'}
+            calls=0
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n):
+                self.calls+=1
+                now[0]=1 if self.calls==1 else 1301
+                return b'abc' if self.calls==1 else b''
+        with tempfile.TemporaryDirectory() as directory, patch.object(h,'request',return_value=Response()), patch.object(h.time,'monotonic',side_effect=lambda:now[0]):
+            with self.assertRaisesRegex(h.Blocked,'deadline'):
+                h.acquire({'bytes':3,'etag':None},Path(directory)/'tiny')
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL),(0.0,0.0))
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),'Linux wall-clock HTTP alarm')
+    def test_blocking_read_is_interrupted(self):
+        class Response:
+            status=206
+            headers={'Content-Range':'bytes 0-2/3'}
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n):
+                time.sleep(2)
+                return b'abc'
+        previous=signal.getsignal(signal.SIGALRM)
+        with patch.object(h,'METADATA_SECONDS',.05), patch.object(h,'request',return_value=Response()):
+            ranges=h.Ranges({'bytes':3,'etag':None})
+            started=time.monotonic()
+            with self.assertRaisesRegex(h.Blocked,'deadline'):
+                ranges.get(0,3)
+            self.assertLess(time.monotonic()-started,.5)
+        self.assertIs(signal.getsignal(signal.SIGALRM),previous)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL),(0.0,0.0))
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),'Linux wall-clock HTTP alarm')
+    def test_acquisition_blocking_eof_is_interrupted(self):
+        class Response:
+            status=200
+            headers={'Content-Length':'3'}
+            calls=0
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n):
+                self.calls+=1
+                if self.calls==1: return b'abc'
+                time.sleep(2)
+                return b''
+        with tempfile.TemporaryDirectory() as directory, patch.object(h,'ACQUIRE_SECONDS',.05), patch.object(h,'request',return_value=Response()):
+            started=time.monotonic()
+            with self.assertRaisesRegex(h.Blocked,'deadline'):
+                h.acquire({'bytes':3,'etag':None},Path(directory)/'tiny')
+            self.assertLess(time.monotonic()-started,.5)
+
+    def test_range_terminal_deadline(self):
+        now=[0]
+        class Response:
+            status=206
+            headers={'Content-Range':'bytes 0-2/3'}
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n): now[0]=181; return b'abc'
+        with patch.object(h.time,'monotonic',side_effect=lambda:now[0]), patch.object(h,'request',return_value=Response()):
+            ranges=h.Ranges({'bytes':3,'etag':None})
+            with self.assertRaisesRegex(h.Blocked,'deadline'):
+                ranges.get(0,3)
+
     def test_streaming_digest(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'tiny'; path.write_bytes(b'abc')
@@ -173,6 +244,271 @@ class RunnerContracts(unittest.TestCase):
             self.assertFalse(result['started'])
             self.assertEqual(result['budget_exceeded'],'scratch')
             self.assertFalse((root/'blocked.log').exists())
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),'Linux owned descendant monitor')
+    def test_leader_exit_does_not_release_descendant_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            code="import subprocess,sys; subprocess.Popen([sys.executable,'-c',\"import time,pathlib; time.sleep(1); pathlib.Path('late').write_text('wrong')\"])"
+            result=self.r.monitored_run([sys.executable,'-c',code],root,dict(os.environ),root/'log',.4,root)
+            self.assertTrue(result['timed_out'])
+            self.assertTrue(result['descendants_after_leader_exit'])
+            self.assertTrue(result['owned_tree_finished'])
+            self.assertGreaterEqual(result['owned_processes_observed'],2)
+            self.assertTrue(result['adopted_children_reaped'])
+            self.assertFalse((root/'late').exists())
+            self.assertFalse(any(r['parent']==os.getpid() for r in self.r.process_records().values()))
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),'Linux owned descendant monitor')
+    def test_short_descendant_finishes_before_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            code="import subprocess,sys; subprocess.Popen([sys.executable,'-c',\"import time,pathlib; time.sleep(.25); pathlib.Path('done').write_text('yes')\"])"
+            result=self.r.monitored_run([sys.executable,'-c',code],root,dict(os.environ),root/'log',3,root)
+            self.assertEqual(result['exit_code'],0)
+            self.assertFalse(result['timed_out'])
+            self.assertTrue(result['owned_tree_finished'])
+            self.assertTrue((root/'done').exists())
+            self.assertGreaterEqual(result['wall_seconds'],.25)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),'Linux adopted descendant ownership')
+    def test_new_session_descendant_is_owned_after_leader_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            code="import subprocess,sys; subprocess.Popen([sys.executable,'-c',\"import time,pathlib; time.sleep(1); pathlib.Path('late').write_text('wrong')\"],start_new_session=True)"
+            result=self.r.monitored_run([sys.executable,'-c',code],root,dict(os.environ),root/'log',.4,root)
+            self.assertTrue(result['timed_out'])
+            self.assertTrue(result['owned_tree_finished'])
+            self.assertTrue(result['adopted_children_reaped'])
+            self.assertFalse((root/'late').exists())
+
+    def cache_fixture(self):
+        identity={'timeline_sha256':'a'*64,'config_sha256':'b'*64,
+                  'sources_sha256':{'source':'c'*64},'final_sha256':'d'*64}
+        stat={'size':123,'mtime_ns':1}
+        paths=['cache/seg/a.mp4','cache/seg/b.mp4','cache/seg/c.mp4','cache/vseg/a.mp4']
+        calls=[{'kind':'audio','source':'source','path':'cache/audio/a.wav','hit':True},
+               {'kind':'cache_event','validator':'audio_cache_valid'},
+               *[{'kind':'video','path':path,'hit':True} for path in paths],
+               {'kind':'qc_record','hit':True},
+               {'kind':'loudness_lookup','path':'out/final.mp4','hit':True},
+               {'kind':'command','target':'out/.final.tmp.mp4','argv':['ffmpeg']}]
+        for call in calls: call['completed']=True
+        names=[f"底轨切点帧比对 dst={cl['dst_in']} src=source:{cl['src_in']+2}"
+               for cl in self.r.timeline_spec()['video_tracks'][0]['clips']]
+        names.append('空窗无叠加泄漏 @frame 359')
+        child={'cache_observations':{'schema':'framivra.issue85.cache-observations.v1',
+                 'final_before':stat,'final_after':stat,'identity_before':identity,
+                 'identity_after':identity,'calls':calls,'always_recomputed':['mux']},
+               'qc_report':{'checks':[{'name':name,'pass':True} for name in names],
+                            'skipped_probes':[{'name':name} for name in names]}}
+        return json.loads(json.dumps(child)),json.loads(json.dumps(child))
+
+    def test_warm_cache_requires_each_applicable_hit_and_no_rebuild(self):
+        cold,warm=self.cache_fixture()
+        self.assertTrue(self.r.warm_cache_assessment(cold,warm,self.r.CANDIDATE)['passed'])
+        for index,call in enumerate(warm['cache_observations']['calls']):
+            if 'hit' not in call: continue
+            changed=json.loads(json.dumps(warm))
+            changed['cache_observations']['calls'][index]['hit']=False
+            with self.subTest(kind=call['kind'],index=index):
+                self.assertFalse(self.r.warm_cache_assessment(cold,changed,self.r.CANDIDATE)['passed'])
+        for target in ('cache/audio/a.wav','cache/seg/a.mp4','cache/vseg/a.mp4'):
+            changed=json.loads(json.dumps(warm))
+            changed['cache_observations']['calls'].append(
+                {'kind':'command','target':target,'completed':True})
+            with self.subTest(rebuild=target):
+                self.assertFalse(self.r.warm_cache_assessment(cold,changed,self.r.CANDIDATE)['passed'])
+        for call in warm['cache_observations']['calls']:
+            if 'hit' in call: call['hit']=False
+        self.assertFalse(self.r.warm_cache_assessment(cold,warm,self.r.CANDIDATE)['passed'])
+
+    def test_warm_remux_exceptions_require_full_evidence(self):
+        cold,warm=self.cache_fixture()
+        wm=warm['cache_observations']
+        wm['final_after']['mtime_ns']=2
+        for row in wm['calls']:
+            if row['kind'] in ('qc_record','loudness_lookup'): row['hit']=False
+        wm['calls'] += [{'kind':'command','target':'cache/qc_probe_x.raw','completed':True},
+                       {'kind':'loudness_measure','path':'out/final.mp4','completed':True}]
+        warm['qc_report']['skipped_probes']=[]
+        self.assertTrue(self.r.warm_cache_assessment(cold,warm,self.r.BASELINE)['passed'])
+        self.assertFalse(self.r.warm_cache_assessment(cold,warm,self.r.CANDIDATE)['passed'])
+        wm['identity_after']['final_sha256']='e'*64
+        self.assertTrue(self.r.warm_cache_assessment(cold,warm,self.r.CANDIDATE)['passed'])
+        wm['calls']=[row for row in wm['calls'] if row.get('target')!='out/.final.tmp.mp4']
+        self.assertFalse(self.r.warm_cache_assessment(cold,warm,self.r.CANDIDATE)['passed'])
+
+    def test_orchestrator_rejects_zero_warm_hit_evidence(self):
+        r=self.r
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); source=root/'source'; source.write_bytes(b'x'*150000)
+            seen=[]
+            def fake_run(argv,cwd,env,log,timeout,budget_root):
+                evidence=Path(argv[-3]); seen.append(evidence.name)
+                r.write_json(evidence/'result.json',{'passed':True,'render_wall_seconds':100,
+                    'decoded_identity':{'v':'same','a':'same'},'cache_hits':0})
+                return {'exit_code':0,'timed_out':False,'budget_exceeded':None}
+            with patch.object(r,'checked_revision',side_effect=lambda p,e:{'path':str(p),'commit':e}), patch.object(r,'monitored_run',side_effect=fake_run):
+                result=r.run_experiment(root,root,source,root/'runs')
+            self.assertIn('warm',seen)
+            self.assertEqual(result['status'],'FAIL')
+            warm=[sample for sample in result['samples'] if sample['phase']=='warm']
+            self.assertTrue(warm)
+            self.assertFalse(warm[0]['warm_cache_gate']['passed'])
+
+    def test_each_of_six_warm_samples_is_independently_gated(self):
+        r=self.r
+        for rejected in [None,*[(pair,label) for pair in (1,2,3) for label in ('baseline','candidate')]]:
+            with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); source=root/'source'; source.write_bytes(b'x'*150000)
+                def fake_run(argv,cwd,env,log,timeout,budget_root):
+                    evidence=Path(argv[-3]); action=argv[-2]
+                    cold,warm=self.cache_fixture()
+                    label=Path(cwd).name.split('-')[-1]
+                    pair=int(Path(cwd).name.split('-')[1])
+                    child=warm if evidence.name=='warm' else cold
+                    if evidence.name=='warm' and label=='baseline':
+                        wm=child['cache_observations']; wm['final_after']['mtime_ns']=2
+                        for row in wm['calls']:
+                            if row['kind'] in ('qc_record','loudness_lookup'): row['hit']=False
+                        wm['calls'] += [{'kind':'command','target':'cache/qc_probe_x.raw','completed':True},
+                            {'kind':'loudness_measure','path':'out/final.mp4','completed':True}]
+                        child['qc_report']['skipped_probes']=[]
+                    if evidence.name=='warm' and (pair,label)==rejected:
+                        child['cache_observations']['calls'][0]['hit']=False
+                    child.update(passed=True,render_wall_seconds=100,decoded_identity={'v':'same','a':'same'})
+                    if action=='negative': child['negative']={'passed':True}
+                    r.write_json(evidence/'result.json',child)
+                    return {'exit_code':0,'timed_out':False,'budget_exceeded':None}
+                with patch.object(r,'checked_revision',side_effect=lambda p,e:{'path':str(p),'commit':e}), patch.object(r,'monitored_run',side_effect=fake_run):
+                    result=r.run_experiment(root,root,source,root/'runs')
+                self.assertEqual(result['status'],'PASS' if rejected is None else 'FAIL')
+                if rejected is None:
+                    self.assertEqual(sum(sample['phase']=='warm' for sample in result['samples']),6)
+                else:
+                    bad=[sample for sample in result['samples'] if sample['phase']=='warm' and
+                         (sample['pair'],sample['label'])==rejected]
+                    self.assertEqual(len(bad),1)
+                    self.assertFalse(bad[0]['warm_cache_gate']['passed'])
+
+    def warm_cache_fixture(self, baseline=False, changed_content=False):
+        import copy
+        r = self.r
+        row = lambda kind, **kw: {'kind': kind, 'completed': True, **kw}
+        ident = {'timeline_sha256': 'a' * 64, 'config_sha256': 'b' * 64,
+                 'sources_sha256': {'source': 'c' * 64}, 'final_sha256': 'd' * 64}
+        paths = [f'cache/seg/{i}.mp4' for i in range(3)] + ['cache/vseg/segment.mp4']
+        names = [f'底轨切点帧比对 dst={d} src=source:{s + 2}'
+                 for d, s in ((0, 0), (120, 240), (240, 480))] + ['空窗无叠加泄漏 @frame 359']
+        cold = {'cache_observations': {'schema': 'framivra.issue85.cache-observations.v1',
+                    'identity_before': dict(ident, final_sha256=None), 'identity_after': ident,
+                    'final_before': None, 'final_after': {'size': 999, 'mtime_ns': 1},
+                    'always_recomputed': [],
+                    'calls': [row('audio', source='source', path='cache/audio/source.wav', hit=False)]
+                             + [row('video', path=p, hit=False) for p in paths]},
+                'qc_report': {'checks': [{'name': name, 'pass': True} for name in names],
+                              'skipped_probes': []}}
+        warm = copy.deepcopy(cold)
+        obs = warm['cache_observations']
+        obs['identity_before'] = copy.deepcopy(ident)
+        obs['final_before'] = dict(obs['final_after'])
+        obs['final_after']['mtime_ns'] = 2
+        if changed_content:
+            obs['identity_after']['final_sha256'] = 'e' * 64
+        misses = baseline or changed_content
+        obs['calls'] = [row('audio', source='source', path='cache/audio/source.wav', hit=True),
+                        row('cache_event', validator='audio_cache_valid')]
+        obs['calls'] += [row('video', path=p, hit=True) for p in paths]
+        obs['calls'] += [row('qc_record', hit=not misses),
+                         row('loudness_lookup', path='out/final.mp4', hit=not misses),
+                         row('command', target='out/.final.tmp.mp4', argv=['ffmpeg'])]
+        if misses:
+            obs['calls'] += [row('loudness_measure', path='out/final.mp4'),
+                             row('command', target='cache/qc_probe_1.raw', argv=['ffmpeg'])]
+        else:
+            warm['qc_report']['skipped_probes'] = [{'name': name, 'seg': [0, 360]} for name in names]
+        return cold, warm
+
+    def test_warm_cache_real_applicability_contract(self):
+        for baseline, changed in ((False, False), (True, False), (False, True)):
+            with self.subTest(baseline=baseline, changed=changed):
+                cold, warm = self.warm_cache_fixture(baseline, changed)
+                result = self.r.warm_cache_assessment(cold, warm,
+                    self.r.BASELINE if baseline else self.r.CANDIDATE)
+                self.assertTrue(result['passed'], result)
+                self.assertEqual(result['caches']['qc_probes']['applicable'], not (baseline or changed))
+
+    def test_warm_cache_missing_each_hit_and_rebuild_fails(self):
+        import copy
+        cold, warm = self.warm_cache_fixture()
+        for index, row in enumerate(warm['cache_observations']['calls']):
+            if 'hit' not in row:
+                continue
+            with self.subTest(missing_hit=row):
+                changed = copy.deepcopy(warm)
+                changed['cache_observations']['calls'][index]['hit'] = False
+                self.assertFalse(self.r.warm_cache_assessment(cold, changed, self.r.CANDIDATE)['passed'])
+        for target in ('cache/audio/source.wav', 'cache/seg/0.mp4', 'cache/vseg/segment.mp4',
+                       'cache/vseg_pass/p0.mkv', 'cache/qc_probe_1.raw'):
+            with self.subTest(rebuild=target):
+                changed = copy.deepcopy(warm)
+                changed['cache_observations']['calls'].append(
+                    {'kind': 'command', 'completed': True, 'target': target, 'argv': ['ffmpeg']})
+                self.assertFalse(self.r.warm_cache_assessment(cold, changed, self.r.CANDIDATE)['passed'])
+        warm['cache_observations']['calls'].append(
+            {'kind': 'loudness_measure', 'completed': True, 'path': 'out/final.mp4'})
+        self.assertFalse(self.r.warm_cache_assessment(cold, warm, self.r.CANDIDATE)['passed'])
+
+    def test_warm_cache_exceptions_need_real_evidence(self):
+        for baseline in (True, False):
+            cold, warm = self.warm_cache_fixture(baseline, changed_content=not baseline)
+            revision = self.r.BASELINE if baseline else self.r.CANDIDATE
+            warm['cache_observations']['calls'] = [row for row in warm['cache_observations']['calls']
+                if row.get('target') != 'out/.final.tmp.mp4']
+            self.assertFalse(self.r.warm_cache_assessment(cold, warm, revision)['passed'])
+        cold, warm = self.warm_cache_fixture()
+        warm['cache_observations']['identity_after']['sources_sha256']['source'] = 'f' * 64
+        self.assertFalse(self.r.warm_cache_assessment(cold, warm, self.r.CANDIDATE)['passed'])
+        self.assertFalse(self.r.warm_cache_assessment({}, {'cache_hits': 0}, self.r.CANDIDATE)['passed'])
+
+    def test_cache_meter_delegates_existing_decisions_unchanged(self):
+        from types import SimpleNamespace
+        from vtx import stages, composite, events, recovery, qc, loudness_cache
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'out').mkdir()
+            (root / 'source.mp4').write_bytes(b'tiny source')
+            (root / 'out/final.mp4').write_bytes(b'tiny output')
+            (root / 'timeline.json').write_text(json.dumps(self.r.timeline_spec()))
+            (root / 'config.json').write_text('{}')
+            with patch.object(stages, 'source_audio_extraction', return_value=(root / 'cache/audio/a.wav', ['real miss'])) as audio, \
+                 patch.object(composite, 'media_cache_valid', return_value=False) as video, \
+                 patch.object(events, 'cache_hit', return_value='event') as event, \
+                 patch.object(recovery, 'atomic_ffmpeg', return_value='executed') as command, \
+                 patch.object(qc, '_load_qc_pass_record', return_value=None) as qcr, \
+                 patch.object(loudness_cache, 'lookup', return_value=None) as loud, \
+                 patch.object(loudness_cache, 'measure_and_store', return_value={'i': -14}) as measure:
+                meter = self.r.CacheMeter(root)
+                meter.install()
+                c = SimpleNamespace()
+                try:
+                    self.assertEqual(stages.source_audio_extraction(c, 'source')[1], ['real miss'])
+                    self.assertFalse(composite.media_cache_valid(root / 'cache/seg/s.mp4', 120))
+                    self.assertEqual(events.cache_hit(c, 'audio_cache_valid'), 'event')
+                    self.assertEqual(recovery.atomic_ffmpeg(c, ['ffmpeg', str(root / 'out/.final.tmp.mp4')], None), 'executed')
+                    self.assertIsNone(qc._load_qc_pass_record(c))
+                    self.assertIsNone(loudness_cache.lookup(root / 'out/final.mp4', root=root))
+                    self.assertEqual(loudness_cache.measure_and_store(root / 'out/final.mp4', None, root=root), {'i': -14})
+                    observed = meter.summary()
+                    self.assertTrue(all(row['completed'] for row in observed['calls']))
+                    self.assertTrue(all(row['hit'] is False for row in observed['calls'] if 'hit' in row))
+                    self.assertEqual(observed['identity_before'], observed['identity_after'])
+                finally:
+                    meter.restore()
+                for original in (audio, video, event, command, qcr, loud, measure):
+                    original.assert_called_once()
+                self.assertIs(stages.source_audio_extraction, audio)
 
     def test_performance_never_selects_best_pair(self):
         def samples(deltas, warm_delta=0):
