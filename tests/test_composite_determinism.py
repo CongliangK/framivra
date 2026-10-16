@@ -61,6 +61,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
+from vtx.frame_source import PngSequence
 from vtx import composite
 from vtx.composite import RenderPlan, _graph_code_digest
 
@@ -93,7 +94,7 @@ class TestGraphCodeDigest(unittest.TestCase):
         p = _P(); p.W, p.H, p.draft = 1920, 1080, False
         p.c = mock.MagicMock(gpu=False)
         sl = [{"cl": {"dst_in": 5, "dur": 30}, "gfx": False,
-               "seg": Path("/cache/seg/abc123.mov"), "pngdir": Path("/cache/gfx/x"),
+               "seg": Path("/cache/seg/abc123.mov"), "source": PngSequence(Path("/cache/gfx/x"), "x", 30, 30, 64, 64),
                "x": 0, "y": 0, "w2": None, "h2": None}]
         real = _graph_code_digest()
         with mock.patch.object(composite, "_graph_code_digest", return_value=real):
@@ -210,9 +211,9 @@ class TestPassKeySubsSeparation(unittest.TestCase):
             plan = RenderPlan(c=c, draft=False, f=1.0, W=64, H=64,
                               nframes=None, nseg=1, layers=[])
             sl = [{"cl": {"dst_in": 0, "dur": 30}, "gfx": True,
-                   "pngdir": d / "seqA", "x": 0, "y": 0, "w2": None, "h2": None, "ti": 0},
+                   "source": PngSequence(d / "seqA", "seqA", 30, 30, 64, 64), "x": 0, "y": 0, "w2": None, "h2": None, "ti": 0},
                   {"cl": {"dst_in": 10, "dur": 30}, "gfx": True,
-                   "pngdir": d / "seqB", "x": 8, "y": 4, "w2": None, "h2": None, "ti": 0}]
+                   "source": PngSequence(d / "seqB", "seqB", 30, 30, 64, 64), "x": 8, "y": 4, "w2": None, "h2": None, "ti": 0}]
             sfile = None
             if with_subs:
                 # 尾支 last and with_subs 触 subtitles=filename=（filter_filename
@@ -268,7 +269,7 @@ class TestCrossRunDeterminism(unittest.TestCase):
         for k, (si, dst_in) in enumerate(self.LAYERS):
             out.append({"cl": {"src": f"s{si}", "src_in": 0, "src_out": self.SEQ_FRAMES[si],
                                "dst_in": dst_in, "dur": self.SEQ_FRAMES[si]},
-                        "pngdir": d / f"seq{si}",
+                        "source": PngSequence(d / f"seq{si}", f"seq{si}", self.SEQ_FRAMES[si], self.FPS, self.W, self.H),
                         "x": (k * 137) % (self.W // 2), "y": (k * 89) % (self.H // 2),
                         "w2": None, "h2": None, "gfx": True, "ti": 0})
         return out

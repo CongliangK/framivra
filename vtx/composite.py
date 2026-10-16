@@ -10,10 +10,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
-from .hygiene import budget_gate, gfx_dir, manifest_record, seg_key
+from .hygiene import budget_gate, manifest_record, seg_key
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
 from . import probe_cache, fstxn
 from .recovery import media_cache_valid
+from .frame_source import png_source
+from . import frame_source, gfx_cli
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）
@@ -80,9 +82,21 @@ def _graph_code_digest() -> str:
     现扩为合成路径五函数联合摘要：任一行为性改动必翻转段键与 pass 键；切点逻辑
     经 a|b 入键、prepare_layers 滤镜链经上游内容键入键，不在此列。lru_cache：进程内取一次。
     """
-    return hashlib.sha1("".join(
+    source = "".join(
         _normalized_ast_src(inspect.getsource(getattr(RenderPlan, n))) for n in _SYNTH_FUNCS
-    ).encode("utf-8")).hexdigest()[:12]
+    )
+    # Issue #68: one exact migration fingerprint preserves existing PNG cache
+    # identities. Include the whole new descriptor and its PNG validator module,
+    # so later helper/contract/validation edits cannot silently reuse this alias.
+    # This is source identity, not a proof of runtime/library equivalence; the
+    # migration is separately checked against d9ce4aa with CPU media fixtures.
+    source += _normalized_ast_src(inspect.getsource(frame_source))
+    source += _normalized_ast_src(inspect.getsource(gfx_cli))
+    fingerprint = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    if fingerprint == "9cade326bee042e1c8501f8db634e1369fdf8079feb993c1abea6ed671b88938":
+        return "e94c2171a336"
+    return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
+
 
 
 # ---------------------------------------------------------------- 切点选择
@@ -264,8 +278,7 @@ class RenderPlan:
         c = self.c
         rel_in = L["cl"]["dst_in"] - a   # 段内相对起点（可负 = 跨段界的层）
         if L["gfx"]:
-            return ["-framerate", str(c.fps), "-start_number", str(max(0, -rel_in)),
-                    *topts, "-i", str(L["pngdir"] / "f%04d.png")]
+            return L["source"].input_args(max(0, -rel_in), options=topts, ready=not c.dry)
         ss = ["-ss", f"{max(0, -rel_in) / c.fps:.6f}"] if rel_in < 0 else []
         return [*ss, *topts, "-i", str(L["seg"])]
 
@@ -395,7 +408,7 @@ class RenderPlan:
         vcodec, enc = pick_vcodec(c, self.draft)
         for k, L in enumerate(layers_subset):
             last = k == n - 1
-            ident = L["pngdir"].name if L["gfx"] else L["seg"].name
+            ident = L["source"].identity if L["gfx"] else L["seg"].name
             h = hashlib.sha1()
             h.update(f"{prev_key}|pass{k}\n".encode())
             h.update(f"passgraph={_graph_code_digest()}\n".encode())
@@ -520,7 +533,7 @@ class RenderPlan:
                  f"|{int(bool(getattr(self.c, 'gpu', False)))}\n".encode())
         h.update(f"graph={_graph_code_digest()}\n".encode())
         for L in sl:
-            ident = L["pngdir"].name if L["gfx"] else L["seg"].name   # 上游内容键
+            ident = L["source"].identity if L["gfx"] else L["seg"].name   # 上游内容键
             h.update((ident + "|" + json.dumps(L["cl"], sort_keys=True, ensure_ascii=False)
                       + f"|{L['x']}|{L['y']}|{L['w2']}|{L['h2']}\n").encode())
         if with_subs and sfile is not None and sfile.exists():
@@ -606,7 +619,7 @@ class RenderPlan:
 # ---------------------------------------------------------------- 图层预处理（整片与区间渲染共用）
 def prepare_layers(c: Ctx):
     """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
-    （每项 {cl, seg|pngdir, x, y, w2, h2, gfx, ti}，顺序=图层序）。
+    （每项 {cl, seg|source, x, y, w2, h2, gfx, ti}，顺序=图层序）。
 
     自 build_video 提取（方案五阶段1 区间渲染）：seg 键与渲染窗口无关（内容寻址），
     整片与区间共用同一份 cache/seg——区间渲染不得另造键或另写命名空间。本函数只做
@@ -616,7 +629,7 @@ def prepare_layers(c: Ctx):
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
     # 需要 alpha（opacity<1 或 fade）→ ProRes 4444；纯不透明全屏 → libx264。所有轨道等价。
-    layers = []      # 每项: {cl, seg|pngdir, x, y, w2, h2|None, gfx:bool, ti}
+    layers = []      # 每项: {cl, seg|source, x, y, w2, h2|None, gfx:bool, ti}
     enc_tasks = []   # (label, cmd, nvenc)：待并行编码的 seg（缓存命中的不进列表）；
                      # nvenc=True 的任务在 run_ffmpeg_task 里占 NVENC 会话预算槽
     # seg 编码器判定（方案二阶段3）循环外算一次：无 alpha seg 默认 NVENC 化
@@ -630,7 +643,7 @@ def prepare_layers(c: Ctx):
             if kind == "gfx":
                 # gfx 帧缓存目录 = 内容寻址键（与 gfx 阶段同键，见 hygiene.gfx_key；
                 # PR#1 的路径哈希 gfx_dir 被此方案取代——内容键同样隔离同名页/换时长）
-                layers.append({"cl": cl, "pngdir": gfx_dir(c, cl),
+                layers.append({"cl": cl, "source": png_source(c, cl),
                                "x": cl.get("x", 0), "y": cl.get("y", 0), "w2": None, "h2": None,
                                "gfx": True, "ti": ti})
                 continue

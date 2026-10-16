@@ -163,15 +163,15 @@ def run_range(c, fa: int, fb: int):
     missing_gfx = []
     for L in layers:
         if not L["gfx"]: continue
-        have = len(list(L["pngdir"].glob("f*.png"))) if L["pngdir"].exists() else 0
-        if have != L["cl"]["dur"]:
-            missing_gfx.append((L["cl"]["src"], L["pngdir"], have, L["cl"]["dur"]))
-    if missing_gfx and not c.dry:
-        print(f"✗ gfx 帧缓存缺失（{len(missing_gfx)} 页）——区间渲染只复用不渲染 gfx，"
-              f"请先运行：vtx.py -t <timeline> gfx")
-        for src, d, have, need in missing_gfx[:8]:
-            print(f"  - {src}：{d.name} 有 {have} 帧 / 需 {need} 帧")
-        if len(missing_gfx) > 8: print(f"  … 另 {len(missing_gfx) - 8} 页")
+        if c.dry: continue
+        try:
+            L["source"].require_ready()
+        except ValueError as exc:
+            missing_gfx.append(f"{L['cl']['src']}: {exc}")
+    if missing_gfx:
+        print("✗ gfx 帧缓存缺失——区间渲染只复用不渲染 gfx，请先运行 vtx gfx")
+        for error in missing_gfx[:8]:
+            print(f"  - {error}")
         sys.exit(1)
 
     plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, layers=layers,
