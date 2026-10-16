@@ -47,7 +47,7 @@ from pathlib import Path
 
 from . import registry as _registry
 from .manifest import load_manifest
-from .compatibility import require_compatible_core
+from .compatibility import require_compatible_core, require_compatible_protocol
 
 HOOK_NAMES = ("prepare_source", "audio_events", "validate",
               "probe_source", "finish")   # v1.1 + validate；v1.2 + 缝 C/D（§2.2）
@@ -185,6 +185,7 @@ def _load_plugin_module(name: str):
             raise RuntimeError(f"插件 {name}: 检测内核版本 {__version__!r}; "
                                f"manifest 无效：{'; '.join(errors)}")
         require_compatible_core(name, manifest)
+        require_compatible_protocol(name, manifest, _plugin_hooks_declared(name))
         if origin == "external":
             # P4 审查 P1-1 修正：append（官方包/stdlib 优先）+ 导入后即摘除 +
             # mod.__file__ 落点断言——insert(0) 且常驻会让 external 父目录下的
