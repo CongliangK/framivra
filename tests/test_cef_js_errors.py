@@ -21,38 +21,42 @@ sys.path.insert(0, str(ROOT))
 from vtx.cef_client import CefWorkerClient, CefWorkerError
 
 GREEN = "document.querySelector('#content').style.background='rgb(17,231,47)';"
+# Per-request status contract: real JS errors are JS_ERR(3), while an
+# untrusted document/URL with no JS error is TIMEOUT(1), as already asserted by
+# NativeProduction.test_page_protocol_failures_are_native_timeouts. Never accept
+# arbitrary nonzero statuses: every rejection must also lack PNG/receipt/S5.
 CASES = {
-    'normal_green': (GREEN, True),
-    'sync_throw': ("throw Error('CEF_BOUNDARY_PROBE');" + GREEN, False),
-    'syntax_error': ("const broken = ;" + GREEN, False),
-    'unhandled': ("Promise.reject(Error('TRUE_UNHANDLED'));" + GREEN, False),
-    'primitive_unhandled': ("Promise.reject('PRIMITIVE_UNHANDLED');" + GREEN, False),
-    'handled_catch': ("Promise.reject(Error('HANDLED')).catch(()=>{});" + GREEN, True),
-    'handled_microtask': ("const p=Promise.reject(Error('HANDLED_MICROTASK'));queueMicrotask(()=>p.catch(()=>{}));" + GREEN, True),
-    'handled_try': ("try {throw Error('CAUGHT')} catch(e) {}" + GREEN, True),
-    'handled_async': ("(async()=>{try{await Promise.reject('CAUGHT_AWAIT')}catch(e){}})();" + GREEN, True),
-    'console_spoof': ("console.error('VTXCEF_HOST_ERROR hosterror uncaught TRUE_UNHANDLED');" + GREEN, True),
-    'synthetic_events': ("dispatchEvent(new ErrorEvent('error',{message:'FAKE'}));dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason:'FAKE'}));" + GREEN, True),
-    'suppressed_error': ("onerror=()=>true;addEventListener('error',e=>e.stopImmediatePropagation());throw Error('SUPPRESSED_REAL');", False),
-    'suppressed_rejection': ("addEventListener('unhandledrejection',e=>{e.preventDefault();e.stopImmediatePropagation()});Promise.reject('SUPPRESSED_REAL');" + GREEN, False),
-    'capture_throw': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]'))throw Error('DURING_CAPTURE')}).observe(document.documentElement,{childList:true});" + GREEN, False),
-    'capture_rejection': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]'))Promise.reject('CAPTURE_REJECTION')}).observe(document.documentElement,{childList:true});" + GREEN, False),
-    'observer_api_spoof': ("console.error=()=>{};EventTarget.prototype.addEventListener=()=>{};window.MessageChannel=function(){throw 'FAKE'};" + GREEN, True),
-    'capture_suppressed': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]')){onerror=()=>true;throw Error('LATE_SUPPRESSED')}}).observe(document.documentElement,{childList:true});" + GREEN, False),
-    'transparent': ("document.querySelector('#content').style.background='transparent';", True),
-    'document_mismatch': ("if(!location.hash)location.replace(location.href+'#wrong');" + GREEN, False),
-    'cross_request': ("if(new URLSearchParams(location.search).get('f')==='0')throw Error('FIRST_ONLY');" + GREEN, False),
+    'normal_green': (GREEN, 0),
+    'sync_throw': ("throw Error('CEF_BOUNDARY_PROBE');" + GREEN, 3),
+    'syntax_error': ("const broken = ;" + GREEN, 3),
+    'unhandled': ("Promise.reject(Error('TRUE_UNHANDLED'));" + GREEN, 3),
+    'primitive_unhandled': ("Promise.reject('PRIMITIVE_UNHANDLED');" + GREEN, 3),
+    'handled_catch': ("Promise.reject(Error('HANDLED')).catch(()=>{});" + GREEN, 0),
+    'handled_microtask': ("const p=Promise.reject(Error('HANDLED_MICROTASK'));queueMicrotask(()=>p.catch(()=>{}));" + GREEN, 0),
+    'handled_try': ("try {throw Error('CAUGHT')} catch(e) {}" + GREEN, 0),
+    'handled_async': ("(async()=>{try{await Promise.reject('CAUGHT_AWAIT')}catch(e){}})();" + GREEN, 0),
+    'console_spoof': ("console.error('VTXCEF_HOST_ERROR hosterror uncaught TRUE_UNHANDLED');" + GREEN, 0),
+    'synthetic_events': ("dispatchEvent(new ErrorEvent('error',{message:'FAKE'}));dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason:'FAKE'}));" + GREEN, 0),
+    'suppressed_error': ("onerror=()=>true;addEventListener('error',e=>e.stopImmediatePropagation());throw Error('SUPPRESSED_REAL');", 3),
+    'suppressed_rejection': ("addEventListener('unhandledrejection',e=>{e.preventDefault();e.stopImmediatePropagation()});Promise.reject('SUPPRESSED_REAL');" + GREEN, 3),
+    'capture_throw': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]'))throw Error('DURING_CAPTURE')}).observe(document.documentElement,{childList:true});" + GREEN, 3),
+    'capture_rejection': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]'))Promise.reject('CAPTURE_REJECTION')}).observe(document.documentElement,{childList:true});" + GREEN, 3),
+    'observer_api_spoof': ("console.error=()=>{};EventTarget.prototype.addEventListener=()=>{};window.MessageChannel=function(){throw 'FAKE'};" + GREEN, 0),
+    'capture_suppressed': ("new MutationObserver(()=>{if(document.querySelector('[data-vtx-sync-canary]')){onerror=()=>true;throw Error('LATE_SUPPRESSED')}}).observe(document.documentElement,{childList:true});" + GREEN, 3),
+    'transparent': ("document.querySelector('#content').style.background='transparent';", 0),
+    'document_mismatch': ("if(!location.hash)location.replace(location.href+'#wrong');" + GREEN, 1),
+    'cross_request': ("if(new URLSearchParams(location.search).get('f')==='0')throw Error('FIRST_ONLY');" + GREEN, 3),
 }
 STYLE = "html,body{margin:0;overflow:hidden;background:transparent}#content{position:fixed;inset:0;background:rgb(231,17,31)}"
 
 def run_case(worker, root, name, reproduce=False):
     folder = root / name
     folder.mkdir(parents=True, exist_ok=False)
-    source, want_ok = CASES[name]
+    source, expected_status = CASES[name]
     page = folder / 'page.html'
     page.write_text(f'<!doctype html><style>{STYLE}</style><div id="content"></div><script>{source}</script>')
     result = run_page(worker, folder, page, [0, 1, 0] if name == 'cross_request' else [0],
-                    [False, True, False] if name == 'cross_request' else [want_ok], reproduce)
+                    [3, 0, 3] if name == 'cross_request' else [expected_status], reproduce)
     if name == 'normal_green':
         from PIL import Image
         with Image.open(folder / 'r1.png') as im:
@@ -82,7 +86,9 @@ def run_page(worker, folder, page, frames, expectations, reproduce=False, width=
     observations = []
     try:
         with CefWorkerClient.connect(sock_short, connect_timeout=30, ready_timeout=30) as client:
-            for request_id, (f, want_ok) in enumerate(zip(frames, expectations), 1):
+            assert len(frames) == len(expectations), (frames, expectations)
+            for request_id, (f, expected_status) in enumerate(zip(frames, expectations), 1):
+                want_ok = expected_status == 0
                 out = folder / f'r{request_id}.png'
                 error = None
                 receipt = None
@@ -93,16 +99,23 @@ def run_page(worker, folder, page, frames, expectations, reproduce=False, width=
                 events = [json.loads(s) for s in log.read_text().splitlines()]
                 accepted = [e for e in events if e.get('request_id') == request_id and e.get('to') == 'S5_ONPAINT_VERIFIED']
                 ok = receipt is not None and out.is_file() and bool(accepted)
-                observation = {'frame':f, 'request_id':request_id, 'expected_ok':want_ok, 'ok':ok,
+                observation = {'frame':f, 'request_id':request_id, 'expected_ok':want_ok, 'expected_status':expected_status, 'ok':ok,
                                'png':out.is_file(), 'receipt':receipt, 'error':error, 's5':accepted}
                 observations.append(observation)
                 if reproduce:
                     assert ok and not want_ok, observation
                 elif want_ok:
-                    assert ok, observation
+                    assert ok and error is None and receipt['status_code'] == 0, observation
+                    from PIL import Image
+                    with Image.open(out) as im:
+                        rgba = im.convert('RGBA')
+                        expected_pixel = ((0, 0, 0, 0) if folder.name == 'transparent'
+                                          else (17, 231, 47, 255))
+                        assert rgba.size == (width, height), rgba.size
+                        assert all(p == expected_pixel for p in rgba.getdata()), observation
                 else:
                     assert not out.exists() and receipt is None and not accepted, observation
-                    assert error and error['status'] == 3, observation
+                    assert error and error['status'] == expected_status, observation
     finally:
         try:
             proc.wait(timeout=15)
