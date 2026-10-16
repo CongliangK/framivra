@@ -388,7 +388,14 @@ class AcceptanceContracts(unittest.TestCase):
         self.assertIn('timeout-minutes: 10',workflow)
         for forbidden in ('pull_request_target','secrets.','--no-sandbox','add-apt-repository','apt-key','workflow_dispatch'):
             self.assertNotIn(forbidden,workflow)
-        self.assertIn('sudo apt-get install -y --no-install-recommends fonts-dejavu-core',workflow)
+        install = 'sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core'
+        self.assertIn(install, workflow)
+        for tool in ('ffmpeg', 'ffprobe'):
+            self.assertLess(workflow.index(install), workflow.index('command -v ' + tool))
+            self.assertIn(tool + ' -version', workflow)
+        harness = (root/'tests/run_gfx_dependency_acceptance.py').read_text()
+        self.assertIn("for tool in ('ffmpeg', 'ffprobe'):", harness)
+        self.assertIn("run([tool, '-version'], tool + '-version', limit=10)", harness)
         self.assertEqual(MAX_EVIDENCE,20*1024*1024)
 
 

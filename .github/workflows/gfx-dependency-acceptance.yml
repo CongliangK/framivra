@@ -32,10 +32,12 @@ jobs:
       - name: Check official tools and prepare distro font plus test libraries
         run: |
           command -v google-chrome
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
           command -v ffmpeg
           command -v ffprobe
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+          ffmpeg -version
+          ffprobe -version
           test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
           python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
       - name: Strict closure and actual pixel/cache acceptance

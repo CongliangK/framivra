@@ -415,6 +415,8 @@ def main():
             ('status', ['status', '--porcelain'])]}
         assert not report['identity']['status'], 'requires clean frozen checkout'
         run([chrome, '--version'], 'chrome-version', limit=10)
+        for tool in ('ffmpeg', 'ffprobe'):
+            run([tool, '-version'], tool + '-version', limit=10)
         run([chrome, '--headless', '--disable-gpu', '--no-first-run',
              '--user-data-dir=' + str(root/'preflight-profile'), '--dump-dom', 'about:blank'],
             'sandbox-preflight', limit=30)
