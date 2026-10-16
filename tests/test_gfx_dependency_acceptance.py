@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url
+from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation
 from vtx.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
@@ -181,6 +181,7 @@ class AcceptanceContracts(unittest.TestCase):
                 trace=self.root/('trace-'+str(injection)+'.json')
                 with patch.object(gfx_render.WSConn,'send_text',send), \
                         patch.object(gfx_render.WSConn,'recv_msg',receive), \
+                        patch('tests.run_gfx_dependency_acceptance.prepare_font_observation', return_value={}), \
                         patch.object(cli,'main',side_effect=invoke):
                     if injection:
                         with self.assertRaises(DependencyError):
@@ -227,7 +228,8 @@ class AcceptanceContracts(unittest.TestCase):
                     with patch.object(gfx_render.WSConn,'send_text',send), \
                             patch.object(gfx_render.WSConn,'recv_msg',recv), \
                             (patch.object(RequestPolicy,'check',return_value=None) if regression=='disabled' else nullcontext()), \
-                            patch.object(cli,'main',side_effect=invoke):
+                            patch('tests.run_gfx_dependency_acceptance.prepare_font_observation', return_value={}), \
+                        patch.object(cli,'main',side_effect=invoke):
                         if regression=='disabled':
                             with self.assertRaisesRegex(AssertionError,'was not rejected'):
                                 worker(self.c.tl_path,trace,injection)
@@ -444,6 +446,80 @@ class AcceptanceContracts(unittest.TestCase):
         observer.observe(object(), 'recv', message)
         self.assertEqual(message, original)
         self.assertEqual(rows[0]['url'], safe)
+
+    def test_font_observation_preparation_requires_owned_empty_target(self):
+        values = {
+            'Target.getTargetInfo': {'targetInfo': {'targetId':'owned','type':'page','url':'about:blank'}},
+            'Page.getFrameTree': {'frameTree': {'frame': {'id':'owned','url':'about:blank'}}},
+            'Runtime.evaluate': {'result': {'value': {'url':'about:blank','top':True,'empty':True}}},
+            'DOM.enable': {}, 'CSS.enable': {}}
+        calls = []
+        def call(tab, method, **kwargs):
+            calls.append(method)
+            return copy.deepcopy(values[method])
+        result = prepare_font_observation(object(), call, 'owned')
+        self.assertEqual(result, dict(target_id='owned',frame_id='owned',url='about:blank'))
+        self.assertEqual(calls, list(values))
+        mutations = [
+            lambda v: v['Target.getTargetInfo']['targetInfo'].update(targetId='foreign'),
+            lambda v: v['Target.getTargetInfo']['targetInfo'].update(type='iframe'),
+            lambda v: v['Target.getTargetInfo']['targetInfo'].update(url='file:///fixture.html'),
+            lambda v: v['Page.getFrameTree']['frameTree']['frame'].update(url='file:///fixture.html'),
+            lambda v: v['Page.getFrameTree']['frameTree']['frame'].update(id='foreign'),
+            lambda v: v['Page.getFrameTree']['frameTree']['frame'].update(parentId='parent'),
+            lambda v: v['Page.getFrameTree']['frameTree'].update(childFrames=[{}]),
+            lambda v: v['Runtime.evaluate']['result']['value'].update(empty=False),
+            lambda v: v['Runtime.evaluate']['result']['value'].update(top=False),
+            lambda v: v['Runtime.evaluate']['result']['value'].update(url='file:///fixture.html'),
+            lambda v: v['Runtime.evaluate'].update(exceptionDetails={'text':'error'})]
+        original = copy.deepcopy(values)
+        for mutation in mutations:
+            values = copy.deepcopy(original); mutation(values); calls.clear()
+            with self.assertRaises(AssertionError): prepare_font_observation(object(),call,'owned')
+            self.assertNotIn('CSS.enable',calls)
+            self.assertNotIn('Page.navigate',calls)
+        calls.clear()
+        with self.assertRaises(AssertionError): prepare_font_observation(object(),call,None)
+        self.assertEqual(calls,[])
+        values = original
+        def unsupported(tab, method, **kwargs):
+            if method == 'CSS.enable': raise RuntimeError('unsupported')
+            return call(tab,method,**kwargs)
+        with self.assertRaisesRegex(RuntimeError,'unsupported'):
+            prepare_font_observation(object(),unsupported,'owned')
+
+    def test_worker_prepares_owned_tab_before_fetch_and_never_reenables(self):
+        from vtx import cli, gfx_render
+        from tests.run_gfx_dependency_acceptance import worker
+        sent = []
+        def init(ws, *args, **kwargs): ws.queue = []
+        def send(ws, data):
+            msg = json.loads(data); sent.append(msg['method'])
+            result = {}
+            if msg['method'] == 'Target.getTargetInfo':
+                result = {'targetInfo': {'targetId':'owned','type':'page','url':'about:blank'}}
+            elif msg['method'] == 'Page.getFrameTree':
+                result = {'frameTree': {'frame': {'id':'owned','url':'about:blank'}}}
+            elif msg['method'] == 'Runtime.evaluate':
+                result = {'result': {'value': {'url':'about:blank','top':True,'empty':True}}}
+            ws.queue.append({'id':msg['id'],'result':result})
+        def recv(ws): return 1, json.dumps(ws.queue.pop(0))
+        def invoke():
+            tab = gfx_render.Tab(1, '/devtools/page/owned')
+            tab.call('Fetch.enable', patterns=[{'urlPattern':'*'}])
+            tab.call('Page.navigate', url='file:///fixture/a.html')
+            with self.assertRaisesRegex(AssertionError,'prepared twice'): tab.call('Fetch.enable')
+        path = self.root/'preparation-trace.json'
+        with patch.object(gfx_render.WSConn,'__init__',init), \
+             patch.object(gfx_render.WSConn,'send_text',send), \
+             patch.object(gfx_render.WSConn,'recv_msg',recv), \
+             patch.object(cli,'main',side_effect=invoke):
+            worker(self.c.tl_path,path)
+        self.assertEqual(sent.count('CSS.enable'),1)
+        self.assertLess(sent.index('CSS.enable'),sent.index('Fetch.enable'))
+        self.assertLess(sent.index('Fetch.enable'),sent.index('Page.navigate'))
+        self.assertEqual(json.loads(path.read_text())['font_observation_targets'],
+                         [dict(target_id='owned',frame_id='owned',url='about:blank')])
 
     def test_workflow_scope_and_budget(self):
         root=Path(__file__).resolve().parents[1]

@@ -178,11 +178,30 @@ class ProtocolObserver:
             self.append('protocol', row)
 
 
+def prepare_font_observation(tab, call, owned_target):
+    """Enable inspector sources only on this newly owned, proven-empty target."""
+    assert owned_target, 'unowned target cannot prepare font observation'
+    info = call(tab, 'Target.getTargetInfo')['targetInfo']
+    tree = call(tab, 'Page.getFrameTree')['frameTree']
+    frame = tree['frame']
+    assert info['targetId'] == owned_target and info['type'] == 'page', info
+    assert info['url'] == frame['url'] == 'about:blank', 'target already has a document'
+    assert frame['id'] == owned_target and not frame.get('parentId') and not tree.get('childFrames'), tree
+    blank = call(tab, 'Runtime.evaluate', expression=(
+        '({url:location.href,top:window===window.top,empty:document.body!==null&&'
+        'document.body.childNodes.length===0})'), returnByValue=True)
+    assert not blank.get('exceptionDetails') and blank.get('result', {}).get('value') == {
+        'url': 'about:blank', 'top': True, 'empty': True}, blank
+    call(tab, 'DOM.enable')
+    call(tab, 'CSS.enable')
+    return dict(target_id=owned_target, frame_id=frame['id'], url='about:blank')
+
+
 def worker(timeline, trace_path, injection=None, stage="gfx"):
     """Observe actual production calls; never fabricate a Fetch result or pixels."""
     from vtx import cli, gfx_render, gfx_cli, events, gfx_dependencies
     from vtx.gfx_dependencies import RequestPolicy
-    trace = dict(protocol=[], requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False,
+    trace = dict(font_observation_targets=[], protocol=[], requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False,
         screenshot_attempts=0, production_failures=[], propagated_production_failure=False,
         invocation=dict(stage=stage, timeline=str(timeline),
             timeline_sha256=hashlib.sha256(timeline.read_bytes()).hexdigest(),
@@ -212,6 +231,14 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
     original_send = gfx_render.WSConn.send_text
     original_recv = gfx_render.WSConn.recv_msg
     original_call = gfx_render.Tab.call
+    original_tab_init = gfx_render.Tab.__init__
+    owned_targets = {}
+    prepared_targets = set()
+    def tab_init(tab, port, ws_path, *args, **kwargs):
+        original_tab_init(tab, port, ws_path, *args, **kwargs)
+        prefix = "/devtools/page/"
+        assert ws_path.startswith(prefix) and "/" not in ws_path[len(prefix):], ws_path
+        owned_targets[tab] = ws_path[len(prefix):]
     def save():
         trace_path.write_text(json.dumps(trace, indent=2))
     def append(key, row):
@@ -241,14 +268,17 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
                 append('acknowledgements', dict(row, error=msg.get('error')))
         return op, data
     def call(tab, method, **kwargs):
+        if method == 'Fetch.enable':
+            assert tab not in prepared_targets, 'font observation prepared twice'
+            prepared = prepare_font_observation(tab, original_call, owned_targets.get(tab))
+            append('font_observation_targets', prepared)
+            prepared_targets.add(tab)
         if method == 'Page.captureScreenshot':
             trace['screenshot_attempts'] += 1
             result = original_call(tab, 'Runtime.evaluate', expression=METRICS, returnByValue=True)
             if result.get('exceptionDetails'):
                 raise AssertionError(result)
             measurements = result.get('result', {}).get('value')
-            original_call(tab, 'DOM.enable')
-            original_call(tab, 'CSS.enable')
             document = original_call(tab, 'DOM.getDocument')
             node = original_call(tab, 'DOM.querySelector', nodeId=document['root']['nodeId'], selector='p')
             fonts = original_call(tab, 'CSS.getPlatformFontsForNode', nodeId=node['nodeId'])
@@ -278,6 +308,7 @@ def worker(timeline, trace_path, injection=None, stage="gfx"):
              patch.object(RequestPolicy, 'response', response), \
              patch.object(gfx_render.WSConn, 'send_text', send), \
              patch.object(gfx_render.WSConn, 'recv_msg', recv), \
+             patch.object(gfx_render.Tab, '__init__', tab_init), \
              patch.object(gfx_render.Tab, 'call', call), \
              patch.object(gfx_cli, 'render_cli', fallback), \
              patch.object(sys, 'argv', ['vtx', '-t', str(timeline), '--events-jsonl', str(trace_path.with_suffix('.events.jsonl')), stage]):
