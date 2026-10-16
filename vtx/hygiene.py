@@ -214,9 +214,9 @@ _NS_MAX = 64
 def gfx_cache_ns() -> str:
     """VTX_GFX_CACHE_NS（issue #103，默认空 = 正式态）：实验渲染缓存命名空间。
 
-    非空 → gfx_dir 路由 cache/gfx_exp/<ns>/<key>/（与正式 cache/gfx/ 物理隔离，
-    gfx_key 算法一字不动——键轴纪律 R12-G1-037 与 docs/cache-provenance.md 不受
-    影响，同一页在两个 ns 下同键异目录）。非法值显式 ValueError：实验配置写错
+    非空 → gfx_dir 路由 cache/gfx_exp/<ns>/<key>/（与正式 cache/gfx/ 物理隔离）。
+    Electron 缺省 namespace=electron_b0；namespace 与 Electron 身份均入 gfx_key，
+    同步隔离仅消费目录内容键的 vseg/pass 下游。非法值显式 ValueError：配置写错
     宁可大声失败，绝不静默回落正式缓存破坏隔离。"""
     from .gfx_backend import selected
     backend = selected()  # unknown selectors fail even on a warm cache

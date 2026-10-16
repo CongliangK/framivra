@@ -15,7 +15,8 @@ from .hygiene import gfx_cache_ns, gfx_dir, gfx_key, manifest_record
 def require_result(st, frames, outdir, width, height):
     """Require this invocation's complete adapter AND worker receipts, not old PNGs."""
     def reject(reason):
-        raise ElectronRenderError(f"Electron incomplete/failed receipt: {reason}; {st}")
+        detail = {k: st.get(k) for k in ("run_id", "evidence_dir", "exit_code", "failed")} if isinstance(st, dict) else st
+        raise ElectronRenderError(f"Electron incomplete/failed receipt: {reason}; {detail}")
     if not isinstance(st, dict):
         reject("not an object")
     run_id = st.get("run_id")

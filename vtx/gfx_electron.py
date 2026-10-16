@@ -1,4 +1,4 @@
-"""Electron-only Mode N adapter; intentionally not connected to public routing/cache.
+"""Electron-only Mode N adapter; public routing/cache live in gfx_backend/stage.
 
 No Chrome fallback and no cache hits: every requested frame navigates the original
 HTML with ?f=. The caller owns output isolation/cache identity and supplies a Ctx

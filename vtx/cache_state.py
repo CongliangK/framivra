@@ -11,8 +11,9 @@
   - 输入身份 receipt_fingerprint 用「便宜但与缓存键同等敏感」的材料：timeline 字节
     + 源媒体 stat 身份（path+size+mtime_ns+首尾采样哈希，同 hygiene._fp 哲学）+
     gfx html 字节 + 声明依赖（cache_dependencies）内容。任何缓存键会变的输入变化，
-    回执门同样重置；不做全量媒体哈希，不做 vtx/*.py 实现哈希（代码变更即全缓存
-    失效，开发迭代不可接受——升级渲染器后请显式 `vtx clean`/`gc`）。
+    回执门同样重置；不做全量媒体哈希。Electron Alpha 另追加显式后端身份与
+    namespace（gfx_backend.py）；其已列出的实现代码变化自动失效。其他实现升级
+    不做全仓代码哈希，须显式隔离或清理旧缓存。
 """
 import hashlib
 import json
