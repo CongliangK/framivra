@@ -173,6 +173,11 @@ def _manifest(run, expected, viewport):
     require(t["viewport"] == viewport, "manifest viewport does not match timeline")
     require(t.get("backend_id") == m.get("backend_id"), "backend identity mismatch")
     require(t.get("color_space") == "srgb", "strict evidence requires srgb")
+    # The normalized contract preserves an unavailable marker through repeated
+    # normalization; a legacy default must not become an explicit observation.
+    require(normalized.get("color_space_contract") == {
+        "source": "explicit_config", "value": "srgb", "measured": False},
+        "strict evidence requires explicit sRGB configuration, not a default or measured-color claim")
     require(m.get("backend_id") == expected.get("backend_id"), "actual/declared backend_id mismatch")
     for field in ("effective_backend", "chromium_version"):
         require(t[field] == expected.get(field), f"actual/declared {field} mismatch")
@@ -195,6 +200,72 @@ def _manifest(run, expected, viewport):
             "missing font evidence")
     _host_controls(m)
     return m
+
+
+def _producer_binding(run, plan, viewport):
+    """Extra mandatory checks for the bounded #63 producer profile only."""
+    from vtx import events, gfx_runtime
+    from vtx.infra import Ctx
+    from vtx.hygiene import gfx_key
+    timeline = run.get('timeline_path')
+    require(isinstance(timeline, str) and Path(timeline).is_absolute(), 'missing producer timeline')
+    producer_context = Ctx(Path(timeline))
+    required = list(instances(plan.get('required_instances')))
+    require(input_fingerprint(producer_context, required) == plan['input_fingerprint'],
+            'producer timeline/input drift')
+    binding = run.get('producer_binding')
+    require(isinstance(binding, dict) and set(binding) == {'runtime', 'page_witnesses'},
+            'missing experiment producer binding')
+    runtimes, witnesses = binding['runtime'], binding['page_witnesses']
+    require(isinstance(runtimes, dict) and bool(runtimes) and len(runtimes) <= 256,
+            'invalid runtime evidence set')
+    require(isinstance(witnesses, dict) and bool(witnesses) and len(witnesses) <= 32768,
+            'invalid page witness set')
+    for key, raw in runtimes.items():
+        require([arg for arg in raw.get('effective_argv', []) if arg.startswith('--force-color-profile')] ==
+                ['--force-color-profile=srgb'], 'actual browser color configuration missing or conflicting')
+        require(digest(raw) == key and raw.get('run_id') == run['run_id'] and
+                gfx_runtime.identity(raw) == plan.get('runtime_identity'), 'runtime evidence mismatch')
+    width, height = (int(part) for part in viewport.split('x'))
+    for key, witness in witnesses.items():
+        require(digest(witness) == key and witness.get('source') == 'page-cdp-eval' and
+                witness.get('viewport') == {'width': width, 'height': height, 'device_scale': 1} and
+                witness.get('alpha_path') in ('opaque', 'override', 'twoshot', 'canvas'),
+                'page observation mismatch')
+    path = run.get('events_path')
+    require(isinstance(path, str) and Path(path).is_absolute(), 'missing producer event path')
+    with Path(path).open('rb') as stream:
+        data = stream.read(128 * 1024 * 1024 + 1)
+    require(len(data) <= 128 * 1024 * 1024 and hashlib.sha256(data).hexdigest() == run.get('events_sha256'),
+            'producer event digest/size mismatch')
+    parsed = events.read_events(data.decode('utf-8'))
+    require(parsed['complete'] and parsed['exit_code'] == 0 and parsed['run_id'] == run.get('execution_run_id'),
+            'producer event stream is not successfully closed')
+    commits = {row['seq']: row['extensions'] for row in parsed['events'] if row['event'] == 'frame_commit'}
+    require(bool(commits), 'no observed publications')
+    for fields in commits.values():
+        require(fields.get('runtime_sha256') in runtimes and fields.get('page_witness_sha256') in witnesses,
+                'unbound publication observation')
+    for instance in run['instances']:
+        expected_key = gfx_key(producer_context, {'src': instance['src'], 'dur': instance['dur']})
+        for frame, record in instance['frames'].items():
+            fields = commits.get(record.get('publication_seq'))
+            require(isinstance(fields, dict) and fields['gfx_key'] == expected_key and
+                    fields['frame_index'] == int(frame) and
+                    fields['frame_origin'] == record['origin'] and all(fields.get(key) == record.get(key)
+                    for key in ('gfx_key', 'png_sha256', 'runtime_sha256', 'page_witness_sha256')),
+                    'completion is not bound to publication event')
+            path = Path(instance['frame_dir']) / ('f' + frame + '.png')
+            with path.open('rb') as stream:
+                raw = stream.read(128 * 1024 * 1024 + 1)
+            require(len(raw) <= 128 * 1024 * 1024 and hashlib.sha256(raw).hexdigest() == record['png_sha256'],
+                    'published PNG bytes changed')
+    manifest = run['env_manifest']
+    actual_host = {field: manifest.get(field) for field in ('os_kernel', 'cpu_model', 'display_server',
+        'gpu_driver_and_vram', 'fonts_fingerprint', 'font_configuration_files',
+        'font_environment', 'git_sha', 'git_clean')}
+    require(actual_host == plan.get('host_identity') and manifest.get('git_clean') is True,
+            'frozen source/host/font configuration mismatch')
 
 
 def verify(c, clips, golden, plan, candidate):
@@ -233,6 +304,8 @@ def verify(c, clips, golden, plan, candidate):
             require(run.get("plan_sha256") == plan_hash, f"{side}: plan not bound to run")
             require(run.get("input_fingerprint") == plan["input_fingerprint"], f"{side}: input mismatch")
             manifests[side] = _manifest(run, expected, f"{c.w}x{c.h}")
+            if expected.get("config", {}).get("profile") == "issue63-short-four-pages-v1":
+                _producer_binding(run, plan, f"{c.w}x{c.h}")
             require(run.get("env_sha256") == digest(run["env_manifest"]), f"{side}: environment digest mismatch")
             raw_instances = run.get("instances")
             maps[side] = {} if raw_instances == [] else instances(raw_instances)

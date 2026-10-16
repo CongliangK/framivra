@@ -516,7 +516,12 @@ def _runtime_backend_truth(backend_id: str, runtime_gpu_info) -> dict:
         "chromium_version": version,
         "chromium_major": major,
         "viewport": _viewport_str(runtime_gpu_info.get("viewport")),
+        # Legacy display value is preserved; strict evidence must also check
+        # the explicit configuration source. A default is never measurement.
         "color_space": str(runtime_gpu_info.get("color_space") or "srgb"),
+        "color_space_contract": runtime_gpu_info.get("color_space_contract", {
+            "source": "explicit_config" if runtime_gpu_info.get("color_space") else "unavailable",
+            "value": runtime_gpu_info.get("color_space") or None, "measured": False}),
         "evidence": evidence,
         "policy": "生效后端仅采信渲染进程内部接口实测值；命令行启动参数不作证据",
     }

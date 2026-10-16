@@ -28,7 +28,8 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 独立渲染（写入 outdir）：env python3 -m vtx.gfx_render <html> <outdir> <N帧> [--tabs 4]
 """
 import base64
-from . import fstxn
+from . import fstxn, events, process_samples, gfx_provenance
+import contextvars
 import hashlib
 from pathlib import Path
 import json
@@ -60,11 +61,13 @@ PNG_COMPRESS_LEVEL = int(os.environ.get("VTX_GFX_PNG_LEVEL", "3"))
 
 # ---------------------------------------------------------------- PNG 最小编解码（8-bit 非交错，color_type 2/6）
 
+@events.observed("png_decode")
 def png_decode_rgb(data: bytes):
     """解码 Chrome 输出 PNG → (h, w, 3) uint8 numpy。仅支持 8-bit 非交错 RGB/RGBA。"""
     return _png_decode(data)[:, :, :3].copy()
 
 
+@events.observed("png_decode")
 def png_decode_rgba(data: bytes):
     """同上 → (h, w, 4)（RGB 输入补 alpha=255）。"""
     import numpy as np
@@ -144,6 +147,7 @@ def _png_decode(data: bytes):
     return out.reshape(h, w, nch)
 
 
+@events.observed("png_encode")
 def png_encode_rgba(arr) -> bytes:
     """(h,w,4) uint8 numpy → RGBA PNG（filter=0，zlib 级别可调）。"""
     # PIL 快路径（2026-09-11）：compress_level=PNG_COMPRESS_LEVEL，~17ms vs zlib 直压 ~22ms，
@@ -290,6 +294,7 @@ class WSConn:
 class Tab:
     """一个 page target 的 CDP 会话（线程独占）。"""
 
+    @events.observed("tab_initialize")
     def __init__(self, port, ws_path, width=1920, height=1080):
         self.ws = WSConn(port, ws_path)
         try:
@@ -301,6 +306,7 @@ class Tab:
             self.ws.close()   # 半初始化 Tab 显式关 fd（RECP-20260916-002）
             raise
 
+    @events.observed("tab_close")
     def close(self):
         """释放本 tab 的 CDP socket（对端已死时为无害 no-op，close 内吞 OSError）。"""
         self.ws.close()
@@ -322,6 +328,7 @@ class Tab:
             # 其它 id / 事件通知：忽略（每 tab 单线程使用，正常不会有别的 id）
         raise TimeoutError(f"CDP {method} timeout")
 
+    @events.observed("navigate")
     def navigate(self, url, timeout=5.0):
         """导航并等待新文档就绪。坑：Page.navigate 返回时旧文档可能仍在，
         readyState=="complete" 是旧页的（曾致全部帧渲成 f=0 的空页）——
@@ -340,13 +347,16 @@ class Tab:
             time.sleep(0.02)
         raise TimeoutError(f"page load timeout: {url}")
 
+    @events.observed("evaluate_rpc")
     def eval(self, expression):
         r = self.call("Runtime.evaluate", expression=expression, returnByValue=True)
         return r.get("result", {}).get("value")
 
     def shot(self) -> bytes:
-        r = self.call("Page.captureScreenshot", format="png", timeout=30)
-        return base64.b64decode(r["data"])
+        with events.operation("capture_rpc", **getattr(self, "observation", {})):
+            r = self.call("Page.captureScreenshot", format="png", timeout=30)
+        with events.operation("base64_decode"):
+            return base64.b64decode(r["data"])
 
 
 _SUPERVISION_WARNED = False
@@ -365,6 +375,20 @@ def _warn_supervision_degraded():
           "kill -9 后浏览器进程树不会自动归零，需自行清理）", file=sys.stderr)
 
 
+def _browser_identity(browser):
+    return {'browser_id': browser.observation_id,
+            'generation': browser.observation_generation}
+
+
+def _begin_browser_identity(browser):
+    if not hasattr(browser, 'observation_id'):
+        browser.observation_id = str(events.uuid.uuid4())
+        browser.observation_generation = 0
+    else:
+        browser.observation_generation += 1
+    return _browser_identity(browser)
+
+
 class Browser:
     """惰性启动的常驻 headless Chrome。崩溃后 hard_restart() 重建（线程安全）。
 
@@ -378,7 +402,10 @@ class Browser:
     形态（裸 Popen + tempfile.mkdtemp，与 ctx=None 同路径）并一次性 stderr
     告警。ctx=None（独立直跑入口）保持原 tempfile.mkdtemp + 裸 Popen 形态。"""
 
-    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None):
+    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None, experiment_color_profile=None):
+        if experiment_color_profile not in (None, "srgb"):
+            raise ValueError("invalid experiment color profile")
+        self.experiment_color_profile = experiment_color_profile
         self.chrome = chrome_path
         self.tabs_n = max(1, tabs)
         self.width, self.height = width, height
@@ -411,12 +438,16 @@ class Browser:
                     return
         raise RuntimeError("no chrome found")
 
+    @events.observed("browser_start", _begin_browser_identity)
     def start(self):
         self._find_chrome()
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
         self.port = s.getsockname()[1]
         s.close()
+        ledger = gfx_provenance.current()
+        color_profile = self.experiment_color_profile or getattr(ledger, "color_profile", None)
+        color_args = ["--force-color-profile=srgb"] if color_profile == "srgb" else []
         supervised = self.ctx is not None
         if supervised:
             # O1（红队）：非 Linux/无 /proc 平台监管器不可用（账本拒绝编造）。
@@ -427,63 +458,81 @@ class Browser:
             supervised = supervision_available()
             if not supervised:
                 _warn_supervision_degraded()
-        if supervised:
-            # issue #103：监管态——argv 由运行目录动态拼（--user-data-dir 落
-            # tmp_run 的 profile/）；supervisor 尾追 --parent-alive-fd=<fd>
-            # （Chrome 忽略未知开关，fd 由守卫持有强制全树归零，不依赖协作）。
-            from .proc_supervisor import SupervisedProcessGroup
-            self.group = SupervisedProcessGroup(
-                self.ctx,
-                lambda run_dir, profile: [
-                    self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
-                    f"--remote-debugging-port={self.port}",
-                    f"--user-data-dir={profile}",
-                    "--no-first-run", "--no-default-browser-check", "about:blank"],
-                backend_id="cdp")
-            self.group.start()
-            self.proc = self.group.proc
-            self.user_data_dir = self.group.profile_dir
-        else:
-            self.user_data_dir = tempfile.mkdtemp(prefix="vtx_gfx_cdp_")
-            self.proc = subprocess.Popen(
-                [self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
-                 f"--remote-debugging-port={self.port}",
-                 f"--user-data-dir={self.user_data_dir}",
-                 "--no-first-run", "--no-default-browser-check", "about:blank"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            try:
-                urllib.request.urlopen(
-                    f"http://127.0.0.1:{self.port}/json/version", timeout=1)
-                break
-            except Exception:
-                if self.proc.poll() is not None:
-                    raise RuntimeError("chrome exited during startup")
-                time.sleep(0.2)
-        else:
-            raise RuntimeError("chrome devtools not ready in 15s")
+        with events.operation("browser_spawn"):
+            if supervised:
+                # issue #103：监管态——argv 由运行目录动态拼（--user-data-dir 落
+                # tmp_run 的 profile/）；supervisor 尾追 --parent-alive-fd=<fd>
+                # （Chrome 忽略未知开关，fd 由守卫持有强制全树归零，不依赖协作）。
+                from .proc_supervisor import SupervisedProcessGroup
+                self.group = SupervisedProcessGroup(
+                    self.ctx,
+                    lambda run_dir, profile: [
+                        self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+                        f"--remote-debugging-port={self.port}",
+                        f"--user-data-dir={profile}",
+                        "--no-first-run", "--no-default-browser-check", *color_args, "about:blank"],
+                    backend_id="cdp")
+                self.group.start()
+                self.proc = self.group.proc
+                self.user_data_dir = self.group.profile_dir
+            else:
+                self.user_data_dir = tempfile.mkdtemp(prefix="vtx_gfx_cdp_")
+                self.proc = subprocess.Popen(
+                    [self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+                     f"--remote-debugging-port={self.port}",
+                     f"--user-data-dir={self.user_data_dir}",
+                     "--no-first-run", "--no-default-browser-check", *color_args, "about:blank"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process_samples.register_browser(self.proc)
+        with events.operation("browser_ready"):
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                try:
+                    urllib.request.urlopen(
+                        f"http://127.0.0.1:{self.port}/json/version", timeout=1)
+                    break
+                except Exception:
+                    if self.proc.poll() is not None:
+                        raise RuntimeError("chrome exited during startup")
+                    time.sleep(0.2)
+            else:
+                raise RuntimeError("chrome devtools not ready in 15s")
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/json/new?about:blank", method="PUT")
         self.tab_ws_urls = []
         for _ in range(self.tabs_n):
-            info = json.load(urllib.request.urlopen(req, timeout=5))
-            url = info["webSocketDebuggerUrl"]
-            self.tab_ws_urls.append("/" + url.split("/", 3)[3])
+            with events.operation("target_create"):
+                info = json.load(urllib.request.urlopen(req, timeout=5))
+                url = info["webSocketDebuggerUrl"]
+                self.tab_ws_urls.append("/" + url.split("/", 3)[3])
+        gfx_provenance.browser_ready(self)
 
+    @events.observed("tabs_open", lambda self: _browser_identity(self)
+                     if hasattr(self, "observation_id") else {})
     def open_tabs(self):
         # 部分失败回收：第 k 个 Tab 起不来时，前 k-1 个已建会话显式关闭再上抛
         # （RECP-20260916-002；原 list 推导式泄漏半建池，仅靠 GC 兜底）。
         tabs = []
         try:
-            for u in self.tab_ws_urls:
-                tabs.append(Tab(self.port, u, self.width, self.height))
+            for index, u in enumerate(self.tab_ws_urls):
+                if events.lifecycle_enabled():
+                    identity = dict(_browser_identity(self) if hasattr(self, "observation_id")
+                                    else {}, tab_index=index)
+                    with events.operation("tab_slot", **identity):
+                        tab = Tab(self.port, u, self.width, self.height)
+                        tab.observation = identity
+                        tabs.append(tab)
+                else:
+                    tabs.append(Tab(self.port, u, self.width, self.height))
+                gfx_provenance.bind_tab(self, tabs[-1])
         except BaseException:
             for t in tabs:
                 t.close()
             raise
         return tabs
 
+    @events.observed("browser_stop", lambda self: _browser_identity(self)
+                     if hasattr(self, "observation_id") else {})
     def stop(self):
         # issue #103：监管态收尾统一走组停机（SIGTERM 主进程 → 宽限 → 组残员
         # killpg → 删账本 → 关管道收守卫 → tmp_run rmtree 运行目录含 Profile）。
@@ -502,6 +551,7 @@ class Browser:
         if self.user_data_dir:
             shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
+    @events.observed("browser_restart")
     def hard_restart(self):
         """杀进程重起 + 重建 tab 池 URL（连接方需重开 Tab）。监管态下重起 =
         新监管组（新 tmp_run 目录/账本/守卫），旧组完整停机清场。"""
@@ -585,13 +635,15 @@ def _two_shot_combine(png_white: bytes, png_black: bytes) -> bytes:
     import numpy as np
     cw = png_decode_rgb(png_white).astype(np.int16)
     cb = png_decode_rgb(png_black).astype(np.int16)
-    # alpha 理论上各通道同值；取通道最大差 robust against 8-bit 舍入
-    a = np.clip(255 - (cw - cb).max(axis=2), 0, 255).astype(np.uint8)  # (h,w)
-    af = a.astype(np.float32) / 255.0
-    f = np.where(af[..., None] > 0.0,
-                 cb / np.maximum(af[..., None], 1e-6), 0.0)  # F = Cb/a（非预乘）
-    rgb = np.clip(np.rint(f), 0, 255).astype(np.uint8)
-    return png_encode_rgba(np.dstack([rgb, a]))
+    with events.operation("alpha_compute"):
+        # alpha 理论上各通道同值；取通道最大差 robust against 8-bit 舍入
+        a = np.clip(255 - (cw - cb).max(axis=2), 0, 255).astype(np.uint8)  # (h,w)
+        af = a.astype(np.float32) / 255.0
+        f = np.where(af[..., None] > 0.0,
+                     cb / np.maximum(af[..., None], 1e-6), 0.0)  # F = Cb/a（非预乘）
+        rgb = np.clip(np.rint(f), 0, 255).astype(np.uint8)
+        rgba = np.dstack([rgb, a])
+    return png_encode_rgba(rgba)
 
 
 def decode_canvas_export(data_url, width, height):
@@ -600,7 +652,8 @@ def decode_canvas_export(data_url, width, height):
     if not isinstance(data_url, str) or not data_url.startswith(prefix):
         raise GfxRenderError("invalid canvas export data URL")
     try:
-        png = base64.b64decode(data_url[len(prefix):], validate=True)
+        with events.operation("base64_decode"):
+            png = base64.b64decode(data_url[len(prefix):], validate=True)
         if png[:8] != b"\x89PNG\r\n\x1a\n":
             raise ValueError("not a PNG")
         pos, header, image_data, ended = 8, False, False, False
@@ -696,7 +749,8 @@ def plan_static_spans(spans, want, outdir, *, width=None, height=None):
     return work, copy_now, deferred, n_spans
 
 
-def _atomic_write_bytes(path, data):
+@events.observed("atomic_commit")
+def _atomic_write_bytes(path, data, *, origin="rendered", copy_head=None, source_token=None, producer_token=None):
     """帧落盘原子化（M1）：同目录临时文件写完整字节 → os.replace 原子替换目标。
     背景：同页 split×k 时多个 render_page 并发写同一 outdir（跨度头帧可被两块
     同时渲染并双写），直接 truncate/write 交错会产生撕裂 PNG 并经 deferred 复制
@@ -706,8 +760,11 @@ def _atomic_write_bytes(path, data):
     唯一（O_EXCL），成功路径 tmp 已被 replace 移走、异常路径 finally 清理，
     两种路径均不留 tmp 残留。"""
     fstxn.atomic_write(path, data)
+    gfx_provenance.published(path, data, origin=origin, copy_head=copy_head, source_token=source_token, producer_token=producer_token)
 
 
+@events.observed("page_lifecycle", failed=lambda result: bool(result["failed"]))
+@process_samples.observed_tree
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 width=1920, height=1080, progress=None, frames=None, ctx=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
@@ -816,7 +873,9 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             t0 = time.monotonic()
             ok = True
             try:
-                png = decode_canvas_export(tab.eval("window.__vtx_export_png()"), width, height)
+                with events.operation("canvas_export_rpc"):
+                    data_url = tab.eval("window.__vtx_export_png()")
+                png = decode_canvas_export(data_url, width, height)
             # B6：except 收窄到 (GfxRenderError, TypeError)——decode_canvas_export 已把
             # 载荷类 ValueError/struct.error 包装成 GfxRenderError；json.JSONDecodeError
             # （CDP 响应损坏，ValueError 子类）不再被误吞成「载荷失效」，照常走重试/自愈
@@ -858,8 +917,9 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         """给每个 tab 设透明背景 override；任一失败返回 False（整页回落双截）。"""
         try:
             for t in tabs_:
-                t.call("Emulation.setDefaultBackgroundColorOverride",
-                       color={"r": 0, "g": 0, "b": 0, "a": 0})
+                with events.operation("override_rpc"):
+                    t.call("Emulation.setDefaultBackgroundColorOverride",
+                           color={"r": 0, "g": 0, "b": 0, "a": 0})
             return True
         except Exception:
             return False
@@ -877,21 +937,23 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             重复重启：自己那代已被别人换新则直接换用共享新池）。"""
             nonlocal pool, use_override
             try:
-                new_pool = None
-                with browser.lock:
-                    if browser.generation == gen[0]:
-                        browser.hard_restart()
-                        new_pool = browser.open_tabs()
-                        # override 重应用须在锁内、池发布前完成（2026-09-11 修复）：
-                        # 重启后的新池若不带 override，透明页会静默渲成白底不透明帧。
-                        # 锁内 CDP 调用有 Tab.call 硬超时兜底。
-                        if new_pool is not None and use_override and not apply_override(new_pool):
-                            use_override = False  # 重应用失败 → 本页回落双截
-                if new_pool is not None:
-                    pool = new_pool
-                    gen[0] = browser.generation
+                with events.operation("heal"):
+                    new_pool = None
+                    with events.observed_lock(browser.lock):
+                        if browser.generation == gen[0]:
+                            browser.hard_restart()
+                            new_pool = browser.open_tabs()
+                            # override 重应用须在锁内、池发布前完成（2026-09-11 修复）：
+                            # 重启后的新池若不带 override，透明页会静默渲成白底不透明帧。
+                            # 锁内 CDP 调用有 Tab.call 硬超时兜底。
+                            if new_pool is not None and use_override and not apply_override(new_pool):
+                                use_override = False  # 重应用失败 → 本页回落双截
+                    if new_pool is not None:
+                        pool = new_pool
+                        gen[0] = browser.generation
             except Exception:
-                time.sleep(0.5)
+                with events.operation("heal_backoff"):
+                    time.sleep(0.5)
 
         def shot_with_heal(i, navfree=False):
             """渲一帧并落盘（含自愈重试 ≤2）。B5 语义：路径计数移到 write 成功
@@ -899,21 +961,28 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             抛错时本帧自动转回导航路径（不耗重试预算，页级一次性告警）。"""
             nf = navfree
             retries = 0
+            observed_attempt = 0
             while True:
+                observed_attempt += 1
                 try:
-                    if idx >= len(pool):
-                        raise ConnectionError("tab lost after browser restart")
-                    png, path, timing = do_frame(pool[idx], i, navfree=nf)
-                    t0 = time.monotonic()
-                    _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png)
-                    my_times["write"].append(time.monotonic() - t0)
-                    for c in ("nav", "export", "decode"):
-                        my_times[c].append(timing[c])
-                    if canvas_export and path != "canvas":
-                        my_paths["canvas_fallback"] += 1  # canvas 校验失败回落：实际路径仍照常计
-                    my_paths[path] += 1
-                    gen[0] = browser.generation
-                    return True
+                    with events.operation("frame", frame_index=i, tab_index=idx,
+                                          attempt_index=observed_attempt, frame_origin="rendered"):
+                        if idx >= len(pool):
+                            raise ConnectionError("tab lost after browser restart")
+                        frame_tab = pool[idx]
+                        png, path, timing = do_frame(frame_tab, i, navfree=nf)
+                        t0 = time.monotonic()
+                        producer_token = gfx_provenance.frame_source(frame_tab, path)
+                        _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png,
+                                            producer_token=producer_token)
+                        my_times["write"].append(time.monotonic() - t0)
+                        for c in ("nav", "export", "decode"):
+                            my_times[c].append(timing[c])
+                        if canvas_export and path != "canvas":
+                            my_paths["canvas_fallback"] += 1  # canvas 校验失败回落：实际路径仍照常计
+                        my_paths[path] += 1
+                        gen[0] = browser.generation
+                        return True
                 except Exception:
                     if nf:
                         # navfree 失败 → 本帧转导航路径；绝不静默（页级告警一次）
@@ -948,85 +1017,97 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         per_tab[idx] = (my_paths, my_times)
 
     try:
-        pool = browser.open_tabs()
-        pool[0].navigate(f"{base_uri}?f={work[0]}")
-        time.sleep(0.15)
-        # Canvas 导出通道（PR#1）先于透明检测：opt-in 页直出画布 PNG（自带精确 alpha），
-        # 截图路径整体旁路——override/flatten 守卫/两截解算都不需要；导出失败帧在
-        # do_frame 内回落白黑双截（transparent=True 保证回落路径走两截，保 alpha）。
-        canvas_export = bool(pool[0].eval("typeof window.__vtx_export_png === 'function'"))
-        # —— 特性 2 静态跨度去重：导航后读声明并缩减渲染集。必须在 worker 启动前
-        # 完成（缺失头帧要并入 work 并重建队列）；声明是惰性数据，读取/解析失败
-        # 只影响缩减不影响像素。复制在规划后立即做（头帧已缓存的成员）。——
-        raw_spans = None
-        if os.environ.get("VTX_GFX_STATIC", "1") != "0":
-            try:
-                raw_spans = pool[0].eval("window.__vtx_static_spans || null")
-            except Exception:
-                raw_spans = None
-        spans = _normalize_spans(raw_spans, n_frames)
-        if spans is None:
-            note("__vtx_static_spans 声明解析失败，按无声明原路径渲染")
-            spans = []
-        copy_now = []
-        if spans:
-            work, copy_now, deferred_spans, static_spans_n = plan_static_spans(
-                spans, work, outdir, width=width, height=height)
-        for m, head_path in copy_now:
-            # 头帧已缓存：字节复制（B5 口径：写成功才计数）；失败则交回渲染集。
-            # 读头帧直读、写成员走 _atomic_write_bytes（并发双写下成员文件同样不撕裂）
-            try:
-                with open(head_path, "rb") as fh:
-                    data = fh.read()
-                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data)
-                static_copied_n += 1
-            except OSError as e:
-                note(f"帧 {m} 复制头帧失败（{e}），改渲染")
-                work.append(m)
-                work.sort()
-        queues = [work[k::tabs_n] for k in range(tabs_n)]
-        # —— 特性 1 nav-free 资格判定：VTX_GFX_NAVFREE=1 且页面有 __vtx_render。
-        # 默认 0：env 关闭时零额外 eval，页面行为与旧路径逐字节一致。——
-        if os.environ.get("VTX_GFX_NAVFREE", "0") == "1":
-            try:
-                navfree_on = bool(pool[0].eval(
-                    "typeof window.__vtx_render === 'function'"))
-            except Exception:
-                navfree_on = False
-            if navfree_on:
-                note("navfree 已启用：每 tab 仅导航一次、帧态由页内 __vtx_render 置位"
-                     "（像素一致性以 golden 全帧比对验收）")
-        transparent = None
-        use_override = False
-        if not canvas_export and work:
-            # 跨度缩减后 work 可能为空（缺失帧全是已缓存头帧的成员）→ 跳过透明检测
-            use_override = apply_override(pool)  # 透明快路径开关（2026-09-11）
-            if use_override:
-                # flatten 守卫（2026-09-11）：body/html 级 opacity 的页（标题/端板类淡入
-                # 淡出）会使 Chrome 合成组拍平，override 截图静默变全不透明白底（g6a_title
-                # 实案）。双探针帧（首帧+中帧）截图若 alpha 全 255 且注入式探针判定页面
-                # 为透明 → 判定 flatten，本页回落白黑双截。
-                import numpy as np
-                probes = [work[0], work[len(work) // 2]]
-                flat = True
-                for pf in probes:
-                    pool[0].navigate(f"{base_uri}?f={pf}")
-                    arr = png_decode_rgba(pool[0].shot())
-                    if not (arr[:, :, 3] == 255).all():
-                        flat = False
-                        break
-                if flat and page_transparent(pool[0]):
-                    use_override = False
-                    pool[0].call("Emulation.setDefaultBackgroundColorOverride")
-                elif not flat:
-                    transparent = True
-            if not use_override:
-                transparent = page_transparent(pool[0])
-        else:
-            transparent = True
+        with events.operation("setup"):
+            pool = browser.open_tabs()
+            pool[0].navigate(f"{base_uri}?f={work[0]}")
+            time.sleep(0.15)
+            # Canvas 导出通道（PR#1）先于透明检测：opt-in 页直出画布 PNG（自带精确 alpha），
+            # 截图路径整体旁路——override/flatten 守卫/两截解算都不需要；导出失败帧在
+            # do_frame 内回落白黑双截（transparent=True 保证回落路径走两截，保 alpha）。
+            canvas_export = bool(pool[0].eval("typeof window.__vtx_export_png === 'function'"))
+            # —— 特性 2 静态跨度去重：导航后读声明并缩减渲染集。必须在 worker 启动前
+            # 完成（缺失头帧要并入 work 并重建队列）；声明是惰性数据，读取/解析失败
+            # 只影响缩减不影响像素。复制在规划后立即做（头帧已缓存的成员）。——
+            raw_spans = None
+            if os.environ.get("VTX_GFX_STATIC", "1") != "0":
+                try:
+                    raw_spans = pool[0].eval("window.__vtx_static_spans || null")
+                except Exception:
+                    raw_spans = None
+            spans = _normalize_spans(raw_spans, n_frames)
+            if spans is None:
+                note("__vtx_static_spans 声明解析失败，按无声明原路径渲染")
+                spans = []
+            copy_now = []
+            if spans:
+                work, copy_now, deferred_spans, static_spans_n = plan_static_spans(
+                    spans, work, outdir, width=width, height=height)
+            for m, head_path in copy_now:
+                # 头帧已缓存：字节复制（B5 口径：写成功才计数）；失败则交回渲染集。
+                # 读头帧直读、写成员走 _atomic_write_bytes（并发双写下成员文件同样不撕裂）
+                try:
+                    head = int(os.path.basename(head_path)[1:-4]) if events.lifecycle_enabled() or gfx_provenance.enabled() else None
+                    with events.operation("static_read", copy_head=head):
+                        copy_source = gfx_provenance.before_static_read(head_path)
+                        with open(head_path, "rb") as fh:
+                            data = fh.read()
+                    with events.operation("static_copy", frame_index=m, copy_head=head,
+                                          frame_origin="static_copy"):
+                        _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data,
+                                            origin="static_copy", copy_head=head, source_token=copy_source)
+                    static_copied_n += 1
+                except OSError as e:
+                    note(f"帧 {m} 复制头帧失败（{e}），改渲染")
+                    work.append(m)
+                    work.sort()
+            queues = [work[k::tabs_n] for k in range(tabs_n)]
+            # —— 特性 1 nav-free 资格判定：VTX_GFX_NAVFREE=1 且页面有 __vtx_render。
+            # 默认 0：env 关闭时零额外 eval，页面行为与旧路径逐字节一致。——
+            if os.environ.get("VTX_GFX_NAVFREE", "0") == "1":
+                try:
+                    navfree_on = bool(pool[0].eval(
+                        "typeof window.__vtx_render === 'function'"))
+                except Exception:
+                    navfree_on = False
+                if navfree_on:
+                    note("navfree 已启用：每 tab 仅导航一次、帧态由页内 __vtx_render 置位"
+                         "（像素一致性以 golden 全帧比对验收）")
+            transparent = None
+            use_override = False
+            if not canvas_export and work:
+                # 跨度缩减后 work 可能为空（缺失帧全是已缓存头帧的成员）→ 跳过透明检测
+                use_override = apply_override(pool)  # 透明快路径开关（2026-09-11）
+                if use_override:
+                    # flatten 守卫（2026-09-11）：body/html 级 opacity 的页（标题/端板类淡入
+                    # 淡出）会使 Chrome 合成组拍平，override 截图静默变全不透明白底（g6a_title
+                    # 实案）。双探针帧（首帧+中帧）截图若 alpha 全 255 且注入式探针判定页面
+                    # 为透明 → 判定 flatten，本页回落白黑双截。
+                    import numpy as np
+                    probes = [work[0], work[len(work) // 2]]
+                    flat = True
+                    for pf in probes:
+                        pool[0].navigate(f"{base_uri}?f={pf}")
+                        arr = png_decode_rgba(pool[0].shot())
+                        if not (arr[:, :, 3] == 255).all():
+                            flat = False
+                            break
+                    if flat and page_transparent(pool[0]):
+                        use_override = False
+                        pool[0].call("Emulation.setDefaultBackgroundColorOverride")
+                    elif not flat:
+                        transparent = True
+                if not use_override:
+                    transparent = page_transparent(pool[0])
+            else:
+                transparent = True
         if work:
             # 缩减后 work 可能清空（缺失帧全是已缓存头帧的跨度成员）→ 零线程收尾
-            threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
+            if events.lifecycle_enabled() or gfx_provenance.enabled():
+                # Each thread owns a copy captured before dispatch, not one shared Context.
+                threads = [threading.Thread(target=contextvars.copy_context().run,
+                                            args=(worker, k)) for k in range(tabs_n)]
+            else:
+                threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
             for t in threads:
                 t.start()
             for t in threads:
@@ -1040,11 +1121,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     for head, members in deferred_spans:
         head_path = os.path.join(outdir, f"f{head:04d}.png")
         try:
-            reason = png_invalid_reason(head_path, width=width, height=height)
-            if reason:
-                raise OSError(reason)
-            with open(head_path, "rb") as fh:
-                data = fh.read()
+            with events.operation("static_read", copy_head=head):
+                copy_source = gfx_provenance.before_static_read(head_path)
+                reason = png_invalid_reason(head_path, width=width, height=height)
+                if reason:
+                    raise OSError(reason)
+                with open(head_path, "rb") as fh:
+                    data = fh.read()
         except OSError as e:
             # 头帧渲染失败/不可读：成员帧交回 failed 由调用方 CLI 补渲，绝不静默丢帧
             note(f"跨度头帧 f{head:04d}.png 不可读（{e}），{len(members)} 个成员帧交由调用方回落")
@@ -1054,7 +1137,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             continue
         for m in members:
             try:
-                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data)
+                with events.operation("static_copy", frame_index=m, copy_head=head,
+                                      frame_origin="static_copy"):
+                    _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data,
+                                            origin="static_copy", copy_head=head, source_token=copy_source)
                 static_copied_n += 1
             except OSError as e:
                 note(f"帧 {m} 复制头帧失败（{e}），交由调用方回落")
@@ -1063,7 +1149,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     # failed 里可能混有 deferred 复制失败的成员帧（成员被跨度认领后不在 work 内），
     # 直接 len(work)-len(failed) 会失真甚至为负；static_copied 字节复制帧按既有
     # 文档口径不计入 rendered（单独计入 path_counts["static_copied"]）。
-    failed.extend(i for i, _ in verify_frames(outdir, requested, width=width, height=height))
+    with events.operation("final_validation"):
+        failed.extend(i for i, _ in verify_frames(outdir, requested, width=width, height=height))
     failed = sorted(set(failed))
     work_set = set(work)
     rendered_n = len(work) - sum(1 for f in failed if f in work_set)
