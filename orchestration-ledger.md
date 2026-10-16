@@ -1,16 +1,97 @@
 # Framivra orchestration ledger
 
-Local draft, not published. Snapshot 2026-10-16T14:44:10Z. Retained-evidence reconciliation, not fresh remote polling. Fresh independent review required.
-Repository: https://github.com/CongliangK/framivra. Metadata predecessor: e76af1024fc3cf9190968230f9615eea9df2d57f.
+Local draft, not published. Snapshot 2026-10-16T16:46:19Z. Fresh independent review required.
+Repository: https://github.com/CongliangK/framivra. Metadata predecessor: 07f69da6a108b77899f478f51721d1be2b26b0fd.
 
-## Goal and verified retained state
+## Verified goal and main
 
-Original goal: **6/20**, #44, #49, #53, #144, #68, #90. Last verified ordinary open count:46. New #153/#155 never increase original-goal completion. Aggregate PR count is not an issue count. Six validation-only PRs159–164 remain unmerged.
-Main 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6; tree 36635f257a7c4dbb36049e578340bfa8ba155b83. PR165 merged; post-merge CI9/9 success. #18 and #155 remain OPEN: closure attempts denied and stopped14:24. No retry without new explicit user confirmation.
+Original goal: **7/20**: #44, #49, #53, #144, #68, #90, #50. Ordinary open issues: **45**; open PRs: **7**. Counts are distinct; 52 is their sum, not an ordinary issue count.
+Main b8820dbba6989dd216c8fa519633371e3d380cb6; tree 6df9c550d3cd00e2e13717c36f09bb711bf41d98. PR167 merged, exact post-merge run38928811485 nine successful jobs. #50 closed completed 2026-10-16T16:15:40Z; https://github.com/CongliangK/framivra/issues/50#issuecomment-6219728481.
+#18/#155 remain OPEN after denied closure attempts; no retry without new specific confirmation. Neither is counted. Validation-only PR159–164 remain unmerged; local native PR166 untouched.
 
-## Scope and decisions
+## Scope and evidence boundaries
 
-Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve independent review, actual verification and serial PR integration. Security/access denials remain blocked. No source edits or remote actions performed for this ledger. Prior failed rounds and decisions are historical, not current pass claims.
+Cloud non-CEF/Electron work only; Coagentdraw paused. Preserve independent review, actual verification and serial PR integration. No source edits, remote writes or permission changes for this ledger. Historical failures remain historical, and source PASS does not establish runtime/whole-DoD acceptance. Temporary relative worktrees/evidence may retire; only published GitHub identities are durable public proof.
+
+## Integration candidate
+
+{
+  "state": "frozen_two_scoped_source_reviews_pass_actual_acceptance_pending",
+  "scope": "M + #52 + #100",
+  "base": "b8820dbba6989dd216c8fa519633371e3d380cb6",
+  "inputs": {
+    "52": "d7ce725630f8eb431dedc43a891978f70d2ec6fe",
+    "100": "318ae572fb697d5cc9a6acb7769c0370d497d84c"
+  },
+  "head": "225891a994f509e834e82f4598e7871359dbcad7",
+  "tree": "25237fcd923b3a7736d70c6700f8cf29432001f5",
+  "branch": "dot/issue52-100-final-integration",
+  "worktree_relative": "development/worktrees/framivra-52-100-final-integration",
+  "owner_role": "Integration maintainer; independent reviewer",
+  "environment": "Temporary cloud Linux workspace",
+  "next_gate": "Actual exact-B CPU/media and normal-sandbox HTML acceptance, relevant aggregate and CI; then authorized PR/merge/postmerge. No runtime/whole-issue completion claimed.",
+  "local_candidate": "225891a994f509e834e82f4598e7871359dbcad7",
+  "ordered_parents": [
+    "712d2fb1a3b71f16a59e35c85eea0b14dc7cca4a"
+  ],
+  "parent": "712d2fb1a3b71f16a59e35c85eea0b14dc7cca4a",
+  "write_scope": [
+    ".github/workflows/impact-html-acceptance.yml",
+    "docs/agent-diagnostics.md",
+    "docs/cache-provenance.md",
+    "plugins/bgm-render/__init__.py",
+    "plugins/blender-bridge/__init__.py",
+    "plugins/duck-static/__init__.py",
+    "scripts/ci_checks.py",
+    "tests/fixtures/agent-diagnostics/timeline.invalid.json",
+    "tests/impact_inventory.py",
+    "tests/run_impact_gfx_reconciliation.py",
+    "tests/run_impact_html_reconciliation.py",
+    "tests/run_impact_reconciliation.py",
+    "tests/test_agent_diagnostics.py",
+    "tests/test_agent_diagnostics_attribution.py",
+    "tests/test_agent_diagnostics_boundaries.py",
+    "tests/test_agent_diagnostics_cache_operations.py",
+    "tests/test_agent_diagnostics_clip_dependencies.py",
+    "tests/test_agent_diagnostics_evaluation.py",
+    "tests/test_agent_diagnostics_loading.py",
+    "tests/test_agent_diagnostics_operations.py",
+    "tests/test_agent_diagnostics_plugins.py",
+    "tests/test_agent_diagnostics_probe.py",
+    "tests/test_agent_diagnostics_qc.py",
+    "tests/test_agent_diagnostics_qc_operations.py",
+    "tests/test_agent_diagnostics_repair.py",
+    "tests/test_agent_diagnostics_transport.py",
+    "tests/test_frame_source.py",
+    "tests/test_impact_html_harness.py",
+    "tests/test_impact_identity.py",
+    "tests/test_impact_inventory.py",
+    "tests/test_impact_repair.py",
+    "vtx/acceptance.py",
+    "vtx/agent_diagnostics.py",
+    "vtx/cache_state.py",
+    "vtx/cli.py",
+    "vtx/composite.py",
+    "vtx/diagnostics.py",
+    "vtx/hygiene.py",
+    "vtx/impact.py",
+    "vtx/infra.py",
+    "vtx/pluginlib/hooks.py",
+    "vtx/preview.html",
+    "vtx/qc.py",
+    "vtx/stages.py",
+    "vtx/subtitles_src.py",
+    "vtx/timeline.schema.json",
+    "vtx/timeline_diff.py"
+  ],
+  "native_reference": "712d2fb1a3b71f16a59e35c85eea0b14dc7cca4a",
+  "diff_sha256": "1dbfe9cfd6908c8a1e84fccca82046796e3ff4d6cff9cf1eef4ab9dc358e1d91",
+  "independent_review": "Cache/impact/harness scoped PASS and diagnostics/execution-context scoped PASS",
+  "evidence_relative": [
+    "outputs/framivra-ledger-1645-evidence/combined-B-diagnostics-review.md",
+    "outputs/framivra-ledger-1645-evidence/combined-B-cache-review.md"
+  ]
+}
 
 ## Active
 
@@ -50,7 +131,8 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - dependencies: []
 - published_source_url: https://github.com/CongliangK/framivra/tree/41083fd418ea45fb240b8e28440008ff77323321
 - merge_url: https://github.com/CongliangK/framivra/commit/1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: retained_checkpoint_gate_pending
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #45: F12 cancellation and F13 adaptive concurrency
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/45
@@ -82,71 +164,77 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - repair_count_detail: Two prior rounds retained; R4 unresolved. Historical round cap is not current status.
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/45
 - dependencies: []
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: retained_checkpoint_gate_pending
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #52: Incremental impact analysis
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/52
-- state: frozen_candidate_failed_harness_review_successor_repair_active_unfrozen
+- state: source_checkpoint_pass_combined_B_scoped_pass_actual_acceptance_pending
 - owner_role: Workstream implementer; independent reviewer; integration maintainer
 - environment: Temporary cloud Linux workspace
-- branch: cloud/issue52-current-html-20261016
+- branch: cloud/issue52-html-repair1-20261016
 - base: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
-- local_candidate: 8e88d4edc0df1f5c974d426431f4b13acba1ad87
-- tree: f40844061f9b45c43ecc6cee7d7e1edce3e923fb
-- parent: fee158ce0e0825cafd5ecbacc436b6576cfb52b9
+- local_candidate: d7ce725630f8eb431dedc43a891978f70d2ec6fe
+- tree: 205abb53e664fecf469c1c2aa13086f64b60099d
+- parent: 33ed248bc5e53139fc6786b95241fac6b4a5c603
 - published_head: None
 - published_tree: None
 - pr_url: None
 - ci_url: None
 - ci_status: not_run_for_candidate
-- worktree_relative: development/worktrees/framivra-issue52-current-html
-- write_scope: [".github/workflows/impact-html-acceptance.yml", "docs/cache-provenance.md", "tests/run_impact_gfx_reconciliation.py", "tests/run_impact_html_reconciliation.py", "tests/run_impact_reconciliation.py", "tests/test_frame_source.py", "tests/test_impact_html_harness.py", "tests/test_impact_identity.py", "tests/test_impact_repair.py", "vtx/acceptance.py", "vtx/cache_state.py", "vtx/cli.py", "vtx/composite.py", "vtx/hygiene.py", "vtx/impact.py", "vtx/preview.html", "vtx/stages.py", "vtx/timeline.schema.json", "vtx/timeline_diff.py"]
+- worktree_relative: development/worktrees/framivra-issue52-html-repair1
+- write_scope: [".github/workflows/impact-html-acceptance.yml", "docs/cache-provenance.md", "tests/impact_inventory.py", "tests/run_impact_gfx_reconciliation.py", "tests/run_impact_html_reconciliation.py", "tests/run_impact_reconciliation.py", "tests/test_frame_source.py", "tests/test_impact_html_harness.py", "tests/test_impact_identity.py", "tests/test_impact_inventory.py", "tests/test_impact_repair.py", "vtx/acceptance.py", "vtx/cache_state.py", "vtx/cli.py", "vtx/composite.py", "vtx/hygiene.py", "vtx/impact.py", "vtx/preview.html", "vtx/stages.py", "vtx/timeline.schema.json", "vtx/timeline_diff.py"]
 - repair_rounds_used: 1
 - pending_approval: None
-- checks: {"prior_author": "74 focused/2 opt-in skips;47 compatibility/3 skips; exact frozen candidate", "independent_focused": "120 tests,5 opt-in skips, no failures; earlier nonexistent-module invocation errors corrected", "independent_actual_media": "30 scenes64x64 cold/warm and four mutations ran; passed existing checks, whose F2 blind spots remain", "html_acceptance": "NOT RUN", "full_aggregate": "NOT RUN"}
-- independent_review: FAIL acceptance-harness completeness on frozen 8e88d4e/tree f408440; not a demonstrated production renderer defect
-- evidence_relative: ["outputs/issue52-current-html-integration/IDENTITY.json", "outputs/issue52-current-html-integration/REPORT.md", "outputs/issue52-current-html-integration/preservation.json", "outputs/issue52-independent-current-html-review/REPORT.md"]
-- next_gate: Repair F1/F2 in isolated successor; freeze new head/tree, fresh independent review, then actual normal-sandbox hosted 1080p HTML acceptance and aggregate before original DoD/PR gates
-- limits: Actual1080p HTML and aggregate unrun. The 64x64 companion does not establish HTML acceptance. F1/F2 undermine completeness of claimed mutation reconciliation. No production renderer defect inferred.
-- integration_target: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
-- candidate_identity_scope: Old8e88d4e/tree f408440 remains frozen and independently FAIL; successor is unfrozen
-- ordered_parents: ["fee158ce0e0825cafd5ecbacc436b6576cfb52b9"]
+- checks: {"independent": "130 tests,5 opt-in skips,no failures; inventory negative controls PASS", "author_media": "64x64 cold/warm plus four mutations PASS; not actual HTML", "html_acceptance": "NOT RUN", "full_aggregate": "NOT RUN"}
+- independent_review: Source and repaired HTML/media harness PASS; original DoD insufficient; integrated B separately has two scoped source PASS reviews, not runtime acceptance
+- evidence_relative: ["outputs/issue52-html-repair1-integration/IDENTITY.json", "outputs/issue52-html-repair1-integration/REPORT.md", "outputs/issue52-independent-finalrepair-review/REPORT.md", "outputs/framivra-ledger-1645-evidence/combined-B-diagnostics-review.md", "outputs/framivra-ledger-1645-evidence/combined-B-cache-review.md"]
+- next_gate: Actual exact-B CPU/media and normal-sandbox HTML acceptance, relevant aggregate and CI; then authorized PR/merge/postmerge. No runtime/whole-issue completion claimed.
+- limits: No actual HTML acceptance. CPU production-selected; soft3000s subprocess-boundary budget,65-minute job ceiling; disk/RSS observations only.
+- integration_target: b8820dbba6989dd216c8fa519633371e3d380cb6
+- candidate_identity_scope: Immutable source checkpoint; runtime/integration acceptance separately stated
+- ordered_parents: ["33ed248bc5e53139fc6786b95241fac6b4a5c603"]
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/52
-- dependencies: ["Current main 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6; preserved #18/#155/#90/#68 implementations; original resolver contracts"]
-- review_findings: {"F1": "Inventory omits unrelated audio/seg additions and can miss new PNGs in retired gfx directories", "F2": "Media companion misses product removals and same-size restored-mtime corruption"}
-- successor_candidate: {"state": "active_unfrozen", "worktree_relative": "development/worktrees/framivra-issue52-html-repair1", "branch": "cloud/issue52-html-repair1-20261016", "base": "1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6", "head": null, "tree": null, "starting_checkpoint": "953e85431a7c445d785fd0b619fd34338143aadb", "starting_tree": "f40844061f9b45c43ecc6cee7d7e1edce3e923fb", "note": "Dirty working source not inspected or represented as a frozen candidate; old8e88d4e preserved"}
+- dependencies: ["Final integration onto main b8820dbba6989dd216c8fa519633371e3d380cb6 with #100; preserve #18/#155/#90/#68/#50 contracts"]
+- review_findings: {"prior_F1_F2": "Repaired in d7ce725; historical failures retained"}
+- successor_candidate: None
 - resource_limits: Two-worker CPU claim unsupported: VTX_VIDEO_WORKERS is not consumed by production code. Python3000s checks occur around subprocesses, not all inventory/decode work. Hard workflow ceiling65min, media step8min; disk/RSS are observations, not quotas or process-tree caps.
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: source_review_pass_runtime_pending
+- combined_candidate: {"head": "225891a994f509e834e82f4598e7871359dbcad7", "tree": "25237fcd923b3a7736d70c6700f8cf29432001f5", "state": "two_scoped_source_reviews_pass_actual_acceptance_pending"}
+- Prior checkpoints remain historical in companion JSON, with count/provenance corrections below.
 
 ### #100: Structured agent diagnostics
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/100
-- state: precision_coverage_implementation_unfrozen
+- state: source_checkpoint_pass_combined_B_scoped_pass_actual_acceptance_pending
 - owner_role: Workstream implementer; independent reviewer; integration maintainer
 - environment: Temporary cloud Linux workspace
-- branch: dot/issue100-precise-operations
+- branch: dot/issue100-probe-observation
 - base: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
-- local_candidate: None
-- tree: None
-- parent: None
+- local_candidate: 318ae572fb697d5cc9a6acb7769c0370d497d84c
+- tree: 1502569891386575010cb2608eaf8dbd0080ec45
+- parent: 9c3c5ec655cd06b059decec4d174b5556a03f78e
 - published_head: None
 - published_tree: None
 - pr_url: None
 - ci_url: None
 - ci_status: not_run_for_candidate
-- worktree_relative: development/worktrees/framivra-agent-diagnostics-100-precise
-- write_scope: ["docs/agent-diagnostics.md", "plugins/bgm-render/__init__.py", "plugins/blender-bridge/__init__.py", "plugins/duck-static/__init__.py", "scripts/ci_checks.py", "tests/fixtures/agent-diagnostics/timeline.invalid.json", "tests/test_agent_diagnostics.py", "tests/test_agent_diagnostics_attribution.py", "tests/test_agent_diagnostics_boundaries.py", "tests/test_agent_diagnostics_loading.py", "tests/test_agent_diagnostics_plugins.py", "tests/test_agent_diagnostics_qc.py", "tests/test_agent_diagnostics_repair.py", "vtx/agent_diagnostics.py", "vtx/diagnostics.py", "vtx/infra.py", "vtx/pluginlib/hooks.py", "vtx/qc.py", "vtx/stages.py", "vtx/subtitles_src.py"]
+- worktree_relative: development/worktrees/framivra-agent-diagnostics-100-probe
+- write_scope: ["docs/agent-diagnostics.md", "plugins/bgm-render/__init__.py", "plugins/blender-bridge/__init__.py", "plugins/duck-static/__init__.py", "scripts/ci_checks.py", "tests/fixtures/agent-diagnostics/timeline.invalid.json", "tests/test_agent_diagnostics.py", "tests/test_agent_diagnostics_attribution.py", "tests/test_agent_diagnostics_boundaries.py", "tests/test_agent_diagnostics_cache_operations.py", "tests/test_agent_diagnostics_evaluation.py", "tests/test_agent_diagnostics_loading.py", "tests/test_agent_diagnostics_operations.py", "tests/test_agent_diagnostics_plugins.py", "tests/test_agent_diagnostics_probe.py", "tests/test_agent_diagnostics_qc.py", "tests/test_agent_diagnostics_qc_operations.py", "tests/test_agent_diagnostics_repair.py", "tests/test_agent_diagnostics_transport.py", "vtx/agent_diagnostics.py", "vtx/cache_state.py", "vtx/diagnostics.py", "vtx/infra.py", "vtx/pluginlib/hooks.py", "vtx/qc.py", "vtx/stages.py", "vtx/subtitles_src.py"]
 - repair_rounds_used: None
 - pending_approval: None
-- checks: {"current": "Unfrozen edits; no exact final candidate test/review claim"}
-- independent_review: New final candidate not frozen or reviewed
-- evidence_relative: ["outputs/issue100-precise-coverage-plan/plan.md", "outputs/issue100-precise-coverage-plan/identity.json"]
-- next_gate: Finish precise operation coverage; freeze exact tree, independently review and actually verify original DoD
-- limits: Prior causal/Unicode PASS is bounded to old trees; three operation-coverage hard gates remain.
+- checks: {"independent": "102 provider comparisons;626 short-circuit,288 validate/audit,104 QC,10 traces;180 bounded unit tests;30 entrypoint executions PASS", "repair": "Actual seven-class WAV/HTML real-ffprobe repair PASS; no render"}
+- independent_review: Scoped precision/causality/compatibility PASS; original DoD INSUFFICIENT; integrated B separately has two scoped source PASS reviews, not runtime acceptance
+- evidence_relative: ["outputs/issue100-probe-independent/review.md", "outputs/framivra-ledger-1645-evidence/combined-B-diagnostics-review.md", "outputs/framivra-ledger-1645-evidence/combined-B-cache-review.md"]
+- next_gate: Actual exact-B CPU/media and normal-sandbox HTML acceptance, relevant aggregate and CI; then authorized PR/merge/postmerge. No runtime/whole-issue completion claimed.
+- limits: Old source PASS does not certify final combined candidate or full render/aggregate.
 - repair_count_detail: Historical rounds retained; current precision-coverage work not frozen
-- ordered_parents: []
+- ordered_parents: ["9c3c5ec655cd06b059decec4d174b5556a03f78e"]
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/100
-- dependencies: []
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- dependencies: ["Final integration onto main b8820dbba6989dd216c8fa519633371e3d380cb6 with #52"]
+- candidate_identity_scope: Immutable source checkpoint; runtime/integration acceptance separately stated
+- phase: source_review_pass_integration_pending
+- combined_candidate: {"head": "225891a994f509e834e82f4598e7871359dbcad7", "tree": "25237fcd923b3a7736d70c6700f8cf29432001f5", "state": "two_scoped_source_reviews_pass_actual_acceptance_pending"}
+- Prior checkpoints remain historical in companion JSON, with count/provenance corrections below.
 
 ### #18: Distribution model-license inventory
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/18
@@ -183,7 +271,8 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - dependencies: []
 - published_source_url: https://github.com/CongliangK/framivra/tree/41083fd418ea45fb240b8e28440008ff77323321
 - merge_url: https://github.com/CongliangK/framivra/commit/1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: retained_checkpoint_gate_pending
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #87: CI feedback and coverage partition
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/87
@@ -216,37 +305,190 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/87
 - dependencies: []
 - published_source_url: https://github.com/CongliangK/framivra/tree/93da8899bc82538cb9f7333a67d8c920f2d96f16
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: retained_checkpoint_gate_pending
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
-### #50: Structured execution events and artifact links
-- Issue / original DoD: https://github.com/CongliangK/framivra/issues/50
+### #47: Declared HTML dependency closure
+- Issue / original DoD: https://github.com/CongliangK/framivra/issues/47
+- original_dod_reference: https://github.com/CongliangK/framivra/issues/47
 - owner_role: Workstream implementer; independent reviewer; integration maintainer
 - environment: Temporary cloud Linux workspace
-- state: frozen_repair2_bounded_independent_pass_actual_media_verification_running
-- base: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
-- local_candidate: f8d0d864807a8eef7880b7f388cd1d5d75f2d7e6
-- tree: c83b54139d3e94be882cd83bdd4a49b9a24f3bca
-- parent: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
-- branch: dot/structured-events-50-repair2
-- worktree_relative: development/worktrees/framivra-structured-events-50-repair2
-- write_scope: ["docs/execution-events.md", "tests/test_execution_event_contract.py", "tests/test_execution_events.py", "tests/test_execution_invariants.py", "tests/test_execution_links.py", "vtx/acceptance.py", "vtx/cli.py", "vtx/composite.py", "vtx/encoders.py", "vtx/events.py", "vtx/execution_links.py", "vtx/infra.py", "vtx/qc.py", "vtx/stages.py"]
-- repair_rounds_used: 2
+- dependencies: ["Integrate #52 resolver/clip-dependency implementation first; coordinate #85 and #48"]
+- write_scope: ["docs/cache-provenance.md", "scripts/gfx_golden.py", "scripts/run_all_tests.sh", "tests/prepare_gfx_dependency_fixture.py", "tests/test_gfx_dependencies.py", "vtx/cache_state.py", "vtx/cli.py", "vtx/gfx_cli.py", "vtx/gfx_dependencies.py", "vtx/gfx_render.py", "vtx/hygiene.py", "vtx/impact.py", "vtx/stages.py", "vtx/timeline.schema.json"]
 - published_head: None
 - published_tree: None
 - pr_url: None
 - ci_url: None
-- ci_status: not_run
+- ci_status: not_run_for_candidate
 - pending_approval: None
-- checks: {"focused": "83 passed", "regression": "79 run:78 passed,1 opt-in Chrome skip", "docs": "7 gates pass", "new_actual_media": "Verification started on exact f8d0d864; pending, no result claim", "independent_focused": "83 passed", "independent_regression": "129 passed,1 opt-in skip"}
-- independent_review: Final bounded source/focused synthetic/compatibility PASS received14:43; whole original DoD INSUFFICIENT EVIDENCE
-- next_gate: Finish exact-tree real CPU media/cache/hash/human-output verification and remaining original aggregate/acceptance gates; PR/integration gates remain
-- limits: Bounded independent PASS does not establish actual media, full aggregate, real Chrome/GPU or original whole-DoD completion.
-- evidence_relative: ["outputs/issue50-repair2/BINDING.json", "outputs/issue50-repair2/REPORT.md", "outputs/issue50-repair1-independent-review/REPORT.md", "outputs/issue50-repair2-independent-review/REPORT.md"]
-- original_dod_reference: https://github.com/CongliangK/framivra/issues/50
-- dependencies: ["Current main 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6; preserve original resource-null/event identity contracts; historical repair1 FAIL retained"]
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- checks: {"unit": "26 PASS", "independent": "18 checks plus two-alias probe PASS", "actual_chrome": "NOT RUN"}
+- independent_review: Bounded source repairs PASS; actual browser/merge acceptance insufficient
+- local_candidate: 2a7cbdfdc7658285bb815c8bab0f8ab856147f75
+- tree: 9fda21c9a69eb76e9cd006b84282c5938ec6712a
+- parent: 22236657c082c521a8b887de34a17a78c196d720
+- ordered_parents: ["22236657c082c521a8b887de34a17a78c196d720"]
+- base: d7ce725630f8eb431dedc43a891978f70d2ec6fe
+- candidate_identity_scope: Immutable source checkpoint; runtime/integration acceptance separately stated
+- phase: source_review_pass_runtime_pending
+- state: frozen_source_pass_runtime_pending
+- worktree_relative: development/worktrees/framivra-issue47-repair1
+- branch: work/issue47-dependency-locking-repair1
+- next_gate: Integrate accepted main/#52/#100; actual normal-sandbox Chrome and visible mutation/cache/GC reconciliation; fresh final review and PR gates.
+- limits: Canonical-file runtime completeness does not prove every alias URL observed. #48 environment identity remains separate.
+- evidence_relative: ["outputs/issue47-repair1-independent-review/REPORT.md"]
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
-## Completed original goal
+### #141: ASR isolated environment and assets
+- Issue / original DoD: https://github.com/CongliangK/framivra/issues/141
+- original_dod_reference: https://github.com/CongliangK/framivra/issues/141
+- owner_role: Workstream implementer; independent reviewer; integration maintainer
+- environment: Temporary cloud Linux workspace
+- dependencies: ["18 fixed official snapshot gate"]
+- write_scope: [".gitignore", "apps/asr/README.md", "apps/asr/app.json", "apps/asr/asr_cli.py", "apps/asr/assets.py", "apps/asr/bootstrap.py", "apps/asr/client.py", "apps/asr/init.sh", "apps/asr/isolation.py", "apps/asr/provision.py", "apps/asr/sidecar_server.py", "apps/asr/tests/test_client.py", "apps/asr/tests/test_init_boundary.py", "apps/asr/tests/test_init_offline.sh", "apps/asr/tests/test_isolation.py", "apps/asr/tests/test_provision_maintenance.py", "apps/asr/tests/test_redteam2_regressions.py", "config.example.json", "docs/catalog.md", "docs/skill/references/edit.md", "tests/test_model_licenses.py", "vtx/pluginlib/config.py"]
+- published_head: None
+- published_tree: None
+- pr_url: None
+- ci_url: None
+- ci_status: not_run_for_candidate
+- pending_approval: None
+- checks: {"asr": "129 PASS", "licenses": "19 PASS", "fresh_controls": "8 PASS", "docs": "7 PASS", "real_install_cpu": "NOT RUN"}
+- independent_review: Source/fake controls, maintenance and consumer surface PASS; whole DoD insufficient
+- local_candidate: bdfcee912ec4d60b7722c5375f5c3c14bf01373e
+- tree: bc31c6b49afdd16e68d7a6d32a151d862012bb41
+- parent: 3632fd729776b49e8814fba12566eca402ce7131
+- ordered_parents: ["3632fd729776b49e8814fba12566eca402ce7131"]
+- base: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
+- candidate_identity_scope: Immutable source checkpoint; runtime/integration acceptance separately stated
+- phase: source_review_pass_runtime_pending
+- state: frozen_source_pass_runtime_pending
+- worktree_relative: development/worktrees/framivra-asr-isolation-141-repair2
+- branch: fix/asr-isolation-141-redteam2
+- next_gate: Real official installation, CPU transcription/alignment, measured RSS/time/disk, full aggregate and separate #142/#140 gates.
+- limits: Linux cooperating leases and conservative recognizable-path snapshot only; no real inference/IME/GPU acceptance or universal same-UID protection.
+- evidence_relative: ["outputs/asr-isolation-141-repair2-independent-20261016/review.md"]
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
+
+### #63: Graphics lifecycle and frame provenance
+- Issue / original DoD: https://github.com/CongliangK/framivra/issues/63
+- original_dod_reference: https://github.com/CongliangK/framivra/issues/63
+- owner_role: Workstream implementer; independent reviewer; integration maintainer
+- environment: Temporary cloud Linux workspace
+- dependencies: [62, 50]
+- write_scope: ["docs/execution-events.md", "tests/test_execution_clock.py", "tests/test_execution_warning.py", "tests/test_gfx_lifecycle_events.py", "tests/test_gfx_page_observation.py", "tests/test_gfx_provenance.py", "tests/test_process_samples.py", "vtx/cli.py", "vtx/events.py", "vtx/execution_links.py", "vtx/gfx_cli.py", "vtx/gfx_observation.py", "vtx/gfx_provenance.py", "vtx/gfx_render.py", "vtx/process_samples.py"]
+- published_head: None
+- published_tree: None
+- pr_url: None
+- ci_url: None
+- ci_status: not_run_for_candidate
+- pending_approval: None
+- checks: {"focused": "197 total:190 PASS,7 real-integration SKIP; immutable copied log hash bound", "adversarial": "7 tests PASS", "boundaries": "12 tests PASS, including7 inherited controls; not19 disjoint added controls", "actual_runtime": "NOT ESTABLISHED"}
+- independent_review: Bounded PASS for two provenance repairs and adjacent failure/compatibility controls; whole #62/#63 insufficient
+- local_candidate: 1b32f989136389a374e480355e7738634d6f0980
+- tree: abb4abde592e2b5a2b65f6f829f9657c7406c320
+- parent: 37a53b0360379ff45729959be0018af26306c1ac
+- ordered_parents: ["37a53b0360379ff45729959be0018af26306c1ac"]
+- base: f8d0d864807a8eef7880b7f388cd1d5d75f2d7e6
+- candidate_identity_scope: Immutable source checkpoint; runtime/integration acceptance separately stated
+- phase: bounded_source_review_pass_runtime_pending
+- state: frozen_provenance_repairs_bounded_pass_whole_issue_incomplete
+- worktree_relative: development/worktrees/framivra-lifecycle-63
+- branch: work/issue63-lifecycle
+- next_gate: Freeze/review actual runtime bridge separately; actual-main integration, strict receipts/stream binding, actual Chrome/RGBA and paired cold-round/overhead acceptance, PR/CI/merge gates.
+- limits: Moving untracked runtime files excluded from this review. No complete #62/#63 receipt/performance/runtime acceptance. Historical37a53b0 FAIL retained.
+- evidence_relative: ["outputs/framivra-ledger-1645-evidence/issue63-1b32f989-focused.log", "outputs/framivra-ledger-1645-evidence/issue63-1b32f989-review.md"]
+- Prior checkpoints remain historical in companion JSON, with count/provenance corrections below.
+
+### #48: Graphics environment identity foundation
+- Issue / original DoD: https://github.com/CongliangK/framivra/issues/48
+- original_dod_reference: https://github.com/CongliangK/framivra/issues/48
+- owner_role: Workstream implementer; independent reviewer; integration maintainer
+- environment: Temporary cloud Linux workspace
+- dependencies: ["#47 shared resolver; integrate #52 first; #62 identity consumer"]
+- write_scope: ["docs/cache-provenance.md", "scripts/run_all_tests.sh", "tests/test_gfx_environment.py", "vtx/gfx_cli.py", "vtx/gfx_environment.py"]
+- published_head: None
+- published_tree: None
+- pr_url: None
+- ci_url: None
+- ci_status: not_run_for_candidate
+- pending_approval: None
+- checks: {"author_focused": "80 tests total:79 PASS,1 actual-Chrome SKIP; diff check PASS", "runtime": "NOT RUN"}
+- independent_review: No independent review or acceptance for this foundation checkpoint
+- phase: partial_source_checkpoint
+- state: frozen_partial_foundation_unreviewed_runtime_unimplemented
+- local_candidate: 6da2c8a40eaa2bd464f3ba60ee55f1cbc8708705
+- tree: f02e3a334b056f003de0f0fba8fa876be766fd0f
+- parent: 2a7cbdfdc7658285bb815c8bab0f8ab856147f75
+- ordered_parents: ["2a7cbdfdc7658285bb815c8bab0f8ab856147f75"]
+- base: 2a7cbdfdc7658285bb815c8bab0f8ab856147f75
+- branch: issue48-environment-identity
+- worktree_relative: development/worktrees/framivra-issue48
+- next_gate: Independent review of partial foundation; implement persisted production identity/runtime/font adapter and consumers; accepted-main/#52/#47 integration and actual browser A/B/font-switch gates.
+- limits: No production activation or actual browser/font-resolution completeness. Reuse remains forbidden. Source tests do not certify runtime identity.
+- evidence_relative: ["outputs/issue48-foundation/REPORT.md", "outputs/issue48-foundation/unit.log", "outputs/framivra-ledger-1645-evidence/issue48-foundation-unit.log"]
+- candidate_identity_scope: Immutable source checkpoint; runtime/integration acceptance separately stated
+- execution_transport_note: Initial exec transport disconnected transiently. The original read-only call was retried in the same environment and succeeded; clean checkpoint verified. This was not an access denial and is not an ongoing blocker.
+- Prior checkpoints remain historical in companion JSON, with count/provenance corrections below.
+
+### #142: Owned ASR service lifecycle
+- Issue / original DoD: https://github.com/CongliangK/framivra/issues/142
+- original_dod_reference: https://github.com/CongliangK/framivra/issues/142
+- owner_role: Workstream implementer; independent reviewer; integration maintainer
+- environment: Temporary cloud Linux workspace
+- dependencies: [141]
+- write_scope: ["apps/aroll/README.md", "\"apps/aroll/docs/A-roll\\345\\256\\236\\346\\213\\215\\347\\264\\240\\346\\235\\220\\345\\244\\204\\347\\220\\206\\346\\265\\201\\347\\250\\213-2026-09-07.md\"", "apps/asr/README.md", "apps/asr/admission.py", "apps/asr/app.json", "apps/asr/asr_cli.py", "apps/asr/assets.py", "apps/asr/bootstrap.py", "apps/asr/client.py", "apps/asr/isolation.py", "apps/asr/owned_service.py", "apps/asr/service_policy.py", "apps/asr/sidecar_server.py", "apps/asr/tests/test_cli_baseurl.py", "apps/asr/tests/test_client.py", "apps/asr/tests/test_isolation.py", "apps/asr/tests/test_owned_service.py", "apps/asr/tests/test_redteam2_regressions.py", "apps/blender-bridge/README.md", "config.example.json", "docs/catalog.md", "docs/skill/references/edit.md", "tests/test_vt_entry.py", "vt.py", "vtx/pluginlib/config.py"]
+- published_head: None
+- published_tree: None
+- pr_url: None
+- ci_url: None
+- ci_status: not_run_for_candidate
+- pending_approval: None
+- checks: {"asr_suite": "146 tests total:141 PASS,5 real owned-UDS helper controls SKIP; copied log bound by SHA256 in frozen_evidence_snapshots", "historical_capture": "16:29 count141 total/136 PASS/5 SKIP was author-reported; overwritten original log prevents independent reproduction of that historical count", "initial_review": "Superseded by final version-bound review: two confirmed blockers R1/R2. Public metadata helper and socketpair cleanup observations remain advisory, not additional proven bugs.", "aggregate": "ABORTED exit130 to avoid contention; not PASS. Cleanup error not reproduced in one bounded replay; doctor/vt-init fixtures fail on absent google-chrome before production behavior.", "real_uds": "5 explicit SKIP; socket-creation errno1 before bind remains stopped"}
+- independent_review: Independent FAIL: R1 P2 retained pidfd leak on socket construction failure; R2 P1 authoritative VTX_CONFIG relative/tilde pathname reinterpretation across worker cwd/HOME. Only these two are confirmed blockers.
+- phase: source_review_fail_repair_pending
+- state: frozen_candidate_independent_FAIL_R1_R2_repair_pending_runtime_blocked
+- local_candidate: 50458a6f8bb863036df76b6eab431accc07f0cb6
+- tree: 92d4d0fd655068a1e9c05dc92514f118facb1943
+- parent: bdfcee912ec4d60b7722c5375f5c3c14bf01373e
+- ordered_parents: ["bdfcee912ec4d60b7722c5375f5c3c14bf01373e"]
+- base: bdfcee912ec4d60b7722c5375f5c3c14bf01373e
+- branch: fix/asr-owned-service-142
+- worktree_relative: repos/framivra/development/asr-owned-service-142
+- next_gate: Repair confirmed R1/R2 within existing authorization; freeze successor and obtain fresh independent review. Clarify advisory metadata-probe policy and acquisition ownership without promoting them to proven defects. Actual helper/CPU lifecycle acceptance still requires separately authorized supported platform; no denied-path retry.
+- limits: No final source PASS, full aggregate PASS, actual service or real model acceptance. Preserve platform denial and explicit skips.
+- evidence_relative: ["outputs/framivra-ledger-1645-evidence/asr142-50458a-tests.log", "outputs/framivra-ledger-1645-evidence/asr142-50458a-status.md", "outputs/framivra-ledger-1645-evidence/asr142-preliminary-reproduce.log", "outputs/framivra-ledger-1645-evidence/asr142-final-review.md"]
+- platform_boundary: {"denied_operation": "AF_UNIX SOCK_STREAM socket creation in temporary fake worker", "exception": "PermissionError errno1 Operation not permitted", "before_bind": true, "proc_path_cause_established": false, "actual_path_state": "Stopped after one in-place diagnostic", "workarounds_used": false, "restrictions": "No escalation, path change, TCP substitute or environment switch. Source/mock/document work only until separately authorized supported-platform runtime acceptance."}
+- review_findings: {"R1": "P2 confirmed pidfd resource leak", "R2": "P1 confirmed authoritative configuration-source continuity defect", "advisories": "Read-only metadata helper policy; explicit startup socket ownership. Neither is an additional proven blocker."}
+- Prior checkpoints remain historical in companion JSON, with count/provenance corrections below.
+
+### #85: Verified media identity and QC reuse
+- Issue / original DoD: https://github.com/CongliangK/framivra/issues/85
+- original_dod_reference: https://github.com/CongliangK/framivra/issues/85
+- owner_role: Workstream implementer; independent reviewer; integration maintainer
+- environment: Temporary cloud Linux workspace
+- dependencies: [97]
+- write_scope: Formal Verified identity and explicit trust model shared by receipt, seg/audio/loudness and QC. Prefer full verified reads at declared trust boundaries plus within-run reuse, or genuinely controlled immutable ingestion; never stat-only sidecars.
+- published_head: None
+- published_tree: None
+- pr_url: None
+- ci_url: None
+- ci_status: not_run_for_candidate
+- pending_approval: Acceptance wording interpretation unresolved; no permission/security changes implied.
+- checks: {"source": "Read-only immutable-main assessment; no benchmark/test execution"}
+- independent_review: Static correctness gaps identified; no implementation accepted
+- state: read_only_readiness_gaps_no_implementation_or_benchmark
+- phase: design_interpretation_pending
+- local_candidate: None
+- tree: None
+- base: b8820dbba6989dd216c8fa519633371e3d380cb6
+- branch: None
+- worktree_relative: None
+- next_gate: Record interpretation of original no-full-read language versus later permitted full re-read/controlled import; implement actual runtime Verified consumers and QC identity; qualifying real-media benchmark.
+- limits: Runtime source identity remains sampled; QC exemptions remain stat-based. Complete snapshot/output hashes do not close these gaps. No numerical performance claim.
+- evidence_relative: ["outputs/issue85-verified-identity-readiness.md"]
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
+
+
+## Completed
 
 ### #44: Issue 44
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/44
@@ -257,7 +499,14 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/44
 - dependencies: []
 - merge_url: https://github.com/CongliangK/framivra/commit/1cecc40dba44eac912c39a35e8c4fff7066f700e
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- owner_role: Historical workstream implementer and reviewer; individual identity not retained
+- environment: Historical execution environment not retained in this record
+- write_scope: None
+- state: historically_completed_original_issue
+- checks: {"status": "See retained original closure evidence; no new execution for this snapshot"}
+- next_gate: Completed historical issue; retain original evidence limits
+- phase: completed_original_issue
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #49: Issue 49
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/49
@@ -268,7 +517,14 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - original_dod_reference: https://github.com/CongliangK/framivra/issues/49
 - dependencies: []
 - merge_url: https://github.com/CongliangK/framivra/commit/d17d07e955153dddb0e20596d6f29e393bc38701
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- owner_role: Historical workstream implementer and reviewer; individual identity not retained
+- environment: Historical execution environment not retained in this record
+- write_scope: None
+- state: historically_completed_original_issue
+- checks: {"status": "See retained original closure evidence; no new execution for this snapshot"}
+- next_gate: Completed historical issue; retain original evidence limits
+- phase: completed_original_issue
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #53: Issue 53
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/53
@@ -311,7 +567,11 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - dependencies: []
 - published_source_url: https://github.com/CongliangK/framivra/tree/c353fae63866fa986f73460ab541d683d89bbcc5
 - merge_url: https://github.com/CongliangK/framivra/commit/d9ce4aab52fec57b770f689550fbbde1a860243b
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- environment: Historical execution environment not retained in this record
+- checks: {"status": "See retained original closure evidence; no new execution for this snapshot"}
+- next_gate: Completed historical issue; retain original evidence limits
+- phase: completed_original_issue
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #144: Template layout migration
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/144
@@ -350,7 +610,8 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - dependencies: []
 - published_source_url: https://github.com/CongliangK/framivra/tree/1cb21b6874f721d15dd53c143079a152cca20d9d
 - merge_url: https://github.com/CongliangK/framivra/commit/e8d9ee739f851bdf50acc4bc7f1567423d7dafb7
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: completed_original_issue
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #68: PNG FrameSource consumer boundary
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/68
@@ -391,7 +652,8 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - dependencies: []
 - published_source_url: https://github.com/CongliangK/framivra/tree/52fa6809e78e698f313f2f1883d6c10e57eb20d8
 - merge_url: https://github.com/CongliangK/framivra/commit/e928657f2833155423f6ccfca4869a1805b34bde
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: completed_original_issue
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
 ### #90: Scoped quality and evidence labels
 - Issue / original DoD: https://github.com/CongliangK/framivra/issues/90
@@ -430,197 +692,137 @@ Cloud non-CEF/Electron work in original scope; Coagentdraw paused. Preserve inde
 - dependencies: []
 - published_source_url: https://github.com/CongliangK/framivra/tree/4c49cc25bf77fb3de11bb33da3f15e423c84a4bb
 - merge_url: https://github.com/CongliangK/framivra/commit/2bd870f63b7ba1f0a0d3ffa43f630ebdd50aaf0c
-- Earlier checkpoint and all nested failure history retained in companion JSON; older tests are not reassigned to this tree.
+- phase: completed_original_issue
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
-## Conditional queue: 16 candidates, no closure guarantee
+### #50: Structured execution events and artifact links
+- Issue / original DoD: https://github.com/CongliangK/framivra/issues/50
+- owner_role: Workstream implementer; independent reviewer; integration maintainer
+- environment: Temporary cloud Linux workspace
+- state: merged_postmerge_ci_success_issue_closed_completed
+- base: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
+- local_candidate: f9a0267022024f7f1b042e284395f371f9e7c86e
+- tree: 6df9c550d3cd00e2e13717c36f09bb711bf41d98
+- parent: 70f509063ed25cfec15a0d5d03551f88e3a1122d
+- branch: dot/structured-events-50
+- worktree_relative: development/worktrees/framivra-execution-warning-50-repair
+- write_scope: ["docs/execution-events.md", "tests/test_execution_clock.py", "tests/test_execution_event_contract.py", "tests/test_execution_events.py", "tests/test_execution_invariants.py", "tests/test_execution_links.py", "tests/test_execution_warning.py", "vtx/acceptance.py", "vtx/cli.py", "vtx/composite.py", "vtx/encoders.py", "vtx/events.py", "vtx/execution_links.py", "vtx/infra.py", "vtx/qc.py", "vtx/stages.py"]
+- repair_rounds_used: None
+- published_head: fd8210fe914cab4eb82636dfa3b5039fc4d618d4
+- published_tree: 6df9c550d3cd00e2e13717c36f09bb711bf41d98
+- pr_url: https://github.com/CongliangK/framivra/pull/167
+- ci_url: https://github.com/CongliangK/framivra/actions/runs/38928811485
+- ci_status: completed_success
+- pending_approval: None
+- checks: {"actual_cpu": "60-frame 320x180 fixture, strict QC8/8, parity/resume/corrupt-sink/fault controls and tamper rejection PASS; visual_content unknown, accepted=false retained", "postmerge": "9/9 successful jobs; each Python3.9–3.13 aggregate1706 tests/42 optional skips; strict FFmpeg90 and Chrome14 zero skips; Windows24 plus install; docs/static7 gates"}
+- independent_review: Exact final combined integrity source PASS; actual CPU acceptance PASS within declared boundaries
+- next_gate: Original issue completed; preserve observation-only and evidence limits in dependent integrations.
+- limits: No GPU/Blender/native CEF/Electron, visual-content, broad cancellation or performance certification. Optional skips remain skips.
+- evidence_relative: ["outputs/review50-combined-integrity/REPORT.md", "outputs/issue50-final-clock-actual-acceptance/REPORT.md", "outputs/issue50-clock-publication-plan/POST-MERGE-REPORT.md", "outputs/issue50-clock-publication-plan/published-mapping.json", "outputs/issue50-clock-publication-plan/closure-readback.json", "outputs/issue50-clock-publication-plan/closure-comment-readback.json"]
+- original_dod_reference: https://github.com/CongliangK/framivra/issues/50
+- dependencies: ["Current main 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6; preserve original resource-null/event identity contracts; historical repair1 FAIL retained"]
+- ordered_parents: ["70f509063ed25cfec15a0d5d03551f88e3a1122d"]
+- candidate_identity_scope: Immutable source checkpoint; runtime/integration acceptance separately stated
+- phase: completed_original_issue
+- merge: b8820dbba6989dd216c8fa519633371e3d380cb6
+- merge_url: https://github.com/CongliangK/framivra/commit/b8820dbba6989dd216c8fa519633371e3d380cb6
+- postmerge_ci_url: https://github.com/CongliangK/framivra/actions/runs/38928811485
+- issue_state: closed
+- state_reason: completed
+- closed_at_utc: 2026-10-16T16:15:40Z
+- closure_comment_url: https://github.com/CongliangK/framivra/issues/50#issuecomment-6219728481
+- counts_toward_original_goal: True
+- repair_count_detail: Preserve earlier failed rounds plus clock/warning repairs; no guessed aggregate repair count
+- Earlier checkpoints and nested failure history retained in companion JSON; older tests are not reassigned to newer trees.
 
-Independent review and retained-evidence verification completed; native attachment delivered. #18/#155 excluded. The current #52/#50 identities above supersede old dependency hashes in queue planning. #52 has since failed harness review; its successor and #100 remain unfrozen.
 
-### Queue 1: #52
-- Original DoD: https://github.com/CongliangK/framivra/issues/52
-- State: Active repair after frozen acceptance-harness FAIL F1/F2; successor unfrozen; whole original DoD incomplete
-- Dependencies: ["#52 a7e77ad5ee6bde0396e39cd35d684be114746874, reviewed against 2bd870f"]
-- Write scope: ["vtx/impact.py", "vtx/cache_state.py", "vtx/hygiene.py", "vtx/timeline_diff.py", "vtx/composite.py", "vtx/cli.py", "vtx/stages.py", "vtx/timeline.schema.json", "vtx/preview.html", "tests/run_impact_gfx_reconciliation.py", "tests/run_impact_reconciliation.py"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: python -m unittest tests.test_impact_identity tests.test_impact_repair tests.test_timeline_diff tests.test_cache_state -v; existing reconciliation scripts per retained commands.json; VTX_TEST_CHROME=1 VTX_TEST_FFMPEG=1 bash scripts/run_all_tests.sh; bash scripts/doc_gates.sh
-- Original DoD assessment: All original analysis DoD is cloud-achievable; proposed full-size HTML gate needs hosted runner and final-tree fresh review.
-- Next gate: Integrate existing reviewed candidate serially onto current main; preserve new marker fix. Finish 30-page 1920x1080 real local HTML producer on hosted normal-sandbox Chrome, not pre-generated PNGs; local/global restored-mtime dependency changes must match predicted exact gfx/vseg/vseg_qc/vseg_pass path sets with no unrelated rewrites. CPU reconciliation already passes but full aggregate and HTML remain unrun.
+## Conditional Queue
 
-### Queue 2: #50
-- Original DoD: https://github.com/CongliangK/framivra/issues/50
-- State: Bounded independent PASS on frozen repair2; actual media verification running; whole DoD unverified
-- Dependencies: ["#50 6b3617903a4640ab9bb41e7def6e5fdf3aa94e42 fresh FAIL"]
-- Write scope: ["vtx/events.py", "vtx/qc.py", "tests/test_execution_event_contract.py", "tests/test_execution_events.py", "tests/test_execution_links.py"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: python -m unittest tests.test_execution_event_contract tests.test_execution_events tests.test_execution_links -v; rerun outputs/issue50-repair1-independent-review/adversarial.py and edge_checks.py against new candidate; bash scripts/run_all_tests.sh; bash scripts/doc_gates.sh
-- Original DoD assessment: All original DoD is cloud-achievable. No need for actual GPU or #45 scheduler implementation; do not claim real cancellation from observed synthetic events.
-- Next gate: Repair semantic attempt/lifetime contradictions and propagate observation context through actual QC nested executor workers. Existing 77-test PASS is insufficient. Fresh adversarial package tests must reject attempt 99/999, overlapping retries within one task, children preceding parents; independent tasks may overlap. Then new-tree CPU media parity, truncation/resource-null/error/cancel/retry/cache tests.
+- #52: source_checkpoint_pass_combined_B_scoped_pass_actual_acceptance_pending; next: Actual exact-B CPU/media and normal-sandbox HTML acceptance, relevant aggregate and CI; then authorized PR/merge/postmerge. No runtime/whole-issue completion claimed.; original DoD: https://github.com/CongliangK/framivra/issues/52
+- #50: merged_postmerge_ci_success_issue_closed_completed; next: Original issue completed; preserve observation-only and evidence limits in dependent integrations.; original DoD: https://github.com/CongliangK/framivra/issues/50
+- #100: source_checkpoint_pass_combined_B_scoped_pass_actual_acceptance_pending; next: Actual exact-B CPU/media and normal-sandbox HTML acceptance, relevant aggregate and CI; then authorized PR/merge/postmerge. No runtime/whole-issue completion claimed.; original DoD: https://github.com/CongliangK/framivra/issues/100
+- #47: frozen_source_pass_runtime_pending; next: Integrate accepted main/#52/#100; actual normal-sandbox Chrome and visible mutation/cache/GC reconciliation; fresh final review and PR gates.; original DoD: https://github.com/CongliangK/framivra/issues/47
+- #48: frozen_partial_foundation_unreviewed_runtime_unimplemented; next: Independent review of partial foundation; implement persisted production identity/runtime/font adapter and consumers; accepted-main/#52/#47 integration and actual browser A/B/font-switch gates.; original DoD: https://github.com/CongliangK/framivra/issues/48
+- #63: frozen_provenance_repairs_bounded_pass_whole_issue_incomplete; next: Freeze/review actual runtime bridge separately; actual-main integration, strict receipts/stream binding, actual Chrome/RGBA and paired cold-round/overhead acceptance, PR/CI/merge gates.; original DoD: https://github.com/CongliangK/framivra/issues/63
+- #64: Conditional not launched; original DoD unchanged; next: Do not use cache hits as speed results; bind candidate environment/config to #48. Full #63 events and #62 producer integration first.; original DoD: https://github.com/CongliangK/framivra/issues/64
+- #67: Conditional not launched; original DoD unchanged; next: Missing download/runtime access is blocked, not negative research. Ordinary Chrome protocol schema is not proof. Comment requests baseline jitter evidence first; preserve no production activation.; original DoD: https://github.com/CongliangK/framivra/issues/67
+- #66: Conditional not launched; original DoD unchanged; next: BLOCKED until #45 shared ownership/budget lifecycle contract is established. Highest concurrency/isolation risk in shortlist. Current heal publishes new pool outside lock and process lifetime is render_page. Do not substitute many tabs for independent workers. No default activation without reproducible benefit.; original DoD: https://github.com/CongliangK/framivra/issues/66
+- #85: read_only_readiness_gaps_no_implementation_or_benchmark; next: Record interpretation of original no-full-read language versus later permitted full re-read/controlled import; implement actual runtime Verified consumers and QC identity; qualifying real-media benchmark.; original DoD: https://github.com/CongliangK/framivra/issues/85
+- #87: old_base_product_four_hosted_fixtures_pass_unmerged; next: Rebase/integrate serially on new main and reverify; resolve policy evidence and original main/schedule/manual/performance acceptance. Do not merge validation PRs or retry denied protection access.; original DoD: https://github.com/CongliangK/framivra/issues/87
+- #141: frozen_source_pass_runtime_pending; next: Real official installation, CPU transcription/alignment, measured RSS/time/disk, full aggregate and separate #142/#140 gates.; original DoD: https://github.com/CongliangK/framivra/issues/141
+- #142: frozen_candidate_independent_FAIL_R1_R2_repair_pending_runtime_blocked; next: Repair confirmed R1/R2 within existing authorization; freeze successor and obtain fresh independent review. Clarify advisory metadata-probe policy and acquisition ownership without promoting them to proven defects. Actual helper/CPU lifecycle acceptance still requires separately authorized supported platform; no denied-path retry.; original DoD: https://github.com/CongliangK/framivra/issues/142
+- #140: Conditional not launched; original DoD unchanged; next: ['No install/download/run performed during this read-only assessment.', 'Need bounded real CPU install→transcribe→timestamps→owned stop/restart evidence and measured RSS/time/disk.', 'Respect exact license acknowledgment and download opt-in; legacy ModelScope path stays blocked.', 'No genuine GPU co-residency test without separate authorization; unavailable GPU must fail closed.', 'Independent red team, fixes, full tests, PR merge and post-merge acceptance remain mandatory.']; original DoD: https://github.com/CongliangK/framivra/issues/140
+- #51: Conditional not launched; original DoD unchanged; next: Implement stable submit/status/cancel/resume consumer only after safe shared ownership and cancellation lifecycle; CLI consumes API. CPU/short-FFmpeg evidence can close this API scope without complete adaptive policy or DAG, but cannot paper over #45 failure to reclaim descendants or falsely release capacity.; original DoD: https://github.com/CongliangK/framivra/issues/51
+- #46: Conditional not launched; original DoD unchanged; next: Generate heterogeneous H264/ProRes/PNG CPU inputs with dense layer boundaries, freeze seed/version/threads/cold roots, compare decoded frame hashes and PTS/framesync events. Existing test explicitly says synthetic PNG graph cannot reproduce original disease. Fix only demonstrated cause, no blind FFV1 passes.; original DoD: https://github.com/CongliangK/framivra/issues/46
 
-### Queue 3: #100
-- Original DoD: https://github.com/CongliangK/framivra/issues/100
-- State: Active candidate tracked separately
-- Dependencies: []
-- Write scope: "Repair producer-owned precise diagnostics across the existing operation inventory; preserve exception identity, evaluation order, human output and exit codes. Integrate 0166dfa after rebasing onto fresh main, not its old base."
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: Run every catalog disposition and fatal-operation negative; real seven-class repair fixture with FFmpeg and zero skips; relevant full batches, audit/QC, independent exact-commit red team, PR CI and post-merge readback.
-- Original DoD assessment: Existing precision audit is FAIL; earlier causality success does not satisfy complete hard-gate coverage. Coordinate any cache_state diagnostic annotation with #85 without changing identity semantics.
-- Next gate: Existing precision audit is FAIL; earlier causality success does not satisfy complete hard-gate coverage. Coordinate any cache_state diagnostic annotation with #85 without changing identity semantics.
+## Pending Decisions
 
-### Queue 4: #47
-- Original DoD: https://github.com/CongliangK/framivra/issues/47
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: ["Integrate #52 resolver/clip-dependency implementation first; coordinate #85 and #48"]
-- Write scope: ["vtx/cache_state.py", "vtx/hygiene.py", "vtx/impact.py", "vtx/timeline_diff.py", "vtx/stages.py", "vtx/timeline.schema.json", "vtx/gfx_render.py", "vtx/gfx_cli.py", "vtx/cli.py", "tests/test_cache_state.py", "tests/test_gfx_cli_fallback.py"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: python -m unittest tests.test_cache_state tests.test_timeline_diff tests.test_gfx_golden tests.test_gfx_cli_fallback -v; new strict fixture suite; hosted Chrome real nested CSS/font/image requests, dynamic fetch and forbidden remote negatives, same-byte HTML different directories, A-only/B-warm/global invalidation and mtime-restored tests; aggregate/doc_gates
-- Original DoD assessment: All original DoD appears cloud-achievable with normal-sandbox hosted Chrome. Unknown dynamic closure must fail closed or explicitly remain unproved, never silently certify.
-- Next gate: Complete single resolver across keys/receipts/gc/diff, retain project union page declarations and legacy identity where contracted, bind HTML resolution path. Strict mode must reject unproved dynamic/remote resources, including fallback; static scan and observed CDP requests alone cannot certify arbitrary future paths. Conservative strict rejection is an allowed engineering design, not a scope trim.
+- issue18_issue155: Issue closure attempts denied and stopped at 14:24 UTC. Both issues remain OPEN. New explicit user confirmation required before retry; do not retry or bypass denial.
+- issue45: Ownership/lease architecture and actual timing/isolation gates unresolved; preserve original DoD.
+- issue87: Required-context policy remains unverified after access denial; do not retry protected access or change settings. Performance protocol and remaining original acceptance unresolved.
+- issue85: Explicit interpretation of original no-full-read versus later re-read/controlled-import wording remains unresolved; no benchmark performed.
 
-### Queue 5: #48
-- Original DoD: https://github.com/CongliangK/framivra/issues/48
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: ["#47 shared resolver; integrate #52 first; #62 identity consumer"]
-- Write scope: ["vtx/hygiene.py", "vtx/cache_state.py", "vtx/gfx_render.py", "vtx/gfx_cli.py", "vtx/gfx_evidence.py", "scripts/gfx_golden.py", "tests/test_gfx_golden.py", "tests/test_gfx_evidence.py"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: python -m unittest tests.test_cache_state tests.test_gfx_golden tests.test_gfx_evidence -v; hosted normal-sandbox Chrome A/B and distinct font-file fixtures; verify actual browser/font changes invalidate, unknown never aliases, compression-neutral changes not overclaimed; aggregate/doc_gates
-- Original DoD assessment: Full closure feasible in hosted cloud if two actual browser/font identities are available through approved standard runner setup. Browser version lookup alone is not the real-render gate.
-- Next gate: Collect executable/version, font-file content digest, effective rendering flags/backend/viewport/scale/color/alpha/schema identity; unknown fail-closed or explicit low-trust non-reuse. Wire keys, receipts and strict Golden independent candidate roots. Make old-cache migration conservative. Compression-only changes need not invalidate if proven pixel-neutral.
+## Recovery Archive
 
-### Queue 6: #63
-- Original DoD: https://github.com/CongliangK/framivra/issues/63
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: [62, 50]
-- Write scope: "Add the single versioned lifecycle-event producer with run/key/page/block/frame/backend identity; keep legacy statistics. Cover startup, tabs, setup, retries, healing, copies and stop; record composite CDP RPC honestly. Build safe isolated benchmark wrapper."
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: At least three paired same-target cold runs on hosted real Chrome, pre-frozen #62 plan/producer provenance, decoded full-frame zero differences, complete wall/critical path/tree RSS, trace overhead, real strict Chrome/pipeline suites. GPU fields null with reason are allowed here.
-- Original DoD assessment: Current render_page starts ms_total after Browser.start and computes dt before deferred copies; Tab.call drops events; CLI merges weighted approximations. Need trace-capable event/stream handling if trace option offered. No historical production speed claim.
-- Next gate: Current render_page starts ms_total after Browser.start and computes dt before deferred copies; Tab.call drops events; CLI merges weighted approximations. Need trace-capable event/stream handling if trace option offered. No historical production speed claim.
+- classification: Owner-only historical recovery artifact; delivered, not public proof
+- cutoff_utc: 2026-10-16T15:30:18Z
+- sha256: ac6652200b46c2572308c472a92113bbaa5a1f4a9e7a540580754d48e4c41f6c
+- requires_baseline: 1b39955b8d52a2e1efadfc898e9b056fbbc5d3f6
+- bytes: 751886
+- does_not_prove: Current acceptance or public availability. Excludes later moving work; not a backup of the present workspace.
 
-### Queue 7: #64
-- Original DoD: https://github.com/CongliangK/framivra/issues/64
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: [62, 63, 48]
-- Write scope: "Opt-in optimizeForSpeed propagated into every CDP screenshot/probe/twoshot; capability detection only downgrades explicit unsupported parameter, never real screenshot errors; Canvas unaffected and default argv/params unchanged."
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: Three isolated paired cold A/B rounds, opaque/override/twoshot/flatten/Canvas/CLI fallback, low/high entropy pages, all decoded RGBA identical; PNG bytes/size, FFmpeg tail decode, total wall and resource budget; unsupported/no-benefit result may validly close experiment when actually measured.
-- Original DoD assessment: Do not use cache hits as speed results; bind candidate environment/config to #48. Full #63 events and #62 producer integration first.
-- Next gate: Do not use cache hits as speed results; bind candidate environment/config to #48. Full #63 events and #62 producer integration first.
+## Local Native Boundary
 
-### Queue 8: #67
-- Original DoD: https://github.com/CongliangK/framivra/issues/67
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: [62, 63, 48]
-- Write scope: "Pin official chrome-headless-shell and matching protocol; first actually probe controlled target+BeginFrame. Then isolated runner with explicit frame/run/generation binding and resource readiness; do not touch production NAVFREE."
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: If binary truly rejects required protocol, retained minimal reproduction and negative conclusion is legitimate research closure. If supported, fonts/images/SVG/blur/gradient/alpha long sequences, seeded repeats/seeks, eight-instance load, independent decoded full-frame reference and multi-round cold/full wave costs.
-- Original DoD assessment: Missing download/runtime access is blocked, not negative research. Ordinary Chrome protocol schema is not proof. Comment requests baseline jitter evidence first; preserve no production activation.
-- Next gate: Missing download/runtime access is blocked, not negative research. Ordinary Chrome protocol schema is not proof. Comment requests baseline jitter evidence first; preserve no production activation.
+- previous_local_task_status: Previously disconnected user-local work was rechecked completed. No new local route needed.
+- state: Native CEF/Electron remain user-local; PR166 untouched
+- pr_url: https://github.com/CongliangK/framivra/pull/166
+- coagentdraw: Paused
+- cloud_acceptance: No local native results imported as cloud acceptance
 
-### Queue 9: #66
-- Original DoD: https://github.com/CongliangK/framivra/issues/66
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: [62, 63, 45, 48]
-- Write scope: "Bounded command-lifetime whole-Browser lease pool, compatible configuration groups, fresh isolated targets per page, explicit stop ownership, bounded healing, atomic generation+pool publication."
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: Mock saturation/partial startup/lease timeouts/concurrent restarts/cache-zero-start. Real transparent→opaque→Canvas→flatten→transparent, repeated pages/blocks, kill one worker without affecting others, full RGBA identity and zero process/fd/profile residue. Three paired rounds wall/start count/RSS/hit benefit.
-- Original DoD assessment: BLOCKED until #45 shared ownership/budget lifecycle contract is established. Highest concurrency/isolation risk in shortlist. Current heal publishes new pool outside lock and process lifetime is render_page. Do not substitute many tabs for independent workers. No default activation without reproducible benefit.
-- Next gate: BLOCKED until #45 shared ownership/budget lifecycle contract is established. Highest concurrency/isolation risk in shortlist. Current heal publishes new pool outside lock and process lifetime is render_page. Do not substitute many tabs for independent workers. No default activation without reproducible benefit.
+## Four Repository Audit
 
-### Queue 10: #85
-- Original DoD: https://github.com/CongliangK/framivra/issues/85
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: [97]
-- Write scope: "Formal Verified identity and explicit trust model shared by receipt, seg/audio/loudness and QC. Prefer full verified reads at declared trust boundaries plus within-run reuse, or genuinely controlled immutable ingestion; never stat-only sidecars."
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: Same-size restored-mtime middle mutation must invalidate all keys, receipts and QC exemptions. Actual >=1GB media project cold identity overhead <=max(60s,10% total cold time), repeated warm behavior and identity failure negatives; full CPU pipeline and independent audit.
-- Original DoD assessment: No >=950MB file found by read-only metadata search in this workspace/shared. Need real licensed media project from an already authorized source; padded random/synthetic bytes are not proof of actual-project gate. Immutable trust model must not require security permission changes.
-- Next gate: No >=950MB file found by read-only metadata search in this workspace/shared. Need real licensed media project from an already authorized source; padded random/synthetic bytes are not proof of actual-project gate. Immutable trust model must not require security permission changes.
+- state: Read-only report delivered 14:26 UTC; historical observation window13:49–13:50, superseded for PR165 by current merged evidence
+- evidence_relative: ["outputs/four-repo-audit-20261016-1333/final/status-report.md", "outputs/four-repo-audit-20261016-1333/final/research-commissions.md"]
+- new_research_questions: 2
+- research_topics: ["#87 actionable feedback endpoint and matched protocol", "#89 per-frame identity observation bridge"]
+- coagentdraw: Paused
+- router: PAUSED / NOT READY; no training acceptance inferred
+- ibus: Zero open issues does not prove real desktop/device lifecycle acceptance
 
-### Queue 11: #87
-- Original DoD: https://github.com/CongliangK/framivra/issues/87
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: []
-- Write scope: "Continue from independently reviewed 96b9613 product, instrument leaf test times, optimize only evidenced costs and preserve coverage; retain exact four path fixtures and warm-cache verification."
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: Freeze actionable-failure/required-green/all-complete definitions; matched cache-temperature runs with P50/P95/cost and <=4.5m designated goal, >=25% overall savings, weekly equivalence, every required status terminal.
-- Original DoD assessment: Parent reports four 10/10 cases and 100 warm archives verified. Earlier timing report still shows HTML first fast 344s; do not substitute warm-cache pass for target. Required-slow policy NOT VERIFIED: an incidental ordinary branch summary exposed eight contexts, while the dedicated policy request returned 403 and was not bypassed. That summary is not authoritative complete current protection-policy evidence. A required aggregate depending on slow job is a possible code-only design but does not silently satisfy literal request that slow job itself be required; no security mutation authorized.
-- Next gate: Parent reports four 10/10 cases and 100 warm archives verified. Earlier timing report still shows HTML first fast 344s; do not substitute warm-cache pass for target. Required-slow policy NOT VERIFIED: an incidental ordinary branch summary exposed eight contexts, while the dedicated policy request returned 403 and was not bypassed. That summary is not authoritative complete current protection-policy evidence. A required aggregate depending on slow job is a possible code-only design but does not silently satisfy literal request that slow job itself be required; no security mutation authorized.
+## Publication Plan
 
-### Queue 12: #141
-- Original DoD: https://github.com/CongliangK/framivra/issues/141
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: ["18 fixed official snapshot gate"]
-- Write scope: ["apps/asr/isolation.py (proposed)", "apps/asr/client.py", "apps/asr/sidecar_server.py", "apps/asr/init.sh", "vtx/pluginlib/config.py", "config.example.json", "apps/asr/app.json", "apps/asr/README.md", "docs/catalog.md"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: ['env python3 -m unittest discover -s apps/asr/tests -t apps/asr -v', 'bash apps/asr/tests/test_init_offline.sh', 'bash scripts/run_all_tests.sh', 'bash scripts/doc_gates.sh']
-- Original DoD assessment: ['No install/download/run performed during this read-only assessment.', 'Need bounded real CPU install→transcribe→timestamps→owned stop/restart evidence and measured RSS/time/disk.', 'Respect exact license acknowledgment and download opt-in; legacy ModelScope path stays blocked.', 'No genuine GPU co-residency test without separate authorization; unavailable GPU must fail closed.', 'Independent red team, fixes, full tests, PR merge and post-merge acceptance remain mandatory.']
-- Next gate: ['No install/download/run performed during this read-only assessment.', 'Need bounded real CPU install→transcribe→timestamps→owned stop/restart evidence and measured RSS/time/disk.', 'Respect exact license acknowledgment and download opt-in; legacy ModelScope path stays blocked.', 'No genuine GPU co-residency test without separate authorization; unavailable GPU must fail closed.', 'Independent red team, fixes, full tests, PR merge and post-merge acceptance remain mandatory.']
+- branch_exists: True
+- branch_read_result: Retained publication proof verified locally; not freshly fetched
+- root_commit_supported_by_connector: False
+- proposed_commit_parent: 07f69da6a108b77899f478f51721d1be2b26b0fd
+- proposed_tree: Only orchestration-ledger.md and orchestration-facts.json, created without base tree
+- gate: Fresh independent review required before any remote publication. Re-read remote predecessor and use expected-sha non-force update. Only the two metadata files; never merge metadata branch into main.
 
-### Queue 13: #142
-- Original DoD: https://github.com/CongliangK/framivra/issues/142
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: [141]
-- Write scope: ["apps/asr/client.py", "apps/asr/sidecar_server.py", "apps/asr/asr_cli.py", "vt.py", "apps/asr/tests/test_client.py", "apps/asr/tests/test_cli_baseurl.py", "apps/asr/tests/test_isolation.py (proposed)"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: ['env python3 -m unittest discover -s apps/asr/tests -t apps/asr -v', 'bash apps/asr/tests/test_init_offline.sh', 'bash scripts/run_all_tests.sh', 'bash scripts/doc_gates.sh']
-- Original DoD assessment: ['No install/download/run performed during this read-only assessment.', 'Need bounded real CPU install→transcribe→timestamps→owned stop/restart evidence and measured RSS/time/disk.', 'Respect exact license acknowledgment and download opt-in; legacy ModelScope path stays blocked.', 'No genuine GPU co-residency test without separate authorization; unavailable GPU must fail closed.', 'Independent red team, fixes, full tests, PR merge and post-merge acceptance remain mandatory.']
-- Next gate: ['No install/download/run performed during this read-only assessment.', 'Need bounded real CPU install→transcribe→timestamps→owned stop/restart evidence and measured RSS/time/disk.', 'Respect exact license acknowledgment and download opt-in; legacy ModelScope path stays blocked.', 'No genuine GPU co-residency test without separate authorization; unavailable GPU must fail closed.', 'Independent red team, fixes, full tests, PR merge and post-merge acceptance remain mandatory.']
+## Metadata Review
 
-### Queue 14: #140
-- Original DoD: https://github.com/CongliangK/framivra/issues/140
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: [141, 142]
-- Write scope: ["apps/asr/tests/", "scripts/run_all_tests.sh", "scripts/doc_gates.sh"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: ['env python3 -m unittest discover -s apps/asr/tests -t apps/asr -v', 'bash apps/asr/tests/test_init_offline.sh', 'bash scripts/run_all_tests.sh', 'bash scripts/doc_gates.sh']
-- Original DoD assessment: ['No install/download/run performed during this read-only assessment.', 'Need bounded real CPU install→transcribe→timestamps→owned stop/restart evidence and measured RSS/time/disk.', 'Respect exact license acknowledgment and download opt-in; legacy ModelScope path stays blocked.', 'No genuine GPU co-residency test without separate authorization; unavailable GPU must fail closed.', 'Independent red team, fixes, full tests, PR merge and post-merge acceptance remain mandatory.']
-- Next gate: ['No install/download/run performed during this read-only assessment.', 'Need bounded real CPU install→transcribe→timestamps→owned stop/restart evidence and measured RSS/time/disk.', 'Respect exact license acknowledgment and download opt-in; legacy ModelScope path stays blocked.', 'No genuine GPU co-residency test without separate authorization; unavailable GPU must fail closed.', 'Independent red team, fixes, full tests, PR merge and post-merge acceptance remain mandatory.']
+- state: New successor corrects prior metadata FAIL; fresh independent review required, not published
+- predecessor_publication_proof: outputs/framivra-ledger-1443-independent-review/publication-proof.json
+- source_code_changes: False
+- remote_actions: False
+- corrections: ["#48 corrected total/pass/skip wording", "#142 historical count qualified as author-reported with overwritten provenance; new146/141/5 copied and SHA256 bound", "Frozen B two scoped PASS reviews, #63 bounded provenance PASS, and #142 final R1/R2 FAIL recorded without whole-issue acceptance"]
+- predecessor_review: outputs/ledger1629-independent/REPORT.md
 
-### Queue 15: #51
-- Original DoD: https://github.com/CongliangK/framivra/issues/51
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: ["#45 shared F12 cancellation contract; candidate 91b3783269c3164d12bdb999cf4918440be9961a currently FAIL"]
-- Write scope: ["vtx/api.py", "vtx/cli.py", "vtx/runtime.py", "new job-control module and tests"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: New API lifecycle suite plus tests.test_runtime_cancellation and real owned short FFmpeg fixture; replay first-failure bounded latency, idempotency, failure context/exit code and verified-output resume; aggregate/doc_gates
-- Original DoD assessment: Conditionally feasible, not immediate. No independent third cancellation manager. If durable ownership capability cannot be established without permission changes, remain blocked.
-- Next gate: Implement stable submit/status/cancel/resume consumer only after safe shared ownership and cancellation lifecycle; CLI consumes API. CPU/short-FFmpeg evidence can close this API scope without complete adaptive policy or DAG, but cannot paper over #45 failure to reclaim descendants or falsely release capacity.
+## Historical count and provenance corrections
 
-### Queue 16: #46
-- Original DoD: https://github.com/CongliangK/framivra/issues/46
-- State: Conditional not launched; original DoD unchanged
-- Dependencies: ["#89 PTS/CFR evidence; original #11 project/slice if generated heterogenous fixture fails to reproduce"]
-- Write scope: ["tests/test_composite_determinism.py", "vtx/composite.py", "new diagnostic fixture/script"]
-- Owner/environment: Workstream implementer; independent reviewer; integration maintainer; Cloud, excluding local CEF/Electron
-- Acceptance: python -m unittest tests.test_composite_determinism -v; new independent cold-root repeated runs with ffmpeg decoded rawvideo/framehash and ffprobe/showinfo PTS logs; reconcile #89; aggregate/doc_gates
-- Original DoD assessment: Research and harness feasible. Full original closure conditional on a stable original-equivalent reproducer; non-reproduction is not proof of fix. No request to access user-local original files tonight.
-- Next gate: Generate heterogeneous H264/ProRes/PNG CPU inputs with dense layer boundaries, freeze seed/version/threads/cold roots, compare decoded frame hashes and PTS/framesync events. Existing test explicitly says synthetic PNG graph cannot reproduce original disease. Fix only demonstrated cause, no blind FFV1 passes.
+- #48: Earlier wording80 PASS plus1 skip was erroneous. Correct evidence is80 total,79 PASS,1 SKIP. Original draft retained for history, not current numerical authority.
+- #142: At16:29,141 total/136 PASS/5 SKIP was author-reported at capture. Its referenced log was subsequently overwritten; that historical count is not independently reproducible from the current path. The new copied log records146 total/141 PASS/5 SKIP for candidate50458a; it is later evidence, not a backdated correction of the earlier run.
 
-## Four-repository audit and research
+## Frozen evidence copies
 
-{
-  "state": "Read-only report delivered 14:26 UTC; historical observation window13:49–13:50, superseded for PR165 by current merged evidence",
-  "evidence_relative": [
-    "outputs/four-repo-audit-20261016-1333/final/status-report.md",
-    "outputs/four-repo-audit-20261016-1333/final/research-commissions.md"
-  ],
-  "new_research_questions": 2,
-  "research_topics": [
-    "#87 actionable feedback endpoint and matched protocol",
-    "#89 per-frame identity observation bridge"
-  ],
-  "coagentdraw": "Paused",
-  "router": "PAUSED / NOT READY; no training acceptance inferred",
-  "ibus": "Zero open issues does not prove real desktop/device lifecycle acceptance"
-}
+- outputs/framivra-ledger-1645-evidence/asr142-50458a-tests.log: SHA256 7f45be337f180eb491ee3d548ee4da073521a1632bb1e9c15ee23a0551b22b1b
+- outputs/framivra-ledger-1645-evidence/asr142-50458a-status.md: SHA256 099475c3c6df2255e89127f263cc3f2962987307bba548b5ebbcafe35ed91426
+- outputs/framivra-ledger-1645-evidence/asr142-preliminary-reproduce.log: SHA256 924fc7c656f24961129933378910d24efbe59808ec8c06c5b938e658c81b076c
+- outputs/framivra-ledger-1645-evidence/issue63-1b32f989-focused.log: SHA256 446e3ae2cadbb798d90cb24f6a00a7b51a55f7969126abd7e6f9b07c5593f4d2
+- outputs/framivra-ledger-1645-evidence/issue63-1b32f989-review.md: SHA256 6b43d35ca2fab76d0fb076cf91f5480ce55e1b0e5c68e96ee67a53f159ab0863
+- outputs/framivra-ledger-1645-evidence/combined-B-diagnostics-review.md: SHA256 6650ce7da7fe23b961298031fb72f596be8b943520255b4190351bb67a4a6ca2
+- outputs/framivra-ledger-1645-evidence/combined-B-cache-review.md: SHA256 43697774aefdf7bd85e7afe008858e546a628537e17b0660cb341ac8b87dabf4
+- outputs/framivra-ledger-1645-evidence/issue48-foundation-unit.log: SHA256 26ab7fab086969a5f08445bbe768e4324f2e659d4924dce74e7681d3ced45f17
+- outputs/framivra-ledger-1645-evidence/metadata1629-review.md: SHA256 95cfee2065c1549b5329e0043a54f77a2b082b3a55c3b962e3df760d64ab4ece
+- outputs/framivra-ledger-1645-evidence/asr142-final-review.md: SHA256 b0027615882fe973958d0b910c062103c97ad38af3480a5883228b8ec06272aa
 
-## Recovery and publication
-
-Previous published snapshot: https://github.com/CongliangK/framivra/blob/e76af1024fc3cf9190968230f9615eea9df2d57f/orchestration-ledger.md
-Previous structured snapshot: https://github.com/CongliangK/framivra/blob/e76af1024fc3cf9190968230f9615eea9df2d57f/orchestration-facts.json
-Retained predecessor proof: outputs/framivra-ledger-1048-publication/proof.json. This draft contains only orchestration-ledger.md and orchestration-facts.json. Fresh review, expected predecessor comparison and authorized publication gate remain; never merge the metadata branch into main.
-No unknown gate is PASS. Local worktree availability is temporary; only published commit links are durable. Current draft was not published and no repository source was changed.
-
-## Metadata predecessor review
-
-The earlier local snapshot failed public-publication review. This successor removes private Library identifiers, corrects both queue #87 policy claims, and records #52 F1/F2 plus its unfrozen repair. The earlier frozen files remain unchanged. Fresh independent review is required.
+Prior16:25 and16:29 snapshots retained unchanged; this16:46 successor is new evidence, not a backdated rewrite. Original completion remains7/20. No source edits or remote writes.
