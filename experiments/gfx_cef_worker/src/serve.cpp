@@ -390,13 +390,15 @@ void DrainSyncReadyQueue(RunState& state, fsync::FrameSyncStateMachine& m) {
 //    三元组（gen/req/f）随装配注入 —— 晚到/异世代回调在宿主侧被拒收。
 std::string BuildSyncBridgeJs(uint32_t gen, uint32_t request_id, int32_t f,
                               bool mode_n, bool clean, bool exact,
-                              const std::string& fault) {
-  char header[200];
+                              const std::string& fault,
+                              bool baseline_only = false) {
+  char header[240];
   std::snprintf(header, sizeof(header),
                 "(function(){\"use strict\";var GEN=%u,REQ=%u,F=%d,"
-                "MODE_N=%s,CLEAN=%s,EXACT=%s,FAULT=\"%s\";",
+                "MODE_N=%s,CLEAN=%s,EXACT=%s,BASELINE=%s,FAULT=\"%s\";",
                 gen, request_id, f, mode_n ? "true" : "false",
-                clean ? "true" : "false", exact ? "true" : "false", fault.c_str());
+                clean ? "true" : "false", exact ? "true" : "false",
+                 baseline_only ? "true" : "false", fault.c_str());
   // 注：FAULT 名单由 main.cpp 参数面锁定（none|stale_canary|no_canary|
   // no_ready|early_burst），此处字符串只来自受信配置面。
   return std::string(header) + R"VTXSYNC(
@@ -515,15 +517,21 @@ function originals() {
 }
 var done = false;
 Promise.all([fontsP, imgsReady(), loadP]).then(function () {
-  send({ phase: "assets_ready" });             // —— S2 就绪信号 ——
+  if (!BASELINE) send({ phase: "assets_ready" }); // —— S2 就绪信号 ——
   applyState();
   requestAnimationFrame(function () {          // 双 rAF（只作就绪候选）
     requestAnimationFrame(function () {
       var step = function () {                 // MessageChannel task（非微任务）
         if (done) { return; }
         done = true;
-        drawCanary(F);
-        send({ phase: "canary_set", orig: originals() });  // —— S3 通知 ——
+        if (BASELINE) {
+          // This fresh document NEVER receives witness DOM (not even hidden).
+          // The native capture is a rejection reference only, not frame proof.
+          send({ phase: "baseline_ready" });
+        } else {
+          drawCanary(F);
+          send({ phase: "canary_set", orig: originals() });
+        }  // —— S3 通知 ——
       };
       var ch = null;
       try { ch = new MessageChannel(); } catch (e) {}
@@ -537,6 +545,68 @@ Promise.all([fontsP, imgsReady(), loadP]).then(function () {
   });
 });
 })();)VTXSYNC";
+}
+
+// Capture an independent, never-instrumented document BEFORE the signed
+// navigation. No baseline paint enters FeedPaint or supplies output bytes.
+// Two equal fresh OnPaint buffers after readiness are required; this is only a
+// conservative equality veto, NOT target-frame/generation proof.
+static bool CaptureExactBaseline(RunState& state, PumpDriver& pump,
+                                 CefRefPtr<CefBrowser> browser,
+                                 fsync::FrameSyncStateMachine& machine,
+                                 const ServeOptions& opt, uint32_t gen,
+                                 uint32_t req, int32_t frame, bool mode_n) {
+  {
+    std::lock_guard<std::mutex> lock(state.mu);
+    state.sync_capture_armed = false;
+    state.sync_ready_queue.clear();
+    state.buffer.clear();
+  }
+  state.loaded.store(false, std::memory_order_relaxed);
+  browser->GetMainFrame()->LoadURL(ExpandUrlTemplate(opt.url_template, frame));
+  if (!pump.Until([&] { return state.loaded.load(std::memory_order_relaxed); },
+                  opt.frame_budget_ms)) {
+    return false;
+  }
+  browser->GetMainFrame()->ExecuteJavaScript(
+      BuildSyncBridgeJs(gen, req, frame, mode_n, false, true, opt.sync_fault, true),
+      "vtx_baseline_readiness", 0);
+  const uint64_t deadline = NowUs() +
+      static_cast<uint64_t>(opt.sync_ready_timeout_ms) * 1000ull;
+  bool ready = false;
+  uint64_t last_paint = 0;
+  std::vector<uint8_t> previous;
+  while (NowUs() < deadline) {
+    browser->GetHost()->Invalidate(PET_VIEW);
+    browser->GetHost()->SendExternalBeginFrame();
+    pump.Once();
+    {
+      std::lock_guard<std::mutex> lock(state.mu);
+      for (const auto& js : state.sync_ready_queue) {
+        fsync::PageEvent ev;
+        if (js.find("\"phase\":\"baseline_ready\"") != std::string::npos &&
+            ParseSyncReadyJson(js, &ev) && ev.document_gen == gen &&
+            ev.request_id == req && ev.target_frame_index == frame) {
+          ready = true;
+          last_paint = state.paints.load(std::memory_order_relaxed);
+          previous.clear();
+        }
+      }
+      state.sync_ready_queue.clear();
+      const uint64_t paints = state.paints.load(std::memory_order_relaxed);
+      if (ready && paints > last_paint && !state.buffer.empty()) {
+        last_paint = paints;
+        if (previous == state.buffer) {
+          return machine.SetExactBaseline(state.buffer.data(),
+              static_cast<size_t>(state.width) * 4u, state.width, state.height,
+              NowUs());
+        }
+        previous = state.buffer;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return false;
 }
 
 // 状态机驱动的帧生产：S0→S1（导航/注入）→ S2/S3（就绪信号，泵送推进
@@ -590,8 +660,23 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     state.sync_capture_armed = false;
   };
 
-  // —— S1：Mode N 逐帧导航（?f=N）；Mode P 常驻页不导航 ——
-  if (mode_n) {
+  if (exact) {
+    if (!CaptureExactBaseline(state, pump, browser, machine, opt,
+                              document_gen, request_id, frame, mode_n)) {
+      disarm();
+      r.status = kStatusTimeout;
+      machine.FailRequest("uninstrumented_baseline_unavailable", NowUs());
+      return r;
+    }
+    // The signed document must be NEW: no post-removal DOM, mutation side
+    // effects or old witness nodes may contaminate the baseline reference.
+    std::lock_guard<std::mutex> lock(state.mu);
+    state.sync_capture_armed = true;
+    state.sync_ready_queue.clear();
+  }
+  // Mode N navigates per frame. Exact additionally isolates its unsigned
+  // reference from its signed document (Mode P re-applies its pure frame hook).
+  if (mode_n || exact) {
     state.loaded.store(false, std::memory_order_relaxed);
     browser->GetMainFrame()->LoadURL(
         ExpandUrlTemplate(opt.url_template, frame));
