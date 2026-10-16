@@ -11,6 +11,8 @@ from pathlib import Path
 from .hygiene import (audio_key, manifest_record, rotate_history, versions_check,
                      versions_record)
 from .infra import Ctx, run_parallel
+from .diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
+                          source_structure, mark_handled, operation)
 from . import fstxn
 from .pluginlib import hooks as _plugin_hooks
 from .pluginlib import registry as _plugin_registry
@@ -56,7 +58,7 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
     """
     warns = []
 
-    def scan(scope_path: str, known: set, items, label_fmt: str):
+    def scan(scope_path: str, known: set, items, label_fmt: str, paths):
         for i, item in enumerate(items if isinstance(items, list) else []):
             if not isinstance(item, dict):
                 continue
@@ -64,6 +66,8 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
                 if k == "_meta" or k in known:
                     continue
                 label = label_fmt.format(i=i)
+                path = key_path(paths(i), k)
+                before_err, before_warn = len(errs), len(warns)
                 name, ki = _plugin_registry.lookup_key(k)
                 if name is not None and ki and ki.get("path") == scope_path:
                     state = _plugin_registry.plugin_state(name)
@@ -84,132 +88,194 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
                 else:
                     warns.append(f"{label}: 未知键 {k!r}（不在内核 schema，也无插件声明）")
 
+                for message in errs[before_err:]:
+                    emit(c, message, json_path=path, rule_id='validate.plugin_state',
+                         measured={'plugin': name, 'state': state}, threshold={'state': 'active'},
+                         suggested_actions=[{'op': 'review_plugin_installation', 'params': {'plugin': name}}])
+                for message in warns[before_warn:]:
+                    emit(c, message, json_path=path, rule_id='validate.unknown_key',
+                         measured={'key': k, 'scope': scope_path}, threshold={'known_key': True},
+                         severity='warning', suggested_actions=[{'op': 'review_key', 'params': {'json_path': path}}])
+
     # root scope（协议 v1.2，P6 接线）：顶层键纳入扫描——KERNEL_KEYS["root"]
     # 自 v2 起即备而未扫（死键集），blender_bridge 类顶层插件键需此 scope 走
     # 三分支；顶层未知键自此「警告不阻断」（v1 静默，与 §2.1 语义对齐）。
-    scan("root", KERNEL_KEYS["root"], [c.tl], "timeline")
+    scan("root", KERNEL_KEYS["root"], [c.tl], "timeline", lambda i: "$")
     scan("project", KERNEL_KEYS["project"],
          [c.tl.get("project")] if isinstance(c.tl.get("project"), dict) else [],
-         "project")
+         "project", lambda i: "$.project")
     scan("sources[]", KERNEL_KEYS["sources[]"], c.tl.get("sources", []),
-         "sources[{i}]")
+         "sources[{i}]", lambda i: f"$.sources[{i}]")
     tracks = c.tl.get("audio_tracks", [])
     scan("audio_tracks[]", KERNEL_KEYS["audio_tracks[]"], tracks,
-         "audio_tracks[{i}]")
+         "audio_tracks[{i}]", lambda i: f"$.audio_tracks[{i}]")
     # events[] 扫描标签按轨内索引计（P6 修复 A-P2-3：v1 扁平跨轨索引与其它
     # scope 的「容器内索引」惯例不符，报错定位难读）。
+    event_paths = []
+    def observed_event(ti, ei, event):
+        event_paths.append(f"$.audio_tracks[{ti}].events[{ei}]")
+        return event
     scan("audio_tracks[].events[]", KERNEL_KEYS["audio_tracks[].events[]"],
-         [e for tr in tracks if isinstance(tr, dict)
-          for e in (tr.get("events") or [])],
-         "audio_tracks[].events[{i}]")
+         [observed_event(ti, ei, e) for ti, tr in enumerate(tracks) if isinstance(tr, dict)
+          for ei, e in indexed(c, (tr.get("events") or []), f"$.audio_tracks[{ti}].events")],
+         "audio_tracks[].events[{i}]", lambda i: event_paths[i])
     return warns
 
 
 # ---------------------------------------------------------------- validate
 def validate(c: Ctx):
     errs = []
-    def err(m): errs.append(m)
+    observed = {}
+    def observe(key, value):
+        observed[key] = value
+        return value
+    def err(m, path='$', rule='unknown', measured=None, threshold=None, source=None):
+        errs.append(m)
+        emit(c, m, json_path=path, rule_id=rule, measured=measured,
+             threshold=threshold, source=source)
+    def field(obj, key, parent):
+        return observe(key_path(parent, key), required_field(c, obj, key, parent, rule='validate.required_field'))
+    def native(path, fn, description, *, paths=None, source=None):
+        return operation(c, fn, path=path, rule='validate.operation',
+                         operands={'operation': description, 'paths': paths or [path]},
+                         source=source)
+    def provider(path, fn, description, *, fact, paths=None):
+        return operation(c, fn, path=path, rule='probe.metadata_operation',
+                         operands={'operation': description, 'paths': paths or [path]},
+                         source={'provider': 'source facts', 'provider_path': fact},
+                         status='unknown')
     from .cache_state import validate_cache_dependencies
     try:
         validate_cache_dependencies(c)
     except (ValueError, OSError) as error:
-        err(str(error))
+        # The dependency producer supplies precise origins. Retain #52's
+        # advisory accumulation without duplicating an already handled record.
+        errs.append(str(error))
+        if not getattr(error, '_vtx_diagnostic_handled', False):
+            emit(c, str(error), rule_id='load.cache_dependency', status='unknown',
+                 measured={'exception_type': type(error).__name__})
+    sources = field(c.tl, "sources", "$")
+    source_indices = {}
     srcs = {}
-    for si, s in enumerate(c.tl["sources"]):
-        if (not isinstance(s, dict) or not isinstance(s.get("id"), str) or not s["id"]
-                or not isinstance(s.get("path"), str) or not s["path"]):
-            err(f"sources[{si}]: 条目须为含非空 id/path 字符串的对象"); continue
-        srcs[s["id"]] = s
+    for si, s in indexed(c, sources, "$.sources"):
+        source_indices[id(s)] = si
+        problem = source_structure(s, si)
+        if problem is not None:
+            err(problem); continue
+        srcs[field(s, 'id', f'$.sources[{si}]')] = s
     for sid, s in srcs.items():
+        sp = f"$.sources[{source_indices[id(s)]}]"
         p = c.src_path(sid)
-        if not p.exists(): err(f"source {sid}: 文件不存在 {p}"); continue
+        if not p.exists(): err(f"source {sid}: 文件不存在 {p}", sp+".path", 'validate.source_exists', {'path': str(p), 'exists': False}, {'exists': True}); continue
         # 缝 C（协议 v1.2，P6）：虚拟源 facts——插件受理的源（如 bgm-render 的
         # music_tools 工程 JSON）用插件供给的 facts，其余照旧 ffprobe 实测
         i = _plugin_hooks.run_probe_source(c, sid)
         if i is None:
             i = c.probe(p)
-        if i["has_video"]:
-            if abs(i["fps"] - c.fps) > 0.01: err(f"source {sid}: fps={i['fps']} ≠ {c.fps}（须先 CFR 归一化）")
-        if not i["has_audio"]: err(f"source {sid}: 无音频轨")   # 纯视频源同禁；纯音频源合法（has_video=False）
+        if operation(c, lambda: observe("i['has_video']", i['has_video']), path=sp, rule='probe.metadata_operation', operands={'operation': 'i["has_video"]'}, source={'provider': 'source facts', 'provider_path': "'has_video'"}, status='unknown'):
+            if provider(sp+".path", lambda: abs(observe("i['fps'] - c.fps", observe("i['fps']", i['fps']) - c.fps)) > 0.01, 'comparison', fact='$.fps', paths=['$.project.fps']): err(f"source {sid}: fps={operation(c, lambda: observe("i['fps']", i['fps']), path=sp, rule='probe.metadata_operation', operands={'operation': "i['fps']"}, source={'provider': 'source facts', 'provider_path': "'fps'"}, status='unknown')} ≠ {c.fps}（须先 CFR 归一化）", sp+".path", 'validate.source_fps', {'value': observed.get("i['fps']", {'status': 'not_observed'}), 'unit': 'frames/s'}, {'value': c.fps, 'tolerance': 0.01, 'unit': 'frames/s'})
+        if not operation(c, lambda: observe("i['has_audio']", i['has_audio']), path=sp, rule='probe.metadata_operation', operands={'operation': 'i["has_audio"]'}, source={'provider': 'source facts', 'provider_path': "'has_audio'"}, status='unknown'): err(f"source {sid}: 无音频轨", sp+".path", 'validate.source_audio', {'has_audio': False}, {'has_audio': True})   # 纯视频源同禁；纯音频源合法（has_video=False）
     # v2 轨道等价：无 base 特权、无覆盖性约束；唯一机制约束 = 同轨 clips 不重叠
-    for tr in c.tl["video_tracks"]:
-        kind = tr.get("kind", "?")
-        clips = sorted(tr["clips"], key=lambda x: x["dst_in"])
-        if not clips: err(f"轨道 {tr['name']}: 无 clips")
+    for ti, tr in indexed(c, field(c.tl, "video_tracks", "$"), "$.video_tracks"):
+        tp = f"$.video_tracks[{ti}]"
+        kind = native(tp, lambda: tr.get('kind', '?'), 'tr.get')
+        raw_clips = field(tr, "clips", tp)
+        clip_indices = {}
+        clip_ordinal = 0
+        def clip_key(cl):
+            nonlocal clip_ordinal
+            ci = clip_ordinal
+            clip_ordinal += 1
+            clip_indices[id(cl)] = ci
+            return field(cl, 'dst_in', f'{tp}.clips[{ci}]')
+        clips = native(tp + '.clips', lambda: sorted(raw_clips, key=clip_key), 'sorted')
+        if not clips: err(f"轨道 {field(tr, 'name', tp)}: 无 clips", tp + '.clips', 'validate.track_empty', {'value': 0, 'unit': 'clips'}, {'min': 1, 'unit': 'clips'})
         for a, b in zip(clips, clips[1:]):
-            if a["dst_in"] + a["dur"] > b["dst_in"]:
-                err(f"同轨 clips 重叠: {tr['name']} @帧 {a['dst_in'] + a['dur']} > {b['dst_in']}")
+            if native(tp + '.clips', lambda: observe("field(a, 'dst_in', f'{tp}.clips[{clip_indices[id(a)]}]') + field(a, 'dur', f'{tp}.clips[{clip_indices[id(a)]}]')", field(a, 'dst_in', f'{tp}.clips[{clip_indices[id(a)]}]') + field(a, 'dur', f'{tp}.clips[{clip_indices[id(a)]}]')) > field(b, 'dst_in', f'{tp}.clips[{clip_indices[id(b)]}]'), 'comparison', paths=[key_path(f'{tp}.clips[{clip_indices[id(b)]}]', 'dst_in'), key_path(f'{tp}.clips[{clip_indices[id(a)]}]', 'dst_in'), key_path(f'{tp}.clips[{clip_indices[id(a)]}]', 'dur')]):
+                err(f"同轨 clips 重叠: {field(tr, 'name', tp)} @帧 {native(tp + '.clips', lambda: observe("field(a, 'dst_in', f'{tp}.clips[{clip_indices[id(a)]}]') + field(a, 'dur', f'{tp}.clips[{clip_indices[id(a)]}]')", field(a, 'dst_in', f'{tp}.clips[{clip_indices[id(a)]}]') + field(a, 'dur', f'{tp}.clips[{clip_indices[id(a)]}]')), 'arithmetic', paths=[key_path(f'{tp}.clips[{clip_indices[id(a)]}]', 'dst_in'), key_path(f'{tp}.clips[{clip_indices[id(a)]}]', 'dur')])} > {field(b, 'dst_in', f'{tp}.clips[{clip_indices[id(b)]}]')}", f'{tp}.clips[{clip_indices[id(b)]}].dst_in', 'validate.clip_overlap', {'previous_end': observed.get("field(a, 'dst_in', f'{tp}.clips[{clip_indices[id(a)]}]') + field(a, 'dur', f'{tp}.clips[{clip_indices[id(a)]}]')", {'status': 'not_observed'}), 'start': observed.get(key_path(f'{tp}.clips[{clip_indices[id(b)]}]', 'dst_in'), {'status': 'not_observed'}), 'unit': 'frames'}, {'max_previous_end': observed.get(key_path(f'{tp}.clips[{clip_indices[id(b)]}]', 'dst_in'), {'status': 'not_observed'}), 'unit': 'frames'})
         for cl in clips:
-            if cl["dst_in"] < 0 or cl["dst_in"] + cl["dur"] > c.dur:
-                err(f"{tr['name']}: clip 区间越界 @dst_in={cl['dst_in']}")
+            observed.clear()
+            cp = f"{tp}.clips[{clip_indices[id(cl)]}]"
+            if native(cp, lambda: field(cl, 'dst_in', cp) < 0, 'comparison', paths=[key_path(cp, 'dst_in')]) or native(cp, lambda: observe("field(cl, 'dst_in', cp) + field(cl, 'dur', cp)", field(cl, 'dst_in', cp) + field(cl, 'dur', cp)) > c.dur, 'comparison', paths=['$.project.duration_frames', key_path(cp, 'dst_in'), key_path(cp, 'dur')]):
+                err(f"{field(tr, 'name', tp)}: clip 区间越界 @dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_bounds', {'start': observed.get(key_path(cp, 'dst_in'), {'status': 'not_observed'}), 'end': observed.get("field(cl, 'dst_in', cp) + field(cl, 'dur', cp)", {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'unit': 'frames'})
             if kind == "gfx":
-                if not (c.root / cl["src"]).exists(): err(f"gfx clip html 不存在: {cl['src']}")
+                if not (native(cp, lambda: observe("c.root / field(cl, 'src', cp)", c.root / field(cl, 'src', cp)), 'arithmetic', paths=[key_path(cp, 'src')])).exists(): err(f"gfx clip html 不存在: {field(cl, 'src', cp)}", cp + '.src', 'validate.gfx_exists', {'path': observed.get(key_path(cp, 'src'), {'status': 'not_observed'}), 'exists': False}, {'exists': True})
                 continue
-            if cl["src"] not in srcs: err(f"clip 引用未知 src {cl['src']}"); continue
-            if "src_in" not in cl or "src_out" not in cl:
-                err(f"普通 clip 缺 src_in/src_out: {tr['name']} dst_in={cl['dst_in']}"); continue
-            if cl["src_out"] - cl["src_in"] != cl["dur"]:
-                err(f"EDL 不变量破坏: {tr['name']} dst_in={cl['dst_in']}")
-            p = c.src_path(cl["src"])
+            if native(cp, lambda: field(cl, 'src', cp) not in srcs, 'comparison', paths=[key_path(cp, 'src')]): err(f"clip 引用未知 src {field(cl, 'src', cp)}", cp + '.src', 'validate.clip_source', {'value': observed.get(key_path(cp, 'src'), {'status': 'not_observed'})}, {'allowed': list(srcs)}); continue
+            if native(cp, lambda: 'src_in' not in cl, 'comparison') or native(cp, lambda: 'src_out' not in cl, 'comparison'):
+                err(f"普通 clip 缺 src_in/src_out: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_source_range', {'keys': {'status': 'not_observed'}}, {'required': ['src_in', 'src_out']}); continue
+            if native(cp, lambda: observe("field(cl, 'src_out', cp) - field(cl, 'src_in', cp)", field(cl, 'src_out', cp) - field(cl, 'src_in', cp)) != field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur'), key_path(cp, 'src_out'), key_path(cp, 'src_in')]):
+                err(f"EDL 不变量破坏: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_edl', {'value': observed.get("field(cl, 'src_out', cp) - field(cl, 'src_in', cp)", {'status': 'not_observed'}), 'unit': 'frames'}, {'value': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
+            p = c.src_path(field(cl, "src", cp))
             if p.exists():
                 i = c.probe(p)
-                if not i["has_video"]:
-                    err(f"视频 clip 引用了纯音频源: {tr['name']} src={cl['src']}")
-                elif cl["src_out"] > i["nb_frames"]:
-                    err(f"切割越界: {tr['name']} src={cl['src']} src_out={cl['src_out']} > 实测 {i['nb_frames']}")
-            if cl.get("fade_in_frames", 0) + cl.get("fade_out_frames", 0) > cl["dur"]:
-                err(f"fade 总长超过片段: {tr['name']} dst_in={cl['dst_in']}")
+                if not operation(c, lambda: observe("i['has_video']", i['has_video']), path=cp, rule='probe.metadata_operation', operands={'operation': 'i["has_video"]'}, source={'provider': 'source facts', 'provider_path': "'has_video'"}, status='unknown'):
+                    err(f"视频 clip 引用了纯音频源: {field(tr, 'name', tp)} src={field(cl, 'src', cp)}", cp + '.src', 'validate.clip_video', {'has_video': False}, {'has_video': True})
+                elif provider(cp+'.src', lambda: field(cl, 'src_out', cp) > observe("i['nb_frames']", i['nb_frames']), 'comparison', fact='$.nb_frames', paths=[key_path(cp, 'src_out')]):
+                    err(f"切割越界: {field(tr, 'name', tp)} src={field(cl, 'src', cp)} src_out={field(cl, 'src_out', cp)} > 实测 {operation(c, lambda: observe("i['nb_frames']", i['nb_frames']), path=cp, rule='probe.metadata_operation', operands={'operation': "i['nb_frames']"}, source={'provider': 'source facts', 'provider_path': "'nb_frames'"}, status='unknown')}", cp + '.src_out', 'validate.clip_source_bounds', {'value': observed.get(key_path(cp, 'src_out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get("i['nb_frames']", {'status': 'not_observed'}), 'unit': 'frames'})
+            if native(cp, lambda: observe("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)) > field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur')]):
+                err(f"fade 总长超过片段: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_fade', {'value': observed.get("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
     # v2 subtitles_src（§1.1 条目 6）：加载点解析错误在此 FAIL——互斥/文件缺失/
     # 解析失败（infra.Ctx 构造期记入，语义裁定见 vtx/subtitles_src.py 模块头）。
     for e in getattr(c, "subtitles_errors", []):
-        err(e)
-    for s in c.tl["subtitles"]:
-        if not (0 <= s["in"] < s["out"] <= c.dur): err(f"字幕区间非法: {s['text'][:10]}")
-    for ti, tr in enumerate(c.tl["audio_tracks"]):
+        err(e, "$.subtitles_src", 'validate.subtitle_source', None, None)
+    for si, s in indexed(c, field(c.tl, "subtitles", "$"), "$.subtitles"):
+        observed.clear()
+        subpath, subsource = subtitle_location(c, si)
+        if not (native(subpath, lambda: 0 <= field(s, 'in', subpath) < field(s, 'out', subpath) <= c.dur, 'comparison', paths=[key_path(subpath, 'in'), key_path(subpath, 'out'), '$.project.duration_frames'], source=subsource)): err(f"字幕区间非法: {native(subpath, lambda: field(s, 'text', subpath)[:10], 'native operation', paths=[key_path(subpath, 'text')], source=subsource)}", subpath, 'validate.subtitle_bounds', {'start': observed.get(key_path(subpath, 'in'), {'status': 'not_observed'}), 'end': observed.get(key_path(subpath, 'out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'start_before_end': True, 'unit': 'frames'}, subsource)
+    for ti, tr in indexed(c, field(c.tl, "audio_tracks", "$"), "$.audio_tracks"):
+        ap = f"$.audio_tracks[{ti}]"
         # 容器与必填键防御（P6 修复 B-P2-3）：schema 声明 events[].volume 等必填
         # 但结构权威零强制——缺键 timeline 此前在 _audio_graph 裸 KeyError 崩栈，
         # validate（机制权威）须把缺键挡在渲染前；缺 name/events 的轨在 validate
         # 自身就会 KeyError，一并防御。
         if not isinstance(tr, dict):
-            err(f"audio_tracks[{ti}]: 须为对象"); continue
-        name = tr.get("name", f"#{ti}")
-        evs_raw = tr.get("events")
+            err(f"audio_tracks[{ti}]: 须为对象", ap, 'validate.audio_track_structure', {'value': tr}, {'type': 'object'}); continue
+        name = native(ap, lambda: tr.get('name', f'#{ti}'), 'tr.get')
+        evs_raw = native(ap, lambda: tr.get('events'), 'tr.get')
         if not isinstance(evs_raw, list) or not all(isinstance(e, dict) for e in evs_raw):
-            err(f"轨道 {name}: events 须为对象列表"); continue
-        for e in evs_raw:
+            err(f"轨道 {name}: events 须为对象列表", ap+".events", 'validate.audio_events_structure', {'value': evs_raw}, {'type': 'array of objects'}); continue
+        event_indices = {}
+        for ei, e in enumerate(evs_raw):
+            event_indices[id(e)] = ei
+            ep = f"{ap}.events[{ei}]"
             for k in ("src", "in", "out", "volume"):
                 if k not in e:
-                    err(f"轨道 {name} 事件缺必填键 {k!r}: {e}")
+                    err(f"轨道 {name} 事件缺必填键 {k!r}: {e}", key_path(ep,k), 'validate.audio_event_required', {'present': False}, {'present': True})
         if any(any(k not in e for k in ("src", "in", "out")) for e in evs_raw):
             continue   # 缺键事件已报错；排序键不可得，跳过该轨区间校验
-        evs = sorted(evs_raw, key=lambda e: e["in"])
+        evs = native(ap + '.events', lambda: sorted(evs_raw, key=lambda e: field(e, 'in', f'{ap}.events[{event_indices[id(e)]}]')), 'sorted')
         for e in evs:
-            if not (0 <= e["in"] < e["out"] <= c.dur): err(f"音频事件区间非法: {name}@{e['in']}")
-            if e["src"] not in srcs: err(f"音频引用未知 src {e['src']}"); continue
-            i = _plugin_hooks.run_probe_source(c, e["src"])
+            observed.clear()
+            ep = f"{ap}.events[{event_indices[id(e)]}]"
+            if not native(ep, lambda: 0 <= field(e, 'in', ep) < field(e, 'out', ep) <= c.dur, 'comparison', paths=[key_path(ep, 'in'), key_path(ep, 'out'), '$.project.duration_frames']): err(f"音频事件区间非法: {name}@{field(e, 'in', ep)}", ep, 'validate.audio_event_bounds', {'start': observed.get(key_path(ep, 'in'), {'status': 'not_observed'}), 'end': observed.get(key_path(ep, 'out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'start_before_end': True, 'unit': 'frames'})
+            if native(ep, lambda: field(e, 'src', ep) not in srcs, 'comparison', paths=[key_path(ep, 'src')]): err(f"音频引用未知 src {field(e, 'src', ep)}", ep + '.src', 'validate.audio_source', {'value': observed.get(key_path(ep, 'src'), {'status': 'not_observed'})}, {'allowed': list(srcs)}); continue
+            i = _plugin_hooks.run_probe_source(c, field(e, 'src', ep))
             if i is None:
-                i = c.probe(c.src_path(e["src"]))
-            need = e.get("src_in", 0) + (e["out"] - e["in"])
-            if not e.get("loop") and need > i["nb_frames"]:
-                err(f"音频源不足: {name}@{e['in']} 需 {need} 帧 > {i['nb_frames']}（或声明 loop）")
+                i = c.probe(c.src_path(field(e, 'src', ep)))
+            need = native(ep, lambda: observe("e.get('src_in', 0) + (field(e, 'out', ep) - field(e, 'in', ep))", e.get('src_in', 0) + observe("field(e, 'out', ep) - field(e, 'in', ep)", field(e, 'out', ep) - field(e, 'in', ep))), 'arithmetic', paths=[key_path(ep, 'out'), key_path(ep, 'in')])
+            if not native(ep, lambda: e.get('loop'), 'e.get') and provider(ep+'.src', lambda: need > observe("i['nb_frames']", i['nb_frames']), 'comparison', fact='$.nb_frames'):
+                err(f"音频源不足: {name}@{field(e, 'in', ep)} 需 {need} 帧 > {operation(c, lambda: observe("i['nb_frames']", i['nb_frames']), path=ep, rule='probe.metadata_operation', operands={'operation': "i['nb_frames']"}, source={'provider': 'source facts', 'provider_path': "'nb_frames'"}, status='unknown')}（或声明 loop）", ep, 'validate.audio_source_bounds', {'value': need, 'unit': 'frames'}, {'max': observed.get("i['nb_frames']", {'status': 'not_observed'}), 'unit': 'frames'})
         for a, b in zip(evs, evs[1:]):
-            if a["out"] > b["in"]: err(f"音频轨内事件重叠: {name}")
+            if native(ap + '.events', lambda: field(a, 'out', f'{ap}.events[{event_indices[id(a)]}]') > field(b, 'in', f'{ap}.events[{event_indices[id(b)]}]'), 'comparison', paths=[key_path(f'{ap}.events[{event_indices[id(a)]}]', 'out'), key_path(f'{ap}.events[{event_indices[id(b)]}]', 'in')]): err(f'音频轨内事件重叠: {name}', f'{ap}.events[{event_indices[id(b)]}].in', 'validate.audio_overlap', {'previous_end': observed.get(key_path(f'{ap}.events[{event_indices[id(a)]}]', 'out'), {'status': 'not_observed'}), 'start': observed.get(key_path(f'{ap}.events[{event_indices[id(b)]}]', 'in'), {'status': 'not_observed'}), 'unit': 'frames'}, {'max_previous_end': observed.get(key_path(f'{ap}.events[{event_indices[id(b)]}]', 'in'), {'status': 'not_observed'}), 'unit': 'frames'})
     # v2 §2.1 不变量 ③：插件键三分支 + 未知键警告（扫描范围 sources[]/audio_tracks[]
     # （含 events[]）/project；`_meta` 永久白名单）。已声明未装/被禁用进 errs FAIL；
     # 未知键只警告不阻断——现有 timeline（键全部已知或已声明）零新输出。
     _plugin_warns = _scan_plugin_keys(c, errs)
     # v2 §2.2 validate 钩子（协议 v1.1 增补）：插件级契约早失败（互斥/_meta 双施/
     # 键值形状），错误行并入 errs 阻断——仅对三分支放行后的生效插件调用。
-    errs.extend(_plugin_hooks.run_validate(c))
+    for plugin_error in _plugin_hooks.run_validate(c):
+        err(plugin_error)
     if errs:
         print(f"校验失败（{len(errs)} 项）："); [print("  ✗", e) for e in errs]
-        c.receipt("validate", False, f"{len(errs)} errors"); sys.exit(1)
+        c.receipt("validate", False, f"{len(errs)} errors")
+        failure = SystemExit(1)
+        mark_handled(failure)
+        raise failure
     for w in _plugin_warns:
         print("  ⚠", w)
-    nclips = sum(len(t["clips"]) for t in c.tl["video_tracks"])
-    msg = (f"{len(srcs)} 源 / {len(c.tl['video_tracks'])} 视频轨 {nclips} clips / "
-           f"{len(c.tl['subtitles'])} 字幕 / "
-           f"{len(c.tl['audio_tracks'])} 音轨 {sum(len(t['events']) for t in c.tl['audio_tracks'])} 事件")
+    nclips = sum((len(t['clips']) for t in field(c.tl, 'video_tracks', '$')))
+    msg = (f"{len(srcs)} 源 / {len(field(c.tl, 'video_tracks', '$'))} 视频轨 {nclips} clips / {len(field(c.tl, 'subtitles', '$'))} 字幕 / {len(field(c.tl, 'audio_tracks', '$'))} 音轨 {sum((len(t['events']) for t in field(c.tl, 'audio_tracks', '$')))} 事件")
     print("✓ 校验通过：" + msg); c.receipt("validate", True, msg)
 
 
@@ -232,69 +298,151 @@ def _complement(wins, total):
     return out
 
 def audit(c: Ctx):
-    D = c.dur * c.spf
+    def field(obj, key, parent):
+        return required_field(c, obj, key, parent, rule='audit.required_field')
+    def calc(path, fn, expression, source=None):
+        return operation(c, fn, path=path, rule='audit.operation',
+                         operands={'operation': expression}, source=source)
+    def subfield(sub, key, index):
+        path, source = subtitle_location(c, index)
+        return required_field(c, sub, key, path, rule='audit.required_field', source=source)
+    D = calc('$.project.duration_frames', lambda: c.dur * c.spf, 'duration_frames * seconds_per_frame')
     lines = []
+    def metric(message, rule, path, measured, threshold, warn=False, source=None, status=None):
+        emit(c, message, rule_id=rule, json_path=path, measured=measured, threshold=threshold,
+             severity='warning' if warn else 'info', status=status or ('warn' if warn else 'pass'),
+             source=source, suggested_actions=[{'op': 'review_editorial_choice', 'params': {'json_path': path}}])
     def ind(name, status, detail=""):
         lines.append({"name": name, "status": status, "detail": detail})
         print(f"  {'✓' if status=='ok' else ('⚠' if status=='warn' else 'ℹ')} {name}  {detail}")
     # 1) 画面构成（kind 时间占比，同一 kind 多轨取并集）
     kind_wins = {}
-    for tr in c.tl["video_tracks"]:
-        kd = tr.get("kind", "other")
-        kind_wins.setdefault(kd, [])
-        kind_wins[kd] += [(cl["dst_in"] * c.spf, (cl["dst_in"] + cl["dur"]) * c.spf) for cl in tr["clips"]]
-    comp = {kd: sum(e - s for s, e in _union(w)) for kd, w in kind_wins.items()}
-    comp_s = " / ".join(f"{k} {v/D*100:.0f}%" for k, v in sorted(comp.items()))
+    for ti, tr in indexed(c, field(c.tl, "video_tracks", "$"), "$.video_tracks"):
+        tp = f"$.video_tracks[{ti}]"
+        kd = calc(tp, lambda: tr.get("kind", "other"), "track.get(kind)")
+        calc(tp+".kind", lambda: kind_wins.setdefault(kd, []), "group by kind")
+        for ci, cl in indexed(c, field(tr, 'clips', tp), tp+'.clips'):
+            cp = f'{tp}.clips[{ci}]'
+            kind_wins[kd].append(calc(cp, lambda: (field(cl, 'dst_in', cp) * c.spf,
+                (field(cl, 'dst_in', cp) + field(cl, 'dur', cp)) * c.spf), 'clip interval in seconds'))
+    comp = {kd: sum(e - s for s, e in calc("$.video_tracks", lambda: _union(w), "union intervals")) for kd, w in kind_wins.items()}
+    comp_s = " / ".join(f"{k} {calc('$.project.duration_frames', lambda: v/D*100, 'composition percentage'):.0f}%" for k, v in calc("$.video_tracks", lambda: sorted(comp.items()), "sort composition kinds"))
+    metric('画面构成', 'audit.composition', '$.video_tracks',
+           {'by_kind': comp, 'total': D, 'unit': 's'}, None)
     ind("画面构成", "ok", comp_s)
     if "aroll" not in comp and "gfx" not in comp and "screen" not in comp:
+        metric('模块完整性', 'audit.modules', '$.video_tracks', {'kinds': list(comp)},
+               {'any_of': ['aroll', 'screen', 'gfx']}, True)
         ind("模块完整性", "warn", "无 aroll/screen/gfx——纯 B-roll 成片，请确认是有意为之")
     for kd in ("broll", "screen", "gfx"):
-        if kd not in comp: ind(f"缺少 {kd} 模块", "info", "可用该类画面增加视觉变化（主流技术视频均有覆盖）")
+        if kd not in comp:
+            metric(f'缺少 {kd} 模块', 'audit.module_missing', '$.video_tracks', {'kind': kd, 'present': False},
+                   {'present': True}, status='info')
+            ind(f"缺少 {kd} 模块", "info", "可用该类画面增加视觉变化（主流技术视频均有覆盖）")
     # 2) 黑场窗口（无任何视频层的帧段——机制合法，但多半是编排遗漏）
     all_v = [w for ws in kind_wins.values() for w in ws]
-    blacks = [(s, e) for s, e in _complement(all_v, D) if e - s > 0.5]
+    blacks = [(s, e) for s, e in calc("$.video_tracks", lambda: _complement(all_v, D), "complement video intervals") if e - s > 0.5]
+    for start, stop in blacks:
+        metric('blacks', 'audit.video_gap', '$.video_tracks',
+               {'start': start, 'end': stop, 'unit': 's'},
+               {'max': 0.5, 'unit': 's'}, True)
     if blacks:
         fmt = "、".join(f"{s:.1f}-{e:.1f}s" for s, e in blacks[:5])
         ind("黑场窗口（无视频内容）", "warn", f"{len(blacks)} 段：{fmt}（若非有意留黑请补覆盖层）")
     else:
         ind("黑场窗口", "ok", "全程有画面")
     # 3) 无声窗口（BGM 铁律：主流视频口播间隙 100% 有音乐/音效铺底）
-    all_a = [(e["in"] * c.spf, e["out"] * c.spf) for tr in c.tl["audio_tracks"] for e in tr["events"]]
-    silents = [(s, e) for s, e in _complement(all_a, D) if e - s > 0.3]
+    all_a = []
+    for ti, tr in indexed(c, field(c.tl, 'audio_tracks', '$'), '$.audio_tracks'):
+        ap = f'$.audio_tracks[{ti}]'
+        for ei, e in indexed(c, field(tr, 'events', ap), ap+'.events'):
+            ep = f'{ap}.events[{ei}]'
+            all_a.append(calc(ep, lambda: (field(e, 'in', ep) * c.spf,
+                                          field(e, 'out', ep) * c.spf), 'audio interval in seconds'))
+    silents = [(s, e) for s, e in calc("$.audio_tracks", lambda: _complement(all_a, D), "complement audio intervals") if e - s > 0.3]
+    for start, stop in silents:
+        metric('silents', 'audit.audio_gap', '$.audio_tracks',
+               {'start': start, 'end': stop, 'unit': 's'},
+               {'max': 0.3, 'unit': 's'}, True)
     if silents:
         fmt = "、".join(f"{s:.1f}-{e:.1f}s" for s, e in silents[:5])
         ind("无声窗口（无任何音频事件）", "warn", f"{len(silents)} 段：{fmt}——bed 轨应全程铺底")
     else:
         ind("无声窗口", "ok", "全程有音频（BGM 铺底达标）")
     # 4) 口播覆盖率（voice 轨并集；主流观察 83-99.7%，本项目目标 85-90%）
-    voice_tr = [tr for tr in c.tl["audio_tracks"] if tr["name"] == "voice"]
+    voice_entries = [(ti, tr) for ti, tr in indexed(c, field(c.tl, 'audio_tracks', '$'), '$.audio_tracks')
+                if field(tr, 'name', f'$.audio_tracks[{ti}]') == 'voice']
+    voice_tr = [tr for _, tr in voice_entries]
     if voice_tr:
-        vw = _union([(e["in"] * c.spf, e["out"] * c.spf) for e in voice_tr[0]["events"]])
-        cov = sum(e - s for s, e in vw) / D
+        voice_index = voice_entries[0][0]
+        voice_path = f'$.audio_tracks[{voice_index}]'
+        voice_windows = []
+        for ei, e in indexed(c, field(voice_tr[0], 'events', voice_path), voice_path+'.events'):
+            ep = f'{voice_path}.events[{ei}]'
+            voice_windows.append(calc(ep, lambda: (field(e, 'in', ep)*c.spf,
+                                                   field(e, 'out', ep)*c.spf), 'voice interval in seconds'))
+        vw = calc(voice_path, lambda: _union(voice_windows), 'union voice intervals')
+        cov = calc(voice_path, lambda: sum(e - s for s, e in vw) / D, 'voice coverage / project duration')
         st = "ok" if 0.70 <= cov <= 0.98 else "warn"
+        metric('口播覆盖率', 'audit.voice_coverage', voice_path, {'value': cov, 'unit': 'ratio'},
+               {'min': .70, 'max': .98, 'unit': 'ratio'}, st == 'warn')
         ind("口播覆盖率（voice 轨）", st, f"{cov*100:.1f}%（主流观察 83-99.7%，目标 85-90%）")
         # 5) 语速（字幕字数 ÷ voice 占用秒数；标准值 5.5 字/s＝主流中位，基准见 data/speech_rate.json）
-        chars = sum(len(s["text"]) for s in c.tl["subtitles"])
+        chars = sum(calc(subtitle_location(c, si)[0], lambda: len(subfield(sub, 'text', si)), 'subtitle text length', subtitle_location(c, si)[1]) for si, sub in indexed(c, field(c.tl, 'subtitles', '$'), '$.subtitles'))
         vsec = sum(e - s for s, e in vw)
         if vsec > 0 and chars > 0:
             rate = chars / vsec
             st = "ok" if 4.8 <= rate <= 6.3 else "warn"
+            metric('全片语速', 'audit.voice_rate', voice_path,
+                   {'value': rate, 'characters': chars, 'voice_seconds': vsec, 'unit': 'characters/s'},
+                   {'min': 4.8, 'max': 6.3, 'unit': 'characters/s'}, st == 'warn')
             ind("全片语速（字/秒）", st,
                 f"{rate:.2f} 字/s（标准值 5.5，偏差 {(rate-5.5)/5.5*100:+.0f}%；"
                 f"主流中位 5.56、P25-P75 4.95~5.76；<4.8 偏慢拖节奏，>6.3 高密度口播需确认是有意为之）")
     else:
+        metric('没有 voice 轨', 'audit.voice_missing', '$.audio_tracks', None,
+               {'track_name': 'voice'}, True, status='unknown')
         ind("voice 轨", "warn", "没有名为 voice 的音轨，口播覆盖率/语速无法评估")
     # 6) 字幕质量（阅读速度/长度/最短时长/相互重叠）
     #    瞬时语速基准（15758 行实测）：P50=5.68 P90=7.41 P95=8.02 P99=9.37；>8字/s 占 5.1%
     n_fast = n_long = n_short = 0
-    for s in c.tl["subtitles"]:
-        d = (s["out"] - s["in"]) * c.spf
-        n = len(s["text"])
-        if n / d > 9.0: n_fast += 1
-        elif n / d > 7.5: n_long += 1
-        if d < 0.6: n_short += 1
-    subs_s = sorted(c.tl["subtitles"], key=lambda x: x["in"])
-    overlaps = sum(1 for a, b in zip(subs_s, subs_s[1:]) if a["out"] > b["in"])
+    subtitle_indices = {}
+    for si, s in indexed(c, field(c.tl, 'subtitles', '$'), '$.subtitles'):
+        subtitle_indices[id(s)] = si
+        subpath, subsource = subtitle_location(c, si)
+        d = calc(subpath, lambda: (subfield(s, 'out', si) - subfield(s, 'in', si)) * c.spf, 'subtitle duration in seconds', subsource)
+        n = calc(subpath, lambda: len(subfield(s, 'text', si)), 'subtitle text length', subsource)
+        if (cps := calc(subpath, lambda: n / d, 'characters / duration_seconds', subsource)) > 9.0:
+            n_fast += 1
+            cps_status = 'warn'
+        elif (cps := calc(subpath, lambda: n / d, 'characters / duration_seconds', subsource)) > 7.5:
+            n_long += 1
+            cps_status = 'info'
+        else:
+            cps_status = 'pass'
+        if (short := d < 0.6): n_short += 1
+        metric('字幕阅读速度', 'audit.subtitle_cps', subpath,
+               {'value': cps, 'unit': 'characters/s'},
+               {'warning_above': 9.0, 'advisory_above': 7.5, 'unit': 'characters/s'},
+               cps_status == 'warn', subsource, status=cps_status)
+        metric('字幕最短时长', 'audit.subtitle_duration', subpath,
+               {'value': d, 'unit': 's'}, {'min': .6, 'unit': 's'}, False,
+               subsource, status='info' if short else 'pass')
+    subs_s = calc('$.subtitles', lambda: sorted(field(c.tl, 'subtitles', '$'), key=lambda x: x['in']), 'sort subtitles by in')
+    overlaps = 0
+    for left, right in zip(subs_s, subs_s[1:]):
+        pair = {}
+        def overlap():
+            pair['end'] = left['out']
+            pair['start'] = right['in']
+            return pair['end'] > pair['start']
+        if calc('$.subtitles', overlap, 'subtitle overlap comparison'):
+            overlaps += 1
+            subpath, subsource = subtitle_location(c, subtitle_indices[id(right)])
+            metric('字幕相互重叠', 'audit.subtitle_overlap', subpath,
+                   {'previous_index': subtitle_indices[id(left)], 'previous_end': pair['end'],
+                    'start': pair['start'], 'unit': 'frames'},
+                   {'max_previous_end': pair['start'], 'unit': 'frames'}, True, subsource)
     st = "ok" if (n_fast == 0 and overlaps == 0) else "warn"
     ind("字幕阅读速度", st,
         f"过快(>9字/s≈P99) {n_fast} 条 / 偏快(>7.5≈P92) {n_long} 条 / 过短(<0.6s) {n_short} 条 / 相互重叠 {overlaps} 条")

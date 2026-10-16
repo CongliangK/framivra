@@ -52,6 +52,7 @@ sources[] 级键 ``"bgm": true | {"output": "master|premaster|stem:<轨名>",
 config 键（vtx.api.cfg_get）：``bgm.cli``（bgm 包装脚本路径，优先）；
 ``bgm.repo``（music_tools 仓根，python3 -m bgm_gen 兜底通道的 PYTHONPATH）。
 """
+from vtx.diagnostics import DiagnosticMessage, key_path, emit
 import fcntl
 import hashlib
 import json
@@ -501,30 +502,30 @@ def validate(c):
             continue
         val = s[KEY]
         if not (val is True or isinstance(val, dict)):
-            errs.append(f"sources[{si}]: 键 {KEY!r} 须为 true 或对象 "
-                        f"{{output, extra_deps}}，得到 {val!r}")
+            errs.append(DiagnosticMessage(f"sources[{si}]: 键 {KEY!r} 须为 true 或对象 "
+                        f"{{output, extra_deps}}，得到 {val!r}", json_path=f'$.sources[{si}][{KEY!r}]', rule_id='plugin.bgm.type', measured={'value': val}, threshold={'type': 'true or object'}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': f'$.sources[{si}][{KEY!r}]'}}]))
             continue
         path = s.get("path", "")
         if not isinstance(path, str) or not path.lower().endswith(".json"):
-            errs.append(f"sources[{si}]: bgm 源的 path 须指向 music_tools 工程 JSON"
-                        f"（.json），得到 {path!r}")
+            errs.append(DiagnosticMessage(f"sources[{si}]: bgm 源的 path 须指向 music_tools 工程 JSON"
+                        f"（.json），得到 {path!r}", json_path=f'$.sources[{si}].path', rule_id='plugin.bgm.path', measured={'value': path}, threshold={'extension': '.json'}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': f'$.sources[{si}].path'}}]))
         if isinstance(val, dict):
             unknown = sorted(set(val) - {"output", "extra_deps"})
             if unknown:
-                errs.append(f"sources[{si}]: 键 {KEY!r} 含未知参数 {unknown}"
-                            "（可用：output/extra_deps）")
+                errs.append(DiagnosticMessage(f"sources[{si}]: 键 {KEY!r} 含未知参数 {unknown}"
+                            "（可用：output/extra_deps）", json_path=f'$.sources[{si}][{KEY!r}]', rule_id='plugin.bgm.keys', measured={'keys': unknown}, threshold={'allowed': ['output', 'extra_deps']}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': f'$.sources[{si}][{KEY!r}]'}}]))
             out_which = val.get("output", "master")
             stem_ok = (isinstance(out_which, str) and
                        out_which.startswith(STEM_PREFIX) and
                        bool(_STEM_NAME_RE.fullmatch(out_which[len(STEM_PREFIX):])))
             if out_which not in OUTPUTS and not stem_ok:
                 errs.append(
-                    f"sources[{si}]: {KEY}.output 须为 {'|'.join(OUTPUTS)} 或 "
+                    DiagnosticMessage(f"sources[{si}]: {KEY}.output 须为 {'|'.join(OUTPUTS)} 或 "
                     f"'{STEM_PREFIX}<轨名>'（轨名 ^[A-Za-z0-9][A-Za-z0-9_.-]*$，"
                     f"不得含路径分隔符；可用轨名见 `bgm show structure`），"
-                    f"得到 {out_which!r}")
+                    f"得到 {out_which!r}", json_path=f'$.sources[{si}][{KEY!r}].output', rule_id='plugin.bgm.output', measured={'value': out_which}, threshold={'allowed': list(OUTPUTS), 'stem_pattern': _STEM_NAME_RE.pattern}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': f'$.sources[{si}][{KEY!r}].output'}}]))
             deps = val.get("extra_deps", [])
             if not isinstance(deps, list) or not all(isinstance(x, str) for x in deps):
-                errs.append(f"sources[{si}]: {KEY}.extra_deps 须为字符串数组"
-                            "（相对音乐工程目录的深度依赖，进产物键摘要）")
+                errs.append(DiagnosticMessage(f"sources[{si}]: {KEY}.extra_deps 须为字符串数组"
+                            "（相对音乐工程目录的深度依赖，进产物键摘要）", json_path=f'$.sources[{si}][{KEY!r}].extra_deps', rule_id='plugin.bgm.dependencies', measured={'value': deps}, threshold={'type': 'array of strings'}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': f'$.sources[{si}][{KEY!r}].extra_deps'}}]))
     return errs

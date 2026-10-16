@@ -25,6 +25,7 @@ json2blend.py，经 ``blender --background --factory-startup --python`` 运行�
   `vtx all` 收尾缝——关停本插件不影响主链（§0.2 关停测试）。
 - --draft / --dry-run / `all --until` 截断链不触发（cli 缝 D 接线口径）。
 """
+from vtx.diagnostics import DiagnosticMessage, key_path, emit
 import hashlib
 import json
 import math
@@ -77,20 +78,20 @@ def validate(c):
         return []
     errs = []
     if not (val is True or isinstance(val, dict)):
-        return [f"timeline: 键 {KEY!r} 须为 true 或对象 {{out, verify}}，得到 {val!r}"]
+        return [DiagnosticMessage(f"timeline: 键 {KEY!r} 须为 true 或对象 {{out, verify}}，得到 {val!r}", json_path=key_path('$', KEY), rule_id='plugin.blender.type', measured={'value': val}, threshold={'type': 'true or object'}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': key_path('$', KEY)}}])]
     if isinstance(val, dict):
         unknown = sorted(set(val) - {"out", "verify"})
         if unknown:
-            errs.append(f"timeline: 键 {KEY!r} 含未知参数 {unknown}（可用：out/verify）")
+            errs.append(DiagnosticMessage(f"timeline: 键 {KEY!r} 含未知参数 {unknown}（可用：out/verify）", json_path=key_path('$', KEY), rule_id='plugin.blender.keys', measured={'keys': unknown}, threshold={'allowed': ['out', 'verify']}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': key_path('$', KEY)}}]))
         out = val.get("out", "preview.blend")
         if not isinstance(out, str) or not out:
-            errs.append(f"timeline: {KEY}.out 须为非空字符串（相对项目根，如 preview.blend）")
+            errs.append(DiagnosticMessage(f"timeline: {KEY}.out 须为非空字符串（相对项目根，如 preview.blend）", json_path=key_path('$', KEY)+'.out', rule_id='plugin.blender.output_type', measured={'value': out}, threshold={'type': 'nonempty string'}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': key_path('$', KEY)+'.out'}}]))
         else:
             p = Path(out)
             if p.is_absolute() or ".." in p.parts:
-                errs.append(f"timeline: {KEY}.out 禁止绝对路径/..（须落在项目根内）: {out}")
-        if "verify" in val and not isinstance(val["verify"], bool):
-            errs.append(f"timeline: {KEY}.verify 须为布尔值")
+                errs.append(DiagnosticMessage(f"timeline: {KEY}.out 禁止绝对路径/..（须落在项目根内）: {out}", json_path=key_path('$', KEY)+'.out', rule_id='plugin.blender.output_path', measured={'value': out}, threshold={'relative_to_project': True, 'parent_traversal': False}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': key_path('$', KEY)+'.out'}}]))
+        if "verify" in val and not isinstance((verify_value := val["verify"]), bool):
+            errs.append(DiagnosticMessage(f"timeline: {KEY}.verify 须为布尔值", json_path=key_path('$', KEY)+'.verify', rule_id='plugin.blender.verify', measured={'value': verify_value}, threshold={'type': 'boolean'}, suggested_actions=[{'op': 'review_plugin_parameter', 'params': {'json_path': key_path('$', KEY)+'.verify'}}]))
     return errs
 
 

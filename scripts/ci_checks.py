@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 MEDIA_TESTS = {
     'ffmpeg': (
         'tests.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
+        'tests.test_agent_diagnostics_qc.TestQCDiagnosticsCPU',
+        'tests.test_agent_diagnostics_loading.Loading.test_invalid_media_probe_is_structured',
+        'tests.test_agent_diagnostics_repair.FixtureRepair.test_seven_rule_repair_reaches_actual_validate_green',
         'tests.test_filter_threads',
         'tests.test_composite_determinism',
         'tests.test_frame_source',
