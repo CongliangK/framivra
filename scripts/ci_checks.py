@@ -18,6 +18,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MEDIA_TESTS = {
     'ffmpeg': (
+        'tests.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
         'tests.test_filter_threads',
         'tests.test_composite_determinism',
         'tests.test_post_loudness',
