@@ -91,7 +91,7 @@ class TestMigrationIdentity(unittest.TestCase):
     def tearDown(self):
         composite._graph_code_digest.cache_clear()
 
-    def test_exact_baseline_and_mutation_invalidation(self):
+    def test_historical_baseline_and_mutation_invalidation(self):
         # Hash the pinned pre-migration source on THIS interpreter. ast.dump
         # itself changed across supported Python versions before this feature.
         fixture = json.loads((Path(__file__).parent / 'fixtures/png_graph_d9ce4aa.json').read_text())
@@ -100,7 +100,7 @@ class TestMigrationIdentity(unittest.TestCase):
         legacy_source = ''.join(composite._normalized_ast_src(m['source']) for m in fixture['methods'])
         expected = hashlib.sha1(legacy_source.encode('utf-8')).hexdigest()[:12]
         composite._graph_code_digest.cache_clear()
-        # Issue #52 extracts pass identity after #68's exact migration. Keep
+        # Issues #52/#63 change pass identity/publication after #68. Keep
         # the old mapping intact, but never alias this new implementation.
         self.assertIn(expected, composite._PNG_MIGRATION_DIGESTS.values())
         source = ''.join(composite._normalized_ast_src(inspect.getsource(

@@ -524,15 +524,12 @@ class RenderPlan:
                 # （实测口径 R4-E2' A1d：FFV1 同输入同 argv 重复编码 4 次得 4 个
                 # 不同容器 md5——容器字节层非确定；但 4 产物解码域 framemd5 逐帧
                 # 全同，无损语义成立，只影响 pass 文件字节、不影响像素与缓存命中
-                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。落盘走 *.part.mkv
-                # 临时名 + os.replace 原子替换：并发/重入读者（帧数校验、下游
-                # pass）永远看到完整文件而非半截 mkv（FFV1 大文件写入窗口数十秒，
-                # 直接写 target 存在互踩窗口——tests 并发复渲实测踩中，R4-E1-v2）。
-                # 临时名保留 .mkv 结尾：ffmpeg 按扩展名选 muxer，.part 结尾无法
-                # 初始化（实测 Invalid argument）。
+                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。Ctx.run 的
+                # atomic_ffmpeg 负责随机同目录暂存、完整校验及原子发布媒体，再在
+                # 同一目标写锁内写完成证书；必须传最终路径，避免仅移动媒体而
+                # 将证书留在临时名。媒体/证书不是双文件原子事务，证书失败仍抛出。
                 tail = ["-frames:v", str(seglen), "-c:v", "ffv1", "-level", "3",
-                        "-g", "1",
-                        str(target.with_name(target.stem + ".part" + target.suffix))]
+                        "-g", "1", str(target)]
             c.run(cmd + ["-filter_complex_threads", "1",
                          "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
             if c.dry:
@@ -542,9 +539,6 @@ class RenderPlan:
                 # sys.exit(1) 误杀 --dry-run（TestUntilFlag 实测回归，R4-E1-v2）
                 prev = target
                 continue
-            if not last:
-                fstxn.replace(target.with_name(target.stem + ".part" + target.suffix),
-                           target)
             if not self._pass_fresh(target, seglen):
                 print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
                       f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
