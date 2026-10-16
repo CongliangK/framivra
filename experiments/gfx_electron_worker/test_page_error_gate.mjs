@@ -19,9 +19,14 @@ class Debugger extends EventEmitter {
 const debug = new Debugger(), errors = [], failures = [];
 const gate = await installPageErrorGate({debugger:debug}, errors, e => failures.push(e));
 assert.deepEqual(debug.commands.map(x=>x.method),
-  ['Runtime.enable','Debugger.enable','Debugger.setPauseOnExceptions','Target.setAutoAttach']);
+  ['Runtime.enable','Debugger.enable','Debugger.setPauseOnExceptions','Page.enable',
+    'Page.addScriptToEvaluateOnNewDocument','Target.setAutoAttach']);
 assert.equal(debug.commands[2].params.state, 'uncaught');
-assert.equal(debug.commands[3].params.waitForDebuggerOnStart, true);
+assert.equal(debug.commands[5].params.waitForDebuggerOnStart, true);
+const source = debug.commands[4].params.source;
+const observerUrl = source.split('sourceURL=')[1];
+assert.equal(debug.commands[4].params.runImmediately, true);
+assert.equal(debug.commands[4].params.worldName, undefined); // rejecting realm, not isolated
 debug.message('Runtime.consoleAPICalled', {type:'error',args:[{value:'Uncaught fake'}]});
 assert.deepEqual(errors, []);
 assert.deepEqual(failures, []);
@@ -44,7 +49,8 @@ assert.equal(failures.length, 1);
 debug.message('Target.attachedToTarget', {sessionId:'child'});
 await gate.fence();
 assert.deepEqual(debug.commands.filter(x=>x.id==='child').map(x=>x.method),
-  ['Runtime.enable','Debugger.enable','Debugger.setPauseOnExceptions','Target.setAutoAttach',
+  ['Runtime.enable','Debugger.enable','Debugger.setPauseOnExceptions','Page.enable',
+    'Page.addScriptToEvaluateOnNewDocument','Target.setAutoAttach',
     'Runtime.runIfWaitingForDebugger','Runtime.getIsolateId']);
 assert.equal(errors.at(-1).session_id, 'child');
 const before = errors.length;
@@ -52,10 +58,27 @@ debug.message('Debugger.paused', {reason:'other'});
 debug.message('Debugger.paused', {reason:'exception',data:{uncaught:false}});
 assert.equal(errors.length, before); // harmless debugger/caught exception
 assert.equal(debug.commands.at(-1).method, 'Debugger.resume');
-debug.message('Debugger.paused', {reason:'promiseRejection',data:{uncaught:true,value:'suppressed'}});
-assert.equal(errors.at(-1).event, 'Debugger.paused');
-assert.equal(errors.at(-1).description, 'suppressed');
+const priorFailures = failures.length;
+debug.message('Debugger.paused', {reason:'promiseRejection',data:{uncaught:true,value:'possibly handled'}});
+assert.equal(errors.length, before); // before HTML checkpoint: NOT yet unhandled
+assert.equal(failures.length, priorFailures);
 assert.equal(debug.commands.at(-1).method, 'Debugger.resume');
+// Only a pause in the exact host-installed observer confirms HTML notification.
+debug.message('Debugger.scriptParsed', {url:observerUrl,scriptId:'observer'});
+const originalSend = debug.sendCommand;
+debug.sendCommand = async function(method, params, id) {
+  if (method === 'Debugger.getScriptSource') return {scriptSource:source};
+  if (method === 'Debugger.evaluateOnCallFrame') return {result:{type:'string',value:'suppressed'}};
+  return originalSend.call(this, method, params, id);
+};
+debug.message('Debugger.paused', {reason:'other',callFrames:[
+  {callFrameId:'observer-call',location:{scriptId:'observer'}}]});
+await gate.fence();
+const confirmed = errors.find(x=>x.confirmation === 'trusted_html_event');
+assert.equal(confirmed.event, 'Debugger.paused');
+assert.equal(confirmed.description, 'suppressed');
+assert.equal(confirmed.text, 'unhandledrejection');
+assert(failures.some(x=>x === 'page_runtime_error:suppressed'));
 for (let i=0;i<50;i++) debug.message('Runtime.exceptionThrown', {exceptionDetails:{text:'boom'}});
 assert.equal(errors.length, 32);
 debug.emit('detach', {}, 'replaced_with_devtools');

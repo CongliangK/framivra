@@ -17,7 +17,7 @@ from .gfx_cli import png_invalid_reason
 from .proc_supervisor import SupervisedProcessGroup, supervision_available
 
 WORKER_DIR = Path(__file__).resolve().parents[1] / "experiments/gfx_electron_worker"
-PAGE_ERROR_GATE = "cdp-uncaught-exceptions/1"
+PAGE_ERROR_GATE = "cdp-html-unhandled-exceptions/2"
 
 
 class ElectronRenderError(RuntimeError):
