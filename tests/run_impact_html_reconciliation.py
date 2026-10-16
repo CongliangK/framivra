@@ -2,7 +2,7 @@
 
 Run only on a normally sandboxed Chrome host. Static spans use the production
 renderer optimization: Chrome produces each page's pixels and the renderer
-materializes all 90 frames. This is correctness evidence, not a speed benchmark.
+materializes every frame of the explicit 48- or 90-frame page profile. This is correctness evidence, not a speed benchmark.
 """
 import argparse
 import json
@@ -19,8 +19,17 @@ sys.path.insert(0, str(REPO))
 from tests.impact_inventory import POLICY, observe, delta, validate_sidecars, is_pass_sidecar
 
 
-def fixture(root):
+def profile(frames_per_page):
+    if frames_per_page not in (48, 90):
+        raise ValueError("frames per page must be 48 or 90")
+    return dict(frames_per_page=frames_per_page, pages=30,
+                total_frames=30 * frames_per_page, static_copied=frames_per_page - 1,
+                subtitle=[640 * frames_per_page // 90, 670 * frames_per_page // 90])
+
+
+def fixture(root, frames_per_page=90):
     """Self-contained consumed dependencies; effective rules lie beyond 128 KiB."""
+    shape = profile(frames_per_page)
     padding = '/*' + 'x' * 131072 + '*/\n'
     (root / 'global.css').write_text(padding + '#global{background:#224466}\n' + padding)
     (root / 'local.css').write_text(padding + '#local{background:#668822}\n' + padding)
@@ -35,14 +44,14 @@ def fixture(root):
             '#page{left:700px;background:#aa2244}</style>'
             '<link rel="stylesheet" href="global.css">' + local +
             f'<h1>Page {i + 1}</h1><div id="global"></div><div id="local"></div>'
-            '<div id="page"></div><script>window.__vtx_static_spans=[[0,90]];</script>')
-        clip = dict(src=f'page{i}.html', dst_in=90 * i, dur=90)
+            f'<div id="page"></div><script>window.__vtx_static_spans=[[0,{frames_per_page}]];</script>')
+        clip = dict(src=f'page{i}.html', dst_in=frames_per_page * i, dur=frames_per_page)
         if i == 7:
             clip['cache_dependencies'] = ['local.css']
         clips.append(clip)
     return dict(version=2, project=dict(fps=30.0, width=1920, height=1080,
-        duration_frames=2700, cache_dependencies=['global.css']), sources=[],
-        audio_tracks=[], subtitles=[],
+        duration_frames=shape['total_frames'], cache_dependencies=['global.css']), sources=[],
+        audio_tracks=[], subtitles=[dict(zip(('in', 'out'), shape['subtitle']), text='Issue 52 page eight')],
         video_tracks=[dict(name='pages', kind='gfx', clips=clips)])
 
 
@@ -57,11 +66,38 @@ def middle_edit(path, old, new):
     assert path.stat().st_size == stat.st_size and path.stat().st_mtime_ns == stat.st_mtime_ns
 
 
+def partial_inventory(root, max_entries=512, seconds=1.0):
+    """Bounded, non-hashing failure observation; never acceptance/recovery proof."""
+    started = time.monotonic()
+    result = dict(partial=True, entries=[], scanned_entries=0, truncated=False, errors=[])
+    for folder in ('cache/vseg', 'cache/vseg_qc', 'cache/vseg_pass', 'out'):
+        directory = root / folder
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if result['scanned_entries'] >= max_entries or time.monotonic() - started >= seconds:
+                        result['truncated'] = True
+                        return result
+                    result['scanned_entries'] += 1
+                    if entry.is_file(follow_symlinks=False):
+                        stat = entry.stat(follow_symlinks=False)
+                        result['entries'].append(dict(path=folder + '/' + entry.name,
+                            size=stat.st_size, mtime_ns=stat.st_mtime_ns))
+        except OSError as error:
+            result['errors'].append(str(error))
+    return result
+
+
 def main():
     import resource  # Hosted Linux runner only; fixture unit tests remain portable.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--frames-per-page', type=int, choices=(48, 90), default=90,
+                        help='48: correctness profile; 90: retained long profile')
     args = parser.parse_args()
+    shape = profile(args.frames_per_page)
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
     evidence = root / 'evidence'
@@ -81,7 +117,7 @@ def main():
     # The hosted workflow's 65-minute job ceiling is the hard outer bound.
     deadline = time.monotonic() + 3000
     report = dict(passed=False, coverage='real Chrome HTML + CPU composition',
-                  commands=[], cases=[], inventory_policy=POLICY,
+                  commands=[], cases=[], profile=shape, inventory_policy=POLICY,
                   resource_scope='65-minute hosted job ceiling; 50-minute budget checked at subprocess boundaries; disk/RSS observations are not quotas; production chooses CPU concurrency',
                   environment={k: env[k] for k in ('VTX_SEG_NVENC', 'VTX_NO_NVENC',
                       'VTX_VIDEO_SEGMENTS', 'VTX_GFX', 'VTX_GFX_PAGES',
@@ -104,9 +140,11 @@ def main():
                                         env=env, start_new_session=True)
                 proc.wait(timeout=min(limit, remaining))
             except subprocess.TimeoutExpired:
+                report['failure_partial_inventory'] = partial_inventory(root)
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
-                report['commands'].append(dict(argv=command, timed_out=True))
+                report['commands'].append(dict(argv=command, timed_out=True,
+                    seconds=time.monotonic() - start))
                 save()
                 raise
         report['commands'].append(dict(argv=command, exit_code=proc.returncode,
@@ -135,19 +173,19 @@ def main():
         run([chrome, '--headless', '--disable-gpu', '--no-first-run',
              '--user-data-dir=' + str(root / 'preflight-profile'), '--dump-dom', 'about:blank'],
             'chrome-sandbox-preflight', 45)
-        tl = fixture(root)
-        tl['subtitles'] = [{'in': 640, 'out': 670, 'text': 'Issue 52 page eight'}]
+        tl = fixture(root, args.frames_per_page)
         expected = dict(global_color=(34, 68, 102), local_color=(102, 136, 34), page_color=(170, 34, 68))
         timeline = root / 'timeline.json'
         def render(label):
             timeline.write_text(json.dumps(tl))
             for stage in ('gfx', 'video'):
-                run([sys.executable, REPO / 'vtx/vtx.py', '-t', timeline, stage], label + '-' + stage)
+                run([sys.executable, REPO / 'vtx/vtx.py', '-t', timeline, '--events-jsonl',
+                     evidence / f'{label}-{stage}-events.jsonl', stage], label + '-' + stage)
                 shutil.copy2(root / 'out' / 'receipt.json', evidence / f'{label}-{stage}-receipt.json')
             if label != 'warm':
                 detail = json.loads((evidence / f'{label}-gfx-receipt.json').read_text())['stages']['gfx']['detail']
                 expected_pages = 30 if label in ('cold', 'global-middle-restored-mtime') else 1
-                assert detail.count('static_copied×89') == expected_pages, detail
+                assert detail.count(f"static_copied×{shape['static_copied']}") == expected_pages, detail
                 assert detail.count('span×1') == expected_pages, detail
         verified_frame_counts = {}
         def inventory(label):
@@ -180,7 +218,7 @@ def main():
             for i, clip in enumerate(tl['video_tracks'][0]['clips']):
                 directory = gfx_dir(context, clip)
                 frames = sorted(directory.glob('f*.png'))
-                assert len(frames) == 90, (i, len(frames))
+                assert len(frames) == shape['frames_per_page'], (i, len(frames))
                 for frame in (frames[0], frames[-1]):
                     with Image.open(frame) as im:
                         im = im.convert('RGB')
@@ -201,7 +239,7 @@ def main():
                 probe = json.loads(run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
                     '-show_entries', 'stream=width,height,nb_frames,r_frame_rate', '-of', 'json', path],
                     f'{label}-probe-{i}', 30))['streams'][0]
-                assert (probe['width'], probe['height'], int(probe['nb_frames'])) == (1920,1080,2700), probe
+                assert (probe['width'], probe['height'], int(probe['nb_frames'])) == (1920,1080,shape['total_frames']), probe
                 assert probe['r_frame_rate'] == '30/1', probe
         render('cold')
         before = capture(tl, root, nseg=8)
@@ -213,7 +251,7 @@ def main():
         report['cold_delta'] = delta({}, previous, cold_paths, cold_frames)
         save()
         assert report['cold_delta']['passed'], report['cold_delta']
-        assert len([p for p in previous if p.endswith('.png')]) == 2700
+        assert len([p for p in previous if p.endswith('.png')]) == shape['total_frames']
         assert any(p.startswith('cache/vseg_qc/') for p in previous)
         validate('cold', previous, {})
         (evidence / 'cold-inventory.json').write_text(json.dumps(previous, indent=2))
@@ -256,11 +294,13 @@ def main():
         check('global-middle-restored-mtime')
         report['passed'] = True
     except Exception as error:
+        if 'failure_partial_inventory' not in report:
+            report['failure_partial_inventory'] = partial_inventory(root)
         report['error'] = f'{type(error).__name__}: {error}'
         raise
     finally:
         save()
-    print(json.dumps(dict(passed=True, pages=30, frames=2700, resolution=[1920,1080])))
+    print(json.dumps(dict(passed=True, pages=30, frames=shape['total_frames'], resolution=[1920,1080])))
 
 
 if __name__ == '__main__':

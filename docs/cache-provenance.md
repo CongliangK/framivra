@@ -189,3 +189,12 @@ retired_artifacts、conservative_nodes 和 uncertainties。建议重跑阶段只
 pass/vseg 键与实际渲染共享纯身份函数和段 ASS 字节生成。抽取 pass 身份函数会改变
 合成代码摘要，因此升级后视频合成段与 pass 中间物一次性冷重建；旧缓存不自动删除。
 不固定旧摘要来伪造兼容。gfx 后端实现、QC 质量等级与此分析合同独立。
+
+
+HTML 验收夹具保留 90 帧/页长 profile；受限 workflow 显式选择 48 帧/页 correctness
+profile，仍为 30 场景、1080p/30fps、生产编码质量及八段。字幕按比例落在第八页
+（48 帧 profile 为 [341,357)），完整解码、warm 字节/mtime、全部 mutation 和 raw delta
+断言保持。原 2700 帧 hosted 运行在主视频完成后、QC 合成阶段触及既有 900 秒上限，
+未通过验收；不能据此判定生产回归或 OOM。48 帧 profile 的通过须由最终版本实际运行
+证明。900 秒命令、3000 秒边界预算及 65 分钟作业上限不延长。事件 JSONL 和有界
+失败路径/大小清单只辅助定位，不替代完整库存、解码或成功回执。

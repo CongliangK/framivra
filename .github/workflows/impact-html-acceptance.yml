@@ -53,7 +53,7 @@ jobs:
           export VTX_CONFIG="$HOME/config.json"
           mkdir -p "$XDG_CONFIG_HOME"
           printf '{}\n' > "$VTX_CONFIG"
-          python tests/run_impact_html_reconciliation.py --output "$RUNNER_TEMP/impact-html"
+          python tests/run_impact_html_reconciliation.py --frames-per-page 48 --output "$RUNNER_TEMP/impact-html"
       - name: Preserve media trim subtitle duration and audio reconciliation
         timeout-minutes: 8
         run: python tests/run_impact_reconciliation.py --output "$RUNNER_TEMP/impact-media"
