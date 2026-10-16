@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice
+from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts
 from vtx.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
@@ -145,7 +145,8 @@ class AcceptanceContracts(unittest.TestCase):
             t=copy.deepcopy(good);mutate(t)
             with self.assertRaises(AssertionError):check_trace(t,{'file:///a.png'})
         with self.assertRaises(AssertionError):check_trace(good,set(),rejected=True)
-        good['requests'][0]['decision']='Fetch.failRequest';check_trace(good,set(),rejected=True)
+        good['requests'][0]['decision']='Fetch.failRequest'
+        with self.assertRaises(AssertionError):check_trace(good,set(),rejected=True,target='file:///a.png')
 
     def test_worker_observes_real_policy_response_and_ack_with_mock_transport(self):
         from vtx import cli, gfx_render
@@ -185,7 +186,197 @@ class AcceptanceContracts(unittest.TestCase):
                     else:
                         worker(self.c.tl_path,trace)
                 rows=json.loads(trace.read_text())
-                check_trace(rows,set() if injection else {record['html_uri']},rejected=bool(injection))
+                check_trace(rows,set() if injection else {record['html_uri']},rejected=bool(injection),
+                            target=rows.get('injected_target'))
+
+    def test_fixture_all_nonzero_geometry_has_units_and_preserves_rois(self):
+        import re
+        css=(self.project/'global.css').read_text()
+        for rule in ('width:1920px','height:1080px','width:24px','height:24px',
+                     '#left{left:0}','#right{left:32px}','#shared{left:64px;',
+                     'left:96px','top:24px','font:20px'):
+            self.assertIn(rule,css)
+        self.assertFalse(re.findall(r'(?:left|top|width|height|margin):[1-9][0-9]*(?=[;}])',css))
+
+    def test_disabled_or_swallowed_production_rejection_cannot_pass_negative(self):
+        from contextlib import nullcontext
+        from vtx import cli,gfx_render
+        from vtx.gfx_dependencies import RequestPolicy
+        from tests.run_gfx_dependency_acceptance import worker
+        record=resolve(self.c,self.tl['video_tracks'][0]['clips'][0])
+        for injection in ('local','external'):
+            for regression in ('disabled','swallowed'):
+                with self.subTest(injection=injection,regression=regression):
+                    ws=gfx_render.WSConn.__new__(gfx_render.WSConn);ws.queue=[]
+                    tab=gfx_render.Tab.__new__(gfx_render.Tab)
+                    tab.ws=ws;tab._mid=0;tab._policy_commands=set();tab.request_policy=RequestPolicy(record)
+                    def send(socket,data):
+                        msg=json.loads(data)
+                        if msg['method']=='Page.navigate':
+                            socket.queue.append({'method':'Fetch.requestPaused','params':{
+                                'requestId':'denial','resourceType':'Document','request':{'url':msg['params']['url']}}})
+                        socket.queue.append({'id':msg['id'],'result':{}})
+                    def recv(socket):return 1,json.dumps(socket.queue.pop(0))
+                    def invoke():
+                        try:tab.call('Fetch.enable')
+                        except DependencyError:
+                            if regression != 'swallowed':raise
+                    trace=self.root/(injection+'-'+regression+'.json')
+                    with patch.object(gfx_render.WSConn,'send_text',send), \
+                            patch.object(gfx_render.WSConn,'recv_msg',recv), \
+                            (patch.object(RequestPolicy,'check',return_value=None) if regression=='disabled' else nullcontext()), \
+                            patch.object(cli,'main',side_effect=invoke):
+                        if regression=='disabled':
+                            with self.assertRaisesRegex(AssertionError,'was not rejected'):
+                                worker(self.c.tl_path,trace,injection)
+                        else:
+                            worker(self.c.tl_path,trace,injection)
+                    row=json.loads(trace.read_text())
+                    self.assertFalse(row['propagated_production_failure'])
+                    self.assertTrue(row['injected'])
+                    with self.assertRaises(AssertionError):
+                        check_trace(row,set(),rejected=True,target=row['injected_target'])
+
+    def test_rejection_contract_rejects_wrong_url_no_injection_capture_and_partial_file(self):
+        target='file:///expected.html'
+        row=dict(fallback_calls=0,injected=True,injected_target=target,injected_kind='Document',
+            propagated_production_failure=True,terminal_exception_type='DependencyError',
+            production_failures=[dict(reason='strict runtime request rejected')],
+            screenshot_attempts=0,metrics=[],pending_acknowledgements=[],
+            requests=[dict(url=target,kind='Document',decision='Fetch.failRequest',request_id='r')],
+            acknowledgements=[dict(request_id='r',error=None,method='Fetch.failRequest')])
+        check_trace(row,set(),rejected=True,target=target)
+        for mutate in (lambda r:r.update(injected=False),lambda r:r.update(metrics=[{}]),
+                       lambda r:r.update(screenshot_attempts=1),
+                       lambda r:r.update(propagated_production_failure=False),
+                       lambda r:r.update(terminal_exception_type='TimeoutError'),
+                       lambda r:r['requests'][0].update(url='file:///unrelated.html')):
+            bad=copy.deepcopy(row);mutate(bad)
+            with self.assertRaises(AssertionError):check_trace(bad,set(),rejected=True,target=target)
+        check_no_products(self.project,row)
+        (self.project/'f0000.png').write_bytes(b'partial')
+        with self.assertRaises(AssertionError):check_no_products(self.project,row)
+        with self.assertRaises(AssertionError):check_static_failure(row,'undeclared dependency')
+
+    def native_fixture(self,failed=False):
+        from tests.test_execution_events import Buffer
+        from vtx import events
+        stream=Buffer(); execution=events.ExecutionContext(stream)
+        receipt={'stages':{},'timeline':hashlib.sha256(self.c.tl_path.read_bytes()).hexdigest()}
+        error=DependencyError('strict runtime request rejected') if failed else None
+        try:
+            with execution.task('gfx',kind='stage').scope() as task:
+                def action():
+                    if error:raise error
+                    return 0
+                task.attempt(action)
+                execution.receipt('gfx',True,lambda ref:receipt['stages'].update(
+                    gfx=dict(ok=True,observed_by=ref)))
+        except DependencyError:pass
+        execution.finish(1 if failed else 0,error)
+        path=self.root/'native.jsonl';path.write_text(stream.getvalue())
+        identity={'head':'head','tree':'tree'}
+        trace=dict(execution_run_id=execution.run_id,invocation=dict(stage='gfx',
+            timeline=str(self.c.tl_path),timeline_sha256=hashlib.sha256(self.c.tl_path.read_bytes()).hexdigest(),
+            **identity),propagated_production_failure=failed,native_error=events.safe_error(error),
+            production_failures=[dict(native_error=events.safe_error(error))] if failed else [])
+        return path,trace,receipt,identity
+
+    def test_required_native_events_and_exact_receipt_identity(self):
+        path,trace,receipt,identity=self.native_fixture()
+        def validate():return check_native_events(path,trace,timeline=self.c.tl_path,
+            stage='gfx',identity=identity,receipt=receipt,gfx_attempts=1)
+        validate();original=path.read_text()
+        for content in ('','{broken}\n',original.splitlines(True)[0],original[:-2]):
+            path.write_text(content)
+            with self.assertRaises((AssertionError,ValueError)):validate()
+        path.unlink()
+        with self.assertRaises(FileNotFoundError):validate()
+        path.write_text(original)
+        for target,key,value in ((trace,'execution_run_id','unrelated'),
+                                 (trace['invocation'],'head','other'),
+                                 (trace['invocation'],'stage','video'),
+                                 (receipt,'timeline','wrong-timeline'),
+                                 (receipt['stages']['gfx']['observed_by'],'run_id','other')):
+            old=target[key];target[key]=value
+            with self.assertRaises(AssertionError):validate()
+            target[key]=old
+        rows=[json.loads(line) for line in original.splitlines()]
+        rows[-1]['extensions']['evidence_complete']=False
+        path.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+        with self.assertRaises(AssertionError):validate()
+
+    def test_native_failure_requires_matching_failed_attempt_and_cause(self):
+        path,trace,receipt,identity=self.native_fixture(failed=True)
+        def validate():return check_native_events(path,trace,timeline=self.c.tl_path,
+            stage='gfx',identity=identity,failed=True,runtime=True)
+        validate()
+        with self.assertRaises(AssertionError):
+            check_native_events(path,trace,timeline=self.c.tl_path,stage='gfx',identity=identity,
+                failed=True,runtime=True,receipt={'timeline':trace['invocation']['timeline_sha256'],'stages':{'gfx':{'ok':True}}})
+        trace['native_error']=None
+        with self.assertRaises(AssertionError):validate()
+
+    def test_real_cli_static_failure_and_validate_success_require_native_evidence(self):
+        from tests.run_gfx_dependency_acceptance import worker
+        from vtx import gfx_render
+        trace_path=self.root/'actual-cli.json'
+        with patch.object(gfx_render.Browser,'start',side_effect=AssertionError('unexpected browser')) as browser:
+            worker(self.c.tl_path,trace_path,stage='validate')
+            tr=json.loads(trace_path.read_text())
+            receipt=json.loads((self.project/'out/receipt.json').read_text())
+            identity={k:tr['invocation'][k] for k in ('head','tree')}
+            check_native_events(trace_path.with_suffix('.events.jsonl'),tr,timeline=self.c.tl_path,
+                                stage='validate',identity=identity,receipt=receipt)
+            negative=self.root/'actual-negative.json'
+            (self.project/'a.html').write_text('<style/>')
+            with self.assertRaises(SystemExit):worker(self.c.tl_path,negative)
+            tr=json.loads(negative.read_text())
+            check_static_failure(tr,'self-closing non-void HTML unsupported')
+            check_no_products(self.project,tr)
+            check_native_events(negative.with_suffix('.events.jsonl'),tr,timeline=self.c.tl_path,
+                                stage='gfx',identity=identity,failed=True)
+            browser.assert_not_called()
+
+    def test_real_cli_runtime_failure_wrap_keeps_attempt_cause_and_failed_receipt(self):
+        from tests.run_gfx_dependency_acceptance import worker
+        from vtx import cli,gfx_render
+        from vtx.gfx_dependencies import RequestPolicy
+        def reject(*args,**kwargs):
+            policy=RequestPolicy(kwargs['dependency_record'])
+            policy.violation=DependencyError('controlled mock runtime denial')
+            policy.check()
+        trace_path=self.root/'actual-runtime.json'
+        with patch.object(cli,'budget_gate'),patch.object(gfx_render,'available',return_value=True), \
+                patch.object(cli,'find_chrome',return_value='mock-chrome'), \
+                patch.object(gfx_render,'render_page',side_effect=reject):
+            with self.assertRaises(SystemExit):worker(self.c.tl_path,trace_path)
+        tr=json.loads(trace_path.read_text())
+        self.assertTrue(tr['propagated_production_failure'])
+        self.assertEqual(tr['terminal_exception_type'],'SystemExit')
+        receipt=json.loads((self.project/'out/receipt.json').read_text())
+        check_native_events(trace_path.with_suffix('.events.jsonl'),tr,timeline=self.c.tl_path,
+            stage='gfx',identity={k:tr['invocation'][k] for k in ('head','tree')},
+            receipt=receipt,failed=True,runtime=True)
+
+    def test_business_success_with_missing_native_sink_is_insufficient(self):
+        from tests.run_gfx_dependency_acceptance import worker
+        from vtx import events
+        trace_path=self.root/'sink-failed.json'
+        with patch.object(events,'open_sink',side_effect=OSError('controlled sink unavailable')):
+            worker(self.c.tl_path,trace_path,stage='validate')
+        tr=json.loads(trace_path.read_text())
+        receipt=json.loads((self.project/'out/receipt.json').read_text())
+        with self.assertRaises(FileNotFoundError):
+            check_native_events(trace_path.with_suffix('.events.jsonl'),tr,timeline=self.c.tl_path,
+                stage='validate',identity={k:tr['invocation'][k] for k in ('head','tree')},receipt=receipt)
+
+    def test_exact_round_screenshot_counts_not_only_upper_bound(self):
+        for changed,want in (([0,1],4),([],0),([0],2),([0,1],4)):
+            row=dict(screenshot_attempts=want,metrics=[{}]*want)
+            check_round_counts(row,changed)
+            row['screenshot_attempts']+=1;row['metrics'].append({})
+            with self.assertRaises(AssertionError):check_round_counts(row,changed)
 
     def test_workflow_scope_and_budget(self):
         root=Path(__file__).resolve().parents[1]

@@ -92,7 +92,7 @@ def fixture(root, font, provenance):
         '@font-face{font-family:Fixture;src:url("font.ttf")}'
         'html,body{margin:0;width:1920px;height:1080px;background:#ffffff}'
         'div{position:absolute;width:24px;height:24px;top:0}'
-        '#left{left:0}#right{left:32}#shared{left:64;background:#224466}'
+        '#left{left:0}#right{left:32px}#shared{left:64px;background:#224466}'
         '#direct{position:absolute;left:96px;top:0;width:24px;height:24px}'
         'p{position:absolute;left:0;top:24px;margin:0;font:20px Fixture;color:#000000}')
     common = '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="global.css">'
@@ -116,11 +116,35 @@ faces:Array.from(document.fonts).map(f=>({family:f.family,status:f.status})),
 family:getComputedStyle(document.querySelector('p')).fontFamily}))()'''
 
 
-def worker(timeline, trace_path, injection=None):
+def worker(timeline, trace_path, injection=None, stage="gfx"):
     """Observe actual production calls; never fabricate a Fetch result or pixels."""
-    from vtx import cli, gfx_render, gfx_cli
+    from vtx import cli, gfx_render, gfx_cli, events, gfx_dependencies
     from vtx.gfx_dependencies import RequestPolicy
-    trace = dict(requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False)
+    trace = dict(requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False,
+        screenshot_attempts=0, production_failures=[], propagated_production_failure=False,
+        invocation=dict(stage=stage, timeline=str(timeline),
+            timeline_sha256=hashlib.sha256(timeline.read_bytes()).hexdigest(),
+            head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=REPO,text=True,timeout=10).strip(),
+            tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=REPO,text=True,timeout=10).strip()))
+    failure_objects = []
+    original_check = RequestPolicy.check
+    original_resolve = gfx_dependencies.resolve
+    original_init = events.ExecutionContext.__init__
+    def observe_init(context, *args, **kwargs):
+        original_init(context, *args, **kwargs)
+        trace['execution_run_id'] = context.run_id
+    def observe_failure(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except gfx_dependencies.DependencyError as error:
+            failure_objects.append(error)
+            trace['production_failures'].append(dict(reason=error.reason, resource=error.resource,
+                origin=error.origin, type=type(error).__name__, native_error=events.safe_error(error)))
+            raise
+    def check(policy, *args, **kwargs):
+        return observe_failure(original_check, policy, *args, **kwargs)
+    def resolve(*args, **kwargs):
+        return observe_failure(original_resolve, *args, **kwargs)
     pending = {}
     original_response = RequestPolicy.response
     original_send = gfx_render.WSConn.send_text
@@ -153,6 +177,7 @@ def worker(timeline, trace_path, injection=None):
         return op, data
     def call(tab, method, **kwargs):
         if method == 'Page.captureScreenshot':
+            trace['screenshot_attempts'] += 1
             result = original_call(tab, 'Runtime.evaluate', expression=METRICS, returnByValue=True)
             if result.get('exceptionDetails'):
                 raise AssertionError(result)
@@ -169,6 +194,8 @@ def worker(timeline, trace_path, injection=None):
             trace['injected'] = True
             target = ((timeline.parent / 'undeclared.html').as_uri() if injection == 'local'
                       else 'https://dependency-control.invalid/forbidden')
+            trace['injected_target'] = target
+            trace['injected_kind'] = 'Document'
             # Controlled test-only navigation after real Fetch installation. The
             # production static source/record stays unchanged and script-disabled.
             original_call(tab, 'Page.navigate', url=target)
@@ -180,24 +207,48 @@ def worker(timeline, trace_path, injection=None):
         trace['fallback_calls'] += 1
         raise AssertionError('strict mode attempted CLI fallback')
     try:
-        with patch.object(RequestPolicy, 'response', response), \
+        with patch.object(RequestPolicy, 'check', check), \
+             patch.object(gfx_dependencies, 'resolve', resolve), \
+             patch.object(events.ExecutionContext, '__init__', observe_init), \
+             patch.object(RequestPolicy, 'response', response), \
              patch.object(gfx_render.WSConn, 'send_text', send), \
              patch.object(gfx_render.WSConn, 'recv_msg', recv), \
              patch.object(gfx_render.Tab, 'call', call), \
              patch.object(gfx_cli, 'render_cli', fallback), \
-             patch.object(sys, 'argv', ['vtx', '-t', str(timeline), '--events-jsonl', str(trace_path.with_suffix('.events.jsonl')), 'gfx']):
+             patch.object(sys, 'argv', ['vtx', '-t', str(timeline), '--events-jsonl', str(trace_path.with_suffix('.events.jsonl')), stage]):
             code = cli.main()
             if code:
                 raise SystemExit(code)
+    except BaseException as error:
+        trace['native_error'] = events.safe_error(error)
+        trace['terminal_exception_type'] = type(error).__name__
+        current = error
+        seen = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if any(current is original for original in failure_objects):
+                trace['propagated_production_failure'] = True
+            current = current.__cause__ if current.__cause__ is not None else (
+                None if current.__suppress_context__ else current.__context__)
+        raise
     finally:
         trace['pending_acknowledgements'] = list(pending.values())
         save()
 
 
-def check_trace(trace, expected_urls, *, rejected=False):
+def check_trace(trace, expected_urls, *, rejected=False, target=None):
     assert trace['fallback_calls'] == 0, trace
     if rejected:
-        assert any(r['decision'] == 'Fetch.failRequest' for r in trace['requests']), trace
+        assert target is not None and trace.get('injected') is True, trace
+        assert trace.get('injected_target') == target and trace.get('injected_kind') == 'Document', trace
+        assert trace.get('propagated_production_failure') is True, trace
+        assert trace.get('terminal_exception_type') in ('DependencyError', 'SystemExit'), trace
+        assert any(f['reason'] == 'strict runtime request rejected' for f in trace['production_failures']), trace
+        assert trace['screenshot_attempts'] == 0 and trace['metrics'] == [], trace
+        denied = [r for r in trace['requests'] if r['decision'] == 'Fetch.failRequest']
+        assert denied and all(r['url'] == target and r['kind'] == 'Document' for r in denied), trace
+        assert all(any(a['request_id'] == r['request_id'] and a.get('method') == 'Fetch.failRequest'
+                       and a['error'] is None for a in trace['acknowledgements']) for r in denied), trace
     else:
         assert trace['metrics'], 'no actual pre-screenshot DOM measurements'
         for m in trace['metrics']:
@@ -214,6 +265,78 @@ def check_trace(trace, expected_urls, *, rejected=False):
     assert {a['request_id'] for a in trace['acknowledgements']} == {r['request_id'] for r in trace['requests']}
 
 
+def check_round_counts(trace, changed):
+    assert trace['screenshot_attempts'] == len(trace['metrics']) == 2*len(changed), 'wrong per-round screenshot count'
+
+
+def check_no_products(project, trace):
+    assert trace['screenshot_attempts'] == 0 and trace['metrics'] == []
+    assert trace['fallback_calls'] == 0
+    assert not list(project.rglob('f[0-9]*.png')), 'forbidden partial screenshot exists'
+    assert not list(project.rglob('complete.json')), 'forbidden completion marker exists'
+
+
+def check_static_failure(trace, expected_reason):
+    assert trace.get('propagated_production_failure') is True, trace
+    assert trace['requests'] == [] and trace['fallback_calls'] == 0
+    assert any(f['reason'] == expected_reason for f in trace['production_failures']), trace
+    assert trace.get('terminal_exception_type') in ('DependencyError', 'SystemExit'), trace
+
+
+def check_native_events(path, trace, *, timeline, stage, identity, failed=False,
+                        receipt=None, runtime=False, gfx_attempts=None):
+    """Required original event validator plus invocation/receipt/failure binding."""
+    from vtx.events import read_events
+    invocation = trace['invocation']
+    assert invocation == dict(stage=stage, timeline=str(timeline),
+        timeline_sha256=hashlib.sha256(timeline.read_bytes()).hexdigest(),
+        head=identity['head'], tree=identity['tree']), invocation
+    if receipt is not None:
+        assert receipt['timeline'] == invocation['timeline_sha256'], 'receipt timeline mismatch'
+    parsed = read_events(path.read_text())
+    assert parsed['complete'], 'native events missing/truncated/incomplete'
+    rows = parsed['events']
+    assert rows and all(r['run_id'] == trace['execution_run_id'] for r in rows)
+    terminal = rows[-1]
+    assert terminal['event'] == 'run_terminal'
+    assert terminal['outcome'] == ('failed' if failed else 'succeeded')
+    tasks = [r for r in rows if r['event'] == 'task_terminal']
+    attempts = [r for r in rows if r['event'] == 'attempt_terminal']
+    if failed:
+        assert trace.get('propagated_production_failure') is True
+        assert terminal['error'] == trace['native_error'], 'failure/event cause mismatch'
+        if runtime:
+            causes = [f['native_error'] for f in trace['production_failures']]
+            assert any(r['outcome'] == 'failed' and r['error'] in causes for r in attempts)
+            assert any(r['outcome'] == 'failed' and r['error'] == trace['native_error'] for r in tasks)
+        assert not any(r['event'] == 'receipt_commit' and r['outcome'] == 'succeeded' for r in rows)
+        if receipt is not None:
+            entry = receipt.get('stages', {}).get(stage, {})
+            assert entry.get('ok') is not True, 'failed operation retains successful receipt'
+            if entry.get('observed_by'):
+                ref = entry['observed_by']
+                assert any(r['event'] == 'receipt_commit' and r['outcome'] == 'failed'
+                    and r['event_id'] == ref['event_id'] and r['task_id'] == ref['task_id']
+                    and r['run_id'] == ref['run_id'] for r in rows)
+    else:
+        assert terminal['error'] is None
+        assert tasks and all(r['outcome'] == 'succeeded' for r in tasks)
+        assert all(r['outcome'] == 'succeeded' for r in attempts)
+        if gfx_attempts is not None:
+            assert len(attempts) == gfx_attempts, 'unexpected native gfx attempts'
+        assert receipt is not None
+        entry = receipt['stages'][stage]
+        assert entry['ok'] is True
+        ref = entry['observed_by']
+        assert ref['run_id'] == trace['execution_run_id']
+        commits = [r for r in rows if r['event'] == 'receipt_commit' and
+                   r['stage'] == stage and r['outcome'] == 'succeeded' and
+                   r['task_id'] == ref['task_id'] and r['event_id'] == ref['event_id']]
+        assert len(commits) == 1, 'receipt not committed by this exact native invocation'
+    return dict(run_id=trace['execution_run_id'], event_count=len(rows), stage=stage,
+                outcome=terminal['outcome'], attempts=len(attempts))
+
+
 def restore_edit(path, old, new):
     before = path.stat()
     data = path.read_bytes()
@@ -228,10 +351,11 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--worker', type=Path)
     parser.add_argument('--trace', type=Path)
+    parser.add_argument('--stage', choices=('gfx','validate','video'), default='gfx')
     parser.add_argument('--inject', choices=('local', 'external'))
     args = parser.parse_args()
     if args.worker:
-        return worker(args.worker.resolve(), args.trace, args.inject)
+        return worker(args.worker.resolve(), args.trace, args.inject, args.stage)
     if not args.output:
         parser.error('--output is required')
     root = args.output.resolve()
@@ -301,6 +425,29 @@ def main():
         report['font'] = {k:v for k,v in provenance.items() if k != 'notice_text'}
         expected_shared = (34, 68, 102); expected_left = (238, 34, 17)
         previous = {}; before = None
+        required_native = []
+        def native(stage, label, *, project_timeline=timeline, failed=False, injection=None,
+                   gfx_attempts=None):
+            trace_path = evidence/(label+'-trace.json')
+            argv = [sys.executable,__file__,'--worker',project_timeline,'--stage',stage,'--trace',trace_path]
+            if injection: argv += ['--inject',injection]
+            run(argv,label,expect_failure=failed)
+            trace = json.loads(trace_path.read_text())
+            receipt = None
+            source = project_timeline.parent/'out/receipt.json'
+            if not failed or source.exists():
+                receipt = json.loads(source.read_text())
+                shutil.copyfile(source,evidence/(label+'-receipt.json'))
+            event_path = trace_path.with_suffix('.events.jsonl')
+            binding = check_native_events(event_path,trace,timeline=project_timeline,stage=stage,
+                identity=report['identity'],failed=failed,receipt=receipt,runtime=bool(injection),
+                gfx_attempts=gfx_attempts)
+            names = dict(trace=trace_path.name,events=event_path.name,
+                         receipt=None if receipt is None else label+'-receipt.json')
+            required_native.append(dict(names,binding=binding,sha256={name:
+                hashlib.sha256((evidence/name).read_bytes()).hexdigest()
+                for name in names.values() if name is not None}))
+            return trace
         def render(label, changed):
             nonlocal before, previous
             c = Ctx(timeline)
@@ -320,9 +467,9 @@ def main():
                 if path.is_symlink(): row['symlink'] = os.readlink(path)
                 inputs[str(path.relative_to(project))] = row
             (evidence/(label+'-inputs.json')).write_text(json.dumps(inputs,indent=2))
-            run([sys.executable, '-m', 'vtx', '-t', timeline, 'validate'], label+'-validate')
-            run([sys.executable, __file__, '--worker', timeline, '--trace', evidence/(label+'-trace.json')], label+'-gfx')
-            trace = json.loads((evidence/(label+'-trace.json')).read_text())
+            native('validate',label+'-validate')
+            trace = native('gfx',label+'-gfx',gfx_attempts=len(changed))
+            check_round_counts(trace,changed)
             report['rendered_frames'] = report.get('rendered_frames', 0) + len(trace['metrics'])
             assert report['rendered_frames'] <= 24
             if changed:
@@ -330,9 +477,7 @@ def main():
                 check_trace(trace, urls)
             else:
                 assert not trace['requests'] and not trace['metrics'] and trace['fallback_calls'] == 0
-            shutil.copyfile(project/'out/receipt.json', evidence/(label+'-gfx-receipt.json'))
-            run([sys.executable, '-m', 'vtx', '-t', timeline, 'video'], label+'-video', limit=90)
-            shutil.copyfile(project/'out/receipt.json', evidence/(label+'-video-receipt.json'))
+            native('video',label+'-video')
             for i, output in enumerate((project/'out/video_noaudio.mp4', project/'cache/qc_clean.mp4')):
                 run(['ffmpeg','-v','error','-xerror','-threads','1','-i',output,
                      '-map','0:v:0','-f','null','-'],label+'-output-decode-'+str(i))
@@ -423,10 +568,12 @@ def main():
             negative['project']['duration_frames'] = 2
             nt=neg/'timeline.json';nt.write_text(json.dumps(negative))
             original=(neg/'a.html').read_bytes()
-            run([sys.executable,__file__,'--worker',nt,'--trace',evidence/(case+'-trace.json')],case,True)
-            tr=json.loads((evidence/(case+'-trace.json')).read_text())
-            assert tr['requests']==[] and tr['fallback_calls']==0 and original==(neg/'a.html').read_bytes()
-            assert not list(neg.rglob('complete.json'))
+            tr=native('gfx',case,project_timeline=nt,failed=True)
+            reason = ('self-closing non-void HTML unsupported' if case.startswith('unknown') else
+                      'undeclared dependency' if case == 'undeclared' else 'nonlocal or ambiguous URL')
+            check_static_failure(tr,reason)
+            check_no_products(neg,tr)
+            assert original==(neg/'a.html').read_bytes()
         for case in ('local','external'):
             neg=root/('runtime-'+case);negative=fixture(neg,font,provenance)
             negative['video_tracks'][0]['clips'] = negative['video_tracks'][0]['clips'][:1]
@@ -434,9 +581,19 @@ def main():
             (neg/'undeclared.html').write_text('<p>Forbidden</p>')
             nt=neg/'timeline.json';nt.write_text(json.dumps(negative))
             trace=evidence/('runtime-'+case+'-trace.json')
-            run([sys.executable,__file__,'--worker',nt,'--trace',trace,'--inject',case], 'runtime-'+case,True)
-            check_trace(json.loads(trace.read_text()),set(),rejected=True)
-            assert not list(neg.rglob('complete.json'))
+            tr=native('gfx','runtime-'+case,project_timeline=nt,failed=True,injection=case)
+            target=(neg/'undeclared.html').as_uri() if case == 'local' else 'https://dependency-control.invalid/forbidden'
+            check_trace(tr,set(),rejected=True,target=target)
+            check_no_products(neg,tr)
+        assert report['rendered_frames'] == 10
+        assert len(required_native) == 21  # 4 rounds × 3 stages + 7 static + 2 runtime
+        for item in required_native:
+            for key in ('trace','events','receipt'):
+                if item[key] is not None:
+                    path = evidence/item[key]
+                    assert path.is_file() and path.stat().st_size > 0
+                    assert hashlib.sha256(path.read_bytes()).hexdigest() == item['sha256'][item[key]], 'validated evidence changed'
+        report['required_native_evidence'] = required_native
         report['passed']=True
     except Exception as error:
         report['error']=f'{type(error).__name__}: {error}'
