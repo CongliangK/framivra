@@ -38,7 +38,7 @@ DUCK_MAKEUP = 1
 KERNEL_KEYS = {
     "root": {"version", "project", "sources", "video_tracks", "subtitles",
              "subtitles_src", "audio_tracks"},
-    "project": {"fps", "width", "height", "duration_frames", "cache_dependencies"},
+    "project": {"fps", "width", "height", "duration_frames", "cache_dependencies", "gfx_dependency_policy"},
     "sources[]": {"id", "path", "transform"},
     "audio_tracks[]": {"name", "duck", "duck_by", "duck_params", "events"},
     "audio_tracks[].events[]": {"src", "src_in", "in", "out", "volume",

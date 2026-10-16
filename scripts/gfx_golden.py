@@ -154,6 +154,20 @@ def gfx_clips(c: Ctx):
     return out
 
 
+def full_gfx_clip(c, src, dur):
+    """Never reconstruct a dependency-bearing clip from src/dur alone.
+
+    The historical Golden schema cannot represent two distinct dependency
+    identities at the same src/dur; reject that ambiguity instead of choosing.
+    """
+    matches = [cl for tr in c.tl.get('video_tracks', []) if tr.get('kind') == 'gfx'
+               for cl in tr.get('clips', []) if cl['src'] == src and int(cl['dur']) == dur]
+    keys = {hygiene.gfx_key(c, cl) for cl in matches}
+    if len(keys) != 1:
+        raise ValueError(f'ambiguous or missing Golden clip identity: {src} dur={dur}')
+    return matches[0]
+
+
 def _match(name: str, src: str) -> bool:
     """名单匹配：src 相对路径全等 / src 文件名 stem 全等 / 子串包含，任一命中。"""
     return name == src or name == Path(src).stem or name in src
@@ -681,7 +695,7 @@ def cmd_build(args) -> int:
         if not html.exists():
             errors.append(f"html 缺失: {src}")
             continue
-        key = hygiene.gfx_key(c, {"src": src, "dur": dur})
+        key = hygiene.gfx_key(c, full_gfx_clip(c, src, dur))
         d = c.cache / "gfx" / key
         if not d.is_dir():
             errors.append(f"帧目录缺失: {src} dur={dur} → cache/gfx/{key}（先完成 gfx 渲染）")
@@ -812,7 +826,7 @@ def cmd_compare(args) -> int:
     for src, dur in gfx_clips(c):
         pv = g.get("pages", {}).get(src)
         if pv is None or str(dur) not in pv.get("durs", {}):
-            unrecorded.append({"src": src, "dur": dur})
+            unrecorded.append(full_gfx_clip(c, src, dur))
     if unrecorded:
         print(f"  ⚠ timeline 中有 {len(unrecorded)} 个 gfx 实例未记录在 golden（不在本次比对"
               f"范围，需要覆盖请重建 golden）：")
@@ -826,10 +840,10 @@ def cmd_compare(args) -> int:
     for src, pv in sel.items():
         for durs, inst in pv.get("durs", {}).items():
             dur = int(inst["dur"])
-            d = c.cache / "gfx" / hygiene.gfx_key(c, {"src": src, "dur": dur})
+            d = c.cache / "gfx" / hygiene.gfx_key(c, full_gfx_clip(c, src, dur))
             if not d.is_dir():
                 dir_missing.append({"src": src, "dur": dur,
-                                    "key": hygiene.gfx_key(c, {"src": src, "dur": dur})})
+                                    "key": hygiene.gfx_key(c, full_gfx_clip(c, src, dur))})
                 continue
             for fkey in inst.get("frames", {}):
                 p = d / f"f{int(fkey):04d}.png"

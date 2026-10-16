@@ -294,6 +294,8 @@ class Tab:
         self.ws = WSConn(port, ws_path)
         try:
             self._mid = 0
+            self.request_policy = None
+            self._policy_commands = set()
             self.call("Page.enable")
             self.call("Emulation.setDeviceMetricsOverride",
                       width=width, height=height, deviceScaleFactor=1, mobile=False)
@@ -310,6 +312,8 @@ class Tab:
         mid = self._mid
         self.ws.send_text(json.dumps({"id": mid, "method": method, "params": params}))
         deadline = time.monotonic() + timeout
+        response = None
+        events_seen = 0
         while time.monotonic() < deadline:
             op, data = self.ws.recv_msg()
             if op == 0x8:
@@ -318,8 +322,24 @@ class Tab:
             if msg.get("id") == mid:
                 if "error" in msg:
                     raise RuntimeError(f"{method}: {msg['error']}")
-                return msg.get("result", {})
-            # 其它 id / 事件通知：忽略（每 tab 单线程使用，正常不会有别的 id）
+                response = msg.get("result", {})
+            if msg.get('id') in self._policy_commands:
+                self._policy_commands.remove(msg['id'])
+                if 'error' in msg:
+                    raise RuntimeError(f"strict request enforcement failed: {msg['error']}")
+            if msg.get('method') == 'Fetch.requestPaused' and self.request_policy is not None:
+                events_seen += 1
+                if events_seen > 10000 or len(self._policy_commands) >= 256:
+                    raise RuntimeError('strict request event budget exceeded')
+                command, args = self.request_policy.response(msg['params'])
+                self._mid += 1
+                self._policy_commands.add(self._mid)
+                self.ws.send_text(json.dumps({'id': self._mid, 'method': command, 'params': args}))
+            if response is not None and not self._policy_commands:
+                if self.request_policy is not None:
+                    self.request_policy.check()
+                return response
+            # Other events have no effect on the single-threaded legacy client.
         raise TimeoutError(f"CDP {method} timeout")
 
     def navigate(self, url, timeout=5.0):
@@ -709,7 +729,8 @@ def _atomic_write_bytes(path, data):
 
 
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
-                width=1920, height=1080, progress=None, frames=None, ctx=None):
+                width=1920, height=1080, progress=None, frames=None, ctx=None,
+                dependency_record=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
 
     ctx（issue #103 可选）：vtx gfx 阶段传入 Ctx 后，常驻 Chrome 交
@@ -743,6 +764,9 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     未启用特性的页行为逐字节不变：VTX_GFX_NAVFREE=0 时零额外 eval；
     VTX_GFX_STATIC 只多一次声明读取 eval（惰性数据，像素零影响）。
     """
+    if dependency_record is not None:
+        return render_strict_page(html_path, outdir, n_frames, chrome_path,
+                                  width, height, frames, ctx, dependency_record)
     if not _HAS_NUMPY:
         raise GfxRenderError("numpy unavailable")
     tabs_n = tabs or int(os.environ.get("VTX_GFX_TABS", "4"))
@@ -1106,3 +1130,57 @@ if __name__ == "__main__":
     stats = render_page(html, outdir, n, tabs=tabs)
     print(json.dumps({k: v for k, v in stats.items()}, ensure_ascii=False, indent=1))
     print(f"wall: {(time.monotonic() - t0) * 1000:.0f}ms")
+
+
+def render_strict_page(html_path, outdir, n_frames, chrome_path, width, height,
+                       frames, ctx, record):
+    """Conservative static-only route, no retry, JS export or CLI downgrade.
+
+    Every invocation uses a fresh enforced target. No partial-frame reuse or
+    inherited completion certificate is accepted by this route.
+    """
+    from .gfx_dependencies import RequestPolicy, DependencyError
+    if record.get('policy') != 'strict' or record.get('closure') != 'static-subset-v1':
+        raise DependencyError('strict static contract required')
+    browser = Browser(chrome_path, 1, width, height, ctx=ctx)
+    pool = []
+    started = time.monotonic()
+    requested = list(range(n_frames) if frames is None else frames)
+    try:
+        browser.start()
+        pool = browser.open_tabs()
+        tab = pool[0]
+        tab.request_policy = RequestPolicy(record)
+        tab.call('Emulation.setScriptExecutionDisabled', value=True)
+        tab.call('Network.enable')
+        tab.call('Network.setCacheDisabled', cacheDisabled=True)
+        tab.call('Fetch.enable', patterns=[{'urlPattern': '*', 'requestStage': 'Request'}])
+        tab.call('Emulation.setDefaultBackgroundColorOverride',
+                 color={'r': 0, 'g': 0, 'b': 0, 'a': 0})
+        for frame in requested:
+            tab.request_policy.observed.clear()
+            tab.navigate(record['html_uri'] + '?f=' + str(frame))
+            ready = tab.call('Runtime.evaluate', expression='document.fonts.ready.then(()=>true)',
+                             awaitPromise=True, returnByValue=True)
+            if ready.get('exceptionDetails') or ready.get('result', {}).get('value') is not True:
+                raise DependencyError('font readiness unproven')
+            # Coverage must be observed, not inferred from Fetch.enable success.
+            tab.request_policy.check(require_complete=True)
+            png = tab.shot()
+            tab.call('Runtime.evaluate', expression='true', returnByValue=True)
+            tab.request_policy.check(require_complete=True)
+            _atomic_write_bytes(str(Path(outdir) / f'f{frame:04d}.png'), png)
+        counts = _empty_path_counts()
+        counts['override'] = len(requested)
+        elapsed = (time.monotonic() - started) * 1000
+        return {'n': n_frames, 'rendered': len(requested), 'failed': [],
+                'transparent': True, 'tabs': 1, 'ms_total': elapsed,
+                'ms_per_frame': elapsed / max(1, len(requested)),
+                'canvas_export': False, 'path_counts': counts, 'static_spans': 0,
+                'timings_ms': {c: _timings_summary([]) for c in _TIME_CATS},
+                'dependency_enforcement': 'fetch-pinned-local-v1',
+                'dependency_observed': sorted(tab.request_policy.observed)}
+    finally:
+        for tab in pool:
+            tab.close()
+        browser.stop()
