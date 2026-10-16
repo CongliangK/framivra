@@ -520,14 +520,18 @@ def qc(c):
     ok(f"{stacked[0] if stacked else 0} 轨并发窗口有能量", v1 > -50,
        f"mean {v1:.1f} dB"
        + (f" @frame {stacked[1]}" if stacked else "（无任何音频事件）"))
+    from .quality import qc_quality
     rep["skipped_probes"] = skipped_probes
+    rep["quality"] = qc_quality(rep)
     fstxn.atomic_write(c.out / "qc_report.json", json.dumps(rep, ensure_ascii=False, indent=2))
     failed = [x for x in rep["checks"] if not x["pass"]]
+    print("质量标签：" + rep["quality"]["display"] + "（visual_content=unknown）")
     print(f"QC：{len(rep['checks']) - len(failed)}/{len(rep['checks'])} 通过")
     if skipped_probes:
         print(f"⚠ 免检 {len(skipped_probes)} 项（内容键命中段，stat 绑定一致）："
               "段内像素级篡改若同时保持段文件 stat 不变则本模式不查——--strict 恢复全检")
-    c.receipt("qc", not failed, f"{len(rep['checks'])-len(failed)}/{len(rep['checks'])}")
+    c.receipt("qc", not failed, f"{len(rep['checks'])-len(failed)}/{len(rep['checks'])}",
+              extra={"skipped_probes": skipped_probes})
     # 免检记录每轮刷新（方案三阶段1）：segs/final 重绑当前 stat，checks 按名记忆
     # pass——✗ 项下轮必复测；记录在 exit 判定前写（失败轮同样刷新，失败项记忆
     # 为 False 即「不可免检」，安全性不受影响）。

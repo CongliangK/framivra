@@ -254,6 +254,8 @@ class Ctx:
             rec["stages"][stage] = {"ok": bool(ok), "detail": detail}
             if extra:
                 rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
+            from .quality import receipt_quality
+            rec["quality"] = receipt_quality(rec)
             return rec
 
         # B06：读-改-写整段走 fstxn 事务（原方案二阶段2 的实例锁已下沉——见
@@ -292,6 +294,8 @@ class Ctx:
                                    '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
             for name in DOWNSTREAM.get(stage, []) + [stage]:
                 rec['stages'].pop(name, None)
+            from .quality import receipt_quality
+            rec["quality"] = receipt_quality(rec)
             return rec
 
         # 与 receipt() 同一 fstxn 事务（原同持 _receipt_lock——锁下沉见 __init__ 注）：

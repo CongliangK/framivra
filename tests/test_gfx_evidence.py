@@ -78,6 +78,8 @@ class Evidence(unittest.TestCase):
     def reject(self):
         r = self.check()
         self.assertFalse(r['ok'], r)
+        self.assertNotEqual(r['quality']['display'], 'Verified Exact')
+        self.assertFalse(r['quality']['reproducible'])
         return r
 
     def test_full_independent_run_passes(self):
@@ -86,6 +88,11 @@ class Evidence(unittest.TestCase):
         self.assertEqual(r['compared_frames'], 4)
         self.assertEqual(r['hashed_frames'], 8)
         self.assertTrue(r['same_version_causal'])
+        self.assertEqual(r['quality']['display'], 'Verified Exact')
+        self.assertTrue(r['quality']['reproducible'])
+        self.assertEqual(r['quality']['purpose'], 'unknown')
+        self.assertGreaterEqual(r['quality_cost']['wall_seconds'], 0)
+        self.assertIsNone(r['quality_cost']['render_seconds'])
 
     def test_one_difference_counts_all_four(self):
         p = self.root / 'candidate/f0001.png'
@@ -208,7 +215,10 @@ class Evidence(unittest.TestCase):
         self.backend_change()
         self.plan['variable_axes'] = ['effective_backend']
         self.bind()
-        self.assertTrue(self.check()['ok'])
+        result = self.check()
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['quality']['display'], 'Verified Exact')
+        self.assertFalse(result['quality']['reproducible'])
         self.assertTrue(ge.env_manifest.verify_manifest_compatibility(
             self.runs['baseline']['env_manifest'], self.runs['candidate']['env_manifest']))
 

@@ -626,7 +626,9 @@ class AnalyzeCli(unittest.TestCase):
         rd, cd = self._dirs({0: (t2_ref, t2_ref.copy()),
                              1: (t2_ref, t2_cand)})
         with contextlib.redirect_stdout(io.StringIO()):
-            rc = gg.main(["analyze", "--ref", str(rd), "--cand", str(cd)])
+            report = self.root / "quality-report.json"
+            rc = gg.main(["analyze", "--ref", str(rd), "--cand", str(cd), "--report", str(report)])
+        self.assertEqual(json.loads(report.read_text())["quality"]["display"], "unknown")
         self.assertEqual(rc, 0)                       # Tier-1/Tier-2 均为通过
 
     def test_file_mode_tier2_pass_with_heatmap(self):

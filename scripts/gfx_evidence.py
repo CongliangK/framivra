@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -198,6 +199,7 @@ def _manifest(run, expected, viewport):
 
 def verify(c, clips, golden, plan, candidate):
     """Return a fail-closed, serializable report, including successfully compared counts."""
+    started = time.perf_counter()
     report = {"schema": "vtx.gfx_evidence_report/1", "ok": False,
               "same_version_causal": False, "hashed_frames": 0, "compared_frames": 0,
               "different_frames": [], "missing_frames": [], "unknown_provenance": [],
@@ -348,4 +350,9 @@ def verify(c, clips, golden, plan, candidate):
         report["same_version_causal"] = False
     for key in ("different_frames", "missing_frames", "unknown_provenance", "uncovered_instances"):
         report[key + "_count"] = len(report[key])
+    from vtx.quality import golden_quality
+    report["quality"] = golden_quality(report, fixed_environment=bool(report["ok"] and not changed))
+    report["quality_cost"] = {"scope": "strict_golden_verification",
+                              "wall_seconds": time.perf_counter() - started,
+                              "render_seconds": None}
     return report
