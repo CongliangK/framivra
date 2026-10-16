@@ -16,18 +16,105 @@
 """
 import hashlib
 import json
-from pathlib import Path
+import os
+import stat
+import operator
+from pathlib import Path, PosixPath, WindowsPath
+
+from .diagnostics import emit, indexed, mark_handled, operation, required_field
 
 SAMPLE_BYTES = 65536   # 源媒体首/尾采样字节数（stat 身份的内容成分）
 
 
+_NATIVE_VALUES = (type(None), bool, int, float, str, bytes, list, dict, tuple)
+_NO_DEFAULT = object()
+
+
+def _operand(value, path):
+    evidence = {'json_path': path, 'type': type(value).__name__}
+    if type(value) in (type(None), bool, int, float, str):
+        evidence['value'] = value
+    return evidence
+
+
+def _native_operation(c, value, function, path, name, *, source=None, status='fail'):
+    # Only native operations on native values belong to this producer. A custom
+    # mapping, __str__, __fspath__, or encode callback must keep its own error.
+    if type(value) not in _NATIVE_VALUES:
+        return function()
+    return operation(c, function, path=path, rule='load.operation',
+                     operands={'operation': name, 'values': [_operand(value, path)]},
+                     source=source, status=status)
+
+
+def _get(c, obj, key, parent, default=_NO_DEFAULT):
+    call = (lambda: obj.get(key)) if default is _NO_DEFAULT else (lambda: obj.get(key, default))
+    return _native_operation(c, obj, call, parent,
+                             'mapping_get:' + key)
+
+
+def _field(c, obj, key, parent):
+    if type(obj) not in _NATIVE_VALUES:
+        return obj[key]
+    return required_field(c, obj, key, parent)
+
+
+def _indexed(c, value, path):
+    if type(value) not in _NATIVE_VALUES:
+        return enumerate(iter(value))
+    return indexed(c, value, path)
+
+
+class _SourceEntries:
+    """Carry indices without skipping sorted()'s original length-hint read."""
+    def __init__(self, c, sources):
+        self.c, self.sources = c, sources
+
+    def __iter__(self):
+        return _indexed(self.c, self.sources, '$.sources')
+
+    def __length_hint__(self):
+        # Custom __len__/__length_hint__ callbacks stay outside annotation.
+        return operator.length_hint(self.sources, 8)
+
+
+def _path(c, value, path):
+    root = c.root
+    if type(root) not in (Path, PosixPath, WindowsPath):
+        return root / value
+    return _native_operation(c, value, lambda: root / value, path, 'path_join')
+
+
+def _text(c, value, path):
+    # Container repr can call methods on its contents; do not wrap that callback.
+    if type(value) in (list, dict, tuple):
+        return str(value)
+    return _native_operation(c, value, lambda: str(value), path, 'str')
+
+
+def _encode(c, value, path, *, source=None, status='fail'):
+    return _native_operation(c, value, lambda: value.encode(), path, 'encode',
+                             source=source, status=status)
+
+
 def file_digest(path) -> str:
     """小文件全量 sha256（html/依赖等 KB 级资产）。"""
-    digest = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
+    p = Path(path)
+    if not stat.S_ISREG(p.stat().st_mode):
+        raise ValueError(f'content hash input is not a regular file: {p}')
+    # A precheck gives a clear error; nonblocking open plus fstat also prevents
+    # a regular-file-to-FIFO replacement from hanging between check and open.
+    fd = os.open(p, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) |
+                 getattr(os, 'O_BINARY', 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f'content hash input is not a regular file: {p}')
+        digest = hashlib.sha256()
+        for block in iter(lambda: os.read(fd, 1024 * 1024), b''):
             digest.update(block)
-    return digest.hexdigest()
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
 
 
 def media_stat_digest(path) -> str:
@@ -51,20 +138,96 @@ def media_stat_digest(path) -> str:
     return f"{st.st_size}:{st.st_mtime_ns}:{h.hexdigest()[:16]}"
 
 
-def declared_dependencies(c):
-    """project.cache_dependencies 声明表（list[str]，相对项目根）。"""
-    deps = c.tl.get("project", {}).get("cache_dependencies", [])
-    if not isinstance(deps, list) or not all(isinstance(p, str) for p in deps):
-        raise ValueError('project.cache_dependencies must be a list of file paths')
+def _dependency_list(owner, label, *, c=None, origin='$'):
+    deps = _get(c, owner, "cache_dependencies", origin, [])
+    invalid_index = None
+    def valid(index, value):
+        nonlocal invalid_index
+        invalid_index = index
+        return isinstance(value, str) and value.strip() and "\0" not in value
+    if not isinstance(deps, list) or not all(valid(i, p) for i, p in enumerate(deps)):
+        error = ValueError(f'{label}.cache_dependencies must be a list of nonempty file paths')
+        location = origin + '.cache_dependencies' if origin != '$' else '$'
+        if invalid_index is not None and origin != '$':
+            location += f'[{invalid_index}]'
+        emit(c, str(error), json_path=location, rule_id='load.cache_dependencies',
+             measured={'type': type(deps).__name__},
+             threshold={'type': 'list[nonempty file path without NUL]'})
+        mark_handled(error)
+        raise error
     return deps
 
 
+def declared_dependencies(c, clip=None):
+    """Project declarations or canonical project/clip union; no inferred closure."""
+    deps = _dependency_list(_get(c, c.tl, "project", '$', {}), 'project',
+                            c=c, origin='$.project')
+    if clip is None or not _native_operation(c, clip, lambda: "cache_dependencies" in clip,
+                                            '$', 'clip_dependency_membership'):
+        return deps
+    # Public callers provide a clip object, not its timeline location. Do not
+    # scan/re-read the timeline just to invent an index for this entry point.
+    local = _dependency_list(clip, 'clip', c=c)
+    if not local:
+        return deps
+    return sorted({str((c.root / item).resolve()) for item in deps + local})
+
+
+class _DependencyValues:
+    """Observe the existing list/extend iteration, preserving its length hint."""
+    def __init__(self, values, origin, origins):
+        self.values, self.origin, self.origins = values, origin, origins
+
+    def __iter__(self):
+        iterator = iter(self.values)
+        def observed():
+            for index, value in enumerate(iterator):
+                # Custom str subclasses may have effectful hashing. They remain
+                # opaque; diagnostic bookkeeping must not invoke their callbacks.
+                if self.origins is not None and type(value) is str:
+                    self.origins.setdefault(value, f'{self.origin}[{index}]')
+                yield value
+        return observed()
+
+    def __length_hint__(self):
+        return operator.length_hint(self.values, 8)
+
+
+def all_declared_dependencies(c, *, _origins=None):
+    """Every declaration, preserving native order and first duplicate origin."""
+    deps = list(_DependencyValues(declared_dependencies(c),
+                                 '$.project.cache_dependencies', _origins))
+    for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
+        track_origin = f'$.video_tracks[{ti}]'
+        for ci, clip in _indexed(c, _get(c, track, 'clips', track_origin, []), track_origin + '.clips'):
+            origin = f'{track_origin}.clips[{ci}]'
+            if _native_operation(c, clip, lambda: 'cache_dependencies' in clip,
+                                 origin, 'clip_dependency_membership'):
+                if _get(c, track, 'kind', track_origin) != 'gfx':
+                    error = ValueError('clip.cache_dependencies is only valid on gfx tracks')
+                    emit(c, str(error), json_path=origin + '.cache_dependencies',
+                         rule_id='load.cache_dependencies', measured={'declaration_present': True},
+                         threshold={'track_kind': 'gfx'})
+                    mark_handled(error)
+                    raise error
+                deps.extend(_DependencyValues(_dependency_list(clip, 'clip', c=c, origin=origin),
+                                              origin + '.cache_dependencies', _origins))
+    return list(dict.fromkeys(deps))
+
+
 def validate_cache_dependencies(c):
-    """PR#1：声明的本地依赖必须存在且是文件——Ctx 构造即快速失败。"""
-    for item in declared_dependencies(c):
-        path = c.root / item
+    """Declared local dependencies must exist and be regular files."""
+    origins = {}
+    for item in all_declared_dependencies(c, _origins=origins):
+        origin = origins.get(item, '$') if type(item) is str else '$'
+        path = _path(c, item, origin)
         if not path.is_file():
-            raise ValueError(f'cache dependency is not a file: {item}')
+            error = ValueError(f'cache dependency is not a file: {item}')
+            emit(c, str(error), json_path=origin, rule_id='load.cache_dependency',
+                 measured={'path': item, 'is_file': False}, threshold={'is_file': True},
+                 source={'resource': str(path)})
+            mark_handled(error)
+            raise error
 
 
 class InputIdentityError(RuntimeError):
@@ -79,10 +242,17 @@ def verify_input_identity(c):
         raise InputIdentityError(
             f"issue #32：输入在渲染期间变化或无法复核（{e}）；"
             "本次产物不标成功，请恢复输入或重新运行 vtx all") from e
-    if current != c.input_fingerprint:
-        raise InputIdentityError(
+    expected = c.input_fingerprint
+    if current != expected:
+        error = InputIdentityError(
             "issue #32：输入在渲染期间被修改；本次产物不标成功，"
             "请恢复输入或重新运行 vtx all")
+        emit(c, str(error), rule_id='runtime.input_identity',
+             measured={'input_fingerprint': current},
+             threshold={'input_fingerprint': expected},
+             suggested_actions=[{'op': 'restore_or_restart_inputs', 'params': {}}])
+        mark_handled(error)
+        raise error
 
 
 def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
@@ -99,25 +269,55 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     """
     h = hashlib.sha256()
     h.update(c.tl_path.read_bytes() if timeline_bytes is None else timeline_bytes)
-    for s in sorted(c.tl.get("sources", []), key=lambda s: str(s.get("path", ""))):
-        p = c.root / s["path"]
-        h.update((str(s.get("path", "")) + ":" +
-                  (media_stat_digest(p) if p.is_file() else "MISSING") + "\n").encode())
-    for tr in c.tl.get("video_tracks", []):
-        if tr.get("kind") != "gfx":
+    def source_key(entry):
+        index, source = entry
+        origin = f'$.sources[{index}]'
+        return _text(c, _get(c, source, 'path', origin, ''), origin + '.path')
+
+    # Keep one sort/key evaluation and carry original indices through its order.
+    # Keys are str(), so native key comparisons cannot fail on mixed JSON types.
+    sources = _get(c, c.tl, 'sources', '$', [])
+    for index, s in sorted(_SourceEntries(c, sources), key=source_key):
+        origin = f'$.sources[{index}]'
+        p = _path(c, _field(c, s, 'path', origin), origin + '.path')
+        prefix = _text(c, _get(c, s, 'path', origin, ''), origin + '.path') + ':'
+        digest = media_stat_digest(p) if p.is_file() else 'MISSING'
+        h.update(_encode(c, prefix + digest + '\n', origin + '.path'))
+    tracks = _get(c, c.tl, 'video_tracks', '$', [])
+    for ti, tr in _indexed(c, tracks, '$.video_tracks'):
+        track_origin = f'$.video_tracks[{ti}]'
+        if _get(c, tr, 'kind', track_origin) != "gfx":
             continue
-        for cl in tr.get("clips", []):
-            p = c.root / cl["src"]
-            h.update((str(cl["src"]) + ":" +
-                      (file_digest(p) if p.is_file() else "MISSING") + "\n").encode())
-    for item in declared_dependencies(c):
-        h.update((item + ":" + file_digest(c.root / item) + "\n").encode())
+        clips = _get(c, tr, 'clips', track_origin, [])
+        for ci, cl in _indexed(c, clips, track_origin + '.clips'):
+            origin = f'{track_origin}.clips[{ci}]'
+            p = _path(c, _field(c, cl, 'src', origin), origin + '.src')
+            prefix = _text(c, _field(c, cl, 'src', origin), origin + '.src') + ':'
+            digest = file_digest(p) if p.is_file() else 'MISSING'
+            h.update(_encode(c, prefix + digest + '\n', origin + '.src'))
+    for index, item in enumerate(declared_dependencies(c)):
+        origin = f'$.project.cache_dependencies[{index}]'
+        prefix = item + ':'
+        digest = file_digest(_path(c, item, origin))
+        h.update(_encode(c, prefix + digest + '\n', origin))
+    for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
+        track_origin = f'$.video_tracks[{ti}]'
+        for ci, clip in _indexed(c, _get(c, track, 'clips', track_origin, []), track_origin + '.clips'):
+            origin = f'{track_origin}.clips[{ci}]'
+            if not _native_operation(c, clip, lambda: 'cache_dependencies' in clip,
+                                     origin, 'clip_dependency_membership'):
+                continue
+            for index, item in enumerate(_dependency_list(clip, 'clip', c=c, origin=origin)):
+                location = f'{origin}.cache_dependencies[{index}]'
+                prefix = f"clip_dependency:{ti}:{ci}:" + item + ":"
+                digest = file_digest(_path(c, item, location))
+                h.update(_encode(c, prefix + digest + "\n", location))
     # v2 §1.1 条目 6：subtitles_src 文件内容并入（缺失记 MISSING——validate 侧 FAIL）
-    src = c.tl.get("subtitles_src")
+    src = _get(c, c.tl, 'subtitles_src', '$')
     if isinstance(src, str) and src:
-        p = c.root / src
-        h.update(("subtitles_src:" + (file_digest(p) if p.is_file() else "MISSING")
-                  + "\n").encode())
+        p = _path(c, src, '$.subtitles_src')
+        digest = file_digest(p) if p.is_file() else 'MISSING'
+        h.update(_encode(c, 'subtitles_src:' + digest + '\n', '$.subtitles_src'))
     # v2 §2.1 不变量 ②：生效插件清单摘要段（迟导入便于测试替身；pluginlib 零 vtx
     # 依赖无环）。空生效清单时省略段——无插件时间线指纹与 v1 逐字节一致（v1 回执
     # 继续有效，影子基线温态复验依赖）；插件装/卸/升级/改参时段出现或内容变，
@@ -125,7 +325,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     from .pluginlib.hooks import active_plugins_digest
     _pdigest = active_plugins_digest(c)
     if _pdigest:
-        h.update(_pdigest.encode())
+        h.update(_encode(c, _pdigest, '$', status='unknown', source={
+            'domain': 'provider', 'provider': 'active_plugins_digest',
+            'field': 'return_value'}))
     return h.hexdigest()
 
 

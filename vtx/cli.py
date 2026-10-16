@@ -786,6 +786,8 @@ def _main(execution=None):
     ap.add_argument("--report-only", action="store_true",
                     help="audio 专属：纯报告模式——不重混音，只读已有 out/audio.wav 出报告"
                          "（缺失报错）；与 --report 互斥")
+    ap.add_argument("--capture-impact", action="store_true",
+                    help="diff only: capture one timeline's CPU/formal input identities")
     ap.add_argument("--json", metavar="PATH",
                     help="diff 时间线模式专属：机器可读 diff/影响面/推荐路径 JSON 写入 PATH"
                          "（缺省只打印人读摘要；报告对比模式不支持）；"
@@ -866,10 +868,18 @@ def _main(execution=None):
         if not valid:
             print("invalid predecessor execution UUID"); sys.exit(2)
         execution.resumed_from_run_id = a.resumed_from_run_id
+    if a.capture_impact and a.command != "diff":
+        print("--capture-impact only applies to diff"); sys.exit(2)
     if a.command == "diff":
         # 报告对比（信息性，与 gc/df/snapshot 同类）：不依赖 timeline，故在 timeline
         # 检查前分发；两个位置参数复用 subs_extra 槽（argparse `*` 在 command 后的
         # 既有约定，见上注）。纯读命令：不写任何产物、不做 receipt；--dry-run 尊重。
+        if a.capture_impact:
+            if len(a.subs_extra) != 1:
+                print("Usage: diff --capture-impact <timeline.json> [--json NEW_PATH]")
+                sys.exit(2)
+            from .timeline_diff import run_impact_capture
+            sys.exit(run_impact_capture(a.subs_extra[0], a.json, a.dry_run))
         if len(a.subs_extra) != 2:
             print("✗ 用法：diff <旧报告.json> <新报告.json>"
                   "（timeline 语义 diff 同形：diff <旧timeline> <新timeline> [--json PATH]）"); sys.exit(2)
@@ -885,6 +895,10 @@ def _main(execution=None):
         except (OSError, ValueError) as e:
             print(f"✗ 输入读取/解析失败（timeline 语义 diff 与报告对比都要求两份合法 JSON）：{e}")
             sys.exit(2)
+        if (isinstance(da, dict) and
+                str(da.get("schema", "")).startswith("framivra-impact-snapshot-")):
+            from .timeline_diff import run_snapshot_diff
+            sys.exit(run_snapshot_diff(da, jb, a.json, a.dry_run))
         tl_a, tl_b = is_timeline(da), is_timeline(db)
         if tl_a and tl_b:
             if a.json and a.dry_run:

@@ -22,6 +22,8 @@ timeline 根级可选键 `subtitles_src`（字符串，相对 timeline.json 的�
   - `.json`：v1 subtitles[] 同构列表（帧值直用），也接受 {"subtitles": [...]}
     包裹形。
 """
+from .diagnostics import DiagnosticMessage, DiagnosticValueError
+
 import json
 import re
 from pathlib import Path
@@ -60,7 +62,7 @@ def parse_srt(text: str, fps: int) -> list:
             if line.strip():
                 # 块外孤儿行：序号行（纯数字）忽略；其他非空行属结构损坏
                 if not line.strip().isdigit():
-                    raise ValueError(f"SRT 第 {i + 1} 行非空且非时间戳/序号行: {line.strip()[:40]!r}")
+                    raise DiagnosticValueError(f"SRT 第 {i + 1} 行非空且非时间戳/序号行: {line.strip()[:40]!r}", line=i+1)
             i += 1
             continue
         start = _ts_to_seconds(m.group(1), m.group(2), m.group(3), m.group(4))
@@ -71,7 +73,7 @@ def parse_srt(text: str, fps: int) -> list:
             text_lines.append(lines[i].strip())
             i += 1
         if not text_lines:
-            raise ValueError(f"SRT 时间戳行（第 {i} 行附近）后无字幕文本")
+            raise DiagnosticValueError(f"SRT 时间戳行（第 {i} 行附近）后无字幕文本", line=i)
         subs.append({"in": _sec_to_frame(start, fps),
                      "out": _sec_to_frame(end, fps),
                      "text": "\\N".join(text_lines)})
@@ -84,6 +86,7 @@ def parse_subs_json(data, fps: int) -> list:
     接受裸列表或 {"subtitles": [...]} 包裹形。结构校验：每条须为含 int in/out 与
     str text 的 dict，损坏抛 ValueError（validate FAIL）。
     """
+    prefix = "$.subtitles" if isinstance(data, dict) and "subtitles" in data else "$"
     if isinstance(data, dict) and "subtitles" in data:
         data = data["subtitles"]
     if not isinstance(data, list):
@@ -91,12 +94,12 @@ def parse_subs_json(data, fps: int) -> list:
     out = []
     for idx, s in enumerate(data):
         if not isinstance(s, dict):
-            raise ValueError(f"subtitles_src JSON 第 {idx} 条不是对象")
+            raise DiagnosticValueError(f"subtitles_src JSON 第 {idx} 条不是对象", index=idx, json_path=f"{prefix}[{idx}]")
         for k in ("in", "out"):
             if not isinstance(s.get(k), int) or isinstance(s.get(k), bool):
-                raise ValueError(f"subtitles_src JSON 第 {idx} 条缺少整数帧值 {k!r}")
+                raise DiagnosticValueError(f"subtitles_src JSON 第 {idx} 条缺少整数帧值 {k!r}", index=idx, json_path=f"{prefix}[{idx}].{k}")
         if not isinstance(s.get("text"), str):
-            raise ValueError(f"subtitles_src JSON 第 {idx} 条缺少字符串 text")
+            raise DiagnosticValueError(f"subtitles_src JSON 第 {idx} 条缺少字符串 text", index=idx, json_path=f"{prefix}[{idx}].text")
         out.append({"in": s["in"], "out": s["out"], "text": s["text"]})
     return out
 
@@ -113,22 +116,23 @@ def resolve_subtitles_src(c) -> None:
       - 解析成功 → tl["subtitles"] = 解析结果（后续各阶段拿到的是帧值列表）。
     """
     c.subtitles_errors = []
+    c.subtitles_origin = None
     src = c.tl.get("subtitles_src")
     if src is None or src == "":
         return   # 未声明（缺省）或空串（等价未声明）
     if not isinstance(src, str):
-        c.subtitles_errors.append(f"subtitles_src 必须为字符串（相对 timeline.json 的路径），"
-                                  f"实为 {type(src).__name__}")
+        c.subtitles_errors.append(DiagnosticMessage(f"subtitles_src 必须为字符串（相对 timeline.json 的路径），"
+                                  f"实为 {type(src).__name__}", json_path="$.subtitles_src", rule_id='subtitle.source_type', measured={'type': type(src).__name__}, threshold={'type': 'string'}))
         return
     if c.tl.get("subtitles"):
         c.subtitles_errors.append(
-            "subtitles_src 与根级 subtitles[] 互斥——两者都非空（subtitles_src 声明了"
+            DiagnosticMessage("subtitles_src 与根级 subtitles[] 互斥——两者都非空（subtitles_src 声明了"
             "外部字幕文件，subtitles[] 又内联了字幕）；请只保留其一（外部来源用 "
-            "subtitles_src，手工微调后的内联字幕直接写 subtitles[]）")
+            "subtitles_src，手工微调后的内联字幕直接写 subtitles[]）", json_path="$.subtitles_src", rule_id='subtitle.source_exclusive', measured={'inline': True, 'external': True}, threshold={'max_sources': 1}))
         return
     path = Path(c.root) / src
     if not path.is_file():
-        c.subtitles_errors.append(f"subtitles_src 文件不存在: {src}")
+        c.subtitles_errors.append(DiagnosticMessage(f"subtitles_src 文件不存在: {src}", json_path="$.subtitles_src", rule_id='subtitle.source_exists', measured={'path': src, 'exists': False}, threshold={'exists': True}))
         c.tl["subtitles"] = []
         return
     try:
@@ -138,12 +142,14 @@ def resolve_subtitles_src(c) -> None:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except ValueError as e:
-                raise ValueError(f"JSON 解析失败: {e}") from None
+                raise DiagnosticValueError(f"JSON 解析失败: {e}", line=getattr(e, "lineno", None), column=getattr(e, "colno", None)) from None
             parsed = parse_subs_json(data, c.fps)
         else:
             raise ValueError(f"不支持的字幕格式 {path.suffix!r}（支持 .srt / .json）")
     except (OSError, ValueError) as e:
-        c.subtitles_errors.append(f"subtitles_src 解析失败（{src}）: {e}")
+        c.subtitles_errors.append(DiagnosticMessage(f"subtitles_src 解析失败（{src}）: {e}", json_path="$.subtitles_src", rule_id='subtitle.source_parse', measured={'path': src, 'format': path.suffix.lower()}, threshold={'formats': ['.srt', '.json']}, source=dict({'file': src}, **getattr(e, 'metadata', {}))))
         c.tl["subtitles"] = []
         return
     c.tl["subtitles"] = parsed
+    c.subtitles_origin = {'file': src, 'format': path.suffix.lower(),
+                          'json_path': '$.subtitles' if path.suffix.lower() == '.json' and isinstance(data, dict) else '$'}

@@ -93,7 +93,9 @@ def collect_inputs(timeline):
         if track.get('kind') == 'gfx':
             for clip in track.get('clips', []):
                 names.setdefault(relative(clip['src']), 'gfx')
-    for name in tl.get('project', {}).get('cache_dependencies', []):
+    from types import SimpleNamespace
+    from .cache_state import all_declared_dependencies
+    for name in all_declared_dependencies(SimpleNamespace(tl=tl)):
         names.setdefault(relative(name), 'declared_dependency')
     if tl.get('subtitles_src'):
         names.setdefault(relative(tl['subtitles_src']), 'subtitles_src')

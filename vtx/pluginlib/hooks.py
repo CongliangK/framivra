@@ -39,6 +39,8 @@ P2b 起 plugins/ 有实体包（denoise / duck-static）。「生效」按 timel
 插件段（v1 逐字节兼容）、总线空转，内核零行为变化（三不变量接线见
 pluginlib/__init__.py 接线表）。
 """
+from ..diagnostics import indexed
+
 import hashlib
 import importlib
 import json
@@ -112,7 +114,7 @@ def _plugin_version(name: str, repo_root=None) -> str:
     return "?"
 
 
-def _scope_items(tl, path):
+def _scope_items(tl, path, c=None):
     """键声明 path → timeline 中的检索容器（_scan_plugin_keys 四 scope 同构）。
     P6 修复 A-P1-2：v1 只认 sources[]/audio_tracks[] 两 path，声明在 root/project/
     events[] 的键「validate 放行但插件永不生效」+ 参数摘要盲区——现与内核扫描
@@ -128,8 +130,8 @@ def _scope_items(tl, path):
     if path == "audio_tracks[]":
         return tl.get("audio_tracks", [])
     if path == "audio_tracks[].events[]":
-        return [e for tr in tl.get("audio_tracks", []) if isinstance(tr, dict)
-                for e in (tr.get("events") or [])]
+        return [e for ti, tr in indexed(c, tl.get("audio_tracks", []), '$.audio_tracks') if isinstance(tr, dict)
+                for _, e in indexed(c, (tr.get("events") or []), f'$.audio_tracks[{ti}].events')]
     return []
 
 
@@ -150,7 +152,8 @@ def _timeline_declares(c, name: str, repo_root=None) -> bool:
         if info.get("plugin") != name:
             continue
         has_keys = True
-        for it in _scope_items(tl, info.get("path")):
+        for _, it in indexed(c, _scope_items(tl, info.get("path"), c),
+                             '$.' + (info.get("path") or '').removesuffix('[]')):
             if isinstance(it, dict) and key in it:
                 return True
     return not has_keys
@@ -290,7 +293,9 @@ def run_validate(c) -> list:
         if callable(fn):
             got = fn(c)
             if isinstance(got, (list, tuple)):
-                errs.extend(str(x) for x in got)
+                # Structured string subclasses retain source evidence; third-party
+                # opaque values remain strings and receive an honest unknown rule.
+                errs.extend(x if isinstance(x, str) else str(x) for x in got)
     return errs
 
 

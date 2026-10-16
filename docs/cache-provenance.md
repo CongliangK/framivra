@@ -59,8 +59,11 @@
 }
 ```
 
-不存在或非文件依赖会报错（Ctx 构造即快速失败）。声明属项目级——任一依赖变化会使
-全部 gfx 页重渲（保守过失效，可接受）。未声明的间接依赖、网络资源、运行时下载和
+不存在或非文件依赖会报错（Ctx 构造即快速失败）。项目级依赖变化会使全部 gfx 页重渲。
+gfx clip 可选 `cache_dependencies: ["gfx/page.css"]`，与项目声明取并集，只影响声明它的
+页面。两级路径均相对 timeline 根目录；非空片段声明按解析后的路径去重排序，全量
+内容哈希捕获恢复 mtime 的中间字节修改；空/未声明片段依赖保留旧项目级键。
+该字段仅适用于 gfx，非 gfx 声明会拒绝。未声明的间接依赖、网络资源、运行时下载和
 浏览器/FFmpeg/vtx 代码升级不在此覆盖范围；建议使用内嵌或明确声明的静态本地素材。
 升级渲染器/运行依赖后请 `vtx clean` 或 `vtx gc` 后重新运行。输入在一次命令期间应
 保持不变，同一项目不要同时运行多个写入命令。
@@ -156,3 +159,42 @@ Production 须两个质量门全 passed。显式 preview 优先决定用途；�
 成本归因：严格 Golden 报告 quality_cost 单列 strict_golden_verification 的 wall_seconds；
 它只计本次校验，不是渲染成本或后端性能，render_seconds 缺证据为 null。
 用途/等级不能作为性能提升证据；#63 的渲染成本归因仍须实际运行测量。
+
+## 修改影响快照（#52，CPU 分析面）
+
+两份旧/新 timeline 都会读取当前素材，不能还原原位修改前的字节。新增
+`diff --capture-impact` 保存修改前输入身份；随后以快照与当前 timeline 对比。
+捕获为 CPU/x264、formal、当前 `VTX_VIDEO_SEGMENTS` 合同，不探测 GPU。
+必须显式设置 `VTX_SEG_NVENC=0`；snapshot 的 execution 字段记录实际分析参数。
+以下只输出 JSON 到标准输出，零项目写入：
+
+```bash
+env VTX_SEG_NVENC=0 python3 vtx/vtx.py diff --capture-impact timeline.json --dry-run
+```
+
+显式指定 `--json NEW_PATH` 才写分析文件，拒绝覆盖已有文件或链接；与 dry 冲突。
+第二次使用既有 diff 两参数形式，将 before 快照放在第一位、当前 timeline 放在
+第二位，输出 affected_nodes（节点、旧新键、原因）、new_artifacts、
+retired_artifacts、conservative_nodes 和 uncertainties。建议重跑阶段只是分析结果，
+不改变 all 的编排。未变音频不建议重混，不表示 all 会自动跳过 audio。
+
+快照比较要求同一项目根。v2 快照补齐 gfx 底轨的 QC 基准段与无字幕 pass，拒绝旧 v1
+快照（需重新捕获），避免把遗漏节点误当新产物。主图与 QC 各自计算切点；草稿
+使用 vseg_draft，正式 gfx 底轨另含 vseg_qc。缓存路径集合依据修改前完整温缓存假设，不检查产物是否
+缺失/损坏，也不把历史其他代缓存算作必然命中。未知依赖明确列出并扩大保守节点集；
+静态声明不证明动态 JavaScript、网络或插件闭包。窗口媒体缺少尺寸探测时列为未知。
+媒体仍使用现有 Fast 采样身份，首尾不变且恢复 mtime 的中间字节修改不受保证（#85）；
+声明依赖使用完整摘要，包含这种中间字节修改。该报告不是 Verified 身份证明。
+
+pass/vseg 键与实际渲染共享纯身份函数和段 ASS 字节生成。抽取 pass 身份函数会改变
+合成代码摘要，因此升级后视频合成段与 pass 中间物一次性冷重建；旧缓存不自动删除。
+不固定旧摘要来伪造兼容。gfx 后端实现、QC 质量等级与此分析合同独立。
+
+
+HTML 验收夹具保留 90 帧/页长 profile；受限 workflow 显式选择 48 帧/页 correctness
+profile，仍为 30 场景、1080p/30fps、生产编码质量及八段。字幕按比例落在第八页
+（48 帧 profile 为 [341,357)），完整解码、warm 字节/mtime、全部 mutation 和 raw delta
+断言保持。原 2700 帧 hosted 运行在主视频完成后、QC 合成阶段触及既有 900 秒上限，
+未通过验收；不能据此判定生产回归或 OOM。48 帧 profile 的通过须由最终版本实际运行
+证明。900 秒命令、3000 秒边界预算及 65 分钟作业上限不延长。事件 JSONL 和有界
+失败路径/大小清单只辅助定位，不替代完整库存、解码或成功回执。

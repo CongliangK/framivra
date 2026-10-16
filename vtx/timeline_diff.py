@@ -609,3 +609,55 @@ def run_timeline_diff(old_path, new_path, json_path=None, dry=False):
         fstxn.atomic_write(jp, json.dumps(res, ensure_ascii=False, indent=1))
         print(f"✓ 机器可读结果已写入 {json_path}")
     return rc
+
+
+def _write_new_impact(path, result):
+    """Explicit analysis outputs never overwrite an existing file or symlink."""
+    with Path(path).open('x', encoding='utf-8') as stream:
+        json.dump(result, stream, ensure_ascii=False, indent=2)
+        stream.write('\n')
+
+
+def run_impact_capture(timeline_path, json_path=None, dry=False):
+    """Capture a CPU/formal before identity without rendering or project writes."""
+    import os
+    from .impact import capture
+    try:
+        if os.environ.get('VTX_SEG_NVENC') != '0' and not os.environ.get('VTX_NO_NVENC'):
+            raise ValueError('impact capture requires explicit CPU contract: VTX_SEG_NVENC=0')
+        if json_path and dry:
+            raise ValueError('--json and --dry-run cannot be combined')
+        path = Path(timeline_path)
+        timeline = json.loads(path.read_text(encoding='utf-8'))
+        if not is_timeline(timeline):
+            raise ValueError('capture input is not a timeline')
+        nseg = int(os.environ.get('VTX_VIDEO_SEGMENTS', '8'))
+        result = capture(timeline, path.parent, nseg=nseg)
+        if json_path:
+            _write_new_impact(json_path, result)
+        else:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f'Impact capture failed: {error}', file=sys.stderr)
+        return 2
+
+
+def run_snapshot_diff(before, timeline_path, json_path=None, dry=False):
+    """Compare a preserved before snapshot with the current project inputs."""
+    from .impact import capture, compare
+    try:
+        if json_path and dry:
+            raise ValueError('--json and --dry-run cannot be combined')
+        path = Path(timeline_path)
+        timeline = json.loads(path.read_text(encoding='utf-8'))
+        if not is_timeline(timeline):
+            raise ValueError('snapshot comparison requires a current timeline')
+        result = compare(before, capture(timeline, path.parent, **before['execution']))
+        if json_path:
+            _write_new_impact(json_path, result)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1 if result['affected_nodes'] or result['audio_mix_changed'] else 0
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f'Impact analysis failed: {error}', file=sys.stderr)
+        return 2

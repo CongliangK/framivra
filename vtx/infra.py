@@ -5,6 +5,7 @@
 """
 import contextlib, hashlib, json, os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import ContextVar
 from pathlib import Path
 
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
@@ -14,8 +15,12 @@ from .cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
                          receipt_fingerprint, validate_cache_dependencies,
                          verify_input_identity)
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
+from .diagnostics import emit, key_path, required_field, mark_handled, producer_exit, operation, indexed
 from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
                        nvenc_retry_run)
+
+
+_probe_json_path = ContextVar("vtx_probe_json_path", default="$")
 
 
 def is_ffmpeg_cmd(cmd) -> bool:
@@ -88,15 +93,32 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
 
 
 class Ctx:
-    def __init__(self, timeline_path: Path, *, execution=None):
+    def __init__(self, timeline_path: Path, *, execution=None, diagnostics=None):
         self.execution = execution if execution is not None else events.ExecutionContext()
+        if diagnostics is not None:
+            self.diagnostics = diagnostics
         self.tl_path = timeline_path
         self.root = timeline_path.parent
-        self.timeline_bytes = timeline_path.read_bytes()
+        try:
+            self.timeline_bytes = timeline_path.read_bytes()
+        except OSError as error:
+            emit(self, str(error), rule_id='load.timeline_file', measured={'path': str(timeline_path)},
+                 threshold={'readable_file': True})
+            mark_handled(error)
+            raise
         self.timeline_sha256 = hashlib.sha256(self.timeline_bytes).hexdigest()
         self.timeline_md5 = hashlib.md5(self.timeline_bytes).hexdigest()
-        self.tl = json.loads(self.timeline_bytes.decode("utf-8"))
-        self.fps = self.tl["project"]["fps"]
+        try:
+            self.tl = json.loads(self.timeline_bytes.decode("utf-8"))
+        except (ValueError, UnicodeError) as error:
+            emit(self, str(error), rule_id='load.timeline_json', measured={'line': getattr(error, 'lineno', None),
+                 'column': getattr(error, 'colno', None)}, threshold={'encoding': 'UTF-8', 'syntax': 'JSON'})
+            mark_handled(error)
+            raise
+        def field(obj, key, parent):
+            return required_field(self, obj, key, parent)
+        project = field(self.tl, 'project', '$')
+        self.fps = field(project, 'fps', '$.project')
         # fps 契约前置校验（B02/issue #26 / F-04 / #4 三面统一，2026-10-13）：
         # 允许值单一来源 constraints.ALLOWED_FPS——D24 换基后全管线固定 30fps
         # （≠29.97；24/25/50/60 及 NTSC 非整数帧率一律拒绝），schema/preview 同源
@@ -105,11 +127,16 @@ class Ctx:
         # 数值等值的 30.0 归一为 int 30（JSON Schema const 数学等值语义，三面同判）。
         _fps_err = fps_error(self.fps)
         if _fps_err:
-            raise ValueError(_fps_err)
+            emit(self, _fps_err, json_path='$.project.fps', rule_id='load.project_fps',
+                 measured={'value': self.fps, 'unit': 'frames/s'}, threshold={'value': 30, 'unit': 'frames/s'},
+                 suggested_actions=[{'op': 'normalize_project_fps', 'params': {'fps': 30}}])
+            error = ValueError(_fps_err)
+            mark_handled(error)
+            raise error
         self.fps = int(self.fps)
-        self.dur = self.tl["project"]["duration_frames"]
-        self.w = self.tl["project"]["width"]
-        self.h = self.tl["project"]["height"]
+        self.dur = field(project, 'duration_frames', '$.project')
+        self.w = field(project, 'width', '$.project')
+        self.h = field(project, 'height', '$.project')
         self.spf = 1.0 / self.fps
         self.spf_samples = AUDIO_SAMPLE_RATE // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
         self.cache = self.root / "cache"; self.out = self.root / "out"
@@ -167,66 +194,109 @@ class Ctx:
                 if r.returncode:
                     observation.finish(r.returncode, RuntimeError())
         except RuntimeError as error:
+            emit(self, str(error), json_path=_probe_json_path.get(),
+                 rule_id='runtime.command', measured={'exception_type': type(error).__name__},
+                 threshold={'exit_code': 0}, status='unknown')
             print(f"CMD FAILED: {error}", file=sys.stderr)
-            sys.exit(1)
+            producer_exit(1)
         if r.returncode != 0 and need:
-            print("CMD FAILED:", " ".join(map(str, cmd))[:300], file=sys.stderr)
-            print(r.stderr[-1500:], file=sys.stderr); sys.exit(1)
+            print("CMD FAILED:", (command_display := " ".join(map(str, cmd))[:300]), file=sys.stderr)
+            print((error_display := r.stderr[-1500:]), file=sys.stderr)
+            emit(self, error_display, json_path=_probe_json_path.get(),
+                 rule_id='runtime.command', measured={'command_display': command_display, 'exit_code': r.returncode},
+                 threshold={'exit_code': 0}, status='unknown')
+            producer_exit(1)
         return r
 
     def probe(self, path: Path):
         path = Path(path)
+        # No caller-provided timeline origin exists here. The provider/resource
+        # is authoritative; even a warm cache hit must not scan source inputs.
+        return self._probe(path)
+
+    def _probe(self, path: Path):
+        def metadata(fn, pointer, description, **options):
+            return operation(self, fn, path=_probe_json_path.get(),
+                             rule='probe.metadata_operation', status='unknown',
+                             operands={'operation': description},
+                             source={'provider': 'ffprobe', 'resource': str(path),
+                                     'provider_path': pointer}, **options)
         if path in self.probes: return self.probes[path]
         # 不用 -count_frames（逐帧解码计数：voice-ime 实测 1080p 全源 12-27s/个，
         # validate+video 每次进程合计 ~2.5min 纯浪费）。mp4/mov 流头 nb_frames 即精确；
         # 流头缺失才回落 -count_packets（仅解封装，秒级）。
         r = self.run(["ffprobe", "-v", "error", "-print_format", "json",
                       "-show_streams", "-show_format", str(path)])
-        d = json.loads(r.stdout)
-        v = next((s for s in d["streams"] if s["codec_type"] == "video"), None)
-        a = next((s for s in d["streams"] if s["codec_type"] == "audio"), None)
+        d = metadata(lambda: json.loads(r.stdout), '$', 'decode ffprobe JSON')
+        v = metadata(lambda: next((s for s in d['streams'] if s['codec_type'] == 'video'), None), '$.streams', 'select video stream')
+        a = metadata(lambda: next((s for s in d['streams'] if s['codec_type'] == 'audio'), None), '$.streams', 'select audio stream')
         if v is not None:
-            nb = str(v.get("nb_frames") or "")
-            if not nb.isdigit() or int(nb) == 0:
+            nb_pointer = '$.streams[video].nb_frames'
+            nb = metadata(lambda: str(v.get("nb_frames") or ""),
+                          '$.streams[video].nb_frames', 'read frame count text')
+            if not nb.isdigit() or metadata(lambda: int(nb), nb_pointer, "video frame count integer") == 0:
                 r2 = self.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                                "-count_packets", "-show_entries", "stream=nb_read_packets",
                                "-of", "csv=p=0", str(path)])
-                nb = r2.stdout.strip() if r2 else ""
+                nb_pointer = '$.streams[video].nb_read_packets'
+                nb = metadata(lambda: r2.stdout.strip() if r2 else "",
+                              '$.streams[video].nb_read_packets', 'read packet count text')
             # r_frame_rate 安全解析（原 eval：异常值会裸抛 SyntaxError/ZeroDivisionError，
             # 且 eval 本身是任意表达式执行面）。正常形如 "30/1"；分母非正/解析失败 →
             # 回落 nb_frames ÷ format.duration 路径，仍不可得才友好报错退出。
-            fps = None
-            num, _, den = str(v.get("r_frame_rate") or "").partition("/")
-            try:
-                den_i = int(den.strip() or "1")
-                if den_i > 0:
-                    fps = int(num.strip()) / den_i
-            except (ValueError, ZeroDivisionError):
-                fps = None
-            if fps is None:
+            rate_raw = None
+            def parse_rate():
+                nonlocal rate_raw
+                num, _, den = str((rate_raw := v.get("r_frame_rate")) or "").partition("/")
                 try:
-                    dur_s = float(d.get("format", {}).get("duration") or 0)
-                except (TypeError, ValueError):
-                    dur_s = 0.0
-                if dur_s > 0 and nb.isdigit() and int(nb) > 0:
-                    fps = int(nb) / dur_s
+                    den_i = int(den.strip() or "1")
+                    if den_i > 0:
+                        return int(num.strip()) / den_i
+                except (ValueError, ZeroDivisionError):
+                    pass  # Native recoverable fallback, never a failure record.
+                return None
+            fps = metadata(parse_rate, '$.streams[video].r_frame_rate',
+                           'parse rational frame rate')
+            if fps is None:
+                duration_raw = None
+                def parse_duration():
+                    nonlocal duration_raw
+                    try:
+                        return float((duration_raw := d.get("format", {}).get("duration")) or 0)
+                    except (TypeError, ValueError):
+                        return 0.0  # Keep the original recovered-duration fallback.
+                dur_s = metadata(parse_duration, '$.format.duration',
+                                 'parse fallback duration')
+                if dur_s > 0 and nb.isdigit() and metadata(lambda: int(nb), nb_pointer, "video frame count integer") > 0:
+                    fps = metadata(lambda: int(nb) / dur_s,
+                                   [nb_pointer, '$.format.duration'],
+                                   'frame count divided by fallback duration')
                 else:
+                    emit(self, 'ffprobe 无法解析帧率', json_path=_probe_json_path.get(),
+                         rule_id='probe.fps', measured={'r_frame_rate': rate_raw, 'duration': duration_raw, 'frames': nb},
+                         threshold={'parseable_fps': True}, status='unknown',
+                         source={'provider': 'ffprobe', 'resource': str(path),
+                                 'provider_path': ['$.streams[video].r_frame_rate', nb_pointer, '$.format.duration']})
                     print(f"✗ ffprobe 无法解析 {path.name} 的帧率"
                           f"（r_frame_rate={v.get('r_frame_rate')!r}，duration/帧数回落亦不可得）",
                           file=sys.stderr)
-                    sys.exit(1)
+                    producer_exit(1)
             info = {"fps": fps,
-                    "nb_frames": int(nb) if nb.isdigit() else 0,
-                    "w": int(v["width"]), "h": int(v["height"]),
+                    "nb_frames": metadata(lambda: int(nb), nb_pointer, "video frame count integer") if nb.isdigit() else 0,
+                    "w": metadata(lambda: int(v['width']), '$.streams[video].width', 'video width integer'),
+                    "h": metadata(lambda: int(v['height']), '$.streams[video].height', 'video height integer'),
                     "has_video": True, "has_audio": a is not None}
         else:  # 纯音频源（音效/BGM/环境声文件）：时长换算到项目帧网格，仅供音频事件引用
-            dur_raw = d.get("format", {}).get("duration")
+            dur_raw = metadata(lambda: d.get('format', {}).get('duration'), '$.format.duration', 'read audio duration')
             if not dur_raw:
+                emit(self, 'ffprobe 未返回纯音频源 format.duration', json_path=_probe_json_path.get(),
+                     rule_id='probe.audio_duration', measured=None, threshold={'unit': 's', 'present': True}, status='unknown',
+                     source={'provider': 'ffprobe', 'resource': str(path), 'provider_path': '$.format.duration'})
                 print(f"✗ ffprobe 未返回纯音频源 {path.name} 的 format.duration，"
                       "无法换算到项目帧网格", file=sys.stderr)
-                sys.exit(1)
-            dur = float(dur_raw)
-            info = {"fps": None, "nb_frames": int(dur * self.fps),
+                producer_exit(1)
+            dur = metadata(lambda: float(dur_raw), '$.format.duration', 'audio duration float')
+            info = {"fps": None, "nb_frames": metadata(lambda: int(dur * self.fps), '$.format.duration', 'audio duration to frames'),
                     "w": 0, "h": 0, "has_video": False, "has_audio": a is not None}
         self.probes[path] = info; return info
 
@@ -235,7 +305,10 @@ class Ctx:
         if stage is not None:  # preview tasks must not touch the formal receipt
             self.receipt(stage, False, str(error))
         print(f"✗ {error}", file=sys.stderr)
-        sys.exit(1)
+        failure = SystemExit(1)
+        if getattr(error, '_vtx_diagnostic_handled', False):
+            mark_handled(failure)
+        raise failure
 
     def verify_inputs(self, stage):
         if self.dry:
@@ -299,13 +372,21 @@ class Ctx:
             _archive_stale_receipt(f, self.input_fingerprint)
             dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
                             'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
-            if any(t.get('kind') == 'gfx' for t in self.tl['video_tracks']):
+            if any(operation(self, lambda: t.get('kind') == 'gfx',
+                             path=f'$.video_tracks[{ti}]', rule='load.operation',
+                             operands={'operation': 'track kind for stage dependencies'})
+                   for ti, t in indexed(self, required_field(self, self.tl, 'video_tracks', '$'), '$.video_tracks')):
                 dependencies['video'] = dependencies['video_draft'] = ['gfx']
             missing = [name for name in dependencies.get(stage, [])
                        if not rec['stages'].get(name, {}).get('ok')]
             if missing:
-                raise RuntimeError('当前输入要求先成功完成阶段: ' + ', '.join(missing) +
-                                   '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
+                error = RuntimeError('当前输入要求先成功完成阶段: ' + ', '.join(missing) +
+                                     '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')
+                emit(self, str(error), rule_id='runtime.stage_prerequisite',
+                     measured={'stage': stage}, threshold={'current_input_prerequisites': 'successful'},
+                     suggested_actions=[{'op': 'run_pipeline', 'params': {'command': 'vtx all'}}])
+                mark_handled(error)
+                raise error
             for name in DOWNSTREAM.get(stage, []) + [stage]:
                 rec['stages'].pop(name, None)
             from .quality import receipt_quality
