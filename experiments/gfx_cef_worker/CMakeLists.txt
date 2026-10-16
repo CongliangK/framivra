@@ -145,3 +145,6 @@ add_executable(frame_sync_selftest src/frame_sync_selftest.cpp
                                   src/frame_sync_machine.cpp
                                   src/frame_pipeline.cpp src/pixel_ops.cpp)
 target_link_libraries(frame_sync_selftest PRIVATE Threads::Threads)
+
+# Deterministic fence deadline policy (synthetic timestamps; no CEF/retries).
+add_executable(js_checkpoint_selftest src/js_checkpoint_selftest.cpp)

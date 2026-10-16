@@ -210,7 +210,7 @@ ProduceResult ProduceFrame(RunState& state, PumpDriver& pump,
     return r;
   }
   if (!CheckJsCheckpoint(state, pump, browser, t0 + static_cast<uint64_t>(opt.frame_budget_ms) * 1000ull)) {
-    r.status = kStatusJsErr; return r;
+    r.status = state.js_error.failed ? kStatusJsErr : kStatusTimeout; return r;
   }
   pump.Until([] { return false; }, opt.ready_settle_ms);  // 字体/布局余量
   r.t_ready_wait_us = NowUs() - t0;
@@ -239,7 +239,7 @@ ProduceResult ProduceFrame(RunState& state, PumpDriver& pump,
         },
         200);
     if (!CheckJsCheckpoint(state, pump, browser, t1 + budget_us)) {
-      state.capture_armed = false; r.status = kStatusJsErr; return r;
+      state.capture_armed = false; r.status = state.js_error.failed ? kStatusJsErr : kStatusTimeout; return r;
     }
     std::lock_guard<std::mutex> lock(state.mu);
     if (state.cap_size_mismatch) {
@@ -447,15 +447,16 @@ var loadP = (document.readyState === "complete") ? { then: function (cb) { cb();
 function applyState() {
   if (!MODE_N) {
     if (typeof window.__vtx_render !== "function") {
-      throw new Error("Mode P requires synchronous __vtx_render(f)");
+      return false;  // protocol violation, not a page JS exception
     }
     var result = window.__vtx_render(F);
     if (result && typeof result.then === "function") {
-      throw new Error("Mode P requires synchronous __vtx_render(f)");
+      return false;  // protocol violation, not a page JS exception
     }
   } else if (Number(new URLSearchParams(location.search).get("f")) !== F) {
-    throw new Error("Mode N document frame mismatch");
+    return false;  // wrong URL/frame must time out without manufacturing JS_ERR
   }
+  return true;
 }
 // —— v2 双像素 Canary（vtx/frame_canary.py 冻结公式镜像）——
 var KEY1 = CLEAN ? 0x5A : 0xA5, KEY2 = CLEAN ? 0x3C : 0xC3;
@@ -532,7 +533,7 @@ function originals() {
 var done = false;
 Promise.all([fontsP, imgsReady(), loadP]).then(function () {
   if (!BASELINE) send({ phase: "assets_ready" }); // —— S2 就绪信号 ——
-  applyState();
+  if (!applyState()) return;  // never publish readiness for invalid protocol
   requestAnimationFrame(function () {          // 双 rAF（只作就绪候选）
     requestAnimationFrame(function () {
       var step = function () {                 // MessageChannel task（非微任务）
@@ -829,12 +830,14 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
       return r;
     }
   }
-  const auto js_fail = [&]() {
-    disarm(); r.status = kStatusJsErr;
-    machine.FailRequest("JS_ERR_observer_fence", NowUs());
+  const auto js_fail = [&](const char* timeout_reason) {
+    disarm();
+    r.status = state.js_error.failed ? kStatusJsErr : kStatusTimeout;
+    machine.FailRequest(state.js_error.failed ? "JS_ERR_observer_fence" :
+        timeout_reason, NowUs());
     return r;
   };
-  if (!CheckJsCheckpoint(state, pump, browser, load_deadline)) return js_fail();
+  if (!CheckJsCheckpoint(state, pump, browser, load_deadline)) return js_fail("load_timeout");
   // 注入桥（Mode N：加载完成后注入新文档；Mode P：常驻页每请求重放）。
   browser->GetMainFrame()->ExecuteJavaScript(
       BuildSyncBridgeJs(document_gen, request_id, frame, mode_n, clean, exact,
@@ -859,7 +862,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
     DrainSyncReadyQueue(state, machine);
-    if (!ConsumeJsPaint(state, pump, browser, ready_deadline)) return js_fail();
+    if (!ConsumeJsPaint(state, pump, browser, ready_deadline)) return js_fail("ready_timeout");
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   DrainSyncReadyQueue(state, machine);
@@ -869,7 +872,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     machine.FailRequest("ready_timeout", NowUs());
     return r;
   }
-  if (!CheckJsCheckpoint(state, pump, browser, ready_deadline)) return js_fail();
+  if (!CheckJsCheckpoint(state, pump, browser, ready_deadline)) return js_fail("ready_timeout");
   r.t_ready_wait_us = NowUs() - t0;
 
   // —— S4：外部帧泵（就绪信号只是候选；提交完成只能由 S5 验签确立）——
@@ -898,7 +901,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     browser->GetHost()->SendExternalBeginFrame();
     pump.Once();
     DrainSyncReadyQueue(state, machine);
-    if (!ConsumeJsPaint(state, pump, browser, pump_deadline)) return js_fail();
+    if (!ConsumeJsPaint(state, pump, browser, pump_deadline)) return js_fail("pump_timeout");
     {
       std::lock_guard<std::mutex> lock(state.mu);
       if (state.sync_size_mismatch) {
@@ -916,7 +919,7 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   disarm();
-  if (state.js_error.failed) return js_fail();
+  if (state.js_error.failed) return js_fail("pump_timeout");
   const fsync::FrameSyncStateMachine::RequestStats stats =
       machine.request_stats();
   r.early_paint_dropped = static_cast<uint32_t>(stats.early_paint_dropped);

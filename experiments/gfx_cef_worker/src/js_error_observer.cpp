@@ -209,7 +209,8 @@ bool ReceiveJsErrorMessage(RunState& state, CefRefPtr<CefBrowser> browser,
 bool CheckJsCheckpoint(RunState& state, PumpDriver& pump,
     CefRefPtr<CefBrowser> browser, uint64_t deadline) {
   auto& g = state.js_error;
-  if (g.failed || g.expected_url.empty() || NowUs() >= deadline) return false;
+  if (g.failed || g.expected_url.empty() ||
+      JsCheckpointRemainingMs(NowUs(), deadline) <= 0) return false;
   // Signed int is CEF's transport field. Never reuse a sequence on overflow.
   if (g.sent >= 0x7fffffffU) { g.failed = true; return false; }
   ++g.sent;
@@ -217,12 +218,15 @@ bool CheckJsCheckpoint(RunState& state, PumpDriver& pump,
   auto a = message->GetArgumentList();
   a->SetInt(0, static_cast<int>(g.sent)); a->SetString(1, g.expected_url);
   browser->GetMainFrame()->SendProcessMessage(PID_RENDERER, message);
-  const uint64_t now = NowUs();
-  const auto remaining = now < deadline ? static_cast<int>((deadline - now) / 1000) : 0;
-  if (remaining <= 0 || !pump.Until([&] { return g.failed || g.done == g.sent; }, remaining)) {
-    g.failed = true; state.last_error = "JS_ERR observer_checkpoint_timeout";
-    return false;
-  }
-  return !g.failed && g.installed && g.done == g.sent;
+  const auto remaining = JsCheckpointRemainingMs(NowUs(), deadline);
+  const bool completed = remaining > 0 &&
+      pump.Until([&] { return g.failed || g.done == g.sent; }, remaining);
+  const auto result = JsCheckpointResult(g, NowUs(), deadline);
+  if (completed && result == JsCheckpointOutcome::kPassed) return true;
+  // No authenticated observer error: this is a protocol budget failure, NOT a
+  // JS exception. In particular a stale paint can consume the final fraction
+  // of a millisecond while entering its fence. Never poison sticky JS state.
+  if (!g.failed) state.last_error = "TIMEOUT observer_checkpoint_budget";
+  return false;
 }
 }  // namespace vtx_cef
