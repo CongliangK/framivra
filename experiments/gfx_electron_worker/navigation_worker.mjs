@@ -94,8 +94,8 @@ async function renderFrame(f, generation, ses, pageErrors) {
   let errorGate;
   async function checkPageErrors() {
     if (fatal) throw fatal;
-    // A renderer task/microtask checkpoint lets unhandled promise rejections
-    // surface before the ordered CDP fence. No page-world hook is involved.
+    // Yield the renderer task/microtask checkpoint, then drain the gate's CDP
+    // notifications (including its trusted HTML rejection observer).
     await isolated(wc, `${checkDocumentCode(expectedUrl,f)};
       new Promise(resolve => setTimeout(resolve, 0))`);
     await errorGate.fence();
@@ -158,7 +158,8 @@ async function renderFrame(f, generation, ses, pageErrors) {
     // Materialize a script-free renderer before issuing Runtime commands; a
     // brand-new WebContents has no live CDP Runtime target yet in Electron 44.
     // Explicit transparency avoids about:blank's opaque OSR backdrop surviving
-    // the next navigation. The original HTML is never modified or hooked.
+    // the next navigation. HTML bytes and page APIs are never modified; the
+    // gate installs only a closure-owned error observer before page scripts.
     await deadline(wc.loadURL('data:text/html,<style>html,body{background:transparent}</style>'), timeoutMs, 'blank_target');
     errorGate = await installPageErrorGate(wc, pageErrors, fail);
     if (fatal) throw fatal;

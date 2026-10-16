@@ -72,7 +72,7 @@ debug.sendCommand = async function(method, params, id) {
   return originalSend.call(this, method, params, id);
 };
 debug.message('Debugger.paused', {reason:'other',callFrames:[
-  {callFrameId:'observer-call',location:{scriptId:'observer'}}]});
+  {callFrameId:'observer-call',functionName:'onUnhandledRejection',location:{scriptId:'observer'}}]});
 await gate.fence();
 const confirmed = errors.find(x=>x.confirmation === 'trusted_html_event');
 assert.equal(confirmed.event, 'Debugger.paused');
@@ -105,4 +105,23 @@ late.sendCommand = async function(method, params, id) {
 await lateGate.fence();
 assert(late.commands.some(x=>x.id==='late-child' && x.method==='Runtime.getIsolateId'));
 lateGate.close();
-console.log('page error gate: arm/order/console/fence/child/bounds/detach/install PASS');
+// A matching sourceURL alone is not sufficient host-observer identity.
+const spoof = new Debugger(), spoofFailures = [];
+const spoofGate = await installPageErrorGate({debugger:spoof}, [], e=>spoofFailures.push(e));
+const spoofUrl = spoof.commands.find(x=>x.method==='Page.addScriptToEvaluateOnNewDocument')
+  .params.source.split('sourceURL=')[1];
+spoof.message('Debugger.scriptParsed', {url:spoofUrl,scriptId:'spoof'});
+spoof.message('Debugger.paused', {reason:'other',callFrames:[
+  {callFrameId:'spoof-call',functionName:'onUnhandledRejection',location:{scriptId:'spoof'}}]});
+await spoofGate.fence();
+assert(spoofFailures.some(x=>x==='page_error_gate:observer_source_mismatch'));
+assert(spoof.commands.some(x=>x.method==='Debugger.resume'));
+spoofGate.close();
+const noObserver = new Debugger();
+noObserver.sendCommand = async method => {
+  if (method === 'Page.addScriptToEvaluateOnNewDocument') throw Error('observer unavailable');
+  return {};
+};
+await assert.rejects(installPageErrorGate({debugger:noObserver}, [], ()=>{}),
+  /page_error_gate:install:observer unavailable/);
+console.log('page error gate: arm/order/console/checkpoint/fence/child/identity/bounds/detach/install PASS');

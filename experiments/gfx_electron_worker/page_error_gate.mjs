@@ -15,8 +15,13 @@ export async function installPageErrorGate(wc, errors, fail) {
   // Propagation. A closure-only listener adds no page API or host-call binding,
   // and does not mark any Promise handled. Synthetic events cannot reject frames.
   // This must run in the rejecting realm (isolated worlds do not receive it).
+  // The same observer covers script/SyntaxError events suppressed by onerror;
+  // resource error events also reject (the resource gate already requires this).
   const observerSource = `(() => {
-    addEventListener('unhandledrejection', function(event) {
+    addEventListener('unhandledrejection', function onUnhandledRejection(event) {
+      if (event.isTrusted) { debugger; }
+    }, true);
+    addEventListener('error', function onPageError(event) {
       if (event.isTrusted) { debugger; }
     }, true);
   })();\n//# sourceURL=${observerUrl}`;
@@ -81,13 +86,16 @@ export async function installPageErrorGate(wc, errors, fail) {
             // Do not trust a page sourceURL/debugger statement as confirmation.
             const source = await send('Debugger.getScriptSource', {scriptId:top.location.scriptId}, sessionId);
             if (source.scriptSource !== observerSource) throw Error('observer_source_mismatch');
+            const rejection = top.functionName === 'onUnhandledRejection';
+            if (!rejection && top.functionName !== 'onPageError') throw Error('observer_location_mismatch');
             const r = await send('Debugger.evaluateOnCallFrame',
-              {callFrameId:top.callFrameId, expression:'event.reason', silent:true}, sessionId);
+              {callFrameId:top.callFrameId, expression:rejection ? 'event.reason' : 'event.error', silent:true}, sessionId);
             if (r.exceptionDetails) throw Error('observer_reason_unavailable');
-            const reason = r.result || {};
-            recordFailure({event:method, session_id:sessionId, text:'unhandledrejection',
+            const reason = r.result || {}, text = rejection ? 'unhandledrejection' : 'error';
+            recordFailure({event:method, session_id:sessionId, text,
               confirmation:'trusted_html_event', exception_type:reason.className || reason.type,
-              description:String(reason.description ?? reason.value ?? 'unhandledrejection').slice(0,4000), stack});
+              description:String(reason.description ?? reason.value ??
+                (rejection ? text : 'resource_error_or_script_error')).slice(0,4000), stack});
           }
           // promiseRejection alone is NOT a failure; only a real HTML event or
           // Runtime.exceptionThrown after the checkpoint establishes unhandled.

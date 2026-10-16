@@ -37,6 +37,7 @@ class RealPromiseCheckpointTests(unittest.TestCase):
         })().catch(()=>{});
         dispatchEvent(new PromiseRejectionEvent('unhandledrejection',
           {promise:Promise.resolve(),reason:'SYNTHETIC_NOT_UNHANDLED'}));
+        dispatchEvent(new ErrorEvent('error',{error:Error('SYNTHETIC_NOT_THROWN')}));
         debugger; // ordinary page breakpoints still harmless
         </script>''', stale=(), failed=())
 
@@ -53,6 +54,24 @@ class RealPromiseCheckpointTests(unittest.TestCase):
                 </script></html>''', name=name, stale=())
                 self.assertTrue(any(e.get('confirmation') == 'trusted_html_event'
                                     for e in r['page_errors']['0']), r)
+
+    def test_suppressed_script_errors_at_start_and_capture(self):
+        for name, html in [
+            ('start_throw', "<script>window.onerror=()=>true;throw Error('SUPPRESSED_THROW');</script>"),
+            ('start_syntax', "<script>window.onerror=()=>true;</script><script>const broken=;</script>"),
+            ('capture_syntax', '''<!doctype html><html><head><style>html,body{margin:0;background:rgb(210,0,0)}</style></head><body></body><script>
+            window.onerror=()=>true;
+            new MutationObserver((_records,observer)=>{
+              observer.disconnect();
+              const script=document.createElement('script');
+              script.textContent='const broken_during_capture = ;';
+              document.head.append(script);
+            }).observe(document.documentElement,{childList:true});
+            </script></html>'''),
+        ]:
+            with self.subTest(name=name):
+                r = self.run_page(html, name=name)
+                self.assertIn('Error', str(r['page_errors']['0']), r)
 
     def test_worker_checkpoint_and_suppression(self):
         for name, source, failed in [
