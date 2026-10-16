@@ -119,3 +119,5 @@ bash scripts/release.sh --help
 本项目许可证与版权声明见仓根 [LICENSE](LICENSE)，不替代上游代码、模型/辅助权重、API 服务与输出权利。
 
 第三方许可、固定官方证据与默认载荷/可选下载边界统一见 [第三方许可](docs/third-party-licenses.md)；未知或受限资产不算合规通过，未审查的自动下载明确阻断。默认源码/内核未捆绑权重或外部工具二进制，与安装器的可选下载不是同一声明。
+
+<!-- Issue 87 validation-only documentation path fixture; never merge. -->
