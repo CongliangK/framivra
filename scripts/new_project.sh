@@ -40,7 +40,7 @@ fi
 cat <<'EOF'
 ✓ 项目已创建。下一步：
   1. 素材放 assets/（CFR 30fps（D24 换基）、含音轨，竖版会自动中心裁 16:9）
-  2. gfx/gfxA.html 为协议合规样页，可直接 vtx all 跑通，改文案/配色即可；协议见 skill/references/gfx.md
+  2. gfx/gfxA.html 为协议合规样页，可直接 vtx all 跑通，改文案/配色即可；协议见 docs/skill/references/gfx.md
   3. 编辑 timeline.json 完成编排
   4. python3 ~/.agents/skills/video/vtx/vtx.py -t <项目>/timeline.json validate
   5. 校验通过后 ... all → out/final.mp4

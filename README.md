@@ -1,6 +1,6 @@
 # Framivra —— 可复现、帧精确的视频制作工具箱（v2 插件化架构）
 
-> **Framivra**（小写 `framivra`，读 "frame-ee-vra"）:frame + 自造后缀。仓目录与文档内路径占位沿用 `video_tools` 历史路径名,品牌名以本行与 pyproject 包名为准。**本仓是什么**:B 站视频产线的程序本体权威仓。**内核** `vtx/` = timeline.json 契约 + 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ 混音响度终链（-14 LUFS + limiter）+ 内容寻址缓存——关停它主链产物不可信，故永不可关（宪法信条）。产线知识在 `skills/tech-talk/` 工作流包（科技口播六阶段 SOP + 调研/拍摄/封面/发布链配方）；机制契约文档在 `skill/`（路由索引 `skill/SKILL.md`）。git 管理，大模型能力默认关闭。
+> **Framivra**（小写 `framivra`，读 "frame-ee-vra"）:frame + 自造后缀。仓目录与文档内路径占位沿用 `video_tools` 历史路径名,品牌名以本行与 pyproject 包名为准。**本仓是什么**:B 站视频产线的程序本体权威仓。**内核** `vtx/` = timeline.json 契约 + 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ 混音响度终链（-14 LUFS + limiter）+ 内容寻址缓存——关停它主链产物不可信，故永不可关（宪法信条）。产线知识在 `templates/tech-talk/` 工作流包（科技口播六阶段 SOP + 调研/拍摄/封面/发布链配方）；机制契约文档在 `docs/skill/`（路由索引 `docs/skill/SKILL.md`）。git 管理，大模型能力默认关闭。
 
 > **姊妹项目 Music Tools**：本仓专注「视频」产线。BGM / 配乐 / 床乐 / 音效 / 响度 QC / 分轨混音需求请移步姊妹仓 music_tools（本仓 `apps/bgm` 为路由声明）——music_tools 产出的 BGM 挂载进本仓 timeline.json 后，由 `apps/blender-bridge/audit_bundle.py` 生成分轨审计包供 Blender 逐轨裁决。
 
@@ -8,12 +8,12 @@
 
 ```
 vtx/            ① 内核（永不可关，宪法信条）：渲染链 + validate/qc + 响度终链 + 缓存 + vtx/api.py 对外面 + vtx/pluginlib/ 协议运行时
-skill/             ① 内核文档：SKILL.md 路由索引 + references/{edit,gfx,runbook}.md + assets/ 起手模板
+docs/skill/     ① 内核文档：SKILL.md 路由索引 + references/{edit,gfx,runbook}.md + assets/ 起手模板
 apps/  (12 件)  ② 应用：产出独立素材不进 timeline 管线，关停不影响主链
 plugins/ (4 件) ② 插件：扩展 timeline.json 词汇并钩进管线（denoise / duck-static / blender-bridge / bgm-render + registry.json）
-skills/         ③ 工作流包：tech-talk（科技口播制作范本；skill.json 声明 uses_apps/optional_plugins）
+templates/      ③ 模板集合：tech-talk / skill-demo 工作流 + hello-app / hello-plugin 开发范本
 scripts/           内核工具残留：new_project.sh / gfx_golden.py / bench_cold.sh（+ 迁走件兼容 symlink）
-vt.py              统一入口：doctor / apps|plugins|skills list|check / version / init / --fix-links
+vt.py              统一入口：doctor / apps|plugins|templates list|check（skills 兼容别名） / version / init / --fix-links
 ```
 
 分层判据（关停测试）：关停后主链产物**不可信** → 内核；**仍能可信出一期片** → 可卸载（apps/plugins）。apps/plugins 每件自包含（app.json/plugin.json + 代码 + README + tests）。
@@ -24,7 +24,7 @@ vt.py              统一入口：doctor / apps|plugins|skills list|check / vers
 git clone https://github.com/CongliangK/framivra
 cd framivra
 python3 vt.py init                     # 依赖自检 + 安装指引 + 生成 config.local.json（幂等；--fix 自动装）
-python3 vt.py doctor                   # 三检：版本漂移 / apps+plugins manifest+health / skills 完好性
+python3 vt.py doctor                   # 三检：版本漂移 / apps+plugins manifest+health / 工作流模板完好性
 bash scripts/new_project.sh <项目目录> 30  # 新项目脚手架（目录 + 模板 timeline.json + schema）
 python3 vtx/vtx.py -t <项目>/timeline.json validate    # 渲染前校验门（必跑）
 python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/final.mp4（--until video 可截断）
@@ -67,7 +67,7 @@ bash scripts/release.sh --help
 
 ## 三层路由
 
-**内核**：`skill/SKILL.md`（路由索引 + 迭代回路速查）→ `skill/references/edit.md`（timeline 契约 + vtx 全阶段 + 坑表）、`gfx.md`（帧驱动协议 + D22 设计铁律）、`runbook.md`（修改配方 R1-R4 + 棒次协议）。
+**内核**：`docs/skill/SKILL.md`（路由索引 + 迭代回路速查）→ `docs/skill/references/edit.md`（timeline 契约 + vtx 全阶段 + 坑表）、`gfx.md`（帧驱动协议 + D22 设计铁律）、`runbook.md`（修改配方 R1-R4 + 棒次协议）。
 
 **apps/**（12 件，一句话）：
 
@@ -88,7 +88,7 @@ bash scripts/release.sh --help
 
 **plugins/**（4 件）：`plugins/denoise/`——口播降噪（`sources[].denoise`，缝 A prepare 源产物钩子）；`plugins/duck-static/`——床乐静态分段避让（`audio_tracks[].duck_strategy`，缝 B 音轨事件内存变换）；`plugins/blender-bridge/`——顶层键 `blender_bridge` 配置即 `vtx all` 收尾自动导出 Blender 审片工程（缝 D finish，协议 v1.2）；`plugins/bgm-render/`——`sources[].bgm` 音轨直接引用 music_tools 工程 JSON，自动渲染母带入内容寻址缓存（缝 A+C，协议 v1.2）。协议 v1/v1.2 与 registry.json 见 `docs/ARCHITECTURE.md` §2/§2.5。
 
-**skills/**：`skills/tech-talk/`——科技口播 B 站视频制作范本（六阶段流程 / 音频支线 / 全链 SOP / 已验收模板资产），产线任务先读其 SKILL.md。
+**templates/**：集合入口见 [templates/README.md](templates/README.md)。`tech-talk/` 是完整科技口播 B 站流程（六阶段 / 音频支线 / 全链 SOP / 模板资产），与纯内核 `skill-demo/`、开发范本 `hello-app/` / `hello-plugin/` 平级；产线任务先读 tech-talk 的 SKILL.md。`python3 vt.py templates list|check` 检查工作流模板，旧 `skills` 命令兼容；doctor JSON 保留 `skills` 字段。
 
 ## 依赖矩阵
 

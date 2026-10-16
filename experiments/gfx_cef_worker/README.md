@@ -46,7 +46,7 @@ bash experiments/gfx_cef_worker/build_cef_worker.sh
 # 网络受限时：CEF_DL_PROXY=http://127.0.0.1:7890 bash ...（先直连，失败再挂代理）
 
 # 独立渲染一帧（#109 DoD①：PNG 过 png_invalid_reason）
-build/bin/vtx_cef_worker --mode=a0 --url="file://$PWD/examples/skill-demo/gfxA.html?f=0" --out-png=/tmp/a0.png
+build/bin/vtx_cef_worker --mode=a0 --url="file://$PWD/templates/skill-demo/gfxA.html?f=0" --out-png=/tmp/a0.png
 build/bin/vtx_cef_worker --mode=a1 --ozone-platform=headless --url=... --out-png=/tmp/a1.png --probe-gpu-page --out-json=/tmp/a1.json
 
 # 三态显示环境矩阵探测（证据默认落 /tmp/framivra-evidence/issue-109/matrix/）

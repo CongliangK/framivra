@@ -47,8 +47,8 @@ video_tools/
 ├── vtx/            # 内核包（永不可关〔宪法信条〕，见 §1）
 ├── apps/           # 12 件应用（见 §3）
 ├── plugins/        # 官方插件（denoise / duck-static，见 §2）+ registry.json
-├── skills/         # 工作流包（tech-talk，见 §4）
-├── examples/       # hello-app + hello-plugin 纪律范本 + skill-demo 虚拟歌手骨架（见 §4.2）
+├── docs/skill/     # 工具使用 SKILL + references + 通用 assets
+├── templates/      # tech-talk / skill-demo 工作流 + hello-app / hello-plugin 开发范本（见 §4）
 ├── scripts/        # 内核工具与仓级基建：new_project / gfx_golden / bench_cold + run_all_tests / docs_smoke + 迁走件的兼容 symlink
 ├── vt.py           # 统一入口（doctor/list/check/version/init，见 §5.1）
 └── pyproject.toml  # 包 video-tools，console scripts vtx/vt（见 §5.2）
@@ -350,21 +350,23 @@ subtitles_src/插件键文档；timeline.schema.json TP 旧口径 -1.5 → -1.0 
 
 ---
 
-## 4. 工作流包（skills/）
+## 4. 模板集合（templates/）
 
 ### 4.1 tech-talk
 
 ```
-skills/tech-talk/
+templates/tech-talk/
 ├── skill.json     # {name, version, uses_plugins[], optional_plugins[], docs, assets}
 ├── SKILL.md       # 无 frontmatter（挂载层负责元数据，本体纯文档）
-├── references/    # 从 skill/references/ 迁入的产线知识（§8）
-└── assets/
+├── references/    # 产线知识（历史来源见 §8）
+├── assets/
+├── scripts/       # 项目脚手架、冻结与发布包
+└── templates/     # 四份工程文档模板，保留包内布局
 ```
 
 uses 声明按**产线用法定**（不是最小依赖）：`uses_apps: asr, tts, imgen, matting, gates, publish, sync, blender-bridge, bgm` 级别全量声明 + `uses_plugins` / `optional_plugins` 按实际挂接（denoise 是否 uses 待产线定案后回填，初版进 optional_plugins）〔用户拍板〕。
 
-### 4.2 examples/（纪律范本）
+### 4.2 平级范本（templates/）
 
 - **hello-app**：最小 app 结构范本（manifest/health/README/tests 自包含）。
 - **skill-demo**：虚拟歌手搞笑视频工作流包骨架（零 apps/plugins 依赖的纯内核包）——
@@ -372,7 +374,7 @@ uses 声明按**产线用法定**（不是最小依赖）：`uses_apps: asr, tts
   expected_check 以 `qc --strict` 断言全检含 TP 项）。
 - **hello-plugin**（音频插件完整纪律范本）：演示装/未装/禁用**三分支**报错文案（§2.1 不变量 3）、`contribute_keys` 缓存键贡献（§2.1 不变量 1）、环境缺失 fail-hard（§2.2 缝 A）、**卸载后缓存失效**（键出白名单 → gc 回收，验收门 6 的对照实现）。
 
-examples 本身走 external 注册路径安装（默认 disabled，§2.4）——范本即安全节的活体测试。
+tech-talk 与 skill-demo 由现有 `skill.json` / `SKILL.md` 识别并检查；缺少配对文件、坏 JSON 或非对象 manifest、错误 uses 声明均失败。hello-app / hello-plugin 是开发范本，只有 external 显式注册和 enable 才进入组件运行面（默认 disabled，§2.4），模板发现不注册、不启用、不探测它们。
 
 ---
 
@@ -387,14 +389,14 @@ examples 本身走 external 注册路径安装（默认 disabled，§2.4）—�
 - `doctor [--json|--fix]` 三检：
   1. **版本**：本地 HEAD vs origin/HEAD 漂移；`git fetch` 5s 超时；`VTX_DOCTOR_OFFLINE=1` 跳过；报 clean/dirty/ahead/behind 四态；VERSION 文件仅发布标识，**无 tag 不告警**。
   2. **apps+plugins**：manifest 有效 + health 探测 + requires 依赖检查；**enabled 才 FAIL 门**（缺失/disabled 仅提示）；附「`import vtx` 实际解析路径」自检（双模块裂分的常驻哨兵）。
-  3. **skills**：包完好 + uses 声明齐备 + 挂载链接有效 + 内核 SKILL.md 索引新鲜度。
-- `apps|plugins|skills list|check`：分层清单与单项体检。
+  3. **工作流模板**：包完好 + uses 声明齐备 + 挂载链接有效 + 内核 SKILL.md 索引新鲜度。
+- `apps|plugins|templates list|check`：分层清单与单项体检。`skills list|check` 为模板命令兼容别名；doctor JSON 仍用 `skills` 键与既有子字段，数据来自 `templates/`。
 - `version` / `init`（原 init.py 语义；注意 **init 的 `--fix` 与 doctor 的 `--fix` 语义不同**：前者安装缺失基础依赖，后者修复三检中可自动修复项（链接/注册表），不得混用）/ `--fix-links`（重建挂载符号链接）。
 
 ### 5.2 pyproject.toml
 
 - 包名 `video-tools`；console scripts：`vtx`（渲染 CLI）与 `vt`（§5.1 入口）。
-- **pip 包只含内核**（vtx/ 含 vtx/pluginlib/ + scripts/ 内核工具 + 内核文档）；apps/plugins/skills/examples 不进发行包。
+- **pip 包只含内核**（vtx/ 含 vtx/pluginlib/ + scripts/ 内核工具 + 内核文档）；apps/plugins/templates 不进发行包。
 - **clone 即用与 pip 安装并存**：repo 根可直接 `python3 vt.py` / `python3 -m vtx`（不依赖安装步骤）；pip 安装提供全局命令与稳定 import 路径。两路径必须同码同义（验收门 8 的 import<1s 顺带守护包导入健康）。
 
 ### 5.3 config 统一
@@ -481,6 +483,8 @@ CLI 命令面保留承诺：`post_loudness.sh` / `bed_static_duck.py` / `content
 ---
 
 ## 8. 文档双层映射表（知识守恒）
+
+> 本表保留 v2 拆分时的历史来源路径；当前工具使用文档在 `docs/skill/`，工作流在 `templates/tech-talk/`。来源列不是可执行入口；当前目录与发现规则以 §0.4 / §4 / §5 为准。
 
 原则：**内核文档**（机制/契约/基准，任何产线通用）留 skill/ 与 docs/；**产线知识**（tech-talk 这条流水线的配方/规范/模板）进 skills/tech-talk/。逐件：
 

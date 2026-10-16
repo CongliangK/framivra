@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # docs_smoke.sh —— 文档命令可执行性冒烟（验收门 3 的机器化清单生成器，v2 P3 创建）。
 #
-# 扫描范围：README.md + skill/**/*.md + skills/tech-talk/**/*.md + apps/*/README.md + docs/**/*.md
+# 扫描范围：README.md + templates/**/*.md + apps/*/README.md + docs/**/*.md（含 docs/skill）
 # （docs/plans* 历史归档豁免：由 collect_targets() 功能过滤，按 docs 根 parts[0] 前缀排除，非子串）。
 # 提取 fenced bash/sh 块中含 python3/python/bash/env/node 的命令行，
 # 对含仓库路径形态（apps/ plugins/ scripts/ vtx/ 及根级 vt.py，含 $VIDEO_TOOLS/<video_tools>/
@@ -11,7 +11,7 @@
 #   .mjs → node --check（node 不在则 SKIP）
 # 洞 1 围栏外 inline 通道：行内码 span/表格/列表行命中 CMD_WORDS+路径形态者按 method 判定表
 # 入通道冒烟（输出行缀 inline）；无四前缀 lead 而 TOKEN 命中者 SKIP-登记（计 s，不冒烟不入 K）；
-# 上限自检：入通道 n>候选（开工重录实出常量）→ FAIL [selfcheck] 一条。
+# 上限自检：入通道 n>同次扫描候选（历史锚仅留作来源记录）→ FAIL [selfcheck] 一条。
 # 同一脚本去重后只冒烟一次；输出 PASS/FAIL/SKIP 清单 + 登记行 + 结论行。
 # exit 语义（形态 A）：FAIL>0 → 1；SKIP>0 或 降级>0 → 0（降级/SKIP 经 ⚠️ 结论行告警，知会形态）。
 # --golden <dir>：负例 golden 模式，targets=dir 递归（共用 collect_targets，不施 plans 过滤），
@@ -39,7 +39,7 @@ ROOT = Path(os.environ["DOCS_SMOKE_ROOT"]).resolve()
 VERBOSE = os.environ.get("DOCS_SMOKE_VERBOSE", "")
 GOLDEN = os.environ.get("DOCS_SMOKE_GOLDEN", "").strip()
 
-# ---------- 目标收集（单段实现：主面五 glob 与 --golden 共用；patch P4/P5） ----------
+# ---------- 目标收集（单段实现：主面四组 与 --golden 共用；patch P4/P5） ----------
 def collect_targets(base: Path, pattern: str, docs_root=None):
     """base 下按 pattern 收集 .md；docs_root 给定时对 base=docs 施加 plans* 前缀豁免
     （按 docs 根 relative parts[0].startswith("plans") 功能过滤，禁注释充数）。"""
@@ -61,7 +61,7 @@ else:
     targets = []
     if (ROOT / "README.md").is_file():
         targets.append(ROOT / "README.md")
-    for pat, base, dr in (("skill/**/*.md", ROOT, None), ("skills/tech-talk/**/*.md", ROOT, None),
+    for pat, base, dr in (("templates/**/*.md", ROOT, None),
                           ("apps/*/README.md", ROOT, None), ("docs/**/*.md", ROOT, docs_root)):
         targets.extend(collect_targets(base, pat, dr))
     targets = sorted(set(t for t in targets if t.is_file()))
@@ -69,14 +69,14 @@ else:
                        if t.relative_to(docs_root).parts[0].startswith("plans"))
 
 FENCE = re.compile(r"^```(bash|sh|shell)\s*$", re.M)
-# R5 修:① heads 增 skills(skills/tech-talk/scripts/*.py 等产线脚本入冒烟面);
+# R5 修:① heads 含 templates(templates/tech-talk/scripts/*.py 等产线脚本入冒烟面);
 # ② 行首边界负向后顾 (?<![\w./$-])——路径必须始于词边界,禁止在
-# $VIDEO_TOOLS/skills/... 一类长路径中段回退误捕尾部 scripts/xxx.py。
+# $VIDEO_TOOLS/templates/... 一类长路径中段回退误捕尾部 scripts/xxx.py。
 TOKEN = re.compile(
     r"(?<![\w./$-])"
     r"(?:(?:\$\{?VIDEO_TOOLS\}?|<video_tools>|<本仓>|<skill>|~/文档/01_活跃项目/video_tools[\w-]*"
     r"|~/.agents/skills/video)/+)?"                       # 可选前缀（env 占位/挂载/家目录）
-    r"((?:\.\./)*(?:apps|plugins|scripts|vtx|skills)/[A-Za-z0-9_./-]+\.(?:py|sh|mjs))"
+    r"((?:\.\./)*(?:apps|plugins|scripts|vtx|templates)/[A-Za-z0-9_./-]+\.(?:py|sh|mjs))"
     r"(?=[\s'\"\\<>|$;#&)]|$)")                           # 仓库路径形态（含 README 相对 ../）
 CMD_WORDS = re.compile(r"\b(?:python3?|bash|env|node)\b")
 INLINE_SPAN = re.compile(r"`([^`]+)`")
@@ -87,7 +87,7 @@ LEAD_PY = re.compile(r"^(?:env\s+)?python3?\b")
 LEAD_MJS = re.compile(r"^(?:env\s+)?node\b")
 LEAD_SH = re.compile(r"^bash\b")
 # 栅栏外候选常量口径（§五）：开工重录实出值（HEAD 3c415b2 / 2026-09-19，提取器全 35 文档表面）。
-# 起草锚 11 系 skill/SKILL.md 单文件 grep 行口径，仅对读参考（P1(b) 重锚；留档件 §四）。
+# 起草锚 11 系 docs/skill/SKILL.md 单文件 grep 行口径，仅对读参考（P1(b) 重锚；留档件 §四）。
 INLINE_CAND_ANCHOR = 69
 # golden 四档预期冻结表（patch §六 正本，席 2 盲跑唯一口径；开工后作者禁改）
 GOLDEN_EXPECT = {
@@ -287,8 +287,9 @@ for (path_s, method), rec in sorted(combined.items()):
 
 # ---------- 自检（patch P3 上限 / P9 双向 / 登记行在场；失检=工具故障按 FAIL 计） ----------
 selfcheck = []
-if n_channel > INLINE_CAND_ANCHOR:
-    selfcheck.append(("FAIL", f"[selfcheck] inline 提取越界 n>候选（{n_channel}>{INLINE_CAND_ANCHOR}）"))
+# Compare channels from the same collected surface; the historical anchor is not a cap.
+if n_channel > n_cand:
+    selfcheck.append(("FAIL", f"[selfcheck] inline 提取越界 n>候选（{n_channel}>{n_cand}）"))
 
 def md_inventory():
     """在役 .md 清单（P2 三数正本=本桌留档件 §三口径）：排除点目录、cache/、tests/、docs/plans*。"""
@@ -310,7 +311,7 @@ if not GOLDEN:
         n_service = len(md_inventory())
         reg_line = (f"登记: 门面 {len(targets)} / 在役 {n_service} / 未入检 {n_service - len(targets)}(清单=留档件)"
                     f" | T={T} / K={K} / 冒烟 {K}"
-                    f" | 栅栏外 候选 {INLINE_CAND_ANCHOR} / 入通道 {n_channel} / 冒烟 {m} / SKIP-登记 {len(inline_skips)}"
+                    f" | 栅栏外 候选 {n_cand}（历史锚 {INLINE_CAND_ANCHOR}） / 入通道 {n_channel} / 冒烟 {m} / SKIP-登记 {len(inline_skips)}"
                     f" | 豁免 plans* {plans_exempt} | 降级 {n_degraded}")
         reg_ok = reg_line.startswith("登记: 门面 ")
     except Exception:

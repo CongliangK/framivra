@@ -17,19 +17,20 @@
                          内核之上的可选能力面，缺件=未装该能力而非安装损坏，
                          硬门在②依赖面与各使用点 fail-hard；external enabled
                          件维持严格 FAIL 不回退）
-                         ④skills（工作流包完好性；未注册包如 examples/skill-demo
-                         不在扫描面，不误报）
+                         ④模板/工作流（templates/ 完好性；JSON 保留 skills 兼容字段；
+                         app/plugin 开发示例不注册、不探测）
   doctor --fix          修复体检中可自动修复项：挂载链接重建（联动 --fix-links
                          同表；live 挂载指向其他仓时只报人工项不自动改）+
                          plugins/registry.json 缺字段回填（manifest 为声明数据源，
                          §2.3）。无可自动修复项时明确说明。
-  apps|plugins|skills list|check
+  apps|plugins|templates list|check
                          list = 注册表 + 安装态清单；check = doctor 组件段单层体检
+                         skills list|check 为 templates 的兼容拼法
   version                VERSION 内容 + git HEAD 短哈希
   init [--fix] [--json]  原 init.py 语义（七小节自检 + --fix 自动装基础依赖 +
                          config.local.json 幂等生成）
-  --fix-links [--dry]    重建挂载符号链接（skill 5 链接 + 第 6 条 skills 链接，指向本仓
-                         对应目录；VT_MOUNT_ROOT 可覆盖挂载根——测试/多仓并存用）
+  --fix-links [--dry]    重建六件挂载符号链接（docs/skill 三件 + vtx/scripts/templates）；
+                         清理仅指向本仓退役 skills 的旧链接；VT_MOUNT_ROOT 可隔离
 
 子进程纪律（全局 AGENTS.md argv[0] 劫持 / §5.1）：一律 shutil.which 定位 python3，
 禁 sys.executable；零 spec_from_file_location、零跨目录 import——原 init.py 对
@@ -698,35 +699,48 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
 
 
 def _doctor_skills(json_out: bool) -> dict:
-    """skills 段：skills/ 工作流包完好性（skill.json + SKILL.md 齐备 + uses 声明逐件在册）。
+    """JSON skills 兼容段：templates/ 工作流完好性；不激活 app/plugin 开发示例。
 
-    在册校验（P3，tech-talk 落地）：uses_apps 逐件对照 apps 发现清单；uses_plugins/
-    optional_plugins 逐件对照 plugins/registry.json 静态注册表——声明了未落地/未注册
-    的件计 FAIL（uses 声明是包与组件之间的契约面，漂移即失效）。
+    skill.json 或 SKILL.md 任一在场即检查二者，不能静默漏过损坏包。
+    uses_apps 对照 apps 发现清单，uses_plugins/optional_plugins 对照静态注册表；
+    仍接受既有字符串或 {name, ...} 声明，不引入新 manifest 协议。
     """
     out = {"installed": [], "fail": False}
-    base = ROOT / "skills"
+    base = ROOT / "templates"
     if not base.is_dir():
-        out["note"] = "无已安装工作流包（skills/ 未创建）"
+        out["note"] = "无工作流模板（templates/ 未创建）"
     else:
         known_apps = {e["name"] for e in _preg.discover(ROOT) if e["kind"] == "app"}
         known_plugins = set(_preg.load_static_registry(ROOT)["plugins"])
 
-        def _names(decl) -> list:
+        def _names(meta, field) -> list:
+            decl = meta.get(field, [])
             if not isinstance(decl, list):
-                return []
-            return [u["name"] if isinstance(u, dict) else str(u) for u in decl]
+                raise ValueError(f"{field} 须为数组")
+            names = []
+            for index, entry in enumerate(decl):
+                name = entry.get("name") if isinstance(entry, dict) else entry
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(f"{field}[{index}] 须为非空名称或含非空 name 的对象")
+                names.append(name)
+            return names
 
         for d in sorted(base.iterdir()):
             if not d.is_dir() or d.name.startswith((".", "_")):
                 continue
+            # Either workflow marker is enough to require both, including dangling
+            # symlinks. Unmarked directories and app/plugin examples are not workflows.
+            if not any((d / name).exists() or (d / name).is_symlink()
+                       for name in ("skill.json", "SKILL.md")):
+                continue
             item = {"name": d.name, "ok": True}
             try:
                 meta = json.loads((d / "skill.json").read_text(encoding="utf-8"))
+                if not isinstance(meta, dict):
+                    raise ValueError("顶层须为 JSON 对象")
                 item["version"] = meta.get("version", "?")
-                item["uses_apps"] = _names(meta.get("uses_apps", []))
-                item["uses_plugins"] = _names(meta.get("uses_plugins", []))
-                item["optional_plugins"] = _names(meta.get("optional_plugins", []))
+                for field in ("uses_apps", "uses_plugins", "optional_plugins"):
+                    item[field] = _names(meta, field)
             except (OSError, ValueError) as e:
                 item["ok"] = False
                 item["error"] = f"skill.json 缺失/损坏: {e}"
@@ -754,7 +768,7 @@ def _doctor_skills(json_out: bool) -> dict:
         if "note" in out:
             print(f"  ℹ {out['note']}")
         for it in out["installed"]:
-            print(f"  {'✓' if it['ok'] else '✗'} skills/{it['name']}@{it.get('version', '?')}"
+            print(f"  {'✓' if it['ok'] else '✗'} templates/{it['name']}@{it.get('version', '?')}"
                   + (f"（{it['error']}）" if it.get("error") else ""))
             if it.get("ok"):
                 print(f"      uses_apps {len(it['uses_apps'])} 件逐件在册"
@@ -763,11 +777,34 @@ def _doctor_skills(json_out: bool) -> dict:
     return out
 
 
+def _retired_skills_mount():
+    """Only a direct symlink to this checkout's retired skills path is ours.
+
+    Resolve the target parent, never its final component: a foreign symlink
+    must not become removable merely by resolving through it. Parent resolution
+    also prevents symlink/.. traversal from masquerading as this repository.
+    """
+    link = mount_root() / "skills"
+    target = ROOT.resolve() / "skills"
+    if link.is_symlink():
+        current = link.parent / os.readlink(link)
+        try:
+            current = current.parent.resolve() / current.name
+        except (OSError, RuntimeError):
+            return link, target, "retired_foreign", ""
+        problem = "retired" if current == target else "retired_foreign"
+        return link, target, problem, ""
+    if link.exists():
+        return link, target, "retired_occupied", ""
+    return None
+
+
 # ================================================================ doctor --fix（§5.1，P4 落地）
 def _mount_link_state() -> list:
     """挂载链接体检（与 cmd_fix_links 同表 MOUNT_LINKS）：
     → [(link_path, target_path, problem, want)]，problem ∈ missing|wrong_target|
-    absolute_form|occupied；want = 应有的相对链接目标串。空列表 = 全部健康。
+    absolute_form|occupied|retired|retired_foreign|retired_occupied；
+    want = 应有的相对链接目标串（退役项为空）。空列表 = 全部健康。
 
     目标件本仓未落地的链接项不体检（cmd_fix_links 同口径：落地后再挂）。
     """
@@ -791,13 +828,16 @@ def _mount_link_state() -> list:
             out.append((link, target, "occupied", want))       # 真实文件占用：永不自动改
         else:
             out.append((link, target, "missing", want))
+    retired = _retired_skills_mount()
+    if retired is not None:
+        out.append(retired)
     return out
 
 
 def _mount_fix_safe(items: list) -> tuple:
     """挂载链接自动修复的安全门 → (safe, reason)。
 
-    VTX_MOUNT_ROOT 覆盖 → 安全（测试/多仓并存的隔离环境）；默认 live 挂载根下
+    VT_MOUNT_ROOT 覆盖 → 安全（测试/多仓并存的隔离环境）；默认 live 挂载根下
     任一现存链接解析到**本仓之外**的路径（含悬空——目标虽缺失但明确不属本仓）
     → 不安全（挂载属其他仓——本机 live voice-ime/主工作区场景，铁律：不自动
     改，列人工项）；其余（缺失/仓内错指/绝对形）→ 安全。
@@ -808,6 +848,8 @@ def _mount_fix_safe(items: list) -> tuple:
         return True, "VT_MOUNT_ROOT 隔离环境"
     root = ROOT.resolve()
     for link, _target, problem, _want in items:
+        if problem == "retired_foreign":
+            return False, f"{link.name} 非直接指向本仓退役 skills——保留，请人工处理"
         if problem != "wrong_target":
             continue
         current = Path(os.readlink(link))
@@ -819,12 +861,19 @@ def _mount_fix_safe(items: list) -> tuple:
 
 def _apply_mount_link_fixes(items: list) -> list:
     """执行挂载链接修复（missing/wrong_target/absolute_form → 重建相对链接）；
-    occupied 跳过。返回实际修复的链接名列表。"""
+    retired 仅重核本仓归属后摘除；occupied/foreign 退役项保留。返回实际修复项。"""
     mroot = mount_root()
     mroot.mkdir(parents=True, exist_ok=True)
     applied = []
     for link, _target, problem, want in items:
-        if problem == "occupied":
+        if problem in ("occupied", "retired_foreign", "retired_occupied"):
+            continue
+        if problem == "retired":
+            # Recheck ownership before removal, in case the plan became stale.
+            current = _retired_skills_mount()
+            if current is not None and current[2] == "retired":
+                link.unlink()
+                applied.append(f"{link.name}（已移除本仓退役链接）")
             continue
         if link.is_symlink():
             link.unlink()
@@ -897,14 +946,20 @@ def _doctor_fix(json_out: bool) -> dict:
     # 双侧静默消失）
     occupied_notes = [f"挂载链接 {lk.name} 被真实文件占用（非符号链接）——永不自动改，"
                       "人工确认后处理（--fix-links 同口径跳过）"
-                      for lk, _t, prob, _w in items if prob == "occupied"]
+                      for lk, _t, prob, _w in items
+                      if prob in ("occupied", "retired_occupied")]
+    occupied_notes.extend(
+        f"退役挂载 {lk.name} 非直接指向本仓 skills 的符号链接——保留，请人工处理"
+        for lk, _t, prob, _w in items if prob == "retired_foreign")
     if not items:
         report["mount"] = {"status": "ok", "note": "挂载链接全部健康"}
     else:
         safe, reason = _mount_fix_safe(items)
         if safe:
             applied = _apply_mount_link_fixes(items)
-            report["mount"] = {"status": "fixed", "applied": applied}
+            report["mount"] = {"status": "fixed" if applied else "manual", "applied": applied}
+            if not applied:
+                report["mount"]["note"] = "挂载项需人工处理"
         else:
             report["mount"] = {"status": "manual", "note": reason +
                                "——确认目标仓后跑 vt.py --fix-links"}
@@ -924,7 +979,7 @@ def _doctor_fix(json_out: bool) -> dict:
             print("  ✓ 挂载链接全部健康")
         elif m.get("status") == "fixed":
             for a in m["applied"]:
-                print(f"  · 已重建挂载链接 {a}")
+                print(f"  · 已修复挂载链接 {a}")
         else:
             print(f"  ℹ 挂载链接：{m['note']}")
         r = report["registry"]
@@ -952,7 +1007,7 @@ def cmd_doctor(a) -> int:
         print("== ③ 组件（apps + plugins）==")
     components = _doctor_components(a.json)
     if not a.json:
-        print("== ④ skills（工作流包）==")
+        print("== ④ 模板/工作流（templates）==")
     skills = _doctor_skills(a.json)
     fix = _doctor_fix(a.json) if a.fix else None
     if a.json:
@@ -968,14 +1023,14 @@ def cmd_doctor(a) -> int:
     if components["fail"]:
         fails.append("组件段存在 FAIL（manifest 无效 / external enabled 件 health·requires 不通过）")
     if skills["fail"]:
-        fails.append("skills 段存在 FAIL")
+        fails.append("模板/工作流段存在 FAIL")
     print("doctor 结论：" + ("✅ 通过" if not fails else "❌ " + "；".join(fails)))
     return 1 if fails else 0
 
 
 # ================================================================ list / check / version
 def cmd_list(kind: str) -> int:
-    if kind == "skills":
+    if kind in ("templates", "skills"):
         sk = _doctor_skills(json_out=False)
         return 1 if sk["fail"] else 0
     comp = _doctor_components(json_out=True, kind_filter=("app" if kind == "apps" else "plugin"))
@@ -998,10 +1053,10 @@ def cmd_list(kind: str) -> int:
 
 
 def cmd_check(kind: str) -> int:
-    """check = doctor 组件段单层（apps → app；plugins → plugin；skills → skills 段）。"""
-    if kind == "skills":
+    """check = doctor 组件段单层（apps → app；plugins → plugin；templates/skills → 工作流段）。"""
+    if kind in ("templates", "skills"):
         sk = _doctor_skills(json_out=False)
-        print("skills check：" + ("✅" if not sk["fail"] else "❌"))
+        print("templates check：" + ("✅" if not sk["fail"] else "❌"))
         return 1 if sk["fail"] else 0
     comp = _doctor_components(json_out=False, kind_filter=("app" if kind == "apps" else "plugin"))
     print(f"{kind} check：" + ("✅" if not comp["fail"] else "❌"))
@@ -1019,16 +1074,16 @@ def cmd_version() -> int:
 
 
 # ================================================================ --fix-links
-# 挂载表：~/.agents/skills/video/ 下 5 条 skill 链接 + 第 6 条 skills 链接（v2
-# 工作流包目录），目标 = 本仓对应目录（VT_MOUNT_ROOT 可覆盖挂载根——测试/多仓并存；
+# 挂载表：~/.agents/skills/video/ 下 docs/skill 三件 + vtx/scripts/templates，
+# 目标 = 本仓对应目录（VT_MOUNT_ROOT 可覆盖挂载根——测试/多仓并存；
 # 默认指向 live 挂载，真实修复前先 --dry 核对目标仓是否为本仓）。
 MOUNT_LINKS = (
-    ("SKILL.md", "skill/SKILL.md"),
-    ("references", "skill/references"),
-    ("assets", "skill/assets"),
+    ("SKILL.md", "docs/skill/SKILL.md"),
+    ("references", "docs/skill/references"),
+    ("assets", "docs/skill/assets"),
     ("vtx", "vtx"),
     ("scripts", "scripts"),
-    ("skills", "skills"),       # P2 落地；目标缺失时跳过并提示
+    ("templates", "templates"),  # 目标缺失时跳过并提示
 )
 
 
@@ -1074,6 +1129,20 @@ def cmd_fix_links(dry: bool) -> int:
             os.symlink(want, link)
             print(f"    · 已创建相对链接 → {want}")
         changed += 1
+    retired = _retired_skills_mount()
+    if retired is not None:
+        link, _target, problem, _want = retired
+        if problem == "retired":
+            if dry:
+                print("  [dry] 将移除退役 skills 链接（直接指向本仓 skills）")
+                changed += 1
+            else:
+                applied = _apply_mount_link_fixes([retired])
+                changed += len(applied)
+                for action in applied:
+                    print(f"  · {action}")
+        else:
+            print("  ℹ 退役 skills 路径被非本仓链接或真实文件/目录占用——保留，请人工处理")
     print(("✓ 修复完成" if not dry else "[dry] 以上为修复计划") + f"（{changed} 处变更）")
     return 0
 
@@ -1082,14 +1151,14 @@ def cmd_fix_links(dry: bool) -> int:
 def main():
     ap = argparse.ArgumentParser(description="vt —— Framivra v2 统一入口（doctor/list/check/version/init/--fix-links）")
     ap.add_argument("command", nargs="?", default=None,
-                    help="doctor | apps|plugins|skills list|check | version | init")
-    ap.add_argument("sub", nargs="?", default=None, help="list | check（apps/plugins/skills 的子命令）")
+                    help="doctor | apps|plugins|templates list|check（skills 兼容）| version | init")
+    ap.add_argument("sub", nargs="?", default=None, help="list | check（apps/plugins/templates；skills 兼容）")
     ap.add_argument("--json", action="store_true", help="doctor/init：机器可读输出")
     ap.add_argument("--fix", action="store_true",
                     help="init：安装缺失基础依赖；doctor：修复可自动修复项（挂载链接重建 + "
                          "registry.json 缺字段回填，§5.1）——两者语义不同，不得混用")
     ap.add_argument("--fix-links", action="store_true",
-                    help="重建挂载符号链接（skill 5 链接 + skills 链接，指向本仓；--dry 只报告）")
+                    help="重建六件挂载并安全清理本仓退役 skills 链接；--dry 只报告")
     ap.add_argument("--dry", action="store_true", help="--fix-links 专属：只报告不修复")
     a = ap.parse_args()
 
@@ -1101,7 +1170,7 @@ def main():
         return cmd_init(a)
     if a.command == "doctor":
         return cmd_doctor(a)
-    if a.command in ("apps", "plugins", "skills"):
+    if a.command in ("apps", "plugins", "templates", "skills"):
         if a.sub == "list":
             return cmd_list(a.command)
         if a.sub == "check":
