@@ -202,9 +202,9 @@ still-required frozen-input/plan/environment run receipt.
 
 ### Experimental bounded runtime observation bridge
 
-`vtx.gfx_runtime.collect(port, run_id=...)` is an opt-in, currently unwired
-collector for the future isolated experiment runner. It does not change startup,
-rendering, cache identity or ordinary event metadata. Its raw artifact is private:
+`vtx.gfx_runtime.collect(port, run_id=...)` is the opt-in root collector wired to
+the isolated experiment producer below. Ordinary rendering does not invoke it
+or change cache identity or event metadata. Its raw artifact is private:
 actual executable paths and effective argv must never be copied into event rows.
 It is not a reusable environment credential or a completed #62 run receipt.
 
@@ -233,8 +233,8 @@ Missing observations remain null with fixed reason codes, without raw exception
 messages. Viewport/scale and alpha need page-level observations; color_space stays
 null instead of turning the configured sRGB policy into measured color. The raw
 schema-1 shape is an experimental adapter input, not an expansion of the public
-event protocol or a guarantee that #48 will accept it. Full-run linkage, page
-witnesses, font/config evidence and producer/run receipts remain to be integrated.
+event protocol or a guarantee that #48 will accept it. The limited producer below supplies full-run linkage, page witnesses and
+recorded font/config evidence; general environment trust remains separate.
 
 ### Limited experiment producer and fresh-root runner
 
@@ -314,3 +314,14 @@ never trims successful evidence and still claims PASS. Artifacts expire after
 seven days and can contain runner paths/argv, so they should be treated as raw
 experiment evidence. The workflow can establish only this short profile's partial
 acceptance; trace, graph critical path and Chrome-only RSS remain separate gaps.
+
+The artifact gate validates producer-shaped records rather than filenames alone:
+valid full source SHAs must match the actual checkout, workflow expected head
+when supplied, preflight and all arm manifests; plans, arm UUIDs/configurations,
+closed successful streams, frame publication digests, Golden records and all
+matrix summaries must agree. Owner/preflight and the four HTML pages/timeline
+are mandatory. The packer hashes the existing bounded fixture media to verify
+the frozen input fingerprint and retains that hash, but never includes media
+bytes or reads PNGs. Missing media at packing time is insufficient evidence.
+These are local consistency checks, not remote attestation or independent pixel
+recomputation from a PNG-free bundle.
