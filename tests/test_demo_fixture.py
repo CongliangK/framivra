@@ -136,6 +136,14 @@ class RealGenerationTests(unittest.TestCase):
                      '--ffmpeg', FFMPEG],
                     capture_output=True, cwd=REPO)
                 if result.returncode != 0:
+                    stderr = result.stderr.decode('utf-8', 'replace')
+                    if 'toolchain ffmpeg identity' in stderr:
+                        # 冻结清单外的工具链按 issue #177 F6 显式 skip，不算失败，
+                        # 也不把它静默当通过：确定性生成证据由冻结工具链环境提供。
+                        raise unittest.SkipTest(
+                            'demo fixture toolchain unsupported (ffmpeg/ffprobe '
+                            'identity != frozen manifest): real-generation '
+                            'tests skipped; %s' % stderr.strip())
                     raise AssertionError('%s prepare failed: %s'
                                          % (profile, result.stderr))
 
