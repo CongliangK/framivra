@@ -36,6 +36,10 @@ class ContractTests(unittest.TestCase):
         p = subprocess.run(['node', str(WORKER_DIR/'test_pixel_codec.mjs')], capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
 
+    def test_decoder_thread_protocol(self):
+        p = subprocess.run(['node', str(WORKER_DIR/'test_decoder_thread.mjs')], capture_output=True, text=True, timeout=15)
+        self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+
     def test_png_codec_independent_reference(self):
         p = subprocess.run([sys.executable, '-B', str(WORKER_DIR/'test_pixel_codec_reference.py')],
                            capture_output=True, text=True)

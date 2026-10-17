@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { decodeNativePng, markerMatches, markerRanges, mergeWitnesses } from './pixel_codec.mjs';
+import { NativePngDecoder, markerMatches, markerRanges, mergeWitnesses } from './pixel_codec.mjs';
 import { installPageErrorGate, PAGE_ERROR_GATE } from './page_error_gate.mjs';
 function samePhase(a,b,phase,width,height) {
   let pos=0;
@@ -79,8 +79,9 @@ function checkDocumentCode(url, f) { return `(() => {
   if (location.href !== ${JSON.stringify(url)} || new URL(location.href).searchParams.get('f') !== ${JSON.stringify(String(f))}) throw Error('wrong_document');
   if (devicePixelRatio !== 1 || innerWidth !== ${width} || innerHeight !== ${height}) throw Error('viewport_mismatch');
 })()`; }
-async function renderFrame(f, generation, ses, pageErrors) {
+async function renderFrame(f, generation, ses, pageErrors, decoder) {
   const start = Date.now();
+  decoder.begin(f, generation);
   const url = pathToFileURL(job.page); url.searchParams.set('f', String(f));
   const expectedUrl = url.href;
   const win = new BrowserWindow({width, height, show:false, frame:false, transparent:true,
@@ -115,10 +116,10 @@ async function renderFrame(f, generation, ses, pageErrors) {
       if (!markerMatches(bitmap, width, height, active.phase, active.token)) { rejected++; return; }
       const png = image.toPNG();
       const ready = active; active = null;
-      ready.resolve({bitmap, rgba:decodeNativePng(png,width,height)});
+      ready.resolve({bitmap, rgba:decoder.decode(png,ready.operation)});
     } catch (e) { active?.reject(e); active = null; }
   });
-  async function witness(phase) {
+  async function witness(phase, operation) {
     if (fatal) throw fatal;
     const token = crypto.randomBytes(48);
     let resolve, reject;
@@ -126,7 +127,7 @@ async function renderFrame(f, generation, ses, pageErrors) {
     // Attach rejection handler before asynchronous installation to avoid an
     // unhandled rejection if the renderer dies during executeJavaScript.
     captured.catch(() => {});
-    active = {phase, token, resolve, reject};
+    active = {phase, token, operation, resolve, reject};
     let pulse;
     try {
       await isolated(wc, `${checkDocumentCode(expectedUrl,f)};
@@ -190,36 +191,45 @@ async function renderFrame(f, generation, ses, pageErrors) {
     const baselineImage = await wc.capturePage();
     const baselineSize = baselineImage.getSize();
     if (baselineSize.width !== width || baselineSize.height !== height) throw Error('baseline_geometry');
-    const baseline = decodeNativePng(baselineImage.toPNG(),width,height);
-    const a = await witness('a'); const b = await witness('b');
+    const baselinePending = decoder.decode(baselineImage.toPNG(),'baseline');
+    const a = await witness('a','a'); const b = await witness('b','b');
     // A/B/A/B repeats detect ordinary page timers even in marker-covered pixels.
     await delay(40);
-    const aa = await witness('a');
-    if (!samePhase(a.bitmap,aa.bitmap,'a',width,height) || !samePhase(a.rgba,aa.rgba,'a',width,height)) throw Error('unstable_page:repeated_a');
-    const bb = await witness('b');
-    if (!samePhase(b.bitmap,bb.bitmap,'b',width,height) || !samePhase(b.rgba,bb.rgba,'b',width,height)) throw Error('unstable_page:repeated_b');
+    const aa = await witness('a','aa');
+    if (!samePhase(a.bitmap,aa.bitmap,'a',width,height)) throw Error('unstable_page:repeated_a');
+    const bb = await witness('b','bb');
+    if (!samePhase(b.bitmap,bb.bitmap,'b',width,height)) throw Error('unstable_page:repeated_b');
+    const [baseline, ar, br, aar, bbr] = await Promise.all([baselinePending,a.rgba,b.rgba,aa.rgba,bb.rgba]);
+    if (!samePhase(ar,aar,'a',width,height)) throw Error('unstable_page:repeated_a');
+    if (!samePhase(br,bbr,'b',width,height)) throw Error('unstable_page:repeated_b');
     if (fatal) throw fatal;
     if (ses._vtxEpoch !== resourceEpoch || ses._vtxPending.size || ses._vtxErrors.length) throw Error('resource_changed_during_capture');
     await isolated(wc, checkDocumentCode(expectedUrl,f));
     const clean = mergeWitnesses(a.bitmap,b.bitmap,width,height);
-    const expected = mergeWitnesses(a.rgba,b.rgba,width,height);
+    const expected = mergeWitnesses(ar,br,width,height);
     if (!expected.equals(baseline)) throw Error('marker_side_effect_or_unstable_baseline');
     const rebuilt = nativeImage.createFromBitmap(clean,{width,height,scaleFactor:1});
     const png = rebuilt.toPNG();
     // Bitmap roundtrip alone misses alpha/color normalization regressions.
     // Guard the entire decoded output against *native witness PNGs*, every frame.
-    if (!decodeNativePng(png,width,height).equals(expected)) throw Error('native_png_semantics_mismatch');
+    if (!(await decoder.decode(png,'final')).equals(expected)) throw Error('native_png_semantics_mismatch');
     // Keep monitoring through all witnesses and PNG reconstruction. No await
     // between this final fence/veto and the atomic publication/receipt.
     await checkPageErrors();
     if (ses._vtxEpoch !== resourceEpoch || ses._vtxPending.size || ses._vtxErrors.length) throw Error('resource_changed_during_capture');
+    decoder.assertComplete();
     const out = path.join(job.out_dir, `f${String(f).padStart(4,'0')}.png`);
     atomicWrite(out,png);
     return {frame:f,generation,url:expectedUrl,paints,rejected_paints:rejected,witnesses:4,
       png_bytes:png.length,sha256:crypto.createHash('sha256').update(png).digest('hex'),
       path:'electron_native_topng',baseline_veto_passed:true,png_semantics_passed:true,
-      page_error_fence_passed:true,elapsed_ms:Date.now()-start,output:out};
-  } finally { errorGate?.close(); if (!win.isDestroyed()) win.destroy(); }
+      page_error_fence_passed:true,png_decode_count:6,elapsed_ms:Date.now()-start,output:out};
+  } finally {
+    errorGate?.close(); if (!win.isDestroyed()) win.destroy();
+    // A failed page generation must not leak decode replies into the next one.
+    // The existing whole-frame watchdog also bounds this cleanup/drain.
+    await decoder.drain();
+  }
 }
 async function main() {
   fs.mkdirSync(job.out_dir,{recursive:true});
@@ -241,8 +251,9 @@ async function main() {
   const result = {schema:'vtx.electron.navigation/1',run_id:runId,requested_backend:'electron',effective_backend:'electron',
     mode:'N',raster_mode:job.mode,output:job.output,versions:process.versions,
     viewport:{width,height,device_scale_factor:1},gpu_feature_status:app.getGPUFeatureStatus(),
-    max_inflight:1,shared_memory:false,frames:[],failed:[],errors:{},
+    max_inflight:1,decoder_threads:1,max_pending_decodes:6,shared_memory:false,frames:[],failed:[],errors:{},
     page_error_gate:PAGE_ERROR_GATE,page_errors:{}};
+  const decoder = new NativePngDecoder(width,height);
   let generation=0;
   for (const f of frames) {
     ses._vtxErrors=[]; ses._vtxRequests=0;
@@ -250,7 +261,7 @@ async function main() {
     const watchdog = setTimeout(() => { result.failed.push(f); result.errors[f]='timeout:frame';
       atomicWrite(job.result,JSON.stringify(result,null,2)); app.exit(72); }, timeoutMs);
     result.page_errors[f]=[];
-    try { result.frames.push(await renderFrame(f,++generation,ses,result.page_errors[f])); }
+    try { result.frames.push(await renderFrame(f,++generation,ses,result.page_errors[f],decoder)); }
     catch (e) {
       // app.exit's target teardown can reject a pending await after the watchdog
       // recorded timeout: do not replace that cause with debugger detachment.
@@ -262,6 +273,7 @@ async function main() {
     atomicWrite(job.result,JSON.stringify(result,null,2));
   }
   atomicWrite(job.result,JSON.stringify(result,null,2));
+  await decoder.close();
   app.exit(result.failed.length ? 1 : 0);
 }
 app.whenReady().then(main).catch(e => {console.error(e.stack||e);app.exit(70);});

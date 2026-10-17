@@ -1,6 +1,7 @@
 // Decode only the RGB/RGBA8 PNGs emitted by Electron. Used as an independent
 // output semantic guard: bitmap round-trip equality alone misses alpha changes.
 import zlib from 'node:zlib';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 export function decodeNativePng(png, width, height) {
   if (!png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) throw new Error('PNG signature');
   let channels = 0, idat = [];
@@ -113,4 +114,81 @@ export function mergeWitnesses(a, b, width, height) {
   const clean = Buffer.from(a);
   for (const [start,end] of ar) b.copy(clean,start,start,end);
   return clean;
+}
+
+
+// One host decoder thread, never a page/render worker. Six independently encoded
+// PNGs still undergo the same full RGBA decoder. Only immutable PNG copies cross
+// the boundary; compositor bitmaps remain owned by the main thread.
+const DECODE_OPERATIONS = ['baseline', 'a', 'b', 'aa', 'bb', 'final'];
+export class NativePngDecoder {
+  constructor(width, height) {
+    this.width = width; this.height = height; this.pending = new Map();
+    this.submitted = []; this.completed = 0; this.generation = 0; this.used = new Set(); this.failure = null; this.closed = false;
+    this.worker = new Worker(new URL(import.meta.url), {workerData:{vtxNativePngDecoder:1}});
+    this.worker.on('message', message => {
+      if (this.closed) return;
+      const entry = this.pending.get(message?.operation);
+      if (!entry || message.generation !== this.generation || message.frame !== this.frame ||
+          message.width !== this.width || message.height !== this.height ||
+          !(message.rgba instanceof Uint8Array) || message.rgba.byteLength !== this.width*this.height*4 ||
+          Object.keys(message).sort().join(',') !== 'frame,generation,height,operation,rgba,width') {
+        this.fail(Error('decoder_protocol')); return;
+      }
+      this.pending.delete(message.operation); this.completed++;
+      entry.resolve(Buffer.from(message.rgba.buffer, message.rgba.byteOffset, message.rgba.byteLength));
+    });
+    this.worker.on('error', e => this.fail(Error(`decoder_error:${e.message}`)));
+    this.worker.on('exit', code => { if (!this.closed) this.fail(Error(`decoder_exit:${code}`)); });
+  }
+  fail(error) {
+    this.failure ||= error;
+    for (const entry of this.pending.values()) entry.reject(this.failure);
+    this.pending.clear();
+  }
+  begin(frame, generation) {
+    if (this.closed || this.failure) throw this.failure || Error('decoder_closed');
+    if (this.pending.size || !Number.isInteger(frame) || !Number.isInteger(generation) || generation !== this.generation+1) throw Error('decoder_generation');
+    this.frame = frame; this.generation = generation; this.used.clear(); this.completed = 0; this.submitted = [];
+  }
+  decode(png, operation) {
+    if (this.closed || this.failure) return Promise.reject(this.failure || Error('decoder_closed'));
+    if (!this.generation || !Buffer.isBuffer(png) || operation !== DECODE_OPERATIONS[this.used.size] || this.used.has(operation) || this.pending.size >= 6) return Promise.reject(Error('decoder_operation'));
+    this.used.add(operation);
+    const promise = new Promise((resolve,reject) => {
+      this.pending.set(operation, {resolve,reject});
+      try { this.worker.postMessage({generation:this.generation, frame:this.frame, operation,
+        width:this.width, height:this.height, png}); }
+      catch (e) { this.fail(e); }
+    });
+    // Errors may arrive while Chromium is painting; fence them when collected.
+    promise.catch(() => {}); this.submitted.push(promise);
+    return promise;
+  }
+  async drain() { await Promise.allSettled(this.submitted); }
+  assertComplete() {
+    if (this.failure) throw this.failure;
+    if (this.closed || this.pending.size || this.used.size !== 6 || this.completed !== 6) throw Error('decoder_incomplete');
+  }
+  close() {
+    if (this.closed) return;
+    this.closed = true; this.fail(Error('decoder_closed'));
+    return this.worker.terminate();
+  }
+}
+if (!isMainThread && workerData?.vtxNativePngDecoder === 1) {
+  let generation = 0, frame = -1, used = new Set();
+  parentPort.on('message', message => {
+    const {generation:g, frame:f, operation, width, height, png} = message;
+    if (!Number.isInteger(g) || !Number.isInteger(f) || f < 0 ||
+        !Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 2 ||
+        width > 3840 || height > 2160 || width*height > 8294400 ||
+        !(png instanceof Uint8Array) || !DECODE_OPERATIONS.includes(operation) ||
+        Object.keys(message).sort().join(',') !== 'frame,generation,height,operation,png,width') throw Error('decoder_request');
+    if (g > generation) { generation = g; frame = f; used = new Set(); }
+    if (g !== generation || f !== frame || operation !== DECODE_OPERATIONS[used.size] || used.has(operation)) throw Error('decoder_request_generation');
+    used.add(operation);
+    const rgba = decodeNativePng(Buffer.from(png.buffer,png.byteOffset,png.byteLength),width,height);
+    parentPort.postMessage({generation:g,frame:f,operation,width,height,rgba},[rgba.buffer]);
+  });
 }
