@@ -19,6 +19,7 @@
   可执行文件 SHA256 并入 gfx 键；缺省路由 `cache/gfx_exp/cef-alpha/<key>/`。
   `VTX_GFX_CACHE_NS` 可覆盖命名空间。生效 CEF 身份和命名空间同时进入阶段回执；
   分段与多 pass 键使用 gfx 相对 cache 的完整路径，不能跨命名空间误命中旧视频段。
+- **Electron Alpha 身份**：`VTX_GFX=electron` 将实际 binary、导航 worker、错误门、codec、Python 适配/生产门/PNG 校验/监管器及输出配置纳入同一内容键；缺省 namespace 为 `electron_b0`。只读桥复用生产 validator 核验真实 adapter/worker 回执，不补签旧 PNG。strict 依赖只支持 CDP，Electron/CEF 明确拒绝。
 - **键轴边界（诚实注记）**：CDP/CLI 的 Chrome 升级与 NAVFREE/STATIC 开关仍不入
   gfx 键；CEF 键不单独散列同目录运行库、字体、GPU 驱动。运行库须使用锁定分发包，
   环境变化宜在全新项目副本重建。段中间物 `vseg_pass` 属 gc 白名单。
@@ -120,7 +121,12 @@ qc 要求当前 mux；单跑某阶段前置不满足会直接拒绝。可以直�
 则保守重建一次。视频须完整解码；合成段满足精确段长，预编码允许已认证的短源自然
 结束（帧数选项是上限，不以补帧伪装完成）。单独存在文件、整数帧数旁车或流头不能
 证明中断文件完整。合法缓存可复用，损坏节点
-重建；PNG 逐帧恢复沿用 gfx 完整性门，不为中断无条件重渲已完成帧。
+重建；CDP/CLI 的 PNG 逐帧恢复沿用 gfx 完整性门。Electron 仅复用绑定相同身份、
+namespace、完整帧摘要和成功 run 回执的完整页；缺失/损坏完成标记的页须全部请求新帧，
+不能把现存 PNG 补签为 Electron 成功。每个新块须有本次完整 adapter/worker 回执，
+非空 failed、非零退出、缺帧/错后端/缺错误门均硬失败，无回落。整页所有块通过、PNG
+完整性与输入身份门通过后才原子发布 complete.json。配置与入口见
+[Electron 导航接线](../experiments/gfx_electron_worker/README.md#alpha-导航与生产接线候选非原视频全片验收)。
 
 杀死整个写进程遗留的同目标临时件，下一次写入持该目标事务锁后清理；其他目标的
 临时件不受影响。进程崩溃发生在媒体替换与完成凭据写入之间时，留下完整旧式媒体，

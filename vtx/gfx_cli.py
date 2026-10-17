@@ -320,7 +320,8 @@ def invalidate_page(outdir):
 
 
 def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None,
-                  dependency_digest=None, dependency_enforcement=None, dependency_observed=None):
+                  dependency_digest=None, dependency_enforcement=None, dependency_observed=None,
+                  backend_identity=None, render_runs=None):
     """Validate the whole page and pin-input gate before atomic publication.
 
     Caller invokes only on non-dry paths after all blocks/fallbacks finish.
@@ -344,6 +345,9 @@ def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=No
             raise GfxCliError('strict completion requires observed local requests')
         record['dependency_observed'] = dependency_observed
     verify_inputs()
+    if backend_identity is not None:
+        record["backend_identity"] = backend_identity
+        record["render_runs"] = render_runs
     fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True))
 
 
