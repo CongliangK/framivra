@@ -275,7 +275,7 @@ def _gfx(c: Ctx):
             if sizes is None:
                 jobs.append((cid, key, cl, n, d, html, None,
                              events.task(c, "gfx", kind="gfx_block",
-                                         metadata={"page_id": page_id, "backend": "cdp" if cdp_mod else "cli", "frame_range": [0, n]})))
+                                         metadata={"page_id": page_id, "backend": "cef" if backend == "cef" else ("cdp" if cdp_mod else "cli"), "frame_range": [0, n]})))
                 continue
             off, put = 0, 0
             for sz in sizes:

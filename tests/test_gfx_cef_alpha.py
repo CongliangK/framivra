@@ -319,7 +319,8 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
             p = project(root)
             env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
                        VTX_CEF_MODE='a0', VTX_GFX_PAGES='1', VTX_GFX_CACHE_NS='')
-            command = [os.sys.executable, str(ROOT / 'vtx/vtx.py'), '-t', str(p), 'gfx']
+            command = [os.sys.executable, str(ROOT / 'vtx/vtx.py'), '-t', str(p),
+                       '--events-jsonl', str(root / 'cef-events.jsonl'), 'gfx']
             result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=150)
             evidence = os.environ.get('VTX_CEF_EVIDENCE_DIR')
             if evidence:
@@ -327,6 +328,14 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
                 (Path(evidence) / 'production-fixture/startup.log').write_text(result.stdout + result.stderr)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('Mode N native-exact', result.stdout)
+            from vtx import events as execution_events
+            observed = execution_events.read_events((root / 'cef-events.jsonl').read_bytes())
+            self.assertTrue(observed['complete'])
+            self.assertTrue(observed['events'][-1]['extensions']['evidence_complete'])
+            blocks = [row for row in observed['events'] if row['event'] == 'task_start'
+                      and 'backend' in row['extensions']]
+            self.assertEqual([row['extensions']['backend'] for row in blocks], ['cef'])
+            (root / 'cef-events.initial.jsonl').write_bytes((root / 'cef-events.jsonl').read_bytes())
             with mock.patch.dict(os.environ, env):
                 c = Ctx(p)
                 out = hygiene.gfx_dir(c, c.tl['video_tracks'][0]['clips'][0])

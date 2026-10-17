@@ -265,7 +265,7 @@ class RealBlenderCache(CacheFixture):
         self.seed(ns='wrong-ns')
         self.export(expected=1)
 
-    def test_default_cdp_cli_canonical_export_rejects_legacy_stem(self):
+    def test_default_cdp_cli_canonical_and_certified_legacy_export(self):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(
                     os.environ, {'VTX_GFX': backend, 'VTX_GFX_CACHE_NS': ''}):
@@ -276,13 +276,23 @@ class RealBlenderCache(CacheFixture):
                 # layout, never rename/copy a CEF page into a stem alias.
                 legacy = legacy_cache / 'cache' / 'page'
                 self.seed(legacy, marker=False)
-                (legacy_cache / 'gfx').symlink_to(self.root / 'gfx', target_is_directory=True)
+                (legacy_cache / 'gfx').mkdir()
+                (legacy_cache / 'gfx' / 'page.html').write_bytes(
+                    (self.root / 'gfx' / 'page.html').read_bytes())
                 timeline = legacy_cache / 'timeline.json'
                 timeline.write_text(json.dumps(self.tl))
                 old_timeline = self.timeline
                 self.timeline = timeline
                 try:
-                    self.export(expected=1)
+                    self.export(expected=1)  # unmarked legacy is not provenance
+                    old = SimpleNamespace(**dict(vars(self.c), root=legacy_cache,
+                                                 cache=legacy_cache / 'cache'))
+                    gfx_cli.complete_page(legacy, 3, gfx_key(old, self.clip), 8, 6,
+                                          verify_inputs=lambda: None)
+                    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in legacy.iterdir()}
+                    self.export()
+                    self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                                              for p in legacy.iterdir()})
                 finally:
                     self.timeline = old_timeline
 

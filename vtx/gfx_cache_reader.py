@@ -2,8 +2,11 @@
 
 No rendering, certification, marker publication or directory discovery. CEF and
 experimental namespaces require an existing exact completion record. The default
-CDP/CLI route accepts unmarked PNGs only at the current canonical directory.
+CDP/CLI route accepts unmarked PNGs only at the current canonical directory;
+its derived legacy stem requires an exact current completion certificate.
 """
+from pathlib import Path
+
 from . import gfx_cli
 from .hygiene import gfx_cache_ns
 
@@ -26,10 +29,20 @@ def resolve_frames(c, clip):
     namespace = gfx_cache_ns()
     key = source.directory.name
     directory = source.directory
+    from .gfx_backend import selected
+    legacy = False
+    # Only one explicitly derived old location, never discovery. An existing
+    # canonical entry (including a broken symlink/non-directory) must fail on
+    # its own merits, not be concealed by otherwise valid historical frames.
+    if (not namespace and selected() in ('cdp', 'cli')
+            and not directory.exists() and not directory.is_symlink()):
+        candidate = c.cache / Path(clip['src']).stem
+        if candidate.is_dir():
+            directory, legacy = candidate, True
     dependency_digest = digest(resolve(c, clip)) if policy(c) == 'strict' else None
     n = source.frame_count
     marker = directory / gfx_cli.COMPLETE_FILE
-    if namespace or marker.exists() or dependency_digest is not None:
+    if legacy or namespace or marker.exists() or dependency_digest is not None:
         # inspect_page's second result also detects absent/malformed records,
         # unsupported schemas, missing hashes and mismatched backend_ns. Unlike
         # a renderer, a read-only consumer must not recertify any of these.

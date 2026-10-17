@@ -145,7 +145,7 @@ def _metadata(event, metadata, *, strict):
             elif key == 'page_id':
                 valid = _id(value)
             elif key == 'backend':
-                valid = value in ('cdp', 'cli')
+                valid = value in ('cdp', 'cli', 'cef')
             elif key == 'frame_range':
                 valid = value is None or _frame_range(value)
             elif key == 'frames':
