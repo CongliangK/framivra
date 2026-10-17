@@ -48,6 +48,7 @@ MEDIA_TESTS = {
         'SubsAlphaProbe.test_real_ffprobe_rejects_truncated_garbage',
         'tests.test_range_render.TestRangeIntegration',
         'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
+        'tests.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
         'tests.test_graphics_portability.SubtitleIntegration',
     ),
     'chrome': (
