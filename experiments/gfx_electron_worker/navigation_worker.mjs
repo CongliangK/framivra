@@ -1,9 +1,10 @@
 // Production candidate, Mode N only: real ?f= navigation, no page opt-in APIs.
-// One fresh WebContents per frame, one in-flight frame, no SHM/native helper.
+// Two fresh isolated documents at most; only one capture/decoder generation.
 import { app, BrowserWindow, nativeImage, session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { NativePngDecoder, markerMatches, markerRanges, mergeWitnesses } from './pixel_codec.mjs';
 import { installPageErrorGate, PAGE_ERROR_GATE } from './page_error_gate.mjs';
@@ -26,6 +27,8 @@ const jobPath = path.resolve(args.job);
 if (fs.statSync(jobPath).size > 2_000_000) throw Error('job too large');
 const job = JSON.parse(fs.readFileSync(jobPath, 'utf8'));
 const { width, height, frames, timeout_ms: timeoutMs, run_id: runId } = job;
+const scheduling={max_inflight:2,max_live_documents:2,max_capture_inflight:1,prefetch_limit:1,decoder_threads:1,max_pending_decodes:6};
+if (!job.scheduling || Object.keys(job.scheduling).length!==Object.keys(scheduling).length || Object.entries(scheduling).some(([k,v]) => job.scheduling[k]!==v)) throw Error('invalid scheduling');
 if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 2 || width > 3840 || height > 2160 || width*height > 8294400) throw Error('invalid viewport');
 if (!Array.isArray(frames) || frames.length > 20000 || new Set(frames).size !== frames.length || frames.some(f => !Number.isInteger(f) || f < 0 || f > 2147483647)) throw Error('invalid frames');
 if (!Number.isInteger(timeoutMs) || timeoutMs < 500 || timeoutMs > 120000) throw Error('invalid timeout');
@@ -79,18 +82,33 @@ function checkDocumentCode(url, f) { return `(() => {
   if (location.href !== ${JSON.stringify(url)} || new URL(location.href).searchParams.get('f') !== ${JSON.stringify(String(f))}) throw Error('wrong_document');
   if (devicePixelRatio !== 1 || innerWidth !== ${width} || innerHeight !== ${height}) throw Error('viewport_mismatch');
 })()`; }
-async function renderFrame(f, generation, ses, pageErrors, decoder) {
-  const start = Date.now();
-  decoder.begin(f, generation);
+function createFrameContext(f, generation, pageErrors, decoder, result) {
+  // Start before session/window creation; promotion NEVER resets this budget.
+  const start = performance.now();
+  const remaining = () => Math.max(1, timeoutMs-(performance.now()-start));
+  const ses = createSession(`vtx-${runId}-${generation}`);
+  result.sessions_created++;
+  let closed = false, capturing = false;
+  const watchdog = setTimeout(() => {
+    if (!result.failed.includes(f)) result.failed.push(f);
+    result.errors[f]='timeout:frame'; result.timed_out=true;
+    atomicWrite(job.result,JSON.stringify(result,null,2));
+    // Preserve the existing whole-batch timeout exit contract, including a
+    // timeout in the ahead document while current capture is still running.
+    app.exit(72);
+  }, remaining());
   const url = pathToFileURL(job.page); url.searchParams.set('f', String(f));
   const expectedUrl = url.href;
   const win = new BrowserWindow({width, height, show:false, frame:false, transparent:true,
     useContentSize:true, webPreferences:{session:ses, offscreen:{useSharedTexture:false, deviceScaleFactor:1},
       backgroundThrottling:false, contextIsolation:true, nodeIntegration:false, sandbox:true, spellcheck:false}});
+  result.live_documents++;
+  result.peak_live_documents=Math.max(result.peak_live_documents,result.live_documents);
+  if (result.live_documents>2) throw Error('live_document_limit');
   const wc = win.webContents;
   wc.setFrameRate(60);
   wc.setWindowOpenHandler(() => ({action:'deny'}));
-  let fatal = null, paints = 0, rejected = 0, active = null;
+  let fatal = null, paints = 0, rejected = 0, active = null, unmarkedPaint = null;
   const fail = reason => { fatal ||= Error(reason); active?.reject(fatal); };
   let errorGate;
   async function checkPageErrors() {
@@ -107,6 +125,7 @@ async function renderFrame(f, generation, ses, pageErrors, decoder) {
   wc.on('will-redirect', e => { e.preventDefault(); fail('unexpected_redirect'); });
   wc.on('paint', (_event, _dirty, image) => {
     paints++;
+    unmarkedPaint?.(); unmarkedPaint=null;
     if (!active) return;
     try {
       const size = image.getSize();
@@ -152,20 +171,23 @@ async function renderFrame(f, generation, ses, pageErrors, decoder) {
         })()`);
       wc.invalidate(); // Critical for unchanged/static documents (no paint starvation).
       pulse = setInterval(() => { if (!wc.isDestroyed()) wc.invalidate(); }, 30);
-      return await deadline(captured, Math.max(1, timeoutMs-(Date.now()-start)), 'marker_paint');
+      return await deadline(captured, remaining(), 'marker_paint');
     } finally { clearInterval(pulse); active = null; }
   }
-  try {
+  async function prepare() {
     // Materialize a script-free renderer before issuing Runtime commands; a
     // brand-new WebContents has no live CDP Runtime target yet in Electron 44.
     // Explicit transparency avoids about:blank's opaque OSR backdrop surviving
     // the next navigation. HTML bytes and page APIs are never modified; the
     // gate installs only a closure-owned error observer before page scripts.
-    await deadline(wc.loadURL('data:text/html,<style>html,body{background:transparent}</style>'), timeoutMs, 'blank_target');
-    errorGate = await installPageErrorGate(wc, pageErrors, fail);
+    await deadline(wc.loadURL('data:text/html,<style>html,body{background:transparent}</style>'), remaining(), 'blank_target');
+    errorGate = await deadline(installPageErrorGate(wc, pageErrors, fail), remaining(), 'error_gate');
     if (fatal) throw fatal;
-    await deadline(wc.loadURL(expectedUrl), timeoutMs, 'navigation');
+    await deadline(wc.loadURL(expectedUrl), remaining(), 'navigation');
     if (fatal) throw fatal;
+    await ready();
+  }
+  async function ready() {
     await deadline(isolated(wc, `${checkDocumentCode(expectedUrl,f)};
       (async () => {
         await document.fonts.ready;
@@ -175,19 +197,35 @@ async function renderFrame(f, generation, ses, pageErrors, decoder) {
         if (document.readyState !== 'complete') throw Error('document_not_ready');
         if (document.getAnimations().some(a => a.playState === 'running' || a.pending)) throw Error('unstable_page:active_animation');
         return true;
-      })()`), timeoutMs, 'resources');
+      })()`), remaining(), 'resources');
     // Track actual browser resource requests including CSS/background/font/fetch;
     // late requests during the witness window invalidate the whole frame.
     await deadline((async () => {
       while (ses._vtxPending.size || Date.now()-ses._vtxChanged < 100) { if (fatal) throw fatal; await delay(20); }
-    })(), timeoutMs, 'resource_quiet');
+    })(), remaining(), 'resource_quiet');
     if (ses._vtxErrors.length) throw Error(`resource_error:${ses._vtxErrors.join(';').slice(0,1000)}`);
-    await checkPageErrors();
+    await deadline(checkPageErrors(), remaining(), 'page_checkpoint');
+  }
+  async function capture() {
+    if (closed) throw fatal || Error('closed_context');
+    capturing = true;
+    result.capture_inflight++;
+    result.peak_capture_inflight=Math.max(result.peak_capture_inflight,result.capture_inflight);
+    if (result.capture_inflight!==1) throw Error('capture_limit');
+    decoder.begin(f,generation);
+    const captureStarted=performance.now();
+    // Recheck all readiness and the error checkpoint after waiting in the
+    // ahead slot. The epoch is frozen only AFTER this promotion fence.
+    await ready();
     const resourceEpoch = ses._vtxEpoch;
     // An untagged snapshot is ONLY a veto against DOM-marker side effects
     // (:last-child/:has/etc.). It is NEVER a source for recovered pixels, nor
     // evidence of target identity. Every output pixel still comes from nonce-
     // attested paint witnesses below; a stale baseline can only reject a frame.
+    // A prepared OSR document may have completed resources without producing
+    // a new compositor frame. Refresh the unmarked veto snapshot before asking
+    // capturePage; this paint is never used as attested output pixel evidence.
+    await deadline(new Promise(resolve => { unmarkedPaint=resolve; wc.invalidate(); }), remaining(), 'unmarked_refresh');
     const baselineImage = await wc.capturePage();
     const baselineSize = baselineImage.getSize();
     if (baselineSize.width !== width || baselineSize.height !== height) throw Error('baseline_geometry');
@@ -215,7 +253,7 @@ async function renderFrame(f, generation, ses, pageErrors, decoder) {
     if (!(await decoder.decode(png,'final')).equals(expected)) throw Error('native_png_semantics_mismatch');
     // Keep monitoring through all witnesses and PNG reconstruction. No await
     // between this final fence/veto and the atomic publication/receipt.
-    await checkPageErrors();
+    await deadline(checkPageErrors(), remaining(), 'page_checkpoint');
     if (ses._vtxEpoch !== resourceEpoch || ses._vtxPending.size || ses._vtxErrors.length) throw Error('resource_changed_during_capture');
     decoder.assertComplete();
     const out = path.join(job.out_dir, `f${String(f).padStart(4,'0')}.png`);
@@ -223,17 +261,33 @@ async function renderFrame(f, generation, ses, pageErrors, decoder) {
     return {frame:f,generation,url:expectedUrl,paints,rejected_paints:rejected,witnesses:4,
       png_bytes:png.length,sha256:crypto.createHash('sha256').update(png).digest('hex'),
       path:'electron_native_topng',baseline_veto_passed:true,png_semantics_passed:true,
-      page_error_fence_passed:true,png_decode_count:6,elapsed_ms:Date.now()-start,output:out};
-  } finally {
-    errorGate?.close(); if (!win.isDestroyed()) win.destroy();
-    // A failed page generation must not leak decode replies into the next one.
-    // The existing whole-frame watchdog also bounds this cleanup/drain.
-    await decoder.drain();
+      page_error_fence_passed:true,png_decode_count:6,prefetch_age_ms:captureStarted-start,elapsed_ms:performance.now()-start,output:out};
   }
+  async function close() {
+    if (closed) return;
+    closed=true;
+    errorGate?.close(); if (!win.isDestroyed()) win.destroy();
+    result.live_documents--;
+    // Only the exclusive capture owner may touch/drain the shared decoder.
+    if (capturing) {
+      await decoder.drain();
+      result.capture_inflight--;
+    }
+    clearTimeout(watchdog);
+  }
+  // Observe prep rejection immediately: ahead errors are private until their
+  // ordered turn and must never become host unhandled Promise rejections.
+  const prepared=prepare().then(() => null, async e => {
+    fatal ||= e; await close(); return fatal;
+  });
+  return {f, prepared, capture, close,
+    skip: async () => { decoder.begin(f,generation); await decoder.drain(); }};
 }
-async function main() {
-  fs.mkdirSync(job.out_dir,{recursive:true});
-  const ses = session.fromPartition(`vtx-${runId}`, {cache:false});
+function createSession(partition) {
+  // Unique session per generation prevents worker/request/late callback state
+  // from ever being inherited by another document. Native registry lifetime is
+  // batch-scoped; report session count honestly rather than claim two sessions.
+  const ses = session.fromPartition(partition, {cache:false});
   ses._vtxPending = new Set(); ses._vtxErrors=[]; ses._vtxChanged=0; ses._vtxEpoch=0; ses._vtxRequests=0;
   const resourceError = message => { if (ses._vtxErrors.length < 32) ses._vtxErrors.push(message.slice(0,1000)); };
   ses.setPermissionRequestHandler((_wc,_p,cb) => cb(false));
@@ -248,29 +302,41 @@ async function main() {
   const done = d => { ses._vtxPending.delete(d.id); ses._vtxChanged=Date.now(); ses._vtxEpoch++; };
   ses.webRequest.onCompleted(d => {done(d); if(d.statusCode>=400) resourceError(`http_${d.statusCode}:${d.url}`);});
   ses.webRequest.onErrorOccurred(d => {done(d); resourceError(`${d.error}:${d.url}`);});
-  const result = {schema:'vtx.electron.navigation/1',run_id:runId,requested_backend:'electron',effective_backend:'electron',
+  return ses;
+}
+async function main() {
+  fs.mkdirSync(job.out_dir,{recursive:true});
+  const result = {schema:'vtx.electron.navigation/2',run_id:runId,requested_backend:'electron',effective_backend:'electron',
     mode:'N',raster_mode:job.mode,output:job.output,versions:process.versions,
     viewport:{width,height,device_scale_factor:1},gpu_feature_status:app.getGPUFeatureStatus(),
-    max_inflight:1,decoder_threads:1,max_pending_decodes:6,shared_memory:false,frames:[],failed:[],errors:{},
+    max_inflight:2,max_live_documents:2,max_capture_inflight:1,prefetch_limit:1,
+    live_documents:0,peak_live_documents:0,capture_inflight:0,peak_capture_inflight:0,sessions_created:0,
+    decoder_threads:1,max_pending_decodes:6,shared_memory:false,frames:[],failed:[],errors:{},
     page_error_gate:PAGE_ERROR_GATE,page_errors:{}};
   const decoder = new NativePngDecoder(width,height);
   let generation=0;
-  for (const f of frames) {
-    ses._vtxErrors=[]; ses._vtxRequests=0;
-    // The total per-frame timer also bounds multi-step awaits and stuck scripts.
-    const watchdog = setTimeout(() => { result.failed.push(f); result.errors[f]='timeout:frame';
-      atomicWrite(job.result,JSON.stringify(result,null,2)); app.exit(72); }, timeoutMs);
+  const create = f => {
     result.page_errors[f]=[];
-    try { result.frames.push(await renderFrame(f,++generation,ses,result.page_errors[f],decoder)); }
-    catch (e) {
-      // app.exit's target teardown can reject a pending await after the watchdog
-      // recorded timeout: do not replace that cause with debugger detachment.
+    return createFrameContext(f,++generation,result.page_errors[f],decoder,result);
+  };
+  let current=frames.length ? create(frames[0]) : null;
+  for (let i=0;i<frames.length;i++) {
+    const f=frames[i];
+    let next=null;
+    try {
+      const preparationError=await current.prepared;
+      if (result.timed_out) return;
+      if (preparationError) { await current.skip(); throw preparationError; }
+      // Launch only one ahead; no nonce/baseline/decode until prior close.
+      if (i+1<frames.length) next=create(frames[i+1]);
+      result.frames.push(await current.capture());
+    } catch(e) {
       if (!result.failed.includes(f)) result.failed.push(f);
-      result.errors[f] ||= (String(e?.stack||e?.message||JSON.stringify(e)) +
-        (ses._vtxErrors.length ? `; resource_error:${ses._vtxErrors.join(';')}` : '')).slice(0,4000);
-    }
-    finally { clearTimeout(watchdog); }
+      result.errors[f] ||= String(e?.stack||e).slice(0,4000);
+    } finally { await current.close(); }
+    if (result.timed_out) return;
     atomicWrite(job.result,JSON.stringify(result,null,2));
+    current=next || (i+1<frames.length ? create(frames[i+1]) : null);
   }
   atomicWrite(job.result,JSON.stringify(result,null,2));
   await decoder.close();

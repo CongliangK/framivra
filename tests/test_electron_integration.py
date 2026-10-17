@@ -1,6 +1,7 @@
 """Public Electron route/cache gates. Real tests require VTX_TEST_ELECTRON=1.
 Fixtures never use voice-ime. Retain real outputs via VTX_ELECTRON_EVIDENCE_DIR.
 """
+from vtx import gfx_electron
 import contextlib
 import hashlib
 import io
@@ -71,9 +72,10 @@ class IntegrationGates(unittest.TestCase):
                                  url=Path(html).resolve().as_uri() + f'?f={f}', output=str(target.resolve()),
                                  page_error_fence_passed=True, baseline_veto_passed=True,
                                  png_semantics_passed=True, sha256=hashlib.sha256(target.read_bytes()).hexdigest()))
-        raw = dict(schema='vtx.electron.navigation/1', run_id=run_id, mode='N', raster_mode='b0',
+        raw = dict(schema='vtx.electron.navigation/2', run_id=run_id, mode='N', raster_mode='b0',
                    output=gfx_backend.OUTPUT, requested_backend='electron', effective_backend='electron',
-                   failed=[], errors={}, frames=receipts, max_inflight=1, shared_memory=False,
+                   failed=[], errors={}, frames=receipts, **gfx_electron.SCHEDULING, shared_memory=False,
+                   peak_live_documents=2, peak_capture_inflight=1, live_documents=0, capture_inflight=0,
                    page_error_gate=gfx_electron_stage.PAGE_ERROR_GATE, page_errors={str(f): [] for f in frames},
                    viewport=dict(width=192, height=96, device_scale_factor=1))
         st = dict(run_id=run_id, evidence_dir=str(evidence), mode='N', raster_mode='b0',
@@ -83,7 +85,7 @@ class IntegrationGates(unittest.TestCase):
         job = dict(run_id=run_id, page=str(Path(html).resolve()), out_dir=str(d.resolve()),
                    result=str(evidence.resolve() / 'result.json'), width=192, height=96, frames=frames,
                    timeout_ms=int(kw['timeout_s'] * 1000), mode=kw['mode'], output=kw['output'],
-                   source_sha256=hashlib.sha256(Path(html).read_bytes()).hexdigest())
+                   source_sha256=hashlib.sha256(Path(html).read_bytes()).hexdigest(), scheduling=dict(gfx_electron.SCHEDULING))
         (evidence / 'request.json').write_text(json.dumps(job))
         (evidence / 'result.json').write_text(json.dumps(raw))
         (evidence / 'adapter-result.json').write_text(json.dumps(st))
@@ -173,6 +175,11 @@ class IntegrationGates(unittest.TestCase):
     def test_current_caller_rejects_forged_provenance_readonly_and_producer(self):
         from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
         cases = [
+            ('result.json', lambda o: o.update(max_inflight=1)),
+            ('result.json', lambda o: o.update(max_capture_inflight=2)),
+            ('result.json', lambda o: o.update(prefetch_limit=True)),
+            ('result.json', lambda o: o.update(peak_live_documents=3)),
+            ('request.json', lambda o: o['scheduling'].update(max_inflight=1)),
             ('result.json', lambda o: o['frames'][0].update(url='file:///unrelated-source.html?f=0')),
             ('result.json', lambda o: o['frames'][0].update(output='/unrelated/f0000.png')),
             ('request.json', lambda o: o.update(page='/unrelated-source.html')),

@@ -18,6 +18,20 @@ from .proc_supervisor import SupervisedProcessGroup, supervision_available
 
 WORKER_DIR = Path(__file__).resolve().parents[1] / "experiments/gfx_electron_worker"
 PAGE_ERROR_GATE = "cdp-html-unhandled-exceptions/2"
+SCHEDULING = {"max_inflight": 2, "max_live_documents": 2,
+              "max_capture_inflight": 1, "prefetch_limit": 1,
+              "decoder_threads": 1, "max_pending_decodes": 6}
+
+
+def valid_schedule(raw):
+    return (all(type(raw.get(k)) is int and raw[k] == v for k, v in SCHEDULING.items())
+            and type(raw.get("peak_live_documents")) is int
+            and 0 <= raw["peak_live_documents"] <= 2
+            and type(raw.get("peak_capture_inflight")) is int
+            and 0 <= raw["peak_capture_inflight"] <= 1
+            and type(raw.get("live_documents")) is int and 0 <= raw["live_documents"] <= 2
+            and type(raw.get("capture_inflight")) is int and 0 <= raw["capture_inflight"] <= 1)
+
 
 
 class ElectronRenderError(RuntimeError):
@@ -31,7 +45,8 @@ def expected_request(html_path, outdir, frames, width, height, run_id, *, mode, 
             "result": str(directory / ".electron" / run_id / "result.json"),
             "width": width, "height": height, "frames": list(frames),
             "timeout_ms": int(timeout_s * 1000), "mode": mode, "output": output,
-            "source_sha256": hashlib.sha256(page.read_bytes()).hexdigest()}
+            "source_sha256": hashlib.sha256(page.read_bytes()).hexdigest(),
+            "scheduling": dict(SCHEDULING)}
 
 
 def frame_url(html_path, frame):
@@ -108,7 +123,8 @@ def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
         except (OSError, ValueError):
             pass
     valid_run = (raw.get("run_id") == run_id
-                 and raw.get("schema") == "vtx.electron.navigation/1"
+                 and raw.get("schema") == "vtx.electron.navigation/2"
+                 and valid_schedule(raw)
                  and raw.get("requested_backend") == "electron"
                  and raw.get("effective_backend") == "electron"
                  and raw.get("output") == output and raw.get("mode") == "N"
@@ -155,6 +171,6 @@ def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
                "page_error_gate": raw.get("page_error_gate"), "page_errors": page_errors,
                "evidence_dir": str(evidence), "versions": raw.get("versions", {}),
                "ms_total": elapsed, "ms_per_frame": elapsed / max(1, len(requested)),
-               "mode": "N", "raster_mode": mode, "max_inflight": 1}
+               "mode": "N", "raster_mode": mode, **SCHEDULING}
     (evidence / "adapter-result.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary

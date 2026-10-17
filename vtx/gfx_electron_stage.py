@@ -8,7 +8,7 @@ from pathlib import Path
 
 from . import events, fstxn, gfx_cli
 from .gfx_backend import OUTPUT, electron_config, identity
-from .gfx_electron import PAGE_ERROR_GATE, ElectronRenderError, expected_request, frame_url, render_page
+from .gfx_electron import valid_schedule, PAGE_ERROR_GATE, ElectronRenderError, expected_request, frame_url, render_page
 from .hygiene import gfx_cache_ns, gfx_dir, gfx_key, manifest_record
 
 
@@ -59,12 +59,13 @@ def require_result(st, frames, outdir, width, height, *, expected_html=None, exp
         raw = json.loads((evidence / "result.json").read_text(encoding="utf-8"))
         if saved != st:
             reject("adapter receipt mismatch")
-        if (raw.get("run_id") != run_id or raw.get("schema") != "vtx.electron.navigation/1"
+        if (raw.get("run_id") != run_id or raw.get("schema") != "vtx.electron.navigation/2"
                 or raw.get("requested_backend") != "electron" or raw.get("effective_backend") != "electron"
                 or raw.get("failed") != [] or raw.get("errors") != {}
                 or raw.get("mode") != "N" or raw.get("raster_mode") != "b0" or raw.get("output") != OUTPUT
                 or raw.get("page_error_gate") != PAGE_ERROR_GATE or raw.get("shared_memory") is not False
-                or raw.get("max_inflight") != 1
+                or not valid_schedule(raw) or raw.get("live_documents") != 0
+                or raw.get("capture_inflight") != 0 or raw.get("timed_out")
                 or raw.get("viewport") != {"width": width, "height": height, "device_scale_factor": 1}
                 or raw.get("page_errors") != {str(f): [] for f in frames}
                 or st.get("page_errors") != raw.get("page_errors")):

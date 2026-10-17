@@ -70,7 +70,7 @@ class RealNavigationTests(unittest.TestCase):
 
     def render(self, page, frames=(0,), n=1, **kwargs):
         result=render_page(page,self.case/'输出 中文 very long output path with spaces',n,
-                           width=192,height=96,frames=list(frames),ctx=self.ctx,**kwargs)
+                           width=kwargs.pop('width',192),height=kwargs.pop('height',96),frames=list(frames),ctx=self.ctx,**kwargs)
         self.results.append({'test':self._testMethodName,**result})
         # The existing supervisor must clean all runtime profiles and live trees.
         self.assertFalse(list((self.case/'cache/tmp').glob('*')))
@@ -101,6 +101,52 @@ class RealNavigationTests(unittest.TestCase):
         self.assertEqual([x['generation'] for x in raw['frames']],[1,2,3])
         self.assertTrue(all(x['witnesses']==4 for x in raw['frames']))
         self.assertGreater(sum(x['rejected_paints'] for x in raw['frames']),0)
+
+    def test_prefetch_ordinary_failure_isolation_and_bounds(self):
+        # Genuine rc0 first. Timed failures happen only in the ahead f1 document.
+        base="<style>html{background:rgb(12,35,78)}</style><script>const f=+new URL(location).searchParams.get('f');"
+        for kind,script in [
+            ('resource', "setTimeout(()=>{new Image().src='missing-prefetch-resource.png'},180)"),
+            ('throw', "setTimeout(()=>{throw Error('ahead-only-error')},180)"),
+            ('promise', "setTimeout(()=>{Promise.reject(Error('ahead-only-promise'))},180)"),
+            ('thirdchild', "const child=document.createElement('iframe');child.srcdoc='<script>setTimeout(()=>{throw Error(\"ahead-child\")},180)<\\/script>';document.documentElement.append(child)")
+        ]:
+            with self.subTest(kind=kind):
+                page=self.page(base+'if(f===1){/*CONTROL*/}</script><body></body>')
+                control=self.render(page,frames=[0,1,2],n=3,width=1920,height=1080)
+                self.assertEqual(control['exit_code'],0,control)
+                self.assertEqual(control['failed'],[],control)
+                page.write_text(base+'if(f===1){'+script+'}</script><body></body>')
+                r=self.render(page,frames=[0,1,2],n=3,width=1920,height=1080)
+                self.assertEqual(r['exit_code'],1,r)
+                self.assertEqual(r['failed'],[1],r)
+                raw=json.loads((Path(r['evidence_dir'])/'result.json').read_text())
+                self.assertEqual([x['frame'] for x in raw['frames']],[0,2])
+                self.assertEqual(raw['page_errors']['0'],[])
+                self.assertEqual(raw['page_errors']['2'],[])
+                self.assertLessEqual(raw['peak_live_documents'],2)
+                self.assertEqual(raw['peak_capture_inflight'],1)
+                self.assertEqual(raw['live_documents'],0)
+                self.assertEqual(raw['capture_inflight'],0)
+                self.assertEqual(raw['sessions_created'],3)
+
+    def test_prefetch_timeout_keeps_absolute_whole_batch_budget(self):
+        page=self.page("<style>html{background:rgb(12,35,78)}</style>")
+        control=self.render(page,frames=[0,1],n=2,timeout_s=15)
+        self.assertEqual(control['exit_code'],0,control)
+        page.write_text("<style>html{background:rgb(12,35,78)}</style><script>if(+new URL(location).searchParams.get('f')===1)while(true){}</script>")
+        started=time.monotonic()
+        r=self.render(page,frames=[0,1],n=2,timeout_s=15)
+        elapsed=time.monotonic()-started
+        self.assertEqual(r['exit_code'],72,r)
+        self.assertIn('timeout:frame',str(r['errors']))
+        self.assertGreater(elapsed,14)
+        self.assertLess(elapsed,18)
+        # Crash policy invalidates adapter successes, but raw current f0 must
+        # have published before the independent ahead document timed out.
+        raw=json.loads((Path(r['evidence_dir'])/'result.json').read_text())
+        self.assertEqual([x['frame'] for x in raw['frames']],[0])
+        self.assertEqual(raw['failed'],[1])
 
     def test_static_page_no_starvation_and_security(self):
         # Ordinary DOM/CSS, no optional APIs. Exposed Node or bridge turns red.
