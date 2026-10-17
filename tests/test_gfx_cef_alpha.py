@@ -96,10 +96,16 @@ class Routing(unittest.TestCase):
     def test_downstream_segment_keys_include_namespace_route(self):
         plan = SimpleNamespace(c=SimpleNamespace(cache=self.root / 'cache'),
                                W=64, H=48, draft=False)
-        layer = dict(gfx=True, pngdir=plan.c.cache / 'gfx' / 'samekey',
-                     cl={}, x=0, y=0, w2=64, h2=48)
+        from vtx.frame_source import png_source
+        c = Ctx(self.p)
+        clip = c.tl['video_tracks'][0]['clips'][0]
+        with mock.patch.dict(os.environ, VTX_GFX_CACHE_NS='one'):
+            source = png_source(c, clip)
+        layer = dict(gfx=True, source=source, cl={}, x=0, y=0, w2=64, h2=48)
         k = RenderPlan._seg_content_key(plan, 0, 3, [layer], False, None)
-        layer['pngdir'] = plan.c.cache / 'gfx_exp' / 'cef-alpha' / 'samekey'
+        with mock.patch.dict(os.environ, VTX_GFX_CACHE_NS='two'):
+            layer['source'] = png_source(c, clip)
+        self.assertEqual(source.directory.name, layer['source'].directory.name)
         self.assertNotEqual(k, RenderPlan._seg_content_key(plan, 0, 3, [layer], False, None))
 
     def test_cef_never_falls_back_after_native_failure(self):

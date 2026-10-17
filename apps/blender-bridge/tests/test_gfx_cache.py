@@ -161,7 +161,7 @@ class ReadOnlyCache(CacheFixture):
             self.seed(marker=False)
         self.assert_rejected()
 
-    def test_default_cdp_cli_modern_and_stem_compatibility(self):
+    def test_default_cdp_cli_canonical_only_no_stem_discovery(self):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(
                     os.environ, {'VTX_GFX': backend, 'VTX_GFX_CACHE_NS': ''}):
@@ -170,9 +170,10 @@ class ReadOnlyCache(CacheFixture):
                 # A separate read-only view tests the old stem layout without
                 # moving or aliasing any modern cache directory.
                 old = SimpleNamespace(**dict(vars(self.c), cache=self.root / ('old-' + backend)))
-                legacy = self.seed(old.cache / 'page', marker=False)
+                self.seed(old.cache / 'page', marker=False)
                 from vtx import gfx_cache_reader
-                self.assertEqual(gfx_cache_reader.resolve_frames(old, self.clip)[0].parent, legacy)
+                with self.assertRaises(gfx_cache_reader.GfxCacheError):
+                    gfx_cache_reader.resolve_frames(old, self.clip)
 
     def test_incomplete_modern_default_does_not_fall_back_to_stem(self):
         with mock.patch.dict(os.environ, {'VTX_GFX': 'cdp', 'VTX_GFX_CACHE_NS': ''}):
@@ -191,6 +192,23 @@ class ReadOnlyCache(CacheFixture):
         selected.parent.mkdir(parents=True)
         selected.symlink_to(other, target_is_directory=True)
         self.assert_rejected()
+
+    def test_strict_canonical_bridge_requires_dependency_certificate(self):
+        from vtx.gfx_dependencies import resolve, digest
+        with mock.patch.dict(os.environ, VTX_GFX='cdp', VTX_GFX_CACHE_NS=''):
+            self.tl['project']['gfx_dependency_policy'] = 'strict'
+            d = self.seed(marker=False)
+            self.assert_rejected()
+            self.seed(ns=None)
+            self.assert_rejected()  # PNG hashes alone do not prove strict delivery.
+            gfx_cli.complete_page(d, 3, gfx_key(self.c, self.clip), 8, 6,
+                                  verify_inputs=lambda: None,
+                                  dependency_digest=digest(resolve(self.c, self.clip)),
+                                  dependency_enforcement='fetch-pinned-local-v1',
+                                  dependency_observed=[(self.root / self.clip['src']).as_uri()])
+            before = self.snapshot()
+            self.assertEqual(self.resolve()[0].parent, d)
+            self.assertEqual(self.snapshot(), before)
 
     def test_bad_namespace_fails_before_cache_access(self):
         with mock.patch.dict(os.environ, {'VTX_GFX_CACHE_NS': '../escape'}):
@@ -247,7 +265,7 @@ class RealBlenderCache(CacheFixture):
         self.seed(ns='wrong-ns')
         self.export(expected=1)
 
-    def test_default_cdp_cli_modern_and_legacy_export(self):
+    def test_default_cdp_cli_canonical_export_rejects_legacy_stem(self):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(
                     os.environ, {'VTX_GFX': backend, 'VTX_GFX_CACHE_NS': ''}):
@@ -264,7 +282,7 @@ class RealBlenderCache(CacheFixture):
                 old_timeline = self.timeline
                 self.timeline = timeline
                 try:
-                    self.export()
+                    self.export(expected=1)
                 finally:
                     self.timeline = old_timeline
 

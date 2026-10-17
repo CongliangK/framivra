@@ -42,6 +42,7 @@
           "minimum": 1,
           "description": "成片总帧数（画布时长）。任何帧都可能无内容而显示黑场——这是合法输出，语义层规划负责避免"
         },
+        "gfx_dependency_policy": {"type": "string", "enum": ["legacy", "strict"]},
         "cache_dependencies": {
           "type": "array",
           "items": {
@@ -87,6 +88,12 @@
           "kind",
           "clips"
         ],
+        "allOf": [{
+          "if": {"properties": {"kind": {"const": "gfx"}}, "required": ["kind"]},
+          "else": {"properties": {"clips": {"items": {
+            "not": {"required": ["cache_dependencies"]}
+          }}}}
+        }],
         "properties": {
           "name": {
             "type": "string",
@@ -117,6 +124,11 @@
                 "src": {
                   "type": "string",
                   "description": "sources[].id；gfx 轨为 HTML 文件路径"
+                },
+                "cache_dependencies": {
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1},
+                  "description": "Gfx clips only. Optional local file paths relative to the timeline root, unioned with project.cache_dependencies. Full content hashes; no transitive or remote dependency discovery."
                 },
                 "src_in": {
                   "type": "integer",

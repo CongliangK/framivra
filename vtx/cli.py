@@ -98,7 +98,7 @@ from pathlib import Path
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
 from .composite import build_video, prepare_layers
 from .encoders import find_chrome
-from . import gfx_cli, hygiene, fstxn
+from . import gfx_cli, hygiene, fstxn, events
 from .hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
                       manifest_record, snapshot)
 from .infra import (Ctx, ProjectPathError, ensure_inside_project,
@@ -199,6 +199,9 @@ def _gfx(c: Ctx):
     # 与 complete.json 的 backend_ns 元数据同源；非法值在此显式失败（不静默落
     # 正式缓存破坏隔离）。
     backend_ns = gfx_cache_ns()
+    from .gfx_dependencies import policy, resolve, digest, DependencyError
+    strict = policy(c) == 'strict'
+    dependency_records = {}
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
     from .gfx_backend import selected
@@ -214,9 +217,17 @@ def _gfx(c: Ctx):
             print(f"⚠ CDP 渲染器不可用（{e}），回落 CLI 截图路径")
             cdp_mod = None
 
+    if strict and cdp_mod is None:
+        raise DependencyError('strict dependencies require CDP; CLI downgrade forbidden')
+
     def render_cli(i_range, d, html, chrome):
         # issue #28：强制 CLI、整页回落、帧级补渲共用退出码与产物双重校验。
-        return gfx_cli.render_cli(i_range, d, html, chrome, width=c.w, height=c.h)
+        frame_list = list(i_range)
+        observation = events.task(c, "gfx", kind="gfx_fallback",
+                                  metadata={"backend": "cli", **events.frame_metadata(frame_list)})
+        with observation.scope():
+            return observation.attempt(gfx_cli.render_cli, frame_list, d, html, chrome,
+                                       width=c.w, height=c.h)
 
     # 页内分片开关（方案 v2 阶段 1）：VTX_GFX_SPLIT_FRAMES 为块大小阈值，
     # VTX_GFX_SPLIT_MAX（默认 3）为单页最大块数。默认 450（2026-09-12 定版，
@@ -233,16 +244,21 @@ def _gfx(c: Ctx):
             # html 变了键就变（新条目），旧键由 gc 回收——D29 mtime 补丁与 D38 同索引
             # 误命中从机制上消失，故此处不再有任何 mtime 比对。
             key = gfx_key(c, cl)
+            page_id = str(events.uuid.uuid4())
+            dependency_records[key] = resolve(c, cl) if strict else None
+            dependency_digest = digest(dependency_records[key]) if strict else None
             n = cl["dur"]
             d = gfx_dir(c, cl)
             # issue #28：逐一核验 [0,n)，f9999/空文件等不再冒充完整缓存。
             bad, needs_marker = gfx_cli.inspect_page(d, n, key, c.w, c.h,
-                                                     backend_ns=backend_ns)
+                                                     backend_ns=backend_ns,
+                                                     dependency_digest=dependency_digest)
             if not bad:
                 if needs_marker and not c.dry:
                     gfx_cli.complete_page(d, n, key, c.w, c.h,
                                           verify_inputs=lambda: c.verify_inputs("gfx"),
                                           backend_ns=backend_ns)
+                events.cache_hit(c, "inspect_page", frames=[0, n])
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
             # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
             if not c.dry:
@@ -254,17 +270,22 @@ def _gfx(c: Ctx):
             # 页内分片（方案 v2 阶段 1，默认关）：SPLIT_FRAMES>0 且页帧数超阈值时把
             # [0,n) 切成 min(SPLIT_MAX, ceil(n/阈值)) 个连续块，每块独立一次
             # render_page（独立 Chrome 实例）；dry-run / CLI 回落态不拆。
-            sizes = (None if (c.dry or cdp_mod is None)
+            sizes = (None if (c.dry or cdp_mod is None or strict)
                      else _split_page(n, split_frames, split_max))
             if sizes is None:
-                jobs.append((cid, key, cl, n, d, html, None))
+                jobs.append((cid, key, cl, n, d, html, None,
+                             events.task(c, "gfx", kind="gfx_block",
+                                         metadata={"page_id": page_id, "backend": "cdp" if cdp_mod else "cli", "frame_range": [0, n]})))
                 continue
             off, put = 0, 0
             for sz in sizes:
                 fb = list(range(off, off + sz)); off += sz
                 if not gfx_cli.verify_frames(d, fb, width=c.w, height=c.h):
+                    events.cache_hit(c, "verify_frames", frames=[fb[0], fb[-1] + 1])
                     continue    # 整块已缓存 → 跳过（不起 Chrome、不占池槽）
-                jobs.append((cid, key, cl, n, d, html, fb)); put += 1
+                jobs.append((cid, key, cl, n, d, html, fb,
+                             events.task(c, "gfx", kind="gfx_block",
+                                         metadata={"page_id": page_id, "backend": "cdp", "frame_range": [fb[0], fb[-1] + 1]}))); put += 1
             if put == 0:        # 页级帧数门已滤全缓存，理论不可达；防御性兜底
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1
 
@@ -283,7 +304,10 @@ def _gfx(c: Ctx):
             page_agg.setdefault((j[0], j[1]), {"left": 0, "blocks": []})["left"] += 1
 
     def render_one(job):
-        cid, key, cl, n, d, html, frames = job
+        return job[7].call(render_block, job)
+
+    def render_block(job):
+        cid, key, cl, n, d, html, frames, observation = job
         st = None
         if backend == "cef":
             from .gfx_cef import render_page
@@ -299,10 +323,14 @@ def _gfx(c: Ctx):
                 # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）。
                 # ctx 透传（issue #103）：CDP 常驻 Chrome 交 proc_supervisor 监管
                 # （独立进程组 + PDEATHSIG + 守卫 + tmp_run 账本，Profile 不再落系统 /tmp）。
-                st = cdp_mod.render_page(html, d, n, chrome_path=find_chrome(),
+                st = observation.attempt(cdp_mod.render_page, html, d, n, chrome_path=find_chrome(),
                                          width=c.w, height=c.h, frames=frames,
-                                         ctx=c)
+                                         ctx=c,
+                                         **({"dependency_record": dependency_records[key]} if strict else {}))
             except Exception as e:
+                if strict:
+                    gfx_cli.invalidate_page(d)
+                    raise
                 # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
                 fb = range(n) if frames is None else frames
                 print(f"⚠ {cid}: CDP 渲染失败（{e}），"
@@ -311,6 +339,9 @@ def _gfx(c: Ctx):
                 st = None
             else:
                 if st["failed"]:
+                    if strict:
+                        gfx_cli.invalidate_page(d)
+                        raise DependencyError('strict CDP frame failure; CLI downgrade forbidden')
                     print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
                     # issue #28：补渲失败不可被 CDP 的 except 吞掉后重试成成功。
                     render_cli(st["failed"], d, html, find_chrome())
@@ -322,7 +353,11 @@ def _gfx(c: Ctx):
             rendered_via = "cli 6 并发" if st is None else _cdp_via(st)
             gfx_cli.complete_page(d, n, key, c.w, c.h,
                                   verify_inputs=lambda: c.verify_inputs("gfx"),
-                                  backend_ns=backend_ns)
+                                  backend_ns=backend_ns,
+                                  **({'dependency_digest': digest(dependency_records[key]),
+                                      'dependency_enforcement': st.get('dependency_enforcement'),
+                                      'dependency_observed': st.get('dependency_observed')}
+                                     if strict else {}))
             print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
             manifest_record(c, d, "gfx", key)
             return cid, rendered_via
@@ -357,7 +392,7 @@ def _gfx(c: Ctx):
         if c.dry:
             # dry-run：只报告将渲染的页，不起 Chrome（否则冷态 all --dry-run 白付
             # 数分钟真实渲染 + GB 级 PNG 落盘，2026-09-11 门控；dry 不拆块）
-            for cid, key, cl, n, d, html, frames in jobs:
+            for cid, key, cl, n, d, html, frames, observation in jobs:
                 print(f"  [dry-run] gfx {cid}[{key}]: 将渲染 {n} 帧（{backend.upper()} {c.w}×{c.h}）")
             total += len(jobs)
         else:
@@ -401,7 +436,7 @@ def _pipeline_enabled(env=None) -> bool:
     return e.get("VTX_PIPELINE", "1") != "0"
 
 
-def _stage_exit_code(fn, c: Ctx) -> int:
+def _stage_exit_code(fn, c: Ctx, *, observation=None) -> int:
     """`vtx all` 编排内运行 qc 阶段并捕获其 SystemExit（2026-09-14 裁定：qc 失败
     不阻断 finish 收尾——final.mp4/qc_report.json 等产物此时已就绪，历史行为
     SystemExit 直接冒出会跳过缝 D 的 run_finish，存量假阴性项目永远到不了收尾）。
@@ -413,8 +448,24 @@ def _stage_exit_code(fn, c: Ctx) -> int:
         code = e.code if isinstance(e.code, int) else (1 if e.code else 0)
         print(f"⚠ qc 阶段失败（退出码 {code}）——按裁定不阻断 finish 收尾，"
               "退出码在收尾后如实汇总")
+        if observation is not None:
+            observation.finish(code, e)
         return code
     return 0
+
+
+def _observed_stage(c, name, fn, *, capture_exit=False):
+    stage = _stage_receipt_name(name, c.draft)
+    with events.task(c, stage, kind='stage').scope() as observation:
+        try:
+            c.begin_stage(stage)
+        except RuntimeError as error:
+            print(f"✗ {error}"); sys.exit(1)
+        if capture_exit:
+            code = _stage_exit_code(fn, c, observation=observation)
+            observation.finish(code, RuntimeError() if code else None)
+            return code
+        return fn(c)
 
 
 def _run_all_pipeline(c: Ctx, until=None):
@@ -441,25 +492,17 @@ def _run_all_pipeline(c: Ctx, until=None):
     by_name = dict(STAGES)
     for name in ("validate", "audit", "prepare"):   # —— 串行头 ——
         print(f"== {name} ==")
-        try:
-            c.begin_stage(_stage_receipt_name(name, c.draft))
-        except RuntimeError as e:
-            print(f"✗ {e}"); sys.exit(1)
-        by_name[name](c)
+        _observed_stage(c, name, by_name[name])
         if until == name:
             return 0
 
     def _stage_job(name, fn):                        # —— 波内阶段路：现行阶段语义 ——
         def run():
-            try:
-                c.begin_stage(_stage_receipt_name(name, c.draft))
-            except RuntimeError as e:
-                print(f"✗ {e}"); sys.exit(1)
-            fn(c)
+            _observed_stage(c, name, fn)
         return run
 
     def _pre_layers():                               # —— 波内预编码路：无门无回执 ——
-        c._pre_layers = prepare_layers(c)
+        c._pre_layers = events.task(c, "video", kind="preencode").call(prepare_layers, c)
 
     run_wave(c, [("gfx", _stage_job("gfx", by_name["gfx"])),
                  ("audio", _stage_job("audio", by_name["audio"])),
@@ -469,18 +512,14 @@ def _run_all_pipeline(c: Ctx, until=None):
     qc_exit = 0
     for name in ("video", "mux", "qc"):              # —— 串行尾 ——
         print(f"== {name} ==")
-        try:
-            c.begin_stage(_stage_receipt_name(name, c.draft))
-        except RuntimeError as e:
-            print(f"✗ {e}"); sys.exit(1)
         if name == "video":
-            build_video(c, layers=c._pre_layers)   # 波内预编码产物（Ctx.__init__ 显式声明，见 infra）
+            _observed_stage(c, name, lambda c: build_video(c, layers=c._pre_layers))   # 波内预编码产物（Ctx.__init__ 显式声明，见 infra）
         elif name == "qc":
             # 2026-09-14 裁定：qc 失败不阻断 finish（产物已就绪）——捕获退出码，
             # 由 main 在 finish 后汇总；video/mux 失败仍即时终止
-            qc_exit = _stage_exit_code(by_name["qc"], c)
+            qc_exit = _observed_stage(c, "qc", by_name["qc"], capture_exit=True)
         else:
-            by_name[name](c)
+            _observed_stage(c, name, by_name[name])
         if until == name:
             return qc_exit
     return qc_exit
@@ -708,17 +747,33 @@ def _preview_command(c, a):
 
 
 def main():
-    """Safety failures are user errors, including failures in worker dispatch."""
+    """One invocation, including input-load and finish failures."""
+    execution = events.ExecutionContext()
+    code, failure = 0, None
     try:
-        return _main()
-    except ProjectPathError as error:
-        print(f'✗ {error}', file=sys.stderr)
-        return 1
+        try:
+            result = _main(execution)
+            code = result or 0
+            return result
+        except ProjectPathError as error:
+            print(f'✗ {error}', file=sys.stderr)
+            code, failure = 1, error
+            return 1
+    except BaseException as error:
+        code, failure = events.exit_code(error), error
+        raise
+    finally:
+        execution.finish(code, failure)
 
 
-def _main():
+def _main(execution=None):
+    execution = execution if execution is not None else events.ExecutionContext()
     ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
+    ap.add_argument("--events-jsonl", metavar="PATH",
+                    help="optional exclusive JSONL execution evidence; independent of stdout")
+    ap.add_argument("--resumed-from-run-id", metavar="UUID",
+                    help="explicit predecessor execution (does not bypass input validation)")
     ap.add_argument("--until", metavar="STAGE", default=None,
                     help="all 专属：只执行到该阶段止（validate|audit|prepare|gfx|video|mux|qc，"
                          "STAGES 线性序；audio 为波内成员不作终点）。R4 冷跑链用法："
@@ -762,6 +817,8 @@ def _main():
     ap.add_argument("--report-only", action="store_true",
                     help="audio 专属：纯报告模式——不重混音，只读已有 out/audio.wav 出报告"
                          "（缺失报错）；与 --report 互斥")
+    ap.add_argument("--capture-impact", action="store_true",
+                    help="diff only: capture one timeline's CPU/formal input identities")
     ap.add_argument("--json", metavar="PATH",
                     help="diff 时间线模式专属：机器可读 diff/影响面/推荐路径 JSON 写入 PATH"
                          "（缺省只打印人读摘要；报告对比模式不支持）；"
@@ -834,10 +891,26 @@ def _main():
         sug = difflib.get_close_matches(a.command, valid_names, n=3, cutoff=0.6)
         hint = f"，最接近：{' | '.join(sug)}" if sug else ""
         print(f"✗ 未知命令：{a.command!r}（可用：{' | '.join(valid_names)}）{hint}"); sys.exit(2)
+    if a.resumed_from_run_id:
+        try:
+            valid = events.canonical_uuid(a.resumed_from_run_id)
+        except (ValueError, TypeError, AttributeError):
+            valid = False
+        if not valid:
+            print("invalid predecessor execution UUID"); sys.exit(2)
+        execution.resumed_from_run_id = a.resumed_from_run_id
+    if a.capture_impact and a.command != "diff":
+        print("--capture-impact only applies to diff"); sys.exit(2)
     if a.command == "diff":
         # 报告对比（信息性，与 gc/df/snapshot 同类）：不依赖 timeline，故在 timeline
         # 检查前分发；两个位置参数复用 subs_extra 槽（argparse `*` 在 command 后的
         # 既有约定，见上注）。纯读命令：不写任何产物、不做 receipt；--dry-run 尊重。
+        if a.capture_impact:
+            if len(a.subs_extra) != 1:
+                print("Usage: diff --capture-impact <timeline.json> [--json NEW_PATH]")
+                sys.exit(2)
+            from .timeline_diff import run_impact_capture
+            sys.exit(run_impact_capture(a.subs_extra[0], a.json, a.dry_run))
         if len(a.subs_extra) != 2:
             print("✗ 用法：diff <旧报告.json> <新报告.json>"
                   "（timeline 语义 diff 同形：diff <旧timeline> <新timeline> [--json PATH]）"); sys.exit(2)
@@ -853,6 +926,10 @@ def _main():
         except (OSError, ValueError) as e:
             print(f"✗ 输入读取/解析失败（timeline 语义 diff 与报告对比都要求两份合法 JSON）：{e}")
             sys.exit(2)
+        if (isinstance(da, dict) and
+                str(da.get("schema", "")).startswith("framivra-impact-snapshot-")):
+            from .timeline_diff import run_snapshot_diff
+            sys.exit(run_snapshot_diff(da, jb, a.json, a.dry_run))
         tl_a, tl_b = is_timeline(da), is_timeline(db)
         if tl_a and tl_b:
             if a.json and a.dry_run:
@@ -868,9 +945,23 @@ def _main():
         sys.exit(run_diff(ja, jb, dry=a.dry_run))
     # 不跟随符号链接（resolve() 会穿透 cp -rs 链接树等隔离副本，把 out/ 回执写到 live 项目）
     tp = Path(os.path.abspath(os.path.expanduser(a.timeline)))
-    if not tp.exists(): print(f"timeline 不存在: {tp}"); sys.exit(1)
+    if not policy.dry and a.command not in ("df", "clean", "gc", "snapshot", "diff"):
+        role = ("all_until_mux" if a.command == "all" and a.until == "mux" else
+                "qc_strict" if a.command == "qc" and a.strict else None)
+        from .execution_links import open_response
+        stream, request = open_response(tp, role)
+        if stream is not None:
+            execution.activate(stream, request)
+        elif a.events_jsonl:
+            try:
+                execution.activate(events.open_sink(a.events_jsonl))
+            except (OSError, ValueError):
+                execution._warn()
+    if not tp.exists():
+        print(f"timeline 不存在: {tp}")
+        raise SystemExit(1) from FileNotFoundError()
     try:
-        c = Ctx(tp)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
+        c = Ctx(tp, execution=execution)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
     except (ValueError, KeyError, TypeError, ZeroDivisionError, FileNotFoundError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
         # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
@@ -996,16 +1087,12 @@ def _main():
             print(f"== {name} ==")
             # PR#1：阶段开始前做依赖门 + 撤销下游旧成功（失败重跑不得保留旧 QC PASS）。
             # draft 模式的 video/mux 记为 video_draft/mux_draft。
-            try:
-                c.begin_stage(_stage_receipt_name(name, c.draft))
-            except RuntimeError as e:
-                print(f"✗ {e}"); sys.exit(1)
             if name == "qc" and a.command == "all":
                 # 2026-09-14 裁定（同流水线路径）：all 内 qc 失败不阻断 finish——
                 # 捕获退出码交 main 汇总；单阶段 `vtx qc` 仍走下方 fn(c) 冒泡退出
-                qc_exit = _stage_exit_code(fn, c)
+                qc_exit = _observed_stage(c, name, fn, capture_exit=True)
             else:
-                fn(c)
+                _observed_stage(c, name, fn)
             # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
             # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
             if name == "audio" and a.report:
@@ -1022,7 +1109,10 @@ def _main():
     if (a.command == "all" and a.until in (None, "qc")
             and not c.draft and not c.dry):
         from .pluginlib import hooks as _plugin_hooks
-        _finish_errs = _plugin_hooks.run_finish(c)
+        with events.task(c, "finish", kind="stage").scope() as observation:
+            _finish_errs = _plugin_hooks.run_finish(c)
+            if _finish_errs:
+                observation.finish(1, RuntimeError())
         if _finish_errs:
             for e in _finish_errs:
                 print("  ✗", e)

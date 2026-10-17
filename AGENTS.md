@@ -7,14 +7,14 @@ B 站视频产线程序本体权威仓:内核 `vtx/`(timeline.json 契约+帧精
 
 ## 常用命令
 - 统一入口:`python3 vt.py doctor|init|--fix-links`。doctor 例行跑用 `env VTX_DOCTOR_OFFLINE=1`(零写态);`--fix-links` 去 --dry 即实写(写操作,DOC-CHARTER §7a)。
-- 渲染:`vtx -t <timeline.json> all`(分阶段 validate/prepare/gfx/video/audio/mux/qc;子命令全集=skill/references/runbook.md「命令正字法」节)。
+- 渲染:`vtx -t <timeline.json> all`(分阶段 validate/prepare/gfx/video/audio/mux/qc;子命令全集=docs/skill/references/runbook.md「命令正字法」节)。
 - 门禁:`bash scripts/run_all_tests.sh`(集成需 VTX_TEST_CHROME/VTX_TEST_FFMPEG);`bash scripts/doc_gates.sh`(文档门聚合器,leaf 清单见脚本头注册面,任一 FAIL 总非零)。
 - 安装:一键安装=克隆模式引导(Linux/macOS=scripts/install.sh,Windows=scripts/install_windows.ps1;克隆/安全更新+幂等 init,不依赖发版资产);人面安装行→README.md。GitHub Releases 发版通道(install.py,未发版)接入跟踪=#94,参数 home=scripts/install.py --help。
 
 ## 写态红线
 - 生成区禁手改:docs/catalog.md 生成区(变更走 `python3 scripts/gen_manifest_catalog.py` 重注);项目 cache/ 与 out/ 运行时产物(.gitignore 在册)。
 - docs/plans* 三目录只读历史层(唯一活文件例外见 DOC-CHARTER §19)。
-- skill/ 与 skills/** 文档修订即改写挂载消费面,落笔前先经消费面评审公告(DOC-CHARTER §5/§7b)。
+- docs/skill/ 与 templates/** 文档修订即改写挂载消费面,落笔前先经消费面评审公告(DOC-CHARTER §5/§7b)。
 - 版本三源(VERSION/pyproject.toml/vtx/__init__.py)改一必三,doc_gates version_sync leaf 守护。
 - 文档化命令零写态书写(--dry/离线旗标;DOC-CHARTER §21);docs 域命令须入 bash 栅栏方受冒烟守护。
 
@@ -26,6 +26,6 @@ B 站视频产线程序本体权威仓:内核 `vtx/`(timeline.json 契约+帧精
 ## H home 指针(一事实一家,禁复制)
 - 文档层规则与写入权→docs/DOC-CHARTER.md
 - 契约权威(v2 冻结件)→docs/ARCHITECTURE.md
-- 开发纪律/演进史/基准→docs/DEV.md
+- 开发纪律/演进史/基准/依赖原则(默认标准库,成熟库按需评估)→docs/DEV.md
 - 组件清单→docs/catalog.md;缓存与回执语义→docs/cache-provenance.md
-- 操作路由→skill/SKILL.md;工作流包→skills/tech-talk/;人类面→README.md
+- 操作路由→docs/skill/SKILL.md;工作流包→templates/tech-talk/;人类面→README.md

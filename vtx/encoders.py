@@ -4,6 +4,7 @@
 """
 import contextlib, os, shutil, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 
 def find_chrome() -> str:
@@ -66,7 +67,8 @@ def nvenc_concurrency(c, workers: int) -> int:
                    "-c:v", "h264_nvenc", "-f", "null", "-"], need=False)
         return r == "" or r.returncode == 0
     with ThreadPoolExecutor(workers) as ex:
-        if not all(ex.map(_p, range(workers))):
+        futures = [ex.submit(copy_context().run, _p, i) for i in range(workers)]
+        if not all(f.result() for f in futures):
             print("⚠ NVENC 并发会话探测失败，回落串行渲染")
             return 1
     return workers

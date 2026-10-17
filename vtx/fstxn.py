@@ -463,7 +463,7 @@ def _flock_for(path: Path):
 
 
 @contextlib.contextmanager
-def _transaction(path, *, allow_symlink=False, staging=False):
+def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None):
     """事务核心：两层锁 + tmp 代管；被包裹方置 txn.commit 后正常退出才替换。
 
     fd 锚定平台：随机名 O_EXCL tmp + 提交前 inode 对账（tmp 目录项中途被置换
@@ -482,6 +482,8 @@ def _transaction(path, *, allow_symlink=False, staging=False):
                 yield txn
                 if txn.commit:
                     os.replace(txn.tmp, p)
+                    if after_commit is not None:
+                        after_commit()
             finally:
                 txn.tmp.unlink(missing_ok=True)   # 成功路径已被 replace 移走；失败/中止清残件
         return
@@ -500,6 +502,8 @@ def _transaction(path, *, allow_symlink=False, staging=False):
                     if entry_identity(os.stat(tempname, dir_fd=parent, follow_symlinks=False)) != entry_identity(os.fstat(fd)):
                         raise _write_error(target, '事务临时文件身份已变化')
                     os.replace(tempname, name, src_dir_fd=parent, dst_dir_fd=parent)
+                    if after_commit is not None:
+                        after_commit()
             finally:
                 os.close(fd)
                 try:
@@ -525,7 +529,7 @@ def locked_write(path):
 
 
 @contextlib.contextmanager
-def locked_staging(path):
+def locked_staging(path, *, after_commit=None):
     """持锁 + 随机名真实 staging 路径（子进程写者专用：ffmpeg/chrome 等外部
     进程经 argv 接收输出路径）。
 
@@ -533,7 +537,10 @@ def locked_staging(path):
     目录项中途被置换即拒绝发布）+ 原子替换。/proc 锚定路径会被子进程沙箱/
     yama ptrace 拒开，故子进程写者不经 fd_path；随机名不可预置，预置链接
     写穿面不存在（issue #59）。锁序与 locked_write 一致。"""
-    with _transaction(path, staging=True) as txn:
+    # The callback runs after publication but before either target lock is released.
+    # It must not reacquire this non-reentrant target lock. If it fails, media
+    # remains published and the error propagates; no success is fabricated.
+    with _transaction(path, staging=True, after_commit=after_commit) as txn:
         yield txn.tmp
         txn.commit = True
 

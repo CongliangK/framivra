@@ -3,7 +3,7 @@
 | # | 事项 | 评级 | 状态 |
 |---|---|---|---|
 | ⑨ | 渲染窗口 TOCTOU（timeline 渲染中被改：指纹录新字节/产物用旧内存）——v1 继承行为，loudness 键绑定输出 stat 无撞键窗口 | 低 | 已修；验收与边界见 [#32](https://github.com/CongliangK/framivra/issues/32) / [PR #70](https://github.com/CongliangK/framivra/pull/70) |
-| ⑩ | `_plugin_params_digest` 的 except-pass 降级路径（key_map 读失败时退化为无参数成分，代码摘要仍兜底） | 低 | 登记 |
+| ⑩ | `_plugin_params_digest` 的 except-pass 降级路径（key_map 读失败时退化为无参数成分，代码摘要仍兜底） | 低 | 登记；与 #86 的代码身份问题不同：相对路径缺失、同名文件排序不确定由 `plugin_code_digest` 的路径排序与有界编码修复，迁移说明见 [缓存与回执](../../cache-provenance.md#插件代码身份与升级说明86)。参数降级本身未变 |
 | ⑪ | doctor 部分测试依赖 git 仓存在（剥离 .git 的部署形态下版本段测试需跳过） | 低 | 登记 |
 | ④ | 外部三载体核销（music_tools SKILL.md / 04_bilibili视频 AGENTS.md / _library 六链接） | 中 | **P6 已核销**（2026-09-14 实测：①music_tools SKILL.md 已指 apps/blender-bridge 新路径；③_library 六链接已直指新路径；②AGENTS.md 大体 v2 化，残留 3 处旧路径写法 + 1 句 v1 链语义——经仓根兼容 symlink 可解析，待下次工作区文档批次清理）；R-02 复核（2026-09-17，锚 e2842c5）：①music_tools/skill/SKILL.md 实指 audit_bundle.py 新路径 ✓；③_library 六链接直指 apps/blender-bridge ✓；②AGENTS.md 残留为陈旧计数级（「plugins/ 2 插件」，实况 4 件）待外部批次清理（外部清理不在 R-02 范围） |
 | ⑫ | external 插件卸载语义与官方不对称（条目移除→键退化「未知键警告」不阻断，渲染照走——靠指纹段消失强制重渲 + gc 兜底；官方件卸载=validate FAIL） | 低 | 设计选择，登记（P6 验收期确认） |

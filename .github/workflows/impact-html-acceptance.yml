@@ -1,0 +1,76 @@
+name: Issue 52 real HTML impact acceptance
+
+# Dedicated same-repository validation PR only, or explicit post-registration
+# manual dispatch. No push/schedule renders, secrets, or cache restore.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/impact-html-acceptance.yml'
+      - 'tests/run_impact_html_reconciliation.py'
+      - 'tests/test_impact_html_harness.py'
+      - 'tests/impact_inventory.py'
+      - 'tests/test_impact_inventory.py'
+      - 'tests/run_impact_reconciliation.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue52-html-acceptance
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.head_ref, 'dot/issue52-html-validation-'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      VTX_DOCTOR_OFFLINE: '1'
+      VTX_NO_NVENC: '1'
+      VTX_SEG_NVENC: '0'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install ordinary CPU tools and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      - name: Real HTML cold warm and dependency acceptance
+        run: |
+          export HOME="$RUNNER_TEMP/impact-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export VTX_CONFIG="$HOME/config.json"
+          mkdir -p "$XDG_CONFIG_HOME"
+          printf '{}\n' > "$VTX_CONFIG"
+          python tests/run_impact_html_reconciliation.py --frames-per-page 48 --output "$RUNNER_TEMP/impact-html"
+      - name: Preserve media trim subtitle duration and audio reconciliation
+        timeout-minutes: 8
+        run: python tests/run_impact_reconciliation.py --output "$RUNNER_TEMP/impact-media"
+      - name: Upload bounded acceptance evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue52-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/impact-html/evidence/
+            ${{ runner.temp }}/impact-html/*.html
+            ${{ runner.temp }}/impact-html/*.css
+            ${{ runner.temp }}/impact-html/timeline.json
+            ${{ runner.temp }}/impact-media/*.log
+            ${{ runner.temp }}/impact-media/reconciliation.json
+            ${{ runner.temp }}/impact-media/*inventory.json
+            ${{ runner.temp }}/impact-media/inventory-policy.json
+            ${{ runner.temp }}/impact-media/timeline.json

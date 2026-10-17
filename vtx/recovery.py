@@ -144,10 +144,21 @@ def atomic_ffmpeg(c, cmd, execute):
         return execute(cmd)
     # ffmpeg 经 argv 接收输出路径（子进程写者）——locked_staging 给同目录
     # 随机名真实路径（/proc 锚定路径会被子进程拒开），提交前 inode 对账。
-    with fstxn.locked_staging(target) as temporary:
+    def publish_marker():
+        fstxn.atomic_write(_marker(target), json.dumps(rec, sort_keys=True))
+
+    with fstxn.locked_staging(target, after_commit=publish_marker) as temporary:
         current = Path(temporary).resolve()
-        for orphan in target.parent.glob('.' + target.name + '.*.tmp'):
-            if orphan != current:
+        prefix = '.' + target.name + '.'
+        for orphan in target.parent.iterdir():
+            # Names are literal: brackets, * and ? in an owned output filename
+            # must never select another target's staging files.
+            if not orphan.name.startswith(prefix) or not orphan.name.endswith('.tmp'):
+                continue
+            # Media staging has one random token after the exact target name.
+            # In particular, never claim .<target>.complete.json.<token>.tmp.
+            token = orphan.name[len(prefix):-4]
+            if orphan != current and token and '.' not in token:
                 fstxn.unlink(orphan)
         # Keep the original argv and output format; only replace the destination.
         # -y: the mkstemp staging file already exists, so a caller that omitted
@@ -166,5 +177,4 @@ def atomic_ffmpeg(c, cmd, execute):
                 raise RuntimeError('FFmpeg produced more frames than requested: ' + str(target))
         from .cache_state import verify_input_identity
         verify_input_identity(c)
-    fstxn.atomic_write(_marker(target), json.dumps(rec, sort_keys=True))
     return result

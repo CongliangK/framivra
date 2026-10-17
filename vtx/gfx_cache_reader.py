@@ -1,13 +1,11 @@
 """Read-only gfx consumer for bridges: production routing and PNG integrity.
 
 No rendering, certification, marker publication or directory discovery. CEF and
-experimental namespaces require an existing exact completion record. Only the
-default CDP/CLI route retains legacy unmarked/stem-directory compatibility.
+experimental namespaces require an existing exact completion record. The default
+CDP/CLI route accepts unmarked PNGs only at the current canonical directory.
 """
-from pathlib import Path
-
 from . import gfx_cli
-from .hygiene import gfx_cache_ns, gfx_dir, gfx_key
+from .hygiene import gfx_cache_ns
 
 
 class GfxCacheError(ValueError):
@@ -22,19 +20,22 @@ def resolve_frames(c, clip):
     production functions as rendering. Never searches other namespaces/keys.
     The input cache is not modified, including legacy caches without a marker.
     """
+    from .frame_source import png_source
+    from .gfx_dependencies import resolve, digest, policy
+    source = png_source(c, clip)
     namespace = gfx_cache_ns()
-    key = gfx_key(c, clip)
-    directory = gfx_dir(c, clip)
-    if not namespace and not directory.is_dir():
-        directory = c.cache / Path(clip['src']).stem
-    n = clip['dur']
+    key = source.directory.name
+    directory = source.directory
+    dependency_digest = digest(resolve(c, clip)) if policy(c) == 'strict' else None
+    n = source.frame_count
     marker = directory / gfx_cli.COMPLETE_FILE
-    if namespace or marker.exists():
+    if namespace or marker.exists() or dependency_digest is not None:
         # inspect_page's second result also detects absent/malformed records,
         # unsupported schemas, missing hashes and mismatched backend_ns. Unlike
         # a renderer, a read-only consumer must not recertify any of these.
         bad, needs_publication = gfx_cli.inspect_page(
-            directory, n, key, c.w, c.h, backend_ns=namespace or None)
+            directory, n, key, c.w, c.h, backend_ns=namespace or None,
+            dependency_digest=dependency_digest)
         if bad:
             raise GfxCacheError(f'gfx 缓存无效 {directory}: {bad[:8]}')
         if needs_publication:

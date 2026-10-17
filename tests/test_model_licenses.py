@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class LicenseInventory(unittest.TestCase):
     def test_inventory_records_default_payload_and_unknowns_without_clearance(self):
         data = policy.load_inventory()
-        self.assertEqual([k for k, v in data["assets"].items() if v["default_payload"]], ["framivra"])
+        self.assertEqual({k for k, v in data["assets"].items() if v["default_payload"]},
+                         {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media", "electron-worker-source"})
         for name in ("matanyone2-weights", "qwen-emotion", "chrome-binary", "music-tools-assets", "imgen-api"):
             self.assertEqual(data["assets"][name]["license_status"], "UNKNOWN")
         self.assertEqual(data["assets"]["matanyone2-code"]["license_status"], "RESTRICTED")
@@ -167,7 +168,8 @@ class SnapshotPolicy(unittest.TestCase):
 class EntryBoundaries(unittest.TestCase):
     def _stage(self, directory, script):
         root = Path(directory) / "checkout"
-        for relative in (script, "scripts/model_license_policy.py", "docs/model-license-inventory.json", "LICENSE"):
+        evidence_paths = [v["local_path"] for v in policy.load_inventory()["evidence"].values() if v.get("local_path")]
+        for relative in (script, "scripts/model_license_policy.py", "docs/model-license-inventory.json", *evidence_paths):
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, destination)

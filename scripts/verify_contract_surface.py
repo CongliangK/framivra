@@ -17,14 +17,14 @@ not that the contract is right。
        audio_tracks[].events[] = …audio_tracks.items.properties.events.items.properties
      KERNEL_KEYS[scope] 每键必须 ∈ 容器 properties 键集;未声明 scope(容器映射外)
      的键逐键视为幻影;幻影键收集全列后 exit 1。
-  ② skill/references/edit.md 的 ```jsonc 围栏(剥注释状态机:字符串内不动,// 行外删,
+  ② docs/skill/references/edit.md 的 ```jsonc 围栏(剥注释状态机:字符串内不动,// 行外删,
      /* */ 删;json.loads)递归收集全部对象键名,须 ⊆ schema 全文档递归收集的
      properties 键名并集。
   ③ plugins/registry.json 每插件 keys[].path 必须 ∈ KERNEL_KEYS scope 集合。
 
 用法:
   python3 scripts/verify_contract_surface.py [--stages P] [--schema P] [--edit P] [--registry P]
-  默认 = vtx/stages.py / vtx/timeline.schema.json / skill/references/edit.md /
+  默认 = vtx/stages.py / vtx/timeline.schema.json / docs/skill/references/edit.md /
   plugins/registry.json;路径一律按仓根解析(cwd 锚仓根)。
   四覆盖参=测试缝,供 golden 免触真件。
 
@@ -190,8 +190,8 @@ def main():
                         help="KERNEL_KEYS 来源(vtx/stages.py)")
     parser.add_argument("--schema", default="vtx/timeline.schema.json",
                         help="结构权威(vtx/timeline.schema.json)")
-    parser.add_argument("--edit", default="skill/references/edit.md",
-                        help="散文权威(skill/references/edit.md)")
+    parser.add_argument("--edit", default="docs/skill/references/edit.md",
+                        help="散文权威(docs/skill/references/edit.md)")
     parser.add_argument("--registry", default="plugins/registry.json",
                         help="插件键注册表(plugins/registry.json)")
     args = parser.parse_args()

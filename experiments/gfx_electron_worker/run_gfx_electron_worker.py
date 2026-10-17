@@ -37,8 +37,8 @@ from vtx import env_manifest                                   # noqa: E402
 from vtx.infra import Ctx                                       # noqa: E402
 from vtx.proc_supervisor import SupervisedProcessGroup          # noqa: E402
 
-DEFAULT_TIMELINE = REPO_ROOT / "examples" / "skill-demo" / "timeline.json"
-DEFAULT_PAGE = REPO_ROOT / "examples" / "skill-demo" / "gfxA.html"
+DEFAULT_TIMELINE = REPO_ROOT / "templates" / "skill-demo" / "timeline.json"
+DEFAULT_PAGE = REPO_ROOT / "templates" / "skill-demo" / "gfxA.html"
 
 
 def electron_bin() -> Path:
@@ -81,7 +81,7 @@ def main(argv=None) -> int:
     ap.add_argument("--timeline", type=Path, default=DEFAULT_TIMELINE,
                     help="项目锚点 timeline.json（cache/tmp 落其项目内；默认 skill-demo）")
     ap.add_argument("--page", type=Path, default=DEFAULT_PAGE,
-                    help="要离屏渲染的 gfx 页面（默认 examples/skill-demo/gfxA.html）")
+                    help="要离屏渲染的 gfx 页面（默认 templates/skill-demo/gfxA.html）")
     ap.add_argument("--frame", type=int, default=0, help="帧号 f（gfx 协议纯函数入参）")
     ap.add_argument("--out-root", type=Path, default=Path.cwd(),
                     help="产物根目录（frame PNG / truth / env_manifest 落其 <mode>_<UTC>/ 子目录）")

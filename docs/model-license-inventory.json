@@ -11,7 +11,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Non-commercial use/redistribution only; commercial use requires contributor permission. Does not license the HF weight snapshot.",
-      "evidence": "matanyone2-code"
+      "evidence": "matanyone2-code",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "indextts-code": {
       "kind": "external-code",
@@ -21,7 +25,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Custom terms include separate-authorization thresholds and retention/downstream obligations; third-party weights require independent rights. Not MIT/Apache and not automatically cleared.",
-      "evidence": "indextts-code"
+      "evidence": "indextts-code",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "edge-tts-code": {
       "kind": "external-code",
@@ -31,7 +39,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "edge-tts-code"
+      "evidence": "edge-tts-code",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "comfyui-code": {
       "kind": "external-code",
@@ -41,7 +53,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "comfyui-code"
+      "evidence": "comfyui-code",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "numpy": {
       "kind": "python-dependency",
@@ -51,7 +67,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "numpy"
+      "evidence": "numpy",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "pillow": {
       "kind": "python-dependency",
@@ -61,7 +81,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "pillow"
+      "evidence": "pillow",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "jsonschema": {
       "kind": "python-dependency",
@@ -71,7 +95,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "jsonschema"
+      "evidence": "jsonschema",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "pyyaml": {
       "kind": "python-dependency",
@@ -81,7 +109,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "pyyaml"
+      "evidence": "pyyaml",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "requests": {
       "kind": "python-dependency",
@@ -91,7 +123,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "requests"
+      "evidence": "requests",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "torch": {
       "kind": "python-dependency",
@@ -101,7 +137,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "torch"
+      "evidence": "torch",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "transformers": {
       "kind": "python-dependency",
@@ -111,7 +151,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "transformers"
+      "evidence": "transformers",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "huggingface-hub": {
       "kind": "python-dependency",
@@ -121,7 +165,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "huggingface-hub"
+      "evidence": "huggingface-hub",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "qwen-asr-code": {
       "kind": "external-code",
@@ -131,7 +179,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "qwen-asr-code"
+      "evidence": "qwen-asr-code",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "resemble-code": {
       "kind": "external-code",
@@ -141,7 +193,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "resemble-code"
+      "evidence": "resemble-code",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "resnet-code": {
       "kind": "external-code",
@@ -151,7 +207,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Snapshot is evidence, not an installation pin or an audit of installed/transitive dependencies.",
-      "evidence": "resnet-code"
+      "evidence": "resnet-code",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "qwen-asr-1.7b": {
       "kind": "model-weights",
@@ -170,7 +230,11 @@
           "commercial",
           "noncommercial"
         ]
-      }
+      },
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "qwen-asr-0.6b": {
       "kind": "model-weights",
@@ -189,7 +253,11 @@
           "commercial",
           "noncommercial"
         ]
-      }
+      },
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "qwen-aligner-0.6b": {
       "kind": "model-weights",
@@ -208,7 +276,11 @@
           "commercial",
           "noncommercial"
         ]
-      }
+      },
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "birefnet-hr": {
       "kind": "model-weights",
@@ -227,7 +299,11 @@
           "commercial",
           "noncommercial"
         ]
-      }
+      },
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "resemble-enhance": {
       "kind": "model-weights",
@@ -246,7 +322,11 @@
           "commercial",
           "noncommercial"
         ]
-      }
+      },
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "matanyone2-weights": {
       "kind": "model-weights",
@@ -261,7 +341,11 @@
         "revision": "40c894a6f68d1f55c86ab0de838d89dc61587930",
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "bytes": 0
-      }
+      },
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "matanyone-legacy": {
       "kind": "model-weights",
@@ -271,7 +355,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Official fixed card has no license declaration; source adaptation/notice provenance also unverified. No automatic runtime/download clearance.",
-      "evidence": "matanyone-legacy"
+      "evidence": "matanyone-legacy",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "indextts-2.5-weights": {
       "kind": "model-weights",
@@ -281,7 +369,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Main custom agreement does not license nested auxiliary assets. ModelScope snapshot mapping unverified. Chain blocked pending review.",
-      "evidence": "indextts-2.5-weights"
+      "evidence": "indextts-2.5-weights",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "maskgct-semantic": {
       "kind": "model-weights",
@@ -291,7 +383,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Upstream card declares non-commercial terms; exact semantic_codec/model.safetensors grant needs clarification. Not cleared by IndexTTS agreement.",
-      "evidence": "maskgct-semantic"
+      "evidence": "maskgct-semantic",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "qwen-emotion": {
       "kind": "model-weights",
@@ -300,7 +396,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "qwen0.6bemo4-merge is a separate/derived auxiliary asset; exact upstream grant and snapshot unverified."
+      "notes": "qwen0.6bemo4-merge is a separate/derived auxiliary asset; exact upstream grant and snapshot unverified.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "w2v-bert": {
       "kind": "model-weights",
@@ -310,7 +410,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Fixed official weight evidence is declared. Existing IndexTTS download mapping is still unpinned; ModelScope/mirror mapping and user files are unverified. This does not clear the full auxiliary chain.",
-      "evidence": "w2v-bert"
+      "evidence": "w2v-bert",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "campplus": {
       "kind": "model-weights",
@@ -320,7 +424,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Fixed official weight evidence is declared. Existing IndexTTS download mapping is still unpinned; ModelScope/mirror mapping and user files are unverified. This does not clear the full auxiliary chain.",
-      "evidence": "campplus"
+      "evidence": "campplus",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "bigvgan": {
       "kind": "model-weights",
@@ -330,7 +438,11 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
       "notes": "Fixed official weight evidence is declared. Existing IndexTTS download mapping is still unpinned; ModelScope/mirror mapping and user files are unverified. This does not clear the full auxiliary chain.",
-      "evidence": "bigvgan"
+      "evidence": "bigvgan",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "resnet18-weights": {
       "kind": "model-weights",
@@ -339,7 +451,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Torchvision source BSD does not by itself prove weights/dataset rights. Hidden torch.hub download must not imply clearance."
+      "notes": "Torchvision source BSD does not by itself prove weights/dataset rights. Hidden torch.hub download must not imply clearance.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "comfyui-checkpoints": {
       "kind": "model-weights",
@@ -348,7 +464,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Service-code GPL does not license arbitrary Flux/diffusion checkpoints. No checkpoint is bundled; external service/user-selected assets remain separately reviewed."
+      "notes": "Service-code GPL does not license arbitrary Flux/diffusion checkpoints. No checkpoint is bundled; external service/user-selected assets remain separately reviewed.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "music-tools-assets": {
       "kind": "external-models-api",
@@ -357,7 +477,12 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "No fixed external checkout/hash inspected. ACE/quantizations, Music3 API/output rights and htdemucs weights require separate evidence. No weights are bundled here; this policy does not sandbox that external process."
+      "notes": "No fixed external checkout/hash inspected. ACE/quantizations, Music3 API/output rights and htdemucs weights require separate evidence. No weights are bundled here; this policy does not sandbox that external process.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download",
+        "external-api"
+      ]
     },
     "imgen-api": {
       "kind": "api-service",
@@ -366,7 +491,10 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Authored client follows root LICENSE; provider terms/output rights cannot be inferred from model names or requests license. Explicit API calls are not included rights grants."
+      "notes": "Authored client follows root LICENSE; provider terms/output rights cannot be inferred from model names or requests license. Explicit API calls are not included rights grants.",
+      "distribution": [
+        "external-api"
+      ]
     },
     "edge-api": {
       "kind": "api-service",
@@ -375,7 +503,10 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "edge-tts client LGPL/MIT does not grant Microsoft service/output rights or an SLA; third-party unofficial interface remains opt-in."
+      "notes": "edge-tts client LGPL/MIT does not grant Microsoft service/output rights or an SLA; third-party unofficial interface remains opt-in.",
+      "distribution": [
+        "external-api"
+      ]
     },
     "chrome-binary": {
       "kind": "external-binary",
@@ -384,7 +515,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Proprietary Chrome/CfT terms are not Chromium BSD. No tracked binary/wheel payload; optional installer --chrome downloads are a separate boundary, not cleared by this model policy."
+      "notes": "Proprietary Chrome/CfT terms are not Chromium BSD. No tracked binary/wheel payload; optional installer --chrome downloads are a separate boundary, not cleared by this model policy.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "chromium-code": {
       "kind": "external-tool",
@@ -393,7 +528,11 @@
       "license_identifier": "BSD-family plus bundled notices",
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Caller-installed browser build/license is unverified; no binary bundled."
+      "notes": "Caller-installed browser build/license is unverified; no binary bundled.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "ffmpeg": {
       "kind": "external-tool",
@@ -402,7 +541,11 @@
       "license_identifier": "LGPL/GPL/build-dependent; nonfree builds require separate review",
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "External process, not bundled. libfdk_aac/nonfree configuration cannot be inferred as redistributable."
+      "notes": "External process, not bundled. libfdk_aac/nonfree configuration cannot be inferred as redistributable.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "blender": {
       "kind": "external-tool",
@@ -411,7 +554,11 @@
       "license_identifier": "GPL-family",
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Caller-installed binary, not bundled; optional preview generation does not certify a particular binary redistribution."
+      "notes": "Caller-installed binary, not bundled; optional preview generation does not certify a particular binary redistribution.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "sox": {
       "kind": "external-tool",
@@ -420,7 +567,11 @@
       "license_identifier": "GPL/LGPL component-dependent",
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Caller-installed binary, not bundled; exact version/build not inspected."
+      "notes": "Caller-installed binary, not bundled; exact version/build not inspected.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "modelscope": {
       "kind": "python-dependency",
@@ -429,7 +580,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "opencv-python": {
       "kind": "python-dependency",
@@ -438,7 +593,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "omegaconf": {
       "kind": "python-dependency",
@@ -447,7 +606,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "hydra-core": {
       "kind": "python-dependency",
@@ -456,7 +619,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "safetensors": {
       "kind": "python-dependency",
@@ -465,7 +632,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "scipy": {
       "kind": "python-dependency",
@@ -474,7 +645,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "torchaudio": {
       "kind": "python-dependency",
@@ -483,7 +658,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "torchvision": {
       "kind": "python-dependency",
@@ -492,7 +671,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "soundfile": {
       "kind": "python-dependency",
@@ -501,7 +684,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "setuptools": {
       "kind": "python-dependency",
@@ -510,7 +697,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "wheel": {
       "kind": "python-dependency",
@@ -519,7 +710,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "build": {
       "kind": "python-dependency",
@@ -528,7 +723,11 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family."
+      "notes": "Metadata source link only; exact license text/installed release and transitive binary notices not captured here. No dependency payload bundled; do not infer clearance from a package name or an upstream code family.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "python-runtime": {
       "kind": "external-runtime",
@@ -537,7 +736,11 @@
       "license_identifier": "PSF plus incorporated notices",
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Caller runtime and transitive standard-library notices; no Python interpreter bundled."
+      "notes": "Caller runtime and transitive standard-library notices; no Python interpreter bundled.",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
     },
     "research-api-services": {
       "kind": "api-service",
@@ -546,7 +749,10 @@
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "Authored API adapters follow root LICENSE, but service terms/content reuse rights require independent review; no provider service or response rights are bundled."
+      "notes": "Authored API adapters follow root LICENSE, but service terms/content reuse rights require independent review; no provider service or response rights are bundled.",
+      "distribution": [
+        "external-api"
+      ]
     },
     "framivra": {
       "kind": "authored-code",
@@ -555,7 +761,12 @@
       "license_identifier": "MIT",
       "default_payload": true,
       "evidence": "framivra",
-      "notes": "Root license is the repository authors declaration, not an independent chain-of-title certification. Default source archive contains repository source/docs/templates and evidence text, no model weights/external binary tools. Kernel wheel contains vtx/vt/data plus generated declarations, dependencies=[]; apps/plugin execution/skills and models are not wheel payload. Existing adaptation provenance warnings are separately explicit."
+      "notes": "Root MIT is the repository authors declaration, not independent chain-of-title evidence. Git source, setuptools sdist and kernel wheel are distinct surfaces; distribution_policy defines boundaries. Separate vendored components, source adaptations, media and package-level conflicts are not relicensed by this declaration.",
+      "distribution": [
+        "git-source",
+        "sdist",
+        "wheel"
+      ]
     },
     "ace-step-official": {
       "kind": "model-weights",
@@ -565,7 +776,341 @@
       "default_payload": false,
       "installed_version": "UNVERIFIED: external quantization and local file hashes not inspected",
       "notes": "Official model-card declaration does not identify or license the differently named external quantized assets in music_tools.",
-      "evidence": "ace-step-official"
+      "evidence": "ace-step-official",
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ]
+    },
+    "vendored-fpng": {
+      "kind": "vendored-code",
+      "source": "https://github.com/richgel999/fpng",
+      "license_status": "DECLARED",
+      "license_identifier": "Unlicense",
+      "default_payload": true,
+      "evidence": "vendored-fpng",
+      "distribution": [
+        "git-source"
+      ],
+      "version": "925796543b9d26b8edfcdcecd94c1dac280f29fc",
+      "files_sha256": {
+        "experiments/gfx_cef_worker/third_party/fpng/fpng.h": "604c7e3757dba53b32f7e2523927c7e02ad90939d631a76f94f0690efa2c1fc9",
+        "experiments/gfx_cef_worker/third_party/fpng/LICENSE": "b99255b8963df084e4151ab470c3cd1c8000c382cd7d0dc3ccda6688c7cceee5",
+        "experiments/gfx_cef_worker/third_party/fpng/fpng.cpp": "b2b953f53f4b472b427bfb04a0ee1839ba66e8f32a02580e7a09d31313edd975"
+      },
+      "lock_home": "experiments/gfx_cef_worker/third_party_locks.json",
+      "notes": "Preserve upstream origin and the complete license in fpng.cpp; separate LICENSE is a repository extraction, not an upstream standalone file. This records checked-in source declarations/hashes; it is not a fresh upstream byte comparison or binary-release clearance."
+    },
+    "vendored-libspng": {
+      "kind": "vendored-code",
+      "source": "https://github.com/randy408/libspng",
+      "license_status": "DECLARED",
+      "license_identifier": "BSD-2-Clause AND libpng-2.0",
+      "default_payload": true,
+      "evidence": "vendored-libspng",
+      "distribution": [
+        "git-source"
+      ],
+      "version": "0.7.3",
+      "files_sha256": {
+        "experiments/gfx_cef_worker/third_party/spng/spng.c": "e3a677708f1f0190212922120a276f3be2921927b6e3604f4da83eaa382364ca",
+        "experiments/gfx_cef_worker/third_party/spng/spng.h": "d7949324d8d3009a59bf560b89a4fbb90c26d537d706154d1f73626e69513586",
+        "experiments/gfx_cef_worker/third_party/spng/LICENSE": "1b7df383405df965cd47fcdaa0fe272a4dd974ff92860d342eccc52abce83d5a"
+      },
+      "lock_home": "experiments/gfx_cef_worker/third_party_locks.json",
+      "notes": "BSD source distributions retain copyright, conditions and disclaimer; binaries reproduce them in accompanying materials. spng.c also contains libpng-derived SIMD code and PNG Reference Library License v2: retain embedded copyright/license, identify altered versions and do not misrepresent origin. This records checked-in source declarations/hashes; it is not a fresh upstream byte comparison or binary-release clearance.",
+      "additional_evidence": [
+        "libspng-embedded-notices"
+      ]
+    },
+    "placeholder-media": {
+      "kind": "data",
+      "source": "https://github.com/CongliangK/framivra/tree/e928657f2833155423f6ccfca4869a1805b34bde/templates/tech-talk/assets/presets/placeholders",
+      "license_status": "UNKNOWN",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "distribution_blocker": "Tracked placeholder media have no independently established generation/source-rights evidence. Root code license alone does not prove media provenance.",
+      "files_sha256": {
+        "templates/tech-talk/assets/presets/placeholders/placeholder_audio.wav": "2ea47becb255e8c3b086c93637073c03a10f4466282bd3154bbd8e4b09dbaad9",
+        "templates/tech-talk/assets/presets/placeholders/placeholder_av.mp4": "7d779c241915d8b691090e03363ddb31a33757c26593ced7a3fa2678bb3e86d9"
+      },
+      "notes": "Tracked placeholder media have no independently established generation/source-rights evidence. Root code license alone does not prove media provenance."
+    },
+    "electron-worker-source": {
+      "kind": "authored-code",
+      "source": "https://github.com/CongliangK/framivra/tree/d9ce4aab52fec57b770f689550fbbde1a860243b/experiments/gfx_electron_worker",
+      "license_status": "UNKNOWN",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "distribution_blocker": "Package declares UNLICENSED. Relationship to root MIT declaration needs maintainer resolution before redistribution clearance; no license text is invented or changed.",
+      "files_sha256": {
+        "experiments/gfx_electron_worker/package.json": "8f0f6f2cdce593fbe8183728d810593e239198fd9d4ab78cb26037330a30919d"
+      },
+      "notes": "Package declares UNLICENSED. Relationship to root MIT declaration needs maintainer resolution before redistribution clearance; no license text is invented or changed."
+    },
+    "cef-runtime": {
+      "kind": "external-binary",
+      "source": "https://bitbucket.org/chromiumembedded/cef",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "on-demand-download"
+      ],
+      "version_home": "experiments/gfx_cef_worker/cef_lock.json",
+      "lock_sha256": "4a1a6c7c0d9d0f4b73ef4cb2a5c76c5ddce111e3d90a42666822ae9f143d95ad",
+      "notes": "Optional externally downloaded CEF/Chromium binary. Exact archive hash/version lives in lock; accompanying LICENSE/credits and redistribution obligations are not captured or verified here."
+    },
+    "electron-runtime": {
+      "kind": "external-binary",
+      "source": "https://github.com/electron/electron",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "on-demand-download"
+      ],
+      "version_home": "experiments/gfx_electron_worker/package-lock.json",
+      "lock_sha256": "f10a37b8c053e6772b111e9ed98763f99f5b271ceb07952727b06305d08902f9",
+      "notes": "Optional Electron npm/download chain. Exact npm versions/integrities live in lock, which references a mirror; lock license labels are not full license/notice evidence and do not cover downloaded Electron binary/Chromium notices. Unresolved scope includes every non-root package entry in package-lock.json, its integrity, dependencies and optional dependencies, plus the postinstall downloaded runtime; no lock package is exempted by its license label."
+    },
+    "host-fonts": {
+      "kind": "font",
+      "source": "Host operating system or user-supplied font files",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "installed_version": "UNVERIFIED: no host font files inspected",
+      "notes": "No tracked font binaries in inspected source tree. Font fallback names do not identify a licensed file/version; user projects or future bundled fonts require separate provenance and embedding/redistribution review."
+    },
+    "keyring": {
+      "kind": "python-dependency",
+      "source": "https://pypi.org/project/keyring/",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "source_references": [
+        "apps/imgen/secrets.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "Optional secret-store adapter; backend dependencies/permissions are separate and uninspected. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "librosa": {
+      "kind": "python-dependency",
+      "source": "https://pypi.org/project/librosa/",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "source_references": [
+        "apps/asr/sidecar_server.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "Optional ASR resampling path. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "soxr": {
+      "kind": "python-dependency",
+      "source": "https://pypi.org/project/soxr/",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "source_references": [
+        "apps/sync/sync_audio.py",
+        "plugins/denoise/quality/quality.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "Optional resampling; native libsoxr/bundled wheel notices require independent review. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "pesq": {
+      "kind": "python-dependency",
+      "source": "https://pypi.org/project/pesq/",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "source_references": [
+        "plugins/denoise/quality/quality.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "Optional quality metric; wrapper declaration cannot establish permissions for underlying algorithm/implementation. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "pystoi": {
+      "kind": "python-dependency",
+      "source": "https://pypi.org/project/pystoi/",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime",
+        "on-demand-download"
+      ],
+      "source_references": [
+        "plugins/denoise/quality/quality.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "Optional quality metric. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "opencc-runtime": {
+      "kind": "external-binary",
+      "source": "https://github.com/BYVoid/OpenCC",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "apps/asr/textnorm.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "ctypes loads system OpenCC library by lookup/fallback SONAME; SONAME does not identify exact package build. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "opencc-dictionaries": {
+      "kind": "data",
+      "source": "https://github.com/BYVoid/OpenCC",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "apps/asr/textnorm.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "External t2s config/dictionaries may be overridden by user path; library code license does not prove specific dictionary origin/rights. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "zlib-runtime": {
+      "kind": "external-binary",
+      "source": "https://zlib.net/",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "experiments/gfx_cef_worker/CMakeLists.txt"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "Direct optional native build dependency ZLIB::ZLIB; concrete linked library/version, static-vs-dynamic linkage and notices are unverified. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "davinci-resolve-sdk": {
+      "kind": "external-runtime",
+      "source": "https://www.blackmagicdesign.com/products/davinciresolve",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "apps/matting/resolve_matte/resolve_ctl.py",
+        "apps/matting/resolve_matte/probe.py"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "External Resolve application and DaVinciResolveScript SDK; installed version and applicable SDK/application agreement are unverified. No agreement is accepted here. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "native-platform-libraries": {
+      "kind": "external-runtime",
+      "source": "experiments/gfx_cef_worker/CMakeLists.txt",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "experiments/gfx_cef_worker/CMakeLists.txt"
+      ],
+      "installed_version": "UNVERIFIED: runtime/build artifact not inspected",
+      "notes": "Threads::Threads, CMAKE_DL_LIBS and platform compiler/runtime dependencies are platform-resolved. Exact linked components/notices need the final binary build manifest; no runtime build was performed. BLOCKER for redistribution of this external component: pin exact artifact/version/hash and capture authoritative full license/notice and restrictions before clearance; no third-party bytes are bundled in the inspected kernel wheel/sdist."
+    },
+    "node-runtime": {
+      "kind": "external-runtime",
+      "source": "https://nodejs.org/en/about",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "apps/research/app.json",
+        "apps/research/dump-computed-styles.mjs",
+        "apps/research/scroll-shoot.mjs",
+        "experiments/gfx_electron_worker/package.json"
+      ],
+      "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
+      "notes": "Node.js executes the research tools and optional Electron npm scripts. Node built-ins are part of that external runtime; its exact build and bundled third-party notices are not inferred from the JavaScript source. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
+    },
+    "xdotool": {
+      "kind": "external-tool",
+      "source": "https://github.com/jordansissel/xdotool",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "apps/matting/resolve_matte/mouse_ctl.py"
+      ],
+      "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
+      "notes": "Optional host xdotool executable used for Resolve GUI controls; host X11/XWayland dependencies and installed package notices are unverified. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
+    },
+    "matanyone-legacy-code": {
+      "kind": "external-code",
+      "source": "https://github.com/pq-yang/MatAnyone",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "apps/matting/run_matanyone.py"
+      ],
+      "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
+      "notes": "Legacy matanyone imports target a separately installed checkout. This is distinct from MatAnyone2 code and from the separately recorded legacy weights; neither license evidence is substituted for this code snapshot. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
+    },
+    "nvidia-external-tooling": {
+      "kind": "external-runtime",
+      "source": "https://developer.nvidia.com/system-management-interface",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "apps/matting/resolve_matte/vram_guard.py",
+        "apps/tts/tts_cli.py"
+      ],
+      "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
+      "notes": "Direct nvidia-smi calls require an external NVIDIA installation. Driver/NVML, CUDA and codec/runtime components selected by external tools need concrete installed/build artifacts and applicable terms; no hardware or private installation was inspected. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
+    },
+    "host-build-toolchain": {
+      "kind": "external-toolchain",
+      "source": "scripts/install.sh",
+      "license_status": "UNKNOWN",
+      "default_payload": false,
+      "distribution": [
+        "external-runtime"
+      ],
+      "source_references": [
+        "scripts/install.sh",
+        "scripts/install_windows.ps1",
+        "scripts/install.py",
+        "scripts/release_github.py",
+        "experiments/gfx_cef_worker/CMakeLists.txt"
+      ],
+      "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
+      "notes": "Bounded host prerequisite scope: Git, curl, shell/PowerShell and standard OS utilities, CMake, Ninja or selected generator, compiler/linker, pip/npm/conda or selected package manager, archive tools and OS package manager. These are invoked or referenced as host/build tools, not bundled by this project. A release including any of their binaries requires an exact component build manifest and notices; this record is not blanket approval of arbitrary external commands. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
     }
   },
   "evidence": {
@@ -764,6 +1309,27 @@
       "sha256": "d842a9c2a022071f676cc38d8e2fc8523427607b90f272160d1baf39918c8813",
       "text": "---\nlibrary_name: matanyone\ntags:\n- model_hub_mixin\n- pytorch_model_hub_mixin\n---\n\n# MatAnyone\n\nThis repository contains the model described in [MatAnyone: Stable Video Matting with Consistent Memory Propagation](https://huggingface.co/papers/2501.14677).\n\nCode: https://github.com/pq-yang/MatAnyone\n\n## Usage\nModels can be directly loaded from [Hugging Face](https://huggingface.co/PeiqingYang/MatAnyone) to make inference.\n\n```shell\npip install -q git+https://github.com/pq-yang/MatAnyone\n```\n\nTo extract the foreground and the alpha video you can **directly run the following lines**. Please refer to [inference_hf.py](https://github.com/pq-yang/MatAnyone/blob/main/inference_hf.py) for more arguments.\n```python\nfrom matanyone import InferenceCore\nprocessor = InferenceCore(\"PeiqingYang/MatAnyone\")\n\nforeground_path, alpha_path = processor.process_video(\n    input_path = <video_path>,\n    mask_path = <mask_path>,\n    output_path = <output_path>\n)\n```",
       "scope": "Official weight-repository evidence, not a source-code license substituted for weights"
+    },
+    "vendored-fpng": {
+      "local_path": "experiments/gfx_cef_worker/third_party/fpng/LICENSE",
+      "sha256": "b99255b8963df084e4151ab470c3cd1c8000c382cd7d0dc3ccda6688c7cceee5",
+      "revision": "d9ce4aab52fec57b770f689550fbbde1a860243b",
+      "url": "https://github.com/CongliangK/framivra/blob/d9ce4aab52fec57b770f689550fbbde1a860243b/experiments/gfx_cef_worker/third_party/fpng/LICENSE",
+      "scope": "Preserve upstream origin and the complete license in fpng.cpp; separate LICENSE is a repository extraction, not an upstream standalone file."
+    },
+    "vendored-libspng": {
+      "local_path": "experiments/gfx_cef_worker/third_party/spng/LICENSE",
+      "sha256": "1b7df383405df965cd47fcdaa0fe272a4dd974ff92860d342eccc52abce83d5a",
+      "revision": "d9ce4aab52fec57b770f689550fbbde1a860243b",
+      "url": "https://github.com/CongliangK/framivra/blob/d9ce4aab52fec57b770f689550fbbde1a860243b/experiments/gfx_cef_worker/third_party/spng/LICENSE",
+      "scope": "BSD source distributions retain copyright, conditions and disclaimer; binaries reproduce them in accompanying materials. spng.c also contains libpng-derived SIMD code and PNG Reference Library License v2: retain embedded copyright/license, identify altered versions and do not misrepresent origin."
+    },
+    "libspng-embedded-notices": {
+      "local_path": "experiments/gfx_cef_worker/third_party/spng/spng.c",
+      "sha256": "e3a677708f1f0190212922120a276f3be2921927b6e3604f4da83eaa382364ca",
+      "revision": "d9ce4aab52fec57b770f689550fbbde1a860243b",
+      "url": "https://github.com/CongliangK/framivra/blob/d9ce4aab52fec57b770f689550fbbde1a860243b/experiments/gfx_cef_worker/third_party/spng/spng.c",
+      "scope": "Full source bytes preserve PNG Reference Library License version 2 and all embedded SIMD attributions; license begins after the libpng derivation comment."
     }
   },
   "legacy_downloads": {
@@ -819,7 +1385,8 @@
       "reason": "Legacy weight and hidden ResNet auxiliary provenance unknown. Existing files are preserved, not licensed by source code.",
       "assets": [
         "matanyone-legacy",
-        "resnet18-weights"
+        "resnet18-weights",
+        "matanyone-legacy-code"
       ]
     }
   },
@@ -840,5 +1407,12 @@
       "source_reference": "https://github.com/ZhengPeng7/BiRefNet/blob/c4d649666cc171486329413dc2b61f0137158b6a/LICENSE",
       "reason": "Header states official-handler adaptation; this implementation did not independently match adaptation/notice provenance. Existing local_files_only guard is preserved; arbitrary trust_remote_code is not sandboxed."
     }
-  ]
+  ],
+  "distribution_policy": {
+    "git-source": "Tracked repository source archive/clone includes experiments, source notices, templates and placeholder media. Check listed provenance/release blockers before redistribution. No bundled model weights are permitted.",
+    "sdist": "Setuptools-generated source distribution is selected by packaging configuration/backend; it is not the Git source archive. Inspect the actual tarball rather than infer payload from repository contents.",
+    "wheel": "Kernel vtx/ and vt.py, generated plugin declarations and dist-info metadata only; no apps/plugin implementations, experiments, templates, fonts, media or model weights.",
+    "release_evidence": "Local archive checks are evidence for those exact bytes only. Published release assets, installer bundles, external binary notices, optional transitive dependencies and installed versions remain unverified unless separately inspected.",
+    "font_data_scope": "Fonts, media/data and model weights have independent rights; code-license declarations do not establish those rights."
+  }
 }

@@ -1,11 +1,23 @@
 # DEV · 开发者向文档
 
-> **开发者向**：工具演进史、性能基准、坑位破案详录。使用视频产线请读 `skill/SKILL.md`，无需阅读本文。
+> **开发者向**：工具演进史、性能基准、坑位破案详录。使用视频产线请读 `docs/skill/SKILL.md`，无需阅读本文。
 > 条目末尾标注出处（裁自哪份文档的哪一节）。部分出处指向 `docs/plans*` 等内部历史归档，该归档不随公开发布——出处仅作溯源注，外部读者视其为历史参考即可，文中操作步骤均自足。
+
+## 依赖原则
+
+默认使用 Python 标准库；真实需求出现时可按需引入成熟第三方库，须充分评估维护成本、平台兼容、性能收益以及回落与测试语义。外部 ffmpeg/ffprobe/Chrome 的工具依赖不因此改变。
+
+**决策记录（2026-10-14，[#99](https://github.com/CongliangK/framivra/issues/99)）**：将「零第三方依赖」铁律调整为上述原则，仅定调，不立即引入或替换任何库；`pyproject.toml` 的 `dependencies = []` 保持不变。克隆引导不增加可选依赖硬检查；doctor 对可选能力缺失仅提示的分级不变，渲染核心硬门及显式启用 external 的失败语义不变。
+
+未来候选仅登记备查，不构成本次实施范围：
+- `vtx/gfx_render.py` 的 `WSConn`：若替换 WebSocket 实现，保住 `tests/test_graphics_portability.py` 假 CDP 分支及既有协议测试语义。
+- `vtx/stages.py` 的 `validate()`：若改用校验库，保住 `tests/test_fps_constraints.py` 的镜像漂移守护语义。
+- `vtx/fstxn.py`：深度绑定确定性与对抗测试语义，不建议替换。
+- gfx CDP 后端已使用 numpy，Pillow 为可选 PNG 编解码快路径（具体路径见 `vtx/gfx_render.py` 模块头）；可在 [#94](https://github.com/CongliangK/framivra/issues/94) 发版准备中评估 optional-dependencies 声明，不把它们加入克隆安装硬门。
 
 ## 一、性能基准
 
-环境：RTX 4080 / 32C64G（旧记「8 核」为过时口径，2026-09-13 订正），基准项目 = voice-ime 653s@1080p30。〔出处：skill/references/edit.md「渲染速度」〕
+环境：RTX 4080 / 32C64G（旧记「8 核」为过时口径，2026-09-13 订正），基准项目 = voice-ime 653s@1080p30。〔出处：docs/skill/references/edit.md「渲染速度」〕
 
 - 渲染全链（2026-09-08 基线）：全片 14.7min → `--gpu` 9:46。
 - 拆包同批提速（2026-09-11）：qc 690s→11s（约 60×，结果与旧版逐项一致）；video 分段并行（8 段，511s→112s，约 4.6×）；冷启动并行化（seg 预编码 + prepare 抽音频线程池）。全链 21.5min → 缓存命中约 50s / 冷启动约 164s。

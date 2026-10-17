@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "project": {"fps": 30, "width": 160, "height": 90, "duration_frames": 90},
+  "sources": [{"id": "fixture_audio", "path": "missing.wav"}],
+  "video_tracks": [
+    {"name": "empty_fixture", "kind": "gfx", "clips": []},
+    {"name": "missing_fixture", "kind": "gfx", "clips": [{"src": "missing.html", "dst_in": -1, "dur": 15}]}
+  ],
+  "subtitles": [{"in": -5, "out": 10, "text": "fixture"}],
+  "audio_tracks": [{"name": "voice", "events": [{"src": "unknown", "in": 5, "out": 10}]}]
+}

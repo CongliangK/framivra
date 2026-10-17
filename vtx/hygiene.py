@@ -187,19 +187,25 @@ def gfx_key(c, cl) -> str:
 
     PR#1 合入：project.cache_dependencies 声明的本地资产（HTML/CSS/JS 引用的
     图片/字体/样式/脚本）内容入键——改依赖即重渲；未声明/网络资产不追踪
-    （cache-provenance.md）。声明属项目级，所有 gfx 页共享（保守过失效，可接受）。
+    （cache-provenance.md）。项目级依赖与可选 clip.cache_dependencies 合并；片段依赖只影响声明页。
     """
-    html = (c.root / cl["src"]).resolve()
-    blob = html.read_bytes()
-    from .cache_state import declared_dependencies, file_digest
-    for dep in declared_dependencies(c):
-        blob += b"|" + str((c.root / dep).resolve()).encode() + b"\0" \
-                + file_digest(c.root / dep).encode()
-    from .gfx_backend import identity
-    backend = identity()
+    from .gfx_dependencies import resolve, identity, read_regular_bytes
+    record = resolve(c, cl)
+    if record['policy'] == 'legacy' and record['legacy_key_safe']:
+        # Explicit compatibility adapter: only proven resource-free inert HTML.
+        blob = read_regular_bytes(c.root / cl['src'])
+        if hashlib.sha256(blob).hexdigest() != record['html_sha256']:
+            raise ValueError('HTML changed during dependency key resolution')
+        for entry in record['dependencies']:
+            blob += b"|" + entry['path'].encode() + b"\0" + entry['sha256'].encode()
+    else:
+        blob = b'gfx-dependencies-v1|' + identity(record)
+    from .gfx_backend import identity as backend_identity
+    backend = backend_identity()
     if backend:
         blob += b"|backend:" + backend.encode()
     return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
+
 
 
 # issue #103：命名空间合法性——ns 进入缓存路径段，拒绝一切可造成路径逃逸/穿越

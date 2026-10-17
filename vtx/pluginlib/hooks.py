@@ -39,6 +39,8 @@ P2b 起 plugins/ 有实体包（denoise / duck-static）。「生效」按 timel
 插件段（v1 逐字节兼容）、总线空转，内核零行为变化（三不变量接线见
 pluginlib/__init__.py 接线表）。
 """
+from ..diagnostics import indexed
+
 import hashlib
 import importlib
 import json
@@ -46,6 +48,8 @@ import sys
 from pathlib import Path
 
 from . import registry as _registry
+from .manifest import load_manifest
+from .compatibility import require_compatible_core, require_compatible_protocol
 
 HOOK_NAMES = ("prepare_source", "audio_events", "validate",
               "probe_source", "finish")   # v1.1 + validate；v1.2 + 缝 C/D（§2.2）
@@ -110,7 +114,7 @@ def _plugin_version(name: str, repo_root=None) -> str:
     return "?"
 
 
-def _scope_items(tl, path):
+def _scope_items(tl, path, c=None):
     """键声明 path → timeline 中的检索容器（_scan_plugin_keys 四 scope 同构）。
     P6 修复 A-P1-2：v1 只认 sources[]/audio_tracks[] 两 path，声明在 root/project/
     events[] 的键「validate 放行但插件永不生效」+ 参数摘要盲区——现与内核扫描
@@ -126,8 +130,8 @@ def _scope_items(tl, path):
     if path == "audio_tracks[]":
         return tl.get("audio_tracks", [])
     if path == "audio_tracks[].events[]":
-        return [e for tr in tl.get("audio_tracks", []) if isinstance(tr, dict)
-                for e in (tr.get("events") or [])]
+        return [e for ti, tr in indexed(c, tl.get("audio_tracks", []), '$.audio_tracks') if isinstance(tr, dict)
+                for _, e in indexed(c, (tr.get("events") or []), f'$.audio_tracks[{ti}].events')]
     return []
 
 
@@ -148,7 +152,8 @@ def _timeline_declares(c, name: str, repo_root=None) -> bool:
         if info.get("plugin") != name:
             continue
         has_keys = True
-        for it in _scope_items(tl, info.get("path")):
+        for _, it in indexed(c, _scope_items(tl, info.get("path"), c),
+                             '$.' + (info.get("path") or '').removesuffix('[]')):
             if isinstance(it, dict) and key in it:
                 return True
     return not has_keys
@@ -175,6 +180,15 @@ def _load_plugin_module(name: str):
     不参与对账。"""
     try:
         d, origin = _registry.plugin_module_dir(name)
+        if d is None:
+            raise RuntimeError(f"插件 {name} 缺少有效 manifest 导入锚，拒绝加载")
+        manifest, errors = load_manifest(d)
+        if errors:
+            from vtx import __version__
+            raise RuntimeError(f"插件 {name}: 检测内核版本 {__version__!r}; "
+                               f"manifest 无效：{'; '.join(errors)}")
+        require_compatible_core(name, manifest)
+        require_compatible_protocol(name, manifest, _plugin_hooks_declared(name))
         if origin == "external":
             # P4 审查 P1-1 修正：append（官方包/stdlib 优先）+ 导入后即摘除 +
             # mod.__file__ 落点断言——insert(0) 且常驻会让 external 父目录下的
@@ -279,7 +293,9 @@ def run_validate(c) -> list:
         if callable(fn):
             got = fn(c)
             if isinstance(got, (list, tuple)):
-                errs.extend(str(x) for x in got)
+                # Structured string subclasses retain source evidence; third-party
+                # opaque values remain strings and receive an honest unknown rule.
+                errs.extend(x if isinstance(x, str) else str(x) for x in got)
     return errs
 
 
@@ -344,30 +360,42 @@ def contribute_keys(c) -> set:
     return keys
 
 
+# Algorithm namespace, independent of plugin/package release versions (#86).
+_PLUGIN_CODE_DIGEST_VERSION = b"vtx-plugin-code-v2\0"
+
+
 def plugin_code_digest(name: str, repo_root=None) -> str:
     """插件代码内容摘要（红队终审 P1-1 裁定 2026-09-14；P6 公共化经 vtx.api 供
     插件产物键复用——A-P1-1：产物键侧同样要掺代码摘要，否则改代码不 bump
     version 时回执指纹翻转但旧产物被缓存命中「洗白」）：插件目录全部 .py 文件
     （rglob 递归含子目录/子包，排除 __pycache__ 与 **tests/ 子目录**——R1-F F5：
     改一行测试 ≠ 插件行为变化，掺入会使产物键/回执无谓翻转触发真工程整轮重渲；
-    口径统一对全部插件生效，见 ARCHITECTURE §2.5 条 9；排序 文件名+字节）的
+    口径统一对全部插件生效，见 ARCHITECTURE §2.5 条 9；按插件根相对 POSIX
+    路径排序，路径与内容以长度前缀分界，独立算法版本入摘要；迁移说明见
+    docs/cache-provenance.md）的
     sha1 前 12 位——改默认参/改代码不 bump version 的场景一律翻转。模块加载
     成功后文件必在；读不到按 MISSING 计（fail-方向：摘要必变）。"""
     d, _origin = _registry.plugin_module_dir(name, repo_root)
-    h = hashlib.sha1()
+    h = hashlib.sha1(_PLUGIN_CODE_DIGEST_VERSION)
     if d is None or not d.is_dir():
-        h.update(b"NO-DIR")
+        h.update(b"NO-DIR\0")
         return h.hexdigest()[:12]
-    for f in sorted(d.rglob("*.py"), key=lambda x: x.name):
-        if "__pycache__" in f.parts:
-            continue
-        if "tests" in f.relative_to(d).parts:
+    h.update(b"DIR\0")
+    for f in sorted(d.rglob("*.py"), key=lambda x: x.relative_to(d).as_posix()):
+        relative = f.relative_to(d)
+        if any(part in {"tests", "__pycache__"} for part in relative.parts):
             continue       # tests/ 不进代码摘要（R1-F F5，docstring 见口径）
-        h.update(f.name.encode())
+        path_bytes = relative.as_posix().encode("utf-8")
+        h.update(len(path_bytes).to_bytes(8, "big"))
+        h.update(path_bytes)
         try:
-            h.update(f.read_bytes())
+            content = f.read_bytes()
         except OSError:
-            h.update(b"MISSING")
+            h.update(b"MISSING\0")
+        else:
+            h.update(b"CONTENT\0")
+            h.update(len(content).to_bytes(8, "big"))
+            h.update(content)
     return h.hexdigest()[:12]
 
 

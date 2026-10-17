@@ -100,7 +100,7 @@ v1→v2 升级的根因（红队 #105 r1/r2/r3 三轮 FAIL 的等价类根因）
 注入桥 ``get_canary_js(mode)``：对现有 HTML 页面零侵入（CDP
 ``Page.addScriptToEvaluateOnNewDocument`` / CEF ``CefFrame::ExecuteJavaScript``
 / Electron ``preload.js`` 均可直接注入本函数返回的 JS 片段）。JS 侧帧号来源
-与页面帧驱动协议同源（``?f=`` 查询参数，skill/references/gfx.md）；绘制时机
+与页面帧驱动协议同源（``?f=`` 查询参数，docs/skill/references/gfx.md）；绘制时机
 = DOMContentLoaded 后双重 rAF（模式 B 协议要求；headless 下 rAF 由截图的
 BeginFrame 驱动，消费 harness 以 throwaway 截图兜底触发）；页面若实现可选
 ``window.__vtx_render(f)`` 协议则透明包装（同参同返、异常照抛）在每次页内置
