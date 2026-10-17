@@ -182,17 +182,13 @@ def _layer_ident(c, tr, ti, cl):
 
 
 def _seg_dialogue(subs, fps, a, b):
-    """段字幕 Dialogue 行（复刻 RenderPlan.write_seg_ass 的换算，样式头两侧同值不比）。"""
-    cs_a = round(a * 100 / fps)
-    out = []
-    for s in subs:
-        if s["out"] > a and s["in"] < b:
-            def _fc(fr):
-                cs = max(0, round(fr * 100 / fps) - cs_a)
-                hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000)
-                return f"{hh}:{mm:02d}:{rem//100:02d}.{rem%100:02d}"
-            out.append(f"0,{_fc(s['in'])},{_fc(s['out'])},,,{s['text']}")
-    return "\n".join(out)
+    """Use the renderer's exact clipped, local-clock ASS dialogue bytes."""
+    from types import SimpleNamespace
+    from .composite import RenderPlan
+    c = SimpleNamespace(fps=fps, tl={"subtitles": subs})
+    plan = RenderPlan(c=c, draft=False, f=1.0, W=1920, H=1080)
+    return "\n".join(line for line in plan.segment_ass_bytes(a, b).decode("utf-8").splitlines()
+                     if line.startswith("Dialogue:"))
 
 
 def _seg_layers(c, layers_by_track, a, b):
@@ -223,8 +219,8 @@ def _edges(tl, nseg):
     dur = tl["project"]["duration_frames"]
     bounds = [(cl["dst_in"], cl["dst_in"] + cl["dur"])
               for tr in tl["video_tracks"] for cl in tr["clips"]]
-    if not bounds:
-        return [0, dur]
+    # Empty tracks still render a segmented black canvas; use the renderer's
+    # cut selection (including short-duration guard coalescing) in that case.
     return [0] + choose_cutpoints(bounds, dur, max(1, nseg)) + [dur]
 
 

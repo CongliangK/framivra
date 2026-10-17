@@ -13,6 +13,7 @@
 运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3 前缀，
 裸 python3 的 sys.executable 被 AppImage 劫持，见全局 AGENTS.md）
 """
+import copy
 import json
 import os
 import subprocess
@@ -24,7 +25,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx.timeline_diff import DiffCtx, _clip_seg_key, diff_timelines, is_timeline
+from vtx.composite import SEG_CUT_GUARD, choose_cutpoints
+from vtx.timeline_diff import DiffCtx, _clip_seg_key, _edges, diff_timelines, is_timeline
 
 VTX = REPO / "vtx" / "vtx.py"
 
@@ -208,6 +210,93 @@ class TestSegKeyImpact(_Base):
         st = res["impact"]["stages"]
         self.assertTrue(all(not v for k, v in st.items() if k != "validate"))
         self.assertTrue(st["validate"])   # 输入变即建议 validate（~3s，与 R1/R2 口径一致）
+
+
+class TestEmptyVideoTracks(_Base):
+    """The legal empty-track canvas has the renderer's real segment layout."""
+
+    def timeline(self, duration=240):
+        return _tl(
+            project={"fps": 30, "width": 1920, "height": 1080,
+                     "duration_frames": duration},
+            sources=[{"id": "bgm", "path": "bgm.wav"}],
+            video_tracks=[],
+            subtitles=[{"in": min(58, duration - 1), "out": min(62, duration), "text": "CROSS"}],
+            audio_tracks=[{"name": "bed", "events": [
+                {"src": "bgm", "in": 0, "out": duration, "volume": 1.0}]}])
+
+    def test_edges_share_real_cutpoints_and_guard_coalescing(self):
+        cases = [(240, 1, [0, 240]), (240, 4, [0, 60, 120, 180, 240]),
+                 (60, 4, [0, 60]), (120, 4, [0, 41, 120])]
+        for duration, requested, expected in cases:
+            with self.subTest(duration=duration, requested=requested):
+                renderer = [0] + choose_cutpoints([], duration, requested) + [duration]
+                self.assertEqual(renderer, expected)
+                self.assertEqual(_edges(self.timeline(duration), requested), renderer)
+
+    def test_clip_based_cutpoints_unchanged(self):
+        timeline = _tl()
+        bounds = [(cl["dst_in"], cl["dst_in"] + cl["dur"])
+                  for track in timeline["video_tracks"] for cl in track["clips"]]
+        for requested in (1, 4, 8):
+            with self.subTest(requested=requested):
+                expected = [0] + choose_cutpoints(bounds, 360, requested) + [360]
+                self.assertEqual(_edges(timeline, requested), expected)
+
+    def test_endpoint_edit_reports_one_of_four_and_frame_fraction(self):
+        old = self.timeline()
+        new = copy.deepcopy(old)
+        new["subtitles"][0]["out"] = 63
+        impact = diff_timelines(old, self.root, new, self.root, nseg=4)["impact"]
+        self.assertEqual(impact["vseg_invalid"], {
+            "count": 1, "total": 4, "segments": [[60, 120]],
+            "nseg": 4, "guard": SEG_CUT_GUARD})
+        self.assertEqual(impact["estimated_seconds"]["video"], 37.5)
+        self.assertIn("60/240", impact["estimate_basis"])
+        self.assertTrue(impact["stages"]["video"])
+
+    def test_no_change_reports_zero_of_four_and_no_stages(self):
+        old = self.timeline()
+        impact = diff_timelines(old, self.root, copy.deepcopy(old), self.root, nseg=4)["impact"]
+        self.assertEqual(impact["vseg_invalid"]["count"], 0)
+        self.assertEqual(impact["vseg_invalid"]["total"], 4)
+        self.assertEqual(impact["vseg_invalid"]["segments"], [])
+        self.assertFalse(any(impact["stages"].values()))
+        self.assertNotIn("video", impact["estimated_seconds"])
+
+    def test_audio_only_reports_zero_of_four_without_video_work(self):
+        old = self.timeline()
+        new = copy.deepcopy(old)
+        new["audio_tracks"][0]["events"][0]["volume"] = 0.5
+        impact = diff_timelines(old, self.root, new, self.root, nseg=4)["impact"]
+        self.assertEqual(impact["vseg_invalid"]["count"], 0)
+        self.assertEqual(impact["vseg_invalid"]["total"], 4)
+        self.assertEqual(impact["vseg_invalid"]["segments"], [])
+        self.assertFalse(impact["stages"]["video"])
+        self.assertTrue(impact["stages"]["audio"])
+        self.assertNotIn("video", impact["estimated_seconds"])
+
+    def test_subtitle_right_open_segment_boundary(self):
+        old = self.timeline()
+        old["subtitles"][0]["out"] = 60
+        new = copy.deepcopy(old)
+        new["subtitles"][0]["text"] = "EDIT"
+        impact = diff_timelines(old, self.root, new, self.root, nseg=4)["impact"]
+        self.assertEqual(impact["vseg_invalid"]["segments"], [[0, 60]])
+        new = copy.deepcopy(old)
+        new["subtitles"][0]["out"] = 61
+        impact = diff_timelines(old, self.root, new, self.root, nseg=4)["impact"]
+        self.assertEqual(impact["vseg_invalid"]["segments"], [[60, 120]])
+
+    def test_short_duration_reports_actual_count_not_requested_count(self):
+        old = self.timeline(60)
+        old["subtitles"] = [{"in": 2, "out": 4, "text": "SHORT"}]
+        new = copy.deepcopy(old)
+        new["subtitles"][0]["out"] = 5
+        impact = diff_timelines(old, self.root, new, self.root, nseg=4)["impact"]
+        self.assertEqual(impact["vseg_invalid"]["total"], 1)
+        self.assertEqual(impact["vseg_invalid"]["segments"], [[0, 60]])
+        self.assertEqual(impact["estimated_seconds"]["video"], 150.0)
 
 
 class TestAdvice(_Base):

@@ -81,7 +81,10 @@ def run_page(worker, folder, page, frames, expectations, reproduce=False, width=
             '--sync-canary=exact', f'--width={width}', f'--height={height}',
             f'--ipc-socket={sock_short}', f'--url-template={page.as_uri()}?f={{f}}',
             f'--root-cache-path={folder / "profile"}', f'--sync-log={log}',
-            '--sync-ready-timeout-ms=5000']
+            '--sync-ready-timeout-ms=5000',
+            # A0=软件无头 OSR：钉 headless，避免 Wayland 会话自动选 wayland
+            # 后 wl_display roundtrip 挂起（与本矩阵的 JS 错误契约无关）。
+            '--ozone-platform=headless']
     proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, start_new_session=True, cwd=folder)
     observations = []
     try:

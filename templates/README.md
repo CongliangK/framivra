@@ -1,6 +1,6 @@
 # templates/ —— 工作流模板与开发范本
 
-四个平级模板（ARCHITECTURE §4）；工作流可组合 SKILL、参考资料、资产和脚本，包内布局保持自包含：
+五个平级模板（ARCHITECTURE §4 + #177 切片）；工作流可组合 SKILL、参考资料、资产和脚本，包内布局保持自包含：
 
 | 目录 | 是什么 | 起手模板 |
 |---|---|---|
@@ -8,6 +8,9 @@
 | `hello-app/` | 最小应用（app）范本：产出独立素材、不进 timeline 管线 | 第三方 app |
 | `hello-plugin/` | 音频插件完整纪律范本：缝 A prepare_source + 三不变量 + 三分支 | 第三方音频插件 |
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
+| `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
+
+消费面变更公告（2026-10-17，#177 切片）：`templates/` 新增 `standard-demo/` 包（README + profiles + 冻结 benchmark manifest + OFL 字体），属挂载消费面构成变更；语义与用法 home=包内 README 与 `docs/demo-fixture.md`，本表只登记构成。
 
 `vt templates list|check` 从 `skill.json` / `SKILL.md` 识别并检查 tech-talk 与 skill-demo；旧 `vt skills list|check` 及 doctor JSON 的 `skills` 字段保持兼容。发现不会执行工作流。hello-app / hello-plugin 由各自组件 manifest 区分，不作为 workflow 检查。
 

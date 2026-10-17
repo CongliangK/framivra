@@ -4,6 +4,8 @@
 Media suites are deliberately enumerated: passing them does not certify model,
 Blender, GPU, release, or external-service integrations. Every selected test
 must execute (zero skips) and missing tools are failures before discovery.
+The 'demo-toolchain' gate is the same strict contract scoped to the frozen
+demo toolchain; it is not run on CI's stock ubuntu ffmpeg (see MEDIA_TESTS).
 """
 import argparse
 import ast
@@ -21,6 +23,7 @@ MEDIA_TESTS = {
         'tests.test_qc_probe_ownership.ProbeOwnership.test_real_ffmpeg_parallel_raw_outputs',
         'tests.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
         'tests.test_agent_diagnostics_qc.TestQCDiagnosticsCPU',
+        'tests.test_qc_sampling.SamplingMediaContract',
         'tests.test_agent_diagnostics_loading.Loading.test_invalid_media_probe_is_structured',
         'tests.test_agent_diagnostics_repair.FixtureRepair.test_seven_rule_repair_reaches_actual_validate_green',
         'tests.test_filter_threads',
@@ -44,6 +47,8 @@ MEDIA_TESTS = {
         'plugins.blender-bridge.tests.test_blender_bridge_plugin.'
         'SubsAlphaProbe.test_real_ffprobe_rejects_truncated_garbage',
         'tests.test_range_render.TestRangeIntegration',
+        'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
+        'tests.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
         'tests.test_graphics_portability.SubtitleIntegration',
     ),
     'chrome': (
@@ -53,6 +58,15 @@ MEDIA_TESTS = {
         'tests.test_gfx_cache_integrity.RealBrowserIntegrity',
         'tests.test_failure_recovery.RealChromeRecovery',
         'tests.test_frame_canary.TestChromeCanary',
+    ),
+    # Frozen-toolchain batch (#177): RealGenerationTests bind the frozen demo
+    # toolchain (ffmpeg 8.1.3 dual anchor). CI's ubuntu ffmpeg can never match,
+    # so this batch is NOT executed by the CI ffmpeg job; it stays strictly
+    # inventoried (media_inventory anchors on VTX_TEST_DEMO_TOOLCHAIN) so the
+    # class cannot silently disappear, and runs zero-skip via gate
+    # 'demo-toolchain' in developer/cloud frozen-toolchain environments.
+    'demo-toolchain': (
+        'tests.test_demo_fixture.RealGenerationTests',
     ),
 }
 
@@ -70,6 +84,10 @@ MEDIA_CONDITIONS = {
     'VTX_RANGE_INTEG': 'ffmpeg', 'VTX_AUDIO_REPORT_INTEG': 'ffmpeg',
     'google-chrome': 'chrome', 'chromium': 'chrome',
     'VTX_TEST_CHROME': 'chrome', 'VTX_PIPE_INTEG': 'chrome',
+    # Frozen-toolchain opt-in: exclusively-demo-toolchain gates form their own
+    # strict batch (not the CI ffmpeg job). Mixed demo+ffmpeg/chrome gates stay
+    # classified as their CI kind so they can never escape strict coverage.
+    'VTX_TEST_DEMO_TOOLCHAIN': 'demo-toolchain',
 }
 
 
@@ -124,8 +142,14 @@ def media_inventory(root=ROOT):
             return found
 
         def record(selector, found):
-            if found:
-                inventory[selector] = 'chrome' if 'chrome' in found else 'ffmpeg'
+            if not found:
+                return
+            if 'chrome' in found:
+                inventory[selector] = 'chrome'
+            elif found == {'demo-toolchain'}:
+                inventory[selector] = 'demo-toolchain'
+            else:
+                inventory[selector] = 'ffmpeg'
 
         module = '.'.join(path.relative_to(root).with_suffix('').parts)
         for case in tree.body:
@@ -207,6 +231,10 @@ def prepare_media(kind):
          '-f', 'null', '-'])
     if kind == 'ffmpeg':
         os.environ.update(VTX_AUDIO_REPORT_INTEG='1', VTX_RANGE_INTEG='1')
+    elif kind == 'demo-toolchain':
+        # Opt-in frozen-toolchain batch: strict zero-skip semantics, but only
+        # meaningful where the toolchain matches the frozen demo manifest.
+        os.environ['VTX_TEST_DEMO_TOOLCHAIN'] = '1'
     else:
         chrome = executable('google-chrome', 'VTX_TEST_CHROME')
         os.environ.update(VTX_TEST_CHROME=chrome, VTX_CHROME=chrome,
@@ -249,7 +277,8 @@ def strict_suite(names, stream=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('gate', choices=('static', 'ffmpeg', 'chrome'))
+    parser.add_argument('gate', choices=('static', 'ffmpeg', 'chrome',
+                                        'demo-toolchain'))
     args = parser.parse_args(argv)
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))

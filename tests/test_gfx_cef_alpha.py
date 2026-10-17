@@ -154,7 +154,8 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
                     fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                     fds.append(fd)
                     worker_env['TMPDIR'] = f'/proc/{os.getpid()}/fd/{fd}'
-                    return [WORKER, '--mode=a0', f'--url={page.as_uri()}?f=0',
+                    return [WORKER, '--mode=a0', '--ozone-platform=headless',
+                            f'--url={page.as_uri()}?f=0',
                             '--width=64', '--height=48', '--begin-frames=12',
                             '--out-png=baseline.png', '--out-json=baseline.json',
                             f'--root-cache-path={profile}']
@@ -203,6 +204,101 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
         self._assert_structure_css_veto('has_third_child',
             '#content{background:rgb(17,231,47)}'
             'html:has(> :nth-child(3)) #content{background:rgb(231,17,31)}')
+
+    # ---- #153：同步 JS 异常的稳定错误帧不得进入 S5（生产 render_page 面）----
+
+    def _js_error_page(self, source):
+        # 红底错误帧形状：异常打断目标绘制前，#content 维持 CSS 红。
+        return ('<!doctype html><html><head><style>\n'
+                'html,body{margin:0;width:100%;height:100%;overflow:hidden;'
+                'background:transparent}\n'
+                '#content{position:fixed;inset:0;background:rgb(231,17,31)}\n'
+                '</style></head><body><div id="content"></div>\n'
+                f'<script>{source}</script></body></html>')
+
+    def test_sync_throw_error_frame_is_vetoed(self):
+        # issue #153 原始形状：绿色目标绘制之前同步 throw，稳定红色错误
+        # 底图（3072/3072）曾被 exact 验收接受进入 S5。宿主侧结构证据 =
+        # 既有握手/状态机通道的 JS_ERR 显式失败；错误帧必须被拒，不得
+        # 发布像素、不得进入 S5_ONPAINT_VERIFIED。
+        from vtx.cef_client import CefWorkerError
+        with tempfile.TemporaryDirectory(prefix='cef_js_throw_') as td:
+            root = Path(td)
+            p = project(root, n=1)
+            page = root / 'page.html'
+            page.write_text(self._js_error_page(
+                "throw Error('CEF_153_SYNC_THROW');"
+                "document.querySelector('#content').style.background="
+                "'rgb(17,231,47)';"))
+            env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                       VTX_CEF_MODE='a0', VTX_GFX_CACHE_NS='')
+            with mock.patch.dict(os.environ, env):
+                c = Ctx(p)
+                out = hygiene.gfx_dir(c, c.tl['video_tracks'][0]['clips'][0])
+                out.mkdir(parents=True)
+                with self.assertRaises(CefWorkerError) as caught:
+                    gfx_cef.render_page(page, out, 1, ctx=c, width=64, height=48)
+                self.assertIn('JS_ERR', str(caught.exception))
+                self.assertFalse((out / 'f0000.png').exists(),
+                                 'JS-error frame pixels published')
+                events = [json.loads(line)
+                          for path in (c.cache / 'reports/cef').glob('*.sync.jsonl')
+                          for line in path.read_text().splitlines()]
+                self.assertFalse(any(e.get('to') == 'S5_ONPAINT_VERIFIED'
+                                     for e in events), 'error frame verified')
+                failed = [e for e in events if e['event'] == 'request_end'
+                          and e.get('status') == 'failed']
+                self.assertTrue(failed, 'request must fail explicitly')
+                self.assertTrue(any(e.get('reason', '').startswith('JS_ERR')
+                                    for e in failed), failed)
+                receipts = [json.loads(path.read_text())
+                            for path in (c.cache / 'reports/cef').glob('*.receipts.json')]
+                self.assertEqual(receipts, [[]])
+                self.assertFalse(any((c.cache / 'tmp').iterdir()),
+                                 'supervised worker leaked')
+            evidence = os.environ.get('VTX_CEF_EVIDENCE_DIR')
+            if evidence:
+                shutil.copytree(root, Path(evidence) / 'js-sync-throw',
+                                dirs_exist_ok=True)
+
+    def test_handled_exceptions_are_not_rejected(self):
+        # 反例（不得误拒）：页面自行 try/catch 的同步异常、已处理的
+        # Promise rejection、以及 console.error 文字，都不是失败证据；
+        # 目标绿帧必须正常验收进入 S5。
+        with tempfile.TemporaryDirectory(prefix='cef_js_handled_') as td:
+            root = Path(td)
+            p = project(root, n=1)
+            page = root / 'page.html'
+            page.write_text(self._js_error_page(
+                "try { throw Error('CAUGHT_SYNC'); } catch (e) {}\n"
+                "Promise.reject(Error('CAUGHT_REJECTION')).catch(() => {});\n"
+                "console.error('JS_ERR hosterror uncaught');\n"
+                "document.querySelector('#content').style.background="
+                "'rgb(17,231,47)';"))
+            env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                       VTX_CEF_MODE='a0', VTX_GFX_CACHE_NS='')
+            with mock.patch.dict(os.environ, env):
+                c = Ctx(p)
+                out = hygiene.gfx_dir(c, c.tl['video_tracks'][0]['clips'][0])
+                out.mkdir(parents=True)
+                gfx_cef.render_page(page, out, 1, ctx=c, width=64, height=48)
+                w, h, rgba = decode_png_rgba(out / 'f0000.png')
+                self.assertEqual((w, h), (64, 48))
+                self.assertEqual(rgba, bytes((17, 231, 47, 255)) * (w * h))
+                events = [json.loads(line)
+                          for path in (c.cache / 'reports/cef').glob('*.sync.jsonl')
+                          for line in path.read_text().splitlines()]
+                self.assertEqual(sum(e.get('to') == 'S5_ONPAINT_VERIFIED'
+                                     for e in events), 1)
+                self.assertFalse(any(e['event'] == 'request_end'
+                                     and e.get('status') == 'failed'
+                                     for e in events))
+                self.assertFalse(any((c.cache / 'tmp').iterdir()),
+                                 'unsigned browser leaked')
+            evidence = os.environ.get('VTX_CEF_EVIDENCE_DIR')
+            if evidence:
+                shutil.copytree(root, Path(evidence) / 'js-handled',
+                                dirs_exist_ok=True)
 
     def test_large_blurred_page_does_not_certify_initial_blank(self):
         # Real original-page failure shape: full-size opaque background behind
@@ -258,7 +354,8 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden}
                         fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                         fds.append(fd)
                         env['TMPDIR'] = f'/proc/{os.getpid()}/fd/{fd}'
-                        return [WORKER, '--mode=a0', '--serve', '--sync',
+                        return [WORKER, '--mode=a0', '--ozone-platform=headless',
+                                '--serve', '--sync',
                                 f'--sync-mode={mode}', '--sync-canary=exact',
                                 f'--sync-fault={fault}', '--sync-ready-timeout-ms=300',
                                 '--sync-pump-timeout-ms=300', '--width=64', '--height=48',

@@ -9,6 +9,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -269,6 +270,122 @@ class TestQCDiagnosticsCPU(unittest.TestCase):
             self.assertEqual(by_rule['qc.true_peak']['status'], 'fail')
             self.assertGreater(by_rule['qc.true_peak']['measured']['value'], qc.QC_TP_MAX)
             self.assertFalse(json.loads((root / 'out/receipt.json').read_text())['stages']['qc']['ok'])
+
+    def test_real_black_canvas_subtitles_audio_through_qc(self):
+        # Reduced CPU runtime control; 320x180 is intentionally outside the
+        # formal schema's 1920x1080 resolution. The full-size test below owns
+        # the formal-input completion regression. 240 frames permits four
+        # actual segments with the production cut guard.
+        for segments in (1, 4):
+            with self.subTest(segments=segments), tempfile.TemporaryDirectory(prefix='vtx_qc_zero_tracks_') as temporary:
+                root = Path(temporary)
+                self.command(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                              'sine=frequency=1000:sample_rate=48000:duration=8',
+                              '-c:a', 'pcm_s16le', root / 'tone.wav'])
+                timeline = root / 'timeline.json'
+                timeline.write_text(json.dumps({
+                    'version': 2,
+                    'project': {'fps': 30, 'width': 320, 'height': 180, 'duration_frames': 240},
+                    'sources': [{'id': 'tone', 'path': 'tone.wav'}],
+                    'video_tracks': [], 'subtitles': [{'in': 3, 'out': 15, 'text': 'TEST'}],
+                    'audio_tracks': [{'name': 'tone', 'events': [
+                        {'src': 'tone', 'in': 0, 'out': 240, 'volume': 1.0}]}]}))
+                env = dict(os.environ, VTX_PIPELINE='0', VTX_VIDEO_SEGMENTS=str(segments),
+                           VTX_SEG_NVENC='0', VTX_IO_WORKERS='1', VTX_FILTER_THREADS='1',
+                           PYTHONDONTWRITEBYTECODE='1')
+                cli = [sys.executable, REPO / 'vtx/vtx.py', '-t', timeline]
+                self.command([*cli, 'all'], env=env, cwd=REPO)
+                listing = root / 'cache/vseg/list.txt'
+                if segments == 4:
+                    lines = listing.read_text().splitlines()
+                    self.assertEqual(len(lines), 4, lines)
+                    starts = []
+                    for index, line in enumerate(lines):
+                        entry = re.fullmatch(r"file '(.+)'", line)
+                        self.assertIsNotNone(entry, line)
+                        segment = Path(entry.group(1))
+                        name = re.fullmatch(r'seg(\d+)_(\d{6})_[0-9a-f]{12}\.mp4', segment.name)
+                        self.assertIsNotNone(name, segment.name)
+                        self.assertEqual(int(name.group(1)), index)
+                        starts.append(int(name.group(2)))
+                        self.assertTrue(segment.is_file(), segment)
+                        probe = self.command(['ffprobe', '-v', 'error', '-count_frames',
+                                              '-select_streams', 'v:0', '-show_entries',
+                                              'stream=nb_read_frames', '-of', 'csv=p=0', segment])
+                        self.assertEqual(int(probe.stdout.strip()), 60, segment)
+                    self.assertEqual(starts, [0, 60, 120, 180])
+                else:
+                    self.assertFalse(listing.exists())
+                receipt = json.loads((root / 'out/receipt.json').read_text())
+                for stage in ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc'):
+                    self.assertTrue(receipt['stages'][stage]['ok'], (stage, receipt))
+                self.command([*cli, '--strict', 'qc'], env=env, cwd=REPO)
+                report = json.loads((root / 'out/qc_report.json').read_text())
+                self.assertEqual(len(report['checks']), 7)
+                self.assertTrue(all(x['pass'] for x in report['checks']), report)
+                leak = next(x for x in report['checks'] if x['name'].startswith('空窗无叠加泄漏'))
+                self.assertEqual(leak['name'], '空窗无叠加泄漏 @frame 239')
+                self.assertEqual(report['skipped_probes'], [])
+                self.assertTrue((root / 'out/final.mp4').is_file())
+
+                # Keep the real audio while replacing only video with visible
+                # leakage. No track is added: QC must reject the bad final.
+                final = root / 'out/final.mp4'
+                damaged = root / 'out/leaked.mp4'
+                self.command(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                              'color=c=white:s=320x180:r=30:d=8', '-i', final,
+                              '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264',
+                              '-threads', '1', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+                              '-c:a', 'copy', '-shortest', damaged])
+                os.replace(damaged, final)
+                context = Ctx(timeline, diagnostics=[]); context.strict = True
+                code, _, report = _run_qc(context)
+                self.assertEqual(code, 1)
+                failures = [x for x in report['checks'] if not x['pass']]
+                self.assertEqual(len(failures), 1, report)
+                self.assertEqual(failures[0]['name'], '空窗无叠加泄漏 @frame 239')
+                self.assertFalse(json.loads((root / 'out/receipt.json').read_text())['stages']['qc']['ok'])
+
+
+    def test_formal_size_zero_tracks_reports_without_crash(self):
+        # Source-bearing 1080p input preserves the formal contract regression.
+        # Existing FFmpeg downscale/range behavior can fail the leakage oracle;
+        # require a complete, consistent report, never force that check green.
+        with tempfile.TemporaryDirectory(prefix='vtx_qc_zero_tracks_1080p_') as temporary:
+            root = Path(temporary)
+            self.command(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                          'sine=frequency=1000:sample_rate=48000:duration=2',
+                          '-c:a', 'pcm_s16le', root / 'tone.wav'])
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps({
+                'version': 2,
+                'project': {'fps': 30, 'width': 1920, 'height': 1080, 'duration_frames': 60},
+                'sources': [{'id': 'tone', 'path': 'tone.wav'}],
+                'video_tracks': [], 'subtitles': [{'in': 3, 'out': 15, 'text': 'TEST'}],
+                'audio_tracks': [{'name': 'tone', 'events': [
+                    {'src': 'tone', 'in': 0, 'out': 60, 'volume': 1.0}]}]}))
+            env = dict(os.environ, VTX_PIPELINE='0', VTX_VIDEO_SEGMENTS='1',
+                       VTX_SEG_NVENC='0', VTX_IO_WORKERS='1', VTX_FILTER_THREADS='1',
+                       PYTHONDONTWRITEBYTECODE='1')
+            cli = [sys.executable, REPO / 'vtx/vtx.py', '-t', timeline]
+            self.command([*cli, 'all', '--until', 'mux'], env=env, cwd=REPO)
+            result = subprocess.run(list(map(str, [*cli, '--strict', 'qc'])),
+                                    text=True, capture_output=True, timeout=180, env=env, cwd=REPO)
+            self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+            report = json.loads((root / 'out/qc_report.json').read_text())
+            self.assertEqual(len(report['checks']), 7, report)
+            leak = [x for x in report['checks'] if x['name'].startswith('空窗无叠加泄漏')]
+            self.assertEqual(len(leak), 1, report)
+            self.assertEqual(leak[0]['name'], '空窗无叠加泄漏 @frame 59')
+            self.assertTrue(all(x['pass'] for x in report['checks'] if x not in leak), report)
+            passed = all(x['pass'] for x in report['checks'])
+            self.assertEqual(result.returncode, 0 if passed else 1)
+            self.assertEqual(report['skipped_probes'], [])
+            receipt = json.loads((root / 'out/receipt.json').read_text())
+            for stage in ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux'):
+                self.assertTrue(receipt['stages'][stage]['ok'], (stage, receipt))
+            self.assertEqual(receipt['stages']['qc']['ok'], passed)
 
 
 if __name__ == '__main__':

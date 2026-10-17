@@ -1,0 +1,342 @@
+{
+  "benchmark_id": "framivra-standard-demo",
+  "schema_version": 1,
+  "owner_issue": "CongliangK/framivra#177（父任务 #91）",
+  "generator": {
+    "path": "scripts/demo.py",
+    "sha256": "200babf8c4b7eafd6b847486a0efb837c8c0285770eba027bdf64b00490f1415"
+  },
+  "toolchain": {
+    "ffmpeg": {
+      "path": "/usr/bin/ffmpeg",
+      "version_line": "ffmpeg version 8.1.3 Copyright (c) 2000-2026 the FFmpeg developers",
+      "binary_sha256": "c5b5ab6791deefd2324e112667d9c792819b53d66bb4aada1c94c57ab1ab2ee4",
+      "configuration_sha256": "288b5edad7ff15cd4f8b792888942f5c31609fa8e15fae4655f5e219330b67e4"
+    },
+    "ffprobe": {
+      "path": "/usr/bin/ffprobe",
+      "version_line": "ffprobe version 8.1.3 Copyright (c) 2007-2026 the FFmpeg developers",
+      "binary_sha256": "f324bd4216e750e468a7628a60aedad71be6434d6f0b167e20e968a1b65a8f37"
+    }
+  },
+  "determinism_note": [
+    "同工具链（version_line+binary_sha256 双锚）两份全新输出 encoded sha256 必须相等；",
+    "跨 FFmpeg 版本不承诺容器字节相同；未列入工具链 = unsupported/unverified；",
+    "标准输入为先冻结期望值，生成时只允许验证，不得自动接受新输出改锁。"
+  ],
+  "fonts": {
+    "Noto Sans SC": {
+      "file": "profiles/standard/v1/fonts/NotoSansSC-VF.ttf",
+      "license": "OFL-1.1",
+      "license_file": "fonts/OFL.txt",
+      "source_url": "https://github.com/google/fonts/tree/main/ofl/notosanssc"
+    }
+  },
+  "profiles": {
+    "quick": {
+      "version": 1,
+      "files": {
+        "gfxA.html": {
+          "sha256": "663ca3ba9c233f202e7861c16bd5e8da17ac983f4db44db93c2d88028940fa04",
+          "size": 2187,
+          "role": "input"
+        },
+        "profile.json": {
+          "sha256": "8d59dcd2978edd6d0b7cfbd2074a0fc8343e20c8f7063bd778f0b0da5f0c7506",
+          "size": 1127,
+          "role": "input"
+        },
+        "timeline.json": {
+          "sha256": "7326740b011bcc7660dd8585c6577aea782832b537ee26b44a81727b7432992c",
+          "size": 1068,
+          "role": "input"
+        },
+        "v01.mp4": {
+          "sha256": "89b656484242050d836c0e9fe0134119bdb0d05805010526e4636bd3edc5ae2a",
+          "size": 2764393,
+          "role": "quick 唯一源（testsrc2+sine，复用 skill-demo 生成法）"
+        }
+      },
+      "decoded": {
+        "v01.mp4": {
+          "frames": 90,
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "30/1",
+          "pix_fmt": "yuv420p",
+          "audio_sample_rate": "48000",
+          "audio_channels": 2,
+          "audio_sample_fmt": "fltp",
+          "audio_duration_ts": 143328,
+          "pts_sha256": "1338da5ac6e50d0c235daf40e94d00886821f1152dd2f3f1ef5872691d4f27dc",
+          "pcm_s16le_sha256": "6e86c70d80c2bdffea2a124ec9d50091af6d8abfbc532db10ad1db12d09a7614",
+          "pixel_rgb24_sha256": "0a58b18615716f1b45254655b258a80389749384300b42190f4caf96e223dcfe"
+        }
+      },
+      "media_generation": {
+        "v01.mp4": {
+          "role": "quick 唯一源（testsrc2+sine，复用 skill-demo 生成法）",
+          "filters": [
+            "testsrc2=size=1920x1080:rate=30",
+            "sine=frequency=440:sample_rate=48000"
+          ],
+          "frames": 90,
+          "extra": [
+            "-frames:v",
+            "90",
+            "-r",
+            "30"
+          ],
+          "seed_note": "lavfi testsrc2/sine 为确定信源（无随机态）"
+        }
+      },
+      "codec_args": [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-threads",
+        "2",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-shortest",
+        "-fflags",
+        "+bitexact",
+        "-flags:v",
+        "+bitexact"
+      ],
+      "timeline": "timeline.json（files 已锁哈希；配置即文件）",
+      "coverage": {
+        "required": [
+          "timeline 结构复用（aroll+gfx 双轨/字幕/voice+bed 双音轨）",
+          "帧驱动 JS gfx 页（?f= 纯函数，含淡入淡出与进度条）",
+          "CJK 字幕文本",
+          "生产 validate 通过"
+        ],
+        "optional": []
+      },
+      "cache_dependencies": [
+        "v01.mp4",
+        "gfxA.html"
+      ]
+    },
+    "standard": {
+      "version": 1,
+      "files": {
+        "fonts/NotoSansSC-VF.ttf": {
+          "sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+          "size": 17772300,
+          "role": "input"
+        },
+        "fonts/OFL.txt": {
+          "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+          "size": 4388,
+          "role": "input"
+        },
+        "gfx/canvas.html": {
+          "sha256": "b6ba1f4cb57c0668b72188632063d5a3300fbe11bbb5c68c7552a46b891655d7",
+          "size": 1502,
+          "role": "input"
+        },
+        "gfx/dom.html": {
+          "sha256": "0f656bcc320cf6789ea9b1c61e2489f9f8df01f6e38571c92219bbf7b4d077ba",
+          "size": 1404,
+          "role": "input"
+        },
+        "profile.json": {
+          "sha256": "c9d85821acb0f470a6264ccec834d28964f1ff735750ed9e8d97df598473c3c8",
+          "size": 2682,
+          "role": "input"
+        },
+        "timeline.json": {
+          "sha256": "6d906fe310e4ca9da9e2e2ab57c14ff0d82e3c8a8e3616c3033cfb72f3b748f6",
+          "size": 1205,
+          "role": "input"
+        },
+        "a.mp4": {
+          "sha256": "a35201b65d24919c15c02da67bddfc7765e4336cbb22ee53ede2f990437806ce",
+          "size": 117970,
+          "role": "standard 第一段 180 帧（color+drawbox+330Hz sine）"
+        },
+        "b.mp4": {
+          "sha256": "d8bd9fe5dd9cedfffa8c32ef88c126d5ed00be4c3c55df57f956e50424b1b0a7",
+          "size": 118045,
+          "role": "standard 第二段 180 帧（color+drawbox+550Hz sine）"
+        }
+      },
+      "decoded": {
+        "a.mp4": {
+          "frames": 180,
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "30/1",
+          "pix_fmt": "yuv420p",
+          "audio_sample_rate": "48000",
+          "audio_channels": 2,
+          "audio_sample_fmt": "fltp",
+          "audio_duration_ts": 288000,
+          "pts_sha256": "42931d6f61848e2f1b568cbd36caa4c680104097cc7daa91091cc77d1ece2413",
+          "pcm_s16le_sha256": "9a12cb1f2a5289079711aa66a4f38289babedffd5849acba2881cf651810a969",
+          "pixel_rgb24_sha256": "c288564968df9ba6858395bfbd394c250017cbe3b71122c665ab78c2281ea841"
+        },
+        "b.mp4": {
+          "frames": 180,
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "30/1",
+          "pix_fmt": "yuv420p",
+          "audio_sample_rate": "48000",
+          "audio_channels": 2,
+          "audio_sample_fmt": "fltp",
+          "audio_duration_ts": 288000,
+          "pts_sha256": "42931d6f61848e2f1b568cbd36caa4c680104097cc7daa91091cc77d1ece2413",
+          "pcm_s16le_sha256": "042eafbe3c45ce76b195f9b7ec3c04eb5520ebc1696b6bd87befbf09bab6801e",
+          "pixel_rgb24_sha256": "6303ad607ef2cfac93ea41d8520bdf7c102087e2ebb3a2a990d4373a0ebe7695"
+        }
+      },
+      "media_generation": {
+        "a.mp4": {
+          "role": "standard 第一段 180 帧（color+drawbox+330Hz sine）",
+          "filters": [
+            "color=0x708090:s=1920x1080:r=30:d=6,drawbox=x=100:y=100:w=400:h=200:color=white:t=fill",
+            "sine=frequency=330:sample_rate=48000:duration=6"
+          ],
+          "frames": 180,
+          "extra": [
+            "-frames:v",
+            "180",
+            "-r",
+            "30"
+          ],
+          "seed_note": "lavfi color/sine 为确定信源（无随机态）"
+        },
+        "b.mp4": {
+          "role": "standard 第二段 180 帧（color+drawbox+550Hz sine）",
+          "filters": [
+            "color=0x906040:s=1920x1080:r=30:d=6,drawbox=x=100:y=100:w=400:h=200:color=white:t=fill",
+            "sine=frequency=550:sample_rate=48000:duration=6"
+          ],
+          "frames": 180,
+          "extra": [
+            "-frames:v",
+            "180",
+            "-r",
+            "30"
+          ],
+          "seed_note": "lavfi color/sine 为确定信源（无随机态）"
+        }
+      },
+      "codec_args": [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-threads",
+        "2",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-shortest",
+        "-fflags",
+        "+bitexact",
+        "-flags:v",
+        "+bitexact"
+      ],
+      "timeline": "timeline.json（files 已锁哈希；配置即文件）",
+      "coverage": {
+        "required": [
+          "两段 180 帧普通视频段（aroll 跨源拼接，剪辑点=第 180 帧）",
+          "字幕横跨第 180 帧剪辑点（in=140 out=230）",
+          "双 gfx 页：帧驱动 canvas（动态）+ 无 JS 动画 DOM（静态区间）",
+          "CJK 文本（字幕+gfx 页）",
+          "透明 gfx 画布",
+          "低 alpha（DOM 面板 rgba(*,*,*,0.15)；canvas 填充 rgba(*,*,*,0.15)）",
+          "字体随包本地化（@font-face 包内文件，无外连）",
+          "音轨 bed(loop)+second 双轨",
+          "生产 validate 通过"
+        ],
+        "optional": [
+          "SVG 内联图形（dom 页）"
+        ]
+      },
+      "cache_dependencies": [
+        "a.mp4",
+        "b.mp4",
+        "gfx/canvas.html",
+        "gfx/dom.html",
+        "fonts/NotoSansSC-VF.ttf"
+      ]
+    },
+    "gfx-stress": {
+      "version": 1,
+      "mode": "reference-only",
+      "reference": {
+        "suite_manifest": "tests/gfx_bench_suite/suite_manifest.json",
+        "suite_manifest_sha256": "1ba25c00b29f0b76efc0a63dc22acb251e1d208d2fce890a1c105e393175e821",
+        "frozen_commit": "70b6853",
+        "frozen_branch": "main",
+        "issue": "CongliangK/framivra#106",
+        "scenarios": [
+          "S1",
+          "S2",
+          "S3",
+          "S4a",
+          "S4b",
+          "S5",
+          "S6",
+          "S7"
+        ],
+        "excluded": [
+          "S8（外部生产基线双轨，历史未纳入本 demo）"
+        ],
+        "page_sha256": {
+          "docs/skill/assets/lower-third.html": "7712bcac4a1500f55cf6b62e20a429dfa4c8e5ead337a2dce6a2bc8c32439a11",
+          "docs/skill/assets/title-card.html": "f17019e7ae5a23bdc5ef60d2e6d72386bd12c6cb541b6c607076cefb1d8b41de",
+          "templates/skill-demo/gfxA.html": "663ca3ba9c233f202e7861c16bd5e8da17ac983f4db44db93c2d88028940fa04",
+          "templates/tech-talk/assets/gfx-examples/gfxA.html": "ca26519e8fe0b98c1ad21f32550478b92b4ca995aa6d5efa8abfdc6e65514012",
+          "templates/tech-talk/assets/gfx-examples/gfxB.html": "7351429535c8193d936d232a4d9e5e3d675b97c49888643b355b0329ca40cd05",
+          "templates/tech-talk/assets/gfx-examples/gfxC.html": "f67b304a00e00ce58924fc95915320aebef0e05c9ae0914b22a679b9f94ec55d",
+          "templates/tech-talk/assets/gfx-examples/motion.html": "fddadad2af4f38f38771cf628aecd0fd4fc62c66c82d544812de5f9406d19e1f",
+          "templates/tech-talk/assets/gfx-templates/chart_curve.html": "a4963d195649d7e3351854b35c707ad669262a86ea06a4bb73d8ccf3aca5da9b",
+          "templates/tech-talk/assets/gfx-templates/data_table_grouped.html": "85b338ee32e4af450156c62732a975e24939d321c19e449627c12fb01bea4ca2",
+          "templates/tech-talk/assets/gfx-templates/endboard.html": "91f8d70634047884fdaa8af6da65f1c39b1095483adf981bb3090bf0e2be8241",
+          "templates/tech-talk/assets/gfx-templates/nav_card.html": "07dba14f9bba7129923038afe270d0b4882e0f258c4b28ca534704e32bf97be3",
+          "templates/tech-talk/assets/gfx-templates/overlay_card_bottom.html": "3a61ad38aa9586927c1ac3217bb5ed061e6387cc41f90ad0ca0428d6ef430996",
+          "templates/tech-talk/assets/gfx-templates/overlay_card_top.html": "8c152cfcbe62200cb12599993354d62b5a0ae7363f24a0302e0e172638ecb721",
+          "templates/tech-talk/assets/presets/placeholders/placeholder_gfx.html": "4361fb9e8864bacce78d4b70f045206e2a4127d887a4810c3602d85bb256887a",
+          "tests/gfx_bench_suite/pages/s1_solid_static.html": "976bb3aaf814ff5dca99c46ed6125ac02809936377891f84bc359e7a5d8dc2bc",
+          "tests/gfx_bench_suite/pages/s3_heavy_blur.html": "f256421b607c4cf40e016b72193bdada40c516ab526b05737f89434228599275",
+          "tests/gfx_bench_suite/pages/s4_body_opacity_fade.html": "2c43e343fa6bb6af5112ee119ee1280fc55f65ffce88cd119aca9567f6906f54",
+          "tests/gfx_bench_suite/pages/s5_webgl_particles.html": "0a40692aff52a4c7e94b962522e3d869a498e9ce2985d3c5b5cb4d3ac2500158",
+          "tests/gfx_bench_suite/pages/s6_timing_adversarial.html": "f9b99848b0df15b98107df3fde576568332e650fac3e6cafd410d803725ad416"
+        }
+      }
+    }
+  },
+  "unrun": [
+    "render",
+    "preview",
+    "qc",
+    "cef",
+    "visual"
+  ]
+}
