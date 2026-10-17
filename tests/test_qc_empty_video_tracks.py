@@ -1,7 +1,8 @@
 """Empty video-track lists use the same black-canvas QC oracle as uncovered clips.
 
 An empty list is legal; an explicitly empty track remains a validation error.
-The small CPU fixture uses the actual validate -> mux -> QC production path.
+CPU production fixtures live in test_agent_diagnostics_qc; reduced runtime
+controls are kept distinct from the source-bearing formal-size regression.
 """
 import contextlib
 import io
@@ -111,7 +112,9 @@ class EmptyVideoTracksQC(unittest.TestCase):
                 self.assertEqual(sum(x['name'].startswith('底轨切点') for x in report['checks']), 1)
                 self.assertEqual(sum(x['name'].startswith('全屏 clip') for x in report['checks']), int(multiple))
 
-    def test_validator_accepts_zero_tracks_but_rejects_an_empty_track(self):
+    def test_runtime_validator_accepts_zero_tracks_but_rejects_an_empty_track(self):
+        # Isolate the runtime track rule: this reduced, sourceless fixture is
+        # not evidence of whole-input formal schema conformance.
         with tempfile.TemporaryDirectory() as temporary:
             timeline = Path(temporary) / 'timeline.json'
             value = {'version': 2,
