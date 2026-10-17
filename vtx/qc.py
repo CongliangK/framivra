@@ -36,8 +36,9 @@ TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_
 QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
 # ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
-# 记录 cache/qc_pass_segs.json：{"version":1,"final":{size,mtime_ns,frames},
-# "segs":[{name,a,b,key,size,mtime_ns}],"checks":{检查名:上轮是否 pass}}。
+# 记录 cache/qc_pass_segs.json：{"version":2,"final":{size,mtime_ns,frames},
+# "probe_filter":采样表达式,"segs":[{name,a,b,key,size,mtime_ns}],
+# "checks":{检查名:上轮是否 pass}}。
 # 免检判定（非 --strict，见 qc() 内）：final (size,mtime_ns) 与记录一致 + 检查项
 # 上轮 pass + 探测帧全部落在 stat 一致的记录段 [a,b) 内 → 跳过实际探测（仍占
 # checks 位，pass=True，detail 前缀「免检」——检查项数量不减少）。final 重封装
@@ -49,17 +50,24 @@ QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.
 # 「74/75 不变 + 温态免检生效」矛盾——改为按检查项记忆：每轮刷新记录，✗ 项永远
 # 实测（下轮必复测，持续失败持续可见），逐项内容绑定的安全性与全过门等价。
 _QC_SEG_RECORD = "qc_pass_segs.json"
+# Keep bicubic sampling, but avoid the imprecise optimized vertical path that
+# can lift a constant black frame above zero (FFmpeg 7.1.5, x86_64). The same
+# filter applies to final, source and qc_clean probes; thresholds stay unchanged.
+# Schema v2 also prevents legacy v1 readers from reusing these passes on rollback.
+_QC_GRAY_FILTER = "scale=48:27:flags=bicubic+accurate_rnd,format=gray"
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
 
 
 def _load_qc_pass_record(c):
-    """读免检记录；缺失/损坏/version 不符/final stat 失配/segs 空 → None（全检）。"""
+    """读免检记录；版本/采样域/产物不匹配或记录不可用 → None（全检）。"""
     try:
         rec = json.loads((c.cache / _QC_SEG_RECORD).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(rec, dict) or rec.get("version") != 1:
+    if not isinstance(rec, dict) or rec.get("version") != 2:
         return None
+    if rec.get("probe_filter") != _QC_GRAY_FILTER:
+        return None   # Old sampling results cannot exempt the new probe contract.
     fin = rec.get("final") or {}
     try:
         st = (c.out / "final.mp4").stat()
@@ -123,7 +131,7 @@ def _write_qc_pass_record(c, frames_nb, checks):
         st = (c.out / "final.mp4").stat()
     except OSError:
         return
-    rec = {"version": 1,
+    rec = {"version": 2, "probe_filter": _QC_GRAY_FILTER,
            "final": {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
                      "frames": frames_nb},
            "segs": segs, "checks": mem}
@@ -320,7 +328,7 @@ def qc(c):
     # (pts[n-1], pts[n]] = ((n-1)/fps, n/fps]：取 (n-0.2)/fps（n=0 用 0）。
     # 已对 final/qc_clean/4 个源 × 多帧位验证与旧 select=eq(n,N) 提帧逐字节一致。
     def gray_frame(path: Path, n: int, pre_crop: str = "", tag: str = "", *, origin="$") -> bytes:
-        vf = (f"{pre_crop}," if pre_crop else "") + "scale=48:27,format=gray"
+        vf = (f"{pre_crop}," if pre_crop else "") + _QC_GRAY_FILTER
         if n:
             offset = native("subtract", n, 0.2, path=origin)
             seconds = native("divide", offset, c.fps, path=origin,
