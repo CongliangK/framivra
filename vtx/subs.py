@@ -212,17 +212,17 @@ def _parse_points(tokens, c: Ctx):
 
 
 def _active_subs(c: Ctx, f: int):
-    """帧 f 活跃字幕。判定必须与真实烧录一致：write_global_ass 的 Dialogue 时间经
-    _fc 的 cs 量化（round(frame·100/fps)），libass 以 pts（帧网格精确值）与之比较——
-    故不能直接用帧坐标 in ≤ f < out（红队 S2：fps=24 时帧 17 pts=0.70833s <
-    量化后起点 0.71s，成片不画、帧坐标判定会画）。此处复刻同一量化比较。"""
-    pc = f * 100 / c.fps
-    return [s for s in c.tl["subtitles"]
-            if round(s["in"] * 100 / c.fps) <= pc < round(s["out"] * 100 / c.fps)]
+    """Frame-space intent is authoritative, including the exclusive out edge.
+
+    RenderPlan puts ASS edges between frames on the actual rendering clock so
+    supported 30fps burn-in agrees with this interval, rather than having the
+    point preview reproduce an ASS quantization error.
+    """
+    return [s for s in c.tl["subtitles"] if s["in"] <= f < s["out"]]
 
 
 def _write_point_ass(c: Ctx, path: Path, subs):
-    """单帧预览 ass：头部用 RenderPlan.ass_head（样式逐字节一致）；时间置 0→1s
+    """单帧预览 ass：头部用 RenderPlan.ass_head（样式逐字节一致）；时间覆盖首帧
     （静态帧渲染与全局 ass 在该时刻的栅格化逐像素一致）。"""
     plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h, nframes=None, layers=[])
     lines = plan.ass_head()

@@ -192,8 +192,14 @@ class RenderPlan:
 
     # ---- 时间戳格式化（ass）----
     def _fc(self, fr):
-        c = self.c
-        cs = round(fr * 100 / c.fps); hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
+        # Place both edges strictly between the previous and target frame.
+        # At supported 30fps a centisecond near the midpoint leaves >=6ms
+        # clearance, including FFmpeg's floating PTS -> libass integer-ms
+        # truncation (e.g. frame111 may arrive at 3699ms, not 3700ms).
+        # Merely flooring the exact frame time fails on those clock boundaries.
+        # Frame zero has no preceding frame; clamp its boundary to zero.
+        cs = max(0, (2 * fr - 1) * 100 // (2 * int(self.c.fps)))
+        hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
         return f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
 
     def ass_head(self):
@@ -211,22 +217,18 @@ class RenderPlan:
             lines.append(f"Dialogue: 0,{self._fc(s['in'])},{self._fc(s['out'])},Def,,0,0,0,,{s['text']}")
         fstxn.atomic_write(path, "\n".join(lines))
 
-    # 段级字幕（阶段二 2026-09-10）：每段一份 ass，Dialogue 帧号换算 =「全局 fc 的
-    # cs − 段起点 fc 的 cs」（整数 cs 相减，与全局量化逐位一致；直接对相对帧取整
-    # 会因舍入方向差 ±1cs）；负值（段前已开始的字幕）钳 0。
     def segment_ass_bytes(self, a, b):
-        """Exact UTF-8 bytes used by render and read-only impact analysis."""
-        c = self.c
-        cs_a = round(a * 100 / c.fps)
+        """Clip in frame space, then quantize on the segment's local clock.
+
+        Subtracting separately quantized global times can put an edge after
+        its intended local frame. Render and read-only impact analysis share
+        these exact bytes, which also invalidate affected segment cache keys.
+        """
         lines = self.ass_head()
-        for s in c.tl["subtitles"]:
+        for s in self.c.tl["subtitles"]:
             if s["out"] > a and s["in"] < b:
-                cs = max(0, round(s["in"] * 100 / c.fps) - cs_a)
-                hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
-                fin = f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
-                cs = max(0, round(s["out"] * 100 / c.fps) - cs_a)
-                hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
-                fout = f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
+                fin = self._fc(max(s["in"], a) - a)
+                fout = self._fc(min(s["out"], b) - a)
                 lines.append(f"Dialogue: 0,{fin},{fout},Def,,0,0,0,,{s['text']}")
         return "\n".join(lines).encode("utf-8")
 
