@@ -391,6 +391,12 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # Append only after all historical producer operations succeed. The shared
     # #47 record adds path/closure identity without reordering native failures.
     _append_gfx_dependency_identity(c, h, gfx_inputs)
+    # Selected renderer and namespace revoke downstream success as well.
+    from .gfx_backend import identity
+    from .hygiene import gfx_cache_ns
+    backend, namespace = identity(), gfx_cache_ns()
+    if backend or namespace:
+        h.update(f"gfx-backend:{backend}|ns:{namespace}\n".encode())
     return h.hexdigest()
 
 

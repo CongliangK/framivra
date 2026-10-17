@@ -62,4 +62,8 @@ class PngSequence:
 def png_source(c, clip):
     """Describe expected output only; safe in the concurrent prepare/gfx wave."""
     directory = gfx_dir(c, clip)
-    return PngSequence(directory, directory.name, clip["dur"], c.fps, c.w, c.h)
+    # Preserve the default leaf identity, but include the selected experimental
+    # namespace in every downstream consumer (pass/segment/range/impact).
+    relative = directory.relative_to(c.cache)
+    identity = str(relative) if relative.parts[0] == "gfx_exp" else directory.name
+    return PngSequence(directory, identity, clip["dur"], c.fps, c.w, c.h)

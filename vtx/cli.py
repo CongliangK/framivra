@@ -204,7 +204,9 @@ def _gfx(c: Ctx):
     dependency_records = {}
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
-    use_cdp = os.environ.get("VTX_GFX", "cdp").lower() != "cli"
+    from .gfx_backend import selected
+    backend = selected()  # unknown values (including electron) fail closed
+    use_cdp = backend == "cdp"
     cdp_mod = None
     if use_cdp:
         try:
@@ -273,7 +275,7 @@ def _gfx(c: Ctx):
             if sizes is None:
                 jobs.append((cid, key, cl, n, d, html, None,
                              events.task(c, "gfx", kind="gfx_block",
-                                         metadata={"page_id": page_id, "backend": "cdp" if cdp_mod else "cli", "frame_range": [0, n]})))
+                                         metadata={"page_id": page_id, "backend": "cef" if backend == "cef" else ("cdp" if cdp_mod else "cli"), "frame_range": [0, n]})))
                 continue
             off, put = 0, 0
             for sz in sizes:
@@ -307,6 +309,15 @@ def _gfx(c: Ctx):
     def render_block(job):
         cid, key, cl, n, d, html, frames, observation = job
         st = None
+        if backend == "cef":
+            from .gfx_cef import render_page
+            rendered_via = render_page(html, d, n, ctx=c, width=c.w, height=c.h)
+            gfx_cli.complete_page(d, n, key, c.w, c.h,
+                                  verify_inputs=lambda: c.verify_inputs("gfx"),
+                                  backend_ns=backend_ns)
+            manifest_record(c, d, "gfx", key)
+            print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
+            return cid, rendered_via
         if cdp_mod is not None:
             try:
                 # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）。
@@ -382,7 +393,7 @@ def _gfx(c: Ctx):
             # dry-run：只报告将渲染的页，不起 Chrome（否则冷态 all --dry-run 白付
             # 数分钟真实渲染 + GB 级 PNG 落盘，2026-09-11 门控；dry 不拆块）
             for cid, key, cl, n, d, html, frames, observation in jobs:
-                print(f"  [dry-run] gfx {cid}[{key}]: 将渲染 {n} 帧（Chrome {c.w}×{c.h}）")
+                print(f"  [dry-run] gfx {cid}[{key}]: 将渲染 {n} 帧（{backend.upper()} {c.w}×{c.h}）")
             total += len(jobs)
         else:
             with ThreadPoolExecutor(min(page_workers, len(jobs))) as pex:

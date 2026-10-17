@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<!-- frame_sync_v2.html —— #114 CEF-03a 状态机验收页（--sync --url-template
+     指向本页；serve 两种驱动模式共用）。
+     协议纪律：全状态 = f 的纯函数；禁 CSS animation/transition、Date.now、
+     Math.random、rAF 时序、WebFont（generic 字族即时刻画，无异步排版）。
+     页面契约（与注入桥 vtx_sync_bridge 配合）：
+       - 背景与左上角 8x8 区域保持透明：clean canary rgba(·,254/255) 须合成
+         在透明底上才是字节精确的 v2 预乘签名（vtx/frame_canary.py 像素
+         物理口径）；(0,0)/(0,1) 之下即上报原像素（本页 = 透明真值，
+         与行 1 邻域等值 —— fixture 明确证明等值的协议允许特例）。
+       - window.__vtx_render(f)：Mode P（常驻页）帧状态施加钩子。
+       - window.__vtx_originals()：返回 (0,0)/(0,1) 两像素 RGBA 直通真值
+         （canvas getImageData；注入桥在 canary_set 事件里上报宿主绑定请求）。
+       - ?f=N：Mode N（逐帧导航）帧号来源。 -->
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden;
+               background: transparent; }
+  #stage { position: fixed; left: 0; top: 0; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+(function () {
+  "use strict";
+  var cv = document.getElementById("stage");
+  // 视口即画布（OSR GetViewRect；zoom=1 下 CSS 像素 = 缓冲像素）。
+  cv.width = window.innerWidth || 1920;
+  cv.height = window.innerHeight || 1080;
+  var ctx = cv.getContext("2d", { willReadFrequently: true });
+
+  function render(f) {
+    f = ((isFinite(f) ? f : 0) & 0xFFFF);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    // 水平条纹（行间丰富变化：行 0 与后续行、陈旧帧内容差异均可检）
+    var band = 24;
+    for (var y = 0; y < cv.height; y += band) {
+      var hue = (f * 7 + (y / band) * 13) % 360;
+      ctx.fillStyle = "hsl(" + hue + ",70%,50%)";
+      ctx.fillRect(0, y, cv.width, band);
+    }
+    // 对角细线（跨区域撕裂可检）
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(cv.width, cv.height);
+    ctx.stroke();
+    // 变宽横条 + 帧号大字（f 纯函数；generic 字族无异步字体加载）
+    ctx.fillStyle = "rgba(245,239,230,0.95)";
+    ctx.fillRect(120, 120, 40 + (f % 400), 40);
+    ctx.font = "700 64px sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("f=" + f, 118, 260);
+    // 左上角 8x8 保持透明（canary 签名位 + 行 1 邻域源 = 透明真值）
+    ctx.clearRect(0, 0, 8, 8);
+    window.__VTX_F = f;
+  }
+
+  // Mode N：帧号来自 ?f=（导航即帧状态施加）；Mode P：__vtx_render 重放。
+  var f = parseInt(new URLSearchParams(location.search).get("f") || "0", 10);
+  if (!isFinite(f) || f < 0) { f = 0; }
+  render(f);
+
+  window.__vtx_render = function (nf) {
+    render(nf);
+    return nf;
+  };
+  window.__vtx_originals = function () {
+    try {
+      var d = ctx.getImageData(0, 0, 2, 1).data;
+      return [[d[0], d[1], d[2], d[3]], [d[4], d[5], d[6], d[7]]];
+    } catch (e) {
+      return null;
+    }
+  };
+})();
+</script>
+</body>
+</html>

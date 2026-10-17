@@ -12,9 +12,8 @@
    （`alignas(64)` 后结构体 128B），无法装入「64 字节回执」。本实现以
    **冻结字段集为准**：模式 1 回执 = 完整 `FrameSlotHeader`（128B 原生
    布局）。64B 定长仅 `FrameRequest`（可达）。
-2. **`vtx/cef_client.py` 改道**：工单落点 `vtx/` 属生产面，#110 边界
-   禁改（本单仍属 experiments 面），消费端随 worker 同目录交付为
-   `experiments/gfx_cef_worker/cef_client.py`；接线 `vtx/` 留待后续工单。
+2. **Python 客户端**：唯一实现为 `vtx/cef_client.py`；本目录 `cef_client.py`
+   为实验自检兼容导入。生产 Alpha 使用同一协议，无另一套解析器。
 3. **槽位状态机位置**：冻结字段集无空闲字承载生命周期状态，EMPTY/
    WRITING/READY 门置于环控制块 `SlotGate`（专享缓存行），槽头保持
    工单原样作帧描述/计时面。
@@ -41,6 +40,12 @@
    （`vtx/fstxn.py` 语义的 C++ 镜像）已按此实现（#110 的裸 `.tmp` 后缀
    升级）；写者 SIGKILL 崩溃窗口内目标恒完整或不存在，`*.tmp.<pid>.*`
    残件为可辨识可清扫模式。
+8. **#114 status_code 增补 4 号档（DUPLICATE）**：工单冻结语义仅
+   0/1/2/3；#114 状态机引入 request_id 重放守卫（重复请求拒绝，不静默
+   重渲），错误回执需要独立档位区分「超时/尺寸/JS 错」与「请求序号
+   重放」。`canary_frame_index` 语义在 `--sync` 路径下取自**双像素联合
+   解码结果**（非请求值回显，#136 红队缺口闭合）；`--sync` 模式下
+   `document_gen` 为导航计数（Mode N 每请求自增；Mode P 常驻页恒 1）。
 
 ## §1 传输与字节序
 
@@ -112,7 +117,7 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 | --- | --- | --- | --- |
 | 0 | u32 | magic | `0x56545846`（"VTXF"） |
 | 4 | u16 | protocol_version | 1 |
-| 6 | u16 | status_code | 0=OK 1=TIMEOUT 2=SIZE_MISMATCH 3=JS_ERR |
+| 6 | u16 | status_code | 0=OK 1=TIMEOUT 2=SIZE_MISMATCH 3=JS_ERR 4=DUPLICATE（#114，见 §0-8） |
 | 8 | u64 | run_id | 与环 run_id 一致（不符=陈旧残帧，消费端拒收） |
 | 16 | u32 | document_gen | 每次导航自增 |
 | 20 | u32 | request_id | 请求序号（回显） |

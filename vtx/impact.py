@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from .cache_state import declared_dependencies, file_digest, media_stat_digest
 from .composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
                         segment_content_key, pass_content_key)
-from .hygiene import audio_key, gfx_key, seg_key, gfx_cache_ns
+from .hygiene import audio_key, seg_key
 
 SCHEMA = 'framivra-impact-snapshot-v2'
 
@@ -42,8 +42,8 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
     error = fps_error(p.get('fps'))
     if error:
         raise ValueError(error)
-    c = SimpleNamespace(tl=tl, root=root, fps=int(p['fps']), w=p['width'],
-                        h=p['height'], gpu=gpu)
+    c = SimpleNamespace(tl=tl, root=root, cache=root / 'cache',
+                        fps=int(p['fps']), w=p['width'], h=p['height'], gpu=gpu)
     sources = {s['id']: s for s in tl['sources']}
     c.src_path = lambda sid: root / sources[sid]['path']
     from .subtitles_src import resolve_subtitles_src
@@ -84,10 +84,11 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                                   dependencies=dependencies,
                                   dependency_record=dependency_record)
                     observed_files[root / clip['src']] = inputs['html']
-                    key = gfx_key(c, clip)
-                    ns = gfx_cache_ns()
-                    artifact = f'cache/gfx_exp/{ns}/{key}' if ns else f'cache/gfx/{key}'
-                    upstream = key
+                    from .frame_source import png_source
+                    source = png_source(c, clip)
+                    key = source.directory.name
+                    artifact = str(source.directory.relative_to(root))
+                    upstream = source.identity
                     # Declared closure is not runtime proof of dynamic JS/network.
                     if dependency_record['closure'] == 'unproven':
                         warnings.append({'node': ident, 'reason': 'gfx_dependency_closure_unproven'})

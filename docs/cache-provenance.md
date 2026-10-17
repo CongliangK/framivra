@@ -15,10 +15,13 @@
 
 - **gfx 页缓存** `cache/gfx/<key>/`：键 = sha1(html 字节 + 显式依赖内容 + fps +
   视口 + 时长)。同内容跨路径复用；同名页不同内容、同页换时长自然分键。
-- **键轴边界（诚实注记）**：渲染驱动/算法轴（Chrome 升级、渲染算法变更）与行为开关轴
-  （NAVFREE/STATIC/VTX_GFX 引擎选择）不入键——同键不同生成路径的理论风险以人工
-  `vtx clean`/`vtx gc` 为补救（R12-G1-037 交界认知在案）；段中间物 `vseg_pass` 已入
-  gc 白名单（commit fa650ad）。
+- **CEF Alpha 身份**：显式 `VTX_GFX=cef` 将协议修订、A0/A1 模式和 worker
+  可执行文件 SHA256 并入 gfx 键；缺省路由 `cache/gfx_exp/cef-alpha/<key>/`。
+  `VTX_GFX_CACHE_NS` 可覆盖命名空间。生效 CEF 身份和命名空间同时进入阶段回执；
+  分段与多 pass 键使用 gfx 相对 cache 的完整路径，不能跨命名空间误命中旧视频段。
+- **键轴边界（诚实注记）**：CDP/CLI 的 Chrome 升级与 NAVFREE/STATIC 开关仍不入
+  gfx 键；CEF 键不单独散列同目录运行库、字体、GPU 驱动。运行库须使用锁定分发包，
+  环境变化宜在全新项目副本重建。段中间物 `vseg_pass` 属 gc 白名单。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
   键 = sha1(源 stat 身份 + 切片/窗口/fade/编码参数)。源 stat 身份 = path + size +
   mtime_ns + **首/尾 64KB 采样哈希**（PR#1 补强：同尺寸 + 恢复时间戳的同路径替换
@@ -95,7 +98,7 @@ Golden 使用原始完整 clip 重建身份；旧 Golden schema 无法表达同 
 ## 阶段回执（PR#1）
 
 `receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
-gfx html 字节 + 声明依赖内容)——与缓存键同等敏感（任何缓存键会变的输入变化，
+gfx html 字节 + 声明依赖内容 + 生效 CEF 身份/实验命名空间)——与缓存键同等敏感（任何缓存键会变的输入变化，
 回执门同样重置），但不做全量媒体哈希（GB 级 I/O 不可接受）。输入变化不继承旧的
 成功状态。CLI 在阶段开始前撤销其旧成功及下游成功，失败重跑不能保留旧 QC PASS。
 audio 要求当前 prepare，video（有 gfx 时）要求当前 gfx，mux 要求当前 video/audio，

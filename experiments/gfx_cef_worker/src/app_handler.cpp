@@ -219,6 +219,23 @@ void WorkerClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
   const auto* src = static_cast<const uint8_t*>(buffer);
   std::lock_guard<std::mutex> lock(state_->mu);
 
+  if (state_->sync_machine != nullptr && state_->sync_capture_armed) {
+    // ===== #114 sync 模式：五阶段状态机闸门（同 UI 线程调用）。
+    // S4 前早期丢弃 / 尺寸不符 / 陈旧与半更新签名拒收 / 精确匹配接受并
+    // 原地恢复两个绑定原像素 —— 判定细节见 frame_sync_machine.cpp。
+    // A paint is only a candidate. FeedPaint can emit S5, so it must run
+    // outside this callback AFTER a renderer error fence for these bytes.
+    if (!state_->js_error.failed && !state_->js_paint_pending) {
+      state_->js_paint_candidate.assign(src, src + static_cast<size_t>(width) * height * 4u);
+      state_->js_paint_w = width;
+      state_->js_paint_h = height;
+      state_->js_paint_pending = true;
+    }
+    state_->paints.store(state_->paints.load(std::memory_order_relaxed) + 1,
+                         std::memory_order_relaxed);
+    return;
+  }
+
   if (state_->capture_armed) {
     // ===== #110 serve 逐请求捕获：尺寸卫兵 → 紧凑拷贝 → 金丝雀核实 =====
     if (static_cast<uint32_t>(width) != state_->cap_expected_w ||
@@ -268,6 +285,13 @@ bool WorkerClient::OnConsoleMessage(CefRefPtr<CefBrowser> /*browser*/,
                                     int /*line*/) {
   const std::string msg = message.ToString();
   std::lock_guard<std::mutex> lock(state_->mu);
+  if (msg.compare(0, strlen(kSyncReadyMarker), kSyncReadyMarker) == 0) {
+    // #114 注入桥就绪通道：console.debug("__VTX_READY__:"+json)。原文
+    // 入队（serve 循环解析为 PageEvent 并核对三元组 —— 解析与状态推进
+    // 集中在 UI 线程消费侧，此处只做传输）。
+    state_->sync_ready_queue.push_back(msg.substr(strlen(kSyncReadyMarker)));
+    return true;
+  }
   if (msg.compare(0, strlen(kPageProbeMarker), kPageProbeMarker) == 0) {
     if (state_->page_probe.empty()) {  // 首个为准（双保险去重）
       state_->page_probe = msg.substr(strlen(kPageProbeMarker));
@@ -281,6 +305,13 @@ bool WorkerClient::OnConsoleMessage(CefRefPtr<CefBrowser> /*browser*/,
     return true;
   }
   return false;
+}
+
+bool WorkerClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame, CefProcessId source,
+    CefRefPtr<CefProcessMessage> message) {
+  if (source != PID_RENDERER) return false;
+  return ReceiveJsErrorMessage(*state_, browser, frame, message);
 }
 
 // ---------------------------------------------------------------- #110 共享装配件

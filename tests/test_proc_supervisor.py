@@ -703,7 +703,9 @@ class SandboxCacheNamespaceTests(_ProjectFixture):
                 mock.patch.object(gfx_render, 'available', return_value=True), \
                 mock.patch.object(gfx_render, 'render_page', side_effect=renderer), \
                 contextlib.redirect_stdout(io.StringIO()):
-            cli.gfx(self.c)
+            # Backend/namespace are pinned inputs: each invocation constructs
+            # its context under the selected environment, just like the CLI.
+            cli.gfx(self.ctx())
 
     def test_cross_ns_never_hits_each_other_via_cli_gfx(self):
         d_default = self.c.cache / 'gfx' / self.key

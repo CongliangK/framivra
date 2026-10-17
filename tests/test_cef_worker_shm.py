@@ -55,7 +55,7 @@ _GATE = _LINUX_PROC and _WORKER and Path(_WORKER).is_file()
 _BIN_DIR = Path(_WORKER).resolve().parent if _GATE else None
 _SELFTEST = _BIN_DIR / "shm_ring_selftest" if _BIN_DIR else None
 _CANARY_URL = (ROOT / "experiments/gfx_cef_worker/pages/frame_canary.html").as_uri()
-_EVIDENCE = Path("/tmp/framivra-evidence/issue-110")
+_EVIDENCE = Path(os.environ.get("VTX_CEF_EVIDENCE_DIR", "/tmp/framivra-evidence/issue-110"))
 
 
 def _wait_until(pred, timeout=30.0, interval=0.05):
