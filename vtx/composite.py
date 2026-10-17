@@ -191,6 +191,14 @@ class RenderPlan:
     layers: list = field(default_factory=list)
 
     # ---- 时间戳格式化（ass）----
+    @staticmethod
+    def _frame_number(fr):
+        """Accept JSON mathematical integers without truncating invalid values."""
+        if (isinstance(fr, bool) or not isinstance(fr, (int, float))
+                or (isinstance(fr, float) and not fr.is_integer()) or fr < 0):
+            raise ValueError(f"subtitle frame boundary must be a non-negative integer: {fr!r}")
+        return int(fr)
+
     def _fc(self, fr):
         # Place both edges strictly between the previous and target frame.
         # At supported 30fps a centisecond near the midpoint leaves >=6ms
@@ -198,6 +206,9 @@ class RenderPlan:
         # truncation (e.g. frame111 may arrive at 3699ms, not 3700ms).
         # Merely flooring the exact frame time fails on those clock boundaries.
         # Frame zero has no preceding frame; clamp its boundary to zero.
+        # JSON Schema's integer type also admits 310.0. Normalize only after
+        # checking mathematical integrality; int(310.5) would change intent.
+        fr = self._frame_number(fr)
         cs = max(0, (2 * fr - 1) * 100 // (2 * int(self.c.fps)))
         hh, rem = divmod(cs, 360000); mm, rem = divmod(rem, 6000); ss, cs2 = divmod(rem, 100)
         return f"{hh}:{mm:02d}:{ss:02d}.{cs2:02d}"
@@ -226,9 +237,12 @@ class RenderPlan:
         """
         lines = self.ass_head()
         for s in self.c.tl["subtitles"]:
-            if s["out"] > a and s["in"] < b:
-                fin = self._fc(max(s["in"], a) - a)
-                fout = self._fc(min(s["out"], b) - a)
+            # Validate before clipping: clipping must not hide a fractional or
+            # boolean endpoint that lies outside this segment.
+            start, end = self._frame_number(s["in"]), self._frame_number(s["out"])
+            if end > a and start < b:
+                fin = self._fc(max(start, a) - a)
+                fout = self._fc(min(end, b) - a)
                 lines.append(f"Dialogue: 0,{fin},{fout},Def,,0,0,0,,{s['text']}")
         return "\n".join(lines).encode("utf-8")
 

@@ -130,6 +130,37 @@ class FrameBoundaryContracts(unittest.TestCase):
         self.assertEqual(_seg_dialogue(subs, 30, 309, 320),
                          _seg_dialogue([dict(subs[0], out=330)], 30, 309, 320))
 
+    def test_mathematical_integer_frames_are_not_type_restricted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for name, subs, origin, stop in cases():
+                integer = plan(subs)
+                equivalent = plan([dict(s, **{'in': float(s['in']), 'out': float(s['out'])})
+                                   for s in subs])
+                original = json.dumps(equivalent.c.tl, sort_keys=True)
+                self.assertEqual(integer.segment_ass_bytes(origin, stop),
+                                 equivalent.segment_ass_bytes(origin, stop), name)
+                a, b = Path(temp) / 'integer.ass', Path(temp) / 'equivalent.ass'
+                integer.write_global_ass(a); equivalent.write_global_ass(b)
+                self.assertEqual(a.read_bytes(), b.read_bytes(), name)
+                self.assertEqual(json.dumps(equivalent.c.tl, sort_keys=True), original)
+
+    def test_fractional_or_non_numeric_frames_are_never_truncated(self):
+        from vtx.timeline_diff import _seg_dialogue
+        for value in (310.5, -1, True, '310', None, float('nan'), float('inf')):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                plan([])._fc(value)
+        for field in ('in', 'out'):
+            sub = {'in': 310, 'out': 329, 'text': 'TEST'}
+            sub[field] += 0.5
+            with self.assertRaises(ValueError):
+                plan([sub]).segment_ass_bytes(309, 340)
+            with self.assertRaises(ValueError):
+                _seg_dialogue([sub], 30, 309, 340)
+            with self.assertRaises(ValueError):
+                plan([sub]).segment_ass_bytes(315, 320)  # clipping cannot conceal invalid input
+            with self.assertRaises(ValueError):
+                _active_subs(plan([sub]).c, 315)
+
     def test_long_timecode_is_integer_exact(self):
         self.assertEqual(plan([])._fc(30 * 3600 + 2), '1:00:00.05')
         self.assertEqual(plan([])._fc(30 * 3600 * 100000 + 2), '100000:00:00.05')
@@ -180,7 +211,7 @@ class SubtitleFrameIntegration(unittest.TestCase):
                  for p in sorted(self.root.rglob('*')) if p.is_file()}
         (self.root / 'manifest.json').write_text(json.dumps(files, indent=2))
 
-    def run_tool(self, cmd, name, env=None):
+    def run_tool(self, cmd, name, env=None, success=True):
         result = subprocess.run(list(map(str, cmd)), capture_output=True,
                                 env=env or self.env, timeout=180)
         (self.root / (name + '.stdout')).write_bytes(result.stdout)
@@ -188,7 +219,10 @@ class SubtitleFrameIntegration(unittest.TestCase):
         self.records.append({'name': name, 'argv': list(map(str, cmd)),
                              'returncode': result.returncode})
         (self.root / 'commands.json').write_text(json.dumps(self.records, indent=2))
-        self.assertEqual(result.returncode, 0, (name, result.stderr[-3000:], result.stdout[-3000:]))
+        if success:
+            self.assertEqual(result.returncode, 0, (name, result.stderr[-3000:], result.stdout[-3000:]))
+        else:
+            self.assertNotEqual(result.returncode, 0, (name, 'invalid input was accepted'))
         return result.stdout
 
     def burn_ass(self, path, count, name):
@@ -241,10 +275,10 @@ class SubtitleFrameIntegration(unittest.TestCase):
             with (self.root / 'per-frame.csv').open('w', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
 
-    def cli(self, timeline, args, name, segments=2):
+    def cli(self, timeline, args, name, segments=2, success=True):
         env = dict(self.env, VTX_VIDEO_SEGMENTS=str(segments))
         return self.run_tool([sys.executable, str(REPO / 'vtx/vtx.py'),
-                             '-t', str(timeline), *args], name, env)
+                             '-t', str(timeline), *args], name, env, success=success)
 
     def check_movie(self, movie, subs, origin, count, name):
         meta = json.loads(self.run_tool(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
@@ -293,6 +327,8 @@ class SubtitleFrameIntegration(unittest.TestCase):
                 {'in': 399, 'out': 400, 'text': 'START399'},
                 {'in': 418, 'out': 420, 'text': 'LOCALEND111'},
                 {'in': 420, 'out': 421, 'text': 'LOCALSTART111'}]
+        # Legal JSON mathematical integers must survive every real entry point.
+        subs = [dict(s, **{'in': float(s['in']), 'out': float(s['out'])}) for s in subs]
         tl = {'version': 2, 'project': {'fps': FPS, 'width': 1920, 'height': 1080,
              'duration_frames': 618}, 'sources': [{'id': 'tone', 'path': 'source.mp4'}],
              'video_tracks': [{'name': 'base', 'kind': 'aroll', 'clips': [
@@ -330,6 +366,61 @@ class SubtitleFrameIntegration(unittest.TestCase):
                              bool(intended(subs, frame)), frame)
         self.assertEqual(timeline.read_bytes(), original, 'never rewrite timeline to fit output')
         (self.root / 'cache-warm.json').write_text(json.dumps({'before': before, 'after': after}, indent=2))
+        self.cli(timeline, ['subs', 'render'], 'integral-subs-render')
+        integer_timeline = project / 'integer-timeline.json'
+        integer_tl = dict(tl, subtitles=[dict(s, **{'in': int(s['in']), 'out': int(s['out'])})
+                                           for s in subs])
+        integer_timeline.write_text(json.dumps(integer_tl))
+        diff_path = self.root / 'integral-diff.json'
+        self.cli(timeline, ['diff', str(timeline), str(integer_timeline),
+                            '--json', str(diff_path)], 'integral-diff')
+        diff = json.loads(diff_path.read_text())
+        self.assertEqual(diff['n_entries'], 0)
+        self.assertEqual(diff['impact']['vseg_invalid']['count'], 0)
+        for field in ('in', 'out'):
+            invalid = json.loads(original)
+            invalid['subtitles'][0][field] += 0.5
+            invalid_timeline = project / f'fractional-{field}.json'
+            invalid_timeline.write_text(json.dumps(invalid))
+            for mode, args in (
+                    ('global', ['subs', 'render']),
+                    ('video', ['video', '--draft', '--frames', '12']),
+                    ('segment', ['video', '--draft', '--range', '309f', '340f']),
+                    ('diff', ['diff', str(invalid_timeline), str(integer_timeline)])):
+                name = f'reject-fractional-{field}-{mode}'
+                self.cli(invalid_timeline, args, name, success=False)
+                self.assertIn('subtitle frame boundary must be a non-negative integer',
+                              (self.root / (name + '.stderr')).read_text()
+                              + (self.root / (name + '.stdout')).read_text())
+        self.assertEqual(timeline.read_bytes(), original)
+
+
+    def test_production_cross_cut_modulo_three(self):
+        tone = self.root / 'tone.wav'
+        self.run_tool([self.ff, '-v', 'error', '-f', 'lavfi', '-i',
+            'sine=frequency=440:sample_rate=48000:duration=22',
+            '-c:a', 'pcm_s16le', tone], 'cross-cut-audio')
+        for cut in (318, 319, 320):
+            project = self.root / f'cut-{cut}'; project.mkdir()
+            subs = [{'in': 310.0, 'out': 329.0, 'text': 'TEST'}]
+            tl = {'version': 2, 'project': {'fps': 30, 'width': 1920, 'height': 1080,
+                  'duration_frames': cut * 2}, 'sources': [{'id': 'tone', 'path': str(tone)}],
+                  'video_tracks': [], 'audio_tracks': [{'name': 'voice', 'events': [
+                      {'src': 'tone', 'in': 0, 'out': cut * 2, 'volume': 1}]}], 'subtitles': subs}
+            timeline = project / 'timeline.json'; timeline.write_text(json.dumps(tl))
+            before = timeline.read_bytes()
+            log = self.cli(timeline, ['video'], f'cut-{cut}-formal').decode()
+            self.assertIn(f'切点 [{cut}]', log)
+            self.check_movie(project / 'out/video_noaudio.mp4', subs, 0, cut * 2,
+                             f'cut-{cut}-formal')
+            log = self.cli(timeline, ['video', '--draft', '--range', '309f', '340f'],
+                           f'cut-{cut}-range').decode()
+            self.assertIn(f'全片切点 [{cut}]', log)
+            self.assertIn(f'[309,{cut})', log)
+            self.assertIn(f'[{cut},340)', log)
+            self.check_movie(project / 'cache/preview/range_10.300_11.333.mp4',
+                             subs, 309, 31, f'cut-{cut}-range')
+            self.assertEqual(timeline.read_bytes(), before)
 
     def test_two_layer_pass_clock(self):
         # Real FFV1 intermediate input: its 1/1000 clock is different from the

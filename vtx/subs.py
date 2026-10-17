@@ -218,7 +218,12 @@ def _active_subs(c: Ctx, f: int):
     supported 30fps burn-in agrees with this interval, rather than having the
     point preview reproduce an ASS quantization error.
     """
-    return [s for s in c.tl["subtitles"] if s["in"] <= f < s["out"]]
+    active = []
+    for s in c.tl["subtitles"]:
+        start, end = RenderPlan._frame_number(s["in"]), RenderPlan._frame_number(s["out"])
+        if start <= f < end:
+            active.append(s)
+    return active
 
 
 def _write_point_ass(c: Ctx, path: Path, subs):
