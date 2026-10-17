@@ -95,10 +95,20 @@ class ContractTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, 'scripts/demo.py', 'preflight', '--profile', 'quick'],
             capture_output=True, cwd=REPO)
+        # rc 语义（issue #177，docs/demo-fixture.md）：preflight 是只读诊断，
+        # 检查本身可执行并完整输出 JSON 即 rc 0——与 ffmpeg 是否在 PATH 无关；
+        # 依赖可用性反映在 checks[].ok / prepare_ready，硬失败闭口在 prepare。
         self.assertEqual(result.returncode, 0)
         report = json.loads(result.stdout)
         self.assertEqual(report['schema_version'], 1)
         self.assertTrue(report['read_only'])
+        self.assertTrue(report['prepare_supported'])
+        prepare_keys = ('python', 'ffmpeg', 'ffprobe', 'profile', 'fonts',
+                        'benchmark_manifest')
+        self.assertEqual(report['prepare_ready'],
+                         all(report['checks'][k]['ok'] for k in prepare_keys))
+        for key in prepare_keys:
+            self.assertIn('ok', report['checks'][key])
         render = report['render']
         self.assertFalse(render['ready'])
         self.assertIsNone(render['cef'])

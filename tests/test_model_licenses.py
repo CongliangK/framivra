@@ -20,7 +20,12 @@ class LicenseInventory(unittest.TestCase):
     def test_inventory_records_default_payload_and_unknowns_without_clearance(self):
         data = policy.load_inventory()
         self.assertEqual({k for k, v in data["assets"].items() if v["default_payload"]},
-                         {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media", "electron-worker-source"})
+                         {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media",
+                          "electron-worker-source", "demo-noto-sans-sc"})
+        self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_status"], "DECLARED")
+        self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_identifier"], "OFL-1.1")
+        self.assertIn("templates/standard-demo/profiles/standard/v1/fonts/NotoSansSC-VF.ttf",
+                      data["assets"]["demo-noto-sans-sc"]["files_sha256"])
         for name in ("matanyone2-weights", "qwen-emotion", "chrome-binary", "music-tools-assets", "imgen-api"):
             self.assertEqual(data["assets"][name]["license_status"], "UNKNOWN")
         self.assertEqual(data["assets"]["matanyone2-code"]["license_status"], "RESTRICTED")

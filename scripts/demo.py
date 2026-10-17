@@ -10,7 +10,9 @@
 契约要点（issue #177）：
   - preflight 只读：stdout 一份版本化 JSON；区分 prepare 依赖（python/ffmpeg/ffprobe/
     字体）与 render 依赖（CDP/CEF），不因缺 CEF 把 prepare 误判为同一成败状态；
-    不 mkdir、不联网、不写缓存、不启动 renderer。
+    不 mkdir、不联网、不写缓存、不启动 renderer。rc 语义：只读检查本身可执行并
+    完整输出 JSON 即 rc 0；依赖缺失反映在 checks[].ok / prepare_ready 字段而非
+    退出码（依赖就绪与否的硬失败闭口在 prepare 的非零退出上）。
   - prepare 只在可信父目录下创建全新工程目录（拒绝已有目录/symlink 组件/越界路径，
     拒绝仓内/HOME/缓存内输出）；生成媒体（确定性参数）→ 复制冻结输入 → 以仓内冻结
     benchmark manifest 为锚核对（不接受新输出改锁）→ 调用 vtx.agent_diagnostics
@@ -490,9 +492,11 @@ def cmd_preflight(args):
             'cef_reason': '本切片不运行/安装 CEF（issue #177 禁令）',
         }
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    if profile == 'gfx-stress':
-        return 0
-    return 0 if report.get('prepare_ready') else 1
+    # rc 语义（issue #177）：preflight 是只读诊断——只要体检本身可执行并完整
+    # 输出 JSON 即 rc 0；依赖可用性反映在 checks[].ok 与 prepare_ready 字段，
+    # 不把「诊断跑成」与「依赖就绪」折叠成同一退出码（真正失败闭口在 prepare：
+    # 依赖缺失时 prepare 以非零退出并给出诊断）。
+    return 0
 
 
 # ------------------------------------------------------------------- prepare

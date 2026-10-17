@@ -4,7 +4,7 @@
   "owner_issue": "CongliangK/framivra#177（父任务 #91）",
   "generator": {
     "path": "scripts/demo.py",
-    "sha256": "9c6b81f3ace5517f30a1dfed620b540403904c7cfafdbd79fbc73025608b1588"
+    "sha256": "200babf8c4b7eafd6b847486a0efb837c8c0285770eba027bdf64b00490f1415"
   },
   "toolchain": {
     "ffmpeg": {

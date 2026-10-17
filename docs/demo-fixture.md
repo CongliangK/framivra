@@ -18,6 +18,13 @@ preflight 区分 prepare 依赖（python/ffmpeg/ffprobe/随包字体）与 rende
 不安装不运行，`cef` 字段恒为 null+reason。gfx-stress 为引用型 profile
 （prepare_supported=false）。
 
+preflight 退出码语义（issue #177）：preflight 是**只读诊断**——只要检查本身
+可执行并完整输出版本化 JSON 即 rc 0；依赖缺失（如无 ffmpeg/ffprobe/字体哈希
+不匹配）反映在 `checks[].ok` 与 `prepare_ready` 字段，不用退出码表达。这样
+「诊断跑成」与「依赖就绪」是两个状态，不会因缺任一依赖（含 CEF）折叠成同一
+成败退出码；依赖就绪与否的硬失败闭口在 `prepare`（缺失/不符时非零退出并保留
+诊断证据）。
+
 prepare（写态命令：只在可信父目录下创建**全新**工程目录，拒绝已有目录/
 symlink 组件/仓内/HOME/缓存内输出，拒绝未冻结工具链与 generator 漂移）：
 
