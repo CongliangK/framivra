@@ -65,18 +65,15 @@ def _log(msg):
 
 def _independence():
     """加载同目录 independence 模块（路径独立性单一接口，issue #141）。
-    sidecar 常以 `python -I sidecar_server.py` 拉起（隔离模式不把脚本目录加入
-    sys.path），故 import 失败时按文件路径直接加载；语义 home=independence.py。"""
-    try:
-        import independence  # noqa: F401
-        return independence
-    except ImportError:
-        import importlib.util
-        p = Path(__file__).resolve().parent / "independence.py"
-        spec = importlib.util.spec_from_file_location("asr_independence", p)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
+    恒按 __file__ 同目录文件路径加载（红队 D2：`PYTHONPATH=<假 independence.py>
+    python3 -P sidecar_server.py` 会用 import 优先分支吞掉全部校验；-P 下脚本
+    目录不入 sys.path 前列，PYTHONPATH 遮蔽生效）。语义 home=independence.py。"""
+    import importlib.util
+    p = Path(__file__).resolve().parent / "independence.py"
+    spec = importlib.util.spec_from_file_location("asr_independence", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _reject_ime_paths(ind, pairs):
@@ -668,10 +665,24 @@ def main():
             print("✗ 指定的 aligner 目录不存在：%s" % p)
             return 2
 
-    # 解析后路径同样过独立性校验（models-root/auto 别名解析出的目录若为指向
-    # IME 的 symlink，resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
-    if _reject_ime_paths(ind, [(model_path, "--model（解析后）"),
-                               (aligner_path, "--aligner（解析后）")]):
+    # 解析后路径同样过独立性+链接关系校验（红队 D1：把 IME 权重文件硬链接进
+    # "干净"目录——路径锚点查不到，必须查 st_nlink；models-root/auto 别名解析出
+    # 的 symlink 目录 resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
+    # 模型目录要求独立权重文件（check_weights=True：nlink>1 或缺权重均拒绝）；
+    # aligner 目录只查存在的权重文件 nlink（不强制存在）。
+    try:
+        ind.verify_model_dir(model_path, "--model（解析后）", check_weights=True)
+        if aligner_path:
+            resolved_aligner = ind.verify_model_dir(aligner_path, "--aligner（解析后）")
+            for name in getattr(ind, "WEIGHT_FILES", ()):
+                f = Path(resolved_aligner) / name
+                if f.exists() and f.stat().st_nlink > 1:
+                    raise ind.AsrIndependenceError(
+                        "--aligner（解析后）的 %s 硬链接数 %d>1（疑似借用输入法/他人权重）"
+                        "——已拒绝；请独立下载（bash apps/asr/init.sh --download）"
+                        % (name, f.stat().st_nlink))
+    except ind.AsrIndependenceError as exc:
+        print("✗ %s" % exc, file=sys.stderr)
         return 2
 
     _HOLDER = ModelHolder(model_path, aligner_path=aligner_path,

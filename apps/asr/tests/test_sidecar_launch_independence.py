@@ -105,6 +105,60 @@ class SidecarLaunchIndependenceTest(unittest.TestCase):
                          isolated=True)
         self._assert_rejected(r, "-I 隔离模式 --model IME 锚点")
 
+    # ---------------------------------------------------------------- 红队二轮 D1/D2 负例
+
+    def test_direct_launch_hardlink_borrowed_weights_rejected(self):
+        """红队 D1：把 IME 模型权重文件硬链接（ln）进"干净"目录后直启——
+        路径锚点查不到（st_nlink=2 同 inode），必须查链接关系拒绝。"""
+        clean = Path(self.tmp.name) / "clean-hl/Qwen3-ASR-1.7B"
+        clean.mkdir(parents=True)
+        os.link(self.ime_model / "model.safetensors", clean / "model.safetensors")
+        os.link(self.ime_model / "config.json", clean / "config.json")
+        self.assertEqual((clean / "model.safetensors").stat().st_nlink, 2)
+        r = self._launch("--port", str(self._free_port()), "--model", str(clean),
+                         "--no-aligner", "--once-health")
+        self.assertNotEqual(r.returncode, 0, "硬链接借用 IME 权重未被拒绝（exit 0）")
+        out = r.stderr + r.stdout
+        self.assertIn("硬链接数 2>1", out)
+        self.assertIn("已拒绝", out)
+
+    def test_direct_launch_hardlink_aligner_weights_rejected(self):
+        """红队 D1（aligner 面）：--aligner 目录内权重文件硬链接自 IME 同样拒绝。"""
+        clean_model = self.home / ".local/share/framivra/asr/models/Qwen3-ASR-1.7B"
+        clean_model.mkdir(parents=True)
+        (clean_model / "config.json").write_text("{}", encoding="utf-8")
+        (clean_model / "model.safetensors").write_bytes(b"CLEAN")
+        clean_aligner = Path(self.tmp.name) / "clean-hl-aligner/Qwen3-ForcedAligner-0.6B"
+        clean_aligner.mkdir(parents=True)
+        os.link(self.ime_model / "model.safetensors", clean_aligner / "model.safetensors")
+        (clean_aligner / "config.json").write_text("{}", encoding="utf-8")
+        r = self._launch("--port", str(self._free_port()), "--model", str(clean_model),
+                         "--aligner", str(clean_aligner), "--once-health")
+        self.assertNotEqual(r.returncode, 0, "aligner 硬链接借用 IME 权重未被拒绝")
+        self.assertIn("硬链接数 2>1", r.stderr + r.stdout)
+
+    def test_direct_launch_fake_independence_module_shadow_rejected(self):
+        """红队 D2：PYTHONPATH 放假 independence.py + `python3 -P` 直启
+        （-P 不把脚本目录放 sys.path 首位 → PYTHONPATH 遮蔽生效）——
+        _independence 必须恒按 __file__ 同目录文件路径加载真模块，拒绝仍生效。"""
+        fake = Path(self.tmp.name) / "fakemod"
+        fake.mkdir()
+        (fake / "independence.py").write_text(
+            "class AsrIndependenceError(Exception): pass\n"
+            "def check_path_independent(path, what): return path\n"
+            "def verify_model_dir(path, what='x', check_weights=False): return path\n"
+            "def ime_anchor_roots(): return []\n"
+            "WEIGHT_FILES = ()\n", encoding="utf-8")
+        env = dict(self.env)
+        env["PYTHONPATH"] = str(fake)
+        argv = [sys.executable, "-P", str(SIDECAR)]
+        r = subprocess.run(
+            argv + ["--port", str(self._free_port()), "--model", str(self.ime_model),
+                    "--no-aligner", "--once-health"],
+            env=env, capture_output=True, text=True, timeout=60)
+        self._assert_rejected(r, "PYTHONPATH 假 independence 遮蔽（-P）")
+        self.assertEqual(r.returncode, 2)
+
     # ---------------------------------------------------------------- 正例（不误伤）
 
     def test_direct_launch_clean_model_once_health_ok(self):
