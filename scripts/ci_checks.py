@@ -44,6 +44,7 @@ MEDIA_TESTS = {
         'plugins.blender-bridge.tests.test_blender_bridge_plugin.'
         'SubsAlphaProbe.test_real_ffprobe_rejects_truncated_garbage',
         'tests.test_range_render.TestRangeIntegration',
+        'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
         'tests.test_graphics_portability.SubtitleIntegration',
     ),
     'chrome': (

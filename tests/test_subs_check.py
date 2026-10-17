@@ -165,23 +165,17 @@ class ReviewS1PostWindow(unittest.TestCase):
         self.assertEqual(rep2['results'][0]['align']['status'], 'fail')
 
 
-class ReviewS2ActiveSetCsQuantization(unittest.TestCase):
-    """红队 S2 回归：preview 活跃集必须与 _fc 的 cs 量化一致（fps=24 帧 17 反例）。"""
-    class _FakeCtx:
-        fps = 24
-        tl = {"subtitles": [{'in': 17, 'out': 18, 'text': '量化边界'}]}
+class ReviewS2ActiveSetFrameIntent(unittest.TestCase):
+    """Issue178: preview follows integer intent, not the old rounded ASS bug."""
 
-    def test_frame17_fps24_not_active(self):
-        # pts=0.70833s < 量化起点 0.71s：成片不画，活跃集也不得包含
-        self.assertEqual(subs_mod._active_subs(self._FakeCtx(), 17), [])
-
-    def test_frame18_fps24_active(self):
-        # pts=0.75s ∈ [0.71, 0.75)？量化终点 round(18*100/24)=75，pc=75 不 < 75 → 不活跃
-        self.assertEqual(subs_mod._active_subs(self._FakeCtx(), 18), [])
-
-    def test_normal_frame_active(self):
-        self._FakeCtx.tl = {"subtitles": [{'in': 12, 'out': 60, 'text': '正常'}]}
-        self.assertEqual(len(subs_mod._active_subs(self._FakeCtx(), 17)), 1)
+    def test_half_open_edges_and_single_frames(self):
+        from types import SimpleNamespace
+        for start, end in ((310, 329), (310, 311), (311, 312), (312, 313)):
+            sub = {'in': start, 'out': end, 'text': '边界'}
+            c = SimpleNamespace(fps=30, tl={"subtitles": [sub]})
+            for f in range(start - 1, end + 2):
+                self.assertEqual(subs_mod._active_subs(c, f),
+                                 [sub] if start <= f < end else [])
 
 
 if __name__ == '__main__':
