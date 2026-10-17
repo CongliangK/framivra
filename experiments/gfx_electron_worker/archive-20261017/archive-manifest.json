@@ -1,0 +1,2478 @@
+{
+  "schema_version": 1,
+  "purpose": "User requested stopping all Electron experiments and preserving task source in Git remote archive.",
+  "route_status": "performance FAIL / rejected; source archive only, no admission",
+  "full_film_status": "Not completed; user cancelled further full-film validation and supplementary experiments.",
+  "scope": "488 source, test, patch and report files only; not all binary evidence. No rendering, optimization, or experiment validation performed during packaging.",
+  "original_local_evidence_root": "/home/liangruochong/文档/04_bilibili视频/_alpha-evidence-20261016",
+  "archive_file": "electron-perf-source-20261017.tar.gz",
+  "archive_sha256": "f8f4b47a26c7bbe4b704505566756c1e206e8b30330afb31bf14a1a5aab0e0ea",
+  "archive_bytes": 1123278,
+  "total_files": 488,
+  "total_source_bytes": 3676295,
+  "deterministic_metadata": {
+    "gzip_mtime": 0,
+    "tar_mtime": 0,
+    "uid": 0,
+    "gid": 0,
+    "uname": "",
+    "gname": "",
+    "mode": "0644",
+    "paths": "sorted relative paths under evidence root"
+  },
+  "exclusions": [
+    "symlinks",
+    "path traversal",
+    "runtime copies",
+    "third-party source copies",
+    "node_modules and dependencies",
+    "generated binary artifacts, caches, frames, audio, video and large logs"
+  ],
+  "risk_scan": {
+    "secret_pattern_candidate_paths": [],
+    "max_file_bytes": 28298,
+    "limitations": "Basic regex screening only; reports/scripts contain local absolute paths. Third-party sources, runtime copies, dependencies and binary artifacts excluded."
+  },
+  "files": [
+    {
+      "path": "electron-perf-codec-row-20261017-codex/REPORT.md",
+      "bytes": 6285,
+      "sha256": "35554cea2b5346f15d4fd8ef00338958e88d03f0c19071be0c8c4c6ec537d84d"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/alpha.py",
+      "bytes": 2037,
+      "sha256": "7a7b6d528dfb71361cf7ad9f5764e5b0b45b4bbf8303b0ebf6e78ac345264e8d"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/baseline-worker/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/baseline-worker/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/baseline-worker/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/candidate-pixel_codec.mjs",
+      "bytes": 10902,
+      "sha256": "eac4fc4b95f638b5f15a4ad46b0dc52ced31b7a5424dcbdbbb51ef204a92ee9b"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/candidate-test_pixel_codec_rows.py",
+      "bytes": 4437,
+      "sha256": "a36a1c8ccfff9f0b577be5d2b1e9283aeb0ee2968c225af54921df6f059e7af6"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/candidate.diff",
+      "bytes": 10121,
+      "sha256": "a2551d70724cbae08c7b4e9fafa123be477e9176d471917967b47ae1b932b639"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/final_bench.py",
+      "bytes": 4183,
+      "sha256": "d94d3a5c2727aa31b10f0cd342932d18b24d589c4aa34c0eabc7cec605d5a909"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/regression_final.py",
+      "bytes": 642,
+      "sha256": "68096b795e613fb764ffaf56d8e62ece4c9bcc6fe7d10b121a3000f983078d41"
+    },
+    {
+      "path": "electron-perf-codec-row-20261017-codex/run.py",
+      "bytes": 1867,
+      "sha256": "a25a91d3e5595018945188ab0b8afbbc504ace5c5c79318711721db6dd5234e2"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/REPORT.md",
+      "bytes": 8820,
+      "sha256": "012eef5a9a05b04a8ca33ff0360f5ddb9f0ebe1dffa49c2448d41893c0aab9c5"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_a/navigation_worker.mjs",
+      "bytes": 18844,
+      "sha256": "8df407c1ca529e219f1cbec98aca340f0e4abfe1679ab3fdae612e87cad700f5"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_a/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_a/pixel_codec.mjs",
+      "bytes": 10476,
+      "sha256": "cf364a495da30104332232b0bb32679671037c05bdb77ea7313af636dd72b209"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_a/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_aa/navigation_worker.mjs",
+      "bytes": 18845,
+      "sha256": "a510c1dcfcee053cd55292af5a9dd4fb346a0710f49c6430fb81fae2b21bf5ff"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_aa/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_aa/pixel_codec.mjs",
+      "bytes": 10476,
+      "sha256": "cf364a495da30104332232b0bb32679671037c05bdb77ea7313af636dd72b209"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/ack_encode_error_aa/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/alpha.py",
+      "bytes": 1810,
+      "sha256": "17cb9aed57cddcc7f13fca1b356710fcbd176dc77878f031bca25f8f79e28a31"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/basic.py",
+      "bytes": 712,
+      "sha256": "a09244320358fec65668fbfff5e602024c03b04e8975e021e13880a146807bf5"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/bench.py",
+      "bytes": 3876,
+      "sha256": "e273f51ba94c4fcc88cd1b5d17baf80b554d8770ac89fa614f544c91cace1158"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/native_png.c",
+      "bytes": 5301,
+      "sha256": "fafaadd9793cb3c6c1710f8c45137fd7cc0537bdc1318fe07b57832876beaa41"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/navigation_worker.mjs.diff",
+      "bytes": 6018,
+      "sha256": "5f277a3664801ed2b593d11f7f5cee5013e56416f861c4936beab8638f45f370"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/negative.py",
+      "bytes": 1727,
+      "sha256": "c735b10283ecbc42b238bd7a1c6f4e143214375675c78e5b4936664513e71e8a"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/new/navigation_worker.mjs",
+      "bytes": 18776,
+      "sha256": "fae95a99802daac6ed02a256d6702861e6d4373016f3671407dd164f24f56824"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/new/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/new/pixel_codec.mjs",
+      "bytes": 10476,
+      "sha256": "cf364a495da30104332232b0bb32679671037c05bdb77ea7313af636dd72b209"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/new/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/old/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/old/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/page_error_gate.mjs.diff",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/pixel_codec.mjs.diff",
+      "bytes": 1280,
+      "sha256": "201c92af45a0c7509a1b0baa7e243f62e897ebd09560ddc0248923247beb2da6"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/probe.py",
+      "bytes": 1474,
+      "sha256": "5dbaac9545051f5abe86ab68afba9aa9e159710246acecf0e963a8dec6b7cd26"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/probe/navigation_worker.mjs",
+      "bytes": 18776,
+      "sha256": "fae95a99802daac6ed02a256d6702861e6d4373016f3671407dd164f24f56824"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/probe/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/probe/pixel_codec.mjs",
+      "bytes": 10720,
+      "sha256": "baa38861d82c222c7ff064aaf37ac306453f0a747fc237575ac74d32bd5ab2b1"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/qualification.py",
+      "bytes": 5828,
+      "sha256": "5f5c6a7fb65e7dacc8f0277dcb95f55bc26c662c809b81ee475c876c17ed04b2"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/run.py",
+      "bytes": 1525,
+      "sha256": "5ba7092e97f8264dbd94798d20dfaabfe4ae3bb726b99417b83aca706b531b35"
+    },
+    {
+      "path": "electron-perf-combined-decoder-yield-20261017-codex/setup.py",
+      "bytes": 3887,
+      "sha256": "85360f87bff7544319bfb7da1afca48c99730556087253babb1409d5c333e843"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/REPORT.md",
+      "bytes": 9845,
+      "sha256": "51d9a9ac6603da7b413c41c73f7282c9bb2c16b07b370a8132a5f2164b7f1551"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/bench.py",
+      "bytes": 5081,
+      "sha256": "14250be1a4f01314d01a88e7a1599ac30bbdc9762c87e31e850a2144d86ef504"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/codec-micro-build.py",
+      "bytes": 976,
+      "sha256": "78f4e222d52ba7e796f0ea2985d052274dfd54a0abff717f9d5882dd8a5da1d3"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/codec-micro-run.mjs",
+      "bytes": 1137,
+      "sha256": "85bd3fc8854f971e2f66ec163cb7b16166f174211b341d50199c68ca84d6ee53"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/codec-micro.mjs",
+      "bytes": 4163,
+      "sha256": "bf73ef3b9fa61d1a0edf2fc777a2d24cce48c65231bb17dddac0cd0ddf1afd58"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/finalize.py",
+      "bytes": 3133,
+      "sha256": "2ef109a16d30883a857bacf50e0b4b8ecefe6f46367b6d3ab9d68f1a82b066cb"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/instrument.py",
+      "bytes": 3830,
+      "sha256": "ee743f3b9a23060bc0c98cf45c29cb4ce70ead0ba9dbf380bc2b857acc5fddbe"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/instrumented/navigation_worker.mjs",
+      "bytes": 17498,
+      "sha256": "32b6b85983f8104bccd8b710883c8b83bde950205be3191480a7d85e9b4cce8b"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/instrumented/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-diagnostics-20261017/instrumented/pixel_codec.mjs",
+      "bytes": 4064,
+      "sha256": "32803706fc95d00146ec2a499352bb6165a4e469005ac5ac0a7ab474f6c0e8c1"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/REPORT.md",
+      "bytes": 8143,
+      "sha256": "9f870cd7a17bbc369c2a33232f9dc4e2d4b787a4e3f228147e27c9d802c26e1e"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/alpha.py",
+      "bytes": 1944,
+      "sha256": "9856b0805a77009e33267db9e13f6f74de02284febf75de6fe729ec122032650"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/basic.py",
+      "bytes": 619,
+      "sha256": "04f27cce2cec89c7ca48e67aa954a34e19afb4693f3a4fb500f378bbc8965b11"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/bench.py",
+      "bytes": 3876,
+      "sha256": "e273f51ba94c4fcc88cd1b5d17baf80b554d8770ac89fa614f544c91cace1158"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/candidate.diff",
+      "bytes": 4076,
+      "sha256": "d9df440af0f5c476d1e5d9ea77cc57fae84ceae9b5a0abe5d73d70cdfcfd7e30"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/diagnostic.py",
+      "bytes": 496,
+      "sha256": "f204bad989f28f570a4f8705679b94071f86b84c2edb9150e53c8c8b25be7e76"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/navigation_worker.mjs",
+      "bytes": 17939,
+      "sha256": "2c870698f5e384849c53fdea9d56b15ffe1c63fa512ebefc1b41cdebed9cb245"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/encode_error_a/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/navigation_worker.mjs",
+      "bytes": 18490,
+      "sha256": "52670602a0c099dca6b5d7294bfe9ca5f1980538108a23c65757dc732ac0def1"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/instrumented/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/negative.py",
+      "bytes": 1699,
+      "sha256": "733d55a13057eca6add62f45c4e6febcdc2856145571a763a3c5f49cbedd96ab"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/negative_v2.py",
+      "bytes": 1723,
+      "sha256": "8fc6f19ec687005875abb7980c42e43713a5e8417370a5d8af8222e6b6240b55"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/navigation_worker.mjs",
+      "bytes": 18083,
+      "sha256": "a4db83cd1cbc5b193123a564aa281146013055ee8beefff708dbabf07bac742c"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new-v2/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/navigation_worker.mjs",
+      "bytes": 17871,
+      "sha256": "04b3ffa83b8b018fa5b804363e7283fca17a2ae0ce7d0df976615b6348334e6f"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/new/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/old/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/tooling/harden.py",
+      "bytes": 1683,
+      "sha256": "49fa4dc05822d1d0b0cced02d652225f81ebec3c7fa36621970df98939924b6a"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/tooling/prepare.py",
+      "bytes": 2562,
+      "sha256": "70ad9f850bff25dba359a0c5802353920ddd696031ba1e975af1b784607f2eaa"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/tooling/prepare_finish.py",
+      "bytes": 3827,
+      "sha256": "2c37606beba5b5e874f4d0778e041a4ae35ef4d7b9c054d9e0b3bb1e6536add2"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/tooling/run.py",
+      "bytes": 1602,
+      "sha256": "3439c42bcd096bec06cd2699a2d9960b70dc93f54aeb38ddd930d3c8d34ee0e8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/tooling/setup.py",
+      "bytes": 3173,
+      "sha256": "0d1615c9ed5bfad76ab4b843813e23238e23b6296dec63eaf4a62435475bc15e"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2.diff",
+      "bytes": 5110,
+      "sha256": "6e37f955ee1e931c6ed87b0b24b7882f2bd49ce9cdca8a101082a52105bc80c4"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/navigation_worker.mjs",
+      "bytes": 18151,
+      "sha256": "07451b8ecb8f868f3c2aacf297c69e762222014f3d304c1344c7196e23934fe9"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_a/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/navigation_worker.mjs",
+      "bytes": 18152,
+      "sha256": "131d7b714ddc8a7795c2fc48793a860d6e30724268f1ede20bbe660849801bc4"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-20261017-codex/v2_encode_error_aa/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/REPORT.md",
+      "bytes": 9312,
+      "sha256": "c1570a70a120533339e3bc4979cd57804bc94ee45290e504aadf205c853cabf8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_alpha.py",
+      "bytes": 1961,
+      "sha256": "5ab5b17eb14ffa03143e6cfaa3d3bdd9a9eeec39a7924b5c089200237dff1cc9"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_basic.py",
+      "bytes": 638,
+      "sha256": "923844f7f9ac1b06633fe00aacff60e1dd40245497b9691e9653df80f19b4588"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_bench.py",
+      "bytes": 3901,
+      "sha256": "ef722a8c5a1a6ee5da23d06f4d06381405182ffb10318b9a1b0a6822d2ac0371"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/navigation_worker.mjs",
+      "bytes": 18844,
+      "sha256": "8df407c1ca529e219f1cbec98aca340f0e4abfe1679ab3fdae612e87cad700f5"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_a/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/navigation_worker.mjs",
+      "bytes": 18845,
+      "sha256": "a510c1dcfcee053cd55292af5a9dd4fb346a0710f49c6430fb81fae2b21bf5ff"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_encode_error_aa/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ack_negative.py",
+      "bytes": 1732,
+      "sha256": "0fd528b5e373c0000068b1dc87330ff671f5fbbb6dc9bf2987eb610757904ef2"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield.diff",
+      "bytes": 6023,
+      "sha256": "314d042f17ce926d942504a749ee52c927c06c545275979ddf85c9fe993eb359"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/navigation_worker.mjs",
+      "bytes": 18776,
+      "sha256": "fae95a99802daac6ed02a256d6702861e6d4373016f3671407dd164f24f56824"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/ackyield/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/alpha.py",
+      "bytes": 1947,
+      "sha256": "2c395650d7d6285deddf0cb12dad1730138915d90f64e350981bcf9a97fa5047"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/basic.py",
+      "bytes": 628,
+      "sha256": "343fdecce2d3413b5ed6d909970fc4d03dfd106207bfe79876fc8d803ab1fc0c"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/bench.py",
+      "bytes": 3879,
+      "sha256": "e2a3f4abf4e303a07c52e0b734eeb0ea5e7a449a8847123a3c64330961e12331"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/diagnostic1.py",
+      "bytes": 744,
+      "sha256": "6bd502af0157d5b02dc9bc8d62dd3349244c3b5f9f98e3792a2990a980ed8127"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/diagnostic2.py",
+      "bytes": 747,
+      "sha256": "aeaec5a0798766fd2d7eab152d88523240b747f1e3ecf45bda5beb9989a4fa47"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/navigation_worker.mjs",
+      "bytes": 19526,
+      "sha256": "fea5f585a66ca01ea28d862e9b8ed6fc34484048c810639b83f723dd9cf449c4"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-ackyield/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/navigation_worker.mjs",
+      "bytes": 17625,
+      "sha256": "0dcdccae9b8c95190540db827ede37675fbd30ebe70677e8004c8a8bcbf336c5"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/navigation_worker.mjs",
+      "bytes": 17626,
+      "sha256": "1a5ecf213a1a8498742d936273ff102a70c7fb4a8ff839d8c9e30cea318cdaff"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-old2/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/navigation_worker.mjs",
+      "bytes": 19080,
+      "sha256": "d2c8a4844525c87559024baabf8a712a0c9eaa8581c6fe7c8dde3a958977458e"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/instrumented-yield1/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/old/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/tooling/prepare2.py",
+      "bytes": 1025,
+      "sha256": "36fc5f275ae94275d5f656a59241e6a881bdc88cdffed407f87ec79189b4d962"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/tooling/prepare_bench.py",
+      "bytes": 408,
+      "sha256": "1e9aac4ef1bf16c0dd08bcd78d8ff3a9ac787cf579484e7b32a29fc2757b75ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/tooling/report.py",
+      "bytes": 9997,
+      "sha256": "afe11479dfbe5039a4af8f72c0f2a02833f2220ff2c0feda0d76a2f1a1fa7776"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/tooling/run.py",
+      "bytes": 1608,
+      "sha256": "c378847bb1d74776463ea02043819a2b7946e98f70b0efb351c53ab8eb3c0225"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/tooling/setup.py",
+      "bytes": 4806,
+      "sha256": "ef732797b79be813bb5bb239ebe19b0e4426508eb6414cbc72f904a4d8045e26"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/tooling/setup2.py",
+      "bytes": 4146,
+      "sha256": "1d86758b140f3ef003e1abe9ff91e83af3c0f980e9dcc1aae8e00461dd476811"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/tooling/summarize.py",
+      "bytes": 2083,
+      "sha256": "a32cab93a0c94a0df9b0ee5cf44f06558f025bd4a830f155934b5efdf3b1caca"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1.diff",
+      "bytes": 5362,
+      "sha256": "c1e630b7276b115f39d368e1f61b2a0fb46a4b49dbdd2572d63faddeb14bfb86"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/navigation_worker.mjs",
+      "bytes": 18332,
+      "sha256": "8b8427fe29a425934c861aaa9b7022eb31041851637eb0e5e27ee825a89ff6d9"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-encode-overlap-yield-20261017-codex/yield1/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/REPORT.md",
+      "bytes": 4547,
+      "sha256": "fc0eeb79a583f3a16db4fc6f70c21aa6a644add812414e8807724c7cdff648f4"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/bench.py",
+      "bytes": 3876,
+      "sha256": "e273f51ba94c4fcc88cd1b5d17baf80b554d8770ac89fa614f544c91cace1158"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/candidate.diff",
+      "bytes": 2238,
+      "sha256": "62008646eb786712ceb0710b2260b96e44f0b5e00d3759328e6ca67bd799e33c"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/drill_sigkill.py",
+      "bytes": 7565,
+      "sha256": "83b16a40513a198ad251abebdf38a8ea5c93213992738038f2ce738f8a7d4295"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/navigation_worker.mjs",
+      "bytes": 17124,
+      "sha256": "8710be55d92e5ec71314cdcd593c99d94511406386a14737121de63e948ed23f"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/package-lock.json",
+      "bytes": 5858,
+      "sha256": "f10a37b8c053e6772b111e9ed98763f99f5b271ceb07952727b06305d08902f9"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/package.json",
+      "bytes": 507,
+      "sha256": "8f0f6f2cdce593fbe8183728d810593e239198fd9d4ab78cb26037330a30919d"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/run_gfx_electron_worker.py",
+      "bytes": 9782,
+      "sha256": "a1b322eecf166a71cf04fb7616e4240b06d5dedab94399e508f49de8fc0301d7"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/new/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/drill_sigkill.py",
+      "bytes": 7565,
+      "sha256": "83b16a40513a198ad251abebdf38a8ea5c93213992738038f2ce738f8a7d4295"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/package-lock.json",
+      "bytes": 5858,
+      "sha256": "f10a37b8c053e6772b111e9ed98763f99f5b271ceb07952727b06305d08902f9"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/package.json",
+      "bytes": 507,
+      "sha256": "8f0f6f2cdce593fbe8183728d810593e239198fd9d4ab78cb26037330a30919d"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/run_gfx_electron_worker.py",
+      "bytes": 9782,
+      "sha256": "a1b322eecf166a71cf04fb7616e4240b06d5dedab94399e508f49de8fc0301d7"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/test_navigation.py",
+      "bytes": 12123,
+      "sha256": "65e5c879e656ead39d8350a446ed7e9046c01b596fa27f3ad86d2f607e00c9b7"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/test_page_errors.py",
+      "bytes": 7278,
+      "sha256": "f2cdeb34fe0155684a4d209622af3fc5bf95cc58a20a2f955fd5c0676b360374"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/test_pixel_codec_reference.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/old/test_promise_checkpoints.py",
+      "bytes": 6002,
+      "sha256": "ad5ae8c9409ae9f9f7788a2d423836da50385b43f111cac2058df5da01bf03f8"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/report.py",
+      "bytes": 7164,
+      "sha256": "990bfdba2a9b82dbac10786367dec36a90d9e688df9025781555c08b4b19939d"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/run.py",
+      "bytes": 1525,
+      "sha256": "5ba7092e97f8264dbd94798d20dfaabfe4ae3bb726b99417b83aca706b531b35"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/setup.py",
+      "bytes": 3188,
+      "sha256": "788258fbb6f02b1e1c4f2e7cd4a297f28391188d239e1ba3596e138418b70610"
+    },
+    {
+      "path": "electron-perf-marker-canvas-20261017-codex/validation.py",
+      "bytes": 3315,
+      "sha256": "64f4258fe165391ac95093d5e67ae733bbaa6c280c60553948f8722821cb79b0"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/REPORT.md",
+      "bytes": 6589,
+      "sha256": "a0482194ba9575067dd4851d4a66ceaf9c0369232183ab63c0c0d0281fa86b7d"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/alpha.py",
+      "bytes": 1810,
+      "sha256": "17cb9aed57cddcc7f13fca1b356710fcbd176dc77878f031bca25f8f79e28a31"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/audit-app.cjs",
+      "bytes": 180,
+      "sha256": "170ca016e59b51b57c3640a22e4e1674e756b3a4010ae612dba31d6e11f2629d"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/audit.cjs",
+      "bytes": 748,
+      "sha256": "ae8092c9db727ef6ba9e1d650e93cdd804bc25b67c8509a7758f4a6bf427ef03"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/audit.py",
+      "bytes": 4249,
+      "sha256": "3af4e9bbf6c77a439f484db3f18ecbc7976f9e6d43cd847026b83cf961b37fb2"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/bench.py",
+      "bytes": 3876,
+      "sha256": "e273f51ba94c4fcc88cd1b5d17baf80b554d8770ac89fa614f544c91cace1158"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/decoder-only.diff",
+      "bytes": 2002,
+      "sha256": "6770bce5f69baf74e74aa1e0034b63801c12dd14b98a25f95ec98e888b92cf21"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/electron-unit.cjs",
+      "bytes": 179,
+      "sha256": "c3b7a96d0cec07885e5b47a173c27af36b563fa66d0a3adccbd1c523c4019ee1"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/missing-addon/pixel_codec.mjs",
+      "bytes": 10751,
+      "sha256": "5ede3b8e56dd6a360163adbafb5d3e9e96f7e2a0708ba8bc281fac38269358c6"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/missing-test.mjs",
+      "bytes": 368,
+      "sha256": "eabcf45acd42b7e28daad0e9d9a5dede92cfa4346ef5b911304898502ad4c5fb"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/native_png.c",
+      "bytes": 5301,
+      "sha256": "fafaadd9793cb3c6c1710f8c45137fd7cc0537bdc1318fe07b57832876beaa41"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/new/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/new/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/new/pixel_codec.mjs",
+      "bytes": 10730,
+      "sha256": "9038b28fcb7206b95fcc7d1ec3245ce36d5c69b386a0bebf4aef04fe3235a32d"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/new/protocol.mjs",
+      "bytes": 2900,
+      "sha256": "5df5861c1f8f64f6a21439aaa90c9e85bb53059d019ed2016e7ef8f3ff44ecfa"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/old/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/old/pixel_codec.mjs",
+      "bytes": 10542,
+      "sha256": "99ac8186faeaeb2a55769446ed008892a9f56497d87862be3396a9021fca0281"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/reference_encoder.py",
+      "bytes": 4510,
+      "sha256": "a396402052d442fb171c6502a61cf33306faa8174251e90b5a66ddf55ca433cd"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/report-attempt1.py",
+      "bytes": 8455,
+      "sha256": "dbf5653fa63d65cce52e8c8dc578ddd09aa652da5d2a507c649c40da34d1643e"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/report.py",
+      "bytes": 8784,
+      "sha256": "4e231737c38ce50463668dc2c1e974b18f182fb2c432a3934014ecd32c06a3c8"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/run.py",
+      "bytes": 1525,
+      "sha256": "5ba7092e97f8264dbd94798d20dfaabfe4ae3bb726b99417b83aca706b531b35"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/unit.cjs",
+      "bytes": 1226,
+      "sha256": "7b79011738b3d3fe4169baa95a450209fee50587846e44efcf39f372534752ff"
+    },
+    {
+      "path": "electron-perf-native-decoder-prototype-20261017-codex/validation.py",
+      "bytes": 5430,
+      "sha256": "f47f47616d2086437050e3acb78000e61d734f4781b525041a94c3014e6acf7d"
+    },
+    {
+      "path": "electron-perf-optimization-20261017/REPORT.md",
+      "bytes": 6191,
+      "sha256": "8776d724a89d463da56816072ae0b42ac99d3ec20a522748ebda415ac33d06eb"
+    },
+    {
+      "path": "electron-perf-optimization-20261017/baseline_pixel_codec.mjs",
+      "bytes": 3773,
+      "sha256": "8827606689d14938d2aec689459efe58185c67a25c28629d58f0ba030d54739c"
+    },
+    {
+      "path": "electron-perf-optimization-20261017/codec_micro.mjs",
+      "bytes": 1530,
+      "sha256": "43b8b0e7d00d4bc9ddea1a4026e9d5eac3f8853ad74e54eea2629dbcdd2c6eb7"
+    },
+    {
+      "path": "electron-perf-optimization-20261017/native_bench.py",
+      "bytes": 3941,
+      "sha256": "5dd735c5f1e61cda6063d1956bb8c3f3c70818ff4a900831d548794387bb280e"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/REPORT.md",
+      "bytes": 7264,
+      "sha256": "79f3f3461520022e5a6ed19d5c885e3b77f9f1b8a171e4a2d54fc0fd44a93a9a"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/bench.py",
+      "bytes": 3847,
+      "sha256": "32137befe73e6dba4bf0ed4e685c2e5c4067ec498398a78899ab42d41f21b478"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/candidate.diff",
+      "bytes": 581,
+      "sha256": "95419fbcfa7524fb21a00742ccd726f05d43436deb80e7acf3aa8a4c50313ee6"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diag-new/navigation_worker.mjs",
+      "bytes": 17345,
+      "sha256": "c720fe5f7afc70b4eccbcd14318dae6db987cca3f2a3309486fb881a8f3ca28d"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diag-new/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diag-new/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diag-old/navigation_worker.mjs",
+      "bytes": 17343,
+      "sha256": "2bb4d53b70b0a6fef86ab9ebe0a241d6dc24646c14f1554ce763457316aa30c1"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diag-old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diag-old/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diagnostic.diff",
+      "bytes": 3842,
+      "sha256": "8f6f3c55f089e2bdfd87fd2f90dc48a121a92ef605187fa260bb8b675adf0844"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/diagnostic.py",
+      "bytes": 3868,
+      "sha256": "ef1099b0a13bcb4f3d578a23c37789ab821441537d566bd7410429326e5c902c"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/new/navigation_worker.mjs",
+      "bytes": 16846,
+      "sha256": "181d7a89455ac7cdb6b207919a2e42c12b5b40be00d952b133cc869a71a23de9"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/new/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/new/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/old/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/old/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/old/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/run.py",
+      "bytes": 1525,
+      "sha256": "5ba7092e97f8264dbd94798d20dfaabfe4ae3bb726b99417b83aca706b531b35"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/tooling/fixdiag.py",
+      "bytes": 520,
+      "sha256": "4466a4f5413da5b1a145039c48d7633b91436f983e32ef279cb783977060ea1a"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/tooling/report.py",
+      "bytes": 10322,
+      "sha256": "b181e631b8bd8696bc162c50f397ff35e06d463d1c7dfdf247cf9f4da61c410c"
+    },
+    {
+      "path": "electron-perf-paint-cadence-20261017-codex/tooling/setup.py",
+      "bytes": 3114,
+      "sha256": "3ca714939e7e948b2a25907c0e18a1ef1f5bf1597ae8dcc9ae378fed49a2aef1"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/REPORT.md",
+      "bytes": 10506,
+      "sha256": "f82a38232cbf5237b4b7f6e187bcbb2756a0ab2b4357f490b4f944af2cc468fa"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/alpha_fractional.py",
+      "bytes": 1974,
+      "sha256": "4fac190da627f60bbd2c9c6a3ea0e5620e54b5116f94ecf0ca4085020eca1124"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/alpha_fractional_run2.py",
+      "bytes": 1989,
+      "sha256": "3f2c35d24e3056778785046ac578aa93a2ed1e4dfa62b86cd9033b8438445f47"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/alpha_transparent.py",
+      "bytes": 1855,
+      "sha256": "6f0e37f3198ef5f738f7cf3190f22e5016b0d9831711a5a11132d4886b5c4e60"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/candidate-instrumented/navigation_worker.mjs",
+      "bytes": 18129,
+      "sha256": "324f7560d6cd634ee09c03a571825b151b66ef60091ade4030a68c582287c01a"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/candidate-instrumented/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/candidate-instrumented/pixel_codec.mjs",
+      "bytes": 11392,
+      "sha256": "067a01a67cb0f947ad993f211b007623f149562ca8a541fc554530b780913766"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/candidate.diff",
+      "bytes": 17695,
+      "sha256": "bd59efbf839de1faa1ee483c24b5f22faba53a27c15119ada45cbdb90136c22d"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/candidate_profile.py",
+      "bytes": 3286,
+      "sha256": "bdb446f19f95cf68476e9bdc425ca7464c82d1c9235e921f1d946007bdd1e5cf"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/candidate_tail.py",
+      "bytes": 3282,
+      "sha256": "7d4362259c3d5dccb750aecd4814db4f6f38b58dd385c2d476fa02abc64b133d"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/detail.py",
+      "bytes": 3260,
+      "sha256": "c5f2162d55d10657ffe83113e8cccbdb9f9434427e8a591abd87088dcee1626c"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/final_bench.py",
+      "bytes": 3971,
+      "sha256": "2a27b30f0b8e7e45530553cd7647de0d69bc5069aa7e8c73eb240e08157d0666"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/identity.py",
+      "bytes": 206,
+      "sha256": "6c9a86ed661d833a3c8a71c7824548b06d3cab85d4627fe04afbdb0ef24236db"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/instrument.py",
+      "bytes": 3830,
+      "sha256": "76fd75241a515995aefa2484a971c85180710a51ed651e823f91bb5b9bf63e46"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/instrument_candidate.py",
+      "bytes": 3859,
+      "sha256": "14475869a255a2fda7aeb786331ee7eca9ed69747510e69934313af6c246edbb"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/instrumented/navigation_worker.mjs",
+      "bytes": 17498,
+      "sha256": "32b6b85983f8104bccd8b710883c8b83bde950205be3191480a7d85e9b4cce8b"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/instrumented/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/instrumented/pixel_codec.mjs",
+      "bytes": 6387,
+      "sha256": "b89e9797ed7cf13b969de4a1e51d1eeb21e549e1b6b9d1f24b7afa0bac15d2cb"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/bad_rgba/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/bad_rgba/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/bad_rgba/pixel_codec.mjs",
+      "bytes": 10328,
+      "sha256": "bd56cadf7787adb2ffc4312f0750e903cf6680283600eaf5f6c4d4ca908f772c"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/crash/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/crash/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/crash/pixel_codec.mjs",
+      "bytes": 10351,
+      "sha256": "5f43a7e001ac18b899a448b90c3bf1c9c2451bcf1520172df1d8cc39678c6380"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/duplicate/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/duplicate/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/duplicate/pixel_codec.mjs",
+      "bytes": 10350,
+      "sha256": "21bc913777d3b43afb406a0a0ca5807c7c899648f5d0e4aa7e9509cbcd2e780f"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/exit/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/exit/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/exit/pixel_codec.mjs",
+      "bytes": 10329,
+      "sha256": "7fda7f8b0d01cabc9ec571ff33da0a0f3dc028646e6a71a62bebfa168f9fa6f1"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/missing/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/missing/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/missing/pixel_codec.mjs",
+      "bytes": 10321,
+      "sha256": "97570fd80a25d31912b9988a82d47b9b7d17131ae6d73619b4bccdbcaf68dd40"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/short_rgba/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/short_rgba/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/short_rgba/pixel_codec.mjs",
+      "bytes": 10307,
+      "sha256": "87bebef722ebdd5e8fca67e818aa414fba49f2d386ff9fe1fdaef8e83a6887a2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/wrong_frame/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/wrong_frame/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/wrong_frame/pixel_codec.mjs",
+      "bytes": 10290,
+      "sha256": "1a4c54127e7b6fbae4d5c3dcae1e1671495548dd21d54a5e1cc290313838b869"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/wrong_generation/navigation_worker.mjs",
+      "bytes": 16845,
+      "sha256": "779cef67cf9e0a848afb6f0f08e797b77dfcc1386b2cbc9ce1de084c7810d5e2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/wrong_generation/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/mutants/wrong_generation/pixel_codec.mjs",
+      "bytes": 10290,
+      "sha256": "2737959ec4b0289f006ef21c43d3db04792a53624d35fa4852104156ed78dc27"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/native_bench.py",
+      "bytes": 3941,
+      "sha256": "ac541d680377f4e7aef44e97319063c4a02c8828a79c1d6646ee4c5d550c086d"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/profile.py",
+      "bytes": 3266,
+      "sha256": "36c0b0143e2e21d3dcd0527a9e972e5fcf7b7501054a30d6ad4ea0408b1b4050"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/regression.py",
+      "bytes": 519,
+      "sha256": "24af65fd45b2d44f3f598504f9ca6077f7b9022036f21221a1a55913bda02a7e"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/regression_final.py",
+      "bytes": 586,
+      "sha256": "3c149b3d6320efb939486c154e2cbe5cf54cd66281088d7c358872895f55588f"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/fix_isolation.py",
+      "bytes": 1158,
+      "sha256": "301ca422fe37a6e850ab88a3172a0d442ede9ce85fa22e6dbbb70bf36bf7c9d2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/freeze.py",
+      "bytes": 1509,
+      "sha256": "c52da7c7c8efab1d8098a4057b2e13b9ff1c5a6946d6a2581c08eaad275211a2"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/harden.py",
+      "bytes": 1528,
+      "sha256": "ecbdb9b276653ec8a1f569b3d58ca70e215c09bdbba984bf700f5834612613f9"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/patch.py",
+      "bytes": 6979,
+      "sha256": "26f88048a8679221fb47d3c3598b29404589bc160682b950cd19e88e44f95292"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/prepare_bench.py",
+      "bytes": 641,
+      "sha256": "f8d504f60ae845ad66b718f394ff6f3051139fe79ec84fa0be61b950f6bbc0a9"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/prepare_regression.py",
+      "bytes": 708,
+      "sha256": "e4e645efa0c0a349240232d124e85fcf9338dbf52e6976b0066f2204998cda03"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/prepare_tail.py",
+      "bytes": 371,
+      "sha256": "4b1d30196d63485bee150cc2a07cf5fdc4f4cea4cac0c1aac9d4d3925dbc6e76"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/prepare_validation.py",
+      "bytes": 5418,
+      "sha256": "0600fbcb7a2530134ce4430737092b96e3c54df0f13ca5d66624b4d6e78a69f8"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/profile_detail.py",
+      "bytes": 1061,
+      "sha256": "a3f548ff3d48403706245520a20f0c36070eb560f9d09f258be26fba9e5ce6ec"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/report.py",
+      "bytes": 12444,
+      "sha256": "c70dd84ea50a3b2989264d074f45ae189540ca11574a8cb7733ac7118714ab28"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/run.py",
+      "bytes": 1543,
+      "sha256": "96cb74e032dda4493defbe004fd97968ddef60616f76cd3e3d0226de9c057db4"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/setup.py",
+      "bytes": 1011,
+      "sha256": "3e2d0b79f2cb073642b83d31930b48c3c3cddf868349544ce607631521a0941e"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/summarize.py",
+      "bytes": 3556,
+      "sha256": "abe4492aa84e69d8ad83da38b6970544c129c83919e60c3fc0f3b40fdb18fb40"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/tooling/tests.py",
+      "bytes": 3302,
+      "sha256": "0a76061c760dd17e5237fc350812e7b192d9a5a08a50bef6211b8d905e791408"
+    },
+    {
+      "path": "electron-perf-pipeline-20261017-codex/validation.py",
+      "bytes": 4836,
+      "sha256": "91a3e0375c66e3ac2f4eb5826794b2d4b594951f6406b416220ed5337237edad"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/REPORT.md",
+      "bytes": 8796,
+      "sha256": "3bfdea3819c717a27db8faf7823bcb0e87be71ad624cc6df178ebffb3c273050"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/candidate.diff",
+      "bytes": 28057,
+      "sha256": "57507587e1a2e6b6f463d5570ea4176d39407a7ca3a72dcac6c6834b198b0eeb"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-after_witnesses/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-after_witnesses/navigation_worker.mjs",
+      "bytes": 20035,
+      "sha256": "e379d3ee3ddc663a30ec1b3d8dadc1d25cb68526417d1a0c4af68166f15dbb7c"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-after_witnesses/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-after_witnesses/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-after_witnesses/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-after_witnesses/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-after_witnesses/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-base/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-base/navigation_worker.mjs",
+      "bytes": 17019,
+      "sha256": "dcad21253163035b356d6ec11ba94860beeb3b60885df1639f74d22c993fc848"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-base/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-base/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-base/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-base/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-base/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-explicit_bg/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-explicit_bg/navigation_worker.mjs",
+      "bytes": 20395,
+      "sha256": "2136960578b84f78c7725cf417fe4b7046c2e7387271df48c9553308d4cd5b5a"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-explicit_bg/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-explicit_bg/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-explicit_bg/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-explicit_bg/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-explicit_bg/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-late-profile/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-late-profile/navigation_worker.mjs",
+      "bytes": 20731,
+      "sha256": "01904cecf39d818eb3b8d1668bbcba0d98fa7601cf0af6987dac793e419b3766"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-late-profile/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-late-profile/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-late-profile/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-late-profile/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-late-profile/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-no_refresh/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-no_refresh/navigation_worker.mjs",
+      "bytes": 20006,
+      "sha256": "2e9234a25ddeb44c4bacc6db450ab28533063301de0f83cb3314d7cc71633dd8"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-no_refresh/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-no_refresh/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-no_refresh/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-no_refresh/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-no_refresh/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-refresh/main.mjs",
+      "bytes": 14430,
+      "sha256": "cfbddaa7e5a2c7756c2c08b130d382129aa72708e711a17c42f9e6da13036ef1"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-refresh/navigation_worker.mjs",
+      "bytes": 20366,
+      "sha256": "1d8a112364085d08b60d15d69b248e71aa88a6ac3462fe58b29b1bd859de9750"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-refresh/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-refresh/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-refresh/test_decoder_thread.mjs",
+      "bytes": 2713,
+      "sha256": "d40b206bcea874a0f7a9a6868107f010e3488d7278cdd22f7115bac31ae1c932"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-refresh/test_page_error_gate.mjs",
+      "bytes": 6659,
+      "sha256": "24b00f443d4c6bdb7101affa6d0befcd322447448d9b3537cce17ca0246581ef"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag-refresh/test_pixel_codec.mjs",
+      "bytes": 1153,
+      "sha256": "9f8ea8dd371fc6e11a8fb1185e6a1603fe16004fce359742ccf243360faee9b3"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag_bg.py",
+      "bytes": 1067,
+      "sha256": "1ee6290caa9cd48d761532ab4ffc6feb924d858bde2ad81e2a2693e3223772b7"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag_fixture.py",
+      "bytes": 1059,
+      "sha256": "57dd8b7ddbdf4b88dea974c738ae70ca64465490539d2b5a3fe7df9254fc91ef"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/diag_late.py",
+      "bytes": 1393,
+      "sha256": "2a84e4d1cf07202f10de4e283de64eecbac229ed6b097b1b16fd994044e4d0b8"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/initial-bench-worker.mjs",
+      "bytes": 19271,
+      "sha256": "e02ff53feeb20a7e18b0735bd77542da79f64a350579c99240f2d1b0e3c2f029"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/initial-reconstruction/experiments/gfx_electron_worker/navigation_worker.mjs",
+      "bytes": 19569,
+      "sha256": "3829097180b98737042a7a05de1917fabce1c118c0079e91b58088d21f14f5e5"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/initial-reconstruction/experiments/gfx_electron_worker/test_navigation.py",
+      "bytes": 15106,
+      "sha256": "a196afc80b2f06dfb23fd31e8918dc9a5450f2e35bc0941c0e964d3932333d1d"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/initial-reconstruction/tests/test_electron_integration.py",
+      "bytes": 28298,
+      "sha256": "f9db6cb5ebc23c116c3a16bae9c7e171bef5355a48ce5fab6b648d06a41b99fb"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/initial-reconstruction/vtx/gfx_electron.py",
+      "bytes": 9421,
+      "sha256": "b458d812ce0448bd35bc1cf4da5332dd676f9011af5b8543480d6cd032f12011"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/initial-reconstruction/vtx/gfx_electron_stage.py",
+      "bytes": 11185,
+      "sha256": "bf72885f84f7e965eff906f544f042e05456a7428c4515aa3caa120bf79c2ea8"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/initial_bench.py",
+      "bytes": 4389,
+      "sha256": "3c33b00a1def974a6e092f0957864d340fc6eb0a7f43d22d2a070ce0e43edf4f"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/late_bench.py",
+      "bytes": 4350,
+      "sha256": "debcdf0560fab03fb5bbc93f48a3e277ce9d8663d028f41525a8be0f46048aff"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/late_profile.py",
+      "bytes": 1838,
+      "sha256": "d28d1f457c380783867a34911231126d7ec081e549474ed26ac3ad3811dfe250"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/pre-late.diff",
+      "bytes": 28057,
+      "sha256": "57507587e1a2e6b6f463d5570ea4176d39407a7ca3a72dcac6c6834b198b0eeb"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/regression_initial.py",
+      "bytes": 588,
+      "sha256": "eb4898e77cc0ece1b368efdaf6c2148320426d38baf35c65b9668a428f8aace5"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/regression_run2.py",
+      "bytes": 585,
+      "sha256": "990c9b6f420a2691c125395f13392040d09fc8f0215831c7408f7209e1d155b1"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/run.py",
+      "bytes": 1629,
+      "sha256": "0d345290e94ff2d942fc8bb7e1cee56872299e3f34780f5125e193be260f0e2d"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/run2-source/experiments/gfx_electron_worker/navigation_worker.mjs",
+      "bytes": 20192,
+      "sha256": "26638abbb2ee6a79bd6db1f2bb95fea366e31117aa7136374f317aa6e5bfb8d9"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/run2-source/experiments/gfx_electron_worker/test_navigation.py",
+      "bytes": 15204,
+      "sha256": "20df380fd3fdd86e130ec9bc12e74aafd42d36f7b01d537067dfad173506b925"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/run2-source/tests/test_electron_integration.py",
+      "bytes": 28298,
+      "sha256": "f9db6cb5ebc23c116c3a16bae9c7e171bef5355a48ce5fab6b648d06a41b99fb"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/run2-source/vtx/gfx_electron.py",
+      "bytes": 9431,
+      "sha256": "63c61c9dba5ca221f5909d8184c61885f8ac485358d5684c8206b4cd54faf43c"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/run2-source/vtx/gfx_electron_stage.py",
+      "bytes": 11295,
+      "sha256": "2208e83d862aaf19778494cf3b0e94332e189a78e53e79302d1357b081f64257"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-bgdiag.py",
+      "bytes": 710,
+      "sha256": "184d920f7be67568839d404893243f19ef27e5df12b916a0a5cfe28aead8c9a0"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-late-profile-setup.py",
+      "bytes": 3183,
+      "sha256": "2cd06405da84c05c1a44bac3ca2a43ba94a905d22527520541432a0ffc66cf70"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-latediag.py",
+      "bytes": 1850,
+      "sha256": "067b74ab795ad6201213298c2dfb7c4b3cd91c5af0d0cd8e0f6a604b6892a00a"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-prefetch-contract.py",
+      "bytes": 3138,
+      "sha256": "b3883a7ff100dc8ddccf6c9e175502db59c4be81104b3ed308360a540beec90e"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-prefetch-diagsetup.py",
+      "bytes": 2280,
+      "sha256": "31ac3a7c4f45d86f016fdbb98b98a5dc1e77982adf9e6312d710a28559d1c984"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-prefetch-fix.py",
+      "bytes": 2899,
+      "sha256": "75b01a7662a0304a693e6292d035bdd9dd104785ba2a5a1117383f6349a41f05"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-prefetch-patch.py",
+      "bytes": 5823,
+      "sha256": "cfad7aaf34219cb9f9bbd3c04382e47948b5231113d6881fa22dcbb66a4a5c63"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-prefetch-report.py",
+      "bytes": 13091,
+      "sha256": "0e1476d4a4e2b50272a9b532ae04bfa9a367cb3f9fda81ec547a21d3e98a913c"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-prefetch-setup.py",
+      "bytes": 2282,
+      "sha256": "7246b9614c653c173481df30252375cd881b8b986ac2381be0e1a33995291b99"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-prefetch-tests.py",
+      "bytes": 5260,
+      "sha256": "495b9c197d89e62365de2ed66825cce66d3dc1e4e5ee103f3b2128219720c877"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-reconstruct-fix.py",
+      "bytes": 2280,
+      "sha256": "3be95a89d6720aa5746b3c85a77baf23e9625abdf85cfe1e322ded8c9597fd8c"
+    },
+    {
+      "path": "electron-perf-prefetch-20261017-codex/tooling/ee-reconstruct-freeze.py",
+      "bytes": 2238,
+      "sha256": "0b765de80ccd8cf96519101919edbbbc6f59709d68d39fa2463520d724c16c38"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/PREPARATION.md",
+      "bytes": 3333,
+      "sha256": "982fb0122a138c6178976d6b3b40382a625941402abfd41376645273af26d1ba"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/REPORT.md",
+      "bytes": 6401,
+      "sha256": "38e288a1f10df993084b95346897343e245749ca4712c498cc9307d5bab7eecf"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/analyze.py",
+      "bytes": 9704,
+      "sha256": "7c1f4807e69609ee92000978b2e97f40cf692a7b321948759e912ce06d1928dc"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/four_sides.py",
+      "bytes": 3280,
+      "sha256": "b2861e85b1e283423f3a1ec48fea4a27d26479ed7ce154bbbef2febeaa91c5cd"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/prepare.py",
+      "bytes": 13747,
+      "sha256": "6488a14b4866fa568349b92a97665674b2e9ea47b69db067eaa7627d553c4026"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/run.py",
+      "bytes": 1800,
+      "sha256": "16cade40c7dc0713d594492f0e293383cf01b73441f50ca9830d37aa666ba0e4"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/base_default/navigation_worker.mjs",
+      "bytes": 17956,
+      "sha256": "09291199ac1b74a01d993e60b892e2ffc800e24e40e49dccf1aef1f27b7a376d"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/base_default/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/base_default/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/base_stay_hidden/navigation_worker.mjs",
+      "bytes": 17984,
+      "sha256": "fc3f1cd552f00643c8cc50c4aafda1f3b9ca215099c8782a31b5bce6b48123f3"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/base_stay_hidden/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/base_stay_hidden/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/early_default/navigation_worker.mjs",
+      "bytes": 20943,
+      "sha256": "f2471ec1b2290a98618423ee8488c84e2ab8b714274a8c2213aaa152cbf57bd2"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/early_default/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/early_default/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/early_stay_hidden/navigation_worker.mjs",
+      "bytes": 20971,
+      "sha256": "48ec220570d33868a5023bc8e35aba157eb32746aa1ccf9efc548dacb3242d13"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/early_stay_hidden/page_error_gate.mjs",
+      "bytes": 8155,
+      "sha256": "baec46139eeba8f0c52488018d71867d4b8c07bfd104d2b6d20eb688aef49425"
+    },
+    {
+      "path": "electron-perf-prefetch-capture-hidden-20261017-codex/workers/early_stay_hidden/pixel_codec.mjs",
+      "bytes": 10288,
+      "sha256": "9a8a4cc448dccfc0d541f56977150272a058d61adba1cbf0d2cb50c9c13c2142"
+    },
+    {
+      "path": "electron-perf-sdk-research-20261017-codex/REPORT.md",
+      "bytes": 12314,
+      "sha256": "fa6f89c640bba014c88577c85e8ce508be87a59cadf0b445090b38581defe28a"
+    }
+  ]
+}
