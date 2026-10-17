@@ -36,7 +36,7 @@ TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_
 QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
 # ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
-# 记录 cache/qc_pass_segs.json：{"version":1,"final":{size,mtime_ns,frames},
+# 记录 cache/qc_pass_segs.json：{"version":2,"final":{size,mtime_ns,frames},
 # "probe_filter":采样表达式,"segs":[{name,a,b,key,size,mtime_ns}],
 # "checks":{检查名:上轮是否 pass}}。
 # 免检判定（非 --strict，见 qc() 内）：final (size,mtime_ns) 与记录一致 + 检查项
@@ -53,6 +53,7 @@ _QC_SEG_RECORD = "qc_pass_segs.json"
 # Keep bicubic sampling, but avoid the imprecise optimized vertical path that
 # can lift a constant black frame above zero (FFmpeg 7.1.5, x86_64). The same
 # filter applies to final, source and qc_clean probes; thresholds stay unchanged.
+# Schema v2 also prevents legacy v1 readers from reusing these passes on rollback.
 _QC_GRAY_FILTER = "scale=48:27:flags=bicubic+accurate_rnd,format=gray"
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
 
@@ -63,7 +64,7 @@ def _load_qc_pass_record(c):
         rec = json.loads((c.cache / _QC_SEG_RECORD).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(rec, dict) or rec.get("version") != 1:
+    if not isinstance(rec, dict) or rec.get("version") != 2:
         return None
     if rec.get("probe_filter") != _QC_GRAY_FILTER:
         return None   # Old sampling results cannot exempt the new probe contract.
@@ -130,7 +131,7 @@ def _write_qc_pass_record(c, frames_nb, checks):
         st = (c.out / "final.mp4").stat()
     except OSError:
         return
-    rec = {"version": 1, "probe_filter": _QC_GRAY_FILTER,
+    rec = {"version": 2, "probe_filter": _QC_GRAY_FILTER,
            "final": {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
                      "frames": frames_nb},
            "segs": segs, "checks": mem}

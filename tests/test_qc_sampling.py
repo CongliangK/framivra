@@ -29,7 +29,7 @@ def _sample(c, path, pre_crop=''):
 
 
 class SamplingCacheContract(unittest.TestCase):
-    def test_legacy_and_different_filters_reprobe_current_filter_reuses(self):
+    def test_schema_and_filter_changes_reprobe_current_contract_reuses(self):
         with tempfile.TemporaryDirectory() as temporary:
             c = _FakeContext(Path(temporary), enabled=True)
             with mock.patch.object(qc.loudness_cache, 'lookup',
@@ -38,14 +38,20 @@ class SamplingCacheContract(unittest.TestCase):
                 self.assertEqual(code, 0)
                 path = c.cache / qc._QC_SEG_RECORD
                 current = json.loads(path.read_text())
+                self.assertEqual(current['version'], 2)
                 self.assertEqual(current['probe_filter'], qc._QC_GRAY_FILTER)
-                for value in (None, 'scale=48:27,format=gray', 'other-filter'):
-                    old = dict(current)
+                # The previous reader requires version == 1 before any reuse.
+                self.assertNotEqual(current['version'], 1)
+                for version, value in ((1, None), (1, qc._QC_GRAY_FILTER),
+                        (2, None), (2, 'scale=48:27,format=gray'),
+                        (2, 'other-filter'), (3, qc._QC_GRAY_FILTER)):
+                    old = dict(current, version=version)
                     if value is None:
                         old.pop('probe_filter')
                     else:
                         old['probe_filter'] = value
                     path.write_text(json.dumps(old)); c.commands.clear()
+                    self.assertIsNone(qc._load_qc_pass_record(c))
                     code, _, report = _run_qc(c)
                     self.assertEqual(code, 0)
                     self.assertEqual(report['skipped_probes'], [])
