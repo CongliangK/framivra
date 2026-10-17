@@ -15,6 +15,11 @@ import unittest
 from unittest import mock
 import wave
 
+try:
+    import fcntl
+except ImportError:   # 非 POSIX 平台无跨进程 flock
+    fcntl = None
+
 from vtx import recovery, stages
 from vtx.infra import Ctx, run_ffmpeg_task
 
@@ -34,6 +39,74 @@ def context(root):
                              'sources': [], 'video_tracks': [],
                              'audio_tracks': [], 'subtitles': []}))
     return Ctx(p)
+
+
+# issue #155 确定性交错的两进程写者脚本：first 在 marker 临时文件真实驻留磁盘
+# 期间放行 second；second 先探测目标锁（非阻塞 flock），再完整跑一次同目标
+# atomic_ffmpeg。修复后 first 持目标锁发布 marker → second 探测阻塞并等待；
+# 修复前 second 可整体完成事务并把 first 的 marker 临时文件当 orphan 删除 →
+# first 的 os.replace 抛 FileNotFoundError（issue #155 的原始异常签名）。
+_DUPLICATE_WRITER_SOURCE = '''\
+import fcntl, json, os, secrets, subprocess, sys, time, wave
+from pathlib import Path
+root = Path(sys.argv[1]); role = sys.argv[2]
+sig = root / 'barrier'
+target = root / 'cache' / 'audio' / 'test.wav'
+tl_path = root / (role + '-timeline.json')
+tl_path.write_text(json.dumps({'project': {'fps': 30, 'width': 64,
+                                           'height': 48, 'duration_frames': 30},
+                               'sources': [], 'video_tracks': [],
+                               'audio_tracks': [], 'subtitles': []}))
+from vtx import recovery
+from vtx.infra import Ctx
+c = Ctx(tl_path)
+cmd = ['ffmpeg', '-y', str(target)]
+
+def encode(argv):
+    with wave.open(str(argv[-1]), 'wb') as stream:
+        stream.setnchannels(2); stream.setsampwidth(2); stream.setframerate(48000)
+        stream.writeframes(b'\\0' * 480 * 4)
+    return subprocess.CompletedProcess(argv, 0, '', '')
+
+def wait_either(a, b, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline and not a.exists() and not b.exists():
+        time.sleep(0.02)
+    return a.exists() or b.exists()
+
+if role == 'first':
+    def slow_marker(path, data):
+        payload = data if isinstance(data, bytes) else str(data).encode('utf-8')
+        tmp = path.parent / ('.' + path.name + '.' + secrets.token_hex(16) + '.tmp')
+        with open(tmp, 'wb') as stream:
+            stream.write(payload)
+        (sig / 'a-marker-tmp').write_text(tmp.name)
+        wait_either(sig / 'b-finished', sig / 'b-blocked', 20)
+        (sig / 'a-tmp-survived').write_text('1' if tmp.exists() else '0')
+        os.replace(tmp, path)  # 修复前：tmp 已被第二写者删除 → FileNotFoundError
+    recovery.fstxn.atomic_write = slow_marker
+    recovery.atomic_ffmpeg(c, cmd, encode)
+    print('FIRST_OK')
+else:
+    deadline = time.time() + 20
+    while time.time() < deadline and not (sig / 'a-marker-tmp').exists():
+        time.sleep(0.02)
+    if not (sig / 'a-marker-tmp').exists():
+        sys.exit(3)
+    lockfile = target.parent / (target.name + '.lock')
+    fd = os.open(lockfile, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        (sig / 'b-blocked').write_text('1')
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+    recovery.atomic_ffmpeg(c, cmd, encode)
+    (sig / 'b-finished').write_text('1')
+    print('SECOND_OK')
+'''
 
 
 class MediaRecovery(unittest.TestCase):
@@ -187,6 +260,41 @@ class MediaRecovery(unittest.TestCase):
         self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(errors, [])
         self.assertTrue(second_encoded.is_set())
+        self.assertTrue(recovery.media_cache_valid(self.target))
+        self.assertEqual(list(self.target.parent.glob('.*.tmp')), [])
+
+    def test_cross_process_duplicate_writer_cannot_retire_inflight_marker(self):
+        # issue #155：两个真实进程对同一内容键目标并发编码，第二写者的 orphan
+        # 清扫不得删除第一写者尚在写入的 marker 临时文件。屏障只固定合法交错
+        # （首写者 marker 临时文件驻留磁盘期间放行第二写者），不改产品源代码。
+        if fcntl is None:
+            self.skipTest('fcntl unavailable')
+        barrier = self.root / 'barrier'
+        barrier.mkdir()
+        script = self.root / 'duplicate_writer.py'
+        script.write_text(_DUPLICATE_WRITER_SOURCE)
+        env = dict(os.environ,
+                   PYTHONPATH=str(Path(recovery.__file__).resolve().parent.parent))
+        first = subprocess.Popen([sys.executable, str(script), str(self.root), 'first'],
+                                 env=env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        second = subprocess.Popen([sys.executable, str(script), str(self.root), 'second'],
+                                  env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
+        try:
+            out1, err1 = first.communicate(timeout=120)
+            out2, err2 = second.communicate(timeout=120)
+        finally:
+            for proc in (first, second):
+                if proc.poll() is None:
+                    proc.kill()
+        self.assertEqual(first.returncode, 0, err1)
+        self.assertEqual(second.returncode, 0, err2)
+        self.assertIn('FIRST_OK', out1)
+        self.assertIn('SECOND_OK', out2)
+        self.assertEqual((barrier / 'a-tmp-survived').read_text(), '1')
+        self.assertTrue((barrier / 'b-blocked').exists(),
+                        'marker 发布期间第二写者必须被目标锁排除')
         self.assertTrue(recovery.media_cache_valid(self.target))
         self.assertEqual(list(self.target.parent.glob('.*.tmp')), [])
 
