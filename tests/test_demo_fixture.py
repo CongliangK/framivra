@@ -4,7 +4,8 @@
   - 合同/反例单测（无需 ffmpeg）：manifest 结构验证、严格 JSON（重复键/非有限数）、
     prepare 输出目录边界（已有目录/symlink 组件/仓内/HOME/缓存/缺父目录）、
     路径逃逸拒绝、preflight 只读且区分 prepare/render 依赖。
-  - 真实 FFmpeg 生成测试（VTX_TEST_FFMPEG）：真实 prepare 两份全新目录 → encoded
+  - 真实 FFmpeg 生成测试（VTX_TEST_DEMO_TOOLCHAIN=1 显式 opt-in，绑定冻结
+    工具链）：真实 prepare 两份全新目录 → encoded
     hash 相等 + 生产 validate exit0 + verify 以仓内冻结锚通过 + 篡改反例全拒。
 
 渲染/preview/QC/CEF 结论保持 UNRUN；本测试不做性能测量。
@@ -25,6 +26,14 @@ sys.path.insert(0, str(REPO))
 import scripts.demo as demo  # noqa: E402  (namespace package under repo root)
 
 FFMPEG = os.environ.get('VTX_TEST_FFMPEG') or shutil.which('ffmpeg')
+
+# 真实生成测试绑定冻结工具链（ffmpeg 8.1.3 双锚）。CI 的 ubuntu ffmpeg 永远
+# unsupported，故该类不注册进 CI strict ffmpeg 零 skip 批次，而是独立的
+# demo-toolchain 批次（scripts/ci_checks.py gate 'demo-toolchain'）：仅在
+# VTX_TEST_DEMO_TOOLCHAIN=1 且工具链与冻结清单匹配时执行；普通本地全量跑
+# 该类以 skip 形式列出（原因见装饰器），不会静默消失——ci_checks 的
+# media_inventory 源码扫描按 VTX_TEST_DEMO_TOOLCHAIN 锚点强制登记该类。
+DEMO_TOOLCHAIN = bool(os.environ.get('VTX_TEST_DEMO_TOOLCHAIN'))
 
 
 class ContractTests(unittest.TestCase):
@@ -118,12 +127,23 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(demo.sha256_file(demo.ROOT / rel), digest)
 
 
-@unittest.skipUnless(FFMPEG, 'set VTX_TEST_FFMPEG to ffmpeg executable')
+@unittest.skipUnless(DEMO_TOOLCHAIN, 'real-generation tests bind the frozen '
+                     'demo toolchain: run the strict demo-toolchain batch via '
+                     '`python3 scripts/ci_checks.py demo-toolchain` in a '
+                     'frozen-toolchain (ffmpeg 8.1.3 dual-anchor) environment')
 class RealGenerationTests(unittest.TestCase):
-    """真实 FFmpeg 生成：确定性、生产 validate、冻结锚 verify、篡改反例。"""
+    """真实 FFmpeg 生成：确定性、生产 validate、冻结锚 verify、篡改反例。
+
+    只在显式 opt-in（VTX_TEST_DEMO_TOOLCHAIN=1）时注册；本类一旦执行就
+    不允许 skip——工具链不匹配冻结清单是硬失败并给出可诊断原因。
+    """
 
     @classmethod
     def setUpClass(cls):
+        if not FFMPEG:
+            raise AssertionError(
+                'VTX_TEST_DEMO_TOOLCHAIN=1 requires ffmpeg on PATH or '
+                'VTX_TEST_FFMPEG (frozen demo toolchain environment)')
         cls.tmp = tempfile.mkdtemp(prefix='demo177-real-')
         cls.projects = []
         for profile in ('quick', 'standard'):
@@ -138,12 +158,14 @@ class RealGenerationTests(unittest.TestCase):
                 if result.returncode != 0:
                     stderr = result.stderr.decode('utf-8', 'replace')
                     if 'toolchain ffmpeg identity' in stderr:
-                        # 冻结清单外的工具链按 issue #177 F6 显式 skip，不算失败，
-                        # 也不把它静默当通过：确定性生成证据由冻结工具链环境提供。
-                        raise unittest.SkipTest(
-                            'demo fixture toolchain unsupported (ffmpeg/ffprobe '
-                            'identity != frozen manifest): real-generation '
-                            'tests skipped; %s' % stderr.strip())
+                        # 该批次已显式 opt-in 冻结工具链：不匹配=硬失败（不
+                        # skip，不静默当通过）。确定性生成证据只能由冻结工具
+                        # 链环境提供，原因随 stderr 一并给出以便诊断。
+                        raise AssertionError(
+                            'demo fixture toolchain unsupported: ffmpeg/ffprobe '
+                            'identity != frozen manifest (this batch requires '
+                            'the frozen 8.1.3 dual-anchor toolchain): %s'
+                            % stderr.strip())
                     raise AssertionError('%s prepare failed: %s'
                                          % (profile, result.stderr))
 

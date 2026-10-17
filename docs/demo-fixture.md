@@ -49,6 +49,28 @@ rgb24 全量指纹核验（F2 级证据，默认 verify 已含帧数/尺寸/帧�
 
 ## 测试与门禁
 
-tests/test_demo_fixture.py（合同+反例；真实生成测试挂 VTX_TEST_FFMPEG，进
-scripts/ci_checks.py strict ffmpeg inventory）。相关回归与门禁聚合见根
-README.md 与 AGENTS.md（链接不复述）。
+tests/test_demo_fixture.py 分两层，执行环境边界如下：
+
+- **合同/反例单测（ContractTests，8 例）**：无需 ffmpeg，随
+  `bash scripts/run_all_tests.sh` 与 CI 各 job 全量执行。
+- **真实生成测试（RealGenerationTests，5 例）**：本质上绑定冻结工具链
+  （ffmpeg 8.1.3 version_line+binary SHA256 双锚）。CI 的 ubuntu 发行版
+  ffmpeg 永远 unsupported，因此该类**不注册进 CI strict ffmpeg 零 skip
+  批次**（`scripts/ci_checks.py` gate `ffmpeg`），改为独立的
+  `demo-toolchain` 批次：仅当 `VTX_TEST_DEMO_TOOLCHAIN=1` 显式 opt-in 时
+  注册执行，且批次内零 skip——工具链不匹配冻结清单是硬失败（错误原因
+  随 demo.py stderr 一并给出），不是 skip。冻结工具链环境（本机
+  ffmpeg 8.1.3 双锚或云端冻结镜像）跑法：
+
+  ```bash
+  env python3 scripts/ci_checks.py demo-toolchain   # strict 零 skip 全量
+  ```
+
+  普通本地全量跑（无该 env）该类以 skip 形式逐项列出并给出原因，不会
+  静默消失：ci_checks 的 media_inventory 源码扫描以
+  `VTX_TEST_DEMO_TOOLCHAIN` 为锚点强制把该类登记进 `demo-toolchain`
+  批次清单（漏登记会在 static/媒体门前置检查报错）。
+
+两道契约均未放宽：demo.py 的工具链冻结锚不变，strict 门零 skip 不变；
+冲突在测试注册面解决——unsupported 环境不执行该类，而非允许它 skip。
+相关回归与门禁聚合见根 README.md 与 AGENTS.md（链接不复述）。
