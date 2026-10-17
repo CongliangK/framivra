@@ -35,9 +35,9 @@
 
 <a id="electron-route-status"></a>
 
-### 🔴 Electron：性能不合格 / 路线不采用（2026-10-17）
+### 🔴 Electron：性能不合格 / 实验封存 / 路线不采用（2026-10-17）
 
-**Electron gfx 路线拒绝生产采用，后续不再考虑或继续性能优化；保留实现、测试与复现入口。** 这是用户基于性能结果作出的路线决策，功能验证或合并不改变此结论，也不削弱正确性门。实现入口见 [Electron 实验说明](../experiments/gfx_electron_worker/README.md)；全片功能证据与提交验收记录由 [PR #175](https://github.com/CongliangK/framivra/pull/175) 承载。
+**Electron gfx 实验正式封存，拒绝生产采用；停止开发、优化与整片验证，保留实现、测试历史证据与复现入口。** 用户基于性能结果终止本轮尝试；整片未完成、未生成完整成片，不要求补验。此决定不削弱正确性门。实现入口见 [Electron 实验说明](../experiments/gfx_electron_worker/README.md)；[PR #175](https://github.com/CongliangK/framivra/pull/175) 承载封存与提交记录，不代表全片验证成功。
 
 性能依据：未集成的 decoder + encode ackyield 组合 POC，在新鲜同机、单 worker、同三份真实 HTML、1920×1080、帧 30/60/90、两轮配对口径下，aggregate 耗时 **8.430915s / 新鲜 CEF 6.355430s = 1.326569**，超过约定准入上限 **1.25**，判定 **FAIL**。这是组合 POC 的测量，不能作为最终合并源码的性能测量或全片外推。原始报告：外部证据根 `_alpha-evidence-20261016/electron-perf-combined-decoder-yield-20261017-codex/REPORT.md`，SHA-256 `012eef5a9a05b04a8ca33ff0360f5ddb9f0ebe1dffa49c2448d41893c0aab9c5`。
 

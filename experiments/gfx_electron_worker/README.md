@@ -1,6 +1,6 @@
 # gfx_electron_worker — Electron OSR 最小宿主（#112 / ELEC-01，路线 B 跟踪锚点）
 
-> **[🔴 性能不合格 / 路线不采用](../../docs/DEV.md#electron-route-status)**：路线决策与性能依据见该唯一状态记录；以下保留实现与复现说明。
+> **[🔴 性能不合格 / 实验封存 / 路线不采用](../../docs/DEV.md#electron-route-status)**：封存决定、整片未完成状态与性能依据见该唯一状态记录；以下仅保留实现与复现说明。
 
 GFX 离屏渲染双路线战役**路线 B（Electron Offscreen Rendering）**起点交付物：以
 最小 JS/Node 代码量验证 Electron OSR 的无头可运行性——离屏加载一页 gfx 帧
@@ -53,8 +53,7 @@ B0 是默认软件输出；B1 选项仅供独立探针复现。资源有界为�
 env VTX_TEST_ELECTRON=1 python3 -m unittest tests.test_electron_integration experiments.gfx_electron_worker.test_navigation experiments.gfx_electron_worker.test_page_errors experiments.gfx_electron_worker.test_promise_checkpoints -v
 ```
 
-公共全链命令预演（零写态；真实全片执行须由主控授权指定验收副本、先隔离旧 cache/out，
-然后显式去掉 `--dry-run`；全片验收记录见上述状态记录所指 PR）：
+公共全链命令预演（零写态，仅保留接口示例；封存后不再执行整片验证）：
 
 ```bash
 env VTX_GFX=electron VTX_ELECTRON_MODE=b0 VTX_GFX_CACHE_NS=electron_alpha_fresh \
