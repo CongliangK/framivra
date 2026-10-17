@@ -24,6 +24,22 @@ class ElectronRenderError(RuntimeError):
     """Explicit backend cannot start or cannot attest its output; never fallback."""
 
 
+def expected_request(html_path, outdir, frames, width, height, run_id, *, mode, output, timeout_s):
+    """Build the host job from caller-owned inputs, never from saved receipts."""
+    page, directory = Path(html_path).resolve(strict=True), Path(outdir).absolute()
+    return {"run_id": run_id, "page": str(page), "out_dir": str(directory),
+            "result": str(directory / ".electron" / run_id / "result.json"),
+            "width": width, "height": height, "frames": list(frames),
+            "timeout_ms": int(timeout_s * 1000), "mode": mode, "output": output,
+            "source_sha256": hashlib.sha256(page.read_bytes()).hexdigest()}
+
+
+def frame_url(html_path, frame):
+    # Node pathToFileURL + URL.searchParams.set('f', String(frame)), on Linux.
+    from urllib.parse import quote
+    return 'file://' + quote(str(Path(html_path).resolve(strict=True)), safe="/!$&'()*+,-.:;=@_~") + f'?f={frame}'
+
+
 def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
                 frames=None, ctx=None, timeout_s=15, electron_path=None,
                 mode="b0", output="electron_native_topng", progress=None):
@@ -64,10 +80,8 @@ def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
     evidence = outdir / ".electron" / run_id
     evidence.mkdir(parents=True)
     result_path = evidence / "result.json"
-    job = {"run_id": run_id, "page": str(page), "out_dir": str(outdir),
-           "result": str(result_path), "width": width, "height": height,
-           "frames": requested, "timeout_ms": int(timeout_s * 1000),
-           "mode": mode, "output": output}
+    job = expected_request(page, outdir, requested, width, height, run_id,
+                           mode=mode, output=output, timeout_s=timeout_s)
     (evidence / "request.json").write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
     started = time.monotonic()
 
@@ -115,7 +129,9 @@ def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
         try:
             reason = png_invalid_reason(target, width=width, height=height)
             digest = hashlib.sha256(target.read_bytes()).hexdigest()
-            if reason or digest != receipt.get("sha256") or receipt.get("path") != output:
+            if (reason or digest != receipt.get("sha256") or receipt.get("path") != output
+                    or receipt.get("url") != frame_url(page, f)
+                    or receipt.get("output") != str(target) or target.resolve() != target):
                 errors[str(f)] = f"output_verification:{reason or 'receipt mismatch'}"
                 continue
         except OSError as exc:

@@ -68,6 +68,7 @@ class IntegrationGates(unittest.TestCase):
             target = d / f'f{f:04d}.png'
             target.write_bytes(png(192, 96, value=f))
             receipts.append(dict(frame=f, path=gfx_backend.OUTPUT,
+                                 url=Path(html).resolve().as_uri() + f'?f={f}', output=str(target.resolve()),
                                  page_error_fence_passed=True, baseline_veto_passed=True,
                                  png_semantics_passed=True, sha256=hashlib.sha256(target.read_bytes()).hexdigest()))
         raw = dict(schema='vtx.electron.navigation/1', run_id=run_id, mode='N', raster_mode='b0',
@@ -79,6 +80,11 @@ class IntegrationGates(unittest.TestCase):
                   rendered=len(frames), exit_code=0, requested_backend='electron', effective_backend='electron',
                   failed=[], errors={}, path_counts={gfx_backend.OUTPUT: len(frames), 'failed': 0},
                   page_error_gate=raw['page_error_gate'], page_errors=raw['page_errors'])
+        job = dict(run_id=run_id, page=str(Path(html).resolve()), out_dir=str(d.resolve()),
+                   result=str(evidence.resolve() / 'result.json'), width=192, height=96, frames=frames,
+                   timeout_ms=int(kw['timeout_s'] * 1000), mode=kw['mode'], output=kw['output'],
+                   source_sha256=hashlib.sha256(Path(html).read_bytes()).hexdigest())
+        (evidence / 'request.json').write_text(json.dumps(job))
         (evidence / 'result.json').write_text(json.dumps(raw))
         (evidence / 'adapter-result.json').write_text(json.dumps(st))
         return st
@@ -163,6 +169,70 @@ class IntegrationGates(unittest.TestCase):
                 with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
             p.write_bytes(original)
         self.assertEqual(len(resolve_frames(self.c, self.cl)), 3)
+
+    def test_current_caller_rejects_forged_provenance_readonly_and_producer(self):
+        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        cases = [
+            ('result.json', lambda o: o['frames'][0].update(url='file:///unrelated-source.html?f=0')),
+            ('result.json', lambda o: o['frames'][0].update(output='/unrelated/f0000.png')),
+            ('request.json', lambda o: o.update(page='/unrelated-source.html')),
+            ('request.json', lambda o: o.update(mode='b1', timeout_ms=500)),
+        ]
+        self.run_gfx()
+        record = json.loads((self.d / gfx_cli.COMPLETE_FILE).read_text())
+        ev = self.d / '.electron' / record['render_runs'][0]['run_id']
+        for name, change in cases:
+            with self.subTest(phase='readonly', name=name, change=change):
+                p = ev / name; original = p.read_bytes()
+                obj = json.loads(original); change(obj); p.write_text(json.dumps(obj))
+                try:
+                    with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
+                finally: p.write_bytes(original)
+        for name, change in cases:
+            with self.subTest(phase='producer', name=name, change=change):
+                (self.d / gfx_cli.COMPLETE_FILE).unlink(missing_ok=True)
+                def broken(html, d, n, **kw):
+                    st = self.fake_render(html, d, n, **kw)
+                    p = Path(st['evidence_dir']) / name
+                    obj = json.loads(p.read_text()); change(obj); p.write_text(json.dumps(obj))
+                    return st
+                with self.assertRaises(SystemExit): self.run_gfx(broken)
+                self.assertFalse((self.d / gfx_cli.COMPLETE_FILE).exists())
+
+    def test_combined_external_binding_and_missing_context_fail_closed(self):
+        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        from vtx.gfx_electron import ElectronRenderError
+        self.run_gfx()
+        marker = json.loads((self.d / gfx_cli.COMPLETE_FILE).read_text())
+        run = marker['render_runs'][0]; ev = self.d / '.electron' / run['run_id']
+        paths = [ev / n for n in ('request.json', 'result.json', 'adapter-result.json')]
+        original = [p.read_bytes() for p in paths]
+        request, raw, adapter = [json.loads(b) for b in original]
+        # Receipts agree with each other but NOT the real current source/settings.
+        request.update(page='/unrelated-source.html', mode='b1', timeout_ms=500)
+        raw['frames'][0]['url'] = 'file:///unrelated-source.html?f=0'
+        raw['raster_mode'] = adapter['raster_mode'] = 'b1'
+        for p, obj in zip(paths, (request, raw, adapter)): p.write_text(json.dumps(obj))
+        try:
+            with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
+        finally:
+            for p, b in zip(paths, original): p.write_bytes(b)
+        adapter = json.loads(original[2])
+        with self.assertRaises(ElectronRenderError):
+            gfx_electron_stage.require_result(adapter, run['frames'], self.d, 192, 96)
+        self.assertIsNone(gfx_electron_stage.cached_runs(self.d, 3, self.d.name, 192, 96,
+                                                       gfx_backend.identity(), hygiene.gfx_cache_ns()))
+        # Valid bytes behind a symlink are still not producer evidence.
+        for p in [*paths, self.d / 'f0000.png', self.d / gfx_cli.COMPLETE_FILE]:
+            with self.subTest(symlink=p.name):
+                b = p.read_bytes(); target = self.root / ('symlink-target-' + p.name)
+                target.write_bytes(b)
+                self.assertTrue(p.resolve().is_relative_to(self.root.resolve()))
+                p.unlink(); p.symlink_to(target)
+                try:
+                    with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
+                finally:
+                    self.assertTrue(p.is_symlink()); p.unlink(); p.write_bytes(b)
 
     def test_strict_electron_rejected_before_launch_or_publication(self):
         self.c.tl['project']['gfx_dependency_policy'] = 'strict'

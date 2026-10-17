@@ -8,11 +8,11 @@ from pathlib import Path
 
 from . import events, fstxn, gfx_cli
 from .gfx_backend import OUTPUT, electron_config, identity
-from .gfx_electron import PAGE_ERROR_GATE, ElectronRenderError, render_page
+from .gfx_electron import PAGE_ERROR_GATE, ElectronRenderError, expected_request, frame_url, render_page
 from .hygiene import gfx_cache_ns, gfx_dir, gfx_key, manifest_record
 
 
-def require_result(st, frames, outdir, width, height):
+def require_result(st, frames, outdir, width, height, *, expected_html=None, expected_config=None):
     """Require this invocation's complete adapter AND worker receipts, not old PNGs."""
     def reject(reason):
         detail = {k: st.get(k) for k in ("run_id", "evidence_dir", "exit_code", "failed")} if isinstance(st, dict) else st
@@ -33,6 +33,28 @@ def require_result(st, frames, outdir, width, height):
             or st.get("page_error_gate") != PAGE_ERROR_GATE):
         reject("adapter status/backend/path/count/error gate")
     try:
+        if expected_html is None or expected_config is None:
+            reject("missing caller source/settings")
+        binary, mode, output, timeout = expected_config
+        if mode != 'b0' or output != OUTPUT:
+            reject("unsupported caller settings")
+        outdir = Path(outdir).absolute()
+        evidence = outdir / '.electron' / run_id
+        if (not frames or any(type(f) is not int or f < 0 for f in frames)
+                or frames != sorted(set(frames))):
+            reject("invalid caller frames")
+        # Reject aliases/escapes at every evidence and PNG path, not just the
+        # marker. resolve() equality also catches symlinked parent directories.
+        for p in [outdir, evidence, *(evidence / name for name in
+                  ('request.json', 'adapter-result.json', 'result.json'))]:
+            if p.resolve(strict=True) != p:
+                reject("symlink/path escape")
+        request = json.loads((evidence / 'request.json').read_text(encoding='utf-8'))
+        expected = expected_request(expected_html, outdir, frames, width, height, run_id,
+                                    mode=mode, output=output, timeout_s=timeout)
+        # JSON type-exact comparison: false/0 and 192.0/192 are not the same job.
+        if json.dumps(request, sort_keys=True) != json.dumps(expected, sort_keys=True):
+            reject("request differs from current caller source/settings/run/paths/frames")
         saved = json.loads((evidence / "adapter-result.json").read_text(encoding="utf-8"))
         raw = json.loads((evidence / "result.json").read_text(encoding="utf-8"))
         if saved != st:
@@ -52,7 +74,10 @@ def require_result(st, frames, outdir, width, height):
             reject("missing/duplicate/out-of-order frame receipt")
         for r in receipts:
             p = Path(outdir) / f"f{r['frame']:04d}.png"
-            if (r.get("path") != OUTPUT or r.get("page_error_fence_passed") is not True
+            if (type(r.get('frame')) is not int or p.resolve(strict=True) != p
+                    or r.get('url') != frame_url(expected_html, r['frame'])
+                    or r.get('output') != str(p)
+                    or r.get("path") != OUTPUT or r.get("page_error_fence_passed") is not True
                     or r.get("baseline_veto_passed") is not True or r.get("png_semantics_passed") is not True
                     or gfx_cli.png_invalid_reason(p, width=width, height=height)
                     or r.get("sha256") != hashlib.sha256(p.read_bytes()).hexdigest()):
@@ -64,15 +89,20 @@ def require_result(st, frames, outdir, width, height):
             "path_counts": st["path_counts"], "versions": st.get("versions", {})}
 
 
-def cached_runs(d, n, key, width, height, backend, ns):
+def cached_runs(d, n, key, width, height, backend, ns, *, expected_html=None, expected_config=None):
     """Unlike legacy CDP, unmarked PNGs can NEVER be promoted to Electron success."""
     try:
-        record = json.loads((d / gfx_cli.COMPLETE_FILE).read_text(encoding="utf-8"))
+        d = Path(d).absolute()
+        marker = d / gfx_cli.COMPLETE_FILE
+        if (expected_html is None or expected_config is None
+                or d.resolve(strict=True) != d or marker.resolve(strict=True) != marker):
+            return None
+        record = json.loads(marker.read_text(encoding="utf-8"))
         runs = record["render_runs"]
         if (record.get("schema") != 1 or record.get("backend_identity") != backend
                 or record.get("backend_ns") != ns or not runs
                 or not isinstance(record.get("sha256"), list) or len(record["sha256"]) != n
-                or sorted(f for r in runs for f in r["frames"]) != list(range(n))
+                or [f for r in runs for f in r["frames"]] != list(range(n))
                 or any(r.get("requested_backend") != "electron" or r.get("effective_backend") != "electron"
                        or not re.fullmatch(r"[a-f0-9]{32}", r.get("run_id", "")) for r in runs)):
             return None
@@ -84,7 +114,8 @@ def cached_runs(d, n, key, width, height, backend, ns):
         for run in runs:
             evidence = d / '.electron' / run['run_id']
             adapter = json.loads((evidence / 'adapter-result.json').read_text(encoding='utf-8'))
-            if require_result(adapter, run['frames'], d, width, height) != run:
+            if require_result(adapter, run['frames'], d, width, height,
+                              expected_html=expected_html, expected_config=expected_config) != run:
                 return None
         return runs
     except (OSError, ValueError, TypeError, KeyError, AttributeError, ElectronRenderError):
@@ -107,7 +138,8 @@ def render_stage(c, split_page):
             if d in seen:
                 continue
             seen.add(d)
-            runs = cached_runs(d, n, key, c.w, c.h, backend, ns)
+            runs = cached_runs(d, n, key, c.w, c.h, backend, ns,
+                               expected_html=c.root / cl['src'], expected_config=(binary, mode, output, timeout))
             if runs:
                 events.cache_hit(c, 'cached_runs', frames=[0, n])
                 all_runs.extend(runs)
@@ -140,7 +172,8 @@ def render_stage(c, split_page):
                 st = render_page((c.root / cl["src"]).resolve(), d, n, width=c.w, height=c.h,
                                  frames=frames, ctx=c, electron_path=binary, mode=mode,
                                  output=output, timeout_s=timeout)
-                return require_result(st, frames, d, c.w, c.h)
+                return require_result(st, frames, d, c.w, c.h, expected_html=c.root / cl['src'],
+                                      expected_config=(binary, mode, output, timeout))
             with observation.scope():
                 return observation.attempt(render_and_verify)
 

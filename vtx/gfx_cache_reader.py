@@ -47,7 +47,9 @@ def resolve_frames(c, clip):
     from .gfx_backend import identity
     if selected() == 'electron':
         from .gfx_electron_stage import cached_runs
-        if cached_runs(directory, n, key, c.w, c.h, identity(), namespace) is None:
+        from .gfx_backend import electron_config
+        if cached_runs(directory, n, key, c.w, c.h, identity(), namespace,
+                       expected_html=c.root / clip['src'], expected_config=electron_config()) is None:
             raise GfxCacheError(f'Electron gfx 完成记录/身份/producer 回执无效: {directory}')
     elif legacy or namespace or marker.exists() or dependency_digest is not None:
         # inspect_page's second result also detects absent/malformed records,
