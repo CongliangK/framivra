@@ -24,8 +24,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# 已知路径型键（自动 ~ 展开；与 config.example.json 的路径型键同步维护）
-PATH_KEYS = ("asr.python", "asr.model_dir", "asr.aligner_dir", "asr.ime_root",
+# 已知路径型键（自动 ~ 展开；与 config.example.json 的路径型键同步维护）。
+# asr.ime_root 已废除（issue #141：ASR 与输入法彻底解耦），不再收录。
+PATH_KEYS = ("asr.python", "asr.model_dir", "asr.aligner_dir",
              "tts.repo", "tts.python", "tts.voice_ref", "tts.edge_bin",
              "bgm.repo", "bgm.cli")   # P6：bgm-render 插件 CLI 解析的两路径键
 

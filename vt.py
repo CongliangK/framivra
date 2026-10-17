@@ -293,7 +293,35 @@ def cmd_init(a):
     # 路径型键已 ~ 展开）。asr/imgen 探测为 config_key 型（v2 §5.1 裁定：废除
     # spec_from_file_location 复用，P2 各 app 落实探针子命令后改走 health.command）。
     lc = _pcfg.load_config()
-    # asr：读 config 判断（模型根/对齐器/解释器）+ sidecar HTTP 探测
+    # asr：读 config 判断（模型根/对齐器/解释器）+ sidecar HTTP 探测。
+    # issue #141：先过独立性校验（旧键 VT_ASR_IME_ROOT/asr.ime_root 拒绝、
+    # base_url 不得指向输入法端口 18081）——校验失败即 fail-closed，不发请求。
+    sys.path.insert(0, str(ROOT / "apps" / "asr"))
+    try:
+        import independence as _asr_ind    # noqa: E402（ASR 独立性单一接口）
+    except ImportError:
+        # pip 安装面不含 apps/（sdist 排除）：退化为最小内联校验（语义同
+        # independence.py，home 在彼处；apps/ 存在时一律走单一接口防漂移）。
+        class _AsrIndShim:
+            class AsrIndependenceError(RuntimeError):
+                pass
+
+            @staticmethod
+            def preflight_config(cfg):
+                if os.environ.get("VT_ASR_IME_ROOT"):
+                    raise _AsrIndShim.AsrIndependenceError(
+                        "环境变量 VT_ASR_IME_ROOT 已废除（ASR 与语音输入法彻底解耦）：请 unset 后重试")
+                if isinstance(cfg, dict) and isinstance(cfg.get("asr"), dict) \
+                        and cfg["asr"].get("ime_root") is not None:
+                    raise _AsrIndShim.AsrIndependenceError(
+                        "配置键 asr.ime_root 已废除（ASR 与语音输入法彻底解耦）：请从 config 删除该键")
+
+            @staticmethod
+            def validate_base_url(base_url):
+                if base_url and ":18081" in str(base_url).rsplit("/", 2)[-1]:
+                    raise _AsrIndShim.AsrIndependenceError(
+                        "asr.base_url 指向端口 18081（语音输入法 sidecar 专用）——禁止复用；默认 18085")
+        _asr_ind = _AsrIndShim
     am = _pcfg.cfg_get(lc, "asr.model_dir", None)
     am_dir = Path(am) if am else None
     rec("asr_model", bool(am_dir and am_dir.is_dir()),
@@ -308,10 +336,14 @@ def cmd_init(a):
         str(ap_path) if ap_path and ap_path.is_file() else "未配置 asr.python（qwen-asr 解释器；bash apps/asr/init.sh）")
     asr_base = _pcfg.cfg_get(lc, "asr.base_url", "http://127.0.0.1:18085")
     try:
+        _asr_ind.preflight_config(lc)
+        _asr_ind.validate_base_url(str(asr_base))
         req = urllib.request.Request(str(asr_base).rstrip("/") + "/health", method="GET")
         with urllib.request.urlopen(req, timeout=0.5) as hr:
             h = json.loads(hr.read().decode("utf-8"))
         rec("asr_sidecar", True, f"ok model={h.get('model', '?')}")
+    except _asr_ind.AsrIndependenceError as e:
+        rec("asr_sidecar", False, f"独立性校验失败（issue #141 禁止复用输入法）：{e}")
     except Exception:
         rec("asr_sidecar", False, f"未运行（{asr_base}；python3 apps/asr/asr_cli.py sidecar start）")
     # tts：IndexTTS-2.5 repo（checkpoints 五件齐）+ 解释器 + 音色参考 + edge 兜底
