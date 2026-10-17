@@ -1,0 +1,33 @@
+{
+  "profile": "quick",
+  "version": 1,
+  "benchmark_id": "framivra-standard-demo",
+  "summary": "1080p30 × 90 帧最小工程输入；复用 templates/skill-demo 的 testsrc2+sine 生成法、timeline 结构与 gfxA 页面（本目录文件为其冻结拷贝，来源不改）",
+  "provenance": {
+    "timeline_source": "templates/skill-demo/timeline.json",
+    "gfx_source": "templates/skill-demo/gfxA.html",
+    "generation_method": "templates/skill-demo/gen_fixture.sh（testsrc2+sine，参数见 benchmark manifest）"
+  },
+  "frames": 90,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "media": {
+    "v01.mp4": {
+      "kind": "lavfi-testsrc2+sine",
+      "frames": 90,
+      "audio": "440Hz sine, 48kHz stereo aac"
+    }
+  },
+  "cache_dependencies": ["v01.mp4", "gfxA.html"],
+  "coverage": {
+    "required": [
+      "timeline 结构复用（aroll+gfx 双轨/字幕/voice+bed 双音轨）",
+      "帧驱动 JS gfx 页（?f= 纯函数，含淡入淡出与进度条）",
+      "CJK 字幕文本",
+      "生产 validate 通过"
+    ],
+    "optional": []
+  },
+  "unrun": ["render", "preview", "qc", "cef", "visual"]
+}

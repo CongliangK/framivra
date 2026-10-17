@@ -1,0 +1,53 @@
+{
+  "profile": "standard",
+  "version": 1,
+  "benchmark_id": "framivra-standard-demo",
+  "summary": "1080p30 × 360 帧标准工程输入：两段 180 帧普通视频段、跨段字幕、双 gfx 页（帧驱动 canvas + 静态 DOM）、CJK/透明/低 alpha；结构自 tests/run_e2e.py 适配",
+  "provenance": {
+    "structure_source": "tests/run_e2e.py（两源/跨段字幕/双 gfx 页）",
+    "gfx_canvas_source": "tests/run_e2e.py canvas 页适配（帧驱动铁律重写）",
+    "gfx_dom_source": "tests/run_e2e.py DOM 页适配（静态区间+低 alpha+CJK+SVG）"
+  },
+  "frames": 360,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "segments": [{"frames": 180, "source": "a"}, {"frames": 180, "source": "b"}],
+  "media": {
+    "a.mp4": {"kind": "lavfi-color+drawbox+sine", "frames": 180, "audio": "330Hz sine, 48kHz stereo aac"},
+    "b.mp4": {"kind": "lavfi-color+drawbox+sine", "frames": 180, "audio": "550Hz sine, 48kHz stereo aac"}
+  },
+  "fonts": {
+    "fonts/NotoSansSC-VF.ttf": {
+      "family": "Noto Sans SC",
+      "license": "OFL-1.1（同目录 OFL.txt 全文）",
+      "source_url": "https://github.com/google/fonts/tree/main/ofl/notosanssc",
+      "upstream_sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da"
+    }
+  },
+  "cache_dependencies": ["a.mp4", "b.mp4", "gfx/canvas.html", "gfx/dom.html", "fonts/NotoSansSC-VF.ttf"],
+  "clip_cache_dependencies": {
+    "gfx/canvas.html": "video_tracks[effects].clips[0]",
+    "gfx/dom.html": "video_tracks[effects].clips[1]"
+  },
+  "coverage": {
+    "required": [
+      "两段 180 帧普通视频段（aroll 跨源拼接，剪辑点=第 180 帧）",
+      "字幕横跨第 180 帧剪辑点（in=140 out=230）",
+      "双 gfx 页：帧驱动 canvas（动态）+ 无 JS 动画 DOM（静态区间）",
+      "CJK 文本（字幕+gfx 页）",
+      "透明 gfx 画布",
+      "低 alpha（DOM 面板 rgba(*,*,*,0.15)；canvas 填充 rgba(*,*,*,0.15)）",
+      "字体随包本地化（@font-face 包内文件，无外连）",
+      "音轨 bed(loop)+second 双轨",
+      "生产 validate 通过"
+    ],
+    "optional": ["SVG 内联图形（dom 页）"]
+  },
+  "edit_targets": [
+    {"target": "subtitles[1].text", "file": "timeline.json", "preview_frames": [140, 230], "note": "跨段字幕文本，供后续编辑切片预览消费"},
+    {"target": ".panel background alpha", "file": "gfx/dom.html", "preview_frames": [240, 300], "note": "低 alpha 样式修改目标"},
+    {"target": "canvas 面板平移速度 fi*3", "file": "gfx/canvas.html", "preview_frames": [30, 90], "note": "帧驱动动效参数修改目标"}
+  ],
+  "unrun": ["render", "preview", "qc", "cef", "visual"]
+}
