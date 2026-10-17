@@ -66,7 +66,7 @@ class Routing(unittest.TestCase):
         self.addCleanup(self.env.stop)
 
     def test_unknown_backend_fail_closed(self):
-        for value in ('electron', 'typo', ''):
+        for value in ('electron-typo', 'typo', ''):
             with mock.patch.dict(os.environ, VTX_GFX=value):
                 with self.assertRaisesRegex(ValueError, 'no silent fallback'):
                     Ctx(self.p)

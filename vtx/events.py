@@ -145,7 +145,7 @@ def _metadata(event, metadata, *, strict):
             elif key == 'page_id':
                 valid = _id(value)
             elif key == 'backend':
-                valid = value in ('cdp', 'cli', 'cef')
+                valid = value in ('cdp', 'cli', 'cef', 'electron')
             elif key == 'frame_range':
                 valid = value is None or _frame_range(value)
             elif key == 'frames':
@@ -159,7 +159,7 @@ def _metadata(event, metadata, *, strict):
             elif key == 'receipt_stage':
                 valid = isinstance(value, str) and value in STAGES
             elif key == 'validator':
-                valid = value in ('inspect_page', 'verify_frames', 'media_cache_valid', 'audio_cache_valid')
+                valid = value in ('inspect_page', 'verify_frames', 'cached_runs', 'media_cache_valid', 'audio_cache_valid')
             elif key == 'producer':
                 valid = value is None
             elif key == 'producer_reason':

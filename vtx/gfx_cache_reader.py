@@ -25,11 +25,13 @@ def resolve_frames(c, clip):
     """
     from .frame_source import png_source
     from .gfx_dependencies import resolve, digest, policy
+    from .gfx_backend import selected
+    if policy(c) == 'strict' and selected() != 'cdp':
+        raise GfxCacheError('strict dependencies require CDP; native/CLI caches unsupported')
     source = png_source(c, clip)
     namespace = gfx_cache_ns()
     key = source.directory.name
     directory = source.directory
-    from .gfx_backend import selected
     legacy = False
     # Only one explicitly derived old location, never discovery. An existing
     # canonical entry (including a broken symlink/non-directory) must fail on
@@ -42,7 +44,14 @@ def resolve_frames(c, clip):
     dependency_digest = digest(resolve(c, clip)) if policy(c) == 'strict' else None
     n = source.frame_count
     marker = directory / gfx_cli.COMPLETE_FILE
-    if legacy or namespace or marker.exists() or dependency_digest is not None:
+    from .gfx_backend import identity
+    if selected() == 'electron':
+        from .gfx_electron_stage import cached_runs
+        from .gfx_backend import electron_config
+        if cached_runs(directory, n, key, c.w, c.h, identity(), namespace,
+                       expected_html=c.root / clip['src'], expected_config=electron_config()) is None:
+            raise GfxCacheError(f'Electron gfx 完成记录/身份/producer 回执无效: {directory}')
+    elif legacy or namespace or marker.exists() or dependency_digest is not None:
         # inspect_page's second result also detects absent/malformed records,
         # unsupported schemas, missing hashes and mismatched backend_ns. Unlike
         # a renderer, a read-only consumer must not recertify any of these.
