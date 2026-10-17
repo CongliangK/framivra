@@ -224,7 +224,11 @@ def gfx_cache_ns() -> str:
     命名空间本身不入 gfx_key，同一后端页面在两个 ns 下同键异目录；CEF 身份
     另入键，详见 docs/cache-provenance.md）。非法值显式 ValueError：实验配置写错
     宁可大声失败，绝不静默回落正式缓存破坏隔离。"""
+    from .gfx_backend import selected
+    backend = selected()  # unknown selectors fail even on a warm cache
     ns = os.environ.get("VTX_GFX_CACHE_NS", "").strip()
+    if not ns and backend == "electron":
+        ns = "electron_b0"
     if not ns:
         from .gfx_backend import selected
         return "cef-alpha" if selected() == "cef" else ""

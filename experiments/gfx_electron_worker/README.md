@@ -1,12 +1,64 @@
 # gfx_electron_worker — Electron OSR 最小宿主（#112 / ELEC-01，路线 B 跟踪锚点）
 
+> **[🔴 性能不合格 / 实验封存 / 路线不采用](../../docs/DEV.md#electron-route-status)**：封存决定、整片未完成状态与性能依据见该唯一状态记录；以下仅保留实现与复现说明。
+
 GFX 离屏渲染双路线战役**路线 B（Electron Offscreen Rendering）**起点交付物：以
 最小 JS/Node 代码量验证 Electron OSR 的无头可运行性——离屏加载一页 gfx 帧
 （`gfxA.html?f=0`）→ 捕获首帧 PNG → 采集渲染环境真值（`process.versions` 三元组 +
 GPU 内部接口实测）→ 干净退出；严格锁定 Electron 版本；B0/B1 双模式独立进程启动；
-并接入 `vtx/proc_supervisor.py`（#103）的进程组卫生体系。**不接线 `vtx/` 生产
-gfx 管线**（那是后续工单的事）；下游熔断门 K1（单帧 IPC + PNG 编码 > 18ms 熔断）
+并接入 `vtx/proc_supervisor.py`（#103）的进程组卫生体系。此最小探针本身**不接线 `vtx/` 生产
+gfx 管线**（导航接线见下节）；下游熔断门 K1（单帧 IPC + PNG 编码 > 18ms 熔断）
 的测量也不在本目录范围。
+
+## Alpha 导航与管线接线（复现入口）
+
+入口为 [gfx_electron.py](../../vtx/gfx_electron.py) 的
+`render_page(html_path, outdir, n_frames, *, width=1920, height=1080, frames=None, ctx=None, timeout_s=15, electron_path=None, mode="b0", output="electron_native_topng", progress=None)`。
+`ctx` 必填，以现有监管器分配项目内 profile/账本并回收进程组。输出
+`f{frame:04d}.png`；结果含 `failed`、`path_counts`、requested/effective backend、
+run_id、退出码与逐次证据目录。**调用方必须把非空 failed 当硬失败**；不读取旧帧作成功证据，
+不静默回落。公共入口显式 `VTX_GFX=electron`；未知值硬失败，默认仍为 CDP，
+CDP/CLI 保留自身历史回落规则。配置由 [gfx_backend.py](../../vtx/gfx_backend.py) 校验：
+`VTX_ELECTRON_BIN` 指向可执行文件（默认本目录忽略区 node_modules 的 Electron），
+`VTX_ELECTRON_MODE=b0`、`VTX_ELECTRON_OUTPUT=electron_native_topng` 是本实现唯一支持组合；
+`VTX_ELECTRON_TIMEOUT` 为每帧秒数（默认 15）。B1/GPU/shared 路由不在本接线支持范围。
+`VTX_GFX_CACHE_NS` 默认 `electron_b0`，可显式隔离验收批次；缓存身份机制见
+[缓存与回执](../../docs/cache-provenance.md)。`VTX_GFX_SPLIT_FRAMES/SPLIT_MAX` 沿用分块规则，
+`VTX_GFX_PAGES` 控制 Electron 块并行数（默认 1）；每 worker 单帧串行。
+原 HTML、`?f=` 与 timeline 无需改写。空闲无需常驻服务；需可用的本地图形显示环境。
+
+[导航 worker](navigation_worker.mjs) 仅实现 Mode N：每帧全新 WebContents
+真实导航原 HTML 的 `?f=`，不依赖页面 opt-in API。页面世界无 Node/IPC/bridge；
+宿主在隔离世界检查 URL/尺寸、等待 load、fonts、image decode 及真实请求静默，
+再插入闭合 shadow canvas 的随机 nonce 标记。A/B/A/B 两个互斥位置的真实 OSR
+paint 逐次验证 nonce，排除延迟 paint；同位置重复及非遮挡全图字节相等后，
+从另一张已验证 compositor 图恢复原像素。另以插入标记前的无标记 snapshot
+做全图否决门，防 DOM 标记影响 `:last-child` 等页面选择器；该 snapshot
+**绝不作恢复源或目标帧绑定证据**。静态页以 invalidate 防饥饿。
+输出通过 createFromBitmap→toPNG，并对**整张 decoded RGBA**与原生 witness PNG
+交叉恢复结果逐字节对比，拒绝 alpha/颜色重建偏差；不猜邻行、不信 originals。
+
+仅 `electron_native_topng` 为本适配支持的输出，`bitmap_shared_encoder` 显式拒绝。
+本入口不依赖旧输出桥、原生助手或共享内存编码器；这些未准入新增件不在累计净 diff 中。
+B0 是默认软件输出；B1 选项仅供独立探针复现。资源有界为单帧串行、
+固定视口上限、请求数量上限、每帧硬超时；不用 SHM/助手队列。临时 PNG 同目录
+独占创建、fsync 后 rename，失败无新半帧。覆盖不到恶意页面的任意未来延迟脚本，
+四张见证是稳定性观测门而非任意 JavaScript 确定性的数学证明；不稳定/被遮挡页面保守拒绝。
+
+[专用测试](test_navigation.py) 默认仅运行契约/像素单元测试；真实测试显式 opt-in。
+下列命令**会写测试证据**（不渲视频、不访问原项目输出）；可设置
+`VTX_ELECTRON_EVIDENCE_DIR` 将完整 fixture/PNG/log/receipt 留在检出外：
+
+```bash
+env VTX_TEST_ELECTRON=1 python3 -m unittest tests.test_electron_integration experiments.gfx_electron_worker.test_navigation experiments.gfx_electron_worker.test_page_errors experiments.gfx_electron_worker.test_promise_checkpoints -v
+```
+
+公共全链命令预演（零写态，仅保留接口示例；封存后不再执行整片验证）：
+
+```bash
+env VTX_GFX=electron VTX_ELECTRON_MODE=b0 VTX_GFX_CACHE_NS=electron_alpha_fresh \
+    VTX_GFX_PAGES=2 python3 vtx/vtx.py -t /path/to/authorized-copy/timeline.json --dry-run all
+```
 
 ## 目录
 
@@ -24,7 +76,7 @@ gfx 管线**（那是后续工单的事）；下游熔断门 K1（单帧 IPC + P
 ## 版本锁策略
 
 - **锁定 `electron@44.7.2`（精确，禁 `^`/`~`）**，Chromium **152.0.7977.149**、
-  Node 22.x、V8 15.2.124.37-electron.0——2026-10-15 查证
+  Node 24.21.0（本机 probe 实测）、V8 15.2.124.37-electron.0——2026-10-15 查证
   `releases.electronjs.org/releases.json`：44.7.2 为最新 stable（2026-10-13 发布）。
 - **与宿主 Chrome 155 的对齐决策**（沿用 #108 `cef_lock.json` alignment_note 先例）：
   本机宿主 `google-chrome` stable=155；Electron stable 通道**没有** Chromium 155

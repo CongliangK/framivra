@@ -205,7 +205,12 @@ def _gfx(c: Ctx):
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
     from .gfx_backend import selected
-    backend = selected()  # unknown values (including electron) fail closed
+    backend = selected()
+    if strict and backend in ("cef", "electron"):
+        raise DependencyError("strict dependencies require CDP; Electron/CEF/CLI unsupported")
+    if backend == "electron":
+        from .gfx_electron_stage import render_stage
+        return render_stage(c, _split_page)
     use_cdp = backend == "cdp"
     cdp_mod = None
     if use_cdp:

@@ -33,6 +33,14 @@
 - **成片后期链路 GPU 化定版（2026-09-13，方案三：qc/gates 提速 + 4K 发布链并行化 + 4K 剔出关键路径）**：bench_p2 基准项目（voice-ime 同型 16746 帧/558.2s@1080p30，RTX 4080/32C64G）3 轮冷跑（cache 全清口径，`scripts/bench_cold.sh 3`）**验证链（validate→gates）中位 291.4s（三轮 289.57/291.41/310.01，波动 7%）vs 方案二定版 ≈299s（2026-09-12，voice-ime 口径）**；分阶段中位：串行头（validate→prepare）5.6 / 并行波（gfx 关键路径）164.8（163.1-183.6，波动 12%）/ video 尾 97.3 / post_loudness 2.6 / mux 4.4 / qc 8.6（rc=1 = 74/75，唯一 ✗ 为 c4_mini 已知探针假阴性）/ gates 8.1（五门全绿）。方案三目标核算：qc+gates 16.7s（预算 ≤30s，达标）、4K 单列 65.7s（预算 ≤80s，达标）；全链 240s 硬门槛未达，缺口归因＝gfx 波内 164.8s（方案一遗留：波内 seg/audio CPU 争用 + g6b 串行硬下限）+ video 尾 97.3s（方案二遗留：threads 解锁无收益）。4K 发布链（--with-4k 单列）：export_4k 65.68s（8 段并行 nvenc p4 = 段渲染 62.8s + concat 2.1s）、check_4k 14 项断言全过；画质门禁 vs x264 基线 10 帧抽样 PSNR min 49.45dB / SSIM min 0.993247 全达标（门 ≥42dB / ≥0.99）。qc/gates 2026-09-13 实测口径（对上方方案二条目 qc 11s、gates 未分项的演进订正）：qc 8.6s + gates 8.1s＝qc -vn + 响度回执共享 + G10 改 count_packets（§〇b 校准：G10 count_frames 26.6s→0.12s 为 gates 大头）+ G1 批量化的合成效果。〔出处：docs/plans-2026-09-11/方案三 §〇b＋方案三-验收证据/bench-正式3轮、bench-正式4k轮 summary〕
 - **真实项目冷渲染基线重锚（2026-09-19，R-07a）**：voice-ime 真实项目（16746f@30fps，HEAD 6388d6e，RTX 4080/32C64G）bench_cold 3 轮冷跑（cache 全清口径，`scripts/bench_cold.sh 3`）**验证链合计（validate→gates）中位 1117.8s（三轮 1119.19/1117.83/1116.81，波动 0.2%）**；分阶段中位：all_until_video 1096.15 / mux 4.1 / qc 10.2 / gates 7.3；三轮 qc 全 **76/76 exit 0**（voice-ime 无 c4_mini 假阴性，与 bench_p2 形态异）、脚本总出口 rc=0。**旧基准 291.4s（bench_p2 非真实项目口径）作废，仅存档对照**；本基线为创新轨 R-07b「三轮中位 ≤基线×0.8，同口径同标的」的继承口径。〔出处：perf 桌 records/2026-09-19-R07a-第二窗逐轮证据/DEST_final_20260919.log（sha256 ff1fc4ac…，与 cache 原件等值）＋机检执行单〕
 
+<a id="electron-route-status"></a>
+
+### 🔴 Electron：性能不合格 / 实验封存 / 路线不采用（2026-10-17）
+
+**Electron gfx 实验正式封存，拒绝生产采用；停止开发、优化与整片验证，保留实现、测试历史证据与复现入口。** 用户基于性能结果终止本轮尝试；整片未完成、未生成完整成片，不要求补验。此决定不削弱正确性门。实现入口见 [Electron 实验说明](../experiments/gfx_electron_worker/README.md)；[PR #175](https://github.com/CongliangK/framivra/pull/175) 承载封存与提交记录，不代表全片验证成功。
+
+性能依据：未集成的 decoder + encode ackyield 组合 POC，在新鲜同机、单 worker、同三份真实 HTML、1920×1080、帧 30/60/90、两轮配对口径下，aggregate 耗时 **8.430915s / 新鲜 CEF 6.355430s = 1.326569**，超过约定准入上限 **1.25**，判定 **FAIL**。这是组合 POC 的测量，不能作为最终合并源码的性能测量或全片外推。原始报告：外部证据根 `_alpha-evidence-20261016/electron-perf-combined-decoder-yield-20261017-codex/REPORT.md`，SHA-256 `012eef5a9a05b04a8ca33ff0360f5ddb9f0ebe1dffa49c2448d41893c0aab9c5`。
+
 ### 迭代回路基线（2026-09-12 实测，voice-ime v4.3 timeline 16746f@30fps，RTX 4080）〔出处：docs/plans-2026-09-11/方案五 阶段1-4 验收记录〕
 
 
