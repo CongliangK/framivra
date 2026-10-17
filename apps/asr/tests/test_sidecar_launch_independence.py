@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""sidecar 直接启动入口的路径独立性对抗测试（issue #141 红队 F1）。
+
+红队实测缺陷：`python3 apps/asr/sidecar_server.py --port 19001 --model <IME 锚点路径>`
+曾可成功启动——直接启动入口对 --model / --aligner / --models-root 零校验。
+本测试断言：任何 IME 锚定路径（含 symlink 逃逸、遗留注入面）在绑定/加载之前
+被拒绝（exit 非零、中文诊断），零监听零加载；干净路径不误伤。
+
+铁律：只用假 HOME 下的假 IME 目录（锚点在 $HOME 内展开），绝不触碰真实输入法、
+绝不向 18081 发任何字节（本组用例全部使用非 18081 的临时端口且拒绝发生在
+绑定之前）。
+"""
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ASR_DIR = Path(__file__).resolve().parent.parent
+SIDECAR = ASR_DIR / "sidecar_server.py"
+
+
+class SidecarLaunchIndependenceTest(unittest.TestCase):
+    """公共脚手架：假 HOME + 假 IME 锚点 + 子进程直启 sidecar。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="vtx-asr-sidecar-launch-")
+        self.home = Path(self.tmp.name) / "home"
+        self.home.mkdir()
+        # 假 IME 仓（默认锚点 ~/文档/01_活跃项目/type/ibus-voice-ime-github 在
+        # 假 HOME 内展开——绝不触碰真实 ~/文档）
+        self.ime = self.home / "文档/01_活跃项目/type/ibus-voice-ime-github"
+        self.ime_model = self.ime / "vendor/models/qwen3-asr/Qwen3-ASR-1.7B"
+        self.ime_model.mkdir(parents=True)
+        (self.ime_model / "model.safetensors").write_bytes(b"FAKE-IME-WEIGHT")
+        (self.ime_model / "config.json").write_text("{}", encoding="utf-8")
+        self.env = dict(os.environ)
+        self.env["HOME"] = str(self.home)
+        self.env.pop("VT_ASR_IME_ROOT", None)
+        self.env.pop("VTX_CONFIG", None)
+        for var in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+                    "PYTHONUSERBASE", "PYTHONNOUSERSITE"):
+            self.env.pop(var, None)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _free_port(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
+
+    def _launch(self, *extra, isolated=False):
+        argv = [sys.executable] + (["-I"] if isolated else []) + [str(SIDECAR)]
+        return subprocess.run(argv + list(extra), env=self.env,
+                              capture_output=True, text=True, timeout=60)
+
+    def _assert_rejected(self, r, what):
+        self.assertNotEqual(r.returncode, 0, "%s 未被拒绝（exit 0）" % what)
+        self.assertIn("已拒绝", (r.stderr + r.stdout), "%s 缺中文拒绝诊断" % what)
+        self.assertIn("语音输入法", (r.stderr + r.stdout), "%s 诊断未指向输入法" % what)
+
+    # ---------------------------------------------------------------- F1 负例
+
+    def test_direct_launch_model_ime_anchor_rejected(self):
+        """红队最小复现：--model IME 锚点路径直启 → exit 非零 fail-closed。"""
+        r = self._launch("--port", str(self._free_port()), "--model", str(self.ime_model))
+        self._assert_rejected(r, "--model IME 锚点")
+        self.assertEqual(r.returncode, 2)
+
+    def test_direct_launch_aligner_ime_anchor_rejected(self):
+        r = self._launch("--port", str(self._free_port()), "--model", "none",
+                         "--aligner", str(self.ime_model))
+        self._assert_rejected(r, "--aligner IME 锚点")
+
+    def test_direct_launch_models_root_ime_anchor_rejected(self):
+        r = self._launch("--port", str(self._free_port()),
+                         "--models-root", str(self.ime / "vendor/models"))
+        self._assert_rejected(r, "--models-root IME 锚点")
+
+    def test_direct_launch_symlink_escape_rejected(self):
+        """看似中立的目录 symlink 指进 IME → resolve 追真身后拒绝。"""
+        link = Path(self.tmp.name) / "looks-clean"
+        link.symlink_to(self.ime_model, target_is_directory=True)
+        r = self._launch("--port", str(self._free_port()), "--model", str(link))
+        self._assert_rejected(r, "--model symlink 逃逸")
+
+    def test_direct_launch_resolved_alias_symlink_rejected(self):
+        """--models-root 干净根内 Qwen3-ASR-1.7B 目录为指向 IME 的 symlink：
+        别名解析后的路径同样过独立性校验。"""
+        root = Path(self.tmp.name) / "clean-root"
+        (root / "Qwen3-ASR-0.6B").mkdir(parents=True)
+        (root / "Qwen3-ASR-0.6B/config.json").write_text("{}", encoding="utf-8")
+        (root / "Qwen3-ASR-1.7B").symlink_to(self.ime_model, target_is_directory=True)
+        r = self._launch("--port", str(self._free_port()),
+                         "--models-root", str(root), "--model", "1.7b")
+        self._assert_rejected(r, "解析后 symlink 逃逸")
+
+    def test_direct_launch_isolated_mode_rejected(self):
+        """init.sh/client 以 `python -I` 拉起（隔离模式无脚本目录入 sys.path）：
+        independence 按文件路径加载，拒绝仍生效。"""
+        r = self._launch("--port", str(self._free_port()), "--model", str(self.ime_model),
+                         isolated=True)
+        self._assert_rejected(r, "-I 隔离模式 --model IME 锚点")
+
+    # ---------------------------------------------------------------- 正例（不误伤）
+
+    def test_direct_launch_clean_model_once_health_ok(self):
+        """干净模型目录（假 HOME 内，非 IME）+ --once-health → 正常起停（exit 0），
+        证明拒绝只针对 IME 路径而非启动入口本身。"""
+        clean = self.home / ".local/share/framivra/asr/models/Qwen3-ASR-1.7B"
+        clean.mkdir(parents=True)
+        (clean / "config.json").write_text("{}", encoding="utf-8")
+        (clean / "model.safetensors").write_bytes(b"CLEAN")
+        r = self._launch("--port", str(self._free_port()),
+                         "--model", "1.7b", "--no-aligner", "--once-health")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("/health 自检通过", r.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

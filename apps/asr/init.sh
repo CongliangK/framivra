@@ -45,7 +45,10 @@ if [[ -n "${VT_ASR_IME_ROOT:-}" ]]; then
   echo "    请 unset VT_ASR_IME_ROOT 后重试；Framivra 专属资产用本脚本建立。" >&2
   exit 2
 fi
-CFG_IME="$(python3 - "$ROOT/config.local.json" <<'PY' 2>/dev/null || true
+# 生效配置文件（issue #141 红队 F3）：VTX_CONFIG 优先（与 vtx/pluginlib config
+# 统一加载语义一致），未设置时保持原行为读仓根 config.local.json。
+CFG_FILE="${VTX_CONFIG:-$ROOT/config.local.json}"
+CFG_IME="$(python3 - "$CFG_FILE" <<'PY' 2>/dev/null || true
 import json, sys
 try:
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))

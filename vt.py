@@ -51,6 +51,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -216,6 +217,47 @@ def _conda_env_py(env, hook):
 
 
 # ================================================================ init（原 init.py 全部语义）
+# issue #141 红队 F2：apps/asr 缺席（pip 安装面不含 apps/）时的最小降级 shim。
+# 语义单一 home=apps/asr/independence.py；此处必须逐条对齐，尤其 validate_base_url
+# 用 urlparse 端口判断（scheme/host/port）而非字符串包含——trailing slash、带路径、
+# 裸 host:port、大小写 scheme 一律不得漏拒；校验失败即 raise，调用方在发
+# GET /health 之前 fail-closed。tests/test_vt_asr_shim.py 守护漂移。
+_ASR_IME_PORT = 18081   # 与 independence.IME_PORT 同值（事实 home 在彼处）
+
+
+class _AsrIndShim:
+    class AsrIndependenceError(RuntimeError):
+        pass
+
+    @staticmethod
+    def preflight_config(cfg):
+        if os.environ.get("VT_ASR_IME_ROOT"):
+            raise _AsrIndShim.AsrIndependenceError(
+                "环境变量 VT_ASR_IME_ROOT 已废除（ASR 与语音输入法彻底解耦）：请 unset 后重试")
+        if isinstance(cfg, dict) and isinstance(cfg.get("asr"), dict) \
+                and cfg["asr"].get("ime_root") is not None:
+            raise _AsrIndShim.AsrIndependenceError(
+                "配置键 asr.ime_root 已废除（ASR 与语音输入法彻底解耦）：请从 config 删除该键")
+
+    @staticmethod
+    def validate_base_url(base_url):
+        if not base_url or not isinstance(base_url, str):
+            raise _AsrIndShim.AsrIndependenceError("asr.base_url 缺失或非字符串")
+        u = urlparse(base_url)
+        if u.scheme != "http" or not u.hostname:
+            raise _AsrIndShim.AsrIndependenceError(
+                "asr.base_url 必须是 http://host:port 形式：%s" % base_url)
+        try:
+            port = u.port or 80
+        except ValueError:
+            raise _AsrIndShim.AsrIndependenceError(
+                "asr.base_url 端口非法：%s" % base_url) from None
+        if port == _ASR_IME_PORT:
+            raise _AsrIndShim.AsrIndependenceError(
+                "asr.base_url 指向端口 %d（语音输入法 sidecar 专用）——禁止复用；默认 18085"
+                % _ASR_IME_PORT)
+
+
 def cmd_init(a):
     res, fail = {}, []
 
@@ -300,27 +342,8 @@ def cmd_init(a):
     try:
         import independence as _asr_ind    # noqa: E402（ASR 独立性单一接口）
     except ImportError:
-        # pip 安装面不含 apps/（sdist 排除）：退化为最小内联校验（语义同
-        # independence.py，home 在彼处；apps/ 存在时一律走单一接口防漂移）。
-        class _AsrIndShim:
-            class AsrIndependenceError(RuntimeError):
-                pass
-
-            @staticmethod
-            def preflight_config(cfg):
-                if os.environ.get("VT_ASR_IME_ROOT"):
-                    raise _AsrIndShim.AsrIndependenceError(
-                        "环境变量 VT_ASR_IME_ROOT 已废除（ASR 与语音输入法彻底解耦）：请 unset 后重试")
-                if isinstance(cfg, dict) and isinstance(cfg.get("asr"), dict) \
-                        and cfg["asr"].get("ime_root") is not None:
-                    raise _AsrIndShim.AsrIndependenceError(
-                        "配置键 asr.ime_root 已废除（ASR 与语音输入法彻底解耦）：请从 config 删除该键")
-
-            @staticmethod
-            def validate_base_url(base_url):
-                if base_url and ":18081" in str(base_url).rsplit("/", 2)[-1]:
-                    raise _AsrIndShim.AsrIndependenceError(
-                        "asr.base_url 指向端口 18081（语音输入法 sidecar 专用）——禁止复用；默认 18085")
+        # pip 安装面不含 apps/（sdist 排除）：退化为模块级最小 shim（语义同
+        # independence.py，home 在彼处）；apps/ 存在时一律走单一接口防漂移。
         _asr_ind = _AsrIndShim
     am = _pcfg.cfg_get(lc, "asr.model_dir", None)
     am_dir = Path(am) if am else None

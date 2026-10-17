@@ -63,6 +63,36 @@ def _log(msg):
     print("[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg), flush=True)
 
 
+def _independence():
+    """加载同目录 independence 模块（路径独立性单一接口，issue #141）。
+    sidecar 常以 `python -I sidecar_server.py` 拉起（隔离模式不把脚本目录加入
+    sys.path），故 import 失败时按文件路径直接加载；语义 home=independence.py。"""
+    try:
+        import independence  # noqa: F401
+        return independence
+    except ImportError:
+        import importlib.util
+        p = Path(__file__).resolve().parent / "independence.py"
+        spec = importlib.util.spec_from_file_location("asr_independence", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+
+def _reject_ime_paths(ind, pairs):
+    """[(path, what)] 逐项路径独立性校验（resolve 追真身，symlink 逃逸无效）；
+    任何一项落在 IME 锚点之下即打印中文诊断并返回 True（调用方 fail-closed 退出）。"""
+    for path, what in pairs:
+        if not path:
+            continue
+        try:
+            ind.check_path_independent(path, what)
+        except ind.AsrIndependenceError as exc:
+            print("✗ %s" % exc, file=sys.stderr)
+            return True
+    return False
+
+
 def ensure_venv_site():
     """venv 整体搬家自愈：venv 的 site-packages 不在 sys.path 时（IME venv 历史上
     从 ~/文档/type/ibus-voice-ime 移动过，pyvenv.cfg 记录旧路径致解析失联）显式补上。
@@ -585,6 +615,22 @@ def main():
         print("✗ 端口 %d 是语音输入法 sidecar 专用端口——任何情况下禁止绑定/复用；"
               "本项目 sidecar 默认 %d" % (IME_PORT, PORT_DEFAULT))
         return 2
+
+    # 路径独立性（issue #141 红队 F1，fail-closed）：显式 --model/--aligner/
+    # --models-root 任何落在 IME 锚点之下（resolve 追真身，symlink 逃逸无效）
+    # 一律拒绝退出——先于端口探测/资产解析/绑定/加载，单一接口=independence。
+    ind = _independence()
+    model_spec = (args.model or "").strip()
+    model_path_arg = model_spec \
+        if model_spec and model_spec != "auto" and ("/" in model_spec or os.sep in model_spec) \
+        else None
+    if _reject_ime_paths(ind, [
+        (args.models_root, "--models-root"),
+        (model_path_arg, "--model"),
+        (args.aligner if args.aligner not in ("auto", "none") else None, "--aligner"),
+    ]):
+        return 2
+
     import socket
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     occ = probe.connect_ex(("127.0.0.1", args.port))
@@ -621,6 +667,12 @@ def main():
         else:
             print("✗ 指定的 aligner 目录不存在：%s" % p)
             return 2
+
+    # 解析后路径同样过独立性校验（models-root/auto 别名解析出的目录若为指向
+    # IME 的 symlink，resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
+    if _reject_ime_paths(ind, [(model_path, "--model（解析后）"),
+                               (aligner_path, "--aligner（解析后）")]):
+        return 2
 
     _HOLDER = ModelHolder(model_path, aligner_path=aligner_path,
                           idle_timeout=args.idle_timeout, dtype=args.dtype,

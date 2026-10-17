@@ -121,6 +121,30 @@ no_calls
 rm -f "$TMP/repo/config.local.json"
 echo 'PASS: legacy config key asr.ime_root rejected'
 
+# 0c. VTX_CONFIG 指向的生效配置含 asr.ime_root → 迁移错误（exit 2），
+#     优先于仓根 config.local.json（issue #141 红队 F3），零探测零联网。
+printf '{"asr": {"ime_root": "/vtx-config/legacy-ime"}}\n' > "$TMP/vtx-config.json"
+export VTX_CONFIG="$TMP/vtx-config.json"
+run 2
+contains "$TMP/output" 'asr.ime_root 已废除'
+no_calls
+echo 'PASS: VTX_CONFIG effective config with asr.ime_root rejected'
+unset VTX_CONFIG
+
+# 0d. VTX_CONFIG 干净而仓根 config.local.json 含 asr.ime_root：遗留键检查读的是
+#     生效配置（VTX_CONFIG），不因仓根旧文件误伤（继续走后续探测汇总）。
+printf '{"asr": {"ime_root": "%s"}}\n' "$IME" > "$TMP/repo/config.local.json"
+printf '{"asr": {}}\n' > "$TMP/vtx-config.json"
+export VTX_CONFIG="$TMP/vtx-config.json"
+run 1
+if grep -q 'asr.ime_root 已废除' "$TMP/output"; then
+  echo 'FAIL: legacy check ignored VTX_CONFIG and read repo-root config' >&2; exit 1
+fi
+no_calls
+echo 'PASS: clean VTX_CONFIG takes precedence over stale repo-root legacy key'
+unset VTX_CONFIG
+rm -f "$TMP/repo/config.local.json"
+
 # 1. 无解释器：普通模式不建 venv、不调用任何联网工具，有中文指引和失败汇总；
 #    假 IME 资产在场也绝不回退（IME 解释器零调用）。
 run 1
