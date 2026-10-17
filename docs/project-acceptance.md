@@ -8,6 +8,7 @@ python3 -m vtx.acceptance --help
 python3 -m vtx.acceptance build --help
 python3 -m vtx.acceptance verify --help
 python3 scripts/acceptance_fixture.py --help
+python3 scripts/cpu_visual_fixture.py --help
 ```
 
 写操作：build 的两个位置参数为 timeline 文件、新建包目录。包目录父目录须已存在且可信；禁止覆盖、复用、符号链接、父级穿越和源项目内输出。输入只接受项目内相对普通文件。脚本 acceptance_fixture.py 的位置参数同样是新目录；它用公开的 testsrc2/sine 生成 2 秒 CPU 样例，然后走正式 Framivra all 至 mux、qc --strict，保留 anchor.json、verification.json 和真实包的 tamper-results.json（媒体、输入副本、manifest、保持 stat 的当前输入四类破坏负例）。不是 FFmpeg 直接生成最终交付件。失败日志也保留，不将失败包装为成功。
@@ -34,3 +35,11 @@ build 返回的 manifest_sha256 必须由接收方独立留存；verify 的必�
 依赖发现限于现有回执声明面；HTML 间接引用、系统字体、插件及外部资源闭包 unknown，self_contained 固定 false。仅证实声明输入的稳定性，不声称完整复现。源码 commit、脏工作树及内核文件摘要用于定位实际构建，不把脏树冒称纯 commit。
 
 外部摘要只锚定接收方所见字节，不能证明生产者诚实、日志真实或输入确实被渲染使用；没有签名、可信执行证明或 GPU 验收。输入/输出父目录须在执行期间静止可信；静态拒绝符号链接不等于抵抗恶意并发文件系统替换。新目录中断后保留未完成证据，不生成成功 manifest，不允许在原目录重试。
+
+## CPU 诊断图形 oracle（#91 子交付）
+
+`cpu_visual_fixture.py` 的位置参数是仓外可信父目录下的新目录（写操作，拒绝覆盖）。依赖测试环境现有 numpy/Pillow、FFmpeg/ffprobe；无字体下载、浏览器、模型或 GPU。场景是有意生成的深蓝背景、帧号、反向运动橙方块/青圆与测试音，不是用户作品。场景参数与冻结有损门槛唯一 home 为脚本常量；原始约定见 [#91 补充](https://github.com/CongliangK/framivra/issues/91#issuecomment-6208887352)。
+
+生成器只制作输入，最终正例仍由上述 #53 标准构建链产生。独立解析颜色/几何/帧号、同序 RGB 全帧差、所有滑动局部块和整数 PTS × 有理数 time_base 均逐帧检查。实际编码的乱序、重复运动帧、丢帧、前段反色、黑帧、局部损坏必须拒绝；重复静态背景区域是通过控制，先以无损 RGB 往返确认其解码字节与正例完全相同并通过同一 oracle，才计入故障拒绝结果；每个负例仅允许预期受损帧失败。合格控制的临时 RGB 可清理，源码映射、生成源/解码源/最终解码 RGB、逐帧报告、编码控制、命令、环境、哈希与失败证据保留。独占目录及执行预算随 plan.json 记录；中断目录不可复用。
+
+保：单视频/单音轨 CPU 诊断场景的独立 oracle 与真实负例；不保：任意项目视觉正确、HTML/透明叠加、GPU、客户端播放或像素精确。独立 report.json 不改通用包的 visual_content=unknown / accepted=false，不把有损相似性称作 Verified Exact，也不足以关闭 #91。真实矩阵在现有严格 FFmpeg CI 门注册，缺工具/依赖或跳过均不可算通过；普通单元测试仅显式启用 VTX_TEST_FFMPEG 时运行该矩阵。
