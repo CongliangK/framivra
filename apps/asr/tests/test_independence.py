@@ -275,6 +275,115 @@ class TestPathInjection(AdversarialBase):
         self.assertEqual(client.pick_model(cfg), str(d))
 
 
+class TestDirAssetAudit(AdversarialBase):
+    """红队四轮 N1/N1b/N4/N3 结构修法：目录级资产审计 verify_dir_assets
+    （摆脱权重文件名白名单——审计目录内每一个条目）。"""
+
+    IME_W = "vendor/models/qwen3-asr/Qwen3-ASR-1.7B/model.safetensors"
+
+    def _ime_weight(self):
+        return self.ime / self.IME_W
+
+    def test_n1_shard_symlink_into_ime_rejected(self):
+        # N1：index.json weight_map 指向的分片是 symlink→IME → 拒
+        d = Path(self.tmp.name) / "shard-sym"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}", encoding="utf-8")
+        (d / "model.safetensors.index.json").write_text(json.dumps(
+            {"metadata": {"total_size": 8},
+             "weight_map": {"model": "model-00001-of-00001.safetensors"}}),
+            encoding="utf-8")
+        (d / "model-00001-of-00001.safetensors").symlink_to(self._ime_weight())
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_dir_assets(str(d), "model", required=True)
+        self.assertIn("语音输入法", str(ctx.exception))
+        self.assert_ime_untouched()
+
+    def test_n1b_mixed_clean_single_and_symlink_shard_rejected(self):
+        # N1b：干净单文件 + 分片 symlink 并存（混放）→ 拒
+        d = Path(self.tmp.name) / "mixed"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}", encoding="utf-8")
+        (d / "model.safetensors").write_bytes(b"CLEAN")
+        (d / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "model-00001-of-00002.safetensors",
+                            "b": "model-00002-of-00002.safetensors"}}),
+            encoding="utf-8")
+        (d / "model-00001-of-00002.safetensors").write_bytes(b"CLEAN")
+        (d / "model-00002-of-00002.safetensors").symlink_to(self._ime_weight())
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_dir_assets(str(d), "model", required=True)
+        self.assertIn("语音输入法", str(ctx.exception))
+        self.assert_ime_untouched()
+
+    def test_n4_aligner_alias_weight_symlink_rejected(self):
+        # N4：aligner 权重别名（pytorch_model.bin/.pt）symlink→IME → 拒
+        for alias in ("pytorch_model.bin", "aligner.pt"):
+            d = Path(self.tmp.name) / ("alias-" + alias)
+            d.mkdir(parents=True)
+            (d / alias).symlink_to(self._ime_weight())
+            with self.assertRaises(independence.AsrIndependenceError) as ctx:
+                independence.verify_dir_assets(str(d), "aligner", required=False)
+            self.assertIn("语音输入法", str(ctx.exception))
+        self.assert_ime_untouched()
+
+    def test_n3_fifo_weight_rejected(self):
+        # N3：FIFO 权重（特殊文件）→ 拒
+        d = Path(self.tmp.name) / "fifo"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}", encoding="utf-8")
+        os.mkfifo(d / "model.safetensors")
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_dir_assets(str(d), "model", required=True)
+        self.assertIn("特殊文件", str(ctx.exception))
+
+    def test_config_symlink_into_ime_rejected(self):
+        # 借道：非权重小文件（config.json）symlink→IME → 拒
+        d = Path(self.tmp.name) / "cfg-sym"
+        d.mkdir(parents=True)
+        (d / "model.safetensors").write_bytes(b"CLEAN")
+        (d / "config.json").symlink_to(self._ime_weight())
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_dir_assets(str(d), "model", required=True)
+        self.assertIn("语音输入法", str(ctx.exception))
+        self.assert_ime_untouched()
+
+    def test_weight_map_escape_outside_dir_rejected(self):
+        # weight_map 指向目录外路径（../ 逃逸）→ 拒
+        d = Path(self.tmp.name) / "escape"
+        d.mkdir(parents=True)
+        (d / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"m": "../outside.safetensors"}}), encoding="utf-8")
+        (Path(self.tmp.name) / "outside.safetensors").write_bytes(b"OUT")
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_dir_assets(str(d), "model", required=True)
+        self.assertIn("目录外", str(ctx.exception))
+
+    def test_weight_map_missing_shard_rejected(self):
+        # weight_map 声明的分片缺失 → fail-closed 拒
+        d = Path(self.tmp.name) / "missing-shard"
+        d.mkdir(parents=True)
+        (d / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"m": "model-00001-of-00001.safetensors"}}),
+            encoding="utf-8")
+        with self.assertRaises(independence.AsrIndependenceError):
+            independence.verify_dir_assets(str(d), "model", required=True)
+
+    def test_clean_sharded_model_accepted(self):
+        # 正例：干净自建分片模型（index.json + 合法分片）→ 过
+        d = Path(self.tmp.name) / "clean-sharded"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}", encoding="utf-8")
+        (d / "tokenizer.json").write_text("{}", encoding="utf-8")
+        (d / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "model-00001-of-00002.safetensors",
+                            "b": "model-00002-of-00002.safetensors"}}),
+            encoding="utf-8")
+        (d / "model-00001-of-00002.safetensors").write_bytes(b"AAA")
+        (d / "model-00002-of-00002.safetensors").write_bytes(b"BBB")
+        independence.verify_dir_assets(str(d), "model", required=True)
+
+
 class TestEnvInjection(AdversarialBase):
     """F. PYTHONPATH/user-site 注入剥离 + 依赖来源验证。"""
 

@@ -665,17 +665,18 @@ def main():
             print("✗ 指定的 aligner 目录不存在：%s" % p)
             return 2
 
-    # 解析后路径同样过独立性+链接关系校验（红队 D1/D3：把 IME 权重文件硬链接或
-    # symlink 进"干净"目录——路径锚点查不到，必须逐权重文件 lstat；models-root/auto
-    # 别名解析出的 symlink 目录 resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
-    # 模型目录要求独立权重文件（check_weights=True：symlink/nlink>1/缺权重均拒绝）；
-    # aligner 目录对存在的权重文件做同样链接关系校验（不强制存在）。
+    # 解析后路径同样过独立性+链接关系校验（红队 D1/D3/N1/N1b/N4：把 IME 权重
+    # 文件硬链接或 symlink 进"干净"目录、分片/别名文件名——路径锚点与文件名
+    # 白名单均查不到，必须目录级逐条目 lstat+resolve；models-root/auto 别名解析
+    # 出的 symlink 目录 resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
+    # 模型目录要求独立权重承载形态（check_weights=True）；aligner 目录做同样
+    # 目录级审计（不强制存在）。
     try:
         ind.verify_model_dir(model_path, "--model（解析后）", check_weights=True)
         if aligner_path:
             resolved_aligner = ind.verify_model_dir(aligner_path, "--aligner（解析后）")
-            ind.verify_weight_links(resolved_aligner, "--aligner（解析后）",
-                                    required=False)
+            ind.verify_dir_assets(resolved_aligner, "--aligner（解析后）",
+                                  required=False)
     except ind.AsrIndependenceError as exc:
         print("✗ %s" % exc, file=sys.stderr)
         return 2

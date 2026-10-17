@@ -229,60 +229,149 @@ def verify_module_from_own_env(py_bin, module, what="解释器"):
 
 
 # ---------------------------------------------------------------- 模型资产（来源/链接关系）
+#
+# 红队四轮（N1/N1b/N4）判定：任何「权重文件名白名单」结构性不完备——分片
+# （model-*-of-*.safetensors）、aligner 别名（pytorch_model.bin/.pt/.ckpt）都不
+# 在白名单内。因此目录级审计不再枚举文件名，而是审计**目录内每一个条目**的
+# 链接关系与文件类型，另按 index.json 的 weight_map 展开分片逐一确认。
 
+#: 兼容保留（旧引用面）：权重文件名提示，仅用于诊断文案，不再作为枚举边界
 WEIGHT_FILES = ("model.safetensors", "model.safetensors.index.json")
+
+_INDEX_NAME = "model.safetensors.index.json"
+_SINGLE_WEIGHT_NAME = "model.safetensors"
+_WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".onnx")
+
+
+def _is_weight_name(name):
+    """按形态（而非固定白名单）识别权重承载文件名。"""
+    return (name == _INDEX_NAME or name == _SINGLE_WEIGHT_NAME
+            or name.endswith(_WEIGHT_SUFFIXES)
+            or ".safetensors." in name)   # 分片 model-00001-of-00001.safetensors 等
+
+
+def _in_ime_anchor(real):
+    for anchor in ime_anchor_roots():
+        if real == anchor or _is_relative_to(real, anchor):
+            return True
+    return False
+
+
+def _reject_entry(resolved_dir, what, name, reason):
+    raise AsrIndependenceError(
+        "%s 的 %s %s——已拒绝（任何情况下禁止借用输入法/他人权重）；"
+        "请独立下载（bash apps/asr/init.sh --download）" % (what, name, reason))
+
+
+def _audit_single_entry(d, what, name, is_weight):
+    """审计目录内一个条目（lstat 级）。违规 raise，正常返回 True（条目存在）。"""
+    f = Path(d) / name
+    try:
+        st = f.lstat()
+    except OSError as exc:
+        raise AsrIndependenceError(
+            "%s 的 %s 无法读取链接信息（%s）——fail-closed 已拒绝"
+            % (what, name, exc)) from None
+    import stat as _stat
+    if (_stat.S_ISFIFO(st.st_mode) or _stat.S_ISCHR(st.st_mode)
+            or _stat.S_ISBLK(st.st_mode) or _stat.S_ISSOCK(st.st_mode)):
+        _reject_entry(d, what, name, "是特殊文件（FIFO/设备/socket）")
+    if _stat.S_ISLNK(st.st_mode):
+        try:
+            real = f.resolve()
+        except OSError as exc:
+            raise AsrIndependenceError(
+                "%s 的 %s 符号链接无法解析（%s）——fail-closed 已拒绝"
+                % (what, name, exc)) from None
+        if _in_ime_anchor(real):
+            _reject_entry(d, what, name, "符号链接指向语音输入法资产（%s）" % real)
+        if is_weight:
+            _reject_entry(d, what, name, "是符号链接（指向 %s）" % real)
+        return True
+    if _stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+        # 保守：模型目录里合法多链接场景不存在，任何多链接常规文件都拒
+        _reject_entry(d, what, name, "硬链接数 %d>1（疑似借用输入法/他人权重）"
+                      % st.st_nlink)
+    return True
+
+
+def verify_dir_assets(resolved_dir, what, required=True):
+    """目录级资产链接审计（#141 五轮结构修法，取代文件名白名单）。
+
+    对目录内**每一个**条目：
+      - lstat：symlink → resolve 追真身，落入 IME 锚点即拒；权重承载形态的
+        symlink 不论真身一律拒（D3/N4）；
+      - st_nlink>1 的常规文件 → 拒（D1/D2：硬链接借用；保守面）；
+      - FIFO/设备/socket 等特殊文件 → 拒（红队 N3 观察项收口）；
+      - OSError 一律 fail-closed。
+    model.safetensors.index.json 若存在且可解析 → 按 weight_map 展开全部分片
+    文件名，逐一确认在目录内且通过上述检查（缺分片/指向目录外路径即拒）。
+    required=True 时目录必须具备权重承载形态（单文件或 index.json+分片）。
+    返回 None，违规 raise。"""
+    d = Path(resolved_dir)
+    if not d.is_dir():
+        raise AsrIndependenceError("%s 不是目录：%s" % (what, d))
+    try:
+        names = [e.name for e in os.scandir(d)]
+    except OSError as exc:
+        raise AsrIndependenceError(
+            "%s 目录无法枚举（%s）——fail-closed 已拒绝" % (what, exc)) from None
+    single_ok = False
+    for name in names:
+        _audit_single_entry(d, what, name, is_weight=_is_weight_name(name))
+        if name == _SINGLE_WEIGHT_NAME:
+            single_ok = True
+    index_ok = False
+    if _INDEX_NAME in names:
+        idx = d / _INDEX_NAME
+        try:
+            data = json.loads(idx.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise AsrIndependenceError(
+                "%s 的 %s 无法解析（%s）——fail-closed 已拒绝"
+                % (what, _INDEX_NAME, exc)) from None
+        wm = data.get("weight_map") if isinstance(data, dict) else None
+        if not isinstance(wm, dict) or not wm:
+            raise AsrIndependenceError(
+                "%s 的 %s 缺少非空 weight_map——fail-closed 已拒绝"
+                % (what, _INDEX_NAME))
+        for shard in sorted(set(str(v) for v in wm.values())):
+            p = Path(shard)
+            if p.is_absolute() or ".." in p.parts:
+                _reject_entry(d, what, _INDEX_NAME,
+                              "的 weight_map 指向目录外路径（%s）" % shard)
+            try:
+                sp = (d / shard).resolve()
+            except OSError as exc:
+                raise AsrIndependenceError(
+                    "%s 的分片 %s 无法解析（%s）——fail-closed 已拒绝"
+                    % (what, shard, exc)) from None
+            if not (_is_relative_to(sp, d) or sp.parent == d):
+                _reject_entry(d, what, _INDEX_NAME,
+                              "的 weight_map 分片逃逸出模型目录（%s）" % shard)
+            _audit_single_entry(d, what, shard, is_weight=True)
+        index_ok = True
+    if required and not (single_ok or index_ok):
+        raise AsrIndependenceError(
+            "%s 缺少权重承载形态（%s 或 %s+分片）："
+            "请独立下载（bash apps/asr/init.sh --download）"
+            % (what, _SINGLE_WEIGHT_NAME, _INDEX_NAME))
 
 
 def verify_weight_links(resolved_dir, what, required=True):
-    """目录内权重文件的链接关系校验（D3：symlink 借用 IME 资产）。
-    对每个权重文件 lstat：is_symlink 或 st_nlink>1 即拒；再 resolve 追真身，
-    路径落入 IME 锚点亦拒（防绕过链接检查的等价形态）。
-    required=True 时缺权重文件也拒。返回 None，违规 raise。"""
-    found = False
-    for name in WEIGHT_FILES:
-        f = Path(resolved_dir) / name
-        if f.exists():
-            found = True
-            try:
-                st = f.lstat()
-            except OSError as exc:
-                raise AsrIndependenceError(
-                    "%s 的 %s 无法读取链接信息（%s）——fail-closed 已拒绝"
-                    % (what, name, exc)) from None
-            if st.st_nlink > 1:
-                raise AsrIndependenceError(
-                    "%s 的 %s 硬链接数 %d>1（疑似借用输入法/他人权重）——已拒绝；"
-                    "请独立下载（bash apps/asr/init.sh --download）" % (what, name, st.st_nlink))
-            if f.is_symlink():
-                raise AsrIndependenceError(
-                    "%s 的 %s 是符号链接（疑似借用输入法/他人权重）——已拒绝；"
-                    "请独立下载（bash apps/asr/init.sh --download）" % (what, name))
-            try:
-                real = f.resolve()
-            except OSError as exc:
-                raise AsrIndependenceError(
-                    "%s 的 %s 路径无法解析（%s）——fail-closed 已拒绝"
-                    % (what, name, exc)) from None
-            for anchor in ime_anchor_roots():
-                if real == anchor or _is_relative_to(real, anchor):
-                    raise AsrIndependenceError(
-                        "%s 的 %s 指向语音输入法资产（%s）——已拒绝；"
-                        "请独立下载（bash apps/asr/init.sh --download）"
-                        % (what, name, real))
-    if required and not found:
-        raise AsrIndependenceError(
-            "%s 缺少权重文件（%s）：请独立下载（bash apps/asr/init.sh --download）"
-            % (what, " / ".join(WEIGHT_FILES)))
+    """兼容别名（旧接入面）：委托目录级审计 verify_dir_assets。"""
+    return verify_dir_assets(resolved_dir, what, required=required)
 
 
 def verify_model_dir(path, what="asr.model_dir", check_weights=False):
     """模型目录独立性 + 链接关系校验，返回 resolve 路径。
     - resolve 追真身：symlink 指进 IME 即拒绝；
-    - check_weights=True 时权重文件逐个过 verify_weight_links
-      （symlink / 硬链接 nlink>1 / resolve 落入 IME 锚点均拒绝）。"""
+    - check_weights=True 时过目录级资产链接审计 verify_dir_assets
+      （目录内任一条目 symlink 落入 IME 锚点 / 硬链接 nlink>1 / 特殊文件 /
+       weight_map 分片缺失或逃逸均拒绝）。"""
     resolved = check_path_independent(path, what)
     if check_weights:
-        verify_weight_links(resolved, what, required=True)
+        verify_dir_assets(resolved, what, required=True)
     return resolved
 
 

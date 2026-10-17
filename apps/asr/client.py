@@ -309,9 +309,9 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         return False
     model = independence.verify_model_dir(model, "model", check_weights=True)
     if aligner:
-        # aligner 权重文件同样过链接关系校验（红队 D3：symlink 借用 IME 资产）
+        # aligner 目录同样过目录级资产链接审计（红队 D3/N4：symlink 借用 IME 资产）
         aligner = independence.verify_model_dir(aligner, "aligner")
-        independence.verify_weight_links(aligner, "aligner", required=False)
+        independence.verify_dir_assets(aligner, "aligner", required=False)
     port = _port_of(base_url)
     SIDECAR_LOG.parent.mkdir(parents=True, exist_ok=True)
     cmd = [py, "-I", str(ASR_DIR / "sidecar_server.py"), "--port", str(port), "--model", model]

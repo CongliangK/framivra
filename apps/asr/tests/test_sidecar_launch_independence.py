@@ -137,6 +137,70 @@ class SidecarLaunchIndependenceTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0, "aligner 硬链接借用 IME 权重未被拒绝")
         self.assertIn("硬链接数 2>1", r.stderr + r.stdout)
 
+    # ---------------------------------------------------------------- 红队四轮 N1/N1b/N4/N3 负例
+
+    def test_direct_launch_n1_shard_symlink_rejected(self):
+        """红队 N1：分片模型 index.json weight_map 指向的分片是 symlink→IME
+        ——文件名白名单查不到，目录级审计必须拒。"""
+        import json as _json
+        d = Path(self.tmp.name) / "n1-shard"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}", encoding="utf-8")
+        (d / "model.safetensors.index.json").write_text(_json.dumps(
+            {"metadata": {"total_size": 8},
+             "weight_map": {"model": "model-00001-of-00001.safetensors"}}),
+            encoding="utf-8")
+        (d / "model-00001-of-00001.safetensors").symlink_to(
+            self.ime_model / "model.safetensors")
+        r = self._launch("--port", str(self._free_port()), "--model", str(d),
+                         "--no-aligner", "--once-health")
+        self._assert_rejected(r, "N1 分片 symlink→IME")
+        self.assertEqual(r.returncode, 2)
+
+    def test_direct_launch_n1b_mixed_shard_symlink_rejected(self):
+        """红队 N1b：干净单文件 + 分片 symlink 混放 → 拒。"""
+        import json as _json
+        d = Path(self.tmp.name) / "n1b-mixed"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}", encoding="utf-8")
+        (d / "model.safetensors").write_bytes(b"CLEAN")
+        (d / "model.safetensors.index.json").write_text(_json.dumps(
+            {"weight_map": {"a": "model-00001-of-00002.safetensors",
+                            "b": "model-00002-of-00002.safetensors"}}),
+            encoding="utf-8")
+        (d / "model-00001-of-00002.safetensors").write_bytes(b"CLEAN")
+        (d / "model-00002-of-00002.safetensors").symlink_to(
+            self.ime_model / "model.safetensors")
+        r = self._launch("--port", str(self._free_port()), "--model", str(d),
+                         "--no-aligner", "--once-health")
+        self._assert_rejected(r, "N1b 干净+分片 symlink 混放")
+        self.assertEqual(r.returncode, 2)
+
+    def test_direct_launch_n4_aligner_alias_symlink_rejected(self):
+        """红队 N4：aligner 权重别名（pytorch_model.bin）symlink→IME → 拒。"""
+        clean_model = self.home / ".local/share/framivra/asr/models/Qwen3-ASR-1.7B"
+        clean_model.mkdir(parents=True)
+        (clean_model / "config.json").write_text("{}", encoding="utf-8")
+        (clean_model / "model.safetensors").write_bytes(b"CLEAN")
+        d = Path(self.tmp.name) / "n4-aligner"
+        d.mkdir(parents=True)
+        (d / "pytorch_model.bin").symlink_to(self.ime_model / "model.safetensors")
+        r = self._launch("--port", str(self._free_port()), "--model", str(clean_model),
+                         "--aligner", str(d), "--once-health")
+        self._assert_rejected(r, "N4 aligner pytorch_model.bin symlink→IME")
+        self.assertEqual(r.returncode, 2)
+
+    def test_direct_launch_n3_fifo_weight_rejected(self):
+        """红队 N3 观察项收口：FIFO 权重文件 → 拒。"""
+        d = Path(self.tmp.name) / "n3-fifo"
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}", encoding="utf-8")
+        os.mkfifo(d / "model.safetensors")
+        r = self._launch("--port", str(self._free_port()), "--model", str(d),
+                         "--no-aligner", "--once-health")
+        self.assertNotEqual(r.returncode, 0, "FIFO 权重未被拒绝")
+        self.assertIn("特殊文件", r.stderr + r.stdout)
+
     def test_direct_launch_fake_independence_module_shadow_rejected(self):
         """红队 D2：PYTHONPATH 放假 independence.py + `python3 -P` 直启
         （-P 不把脚本目录放 sys.path 首位 → PYTHONPATH 遮蔽生效）——
@@ -170,6 +234,29 @@ class SidecarLaunchIndependenceTest(unittest.TestCase):
         (clean / "model.safetensors").write_bytes(b"CLEAN")
         r = self._launch("--port", str(self._free_port()),
                          "--model", "1.7b", "--no-aligner", "--once-health")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("/health 自检通过", r.stdout)
+
+    def test_direct_launch_clean_sharded_model_with_aligner_ok(self):
+        """正例：干净自建分片模型（index.json+合法分片）+ 干净 aligner
+        + --once-health → exit 0，不误伤。"""
+        import json as _json
+        clean = self.home / ".local/share/framivra/asr/models/Qwen3-ASR-1.7B"
+        clean.mkdir(parents=True)
+        (clean / "config.json").write_text("{}", encoding="utf-8")
+        (clean / "model.safetensors.index.json").write_text(_json.dumps(
+            {"weight_map": {"a": "model-00001-of-00002.safetensors",
+                            "b": "model-00002-of-00002.safetensors"}}),
+            encoding="utf-8")
+        (clean / "model-00001-of-00002.safetensors").write_bytes(b"AAA")
+        (clean / "model-00002-of-00002.safetensors").write_bytes(b"BBB")
+        aligner = self.home / ".local/share/framivra/asr/models/Qwen3-ForcedAligner-0.6B"
+        aligner.mkdir(parents=True)
+        (aligner / "config.json").write_text("{}", encoding="utf-8")
+        (aligner / "pytorch_model.bin").write_bytes(b"CLEAN-ALIGNER")
+        r = self._launch("--port", str(self._free_port()),
+                         "--model", str(clean), "--aligner", str(aligner),
+                         "--once-health")
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         self.assertIn("/health 自检通过", r.stdout)
 
