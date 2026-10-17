@@ -98,6 +98,14 @@ Golden 使用原始完整 clip 重建身份；旧 Golden schema 无法表达同 
 
 ## 阶段回执（PR#1）
 
+QC 的段免检记录另绑定 `vtx/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样表达式。
+缺少或不匹配 `probe_filter` 的旧记录不免检，下一次 QC 实测后刷新；不删除媒体、
+重编码或放宽阈值。当前表达式保留 bicubic 并开启准确舍入，避免已观察到的
+FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该探针。
+`--strict` 仍全部实测。此身份不包含完整 FFmpeg/CPU 环境，环境升级不构成跨版本
+像素保证；需要重新核验时使用 strict。黑场、近黑、声明范围与泄漏的 CPU 回归见
+`tests/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。
+
 `receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
 gfx html 字节 + 声明依赖内容 + 生效 CEF 身份/实验命名空间)——与缓存键同等敏感（任何缓存键会变的输入变化，
 回执门同样重置），但不做全量媒体哈希（GB 级 I/O 不可接受）。输入变化不继承旧的
