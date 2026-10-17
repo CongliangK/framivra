@@ -178,6 +178,7 @@ class _SyncServeFixture(unittest.TestCase):
 
     def spawn_worker(self, *extra, mode="a0"):
         argv = [_WORKER, f"--mode={mode}", "--serve",
+                "--ozone-platform=headless",
                 f"--ipc-socket={self.sock}",
                 f"--url-template={_PAGE}?f={{f}}",
                 f"--root-cache-path={self.cache}",
