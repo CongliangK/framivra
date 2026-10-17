@@ -18,67 +18,74 @@ export function decodeNativePng(png, width, height) {
   }
   if (!channels) throw new Error('unsupported native PNG color type');
   const stride = width * channels;
-  const raw = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height });
+  const raw = zlib.inflateSync(idat.length === 1 ? idat[0] : Buffer.concat(idat), { maxOutputLength: (stride + 1) * height });
   if (raw.length !== (stride + 1) * height) throw new Error('PNG payload length');
-  const decoded = Buffer.alloc(stride * height);
+  // RGB reconstruction owns the inflated bytes: keep each filter byte in place
+  // and unfilter its row there, avoiding a second full RGB allocation/copy.
+  // RGBA already is the final result, so retain its contiguous reconstruction.
+  const decoded = channels === 3 ? raw : Buffer.alloc(stride * height);
+  const rowStep = stride + (channels === 3 ? 1 : 0);
+  const rgba = channels === 3 ? Buffer.alloc(width * height * 4) : null;
+  const rgbaWords = rgba && new DataView(rgba.buffer, rgba.byteOffset, rgba.length);
   const rawWords = new DataView(raw.buffer, raw.byteOffset, raw.length);
   const decodedWords = new DataView(decoded.buffer, decoded.byteOffset, decoded.length);
   for (let y = 0; y < height; y++) {
-    const src = y * (stride + 1) + 1, dst = y * stride;
+    const src = y * (stride + 1) + 1, dst = channels === 3 ? src : y * stride;
     const f = raw[src - 1];
     // Dispatch once per row. In particular, filter None is a byte copy, not
     // millions of predictor calculations and branches over already-raw bytes.
     switch (f) {
       case 0:
-        raw.copy(decoded, dst, src, src + stride);
+        if (channels === 4) raw.copy(decoded, dst, src, src + stride);
         break;
       case 1:
-        raw.copy(decoded, dst, src, src + channels);
+        if (channels === 4) raw.copy(decoded, dst, src, src + channels);
         for (let x = channels; x < stride; x++) decoded[dst+x] = raw[src+x] + decoded[dst+x-channels];
         break;
       case 2: {
-        if (!y) { raw.copy(decoded, dst, src, src + stride); break; }
+        if (!y) { if (channels === 4) raw.copy(decoded, dst, src, src + stride); break; }
         // Four independent modulo-256 sums. Mask alternating byte lanes before
         // adding so carries cannot contaminate the adjacent byte. DataView is
         // explicitly little-endian and permits PNG's unaligned row starts.
         let x = 0;
         for (; x + 4 <= stride; x += 4) {
-          const a = rawWords.getUint32(src+x, true), b = decodedWords.getUint32(dst+x-stride, true);
+          const a = rawWords.getUint32(src+x, true), b = decodedWords.getUint32(dst+x-rowStep, true);
           const lo = ((a & 0x00ff00ff) + (b & 0x00ff00ff)) & 0x00ff00ff;
           const hi = (((a >>> 8) & 0x00ff00ff) + ((b >>> 8) & 0x00ff00ff)) & 0x00ff00ff;
           decodedWords.setUint32(dst+x, lo | (hi << 8), true);
         }
-        for (; x < stride; x++) decoded[dst+x] = raw[src+x] + decoded[dst+x-stride];
+        for (; x < stride; x++) decoded[dst+x] = raw[src+x] + decoded[dst+x-rowStep];
         break;
       }
       case 3:
         for (let x = 0; x < stride; x++) {
           const a = x >= channels ? decoded[dst+x-channels] : 0;
-          const b = y ? decoded[dst+x-stride] : 0;
+          const b = y ? decoded[dst+x-rowStep] : 0;
           decoded[dst+x] = raw[src+x] + ((a+b) >>> 1);
         }
         break;
       case 4:
         for (let x = 0; x < stride; x++) {
           const a = x >= channels ? decoded[dst+x-channels] : 0;
-          const b = y ? decoded[dst+x-stride] : 0;
-          const c = y && x >= channels ? decoded[dst+x-stride-channels] : 0;
+          const b = y ? decoded[dst+x-rowStep] : 0;
+          const c = y && x >= channels ? decoded[dst+x-rowStep-channels] : 0;
           const p = a+b-c, pa = Math.abs(p-a), pb = Math.abs(p-b), pc = Math.abs(p-c);
           decoded[dst+x] = raw[src+x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
         }
         break;
       default: throw new Error('PNG filter');
     }
+    if (channels === 3) {
+      let x = 0, j = y * width * 4;
+      for (; x + 3 < stride; x += 3, j += 4) {
+        rgbaWords.setUint32(j, decodedWords.getUint32(dst+x, true) | 0xff000000, true);
+      }
+      // Each row's last RGB pixel has no fourth channel. Do not consume the
+      // next row's filter byte, or overread the final inflated row.
+      rgba[j]=decoded[dst+x]; rgba[j+1]=decoded[dst+x+1]; rgba[j+2]=decoded[dst+x+2]; rgba[j+3]=255;
+    }
   }
   if (channels === 4) return decoded;
-  const rgba = Buffer.alloc(width * height * 4);
-  const rgbaWords = new DataView(rgba.buffer, rgba.byteOffset, rgba.length);
-  let i=0, j=0;
-  for (; i+3<decoded.length; i+=3, j+=4) {
-    rgbaWords.setUint32(j, decodedWords.getUint32(i, true) | 0xff000000, true);
-  }
-  // The final RGB pixel has no fourth input byte; never overread the payload.
-  rgba[j]=decoded[i]; rgba[j+1]=decoded[i+1]; rgba[j+2]=decoded[i+2]; rgba[j+3]=255;
   return rgba;
 }
 
