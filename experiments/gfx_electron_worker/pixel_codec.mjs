@@ -20,20 +20,64 @@ export function decodeNativePng(png, width, height) {
   const raw = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height });
   if (raw.length !== (stride + 1) * height) throw new Error('PNG payload length');
   const decoded = Buffer.alloc(stride * height);
-  const paeth = (a, b, c) => { const p = a+b-c, x=Math.abs(p-a), y=Math.abs(p-b), z=Math.abs(p-c); return x<=y && x<=z ? a : y<=z ? b : c; };
+  const rawWords = new DataView(raw.buffer, raw.byteOffset, raw.length);
+  const decodedWords = new DataView(decoded.buffer, decoded.byteOffset, decoded.length);
   for (let y = 0; y < height; y++) {
-    const f = raw[y * (stride + 1)];
-    if (f > 4) throw new Error('PNG filter');
-    for (let x = 0; x < stride; x++) {
-      const i = y * stride + x, a = x >= channels ? decoded[i-channels] : 0;
-      const b = y ? decoded[i-stride] : 0, c = y && x>=channels ? decoded[i-stride-channels] : 0;
-      const predictor = f === 0 ? 0 : f === 1 ? a : f === 2 ? b : f === 3 ? Math.floor((a+b)/2) : paeth(a,b,c);
-      decoded[i] = (raw[y*(stride+1)+1+x] + predictor) & 255;
+    const src = y * (stride + 1) + 1, dst = y * stride;
+    const f = raw[src - 1];
+    // Dispatch once per row. In particular, filter None is a byte copy, not
+    // millions of predictor calculations and branches over already-raw bytes.
+    switch (f) {
+      case 0:
+        raw.copy(decoded, dst, src, src + stride);
+        break;
+      case 1:
+        raw.copy(decoded, dst, src, src + channels);
+        for (let x = channels; x < stride; x++) decoded[dst+x] = raw[src+x] + decoded[dst+x-channels];
+        break;
+      case 2: {
+        if (!y) { raw.copy(decoded, dst, src, src + stride); break; }
+        // Four independent modulo-256 sums. Mask alternating byte lanes before
+        // adding so carries cannot contaminate the adjacent byte. DataView is
+        // explicitly little-endian and permits PNG's unaligned row starts.
+        let x = 0;
+        for (; x + 4 <= stride; x += 4) {
+          const a = rawWords.getUint32(src+x, true), b = decodedWords.getUint32(dst+x-stride, true);
+          const lo = ((a & 0x00ff00ff) + (b & 0x00ff00ff)) & 0x00ff00ff;
+          const hi = (((a >>> 8) & 0x00ff00ff) + ((b >>> 8) & 0x00ff00ff)) & 0x00ff00ff;
+          decodedWords.setUint32(dst+x, lo | (hi << 8), true);
+        }
+        for (; x < stride; x++) decoded[dst+x] = raw[src+x] + decoded[dst+x-stride];
+        break;
+      }
+      case 3:
+        for (let x = 0; x < stride; x++) {
+          const a = x >= channels ? decoded[dst+x-channels] : 0;
+          const b = y ? decoded[dst+x-stride] : 0;
+          decoded[dst+x] = raw[src+x] + ((a+b) >>> 1);
+        }
+        break;
+      case 4:
+        for (let x = 0; x < stride; x++) {
+          const a = x >= channels ? decoded[dst+x-channels] : 0;
+          const b = y ? decoded[dst+x-stride] : 0;
+          const c = y && x >= channels ? decoded[dst+x-stride-channels] : 0;
+          const p = a+b-c, pa = Math.abs(p-a), pb = Math.abs(p-b), pc = Math.abs(p-c);
+          decoded[dst+x] = raw[src+x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+        }
+        break;
+      default: throw new Error('PNG filter');
     }
   }
   if (channels === 4) return decoded;
-  const rgba = Buffer.alloc(width * height * 4, 255);
-  for (let i=0, j=0; i<decoded.length; i+=3, j+=4) decoded.copy(rgba,j,i,i+3);
+  const rgba = Buffer.alloc(width * height * 4);
+  const rgbaWords = new DataView(rgba.buffer, rgba.byteOffset, rgba.length);
+  let i=0, j=0;
+  for (; i+3<decoded.length; i+=3, j+=4) {
+    rgbaWords.setUint32(j, decodedWords.getUint32(i, true) | 0xff000000, true);
+  }
+  // The final RGB pixel has no fourth input byte; never overread the payload.
+  rgba[j]=decoded[i]; rgba[j+1]=decoded[i+1]; rgba[j+2]=decoded[i+2]; rgba[j+3]=255;
   return rgba;
 }
 

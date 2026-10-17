@@ -36,6 +36,11 @@ class ContractTests(unittest.TestCase):
         p = subprocess.run(['node', str(WORKER_DIR/'test_pixel_codec.mjs')], capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
 
+    def test_png_codec_independent_reference(self):
+        p = subprocess.run([sys.executable, '-B', str(WORKER_DIR/'test_pixel_codec_reference.py')],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+
 
 @unittest.skipUnless(os.environ.get('VTX_TEST_ELECTRON') == '1', 'real Electron opt-in')
 class RealNavigationTests(unittest.TestCase):
