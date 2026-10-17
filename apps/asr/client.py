@@ -308,11 +308,15 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
               % (py or "缺", model or "缺"), file=sys.stderr)
         return False
     model = independence.verify_model_dir(model, "model", check_weights=True)
+    if aligner:
+        # aligner 权重文件同样过链接关系校验（红队 D3：symlink 借用 IME 资产）
+        aligner = independence.verify_model_dir(aligner, "aligner")
+        independence.verify_weight_links(aligner, "aligner", required=False)
     port = _port_of(base_url)
     SIDECAR_LOG.parent.mkdir(parents=True, exist_ok=True)
     cmd = [py, "-I", str(ASR_DIR / "sidecar_server.py"), "--port", str(port), "--model", model]
     if aligner:
-        cmd += ["--aligner", independence.check_path_independent(aligner, "aligner")]
+        cmd += ["--aligner", aligner]
     else:
         print("⚠ 未找到 ForcedAligner：字级时间戳（srt/timeline）将不可用——跑 bash apps/asr/init.sh 下载", file=sys.stderr)
     if verbose:

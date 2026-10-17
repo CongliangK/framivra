@@ -665,22 +665,17 @@ def main():
             print("✗ 指定的 aligner 目录不存在：%s" % p)
             return 2
 
-    # 解析后路径同样过独立性+链接关系校验（红队 D1：把 IME 权重文件硬链接进
-    # "干净"目录——路径锚点查不到，必须查 st_nlink；models-root/auto 别名解析出
-    # 的 symlink 目录 resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
-    # 模型目录要求独立权重文件（check_weights=True：nlink>1 或缺权重均拒绝）；
-    # aligner 目录只查存在的权重文件 nlink（不强制存在）。
+    # 解析后路径同样过独立性+链接关系校验（红队 D1/D3：把 IME 权重文件硬链接或
+    # symlink 进"干净"目录——路径锚点查不到，必须逐权重文件 lstat；models-root/auto
+    # 别名解析出的 symlink 目录 resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
+    # 模型目录要求独立权重文件（check_weights=True：symlink/nlink>1/缺权重均拒绝）；
+    # aligner 目录对存在的权重文件做同样链接关系校验（不强制存在）。
     try:
         ind.verify_model_dir(model_path, "--model（解析后）", check_weights=True)
         if aligner_path:
             resolved_aligner = ind.verify_model_dir(aligner_path, "--aligner（解析后）")
-            for name in getattr(ind, "WEIGHT_FILES", ()):
-                f = Path(resolved_aligner) / name
-                if f.exists() and f.stat().st_nlink > 1:
-                    raise ind.AsrIndependenceError(
-                        "--aligner（解析后）的 %s 硬链接数 %d>1（疑似借用输入法/他人权重）"
-                        "——已拒绝；请独立下载（bash apps/asr/init.sh --download）"
-                        % (name, f.stat().st_nlink))
+            ind.verify_weight_links(resolved_aligner, "--aligner（解析后）",
+                                    required=False)
     except ind.AsrIndependenceError as exc:
         print("✗ %s" % exc, file=sys.stderr)
         return 2

@@ -233,26 +233,56 @@ def verify_module_from_own_env(py_bin, module, what="解释器"):
 WEIGHT_FILES = ("model.safetensors", "model.safetensors.index.json")
 
 
+def verify_weight_links(resolved_dir, what, required=True):
+    """目录内权重文件的链接关系校验（D3：symlink 借用 IME 资产）。
+    对每个权重文件 lstat：is_symlink 或 st_nlink>1 即拒；再 resolve 追真身，
+    路径落入 IME 锚点亦拒（防绕过链接检查的等价形态）。
+    required=True 时缺权重文件也拒。返回 None，违规 raise。"""
+    found = False
+    for name in WEIGHT_FILES:
+        f = Path(resolved_dir) / name
+        if f.exists():
+            found = True
+            try:
+                st = f.lstat()
+            except OSError as exc:
+                raise AsrIndependenceError(
+                    "%s 的 %s 无法读取链接信息（%s）——fail-closed 已拒绝"
+                    % (what, name, exc)) from None
+            if st.st_nlink > 1:
+                raise AsrIndependenceError(
+                    "%s 的 %s 硬链接数 %d>1（疑似借用输入法/他人权重）——已拒绝；"
+                    "请独立下载（bash apps/asr/init.sh --download）" % (what, name, st.st_nlink))
+            if f.is_symlink():
+                raise AsrIndependenceError(
+                    "%s 的 %s 是符号链接（疑似借用输入法/他人权重）——已拒绝；"
+                    "请独立下载（bash apps/asr/init.sh --download）" % (what, name))
+            try:
+                real = f.resolve()
+            except OSError as exc:
+                raise AsrIndependenceError(
+                    "%s 的 %s 路径无法解析（%s）——fail-closed 已拒绝"
+                    % (what, name, exc)) from None
+            for anchor in ime_anchor_roots():
+                if real == anchor or _is_relative_to(real, anchor):
+                    raise AsrIndependenceError(
+                        "%s 的 %s 指向语音输入法资产（%s）——已拒绝；"
+                        "请独立下载（bash apps/asr/init.sh --download）"
+                        % (what, name, real))
+    if required and not found:
+        raise AsrIndependenceError(
+            "%s 缺少权重文件（%s）：请独立下载（bash apps/asr/init.sh --download）"
+            % (what, " / ".join(WEIGHT_FILES)))
+
+
 def verify_model_dir(path, what="asr.model_dir", check_weights=False):
     """模型目录独立性 + 链接关系校验，返回 resolve 路径。
     - resolve 追真身：symlink 指进 IME 即拒绝；
-    - 权重文件 st_nlink>1 视为硬链接借用他人资产，拒绝。"""
+    - check_weights=True 时权重文件逐个过 verify_weight_links
+      （symlink / 硬链接 nlink>1 / resolve 落入 IME 锚点均拒绝）。"""
     resolved = check_path_independent(path, what)
     if check_weights:
-        found = False
-        for name in WEIGHT_FILES:
-            f = Path(resolved) / name
-            if f.exists():
-                found = True
-                st = f.stat()
-                if st.st_nlink > 1:
-                    raise AsrIndependenceError(
-                        "%s 的 %s 硬链接数 %d>1（疑似借用输入法/他人权重）——已拒绝；"
-                        "请独立下载（bash apps/asr/init.sh --download）" % (what, name, st.st_nlink))
-        if not found:
-            raise AsrIndependenceError(
-                "%s 缺少权重文件（%s）：请独立下载（bash apps/asr/init.sh --download）"
-                % (what, " / ".join(WEIGHT_FILES)))
+        verify_weight_links(resolved, what, required=True)
     return resolved
 
 

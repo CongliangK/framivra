@@ -231,6 +231,32 @@ class TestPathInjection(AdversarialBase):
             independence.verify_model_dir(str(d), check_weights=True)
         self.assertIn("硬链接", str(ctx.exception))
 
+    def test_symlinked_weight_into_ime_rejected(self):
+        # 红队 D3：干净目录内权重文件 symlink → IME 资产（目标 nlink=1），
+        # 旧校验只查 stat().st_nlink 对 symlink 语义失效 → 必须 lstat 拒绝
+        ime_w = self.ime / "vendor/models/qwen3-asr/Qwen3-ASR-1.7B/model.safetensors"
+        d = Path(self.tmp.name) / "own-model/Qwen3-ASR-0.6B"
+        d.mkdir(parents=True)
+        (d / "model.safetensors").symlink_to(ime_w)
+        (d / "config.json").write_text("{}")
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_model_dir(str(d), check_weights=True)
+        self.assertIn("符号链接", str(ctx.exception))
+        self.assert_ime_untouched()
+
+    def test_symlinked_aligner_weight_into_ime_rejected(self):
+        # D3 aligner 变体：aligner 目录权重 symlink → IME（nlink=1），
+        # verify_weight_links(required=False) 同样拒绝
+        ime_w = self.ime / "vendor/models/qwen3-asr/Qwen3-ASR-1.7B/model.safetensors"
+        d = Path(self.tmp.name) / "own-aligner/fsmn-vad"
+        d.mkdir(parents=True)
+        (d / "model.safetensors").symlink_to(ime_w)
+        resolved = independence.verify_model_dir(str(d), "aligner")
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_weight_links(resolved, "aligner", required=False)
+        self.assertIn("符号链接", str(ctx.exception))
+        self.assert_ime_untouched()
+
     def test_ime_only_assets_probe_fails_without_touching_ime(self):
         # 验收 1：仅假 IME 环境和模型存在、项目资产缺失 → 明确失败
         # （config.asr.python 指向假 IME venv 也绝不探测使用）
