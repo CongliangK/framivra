@@ -35,6 +35,7 @@ MEDIA_TESTS = {
         'tests.test_pipeline.TestUntilFlag',
         'tests.test_pluginlib.ThreeBranchCli',
         'tests.test_subtitles_src.CliEndToEnd',
+        'tests.test_demo_fixture.RealGenerationTests',
         'apps.blender-bridge.tests.test_audio_audit.AudioAuditIntegration',
         'apps.blender-bridge.tests.test_subs_alpha.HappyPath',
         'apps.gates.tests.test_qc_gates_opt.TestG1BatchEquivalence',

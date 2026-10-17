@@ -11,6 +11,23 @@ import vtx
 from vtx.pluginlib import compatibility, hooks, manifest, registry
 from tests.test_pluginlib import _make_plugin_dir
 
+_SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
+
+
+class _clean_import_path:
+    """import 卫生：用例内还原洁净 sys.path（同名顶层模块 demo 顶替问题，
+    详见 tests/test_plugin_compatibility.py 同名助手注释）。"""
+
+    def __enter__(self):
+        self.saved = sys.path[:]
+        sys.path[:] = [p for p in sys.path
+                       if Path(p or '.').resolve() != _SCRIPTS_DIR.resolve()]
+        return self
+
+    def __exit__(self, *exc):
+        sys.path[:] = self.saved
+        return None
+
 
 class ProtocolMatrixTests(unittest.TestCase):
     def setUp(self):
@@ -140,7 +157,7 @@ class ProtocolMatrixTests(unittest.TestCase):
             "def audio_events(c, tracks):\n"
             f"    Path({str(called)!r}).touch()\n"
             "    return tracks\n")
-        with mock.patch.dict(sys.modules):
+        with _clean_import_path(), mock.patch.dict(sys.modules):
             sys.modules.pop("demo", None)
             for value in ("9.9", None, {}, "1.0"):
                 self.data["requires"]["plugin_protocol"] = value

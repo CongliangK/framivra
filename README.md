@@ -110,7 +110,7 @@ bash scripts/release.sh --help
 > 智能体请循 `AGENTS.md`（行为指南/门禁速览/写态红线）；本 README 为人类面。
 
 - 架构设计权威：`docs/ARCHITECTURE.md`（v2 四层架构 / 插件协议 / 迁移映射 / 验收门）。
-- 开发者文档：`docs/DEV.md`（演进史、性能基准、坑位破案详录）、`cache-provenance.md`（缓存与回执溯源）、`canvas-export.md`（gfx Canvas 导出协议）、`audio-audit.md`（分轨审计包语义）、`post-loudness.md`（响度终链）。
+- 开发者文档：`docs/DEV.md`（演进史、性能基准、坑位破案详录）、`cache-provenance.md`（缓存与回执溯源）、`canvas-export.md`（gfx Canvas 导出协议）、`audio-audit.md`（分轨审计包语义）、`post-loudness.md`（响度终链）、`demo-fixture.md`（standard-demo 冻结输入与 `scripts/demo.py` 三步入口）。
 - 测试：`bash scripts/run_all_tests.sh`（`python3 -m unittest discover -s tests`；集成用例需 VTX_TEST_CHROME/VTX_TEST_FFMPEG）。
 - 工作区（非 git 仓）：各期视频项目目录 + `_library/`（方法论/资产/blender_bridge 挂载，例如 `~/videos/projects/`）——**修改一律改本仓**，工作区历史副本为冻结快照。音频工具见姊妹仓 music_tools。
 

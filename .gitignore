@@ -22,6 +22,9 @@ config.local.json
 # 无代码引用；系统 /usr/share/fonts 或 fonts.google.com 可取）
 *.otf
 *.ttf
+# 例外（#177）：standard-demo 随包冻结字体是 @font-face 代码引用的必需冻结资产
+#（完整 SHA256 入 benchmark manifest），非可再生忽略件
+!templates/standard-demo/profiles/standard/v1/fonts/*.ttf
 
 # 运行产物 / 大媒体（本仓只收工具，产物一律不入库）
 out/
