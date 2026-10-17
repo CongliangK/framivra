@@ -33,11 +33,17 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
         fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         descriptors.append(fd)
         worker_env["TMPDIR"] = f"/proc/{os.getpid()}/fd/{fd}"
-        return [str(worker), f"--mode={mode}", "--serve", "--sync",
+        # A0 是软件无头 OSR：显式钉 ozone=headless，禁止 Chromium 在
+        # Wayland 会话自动选 wayland（wl_display roundtrip 可无限阻塞，
+        # 使 A0 沦为环境依赖的超时）。A1 保留显式平台参数语义不变。
+        argv = [str(worker), f"--mode={mode}", "--serve", "--sync",
                 "--sync-mode=n", "--sync-canary=exact", "--sync-log=sync.jsonl",
                 "--ipc-socket=ipc.sock", f"--root-cache-path={profile}",
                 f"--url-template={html.as_uri()}?f={{f}}",
                 f"--width={width}", f"--height={height}"]
+        if mode == "a0":
+            argv.append("--ozone-platform=headless")
+        return argv
 
     failure = None
     try:
