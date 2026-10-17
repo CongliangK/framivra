@@ -219,8 +219,8 @@ def _edges(tl, nseg):
     dur = tl["project"]["duration_frames"]
     bounds = [(cl["dst_in"], cl["dst_in"] + cl["dur"])
               for tr in tl["video_tracks"] for cl in tr["clips"]]
-    if not bounds:
-        return [0, dur]
+    # Empty tracks still render a segmented black canvas; use the renderer's
+    # cut selection (including short-duration guard coalescing) in that case.
     return [0] + choose_cutpoints(bounds, dur, max(1, nseg)) + [dur]
 
 
