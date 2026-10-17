@@ -270,6 +270,56 @@ class TestQCDiagnosticsCPU(unittest.TestCase):
             self.assertGreater(by_rule['qc.true_peak']['measured']['value'], qc.QC_TP_MAX)
             self.assertFalse(json.loads((root / 'out/receipt.json').read_text())['stages']['qc']['ok'])
 
+    def test_real_black_canvas_subtitles_audio_through_qc(self):
+        for segments in (1, 4):
+            with self.subTest(segments=segments), tempfile.TemporaryDirectory(prefix='vtx_qc_zero_tracks_') as temporary:
+                root = Path(temporary)
+                self.command(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                              'sine=frequency=1000:sample_rate=48000:duration=2',
+                              '-c:a', 'pcm_s16le', root / 'tone.wav'])
+                timeline = root / 'timeline.json'
+                timeline.write_text(json.dumps({
+                    'version': 2,
+                    'project': {'fps': 30, 'width': 320, 'height': 180, 'duration_frames': 60},
+                    'sources': [{'id': 'tone', 'path': 'tone.wav'}],
+                    'video_tracks': [], 'subtitles': [{'in': 3, 'out': 15, 'text': 'TEST'}],
+                    'audio_tracks': [{'name': 'tone', 'events': [
+                        {'src': 'tone', 'in': 0, 'out': 60, 'volume': 1.0}]}]}))
+                env = dict(os.environ, VTX_PIPELINE='0', VTX_VIDEO_SEGMENTS=str(segments),
+                           VTX_SEG_NVENC='0', VTX_IO_WORKERS='1', VTX_FILTER_THREADS='1',
+                           PYTHONDONTWRITEBYTECODE='1')
+                cli = [sys.executable, REPO / 'vtx/vtx.py', '-t', timeline]
+                self.command([*cli, 'all'], env=env, cwd=REPO)
+                receipt = json.loads((root / 'out/receipt.json').read_text())
+                for stage in ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc'):
+                    self.assertTrue(receipt['stages'][stage]['ok'], (stage, receipt))
+                self.command([*cli, '--strict', 'qc'], env=env, cwd=REPO)
+                report = json.loads((root / 'out/qc_report.json').read_text())
+                self.assertEqual(len(report['checks']), 7)
+                self.assertTrue(all(x['pass'] for x in report['checks']), report)
+                leak = next(x for x in report['checks'] if x['name'].startswith('空窗无叠加泄漏'))
+                self.assertEqual(leak['name'], '空窗无叠加泄漏 @frame 59')
+                self.assertEqual(report['skipped_probes'], [])
+                self.assertTrue((root / 'out/final.mp4').is_file())
+
+                # Keep the real audio while replacing only video with visible
+                # leakage. No track is added: QC must reject the bad final.
+                final = root / 'out/final.mp4'
+                damaged = root / 'out/leaked.mp4'
+                self.command(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                              'color=c=white:s=320x180:r=30:d=2', '-i', final,
+                              '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264',
+                              '-threads', '1', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+                              '-c:a', 'copy', '-shortest', damaged])
+                os.replace(damaged, final)
+                context = Ctx(timeline, diagnostics=[]); context.strict = True
+                code, _, report = _run_qc(context)
+                self.assertEqual(code, 1)
+                failures = [x for x in report['checks'] if not x['pass']]
+                self.assertEqual(len(failures), 1, report)
+                self.assertEqual(failures[0]['name'], '空窗无叠加泄漏 @frame 59')
+                self.assertFalse(json.loads((root / 'out/receipt.json').read_text())['stages']['qc']['ok'])
+
 
 if __name__ == '__main__':
     unittest.main()

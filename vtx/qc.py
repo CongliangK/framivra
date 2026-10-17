@@ -367,6 +367,8 @@ def qc(c):
                            paths=("sample_frame", (path + ".dst_in", path + ".dur"))))
 
     def bottom_frame(df: int, tag: str, post_crop: str = None, *, origin="$") -> bytes:
+        if not tracks:  # No video layers: the compositor's canvas is still black.
+            return _BLACK
         if bottom_gfx:  # 底轨是 gfx（无源视频）：回落全片 qc_clean 基准轨
             return gray_frame(c.cache / "qc_clean.mp4", df,
                               pre_crop=f"crop={post_crop}" if post_crop else "", tag=tag,
@@ -620,7 +622,7 @@ def qc(c):
                             path + ".dst_in", (path + ".dst_in", path + ".dur")))
 
     def in_bottom_fade(f0):
-        if bottom_gfx: return False
+        if not tracks or bottom_gfx: return False
         track_path = "$.video_tracks[0]"
         bottom = field(tracks, 0, "$.video_tracks")
         for ci, cl in ops.indexed(field(bottom, "clips", track_path), track_path + ".clips"):
