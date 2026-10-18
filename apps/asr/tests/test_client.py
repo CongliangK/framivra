@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import client  # noqa: E402
+import independence  # noqa: E402
 
 
 class MockSidecar:
@@ -94,7 +95,8 @@ class TestClient(unittest.TestCase):
 
     def test_transcribe_ok(self):
         resp = client.transcribe(self.mock.base_url, "/tmp/a.wav",
-                                 timestamps=True, language="Chinese")
+                                 timestamps=True, language="Chinese",
+                                 cfg={"asr": {"enabled": True}})
         self.assertEqual(resp["text"], "你好世界")
         self.assertEqual(len(resp["words"]), 2)
         method, path, body = self.mock.requests[-1]
@@ -106,19 +108,22 @@ class TestClient(unittest.TestCase):
     def test_4xx_error_path(self):
         self.mock.mode = "4xx"
         with self.assertRaises(client.ClientError) as ctx:
-            client.transcribe(self.mock.base_url, "/tmp/missing.wav")
+            client.transcribe(self.mock.base_url, "/tmp/missing.wav",
+                              cfg={"asr": {"enabled": True}})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("不存在", ctx.exception.message)
 
     def test_timeout(self):
         self.mock.mode = "slow"
         with self.assertRaises(client.TranscribeTimeout):
-            client.transcribe(self.mock.base_url, "/tmp/a.wav", timeout=0.5)
+            client.transcribe(self.mock.base_url, "/tmp/a.wav", timeout=0.5,
+                              cfg={"asr": {"enabled": True}})
 
     def test_long_audio_passthrough_no_split(self):
         # >200s 输入原样 POST：客户端零切分——单次请求、body 完整（方案 §3.3 P1-1）
         long_input = "/tmp/very_long_interview_250s.wav"
-        resp = client.transcribe(self.mock.base_url, long_input, timestamps=True)
+        resp = client.transcribe(self.mock.base_url, long_input, timestamps=True,
+                              cfg={"asr": {"enabled": True}})
         posts = [r for r in self.mock.requests if r[0] == "POST" and r[1] == "/transcribe"]
         self.assertEqual(len(posts), 1, "长音频必须单请求透传，不得客户端切分")
         self.assertEqual(posts[0][2]["audio"], long_input)
@@ -134,7 +139,8 @@ class TestClient(unittest.TestCase):
         client._sidecar_attribution = lambda base_url: True
         try:
             self.assertTrue(client.ensure_sidecar(
-                cfg={}, base_url=self.mock.base_url, verbose=False))
+                cfg={"asr": {"enabled": True}},
+                base_url=self.mock.base_url, verbose=False))
         finally:
             subprocess.Popen = real_popen
             client._sidecar_attribution = real_attr
@@ -147,7 +153,8 @@ class TestClient(unittest.TestCase):
         subprocess.Popen = _no_popen
         try:
             self.assertFalse(client.ensure_sidecar(
-                cfg={}, base_url=self.mock.base_url, verbose=False))
+                cfg={"asr": {"enabled": True}},
+                base_url=self.mock.base_url, verbose=False))
         finally:
             subprocess.Popen = real_popen
 

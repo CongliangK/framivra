@@ -475,7 +475,7 @@ class TestProcessOwnership(AdversarialBase):
         self.addCleanup(srv.shutdown)
         base = "http://127.0.0.1:%d" % srv.server_address[1]
         self.arm_popen_sentinel()
-        self.assertFalse(client.ensure_sidecar(cfg={}, base_url=base, verbose=False))
+        self.assertFalse(client.ensure_sidecar(cfg={"asr": {"enabled": True}}, base_url=base, verbose=False))
         self.assertEqual(self.popen_calls, [])
 
     def test_sidecar_server_refuses_ime_port(self):

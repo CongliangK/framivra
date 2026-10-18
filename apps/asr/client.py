@@ -228,8 +228,11 @@ def _post_json(base_url, path, payload, timeout):
 
 
 def transcribe(base_url, wav_path, timestamps=False, language=None,
-               timeout=TRANSCRIBE_TIMEOUT_DEFAULT):
-    """POST /transcribe。长音频不切分直接透传（库内建分块，方案 §3.3 红队 P1-1）。"""
+                timeout=TRANSCRIBE_TIMEOUT_DEFAULT, cfg=None):
+    """POST /transcribe。长音频不切分直接透传（库内建分块，方案 §3.3 红队 P1-1）。
+    issue #142：转写=计算入口，受 asr.enabled 门禁约束（禁用态不发请求）。"""
+    cfg = cfg if cfg is not None else load_config()
+    independence.require_enabled(cfg, "转写（transcribe）")
     payload = {"audio": str(wav_path)}
     if language:
         payload["language"] = language
@@ -238,7 +241,10 @@ def transcribe(base_url, wav_path, timestamps=False, language=None,
     return _post_json(base_url, "/transcribe", payload, timeout)
 
 
-def warm(base_url, timeout=600.0):
+def warm(base_url, timeout=600.0, cfg=None):
+    """POST /warm。issue #142：预热=计算入口，受 asr.enabled 门禁约束。"""
+    cfg = cfg if cfg is not None else load_config()
+    independence.require_enabled(cfg, "预热（warm）")
     return _post_json(base_url, "/warm", {}, timeout)
 
 
@@ -257,47 +263,61 @@ def _port_of(base_url):
 
 
 def _sidecar_attribution(base_url):
-    """端口上的健康服务是否可归属到本项目 sidecar：pid 文件存在、pid 存活、
-    /proc cmdline 同时含 sidecar_server.py 与端口。无法证明即 False——绝不复用
-    「恰好健康」的任意服务（issue #140 铁律）。"""
+    """端口上的健康服务是否可归属到本项目 sidecar（三因子，issue #142）：
+    pid 记录存在、pid 存活、/proc cmdline 同时含 sidecar_server.py 与端口、
+    记录的启动时刻与 /proc 实测一致（PID 重用防御）。无法证明即 False——
+    绝不复用「恰好健康」的任意服务（issue #140 铁律）。"""
     try:
         port = _port_of(base_url)
     except Exception:
         return False
-    pf = pid_file(port)
-    if not pf.exists():
+    rec = independence.read_pid_record(port)
+    if rec is None:
         return False
-    try:
-        pid = int(pf.read_text().strip())
-    except (OSError, ValueError):
-        return False
-    return independence.pid_owns_sidecar(pid, port)
+    return independence.pid_owns_sidecar(rec["pid"], port,
+                                         start_time=rec.get("start_time"))
 
 
 def preflight(cfg=None):
     """入口统一 fail-closed 前置校验（请求/绑定/拉起之前）：遗留键拒绝 +
-    已配置 python/model_dir/aligner_dir/base_url 独立性校验。"""
+    已配置 python/model_dir/aligner_dir/base_url 独立性校验 + 资源键坏值拒绝。"""
     cfg = cfg if cfg is not None else load_config()
     independence.preflight_config(cfg)
     return cfg
 
 
+def device_map_of(cfg):
+    """sidecar 设备映射：config asr.device_map（默认 cuda:0；CPU-only 用 "cpu"）。"""
+    return cfg_get(cfg, "asr.device_map", "cuda:0")
+
+
+def vram_budget_of(cfg, model_dir):
+    """显存预算（MiB）：config asr.vram_budget_mib 优先，否则按模型目录估计。"""
+    v = cfg_get(cfg, "asr.vram_budget_mib", None)
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        return int(v)
+    return independence.estimate_vram_mib(model_dir)
+
+
 def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
     """sidecar 不在则按配置拉起并等健康；已健康且可归属本项目直接 True。
-    issue #141：健康但无法归属（无 pid 文件/非本项目进程）→ 拒绝复用。"""
+    issue #141：健康但无法归属（无 pid 记录/非本项目进程/启动时刻不符）→ 拒绝复用。
+    issue #142：enabled 门禁（禁用态不发请求不拉起）+ 拉起前通用显存准入
+    （nvidia-smi 只读；不足/不可测即安全拒绝，绝不触碰外部服务）。"""
     cfg = cfg if cfg is not None else load_config()
     preflight(cfg)
+    independence.require_enabled(cfg, "启动/复用 sidecar（ensure_sidecar）")
     base_url = base_url or cfg_get(cfg, "asr.base_url", DEFAULT_BASE_URL)
     independence.validate_base_url(base_url)
     if health(base_url, timeout=1.0):
         if _sidecar_attribution(base_url):
             if verbose:
-                print("✓ sidecar 已在运行：%s（本项目 pid 文件归属通过）" % base_url,
+                print("✓ sidecar 已在运行：%s（本项目 pid 记录三因子归属通过）" % base_url,
                       file=sys.stderr)
             return True
-        print("✗ %s 端口上已有健康服务但无法归属到本项目 sidecar（无本项目 pid 文件"
-              "或进程 cmdline 不符）——拒绝复用任意健康服务（issue #140 铁律）。"
-              "若是遗留 /tmp pid 时代的进程请手动清理后重试" % base_url, file=sys.stderr)
+        print("✗ %s 端口上已有健康服务但无法归属到本项目 sidecar（无本项目 pid 记录、"
+              "进程 cmdline 不符或启动时刻不符/PID 已被复用）——拒绝复用任意健康服务"
+              "（issue #140 铁律）。若是遗留进程请手动清理后重试" % base_url, file=sys.stderr)
         return False
     py = probe_python(cfg)
     model = pick_model(cfg)
@@ -313,8 +333,17 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         aligner = independence.verify_model_dir(aligner, "aligner")
         independence.verify_dir_assets(aligner, "aligner", required=False)
     port = _port_of(base_url)
+    device = device_map_of(cfg)
+    if verbose:
+        print("… 资源准入检查（device=%s，预算 %d MiB）…" % (
+            device, vram_budget_of(cfg, model)), file=sys.stderr)
+    decision = independence.gpu_admission(vram_budget_of(cfg, model), device=device)
+    if not decision["allowed"]:
+        print("✗ %s" % decision["reason"], file=sys.stderr)
+        return False
     SIDECAR_LOG.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [py, "-I", str(ASR_DIR / "sidecar_server.py"), "--port", str(port), "--model", model]
+    cmd = [py, "-I", str(ASR_DIR / "sidecar_server.py"), "--port", str(port),
+           "--model", model, "--device-map", str(device)]
     if aligner:
         cmd += ["--aligner", aligner]
     else:
@@ -326,9 +355,7 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         log.flush()
         proc = subprocess.Popen(cmd, stdout=log, stderr=log, start_new_session=True,
                                 cwd=str(ASR_DIR), env=py_env(py))
-    pf = pid_file(port)
-    pf.parent.mkdir(parents=True, exist_ok=True)
-    pf.write_text(str(proc.pid))
+    independence.write_pid_record(port, proc.pid)
     deadline = time.monotonic() + start_timeout
     while time.monotonic() < deadline:
         if health(base_url, timeout=1.0):
@@ -338,7 +365,7 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         if proc.poll() is not None:
             print("✗ sidecar 启动即退出（code %s）——查看日志：%s" % (proc.returncode, SIDECAR_LOG),
                   file=sys.stderr)
-            pf.unlink(missing_ok=True)
+            pid_file(port).unlink(missing_ok=True)
             return False
         time.sleep(1.0)
     print("✗ sidecar %ds 内未就绪——查看日志：%s" % (start_timeout, SIDECAR_LOG), file=sys.stderr)
@@ -346,8 +373,12 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
 
 
 def stop_sidecar(base_url=None, cfg=None):
-    """SIGTERM sidecar（按项目状态根 pid 文件 + /proc 归属校验）；无法归属则
-    拒绝发信号（issue #141：绝不向外部/输入法进程发信号）。"""
+    """SIGTERM sidecar（项目状态根 pid 记录 + /proc 三因子归属：cmdline、端口、
+    启动时刻）；无法归属（陈旧 PID/PID 重用/伪造记录/外部进程）则拒绝发信号，
+    只报错（issue #141/#142：绝不向外部/输入法进程发信号）。
+
+    语义（issue #142）：停止自有服务**不受 enabled 门禁限制**——禁用态下
+    回收本项目残留 sidecar 是安全收敛动作；只读 health 探测用于判断收尾态。"""
     cfg = cfg if cfg is not None else load_config()
     preflight(cfg)
     base_url = base_url or cfg_get(cfg, "asr.base_url", DEFAULT_BASE_URL)
@@ -355,22 +386,28 @@ def stop_sidecar(base_url=None, cfg=None):
     port = _port_of(base_url)
     pf = pid_file(port)
     alive_before = health(base_url, timeout=1.0) is not None
-    if not pf.exists():
+    rec = independence.read_pid_record(port)
+    if rec is None:
+        if pf.exists():
+            print("✗ pid 记录损坏（%s）——已清除且未发任何信号" % pf, file=sys.stderr)
+            pf.unlink(missing_ok=True)
+            return False
         if alive_before:
-            print("⚠ %d 端口有服务但无本项目 pid 文件——无法归属，未发送停止信号" % port,
+            print("⚠ %d 端口有服务但无本项目 pid 记录——无法归属，未发送停止信号" % port,
                   file=sys.stderr)
         else:
             print("✓ sidecar 未在运行", file=sys.stderr)
         return not alive_before
-    try:
-        pid = int(pf.read_text().strip())
-    except ValueError:
-        pf.unlink(missing_ok=True)
-        print("✗ pid 文件损坏已清除：%s" % pf, file=sys.stderr)
-        return False
-    if not independence.pid_owns_sidecar(pid, port):
-        print("✗ pid %d 无法归属到本项目 sidecar（进程不存在或 cmdline 不符）——"
-              "拒绝发信号；pid 文件保留供排查：%s" % (pid, pf), file=sys.stderr)
+    pid = rec["pid"]
+    if not independence.pid_owns_sidecar(pid, port,
+                                         start_time=rec.get("start_time")):
+        detail = "进程不存在或 cmdline 不符"
+        if rec.get("start_time") is None:
+            detail += "；旧格式 pid 记录无启动时刻，请升级记录（重启 sidecar 自动生成）"
+        else:
+            detail += "或启动时刻不符（PID 可能已被复用）"
+        print("✗ pid %d 无法归属到本项目 sidecar（%s）——拒绝发信号；"
+              "pid 记录保留供排查：%s" % (pid, detail, pf), file=sys.stderr)
         return False
     try:
         os.kill(pid, signal.SIGTERM)

@@ -230,6 +230,16 @@ class _AsrIndShim:
         pass
 
     @staticmethod
+    def asr_enabled(cfg):
+        # issue #142：严格解析（与 independence.asr_enabled 同义；home 在彼处）
+        if not isinstance(cfg, dict) or not isinstance(cfg.get("asr"), dict):
+            return False
+        v = cfg["asr"].get("enabled")
+        if v is True:
+            return True
+        return isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
     def preflight_config(cfg):
         if os.environ.get("VT_ASR_IME_ROOT"):
             raise _AsrIndShim.AsrIndependenceError(
@@ -358,13 +368,24 @@ def cmd_init(a):
     rec("asr_python", bool(ap_path and ap_path.is_file()),
         str(ap_path) if ap_path and ap_path.is_file() else "未配置 asr.python（qwen-asr 解释器；bash apps/asr/init.sh）")
     asr_base = _pcfg.cfg_get(lc, "asr.base_url", "http://127.0.0.1:18085")
+    # issue #142 enabled 门禁：禁用态（含未配置/坏配置，严格解析）零请求零拉起，
+    # 不探测 sidecar（只读诊断面也不发 HTTP）；启用态才做只读 /health 探测。
+    asr_on = _asr_ind.asr_enabled(lc)
+    rec("asr_enabled", asr_on,
+        "已启用" if asr_on else "asr.enabled=false/未配置（禁用态：不探测/不启动/不转写）")
+    # 静态独立性校验（零 HTTP）不分启用与否先行：18081/遗留键等硬边界即使
+    # 禁用态也要给出诊断（issue #141/#142：坏配置不是绕过，是更早的拒绝）。
     try:
         _asr_ind.preflight_config(lc)
         _asr_ind.validate_base_url(str(asr_base))
-        req = urllib.request.Request(str(asr_base).rstrip("/") + "/health", method="GET")
-        with urllib.request.urlopen(req, timeout=0.5) as hr:
-            h = json.loads(hr.read().decode("utf-8"))
-        rec("asr_sidecar", True, f"ok model={h.get('model', '?')}")
+        if asr_on:
+            req = urllib.request.Request(str(asr_base).rstrip("/") + "/health", method="GET")
+            with urllib.request.urlopen(req, timeout=0.5) as hr:
+                h = json.loads(hr.read().decode("utf-8"))
+            rec("asr_sidecar", True, f"ok model={h.get('model', '?')}")
+        else:
+            rec("asr_sidecar", False,
+                "禁用态不探测（issue #142：零 HTTP；只读状态用 asr_cli sidecar status）")
     except _asr_ind.AsrIndependenceError as e:
         rec("asr_sidecar", False, f"独立性校验失败（issue #141 禁止复用输入法）：{e}")
     except Exception:
