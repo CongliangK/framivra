@@ -135,7 +135,7 @@ def main(argv=None):
     package_timeline = package_input / 'timeline.json'
     declared = json.loads(package_timeline.read_text()); declared['project']['cache_dependencies'] = ['fonts/NotoSansSC-VF.ttf']
     package_timeline.write_text(json.dumps(declared, ensure_ascii=False, indent=2) + '\n')
-    command('package-build', [sys.executable, '-m', 'vtx.acceptance', 'build', package_timeline, package, '--chrome', args.chrome], expected=2)
+    command('package-build', [sys.executable, '-m', 'vtx.acceptance', 'build', package_timeline, package, '--chrome', args.chrome.resolve()], expected=2)
     manifest = release.digest(package / 'manifest.json')
     gate('independent_package', [command('package-verify', [sys.executable, '-m', 'vtx.acceptance', 'verify', package,
           '--manifest-sha256', manifest, '--source-root', package_input], expected=2)])
@@ -164,6 +164,8 @@ def main(argv=None):
         'assets': {p.name: release.digest(p) for p in paths}, 'gates': gates,
         'acceptance': {'path': package.name, 'manifest_sha256': manifest}})
     release.verify_freeze_evidence(evidence, commit, args.tag, paths)
+    summary = release.build_public_summary(evidence, assets)
+    print('Public summary for review: ' + str(summary))
     print('Freeze evidence: %s\nSHA256: %s' % (evidence, release.digest(evidence)))
 
 
