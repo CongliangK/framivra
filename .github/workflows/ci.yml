@@ -302,7 +302,7 @@ jobs:
   windows-render:
     name: Windows native render and filesystem safety
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
