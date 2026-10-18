@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -140,7 +141,7 @@ class NativeProduction(unittest.TestCase):
         from vtx.cef_client import CefWorkerError
         from vtx.proc_supervisor import SupervisedProcessGroup
         with tempfile.TemporaryDirectory(prefix=f'cef_dom_{name}_') as td:
-            root = Path(td)
+            root = Path(td).resolve()
             p = project(root, n=1)
             page = root / 'page.html'
             page.write_text('''<!doctype html><html><head><style>
@@ -155,7 +156,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
                 def argv(run, profile):
                     fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                     fds.append(fd)
-                    worker_env['TMPDIR'] = f'/proc/{os.getpid()}/fd/{fd}'
+                    worker_env['TMPDIR'] = str(run) if sys.platform == 'darwin' else f'/proc/{os.getpid()}/fd/{fd}'
                     return [WORKER, '--mode=a0', '--ozone-platform=headless',
                             f'--url={page.as_uri()}?f=0',
                             '--width=64', '--height=48', '--begin-frames=12',
@@ -225,7 +226,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
         # 发布像素、不得进入 S5_ONPAINT_VERIFIED。
         from vtx.cef_client import CefWorkerError
         with tempfile.TemporaryDirectory(prefix='cef_js_throw_') as td:
-            root = Path(td)
+            root = Path(td).resolve()
             p = project(root, n=1)
             page = root / 'page.html'
             page.write_text(self._js_error_page(
@@ -268,7 +269,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
         # Promise rejection、以及 console.error 文字，都不是失败证据；
         # 目标绿帧必须正常验收进入 S5。
         with tempfile.TemporaryDirectory(prefix='cef_js_handled_') as td:
-            root = Path(td)
+            root = Path(td).resolve()
             p = project(root, n=1)
             page = root / 'page.html'
             page.write_text(self._js_error_page(
@@ -307,7 +308,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
         # large software-rasterized blurred gradients. NO page render/originals
         # hooks; capture may first receive several identical transparent paints.
         with tempfile.TemporaryDirectory(prefix='cef_blur_') as td:
-            root = Path(td)
+            root = Path(td).resolve()
             p = project(root, n=1)
             data = json.loads(p.read_text())
             data['project'].update(width=1920, height=1080)
@@ -343,35 +344,49 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden}
                 shutil.copytree(root, Path(evidence)/'large-blur', dirs_exist_ok=True)
 
     def test_page_protocol_failures_are_native_timeouts(self):
+        import socket
         from vtx.cef_client import CefWorkerClient, CefWorkerError
         from vtx.proc_supervisor import SupervisedProcessGroup
         with tempfile.TemporaryDirectory(prefix='cef_protocol_') as td:
-            root = Path(td)
+            root = Path(td).resolve()
             p = project(root)
             c = Ctx(p)
             for mode, fault in [('p', 'none'), ('n', 'stale_canary'), ('n', 'no_ready')]:
                 with self.subTest(mode=mode, fault=fault):
                     fds, env = [], dict(os.environ)
+                    pair = socket.socketpair() if sys.platform == 'darwin' else None
                     def argv(run, profile):
                         fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                         fds.append(fd)
-                        env['TMPDIR'] = f'/proc/{os.getpid()}/fd/{fd}'
-                        return [WORKER, '--mode=a0', '--ozone-platform=headless',
+                        env['TMPDIR'] = str(run) if pair else f'/proc/{os.getpid()}/fd/{fd}'
+                        args = [WORKER, '--mode=a0',
                                 '--serve', '--sync',
                                 f'--sync-mode={mode}', '--sync-canary=exact',
                                 f'--sync-fault={fault}', '--sync-ready-timeout-ms=300',
                                 '--sync-pump-timeout-ms=300', '--width=64', '--height=48',
-                                '--ipc-socket=ipc.sock', f'--root-cache-path={profile}',
+                                f'--root-cache-path={profile}',
                                 f'--url-template={(root/"page.html").as_uri()}?f=' + ('0' if mode == 'p' else '{f}')]
+                        args.extend([f'--ipc-fd={pair[1].fileno()}'] if pair else
+                                    ['--ozone-platform=headless', '--ipc-socket=ipc.sock'])
+                        return args
                     try:
-                        with SupervisedProcessGroup(c, argv, backend_id='cef_protocol', env=env) as group:
-                            with CefWorkerClient.connect(group.run_dir/'ipc.sock') as client:
+                        with SupervisedProcessGroup(c, argv, backend_id='cef_protocol', env=env,
+                                                    pass_fds=(pair[1].fileno(),) if pair else ()) as group:
+                            if pair:
+                                pair[1].close()
+                                connection = CefWorkerClient.from_socket(pair[0])
+                            else:
+                                connection = CefWorkerClient.connect(group.run_dir/'ipc.sock')
+                            with connection as client:
                                 with self.assertRaises(CefWorkerError) as caught:
                                     client.request_png(17, 'frame.png', request_id=1,
                                                        worker_relative=True, timeout=10)
                                 self.assertEqual(caught.exception.status_code, 1)
                             self.assertEqual(group.proc.wait(timeout=15), 0)
                     finally:
+                        if pair:
+                            for endpoint in pair:
+                                endpoint.close()
                         for fd in fds:
                             os.close(fd)
 
@@ -380,7 +395,7 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden}
         import struct
         import wave
         with tempfile.TemporaryDirectory(prefix='cef_pipeline_') as td:
-            root = Path(td)
+            root = Path(td).resolve()
             p = project(root, n=30)
             (root / 'page.html').write_text('''<!doctype html><style>
 html,body{margin:0;background:#faf9f6;overflow:hidden}div{position:fixed;
@@ -414,7 +429,7 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
 
     def test_real_mode_n_exact_pixels_and_cache_repair(self):
         with tempfile.TemporaryDirectory(prefix='cef_production_') as td:
-            root = Path(td)
+            root = Path(td).resolve()
             p = project(root)
             env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
                        VTX_CEF_MODE='a0', VTX_GFX_PAGES='1', VTX_GFX_CACHE_NS='')

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "platform": "macosarm64",
+  "distribution": "minimal",
+  "cef_version": "154.0.34+g14c5a08+chromium-154.0.8037.98",
+  "chromium_version": "154.0.8037.98",
+  "chromium_major": 154,
+  "channel": "stable",
+  "archive": "cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_macosarm64_minimal.tar.bz2",
+  "url": "https://cef-builds.spotifycdn.com/cef_binary_154.0.34%2Bg14c5a08%2Bchromium-154.0.8037.98_macosarm64_minimal.tar.bz2",
+  "size_bytes": 132210884,
+  "sha1_official_index": "b7081f6609e5edccf07be96b5d7977329fbe1bdf",
+  "sha256": "b7efb24bcce34b94e836a9f545005aea210e08abdf4ee1483ea03b8daf93f080"
+}
