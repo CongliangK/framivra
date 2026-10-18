@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""independence —— ASR 独立性单一接口（issue #141：删除全部 IME 复用链）
+"""independence —— ASR 独立性单一接口（issue #141：删除全部 IME 复用链；
+issue #142：enabled 门禁 + 进程归属三因子 + 通用 GPU 资源准入）
 
 用途：所有 ASR 入口（asr_cli / client.ensure_sidecar / stop_sidecar / sidecar_server
 绑定 / init.sh / vt.py doctor）在使用任何外部资产（解释器、模型、URL、进程、信号）
@@ -416,6 +417,154 @@ def verify_asset_entry(entry, model_root):
     return resolved
 
 
+# ---------------------------------------------------------------- enabled 门禁（issue #142）
+
+#: asr.enabled 严格真值集合——其余任何值（缺键/None/坏配置/"maybe"/0/false…）
+#: 一律视为禁用（安全默认，issue #142 矩阵「禁用（含未配置/坏配置）」）
+ENABLED_TRUTHY = ("1", "true", "yes", "on")
+
+
+def asr_enabled(cfg):
+    """asr.enabled 严格解析：只有显式 true/1/yes/on（含布尔 True）才启用。
+    未配置/类型不符/坏值 → False（fail-closed 安全默认）。"""
+    if not isinstance(cfg, dict):
+        return False
+    asr = cfg.get("asr")
+    if not isinstance(asr, dict):
+        return False
+    v = asr.get("enabled")
+    if v is True:
+        return True
+    if isinstance(v, str) and v.strip().lower() in ENABLED_TRUTHY:
+        return True
+    return False
+
+
+def require_enabled(cfg, action="该操作"):
+    """计算/启动类入口的 enabled 门禁（issue #142）：禁用态不发请求、不拉起进程、
+    不预热、不转写、不加载模型。只读 health/status、init 准备（bash
+    apps/asr/init.sh，含 --once-health 冒烟）与自有服务 stop 不走此门
+    （语义见 README「enabled 门禁语义表」）。违规 raise。"""
+    if not asr_enabled(cfg):
+        raise AsrIndependenceError(
+            "asr.enabled 未启用——%s 被拒绝（issue #142 门禁：禁用态不探测/不启动/"
+            "不预热/不转写/不加载模型；未配置/坏配置一律视为禁用）。"
+            "只读 sidecar health/status、init 准备与自有服务 stop 不受影响。"
+            "启用：config.local.json 写 \"asr\": {\"enabled\": true}" % action)
+    return True
+
+
+# ---------------------------------------------------------------- 通用资源准入（issue #142）
+
+#: 各档模型显存预算（MiB，保守粗粒度：权重 bf16 + 对齐器 + 激活/碎片余量）。
+#: 与输入法实现完全无关——只读 nvidia-smi 的总量/占用量，绝不探测/停止/卸载
+#: 任何外部服务（含语音输入法）来腾显存。
+VRAM_BUDGET_MIB = {"1.7b": 6144, "0.6b": 3072}
+VRAM_BUDGET_DEFAULT_MIB = 6144
+NVIDIA_SMI = "nvidia-smi"
+
+
+def estimate_vram_mib(model_dir):
+    """按模型目录名估计显存预算（MiB）；asr.vram_budget_mib 配置优先于估计。"""
+    name = str(Path(model_dir).name).lower()
+    if "0.6" in name or "0_6" in name:
+        return VRAM_BUDGET_MIB["0.6b"]
+    return VRAM_BUDGET_MIB["1.7b"]
+
+
+def _run_nvidia_smi():
+    """只读 nvidia-smi 查询（首块 GPU total/used MiB）；不可用/失败 → None。
+    零写态、零信号、零外部服务操作。"""
+    try:
+        r = subprocess.run(
+            [NVIDIA_SMI, "--query-gpu=memory.total,memory.used",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    parts = [p.strip() for p in r.stdout.strip().splitlines()[0].split(",")]
+    if len(parts) < 2:
+        return None
+    try:
+        total, used = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if total <= 0 or used < 0 or used > total:
+        return None
+    return {"total_mib": total, "used_mib": used, "free_mib": total - used}
+
+
+def gpu_admission(required_mib, device="cuda:0"):
+    """通用 GPU/显存准入（issue #142，与 IME 端点零依赖）。返回决策 dict：
+      {allowed, reason, free_mib, total_mib, required_mib, tool}
+    语义（fail-closed 且可诊断）：
+      - device 为 cpu* → 允许，reason=CPU-only 显存门 N/A（无 GPU 常驻需求）；
+      - nvidia-smi 不可用/不可读 → 拒绝：无法验证显存预算时绝不加载 GPU 模型，
+        不拿“先加载到 OOM 再换小模型”当唯一保护；可诊断地提示改 CPU；
+      - free < required → 拒绝：显存不足安全拒绝（绝不停止/卸载任何外部进程，
+        含语音输入法；排队/降档由调用方显式选择）。"""
+    required_mib = int(required_mib or 0)
+    dev = str(device or "").lower()
+    if dev.startswith("cpu"):
+        return {"allowed": True,
+                "reason": "CPU-only 模式：显存门 N/A（无 GPU 常驻需求）",
+                "free_mib": None, "total_mib": None,
+                "required_mib": None, "tool": None}
+    info = _run_nvidia_smi()
+    if info is None:
+        return {"allowed": False,
+                "reason": "GPU 显存门不可用（nvidia-smi 不存在/不可读/超时）——"
+                          "fail-closed：无法验证显存预算时拒绝加载 GPU 模型，"
+                          "不以“先 OOM 再换小模型”当唯一保护。"
+                          "改 CPU 运行：--device-map cpu 或 config asr.device_map=\"cpu\"",
+                "free_mib": None, "total_mib": None,
+                "required_mib": required_mib, "tool": "nvidia-smi(不可用)"}
+    if info["free_mib"] < required_mib:
+        return {"allowed": False,
+                "reason": "显存不足：free %d MiB < 预算 %d MiB（total %d / used %d）——"
+                          "安全拒绝。绝不为了本项目停止/卸载/重配任何外部服务"
+                          "（含语音输入法）；可等待释放后重试、降档 0.6b 或改 CPU"
+                          % (info["free_mib"], required_mib,
+                             info["total_mib"], info["used_mib"]),
+                "free_mib": info["free_mib"], "total_mib": info["total_mib"],
+                "required_mib": required_mib, "tool": NVIDIA_SMI}
+    return {"allowed": True,
+            "reason": "显存准入通过：free %d MiB ≥ 预算 %d MiB（nvidia-smi 只读查询，"
+                      "零外部服务操作）" % (info["free_mib"], required_mib),
+            "free_mib": info["free_mib"], "total_mib": info["total_mib"],
+            "required_mib": required_mib, "tool": NVIDIA_SMI}
+
+
+def admission_lease():
+    """并发准入互斥（issue #142）：项目状态根下 flock 文件，串行化跨进程的
+    「查显存 → 加载模型」临界区，防两路并发同时通过同一份空闲显存检查。
+    用法：with admission_lease(): ...（获取失败=锁文件不可写时 fail-closed raise）。
+    只锁本项目自有状态文件，不触碰任何外部进程。"""
+    import fcntl
+    path = project_state_root() / "admission.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(path, "a+")
+    except OSError as exc:
+        raise AsrIndependenceError(
+            "资源准入锁不可写（%s）——fail-closed 拒绝并发加载：%s"
+            % (path, exc)) from None
+
+    class _Lease:
+        def __enter__(self):
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            return self
+
+        def __exit__(self, *exc):
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            fh.close()
+            return False
+
+    return _Lease()
+
+
 # ---------------------------------------------------------------- sidecar 进程归属
 
 def pid_file(port):
@@ -423,21 +572,80 @@ def pid_file(port):
     return project_state_root() / ("sidecar_%d.pid" % int(port))
 
 
-def pid_owns_sidecar(pid, port):
-    """pid 是否真的是本项目 sidecar（Linux /proc cmdline 双因子：脚本名 + 端口）。
+def pid_start_time(pid):
+    """/proc/<pid>/stat 的 starttime（field 22，时钟嘀嗒）——进程身份的启动时刻
+    因子：PID 被内核回收复用后 starttime 必变（issue #142：陈旧 PID/PID 重用
+    不得导致向外部进程发信号）。读不到 → None。"""
+    try:
+        data = (Path("/proc") / str(int(pid)) / "stat").read_text()
+    except (OSError, ValueError):
+        return None
+    tail = data.rpartition(")")[2].split()   # comm 可含空格/括号：取最后 ')' 之后
+    try:
+        return int(tail[19])                  # tail[0]=state(field3) → field22=index19
+    except (IndexError, ValueError):
+        return None
+
+
+def write_pid_record(port, pid, extra=None):
+    """写 pid 记录（JSON）：{pid, start_time, port, ...}。启动时刻入档，
+    stop/回收前与 /proc 实测比对，PID 重用即失配。"""
+    rec = {"pid": int(pid), "start_time": pid_start_time(pid), "port": int(port)}
+    if extra:
+        rec.update(extra)
+    pf = pid_file(port)
+    pf.parent.mkdir(parents=True, exist_ok=True)
+    pf.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    return pf
+
+
+def read_pid_record(port):
+    """读 pid 记录；兼容 #141 时代的纯数字旧格式（无 start_time → None，
+    归属校验退化为 cmdline 单因子并在 stop 时给出升级提示）。损坏 → None。"""
+    pf = pid_file(port)
+    try:
+        raw = pf.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if raw.startswith("{"):
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            return None
+        if isinstance(rec, dict) and isinstance(rec.get("pid"), int):
+            return rec
+        return None
+    try:
+        return {"pid": int(raw), "start_time": None, "port": int(port), "legacy": True}
+    except ValueError:
+        return None
+
+
+def pid_owns_sidecar(pid, port, start_time=None):
+    """pid 是否真的是本项目 sidecar——三因子归属（issue #142）：
+    ① /proc cmdline 同时含 sidecar_server.py 与端口；② pid 存活；
+    ③ 记录在案的 start_time 与 /proc 实测一致（PID 重用防御；旧格式记录
+    无 start_time 时跳过该因子并在调用方提示升级）。
     无法证明即 False——绝不向无法归属的进程发信号。"""
     if not pid or int(pid) <= 1:
         return False
-    cmdline_file = Path("/proc") / str(int(pid)) / "cmdline"
+    pid = int(pid)
+    cmdline_file = Path("/proc") / str(pid) / "cmdline"
     try:
         raw = cmdline_file.read_bytes()
     except OSError:
         return False
     parts = [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
     joined = " ".join(parts)
-    return ("sidecar_server.py" in joined
+    if not ("sidecar_server.py" in joined
             and (("--port" in parts and str(int(port)) in parts)
-                 or ("--port %d" % int(port)) in joined))
+                 or ("--port %d" % int(port)) in joined)):
+        return False
+    if start_time is not None:
+        now = pid_start_time(pid)
+        if now is None or int(start_time) != now:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------- 总 preflight
@@ -460,6 +668,17 @@ def preflight_config(cfg):
             check_path_independent(v, "asr.%s" % key)
     if asr.get("base_url"):
         validate_base_url(asr["base_url"])
+    # issue #142：资源准入键坏值 fail-closed（不静默按默认跑）
+    vb = asr.get("vram_budget_mib")
+    if vb is not None and (isinstance(vb, bool)
+                           or not isinstance(vb, (int, float))
+                           or vb <= 0):
+        raise AsrIndependenceError(
+            "asr.vram_budget_mib 必须是正数（MiB），当前值：%r" % (vb,))
+    dm = asr.get("device_map")
+    if dm is not None and not isinstance(dm, str):
+        raise AsrIndependenceError("asr.device_map 必须是字符串（如 cuda:0 / cpu），"
+                                   "当前值：%r" % (dm,))
 
 
 # ---------------------------------------------------------------- CLI

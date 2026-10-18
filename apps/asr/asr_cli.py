@@ -107,7 +107,8 @@ def _transcribe_words(input_path, args, cfg):
         wav = client.extract_wav16k(input_path, tmp_dir, runid)
         lang = getattr(args, "language", None) or client.cfg_get(cfg, "asr.language", "Chinese")
         resp = client.transcribe(base_url, wav, timestamps=True, language=lang,
-                                 timeout=getattr(args, "timeout", None) or client.TRANSCRIBE_TIMEOUT_DEFAULT)
+                                 timeout=getattr(args, "timeout", None) or client.TRANSCRIBE_TIMEOUT_DEFAULT,
+                                 cfg=cfg)
         return resp, _words_or_fallback(resp)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)     # hygiene：退出即删
@@ -168,7 +169,7 @@ def cmd_transcribe(args, cfg):
         wav = client.extract_wav16k(args.input, tmp_dir, runid)
         lang = args.language or client.cfg_get(cfg, "asr.language", "Chinese")
         resp = client.transcribe(base_url, wav, timestamps=args.timestamps,
-                                 language=lang, timeout=args.timeout)
+                                 language=lang, timeout=args.timeout, cfg=cfg)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     if args.json:
@@ -366,6 +367,12 @@ def main():
     cfg = client.load_config()
     try:
         client.preflight(cfg)      # issue #141：一切入口 fail-closed（零请求零拉起）
+        # issue #142 enabled 门禁：transcribe/srt/timeline/batch/sidecar start 为
+        # 计算/启动入口，禁用态（含未配置/坏配置）一律拒绝且零请求零拉起；
+        # sidecar health/status（只读探测）与 sidecar stop（自有服务回收）豁免。
+        if args.cmd in ("transcribe", "srt", "timeline", "batch") or \
+                (args.cmd == "sidecar" and args.action == "start"):
+            independence.require_enabled(cfg, "命令 %s" % args.cmd)
         return args.fn(args, cfg)
     except independence.AsrIndependenceError as exc:
         print("✗ ASR 独立性校验失败：%s" % exc)
