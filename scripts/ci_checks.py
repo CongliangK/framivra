@@ -50,6 +50,7 @@ MEDIA_TESTS = {
         'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
         'tests.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
         'tests.test_graphics_portability.SubtitleIntegration',
+        'templates.promo-demo.v1.production.tests.test_native_postmix_preflight.NativePostmixTests',
     ),
     'chrome': (
         'tests.test_graphics_portability.BrowserIntegration',

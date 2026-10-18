@@ -6,6 +6,9 @@ from types import SimpleNamespace
 from vtx.gfx_dependencies import resolve, identity
 ROOT=Path(__file__).resolve().parents[1]
 PACKAGE=ROOT/'templates/promo-demo/v1/production'
+# Expose the existing decoder class to ordinary and partition discovery.
+NativePostmixTests=importlib.import_module(
+ 'templates.promo-demo.v1.production.tests.test_native_postmix_preflight').NativePostmixTests
 class ProductionSourceContracts(unittest.TestCase):
  def test_schema_and_exact_source_bindings(self):
   import jsonschema

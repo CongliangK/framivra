@@ -198,7 +198,14 @@ class InventoryContract(unittest.TestCase):
             result = ci.inventory(ROOT)
         self.assertEqual(result['baseline']['discovered_count'], 2346)
         self.assertEqual(result['baseline']['unique_test_ids'], 2344)
-        self.assertEqual(result['strict_counts'], {'ffmpeg': 105, 'chrome': 14, 'demo-toolchain': 5})
+        self.assertEqual(result['strict_counts'], {'ffmpeg': 117, 'chrome': 14, 'demo-toolchain': 5})
+        native = [record for record in result['tests'] if record['canonical'].startswith(
+            'templates.promo-demo.v1.production.tests.test_native_postmix_preflight.NativePostmixTests.')]
+        self.assertEqual(len(native), 12)
+        self.assertEqual(len({record['canonical'] for record in native}), 12)
+        for record in native:
+            self.assertEqual(record['partition'], 'real')
+            self.assertEqual(record['strict_gates'], ['ffmpeg'])
         self.assertEqual(len(result['batches']), 16)
         self.assertEqual(sum(result['counts'].values()), len(result['tests']))
         self.assertEqual(len({r['key'] for r in result['tests']}), len(result['tests']))
