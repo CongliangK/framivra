@@ -19,6 +19,10 @@ import contextlib
 import io
 import importlib.metadata
 import sys
+import ctypes
+import plistlib
+import struct
+import uuid
 
 SCHEMA = 'vtx.gfx-environment/1'
 CHROME_VISUAL_FLAGS = ('--headless', '--disable-gpu', '--hide-scrollbars',
@@ -37,6 +41,365 @@ PIXEL_ENV = ('LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'LC_NUMERIC', 'TZ',
              'GALLIUM_DRIVER', '__GLX_VENDOR_LIBRARY_NAME',
              'VK_ICD_FILENAMES', 'VK_DRIVER_FILES', 'DRI_PRIME',
              'VTX_GFX_NAVFREE', 'VTX_GFX_STATIC')
+
+_CORETEXT = '/System/Library/Frameworks/CoreText.framework'
+_COREFOUNDATION = '/System/Library/Frameworks/CoreFoundation.framework'
+
+
+def _darwin_bundle(root):
+    """Hash one app, including framework links, without traversing outside it."""
+    root = Path(root).resolve(strict=True)
+    files, links = {}, {}
+    for base, dirs, names in os.walk(root, onerror=lambda e: _raise(e)):
+        for name in sorted(dirs + names):
+            p = Path(base) / name
+            target = p.resolve(strict=True)
+            if not target.is_relative_to(root):
+                raise EnvironmentError(f'Darwin bundle link escapes distribution: {p}')
+            relative = str(p.relative_to(root))
+            if p.is_symlink():
+                links[relative] = [os.readlink(p), str(target.relative_to(root))]
+            if p.is_file():
+                files[relative] = list(_file(p))
+            elif not p.is_dir():
+                raise EnvironmentError(f'unknown Darwin bundle member: {p}')
+    if not files:
+        raise EnvironmentError(f'empty Darwin app distribution: {root}')
+    return {'files': files, 'links': links}
+
+
+def _darwin_native(path):
+    """Require a native arm64 Mach-O slice; Rosetta/other CPUs are not supported."""
+    with Path(path).open('rb') as f:
+        header = f.read(8)
+        if len(header) != 8:
+            raise EnvironmentError(f'truncated Darwin renderer: {path}')
+        if header[:4] == b'\xcf\xfa\xed\xfe':
+            cpus = [struct.unpack('<I', header[4:])[0]]
+        elif header[:4] in (b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf'):
+            count = struct.unpack('>I', header[4:])[0]
+            width = 20 if header[:4] == b'\xca\xfe\xba\xbe' else 32
+            if not 1 <= count <= 16:
+                raise EnvironmentError('unknown Darwin universal binary inventory')
+            records = f.read(count * width)
+            if len(records) != count * width:
+                raise EnvironmentError('truncated Darwin universal binary inventory')
+            cpus = [struct.unpack_from('>I', records, i * width)[0] for i in range(count)]
+        else:
+            raise EnvironmentError(f'native Mach-O renderer required: {path}')
+    if 0x100000c not in cpus:
+        raise EnvironmentError(f'native arm64 renderer required: {path}')
+    return sorted(cpus)
+
+
+def _darwin_load_commands(path):
+    """Read native Chrome Mach-O dependency names without installing otool."""
+    with Path(path).open('rb') as f:
+        first = f.read(8)
+        if first[:4] not in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf'):
+            return None
+        offset = 0
+        if first[:4] != b'\xcf\xfa\xed\xfe':
+            _darwin_native(path)
+            count = struct.unpack('>I', first[4:])[0]
+            width = 20 if first[:4] == b'\xca\xfe\xba\xbe' else 32
+            records = f.read(count * width)
+            selected = [i * width for i in range(count)
+                        if struct.unpack_from('>I', records, i * width)[0] == 0x100000c]
+            if len(selected) != 1:
+                raise EnvironmentError('ambiguous native Darwin binary slices')
+            offset = struct.unpack_from('>I' if width == 20 else '>Q', records, selected[0] + 8)[0]
+        f.seek(offset)
+        header = f.read(32)
+        if (len(header) != 32 or header[:4] != b'\xcf\xfa\xed\xfe'
+                or struct.unpack_from('<I', header, 4)[0] != 0x100000c):
+            raise EnvironmentError(f'unsupported Darwin binary slice: {path}')
+        count, size = struct.unpack_from('<II', header, 16)
+        if count > 65536 or size > 16 * 1024 * 1024 or offset + 32 + size > Path(path).stat().st_size:
+            raise EnvironmentError('invalid Darwin load command inventory')
+        commands = f.read(size)
+    deps, rpaths, at = [], [], 0
+    for _ in range(count):
+        if at + 8 > len(commands):
+            raise EnvironmentError('truncated Darwin load commands')
+        kind, length = struct.unpack_from('<II', commands, at)
+        if length < 8 or at + length > len(commands):
+            raise EnvironmentError('invalid Darwin load command length')
+        if kind == 0x27:  # LC_DYLD_ENVIRONMENT can add an otherwise unbound loader override.
+            raise EnvironmentError('unsupported embedded Darwin loader environment')
+        if kind in (0xc, 0x80000018, 0x8000001f, 0x20, 0x80000023, 0x8000001c, 0xe):
+            if length < 12:
+                raise EnvironmentError('truncated Darwin dependency command')
+            start = struct.unpack_from('<I', commands, at + 8)[0]
+            if start < 12 or start >= length or b'\0' not in commands[at + start:at + length]:
+                raise EnvironmentError('invalid Darwin dependency name')
+            value = commands[at + start:at + length].split(b'\0', 1)[0].decode('utf-8')
+            if kind == 0xe:  # LC_LOAD_DYLINKER: the file is separately bound below.
+                if value != '/usr/lib/dyld':
+                    raise EnvironmentError('unsupported Darwin dynamic linker')
+            else:
+                (rpaths if kind == 0x8000001c else deps).append(value)
+        at += length
+    if at != size:
+        raise EnvironmentError('mismatched Darwin load command inventory')
+    return deps, rpaths
+
+
+def _darwin_dependencies(root, runtime):
+    lib = ctypes.CDLL(None)
+    contains = lib._dyld_shared_cache_contains_path
+    contains.argtypes, contains.restype = [ctypes.c_char_p], ctypes.c_bool
+    out = {}
+    for path in sorted({v[0] for v in runtime['files'].values()}):
+        commands = _darwin_load_commands(path)
+        if commands is None:
+            continue
+        deps, rpaths = commands
+        # Helper apps can have their own executable-relative paths.
+        executable_dir = next((p / 'Contents/MacOS' for p in Path(path).parents
+                               if p.suffix == '.app'), root / 'Contents/MacOS')
+
+        def expand(value):
+            for prefix, directory in (('@loader_path/', Path(path).parent),
+                                      ('@executable_path/', executable_dir)):
+                if value == prefix[:-1]:
+                    return directory
+                if value.startswith(prefix):
+                    return directory / value[len(prefix):]
+            if value.startswith('/'):
+                return Path(value)
+            raise EnvironmentError(f'unresolved Darwin library path: {value}')
+
+        search = [expand(r).resolve() for r in rpaths]
+        if any(not p.is_relative_to(root) for p in search):
+            raise EnvironmentError(f'external Darwin library search path: {path}')
+        resolved = {}
+        for dep in deps:
+            if dep.startswith(('/usr/lib/', '/System/Library/')) and contains(os.fsencode(dep)):
+                resolved[dep] = 'system-cache'
+                continue
+            choices = ([r / dep[len('@rpath/'):] for r in search]
+                       if dep.startswith('@rpath/') else [expand(dep)])
+            matches = [p.resolve(strict=True) for p in choices if p.is_file()]
+            if not matches or any(not p.is_relative_to(root) for p in matches):
+                raise EnvironmentError(f'unresolved/external Darwin dependency: {path}: {dep}')
+            resolved[dep] = sorted(set(map(str, matches)))
+        out[path] = resolved
+    if not out:
+        raise EnvironmentError('empty Darwin native dependency inventory')
+    return out
+
+
+def _darwin_dyld():
+    """Ask the running native process for its actual system cache, not a guess."""
+    lib = ctypes.CDLL(None)
+    path_fn = lib.dyld_shared_cache_file_path
+    path_fn.argtypes, path_fn.restype = [], ctypes.c_char_p
+    uuid_fn = lib._dyld_get_shared_cache_uuid
+    uuid_fn.argtypes, uuid_fn.restype = [ctypes.c_void_p], ctypes.c_bool
+    value = (ctypes.c_ubyte * 16)()
+    path = path_fn()
+    if not path or not uuid_fn(value) or not any(value):
+        raise EnvironmentError('unknown active Darwin system cache')
+    for name in ('dyld_shared_cache_some_image_overridden',
+                 'dyld_has_inserted_or_interposing_libraries'):
+        check = getattr(lib, name)
+        check.argtypes, check.restype = [], ctypes.c_bool
+        if check():
+            raise EnvironmentError('unsupported Darwin library override')
+    return Path(os.fsdecode(path)), bytes(value)
+
+
+def _darwin_cache(path, loaded_uuid):
+    """Hash actual modern dyld cache/subcache bytes, checking their UUID closure.
+
+    Layout: Apple's dyld_cache_header and dyld_subcache_entry. Older layouts
+    without named subcaches are deliberately unsupported. No SDK is required.
+    """
+    path = Path(path).resolve(strict=True)
+    with path.open('rb') as f:
+        header = f.read(464)
+        if (len(header) != 464 or not header.startswith(b'dyld_v1')
+                or b'arm64' not in header[:16]
+                or struct.unpack_from('<I', header, 16)[0] < 464
+                or header[88:104] != loaded_uuid):
+            raise EnvironmentError('unknown/mismatched Darwin dyld cache header')
+        offset, count = struct.unpack_from('<II', header, 392)
+        if count > 128 or (count and (offset < 464 or offset + count * 56 > path.stat().st_size)):
+            raise EnvironmentError('invalid Darwin dyld subcache inventory')
+        f.seek(offset)
+        records = f.read(count * 56)
+    if len(records) != count * 56:
+        raise EnvironmentError('truncated Darwin dyld subcache inventory')
+    paths, seen = [path], set()
+    for i in range(count):
+        record = records[i * 56:(i + 1) * 56]
+        suffix = record[24:].split(b'\0', 1)[0].decode('ascii')
+        if not re.fullmatch(r'\.[A-Za-z0-9_.]+', suffix) or suffix in seen:
+            raise EnvironmentError('unknown/duplicate Darwin dyld subcache suffix')
+        seen.add(suffix)
+        member = path.with_name(path.name + suffix)
+        with member.open('rb') as f:
+            subheader = f.read(104)
+        if (len(subheader) != 104 or subheader[:16] != header[:16]
+                or subheader[88:104] != record[:16]):
+            raise EnvironmentError(f'mismatched Darwin dyld subcache: {member}')
+        paths.append(member)
+    return {'uuid': str(uuid.UUID(bytes=loaded_uuid)), 'files': _files(paths)}
+
+
+def _darwin_font_inventory():
+    """Use CoreText's available URLs and faces, not Linux fontconfig on macOS."""
+    cf = ctypes.CDLL(_COREFOUNDATION + '/CoreFoundation')
+    ct = ctypes.CDLL(_CORETEXT + '/CoreText')
+    for name in ('CTFontManagerCopyAvailableFontURLs', 'CTFontManagerCopyAvailablePostScriptNames'):
+        fn = getattr(ct, name)
+        fn.argtypes, fn.restype = [], ctypes.c_void_p
+    cf.CFArrayGetCount.argtypes, cf.CFArrayGetCount.restype = [ctypes.c_void_p], ctypes.c_long
+    cf.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+    cf.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+    cf.CFURLGetFileSystemRepresentation.argtypes = [ctypes.c_void_p, ctypes.c_bool,
+                                                   ctypes.c_void_p, ctypes.c_long]
+    cf.CFURLGetFileSystemRepresentation.restype = ctypes.c_bool
+    cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long,
+                                     ctypes.c_uint32]
+    cf.CFStringGetCString.restype = ctypes.c_bool
+    cf.CFRelease.argtypes, cf.CFRelease.restype = [ctypes.c_void_p], None
+
+    def values(fn, urls):
+        array = fn()
+        if not array:
+            raise EnvironmentError('unknown CoreText font inventory')
+        out = []
+        try:
+            count = cf.CFArrayGetCount(array)
+            if not 0 < count <= 100000:
+                raise EnvironmentError('unknown/empty CoreText font inventory')
+            for i in range(count):
+                value = cf.CFArrayGetValueAtIndex(array, i)
+                buf = ctypes.create_string_buffer(32768)
+                ok = (cf.CFURLGetFileSystemRepresentation(value, True, buf, len(buf)) if urls
+                      else cf.CFStringGetCString(value, buf, len(buf), 0x08000100))
+                if not ok or not buf.value:
+                    raise EnvironmentError('unreadable CoreText font inventory entry')
+                out.append(os.fsdecode(buf.value) if urls else buf.value.decode('utf-8'))
+        finally:
+            cf.CFRelease(array)
+        return sorted(set(out))
+
+    return (values(ct.CTFontManagerCopyAvailableFontURLs, True),
+            values(ct.CTFontManagerCopyAvailablePostScriptNames, False))
+
+
+def _darwin_application_domains(root, dependencies):
+    """NSUserDefaults application domains come from actual app/helper metadata."""
+    apps = {root}
+    for binary in dependencies:
+        apps.update(p for p in Path(binary).parents
+                    if p.suffix == '.app' and p.is_relative_to(root))
+    domains = set()
+    for app in apps:
+        info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+        domain = info.get('CFBundleIdentifier')
+        if not isinstance(domain, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]*', domain):
+            raise EnvironmentError(f'unknown Darwin application preference domain: {app}')
+        domains.add(domain)
+    return sorted(domains)
+
+
+def _darwin_fonts(libraries, application_domains):
+    paths, names = _darwin_font_inventory()
+    if not paths or not names or any(not Path(p).is_absolute() for p in paths):
+        raise EnvironmentError('unknown/empty CoreText font inventory')
+    # NSUserDefaults searches the application domain before the global domain.
+    # Hash only the named preference files, never Chrome profiles or raw values.
+    resources = _tree(Path(_CORETEXT) / 'Resources')
+    preferences = []
+    domains = sorted(set(application_domains) | {'.GlobalPreferences', 'com.apple.CoreText', 'com.apple.ATS'})
+    names_by_domain = {domain + '.plist' for domain in domains}
+    by_host = re.compile(r'(?:' + '|'.join(map(re.escape, domains)) + r')\.[A-Za-z0-9-]+\.plist')
+    for root in (Path('/Library/Preferences'), Path.home() / 'Library/Preferences'):
+        try:
+            entries = list(root.iterdir())
+        except FileNotFoundError:
+            continue
+        boundary = root.resolve(strict=True)
+        selected = []
+        for p in entries:
+            if p.name in names_by_domain:
+                selected.append(p)
+            elif p.name == 'ByHost':
+                if not p.resolve(strict=True).is_relative_to(boundary):
+                    raise EnvironmentError(f'Darwin ByHost directory escapes preferences: {p}')
+                if p.is_symlink():
+                    raise EnvironmentError(f'unsupported Darwin ByHost directory symlink: {p}')
+                selected.extend(q for q in p.iterdir() if by_host.fullmatch(q.name))
+        if any(not p.resolve(strict=True).is_relative_to(boundary) for p in selected):
+            raise EnvironmentError('Darwin preference file escapes its directory')
+        # Resolved-target hashes alone cannot bind a symlink's preference domain.
+        if any(p.is_symlink() for p in selected):
+            raise EnvironmentError('unsupported Darwin preference file symlink')
+        preferences.extend(selected)
+    configs = {value[0]: value[1] for value in resources.values()}
+    configs.update(_files(preferences))
+    return {'files': _files(paths), 'configs': configs,
+            'inventory': {'urls': paths, 'postscript_names': names, 'resources': resources,
+                          'application_domains': application_domains},
+            'tools': _files([sys.executable, _ROOT / 'gfx_environment.py']),
+            'libraries': libraries}
+
+
+def _collect_darwin(backend, binary, mode):
+    if backend != 'cdp' or mode is not None or platform.machine() != 'arm64':
+        raise EnvironmentError('Darwin resolver requires native arm64 CDP')
+    if (any(os.environ[k] for k in os.environ if k.startswith(('DYLD_', '__XPC_DYLD_')))
+            or any(os.environ.get(k) for k in ('LD_LIBRARY_PATH', 'LD_PRELOAD',
+                       'LIBGL_DRIVERS_PATH', 'VK_ICD_FILENAMES', 'VK_DRIVER_FILES', 'CFFIXED_USER_HOME'))):
+        raise EnvironmentError('unsupported Darwin DYLD environment override')
+    executable = Path(shutil.which(str(binary)) or binary).resolve(strict=True)
+    if executable.parent.name != 'MacOS' or executable.parent.parent.name != 'Contents':
+        raise EnvironmentError('Darwin resolver requires a Chrome app bundle executable')
+    root = executable.parent.parent.parent
+    if root.suffix != '.app':
+        raise EnvironmentError('Darwin resolver requires a Chrome app bundle')
+    info = plistlib.loads((root / 'Contents/Info.plist').read_bytes())
+    if (info.get('CFBundleIdentifier') != 'com.google.Chrome'
+            or info.get('CFBundleExecutable') != executable.name):
+        raise EnvironmentError('Darwin resolver supports the Google Chrome app bundle only')
+    architecture = _darwin_native(executable)
+    cache = _darwin_cache(*_darwin_dyld())
+    libraries = cache['files']
+    runtime = _darwin_bundle(root)
+    if not any('/Frameworks/' in p for p in runtime['files']):
+        raise EnvironmentError('Darwin Chrome framework distribution is missing')
+    dependencies = _darwin_dependencies(root, runtime)
+    application_domains = _darwin_application_domains(root, dependencies)
+    boot = _command(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid']).strip()
+    if not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', boot):
+        raise EnvironmentError('unknown Darwin host/boot identity')
+    version = _command([str(executable), '--version']).strip()
+    if not version:
+        raise EnvironmentError('empty actual Darwin renderer version')
+    system = _files(['/System/Library/CoreServices/SystemVersion.plist', '/usr/lib/dyld'] +
+                    ([Path('/etc/localtime')] if Path('/etc/localtime').exists() else []))
+    return {'schema': SCHEMA, 'status': 'input-bound', 'pixel_equivalence': 'unproven',
+            'backend': backend, 'mode': mode, 'platform_resolver': 'darwin-arm64-cdp/1',
+            'browser': _files([executable]), 'version': version,
+            'runtime': {str(root): runtime}, 'libraries': libraries,
+            'system_cache': cache, 'architecture': architecture, 'dependencies': dependencies,
+            'fonts': _darwin_fonts(libraries, application_domains),
+            'host_boot': {'boot_session_uuid': boot, 'hostname': platform.node()},
+            'os': list(platform.uname()), 'system_locale': system,
+            'tools': _files(['/usr/sbin/sysctl']),
+            'environment': {k: os.environ.get(k) for k in sorted(set(PIXEL_ENV) |
+                             {k for k in os.environ if k.startswith(('LC_', 'DYLD_', '__XPC_DYLD_', '__CF_'))})},
+            'launch_flags': list(CHROME_VISUAL_FLAGS),
+            'protocol': {'device_scale': 1, 'color': 'srgb',
+                         'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
+            'python_runtime': _python_runtime(),
+            'implementation': _files([_ROOT / p for p in (
+                'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py',
+                'gfx_cef.py', 'cef_client.py')])}
 
 
 class EnvironmentError(ValueError):
@@ -163,6 +526,8 @@ def collect(backend, binary, mode=None):
     observations remain separate evidence; no launch flag proves a GPU backend.
     """
     try:
+        if platform.system() == 'Darwin':
+            return _collect_darwin(backend, binary, mode)
         if platform.system() != 'Linux':
             raise EnvironmentError('gfx environment unknown: platform resolver requires Linux')
         executable = Path(shutil.which(str(binary)) or binary).resolve(strict=True)
@@ -233,7 +598,8 @@ def collect(backend, binary, mode=None):
                 'implementation': _files([_ROOT / p for p in (
                     'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py',
                     'gfx_cef.py', 'cef_client.py')])}
-    except (OSError, RuntimeError, TypeError) as e:
+    except (OSError, RuntimeError, TypeError, AttributeError, plistlib.InvalidFileException,
+            UnicodeError, struct.error) as e:
         raise EnvironmentError(f'gfx environment unknown; cache reuse refused: {e}') from e
 
 
@@ -246,6 +612,9 @@ def resolve(c):
         return None  # frozen historical identity owned by gfx_backend
     selector = (backend, os.environ.get('VTX_CHROME'), os.environ.get('VTX_CEF_WORKER'),
                 os.environ.get('VTX_CEF_MODE'), tuple(os.environ.get(k) for k in PIXEL_ENV))
+    if platform.system() == 'Darwin':
+        selector += (tuple(sorted((k, v) for k, v in os.environ.items()
+                     if k.startswith(('DYLD_', '__XPC_DYLD_', '__CF_')) or k == 'CFFIXED_USER_HOME')),)
     pinned = getattr(c, '_gfx_environment', None)
     if pinned and pinned[0] == selector:
         return pinned[1]
@@ -299,6 +668,19 @@ def verify_certificate(record):
             or record.get('sha256') != digest(record['axes'])):
         raise EnvironmentError('unknown/mismatched gfx input environment certificate')
     axes = record['axes']
+    if axes.get('platform_resolver') == 'darwin-arm64-cdp/1':
+        cache = axes.get('system_cache')
+        host = axes.get('host_boot')
+        architecture = axes.get('architecture')
+        if (axes.get('backend') != 'cdp' or not isinstance(cache, dict)
+                or not isinstance(cache.get('uuid'), str)
+                or not re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}', cache['uuid'])
+                or not isinstance(cache.get('files'), dict) or not cache['files']
+                or cache.get('files') != axes.get('libraries')
+                or not isinstance(host, dict) or not host.get('boot_session_uuid')
+                or not isinstance(architecture, list) or 0x100000c not in architecture
+                or not isinstance(axes.get('dependencies'), dict) or not axes['dependencies']):
+            raise EnvironmentError('incomplete Darwin gfx input environment certificate')
     if (axes.get('backend') not in ('cdp', 'cli', 'cef')
             or axes.get('pixel_equivalence') != 'unproven'
             or not isinstance(axes.get('fonts'), dict)
