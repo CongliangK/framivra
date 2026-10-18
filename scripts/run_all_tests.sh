@@ -17,6 +17,11 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
+# Opt-in measurement/partition entry. No arguments retain the original full
+# discovery commands below, including their optional-skip and exit semantics.
+if [ "$#" -gt 0 ]; then
+  exec env python3 scripts/ci_partition.py "$@"
+fi
 rc=0
 # tests/test_gfx_dependencies.py is included by root discovery (no Chrome required).
 env python3 -m unittest discover -s tests -t . -v || rc=$?

@@ -1,0 +1,525 @@
+"""Fail-closed partitioning preserves discovery instances and real execution.
+
+These tests exercise synthetic subprocess suites, including failure, timeout,
+setup-level skip and a malicious zero-execution TestCase. They never launch
+native renderer integrations or replace the existing strict media preflight.
+"""
+import contextlib
+import copy
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location('ci_partition_under_test', ROOT / 'scripts/ci_partition.py')
+ci = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(ci)
+
+
+def instance(name='test_ok', module='tests.test_sample', case='Case', origin=None):
+    return (origin or module) + '::' + module + '.' + case + '.' + name
+
+
+def policy_for(discovered):
+    return {'schema_version': 1, 'baseline': {'batches': copy.deepcopy(discovered)}, 'placements': []}
+
+
+class InventoryContract(unittest.TestCase):
+    def setUp(self):
+        self.discovered = {'tests': [instance()]}
+        self.policy = policy_for(self.discovered)
+
+    def build(self, discovered=None, policy=None, media=None, strict=None):
+        return ci.policy_inventory(self.discovered if discovered is None else discovered,
+                                   self.policy if policy is None else policy,
+                                   {} if media is None else media,
+                                   {} if strict is None else strict)
+
+    def test_original_and_new_cases_stay_fast_and_visible(self):
+        discovered = {'tests': [instance(), instance('test_new')]}
+        result = self.build(discovered)
+        self.assertEqual([r['partition'] for r in result], ['fast', 'fast'])
+        self.assertEqual([r['new_since_baseline'] for r in result], [False, True])
+
+    def test_new_discovery_batch_stays_visible(self):
+        found = dict(self.discovered, **{'apps/new/tests': [instance()]})
+        result = self.build(found)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[1]['canonical'], 'apps.new.tests.test_sample.Case.test_ok')
+
+    def test_same_test_id_in_different_batches_is_not_deduplicated(self):
+        found = {'tests': [instance()], 'apps/example/tests': [instance()]}
+        result = self.build(found, policy_for(found))
+        self.assertEqual(len({r['key'] for r in result}), 2)
+        self.assertEqual(len({r['id'] for r in result}), 1)
+
+    def test_imported_case_aliases_preserve_both_original_executions(self):
+        found = {'tests': [instance(), instance(origin='tests.test_alias')]}
+        result = self.build(found, policy_for(found))
+        self.assertEqual(len({r['key'] for r in result}), 2)
+        self.assertEqual(len({r['id'] for r in result}), 1)
+
+    def test_missing_original_case_fails(self):
+        with self.assertRaisesRegex(ci.PartitionError, 'missing baseline test'):
+            self.build({'tests': [instance('test_replacement')]})
+
+    def test_missing_original_batch_fails(self):
+        with self.assertRaisesRegex(ci.PartitionError, 'missing baseline batch'):
+            self.build({'apps/new/tests': [instance()]})
+
+    def test_duplicate_discovery_instance_fails(self):
+        with self.assertRaisesRegex(ci.PartitionError, 'duplicate'):
+            self.build({'tests': [instance(), instance()]})
+
+    def test_duplicate_baseline_instance_fails(self):
+        self.policy['baseline']['batches']['tests'].append(instance())
+        with self.assertRaisesRegex(ci.PartitionError, 'duplicate'):
+            self.build()
+
+    def test_empty_and_stale_selectors_fail(self):
+        for selector in ('', ' ', 'tests.test_missing.Case'):
+            self.policy['placements'] = [{'selector': selector, 'partition': 'optional', 'reason': 'fixture'}]
+            with self.subTest(selector=selector), self.assertRaises(ci.PartitionError):
+                self.build()
+
+    def test_overlapping_selectors_fail_even_same_partition(self):
+        self.policy['placements'] = [
+            {'selector': s, 'partition': 'optional', 'reason': 'fixture'}
+            for s in ('tests.test_sample', 'tests.test_sample.Case')]
+        with self.assertRaisesRegex(ci.PartitionError, 'overlapping'):
+            self.build()
+
+    def test_media_and_optional_overlap_fails(self):
+        self.policy['placements'] = [{'selector': 'tests.test_sample', 'partition': 'optional', 'reason': 'fixture'}]
+        with self.assertRaisesRegex(ci.PartitionError, 'overlapping'):
+            self.build(media={'tests.test_sample.Case': 'ffmpeg'})
+
+    def test_new_gated_media_is_real_and_strict_membership_visible(self):
+        result = self.build(media={'tests.test_sample.Case': 'ffmpeg'},
+                            strict={'ffmpeg': ['tests.test_sample']})
+        self.assertEqual(result[0]['partition'], 'real')
+        self.assertEqual(result[0]['strict_gates'], ['ffmpeg'])
+
+    def test_empty_and_stale_strict_selectors_fail(self):
+        for strict in ({'ffmpeg': []}, {'ffmpeg': ['tests.missing']}):
+            with self.subTest(strict=strict), self.assertRaises(ci.PartitionError):
+                self.build(strict=strict)
+
+    def test_malformed_or_empty_baseline_fails(self):
+        for baseline in ({}, {'tests': []}):
+            self.policy['baseline']['batches'] = baseline
+            with self.subTest(baseline=baseline), self.assertRaises(ci.PartitionError):
+                self.build()
+
+    def test_json_duplicate_keys_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'policy.json'
+            path.write_text('{"schema_version": 1, "schema_version": 1}')
+            with self.assertRaisesRegex(ci.PartitionError, 'duplicate JSON keys'):
+                ci.load_json(path)
+
+    def test_current_repository_inventory_preserves_original_and_strict_scopes(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = ci.inventory(ROOT)
+        self.assertEqual(result['baseline']['discovered_count'], 2204)
+        self.assertEqual(result['baseline']['unique_test_ids'], 2202)
+        self.assertEqual(result['strict_counts'], {'ffmpeg': 105, 'chrome': 14, 'demo-toolchain': 5})
+        self.assertEqual(len(result['batches']), 16)
+        self.assertEqual(sum(result['counts'].values()), len(result['tests']))
+        self.assertEqual(len({r['key'] for r in result['tests']}), len(result['tests']))
+        # All harness negatives and real file/process safety remain resident.
+        for record in result['tests']:
+            if record['id'].startswith(('tests.test_ci_partition.', 'tests.test_proc_supervisor.', 'tests.safety.')):
+                self.assertEqual(record['partition'], 'fast', record['id'])
+        self.assertEqual(result['compatibility']['versions'], list(ci.PYTHONS))
+
+
+class ExecutionReconciliation(unittest.TestCase):
+    def setUp(self):
+        self.request = {'attempt_id': 'unique-attempt', 'batch': 'tests',
+                        'selected': [instance()], 'discovered': [instance()]}
+        self.receipt = dict(self.request, unittest_success=True, suite_events=[], records=[
+            {'id': instance(), 'started': 1.0, 'completed': 2.0, 'outcome': 'success',
+             'outcomes': ['success'], 'stop_count': 1}], testsRun=1, skipped=0,
+            failures=0, errors=0, unexpectedSuccesses=0, expectedFailures=0)
+
+    def test_complete_execution_passes(self):
+        self.assertEqual(ci.reconcile(self.request, self.receipt, 0), 'PASS')
+
+    def test_missing_start_or_empty_selection_fails(self):
+        self.receipt['records'] = []
+        with self.assertRaisesRegex(ci.PartitionError, 'selected/started'):
+            ci.reconcile(self.request, self.receipt, 0)
+        self.request['selected'] = []
+        self.receipt['selected'] = []
+        with self.assertRaisesRegex(ci.PartitionError, 'empty execution'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+    def test_missing_completion_or_nonfinite_timestamps_fail(self):
+        for end in (None, float('nan'), float('inf'), 0.0, True):
+            self.receipt['records'][0]['completed'] = end
+            with self.subTest(end=end), self.assertRaisesRegex(ci.PartitionError, 'not completed'):
+                ci.reconcile(self.request, self.receipt, 0)
+
+    def test_duplicate_execution_fails(self):
+        self.receipt['records'] *= 2
+        with self.assertRaisesRegex(ci.PartitionError, 'duplicate execution'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+    def test_failure_unknown_and_missing_outcomes_fail(self):
+        for outcome in ('failure', 'error', 'unexpected_success', None, 'made_up'):
+            self.receipt['records'][0]['outcome'] = outcome
+            with self.subTest(outcome=outcome), self.assertRaisesRegex(ci.PartitionError, 'unsuccessful'):
+                ci.reconcile(self.request, self.receipt, 0)
+
+    def test_skip_is_never_plain_pass_and_strict_skip_fails(self):
+        self.receipt['records'][0]['outcome'] = 'skip'
+        self.receipt['records'][0]['outcomes'] = ['skip']
+        self.receipt['skipped'] = 1
+        self.assertEqual(ci.reconcile(self.request, self.receipt, 0), 'COMPLETE_WITH_SKIPS')
+        with self.assertRaisesRegex(ci.PartitionError, 'strict execution skipped'):
+            ci.reconcile(self.request, self.receipt, 0, strict=True)
+
+    def test_nonzero_cancel_timeout_and_hidden_failure_fail(self):
+        for code in (1, 7, -15, 124, None):
+            with self.subTest(code=code), self.assertRaisesRegex(ci.PartitionError, 'worker failed'):
+                ci.reconcile(self.request, self.receipt, code)
+        self.receipt['unittest_success'] = False
+        with self.assertRaisesRegex(ci.PartitionError, 'worker failed'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+    def test_wrong_attempt_batch_selection_or_discovery_fails(self):
+        for field, value in (('attempt_id', 'old'), ('batch', 'apps/new/tests'),
+                             ('selected', [instance('test_other')]), ('discovered', [])):
+            bad = dict(self.receipt, **{field: value})
+            with self.subTest(field=field), self.assertRaisesRegex(ci.PartitionError, 'mismatch'):
+                ci.reconcile(self.request, bad, 0)
+
+    def test_suite_event_cannot_be_accepted_as_test_execution(self):
+        self.receipt['suite_events'] = [{'id': 'setUpClass', 'outcome': 'skip'}]
+        self.receipt['skipped'] = 1
+        with self.assertRaisesRegex(ci.PartitionError, 'setup/teardown'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+    def test_unittest_execution_count_is_required_and_exact(self):
+        for count in (0, 2, -1, True, None):
+            self.receipt['testsRun'] = count
+            with self.subTest(count=count), self.assertRaisesRegex(ci.PartitionError, 'testsRun'):
+                ci.reconcile(self.request, self.receipt, 0)
+        del self.receipt['testsRun']
+        with self.assertRaisesRegex(ci.PartitionError, 'testsRun'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+    def test_unittest_outcome_counts_must_match_observed_callbacks(self):
+        for field in ('skipped', 'failures', 'errors', 'unexpectedSuccesses', 'expectedFailures'):
+            bad = dict(self.receipt, **{field: 1})
+            with self.subTest(field=field), self.assertRaisesRegex(ci.PartitionError, 'count mismatch'):
+                ci.reconcile(self.request, bad, 0)
+
+    def test_duplicate_stop_or_success_callback_fails(self):
+        self.receipt['records'][0]['stop_count'] = 2
+        with self.assertRaisesRegex(ci.PartitionError, 'not completed'):
+            ci.reconcile(self.request, self.receipt, 0)
+        self.receipt['records'][0]['stop_count'] = 1
+        self.receipt['records'][0]['outcomes'] *= 2
+        with self.assertRaisesRegex(ci.PartitionError, 'duplicate terminal'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+
+class WorkerIntegration(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='ci-partition-negative-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / 'tests').mkdir()
+        (self.root / 'tests/__init__.py').write_text('')
+
+    def source(self, body):
+        (self.root / 'tests/test_sample.py').write_text('import unittest\n' + body)
+
+    def run_fixture(self, strict=False):
+        found = ci.collect(self.root)
+        records = ci.policy_inventory(found, policy_for(found), {}, {})
+        manifest = {'batches': found, 'tests': records, 'source': {'fixture': True}, 'policy_sha256': 'fixture'}
+        with contextlib.redirect_stdout(io.StringIO()):
+            return ci.execute(self.root, manifest, 'fast', 15, strict)
+
+    def test_successful_dynamic_load_tests_is_discovered_and_executed(self):
+        self.source('''class Hidden(unittest.TestCase):
+    def test_ok(self): pass
+def load_tests(loader, tests, pattern):
+    return unittest.TestSuite([Hidden('test_ok')])
+''')
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'PASS', report)
+        self.assertEqual(len(report['attempts'][0]['receipt']['records']), 1)
+
+    def test_custom_suite_validation_cannot_disappear_in_any_partition(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+''')
+        found = ci.collect(self.root)
+        manifest = {'batches': found,
+                    'tests': ci.policy_inventory(found, policy_for(found), {}, {}),
+                    'source': {'fixture': True}, 'policy_sha256': 'fixture'}
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+class ValidatedSuite(unittest.TestSuite):
+    def run(self, result, debug=False):
+        try: raise RuntimeError('required suite validation failed')
+        except RuntimeError:
+            import sys
+            result.addError(unittest.suite._ErrorHolder('suite validation'), sys.exc_info())
+        return super().run(result, debug)
+def load_tests(loader, tests, pattern):
+    return unittest.TestSuite([ValidatedSuite([Case('test_ok')])])
+''')
+        control = subprocess.run([sys.executable, '-m', 'unittest', 'discover',
+                                  '-s', 'tests', '-t', '.', '-v'], cwd=self.root,
+                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(control.returncode, 1)
+        self.assertIn('required suite validation failed', control.stderr)
+        with self.assertRaisesRegex(ci.PartitionError, 'discovery worker failed'):
+            ci.collect(self.root)
+        # Even a previously valid inventory cannot bypass execution rediscovery.
+        for partition in ('fast', 'all'):
+            for strict in (False, True):
+                with self.subTest(partition=partition, strict=strict), contextlib.redirect_stdout(io.StringIO()):
+                    report = ci.execute(self.root, manifest, partition, 15, strict)
+                    self.assertEqual(report['status'], 'FAIL', report)
+                    self.assertNotEqual(report['attempts'][0]['exit_code'], 0)
+
+    def test_instance_overridden_suite_hook_is_rejected(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+def load_tests(loader, tests, pattern):
+    suite = unittest.TestSuite([Case('test_ok')])
+    suite.run = lambda result: result
+    return suite
+''')
+        with self.assertRaisesRegex(ci.PartitionError, 'discovery worker failed'):
+            ci.collect(self.root)
+
+    def test_custom_base_suite_container_is_rejected(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+def load_tests(loader, tests, pattern):
+    return unittest.BaseTestSuite([Case('test_ok')])
+''')
+        with self.assertRaisesRegex(ci.PartitionError, 'discovery worker failed'):
+            ci.collect(self.root)
+
+    def test_global_suite_method_replacement_is_rejected(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+def load_tests(loader, tests, pattern):
+    unittest.TestSuite.run = lambda self, result, debug=False: result
+    return tests
+''')
+        with self.assertRaisesRegex(ci.PartitionError, 'discovery worker failed'):
+            ci.collect(self.root)
+
+    def test_import_failure_is_not_a_valid_inventory(self):
+        self.source("raise ImportError('deliberate import failure')\n")
+        with self.assertRaisesRegex(ci.PartitionError, 'discovery worker failed'):
+            ci.collect(self.root)
+
+    def test_empty_discovery_fails(self):
+        self.source('')
+        with self.assertRaisesRegex(ci.PartitionError, 'discovery worker failed'):
+            ci.collect(self.root)
+
+    def test_duplicate_instance_from_load_tests_fails(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+def load_tests(loader, tests, pattern):
+    return unittest.TestSuite([Case('test_ok'), Case('test_ok')])
+''')
+        with self.assertRaisesRegex(ci.PartitionError, 'discovery worker failed'):
+            ci.collect(self.root)
+
+    def test_setup_skip_records_reason_and_unstarted_method_as_failure(self):
+        self.source('''class Case(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls): raise unittest.SkipTest('missing optional device')
+    def test_ok(self): pass
+''')
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'FAIL')
+        receipt = report['attempts'][0]['receipt']
+        self.assertEqual(receipt['records'], [])
+        self.assertEqual(receipt['suite_events'][0]['detail'], 'missing optional device')
+
+    def test_zero_execution_override_cannot_pass_on_unittest_ok(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+    def run(self, result=None): return result
+''')
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertIn('selected/started', report['attempts'][0]['error'])
+
+    def test_real_subtest_failure_reaches_nonzero_exit(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_bad(self):
+        with self.subTest(index=1): self.fail('deliberate')
+''')
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertEqual(report['attempts'][0]['exit_code'], 1)
+        self.assertEqual(report['attempts'][0]['receipt']['records'][0]['outcome'], 'failure')
+
+    def test_strict_body_skip_fails(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_skip(self): self.skipTest('missing dependency')
+''')
+        report = self.run_fixture(strict=True)
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertIn('strict execution skipped', report['attempts'][0]['error'])
+
+    def test_bounded_worker_timeout_is_an_error(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            ci.run_process([sys.executable, '-c', 'import time; time.sleep(30)'], self.root, 0.1)
+
+    def test_empty_selected_partition_fails(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+''')
+        found = ci.collect(self.root)
+        manifest = {'batches': found, 'tests': ci.policy_inventory(found, policy_for(found), {}, {})}
+        with self.assertRaisesRegex(ci.PartitionError, 'empty partition'):
+            ci.execute(self.root, manifest, 'slow', 1)
+
+    def test_missing_manifest_batch_cannot_pass_with_zero_attempts(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+''')
+        found = ci.collect(self.root)
+        records = ci.policy_inventory(found, policy_for(found), {}, {})
+        with self.assertRaisesRegex(ci.PartitionError, 'every discovery batch'):
+            ci.execute(self.root, {'batches': {}, 'tests': records}, 'fast', 1)
+
+    def test_valid_work_cannot_hide_selected_ghost_or_omit_discovered_test(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+''')
+        found = ci.collect(self.root)
+        records = ci.policy_inventory(found, policy_for(found), {}, {})
+        ghost = dict(records[0], batch='ghost', key='ghost::' + records[0]['instance'])
+        with self.assertRaisesRegex(ci.PartitionError, 'do not match all discovered'):
+            ci.execute(self.root, {'batches': found, 'tests': records + [ghost]}, 'fast', 1)
+        with self.assertRaisesRegex(ci.PartitionError, 'no test records'):
+            ci.execute(self.root, {'batches': found, 'tests': []}, 'fast', 1)
+
+    def test_forged_selected_key_cannot_report_different_executed_identity(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+''')
+        found = ci.collect(self.root)
+        records = ci.policy_inventory(found, policy_for(found), {}, {})
+        records[0]['key'] = 'NEVER_EXECUTED'
+        with self.assertRaisesRegex(ci.PartitionError, 'declared selection key'):
+            ci.execute(self.root, {'batches': found, 'tests': records}, 'fast', 1)
+
+    def test_skip_followed_by_success_cannot_become_strict_pass(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+    def run(self, result=None):
+        result.startTest(self)
+        result.addSkip(self, 'dependency absent')
+        result.addSuccess(self)
+        result.stopTest(self)
+        return result
+''')
+        report = self.run_fixture(strict=True)
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertEqual(report['attempts'][0]['receipt']['skipped'], 1)
+        self.assertEqual(report['attempts'][0]['receipt']['records'][0]['outcome'], 'skip')
+
+    def test_actual_worker_tampered_tests_run_is_rejected(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self): pass
+    def run(self, result=None):
+        super().run(result)
+        result.testsRun = 0
+        return result
+''')
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertIn('testsRun', report['attempts'][0]['error'])
+        self.assertEqual(report['attempts'][0]['receipt']['testsRun'], 0)
+
+    def test_subtest_skip_is_visible_and_strictly_rejected(self):
+        self.source('''class Case(unittest.TestCase):
+    def test_ok(self):
+        with self.subTest(part='missing'): self.skipTest('optional missing')
+''')
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'COMPLETE_WITH_SKIPS')
+        self.assertEqual(report['attempts'][0]['receipt']['suite_events'], [])
+        self.assertEqual(self.run_fixture(strict=True)['status'], 'FAIL')
+
+    def test_ordinary_test_case_attribute_is_not_a_subtest_parent(self):
+        self.source('''class Case(unittest.TestCase):
+    def setUp(self): self.test_case = {'fixture': 'ordinary user attribute'}
+    def test_ok(self): self.assertEqual(self.test_case['fixture'], 'ordinary user attribute')
+''')
+        control = subprocess.run([sys.executable, '-m', 'unittest', 'discover',
+                                  '-s', 'tests', '-t', '.', '-v'], cwd=self.root,
+                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(control.returncode, 0, control.stderr)
+        report = self.run_fixture(strict=True)
+        self.assertEqual(report['status'], 'PASS', report)
+        receipt = report['attempts'][0]['receipt']
+        self.assertEqual(receipt['suite_events'], [])
+        self.assertEqual(receipt['records'][0]['outcomes'], ['success'])
+
+    def test_subtest_skip_with_ordinary_parent_attribute_is_still_recorded(self):
+        self.source('''class Case(unittest.TestCase):
+    def setUp(self): self.test_case = {'fixture': 'ordinary user attribute'}
+    def test_ok(self):
+        with self.subTest(part='missing'): self.skipTest('optional missing')
+''')
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'COMPLETE_WITH_SKIPS', report)
+        receipt = report['attempts'][0]['receipt']
+        self.assertEqual(receipt['suite_events'], [])
+        self.assertEqual(receipt['records'][0]['outcomes'], ['skip'])
+        self.assertEqual(receipt['skipped'], 1)
+        self.assertEqual(self.run_fixture(strict=True)['status'], 'FAIL')
+
+
+class ShellDefaultContract(unittest.TestCase):
+    def test_no_argument_runner_keeps_all_batches_and_failed_exit(self):
+        with tempfile.TemporaryDirectory(prefix='ci-shell-default-') as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/run_all_tests.sh').write_bytes((ROOT / 'scripts/run_all_tests.sh').read_bytes())
+            roots = ['tests', 'apps/a/tests', 'plugins/b/tests', 'templates/c/tests']
+            for batch in roots:
+                (root / batch).mkdir(parents=True)
+            fake = root / 'python3'
+            fake.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$CALL_LOG"\n'
+                            'if [[ "$*" == *"-s tests -t ."* ]]; then exit 7; fi\nexit 0\n')
+            fake.chmod(0o755)
+            log = root / 'calls.txt'
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'], CALL_LOG=str(log))
+            result = subprocess.run(['bash', str(root / 'scripts/run_all_tests.sh')], env=env)
+            self.assertEqual(result.returncode, 7)
+            calls = log.read_text().splitlines()
+            self.assertEqual(len(calls), 4)
+            for batch, call in zip(roots, calls):
+                self.assertIn('-m unittest discover -s ' + batch + ' -t ', call)
+            result = subprocess.run(['bash', str(root / 'scripts/run_all_tests.sh'), '--inventory'], env=env)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(log.read_text().splitlines()[-1], 'scripts/ci_partition.py --inventory')
+
+
+if __name__ == '__main__':
+    unittest.main()
