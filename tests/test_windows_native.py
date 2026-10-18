@@ -226,6 +226,21 @@ class WindowsEnvironment(unittest.TestCase):
                     with self.assertRaises(env.EnvironmentError):
                         env.recheck(c)
 
+    def test_same_metadata_token_never_reuses_windows_content_hash(self):
+        from types import SimpleNamespace
+        from vtx import gfx_environment as env
+        content = self.library.read_bytes()
+        self.addCleanup(self.library.write_bytes, content)
+        with patch.object(env, '_file_token', return_value=('identical metadata token',)):
+            before = env.collect('cdp', self.binary)
+            first_hash = env._file(self.library)[1]
+            self.library.write_bytes(content[:-1] + bytes([content[-1] ^ 1]))
+            self.assertNotEqual(first_hash, env._file(self.library)[1])
+            c = SimpleNamespace(_gfx_environment=(None, before, self.binary, None))
+            with patch.object(env, 'resolve', return_value=before):
+                with self.assertRaisesRegex(env.EnvironmentError, 'runtime'):
+                    env.recheck(c)
+
 @unittest.skipUnless(os.name == 'nt', 'Windows staging and CLI failure contract')
 class WindowsCliFailures(unittest.TestCase):
     def test_nonzero_and_success_without_valid_png_are_failures(self):

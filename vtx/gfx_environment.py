@@ -3,8 +3,9 @@
 This binds inputs, not cross-machine pixel equivalence. In particular a matching
 manifest must never promote environment_identity to passed in Golden evidence.
 Unknown/unreadable inputs fail closed. Collection starts no browser and writes
-nothing (including on dry runs). Digests are memoized by inode/size/mtime/ctime;
-membership and metadata are re-read at every recheck.
+nothing (including on dry runs). POSIX digests are memoized by
+inode/size/mtime/ctime; Windows always hashes bytes because even ChangeTime can
+collide on rapid same-size writes. Membership is re-read at every recheck.
 """
 import hashlib
 import json
@@ -583,8 +584,8 @@ def _file_token(path, st):
     token = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
     if os.name == 'nt':
         # CPython's Windows st_ctime is creation time, not inode change time.
-        # FILE_BASIC_INFO.ChangeTime invalidates memoization even when a writer
-        # restores mtime after changing same-size font/library bytes.
+        # FILE_BASIC_INFO.ChangeTime adds a read-before/after change check.
+        # It is not a content identity: rapid writes can share the same token.
         from ctypes import wintypes
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
@@ -611,10 +612,11 @@ def _file(path):
     if not p.is_file():
         raise EnvironmentError(f'not a regular environment input: {p}')
     token = _file_token(p, st)
-    with _lock:
-        old = _hashes.get(str(p))
-        if old and old[0] == token:
-            return str(p), old[1]
+    if os.name != 'nt':
+        with _lock:
+            old = _hashes.get(str(p))
+            if old and old[0] == token:
+                return str(p), old[1]
     h = hashlib.sha256()
     with p.open('rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
@@ -622,8 +624,9 @@ def _file(path):
     after = p.stat()
     if token != _file_token(p, after):
         raise EnvironmentError(f'environment input changed while hashing: {p}')
-    with _lock:
-        _hashes[str(p)] = token, h.hexdigest()
+    if os.name != 'nt':
+        with _lock:
+            _hashes[str(p)] = token, h.hexdigest()
     return str(p), h.hexdigest()
 
 
