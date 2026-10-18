@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Legacy curated regression for explicit use, narrower than run_all_tests.sh.
+"""Curated PR regression, intentionally narrower than run_all_tests.sh.
 
 The explicit modules retain CLI/contracts, real filesystem/process safety, and
-CI negative controls. Default CI uses ci_fast.py; full discovery remains the
-local default and runs in the manual CI matrix. A missing/empty module or any skipped test fails.
+CI negative controls. Full discovery remains the local default and runs in the
+scheduled/manual CI matrix. A missing/empty module or any skipped test fails.
 """
 import argparse
 import importlib
@@ -121,7 +121,7 @@ def _run_curated(names, stream):
         return 1
     expected = suite.countTestCases()
     print('CI curated regression: %d tests; full regression NOT RUN by this '
-          'command. Full coverage: manual CI or run_all_tests.sh.'
+          'command. Full coverage: scheduled/manual CI or run_all_tests.sh.'
           % expected, file=stream, flush=True)
     def recording_result(*args, **kwargs):
         return RecordingResult(*args, instances=instances, **kwargs)
