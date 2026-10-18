@@ -133,6 +133,10 @@ class ProductionSourceContracts(unittest.TestCase):
   r=subprocess.run([__import__('sys').executable,'-m','unittest','discover','-s',str(PACKAGE/'tests'),'-p','test_prepare_assets.py'],capture_output=True,text=True,timeout=120)
   self.assertEqual(r.returncode,0,r.stdout+r.stderr)
   self.assertIn('Ran 27 tests',r.stderr)
+ def test_native_postmix_binding_and_paired_preflight_groups(self):
+  r=subprocess.run([__import__('sys').executable,'-m','unittest','discover','-s',str(PACKAGE/'tests'),'-p','test_*postmix*.py'],capture_output=True,text=True,timeout=180)
+  self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+  self.assertNotIn('Ran 0 tests',r.stderr)
  @unittest.skipUnless(shutil.which('node'),'Node unavailable: actual source JavaScript checks skipped')
  def test_actual_node_source_groups(self):
   r=subprocess.run(['node','--test',str(PACKAGE/'tests/runtime.test.js'),str(PACKAGE/'tests/integration.test.js')],capture_output=True,text=True,timeout=60)

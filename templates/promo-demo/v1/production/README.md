@@ -63,6 +63,22 @@ python3 templates/promo-demo/v1/production/scripts/preflight.py --source-only --
 
 Require `supplied_postmix_pcm_verified: true` and no source errors. A decoded-PCM mismatch stops acceptance: preserve the actual output and regenerate the waveform, portable provenance/reference together as a newly reviewed binding, retaining the new raw proof and receipt locally, then rebuild. Do not edit an expected hash to make a mismatch pass. The full film must subsequently pass the same comparison against its own out/audio.wav.
 
+### Bind a reviewed native audio result locally
+
+Investigate a mismatch before selecting a new result. Once that specific native result has been reviewed, the explicit binder can create a separate draft project. It does not decide whether an audio difference is acceptable. Supply both the WAV-file and decoded-PCM hashes established by the comparison, the source checkout commit and the commit recorded by the native run.
+
+The command below writes a new directory outside the repository, source project and native run. It never replaces the shipped reference or an existing destination. Keep the completed native run at its original location and use its same qualified FFmpeg/ffprobe. The binder verifies the recorded core bytes, runner, full/projection timeline, stems, graph, successful stages, receipt and selected PCM. A different source commit is permitted only with the same recorded core bytes, projection runner and full timeline. It copies tracked project source and the five verified media inputs; caches, output audio and raw execution receipts are not copied into the project.
+
+```bash
+python3 templates/promo-demo/v1/production/scripts/bind_native_postmix.py --repo /absolute/path/to/framivra --project /absolute/path/to/source-project --projection /absolute/path/to/completed/audio-comparison --out /absolute/path/to/new/bound-run --expected-commit <reviewed-source-commit> --expected-run-commit <recorded-native-run-commit> --expected-wav-sha256 <selected-wav-sha256> --expected-pcm-sha256 <selected-decoded-pcm-sha256>
+```
+
+The destination must stay private and unmodified while binding runs. The binder holds its newly created directories open, creates files exclusively without following links, and rejects changed directory or file identities before writes and build/check stages. It rechecks the selected WAV, native proof and receipt before completion. On failure it removes only entries it still owns; an incomplete directory may remain if an entry was replaced or an unknown file appeared. Do not reuse that incomplete directory. These integrity checks do not sandbox untrusted subprocesses.
+
+Only a successful `binding-result.json` marks a completed draft binding. The new renderable source is `bound-run/project/`; sibling verification files stay private and outside Git. The binder recalculates all 480 fixed-scale stereo-union bins, rebuilds the shared bundle and dependency manifests, and verifies the exact PCM and bins together. Changed dependency bytes invalidate old GFX cache identities without changing HTML clip IDs or the timeline. The original source remains unchanged. The previous AAC diagnostic is not inherited; the new run needs its own encode and listening checks.
+
+Review the generated binding and its T13 waveform before rendering this new project. Audio approval and full-film acceptance remain pending. The full render's own `out/audio.wav` must then pass the copied project's preflight with both `supplied_postmix_pcm_verified` and `supplied_postmix_bins_verified` true. No comparison uses an error tolerance, resampling or a gain adjustment.
+
 The following command is a user-run recipe, not evidence that it has been executed. It writes caches and output inside this project:
 
 ```bash

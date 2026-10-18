@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Read-only source/media checks. No renderer, font install or host changes."""
-import argparse, hashlib, json, math, re, shutil, subprocess, sys
+import argparse, hashlib, json, math, re, shutil, struct, subprocess, sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+NATIVE_SAMPLE_FRAMES=5760000
+NATIVE_PCM_BYTES=NATIVE_SAMPLE_FRAMES*2*4
 def sha(p):
     h=hashlib.sha256()
     with p.open('rb') as f:
@@ -10,7 +12,49 @@ def sha(p):
     return h.hexdigest()
 def decode(path,codec='pcm_s24le',fmt='s24le'):
     result=subprocess.run(['ffmpeg','-nostdin','-v','error','-xerror','-i',str(path),'-map','0:a:0','-c:a',codec,'-f',fmt,'-'],capture_output=True,check=True,timeout=120)
+    if result.stderr.strip():raise ValueError('FFmpeg reported an audio decode error')
     return result.stdout
+
+def native_pcm(path):
+    """Decode one native PCM16 WAV without resampling/gain; return f32le bytes/hash.
+
+    The hash covers every decoded stereo sample, not just the S5 analysis window.
+    This validates supplied media and makes no claim about who produced it.
+    """
+    path=Path(path)
+    if not path.is_file():raise ValueError('native postmix must be a readable WAV file')
+    result=subprocess.run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(path)],capture_output=True,text=True,check=True,timeout=30)
+    if result.stderr.strip():raise ValueError('ffprobe reported a native postmix error')
+    probe=json.loads(result.stdout)
+    try:
+        streams=probe['streams']
+        valid=(probe['format']['format_name']=='wav' and len(streams)==1
+               and streams[0]['codec_type']=='audio' and streams[0]['codec_name']=='pcm_s16le'
+               and streams[0]['sample_rate']=='48000' and type(streams[0]['channels']) is int
+               and streams[0]['channels']==2 and streams[0]['bits_per_sample']==16)
+    except (KeyError,TypeError,IndexError):valid=False
+    if not valid:raise ValueError('native postmix requires one pcm_s16le WAV stream at 48000 Hz, stereo')
+    pcm=decode(path,'pcm_f32le','f32le')
+    if len(pcm)!=NATIVE_PCM_BYTES:raise ValueError('native postmix requires exactly 5760000 stereo sample frames')
+    return pcm,hashlib.sha256(pcm).hexdigest()
+
+def pcm_waveform_samples(pcm):
+    """Return the exact 480 S5 stereo-union bins from full-length f32le PCM.
+
+    No tolerance, quantization, normalization, gain, or resampling is applied.
+    Little-endian unpacking is explicit, including on big-endian hosts.
+    """
+    if len(pcm)!=NATIVE_PCM_BYTES:raise ValueError('waveform PCM requires exactly 5760000 stereo sample frames')
+    if any(not math.isfinite(v) or not -1<=v<=1 for (v,) in struct.iter_unpack('<f',pcm)):
+        raise ValueError('waveform PCM contains nonfinite or out-of-range samples')
+    samples=[]
+    for frame in range(1680,2160):
+        start,end=frame*1600,(frame+1)*1600
+        values=struct.unpack_from('<3200f',pcm,start*8)
+        low,high=min(values),max(values)
+        samples.append({'frame':frame,'sample_start':start,'sample_end':end,
+                        'min':low,'max':high,'value':max(abs(low),abs(high))})
+    return samples
 
 def waveform_errors(value,binding):
     errors=[]
@@ -116,11 +160,15 @@ def check(caption_font=None,postmix=None):
         except (AssertionError,KeyError,ValueError,subprocess.SubprocessError) as e:errors.append(ident+' failed full FLAC/PCM verification: '+str(e))
     checks['audio']=stems
     envelope=ROOT/'audio/waveform-S5.json';binding_path=ROOT/'audio/native-postmix.json'
-    if not envelope.is_file():pending.append('missing real postmix PCM waveform')
+    checks['waveform']={'execution_receipt_verified':False,'supplied_postmix_pcm_verified':False,'supplied_postmix_bins_verified':False}
+    if not envelope.is_file():
+        pending.append('missing real postmix PCM waveform')
+        if postmix:errors.append('cannot verify supplied postmix without the S5 waveform reference')
     else:
         try:
             value=json.loads(envelope.read_text());binding=json.loads(binding_path.read_text())
-            errors.extend(waveform_errors(value,binding))
+            envelope_errors=waveform_errors(value,binding)
+            errors.extend(envelope_errors)
             if binding['portable_provenance_path']!='audio/native-audio-provenance.json':raise ValueError('unexpected portable provenance path')
             provenance_path=ROOT/binding['portable_provenance_path']
             if sha(provenance_path)!=binding['portable_provenance_sha256'] or value['provenance']['mix_recipe_sha256']!=binding['portable_provenance_sha256'] or binding['postmix']['mix_recipe_sha256']!=binding['portable_provenance_sha256']:errors.append('portable native-audio provenance identity mismatch')
@@ -134,11 +182,15 @@ def check(caption_font=None,postmix=None):
             if binding['stems']!={k:v['sha256'] for k,v in stems.items()}:errors.append('postmix reference does not bind these exact verified stems')
             embedded=json.loads((ROOT/'src/assets/media-bindings.json').read_text())
             if embedded['waveform']!=value:errors.append('embedded waveform differs; rebuild before rendering')
-            checks['waveform']={'sha256':sha(envelope),'reference_postmix_sha256':binding['postmix']['sha256'],'reference_link_verified':not waveform_errors(value,binding),'portable_provenance_verified':not provenance_errors,'execution_receipt_verified':False,'supplied_postmix_pcm_verified':False}
+            checks['waveform']={'sha256':sha(envelope),'reference_postmix_sha256':binding['postmix']['sha256'],'reference_link_verified':not envelope_errors,'portable_provenance_verified':not provenance_errors,'execution_receipt_verified':False,'supplied_postmix_pcm_verified':False,'supplied_postmix_bins_verified':False}
             if postmix:
-                pcm=decode(Path(postmix),'pcm_f32le','f32le');digest=hashlib.sha256(pcm).hexdigest()
-                if len(pcm)!=5760000*8 or digest!=binding['postmix']['pcm_sha256']:errors.append('actual postmix PCM differs from the S5 waveform reference')
-                else:checks['waveform']['supplied_postmix_pcm_verified']=True
+                pcm,digest=native_pcm(postmix)
+                if digest!=binding['postmix']['pcm_sha256']:errors.append('actual postmix PCM differs from the S5 waveform reference')
+                else:
+                    checks['waveform']['supplied_postmix_pcm_verified']=True
+                    if envelope_errors or pcm_waveform_samples(pcm)!=value['samples']:
+                        errors.append('actual postmix PCM bins differ from the S5 waveform reference')
+                    else:checks['waveform']['supplied_postmix_bins_verified']=True
         except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as e:errors.append('invalid or unbound real postmix waveform: '+str(e))
     font=json.loads((ROOT/'production/caption-font.json').read_text());chosen=Path(caption_font) if caption_font else None
     if chosen is None and shutil.which('fc-match'):
