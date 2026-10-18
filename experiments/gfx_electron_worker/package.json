@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "vtx GFX route B: minimal Electron Offscreen Rendering host (issue #112, ELEC-01)",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "main": "main.mjs",
   "scripts": {

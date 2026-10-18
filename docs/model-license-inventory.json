@@ -825,32 +825,36 @@
     },
     "placeholder-media": {
       "kind": "data",
-      "source": "https://github.com/CongliangK/framivra/tree/e928657f2833155423f6ccfca4869a1805b34bde/templates/tech-talk/assets/presets/placeholders",
-      "license_status": "UNKNOWN",
+      "source": "scripts/generate_placeholder_media.py",
+      "license_status": "DECLARED",
       "default_payload": true,
       "distribution": [
         "git-source"
       ],
-      "distribution_blocker": "Tracked placeholder media have no independently established generation/source-rights evidence. Root code license alone does not prove media provenance.",
       "files_sha256": {
-        "templates/tech-talk/assets/presets/placeholders/placeholder_audio.wav": "2ea47becb255e8c3b086c93637073c03a10f4466282bd3154bbd8e4b09dbaad9",
-        "templates/tech-talk/assets/presets/placeholders/placeholder_av.mp4": "7d779c241915d8b691090e03363ddb31a33757c26593ced7a3fa2678bb3e86d9"
+        "templates/tech-talk/assets/presets/placeholders/placeholder_audio.wav": "0d6e9e78382e94497926e7a6b5d18a6e5aae51498f7f850f6fb2df360c83d1a9",
+        "templates/tech-talk/assets/presets/placeholders/placeholder_av.mp4": "a379c44ecb5e2415cabe93b4a59c307993f57e120d4b050ed83b0e4d66c3d010",
+        "scripts/generate_placeholder_media.py": "36bbac1879cda9f648da9c431bee72cbb71c276112c7cb39e22cbe3d162f83ca"
       },
-      "notes": "Tracked placeholder media have no independently established generation/source-rights evidence. Root code license alone does not prove media provenance."
+      "notes": "Black video and digital silence generated solely from FFmpeg lavfi color/anullsrc. No external media or fonts. Root MIT applies to these project fixtures; FFmpeg/runtime rights are separate. Previous binary origins are not claimed as verified.",
+      "license_identifier": "MIT",
+      "evidence": "placeholder-generation"
     },
     "electron-worker-source": {
       "kind": "authored-code",
-      "source": "https://github.com/CongliangK/framivra/tree/d9ce4aab52fec57b770f689550fbbde1a860243b/experiments/gfx_electron_worker",
-      "license_status": "UNKNOWN",
+      "source": "experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt",
+      "license_status": "DECLARED",
       "default_payload": true,
       "distribution": [
         "git-source"
       ],
-      "distribution_blocker": "Package declares UNLICENSED. Relationship to root MIT declaration needs maintainer resolution before redistribution clearance; no license text is invented or changed.",
       "files_sha256": {
-        "experiments/gfx_electron_worker/package.json": "8f0f6f2cdce593fbe8183728d810593e239198fd9d4ab78cb26037330a30919d"
+        "experiments/gfx_electron_worker/package.json": "c464a8b9f78f0c0b4165b32404f4f485f864f70f02ff8d7e63a1dd35ab7bdc73",
+        "experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt": "c04d7afb662f0f79721593ee8dcca61530f2ade577d1ee89b058eb4e640eeb79"
       },
-      "notes": "Package declares UNLICENSED. Relationship to root MIT declaration needs maintainer resolution before redistribution clearance; no license text is invented or changed."
+      "notes": "Maintainer explicitly confirmed ownership and authorized MIT for project-authored worker code on 2026-10-18 (FR43). Excludes Electron/Chromium/npm/dependency/runtime code and notices; these remain separately unresolved.",
+      "license_identifier": "MIT",
+      "evidence": "electron-source-authorization"
     },
     "demo-noto-sans-sc": {
       "kind": "font",
@@ -889,7 +893,7 @@
         "on-demand-download"
       ],
       "version_home": "experiments/gfx_electron_worker/package-lock.json",
-      "lock_sha256": "f10a37b8c053e6772b111e9ed98763f99f5b271ceb07952727b06305d08902f9",
+      "lock_sha256": "65e6ac56ba45baf7aa9e3a5e033ec611cf34394a71cd27542f2aead91b8cb08a",
       "notes": "Optional Electron npm/download chain. Exact npm versions/integrities live in lock, which references a mirror; lock license labels are not full license/notice evidence and do not cover downloaded Electron binary/Chromium notices. Unresolved scope includes every non-root package entry in package-lock.json, its integrity, dependencies and optional dependencies, plus the postinstall downloaded runtime; no lock package is exempted by its license label."
     },
     "host-fonts": {
@@ -1353,6 +1357,20 @@
       "revision": "2894aab31764f10f29c421bdfd2340d3b382d384",
       "url": "https://github.com/google/fonts/blob/2894aab31764f10f29c421bdfd2340d3b382d384/ofl/notosanssc/OFL.txt",
       "scope": "Bundled OFL.txt is the byte-identical upstream SIL Open Font License 1.1 text pinned at the last google/fonts revision that touched ofl/notosanssc/OFL.txt; the same revision state carries the vendored variable font binary (NotoSansSC-VF.ttf, upstream NotoSansSC[wght].ttf, sha256 a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da). Not a rights grant."
+    },
+    "placeholder-generation": {
+      "url": "https://github.com/CongliangK/framivra/blob/2dda5e2652bf025d146d1215a0442d8f627dd584/scripts/generate_placeholder_media.py",
+      "revision": "2dda5e2652bf025d146d1215a0442d8f627dd584",
+      "text": "FR43 replacement fixture generation, 2026-10-18.\nGenerator: scripts/generate_placeholder_media.py\nGenerator SHA256: 36bbac1879cda9f648da9c431bee72cbb71c276112c7cb39e22cbe3d162f83ca\nFFmpeg: ffmpeg version 8.1.3\nInputs: only lavfi color=c=black:s=320x180:r=30:d=1 and anullsrc=r=48000:cl=mono.\nOutput: 1-second H264/yuv420p 30fps 320x180 and AAC mono 48kHz MP4; 0.5-second PCM s16le mono 48kHz WAV. No external media/font inputs.\nExact argv is defined in the generator at the immutable revision below. Encoding bytes may vary across FFmpeg builds.\nRights declaration: project-generated black/silent fixtures distributed under root MIT. Does not grant rights to FFmpeg binaries or codecs.\n",
+      "sha256": "dfd9151257760bb5a95453dbd38ffb6cbe0902b9435f8e43765ca99d3b8c7a66",
+      "scope": "Replacement synthetic fixture generation, not a claim about old media provenance"
+    },
+    "electron-source-authorization": {
+      "url": "https://github.com/CongliangK/framivra/blob/ac6ef5ffe921cac247a39a2a1855e41a83f827ac/experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt",
+      "revision": "ac6ef5ffe921cac247a39a2a1855e41a83f827ac",
+      "sha256": "c04d7afb662f0f79721593ee8dcca61530f2ade577d1ee89b058eb4e640eeb79",
+      "local_path": "experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt",
+      "scope": "Maintainer authorization for project-authored source only; no third-party license grant"
     }
   },
   "legacy_downloads": {
@@ -1417,18 +1435,24 @@
     {
       "path": "apps/matting/run_matanyone.py",
       "status": "UNKNOWN",
-      "reason": "Existing header cites an external works/MatAnyone example; adaptation origin/notice rights are not independently established by root MIT declaration."
+      "reason": "Existing header cites an external works/MatAnyone example; adaptation origin/notice rights are not independently established by root MIT declaration.",
+      "history_origin": "d8ed1953508665bc5bc0ef64d0044ca2b4679c38",
+      "review_status": "Git introduction and current header inspected for FR43; upstream adaptation rights remain unverified. Git authorship/root MIT alone does not clear this warning."
     },
     {
       "path": "apps/tts/indextts_worker.py",
       "status": "UNVERIFIED",
-      "reason": "Existing header cites voice-ime source adaptation; this inventory does not establish chain of title or inspect that private external checkout."
+      "reason": "Existing header cites voice-ime source adaptation; this inventory does not establish chain of title or inspect that private external checkout.",
+      "history_origin": "c476b4f5f13687c61c9be02f4015e289a176ddc8",
+      "review_status": "Git introduction and current header inspected for FR43; upstream adaptation rights remain unverified. Git authorship/root MIT alone does not clear this warning."
     },
     {
       "path": "apps/matting/run_birefnet_hr.py",
       "status": "UNVERIFIED",
       "source_reference": "https://github.com/ZhengPeng7/BiRefNet/blob/c4d649666cc171486329413dc2b61f0137158b6a/LICENSE",
-      "reason": "Header states official-handler adaptation; this implementation did not independently match adaptation/notice provenance. Existing local_files_only guard is preserved; arbitrary trust_remote_code is not sandboxed."
+      "reason": "Header states official-handler adaptation; this implementation did not independently match adaptation/notice provenance. Existing local_files_only guard is preserved; arbitrary trust_remote_code is not sandboxed.",
+      "history_origin": "d8ed1953508665bc5bc0ef64d0044ca2b4679c38",
+      "review_status": "Git introduction and current header inspected for FR43; upstream adaptation rights remain unverified. Git authorship/root MIT alone does not clear this warning."
     }
   ],
   "distribution_policy": {

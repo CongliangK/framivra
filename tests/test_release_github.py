@@ -142,7 +142,16 @@ class GithubRelease(unittest.TestCase):
                               text=True, capture_output=True, check=True)
 
     def release(self, *args, **env):
-        return subprocess.run(['bash', str(self.repo / 'scripts/release.sh'),
+        # Transaction fixtures isolate freeze/provenance; their strict real gates
+        # have dedicated negative tests in test_release_freeze.py.
+        harness = ("import importlib.util,sys,types; sys.dont_write_bytecode=True; "
+                   "spec=importlib.util.spec_from_file_location('release',sys.argv[1]); "
+                   "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m); "
+                   "m.verify_freeze_evidence=lambda *a: None; "
+                   "m.build_public_summary=lambda *a: None; "
+                   "sys.modules['verify_release']=types.SimpleNamespace(verify_artifact=lambda *a,**kw: (_ for _ in ()).throw(ValueError('unsigned')) if __import__('os').environ.get('MOCK_PROVENANCE_FAIL') else 1); "
+                   "sys.exit(m.main(sys.argv[2:]))")
+        return subprocess.run([sys.executable, '-c', harness, str(self.repo / 'scripts/release_github.py'),
                                'v2.0.1', *args], cwd=self.repo, env={**self.env, **env},
                               text=True, capture_output=True, timeout=30)
 
@@ -185,6 +194,18 @@ class GithubRelease(unittest.TestCase):
                 self.assertEqual(call[call.index('--hostname') + 1], 'github.com')
             elif call[0] == 'release':
                 self.assertEqual(call[call.index('--repo') + 1], 'github.com/example/framivra')
+
+    def test_unsigned_draft_never_publishes(self):
+        self.assertNotEqual(self.release(MOCK_PROVENANCE_FAIL='1').returncode, 0)
+        self.assertTrue(self.state()['release']['draft'])
+        self.assert_old_intact()
+        self.assertFalse(any('draft=false' in call for call in self.state()['calls']))
+
+    def test_prepare_stops_before_provenance_and_publish(self):
+        result = self.release('--phase', 'prepare', MOCK_PROVENANCE_FAIL='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.state()['release']['draft'])
+        self.assert_old_intact()
 
     def test_each_upload_failure_keeps_previous_published_release(self):
         for name in ('video-tools-2.0.1.tar.gz', 'install.sh', 'releases.json', 'SHA256SUMS'):

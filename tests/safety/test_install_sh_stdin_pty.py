@@ -105,6 +105,7 @@ class InstallShStdinPty(SandboxCase):
             env.pop(key, None)
         env["FRAMIVRA_DIR"] = str(self.clone_dir)
         env["FRAMIVRA_REPO"] = str(self.upstream)
+        env["FRAMIVRA_REF"] = "main"
         master, slave = pty.openpty()
         proc = subprocess.Popen(
             ["bash", "-c", inner], stdin=slave, stdout=slave, stderr=slave,
@@ -207,7 +208,7 @@ class InstallShStdinPty(SandboxCase):
         for key in ("FRAMIVRA_DIR", "FRAMIVRA_REPO", "FRAMIVRA_REF"):
             env.pop(key, None)
         env.update({"FRAMIVRA_DIR": str(self.clone_dir),
-                    "FRAMIVRA_REPO": str(self.upstream)})
+                    "FRAMIVRA_REPO": str(self.upstream), "FRAMIVRA_REF": "main"})
         proc = subprocess.run(
             ["bash", "-c", "cat %s | setsid %s -s --"
              % (quote(INSTALL_SH), quote(BASH))],
