@@ -287,18 +287,52 @@ class WSConn:
             pass
 
 
-class Tab:
-    """一个 page target 的 CDP 会话（线程独占）。"""
+_FAST_PNG_WARNED = False
 
-    def __init__(self, port, ws_path, width=1920, height=1080):
+
+def _warn_fast_png_unsupported():
+    global _FAST_PNG_WARNED
+    if not _FAST_PNG_WARNED:
+        _FAST_PNG_WARNED = True
+        print("⚠ Chrome explicitly rejects optimizeForSpeed; using normal PNG", file=sys.stderr)
+
+
+class Tab:
+    """一个 page target 的 CDP 会话（线程独占）。
+
+    fast_png is an experimental constructor-only opt-in. It affects every
+    screenshot (including alpha probes), never Canvas export or Python PNG_LEVEL.
+    The requested/supported/active attributes are available to experiment reports.
+    """
+
+    def __init__(self, port, ws_path, width=1920, height=1080, *, fast_png=False):
         self.ws = WSConn(port, ws_path)
         try:
+            self.fast_png_requested = bool(fast_png)
+            self.fast_png_supported = None
+            self.fast_png_active = False
             self._mid = 0
             self.request_policy = None
             self._policy_commands = set()
             self.call("Page.enable")
             self.call("Emulation.setDeviceMetricsOverride",
                       width=width, height=height, deviceScaleFactor=1, mobile=False)
+            if self.fast_png_requested:
+                # Probe only the explicitly requested experimental parameter. Other
+                # protocol, renderer, transport and timeout errors remain failures.
+                try:
+                    self.call("Page.captureScreenshot", format="png", optimizeForSpeed=True)
+                except RuntimeError as exc:
+                    message = str(exc).lower()
+                    if "optimizeforspeed" not in message or not any(
+                            token in message for token in ("unknown parameter", "unrecognized parameter",
+                                                           "unsupported parameter", "unexpected parameter")):
+                        raise
+                    self.fast_png_supported = False
+                    _warn_fast_png_unsupported()
+                else:
+                    self.fast_png_supported = True
+                    self.fast_png_active = True
         except BaseException:
             self.ws.close()   # 半初始化 Tab 显式关 fd（RECP-20260916-002）
             raise
@@ -365,7 +399,10 @@ class Tab:
         return r.get("result", {}).get("value")
 
     def shot(self) -> bytes:
-        r = self.call("Page.captureScreenshot", format="png", timeout=30)
+        params = {"format": "png"}
+        if self.fast_png_active:
+            params["optimizeForSpeed"] = True
+        r = self.call("Page.captureScreenshot", timeout=30, **params)
         return base64.b64decode(r["data"])
 
 
@@ -398,7 +435,8 @@ class Browser:
     形态（裸 Popen + tempfile.mkdtemp，与 ctx=None 同路径）并一次性 stderr
     告警。ctx=None（独立直跑入口）保持原 tempfile.mkdtemp + 裸 Popen 形态。"""
 
-    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None):
+    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None, *, fast_png=False):
+        self.fast_png = bool(fast_png)
         self.chrome = chrome_path
         self.tabs_n = max(1, tabs)
         self.width, self.height = width, height
@@ -497,7 +535,8 @@ class Browser:
         tabs = []
         try:
             for u in self.tab_ws_urls:
-                tabs.append(Tab(self.port, u, self.width, self.height))
+                tabs.append(Tab(self.port, u, self.width, self.height, fast_png=True)
+                            if self.fast_png else Tab(self.port, u, self.width, self.height))
         except BaseException:
             for t in tabs:
                 t.close()
