@@ -221,8 +221,9 @@ class ClipDependencies(SnapshotImpact):
         self.clip['cache_dependencies'].reverse()
         self.assertEqual(first, gfx_key(c, self.clip))
 
-    def test_legacy_and_empty_keys_unchanged(self):
+    def test_environment_migration_preserves_empty_dependency_equivalence(self):
         from vtx.hygiene import gfx_key
+        from vtx.gfx_environment import identity
         from vtx.timeline_diff import DiffCtx
         from vtx.cache_state import file_digest
         c = DiffCtx(self.tl, self.root)
@@ -230,9 +231,12 @@ class ClipDependencies(SnapshotImpact):
         blob = (self.root / cl['src']).read_bytes()
         blob += b'|' + str((self.root / 'shared.bin').resolve()).encode() + b'\0' + file_digest(self.root / 'shared.bin').encode()
         old = hashlib.sha1(blob + b'|30|64x64|90').hexdigest()[:12]
-        self.assertEqual(gfx_key(c, cl), old)
+        expected = hashlib.sha1(blob + b'|environment:' + identity(c).encode()
+                                + b'|30|64x64|90').hexdigest()[:12]
+        self.assertNotEqual(expected, old)
+        self.assertEqual(gfx_key(c, cl), expected)
         cl['cache_dependencies'] = []
-        self.assertEqual(gfx_key(c, cl), old)
+        self.assertEqual(gfx_key(c, cl), expected)
 
     def test_missing_local_only_invalidates_declaring_page(self):
         from vtx.impact import compare
