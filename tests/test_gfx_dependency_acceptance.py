@@ -560,19 +560,15 @@ class AcceptanceContracts(unittest.TestCase):
         bad = copy.deepcopy(after);bad['products'].pop('cache/vseg_pass/p0_123456789abc.mkv.n')
         with self.assertRaises(AssertionError): check_gc_contract(before,bad,planned,current)
 
-
-
-class WorkflowContracts(unittest.TestCase):
     def test_workflow_scope_and_budget(self):
         root=Path(__file__).resolve().parents[1]
         workflow=(root/'.github/workflows/gfx-dependency-acceptance.yml').read_text()
         self.assertIn('contents: read',workflow)
-        self.assertIn('on:\n  workflow_dispatch:', workflow)
-        self.assertNotIn('pull_request:', workflow)
-        self.assertNotIn('schedule:', workflow)
-        self.assertIn('ref: ${{ github.sha }}', workflow)
+        self.assertIn('head.repo.full_name == github.repository',workflow)
+        self.assertIn("'dot/issue47-html-validation-'",workflow)
+        self.assertIn('ref: ${{ github.event.pull_request.head.sha }}',workflow)
         self.assertIn('timeout-minutes: 10',workflow)
-        for forbidden in ('pull_request_target','secrets.','--no-sandbox','add-apt-repository','apt-key'):
+        for forbidden in ('pull_request_target','secrets.','--no-sandbox','add-apt-repository','apt-key','workflow_dispatch'):
             self.assertNotIn(forbidden,workflow)
         install = 'sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core'
         self.assertIn(install, workflow)
