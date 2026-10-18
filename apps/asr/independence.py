@@ -114,8 +114,9 @@ def check_path_independent(path, what):
         if resolved == anchor or _is_relative_to(resolved, anchor):
             raise AsrIndependenceError(
                 "%s 指向语音输入法资产，已拒绝（任何情况下禁止复用输入法）：%s\n"
-                "  迁移：删除配置中的 IME 路径，运行 bash apps/asr/init.sh 建立 Framivra "
-                "专属环境与模型（默认根 %s）" % (what, resolved, project_model_root()))
+                "  迁移：删除配置中的 IME 路径，仅配置已独立准备的 Framivra "
+                "专属环境与模型（默认根 %s）；准备边界见 apps/asr/README.md「开启步骤」，"
+                "init 仅检查已有资产，旧 --download 为 BLOCKED" % (what, resolved, project_model_root()))
     return str(resolved)
 
 
@@ -127,7 +128,7 @@ def reject_legacy_config(cfg=None):
     if env:
         raise AsrIndependenceError(
             "环境变量 %s 已废除（ASR 与语音输入法彻底解耦）：请 unset 后重试；"
-            "Framivra 专属资产用 bash apps/asr/init.sh 建立或 config asr.model_dir 指定"
+            "仅配置已独立准备的 Framivra 专属资产；init 不安装，准备边界见 apps/asr/README.md「开启步骤」"
             % LEGACY_ENV)
     if cfg is not None:
         node = cfg
@@ -139,7 +140,7 @@ def reject_legacy_config(cfg=None):
         if node is not None:
             raise AsrIndependenceError(
                 "配置键 %s 已废除（ASR 与语音输入法彻底解耦）：请从 config 删除该键；"
-                "Framivra 专属资产用 bash apps/asr/init.sh 建立或 config asr.model_dir 指定"
+                "仅配置已独立准备的 Framivra 专属资产；init 不安装，准备边界见 apps/asr/README.md「开启步骤」"
                 % LEGACY_CONFIG_KEY)
 
 
@@ -201,7 +202,7 @@ def verify_interpreter(py_bin, what="asr.python"):
     resolved = check_path_independent(py_bin, what)
     p = Path(resolved)
     if not p.exists():
-        raise AsrIndependenceError("%s 不存在：%s（先跑 bash apps/asr/init.sh 建立专属环境）"
+        raise AsrIndependenceError("%s 不存在：%s（init 不创建环境；独立运行环境须另行审核和准备，见 apps/asr/README.md「开启步骤」）"
                                    % (what, resolved))
     if not os.access(str(p), os.X_OK):
         raise AsrIndependenceError("%s 不可执行：%s" % (what, resolved))
@@ -213,8 +214,8 @@ def verify_module_from_own_env(py_bin, module, what="解释器"):
     origin = interpreter_module_origin(py_bin, module)
     if origin is None:
         raise AsrIndependenceError(
-            "%s 内 %s 不可导入（先 bash apps/asr/init.sh --download 安装到专属环境，"
-            "绝不借用输入法环境）：%s" % (what, module, py_bin))
+            "%s 内 %s 不可导入（旧 --download 为 BLOCKED；独立依赖须另行审核和准备，"
+            "见 apps/asr/README.md「开启步骤」，绝不借用输入法环境）：%s" % (what, module, py_bin))
     env_root = Path(py_bin).resolve().parent.parent
     origin_path = Path(origin)
     for anchor in ime_anchor_roots():
@@ -261,7 +262,8 @@ def _in_ime_anchor(real):
 def _reject_entry(resolved_dir, what, name, reason):
     raise AsrIndependenceError(
         "%s 的 %s %s——已拒绝（任何情况下禁止借用输入法/他人权重）；"
-        "请独立下载（bash apps/asr/init.sh --download）" % (what, name, reason))
+        "旧 --download 为 BLOCKED；独立资产准备须先核对 docs/third-party-licenses.md "
+        "与离线 python3 scripts/model_license_policy.py plan <asset>" % (what, name, reason))
 
 
 def _audit_single_entry(d, what, name, is_weight):
@@ -355,7 +357,8 @@ def verify_dir_assets(resolved_dir, what, required=True):
     if required and not (single_ok or index_ok):
         raise AsrIndependenceError(
             "%s 缺少权重承载形态（%s 或 %s+分片）："
-            "请独立下载（bash apps/asr/init.sh --download）"
+            "旧 --download 为 BLOCKED；独立资产准备须先核对 docs/third-party-licenses.md "
+            "与离线 python3 scripts/model_license_policy.py plan <asset>"
             % (what, _SINGLE_WEIGHT_NAME, _INDEX_NAME))
 
 

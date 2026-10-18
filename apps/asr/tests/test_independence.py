@@ -26,6 +26,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -516,6 +517,53 @@ class TestAssetManifest(AdversarialBase):
         with self.assertRaises(independence.AsrIndependenceError) as ctx:
             independence.verify_asset_entry(entries[0], root)
         self.assertIn("哈希不符", str(ctx.exception))
+
+
+class TestOnboardingGuidance(AdversarialBase):
+    """缺资产诊断不把被许可门禁阻断的旧安装器当作修复路线。"""
+
+    def test_missing_interpreter_and_module_explain_preparation_boundary(self):
+        missing = self.home / "own-env/bin/python"
+        with self.assertRaises(independence.AsrIndependenceError) as ctx:
+            independence.verify_interpreter(str(missing))
+        self.assertIn("init 不创建环境", str(ctx.exception))
+        self.assertIn("apps/asr/README.md", str(ctx.exception))
+        with mock.patch.object(independence, "interpreter_module_origin", return_value=None):
+            with self.assertRaises(independence.AsrIndependenceError) as ctx:
+                independence.verify_module_from_own_env(str(missing), "qwen_asr")
+        self.assertIn("旧 --download 为 BLOCKED", str(ctx.exception))
+        self.assertIn("独立依赖须另行审核和准备", str(ctx.exception))
+        self.assertNotIn("bash apps/asr/init.sh --download", str(ctx.exception))
+        self.assertEqual(self.http_calls, [])
+        self.assert_ime_untouched()
+
+    def test_missing_and_borrowed_weights_point_to_offline_license_plan(self):
+        model = self.home / "own-model"
+        model.mkdir()
+        for borrowed in (False, True):
+            if borrowed:
+                source = self.home / "borrowed.safetensors"
+                source.write_bytes(b"fixture")
+                os.link(source, model / "model.safetensors")
+            with self.subTest(borrowed=borrowed):
+                with self.assertRaises(independence.AsrIndependenceError) as ctx:
+                    independence.verify_dir_assets(model, "model")
+                message = str(ctx.exception)
+                self.assertIn("旧 --download 为 BLOCKED", message)
+                self.assertIn("docs/third-party-licenses.md", message)
+                self.assertIn("python3 scripts/model_license_policy.py plan <asset>", message)
+                self.assertNotIn("bash apps/asr/init.sh --download", message)
+        self.assertEqual(self.http_calls, [])
+        self.assert_ime_untouched()
+
+    def test_readme_distinguishes_check_download_and_real_acceptance(self):
+        readme = (Path(client.ASR_DIR) / "README.md").read_text(encoding="utf-8")
+        self.assertIn("BLOCKED（退出码 4）", readme)
+        self.assertIn("scripts/model_license_policy.py plan qwen-asr-1.7b", readme)
+        self.assertIn("固定快照下载不安装 qwen-asr/torch 运行环境", readme)
+        self.assertIn("独立安装与真实转写 UNRUN", readme)
+        self.assertNotIn("一键探测/补齐", readme)
+        self.assertNotIn("CPU 推理不支持", readme)
 
 
 class TestReuseChainDeleted(AdversarialBase):

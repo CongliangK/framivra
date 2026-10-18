@@ -324,7 +324,7 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
     aligner = probe_aligner(cfg)
     if py is None or model is None:
         print("✗ 探测不到 Framivra 专属 qwen-asr 解释器或模型（绝不借用输入法资产）"
-              "——先跑 bash apps/asr/init.sh（python=%s, model=%s）"
+              "——init 仅检查已有资产、不安装；独立准备边界见 apps/asr/README.md「开启步骤」（python=%s, model=%s）"
               % (py or "缺", model or "缺"), file=sys.stderr)
         return False
     model = independence.verify_model_dir(model, "model", check_weights=True)
@@ -347,7 +347,7 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
     if aligner:
         cmd += ["--aligner", aligner]
     else:
-        print("⚠ 未找到 ForcedAligner：字级时间戳（srt/timeline）将不可用——跑 bash apps/asr/init.sh 下载", file=sys.stderr)
+        print("⚠ 未找到 ForcedAligner：字级时间戳（srt/timeline）将不可用——init 不下载；独立准备与许可边界见 apps/asr/README.md「开启步骤」", file=sys.stderr)
     if verbose:
         print("… 拉起 sidecar：%s（日志 %s）" % (" ".join(cmd), SIDECAR_LOG), file=sys.stderr)
     with open(SIDECAR_LOG, "a", encoding="utf-8") as log:

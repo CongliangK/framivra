@@ -20,6 +20,8 @@ vt.py              统一入口：doctor / apps|plugins|templates list|check（s
 
 ## 快速开始（clone 即用，零安装步骤）
 
+想先生成公开示例？按 [standard Demo 运行指南](docs/demo-fixture.md#公开-standard-demo-生产运行) 从冻结输入准备到显式 CDP / CEF 成片、查看结果；依赖资格与未验收范围在指南中说明。
+
 ```bash
 git clone https://github.com/CongliangK/framivra
 cd framivra

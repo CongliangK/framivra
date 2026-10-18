@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# asr 模块初始化：Framivra 专属解释器环境与模型探测（+受许可门禁的下载）+ 冒烟。
+# asr 模块检查：已有 Framivra 专属解释器环境与模型探测 + 本地 sidecar 冒烟。
 # issue #141：与语音输入法（IME）彻底解耦——不探测/复用/借用 IME 的任何解释器、
 # 模型或路径；遗留 VT_ASR_IME_ROOT / asr.ime_root 直接报迁移错误退出。
-# 幂等：已有专属资产一律复用（探测+引用，不重复下载）；只补缺失项。
+# 幂等：检查已有专属资产（探测+引用）；缺失项失败汇总，不补齐。
 # 用法：bash apps/asr/init.sh [--download|--help]。
-# 默认只做本地探测/sidecar 冒烟，不建 venv、不联网；--download 才安装缺失包/下载缺失模型。
-# 网络命令执行前完整打印；pip 单次连接超时 60 秒、最多重试 2 次（无需系统 timeout）。
+# 默认不建 venv、不安装包、不下载模型；--download 在配置/venv/pip 前 BLOCKED。
+# 下方保留的旧安装分支不可由当前许可门禁放行；单资产固定快照下载不安装运行环境。
 set -euo pipefail
 
 usage() {
   echo "用法：bash apps/asr/init.sh [--download|--help]"
   echo "  默认：仅本地探测和 sidecar 冒烟，不创建 venv、不联网；缺失项告警并汇总。"
   echo "  --download：旧 ModelScope 混合下载链未审查，前置明确 BLOCKED，不建环境或联网。"
-  echo "              官方固定快照 opt-in 与证据请看 scripts/model_license_policy.py --help。"
+  echo "              许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/model_license_policy.py plan <asset>。"
+  echo "              另行批准的固定快照下载不安装运行环境，也不解除本入口门禁。"
   echo "  --help, -h：显示本帮助（不探测、不联网）。"
 }
 DOWNLOAD=0
@@ -42,7 +43,7 @@ TUNA="https://pypi.tuna.tsinghua.edu.cn/simple"
 # 绝不静默转成别的路径来源，也不做任何探测/联网。
 if [[ -n "${VT_ASR_IME_ROOT:-}" ]]; then
   echo "✗ 环境变量 VT_ASR_IME_ROOT 已废除（ASR 与语音输入法彻底解耦，issue #141）：" >&2
-  echo "    请 unset VT_ASR_IME_ROOT 后重试；Framivra 专属资产用本脚本建立。" >&2
+  echo "    请 unset VT_ASR_IME_ROOT 后重试；本脚本仅检查已有独立资产，准备边界见 apps/asr/README.md「开启步骤」。" >&2
   exit 2
 fi
 # 生效配置文件（issue #141 红队 F3）：VTX_CONFIG 优先（与 vtx/pluginlib config
@@ -60,7 +61,7 @@ PY
 )"
 if [[ -n "$CFG_IME" ]]; then
   echo "✗ 配置键 asr.ime_root 已废除（ASR 与语音输入法彻底解耦，issue #141）：" >&2
-  echo "    请从 config 删除该键；Framivra 专属资产用本脚本建立或配置 asr.model_dir。" >&2
+  echo "    请从 config 删除该键；仅配置已独立准备的 asr.model_dir，准备边界见 apps/asr/README.md「开启步骤」。" >&2
   exit 2
 fi
 
@@ -71,7 +72,7 @@ bad()  { echo "✗ $*"; FAIL=1; }
 # 防御式门禁：所有网络入口统一收敛；命令打印到 stderr，避免污染 curl 的 JSON 管道。
 run_network() {
   if [[ "$DOWNLOAD" != "1" ]]; then
-    bad "网络操作已阻止：请显式运行 bash apps/asr/init.sh --download"
+    bad "网络操作已阻止；旧 --download 为 BLOCKED，准备边界见 docs/third-party-licenses.md。"
     return 1
   fi
   printf '… 执行网络命令：' >&2
@@ -81,7 +82,7 @@ run_network() {
 }
 
 echo "== asr 模块 init（幂等；Framivra 专属资产，绝不借用输入法）=="
-[[ "$DOWNLOAD" == "1" ]] || echo "本地探测模式：不联网；需要安装/下载时请运行 bash apps/asr/init.sh --download。"
+[[ "$DOWNLOAD" == "1" ]] || echo "本地探测模式：不联网、不安装；旧 --download 为 BLOCKED。许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/model_license_policy.py plan <asset>。"
 
 # ---------------------------------------------------------------- 1. 解释器探测（项目专属环境）
 CFG_PY="$(python3 - "$ROOT/config.local.json" <<'PY' 2>/dev/null || true
@@ -106,7 +107,7 @@ fi
 
 if [[ -z "$PY" ]]; then
   if [[ "$DOWNLOAD" != "1" ]]; then
-    bad "无 Framivra 专属解释器（config.asr.python → apps/asr/.venv；绝不借用输入法环境）；本地模式不创建环境、不安装包。请运行 bash apps/asr/init.sh --download。"
+    bad "无 Framivra 专属解释器（config.asr.python → apps/asr/.venv；绝不借用输入法环境）；本地模式不创建环境、不安装包。旧 --download 为 BLOCKED；独立运行环境须另行审核和准备，见 apps/asr/README.md「开启步骤」。"
   else
     warn "无专属解释器 → 自建 apps/asr/.venv（已显式 --download）"
     # Windows/Git Bash 无 python3 别名 → 回退 python；失败仍走汇总。
@@ -121,7 +122,7 @@ if [[ -z "$PY" ]]; then
         PY="$ASR/.venv/bin/python"; [[ -x "$ASR/.venv/Scripts/python.exe" ]] && PY="$ASR/.venv/Scripts/python.exe"
         ok "解释器（新建 apps/asr/.venv）：$PY"
       else
-        bad "自建 apps/asr/.venv 失败；请修复 Python venv 支持后重跑 --download"
+        bad "自建 apps/asr/.venv 失败；旧 --download 为 BLOCKED，独立运行环境须另行审核和准备。"
       fi
     fi
   fi
@@ -136,7 +137,7 @@ if [[ -n "$PY" ]]; then
     if [[ "$NEED_PACKAGES" == "1" ]]; then
       # 用项目解释器调用 pip（-I 隔离外部注入；绝不调用输入法的 pip）。
       if ! run_network "$PY" -m pip install --timeout 60 --retries 2 -i "$TUNA" -U qwen-asr modelscope; then
-        bad "pip 安装失败；已限制连接超时/重试，请检查网络后重跑 --download"
+        bad "pip 安装失败；旧 --download 为 BLOCKED，依赖来源与许可须另行审核，见 docs/third-party-licenses.md。"
       fi
     fi
   fi
@@ -151,14 +152,14 @@ if [[ -n "$PY" ]]; then
       bad "qwen_asr 来源异常（$QORIGIN，应位于 $VENV_ROOT 内）——疑似外部注入，已拒绝"
     fi
   else
-    bad "专属解释器缺 qwen_asr 包：$PY；未授权时绝不联网安装、绝不借用输入法环境。请运行 bash apps/asr/init.sh --download，或自行执行："
-    printf '    %q -I -m pip install --timeout 60 --retries 2 -i %q -U qwen-asr modelscope\n' "$PY" "$TUNA"
+    bad "专属解释器缺 qwen_asr 包：$PY；绝不借用输入法环境。旧 --download 为 BLOCKED；独立依赖须另行审核和准备，固定快照模型下载不安装运行环境。"
+    printf '    未运行安装：解释器 %q；旧源 %q。许可边界见 docs/third-party-licenses.md。\n' "$PY" "$TUNA"
   fi
   if "$PY" -I -c "import modelscope" 2>/dev/null; then
     HAS_MS=1
-    ok "modelscope 可导入（模型下载通道）"
+    ok "modelscope 可导入（仅旧下载链使用，当前 --download 入口为 BLOCKED）"
   else
-    warn "缺 modelscope 包（仅下载模型时需要）；请运行 bash apps/asr/init.sh --download（当前未自动联网补装）。"
+    warn "缺 modelscope 包（仅旧下载链需要）；旧 --download 为 BLOCKED，本地检查不补装。许可边界见 docs/third-party-licenses.md。"
   fi
 fi
 
@@ -202,7 +203,7 @@ download_model() {  # $1=目录名（Qwen3-ASR-1.7B 等）→ 下载到专属根
   fi
   if [[ "$rc" -ne 0 ]]; then
     bad "下载失败：Qwen/$name（ModelScope 国内直连，exit $rc）"
-    echo "  备选链：a) 重试（modelscope 偶发抖动）  b) hf-mirror：export HF_ENDPOINT=https://hf-mirror.com 后 huggingface-cli download Qwen/$name --local-dir $MODELS_HOME/$name"
+    echo "  旧下载链未审查，不能切换镜像重试；许可边界与固定官方快照要求见 docs/third-party-licenses.md。"
     return 1
   fi
 }
@@ -212,9 +213,9 @@ for name in Qwen3-ASR-1.7B Qwen3-ASR-0.6B Qwen3-ForcedAligner-0.6B; do
   if [[ -n "$root" ]]; then
     ok "模型 $name（复用专属资产）：$root/$name"
   elif [[ "$DOWNLOAD" != "1" ]]; then
-    bad "缺少模型 $name（专属根 $MODELS_HOME）；本地探测不联网、绝不借用输入法模型。请运行 bash apps/asr/init.sh --download，或配置已有 asr.model_dir。"
+    bad "缺少模型 $name（专属根 $MODELS_HOME）；本地探测不联网、绝不借用输入法模型。旧 --download 为 BLOCKED；请核对 docs/third-party-licenses.md 与离线 plan <asset>，或配置已独立准备的 asr.model_dir。"
   elif [[ -z "$PY" || "$HAS_MS" != "1" ]]; then
-    bad "无法下载 $name：解释器/modelscope 未就绪（见上）；修复后重跑 --download。"
+    bad "无法下载 $name：解释器/modelscope 未就绪（见上）；旧 --download 为 BLOCKED，准备边界见 docs/third-party-licenses.md。"
   else
     echo "… 下载 Qwen/$name → $MODELS_HOME/$name（ForcedAligner 约 2GB，国内直连）"
     if download_model "$name"; then
@@ -246,9 +247,9 @@ fi
 echo
 echo "== init 汇总 =="
 if [[ "$FAIL" == "0" ]]; then
-  echo "✓ asr 模块就绪（Framivra 专属环境与模型）。建议把解释器路径写进仓库根 config.local.json（不自动改用户配置）："
+  echo "✓ 已有独立资产检查与 sidecar 冒烟通过（未验真实转写）。建议把解释器路径写进仓库根 config.local.json（不自动改用户配置）："
   [[ -n "$PY" ]] && echo "    \"asr\": { \"python\": \"$PY\", \"model_dir\": \"$MODELS_HOME\" }"
-  echo "  之后：python3 apps/asr/asr_cli.py sidecar start → srt/timeline 子命令自动复用。"
+  echo "  独立环境就绪且显式启用 asr.enabled 后：python3 apps/asr/asr_cli.py sidecar start → srt/timeline 子命令自动复用。"
   echo "  注：18081 为语音输入法 sidecar 专用端口，本模块绝不绑定/探测；默认 18085。"
 else
   echo "✗ 存在失败项（见上）；修复后重跑 bash apps/asr/init.sh（幂等，已就绪项不会重做）。"
