@@ -20,7 +20,7 @@
 #                 %LOCALAPPDATA%\framivra——安装运行数据会让克隆变脏,
 #                 下一次引导拒绝自动更新)
 #   FRAMIVRA_REPO 默认 https://github.com/CongliangK/framivra.git(可信镜像也可)
-#   FRAMIVRA_REF  默认 main(分支名)
+#   FRAMIVRA_REF  默认 stable;可选 vX.Y.Z / vX.Y.Z-rc.N / main(开发版)
 # 信任边界:本脚本经 HTTPS 从 GitHub raw 下载——首次安装信任的是「下载通道 +
 # 仓库当前内容」;发布者身份验证(keyless provenance,#41)随发版通道后续接入,
 # 引导层不自称签名验证(可先取脚本审读后再执行)。
@@ -154,12 +154,39 @@ if (-not $env:LOCALAPPDATA) { throw '[bootstrap] 环境变量 LOCALAPPDATA 未�
 # 显式空值保留给校验拒绝(而非回退默认),语义对齐标杆。
 $Dir = if ($null -ne $env:FRAMIVRA_DIR) { $env:FRAMIVRA_DIR } else { Join-Path $env:LOCALAPPDATA 'framivra-repo' }
 $Repo = if ($null -ne $env:FRAMIVRA_REPO) { $env:FRAMIVRA_REPO } else { 'https://github.com/CongliangK/framivra.git' }
-$Ref = if ($null -ne $env:FRAMIVRA_REF) { $env:FRAMIVRA_REF } else { 'main' }
+$Ref = if ($null -ne $env:FRAMIVRA_REF) { $env:FRAMIVRA_REF } else { 'stable' }
 Assert-BootstrapVar 'FRAMIVRA_DIR' $Dir -AllowSpaces
 Assert-BootstrapVar 'FRAMIVRA_REPO' $Repo
 Assert-BootstrapVar 'FRAMIVRA_REF' $Ref
 $refCheck = Invoke-Git -Quiet @('check-ref-format', '--branch', $Ref)
 if ($refCheck.Code -ne 0) { throw '[bootstrap] FRAMIVRA_REF 非法:须为有效的分支名。' }
+$expectedCommit = $null
+if ($Ref -eq 'stable') {
+  $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/CongliangK/framivra/releases/latest' -Headers @{'User-Agent'='framivra-bootstrap'}
+  if ($release.draft -ne $false -or $release.prerelease -ne $false) { throw '[bootstrap] 无公开稳定发行,不会回落 main。' }
+  $Ref = $release.tag_name
+}
+if ($Ref -ceq 'main') {
+  $sourceRef = 'refs/heads/main'
+  $targetRef = 'refs/remotes/origin/main'
+} else {
+  if ($Ref -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$') { throw '[bootstrap] FRAMIVRA_REF 非法:只接受 stable、vX.Y.Z、vX.Y.Z-rc.N 或 main。' }
+  if (-not [IO.Path]::IsPathRooted($Repo)) {
+    $versionRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/CongliangK/framivra/releases/tags/$Ref" -Headers @{'User-Agent'='framivra-bootstrap'}
+    if ($versionRelease.tag_name -cne $Ref -or $versionRelease.draft -ne $false -or $versionRelease.prerelease -ne ($Ref.Contains('-rc.'))) {
+      throw '[bootstrap] 指定版本不是匹配的公开发行,不会回落 main。'
+    }
+  }
+  $sourceRef = "refs/tags/$Ref"
+  $targetRef = $sourceRef
+  $remoteTag = Invoke-Git -Quiet @('ls-remote', '--exit-code', $Repo, $sourceRef, "$sourceRef^{}")
+  if ($remoteTag.Code -ne 0) { throw '[bootstrap] 发行 tag 查询失败,不会回落 main。' }
+  $peeled = @($remoteTag.Output | Where-Object { $_ -match '\^\{\}$' })
+  if ($peeled.Count -ne 1) { throw '[bootstrap] 发行须为 annotated tag。' }
+  $expectedCommit = ($peeled[0] -split '\s+')[0]
+}
+Write-Host "[bootstrap] 选择 $Ref @ $expectedCommit"
+
 
 # 克隆目录与运行时数据根分离:install.py 语义的运行时数据根是
 # %LOCALAPPDATA%\framivra,混用会让克隆在首次安装后变脏,下一次引导拒绝自动
@@ -212,15 +239,15 @@ if (Test-Path -LiteralPath $Dir) {
     Write-Host '[bootstrap] 正在更新已有的干净克隆...'
     # 显式 refspec 支持浅克隆更新,避免 reset 到过时的远端跟踪引用;失败时
     # 尚未重置任何本地文件。
-    $fetch = Invoke-Git @('-C', $Dir, 'fetch', '--depth', '1', 'origin', "+refs/heads/${Ref}:refs/remotes/origin/${Ref}")
+    $fetch = Invoke-Git @('-C', $Dir, 'fetch', '--depth', '1', 'origin', "+${sourceRef}:${targetRef}")
     if ($fetch.Code -ne 0) {
       Write-Host '[bootstrap] 提示:请检查网络、仓库地址与分支;或把 FRAMIVRA_REPO 指向可信镜像后重试。'
       throw '[bootstrap] 获取远端分支失败,尚未改动本地文件。'
     }
     # 标签/简写歧义防护:一律用全限定 ref,防名为 origin/<ref> 的标签劫持 reset。
-    $targetRef = "refs/remotes/origin/$Ref"
     $newHead = Invoke-Git -Quiet @('-C', $Dir, 'rev-parse', '--verify', "$targetRef^{commit}")
     if ($newHead.Code -ne 0 -or -not "$($newHead.Output)".Trim()) { throw '[bootstrap] 远端分支解析失败,尚未重置本地文件。' }
+    if ($expectedCommit -and "$($newHead.Output)".Trim() -cne $expectedCommit) { throw '[bootstrap] tag 在安装期间移动,拒绝更新。' }
     # ignored→tracked 碰撞预检:先于 marker 检查与 reset 执行(拒绝路径绝无
     # 副作用;fetch 失败零落盘的既有性质保持——预检只读不写)。
     Assert-NoIgnoredCollision -TargetRef $targetRef
@@ -248,9 +275,15 @@ if (Test-Path -LiteralPath $Dir) {
     throw "[bootstrap] 克隆失败,安装尚未开始;若留下半成品目录($Dir),请检查后自行处理或改用其他 FRAMIVRA_DIR。"
   }
   $head = Invoke-Git -Quiet @('-C', $Dir, 'rev-parse', 'HEAD')
+  if ($expectedCommit -and "$($head.Output)".Trim() -cne $expectedCommit) { throw '[bootstrap] 克隆提交与发行 tag 不符,拒绝初始化。' }
   Set-Content -LiteralPath $markerPath -Value "$($head.Output)".Trim() -NoNewline
 }
 
+if (-not $SkipUpdate) {
+  $installedHead = Invoke-Git -Quiet @('-C', $Dir, 'rev-parse', 'HEAD')
+  if ($installedHead.Code -ne 0) { throw '[bootstrap] 无法记录安装提交。' }
+  @{ref=$Ref; commit="$($installedHead.Output)".Trim()} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Dir '.git/framivra-release.json') -Encoding UTF8
+}
 if (-not (Test-Path -LiteralPath (Join-Path $Dir 'vt.py'))) {
   throw '[bootstrap] 仓库缺少 vt.py:请检查 FRAMIVRA_REPO/FRAMIVRA_REF 指向的是 Framivra 本仓。'
 }

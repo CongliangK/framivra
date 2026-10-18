@@ -208,22 +208,36 @@ class InstallShBootstrap(SandboxCase):
                          b"from upstream\n")
         self.assertEqual(self.marker(), new_head)  # 落在远端分支而非旧标签
 
-    def test_ref_switch_moves_clean_clone_to_other_branch(self):
-        # 显式 refspec 支持浅克隆切换分支:干净克隆换 FRAMIVRA_REF 时
-        # fetch 对端分支并 reset 到其最新 tip。
+    def test_unapproved_development_branch_is_rejected(self):
         self.assert_ok(self.bootstrap())
-        self.git("checkout", "-qb", "feature")
-        self.upstream_commit("v3", {"feat.txt": b"feature branch\n"})
+        before = self.marker()
         result = self.bootstrap(FRAMIVRA_REF="feature")
-        self.assert_ok(result)
-        self.assertEqual((self.clone_dir / "feat.txt").read_bytes(),
-                         b"feature branch\n")
-        self.assertEqual(self.marker(),
-                         self.git_out("rev-parse", "HEAD", cwd=self.upstream))
-        self.assertEqual(
-            self.git_out("rev-parse", "refs/remotes/origin/feature",
-                         cwd=self.clone_dir),
-            self.git_out("rev-parse", "HEAD", cwd=self.upstream))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.marker(), before)
+
+    def test_annotated_release_tag_pins_exact_commit(self):
+        self.git("tag", "-a", "v2.1.0", "-m", "stable")
+        expected = self.git_out("rev-parse", "HEAD")
+        self.upstream_commit("new-main", {"new.txt": b"not stable"})
+        self.assert_ok(self.bootstrap(FRAMIVRA_REF="v2.1.0"))
+        self.assertEqual(self.marker(), expected)
+        self.assertFalse((self.clone_dir / "new.txt").exists())
+
+    def test_default_stable_resolves_public_release_instead_of_main(self):
+        self.git("tag", "-a", "v2.1.0", "-m", "stable")
+        stable = self.git_out("rev-parse", "HEAD")
+        self.upstream_commit("development-only", {"new.txt": b"main only"})
+        shim = self.root / 'python-shim'; shim.mkdir()
+        (shim / 'sitecustomize.py').write_text("import io,urllib.request\nurllib.request.urlopen=lambda *a,**k: io.BytesIO(b'{\"tag_name\":\"v2.1.0\",\"draft\":false,\"prerelease\":false}')\n")
+        self.assert_ok(self.bootstrap(FRAMIVRA_REF='stable', PYTHONPATH=str(shim)))
+        self.assertEqual(self.marker(), stable)
+        self.assertFalse((self.clone_dir / 'new.txt').exists())
+
+    def test_lightweight_release_tag_is_rejected(self):
+        self.git("tag", "v2.1.0")
+        result = self.bootstrap(FRAMIVRA_REF="v2.1.0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.clone_dir.exists())
 
     def test_git_status_failure_fails_closed(self):
         # 判脏读数失败(坏索引,git status 非零而 rev-parse --show-toplevel
