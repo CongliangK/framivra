@@ -12,9 +12,9 @@ from vtx.infra import Ctx
 from vtx.hygiene import gfx_dir
 from vtx.gfx_cli import require_frames
 
-p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--case',choices=['transparent','opaque'],default='transparent');a=p.parse_args()
 a.output.mkdir(parents=True,exist_ok=False)
-(a.output/'page.html').write_text(html('transparent'))
+(a.output/'page.html').write_text(html(a.case))
 clip=dict(src='page.html',dst_in=0,dur=2)
 t=a.output/'timeline.json';t.write_text(json.dumps(dict(version=2,
  project=dict(fps=30,width=1920,height=1080,duration_frames=2),sources=[],
@@ -25,4 +25,7 @@ with patch.dict(os.environ,dict(VTX_CHROME='/usr/bin/google-chrome',VTX_GFX_CACH
   cli.gfx(c)
  directory=gfx_dir(c,clip)
  require_frames(directory,range(2),width=1920,height=1080)
+ for png in directory.glob('f*.png'):
+  alpha=gfx_render.png_decode_rgba(png.read_bytes())[:,:,3]
+  assert (alpha==255).all() if a.case=='opaque' else (alpha<255).any()
  print(json.dumps(dict(frames=2,path=str(directory),complete=(directory/'complete.json').exists())))

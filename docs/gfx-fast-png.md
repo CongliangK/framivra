@@ -35,7 +35,7 @@ python3 experiments/gfx_fast_png/full.py --dry
 
 完整流程第一次 fixture 无音频事件，标准 audio 失败；第二次添加事件后生成成片，标准 QC 13/15，灰蓝底与 blur 页差异太小、空窗底片编码色差触发探针失败。两次失败分别保留于 `full/`、`full-v2/`，不计入正式成功样本。后续 fixture 只调整合成底片颜色来满足原有 QC 探针，不修改生产色彩标签或 QC 门。正式完整链三轮按用户指示取消，#63 细项事件依赖仍缺，当前不宣称完整 DoD 通过，issue 应保持 OPEN。白底标准 all 功能检查 normal/fast 各一轮（七页各一帧，90 帧合成有声时间线）均 exit 0、QC 15/15，七张 gfx 输出逐页 RGBA 相同；不是正式全链性能矩阵。补充 opaque 路径 normal/fast 各 12 帧，全部 RGBA 相同。
 
-真实 CLI 回退门失败：现有 `gfx_cli` 原子写截图使用 `.tmp` 扩展名，本机 Chrome 155 明确输出 `Unsupported screenshot image file type: .tmp`。直接 `.png` 目标可成功写出，改成 `.tmp` 失败；独立 Chrome profile 重试仍失败。原始证据为 `real-cli.log`、`real-cli-isolated.log`、`manual-cli.log` 与 `manual-cli-tmp.log`，不通过改名 wrapper 假称生产路径成功，未修改越界的 gfx_cli 实现。mock 回退测试通过不代表该真实门通过。实验不改变默认配置。
+CLI 兼容修复独立于 fast PNG：基线 `gfx_cli` 的原子截图临时文件以 `.tmp` 结尾，Chrome 155 明确拒绝该图片类型。直接 `.png` 目标成功、`.tmp` 失败，独立 profile 不改变失败；原始证据保留于 `real-cli.log`、`real-cli-isolated.log`、`manual-cli.log` 与 `manual-cli-tmp.log`。修复为 `locked_staging` 增加只接受 `.tmp`/`.png` 的可选后缀，默认仍为 `.tmp`；仅截图调用显式选择 `.png`。同目录随机 O_EXCL 临时文件、原 inode 对账、两层锁、提交与失败清理均保留。真实 Chrome 回退透明/不透明各两帧通过，透明 alpha 与不透明 alpha 断言及 complete 记录通过，见 `fixed-real-cli-alpha.log` 与 `fixed-real-cli-opaque.log`。实验不改变默认配置。
 
 
-验证：fast PNG 参数合同 6 项、graphics portability 43 项（真实 Chrome/FFmpeg，零跳过）、CLI fallback mock 22 项、golden 38 项通过；文档聚合门 7/7。完整性能、内存正式预算验收、#63 CDP/Base64细项为未验收；真实 CLI 门失败。因此候选仅供独立代码审查，不建议关闭 #64 或开启生产默认。
+验证：fast PNG 参数合同 6 项、graphics portability 43 项（真实 Chrome/FFmpeg，零跳过）、CLI fallback mock 23 项、golden 38 项通过；文件事务 14 项、写安全对抗/平台 15 项、后缀专属 4 项（native/legacy/中止/逃逸/inode 交换）通过；文档聚合门 7/7。完整性能、内存正式预算验收、#63 CDP/Base64细项为未验收；因此候选仅供独立代码审查，不建议关闭 #64 或开启生产默认。

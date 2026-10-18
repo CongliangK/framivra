@@ -383,7 +383,7 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
         # 同目录随机名真实路径（不可预置），提交前 inode 对账，无效产物
         # 永不占住固定名（issue #59）。
         fstxn.unlink(png)
-        with fstxn.locked_staging(png) as tmp:
+        with fstxn.locked_staging(png, suffix=".png") as tmp:
             staged = [f'--screenshot={tmp}' if str(arg).startswith('--screenshot=') else arg
                       for arg in cmd]
             proc = subprocess.run(staged, capture_output=True, timeout=timeout)
