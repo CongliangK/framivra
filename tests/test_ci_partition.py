@@ -127,8 +127,8 @@ class InventoryContract(unittest.TestCase):
     def test_current_repository_inventory_preserves_original_and_strict_scopes(self):
         with contextlib.redirect_stdout(io.StringIO()):
             result = ci.inventory(ROOT)
-        self.assertEqual(result['baseline']['discovered_count'], 2204)
-        self.assertEqual(result['baseline']['unique_test_ids'], 2202)
+        self.assertEqual(result['baseline']['discovered_count'], 2237)
+        self.assertEqual(result['baseline']['unique_test_ids'], 2235)
         self.assertEqual(result['strict_counts'], {'ffmpeg': 105, 'chrome': 14, 'demo-toolchain': 5})
         self.assertEqual(len(result['batches']), 16)
         self.assertEqual(sum(result['counts'].values()), len(result['tests']))

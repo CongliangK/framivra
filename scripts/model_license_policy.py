@@ -191,9 +191,12 @@ def audit_payload(root=ROOT, *, inventory=None, tracked=None):
         if asset.get("version_home") and asset.get("lock_sha256"):
             if hashlib.sha256((root / asset["version_home"]).read_bytes()).hexdigest() != asset["lock_sha256"]:
                 raise LicensePolicyError("external dependency lock changed: " + ident)
+    blockers = {k: v["distribution_blocker"] for k, v in data["assets"].items() if v.get("distribution_blocker")}
     return dict(ok=True, scope="inventory integrity only; no clearance of source redistribution or optional external assets",
-                release_eligible=False,
-                release_blockers={k: v["distribution_blocker"] for k, v in data["assets"].items() if v.get("distribution_blocker")},
+                release_eligible=not blockers and not data.get("provenance_warnings"),
+                known_payload_blockers_absent=not blockers,
+                legal_clearance=False,
+                release_blockers=blockers,
                 distribution_policy=data.get("distribution_policy", {}),
                 default_assets=[k for k, v in data["assets"].items() if v["default_payload"]],
                 provenance_warnings=data.get("provenance_warnings", []),

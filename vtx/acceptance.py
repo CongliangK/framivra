@@ -178,7 +178,7 @@ def inputs_match(root, records):
         return False
 
 
-def build(timeline, output):
+def build(timeline, output, *, chrome=None):
     """Copy inputs, render in a fresh private workspace, retain success OR failure."""
     timeline = regular(timeline)
     output = safe_path(output)
@@ -210,6 +210,8 @@ def build(timeline, output):
     write_json(output / 'environment.json', env)
     policy = {'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0', 'VTX_PIPELINE': '0',
               'VTX_FILTER_THREADS': '1', 'PYTHONPATH': str(REPO)}
+    if chrome is not None:
+        policy.update(VTX_CHROME=str(regular(chrome)), VTX_GFX='cdp', VTX_VIDEO_SEGMENTS='2')
     with tempfile.TemporaryDirectory(prefix='vtx-acceptance-') as temp:
         project = Path(temp) / 'project'
         shutil.copytree(output / 'inputs', project)
@@ -402,7 +404,14 @@ def validate_metadata(m, env):
     if b['exit_code'] != executions[-1]['exit_code'] or (b['exit_code'] == 0 and len(executions) != 2):
         raise ValueError('aggregate exit disagrees with execution evidence')
     overrides = b['environment_overrides']
-    keys(overrides, 'VTX_NO_NVENC VTX_SEG_NVENC VTX_PIPELINE VTX_FILTER_THREADS PYTHONPATH VTX_CONFIG', 'environment overrides')
+    base = set('VTX_NO_NVENC VTX_SEG_NVENC VTX_PIPELINE VTX_FILTER_THREADS PYTHONPATH VTX_CONFIG'.split())
+    runtime = {'VTX_CHROME', 'VTX_GFX', 'VTX_VIDEO_SEGMENTS'}
+    if set(overrides) not in (base, base | runtime):
+        raise ValueError('unsupported environment overrides')
+    if runtime <= set(overrides):
+        nonempty(overrides['VTX_CHROME'], 'chrome executable')
+        if overrides['VTX_GFX'] != 'cdp' or overrides['VTX_VIDEO_SEGMENTS'] != '2':
+            raise ValueError('unsupported explicit CDP runtime policy')
     for key, value in {'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0', 'VTX_PIPELINE': '0', 'VTX_FILTER_THREADS': '1'}.items():
         if overrides[key] != value:
             raise ValueError('unsupported CPU parameter')
@@ -505,13 +514,14 @@ def main(argv=None):
     b = sub.add_parser('build', help='Render a fresh CPU build and seal its evidence (writes a NEW directory)')
     b.add_argument('timeline')
     b.add_argument('output')
+    b.add_argument('--chrome', help='explicit CDP executable; CPU rendering and two video segments')
     v = sub.add_parser('verify', help='Read-only verification against an independently retained digest')
     v.add_argument('package')
     v.add_argument('--manifest-sha256', required=True)
     v.add_argument('--source-root')
     args = parser.parse_args(argv)
     try:
-        result = build(args.timeline, args.output) if args.command == 'build' else verify(
+        result = build(args.timeline, args.output, chrome=args.chrome) if args.command == 'build' else verify(
             args.package, args.manifest_sha256, args.source_root)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result['accepted'] else 2
