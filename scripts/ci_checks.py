@@ -50,6 +50,8 @@ MEDIA_TESTS = {
         'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
         'tests.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
         'tests.test_graphics_portability.SubtitleIntegration',
+        'tests.test_promo_opening_preview.PreviewContracts.test_vtx_validate_real_media_offline_no_browser',
+        'tests.test_promo_opening_preview.PreviewContracts.test_paper_streams_and_silent_samples',
     ),
     'chrome': (
         'tests.test_graphics_portability.BrowserIntegration',

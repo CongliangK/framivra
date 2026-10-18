@@ -1,0 +1,55 @@
+{
+  "status": "PREVIEW CANDIDATE; user art approval pending; not final production",
+  "issue": "https://github.com/CongliangK/framivra/issues/91#issuecomment-6246953934",
+  "baseline_commit": "4e234e21178f1715a6ce99afff22dcb517e4426f",
+  "expected_output": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "duration_frames": 300,
+    "duration_seconds": 10,
+    "filename": "out/video_noaudio.mp4",
+    "audio_streams": 0
+  },
+  "geometry_viewBox": [
+    0,
+    0,
+    1280,
+    720
+  ],
+  "actual_timeline_tracks": {
+    "video": 2,
+    "gfx": 1,
+    "background_video": 1,
+    "audio": 0,
+    "subtitles": 0,
+    "placeholder_tracks": 0
+  },
+  "production_scope": {
+    "planned_duration_seconds": 120,
+    "planned_track_count": 20,
+    "status": "Separate draft plan; not implemented, approved or frozen by this preview"
+  },
+  "reference": {
+    "name": "Workshop B V03 original rough animatic",
+    "source_sha256": "92deb5ed8bc5be070c971bf7a8c52120f9ad8350383dbcf6974d9a232b60ad41",
+    "cue_sha256": "484faeb93b3b9c1762a3b5cd2a2a5d0b4c70c8c654be523cc400b927e5656280",
+    "mp4_sha256": "2037ca4f187b4e79ff10c8fc36d170dd715ea5c6a137764b67a329f41c97e2e1",
+    "review_scope": "Independent decoded-frame review passed rough design gate only; no HTML, Mac or real-time playback certification"
+  },
+  "validation_limits": {
+    "html_browser_render": "UNRUN",
+    "cdp_pixel_validation": "UNRUN",
+    "framivra_video_render": "UNRUN",
+    "macos_runtime": "UNRUN",
+    "real_time_playback": "UNRUN",
+    "music": "Absent; no audition or approval claimed"
+  },
+  "assets": {
+    "opening.html": "7f0dddb60b843742339abdf87ace627f014a7a73b4cc89f538e697fb11d88b7f",
+    "cues.json": "ea2bd569f0b02f0d4c5d647a0a5448ef7037f9188d93d6ffa8cf575e3ae80d69",
+    "timeline.json": "f9a02ce2eb9ed4fe75c5a8f68d5ccfa083efb9d60ba37d1a2da12f14777d35a0",
+    "paper-background.mp4": "fc42e42426548fcde8b296c1844a36da8daf63fd5a66224ef6dca5fe16155664",
+    "paper-recipe.json": "10ac842509eab22c57a38cd399e13343e23635cfb39ddf4a5d5ca36ea2f6795b"
+  }
+}
