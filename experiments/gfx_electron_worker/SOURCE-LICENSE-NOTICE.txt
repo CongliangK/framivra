@@ -1,0 +1,11 @@
+Framivra Electron worker source
+
+The maintainer confirmed ownership of this directory's project-authored code
+and explicitly authorized MIT licensing on 2026-10-18 for FR43.
+The applicable text and copyright notice are in ../../LICENSE.
+This records that authorization; Git authorship alone is not proof of rights.
+
+Scope: the worker source authored for Framivra, including package metadata.
+This notice does not license Electron, Chromium, npm packages, downloaded
+runtimes, or any third-party code. Their own terms and notices apply.
+No runtime or node_modules is included in the source release.
