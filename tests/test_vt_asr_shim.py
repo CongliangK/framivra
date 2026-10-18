@@ -79,6 +79,18 @@ class ShimBaseUrlSemanticsTest(unittest.TestCase):
                     _raises(independence.validate_base_url, url) is not None,
                     "shim 与 independence 判定不一致：%r" % (url,))
 
+    def test_shim_asr_enabled_parity(self):
+        """issue #142：shim.asr_enabled 与 independence 严格解析逐条同判。"""
+        cases = [{}, {"asr": {}}, {"asr": {"enabled": True}},
+                 {"asr": {"enabled": "true"}}, {"asr": {"enabled": "TRUE"}},
+                 {"asr": {"enabled": "maybe"}}, {"asr": {"enabled": 1}},
+                 {"asr": {"enabled": "0"}}, {"asr": {"enabled": None}},
+                 {"asr": {"enabled": [True]}}, {"asr": None}, 5]
+        for cfg in cases:
+            with self.subTest(cfg=cfg):
+                self.assertEqual(vt._AsrIndShim.asr_enabled(cfg),
+                                 independence.asr_enabled(cfg))
+
     def test_shim_preflight_legacy_keys(self):
         with self.assertRaises(vt._AsrIndShim.AsrIndependenceError):
             vt._AsrIndShim.preflight_config({"asr": {"ime_root": "/x"}})
