@@ -15,6 +15,9 @@
 cmake_minimum_required(VERSION 3.21)
 # C 语言需启用：CEF 官方 cef_variables.cmake(Linux) 会跑 CHECK_C_COMPILER_FLAG
 project(vtx_cef_worker_build LANGUAGES C CXX)
+if(APPLE)
+  enable_language(OBJCXX)
+endif()
 
 # ---- CEF_ROOT：上游分发包根目录 ----
 if(NOT DEFINED CEF_ROOT)
@@ -69,10 +72,12 @@ add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}"
                  "${CMAKE_BINARY_DIR}/libcef_dll_wrapper")
 
 # ---- libcef.so：直接链接分发包内预编译动态库 ----
+if(NOT APPLE)
 add_library(libcef SHARED IMPORTED)
 set_target_properties(libcef PROPERTIES
   IMPORTED_LOCATION "${CEF_LIB_RELEASE}"
   IMPORTED_SONAME "libcef.so")
+endif()
 
 # ---- vtx_cef_worker 可执行 ----
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -97,8 +102,11 @@ set(FPNG_SOURCES "${VTX_THIRD_PARTY}/fpng/fpng.cpp")
 # 但编译 TU 需 -msse4.1 -mpclmul；二者不在 -march=x86-64-v3 集合内）；
 # -w 关上游告警面（上游不按本仓 -Werror 纪律维护）。
 set_source_files_properties(${SPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
-set_source_files_properties(${FPNG_SOURCES}
-                            PROPERTIES COMPILE_OPTIONS "-w;-msse4.1;-mpclmul")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+  set_source_files_properties(${FPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w;-msse4.1;-mpclmul")
+else()
+  set_source_files_properties(${FPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
                              src/frame_pipeline.cpp src/pixel_ops.cpp
                              src/png_writer.cpp src/serve.cpp
@@ -112,13 +120,19 @@ find_package(ZLIB REQUIRED)
 target_include_directories(vtx_cef_worker PRIVATE
                           "${VTX_THIRD_PARTY}/spng" "${VTX_THIRD_PARTY}/fpng")
 target_link_libraries(vtx_cef_worker PRIVATE
-                      libcef_dll_wrapper libcef Threads::Threads
+                      libcef_dll_wrapper Threads::Threads
                       ZLIB::ZLIB ${CMAKE_DL_LIBS})
 # RPATH=$ORIGIN：与可执行同目录的 CEF 运行时优先于系统路径。
 # BUILD_WITH_INSTALL_RPATH：以 INSTALL_RPATH 替代 build RPATH，避免链接
 # 解包目录内 libcef.so 时 CMake 把该目录的本机绝对路径写入产物。
-set_target_properties(vtx_cef_worker PROPERTIES
-                      BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
+if(APPLE)
+  set_target_properties(vtx_cef_worker PROPERTIES
+                        BUILD_WITH_INSTALL_RPATH TRUE
+                        INSTALL_RPATH "@executable_path/../Frameworks")
+else()
+  set_target_properties(vtx_cef_worker PROPERTIES
+                        BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
+endif()
 
 # ---- shm_ring_selftest：4-Slot 环/协议原生自检（无 CEF 依赖；tests 门控
 #      消费，亦支持 --dump-ring 供 Python 解析器跨语言锁定偏移表）。----
@@ -148,3 +162,13 @@ target_link_libraries(frame_sync_selftest PRIVATE Threads::Threads)
 
 # Deterministic fence deadline policy (synthetic timestamps; no CEF/retries).
 add_executable(js_checkpoint_selftest src/js_checkpoint_selftest.cpp)
+
+if(APPLE)
+  target_sources(vtx_cef_worker PRIVATE src/mac_runtime.mm)
+  set_source_files_properties(src/mac_runtime.mm PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-missing-field-initializers")
+  target_link_libraries(vtx_cef_worker PRIVATE "-framework Cocoa")
+  set_target_properties(vtx_cef_worker PROPERTIES MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist")
+else()
+  target_link_libraries(vtx_cef_worker PRIVATE libcef)
+endif()

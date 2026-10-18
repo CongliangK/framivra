@@ -112,7 +112,7 @@ def _darwin_load_commands(path):
         f.seek(offset)
         header = f.read(32)
         if (len(header) != 32 or header[:4] != b'\xcf\xfa\xed\xfe'
-                or struct.unpack_from('<I', header, 4)[0] != 0x100000c):
+                or struct.unpack_from('<I', header, 4)[0] not in (0x100000c, 0x1000007)):
             raise EnvironmentError(f'unsupported Darwin binary slice: {path}')
         count, size = struct.unpack_from('<II', header, 16)
         if count > 65536 or size > 16 * 1024 * 1024 or offset + 32 + size > Path(path).stat().st_size:
@@ -142,7 +142,13 @@ def _darwin_load_commands(path):
         at += length
     if at != size:
         raise EnvironmentError('mismatched Darwin load command inventory')
-    return deps, rpaths
+    # Intel-only Widevine is an inactive distribution resource on arm64.
+    # Validate its structure and retain all bytes in the bundle hash, but do
+    # not pretend its dependency list is native. Referenced targets must pass
+    # _darwin_native separately.
+    if struct.unpack_from('<I', header, 4)[0] == 0x1000007:
+        return None
+    return deps, rpaths, struct.unpack_from('<I', header, 12)[0]
 
 
 def _darwin_dependencies(root, runtime):
@@ -154,10 +160,12 @@ def _darwin_dependencies(root, runtime):
         commands = _darwin_load_commands(path)
         if commands is None:
             continue
-        deps, rpaths = commands
-        # Helper apps can have their own executable-relative paths.
-        executable_dir = next((p / 'Contents/MacOS' for p in Path(path).parents
-                               if p.suffix == '.app'), root / 'Contents/MacOS')
+        deps, rpaths, filetype = commands
+        # MH_EXECUTE helpers outside .app wrappers use their own directory.
+        # Dylibs retain the containing app executable context.
+        executable_dir = (Path(path).parent if filetype == 2 else
+                          next((p / 'Contents/MacOS' for p in Path(path).parents
+                                if p.suffix == '.app'), root / 'Contents/MacOS'))
 
         def expand(value):
             for prefix, directory in (('@loader_path/', Path(path).parent),
@@ -183,6 +191,8 @@ def _darwin_dependencies(root, runtime):
             matches = [p.resolve(strict=True) for p in choices if p.is_file()]
             if not matches or any(not p.is_relative_to(root) for p in matches):
                 raise EnvironmentError(f'unresolved/external Darwin dependency: {path}: {dep}')
+            for match in matches:
+                _darwin_native(match)
             resolved[dep] = sorted(set(map(str, matches)))
         out[path] = resolved
     if not out:
@@ -350,7 +360,7 @@ def _darwin_fonts(libraries, application_domains):
 
 
 def _collect_darwin(backend, binary, mode):
-    if backend != 'cdp' or mode is not None or platform.machine() != 'arm64':
+    if backend not in ('cdp', 'cef') or (backend == 'cdp' and mode is not None) or platform.machine() != 'arm64':
         raise EnvironmentError('Darwin resolver requires native arm64 CDP')
     if (any(os.environ[k] for k in os.environ if k.startswith(('DYLD_', '__XPC_DYLD_')))
             or any(os.environ.get(k) for k in ('LD_LIBRARY_PATH', 'LD_PRELOAD',
@@ -363,8 +373,8 @@ def _collect_darwin(backend, binary, mode):
     if root.suffix != '.app':
         raise EnvironmentError('Darwin resolver requires a Chrome app bundle')
     info = plistlib.loads((root / 'Contents/Info.plist').read_bytes())
-    if (info.get('CFBundleIdentifier') != 'com.google.Chrome'
-            or info.get('CFBundleExecutable') != executable.name):
+    if (info.get('CFBundleExecutable') != executable.name
+            or (backend == 'cdp' and info.get('CFBundleIdentifier') != 'com.google.Chrome')):
         raise EnvironmentError('Darwin resolver supports the Google Chrome app bundle only')
     architecture = _darwin_native(executable)
     cache = _darwin_cache(*_darwin_dyld())
@@ -372,18 +382,20 @@ def _collect_darwin(backend, binary, mode):
     runtime = _darwin_bundle(root)
     if not any('/Frameworks/' in p for p in runtime['files']):
         raise EnvironmentError('Darwin Chrome framework distribution is missing')
+    if backend == 'cef' and not any('Chromium Embedded Framework.framework/' in p for p in runtime['files']):
+        raise EnvironmentError('Darwin CEF framework distribution is missing')
     dependencies = _darwin_dependencies(root, runtime)
     application_domains = _darwin_application_domains(root, dependencies)
     boot = _command(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid']).strip()
     if not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', boot):
         raise EnvironmentError('unknown Darwin host/boot identity')
-    version = _command([str(executable), '--version']).strip()
+    version = _command([str(executable), '--sanity' if backend == 'cef' else '--version']).strip()
     if not version:
         raise EnvironmentError('empty actual Darwin renderer version')
     system = _files(['/System/Library/CoreServices/SystemVersion.plist', '/usr/lib/dyld'] +
                     ([Path('/etc/localtime')] if Path('/etc/localtime').exists() else []))
     return {'schema': SCHEMA, 'status': 'input-bound', 'pixel_equivalence': 'unproven',
-            'backend': backend, 'mode': mode, 'platform_resolver': 'darwin-arm64-cdp/1',
+            'backend': backend, 'mode': mode, 'platform_resolver': 'darwin-arm64-' + backend + '/1',
             'browser': _files([executable]), 'version': version,
             'runtime': {str(root): runtime}, 'libraries': libraries,
             'system_cache': cache, 'architecture': architecture, 'dependencies': dependencies,
@@ -393,7 +405,9 @@ def _collect_darwin(backend, binary, mode):
             'tools': _files(['/usr/sbin/sysctl']),
             'environment': {k: os.environ.get(k) for k in sorted(set(PIXEL_ENV) |
                              {k for k in os.environ if k.startswith(('LC_', 'DYLD_', '__XPC_DYLD_', '__CF_'))})},
-            'launch_flags': list(CHROME_VISUAL_FLAGS),
+            'launch_flags': (list(CHROME_VISUAL_FLAGS) if backend == 'cdp' else
+                             ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
+                              '--use-mock-keychain']),
             'protocol': {'device_scale': 1, 'color': 'srgb',
                          'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
@@ -668,11 +682,12 @@ def verify_certificate(record):
             or record.get('sha256') != digest(record['axes'])):
         raise EnvironmentError('unknown/mismatched gfx input environment certificate')
     axes = record['axes']
-    if axes.get('platform_resolver') == 'darwin-arm64-cdp/1':
+    if axes.get('platform_resolver') in ('darwin-arm64-cdp/1', 'darwin-arm64-cef/1'):
         cache = axes.get('system_cache')
         host = axes.get('host_boot')
         architecture = axes.get('architecture')
-        if (axes.get('backend') != 'cdp' or not isinstance(cache, dict)
+        if (axes.get('platform_resolver') != 'darwin-arm64-' + str(axes.get('backend')) + '/1'
+                or axes.get('backend') not in ('cdp', 'cef') or not isinstance(cache, dict)
                 or not isinstance(cache.get('uuid'), str)
                 or not re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}', cache['uuid'])
                 or not isinstance(cache.get('files'), dict) or not cache['files']

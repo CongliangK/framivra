@@ -16,13 +16,14 @@ class EnvironmentContracts(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = Path(tmp.name).resolve()
         self.dist = self.root / 'dist'; self.dist.mkdir()
         self.binary = self.dist / 'chrome'; self.binary.write_bytes(b'\x7fELFfixture')
         self.font = self.root / 'font.ttf'; self.font.write_bytes(b'font A')
         self.config = self.root / 'fonts.conf'; self.config.write_text('<fontconfig/>')
         self.lib = self.root / 'libfont.so'; self.lib.write_bytes(b'library A')
         self.tool = self.root / 'fc-list'; self.tool.write_bytes(b'fontconfig tool')
+        original_files = env._files
         self.patches = [
             patch.dict(os.environ, {'VTX_GFX': 'cdp', 'FONTCONFIG_FILE': str(self.config),
                 'LD_LIBRARY_PATH': '', 'LD_PRELOAD': '', 'LIBGL_DRIVERS_PATH': '',
@@ -30,7 +31,12 @@ class EnvironmentContracts(unittest.TestCase):
             patch.object(env.shutil, 'which', side_effect=lambda s:
                          str(self.tool) if s in ('fc-list', 'fc-conflist') else s),
             patch.object(env.platform, 'system', return_value='Linux'),
-            patch.object(env, '_command', side_effect=self.command)]
+            patch.object(env, '_command', side_effect=self.command),
+            patch.object(env, '_python_runtime', return_value={'fixture': True}),
+            patch.object(env, '_files', side_effect=lambda paths: original_files(
+                [self.lib if str(p) in ('/etc/machine-id', '/proc/sys/kernel/random/boot_id',
+                                        '/etc/ld.so.cache') else p for p in paths]))]
+
         for p in self.patches:
             p.start(); self.addCleanup(p.stop)
 

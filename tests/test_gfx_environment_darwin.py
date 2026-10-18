@@ -36,7 +36,7 @@ class DarwinEnvironmentContracts(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = Path(tmp.name).resolve()
         self.app = self.root / 'Google Chrome.app'
         self.binary = self.app / 'Contents/MacOS/Google Chrome'
         self.binary.parent.mkdir(parents=True)
@@ -99,6 +99,21 @@ class DarwinEnvironmentContracts(unittest.TestCase):
 
     def collect(self):
         return env.collect('cdp', self.binary)
+
+    def test_cef_bundle_exact_identity_and_framework_closure(self):
+        self.framework.rename(self.framework.with_name('Chromium Embedded Framework.framework'))
+        def command(args):
+            if args == [str(self.binary), '--sanity']:
+                return 'CEF fixture sanity native arm64'
+            return self.command(args)
+        with patch.object(env, '_command', side_effect=command):
+            record = env.collect('cef', self.binary, 'a0')
+        self.assertEqual(record['platform_resolver'], 'darwin-arm64-cef/1')
+        self.assertEqual(record['launch_flags'], ['mode=a0', 'sync-mode=n', 'sync-canary=exact',
+                                                '--use-mock-keychain'])
+        with patch.object(env, 'resolve', return_value=record):
+            certificate = env.certificate(SimpleNamespace(w=32, h=16, fps=30))
+        self.assertEqual(env.verify_certificate(certificate), certificate['sha256'])
 
     def test_complete_native_identity_keeps_pixel_equivalence_unproven(self):
         record = self.collect()
@@ -356,6 +371,33 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         self.library.write_bytes(macho(['@loader_path/helper.dylib']))
         self.assertEqual(self.collect()['dependencies'][str(self.library)],
                          {'@loader_path/helper.dylib': [str(helper)]})
+
+    def test_inactive_intel_resource_is_bound_but_cannot_be_native_dependency(self):
+        intel = self.library.parent / 'intel.dylib'
+        intel.write_bytes(struct.pack('<8I', 0xfeedfacf, 0x1000007, 0, 6, 0, 0, 0, 0))
+        first = self.collect()
+        self.assertNotIn(str(intel), first['dependencies'])
+        intel.write_bytes(intel.read_bytes() + b'changed resource')
+        self.assertNotEqual(env.digest(first), env.digest(self.collect()))
+        good = intel.read_bytes()
+        intel.write_bytes(good[:8])
+        with self.assertRaisesRegex(env.EnvironmentError, 'unsupported Darwin binary slice'):
+            self.collect()
+        intel.write_bytes(good)
+        self.library.write_bytes(macho(['@loader_path/intel.dylib']))
+        with self.assertRaisesRegex(env.EnvironmentError, 'native arm64'):
+            self.collect()
+
+    def test_standalone_helper_uses_its_own_executable_path(self):
+        helper = self.library.parent / 'Helpers/web_app_shortcut_copier'
+        helper.parent.mkdir()
+        helper.write_bytes(macho(['@executable_path/../Chrome']))
+        record = self.collect()
+        self.assertEqual(record['dependencies'][str(helper)],
+                         {'@executable_path/../Chrome': [str(self.library)]})
+        helper.write_bytes(macho(['@executable_path/../../../../../../external']))
+        with self.assertRaisesRegex(env.EnvironmentError, 'unresolved/external'):
+            self.collect()
 
     def test_internal_rpath_dependency_is_resolved(self):
         helper = self.library.parent / 'helper.dylib'
