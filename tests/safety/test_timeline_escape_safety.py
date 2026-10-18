@@ -22,6 +22,10 @@ except ImportError:  # unittest discover -s tests/safety
 class SnapshotTimelineEscape(SandboxCase):
     """snapshot() 相对路径安全校验（工单点名）的 CLI 面对抗。"""
 
+    # These controls exercise real CLI paths and writes, not renderer discovery.
+    # Use the same explicit dependency fixture in positive and negative cases.
+    vtx_environment_fixture = True
+
     def gfx(self, src):
         self.tl["video_tracks"] = [
             {"name": "gfx", "kind": "gfx",
@@ -110,6 +114,8 @@ class SnapshotTimelineEscape(SandboxCase):
 class WriteRootEscape(SandboxCase):
     """cache/out 写根与事务锁文件的符号链接逃逸（工单：锁路径也应受护）。"""
 
+    vtx_environment_fixture = True
+
     def test_symlinked_out_root_blocks_receipt_writes(self):
         # out → 根外：validate 的 begin_stage/receipt 会把 receipt.json 与
         # .lock 落到项目外——统一写根门必须在首个写动作之前拒绝。
@@ -151,8 +157,9 @@ class WriteRootEscape(SandboxCase):
 class LegitUseControl(SandboxCase):
     """对照组：外部素材引用与项目内符号链接不得被误杀（验收原文）。"""
 
-    # Finite hang guard for real cold environment-identity work, not a latency
-    # acceptance gate. Negative/adversarial controls retain the shared 30s bound.
+    vtx_environment_fixture = True
+    # Preserve the finite command guard and real failure diagnostics. Renderer
+    # identity/performance acceptance remains separate from path safety.
     vtx_timeout = 60
     vtx_diagnostics = True
 

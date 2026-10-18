@@ -372,6 +372,185 @@ class MediaRecovery(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG')
 class RealFFmpegRecovery(unittest.TestCase):
+    def _seg_context(self, root, *, frames=6, variants=False):
+        """Public, dynamic CPU input; no browser, fixture download, or GPU."""
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                        'testsrc2=size=96x54:rate=30:duration=0.4', '-frames:v', '12',
+                        '-c:v', 'libx264', '-crf', '0', '-preset', 'ultrafast',
+                        str(root / 'source.mp4')], check=True, capture_output=True)
+        clips = [dict(src='a', src_in=0, src_out=frames, dur=frames, dst_in=i * frames)
+                 for i in range(12)]
+        sources = [dict(id='a', path='source.mp4')]
+        if variants:
+            shutil.copyfile(root / 'source.mp4', root / 'other.mp4')
+            sources.append(dict(id='b', path='other.mp4'))
+            clips += [dict(clips[0], src='b', dst_in=72),
+                      dict(clips[0], src_in=1, src_out=7, dst_in=78),
+                      dict(clips[0], opacity=0.5, fade_in_frames=2, dst_in=84)]
+        timeline = dict(version=2, project=dict(fps=30, width=96, height=54,
+                                                duration_frames=len(clips) * frames),
+                        sources=sources, video_tracks=[dict(kind='broll', clips=clips)],
+                        audio_tracks=[], subtitles=[])
+        path = root / 'timeline.json'
+        path.write_text(json.dumps(timeline))
+        return Ctx(path)
+
+    def _decoded_rgb_frames(self, path, width=96, height=54):
+        result = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path),
+                                 '-threads', '1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-'],
+                                capture_output=True, check=True)
+        stride = width * height * 3
+        self.assertEqual(len(result.stdout) % stride, 0)
+        return [result.stdout[i:i + stride] for i in range(0, len(result.stdout), stride)]
+
+    def test_prepare_duplicate_consumers_cold_warm_frames_and_markers(self):
+        from vtx import composite, infra
+        with tempfile.TemporaryDirectory(prefix='vtx-seg-dedup-') as directory, \
+                mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+            c = self._seg_context(Path(directory))
+            with mock.patch.object(infra, '_run_ffmpeg_task', wraps=infra._run_ffmpeg_task) as encode:
+                layers = composite.prepare_layers(c)
+                self.assertEqual(encode.call_count, 1)
+                self.assertEqual(len(layers), 12)
+                self.assertEqual([layer['cl']['dst_in'] for layer in layers], list(range(0, 72, 6)))
+                self.assertEqual(len({layer['seg'] for layer in layers}), 1)
+                target = layers[0]['seg']
+                before = (target.read_bytes(), target.stat().st_mtime_ns,
+                          recovery._marker(target).read_bytes())
+                self.assertEqual(composite.prepare_layers(c), layers)
+                self.assertEqual(encode.call_count, 1)
+                self.assertEqual(before, (target.read_bytes(), target.stat().st_mtime_ns,
+                                          recovery._marker(target).read_bytes()))
+            self.assertTrue(recovery.media_cache_valid(target, 6))
+            record = json.loads(recovery._marker(target).read_text())
+            self.assertEqual(record['sha256'], recovery._digest(target))
+            frames = self._decoded_rgb_frames(target)
+            self.assertEqual(len(frames), 6)
+            self.assertGreater(len(set(frames)), 1)
+            # All twelve placed consumers must reach the real compositor, including the tail.
+            plan = composite.RenderPlan(c=c, draft=False, f=1, W=c.w, H=c.h, layers=layers)
+            c.out.mkdir(exist_ok=True)
+            final = c.out / 'deduplicated.mp4'
+            plan.composite(layers, final, False, a=0, b=c.dur)
+            self.assertTrue(recovery.media_cache_valid(final, 72))
+            rendered = self._decoded_rgb_frames(final)
+            self.assertEqual(len(rendered), 72)
+            for start in range(0, 72, 6):
+                self.assertGreater(len(set(rendered[start:start + 6])), 1)
+            # A deliberate consumer-only plan with no scheduling builds the unchanged oracle.
+            reference_layers = [dict(cl=clip, seg=target, x=0, y=0, w2=None, h2=None,
+                                     gfx=False, ti=0) for clip in c.tl['video_tracks'][0]['clips']]
+            self.assertEqual(layers, reference_layers)
+            reference = c.out / 'reference.mp4'
+            plan.composite(reference_layers, reference, False, a=0, b=c.dur)
+            self.assertEqual(self._decoded_rgb_frames(reference), rendered)
+
+    def test_prepare_different_source_trim_and_alpha_stay_separate(self):
+        from vtx import composite, infra
+        with tempfile.TemporaryDirectory(prefix='vtx-seg-variants-') as directory, \
+                mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+            c = self._seg_context(Path(directory), variants=True)
+            with mock.patch.object(infra, '_run_ffmpeg_task', wraps=infra._run_ffmpeg_task) as encode:
+                layers = composite.prepare_layers(c)
+                self.assertEqual(encode.call_count, 4)
+                self.assertEqual(len(layers), 15)
+                self.assertEqual(len({layer['seg'] for layer in layers}), 4)
+                self.assertEqual(composite.prepare_layers(c), layers)
+                self.assertEqual(encode.call_count, 4)
+            self.assertEqual(layers[-1]['seg'].suffix, '.mov')
+            for target in {layer['seg'] for layer in layers}:
+                self.assertTrue(recovery.media_cache_valid(target, 6))
+                self.assertEqual(len(self._decoded_rgb_frames(target)), 6)
+            self.assertNotEqual(self._decoded_rgb_frames(layers[0]['seg']),
+                                self._decoded_rgb_frames(layers[-2]['seg']))
+
+    def test_prepare_failed_unique_encoder_blocks_consumers_and_can_retry(self):
+        from vtx import composite, infra
+        with tempfile.TemporaryDirectory(prefix='vtx-seg-failure-') as directory, \
+                mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+            c = self._seg_context(Path(directory))
+            c.receipt('video', True)
+            c.begin_stage('video')
+            original = infra._run_ffmpeg_task
+            def fail(ctx, label, argv, nvenc=False):
+                argv = list(argv)
+                argv[argv.index('-c:v') + 1] = 'vtx_intentionally_missing_encoder'
+                return original(ctx, label, argv, nvenc)
+            with mock.patch.object(infra, '_run_ffmpeg_task', side_effect=fail) as encode, \
+                    self.assertRaises(SystemExit) as caught:
+                composite.prepare_layers(c)
+            self.assertEqual(caught.exception.code, 1)
+            self.assertEqual(encode.call_count, 1)
+            self.assertEqual(list((c.cache / 'seg').glob('*.mp4')), [])
+            self.assertEqual(list((c.cache / 'seg').glob('*.complete.json')), [])
+            self.assertEqual(list((c.cache / 'seg').glob('.*.tmp')), [])
+            self.assertFalse(json.loads((c.out / 'receipt.json').read_text())['stages'].get('video', {}).get('ok', False))
+            with mock.patch.object(infra, '_run_ffmpeg_task', wraps=original) as retry:
+                layers = composite.prepare_layers(c)
+                self.assertEqual(retry.call_count, 1)
+                self.assertEqual(composite.prepare_layers(c), layers)
+                self.assertEqual(retry.call_count, 1)
+
+    def test_prepare_rejects_source_change_before_unique_producer_commit(self):
+        from vtx import composite, infra
+        with tempfile.TemporaryDirectory(prefix='vtx-seg-source-change-') as directory, \
+                mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+            c = self._seg_context(Path(directory))
+            c.receipt('video', True)
+            c.begin_stage('video')
+            source = c.root / 'source.mp4'
+            original = infra._run_ffmpeg_task
+            def change(ctx, label, argv, nvenc=False):
+                result = original(ctx, label, argv, nvenc)
+                source.write_bytes(source.read_bytes() + b'changed after encoding')
+                return result
+            with mock.patch.object(infra, '_run_ffmpeg_task', side_effect=change) as encode, \
+                    self.assertRaises(SystemExit):
+                composite.prepare_layers(c)
+            self.assertEqual(encode.call_count, 1)
+            self.assertEqual(list((c.cache / 'seg').glob('*.mp4')), [])
+            self.assertEqual(list((c.cache / 'seg').glob('*.complete.json')), [])
+            self.assertEqual(list((c.cache / 'seg').glob('.*.tmp')), [])
+            self.assertFalse(json.loads((c.out / 'receipt.json').read_text())['stages'].get('video', {}).get('ok', False))
+
+    def test_prepare_marker_failure_still_propagates_without_success_receipt(self):
+        from vtx import composite, infra
+        with tempfile.TemporaryDirectory(prefix='vtx-seg-marker-failure-') as directory, \
+                mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+            c = self._seg_context(Path(directory))
+            c.receipt('video', True)
+            c.begin_stage('video')
+            original_write = recovery.fstxn.atomic_write
+            def fail_marker(path, data):
+                if str(path).endswith('.mp4.complete.json'):
+                    raise OSError('injected marker publication failure')
+                return original_write(path, data)
+            with mock.patch.object(recovery.fstxn, 'atomic_write', side_effect=fail_marker), \
+                    mock.patch.object(infra, '_run_ffmpeg_task', wraps=infra._run_ffmpeg_task) as encode, \
+                    self.assertRaisesRegex(OSError, 'marker publication failure'):
+                composite.prepare_layers(c)
+            self.assertEqual(encode.call_count, 1)
+            self.assertEqual(len(list((c.cache / 'seg').glob('*.mp4'))), 1)
+            self.assertEqual(list((c.cache / 'seg').glob('*.complete.json')), [])
+            self.assertFalse(json.loads((c.out / 'receipt.json').read_text())['stages'].get('video', {}).get('ok', False))
+            # Existing legacy-media recovery fully verifies the committed file.
+            with mock.patch.object(infra, '_run_ffmpeg_task', side_effect=AssertionError('legacy re-encode')):
+                self.assertEqual(len(composite.prepare_layers(c)), 12)
+
+    def test_prepare_verified_short_source_semantics_are_unchanged(self):
+        from vtx import composite, infra
+        with tempfile.TemporaryDirectory(prefix='vtx-seg-short-') as directory, \
+                mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
+            c = self._seg_context(Path(directory), frames=18)
+            with mock.patch.object(infra, '_run_ffmpeg_task', wraps=infra._run_ffmpeg_task) as encode:
+                layers = composite.prepare_layers(c)
+                self.assertEqual(encode.call_count, 1)
+                self.assertEqual(composite.prepare_layers(c), layers)
+                self.assertEqual(encode.call_count, 1)
+            self.assertTrue(recovery.media_cache_valid(layers[0]['seg'], 18, allow_short_verified=True))
+            self.assertFalse(recovery.media_cache_valid(layers[0]['seg'], 18))
+            self.assertEqual(len(self._decoded_rgb_frames(layers[0]['seg'])), 12)
+
     def test_killed_writer_then_retry_preserves_verified_sibling(self):
         with tempfile.TemporaryDirectory(prefix='vtx-kill-ffmpeg-') as d:
             root = Path(d)

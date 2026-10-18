@@ -4,8 +4,8 @@
 //   spng：spng_ctx_new(ENCODER) → SPNG_ENCODE_TO_BUFFER → spng_set_ihdr
 //         (8bit/RGBA/非隔行) → SPNG_IMG_COMPRESSION_LEVEL=level →
 //         SPNG_FILTER_CHOICE=SUB|UP → spng_encode_image(SPNG_FMT_PNG,
-//         SPNG_ENCODE_FINALIZE) → spng_get_png_buffer（缓冲区归 ctx 所有，
-//         拷出后即刻 free）。每次编码独立 ctx —— 无跨线程共享状态。
+//         SPNG_ENCODE_FINALIZE) → spng_get_png_buffer（成功后缓冲区所有权
+//         转给调用者；buffer/ctx 分别由 RAII 释放，含异常路径）。每次独立 ctx。
 //   fpng：进程级一次 fpng_init()（std::call_once；main/自检入口亦显式调）→
 //         fpng_encode_image_to_memory(…, num_chans=4, flags=0)。
 //   zlib：#109 原样（filter-0 扫描线 + compress2(Z_DEFAULT_COMPRESSION)），
@@ -22,7 +22,9 @@
 #include <zlib.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 
 #include "fpng.h"
@@ -102,14 +104,15 @@ bool EncodeZlibLegacy(const uint8_t* rgba, int width, int height,
 // ---------------------------------------------------------------- libspng
 bool EncodeSpng(const uint8_t* rgba, int width, int height, int level,
                 SpngFilter filter, std::vector<uint8_t>* png) {
-  spng_ctx* ctx = spng_ctx_new(SPNG_CTX_ENCODER);
+  std::unique_ptr<spng_ctx, decltype(&spng_ctx_free)> ctx(
+      spng_ctx_new(SPNG_CTX_ENCODER), &spng_ctx_free);
   if (ctx == nullptr) {
     std::fprintf(stderr, "png_writer: spng_ctx_new 失败\n");
     return false;
   }
   bool ok = false;
   do {
-    if (spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) != 0) {
+    if (spng_set_option(ctx.get(), SPNG_ENCODE_TO_BUFFER, 1) != 0) {
       std::fprintf(stderr, "png_writer: SPNG_ENCODE_TO_BUFFER 设置失败\n");
       break;
     }
@@ -121,9 +124,9 @@ bool EncodeSpng(const uint8_t* rgba, int width, int height, int level,
     ihdr.color_type = 6;  // RGBA
     // 工单口径：SUB|UP 滤波选择（可用 --png-filter 改）+ 压缩级别
     // （1..3；3 对齐 VTX_GFX_PNG_LEVEL）。
-    if (spng_set_ihdr(ctx, &ihdr) != 0 ||
-        spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, level) != 0 ||
-        spng_set_option(ctx, SPNG_FILTER_CHOICE,
+    if (spng_set_ihdr(ctx.get(), &ihdr) != 0 ||
+        spng_set_option(ctx.get(), SPNG_IMG_COMPRESSION_LEVEL, level) != 0 ||
+        spng_set_option(ctx.get(), SPNG_FILTER_CHOICE,
                         static_cast<int>(filter)) != 0) {
       std::fprintf(stderr, "png_writer: spng 头/选项设置失败\n");
       break;
@@ -132,7 +135,7 @@ bool EncodeSpng(const uint8_t* rgba, int width, int height, int level,
     // 与 SPNG_FMT_PNG 逐字节一致（行内像素字节，滤波字节由本库生成）。
     const size_t len =
         static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-    const int ret = spng_encode_image(ctx, rgba, len, SPNG_FMT_PNG,
+    const int ret = spng_encode_image(ctx.get(), rgba, len, SPNG_FMT_PNG,
                                       SPNG_ENCODE_FINALIZE);
     if (ret != 0) {
       std::fprintf(stderr, "png_writer: spng_encode_image 失败: %s\n",
@@ -141,17 +144,19 @@ bool EncodeSpng(const uint8_t* rgba, int width, int height, int level,
     }
     size_t out_len = 0;
     int err = 0;
-    const void* buf = spng_get_png_buffer(ctx, &out_len, &err);
+    // spng_ctx_new uses the standard allocator. Adopt before validating length
+    // so success, defensive rejection, and vector allocation failure all free it.
+    std::unique_ptr<void, decltype(&std::free)> buf(
+        spng_get_png_buffer(ctx.get(), &out_len, &err), &std::free);
     if (buf == nullptr || out_len == 0) {
       std::fprintf(stderr, "png_writer: spng_get_png_buffer 失败: %s\n",
                    spng_strerror(err));
       break;
     }
-    png->assign(static_cast<const uint8_t*>(buf),
-                static_cast<const uint8_t*>(buf) + out_len);
+    png->assign(static_cast<const uint8_t*>(buf.get()),
+                static_cast<const uint8_t*>(buf.get()) + out_len);
     ok = true;
   } while (false);
-  spng_ctx_free(ctx);
   return ok;
 }
 

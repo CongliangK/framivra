@@ -3,7 +3,7 @@
 
 门控：VTX_TEST_CEF_WORKER=<vtx_cef_worker 可执行路径>（先
 `bash experiments/gfx_cef_worker/build_cef_worker.sh`；pixel_ops_selftest
-须在同目录）。未设置即跳过——本测试需要真实 CEF 二进制。
+须在同目录）。未设置即跳过这些 worker 门；#207 独立纯编码门见下文。
 
 验收面（工单 DoD + 父工单验证门）：
   1. 原生自检：pixel_ops_selftest 全 PASS——(c,a)∈[0,255]² 全域穷举
@@ -22,12 +22,22 @@
 安全铁律：一切被杀对象均为本测试自起子进程（worker 独立会话=组长；
 kill 按 PID 核验）。绝不触碰无关进程。
 
+#207 纯编码所有权门（不启动/伪造 CEF worker，不采性能基准）：
+  VTX_TEST_PNG_OWNERSHIP=1 python3 -m unittest \
+    tests.test_cef_worker_pixel_ops.PurePngOwnershipSelfTest -v
+显式启用时需要 Linux、gcc/g++、系统 zlib 开发文件和 Pillow；缺失即失败。
+可另设 VTX_TEST_PNG_OWNERSHIP_ASAN=1 编译地址检测版；ASAN_OPTIONS 控制
+检测范围，detect_leaks=0 仅表示 address-only，绝不代表 LSan 通过。
+默认关闭这个独立门时为 skip，不能计入已执行的原生验收。
+
 独立运行：VTX_TEST_CEF_WORKER=<path> python3 -m unittest
 tests.test_cef_worker_pixel_ops -v
 """
 import json
 import os
+import platform
 import re
+import shutil
 import signal
 import struct
 import subprocess
@@ -74,6 +84,93 @@ def _collect_bench():
             if line.startswith("BENCH_JSON:")]
     assert rows, "无 BENCH_JSON 行"
     return rows, proc.stdout
+
+
+@unittest.skipUnless(os.environ.get("VTX_TEST_PNG_OWNERSHIP") == "1",
+                     "需要显式 VTX_TEST_PNG_OWNERSHIP=1（无 CEF 的原生编码门）")
+class PurePngOwnershipSelfTest(unittest.TestCase):
+    """Issue #207: real native writer/vendor; opt-in, never launch a CEF worker."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not sys.platform.startswith("linux"):
+            raise RuntimeError("PNG ownership --wrap selftest requires Linux/GNU ld")
+        cc, cxx = shutil.which("gcc"), shutil.which("g++")
+        if not cc or not cxx:
+            raise RuntimeError("Explicit PNG ownership gate requires gcc and g++")
+        cls._temp = tempfile.TemporaryDirectory(prefix="vtx_png_ownership_")
+        cls.addClassCleanup(cls._temp.cleanup)
+        cls.build = Path(cls._temp.name)
+        source = ROOT / "experiments" / "gfx_cef_worker"
+        includes = ["-I" + str(source / "src"),
+                    "-I" + str(source / "third_party" / "spng"),
+                    "-I" + str(source / "third_party" / "fpng")]
+        sanitize = (["-fsanitize=address", "-fno-omit-frame-pointer"]
+                    if os.environ.get("VTX_TEST_PNG_OWNERSHIP_ASAN") == "1" else [])
+        common = ["-O1", "-g", *sanitize, *includes]
+        x86 = platform.machine().lower() in ("x86_64", "amd64")
+        arch = ["-march=x86-64-v3"] if x86 else []
+        sources = [
+            ("spng", cc, "c99", source / "third_party/spng/spng.c", ["-w"]),
+            ("fpng", cxx, "c++20", source / "third_party/fpng/fpng.cpp",
+             ["-w", *(["-msse4.1", "-mpclmul"] if x86 else [])]),
+            *[(name, cxx, "c++20", source / "src" / (name + ".cpp"),
+               ["-Wall", "-Wextra", "-Werror", *arch])
+              for name in ("png_writer", "pixel_ops", "pixel_ops_selftest",
+                           "png_writer_ownership_selftest")],
+        ]
+        for name, compiler, standard, path, flags in sources:
+            cls._build([compiler, "-std=" + standard, *common, *flags, "-c",
+                        str(path), "-o", str(cls.build / (name + ".o"))])
+        base = [str(cls.build / (name + ".o"))
+                for name in ("png_writer", "spng", "fpng")]
+        wrappers = ["spng_ctx_new", "spng_ctx_free", "spng_set_option",
+                    "spng_encode_image", "spng_get_png_buffer", "free"]
+        cls.ownership = cls.build / "png_writer_ownership_selftest"
+        cls.pixels = cls.build / "pixel_ops_selftest"
+        cls._build([cxx, *sanitize, *base,
+                    str(cls.build / "png_writer_ownership_selftest.o"),
+                    *["-Wl,--wrap=" + name for name in wrappers],
+                    "-pthread", "-lz", "-o", str(cls.ownership)])
+        cls._build([cxx, *sanitize, *base, str(cls.build / "pixel_ops.o"),
+                    str(cls.build / "pixel_ops_selftest.o"),
+                    "-pthread", "-lz", "-o", str(cls.pixels)])
+
+    @classmethod
+    def _build(cls, argv):
+        print("PNG_NATIVE_BUILD " + " ".join(argv), flush=True)
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+        if proc.returncode:
+            raise RuntimeError(f"Native build failed ({proc.returncode}):\n"
+                               f"{proc.stdout}\n{proc.stderr}")
+
+    def test_ownership_and_independent_pixel_decode(self):
+        from PIL import Image  # Explicit gate requires the independent decoder.
+        samples = self.build / "samples"
+        samples.mkdir()
+        proc = subprocess.run([str(self.ownership), str(samples)],
+                              capture_output=True, text=True, timeout=180)
+        print(proc.stdout, end="", flush=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("OWNERSHIP ALL PASS", proc.stdout)
+        rows = [line.split("\t") for line in proc.stdout.splitlines()
+                if line.startswith("SAMPLE\t")]
+        self.assertEqual(len(rows), 75)
+        for _, name, width, height, raw in rows:
+            width, height = int(width), int(height)
+            path = samples / name
+            self.assertIsNone(png_invalid_reason(path, width=width, height=height))
+            with Image.open(path) as image:
+                self.assertEqual(image.mode, "RGBA")
+                self.assertEqual(image.size, (width, height))
+                self.assertEqual(image.tobytes(), (samples / raw).read_bytes())
+
+    def test_existing_native_selftest(self):
+        proc = subprocess.run([str(self.pixels)], capture_output=True, text=True,
+                              timeout=180)
+        print(proc.stdout, end="", flush=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("ALL PASS", proc.stdout)
 
 
 @unittest.skipUnless(_GATE and _SELFTEST and _SELFTEST.is_file(),
