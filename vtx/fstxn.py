@@ -6,8 +6,7 @@ receipt 落地件，B07 的 manifest/VERSIONS 应用将复用本模块）。
      os.replace 原子只保证文件不撕裂，不保证读-改-写不丢笔（两进程各自基于
      旧快照回写，后写者覆盖前写者）。锁文件 <目标名>.lock 随目标目录存在，
      fd 关闭即释放（进程被杀内核自动回收，无陈旧锁残留——flock 语义随 fd
-     生命周期，loudness_cache 同惯例）。Windows 无 fcntl 时降级为仅进程内锁
-     （本仓 Linux 为主战场）。
+     生命周期，loudness_cache 同惯例）。Windows 使用 msvcrt 字节范围锁，关闭 fd 同样自动释放。
   ② 临时文件 + os.replace 原子写：写者崩溃/被杀后目标文件要么旧值要么新值，
      永不为截断半写件（同目录 tmp 保证 replace 的原子性；残件以 . 前缀 +
      .tmp 后缀落盘，gc 的 out/cache 中间物规则兜底清扫）。
@@ -54,13 +53,13 @@ API（上下文管理器 + mutator 两形态）：
 重入即死锁）；对其他路径的嵌套事务须保持全仓一致的获取顺序（receipt 主件
 先于 prev 伴生件）。
 """
-import contextlib, copy, errno, json, os, secrets, stat, sys, tempfile, threading
+import contextlib, copy, errno, json, os, secrets, stat, sys, tempfile, threading, time
 from pathlib import Path
 
 __all__ = ["locked_write", "locked_staging", "locked_update", "atomic_write",
            "cleanup_identity", "remove_pinned", "mkdir", "unlink", "replace",
            "pinned_parent", "fd_path", "entry_identity", "flock_at", "remove_at",
-           "check_regular_at", "bind_project_root", "write_capability"]
+           "check_regular_at", "bind_project_root", "write_capability", "file_lock"]
 
 # Capture the real APIs once: tests may instrument the final unlink syscall.
 _CLEANUP_DIR_FD_APIS = (os.open, os.stat, os.unlink, os.rmdir)
@@ -110,12 +109,16 @@ def remove_pinned(path, expected, *, preserve):
     the last identity check cannot redirect unlink into its new symlink target.
     preserve(relative_path) is checked for every descendant, so newly created
     locks survive even when their parent was planned as a whole-directory item.
-    POSIX fd primitives are mandatory; there is no unsafe path-based fallback.
+    POSIX uses dir_fd primitives; Windows pins non-delete/write-sharing handles
+    and deletes by handle. There is no unsafe path-based fallback.
     This protects namespace substitution, not a hostile process physically
     moving unrelated protected inodes into an authorized garbage directory.
     """
     if expected is None:
         return
+    if os.name == 'nt':
+        from .windows_cleanup import remove_pinned as windows_remove_pinned
+        return windows_remove_pinned(path, expected, preserve)
     # #56 语义：清理侧（删除）无降级——缺 fd 原语的平台显式拒绝（实时探测
     # os.supports_dir_fd，不走写侧降级缓存；与写路径的 #59 降级契约互不覆盖）。
     if (not getattr(os, 'O_NOFOLLOW', 0) or not getattr(os, 'O_DIRECTORY', 0)
@@ -206,6 +209,11 @@ try:
     import fcntl    # POSIX 跨进程文件锁；Windows 缺该模块（降级见模块头注释）
 except ImportError:   # pragma: no cover - Windows 主战场外的降级路径
     fcntl = None
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 # 进程内 per-path 锁注册表（收口后的目标路径 → Lock）。CLI 生命周期内路径数
 # 有限（每项目一份 receipt/manifest/VERSIONS），不淘汰。fstxn 是全部文件事务的
@@ -393,19 +401,35 @@ def check_regular_at(parent_fd, name, *, what=None, allow_symlink=False):
 def _legacy_flock_for(path: Path):
     """降级平台的锁守卫（原 main 行为）：锁文件经 ensure_inside_project 判定
     后常规创建/打开。延迟导入防模块期环（infra 顶层已 import fstxn）。"""
-    if fcntl is None:   # pragma: no cover - Windows 降级：仅进程内锁
-        yield
-        return
     path.parent.mkdir(parents=True, exist_ok=True)   # 锁文件须目录先在
     from .infra import ensure_inside_project
     ensure_inside_project(path.parent / (path.name + ".lock"), path.parent,
                           what="事务锁文件")
     with open(path.parent / (path.name + ".lock"), "a+b") as lf:
-        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        elif msvcrt is not None:
+            # LK_LOCK gives up after ten retries. Match flock's blocking
+            # semantics with nonblocking attempts, including locks beyond EOF.
+            while True:
+                lf.seek(0)
+                try:
+                    msvcrt.locking(lf.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as error:
+                    if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    time.sleep(0.05)
+        else:
+            raise RuntimeError("No cross-process file locking backend available")
         try:
             yield
         finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            else:
+                lf.seek(0)
+                msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 @contextlib.contextmanager
@@ -460,6 +484,14 @@ def _flock_for(path: Path):
     with pinned_parent(p) as (parent, name, target):
         with flock_at(parent, name, what=target):
             yield
+
+
+@contextlib.contextmanager
+def file_lock(path):
+    """Hold both lock layers for a target without writing it (<target>.lock)."""
+    target = Path(path)
+    with _thread_lock_for(target), _flock_for(target):
+        yield
 
 
 @contextlib.contextmanager

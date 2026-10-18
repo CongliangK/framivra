@@ -23,6 +23,20 @@ import audit_bundle as audit_module   # noqa: E402
 SCRIPT = Path(os.environ.get('VTX_AUDIT_SCRIPT', APP / 'audit_bundle.py'))
 
 
+class ValidationInterpreter(unittest.TestCase):
+    def test_windows_uses_real_interpreter_without_python3_alias_lookup(self):
+        with patch.object(audit_module.sys, "platform", "win32"), \
+             patch.object(audit_module.sys, "executable", sys.executable), \
+             patch.object(audit_module.shutil, "which", side_effect=AssertionError("Store alias")):
+            self.assertEqual(audit_module.validation_python(), sys.executable)
+
+    def test_appimage_uses_host_python(self):
+        with patch.object(audit_module.sys, "platform", "linux"), \
+             patch.dict(os.environ, {"APPIMAGE": "/opt/app.AppImage"}), \
+             patch.object(audit_module.shutil, "which", return_value="/usr/bin/python3"):
+            self.assertEqual(audit_module.validation_python(), "/usr/bin/python3")
+
+
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
 class AudioAuditIntegration(unittest.TestCase):
     def setUp(self):

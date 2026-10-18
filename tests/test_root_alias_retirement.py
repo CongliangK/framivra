@@ -29,13 +29,11 @@ class RootLayout(unittest.TestCase):
     def test_independent_script_links_remain_readable(self):
         for name, target in (("bed_static_duck.py", "plugins/duck-static/bed_static_duck.py"),
                              ("content_gates.py", "apps/gates/content_gates.py")):
-            link = REPO / "scripts" / name
-            self.assertTrue(link.is_file())
-            self.assertEqual(link.read_bytes(), (REPO / target).read_bytes())
-            # Windows checkouts may materialize files, but POSIX keeps git symlinks.
-            if os.name != "nt":
-                self.assertTrue(link.is_symlink())
-                self.assertEqual(os.readlink(link), "../" + target)
+            entry = REPO / "scripts" / name
+            self.assertTrue(entry.is_file())
+            self.assertFalse(entry.is_symlink())
+            self.assertIn("../" + target, entry.read_text(encoding='utf-8'))
+            self.assertIn('runpy.run_path', entry.read_text(encoding='utf-8'))
 
 
 class IsolatedSkillMounts(unittest.TestCase):

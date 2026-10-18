@@ -153,7 +153,10 @@ class CacheIdentity(ExternalCfgTestBase):
         c6 = self.ctx_with(self.ENABLED, db=6)
         p3, p6 = hello.product_path(c3, "v"), hello.product_path(c6, "v")
         self.assertNotEqual(p3, p6)
-        self.assertIn("::hello:1.0.0:", p3.name)
+        self.assertIn("__hello_1.0.0_", p3.name)
+        p3.parent.mkdir(parents=True, exist_ok=True)
+        p3.write_bytes(b"native-path-regression")
+        self.assertIn(p3.stem, hello.contribute_keys(c3))
         self.assertNotEqual(hello.value_digest({"db": 3}), hello.value_digest({"db": 6}))
         self.assertEqual(hello.value_digest({"db": 3}), hello.value_digest({"db": 3}))
 

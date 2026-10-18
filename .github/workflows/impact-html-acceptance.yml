@@ -1,16 +1,7 @@
 name: Issue 52 real HTML impact acceptance
 
-# Dedicated same-repository validation PR only, or explicit post-registration
-# manual dispatch. No push/schedule renders, secrets, or cache restore.
+# Explicit manual acceptance only. No automatic PR/push/scheduled renders.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/impact-html-acceptance.yml'
-      - 'tests/run_impact_html_reconciliation.py'
-      - 'tests/test_impact_html_harness.py'
-      - 'tests/impact_inventory.py'
-      - 'tests/test_impact_inventory.py'
-      - 'tests/run_impact_reconciliation.py'
   workflow_dispatch:
 
 permissions:
@@ -22,10 +13,6 @@ concurrency:
 
 jobs:
   acceptance:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'dot/issue52-html-validation-'))
     runs-on: ubuntu-24.04
     timeout-minutes: 65
     env:

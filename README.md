@@ -12,7 +12,7 @@ docs/skill/     ① 内核文档：SKILL.md 路由索引 + references/{edit,gfx,
 apps/  (12 件)  ② 应用：产出独立素材不进 timeline 管线，关停不影响主链
 plugins/ (4 件) ② 插件：扩展 timeline.json 词汇并钩进管线（denoise / duck-static / blender-bridge / bgm-render + registry.json）
 templates/      ③ 模板集合：tech-talk / skill-demo 工作流 + hello-app / hello-plugin 开发范本
-scripts/           内核工具残留：new_project.sh / gfx_golden.py / bench_cold.sh（+ 迁走件兼容 symlink）
+scripts/           内核工具残留：new_project.sh / gfx_golden.py / bench_cold.sh（+ 迁走件跨平台转发入口）
 vt.py              统一入口：doctor / apps|plugins|templates list|check（skills 兼容别名） / version / init / --fix-links
 ```
 

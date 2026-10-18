@@ -405,6 +405,7 @@ class Browser:
         self.ctx = ctx
         self.group = None       # SupervisedProcessGroup（ctx 模式独有）
         self.proc = None
+        self.windows_job = None
         self.port = None
         self.user_data_dir = None
         self.tab_ws_urls = []
@@ -446,7 +447,7 @@ class Browser:
             # 而非让 _write_ledger 的 RuntimeError 打死整个 CDP 默认路径。
             from .proc_supervisor import supervision_available
             supervised = supervision_available()
-            if not supervised:
+            if not supervised and sys.platform != "win32":
                 _warn_supervision_degraded()
         if supervised:
             # issue #103：监管态——argv 由运行目录动态拼（--user-data-dir 落
@@ -466,12 +467,16 @@ class Browser:
             self.user_data_dir = self.group.profile_dir
         else:
             self.user_data_dir = tempfile.mkdtemp(prefix="vtx_gfx_cdp_")
-            self.proc = subprocess.Popen(
-                [self.chrome, *CHROME_VISUAL_FLAGS,
-                 f"--remote-debugging-port={self.port}",
-                 f"--user-data-dir={self.user_data_dir}",
-                 "--no-first-run", "--no-default-browser-check", "about:blank"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            argv = [self.chrome, *CHROME_VISUAL_FLAGS,
+                    f"--remote-debugging-port={self.port}",
+                    f"--user-data-dir={self.user_data_dir}",
+                    "--no-first-run", "--no-default-browser-check", "about:blank"]
+            if sys.platform == "win32":
+                from .windows_browser import BrowserJob
+                self.windows_job = BrowserJob(argv)
+                self.proc = self.windows_job.proc
+            else:
+                self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             try:
@@ -514,14 +519,31 @@ class Browser:
             self.proc = None
             self.user_data_dir = None
             return
+        if self.windows_job is not None:
+            job, self.windows_job = self.windows_job, None
+            job.close()
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.wait(5)
+        self.proc = None
         if self.user_data_dir:
-            shutil.rmtree(self.user_data_dir, ignore_errors=True)
+            # Windows releases file handles asynchronously after job termination.
+            for attempt in range(30):
+                try:
+                    shutil.rmtree(self.user_data_dir)
+                    self.user_data_dir = None
+                    break
+                except FileNotFoundError:
+                    self.user_data_dir = None
+                    break
+                except OSError:
+                    if attempt == 29:
+                        raise
+                    time.sleep(0.1)
 
     def hard_restart(self):
         """杀进程重起 + 重建 tab 池 URL（连接方需重开 Tab）。监管态下重起 =

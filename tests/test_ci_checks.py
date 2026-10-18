@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,7 @@ import types
 import unittest
 from unittest import mock
 
-import yaml  # test-only dependency, installed by the CI core matrix
+import yaml  # test-only dependency, installed by both CI workflows
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('ci_checks', ROOT / 'scripts/ci_checks.py')
@@ -26,6 +27,13 @@ spec.loader.exec_module(ci)
 
 def tests_of(case):
     return list(unittest.defaultTestLoader.loadTestsFromTestCase(case))
+
+BASH = shutil.which('bash') or 'bash'
+if os.name == 'nt':
+    git = shutil.which('git')
+    candidate = Path(git).resolve().parent.parent / 'bin/bash.exe' if git else None
+    if candidate and candidate.is_file():
+        BASH = str(candidate)
 
 
 class StrictMediaGate(unittest.TestCase):
@@ -528,40 +536,25 @@ class SafetyCommandHangGuard(unittest.TestCase):
 class WorkflowContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.text = (ROOT / '.github/workflows/ci.yml').read_text()
+        cls.text = (ROOT / '.github/workflows/full-regression.yml').read_text(encoding='utf-8')
         # BaseLoader avoids YAML 1.1 treating GitHub's "on" as a boolean.
         cls.workflow = yaml.load(cls.text, Loader=yaml.BaseLoader)
 
     def test_events_and_least_privilege(self):
-        self.assertTrue({'pull_request', 'push', 'workflow_dispatch', 'schedule'} <=
-                        self.workflow['on'].keys())
+        self.assertEqual(set(self.workflow['on']), {'workflow_dispatch'})
         self.assertEqual(self.workflow['permissions'], {'contents': 'read'})
-        self.assertNotIn('pull_request_target', self.workflow['on'])
 
     def test_declared_supported_python_versions_are_tested(self):
-        pyproject = (ROOT / 'pyproject.toml').read_text()
+        pyproject = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
         declared = set(re.findall(r'Programming Language :: Python :: (3\.\d+)', pyproject))
-        matrix = self.workflow['jobs']['core']['strategy']['matrix']['python']
-        match = re.fullmatch(
-            r"\$\{\{ fromJSON\(\(github.event_name == 'schedule' \|\| "
-            r"github.event_name == 'workflow_dispatch'\) && '([^']+)' \|\| '([^']+)'\) \}\}",
-            matrix)
-        self.assertIsNotNone(match)
-        self.assertEqual(set(json.loads(match.group(1))), declared)
-        self.assertEqual(json.loads(match.group(2)), ['3.9', '3.11', '3.13'])
+        self.assertEqual(set(self.workflow['jobs']['core']['strategy']['matrix']['python']), declared)
 
-    def test_curated_and_full_commands_have_exclusive_event_conditions(self):
+    def test_manual_full_discovery_is_unconditional(self):
         steps = self.workflow['jobs']['core']['steps']
-        curated = [s for s in steps if 'python scripts/ci_pr.py' in s.get('run', '')]
-        full = [s for s in steps if 'bash scripts/run_all_tests.sh' in s.get('run', '')]
-        self.assertEqual(len(curated), 1)
+        self.assertFalse(any('python scripts/ci_pr.py' in step.get('run', '') for step in steps))
+        full = [step for step in steps if 'bash scripts/run_all_tests.sh' in step.get('run', '')]
         self.assertEqual(len(full), 1)
-        self.assertEqual(curated[0]['if'],
-                         "github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'")
-        self.assertEqual(full[0]['if'],
-                         "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'")
-        self.assertIn('Full discovery', curated[0]['run'])
-        self.assertIn('GITHUB_STEP_SUMMARY', curated[0]['run'])
+        self.assertNotIn('if', full[0])
 
     def test_core_declares_dependencies_for_all_unittest_batches(self):
         # The app batches are mandatory too: imgen's mock gen/batch chains
@@ -630,34 +623,17 @@ class WorkflowContract(unittest.TestCase):
         })
         for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', ''), repeat=3):
             with self.subTest(values=values):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, **dict(zip(step['env'], values))),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0,
                                  all(value == 'success' for value in values))
 
-    def test_core_matrix_has_all_curated_groups_and_one_full_group_per_version(self):
+    def test_manual_core_matrix_has_one_full_group_per_version(self):
         core = self.workflow['jobs']['core']
         self.assertEqual(core['strategy']['fail-fast'], 'false')
-        matrix = core['strategy']['matrix']
-        parsed = {}
-        for dimension in ('python', 'group'):
-            match = re.fullmatch(
-                r"\$\{\{ fromJSON\(\(github.event_name == 'schedule' \|\| "
-                r"github.event_name == 'workflow_dispatch'\) && '([^']+)' \|\| '([^']+)'\) \}\}",
-                matrix[dimension])
-            self.assertIsNotNone(match)
-            parsed[dimension] = [json.loads(match.group(i)) for i in (1, 2)]
-        self.assertEqual(parsed['group'], [['full'], ['1', '2', '3']])
-        self.assertEqual(len(list(itertools.product(parsed['python'][0], parsed['group'][0]))), 5)
-        self.assertEqual(len(list(itertools.product(parsed['python'][1], parsed['group'][1]))), 9)
-        self.assertEqual(set(matrix), {'python', 'group'})
-        self.assertIn('matrix.python', core['name'])
-        self.assertIn('full regression', core['name'])
-        self.assertIn('curated group {0}/3', core['name'])
-        curated = next(s for s in core['steps'] if 'python scripts/ci_pr.py' in s.get('run', ''))
-        self.assertIn("python scripts/ci_pr.py --group '${{ matrix.group }}'", curated['run'])
-        self.assertNotIn('python scripts/ci_pr.py\n', curated['run'])
+        self.assertEqual(core['strategy']['matrix']['group'], ['full'])
+        self.assertEqual(set(core['strategy']['matrix']), {'python', 'group'})
 
     def test_chrome_required_check_rejects_any_non_success_or_missing_group(self):
         job = self.workflow['jobs']['chrome']
@@ -672,7 +648,7 @@ class WorkflowContract(unittest.TestCase):
         })
         for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', '', 'unknown'), repeat=2):
             with self.subTest(values=values):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, **dict(zip(step['env'], values))),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0,
@@ -681,7 +657,7 @@ class WorkflowContract(unittest.TestCase):
             environment = {key: value for key, value in os.environ.items()
                            if key not in step['env']}
             environment.update({key: 'success' for key in step['env'] if key != missing})
-            result = subprocess.run(['bash', '-e', '-c', step['run']],
+            result = subprocess.run([BASH, '-e', '-c', step['run']],
                                     env=environment, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)
 
@@ -695,18 +671,59 @@ class WorkflowContract(unittest.TestCase):
         self.assertEqual(step['env'], {'CORE_RESULT': '${{ needs.core.result }}'})
         for value in ('success', 'failure', 'cancelled', 'skipped', '', 'unknown'):
             with self.subTest(value=value):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, CORE_RESULT=value),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0, value == 'success')
 
     def test_ungrouped_local_full_runner_remains_original_discovery(self):
-        runner = (ROOT / 'scripts/run_all_tests.sh').read_text()
+        runner = (ROOT / 'scripts/run_all_tests.sh').read_text(encoding='utf-8')
         self.assertIn('if [ "$#" -gt 0 ]; then', runner)
         self.assertIn('exec env python3 scripts/ci_partition.py "$@"', runner)
         self.assertIn('env python3 -m unittest discover -s tests -t . -v || rc=$?', runner)
         self.assertIn('for d in apps/*/tests plugins/*/tests templates/*/tests; do', runner)
         self.assertNotIn('ci_pr.py', runner)
+
+
+class FastWorkflowContract(unittest.TestCase):
+    def test_default_is_one_bounded_job_without_media_or_matrix(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8'),
+                             Loader=yaml.BaseLoader)
+        self.assertEqual(set(workflow['on']), {'pull_request', 'push', 'workflow_dispatch'})
+        self.assertEqual(workflow['on']['push']['branches'], ['main'])
+        self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        self.assertEqual(set(workflow['jobs']), {'fast'})
+        job = workflow['jobs']['fast']
+        self.assertEqual(job['timeout-minutes'], '5')
+        self.assertNotIn('strategy', job)
+        commands = '\n'.join(step.get('run', '') for step in job['steps'])
+        for required in ('python scripts/ci_checks.py static', 'bash scripts/doc_gates.sh',
+                         'python scripts/ci_fast.py', 'GITHUB_STEP_SUMMARY'):
+            self.assertIn(required, commands)
+        for forbidden in ('apt-get', 'choco', 'run_all_tests.sh', 'run_e2e.py',
+                          'ci_checks.py chrome', 'ci_checks.py ffmpeg'):
+            self.assertNotIn(forbidden, commands)
+        for step in job['steps']:
+            self.assertNotIn('continue-on-error', step)
+            if 'uses' in step:
+                self.assertRegex(step['uses'], r'^[\w/-]+@[0-9a-f]{40}$')
+                if step['uses'].startswith('actions/checkout@'):
+                    self.assertEqual(step['with']['persist-credentials'], 'false')
+
+    def test_all_media_acceptance_is_manual_and_windows_render_is_removed(self):
+        for name in ('full-regression.yml', 'gfx-dependency-acceptance.yml',
+                     'impact-html-acceptance.yml'):
+            workflow = yaml.load((ROOT / '.github/workflows' / name).read_text(encoding='utf-8'),
+                                 Loader=yaml.BaseLoader)
+            self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
+            self.assertNotIn('windows-render', workflow['jobs'])
+
+    def test_fast_selection_is_explicit_whole_modules_and_uses_strict_runner(self):
+        from scripts import ci_fast, ci_pr
+        self.assertIs(ci_fast.run_curated, ci_pr.run_curated)
+        self.assertEqual(ci_fast.FAST_MODULES, (
+            'tests.test_ci_checks', 'tests.test_ci_pr',
+            'tests.test_graph_digest', 'tests.test_plugin_code_digest'))
 
 
 if __name__ == '__main__':

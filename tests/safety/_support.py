@@ -29,6 +29,7 @@ A03_FIXED = unittest.skipUnless(
 class SandboxCase(unittest.TestCase):
     vtx_timeout = 30
     vtx_diagnostics = False
+    vtx_traceback_after = None
 
     def setUp(self):
         super().setUp()
@@ -96,10 +97,11 @@ class SandboxCase(unittest.TestCase):
 
     def run_vtx(self, *args):
         self.checked(self.timeline)
+        command = self._vtx_command(args)
         started = time.monotonic()
         try:
             result = subprocess.run(
-                ["env", "python3", str(REPO / "vtx/vtx.py"), "-t", str(self.timeline), *args],
+                command,
                 cwd=self.root, env=self.env, capture_output=True, text=True,
                 timeout=self.vtx_timeout)
         except subprocess.TimeoutExpired as error:
@@ -112,6 +114,25 @@ class SandboxCase(unittest.TestCase):
                                  result.stderr if result.returncode else None)
         return result
 
+    def _vtx_command(self, args):
+        script = str(REPO / "vtx/vtx.py")
+        command = ["env", "python3"]
+        if self.vtx_traceback_after is not None:
+            # Opt-in diagnostic only: preserve the launcher's argv and script
+            # search path, and let SystemExit/exceptions retain their exit code.
+            wrapper = (
+                "import faulthandler, os, runpy, sys\n"
+                "del sys.argv[0]\n"
+                "sys.path[0] = os.path.dirname(sys.argv[0])\n"
+                "faulthandler.dump_traceback_later(%r, repeat=False)\n"
+                "try:\n"
+                "    runpy.run_path(sys.argv[0], run_name='__main__')\n"
+                "finally:\n"
+                "    faulthandler.cancel_dump_traceback_later()\n"
+            ) % self.vtx_traceback_after
+            command.extend(["-c", wrapper])
+        return [*command, script, "-t", str(self.timeline), *args]
+
     def _vtx_diagnostic(self, args, started, outcome, stdout, stderr):
         print("vtx safety command=%r elapsed=%.3fs timeout=%ss %s" %
               (args, time.monotonic() - started, self.vtx_timeout, outcome),
@@ -123,8 +144,10 @@ class SandboxCase(unittest.TestCase):
                     value = "<not captured>"
                 if isinstance(value, bytes):
                     value = value.decode("utf-8", errors="replace")
-                print("%s tail=%r%s" % (name, value[-2048:],
-                      " [truncated]" if len(value) > 2048 else ""),
+                limit = (16384 if name == "stderr" and self.vtx_traceback_after is not None
+                         else 2048)
+                print("%s tail=%r%s" % (name, value[-limit:],
+                      " [truncated]" if len(value) > limit else ""),
                       file=sys.stderr, flush=True)
 
     def assert_ok(self, result):

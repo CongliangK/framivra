@@ -2,7 +2,7 @@
 """tests/test_denoise.py —— denoise 插件（缝 A，v2 §2.2）单元测试。
 
 覆盖：
-  ① 产物路径语义（契约 v1.1）：{audio_key}::denoise:{version}:{digest} 命名 /
+  ① 产物路径语义（契约 v1.1）：{audio_key}__denoise_{version}_{digest} 命名 /
      裸提取键不被污染 / 键值变 → 产物键变；
   ② prepare_source 契约：未声明键 → None / 缓存命中 → 不再产出（环境缺失亦可
      命中）/ 缺产物 + 环境缺失 → fail-hard（SystemExit 1，打印缺什么，不回落
@@ -69,9 +69,12 @@ class ProductPathSemantics(unittest.TestCase):
             bare = c.cache / "audio" / f"{audio_key(c, 'v')}.wav"
             # P6（A-P1-1）：产物键尾部掺 12 位插件代码摘要（ vtx.api.plugin_code_digest）
             self.assertEqual(p.name,
-                             f"{audio_key(c, 'v')}::denoise:{dn.VERSION}:"
-                             f"{dn.value_digest(True)}:"
+                             f"{audio_key(c, 'v')}__denoise_{dn.VERSION}_"
+                             f"{dn.value_digest(True)}_"
                              f"{dn.plugin_code_digest('denoise')}.wav")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"native-path-regression")
+            self.assertIn(p.stem, dn.contribute_keys(c))
             self.assertNotEqual(p, bare)   # 产物键 ≠ 裸提取键（内容寻址不污染）
 
     def test_value_change_changes_path(self):

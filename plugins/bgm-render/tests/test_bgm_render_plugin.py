@@ -56,42 +56,35 @@ _bgm = importlib.import_module("plugins.bgm-render")
 from vtx import hygiene                        # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks   # noqa: E402
 
-FAKE_BGM = r'''#!/bin/bash
-echo "$@" >> "$FAKE_LOG"
-cmd="$1"; shift
-case "$cmd" in
-  show)
-    proj="${@: -1}"
-    dur=$(cat "$(dirname "$proj")/duration.txt" 2>/dev/null || echo 4.0)
-    printf '{\n  "duration_s": %s\n}\n' "$dur"
-    ;;
-  render)
-    proj="$1"; out=""
-    while [ $# -gt 0 ]; do
-      case "$1" in -o) out="$2" ;; esac
-      shift
-    done
-    dur=$(cat "$(dirname "$proj")/duration.txt" 2>/dev/null || echo 4.0)
-    mkdir -p "$out/stems"
-    ffmpeg -nostdin -v error -y -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=$dur" \
-      -ac 2 "$out/mix_master.wav"
-    ffmpeg -nostdin -v error -y -f lavfi -i "sine=frequency=330:sample_rate=44100:duration=$dur" \
-      -ac 2 "$out/mix_premaster.wav"
-    # bus stems：tracks.txt 每轨一个（48k f32 2ch，对齐 music_tools mixer 的
-    # stems/<轨>.bus.wav 规格）；结果 JSON 的 stems 映射是引擎级路径（真实口径）。
-    stems=""
-    while read -r t; do
-      [ -z "$t" ] && continue
-      ffmpeg -nostdin -v error -y -f lavfi -i "sine=frequency=880:sample_rate=48000:duration=$dur" \
-        -ac 2 -c:a pcm_f32le "$out/stems/$t.bus.wav"
-      stems="$stems\"$t\": {\"path\": \"$out/stems/$t.sfz.wav\"},"
-    done < "$(dirname "$proj")/tracks.txt"
-    stems="${stems%,}"
-    printf '{\n  "out_dir": "%s",\n  "master": "%s/mix_master.wav",\n  "premaster": "%s/mix_premaster.wav",\n  "duration_s": %s,\n  "qc_ok": true,\n  "stems": {%s}\n}\n' \
-      "$out" "$out" "$out" "$dur" "$stems"
-    ;;
-  *) echo "unknown cmd: $cmd" >&2; exit 2 ;;
-esac
+FAKE_BGM = r'''import json, os, subprocess, sys
+from pathlib import Path
+args = sys.argv[1:]
+with open(os.environ['FAKE_LOG'], 'a', encoding='utf-8') as log:
+    log.write(' '.join(args) + '\n')
+command = args[0]
+project = Path(args[-1] if command == 'show' else args[1])
+duration_file = project.parent / 'duration.txt'
+duration = float(duration_file.read_text() if duration_file.exists() else '4.0')
+if command == 'show':
+    print(json.dumps({'duration_s': duration}, indent=2))
+elif command == 'render':
+    out = Path(args[args.index('-o') + 1]); (out / 'stems').mkdir(parents=True, exist_ok=True)
+    def sine(name, hz, rate=44100, codec=None):
+        cmd = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+               f'sine=frequency={hz}:sample_rate={rate}:duration={duration}', '-ac', '2']
+        if codec: cmd += ['-c:a', codec]
+        subprocess.run(cmd + [str(out / name)], check=True)
+    sine('mix_master.wav', 440); sine('mix_premaster.wav', 330)
+    stems = {}
+    for track in (project.parent / 'tracks.txt').read_text().splitlines():
+        if track:
+            sine(f'stems/{track}.bus.wav', 880, 48000, 'pcm_f32le')
+            stems[track] = {'path': str(out / f'stems/{track}.sfz.wav')}
+    print(json.dumps({'out_dir': str(out), 'master': str(out / 'mix_master.wav'),
+        'premaster': str(out / 'mix_premaster.wav'), 'duration_s': duration,
+        'qc_ok': True, 'stems': stems}, indent=2))
+else:
+    sys.exit(2)
 '''
 
 
@@ -126,11 +119,13 @@ class _Base(unittest.TestCase):
         (self.root / "music").mkdir()
         # 伪 bgm CLI + 调用日志
         self.log = self.root / "bgm_calls.log"
-        fake = self.root / "fakebgm"
+        fake = self.root / "fakebgm.py"
         fake.write_text(FAKE_BGM, encoding="utf-8")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         cfg = self.root / "vt_config.json"
-        cfg.write_text(json.dumps({"bgm": {"cli": str(fake)}}), encoding="utf-8")
+        argv = [sys.executable, str(fake)]
+        command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+        cfg.write_text(json.dumps({"bgm": {"cli": command}}), encoding="utf-8")
         self._old_env = os.environ.get("VTX_CONFIG")
         os.environ["VTX_CONFIG"] = str(cfg)
         os.environ["FAKE_LOG"] = str(self.log)
@@ -636,7 +631,7 @@ class InvariantsAndBranches(_Base):
         keys = _bgm.contribute_keys(c)
         self.assertEqual(len(keys), 1)
         (key,) = keys
-        self.assertIn("::bgm:", key)
+        self.assertIn("__bgm_", key)
 
     def test_three_branch_not_installed(self):
         from vtx.stages import _scan_plugin_keys

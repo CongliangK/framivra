@@ -157,6 +157,9 @@ class LegitUseControl(SandboxCase):
     vtx_diagnostics = True
 
     def test_external_relative_and_absolute_assets_still_read(self):
+        # Diagnose a stalled child before the existing 60s failure boundary.
+        # Other controls keep their direct CLI invocation.
+        self.vtx_traceback_after = 45
         # 用户把素材放在项目外、以相对/绝对路径引用：读侧（validate 的 gfx html
         # 存在性检查、gc 的 gfx_key 字节读取）照常放行。
         shared = self.put(self.sandbox / "shared.html", b"<html>external</html>")

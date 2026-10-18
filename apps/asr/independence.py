@@ -587,15 +587,14 @@ def gpu_admission(required_mib, device="cuda:0"):
 
 
 def admission_lease():
-    """并发准入互斥（issue #142）：项目状态根下 flock 文件，串行化跨进程的
+    """并发准入互斥（issue #142）：项目状态根下原生文件锁，串行化跨进程的
     「查显存 → 加载模型」临界区，防两路并发同时通过同一份空闲显存检查。
     用法：with admission_lease(): ...（获取失败=锁文件不可写时 fail-closed raise）。
     只锁本项目自有状态文件，不触碰任何外部进程。"""
-    import fcntl
     path = project_state_root() / "admission.lock"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(path, "a+")
+        fh = open(path, "a+b")
     except OSError as exc:
         raise AsrIndependenceError(
             "资源准入锁不可写（%s）——fail-closed 拒绝并发加载：%s"
@@ -603,12 +602,47 @@ def admission_lease():
 
     class _Lease:
         def __enter__(self):
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                if os.name == "nt":
+                    import errno
+                    import msvcrt
+                    import time
+                    # Lock a fixed byte; all contenders use offset zero. The byte
+                    # must exist, and append mode prevents racing initialization
+                    # from overwriting another holder's lock region.
+                    if os.fstat(fh.fileno()).st_size == 0:
+                        fh.write(b"\0")
+                        fh.flush()
+                    while True:
+                        fh.seek(0)
+                        try:
+                            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                            break
+                        except OSError as exc:
+                            if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                                raise
+                            time.sleep(0.05)
+                else:
+                    import fcntl
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            except OSError as exc:
+                fh.close()
+                raise AsrIndependenceError(
+                    "资源准入锁不可用（%s）——fail-closed 拒绝并发加载：%s"
+                    % (path, exc)) from None
             return self
 
         def __exit__(self, *exc):
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            fh.close()
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            finally:
+                fh.close()
             return False
 
     return _Lease()
