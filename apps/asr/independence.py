@@ -473,7 +473,8 @@ def estimate_vram_mib(model_dir):
 
 
 def _run_nvidia_smi():
-    """只读 nvidia-smi 查询（首块 GPU total/used MiB）；不可用/失败 → None。
+    """只读 nvidia-smi 查询（每块 GPU 一行 total/used MiB）→ 行列表；不可用/
+    失败/任一行畸形 → None（fail-closed，与既有畸形输出语义一致）。
     零写态、零信号、零外部服务操作。"""
     try:
         r = subprocess.run(
@@ -484,16 +485,35 @@ def _run_nvidia_smi():
         return None
     if r.returncode != 0 or not r.stdout.strip():
         return None
-    parts = [p.strip() for p in r.stdout.strip().splitlines()[0].split(",")]
-    if len(parts) < 2:
+    rows = []
+    for line in r.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            return None
+        try:
+            total, used = int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+        if total <= 0 or used < 0 or used > total:
+            return None
+        rows.append({"total_mib": total, "used_mib": used,
+                     "free_mib": total - used})
+    return rows or None
+
+
+def _parse_device_index(dev):
+    """解析 device 字符串（小写）→ (gpu_index, explicit)；解析失败 → None。
+      - "cuda" / "mps"（无索引）→ (0, False)：维持首卡语义（沿用历史行为：
+        device_map 不带索引时显存门只看首块 GPU——与 accelerate/transformers
+        对无索引 cuda 的默认设备一致）；
+      - "cuda:N" / "mps:N" → (N, True)：按 N 查对应 GPU 行；
+      - "cuda:x" / "cuda:-1" / "cuda:" 等畸形 → None：fail-closed。"""
+    head, sep, tail = dev.partition(":")
+    if not sep:
+        return (0, False)
+    if not tail or not tail.isdigit():
         return None
-    try:
-        total, used = int(parts[0]), int(parts[1])
-    except ValueError:
-        return None
-    if total <= 0 or used < 0 or used > total:
-        return None
-    return {"total_mib": total, "used_mib": used, "free_mib": total - used}
+    return (int(tail), True)
 
 
 def gpu_admission(required_mib, device="cuda:0"):
@@ -501,6 +521,11 @@ def gpu_admission(required_mib, device="cuda:0"):
       {allowed, reason, free_mib, total_mib, required_mib, tool}
     语义（fail-closed 且可诊断）：
       - device 为 cpu* → 允许，reason=CPU-only 显存门 N/A（无 GPU 常驻需求）；
+      - device 解析失败（如 cuda:x / cuda:-1）→ 拒绝：无法确定目标 GPU 时
+        绝不拿首卡数据冒充准入依据；
+      - device 带索引（cuda:N）→ 严格按第 N 块 GPU 的 free 判定；索引越界
+        （N ≥ nvidia-smi GPU 行数）→ 拒绝（fail-closed，与畸形输出语义一致）；
+      - device 无索引（cuda / mps）→ 首卡语义（见 _parse_device_index 注释）；
       - nvidia-smi 不可用/不可读 → 拒绝：无法验证显存预算时绝不加载 GPU 模型，
         不拿“先加载到 OOM 再换小模型”当唯一保护；可诊断地提示改 CPU；
       - free < required → 拒绝：显存不足安全拒绝（绝不停止/卸载任何外部进程，
@@ -512,8 +537,18 @@ def gpu_admission(required_mib, device="cuda:0"):
                 "reason": "CPU-only 模式：显存门 N/A（无 GPU 常驻需求）",
                 "free_mib": None, "total_mib": None,
                 "required_mib": None, "tool": None}
-    info = _run_nvidia_smi()
-    if info is None:
+    parsed = _parse_device_index(dev)
+    if parsed is None:
+        return {"allowed": False,
+                "reason": "GPU device 字符串无法解析（%r）：fail-closed 拒绝——"
+                          "无法确定目标 GPU 时绝不以首卡数据冒充准入依据。"
+                          "改用 cuda / cuda:N / mps / cpu 等合法形态"
+                          % (device,),
+                "free_mib": None, "total_mib": None,
+                "required_mib": required_mib, "tool": "device-parse(失败)"}
+    gpu_index, explicit = parsed
+    rows = _run_nvidia_smi()
+    if rows is None:
         return {"allowed": False,
                 "reason": "GPU 显存门不可用（nvidia-smi 不存在/不可读/超时）——"
                           "fail-closed：无法验证显存预算时拒绝加载 GPU 模型，"
@@ -521,18 +556,29 @@ def gpu_admission(required_mib, device="cuda:0"):
                           "改 CPU 运行：--device-map cpu 或 config asr.device_map=\"cpu\"",
                 "free_mib": None, "total_mib": None,
                 "required_mib": required_mib, "tool": "nvidia-smi(不可用)"}
+    if gpu_index >= len(rows):
+        return {"allowed": False,
+                "reason": "GPU 索引越界：device=%r 指向第 %d 块 GPU，但 nvidia-smi "
+                          "只报告 %d 块——fail-closed 拒绝（与畸形输出语义一致），"
+                          "绝不回退到其他卡的数据"
+                          % (device, gpu_index, len(rows)),
+                "free_mib": None, "total_mib": None,
+                "required_mib": required_mib, "tool": NVIDIA_SMI}
+    info = rows[gpu_index]
+    which = ("GPU%d" % gpu_index if explicit
+             else "GPU%d（device 无索引，首卡语义）" % gpu_index)
     if info["free_mib"] < required_mib:
         return {"allowed": False,
-                "reason": "显存不足：free %d MiB < 预算 %d MiB（total %d / used %d）——"
+                "reason": "显存不足：%s free %d MiB < 预算 %d MiB（total %d / used %d）——"
                           "安全拒绝。绝不为了本项目停止/卸载/重配任何外部服务"
                           "（含语音输入法）；可等待释放后重试、降档 0.6b 或改 CPU"
-                          % (info["free_mib"], required_mib,
+                          % (which, info["free_mib"], required_mib,
                              info["total_mib"], info["used_mib"]),
                 "free_mib": info["free_mib"], "total_mib": info["total_mib"],
                 "required_mib": required_mib, "tool": NVIDIA_SMI}
     return {"allowed": True,
-            "reason": "显存准入通过：free %d MiB ≥ 预算 %d MiB（nvidia-smi 只读查询，"
-                      "零外部服务操作）" % (info["free_mib"], required_mib),
+            "reason": "显存准入通过：%s free %d MiB ≥ 预算 %d MiB（nvidia-smi 只读查询，"
+                      "零外部服务操作）" % (which, info["free_mib"], required_mib),
             "free_mib": info["free_mib"], "total_mib": info["total_mib"],
             "required_mib": required_mib, "tool": NVIDIA_SMI}
 

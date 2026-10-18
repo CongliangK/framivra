@@ -487,6 +487,66 @@ class TestResourceAdmission(MatrixBase):
         d = independence.gpu_admission(3072, device="cuda:0")
         self.assertTrue(d["allowed"])
 
+    def _fake_smi_multi(self, pairs):
+        """多卡假 nvidia-smi：pairs = [(total, used), ...]，每卡一行。"""
+        script = self.bin / "nvidia-smi"
+        lines = "".join("echo '%d, %d'\n" % (t, u) for t, u in pairs)
+        script.write_text("#!/bin/sh\n" + lines)
+        script.chmod(0o755)
+        os.environ["PATH"] = "%s:%s" % (self.bin, self._path)
+
+    def test_no_index_cuda_keeps_first_card_semantics(self):
+        """cuda（无索引）→ 首卡语义不变：首卡足 → 放行（即使 1 卡不足）。"""
+        self._fake_smi_multi([(16376, 4000), (16376, 16284)])
+        d = independence.gpu_admission(3072, device="cuda")
+        self.assertTrue(d["allowed"])
+        self.assertEqual(d["free_mib"], 12376)
+        self.assertIn("首卡", d["reason"])
+        # 首卡不足（GPU0 free=376 < 预算）→ 拒，即使 GPU1 充足
+        self._fake_smi_multi([(16376, 16000), (16376, 400)])
+        d = independence.gpu_admission(3072, device="cuda")
+        self.assertFalse(d["allowed"])
+
+    def test_cuda1_uses_second_gpu_row_not_first(self):
+        """#142 对抗：双卡 GPU0 足 / GPU1 不足 × cuda:1 → 必拒（不得读首行）。"""
+        self._fake_smi_multi([(24576, 412), (24576, 24484)])  # free: 24164 / 92
+        d = independence.gpu_admission(6144, device="cuda:1")
+        self.assertFalse(d["allowed"], "cuda:1 必须按 GPU1 行判定，不得用 GPU0 数据")
+        self.assertEqual(d["free_mib"], 92)
+        self.assertIn("GPU1", d["reason"])
+        self.assertIn("显存不足", d["reason"])
+
+    def test_cuda1_sufficient_allowed(self):
+        """cuda:1 两卡皆足 → 放行且按 GPU1 行数据。"""
+        self._fake_smi_multi([(16376, 4000), (24576, 412)])   # free: 12376 / 24164
+        d = independence.gpu_admission(6144, device="cuda:1")
+        self.assertTrue(d["allowed"])
+        self.assertEqual(d["free_mib"], 24164)
+        self.assertEqual(d["total_mib"], 24576)
+
+    def test_cuda_index_out_of_range_fail_closed(self):
+        """cuda:2 越界（仅 2 块 GPU）→ 拒，且不回退任何一行数据。"""
+        self._fake_smi_multi([(16376, 4000), (16376, 4000)])
+        d = independence.gpu_admission(6144, device="cuda:2")
+        self.assertFalse(d["allowed"])
+        self.assertIn("越界", d["reason"])
+        self.assertIsNone(d["free_mib"], "越界时不得借用任何卡的数据")
+
+    def test_cuda_malformed_index_fail_closed(self):
+        """cuda:x / cuda:-1 / cuda: 畸形索引 → 解析失败 fail-closed 拒。"""
+        self._fake_smi(16376, 4000)
+        for bad in ("cuda:x", "cuda:-1", "cuda:", "CUDA:0:1"):
+            with self.subTest(bad=bad):
+                d = independence.gpu_admission(6144, device=bad)
+                self.assertFalse(d["allowed"], bad)
+                self.assertIn("无法解析", d["reason"])
+
+    def test_mps_first_card_semantics(self):
+        """mps（既有支持形态）→ 首卡语义：足 → 放行。"""
+        self._fake_smi_multi([(16376, 4000), (16376, 16284)])
+        d = independence.gpu_admission(3072, device="mps")
+        self.assertTrue(d["allowed"])
+
     def test_budget_config_and_estimate(self):
         self.assertEqual(independence.estimate_vram_mib("x/Qwen3-ASR-0.6B"), 3072)
         self.assertEqual(independence.estimate_vram_mib("x/Qwen3-ASR-1.7B"), 6144)
