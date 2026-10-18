@@ -3,6 +3,9 @@ Output must be new to prevent cache reuse. No private assets required.
 """
 import argparse, hashlib, json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, 'reconfigure'):
+        stream.reconfigure(encoding='utf-8', errors='backslashreplace')
 import numpy as np
 # 沙箱兼容：经包装器启动时 sys.executable 可能指向包装器（如 *.AppImage）而非
 # 真实解释器——回退 PATH 解析，保证子进程可执行（可 VTX_TEST_PYTHON 覆盖）。

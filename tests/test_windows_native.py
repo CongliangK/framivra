@@ -197,6 +197,35 @@ class WindowsEnvironment(unittest.TestCase):
         with self.assertRaises(env.EnvironmentError):
             env.collect('cef', self.binary)
 
+    def test_telemetry_exclusion_keeps_fonts_resources_registry_and_boot_bound(self):
+        from types import SimpleNamespace
+        from vtx import gfx_environment as env
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, LOCALAPPDATA=d):
+            fonts = Path(d) / 'Microsoft/Windows/Fonts'; fonts.mkdir(parents=True)
+            font = fonts / 'fixture.ttf'; font.write_bytes(b'font A')
+            setup = self.application / 'SetupMetrics'; setup.mkdir(exist_ok=True)
+            pma = setup / '123_456.pma'; pma.write_bytes(b'metrics A')
+            before = env.collect('cdp', self.binary)
+            c = SimpleNamespace(_gfx_environment=(None, before, self.binary, None))
+            with patch.object(env, 'resolve', return_value=before):
+                pma.unlink(); setup.rmdir()
+                env.recheck(c)
+                for resource in (font, self.library):
+                    saved, content = resource.stat(), resource.read_bytes()
+                    resource.write_bytes(content[:-1] + bytes([content[-1] ^ 1]))
+                    os.utime(resource, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+                    with self.subTest(path=resource.name), self.assertRaises(env.EnvironmentError):
+                        env.recheck(c)
+                    resource.write_bytes(content)
+                original = env._windows_registry
+                with patch.object(env, '_windows_registry', side_effect=lambda root, name:
+                        dict(original(root, name), fixture='changed')):
+                    with self.assertRaises(env.EnvironmentError):
+                        env.recheck(c)
+                with patch.object(env, '_windows_boot', return_value='123'):
+                    with self.assertRaises(env.EnvironmentError):
+                        env.recheck(c)
+
 @unittest.skipUnless(os.name == 'nt', 'Windows staging and CLI failure contract')
 class WindowsCliFailures(unittest.TestCase):
     def test_nonzero_and_success_without_valid_png_are_failures(self):

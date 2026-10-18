@@ -23,6 +23,7 @@ import ctypes
 import plistlib
 import struct
 import uuid
+import stat
 
 SCHEMA = 'vtx.gfx-environment/1'
 CHROME_VISUAL_FLAGS = ('--headless', '--disable-gpu', '--hide-scrollbars',
@@ -542,7 +543,8 @@ def _collect_windows(backend, binary, mode):
     return {'schema': SCHEMA, 'status': 'input-bound', 'pixel_equivalence': 'unproven',
             'backend': backend, 'mode': mode, 'platform_resolver': 'windows-x64/1',
             'browser': _files([executable]), 'version': version,
-            'runtime': {str(executable.parent): _tree(executable.parent)},
+            'runtime': {str(executable.parent): (_windows_chrome_runtime(executable.parent)
+                        if executable.name.lower() == 'chrome.exe' else _tree(executable.parent))},
             'libraries': libraries, 'graphics_libraries': _files(drivers),
             'fonts': {'files': _files(font_paths), 'configs': {'registry': digest(registry)},
                       'tools': _files([sys.executable, _ROOT / 'gfx_environment.py']), 'libraries': libraries},
@@ -640,6 +642,54 @@ def _tree(root):
             p = Path(base) / name
             target, sha = _file(p)
             out[str(p.relative_to(root))] = [target, sha]
+    if not out:
+        raise EnvironmentError(f'empty runtime distribution: {root}')
+    return out
+
+
+def _windows_chrome_runtime(root):
+    """Bind Chrome resources, excluding only its atomic installer histograms.
+
+    Chromium ChromeMetricsServiceClient registers DIR_EXE/SetupMetrics as an
+    atomic histogram directory. FileMetricsProvider consumes/deletes its PMAs
+    (or deletes the directory when reporting is disabled); these are telemetry,
+    not renderer resources. Unknown members remain bound; links and nested
+    directories in this exceptional location are unsupported, not ignored.
+    """
+    root = Path(root).resolve(strict=True)
+    out = {}
+
+    def visit(directory, telemetry=False):
+        try:
+            entries = list(directory.iterdir())
+        except FileNotFoundError:
+            if telemetry:
+                return  # Chrome may delete this exact telemetry directory.
+            raise
+        for p in entries:
+            setup = directory == root and p.name.casefold() == 'setupmetrics'
+            pma = telemetry and p.suffix == '.pma'
+            try:
+                info = p.lstat()
+            except FileNotFoundError:
+                if setup or pma:
+                    continue
+                raise
+            reparse = bool(getattr(info, 'st_file_attributes', 0) & 0x400)
+            if (setup or telemetry) and (p.is_symlink() or reparse):
+                raise EnvironmentError('unsupported Chrome installer telemetry link')
+            if stat.S_ISDIR(info.st_mode):
+                if telemetry:
+                    raise EnvironmentError('unsupported Chrome installer telemetry subdirectory')
+                if p.is_symlink() or reparse:
+                    raise EnvironmentError('unknown Windows runtime directory link')
+                visit(p, setup)
+            elif pma and stat.S_ISREG(info.st_mode):
+                continue
+            else:
+                target, sha = _file(p)
+                out[str(p.relative_to(root))] = [target, sha]
+    visit(root)
     if not out:
         raise EnvironmentError(f'empty runtime distribution: {root}')
     return out

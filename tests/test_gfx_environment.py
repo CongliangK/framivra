@@ -12,6 +12,115 @@ from vtx import gfx_environment as env, gfx_cli, hygiene
 from tests.test_gfx_cache_integrity import png
 
 
+class ChromeInstallerTelemetry(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve() / 'Application'
+        self.root.mkdir()
+        (self.root / 'chrome.exe').write_bytes(b'browser')
+        self.setup = self.root / 'SetupMetrics'; self.setup.mkdir()
+        self.pma = self.setup / '1196_13435891563225954.pma'
+        self.pma.write_bytes(b'installer histogram')
+
+    def collect(self):
+        return env._windows_chrome_runtime(self.root)
+
+    def test_only_direct_pma_changes_are_ignored(self):
+        before = self.collect()
+        self.pma.write_bytes(b'new histogram')
+        (self.setup / 'new.pma').write_bytes(b'new')
+        self.assertEqual(before, self.collect())
+        for p in self.setup.iterdir():
+            p.unlink()
+        self.setup.rmdir()
+        self.assertEqual(before, self.collect())
+        version = self.root / '155.0.8059.40'; version.mkdir()
+        for p in (version / 'same.pma', version / 'chrome.dll', version / 'resources.pak',
+                  self.root / 'initial_preferences', self.root / 'master_preferences'):
+            with self.subTest(path=p.name):
+                p.write_bytes(b'resource A')
+                original = self.collect(); saved = p.stat()
+                p.write_bytes(b'resource B')
+                os.utime(p, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+                self.assertNotEqual(original, self.collect())
+
+    def test_unknown_members_stay_bound_and_subdirectories_fail_closed(self):
+        unknown = self.setup / 'resource.dll'; unknown.write_bytes(b'A')
+        before = self.collect()
+        unknown.write_bytes(b'B')
+        self.assertNotEqual(before, self.collect())
+        unknown.unlink()
+        (self.setup / 'nested').mkdir()
+        with self.assertRaises(env.EnvironmentError):
+            self.collect()
+
+    def test_unknown_member_disappearing_with_directory_changes_identity(self):
+        unknown = self.setup / 'resource.dll'; unknown.write_bytes(b'A')
+        before = self.collect()
+        unknown.unlink(); self.pma.unlink(); self.setup.rmdir()
+        self.assertNotEqual(before, self.collect())
+
+    def test_e2e_failure_diagnostics_survive_cp1252_parent(self):
+        import subprocess
+        import sys
+        script = Path(__file__).resolve().parent / 'run_e2e.py'
+        output = self.root / 'e2e-output'
+        code = '''import runpy,sys,subprocess
+from unittest.mock import patch
+sys.argv = [sys.argv[1], '--repo', sys.argv[2], '--output', sys.argv[3], '--ffmpeg', sys.executable, '--chrome', sys.executable]
+results = [subprocess.CompletedProcess([], n, '中文诊断\\n'.encode('utf-8'), b'') for n in (0,0,1)]
+with patch.object(subprocess, 'run', side_effect=results):
+    runpy.run_path(sys.argv[0], run_name='__main__')
+'''
+        child_env = dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='cp1252')
+        result = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code,
+            str(script), str(script.parent.parent), str(output)], env=child_env, capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('中文诊断', result.stdout.decode('utf-8'))
+        self.assertNotIn(b'UnicodeEncodeError', result.stderr)
+        self.assertFalse(json.loads((output / 'results.json').read_text(encoding='utf-8'))['pass'])
+
+    def test_reparse_telemetry_directory_and_pma_fail_closed(self):
+        original = Path.lstat
+        for target in (self.setup, self.pma):
+            def attributes(p, *args, **kwargs):
+                value = original(p, *args, **kwargs)
+                return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) if p == target else value
+            with self.subTest(path=target.name), patch.object(Path, 'lstat', attributes):
+                with self.assertRaises(env.EnvironmentError):
+                    self.collect()
+
+    def test_only_expected_deletion_races_are_tolerated(self):
+        before = self.collect()
+        original_iter, original_stat = Path.iterdir, Path.lstat
+        def removed_directory(p):
+            if p == self.setup:
+                raise FileNotFoundError(str(p))
+            return original_iter(p)
+        with patch.object(Path, 'iterdir', removed_directory):
+            self.assertEqual(before, self.collect())
+        def removed_leaf(p, *args, **kwargs):
+            if p == self.pma:
+                raise FileNotFoundError(str(p))
+            return original_stat(p, *args, **kwargs)
+        with patch.object(Path, 'lstat', removed_leaf):
+            self.assertEqual(before, self.collect())
+        unknown = self.setup / 'resource.pak'; unknown.write_bytes(b'resource')
+        def removed_unknown(p, *args, **kwargs):
+            if p == unknown:
+                raise FileNotFoundError(str(p))
+            return original_stat(p, *args, **kwargs)
+        with patch.object(Path, 'lstat', removed_unknown), self.assertRaises(FileNotFoundError):
+            self.collect()
+        def denied(p):
+            if p == self.setup:
+                raise PermissionError(str(p))
+            return original_iter(p)
+        with patch.object(Path, 'iterdir', denied), self.assertRaises(PermissionError):
+            self.collect()
+
+
 class EnvironmentContracts(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
