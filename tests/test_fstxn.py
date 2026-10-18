@@ -18,6 +18,7 @@ python3 前缀：AppImage 劫持 argv[0]，裸 python3 的 sys.executable 指向
 解释器，见全局 AGENTS.md）。
 """
 import json
+import shutil
 import os
 import subprocess
 import sys
@@ -30,6 +31,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
 from vtx import fstxn
+
+PYTHON = os.environ.get('VTX_TEST_PYTHON') or (sys.executable if not sys.executable.endswith('.AppImage') else shutil.which('python3'))
 
 # ---- 子进程 worker 脚本（-c 注入；argv[1]=repo 根，其余见各脚本）----
 # 计数器 worker：n 次「读-改-写」自增——多进程并发下的丢失更新探测器。
@@ -63,14 +66,22 @@ sys.path.insert(0, sys.argv[1])
 from vtx import fstxn
 with fstxn.locked_write(Path(sys.argv[2])) as tmp:
     tmp.write_text('{"stages": {"half": tru', encoding="utf-8")
-    os.kill(os.getpid(), signal.SIGKILL)
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        if not kernel.TerminateProcess(kernel.GetCurrentProcess(), 99):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        os.kill(os.getpid(), signal.SIGKILL)
 '''
 
 
 def _run_py(code: str, *args, timeout=120, expect_rc=0):
     """repo 约定的 env python3 前缀（见模块头）；失败时回显 stdout/stderr。
     expect_rc：预期退出码（SIGKILL worker 的 -9 也合法）。"""
-    r = subprocess.run(["env", "python3", "-X", "utf8", "-c", code, *map(str, args)],
+    r = subprocess.run([PYTHON, "-X", "utf8", "-c", code, *map(str, args)],
                        capture_output=True, text=True, cwd=str(REPO), timeout=timeout)
     if r.returncode != expect_rc:
         raise AssertionError(f"worker 退出码 {r.returncode}（预期 {expect_rc}）:"
@@ -79,7 +90,7 @@ def _run_py(code: str, *args, timeout=120, expect_rc=0):
 
 
 def _spawn(code: str, *args):
-    return subprocess.Popen(["env", "python3", "-X", "utf8", "-c", code, *map(str, args)],
+    return subprocess.Popen([PYTHON, "-X", "utf8", "-c", code, *map(str, args)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             cwd=str(REPO))
 
@@ -219,7 +230,7 @@ class CrashSafety(unittest.TestCase):
             p = Path(d) / "receipt.json"
             old = '{"input_fingerprint": "FP", "stages": {"validate": {"ok": true}}}'
             p.write_text(old, encoding="utf-8")
-            _run_py(WORKER_KILL, REPO, p, expect_rc=-9)   # 被 SIGKILL 是预期结局
+            _run_py(WORKER_KILL, REPO, p, expect_rc=99 if os.name == "nt" else -9)   # 被 SIGKILL 是预期结局
             # 旧值原样、可解析（永不截断）
             self.assertEqual(p.read_text(encoding="utf-8"), old)
             json.loads(p.read_text(encoding="utf-8"))

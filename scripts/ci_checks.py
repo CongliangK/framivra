@@ -254,7 +254,12 @@ def static_checks():
             compile(path.read_bytes(), name, 'exec')
             counts['python'] += 1
         elif path.suffix == '.sh':
-            run(['bash', '-n', str(path)])
+            bash = os.environ.get('BASH')
+            if not bash and os.name == 'nt':
+                git = shutil.which('git')
+                candidate = Path(git).resolve().parent.parent / 'bin/bash.exe' if git else None
+                bash = str(candidate) if candidate and candidate.is_file() else None
+            run([bash or shutil.which('bash') or 'bash', '-n', path.as_posix()])
             counts['bash'] += 1
         elif path.suffix in ('.js', '.mjs', '.cjs'):
             run(['node', '--check', str(path)])

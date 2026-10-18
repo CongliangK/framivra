@@ -30,7 +30,11 @@ while [ $# -gt 0 ]; do
     *) echo "未知参数: $1（用法: bash scripts/docs_smoke.sh [--verbose] [--golden <dir>]）" >&2; exit 2 ;;
   esac
 done
-export DOCS_SMOKE_ROOT="$ROOT" DOCS_SMOKE_VERBOSE="$VERBOSE" DOCS_SMOKE_GOLDEN="$GOLDEN"
+SMOKE_BASH="$BASH"
+if command -v cygpath >/dev/null 2>&1; then
+  SMOKE_BASH="$(cygpath -m "$BASH")"
+fi
+export DOCS_SMOKE_ROOT="$ROOT" DOCS_SMOKE_VERBOSE="$VERBOSE" DOCS_SMOKE_GOLDEN="$GOLDEN" DOCS_SMOKE_BASH="$SMOKE_BASH"
 env python3 - <<'PYEOF'
 import os, re, subprocess, sys
 from pathlib import Path
@@ -249,7 +253,7 @@ for (path_s, method), rec in sorted(combined.items()):
         status = "FAIL"
         results.append((status, f"{tag} 路径不存在：{rel}{suffix}"))
     elif method == "sh":
-        r = subprocess.run(["bash", "-n", str(p)], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([os.environ["DOCS_SMOKE_BASH"], "-n", p.as_posix()], capture_output=True, text=True, timeout=30)
         status = "PASS" if r.returncode == 0 else "FAIL"
         results.append((status, f"{tag} bash -n {rel}" +
                         ("" if r.returncode == 0 else f" — {r.stderr.strip()[:160]}") + suffix))

@@ -246,7 +246,7 @@ jobs:
     # 解包,非 file:// 捷径)→ 中文/空格/& 目录安装 → 新 shell(注册表重建
     # PATH)运行 vt doctor 成功门。
     # 注意:vt doctor 在 Windows 全绿依赖 doctor 面修复(PR-A1)先行合入;
-    # Windows 全测试套件适配是 #54 后续范围,本 job 只跑跨平台安装安全套件。
+    # Windows 原生内核与媒体验证由 windows-render job 承载；本 job 跑安装安全套件。
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -297,3 +297,42 @@ jobs:
             Stop-Job $job -ErrorAction SilentlyContinue
             Remove-Job $job -Force -ErrorAction SilentlyContinue
           }
+
+
+  windows-render:
+    name: Windows native render and filesystem safety
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install CPU media tools and test dependencies
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg install failed' }
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13' 'requests>=2.31,<3'
+          if ($LASTEXITCODE -ne 0) { throw 'Python dependency install failed' }
+      - name: Exercise real Windows locks, pinned cleanup and browser Job Objects
+        shell: pwsh
+        run: python -m unittest tests.test_fstxn tests.test_windows_native tests.test_gfx_environment tests.test_script_forwarders -v
+      - name: Render Chinese and special-character paths cold and warm
+        shell: pwsh
+        run: |
+          $env:VTX_TEST_PYTHON = (Get-Command python).Source
+          $ffmpeg = (Get-Command ffmpeg).Source
+          $chrome = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+          if (-not (Test-Path -LiteralPath $chrome)) { throw 'Chrome missing' }
+          python tests/run_e2e.py --repo $PWD --output "$env:RUNNER_TEMP\windows-e2e" --ffmpeg $ffmpeg --chrome $chrome
+          if ($LASTEXITCODE -ne 0) { throw 'Windows end-to-end render failed' }
+      - name: Preserve actual render checks and diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-native-render-evidence
+          path: ${{ runner.temp }}/windows-e2e
+          if-no-files-found: warn

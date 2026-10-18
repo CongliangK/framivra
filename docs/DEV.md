@@ -176,11 +176,7 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 体检当日修复清单见 commit 92609f3 / 898870e；以下为**有意未修/待外部条件**项：
 
 - **NIT 清单**（健壮性审查判 NIT，修不动代码不影响正确性）：qc.py dry 早退后 176-177 死代码、infra.py:71 恒真分支、imgen_cli.py 死变量、vtx.py render_via 字符串状态机、init.py requests 双探测、bilibili.py --retry 0 NameError、aroll/trim_takes.py 44 字节 WAV 头假定（与自家 aup3_extract 配对成立）。
-- **Windows 实机终验待办**：本仓跨平台修复（.gitattributes LF / init.py UTF-8/sys.executable / Edge x86 / conda 钩子 / heredoc cygpath / vtx Windows 三件套）均为 Linux 侧理论推演+Linux 回归，**尚无 Windows 实机验证**——首次在 Windows 落地时按下列最小清单逐项核验，重点复跑仓内 tests/run_e2e.py（VTX_TEST_PYTHON/CHROME/FFMPEG 显式指定）：
-  1. clone 后 LF 保持（.gitattributes 生效，无 CRLF 改写）；
-  2. `env python3 vt.py init` 在 UTF-8 控制台跑通（Python/ffmpeg/Chrome 三探测全绿）；
-  3. Edge x86 路径与 conda 钩子在 Windows 布局下可被探测；
-  4. `python3 tests/run_e2e.py` 全链（显式指定 VTX_TEST_PYTHON/VTX_TEST_CHROME/VTX_TEST_FFMPEG）。
+- **Windows 原生内核验收**：原生 x64 Python 与 Chrome/Edge 支持安装自检、CDP/CLI 图形、FFmpeg 全链、缓存命中及 gc/clean。图形环境指纹绑定浏览器发行目录、系统库/驱动文件、系统与用户字体及注册表、主机与启动边界；未知输入保持拒绝复用，不宣称跨机器像素等价。该保守闭包的扫描成本高于 Linux 口径。Chrome 使用 Job Object，宿主强杀时关闭句柄回收整棵浏览器树；文件事务使用 Windows 字节范围锁；删除使用拒绝写入与改名共享的祖先句柄及按句柄删除，拒绝 junction 祖先。原生安全回归与中文/空格/# 路径单双分段、冷温缓存、严格 QC、解码、黑场和真峰值门由 [Windows workflow](../.github/workflows/ci.yml) 与 [合成 E2E](../tests/run_e2e.py) 承载。Windows CEF 与模型侧车进程生命周期不由此验收，平台专用测试仍按其实际执行报告。
 - **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；apps/asr/README.md 手动路线兜底。
 - **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。
 - **cache_dependencies 未声明依赖的外链变更不触发重渲**：当前全部工程未声明，属声明式契约的已知边界（docs/cache-provenance.md 有口径）。

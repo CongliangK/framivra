@@ -242,8 +242,8 @@ class SymlinkIntegrity(unittest.TestCase):
         for name in ("denoise_voice.py", "denoise_init.sh"):
             link = REPO / "scripts" / name
             real = REPO / "plugins" / "denoise" / name
-            self.assertTrue(link.is_symlink(), f"scripts/{name} 应为 symlink")
-            self.assertEqual(link.resolve(), real.resolve())
+            self.assertFalse(link.is_symlink(), f"scripts/{name} 应为跨平台转发器")
+            self.assertIn("../plugins/denoise/" + name, link.read_text(encoding="utf-8"))
             self.assertTrue(real.is_file(), f"真身 plugins/denoise/{name} 在盘")
 
 

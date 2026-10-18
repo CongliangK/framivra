@@ -11,9 +11,10 @@ p=argparse.ArgumentParser();p.add_argument('--repo',required=True);p.add_argumen
 repo=Path(a.repo).resolve();root=Path(a.output).resolve();root.mkdir(parents=True,exist_ok=False)
 ff=Path(a.ffmpeg).resolve();env=os.environ.copy();env.update(PYTHONUTF8='1',VTX_CHROME=a.chrome,VTX_GFX_TABS='2',VTX_IO_WORKERS='2',TEMP=str(root),TMP=str(root));env['PATH']=str(ff.parent)+os.pathsep+env['PATH']
 results=[]
+cache_checks={}
 def run(cmd,log,extra=None):
     e=env.copy();e.update(extra or {});t=time.monotonic()
-    r=subprocess.run([str(x) for x in cmd],capture_output=True,env=e)
+    r=subprocess.run([str(x) for x in cmd],capture_output=True,env=e,timeout=900)
     Path(log).write_bytes(r.stdout+r.stderr)
     results.append({'step':str(Path(log).relative_to(root)),'exit':r.returncode,'seconds':round(time.monotonic()-t,3)})
     print(results[-1],flush=True);return r
@@ -33,7 +34,20 @@ for case,segments in [('parallel',2),('single',1)]:
         'audio_tracks':[{'name':'bed','events':[{'src':'a','in':0,'out':360,'loop':True,'volume':.3}]},{'name':'second','events':[{'src':'b','in':120,'out':270,'volume':.25}]}]}
     timeline=project/'timeline.json';timeline.write_text(json.dumps(tl,ensure_ascii=False,indent=2),encoding='utf-8')
     cmd=[PYTHON,'-X','utf8',repo/'vtx/vtx.py','-t',timeline]
-    run(cmd+['all'],root/(case+'-all.txt'),{'VTX_VIDEO_SEGMENTS':str(segments)})
+    initial=run(cmd+['all'],root/(case+'-all.txt'),{'VTX_VIDEO_SEGMENTS':str(segments)})
+    if initial.returncode == 0:
+        cached={str(p.relative_to(project)): (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
+                for p in (project/'cache').rglob('*')
+                if p.is_file() and p.suffix in ('.png', '.wav', '.mp4') and 'tmp' not in p.relative_to(project/'cache').parts}
+        warm=run(cmd+['all'],root/(case+'-warm.txt'),{'VTX_VIDEO_SEGMENTS':str(segments)})
+        cache_checks[case]={'files':len(cached),'unchanged':bool(cached) and all(
+            p.is_file() and (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest()) == before
+            for name,before in cached.items() for p in [project/name])}
+    else:
+        # Persist diagnostics even when the pipeline never produces final.mp4.
+        (root/'steps.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
+        (root/'results.json').write_text(json.dumps({'pass':False,'steps':results,'failed_case':case},indent=2),encoding='utf-8')
+        sys.exit(1)
     if (project/'out/final.mp4').exists():
         run(cmd+['--strict','qc'],root/(case+'-strict.txt'))
         run([ff,'-v','error','-i',project/'out/final.mp4','-f','null','-'],root/(case+'-decode.txt'))
@@ -46,12 +60,12 @@ frames=[]
 for case in ['parallel','single']:
     b=(root/(case+'-frames.rgb')).read_bytes();frames.append(np.frombuffer(b,dtype=np.uint8).reshape(-1,90,160,3))
 d=np.abs(frames[0].astype(float)-frames[1].astype(float)).mean(axis=(1,2,3))
-checks={'same_frame_count':len(d)==360,'mean_rgb_difference':float(d.mean()),'max_frame_mean_difference':float(d.max()),'largest_difference_frame':int(d.argmax()),'comparison_pass':bool(d.max()<2)}
+checks={'cache':cache_checks,'same_frame_count':len(d)==360,'mean_rgb_difference':float(d.mean()),'max_frame_mean_difference':float(d.max()),'largest_difference_frame':int(d.argmax()),'comparison_pass':bool(d.max()<2)}
 for case in ['parallel','single']:
     text=(root/(case+'-signal.txt')).read_text(errors='replace');peaks=re.findall(r'Peak:\s*(-?[\d.]+) dBFS',text)
     checks[case]={'no_black_intervals':'black_start:' not in text,'true_peak_dbfs':float(peaks[-1]) if peaks else None}
 summary={'steps':results,'checks':checks,'source_sha256':{str(p.relative_to(repo)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (repo/'vtx').glob('*.py')}}
-summary['pass']=all(r['exit']==0 for r in results) and checks['comparison_pass'] and checks['same_frame_count'] and all(checks[c]['no_black_intervals'] and checks[c]['true_peak_dbfs'] is not None and checks[c]['true_peak_dbfs']<=-1 for c in ['parallel','single'])
+summary['pass']=all(c['unchanged'] for c in cache_checks.values()) and len(cache_checks)==2 and all(r['exit']==0 for r in results) and checks['comparison_pass'] and checks['same_frame_count'] and all(checks[c]['no_black_intervals'] and checks[c]['true_peak_dbfs'] is not None and checks[c]['true_peak_dbfs']<=-1 for c in ['parallel','single'])
 (root/'results.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps(checks,indent=2))
 
 if not summary["pass"]:sys.exit(1)

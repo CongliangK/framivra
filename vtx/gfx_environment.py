@@ -416,6 +416,147 @@ def _collect_darwin(backend, binary, mode):
                 'gfx_cef.py', 'cef_client.py')])}
 
 
+def _windows_registry(root, name):
+    """Inventory names/types and hash values; never publish raw preferences."""
+    import winreg
+    result = {}
+    def visit(key, prefix):
+        children, values, _ = winreg.QueryInfoKey(key)
+        for i in range(values):
+            n, value, kind = winreg.EnumValue(key, i)
+            if isinstance(value, bytes):
+                value = value.hex()
+            result[prefix + '/' + n] = [kind, digest(value)]
+        for i in range(children):
+            child = winreg.EnumKey(key, i)
+            with winreg.OpenKey(key, child) as sub:
+                visit(sub, prefix + '/' + child)
+    try:
+        with winreg.OpenKey(root, name, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            visit(key, name)
+    except FileNotFoundError:
+        return {'absent': digest(name)}
+    return result or {'empty': digest(name)}
+
+
+def _windows_version(executable):
+    from ctypes import wintypes
+    api = ctypes.WinDLL('version', use_last_error=True)
+    api.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+    api.GetFileVersionInfoSizeW.restype = wintypes.DWORD
+    api.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+    api.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT)]
+    unused = wintypes.DWORD()
+    size = api.GetFileVersionInfoSizeW(str(executable), ctypes.byref(unused))
+    if not size:
+        raise EnvironmentError('unknown Windows renderer PE version')
+    data = ctypes.create_string_buffer(size)
+    pointer, length = ctypes.c_void_p(), wintypes.UINT()
+    if (not api.GetFileVersionInfoW(str(executable), 0, size, data)
+            or not api.VerQueryValueW(data, chr(92), ctypes.byref(pointer), ctypes.byref(length))
+            or length.value < 52):
+        raise EnvironmentError('unreadable Windows renderer PE version')
+    info = ctypes.cast(pointer, ctypes.POINTER(wintypes.DWORD))
+    if info[0] != 0xFEEF04BD:
+        raise EnvironmentError('invalid Windows renderer PE version')
+    return '.'.join(str(v) for v in (info[2] >> 16, info[2] & 65535, info[3] >> 16, info[3] & 65535))
+
+
+def _windows_boot():
+    # SystemTimeOfDayInformation begins with the boot FILETIME. Uptime-derived
+    # timestamps drift between collections and cannot identify one boot.
+    data = ctypes.create_string_buffer(48)
+    size = ctypes.c_ulong()
+    query = ctypes.WinDLL('ntdll').NtQuerySystemInformation
+    query.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+    if query(3, data, len(data), ctypes.byref(size)) != 0:
+        raise EnvironmentError('unknown Windows boot identity')
+    boot = struct.unpack_from('<q', data.raw)[0]
+    if boot <= 0:
+        raise EnvironmentError('invalid Windows boot identity')
+    return str(boot)
+
+
+def _collect_windows(backend, binary, mode):
+    import winreg
+    if (backend not in ('cdp', 'cli') or mode is not None
+            or platform.machine().upper() not in ('AMD64', 'X86_64') or struct.calcsize('P') != 8):
+        raise EnvironmentError('Windows resolver requires native x64 Chrome/Edge CDP or CLI')
+    if any(os.environ.get(k) for k in ('FONTCONFIG_FILE', 'FONTCONFIG_PATH', 'FONTCONFIG_SYSROOT',
+                                      'LD_PRELOAD', 'LD_LIBRARY_PATH', 'VK_ICD_FILENAMES', 'VK_DRIVER_FILES')):
+        raise EnvironmentError('unsupported Windows renderer environment override')
+    executable = Path(shutil.which(str(binary)) or binary).resolve(strict=True)
+    if executable.name.lower() not in ('chrome.exe', 'msedge.exe') or executable.parent.name != 'Application':
+        raise EnvironmentError('Windows resolver requires a Chrome/Edge Application distribution')
+    with executable.open('rb') as stream:
+        if stream.read(2) != b'MZ':
+            raise EnvironmentError('Windows renderer is not a native PE executable')
+        stream.seek(60)
+        offset = struct.unpack('<I', stream.read(4))[0]
+        stream.seek(offset)
+        if stream.read(6) != b'PE\0\0d\x86':
+            raise EnvironmentError('Windows renderer requires AMD64 PE architecture')
+    version = _windows_version(executable)
+    version_root = executable.parent / version
+    if not version_root.is_dir() or not (version_root / ('chrome.dll' if executable.name.lower() == 'chrome.exe' else 'msedge.dll')).is_file():
+        raise EnvironmentError('Windows renderer version/distribution mismatch')
+    windows = Path(os.environ['SystemRoot']).resolve(strict=True)
+    system = windows / 'System32'
+    # Include delay-loaded DLLs and graphics driver packages, not just imports.
+    libraries = _files(p for p in system.iterdir() if p.is_file() and p.suffix.lower() in ('.dll', '.exe', '.nls'))
+    drivers = []
+    driver_root = system / 'DriverStore/FileRepository'
+    for base, dirs, names in os.walk(driver_root, onerror=lambda e: _raise(e)):
+        if any((Path(base) / d).is_symlink() for d in dirs):
+            raise EnvironmentError('unknown Windows driver directory link')
+        drivers.extend(Path(base) / n for n in names if Path(n).suffix.lower() in ('.dll', '.sys', '.exe', '.json', '.inf'))
+    font_paths = []
+    font_roots = [windows / 'Fonts', Path(os.environ['LOCALAPPDATA']) / 'Microsoft/Windows/Fonts']
+    for root in font_roots:
+        if root.exists():
+            font_paths.extend(p for p in root.rglob('*') if p.is_file())
+    registry = {}
+    for label, root in (('machine', winreg.HKEY_LOCAL_MACHINE), ('user', winreg.HKEY_CURRENT_USER)):
+        for suffix in ('Fonts', 'FontSubstitutes', 'FontLink', 'FontMapper', 'Font Drivers'):
+            name = 'SOFTWARE/Microsoft/Windows NT/CurrentVersion/' + suffix
+            name = name.replace('/', chr(92))
+            registry[label + '/' + suffix] = _windows_registry(root, name)
+            if suffix == 'Fonts':
+                try:
+                    with winreg.OpenKey(root, name) as key:
+                        for i in range(winreg.QueryInfoKey(key)[1]):
+                            _, value, kind = winreg.EnumValue(key, i)
+                            if kind not in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) or not isinstance(value, str):
+                                raise EnvironmentError('unknown Windows font registry entry')
+                            p = Path(os.path.expandvars(value))
+                            font_paths.append(p if p.is_absolute() else windows / 'Fonts' / p)
+                except FileNotFoundError:
+                    pass
+    if not font_paths:
+        raise EnvironmentError('empty Windows font inventory')
+    for name in ('Control Panel/Desktop', 'Control Panel/Colors', 'Control Panel/International'):
+        registry[name] = _windows_registry(winreg.HKEY_CURRENT_USER, name.replace('/', chr(92)))
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 'SOFTWARE\\Microsoft\\Cryptography', 0,
+                        winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+        machine, _ = winreg.QueryValueEx(key, 'MachineGuid')
+    return {'schema': SCHEMA, 'status': 'input-bound', 'pixel_equivalence': 'unproven',
+            'backend': backend, 'mode': mode, 'platform_resolver': 'windows-x64/1',
+            'browser': _files([executable]), 'version': version,
+            'runtime': {str(executable.parent): _tree(executable.parent)},
+            'libraries': libraries, 'graphics_libraries': _files(drivers),
+            'fonts': {'files': _files(font_paths), 'configs': {'registry': digest(registry)},
+                      'tools': _files([sys.executable, _ROOT / 'gfx_environment.py']), 'libraries': libraries},
+            'registry': registry,
+            'host_boot': {'machine_guid': digest(machine), 'boot_filetime': _windows_boot()},
+            'os': list(platform.uname()), 'environment': {k: os.environ.get(k) for k in
+                sorted(set(PIXEL_ENV) | {'SystemRoot', 'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'PATH'})},
+            'launch_flags': list(CHROME_VISUAL_FLAGS),
+            'protocol': {'device_scale': 1, 'color': 'srgb', 'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
+            'python_runtime': _python_runtime(),
+            'implementation': _files([_ROOT / p for p in ('gfx_environment.py', 'gfx_backend.py',
+                'gfx_render.py', 'gfx_cli.py', 'gfx_cef.py', 'cef_client.py', 'windows_browser.py')])}
+
+
 class EnvironmentError(ValueError):
     pass
 
@@ -436,12 +577,38 @@ def _command(args):
         raise EnvironmentError(f'gfx environment unknown: {args[0]}: {e}') from e
 
 
+def _file_token(path, st):
+    token = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    if os.name == 'nt':
+        # CPython's Windows st_ctime is creation time, not inode change time.
+        # FILE_BASIC_INFO.ChangeTime invalidates memoization even when a writer
+        # restores mtime after changing same-size font/library bytes.
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.CreateFileW(str(path), 0x80, 7, None, 3, 0, None)
+        if handle == wintypes.HANDLE(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            info = ctypes.create_string_buffer(40)
+            if not kernel.GetFileInformationByHandleEx(handle, 0, info, len(info)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            token += (struct.unpack_from('<q', info.raw, 24)[0],)
+        finally:
+            kernel.CloseHandle(handle)
+    return token
+
+
 def _file(path):
     p = Path(path).resolve(strict=True)
     st = p.stat()
     if not p.is_file():
         raise EnvironmentError(f'not a regular environment input: {p}')
-    token = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    token = _file_token(p, st)
     with _lock:
         old = _hashes.get(str(p))
         if old and old[0] == token:
@@ -451,7 +618,7 @@ def _file(path):
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             h.update(block)
     after = p.stat()
-    if token != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+    if token != _file_token(p, after):
         raise EnvironmentError(f'environment input changed while hashing: {p}')
     with _lock:
         _hashes[str(p)] = token, h.hexdigest()
@@ -540,6 +707,8 @@ def collect(backend, binary, mode=None):
     observations remain separate evidence; no launch flag proves a GPU backend.
     """
     try:
+        if platform.system() == 'Windows':
+            return _collect_windows(backend, binary, mode)
         if platform.system() == 'Darwin':
             return _collect_darwin(backend, binary, mode)
         if platform.system() != 'Linux':
@@ -696,6 +865,14 @@ def verify_certificate(record):
                 or not isinstance(architecture, list) or 0x100000c not in architecture
                 or not isinstance(axes.get('dependencies'), dict) or not axes['dependencies']):
             raise EnvironmentError('incomplete Darwin gfx input environment certificate')
+    if axes.get('platform_resolver') == 'windows-x64/1':
+        host = axes.get('host_boot')
+        if (axes.get('backend') not in ('cdp', 'cli') or axes.get('mode') is not None
+                or not isinstance(host, dict) or not host.get('machine_guid')
+                or not str(host.get('boot_filetime', '')).isdigit()
+                or not isinstance(axes.get('registry'), dict) or not axes['registry']
+                or not isinstance(axes.get('graphics_libraries'), dict) or not axes['graphics_libraries']):
+            raise EnvironmentError('incomplete Windows gfx input environment certificate')
     if (axes.get('backend') not in ('cdp', 'cli', 'cef')
             or axes.get('pixel_equivalence') != 'unproven'
             or not isinstance(axes.get('fonts'), dict)

@@ -44,11 +44,11 @@ class EnvironmentContracts(unittest.TestCase):
         if len(args) == 2 and args[1] in ('--version', '--sanity'):
             return 'fixture renderer version 1'
         if args[0] == 'fc-list':
-            return str(self.font) + '\n'
+            return (self.font.as_posix().split(':', 1)[-1]) + '\n'
         if args[0] == 'fc-conflist':
             return '+ ' + str(self.config) + ': fixture\n'
         if args[0] == 'ldd':
-            return 'libfont.so => ' + str(self.lib) + ' (0x1234)\n'
+            return 'libfont.so => ' + self.lib.as_posix().split(':', 1)[-1] + ' (0x1234)\n'
         self.fail(str(args))
 
     def collect(self):

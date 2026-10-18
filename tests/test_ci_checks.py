@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,13 @@ spec.loader.exec_module(ci)
 
 def tests_of(case):
     return list(unittest.defaultTestLoader.loadTestsFromTestCase(case))
+
+BASH = shutil.which('bash') or 'bash'
+if os.name == 'nt':
+    git = shutil.which('git')
+    candidate = Path(git).resolve().parent.parent / 'bin/bash.exe' if git else None
+    if candidate and candidate.is_file():
+        BASH = str(candidate)
 
 
 class StrictMediaGate(unittest.TestCase):
@@ -630,7 +638,7 @@ class WorkflowContract(unittest.TestCase):
         })
         for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', ''), repeat=3):
             with self.subTest(values=values):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, **dict(zip(step['env'], values))),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0,
@@ -672,7 +680,7 @@ class WorkflowContract(unittest.TestCase):
         })
         for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', '', 'unknown'), repeat=2):
             with self.subTest(values=values):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, **dict(zip(step['env'], values))),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0,
@@ -681,7 +689,7 @@ class WorkflowContract(unittest.TestCase):
             environment = {key: value for key, value in os.environ.items()
                            if key not in step['env']}
             environment.update({key: 'success' for key in step['env'] if key != missing})
-            result = subprocess.run(['bash', '-e', '-c', step['run']],
+            result = subprocess.run([BASH, '-e', '-c', step['run']],
                                     env=environment, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)
 
@@ -695,7 +703,7 @@ class WorkflowContract(unittest.TestCase):
         self.assertEqual(step['env'], {'CORE_RESULT': '${{ needs.core.result }}'})
         for value in ('success', 'failure', 'cancelled', 'skipped', '', 'unknown'):
             with self.subTest(value=value):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, CORE_RESULT=value),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0, value == 'success')

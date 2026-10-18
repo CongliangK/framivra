@@ -24,6 +24,7 @@
 无需真 Chrome）。
 """
 import hashlib
+import os
 import json
 import struct
 import subprocess
@@ -442,7 +443,11 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
                 staged.insert(1, '--user-data-dir=' + profile)
                 staged.insert(2, '--no-first-run')
                 staged.insert(3, '--no-default-browser-check')
-                proc = subprocess.run(staged, capture_output=True, timeout=timeout)
+                if os.name == 'nt':
+                    from .windows_browser import run_browser
+                    proc = run_browser(staged, timeout=timeout)
+                else:
+                    proc = subprocess.run(staged, capture_output=True, timeout=timeout)
                 if proc.returncode == 0 and output.is_file():
                     tmp.write_bytes(output.read_bytes())
             if proc.returncode != 0:
