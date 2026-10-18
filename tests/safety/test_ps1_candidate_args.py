@@ -162,8 +162,14 @@ class Ps1CloneModeStructure(unittest.TestCase):
 
     def test_fetch_and_clone_invocations(self):
         self.assert_code_line(
-            ["Invoke-Git", "'fetch'", "'--depth'", "refs/heads/"],
+            ["Invoke-Git", "'fetch'", "'--depth'", "+${sourceRef}:${targetRef}"],
             "fetch 显式 refspec 的实际执行行")
+        self.assert_code_line(
+            ["$sourceRef = 'refs/heads/main'"],
+            "main 分支源引用赋值")
+        self.assert_code_line(
+            ['$sourceRef = "refs/tags/$Ref"'],
+            "冻结版本 tag 源引用赋值")
         self.assert_code_line(
             ["Invoke-Git", "'clone'", "'--depth'"],
             "全新克隆的实际执行行")

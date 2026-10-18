@@ -15,9 +15,9 @@ from pathlib import Path
 __all__ = ["main", "_stage_receipt_name", "__version__"]
 
 # 回退字面量与三源（VERSION/pyproject.toml/本文件）同值，改一必三（doc_gates
-# L6 守护）。F-03/#25：旧值 2.0.0 与 pyproject 2.0.1 漂移，wheel 布局（无根
+# L6 守护）。F-03/#25：旧值 2.0.0 与 pyproject 2.1.0 漂移，wheel 布局（无根
 # VERSION 文件）曾误报旧版本；B01 起字面量随三源同步。
-_FALLBACK_VERSION = "2.0.1"
+_FALLBACK_VERSION = "2.1.0"
 
 # 发行包名（pyproject [project].name）；wheel 安装布局经 importlib.metadata 取版本。
 # B01 红队对抗补：此常量是 ④ 查询名的运行时锚——L6 门（verify_version_sync）
