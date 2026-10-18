@@ -73,8 +73,18 @@ def main(argv=None):
         command('candidate-tag', ['git', '-c', 'user.name=Framivra acceptance', '-c', 'user.email=acceptance@example.invalid',
                 'tag', '-a', args.tag, commit, '-m', 'Private candidate acceptance; never pushed'], cwd=upstream)
     # Exercise the real standalone bootstrap on a tag, never a moving main checkout.
-    gate('isolated_install', [command('bootstrap', ['bash', ROOT / 'scripts/install.sh', '--', '--json'],
-         cwd=out, extra={'FRAMIVRA_REPO': str(upstream), 'FRAMIVRA_DIR': str(source), 'FRAMIVRA_REF': args.tag})])
+    installed = command('bootstrap', ['bash', ROOT / 'scripts/install.sh', '--', '--json'],
+         cwd=out, extra={'FRAMIVRA_REPO': str(upstream), 'FRAMIVRA_DIR': str(source), 'FRAMIVRA_REF': args.tag})
+    mount = home / '.agents/skills/video'
+    mounted = command('isolated-mount', [sys.executable, 'vt.py', '--fix-links'], extra={'VT_MOUNT_ROOT': str(mount)})
+    mount_script = ('import json,sys; from pathlib import Path; m=Path(sys.argv[1]); r=Path(sys.argv[2]); '
+       'expected={"SKILL.md":"docs/skill/SKILL.md","assets":"docs/skill/assets","references":"docs/skill/references",'
+       '"vtx":"vtx","scripts":"scripts","templates":"templates"}; '
+       'rows={n:{"target":str((m/n).resolve()),"ok":(m/n).is_symlink() and (m/n).resolve()==(r/p).resolve()} for n,p in expected.items()}; '
+       'print(json.dumps({"links":rows,"bad":sum(not x["ok"] for x in rows.values())})); '
+       'sys.exit(0 if all(x["ok"] for x in rows.values()) else 1)')
+    checked = command('isolated-mount-check', [sys.executable, '-c', mount_script, mount, source])
+    gate('isolated_install', [installed, mounted, checked])
     project = out / 'standard-demo'
     command('demo-prepare', [sys.executable, 'scripts/demo.py', 'prepare', '--profile', 'standard', '--output', project])
     command('demo-input-verify', [sys.executable, 'scripts/demo.py', 'verify', '--project', project, '--pixels'])
@@ -89,10 +99,11 @@ def main(argv=None):
     baseline_cache = cache_snapshot()
     html = project / 'gfx/canvas.html'; html_original = html.read_bytes()
     html.write_text(html.read_text().replace('rgba(255,255,255,0.15)', 'rgba(80,180,255,0.25)'))
+    edit_gfx = command('edit-gfx', prefix + ['gfx'])
     edit_preview = command('edit-preview', prefix + ['video', '--draft', '--range', '30f', '90f'])
     modified = json.loads(original); modified['subtitles'][0]['text'] = 'Stable source local edit / 局部修改'
     timeline.write_text(json.dumps(modified, ensure_ascii=False, indent=2) + '\n')
-    edit_rows = [edit_preview, command('edit-all', prefix + ['all']), command('edit-qc', prefix + ['qc', '--strict'])]
+    edit_rows = [edit_gfx, edit_preview, command('edit-all', prefix + ['all']), command('edit-qc', prefix + ['qc', '--strict'])]
     edit_cache = cache_snapshot()
     reused = [p for p in baseline_cache if p in edit_cache and baseline_cache[p] == edit_cache[p]]
     created = sorted(set(edit_cache) - set(baseline_cache))

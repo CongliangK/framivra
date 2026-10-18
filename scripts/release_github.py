@@ -298,6 +298,40 @@ def verify_freeze_evidence(path, commit, tag, assets):
     return data
 
 
+def build_public_summary(evidence, work):
+    """Only fixed public fields; never copy logs, paths, accounts or environment.
+
+    The complete acceptance package remains local. This summary is not a public
+    replay bundle and does not upgrade unknown visual/platform qualifications.
+    """
+    from vtx.acceptance import read_json, relative, regular
+    evidence = regular(evidence)
+    data = read_json(evidence)
+    package = evidence.parent / relative(data['acceptance']['path'])
+    env = read_json(package / 'environment.json')
+    versions = {'python': env['python']}
+    for tool in ('ffmpeg', 'ffprobe'):
+        text = env['tools'][tool]['stdout']
+        match = re.match(tool + r' version ([0-9][0-9A-Za-z._+~-]*)', text)
+        if not match:
+            raise ReleaseError('cannot form safe public tool version: ' + tool)
+        versions[tool] = match[1]
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', versions['python']):
+        raise ReleaseError('invalid public Python version')
+    summary = {'schema': 'framivra.public-freeze-summary/1', 'version': data['tag'][1:],
+       'tag': data['tag'], 'source_commit': data['commit'], 'core_asset_sha256': data['assets'],
+       'gates': {name: data['gates'][name]['status'] for name in sorted(REQUIRED_FREEZE_GATES)},
+       'tool_versions': versions, 'support_scope': ['Linux', 'CPU encoding', 'CDP', 'public standard-demo', 'kernel CLI'],
+       'limitations': ['Full acceptance package and raw logs retained locally; summary is not a replay bundle',
+           'Visual content remains unknown; no human audiovisual approval claimed',
+           'macOS, Windows, CEF, Electron, GPU and optional model applications are unqualified',
+           'License integrity is not comprehensive legal clearance; optional provenance warnings remain'],
+       'local_freeze_sha256': digest(evidence), 'reproduction_guide': 'docs/releases.md'}
+    path = work / 'public-freeze-summary.json'
+    path.write_text(json.dumps(summary, sort_keys=True, indent=2) + '\n')
+    return path
+
+
 def publish(root, tag, repository=None, *, dry_run=False, phase='publish', evidence=None):
     root = Path(root).resolve()
     repository, commit = check_source(root, tag, repository)
@@ -311,6 +345,9 @@ def publish(root, tag, repository=None, *, dry_run=False, phase='publish', evide
         work = Path(folder)
         paths = build_assets(root, tag, commit, work)
         verify_freeze_evidence(evidence, commit, tag, paths)
+        summary = build_public_summary(evidence, work)
+        if summary is not None:
+            paths.append(summary)
         expected = {'tag': tag, 'names': {p.name for p in paths}}
         release = find_release(repository, tag, allow_missing=True)
         if release is None:

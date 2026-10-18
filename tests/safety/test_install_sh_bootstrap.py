@@ -223,6 +223,16 @@ class InstallShBootstrap(SandboxCase):
         self.assertEqual(self.marker(), expected)
         self.assertFalse((self.clone_dir / "new.txt").exists())
 
+    def test_default_stable_resolves_public_release_instead_of_main(self):
+        self.git("tag", "-a", "v2.1.0", "-m", "stable")
+        stable = self.git_out("rev-parse", "HEAD")
+        self.upstream_commit("development-only", {"new.txt": b"main only"})
+        shim = self.root / 'python-shim'; shim.mkdir()
+        (shim / 'sitecustomize.py').write_text("import io,urllib.request\nurllib.request.urlopen=lambda *a,**k: io.BytesIO(b'{\"tag_name\":\"v2.1.0\",\"draft\":false,\"prerelease\":false}')\n")
+        self.assert_ok(self.bootstrap(FRAMIVRA_REF='stable', PYTHONPATH=str(shim)))
+        self.assertEqual(self.marker(), stable)
+        self.assertFalse((self.clone_dir / 'new.txt').exists())
+
     def test_lightweight_release_tag_is_rejected(self):
         self.git("tag", "v2.1.0")
         result = self.bootstrap(FRAMIVRA_REF="v2.1.0")

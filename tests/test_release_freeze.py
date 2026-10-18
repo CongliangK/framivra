@@ -63,6 +63,21 @@ class FreezeTests(unittest.TestCase):
             result['gates']['qc']['status'] = 'unknown'
             with self.assertRaisesRegex(release.ReleaseError, 'qc'): self.verify()
 
+    def test_public_summary_never_copies_environment_paths_or_logs(self):
+        package = self.root / 'package'; package.mkdir()
+        (package / 'environment.json').write_text(json.dumps({'python': '3.13.5',
+           'tools': {name: {'stdout': name + ' version 8.1.3 Copyright build secret-private'} for name in ('ffmpeg', 'ffprobe')},
+           'account': 'secret-private', 'HOME': '/private/user', 'logs': 'secret-private'}))
+        self.path.write_text(json.dumps(self.data))
+        summary_path = release.build_public_summary(self.path, self.root)
+        raw = summary_path.read_text()
+        self.assertNotIn('secret-private', raw)
+        self.assertNotIn('/private/user', raw)
+        summary = json.loads(raw)
+        self.assertEqual(summary['tool_versions'], {'python': '3.13.5', 'ffmpeg': '8.1.3', 'ffprobe': '8.1.3'})
+        self.assertEqual(set(summary), {'schema', 'version', 'tag', 'source_commit', 'core_asset_sha256', 'gates',
+           'tool_versions', 'support_scope', 'limitations', 'local_freeze_sha256', 'reproduction_guide'})
+
     def test_rc_accepted_but_unsupported_tag_rejected(self):
         self.assertEqual(release.tag_argument('v2.1.0-rc.1'), 'v2.1.0-rc.1')
         for tag in ('2.1.0', 'v2.1.0-rc.0', 'main'):

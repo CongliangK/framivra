@@ -102,7 +102,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/assets" && cd "$RUNNER_TEMP/assets"
           gh release download "$TAG" --repo CongliangK/framivra \
             --pattern 'SHA256SUMS' --pattern "video-tools-*.tar.gz" \
-            --pattern 'install.sh' --pattern 'releases.json' || {
+            --pattern 'install.sh' --pattern 'releases.json' --pattern 'public-freeze-summary.json' || {
               echo "release assets not found (no release authorized yet?)"; exit 2; }
       - uses: actions/attest-build-provenance@9d57eef8c06cd9d6b433effeeb7a6a77b3ff94ad # v4.2.2
         with:
