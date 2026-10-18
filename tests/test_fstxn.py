@@ -82,7 +82,7 @@ def _run_py(code: str, *args, timeout=120, expect_rc=0):
     """repo 约定的 env python3 前缀（见模块头）；失败时回显 stdout/stderr。
     expect_rc：预期退出码（SIGKILL worker 的 -9 也合法）。"""
     r = subprocess.run([PYTHON, "-X", "utf8", "-c", code, *map(str, args)],
-                       capture_output=True, text=True, cwd=str(REPO), timeout=timeout)
+                       capture_output=True, text=True, encoding="utf-8", cwd=str(REPO), timeout=timeout)
     if r.returncode != expect_rc:
         raise AssertionError(f"worker 退出码 {r.returncode}（预期 {expect_rc}）:"
                              f"\n{r.stdout}\n{r.stderr}")
@@ -114,7 +114,7 @@ class LockedWriteBasics(unittest.TestCase):
                 # The public handle pins the already-open inode, not a path
                 # that an attacker could exchange before its second open.
                 actual = tmp.resolve()
-                self.assertEqual(actual.parent, p.parent)
+                self.assertTrue(actual.parent.samefile(p.parent))
                 self.assertTrue(actual.name.startswith(".state.json."))
                 self.assertTrue(actual.name.endswith(".tmp"))
                 self.assertEqual(tmp.stat().st_ino, actual.stat().st_ino)

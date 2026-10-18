@@ -34,8 +34,10 @@ class EnvironmentContracts(unittest.TestCase):
             patch.object(env, '_command', side_effect=self.command),
             patch.object(env, '_python_runtime', return_value={'fixture': True}),
             patch.object(env, '_files', side_effect=lambda paths: original_files(
-                [self.lib if str(p) in ('/etc/machine-id', '/proc/sys/kernel/random/boot_id',
-                                        '/etc/ld.so.cache') else p for p in paths]))]
+                [{'/fixture/font.ttf': self.font, '/fixture/libfont.so': self.lib,
+                  '/fixture/fonts.conf': self.config, '/etc/machine-id': self.lib,
+                  '/proc/sys/kernel/random/boot_id': self.lib, '/etc/ld.so.cache': self.lib}.get(str(p), p)
+                 for p in paths]))]
 
         for p in self.patches:
             p.start(); self.addCleanup(p.stop)
@@ -44,11 +46,11 @@ class EnvironmentContracts(unittest.TestCase):
         if len(args) == 2 and args[1] in ('--version', '--sanity'):
             return 'fixture renderer version 1'
         if args[0] == 'fc-list':
-            return (self.font.as_posix().split(':', 1)[-1]) + '\n'
+            return '/fixture/font.ttf\n'
         if args[0] == 'fc-conflist':
-            return '+ ' + str(self.config) + ': fixture\n'
+            return '+ /fixture/fonts.conf: fixture\n'
         if args[0] == 'ldd':
-            return 'libfont.so => ' + self.lib.as_posix().split(':', 1)[-1] + ' (0x1234)\n'
+            return 'libfont.so => /fixture/libfont.so (0x1234)\n'
         self.fail(str(args))
 
     def collect(self):
@@ -64,6 +66,27 @@ class EnvironmentContracts(unittest.TestCase):
             self.assertNotEqual(env.digest(a), env.digest(self.collect()), str(path))
             path.write_bytes(original)
         self.assertEqual(a, self.collect())
+
+    def test_linux_inventory_preserves_cross_drive_native_font_path(self):
+        # The Linux protocol inventory is independent of the host filesystem.
+        # Simulate the hosted runner's D: font while hashing real temp bytes;
+        # no drive mapping or system configuration is created by this fixture.
+        physical_font = self.font
+        self.font = Path('D:/renderer-fixture/font.ttf')
+        original_file, observed = env._file, []
+        def hash_input(path):
+            if str(path) == str(self.font):
+                observed.append(str(path))
+                return original_file(physical_font)
+            return original_file(path)
+        with patch.object(env, '_file', side_effect=hash_input):
+            before = self.collect()
+            st = physical_font.stat()
+            physical_font.write_bytes(b'font B')
+            os.utime(physical_font, ns=(st.st_atime_ns, st.st_mtime_ns))
+            self.assertNotEqual(env.digest(before), env.digest(self.collect()))
+        self.assertTrue(observed)
+        self.assertTrue(all(path.startswith('D:') for path in observed))
 
     def test_new_distribution_member_and_visual_flags_invalidate(self):
         a = self.collect()
@@ -217,7 +240,7 @@ class ArchivedEnvironmentEvidence(unittest.TestCase):
         import hashlib
         from PIL import Image
         root = Path(__file__).parent / 'fixtures/gfx-environment'
-        report = json.loads((root / 'acceptance-2026-10-18.json').read_text())
+        report = json.loads((root / 'acceptance-2026-10-18.json').read_text(encoding='utf-8'))
         self.assertTrue(report['passed'])
         self.assertTrue(report['cef_runtime_negative']['worker_unchanged'])
         self.assertNotEqual(report['cef_runtime_negative']['library_before'],

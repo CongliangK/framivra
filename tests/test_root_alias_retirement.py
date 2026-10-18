@@ -26,7 +26,7 @@ class RootLayout(unittest.TestCase):
                 self.assertFalse(os.path.lexists(REPO / name), name)
                 self.assertTrue((REPO / "apps" / app / "app.json").is_file())
 
-    def test_independent_script_forwarders_remain_readable(self):
+    def test_independent_script_links_remain_readable(self):
         for name, target in (("bed_static_duck.py", "plugins/duck-static/bed_static_duck.py"),
                              ("content_gates.py", "apps/gates/content_gates.py")):
             entry = REPO / "scripts" / name

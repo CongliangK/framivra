@@ -607,7 +607,8 @@ class SupervisionDegradationTests(_ProjectFixture):
         fake_proc.poll.return_value = None
         fake_tab = {"webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/abc"}
         err = io.StringIO()
-        with mock.patch.object(proc_supervisor, '_HAS_PROC', False), \
+        with mock.patch.object(gfx_render.sys, 'platform', 'linux'), \
+                mock.patch.object(proc_supervisor, '_HAS_PROC', False), \
                 mock.patch.object(proc_supervisor, '_DARWIN_PROC', None), \
                 mock.patch.object(gfx_render, '_SUPERVISION_WARNED', False), \
                 mock.patch.object(gfx_render.Browser, '_find_chrome',
@@ -635,8 +636,9 @@ class SupervisionDegradationTests(_ProjectFixture):
             self.assertIn('监管不可用', err.getvalue(), '须显式 stderr 告警')
             b.hard_restart()               # 重起不刷屏：一次性告警
             self.assertEqual(err.getvalue().count('监管不可用'), 1)
+            owned_profile = Path(b.user_data_dir)
             b.stop()
-            self.assertFalse(Path(b.user_data_dir).exists(),
+            self.assertFalse(owned_profile.exists(),
                              '无监管路径收尾清理临时 Profile')
 
 
