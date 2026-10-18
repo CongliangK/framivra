@@ -31,6 +31,7 @@ MEDIA_TESTS = {
         'tests.test_frame_source',
         'tests.test_png_format_stability.TestStableSource.test_independent_ffmpeg_rgba_pixels_and_pts',
         'tests.test_png_pts_precision.TestPngTiming.test_real_n1_first_interior_tail_and_repeat_are_timeline_correct',
+        'tests.test_png_pts_precision.TestPngTiming.test_real_n1_multilayer_alpha_positions_and_packet_pts',
         'tests.test_png_pts_precision.TestPngTiming.test_negative_relative_seek_uses_current_then_next_source_frame',
         'tests.test_post_loudness',
         'tests.test_mux_history',

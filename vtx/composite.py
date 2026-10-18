@@ -276,6 +276,9 @@ class RenderPlan:
         # 非确定性主因未除，最终机制与修复口径以本函数 pad 注释的最新修订为准。
         c, draft, f = self.c, self.draft, self.f
         W, H, nframes = self.W, self.H, self.nframes
+        # Only full single-graph PNG layers use the timeline-frame clock below.
+        # Segments, range/seek and truncated drafts retain their existing policy.
+        n1_png = b is None and a == 0 and not (draft and nframes)
         b = c.dur if b is None else b
         seglen = b - a
         if sub_file is None:
@@ -291,7 +294,8 @@ class RenderPlan:
             cmd += self._layer_input_args(L, a, topts)
         parts = ["[0:v]format=yuv420p[cv]"]; cur = "cv"
         for k, L in enumerate(layers_subset):
-            slave, ov, cur = self._layer_chain(L, k, cur, a, seglen, idx=k + 1)
+            slave, ov, cur = self._layer_chain(L, k, cur, a, seglen, idx=k + 1,
+                                             n1_png=n1_png)
             parts += [slave, ov]
         if with_subs:
             parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
@@ -350,8 +354,12 @@ class RenderPlan:
         ss = ["-ss", f"{max(0, -rel_in) / c.fps:.6f}"] if rel_in < 0 else []
         return [*ss, *topts, "-i", str(L["seg"])]
 
-    def _layer_chain(self, L, k, cur, a, seglen, idx):
+    def _layer_chain(self, L, k, cur, a, seglen, idx, *, n1_png=False):
         """单层次输入滤镜段与 overlay 段。返回 (slave_part, overlay_part, out_label)。
+
+        The full N1 PNG path explicitly opts into integer-tick sampling and
+        the documented half-open timeline window. The compatibility policy
+        below remains unchanged for all other callers and non-PNG layers.
 
         enable 界值（2026-09-10 定稿，确定性取舍，不依赖浮点量化运气）：旧全片
         graph 的 t1 = %.6f(dst_out·spf)，dst_out 帧是否显示取决于量化方向——
@@ -407,9 +415,23 @@ class RenderPlan:
         shrink = f"scale=trunc(iw*{f}/2)*2:trunc(ih*{f}/2)*2," if draft else ""
         # image2 uses TB=1/fps. setpts truncates fractional ticks, so the
         # half-frame lead above otherwise selects PNG n+1 at timeline frame n.
-        # Represent that lead exactly; keep non-PNG streams and enable/EOF
-        # policy unchanged. Output CFR remains the project's original fps.
+        # Preserve the legacy default for other callers; the full N1 PNG
+        # override below also fixes exact ticks and its visibility window.
         timing = f"settb=1/{2 * c.fps}," if L["gfx"] else ""
+        if n1_png and L["gfx"]:
+            # PNG TB is 1/(2*fps): exact integer ticks avoid double division
+            # truncating the half-frame lead (e.g. dst=63). Padding stays intact.
+            ticks = 2 * int(eff) - 3 * head
+            slave = f"[{idx}:v]{shrink}{pad}{timing}setpts=PTS+{ticks}[L{k}T]"
+            # FFmpeg 6 updates generic enable from secondary lookahead too.
+            # Overlay's own t is the main-frame time. Put both boundaries halfway
+            # between frame centers: dst <= frame < dst+dur, including one-frame
+            # clips. NAN hides this layer without changing its position or alpha.
+            lo, t1 = (rel_in - 0.5) * c.spf, (rel_out - 0.5) * c.spf
+            ov = (f"[{cur}][L{k}T]overlay=x='if(between(t,{lo:.6f},{t1:.6f}),"
+                  f"{int(L['x'] * f)},NAN)':y={int(L['y'] * f)}:format=auto:"
+                  f"eof_action=repeat[L{k}]")
+            return slave, ov, f"L{k}"
         slave = f"[{idx}:v]{shrink}{pad}{timing}setpts=PTS+{shift}/{c.fps}/TB[L{k}T]"
         ov = (f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
               f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")

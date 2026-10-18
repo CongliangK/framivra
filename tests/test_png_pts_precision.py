@@ -1,11 +1,9 @@
-"""Half-frame lead must not truncate to a whole-frame PNG sampling error."""
+"""Full N1 PNG sampling follows integer frames and half-open clip windows."""
 import contextlib
 import io
 import json
 import hashlib
 import os
-import re
-import time
 import subprocess
 import tempfile
 import unittest
@@ -20,121 +18,35 @@ from vtx.frame_source import PngSequence
 from tests.test_png_format_stability import png
 
 
-def _timing_failure_matrix(root, budget=30.0):
-    """Bounded failure-only diagnostics; observations never replace the oracle."""
-    root.mkdir()
-    deadline = time.monotonic() + budget
-    env = {k: v for k, v in os.environ.items() if k != 'FFREPORT'}
-    cases = ([(d, 12, 0) for d in (0, 1, 2, 18, 330)]
-             + [(d, 1, 0) for d in (0, 1, 18)] + [(18, 12, 20), (18, 12, 16)])
-    variants = ('current-half', 'parent-whole-tb', 'integer-clone', 'integer-transparent',
-                'main-t-x-gating')
-    completed = 0
-    timeouts = 0
-    print('PNG_TIMING_DIAGNOSTIC_BEGIN ' + json.dumps(
-        dict(budget_seconds=budget, subprocess_timeout_seconds=3, attempts_per_case=2,
-             cases=cases, variants=variants)), flush=True)
-    for dst, n, a in cases:
-        if time.monotonic() >= deadline:
-            break
-        source = root / f'dst{dst}-n{n}-a{a}'
-        source.mkdir()
-        inputs = []
-        for i in range(n):
-            row = bytes(((i+1)*16, 32, 64, 255))*32
-            data = png([row]*16, 32, 4)
-            name = f'f{i:04d}.png'
-            (source/name).write_bytes(data)
-            inputs.append(dict(name=name, source_id=i+1, sha256=hashlib.sha256(data).hexdigest()))
-        print('PNG_TIMING_DIAGNOSTIC_INPUT ' + json.dumps(
-            dict(case=[dst, n, a], frames=inputs)), flush=True)
-        total = dst+n+4
-        c = SimpleNamespace(fps=30, spf=1/30, dur=total, w=32, h=16,
-                            dry=False, cache=root, gpu=False)
-        layer = dict(cl={'dst_in': dst, 'dur': n}, gfx=True,
-                     source=PngSequence(source, source.name, n, 30, 32, 16), x=0, y=0)
-        plan = RenderPlan(c=c, draft=False, f=1, W=32, H=16, nseg=1, layers=[layer])
-        commands = []
-        c.run = lambda cmd: commands.append(cmd)
-        plan.composite([layer], root/'unused.mp4', False, a=a)
-        command = commands[0]
-        graph = command[command.index('-filter_complex')+1]
-        rel = dst-a
-        eff = max(rel, 0)
-        head = int(eff > 0)
-        stop = max(1, total-dst-n+2)
-        m = ((dst+n)*10**6) % 30
-        endpoint = ((rel+n+(0.25 if m == 0 or 2*m > 30 else -0.5))/30
-                    if a else (dst+n)/30)
-        end = Fraction(f'{endpoint:.6f}')
-        expected = [min(frame-rel, n-1)+1
-                    if frame >= max(rel, 0) and Fraction(frame, 30) <= end else 0
-                    for frame in range(total-a)]
-        for variant in variants:
-            alternate = graph
-            if variant == 'parent-whole-tb':
-                alternate = graph.replace('settb=1/60,', '')
-            elif variant.startswith('integer-'):
-                # Force actual alpha before an added transparent head, including
-                # uniform RGB PNG inputs. All variants retain the same endpoint.
-                start = (f'start={head}:start_mode='
-                         + ('add:color=black@0:' if variant.endswith('transparent') else 'clone:')) if head else ''
-                slave = (f'[1:v]format=rgba,settb=1/30,tpad={start}stop={stop}:stop_mode=clone,'
-                         f'setpts=PTS+{eff-head}[L0T]')
-                alternate = re.sub(r'\[1:v\].*?\[L0T\]', slave, graph, count=1)
-            elif variant == 'main-t-x-gating':
-                window = re.search(r"enable='([^']+)'", graph).group(1)
-                alternate = graph.replace('overlay=0:0:', f"overlay=x='if({window},0,NAN)':y=0:")
-                alternate = alternate.replace(f"enable='{window}':", '')
-            # showinfo is observational and reports graph PTS before output CFR.
-            alternate = alternate.replace('[L0]null[vout]', '[L0]showinfo@timing[vout]')
-            argv = command[:command.index('-c:v')]
-            argv[argv.index('-v')+1] = 'info'
-            argv[argv.index('-filter_complex')+1] = alternate
-            argv += ['-c:v', 'rawvideo', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-']
-            for attempt in range(2):
-                remaining = deadline-time.monotonic()
-                if remaining <= 0:
-                    print('PNG_TIMING_DIAGNOSTIC_END ' + json.dumps(
-                        dict(completed=completed, timeouts=timeouts, status='budget-exhausted')), flush=True)
-                    return
-                record = dict(case=[dst, n, a], variant=variant, attempt=attempt)
-                if attempt == 0:
-                    record['argv'] = argv
-                try:
-                    result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            cwd=root, env=env, timeout=min(3.0, remaining))
-                    raw = result.stdout
-                    observed = [round(raw[k]/16) for k in range(0, len(raw), 32*16*3)]
-                    stderr = result.stderr.decode('utf-8', 'replace')
-                    tb = re.search(r'showinfo@timing[^\n]*config in time_base: (\d+)/(\d+)', stderr)
-                    pts = [int(x) for x in re.findall(
-                        r'showinfo@timing[^\n]*n:\s*\d+\s+pts:\s*(-?\d+)', stderr)]
-                    timebase = Fraction(int(tb[1]), int(tb[2])) if tb else None
-                    grid = (timebase is not None and len(pts) >= total-a and
-                            all(p*timebase == Fraction(i, 30) for i, p in enumerate(pts[:total-a])))
-                    wrong = [(i, wanted, observed[i] if i < len(observed) else None)
-                             for i, wanted in enumerate(expected)
-                             if i >= len(observed) or observed[i] != wanted]
-                    record.update(exit=result.returncode, bytes=len(raw), frames=len(observed),
-                                  expected_frames=total-a, wrong_count=len(wrong), first_wrong=wrong[:8],
-                                  sha256=hashlib.sha256(raw).hexdigest(), observed_ids=observed, expected_ids=expected,
-                                  graph_time_base=str(timebase), graph_pts=pts, graph_pts_on_grid=grid)
-                    if result.returncode:
-                        record['stderr_tail'] = result.stderr[-2000:].decode('utf-8', 'replace')
-                except subprocess.TimeoutExpired:
-                    timeouts += 1
-                    record['status'] = 'subprocess-timeout'
-                completed += 1
-                print('PNG_TIMING_DIAGNOSTIC_ATTEMPT ' + json.dumps(record), flush=True)
-    print('PNG_TIMING_DIAGNOSTIC_END ' + json.dumps(
-        dict(completed=completed, timeouts=timeouts,
-             status=('budget-exhausted' if completed < len(cases)*len(variants)*2
-                     else 'incomplete-timeouts' if timeouts else 'complete'))), flush=True)
-
-
 class TestPngTiming(unittest.TestCase):
+    def _assert_full_n1_scope(self):
+        # The explicit call shape, not nseg alone, controls the new PNG policy.
+        # This same fast contract runs inside the selected real N1 regression.
+        for a,b,draft,nframes,wanted in ((0,None,False,None,True),
+                (0,40,False,None,False),(20,None,False,None,False),
+                (0,None,True,10,False),(0,None,True,None,True)):
+            c=SimpleNamespace(fps=30,spf=1/30,dur=40,w=32,h=16,dry=True,
+                              cache=Path('.'),gpu=False)
+            layer=dict(cl={'dst_in':18,'dur':12},gfx=True,x=3,y=-2,
+                       source=PngSequence(Path('.'),'fixture',12,30,32,16))
+            plan=RenderPlan(c=c,draft=draft,f=.5 if draft else 1,W=32,H=16,
+                            nframes=nframes,nseg=1,layers=[layer])
+            commands=[];c.run=lambda cmd:commands.append(cmd)
+            plan.composite([layer],Path('unused.mp4'),False,a=a,b=b)
+            graph=commands[0][commands[0].index('-filter_complex')+1]
+            self.assertEqual('overlay=x=' in graph,wanted,(a,b,draft,nframes))
+            self.assertEqual("enable='" in graph,not wanted)
+        # Non-PNG callers are byte-identical even if their graph opts in.
+        layer=dict(cl={'dst_in':18,'dur':12},gfx=False,x=3,y=-2)
+        self.assertEqual(plan._layer_chain(layer,0,'cv',0,40,1),
+                         plan._layer_chain(layer,0,'cv',0,40,1,n1_png=True))
+        # A two-layer segment still routes to passes, never the N1 clock.
+        with mock.patch.object(plan,'_composite_passes',return_value='pass') as passes:
+            self.assertEqual(plan.composite([layer,layer],Path('unused.mp4'),False,b=40),'pass')
+            passes.assert_called_once()
+
     def test_only_png_input_timebase_changes(self):
+        self._assert_full_n1_scope()
         c=SimpleNamespace(fps=30,spf=1/30)
         plan=RenderPlan(c=c,draft=False,f=1,W=32,H=16)
         base=dict(cl={'dst_in':18,'dur':12},x=0,y=0)
@@ -160,13 +72,18 @@ class TestPngTiming(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'),'set VTX_TEST_FFMPEG')
     def test_real_n1_first_interior_tail_and_repeat_are_timeline_correct(self):
+        self._assert_full_n1_scope()
         # Full N1, never range or passes. Direct frame-number oracle is derived
         # from dst, not from the old graph or comparison between two wrong runs.
         with tempfile.TemporaryDirectory() as td, \
              mock.patch.dict(os.environ,{'VTX_FILTER_THREADS':'1','VTX_NO_NVENC':'1'}):
             root=Path(td)
-            for dst,n in [(d,12) for d in (0,1,2,18,330)]+[(d,1) for d in (0,1,18)]:
-                source=root/f'dst{dst}-n{n}';source.mkdir()
+            cases=[(d,12,False) for d in (0,1,2,9,18,63,124,125,330)]
+            cases += [(d,1,False) for d in (0,1,18)]+[(63,12,True)]
+            for dst,n,draft in cases:
+                W,H=(16,8) if draft else (32,16)
+                frame_bytes=W*H*3
+                source=root/f'dst{dst}-n{n}-draft{draft}';source.mkdir()
                 for i in range(n):
                     row=bytes(((i+1)*16,32,64,255))*32
                     (source/f'f{i:04d}.png').write_bytes(png([row]*16,32,4))
@@ -174,7 +91,7 @@ class TestPngTiming(unittest.TestCase):
                 c=SimpleNamespace(fps=30,spf=1/30,dur=total,w=32,h=16,dry=False,cache=root,gpu=False)
                 layer=dict(cl={'dst_in':dst,'dur':n},gfx=True,
                            source=PngSequence(source,source.name,n,30,32,16),x=0,y=0)
-                plan=RenderPlan(c=c,draft=False,f=1,W=32,H=16,nseg=1,layers=[layer])
+                plan=RenderPlan(c=c,draft=draft,f=.5 if draft else 1,W=W,H=H,nseg=1,layers=[layer])
                 commands=[];c.run=lambda cmd:commands.append(cmd)
                 plan.composite([layer],root/'unused.mp4',False)
                 cmd=commands[0]
@@ -182,26 +99,94 @@ class TestPngTiming(unittest.TestCase):
                 for attempt in range(3):
                     argv=cmd[:cmd.index('-c:v')]+['-c:v','rawvideo','-pix_fmt','rgb24','-f','rawvideo','-']
                     raw=subprocess.check_output(argv,stderr=subprocess.PIPE,timeout=15)
-                    self.assertEqual(len(raw),total*32*16*3)
+                    self.assertEqual(len(raw),total*frame_bytes)
                     hashes.append(hashlib.sha256(raw).hexdigest())
                     for frame in range(total):
-                        # Preserve the pre-existing six-decimal enable endpoint:
-                        # the task fixes selection, not inclusive-end policy.
-                        active=frame>=dst and Fraction(frame,30)<=Fraction(f'{(dst+n)/30:.6f}')
-                        expected=min(frame-dst,n-1)+1 if active else 0
-                        observed=round(raw[frame*32*16*3]/16)
-                        try:
-                            self.assertEqual(observed,expected,(dst,n,attempt,frame))
-                        except AssertionError:
-                            try:
-                                _timing_failure_matrix(root/'timing-diagnostics')
-                            except Exception as diagnostic_error:
-                                try:
-                                    print('PNG_TIMING_DIAGNOSTIC_ERROR ' + repr(diagnostic_error), flush=True)
-                                except Exception:
-                                    pass  # Best-effort logging must not replace the oracle failure.
-                            raise  # Preserve the exact original oracle failure.
+                        # Documented [dst,dst+dur), not the old six-decimal
+                        # inclusive endpoint that repeated the last PNG.
+                        active=dst <= frame < dst+n
+                        expected=frame-dst+1 if active else 0
+                        observed=round(raw[frame*frame_bytes]/16)
+                        self.assertEqual(observed,expected,(dst,n,attempt,frame))
+                        pixel=bytes((expected*16,32,64)) if active else bytes(3)
+                        self.assertTrue(raw[frame*frame_bytes:(frame+1)*frame_bytes] == pixel*(W*H),
+                                        (dst,n,attempt,frame,'full-frame pixels'))
                 self.assertEqual(len(set(hashes)),1)
+
+    @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'),'set VTX_TEST_FFMPEG')
+    def test_real_n1_multilayer_alpha_positions_and_packet_pts(self):
+        # Independent RGB source-over oracle, including invisible hidden RGB,
+        # cropped negative coordinates, overlap, and mixed opaque RGB/RGBA PNG.
+        W,H,total=32,16,16
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.dict(os.environ,{'VTX_FILTER_THREADS':'1','VTX_NO_NVENC':'1'}):
+            root=Path(td);layers=[];specs=[];originals={}
+            for k,(dst,n,x,y) in enumerate(((0,16,0,0),(2,8,3,-2),(7,6,-3,3),(10,4,3,-2))):
+                directory=root/f'layer{k}';directory.mkdir();frames=[]
+                for i in range(n):
+                    opaque=k==0 or (k==1 and i==3)
+                    rgb=k==0 or (k==1 and i==3)
+                    pixels=[(16+4*i,24,80,255) if k==0 else
+                            (40+16*i,80+px,160-py,255 if opaque else (0,127,255)[(px+py)%3])
+                            for py in range(H) for px in range(W)]
+                    frames.append(pixels)
+                    rows=[bytes(v for pixel in pixels[py*W:(py+1)*W]
+                                for v in pixel[:3 if rgb else 4]) for py in range(H)]
+                    data=png(rows,W,3 if rgb else 4)
+                    path=directory/f'f{i:04d}.png';path.write_bytes(data)
+                    originals[path]=hashlib.sha256(data).hexdigest()
+                source=PngSequence(directory,f'layer{k}',n,30,W,H)
+                layers.append(dict(cl={'dst_in':dst,'dur':n},gfx=True,source=source,x=x,y=y))
+                specs.append((dst,n,x,y,frames))
+            expected=[]
+            for frame in range(total):
+                canvas=[(0,0,0)]*(W*H)
+                for dst,n,x,y,frames in specs:
+                    if not dst <= frame < dst+n: continue
+                    pixels=frames[frame-dst]
+                    for py in range(max(0,y),min(H,y+H)):
+                        for px in range(max(0,x),min(W,x+W)):
+                            r,g,b,alpha=pixels[(py-y)*W+px-x]
+                            old=canvas[py*W+px]
+                            canvas[py*W+px]=tuple((v*alpha+u*(255-alpha)+127)//255
+                                                       for u,v in zip(old,(r,g,b)))
+                expected.append(bytes(v for pixel in canvas for v in pixel))
+            env={k:v for k,v in os.environ.items() if k!='FFREPORT'}
+            def run(argv):
+                return subprocess.check_output(argv,cwd=root,env=env,stderr=subprocess.PIPE,timeout=15)
+            c=SimpleNamespace(fps=30,spf=1/30,dur=total,w=W,h=H,dry=False,cache=root,gpu=False)
+            plan=RenderPlan(c=c,draft=False,f=1,W=W,H=H,nseg=1,layers=layers)
+            hashes=[]
+            for attempt in range(2):
+                commands=[];c.run=lambda cmd:commands.append(cmd)
+                plan.composite(layers,root/'unused.mp4',False)
+                cmd=commands[0];output=root/f'actual-{attempt}.nut'
+                argv=cmd[:cmd.index('-c:v')]+['-c:v','ffv1','-threads','1','-pix_fmt','bgra','-f','nut',str(output)]
+                run(argv)
+                raw=run(['ffmpeg','-v','error','-threads','1','-i',str(output),
+                         '-pix_fmt','rgb24','-f','rawvideo','-'])
+                self.assertEqual(len(raw),total*W*H*3)
+                hashes.append(hashlib.sha256(raw).hexdigest())
+                for frame,wanted in enumerate(expected):
+                    observed=raw[frame*W*H*3:(frame+1)*W*H*3]
+                    if observed != wanted:
+                        at=next(i for i,(a,b) in enumerate(zip(observed,wanted)) if a!=b)
+                        self.fail((attempt,frame,'pixel',at//3,'channel',at%3,
+                                   observed[at],wanted[at]))
+                probe=json.loads(run(['ffprobe','-v','error','-select_streams','v:0',
+                    '-show_entries','stream=time_base:frame=pts,pkt_dts','-of','json',str(output)]))
+                tb=Fraction(probe['streams'][0]['time_base'])
+                self.assertEqual([int(f['pts'])*tb for f in probe['frames']],
+                                 [Fraction(i,30) for i in range(total)])
+                packets=json.loads(run(['ffprobe','-v','error','-select_streams','v:0',
+                    '-show_entries','packet=pts,dts,duration','-of','json',str(output)]))['packets']
+                self.assertEqual(len(packets),total)
+                for i,p in enumerate(packets):
+                    self.assertEqual(int(p['pts'])*tb,Fraction(i,30))
+                    self.assertEqual(int(p['dts'])*tb,Fraction(i,30))
+                    self.assertEqual(int(p['duration'])*tb,Fraction(1,30))
+                self.assertEqual({p:hashlib.sha256(p.read_bytes()).hexdigest() for p in originals},originals)
+            self.assertEqual(len(set(hashes)),1)
 
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'),'set VTX_TEST_FFMPEG')
     def test_negative_relative_seek_uses_current_then_next_source_frame(self):

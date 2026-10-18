@@ -198,10 +198,11 @@ class InventoryContract(unittest.TestCase):
             result = ci.inventory(ROOT)
         self.assertEqual(result['baseline']['discovered_count'], 2346)
         self.assertEqual(result['baseline']['unique_test_ids'], 2344)
-        self.assertEqual(result['strict_counts'], {'ffmpeg': 127, 'chrome': 14, 'demo-toolchain': 5})
+        self.assertEqual(result['strict_counts'], {'ffmpeg': 128, 'chrome': 14, 'demo-toolchain': 5})
         for selector in (
                 'tests.test_png_format_stability.TestStableSource.test_independent_ffmpeg_rgba_pixels_and_pts',
                 'tests.test_png_pts_precision.TestPngTiming.test_real_n1_first_interior_tail_and_repeat_are_timeline_correct',
+                'tests.test_png_pts_precision.TestPngTiming.test_real_n1_multilayer_alpha_positions_and_packet_pts',
                 'tests.test_png_pts_precision.TestPngTiming.test_negative_relative_seek_uses_current_then_next_source_frame'):
             with self.subTest(selector=selector):
                 selected = [record for record in result['tests'] if record['canonical'] == selector]
