@@ -90,6 +90,40 @@ def _reject_ime_paths(ind, pairs):
     return False
 
 
+_IND = None
+
+
+def _ind():
+    """independence 模块访问器（issue #142 资源准入/门禁用；文件路径加载防遮蔽）。"""
+    global _IND
+    if _IND is None:
+        _IND = _independence()
+    return _IND
+
+
+def _ind_estimate_budget(path):
+    return _ind().estimate_vram_mib(path)
+
+
+def _ind_gpu_admission(required_mib, device):
+    return _ind().gpu_admission(required_mib, device=device)
+
+
+def _load_config_for_gate():
+    """enabled 门禁用配置读取（issue #142）：VTX_CONFIG > 仓根 config.local.json。
+    与 client.load_config 同链（此处仅 stdlib json，解析失败/缺失 → {}，
+    严格解析由 independence.asr_enabled 兜底：未配置=禁用）。"""
+    import os as _os
+    for cand in (_os.environ.get("VTX_CONFIG"),
+                 str(Path(__file__).resolve().parent.parent.parent / "config.local.json")):
+        if cand and Path(cand).is_file():
+            try:
+                return json.loads(Path(cand).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {}
+    return {}
+
+
 def ensure_venv_site():
     """venv 整体搬家自愈：venv 的 site-packages 不在 sys.path 时（IME venv 历史上
     从 ~/文档/type/ibus-voice-ime 移动过，pyvenv.cfg 记录旧路径致解析失联）显式补上。
@@ -277,13 +311,14 @@ class ModelHolder:
 
     def __init__(self, asr_path, aligner_path=None, idle_timeout=300.0,
                  dtype="bfloat16", device_map="cuda:0", max_new_tokens=1024,
-                 check_interval=15.0):
+                 check_interval=15.0, vram_budget_mib=None):
         self.asr_path = asr_path
         self.aligner_path = aligner_path
         self.idle_timeout = float(idle_timeout)
         self.dtype = dtype
         self.device_map = device_map
         self.max_new_tokens = int(max_new_tokens)
+        self.vram_budget_mib = int(vram_budget_mib) if vram_budget_mib else None
         self._interval = max(0.5, float(check_interval))
         self._lock = threading.Lock()
         self._model = None          # 已加载 wrapper（常驻）
@@ -357,53 +392,81 @@ class ModelHolder:
             self._on_gpu = True
 
     def _load_locked(self):
-        from qwen_asr import Qwen3ASRModel      # 延迟 import：本文件需可被系统 python3 导入测 words
-        kw = {"dtype": self._torch_dtype(), "device_map": self.device_map,
-              "max_inference_batch_size": 1, "max_new_tokens": self.max_new_tokens}
+        # issue #142 通用资源准入（先于一切模型 import/加载）：与 IME 端点零依赖，
+        # 只读 nvidia-smi；不足/不可测即安全拒绝——绝不以“先 OOM 再换小模型”当
+        # 唯一保护，绝不停止/卸载任何外部服务腾显存。并发准入经项目状态根
+        # flock 串行（防两路并发凭同一份空闲显存同时过关）。
+        ind = _ind()
+        required = self.vram_budget_mib or ind.estimate_vram_mib(self.asr_path)
         attempts = [self.asr_path]
         comp = companion_path(self.asr_path)
         tried = set()
-        for path in attempts:
-            if path in tried or not path:
-                continue
-            tried.add(path)
-            kw2 = dict(kw)
-            if self.aligner_path:
-                kw2["forced_aligner"] = self.aligner_path
-            _log("加载模型：%s dtype=%s aligner=%s" % (path, self.dtype, self.aligner_path or "无"))
-            t0 = time.monotonic()
-            try:
-                model = Qwen3ASRModel.from_pretrained(path, **kw2)
-            except TypeError as exc:
-                # R10：forced_aligner 关键字参数签名变动 → 显式组装降级路径
-                _log("⚠ from_pretrained 关键字参数失败（%s）→ 显式组装 ForcedAligner" % exc)
-                model = Qwen3ASRModel.from_pretrained(path, **kw)
+        with ind.admission_lease():
+            decision = ind.gpu_admission(required, device=self.device_map)
+            if not decision["allowed"]:
+                _log("✗ 资源准入拒绝：%s" % decision["reason"])
+                raise RuntimeError("资源准入拒绝：%s" % decision["reason"])
+            _log("资源准入：%s" % decision["reason"])
+            from qwen_asr import Qwen3ASRModel  # 延迟 import：准入通过后才动依赖
+            kw = {"dtype": self._torch_dtype(), "device_map": self.device_map,
+                  "max_inference_batch_size": 1, "max_new_tokens": self.max_new_tokens}
+            for path in attempts:
+                if path in tried or not path:
+                    continue
+                tried.add(path)
+                kw2 = dict(kw)
                 if self.aligner_path:
-                    from qwen_asr.inference.qwen3_forced_aligner import Qwen3ForcedAligner
-                    fa_kw = {"dtype": kw["dtype"], "device_map": self.device_map}
-                    model.forced_aligner = Qwen3ForcedAligner.from_pretrained(self.aligner_path, **fa_kw)
-            except Exception as exc:
-                if self._is_oom(exc):
-                    if comp and comp not in tried:
-                        _log("⚠ 显存不足（%s）→ 自动换挡 %s" % (exc, comp))
-                        attempts.append(comp)
-                        continue
+                    kw2["forced_aligner"] = self.aligner_path
+                _log("加载模型：%s dtype=%s aligner=%s" % (path, self.dtype, self.aligner_path or "无"))
+                t0 = time.monotonic()
+                try:
+                    model = Qwen3ASRModel.from_pretrained(path, **kw2)
+                except TypeError as exc:
+                    # R10：forced_aligner 关键字参数签名变动 → 显式组装降级路径
+                    _log("⚠ from_pretrained 关键字参数失败（%s）→ 显式组装 ForcedAligner" % exc)
+                    model = Qwen3ASRModel.from_pretrained(path, **kw)
+                    if self.aligner_path:
+                        from qwen_asr.inference.qwen3_forced_aligner import Qwen3ForcedAligner
+                        fa_kw = {"dtype": kw["dtype"], "device_map": self.device_map}
+                        model.forced_aligner = Qwen3ForcedAligner.from_pretrained(self.aligner_path, **fa_kw)
+                except Exception as exc:
+                    if self._is_oom(exc):
+                        if comp and comp not in tried:
+                            # 次级保护（准入为主保护）：同根 companion 降档重试
+                            _log("⚠ 显存不足（%s）→ 自动换挡 %s" % (exc, comp))
+                            attempts.append(comp)
+                            continue
+                    # 只回收自有资源：模型未就位不留残（模型对象交由 GC，
+                    # 显存缓存清空），绝不触碰外部进程
+                    self._empty_cache_guard()
                     raise
-                raise
-            self._model = model
-            self._loaded_path = path
-            inner = getattr(model, "model", None)
-            self._gpu_device = getattr(inner, "device", None) or self.device_map
-            self._resync_device()
-            self._on_gpu = True
-            _log("模型就绪：%s（耗时 %.1fs）" % (path, time.monotonic() - t0))
-            return
-        raise RuntimeError("模型加载失败：%s" % self.asr_path)
+                self._model = model
+                self._loaded_path = path
+                inner = getattr(model, "model", None)
+                self._gpu_device = getattr(inner, "device", None) or self.device_map
+                self._resync_device()
+                self._on_gpu = True
+                _log("模型就绪：%s（耗时 %.1fs）" % (path, time.monotonic() - t0))
+                return
+            raise RuntimeError("模型加载失败：%s" % self.asr_path)
+
+    def recover_after_oom(self):
+        """运行期 OOM 回收（issue #142）：只释放自有资源——本项目模型迁 CPU +
+        torch 显存缓存清空；绝不停止/卸载/发信号给任何外部进程或服务。"""
+        try:
+            with self._lock:
+                self._to_cpu_locked()
+        except Exception as exc:
+            _log("⚠ OOM 自有资源回收未完成（忽略）：%s" % exc)
 
     @staticmethod
     def _is_oom(exc):
-        import torch
-        return isinstance(exc, getattr(torch.cuda, "OutOfMemoryError", ())) \
+        try:
+            import torch
+            oom_cls = getattr(torch.cuda, "OutOfMemoryError", ())
+        except Exception:
+            oom_cls = ()    # 无 torch 环境（纯测试）：退化为诊断字符串判定
+        return isinstance(exc, oom_cls) \
             or "out of memory" in str(exc).lower() or "cuda oom" in str(exc).lower()
 
     def _torch_dtype(self):
@@ -499,6 +562,7 @@ def _handle_transcribe(handler):
     if timestamps and _HOLDER.aligner_path is None:
         raise RequestError(409, "字级时间戳需要 Qwen3-ForcedAligner（未加载）——先跑 bash apps/asr/init.sh 下载，或去掉 timestamps")
     model = _HOLDER.acquire()
+    oom_exc = None
     try:
         t0 = time.monotonic()
         results = model.transcribe(audio=audio, language=language,
@@ -517,8 +581,19 @@ def _handle_transcribe(handler):
              % (len(text), len(words), len(degraded), elapsed))
         return {"text": text, "words": words, "degraded_ranges": degraded,
                 "duration_s": _probe_duration(audio)}
+    except Exception as exc:
+        if ModelHolder._is_oom(exc):
+            oom_exc = exc
+        else:
+            raise
     finally:
         _HOLDER.release()
+    if oom_exc is not None:
+        _HOLDER.recover_after_oom()
+        raise RequestError(
+            503, "运行期显存不足（OOM）：已把本项目模型迁回 CPU 并清空自有显存缓存"
+                 "（绝不停止/卸载任何外部服务，含语音输入法）。可等待显存释放后"
+                 "重试、降档 0.6b 或改 CPU（--device-map cpu）。原始错误：%s" % oom_exc)
 
 
 class RequestError(Exception):
@@ -599,13 +674,17 @@ def main():
     ap.add_argument("--no-aligner", action="store_true", help="禁用 ForcedAligner（timestamps 请求将 409）")
     ap.add_argument("--idle-timeout", type=float, default=300.0, help="空闲卸载秒数（0 关闭）")
     ap.add_argument("--dtype", default="bfloat16")
-    ap.add_argument("--device-map", default="cuda:0")
+    ap.add_argument("--device-map", default="cuda:0",
+                    help="cuda:0（默认，过显存准入）/ cpu（显存门 N/A）")
+    ap.add_argument("--vram-budget", type=int, default=None,
+                    help="显存预算 MiB（缺省按模型档估计；config asr.vram_budget_mib 同义）")
     ap.add_argument("--max-new-tokens", type=int, default=1024)
     ap.add_argument("--once-health", action="store_true", help="init 冒烟：起服务→自检 /health→退出")
     args = ap.parse_args()
     _ARGS = args
     ensure_venv_site()      # venv 搬家自愈（必须在一切延迟 import qwen_asr 之前）
 
+    ind = _ind()
     # 端口防御（issue #141 fail-closed，先于一切资产解析）：18081 是语音输入法
     # sidecar 专用端口，绝不绑定（这是拒绝，不是探测）；其他占用照旧报错不静默换端口。
     if args.port == IME_PORT:
@@ -616,7 +695,6 @@ def main():
     # 路径独立性（issue #141 红队 F1，fail-closed）：显式 --model/--aligner/
     # --models-root 任何落在 IME 锚点之下（resolve 追真身，symlink 逃逸无效）
     # 一律拒绝退出——先于端口探测/资产解析/绑定/加载，单一接口=independence。
-    ind = _independence()
     model_spec = (args.model or "").strip()
     model_path_arg = model_spec \
         if model_spec and model_spec != "auto" and ("/" in model_spec or os.sep in model_spec) \
@@ -681,9 +759,22 @@ def main():
         print("✗ %s" % exc, file=sys.stderr)
         return 2
 
+    # enabled 门禁（issue #142）：直接长驻运行=服务启动入口，asr.enabled 未启用
+    # （含未配置/坏配置，严格解析）一律拒绝——先于绑定与一切模型加载；18081 端口、IME 路径
+    # 硬边界与解析后资产审计（更 specific 的安全拒绝）先给出诊断。
+    # --once-health 豁免——那是 init 准备冒烟（零模型加载零 GPU，秒起秒退），
+    # 不是禁用绕过路径。
+    if not args.once_health and not ind.asr_enabled(_load_config_for_gate()):
+        print("✗ asr.enabled 未启用——直接启动 sidecar 被拒绝（issue #142 门禁："
+              "禁用态不启动/不预热/不转写/不加载模型）。--once-health 为 init "
+              "准备冒烟不受限；启用：config.local.json 写 \"asr\": {\"enabled\": true}",
+              file=sys.stderr)
+        return 2
+
     _HOLDER = ModelHolder(model_path, aligner_path=aligner_path,
                           idle_timeout=args.idle_timeout, dtype=args.dtype,
-                          device_map=args.device_map, max_new_tokens=args.max_new_tokens)
+                          device_map=args.device_map, max_new_tokens=args.max_new_tokens,
+                          vram_budget_mib=args.vram_budget)
     _log("sidecar 启动：http://%s:%d model=%s aligner=%s（模型延迟加载，首请求上 GPU）"
          % (args.host, args.port, model_path, aligner_path or "无"))
     try:

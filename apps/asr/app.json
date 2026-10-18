@@ -19,10 +19,13 @@
     ]
   },
   "config_keys": [
+    "asr.enabled",
     "asr.base_url",
     "asr.python",
     "asr.model_dir",
-    "asr.aligner_dir"
+    "asr.aligner_dir",
+    "asr.device_map",
+    "asr.vram_budget_mib"
   ],
   "docs": "README.md"
 }

@@ -4,7 +4,9 @@
 > **IME 解耦（issue #141，2026-10-17）**：ASR 与语音输入法彻底解耦——旧键
 > `VT_ASR_IME_ROOT` / `asr.ime_root` 已废除（出现即迁移错误）；解释器/模型探测链
 > 不再含 IME 仓；共驻降档（探测 18081）与「任意健康服务即可复用」均已删除。
-> 独立性单一接口见 `independence.py`（所有入口使用外部资产前 fail-closed 校验）。
+> **安全准入（issue #142，2026-10-18）**：`asr.enabled` 门禁全入口实际执行；
+> sidecar 进程归属三因子（cmdline+端口+启动时刻）；通用 GPU/显存准入
+> （`nvidia-smi` 只读预算，不依赖 IME 端点）。单一接口见 `independence.py`。
 
 音频/视频 → sidecar 转写（字级时间戳）→ 文本规范化 → 锚定式断句聚合 → 帧级
 `timeline.json subtitles[]` 合并（保护其他字段、写前备份）+ 独立 SRT。模块自有轻量
@@ -18,8 +20,8 @@ sidecar（stdlib http.server，默认 **127.0.0.1:18085**；18081 为语音输�
 | 文件 | 用途 |
 |---|---|
 | `sidecar_server.py` | 转写服务：Qwen3-ASR + ForcedAligner，`/health` `/warm` `/transcribe`；words[] 加工（text↔items 对齐）；OOM 换挡 + 空闲卸载。**运行于 qwen-asr 解释器**（通常由 client 自动拉起） |
-| `client.py` | HTTP 客户端（stdlib urllib）+ 音频抽取（ffmpeg 16k mono wav）+ sidecar 进程管理（pid 归属校验）+ config 容错读取 |
-| `independence.py` | **独立性单一接口（issue #141）**：IME 锚定路径拒绝、遗留键迁移错误、base_url 18081 拒绝、解释器依赖来源验证、模型链接关系校验、PID 归属、资产清单（版本/来源/SHA256）接口 |
+| `client.py` | HTTP 客户端（stdlib urllib）+ 音频抽取（ffmpeg 16k mono wav）+ sidecar 进程管理（pid 三因子归属）+ config 容错读取；`ensure_sidecar/transcribe/warm` 受 enabled 门禁与拉起前显存预检约束（issue #142） |
+| `independence.py` | **独立性与安全准入单一接口（issue #141/#142）**：IME 锚定路径拒绝、遗留键迁移错误、base_url 18081 拒绝、解释器依赖来源验证、模型链接关系校验（`verify_dir_assets`）、PID 三因子归属、`asr.enabled` 严格门禁（`asr_enabled/require_enabled`）、通用 GPU/显存准入（`gpu_admission`+并发 `admission_lease`）、资产清单（版本/来源/SHA256）接口 |
 | `textnorm.py` | 文本规范化 N1-N7（内化自 ibus-voice-ime text_postprocess 确定性子集 + ctypes libopencc 繁简软依赖） |
 | `segline.py` | 字级时间戳 → 断句聚合 → 帧（锚定式；split_line/allocate 内化自 voice-ime make_subs.py，时间改字级锚定） |
 | `srt_out.py` | 独立 SRT 1.0 写出（HH:MM:SS,mmm） |
@@ -62,7 +64,35 @@ env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
   sidecar/client 零切分逻辑。
 - **端口防御（issue #141）**：`--port 18081` 直接拒绝（fail-closed，不探测）；启动
   前探测端口占用，被占则报错退出（不静默换端口）。共驻降档链已删除（探测输入法本身
-  即被禁止；GPU 资源准入属 #142 范畴）。
+  即被禁止）。
+- **enabled 门禁（issue #142，实际执行非纸面默认）**：下表入口在 `asr.enabled`
+  未启用（严格解析：仅 `true/1/yes/on`；**未配置/坏配置一律视为禁用**）时零请求零
+  拉起零加载，直接中文诊断退出：
+
+  | 入口 | 禁用态行为 | 豁免（语义明确，非绕过） |
+  |---|---|---|
+  | `asr_cli transcribe/srt/timeline/batch` | 拒绝（exit 2），零 HTTP | — |
+  | `asr_cli sidecar start` / 库 `client.ensure_sidecar` | 拒绝，零探测零拉起 | — |
+  | 库 `client.transcribe` / `client.warm` | 拒绝，零 POST | — |
+  | 直接运行 `sidecar_server.py`（长驻） | 拒绝绑定（18081/IME 路径硬边界先行诊断） | `--once-health`=init 准备冒烟（零模型加载零 GPU） |
+  | `asr_cli sidecar health/status` | **允许**（只读探测自有 base_url，零 POST） | 本行即豁免语义 |
+  | `asr_cli sidecar stop` | **允许**（回收自有残留服务，安全收敛动作） | 本行即豁免语义 |
+  | `vt.py doctor`（asr 段） | 不探测 sidecar（零 HTTP），报告禁用态 | — |
+
+- **进程归属三因子（issue #142）**：pid 记录（JSON：`pid/start_time/port`，落
+  `~/.local/state/framivra/asr/`）+ `/proc cmdline`（sidecar_server.py+端口）+
+  `/proc stat` 启动时刻比对。stop/restart/故障回收前必须三因子全过：陈旧 PID、
+  PID 重用（启动时刻失配）、伪造记录、端口被外部进程抢答 → 只报错不发信号，
+  记录保留供排查；健康但无法归属的服务一律拒绝复用（零 warm/transcribe 试错）。
+- **通用资源准入（issue #142，与 IME 端点零依赖）**：模型加载（client 拉起前预检
+  + sidecar `_load_locked` 准入）前经 `gpu_admission` 只读 `nvidia-smi` 比对显存
+  预算（`asr.vram_budget_mib` 配置优先，缺省按档估计：1.7B≈6144 / 0.6B≈3072 MiB）：
+  不足 → 安全拒绝（绝不停止/卸载/重配任何外部服务，含语音输入法）；`nvidia-smi`
+  不可用且设备为 GPU → **fail-closed 拒绝**（不拿「先 OOM 再换小模型」当唯一保护，
+  诊断给出 CPU 出路）；设备 `cpu` → 显存门 N/A 放行。并发准入经项目状态根 `flock`
+  （`admission_lease`）串行「查显存→加载」临界区；运行期 OOM 只把自有模型迁回 CPU
+  并清自有显存缓存（`recover_after_oom`），返回 503 中文诊断；加载 OOM 的同根
+  companion 降档保留为**次级**保护。
 
 ## 文本规范化规则表（textnorm.py，方案 §3.6）
 
@@ -109,6 +139,10 @@ audit 同阈值）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留
 `env python3 apps/asr/asr_cli.py --help` 退出码 0（app.json health.command；CLI 面系统 python3 即可跑，不涉 sidecar/模型）。sidecar 运行态另经 `asr_cli.py sidecar status` / `GET /health` 探测。
 
 ## 开启步骤（默认关闭）
+
+> `asr.enabled` 自 #142 起为实际执行门禁（见上表）；`asr.device_map`（默认
+> `cuda:0`，CPU-only 用 `"cpu"`）与 `asr.vram_budget_mib`（正数 MiB，缺省按档
+> 估计）参与资源准入。
 
 1. `bash apps/asr/init.sh`：探测 **Framivra 专属资产**——解释器 `config.asr.python` →
    `apps/asr/.venv`（都没有则自建并走清华 PyPI，须 `--download` 且过 #18 许可门禁）；

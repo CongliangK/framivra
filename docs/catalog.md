@@ -8,7 +8,7 @@
 - source: apps/aroll/app.json:3
 | aroll | app | 1.0.0 | — | — | — | 有 | 有 |
 - source: apps/asr/app.json:3
-| asr | app | 1.0.0 | asr.base_url, asr.python, asr.model_dir, asr.aligner_dir | — | — | 有 | 有 |
+| asr | app | 1.0.0 | asr.enabled, asr.base_url, asr.python, asr.model_dir, asr.aligner_dir, asr.device_map, asr.vram_budget_mib | — | — | 有 | 有 |
 - source: apps/bgm/app.json:3
 | bgm | app | 1.0.0 | bgm.enabled | — | — | 无 | 有 |
 - source: apps/blender-bridge/app.json:3
