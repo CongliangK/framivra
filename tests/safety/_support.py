@@ -30,6 +30,7 @@ class SandboxCase(unittest.TestCase):
     vtx_timeout = 30
     vtx_diagnostics = False
     vtx_traceback_after = None
+    vtx_environment_fixture = False
 
     def setUp(self):
         super().setUp()
@@ -117,7 +118,27 @@ class SandboxCase(unittest.TestCase):
     def _vtx_command(self, args):
         script = str(REPO / "vtx/vtx.py")
         command = ["env", "python3"]
-        if self.vtx_traceback_after is not None:
+        if self.vtx_environment_fixture:
+            # Explicit dependency isolation for path-only controls. Keep the
+            # real interpreter, inherited loader environment, CLI, filesystem
+            # and receipt implementation. Never used by renderer acceptance.
+            wrapper = (
+                "import faulthandler, os, runpy, sys\n"
+                "from unittest.mock import patch\n"
+                "del sys.argv[0]\n"
+                "sys.path[0] = os.path.dirname(os.path.dirname(sys.argv[0]))\n"
+                "from tests.gfx_environment_fixture import collect, find_chrome\n"
+                "after = %r\n"
+                "if after is not None: faulthandler.dump_traceback_later(after, repeat=False)\n"
+                "try:\n"
+                "    with patch('vtx.gfx_environment.collect', side_effect=collect), "
+                "patch('vtx.encoders.find_chrome', side_effect=find_chrome):\n"
+                "        runpy.run_path(sys.argv[0], run_name='__main__')\n"
+                "finally:\n"
+                "    faulthandler.cancel_dump_traceback_later()\n"
+            ) % self.vtx_traceback_after
+            command.extend(["-c", wrapper])
+        elif self.vtx_traceback_after is not None:
             # Opt-in diagnostic only: preserve the launcher's argv and script
             # search path, and let SystemExit/exceptions retain their exit code.
             wrapper = (
