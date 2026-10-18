@@ -3,6 +3,7 @@ import contextlib
 from collections import Counter
 import importlib.util
 import io
+import itertools
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -28,11 +30,11 @@ def tests_of(case):
 
 class StrictMediaGate(unittest.TestCase):
     def test_ffmpeg_groups_preserve_every_selected_test_without_overlap(self):
-        one, two = ci.ffmpeg_group('1'), ci.ffmpeg_group('2')
-        self.assertTrue(one)
-        self.assertTrue(two)
-        self.assertFalse(set(one) & set(two))
-        self.assertEqual(Counter(one + two), Counter(ci.MEDIA_TESTS['ffmpeg']))
+        groups = [ci.ffmpeg_group(number) for number in ('1', '2', '3')]
+        self.assertTrue(all(groups))
+        combined_names = sum(groups, ())
+        self.assertEqual(Counter(combined_names), Counter(ci.MEDIA_TESTS['ffmpeg']))
+        self.assertEqual(len(combined_names), len(set(combined_names)))
         def identities(names):
             def leaves(suite):
                 for test in suite:
@@ -40,33 +42,54 @@ class StrictMediaGate(unittest.TestCase):
                         yield from leaves(test)
                     else:
                         yield test.id()
-            return Counter(leaves(unittest.TestLoader().loadTestsFromNames(names)))
-        first, second = identities(one), identities(two)
-        self.assertFalse(first.keys() & second.keys())
-        self.assertEqual(first + second, identities(ci.MEDIA_TESTS['ffmpeg']))
-        self.assertTrue(all(count == 1 for count in (first + second).values()))
+            loader = unittest.TestLoader()
+            result = Counter(leaves(loader.loadTestsFromNames(names)))
+            self.assertFalse(loader.errors)
+            return result
+        combined = sum((identities(group) for group in groups), Counter())
+        self.assertEqual(combined, identities(ci.MEDIA_TESTS['ffmpeg']))
+        self.assertTrue(all(count == 1 for count in combined.values()))
 
     def test_new_ffmpeg_selectors_have_deterministic_complete_module_ownership(self):
         names = ('tests.test_filter_threads.NewCase',
+                 'tests.test_frame_source.NewCase',
                  'tests.test_future_media.First', 'tests.test_future_media.Second')
         with mock.patch.dict(ci.MEDIA_TESTS, {'ffmpeg': names}):
             self.assertEqual(ci.ffmpeg_group('1'), names[:1])
-            self.assertEqual(ci.ffmpeg_group('2'), names[1:])
+            self.assertEqual(ci.ffmpeg_group('2'), names[1:2])
+            self.assertEqual(ci.ffmpeg_group('3'), names[2:])
+
+    def test_empty_duplicate_or_overlapping_ffmpeg_group_configuration_fails(self):
+        invalid_names = ((), ci.MEDIA_TESTS['ffmpeg'] * 2,
+                         ('tests.test_filter_threads',), ('tests.test_frame_source',),
+                         ('tests.test_future_media',))
+        for names in invalid_names:
+            with self.subTest(names=names), \
+                    mock.patch.dict(ci.MEDIA_TESTS, {'ffmpeg': names}), \
+                    self.assertRaises(ValueError):
+                ci.ffmpeg_group('1')
+        for modules in (ci.FFMPEG_GROUP_ONE_MODULES, ('tests',)):
+            with mock.patch.object(ci, 'FFMPEG_GROUP_TWO_MODULES', modules), \
+                    self.assertRaises(ValueError):
+                ci.ffmpeg_group('2')
 
     def test_unknown_ffmpeg_group_and_group_on_other_gates_fail(self):
         with self.assertRaises(ValueError):
             ci.ffmpeg_group('other')
-        for args in (['chrome', '--group', '1'], ['ffmpeg', '--group', '3']):
+        for args in (['chrome', '--group', '1'], ['static', '--group', '2'],
+                     ['demo-toolchain', '--group', '3'], ['ffmpeg', '--group', '4']):
             with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), \
                     self.assertRaises(SystemExit) as raised:
                 ci.main(args)
             self.assertEqual(raised.exception.code, 2)
 
     def test_ffmpeg_grouped_and_default_entrypoints_keep_preflight_and_strict_runner(self):
-        for group in (None, '1', '2'):
+        for group in (None, '1', '2', '3'):
             with self.subTest(group=group), \
+                    mock.patch.dict(os.environ, {}, clear=True), \
                     mock.patch.object(ci, 'check_media_inventory') as inventory, \
                     mock.patch.object(ci, 'prepare_media') as preflight, \
+                    mock.patch.object(ci, 'prepare_chrome', return_value='/chrome') as chrome, \
                     mock.patch.object(ci, 'strict_suite', return_value=0) as strict:
                 args = ['ffmpeg'] + (['--group', group] if group else [])
                 self.assertEqual(ci.main(args), 0)
@@ -74,6 +97,43 @@ class StrictMediaGate(unittest.TestCase):
                 preflight.assert_called_once_with('ffmpeg')
                 strict.assert_called_once_with(
                     ci.ffmpeg_group(group) if group else ci.MEDIA_TESTS['ffmpeg'])
+                if group in (None, '2'):
+                    chrome.assert_called_once_with()
+                    self.assertEqual(os.environ['VTX_CHROME'], '/chrome')
+                else:
+                    chrome.assert_not_called()
+                    self.assertNotIn('VTX_CHROME', os.environ)
+                self.assertNotIn('VTX_TEST_CHROME', os.environ)
+                self.assertNotIn('VTX_PIPE_INTEG', os.environ)
+
+    def test_frame_source_chrome_dependency_failure_prevents_test_execution(self):
+        for group in (None, '2'):
+            with self.subTest(group=group), \
+                    mock.patch.object(ci, 'check_media_inventory'), \
+                    mock.patch.object(ci, 'prepare_media'), \
+                    mock.patch.object(ci, 'prepare_chrome',
+                                      side_effect=RuntimeError('missing Chrome')), \
+                    mock.patch.object(ci, 'strict_suite') as strict, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(ci.main(['ffmpeg'] + (['--group', group] if group else [])), 1)
+                strict.assert_not_called()
+
+    def test_chrome_preflight_requires_real_smoke_without_changing_gate_flags(self):
+        for output in ('<p>vtx-ci-ready</p>', 'broken launch'):
+            with self.subTest(output=output), mock.patch.dict(os.environ, {}, clear=True), \
+                    mock.patch.object(ci, 'executable', return_value='/chrome') as exe, \
+                    mock.patch.object(ci, 'run', return_value=types.SimpleNamespace(stdout=output)) as run:
+                if 'vtx-ci-ready' in output:
+                    self.assertEqual(ci.prepare_chrome(), '/chrome')
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'DOM smoke'):
+                        ci.prepare_chrome()
+                exe.assert_called_once_with('google-chrome', 'VTX_TEST_CHROME')
+                self.assertEqual(run.call_args_list[0].args[0], ['/chrome', '--version'])
+                self.assertIn('--headless=new', run.call_args_list[1].args[0])
+                self.assertIn('--dump-dom', run.call_args_list[1].args[0])
+                self.assertNotIn('VTX_TEST_CHROME', os.environ)
+                self.assertNotIn('VTX_PIPE_INTEG', os.environ)
 
     def suite_exit(self, by_name, names=('fixture',), runner_spy=None):
         """by_name maps each selector to the suite discovery must return."""
@@ -372,7 +432,8 @@ class WorkflowContract(unittest.TestCase):
         self.assertIn('bash scripts/run_all_tests.sh', commands('core'))
         self.assertIn('bash scripts/doc_gates.sh', commands('contracts'))
         self.assertIn('python scripts/ci_checks.py static', commands('contracts'))
-        for group, job in (('1', 'ffmpeg-one'), ('2', 'ffmpeg-two')):
+        for group, job in (('1', 'ffmpeg-one'), ('2', 'ffmpeg-two'),
+                           ('3', 'ffmpeg-three')):
             self.assertIn('python scripts/ci_checks.py ffmpeg --group ' + group,
                           commands(job))
         self.assertIn('python scripts/ci_checks.py chrome', commands('chrome'))
@@ -381,25 +442,71 @@ class WorkflowContract(unittest.TestCase):
         self.assertNotIn('VTX_SEG_NVENC', self.workflow['env'])
 
     def test_ffmpeg_required_check_needs_both_real_groups_and_rejects_non_success(self):
+        # Preserve this regression identity while extending it to the third group.
         job = self.workflow['jobs']['ffmpeg']
         self.assertEqual(job['name'], 'FFmpeg CPU integration (no skips)')
-        self.assertEqual(set(job['needs']), {'ffmpeg-one', 'ffmpeg-two'})
+        self.assertEqual(set(job['needs']), {'ffmpeg-one', 'ffmpeg-two', 'ffmpeg-three'})
         self.assertEqual(job['if'], 'always()')
         self.assertEqual(len(job['steps']), 1)
         step = job['steps'][0]
         self.assertEqual(step['env'], {
             'FIRST_RESULT': '${{ needs.ffmpeg-one.result }}',
             'SECOND_RESULT': '${{ needs.ffmpeg-two.result }}',
+            'THIRD_RESULT': '${{ needs.ffmpeg-three.result }}',
         })
-        for first in ('success', 'failure', 'cancelled', 'skipped', ''):
-            for second in ('success', 'failure', 'cancelled', 'skipped', ''):
-                with self.subTest(first=first, second=second):
-                    result = subprocess.run(['bash', '-e', '-c', step['run']],
-                                            env=dict(os.environ, FIRST_RESULT=first,
-                                                     SECOND_RESULT=second),
-                                            capture_output=True, text=True, timeout=10)
-                    self.assertEqual(result.returncode == 0,
-                                     first == second == 'success')
+        for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', ''), repeat=3):
+            with self.subTest(values=values):
+                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                                        env=dict(os.environ, **dict(zip(step['env'], values))),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0,
+                                 all(value == 'success' for value in values))
+
+    def test_core_matrix_has_all_curated_groups_and_one_full_group_per_version(self):
+        core = self.workflow['jobs']['core']
+        self.assertEqual(core['strategy']['fail-fast'], 'false')
+        matrix = core['strategy']['matrix']
+        parsed = {}
+        for dimension in ('python', 'group'):
+            match = re.fullmatch(
+                r"\$\{\{ fromJSON\(\(github.event_name == 'schedule' \|\| "
+                r"github.event_name == 'workflow_dispatch'\) && '([^']+)' \|\| '([^']+)'\) \}\}",
+                matrix[dimension])
+            self.assertIsNotNone(match)
+            parsed[dimension] = [json.loads(match.group(i)) for i in (1, 2)]
+        self.assertEqual(parsed['group'], [['full'], ['1', '2', '3']])
+        self.assertEqual(len(list(itertools.product(parsed['python'][0], parsed['group'][0]))), 5)
+        self.assertEqual(len(list(itertools.product(parsed['python'][1], parsed['group'][1]))), 9)
+        self.assertEqual(set(matrix), {'python', 'group'})
+        self.assertIn('matrix.python', core['name'])
+        self.assertIn('full regression', core['name'])
+        self.assertIn('curated group {0}/3', core['name'])
+        curated = next(s for s in core['steps'] if 'python scripts/ci_pr.py' in s.get('run', ''))
+        self.assertIn("python scripts/ci_pr.py --group '${{ matrix.group }}'", curated['run'])
+        self.assertNotIn('python scripts/ci_pr.py\n', curated['run'])
+
+    def test_core_aggregate_requires_actual_matrix_success(self):
+        job = self.workflow['jobs']['core-results']
+        self.assertEqual(job['name'], 'Core regression (all selected versions and groups)')
+        self.assertEqual(job['needs'], ['core'])
+        self.assertEqual(job['if'], 'always()')
+        self.assertEqual(len(job['steps']), 1)
+        step = job['steps'][0]
+        self.assertEqual(step['env'], {'CORE_RESULT': '${{ needs.core.result }}'})
+        for value in ('success', 'failure', 'cancelled', 'skipped', '', 'unknown'):
+            with self.subTest(value=value):
+                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                                        env=dict(os.environ, CORE_RESULT=value),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0, value == 'success')
+
+    def test_ungrouped_local_full_runner_remains_original_discovery(self):
+        runner = (ROOT / 'scripts/run_all_tests.sh').read_text()
+        self.assertIn('if [ "$#" -gt 0 ]; then', runner)
+        self.assertIn('exec env python3 scripts/ci_partition.py "$@"', runner)
+        self.assertIn('env python3 -m unittest discover -s tests -t . -v || rc=$?', runner)
+        self.assertIn('for d in apps/*/tests plugins/*/tests templates/*/tests; do', runner)
+        self.assertNotIn('ci_pr.py', runner)
 
 
 if __name__ == '__main__':

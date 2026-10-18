@@ -124,11 +124,80 @@ class InventoryContract(unittest.TestCase):
             with self.assertRaisesRegex(ci.PartitionError, 'duplicate JSON keys'):
                 ci.load_json(path)
 
+    def test_reviewed_environment_migrations_remain_protected(self):
+        policy = ci.load_json(ROOT / 'scripts/ci_partition_policy.json')
+        found = copy.deepcopy(policy['baseline']['batches'])
+        replacements = policy['baseline']['refresh']['replacements']
+        expected = {
+            ('test_gfx_cache_integrity', 'CacheIntegrity',
+             'test_missing_or_malformed_marker_migrates_only_after_full_validation',
+             'test_missing_or_malformed_marker_requires_environment_rerender'),
+            ('test_gfx_cli_fallback', 'GfxCliFallbackTests',
+             'test_cli_shot_cmd_matches_legacy_flags', 'test_cli_shot_cmd_pins_visual_flags'),
+            ('test_impact_identity', 'ClipDependencies',
+             'test_legacy_and_empty_keys_unchanged',
+             'test_environment_migration_preserves_empty_dependency_equivalence'),
+        }
+        expected_pairs = set()
+        for module, case, before, after in expected:
+            prefix = 'tests.' + module + '::tests.' + module + '.' + case + '.'
+            expected_pairs.add((prefix + before, prefix + after))
+        self.assertEqual({(r['previous_instance'], r['replacement_instance'])
+                          for r in replacements}, expected_pairs)
+        self.assertEqual(len(replacements), 3)
+        protected = []
+        for row in replacements:
+            self.assertEqual(row['batch'], 'tests')
+            self.assertTrue(row['reason'])
+            self.assertNotIn(row['previous_instance'], found['tests'])
+            self.assertIn(row['replacement_instance'], found['tests'])
+            protected.append(row['replacement_instance'])
+        # These 14 additional PR #196 contracts must be protected, not merely
+        # discovered as unprotected new cases after refreshing the three names.
+        environment = [name for name in found['tests']
+                       if name.startswith('tests.test_gfx_environment::')]
+        self.assertEqual(len(environment), 13)
+        evidence = ('tests.test_gfx_evidence::tests.test_gfx_evidence.Evidence.'
+                    'test_production_input_environment_is_plan_bound_and_unknown_never_passes')
+        self.assertIn(evidence, found['tests'])
+        for name in protected + environment + [evidence]:
+            missing = copy.deepcopy(found)
+            missing['tests'].remove(name)
+            with self.subTest(instance=name), self.assertRaisesRegex(
+                    ci.PartitionError, 'missing baseline test IDs'):
+                ci.policy_inventory(missing, policy, {}, {})
+
+    def test_refreshed_baseline_preserves_alias_occurrences_and_unknown_tests(self):
+        policy = ci.load_json(ROOT / 'scripts/ci_partition_policy.json')
+        found = copy.deepcopy(policy['baseline']['batches'])
+        originals = ci.policy_inventory(found, policy, {}, {})
+        aliases = [r for r in originals if r['discovery_module'] != r['id'].rsplit('.', 2)[0]]
+        self.assertEqual(len(aliases), 2)
+        for record in aliases:
+            matching = [r for r in originals
+                        if r['batch'] == record['batch'] and r['id'] == record['id']]
+            self.assertEqual(len(matching), 2)
+            for occurrence in matching:
+                missing = copy.deepcopy(found)
+                missing[occurrence['batch']].remove(occurrence['instance'])
+                with self.subTest(instance=occurrence['instance']), self.assertRaisesRegex(
+                        ci.PartitionError, 'missing baseline test IDs'):
+                    ci.policy_inventory(missing, policy, {}, {})
+        unknown = instance('test_future', module='tests.test_future')
+        found['tests'].append(unknown)
+        records = ci.policy_inventory(found, policy, {}, {})
+        self.assertEqual(len(records), len(originals) + 1)
+        added = next(r for r in records if r['instance'] == unknown)
+        self.assertEqual(added['partition'], 'fast')
+        self.assertTrue(added['new_since_baseline'])
+        self.assertEqual({r['key'] for r in originals},
+                         {r['key'] for r in records if not r['new_since_baseline']})
+
     def test_current_repository_inventory_preserves_original_and_strict_scopes(self):
         with contextlib.redirect_stdout(io.StringIO()):
             result = ci.inventory(ROOT)
-        self.assertEqual(result['baseline']['discovered_count'], 2237)
-        self.assertEqual(result['baseline']['unique_test_ids'], 2235)
+        self.assertEqual(result['baseline']['discovered_count'], 2346)
+        self.assertEqual(result['baseline']['unique_test_ids'], 2344)
         self.assertEqual(result['strict_counts'], {'ffmpeg': 105, 'chrome': 14, 'demo-toolchain': 5})
         self.assertEqual(len(result['batches']), 16)
         self.assertEqual(sum(result['counts'].values()), len(result['tests']))

@@ -4,9 +4,9 @@
   "kind": "absorb",
   "expect_rc": 0,
   "cmd": ["python3", "scripts/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g9_bom_absorb/catalog.md"],
-  "attack": "文件头加 UTF-8 BOM(EF BB BF,UTF-8-sig 编辑器落盘形态),区内容逐字节不变",
+  "attack": "取 catalog 生成区作独立副本,文件头 BEGIN marker 前加 UTF-8 BOM(EF BB BF),区内容逐字节不变;省去区外散文,确保禁用 BOM 剥除会被逐行比较捕获",
   "expected_behavior": "normalize 输入侧 BOM 剥除后逐字节相等,exit 0(L5 summary 正常);禁裸比假红",
-  "fixture": "catalog.md(基于真 docs/catalog.md 复制至档目录后仅加 BOM;真件只读零触,集成席收口重验)",
+  "fixture": "catalog.md(仅保留真 docs/catalog.md 生成区并加文件头 BOM;静态期望数据独立于被测生成器运行,真件只读零触)",
   "issued_by": "R-22 M2 席 D",
   "date": "2026-09-20"
 }

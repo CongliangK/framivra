@@ -70,21 +70,40 @@ MEDIA_TESTS = {
     ),
 }
 
-# Balance the two dominant native modules against the remainder. Keep every
-# selector from the same module together; newly added modules default to group
-# 2. This is only placement: MEDIA_TESTS remains the complete strict inventory.
+# Whole-module placement only: MEDIA_TESTS is the complete strict inventory.
+# The original heavy pair stays in group 1; group 2 holds modules whose current
+# environment-identity work dominates the former remainder. New modules use 3.
 FFMPEG_GROUP_ONE_MODULES = (
     'tests.test_subtitle_frame_boundaries',
     'tests.test_filter_threads',
 )
+FFMPEG_GROUP_TWO_MODULES = (
+    'tests.test_frame_source',
+    'tests.test_agent_diagnostics_repair',
+    'tests.test_audio_report',
+)
 
 
 def ffmpeg_group(group):
-    if group not in ('1', '2'):
+    if group not in ('1', '2', '3'):
         raise ValueError('unknown FFmpeg group: %s' % group)
-    return tuple(name for name in MEDIA_TESTS['ffmpeg']
-                 if any(name == module or name.startswith(module + '.')
-                        for module in FFMPEG_GROUP_ONE_MODULES) == (group == '1'))
+    names = MEDIA_TESTS['ffmpeg']
+    modules = FFMPEG_GROUP_ONE_MODULES + FFMPEG_GROUP_TWO_MODULES
+    if (not names or len(set(names)) != len(names) or
+            len(set(modules)) != len(modules)):
+        raise ValueError('empty or duplicate FFmpeg selectors/group modules')
+    groups = {'1': [], '2': [], '3': []}
+    for name in names:
+        owners = [number for number, selected in (
+            ('1', FFMPEG_GROUP_ONE_MODULES), ('2', FFMPEG_GROUP_TWO_MODULES))
+            if any(name == module or name.startswith(module + '.')
+                   for module in selected)]
+        if len(owners) > 1:
+            raise ValueError('overlapping FFmpeg group modules: ' + name)
+        groups[owners[0] if owners else '3'].append(name)
+    if not all(groups.values()):
+        raise ValueError('empty FFmpeg group')
+    return tuple(groups[group])
 
 
 def run(command, **kwargs):
@@ -252,18 +271,24 @@ def prepare_media(kind):
         # meaningful where the toolchain matches the frozen demo manifest.
         os.environ['VTX_TEST_DEMO_TOOLCHAIN'] = '1'
     else:
-        chrome = executable('google-chrome', 'VTX_TEST_CHROME')
+        chrome = prepare_chrome()
         os.environ.update(VTX_TEST_CHROME=chrome, VTX_CHROME=chrome,
                           VTX_PIPE_INTEG='1')
-        run([chrome, '--version'])
-        with tempfile.TemporaryDirectory(prefix='vtx-ci-chrome-') as profile:
-            result = run([chrome, '--headless=new', '--no-sandbox',
-                          '--disable-dev-shm-usage', '--disable-gpu',
-                          '--user-data-dir=' + profile, '--dump-dom',
-                          'data:text/html,<p>vtx-ci-ready</p>'],
-                         capture_output=True, text=True)
-            if 'vtx-ci-ready' not in result.stdout:
-                raise RuntimeError('Chrome launched but DOM smoke did not complete')
+
+
+def prepare_chrome():
+    """Real hosted browser preflight, independent of test-selection opt-ins."""
+    chrome = executable('google-chrome', 'VTX_TEST_CHROME')
+    run([chrome, '--version'])
+    with tempfile.TemporaryDirectory(prefix='vtx-ci-chrome-') as profile:
+        result = run([chrome, '--headless=new', '--no-sandbox',
+                      '--disable-dev-shm-usage', '--disable-gpu',
+                      '--user-data-dir=' + profile, '--dump-dom',
+                      'data:text/html,<p>vtx-ci-ready</p>'],
+                     capture_output=True, text=True)
+        if 'vtx-ci-ready' not in result.stdout:
+            raise RuntimeError('Chrome launched but DOM smoke did not complete')
+    return chrome
 
 
 def strict_suite(names, stream=None):
@@ -295,8 +320,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('gate', choices=('static', 'ffmpeg', 'chrome',
                                         'demo-toolchain'))
-    parser.add_argument('--group', choices=('1', '2'),
-                        help='FFmpeg only: execute one of two complete module groups')
+    parser.add_argument('--group', choices=('1', '2', '3'),
+                        help='FFmpeg only: execute one of three complete module groups')
     args = parser.parse_args(argv)
     if args.group and args.gate != 'ffmpeg':
         parser.error('--group is only valid for the ffmpeg gate')
@@ -307,10 +332,16 @@ def main(argv=None):
             static_checks()
             return 0
         check_media_inventory()
-        prepare_media(args.gate)  # before imports: decorators see enabled gates
         names = ffmpeg_group(args.group) if args.group else MEDIA_TESTS[args.gate]
+        prepare_media(args.gate)  # before imports: decorators see enabled gates
+        if args.gate == 'ffmpeg' and any(
+                name == 'tests.test_frame_source' or
+                name.startswith('tests.test_frame_source.') for name in names):
+            # The generated-PNG consumer now rerenders uncertified legacy PNGs.
+            # Declare its real Chrome dependency without enabling other suites.
+            os.environ['VTX_CHROME'] = prepare_chrome()
         return strict_suite(names)
-    except (OSError, RuntimeError, subprocess.SubprocessError, SyntaxError) as error:
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError, SyntaxError) as error:
         print('CI gate FAILED: %s' % error, file=sys.stderr)
         return 1
 
