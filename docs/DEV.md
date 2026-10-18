@@ -17,11 +17,13 @@
 
 ## CI 回归覆盖
 
-普通 PR 与 main push 只运行 [默认 workflow](../.github/workflows/ci.yml) 的单个轻量 job；超时上限以该文件为准，实际执行目标为 1–3 分钟，托管排队和环境波动须按实测另报。默认门保留全仓静态语法与文档门，以及 [显式纯单元精选](../scripts/ci_fast.py)：CI 结构/严格 runner 反例、图代码摘要和插件代码身份。精选复用原严格生命周期对账，缺失模块、空集合、发现错误或任何 skip 均失败。成功仅认证 Python 3.13 上这些检查，不代表全量回归。
+普通 PR 与 main push 的 Python 检查执行 [显式精选模块](../scripts/ci_pr.py)，覆盖 CLI、契约、真实文件系统与进程安全，以及 CI 门禁反例。完整模块在独立 job 中分组执行，每个解释器必须完成全部精选分组；解释器与分组选择以 [workflow](../.github/workflows/ci.yml) 为准。该检查拒绝缺失模块、空集合、发现错误和任何 skip；成功仅代表精选回归通过，不能宣称全量回归或未运行解释器通过。
 
-这是明确接受的覆盖缩减：默认不再执行真实文件系统/进程安全压力回归、广泛 CLI/app/plugin/example 回归、多 Python 版本矩阵、FFmpeg/Chrome 渲染与 Windows 安装。原全部受支持解释器的全量发现、严格媒体分组、文档/静态和 Windows 安装保留在 [人工全量 workflow](../.github/workflows/full-regression.yml)；HTML 专项验收也仅人工触发，无定时运行。新增 Windows 重渲染 job 已移除，不转建其他自动或手动 job。本地无参统一入口仍完整发现新增测试模块，旧精选入口也保留供显式调用。
+既有定时与手动 workflow 执行全部受支持 Python 版本的默认全量发现；本地无参统一入口也保持全量。新增测试模块自动进入全量发现，是否加入普通 PR 精选集需评审。大规模 CLI 参数组合、其余 app/plugin/example 回归等移出普通 PR Python 检查属于明确接受的覆盖降级。FFmpeg、Chrome、Windows 安装和文档/静态门保留各自实际执行；可选平台/工具 skip 仍按默认全量 runner 的原语义报告，不计作执行成功。
 
-人工媒体分组保留完整模块、真实工具预检及零 skip 约束；汇总仅在所有分组实际 success 时通过，失败、取消、skip 或缺失状态均不通过。FrameSource 组和无分组入口仍预检 Chrome；无环境凭证的旧 PNG 必须真实重渲，不能补签。默认短 CI 的通过不得替代这些未执行检查的证据；提速以 hosted 实际耗时为准，不能靠强杀长任务宣称达标。
+FFmpeg 与 Chrome 严格清单分别按完整模块分成并行组，原断言、工具预检与零 skip 约束保持；无分组参数仍执行完整清单。新增模块确定性归入其默认组。包含 FrameSource 的组及无分组命令显式预检 Chrome：无环境凭证的旧 PNG 必须真实重渲，不能补签。既有 required check 汇总名仅在所有分组实际 success 时通过，失败、取消、skip 或缺失状态均不通过。
+
+CI 提速以实际 hosted 结果为准，分别报告排队、安装、测试与总耗时；精选集不承诺消除排队或媒体任务的机器波动。普通 PR 的目标时限不是强行取消任务或降低超时后声称成功。
 
 ## 一、性能基准
 
@@ -174,7 +176,7 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 体检当日修复清单见 commit 92609f3 / 898870e；以下为**有意未修/待外部条件**项：
 
 - **NIT 清单**（健壮性审查判 NIT，修不动代码不影响正确性）：qc.py dry 早退后 176-177 死代码、infra.py:71 恒真分支、imgen_cli.py 死变量、vtx.py render_via 字符串状态机、init.py requests 双探测、bilibili.py --retry 0 NameError、aroll/trim_takes.py 44 字节 WAV 头假定（与自家 aup3_extract 配对成立）。
-- **Windows 原生内核验收**：原生 x64 Python 与 Chrome/Edge 支持安装自检、CDP/CLI 图形、FFmpeg 全链、缓存命中及 gc/clean。图形环境指纹绑定浏览器发行目录、系统库/驱动文件、系统与用户字体及注册表、主机与启动边界；未知输入保持拒绝复用，不宣称跨机器像素等价。该保守闭包的扫描成本高于 Linux 口径。Chrome 使用 Job Object，宿主强杀时关闭句柄回收整棵浏览器树；文件事务使用 Windows 字节范围锁；删除使用拒绝写入与改名共享的祖先句柄及按句柄删除，拒绝 junction 祖先。原生安全回归由本地 Windows 原生测试验收，中文/空格/# 路径单双分段、冷温缓存、严格 QC、解码、黑场和真峰值门由本地 [合成 E2E](../tests/run_e2e.py) 验收；默认快速 CI 不含 Windows 运行。Windows CEF 与模型侧车进程生命周期不由此验收，平台专用测试仍按其实际执行报告。
+- **Windows 原生内核验收**：原生 x64 Python 与 Chrome/Edge 支持安装自检、CDP/CLI 图形、FFmpeg 全链、缓存命中及 gc/clean。图形环境指纹绑定浏览器发行目录、系统库/驱动文件、系统与用户字体及注册表、主机与启动边界；未知输入保持拒绝复用，不宣称跨机器像素等价。该保守闭包的扫描成本高于 Linux 口径。Chrome 使用 Job Object，宿主强杀时关闭句柄回收整棵浏览器树；文件事务使用 Windows 字节范围锁；删除使用拒绝写入与改名共享的祖先句柄及按句柄删除，拒绝 junction 祖先。原生安全回归由本地 Windows 原生测试验收，中文/空格/# 路径单双分段、冷温缓存、严格 QC、解码、黑场和真峰值门由本地 [合成 E2E](../tests/run_e2e.py) 验收；默认 CI 的 `windows-install` job 验收安装自检，原生渲染由上述本地验收覆盖。Windows CEF 与模型侧车进程生命周期不由此验收，平台专用测试仍按其实际执行报告。
 - **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；apps/asr/README.md 手动路线兜底。
 - **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。
 - **cache_dependencies 未声明依赖的外链变更不触发重渲**：当前全部工程未声明，属声明式契约的已知边界（docs/cache-provenance.md 有口径）。
