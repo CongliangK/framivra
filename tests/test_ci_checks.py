@@ -547,7 +547,7 @@ class WorkflowContract(unittest.TestCase):
         self.assertNotIn('pull_request_target', self.workflow['on'])
 
     def test_declared_supported_python_versions_are_tested(self):
-        pyproject = (ROOT / 'pyproject.toml').read_text()
+        pyproject = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
         declared = set(re.findall(r'Programming Language :: Python :: (3\.\d+)', pyproject))
         matrix = self.workflow['jobs']['core']['strategy']['matrix']['python']
         match = re.fullmatch(
@@ -709,7 +709,7 @@ class WorkflowContract(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, value == 'success')
 
     def test_ungrouped_local_full_runner_remains_original_discovery(self):
-        runner = (ROOT / 'scripts/run_all_tests.sh').read_text()
+        runner = (ROOT / 'scripts/run_all_tests.sh').read_text(encoding='utf-8')
         self.assertIn('if [ "$#" -gt 0 ]; then', runner)
         self.assertIn('exec env python3 scripts/ci_partition.py "$@"', runner)
         self.assertIn('env python3 -m unittest discover -s tests -t . -v || rc=$?', runner)
