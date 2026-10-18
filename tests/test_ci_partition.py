@@ -198,7 +198,18 @@ class InventoryContract(unittest.TestCase):
             result = ci.inventory(ROOT)
         self.assertEqual(result['baseline']['discovered_count'], 2346)
         self.assertEqual(result['baseline']['unique_test_ids'], 2344)
-        self.assertEqual(result['strict_counts'], {'ffmpeg': 105, 'chrome': 14, 'demo-toolchain': 5})
+        self.assertEqual(result['strict_counts'], {'ffmpeg': 107, 'chrome': 14, 'demo-toolchain': 5})
+        preview_media = {
+            'tests.test_promo_opening_preview.PreviewContracts.test_vtx_validate_real_media_offline_no_browser',
+            'tests.test_promo_opening_preview.PreviewContracts.test_paper_streams_and_silent_samples',
+        }
+        preview = [r for r in result['tests']
+                   if r['id'].startswith('tests.test_promo_opening_preview.')]
+        self.assertEqual({r['id'] for r in preview if r['strict_gates']}, preview_media)
+        for record in preview:
+            is_media = record['id'] in preview_media
+            self.assertEqual(record['partition'], 'real' if is_media else 'fast')
+            self.assertEqual(record['strict_gates'], ['ffmpeg'] if is_media else [])
         self.assertEqual(len(result['batches']), 16)
         self.assertEqual(sum(result['counts'].values()), len(result['tests']))
         self.assertEqual(len({r['key'] for r in result['tests']}), len(result['tests']))

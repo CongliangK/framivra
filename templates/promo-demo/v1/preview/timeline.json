@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "project": {
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "duration_frames": 300
+  },
+  "sources": [
+    {
+      "id": "paper",
+      "path": "paper-background.mp4"
+    }
+  ],
+  "video_tracks": [
+    {
+      "name": "visible-paper-background",
+      "kind": "broll",
+      "clips": [
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 0,
+          "dur": 300
+        }
+      ]
+    },
+    {
+      "name": "opening-workshop",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "opening.html",
+          "dst_in": 0,
+          "dur": 300
+        }
+      ]
+    }
+  ],
+  "subtitles": [],
+  "audio_tracks": []
+}

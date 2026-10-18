@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workshop opening | preview candidate</title>
+<style>
+html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: transparent; }
+svg { display: block; width: 1920px; height: 1080px; }
+</style>
+</head>
+<body>
+<svg id="scene" xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1280 720" aria-label="A paper bird assembled in a continuous workshop"></svg>
+<!-- Cue mirror is checked against cues.json. No media or font requests. -->
+<script id="opening-cues" type="application/json">
+{
+  "fps": 30,
+  "duration_frames": 300,
+  "viewBox": [
+    0,
+    0,
+    1280,
+    720
+  ],
+  "contacts": {
+    "cut": 18,
+    "body": 67,
+    "trim": 109,
+    "eye": 150
+  },
+  "windows_inclusive": {
+    "waste": [
+      18,
+      54
+    ],
+    "waste_separation": [
+      28,
+      54
+    ],
+    "head_offcuts": [
+      109,
+      138
+    ],
+    "head_offcut_fall": [
+      112,
+      139
+    ],
+    "recognition_hold": [
+      163,
+      189
+    ],
+    "lift": [
+      190,
+      218
+    ],
+    "world_reveal": [
+      190,
+      239
+    ],
+    "approach": [
+      264,
+      299
+    ],
+    "wave": [
+      219,
+      245
+    ]
+  },
+  "keys": {
+    "hero_x": [
+      [
+        0,
+        280
+      ],
+      [
+        12,
+        350
+      ],
+      [
+        28,
+        350
+      ],
+      [
+        56,
+        650
+      ],
+      [
+        77,
+        650
+      ],
+      [
+        100,
+        950
+      ],
+      [
+        119,
+        950
+      ],
+      [
+        141,
+        1250
+      ],
+      [
+        189,
+        1250
+      ],
+      [
+        239,
+        1490
+      ],
+      [
+        260,
+        1510
+      ],
+      [
+        299,
+        1510
+      ]
+    ],
+    "camera_zoom": [
+      [
+        0,
+        2.35
+      ],
+      [
+        28,
+        2.05
+      ],
+      [
+        70,
+        1.8
+      ],
+      [
+        138,
+        1.58
+      ],
+      [
+        184,
+        1.5
+      ],
+      [
+        238,
+        0.65
+      ],
+      [
+        299,
+        0.65
+      ]
+    ],
+    "camera_x_reveal": [
+      [
+        184,
+        1270
+      ],
+      [
+        238,
+        1010
+      ],
+      [
+        299,
+        1010
+      ]
+    ],
+    "camera_y": [
+      [
+        0,
+        401
+      ],
+      [
+        138,
+        390
+      ],
+      [
+        184,
+        390
+      ],
+      [
+        238,
+        326
+      ],
+      [
+        299,
+        326
+      ]
+    ],
+    "bird_y": [
+      [
+        0,
+        440
+      ],
+      [
+        189,
+        440
+      ],
+      [
+        203,
+        427
+      ],
+      [
+        218,
+        335
+      ],
+      [
+        239,
+        210
+      ],
+      [
+        263,
+        191
+      ]
+    ],
+    "bird_angle": [
+      [
+        0,
+        0
+      ],
+      [
+        192,
+        0
+      ],
+      [
+        215,
+        -9
+      ],
+      [
+        239,
+        -4
+      ],
+      [
+        263,
+        0
+      ]
+    ],
+    "wing_angle": [
+      [
+        194,
+        0
+      ],
+      [
+        205,
+        -22
+      ],
+      [
+        216,
+        11
+      ],
+      [
+        231,
+        -13
+      ],
+      [
+        245,
+        4
+      ],
+      [
+        263,
+        0
+      ]
+    ]
+  },
+  "presses": {
+    "cut": [
+      0,
+      18,
+      32,
+      230
+    ],
+    "body": [
+      57,
+      67,
+      79,
+      159
+    ],
+    "trim": [
+      99,
+      109,
+      121,
+      1
+    ],
+    "eye": [
+      141,
+      150,
+      162,
+      132
+    ]
+  },
+  "first_cut_material": {
+    "stock_bounds": [
+      240,
+      336,
+      406,
+      526
+    ],
+    "contact_cover": [
+      236,
+      332,
+      410,
+      530
+    ],
+    "stock_area": 31540,
+    "wing_area": 6065,
+    "waste_area": 25475
+  },
+  "pose_frames": [
+    0,
+    37,
+    110,
+    176,
+    239,
+    279
+  ]
+}
+</script>
+<script>
+"use strict";
+(() => {
+const C = JSON.parse(document.getElementById("opening-cues").textContent);
+const PAPER = "#F1EDE1", INK = "#252B29", RED = "#D9533B", GREY = "#C3C6BB";
+const MID = "#90998E", AMBER = "#D9AE53", PALE = "#DCDCCF", STOCK = "#CBC5B3";
+const WING_A = [[-91,-100],[-57,13],[25,3]];
+const WING_B = [[-28,-100],[32,-8],[49,-24]];
+const STOCK_RECT = [[-110,-104],[56,-104],[56,86],[-110,86]];
+const BODY = [[-100,15],[-50,-5],[5,-17],[53,-12],[86,9],[56,25],[0,38],[-62,32]];
+const TAIL = [[-70,8],[-149,-11],[-115,27],[-151,58],[-62,31]];
+const HEAD = [[28,22],[56,-66],[112,-66],[112,-8],[84,22]];
+const mix = (a,b,u) => a+(b-a)*u;
+const clamp = u => Math.min(1,Math.max(0,u));
+const ease = u => { u=clamp(u); return u*u*(3-2*u); };
+const ramp = (f,a,b) => ease((f-a)/(b-a));
+function keys(f, values) {
+  if (f<=values[0][0]) return values[0][1];
+  for (let i=1;i<values.length;i++) {
+    const [fa,a]=values[i-1], [fb,b]=values[i];
+    if (f<=fb) return mix(a,b,ramp(f,fa,fb));
+  }
+  return values[values.length-1][1];
+}
+function rot(x,y,degrees) {
+  const a=degrees*Math.PI/180;
+  return [x*Math.cos(a)-y*Math.sin(a),x*Math.sin(a)+y*Math.cos(a)];
+}
+function frameNumber(value) {
+  const n=Number(value);
+  return Number.isFinite(n) ? Math.min(C.duration_frames-1,Math.max(0,Math.floor(n))) : 0;
+}
+function down(f, [start,hit,end,travel]) {
+  return f<=hit ? travel*ramp(f,start,hit) : travel*(1-ramp(f,hit,end));
+}
+function frameState(value) {
+  const f=frameNumber(value), hx=keys(f,C.keys.hero_x), approach=f>=C.windows_inclusive.approach[0];
+  const camera={z:keys(f,C.keys.camera_zoom),
+    x:f<184 ? hx+20 : keys(f,C.keys.camera_x_reveal), y:keys(f,C.keys.camera_y)};
+  const stage=f<C.contacts.cut ? 0 : f<C.contacts.body ? 1 : f<C.contacts.trim ? 2 : f<C.contacts.eye ? 3 : 4;
+  const u=ramp(f,...C.windows_inclusive.approach), scale=mix(.65,35,u*u);
+  const t=ramp(f,...C.windows_inclusive.waste_separation);
+  return {f,hx,camera,stage,approach,
+    bird:{x:approach ? mix(965,640+41*scale,u) : hx,
+      y:approach ? mix(272,360+28*scale,u) : keys(f,C.keys.bird_y),
+      angle:approach ? 0 : keys(f,C.keys.bird_angle),
+      wing:approach || f<194 ? 0 : keys(f,C.keys.wing_angle), scale:approach ? scale : 1},
+    waste:{visible:f>=18 && f<=54,x:350-85*t,y:440+360*t,angle:-12*t},
+    offcuts:{visible:f>=109 && f<139,t:ramp(f,...C.windows_inclusive.head_offcut_fall)},
+    presses:{cut:102+down(f,C.presses.cut),body:240+down(f,C.presses.body),
+      trim:down(f,C.presses.trim),eye:265+down(f,C.presses.eye)},
+    wave:f>=219 && f<=245 ? 18*Math.sin(Math.PI*ramp(f,219,245)) : 0};
+}
+// Preserve V03 geometry and quantized stroke widths; SVG antialiasing is a new renderer.
+function roundEven(n) {
+  const a=Math.floor(n), frac=n-a;
+  return frac===.5 ? a+(a%2) : Math.round(n);
+}
+function svgFrame(value, paper=false) {
+  const s=frameState(value), f=s.f, {x:cx,y:cy,z}=s.camera, world=[];
+  const points=ps => ps.map(p=>p.join(",")).join(" ");
+  function poly(ps,color,target=world) { target.push(`<polygon points="${points(ps)}" fill="${color}"/>`); }
+  function rect(x,y,w,h,color) { poly([[x,y],[x+w,y],[x+w,y+h],[x,y+h]],color); }
+  function line(ps,color=INK,width=3) {
+    const sw=Math.max(1,roundEven(width*z*1.5))/(z*1.5);
+    world.push(`<polyline points="${points(ps)}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linejoin="round"/>`);
+  }
+  function circle(x,y,r,color,target=world) { target.push(`<circle cx="${x}" cy="${y}" r="${r}" fill="${color}"/>`); }
+  function bird(x,y,stage,angle=0,scale=1,wing=0,target=world) {
+    const pp=p=>{ const [rx,ry]=rot(...p,angle); return [x+rx*scale,y+ry*scale]; };
+    const shape=(ps,col)=>poly(ps.map(pp),col,target);
+    if (stage<1) shape(STOCK_RECT,RED);
+    else {
+      shape(WING_A.map(([wx,wy])=>{const [rx,ry]=rot(wx+15,wy+6,wing); return [rx-15,ry-6];}),RED);
+      shape(WING_B,RED);
+    }
+    if (stage>=2) { shape(BODY,INK); shape(TAIL,INK); }
+    shape([[109,-47],[140,-33],[109,-25]],AMBER);
+    shape(stage<3 ? [[28,-66],[112,-66],[112,22],[28,22]] : HEAD,STOCK);
+    if (stage>=4) {const p=pp([93,-43]); circle(...p,4.5*scale,INK,target);}
+  }
+  // Continuous world, conveyor and supplies, in the original paint order.
+  rect(-450,70,2400,13,GREY);
+  for (const x of [120,625,1180,1780]) rect(x,84,9,478,PALE);
+  circle(-90,432,158,INK); circle(-90,432,124,RED); circle(-90,432,28,PAPER);
+  rect(-90,371,460,150,RED);
+  rect(-220,340,2160,200,PALE); rect(-220,356,2160,169,PAPER);
+  for (let x=-400;x<2000;x+=95) {const xx=x+(s.hx-280)%95; line([[xx,531],[xx+38,531]],MID,2);}
+  line([[-220,543],[1940,543]],INK,8); line([[-220,570],[1940,570]],MID,4);
+  for (let x=-150;x<1950;x+=180) {
+    circle(x,587,27,INK); circle(x,587,9,MID);
+    const a=((f*5+x)%360)*Math.PI/180, xx=Math.cos(a)*20, yy=Math.sin(a)*20;
+    line([[x-xx,587-yy],[x+xx,587+yy]],PAPER,3);
+  }
+  rect(115,615,18,180,INK); rect(1640,615,18,180,INK);
+  rect(1550,118,270,12,INK);
+  [74,105,91].forEach((h,i)=>rect(1570+i*65,118-h,46,h,[RED,INK,AMBER][i]));
+  line([[1450,83],[1450,162]],INK,3); poly([[1408,162],[1492,162],[1470,189],[1430,189]],MID);
+  if (f>=190) {
+    const footprint=[WING_A,WING_B,BODY,TAIL,[[28,22],[56,-66],[112,-66],[112,-47],[140,-33],[112,-25],[112,-8],[84,22]]];
+    for (const ps of footprint) poly(ps.map(([x,y])=>[1250+x,440+y]),PALE);
+  }
+  if (s.waste.visible) {
+    const w=s.waste;
+    const contour=ps=>"M "+ps.map(([x,y])=>{const [rx,ry]=rot(x,y,w.angle);return `${w.x+rx},${w.y+ry}`;}).join(" L ")+" Z";
+    world.push(`<path data-part="waste" fill="${RED}" fill-rule="evenodd" d="${[STOCK_RECT,WING_A,WING_B].map(contour).join(" ")}"/>`);
+  }
+  if (!s.approach) bird(s.bird.x,s.bird.y,s.stage,s.bird.angle,s.bird.scale,s.bird.wing);
+  if (s.offcuts.visible) {
+    const x=950-20*s.offcuts.t,y=440+260*s.offcuts.t;
+    poly([[x+28,y-66],[x+56,y-66],[x+28,y+22]],STOCK);
+    poly([[x+112,y-8],[x+112,y+22],[x+84,y+22]],STOCK);
+  }
+  const y=s.presses.cut;
+  rect(266,84,20,240,GREY); rect(420,84,20,240,GREY);
+  rect(236,y,174,198,INK); rect(240,y+4,166,190,MID);
+  for (const tri of [WING_A,WING_B]) line([...tri,tri[0]].map(([x,yy])=>[350+x,y+108+yy]),PAPER,2);
+  rect(332,72,20,Math.max(20,y-72),MID);
+  rect(566,105,155,76,INK); rect(581,119,125,9,MID); line([[644,181],[644,253]],INK,14);
+  const y2=s.presses.body;
+  rect(495,y2-15,251,31,INK); rect(632,203,22,Math.max(38,y2-203),MID);
+  poly(BODY.map(([x,y])=>[650+x,y2+41+y]),MID); poly(TAIL.map(([x,y])=>[650+x,y2+41+y]),MID);
+  const k=s.presses.trim;
+  rect(1025,170,18,137,GREY);
+  poly([[978,374],[1006,374],[978,462]].map(([x,y])=>[x-30*(1-k),y-100*(1-k)]),MID);
+  poly([[1062,432],[1062,462],[1034,462]].map(([x,y])=>[x+30*(1-k),y-100*(1-k)]),MID);
+  rect(1312,147,64,74,INK); rect(1328,221,31,38,MID);
+  const y4=s.presses.eye;
+  rect(1338,251,10,Math.max(4,y4-251),INK); circle(1343,y4,6,INK);
+  circle(1740,311,30,INK); poly([[1711,350],[1764,350],[1784,452],[1696,452]],MID);
+  line([[1712,450],[1699,539]],INK,13); line([[1766,450],[1783,539]],INK,13);
+  line([[1680,543],[1706,543]],INK,10); line([[1774,543],[1800,543]],INK,10);
+  line([[1710,366],[1679,394],[1651,369-s.wave]],INK,10); line([[1763,367],[1804,389],[1820,355]],INK,10);
+  circle(1820,346,9,RED); line([[1820,355],[1843,473]],INK,4);
+  const foreground=[];
+  if (s.approach) bird(s.bird.x,s.bird.y,4,0,s.bird.scale,0,foreground);
+  return `${paper ? `<rect width="1280" height="720" fill="${PAPER}"/>` : ""}<g transform="matrix(${z} 0 0 ${z} ${640-cx*z} ${360-cy*z})">${world.join("")}</g>${foreground.join("")}`;
+}
+function render(value) {
+  const f=frameNumber(value), scene=document.getElementById("scene");
+  scene.innerHTML=svgFrame(f,new URLSearchParams(location.search).get("paper")==="1");
+  scene.setAttribute("data-frame",String(f));
+  return f;
+}
+window.OpeningPreview=Object.freeze({frameNumber,frameState,svgFrame});
+window.__vtx_render=render;
+render(new URLSearchParams(location.search).get("f"));
+})();
+</script>
+</body>
+</html>
