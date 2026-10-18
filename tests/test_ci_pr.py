@@ -1,5 +1,6 @@
 """The curated PR gate must never turn missing or skipped tests into success."""
 import contextlib
+from collections import Counter
 import io
 import sys
 import types
@@ -206,6 +207,103 @@ class CuratedRegressionGate(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
             ci_pr.main(['--pretend-full'])
         self.assertEqual(raised.exception.code, 2)
+
+
+class CuratedGroupContract(unittest.TestCase):
+    def test_groups_preserve_all_modules_and_selected_instances_without_overlap(self):
+        groups = [ci_pr.curated_group(str(number)) for number in range(1, 4)]
+        self.assertTrue(all(groups))
+        selected = [name for group in groups for name in group]
+        self.assertEqual(Counter(selected), Counter(ci_pr.PR_MODULES))
+        self.assertEqual(len(selected), len(set(selected)))
+
+        def identities(names):
+            loader = ci_pr.OriginLoader()
+            keepalive = unittest.TestSuite()
+            selected = []
+            for name in names:
+                suite = loader.loadTestsFromModule(ci_pr.importlib.import_module(name))
+                keepalive.addTest(suite)  # Preserve object IDs exactly as the runner does.
+                self.assertFalse(loader.errors)
+                self.assertGreater(suite.countTestCases(), 0)
+                selected.extend(loader.origins[id(test)] + '::' + test.id()
+                                for test in ci_pr.flatten(suite))
+            return Counter(selected)
+
+        grouped = [identities(group) for group in groups]
+        combined = sum(grouped, Counter())
+        self.assertEqual(combined, identities(ci_pr.PR_MODULES))
+        self.assertTrue(all(count == 1 for count in combined.values()))
+
+    def test_new_selected_module_defaults_to_group_three(self):
+        with mock.patch.object(ci_pr, 'PR_MODULES',
+                               ci_pr.PR_MODULES + ('tests.test_future',)):
+            self.assertIn('tests.test_future', ci_pr.curated_group('3'))
+            self.assertNotIn('tests.test_future', ci_pr.curated_group('1'))
+            self.assertNotIn('tests.test_future', ci_pr.curated_group('2'))
+
+    def test_invalid_empty_duplicate_unknown_and_overlapping_maps_fail(self):
+        with self.assertRaises(ValueError):
+            ci_pr.curated_group('4')
+        invalid = (
+            {'PR_MODULES': ()},
+            {'PR_MODULES': ci_pr.PR_MODULES + (ci_pr.PR_MODULES[0],)},
+            {'PR_GROUP_ONE_MODULES': ()},
+            {'PR_GROUP_TWO_MODULES': ()},
+            {'PR_GROUP_ONE_MODULES': ('unknown',)},
+            {'PR_GROUP_TWO_MODULES': ci_pr.PR_GROUP_ONE_MODULES},
+            {'PR_GROUP_ONE_MODULES': ci_pr.PR_GROUP_ONE_MODULES * 2},
+            {'PR_MODULES': ci_pr.PR_GROUP_ONE_MODULES + ci_pr.PR_GROUP_TWO_MODULES},
+        )
+        for changes in invalid:
+            for group in ('1', '2', '3'):
+                with self.subTest(changes=changes, group=group), \
+                        mock.patch.multiple(ci_pr, **changes), \
+                        self.assertRaises(ValueError):
+                    ci_pr.curated_group(group)
+
+    def test_group_and_default_cli_use_the_same_fail_closed_runner(self):
+        for group in (None, '1', '2', '3'):
+            for code in (0, 1):
+                with self.subTest(group=group, code=code), \
+                        contextlib.redirect_stdout(io.StringIO()), \
+                        mock.patch.object(ci_pr, 'run_curated', return_value=code) as run:
+                    self.assertEqual(ci_pr.main(['--group', group] if group else []), code)
+                    run.assert_called_once_with(
+                        ci_pr.curated_group(group) if group else ci_pr.PR_MODULES)
+
+    def test_invalid_map_fails_before_runner_and_invalid_argument_is_rejected(self):
+        with mock.patch.object(ci_pr, 'PR_MODULES', ()), \
+                mock.patch.object(ci_pr, 'run_curated') as run, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ci_pr.main(['--group', '1']), 1)
+            run.assert_not_called()
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+            ci_pr.main(['--group', '4'])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_whole_module_discovery_includes_unlisted_new_methods(self):
+        modules = {}
+        bodies = []
+        for name in ('first', 'second', 'future'):
+            module = types.ModuleType(name)
+            class Case(unittest.TestCase):
+                def test_original(self):
+                    bodies.append((self.__class__.__module__, 'original'))
+                def test_new_unknown_method(self):
+                    bodies.append((self.__class__.__module__, 'new'))
+            Case.__module__ = name
+            module.Case = Case
+            modules[name] = module
+        with mock.patch.multiple(ci_pr, PR_MODULES=tuple(modules),
+                                 PR_GROUP_ONE_MODULES=('first',),
+                                 PR_GROUP_TWO_MODULES=('second',)), \
+                mock.patch.dict(sys.modules, modules):
+            for number in ('1', '2', '3'):
+                self.assertEqual(ci_pr.run_curated(ci_pr.curated_group(number),
+                                                  stream=io.StringIO()), 0)
+        self.assertEqual(Counter(bodies), Counter(
+            (name, method) for name in modules for method in ('original', 'new')))
 
 
 if __name__ == '__main__':

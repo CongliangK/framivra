@@ -52,6 +52,37 @@ PR_MODULES = (
 )
 
 
+# Whole-module placement from current hosted timings, including Python 3.9.
+# PR_MODULES remains the complete curated inventory. Additional selected
+# modules default to group 3; every test inside a module follows that module.
+PR_GROUP_ONE_MODULES = (
+    'tests.safety.test_hygiene_safety',
+    'tests.test_proc_supervisor',
+)
+PR_GROUP_TWO_MODULES = (
+    'tests.test_input_identity_guard',
+    'tests.test_timeline_diff',
+)
+
+
+def curated_group(group):
+    if group not in ('1', '2', '3'):
+        raise ValueError('unknown curated group: %s' % group)
+    placed = PR_GROUP_ONE_MODULES + PR_GROUP_TWO_MODULES
+    if (not PR_MODULES or len(set(PR_MODULES)) != len(PR_MODULES) or
+            len(set(placed)) != len(placed) or
+            not set(placed) <= set(PR_MODULES)):
+        raise ValueError('empty, duplicate or unknown curated group modules')
+    groups = {
+        '1': tuple(name for name in PR_MODULES if name in PR_GROUP_ONE_MODULES),
+        '2': tuple(name for name in PR_MODULES if name in PR_GROUP_TWO_MODULES),
+        '3': tuple(name for name in PR_MODULES if name not in placed),
+    }
+    if not all(groups.values()):
+        raise ValueError('empty curated group')
+    return groups[group]
+
+
 def run_curated(names=PR_MODULES, stream=None):
     try:
         return _run_curated(names, stream)
@@ -115,10 +146,21 @@ def _run_curated(names, stream):
 
 
 def main(argv=None):
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--group', choices=('1', '2', '3'),
+                        help='execute one of three complete curated module groups')
+    args = parser.parse_args(argv)
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
-    return run_curated()
+    try:
+        names = curated_group(args.group) if args.group else PR_MODULES
+    except ValueError as error:
+        print('CI curated regression FAILED: %s' % error, file=sys.stderr)
+        return 1
+    if args.group:
+        print('CI curated group %s/3: %d whole modules on Python %s' %
+              (args.group, len(names), sys.version.split()[0]), flush=True)
+    return run_curated(names)
 
 
 if __name__ == '__main__':

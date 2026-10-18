@@ -6,9 +6,9 @@
 | 组件名 | 类型 | 版本 | 键 | hooks | installed | tests 态 | README 态 |  
 | --- | --- | --- | --- | --- | --- | --- | --- |  
 - source: apps/aroll/app.json:3  
-| aroll | app | 1.0.0 | — | — | — | 无 | 有 |  
+| aroll | app | 1.0.0 | — | — | — | 有 | 有 |  
 - source: apps/asr/app.json:3  
-| asr | app | 1.0.0 | asr.base_url, asr.python, asr.model_dir, asr.aligner_dir, asr.ime_root | — | — | 有 | 有 |  
+| asr | app | 1.0.0 | asr.enabled, asr.base_url, asr.python, asr.model_dir, asr.aligner_dir, asr.device_map, asr.vram_budget_mib | — | — | 有 | 有 |  
 - source: apps/bgm/app.json:3  
 | bgm | app | 1.0.0 | bgm.enabled | — | — | 无 | 有 |  
 - source: apps/blender-bridge/app.json:3  
@@ -24,9 +24,9 @@
 - source: apps/publish/app.json:3  
 | publish | app | 1.0.0 | — | — | — | 有 | 有 |  
 - source: apps/research/app.json:3  
-| research | app | 1.0.0 | — | — | — | 无 | 有 |  
+| research | app | 1.0.0 | — | — | — | 有 | 有 |  
 - source: apps/sync/app.json:3  
-| sync | app | 1.0.0 | — | — | — | 无 | 有 |  
+| sync | app | 1.0.0 | — | — | — | 有 | 有 |  
 - source: apps/tts/app.json:3  
 | tts | app | 1.0.0 | tts.engine, tts.repo, tts.python, tts.voice_ref, tts.edge_bin | — | — | 有 | 有 |  
 - source: plugins/bgm-render/plugin.json:3  
