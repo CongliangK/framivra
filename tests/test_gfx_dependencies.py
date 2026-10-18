@@ -13,6 +13,8 @@ from vtx import gfx_dependencies as deps, hygiene, gfx_render, gfx_cli
 
 class DependencyContracts(unittest.TestCase):
     def setUp(self):
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -31,7 +33,9 @@ class DependencyContracts(unittest.TestCase):
         self.tl['project']['gfx_dependency_policy'] = 'strict'
 
     def test_resource_free_legacy_vector(self):
-        blob = (self.root / 'page.html').read_bytes() + b'|30|1x1|2'
+        from vtx.gfx_environment import identity
+        blob = ((self.root / 'page.html').read_bytes() + b'|environment:'
+                + identity(self.c).encode() + b'|30|1x1|2')
         self.assertEqual(hygiene.gfx_key(self.c, self.clip), hashlib.sha1(blob).hexdigest()[:12])
         self.strict()
         self.assertNotEqual(hygiene.gfx_key(self.c, self.clip), hashlib.sha1(blob).hexdigest()[:12])

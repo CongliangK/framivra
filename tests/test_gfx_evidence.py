@@ -18,6 +18,8 @@ from PIL import Image
 
 class Evidence(unittest.TestCase):
     def setUp(self):
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -93,6 +95,28 @@ class Evidence(unittest.TestCase):
         self.assertEqual(r['quality']['purpose'], 'unknown')
         self.assertGreaterEqual(r['quality_cost']['wall_seconds'], 0)
         self.assertIsNone(r['quality_cost']['render_seconds'])
+
+    def test_production_input_environment_is_plan_bound_and_unknown_never_passes(self):
+        from vtx import gfx_environment as environment
+        axes = {'schema': environment.SCHEMA, 'status': 'input-bound', 'backend': 'cdp',
+                'pixel_equivalence': 'unproven', 'version': 'fixture version',
+                'viewport': {'width': 64, 'height': 48},
+                **{k: {'fixture': 'a' * 64} for k in
+                   ('browser', 'runtime', 'libraries', 'host_boot', 'implementation')},
+                'fonts': {k: {'fixture': 'b' * 64} for k in ('files', 'configs', 'tools', 'libraries')}}
+        cert = dict(schema=environment.SCHEMA, status='input-bound', axes=axes,
+                    sha256=environment.digest(axes))
+        for side in self.runs:
+            self.runs[side]['input_environment'] = copy.deepcopy(cert)
+            self.plan['arms'][side]['input_environment_sha256'] = cert['sha256']
+        self.bind()
+        self.assertTrue(self.check()['ok'])
+        self.runs['candidate']['input_environment']['status'] = 'unknown'
+        self.reject()
+        self.runs['candidate']['input_environment'] = copy.deepcopy(cert)
+        self.plan['arms']['candidate']['input_environment_sha256'] = '0' * 64
+        self.bind()
+        self.reject()
 
     def test_one_difference_counts_all_four(self):
         p = self.root / 'candidate/f0001.png'

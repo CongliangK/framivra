@@ -4,6 +4,7 @@ Synthetic PNGs use the production completion writer; no browser/CEF rendering.
 The worker fixture is an identity-only executable and is never launched.
 """
 import json
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -20,6 +21,14 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 from vtx.api import gfx_dir, gfx_key
 from vtx import gfx_cli
+from vtx.gfx_environment import certificate
+
+# app discovery owns a different `tests` package; load the shared unit seam by
+# its exact file, never substitute a fake worker for real environment evidence.
+_spec = importlib.util.spec_from_file_location(
+    'gfx_environment_fixture', REPO / 'tests/gfx_environment_fixture.py')
+_environment_fixture = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_environment_fixture)
 
 
 def png_bytes(value=0):
@@ -47,6 +56,7 @@ class CacheFixture(unittest.TestCase):
         self.patch = mock.patch.dict(os.environ, self.env, clear=True)
         self.patch.start()
         self.addCleanup(self.patch.stop)
+        _environment_fixture.bind_environment(self)
         (self.root / 'gfx').mkdir()
         (self.root / 'gfx' / 'page.html').write_text('<html>frame driven</html>')
         self.clip = {'src': 'gfx/page.html', 'dst_in': 0, 'dur': 3}
@@ -67,7 +77,8 @@ class CacheFixture(unittest.TestCase):
             (directory / f'f{i:04d}.png').write_bytes(png_bytes(i))
         if marker:
             gfx_cli.complete_page(directory, 3, gfx_key(self.c, self.clip), 8, 6,
-                                  verify_inputs=lambda: None, backend_ns=ns)
+                                  verify_inputs=lambda: None, backend_ns=ns,
+                                  environment=certificate(self.c))
         return directory
 
 
@@ -165,7 +176,7 @@ class ReadOnlyCache(CacheFixture):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(
                     os.environ, {'VTX_GFX': backend, 'VTX_GFX_CACHE_NS': ''}):
-                d = self.seed(marker=False)
+                d = self.seed(ns=None)
                 self.assertEqual(self.resolve()[0].parent, d)
                 # A separate read-only view tests the old stem layout without
                 # moving or aliasing any modern cache directory.
@@ -205,7 +216,8 @@ class ReadOnlyCache(CacheFixture):
                                   verify_inputs=lambda: None,
                                   dependency_digest=digest(resolve(self.c, self.clip)),
                                   dependency_enforcement='fetch-pinned-local-v1',
-                                  dependency_observed=[(self.root / self.clip['src']).as_uri()])
+                                  dependency_observed=[(self.root / self.clip['src']).as_uri()],
+                                  environment=certificate(self.c))
             before = self.snapshot()
             self.assertEqual(self.resolve()[0].parent, d)
             self.assertEqual(self.snapshot(), before)
@@ -220,11 +232,25 @@ class ReadOnlyCache(CacheFixture):
 @unittest.skipUnless(os.environ.get('VTX_TEST_BLENDER') == '1' and shutil.which('blender'),
                      'requires VTX_TEST_BLENDER=1 and blender')
 class RealBlenderCache(CacheFixture):
+    def blender_command(self, script, *args):
+        # Blender itself is real, while the explicitly identity-only fake worker
+        # remains a unit fixture in both parent and child interpreters.
+        wrapper = self.root / ('fixture_' + Path(script).name)
+        wrapper.write_text(
+            'import sys,runpy,importlib.util\nfrom unittest.mock import patch\n'
+            + 'sys.path.insert(0, ' + repr(str(REPO)) + ')\n'
+            + '_s=importlib.util.spec_from_file_location("gfx_environment_fixture", '
+            + repr(str(REPO / 'tests/gfx_environment_fixture.py')) + ')\n'
+            + '_f=importlib.util.module_from_spec(_s);_s.loader.exec_module(_f)\n'
+            + 'with patch("vtx.gfx_environment.collect", side_effect=_f.collect), '
+            + 'patch("vtx.encoders.find_chrome", side_effect=_f.find_chrome):\n'
+            + '    runpy.run_path(' + repr(str(script)) + ', run_name="__main__")\n')
+        return [shutil.which('blender'), '--background', '--factory-startup',
+                '--python', str(wrapper), '--', *map(str, args)]
+
     def export(self, expected=0):
         out = self.root / 'preview.blend'
-        cmd = [shutil.which('blender'), '--background', '--factory-startup',
-               '--python', str(REPO / 'apps/blender-bridge/json2blend.py'), '--',
-               str(self.timeline), str(out)]
+        cmd = self.blender_command(REPO / 'apps/blender-bridge/json2blend.py', self.timeline, out)
         result = subprocess.run(cmd, env=dict(os.environ), cwd=self.root,
                                 capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
@@ -233,9 +259,8 @@ class RealBlenderCache(CacheFixture):
     def test_current_cef_namespace_exports_and_verifies(self):
         self.seed()
         out = self.export()
-        result = subprocess.run([shutil.which('blender'), '--background', '--factory-startup',
-            '--python', str(REPO / 'apps/blender-bridge/verify_blend.py'), '--',
-            str(self.timeline), str(out)], capture_output=True, text=True, timeout=120)
+        result = subprocess.run(self.blender_command(REPO / 'apps/blender-bridge/verify_blend.py',
+            self.timeline, out), capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('失败 0 项', result.stdout)
 
@@ -269,7 +294,7 @@ class RealBlenderCache(CacheFixture):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(
                     os.environ, {'VTX_GFX': backend, 'VTX_GFX_CACHE_NS': ''}):
-                self.seed(marker=False)
+                self.seed(ns=None)
                 self.export()
                 legacy_cache = self.root / ('legacy-' + backend)
                 # Point the whole project fixture's cache at a distinct legacy
@@ -288,7 +313,7 @@ class RealBlenderCache(CacheFixture):
                     old = SimpleNamespace(**dict(vars(self.c), root=legacy_cache,
                                                  cache=legacy_cache / 'cache'))
                     gfx_cli.complete_page(legacy, 3, gfx_key(old, self.clip), 8, 6,
-                                          verify_inputs=lambda: None)
+                                          verify_inputs=lambda: None, environment=certificate(old))
                     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in legacy.iterdir()}
                     self.export()
                     self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns)

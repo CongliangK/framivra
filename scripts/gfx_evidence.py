@@ -158,6 +158,14 @@ def _host_controls(m):
 
 
 def _manifest(run, expected, viewport):
+    if 'input_environment_sha256' in expected:
+        from vtx.gfx_environment import verify_certificate
+        sha = verify_certificate(run.get('input_environment'))
+        require(sha == expected['input_environment_sha256'],
+                'actual/declared gfx input environment mismatch')
+        view = run['input_environment']['axes'].get('viewport')
+        require(isinstance(view, dict) and f"{view.get('width')}x{view.get('height')}" == viewport,
+                'gfx input environment viewport mismatch')
     m = run.get("env_manifest")
     require(isinstance(m, dict) and m.get("schema") == "vtx.env_manifest/1",
             "missing/unknown env_manifest")

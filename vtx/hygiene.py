@@ -204,6 +204,10 @@ def gfx_key(c, cl) -> str:
     backend = backend_identity()
     if backend:
         blob += b"|backend:" + backend.encode()
+    from .gfx_environment import identity as environment_identity
+    environment = environment_identity(c)
+    if environment:
+        blob += b"|environment:" + environment.encode()
     return _sha1(blob + f"|{c.fps}|{c.w}x{c.h}|{cl['dur']}".encode())
 
 

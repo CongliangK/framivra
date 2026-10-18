@@ -37,6 +37,7 @@ UTF-8 JSON，键排序、无空白、不转义 Unicode、不允许 NaN。输入�
 - config：实际生效配置，与该臂计划精确一致
 - env_manifest：#102 `vtx.env_manifest/1` 对象；其中 run_id 与该臂一致，
   backend_id 与 runtime_backend_truth.backend_id 一致；env_sha256 绑定完整 manifest
+- #48 的可选生产环境绑定字段与可信边界见[渲染环境身份](cache-provenance.md#gfx-environment)。
 - instances：与计划完全相同的实例集合，每项含 src、dur、frame_dir、frames
 - frame_dir：该实例的独立绝对帧目录，可映射隔离缓存，不需要改 HTML 换键
 - frames：恰好 `0000` 到格式化的 `dur-1`（最小四位）的对象映射；每项含

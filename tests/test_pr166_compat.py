@@ -12,6 +12,8 @@ from unittest import mock
 from tests.test_execution_events import Buffer
 from tests.test_frame_source import write_png
 from tests.test_gfx_cef_alpha import project
+from tests.gfx_environment_fixture import bind_environment
+from vtx.gfx_environment import certificate
 from vtx import cli, events, frame_source, gfx_cli, gfx_cache_reader, gfx_render
 from vtx.hygiene import gfx_dir, gfx_key
 from vtx.infra import Ctx
@@ -19,6 +21,7 @@ from vtx.infra import Ctx
 
 class LegacyCertificate(unittest.TestCase):
     def setUp(self):
+        bind_environment(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -38,7 +41,7 @@ class LegacyCertificate(unittest.TestCase):
         for i in range(2):
             write_png(self.legacy / f'f{i:04d}.png', frame=i)
         gfx_cli.complete_page(self.legacy, 2, gfx_key(self.c, self.clip), 16, 16,
-                              verify_inputs=lambda: None)
+                              verify_inputs=lambda: None, environment=certificate(self.c))
 
     def reject(self):
         with self.assertRaises(gfx_cache_reader.GfxCacheError):
@@ -47,6 +50,10 @@ class LegacyCertificate(unittest.TestCase):
     def test_verified_default_cdp_cli_stem_is_readonly_but_production_stays_closed(self):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(os.environ, VTX_GFX=backend):
+                # CDP and CLI no longer share a renderer identity. A current
+                # legacy-layout certificate must identify this selected path.
+                gfx_cli.complete_page(self.legacy, 2, gfx_key(self.c, self.clip), 16, 16,
+                                      verify_inputs=lambda: None, environment=certificate(self.c))
                 directory = gfx_dir(self.c, self.clip)
                 self.assertFalse(directory.exists())
                 self.assertTrue(gfx_cli.inspect_page(directory, 2, gfx_key(self.c, self.clip), 16, 16)[0])
@@ -118,6 +125,9 @@ class LegacyCertificate(unittest.TestCase):
 
 
 class RendererEvents(unittest.TestCase):
+    def setUp(self):
+        bind_environment(self)
+
     def test_backend_allowlist_producer_reader_roundtrip_and_unknown_rejection(self):
         for backend in ('cdp', 'cli', 'cef'):
             with self.subTest(backend=backend):

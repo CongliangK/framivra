@@ -14,15 +14,14 @@
 合入后的机制（main 13bed7a 架构 + PR#1 补强）：
 
 - **gfx 页缓存** `cache/gfx/<key>/`：键 = sha1(html 字节 + 显式依赖内容 + fps +
-  视口 + 时长)。同内容跨路径复用；同名页不同内容、同页换时长自然分键。
+  视口 + 时长 + [渲染环境身份](#gfx-environment))。同名页不同内容、同页换时长自然分键。
 - **CEF Alpha 身份**：显式 `VTX_GFX=cef` 将协议修订、A0/A1 模式和 worker
   可执行文件 SHA256 并入 gfx 键；缺省路由 `cache/gfx_exp/cef-alpha/<key>/`。
   `VTX_GFX_CACHE_NS` 可覆盖命名空间。生效 CEF 身份和命名空间同时进入阶段回执；
   分段与多 pass 键使用 gfx 相对 cache 的完整路径，不能跨命名空间误命中旧视频段。
 - **Electron Alpha 身份**：`VTX_GFX=electron` 将实际 binary、导航 worker、错误门、codec、Python 适配/生产门/PNG 校验/监管器及输出配置纳入同一内容键；缺省 namespace 为 `electron_b0`。只读桥复用生产 validator 核验真实 adapter/worker 回执，不补签旧 PNG。strict 依赖只支持 CDP，Electron/CEF 明确拒绝。
-- **键轴边界（诚实注记）**：CDP/CLI 的 Chrome 升级与 NAVFREE/STATIC 开关仍不入
-  gfx 键；CEF 键不单独散列同目录运行库、字体、GPU 驱动。运行库须使用锁定分发包，
-  环境变化宜在全新项目副本重建。段中间物 `vseg_pass` 属 gc 白名单。
+- **环境边界**：CDP/CLI/CEF 的身份与未知状态见[渲染环境身份](#gfx-environment)；
+  Electron 保留独立历史身份。段中间物 `vseg_pass` 属 gc 白名单。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
   键 = sha1(源 stat 身份 + 切片/窗口/fade/编码参数)。源 stat 身份 = path + size +
   mtime_ns + **首/尾 64KB 采样哈希**（PR#1 补强：同尺寸 + 恢复时间戳的同路径替换
@@ -89,12 +88,65 @@ strict v1 限 POSIX file URI，其他平台明确拒绝。strict 仅走独立 CD
 及扫描资源的拦截；Chrome 不支持 file 拦截或未加载某个扫描资源时保守失败。
 Fetch.enable 成功、Network 日志或有效 PNG 均不构成拦截证明。严格页不混用旧帧，
 不重启降级、不走 CLI 回退；完成标记绑定依赖摘要与实际执行路径，旧标记不得补认证。
-浏览器、系统字体及渲染环境身份属于独立 #48，当前不声称覆盖；真实 Chrome 请求、
-像素变化及失效对账仍为必须的验收门，静态/mock 测试不能替代。
+浏览器、系统字体及渲染环境身份使用下述独立解析器；#47 的资源闭包不替代环境身份。
+真实 Chrome 请求、像素变化及失效对账是必须的验收门，静态/mock 测试不能替代。
 
 Golden 使用原始完整 clip 重建身份；旧 Golden schema 无法表达同 src/dur 的多个
 不同依赖身份，因此明确拒绝歧义。输入在一次命令期间应保持不变，同一项目不要
 同时运行多个写入命令。升级渲染环境后需按既有清理流程重新构建。
+
+<a id="gfx-environment"></a>
+
+## 渲染环境身份（#48）
+
+`vtx/gfx_environment.py` 是 CDP/CLI/CEF 共享解析器，追加于 #47 依赖身份之后，
+同时进入 gfx 键和阶段输入指纹；下游分段沿用 gfx 身份。CDP 与 CLI 分键。
+环境记录以 `vtx.gfx-environment/1` 编号，页完成凭证保存完整字段与 SHA256，
+阶段回执记录环境摘要和可信状态。收集只读，不启动浏览器。
+
+内容轴包括实际原生浏览器文件与版本、CEF worker/运行库及分发资源、动态链接库、
+图形库与驱动、Python/numpy/Pillow 运行库、全部 fontconfig 可见字体的文件内容及生效配置、相关进程环境、
+NAVFREE/STATIC、启动参数及渲染实现摘要。字体不限于模板预设家族，包含任意 HTML
+所用的系统回退字体。视口、fps、时长由页键绑定，凭证另绑定视口和 fps。
+CDP/CLI 固定 device scale、srgb 和字体 hinting 参数，共用同一参数定义；CLI
+使用独立 profile，排除桌面浏览器偏好/扩展。CEF 沿用其 worker 的锁定模式。
+PNG 压缩级别和调度并发只影响编码/执行，不加入 RGBA 环境轴。
+
+解析器采用保守的 Linux 主机/启动周期边界，不承诺跨机或重启后缓存共享。
+同路径同大小并恢复 mtime 的替换仍按内容识别；哈希 memo 同时检查 inode、ctime。
+字体集合、配置和运行库成员均在复核时重新枚举。任务不接纳中途的新身份；
+环境发生变化，阶段完成门拒绝发布成功回执。
+
+未知平台、缺字体清单、缺运行库、不可读资源、无法解析的动态链接或覆盖路径均为
+`unknown`，不能用两条相等的 unknown 记录证明等价。时间线可加载以显示诊断，
+实际渲染与缓存消费明确拒绝；没有静默复用或假定环境不变的降级。非 Linux
+解析器没有通过实际验收，因此属于此明确拒绝路径。
+
+缺少环境字段的旧页不得补签成功，即使所有 PNG 都能解码。首次使用须重渲，
+旧目录保留供审计。中断续渲只允许本解析器生成且绑定当前页合同的
+`environment.pending.json`；不是完整页消费凭证。完整性、依赖与环境门全部通过
+后原子发布 `complete.json`，删除 pending。桥与 FrameSource 消费也核验环境凭证。
+CDP 自动回落 CLI 的页明确失败，不发布完成凭证或成功回执；须显式以
+`VTX_GFX=cli` 重跑获得独立身份。回落前撤销 pending，防止混合帧被续签；
+带 `mixed_producer` 的历史页也不允许复用或消费。
+
+`input-bound` 仅表示所列输入已绑定，`pixel_equivalence=unproven` 不因摘要相等
+变成像素等价或 Verified Exact。生效 GPU/Chromium 内部接口、实际字体消费和独立
+全帧对照仍由 #102/#62 的运行证据承担。Golden 冻结计划可为每臂指定
+`input_environment_sha256`，运行回执须提供匹配、完整且非 unknown 的
+`input_environment` 凭证；原有真实运行门不减弱。
+
+真实验收摘要与每帧摘要见
+[环境验收证据](../tests/fixtures/gfx-environment/acceptance-2026-10-18.json)。
+该受控夹具覆盖完整 HTML、JavaScript 和系统文本字体，不是整片性能或跨机像素证明。
+浏览器版本不同也可能逐帧相等，缓存仍须按身份分离。CEF 运行库负例为同一 worker、
+同一路径下替换 libcef.so 文件（追加不参与装载的 ELF 尾字节），证明内容失效；
+它不是运行库版本升级成功的声明。复现实验会向显式指定的新证据目录写入文件并
+启动真实浏览器，参数和前置工具通过零写态帮助查看：
+
+```bash
+env python3 tests/run_gfx_environment_acceptance.py --help
+```
 
 ## 阶段回执（PR#1）
 
@@ -109,7 +161,7 @@ FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该
 `tests/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。
 
 `receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
-gfx html 字节 + 声明依赖内容 + 生效 CEF 身份/实验命名空间)——与缓存键同等敏感（任何缓存键会变的输入变化，
+gfx html 字节 + 声明依赖内容 + 生效后端/环境身份/实验命名空间)——与缓存键同等敏感（任何缓存键会变的输入变化，
 回执门同样重置），但不做全量媒体哈希（GB 级 I/O 不可接受）。输入变化不继承旧的
 成功状态。CLI 在阶段开始前撤销其旧成功及下游成功，失败重跑不能保留旧 QC PASS。
 audio 要求当前 prepare，video（有 gfx 时）要求当前 gfx，mux 要求当前 video/audio，

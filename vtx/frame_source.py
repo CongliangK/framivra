@@ -6,7 +6,7 @@ EOF (the compositor owns trim, repeat-last and padding). Missing/truncated files
 fail before consumption; decoder errors still propagate from FFmpeg. Recovery is
 an explicit rerun of gfx, never fabricated frames or a successful receipt.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 
@@ -26,6 +26,7 @@ class PngSequence:
     pixel_format: str = "unknown"
     alpha: str = "unknown"
     color_space: str = "unknown"
+    environment_check: object = field(default=None, repr=False, compare=False)
 
     @property
     def time_base(self):
@@ -42,11 +43,15 @@ class PngSequence:
     def require_ready(self, start=0, stop=None):
         stop = self.frame_count if stop is None else stop
         self._interval(start, stop)
+        expected = self.environment_check() if self.environment_check is not None else None
         for frame in range(start, stop):
             path = self.frame_path(frame)
-            reason = png_invalid_reason(path, width=self.width, height=self.height)
+            got = []
+            reason = png_invalid_reason(path, width=self.width, height=self.height, _fingerprint=got)
             if reason:
                 raise ValueError(f"PNG source not ready: {path}; rerun vtx gfx ({reason})")
+            if expected is not None and (not got or got[0] != expected[frame]):
+                raise ValueError(f'PNG source digest changed: {path}; rerun vtx gfx')
 
     def input_args(self, start=0, stop=None, *, options=(), ready=True):
         stop = self.frame_count if stop is None else stop
@@ -66,4 +71,25 @@ def png_source(c, clip):
     # namespace in every downstream consumer (pass/segment/range/impact).
     relative = directory.relative_to(c.cache)
     identity = str(relative) if relative.parts[0] == "gfx_exp" else directory.name
-    return PngSequence(directory, identity, clip["dur"], c.fps, c.w, c.h)
+    def check_environment():
+        import json
+        from .gfx_environment import certificate
+        from .gfx_cli import COMPLETE_FILE
+        expected = certificate(c)
+        if expected is None:
+            return  # historical Electron has its independent producer checks
+        try:
+            record = json.loads((directory / COMPLETE_FILE).read_text())
+        except (OSError, ValueError) as error:
+            raise ValueError('gfx environment certificate missing; rerun vtx gfx') from error
+        if (not isinstance(record, dict) or type(record.get('schema')) is not int
+                or record['schema'] != 1
+                or record.get('environment') != expected
+                or record.get('mixed_producer')
+                or not isinstance(record.get('sha256'), list) or len(record['sha256']) != clip['dur']
+                or any(record.get(k) != v for k, v in
+                       dict(key=directory.name, frames=clip['dur'], width=c.w, height=c.h).items())):
+            raise ValueError('gfx environment certificate changed; rerun vtx gfx')
+        return record['sha256']
+    return PngSequence(directory, identity, clip["dur"], c.fps, c.w, c.h,
+                       environment_check=check_environment)

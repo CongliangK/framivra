@@ -36,6 +36,7 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
+from tests.gfx_environment_fixture import environment_cli
 from types import SimpleNamespace
 from unittest import mock
 
@@ -369,21 +370,26 @@ class GfxCliFallbackTests(unittest.TestCase):
         self.assertEqual(0, render_cli([], self.out, self.html, fail))
 
     # ------------------------------- 命令构造与 cli.py 原 shot_cli 一致
-    def test_cli_shot_cmd_matches_legacy_flags(self):
+    def test_cli_shot_cmd_pins_visual_flags(self):
         stub = self._stub("ok")
         cmd = _cli_shot_cmd(str(stub), 3, self.out, self.html, 1920, 1080)
-        self.assertEqual(cmd[1:6], ["--headless", "--disable-gpu",
-                                    "--hide-scrollbars", "--window-size=1920,1080",
+        self.assertEqual(cmd[1:9], ["--headless", "--disable-gpu", "--hide-scrollbars",
+                                    "--force-device-scale-factor=1", "--force-color-profile=srgb",
+                                    "--font-render-hinting=none", "--window-size=1920,1080",
                                     "--default-background-color=00000000"])
         self.assertEqual(cmd[0], str(stub))
-        self.assertEqual(cmd[6], f"--screenshot={self.out}/f0003.png")
-        self.assertTrue(cmd[7].startswith("file://"))
-        self.assertTrue(cmd[7].endswith(f"{self.html.name}?f=3"))
+        self.assertEqual(cmd[9], f"--screenshot={self.out}/f0003.png")
+        self.assertTrue(cmd[10].startswith("file://"))
+        self.assertTrue(cmd[10].endswith(f"{self.html.name}?f=3"))
 
 
 class GfxCliEntryTests(unittest.TestCase):
+
     """issue #28：真实 CLI 接线与失败回执，防止 helper 单测绿而入口仍漏检。"""
-    setUp = GfxCliFallbackTests.setUp
+    def setUp(self):
+        GfxCliFallbackTests.setUp(self)
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
     tearDown = GfxCliFallbackTests.tearDown
     _stub = GfxCliFallbackTests._stub
 
@@ -408,7 +414,7 @@ class GfxCliEntryTests(unittest.TestCase):
                              ("truncated", "截断")):
             with self.subTest(mode=mode):
                 result = subprocess.run(
-                    [sys.executable, "-m", "vtx", "-t", str(c.tl_path), "gfx"],
+                    [*environment_cli(), "-t", str(c.tl_path), "gfx"],
                     cwd=REPO, env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(self._stub(mode))),
                     capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -424,7 +430,7 @@ class GfxCliEntryTests(unittest.TestCase):
         d.mkdir(parents=True)
         (d / "f9999.png").write_bytes(MINIMAL_PNG)
         result = subprocess.run(
-            [sys.executable, "-m", "vtx", "-t", str(c.tl_path), "gfx"], cwd=REPO,
+            [*environment_cli(), "-t", str(c.tl_path), "gfx"], cwd=REPO,
             env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(self._stub("nowrite"))),
             capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -443,7 +449,7 @@ class GfxCliEntryTests(unittest.TestCase):
         for run in (1, 2):
             with self.subTest(run=run):
                 result = subprocess.run(
-                    [sys.executable, "-m", "vtx", "-t", str(c.tl_path), "gfx"],
+                    [*environment_cli(), "-t", str(c.tl_path), "gfx"],
                     cwd=REPO, env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(stub)),
                     capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -467,7 +473,7 @@ class GfxCliEntryTests(unittest.TestCase):
         for run in (1, 2):
             with self.subTest(run=run):
                 result = subprocess.run(
-                    [sys.executable, "-m", "vtx", "-t", str(c.tl_path), "gfx"],
+                    [*environment_cli(), "-t", str(c.tl_path), "gfx"],
                     cwd=REPO, env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(stub)),
                     capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)

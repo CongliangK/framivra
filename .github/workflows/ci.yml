@@ -26,7 +26,10 @@ jobs:
   core:
     name: Core Python ${{ matrix.python }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # Full environment rechecks (#48) add filesystem/library inventory work.
+    # Four Python jobs hit the old 25-minute limit without assertion failures;
+    # retain the entire suite and allow slower hosted runners to finish.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

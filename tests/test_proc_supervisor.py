@@ -597,6 +597,8 @@ class SupervisionDegradationTests(_ProjectFixture):
     """O1：监管不可用平台（非 Linux/无 /proc）真实降级——不硬失败（跨平台离线）。"""
 
     def test_no_proc_platform_falls_back_to_unsupervised_with_warning(self):
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         # monkeypatch 平台探测 → Browser 接入点回落 #103 之前的无监管路径
         # （裸 Popen + tempfile.mkdtemp，= main 基线），渲染启动照常成功 +
         # 一次性 stderr 告警。修复前此处是 _write_ledger 的 RuntimeError
