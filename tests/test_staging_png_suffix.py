@@ -9,6 +9,14 @@ from vtx.infra import ProjectPathError
 
 
 class StagingSuffix(unittest.TestCase):
+    def setUp(self):
+        # Platform simulation must not consume another test's process-wide
+        # warning or retain a temporary project root after this test exits.
+        state = patch.multiple(fstxn, _PROJECT_ROOT=None, _DEGRADED_NOTICED=False,
+                               _FD_WRITE_SUPPORT=None)
+        state.start()
+        self.addCleanup(state.stop)
+
     def test_default_and_png_native_and_legacy(self):
         for legacy in (False,True):
             for suffix in (None,'.png'):
