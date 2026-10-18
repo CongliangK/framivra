@@ -560,7 +560,7 @@ def _handle_transcribe(handler):
     if isinstance(language, str) and not language.strip():
         language = None
     if timestamps and _HOLDER.aligner_path is None:
-        raise RequestError(409, "字级时间戳需要 Qwen3-ForcedAligner（未加载）——先跑 bash apps/asr/init.sh 下载，或去掉 timestamps")
+        raise RequestError(409, "字级时间戳需要 Qwen3-ForcedAligner（未加载）——init 不下载；独立准备与许可边界见 apps/asr/README.md「开启步骤」，或去掉 timestamps")
     model = _HOLDER.acquire()
     oom_exc = None
     try:
@@ -719,12 +719,12 @@ def main():
     model_path, explicit = resolve_model_dir(args.model, args.models_root)
     if model_path is None:
         if explicit:
-            print("✗ 未找到指定模型目录：%s（先跑 bash apps/asr/init.sh）" % args.model)
+            print("✗ 未找到指定模型目录：%s（init 不下载；独立准备与许可边界见 apps/asr/README.md「开启步骤」）" % args.model)
             return 2
         model_path = resolve_model_dir("1.7b", args.models_root)[0] \
             or resolve_model_dir("0.6b", args.models_root)[0]
         if model_path is None:
-            print("✗ Framivra 专属模型根没有 Qwen3-ASR 模型（%s）——先跑 bash apps/asr/init.sh"
+            print("✗ Framivra 专属模型根没有 Qwen3-ASR 模型（%s）——init 不下载；独立准备与许可边界见 apps/asr/README.md「开启步骤」"
                   "（绝不借用输入法资产）" % PROJECT_MODEL_ROOT)
             return 2
 
@@ -734,7 +734,7 @@ def main():
     elif args.aligner == "auto":
         aligner_path = resolve_aligner_dir(args.models_root)
         if aligner_path is None:
-            print("⚠ 未找到 %s——timestamps 请求将返回 409；跑 bash apps/asr/init.sh 下载" % ALIGNER_DIR)
+            print("⚠ 未找到 %s——timestamps 请求将返回 409；init 不下载，独立准备与许可边界见 apps/asr/README.md「开启步骤」" % ALIGNER_DIR)
     else:
         p = str(Path(args.aligner).expanduser())
         if Path(p).exists():

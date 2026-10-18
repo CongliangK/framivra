@@ -27,13 +27,15 @@ sidecar（stdlib http.server，默认 **127.0.0.1:18085**；18081 为语音输�
 | `srt_out.py` | 独立 SRT 1.0 写出（HH:MM:SS,mmm） |
 | `tl_merge.py` | timeline.json subtitles[] 合并（只动 subtitles 键 + 备份 + 原子写回） |
 | `asr_cli.py` | 总入口：`sidecar` / `transcribe` / `srt` / `timeline` / `batch` |
-| `init.sh` | 幂等初始化：Framivra 专属解释器/模型探测（`config.asr.python` → `apps/asr/.venv`；模型 `config.asr.model_dir` → 专属根）、许可门禁后的缺才下载、冒烟；**绝不借用输入法环境/模型** |
+| `init.sh` | 已有 Framivra 专属解释器/模型检查与本地 sidecar 冒烟；不补齐缺失资产，旧 `--download` 入口为 **BLOCKED**；**绝不借用输入法环境/模型** |
 | `tests/` | 单测（零模型零 GPU 零网络）+ fixtures |
 
 ## 用法
 
+以下运行命令要求已独立准备并审核环境与模型，且显式启用 ASR；准备边界见下文「开启步骤」。
+
 ```bash
-bash apps/asr/init.sh                                        # 一次性初始化（幂等）
+bash apps/asr/init.sh                                        # 检查已有独立资产；含本地 sidecar 冒烟，非安装器
 env python3 apps/asr/asr_cli.py sidecar start                # 拉起 sidecar（日志 ~/.local/state/framivra/asr/sidecar.log）
 env python3 apps/asr/asr_cli.py transcribe 口播.wav --timestamps --json
 env python3 apps/asr/asr_cli.py srt 口播.mp4 -o out.srt      # 音视频皆可（自动抽 16k wav）
@@ -54,7 +56,7 @@ env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
 | `/transcribe` | POST | `{"audio":"<本地wav路径>","language":"Chinese","timestamps":true}` | `{"text":"…","words":[{"w":"字","s":0.833,"e":0.913},…],"degraded_ranges":[[起,止],…],"duration_s":12.34}` |
 
 - 错误统一 `{"error":"中文可行动信息"}` + 4xx/5xx；音频不存在 400；`timestamps:true`
-  但 aligner 未加载 409（先跑 `bash apps/asr/init.sh`）。
+  但 aligner 未加载 409（须独立准备并配置 aligner，见「开启步骤」；init 不会下载）。
 - **words 为 sidecar 加工格式，非 qwen-asr 原生 items**（原生为 token 级、无标点、ms
   制）：words[] = 单字粒度（拉丁连续串拆单字符共享 token 时间窗）、含标点（零宽锚 =
   前实字 {s,e}）、单位秒 3 位小数；`degraded_ranges` 为 text↔items 失配区段（text 字符
@@ -128,8 +130,8 @@ audit 同阈值）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留
   `independence.verify_module_from_own_env` 验证必须来自该环境根内）；Qwen3-ASR-1.7B/0.6B +
   Qwen3-ForcedAligner-0.6B 模型装在**专属根 `~/.local/share/framivra/asr/models`**
   （同型号允许独立部署，禁止 symlink/hardlink/共享缓存借用输入法权重——
-  `independence.py` 资产清单接口固定版本/来源/SHA256 记账，真实下载待关联工单过
-  #18 许可门禁）；`bash apps/asr/init.sh` 一键探测/补齐。
+  `independence.py` 资产清单接口固定版本/来源/SHA256 记账）；`bash apps/asr/init.sh`
+  仅检查已有独立资产并冒烟，不创建环境、不安装包、不下载模型。
 - **旧配置迁移**：`VT_ASR_IME_ROOT` / `asr.ime_root` 出现即报迁移错误（fail-closed，
   不静默换算）；`asr.python` / `asr.model_dir` / `asr.aligner_dir` / `asr.base_url`
   显式配置同样过独立性校验，指向输入法资产/端口即拒绝。
@@ -141,28 +143,41 @@ audit 同阈值）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留
 ## 开启步骤（默认关闭）
 
 > `asr.enabled` 自 #142 起为实际执行门禁（见上表）；`asr.device_map`（默认
-> `cuda:0`，CPU-only 用 `"cpu"`）与 `asr.vram_budget_mib`（正数 MiB，缺省按档
-> 估计）参与资源准入。
+> `cuda:0`，接受 `"cpu"`）与 `asr.vram_budget_mib`（正数 MiB，缺省按档
+> 估计）参与资源准入。CPU 参数通过显存门（N/A）不代表真实 CPU 转写已验收。
 
-1. `bash apps/asr/init.sh`：探测 **Framivra 专属资产**——解释器 `config.asr.python` →
-   `apps/asr/.venv`（都没有则自建并走清华 PyPI，须 `--download` 且过 #18 许可门禁）；
-   模型 `config.asr.model_dir` → 专属根 `~/.local/share/framivra/asr/models`
-   （Qwen3-ASR-1.7B / 0.6B / **Qwen3-ForcedAligner-0.6B**，缺才下载；绝不借用输入法
-   环境/模型）；完成后 `--once-health` 冒烟。
-2. 把解释器/模型路径写进仓库根 `config.local.json`（init 结束会打印建议片段，不自动改）：
+1. 先阅读 [第三方许可与模型下载边界](../../docs/third-party-licenses.md)。旧
+   `bash apps/asr/init.sh --download` 在配置探测、建 venv、pip 和模型请求之前
+   **BLOCKED（退出码 4）**；它不是可用的安装路线。以下 `plan <asset>` 仅离线显示
+   单资产证据与限制，不下载、不安装，也不表示已获得用途许可：
+
+   ```bash
+   env python3 scripts/model_license_policy.py plan qwen-asr-1.7b
+   ```
+
+   另行确认许可、固定官方快照、证据哈希和用途后，受支持的单资产下载接口才可使用；
+   **固定快照下载不安装 qwen-asr/torch 运行环境，也不解除旧 init 下载门禁**。
+   缺失的独立环境/依赖仍须另行审核和准备；不得借用输入法环境、模型或共享缓存。
+2. 已独立准备资产后，`bash apps/asr/init.sh` 检查解释器 `config.asr.python` →
+   `apps/asr/.venv`，模型 `config.asr.model_dir` → 专属根
+   `~/.local/share/framivra/asr/models`（Qwen3-ASR-1.7B / 0.6B /
+   **Qwen3-ForcedAligner-0.6B**），并执行本地 `--once-health` 冒烟。缺失项失败汇总，
+   不自动补齐；冒烟不加载真实模型、不验证转写质量。
+3. 确认独立环境与资产就绪后，才把解释器/模型路径和显式启用项写进仓库根
+   `config.local.json`（写配置是独立操作；init 仅打印建议片段，不自动改）：
    `"asr": { "enabled": true, "python": "<apps/asr/.venv>/bin/python", "model_dir": "~/.local/share/framivra/asr/models" }`
    （`base_url` 默认 `http://127.0.0.1:18085`，无需写）。
-3. 日常使用无需手动起 sidecar：`srt`/`timeline`/`batch` 会自动拉起并等健康。
+4. 日常使用无需手动起 sidecar：`srt`/`timeline`/`batch` 会自动拉起并等健康。
 
-GPU：4080 16GB 下 1.7B+aligner 同驻约 6-8GB；空闲 5 分钟自动卸载到 CPU 释放显存；
-CPU 推理不支持。共驻降档已删除——与输入法的 GPU 竞争由 #142 资源准入统一处理，
-绝不停/降输入法。
+空闲 5 分钟自动卸载到 CPU 释放显存；这与 CPU 实际推理验收不同。当前独立环境的
+CPU/GPU 真实转写均未验收，不据参数准入宣称硬件支持或实测显存占用。与输入法的
+GPU 竞争由 #142 通用资源准入处理，绝不停/降输入法。
 
 ## 已验证版本
 
-- **独立安装未跑（issue #141 注记）**：专属环境 `apps/asr/.venv` 与专属模型根
-  `~/.local/share/framivra/asr/models` 的真实安装+转写正例尚未执行（下载受 #18
-  许可门禁 BLOCKED，待关联工单交付固定快照资产后补）。以下为历史实测版本记录
+- **独立安装与真实转写 UNRUN（issue #140/#141）**：专属环境 `apps/asr/.venv` 与专属模型根
+  `~/.local/share/framivra/asr/models` 的真实安装+转写正例尚未执行（旧 init 下载入口受 #18
+  许可门禁 BLOCKED；另行批准的固定快照下载也不能替代运行环境安装与实际转写验收）。以下为历史实测版本记录
   （当时借用 IME 环境——该链路已废除，仅作 qwen-asr 库行为溯源）：
 - qwen-asr **0.0.6**（历史实测于 Python 3.14.7）——`from_pretrained(asr,
   forced_aligner=...)` 路线实证；forced_aligner 关键字失败时自动降级显式组装（R10）。
@@ -185,7 +200,7 @@ CPU 推理不支持。共驻降档已删除——与输入法的 GPU 竞争由 #
 ## 测试
 
 ```bash
-cd apps/asr && env python3 -m unittest discover -s tests -t . -v   # 59 个用例，零模型零 GPU 零网络
+cd apps/asr && env python3 -m unittest discover -s tests -t . -v   # 零真实模型、零 GPU，仅隔离 fixture/mock 服务
 # 或仓根统一入口：bash scripts/run_all_tests.sh（自动发现 apps/*/tests）
 ```
 

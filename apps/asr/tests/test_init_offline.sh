@@ -151,18 +151,26 @@ run 1
 no_calls
 [[ ! -d "$TMP/repo/apps/asr/.venv" ]]
 contains "$TMP/output" '本地探测模式：不联网'
-contains "$TMP/output" 'bash apps/asr/init.sh --download'
+contains "$TMP/output" '旧 --download 为 BLOCKED'
+contains "$TMP/output" 'docs/third-party-licenses.md'
+contains "$TMP/output" 'python3 scripts/model_license_policy.py plan <asset>'
+contains "$TMP/output" '独立运行环境须另行审核和准备'
+if grep -q '请运行 bash apps/asr/init.sh --download' "$TMP/output"; then
+  echo 'FAIL: missing assets recommend the blocked downloader' >&2; exit 1
+fi
 contains "$TMP/output" '绝不借用输入法'
 contains "$TMP/output" '== init 汇总 =='
 [[ ! -f "$TMP/ime_calls" ]] || { echo 'FAIL: IME interpreter invoked' >&2; exit 1; }
 echo 'PASS: default missing interpreter is local-only, never falls back to IME'
 
-# 2a. 许可门禁不变：--download 在无授权证据时仍 BLOCKED（exit 4），零网络命令。
+# 2a. 许可门禁不变：旧 --download 一律 BLOCKED（exit 4），零网络命令。
 #     拷贝真实 policy + inventory + 本地证据件到隔离副本（只读复用，不改真实树）。
 REAL_ROOT="$(cd "$ASR/../.." && pwd)"
 mkdir -p "$TMP/repo/scripts" "$TMP/repo/docs" \
   "$TMP/repo/experiments/gfx_cef_worker/third_party/spng" \
-  "$TMP/repo/experiments/gfx_cef_worker/third_party/fpng"
+  "$TMP/repo/experiments/gfx_cef_worker/third_party/fpng" \
+  "$TMP/repo/templates/standard-demo/profiles/standard/v1/fonts" \
+  "$TMP/repo/experiments/gfx_electron_worker"
 cp "$REAL_ROOT/scripts/model_license_policy.py" "$TMP/repo/scripts/"
 cp "$REAL_ROOT/docs/model-license-inventory.json" "$TMP/repo/docs/"
 cp "$REAL_ROOT/LICENSE" "$TMP/repo/" 2>/dev/null || true
@@ -171,15 +179,19 @@ cp "$REAL_ROOT/experiments/gfx_cef_worker/third_party/spng/spng.c" \
    "$TMP/repo/experiments/gfx_cef_worker/third_party/spng/"
 cp "$REAL_ROOT/experiments/gfx_cef_worker/third_party/fpng/LICENSE" \
    "$TMP/repo/experiments/gfx_cef_worker/third_party/fpng/"
+cp "$REAL_ROOT/templates/standard-demo/profiles/standard/v1/fonts/OFL.txt" \
+   "$TMP/repo/templates/standard-demo/profiles/standard/v1/fonts/"
+cp "$REAL_ROOT/experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt" \
+   "$TMP/repo/experiments/gfx_electron_worker/"
 : > "$CALL_LOG"
 run 4 --download
 contains "$TMP/output" 'BLOCKED'
 no_calls
-echo 'PASS: license gate stays closed without authorization (exit 4, no network)'
+echo 'PASS: legacy download gate stays blocked (exit 4, no network)'
 
-# 2b. 门禁放行后的安装路径（stub 模拟未来已授权固定快照）：--download 才创建 venv/
-#     调用假 pip；下载落点必须是 Framivra 专属根（不是假 IME vendor，不是 ~/models）。
-printf 'raise SystemExit(0)  # stub: 模拟已授权固定快照\n' > "$TMP/repo/scripts/model_license_policy.py"
+# 2b. 仅隔离副本覆盖门禁，以检查不可达旧分支的路径约束；这不是获准固定快照
+#     下载路线，也不证明真实安装可行。下方 pip/modelscope/curl/解释器全部为假程序。
+printf 'raise SystemExit(0)  # fixture only: exercise unreachable legacy branch\n' > "$TMP/repo/scripts/model_license_policy.py"
 run 0 --download
 contains "$CALL_LOG" 'venv -m venv'
 contains "$CALL_LOG" 'pip install --timeout 60 --retries 2'
@@ -191,26 +203,31 @@ contains "$TMP/output" '-m pip install --timeout 60 --retries 2'
 contains "$TMP/output" '-m modelscope download'
 contains "$TMP/output" 'curl -fSL'
 [[ "$(< "$CALL_LOG")" != *"$IME"* ]] || { echo 'FAIL: touched fake IME paths' >&2; exit 1; }
-echo 'PASS: explicit download targets project-owned roots only'
+echo 'PASS: stubbed unreachable legacy branch targets project-owned roots only'
 
-# 3. 就绪资产：无论普通还是 --download 都不调用 pip/modelscope/curl（幂等）。
+# 3. 同一假门禁 fixture 中就绪资产：两分支均不调用假 pip/modelscope/curl。
 : > "$CALL_LOG"
 run 0
 no_calls
 contains "$TMP/output" '复用专属资产'
 run 0 --download
 no_calls
-echo 'PASS: ready interpreter/models are reused in both modes'
+echo 'PASS: stubbed ready interpreter/models are reused in both fixture modes'
 
-# 4. 已有解释器但缺包：普通模式不调用 pip；--download 才补包。
+# 4. 同一假门禁 fixture 中已有解释器但缺包：普通模式不调用假 pip。
 export INSTALL_MARKER="$TMP/installed-again"
 run 1
 no_calls
 contains "$TMP/output" '缺 qwen_asr 包'
 contains "$TMP/output" '缺 modelscope 包'
+contains "$TMP/output" '旧 --download 为 BLOCKED'
+contains "$TMP/output" '固定快照模型下载不安装运行环境'
+if grep -q '自行执行：' "$TMP/output"; then
+  echo 'FAIL: missing packages recommend an unreviewed manual install' >&2; exit 1
+fi
 run 0 --download
 contains "$CALL_LOG" 'pip install --timeout 60 --retries 2'
-echo 'PASS: existing interpreter missing packages requires explicit download'
+echo 'PASS: missing packages do not install in default mode; stubbed legacy branch remains isolated'
 
 # 5. pip 失败仍汇总且不冒然下载模型（使用新的隔离 HOME）。
 : > "$CALL_LOG"
@@ -226,6 +243,10 @@ echo 'PASS: pip failure has summary and skips model network commands'
 export HOME="$TMP/home"
 run 0 --help
 contains "$TMP/output" '不创建 venv、不联网'
+contains "$TMP/output" 'BLOCKED'
+contains "$TMP/output" 'docs/third-party-licenses.md'
+contains "$TMP/output" 'plan <asset>'
+contains "$TMP/output" '固定快照下载不安装运行环境'
 no_calls
 run 2 --unknown
 contains "$TMP/output" '未知参数'
