@@ -1131,6 +1131,48 @@
       ],
       "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",
       "notes": "Bounded host prerequisite scope: Git, curl, shell/PowerShell and standard OS utilities, CMake, Ninja or selected generator, compiler/linker, pip/npm/conda or selected package manager, archive tools and OS package manager. These are invoked or referenced as host/build tools, not bundled by this project. A release including any of their binaries requires an exact component build manifest and notices; this record is not blanket approval of arbitrary external commands. BLOCKER for redistribution of these external components: pin exact versions/hashes and preserve authoritative full license/notice and restrictions before clearance."
+    },
+    "gfx-environment-evidence": {
+      "kind": "data",
+      "source": "tests/run_gfx_environment_acceptance.py",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "gfx-environment-generation",
+      "files_sha256": {
+        "tests/fixtures/gfx-environment/alternate-browser/f0000.png": "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1",
+        "tests/fixtures/gfx-environment/alternate-browser/f0001.png": "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017",
+        "tests/fixtures/gfx-environment/alternate-browser/f0002.png": "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2",
+        "tests/fixtures/gfx-environment/alternate-browser/f0003.png": "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1",
+        "tests/fixtures/gfx-environment/cdp-font-a/f0000.png": "072f72a3f02a80f31ff897c425456a8ef7a0c783383b218b2cae6d9438b8d354",
+        "tests/fixtures/gfx-environment/cdp-font-a/f0001.png": "ff477ee1585ddef47169dfaf14b49d60dd0ff864dd87acf933d23c16b387cc7f",
+        "tests/fixtures/gfx-environment/cdp-font-a/f0002.png": "2dbd12f3477e974872701f3032cdaa651095e3a5b017fbe743216f6213f24728",
+        "tests/fixtures/gfx-environment/cdp-font-a/f0003.png": "0ab67c4258bb5c2d3c81fb5425e7020a90d508b3e927b8a0afb109f9c2c0c389",
+        "tests/fixtures/gfx-environment/cdp-font-b/f0000.png": "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1",
+        "tests/fixtures/gfx-environment/cdp-font-b/f0001.png": "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017",
+        "tests/fixtures/gfx-environment/cdp-font-b/f0002.png": "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2",
+        "tests/fixtures/gfx-environment/cdp-font-b/f0003.png": "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1",
+        "tests/fixtures/gfx-environment/cef-font-a/f0000.png": "93e91f15c3ba3503bcb706a822633d3cb068a328da296c456122bfdbccbe3a3e",
+        "tests/fixtures/gfx-environment/cef-font-a/f0001.png": "4393aa9cd6a22b19bab80b15d8986461285e2ff73700e5534e83f504c11b8b31",
+        "tests/fixtures/gfx-environment/cef-font-a/f0002.png": "f373df30e2dcdb19f4e2c085558817928ff6368e3df69807925bf468e4e781a4",
+        "tests/fixtures/gfx-environment/cef-font-a/f0003.png": "eb7bd9654c2b48cd456d1be59ab9194ab1a27707fd36e65aa32ed45f1b70be3a",
+        "tests/fixtures/gfx-environment/cef-runtime-a/f0000.png": "e00e772e53fe070e104ae66352788fc31cc572017efc9d22c8ea0865e93aa0b0",
+        "tests/fixtures/gfx-environment/cef-runtime-a/f0001.png": "10d164daa3f1942e22269878719d66caa3b839cd05158a0576da8850614fe4aa",
+        "tests/fixtures/gfx-environment/cef-runtime-a/f0002.png": "a3ec844017fc9fc0c6a4c3d34209201aeb82ebdc7b26315c738862ae1bb49e5f",
+        "tests/fixtures/gfx-environment/cef-runtime-a/f0003.png": "e78c8eb68a10a0800aa3952df546b09be74477267f30803c4bf815025388daa5",
+        "tests/fixtures/gfx-environment/cef-runtime-b/f0000.png": "e00e772e53fe070e104ae66352788fc31cc572017efc9d22c8ea0865e93aa0b0",
+        "tests/fixtures/gfx-environment/cef-runtime-b/f0001.png": "10d164daa3f1942e22269878719d66caa3b839cd05158a0576da8850614fe4aa",
+        "tests/fixtures/gfx-environment/cef-runtime-b/f0002.png": "a3ec844017fc9fc0c6a4c3d34209201aeb82ebdc7b26315c738862ae1bb49e5f",
+        "tests/fixtures/gfx-environment/cef-runtime-b/f0003.png": "e78c8eb68a10a0800aa3952df546b09be74477267f30803c4bf815025388daa5",
+        "tests/fixtures/gfx-environment/cli-font-b/f0000.png": "6297cb477277e1ca0f0af7bfa959853b718aacc1c04528dcc7e8f25945e863f5",
+        "tests/fixtures/gfx-environment/cli-font-b/f0001.png": "e8268ceabb0e1c1c32f47d240f34354af3997a627f5f8530a17ea033e31a142f",
+        "tests/fixtures/gfx-environment/cli-font-b/f0002.png": "4df79b91b12b0148d947f706ca4df891ec5365148d78ec9cc4517ddd20e7b947",
+        "tests/fixtures/gfx-environment/cli-font-b/f0003.png": "2e12c46452e53198d6f312eef19476a25149b5a22f7dcf82c0f114f2551a7d42"
+      },
+      "notes": "Generated full-HTML/JS/text test screenshots. No font files, browser/runtime binaries or third-party page media are included. Runtime/font inputs remain separately governed external assets; this registration is not a legal certificate."
     }
   },
   "evidence": {
@@ -1371,6 +1413,11 @@
       "sha256": "c04d7afb662f0f79721593ee8dcca61530f2ade577d1ee89b058eb4e640eeb79",
       "local_path": "experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt",
       "scope": "Maintainer authorization for project-authored source only; no third-party license grant"
+    },
+    "gfx-environment-generation": {
+      "revision": "d7ed2cc90ab19d1bd7208cdfb0af54deb42440c9",
+      "text": "Project-generated gfx environment test evidence (#48). HTML/CSS/JavaScript fixture is authored in tests/run_gfx_environment_acceptance.py; generated output and observed font/runtime hashes are recorded in tests/fixtures/gfx-environment/acceptance-2026-10-18.json at source revision d7ed2cc90ab19d1bd7208cdfb0af54deb42440c9. The PNGs show only the authored fixture, not external web content. Root MIT applies to project-authored fixture/data declarations. Font files, browsers, CEF and other runtime binaries are external and are not shipped or relicensed by this entry. This is provenance/inventory evidence, not independent legal clearance of external software or fonts.\n",
+      "sha256": "b637b86212140aba0a28eecc7e7f3c7c9596898eb280e3b8c5c0bc29ee26a71a"
     }
   },
   "legacy_downloads": {

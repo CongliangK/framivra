@@ -21,7 +21,7 @@ class LicenseInventory(unittest.TestCase):
         data = policy.load_inventory()
         self.assertEqual({k for k, v in data["assets"].items() if v["default_payload"]},
                          {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media",
-                          "electron-worker-source", "demo-noto-sans-sc"})
+                      "electron-worker-source", "demo-noto-sans-sc", "gfx-environment-evidence"})
         self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_status"], "DECLARED")
         self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_identifier"], "OFL-1.1")
         self.assertIn("templates/standard-demo/profiles/standard/v1/fonts/NotoSansSC-VF.ttf",
