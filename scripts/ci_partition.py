@@ -260,6 +260,14 @@ def collect(root, timeout=60):
     return discovered
 
 
+# A TestCase can report several failed/skipped phases (body, tearDown and
+# cleanups). These are not final success/expected-failure callbacks. Subtest
+# success is also nonterminal; the parent must still complete independently.
+OUTCOME_PRIORITY = {None: -1, 'success': 0, 'expected_failure': 1, 'skip': 2,
+                    'unexpected_success': 3, 'failure': 4, 'error': 5}
+TERMINAL_OUTCOMES = ('success', 'expected_failure', 'unexpected_success')
+
+
 class RecordingResult(unittest.TextTestResult):
     def __init__(self, *args, **kwargs):
         self.instances = kwargs.pop('instances', {})
@@ -267,36 +275,51 @@ class RecordingResult(unittest.TextTestResult):
         self.records = []
         self.active = {}
         self.suite_events = []
+        # Hold references so Python cannot reuse a finished subtest's identity.
+        # Repeated parameter values are legitimate distinct subtest instances.
+        self.subtests = {}
 
     def startTest(self, test):
         super().startTest(test)
+        started = time.monotonic()
         record = {'id': self.instances.get(id(test), test.id()), 'original_id': test.id(),
-                  'started': time.monotonic(), 'completed': None,
-                  'outcome': None, 'outcomes': [], 'stop_count': 0, 'details': []}
+                  'started': started, 'completed': None,
+                  'outcome': None, 'outcomes': [], 'stop_count': 0, 'details': [],
+                  'events': [{'kind': 'start', 'time': started}]}
+        # Retain duplicate starts as separate records: reconciliation rejects
+        # duplicate identities rather than silently replacing the first start.
         self.records.append(record)
         self.active[id(test)] = record
 
     def stopTest(self, test):
-        self.active[id(test)]['completed'] = time.monotonic()
-        self.active[id(test)]['stop_count'] += 1
+        record = self.active.pop(id(test), None)
+        if record is None:
+            self.suite_events.append({'id': test.id(), 'kind': 'stop',
+                                      'detail': 'stopTest outside active lifecycle'})
+        else:
+            record['completed'] = time.monotonic()
+            record['stop_count'] += 1
+            record['events'].append({'kind': 'stop', 'time': record['completed']})
         super().stopTest(test)
 
-    def record(self, test, outcome, detail=None):
-        # unittest sends a skipped subTest to addSkip, not its parent test.
-        # Ordinary TestCases may legitimately use test_case for fixture data.
+    def record(self, test, outcome, detail=None, subtest=None):
         record = self.active.get(id(test))
-        if record is None and isinstance(test, unittest.case._SubTest):
-            record = self.active.get(id(test.test_case))
         if record is None:
-            self.suite_events.append({'id': test.id(), 'outcome': outcome, 'detail': detail})
+            self.suite_events.append({'id': test.id(), 'outcome': outcome, 'detail': detail,
+                                      'kind': 'subtest' if subtest is not None else 'outcome'})
             return
-        # Keep every outcome callback. Neither a skipped subtest nor an earlier
-        # failure may disappear behind a subsequent addSuccess callback.
-        record['outcomes'].append(outcome)
-        priority = {None: -1, 'success': 0, 'expected_failure': 1, 'skip': 2,
-                    'unexpected_success': 3, 'failure': 4, 'error': 5}
-        if priority[outcome] > priority[record['outcome']]:
-            record['outcome'] = outcome
+        event = {'kind': 'outcome', 'outcome': outcome, 'time': time.monotonic()}
+        if subtest is not None:
+            token = id(subtest)
+            self.subtests.setdefault(token, (subtest, len(self.subtests)))
+            event.update(kind='subtest', subtest=self.subtests[token][1])
+        record['events'].append(event)
+        # Successful subtests do not complete their parent or increment the
+        # unittest outcome totals. Every other callback remains visible.
+        if subtest is None or outcome != 'success':
+            record['outcomes'].append(outcome)
+            if OUTCOME_PRIORITY[outcome] > OUTCOME_PRIORITY[record['outcome']]:
+                record['outcome'] = outcome
         if detail is not None:
             record['details'].append(detail)
 
@@ -313,7 +336,12 @@ class RecordingResult(unittest.TextTestResult):
         super().addError(test, error)
 
     def addSkip(self, test, reason):
-        self.record(test, 'skip', reason)
+        # Only an actual stdlib subtest has a parent here. Ordinary TestCases
+        # may legitimately use a test_case attribute for their own fixtures.
+        if isinstance(test, unittest.case._SubTest):
+            self.record(test.test_case, 'skip', reason, subtest=test)
+        else:
+            self.record(test, 'skip', reason)
         super().addSkip(test, reason)
 
     def addExpectedFailure(self, test, error):
@@ -325,10 +353,73 @@ class RecordingResult(unittest.TextTestResult):
         super().addUnexpectedSuccess(test)
 
     def addSubTest(self, test, subtest, error):
-        if error is not None:
-            outcome = 'failure' if issubclass(error[0], test.failureException) else 'error'
-            self.record(test, outcome, self._exc_info_to_string(error, subtest))
+        outcome = ('success' if error is None else
+                   'failure' if issubclass(error[0], test.failureException) else 'error')
+        detail = None if error is None else self._exc_info_to_string(error, subtest)
+        if not isinstance(subtest, unittest.case._SubTest) or subtest.test_case is not test:
+            self.suite_events.append({'id': test.id(), 'outcome': outcome,
+                                      'detail': 'invalid subtest parent'})
+        else:
+            self.record(test, outcome, detail, subtest=subtest)
         super().addSubTest(test, subtest, error)
+
+
+def reconcile_events(record):
+    """Check ordered ordinary unittest semantics, not hostile-code authenticity."""
+    label = record['id']
+    start, end = record.get('started'), record.get('completed')
+    if (type(record.get('stop_count')) is not int or record['stop_count'] != 1
+            or type(start) not in (float, int) or type(end) not in (float, int)
+            or not math.isfinite(start) or not math.isfinite(end) or end < start):
+        raise PartitionError('selected test not completed: ' + label)
+    events = record.get('events')
+    if not isinstance(events, list) or len(events) < 3:
+        raise PartitionError('missing lifecycle/outcome events: ' + label)
+    state, previous = 'new', start
+    outcomes, subtests = [], set()
+    terminal = None
+    for event in events:
+        if not isinstance(event, dict):
+            raise PartitionError('invalid lifecycle event: ' + label)
+        stamp, kind = event.get('time'), event.get('kind')
+        if (type(stamp) not in (float, int) or not math.isfinite(stamp)
+                or stamp < previous or stamp > end):
+            raise PartitionError('invalid lifecycle event time: ' + label)
+        previous = stamp
+        if kind == 'start' and state == 'new' and stamp == start:
+            state = 'active'
+        elif kind == 'stop' and state == 'active' and stamp == end:
+            state = 'stopped'
+        elif kind in ('outcome', 'subtest') and state == 'active':
+            outcome = event.get('outcome')
+            allowed = ('success', 'failure', 'error', 'skip') if kind == 'subtest' else OUTCOME_PRIORITY
+            if outcome is None or outcome not in allowed:
+                raise PartitionError('invalid outcome event: ' + label)
+            if terminal is not None:
+                raise PartitionError('duplicate terminal or callback after terminal outcome: ' + label)
+            if kind == 'subtest':
+                token = event.get('subtest')
+                if type(token) is not int or token < 0 or token in subtests:
+                    raise PartitionError('invalid or duplicate subtest outcome: ' + label)
+                subtests.add(token)
+                if outcome == 'success':
+                    continue
+            elif outcome in TERMINAL_OUTCOMES:
+                if outcomes:
+                    raise PartitionError('incompatible terminal outcome callbacks: ' + label)
+                terminal = outcome
+            outcomes.append(outcome)
+        else:
+            raise PartitionError('invalid lifecycle event order: ' + label)
+    if state != 'stopped':
+        raise PartitionError('selected test not completed: ' + label)
+    if not outcomes:
+        raise PartitionError('missing parent outcome callback: ' + label)
+    if record.get('outcomes') != outcomes:
+        raise PartitionError('outcome callbacks do not match event log: ' + label)
+    if record.get('outcome') != max(outcomes, key=OUTCOME_PRIORITY.get):
+        raise PartitionError('unsuccessful or inconsistent outcome summary: ' + label)
+    return outcomes
 
 
 def reconcile(request, receipt, exit_code, strict=False):
@@ -336,6 +427,9 @@ def reconcile(request, receipt, exit_code, strict=False):
     for field in ('attempt_id', 'batch', 'selected', 'discovered'):
         if receipt.get(field) != request.get(field):
             raise PartitionError('execution receipt mismatch: ' + field)
+    suite_events = receipt.get('suite_events')
+    if type(suite_events) is not list:
+        raise PartitionError('suite_events must be an explicit list')
     selected = unique(request['selected'], 'selected IDs')
     if not selected:
         raise PartitionError('empty execution selection')
@@ -346,30 +440,20 @@ def reconcile(request, receipt, exit_code, strict=False):
             sorted(set(selected) - set(ids)), sorted(set(ids) - set(selected))))
     if type(receipt.get('testsRun')) is not int or receipt['testsRun'] != len(selected):
         raise PartitionError('unittest testsRun does not match selected/started tests')
-    observed = Counter(outcome for record in records for outcome in record.get('outcomes', []))
-    observed.update(event.get('outcome') for event in receipt.get('suite_events', []))
+    observed = Counter()
+    for record in records:
+        outcomes = reconcile_events(record)
+        observed.update(outcomes)
+        if any(outcome not in ('success', 'expected_failure', 'skip') for outcome in outcomes):
+            raise PartitionError('unsuccessful test: ' + record['id'])
+    observed.update(event.get('outcome') for event in suite_events)
     for field, outcome in (('skipped', 'skip'), ('failures', 'failure'), ('errors', 'error'),
                            ('unexpectedSuccesses', 'unexpected_success'), ('expectedFailures', 'expected_failure')):
         if type(receipt.get(field)) is not int or receipt[field] != observed[outcome]:
             raise PartitionError('unittest outcome count mismatch: ' + field)
     if strict and receipt['skipped']:
         raise PartitionError('strict execution skipped tests or subtests')
-    for record in records:
-        start, end = record.get('started'), record.get('completed')
-        if (record.get('stop_count') != 1
-                or type(start) not in (float, int) or type(end) not in (float, int)
-                or not math.isfinite(start) or not math.isfinite(end) or end < start):
-            raise PartitionError('selected test not completed: ' + record['id'])
-        if record.get('outcome') not in ('success', 'expected_failure', 'skip'):
-            raise PartitionError('unsuccessful test: ' + record['id'])
-        if not record.get('outcomes') or any(
-                outcome not in ('success', 'expected_failure', 'skip') for outcome in record['outcomes']):
-            raise PartitionError('unsuccessful or missing outcome callback: ' + record['id'])
-        if record['outcomes'].count('success') > 1 or record['outcomes'].count('expected_failure') > 1:
-            raise PartitionError('duplicate terminal outcome callback: ' + record['id'])
-        if strict and record['outcome'] == 'skip':
-            raise PartitionError('strict execution skipped: ' + record['id'])
-    if receipt.get('suite_events'):
+    if suite_events:
         raise PartitionError('setup/teardown did not complete selected tests: %s' % receipt['suite_events'])
     if exit_code != 0 or receipt.get('unittest_success') is not True:
         raise PartitionError('test worker failed (exit %s)' % exit_code)

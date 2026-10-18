@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "baseline": {
-    "commit": "ed9965b360ace2c11e99ca7669969eead5aceee4",
-    "tree": "fbc39121c60496b4059c28773e3c67d26f27bfee",
+    "commit": "bb4c647b9da9d27409e21b3661ace36289c4234d",
+    "tree": "773ea318b0db7bc0dcafba218b67f14a367715a9",
     "discovered_count": 2204,
     "unique_test_ids": 2202,
     "note": "Discovery only on integrated baseline. Aliased imports remain separate discovery instances; no execution PASS inferred.",

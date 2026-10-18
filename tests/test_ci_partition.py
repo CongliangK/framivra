@@ -1,7 +1,7 @@
 """Fail-closed partitioning preserves discovery instances and real execution.
 
 These tests exercise synthetic subprocess suites, including failure, timeout,
-setup-level skip and a malicious zero-execution TestCase. They never launch
+setup-level skip and an incorrectly zero-execution TestCase. They never launch
 native renderer integrations or replace the existing strict media preflight.
 """
 import contextlib
@@ -146,11 +146,25 @@ class ExecutionReconciliation(unittest.TestCase):
                         'selected': [instance()], 'discovered': [instance()]}
         self.receipt = dict(self.request, unittest_success=True, suite_events=[], records=[
             {'id': instance(), 'started': 1.0, 'completed': 2.0, 'outcome': 'success',
-             'outcomes': ['success'], 'stop_count': 1}], testsRun=1, skipped=0,
+             'outcomes': ['success'], 'stop_count': 1,
+             'events': [{'kind': 'start', 'time': 1.0},
+                        {'kind': 'outcome', 'outcome': 'success', 'time': 1.5},
+                        {'kind': 'stop', 'time': 2.0}]}], testsRun=1, skipped=0,
             failures=0, errors=0, unexpectedSuccesses=0, expectedFailures=0)
 
     def test_complete_execution_passes(self):
         self.assertEqual(ci.reconcile(self.request, self.receipt, 0), 'PASS')
+
+    def test_suite_events_requires_an_explicit_list(self):
+        for strict in (False, True):
+            missing = dict(self.receipt)
+            del missing['suite_events']
+            for label, receipt in [('missing', missing)] + [
+                    (repr(value), dict(self.receipt, suite_events=value))
+                    for value in ({}, '', None, False, 0, ())]:
+                with self.subTest(strict=strict, value=label), self.assertRaisesRegex(
+                        ci.PartitionError, 'suite_events must be an explicit list'):
+                    ci.reconcile(self.request, receipt, 0, strict=strict)
 
     def test_missing_start_or_empty_selection_fails(self):
         self.receipt['records'] = []
@@ -181,6 +195,7 @@ class ExecutionReconciliation(unittest.TestCase):
     def test_skip_is_never_plain_pass_and_strict_skip_fails(self):
         self.receipt['records'][0]['outcome'] = 'skip'
         self.receipt['records'][0]['outcomes'] = ['skip']
+        self.receipt['records'][0]['events'][1]['outcome'] = 'skip'
         self.receipt['skipped'] = 1
         self.assertEqual(ci.reconcile(self.request, self.receipt, 0), 'COMPLETE_WITH_SKIPS')
         with self.assertRaisesRegex(ci.PartitionError, 'strict execution skipped'):
@@ -228,8 +243,152 @@ class ExecutionReconciliation(unittest.TestCase):
             ci.reconcile(self.request, self.receipt, 0)
         self.receipt['records'][0]['stop_count'] = 1
         self.receipt['records'][0]['outcomes'] *= 2
+        self.receipt['records'][0]['events'].insert(2,
+            {'kind': 'outcome', 'outcome': 'success', 'time': 1.75})
         with self.assertRaisesRegex(ci.PartitionError, 'duplicate terminal'):
             ci.reconcile(self.request, self.receipt, 0)
+
+
+    def test_boolean_stop_count_and_inconsistent_summary_fail(self):
+        self.receipt['records'][0]['stop_count'] = True
+        with self.assertRaisesRegex(ci.PartitionError, 'not completed'):
+            ci.reconcile(self.request, self.receipt, 0)
+        self.receipt['records'][0]['stop_count'] = 1
+        self.receipt['records'][0]['outcome'] = 'expected_failure'
+        with self.assertRaisesRegex(ci.PartitionError, 'inconsistent outcome'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+    def test_missing_malformed_and_unordered_events_fail(self):
+        original = copy.deepcopy(self.receipt['records'][0])
+        malformed = [None, [], {}, original['events'][:-1], original['events'][1:],
+                     list(reversed(original['events']))]
+        for event in ({'kind': 'start', 'time': 1.25}, {'kind': 'stop', 'time': 1.25},
+                      {'kind': 'unknown', 'time': 1.25},
+                      {'kind': 'outcome', 'outcome': 'unknown', 'time': 1.25}):
+            malformed.append([original['events'][0], event] + original['events'][1:])
+        for stamp in (True, None, float('nan'), float('inf'), 0.5, 2.5):
+            events = copy.deepcopy(original['events'])
+            events[1]['time'] = stamp
+            malformed.append(events)
+        for events in malformed:
+            with self.subTest(events=events), self.assertRaises(ci.PartitionError):
+                self.receipt['records'][0] = dict(original, events=events)
+                ci.reconcile(self.request, self.receipt, 0)
+        self.receipt['records'][0] = dict(original, outcomes=['expected_failure'])
+        with self.assertRaisesRegex(ci.PartitionError, 'do not match event log'):
+            ci.reconcile(self.request, self.receipt, 0)
+
+
+class EventLifecycleContract(unittest.TestCase):
+    def setUp(self):
+        class Case(unittest.TestCase):
+            def runTest(self): pass
+        self.case = Case()
+        self.result = ci.RecordingResult(unittest.runner._WritelnDecorator(io.StringIO()),
+                                         True, 0, instances={id(self.case): instance()})
+        self.request = {'attempt_id': 'event-attempt', 'batch': 'tests',
+                        'selected': [instance()], 'discovered': [instance()]}
+        self.subtest = unittest.case._SubTest(self.case, 'subtest', {})
+        try:
+            raise AssertionError('test callback')
+        except AssertionError:
+            self.error = sys.exc_info()
+
+    def emit(self, *sequence):
+        for event in sequence:
+            if event == 'start': self.result.startTest(self.case)
+            elif event == 'stop': self.result.stopTest(self.case)
+            elif event == 'success': self.result.addSuccess(self.case)
+            elif event == 'expected_failure': self.result.addExpectedFailure(self.case, self.error)
+            elif event == 'unexpected_success': self.result.addUnexpectedSuccess(self.case)
+            elif event == 'skip': self.result.addSkip(self.case, 'phase skipped')
+            elif event == 'failure': self.result.addFailure(self.case, self.error)
+            elif event == 'error': self.result.addError(self.case, self.error)
+            elif event == 'subtest_skip': self.result.addSkip(self.subtest, 'subtest skipped')
+            elif event == 'subtest_success': self.result.addSubTest(self.case, self.subtest, None)
+            elif event == 'subtest_failure': self.result.addSubTest(self.case, self.subtest, self.error)
+            else: self.fail('unknown fixture event: ' + event)
+
+    def reconcile(self, strict=False):
+        result = self.result
+        receipt = dict(self.request, records=result.records, suite_events=result.suite_events,
+                       unittest_success=result.wasSuccessful(), testsRun=result.testsRun,
+                       skipped=len(result.skipped), failures=len(result.failures), errors=len(result.errors),
+                       unexpectedSuccesses=len(result.unexpectedSuccesses), expectedFailures=len(result.expectedFailures))
+        return ci.reconcile(self.request, receipt, 0 if result.wasSuccessful() else 1, strict)
+
+    def test_every_callback_before_start_or_after_stop_fails(self):
+        callbacks = ('success', 'expected_failure', 'unexpected_success', 'skip', 'failure',
+                     'error', 'subtest_skip', 'subtest_success', 'subtest_failure')
+        for callback in callbacks:
+            for before in (True, False):
+                with self.subTest(callback=callback, before=before):
+                    self.setUp()
+                    valid = ('start', 'success', 'stop')
+                    self.emit(*((callback,) + valid if before else valid + (callback,)))
+                    with self.assertRaises(ci.PartitionError):
+                        self.reconcile()
+                    self.assertTrue(self.result.suite_events)
+
+    def test_mixed_and_repeated_aggregate_terminal_outcomes_fail(self):
+        for first in ci.TERMINAL_OUTCOMES:
+            for second in ci.TERMINAL_OUTCOMES + ('skip', 'failure', 'error', 'subtest_success'):
+                with self.subTest(first=first, second=second):
+                    self.setUp()
+                    self.emit('start', first, second, 'stop')
+                    with self.assertRaisesRegex(ci.PartitionError, 'terminal'):
+                        self.reconcile()
+        for phase in ('skip', 'failure', 'error', 'subtest_skip', 'subtest_failure'):
+            for terminal in ci.TERMINAL_OUTCOMES:
+                with self.subTest(phase=phase, terminal=terminal):
+                    self.setUp()
+                    self.emit('start', phase, terminal, 'stop')
+                    with self.assertRaisesRegex(ci.PartitionError, 'terminal'):
+                        self.reconcile()
+
+    def test_missing_duplicate_and_restarted_lifecycles_fail(self):
+        for sequence in (('success',), ('start', 'stop'), ('start', 'success'),
+                         ('stop', 'start', 'success', 'stop'),
+                         ('start', 'start', 'success', 'stop'),
+                         ('start', 'success', 'stop', 'stop'),
+                         ('start', 'success', 'stop', 'start', 'success', 'stop'),
+                         ('start', 'subtest_success', 'stop'),
+                         ('start', 'stop', 'success'), ('start', 'stop', 'expected_failure')):
+            with self.subTest(sequence=sequence):
+                self.setUp()
+                self.emit(*sequence)
+                with self.assertRaises(ci.PartitionError):
+                    self.reconcile()
+
+    def test_subtest_has_only_one_outcome_per_actual_instance(self):
+        for first in ('subtest_success', 'subtest_skip', 'subtest_failure'):
+            for second in ('subtest_success', 'subtest_skip', 'subtest_failure'):
+                with self.subTest(first=first, second=second):
+                    self.setUp()
+                    self.emit('start', first, second, 'stop')
+                    with self.assertRaisesRegex(ci.PartitionError, 'duplicate subtest'):
+                        self.reconcile()
+
+    def test_wrong_subtest_parent_cannot_contribute_success(self):
+        self.emit('start')
+        wrong = unittest.case._SubTest(unittest.TestCase(), 'wrong parent', {})
+        self.result.addSubTest(self.case, wrong, None)
+        self.emit('success', 'stop')
+        with self.assertRaises(ci.PartitionError):
+            self.reconcile()
+
+    def test_successful_subtests_before_parent_terminal_are_valid(self):
+        for terminal in ('success', 'expected_failure'):
+            with self.subTest(terminal=terminal):
+                self.setUp()
+                self.emit('start', 'subtest_success', terminal, 'stop')
+                self.assertEqual(self.reconcile(strict=True), 'PASS')
+
+    def test_separate_skipped_phases_remain_visible_and_strictly_fail(self):
+        self.emit('start', 'skip', 'skip', 'stop')
+        self.assertEqual(self.reconcile(), 'COMPLETE_WITH_SKIPS')
+        with self.assertRaisesRegex(ci.PartitionError, 'strict execution skipped'):
+            self.reconcile(strict=True)
 
 
 class WorkerIntegration(unittest.TestCase):
@@ -249,6 +408,110 @@ class WorkerIntegration(unittest.TestCase):
         manifest = {'batches': found, 'tests': records, 'source': {'fixture': True}, 'policy_sha256': 'fixture'}
         with contextlib.redirect_stdout(io.StringIO()):
             return ci.execute(self.root, manifest, 'fast', 15, strict)
+
+    def test_terminal_order_regressions_fail_in_actual_workers(self):
+        statements = {
+            'success': 'result.addSuccess(self)',
+            'expected_failure': 'result.addExpectedFailure(self, error)',
+            'stop': 'result.stopTest(self)',
+        }
+        for sequence in (('success', 'expected_failure', 'stop'),
+                         ('expected_failure', 'success', 'stop'),
+                         ('stop', 'success'), ('stop', 'expected_failure')):
+            with self.subTest(sequence=sequence):
+                self.source("""class Case(unittest.TestCase):
+    def test_ok(self): pass
+    def run(self, result=None):
+        import sys
+        try: raise AssertionError('expected failure fixture')
+        except AssertionError: error = sys.exc_info()
+        result.startTest(self)
+""" + ''.join('        ' + statements[event] + '\n' for event in sequence) +
+                            '        return result\n')
+                report = self.run_fixture(strict=True)
+                self.assertEqual(report['status'], 'FAIL', report)
+                self.assertEqual(report['attempts'][0]['exit_code'], 0, report)
+                self.assertIn('receipt', report['attempts'][0])
+
+    def test_ordinary_expected_failures_and_nested_subtests_pass(self):
+        self.source("""class Case(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_expected(self): self.fail('expected')
+    @unittest.expectedFailure
+    def test_expected_after_subtests(self):
+        with self.subTest(part='success'): pass
+        with self.subTest(part='failure'): self.fail('expected in subtest')
+    def test_repeated_and_nested_subtests(self):
+        for _ in range(2):
+            with self.subTest(part='same'):
+                with self.subTest(part='nested'): pass
+""")
+        report = self.run_fixture(strict=True)
+        self.assertEqual(report['status'], 'PASS', report)
+        self.assertEqual(report['attempts'][0]['receipt']['expectedFailures'], 2)
+
+    def test_ordinary_multiple_skipped_phases_and_subtests_remain_visible(self):
+        self.source("""class Case(unittest.TestCase):
+    def setUp(self): self.test_case = {'ordinary': True}
+    def test_skipped_phases(self):
+        self.addCleanup(self.skipTest, 'cleanup skip')
+        self.skipTest('body skip')
+    def tearDown(self): self.skipTest('teardown skip')
+    def test_repeated_skipped_subtests(self):
+        for _ in range(2):
+            with self.subTest(part='same'): self.skipTest('subtest skip')
+""")
+        # Stock unittest itself emits three parent skip callbacks for body,
+        # tearDown and cleanup. TestResult supplies no phase label, so repeated
+        # parent skips cannot be classified as fabricated from callbacks alone.
+        control = subprocess.run([sys.executable, '-m', 'unittest', 'discover',
+                                  '-s', 'tests', '-t', '.', '-v'], cwd=self.root,
+                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(control.returncode, 0, control.stderr)
+        self.assertIn('OK (skipped=6)', control.stderr)
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'COMPLETE_WITH_SKIPS', report)
+        self.assertEqual(report['attempts'][0]['receipt']['skipped'], 6)
+        self.assertEqual(self.run_fixture(strict=True)['status'], 'FAIL')
+
+    def test_ordinary_failure_and_multiple_cleanup_errors_remain_failures(self):
+        self.source("""class Case(unittest.TestCase):
+    def broken(self): raise RuntimeError('cleanup error')
+    def test_bad(self):
+        self.addCleanup(self.broken)
+        self.addCleanup(self.broken)
+        with self.subTest(part='bad'): self.fail('subtest failure')
+        self.fail('body failure')
+    def tearDown(self): raise RuntimeError('teardown error')
+""")
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'FAIL', report)
+        receipt = report['attempts'][0]['receipt']
+        self.assertEqual(receipt['failures'], 2)
+        self.assertEqual(receipt['errors'], 3)
+        self.assertEqual(ci.reconcile_events(receipt['records'][0]),
+                         ['failure', 'failure', 'error', 'error', 'error'])
+
+    def test_ordinary_unexpected_success_remains_a_failure(self):
+        self.source("""class Case(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_unexpected(self): pass
+""")
+        report = self.run_fixture()
+        self.assertEqual(report['status'], 'FAIL', report)
+        self.assertEqual(report['attempts'][0]['receipt']['unexpectedSuccesses'], 1)
+
+    def test_real_worker_explicit_empty_suite_events_pass(self):
+        self.source('class Case(unittest.TestCase):\n    def test_ok(self): pass\n')
+        for strict in (False, True):
+            with self.subTest(strict=strict):
+                report = self.run_fixture(strict=strict)
+                self.assertEqual(report['status'], 'PASS', report)
+                self.assertEqual(len(report['attempts']), 1)
+                receipt = report['attempts'][0]['receipt']
+                self.assertIs(type(receipt['suite_events']), list)
+                self.assertEqual(receipt['suite_events'], [])
+                self.assertEqual(receipt['testsRun'], 1)
 
     def test_successful_dynamic_load_tests_is_discovered_and_executed(self):
         self.source('''class Hidden(unittest.TestCase):
