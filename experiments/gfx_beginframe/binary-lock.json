@@ -1,0 +1,12 @@
+{
+  "schema": "vtx.beginframe_binary_lock/1",
+  "browser_version": "149.0.7827.55",
+  "binary_sha256": "670ba079b75107746ba41abad131180a31a7c7219aa1bd4061fb471f4535d541",
+  "distribution": "Existing Playwright-managed chromium-headless-shell revision 1228, linux64",
+  "distribution_metadata": "playwright-core 1.61.1 browsers.json: chromium-headless-shell revision 1228 browserVersion 149.0.7827.55",
+  "download_url": null,
+  "download_receipt": null,
+  "protocol_sha256": "3b44ace897289a7a612f9cd1c4bc882dd63cf43c2d4cbe487c3ba6fc396a049f",
+  "protocol_origin": "Live binary /json/protocol, captured before target rendering",
+  "required_control_flags": ["--enable-begin-frame-control", "--run-all-compositor-stages-before-draw"]
+}
