@@ -2,14 +2,14 @@
 """sidecar_server —— Qwen3-ASR + ForcedAligner 本地转写服务（video_tools 自有）
 
 用途：常驻 HTTP 服务（stdlib http.server），接收 16k wav 路径，返回转写文本与
-sidecar 加工的字级 words[]（时间锚定断句的直接输入）。与 IME 输入法 sidecar
-（18081）完全解耦，本服务默认 127.0.0.1:18085。
+sidecar 加工的字级 words[]（时间锚定断句的直接输入）。与语音输入法（IME）完全
+解耦（issue #141）：默认 127.0.0.1:18085，绝不绑定/探测 18081。
 
-用法（运行于 qwen-asr 解释器——config.asr.python 探测链，本机即 IME .venv-qwen-asr，
-Python 3.14.7 + qwen-asr 0.0.6 + torch 2.12.0）：
-    <venv>/bin/python sidecar_server.py --port 18085            # 常驻
-    <venv>/bin/python sidecar_server.py --once-health           # init 冒烟：起→/health→退
-通常由 asr_cli/client.py 自动拉起（日志 ~/.local/state/video_tools/asr_sidecar.log），
+用法（运行于 Framivra 专属 qwen-asr 解释器——config.asr.python 或
+apps/asr/.venv；绝不借用输入法环境）：
+    <venv>/bin/python -I sidecar_server.py --port 18085       # 常驻
+    <venv>/bin/python -I sidecar_server.py --once-health      # init 冒烟：起→/health→退
+通常由 asr_cli/client.py 自动拉起（日志 ~/.local/state/framivra/asr/sidecar.log），
 不需要手动运行。
 
 机制（方案 §3.3/§3.4）：
@@ -23,8 +23,8 @@ Python 3.14.7 + qwen-asr 0.0.6 + torch 2.12.0）：
     {s,e}；失配区段线性插值兜底并标注 degraded_ranges；全失配 words=[]。
   - 长音频：任意时长直接透传（库内建 ±5s 低能量边界分块与拼回，MAX_FORCE_ALIGN_
     INPUT_SECONDS=180 是分块目标值非门槛），本服务零切分零拼回。
-  - 同卡共驻防护：启动探测 IME sidecar(18081) 存活 → 默认档自动降 0.6B（IME 1.7B +
-    本 1.7B + aligner 三者同驻 16GB 4080 必爆显存）；--model 显式指定则尊重并自担风险。
+  - 同卡共驻防护已删除（issue #141）：不再探测 18081、不做共驻降档——GPU 资源
+    准入/预算属 #142 范畴，且探测输入法本身即被禁止。
   - 显存换挡与空闲卸载：lazy 加载（首请求上 GPU）；加载 OOM 自动改试另一档
     （1.7B↔0.6B 同根 companion）；空闲超时（默认 300s 可配）卸载到 CPU RAM 释放 VRAM
     （IME ModelManager 实证策略的解耦简化版）。
@@ -48,10 +48,12 @@ import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-IME_ROOT_DEFAULT = "~/文档/01_活跃项目/type/ibus-voice-ime-github"   # ~ 展开（P2a 参数化；env VT_ASR_IME_ROOT 可覆盖）
 PROTOCOL_VERSION = 1
 PORT_DEFAULT = 18085
-IME_PORT = 18081          # IME 输入法 sidecar 既有端口，绝不复用（探测它只为共驻降档）
+IME_PORT = 18081          # 输入法 sidecar 专用端口：绝不绑定（fail-closed 拒绝，不探测）
+# Framivra 专属模型资产根（与 client.independence.PROJECT_MODEL_ROOT 同值；
+# 测试断言两者一致防漂移）。真实下载/SHA256 记账见 independence.py 资产清单接口。
+PROJECT_MODEL_ROOT = "~/.local/share/framivra/asr/models"
 
 MODEL_DIRS = {"1.7b": "Qwen3-ASR-1.7B", "0.6b": "Qwen3-ASR-0.6B"}
 ALIGNER_DIR = "Qwen3-ForcedAligner-0.6B"
@@ -59,6 +61,33 @@ ALIGNER_DIR = "Qwen3-ForcedAligner-0.6B"
 
 def _log(msg):
     print("[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg), flush=True)
+
+
+def _independence():
+    """加载同目录 independence 模块（路径独立性单一接口，issue #141）。
+    恒按 __file__ 同目录文件路径加载（红队 D2：`PYTHONPATH=<假 independence.py>
+    python3 -P sidecar_server.py` 会用 import 优先分支吞掉全部校验；-P 下脚本
+    目录不入 sys.path 前列，PYTHONPATH 遮蔽生效）。语义 home=independence.py。"""
+    import importlib.util
+    p = Path(__file__).resolve().parent / "independence.py"
+    spec = importlib.util.spec_from_file_location("asr_independence", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _reject_ime_paths(ind, pairs):
+    """[(path, what)] 逐项路径独立性校验（resolve 追真身，symlink 逃逸无效）；
+    任何一项落在 IME 锚点之下即打印中文诊断并返回 True（调用方 fail-closed 退出）。"""
+    for path, what in pairs:
+        if not path:
+            continue
+        try:
+            ind.check_path_independent(path, what)
+        except ind.AsrIndependenceError as exc:
+            print("✗ %s" % exc, file=sys.stderr)
+            return True
+    return False
 
 
 def ensure_venv_site():
@@ -192,30 +221,13 @@ def build_words(text, items):
 
 # ================================================================ 模型管理（换挡 + 空闲卸载）
 
-def _ime_root():
-    """IME 根三级覆盖链（P2 审查 P2-2 补齐 config 层，与 client.py 对齐）：
-    env VT_ASR_IME_ROOT > config asr.ime_root > ~ 展开默认。"""
-    env = os.environ.get("VT_ASR_IME_ROOT")
-    if env:
-        return str(Path(env).expanduser())
-    try:
-        from vtx.pluginlib.config import load_config
-        cfg = (load_config().get("asr") or {}).get("ime_root")
-        if cfg:
-            return str(Path(str(cfg)).expanduser())
-    except Exception:
-        pass
-    return str(Path(IME_ROOT_DEFAULT).expanduser())
-
-
 def _models_roots(extra=None):
-    """模型根目录探测链（手动运行时；client 拉起时显式传 --model/--aligner）。"""
-    ime = _ime_root()
+    """模型根目录链（手动运行时；client 拉起时显式传 --model/--aligner）。
+    issue #141：只含 Framivra 专属根——无 IME vendor、无共享 ~/models。"""
     roots = []
     if extra:
         roots.append(str(Path(extra).expanduser()))
-    roots.append(str(Path("~/models/qwen3-asr").expanduser()))
-    roots.append(str(Path(ime) / "vendor/models/qwen3-asr"))
+    roots.append(str(Path(PROJECT_MODEL_ROOT).expanduser()))
     return roots
 
 
@@ -238,7 +250,7 @@ def resolve_model_dir(spec, models_root=None):
 
 
 def resolve_aligner_dir(models_root=None):
-    """ForcedAligner 目录探测链（config 对齐目录 → ~/models → IME vendor）。"""
+    """ForcedAligner 目录链（config 对齐目录 → 项目模型根；issue #141 无 IME）。"""
     for root in _models_roots(models_root):
         p = Path(root) / ALIGNER_DIR
         if (p / "config.json").exists():
@@ -247,23 +259,13 @@ def resolve_aligner_dir(models_root=None):
 
 
 def companion_path(model_path):
-    """同根另一档目录（IME _companion_path 同思路：OOM 换挡目标）。"""
+    """同根另一档目录（OOM 换挡目标；仍限同一 Framivra 模型根内）。"""
     p = Path(model_path)
     if not p.exists():
         return None
     alias = "0.6b" if "1.7" in p.name or "1_7" in p.name else "1.7b"
     cand = p.parent / MODEL_DIRS[alias]
     return str(cand) if (cand / "config.json").exists() else None
-
-
-def _ime_sidecar_alive(timeout=0.5):
-    """探测 IME sidecar(18081) 是否存活（R3/R6：共驻 → 默认降 0.6B 档）。"""
-    import urllib.request
-    try:
-        with urllib.request.urlopen("http://127.0.0.1:%d/health" % IME_PORT, timeout=timeout) as r:
-            return r.status == 200
-    except Exception:
-        return False
 
 
 class ModelHolder:
@@ -591,9 +593,9 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=PORT_DEFAULT)
     ap.add_argument("--model", default="auto",
-                    help="1.7b / 0.6b / 模型目录路径；auto=探测（IME 18081 同驻则默认 0.6b）")
-    ap.add_argument("--aligner", default="auto", help="ForcedAligner 目录；auto=探测链；none=禁用")
-    ap.add_argument("--models-root", default=None, help="模型根目录（缺省走 ~/models 与 IME vendor 探测链）")
+                    help="1.7b / 0.6b / 模型目录路径；auto=项目模型根探测（1.7b 优先）")
+    ap.add_argument("--aligner", default="auto", help="ForcedAligner 目录；auto=项目模型根；none=禁用")
+    ap.add_argument("--models-root", default=None, help="模型根目录（缺省走 Framivra 专属根 ~/.local/share/framivra/asr/models）")
     ap.add_argument("--no-aligner", action="store_true", help="禁用 ForcedAligner（timestamps 请求将 409）")
     ap.add_argument("--idle-timeout", type=float, default=300.0, help="空闲卸载秒数（0 关闭）")
     ap.add_argument("--dtype", default="bfloat16")
@@ -604,27 +606,49 @@ def main():
     _ARGS = args
     ensure_venv_site()      # venv 搬家自愈（必须在一切延迟 import qwen_asr 之前）
 
-    # 模型档位解析：显式 > auto（同驻降档）；路径直接用
+    # 端口防御（issue #141 fail-closed，先于一切资产解析）：18081 是语音输入法
+    # sidecar 专用端口，绝不绑定（这是拒绝，不是探测）；其他占用照旧报错不静默换端口。
+    if args.port == IME_PORT:
+        print("✗ 端口 %d 是语音输入法 sidecar 专用端口——任何情况下禁止绑定/复用；"
+              "本项目 sidecar 默认 %d" % (IME_PORT, PORT_DEFAULT))
+        return 2
+
+    # 路径独立性（issue #141 红队 F1，fail-closed）：显式 --model/--aligner/
+    # --models-root 任何落在 IME 锚点之下（resolve 追真身，symlink 逃逸无效）
+    # 一律拒绝退出——先于端口探测/资产解析/绑定/加载，单一接口=independence。
+    ind = _independence()
+    model_spec = (args.model or "").strip()
+    model_path_arg = model_spec \
+        if model_spec and model_spec != "auto" and ("/" in model_spec or os.sep in model_spec) \
+        else None
+    if _reject_ime_paths(ind, [
+        (args.models_root, "--models-root"),
+        (model_path_arg, "--model"),
+        (args.aligner if args.aligner not in ("auto", "none") else None, "--aligner"),
+    ]):
+        return 2
+
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    occ = probe.connect_ex(("127.0.0.1", args.port))
+    probe.close()
+    if occ == 0:
+        print("✗ 端口 %d 已被占用——请换 --port 或改 config asr.base_url" % args.port)
+        return 2
+
+    # 模型档位解析：显式路径/别名 → 项目模型根 auto（1.7b 优先；issue #141：
+    # 共驻降档与 IME 探测链已删除）
     model_path, explicit = resolve_model_dir(args.model, args.models_root)
     if model_path is None:
         if explicit:
             print("✗ 未找到指定模型目录：%s（先跑 bash apps/asr/init.sh）" % args.model)
             return 2
-        if _ime_sidecar_alive():
-            cand = resolve_model_dir("0.6b", args.models_root)[0]
-            if cand:
-                model_path = cand
-                print("⚠ 探测到 IME sidecar（18081）同驻——默认降 0.6B 档：%s" % cand)
+        model_path = resolve_model_dir("1.7b", args.models_root)[0] \
+            or resolve_model_dir("0.6b", args.models_root)[0]
         if model_path is None:
-            model_path = resolve_model_dir("1.7b", args.models_root)[0]
-        if model_path is None:
-            print("✗ 探测链上没有 Qwen3-ASR 模型（~/models/qwen3-asr 或 IME vendor）——先跑 bash apps/asr/init.sh")
+            print("✗ Framivra 专属模型根没有 Qwen3-ASR 模型（%s）——先跑 bash apps/asr/init.sh"
+                  "（绝不借用输入法资产）" % PROJECT_MODEL_ROOT)
             return 2
-    elif args.model == "auto" and _ime_sidecar_alive() and "1.7" in model_path:
-        cand = resolve_model_dir("0.6b", args.models_root)[0]
-        if cand:
-            print("⚠ 探测到 IME sidecar（18081）同驻——默认降 0.6B 档：%s（--model 1.7b 显式覆盖自担风险）" % cand)
-            model_path = cand
 
     aligner_path = None
     if args.no_aligner or args.aligner == "none":
@@ -641,14 +665,20 @@ def main():
             print("✗ 指定的 aligner 目录不存在：%s" % p)
             return 2
 
-    # 端口占用探测（不静默换端口，防配置漂移）
-    import socket
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    occ = probe.connect_ex(("127.0.0.1", args.port))
-    probe.close()
-    if occ == 0:
-        print("✗ 端口 %d 已被占用（18081 是 IME 输入法 sidecar 专用；本服务默认 18085）——"
-              "请换 --port 或改 config asr.base_url" % args.port)
+    # 解析后路径同样过独立性+链接关系校验（红队 D1/D3/N1/N1b/N4：把 IME 权重
+    # 文件硬链接或 symlink 进"干净"目录、分片/别名文件名——路径锚点与文件名
+    # 白名单均查不到，必须目录级逐条目 lstat+resolve；models-root/auto 别名解析
+    # 出的 symlink 目录 resolve 追真身后在此拒绝；先于 ModelHolder/绑定）。
+    # 模型目录要求独立权重承载形态（check_weights=True）；aligner 目录做同样
+    # 目录级审计（不强制存在）。
+    try:
+        ind.verify_model_dir(model_path, "--model（解析后）", check_weights=True)
+        if aligner_path:
+            resolved_aligner = ind.verify_model_dir(aligner_path, "--aligner（解析后）")
+            ind.verify_dir_assets(resolved_aligner, "--aligner（解析后）",
+                                  required=False)
+    except ind.AsrIndependenceError as exc:
+        print("✗ %s" % exc, file=sys.stderr)
         return 2
 
     _HOLDER = ModelHolder(model_path, aligner_path=aligner_path,

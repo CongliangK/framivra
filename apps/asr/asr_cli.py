@@ -34,6 +34,7 @@ from pathlib import Path
 # 平铺 import 同目录模块（vtx 同款手法）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import client          # noqa: E402
+import independence    # noqa: E402  issue #141 独立性单一接口
 import segline         # noqa: E402
 import srt_out         # noqa: E402
 import textnorm        # noqa: E402
@@ -41,6 +42,14 @@ import tl_merge        # noqa: E402
 
 
 # ---------------------------------------------------------------- 公共
+
+def _base_url(args, cfg):
+    """统一 base_url 解析 + 请求前独立性校验（issue #141：18081 等 fail-closed）。"""
+    base_url = getattr(args, "base_url", None) or client.cfg_get(
+        cfg, "asr.base_url", client.DEFAULT_BASE_URL)
+    independence.validate_base_url(base_url)
+    return base_url
+
 
 def _runid():
     return time.strftime("%Y%m%d-%H%M%S") + "-%d" % os.getpid()
@@ -89,7 +98,7 @@ def _words_or_fallback(resp, verbose=True):
 
 def _transcribe_words(input_path, args, cfg):
     """公共链：ensure_sidecar → 抽 16k wav → /transcribe(timestamps) → words[]（含回退）。"""
-    base_url = getattr(args, "base_url", None) or client.cfg_get(cfg, "asr.base_url", client.DEFAULT_BASE_URL)
+    base_url = _base_url(args, cfg)
     if not client.ensure_sidecar(cfg, base_url=base_url):
         sys.exit(2)
     runid = _runid()
@@ -125,7 +134,7 @@ def _audit_report_path(out_like, runid):
 # ---------------------------------------------------------------- 子命令
 
 def cmd_sidecar(args, cfg):
-    base_url = args.base_url or client.cfg_get(cfg, "asr.base_url", client.DEFAULT_BASE_URL)
+    base_url = _base_url(args, cfg)
     if args.action == "health":
         info = client.health(base_url)
         print("✓ /health：%s" % json.dumps(info, ensure_ascii=False) if info
@@ -150,7 +159,7 @@ def cmd_sidecar(args, cfg):
 
 
 def cmd_transcribe(args, cfg):
-    base_url = args.base_url or client.cfg_get(cfg, "asr.base_url", client.DEFAULT_BASE_URL)
+    base_url = _base_url(args, cfg)
     if not client.ensure_sidecar(cfg, base_url=base_url):
         return 2
     runid = _runid()
@@ -268,7 +277,7 @@ def cmd_batch(args, cfg):
         return 1
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
-    base_url = args.base_url or client.cfg_get(cfg, "asr.base_url", client.DEFAULT_BASE_URL)
+    base_url = _base_url(args, cfg)
     if not client.ensure_sidecar(cfg, base_url=base_url):
         return 2
     report = {"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "items": []}
@@ -356,7 +365,11 @@ def main():
     args = ap.parse_args()
     cfg = client.load_config()
     try:
+        client.preflight(cfg)      # issue #141：一切入口 fail-closed（零请求零拉起）
         return args.fn(args, cfg)
+    except independence.AsrIndependenceError as exc:
+        print("✗ ASR 独立性校验失败：%s" % exc)
+        return 2
     except client.ClientError as exc:
         print("✗ sidecar 返回错误：%s" % exc.message)
         return 1
