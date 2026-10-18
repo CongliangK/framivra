@@ -112,7 +112,7 @@ def _darwin_load_commands(path):
         f.seek(offset)
         header = f.read(32)
         if (len(header) != 32 or header[:4] != b'\xcf\xfa\xed\xfe'
-                or struct.unpack_from('<I', header, 4)[0] != 0x100000c):
+                or struct.unpack_from('<I', header, 4)[0] not in (0x100000c, 0x1000007)):
             raise EnvironmentError(f'unsupported Darwin binary slice: {path}')
         count, size = struct.unpack_from('<II', header, 16)
         if count > 65536 or size > 16 * 1024 * 1024 or offset + 32 + size > Path(path).stat().st_size:
@@ -142,7 +142,13 @@ def _darwin_load_commands(path):
         at += length
     if at != size:
         raise EnvironmentError('mismatched Darwin load command inventory')
-    return deps, rpaths
+    # Intel-only Widevine is an inactive distribution resource on arm64.
+    # Validate its structure and retain all bytes in the bundle hash, but do
+    # not pretend its dependency list is native. Referenced targets must pass
+    # _darwin_native separately.
+    if struct.unpack_from('<I', header, 4)[0] == 0x1000007:
+        return None
+    return deps, rpaths, struct.unpack_from('<I', header, 12)[0]
 
 
 def _darwin_dependencies(root, runtime):
@@ -154,10 +160,12 @@ def _darwin_dependencies(root, runtime):
         commands = _darwin_load_commands(path)
         if commands is None:
             continue
-        deps, rpaths = commands
-        # Helper apps can have their own executable-relative paths.
-        executable_dir = next((p / 'Contents/MacOS' for p in Path(path).parents
-                               if p.suffix == '.app'), root / 'Contents/MacOS')
+        deps, rpaths, filetype = commands
+        # MH_EXECUTE helpers outside .app wrappers use their own directory.
+        # Dylibs retain the containing app executable context.
+        executable_dir = (Path(path).parent if filetype == 2 else
+                          next((p / 'Contents/MacOS' for p in Path(path).parents
+                                if p.suffix == '.app'), root / 'Contents/MacOS'))
 
         def expand(value):
             for prefix, directory in (('@loader_path/', Path(path).parent),
@@ -183,6 +191,8 @@ def _darwin_dependencies(root, runtime):
             matches = [p.resolve(strict=True) for p in choices if p.is_file()]
             if not matches or any(not p.is_relative_to(root) for p in matches):
                 raise EnvironmentError(f'unresolved/external Darwin dependency: {path}: {dep}')
+            for match in matches:
+                _darwin_native(match)
             resolved[dep] = sorted(set(map(str, matches)))
         out[path] = resolved
     if not out:

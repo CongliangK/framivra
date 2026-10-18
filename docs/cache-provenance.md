@@ -105,22 +105,35 @@ Golden 使用原始完整 clip 重建身份；旧 Golden schema 无法表达同 
 阶段回执记录环境摘要和可信状态。收集只读，不启动浏览器。
 
 内容轴包括实际原生浏览器文件与版本、CEF worker/运行库及分发资源、动态链接库、
-图形库与驱动、Python/numpy/Pillow 运行库、全部 fontconfig 可见字体的文件内容及生效配置、相关进程环境、
+图形库与驱动、Python/numpy/Pillow 运行库、全部平台字体清单的文件内容及生效配置、相关进程环境、
 NAVFREE/STATIC、启动参数及渲染实现摘要。字体不限于模板预设家族，包含任意 HTML
 所用的系统回退字体。视口、fps、时长由页键绑定，凭证另绑定视口和 fps。
 CDP/CLI 固定 device scale、srgb 和字体 hinting 参数，共用同一参数定义；CLI
 使用独立 profile，排除桌面浏览器偏好/扩展。CEF 沿用其 worker 的锁定模式。
 PNG 压缩级别和调度并发只影响编码/执行，不加入 RGBA 环境轴。
 
-解析器采用保守的 Linux 主机/启动周期边界，不承诺跨机或重启后缓存共享。
+Linux 解析器采用保守的主机/启动周期边界，不承诺跨机或重启后缓存共享。
 同路径同大小并恢复 mtime 的替换仍按内容识别；哈希 memo 同时检查 inode、ctime。
 字体集合、配置和运行库成员均在复核时重新枚举。任务不接纳中途的新身份；
 环境发生变化，阶段完成门拒绝发布成功回执。
 
 未知平台、缺字体清单、缺运行库、不可读资源、无法解析的动态链接或覆盖路径均为
 `unknown`，不能用两条相等的 unknown 记录证明等价。时间线可加载以显示诊断，
-实际渲染与缓存消费明确拒绝；没有静默复用或假定环境不变的降级。非 Linux
-解析器没有通过实际验收，因此属于此明确拒绝路径。
+实际渲染与缓存消费明确拒绝；没有静默复用或假定环境不变的降级。
+
+Darwin 分支接纳原生 arm64 的 Google Chrome app/CDP 与 CEF worker app。
+它绑定完整 app/framework/资源及内部符号链接、原生依赖、实际 dyld cache 与全部
+具名 subcache 的文件内容、CoreText 可见字体文件和字面名称清单、回退配置、
+系统/用户字体偏好、OS 与启动周期及工具身份。Mach-O 独立 helper 的
+`@executable_path` 按该可执行文件目录解析；bundle 内旧版本成员同样纳入检查。
+应用偏好域取自实际 renderer/helper app 的 CFBundleIdentifier，绑定相应系统/用户
+plist 及 ByHost 文件内容摘要，不读取 Chrome profile/history，也不保存偏好原值。
+选中的偏好文件及 ByHost 目录不支持符号链接。未知库、外部 bundle 链接、缺失或
+不可读 cache、loader 覆盖均拒绝；不支持 Rosetta、Darwin CLI/Electron 或其他浏览器。
+首次收集读取实际文件；后续沿用 inode/size/mtime/ctime 哈希 memo，仍复核成员与
+元数据。CPU 合成测试不代表实机验收，输入绑定不证明跨平台像素一致。
+真实 CDP 缓存验收入口见 [Darwin 集成运行器](../tests/run_macos_cdp_acceptance.py)，
+全链音视频与字幕入口见 [端到端运行器](../tests/run_e2e.py)。其他平台继续拒绝。
 
 缺少环境字段的旧页不得补签成功，即使所有 PNG 都能解码。首次使用须重渲，
 旧目录保留供审计。中断续渲只允许本解析器生成且绑定当前页合同的

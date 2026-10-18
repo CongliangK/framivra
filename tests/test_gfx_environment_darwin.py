@@ -372,6 +372,33 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         self.assertEqual(self.collect()['dependencies'][str(self.library)],
                          {'@loader_path/helper.dylib': [str(helper)]})
 
+    def test_inactive_intel_resource_is_bound_but_cannot_be_native_dependency(self):
+        intel = self.library.parent / 'intel.dylib'
+        intel.write_bytes(struct.pack('<8I', 0xfeedfacf, 0x1000007, 0, 6, 0, 0, 0, 0))
+        first = self.collect()
+        self.assertNotIn(str(intel), first['dependencies'])
+        intel.write_bytes(intel.read_bytes() + b'changed resource')
+        self.assertNotEqual(env.digest(first), env.digest(self.collect()))
+        good = intel.read_bytes()
+        intel.write_bytes(good[:8])
+        with self.assertRaisesRegex(env.EnvironmentError, 'unsupported Darwin binary slice'):
+            self.collect()
+        intel.write_bytes(good)
+        self.library.write_bytes(macho(['@loader_path/intel.dylib']))
+        with self.assertRaisesRegex(env.EnvironmentError, 'native arm64'):
+            self.collect()
+
+    def test_standalone_helper_uses_its_own_executable_path(self):
+        helper = self.library.parent / 'Helpers/web_app_shortcut_copier'
+        helper.parent.mkdir()
+        helper.write_bytes(macho(['@executable_path/../Chrome']))
+        record = self.collect()
+        self.assertEqual(record['dependencies'][str(helper)],
+                         {'@executable_path/../Chrome': [str(self.library)]})
+        helper.write_bytes(macho(['@executable_path/../../../../../../external']))
+        with self.assertRaisesRegex(env.EnvironmentError, 'unresolved/external'):
+            self.collect()
+
     def test_internal_rpath_dependency_is_resolved(self):
         helper = self.library.parent / 'helper.dylib'
         helper.write_bytes(macho())
