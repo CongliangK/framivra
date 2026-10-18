@@ -70,6 +70,22 @@ MEDIA_TESTS = {
     ),
 }
 
+# Balance the two dominant native modules against the remainder. Keep every
+# selector from the same module together; newly added modules default to group
+# 2. This is only placement: MEDIA_TESTS remains the complete strict inventory.
+FFMPEG_GROUP_ONE_MODULES = (
+    'tests.test_subtitle_frame_boundaries',
+    'tests.test_filter_threads',
+)
+
+
+def ffmpeg_group(group):
+    if group not in ('1', '2'):
+        raise ValueError('unknown FFmpeg group: %s' % group)
+    return tuple(name for name in MEDIA_TESTS['ffmpeg']
+                 if any(name == module or name.startswith(module + '.')
+                        for module in FFMPEG_GROUP_ONE_MODULES) == (group == '1'))
+
 
 def run(command, **kwargs):
     print('+ ' + ' '.join(map(str, command)), flush=True)
@@ -279,7 +295,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('gate', choices=('static', 'ffmpeg', 'chrome',
                                         'demo-toolchain'))
+    parser.add_argument('--group', choices=('1', '2'),
+                        help='FFmpeg only: execute one of two complete module groups')
     args = parser.parse_args(argv)
+    if args.group and args.gate != 'ffmpeg':
+        parser.error('--group is only valid for the ffmpeg gate')
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
     try:
@@ -288,7 +308,8 @@ def main(argv=None):
             return 0
         check_media_inventory()
         prepare_media(args.gate)  # before imports: decorators see enabled gates
-        return strict_suite(MEDIA_TESTS[args.gate])
+        names = ffmpeg_group(args.group) if args.group else MEDIA_TESTS[args.gate]
+        return strict_suite(names)
     except (OSError, RuntimeError, subprocess.SubprocessError, SyntaxError) as error:
         print('CI gate FAILED: %s' % error, file=sys.stderr)
         return 1
