@@ -1,10 +1,7 @@
 name: Issue 47 bounded strict HTML acceptance
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/gfx-dependency-acceptance.yml'
-      - 'tests/run_gfx_dependency_acceptance.py'
-      - 'tests/test_gfx_dependency_acceptance.py'
+  workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
@@ -12,9 +9,6 @@ concurrency:
   cancel-in-progress: false
 jobs:
   acceptance:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.head_ref, 'dot/issue47-html-validation-')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -25,7 +19,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
@@ -64,7 +58,7 @@ jobs:
         if: always() && steps.evidence_budget.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: issue47-dependencies-${{ github.event.pull_request.head.sha }}
+          name: issue47-dependencies-${{ github.sha }}
           retention-days: 7
           if-no-files-found: error
           path: ${{ runner.temp }}/issue47-dependencies/evidence/

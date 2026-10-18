@@ -1,0 +1,279 @@
+name: Full regression (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# No GPU required. Model/Blender/external-service tests remain optional in the
+# ordinary runner; the enumerated media groups below prohibit all skips.
+env:
+  VTX_DOCTOR_OFFLINE: '1'
+  VTX_SAFETY_EXPECT_FIXED: '1'
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  core:
+    name: Core Python ${{ matrix.python }} (full regression)
+    runs-on: ubuntu-24.04
+    # Full environment rechecks (#48) add filesystem/library inventory work.
+    # Four Python jobs hit the old 25-minute limit without assertion failures;
+    # retain the entire suite and allow slower hosted runners to finish.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        group: [full]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install real CPU tools used by core fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - name: Install test-only dependencies
+        run: python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13' 'jsonschema>=4.18,<5' 'PyYAML>=6,<7' 'requests>=2.31,<3'
+      - name: Run full kernel, app, plugin and example unittest batches
+        run: |
+          export HOME="$RUNNER_TEMP/framivra-core-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export VTX_CONFIG="$HOME/config.json"
+          mkdir -p "$XDG_CONFIG_HOME"
+          printf '{}\n' > "$VTX_CONFIG"
+          unset PYTHONPATH PYTHONHOME BGM_CLI BGM_REPO IMGEN_CONFIG SC_API_KEY NANOBANANA2_API_KEY
+          bash scripts/run_all_tests.sh
+
+  core-results:
+    name: Core regression (all selected versions and groups)
+    needs: [core]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require actual success from every core matrix job
+        env:
+          CORE_RESULT: ${{ needs.core.result }}
+        run: |
+          printf 'All selected core versions and groups: %s\n' "$CORE_RESULT"
+          test "$CORE_RESULT" = success
+
+  contracts:
+    name: Documentation and static syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Check Python, Bash and Node syntax without executing source
+        run: python scripts/ci_checks.py static
+      - name: Run all documentation gates
+        run: bash scripts/doc_gates.sh
+
+  ffmpeg-one:
+    name: FFmpeg CPU group 1 (no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install CPU media and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      - name: Preflight tools and execute declared FFmpeg integrations
+        run: python scripts/ci_checks.py ffmpeg --group 1
+
+  ffmpeg-two:
+    name: FFmpeg CPU group 2 + Chrome fixture (no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install CPU media and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      - name: Preflight tools and execute declared FFmpeg integrations
+        # Hosted google-chrome is preflighted for the frame-source rerender fixture.
+        run: python scripts/ci_checks.py ffmpeg --group 2
+
+  ffmpeg-three:
+    name: FFmpeg CPU group 3 (no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install CPU media and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      - name: Preflight tools and execute declared FFmpeg integrations
+        run: python scripts/ci_checks.py ffmpeg --group 3
+
+  ffmpeg:
+    name: FFmpeg CPU integration (no skips)
+    needs: [ffmpeg-one, ffmpeg-two, ffmpeg-three]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require actual success from all three zero-skip groups
+        env:
+          FIRST_RESULT: ${{ needs.ffmpeg-one.result }}
+          SECOND_RESULT: ${{ needs.ffmpeg-two.result }}
+          THIRD_RESULT: ${{ needs.ffmpeg-three.result }}
+        run: |
+          printf 'FFmpeg group 1: %s; group 2: %s; group 3: %s\n' "$FIRST_RESULT" "$SECOND_RESULT" "$THIRD_RESULT"
+          test "$FIRST_RESULT" = success && test "$SECOND_RESULT" = success && test "$THIRD_RESULT" = success
+
+  chrome-one:
+    name: Chrome CPU group 1 pipeline (no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install media and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      # ubuntu-24.04 hosted images provide google-chrome. The strict preflight
+      # actually launches it: image changes/missing Chrome fail, never skip.
+      - name: Preflight Chrome and execute cold/warm pipeline
+        run: python scripts/ci_checks.py chrome --group 1
+
+  chrome-two:
+    name: Chrome CPU group 2 graphics (no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install media and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      # ubuntu-24.04 hosted images provide google-chrome. The strict preflight
+      # actually launches it: image changes/missing Chrome fail, never skip.
+      - name: Preflight Chrome and execute graphics integrations
+        run: python scripts/ci_checks.py chrome --group 2
+
+  chrome:
+    name: Chrome and pipeline CPU integration (no skips)
+    needs: [chrome-one, chrome-two]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require actual success from both zero-skip Chrome groups
+        env:
+          FIRST_RESULT: ${{ needs.chrome-one.result }}
+          SECOND_RESULT: ${{ needs.chrome-two.result }}
+        run: |
+          printf 'Chrome group 1: %s; group 2: %s\n' "$FIRST_RESULT" "$SECOND_RESULT"
+          test "$FIRST_RESULT" = success && test "$SECOND_RESULT" = success
+
+  windows-install:
+    name: Windows one-command install candidate
+    runs-on: windows-2025
+    timeout-minutes: 30
+    # 候选验收 job:真实 Windows 上验证统一安装器(install.py + PowerShell 入口
+    # 支撑面)端到端:本地 http 载荷服务(git-archive 真实下载+SHA256+白名单
+    # 解包,非 file:// 捷径)→ 中文/空格/& 目录安装 → 新 shell(注册表重建
+    # PATH)运行 vt doctor 成功门。
+    # 注意:vt doctor 在 Windows 全绿依赖 doctor 面修复(PR-A1)先行合入;
+    # 本 job 仅按人工请求运行安装安全套件。
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install real CPU media tools
+        shell: pwsh
+        run: choco install ffmpeg -y --no-progress
+      - name: Install declared python packages
+        # doctor 组件段对 builtin 件声明的 python_packages 缺失保持 FAIL 门
+        # (#78 红队裁决不可削弱);与 Linux 核心 job 同口径预装。
+        shell: pwsh
+        run: python -m pip install 'numpy>=1.24,<3' 'requests>=2.31,<3'
+      - name: Run cross-platform installer safety suite
+        shell: pwsh
+        run: python -m unittest tests.safety.test_install_py_safety -v
+      - name: Build git-archive payload and serve it locally
+        shell: pwsh
+        run: |
+          $ver = "0.0.0-ci"
+          $payloadRoot = "$env:RUNNER_TEMP\payload"
+          $dir = "$payloadRoot\v$ver"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          git archive --format=tar.gz -o "$dir\video-tools-$ver.tar.gz" HEAD
+          if ($LASTEXITCODE -ne 0) { throw "git archive failed" }
+          python -c "import hashlib,sys; h = hashlib.sha256(open(sys.argv[1], 'rb').read()).hexdigest(); open(sys.argv[2], 'w').write(h + '  video-tools-' + sys.argv[3] + '.tar.gz' + chr(10))" "$dir\video-tools-$ver.tar.gz" "$dir\SHA256SUMS" $ver
+          Set-Content -Path "$payloadRoot\releases.json" -Value '{"latest":"0.0.0-ci"}' -Encoding ascii
+          $job = Start-Job { param($p) python -m http.server 18742 --bind 127.0.0.1 --directory $p } -ArgumentList $payloadRoot
+          try {
+            Start-Sleep -Seconds 3
+            # choco 装的 ffmpeg 在 Machine PATH;当前进程环境可能滞后,防御性重建。
+            $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+            # 安装到中文+空格+& 目录:单命令端到端(真实 http 下载+SHA256+白名单解包+doctor 门)。
+            $env:VIDEO_TOOLS_DL_BASE = "http://127.0.0.1:18742"
+            $target = "$env:RUNNER_TEMP\Framivra 测试&A 目录"
+            python scripts\install.py --dir $target --version $ver --non-interactive --no-provenance
+            if ($LASTEXITCODE -ne 0) { throw "install.py failed" }
+            if (-not (Test-Path "$target\.vt-install.json")) { throw "install marker missing" }
+            # 新 shell 模拟:子进程内从 Machine+User 注册表重建 PATH(等价新开
+            # 终端),断言 vt doctor 在无继承会话变量的情况下通过成功门。
+            $machine = [Environment]::GetEnvironmentVariable('Path','Machine')
+            $user = [Environment]::GetEnvironmentVariable('Path','User')
+            & pwsh -NoProfile -Command "`$env:Path = '$machine;$user'; vt doctor" | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "fresh-shell vt doctor failed" }
+          } finally {
+            Stop-Job $job -ErrorAction SilentlyContinue
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+          }
