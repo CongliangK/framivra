@@ -45,6 +45,8 @@ for case,segments in [('parallel',2),('single',1)]:
             for name,before in cached.items() for p in [project/name])}
     else:
         # Persist diagnostics even when the pipeline never produces final.mp4.
+        # These are controlled synthetic-project logs already retained as artifacts.
+        print('\n'.join((initial.stdout+initial.stderr).decode('utf-8',errors='replace').splitlines()[-60:]),flush=True)
         (root/'steps.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
         (root/'results.json').write_text(json.dumps({'pass':False,'steps':results,'failed_case':case},indent=2),encoding='utf-8')
         sys.exit(1)

@@ -135,6 +135,44 @@ class EnvironmentContracts(unittest.TestCase):
         with self.assertRaises(env.EnvironmentError):
             env.verify_certificate(cert)
 
+    def test_recheck_diagnoses_runtime_members_without_values_or_host_paths(self):
+        before = self.collect()
+        before['runtime'] = {'/private/distribution': {
+            'SetupMetrics/setup.pma': ['private target', 'secret digest'],
+            'version/resources.pak': ['private target', 'secret digest']}}
+        after = copy.deepcopy(before)
+        del after['runtime']['/private/distribution']['SetupMetrics/setup.pma']
+        after['runtime']['/private/distribution']['version/resources.pak'][1] = 'new secret'
+        after['environment']['HOME'] = '/private/new-home'
+        after['registry'] = {'private preference': 'secret value'}
+        c = SimpleNamespace(_gfx_environment=(None, before, self.binary, None))
+        with patch.object(env, 'resolve', return_value=before), \
+                patch.object(env, 'collect', return_value=after):
+            with self.assertRaises(env.EnvironmentError) as error:
+                env.recheck(c)
+        message = str(error.exception)
+        for label in ('runtime/SetupMetrics/setup.pma', 'runtime/version/resources.pak',
+                      'environment', 'registry', 'restart with current inputs'):
+            self.assertIn(label, message)
+        for value in ('/private', 'secret', 'preference'):
+            self.assertNotIn(value, message)
+        self.assertIs(c._gfx_environment[1], before)
+
+    def test_change_diagnostics_bound_output_and_escape_labels(self):
+        before = {'runtime': {'/private': {}}}
+        after = {'runtime': {'/private': {str(i): ['target', 'digest'] for i in range(30)}}}
+        labels = json.loads(env._changed_inputs(before, after))
+        self.assertEqual(len(labels), 21)
+        self.assertEqual(labels[-1], '...')
+        after = {'runtime': {'/private': {'C:/private/input': [], '\nmember': []}}}
+        diagnostic = env._changed_inputs(before, after)
+        self.assertNotIn('C:/private', diagnostic)
+        self.assertNotIn('\n', diagnostic)
+        diagnostic = env._changed_inputs(
+            {'host_boot': {'boot_filetime': 'secret before', 'machine_guid': 'unchanged'}},
+            {'host_boot': {'boot_filetime': 'secret after', 'machine_guid': 'unchanged'}})
+        self.assertEqual(json.loads(diagnostic), ['host_boot/boot_filetime'])
+
     def test_environment_key_and_receipt_axes_share_dependency_resolver(self):
         from tests.gfx_environment_fixture import bind_environment
         from vtx.infra import Ctx

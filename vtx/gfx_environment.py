@@ -815,14 +815,58 @@ def resolve(c):
     return record
 
 
+def _changed_inputs(before, after):
+    """Bounded diagnostic labels only; never include input values or host paths.
+
+    Runtime member names are relative to their distribution. Other axes can
+    contain user preferences, environment values and absolute paths, so report
+    only their fixed top-level label.
+    """
+    axes = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    labels = []
+    for axis in axes:
+        if axis == 'host_boot':
+            # Known resolver field names are safe; Linux keys are host paths.
+            old, new = before.get(axis, {}), after.get(axis, {})
+            fields = ('machine_guid', 'boot_filetime', 'boot_session_uuid')
+            changed = [key for key in fields if old.get(key) != new.get(key)]
+            labels.extend('host_boot/' + key for key in changed)
+            if {k: v for k, v in old.items() if k not in fields} != {
+                    k: v for k, v in new.items() if k not in fields} or not changed:
+                labels.append(axis)
+            continue
+        if axis != 'runtime':
+            labels.append(axis)
+            continue
+        old, new = before.get(axis, {}), after.get(axis, {})
+        for root in sorted(set(old) | set(new)):
+            a, b = old.get(root, {}), new.get(root, {})
+            for member in sorted(set(a) | set(b)):
+                if a.get(member) != b.get(member):
+                    # Both supported runtime layouts use relative member keys.
+                    # Reject absolute names rather than leaking a host path.
+                    if Path(member).is_absolute() or re.match(r'^[A-Za-z]:', member):
+                        labels.append('runtime')
+                    else:
+                        labels.append('runtime/' + member)
+        if not any(label.startswith('runtime') for label in labels):
+            labels.append('runtime')
+    return json.dumps(labels[:20] + (['...'] if len(labels) > 20 else []), ensure_ascii=True)
+
+
 def recheck(c):
     pinned = getattr(c, '_gfx_environment', None)
     if pinned is None:
         return
     if pinned[1]['status'] != 'input-bound':
         return  # metadata-only contexts; certificate() refuses this path
-    if resolve(c) != pinned[1] or collect(pinned[1]['backend'], pinned[2], pinned[3]) != pinned[1]:
-        raise EnvironmentError('gfx environment changed during invocation; restart with current inputs')
+    current = resolve(c)
+    if current == pinned[1]:
+        current = collect(pinned[1]['backend'], pinned[2], pinned[3])
+    if current != pinned[1]:
+        raise EnvironmentError('gfx environment changed during invocation; changed inputs: '
+                               + _changed_inputs(pinned[1], current)
+                               + '; restart with current inputs')
 
 
 def identity(c):
