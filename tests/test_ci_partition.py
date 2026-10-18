@@ -198,7 +198,12 @@ class InventoryContract(unittest.TestCase):
             result = ci.inventory(ROOT)
         self.assertEqual(result['baseline']['discovered_count'], 2346)
         self.assertEqual(result['baseline']['unique_test_ids'], 2344)
-        self.assertEqual(result['strict_counts'], {'ffmpeg': 105, 'chrome': 14, 'demo-toolchain': 5})
+        self.assertEqual(result['strict_counts'], {'ffmpeg': 106, 'chrome': 14, 'demo-toolchain': 5})
+        utf8_subtitle = next(record for record in result['tests'] if record['canonical'] ==
+                             'apps.blender-bridge.tests.test_subs_alpha.HappyPath.'
+                             'test_utf8_timeline_with_utf8_mode_disabled')
+        self.assertEqual(utf8_subtitle['partition'], 'real')
+        self.assertIn('ffmpeg', utf8_subtitle['strict_gates'])
         self.assertEqual(len(result['batches']), 16)
         self.assertEqual(sum(result['counts'].values()), len(result['tests']))
         self.assertEqual(len({r['key'] for r in result['tests']}), len(result['tests']))
