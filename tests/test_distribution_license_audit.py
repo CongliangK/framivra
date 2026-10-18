@@ -42,13 +42,30 @@ class ArchiveInventory(unittest.TestCase):
                 paths.add(asset['version_home'])
         return {p: (ROOT / p).read_bytes() for p in paths}
 
-    def test_source_reports_media_conflicts_and_vendored_notices(self):
+    def test_source_reports_resolved_payload_and_vendored_notices(self):
         report = audit.inspect_archive(self.tar(self.source_files()), 'git-source')
         self.assertTrue(report['integrity_checks_passed'])
         self.assertFalse(report['legal_clearance'])
-        self.assertIn('placeholder-media', report['release_blockers'])
-        self.assertIn('electron-worker-source', report['release_blockers'])
+        self.assertEqual({}, report['release_blockers'])
         self.assertIn('vendored-libspng', report['inventoried_assets_present'])
+
+    def test_declared_source_resolution_does_not_hide_future_blocker(self):
+        data = copy.deepcopy(self.data)
+        data['assets']['electron-worker-source']['distribution_blocker'] = 'fixture unresolved rights'
+        report = audit.inspect_archive(self.tar(self.source_files()), 'git-source', inventory=data)
+        self.assertEqual(report['release_blockers'], {'electron-worker-source': 'fixture unresolved rights'})
+        self.assertFalse(report['legal_clearance'])
+
+    def test_payload_blocker_resolution_keeps_adaptation_warnings_visible(self):
+        report = policy.audit_payload()
+        self.assertTrue(report['known_payload_blockers_absent'])
+        self.assertEqual({}, report['release_blockers'])
+        self.assertFalse(report['release_eligible'])
+        self.assertFalse(report['legal_clearance'])
+        self.assertEqual(3, len(report['provenance_warnings']))
+        for ident in ('placeholder-media', 'electron-worker-source'):
+            self.assertEqual('DECLARED', self.data['assets'][ident]['license_status'])
+            self.assertIn(self.data['assets'][ident]['evidence'], self.data['evidence'])
 
     def test_missing_vendor_notice_or_changed_embedded_notice_fails(self):
         files = self.source_files()
