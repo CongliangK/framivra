@@ -231,6 +231,95 @@ REQUIRED_FREEZE_GATES = frozenset(('isolated_install', 'public_demo_render', 'pu
     'local_edit', 'failure_recovery', 'independent_package', 'distribution_license'))
 
 
+# Order and exact exit results are policy, not producer-selected expectations.
+REQUIRED_FREEZE_STEPS = {
+    'isolated_install': (('bootstrap', 0), ('isolated-mount', 0), ('isolated-mount-check', 0)),
+    'public_demo_render': (('demo-prepare', 0), ('demo-input-verify', 0), ('demo-all', 0)),
+    'public_demo_qc': (('demo-qc', 0),),
+    'local_edit': (('edit-gfx', 0), ('edit-preview', 0), ('edit-all', 0), ('edit-qc', 0)),
+    'failure_recovery': (('expected-invalid-input', 1), ('recovery-all', 0), ('recovery-qc', 0)),
+    'independent_package': (('package-build', 2), ('package-verify', 2),
+                            ('package-tamper-rejected', 1), ('input-tamper-rejected', 1)),
+    'distribution_license': (('license-archive', 0), ('license-audit', 0)),
+}
+REQUIRED_OBSERVATIONS = {'local_edit': {'cache_edit'}, 'failure_recovery': {'cache_recovery'}}
+
+
+def validate_cache_observation(name, data, commit, tag):
+    from vtx.acceptance import relative
+    if not isinstance(data, dict) or data.get('schema') != 'framivra.' + name + '/1' or data.get('commit') != commit or data.get('tag') != tag:
+        raise ReleaseError('cache observation source identity mismatch')
+    def sha(value):
+        if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value):
+            raise ReleaseError('invalid cache observation hash')
+        return value
+    if name == 'cache_edit':
+        if set(data) != {'schema', 'commit', 'tag', 'reused', 'created', 'before', 'after', 'html_before_sha256', 'html_after_sha256'}:
+            raise ReleaseError('invalid edit observation schema')
+        if sha(data['html_before_sha256']) == sha(data['html_after_sha256']):
+            raise ReleaseError('HTML edit was not observed')
+        for records in (data['before'], data['after']):
+            if not isinstance(records, dict) or not records:
+                raise ReleaseError('missing cache snapshot')
+            for path, row in records.items():
+                relative(path)
+                if not path.startswith('cache/') or not isinstance(row, dict) or set(row) != {'sha256', 'mtime_ns'}:
+                    raise ReleaseError('invalid cache snapshot record')
+                sha(row['sha256'])
+                if type(row['mtime_ns']) is not int or row['mtime_ns'] < 0:
+                    raise ReleaseError('invalid cache snapshot time')
+        for key in ('reused', 'created'):
+            if not isinstance(data[key], list) or not all(isinstance(p, str) for p in data[key]):
+                raise ReleaseError('invalid cache edit path claims')
+        before, after = data['before'], data['after']
+        reused = sorted(p for p in before if p in after and before[p] == after[p])
+        created = sorted(set(after) - set(before))
+        if sorted(data['reused']) != reused or len(data['reused']) != len(set(data['reused'])) or data['created'] != created:
+            raise ReleaseError('cache edit claims disagree with snapshots')
+        if not any(p.startswith('cache/gfx/') and p.endswith('.png') for p in reused) or not any(p.startswith('cache/gfx/') and p.endswith('.png') for p in created):
+            raise ReleaseError('missing gfx invalidation or unrelated gfx cache reuse')
+    elif name == 'cache_recovery':
+        if set(data) != {'schema', 'commit', 'tag', 'path', 'before_sha256', 'corrupted_sha256', 'after_sha256', 'injected_bytes'}:
+            raise ReleaseError('invalid recovery observation schema')
+        relative(data['path'])
+        if not data['path'].startswith('cache/audio/') or not data['path'].endswith('.wav'):
+            raise ReleaseError('recovery did not target audio cache')
+        marker = 'INTERRUPTED RELEASE ACCEPTANCE CACHE'
+        corrupt = hashlib.sha256(marker.encode()).hexdigest()
+        if data['injected_bytes'] != marker or sha(data['corrupted_sha256']) != corrupt:
+            raise ReleaseError('missing actual corrupted cache digest')
+        if sha(data['before_sha256']) != sha(data['after_sha256']) or data['before_sha256'] == corrupt:
+            raise ReleaseError('corrupted cache was not restored to original bytes')
+
+
+
+def observed_cache_edit(data, baseline_log, edit_log):
+    """Bind cache snapshots to actual standard-demo worker/hit observations."""
+    baseline = Path(baseline_log).read_text(encoding='utf-8')
+    edited = Path(edit_log).read_text(encoding='utf-8')
+    def key(text, page, cached=False):
+        lines = [line for line in text.splitlines() if re.search(r'✓ ' + page + r'\[', line)]
+        pattern = r'✓ ' + page + r'\[([0-9a-f]{12})\]: '
+        pattern += r'60 帧已缓存$' if cached else r'渲染 60 帧.*CDP .*failed×0(?:[,， )]|$)'
+        match = re.search(pattern, lines[0]) if len(lines) == 1 else None
+        if match is None or (not cached and re.search(r'cli_fallback×[1-9]', lines[0])):
+            raise ReleaseError('missing actual cache edit worker/hit observation: ' + page)
+        return match.group(1)
+    old_canvas, old_dom = key(baseline, 'canvas'), key(baseline, 'dom')
+    new_canvas, hit_dom = key(edited, 'canvas'), key(edited, 'dom', cached=True)
+    if old_canvas == new_canvas or old_dom != hit_dom:
+        raise ReleaseError('cache edit worker keys did not invalidate canvas and reuse dom')
+    def frames(records, cache_key):
+        prefix = 'cache/gfx/' + cache_key + '/'
+        return {p for p in records if p.startswith(prefix) and p.endswith('.png')}
+    dom_frames = frames(data['before'], old_dom)
+    old_frames = frames(data['before'], old_canvas)
+    new_frames = frames(data['after'], new_canvas)
+    if (len(dom_frames) != 60 or len(old_frames) != 60 or len(new_frames) != 60 or
+        not dom_frames.issubset(data['reused']) or not new_frames.issubset(data['created'])):
+        raise ReleaseError('cache snapshots do not bind actual worker/hit keys and frames')
+
+
 def observed_cdp(path):
     """Observe cold standard-demo worker completion, never the requested knob."""
     text = Path(path).read_text(encoding='utf-8', errors='strict')
@@ -275,25 +364,45 @@ def verify_freeze_evidence(path, commit, tag, assets):
         if digest(evidence_file) != row['sha256']:
             raise ReleaseError('freeze gate evidence bytes changed: ' + name)
         report = read_json(evidence_file)
-        if (set(report) != {'schema', 'commit', 'tag', 'gate', 'status', 'steps'} or
-            report['schema'] != 'framivra.freeze-gate/1' or report['commit'] != commit or
+        if (set(report) != {'schema', 'commit', 'tag', 'gate', 'status', 'steps', 'observations'} or
+            report['schema'] != 'framivra.freeze-gate/2' or report['commit'] != commit or
             report['tag'] != tag or report['gate'] != name or report['status'] != 'passed' or
             not isinstance(report['steps'], list) or not report['steps']):
             raise ReleaseError('invalid freeze gate report: ' + name)
-        for step in report['steps']:
-            if (not isinstance(step, dict) or set(step) != {'argv', 'exit_code', 'expected_exit', 'log', 'sha256'} or
+        required = REQUIRED_FREEZE_STEPS[name]
+        if len(report['steps']) != len(required):
+            raise ReleaseError('required freeze steps missing or extra: ' + name)
+        for step, (role, required_exit) in zip(report['steps'], required):
+            if (not isinstance(step, dict) or set(step) != {'role', 'source_commit', 'argv', 'exit_code', 'expected_exit', 'log', 'sha256'} or
                 not isinstance(step['argv'], list) or not step['argv'] or type(step['exit_code']) is not int):
                 raise ReleaseError('invalid freeze command evidence: ' + name)
-            expected = step['expected_exit']
-            if expected == 'nonzero':
-                if name != 'failure_recovery' or step['exit_code'] == 0:
-                    raise ReleaseError('negative recovery probe did not fail')
-            elif type(expected) is not int or expected not in (0, 2) or step['exit_code'] != expected or (expected == 2 and name != 'independent_package'):
-                raise ReleaseError('required freeze command failed: ' + name)
+            if (step['role'] != role or step['source_commit'] != commit or
+                type(step['expected_exit']) is not int or step['expected_exit'] != required_exit or step['exit_code'] != required_exit):
+                raise ReleaseError('required freeze step identity or exit disagrees: ' + role)
+            if step['log'] != role + '.log':
+                raise ReleaseError('required raw log identity disagrees: ' + role)
             if digest(regular(path.parent / relative(step['log']))) != step['sha256']:
                 raise ReleaseError('freeze raw log bytes changed: ' + name)
+        observations = report['observations']
+        if not isinstance(observations, dict) or set(observations) != REQUIRED_OBSERVATIONS.get(name, set()):
+            raise ReleaseError('required cache observations missing or unknown: ' + name)
+        for observation_name, record in observations.items():
+            if not isinstance(record, dict) or set(record) != {'path', 'sha256'}:
+                raise ReleaseError('invalid cache observation reference')
+            observation_path = regular(path.parent / relative(record['path']))
+            if digest(observation_path) != record['sha256']:
+                raise ReleaseError('cache observation bytes changed')
+            observation = read_json(observation_path)
+            validate_cache_observation(observation_name, observation, commit, tag)
+            if observation_name == 'cache_edit':
+                observed_cache_edit(observation, path.parent / 'demo-all.log', path.parent / 'edit-gfx.log')
+        if name == 'independent_package':
+            for step, expected_error in zip(report['steps'][2:], ('file digest mismatch: artifacts/final.mp4', 'live input changed: a.mp4')):
+                rejected = read_json(path.parent / relative(step['log']))
+                if rejected.get('error') != expected_error:
+                    raise ReleaseError('tamper rejection reason does not match the actual probe')
         if name == 'public_demo_render':
-            observed_cdp(path.parent / relative(report['steps'][0]['log']))
+            observed_cdp(path.parent / relative(report['steps'][-1]['log']))
         if name == 'distribution_license':
             audit = read_json(path.parent / relative(report['steps'][-1]['log']))
             if audit.get('integrity_checks_passed') is not True or audit.get('release_blockers'):
@@ -341,7 +450,7 @@ def build_public_summary(evidence, work):
     summary = {'schema': 'framivra.public-freeze-summary/1', 'version': data['tag'][1:],
        'tag': data['tag'], 'source_commit': data['commit'], 'core_asset_sha256': data['assets'],
        'gates': {name: data['gates'][name]['status'] for name in sorted(REQUIRED_FREEZE_GATES)},
-       'tool_versions': versions, 'backend_observed': observed_cdp(evidence.parent / relative(read_json(evidence.parent / data['gates']['public_demo_render']['path'])['steps'][0]['log'])), 'support_scope': ['Linux', 'CPU encoding', 'CDP', 'public standard-demo', 'kernel CLI'],
+       'tool_versions': versions, 'backend_observed': observed_cdp(evidence.parent / relative(read_json(evidence.parent / data['gates']['public_demo_render']['path'])['steps'][-1]['log'])), 'support_scope': ['Linux', 'CPU encoding', 'CDP', 'public standard-demo', 'kernel CLI'],
        'limitations': ['Full acceptance package and raw logs retained locally; summary is not a replay bundle',
            'Visual content remains unknown; no human audiovisual approval claimed',
            'macOS, Windows, CEF, Electron, GPU and optional model applications are unqualified',
