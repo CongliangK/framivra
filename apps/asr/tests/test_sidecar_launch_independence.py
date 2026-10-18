@@ -205,6 +205,10 @@ class SidecarLaunchIndependenceTest(unittest.TestCase):
         """红队 D2：PYTHONPATH 放假 independence.py + `python3 -P` 直启
         （-P 不把脚本目录放 sys.path 首位 → PYTHONPATH 遮蔽生效）——
         _independence 必须恒按 __file__ 同目录文件路径加载真模块，拒绝仍生效。"""
+        if sys.version_info < (3, 11):
+            raise unittest.SkipTest(
+                "python3 -P 于 3.11 引入；3.10 下脚本目录恒为 sys.path[0]，"
+                "该遮蔽向量本就不可构造，产品面由其余用例覆盖")
         fake = Path(self.tmp.name) / "fakemod"
         fake.mkdir()
         (fake / "independence.py").write_text(
