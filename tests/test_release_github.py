@@ -142,7 +142,15 @@ class GithubRelease(unittest.TestCase):
                               text=True, capture_output=True, check=True)
 
     def release(self, *args, **env):
-        return subprocess.run(['bash', str(self.repo / 'scripts/release.sh'),
+        # Transaction fixtures isolate freeze/provenance; their strict real gates
+        # have dedicated negative tests in test_release_freeze.py.
+        harness = ("import importlib.util,sys,types; sys.dont_write_bytecode=True; "
+                   "spec=importlib.util.spec_from_file_location('release',sys.argv[1]); "
+                   "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m); "
+                   "m.verify_freeze_evidence=lambda *a: None; "
+                   "sys.modules['verify_release']=types.SimpleNamespace(verify_artifact=lambda *a,**kw: 1); "
+                   "sys.exit(m.main(sys.argv[2:]))")
+        return subprocess.run([sys.executable, '-c', harness, str(self.repo / 'scripts/release_github.py'),
                                'v2.0.1', *args], cwd=self.repo, env={**self.env, **env},
                               text=True, capture_output=True, timeout=30)
 

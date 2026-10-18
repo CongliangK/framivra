@@ -23,7 +23,7 @@
 #                 不得使用运行时数据根 ~/.local/share/video-tools——安装运行
 #                 数据会让克隆变脏,下一次引导拒绝自动更新)
 #   FRAMIVRA_REPO 默认 https://github.com/CongliangK/framivra.git(可信镜像也可)
-#   FRAMIVRA_REF  默认 main(分支名)
+#   FRAMIVRA_REF  默认 stable;可选 vX.Y.Z / vX.Y.Z-rc.N / main(开发版)
 # 信任边界:本脚本经 HTTPS 从 GitHub raw 下载——首次安装信任的是「下载通道 +
 # 仓库当前内容」;发布者身份验证(keyless provenance)随发版通道后续接入,
 # 引导层不自称签名验证(可先取脚本审读后再执行)。
@@ -62,7 +62,46 @@ done
 # ---------- 环境变量(显式空值保留给校验拒绝,而非回退默认) ----------
 DIR="${FRAMIVRA_DIR-${HOME-}/.local/share/framivra-repo}"
 REPO="${FRAMIVRA_REPO-https://github.com/CongliangK/framivra.git}"
-REF="${FRAMIVRA_REF-main}"
+REF="${FRAMIVRA_REF-stable}"
+EXPECTED_COMMIT=""
+if [ "$REF" = stable ]; then
+  REF="$(python3 - <<'PY_RELEASE'
+import json, urllib.request
+request = urllib.request.Request('https://api.github.com/repos/CongliangK/framivra/releases/latest', headers={'User-Agent': 'framivra-bootstrap'})
+with urllib.request.urlopen(request, timeout=30) as response:
+    release = json.load(response)
+if release.get('draft') is not False or release.get('prerelease') is not False:
+    raise SystemExit('stable release is not public and final')
+print(release['tag_name'])
+PY_RELEASE
+)" || fail '稳定发行解析失败;不会回落 main。'
+fi
+case "$REF" in
+  main) SOURCE_REF="refs/heads/main"; TARGET_REF="refs/remotes/origin/main" ;;
+  *)
+    [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] || fail 'FRAMIVRA_REF 非法:只接受 stable、vX.Y.Z、vX.Y.Z-rc.N 或 main。'
+    SOURCE_REF="refs/tags/$REF"; TARGET_REF="$SOURCE_REF"
+    # A public network tag must belong to a published Release. Absolute local
+    # repositories are an explicit offline candidate/testing trust boundary.
+    case "$REPO" in
+      /*) ;;
+      *)
+        python3 - "$REF" <<'PY_PUBLIC_RELEASE' || fail '指定版本不是已公开发行,或查询失败;不会回落 main。'
+import json, sys, urllib.request
+ref = sys.argv[1]
+request = urllib.request.Request('https://api.github.com/repos/CongliangK/framivra/releases/tags/' + ref, headers={'User-Agent': 'framivra-bootstrap'})
+with urllib.request.urlopen(request, timeout=30) as response:
+    release = json.load(response)
+assert release.get('tag_name') == ref and release.get('draft') is False
+assert release.get('prerelease') is ('-rc.' in ref)
+PY_PUBLIC_RELEASE
+        ;;
+    esac
+    REMOTE_TAG="$(git ls-remote --exit-code "$REPO" "$SOURCE_REF" "$SOURCE_REF^{}")" || fail '发行 tag 不存在或网络失败;不会回落 main。'
+    EXPECTED_COMMIT="$(printf '%s\n' "$REMOTE_TAG" | python3 -c 'import sys; rows=[x.split() for x in sys.stdin if x.strip()]; peeled=[r[0] for r in rows if r[1].endswith("^{}")]; assert len(peeled)==1, "release requires annotated tag"; print(peeled[0])')" || fail '发行须为 annotated tag。'
+    ;;
+esac
+printf '[bootstrap] 选择 %s @ %s\n' "$REF" "${EXPECTED_COMMIT:-development/main}"
 # 去掉尾部斜杠与 /. 尾缀:/tmp/link/ 或 /tmp/link/. 的 -L 判定为假,会绕过
 # 符号链接检查;数据根比对同理须用规范化路径(标杆红队发现)。
 while [ "$DIR" != "/" ]; do
@@ -174,13 +213,13 @@ if [ -e "$DIR" ] || [ -L "$DIR" ]; then
     printf '[bootstrap] 正在更新已有的干净克隆……\n'
     # 显式分支映射支持浅克隆切换/更新,避免 reset 到过时的远端跟踪引用;
     # 失败时尚未重置任何本地文件。
-    if ! git -C "$DIR" fetch --depth 1 origin "+refs/heads/$REF:refs/remotes/origin/$REF"; then
+    if ! git -C "$DIR" fetch --depth 1 origin "+$SOURCE_REF:$TARGET_REF"; then
       network_hint
       fail '获取远端分支失败,尚未改动本地文件。'
     fi
     # 标签/简写歧义防护:一律用全限定 ref,防名为 origin/<ref> 的标签劫持 reset。
-    TARGET_REF="refs/remotes/origin/$REF"
     NEW_HEAD="$(git -C "$DIR" rev-parse --verify "$TARGET_REF^{commit}")" || fail '远端分支解析失败,尚未重置本地文件。'
+    [ -z "$EXPECTED_COMMIT" ] || [ "$NEW_HEAD" = "$EXPECTED_COMMIT" ] || fail '远端 tag 在安装期间移动,拒绝更新。'
     # ignored→tracked 碰撞预检(fail-closed,红线):porcelain 判脏看不见
     # ignored 文件——上游新版本把原 ignored 路径(vt.py init 生成的
     # config.local.json,以及 out/、*.mp4 等被 .gitignore 忽略的产物)转为
@@ -255,9 +294,18 @@ else
     fail "克隆失败,安装尚未开始;若留下半成品目录($DIR),请检查后自行处理或改用其他 FRAMIVRA_DIR。"
   fi
   DIR="$(cd -- "$DIR" && pwd -P)"
+  [ -z "$EXPECTED_COMMIT" ] || [ "$(git -C "$DIR" rev-parse HEAD)" = "$EXPECTED_COMMIT" ] || fail '克隆提交与发行 tag 不符,拒绝初始化。'
   printf '%s\n' "$(git -C "$DIR" rev-parse HEAD)" > "$DIR/.git/$MARKER_NAME"
 fi
 
+if [ "$SKIP_UPDATE" -eq 0 ]; then
+  python3 - "$DIR" "$REF" <<'PY_RECORD'
+import json, pathlib, subprocess, sys
+root, ref = sys.argv[1:]
+commit = subprocess.check_output(['git', '-C', root, 'rev-parse', 'HEAD'], text=True).strip()
+(pathlib.Path(root) / '.git/framivra-release.json').write_text(json.dumps({'ref': ref, 'commit': commit}, sort_keys=True) + '\n')
+PY_RECORD
+fi
 [ -f "$DIR/vt.py" ] || fail '仓库缺少 vt.py:请检查 FRAMIVRA_REPO/FRAMIVRA_REF 指向的是 Framivra 本仓。'
 printf '[bootstrap] 在克隆内运行 vt.py init(依赖自检 + 幂等生成 config.local.json;额外参数已原样透传)……\n'
 cd -- "$DIR"

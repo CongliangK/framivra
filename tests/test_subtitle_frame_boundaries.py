@@ -42,6 +42,26 @@ def parse_ass(data):
             for p in [line.split(',', 9)]]
 
 
+def emitted_showinfo_pts(log, count):
+    """showinfo can observe encoder lookahead beyond -frames:v output."""
+    observed = [(int(a), int(b)) for a, b in re.findall(
+        r'\bn:\s*(\d+)\s+pts:\s*(-?\d+)', log)]
+    # Raw byte length independently fixes actual emitted frame count. Preserve
+    # every PTS check for that range; never mistake filter lookahead for output.
+    return [(n, pts) for n, pts in observed if n < count]
+
+
+class ShowinfoOutputRange(unittest.TestCase):
+    def test_lookahead_is_not_an_emitted_frame(self):
+        log = 'n: 0 pts: 0\nn: 1 pts: 1\n'
+        self.assertEqual(emitted_showinfo_pts(log, 1), [(0, 0)])
+
+    def test_actual_emitted_pts_error_is_preserved(self):
+        log = 'n: 0 pts: 1\nn: 1 pts: 1\n'
+        self.assertNotEqual(emitted_showinfo_pts(log, 1), [(0, 0)])
+        self.assertNotEqual(emitted_showinfo_pts('n: 1 pts: 1', 1), [(0, 0)])
+
+
 def intended(subtitles, frame):
     # Independent oracle: never call production conversion or active-set code.
     return [s['text'] for s in subtitles if s['in'] <= frame < s['out']]
@@ -234,8 +254,7 @@ class SubtitleFrameIntegration(unittest.TestCase):
         self.assertEqual(len(raw), count * 160 * 90)
         log = (self.root / (name + '.stderr')).read_text()
         self.assertIn('time_base: 1/30', log)
-        observed_pts = [(int(a), int(b)) for a, b in re.findall(
-            r'\bn:\s*(\d+)\s+pts:\s*(-?\d+)', log)]
+        observed_pts = emitted_showinfo_pts(log, count)
         self.assertEqual(observed_pts, [(n, n) for n in range(count)])
         return [raw[i * 14400:(i + 1) * 14400] for i in range(count)]
 

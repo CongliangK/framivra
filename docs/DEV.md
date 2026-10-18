@@ -177,6 +177,5 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 
 ### 版本与发布纪律（R-04，2026-09-17）〔出处：R-03/04/05 合并任务书〕
 
-- **tag↔VERSION 同步**：VERSION 文件变更必须与同名 annotated tag 同批落地（tag 名=VERSION 文件内容字面，如 `2.0.0`）。tag 创建后 doctor 版本段应 clean（`VTX_DOCTOR_OFFLINE=1 vtx.py doctor --json` 顶层 `version`/`state` 达标）。
-- **语义**：tag 锚定可信任状态——带已知缺陷的状态不打 release tag。
-- **兼容**：doctor「无 tag 不告警」为 §5.1 设计语义，本纪律不改变该行为；tag 为发布锚，非门控条件。
+- **版本、冻结门与支持范围**：唯一规则见 [源码稳定基线](releases.md)。VERSION、pyproject 与包内回退版本须同步；annotated tag 固定同一提交。
+- **兼容**：doctor「无 tag 不告警」为 §5.1 设计语义；发行冻结门独立执行，不改变该行为。

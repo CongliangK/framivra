@@ -95,7 +95,10 @@ jobs:
           DIGEST: ${{ inputs.digest }}
         run: |
           set -euo pipefail
-          test "${TAG#v}" != "$TAG" || { echo "tag must be vX.Y.Z"; exit 2; }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] || exit 2
+          test "$GITHUB_REF" = "refs/tags/$TAG" || { echo 'dispatch workflow at exact tag ref'; exit 2; }
+          test -n "$DIGEST" && test "$(git rev-parse HEAD)" = "$DIGEST" || { echo 'exact candidate digest required'; exit 2; }
+          test "$(gh release view "$TAG" --repo CongliangK/framivra --json isDraft --jq .isDraft)" = true || { echo 'requires unpublished draft'; exit 2; }
           mkdir -p "$RUNNER_TEMP/assets" && cd "$RUNNER_TEMP/assets"
           gh release download "$TAG" --repo CongliangK/framivra \
             --pattern 'SHA256SUMS' --pattern "video-tools-*.tar.gz" \
@@ -114,7 +117,8 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/assets"
           REF_ARGS=(--source-ref "refs/tags/$TAG")
-          if [ -n "$DIGEST" ]; then REF_ARGS+=(--source-digest "$DIGEST"); fi
+          test -n "$DIGEST" || exit 2
+          REF_ARGS+=(--source-digest "$DIGEST")
           for f in *; do
             gh attestation verify "$f" \
               --repo CongliangK/framivra \
