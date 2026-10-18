@@ -15,7 +15,7 @@ Python wheel 分发。
 
 ## 生产接线（实验性 Alpha）
 
-`VTX_GFX` 只接受 `cdp|cli|cef`；未知值（含 Electron）拒绝执行。CEF 初始化、
+CEF 通过 `VTX_GFX=cef` 显式选择；未知后端值拒绝执行，默认仍为 CDP。CEF 初始化、
 验签或输出失败直接使 gfx 阶段失败，**不回落 CDP/CLI**。Python 客户端在 `vtx/`，
 worker 及同目录锁定 CEF 运行库须另行构建。仅 Linux `/proc` 监管可用时启动；
 worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处理不可信页面**。
@@ -30,9 +30,11 @@ worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处�
 输出为签名捕获的 BGRA 预乘像素经现有逆预乘/PNG 链的结果，**不使用邻行像素猜测**。
 页面仍须遵守帧纯函数协议；异步视觉变化、根元素特效或结构选择器（如
 `body:last-child`、`html:has`）的见证副作用可能导致显式超时，不承诺任意网页兼容。
-`clean` 旧实验通道的邻域兜底不用于生产。本机制不建立页面脚本异常的完整失败语义：
-导航期/捕获期未捕获异常、语法错误、未处理 Promise 拒绝及错误事件抑制仍须单独验收；
-不能以本修复或短片 fixture 宣称完整 Alpha 已通过。
+`clean` 旧实验通道的邻域兜底不用于生产。renderer 在页面 inline script 前安装
+可信错误观察器，并在接受捕获像素前核对 renderer fence：未捕获异常、语法错误、
+未处理 Promise 拒绝及已覆盖的错误事件抑制反例以 `JS_ERR/3` 拒绝；协议、
+文档绑定或 deadline 失败以 `TIMEOUT/1` 拒绝。已处理异常与普通 console 不作错误帧。
+这些有限反例不构成任意网页正确性或不可信输入安全保证；短片 fixture 也不代替完整项目验收。
 
 缓存身份与路由权威见 [cache-provenance](../../docs/cache-provenance.md)。
 原生逐事件日志、进程日志、逐帧回执保留在项目 `cache/reports/cef/`；失败亦保留。
