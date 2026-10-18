@@ -13,6 +13,8 @@ from vtx import cache_state, gfx_dependencies as deps
 
 class IntegratedDependencyOperations(unittest.TestCase):
     def setUp(self):
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)

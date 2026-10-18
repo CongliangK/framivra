@@ -14,7 +14,7 @@ import unittest
 import zlib
 from unittest import mock
 
-from vtx import cli, gfx_cli, gfx_render, hygiene
+from vtx import cli, gfx_cli, gfx_render, hygiene, gfx_environment
 from vtx.infra import Ctx
 
 
@@ -35,6 +35,8 @@ def stats(n):
 
 class CacheIntegrity(unittest.TestCase):
     def setUp(self):
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         self.tmp = tempfile.TemporaryDirectory(prefix='vtx_issue33_')
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -57,7 +59,8 @@ class CacheIntegrity(unittest.TestCase):
 
     def complete(self):
         gfx_cli.complete_page(self.d, 3, self.key, 6, 4,
-                              verify_inputs=lambda: self.c.verify_inputs('gfx'))
+                              verify_inputs=lambda: self.c.verify_inputs('gfx'),
+                              environment=gfx_environment.certificate(self.c))
 
     def renderer(self, html, d, n, **kw):
         targets = range(n) if kw['frames'] is None else kw['frames']
@@ -75,7 +78,7 @@ class CacheIntegrity(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             cli.gfx(self.c)
 
-    def test_missing_or_malformed_marker_migrates_only_after_full_validation(self):
+    def test_missing_or_malformed_marker_requires_environment_rerender(self):
         self.frames()
         for content in (None, '{broken', json.dumps(dict(schema=999))):
             marker = self.d / gfx_cli.COMPLETE_FILE
@@ -83,7 +86,9 @@ class CacheIntegrity(unittest.TestCase):
                 marker.unlink(missing_ok=True)
             else:
                 marker.write_text(content)
-            self.run_gfx(renderer=lambda *a, **k: self.fail('valid legacy cache must not start Chrome'))
+            self.rendered.clear()
+            self.run_gfx()
+            self.assertEqual(self.rendered, [0, 1, 2])
             self.assertEqual(gfx_cli.inspect_page(self.d, 3, self.key, 6, 4), ([], False))
             self.assertEqual(len(json.loads(marker.read_text())['sha256']), 3)
 

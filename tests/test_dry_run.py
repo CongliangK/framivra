@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from vtx import cli, hygiene
+from tests.gfx_environment_fixture import bind_environment, environment_cli
 from vtx.infra import Ctx
 
 REPO = Path(__file__).resolve().parents[1]
@@ -44,6 +45,7 @@ def tree_sha256(root):
 
 class DryRunRegression(unittest.TestCase):
     def setUp(self):
+        bind_environment(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -107,7 +109,7 @@ class DryRunRegression(unittest.TestCase):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", VTX_NO_NVENC="1",
                    VTX_DOCTOR_OFFLINE="1")
         env.update(env_extra or {})
-        return subprocess.run(["env", "python3", "-B", str(VTX),
+        return subprocess.run([*environment_cli(),
                                "-t", str(self.timeline), *args],
                               cwd=REPO, env=env, capture_output=True, text=True,
                               timeout=30)

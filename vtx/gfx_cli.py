@@ -27,6 +27,7 @@ import hashlib
 import json
 import struct
 import subprocess
+import tempfile
 import zlib
 
 if __package__:
@@ -255,6 +256,7 @@ def require_frames(outdir, frames, *, width=None, height=None):
 # Page completion is an integrity record, not a renderer/environment identity
 # or evidence of a fresh experimental run (those have separate contracts).
 COMPLETE_FILE = "complete.json"
+ENV_PENDING_FILE = 'environment.pending.json'
 
 
 def _page_record(outdir, n, key, width, height, backend_ns=None):
@@ -277,7 +279,8 @@ def _page_record(outdir, n, key, width, height, backend_ns=None):
     return record, bad
 
 
-def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_digest=None):
+def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_digest=None,
+                 environment=None):
     """Return bad frames plus whether a completion record needs publication.
 
     Missing/unreadable legacy markers never skip validation: complete valid
@@ -291,6 +294,30 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_dige
         old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         old = None
+    if environment is None and isinstance(old, dict):
+        # Integrity-only callers do not certify the environment. Production
+        # lookups always supply their independently resolved expected record.
+        for field in ('environment', 'mixed_producer'):
+            if field in old:
+                current[field] = old[field]
+    if environment is not None:
+        if not isinstance(environment, dict) or environment.get('status') != 'input-bound':
+            return [(i, 'unknown environment cannot certify cache reuse') for i in range(n)], True
+        current['environment'] = environment
+        try:
+            pending = json.loads((Path(outdir) / ENV_PENDING_FILE).read_text())
+        except (OSError, ValueError):
+            pending = None
+        resumable = old is None and pending == {
+            'environment': environment, 'key': key, 'frames': n, 'width': width, 'height': height}
+        if (not resumable and (not isinstance(old, dict) or type(old.get('schema')) is not int
+                or old['schema'] != 1
+                or old.get('environment') != environment or old.get('mixed_producer', False)
+                or not isinstance(old.get('sha256'), list) or len(old['sha256']) != n)):
+            return [(i, 'environment certificate missing/changed or mixed producer')
+                    for i in range(n)], True
+        if isinstance(old, dict) and old.get('mixed_producer'):
+            current['mixed_producer'] = True
     if dependency_digest is not None:
         current['dependency_digest'] = dependency_digest
         current['dependency_enforcement'] = 'fetch-pinned-local-v1'
@@ -321,7 +348,7 @@ def invalidate_page(outdir):
 
 def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None,
                   dependency_digest=None, dependency_enforcement=None, dependency_observed=None,
-                  backend_identity=None, render_runs=None):
+                  backend_identity=None, render_runs=None, environment=None, mixed_producer=False):
     """Validate the whole page and pin-input gate before atomic publication.
 
     Caller invokes only on non-dry paths after all blocks/fallbacks finish.
@@ -345,16 +372,34 @@ def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=No
             raise GfxCliError('strict completion requires observed local requests')
         record['dependency_observed'] = dependency_observed
     verify_inputs()
+    if environment is not None:
+        if not isinstance(environment, dict) or environment.get('status') != 'input-bound':
+            invalidate_page(outdir)
+            raise GfxCliError('unknown environment cannot publish completion')
+        if mixed_producer:
+            invalidate_page(outdir)
+            fstxn.unlink(Path(outdir) / ENV_PENDING_FILE)
+            raise GfxCliError('CDP/CLI mixed environment cannot publish completion; '
+                              'rerun explicitly with VTX_GFX=cli for a separate identity')
+        record['environment'] = environment
     if backend_identity is not None:
         record["backend_identity"] = backend_identity
         record["render_runs"] = render_runs
     fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True))
+    fstxn.unlink(Path(outdir) / ENV_PENDING_FILE)
+
+
+def begin_environment_page(outdir, environment, key, n, width, height):
+    if environment is not None:
+        record = dict(environment=environment, key=key, frames=n, width=width, height=height)
+        fstxn.atomic_write(Path(outdir) / ENV_PENDING_FILE, json.dumps(record, sort_keys=True))
 
 
 def _cli_shot_cmd(chrome, i, d, html, width, height):
     """构造第 i 帧的 Chrome 截图命令（与 cli.py 原 shot_cli 逐字节一致）。"""
     png = Path(d) / f"f{i:04d}.png"
-    return [chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+    from .gfx_environment import CHROME_VISUAL_FLAGS
+    return [chrome, *CHROME_VISUAL_FLAGS,
             f"--window-size={width},{height}", "--default-background-color=00000000",
             f"--screenshot={png}", f"{Path(html).resolve().as_uri()}?f={i}"]
 
@@ -384,9 +429,22 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
         # 永不占住固定名（issue #59）。
         fstxn.unlink(png)
         with fstxn.locked_staging(png) as tmp:
-            staged = [f'--screenshot={tmp}' if str(arg).startswith('--screenshot=') else arg
-                      for arg in cmd]
-            proc = subprocess.run(staged, capture_output=True, timeout=timeout)
+            # A default-profile Chrome may forward this request to an already
+            # running desktop browser and exit 0 without a screenshot. A fresh
+            # profile also excludes extensions/preferences from cache identity.
+            with tempfile.TemporaryDirectory(prefix='vtx_cli_profile_', dir=d) as profile:
+                # Chrome chooses its encoder by filename extension and silently
+                # exits 0 for the transaction's .tmp suffix. Render a .png in
+                # the private profile, then copy into the pinned staging inode.
+                output = Path(profile) / 'frame.png'
+                staged = [f'--screenshot={output}' if str(arg).startswith('--screenshot=') else arg
+                          for arg in cmd]
+                staged.insert(1, '--user-data-dir=' + profile)
+                staged.insert(2, '--no-first-run')
+                staged.insert(3, '--no-default-browser-check')
+                proc = subprocess.run(staged, capture_output=True, timeout=timeout)
+                if proc.returncode == 0 and output.is_file():
+                    tmp.write_bytes(output.read_bytes())
             if proc.returncode != 0:
                 raise GfxCliError(_rc_error(staged, proc) + f'\n    原目标：--screenshot={png}')
             reason = png_invalid_reason(tmp, width=width, height=height)

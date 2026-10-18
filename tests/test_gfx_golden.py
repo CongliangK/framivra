@@ -71,6 +71,8 @@ def _fill_cache(tp: Path, clips, skip=(), tamper=()):
 
 class GfxGolden(unittest.TestCase):
     def setUp(self):
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)

@@ -285,6 +285,8 @@ def verify_input_identity(c):
     """Re-read inputs; never adopt the current identity for an in-flight build."""
     try:
         current = receipt_fingerprint(c)
+        from .gfx_environment import recheck
+        recheck(c)
     except (OSError, ValueError, RuntimeError) as e:
         raise InputIdentityError(
             f"issue #32：输入在渲染期间变化或无法复核（{e}）；"
@@ -398,6 +400,11 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     backend, namespace = identity(), gfx_cache_ns()
     if backend or namespace:
         h.update(f"gfx-backend:{backend}|ns:{namespace}\n".encode())
+    if gfx_inputs:
+        from .gfx_environment import identity as environment_identity
+        environment = environment_identity(c)
+        if environment:
+            h.update(environment.encode())
     return h.hexdigest()
 
 

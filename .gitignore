@@ -43,6 +43,7 @@ apps/tts/.venv/
 apps/imgen/.venv/
 
 # 测试 fixtures 反排除（防上面 *.wav/*.png 全局规则误杀测试小资产）
+!tests/fixtures/gfx-environment/**/*.png
 !apps/asr/tests/fixtures/**
 !apps/tts/tests/fixtures/**
 !apps/imgen/tests/fixtures/**

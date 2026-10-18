@@ -45,19 +45,22 @@ def resolve_frames(c, clip):
     n = source.frame_count
     marker = directory / gfx_cli.COMPLETE_FILE
     from .gfx_backend import identity
+    from .gfx_environment import certificate, recheck
+    environment = certificate(c)
+    recheck(c)
     if selected() == 'electron':
         from .gfx_electron_stage import cached_runs
         from .gfx_backend import electron_config
         if cached_runs(directory, n, key, c.w, c.h, identity(), namespace,
                        expected_html=c.root / clip['src'], expected_config=electron_config()) is None:
             raise GfxCacheError(f'Electron gfx 完成记录/身份/producer 回执无效: {directory}')
-    elif legacy or namespace or marker.exists() or dependency_digest is not None:
+    elif environment is not None or legacy or namespace or marker.exists() or dependency_digest is not None:
         # inspect_page's second result also detects absent/malformed records,
         # unsupported schemas, missing hashes and mismatched backend_ns. Unlike
         # a renderer, a read-only consumer must not recertify any of these.
         bad, needs_publication = gfx_cli.inspect_page(
             directory, n, key, c.w, c.h, backend_ns=namespace or None,
-            dependency_digest=dependency_digest)
+            dependency_digest=dependency_digest, environment=environment)
         if bad:
             raise GfxCacheError(f'gfx 缓存无效 {directory}: {bad[:8]}')
         if needs_publication:

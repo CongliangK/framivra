@@ -1,0 +1,999 @@
+{
+  "schema": "vtx.gfx-environment-acceptance/1",
+  "scope": "full HTML + JavaScript + consumed text fonts; all 4 frames",
+  "git": "ed9965b360ace2c11e99ca7669969eead5aceee4",
+  "comparisons": {
+    "font_change": [
+      {
+        "frame": "f0000.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            36
+          ],
+          [
+            0,
+            51
+          ],
+          [
+            0,
+            85
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "072f72a3f02a80f31ff897c425456a8ef7a0c783383b218b2cae6d9438b8d354",
+          "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1"
+        ]
+      },
+      {
+        "frame": "f0001.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            36
+          ],
+          [
+            0,
+            51
+          ],
+          [
+            0,
+            85
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "ff477ee1585ddef47169dfaf14b49d60dd0ff864dd87acf933d23c16b387cc7f",
+          "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017"
+        ]
+      },
+      {
+        "frame": "f0002.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            36
+          ],
+          [
+            0,
+            51
+          ],
+          [
+            0,
+            85
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "2dbd12f3477e974872701f3032cdaa651095e3a5b017fbe743216f6213f24728",
+          "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2"
+        ]
+      },
+      {
+        "frame": "f0003.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            36
+          ],
+          [
+            0,
+            51
+          ],
+          [
+            0,
+            85
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "0ab67c4258bb5c2d3c81fb5425e7020a90d508b3e927b8a0afb109f9c2c0c389",
+          "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1"
+        ]
+      }
+    ],
+    "browser_change": [
+      {
+        "frame": "f0000.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1",
+          "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1"
+        ]
+      },
+      {
+        "frame": "f0001.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017",
+          "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017"
+        ]
+      },
+      {
+        "frame": "f0002.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2",
+          "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2"
+        ]
+      },
+      {
+        "frame": "f0003.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1",
+          "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1"
+        ]
+      }
+    ],
+    "cdp_cli": [
+      {
+        "frame": "f0000.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            248
+          ],
+          [
+            0,
+            244
+          ],
+          [
+            0,
+            233
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1",
+          "6297cb477277e1ca0f0af7bfa959853b718aacc1c04528dcc7e8f25945e863f5"
+        ]
+      },
+      {
+        "frame": "f0001.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            248
+          ],
+          [
+            0,
+            244
+          ],
+          [
+            0,
+            233
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017",
+          "e8268ceabb0e1c1c32f47d240f34354af3997a627f5f8530a17ea033e31a142f"
+        ]
+      },
+      {
+        "frame": "f0002.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            248
+          ],
+          [
+            0,
+            244
+          ],
+          [
+            0,
+            233
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2",
+          "4df79b91b12b0148d947f706ca4df891ec5365148d78ec9cc4517ddd20e7b947"
+        ]
+      },
+      {
+        "frame": "f0003.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            248
+          ],
+          [
+            0,
+            244
+          ],
+          [
+            0,
+            233
+          ],
+          [
+            0,
+            255
+          ]
+        ],
+        "sha256": [
+          "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1",
+          "2e12c46452e53198d6f312eef19476a25149b5a22f7dcf82c0f114f2551a7d42"
+        ]
+      }
+    ],
+    "cef_library_replacement": [
+      {
+        "frame": "f0000.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "e00e772e53fe070e104ae66352788fc31cc572017efc9d22c8ea0865e93aa0b0",
+          "e00e772e53fe070e104ae66352788fc31cc572017efc9d22c8ea0865e93aa0b0"
+        ]
+      },
+      {
+        "frame": "f0001.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "10d164daa3f1942e22269878719d66caa3b839cd05158a0576da8850614fe4aa",
+          "10d164daa3f1942e22269878719d66caa3b839cd05158a0576da8850614fe4aa"
+        ]
+      },
+      {
+        "frame": "f0002.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "a3ec844017fc9fc0c6a4c3d34209201aeb82ebdc7b26315c738862ae1bb49e5f",
+          "a3ec844017fc9fc0c6a4c3d34209201aeb82ebdc7b26315c738862ae1bb49e5f"
+        ]
+      },
+      {
+        "frame": "f0003.png",
+        "equal_rgba": true,
+        "extrema": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "e78c8eb68a10a0800aa3952df546b09be74477267f30803c4bf815025388daa5",
+          "e78c8eb68a10a0800aa3952df546b09be74477267f30803c4bf815025388daa5"
+        ]
+      }
+    ],
+    "cef_font_change": [
+      {
+        "frame": "f0000.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            212
+          ],
+          [
+            0,
+            193
+          ],
+          [
+            0,
+            164
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "e00e772e53fe070e104ae66352788fc31cc572017efc9d22c8ea0865e93aa0b0",
+          "93e91f15c3ba3503bcb706a822633d3cb068a328da296c456122bfdbccbe3a3e"
+        ]
+      },
+      {
+        "frame": "f0001.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            212
+          ],
+          [
+            0,
+            193
+          ],
+          [
+            0,
+            164
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "10d164daa3f1942e22269878719d66caa3b839cd05158a0576da8850614fe4aa",
+          "4393aa9cd6a22b19bab80b15d8986461285e2ff73700e5534e83f504c11b8b31"
+        ]
+      },
+      {
+        "frame": "f0002.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            212
+          ],
+          [
+            0,
+            193
+          ],
+          [
+            0,
+            164
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "a3ec844017fc9fc0c6a4c3d34209201aeb82ebdc7b26315c738862ae1bb49e5f",
+          "f373df30e2dcdb19f4e2c085558817928ff6368e3df69807925bf468e4e781a4"
+        ]
+      },
+      {
+        "frame": "f0003.png",
+        "equal_rgba": false,
+        "extrema": [
+          [
+            0,
+            212
+          ],
+          [
+            0,
+            193
+          ],
+          [
+            0,
+            164
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "sha256": [
+          "e78c8eb68a10a0800aa3952df546b09be74477267f30803c4bf815025388daa5",
+          "eb7bd9654c2b48cd456d1be59ab9194ab1a27707fd36e65aa32ed45f1b70be3a"
+        ]
+      }
+    ]
+  },
+  "cef_runtime_negative": {
+    "worker_unchanged": true,
+    "library_before": "8952fb40b6bd1d8f145a27c9f4103dac92438309768d928235c4a8913eb1dba3",
+    "library_after": "d52c5a8d7291fdffc8177551dbb9f7cb2908077e4fd000cbf5717fe22d1c2480",
+    "kind": "real libcef.so file replacement with inert ELF trailer; same version, not upgrade"
+  },
+  "date": "2026-10-18",
+  "evidence_root": "/tmp/framivra-issue48-release",
+  "raw_summary_sha256": "2a8e548ecc69978615abb20e0fb4f25311eed40c55128d728e365f6dbf9f4c05",
+  "runs": {
+    "cdp-font-a": {
+      "backend": "cdp",
+      "key": "398396c13d88",
+      "environment_sha256": "cfdb52e5dac49326ab48110d76e1cfb3688e10b7c359a5c838e97d82dfaadee2",
+      "frames": {
+        "f0000.png": "072f72a3f02a80f31ff897c425456a8ef7a0c783383b218b2cae6d9438b8d354",
+        "f0001.png": "ff477ee1585ddef47169dfaf14b49d60dd0ff864dd87acf933d23c16b387cc7f",
+        "f0002.png": "2dbd12f3477e974872701f3032cdaa651095e3a5b017fbe743216f6213f24728",
+        "f0003.png": "0ab67c4258bb5c2d3c81fb5425e7020a90d508b3e927b8a0afb109f9c2c0c389"
+      },
+      "warm": false,
+      "version": "Google Chrome 155.0.8059.39",
+      "fonts": {
+        "active.ttf": "08ca98e69d9d8fa1065584b4f9ab7d49b6205abea6572b90e171b254845bb990"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "7a2617884fdc9aa0e2556deb9a9e5301c6e82add430a9e76723d6e7e6cd9fb83",
+      "certificate_file_sha256": "b6627a530e6af3ff338b15faa8f2256bdd132289b054c427f540c631e8f8c5d2",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "cdp-warm": {
+      "backend": "cdp",
+      "key": "398396c13d88",
+      "environment_sha256": "cfdb52e5dac49326ab48110d76e1cfb3688e10b7c359a5c838e97d82dfaadee2",
+      "frames": {
+        "f0000.png": "072f72a3f02a80f31ff897c425456a8ef7a0c783383b218b2cae6d9438b8d354",
+        "f0001.png": "ff477ee1585ddef47169dfaf14b49d60dd0ff864dd87acf933d23c16b387cc7f",
+        "f0002.png": "2dbd12f3477e974872701f3032cdaa651095e3a5b017fbe743216f6213f24728",
+        "f0003.png": "0ab67c4258bb5c2d3c81fb5425e7020a90d508b3e927b8a0afb109f9c2c0c389"
+      },
+      "warm": true,
+      "version": "Google Chrome 155.0.8059.39",
+      "fonts": {
+        "active.ttf": "08ca98e69d9d8fa1065584b4f9ab7d49b6205abea6572b90e171b254845bb990"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "13e25a288876a31cecee61e359ef0d6fa7cc1e7813a546d6976982bd9c449ea0",
+      "certificate_file_sha256": "b6627a530e6af3ff338b15faa8f2256bdd132289b054c427f540c631e8f8c5d2",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "cdp-old-marker-rejected": {
+      "backend": "cdp",
+      "key": "398396c13d88",
+      "environment_sha256": "cfdb52e5dac49326ab48110d76e1cfb3688e10b7c359a5c838e97d82dfaadee2",
+      "frames": {
+        "f0000.png": "072f72a3f02a80f31ff897c425456a8ef7a0c783383b218b2cae6d9438b8d354",
+        "f0001.png": "ff477ee1585ddef47169dfaf14b49d60dd0ff864dd87acf933d23c16b387cc7f",
+        "f0002.png": "2dbd12f3477e974872701f3032cdaa651095e3a5b017fbe743216f6213f24728",
+        "f0003.png": "0ab67c4258bb5c2d3c81fb5425e7020a90d508b3e927b8a0afb109f9c2c0c389"
+      },
+      "warm": false,
+      "version": "Google Chrome 155.0.8059.39",
+      "fonts": {
+        "active.ttf": "08ca98e69d9d8fa1065584b4f9ab7d49b6205abea6572b90e171b254845bb990"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "fb6a5c844160c2169f32c52407d03b3737fa607cca079ddc4986746262ca525d",
+      "certificate_file_sha256": "b6627a530e6af3ff338b15faa8f2256bdd132289b054c427f540c631e8f8c5d2",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "cdp-font-b": {
+      "backend": "cdp",
+      "key": "a1e7a476b42c",
+      "environment_sha256": "e0648de3840c5f5752b57a5a8b990634f432fc1f5b6127eecaf4348f15302205",
+      "frames": {
+        "f0000.png": "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1",
+        "f0001.png": "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017",
+        "f0002.png": "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2",
+        "f0003.png": "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1"
+      },
+      "warm": false,
+      "version": "Google Chrome 155.0.8059.39",
+      "fonts": {
+        "active.ttf": "8deba7c78917fb06eafa38f73434b8f50f2b733cf4374bbf54be814699115dc4"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "105970cee048fe30251137b9aa22c6edafc923eae937103a9f64774d4593f718",
+      "certificate_file_sha256": "5fb777a79026df3165bad871c890275d9cfb279fd415ce85b500cd137f90f368",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "alternate-browser": {
+      "backend": "cdp",
+      "key": "b3a82162ae28",
+      "environment_sha256": "c7d79ae2db5b5d00c4751bebee0a586ed473565967a5637adfd17c11984586b7",
+      "frames": {
+        "f0000.png": "485e5919e8acb557a96be9469bf8924e584b9061e293438f3bcd011a99c14be1",
+        "f0001.png": "c480df43222059150bbfa376acd0e165310a3d575010bdb560a3e4ce872db017",
+        "f0002.png": "38e108096890ff8bbea268b1c5e317eb8a3f1fc3023e72ca6a343df34b5090e2",
+        "f0003.png": "3bcf76f1f6e593277cf0bd5a56363b1bcc574f64376eee89fe6b18f1d83000f1"
+      },
+      "warm": false,
+      "version": "Google Chrome for Testing 153.0.8010.12",
+      "fonts": {
+        "active.ttf": "8deba7c78917fb06eafa38f73434b8f50f2b733cf4374bbf54be814699115dc4"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "2f6d80aae2b80e8857dda5dcf32f14a3bdabd01537926d51645e20a5093a4655",
+      "certificate_file_sha256": "83555e12b459c10ac8b2f98575b09e306331306235482286489ba8f82ed56f99",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "cli-font-b": {
+      "backend": "cli",
+      "key": "b49283f68b23",
+      "environment_sha256": "12b9ea054b4667cbaf560039fb7a7a19437ad263647b0e3f2c935da6f2a6908f",
+      "frames": {
+        "f0000.png": "6297cb477277e1ca0f0af7bfa959853b718aacc1c04528dcc7e8f25945e863f5",
+        "f0003.png": "2e12c46452e53198d6f312eef19476a25149b5a22f7dcf82c0f114f2551a7d42",
+        "f0001.png": "e8268ceabb0e1c1c32f47d240f34354af3997a627f5f8530a17ea033e31a142f",
+        "f0002.png": "4df79b91b12b0148d947f706ca4df891ec5365148d78ec9cc4517ddd20e7b947"
+      },
+      "warm": false,
+      "version": "Google Chrome 155.0.8059.39",
+      "fonts": {
+        "active.ttf": "8deba7c78917fb06eafa38f73434b8f50f2b733cf4374bbf54be814699115dc4"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "fe5031e9ac0fcc994c21f4e88c49c99bc6c9cb814cc1c9182add6cc192f52690",
+      "certificate_file_sha256": "d194c06d3b97297a4c68c70ba8eb7ecf7937dec358ccc6554b2ac6e1bba6a0ea",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "cef-runtime-a": {
+      "backend": "cef",
+      "key": "5ce7e5d8ccd2",
+      "environment_sha256": "a80fcc38d40c8db87f0a31466a96b373cc17f21ace74c7acd68c84a0acf64a6f",
+      "frames": {
+        "f0000.png": "e00e772e53fe070e104ae66352788fc31cc572017efc9d22c8ea0865e93aa0b0",
+        "f0001.png": "10d164daa3f1942e22269878719d66caa3b839cd05158a0576da8850614fe4aa",
+        "f0002.png": "a3ec844017fc9fc0c6a4c3d34209201aeb82ebdc7b26315c738862ae1bb49e5f",
+        "f0003.png": "e78c8eb68a10a0800aa3952df546b09be74477267f30803c4bf815025388daa5"
+      },
+      "warm": false,
+      "version": "CEF_VERSION_MAJOR      runtime=154      locked=154      ok\nCEF_VERSION_MINOR      runtime=0        locked=0        ok\nCEF_VERSION_PATCH      runtime=34       locked=34       ok\nCHROME_VERSION_MAJOR   runtime=154      locked=154      ok\nCHROME_VERSION_MINOR   runtime=0        locked=0        ok\nCHROME_VERSION_BUILD   runtime=8037     locked=8037     ok\nCHROME_VERSION_PATCH   runtime=98       locked=98       ok\nCEF_API_HASH_PLATFORM  runtime=488548509981031433af22af05c9b59e6f0788a9\n                       locked=488548509981031433af22af05c9b59e6f0788a9 ok\nlibcef_dll_wrapper     ok\nSANITY OK: cef=154.0.34+g14c5a08+chromium-154.0.8037.98 chromium=154.0.8037.98 (libcef.so 与版本锁一致)",
+      "fonts": {
+        "active.ttf": "8deba7c78917fb06eafa38f73434b8f50f2b733cf4374bbf54be814699115dc4"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "5019c559f21a8be7f793ae66fb34e137a9016a3de575450177d4a88644166b3d",
+      "certificate_file_sha256": "0eb3d34171ce3a38c837992ab1e1c84b7c272463b355c45e0d20f32d0ae6931d",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "cef-runtime-b": {
+      "backend": "cef",
+      "key": "9306a3ce0923",
+      "environment_sha256": "830652039dfb7760ff7a8684929b0480f157ebcda659052d63d57a2ddf8b109d",
+      "frames": {
+        "f0000.png": "e00e772e53fe070e104ae66352788fc31cc572017efc9d22c8ea0865e93aa0b0",
+        "f0001.png": "10d164daa3f1942e22269878719d66caa3b839cd05158a0576da8850614fe4aa",
+        "f0002.png": "a3ec844017fc9fc0c6a4c3d34209201aeb82ebdc7b26315c738862ae1bb49e5f",
+        "f0003.png": "e78c8eb68a10a0800aa3952df546b09be74477267f30803c4bf815025388daa5"
+      },
+      "warm": false,
+      "version": "CEF_VERSION_MAJOR      runtime=154      locked=154      ok\nCEF_VERSION_MINOR      runtime=0        locked=0        ok\nCEF_VERSION_PATCH      runtime=34       locked=34       ok\nCHROME_VERSION_MAJOR   runtime=154      locked=154      ok\nCHROME_VERSION_MINOR   runtime=0        locked=0        ok\nCHROME_VERSION_BUILD   runtime=8037     locked=8037     ok\nCHROME_VERSION_PATCH   runtime=98       locked=98       ok\nCEF_API_HASH_PLATFORM  runtime=488548509981031433af22af05c9b59e6f0788a9\n                       locked=488548509981031433af22af05c9b59e6f0788a9 ok\nlibcef_dll_wrapper     ok\nSANITY OK: cef=154.0.34+g14c5a08+chromium-154.0.8037.98 chromium=154.0.8037.98 (libcef.so 与版本锁一致)",
+      "fonts": {
+        "active.ttf": "8deba7c78917fb06eafa38f73434b8f50f2b733cf4374bbf54be814699115dc4"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "d07a9309863854b8026ea2ed5f3c738e9bb56991b9c981a74fdffc9f39817774",
+      "certificate_file_sha256": "ec6d73f8f0da8cf50608bb6eb875d58b4a8258d36e3be3fdc2380dc519a0a691",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    },
+    "cef-font-a": {
+      "backend": "cef",
+      "key": "d54f9d8867f7",
+      "environment_sha256": "cc1b260d5006b0d5e7e5e58bc55cec033a0981e719700d25b3f6e9537bda8203",
+      "frames": {
+        "f0000.png": "93e91f15c3ba3503bcb706a822633d3cb068a328da296c456122bfdbccbe3a3e",
+        "f0001.png": "4393aa9cd6a22b19bab80b15d8986461285e2ff73700e5534e83f504c11b8b31",
+        "f0002.png": "f373df30e2dcdb19f4e2c085558817928ff6368e3df69807925bf468e4e781a4",
+        "f0003.png": "eb7bd9654c2b48cd456d1be59ab9194ab1a27707fd36e65aa32ed45f1b70be3a"
+      },
+      "warm": false,
+      "version": "CEF_VERSION_MAJOR      runtime=154      locked=154      ok\nCEF_VERSION_MINOR      runtime=0        locked=0        ok\nCEF_VERSION_PATCH      runtime=34       locked=34       ok\nCHROME_VERSION_MAJOR   runtime=154      locked=154      ok\nCHROME_VERSION_MINOR   runtime=0        locked=0        ok\nCHROME_VERSION_BUILD   runtime=8037     locked=8037     ok\nCHROME_VERSION_PATCH   runtime=98       locked=98       ok\nCEF_API_HASH_PLATFORM  runtime=488548509981031433af22af05c9b59e6f0788a9\n                       locked=488548509981031433af22af05c9b59e6f0788a9 ok\nlibcef_dll_wrapper     ok\nSANITY OK: cef=154.0.34+g14c5a08+chromium-154.0.8037.98 chromium=154.0.8037.98 (libcef.so 与版本锁一致)",
+      "fonts": {
+        "active.ttf": "08ca98e69d9d8fa1065584b4f9ab7d49b6205abea6572b90e171b254845bb990"
+      },
+      "implementation": {
+        "cef_client.py": "84d0d3a4f672661f40a00348d32122824117f6ea8f546971913cd2e428522a73",
+        "gfx_backend.py": "542cd636c49248e09552fa50e77feb1ef3216ee500eb60014a2bd29bd076852a",
+        "gfx_cef.py": "245d1a78c932459f6a789761c731b94172647c779c37f39179de8fc8990c92b8",
+        "gfx_cli.py": "166863ecbe4acaf44b5eb66ee01c689bf524919d6c84d9e7e50eb5b66e66f4ee",
+        "gfx_environment.py": "3973e1fc115dc3f24f621d954e486f8db9b301c15f31298966241acea92803d6",
+        "gfx_render.py": "7d4d1e2f340d99ea9987758bf817d7358267d3d40a7dbbaf1a0f55aa0e739570"
+      },
+      "stdout_sha256": "2c147b7fa4839a49db2f9053badf781f180c5fc38dcea2a23c0176e8f905c39b",
+      "certificate_file_sha256": "8c7ed2128b827d5ec358ead53549c3cf408c0a101fe4f8707ac0883acd9fde94",
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]"
+    }
+  },
+  "browser_a_observation": {
+    "version": {
+      "protocolVersion": "1.3",
+      "product": "Chrome/155.0.8059.39",
+      "revision": "@3ff7ac5a9224be9156d7f8703a06e22890aafd34",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+      "jsVersion": "15.5.35.20"
+    },
+    "fonts": {
+      "fonts": [
+        {
+          "familyName": "DejaVu Sans",
+          "postScriptName": "DejaVuSans",
+          "isCustomFont": false,
+          "glyphCount": 37
+        }
+      ]
+    },
+    "gpu_feature_status": {
+      "2d_canvas": "unavailable_software",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "disabled_software",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "disabled_off",
+      "rasterization": "disabled_software",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "trees_in_viz": "disabled_off",
+      "video_decode": "disabled_software",
+      "video_encode": "disabled_software",
+      "vulkan": "disabled_off",
+      "webgl": "unavailable_software",
+      "webgpu": "unavailable_software",
+      "webgpu_on_vk_via_gl_interop": "disabled_off",
+      "webnn": "unavailable_software"
+    },
+    "gpu_aux_attributes": {
+      "amdSwitchable": false,
+      "canSupportThreadedTextureMailbox": false,
+      "directRenderingVersion": "",
+      "displayType": "ANGLE_SWIFTSHADER",
+      "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_copy_texture_3d GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_image GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_object_flags GL_ANGLE_memory_size GL_ANGLE_multi_draw GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_read_only_depth_stencil_feedback_loops GL_ANGLE_relaxed_vertex_attribute_type GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_robust_fragment_shader_output GL_ANGLE_robust_resource_initialization GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_texture_usage GL_ANGLE_translated_shader_source GL_ANGLE_vulkan_image GL_ANGLE_yuv_internal_format GL_APPLE_clip_distance GL_ARM_rgba8 GL_ARM_shader_framebuffer_fetch GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_compressed_texture GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_EGL_image_array GL_EXT_EGL_image_external_wrap_modes GL_EXT_EGL_image_storage GL_EXT_base_instance GL_EXT_blend_minmax GL_EXT_buffer_storage GL_EXT_clear_texture GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_copy_image GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_memory_object GL_EXT_memory_object_fd GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_robustness GL_EXT_sRGB GL_EXT_sRGB_write_control GL_EXT_semaphore GL_EXT_semaphore_fd GL_EXT_separate_shader_objects GL_EXT_shader_framebuffer_fetch GL_EXT_shader_framebuffer_fetch_non_coherent GL_EXT_shader_non_constant_global_initializers GL_EXT_shader_texture_lod GL_EXT_shadow_samplers GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_lod_bias GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_sRGB_decode GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_EXT_texture_type_2_10_10_10_REV GL_EXT_unpack_subimage GL_KHR_blend_equation_advanced GL_KHR_debug GL_KHR_robust_buffer_access_behavior GL_KHR_robustness GL_KHR_texture_compression_astc_ldr GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_polygon_mode GL_NV_read_depth GL_NV_read_depth_stencil GL_NV_read_stencil GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_compressed_paletted_texture GL_OES_copy_image GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_depth_texture_cube_map GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_shading GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object GL_OES_vertex_half_float GL_OES_vertex_type_10_10_10_2 GL_OVR_multiview GL_OVR_multiview2 GL_QCOM_texture_lod_bias ",
+      "glImplementationParts": "(gl=egl-angle,angle=swiftshader)",
+      "glRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0)",
+      "glResetNotificationStrategy": 33362,
+      "glVendor": "Google Inc. (Google)",
+      "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28853 git hash: 170484eea03a)",
+      "glWsExtensions": "EGL_EXT_create_context_robustness EGL_ANGLE_surface_orientation EGL_KHR_create_context EGL_KHR_image EGL_KHR_image_base EGL_EXT_image_gl_colorspace EGL_KHR_gl_colorspace EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_fence_sync EGL_KHR_wait_sync EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_KHR_swap_buffers_with_damage EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_IMG_context_priority EGL_KHR_create_context_no_error EGL_KHR_reusable_sync EGL_EXT_buffer_age EGL_ANGLE_create_surface_swap_interval EGL_ANGLE_vulkan_image EGL_KHR_partial_update EGL_ANGLE_global_fence_sync EGL_ANGLE_memory_usage_report ",
+      "glWsVendor": "Google Inc. (Google)",
+      "glWsVersion": "1.5 (ANGLE 2.1.28853 git hash: 170484eea03a)",
+      "hardwareSupportsVulkan": false,
+      "inProcessGpu": false,
+      "initializationTime": 0.013581,
+      "isAsan": false,
+      "isClangCoverage": false,
+      "jpegDecodeAcceleratorSupported": false,
+      "maxMsaaSamples": "4",
+      "optimus": false,
+      "passthroughCmdDecoder": true,
+      "pixelShaderVersion": "3.00",
+      "processCrashCount": 0,
+      "sandboxed": false,
+      "skiaBackendType": "None",
+      "subpixelFontRendering": true,
+      "targetCpuBits": 64,
+      "vertexShaderVersion": "3.00",
+      "visibilityCallbackCallCount": 0
+    }
+  },
+  "browser_b_font_observation": {
+    "version": {
+      "protocolVersion": "1.3",
+      "product": "Chrome/155.0.8059.39",
+      "revision": "@3ff7ac5a9224be9156d7f8703a06e22890aafd34",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+      "jsVersion": "15.5.35.20"
+    },
+    "fonts": {
+      "fonts": [
+        {
+          "familyName": "DejaVu Serif",
+          "postScriptName": "DejaVuSerif",
+          "isCustomFont": false,
+          "glyphCount": 37
+        }
+      ]
+    },
+    "gpu_feature_status": {
+      "2d_canvas": "unavailable_software",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "disabled_software",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "disabled_off",
+      "rasterization": "disabled_software",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "trees_in_viz": "disabled_off",
+      "video_decode": "disabled_software",
+      "video_encode": "disabled_software",
+      "vulkan": "disabled_off",
+      "webgl": "unavailable_software",
+      "webgpu": "unavailable_software",
+      "webgpu_on_vk_via_gl_interop": "disabled_off",
+      "webnn": "unavailable_software"
+    },
+    "gpu_aux_attributes": {
+      "amdSwitchable": false,
+      "canSupportThreadedTextureMailbox": false,
+      "directRenderingVersion": "",
+      "displayType": "ANGLE_SWIFTSHADER",
+      "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_copy_texture_3d GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_image GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_object_flags GL_ANGLE_memory_size GL_ANGLE_multi_draw GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_read_only_depth_stencil_feedback_loops GL_ANGLE_relaxed_vertex_attribute_type GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_robust_fragment_shader_output GL_ANGLE_robust_resource_initialization GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_texture_usage GL_ANGLE_translated_shader_source GL_ANGLE_vulkan_image GL_ANGLE_yuv_internal_format GL_APPLE_clip_distance GL_ARM_rgba8 GL_ARM_shader_framebuffer_fetch GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_compressed_texture GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_EGL_image_array GL_EXT_EGL_image_external_wrap_modes GL_EXT_EGL_image_storage GL_EXT_base_instance GL_EXT_blend_minmax GL_EXT_buffer_storage GL_EXT_clear_texture GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_copy_image GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_memory_object GL_EXT_memory_object_fd GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_robustness GL_EXT_sRGB GL_EXT_sRGB_write_control GL_EXT_semaphore GL_EXT_semaphore_fd GL_EXT_separate_shader_objects GL_EXT_shader_framebuffer_fetch GL_EXT_shader_framebuffer_fetch_non_coherent GL_EXT_shader_non_constant_global_initializers GL_EXT_shader_texture_lod GL_EXT_shadow_samplers GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_lod_bias GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_sRGB_decode GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_EXT_texture_type_2_10_10_10_REV GL_EXT_unpack_subimage GL_KHR_blend_equation_advanced GL_KHR_debug GL_KHR_robust_buffer_access_behavior GL_KHR_robustness GL_KHR_texture_compression_astc_ldr GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_polygon_mode GL_NV_read_depth GL_NV_read_depth_stencil GL_NV_read_stencil GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_compressed_paletted_texture GL_OES_copy_image GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_depth_texture_cube_map GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_shading GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object GL_OES_vertex_half_float GL_OES_vertex_type_10_10_10_2 GL_OVR_multiview GL_OVR_multiview2 GL_QCOM_texture_lod_bias ",
+      "glImplementationParts": "(gl=egl-angle,angle=swiftshader)",
+      "glRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0)",
+      "glResetNotificationStrategy": 33362,
+      "glVendor": "Google Inc. (Google)",
+      "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28853 git hash: 170484eea03a)",
+      "glWsExtensions": "EGL_EXT_create_context_robustness EGL_ANGLE_surface_orientation EGL_KHR_create_context EGL_KHR_image EGL_KHR_image_base EGL_EXT_image_gl_colorspace EGL_KHR_gl_colorspace EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_fence_sync EGL_KHR_wait_sync EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_KHR_swap_buffers_with_damage EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_IMG_context_priority EGL_KHR_create_context_no_error EGL_KHR_reusable_sync EGL_EXT_buffer_age EGL_ANGLE_create_surface_swap_interval EGL_ANGLE_vulkan_image EGL_KHR_partial_update EGL_ANGLE_global_fence_sync EGL_ANGLE_memory_usage_report ",
+      "glWsVendor": "Google Inc. (Google)",
+      "glWsVersion": "1.5 (ANGLE 2.1.28853 git hash: 170484eea03a)",
+      "hardwareSupportsVulkan": false,
+      "inProcessGpu": false,
+      "initializationTime": 0.011963,
+      "isAsan": false,
+      "isClangCoverage": false,
+      "jpegDecodeAcceleratorSupported": false,
+      "maxMsaaSamples": "4",
+      "optimus": false,
+      "passthroughCmdDecoder": true,
+      "pixelShaderVersion": "3.00",
+      "processCrashCount": 0,
+      "sandboxed": false,
+      "skiaBackendType": "None",
+      "subpixelFontRendering": true,
+      "targetCpuBits": 64,
+      "vertexShaderVersion": "3.00",
+      "visibilityCallbackCallCount": 0
+    }
+  },
+  "alternate_browser_observation": {
+    "version": {
+      "protocolVersion": "1.3",
+      "product": "Chrome/153.0.8010.12",
+      "revision": "@971a7443b0c9b0a9b2860529b33331b76077ec62",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "jsVersion": "15.3.76.4"
+    },
+    "fonts": {
+      "fonts": [
+        {
+          "familyName": "DejaVu Serif",
+          "postScriptName": "DejaVuSerif",
+          "isCustomFont": false,
+          "glyphCount": 37
+        }
+      ]
+    },
+    "gpu_feature_status": {
+      "2d_canvas": "unavailable_software",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "disabled_software",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "disabled_off",
+      "rasterization": "disabled_software",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "trees_in_viz": "disabled_off",
+      "video_decode": "disabled_software",
+      "video_encode": "disabled_software",
+      "vulkan": "disabled_off",
+      "webgl": "unavailable_software",
+      "webgpu": "unavailable_software",
+      "webgpu_on_vk_via_gl_interop": "disabled_off",
+      "webnn": "unavailable_software"
+    },
+    "gpu_aux_attributes": {
+      "amdSwitchable": false,
+      "canSupportThreadedTextureMailbox": false,
+      "directRenderingVersion": "",
+      "displayType": "ANGLE_SWIFTSHADER",
+      "glExtensions": "GL_AMD_performance_monitor GL_ANGLE_base_vertex_base_instance_shader_builtin GL_ANGLE_blob_cache GL_ANGLE_client_arrays GL_ANGLE_clip_cull_distance GL_ANGLE_compressed_texture_etc GL_ANGLE_copy_texture_3d GL_ANGLE_depth_texture GL_ANGLE_framebuffer_blit GL_ANGLE_framebuffer_multisample GL_ANGLE_get_image GL_ANGLE_get_serialized_context_string GL_ANGLE_get_tex_level_parameter GL_ANGLE_instanced_arrays GL_ANGLE_memory_object_flags GL_ANGLE_memory_size GL_ANGLE_multi_draw GL_ANGLE_pack_reverse_row_order GL_ANGLE_polygon_mode GL_ANGLE_program_binary_readiness_query GL_ANGLE_program_cache_control GL_ANGLE_read_only_depth_stencil_feedback_loops GL_ANGLE_relaxed_vertex_attribute_type GL_ANGLE_renderability_validation GL_ANGLE_request_extension GL_ANGLE_rgbx_internal_format GL_ANGLE_robust_client_memory GL_ANGLE_robust_fragment_shader_output GL_ANGLE_robust_resource_initialization GL_ANGLE_shader_pixel_local_storage GL_ANGLE_shader_pixel_local_storage_coherent GL_ANGLE_stencil_texturing GL_ANGLE_texture_compression_dxt3 GL_ANGLE_texture_compression_dxt5 GL_ANGLE_texture_multisample GL_ANGLE_texture_usage GL_ANGLE_translated_shader_source GL_ANGLE_vulkan_image GL_ANGLE_yuv_internal_format GL_APPLE_clip_distance GL_ARM_rgba8 GL_ARM_shader_framebuffer_fetch GL_CHROMIUM_bind_generates_resource GL_CHROMIUM_bind_uniform_location GL_CHROMIUM_copy_compressed_texture GL_CHROMIUM_copy_texture GL_CHROMIUM_lose_context GL_EXT_EGL_image_array GL_EXT_EGL_image_external_wrap_modes GL_EXT_EGL_image_storage GL_EXT_base_instance GL_EXT_blend_minmax GL_EXT_buffer_storage GL_EXT_clear_texture GL_EXT_clip_control GL_EXT_clip_cull_distance GL_EXT_color_buffer_float GL_EXT_color_buffer_half_float GL_EXT_compressed_ETC1_RGB8_sub_texture GL_EXT_conservative_depth GL_EXT_copy_image GL_EXT_debug_label GL_EXT_debug_marker GL_EXT_depth_clamp GL_EXT_discard_framebuffer GL_EXT_disjoint_timer_query GL_EXT_draw_buffers GL_EXT_draw_buffers_indexed GL_EXT_draw_elements_base_vertex GL_EXT_float_blend GL_EXT_frag_depth GL_EXT_instanced_arrays GL_EXT_map_buffer_range GL_EXT_memory_object GL_EXT_memory_object_fd GL_EXT_occlusion_query_boolean GL_EXT_polygon_offset_clamp GL_EXT_read_format_bgra GL_EXT_robustness GL_EXT_sRGB GL_EXT_sRGB_write_control GL_EXT_semaphore GL_EXT_semaphore_fd GL_EXT_separate_shader_objects GL_EXT_shader_framebuffer_fetch GL_EXT_shader_framebuffer_fetch_non_coherent GL_EXT_shader_non_constant_global_initializers GL_EXT_shader_texture_lod GL_EXT_shadow_samplers GL_EXT_texture_border_clamp GL_EXT_texture_compression_bptc GL_EXT_texture_compression_dxt1 GL_EXT_texture_compression_rgtc GL_EXT_texture_compression_s3tc_srgb GL_EXT_texture_filter_anisotropic GL_EXT_texture_format_BGRA8888 GL_EXT_texture_lod_bias GL_EXT_texture_mirror_clamp_to_edge GL_EXT_texture_rg GL_EXT_texture_sRGB_R8 GL_EXT_texture_sRGB_RG8 GL_EXT_texture_sRGB_decode GL_EXT_texture_shadow_lod GL_EXT_texture_storage GL_EXT_texture_type_2_10_10_10_REV GL_EXT_unpack_subimage GL_KHR_blend_equation_advanced GL_KHR_debug GL_KHR_robust_buffer_access_behavior GL_KHR_robustness GL_KHR_texture_compression_astc_ldr GL_NV_fence GL_NV_framebuffer_blit GL_NV_pack_subimage GL_NV_pixel_buffer_object GL_NV_polygon_mode GL_NV_read_depth GL_NV_read_depth_stencil GL_NV_read_stencil GL_NV_shader_noperspective_interpolation GL_OES_EGL_image GL_OES_EGL_image_external GL_OES_EGL_image_external_essl3 GL_OES_EGL_sync GL_OES_compressed_ETC1_RGB8_texture GL_OES_compressed_paletted_texture GL_OES_copy_image GL_OES_depth24 GL_OES_depth32 GL_OES_depth_texture GL_OES_depth_texture_cube_map GL_OES_draw_buffers_indexed GL_OES_draw_elements_base_vertex GL_OES_element_index_uint GL_OES_fbo_render_mipmap GL_OES_get_program_binary GL_OES_mapbuffer GL_OES_packed_depth_stencil GL_OES_required_internalformat GL_OES_rgb8_rgba8 GL_OES_sample_shading GL_OES_sample_variables GL_OES_shader_multisample_interpolation GL_OES_standard_derivatives GL_OES_surfaceless_context GL_OES_texture_3D GL_OES_texture_border_clamp GL_OES_texture_float GL_OES_texture_float_linear GL_OES_texture_half_float GL_OES_texture_half_float_linear GL_OES_texture_npot GL_OES_texture_stencil8 GL_OES_texture_storage_multisample_2d_array GL_OES_vertex_array_object GL_OES_vertex_half_float GL_OES_vertex_type_10_10_10_2 GL_OVR_multiview GL_OVR_multiview2 GL_QCOM_texture_lod_bias ",
+      "glImplementationParts": "(gl=egl-angle,angle=swiftshader)",
+      "glRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0)",
+      "glResetNotificationStrategy": 33362,
+      "glVendor": "Google Inc. (Google)",
+      "glVersion": "OpenGL ES 3.0 (ANGLE 2.1.28646 git hash: a6bc9eff8444)",
+      "glWsExtensions": "EGL_EXT_create_context_robustness EGL_ANGLE_surface_orientation EGL_KHR_create_context EGL_KHR_image EGL_KHR_image_base EGL_EXT_image_gl_colorspace EGL_KHR_gl_colorspace EGL_KHR_gl_texture_2D_image EGL_KHR_gl_texture_cubemap_image EGL_KHR_gl_renderbuffer_image EGL_KHR_get_all_proc_addresses EGL_KHR_fence_sync EGL_KHR_wait_sync EGL_ANGLE_create_context_webgl_compatibility EGL_CHROMIUM_create_context_bind_generates_resource EGL_KHR_swap_buffers_with_damage EGL_EXT_pixel_format_float EGL_KHR_surfaceless_context EGL_ANGLE_display_texture_share_group EGL_ANGLE_display_semaphore_share_group EGL_ANGLE_create_context_client_arrays EGL_ANGLE_program_cache_control EGL_ANGLE_robust_resource_initialization EGL_ANGLE_create_context_extensions_enabled EGL_ANDROID_blob_cache EGL_ANDROID_recordable EGL_ANGLE_create_context_backwards_compatible EGL_KHR_no_config_context EGL_IMG_context_priority EGL_KHR_create_context_no_error EGL_KHR_reusable_sync EGL_EXT_buffer_age EGL_ANGLE_create_surface_swap_interval EGL_ANGLE_vulkan_image EGL_KHR_partial_update EGL_ANGLE_global_fence_sync EGL_ANGLE_memory_usage_report ",
+      "glWsVendor": "Google Inc. (Google)",
+      "glWsVersion": "1.5 (ANGLE 2.1.28646 git hash: a6bc9eff8444)",
+      "hardwareSupportsVulkan": false,
+      "inProcessGpu": false,
+      "initializationTime": 0.214113,
+      "isAsan": false,
+      "isClangCoverage": false,
+      "jpegDecodeAcceleratorSupported": false,
+      "maxMsaaSamples": "4",
+      "optimus": false,
+      "passthroughCmdDecoder": true,
+      "pixelShaderVersion": "3.00",
+      "processCrashCount": 0,
+      "sandboxed": false,
+      "skiaBackendType": "None",
+      "subpixelFontRendering": true,
+      "targetCpuBits": 64,
+      "vertexShaderVersion": "3.00",
+      "visibilityCallbackCallCount": 0
+    }
+  },
+  "passed": true
+}

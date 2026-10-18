@@ -53,6 +53,8 @@ def project(root, n=3):
 
 class Routing(unittest.TestCase):
     def setUp(self):
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         self.tmp = tempfile.TemporaryDirectory(prefix='cef_alpha_')
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)

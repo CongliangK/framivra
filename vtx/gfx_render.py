@@ -433,6 +433,7 @@ class Browser:
 
     def start(self):
         self._find_chrome()
+        from .gfx_environment import CHROME_VISUAL_FLAGS
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
         self.port = s.getsockname()[1]
@@ -455,7 +456,7 @@ class Browser:
             self.group = SupervisedProcessGroup(
                 self.ctx,
                 lambda run_dir, profile: [
-                    self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+                    self.chrome, *CHROME_VISUAL_FLAGS,
                     f"--remote-debugging-port={self.port}",
                     f"--user-data-dir={profile}",
                     "--no-first-run", "--no-default-browser-check", "about:blank"],
@@ -466,7 +467,7 @@ class Browser:
         else:
             self.user_data_dir = tempfile.mkdtemp(prefix="vtx_gfx_cdp_")
             self.proc = subprocess.Popen(
-                [self.chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+                [self.chrome, *CHROME_VISUAL_FLAGS,
                  f"--remote-debugging-port={self.port}",
                  f"--user-data-dir={self.user_data_dir}",
                  "--no-first-run", "--no-default-browser-check", "about:blank"],
