@@ -369,7 +369,7 @@ inline std::unique_ptr<ShmRingView> ShmRingView::Attach(int shm_fd,
     return nullptr;
   }
   struct stat st {};
-  if (::fstat(fd, &st) != 0 || st.st_size <= 0) {
+  if (::fstat(fd, &st) != 0 || st.st_size < static_cast<off_t>(sizeof(RingControl))) {
     *err = "shm fd 无效（fstat 失败或尺寸非正）";
     ::close(fd);
     return nullptr;
@@ -408,13 +408,21 @@ inline std::unique_ptr<ShmRingView> ShmRingView::Attach(int shm_fd,
   }
   view->geo_ = RingGeometry::ForSize(view->control_->max_width,
                                      view->control_->max_height);
-  if (view->geo_.total_bytes != total) {
+  uint64_t expected_allocation = view->geo_.total_bytes;
+#if defined(__APPLE__)
+  // Darwin POSIX SHM fstat reports the VM-page-rounded allocation, while the
+  // wire geometry remains byte-exact and shared with Linux/Python.
+  const uint64_t page = static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
+  expected_allocation = ((expected_allocation + page - 1) / page) * page;
+#endif
+  if (expected_allocation != total) {
     *err = "环尺寸与几何不符（控制块字段损坏？）";
     ::munmap(view->base_, view->total_bytes_);
     ::close(fd);
     delete view;
     return nullptr;
   }
+  view->fd_ = fd;
   return std::unique_ptr<ShmRingView>(view);
 }
 

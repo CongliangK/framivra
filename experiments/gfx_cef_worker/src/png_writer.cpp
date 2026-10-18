@@ -12,7 +12,11 @@
 //         字节口径与 #110 产物一致（基线对照面）。
 #include "png_writer.h"
 
+#if defined(__APPLE__)
+#include <pthread.h>
+#else
 #include <sys/syscall.h>
+#endif
 #include <unistd.h>
 
 #include <zlib.h>
@@ -282,9 +286,15 @@ bool AtomicWriteBytes(const std::string& final_path, const uint8_t* data,
   // 命名规范：同目录 <final>.tmp.<pid>.<tid>（vtx/fstxn.py 语义的 C++ 镜像；
   // pid+tid 保证并发编码线程互不碰撞，残件模式 *.tmp.<pid>.* 可辨识可清扫）。
   char suffix[64];
+#if defined(__APPLE__)
+  uint64_t tid = 0;
+  if (pthread_threadid_np(nullptr, &tid) != 0) return false;
+#else
+  const auto tid = ::syscall(SYS_gettid);
+#endif
   std::snprintf(suffix, sizeof(suffix), ".tmp.%ld.%ld",
                 static_cast<long>(::getpid()),
-                static_cast<long>(::syscall(SYS_gettid)));
+                static_cast<long>(tid));
   const std::string tmp = final_path + suffix;
   std::FILE* fh = std::fopen(tmp.c_str(), "wb");
   if (fh == nullptr) {

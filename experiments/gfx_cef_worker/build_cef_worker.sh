@@ -52,6 +52,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+if [ "$(uname -s)" = Darwin ]; then
+  exec python3 "$SCRIPT_DIR/build_macos.py"
+fi
+
 for tool in python3 cmake ninja curl sha256sum sha1sum; do
   command -v "$tool" >/dev/null 2>&1 || fail "缺少工具: $tool"
 done

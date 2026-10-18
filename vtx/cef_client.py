@@ -23,6 +23,7 @@ import mmap
 import os
 import socket
 import struct
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -154,6 +155,8 @@ class CefWorkerClient:
     def connect(cls, socket_path, connect_timeout=30.0, ready_timeout=30.0):
         """连 serve worker；socket_path 为其 --ipc-socket 路径。"""
         path, fd = str(socket_path), None
+        if sys.platform == 'darwin' and len(path.encode()) >= 104:
+            raise CefWorkerError("Darwin socket path too long; use an inherited socketpair")
         if len(path.encode()) >= 108:
             parent, name = os.path.split(os.path.abspath(path))
             fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -180,6 +183,11 @@ class CefWorkerClient:
                     raise CefWorkerError(
                         f"连接 worker 失败: {path} ({last_err})") from exc
                 time.sleep(0.05)
+        return cls.from_socket(sock, ready_timeout)
+
+    @classmethod
+    def from_socket(cls, sock, ready_timeout=30.0):
+        """Consume Hello from an already connected inherited socketpair."""
         sock.settimeout(ready_timeout)
         # Hello + SCM_RIGHTS(SHM fd) 单次 recvmsg
         data, ancdata, _flags, _addr = sock.recvmsg(
@@ -227,6 +235,9 @@ class CefWorkerClient:
         self.frame_bytes = frame_bytes
         self.slot_stride = _align64(128 + frame_bytes)
         expected = _CTRL_SIZE + self.slot_stride * RING_SLOTS
+        if sys.platform == 'darwin':
+            page = mmap.PAGESIZE
+            expected = ((expected + page - 1) // page) * page
         if expected != size:
             raise CefWorkerError(f"环尺寸不符: 期望 {expected} 实际 {size}")
 
@@ -296,6 +307,8 @@ class CefWorkerClient:
         path = str(out_png_path)
         fd = None
         if not worker_relative and len(os.path.abspath(path).encode()) > MAX_OUT_PNG_PATH:
+            if sys.platform == 'darwin':
+                raise CefWorkerError("Darwin PNG output requires worker-relative basename")
             parent, name = os.path.split(os.path.abspath(path))
             fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             path = f"/proc/{os.getpid()}/fd/{fd}/{name}"
@@ -340,6 +353,8 @@ class CefWorkerClient:
                      dump_raw_path=None, timeout: float = 90.0) -> SlotFrame:
         path, fd = dump_raw_path, None
         if path is not None and len(os.path.abspath(str(path)).encode()) > MAX_OUT_PNG_PATH:
+            if sys.platform == 'darwin':
+                raise CefWorkerError("Darwin raw dump path exceeds protocol limit")
             parent, name = os.path.split(os.path.abspath(str(path)))
             fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             path = f"/proc/{os.getpid()}/fd/{fd}/{name}"

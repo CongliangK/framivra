@@ -82,7 +82,7 @@ ROLE = sys.argv[1]
 
 if ROLE == "child":
     mode, lock_path = sys.argv[2], sys.argv[3]
-    if mode == "coop":
+    if mode == "coop" and sys.platform.startswith("linux"):
         import ctypes
         ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0)
     with open(lock_path, "a+b") as fh:
@@ -108,7 +108,7 @@ def _pdeathsig():
 for k in range(3):
     subprocess.Popen([sys.executable, __file__, "child", mode,
                       os.path.join(profile, "lock_%d" % k)],
-                     preexec_fn=_pdeathsig if mode == "coop" else None)
+                     preexec_fn=_pdeathsig if mode == "coop" and sys.platform.startswith("linux") else None)
 
 if mode == "coop" and alive_fd is not None:
     import threading
@@ -143,7 +143,7 @@ def worker_argv(run_dir, profile):
     return [sys.executable, str(sim), "main", mode, str(profile)]
 
 
-with SupervisedProcessGroup(c, worker_argv, backend_id="sim") as sg:
+with SupervisedProcessGroup(c, worker_argv, backend_id="sim", stderr=sys.stderr) as sg:
     ready_path.write_text(json.dumps({
         "run_dir": str(sg.run_dir), "pgid": sg.pgid, "host_pid": os.getpid(),
         "worker_pid": sg.proc.pid}), encoding="utf-8")
@@ -157,7 +157,7 @@ class _ProjectFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='vtx_issue103_')
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         (self.root / 'page.html').write_text('<html><body>sim</body></html>')
         self.timeline = self.root / 'timeline.json'
         self.timeline.write_text(json.dumps(dict(
@@ -196,7 +196,7 @@ class _ProjectFixture(unittest.TestCase):
                       if x.is_dir() and (x / WORKER_LEDGER).is_file())
 
 
-@unittest.skipUnless(_LINUX_PROC, '真实进程树演练需要 Linux /proc')
+@unittest.skipUnless(proc_supervisor.supervision_available(), '真实进程树演练需要受支持内核身份')
 class HostSigkillDoD(_ProjectFixture):
     """DoD ①：宿主被 SIGKILL 后 100ms 进程树归零 + reap 后临时目录残留为 0。"""
 
@@ -608,6 +608,7 @@ class SupervisionDegradationTests(_ProjectFixture):
         fake_tab = {"webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/abc"}
         err = io.StringIO()
         with mock.patch.object(proc_supervisor, '_HAS_PROC', False), \
+                mock.patch.object(proc_supervisor, '_DARWIN_PROC', None), \
                 mock.patch.object(gfx_render, '_SUPERVISION_WARNED', False), \
                 mock.patch.object(gfx_render.Browser, '_find_chrome',
                                   lambda self: None), \
@@ -644,6 +645,8 @@ class SandboxCacheNamespaceTests(_ProjectFixture):
 
     def setUp(self):
         super().setUp()
+        from tests.gfx_environment_fixture import bind_environment
+        bind_environment(self)
         self.c = self.ctx()
         self.clip = self.c.tl['video_tracks'][0]['clips'][0]
         self.key = hygiene.gfx_key(self.c, self.clip)
@@ -756,6 +759,25 @@ class SandboxCacheNamespaceTests(_ProjectFixture):
             self.assertFalse(d2.exists())
         self.assertFalse(d1.exists())
 
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'Darwin kernel identity')
+class DarwinProcessIdentityTests(unittest.TestCase):
+    def test_native_identity_and_lineage_rejects_without_signal(self):
+        self.assertTrue(proc_supervisor.supervision_available())
+        self.assertGreater(proc_starttime(os.getpid()), 0)
+        self.assertIn(os.getpid(), group_live_members(os.getpgid(0)))
+        self.assertRegex(boot_id(), r'^[0-9A-Fa-f-]{36}$')
+        for group in (0, 1, os.getpgid(0), os.getpgid(os.getppid())):
+            with self.subTest(group=group), mock.patch.object(os, 'killpg') as send:
+                with self.assertRaises(proc_supervisor.LineageKillDenied):
+                    proc_supervisor.kill_group(group)
+                send.assert_not_called()
+
+    def test_unknown_native_info_is_not_a_synthetic_start_time(self):
+        with mock.patch.object(proc_supervisor, '_darwin_info', return_value=None):
+            self.assertIsNone(proc_starttime(os.getpid()))
+            self.assertFalse(proc_supervisor.supervision_available())
 
 if __name__ == '__main__':
     unittest.main()

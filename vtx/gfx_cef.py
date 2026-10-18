@@ -6,6 +6,8 @@ sandbox. Worker trees, profiles, and scratch files stay under supervision.
 import json
 import os
 import secrets
+import socket
+import sys
 from pathlib import Path
 
 from . import fstxn, gfx_cli
@@ -17,7 +19,7 @@ from .proc_supervisor import SupervisedProcessGroup, supervision_available
 def render_page(html, outdir, n_frames, *, ctx, width, height):
     worker, mode = cef_config()
     if not supervision_available():
-        raise RuntimeError("CEF Alpha requires Linux /proc and process-tree supervision")
+        raise RuntimeError("CEF Alpha requires verified process-tree supervision")
     if n_frames > 65536 or width < 16 or height < 16:
         raise ValueError("CEF exact protocol requires <=65536 frames and viewport >=16x16")
     html, outdir = Path(html).resolve(), Path(outdir)
@@ -25,6 +27,12 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
     fstxn.mkdir(report)
     key, receipts, descriptors = f"{outdir.name}-{secrets.token_hex(4)}", [], []
     worker_env = dict(os.environ)
+    pair = socket.socketpair() if sys.platform == 'darwin' else None
+    if pair:
+        # Native socketpair avoids AF_UNIX pathname limits, cwd mutation and
+        # external scratch aliases. Shared memory still travels via SCM_RIGHTS.
+        worker_env["TMPDIR"] = str(outdir.parent)
+
 
     def argv(run, profile):
         # AF_UNIX and Chromium's own scratch sockets have short path limits.
@@ -32,7 +40,7 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
         # while retaining ALL scratch bytes in supervised cache/tmp (not /tmp).
         fd = os.open(run, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         descriptors.append(fd)
-        worker_env["TMPDIR"] = f"/proc/{os.getpid()}/fd/{fd}"
+        worker_env["TMPDIR"] = str(run) if pair else f"/proc/{os.getpid()}/fd/{fd}"
         # A0 是软件无头 OSR：显式钉 ozone=headless，禁止 Chromium 在
         # Wayland 会话自动选 wayland（wl_display roundtrip 可无限阻塞，
         # 使 A0 沦为环境依赖的超时）。A1 保留显式平台参数语义不变。
@@ -41,7 +49,10 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
                 "--ipc-socket=ipc.sock", f"--root-cache-path={profile}",
                 f"--url-template={html.as_uri()}?f={{f}}",
                 f"--width={width}", f"--height={height}"]
-        if mode == "a0":
+        if pair:
+            argv.remove("--ipc-socket=ipc.sock")
+            argv.append(f"--ipc-fd={pair[1].fileno()}")
+        if mode == "a0" and not pair:
             argv.append("--ozone-platform=headless")
         return argv
 
@@ -53,10 +64,16 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
             try:
                 with open(logpath, "wb") as log:
                     with SupervisedProcessGroup(ctx, argv, backend_id=f"cef_{mode}",
-                                                stdout=log, stderr=log, env=worker_env) as group:
+                                                stdout=log, stderr=log, env=worker_env,
+                                                pass_fds=(pair[1].fileno(),) if pair else ()) as group:
                         try:
-                            sock = f"/proc/{os.getpid()}/fd/{descriptors[-1]}/ipc.sock"
-                            with CefWorkerClient.connect(sock, connect_timeout=45) as client:
+                            if pair:
+                                pair[1].close()
+                                connection = CefWorkerClient.from_socket(pair[0], ready_timeout=45)
+                            else:
+                                sock = f"/proc/{os.getpid()}/fd/{descriptors[-1]}/ipc.sock"
+                                connection = CefWorkerClient.connect(sock, connect_timeout=45)
+                            with connection as client:
                                 if client.hello["pid"] != group.proc.pid:
                                     raise CefWorkerError("Hello PID does not match supervised worker")
                                 ctx.verify_inputs("gfx")
@@ -94,6 +111,9 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
         if failure is not None:
             raise CefWorkerError(f"{failure}; native logs: {report}") from failure
     finally:
+        if pair:
+            for endpoint in pair:
+                endpoint.close()
         for fd in descriptors:
             os.close(fd)
     gfx_cli.require_frames(outdir, range(n_frames), width=width, height=height)

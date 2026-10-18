@@ -13,11 +13,30 @@ libspng/fpng 双编码原子落盘适配器）+ 阶段 3a（#114，CEF-03a：五
 `vtx/gfx_cef.py`，显式 `VTX_GFX=cef` 选择实验性 Alpha（见下节）；原生二进制不随
 Python wheel 分发。
 
+## macOS arm64 构建（#202）
+
+同一入口 `build_cef_worker.sh` 在 Darwin 选择 `cef_lock.macosarm64.json`，锁定与
+Linux 同版的官方 Minimal 分发包；大小、SHA-256、官方索引 SHA-1 全部核对。
+需要 Xcode Command Line Tools、Python ≥3.9、CMake ≥3.21、Ninja、curl。
+构建脚本只布置用户态产物，不修改系统安全策略。arm64 产物包含 Cocoa
+`NSApplication`、CEF framework 与五种 Helper app，并逐包本地 ad-hoc 签名校验。
+`build/bin/vtx_cef_worker` 为启动脚本；环境变量应使用真实 bundle 内入口：
+`build/bin/vtx_cef_worker.app/Contents/MacOS/vtx_cef_worker`。原生自检仍位于
+`build/bin/`。macOS x86_64 尚无分发锁，明确拒绝构建。
+
+macOS 通过已连接的 `--ipc-fd=N` 接收宿主 socketpair；原生验证 AF_UNIX/
+SOCK_STREAM/已连接状态并设 close-on-exec，防止 helper 继承拖延 EOF。
+Linux 继续使用 `--ipc-socket`。协议布局保持不变，Darwin POSIX SHM 的
+`fstat` 分配尺寸按系统页上取整，逻辑环几何仍为原始字节尺寸。父活管道
+EOF 与独立监管守卫负责父死清理；macOS 没有 Linux PDEATHSIG。macOS
+browser/helper 使用 `--use-mock-keychain`，凭据仅存在 worker 进程内；渲染
+profile 不访问系统登录钥匙串，以免非交互关停等待钥匙串授权。
+
 ## 生产接线（实验性 Alpha）
 
 CEF 通过 `VTX_GFX=cef` 显式选择；未知后端值拒绝执行，默认仍为 CDP。CEF 初始化、
 验签或输出失败直接使 gfx 阶段失败，**不回落 CDP/CLI**。Python 客户端在 `vtx/`，
-worker 及同目录锁定 CEF 运行库须另行构建。仅 Linux `/proc` 监管可用时启动；
+worker 及同目录锁定 CEF 运行库须另行构建。仅平台完整进程监管可用时启动（Linux `/proc`，macOS `libproc`）；
 worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处理不可信页面**。
 
 生产 CEF 固定使用 **Mode N**：每帧导航原页面 `?f=N`，不要求页面实现
@@ -38,7 +57,8 @@ worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处�
 
 缓存身份与路由权威见 [cache-provenance](../../docs/cache-provenance.md)。
 原生逐事件日志、进程日志、逐帧回执保留在项目 `cache/reports/cef/`；失败亦保留。
-所有运行 scratch/profile 落监管 `cache/tmp/`，长路径通过父 fd 别名访问。
+所有运行 scratch/profile 落监管 `cache/tmp/`；Linux 长路径通过父 fd 别名访问，
+macOS 使用继承的 Unix socketpair fd 连接，不依赖 `/proc`。
 
 下例为**实际写操作**，仅在已确认允许写入且 `cache/`、`out/` 全新的项目副本执行；
 不要把 `PROJECT_COPY` 指向原项目。全片验收还须检查内容门、外引 BGM 与 Blender 收尾，
@@ -153,7 +173,8 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
 ## 版本锁策略
 
 - 锁定对象 = 官方 **Minimal Distribution**（`cef-builds.spotifycdn.com`），
-  Linux x86_64，stable 通道；改版本必须整包重锁（url/size/sha256/sha1 联动）。
+  Linux x86_64（`cef_lock.json`）与 macOS arm64（`cef_lock.macosarm64.json`），
+  stable 通道；改版本必须整包重锁（url/size/sha256/sha1 联动）。
 - `sha256` 为主校验（下载后强制比对）；`sha1_official_index` 与官方索引
   交叉校验。注意两个校验和同记于锁文件，对同一分发包同步篡改即可自洽，
   单靠锁内字段防不住假锁——实际防线是官方索引交叉核对 + git 对锁变更的

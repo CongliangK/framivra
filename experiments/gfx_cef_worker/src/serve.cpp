@@ -37,6 +37,12 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 
+#if defined(__APPLE__)
+#define VTX_SEND_FLAGS 0  // RunServe ignores SIGPIPE before opening sockets.
+#else
+#define VTX_SEND_FLAGS MSG_NOSIGNAL
+#endif
+
 namespace vtx_cef {
 
 // ---------------------------------------------------------------- Socket 基元
@@ -76,7 +82,7 @@ bool SendAll(int fd, const void* buf, size_t n) {
   const auto* p = static_cast<const uint8_t*>(buf);
   size_t sent = 0;
   while (sent < n) {
-    const ssize_t s = ::send(fd, p + sent, n - sent, MSG_NOSIGNAL);
+    const ssize_t s = ::send(fd, p + sent, n - sent, VTX_SEND_FLAGS);
     if (s < 0) {
       if (errno == EINTR) {
         continue;
@@ -107,7 +113,7 @@ bool SendHelloWithFd(int conn, const HelloInfo& hello, int shm_fd) {
   cmsg->cmsg_len = CMSG_LEN(sizeof(int));
   std::memcpy(CMSG_DATA(cmsg), &shm_fd, sizeof(int));
   msg.msg_controllen = cmsg->cmsg_len;
-  return ::sendmsg(conn, &msg, MSG_NOSIGNAL) ==
+  return ::sendmsg(conn, &msg, VTX_SEND_FLAGS) ==
          static_cast<ssize_t>(sizeof(hello));
 }
 
@@ -981,6 +987,22 @@ void FillReceipt(FrameSlotHeader* h, const ProduceResult& r, uint64_t run_id,
 int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   ::signal(SIGPIPE, SIG_IGN);  // 宿主暴毙时 send 得错误而非被信号杀死
 
+  // An inherited transport must already be a connected AF_UNIX stream. Close
+  // it on exec before CEF launches helpers, so EOF still identifies the host.
+  if (opt.ipc_fd >= 0) {
+    struct sockaddr_storage peer{};
+    socklen_t peer_len = sizeof(peer);
+    int type = 0;
+    socklen_t type_len = sizeof(type);
+    if (::getpeername(opt.ipc_fd, reinterpret_cast<struct sockaddr*>(&peer), &peer_len) != 0 ||
+        peer.ss_family != AF_UNIX ||
+        ::getsockopt(opt.ipc_fd, SOL_SOCKET, SO_TYPE, &type, &type_len) != 0 ||
+        type != SOCK_STREAM || ::fcntl(opt.ipc_fd, F_SETFD, FD_CLOEXEC) < 0) {
+      std::fprintf(stderr, "vtx_cef_worker: --ipc-fd must be a connected Unix stream\n");
+      return 2;
+    }
+  }
+
   // ---- 参数面校验 ----
   const bool sync_mode_p = opt.sync && opt.sync_mode == "p";
   // Mode N（逐帧导航）需要 {f} 占位；Mode P 的 url_template 是常驻页地址。
@@ -994,6 +1016,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   } socket_dir;
   std::string socket_address = opt.ipc_socket;
   struct sockaddr_un sun_probe;
+#if defined(__linux__)
   if (socket_address.size() + 1 > sizeof(sun_probe.sun_path)) {
     const std::filesystem::path p(socket_address);
     socket_dir.fd = ::open(p.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -1001,8 +1024,9 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     socket_address = "/proc/" + std::to_string(::getpid()) + "/fd/" +
                      std::to_string(socket_dir.fd) + "/" + p.filename().string();
   }
-  if (socket_address.empty() ||
-      socket_address.size() + 1 > sizeof(sun_probe.sun_path)) {
+#endif
+  if (opt.ipc_fd < 0 && (socket_address.empty() ||
+      socket_address.size() + 1 > sizeof(sun_probe.sun_path))) {
     std::fprintf(stderr, "vtx_cef_worker: --ipc-socket 缺失或超长\n");
     return 2;
   }
@@ -1032,25 +1056,29 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   }
 
   // ---- 监听 socket（路径归宿主目录；残留名先解绑）----
-  const int listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-  if (listen_fd < 0) {
-    std::fprintf(stderr, "vtx_cef_worker: socket() 失败: %s\n",
-                 std::strerror(errno));
-    return 1;
-  }
-  struct sockaddr_un addr;
-  std::memset(&addr, 0, sizeof(addr));
-  addr.sun_family = AF_UNIX;
-  std::strncpy(addr.sun_path, socket_address.c_str(),
-               sizeof(addr.sun_path) - 1);
-  ::unlink(opt.ipc_socket.c_str());  // 同名残骸（崩溃遗留）先行清扫
-  if (::bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr),
-             sizeof(addr)) != 0 ||
-      ::listen(listen_fd, 1) != 0) {
-    std::fprintf(stderr, "vtx_cef_worker: bind/listen %s 失败: %s\n",
-                 opt.ipc_socket.c_str(), std::strerror(errno));
-    ::close(listen_fd);
-    return 1;
+  int listen_fd = -1;
+  if (opt.ipc_fd < 0) {
+    listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+      std::fprintf(stderr, "vtx_cef_worker: socket() 失败: %s\n",
+                   std::strerror(errno));
+      return 1;
+    }
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, socket_address.c_str(),
+                 sizeof(addr.sun_path) - 1);
+    ::unlink(opt.ipc_socket.c_str());  // 同名残骸（崩溃遗留）先行清扫
+    if (::bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr),
+               sizeof(addr)) != 0 ||
+        ::listen(listen_fd, 1) != 0) {
+      std::fprintf(stderr, "vtx_cef_worker: bind/listen %s 失败: %s\n",
+                   opt.ipc_socket.c_str(), std::strerror(errno));
+      ::close(listen_fd);
+      return 1;
+    }
+
   }
 
   // ---- CEF 初始化 + 建窗 ----
@@ -1173,9 +1201,9 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
 
   // ---- 接受单宿主连接 ----
   struct pollfd pf { listen_fd, POLLIN, 0 };
-  int accept_rc = ::poll(&pf, 1, opt.idle_timeout_ms);
-  int conn = -1;
-  if (accept_rc > 0) {
+  int accept_rc = opt.ipc_fd >= 0 ? 1 : ::poll(&pf, 1, opt.idle_timeout_ms);
+  int conn = opt.ipc_fd;
+  if (opt.ipc_fd < 0 && accept_rc > 0) {
     conn = ::accept(listen_fd, nullptr, nullptr);
   }
   ::close(listen_fd);

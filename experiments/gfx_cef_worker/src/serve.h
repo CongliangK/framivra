@@ -27,6 +27,7 @@ namespace vtx_cef {
 
 struct ServeOptions {
   Options cef;                       // a0/a1、视口、故障注入 render_*
+  int ipc_fd = -1;  // inherited connected AF_UNIX stream; owned by serve
   std::string ipc_socket;            // Unix socket 路径（宿主侧目录）
   std::string url_template;          // 含 "{f}" 占位的页面模板（sync Mode P
                                      // 时为常驻页 URL，不含 {f}）

@@ -51,6 +51,13 @@ void AppendA1Switches(CefRefPtr<CefCommandLine> command_line,
 
 void WorkerApp::OnBeforeCommandLineProcessing(
     const CefString& process_type, CefRefPtr<CefCommandLine> command_line) {
+#if defined(__APPLE__)
+  // Local render profiles never need OS credentials. Use Chromium's process-
+  // local keychain implementation to avoid interactive login-keychain access
+  // (which otherwise blocks profile teardown in SecItemCopyMatching).
+  command_line->AppendSwitch("use-mock-keychain");
+#endif
+
   // 子进程再入路径（CefExecuteProcess 的占位 app，options_=null）不做注入；
   // 仅浏览器进程（process_type 为空）注入，子进程开关由 Chromium 自行传播
   // ——对子进程改参是未定义行为（cef_app.h 文档）。

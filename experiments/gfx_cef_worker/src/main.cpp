@@ -22,7 +22,13 @@
 //   - 模式 1（Worker 原地落盘）/ 模式 2（4-Slot SHM 环零拷贝）双协议；
 //   - --fault-inject 故障注入面（size_mismatch / abort_after_frame）；
 //   - --sanity 自检沿用 #108（版本锁运行时自证），行为不变。
+#if defined(__linux__)
 #include <sys/prctl.h>
+#endif
+#if defined(__APPLE__)
+#include "mac_runtime.h"
+#include <crt_externs.h>
+#endif
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -76,6 +82,7 @@ struct RunOptions {
   int parent_alive_fd = -1;      // 监管器父存活管道读端
   // ---- #110 帧服务模式（--serve）----
   bool serve = false;
+  int ipc_fd = -1;
   std::string ipc_socket;              // Unix socket 路径
   std::string url_template;            // 含 {f} 占位
   std::string fault_inject;            // none|size_mismatch|abort_after_frame
@@ -108,6 +115,7 @@ void Usage(const char* argv0) {
       "\n"
       "选项:\n"
       "  --mode=a0|a1            A0=Software OSR（默认）；A1=GPU 合成→CPU Buffer\n"
+      "  --ipc-fd=N              已连接 Unix stream fd（与 --ipc-socket 互斥）\n"
       "  --ozone-platform=p      A1 平台切换: headless|x11|wayland（默认 headless）\n"
       "  --url=<url>             要加载渲染的页面\n"
       "  --out-png=<path>        输出 PNG（默认尺寸 1920x1080）\n"
@@ -222,6 +230,7 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
                    &opt->fault_abort_after_frames)) {
     } else if (arg == "--serve") {
       opt->serve = true;
+    } else if (num("--ipc-fd=", &opt->ipc_fd)) {
     } else if (const std::string v = value("--ipc-socket="); !v.empty()) {
       opt->ipc_socket = v;
     } else if (const std::string v = value("--url-template="); !v.empty()) {
@@ -264,7 +273,8 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
     return false;
   }
   if (opt->serve) {
-    if (opt->ipc_socket.empty() || opt->url_template.empty()) {
+    if ((opt->ipc_socket.empty() && opt->ipc_fd < 0) ||
+        (!opt->ipc_socket.empty() && opt->ipc_fd >= 0) || opt->url_template.empty()) {
       std::fprintf(stderr,
                    "--serve 需要 --ipc-socket=<path> 与 --url-template=<tpl>\n");
       return false;
@@ -322,6 +332,14 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
 // WAYLAND_DISPLAY=wayland-0，exit 时 getenv 不可信）。NUL 分隔逐项解析。
 std::map<std::string, std::string> LaunchEnvSnapshot() {
   std::map<std::string, std::string> out;
+#if defined(__APPLE__)
+  for (char** e = *_NSGetEnviron(); *e; ++e) {
+    const std::string item(*e);
+    const size_t eq = item.find('=');
+    if (eq != std::string::npos) out[item.substr(0, eq)] = item.substr(eq + 1);
+  }
+  return out;
+#else
   std::FILE* fh = std::fopen("/proc/self/environ", "rb");
   if (fh == nullptr) {
     return out;
@@ -348,6 +366,7 @@ std::map<std::string, std::string> LaunchEnvSnapshot() {
     start = end + 1;
   }
   return out;
+#endif
 }
 
 std::string JsonEscape(const std::string& s) {
@@ -448,7 +467,13 @@ int main(int argc, char* argv[]) {
   // ===== 工单铁律：main() 入口第一行 PDEATHSIG（父死内核即刻击杀本进程）。
   //        本二进制被 CEF 以 --type=zygote/gpu/renderer/utility 再入执行子
   //        进程 —— 它们同样过这行：exec 派生的子进程全挂 PDEATHSIG。
+#if defined(__linux__)
   ::prctl(PR_SET_PDEATHSIG, SIGKILL);
+#endif
+  const std::map<std::string, std::string> launch_env = LaunchEnvSnapshot();
+#if defined(__APPLE__)
+  vtx_cef::MacRuntime mac_runtime(argc, argv);
+#endif
 
   // ===== CEF 子进程路径：同一可执行以 --type=* 再入（zygote/GPU/renderer/
   //        utility），必须先交 CefExecuteProcess 接管，返回值 >= 0 即子进程
@@ -537,6 +562,7 @@ int main(int argc, char* argv[]) {
     vtx_cef::ServeOptions sopt;
     sopt.cef = opt.cef;
     sopt.ipc_socket = opt.ipc_socket;
+    sopt.ipc_fd = opt.ipc_fd;
     sopt.url_template = opt.url_template;
     sopt.root_cache_path = opt.root_cache_path;
     sopt.slot_wait_timeout_ms = opt.slot_wait_timeout_ms;
@@ -578,7 +604,6 @@ int main(int argc, char* argv[]) {
   vtx_cef::RunState state;
   // 启动环境快照（exec 时刻真相；Chromium 运行期会重注入 WAYLAND_DISPLAY，
   // exit 时 getenv 不可信——矩阵证据保真依赖此快照）
-  const std::map<std::string, std::string> launch_env = LaunchEnvSnapshot();
 
   // ===== CEF 初始化（工单口径：windowless + no_sandbox + 单线程消息循环
   //        + external_message_pump 外置泵；#110 起经共享装配，与 serve 模式

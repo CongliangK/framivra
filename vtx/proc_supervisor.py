@@ -47,21 +47,19 @@ tests/test_hygiene_ledger_txn.py）——账本是 tmp_run 目录内的独立文
 运行目录纪律：工作目录与浏览器 --user-data-dir / root_cache_path 统一分配在
 hygiene.tmp_run(c, "gfx_<backend_id>") 创建的 cache/tmp/<UTC>-gfx_<backend_id>/
 下（unique=True 追加 -<pid>-<序号> 后缀，并行监管组不互撞）——杜绝写系统
-/tmp tmpfs 占内存。平台能力：完整监管依赖 /proc（账本的 starttime/boot_id 与
-组成员扫描）；supervision_available()=False 的平台（非 Linux、无 /proc），
-SupervisedProcessGroup 不做「假装降级」——账本拒绝编造（_write_ledger 恒
-RuntimeError，宁可不起不可无账本裸奔），真实降级发生在接入点
-gfx_render.Browser.start：检测监管不可用即回落 #103 之前的无监管路径
-（裸 Popen + tempfile.mkdtemp，行为=main 基线）并一次性 stderr 告警。
-进程演练测试按平台跳过。
+/tmp tmpfs 占内存。Linux 使用 /proc starttime 与 boot_id；Darwin 使用
+libproc PROC_PIDTBSDINFO 微秒 start timeval、kern.bootsessionuuid 与内核组信息。
+Darwin 无 PDEATHSIG，父存活管道守卫须完成就绪握手后 start() 才返回。
+其他平台拒绝编造监管账本；CEF 接入点在监管不可用时明确失败。
 
-纯标准库（ctypes 仅用于 prctl）。独立测试：python3 -m unittest
+纯标准库（ctypes 用于 prctl 与 Darwin libproc）。独立测试：python3 -m unittest
 tests.test_proc_supervisor -v（真实进程树演练，只杀本测试自起子进程）。
 """
 import ctypes
 import json
 import os
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -114,13 +112,39 @@ except AttributeError:   # pragma: no cover - libc 未导出 prctl 的病态环�
 _HAS_PROC = Path("/proc/self/stat").is_file()
 
 
+
+# Darwin proc_bsdinfo from <sys/proc_info.h>; kernel returns exact start timeval,
+# unlike ps lstart (second precision, unsuitable for PID reuse checks).
+class _DarwinBSDInfo(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_uint32) for n in (
+        "flags", "status", "xstatus", "pid", "ppid", "uid", "gid", "ruid",
+        "rgid", "svuid", "svgid", "rfu") ] + [
+        ("comm", ctypes.c_char * 16), ("name", ctypes.c_char * 32)] + [
+        (n, ctypes.c_uint32) for n in ("nfiles", "pgid", "pjobc", "e_tdev",
+                                      "e_tpgid", "nice")] + [
+        ("start_sec", ctypes.c_uint64), ("start_usec", ctypes.c_uint64)]
+
+try:
+    _DARWIN_PROC = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True) if sys.platform == "darwin" else None
+    if _DARWIN_PROC is not None:
+        _DARWIN_PROC.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                             ctypes.c_void_p, ctypes.c_int]
+        _DARWIN_PROC.proc_pidinfo.restype = ctypes.c_int
+except OSError:
+    _DARWIN_PROC = None
+
+
+def _darwin_info(pid):
+    if _DARWIN_PROC is None:
+        return None
+    info = _DarwinBSDInfo()
+    count = _DARWIN_PROC.proc_pidinfo(int(pid), 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+    return info if count == ctypes.sizeof(info) else None
+
+
 def supervision_available() -> bool:
-    """平台是否具备完整监管能力（issue #103 O1）：监管的击杀核验（账本
-    starttime/boot_id、组成员扫描）全部依赖 /proc，缺失即监管不可用。
-    接入点（gfx_render.Browser.start）据此分流——False 时回落 #103 之前的
-    无监管路径并一次性 stderr 告警，而非等 _write_ledger 抛 RuntimeError
-    把 gfx 阶段打死。测试可 monkeypatch 模块级 _HAS_PROC 模拟平台探测。"""
-    return _HAS_PROC
+    """Linux /proc or Darwin kernel process/boot identity; never synthesize it."""
+    return _HAS_PROC or (_DARWIN_PROC is not None and _darwin_info(os.getpid()) is not None and boot_id() is not None)
 
 
 class LineageKillDenied(Exception):
@@ -149,6 +173,9 @@ def _proc_stat_tail(pid) -> "list[str] | None":
 def proc_starttime(pid) -> "int | None":
     """/proc/<pid>/stat 第 22 字段 starttime（内核时钟 tick）——PID 回绕后同名
     pid 的 starttime 必变，账本击杀前的身份核对依据（issue #103 工单口径）。"""
+    if _DARWIN_PROC is not None:
+        info = _darwin_info(pid)
+        return info.start_sec * 1_000_000 + info.start_usec if info else None
     tail = _proc_stat_tail(pid)
     if tail is None or len(tail) < 20:
         return None
@@ -161,6 +188,17 @@ def proc_starttime(pid) -> "int | None":
 def group_live_members(pgid) -> list:
     """进程组 pgid 的存活成员 pid 表（扫 /proc pgrp 字段；僵尸 Z 不计——僵尸
     不持文件锁/不占调度，由 init 收尸）。非 Linux/无 /proc → 恒空表。"""
+    if _DARWIN_PROC is not None:
+        # ps supplies only a PID inventory; identity, state and group are read
+        # independently from libproc and never inferred from command names.
+        result = subprocess.run(["/bin/ps", "-axo", "pid="], capture_output=True,
+                                text=True, check=True, timeout=10)
+        members = []
+        for name in result.stdout.split():
+            info = _darwin_info(int(name))
+            if info and info.pgid == pgid and info.status != 5:  # SZOMB
+                members.append(info.pid)
+        return sorted(members)
     if not _HAS_PROC:
         return []
     try:
@@ -185,6 +223,13 @@ def group_live_members(pgid) -> list:
 def boot_id():
     """/proc/sys/kernel/random/boot_id：账本跨启动周期的作废判据（旧开机的
     pgid 在本开机毫无意义，只清目录绝不动进程）。不可得 → None。"""
+    if _DARWIN_PROC is not None:
+        try:
+            value = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"],
+                                   capture_output=True, text=True, check=True, timeout=10).stdout.strip()
+            return value if re.fullmatch(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", value) else None
+        except (OSError, subprocess.SubprocessError):
+            return None
     try:
         text = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii")
         return text.strip() or None
@@ -215,6 +260,27 @@ def _caller_lineage_pgids() -> set:
         pgids.add(os.getpgid(0))     # 规则②判据：非 /proc 平台也恒可获取
     except OSError:   # pragma: no cover - getpgid(0) 对自身恒成功
         pass
+    if _DARWIN_PROC is not None:
+        pid, seen = os.getpid(), set()
+        while pid > 0 and pid not in seen:
+            seen.add(pid)
+            info = _darwin_info(pid)
+            if info is None:
+                # Protected ancestors (notably launchd) may deny proc_pidinfo.
+                # ps ancestry is sufficient for deny-list expansion, never for
+                # ledger identity or authorizing a PID-reuse-sensitive kill.
+                row = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "ppid=,pgid="],
+                                     capture_output=True, text=True, check=True,
+                                     timeout=10).stdout.split()
+                if len(row) != 2:
+                    raise LineageKillDenied("Darwin ancestor identity unavailable")
+                parent, group = map(int, row)
+                pgids.add(group)
+                pid = parent
+                continue
+            pgids.add(info.pgid)
+            pid = info.ppid
+        return pgids
     if not _HAS_PROC:
         return pgids
     pid, seen = os.getpid(), set()
@@ -291,7 +357,7 @@ def _make_pdeathsig_preexec(expected_ppid: int):
 
 # ---------------------------------------------------------------- 守卫进程
 
-def _guard_main(pgid: int, alive_fd: int):
+def _guard_main(pgid: int, alive_fd: int, ready_fd=None):
     """守卫子进程主循环（python3 -m vtx.proc_supervisor guard <pgid> <fd>）：
     阻塞读父存活管道 → EOF（宿主死亡/收尾关写端）→ 立即 killpg(SIGKILL)。
     守卫不经 PDEATHSIG、自成会话（不在 Worker 组内，killpg 打不到自己）。
@@ -300,6 +366,10 @@ def _guard_main(pgid: int, alive_fd: int):
     组已消亡时 killpg 得 ESRCH 吞掉即可——毫秒级预算不留给进程表扫描；
     对 PID 复用的严谨防御由 reap 账本路径的 starttime 核对承担。任何异常
     路径都安静退出——守卫身后还有账本+reap。"""
+    _assert_kill_whitelisted(pgid)
+    if ready_fd is not None:
+        os.write(ready_fd, b"R")
+        os.close(ready_fd)
     try:
         while os.read(alive_fd, 4096):   # 宿主不写数据；EOF(b"") 是唯一结局
             pass
@@ -311,7 +381,8 @@ def _guard_main(pgid: int, alive_fd: int):
         pass
     try:
         _assert_kill_whitelisted(pgid)   # R3：守卫侧 killpg 同受白名单约束
-    except LineageKillDenied:
+    except LineageKillDenied as error:
+        print(str(error), file=sys.stderr, flush=True)
         os._exit(0)   # 宁可放过（身后还有账本+reap 兜底），绝不反杀谱系
     try:
         os.killpg(pgid, signal.SIGKILL)
@@ -341,7 +412,7 @@ class SupervisedProcessGroup:
     """
 
     def __init__(self, c, argv, *, backend_id: str, kill_grace: float = 5.0,
-                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=None):
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=None, pass_fds=()):
         if not isinstance(backend_id, str) or not _BACKEND_ID_RE.fullmatch(backend_id):
             raise ValueError(f"backend_id 非法（{backend_id!r}）：须为字母数字与 _.- "
                              "的组合且不以 . 开头（它进入 tmp_run 目录名）")
@@ -350,6 +421,7 @@ class SupervisedProcessGroup:
         self.backend_id = backend_id
         self.kill_grace = kill_grace
         self._stdout, self._stderr, self._env = stdout, stderr, env
+        self._pass_fds = tuple(pass_fds)
         self.proc = None
         self.guard_proc = None
         self.pgid = None
@@ -369,7 +441,7 @@ class SupervisedProcessGroup:
         self.run_dir = self._tmp.path
         self.profile_dir = self.run_dir / "profile"
         self.profile_dir.mkdir(parents=True, exist_ok=True)
-        r_fd = None
+        r_fd = ready_r = ready_w = None
         try:
             r_fd, self._pipe_w = os.pipe()
             argv = self.argv(self.run_dir, self.profile_dir) \
@@ -378,23 +450,35 @@ class SupervisedProcessGroup:
             preexec = _make_pdeathsig_preexec(os.getpid()) if _PRCTL is not None else None
             self.proc = subprocess.Popen(
                 argv, cwd=str(self.run_dir), start_new_session=True,
-                preexec_fn=preexec, pass_fds=(r_fd,),
+                preexec_fn=preexec, pass_fds=(r_fd, *self._pass_fds),
                 stdout=self._stdout, stderr=self._stderr, env=self._env)
             self.pgid = self.proc.pid   # 会话组长：pgid 恒等于主进程 pid
             self._write_ledger()
+            ready_r, ready_w = os.pipe()
             self.guard_proc = subprocess.Popen(
                 [sys.executable, "-m", "vtx.proc_supervisor",
-                 "guard", str(self.pgid), str(r_fd)],
-                cwd=str(_REPO_ROOT), start_new_session=True, pass_fds=(r_fd,),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                 "guard", str(self.pgid), str(r_fd), str(ready_w)],
+                cwd=str(_REPO_ROOT), start_new_session=True, pass_fds=(r_fd, ready_w),
+                stdout=subprocess.DEVNULL, stderr=self._stderr,
                 env={**os.environ, "PYTHONPATH": os.pathsep.join(
                     p for p in (str(_REPO_ROOT),
                                 os.environ.get("PYTHONPATH", "")) if p)})
+            os.close(ready_w)
+            ready_w = None
+            try:
+                if not select.select([ready_r], [], [], 10)[0] or os.read(ready_r, 1) != b"R":
+                    raise RuntimeError("process-tree guard did not become ready")
+            finally:
+                os.close(ready_r)
+                ready_r = None
             os.close(r_fd)   # 宿主侧读端到此为止：EOF 只由宿主写端关闭触发
             r_fd = None
             self._stopped = False
             return self
         except BaseException:
+            for ready in (ready_r, ready_w):
+                if ready is not None:
+                    os.close(ready)
             if r_fd is not None:
                 try:
                     os.close(r_fd)
@@ -476,9 +560,10 @@ class SupervisedProcessGroup:
         boot = boot_id()
         if ticks is None or host_ticks is None or boot is None:
             raise RuntimeError(
-                "无法读取 /proc starttime/boot_id（非 Linux 或 /proc 不可用）："
+                "无法读取内核进程 starttime/boot identity："
                 "监管账本拒绝编造，Worker 启动失败（issue #103）")
         rec = {"schema": 1,
+               "platform": sys.platform,
                "backend_id": self.backend_id,
                "pgid": self.pgid,
                "boot_id": boot,
@@ -535,7 +620,11 @@ def reap_run_dir(run_dir, *, ledger_path=None) -> str:
             raise KeyError("pgid 非法（<=1）")
     except (OSError, ValueError, KeyError, TypeError):
         return "broken_ledger"
+    if _DARWIN_PROC is not None and rec.get("platform") != "darwin":
+        return "broken_ledger"
     current_boot = boot_id()
+    if _DARWIN_PROC is not None and (current_boot is None or not rec.get("boot_id")):
+        return "broken_ledger"
     if current_boot and rec.get("boot_id") not in (None, current_boot):
         return "stale_boot"
     if proc_starttime(host_pid) == host_ticks:
@@ -602,10 +691,10 @@ def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["guard"]:
         # 内部守卫子命令：python3 -m vtx.proc_supervisor guard <pgid> <fd>
-        if len(argv) != 3:
+        if len(argv) not in (3, 4):
             print("usage: guard <pgid> <alive_fd>", file=sys.stderr)
             return 2
-        _guard_main(int(argv[1]), int(argv[2]))
+        _guard_main(int(argv[1]), int(argv[2]), int(argv[3]) if len(argv) == 4 else None)
         return 0   # os._exit 直退，此处不可达
     if argv[:1] == ["reap"]:
         # 运维/高压测试入口：清扫项目孤儿 Worker（读 timeline.json 锚定 cache/）
