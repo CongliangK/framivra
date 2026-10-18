@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 # No GPU required. Model/Blender/external-service tests remain optional in the
-# ordinary runner; the two enumerated media jobs below prohibit all skips.
+# ordinary runner; the enumerated media groups below prohibit all skips.
 env:
   VTX_DOCTOR_OFFLINE: '1'
   VTX_SAFETY_EXPECT_FIXED: '1'
@@ -30,8 +30,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Declared classifiers in pyproject.toml, including the >=3.9 floor.
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        # PR/main: curated regression on the endpoints and middle version.
+        # Scheduled/manual: original full discovery on every declared version.
+        python: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["3.9","3.10","3.11","3.12","3.13"]' || '["3.9","3.11","3.13"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -45,7 +46,19 @@ jobs:
           sudo apt-get install -y ffmpeg fonts-noto-cjk
       - name: Install test-only dependencies
         run: python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13' 'jsonschema>=4.18,<5' 'PyYAML>=6,<7' 'requests>=2.31,<3'
-      - name: Run kernel, app, plugin and example unittest batches
+      - name: Run curated PR regression (reduced coverage, zero skips)
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          export HOME="$RUNNER_TEMP/framivra-core-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export VTX_CONFIG="$HOME/config.json"
+          mkdir -p "$XDG_CONFIG_HOME"
+          printf '{}\n' > "$VTX_CONFIG"
+          unset PYTHONPATH PYTHONHOME BGM_CLI BGM_REPO IMGEN_CONFIG SC_API_KEY NANOBANANA2_API_KEY
+          echo 'Curated PR regression only. Full discovery and the other Python versions run on schedule or workflow_dispatch; omitted tests are not certified by this check.' >> "$GITHUB_STEP_SUMMARY"
+          python scripts/ci_pr.py
+      - name: Run full kernel, app, plugin and example unittest batches
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           export HOME="$RUNNER_TEMP/framivra-core-home"
           export XDG_CONFIG_HOME="$HOME/.config"
@@ -74,8 +87,8 @@ jobs:
       - name: Run all documentation gates
         run: bash scripts/doc_gates.sh
 
-  ffmpeg:
-    name: FFmpeg CPU integration (no skips)
+  ffmpeg-one:
+    name: FFmpeg CPU group 1 (no skips)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -91,7 +104,41 @@ jobs:
           sudo apt-get install -y ffmpeg fonts-noto-cjk
           python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
       - name: Preflight tools and execute declared FFmpeg integrations
-        run: python scripts/ci_checks.py ffmpeg
+        run: python scripts/ci_checks.py ffmpeg --group 1
+
+  ffmpeg-two:
+    name: FFmpeg CPU group 2 (no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install CPU media and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      - name: Preflight tools and execute declared FFmpeg integrations
+        run: python scripts/ci_checks.py ffmpeg --group 2
+
+  ffmpeg:
+    name: FFmpeg CPU integration (no skips)
+    needs: [ffmpeg-one, ffmpeg-two]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require actual success from both zero-skip groups
+        env:
+          FIRST_RESULT: ${{ needs.ffmpeg-one.result }}
+          SECOND_RESULT: ${{ needs.ffmpeg-two.result }}
+        run: |
+          printf 'FFmpeg group 1: %s; group 2: %s\n' "$FIRST_RESULT" "$SECOND_RESULT"
+          test "$FIRST_RESULT" = success && test "$SECOND_RESULT" = success
 
   chrome:
     name: Chrome and pipeline CPU integration (no skips)

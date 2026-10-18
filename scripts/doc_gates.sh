@@ -5,7 +5,8 @@
 # 保什么:
 #   - 七个 leaf 的 rc 全收集,逐行显形(leaf_N: <id> rc=<rc> PASS|FAIL);
 #   - 聚合非零语义:任一 leaf FAIL,或尾部对账三数(registry/output/header)不等 → 总 exit 1;
-#   - 目标脚本缺位 → leaf_N: <id> SKIP reason=target-missing,SKIP 不致败但必须显形。
+#   - 七个注册 leaf 均必需;目标脚本缺位/空文件 → FAIL,不得以 SKIP 代替执行。
+#   - leaf 内允许的可选检查仍由 leaf 自身 rc 判定,不扫描其 warning/SKIP 文本。
 # 不保什么:
 #   - 散文语义质量(= review 分工,本门只做可机检形态);
 #   - C4 极限声明(不在本门判定)。
@@ -60,8 +61,13 @@ while IFS= read -r line; do
   target=""
   read -r _ target _ <<<"$cmd"
   if [ -z "$target" ] || [ ! -f "$target" ]; then
-    emit "$seq: $id SKIP reason=target-missing"
-    skip=$((skip + 1))
+    emit "$seq: $id rc=127 FAIL reason=target-missing"
+    fail=$((fail + 1))
+    continue
+  fi
+  if [ ! -s "$target" ]; then
+    emit "$seq: $id rc=126 FAIL reason=target-empty"
+    fail=$((fail + 1))
     continue
   fi
   bash -c "$cmd" </dev/null

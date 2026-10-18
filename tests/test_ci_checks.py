@@ -1,11 +1,14 @@
 """CI contract regressions, including fail-closed integration skip handling."""
 import contextlib
+from collections import Counter
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,6 +27,54 @@ def tests_of(case):
 
 
 class StrictMediaGate(unittest.TestCase):
+    def test_ffmpeg_groups_preserve_every_selected_test_without_overlap(self):
+        one, two = ci.ffmpeg_group('1'), ci.ffmpeg_group('2')
+        self.assertTrue(one)
+        self.assertTrue(two)
+        self.assertFalse(set(one) & set(two))
+        self.assertEqual(Counter(one + two), Counter(ci.MEDIA_TESTS['ffmpeg']))
+        def identities(names):
+            def leaves(suite):
+                for test in suite:
+                    if isinstance(test, unittest.TestSuite):
+                        yield from leaves(test)
+                    else:
+                        yield test.id()
+            return Counter(leaves(unittest.TestLoader().loadTestsFromNames(names)))
+        first, second = identities(one), identities(two)
+        self.assertFalse(first.keys() & second.keys())
+        self.assertEqual(first + second, identities(ci.MEDIA_TESTS['ffmpeg']))
+        self.assertTrue(all(count == 1 for count in (first + second).values()))
+
+    def test_new_ffmpeg_selectors_have_deterministic_complete_module_ownership(self):
+        names = ('tests.test_filter_threads.NewCase',
+                 'tests.test_future_media.First', 'tests.test_future_media.Second')
+        with mock.patch.dict(ci.MEDIA_TESTS, {'ffmpeg': names}):
+            self.assertEqual(ci.ffmpeg_group('1'), names[:1])
+            self.assertEqual(ci.ffmpeg_group('2'), names[1:])
+
+    def test_unknown_ffmpeg_group_and_group_on_other_gates_fail(self):
+        with self.assertRaises(ValueError):
+            ci.ffmpeg_group('other')
+        for args in (['chrome', '--group', '1'], ['ffmpeg', '--group', '3']):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit) as raised:
+                ci.main(args)
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_ffmpeg_grouped_and_default_entrypoints_keep_preflight_and_strict_runner(self):
+        for group in (None, '1', '2'):
+            with self.subTest(group=group), \
+                    mock.patch.object(ci, 'check_media_inventory') as inventory, \
+                    mock.patch.object(ci, 'prepare_media') as preflight, \
+                    mock.patch.object(ci, 'strict_suite', return_value=0) as strict:
+                args = ['ffmpeg'] + (['--group', group] if group else [])
+                self.assertEqual(ci.main(args), 0)
+                inventory.assert_called_once_with()
+                preflight.assert_called_once_with('ffmpeg')
+                strict.assert_called_once_with(
+                    ci.ffmpeg_group(group) if group else ci.MEDIA_TESTS['ffmpeg'])
+
     def suite_exit(self, by_name, names=('fixture',), runner_spy=None):
         """by_name maps each selector to the suite discovery must return."""
         real_load = unittest.TestLoader.loadTestsFromNames
@@ -260,9 +311,27 @@ class WorkflowContract(unittest.TestCase):
     def test_declared_supported_python_versions_are_tested(self):
         pyproject = (ROOT / 'pyproject.toml').read_text()
         declared = set(re.findall(r'Programming Language :: Python :: (3\.\d+)', pyproject))
-        matrix = set(self.workflow['jobs']['core']['strategy']['matrix']['python'])
-        self.assertEqual(matrix, declared)
-        self.assertIn('3.9', matrix)
+        matrix = self.workflow['jobs']['core']['strategy']['matrix']['python']
+        match = re.fullmatch(
+            r"\$\{\{ fromJSON\(\(github.event_name == 'schedule' \|\| "
+            r"github.event_name == 'workflow_dispatch'\) && '([^']+)' \|\| '([^']+)'\) \}\}",
+            matrix)
+        self.assertIsNotNone(match)
+        self.assertEqual(set(json.loads(match.group(1))), declared)
+        self.assertEqual(json.loads(match.group(2)), ['3.9', '3.11', '3.13'])
+
+    def test_curated_and_full_commands_have_exclusive_event_conditions(self):
+        steps = self.workflow['jobs']['core']['steps']
+        curated = [s for s in steps if 'python scripts/ci_pr.py' in s.get('run', '')]
+        full = [s for s in steps if 'bash scripts/run_all_tests.sh' in s.get('run', '')]
+        self.assertEqual(len(curated), 1)
+        self.assertEqual(len(full), 1)
+        self.assertEqual(curated[0]['if'],
+                         "github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'")
+        self.assertEqual(full[0]['if'],
+                         "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'")
+        self.assertIn('Full discovery', curated[0]['run'])
+        self.assertIn('GITHUB_STEP_SUMMARY', curated[0]['run'])
 
     def test_core_declares_dependencies_for_all_unittest_batches(self):
         # The app batches are mandatory too: imgen's mock gen/batch chains
@@ -303,11 +372,34 @@ class WorkflowContract(unittest.TestCase):
         self.assertIn('bash scripts/run_all_tests.sh', commands('core'))
         self.assertIn('bash scripts/doc_gates.sh', commands('contracts'))
         self.assertIn('python scripts/ci_checks.py static', commands('contracts'))
-        for kind in ('ffmpeg', 'chrome'):
-            self.assertIn('python scripts/ci_checks.py ' + kind, commands(kind))
+        for group, job in (('1', 'ffmpeg-one'), ('2', 'ffmpeg-two')):
+            self.assertIn('python scripts/ci_checks.py ffmpeg --group ' + group,
+                          commands(job))
+        self.assertIn('python scripts/ci_checks.py chrome', commands('chrome'))
         # Unit tests simulate NVENC and must not be overridden globally.
         self.assertNotIn('VTX_NO_NVENC', self.workflow['env'])
         self.assertNotIn('VTX_SEG_NVENC', self.workflow['env'])
+
+    def test_ffmpeg_required_check_needs_both_real_groups_and_rejects_non_success(self):
+        job = self.workflow['jobs']['ffmpeg']
+        self.assertEqual(job['name'], 'FFmpeg CPU integration (no skips)')
+        self.assertEqual(set(job['needs']), {'ffmpeg-one', 'ffmpeg-two'})
+        self.assertEqual(job['if'], 'always()')
+        self.assertEqual(len(job['steps']), 1)
+        step = job['steps'][0]
+        self.assertEqual(step['env'], {
+            'FIRST_RESULT': '${{ needs.ffmpeg-one.result }}',
+            'SECOND_RESULT': '${{ needs.ffmpeg-two.result }}',
+        })
+        for first in ('success', 'failure', 'cancelled', 'skipped', ''):
+            for second in ('success', 'failure', 'cancelled', 'skipped', ''):
+                with self.subTest(first=first, second=second):
+                    result = subprocess.run(['bash', '-e', '-c', step['run']],
+                                            env=dict(os.environ, FIRST_RESULT=first,
+                                                     SECOND_RESULT=second),
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode == 0,
+                                     first == second == 'success')
 
 
 if __name__ == '__main__':
