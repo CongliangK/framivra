@@ -23,4 +23,7 @@ CPU protocol checks do not require a browser:
 
 ```bash
 python3 experiments/gfx_beginframe/test_run.py
+python3 experiments/gfx_beginframe/test_functional.py
 ```
+
+The functional entry-point regression test injects matching and corrupted idle PNG responses in independent processes. It checks the real report and exit code while all other functional gates succeed; it does not launch a browser.

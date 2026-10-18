@@ -82,9 +82,9 @@ def main():
         if f in byframe and byframe[f]!=h:report['history_independent']=False
         byframe[f]=h
     report['no_damage_results']=[x['hasDamage'] for x in clean['beginframe']]
-    report['ok']=all(report['full_frame_exact']) and report['history_independent'] and report['recovery_same_pixels']
+    report['ok']=all(report['full_frame_exact']) and report['history_independent'] and report['recovery_same_pixels'] and report['capture_after_idle_same_pixels']
     atomic_json(a.output/'functional.json',report)
-    print(json.dumps({k:report[k] for k in ('ok','full_frame_exact','history_independent','recovery_same_pixels','no_damage_results')}))
+    print(json.dumps({k:report[k] for k in ('ok','full_frame_exact','history_independent','recovery_same_pixels','capture_after_idle_same_pixels','no_damage_results')}))
     return 0 if report['ok'] else 1
 
 if __name__=='__main__':sys.exit(main())
