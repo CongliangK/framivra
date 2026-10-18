@@ -1,0 +1,140 @@
+{
+  "format": "framivra-native-audio-portable-provenance/1",
+  "scope": "PORTABLE_REFERENCE_METADATA_NOT_AN_EXECUTION_RECEIPT",
+  "full_execution_proof_included": false,
+  "full_project_pass": false,
+  "user_full_render_postmix_check_required": true,
+  "core_commit": "4e81018430842152accd92004237f738a063a51a",
+  "core_source_hashes": {
+    "vtx/stages.py": "80a020759e4b66881fd0b9546b6790c26f0a06f50a2ada37646186f15db3599f",
+    "vtx/infra.py": "27a665f427ba2aae7102c63b9429cfc58d1b22f680ca6843ef741a2e1df7f494",
+    "vtx/cache_state.py": "e0b4304310260c93cf4f208c223a078b0e635796bf90accc259676c56af02373",
+    "vtx/hygiene.py": "608274875331b0134fe3dc82df8d2599e906383342b7df5082c6ce9306957c61",
+    "vtx/constraints.py": "499480eb37ca0d5e085614a495b41ec24279fb9594957899fd1d9630a8078360",
+    "vtx/pluginlib/hooks.py": "26689a2559604233a7d1ce6e2adbaa63d153d5155177036d6a33c6c1e355e2d6",
+    "vtx/pluginlib/registry.py": "35acc33df3fed486b97eed7457e109865d79f2c82e8a757cee16fe49f83396d1",
+    "vtx/cli.py": "35a48c20c4af142042159879b3b0062a5650017a4caf3a0d68fa2599e29ff96c"
+  },
+  "declared_toolchain": {
+    "ffmpeg_version": "7.1.5",
+    "audio_profile": "48 kHz stereo; native prepare and audio stages; unity stem events; target -14 LUFS; two-pass static gain and alimiter; PCM16 WAV"
+  },
+  "audio_inputs_signature": "34b86439aaf1c1b3efefa538172c484174267e05683f1bf8fd6438e8680dfc5c",
+  "audio_relevant_inputs": {
+    "project": {
+      "fps": 30,
+      "width": 1920,
+      "height": 1080,
+      "duration_frames": 3600
+    },
+    "sources": [
+      {
+        "id": "T17",
+        "path": "audio/T17.flac"
+      },
+      {
+        "id": "T18",
+        "path": "audio/T18.flac"
+      },
+      {
+        "id": "T19",
+        "path": "audio/T19.flac"
+      },
+      {
+        "id": "T20",
+        "path": "audio/T20.flac"
+      }
+    ],
+    "audio_tracks": [
+      {
+        "name": "harmony-melody",
+        "events": [
+          {
+            "src": "T17",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      },
+      {
+        "name": "rhythmic-motion",
+        "events": [
+          {
+            "src": "T18",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      },
+      {
+        "name": "tactile-contact",
+        "events": [
+          {
+            "src": "T19",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      },
+      {
+        "name": "character-signature",
+        "events": [
+          {
+            "src": "T20",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      }
+    ]
+  },
+  "source_sha256": {
+    "T17": "5209ddfe388cc071250582a9e6cad787b39ca36bbb335b753dec549c41dabdd9",
+    "T18": "df582e54cdad868eb3e9251da3d03fa8f6857e67346c55bb052de7acbccd0e74",
+    "T19": "0ecf976ad57f4dd557dbc8c5b6caab19f1fbe86a4a89b458164e05839dc9e8ee",
+    "T20": "c4d251f25d5678f802a529973d5e04bdb7c8f3b2e341b002012b41df55725da8"
+  },
+  "active_plugins": [],
+  "target_lufs": -14.0,
+  "reference_execution_summary": {
+    "native_stages": [
+      "validate",
+      "prepare",
+      "audio"
+    ],
+    "audio_graph_equivalence_recorded": true,
+    "browser_or_gfx_called": false,
+    "postmix_sha256": "ed1053b0b803e33830d4d2e0c42c09294de7c16b7c361da57ac028a11bab17d8"
+  },
+  "postmix_pcm_contract": {
+    "kind": "actual-pcm",
+    "stage": "framivra-audio-stage",
+    "sha256": "ed1053b0b803e33830d4d2e0c42c09294de7c16b7c361da57ac028a11bab17d8",
+    "source": "out/audio.wav",
+    "source_codec": "pcm_s16le",
+    "pcm_sha256": "6dc62e318d0f571dc7d614c72ee1eb52b99b1870b08a4d5f998e0b08213cd9c8",
+    "pcm_hash_representation": "native-rate decoded interleaved little-endian float32; no resampling or gain change",
+    "sample_rate": 48000,
+    "channels": 2,
+    "sample_frames": 5760000
+  },
+  "projection_scope": {
+    "video_tracks": "All15 visual tracks; native _audio_graph reads only audio_tracks, explicitly compared against the full timeline in a read-only copied context.",
+    "subtitles": "Native audio graph does not consume subtitles.",
+    "paper": "Paper source has no audio event. Its silent source stream would be prepared but is never an input to the native audio graph.",
+    "cache_dependencies": "Only GFX/source cache declarations; no audio transform parameters. Audio source IDs, bytes, fps, duration, events, volumes and no-plugin state preserved."
+  },
+  "evidence_notice": "This portable manifest records the reference inputs and reported audio-only result. It omits host paths, invocation logs, environment data and raw execution receipts. Checking this manifest does not execute the pipeline or establish a user-run result. Run the versioned projection helper locally and compare the resulting PCM before acceptance."
+}

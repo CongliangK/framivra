@@ -1,0 +1,74 @@
+[
+  {
+    "path": "runtime/shared.js",
+    "sha256": "d3e8362e729572030cc59aa4a3515887ed57ee33991e684cbab12c7d3d21f743"
+  },
+  {
+    "path": "runtime/effects.json",
+    "sha256": "65fb2bdcd02879dbf5d5307562f3e1e98b667c781189b4492a0ea49a4ce18135"
+  },
+  {
+    "path": "production/cues.json",
+    "sha256": "329091f03cff0553c50d5ed721e53d6f167950eb2bc0e05415658f3bed5f6585"
+  },
+  {
+    "path": "production/source-bindings.json",
+    "sha256": "7fb8b5363750c6fa7bad8f0c481278309a851a7192abe5b29cebf16d37bba9e7"
+  },
+  {
+    "path": "design/geometry.json",
+    "sha256": "f3daf9c5ed11c000160d61ce2e6c852a232e310aaff8e80dffca0f0f0a9606d3"
+  },
+  {
+    "path": "design/shapes.svg",
+    "sha256": "a41df15887ebb81f6331a25ade735f2ca5c4ff309a616f9e39fbf5d95f8b2ae1"
+  },
+  {
+    "path": "production/caption-font.json",
+    "sha256": "59cd8d91979c7ba657a7e0809efef6fa5571959d07ad39371918d5f6448be0e3"
+  },
+  {
+    "path": "src/assets/provider-review.json",
+    "sha256": "bd19b4a5eb8284833b4160f73f3b83e3fc860e08e57e26a5cd6f47cb69c2917b"
+  },
+  {
+    "path": "production/reviews/font-outlines.json",
+    "sha256": "87ace0539db488dd48022b0139a01dd0a2b53e65c2120f210d8a46a5d92dc6be"
+  },
+  {
+    "path": "src/assets/fonts/source-label-glyphs.json",
+    "sha256": "2acef4fe4abb53af646c4bfb02a9bd35855cbec460fc537d4c6e218dd18ab7a0"
+  },
+  {
+    "path": "notices/Noto-Mono-OFL-copyright.txt",
+    "sha256": "075f91382875da1c4b491f1facf2586f55448705133264d98ce15cab6211b125"
+  },
+  {
+    "path": "notices/Noto-CJK-copyright.txt",
+    "sha256": "849f4ea9c214fa4ac3593b770c699f387534b11ce671264c1b10d85bdcb5997b"
+  },
+  {
+    "path": "audio/stems.json",
+    "sha256": "25131e0c86241778a880304b52937bfaa52edb79c59425e2219571142b6f48c7"
+  },
+  {
+    "path": "audio/native-postmix.json",
+    "sha256": "8cf976e949143a00a9aa282c89aac1afd477bd736c55a3ef921fb183af78afcc"
+  },
+  {
+    "path": "audio/waveform-S5.json",
+    "sha256": "46bef41214ff52418d52439f17ee08de9c323aba31df67f5b23065fa7d0b7b63"
+  },
+  {
+    "path": "audio/native-audio-provenance.json",
+    "sha256": "e3ab364eb2b510c5958e710e9761fd73ff881e9c800101571cd6275d198a0ae6"
+  },
+  {
+    "path": "src/assets/fonts/brand-glyphs.json",
+    "sha256": "52decbe0b6aacd419910781b034dc0232f8cdc8d15ae3404948035830a0a68a9"
+  },
+  {
+    "path": "notices/Noto-SC-OFL.txt",
+    "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+  }
+]

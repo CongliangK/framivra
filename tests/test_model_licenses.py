@@ -21,7 +21,12 @@ class LicenseInventory(unittest.TestCase):
         data = policy.load_inventory()
         self.assertEqual({k for k, v in data["assets"].items() if v["default_payload"]},
                          {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media",
-                      "electron-worker-source", "demo-noto-sans-sc", "gfx-environment-evidence"})
+                      "electron-worker-source", "demo-noto-sans-sc", "gfx-environment-evidence", "promo-production-source"})
+        promo=data["assets"]["promo-production-runtime-media"]
+        self.assertFalse(promo["default_payload"])
+        self.assertFalse(promo["reference_files_are_tracked_payload"])
+        self.assertEqual(len(promo["reference_files_sha256"]),5)
+        self.assertNotIn("files_sha256",promo)
         self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_status"], "DECLARED")
         self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_identifier"], "OFL-1.1")
         self.assertIn("templates/standard-demo/profiles/standard/v1/fonts/NotoSansSC-VF.ttf",
@@ -56,6 +61,13 @@ class LicenseInventory(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertIn("no clearance", report["scope"])
         self.assertIn("maskgct-semantic", report["unknown_or_restricted"])
+
+    def test_generated_promo_references_do_not_allow_tracked_media(self):
+        data = policy.load_inventory()
+        refs = data["assets"]["promo-production-runtime-media"]["reference_files_sha256"]
+        for name in refs:
+            with self.subTest(name=name), self.assertRaisesRegex(policy.LicensePolicyError, "unregistered media/font payload"):
+                policy.audit_payload(tracked=[name])
 
     def test_new_weight_and_binary_payloads_are_rejected(self):
         for name in ("model.safetensors", "torch_weights.bin", "chrome.exe", "lib.so", "checkpoint.pth"):

@@ -1,0 +1,376 @@
+{
+  "units": "1280x720 viewBox; multiply by 1.5 for 1920x1080",
+  "bird": {
+    "wing_a": [
+      [
+        -91,
+        -100
+      ],
+      [
+        -57,
+        13
+      ],
+      [
+        25,
+        3
+      ]
+    ],
+    "wing_b": [
+      [
+        -28,
+        -100
+      ],
+      [
+        32,
+        -8
+      ],
+      [
+        49,
+        -24
+      ]
+    ],
+    "body": [
+      [
+        -100,
+        15
+      ],
+      [
+        -50,
+        -5
+      ],
+      [
+        5,
+        -17
+      ],
+      [
+        53,
+        -12
+      ],
+      [
+        86,
+        9
+      ],
+      [
+        56,
+        25
+      ],
+      [
+        0,
+        38
+      ],
+      [
+        -62,
+        32
+      ]
+    ],
+    "tail": [
+      [
+        -70,
+        8
+      ],
+      [
+        -149,
+        -11
+      ],
+      [
+        -115,
+        27
+      ],
+      [
+        -151,
+        58
+      ],
+      [
+        -62,
+        31
+      ]
+    ],
+    "head": [
+      [
+        28,
+        22
+      ],
+      [
+        56,
+        -66
+      ],
+      [
+        112,
+        -66
+      ],
+      [
+        112,
+        -8
+      ],
+      [
+        84,
+        22
+      ]
+    ],
+    "beak": [
+      [
+        109,
+        -47
+      ],
+      [
+        140,
+        -33
+      ],
+      [
+        109,
+        -25
+      ]
+    ],
+    "eye": {
+      "center": [
+        93,
+        -43
+      ],
+      "radius": 4.5
+    },
+    "wing_a_hinge": [
+      -15,
+      -6
+    ]
+  },
+  "A": {
+    "path": "M-80 110V-15A80 80 0 0 1 80-15V110H52V-15A52 52 0 0 0-52-15V110Z",
+    "receiver_y": 110
+  },
+  "R": {
+    "double_rail_y": [
+      0,
+      18
+    ],
+    "rail_x": [
+      -80,
+      80
+    ],
+    "crossbar_x": [
+      -55,
+      0,
+      55
+    ],
+    "owner": "P-C / mobile G threshold"
+  },
+  "W-guide": {
+    "fixed_world": true,
+    "rail_endpoints": [
+      [
+        182,
+        567
+      ],
+      [
+        1097,
+        567
+      ]
+    ],
+    "second_y": 584,
+    "wheel_centers_y": 602
+  },
+  "P-C": {
+    "local_carrier_rect": [
+      -110,
+      110,
+      250,
+      14
+    ],
+    "receiver_rectangles": [
+      [
+        -91,
+        107,
+        42,
+        8
+      ],
+      [
+        49,
+        107,
+        42,
+        8
+      ]
+    ],
+    "gate_world_f2450_and_f2759": {
+      "translation": [
+        650,
+        379
+      ],
+      "scale": 1.06,
+      "rotation": 0
+    }
+  },
+  "P_f2159": {
+    "P_A": [
+      [
+        608,
+        496
+      ],
+      [
+        738,
+        496
+      ],
+      [
+        938,
+        360
+      ],
+      [
+        808,
+        360
+      ]
+    ],
+    "P_B": [
+      [
+        808,
+        360
+      ],
+      [
+        938,
+        360
+      ],
+      [
+        1110,
+        499
+      ],
+      [
+        980,
+        499
+      ]
+    ],
+    "shared_hinge": [
+      [
+        808,
+        360
+      ],
+      [
+        938,
+        360
+      ]
+    ],
+    "note": "Screen-space target; motion must use a shared local hinge graph."
+  },
+  "F": {
+    "corner_polygon": [
+      [
+        0,
+        0
+      ],
+      [
+        78,
+        0
+      ],
+      [
+        78,
+        16
+      ],
+      [
+        20,
+        16
+      ],
+      [
+        20,
+        72
+      ],
+      [
+        0,
+        72
+      ]
+    ],
+    "corner_count": 4,
+    "wide_frame": [
+      170,
+      104,
+      940,
+      452
+    ],
+    "final_frame": [
+      140,
+      181,
+      1000,
+      397
+    ]
+  },
+  "contacts": {
+    "S2_wing_card": {
+      "bird_translation": [
+        765,
+        465
+      ],
+      "scale": 1.5,
+      "local_wing_tip": [
+        -91,
+        -100
+      ],
+      "world_contact": [
+        628.5,
+        315
+      ]
+    },
+    "S5_beak_F": {
+      "bird_translation": [
+        670,
+        449
+      ],
+      "scale": 0.8,
+      "world_contact": [
+        782,
+        422.6
+      ]
+    },
+    "S5_F_buckle_P_A": {
+      "f1950": {
+        "F_lower_endpoint": [
+          788.52223994,
+          447.34133082
+        ],
+        "shared_buckle_P_A_anchor": [
+          792,
+          463
+        ]
+      },
+      "f2159_2160": {
+        "F_lower_endpoint": [
+          879.17140594,
+          378.10166427
+        ],
+        "shared_buckle_P_A_anchor": [
+          867,
+          360
+        ]
+      },
+      "connection": "Continuous 5-unit red paper tongue joins the exact black buckle/P-A anchor; beak-to-F contact retained."
+    },
+    "S8_foot_F": {
+      "bird_translation": [
+        1053,
+        143
+      ],
+      "scale": 0.8,
+      "foot_baseline": 181.4,
+      "frame_top": 181
+    }
+  },
+  "E_windows": {
+    "E01": [
+      810,
+      1140
+    ],
+    "E02": [
+      2280,
+      2700
+    ],
+    "E03": [
+      2820,
+      3090
+    ]
+  },
+  "S7_absent_holds": {
+    "F": [
+      2985,
+      3015
+    ],
+    "middle": [
+      3045,
+      3075
+    ]
+  },
+  "production_cues": "NOT_CREATED_BY_R03"
+}

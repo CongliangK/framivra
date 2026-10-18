@@ -1,0 +1,274 @@
+{
+  "commit": "aa5e7781952418f5881c41f166f237dc7a24111c",
+  "source": "https://github.com/CongliangK/scoreweft/tree/aa5e7781952418f5881c41f166f237dc7a24111c",
+  "scope": "Unchanged bgm_gen runtime package and MIT notices; unused catalog previews and documentation omitted.",
+  "files": {
+    "LICENSE": {
+      "sha256": "b6541ab9c22abc362bd46c9472a48242c9cb6612ef00aa73ad28533ef0c16eb6"
+    },
+    "NOTICE.md": {
+      "sha256": "1a93be9bf7e254f14424a033fab55b614e53c549c5ac69b6d9660491fee3decd"
+    },
+    "bgm_gen/__init__.py": {
+      "sha256": "a58f73f723e53599284c4fba0c16e21cf4ba442a4bc6b39ae47725039d39de69"
+    },
+    "bgm_gen/__main__.py": {
+      "sha256": "307299fda7b77d22c64cb51430ec75e5f59d78e9c948786afb3b2544fe45e4b7"
+    },
+    "bgm_gen/analysis/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "bgm_gen/analysis/bpm_check.py": {
+      "sha256": "48c6ba6611c2b81e57111ffbcfc752048deea61ba3583fffed7ec26ee6809cab"
+    },
+    "bgm_gen/analysis/key_check.py": {
+      "sha256": "ec02956b463dcaa99aa5cb65da627459635ecb1cfe57c5fd8b654a379af59154"
+    },
+    "bgm_gen/analysis/tempo_check.py": {
+      "sha256": "534ba2e8769fb8886949dec3a479d167fedc0274af684626acaad1f71a461ac4"
+    },
+    "bgm_gen/assets.json": {
+      "sha256": "4aae70d311572589fe370f55cbd34bfdf25245a94ba667fcbe0e061c60e757cc"
+    },
+    "bgm_gen/catalog.py": {
+      "sha256": "347d59f6bdae63e44af11b9fd4dd3aff67df227745ec960900cd24e609324f79"
+    },
+    "bgm_gen/cli.py": {
+      "sha256": "e029e30e48f1c5daae193e6445316c1c0ddb4f6084aeed8d72e20c1b46132dc2"
+    },
+    "bgm_gen/core/__init__.py": {
+      "sha256": "683d2239daf4179d925fc3395731b651e1b3c0b474d0a071cc84682dce92a462"
+    },
+    "bgm_gen/core/edit.py": {
+      "sha256": "0756a0f7c4582a3a5355ff777c28f534d2ba34962d830d02264065777582aad3"
+    },
+    "bgm_gen/core/mixer.py": {
+      "sha256": "5ba69df352e5a344a1828b719b18067738762d59d6b2e848376e8f49567d1687"
+    },
+    "bgm_gen/core/musicxml_import.py": {
+      "sha256": "ade29d18d75c5a64ae9b762f660193d90dcaecad7fe1f0617ea9428d04786240"
+    },
+    "bgm_gen/core/project.py": {
+      "sha256": "2261aae5e875493cf14378e88abca1fae15ef9b85a9c9938a32b94b5bebca4a4"
+    },
+    "bgm_gen/core/qc.py": {
+      "sha256": "218d9bdfbc25f6819d3d713d70d8cb5570eeccd94f8ea596882131d786a23b1c"
+    },
+    "bgm_gen/core/resources.py": {
+      "sha256": "14b898b71c101326bac779822c6371a4f8d4d94bc8d6bf7835017ad5a7980612"
+    },
+    "bgm_gen/core/show.py": {
+      "sha256": "6e70cbbe8c71449d95a0433a4794075a5a8f5e852fb53063b0c69fbc2e6b4856"
+    },
+    "bgm_gen/core/smf_import.py": {
+      "sha256": "22ece426aa8bda33277d2c3ffe0df083f63c0369299fbdc41ae728962e12c728"
+    },
+    "bgm_gen/core/space.py": {
+      "sha256": "1b067692c1ed05b1fd39522ca10c0962e08e8f063986d2a0e6236e19ee63084d"
+    },
+    "bgm_gen/doctor.py": {
+      "sha256": "70b3addb214e56b050cc31bac992b6fb74af4e9e30e1f78b106ca1389e03bfb5"
+    },
+    "bgm_gen/engines/README.md": {
+      "sha256": "4f6edd4ea1d37039008aee081c9f2a48204d63ec22111664023fa051e3c9f2f4"
+    },
+    "bgm_gen/engines/__init__.py": {
+      "sha256": "7bd15eee5c5f60bde950941927f2b5fc9f29635b2e131bc67c98f3a5b462a066"
+    },
+    "bgm_gen/engines/_wavio.py": {
+      "sha256": "364bcaa18348474f89b6141aff2be87d65c1949c07eedf0d871a995f28d550b5"
+    },
+    "bgm_gen/engines/ai.py": {
+      "sha256": "408dc303b3e805ee911b04b1b2b413a57e77b7863ff9485ff9112da3bfc68cb3"
+    },
+    "bgm_gen/engines/base.py": {
+      "sha256": "a1cc589be052427c847be4142ee44d1908d721083c462546b867ec3f25fae968"
+    },
+    "bgm_gen/engines/demucs.py": {
+      "sha256": "4fca0e3d6c8717ab2037c97b67ad7fa6b356546698390122eca1856c01eb85b8"
+    },
+    "bgm_gen/engines/descriptor_check.py": {
+      "sha256": "a41a1c6596ad1c945a15a3f336ea1eb0e361c8e978984b128dc507d621b9ba09"
+    },
+    "bgm_gen/engines/descriptors/ai.json": {
+      "sha256": "ae210061d2e32d1415c7f2ef783d9ea829487b482626cae98bc3f8fe5d19b669"
+    },
+    "bgm_gen/engines/descriptors/demucs.json": {
+      "sha256": "cdbc70f7a55c3f0a7ad467390eabd25215971c1ea79e2eca558fd8e5fd4325bc"
+    },
+    "bgm_gen/engines/descriptors/harvest_log/ai.log": {
+      "sha256": "5819810ddcdd6ceb6eba8577b3365e521187889c834d44919c935633cf4396af"
+    },
+    "bgm_gen/engines/descriptors/harvest_log/demucs.log": {
+      "sha256": "5706159d92ba8fbbe794170071db77f7c3f43846de57e239d3dd2c29197dd332"
+    },
+    "bgm_gen/engines/descriptors/harvest_log/master.log": {
+      "sha256": "dddb7cbb37b5f9be5e67b2da2add5d8bc35bbe5b2924de77fcac51954e8d6bf8"
+    },
+    "bgm_gen/engines/descriptors/harvest_log/sample.log": {
+      "sha256": "cd5558633353ef341f2f0d50c031e45cd23e87623a7f93fad6510cf68ff428db"
+    },
+    "bgm_gen/engines/descriptors/harvest_log/sf2.log": {
+      "sha256": "09e64ac9cf401a059e1de611040c649abf1fc729c5f2cd6adf99375a669ade5c"
+    },
+    "bgm_gen/engines/descriptors/harvest_log/sfz.log": {
+      "sha256": "fbb5eb3addb6bb30b0f6051e140b2867771d326c5dcae8a39c81d387eec09956"
+    },
+    "bgm_gen/engines/descriptors/harvest_log/synth.log": {
+      "sha256": "640b6086bc9f84d46217a7e139f5e7c0d6460f75fb6c46e2dadfa703f325fdf3"
+    },
+    "bgm_gen/engines/descriptors/master.json": {
+      "sha256": "399688e0a9e1e6af4ff3140a32b19212e1cf92fd381a14d211f46e786d6f22be"
+    },
+    "bgm_gen/engines/descriptors/sample.json": {
+      "sha256": "a6ff0641390ccafa831c5c153a891ef183799baf83357decee2284850917b4c5"
+    },
+    "bgm_gen/engines/descriptors/sf2.json": {
+      "sha256": "5888fa97ecd3e5d56a030b4d2fe1dc11a2a5a63a7dc6cc4c91fb0375f4b6c244"
+    },
+    "bgm_gen/engines/descriptors/sfz.json": {
+      "sha256": "f3283c5946f9f96871dc74c369103ccadaa53598d98a5c63fca3ffb149021fa8"
+    },
+    "bgm_gen/engines/descriptors/synth.json": {
+      "sha256": "196960855519c5a955a7c413ba317b5d7038fccca5538b56cf35be0767d1ddf1"
+    },
+    "bgm_gen/engines/gpu_guard.py": {
+      "sha256": "ab78c4e9e4bf14ca1fd7d9de7d1bd85b6ccaa9edd89fd24d9aa2b2a1a30786ce"
+    },
+    "bgm_gen/engines/harvest.py": {
+      "sha256": "3fcc46199af4b94aa8a7db1f830a5c7fccc6436df52e7cd8b5a124e4c5eb71de"
+    },
+    "bgm_gen/engines/master.py": {
+      "sha256": "f0766c28db7a9aee6069ab8320dea8ecd87ee5844a1b9484fd12bb71eacb1058"
+    },
+    "bgm_gen/engines/midi_util.py": {
+      "sha256": "d8ed880d24f64de842f50e974fd591eb8cea68b674547a83ef2bcdd63c469cc2"
+    },
+    "bgm_gen/engines/sample.py": {
+      "sha256": "f88c150730c4d751c326f26194530cd4b1c285afb609569c9696e9f8a4b3369d"
+    },
+    "bgm_gen/engines/sf2.py": {
+      "sha256": "9669f370796f7d9d309e3cc7a5f5dba05f421de1d7ce278995862ff0b014f658"
+    },
+    "bgm_gen/engines/sfz.py": {
+      "sha256": "a29fee8b22fd9fdb2a030e7a8f42e73f5502ded676250edd8442e201cc8af009"
+    },
+    "bgm_gen/engines/synth.py": {
+      "sha256": "30dd7cc5bb805fe6e0fe79e218154f14e1131446d02c6505fcf698d74b31887f"
+    },
+    "bgm_gen/legacy/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "bgm_gen/legacy/ab_steps.py": {
+      "sha256": "f5d5f57d4bce031fd28dd93fff36dbb9fe2b8bbe9ced44802cbabe76b7aa2de8"
+    },
+    "bgm_gen/legacy/demo_lofi.py": {
+      "sha256": "f2edb2939e31e84445776a6476373a6a35ab615d4e765551a29e8b369f9ba4c4"
+    },
+    "bgm_gen/legacy/gen.py": {
+      "sha256": "219d1630ef877724091050b3ede8cb084e1e1b838584ebc5d0989fa70cb9ebf9"
+    },
+    "bgm_gen/legacy/gm_lofi.py": {
+      "sha256": "2c5e22c825d86f08aae7fc7dbca338ae1b4a785252a3e5963152509fe1e927e5"
+    },
+    "bgm_gen/legacy/midi2wav.py": {
+      "sha256": "aa43ba15edee855a0600baf2e736a8c486f1b6388d17213d2f138b85600ffeaf"
+    },
+    "bgm_gen/paths.py": {
+      "sha256": "a9b9dd72c7afc817717297dcd63fc033aae82ea05f20cf460e00bc56ba05c1d8"
+    },
+    "bgm_gen/schema/engine_descriptor_v1.json": {
+      "sha256": "d86697609da0a19127aa0b2cbf3a686233ec94d33458845f142d9fdf9dcde5d9"
+    },
+    "bgm_gen/schema/project_v1.json": {
+      "sha256": "07f637c358fd974c818601b4ee4ad5af184612ba59ee0fb824a26c2ceee8795a"
+    },
+    "bgm_gen/schema/project_v2.json": {
+      "sha256": "ff0460f1270a03ddcb3661bd89e1c2305ad8e3b94c77cb32e2b421e6eed934f0"
+    },
+    "bgm_gen/synthlib.py": {
+      "sha256": "424ffb117642e92fdfe3892c5e70c3bd2a48d5aaf0c3683c36f944f39057a61e"
+    },
+    "bgm_gen/tests/COVERAGE_AUDIT.md": {
+      "sha256": "c63a6cf9e04baa7d6e0013d16a302a6e0ee81fb67e96e1a521175cfd1b0b9c96"
+    },
+    "bgm_gen/tests/README.md": {
+      "sha256": "403f791a226385fd85225655f34d19fc0506538230518d901f6857d28cc5befd"
+    },
+    "bgm_gen/tests/baselines_w2a.json": {
+      "sha256": "26226aba2ef5314054752ff77b4e8aa6fa83cb2008383772e63ea18a17afa9ea"
+    },
+    "bgm_gen/tests/baselines_w2b.json": {
+      "sha256": "cf43faaf2ca3325fb11fa49c2bd3cb242912e3c5981bd36361c34f317eb83f38"
+    },
+    "bgm_gen/tests/conftest.py": {
+      "sha256": "8a4f79eb6aea2ed328e4724a9a104d139cfa630e236fcae53883699f1675849a"
+    },
+    "bgm_gen/tests/helpers.py": {
+      "sha256": "0dfded4c451b2f86d635e9ebb8b2d6836e1537899cc2f2dbdb33a274e41fb310"
+    },
+    "bgm_gen/tests/test_assets.py": {
+      "sha256": "d65689546ac51b48aa7c1cbbe6590c1b00109a1e197b194d34c6d6ca420c6ba6"
+    },
+    "bgm_gen/tests/test_catalog.py": {
+      "sha256": "d9e8a892adfa954290f3040e23a8dac5ffe6091e4ee7021c075b5f5bb4e24e16"
+    },
+    "bgm_gen/tests/test_cli.py": {
+      "sha256": "85175b6ae3e686bd85ee5937fc85a68f15382f7894696778782a1b26f4ce4363"
+    },
+    "bgm_gen/tests/test_cli_negative.py": {
+      "sha256": "c6795997094142e5877e8733f34301a64ca21dd6de735ac70e0df271e7b83a5b"
+    },
+    "bgm_gen/tests/test_descriptors.py": {
+      "sha256": "ea19a67628bf2e9f2e140272f93592c4038ae79914d2d43496225ed979085579"
+    },
+    "bgm_gen/tests/test_doctor_robust.py": {
+      "sha256": "331ab1c6c1336a1628efde9d22d0bd3d9df3ef29372a44ffac9b5363d383f176"
+    },
+    "bgm_gen/tests/test_dual_layout.py": {
+      "sha256": "d61b27ed2172b7f713f13bb90c73a0d27936ebf90a41fcaba68eb7de9e423f9d"
+    },
+    "bgm_gen/tests/test_edit.py": {
+      "sha256": "b73b672f634d960320fc10398e05330d4c783a1466f30b29d719e00dac323bd4"
+    },
+    "bgm_gen/tests/test_edit_split_regression.py": {
+      "sha256": "70f8def31e069f3a488622252adcde778e389592f8b22e006760787003a6e6db"
+    },
+    "bgm_gen/tests/test_engines.py": {
+      "sha256": "ec4a0d0877ec5e157ed94ee74972036ab553a4374bd601186425a841a74675eb"
+    },
+    "bgm_gen/tests/test_events.py": {
+      "sha256": "75e345f29bdbff67a90051b09a90c5f7bc2799944c2ea07e0533c5f3495fccfd"
+    },
+    "bgm_gen/tests/test_legacy.py": {
+      "sha256": "f047e109a07e063c8462f9b33218e1d9e82181f39de9d7bc13fe346a80a276f8"
+    },
+    "bgm_gen/tests/test_mixer_premaster.py": {
+      "sha256": "dc032d13a9c660fc59f40eaabeb82671e0d0c9972f0c2bf0554bb451e7ad845a"
+    },
+    "bgm_gen/tests/test_musicxml_import.py": {
+      "sha256": "394576a2e51061f36d611a1f2a4d33c2f4243df49bcf97c872473e71b53ee6fb"
+    },
+    "bgm_gen/tests/test_parallel.py": {
+      "sha256": "f33247964fe29f749f7de8082a518ee63d963f28bae97d565850f116a5d651fc"
+    },
+    "bgm_gen/tests/test_portable_paths.py": {
+      "sha256": "70b0e981658d17a06d07337816b1ac6bba7262ebf5e552a64524ec1442b716e1"
+    },
+    "bgm_gen/tests/test_qc.py": {
+      "sha256": "04d003ea78389cf95f2434c3f824755db2eb8fcae0340c1077dd673880ddb149"
+    },
+    "bgm_gen/tests/test_qc_gating.py": {
+      "sha256": "623b2206398485043732fb7669a41a177a17952d4d268b02d34e42bf0a2afbc0"
+    },
+    "bgm_gen/tests/test_show.py": {
+      "sha256": "f6ced70e0a6fa43a1ca23237516c56757736dca941e45770829c1a8020f640f7"
+    },
+    "bgm_gen/tests/test_smf_import.py": {
+      "sha256": "e12bd099637781efb9b886fc6be80361caffffd2596649d00e144c31169dfee3"
+    },
+    "bgm_gen/tests/test_space.py": {
+      "sha256": "f5f45164dd7b13fd79367ec6ea7d90cb5959b5d1adacb051de9c8906e565d32f"
+    }
+  }
+}

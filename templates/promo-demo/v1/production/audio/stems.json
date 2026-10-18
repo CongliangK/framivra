@@ -1,0 +1,77 @@
+{
+  "format": "framivra-lossless-stems/1",
+  "status": "EXACT_PCM_VERIFIED_USER_LISTENING_PENDING",
+  "source_manifest_sha256": "d558e697318ac30a64df20d7a7fc0b91cac0a9b730f47c1ae86731aa382a6095",
+  "encoding": [
+    "ffmpeg",
+    "-nostdin",
+    "-v",
+    "error",
+    "-xerror",
+    "-n",
+    "-i",
+    "<original-Txx.wav>",
+    "-map",
+    "0:a:0",
+    "-c:a",
+    "flac",
+    "-compression_level",
+    "8",
+    "<Txx.flac>"
+  ],
+  "ffmpeg_version": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "stems": [
+    {
+      "id": "T17",
+      "path": "audio/T17.flac",
+      "sha256": "5209ddfe388cc071250582a9e6cad787b39ca36bbb335b753dec549c41dabdd9",
+      "bytes": 14042603,
+      "source_wav_sha256": "160c604c078701e18efb34ecd05f3b134ee1f6687a3f232792faa091ae27df8b",
+      "pcm24_sha256": "88a228cf6ab9e17d46c4ff19617f9ff7e207057e852dd86ee33c8d5a622c4aef",
+      "pcm24_representation": "signed interleaved little-endian packed 24-bit PCM",
+      "channels": 2,
+      "sample_rate": 48000,
+      "sample_frames": 5760000,
+      "lossless_verified_against": "direct original WAV data payload, not a second decode of the same codec"
+    },
+    {
+      "id": "T18",
+      "path": "audio/T18.flac",
+      "sha256": "df582e54cdad868eb3e9251da3d03fa8f6857e67346c55bb052de7acbccd0e74",
+      "bytes": 2326493,
+      "source_wav_sha256": "4a6ba50e146157b4eb0f87a59453a84d2ddebbf421c74a135da4b8a8274753bd",
+      "pcm24_sha256": "eb64ace15bb586b6106e28ea84b367ee5cf83bcd598d14c22325265319714ed5",
+      "pcm24_representation": "signed interleaved little-endian packed 24-bit PCM",
+      "channels": 2,
+      "sample_rate": 48000,
+      "sample_frames": 5760000,
+      "lossless_verified_against": "direct original WAV data payload, not a second decode of the same codec"
+    },
+    {
+      "id": "T19",
+      "path": "audio/T19.flac",
+      "sha256": "0ecf976ad57f4dd557dbc8c5b6caab19f1fbe86a4a89b458164e05839dc9e8ee",
+      "bytes": 592237,
+      "source_wav_sha256": "1de7f6b47763bfa1a295b439b7ce8ba72722ad2a8cf9490571b6b44e00235de9",
+      "pcm24_sha256": "bd7086c20fef6c56c832f9e01ba4ea0a5e4ea01b1e39d7c8a7bc4ed39e31f5d8",
+      "pcm24_representation": "signed interleaved little-endian packed 24-bit PCM",
+      "channels": 2,
+      "sample_rate": 48000,
+      "sample_frames": 5760000,
+      "lossless_verified_against": "direct original WAV data payload, not a second decode of the same codec"
+    },
+    {
+      "id": "T20",
+      "path": "audio/T20.flac",
+      "sha256": "c4d251f25d5678f802a529973d5e04bdb7c8f3b2e341b002012b41df55725da8",
+      "bytes": 1781189,
+      "source_wav_sha256": "e9ef788a9870db0b58d939b336cebf275b230b840ca4435f464e654db88671df",
+      "pcm24_sha256": "46c4967e271e013074a6fb8313689b1e3f937cfe2bc5e753e8f250cb440aa199",
+      "pcm24_representation": "signed interleaved little-endian packed 24-bit PCM",
+      "channels": 2,
+      "sample_rate": 48000,
+      "sample_frames": 5760000,
+      "lossless_verified_against": "direct original WAV data payload, not a second decode of the same codec"
+    }
+  ]
+}

@@ -1173,6 +1173,48 @@
         "tests/fixtures/gfx-environment/cli-font-b/f0003.png": "2e12c46452e53198d6f312eef19476a25149b5a22f7dcf82c0f114f2551a7d42"
       },
       "notes": "Generated full-HTML/JS/text test screenshots. No font files, browser/runtime binaries or third-party page media are included. Runtime/font inputs remain separately governed external assets; this registration is not a legal certificate."
+    },
+    "promo-production-source": {
+      "kind": "authored-data",
+      "source": "templates/promo-demo/v1/production/notices/ORIGINAL-DEMO-MEDIA.md",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": true,
+      "distribution": [
+        "git-source"
+      ],
+      "evidence": "framivra",
+      "files_sha256": {
+        "templates/promo-demo/v1/production/notices/ORIGINAL-DEMO-MEDIA.md": "5034d1a7f3e9c6f0470e655f6f346954899f19dc6d1a789ce387a8d047c332be",
+        "templates/promo-demo/v1/production/notices/FRAMIVRA-MIT-LICENSE.txt": "1b117841b971e70787f3af7161bd51b6b14a2b0b771f469c7fc4e81504cdac44",
+        "templates/promo-demo/v1/production/music/score.json": "93e84f1e53d38bc38669802e243bb9d86eb56f3d3081042393708279a16f6114",
+        "templates/promo-demo/v1/production/audio/stems.json": "25131e0c86241778a880304b52937bfaa52edb79c59425e2219571142b6f48c7",
+        "templates/promo-demo/v1/production/media/paper-recipe.json": "c1903764225561fed1a9cf6089d01c598112818616d1bea66cbc3555c91dd914",
+        "templates/promo-demo/v1/production/scripts/prepare_assets.py": "9dee2dfb4ec86bf397a46c555faf259dc3f9dc17186edce7104cee806f20b349",
+        "templates/promo-demo/v1/production/scripts/run_native_audio_projection.py": "fd9762dd74b2ed50e64365150631ecf8634c74a9f4e90c0640d4bd265dab9b89"
+      },
+      "notes": "The project owner explicitly authorized MIT distribution of the original Demo score, project recipes and generated media on 2026-10-18. Only editable source, small manifests and notices are included in Git. Third-party font outlines/notices retain OFL and are excluded from this original-work declaration. This records a declaration, not a legal-clearance or chain-of-title certification."
+    },
+    "promo-production-runtime-media": {
+      "kind": "data",
+      "source": "templates/promo-demo/v1/production/notices/ORIGINAL-DEMO-MEDIA.md",
+      "license_status": "DECLARED",
+      "license_identifier": "MIT",
+      "default_payload": false,
+      "distribution": [
+        "separately-supplied-local-input",
+        "local-generation"
+      ],
+      "evidence": "framivra",
+      "reference_files_sha256": {
+        "templates/promo-demo/v1/production/audio/T17.flac": "5209ddfe388cc071250582a9e6cad787b39ca36bbb335b753dec549c41dabdd9",
+        "templates/promo-demo/v1/production/audio/T18.flac": "df582e54cdad868eb3e9251da3d03fa8f6857e67346c55bb052de7acbccd0e74",
+        "templates/promo-demo/v1/production/audio/T19.flac": "0ecf976ad57f4dd557dbc8c5b6caab19f1fbe86a4a89b458164e05839dc9e8ee",
+        "templates/promo-demo/v1/production/audio/T20.flac": "c4d251f25d5678f802a529973d5e04bdb7c8f3b2e341b002012b41df55725da8",
+        "templates/promo-demo/v1/production/media/paper-background.mp4": "fc42e42426548fcde8b296c1844a36da8daf63fd5a66224ef6dca5fe16155664"
+      },
+      "reference_files_are_tracked_payload": false,
+      "notes": "Original procedural score output and FFmpeg color/digital-silence source. These five generated files are excluded from Git and release payloads; reference hashes describe expected local runtime inputs only. The offline project importer verifies an explicitly supplied directory without downloading anything. No final movie or native postmix WAV is distributed in the source package. External synthesis/runtime/font licenses remain separate."
     }
   },
   "evidence": {

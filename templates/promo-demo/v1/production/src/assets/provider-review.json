@@ -1,0 +1,24 @@
+{
+  "status": "EXACT_PROVIDER_STATIC_OUTLINES_INDEPENDENTLY_REVIEWED",
+  "receipt_path": "production/reviews/font-outlines.json",
+  "receipt_sha256": "87ace0539db488dd48022b0139a01dd0a2b53e65c2120f210d8a46a5d92dc6be",
+  "scope": "Exact static glyph-outline providers and bounded consumer functions only",
+  "providers": {
+    "sourceLabels": {
+      "status": "PASS",
+      "provider_path": "src/assets/fonts/source-label-glyphs.json",
+      "provider_sha256": "2acef4fe4abb53af646c4bfb02a9bd35855cbec460fc537d4c6e218dd18ab7a0",
+      "license_path": "notices/Noto-Mono-OFL-copyright.txt",
+      "license_sha256": "075f91382875da1c4b491f1facf2586f55448705133264d98ce15cab6211b125",
+      "report_sha256": "89e74ae4c5b43d296f0a4a7f9e2ab5c192e10b3f4d5d3e88dbbe2096c668f70d"
+    },
+    "brand": {
+      "status": "PASS",
+      "provider_path": "src/assets/fonts/brand-glyphs.json",
+      "provider_sha256": "52decbe0b6aacd419910781b034dc0232f8cdc8d15ae3404948035830a0a68a9",
+      "license_path": "notices/Noto-SC-OFL.txt",
+      "license_sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+      "report_sha256": "89e74ae4c5b43d296f0a4a7f9e2ab5c192e10b3f4d5d3e88dbbe2096c668f70d"
+    }
+  }
+}

@@ -1,0 +1,409 @@
+{
+  "version": 2,
+  "project": {
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "duration_frames": 3600,
+    "cache_dependencies": [
+      "runtime/shared.js",
+      "runtime/effects.json",
+      "production/cues.json",
+      "production/source-bindings.json",
+      "design/geometry.json",
+      "design/shapes.svg"
+    ]
+  },
+  "sources": [
+    {
+      "id": "paper",
+      "path": "media/paper-background.mp4"
+    },
+    {
+      "id": "T17",
+      "path": "audio/T17.wav"
+    },
+    {
+      "id": "T18",
+      "path": "audio/T18.wav"
+    },
+    {
+      "id": "T19",
+      "path": "audio/T19.wav"
+    },
+    {
+      "id": "T20",
+      "path": "audio/T20.wav"
+    }
+  ],
+  "video_tracks": [
+    {
+      "name": "visible-paper-background",
+      "kind": "broll",
+      "clips": [
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 0,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 300,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 600,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 900,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 1200,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 1500,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 1800,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 2100,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 2400,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 2700,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 3000,
+          "dur": 300
+        },
+        {
+          "src": "paper",
+          "src_in": 0,
+          "src_out": 300,
+          "dst_in": 3300,
+          "dur": 300
+        }
+      ]
+    },
+    {
+      "name": "far-workshop",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T02_0000_0690.html",
+          "dst_in": 0,
+          "dur": 690
+        },
+        {
+          "src": "gfx/T02_1140_3600.html",
+          "dst_in": 1140,
+          "dur": 2460
+        }
+      ]
+    },
+    {
+      "name": "middle-gate-carrier",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T03_0690_3600.html",
+          "dst_in": 690,
+          "dur": 2910
+        }
+      ]
+    },
+    {
+      "name": "transport-reel-guide",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T04_0000_3600.html",
+          "dst_in": 0,
+          "dur": 3600
+        }
+      ]
+    },
+    {
+      "name": "stock-offcuts-fold-planes",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T06_0000_0139.html",
+          "dst_in": 0,
+          "dur": 139
+        },
+        {
+          "src": "gfx/T06_0690_3600.html",
+          "dst_in": 690,
+          "dur": 2910
+        }
+      ]
+    },
+    {
+      "name": "continuous-red-frame",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T05_0330_3600.html",
+          "dst_in": 330,
+          "dur": 3270
+        }
+      ]
+    },
+    {
+      "name": "bird-wings",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T08_0018_3600.html",
+          "dst_in": 18,
+          "dur": 3582
+        }
+      ]
+    },
+    {
+      "name": "bird-body-head",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T07_0000_3600.html",
+          "dst_in": 0,
+          "dur": 3600
+        }
+      ]
+    },
+    {
+      "name": "tools-and-operator",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T09_0000_0630.html",
+          "dst_in": 0,
+          "dur": 630
+        },
+        {
+          "src": "gfx/T09_2280_3600.html",
+          "dst_in": 2280,
+          "dur": 1320
+        }
+      ]
+    },
+    {
+      "name": "ingredient-cards",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T10_0330_0630.html",
+          "dst_in": 330,
+          "dur": 300
+        }
+      ]
+    },
+    {
+      "name": "temporal-ribbons",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T11_0630_1200.html",
+          "dst_in": 630,
+          "dur": 570
+        }
+      ]
+    },
+    {
+      "name": "real-pcm-waveform",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T13_1710_2160.html",
+          "dst_in": 1710,
+          "dur": 450,
+          "cache_dependencies": [
+            "audio/waveform-S5.json"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "source-leaders",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T12_0960_1140.html",
+          "dst_in": 960,
+          "dur": 180
+        },
+        {
+          "src": "gfx/T12_2820_3180.html",
+          "dst_in": 2820,
+          "dur": 360
+        }
+      ]
+    },
+    {
+      "name": "actual-source-fields",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T14_0810_1140.html",
+          "dst_in": 810,
+          "dur": 330
+        },
+        {
+          "src": "gfx/T14_2820_3150.html",
+          "dst_in": 2820,
+          "dur": 330
+        }
+      ]
+    },
+    {
+      "name": "brand-wordmark",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "gfx/T15_3360_3600.html",
+          "dst_in": 3360,
+          "dur": 240
+        }
+      ]
+    }
+  ],
+  "subtitles": [
+    {
+      "in": 195,
+      "out": 255,
+      "text": "从一张纸，做出一个画面。"
+    },
+    {
+      "in": 420,
+      "out": 600,
+      "text": "把散开的材料，放到一起。"
+    },
+    {
+      "in": 900,
+      "out": 1080,
+      "text": "把每一层，放进时间。"
+    },
+    {
+      "in": 1410,
+      "out": 1590,
+      "text": "动作，发生在该发生的那一帧。"
+    },
+    {
+      "in": 1830,
+      "out": 2010,
+      "text": "让声音，接住每次变化。"
+    },
+    {
+      "in": 2460,
+      "out": 2640,
+      "text": "让不同的层，组成同一个世界。"
+    },
+    {
+      "in": 2940,
+      "out": 3120,
+      "text": "这幅画面，来自你能修改的工程。"
+    },
+    {
+      "in": 3330,
+      "out": 3450,
+      "text": "让画面，各就各位。"
+    }
+  ],
+  "audio_tracks": [
+    {
+      "name": "harmony-melody",
+      "events": [
+        {
+          "src": "T17",
+          "src_in": 0,
+          "in": 0,
+          "out": 3600,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    },
+    {
+      "name": "rhythmic-motion",
+      "events": [
+        {
+          "src": "T18",
+          "src_in": 0,
+          "in": 0,
+          "out": 3600,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    },
+    {
+      "name": "tactile-contact",
+      "events": [
+        {
+          "src": "T19",
+          "src_in": 0,
+          "in": 0,
+          "out": 3600,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    },
+    {
+      "name": "character-signature",
+      "events": [
+        {
+          "src": "T20",
+          "src_in": 0,
+          "in": 0,
+          "out": 3600,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    }
+  ]
+}

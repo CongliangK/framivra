@@ -1,0 +1,286 @@
+{
+  "status": "AUTHOR_TIMING_AND_TARGET_CURVES; no final motion/pixels claimed",
+  "ease_functions": {
+    "linear": "u",
+    "smoothstep": "u*u*(3-2*u)",
+    "smootherstep": "u*u*u*(u*(6*u-15)+10)"
+  },
+  "curve_time": "For key-to-key segment [a,b], u=clamp((global_f-a)/(b-a),0,1). Actual scene scheduling stays half-open. Evaluate exact endpoint at next segment start.",
+  "opening": "Use unchanged embedded opening key interpolation and projection.",
+  "S2_touch": {
+    "contact_frame": 365,
+    "card_flip_start": 366,
+    "hinge": "same left card edge; never stretch A glyph",
+    "target": {
+      "bird_translation": [
+        765,
+        465
+      ],
+      "scale": 1.5,
+      "local_wing_tip": [
+        -91,
+        -100
+      ],
+      "world_contact": [
+        628.5,
+        315
+      ]
+    }
+  },
+  "S4_flight": {
+    "kind": "piecewise cubic Bezier for B root in author-space; one shared camera projection",
+    "segments": [
+      {
+        "from_frame": 1320,
+        "to_frame": 1434,
+        "points": [
+          [
+            400,
+            489
+          ],
+          [
+            475,
+            440
+          ],
+          [
+            650,
+            344
+          ],
+          [
+            756,
+            344
+          ]
+        ]
+      },
+      {
+        "from_frame": 1434,
+        "to_frame": 1515,
+        "points": [
+          [
+            756,
+            344
+          ],
+          [
+            831.3157894736842,
+            344
+          ],
+          [
+            965,
+            390
+          ],
+          [
+            1005,
+            447
+          ]
+        ]
+      }
+    ],
+    "apex_frame": 1434,
+    "tangent_note": "Vertical derivative0 at shared apex; horizontal derivatives match when divided by segment durations114 and81.",
+    "pose_targets": "Use shared bird pose target keys for rotation/scale/wing. Feet at1515 must be solved against actual platform top; do not hide a gap with body motion.",
+    "settle_keys": [
+      {
+        "frame": 1515,
+        "root": [
+          1005,
+          447
+        ]
+      },
+      {
+        "frame": 1530,
+        "root": [
+          1013,
+          449
+        ]
+      },
+      {
+        "frame": 1545,
+        "root": [
+          1005,
+          447
+        ]
+      },
+      {
+        "frame": 1560,
+        "root": [
+          1005,
+          447
+        ]
+      }
+    ],
+    "settle_rule": "One finite forward overshoot; contact foot is constrained to support while body/head settle."
+  },
+  "S5_connection": {
+    "f1950": {
+      "F_lower_endpoint": [
+        788.52223994,
+        447.34133082
+      ],
+      "shared_buckle_P_A_anchor": [
+        792,
+        463
+      ]
+    },
+    "f2159_2160": {
+      "F_lower_endpoint": [
+        879.17140594,
+        378.10166427
+      ],
+      "shared_buckle_P_A_anchor": [
+        867,
+        360
+      ]
+    },
+    "connection": "Continuous 5-unit red paper tongue joins the exact black buckle/P-A anchor; beak-to-F contact retained."
+  },
+  "S6_carrier": {
+    "coordinate_space": "W-guide-fixed local workshop coordinates before common camera",
+    "slide_progress_keys": [
+      [
+        2160,
+        0
+      ],
+      [
+        2250,
+        0
+      ],
+      [
+        2280,
+        0.12
+      ],
+      [
+        2400,
+        1
+      ],
+      [
+        2700,
+        1
+      ]
+    ],
+    "gate_mount": "All A/R/L/G/receiver local coordinates under same P-C root; pure translation only2250–2400. World displacement must be solved with shared hinge rig, not inferred from independent static screen polygons.",
+    "fold_phases": [
+      {
+        "object": "P-A",
+        "start": 2130,
+        "end": 2250
+      },
+      {
+        "object": "P-B",
+        "start": 2520,
+        "end": 2610
+      }
+    ],
+    "support_visibility": {
+      "before_foreground_occlusion": [
+        2280,
+        2400
+      ],
+      "occluded_target_frame": 2450,
+      "after_foreground_occlusion": [
+        2610,
+        2700
+      ],
+      "requirement": "Show both feet seated on their original P-C receivers before and after the temporary foreground fold occlusion; do not treat occlusion as removal or new assembly."
+    }
+  },
+  "S7_separation": {
+    "progress_keys": [
+      [
+        2759,
+        0
+      ],
+      [
+        2760,
+        0
+      ],
+      [
+        2820,
+        0.72
+      ],
+      [
+        2910,
+        1
+      ],
+      [
+        3090,
+        1
+      ],
+      [
+        3180,
+        0
+      ]
+    ],
+    "ease": "smoothstep",
+    "group_offsets_at_one": {
+      "T02": [
+        -70,
+        -54
+      ],
+      "T03": [
+        -54,
+        -2
+      ],
+      "T04": [
+        18,
+        25
+      ],
+      "T06": [
+        18,
+        25
+      ],
+      "T09_operator": [
+        -54,
+        -2
+      ],
+      "T05": [
+        30,
+        -7
+      ],
+      "B": [
+        100,
+        -37
+      ]
+    },
+    "withdrawal_rule": "Separate selected owner after base offsets; zero-render entire selected contribution for exact absent interval. Nonselected state sampled from frozen2940 baseline until3090."
+  },
+  "ending": {
+    "final_frame": 3599,
+    "F_rect": [
+      140,
+      181,
+      1000,
+      397
+    ],
+    "B": [
+      1053,
+      143,
+      0.8,
+      0,
+      6
+    ],
+    "mini_world_matrix": [
+      0.39,
+      0,
+      0,
+      0.39,
+      400.4,
+      336.25
+    ],
+    "mini_excludes": [
+      "B",
+      "F"
+    ],
+    "wordmark_origin": [
+      280,
+      393
+    ],
+    "wordmark_size": 108,
+    "wordmark_weight": 600,
+    "wordmark_reveal": [
+      3360,
+      3420
+    ],
+    "fully_settled_frame": 3480
+  },
+  "runtime_rule": "Scene authors may solve bounded geometry against these contacts and poses, but shared cue/frame/window changes must be integrated once and independently reviewed."
+}

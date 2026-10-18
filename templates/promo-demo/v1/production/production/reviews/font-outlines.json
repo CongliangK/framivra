@@ -1,0 +1,92 @@
+{
+  "format": "framivra-independent-font-review/1",
+  "verdict": "PASS",
+  "scope": "Exact static glyph-outline providers and bounded consumer functions only",
+  "providers": {
+    "sourceLabels": {
+      "verdict": "PASS",
+      "providerSha256": "2acef4fe4abb53af646c4bfb02a9bd35855cbec460fc537d4c6e218dd18ab7a0",
+      "fontSha256": "6b692c4b6d15ccf59f1c1fe8d11cb8a92f51960f3e9f1f523781755a3af7e29f",
+      "licenseSha256": "075f91382875da1c4b491f1facf2586f55448705133264d98ce15cab6211b125",
+      "generatorSha256": "4acc42e844688cfb108421a75c0ea53b348a06e7cd1224f4493c2926f9735542",
+      "glyphCount": 95,
+      "instancedWeight": null,
+      "evidence": "evidence/source-labels-result.json"
+    },
+    "brand": {
+      "verdict": "PASS",
+      "providerSha256": "52decbe0b6aacd419910781b034dc0232f8cdc8d15ae3404948035830a0a68a9",
+      "fontSha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+      "licenseSha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+      "generatorSha256": "9d8415fc5059edf210b17274e456d8ab7adb40653656dd3e740a9b07b738e90b",
+      "glyphCount": 6,
+      "instancedWeight": 600,
+      "evidence": "evidence/brand-result.json"
+    }
+  },
+  "checks": {
+    "independentSourceRegeneration": "PASS",
+    "separateSVGPathBoundsParse": "PASS",
+    "deterministicJSONExactBytes": "PASS",
+    "originalGeneratorsTwiceIsolated": "PASS",
+    "finiteCoordinates": "PASS",
+    "completeRequestedGlyphCoverage": "PASS",
+    "pairedNoticesExactBytes": "PASS",
+    "consumerFocusedTests": {
+      "status": "PASS",
+      "count": 13
+    },
+    "svgEscapingRoundTrip": "PASS",
+    "actualInkscapeRaster": "PASS",
+    "renderedSamplePixelInspection": "PASS"
+  },
+  "integrationContract": {
+    "preserveProviderJSONBytes": true,
+    "requireExactProviderAndLicenseHashVerification": true,
+    "separateReviewReceipt": true,
+    "derivedRuntimeReviewStatus": "INDEPENDENTLY_APPROVED",
+    "keepPairedOFLNotices": true,
+    "layoutModel": "Explicit glyph-by-glyph hmtx advances; no general OpenType shaping/kerning claim"
+  },
+  "excludedAcceptance": [
+    "native Chinese ASS Noto Sans CJK SC font environment",
+    "scene animation or source binding outside tested functions",
+    "whole-film engine/render/audio/performance acceptance",
+    "user aesthetic approval"
+  ],
+  "authorFilesModified": false,
+  "downloadsOrInstalls": false,
+  "browserOrUserDeviceUsed": false,
+  "report": {
+    "path": "REPORT.md",
+    "sha256": "89e74ae4c5b43d296f0a4a7f9e2ab5c192e10b3f4d5d3e88dbbe2096c668f70d"
+  },
+  "evidence": {
+    "evidence/author-generator-reproduction.json": "6cd7dab7e76c2e22c220b63119f671f9e441c752b3c6bfea70cc8b275763989b",
+    "evidence/brand-glyph-comparison.json": "2fa62c06abbbd0666e550c4432b1dc6dd5c6654b111e53af03b9f556e781c0cc",
+    "evidence/brand-independently-regenerated.json": "52decbe0b6aacd419910781b034dc0232f8cdc8d15ae3404948035830a0a68a9",
+    "evidence/brand-result.json": "8ca21c78cd5092673cc7796fa38a97a654dbd9546822a7031f0da3095c9b5c84",
+    "evidence/brand-runtime-run.svg": "9a927a196c6228d9f1c9abc68c10db45a67efa3b0f8bd14d029cae787f7bf4b7",
+    "evidence/escaped-runtime-sample.svg": "7e2935b656bdf51d2eed4b76964862eb8e303cefa18b058640814525784508b2",
+    "evidence/glyph-sample.png": "7bb50239b480ed7ec8e890873b0416c919f4ee920b41ad51e470ab83efacd58c",
+    "evidence/glyph-sample.svg": "2f16c620500ef9c3ce80a79a06455e532c9f1e042bd4dd1f427e511b490f694f",
+    "evidence/independent-check.log": "1b24933a160463644aa685d77e8a738d40731a0f58a75ec62a2b1431dab88ea8",
+    "evidence/inkscape.log": "791f8cc0895428d13e17dbfec60a33d2926eeb904361973177d27cbb715bba5c",
+    "evidence/raster-and-xml-check.json": "2ac0f7d482a0b3a4b50f6f3ee7aa40afd0d5d9dee755838ac343d56f82191519",
+    "evidence/runtime-font-tests.json": "5cd957647893b4c294f433772626d71c7ba61e6d17a3530a5b226fd34243f1c1",
+    "evidence/runtime-font-tests.log": "0492317255ed63b76f1098e0e5b5ab69d07548ffeaf2138b70e1b9d39235e2c1",
+    "evidence/scene07-author-reproduce-1.log": "b1a20f0de9e171373467f5e8672b19fd2b8c5b04dd51779b2858ff0b2845f181",
+    "evidence/scene07-author-reproduce-2.log": "b1a20f0de9e171373467f5e8672b19fd2b8c5b04dd51779b2858ff0b2845f181",
+    "evidence/scene08-author-reproduce-1.log": "34e3f9df5e6ee31926cf3cd07e0d504c2aea4007f6bd0361aaec44be0f9e79f3",
+    "evidence/scene08-author-reproduce-2.log": "34e3f9df5e6ee31926cf3cd07e0d504c2aea4007f6bd0361aaec44be0f9e79f3",
+    "evidence/source-labels-glyph-comparison.json": "d251d050f6b0df5dfb64eb23d3cbe4edbebe9fbebd59d779d20e1b9577201256",
+    "evidence/source-labels-independently-regenerated.json": "2acef4fe4abb53af646c4bfb02a9bd35855cbec460fc537d4c6e218dd18ab7a0",
+    "evidence/source-labels-result.json": "65e7a4ce429a81730a1b130f03e8440b7fa2c880b5d513b5052996e55cf27c33",
+    "evidence/xml-check.json": "2ec1e2e70e24619bc748b6482f2e56127ed12edb89a2fd94b9da810d334307e6"
+  },
+  "reviewedConsumerModules": {
+    "scene07/src/runtime/svg.js": "f357f3e03ce235a99ec569a22275549d158b0698d0ba2456a2db025722293214",
+    "scene07/src/scenes/07-source-layers.js": "c8e6c5542b04a0c6ff51eea55b8e889519c4a5830a5eb35b7715b0fdf50a8b00",
+    "scene08/src/scenes/08-resolve.js": "eca1157f72985ebf93444372bfe7a102eb9eb1b88ba478b6f4586090d2c55709"
+  }
+}
