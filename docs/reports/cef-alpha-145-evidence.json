@@ -1,0 +1,69 @@
+{
+  "scope": "CEF #145 experimental Alpha; original failures retained; supplemental correlation exit 0",
+  "evidence_root": "/home/liangruochong/文档/04_bilibili视频/_alpha-evidence-20261018/issue145/continuation-20261018T015154Z-32c099",
+  "source_commit": "59811757809642534591e77ee86669aeccbcdbf7",
+  "main_base": "0b9e197",
+  "final_sha256": "3817cdf4698a74e3cb357844493142515a58044a9e812222eb59778bc97bb695",
+  "files": {
+    "summary.json": {
+      "sha256": "ed02402c9e8f59d93c38ea09a9eeb5447f774d429a6ec46db3eedacf7c89bcb3",
+      "bytes": 1085
+    },
+    "identity.json": {
+      "sha256": "12a2002d53515f74bfe244bfe791c2b1c3619afa0f7318ae5f31ba487fd174c1",
+      "bytes": 1321
+    },
+    "commands.json": {
+      "sha256": "72985cc3bc6df63d797d0ec9f4dabf46ee26fb31b9d40d59d439ee3c67eea5de",
+      "bytes": 164958
+    },
+    "environment.json": {
+      "sha256": "f17f5de3abc349dd5ab51e0316dcce6e4060c189d6454e9171c5a16f6ca59a67",
+      "bytes": 1735
+    },
+    "stages.jsonl": {
+      "sha256": "100eb48ced4065c5140e672768ba6f29a1db821ada3230db5eca91902871ffe1",
+      "bytes": 1573
+    },
+    "gfx-audit/complete-gfx-audit.json": {
+      "sha256": "b667482c0e7d4da4fefedbf400cb8d5796f64390339e06aced4596aa62fb4d3f",
+      "bytes": 9546
+    },
+    "ass-audit/ass-clock-summary.json": {
+      "sha256": "4fb36cb4f1c495f080886de47da6844094b3d42a77bed71bb09608c4f85d2e15",
+      "bytes": 2232
+    },
+    "audio-correlation/new-audio-correlation.json": {
+      "sha256": "94626a1c5b041d10dbe706a63de500a53b70cc7b155101acb4402588324c8cde",
+      "bytes": 44082
+    },
+    "qc-strict.log": {
+      "sha256": "c39b50905d7ccfb44aa99e8c2a9f29bb152bde67c8fc3fc27511efe13f9008e3",
+      "bytes": 6473
+    },
+    "subs-check.log": {
+      "sha256": "0a87f95b6f5a7ecc3783b352180baecc8b28ff4414e623c7a4346bb9605e89eb",
+      "bytes": 20510
+    },
+    "content-gates.json": {
+      "sha256": "2dc61d1e30a179fec66233351f2911e2e5566cc023277d789abb3515196c833c",
+      "bytes": 2670
+    },
+    "ffprobe.log": {
+      "sha256": "6dd37b9522843eff5f2e5f99679b6d4710171ffef96b4fa1a26509c7fab17807",
+      "bytes": 4536
+    },
+    "blackdetect.log": {
+      "sha256": "27e8cd844ef26daa329665f9c135deb7de9c9ce6c1e5f86c4857914e65dfef6a",
+      "bytes": 6689
+    },
+    "blender-verify.log": {
+      "sha256": "d37b89e571eec17c902549d604a3cbb05fec217776c409b2a85d5135964a8e39",
+      "bytes": 5007
+    },
+    "audio-correlation.log": {
+      "sha256": "375163cb1abdc19091a1f944e14c8907c41f6d6a0dcc6687e908239ce2e0fab2",
+      "bytes": 272
+    }
+  }
+}
