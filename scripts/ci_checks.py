@@ -83,6 +83,28 @@ FFMPEG_GROUP_TWO_MODULES = (
     'tests.test_audio_report',
 )
 
+# Hosted timings put the cold/warm pipeline at ~210s and the rest at ~65s.
+# Keep every selected class/method of a module together; new modules use 2.
+CHROME_GROUP_ONE_MODULES = ('tests.test_pipeline',)
+
+
+def chrome_group(group):
+    if group not in ('1', '2'):
+        raise ValueError('unknown Chrome group: %s' % group)
+    names = MEDIA_TESTS['chrome']
+    modules = CHROME_GROUP_ONE_MODULES
+    if (not names or len(set(names)) != len(names) or not modules or
+            len(set(modules)) != len(modules) or
+            not all(any(name == module or name.startswith(module + '.')
+                        for name in names) for module in modules)):
+        raise ValueError('empty, duplicate or unknown Chrome selectors/group modules')
+    first = tuple(name for name in names if any(
+        name == module or name.startswith(module + '.') for module in modules))
+    second = tuple(name for name in names if name not in first)
+    if not first or not second:
+        raise ValueError('empty Chrome group')
+    return first if group == '1' else second
+
 
 def ffmpeg_group(group):
     if group not in ('1', '2', '3'):
@@ -321,10 +343,11 @@ def main(argv=None):
     parser.add_argument('gate', choices=('static', 'ffmpeg', 'chrome',
                                         'demo-toolchain'))
     parser.add_argument('--group', choices=('1', '2', '3'),
-                        help='FFmpeg only: execute one of three complete module groups')
+                        help='whole-module group: FFmpeg 1-3 or Chrome 1-2')
     args = parser.parse_args(argv)
-    if args.group and args.gate != 'ffmpeg':
-        parser.error('--group is only valid for the ffmpeg gate')
+    if args.group and (args.gate not in ('ffmpeg', 'chrome') or
+                       (args.gate == 'chrome' and args.group == '3')):
+        parser.error('--group requires FFmpeg 1-3 or Chrome 1-2')
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
     try:
@@ -332,7 +355,10 @@ def main(argv=None):
             static_checks()
             return 0
         check_media_inventory()
-        names = ffmpeg_group(args.group) if args.group else MEDIA_TESTS[args.gate]
+        names = MEDIA_TESTS[args.gate]
+        if args.group:
+            names = (ffmpeg_group(args.group) if args.gate == 'ffmpeg'
+                     else chrome_group(args.group))
         prepare_media(args.gate)  # before imports: decorators see enabled gates
         if args.gate == 'ffmpeg' and any(
                 name == 'tests.test_frame_source' or

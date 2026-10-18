@@ -180,8 +180,8 @@ jobs:
           printf 'FFmpeg group 1: %s; group 2: %s; group 3: %s\n' "$FIRST_RESULT" "$SECOND_RESULT" "$THIRD_RESULT"
           test "$FIRST_RESULT" = success && test "$SECOND_RESULT" = success && test "$THIRD_RESULT" = success
 
-  chrome:
-    name: Chrome and pipeline CPU integration (no skips)
+  chrome-one:
+    name: Chrome CPU group 1 pipeline (no skips)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -198,8 +198,44 @@ jobs:
           python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
       # ubuntu-24.04 hosted images provide google-chrome. The strict preflight
       # actually launches it: image changes/missing Chrome fail, never skip.
-      - name: Preflight Chrome and execute graphics and cold/warm pipeline
-        run: python scripts/ci_checks.py chrome
+      - name: Preflight Chrome and execute cold/warm pipeline
+        run: python scripts/ci_checks.py chrome --group 1
+
+  chrome-two:
+    name: Chrome CPU group 2 graphics (no skips)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install media and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install 'numpy>=1.24,<3' 'Pillow>=10,<13'
+      # ubuntu-24.04 hosted images provide google-chrome. The strict preflight
+      # actually launches it: image changes/missing Chrome fail, never skip.
+      - name: Preflight Chrome and execute graphics integrations
+        run: python scripts/ci_checks.py chrome --group 2
+
+  chrome:
+    name: Chrome and pipeline CPU integration (no skips)
+    needs: [chrome-one, chrome-two]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require actual success from both zero-skip Chrome groups
+        env:
+          FIRST_RESULT: ${{ needs.chrome-one.result }}
+          SECOND_RESULT: ${{ needs.chrome-two.result }}
+        run: |
+          printf 'Chrome group 1: %s; group 2: %s\n' "$FIRST_RESULT" "$SECOND_RESULT"
+          test "$FIRST_RESULT" = success && test "$SECOND_RESULT" = success
 
   windows-install:
     name: Windows one-command install candidate

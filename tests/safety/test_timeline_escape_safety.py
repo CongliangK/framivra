@@ -151,6 +151,11 @@ class WriteRootEscape(SandboxCase):
 class LegitUseControl(SandboxCase):
     """对照组：外部素材引用与项目内符号链接不得被误杀（验收原文）。"""
 
+    # Finite hang guard for real cold environment-identity work, not a latency
+    # acceptance gate. Negative/adversarial controls retain the shared 30s bound.
+    vtx_timeout = 60
+    vtx_diagnostics = True
+
     def test_external_relative_and_absolute_assets_still_read(self):
         # 用户把素材放在项目外、以相对/绝对路径引用：读侧（validate 的 gfx html
         # 存在性检查、gc 的 gfx_key 字节读取）照常放行。

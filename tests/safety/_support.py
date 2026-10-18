@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -26,6 +27,9 @@ A03_FIXED = unittest.skipUnless(
 
 
 class SandboxCase(unittest.TestCase):
+    vtx_timeout = 30
+    vtx_diagnostics = False
+
     def setUp(self):
         super().setUp()
         self.temporary = tempfile.TemporaryDirectory(prefix="vtx-safety-")
@@ -92,9 +96,36 @@ class SandboxCase(unittest.TestCase):
 
     def run_vtx(self, *args):
         self.checked(self.timeline)
-        return subprocess.run(
-            ["env", "python3", str(REPO / "vtx/vtx.py"), "-t", str(self.timeline), *args],
-            cwd=self.root, env=self.env, capture_output=True, text=True, timeout=30)
+        started = time.monotonic()
+        try:
+            result = subprocess.run(
+                ["env", "python3", str(REPO / "vtx/vtx.py"), "-t", str(self.timeline), *args],
+                cwd=self.root, env=self.env, capture_output=True, text=True,
+                timeout=self.vtx_timeout)
+        except subprocess.TimeoutExpired as error:
+            if self.vtx_diagnostics:
+                self._vtx_diagnostic(args, started, "timeout", error.stdout, error.stderr)
+            raise  # A timeout still fails; never retry or substitute success.
+        if self.vtx_diagnostics:
+            self._vtx_diagnostic(args, started, "exit=%s" % result.returncode,
+                                 result.stdout if result.returncode else None,
+                                 result.stderr if result.returncode else None)
+        return result
+
+    def _vtx_diagnostic(self, args, started, outcome, stdout, stderr):
+        print("vtx safety command=%r elapsed=%.3fs timeout=%ss %s" %
+              (args, time.monotonic() - started, self.vtx_timeout, outcome),
+              file=sys.stderr, flush=True)
+        # Only bounded captured output on failure, never environment variables.
+        for name, value in (("stdout", stdout), ("stderr", stderr)):
+            if outcome != "exit=0":
+                if value is None:
+                    value = "<not captured>"
+                if isinstance(value, bytes):
+                    value = value.decode("utf-8", errors="replace")
+                print("%s tail=%r%s" % (name, value[-2048:],
+                      " [truncated]" if len(value) > 2048 else ""),
+                      file=sys.stderr, flush=True)
 
     def assert_ok(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

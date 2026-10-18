@@ -29,6 +29,85 @@ def tests_of(case):
 
 
 class StrictMediaGate(unittest.TestCase):
+    def test_chrome_groups_preserve_all_test_identities_and_whole_modules(self):
+        groups = [ci.chrome_group(group) for group in ('1', '2')]
+        self.assertEqual(Counter(sum(groups, ())), Counter(ci.MEDIA_TESTS['chrome']))
+        self.assertEqual(groups[0], ('tests.test_pipeline.TestPipelineIntegration',))
+        def identities(names):
+            def leaves(suite):
+                for test in suite:
+                    if isinstance(test, unittest.TestSuite):
+                        yield from leaves(test)
+                    else:
+                        yield test.id()
+            loader = unittest.TestLoader()
+            result = Counter(leaves(loader.loadTestsFromNames(names)))
+            self.assertFalse(loader.errors)
+            return result
+        combined = sum((identities(group) for group in groups), Counter())
+        self.assertEqual(combined, identities(ci.MEDIA_TESTS['chrome']))
+        self.assertTrue(all(count == 1 for count in combined.values()))
+        modules = [set(name.split('.')[1] for name in group) for group in groups]
+        self.assertFalse(modules[0] & modules[1])
+
+    def test_new_chrome_selectors_keep_deterministic_complete_module_ownership(self):
+        names = ('tests.test_pipeline.NewCase', 'tests.test_pipeline.OtherCase',
+                 'tests.test_future_media.First', 'tests.test_future_media.Second')
+        with mock.patch.dict(ci.MEDIA_TESTS, {'chrome': names}):
+            self.assertEqual(ci.chrome_group('1'), names[:2])
+            self.assertEqual(ci.chrome_group('2'), names[2:])
+
+    def test_invalid_empty_duplicate_or_unknown_chrome_groups_fail(self):
+        for group in ('0', '3', 'unknown'):
+            with self.subTest(group=group), self.assertRaises(ValueError):
+                ci.chrome_group(group)
+        for names in ((), ci.MEDIA_TESTS['chrome'] * 2,
+                      ('tests.test_pipeline',), ('tests.test_future_media',)):
+            with self.subTest(names=names), \
+                    mock.patch.dict(ci.MEDIA_TESTS, {'chrome': names}), \
+                    self.assertRaises(ValueError):
+                ci.chrome_group('1')
+        for modules in ((), ('unknown',), ci.CHROME_GROUP_ONE_MODULES * 2, ('tests',)):
+            with self.subTest(modules=modules), \
+                    mock.patch.object(ci, 'CHROME_GROUP_ONE_MODULES', modules), \
+                    self.assertRaises(ValueError):
+                ci.chrome_group('2')
+
+    def test_chrome_grouped_and_default_entrypoints_keep_real_preflight_and_flags(self):
+        for group in (None, '1', '2'):
+            with self.subTest(group=group), \
+                    mock.patch.dict(os.environ, {}, clear=True), \
+                    mock.patch.object(ci, 'check_media_inventory') as inventory, \
+                    mock.patch.object(ci, 'executable', side_effect=lambda name, override=None: '/bin/' + name), \
+                    mock.patch.object(ci, 'run') as media_smoke, \
+                    mock.patch.object(ci, 'prepare_chrome', return_value='/chrome') as chrome, \
+                    mock.patch.object(ci, 'strict_suite', return_value=0) as strict:
+                self.assertEqual(ci.main(['chrome'] + (['--group', group] if group else [])), 0)
+                inventory.assert_called_once_with()
+                chrome.assert_called_once_with()
+                self.assertEqual(media_smoke.call_count, 3)
+                strict.assert_called_once_with(
+                    ci.chrome_group(group) if group else ci.MEDIA_TESTS['chrome'])
+                self.assertEqual(os.environ['VTX_TEST_CHROME'], '/chrome')
+                self.assertEqual(os.environ['VTX_CHROME'], '/chrome')
+                self.assertEqual(os.environ['VTX_PIPE_INTEG'], '1')
+                self.assertNotIn('VTX_RANGE_INTEG', os.environ)
+                self.assertNotIn('VTX_AUDIO_REPORT_INTEG', os.environ)
+                self.assertNotIn('VTX_TEST_DEMO_TOOLCHAIN', os.environ)
+
+    def test_chrome_dependency_failure_blocks_both_groups_and_default(self):
+        for group in (None, '1', '2'):
+            with self.subTest(group=group), \
+                    mock.patch.object(ci, 'check_media_inventory'), \
+                    mock.patch.object(ci, 'executable', side_effect=lambda name, override=None: '/bin/' + name), \
+                    mock.patch.object(ci, 'run'), \
+                    mock.patch.object(ci, 'prepare_chrome', side_effect=RuntimeError('missing Chrome')), \
+                    mock.patch.object(ci, 'strict_suite') as strict, \
+                    mock.patch.dict(os.environ, {}, clear=True), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(ci.main(['chrome'] + (['--group', group] if group else [])), 1)
+                strict.assert_not_called()
+
     def test_ffmpeg_groups_preserve_every_selected_test_without_overlap(self):
         groups = [ci.ffmpeg_group(number) for number in ('1', '2', '3')]
         self.assertTrue(all(groups))
@@ -76,7 +155,7 @@ class StrictMediaGate(unittest.TestCase):
     def test_unknown_ffmpeg_group_and_group_on_other_gates_fail(self):
         with self.assertRaises(ValueError):
             ci.ffmpeg_group('other')
-        for args in (['chrome', '--group', '1'], ['static', '--group', '2'],
+        for args in (['chrome', '--group', '3'], ['static', '--group', '2'],
                      ['demo-toolchain', '--group', '3'], ['ffmpeg', '--group', '4']):
             with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), \
                     self.assertRaises(SystemExit) as raised:
@@ -355,6 +434,97 @@ class NewBrowser(unittest.TestCase):
             suite.assert_not_called()
 
 
+class SafetyCommandHangGuard(unittest.TestCase):
+    def sandbox(self, case_type):
+        case = case_type()
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        return case
+
+    def test_only_positive_timeline_controls_extend_the_finite_hang_guard(self):
+        from tests.safety import _support as support
+        from tests.safety import test_timeline_escape_safety as timeline
+        self.assertEqual(support.SandboxCase.vtx_timeout, 30)
+        self.assertFalse(support.SandboxCase.vtx_diagnostics)
+        for case_type, timeout in ((support.SandboxCase, 30),
+                                   (timeline.SnapshotTimelineEscape, 30),
+                                   (timeline.WriteRootEscape, 30),
+                                   (timeline.LegitUseControl, 60)):
+            case = self.sandbox(case_type)
+            completed = subprocess.CompletedProcess([], 0, 'ok', '')
+            with self.subTest(case=case_type.__name__), \
+                    mock.patch.object(support.subprocess, 'run', return_value=completed) as run, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertIs(case.run_vtx('validate'), completed)
+                run.assert_called_once_with(
+                    ['env', 'python3', str(support.REPO / 'vtx/vtx.py'),
+                     '-t', str(case.timeline), 'validate'],
+                    cwd=case.root, env=case.env, capture_output=True, text=True,
+                    timeout=timeout)
+
+    def test_positive_command_reports_real_elapsed_time_without_environment_dump(self):
+        from tests.safety import _support as support
+        from tests.safety.test_timeline_escape_safety import LegitUseControl
+        case = self.sandbox(LegitUseControl)
+        case.env['FIXTURE_SECRET'] = 'must-not-be-logged'
+        completed = subprocess.CompletedProcess([], 0, 'ok', '')
+        output = io.StringIO()
+        with mock.patch.object(support.subprocess, 'run', return_value=completed), \
+                mock.patch.object(support.time, 'monotonic', side_effect=(100, 101.25)), \
+                contextlib.redirect_stderr(output):
+            self.assertIs(case.run_vtx('gc'), completed)
+        self.assertIn("command=('gc',) elapsed=1.250s timeout=60s exit=0", output.getvalue())
+        self.assertNotIn('must-not-be-logged', output.getvalue())
+
+    def test_timeout_still_raises_without_retry_and_reports_bounded_captured_output(self):
+        from tests.safety import _support as support
+        from tests.safety.test_timeline_escape_safety import LegitUseControl
+        for case_type in (support.SandboxCase, LegitUseControl):
+            case = self.sandbox(case_type)
+            error = subprocess.TimeoutExpired(['fixture'], case.vtx_timeout,
+                                               output=b'prefix' + b'x' * 3000,
+                                               stderr=b'failure\xff')
+            output = io.StringIO()
+            with self.subTest(case=case_type.__name__), \
+                    mock.patch.object(support.subprocess, 'run', side_effect=error) as run, \
+                    contextlib.redirect_stderr(output), \
+                    self.assertRaises(subprocess.TimeoutExpired) as raised:
+                case.run_vtx('validate')
+            self.assertIs(raised.exception, error)
+            run.assert_called_once()
+            if case_type is LegitUseControl:
+                self.assertIn('timeout=60s timeout', output.getvalue())
+                self.assertIn('stdout tail=', output.getvalue())
+                self.assertIn('stderr tail=', output.getvalue())
+                self.assertIn('[truncated]', output.getvalue())
+                self.assertNotIn('prefix', output.getvalue())
+                self.assertLess(len(output.getvalue()), 2500)
+            else:
+                self.assertEqual(output.getvalue(), '')
+
+    def test_positive_failure_is_not_success_and_missing_output_is_not_claimed_empty(self):
+        from tests.safety import _support as support
+        from tests.safety.test_timeline_escape_safety import LegitUseControl
+        case = self.sandbox(LegitUseControl)
+        completed = subprocess.CompletedProcess([], 1, 'failed', '')
+        output = io.StringIO()
+        with mock.patch.object(support.subprocess, 'run', return_value=completed), \
+                contextlib.redirect_stderr(output):
+            result = case.run_vtx('gc')
+        self.assertIs(result, completed)
+        with self.assertRaises(AssertionError):
+            case.assert_ok(result)
+        self.assertIn("stdout tail='failed'", output.getvalue())
+        self.assertIn("stderr tail=''", output.getvalue())
+        output = io.StringIO()
+        with mock.patch.object(support.subprocess, 'run',
+                               side_effect=subprocess.TimeoutExpired(['fixture'], 60)), \
+                contextlib.redirect_stderr(output), self.assertRaises(subprocess.TimeoutExpired):
+            case.run_vtx('validate')
+        self.assertIn("stdout tail='<not captured>'", output.getvalue())
+        self.assertIn("stderr tail='<not captured>'", output.getvalue())
+
+
 class WorkflowContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -436,7 +606,11 @@ class WorkflowContract(unittest.TestCase):
                            ('3', 'ffmpeg-three')):
             self.assertIn('python scripts/ci_checks.py ffmpeg --group ' + group,
                           commands(job))
-        self.assertIn('python scripts/ci_checks.py chrome', commands('chrome'))
+        for group, job in (('1', 'chrome-one'), ('2', 'chrome-two')):
+            self.assertIn('python scripts/ci_checks.py chrome --group ' + group,
+                          commands(job))
+            self.assertIn('sudo apt-get install -y ffmpeg fonts-noto-cjk', commands(job))
+            self.assertEqual(jobs[job]['runs-on'], 'ubuntu-24.04')
         # Unit tests simulate NVENC and must not be overridden globally.
         self.assertNotIn('VTX_NO_NVENC', self.workflow['env'])
         self.assertNotIn('VTX_SEG_NVENC', self.workflow['env'])
@@ -484,6 +658,32 @@ class WorkflowContract(unittest.TestCase):
         curated = next(s for s in core['steps'] if 'python scripts/ci_pr.py' in s.get('run', ''))
         self.assertIn("python scripts/ci_pr.py --group '${{ matrix.group }}'", curated['run'])
         self.assertNotIn('python scripts/ci_pr.py\n', curated['run'])
+
+    def test_chrome_required_check_rejects_any_non_success_or_missing_group(self):
+        job = self.workflow['jobs']['chrome']
+        self.assertEqual(job['name'], 'Chrome and pipeline CPU integration (no skips)')
+        self.assertEqual(set(job['needs']), {'chrome-one', 'chrome-two'})
+        self.assertEqual(job['if'], 'always()')
+        self.assertEqual(len(job['steps']), 1)
+        step = job['steps'][0]
+        self.assertEqual(step['env'], {
+            'FIRST_RESULT': '${{ needs.chrome-one.result }}',
+            'SECOND_RESULT': '${{ needs.chrome-two.result }}',
+        })
+        for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', '', 'unknown'), repeat=2):
+            with self.subTest(values=values):
+                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                                        env=dict(os.environ, **dict(zip(step['env'], values))),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0,
+                                 all(value == 'success' for value in values))
+        for missing in step['env']:
+            environment = {key: value for key, value in os.environ.items()
+                           if key not in step['env']}
+            environment.update({key: 'success' for key in step['env'] if key != missing})
+            result = subprocess.run(['bash', '-e', '-c', step['run']],
+                                    env=environment, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
 
     def test_core_aggregate_requires_actual_matrix_success(self):
         job = self.workflow['jobs']['core-results']
