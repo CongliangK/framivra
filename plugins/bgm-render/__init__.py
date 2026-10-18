@@ -13,7 +13,7 @@ sources[] 级键 ``"bgm": true | {"output": "master|premaster|stem:<轨名>",
   master/premaster/stem 产物 → 转 48kHz stereo s16（与内核裸提取同格式）落
   内容寻址键：
 
-      cache/audio/{audio_key}::bgm:{version}:{digest}.wav
+      cache/audio/{audio_key}__bgm_{version}_{digest}.wav
 
   digest = bgm 键值 + 插件代码摘要 + **$ref 外部文件内容摘要**（music_tools
   schema v2 的 track $ref 拆分件——主工程字节不变而 $ref 件被改时产物键仍翻转，
@@ -53,7 +53,7 @@ config 键（vtx.api.cfg_get）：``bgm.cli``（bgm 包装脚本路径，优先�
 ``bgm.repo``（music_tools 仓根，python3 -m bgm_gen 兜底通道的 PYTHONPATH）。
 """
 from vtx.diagnostics import DiagnosticMessage, key_path, emit
-import fcntl
+from vtx import fstxn
 import hashlib
 import json
 import math
@@ -93,7 +93,26 @@ def _bgm_cmd(c=None):
     fails = []
     cli = cfg_get("bgm.cli", "")
     if cli:
-        argv = shlex.split(os.path.expanduser(cli))
+        expanded = os.path.expanduser(cli)
+        if os.name == 'nt':
+            # Apply Windows argv quoting, preserving backslashes in paths.
+            import ctypes
+            from ctypes import wintypes
+            shell = ctypes.WinDLL('shell32', use_last_error=True)
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            shell.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+            shell.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+            kernel.LocalFree.argtypes = [ctypes.c_void_p]
+            count = ctypes.c_int()
+            pointer = shell.CommandLineToArgvW(expanded, ctypes.byref(count))
+            if not pointer:
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                argv = [pointer[i] for i in range(count.value)]
+            finally:
+                kernel.LocalFree(pointer)
+        else:
+            argv = shlex.split(expanded)
         # 存在性/可执行门：shutil.which 对含分隔符的路径按字面探测、裸命令名查
         # PATH，且只认可执行件——非执行文件过了这道门也会在 subprocess 处崩。
         if argv and shutil.which(argv[0]):
@@ -103,7 +122,7 @@ def _bgm_cmd(c=None):
     if wrapper.is_file():
         return [str(wrapper)], None
     repo = Path(os.path.expanduser(cfg_get("bgm.repo", _DEFAULT_REPO)))
-    py = shutil.which("python3")
+    py = sys.executable if os.name == "nt" else shutil.which("python3")
     if repo.is_dir() and py:
         env = dict(os.environ)
         env["PYTHONPATH"] = str(repo) + (os.pathsep + env["PYTHONPATH"]
@@ -279,9 +298,9 @@ def render_digest(c, sid) -> str:
 
 
 def product_path(c, sid) -> Path:
-    """产物路径 cache/audio/{audio_key}::bgm:{version}:{param_digest}.wav。"""
+    """产物路径 cache/audio/{audio_key}__bgm_{version}_{param_digest}.wav。"""
     return c.cache / "audio" / (
-        f"{_audio_key(c, sid)}::bgm:{VERSION}:{param_digest(c, sid)}.wav")
+        f"{_audio_key(c, sid)}__bgm_{VERSION}_{param_digest(c, sid)}.wav")
 
 
 def render_cache_dir(c, sid) -> Path:
@@ -304,13 +323,11 @@ def _flock(lock_path: Path):
     """跨进程排他锁（flock；对齐 loudness_cache.py 的 .lock 惯例：锁文件随目录
     存在、随 fd 关闭自动释放，异常路径不残留锁态）。prepare 内核侧串行，此锁防
     的是多 vtx 进程/区间预览并发触发同一工程的渲染双写。"""
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a+b") as lf:
-        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+    # fstxn owns the cross-platform lock backend and preserves the existing
+    # <digest>.lock name. This plugin always supplies that suffix.
+    target = lock_path.with_name(lock_path.name[:-5])
+    with fstxn.file_lock(target):
+        yield
 
 
 def _ensure_shared_render(c, sid, force: bool = False):

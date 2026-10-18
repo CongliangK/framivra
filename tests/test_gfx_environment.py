@@ -12,6 +12,115 @@ from vtx import gfx_environment as env, gfx_cli, hygiene
 from tests.test_gfx_cache_integrity import png
 
 
+class ChromeInstallerTelemetry(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve() / 'Application'
+        self.root.mkdir()
+        (self.root / 'chrome.exe').write_bytes(b'browser')
+        self.setup = self.root / 'SetupMetrics'; self.setup.mkdir()
+        self.pma = self.setup / '1196_13435891563225954.pma'
+        self.pma.write_bytes(b'installer histogram')
+
+    def collect(self):
+        return env._windows_chrome_runtime(self.root)
+
+    def test_only_direct_pma_changes_are_ignored(self):
+        before = self.collect()
+        self.pma.write_bytes(b'new histogram')
+        (self.setup / 'new.pma').write_bytes(b'new')
+        self.assertEqual(before, self.collect())
+        for p in self.setup.iterdir():
+            p.unlink()
+        self.setup.rmdir()
+        self.assertEqual(before, self.collect())
+        version = self.root / '155.0.8059.40'; version.mkdir()
+        for p in (version / 'same.pma', version / 'chrome.dll', version / 'resources.pak',
+                  self.root / 'initial_preferences', self.root / 'master_preferences'):
+            with self.subTest(path=p.name):
+                p.write_bytes(b'resource A')
+                original = self.collect(); saved = p.stat()
+                p.write_bytes(b'resource B')
+                os.utime(p, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+                self.assertNotEqual(original, self.collect())
+
+    def test_unknown_members_stay_bound_and_subdirectories_fail_closed(self):
+        unknown = self.setup / 'resource.dll'; unknown.write_bytes(b'A')
+        before = self.collect()
+        unknown.write_bytes(b'B')
+        self.assertNotEqual(before, self.collect())
+        unknown.unlink()
+        (self.setup / 'nested').mkdir()
+        with self.assertRaises(env.EnvironmentError):
+            self.collect()
+
+    def test_unknown_member_disappearing_with_directory_changes_identity(self):
+        unknown = self.setup / 'resource.dll'; unknown.write_bytes(b'A')
+        before = self.collect()
+        unknown.unlink(); self.pma.unlink(); self.setup.rmdir()
+        self.assertNotEqual(before, self.collect())
+
+    def test_e2e_failure_diagnostics_survive_cp1252_parent(self):
+        import subprocess
+        import sys
+        script = Path(__file__).resolve().parent / 'run_e2e.py'
+        output = self.root / 'e2e-output'
+        code = '''import runpy,sys,subprocess
+from unittest.mock import patch
+sys.argv = [sys.argv[1], '--repo', sys.argv[2], '--output', sys.argv[3], '--ffmpeg', sys.executable, '--chrome', sys.executable]
+results = [subprocess.CompletedProcess([], n, '中文诊断\\n'.encode('utf-8'), b'') for n in (0,0,1)]
+with patch.object(subprocess, 'run', side_effect=results):
+    runpy.run_path(sys.argv[0], run_name='__main__')
+'''
+        child_env = dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='cp1252')
+        result = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code,
+            str(script), str(script.parent.parent), str(output)], env=child_env, capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('中文诊断', result.stdout.decode('utf-8'))
+        self.assertNotIn(b'UnicodeEncodeError', result.stderr)
+        self.assertFalse(json.loads((output / 'results.json').read_text(encoding='utf-8'))['pass'])
+
+    def test_reparse_telemetry_directory_and_pma_fail_closed(self):
+        original = Path.lstat
+        for target in (self.setup, self.pma):
+            def attributes(p, *args, **kwargs):
+                value = original(p, *args, **kwargs)
+                return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) if p == target else value
+            with self.subTest(path=target.name), patch.object(Path, 'lstat', attributes):
+                with self.assertRaises(env.EnvironmentError):
+                    self.collect()
+
+    def test_only_expected_deletion_races_are_tolerated(self):
+        before = self.collect()
+        original_iter, original_stat = Path.iterdir, Path.lstat
+        def removed_directory(p):
+            if p == self.setup:
+                raise FileNotFoundError(str(p))
+            return original_iter(p)
+        with patch.object(Path, 'iterdir', removed_directory):
+            self.assertEqual(before, self.collect())
+        def removed_leaf(p, *args, **kwargs):
+            if p == self.pma:
+                raise FileNotFoundError(str(p))
+            return original_stat(p, *args, **kwargs)
+        with patch.object(Path, 'lstat', removed_leaf):
+            self.assertEqual(before, self.collect())
+        unknown = self.setup / 'resource.pak'; unknown.write_bytes(b'resource')
+        def removed_unknown(p, *args, **kwargs):
+            if p == unknown:
+                raise FileNotFoundError(str(p))
+            return original_stat(p, *args, **kwargs)
+        with patch.object(Path, 'lstat', removed_unknown), self.assertRaises(FileNotFoundError):
+            self.collect()
+        def denied(p):
+            if p == self.setup:
+                raise PermissionError(str(p))
+            return original_iter(p)
+        with patch.object(Path, 'iterdir', denied), self.assertRaises(PermissionError):
+            self.collect()
+
+
 class EnvironmentContracts(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -34,8 +143,10 @@ class EnvironmentContracts(unittest.TestCase):
             patch.object(env, '_command', side_effect=self.command),
             patch.object(env, '_python_runtime', return_value={'fixture': True}),
             patch.object(env, '_files', side_effect=lambda paths: original_files(
-                [self.lib if str(p) in ('/etc/machine-id', '/proc/sys/kernel/random/boot_id',
-                                        '/etc/ld.so.cache') else p for p in paths]))]
+                [{'/fixture/font.ttf': self.font, '/fixture/libfont.so': self.lib,
+                  '/fixture/fonts.conf': self.config, '/etc/machine-id': self.lib,
+                  '/proc/sys/kernel/random/boot_id': self.lib, '/etc/ld.so.cache': self.lib}.get(str(p), p)
+                 for p in paths]))]
 
         for p in self.patches:
             p.start(); self.addCleanup(p.stop)
@@ -44,11 +155,11 @@ class EnvironmentContracts(unittest.TestCase):
         if len(args) == 2 and args[1] in ('--version', '--sanity'):
             return 'fixture renderer version 1'
         if args[0] == 'fc-list':
-            return str(self.font) + '\n'
+            return '/fixture/font.ttf\n'
         if args[0] == 'fc-conflist':
-            return '+ ' + str(self.config) + ': fixture\n'
+            return '+ /fixture/fonts.conf: fixture\n'
         if args[0] == 'ldd':
-            return 'libfont.so => ' + str(self.lib) + ' (0x1234)\n'
+            return 'libfont.so => /fixture/libfont.so (0x1234)\n'
         self.fail(str(args))
 
     def collect(self):
@@ -64,6 +175,27 @@ class EnvironmentContracts(unittest.TestCase):
             self.assertNotEqual(env.digest(a), env.digest(self.collect()), str(path))
             path.write_bytes(original)
         self.assertEqual(a, self.collect())
+
+    def test_linux_inventory_preserves_cross_drive_native_font_path(self):
+        # The Linux protocol inventory is independent of the host filesystem.
+        # Simulate the hosted runner's D: font while hashing real temp bytes;
+        # no drive mapping or system configuration is created by this fixture.
+        physical_font = self.font
+        self.font = Path('D:/renderer-fixture/font.ttf')
+        original_file, observed = env._file, []
+        def hash_input(path):
+            if str(path) == str(self.font):
+                observed.append(str(path))
+                return original_file(physical_font)
+            return original_file(path)
+        with patch.object(env, '_file', side_effect=hash_input):
+            before = self.collect()
+            st = physical_font.stat()
+            physical_font.write_bytes(b'font B')
+            os.utime(physical_font, ns=(st.st_atime_ns, st.st_mtime_ns))
+            self.assertNotEqual(env.digest(before), env.digest(self.collect()))
+        self.assertTrue(observed)
+        self.assertTrue(all(path.startswith('D:') for path in observed))
 
     def test_new_distribution_member_and_visual_flags_invalidate(self):
         a = self.collect()
@@ -111,6 +243,44 @@ class EnvironmentContracts(unittest.TestCase):
         cert['axes']['fonts'] = {}
         with self.assertRaises(env.EnvironmentError):
             env.verify_certificate(cert)
+
+    def test_recheck_diagnoses_runtime_members_without_values_or_host_paths(self):
+        before = self.collect()
+        before['runtime'] = {'/private/distribution': {
+            'SetupMetrics/setup.pma': ['private target', 'secret digest'],
+            'version/resources.pak': ['private target', 'secret digest']}}
+        after = copy.deepcopy(before)
+        del after['runtime']['/private/distribution']['SetupMetrics/setup.pma']
+        after['runtime']['/private/distribution']['version/resources.pak'][1] = 'new secret'
+        after['environment']['HOME'] = '/private/new-home'
+        after['registry'] = {'private preference': 'secret value'}
+        c = SimpleNamespace(_gfx_environment=(None, before, self.binary, None))
+        with patch.object(env, 'resolve', return_value=before), \
+                patch.object(env, 'collect', return_value=after):
+            with self.assertRaises(env.EnvironmentError) as error:
+                env.recheck(c)
+        message = str(error.exception)
+        for label in ('runtime/SetupMetrics/setup.pma', 'runtime/version/resources.pak',
+                      'environment', 'registry', 'restart with current inputs'):
+            self.assertIn(label, message)
+        for value in ('/private', 'secret', 'preference'):
+            self.assertNotIn(value, message)
+        self.assertIs(c._gfx_environment[1], before)
+
+    def test_change_diagnostics_bound_output_and_escape_labels(self):
+        before = {'runtime': {'/private': {}}}
+        after = {'runtime': {'/private': {str(i): ['target', 'digest'] for i in range(30)}}}
+        labels = json.loads(env._changed_inputs(before, after))
+        self.assertEqual(len(labels), 21)
+        self.assertEqual(labels[-1], '...')
+        after = {'runtime': {'/private': {'C:/private/input': [], '\nmember': []}}}
+        diagnostic = env._changed_inputs(before, after)
+        self.assertNotIn('C:/private', diagnostic)
+        self.assertNotIn('\n', diagnostic)
+        diagnostic = env._changed_inputs(
+            {'host_boot': {'boot_filetime': 'secret before', 'machine_guid': 'unchanged'}},
+            {'host_boot': {'boot_filetime': 'secret after', 'machine_guid': 'unchanged'}})
+        self.assertEqual(json.loads(diagnostic), ['host_boot/boot_filetime'])
 
     def test_environment_key_and_receipt_axes_share_dependency_resolver(self):
         from tests.gfx_environment_fixture import bind_environment
@@ -217,7 +387,7 @@ class ArchivedEnvironmentEvidence(unittest.TestCase):
         import hashlib
         from PIL import Image
         root = Path(__file__).parent / 'fixtures/gfx-environment'
-        report = json.loads((root / 'acceptance-2026-10-18.json').read_text())
+        report = json.loads((root / 'acceptance-2026-10-18.json').read_text(encoding='utf-8'))
         self.assertTrue(report['passed'])
         self.assertTrue(report['cef_runtime_negative']['worker_unchanged'])
         self.assertNotEqual(report['cef_runtime_negative']['library_before'],

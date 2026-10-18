@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,14 @@ spec.loader.exec_module(ci)
 
 def tests_of(case):
     return list(unittest.defaultTestLoader.loadTestsFromTestCase(case))
+
+
+BASH = shutil.which('bash') or 'bash'
+if os.name == 'nt':
+    git = shutil.which('git')
+    candidate = Path(git).resolve().parent.parent / 'bin/bash.exe' if git else None
+    if candidate and candidate.is_file():
+        BASH = str(candidate)
 
 
 class StrictMediaGate(unittest.TestCase):
@@ -417,7 +426,10 @@ class NewBrowser(unittest.TestCase):
         self.assertEqual(inventory['tests.test_failure_recovery.RealFFmpegRecovery'], 'ffmpeg')
         for selector in ('tests.test_gfx_cache_integrity.RealBrowserIntegrity',
                          'tests.test_failure_recovery.RealChromeRecovery',
-                         'tests.test_failure_recovery.RealFFmpegRecovery'):
+                         'tests.test_failure_recovery.RealFFmpegRecovery',
+                         'tests.test_png_format_stability.TestStableSource.test_independent_ffmpeg_rgba_pixels_and_pts',
+                         'tests.test_png_pts_precision.TestPngTiming.test_real_n1_first_interior_tail_and_repeat_are_timeline_correct',
+                         'tests.test_png_pts_precision.TestPngTiming.test_negative_relative_seek_uses_current_then_next_source_frame'):
             with self.subTest(selector=selector):
                 selections = {kind: tuple(name for name in names if name != selector)
                               for kind, names in ci.MEDIA_TESTS.items()}
@@ -446,6 +458,7 @@ class SafetyCommandHangGuard(unittest.TestCase):
         from tests.safety import test_timeline_escape_safety as timeline
         self.assertEqual(support.SandboxCase.vtx_timeout, 30)
         self.assertFalse(support.SandboxCase.vtx_diagnostics)
+        self.assertFalse(support.SandboxCase.vtx_environment_fixture)
         for case_type, timeout in ((support.SandboxCase, 30),
                                    (timeline.SnapshotTimelineEscape, 30),
                                    (timeline.WriteRootEscape, 30),
@@ -456,11 +469,58 @@ class SafetyCommandHangGuard(unittest.TestCase):
                     mock.patch.object(support.subprocess, 'run', return_value=completed) as run, \
                     contextlib.redirect_stderr(io.StringIO()):
                 self.assertIs(case.run_vtx('validate'), completed)
+                command = run.call_args.args[0]
+                if case_type is support.SandboxCase:
+                    self.assertEqual(command[:2], ['env', 'python3'])
+                    self.assertEqual(command[2], str(support.REPO / 'vtx/vtx.py'))
+                    self.assertNotIn('-c', command)
+                else:
+                    self.assertTrue(case.vtx_environment_fixture)
+                    self.assertEqual(command[:3], ['env', 'python3', '-c'])
+                    self.assertIn('from tests.gfx_environment_fixture import collect, find_chrome', command[3])
+                    self.assertIn("runpy.run_path(sys.argv[0], run_name='__main__')", command[3])
+                    self.assertEqual(command[4], str(support.REPO / 'vtx/vtx.py'))
+                self.assertEqual(command[-3:], ['-t', str(case.timeline), 'validate'])
                 run.assert_called_once_with(
-                    ['env', 'python3', str(support.REPO / 'vtx/vtx.py'),
-                     '-t', str(case.timeline), 'validate'],
+                    command,
                     cwd=case.root, env=case.env, capture_output=True, text=True,
                     timeout=timeout)
+
+    def test_path_fixture_keeps_real_receipt_asset_identity_and_missing_asset_failure(self):
+        from tests.safety import _support as support
+        from tests.safety.test_timeline_escape_safety import LegitUseControl
+        case = self.sandbox(LegitUseControl)
+        case.vtx_traceback_after = 45
+        command = case._vtx_command(('validate',))
+        self.assertIn('after = 45', command[3])
+        self.assertIn('faulthandler.dump_traceback_later(after, repeat=False)', command[3])
+        self.assertIn('faulthandler.cancel_dump_traceback_later()', command[3])
+        self.assertEqual(case.vtx_timeout, 60)
+        asset = case.put(case.sandbox / 'shared.html', b'<html>one</html>')
+        case.tl['video_tracks'] = [{'name': 'gfx', 'kind': 'gfx', 'clips': [
+            {'src': '../shared.html', 'dst_in': 0, 'dur': 30}]}]
+        case.save_timeline()
+        inherited_environment = dict(case.env)
+        real_run = support.subprocess.run
+        with mock.patch.object(support.subprocess, 'run', wraps=real_run) as run, \
+                contextlib.redirect_stderr(io.StringIO()):
+            case.assert_ok(case.run_vtx('validate'))
+        self.assertEqual(run.call_args.kwargs['env'], inherited_environment)
+        receipt_path = case.root / 'out/receipt.json'
+        before = json.loads(receipt_path.read_text())
+        self.assertTrue(before['stages']['validate']['ok'])
+        self.assertTrue(before['gfx_backend']['environment_identity'].startswith('vtx.gfx-environment/1|'))
+        asset.write_bytes(b'<html>two</html>')
+        with contextlib.redirect_stderr(io.StringIO()):
+            case.assert_ok(case.run_vtx('validate'))
+        after = json.loads(receipt_path.read_text())
+        self.assertNotEqual(before['input_fingerprint'], after['input_fingerprint'])
+        asset.unlink()
+        with contextlib.redirect_stderr(io.StringIO()):
+            failed = case.run_vtx('validate')
+        self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.assertFalse(json.loads(receipt_path.read_text())['stages']['validate']['ok'])
+        case.assert_outside_unchanged()
 
     def test_positive_command_reports_real_elapsed_time_without_environment_dump(self):
         from tests.safety import _support as support
@@ -528,7 +588,7 @@ class SafetyCommandHangGuard(unittest.TestCase):
 class WorkflowContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.text = (ROOT / '.github/workflows/ci.yml').read_text()
+        cls.text = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
         # BaseLoader avoids YAML 1.1 treating GitHub's "on" as a boolean.
         cls.workflow = yaml.load(cls.text, Loader=yaml.BaseLoader)
 
@@ -539,7 +599,7 @@ class WorkflowContract(unittest.TestCase):
         self.assertNotIn('pull_request_target', self.workflow['on'])
 
     def test_declared_supported_python_versions_are_tested(self):
-        pyproject = (ROOT / 'pyproject.toml').read_text()
+        pyproject = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
         declared = set(re.findall(r'Programming Language :: Python :: (3\.\d+)', pyproject))
         matrix = self.workflow['jobs']['core']['strategy']['matrix']['python']
         match = re.fullmatch(
@@ -630,7 +690,7 @@ class WorkflowContract(unittest.TestCase):
         })
         for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', ''), repeat=3):
             with self.subTest(values=values):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, **dict(zip(step['env'], values))),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0,
@@ -672,7 +732,7 @@ class WorkflowContract(unittest.TestCase):
         })
         for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', '', 'unknown'), repeat=2):
             with self.subTest(values=values):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, **dict(zip(step['env'], values))),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0,
@@ -681,7 +741,7 @@ class WorkflowContract(unittest.TestCase):
             environment = {key: value for key, value in os.environ.items()
                            if key not in step['env']}
             environment.update({key: 'success' for key in step['env'] if key != missing})
-            result = subprocess.run(['bash', '-e', '-c', step['run']],
+            result = subprocess.run([BASH, '-e', '-c', step['run']],
                                     env=environment, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)
 
@@ -695,13 +755,13 @@ class WorkflowContract(unittest.TestCase):
         self.assertEqual(step['env'], {'CORE_RESULT': '${{ needs.core.result }}'})
         for value in ('success', 'failure', 'cancelled', 'skipped', '', 'unknown'):
             with self.subTest(value=value):
-                result = subprocess.run(['bash', '-e', '-c', step['run']],
+                result = subprocess.run([BASH, '-e', '-c', step['run']],
                                         env=dict(os.environ, CORE_RESULT=value),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0, value == 'success')
 
     def test_ungrouped_local_full_runner_remains_original_discovery(self):
-        runner = (ROOT / 'scripts/run_all_tests.sh').read_text()
+        runner = (ROOT / 'scripts/run_all_tests.sh').read_text(encoding='utf-8')
         self.assertIn('if [ "$#" -gt 0 ]; then', runner)
         self.assertIn('exec env python3 scripts/ci_partition.py "$@"', runner)
         self.assertIn('env python3 -m unittest discover -s tests -t . -v || rc=$?', runner)

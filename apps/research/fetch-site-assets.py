@@ -42,6 +42,9 @@ def save(url: str, outdir: Path, kind: str) -> Path:
 
 
 def main() -> int:
+    if len(sys.argv) < 3 or sys.argv[1] in ('--help', '-h'):
+        print('用法: fetch-site-assets.py <页面URL> <输出目录>')
+        return 0 if len(sys.argv) > 1 and sys.argv[1] in ('--help', '-h') else 2
     failed = False
     url, outdir = sys.argv[1], Path(sys.argv[2])
     outdir.mkdir(parents=True, exist_ok=True)

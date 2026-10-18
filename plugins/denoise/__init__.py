@@ -4,7 +4,7 @@ sources[] 级键 ``"denoise": true | {...可选参数}``——声明即该源的
 走「Resemble 仅降噪(conda) → afftdn 谱降噪+回 48kHz」链（v2，链内延迟
 补偿；v1 陷波级弃用，弃选理由见 denoise_voice.py 头注），产物内容寻址：
 
-    cache/audio/{audio_key}::denoise:{version}:{value_digest}:{code_digest}.wav
+    cache/audio/{audio_key}__denoise_{version}_{value_digest}_{code_digest}.wav
 
 - audio_key = 内核 prepare 裸提取键（经 vtx.api.audio_key——插件只依赖内核
   API 面，禁捅内部模块）；value_digest = 该源 denoise 键值的排序 JSON sha1[:12]；
@@ -53,11 +53,11 @@ def _source(c, sid):
 
 
 def product_path(c, sid) -> Path:
-    """产物路径 cache/audio/{audio_key}::denoise:{version}:{value_digest}:{code_digest}.wav。"""
+    """产物路径 cache/audio/{audio_key}__denoise_{version}_{value_digest}_{code_digest}.wav。"""
     s = _source(c, sid) or {}
     return c.cache / "audio" / (
-        f"{_audio_key(c, sid)}::denoise:{VERSION}:{value_digest(s.get(KEY))}"
-        f":{plugin_code_digest('denoise')}.wav")
+        f"{_audio_key(c, sid)}__denoise_{VERSION}_{value_digest(s.get(KEY))}"
+        f"_{plugin_code_digest('denoise')}.wav")
 
 
 def prepare_source(c, sid):

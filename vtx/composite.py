@@ -405,7 +405,12 @@ class RenderPlan:
                + f"stop_duration={stop / c.fps:.6f}:stop_mode=clone,")
         shift = eff - pre - head
         shrink = f"scale=trunc(iw*{f}/2)*2:trunc(ih*{f}/2)*2," if draft else ""
-        slave = f"[{idx}:v]{shrink}{pad}setpts=PTS+{shift}/{c.fps}/TB[L{k}T]"
+        # image2 uses TB=1/fps. setpts truncates fractional ticks, so the
+        # half-frame lead above otherwise selects PNG n+1 at timeline frame n.
+        # Represent that lead exactly; keep non-PNG streams and enable/EOF
+        # policy unchanged. Output CFR remains the project's original fps.
+        timing = f"settb=1/{2 * c.fps}," if L["gfx"] else ""
+        slave = f"[{idx}:v]{shrink}{pad}{timing}setpts=PTS+{shift}/{c.fps}/TB[L{k}T]"
         ov = (f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
               f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
         return slave, ov, f"L{k}"
@@ -699,6 +704,7 @@ def prepare_layers(c: Ctx):
     layers = []      # 每项: {cl, seg|source, x, y, w2, h2|None, gfx:bool, ti}
     enc_tasks = []   # (label, cmd, nvenc)：待并行编码的 seg（缓存命中的不进列表）；
                      # nvenc=True 的任务在 run_ffmpeg_task 里占 NVENC 会话预算槽
+    producers = {}   # 本次调用的目标 → 精确生产规范；逻辑 layers 不去重
     # seg 编码器判定（方案二阶段3）循环外算一次：无 alpha seg 默认 NVENC 化
     # （卸给 GPU，缓解波内与 gfx 的 CPU 竞争），VTX_SEG_NVENC=0 或探测失败回落
     # x264。判定单一来源 encoders.seg_encoder_kind——hygiene.gc 的键集重算共用
@@ -753,6 +759,20 @@ def prepare_layers(c: Ctx):
                     # x264 回退串保持原样（VTX_SEG_NVENC=0 显式回退或探测失败回落）
                     vcodec_seg = ["-c:v", "libx264", "-crf", "14", "-preset", "veryfast",
                                   "-pix_fmt", "yuv420p"]
+            label = f"seg t{ti:02d}c{ci:02d}（{cl['dur']} 帧）"
+            cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
+                   "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
+                   *vcodec_seg, str(seg)]
+            nvenc = not need_alpha and seg_kind == "nvenc"
+            signature = (tuple(cmd), nvenc)
+            producer = producers.get(seg)
+            if producer is None:
+                producer = {"signature": signature, "label": label, "queued": False}
+                producers[seg] = producer
+            elif producer["signature"] != signature:
+                # Check even warm targets: a key collision must not select an
+                # arbitrary producer or certify incompatible consumers.
+                raise ValueError(f"conflicting seg producer for {seg}: {producer['label']} / {label}")
             # Verify a successful decode's digest/frame record, or fully decode
             # legacy media. Container header counts alone cannot certify a hit.
             if media_cache_valid(seg, cl['dur'], allow_short_verified=True):
@@ -764,11 +784,9 @@ def prepare_layers(c: Ctx):
             # 不变，分段切片按 dst_in 过滤依赖顺序），收集到 enc_tasks 由线程池并行编。
             L = {"cl": cl, "seg": seg, "x": x, "y": y, "w2": w2, "h2": h2, "gfx": False, "ti": ti}
             layers.append(L)
-            enc_tasks.append((f"seg t{ti:02d}c{ci:02d}（{cl['dur']} 帧）",
-                              ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
-                               "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
-                               *vcodec_seg, str(seg)],
-                              not need_alpha and seg_kind == "nvenc"))
+            if not producer["queued"]:
+                enc_tasks.append((label, cmd, nvenc))
+                producer["queued"] = True
     run_parallel(c, enc_tasks, "seg 预编码")
     # This task also runs independently in the all pipeline wave.
     stage = "video_draft" if getattr(c, "draft", False) else "video"

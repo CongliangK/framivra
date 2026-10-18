@@ -16,7 +16,11 @@
 运行：bash scripts/run_all_tests.sh（批次一）。
 """
 import json
+import contextlib
+import io
 import os
+import shlex
+import subprocess
 import stat
 import sys
 import tempfile
@@ -84,20 +88,24 @@ class RootScopeScan(unittest.TestCase):
 class ProbeSourceIntegration(unittest.TestCase):
     """缝 C：bgm 源（工程 JSON）validate 全链——伪 bgm CLI + 真 registry 插件。"""
 
-    FAKE = r'''#!/bin/bash
-proj="${@: -1}"
-dur=$(cat "$(dirname "$proj")/duration.txt" 2>/dev/null || echo 4.0)
-printf '{\n  "duration_s": %s\n}\n' "$dur"
+    FAKE = r'''import json, sys
+from pathlib import Path
+project = Path(sys.argv[-1])
+duration_file = project.parent / 'duration.txt'
+duration = float(duration_file.read_text(encoding='utf-8')) if duration_file.exists() else 4.0
+print(json.dumps({'duration_s': duration}, indent=2))
 '''
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
-        fake = self.root / "fakebgm"
+        fake = self.root / "fakebgm.py"
         fake.write_text(self.FAKE, encoding="utf-8")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         cfg = self.root / "cfg.json"
-        cfg.write_text(json.dumps({"bgm": {"cli": str(fake)}}), encoding="utf-8")
+        argv = [sys.executable, str(fake)]
+        command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+        cfg.write_text(json.dumps({"bgm": {"cli": command}}), encoding="utf-8")
         self._old = os.environ.get("VTX_CONFIG")
         os.environ["VTX_CONFIG"] = str(cfg)
         (self.root / "bgm.json").write_text('{"name": "x"}', encoding="utf-8")
@@ -174,7 +182,8 @@ class GcLoudnessSidecarExemption(unittest.TestCase):
             (root / "cache" / "audio" / "loudness_receipts.json.tmp").write_text("", encoding="utf-8")
             from vtx.infra import Ctx
             c = Ctx(_write(root, _tl()))
-            plan = hygiene.gc_plan(c)
+            with contextlib.redirect_stdout(io.StringIO()):
+                plan = hygiene.gc_plan(c)
             names = [p.name for p, _, _ in plan["audio"]]
             self.assertNotIn("loudness_receipts.json.lock", names,
                              "flock 锁文件被 gc 回收会破坏跨进程互斥（B-P2-1）")
@@ -196,7 +205,8 @@ class GcOutDeliverableExemption(unittest.TestCase):
                 (out / n).write_bytes(b"x" * 8)
             from vtx.infra import Ctx
             c = Ctx(_write(root, _tl()))
-            plan = hygiene.gc_plan(c)
+            with contextlib.redirect_stdout(io.StringIO()):
+                plan = hygiene.gc_plan(c)
             names = [p.name for p, _, _ in plan["out_intermediate"]]
             for keep in ("final_4k.mp4", "final_4k_x264_ref.mp4",
                          "FREEZE.json", "FREEZE_v47.json"):
@@ -249,8 +259,9 @@ class RangeStaleReceipt(unittest.TestCase):
             (root / "out" / "receipt.json").write_text(json.dumps(
                 {"input_fingerprint": "STALE",
                  "stages": {"audio": {"gain_db": 2.5, "ok": True}}}), encoding="utf-8")
-            self.assertIsNone(_receipt_audio_gain(c),
-                              "指纹失配的陈旧回执不得供给区间增益（B-P2-2）")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertIsNone(_receipt_audio_gain(c),
+                                  "指纹失配的陈旧回执不得供给区间增益（B-P2-2）")
 
     def test_fresh_receipt_supplies_gain(self):
         from vtx.range import _receipt_audio_gain
@@ -278,8 +289,8 @@ class DenoiseProductKeyDigest(unittest.TestCase):
         with mock.patch.object(den, "_audio_key", return_value="ak123"):
             p = den.product_path(_C(), "s1")
         name = p.name
-        self.assertIn("::denoise:2.0.0:", name)   # R-20 P2 升级连带随迁(P3:根 tests 版本钉遗漏,越界申报获批,仅字面量)
-        parts = name[:-4].split(":")
+        self.assertIn("__denoise_2.0.0_", name)   # R-20 P2 升级连带随迁(P3:根 tests 版本钉遗漏,越界申报获批,仅字面量)
+        parts = name[:-4].split("_")
         self.assertEqual(len(parts[-1]), 12,
                          f"产物键尾部须为 12 位代码摘要（A-P1-1）：{name}")
 

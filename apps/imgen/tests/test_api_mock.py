@@ -13,6 +13,8 @@
 CLI 走 subprocess（stdin=DEVNULL 保证非 TTY）；mock 输入图 ffmpeg 合成（KB 级）。
 """
 import glob
+import io
+from unittest.mock import patch
 import json
 import os
 import subprocess
@@ -441,6 +443,15 @@ class KindOverrideTest(ApiMockTestCase):
 
 
 class PayGateTest(ApiMockTestCase):
+    def test_tty_eof_aborts_with_zero_submits(self):
+        cli = _loader.load("imgen_cli")
+        stderr = io.StringIO()
+        with patch("builtins.input", side_effect=EOFError):
+            self.assertFalse(cli.confirm_paid_submit(1, 0.1, False, True, stderr=stderr))
+            self.assertFalse(cli.confirm_paid_submit(51, 0.1, True, True, stderr=stderr))
+        self.assertEqual(self.mock.state.submit_count, 0)
+        self.assertIn("未产生任何提交", stderr.getvalue())
+
     def test_no_yes_non_tty_aborts_with_zero_submits(self):
         proc = self.run_cli([
             "gen", "付费门测试", "--out", str(self.out), "--kind", "bg4k", "--key", TEST_KEY,

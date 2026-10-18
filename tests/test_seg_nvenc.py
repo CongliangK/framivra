@@ -195,5 +195,216 @@ class TestNvencBudget(unittest.TestCase):
                 list(ex.map(work, range(4)))   # Barrier 超时会抛 BrokenBarrierError → 测试失败
 
 
+class TestPrepareProducerDedup(unittest.TestCase):
+    """#208: one producer per invocation, without losing logical consumers."""
+
+    def setUp(self):
+        import tempfile
+        from types import SimpleNamespace
+        from vtx import composite
+        self.composite = composite
+        temporary = tempfile.TemporaryDirectory(prefix='vtx-seg-producers-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        (self.root / 'a.mp4').write_bytes(b'first source')
+        (self.root / 'b.mp4').write_bytes(b'second source')
+        self.clips = [dict(src='a', src_in=0, src_out=6, dur=6, dst_in=i * 6)
+                      for i in range(12)]
+        self.c = SimpleNamespace(
+            root=self.root, cache=self.root / 'cache', fps=30, spf=1 / 30,
+            w=64, h=48, dry=False,
+            tl={'video_tracks': [{'kind': 'broll', 'clips': self.clips}]},
+            src_path=lambda sid: self.root / (sid + '.mp4'),
+            probe=lambda path: {'w': 64, 'h': 48},
+            crop169=mock.Mock(return_value='crop=64:36:0:6'),
+            verify_inputs=mock.Mock())
+        for name, target, kwargs in (
+                ('cache', 'media_cache_valid', {'return_value': False}),
+                ('kind', 'seg_encoder_kind', {'return_value': 'x264'}),
+                ('runner', 'run_parallel', {})):
+            patch = mock.patch.object(composite, target, **kwargs)
+            setattr(self, name, patch.start())
+            self.addCleanup(patch.stop)
+
+    def prepare(self):
+        layers = self.composite.prepare_layers(self.c)
+        return layers, self.runner.call_args.args[1]
+
+    def test_twelve_cold_consumers_share_exactly_one_producer(self):
+        layers, tasks = self.prepare()
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(len(layers), 12)
+        self.assertEqual([layer['cl'] for layer in layers], self.clips)
+        self.assertEqual([layer['cl']['dst_in'] for layer in layers], list(range(0, 72, 6)))
+        self.assertEqual(len({layer['seg'] for layer in layers}), 1)
+        self.assertTrue(all(layer['ti'] == 0 and not layer['gfx'] for layer in layers))
+        self.assertEqual(self.cache.call_count, 12)  # do not change validation lifetime
+        self.c.verify_inputs.assert_called_once_with('video')
+        self.assertFalse(tasks[0][2])
+        self.assertEqual(tasks[0][1][-1], str(layers[0]['seg']))
+
+    def test_equal_production_across_tracks_retains_track_order(self):
+        self.c.tl['video_tracks'] = [
+            {'kind': 'broll', 'clips': self.clips[:2]},
+            {'kind': 'broll', 'clips': self.clips[2:]}]
+        layers, tasks = self.prepare()
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual([layer['ti'] for layer in layers], [0, 0] + [1] * 10)
+        self.assertEqual([layer['cl'] for layer in layers], self.clips)
+
+    def test_different_inputs_and_production_parameters_stay_distinct(self):
+        changes = ({'src': 'b'}, {'src_in': 1}, {'src_out': 7}, {'dur': 7},
+                   {'scale': 0.5}, {'x': 2}, {'y': 2}, {'opacity': 0.5},
+                   {'fade_in_frames': 2}, {'fade_out_frames': 2})
+        for change in changes:
+            with self.subTest(change=change):
+                self.c.tl['video_tracks'][0]['clips'] = [self.clips[0],
+                                                       dict(self.clips[1], **change)]
+                layers, tasks = self.prepare()
+                self.assertEqual(len(tasks), 2)
+                self.assertNotEqual(layers[0]['seg'], layers[1]['seg'])
+
+    def test_encoder_modes_keep_their_key_argv_and_budget_flag(self):
+        keys = []
+        for kind in ('x264', 'nvenc'):
+            with self.subTest(kind=kind):
+                self.kind.return_value = kind
+                layers, tasks = self.prepare()
+                keys.append(layers[0]['seg'])
+                self.assertEqual(len(tasks), 1)
+                self.assertEqual(tasks[0][2], kind == 'nvenc')
+                self.assertIn('h264_nvenc' if kind == 'nvenc' else 'libx264', tasks[0][1])
+        self.assertNotEqual(*keys)
+        for clip in self.clips:
+            clip['opacity'] = 0.5
+        layers, tasks = self.prepare()
+        self.assertEqual(len(tasks), 1)
+        self.assertIn('prores_ks', tasks[0][1])
+        self.assertFalse(tasks[0][2])
+        self.assertEqual(layers[0]['seg'].suffix, '.mov')
+
+    def test_same_target_different_specs_fail_before_cold_or_warm_use(self):
+        for warm in (False, True):
+            for change in ({'src': 'b'}, {'src_in': 1}, {'dur': 7}, {'scale': 0.5}):
+                with self.subTest(warm=warm, change=change):
+                    self.cache.return_value = warm
+                    self.runner.reset_mock()
+                    self.c.tl['video_tracks'][0]['clips'] = [self.clips[0],
+                                                           dict(self.clips[1], **change)]
+                    with mock.patch.object(self.composite, 'seg_key', return_value='collision'), \
+                            self.assertRaisesRegex(ValueError, 'conflicting seg producer'):
+                        self.composite.prepare_layers(self.c)
+                    self.runner.assert_not_called()
+
+    def test_actual_filter_difference_conflicts_even_when_key_is_equal(self):
+        self.c.tl['video_tracks'][0]['clips'] = self.clips[:2]
+        self.c.crop169.side_effect = ['crop=64:36:0:6', 'crop=62:34:0:6']
+        with self.assertRaisesRegex(ValueError, 'conflicting seg producer'):
+            self.composite.prepare_layers(self.c)
+        self.runner.assert_not_called()
+
+    def test_different_keys_are_not_merged_by_equivalent_commands(self):
+        self.c.tl['video_tracks'][0]['clips'] = self.clips[:2]
+        with mock.patch.object(self.composite, 'seg_key', side_effect=['key-a', 'key-b']):
+            layers, tasks = self.prepare()
+        self.assertEqual(len(tasks), 2)
+        self.assertNotEqual(layers[0]['seg'], layers[1]['seg'])
+
+    def test_warm_hits_and_mixed_cache_states_preserve_all_consumers(self):
+        for hits, expected in (([True] * 12, 0),
+                               ([True] + [False] * 11, 1),
+                               ([False] + [True] * 11, 1)):
+            with self.subTest(hits=hits):
+                self.cache.reset_mock(side_effect=True)
+                self.cache.side_effect = hits
+                layers, tasks = self.prepare()
+                self.assertEqual(len(tasks), expected)
+                self.assertEqual(len(layers), 12)
+                self.assertEqual(self.cache.call_count, 12)
+
+    def test_table_is_local_to_each_invocation(self):
+        first, first_tasks = self.prepare()
+        second, second_tasks = self.prepare()
+        self.assertEqual(len(first_tasks), 1)
+        self.assertEqual(len(second_tasks), 1)
+        self.assertEqual(first, second)
+
+    def test_draft_and_range_keep_same_key_and_verification_stage(self):
+        reference, _ = self.prepare()
+        for draft, window, expected in ((True, None, 'video_draft'),
+                                        (False, (2, 5), None),
+                                        (True, (2, 5), None)):
+            with self.subTest(draft=draft, window=window):
+                self.c.draft, self.c.range_window = draft, window
+                self.c.verify_inputs.reset_mock()
+                layers, tasks = self.prepare()
+                self.assertEqual(layers, reference)
+                self.assertEqual(len(tasks), 1)
+                self.c.verify_inputs.assert_called_once_with(expected)
+
+    def test_empty_tracks_still_verify_inputs_without_producers(self):
+        self.c.tl['video_tracks'] = []
+        layers, tasks = self.prepare()
+        self.assertEqual((layers, tasks), ([], []))
+        self.c.verify_inputs.assert_called_once_with('video')
+
+    def test_dry_run_prints_one_producer_without_media_or_receipt(self):
+        import contextlib
+        import io
+        from vtx import infra
+        self.c.dry = True
+        output = io.StringIO()
+        with mock.patch.object(self.composite, 'run_parallel', infra.run_parallel), \
+                mock.patch.object(infra.subprocess, 'run', side_effect=AssertionError('dry process')), \
+                contextlib.redirect_stdout(output):
+            layers = self.composite.prepare_layers(self.c)
+        self.assertEqual(len(layers), 12)
+        self.assertEqual(output.getvalue().count('[dry-run]'), 1)
+        self.assertEqual(list((self.c.cache / 'seg').iterdir()), [])
+        self.assertFalse((self.root / 'out' / 'receipt.json').exists())
+
+    def test_producer_failure_blocks_all_dependants_without_extra_retries(self):
+        import contextlib
+        import io
+        from vtx import infra
+        for workers in (1, 3):
+            with self.subTest(workers=workers):
+                self.c.verify_inputs.reset_mock()
+                seen = []
+                # An unrelated producer still completes under existing run_parallel policy.
+                self.c.tl['video_tracks'][0]['clips'] = self.clips + [dict(self.clips[0], src='b')]
+                def execute(c, label, cmd, nvenc=False, **kwargs):
+                    source = cmd[cmd.index('-i') + 1]
+                    seen.append(source)
+                    if source == str(self.root / 'a.mp4'):
+                        raise RuntimeError('owned producer failed')
+                with mock.patch.object(self.composite, 'run_parallel', infra.run_parallel), \
+                        mock.patch.object(infra, 'io_workers', return_value=workers), \
+                        mock.patch.object(infra, 'run_ffmpeg_task', side_effect=execute), \
+                        contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()), \
+                        self.assertRaises(SystemExit) as caught:
+                    self.composite.prepare_layers(self.c)
+                self.assertEqual(caught.exception.code, 1)
+                self.assertEqual(sorted(seen), [str(self.root / 'a.mp4'), str(self.root / 'b.mp4')])
+                self.c.verify_inputs.assert_not_called()
+                self.assertFalse((self.root / 'out' / 'receipt.json').exists())
+        _, tasks = self.prepare()  # failure did not poison the next invocation
+        self.assertEqual(len(tasks), 2)
+
+    def test_unique_producer_cancellation_is_not_retried_or_swallowed(self):
+        import contextlib
+        import io
+        from vtx import infra
+        with mock.patch.object(self.composite, 'run_parallel', infra.run_parallel), \
+                mock.patch.object(infra, 'run_ffmpeg_task', side_effect=KeyboardInterrupt) as encode, \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertRaises(KeyboardInterrupt):
+            self.composite.prepare_layers(self.c)
+        self.assertEqual(encode.call_count, 1)
+        self.c.verify_inputs.assert_not_called()
+        self.assertFalse((self.root / 'out' / 'receipt.json').exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -764,6 +764,14 @@ def _preview_command(c, a):
 
 def main():
     """One invocation, including input-load and finish failures."""
+    if sys.platform == 'win32':
+        # All three entry points share this path. Redirected Windows streams
+        # may default to GBK, which cannot encode status glyphs or user paths.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except (AttributeError, OSError, ValueError):
+                pass
     execution = events.ExecutionContext()
     code, failure = 0, None
     try:

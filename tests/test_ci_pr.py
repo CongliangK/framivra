@@ -203,6 +203,33 @@ class CuratedRegressionGate(unittest.TestCase):
                        'tests.test_vt_entry', 'tests.safety.test_hygiene_safety'):
             self.assertIn(module, ci_pr.PR_MODULES)
 
+        # Require the actual fast regression methods, not just their module or
+        # an aggregate count that could be satisfied by unrelated tests.
+        module_name = 'tests.test_fstxn'
+        self.assertIn(module_name, ci_pr.curated_group('3'))
+        module = ci_pr.importlib.import_module(module_name)
+        methods = (
+            'test_pinned_derivative_does_not_require_proc_or_change_default_capability',
+            'test_missing_directory_capability_refuses_only_mixed_without_writes',
+            'test_regular_pinned_stream_io_abort_preserves_old_bytes_and_retry',
+        )
+
+        def assert_pinned_methods_loaded():
+            loader = ci_pr.OriginLoader()
+            suite = loader.loadTestsFromModule(module)
+            self.assertFalse(loader.errors)
+            counts = Counter(test.id() for test in ci_pr.flatten(suite))
+            for method in methods:
+                identity = f'{module_name}.PinnedPngPageBasics.{method}'
+                self.assertEqual(counts[identity], 1, identity)
+
+        assert_pinned_methods_loaded()
+        for method in methods:
+            with self.subTest(missing=method), \
+                    mock.patch.object(module.PinnedPngPageBasics, method, None), \
+                    self.assertRaisesRegex(AssertionError, method):
+                assert_pinned_methods_loaded()
+
     def test_unrecognized_argument_is_an_error(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
             ci_pr.main(['--pretend-full'])

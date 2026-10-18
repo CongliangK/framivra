@@ -17,6 +17,8 @@
 # 目标脚本取命令第二 token 做存在性预检;执行统一 bash -c "<command>",cwd=仓根。
 
 set -u
+# Gate output and Python subprocess pipes use UTF-8 on every host.
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"

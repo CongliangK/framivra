@@ -24,7 +24,9 @@
 无需真 Chrome）。
 """
 import hashlib
+import os
 import json
+import stat
 import struct
 import subprocess
 import tempfile
@@ -54,6 +56,15 @@ _IHDR_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8),
 # 恶意高压缩流（64 KiB 压缩解出数 GiB）也不会整段驻内存（issue #28 R3）。
 _MAX_ZLIB_OUT = 1 << 20
 
+# PNG editor semantics, not generic ancillary interpretation (PNG 3 §14.2).
+# RGB samples/space, dimensions and palette do not change; sBIT alone gains
+# alpha precision. bKGD remains RGB, hIST/sPLT keep the unchanged palette, and
+# tIME keeps the unchanged image's timestamp. Unknown unsafe chunks are refused
+# only by conversion, while unknown safe-to-copy chunks keep their IDAT side.
+_RGBA_UNSAFE_COPY_CHUNKS = {b'cHRM', b'gAMA', b'iCCP', b'sBIT', b'sRGB',
+                            b'cICP', b'mDCV', b'cLLI', b'bKGD', b'hIST',
+                            b'sPLT', b'tIME'}
+
 
 class GfxCliError(RuntimeError):
     """Chrome CLI 截图回退路径的显式失败（非零退出码 / 产物校验不过）。"""
@@ -74,7 +85,8 @@ class _HashingReader:
         return self.stream.tell()
 
 
-def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "str | None":
+def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None,
+                       _properties=None, _chunks=None, _directory_fd=None) -> "str | None":
     """校验单个目标 PNG：存在、非零字节、PNG 签名、完整块与 CRC、IDAT 可解码。
 
     有效返回 None；无效返回中文原因（缺失/零字节/非 PNG/截断/CRC 损坏/不支持
@@ -84,15 +96,28 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
     """
     p = Path(path)
     try:
-        if not p.is_file():
-            return "缺失"
-        size = p.stat().st_size
+        if _directory_fd is None:
+            if not p.is_file():
+                return "缺失"
+            size = p.stat().st_size
+        else:
+            info = os.stat(p.name, dir_fd=_directory_fd, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                return "缺失或不是普通文件"
+            size = info.st_size
     except OSError as e:            # 竞态删除/权限等：按无效处理，不放行
         return f"不可读（{e}）"
+    if _chunks is not None and size > 32 << 20:
+        return "PNG conversion exceeds 32 MiB compressed limit"
     if size == 0:
         return "零字节"
     try:
-        with open(p, "rb") as stream:
+        with (open(p, "rb") if _directory_fd is None else
+              fstxn.open_at(_directory_fd, p.name)) as stream:
+            if _directory_fd is not None:
+                size = os.fstat(stream.fileno()).st_size
+                if _chunks is not None and size > 32 << 20:
+                    return "PNG conversion exceeds 32 MiB compressed limit"
             fh = _HashingReader(stream)
             head = fh.read(len(PNG_SIGNATURE))
             if head != PNG_SIGNATURE:
@@ -102,6 +127,9 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
                 return "截断 PNG（不足完整 IHDR 的 33 字节）"
             first, has_data = True, False
             palette = False
+            transparency, animated, significant_bits = False, False, False
+            unsafe_unknown = False
+            chunks = [] if _chunks is not None else None
             idat_ended = False
             # issue #28 R3：CRC 全对 ≠ 像素可解码——红队用「块结构完整、CRC 正确、
             # IDAT 为垃圾字节」的件骗过纯结构校验：真 CLI rc0、gfx ok:true、二次
@@ -122,16 +150,33 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
                     return "截断 PNG（块长度超出文件）"
                 if not all(65 <= x <= 90 or 97 <= x <= 122 for x in tag) or tag[2] & 32:
                     return "损坏 PNG（块类型非法）"
+                if tag[0] & 32 and not tag[3] & 32 and tag not in _RGBA_UNSAFE_COPY_CHUNKS:
+                    unsafe_unknown = True
+                if tag in (b"acTL", b"fcTL", b"fdAT"):
+                    animated = True
+                if tag == b"tRNS":
+                    if first or transparency or has_data or color not in (0, 2, 3) \
+                            or (color == 0 and length != 2) or (color == 2 and length != 6) \
+                            or (color == 3 and (not palette or not 0 < length <= palette_entries)):
+                        return "损坏 PNG（tRNS 无效或顺序错误）"
+                    transparency = True
+                if tag == b"sBIT":
+                    if first or significant_bits or palette or has_data \
+                            or length != {0: 1, 2: 3, 3: 3, 4: 2, 6: 4}.get(color):
+                        return "损坏 PNG（sBIT 无效或顺序错误）"
+                    significant_bits = True
+                body = bytearray() if chunks is not None or tag in (b'tRNS', b'sBIT') else None
                 if not first:
                     if tag == b"IHDR":
                         return "损坏 PNG（重复 IHDR）"
                     if not tag[0] & 32 and tag not in (b"PLTE", b"IDAT", b"IEND"):
                         return "损坏 PNG（未知关键块）"
                     if tag == b"PLTE":
-                        if palette or has_data or not length or length % 3 or length > 768 \
+                        if palette or transparency or has_data or not length or length % 3 or length > 768 \
                                 or color in (0, 4) or (color == 3 and length // 3 > 2 ** depth):
                             return "损坏 PNG（PLTE 无效或顺序错误）"
                         palette = True
+                        palette_entries = length // 3
                     if tag == b"IDAT":
                         if idat_ended or (color == 3 and not palette):
                             return "损坏 PNG（IDAT 顺序错误或缺少 PLTE）"
@@ -161,6 +206,10 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
                                 "总量比对拦截）")
                     row_stride = 1 + (w * channels * depth + 7) // 8
                     expect_raw = h * row_stride
+                    if chunks is not None and expect_raw > 64 << 20:
+                        return "PNG conversion exceeds 64 MiB scanline limit"
+                    if body is not None:
+                        body.extend(data)
                     crc = zlib.crc32(data, zlib.crc32(tag))
                     first = False
                 else:
@@ -171,6 +220,8 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
                         if not data:
                             return "截断 PNG（块数据不足）"
                         crc = zlib.crc32(data, crc)
+                        if body is not None:
+                            body.extend(data)
                         if tag == b"IDAT":
                             # 逐块喂入联合 zlib 流；单次解压输出限流，产物即弃
                             # 只记长度——流式推进，不整读超大文件也不驻留解压产物。
@@ -199,6 +250,13 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
                 stored_crc = fh.read(4)
                 if len(stored_crc) != 4 or struct.unpack(">I", stored_crc)[0] != crc & 0xFFFFFFFF:
                     return "损坏 PNG（块 CRC 不符）"
+                if tag == b"sBIT" and any(not 1 <= x <= (8 if color == 3 else depth) for x in body):
+                    return "损坏 PNG（sBIT 精度非法）"
+                if tag == b"tRNS" and color in (0, 2) and any(
+                        value[0] >= 2 ** depth for value in struct.iter_unpack(">H", body)):
+                    return "损坏 PNG（tRNS 样本超出位深）"
+                if chunks is not None:
+                    chunks.append((tag, bytes(body)))
                 if tag == b"IDAT" and length:
                     has_data = True
                 if tag == b"IEND":
@@ -217,11 +275,67 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
                                 f"{w}×{h} 应解出 {expect_raw} 字节不符）")
                     if fh.read(1):
                         return "损坏 PNG（IEND 后有尾随数据）"
+                    if _properties is not None:
+                        _properties.update(depth=depth, color=color, transparency=transparency,
+                                           animated=animated, unsafe_unknown=unsafe_unknown)
+                    if _chunks is not None:
+                        _chunks.extend(chunks)
                     if _fingerprint is not None:
                         _fingerprint.append(fh.digest.hexdigest())
                     return None
     except (OSError, struct.error) as e:
         return f"不可读或截断（{e}）"
+
+
+def opaque_rgb_to_rgba(path, *, width, height, expected_digest):
+    """Expand only validated, noninterlaced opaque RGB8 without changing RGB.
+
+    Reuse the authoritative parser; this is not a second PNG decoder. Each RGB
+    filtered byte stays unchanged because its left/up/upper-left neighbours
+    are unchanged when bpp grows from 3 to 4. Only the constant-255 alpha
+    channel's filtered bytes are inserted. Colour and ancillary chunks retain
+    their exact bytes/order; sBIT gains the new alpha channel's 8-bit precision.
+    """
+    props, chunks, digest = {}, [], []
+    reason = png_invalid_reason(path, width=width, height=height,
+                                _properties=props, _chunks=chunks, _fingerprint=digest)
+    if reason or digest != [expected_digest]:
+        raise ValueError(f"PNG conversion source changed or invalid: {path}: {reason}")
+    if props['unsafe_unknown']:
+        raise ValueError(f"Unsupported unknown unsafe-to-copy PNG chunk: {path}")
+    if props != dict(depth=8, color=2, transparency=False, animated=False, unsafe_unknown=False):
+        raise ValueError(f"Unsupported PNG conversion (requires opaque RGB8): {path}")
+    raw = zlib.decompress(b"".join(body for tag, body in chunks if tag == b"IDAT"))
+    stride = width * 3 + 1
+    converted = bytearray()
+    for y in range(height):
+        row = raw[y * stride:(y + 1) * stride]
+        filt = row[0]
+        # Alpha predictor residuals for PNG filters None/Sub/Up/Average/Paeth.
+        first = (255, 255, 255 if y == 0 else 0,
+                 255 if y == 0 else 128, 255 if y == 0 else 0)[filt]
+        rest = (255, 0, 255 if y == 0 else 0, 128 if y == 0 else 0, 0)[filt]
+        rgba = bytearray(width * 4)
+        rgba[0::4], rgba[1::4], rgba[2::4] = row[1::3], row[2::3], row[3::3]
+        rgba[3::4] = bytes([first]) + bytes([rest]) * (width - 1)
+        converted.append(filt)
+        converted.extend(rgba)
+    encoded = zlib.compress(converted)
+    result, wrote_data = bytearray(PNG_SIGNATURE), False
+    for tag, body in chunks:
+        if tag == b"IHDR":
+            body = body[:9] + b"\x06" + body[10:]
+        elif tag == b"sBIT":
+            if len(body) != 3 or any(not 1 <= x <= 8 for x in body):
+                raise ValueError(f"Unsupported RGB8 sBIT: {path}")
+            body += b"\x08"
+        elif tag == b"IDAT":
+            if wrote_data:
+                continue
+            body, wrote_data = encoded, True
+        result.extend(struct.pack(">I", len(body)) + tag + body
+                      + struct.pack(">I", zlib.crc32(tag + body) & 0xffffffff))
+    return bytes(result)
 
 
 def verify_frames(outdir, frames, *, width=None, height=None):
@@ -259,12 +373,13 @@ COMPLETE_FILE = "complete.json"
 ENV_PENDING_FILE = 'environment.pending.json'
 
 
-def _page_record(outdir, n, key, width, height, backend_ns=None):
+def _page_record(outdir, n, key, width, height, backend_ns=None, *, directory_fd=None):
     digests, bad = [], []
     for i in range(n):
         got = []
         reason = png_invalid_reason(Path(outdir) / f"f{i:04d}.png",
-                                    width=width, height=height, _fingerprint=got)
+                                    width=width, height=height, _fingerprint=got,
+                                    _directory_fd=directory_fd)
         if reason:
             bad.append((i, reason))
         digests.append(got[0] if got else None)
@@ -279,8 +394,15 @@ def _page_record(outdir, n, key, width, height, backend_ns=None):
     return record, bad
 
 
+def _page_json(outdir, name, directory_fd):
+    if directory_fd is None:
+        return json.loads((Path(outdir) / name).read_text(encoding='utf-8'))
+    with fstxn.open_at(directory_fd, name) as stream:
+        return json.loads(stream.read().decode('utf-8'))
+
+
 def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_digest=None,
-                 environment=None):
+                 environment=None, frame_source=None, directory_fd=None):
     """Return bad frames plus whether a completion record needs publication.
 
     Missing/unreadable legacy markers never skip validation: complete valid
@@ -289,9 +411,12 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_dige
     frame; changed valid PNG bytes invalidate that frame by SHA256. All hits
     still undergo full PNG validation; the marker alone cannot certify a hit.
     """
-    current, bad = _page_record(outdir, n, key, width, height, backend_ns)
+    current, bad = _page_record(outdir, n, key, width, height, backend_ns,
+                                directory_fd=directory_fd)
+    if frame_source is not None:
+        current["frame_source"] = frame_source
     try:
-        old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
+        old = _page_json(outdir, COMPLETE_FILE, directory_fd)
     except (OSError, ValueError):
         old = None
     if environment is None and isinstance(old, dict):
@@ -305,7 +430,7 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_dige
             return [(i, 'unknown environment cannot certify cache reuse') for i in range(n)], True
         current['environment'] = environment
         try:
-            pending = json.loads((Path(outdir) / ENV_PENDING_FILE).read_text())
+            pending = _page_json(outdir, ENV_PENDING_FILE, directory_fd)
         except (OSError, ValueError):
             pending = None
         resumable = old is None and pending == {
@@ -341,14 +466,15 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_dige
     return sorted(bad), old != current
 
 
-def invalidate_page(outdir):
+def invalidate_page(outdir, *, directory_fd=None):
     """Revoke completion before modifying frames; no-op if already absent."""
-    fstxn.unlink(Path(outdir) / COMPLETE_FILE)
+    fstxn.unlink(Path(outdir) / COMPLETE_FILE, directory_fd=directory_fd)
 
 
 def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None,
                   dependency_digest=None, dependency_enforcement=None, dependency_observed=None,
-                  backend_identity=None, render_runs=None, environment=None, mixed_producer=False):
+                  backend_identity=None, render_runs=None, environment=None, mixed_producer=False,
+                  frame_source=None, directory_fd=None):
     """Validate the whole page and pin-input gate before atomic publication.
 
     Caller invokes only on non-dry paths after all blocks/fallbacks finish.
@@ -357,36 +483,40 @@ def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=No
     backend_ns（issue #103 可选）：实验命名空间页打元数据标（缺省字段不写，
     正式态字节不变）。
     """
-    record, bad = _page_record(outdir, n, key, width, height, backend_ns)
+    record, bad = _page_record(outdir, n, key, width, height, backend_ns,
+                               directory_fd=directory_fd)
     if bad:
-        invalidate_page(outdir)
+        invalidate_page(outdir, directory_fd=directory_fd)
         raise GfxCliError(f"gfx 完成检查失败：{bad}")
     if dependency_digest is not None:
         if dependency_enforcement != 'fetch-pinned-local-v1':
-            invalidate_page(outdir)
+            invalidate_page(outdir, directory_fd=directory_fd)
             raise GfxCliError('strict completion requires runtime enforcement evidence')
         record['dependency_digest'] = dependency_digest
         record['dependency_enforcement'] = dependency_enforcement
         if not isinstance(dependency_observed, list) or not dependency_observed:
-            invalidate_page(outdir)
+            invalidate_page(outdir, directory_fd=directory_fd)
             raise GfxCliError('strict completion requires observed local requests')
         record['dependency_observed'] = dependency_observed
     verify_inputs()
+    if frame_source is not None:
+        record["frame_source"] = frame_source
     if environment is not None:
         if not isinstance(environment, dict) or environment.get('status') != 'input-bound':
-            invalidate_page(outdir)
+            invalidate_page(outdir, directory_fd=directory_fd)
             raise GfxCliError('unknown environment cannot publish completion')
         if mixed_producer:
-            invalidate_page(outdir)
-            fstxn.unlink(Path(outdir) / ENV_PENDING_FILE)
+            invalidate_page(outdir, directory_fd=directory_fd)
+            fstxn.unlink(Path(outdir) / ENV_PENDING_FILE, directory_fd=directory_fd)
             raise GfxCliError('CDP/CLI mixed environment cannot publish completion; '
                               'rerun explicitly with VTX_GFX=cli for a separate identity')
         record['environment'] = environment
     if backend_identity is not None:
         record["backend_identity"] = backend_identity
         record["render_runs"] = render_runs
-    fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True))
-    fstxn.unlink(Path(outdir) / ENV_PENDING_FILE)
+    fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True),
+                       directory_fd=directory_fd)
+    fstxn.unlink(Path(outdir) / ENV_PENDING_FILE, directory_fd=directory_fd)
 
 
 def begin_environment_page(outdir, environment, key, n, width, height):
@@ -442,7 +572,11 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
                 staged.insert(1, '--user-data-dir=' + profile)
                 staged.insert(2, '--no-first-run')
                 staged.insert(3, '--no-default-browser-check')
-                proc = subprocess.run(staged, capture_output=True, timeout=timeout)
+                if os.name == 'nt':
+                    from .windows_browser import run_browser
+                    proc = run_browser(staged, timeout=timeout)
+                else:
+                    proc = subprocess.run(staged, capture_output=True, timeout=timeout)
                 if proc.returncode == 0 and output.is_file():
                     tmp.write_bytes(output.read_bytes())
             if proc.returncode != 0:
