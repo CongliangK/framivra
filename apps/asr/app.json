@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "kind": "app",
   "entry": {
-    "cli": ["asr_cli.py"]
+    "cli": [
+      "asr_cli.py"
+    ]
   },
   "health": {
     "type": "command",
@@ -11,8 +13,16 @@
   },
   "requires": {
     "core": ">=2.0.0",
-    "binaries": ["ffmpeg", "ffprobe"]
+    "binaries": [
+      "ffmpeg",
+      "ffprobe"
+    ]
   },
-  "config_keys": ["asr.base_url", "asr.python", "asr.model_dir", "asr.aligner_dir", "asr.ime_root"],
+  "config_keys": [
+    "asr.base_url",
+    "asr.python",
+    "asr.model_dir",
+    "asr.aligner_dir"
+  ],
   "docs": "README.md"
 }

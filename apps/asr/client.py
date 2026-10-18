@@ -16,11 +16,15 @@
 
 机制：
   - cfg_get：容错读 config.local.json（§7.2，缺键/类型不符 → 默认值，~ 展开）；
-  - 探测链（复用本机资产优先）：解释器 config.asr.python → IME .venv-qwen-asr →
-    apps/asr/.venv；模型根 config.asr.model_dir → IME vendor/models/qwen3-asr →
-    ~/models/qwen3-asr；
-  - sidecar 日志 ~/.local/state/video_tools/asr_sidecar.log，pid 文件 /tmp/asr_sidecar_<port>.pid
-    （stop 按 pid SIGTERM）；
+  - 独立性铁律（issue #141/#140：任何情况下禁止复用语音输入法）：一切外部资产
+    （解释器/模型/URL/进程/信号）使用前经 independence.py fail-closed 校验——
+    旧键 VT_ASR_IME_ROOT / asr.ime_root 报迁移错误；探测链只含 Framivra 专属根
+    （解释器 config.asr.python → apps/asr/.venv；模型 config.asr.model_dir →
+    ~/.local/share/framivra/asr/models）；零 IME 探测、零共驻降档；
+  - 端口上「恰好健康」的服务不可复用：必须 pid 文件 + /proc cmdline 归属到本
+    项目 sidecar 才算自己人；stop 只对可归属 pid 发 SIGTERM；
+  - sidecar 日志 ~/.local/state/framivra/asr/sidecar.log，pid 文件
+    ~/.local/state/framivra/asr/sidecar_<port>.pid（项目状态根，与 IME 独立）；
   - 4xx/5xx → ClientError（带服务端中文 error）；超时 → TranscribeTimeout。
 
 来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.3/§7.2/§9.1。
@@ -39,11 +43,11 @@ from pathlib import Path
 ASR_DIR = Path(__file__).resolve().parent
 REPO_ROOT = ASR_DIR.parent.parent    # v2 迁移后 asr 在 apps/ 下，仓根 = 上两级
 DEFAULT_BASE_URL = "http://127.0.0.1:18085"
-# IME 仓默认位置（~ 展开型，P2a 参数化收编；覆盖链 env VT_ASR_IME_ROOT > config
-# asr.ime_root > 本默认，见 ime_root()）
-IME_ROOT_DEFAULT = "~/文档/01_活跃项目/type/ibus-voice-ime-github"
-SIDECAR_LOG = Path("~/.local/state/video_tools/asr_sidecar.log").expanduser()
+SIDECAR_LOG = Path("~/.local/state/framivra/asr/sidecar.log").expanduser()
 TRANSCRIBE_TIMEOUT_DEFAULT = 1800.0     # 长音频（1200s 上限 × RTF）也要能跑完
+
+sys.path.insert(0, str(ASR_DIR))
+import independence    # noqa: E402  独立性单一接口（issue #141）
 
 
 class ClientError(Exception):
@@ -103,62 +107,55 @@ def load_config(repo_root=None):
     return _pluginlib_config().load_config(repo_root or REPO_ROOT)
 
 
-def ime_root(cfg=None):
-    """IME 仓根（解释器/模型复用链的锚）：env VT_ASR_IME_ROOT > config asr.ime_root
-    > ~ 展开型默认（~/文档/01_活跃项目/type/ibus-voice-ime-github）。统一 expanduser
-    归一（默认值含 ~；显式给出的绝对路径 expanduser 幂等无害）。"""
-    v = os.environ.get("VT_ASR_IME_ROOT")
-    if not v and cfg is not None:
-        v = cfg_get(cfg, "asr.ime_root", None)
-    return str(Path(v or IME_ROOT_DEFAULT).expanduser())
-
-
-# ---------------------------------------------------------------- 探测链（§6.5 复用优先）
+# ---------------------------------------------------------------- 探测链（Framivra 专属根，issue #141）
 
 def py_env(py_bin):
-    """为解释器构造环境：venv 整体搬家后自身 site-packages 会失联（IME venv 历史
-    路径 ~/文档/type/ibus-ime，现 type/ibus-voice-ime-github），显式补 PYTHONPATH。"""
-    env = dict(os.environ)
-    sp_root = Path(py_bin).resolve().parent.parent / "lib"
-    for sp in sorted(sp_root.glob("python*/site-packages")):
-        existing = env.get("PYTHONPATH", "")
-        if str(sp) not in existing.split(os.pathsep):
-            env["PYTHONPATH"] = (str(sp) + os.pathsep + existing) if existing else str(sp)
-        break
-    return env
+    """为解释器构造环境（issue #141）：剥离外部注入（PYTHONPATH/PYTHONHOME/
+    user-site 变量），配合解释器 -I isolated mode——不再为复用外部 venv 补
+    PYTHONPATH（那是 IME 复用链的一部分，已删除）。"""
+    return independence.sandbox_env()
 
 
 def _py_imports(py_bin, module):
-    r = subprocess.run([py_bin, "-c", "import %s" % module],
+    r = subprocess.run([str(py_bin), "-I", "-c", "import %s" % module],
                        capture_output=True, env=py_env(py_bin))
     return r.returncode == 0
 
 
 def probe_python(cfg=None):
-    """qwen-asr 解释器：config.asr.python → IME .venv-qwen-asr → apps/asr/.venv；
-    候选必须能 import qwen_asr（PYTHONPATH 补齐后验证）。"""
+    """qwen-asr 解释器：config.asr.python → apps/asr/.venv（Framivra 专属根）。
+    无 IME 回退；显式 python 过独立性校验 + 依赖来源验证（qwen_asr 必须装在
+    解释器自身环境根内，而非 user-site / IME site-packages）。"""
     cfg = cfg if cfg is not None else load_config()
-    cands = [cfg_get(cfg, "asr.python", None)]
-    cands.append(Path(ime_root(cfg)) / ".venv-qwen-asr/bin/python")
-    cands.append(ASR_DIR / ".venv/bin/python")
+    independence.reject_legacy_config(cfg)
+    cands = [cfg_get(cfg, "asr.python", None),
+             independence.project_env_root() / "bin/python"]
     for c in cands:
         if not c:
             continue
-        p = Path(_expand(c))
-        if p.exists() and os.access(str(p), os.X_OK) and _py_imports(str(p), "qwen_asr"):
-            return str(p)
+        try:
+            p = independence.verify_interpreter(_expand(c), "asr.python")
+        except independence.AsrIndependenceError:
+            continue
+        if _py_imports(p, "qwen_asr"):
+            try:
+                independence.verify_module_from_own_env(p, "qwen_asr")
+                return str(p)
+            except independence.AsrIndependenceError:
+                continue
     return None
 
 
 def model_roots(cfg=None):
-    """模型根目录探测链：config.asr.model_dir → IME vendor → ~/models/qwen3-asr。"""
+    """模型根目录链：config.asr.model_dir → ~/.local/share/framivra/asr/models
+    （Framivra 专属根；无 IME vendor、无共享 ~/models）。"""
     cfg = cfg if cfg is not None else load_config()
+    independence.reject_legacy_config(cfg)
     roots = []
     c = cfg_get(cfg, "asr.model_dir", None)
     if c:
-        roots.append(_expand(c))
-    roots.append(str(Path(ime_root(cfg)) / "vendor/models/qwen3-asr"))
-    roots.append(str(Path("~/models/qwen3-asr").expanduser()))
+        roots.append(independence.check_path_independent(_expand(c), "asr.model_dir"))
+    roots.append(str(independence.project_model_root()))
     return roots
 
 
@@ -173,11 +170,12 @@ def probe_model(cfg=None, alias="1.7b"):
 
 
 def probe_aligner(cfg=None):
-    """探测 ForcedAligner 目录：config.asr.aligner_dir → 模型根探测链。"""
+    """探测 ForcedAligner 目录：config.asr.aligner_dir → 项目模型根。"""
     cfg = cfg if cfg is not None else load_config()
+    independence.reject_legacy_config(cfg)
     c = cfg_get(cfg, "asr.aligner_dir", None)
     if c:
-        p = Path(_expand(c))
+        p = Path(independence.check_path_independent(_expand(c), "asr.aligner_dir"))
         if p.exists():
             return str(p)
     for root in model_roots(cfg):
@@ -187,25 +185,10 @@ def probe_aligner(cfg=None):
     return None
 
 
-def ime_sidecar_alive(timeout=0.5):
-    """IME sidecar(18081) 存活探测（R3/R6：共驻 → 本 sidecar 默认降 0.6B 档）。"""
-    try:
-        req = urllib.request.Request("http://127.0.0.1:18081/health", method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
 def pick_model(cfg=None):
-    """默认档：1.7B 优先，缺则 0.6B；IME sidecar(18081) 同驻时反转为 0.6B 优先
-    （与 sidecar 启动时 auto 探测同一决策，IME 1.7B + 本 1.7B + aligner 三者
-    同驻 16GB 4080 必爆显存，方案 §3.3/R3）。"""
-    if ime_sidecar_alive():
-        m = probe_model(cfg, "0.6b") or probe_model(cfg, "1.7b")
-    else:
-        m = probe_model(cfg, "1.7b") or probe_model(cfg, "0.6b")
-    return m
+    """默认档：1.7B 优先，缺则 0.6B（issue #141：共驻降档链已删除——不做任何
+    IME 端口探测；GPU 资源准入属 #142 范畴）。"""
+    return probe_model(cfg, "1.7b") or probe_model(cfg, "0.6b")
 
 
 # ---------------------------------------------------------------- HTTP
@@ -262,10 +245,9 @@ def warm(base_url, timeout=600.0):
 # ---------------------------------------------------------------- sidecar 进程管理
 
 def pid_file(port):
-    # tempfile.gettempdir() 跨平台（Windows 原生 Python 对 "/tmp" 会解析到当前盘根，
-    # 目录不存在写入失败；Git Bash 与 Linux 不变）
-    import tempfile
-    return Path(tempfile.gettempdir()) / ("asr_sidecar_%d.pid" % port)
+    """PID 文件落项目状态根 ~/.local/state/framivra/asr/（issue #141：与 IME
+    的任何 pid/状态域完全独立；/tmp 下的旧文件不再是信号依据）。"""
+    return independence.pid_file(port)
 
 
 def _port_of(base_url):
@@ -274,24 +256,65 @@ def _port_of(base_url):
     return u.port or (443 if u.scheme == "https" else 80)
 
 
-def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
-    """sidecar 不在则按配置拉起并等健康；已健康直接 True。"""
+def _sidecar_attribution(base_url):
+    """端口上的健康服务是否可归属到本项目 sidecar：pid 文件存在、pid 存活、
+    /proc cmdline 同时含 sidecar_server.py 与端口。无法证明即 False——绝不复用
+    「恰好健康」的任意服务（issue #140 铁律）。"""
+    try:
+        port = _port_of(base_url)
+    except Exception:
+        return False
+    pf = pid_file(port)
+    if not pf.exists():
+        return False
+    try:
+        pid = int(pf.read_text().strip())
+    except (OSError, ValueError):
+        return False
+    return independence.pid_owns_sidecar(pid, port)
+
+
+def preflight(cfg=None):
+    """入口统一 fail-closed 前置校验（请求/绑定/拉起之前）：遗留键拒绝 +
+    已配置 python/model_dir/aligner_dir/base_url 独立性校验。"""
     cfg = cfg if cfg is not None else load_config()
+    independence.preflight_config(cfg)
+    return cfg
+
+
+def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
+    """sidecar 不在则按配置拉起并等健康；已健康且可归属本项目直接 True。
+    issue #141：健康但无法归属（无 pid 文件/非本项目进程）→ 拒绝复用。"""
+    cfg = cfg if cfg is not None else load_config()
+    preflight(cfg)
     base_url = base_url or cfg_get(cfg, "asr.base_url", DEFAULT_BASE_URL)
+    independence.validate_base_url(base_url)
     if health(base_url, timeout=1.0):
-        if verbose:
-            print("✓ sidecar 已在运行：%s" % base_url, file=sys.stderr)
-        return True
+        if _sidecar_attribution(base_url):
+            if verbose:
+                print("✓ sidecar 已在运行：%s（本项目 pid 文件归属通过）" % base_url,
+                      file=sys.stderr)
+            return True
+        print("✗ %s 端口上已有健康服务但无法归属到本项目 sidecar（无本项目 pid 文件"
+              "或进程 cmdline 不符）——拒绝复用任意健康服务（issue #140 铁律）。"
+              "若是遗留 /tmp pid 时代的进程请手动清理后重试" % base_url, file=sys.stderr)
+        return False
     py = probe_python(cfg)
     model = pick_model(cfg)
     aligner = probe_aligner(cfg)
     if py is None or model is None:
-        print("✗ 探测不到 qwen-asr 解释器或模型——先跑 bash apps/asr/init.sh（python=%s, model=%s）"
+        print("✗ 探测不到 Framivra 专属 qwen-asr 解释器或模型（绝不借用输入法资产）"
+              "——先跑 bash apps/asr/init.sh（python=%s, model=%s）"
               % (py or "缺", model or "缺"), file=sys.stderr)
         return False
+    model = independence.verify_model_dir(model, "model", check_weights=True)
+    if aligner:
+        # aligner 目录同样过目录级资产链接审计（红队 D3/N4：symlink 借用 IME 资产）
+        aligner = independence.verify_model_dir(aligner, "aligner")
+        independence.verify_dir_assets(aligner, "aligner", required=False)
     port = _port_of(base_url)
     SIDECAR_LOG.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [py, str(ASR_DIR / "sidecar_server.py"), "--port", str(port), "--model", model]
+    cmd = [py, "-I", str(ASR_DIR / "sidecar_server.py"), "--port", str(port), "--model", model]
     if aligner:
         cmd += ["--aligner", aligner]
     else:
@@ -303,7 +326,9 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         log.flush()
         proc = subprocess.Popen(cmd, stdout=log, stderr=log, start_new_session=True,
                                 cwd=str(ASR_DIR), env=py_env(py))
-    pid_file(port).write_text(str(proc.pid))
+    pf = pid_file(port)
+    pf.parent.mkdir(parents=True, exist_ok=True)
+    pf.write_text(str(proc.pid))
     deadline = time.monotonic() + start_timeout
     while time.monotonic() < deadline:
         if health(base_url, timeout=1.0):
@@ -313,6 +338,7 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
         if proc.poll() is not None:
             print("✗ sidecar 启动即退出（code %s）——查看日志：%s" % (proc.returncode, SIDECAR_LOG),
                   file=sys.stderr)
+            pf.unlink(missing_ok=True)
             return False
         time.sleep(1.0)
     print("✗ sidecar %ds 内未就绪——查看日志：%s" % (start_timeout, SIDECAR_LOG), file=sys.stderr)
@@ -320,20 +346,32 @@ def ensure_sidecar(cfg=None, base_url=None, start_timeout=180.0, verbose=True):
 
 
 def stop_sidecar(base_url=None, cfg=None):
-    """SIGTERM sidecar（按 pid 文件）；返回是否停掉了进程。"""
+    """SIGTERM sidecar（按项目状态根 pid 文件 + /proc 归属校验）；无法归属则
+    拒绝发信号（issue #141：绝不向外部/输入法进程发信号）。"""
     cfg = cfg if cfg is not None else load_config()
+    preflight(cfg)
     base_url = base_url or cfg_get(cfg, "asr.base_url", DEFAULT_BASE_URL)
+    independence.validate_base_url(base_url)
     port = _port_of(base_url)
     pf = pid_file(port)
     alive_before = health(base_url, timeout=1.0) is not None
     if not pf.exists():
         if alive_before:
-            print("⚠ %d 端口有服务但无本机 pid 文件（非本 CLI 拉起？）——未发送停止信号" % port,
+            print("⚠ %d 端口有服务但无本项目 pid 文件——无法归属，未发送停止信号" % port,
                   file=sys.stderr)
-            return False
-        print("✓ sidecar 未在运行", file=sys.stderr)
-        return True
-    pid = int(pf.read_text().strip())
+        else:
+            print("✓ sidecar 未在运行", file=sys.stderr)
+        return not alive_before
+    try:
+        pid = int(pf.read_text().strip())
+    except ValueError:
+        pf.unlink(missing_ok=True)
+        print("✗ pid 文件损坏已清除：%s" % pf, file=sys.stderr)
+        return False
+    if not independence.pid_owns_sidecar(pid, port):
+        print("✗ pid %d 无法归属到本项目 sidecar（进程不存在或 cmdline 不符）——"
+              "拒绝发信号；pid 文件保留供排查：%s" % (pid, pf), file=sys.stderr)
+        return False
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:

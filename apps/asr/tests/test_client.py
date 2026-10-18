@@ -125,13 +125,28 @@ class TestClient(unittest.TestCase):
         self.assertEqual(resp["duration_s"], 250.0)
 
     def test_ensure_sidecar_already_running_no_spawn(self):
-        # 已健康 → 不拉起进程（Popen 必须零调用）
+        # 已健康且可归属（本项目 pid 文件 + cmdline）→ 不拉起进程（Popen 必须零调用）
         real_popen = subprocess.Popen
+        real_attr = client._sidecar_attribution
         def _no_popen(*a, **kw):
             raise AssertionError("健康状态下不应拉起进程：%s" % (a,))
         subprocess.Popen = _no_popen
+        client._sidecar_attribution = lambda base_url: True
         try:
             self.assertTrue(client.ensure_sidecar(
+                cfg={}, base_url=self.mock.base_url, verbose=False))
+        finally:
+            subprocess.Popen = real_popen
+            client._sidecar_attribution = real_attr
+
+    def test_ensure_sidecar_healthy_unattributed_refused(self):
+        # issue #141/#140：端口健康但无法归属本项目 → 拒绝复用（零拉起零请求复用）
+        real_popen = subprocess.Popen
+        def _no_popen(*a, **kw):
+            raise AssertionError("无法归属时不应拉起进程：%s" % (a,))
+        subprocess.Popen = _no_popen
+        try:
+            self.assertFalse(client.ensure_sidecar(
                 cfg={}, base_url=self.mock.base_url, verbose=False))
         finally:
             subprocess.Popen = real_popen

@@ -15,10 +15,9 @@
     "python": null,
     "model_dir": null,
     "aligner_dir": null,
-    "ime_root": null,
     "language": "Chinese",
-    "purpose": "Qwen3-ASR+ForcedAligner 字幕产线（apps/asr/）：口播/素材听写→字级时间戳→timeline subtitles[]/SRT",
-    "howto": "bash apps/asr/init.sh 后置 enabled:true。注：18081 为 IME 输入法 sidecar，本仓 sidecar 默认 18085"
+    "purpose": "Qwen3-ASR+ForcedAligner 字幕产线（apps/asr/）：口播/素材听写→字级时间戳→timeline subtitles[]/SRT（issue #141：与语音输入法彻底解耦——专属环境 apps/asr/.venv、模型根 ~/.local/share/framivra/asr/models）",
+    "howto": "bash apps/asr/init.sh 后置 enabled:true。18081 为语音输入法 sidecar 专用端口，本仓绝不绑定/探测；sidecar 默认 18085。旧键 asr.ime_root / 环境变量 VT_ASR_IME_ROOT 已废除（出现即报迁移错误）"
   },
   "tts": {
     "enabled": false,
