@@ -536,7 +536,7 @@ class SafetyCommandHangGuard(unittest.TestCase):
 class WorkflowContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.text = (ROOT / '.github/workflows/ci.yml').read_text()
+        cls.text = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
         # BaseLoader avoids YAML 1.1 treating GitHub's "on" as a boolean.
         cls.workflow = yaml.load(cls.text, Loader=yaml.BaseLoader)
 
