@@ -19,6 +19,8 @@
 #
 # 用法：bash scripts/docs_smoke.sh [--verbose] [--golden <dir>]
 set -uo pipefail
+# Also required when this leaf runs directly, outside doc_gates.sh.
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 VERBOSE=""; GOLDEN=""

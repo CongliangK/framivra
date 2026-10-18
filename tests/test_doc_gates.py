@@ -2,12 +2,14 @@
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BASH = shutil.which('bash') or 'bash'
 LEAVES = (
     ('docs_smoke', 'docs_smoke.sh'),
     ('doc_budget', 'verify_doc_budget.py'),
@@ -27,7 +29,7 @@ class RequiredDocumentGates(unittest.TestCase):
         self.scripts = self.root / 'scripts'
         self.scripts.mkdir()
         self.gate = self.scripts / 'doc_gates.sh'
-        self.gate.write_text((ROOT / 'scripts/doc_gates.sh').read_text())
+        self.gate.write_text((ROOT / 'scripts/doc_gates.sh').read_text(encoding='utf-8'), encoding='utf-8')
         self.populate()
 
     def populate(self):
@@ -39,10 +41,14 @@ class RequiredDocumentGates(unittest.TestCase):
             # Interpreter execution intentionally does not require an executable bit.
             path.chmod(0o600)
 
-    def run_gate(self):
+    def run_gate(self, encoding_env=None):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
-        result = subprocess.run(['bash', str(self.gate)], cwd=self.root,
-                                env=env, text=True, stdout=subprocess.PIPE,
+        if encoding_env is not None:
+            env.pop('PYTHONUTF8', None)
+            env.pop('PYTHONIOENCODING', None)
+            env.update(encoding_env)
+        result = subprocess.run([BASH, str(self.gate)], cwd=self.root,
+                                env=env, text=True, encoding='utf-8', stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, timeout=15)
         lines = re.findall(r'^leaf_\d+:.*$', result.stdout, re.MULTILINE)
         self.assertEqual(len(lines), 7, result.stdout)
@@ -116,10 +122,33 @@ class RequiredDocumentGates(unittest.TestCase):
         self.assert_summary(result, 7, 0)
 
     def test_header_reconciliation_remains_fail_closed(self):
-        self.gate.write_text(self.gate.read_text().replace('# LEAVES=7', '# LEAVES=8'))
+        self.gate.write_text(self.gate.read_text(encoding='utf-8').replace('# LEAVES=7', '# LEAVES=8'), encoding='utf-8')
         result = self.run_gate()
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn('对账=MISMATCH', result.stdout)
+
+    def test_aggregate_and_standalone_smoke_own_utf8_boundaries(self):
+        fixture = self.scripts / 'unicode_help.py'
+        fixture.write_text('import sys\nassert sys.flags.utf8_mode == 1\nprint("中文 ⚠")\n', encoding='utf-8')
+        for _, filename in LEAVES[1:]:
+            (self.scripts / filename).write_text(fixture.read_text(encoding='utf-8'), encoding='utf-8')
+        (self.scripts / 'docs_smoke.sh').write_text(
+            (ROOT / 'scripts/docs_smoke.sh').read_text(encoding='utf-8'), encoding='utf-8')
+        (self.root / 'README.md').write_text('```bash\npython3 scripts/unicode_help.py\n```\n', encoding='utf-8')
+        for settings in ({}, {'PYTHONUTF8': '0', 'PYTHONIOENCODING': 'cp1252'}):
+            with self.subTest(settings=settings):
+                result = self.run_gate(settings)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assert_summary(result, 7, 0)
+                self.assertIn('中文 ⚠', result.stdout)
+                env = dict(os.environ)
+                env.pop('PYTHONUTF8', None); env.pop('PYTHONIOENCODING', None)
+                env.update(settings)
+                standalone = subprocess.run([BASH, str(self.scripts / 'docs_smoke.sh')],
+                    cwd=self.root, env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
+                self.assertEqual(standalone.returncode, 0, standalone.stdout + standalone.stderr)
+                self.assertIn('--help scripts', standalone.stdout)
+                self.assertNotIn('compile ', standalone.stdout)
 
 
 if __name__ == '__main__':
