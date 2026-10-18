@@ -8,7 +8,7 @@ v2 ARCHITECTURE §4.2 / §2.2 缝 A / §2.1 三不变量——第三方音频插
 声明即该源的 prepare 音频被施加 ``volume=N dB``（ffmpeg volume 滤镜，无重依赖），
 产物内容寻址（与内核裸提取同格式：48kHz stereo pcm_s16le）：
 
-    cache/audio/{audio_key}::hello:{version}:{value_digest}:{code_digest}.wav
+    cache/audio/{audio_key}__hello_{version}_{value_digest}_{code_digest}.wav
 
 - audio_key = 内核 prepare 裸提取键（经 ``vtx.api.audio_key``——插件只依赖内核
   API 面，禁捅内部模块）；value_digest = hello_gain 键值排序 JSON sha1[:12]；
@@ -68,11 +68,11 @@ def _gain_db(value):
 
 
 def product_path(c, sid) -> Path:
-    """产物路径 cache/audio/{audio_key}::hello:{version}:{value_digest}:{code_digest}.wav。"""
+    """产物路径 cache/audio/{audio_key}__hello_{version}_{value_digest}_{code_digest}.wav。"""
     s = _source(c, sid) or {}
     return c.cache / "audio" / (
-        f"{_audio_key(c, sid)}::hello:{VERSION}:{value_digest(s.get(KEY))}"
-        f":{plugin_code_digest('hello-plugin')}.wav")
+        f"{_audio_key(c, sid)}__hello_{VERSION}_{value_digest(s.get(KEY))}"
+        f"_{plugin_code_digest('hello-plugin')}.wav")
 
 
 def prepare_source(c, sid):

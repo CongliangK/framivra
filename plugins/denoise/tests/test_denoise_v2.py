@@ -8,7 +8,7 @@ P3 增量覆盖面(P2 版 test_denoise.py 之上,兼容共存零改动):
      返回 1 且不起链;CLI 缺省 mono(chain 不带 stereo);
   ⑧ fail-hard 传播:链中任一子进程非零 → SystemExit 1,不产半链产物;
   ⑨ stereo 48k 契约:插件产物终步 -ac 2;CLI 缺省无 -ac(=mono);
-  ⑩ 缓存键 2.0.0:产物键含 ::denoise:2.0.0:;plugin.json/__init__.py/
+  ⑩ 缓存键 2.0.0:产物键含 __denoise_2.0.0_;plugin.json/__init__.py/
      registry.json/README 四处版本一致(#12 P3 复核机检化);
   ⑪ symlink 契约(#10):scripts/denoise_voice.py、scripts/denoise_init.sh 为
      指向 plugins/denoise/ 真身的兼容 symlink(指向不改变)。
@@ -212,8 +212,8 @@ class CacheKeyV200(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             c = Ctx(_proj(Path(d)))
             name = dn.product_path(c, "v").name
-            self.assertIn("::denoise:2.0.0:", name)
-            self.assertNotIn(":1.0.0:", name)   # v1 键形零残留
+            self.assertIn("__denoise_2.0.0_", name)
+            self.assertNotIn("__denoise_1.0.0_", name)   # v1 键形零残留
 
     def test_version_consistency_four_places(self):
         # plugin.json / __init__.py / registry.json / README 四处 2.0.0;

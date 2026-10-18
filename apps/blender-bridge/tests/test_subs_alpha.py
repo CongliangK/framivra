@@ -62,7 +62,8 @@ class HappyPath(unittest.TestCase):
 
     def test_generates_prores_alpha_track(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
+            root = Path(d) / "工程 space [comma,semi;]"
+            root.mkdir()
             _write_timeline(root)
             self._write_ass(root)
             r = subprocess.run([sys.executable, str(SCRIPT), str(root / "timeline.json")],

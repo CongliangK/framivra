@@ -274,7 +274,11 @@ def confirm_paid_submit(
         print("✗ 非交互终端且未获确认（--yes），已中止：未产生任何提交、未扣费", file=stderr)
         return False
     stdin = stdin or sys.stdin
-    answer = input("确认提交？[y/N] ").strip().lower() if stdin is sys.stdin else stdin.readline().strip().lower()
+    try:
+        answer = input("确认提交？[y/N] ").strip().lower() if stdin is sys.stdin else stdin.readline().strip().lower()
+    except EOFError:
+        # Windows NUL may report isatty=True, but supplies no confirmation.
+        answer = ""
     if answer in ("y", "yes"):
         return True
     print("✗ 已取消：未产生任何提交、未扣费", file=stderr)

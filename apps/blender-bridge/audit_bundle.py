@@ -182,6 +182,17 @@ def content_spans(src: Path, dur_s: float, fps: int, thr: str, min_sil: float, p
     return frames
 
 
+def validation_python():
+    """Use the running interpreter; AppImage's embedded runtime needs a host Python."""
+    if sys.platform == "win32" or not os.environ.get("APPIMAGE"):
+        executable = sys.executable
+    else:
+        executable = shutil.which("python3")
+    if not executable:
+        raise OSError("未找到可运行的 Python 解释器")
+    return executable
+
+
 def main():
     ap = argparse.ArgumentParser(description="BGM 分轨审计包生成器")
     ap.add_argument("-t", "--timeline", required=True, type=Path, help="项目生产 timeline.json")
@@ -345,8 +356,7 @@ def main():
                 break
     if vtx is None or not vtx.exists():
         vtx = Path.home() / ".agents/skills/video/vtx/vtx.py"
-    # P2 审查 P2-4：本机 AppImage 有 argv[0] 劫持，sys.executable 指向错误解释器
-    py3 = shutil.which("python3") or "python3"
+    py3 = validation_python()
     run([py3, str(vtx), "-t", str(at_path), "validate"], tail=2)
     print(f"[timing] step3 validate: {time.perf_counter() - t2:.1f}s")
     if a.skip_blend:
