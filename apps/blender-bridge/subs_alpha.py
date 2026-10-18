@@ -15,7 +15,7 @@ from vtx.infra import filter_filename
 
 # 保留 timeline 符号链接所在项目的根，不跳到链接目标项目的 cache。
 tl_path = Path(sys.argv[1]).absolute()
-tl = json.loads(tl_path.read_text())
+tl = json.loads(tl_path.read_text(encoding="utf-8"))
 P = tl["project"]
 W, H, FPS, DUR = P["width"], P["height"], P["fps"], P["duration_frames"]
 ass = tl_path.parent / "cache" / "subs.ass"

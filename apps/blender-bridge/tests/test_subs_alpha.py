@@ -7,6 +7,7 @@
 运行：cd apps/blender-bridge && env python3 -m unittest discover -s tests -t .
 """
 import json
+import os
 import subprocess
 import sys
 import shutil
@@ -22,7 +23,7 @@ def _write_timeline(root: Path, subs: bool = True):
     tl = {"version": 2,
           "project": {"fps": 30, "width": 320, "height": 180, "duration_frames": 30},
           "sources": [], "video_tracks": [],
-          "subtitles": [{"in": 0, "out": 30, "text": "测试"}] if subs else [],
+          "subtitles": [{"in": 0, "out": 30, "text": "测试文"}] if subs else [],
           "audio_tracks": []}
     p = root / "timeline.json"
     p.write_text(__import__("json").dumps(tl, ensure_ascii=False), encoding="utf-8")
@@ -61,13 +62,22 @@ class HappyPath(unittest.TestCase):
                 encoding="utf-8")
 
     def test_generates_prores_alpha_track(self):
+        self._assert_generates_prores_alpha_track()
+
+    def test_utf8_timeline_with_utf8_mode_disabled(self):
+        # Native Windows uses the legacy locale (e.g. cp936) here. The fixture
+        # contains literal Chinese JSON bytes (ensure_ascii=False), not escapes.
+        self._assert_generates_prores_alpha_track(
+            {**os.environ, "PYTHONUTF8": "0", "PYTHONIOENCODING": "utf-8"})
+
+    def _assert_generates_prores_alpha_track(self, env=None):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d) / "工程 space [comma,semi;]"
             root.mkdir()
             _write_timeline(root)
             self._write_ass(root)
             r = subprocess.run([sys.executable, str(SCRIPT), str(root / "timeline.json")],
-                               capture_output=True, text=True, encoding="utf-8")
+                               capture_output=True, text=True, encoding="utf-8", env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
             mov = root / "cache" / "subs_alpha.mov"
             self.assertTrue(mov.is_file(), "产物须落盘 cache/subs_alpha.mov")
