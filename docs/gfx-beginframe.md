@@ -1,30 +1,55 @@
 # Headless-shell BeginFrame research
 
-Issue #67 studies an isolated persistent-page renderer. The production backend and NAVFREE default are unchanged. The experimental implementation and entry points are in [experiments/gfx_beginframe](../experiments/gfx_beginframe/README.md); its distribution identity is [locked separately](../experiments/gfx_beginframe/binary-lock.json).
+**Issue #67 remains OPEN. The current candidate fails the full-frame exactness gate and must not be adopted for production. Formal performance is UNRUN.** The host is undergoing substantial concurrent development, so saved wall/RSS observations cannot establish speed, efficiency or a performance NoGo. The production backend and NAVFREE default are unchanged.
 
-## Research premise
+The isolated implementation and entry points are in [experiments/gfx_beginframe](../experiments/gfx_beginframe/README.md); its binary/distribution/protocol identity has one home in [the lock file](../experiments/gfx_beginframe/binary-lock.json). No new browser was downloaded. Original download URL and receipt are unknown and recorded as null; local Playwright distribution metadata and the actual executable hash are retained.
 
-[DEV's historical NAVFREE record](DEV.md#navfree-免导航截图判负双杀方案-v2-阶段-2) records real concurrent pixel drift and slower rendering. That record does not identify a screenshot-versus-animation-clock race. It therefore establishes a reason to test, without establishing that BeginFrame is necessary or sufficient. The ordinary navigation reference remains the control arm.
+## Research premise and support
 
-The existing local headless-shell successfully created an `enableBeginFrameControl` target. Its first BeginFrame call explicitly required `--run-all-compositor-stages-before-draw`; adding that flag yielded a real screenshot of a production heavy page. The binary's live protocol was captured and hashed rather than treating a remote protocol schema as proof of support. No new browser was downloaded. The original download receipt and URL are unknown and are recorded as null.
+[DEV's historical NAVFREE record](DEV.md#navfree-免导航截图判负双杀方案-v2-阶段-2) records concurrent pixel drift and slower rendering. It does not identify a screenshot-versus-animation-clock race. The history establishes a reason to investigate, without establishing that BeginFrame is necessary or sufficient.
+
+The locked local shell actually created an `enableBeginFrameControl` target. Its first BeginFrame call explicitly required `--run-all-compositor-stages-before-draw`; supplying that flag produced screenshots of real content. The live protocol was captured and checked against the lock. A remote schema was not treated as evidence of implementation support.
+
+The same shell provides the ordinary navigation reference. Viewport, color profile and fonts match; normal navigation removes the two required control flags and sets the target control bit false. These necessary experimental axes are declared in the strict comparison plan. A different system Chrome version is not used to attribute pixel differences to BeginFrame.
 
 ## Frame and resource protocol
 
-Persistent rendering requires a caller-declared pure `__vtx_render(f)`. Each request awaits that function, a microtask checkpoint, `document.fonts.ready`, all images' successful load/decode, and a layout read. These are separate readiness observations; none is called a compositor barrier. A monotonic synthetic tick sequence advances by the declared fixed interval independently of requested frame order. The screenshot comes from the corresponding BeginFrame response.
+Persistent rendering requires a caller-declared pure `__vtx_render(f)`. Each request awaits that function, a microtask checkpoint, `document.fonts.ready`, successful image load/decode, and a layout read. Those observations do not constitute a compositor barrier. Monotonic synthetic ticks advance at the fixed research interval, independently of requested frame order. The screenshot comes from the corresponding BeginFrame response.
 
-Every request uses a dedicated target socket and CDP request ID, with a page acknowledgement containing run, target, generation, request and frame. The acknowledgement is checked before and after capture. Diagnostic output also verifies the shared two-corner framebuffer Canary. No-damage output requires a new screenshot response; absent screenshots fail rather than copying an earlier frame. Exceptions fail the run. A new target/run is required for recovery, with an independent identity and initialized page state.
+Each request uses a target-specific socket and CDP request ID. A page acknowledgement binds run, target, generation, request and frame and is checked before and after capture. Diagnostic runs additionally decode both framebuffer Canary corners. Correct corners do not prove that every interior layer has the right raster state; full-frame Golden comparison remains mandatory.
 
-The reference uses the same shell binary, viewport, color profile and fonts, with normal compositor scheduling and ordinary navigation screenshots. Its two control flags and target control bit differ by necessity and are declared experimental axes. System Chrome from another version is not used to attribute differences to BeginFrame.
+No-damage output requires its own screenshot response. Missing captures and page exceptions fail the run, without a completed receipt. Recovery starts a new target/run with initialized state and independent identity. Tabs are not transferred between runs or pages. The runner never fabricates a frame by copying the previous screenshot.
 
-## Evidence and limits
+`strict.py` consumes the existing #62 input fingerprint, manifest and strict verifier contracts. It freezes actual configuration and frame orders before either arm renders. The final runner preflights routes serially, closes the probe browsers, then starts/renders/exits each actual arm independently. The saved pressure experiment used an earlier implementation with an idle second browser resident; it is functional evidence only. Its source is retained by commit `44df0ed`.
 
-Evidence root: `/tmp/framivra-orchestration-20261018/issue67/`. These files are local research artifacts, not portable published assets.
+## Functional evidence
 
-- `probe.json` and `protocol.json`: actual binary, protocol and controlled target support.
-- `real-beginframe/` and `real-navigation/`: production c5a page requests 0, 22, 1, 22; decoded full-frame RGBA hashes are equal across arms and repeated frame 22.
-- `functional-v2/functional.json`: fixed-seed resource-heavy fixture, 21 requests, full-frame exact comparison, repeated/seek history independence, dual-corner diagnostics and error/new-run recovery. Two idle BeginFrame calls returned `hasDamage=false`; the following independent screenshot retained the correct pixels.
-- `strict-software/strict-report.json`: existing #62 strict verification passed for a complete 32-frame isolated project. The actual renderer in both arms is SwiftShader. An earlier attempt (`strict-first/`) correctly failed environment comparison because unrelated host GPU memory use changed; the software rerun uses the verifier's existing software-backend nonapplicability contract and retains raw GPU inventory separately.
+Evidence root: `/tmp/framivra-orchestration-20261018/issue67/`. These are local artifacts; [the implementation](../experiments/gfx_beginframe/README.md) includes parameterized replay and strict-verification entry points. `evidence-snapshot.json` hashes the principal records.
 
-These are functional evidence, not performance acceptance. Internal timing fields remain null because #63 has no merged timing interface on the frozen baseline; PR #169 is not imported or modified. External whole-wave timing can be measured independently, but cannot supply missing navigation/layout/raster/compositor/PNG internal attribution.
+Initial small probes passed: real c5a requests 0, 22, 1, 22 were full-frame exact; the self-contained resource fixture included an embedded font, PNG image, SVG blur, gradient and alpha. Its 21 fixed-seed requests, dual-corner diagnostics and error/new-run recovery passed. Idle BeginFrame returned `hasDamage=false` twice; a subsequent independent screenshot still matched. Eight CPU protocol checks cover exceptions, missing capture, stale identity and no-damage behavior. These small passes do not override the pressure failure.
 
-The long fixed-seed sequence, complete eight-instance load, multi-round cold whole-wave measurements, and independent review remain required before deciding whether the research meets its closure conditions. A successful small probe does not authorize production adoption. No technical Go/NoGo is inferred from environment failure or from these initial functional samples.
+The pressure plan covers every frame 0–127 of eight independent 1920×1080 instances, with seed-bound shuffled order. Two instances each use the synthetic fixture, c5a, c5b and llm_post. The real source files were copied without modification into an isolated project. g6b was excluded after an explicit rejection because it has no `__vtx_render`; it must retain navigation.
+
+The existing #62 verifier compared all 1024 requested output pairs and rejected 245. It reported no missing frames, unknown provenance, environment mismatch or coverage error. Per-instance differences:
+
+| Page | First copy | Second copy |
+| --- | ---: | ---: |
+| Resource-heavy synthetic fixture | 0 | 0 |
+| c5a_main_path | 46 | 29 |
+| c5b_hotkey | 6 | 4 |
+| llm_post | 64 | 96 |
+
+The full receipts, frame orders and PNGs are in `matrix-round1/`; `difference-samples.json` records coordinates and RGBA values. Example c5a frame 22 differs at 726 pixels, maximum channel difference 9, bounding box (58,43)–(501,349). This is a failure of the exactness gate regardless of perceived visual closeness.
+
+A reproducible single-instance counterexample is retained in `history-c5a/`: replay the original prefix through frame 22, then request frame 22 twice more. Two independent runs produced the same differing final image on all three repeated requests. Both Canary corners decoded the requested frame. The final serialized DOM bytes matched the fresh navigation reference exactly. A shorter 127→22→22 probe did not reproduce. These observations rule out an explanation based solely on differing serialized DOM attributes, but do not identify the browser's internal cause or prove an interior layer is current. They do not establish a screenshot/animation-clock race.
+
+The final sequential strict runner passed a separate four-frame self-contained smoke (`strict-serial-tiny/`). This checks lifecycle/receipt integration, not remediation of the real-page failure.
+
+## Remaining gates and research disposition
+
+- **Exactness: FAIL for this candidate.** Stable real-page history-dependent pixel differences require investigation; no page or reference was altered to obtain a pass.
+- **Formal performance: UNRUN.** Planned three-round independent cold measurements were cancelled when the user identified uncontrolled simultaneous development. Saved wave/process wall and sampled RSS are diagnostic only. RSS sums resident pages across a process tree, double-counting shared pages; the pressure experiment also kept both browsers resident. No speed ratio or performance verdict is derived.
+- **Internal attribution: unavailable.** #63 has no merged timing interface on the frozen baseline; PR #169 was not imported or modified. Navigation/layout/raster/compositor/PNG timing fields remain null. External process timing cannot fill those missing fields.
+- **Production eligibility: rejected for the current implementation.** The research issue remains OPEN pending independent review and a decision on the unresolved correctness, controlled performance and attribution requirements. Binary support and small functional successes alone do not complete the original DoD.
+
+The actual renderer was SwiftShader in both arms. An initial strict attempt correctly rejected changing unrelated host GPU memory occupancy. Software reruns use #62's existing software-backend nonapplicability contract and retain the raw GPU inventory separately; the verifier itself is unchanged.

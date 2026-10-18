@@ -25,8 +25,9 @@ from vtx.gfx_render import Tab, WSConn, png_decode_rgba
 from vtx.gfx_cli import png_invalid_reason
 from vtx.frame_canary import signature_rgb, signature2_rgb, verify_diagnostic_corners
 
-VERSION = '149.0.7827.55'
-BINARY_SHA256 = '670ba079b75107746ba41abad131180a31a7c7219aa1bd4061fb471f4535d541'
+LOCK = json.loads(Path(__file__).with_name('binary-lock.json').read_text())
+VERSION = LOCK['browser_version']
+BINARY_SHA256 = LOCK['binary_sha256']
 FLAGS = ['--no-sandbox', '--enable-begin-frame-control',
          '--run-all-compositor-stages-before-draw', '--force-color-profile=srgb',
          '--remote-debugging-port=0']
@@ -84,6 +85,8 @@ class Shell:
             self.browser = browser_session(self.port, path)
             protocol = self.get('/json/protocol', raw=True)
             atomic_bytes(self.output/'protocol.json', protocol)
+            if hashlib.sha256(protocol).hexdigest() != LOCK['protocol_sha256']:
+                raise ValueError('live protocol differs from fixed lock')
             self.metadata = {'binary':str(binary), 'binary_sha256':sha, 'version':version,
                 'flags':flags, 'protocol_sha256':hashlib.sha256(protocol).hexdigest(),
                 'browser_version':self.browser.call('Browser.getVersion'),

@@ -12,6 +12,8 @@ import random
 from pathlib import Path
 import sys
 import time
+import uuid
+import threading
 
 from run import ROOT, Shell, render, atomic_json
 sys.path.insert(0,str(ROOT/'scripts'))
@@ -58,55 +60,75 @@ def main():
         frames=list(range(dur));random.Random(a.seed+index).shuffle(frames);orders[src,dur]=frames
     plan['frame_orders']=[{'src':s,'dur':d,'frames':orders[s,d]} for s,d in clips]
     plan['seed']=a.seed
-    report={'status':'failed','internal_phase_timing':None,'valid_performance_sample':False}
+    report={'status':'failed','internal_phase_timing':None,'performance_verdict':None,
+            'wave_scope':'one fresh browser start, runtime manifest, all frame renders/PNG writes/hashes, browser exit; excludes preflight and final strict verifier'}
+    # Probe both routes without rendering, then close them before freezing plan.
+    # Actual arms use fresh processes; only one browser tree exists at a time.
+    def config(shell, side):
+        return {'capture':'navigate_screenshot' if side=='baseline' else 'render_beginframe',
+                'beginframe_control':side=='candidate',
+                'binary_sha256':shell.metadata['binary_sha256'],
+                'protocol_sha256':shell.metadata['protocol_sha256'],
+                'runner_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in
+                    (Path(__file__),Path(__file__).with_name('run.py'))},
+                'flags':shell.metadata['flags']}
     try:
         for side in order:
-            began_setup=time.monotonic()
-            shell=Shell(a.binary,a.output/side,c.w,c.h,navigation=side=='baseline')
-            shells[side]=shell;m=manifest(shell,side)
-            shell.metadata['external_setup_wall_seconds']=time.monotonic()-began_setup
-            atomic_json(a.output/side/'runtime.json',shell.metadata)
-            config={'capture':'navigate_screenshot' if side=='baseline' else 'render_beginframe',
-                    'beginframe_control':side=='candidate',
-                    'binary_sha256':shell.metadata['binary_sha256'],
-                    'protocol_sha256':shell.metadata['protocol_sha256'],
-                    'runner_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in
-                        (Path(__file__),Path(__file__).with_name('run.py'))},
-                    'flags':shell.metadata['flags']}
-            plan['arms'][side]={'run_id':m['run_id'],'backend_id':'cdp',
-                'effective_backend':m['runtime_backend_truth']['effective_backend'],
-                'chromium_version':m['runtime_backend_truth']['chromium_version'],'config':config}
-            runs[side]={'schema':'vtx.gfx_run/1','run_id':m['run_id'],'complete':False,
-                'input_fingerprint':plan['input_fingerprint'],'config':config,'env_manifest':m,
-                'env_sha256':ge.digest(m),'instances':[]}
+            probe=Shell(a.binary,a.output/(side+'-preflight'),c.w,c.h,navigation=side=='baseline')
+            try:
+                m=manifest(probe,side)
+                plan['arms'][side]={'run_id':uuid.uuid4().hex,'backend_id':'cdp',
+                    'effective_backend':m['runtime_backend_truth']['effective_backend'],
+                    'chromium_version':m['runtime_backend_truth']['chromium_version'],
+                    'config':config(probe,side)}
+                atomic_json(a.output/(side+'-preflight')/'runtime.json',probe.metadata)
+            finally:probe.close()
         atomic_json(a.output/'plan.json',plan)
         for side in order:
-            run=runs[side];run['plan_sha256']=ge.digest(plan)
             began=time.monotonic()
-            # Create targets serially: the browser session has one CDP connection.
-            # Each frame loop then owns one target/WS connection exclusively.
-            shell=shells[side]
-            # render creates its target; serialize creation using a tiny local lock.
-            import threading
-            lock=threading.Lock();original=shell.target
-            def target():
-                with lock:return original()
-            shell.target=target
-            def instance(item):
-                src,dur=item;directory=(a.output/side/('instance-'+str(clips.index(item)))).resolve()
-                records=render(shell,c.root/src,orders[src,dur],directory,navigation=side=='baseline',run_id=run['run_id'])
-                frames={}
-                for r in records:
-                    frame=r['token']['frame'];path=directory/f'f{frame:04d}.png'
-                    Path(r['path']).rename(path)
-                    r['path']=str(path)
-                    frames[f'{frame:04d}']={'run_id':run['run_id'],'origin':'rendered','sha256':r['rgba_sha256']}
-                atomic_json(directory/'requests.json',records)
-                return {'src':src,'dur':dur,'frame_dir':str(directory),'frames':frames}
-            with ThreadPoolExecutor(max_workers=a.workers) as pool:
-                run['instances']=list(pool.map(instance,clips))
-            if ge.input_fingerprint(c,clips)!=plan['input_fingerprint']:raise RuntimeError('inputs changed')
-            run['external_render_wave_wall_seconds']=time.monotonic()-began
+            shell=Shell(a.binary,a.output/side,c.w,c.h,navigation=side=='baseline')
+            shells[side]=shell
+            try:
+                m=manifest(shell,side)
+                expected=plan['arms'][side]
+                # The experiment allocates run IDs before starting either arm.
+                # Runtime data are freshly collected from this actual process.
+                m['run_id']=expected['run_id']
+                if config(shell,side)!=expected['config']:
+                    raise RuntimeError('runtime configuration differs from preflight plan')
+                run={'schema':'vtx.gfx_run/1','run_id':expected['run_id'],'complete':False,
+                    'input_fingerprint':plan['input_fingerprint'],'config':config(shell,side),
+                    'env_manifest':m,'env_sha256':ge.digest(m),'instances':[],
+                    'plan_sha256':ge.digest(plan)}
+                ge._manifest(run,expected,f'{c.w}x{c.h}')
+                runs[side]=run
+                atomic_json(a.output/side/'runtime.json',shell.metadata)
+                # Target creation uses the browser socket under a lock. Frame loops
+                # then own separate target sockets and can run concurrently.
+                lock=threading.Lock();original=shell.target
+                def target():
+                    with lock:return original()
+                shell.target=target
+                def instance(item):
+                    src,dur=item
+                    directory=(a.output/side/('instance-'+str(clips.index(item)))).resolve()
+                    records=render(shell,c.root/src,orders[src,dur],directory,
+                                   navigation=side=='baseline',run_id=run['run_id'])
+                    frames={}
+                    for r in records:
+                        frame=r['token']['frame'];path=directory/f'f{frame:04d}.png'
+                        Path(r['path']).rename(path);r['path']=str(path)
+                        frames[f'{frame:04d}']={'run_id':run['run_id'],'origin':'rendered',
+                                               'sha256':r['rgba_sha256']}
+                    atomic_json(directory/'requests.json',records)
+                    return {'src':src,'dur':dur,'frame_dir':str(directory),'frames':frames}
+                with ThreadPoolExecutor(max_workers=a.workers) as pool:
+                    run['instances']=list(pool.map(instance,clips))
+                if ge.input_fingerprint(c,clips)!=plan['input_fingerprint']:
+                    raise RuntimeError('inputs changed')
+            finally:
+                shell.close();shells.pop(side,None)
+            run['external_complete_wave_wall_seconds']=time.monotonic()-began
             run['complete']=True
             atomic_json(a.output/(side+'-run.json'),run)
         golden={'meta':{'fps':c.fps,'viewport':f'{c.w}x{c.h}',
@@ -117,7 +139,7 @@ def main():
         atomic_json(a.output/'golden.json',golden)
         report['verification']=ge.verify(c,clips,golden,plan,runs['candidate'])
         report['status']='complete' if report['verification']['ok'] else 'different_or_unverified'
-        report['external_wave_wall_seconds']={s:r['external_render_wave_wall_seconds'] for s,r in runs.items()}
+        report['external_wave_wall_seconds']={s:r['external_complete_wave_wall_seconds'] for s,r in runs.items()}
     except Exception as error:
         report['error']=repr(error)
         raise
