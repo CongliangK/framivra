@@ -463,7 +463,7 @@ def _flock_for(path: Path):
 
 
 @contextlib.contextmanager
-def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None):
+def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None, suffix=".tmp"):
     """事务核心：两层锁 + tmp 代管；被包裹方置 txn.commit 后正常退出才替换。
 
     fd 锚定平台：随机名 O_EXCL tmp + 提交前 inode 对账（tmp 目录项中途被置换
@@ -471,10 +471,12 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None)
     写者，见 locked_staging），否则 /proc 锚定（进程内写者）。
     allow_symlink=True：允许末段符号链接目标被原子替换（账本目标侧免疫）。
     降级平台：mkstemp + os.replace + main 锁守卫（原 main 行为）。"""
+    if suffix not in (".tmp", ".png"):
+        raise ValueError("staging suffix must be .tmp or .png")
     p = _write_target(path)
     if _legacy_guard():
         with _thread_lock_for(p), _legacy_flock_for(p):
-            fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=".tmp",
+            fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=suffix,
                                         dir=p.parent)
             os.close(fd)   # 只借 mkstemp 的唯一名，内容由调用方按需重开写
             txn = _Txn(p, Path(name))
@@ -490,7 +492,7 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None)
     with _thread_lock_for(p), pinned_parent(p) as (parent, name, target):
         with flock_at(parent, name, what=target):
             _regular_leaf(parent, name, target, allow_symlink=allow_symlink)
-            tempname = '.' + name + '.' + secrets.token_hex(16) + '.tmp'
+            tempname = '.' + name + '.' + secrets.token_hex(16) + suffix
             fd = os.open(tempname, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                          0o600, dir_fd=parent)
             txn = _Txn(target,
@@ -529,7 +531,7 @@ def locked_write(path):
 
 
 @contextlib.contextmanager
-def locked_staging(path, *, after_commit=None):
+def locked_staging(path, *, after_commit=None, suffix=".tmp"):
     """持锁 + 随机名真实 staging 路径（子进程写者专用：ffmpeg/chrome 等外部
     进程经 argv 接收输出路径）。
 
@@ -537,10 +539,12 @@ def locked_staging(path, *, after_commit=None):
     目录项中途被置换即拒绝发布）+ 原子替换。/proc 锚定路径会被子进程沙箱/
     yama ptrace 拒开，故子进程写者不经 fd_path；随机名不可预置，预置链接
     写穿面不存在（issue #59）。锁序与 locked_write 一致。"""
+    # Chrome infers screenshot format from the extension; only fixed safe suffixes
+    # are accepted, and the default preserves all existing callers.
     # The callback runs after publication but before either target lock is released.
     # It must not reacquire this non-reentrant target lock. If it fails, media
     # remains published and the error propagates; no success is fabricated.
-    with _transaction(path, staging=True, after_commit=after_commit) as txn:
+    with _transaction(path, staging=True, after_commit=after_commit, suffix=suffix) as txn:
         yield txn.tmp
         txn.commit = True
 

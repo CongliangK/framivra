@@ -368,6 +368,15 @@ class GfxCliFallbackTests(unittest.TestCase):
         # 空区间零命令（不起任何子进程即返回）
         self.assertEqual(0, render_cli([], self.out, self.html, fail))
 
+    def test_atomic_screenshot_retains_png_extension(self):
+        stub = self._stub("ok")
+        text = stub.read_text().replace('if MODE == "fail":',
+            'if target is not None and not target.endswith(".png"):\n    sys.exit(4)\nif MODE == "fail":')
+        stub.write_text(text)
+        result = run_cli_shot(0, self.out, self.html, stub, width=1, height=1)
+        self.assertEqual(result.read_bytes(), MINIMAL_PNG)
+        self.assertFalse(any(p.name.startswith('.f0000.png.') for p in self.out.iterdir()))
+
     # ------------------------------- 命令构造与 cli.py 原 shot_cli 一致
     def test_cli_shot_cmd_matches_legacy_flags(self):
         stub = self._stub("ok")
