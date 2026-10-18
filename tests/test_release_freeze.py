@@ -58,7 +58,7 @@ class FreezeTests(unittest.TestCase):
            ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc', 'process', 'input_stability', 'tool_versions', 'media')}}
         (self.root / 'package').mkdir()
         (self.root / 'package/environment.json').write_text(json.dumps({'git': {'status': 'passed', 'stdout': self.commit}, 'git_status': {'status': 'passed', 'stdout': ''}}))
-        with mock.patch('vtx.acceptance.verify', return_value=result):
+        with mock.patch('vtx.acceptance.verify', return_value=result), mock.patch.object(release, 'observed_cdp', return_value='cdp'):
             self.verify()
             result['gates']['qc']['status'] = 'unknown'
             with self.assertRaisesRegex(release.ReleaseError, 'qc'): self.verify()
@@ -69,14 +69,26 @@ class FreezeTests(unittest.TestCase):
            'tools': {name: {'stdout': name + ' version 8.1.3 Copyright build secret-private'} for name in ('ffmpeg', 'ffprobe')},
            'account': 'secret-private', 'HOME': '/private/user', 'logs': 'secret-private'}))
         self.path.write_text(json.dumps(self.data))
-        summary_path = release.build_public_summary(self.path, self.root)
+        with mock.patch.object(release, 'observed_cdp', return_value='cdp'):
+            summary_path = release.build_public_summary(self.path, self.root)
         raw = summary_path.read_text()
         self.assertNotIn('secret-private', raw)
         self.assertNotIn('/private/user', raw)
         summary = json.loads(raw)
         self.assertEqual(summary['tool_versions'], {'python': '3.13.5', 'ffmpeg': '8.1.3', 'ffprobe': '8.1.3'})
         self.assertEqual(set(summary), {'schema', 'version', 'tag', 'source_commit', 'core_asset_sha256', 'gates',
-           'tool_versions', 'support_scope', 'limitations', 'local_freeze_sha256', 'reproduction_guide'})
+           'tool_versions', 'backend_observed', 'support_scope', 'limitations', 'local_freeze_sha256', 'reproduction_guide'})
+
+    def test_requested_cdp_or_fallback_does_not_qualify(self):
+        log = self.root / 'worker.log'
+        for text in ('VTX_GFX=cdp', '✓ canvas[x]: 渲染 60 帧 CDP failed×0'):
+            log.write_text(text)
+            with self.assertRaises(release.ReleaseError): release.observed_cdp(log)
+        good = '\n'.join('✓ ' + name + '[x]: 渲染 60 帧（含 alpha，4 tabs CDP override×60 failed×0, 1ms）' for name in ('canvas','dom'))
+        log.write_text(good)
+        self.assertEqual(release.observed_cdp(log), 'cdp')
+        log.write_text(good + '\n回落 CLI')
+        with self.assertRaises(release.ReleaseError): release.observed_cdp(log)
 
     def test_rc_accepted_but_unsupported_tag_rejected(self):
         self.assertEqual(release.tag_argument('v2.1.0-rc.1'), 'v2.1.0-rc.1')

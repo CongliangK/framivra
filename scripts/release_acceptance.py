@@ -90,7 +90,9 @@ def main(argv=None):
     command('demo-input-verify', [sys.executable, 'scripts/demo.py', 'verify', '--project', project, '--pixels'])
     timeline = project / 'timeline.json'
     prefix = [sys.executable, '-m', 'vtx', '-t', timeline]
-    gate('public_demo_render', [command('demo-all', prefix + ['all'])])
+    rendered = command('demo-all', prefix + ['all'])
+    release.observed_cdp(out / rendered['log'])
+    gate('public_demo_render', [rendered])
     gate('public_demo_qc', [command('demo-qc', prefix + ['qc', '--strict'])])
     original = timeline.read_bytes()
     def cache_snapshot():

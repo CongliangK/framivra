@@ -231,6 +231,23 @@ REQUIRED_FREEZE_GATES = frozenset(('isolated_install', 'public_demo_render', 'pu
     'local_edit', 'failure_recovery', 'independent_package', 'distribution_license'))
 
 
+def observed_cdp(path):
+    """Observe cold standard-demo worker completion, never the requested knob."""
+    text = Path(path).read_text(encoding='utf-8', errors='strict')
+    lines = [line for line in text.splitlines() if re.search(r'✓ (?:canvas|dom)\[', line)]
+    if len(lines) != 2:
+        raise ReleaseError('missing cold CDP worker observations for both demo pages')
+    for page in ('canvas', 'dom'):
+        matching = [line for line in lines if re.search(r'✓ ' + page + r'\[', line)]
+        if len(matching) != 1 or not re.search(r'渲染 60 帧.*CDP .*failed×0(?:[,， )]|$)', matching[0]):
+            raise ReleaseError('required actual CDP worker completion missing: ' + page)
+        if re.search(r'cli_fallback×[1-9]', matching[0]):
+            raise ReleaseError('CDP worker used CLI fallback')
+    if '回落 CLI' in text or '回落CLI' in text:
+        raise ReleaseError('CLI downgrade is outside the CDP baseline qualification')
+    return 'cdp'
+
+
 def verify_freeze_evidence(path, commit, tag, assets):
     """Seal evidence bytes and strict required outcomes; human truth remains review.
 
@@ -275,6 +292,8 @@ def verify_freeze_evidence(path, commit, tag, assets):
                 raise ReleaseError('required freeze command failed: ' + name)
             if digest(regular(path.parent / relative(step['log']))) != step['sha256']:
                 raise ReleaseError('freeze raw log bytes changed: ' + name)
+        if name == 'public_demo_render':
+            observed_cdp(path.parent / relative(report['steps'][0]['log']))
         if name == 'distribution_license':
             audit = read_json(path.parent / relative(report['steps'][-1]['log']))
             if audit.get('integrity_checks_passed') is not True or audit.get('release_blockers'):
@@ -284,6 +303,7 @@ def verify_freeze_evidence(path, commit, tag, assets):
         raise ReleaseError('independent acceptance package is required')
     package_root = path.parent / relative(package['path'])
     result = verify(package_root, package['manifest_sha256'])
+    observed_cdp(package_root / 'build.log')
     environment = read_json(package_root / 'environment.json')
     if environment.get('git', {}).get('status') != 'passed' or environment['git']['stdout'].strip() != commit:
         raise ReleaseError('acceptance package was built by a different commit')
@@ -321,7 +341,7 @@ def build_public_summary(evidence, work):
     summary = {'schema': 'framivra.public-freeze-summary/1', 'version': data['tag'][1:],
        'tag': data['tag'], 'source_commit': data['commit'], 'core_asset_sha256': data['assets'],
        'gates': {name: data['gates'][name]['status'] for name in sorted(REQUIRED_FREEZE_GATES)},
-       'tool_versions': versions, 'support_scope': ['Linux', 'CPU encoding', 'CDP', 'public standard-demo', 'kernel CLI'],
+       'tool_versions': versions, 'backend_observed': observed_cdp(evidence.parent / relative(read_json(evidence.parent / data['gates']['public_demo_render']['path'])['steps'][0]['log'])), 'support_scope': ['Linux', 'CPU encoding', 'CDP', 'public standard-demo', 'kernel CLI'],
        'limitations': ['Full acceptance package and raw logs retained locally; summary is not a replay bundle',
            'Visual content remains unknown; no human audiovisual approval claimed',
            'macOS, Windows, CEF, Electron, GPU and optional model applications are unqualified',
