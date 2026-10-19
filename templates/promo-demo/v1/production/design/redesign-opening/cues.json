@@ -1,0 +1,306 @@
+{
+  "format": "framivra-isolated-opening-cue-proposal/1",
+  "status": "VISUAL_SOURCE_CUES_ONLY_AUDIO_UNAUDITIONED_NO_PCM_BOUND",
+  "scope": "Isolated first 300 frames; original 3600-frame film, score and four audio roles are unchanged.",
+  "clock": {
+    "fps": 30,
+    "sample_rate": 48000,
+    "samples_per_video_frame": 1600,
+    "frames": 300
+  },
+  "read_only_existing_score": {
+    "path": "../../music/score.json",
+    "sha256": "93e84f1e53d38bc38669802e243bb9d86eb56f3d3081042393708279a16f6114",
+    "events_0_to_299": [
+      {
+        "id": "e0000",
+        "voice": "nylon",
+        "role": "T17",
+        "sample": 0,
+        "frame": 0,
+        "seconds": 0.0,
+        "pitch": 50,
+        "duration_seconds": 0.35,
+        "velocity": 48,
+        "gain_db": -6.0,
+        "pan": -0.18,
+        "phrase": "opening question"
+      },
+      {
+        "id": "e0001",
+        "voice": "knock",
+        "role": "T19",
+        "sample": 28800,
+        "frame": 18,
+        "seconds": 0.6,
+        "pitch": 74,
+        "duration_seconds": 0.12,
+        "velocity": 86,
+        "gain_db": 0.0,
+        "pan": -0.24,
+        "phrase": "physical action: die touches full stock",
+        "picture_cue": "cut"
+      },
+      {
+        "id": "e0002",
+        "voice": "nylon",
+        "role": "T17",
+        "sample": 57600,
+        "frame": 36,
+        "seconds": 1.2,
+        "pitch": 57,
+        "duration_seconds": 0.35,
+        "velocity": 48,
+        "gain_db": -3,
+        "pan": -0.18,
+        "phrase": "opening question"
+      },
+      {
+        "id": "e0003",
+        "voice": "knock",
+        "role": "T19",
+        "sample": 107200,
+        "frame": 67,
+        "seconds": 2.2333333333333334,
+        "pitch": 62,
+        "duration_seconds": 0.2,
+        "velocity": 88,
+        "gain_db": 0.0,
+        "pan": 0.05,
+        "phrase": "physical action: body die touches and ink persists",
+        "picture_cue": "body"
+      },
+      {
+        "id": "e0004",
+        "voice": "nylon",
+        "role": "T17",
+        "sample": 131200,
+        "frame": 82,
+        "seconds": 2.7333333333333334,
+        "pitch": 64,
+        "duration_seconds": 0.35,
+        "velocity": 51,
+        "gain_db": -3,
+        "pan": -0.18,
+        "phrase": "opening question"
+      },
+      {
+        "id": "e0005",
+        "voice": "knock",
+        "role": "T19",
+        "sample": 174400,
+        "frame": 109,
+        "seconds": 3.6333333333333333,
+        "pitch": 81,
+        "duration_seconds": 0.1,
+        "velocity": 74,
+        "gain_db": 0.0,
+        "pan": -0.1,
+        "phrase": "physical action: two cut shoes touch head stock",
+        "picture_cue": "trim"
+      },
+      {
+        "id": "e0006",
+        "voice": "nylon",
+        "role": "T17",
+        "sample": 200000,
+        "frame": 125,
+        "seconds": 4.166666666666667,
+        "pitch": 66,
+        "duration_seconds": 0.35,
+        "velocity": 46,
+        "gain_db": -3,
+        "pan": -0.18,
+        "phrase": "opening question"
+      },
+      {
+        "id": "e0007",
+        "voice": "knock",
+        "role": "T19",
+        "sample": 240000,
+        "frame": 150,
+        "seconds": 5.0,
+        "pitch": 86,
+        "duration_seconds": 0.09,
+        "velocity": 65,
+        "gain_db": 0.0,
+        "pan": 0.24,
+        "phrase": "physical action: punch contacts eye point",
+        "picture_cue": "eye"
+      },
+      {
+        "id": "e0008",
+        "voice": "motif",
+        "role": "T20",
+        "sample": 304000,
+        "frame": 190,
+        "seconds": 6.333333333333333,
+        "pitch": 74,
+        "duration_seconds": 0.32,
+        "velocity": 79,
+        "gain_db": 0,
+        "pan": 0.12,
+        "phrase": "first lift",
+        "picture_cue": "lift"
+      },
+      {
+        "id": "e0009",
+        "voice": "motif",
+        "role": "T20",
+        "sample": 328000,
+        "frame": 205,
+        "seconds": 6.833333333333333,
+        "pitch": 78,
+        "duration_seconds": 0.26,
+        "velocity": 72,
+        "gain_db": 0,
+        "pan": 0.12,
+        "phrase": "first lift"
+      },
+      {
+        "id": "e0010",
+        "voice": "motif",
+        "role": "T20",
+        "sample": 352000,
+        "frame": 220,
+        "seconds": 7.333333333333333,
+        "pitch": 81,
+        "duration_seconds": 0.54,
+        "velocity": 76,
+        "gain_db": 0,
+        "pan": 0.12,
+        "phrase": "first lift"
+      },
+      {
+        "id": "e0011",
+        "voice": "nylon",
+        "role": "T17",
+        "sample": 355200,
+        "frame": 222,
+        "seconds": 7.4,
+        "pitch": 57,
+        "duration_seconds": 0.3,
+        "velocity": 55,
+        "gain_db": -2,
+        "pan": -0.18,
+        "phrase": "opening release"
+      },
+      {
+        "id": "e0012",
+        "voice": "nylon",
+        "role": "T17",
+        "sample": 401600,
+        "frame": 251,
+        "seconds": 8.366666666666667,
+        "pitch": 62,
+        "duration_seconds": 0.25,
+        "velocity": 48,
+        "gain_db": -2,
+        "pan": -0.18,
+        "phrase": "opening release"
+      },
+      {
+        "id": "e0013",
+        "voice": "motif",
+        "role": "T20",
+        "sample": 408000,
+        "frame": 255,
+        "seconds": 8.5,
+        "pitch": 78,
+        "duration_seconds": 0.3,
+        "velocity": 59,
+        "gain_db": 0.0,
+        "pan": 0.12,
+        "phrase": "answer before wing cover"
+      }
+    ]
+  },
+  "comparison": [
+    {
+      "visual_event": "upper contour die contact",
+      "visual_frame": 18,
+      "existing_event": "e0001",
+      "audio_onset_frame": 18,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN",
+      "semantic_change": "Printed bird is freed rather than generated from blank colour."
+    },
+    {
+      "visual_event": "lower contour knife contact",
+      "visual_frame": 67,
+      "existing_event": "e0003",
+      "audio_onset_frame": 67,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN",
+      "semantic_change": "Old imprint becomes cutting preprinted lower stock; actual timbre suitability must be judged."
+    },
+    {
+      "visual_event": "two trim edges meet head boundaries",
+      "visual_frame": 109,
+      "existing_event": "e0005",
+      "audio_onset_frame": 109,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN"
+    },
+    {
+      "visual_event": "eye tool bottom reaches shared eye anchor; eye appears",
+      "visual_frame": 150,
+      "existing_event": "e0007",
+      "audio_onset_frame": 150,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN",
+      "weight_intent": "Lightest contact; existing velocity 65 is metadata, not an audible loudness measurement."
+    },
+    {
+      "visual_event": "launch anticipation starts",
+      "visual_frame": 190,
+      "existing_event": "e0008",
+      "audio_onset_frame": 190,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN"
+    },
+    {
+      "visual_event": "last supported push; flight starts immediately after",
+      "visual_frame": 206,
+      "existing_event": "e0009",
+      "audio_onset_frame": 205,
+      "onset_minus_visual_frames": -1,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN",
+      "weight_intent": "First flight is the primary release, not four equally heavy mechanical beats. A one-frame onset lead is reported, not signed off."
+    },
+    {
+      "visual_event": "free flight after foot retraction",
+      "visual_frame": 220,
+      "existing_event": "e0010",
+      "audio_onset_frame": 220,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN"
+    },
+    {
+      "visual_event": "near wing begins foreground approach",
+      "visual_frame": 264,
+      "existing_event": "e0013",
+      "audio_onset_frame": 255,
+      "onset_minus_visual_frames": -9,
+      "measured_acoustic_peak_frame": null,
+      "listening": "UNRUN",
+      "weight_intent": "Existing answer leads the takeover; no invented extra impact sound."
+    }
+  ],
+  "holds": [
+    {
+      "frames": [
+        163,
+        190
+      ],
+      "meaning": "27 identical full-silhouette recognition frames; background music may sustain, no added contact cue."
+    }
+  ],
+  "mac_handoff": "Root coordinates existing immutable music/stems first 10 seconds and actual frame export. Do not create a silent fake audio pass. If sound redesign is required, request explicit music/audio file scope from root before changing bindings.",
+  "never_claim": [
+    "Source event onset equals acoustic peak",
+    "Node cue equality proves audible synchronization",
+    "Ten-second trial proves 120-second BGM or final user acceptance"
+  ]
+}

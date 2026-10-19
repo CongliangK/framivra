@@ -1,0 +1,16 @@
+{
+  "format": "framivra-opening-source-identity/1",
+  "status": "ISOLATED_300_FRAME_SOURCE_NOT_ART_ACCEPTANCE",
+  "original_production_base": "b287b86d95565e308eaf8fa64900f9bc6d62ae8e",
+  "files": {
+    "index.html": "e8aba4b01ad199517c601e9e26e0b1be5a313f49bd952bd1f8c09ebcbfcf2a7b",
+    "geometry.js": "f15282f8775baf5527b8e3c1c03ca56449881d6b3a3f33a2a5e94be0bbfe0f1d",
+    "opening.js": "35d439205476c0cf67c3ada15802e88b33c4342c18de8e57f04ac575c36340c4",
+    "cues.json": "3caf427940ffd6ac155cdf291b729a4997d45c0a792bc0b625c050856944a91d",
+    "preview-timeline.json": "2c1aa821b679de5157d0944f1090cfc49a09ddb23806a4e8469b3ca0e06e70a8",
+    "prepare_preview.py": "b2f5749cd1f9fe13a2a504f6e674d5bf4c94079eea953f52c4369804306bd78c",
+    "inspect_preview.py": "e2b31ef8841e1bfb9461b82b609d9b2cab2721434433a8bdba9d847a8ed2276f",
+    "run_native_preview.py": "72c7cd00d80f2730fca611869890e958dd24d8fb50411d0ec2351caa14486aaa"
+  },
+  "production_stems_sha256": "25131e0c86241778a880304b52937bfaa52edb79c59425e2219571142b6f48c7"
+}
