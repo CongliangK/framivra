@@ -139,8 +139,12 @@ def render_arm(spec_file, arm):
     return report['process_exit_code']
 
 
-def execute_pair(plan, output, chrome, commit, tree):
+def execute_pair(plan, output, chrome, commit, tree, *, arm_order=None):
     """One 900-second deadline, including identity checks, both arms and quality."""
+    if arm_order is not None:
+        require(plan.get('mode') == 'fast-png', 'Explicit arm order is fast-png only')
+        require(arm_order in ('AB','BA'), 'Arm order must be AB or BA')
+    arms_in_order = ('candidate','baseline') if arm_order == 'BA' else ('baseline','candidate')
     from vtx import proc_supervisor
     start = clock_now()
     deadline = start + DEADLINE_SECONDS
@@ -160,6 +164,9 @@ def execute_pair(plan, output, chrome, commit, tree):
                'base':plan['base'],'plan_sha256':digest(canonical(plan)),'processes':[],
                'deadline_seconds':DEADLINE_SECONDS,'clock':clock_evidence,'full_scene_quality':'UNRUN',
                'performance_claim':'none; first local pair only'}
+    order_evidence = {'arm_order':arm_order or 'AB','arm_sequence':list(arms_in_order)} \
+        if plan.get('mode') == 'fast-png' else {}
+    summary.update(order_evidence)
     try:
         verify_plan(plan)
         # No experimental implementation may silently alter production/core or the fixed source template.
@@ -169,11 +176,12 @@ def execute_pair(plan, output, chrome, commit, tree):
         require(not diff.strip(),'Pilot implementation changes production or fixed source')
         spec = {'plan':plan,'implementation':implementation,'output':str(root),'chrome':str(Path(chrome).resolve()),
                 'deadline_monotonic':deadline,'clock_kind':CLOCK_KIND}
+        spec.update(order_evidence)
         write_json(root/'spec.json',spec)
         env = dict(os.environ,**PROFILE,VTX_CHROME=spec['chrome'])
         env['PYTHONPATH'] = str(ROOT)
         ctx = SimpleNamespace(root=root,cache=root/'cache')
-        for arm in ('baseline','candidate'):
+        for arm in arms_in_order:
             remaining = deadline-clock_now()
             require(remaining>0,'Pair deadline reached before '+arm)
             fresh(root/arm)
@@ -264,6 +272,8 @@ def main(argv=None):
     p=sub.add_parser('run'); p.add_argument('--plan',required=True); p.add_argument('--output',required=True)
     p.add_argument('--chrome',required=True); p.add_argument('--implementation-commit',required=True)
     p.add_argument('--implementation-tree',required=True)
+    p.add_argument('--arm-order',choices=['AB','BA'],
+                   help='fast-png only: AB=baseline then candidate (default), BA=candidate then baseline')
     p=sub.add_parser('_quality'); p.add_argument('--spec',required=True); p.add_argument('--parent-alive-fd')
     p=sub.add_parser('_arm'); p.add_argument('--spec',required=True); p.add_argument('--arm',choices=['baseline','candidate'],required=True)
     p.add_argument('--parent-alive-fd')
@@ -278,7 +288,7 @@ def main(argv=None):
         from .quality import run_quality
         return run_quality(args.spec)
     return execute_pair(json.loads(Path(args.plan).read_bytes()),args.output,args.chrome,
-                        args.implementation_commit,args.implementation_tree)
+                        args.implementation_commit,args.implementation_tree,arm_order=args.arm_order)
 
 if __name__=='__main__':
     sys.exit(main())
