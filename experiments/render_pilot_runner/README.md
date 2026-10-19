@@ -4,6 +4,57 @@ Isolated opt-in experiment for the frozen TODAY plan identified in contract.py.
 Nothing imports this directory from production. It changes no CI discovery,
 selector, shard, required check, event schema, old cache or manifest.
 
+## Fast-PNG order-balanced replication preparation
+
+`run --arm-order AB|BA` is an optional fast-png-only execution setting. A always
+means baseline PNG; B always means optimizeForSpeed candidate PNG. Omission keeps
+the existing AB order. BA starts candidate before baseline, with quality last.
+It does not swap directory names, capture modes, frame mappings or left/right
+quality identities. An explicit order on any other mode is refused before work.
+The stopped group experiment is not resumed or otherwise extended by this change.
+
+The fast-png spec/result record `arm_order` and `arm_sequence` as requested schedule.
+The result's `processes` array records actual stages started, including failures;
+a two-item schedule is not evidence that both arms completed. Existing per-attempt
+raw stats, capture traces, PNG sizes, exits, cleanup and full-wall records remain
+authoritative. The plan and its digest are unchanged; order is separate execution
+configuration in spec/result. Each pair still has one shared deadline and its own
+fresh output, cache and profiles. No retries, concurrency or timing system is added.
+
+After independent review of the new exact implementation commit/tree, the proposed
+formal replication is three separate serial pairs, AB / BA / AB, each in a new
+directory. The original 1c01574 first pair remains a pilot outside these formal
+samples; do not pool its timing or reuse its cache. Keep the same reviewed bound
+input, browser/environment, profile and 120 targets per arm. Order varies only
+between whole arms; each arm retains continuous then diagnostic batches. This
+small schedule includes both orders but is not an equal-count randomized design.
+
+Record every pair and every attempt, including unsuccessful/partial runs. Do not
+replace failed samples with hidden reruns or proceed after unverified cleanup.
+Report continuous 90 globals / 180 layer-frames separately from diagnostic
+30 globals / 58 layer-frames. Preserve arm wall, supervised wall and whole-pair
+wall as separate measurements; retain each render_page timing sum/count/p95
+without manufacturing pooled percentiles. For each pair and each batch sum all
+fresh target PNG byte counts by named arm, and report the candidate/baseline size
+ratio beside time differences. Initial screenshot probes are not target frames.
+Diagnostics do not establish throughput. Exact 238-frame RGBA/alpha equality,
+no fallback/recovery, unchanged identities and verified cleanup remain required.
+Cross-pair stability, thermal/resource observations and the PNG-size tradeoff must
+be assessed separately; no new acceptance threshold or stable speed claim is added.
+
+Ordinary explicit regression command (no browser, FFmpeg, real worker or path attack):
+
+```bash
+python3 -m unittest experiments.render_pilot_runner.test_arm_order -v
+```
+
+The following example WRITES a fresh pair and starts real browsers; it is only
+for the separately authorized Mac execution after review, not a cloud test:
+
+```bash
+python3 -m experiments.render_pilot_runner.runner run --plan /ABS/FAST-PNG-plan.json --output /ABS/NEW-FORMAL-PAIR-2 --chrome /ABS/QUALIFIED-CHROME --implementation-commit FULL-REVIEWED-COMMIT --implementation-tree FULL-REVIEWED-TREE --arm-order BA
+```
+
 ## Boundaries and inputs
 
 - b287/d281 is the workload baseline, not the execution implementation identity.
