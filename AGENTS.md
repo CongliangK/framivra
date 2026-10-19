@@ -12,6 +12,7 @@ B 站视频产线程序本体权威仓:内核 `vtx/`(timeline.json 契约+帧精
 - 安装:一键安装=克隆模式引导(Linux/macOS=scripts/install.sh,Windows=scripts/install_windows.ps1;默认稳定tag/显式版本或main+安全更新+幂等 init);人面安装行→README.md。源码冻结规则 home=docs/releases.md;长期资产安装改进跟踪=#94,参数 home=scripts/install.py --help。
 
 ## 写态红线
+- **CI 默认禁止擅改**:工作流、门禁脚本、测试选择/分片、通过判据及仓库检查设置均属 CI。只有对必要性、影响与验证/回滚方案有十足把握，且**修改前向用户说明并申请、获得明确批准**后，方可在批准范围内调整；未获批准一律不动。不得以修复失败、提速或让检查变绿为由，删减/跳过测试、放宽门禁或绕过必需检查；应先定位并修复业务代码，确需改 CI 则停下申请。
 - 生成区禁手改:docs/catalog.md 生成区(变更走 `python3 scripts/gen_manifest_catalog.py` 重注);项目 cache/ 与 out/ 运行时产物(.gitignore 在册)。
 - docs/plans* 三目录只读历史层(唯一活文件例外见 DOC-CHARTER §19)。
 - docs/skill/ 与 templates/** 文档修订即改写挂载消费面,落笔前先经消费面评审公告(DOC-CHARTER §5/§7b)。
