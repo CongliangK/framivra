@@ -1,0 +1,7 @@
+/gfx/
+/assets/
+/.generated/
+/cache/
+/out/
+__pycache__/
+*.pyc

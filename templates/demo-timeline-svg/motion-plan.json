@@ -1,0 +1,35 @@
+{
+  "format": "framivra-demo-motion-plan/v1",
+  "identity": "JSON-centered abstract concept animation; not a production Framivra schema or live editing UI",
+  "project": {"width": 1920, "height": 1080, "fps": 30, "duration_frames": 900},
+  "anchors": {"json_origin":18,"arrangement_read":135,"first_hit":228,"rewrite":339,"old_point_pass":411,"new_hit":462,"result_carry":510,"result_settle":606,"brand_transfer":720,"brand_lock":774,"end":900},
+  "shots": [
+    {"id":"json_source","in":0,"out":120},
+    {"id":"arrangement","in":120,"out":195},
+    {"id":"first_content","in":195,"out":300},
+    {"id":"rewrite","in":300,"out":379},
+    {"id":"revised_content","in":379,"out":510},
+    {"id":"result","in":510,"out":720},
+    {"id":"brand","in":720,"out":900}
+  ],
+  "materials": {
+    "picture":{"identity":"coral circle","before_radius":92,"after_radius":320,"center":[560,500]},
+    "text":{"identity":"Aa","content":"此刻","position":[900,600],"font_size":240},
+    "sound":{"identity":"blue three-stroke pulse","visual_center":[1580,500],"cue_name":"same_short_D5_hit","audio_status":"No audio included in this preview; actual cue belongs to separate audio plan"}
+  },
+  "arrangements": {
+    "initial":{"onset_anchor":"first_hit","point_x":760,"event_widths":{"picture":440,"text":380,"sound":110}},
+    "revised":{"onset_anchor":"new_hit","point_x":1200,"previous_point_x":760,"event_widths":{"picture":440,"text":380,"sound":110}}
+  },
+  "copy": {
+    "source":["一个 JSON，","一条时间线。"],
+    "arrangement":["画面、文字、声音，","同一份编排。"],
+    "rewrite":["修改编排，","节奏可控。"],
+    "result":"编排可控，成片可信。",
+    "brand":"Framivra",
+    "tagline":"一条时间线，统筹完整视频。",
+    "stability":"为稳定创作而构建。"
+  },
+  "motion": {"main_motion_frames":7,"settle_frames":7,"sound_visual_frames":10,"result_center_arrival_frames":11,"result_lead_in_frame":529,"result_tail_in_frame":546,"result_strip_join_frame":579,"result_strip_join_frames":12,"result_relation_read_frame":606},
+  "constraints":{"material_hit_frames":[228,462],"no_hit_frames":[411,510,606],"brand_read_frames":[774,900],"no_third_hit":true,"complex_snapshots":"whole translation and uniform scale only","browser_validation":"not performed","audio_included":false}
+}

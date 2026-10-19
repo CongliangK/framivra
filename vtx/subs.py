@@ -255,6 +255,9 @@ def _layer_ready(c: Ctx, f: int):
                 try:
                     source.require_ready(rel, rel + 1)
                 except ValueError:
+                    from . import gfx_svg
+                    if gfx_svg.is_svg(cl):
+                        raise  # Explicit SVG cache failures cannot become a successful black preview.
                     return None
                 # The preview consumes one output frame. Keep readiness at the
                 # same clip-local boundary; later PNGs need not exist yet.
@@ -302,7 +305,7 @@ def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
     return p, "黑场画布（兜底）"
 
 
-def run_preview(c: Ctx, tokens, dry: bool):
+def _run_preview(c: Ctx, tokens, dry: bool, *, before_summary=None):
     """subs preview：每个时间点产一张 out/subs_preview_f<帧号>.png（≤5s/张）。"""
     points = _parse_points(tokens, c)
     seen = set()
@@ -326,11 +329,25 @@ def run_preview(c: Ctx, tokens, dry: bool):
                     print(f"✗ 帧 {f}：字幕烧录失败"); ok = False; continue
         tag = "[dry-run] " if dry else ""
         print(f"{tag}✓ 帧 {f}（{tok}）：{dst}｜背景={src}｜活跃字幕 {len(subs)} 条")
+    if before_summary is not None:
+        before_summary()  # Full input recheck before any final PASS declaration.
     tail = "（dry-run 未落盘）" if dry else ""
     print(("PASS" if ok else "FAIL") + "｜产物：" +
           "、".join(str(c.out / f"subs_preview_f{f}.png") for f, _ in points) + tail)
     if not ok:
         sys.exit(1)
+
+
+def run_preview(c: Ctx, tokens, dry: bool):
+    from . import gfx_svg
+    if gfx_svg.route(c) != 'svg-sequence':
+        return _run_preview(c, tokens, dry)
+    from .cache_state import verify_input_identity
+    verify_input_identity(c)
+    # _layer_ready and RenderPlan both retain this exact context and source.
+    # Exceptions/cancellation only clear scope; cleanup never replaces errors.
+    with gfx_svg.consumer_scope(c):
+        return _run_preview(c, tokens, dry, before_summary=lambda: verify_input_identity(c))
 
 
 # ---------------------------------------------------------------- CLI 路由

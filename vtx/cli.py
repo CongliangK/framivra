@@ -189,6 +189,10 @@ def gfx(c: Ctx):
 
 def _gfx(c: Ctx):
     budget_gate(c, "gfx")
+    from . import gfx_svg
+    if gfx_svg.route(c) == "svg-sequence":
+        from .gfx_svg_stage import render_stage
+        return render_stage(c)
     # issue #103：gfx 阶段开工前清扫上次崩溃残留的监管 Worker 孤儿组（只杀
     # 账本核验过、宿主已死的组；并行 vtx 进程的活动组由账本 host 字段跳过）。
     # dry 零写态纪律：dry 跳过（reap 有目录移除动作）。

@@ -6,6 +6,7 @@
 import contextlib, hashlib, json, os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import ContextVar
+from fractions import Fraction
 from pathlib import Path
 
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
@@ -21,6 +22,28 @@ from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
 
 
 _probe_json_path = ContextVar("vtx_probe_json_path", default="$")
+
+
+def _audio_duration_from_ticks(stream):
+    """Read exact nonnegative stream time, or leave legacy duration fallback intact."""
+    ticks = stream.get('duration_ts')
+    time_base = stream.get('time_base')
+    if (isinstance(ticks, bool) or not isinstance(ticks, (int, str))
+            or not isinstance(time_base, str)):
+        return None
+    parts = [str(ticks).strip(), *time_base.split('/')]
+    if len(parts) != 3:
+        return None
+    parts = [part.strip() for part in parts]
+    if not all(part.isascii() and part.isdecimal() for part in parts):
+        return None
+    try:
+        count, numerator, denominator = map(int, parts)
+        if numerator > 0 and denominator > 0:
+            return count * Fraction(numerator, denominator)
+    except ValueError:
+        pass  # Unusable metadata is recoverable, not a terminal diagnostic.
+    return None
 
 
 def is_ffmpeg_cmd(cmd) -> bool:
@@ -153,9 +176,15 @@ class Ctx:
         validate_cache_dependencies(self)
         from .gfx_backend import selected, identity
         from .hygiene import gfx_cache_ns
-        self.gfx_backend = {"requested_backend": selected(), "identity": identity(),
-                            "namespace": gfx_cache_ns()} if any(
-            t.get("kind") == "gfx" for t in self.tl.get("video_tracks", [])) else None
+        from . import gfx_svg
+        if gfx_svg.route(self) == 'svg-sequence':
+            self.gfx_backend = {'requested_backend': 'svg-sequence',
+                                'identity': gfx_svg.engine_identity(),
+                                'namespace': gfx_svg.NAMESPACE, 'experimental': True}
+        else:
+            self.gfx_backend = {"requested_backend": selected(), "identity": identity(),
+                                "namespace": gfx_cache_ns()} if any(
+                t.get("kind") == "gfx" for t in self.tl.get("video_tracks", [])) else None
         self.input_fingerprint = receipt_fingerprint(
             self, timeline_bytes=self.timeline_bytes)
         if self.gfx_backend is not None and getattr(self, '_gfx_environment', None):
@@ -297,16 +326,27 @@ class Ctx:
                     "h": metadata(lambda: int(v['height']), '$.streams[video].height', 'video height integer'),
                     "has_video": True, "has_audio": a is not None}
         else:  # 纯音频源（音效/BGM/环境声文件）：时长换算到项目帧网格，仅供音频事件引用
-            dur_raw = metadata(lambda: d.get('format', {}).get('duration'), '$.format.duration', 'read audio duration')
-            if not dur_raw:
-                emit(self, 'ffprobe 未返回纯音频源 format.duration', json_path=_probe_json_path.get(),
-                     rule_id='probe.audio_duration', measured=None, threshold={'unit': 's', 'present': True}, status='unknown',
-                     source={'provider': 'ffprobe', 'resource': str(path), 'provider_path': '$.format.duration'})
-                print(f"✗ ffprobe 未返回纯音频源 {path.name} 的 format.duration，"
-                      "无法换算到项目帧网格", file=sys.stderr)
-                producer_exit(1)
-            dur = metadata(lambda: float(dur_raw), '$.format.duration', 'audio duration float')
-            info = {"fps": None, "nb_frames": metadata(lambda: int(dur * self.fps), '$.format.duration', 'audio duration to frames'),
+            dur = None
+            duration_pointer = ['$.streams[0].duration_ts', '$.streams[0].time_base']
+            # ffprobe rounds format.duration to decimal microseconds; a 54400-sample
+            # WAV at 48 kHz is exactly 34 project frames, not int(1.133333 * 30)=33.
+            # Only a single audio stream can replace container duration without
+            # changing the existing multi-stream/container selection semantics.
+            if a is not None and len(d['streams']) == 1:
+                dur = metadata(lambda: _audio_duration_from_ticks(a), duration_pointer,
+                               'parse exact audio stream duration')
+            if dur is None:
+                duration_pointer = '$.format.duration'
+                dur_raw = metadata(lambda: d.get('format', {}).get('duration'), duration_pointer, 'read audio duration')
+                if not dur_raw:
+                    emit(self, 'ffprobe 未返回纯音频源 format.duration', json_path=_probe_json_path.get(),
+                         rule_id='probe.audio_duration', measured=None, threshold={'unit': 's', 'present': True}, status='unknown',
+                         source={'provider': 'ffprobe', 'resource': str(path), 'provider_path': '$.format.duration'})
+                    print(f"✗ ffprobe 未返回纯音频源 {path.name} 的 format.duration，"
+                          "无法换算到项目帧网格", file=sys.stderr)
+                    producer_exit(1)
+                dur = metadata(lambda: float(dur_raw), duration_pointer, 'audio duration float')
+            info = {"fps": None, "nb_frames": metadata(lambda: int(dur * self.fps), duration_pointer, 'audio duration to frames'),
                     "w": 0, "h": 0, "has_video": False, "has_audio": a is not None}
         self.probes[path] = info; return info
 

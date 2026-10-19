@@ -199,6 +199,13 @@ def validate(c: Ctx):
             if native(cp, lambda: field(cl, 'dst_in', cp) < 0, 'comparison', paths=[key_path(cp, 'dst_in')]) or native(cp, lambda: observe("field(cl, 'dst_in', cp) + field(cl, 'dur', cp)", field(cl, 'dst_in', cp) + field(cl, 'dur', cp)) > c.dur, 'comparison', paths=['$.project.duration_frames', key_path(cp, 'dst_in'), key_path(cp, 'dur')]):
                 err(f"{field(tr, 'name', tp)}: clip 区间越界 @dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_bounds', {'start': observed.get(key_path(cp, 'dst_in'), {'status': 'not_observed'}), 'end': observed.get("field(cl, 'dst_in', cp) + field(cl, 'dur', cp)", {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'unit': 'frames'})
             if kind == "gfx":
+                from . import gfx_svg
+                if gfx_svg.is_svg(cl):
+                    try:
+                        gfx_svg.resolve(c, cl)
+                    except (ValueError, OSError) as error:
+                        err(str(error), cp + '.src', 'validate.svg_sequence')
+                    continue
                 if not (native(cp, lambda: observe("c.root / field(cl, 'src', cp)", c.root / field(cl, 'src', cp)), 'arithmetic', paths=[key_path(cp, 'src')])).exists(): err(f"gfx clip html 不存在: {field(cl, 'src', cp)}", cp + '.src', 'validate.gfx_exists', {'path': observed.get(key_path(cp, 'src'), {'status': 'not_observed'}), 'exists': False}, {'exists': True})
                 continue
             if native(cp, lambda: field(cl, 'src', cp) not in srcs, 'comparison', paths=[key_path(cp, 'src')]): err(f"clip 引用未知 src {field(cl, 'src', cp)}", cp + '.src', 'validate.clip_source', {'value': observed.get(key_path(cp, 'src'), {'status': 'not_observed'})}, {'allowed': list(srcs)}); continue

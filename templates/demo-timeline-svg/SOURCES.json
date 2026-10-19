@@ -1,0 +1,14 @@
+{
+  "format": "framivra-demo-source-identities/v1",
+  "motion_source": "timeline-motion-r1",
+  "renderer_sha256": "cda8f88605e0062b5340b06f19daf43cec80289abbb4b0a2b975b389443849d2",
+  "motion_plan_sha256": "2fc71524d135b94c4d9c79a233e7f90ef1b9aabfe05eac977592c8fb86d9cc23",
+  "audio_score_source": "audio-r1/scripts/build.py",
+  "audio_score_source_sha256": "57c80e95529cc464ca8f99cb4d6a41bad7e7cc5d6f1adbaae9727ae677a4e45f",
+  "audio_adaptation": "Preserves score, synthesis, event gains/pans and native-input export. Uses vendored synth subset; omits separate audition mastering.",
+  "scoreweft_commit": "aa5e7781952418f5881c41f166f237dc7a24111c",
+  "visual_review": "UNRUN_FOR_PRODUCTION",
+  "native_render": "UNRUN",
+  "native_audio": "UNRUN",
+  "human_listening": "UNRUN"
+}

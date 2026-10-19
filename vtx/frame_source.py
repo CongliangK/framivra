@@ -27,6 +27,7 @@ class PngSequence:
     alpha: str = "unknown"
     color_space: str = "unknown"
     environment_check: object = field(default=None, repr=False, compare=False)
+    interval_check: object = field(default=None, repr=False, compare=False)
 
     @property
     def time_base(self):
@@ -43,7 +44,8 @@ class PngSequence:
     def require_ready(self, start=0, stop=None):
         stop = self.frame_count if stop is None else stop
         self._interval(start, stop)
-        expected = self.environment_check() if self.environment_check is not None else None
+        expected = (self.interval_check(start, stop) if self.interval_check is not None
+                    else self.environment_check() if self.environment_check is not None else None)
         for frame in range(start, stop):
             path = self.frame_path(frame)
             got = []
@@ -66,9 +68,22 @@ class PngSequence:
 
 def png_source(c, clip):
     """Describe expected output only; safe in the concurrent prepare/gfx wave."""
+    from . import gfx_svg
+    if gfx_svg.is_svg(clip):
+        scope = getattr(c, '_svg_consumer_sources', None)
+        scope_key = gfx_svg.canonical(clip)
+        if scope is not None and scope_key in scope:
+            return scope[scope_key]
+        record = gfx_svg.resolve(c, clip)
+        directory = c.cache / 'gfx_exp' / gfx_svg.NAMESPACE / gfx_svg.record_key(record)
+        snapshot = gfx_svg.SequenceSnapshot(c, clip, directory, record, scope=scope)
+        source = PngSequence(directory, str(directory.relative_to(c.cache)), clip['dur'],
+                             c.fps, c.w, c.h, interval_check=snapshot.check_interval)
+        if scope is not None:
+            scope[scope_key] = source
+        return source
     directory = gfx_dir(c, clip)
-    # Preserve the default leaf identity, but include the selected experimental
-    # namespace in every downstream consumer (pass/segment/range/impact).
+    # Preserve the default leaf identity and HTML environment behavior.
     relative = directory.relative_to(c.cache)
     identity = str(relative) if relative.parts[0] == "gfx_exp" else directory.name
     def check_environment():

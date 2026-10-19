@@ -1,0 +1,89 @@
+{
+  "version": 2,
+  "project": {
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "duration_frames": 900
+  },
+  "sources": [
+    {
+      "id": "timeline_music_bed",
+      "path": "assets/audio/bed-premaster.wav"
+    },
+    {
+      "id": "same_content_cue",
+      "path": "assets/audio/content-cue.wav"
+    }
+  ],
+  "video_tracks": [
+    {
+      "name": "timeline-motion",
+      "kind": "gfx",
+      "clips": [
+        {
+          "format": "svg-sequence",
+          "src": "gfx/demo.frames.json",
+          "dst_in": 0,
+          "dur": 900,
+          "cache_dependencies": [
+            "build_demo.js",
+            "renderer.js",
+            "motion-plan.json",
+            "fonts.lock.json",
+            "audio/build.py",
+            "vendor/scoreweft/SOURCES.json",
+            "vendor/scoreweft/bgm_gen/__init__.py",
+            "vendor/scoreweft/bgm_gen/synthlib.py",
+            "vendor/scoreweft/bgm_gen/engines/__init__.py",
+            "vendor/scoreweft/bgm_gen/engines/base.py",
+            "vendor/scoreweft/bgm_gen/engines/descriptor_check.py",
+            "vendor/scoreweft/bgm_gen/engines/synth.py",
+            "vendor/scoreweft/bgm_gen/engines/_wavio.py",
+            "vendor/scoreweft/bgm_gen/engines/descriptors/synth.json",
+            "assets/fonts/NotoSansCJK-Regular.ttc",
+            "assets/fonts/NotoSansCJK-Bold.ttc",
+            "assets/fonts/DejaVuSans.ttf",
+            "assets/fonts/DejaVuSans-Bold.ttf"
+          ]
+        }
+      ]
+    }
+  ],
+  "subtitles": [],
+  "audio_tracks": [
+    {
+      "name": "bed",
+      "duck": false,
+      "events": [
+        {
+          "src": "timeline_music_bed",
+          "src_in": 0,
+          "in": 0,
+          "out": 900,
+          "volume": 1.0
+        }
+      ]
+    },
+    {
+      "name": "timeline_cue",
+      "duck": false,
+      "events": [
+        {
+          "src": "same_content_cue",
+          "src_in": 0,
+          "in": 228,
+          "out": 262,
+          "volume": 1.0
+        },
+        {
+          "src": "same_content_cue",
+          "src_in": 0,
+          "in": 462,
+          "out": 496,
+          "volume": 1.0
+        }
+      ]
+    }
+  ]
+}
