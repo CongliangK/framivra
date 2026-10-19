@@ -22,12 +22,16 @@
 
 - 处理链＝aup3 提取 → 双系统同步 → 音轨替换（口型感知 +200ms）→ 可选降噪 → 头尾真空切割 → 构图统一（references/aroll-pipeline.md）。
 
-## 二、gfx 页清单（动效层）
+## 二、gfx 入口与模块计划
+
+先按 [HTML 创作组织](../../../docs/skill/references/gfx.md#html-创作组织) 决定入口；下表按实际 HTML 列项，服务段可覆盖多个场景，页内模块/负责人另记在同一项内，不按角色新建页。
 
 | 新页名 | 服务段 | 轨型（gfx-full/gfx-overlay） | dur/N 帧 | 起手模板（assets/gfx-templates/） | 判定 |
 |---|---|---|---|---|---|
 | {{页名}} | {{段号}} | {{}} | {{s}}s/{{n}}f | {{chart_curve / data_table_grouped / …}} | {{新作/改造}} |
 
+- 页内模块/负责人：{{共用入口、模块/命名空间、帧窗口、层序、集成人}}。
+- 如拆多页：{{独立用途与复用/编辑边界、为何不放同页、底画面/层序/时间窗、新增页面×帧数及透明渲染/合成/缓存成本；标实测或估算/待测}}。
 - 新作页三件套＝manifest.json + data-sources.md + 自查脚本；设计基准=`assets/gfx-templates/_tokens.md`；成熟手法速查=`references/voice-ime-paradigm.md`。
 
 ## 三、BGM stem 计划

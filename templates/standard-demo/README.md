@@ -12,6 +12,8 @@
 | standard | v1 | 360 帧：两段 180 帧普通视频段、跨段字幕（横穿第 180 帧剪辑点）、双 gfx 页（帧驱动 canvas + 静态 DOM）、CJK/透明/低 alpha；结构自 tests/run_e2e.py 适配 | 可 prepare |
 | gfx-stress | v1 | 仅以固定 commit（70b6853）+ suite_manifest 完整 SHA256 + S1–S7 页面完整哈希引用现存冻结套件 tests/gfx_bench_suite；不复制不重定义，S8 保持历史未纳入 | 引用型，UNRUN |
 
+standard 的双页与 gfx-stress 多页用于冻结输入覆盖/渲染压力验证，不是纯 MG 创作拆页范本；新作品组织见 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织)。
+
 ## 冻结锚
 
 `benchmark/benchmark_manifest.json`（benchmark_id=`framivra-standard-demo`）锁：

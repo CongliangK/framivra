@@ -180,7 +180,7 @@ python3 $VTX -t timeline.json video --draft --range <字幕窗入点> <出点>  
 
 **适用场景**：修改 `gfx/*.html`（数据、布局、动效纯函数）。
 
-**前置条件**：页面符合帧驱动协议（动画=帧号 f 的纯函数；细节读 `gfx.md`）。
+**前置条件**：先按 [HTML 创作组织](gfx.md#html-创作组织) 确认是页内模块修改还是确需新页，再遵守帧驱动协议（动画=帧号 f 的纯函数；细节读 `gfx.md`）。
 
 ```bash
 cd ~/文档/04_bilibili视频/voice-ime
@@ -277,6 +277,8 @@ python3 $VIDEO_TOOLS/apps/gates/content_gates.py -t timeline.json --media out/fi
 ---
 
 ## 主控-子智能体棒次协议
+
+创作分工的页面/模块边界先依 [HTML 创作组织](gfx.md#html-创作组织) 写入任务书；本协议的「一棒」不定义 HTML、clip 或轨道数量。
 
 1. **棒次 prompt 必须自包含**：权威仓路径、任务目标、报告落盘路径（`<video_tools>/docs/reports/`）、**严禁 git commit**（改完留工作区由主控提交）。
 2. **worker 只读 runbook 对应配方**，不读全仓；配方外需求回报主控拍板，不自行发挥。

@@ -1,6 +1,6 @@
 # gfx-templates · 场景→模板索引（模板包 R2，2026-10-03）
 
-> **结论先行**：六件已验收参数化模板覆盖 tech-talk 全部叙事阶段的 gfx 需求——新作页**一律从本目录起手**（复制→改 _tokens→改文案→validate），不从零写。设计基准=`_tokens.md`（调色/字号/组件模式/D22 禁则）；机制契约（帧驱动协议）=内核 `docs/skill/references/gfx.md`；成熟编排手法速查=`references/voice-ime-paradigm.md`。
+> **结论先行**：六件已验收参数化模板供 tech-talk 取用。先按 [HTML 创作组织](../../../../docs/skill/references/gfx.md#html-创作组织) 决定入口，再复用整页或页内组件；下表是用途映射，不要求每种场景/组件复制一个 HTML。设计基准=`_tokens.md`（调色/字号/组件模式/D22 禁则）；机制契约（帧驱动协议）=内核 `docs/skill/references/gfx.md`；成熟编排手法速查=`references/voice-ime-paradigm.md`。
 
 ## 一、模板清单与适用场景
 
@@ -26,7 +26,7 @@
 
 ## 三、使用步骤（复制→改 _tokens→改文案→validate）
 
-1. **复制**：`cp <模板>.html <项目>/gfx/<页名>.html`——页名按 02-script 素材指向起名，登记 manifest.json（{文件名,用途,服务段,N,dur,轨型,状态}；N=dur×30 精确）。
+1. **复用**：已确定需要独立页面时才用 `cp <模板>.html <项目>/gfx/<页名>.html`；同页模块则取用其组件与数据，接入共用帧表。实际入口按 02-script 素材指向命名并登记 manifest.json（{文件名,用途,服务段,N,dur,轨型,状态}；N=dur×30 精确）。
 2. **改 _tokens**：对照 `_tokens.md` §3 调色板/§4 字号梯度改页内常量；**数值语义色只许 RED #dc2626 / GREEN #16a34a**。
 3. **改文案**：只改 CONST 数据/文案常量，不碰帧驱动机制代码（FPS=30、f 解析、三禁则）；数据外置页同步改 data-*.json + data-sources.md 溯源。
 4. **validate/自查**：三关键帧截图（f=0 / N/2 / N-1）自查三项——协议（同 f 渲两次 md5 一致、grep 无 animation/transition/Date.now/Math.random）、风格（D22 逐条+蓝色像素占比=0）、数据（画面数字与需求单逐字比对）；`<title>` 帧数标注与代码 N 一致。

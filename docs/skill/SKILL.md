@@ -1,11 +1,11 @@
 ---
 name: video
-description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、制作视频动效/动态图表/字幕条/片头片尾/透明图层、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook / sync_audio / denoise_voice / content_gates / A-roll，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门，或要求视频调研、对标分析、选题池、B 站视频制作（→ 先读 templates/tech-talk/）。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 templates/tech-talk/（本仓 templates/ 工作流模板）——封面（make_cover）、调研（research 六件）、BGM（music skill 路由）的完整配方在彼处。"
+description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、制作纯 MG/Motion Graphics/视频动效/动态图表/字幕条/片头片尾/透明图层、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook / sync_audio / denoise_voice / content_gates / A-roll，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门，或要求视频调研、对标分析、选题池、B 站科技口播制作（→ 先读 templates/tech-talk/）。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 templates/tech-talk/（本仓 templates/ 工作流模板）——封面（make_cover）、调研（research 六件）、BGM（music skill 路由）的完整配方在彼处。"
 ---
 # video · video_tools v2 内核 skill（路由索引 + 迭代回路）
 
 > **内核向**：本文件是机制文档的路由索引与全仓分层地图。机制/契约/基准留本 skill 与 docs/（任何产线通用）；产线配方（六阶段创作流程/拍摄规范/voice-ime 范式/发布链/BGM/封面）在 **`templates/tech-talk/`** 工作流包。开发者分析见 `docs/DEV.md`。
-> **接到任务先查路由表去读对应 reference 再动手**；本文件是「路线图」，字段语义与坑表以 references 为准。
+> **接到任务先查路由表去读对应 reference 再动手**；本文件是「路线图」，字段语义与坑表以 references 为准。创作起手、页面拆分与多人分工，先读 [HTML 创作组织](references/gfx.md#html-创作组织)。
 
 ## 三层架构一页（v2）
 
@@ -45,7 +45,7 @@ video_tools/
 | 领域 | 文档 | 管什么 |
 |---|---|---|
 | 剪辑 edit | `references/edit.md` | timeline.json 契约 + vtx CLI 全阶段（validate/audit/prepare/gfx/video/audio/mux/qc/gc）+ 音频工程 + 渲染坑表 + 缓存治理 + 三大生成模块接口 |
-| 动效 gfx | `references/gfx.md` | HTML 帧驱动透明动效页协议（CDP/Canvas/静态跨度）+ 工具函数 + D22 设计铁律 + 样式模式库 |
+| 动效 gfx | `references/gfx.md` | HTML 创作组织与帧驱动协议（CDP/Canvas/静态跨度）+ 工具函数 + D22 设计铁律 + 样式模式库 |
 | 修改配方/棒次 | `references/runbook.md` | 标准修改配方 R1-R4、R2s 与子智能体棒次协议（R5/R6/R7 产线配方 → `templates/tech-talk/references/runbook-r5r6r7.md`） |
 | 抠像/背景合成 matting | `apps/matting/matting.md`（app 专属文档） | 真人实拍抠像（达芬奇 Magic Mask 主力 + 自研链备用）→ 带 alpha ProRes4444 → 背景合成全流程；内核路由即本行 |
 | 调研 research / 封面 cover / 拍摄规范 / voice-ime 范式 | `templates/tech-talk/references/`（research.md / cover.md / shooting.md / voice-ime-paradigm.md） | 产线知识：R0-R6 多智能体调研、B 站封面产线、实拍规范、动效编排范式 |
@@ -54,7 +54,7 @@ video_tools/
 | 用户任务 / 关键词 | 先读 |
 |---|---|
 | 剪辑、切素材、多轨合成、画中画、烧字幕、混音、渲染、QC、缓存治理；提到 timeline.json / vtx | `references/edit.md` |
-| 做动效页、动态图表、片头片尾、overlay 卡、写 gfx/*.html | `references/gfx.md` |
+| 纯 MG、多角色/场景、透明叠加、动效页/图表/片头片尾/overlay 卡、写 gfx/*.html | [gfx 创作组织与协议](references/gfx.md#html-创作组织) |
 | 实拍素材处理、音视频同步、降噪、响度、验证门 | `references/edit.md` + `references/runbook.md` + 各脚本 `--help` |
 | 标准修改任务（改音量/改编排/改字幕/改 gfx 页/全冷重渲） | `references/runbook.md`（R1-R4 配方） |
 | 抠像、换背景、绿幕、背景替换、Magic Mask、matte、带 alpha 前景合成 | `apps/matting/matting.md` |
@@ -64,8 +64,8 @@ video_tools/
 | BGM/配乐生成、音色、乐谱 | **路由到 `music` skill**；挂载后分轨审计包配方见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
 
 ## 推荐方式与全局铁律
-1. **委派模式**：复杂任务拆棒交子智能体流水执行，每棒落盘 REPORT；长命令子智能体内必须 run_in_background+轮询（同步等待会被看门狗杀）。
-2. **验证门优先**：validate（机制）+ content_gates（内容）+ blackdetect（零黑帧）+ 视觉抽帧（**视觉模型读图只作线索，DOM/像素证据才是权威**）。
+1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆棒，每棒落盘 REPORT；长命令子智能体内必须 run_in_background+轮询（同步等待会被看门狗杀）。
+2. **验证门优先**：validate（机制）+ content_gates（内容）+ blackdetect（零黑帧）+ 视觉抽帧（**技术事实判定中，视觉模型读图只作线索，DOM/像素证据才是权威**）；艺术审查与用户视觉确认按 [创作交付检查](references/gfx.md#html-创作组织) 分别记录。
 3. **迭代用 draft，正式才 --gpu**；缓存内容寻址，源变更自动换键，收尾习惯 `gc --dry` → `gc`。
 4. **剪辑永远走 timeline.json + vtx**：不手写 ffmpeg 剪辑命令；改 timeline 必重跑 validate。
 5. **gfx 页面必须帧驱动**：动画状态 = 帧号 f 的纯函数，禁 CSS animation/transition、Date.now()、Math.random()、rAF 时序。

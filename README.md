@@ -69,6 +69,8 @@ bash scripts/release.sh --help
 
 ## 三层路由
 
+**开始创作**：纯 MG、多场景/角色与透明叠加的源码组织，先读 [HTML 创作组织](docs/skill/references/gfx.md#html-创作组织)；再选机制或口播工作流，避免把模板清单直接当页面清单。
+
 **内核**：`docs/skill/SKILL.md`（路由索引 + 迭代回路速查）→ `docs/skill/references/edit.md`（timeline 契约 + vtx 全阶段 + 坑表）、`gfx.md`（帧驱动协议 + D22 设计铁律）、`runbook.md`（修改配方 R1-R4 + 棒次协议）。
 
 **apps/**（12 件，一句话）：

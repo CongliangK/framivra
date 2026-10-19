@@ -11,6 +11,8 @@ description: 科技口播 B 站视频制作工作流范本（video 内核之上�
 
 ## 制作范本总览
 
+本包面向口播产线；纯 MG 起手直接读内核 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织)，不把本包的拍摄阶段、轨道骨架或模板页数当作必需结构。
+
 - **一条主链**：调研立项 → 稿子与结构 → 实拍与素材 → 动效页 → 时间线编排 → 渲染与 QC → 发布链（4K/封面/冻结）。
 - **两条音频支线**：口播/同期声支线（每期必经）与 BGM/音效支线（路由 music skill + 分轨审计包交付门）。
 - **产线挂载件**：见文末「uses 声明表」——12 件 app 全量使用，denoise/duck-static 两插件可选（键声明进 timeline 才生效）。
@@ -47,7 +49,7 @@ env python3 <video_tools>/apps/sync/sync_audio.py 相机轨 话筒轨   # GCC-PH
 # 手册（可照抄）：_library/reports/A-roll实拍素材处理流程-2026-09-07.md
 ```
 - **抠像支线**：需要「真人出现在新背景前」的镜头 → 抠像 + 背景合成，全流程见 `apps/matting/matting.md`（resolve_matte 主力，产物带 alpha ProRes4444；背景图走 `apps/imgen/` bg4k 硬接口）。
-- **④ 动效页** → 内核 `docs/skill/references/gfx.md`（帧驱动协议 + D22 设计铁律）；**优先复用本包 `assets/gfx-templates/` 已验收模板**（六件参数化页 + `_tokens.md` 设计基准；场景→模板映射表与使用步骤见 `assets/gfx-templates/INDEX.md`；改 CONST 数据不碰机制代码）；新页三件套=manifest+data-sources+自查脚本；实例页参考 `assets/gfx-examples/`。
+- **④ 动效页** → 先按内核 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织) 定页内模块/独立素材边界，再读帧驱动协议 + D22 设计铁律；**优先复用本包 `assets/gfx-templates/` 已验收模板**（六件参数化页 + `_tokens.md` 设计基准；场景→模板映射表与使用步骤见 `assets/gfx-templates/INDEX.md`；改 CONST 数据不碰机制代码）；新页三件套=manifest+data-sources+自查脚本；实例页参考 `assets/gfx-examples/`。
 - **⑤ 时间线编排**：新项目**起手复制 `assets/presets/timeline.skeleton.json`**（voice-ime v4.7 轨制抽象骨架，含占位素材原位可 validate；轨级 duck_strategy/duck_params 示范；实例化步骤见其 `_meta`），再按帧预算铺真实编排（契约速览与「素材放哪条轨」速查表见内核 `docs/skill/references/edit.md`）。**编排完先开 `preview.html` 人审，再 validate**。批量重排写幂等脚本 + `vtx snapshot` 留快照。口播字幕锚定 → `apps/asr/`（`asr_cli.py timeline` 就地合并 subtitles[]）。
 - **⑥ 渲染与 QC**：
 ```bash
