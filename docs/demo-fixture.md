@@ -5,6 +5,8 @@
 > [输入包说明](../templates/standard-demo/README.md)。demo.py 只做输入准备与核验，
 > 其 realization.json 中 renderer/QC/CEF 的 UNRUN 不代表后续生产命令的结果。
 
+新纯 MG 作品先依 [HTML 创作组织](skill/references/gfx.md#html-创作组织) 设计；本页的冻结多页 fixture 按原覆盖用途保留，不把新作品改写成较少页面后的耗时与本 fixture 当作同输入性能对照。
+
 ## 三步入口
 
 ```bash

@@ -49,6 +49,8 @@
 
 ## 6 gfx 动效页
 
+先读 [HTML 创作组织](../../../docs/skill/references/gfx.md#html-创作组织)，在素材计划确定页面边界；本口播流程的素材分线与委派棒次不作为拆页依据。
+
 - **入口**：内核 `docs/skill/references/gfx.md`（帧驱动协议）；**优先复用 `assets/gfx-templates/`** 已验收模板（六件参数化页 + `_tokens.md`）。
 - **关键规则**：宏观取向（禁深蓝/背景板原则/pip 安全区）→ `visual-baseline.md`；编排手法 → `voice-ime-paradigm.md`；新页三件套=manifest+data-sources+自查脚本。
 - **验证门**：同 f 同像素 md5；蓝像素占比 0；数据逐字比对；pip 安全区像素扫描。

@@ -1,10 +1,27 @@
-# 动效（gfx）· HTML 帧驱动透明动效页
+# 动效（gfx）· HTML 帧驱动动效页
 
 > **使用者向**：动效页设计协议与样式模式库。坑位来历与实测数据见 `../../DEV.md`。
 
-编写供 vtx 渲染的 HTML 动效页面（透明图层）。本文档管**设计协议与样式模式库**；页面的渲染、时移、合成、QC 由同 skill `references/edit.md` 的 vtx CLI 完成。索引见 `../SKILL.md`。
+编写供 vtx 渲染的 HTML 动效页面（全屏画面或透明叠层）。本文档管**设计协议与样式模式库**；页面的渲染、时移、合成、QC 由同 skill `references/edit.md` 的 vtx CLI 完成。索引见 `../SKILL.md`。
+
+## HTML 创作组织
+
+**新建或重设计纯 MG（Motion Graphics）作品时，先定场景树，再分工和写页面。** 以下是创作组织原则，不改变 gfx clip/alpha/多轨渲染契约：
+
+- **同一作品默认一个 HTML 渲染入口**：背景、角色、图表、文字、粒子与转场作为同页 DOM/SVG/Canvas 场景树中的逻辑模块；章节和场景切换在页内完成。透明组件可以直接叠在同页不透明底画面上，透明本身不是拆页理由。
+- **共享时间与坐标**：模块共用该 gfx clip 的局部帧 `f`/时间 `t`，场景窗口和节拍以同一帧表计算，不能各启一套独立时钟。`?f=` 不是成片全局帧；确需作品绝对帧时，由作者按已固定的 clip 入点显式映射（作品从 0 开始且由整段 clip 承载时就是 `f`），不假设渲染器自动提供。布局共用页面画布原点；嵌套容器局部坐标须明确换算。
+- **角色分工不决定渲染边界**：即使安排 20 个创作角色，仍可分别维护同页的场景、数据、样式与动画函数；角色数不等于 HTML、轨道或 clip 数。任务书写明共用入口、负责模块/命名空间、帧窗口、层序与集成人；JS/CSS 拆文件只为源码维护，遵守下文依赖声明，不把模块另做 HTML 再等渲染时合组。
+- **多 HTML 的适用条件**：存在明确的独立叠加、跨片复用或单独编辑/替换需求，才按资产边界拆页。例如口播或综艺的底视频上，需要独立替换、错开出现的 HTML 字幕条、角标、信息卡；不透明底页与透明叠层也可独立制作。仅因有透明元素、多场景、多角色或多人协作，不成立拆页理由。
+- **拆页前记账**：在项目素材计划中记录独立用途/复用或编辑边界、为何不放同页、底画面与层序、时间窗，以及新增页面×帧数、透明渲染与合成/缓存的额外成本（未测就标估算/待测）。保留独立素材可编辑性，不靠改权限、绕过校验或移除效果减成本。
+- **先组织源码，不做事后自动合页补救**：本原则不要求迁移所有旧项目，也不禁止工具多页能力。通用自动合组不能替代起手设计；相关试点 [#213](https://github.com/CongliangK/framivra/issues/213) 为 closed/not_planned，不作为继续开发路线。既有口播多页素材与冻结测试/demo 输入按其原用途保留；重设计作品是新 workload，减少页面数量不能作为同输入引擎提速证据。
+
+起手判断示例：纯 MG 宣传片含多章、角色和半透明粒子 → 同一 HTML 内按帧编排；真人口播加可替换角标/信息卡 → 有独立资产需求时可拆 HTML，并登记成本。模板里的不同文件是可取用的范例，不是新作品的页数清单。
+
+**交付分三项记结论**：技术验证检查帧确定性、布局/alpha、数据与实际渲染；独立艺术审查检查叙事、构图、节奏与动效表现；用户观看最终成片给出视觉确认。DOM/像素与 QC 证明不了艺术质量，艺术评价也不能替代技术验证，二者都不代替用户视觉确认。
 
 ## 帧驱动协议（必须遵守，vtx 依赖它逐帧截图）
+
+下例的整页淡出仅适用于已有底画面的独立叠层；全屏底页须去掉该 opacity 行，页内转场由场景模块控制。
 
 ```html
 <script>
@@ -17,7 +34,7 @@ document.body.style.opacity = 1 - clamp01(seg(t, N/FPS - 0.4, N/FPS)); // 结尾
 </script>
 ```
 
-- 画布固定 `1920x1080`、`background:transparent`、`overflow:hidden`；字体 `"Noto Sans CJK SC", sans-serif`（系统已装，无头渲染正常）。
+- 画布固定 `1920x1080`、`overflow:hidden`；独立叠层用 `background:transparent`，全屏底页自带不透明底色（同页组件仍可透明）；字体 `"Noto Sans CJK SC", sans-serif`（系统已装，无头渲染正常）。
 - 动效时长 = 所属事件的帧数（`out`−`in`，契约字段见 `docs/ARCHITECTURE.md`）；页面内容的时间轴从 0 开始（vtx 负责把它平移到成片时间轴）。
 - vtx 逐帧截图渲染 gfx 帧。默认走 **CDP 常驻浏览器引擎**（多 tab/页并行；不透明页与 CLI 逐字节一致、透明页双探针解算 alpha，≤5/255 舍入级）；失败自动回落 CLI 逐帧路径（`google-chrome --headless --screenshot --default-background-color=00000000 "?f=N"`），输出同为带 alpha 的 PNG 序列。两引擎对页面唯一要求：**从 `?f=` 查询参数确定性渲染**（CDP 引擎以 location.search 变更确认新文档，页面不得依赖滚动/焦点等副作用）。
 - **外部依赖声明（cache_dependencies 契约）**：gfx 页引用的外部本地资产（CSS/JS/图片/字体等）必须在 timeline `project.cache_dependencies` 显式声明（相对项目根的路径列表）。声明的依赖内容参与 gfx 缓存键与回执输入身份——**改依赖即换键重渲**；依赖不存在或非文件会在 vtx 构造期直接报错。声明属项目级：任一依赖变化会使全部 gfx 页重渲（保守过失效，可接受）；未声明的间接依赖、网络资源不追踪，建议内嵌素材或全部显式声明。详见 `docs/cache-provenance.md`。
@@ -51,7 +68,7 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
 
 ## 样式模式库（按需取用；起手模板在本 skill assets/，实例页见 tech-talk assets/）
 
-实例页已随产线资产迁至 `templates/tech-talk/assets/gfx-examples/`（源自 poc1/poc2 已验证页面，v2 迁出内核），下表实例位置均相对该目录：
+实例页在 `templates/tech-talk/assets/gfx-examples/`（源自 poc1/poc2 已验证页面），下表实例位置均相对该目录；它们供取用页内手法，页面组织先按上文「HTML 创作组织」决定：
 
 | 模式 | 关键手法 | 实例位置 |
 |---|---|---|
@@ -66,7 +83,7 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
 | 毛玻璃卡片 | ~~`background:rgba(15,23,42,.55)` + `backdrop-filter:blur(6px)` + 内高光 inset~~ **已作废**：深底玻璃属禁用深蓝系；替代=白底暖色卡 `#fff`/`rgba(255,253,250,.92)` + 浅暖描边+柔投影（见 gfx-templates/ overlay 卡族） | gfxA |
 | 漂移渐变背景 | 两个 blur(150px) 径向渐变 div 按 `sin/cos(t)` 平移——**暖底版**（卡其 #c8a24a/琥珀 #d97706 极淡斑，白底之上）为现行基线；poc 深底版实例仅作机制参考 | motion / endboard.html |
 
-起手模板（内核通用件）：本 skill `assets/title-card.html`（标题卡）和 `assets/lower-third.html`（下三分之一条），复制到项目 `gfx/` 改文案与配色即可；产线已验收七件参数化模板（gfx-templates/）在 `templates/tech-talk/assets/gfx-templates/`。
+起手模板（内核通用件）：本 skill `assets/title-card.html`（标题卡）和 `assets/lower-third.html`（下三分之一条），按已确定的页面边界复制或取用其页内组件，再改文案与配色；产线已验收七件参数化模板（gfx-templates/）在 `templates/tech-talk/assets/gfx-templates/`。
 
 页面写好后如何挂进时间线（timeline 里 kind=gfx 的 clip、帧序列渲染），见 `references/edit.md`。
 

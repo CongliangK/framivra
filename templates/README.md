@@ -10,6 +10,8 @@
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
 
+消费面变更公告（2026-10-19，HTML 创作组织，落笔前范围已评审）：原则 home=[HTML 创作组织](../docs/skill/references/gfx.md#html-创作组织)。本次仅修订既有 Markdown：`AGENTS.md`、`README.md`、`docs/skill/SKILL.md`、`docs/skill/references/{gfx,edit,runbook}.md`、`templates/README.md`、`templates/tech-talk/SKILL.md`、`templates/tech-talk/references/production-workflow.md`、`templates/tech-talk/templates/03-assets-plan.md`、`templates/tech-talk/assets/gfx-templates/{INDEX,_tokens}.md`、`templates/skill-demo/SKILL.md`、`templates/standard-demo/README.md`、`docs/demo-fixture.md`（路径以仓根计）。路径集合、可执行模板与冻结输入不变。真实用户六件挂载复核另行留证；本公告不代表个人 Skill 已安装或更新。
+
 消费面变更公告（2026-10-17，#177 切片）：`templates/` 新增 `standard-demo/` 包（README + profiles + 冻结 benchmark manifest + OFL 字体），属挂载消费面构成变更；语义与用法 home=包内 README 与 `docs/demo-fixture.md`，本表只登记构成。
 
 `vt templates list|check` 从 `skill.json` / `SKILL.md` 识别并检查 tech-talk 与 skill-demo；旧 `vt skills list|check` 及 doctor JSON 的 `skills` 字段保持兼容。发现不会执行工作流。hello-app / hello-plugin 由各自组件 manifest 区分，不作为 workflow 检查。
