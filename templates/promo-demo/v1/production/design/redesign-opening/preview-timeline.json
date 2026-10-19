@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "project": {
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "duration_frames": 300,
+    "cache_dependencies": [
+      "scene/geometry.js",
+      "scene/opening.js",
+      "metadata/cues.json",
+      "metadata/stems.json",
+      "metadata/source-manifest.json"
+    ]
+  },
+  "sources": [
+    {
+      "id": "T17",
+      "path": "audio/T17.flac"
+    },
+    {
+      "id": "T18",
+      "path": "audio/T18.flac"
+    },
+    {
+      "id": "T19",
+      "path": "audio/T19.flac"
+    },
+    {
+      "id": "T20",
+      "path": "audio/T20.flac"
+    }
+  ],
+  "video_tracks": [
+    {
+      "name": "paper-swift-single-scene",
+      "kind": "gfx",
+      "clips": [
+        {
+          "src": "scene/index.html",
+          "dst_in": 0,
+          "dur": 300
+        }
+      ]
+    }
+  ],
+  "subtitles": [],
+  "audio_tracks": [
+    {
+      "name": "harmony-melody",
+      "events": [
+        {
+          "src": "T17",
+          "src_in": 0,
+          "in": 0,
+          "out": 300,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    },
+    {
+      "name": "rhythmic-motion",
+      "events": [
+        {
+          "src": "T18",
+          "src_in": 0,
+          "in": 0,
+          "out": 300,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    },
+    {
+      "name": "tactile-contact",
+      "events": [
+        {
+          "src": "T19",
+          "src_in": 0,
+          "in": 0,
+          "out": 300,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    },
+    {
+      "name": "character-signature",
+      "events": [
+        {
+          "src": "T20",
+          "src_in": 0,
+          "in": 0,
+          "out": 300,
+          "volume": 1,
+          "loop": false
+        }
+      ]
+    }
+  ]
+}
