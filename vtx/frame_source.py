@@ -47,7 +47,7 @@ class PngSequence:
         self._interval(frame, frame + 1)
         return self.directory / f"f{frame:04d}.png"
 
-    def _validated(self, start, stop, *, through_eof=False):
+    def _validated(self, start, stop, *, through_eof=False, _previous=()):
         self._interval(start, stop)
         expected = self.environment_check() if self.environment_check is not None else None
         # stop is a readiness boundary, not an image2 EOF. Partial subtitle
@@ -56,12 +56,37 @@ class PngSequence:
         if through_eof:
             while (self.directory / f"f{end:04d}.png").exists():
                 end += 1
+        # This reuse is restricted to the already parsed source snapshot in the
+        # same canonical-input transaction. It is not a stat/marker cache: read
+        # all bytes again and require the same SHA-256 before reusing PNG facts.
+        # Its collision-resistance assumption is the existing source-digest gate.
+        previous = {path: (digest, props) for path, digest, props in _previous}
         frames = []
         for frame in range(start, end):
             path = self.directory / f"f{frame:04d}.png"
             got, props = [], {}
-            reason = png_invalid_reason(path, width=self.width, height=self.height,
-                                        _fingerprint=got, _properties=props)
+            prior = previous.get(path)
+            if prior is not None:
+                try:
+                    if not path.is_file():
+                        raise OSError('missing or not a regular PNG file')
+                    digest = hashlib.sha256()
+                    with path.open('rb') as stream:
+                        remaining = os.fstat(stream.fileno()).st_size
+                        # A concurrently growing file cannot make this reread
+                        # unbounded. One extra byte detects growth at the edge.
+                        while block := stream.read(min(65536, remaining + 1)):
+                            digest.update(block)
+                            remaining -= len(block)
+                            if remaining < 0:
+                                break
+                    if remaining < 0 or digest.hexdigest() != prior[0]:
+                        raise ValueError(f'PNG source digest changed: {path}; rerun vtx gfx')
+                    got, props = [prior[0]], prior[1]
+                except OSError as error:
+                    raise ValueError(f"PNG source not ready: {path}; rerun vtx gfx ({error})") from error
+            reason = None if got else png_invalid_reason(
+                path, width=self.width, height=self.height, _fingerprint=got, _properties=props)
             if reason:
                 raise ValueError(f"PNG source not ready: {path}; rerun vtx gfx ({reason})")
             if expected is not None and (frame >= len(expected) or got != [expected[frame]]):
@@ -128,7 +153,7 @@ class PngSequence:
             def verify_inputs():
                 check_directory()
                 check_eof()
-                current = self._validated(start, stop, through_eof=True)
+                current = self._validated(start, stop, through_eof=True, _previous=frames)
                 if [(p, h) for p, h, _ in current] != [(p, h) for p, h, _ in frames]:
                     raise ValueError('PNG source changed before canonical consumption')
                 check_directory()
