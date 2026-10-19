@@ -189,6 +189,9 @@ def gfx_key(c, cl) -> str:
     图片/字体/样式/脚本）内容入键——改依赖即重渲；未声明/网络资产不追踪
     （cache-provenance.md）。项目级依赖与可选 clip.cache_dependencies 合并；片段依赖只影响声明页。
     """
+    from . import gfx_svg
+    if gfx_svg.is_svg(cl):
+        return gfx_svg.key(c, cl)
     from .gfx_dependencies import resolve, identity, read_regular_bytes
     record = resolve(c, cl)
     if record['policy'] == 'legacy' and record['legacy_key_safe']:
@@ -248,6 +251,9 @@ def gfx_cache_ns() -> str:
 def gfx_dir(c, cl) -> Path:
     # issue #103：实验态（VTX_GFX_CACHE_NS 非空）整树路由 cache/gfx_exp/<ns>/<key>/，
     # 与正式 cache/gfx/<key> 物理隔离；默认空 = 原路径逐字节不变。
+    from . import gfx_svg
+    if gfx_svg.is_svg(cl):
+        return c.cache / GFX_EXP / gfx_svg.NAMESPACE / gfx_key(c, cl)
     ns = gfx_cache_ns()
     if ns:
         return c.cache / GFX_EXP / ns / gfx_key(c, cl)

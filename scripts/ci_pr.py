@@ -43,6 +43,8 @@ PR_MODULES = (
     'tests.test_plugin_code_digest',
     'tests.test_plugin_compatibility',
     'tests.test_graph_digest',
+    'tests.test_gfx_svg',
+    'tests.test_audio_duration',
     'tests.test_timeline_diff',
     'tests.test_execution_event_contract',
     'tests.test_version_sources',

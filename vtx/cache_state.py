@@ -268,6 +268,35 @@ def validate_cache_dependencies(c):
             mark_handled(error)
             raise error
 
+    from . import gfx_svg
+    try:
+        svg_route = gfx_svg.route(c)
+    except ValueError as error:
+        location = '$.video_tracks'
+        for ti, track in enumerate(c.tl.get('video_tracks', [])):
+            for ci, clip in enumerate(track.get('clips', [])):
+                if 'format' in clip and (track.get('kind') != 'gfx' or clip['format'] not in ('html', 'svg-sequence')):
+                    location = f'$.video_tracks[{ti}].clips[{ci}].format'
+        if 'strict dependency' in str(error):
+            location = '$.project.gfx_dependency_policy'
+        emit(c, str(error), json_path=location, rule_id='load.svg_sequence',
+             measured={'exception_type': type(error).__name__})
+        mark_handled(error)
+        raise
+    if svg_route == 'svg-sequence':
+        for ti, track in enumerate(c.tl.get('video_tracks', [])):
+            if track.get('kind') == 'gfx':
+                for ci, clip in enumerate(track.get('clips', [])):
+                    try:
+                        gfx_svg.resolve(c, clip)
+                    except (ValueError, OSError) as error:
+                        emit(c, str(error), json_path=f'$.video_tracks[{ti}].clips[{ci}].src',
+                             rule_id='load.svg_sequence',
+                             source={'resource': str(c.root / clip['src'])},
+                             measured={'exception_type': type(error).__name__})
+                        mark_handled(error)
+                        raise
+        return
     from .gfx_dependencies import policy, resolve
     if policy(c) == 'strict':
         for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
@@ -285,8 +314,10 @@ def verify_input_identity(c):
     """Re-read inputs; never adopt the current identity for an in-flight build."""
     try:
         current = receipt_fingerprint(c)
-        from .gfx_environment import recheck
-        recheck(c)
+        from . import gfx_svg
+        if gfx_svg.route(c) != 'svg-sequence':
+            from .gfx_environment import recheck
+            recheck(c)
     except (OSError, ValueError, RuntimeError) as e:
         raise InputIdentityError(
             f"issue #32：输入在渲染期间变化或无法复核（{e}）；"
@@ -308,6 +339,10 @@ def _append_gfx_dependency_identity(c, h, gfx_inputs):
     """Versioned #47 suffix; historical serialization stays an explicit adapter."""
     from .gfx_dependencies import resolve, identity, policy
     for clip, path, origin, exists in gfx_inputs:
+        from . import gfx_svg
+        if gfx_svg.is_svg(clip):
+            h.update(b'svg-sequence|' + gfx_svg.canonical(gfx_svg.resolve(c, clip)))
+            continue
         if not exists and policy(c) == 'legacy':
             continue
         record = resolve(c, clip, html_path=path, origin=origin)
@@ -394,6 +429,9 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # Append only after all historical producer operations succeed. The shared
     # #47 record adds path/closure identity without reordering native failures.
     _append_gfx_dependency_identity(c, h, gfx_inputs)
+    from . import gfx_svg
+    if gfx_svg.route(c) == 'svg-sequence':
+        return h.hexdigest()
     # Selected renderer and namespace revoke downstream success as well.
     from .gfx_backend import identity
     from .hygiene import gfx_cache_ns

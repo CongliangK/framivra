@@ -405,7 +405,15 @@ class RenderPlan:
                + f"stop_duration={stop / c.fps:.6f}:stop_mode=clone,")
         shift = eff - pre - head
         shrink = f"scale=trunc(iw*{f}/2)*2:trunc(ih*{f}/2)*2," if draft else ""
-        slave = f"[{idx}:v]{shrink}{pad}setpts=PTS+{shift}/{c.fps}/TB[L{k}T]"
+        timing = f"setpts=PTS+{shift}/{c.fps}/TB"
+        if L["gfx"]:
+            # image2 has TB=1/fps: its integer PTS cannot represent the
+            # half-frame lead, so setpts truncation selects PNG n+1 at frame n.
+            # Use two ticks per frame and an integer offset; dividing by fps/TB
+            # again can round even a nominally integral offset (e.g. dst=63).
+            ticks = 2 * int(eff) - 3 * head
+            timing = f"settb=1/{2 * c.fps},setpts=PTS+{ticks}"
+        slave = f"[{idx}:v]{shrink}{pad}{timing}[L{k}T]"
         ov = (f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
               f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
         return slave, ov, f"L{k}"

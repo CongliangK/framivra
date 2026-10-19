@@ -295,6 +295,9 @@ function validate(tl){
   if(P.width===undefined||P.height===undefined) err("project.width/height 缺失");
   else if(!CONSTRAINTS.sizes.some(s=>s[0]===P.width&&s[1]===P.height)) err(`project 分辨率 ${P.width}x${P.height} 无效：仅允许 ${CONSTRAINTS.sizes.map(s=>s.join("x")).join("/")}`);
   if(!tl.video_tracks?.length) warn("没有任何视频轨（成片将是纯黑场）");
+  const gfxFormats=new Set((tl.video_tracks||[]).filter(t=>t.kind==="gfx").flatMap(t=>(t.clips||[]).map(c=>c.format||"html")));
+  if(gfxFormats.size>1) err("HTML/SVG gfx 混合时间线暂不支持");
+  if(gfxFormats.has("svg-sequence")&&P.gfx_dependency_policy&&P.gfx_dependency_policy!=="legacy") err("SVG-sequence 不使用 HTML strict 依赖证明");
   (tl.video_tracks||[]).forEach((t,ti)=>{
     const clips=[...t.clips].sort((a,b)=>a.dst_in-b.dst_in);
     for(let i=1;i<clips.length;i++)
@@ -309,6 +312,7 @@ function validate(tl){
         if(!Array.isArray(c.cache_dependencies)||!c.cache_dependencies.every(p=>typeof p==="string"&&p.trim()&&!p.includes("\0")))
           err(`轨 ${t.name}[${i}]: cache_dependencies 须为非空文件路径数组`);
       }
+      if(c.format!==undefined&&(t.kind!=="gfx"||!["html","svg-sequence"].includes(c.format))) err(`轨 ${t.name}[${i}]: 不支持的 gfx format`);
       if(t.kind==="gfx") return;
       if(!srcIds.has(c.src)) err(`轨 ${t.name}[${i}] 引用不存在的源 ${c.src}`);
       if(c.src_in!==undefined&&!allF(c.src_in)) err(`轨 ${t.name}[${i}]: src_in 非整数`);

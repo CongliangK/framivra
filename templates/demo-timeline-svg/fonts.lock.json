@@ -1,0 +1,53 @@
+{
+  "format": "framivra-demo-fonts/v1",
+  "fonts": [
+    {
+      "family": "Noto Sans CJK SC",
+      "weight": 400,
+      "collection_index": 2,
+      "sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+      "license": "SIL Open Font License 1.1",
+      "version": [
+        "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603"
+      ],
+      "system_path_hint": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+      "path": "assets/fonts/NotoSansCJK-Regular.ttc"
+    },
+    {
+      "family": "Noto Sans CJK SC",
+      "weight": 700,
+      "collection_index": 2,
+      "sha256": "faa5f3656a78b2e2d450d27fe8382c778bc2b6bb5ea29c986664a6a435056ceb",
+      "license": "SIL Open Font License 1.1",
+      "version": [
+        "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603"
+      ],
+      "system_path_hint": "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+      "path": "assets/fonts/NotoSansCJK-Bold.ttc"
+    },
+    {
+      "family": "DejaVu Sans",
+      "weight": 400,
+      "collection_index": null,
+      "sha256": "57f73e11f51999432bf7ab22ce55b6f945d5eca1bf824404cfa9ec2e3718c84e",
+      "license": "Bitstream Vera license; DejaVu changes public domain",
+      "version": [
+        "Version 2.37"
+      ],
+      "system_path_hint": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+      "path": "assets/fonts/DejaVuSans.ttf"
+    },
+    {
+      "family": "DejaVu Sans",
+      "weight": 700,
+      "collection_index": null,
+      "sha256": "a4c5bc453ca281d90ea079e596da7ae0dfeb5777497c29ec254e76d97ff6f890",
+      "license": "Bitstream Vera license; DejaVu changes public domain",
+      "version": [
+        "Version 2.37"
+      ],
+      "system_path_hint": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+      "path": "assets/fonts/DejaVuSans-Bold.ttf"
+    }
+  ]
+}

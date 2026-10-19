@@ -47,6 +47,10 @@ AGENTS.md）。①② 纯函数零渲染；③ 需 ffmpeg+libx264（缺任一 sk
 """
 import hashlib
 import inspect
+import json
+import struct
+import zlib
+from fractions import Fraction
 import os
 import re
 import shutil
@@ -342,6 +346,104 @@ class TestCrossRunDeterminism(unittest.TestCase):
         self.assertEqual(len(set(md5s)), 1, f"中段形态跨运行发散：{md5s}")
         self.assertEqual(set(frames), {100 - 40},
                          f"输出帧数 != 段长 60：{frames}")
+
+
+@unittest.skipUnless(_have_ffmpeg_x264(), "需要 ffmpeg 与 libx264 编码器")
+class TestPngSourceFrameAlignment(unittest.TestCase):
+    """Decode frame IDs: correct counts/PTS alone cannot detect a skipped PNG.
+
+    Keep the legacy visibility-window policy outside this clock regression;
+    delayed-layer checks cover every frame inside the clip's active interval.
+    """
+
+    W, H, FPS, DUR = 160, 96, 30, 300
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="vtx_png_clock_")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        frames = self.root / "frames"
+        frames.mkdir()
+        def chunk(tag, data):
+            return (struct.pack(">I", len(data)) + tag + data
+                    + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff))
+        for frame in range(self.DUR):
+            # ID zero is the black canvas; PNG n carries n+1 in ten wide bars.
+            row = b"".join(bytes((230 if (frame + 1) & (1 << bit) else 20,)) * 48
+                           for bit in range(10))
+            png = (b"\x89PNG\r\n\x1a\n"
+                   + chunk(b"IHDR", struct.pack(">IIBBBBB", self.W, self.H, 8, 2, 0, 0, 0))
+                   + chunk(b"IDAT", zlib.compress((b"\0" + row) * self.H))
+                   + chunk(b"IEND", b""))
+            (frames / f"f{frame:04d}.png").write_bytes(png)
+        self.source = PngSequence(frames, "clock", self.DUR, self.FPS, self.W, self.H)
+        self.sources = {self.DUR: self.source}
+        self.outputs = 0
+
+    def _layer(self, dst=0, y=0):
+        duration = self.DUR - dst
+        if duration not in self.sources:
+            directory = self.root / f"frames{duration}"
+            directory.mkdir()
+            for n in range(duration):
+                (directory / f"f{n:04d}.png").write_bytes(self.source.frame_path(n).read_bytes())
+            self.sources[duration] = PngSequence(directory, f"clock{duration}", duration,
+                                                 self.FPS, self.W, self.H)
+        return {"cl": {"src": "clock", "dst_in": dst, "dur": duration},
+                "source": self.sources[duration], "gfx": True, "x": 0, "y": y,
+                "w2": None, "h2": None, "ti": 0}
+
+    def _render(self, layers, a, b, with_subs=False):
+        from types import SimpleNamespace
+        self.outputs += 1
+        cache = self.root / f"render{self.outputs}"
+        cache.mkdir()
+        def run(argv, **kwargs):
+            return subprocess.run(argv, capture_output=True, check=True, timeout=120)
+        c = SimpleNamespace(fps=self.FPS, spf=1 / self.FPS, dur=self.DUR,
+                            w=self.W, h=self.H, cache=cache, dry=False, gpu=False, run=run)
+        plan = RenderPlan(c=c, draft=False, f=1, W=self.W, H=self.H)
+        ass = cache / "empty.ass"
+        ass.write_text("\n".join(plan.ass_head()), encoding="utf-8")
+        out = cache / "output.mp4"
+        plan.composite(layers, out, with_subs, a=a, b=b, sub_file=ass)
+        raw = run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(out),
+                   "-f", "rawvideo", "-pix_fmt", "gray", "-"]).stdout
+        count = (self.DUR if b is None else b) - a
+        self.assertEqual(len(raw), count * self.W * self.H)
+        probe = json.loads(run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                               "-show_streams", "-show_frames", "-of", "json", str(out)]).stdout)
+        tb = Fraction(probe["streams"][0]["time_base"])
+        self.assertEqual([int(f["pts"]) * tb for f in probe["frames"]],
+                         [Fraction(n, self.FPS) for n in range(count)])
+        def ids(row):
+            return [sum(1 << bit for bit in range(10)
+                        if raw[n * self.W * self.H + row * self.W + bit * 16 + 8] > 128)
+                    for n in range(count)]
+        return ids
+
+    def test_default_segments_and_single_graph_decode_every_source_frame(self):
+        edges = [0] + composite.choose_cutpoints([(0, self.DUR)], self.DUR,
+                                                  composite.DEFAULT_SEGMENTS) + [self.DUR]
+        self.assertEqual(edges, [0, 41, 82, 123, 164, 205, 246, 300])
+        for a, b in list(zip(edges, edges[1:])) + [(0, None)]:
+            with self.subTest(a=a, b=b):
+                ids = self._render([self._layer()], a, b, with_subs=True)(24)
+                self.assertEqual(ids, list(range(a + 1, (self.DUR if b is None else b) + 1)))
+
+    def test_delayed_source_has_exact_integer_ticks(self):
+        # dst=63 catches a half-timebase-only fix that still divides by fps/TB.
+        for dst in (1, 63, 111):
+            with self.subTest(dst=dst):
+                ids = self._render([self._layer(dst)], 0, 150)(24)
+                self.assertEqual(ids[dst:], list(range(1, 151 - dst)))
+
+    def test_crossing_sources_remain_aligned_through_passes(self):
+        for with_subs in (False, True):
+            with self.subTest(with_subs=with_subs):
+                ids = self._render([self._layer(), self._layer(7, 48)], 41, 123, with_subs)
+                self.assertEqual(ids(24), list(range(42, 124)))
+                self.assertEqual(ids(72), list(range(35, 117)))
 
 
 if __name__ == "__main__":

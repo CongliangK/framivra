@@ -33,6 +33,7 @@ MEDIA_TESTS = {
         'tests.test_mux_history',
         'tests.test_audio_report.TestEndToEndSynthetic',
         'tests.test_audio_report.TestMeasurePrimitives',
+        'tests.test_audio_duration_ffmpeg.RealAudioDurationTest',
         'tests.test_failure_recovery.RealFFmpegRecovery',
         'tests.test_pipeline.TestReceiptConcurrentLock',
         'tests.test_pipeline.TestUntilFlag',

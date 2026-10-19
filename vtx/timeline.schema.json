@@ -91,7 +91,7 @@
         "allOf": [{
           "if": {"properties": {"kind": {"const": "gfx"}}, "required": ["kind"]},
           "else": {"properties": {"clips": {"items": {
-            "not": {"required": ["cache_dependencies"]}
+            "allOf": [{"not": {"required": ["cache_dependencies"]}}, {"not": {"required": ["format"]}}]
           }}}}
         }],
         "properties": {
@@ -123,7 +123,11 @@
               "properties": {
                 "src": {
                   "type": "string",
-                  "description": "sources[].id；gfx 轨为 HTML 文件路径"
+                  "description": "sources[].id；gfx 缺省为 HTML 文件路径；format=svg-sequence 为项目根相对的 framivra-svg-sequence/v1 manifest 路径"
+                },
+                "format": {
+                  "enum": ["html", "svg-sequence"],
+                  "description": "Gfx only. Default html; svg-sequence is a static manifest with fps/width/height/frame_count/frames. All frame/font/generator paths are project-root-relative; frame_count equals dur; frame indices are clip-local. Mixed HTML/SVG gfx timelines are unsupported. Generators are never executed."
                 },
                 "cache_dependencies": {
                   "type": "array",

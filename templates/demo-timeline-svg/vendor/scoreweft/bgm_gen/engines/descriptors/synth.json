@@ -1,0 +1,137 @@
+{
+  "binary_pin": {
+    "additional_pins": [
+      {
+        "name": "ffmpeg",
+        "note": "spec.sr≠44100 时 _wavio.resample_wav_file 重采样（系统包；doctor 探测交叉核验）",
+        "sha256": null,
+        "version": "8.1.2"
+      }
+    ],
+    "note": "无独立二进制：纯 numpy（synthlib，内部 SR 恒 44100，随机源全部种子化→deterministic；nylon 随机源=splitmix64 整数哈希流，BG-D16 纪律）；解释器=runtime.json python_system（miniconda base）",
+    "sha256": null,
+    "size": null,
+    "version": null
+  },
+  "coverage": {
+    "evidence": [
+      "bgm_gen/engines/synth.py（render() 的 payload 读取行为——收割第一事实源 C12）",
+      "bgm_gen/synthlib.py（音色函数签名=params 合法键事实源；nylon 段内注释=拨弦物理模型与 MF 盲听定档证据指针）"
+    ],
+    "gaps": [
+      "dur=0 行不拒绝（引擎内 dur_s=0 宽容，与 midi 层钳 1 tick 口径不同属引擎差异）",
+      "vel=0 不拒绝（gain 0，仅占时长）",
+      "spec.sr≠44100 依赖 ffmpeg 重采样（未在描述符参数面建模，binary_pin additional_pins 注记）",
+      "bpm 收紧 min=1（工程层 meta.bpm lo=0.0001 与之分层不一致；生产路径无影响，R1 审查 E-1 记录）",
+      "nylon 同 pitch 同 params 重复触发同波形（无 round-robin 轮替）——时序解耦由上游 humanize/warp 层承担；vel→gain 线性（亮度 bright 为轨级参数非逐音符），2026-08-25 注记"
+    ],
+    "probes": [
+      "bgm_gen/tests/test_descriptors.py [fast] synth_default（program=kick 默认 bpm）/ synth_fm_ep_boundary（bpm 边界 200+params 合法组合）+ determinism 双渲",
+      "bgm_gen/tests/test_guitar_test_data.py [fast] nylon_probe（program=nylon 出参契约+params 合法组合+determinism 双渲，2026-08-25 新增）"
+    ],
+    "tier": "A"
+  },
+  "engine": "synth",
+  "events_supported": [],
+  "formats": [
+    "wav（pcm_s16le）"
+  ],
+  "input_ports": [
+    {
+      "description": "BG-D7 统一记谱（唯一音频内容入口）",
+      "id": "notes",
+      "type": "note_array"
+    }
+  ],
+  "invariants": [
+    {
+      "check": true,
+      "id": "synth_params_by_program",
+      "rule": "params 键必须 ∈ program 对应的 synthlib 函数签名参数：kick/snare/bass/lead=∅；hat={decay}；fm_ep={ratio, idx, bright_decay}；nylon={bright, pick, body, decay_ref}"
+    },
+    {
+      "check": false,
+      "id": "synth_notes_semantics",
+      "rule": "perc 行 pitch 忽略（仅占时长）；vel=0 合法（gain 0）；dur=0 行宽容（引擎 dur_s=0 行为，不拒）；notes 空列表由渲染层 render_synth_notes 守卫拒绝"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "synthlib 音色函数名：kick/snare/hat=打击乐（pitch 忽略），fm_ep/bass/lead/nylon=调性（pitch→f0）；nylon=Karplus-Strong 尼龙弦吉他拨弦物理模型（时值语义：输出=dur+0.9s 自然延音+80ms 释音）",
+      "enum": [
+        "kick",
+        "snare",
+        "hat",
+        "fm_ep",
+        "bass",
+        "lead",
+        "nylon"
+      ],
+      "flags": [
+        "required"
+      ],
+      "id": "program",
+      "stepped": true,
+      "type": "enum"
+    },
+    {
+      "description": "BG-D7 统一记谱 [[pitch(MIDI 0-127), beat(浮点), dur(浮点 beat), vel(0-127)], ...]；beat/dur 单位=四分音符；vel→gain=vel/127（线性），总线叠加后 softclip",
+      "flags": [
+        "required"
+      ],
+      "id": "notes",
+      "schema": {
+        "items": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "minItems": 1
+      },
+      "type": "tuple"
+    },
+    {
+      "default": 120.0,
+      "description": "beat→秒换算：at = beat * 60/bpm",
+      "id": "bpm",
+      "min": 1,
+      "type": "float",
+      "unit": "bpm"
+    },
+    {
+      "default": {},
+      "description": "按 program 透传为 synthlib 函数 kwargs；合法键随 program 变（invariant synth_params_by_program 强制）",
+      "id": "params",
+      "type": "object"
+    }
+  ],
+  "track_projection": {
+    "bpm": "meta.bpm",
+    "hooks": [],
+    "note": "R1 锁 core/project.py track_engine_spec 的 if/elif 原样；数据化=R2（重组装深比较锁）",
+    "notes": "track.notes",
+    "params": "—（v1 工程轨无通道；v2=track.params 覆盖合并，钩子④，R2 落地）",
+    "program": "track.instrument"
+  },
+  "version": "1.1.0"
+}

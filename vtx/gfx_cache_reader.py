@@ -24,6 +24,11 @@ def resolve_frames(c, clip):
     The input cache is not modified, including legacy caches without a marker.
     """
     from .frame_source import png_source
+    from . import gfx_svg
+    if gfx_svg.is_svg(clip):
+        source = png_source(c, clip)
+        source.require_ready()
+        return [source.frame_path(i) for i in range(source.frame_count)]
     from .gfx_dependencies import resolve, digest, policy
     from .gfx_backend import selected
     if policy(c) == 'strict' and selected() != 'cdp':
