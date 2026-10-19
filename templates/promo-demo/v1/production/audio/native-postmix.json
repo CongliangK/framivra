@@ -1,0 +1,126 @@
+{
+  "format": "framivra-native-postmix-reference/2",
+  "status": "NATIVE_AUDIO_ONLY_REFERENCE_USER_FULL_RENDER_PENDING",
+  "postmix": {
+    "kind": "actual-pcm",
+    "stage": "framivra-audio-stage",
+    "sha256": "ed1053b0b803e33830d4d2e0c42c09294de7c16b7c361da57ac028a11bab17d8",
+    "source": "out/audio.wav",
+    "source_codec": "pcm_s16le",
+    "pcm_sha256": "6dc62e318d0f571dc7d614c72ee1eb52b99b1870b08a4d5f998e0b08213cd9c8",
+    "pcm_hash_representation": "native-rate decoded interleaved little-endian float32; no resampling or gain change",
+    "sample_rate": 48000,
+    "channels": 2,
+    "sample_frames": 5760000,
+    "mix_recipe_sha256": "e3ab364eb2b510c5958e710e9761fd73ff881e9c800101571cd6275d198a0ae6"
+  },
+  "waveform_sha256": "46bef41214ff52418d52439f17ee08de9c323aba31df67f5b23065fa7d0b7b63",
+  "stems": {
+    "T17": "5209ddfe388cc071250582a9e6cad787b39ca36bbb335b753dec549c41dabdd9",
+    "T18": "df582e54cdad868eb3e9251da3d03fa8f6857e67346c55bb052de7acbccd0e74",
+    "T19": "0ecf976ad57f4dd557dbc8c5b6caab19f1fbe86a4a89b458164e05839dc9e8ee",
+    "T20": "c4d251f25d5678f802a529973d5e04bdb7c8f3b2e341b002012b41df55725da8"
+  },
+  "core_commit": "4e81018430842152accd92004237f738a063a51a",
+  "audio_inputs_signature": "34b86439aaf1c1b3efefa538172c484174267e05683f1bf8fd6438e8680dfc5c",
+  "audio_relevant_inputs": {
+    "project": {
+      "fps": 30,
+      "width": 1920,
+      "height": 1080,
+      "duration_frames": 3600
+    },
+    "sources": [
+      {
+        "id": "T17",
+        "path": "audio/T17.flac"
+      },
+      {
+        "id": "T18",
+        "path": "audio/T18.flac"
+      },
+      {
+        "id": "T19",
+        "path": "audio/T19.flac"
+      },
+      {
+        "id": "T20",
+        "path": "audio/T20.flac"
+      }
+    ],
+    "audio_tracks": [
+      {
+        "name": "harmony-melody",
+        "events": [
+          {
+            "src": "T17",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      },
+      {
+        "name": "rhythmic-motion",
+        "events": [
+          {
+            "src": "T18",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      },
+      {
+        "name": "tactile-contact",
+        "events": [
+          {
+            "src": "T19",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      },
+      {
+        "name": "character-signature",
+        "events": [
+          {
+            "src": "T20",
+            "src_in": 0,
+            "in": 0,
+            "out": 3600,
+            "volume": 1,
+            "loop": false
+          }
+        ]
+      }
+    ]
+  },
+  "active_plugins": [],
+  "post_loudness": {
+    "input_i": -14.9,
+    "output_i": -14.6,
+    "gain_db": 0.9000000000000004,
+    "target": -14.0,
+    "tp_dbfs": -3.9,
+    "sha256": "ed1053b0b803e33830d4d2e0c42c09294de7c16b7c361da57ac028a11bab17d8"
+  },
+  "aac_192k_diagnostic": {
+    "sha256": "e9a7288296fd7a4bae33f4e54aeb561a93f680853c3ab28107917ed8c0683674",
+    "integrated_lufs": -14.6,
+    "true_peak_dbfs": -2.2,
+    "actual_final_video_audio": false
+  },
+  "user_audio_approved": false,
+  "user_full_render_postmix_check_required": true,
+  "portable_provenance_path": "audio/native-audio-provenance.json",
+  "portable_provenance_sha256": "e3ab364eb2b510c5958e710e9761fd73ff881e9c800101571cd6275d198a0ae6",
+  "evidence_scope": "PORTABLE_REFERENCE_METADATA_NOT_AN_EXECUTION_RECEIPT"
+}

@@ -1,0 +1,50 @@
+{
+  "schema": "promo-gfx-grouping-interface/1",
+  "scope": "One removable T08 wings then T07 body export experiment; no production/default/CI changes",
+  "prepare_command": "python3 experiments/promo_gfx_grouping/prepare.py --bound-project ABS_REVIEWED_NATIVE_BOUND_PROJECT --output NEW_ABSOLUTE_DIRECTORY",
+  "writes": "Only a new output directory whose parent already exists; never nest it in the original bound project",
+  "output": {
+    "group-plan.json": "Immutable unvalidated candidate plan; all returned paths are relative to its directory",
+    "project/": "109 original payload files copied byte-for-byte plus two experiment files; no media/cache/out",
+    "project/gfx/group_T08_T07_0000_3600.html": "1920x1080 transparent single HTML export; ?f=global_frame; valid half-open global frame domain [0,3600)",
+    "project/runtime/group-pilot.js": "Calls original bound renderFrame separately per active member, in paint order"
+  },
+  "mapping": {
+    "group_local_frame": "global_frame",
+    "T08.01": {"active_global_interval": [18, 3600], "local_frame_offset": -18, "paint_index": 6},
+    "T07.01": {"active_global_interval": [0, 3600], "local_frame_offset": 0, "paint_index": 7},
+    "inactive_members": "No renderFrame invocation; empty member SVG root"
+  },
+  "barriers": [
+    "Original members are adjacent plain full-size GFX overlays at paintIndex 6 and 7; any timeline drift is rejected",
+    "Each member retains its own SVG root, viewBox, original fragment, defs, masks, effects, opacity and camera",
+    "film-T08-01-* and film-T07-01-* original namespaces and all references are preserved; no ID rewrite",
+    "Original bundle and mount options are retained; no shared-state optimization, asynchronous resource change or effect removal",
+    "Exactly one f query is accepted; invalid frames reject rather than clamp",
+    "Initial visible error plate is hidden only after complete synchronous render; script failure is not transparent success",
+    "NAVFREE, BeginFrame, canvas-export and static-spans are not enabled"
+  ],
+  "cache": {
+    "content_identity": "Includes ordered windows/options, all 109 bound payload hashes, generated page/adapter hashes and implementation dependencies",
+    "environment": "Runner must include actual browser/tool revisions, renderer implementation and effective pixel-affecting options",
+    "helper": "prepare.cache_identity(plan, actual_renderer_environment_sha256) binds whole plan and environment",
+    "namespace": "Independent experiment arm only; no old PNG reuse or production completion marker"
+  },
+  "runner_responsibility": [
+    "Verify all frozen input and candidate bytes before and after the run, record actual candidate commit/tree and environment",
+    "Call original render_page with explicit frame list at 1920x1080 and one tab; global IDs map directly to group query/output IDs",
+    "Keep baseline member global-to-local mapping and member half-open activation; do not render T08 before global 18",
+    "Use original bound project for full N1 paper/other-GFX/native-subtitle reference; copied experiment has no full-film media",
+    "Compare lossless RGBA and alpha, black/white/actual backgrounds and full original N1 composition without loosening thresholds",
+    "Own rendering budget, timing, cancellation, cleanup, output verification and all promotion decisions"
+  ],
+  "ordinary_test_commands": [
+    "node --test experiments/promo_gfx_grouping/tests/group.test.cjs",
+    "python3 experiments/promo_gfx_grouping/tests/test_prepare.py --bound-project ABS_REVIEWED_NATIVE_BOUND_PROJECT -v",
+    "node experiments/promo_gfx_grouping/tests/verify_bound.cjs ABS_PREPARED_PROJECT"
+  ],
+  "coverage_limit": "Explicit local structural/filesystem tests only; no CI discovery/registration change, browser/pixel/performance/whole-film qualification or independent review is inferred",
+  "rollback": "Do not select this experiment. Original 19 entries and timeline remain unchanged; discard only the newly owned experiment output after preserving evidence.",
+  "incremental_edit_limit": "The fixed input pin intentionally rejects changed original content. Local-edit cost experiments require a separately frozen amended input manifest and review; this preparer does not silently accept variants.",
+  "qualification": "UNVALIDATED_CANDIDATE; browser internal composition and original FFmpeg overlays may differ in alpha/color/rounding even when each member fragment is identical"
+}

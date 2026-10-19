@@ -1,0 +1,13 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),assert=require('node:assert/strict');
+const ROOT=path.resolve(__dirname,'..'),record=JSON.parse(fs.readFileSync(path.join(ROOT,'evidence/input-snapshot.json'),'utf8'));
+const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+for(const item of record.inputs)assert.equal(sha(fs.readFileSync(path.join(ROOT,item.copy))),item.sha256,item.copy);
+assert.equal(record.r04_r05_manifest_sha256,'faba9ce84481655405869df167a5529b145acff301e3fb60a8f2f99b893e1957');
+const contracts=JSON.parse(fs.readFileSync(path.join(ROOT,'src/assets/gfx-workload.json'),'utf8'));
+const switches=contracts.diagnostic_switches;
+const actual=Object.keys(require('../src/runtime/effects.js').DEFAULTS).sort();
+const expected=Array.isArray(switches)?switches.map(x=>typeof x==='string'?x:x.id).sort():Object.keys(switches.defaults||switches).sort();
+assert.deepEqual(actual,expected);
+assert.deepEqual(switches,require('../src/runtime/effects.js').DEFAULTS);
+console.log(JSON.stringify({status:'PASS_LOCAL_INPUT_IDENTITIES',count:record.inputs.length,r04_r05_manifest:record.r04_r05_manifest_sha256,actual_switch_ids:actual,upstream_diagnostic_switches:switches},null,2));

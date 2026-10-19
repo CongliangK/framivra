@@ -1,0 +1,103 @@
+{
+  "status": "ACTUAL_EMITTED_CANDIDATE_TIMELINE",
+  "timeline_sha256": "957e893ce00e8a116fe130251e60f4f23662a00bccd0b413b7b4a52efa9e9b19",
+  "items": [
+    {
+      "id": "S3.strip",
+      "track_id": "T11",
+      "track_name": "temporal-ribbons",
+      "clip_src": "gfx/T11_0630_1200.html",
+      "window": [
+        810,
+        1050
+      ],
+      "fields": {
+        "src": "gfx/T11_0630_1200.html"
+      },
+      "short_display_label": "A-arch",
+      "expected_projection": {
+        "src": "gfx/T11_0630_1200.html"
+      },
+      "object_id": "A-arch",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track.",
+      "displayFields": {
+        "src": "T11_0630_1200.html"
+      }
+    },
+    {
+      "id": "S3.gate",
+      "track_id": "T03",
+      "track_name": "middle-gate-carrier",
+      "clip_src": "gfx/T03_0690_3600.html",
+      "window": [
+        1050,
+        1140
+      ],
+      "fields": {
+        "src": "gfx/T03_0690_3600.html",
+        "dst_in": 690,
+        "dur": 2910
+      },
+      "short_display_label": "T03",
+      "expected_projection": {
+        "src": "gfx/T03_0690_3600.html",
+        "dst_in": 690,
+        "dur": 2910
+      },
+      "object_id": "A-arch",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track.",
+      "displayFields": {
+        "src": "T03_0690_3600.html",
+        "dst_in": "690",
+        "dur": "2910"
+      }
+    },
+    {
+      "id": "S7.middle",
+      "track_id": "T03",
+      "track_name": "middle-gate-carrier",
+      "clip_src": "gfx/T03_0690_3600.html",
+      "window": [
+        2820,
+        3150
+      ],
+      "fields": {
+        "src": "gfx/T03_0690_3600.html",
+        "dur": 2910
+      },
+      "short_display_label": "T03",
+      "expected_projection": {
+        "src": "gfx/T03_0690_3600.html",
+        "dur": 2910
+      },
+      "object_id": "A-arch",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track.",
+      "displayFields": {
+        "src": "T03_0690_3600.html",
+        "dur": "2910"
+      }
+    },
+    {
+      "id": "S7.frame",
+      "track_id": "T05",
+      "track_name": "continuous-red-frame",
+      "clip_src": "gfx/T05_0330_3600.html",
+      "window": [
+        2820,
+        3150
+      ],
+      "fields": {
+        "src": "gfx/T05_0330_3600.html"
+      },
+      "short_display_label": "T05",
+      "expected_projection": {
+        "src": "gfx/T05_0330_3600.html"
+      },
+      "object_id": "F-frame",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track.",
+      "displayFields": {
+        "src": "T05_0330_3600.html"
+      }
+    }
+  ]
+}

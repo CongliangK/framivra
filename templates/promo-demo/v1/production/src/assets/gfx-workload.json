@@ -1,0 +1,263 @@
+{
+  "status": "DESIGN_REQUIREMENTS_NOT_MEASURED",
+  "default_profile": "film",
+  "diagnostic_profiles_only": true,
+  "families": [
+    {
+      "id": "path_deformation",
+      "windows": [
+        [
+          630,
+          1200
+        ],
+        [
+          2100,
+          2700
+        ]
+      ],
+      "owners": [
+        "T06",
+        "T11"
+      ],
+      "varying_properties": [
+        "ribbon Bézier control points",
+        "shared paper hinge vertices",
+        "mask boundary paths"
+      ],
+      "off_control": "Same frame and pose with recorded rigid simplified paths; labels mark diagnostic, never substitute as final.",
+      "diagnostic_switch_id": "path_deformation"
+    },
+    {
+      "id": "material_masks",
+      "windows": [
+        [
+          810,
+          1140
+        ],
+        [
+          1380,
+          1470
+        ],
+        [
+          2280,
+          2700
+        ],
+        [
+          2820,
+          2910
+        ]
+      ],
+      "owners": [
+        "T03",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T11"
+      ],
+      "varying_properties": [
+        "two ribbon weave clip/mask boundaries",
+        "common gate/foreground occluder silhouette",
+        "local paper peel boundary"
+      ],
+      "off_control": "Bypass only named local occlusion, leaving geometry/time unchanged. Expected spatial errors are evidence of function, not acceptable film.",
+      "diagnostic_switch_id": "material_masks"
+    },
+    {
+      "id": "text_path_layout",
+      "windows": [
+        [
+          810,
+          1050
+        ],
+        [
+          2820,
+          2910
+        ]
+      ],
+      "owners": [
+        "T14"
+      ],
+      "varying_properties": [
+        "one actual short source label path",
+        "two-column to two-row source slip layout"
+      ],
+      "off_control": "Freeze text path/layout at documented start state; text content stays exact. No per-frame forced reflow.",
+      "diagnostic_switch_id": null
+    },
+    {
+      "id": "leader_geometry",
+      "windows": [
+        [
+          960,
+          1050
+        ],
+        [
+          2820,
+          2910
+        ],
+        [
+          3090,
+          3150
+        ]
+      ],
+      "owners": [
+        "T12"
+      ],
+      "varying_properties": [
+        "object-to-label bound endpoints",
+        "routed elbow/control points"
+      ],
+      "off_control": "Freeze leader endpoints to expose detachment, not replace objects.",
+      "diagnostic_switch_id": null
+    },
+    {
+      "id": "text_reveal",
+      "windows": [
+        [
+          810,
+          840
+        ],
+        [
+          2820,
+          2880
+        ],
+        [
+          3360,
+          3420
+        ]
+      ],
+      "owners": [
+        "T14",
+        "T15"
+      ],
+      "varying_properties": [
+        "text clip boundary, no glyph deformation"
+      ],
+      "off_control": "Show exact same glyphs in their stable location from start.",
+      "diagnostic_switch_id": "text_reveal"
+    },
+    {
+      "id": "gradient_alpha_reveal",
+      "windows": [
+        [
+          810,
+          1140
+        ],
+        [
+          1710,
+          1770
+        ],
+        [
+          2160,
+          2700
+        ],
+        [
+          2820,
+          2910
+        ]
+      ],
+      "owners": [
+        "T06",
+        "T11",
+        "T13"
+      ],
+      "varying_properties": [
+        "local seam gradient coordinate/extent",
+        "waveform inlet reveal edge",
+        "paper contact overlap"
+      ],
+      "off_control": "Hard-edge local mask replacing soft edge; same mask footprint and all geometry unchanged.",
+      "diagnostic_switch_id": "gradient_alpha_reveal"
+    },
+    {
+      "id": "local_blur",
+      "windows": [
+        [
+          2280,
+          2700
+        ]
+      ],
+      "owners": [
+        "T03"
+      ],
+      "varying_properties": [
+        "two small contact patch widths/positions driven by settle; sigma chosen≤2.6 authorunits",
+        "tightly bounded filter region"
+      ],
+      "off_control": "Keep exact patch geometry, opacity0.09, bounds and time; remove feGaussianBlur only. No whole-scene blur.",
+      "diagnostic_switch_id": "local_blur"
+    },
+    {
+      "id": "translucent_trails",
+      "windows": [
+        [
+          1404,
+          1452
+        ]
+      ],
+      "owners": [
+        "T08"
+      ],
+      "varying_properties": [
+        "one wing silhouette computed from global_f-3",
+        "shared current gate mask"
+      ],
+      "off_control": "Remove historical silhouette only; main B stays sharp. opacity≤0.09, no post-1451 residue.",
+      "diagnostic_switch_id": "translucent_trails"
+    },
+    {
+      "id": "real_waveform",
+      "windows": [
+        [
+          1710,
+          2160
+        ]
+      ],
+      "owners": [
+        "T13"
+      ],
+      "varying_properties": [
+        "visible true envelope segment/current global cue tick"
+      ],
+      "off_control": "No fake substitute; use T13 removal-control as distinct test.",
+      "diagnostic_switch_id": null
+    }
+  ],
+  "E01": {
+    "window": [
+      810,
+      1140
+    ],
+    "meaning": "Three deforming carriers, two crossings, real source textPath and completed gate. Text stabilizes1050–1140."
+  },
+  "E02": {
+    "window": [
+      2280,
+      2700
+    ],
+    "meaning": "Sustained14-second shared hinge/camera/occluder/reveal work. Eight active gfx, not a forced twelve-layer claim."
+  },
+  "E03": {
+    "window": [
+      2820,
+      3090
+    ],
+    "meaning": "Complex original scene with source layouts and ordered full removals. Intentional stable holds included; no constant-motion fiction."
+  },
+  "comparisons": "Keep source/media/fonts/dimensions/fps/frame set/backend/device and cache state recorded. effects.json is a declared cache dependency. Change one family per copy and record changed input identity. Never report one average from unequal runs.",
+  "forbidden_claims": [
+    "No navfree/static-span/fast-path eligibility is asserted",
+    "No GPU utilization, memory, fps, elapsed time, PNG size or render load was measured",
+    "No geometry count or effect API name is evidence of expensive execution",
+    "Diagnostic variants are not official acceptance renders"
+  ],
+  "diagnostic_switches": {
+    "path_deformation": true,
+    "material_masks": true,
+    "text_reveal": true,
+    "translucent_trails": true,
+    "gradient_alpha_reveal": true,
+    "local_blur": true
+  }
+}

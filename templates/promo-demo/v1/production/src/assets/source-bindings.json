@@ -1,0 +1,88 @@
+{
+  "status": "RECIPE_BINDINGS; resolve from final actual timeline and compare at R06/R17",
+  "resolve_rule": "Find video track by exact name and clip by src. Require unique match; copy fields verbatim. Short visible label maps to real source path; do not invent runtime stats.",
+  "items": [
+    {
+      "id": "S3.strip",
+      "track_id": "T11",
+      "track_name": "temporal-ribbons",
+      "clip_src": "gfx/T11_0630_1200.html",
+      "window": [
+        810,
+        1050
+      ],
+      "fields": [
+        "src"
+      ],
+      "short_display_label": "A-arch",
+      "expected_projection": {
+        "src": "gfx/T11_0630_1200.html"
+      },
+      "object_id": "A-arch",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track."
+    },
+    {
+      "id": "S3.gate",
+      "track_id": "T03",
+      "track_name": "middle-gate-carrier",
+      "clip_src": "gfx/T03_0690_3600.html",
+      "window": [
+        1050,
+        1140
+      ],
+      "fields": [
+        "src",
+        "dst_in",
+        "dur"
+      ],
+      "short_display_label": "T03",
+      "expected_projection": {
+        "src": "gfx/T03_0690_3600.html",
+        "dst_in": 690,
+        "dur": 2910
+      },
+      "object_id": "A-arch",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track."
+    },
+    {
+      "id": "S7.middle",
+      "track_id": "T03",
+      "track_name": "middle-gate-carrier",
+      "clip_src": "gfx/T03_0690_3600.html",
+      "window": [
+        2820,
+        3150
+      ],
+      "fields": [
+        "src",
+        "dur"
+      ],
+      "short_display_label": "T03",
+      "expected_projection": {
+        "src": "gfx/T03_0690_3600.html",
+        "dur": 2910
+      },
+      "object_id": "A-arch",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track."
+    },
+    {
+      "id": "S7.frame",
+      "track_id": "T05",
+      "track_name": "continuous-red-frame",
+      "clip_src": "gfx/T05_0330_3600.html",
+      "window": [
+        2820,
+        3150
+      ],
+      "fields": [
+        "src"
+      ],
+      "short_display_label": "T05",
+      "expected_projection": {
+        "src": "gfx/T05_0330_3600.html"
+      },
+      "object_id": "F-frame",
+      "visible_text_rule": "Use basename for src, exact integer for dur/dst_in. Label identifies group when group-owned; never say A is a standalone track."
+    }
+  ]
+}

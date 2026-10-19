@@ -26,11 +26,14 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
-from vtx import fstxn
+from vtx import frame_source, fstxn, gfx_cli
+from vtx.frame_source import PngSequence
+from tests.test_png_format_stability import png, sample
 
 PYTHON = os.environ.get('VTX_TEST_PYTHON') or (sys.executable if not sys.executable.endswith('.AppImage') else shutil.which('python3'))
 
@@ -102,6 +105,76 @@ def _minimal_timeline(root: Path) -> Path:
     p = root / "timeline.json"
     p.write_text(json.dumps(tl), encoding="utf-8")
     return p
+
+
+class PinnedPngPageBasics(unittest.TestCase):
+    """Ordinary directory-fd regression coverage in the fast PR module."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.directory = self.root/'original'
+        self.directory.mkdir()
+        self.source = PngSequence(self.directory, 'test-source', 4, 30, 8, 4)
+
+    def write(self, i, bpp=4, before=()):
+        rows = sample(8, 4, bpp, i)
+        # Exercise legal transparency and hidden RGB without using colour as ID.
+        if bpp == 4:
+            rows = [bytes(v if x%4!=3 else (0,64,128,255)[(x//4)%4]
+                          for x,v in enumerate(row)) for row in rows]
+        data = png(rows, 8, bpp, filters=(0,1,3,4), before=before)
+        (self.directory/f'f{i:04d}.png').write_bytes(data)
+        return data
+
+    def output(self, start=0, stop=None):
+        argv = self.source.input_args(start, stop)
+        return Path(argv[-1]).parent, int(argv[3])
+
+    def test_pinned_derivative_does_not_require_proc_or_change_default_capability(self):
+        for i in range(4): self.write(i, 3 if i == 2 else 4)
+        gfx_cli.complete_page(self.directory, 4, self.directory.name, 8, 4,
+                              verify_inputs=lambda: None)
+        original = {p.name: p.read_bytes() for p in self.directory.iterdir()}
+        with mock.patch.object(frame_source.fstxn, '_FD_WRITE_SUPPORT', False), \
+                mock.patch.object(frame_source.fstxn, 'fd_path',
+                                  side_effect=AssertionError('no proc paths in directory transaction')):
+            self.assertEqual(frame_source.fstxn.write_capability(), 'legacy')
+            out, first = self.output()
+            self.assertEqual(self.output(), (out, first))
+            self.assertEqual(frame_source.fstxn.write_capability(), 'legacy')
+        self.assertEqual(original, {p.name: p.read_bytes() for p in self.directory.iterdir()})
+        self.assertEqual(json.loads((out/'complete.json').read_text())['frames'], 4)
+
+    def test_missing_directory_capability_refuses_only_mixed_without_writes(self):
+        for i in range(4): self.write(i, 4)
+        with mock.patch.object(frame_source.fstxn, '_WRITE_DIR_FD_APIS', (lambda: None,)):
+            self.assertEqual(self.output(), (self.directory, 0))
+            self.write(2, 3)
+            original = {p.name: p.read_bytes() for p in self.directory.iterdir()}
+            with self.assertRaisesRegex(ValueError, 'dir_fd/O_NOFOLLOW'):
+                self.output()
+            self.assertEqual(list(self.root.iterdir()), [self.directory])
+            self.assertEqual(original, {p.name: p.read_bytes() for p in self.directory.iterdir()})
+
+    def test_regular_pinned_stream_io_abort_preserves_old_bytes_and_retry(self):
+        directory = self.root/'ordinary-writes'
+        with frame_source.fstxn.pinned_directory(directory) as (fd, check):
+            with frame_source.fstxn.atomic_writer_at(fd, 'record.bin') as stream:
+                stream.write(b'old')
+            with self.assertRaisesRegex(OSError, 'simulated I/O failure'):
+                with frame_source.fstxn.atomic_writer_at(fd, 'record.bin') as stream:
+                    stream.write(b'partial')
+                    raise OSError('simulated I/O failure')
+            with frame_source.fstxn.open_at(fd, 'record.bin') as stream:
+                self.assertEqual(stream.read(), b'old')
+            self.assertEqual([p.name for p in directory.iterdir()], ['record.bin'])
+            with frame_source.fstxn.atomic_writer_at(fd, 'record.bin') as stream:
+                stream.write(b'new')
+            with frame_source.fstxn.open_at(fd, 'record.bin') as stream:
+                self.assertEqual(stream.read(), b'new')
+            check()
 
 
 class LockedWriteBasics(unittest.TestCase):

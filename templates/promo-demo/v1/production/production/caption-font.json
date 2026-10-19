@@ -1,0 +1,22 @@
+{
+  "status": "LOCAL_BYTES_VERIFIED_NATIVE_ASS_CONSUMPTION_PENDING",
+  "sha256": "faa5f3656a78b2e2d450d27fe8382c778bc2b6bb5ea29c986664a6a435056ceb",
+  "license_path": "notices/Noto-CJK-copyright.txt",
+  "license_sha256": "849f4ea9c214fa4ac3593b770c699f387534b11ce671264c1b10d85bdcb5997b",
+  "native_ass_family": "Noto Sans CJK SC",
+  "native_ass_bold": true,
+  "faces": [
+    {
+      "collection_index": 2,
+      "family": "Noto Sans CJK SC",
+      "style": "Bold",
+      "version": "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603",
+      "glyphs_missing": []
+    }
+  ],
+  "install_performed": false,
+  "user_environment_consumption_verified": false,
+  "reference_filename": "NotoSansCJK-Bold.ttc",
+  "bundled": false,
+  "consumption": "External prerequisite: the renderer must select these exact font bytes through its ordinary native ASS font lookup. No package-local loader or installation is provided."
+}

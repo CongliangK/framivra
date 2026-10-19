@@ -1,0 +1,340 @@
+{
+  "format": "framivra-boundary-contract/1",
+  "status": "DESIGN_TARGETS; final dynamic/pixel verification unrun",
+  "unit": "1280x720 author coordinates",
+  "pairs": [
+    {
+      "frames": [
+        299,
+        300
+      ],
+      "checkpoint": "wing-cover",
+      "required_samples": [
+        298,
+        299,
+        300,
+        301
+      ],
+      "persistent_state": [
+        "B wing shape/color/direction"
+      ],
+      "owners": [
+        "T07",
+        "T08"
+      ],
+      "camera_contract": "Opening foreground override is identical on299/300. Covered rebase may occur only underneath full wing.",
+      "R03_svg_pair": [
+        "round03/boundaries/f0299.svg",
+        "round03/boundaries/f0300.svg"
+      ],
+      "geometry_rule": "Both boundary frames resolve one shared checkpoint. Compare actual rendered frames and two-frame motion on each side; equality of source IDs is insufficient.",
+      "status": "ACTUAL_FRAMES_UNRUN"
+    },
+    {
+      "frames": [
+        719,
+        720
+      ],
+      "checkpoint": "three-ribbons",
+      "required_samples": [
+        718,
+        719,
+        720,
+        721
+      ],
+      "persistent_state": [
+        "A/L/R order",
+        "single grasp",
+        "F folded",
+        "P-C receivers already visible"
+      ],
+      "owners": [
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T11"
+      ],
+      "camera_contract": "No camera reset. Continue same diagonal camera/pose through this boundary.",
+      "R03_svg_pair": [
+        "round03/boundaries/f0719.svg",
+        "round03/boundaries/f0720.svg"
+      ],
+      "geometry_rule": "Both boundary frames resolve one shared checkpoint. Compare actual rendered frames and two-frame motion on each side; equality of source IDs is insufficient.",
+      "status": "ACTUAL_FRAMES_UNRUN"
+    },
+    {
+      "frames": [
+        1199,
+        1200
+      ],
+      "checkpoint": "closed-gate",
+      "required_samples": [
+        1198,
+        1199,
+        1200,
+        1201
+      ],
+      "persistent_state": [
+        "G on P-C receivers",
+        "B at left origin",
+        "F on gate",
+        "bar closing"
+      ],
+      "owners": [
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08"
+      ],
+      "camera_contract": "Pillar occlusion finishes before1199. Side view same at1199/1200.",
+      "R03_svg_pair": [
+        "round03/boundaries/f1199.svg",
+        "round03/boundaries/f1200.svg"
+      ],
+      "geometry_rule": "Both boundary frames resolve one shared checkpoint. Compare actual rendered frames and two-frame motion on each side; equality of source IDs is insufficient.",
+      "status": "ACTUAL_FRAMES_UNRUN"
+    },
+    {
+      "frames": [
+        1679,
+        1680
+      ],
+      "checkpoint": "released-reel",
+      "required_samples": [
+        1678,
+        1679,
+        1680,
+        1681
+      ],
+      "persistent_state": [
+        "Q unlocked and feed moving",
+        "F on free end",
+        "B settled",
+        "upright G on same P-C",
+        "shared P-A hinge"
+      ],
+      "owners": [
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08"
+      ],
+      "camera_contract": "Paper-level camera state carries through; Q velocity does not reset.",
+      "R03_svg_pair": [
+        "round03/boundaries/f1679.svg",
+        "round03/boundaries/f1680.svg"
+      ],
+      "geometry_rule": "Both boundary frames resolve one shared checkpoint. Compare actual rendered frames and two-frame motion on each side; equality of source IDs is insufficient.",
+      "status": "ACTUAL_FRAMES_UNRUN"
+    },
+    {
+      "frames": [
+        2159,
+        2160
+      ],
+      "checkpoint": "first-fold",
+      "required_samples": [
+        2158,
+        2159,
+        2160,
+        2161
+      ],
+      "persistent_state": [
+        "same buckle",
+        "Q paper meets P-A",
+        "B pulls F",
+        "G fixed on P-C",
+        "P-C not yet sliding"
+      ],
+      "owners": [
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08"
+      ],
+      "camera_contract": "Same first-fold checkpoint and tangent; no world crossfade.",
+      "R03_svg_pair": [
+        "round03/boundaries/f2159.svg",
+        "round03/boundaries/f2160.svg"
+      ],
+      "geometry_rule": "Both boundary frames resolve one shared checkpoint. Compare actual rendered frames and two-frame motion on each side; equality of source IDs is insufficient.",
+      "status": "ACTUAL_FRAMES_UNRUN"
+    },
+    {
+      "frames": [
+        2759,
+        2760
+      ],
+      "checkpoint": "complete-world",
+      "required_samples": [
+        2758,
+        2759,
+        2760,
+        2761
+      ],
+      "persistent_state": [
+        "all S6 objects",
+        "F complete",
+        "same B/operator positions",
+        "P-A/P-B settled"
+      ],
+      "owners": [
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09"
+      ],
+      "camera_contract": "Camera settled. S7 offsets are exactly0 at2760, separation begins after.",
+      "R03_svg_pair": [
+        "round03/boundaries/f2759.svg",
+        "round03/boundaries/f2760.svg"
+      ],
+      "geometry_rule": "Both boundary frames resolve one shared checkpoint. Compare actual rendered frames and two-frame motion on each side; equality of source IDs is insufficient.",
+      "status": "ACTUAL_FRAMES_UNRUN"
+    },
+    {
+      "frames": [
+        3239,
+        3240
+      ],
+      "checkpoint": "ending-bridge",
+      "required_samples": [
+        3238,
+        3239,
+        3240,
+        3241
+      ],
+      "persistent_state": [
+        "reassembled miniature world",
+        "one F",
+        "same descending B",
+        "source slips exited"
+      ],
+      "owners": [
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09"
+      ],
+      "camera_contract": "One common retreat; frame/body transform identical at3239/3240.",
+      "R03_svg_pair": [
+        "round03/boundaries/f3239.svg",
+        "round03/boundaries/f3240.svg"
+      ],
+      "geometry_rule": "Both boundary frames resolve one shared checkpoint. Compare actual rendered frames and two-frame motion on each side; equality of source IDs is insufficient.",
+      "status": "ACTUAL_FRAMES_UNRUN"
+    }
+  ],
+  "rig_rules": {
+    "B": "One global B rig returns transform, wing articulation, feet state and resolved occluders. T07/T08 use it unchanged; only drawing ownership differs.",
+    "G_P_C": "P-C root carries receivers, A, R, L mount/linkage and gate. After respective seating cues all mounting coordinates remain fixed. G is never re-created or independently rescaled during2250–2400.",
+    "fixed_W_guide": "World-fixed reference, not a child of P-C. For2250–2400 measure P-C motion relative to W-guide before camera projection. Common camera may move both on screen.",
+    "P_hinges": "P-C↔P-A and P-A↔P-B shared edges each have one identity and computed endpoint pair. Connected faces reference those endpoints rather than interpolate duplicate vertices. P-C remains flat; P-A finishes its opening before P-C slides; P-B opens after2520.",
+    "F": "One corner set with four persistent IDs and shared edge lengths. Folded reserve must be visible before material is paid out. S7 absence clears all F pixels and its shadows/trails.",
+    "Q": "Shelf, stop, axle and feed share one physical assembly. Stop clears at1590 before rotation1620; Q remains in T04 through3600 and never becomes the original red-stock reel.",
+    "S7": "Apply offsets to original groups, not redrawn illustration. At full separation: back(-70,-54), middle(-54,-2), front(+18,+25), operator(-54,-2), F(+30,-7), B(+100,-37). Hold other states2940–3090.",
+    "S8": "Miniature world transforms original T02/T03/T04/T06/T09 only; exclude B and F before scaling. Final targets F[140,181,1000,397], B[1053,143,.8,0,6], foot y181.4, frame top181."
+  },
+  "camera_design": {
+    "S1": "Use exact embedded opening curves through299; do not reinterpret contacts. Foreground approach uses source frameState projection.",
+    "S2_to_S6": "R03 poses are screen-space composition targets; solve world-rig and shared camera together. Do not interpolate each screen polygon as a different world or independently reset pages at scenes. Side→top and top→side rebases only behind the stated real card/pillar occlusion.",
+    "S4": "Keep start/platform/gate in view through1260. Camera follow displacement must be smaller than B displacement during flight so the arc remains visible. One convex flight arc1320–1515; finite settle1515–1560.",
+    "S6": "P-C slide2250–2400 occurs in fixed W-guide world coordinates. Camera retreats as world opens; dynamic scale/translation must be one shared function. No camera angle/perspective/3D added.",
+    "S7": "No camera motion2940–3090; complete-world state is the baseline.",
+    "S8": "Only small continuous retreat3240–3420; camera and world fully settled by3480.",
+    "unresolved_proof": "R06 must solve interpolation against these endpoint contracts and test all frames for shared hinges/contact order. R03 static targets do not prove a rigid-motion solution; if a target conflicts, make a bounded reviewed design correction, never hide a jump."
+  },
+  "R03_contact_anchors": {
+    "S2_wing_card": {
+      "bird_translation": [
+        765,
+        465
+      ],
+      "scale": 1.5,
+      "local_wing_tip": [
+        -91,
+        -100
+      ],
+      "world_contact": [
+        628.5,
+        315
+      ]
+    },
+    "S5_beak_F": {
+      "bird_translation": [
+        670,
+        449
+      ],
+      "scale": 0.8,
+      "world_contact": [
+        782,
+        422.6
+      ]
+    },
+    "S5_F_buckle_P_A": {
+      "f1950": {
+        "F_lower_endpoint": [
+          788.52223994,
+          447.34133082
+        ],
+        "shared_buckle_P_A_anchor": [
+          792,
+          463
+        ]
+      },
+      "f2159_2160": {
+        "F_lower_endpoint": [
+          879.17140594,
+          378.10166427
+        ],
+        "shared_buckle_P_A_anchor": [
+          867,
+          360
+        ]
+      },
+      "connection": "Continuous 5-unit red paper tongue joins the exact black buckle/P-A anchor; beak-to-F contact retained."
+    },
+    "S8_foot_F": {
+      "bird_translation": [
+        1053,
+        143
+      ],
+      "scale": 0.8,
+      "foot_baseline": 181.4,
+      "frame_top": 181
+    }
+  },
+  "S5_connection_rule": "At f1950 the F lower tongue and buckle/P-A anchor are already continuously connected. f1965 is final seating/response, not first contact. Keep a shared material tongue endpoint from the revised f1950 chain into the revised f2159/2160 chain.",
+  "S6_support_visibility": {
+    "before_foreground_occlusion": [
+      2280,
+      2400
+    ],
+    "occluded_target_frame": 2450,
+    "after_foreground_occlusion": [
+      2610,
+      2700
+    ],
+    "requirement": "Show both feet seated on their original P-C receivers before and after the temporary foreground fold occlusion; do not treat occlusion as removal or new assembly."
+  }
+}

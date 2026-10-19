@@ -29,6 +29,10 @@ MEDIA_TESTS = {
         'tests.test_filter_threads',
         'tests.test_composite_determinism',
         'tests.test_frame_source',
+        'tests.test_png_format_stability.TestStableSource.test_independent_ffmpeg_rgba_pixels_and_pts',
+        'tests.test_png_pts_precision.TestPngTiming.test_real_n1_first_interior_tail_and_repeat_are_timeline_correct',
+        'tests.test_png_pts_precision.TestPngTiming.test_real_n1_multilayer_alpha_positions_and_packet_pts',
+        'tests.test_png_pts_precision.TestPngTiming.test_negative_relative_seek_uses_current_then_next_source_frame',
         'tests.test_post_loudness',
         'tests.test_mux_history',
         'tests.test_audio_report.TestEndToEndSynthetic',
@@ -50,6 +54,7 @@ MEDIA_TESTS = {
         'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
         'tests.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
         'tests.test_graphics_portability.SubtitleIntegration',
+        'templates.promo-demo.v1.production.tests.test_native_postmix_preflight.NativePostmixTests',
     ),
     'chrome': (
         'tests.test_graphics_portability.BrowserIntegration',

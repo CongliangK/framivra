@@ -1,0 +1,78 @@
+{
+  "format": "framivra-portable-music-recipe/1",
+  "status": "FROZEN_VALIDATED_EXTERNAL_SOURCE_RECIPE",
+  "source_commit": "aa5e7781952418f5881c41f166f237dc7a24111c",
+  "files": [
+    {
+      "path": "PORTABILITY.json",
+      "bytes": 1626,
+      "sha256": "bd7fd72fac359a658249000a8cb491b2342f7e37bf24e4ceafdfbb49af7a4825"
+    },
+    {
+      "path": "README.md",
+      "bytes": 6768,
+      "sha256": "d00ac092a98023e1939f257c0929f6d14bc1cae7a397e8d07ebee60ccebaa296"
+    },
+    {
+      "path": "SOURCE_INTEGRITY.json",
+      "bytes": 11747,
+      "sha256": "ae139ace16d9b2eae76201c18b45043e9080c18574df0cdc5ce03444fc088beb"
+    },
+    {
+      "path": "inputs/audio-roles.json",
+      "bytes": 5743,
+      "sha256": "82828751d0a7d7de44dad3bc1c30eb889aee5d30eb8a69bebc3443ff980a275f"
+    },
+    {
+      "path": "inputs/cues.json",
+      "bytes": 39665,
+      "sha256": "329091f03cff0553c50d5ed721e53d6f167950eb2bc0e05415658f3bed5f6585"
+    },
+    {
+      "path": "notices/LICENSE",
+      "bytes": 1079,
+      "sha256": "b6541ab9c22abc362bd46c9472a48242c9cb6612ef00aa73ad28533ef0c16eb6"
+    },
+    {
+      "path": "notices/NOTICE.md",
+      "bytes": 8687,
+      "sha256": "1a93be9bf7e254f14424a033fab55b614e53c549c5ac69b6d9660491fee3decd"
+    },
+    {
+      "path": "score.json",
+      "bytes": 124932,
+      "sha256": "93e84f1e53d38bc38669802e243bb9d86eb56f3d3081042393708279a16f6114"
+    },
+    {
+      "path": "scoreweft-editable-projection.json",
+      "bytes": 34511,
+      "sha256": "e0a722de21ccd27d78e458dab6a747e3801a4d9935e6849b89fcc660a2938f3f"
+    },
+    {
+      "path": "scripts/compose.py",
+      "bytes": 12173,
+      "sha256": "9971396f16e6d754c59ec69ca2815585d34af9aefc3aee85172b7e4d077740e5"
+    },
+    {
+      "path": "scripts/render.py",
+      "bytes": 17231,
+      "sha256": "7ac3b0746c12edd30e7f4cc5e97de38667167e0546761a455d7d280b1d0cece7"
+    },
+    {
+      "path": "scripts/render_guard.py",
+      "bytes": 8164,
+      "sha256": "fffc34497f93fabdd734e84c5aea6401ebf8df5efdbb06b818b18ce819936102"
+    },
+    {
+      "path": "scripts/verify_delivery.py",
+      "bytes": 5983,
+      "sha256": "f9393ba0ddc266625e336e83777e4bb3f3760b9aab43ce729825265f6a48218d"
+    },
+    {
+      "path": "scripts/waveform_from_pcm.py",
+      "bytes": 2802,
+      "sha256": "4339baecb10edaf655861d8aa24d60d076b15dbce18e2af47fd98ce09b8df54e"
+    }
+  ],
+  "documentation_revision": "Source-only portable recipe; original MIT and third-party notices preserved; raw execution/resource reports excluded. Music and DSP source bytes unchanged."
+}

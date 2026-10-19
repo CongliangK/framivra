@@ -1,0 +1,20 @@
+# This Git package contains editable source, recipes and small hash manifests only.
+# Runtime media is imported or regenerated locally and must not be force-added.
+*.flac
+*.wav
+*.mp4
+*.mov
+*.webm
+*.m4a
+*.aac
+*.mp3
+*.ogg
+*.zip
+*.tar
+*.gz
+out/
+cache/
+frames/
+rendered/
+diagnostics/
+asset-pack/

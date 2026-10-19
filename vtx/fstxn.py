@@ -59,7 +59,8 @@ from pathlib import Path
 __all__ = ["locked_write", "locked_staging", "locked_update", "atomic_write",
            "cleanup_identity", "remove_pinned", "mkdir", "unlink", "replace",
            "pinned_parent", "fd_path", "entry_identity", "flock_at", "remove_at",
-           "check_regular_at", "bind_project_root", "write_capability", "file_lock"]
+           "check_regular_at", "bind_project_root", "write_capability", "file_lock",
+           "pinned_directory", "open_at", "atomic_writer_at"]
 
 # Capture the real APIs once: tests may instrument the final unlink syscall.
 _CLEANUP_DIR_FD_APIS = (os.open, os.stat, os.unlink, os.rmdir)
@@ -323,7 +324,7 @@ def _require_fd_writes(path, *, what="写入"):
 
 
 @contextlib.contextmanager
-def pinned_parent(path, *, create=True):
+def pinned_parent(path, *, create=True, proc_paths=True):
     """Open/create every directory component via a no-follow pinned parent fd.
 
     Holding the final descriptor protects all subsequent mkdir/open/rename from
@@ -331,9 +332,13 @@ def pinned_parent(path, *, create=True):
     仅 with 体内由本函数自身的目录链操作抛出的 OSError 会转 ProjectPathError；
     调用方 with 体内的异常（含 OSError）原样穿透——loudness 回执的 advisory
     吞错与既有测试对原始 OSError 的断言都依赖该语义。要求
-    write_capability() == 'fd-anchored'。"""
+    write_capability() == 'fd-anchored'。proc_paths=False 仅供新增纯 dir_fd
+    消费者：无 /proc 路径输出，也不允许 legacy 降级。"""
     p = _write_target(path)
-    _require_fd_writes(p)
+    if proc_paths:
+        _require_fd_writes(p)
+    else:
+        _require_directory_fds(p)
     descriptors = []
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
@@ -356,6 +361,89 @@ def pinned_parent(path, *, create=True):
     finally:
         for descriptor in reversed(descriptors):
             os.close(descriptor)
+
+
+def _require_directory_fds(path):
+    # New opt-in directory transactions never take the legacy path. Unlike
+    # proc-path writers, these use streams and dir_fd on Linux and macOS.
+    if (not getattr(os, 'O_NOFOLLOW', 0) or not getattr(os, 'O_DIRECTORY', 0)
+            or not getattr(os, 'O_NONBLOCK', 0)
+            or not all(api in os.supports_dir_fd for api in _WRITE_DIR_FD_APIS)
+            or fcntl is None):
+        raise _write_error(path, '固定目录事务需要 dir_fd/O_NOFOLLOW/flock；拒绝降级')
+
+
+@contextlib.contextmanager
+def pinned_directory(path):
+    """Pin a new/regular directory, rejecting its symlink and later exchange.
+
+    Return its fd and a namespace-identity check. All writes must use the fd,
+    not the pathname: a check alone cannot close a subsequent replacement race.
+    This opt-in path has no unsafe fallback and does not require /proc.
+    """
+    with pinned_parent(path, proc_paths=False) as (parent, name, target):
+        try:
+            os.mkdir(name, dir_fd=parent)
+        except FileExistsError:
+            pass
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        try:
+            expected = cleanup_identity(target)
+            identity = entry_identity(os.fstat(fd))
+            def check():
+                if (not expected or expected[-1] != identity
+                        or cleanup_identity(target) != expected
+                        or entry_identity(os.stat(name, dir_fd=parent,
+                                                  follow_symlinks=False)) != identity):
+                    raise _write_error(target, '固定目录身份已变化')
+            check()
+            yield fd, check
+        finally:
+            os.close(fd)
+
+
+def open_at(parent_fd, name):
+    """Open one regular file read-only without following a leaf symlink."""
+    if not name or name in ('.', '..') or Path(name).name != name:
+        raise ValueError('directory transaction requires a single filename')
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise _write_error(name, '固定目录条目不是普通文件')
+        return os.fdopen(fd, 'rb')
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+@contextlib.contextmanager
+def atomic_writer_at(parent_fd, name):
+    """Stream to an exclusive tmp and replace only in the caller's pinned fd.
+
+    The caller holds the page lock. No pathname resolution or per-file lock
+    can redirect this write into a different directory, including on macOS.
+    """
+    if not name or name in ('.', '..') or Path(name).name != name:
+        raise ValueError('directory transaction requires a single filename')
+    _regular_leaf(parent_fd, name, Path(name))
+    tempname = '.' + name + '.' + secrets.token_hex(16) + '.tmp'
+    fd = os.open(tempname, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                 0o600, dir_fd=parent_fd)
+    try:
+        with os.fdopen(fd, 'wb', closefd=False) as stream:
+            yield stream
+        _regular_leaf(parent_fd, name, Path(name))
+        if entry_identity(os.stat(tempname, dir_fd=parent_fd, follow_symlinks=False)) != entry_identity(os.fstat(fd)):
+            raise _write_error(name, '事务临时文件身份已变化')
+        # POSIX rename replaces a file atomically. Its dir_fd support is the
+        # advertised capability on macOS; os.replace is not in that set.
+        os.rename(tempname, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    finally:
+        os.close(fd)
+        try:
+            os.unlink(tempname, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
 
 
 def fd_path(fd):
@@ -487,9 +575,13 @@ def _flock_for(path: Path):
 
 
 @contextlib.contextmanager
-def file_lock(path):
+def file_lock(path, *, directory_fd=None):
     """Hold both lock layers for a target without writing it (<target>.lock)."""
     target = Path(path)
+    if directory_fd is not None:
+        with _thread_lock_for(target), flock_at(directory_fd, target.name, what=target):
+            yield
+        return
     with _thread_lock_for(target), _flock_for(target):
         yield
 
@@ -611,9 +703,16 @@ def locked_update(path, mutator, *, load=None, default=None, dump=None):
     return new
 
 
-def unlink(path):
+def unlink(path, *, directory_fd=None):
     """Remove a leaf in a pinned directory, never following its ancestors;
     degrade to Path.unlink(missing_ok=True) on platforms without fd writes."""
+    if directory_fd is not None:
+        _regular_leaf(directory_fd, Path(path).name, Path(path))
+        try:
+            os.unlink(Path(path).name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        return
     if _legacy_guard():
         Path(path).unlink(missing_ok=True)
         return
@@ -640,13 +739,17 @@ def replace(source, target):
             os.replace(srcname, dstname, src_dir_fd=srcfd, dst_dir_fd=dstfd)
 
 
-def atomic_write(path, data):
+def atomic_write(path, data, *, directory_fd=None):
     """无锁原子写（tmp + os.replace）：调用方已持锁区段内的伴生件写入用
     （如 _archive_stale_receipt 的 receipt.prev.json——receipt.json 锁的持有
     者独占轮转，无需再拿第二把锁文件）。str 按 UTF-8 编码，bytes 直写。
     目标目录不存在时自动建；写失败抛原始异常（残件在 finally 清理）；
     fd 锚定平台附提交前 inode 对账（issue #59），降级平台为 main 行为。"""
     payload = data if isinstance(data, bytes) else str(data).encode("utf-8")
+    if directory_fd is not None:
+        with atomic_writer_at(directory_fd, Path(path).name) as stream:
+            stream.write(payload)
+        return
     p = _write_target(path)
     if _legacy_guard():
         p.parent.mkdir(parents=True, exist_ok=True)

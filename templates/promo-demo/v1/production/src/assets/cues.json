@@ -1,0 +1,1591 @@
+{
+  "format": "framivra-film-design-cues/1",
+  "status": "AUTHOR_CANDIDATE; downstream implementation and independent review pending",
+  "project": {
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "duration_frames": 3600,
+    "duration_seconds": 120,
+    "viewBox": [
+      0,
+      0,
+      1280,
+      720
+    ],
+    "audio_sample_rate": 48000,
+    "samples_per_frame": 1600,
+    "samples_per_stem": 5760000
+  },
+  "scenes": [
+    {
+      "id": "S1",
+      "name": "做出鸟",
+      "in": 0,
+      "out": 300,
+      "duration_frames": 300,
+      "beats": [
+        {
+          "id": "S1.01.die-descent",
+          "in": 0,
+          "out": 18,
+          "action": "刀模覆盖红纸后接触；头料和嘴片预先在载体上",
+          "camera_mode": "close-follow"
+        },
+        {
+          "id": "S1.02.cut-and-waste",
+          "in": 18,
+          "out": 55,
+          "action": "刀抬起；f28 起完整互补废框落走，两片翼留原位",
+          "camera_mode": "close-follow"
+        },
+        {
+          "id": "S1.03.body-imprint",
+          "in": 55,
+          "out": 100,
+          "action": "沿输送带到印站；f67 实际印面接触后墨身持续存在",
+          "camera_mode": "close-follow"
+        },
+        {
+          "id": "S1.04.trim-head",
+          "in": 100,
+          "out": 141,
+          "action": "f109 切鞋修边，两片互补头料边角随后落走",
+          "camera_mode": "close-follow"
+        },
+        {
+          "id": "S1.05.eye-contact",
+          "in": 141,
+          "out": 163,
+          "action": "f150 点眼；工具完全退开后才进入识别停顿",
+          "camera_mode": "close-follow"
+        },
+        {
+          "id": "S1.06.recognition-hold",
+          "in": 163,
+          "out": 190,
+          "action": "完整侧影27帧；无标签覆盖，无重复弹跳",
+          "camera_mode": "settled-close"
+        },
+        {
+          "id": "S1.07.lift-and-reveal",
+          "in": 190,
+          "out": 264,
+          "action": "先离载体再拉远工坊；操作者一次短回应",
+          "camera_mode": "opening-world-reveal"
+        },
+        {
+          "id": "S1.08.wing-cover",
+          "in": 264,
+          "out": 300,
+          "action": "同一翼由现有鸟坐标放大覆画；不是红色矩形",
+          "camera_mode": "opening-wing-foreground"
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "name": "找到材料",
+      "in": 300,
+      "out": 720,
+      "duration_frames": 420,
+      "beats": [
+        {
+          "id": "S2.01.wing-uncover",
+          "in": 300,
+          "out": 345,
+          "action": "f300 承接红翼轮廓，向右上退开；f330 起卡与 F 料槽可见",
+          "camera_mode": "covered-rebase-to-side"
+        },
+        {
+          "id": "S2.02.touch-and-flip",
+          "in": 345,
+          "out": 390,
+          "action": "f365 翼A尖接 A 卡右上角；f366 才开始绕左公共边翻卡",
+          "camera_mode": "side-touch"
+        },
+        {
+          "id": "S2.03.land-and-reveal-L",
+          "in": 390,
+          "out": 435,
+          "action": "A 卡放平才露 L，R 仍从叠底可见",
+          "camera_mode": "side-table"
+        },
+        {
+          "id": "S2.04.push-card-chain",
+          "in": 435,
+          "out": 525,
+          "action": "手推 A，A 接 L，L 接 R；近卡遮挡中转为平面俯视",
+          "camera_mode": "card-occluded-turn"
+        },
+        {
+          "id": "S2.05.staggered-cards",
+          "in": 525,
+          "out": 600,
+          "action": "三卡沿邻槽错开行进；鸟绕到右侧自由端",
+          "camera_mode": "top-down-pull"
+        },
+        {
+          "id": "S2.06.place-folded-F",
+          "in": 600,
+          "out": 630,
+          "action": "操作者把已在料槽的四角折叠 F 放上汇合纸舌",
+          "camera_mode": "top-down-pull"
+        },
+        {
+          "id": "S2.07.pull-ribbons",
+          "in": 630,
+          "out": 690,
+          "action": "f630 卡/带 owner 无缝交接；鸟咬住纸舌将三条带拉出",
+          "camera_mode": "pull-wide"
+        },
+        {
+          "id": "S2.08.reveal-receivers",
+          "in": 690,
+          "out": 720,
+          "action": "既有 P-C/折边/接收座在前方显露；抓点和 A/L/R 次序保持",
+          "camera_mode": "pull-wide"
+        }
+      ]
+    },
+    {
+      "id": "S3",
+      "name": "把材料放进时间",
+      "in": 720,
+      "out": 1200,
+      "duration_frames": 480,
+      "beats": [
+        {
+          "id": "S3.01.tauten-and-hook",
+          "in": 720,
+          "out": 810,
+          "action": "三条 Bézier 纸带受拉变直；f795 把公共自由端挂圆钉",
+          "camera_mode": "ribbon-follow"
+        },
+        {
+          "id": "S3.02.arch-first",
+          "in": 810,
+          "out": 900,
+          "action": "A 转交 T03，左脚先到，右脚悬空；一条真实短源标签沿带排字",
+          "camera_mode": "ribbon-gate"
+        },
+        {
+          "id": "S3.03.rail-lock",
+          "in": 900,
+          "out": 960,
+          "action": "R 滑向 P-C，f930 接管且锁脚距；两处真实上下交错裁切",
+          "camera_mode": "ribbon-gate"
+        },
+        {
+          "id": "S3.04.signal-opens",
+          "in": 960,
+          "out": 1050,
+          "action": "L 沿杆升起；f1005 转交 T03，f1049 门栓完全打开；引线连带到门",
+          "camera_mode": "ribbon-gate"
+        },
+        {
+          "id": "S3.05.hang-F-and-read",
+          "in": 1050,
+          "out": 1140,
+          "action": "鸟挂 F 于门顶；读一条真实 clip 的 src/dst_in/dur；路径文字收平",
+          "camera_mode": "source-read"
+        },
+        {
+          "id": "S3.06.marker-becomes-lever",
+          "in": 1140,
+          "out": 1200,
+          "action": "墨标折杆接凸轮；门栓回落；柱遮挡中回侧景，纸带收至 P-C 下",
+          "camera_mode": "pillar-occluded-side"
+        }
+      ]
+    },
+    {
+      "id": "S4",
+      "name": "穿过时机",
+      "in": 1200,
+      "out": 1680,
+      "duration_frames": 480,
+      "beats": [
+        {
+          "id": "S4.01.read-three-positions",
+          "in": 1200,
+          "out": 1260,
+          "action": "保留起台、门洞、右落台；关门使鸟停住",
+          "camera_mode": "gate-established"
+        },
+        {
+          "id": "S4.02.gate-rise-and-compress",
+          "in": 1260,
+          "out": 1320,
+          "action": "凸轮/连杆先开门；鸟下沉、翼收但保留两红尖；f1305 低点",
+          "camera_mode": "gate-anticipation"
+        },
+        {
+          "id": "S4.03.launch-and-catch-F",
+          "in": 1320,
+          "out": 1380,
+          "action": "f1320 蹬离，f1350–1352 翼根碰 F 纸舌，f1353 后门挂点空",
+          "camera_mode": "gate-flight"
+        },
+        {
+          "id": "S4.04.cross-gate",
+          "in": 1380,
+          "out": 1470,
+          "action": "单峰飞行弧线，共同 body/wing mask；仅短历史翼影",
+          "camera_mode": "gate-flight"
+        },
+        {
+          "id": "S4.05.land-and-settle",
+          "in": 1470,
+          "out": 1560,
+          "action": "f1515 脚先接平台，身体有限前冲；f1545 落稳，F 延迟落下",
+          "camera_mode": "landing"
+        },
+        {
+          "id": "S4.06.release-Q",
+          "in": 1560,
+          "out": 1620,
+          "action": "f1572 支撑板下压，f1590 止挡离卷，f1620 卷才开始转",
+          "camera_mode": "release-close"
+        },
+        {
+          "id": "S4.07.feed-paper-transition",
+          "in": 1620,
+          "out": 1680,
+          "action": "Q 向左放带，F 与鸟位置保留；镜头降到带高",
+          "camera_mode": "paper-level"
+        }
+      ]
+    },
+    {
+      "id": "S5",
+      "name": "让声音接住动作",
+      "in": 1680,
+      "out": 2160,
+      "duration_frames": 480,
+      "beats": [
+        {
+          "id": "S5.01.reveal-real-waveform",
+          "in": 1680,
+          "out": 1770,
+          "action": "先见连续 Q 纸带；f1710 才揭示实际 PCM 的本段 envelope",
+          "camera_mode": "paper-tracking"
+        },
+        {
+          "id": "S5.02.tap-tongue",
+          "in": 1770,
+          "out": 1830,
+          "action": "f1800 足尖碰第一纸舌，纸舌压下并有限回起",
+          "camera_mode": "paper-tracking"
+        },
+        {
+          "id": "S5.03.open-buckle-cover",
+          "in": 1830,
+          "out": 1890,
+          "action": "f1860 喙拨第二宽纸片，f1875 露连接扣",
+          "camera_mode": "paper-tracking"
+        },
+        {
+          "id": "S5.04.connect-and-pull",
+          "in": 1890,
+          "out": 2010,
+          "action": "f1950 喙/F 纸舌与扣/P-A 已连续相接，f1965 完成压紧响应；第三纸边受力张开",
+          "camera_mode": "buckle-close"
+        },
+        {
+          "id": "S5.05.quiet-glide",
+          "in": 2010,
+          "out": 2100,
+          "action": "三秒相对稳定滑行，Q 慢下来，G/P-C/折边仍可追溯；实际 PCM 如实低密",
+          "camera_mode": "quiet-glide"
+        },
+        {
+          "id": "S5.06.lift-first-fold",
+          "in": 2100,
+          "out": 2160,
+          "action": "f2115 F 带动扣，f2130 P-A 从旧铰边开始开；P-C/G 尚不动",
+          "camera_mode": "fold-close"
+        }
+      ]
+    },
+    {
+      "id": "S6",
+      "name": "展开一个世界",
+      "in": 2160,
+      "out": 2760,
+      "duration_frames": 600,
+      "beats": [
+        {
+          "id": "S6.01.flatten-front-wing",
+          "in": 2160,
+          "out": 2250,
+          "action": "P-A 沿同一铰边翻平；P-C 平放、门始终直立",
+          "camera_mode": "fold-follow"
+        },
+        {
+          "id": "S6.02.carrier-start",
+          "in": 2250,
+          "out": 2280,
+          "action": "前翼张力传到 P-C；P-C/G 开始相对固定 W-guide 滑动",
+          "camera_mode": "fold-follow"
+        },
+        {
+          "id": "S6.03.carrier-slide-and-brace",
+          "in": 2280,
+          "out": 2400,
+          "action": "操作者先接支撑再扶稳；P-C/G 到止点；前中后景遮挡持续改变",
+          "camera_mode": "world-pullback"
+        },
+        {
+          "id": "S6.04.unfold-F-climax",
+          "in": 2400,
+          "out": 2520,
+          "action": "唯一最大动作：左下、牵引右上、余两角/边依次展开；鸟从门后到前",
+          "camera_mode": "world-release"
+        },
+        {
+          "id": "S6.05.open-back-wing",
+          "in": 2520,
+          "out": 2610,
+          "action": "框接横梁，梁滑开，P-B 沿旧铰边展开；L 随连杆抬到灯位",
+          "camera_mode": "world-pullback"
+        },
+        {
+          "id": "S6.06.settle-world",
+          "in": 2610,
+          "out": 2700,
+          "action": "纸面落平、框线收直、局部柔影收窄；鸟共 mask 穿支架再上抬",
+          "camera_mode": "world-ease-out"
+        },
+        {
+          "id": "S6.07.remember-complete-world",
+          "in": 2700,
+          "out": 2760,
+          "action": "完整原图60帧，允许小收稳，绝不提前拆层",
+          "camera_mode": "complete-world-hold"
+        }
+      ]
+    },
+    {
+      "id": "S7",
+      "name": "看见它怎样组成",
+      "in": 2760,
+      "out": 3240,
+      "duration_frames": 480,
+      "beats": [
+        {
+          "id": "S7.01.pull-source-tab",
+          "in": 2760,
+          "out": 2820,
+          "action": "鸟轻拉框外纸耳，原景开始有限平面分离",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.02.separate-and-label",
+          "in": 2820,
+          "out": 2910,
+          "action": "窄剥离 mask；绑定引线和两张真实源笺，标签按间距重排",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.03.read-original",
+          "in": 2910,
+          "out": 2970,
+          "action": "分层姿态稳定；一笺加真实字段，一笺只源名；f2940–2969 为比较基准",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.04.withdraw-F",
+          "in": 2970,
+          "out": 2985,
+          "action": "F 全部边/角沿右纸缝退出，其他层冻结",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.05.F-absent",
+          "in": 2985,
+          "out": 3015,
+          "action": "F 30帧零贡献，不留影/边/拖尾；标签保持",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.06.restore-F",
+          "in": 3015,
+          "out": 3030,
+          "action": "沿原路恢复；f3030 F 全部复位",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.07.withdraw-middle",
+          "in": 3030,
+          "out": 3045,
+          "action": "完整 T03 含 G、P-C、支撑/灯/影一起退出；不是只藏拱",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.08.middle-absent",
+          "in": 3045,
+          "out": 3075,
+          "action": "T03 30帧零贡献；F、鸟、操作者、标签不动",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.09.restore-middle",
+          "in": 3075,
+          "out": 3090,
+          "action": "同一路径恢复；f3090 恢复全部中景",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.10.reassemble-original",
+          "in": 3090,
+          "out": 3180,
+          "action": "引线/源笺退出，原物件沿路归位；操作者扶边，鸟牵右上角",
+          "camera_mode": "locked-wide"
+        },
+        {
+          "id": "S7.11.frame-to-ending",
+          "in": 3180,
+          "out": 3240,
+          "action": "F 扩向片尾边界，世界收回框内，鸟沿右边下降",
+          "camera_mode": "ending-bridge"
+        }
+      ]
+    },
+    {
+      "id": "S8",
+      "name": "归位",
+      "in": 3240,
+      "out": 3600,
+      "duration_frames": 360,
+      "beats": [
+        {
+          "id": "S8.01.frame-settle",
+          "in": 3240,
+          "out": 3330,
+          "action": "承接同一框/鸟/世界；左上先停，右下受鸟牵引归位",
+          "camera_mode": "ending-small-retreat"
+        },
+        {
+          "id": "S8.02.perch-and-wordmark",
+          "in": 3330,
+          "out": 3420,
+          "action": "f3350 脚接右上框角，框一次小下压复位；f3360 名称开始整体显露",
+          "camera_mode": "ending-small-retreat"
+        },
+        {
+          "id": "S8.03.recognize-brand",
+          "in": 3420,
+          "out": 3480,
+          "action": "字标稳定；鸟一次收翼抬头；缩小世界无第二只 B/第二个 F",
+          "camera_mode": "ending-hold"
+        },
+        {
+          "id": "S8.04.resolved-hold",
+          "in": 3480,
+          "out": 3600,
+          "action": "四秒安定，末帧完整；音尾必须在3600前解决",
+          "camera_mode": "ending-hold"
+        }
+      ]
+    }
+  ],
+  "contacts": [
+    {
+      "id": "cut",
+      "frame": 18,
+      "sample_at_48khz": 28800,
+      "audio_role": "T19",
+      "meaning": "die touches full stock",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "body",
+      "frame": 67,
+      "sample_at_48khz": 107200,
+      "audio_role": "T19",
+      "meaning": "body die touches and ink persists",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "trim",
+      "frame": 109,
+      "sample_at_48khz": 174400,
+      "audio_role": "T19",
+      "meaning": "two cut shoes touch head stock",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "eye",
+      "frame": 150,
+      "sample_at_48khz": 240000,
+      "audio_role": "T19",
+      "meaning": "punch contacts eye point",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "recognize",
+      "frame": 163,
+      "sample_at_48khz": 260800,
+      "audio_role": "T20",
+      "meaning": "clear silhouette begins",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "lift",
+      "frame": 190,
+      "sample_at_48khz": 304000,
+      "audio_role": "T20",
+      "meaning": "bird leaves support",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "wing_card",
+      "frame": 365,
+      "sample_at_48khz": 584000,
+      "audio_role": "T19",
+      "meaning": "wing-A tip reaches card corner",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "push_A",
+      "frame": 450,
+      "sample_at_48khz": 720000,
+      "audio_role": "T19",
+      "meaning": "operator hand contacts A",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "A_meets_L",
+      "frame": 474,
+      "sample_at_48khz": 758400,
+      "audio_role": "T19",
+      "meaning": "A trailing edge pushes L",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "L_meets_R",
+      "frame": 498,
+      "sample_at_48khz": 796800,
+      "audio_role": "T19",
+      "meaning": "L pushes R",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_on_strip",
+      "frame": 615,
+      "sample_at_48khz": 984000,
+      "audio_role": "T19",
+      "meaning": "reserve frame placed on paper tab",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "grasp",
+      "frame": 630,
+      "sample_at_48khz": 1008000,
+      "audio_role": "T19",
+      "meaning": "beak grips common tab",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "hook_receiver",
+      "frame": 795,
+      "sample_at_48khz": 1272000,
+      "audio_role": "T19",
+      "meaning": "tab catches receiver pin",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "A_left_seat",
+      "frame": 855,
+      "sample_at_48khz": 1368000,
+      "audio_role": "T19",
+      "meaning": "left arch foot contacts seat; right still above",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "R_locks_feet",
+      "frame": 945,
+      "sample_at_48khz": 1512000,
+      "audio_role": "T19",
+      "meaning": "R locks two foot positions",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "gate_open",
+      "frame": 1049,
+      "sample_at_48khz": 1678400,
+      "audio_role": "T19",
+      "meaning": "L-driven bar reaches passable state",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_hang",
+      "frame": 1100,
+      "sample_at_48khz": 1760000,
+      "audio_role": "T19",
+      "meaning": "same folded F catches gate top",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "launch",
+      "frame": 1320,
+      "sample_at_48khz": 2112000,
+      "audio_role": "T20",
+      "meaning": "support release before wing lift",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_wing_catch",
+      "frame": 1351,
+      "sample_at_48khz": 2161600,
+      "audio_role": "T19",
+      "meaning": "paper tongue touches wing root",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "cross_apex",
+      "frame": 1434,
+      "sample_at_48khz": 2294400,
+      "audio_role": "T20",
+      "meaning": "bird passes high gate safe zone",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "land",
+      "frame": 1515,
+      "sample_at_48khz": 2424000,
+      "audio_role": "T19",
+      "meaning": "foot touches right platform",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "plate_down",
+      "frame": 1572,
+      "sample_at_48khz": 2515200,
+      "audio_role": "T19",
+      "meaning": "foot pressure lowers support plate",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "stop_clear",
+      "frame": 1590,
+      "sample_at_48khz": 2544000,
+      "audio_role": "T19",
+      "meaning": "Q stop clears reel",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "Q_turn",
+      "frame": 1620,
+      "sample_at_48khz": 2592000,
+      "audio_role": "T19",
+      "meaning": "reel begins only after release",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "tap_tongue",
+      "frame": 1800,
+      "sample_at_48khz": 2880000,
+      "audio_role": "T19",
+      "meaning": "foot touches first paper tongue",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "beak_flip",
+      "frame": 1860,
+      "sample_at_48khz": 2976000,
+      "audio_role": "T19",
+      "meaning": "beak flips second wide paper tab",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "beak_F",
+      "frame": 1950,
+      "sample_at_48khz": 3120000,
+      "audio_role": "T19",
+      "meaning": "beak touches F tongue at buckle",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "buckle_seated",
+      "frame": 1965,
+      "sample_at_48khz": 3144000,
+      "audio_role": "T19",
+      "meaning": "already-connected buckle finishes seating response; first visible continuity is f1950",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_tension",
+      "frame": 2115,
+      "sample_at_48khz": 3384000,
+      "audio_role": "T19",
+      "meaning": "same frame tongue takes tension",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "P_A_starts",
+      "frame": 2130,
+      "sample_at_48khz": 3408000,
+      "audio_role": "T19",
+      "meaning": "first shared fold opens",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "P_C_slide",
+      "frame": 2250,
+      "sample_at_48khz": 3600000,
+      "audio_role": "T19",
+      "meaning": "tension reaches carrier along fixed guide",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "operator_brace",
+      "frame": 2310,
+      "sample_at_48khz": 3696000,
+      "audio_role": "T19",
+      "meaning": "hand contacts support before settling",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "carrier_stop",
+      "frame": 2400,
+      "sample_at_48khz": 3840000,
+      "audio_role": "T19",
+      "meaning": "carrier reaches stop without foot detachment",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_unfold",
+      "frame": 2400,
+      "sample_at_48khz": 3840000,
+      "audio_role": "T20",
+      "meaning": "maximum single release begins",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_beam_contact",
+      "frame": 2520,
+      "sample_at_48khz": 4032000,
+      "audio_role": "T19",
+      "meaning": "frame edge meets beam and opens P-B",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "final_support",
+      "frame": 2600,
+      "sample_at_48khz": 4160000,
+      "audio_role": "T19",
+      "meaning": "operator seats final support",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "source_tab",
+      "frame": 2775,
+      "sample_at_48khz": 4440000,
+      "audio_role": "T19",
+      "meaning": "bird pulls explanation tab",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_withdraw",
+      "frame": 2970,
+      "sample_at_48khz": 4752000,
+      "audio_role": "T19",
+      "meaning": "frame comparison starts",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "F_restore",
+      "frame": 3030,
+      "sample_at_48khz": 4848000,
+      "audio_role": "T19",
+      "meaning": "frame fully restored",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "middle_restore",
+      "frame": 3090,
+      "sample_at_48khz": 4944000,
+      "audio_role": "T19",
+      "meaning": "middle fully restored",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "perch",
+      "frame": 3350,
+      "sample_at_48khz": 5360000,
+      "audio_role": "T19",
+      "meaning": "feet touch actual frame",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "brand",
+      "frame": 3360,
+      "sample_at_48khz": 5376000,
+      "audio_role": "T20",
+      "meaning": "wordmark enters the settled world",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    },
+    {
+      "id": "resolve",
+      "frame": 3480,
+      "sample_at_48khz": 5568000,
+      "audio_role": "T20",
+      "meaning": "final four-second resolution begins",
+      "audio_status": "EVENT_REQUIREMENT_ONLY_NO_SOUND_CREATED"
+    }
+  ],
+  "opening_reference": {
+    "source": "html-opening-preview/candidate-r3/templates/promo-demo/v1/preview/cues.json",
+    "sha256": "ea2bd569f0b02f0d4c5d647a0a5448ef7037f9188d93d6ffa8cf575e3ae80d69",
+    "embedded": {
+      "fps": 30,
+      "duration_frames": 300,
+      "viewBox": [
+        0,
+        0,
+        1280,
+        720
+      ],
+      "contacts": {
+        "cut": 18,
+        "body": 67,
+        "trim": 109,
+        "eye": 150
+      },
+      "windows_inclusive": {
+        "waste": [
+          18,
+          54
+        ],
+        "waste_separation": [
+          28,
+          54
+        ],
+        "head_offcuts": [
+          109,
+          138
+        ],
+        "head_offcut_fall": [
+          112,
+          139
+        ],
+        "recognition_hold": [
+          163,
+          189
+        ],
+        "lift": [
+          190,
+          218
+        ],
+        "world_reveal": [
+          190,
+          239
+        ],
+        "approach": [
+          264,
+          299
+        ],
+        "wave": [
+          219,
+          245
+        ]
+      },
+      "keys": {
+        "hero_x": [
+          [
+            0,
+            280
+          ],
+          [
+            12,
+            350
+          ],
+          [
+            28,
+            350
+          ],
+          [
+            56,
+            650
+          ],
+          [
+            77,
+            650
+          ],
+          [
+            100,
+            950
+          ],
+          [
+            119,
+            950
+          ],
+          [
+            141,
+            1250
+          ],
+          [
+            189,
+            1250
+          ],
+          [
+            239,
+            1490
+          ],
+          [
+            260,
+            1510
+          ],
+          [
+            299,
+            1510
+          ]
+        ],
+        "camera_zoom": [
+          [
+            0,
+            2.35
+          ],
+          [
+            28,
+            2.05
+          ],
+          [
+            70,
+            1.8
+          ],
+          [
+            138,
+            1.58
+          ],
+          [
+            184,
+            1.5
+          ],
+          [
+            238,
+            0.65
+          ],
+          [
+            299,
+            0.65
+          ]
+        ],
+        "camera_x_reveal": [
+          [
+            184,
+            1270
+          ],
+          [
+            238,
+            1010
+          ],
+          [
+            299,
+            1010
+          ]
+        ],
+        "camera_y": [
+          [
+            0,
+            401
+          ],
+          [
+            138,
+            390
+          ],
+          [
+            184,
+            390
+          ],
+          [
+            238,
+            326
+          ],
+          [
+            299,
+            326
+          ]
+        ],
+        "bird_y": [
+          [
+            0,
+            440
+          ],
+          [
+            189,
+            440
+          ],
+          [
+            203,
+            427
+          ],
+          [
+            218,
+            335
+          ],
+          [
+            239,
+            210
+          ],
+          [
+            263,
+            191
+          ]
+        ],
+        "bird_angle": [
+          [
+            0,
+            0
+          ],
+          [
+            192,
+            0
+          ],
+          [
+            215,
+            -9
+          ],
+          [
+            239,
+            -4
+          ],
+          [
+            263,
+            0
+          ]
+        ],
+        "wing_angle": [
+          [
+            194,
+            0
+          ],
+          [
+            205,
+            -22
+          ],
+          [
+            216,
+            11
+          ],
+          [
+            231,
+            -13
+          ],
+          [
+            245,
+            4
+          ],
+          [
+            263,
+            0
+          ]
+        ]
+      },
+      "presses": {
+        "cut": [
+          0,
+          18,
+          32,
+          230
+        ],
+        "body": [
+          57,
+          67,
+          79,
+          159
+        ],
+        "trim": [
+          99,
+          109,
+          121,
+          1
+        ],
+        "eye": [
+          141,
+          150,
+          162,
+          132
+        ]
+      },
+      "first_cut_material": {
+        "stock_bounds": [
+          240,
+          336,
+          406,
+          526
+        ],
+        "contact_cover": [
+          236,
+          332,
+          410,
+          530
+        ],
+        "stock_area": 31540,
+        "wing_area": 6065,
+        "waste_area": 25475
+      },
+      "pose_frames": [
+        0,
+        37,
+        110,
+        176,
+        239,
+        279
+      ]
+    },
+    "interval_conversion": "Original opening windows_inclusive [a,b] become [a,b+1) when exported; contacts unchanged."
+  },
+  "shared_runtime_contract": {
+    "geometry_units": "1280x720 author viewBox; uniform output scale1.5",
+    "frame_domain": "global integer f in [0,3600); local f in [0,clip.dur)",
+    "local_to_global": "global_f = entry.global_start_frame + local_f",
+    "scene_frame": "find scene by in <= global_f < out; scene_f = global_f - scene.in",
+    "input_sanitization": "Finite numeric input floored, then clamped to [0,dur-1]; NaN/nonfinite =>0. Validate entry start/dur as exact recipe values. Never clamp global_f at299.",
+    "determinism": "Pure state from global_f + immutable inputs. No elapsed time, requestAnimationFrame clock, Math.random, or accumulated previous-frame state. Repeated/reverse/shuffled f must produce identical state.",
+    "camera": "One cameraFromGlobalFrame result applies to all geometry in the shared world. Intentional foreground wing override [264,345) uses the same B transform on both bird pages. Source slips and subtitles use screen-space safe areas.",
+    "mask_contract": "Each HTML page recreates its own SVG definitions from shared resolved world geometry. No cross-document url(#id), no duplicate opaque gate painted on bird pages. Body and wings consume bit-identical B visibility regions; retain page-specific ID prefixes to avoid collisions.",
+    "no_new_renderer_protocol": true,
+    "renderer_path": "Keep current navigation-based page protocol; expose existing __vtx_render(local_f) for deterministic testing only. Do not declare navfree eligibility, static spans, beginFrame or canvas-export fast paths."
+  },
+  "pose_targets": {
+    "semantics": "R03 screen-space composition checkpoints [x,y,scale,body_degrees,wingA_degrees]. These are targets, not independently interpolable mechanical vertices. Current R03 review may revise targets.",
+    "bird": [
+      {
+        "frame": 299,
+        "rig": "opening-reference",
+        "target": null
+      },
+      {
+        "frame": 300,
+        "rig": "opening-reference",
+        "target": null
+      },
+      {
+        "frame": 365,
+        "rig": "B",
+        "target": [
+          765,
+          465,
+          1.5,
+          0,
+          0
+        ]
+      },
+      {
+        "frame": 719,
+        "rig": "B",
+        "target": [
+          1032,
+          306,
+          0.8,
+          -2,
+          0
+        ]
+      },
+      {
+        "frame": 720,
+        "rig": "B",
+        "target": [
+          1032,
+          306,
+          0.8,
+          -2,
+          0
+        ]
+      },
+      {
+        "frame": 879,
+        "rig": "B",
+        "target": [
+          1032,
+          306,
+          0.8,
+          -2,
+          0
+        ]
+      },
+      {
+        "frame": 1049,
+        "rig": "B",
+        "target": [
+          1032,
+          306,
+          0.8,
+          -2,
+          0
+        ]
+      },
+      {
+        "frame": 1199,
+        "rig": "B",
+        "target": [
+          400,
+          490,
+          0.9,
+          0,
+          0
+        ]
+      },
+      {
+        "frame": 1200,
+        "rig": "B",
+        "target": [
+          400,
+          490,
+          0.9,
+          0,
+          0
+        ]
+      },
+      {
+        "frame": 1305,
+        "rig": "B",
+        "target": [
+          400,
+          489,
+          0.9,
+          8,
+          12
+        ]
+      },
+      {
+        "frame": 1434,
+        "rig": "B",
+        "target": [
+          756,
+          344,
+          1,
+          -5,
+          0
+        ]
+      },
+      {
+        "frame": 1545,
+        "rig": "B",
+        "target": [
+          1005,
+          447,
+          0.82,
+          3,
+          0
+        ]
+      },
+      {
+        "frame": 1679,
+        "rig": "B",
+        "target": [
+          951,
+          450,
+          0.82,
+          0,
+          0
+        ]
+      },
+      {
+        "frame": 1680,
+        "rig": "B",
+        "target": [
+          951,
+          450,
+          0.82,
+          0,
+          0
+        ]
+      },
+      {
+        "frame": 1950,
+        "rig": "B",
+        "target": [
+          670,
+          449,
+          0.8,
+          0,
+          0
+        ]
+      },
+      {
+        "frame": 2159,
+        "rig": "B",
+        "target": [
+          834,
+          346,
+          0.8,
+          -5,
+          0
+        ]
+      },
+      {
+        "frame": 2160,
+        "rig": "B",
+        "target": [
+          834,
+          346,
+          0.8,
+          -5,
+          0
+        ]
+      },
+      {
+        "frame": 2450,
+        "rig": "B",
+        "target": [
+          996,
+          269,
+          0.82,
+          -9,
+          0
+        ]
+      },
+      {
+        "frame": 2759,
+        "rig": "B",
+        "target": [
+          850,
+          245,
+          0.86,
+          -3,
+          0
+        ]
+      },
+      {
+        "frame": 2760,
+        "rig": "B",
+        "target": [
+          850,
+          245,
+          0.86,
+          -3,
+          0
+        ]
+      },
+      {
+        "frame": 2940,
+        "rig": "B",
+        "target": [
+          950,
+          208,
+          0.86,
+          -3,
+          0
+        ]
+      },
+      {
+        "frame": 2995,
+        "rig": "B",
+        "target": [
+          950,
+          208,
+          0.86,
+          -3,
+          0
+        ]
+      },
+      {
+        "frame": 3060,
+        "rig": "B",
+        "target": [
+          950,
+          208,
+          0.86,
+          -3,
+          0
+        ]
+      },
+      {
+        "frame": 3239,
+        "rig": "B",
+        "target": [
+          1117,
+          404,
+          0.64,
+          78,
+          0
+        ]
+      },
+      {
+        "frame": 3240,
+        "rig": "B",
+        "target": [
+          1117,
+          404,
+          0.64,
+          78,
+          0
+        ]
+      },
+      {
+        "frame": 3599,
+        "rig": "B",
+        "target": [
+          1053,
+          143,
+          0.8,
+          0,
+          6
+        ]
+      }
+    ]
+  },
+  "owner_handoffs": [
+    {
+      "object": "stock→wings",
+      "frame": 18,
+      "outgoing": "T06",
+      "incoming": "T08",
+      "rule": "T06 stops solid red stock at f18 and owns complement only; T08 begins cut wings at f18. Tool covers contact region."
+    },
+    {
+      "object": "A/L/R cards→ribbons",
+      "frame": 630,
+      "outgoing": "T10",
+      "incoming": "T11",
+      "rule": "One identical card/glyph silhouette at transfer; continued tail reserve unfolds. T10 last local299 is global629; T11 local0 is630."
+    },
+    {
+      "object": "A-arch",
+      "frame": 810,
+      "outgoing": "T11",
+      "incoming": "T03",
+      "rule": "Transfer same rigid glyph while it starts rising; carrier stays T11."
+    },
+    {
+      "object": "R-rail",
+      "frame": 930,
+      "outgoing": "T11",
+      "incoming": "T03",
+      "rule": "Transfer at seating movement; after f945 local mounting to P-C is invariant."
+    },
+    {
+      "object": "L-signal",
+      "frame": 1005,
+      "outgoing": "T11",
+      "incoming": "T03",
+      "rule": "Transfer on the same connecting rod; no second cap."
+    },
+    {
+      "object": "residual physical ribbons",
+      "frame": 1200,
+      "outgoing": "T11",
+      "incoming": "T04",
+      "rule": "All remaining strips have settled into physical feed/transport before exit. T04 continuation uses identical shared ribbon endpoint geometry at1199/1200, never an extra R glyph."
+    }
+  ],
+  "explanatory_withdrawals": [
+    {
+      "track": "T05",
+      "exit": [
+        2970,
+        2985
+      ],
+      "zero_contribution": [
+        2985,
+        3015
+      ],
+      "return": [
+        3015,
+        3030
+      ],
+      "restored_frame": 3030,
+      "sample_frames": [
+        2969,
+        2995,
+        3030
+      ]
+    },
+    {
+      "track": "T03",
+      "exit": [
+        3030,
+        3045
+      ],
+      "zero_contribution": [
+        3045,
+        3075
+      ],
+      "return": [
+        3075,
+        3090
+      ],
+      "restored_frame": 3090,
+      "sample_frames": [
+        3030,
+        3060,
+        3090
+      ]
+    }
+  ],
+  "global_holds": [
+    {
+      "in": 163,
+      "out": 190,
+      "meaning": "bird recognition; no titles"
+    },
+    {
+      "in": 2010,
+      "out": 2100,
+      "meaning": "quiet glide; not all layers absent"
+    },
+    {
+      "in": 2700,
+      "out": 2760,
+      "meaning": "complete-world memory; no early separation"
+    },
+    {
+      "in": 2940,
+      "out": 3090,
+      "meaning": "all nonselected visual state/camera/labels frozen during ordered comparisons"
+    },
+    {
+      "in": 3480,
+      "out": 3600,
+      "meaning": "resolved readable ending; may be fully static after last settle"
+    }
+  ],
+  "captions": [
+    {
+      "in": 195,
+      "out": 255,
+      "text": "从一张纸，做出一个画面。"
+    },
+    {
+      "in": 420,
+      "out": 600,
+      "text": "把散开的材料，放到一起。"
+    },
+    {
+      "in": 900,
+      "out": 1080,
+      "text": "把每一层，放进时间。"
+    },
+    {
+      "in": 1410,
+      "out": 1590,
+      "text": "动作，发生在该发生的那一帧。"
+    },
+    {
+      "in": 1830,
+      "out": 2010,
+      "text": "让声音，接住每次变化。"
+    },
+    {
+      "in": 2460,
+      "out": 2640,
+      "text": "让不同的层，组成同一个世界。"
+    },
+    {
+      "in": 2940,
+      "out": 3120,
+      "text": "这幅画面，来自你能修改的工程。"
+    },
+    {
+      "in": 3330,
+      "out": 3450,
+      "text": "让画面，各就各位。"
+    }
+  ],
+  "audio_status": "FULL_SCORE_UNAPPROVED; abstract event/stem requirements only",
+  "workload_status": "Nominal scheduled frames only; no GPU, memory, elapsed-time or actual pixel claims"
+}

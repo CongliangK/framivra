@@ -1,0 +1,5 @@
+# Source origins
+
+The original point geometry, palette, opening frame math and page protocol are adapted from the existing Framivra candidate at `html-opening-preview/candidate-r3/templates/promo-demo/v1/preview/opening.html`, copyright (c) 2026 ruochongliang, MIT. The complete notice is retained as `FRAMIVRA-MIT-LICENSE.txt` and in the generated shared bundle.
+
+The R03 `geometry.json` / `shapes.svg` and R04/R05 cue/track/motion contracts are copied as project design inputs with exact hashes in the input record. No third-party asset, remote image, audio or font was downloaded for R06. The preserved original opening HTML is a read-only source-test reference, not a second production page.

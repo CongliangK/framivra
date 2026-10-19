@@ -1,0 +1,937 @@
+{
+  "format": "framivra-film-track-map/1",
+  "status": "AUTHOR_DESIGN; no media generated",
+  "counts": {
+    "semantic": 20,
+    "video_tracks": 15,
+    "gfx_tracks": 14,
+    "native_subtitle_streams": 1,
+    "audio_tracks": 4
+  },
+  "bottom_to_top_video_ids": [
+    "T01",
+    "T02",
+    "T03",
+    "T04",
+    "T06",
+    "T05",
+    "T08",
+    "T07",
+    "T09",
+    "T10",
+    "T11",
+    "T13",
+    "T12",
+    "T14",
+    "T15"
+  ],
+  "tracks": [
+    {
+      "id": "T01",
+      "name": "visible-paper-background",
+      "kind": "broll",
+      "role": "Paper ground only; no silent-source audio counted.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3600,
+      "remove_control": {
+        "window": [
+          0,
+          300
+        ],
+        "expected_difference": "Transparent negative space becomes black without the visible paper.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "video_array_index": 0
+    },
+    {
+      "id": "T02",
+      "name": "far-workshop",
+      "kind": "gfx",
+      "role": "Far beams, stock rack, fixed backdrop. Recalled stationary station silhouettes in S6–S8 use the original geometry. No gate, guide, bird, operator or opaque ground.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 690
+        },
+        {
+          "in": 1140,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3150,
+      "remove_control": {
+        "window": [
+          2520,
+          2610
+        ],
+        "expected_difference": "The expanded workshop loses its back layer and original station context.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T02.01",
+          "src": "gfx/T02_0000_0690.html",
+          "dst_in": 0,
+          "dur": 690,
+          "global_start_frame": 0,
+          "local_range": [
+            0,
+            690
+          ],
+          "last_local_frame": 689,
+          "last_global_frame": 689
+        },
+        {
+          "id": "T02.02",
+          "src": "gfx/T02_1140_3600.html",
+          "dst_in": 1140,
+          "dur": 2460,
+          "global_start_frame": 1140,
+          "local_range": [
+            0,
+            2460
+          ],
+          "last_local_frame": 2459,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 1
+    },
+    {
+      "id": "T03",
+      "name": "middle-gate-carrier",
+      "kind": "gfx",
+      "role": "P-C, two receivers; single A/R/L ownership after their transfers; gate bar/cam/linkage, middle braces, lamp, and their two contact patches. Operator is excluded.",
+      "windows": [
+        {
+          "in": 690,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 2910,
+      "remove_control": {
+        "window": [
+          2910,
+          2970
+        ],
+        "expected_difference": "Entire upright gate/carrier/linkage contribution disappears; also verify S7 zero hold [3045,3075).",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T03.01",
+          "src": "gfx/T03_0690_3600.html",
+          "dst_in": 690,
+          "dur": 2910,
+          "global_start_frame": 690,
+          "local_range": [
+            0,
+            2910
+          ],
+          "last_local_frame": 2909,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 2
+    },
+    {
+      "id": "T04",
+      "name": "transport-reel-guide",
+      "kind": "gfx",
+      "role": "Original conveyor and fixed W-guide, origin/landing supports, Q shelf/stop/lever, Q reel and physical feed paper/tongues/buckle. Does not own waveform or P-A/P-B.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3600,
+      "remove_control": {
+        "window": [
+          1680,
+          1770
+        ],
+        "expected_difference": "The released Q, feed ribbon and physical support vanish, breaking the cause of S5.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T04.01",
+          "src": "gfx/T04_0000_3600.html",
+          "dst_in": 0,
+          "dur": 3600,
+          "global_start_frame": 0,
+          "local_range": [
+            0,
+            3600
+          ],
+          "last_local_frame": 3599,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 3
+    },
+    {
+      "id": "T05",
+      "name": "continuous-red-frame",
+      "kind": "gfx",
+      "role": "One four-corner F: reserve tray, placement, carried fold, gate hang, wing catch, buckle, unfolding frame and final frame. Never S1 waste.",
+      "windows": [
+        {
+          "in": 330,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3270,
+      "remove_control": {
+        "window": [
+          2910,
+          2970
+        ],
+        "expected_difference": "The composition loses its actual red perimeter; also verify S7 zero hold [2985,3015).",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T05.01",
+          "src": "gfx/T05_0330_3600.html",
+          "dst_in": 330,
+          "dur": 3270,
+          "global_start_frame": 330,
+          "local_range": [
+            0,
+            3270
+          ],
+          "last_local_frame": 3269,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 5
+    },
+    {
+      "id": "T06",
+      "name": "stock-offcuts-fold-planes",
+      "kind": "gfx",
+      "role": "Original red stock before f18, complementary waste [18,55), head offcuts [109,139); later connected P-A/P-B with shared hinge seams. P-C belongs T03.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 139
+        },
+        {
+          "in": 690,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3049,
+      "remove_control": {
+        "window": [
+          28,
+          50
+        ],
+        "expected_difference": "Cutting loses the complementary waste; second probe [2280,2400) loses visible unfolding paper planes.",
+        "status": "REQUIRED_NOT_RUN",
+        "additional_windows": [
+          [
+            2280,
+            2400
+          ]
+        ]
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T06.01",
+          "src": "gfx/T06_0000_0139.html",
+          "dst_in": 0,
+          "dur": 139,
+          "global_start_frame": 0,
+          "local_range": [
+            0,
+            139
+          ],
+          "last_local_frame": 138,
+          "last_global_frame": 138
+        },
+        {
+          "id": "T06.02",
+          "src": "gfx/T06_0690_3600.html",
+          "dst_in": 690,
+          "dur": 2910,
+          "global_start_frame": 690,
+          "local_range": [
+            0,
+            2910
+          ],
+          "last_local_frame": 2909,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 4
+    },
+    {
+      "id": "T07",
+      "name": "bird-body-head",
+      "kind": "gfx",
+      "role": "Only body/head/beak/eye/tail and optional feet; staged imprint and trim. Initial head/beak exist. Shared B pose/camera/mask with T08.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3600,
+      "remove_control": {
+        "window": [
+          163,
+          190
+        ],
+        "expected_difference": "The recognizable bird body, raised head, eye and beak are absent.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T07.01",
+          "src": "gfx/T07_0000_3600.html",
+          "dst_in": 0,
+          "dur": 3600,
+          "global_start_frame": 0,
+          "local_range": [
+            0,
+            3600
+          ],
+          "last_local_frame": 3599,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 7
+    },
+    {
+      "id": "T08",
+      "name": "bird-wings",
+      "kind": "gfx",
+      "role": "Only the two original red wings, shared B pose/occlusion; physical wing cover transition and one bounded historical silhouette.",
+      "windows": [
+        {
+          "in": 18,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3582,
+      "remove_control": {
+        "window": [
+          264,
+          300
+        ],
+        "expected_difference": "The physical wing-borne transition and two raised wings disappear.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T08.01",
+          "src": "gfx/T08_0018_3600.html",
+          "dst_in": 18,
+          "dur": 3582,
+          "global_start_frame": 18,
+          "local_range": [
+            0,
+            3582
+          ],
+          "last_local_frame": 3581,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 6
+    },
+    {
+      "id": "T09",
+      "name": "tools-and-operator",
+      "kind": "gfx",
+      "role": "Opening active tool heads and one operator; card-chain force and F placement; S6 support hand and same operator through ending. Far recalled idle tools are T02 after the occluded scene relocation.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 630
+        },
+        {
+          "in": 2280,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 1950,
+      "remove_control": {
+        "window": [
+          355,
+          390
+        ],
+        "expected_difference": "The operator at the material table disappears; required causal probe [435,525) removes the pushing hand.",
+        "status": "REQUIRED_NOT_RUN",
+        "additional_windows": [
+          [
+            435,
+            525
+          ]
+        ]
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T09.01",
+          "src": "gfx/T09_0000_0630.html",
+          "dst_in": 0,
+          "dur": 630,
+          "global_start_frame": 0,
+          "local_range": [
+            0,
+            630
+          ],
+          "last_local_frame": 629,
+          "last_global_frame": 629
+        },
+        {
+          "id": "T09.02",
+          "src": "gfx/T09_2280_3600.html",
+          "dst_in": 2280,
+          "dur": 1320,
+          "global_start_frame": 2280,
+          "local_range": [
+            0,
+            1320
+          ],
+          "last_local_frame": 1319,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 8
+    },
+    {
+      "id": "T10",
+      "name": "ingredient-cards",
+      "kind": "gfx",
+      "role": "A/L/R cards, their rigid glyphs and folded trailing reserves until the f630 handoff to T11. No duplicate cards in S7.",
+      "windows": [
+        {
+          "in": 330,
+          "out": 630
+        }
+      ],
+      "scheduled_frames": 300,
+      "remove_control": {
+        "window": [
+          390,
+          435
+        ],
+        "expected_difference": "The stack and L reveal lose the origin of the later gate materials.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T10.01",
+          "src": "gfx/T10_0330_0630.html",
+          "dst_in": 330,
+          "dur": 300,
+          "global_start_frame": 330,
+          "local_range": [
+            0,
+            300
+          ],
+          "last_local_frame": 299,
+          "last_global_frame": 629
+        }
+      ],
+      "video_array_index": 9
+    },
+    {
+      "id": "T11",
+      "name": "temporal-ribbons",
+      "kind": "gfx",
+      "role": "Three distinct deforming carriers and single glyphs until A810/R930/L1005 transfer to T03; two weave crossings and persistent reserves. Residual strips settle at P-C before exit.",
+      "windows": [
+        {
+          "in": 630,
+          "out": 1200
+        }
+      ],
+      "scheduled_frames": 570,
+      "remove_control": {
+        "window": [
+          900,
+          960
+        ],
+        "expected_difference": "The visible staggered material/time relation and weave disappear.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T11.01",
+          "src": "gfx/T11_0630_1200.html",
+          "dst_in": 630,
+          "dur": 570,
+          "global_start_frame": 630,
+          "local_range": [
+            0,
+            570
+          ],
+          "last_local_frame": 569,
+          "last_global_frame": 1199
+        }
+      ],
+      "video_array_index": 10
+    },
+    {
+      "id": "T12",
+      "name": "source-leaders",
+      "kind": "gfx",
+      "role": "Bound source→object leaders, endpoints and small slip backplates. No text; no fake application controls. S7 slips do not become extra material cards.",
+      "windows": [
+        {
+          "in": 960,
+          "out": 1140
+        },
+        {
+          "in": 2820,
+          "out": 3180
+        }
+      ],
+      "scheduled_frames": 540,
+      "remove_control": {
+        "window": [
+          2820,
+          2910
+        ],
+        "expected_difference": "Source labels lose the spatial correspondence to actual contributions.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T12.01",
+          "src": "gfx/T12_0960_1140.html",
+          "dst_in": 960,
+          "dur": 180,
+          "global_start_frame": 960,
+          "local_range": [
+            0,
+            180
+          ],
+          "last_local_frame": 179,
+          "last_global_frame": 1139
+        },
+        {
+          "id": "T12.02",
+          "src": "gfx/T12_2820_3180.html",
+          "dst_in": 2820,
+          "dur": 360,
+          "global_start_frame": 2820,
+          "local_range": [
+            0,
+            360
+          ],
+          "last_local_frame": 359,
+          "last_global_frame": 3179
+        }
+      ],
+      "video_array_index": 12
+    },
+    {
+      "id": "T13",
+      "name": "real-pcm-waveform",
+      "kind": "gfx",
+      "role": "Actual PCM-derived [1680,2160) envelope on Q feed; moving clip reveal/current cue tick. No synthetic waveform or extra waveform in S7.",
+      "windows": [
+        {
+          "in": 1710,
+          "out": 2160
+        }
+      ],
+      "scheduled_frames": 450,
+      "remove_control": {
+        "window": [
+          1770,
+          1890
+        ],
+        "expected_difference": "The paper loses its real signal shape. Requires audible approved PCM; missing input is a blocker, never a fake empty completed track.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T13.01",
+          "src": "gfx/T13_1710_2160.html",
+          "dst_in": 1710,
+          "dur": 450,
+          "global_start_frame": 1710,
+          "local_range": [
+            0,
+            450
+          ],
+          "last_local_frame": 449,
+          "last_global_frame": 2159
+        }
+      ],
+      "video_array_index": 11
+    },
+    {
+      "id": "T14",
+      "name": "actual-source-fields",
+      "kind": "gfx",
+      "role": "Short real source id on textPath then selected actual timeline fields; two S7 source slips. No scene title and no duplicate caption wording.",
+      "windows": [
+        {
+          "in": 810,
+          "out": 1140
+        },
+        {
+          "in": 2820,
+          "out": 3150
+        }
+      ],
+      "scheduled_frames": 660,
+      "remove_control": {
+        "window": [
+          2910,
+          2970
+        ],
+        "expected_difference": "Actual source/clip information becomes unreadable while the picture remains.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T14.01",
+          "src": "gfx/T14_0810_1140.html",
+          "dst_in": 810,
+          "dur": 330,
+          "global_start_frame": 810,
+          "local_range": [
+            0,
+            330
+          ],
+          "last_local_frame": 329,
+          "last_global_frame": 1139
+        },
+        {
+          "id": "T14.02",
+          "src": "gfx/T14_2820_3150.html",
+          "dst_in": 2820,
+          "dur": 330,
+          "global_start_frame": 2820,
+          "local_range": [
+            0,
+            330
+          ],
+          "last_local_frame": 329,
+          "last_global_frame": 3149
+        }
+      ],
+      "video_array_index": 13
+    },
+    {
+      "id": "T15",
+      "name": "brand-wordmark",
+      "kind": "gfx",
+      "role": "Framivra vector wordmark from supplied Noto Sans SC weight600 glyph paths; no second miniature B/F, download badge or platform claim.",
+      "windows": [
+        {
+          "in": 3360,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 240,
+      "remove_control": {
+        "window": [
+          3450,
+          3540
+        ],
+        "expected_difference": "The finished image loses its product name.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED",
+      "clips": [
+        {
+          "id": "T15.01",
+          "src": "gfx/T15_3360_3600.html",
+          "dst_in": 3360,
+          "dur": 240,
+          "global_start_frame": 3360,
+          "local_range": [
+            0,
+            240
+          ],
+          "last_local_frame": 239,
+          "last_global_frame": 3599
+        }
+      ],
+      "video_array_index": 14
+    },
+    {
+      "id": "T16",
+      "name": "native-captions",
+      "kind": "native-subtitle-stream",
+      "role": "One native inline subtitle stream, burned via existing ASS path; not a sixteenth video track.",
+      "windows": [
+        {
+          "in": 195,
+          "out": 255
+        },
+        {
+          "in": 420,
+          "out": 600
+        },
+        {
+          "in": 900,
+          "out": 1080
+        },
+        {
+          "in": 1410,
+          "out": 1590
+        },
+        {
+          "in": 1830,
+          "out": 2010
+        },
+        {
+          "in": 2460,
+          "out": 2640
+        },
+        {
+          "in": 2940,
+          "out": 3120
+        },
+        {
+          "in": 3330,
+          "out": 3450
+        }
+      ],
+      "scheduled_frames": 1260,
+      "remove_control": {
+        "window": [
+          900,
+          1080
+        ],
+        "expected_difference": "The separate Chinese meaning statement disappears.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED"
+    },
+    {
+      "id": "T17",
+      "name": "harmony-melody",
+      "kind": "audio",
+      "role": "Abstract full-film harmony/melody role; timbre, notes and arrangement unapproved.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3600,
+      "remove_control": {
+        "window": [
+          300,
+          600
+        ],
+        "expected_difference": "Remove audible harmony/melodic narrative; prove by isolated and full-mix listening.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED"
+    },
+    {
+      "id": "T18",
+      "name": "rhythmic-motion",
+      "kind": "audio",
+      "role": "Abstract rhythmic propulsion with intentional rests; no fixed tempo/instrument chosen.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3600,
+      "remove_control": {
+        "window": [
+          810,
+          960
+        ],
+        "expected_difference": "Remove audible rhythmic propulsion in its selected active passage.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED"
+    },
+    {
+      "id": "T19",
+      "name": "tactile-contact",
+      "kind": "audio",
+      "role": "Original tactile action feedback at actual contact cues; a contact is not a separate track.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3600,
+      "remove_control": {
+        "window": [
+          0,
+          180
+        ],
+        "expected_difference": "Cut/imprint/trim/eye material contact feedback is audibly lost.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED"
+    },
+    {
+      "id": "T20",
+      "name": "character-signature",
+      "kind": "audio",
+      "role": "Distinct short character/return gesture role, not a duplicate of T17.",
+      "windows": [
+        {
+          "in": 0,
+          "out": 3600
+        }
+      ],
+      "scheduled_frames": 3600,
+      "remove_control": {
+        "window": [
+          190,
+          264
+        ],
+        "expected_difference": "Hero lift loses its independently audible character gesture.",
+        "status": "REQUIRED_NOT_RUN"
+      },
+      "status": "DESIGN_ONLY_NOT_RENDERED_OR_AUDITIONED"
+    }
+  ],
+  "entry_contract": {
+    "geometry_units": "1280x720 author viewBox; uniform output scale1.5",
+    "frame_domain": "global integer f in [0,3600); local f in [0,clip.dur)",
+    "local_to_global": "global_f = entry.global_start_frame + local_f",
+    "scene_frame": "find scene by in <= global_f < out; scene_f = global_f - scene.in",
+    "input_sanitization": "Finite numeric input floored, then clamped to [0,dur-1]; NaN/nonfinite =>0. Validate entry start/dur as exact recipe values. Never clamp global_f at299.",
+    "determinism": "Pure state from global_f + immutable inputs. No elapsed time, requestAnimationFrame clock, Math.random, or accumulated previous-frame state. Repeated/reverse/shuffled f must produce identical state.",
+    "camera": "One cameraFromGlobalFrame result applies to all geometry in the shared world. Intentional foreground wing override [264,345) uses the same B transform on both bird pages. Source slips and subtitles use screen-space safe areas.",
+    "mask_contract": "Each HTML page recreates its own SVG definitions from shared resolved world geometry. No cross-document url(#id), no duplicate opaque gate painted on bird pages. Body and wings consume bit-identical B visibility regions; retain page-specific ID prefixes to avoid collisions.",
+    "no_new_renderer_protocol": true,
+    "renderer_path": "Keep current navigation-based page protocol; expose existing __vtx_render(local_f) for deterministic testing only. Do not declare navfree eligibility, static spans, beginFrame or canvas-export fast paths."
+  },
+  "project_cache_dependencies": [
+    "runtime/shared.js",
+    "runtime/effects.json",
+    "production/cues.json",
+    "production/source-bindings.json",
+    "design/geometry.json",
+    "design/shapes.svg"
+  ],
+  "clip_dependency_rule": "List all actually loaded local files including scene modules/font/license-linked font inputs and waveform JSON at build time; not transitive by assumption. Add waveform only to T13 unless genuinely shared. Effects file always declared. No remote assets.",
+  "paper": {
+    "source_id": "paper",
+    "consumer_path": "media/paper-background.mp4",
+    "producer_existing_path": "html-opening-preview/candidate-r3/templates/promo-demo/v1/preview/paper-background.mp4",
+    "sha256": "fc42e42426548fcde8b296c1844a36da8daf63fd5a66224ef6dca5fe16155664",
+    "clip_recipe": [
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 0,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 300,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 600,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 900,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 1200,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 1500,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 1800,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 2100,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 2400,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 2700,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 3000,
+        "dur": 300
+      },
+      {
+        "src": "paper",
+        "src_in": 0,
+        "src_out": 300,
+        "dst_in": 3300,
+        "dur": 300
+      }
+    ],
+    "audio": "Do not create audio event for the compatibility silence stream."
+  },
+  "missing_assets_rule": "Do not create empty HTML, placeholder WAV or random envelope to report completed20. Builder must reject absent final source assets. The blueprint below is schema-shaped design only.",
+  "z_rule": "Use this fixed array order. Any locally lower object that passes in front is handled by the upper page excluding shared occluder geometry. Tools/strip/F pages must also obey contact masks. Maskless copies are diagnostics only.",
+  "audio_rule": "Four full120-second stems with sample-accurate internal rests. Timeline events use one source each, no looping. Unity interchange volume is a placeholder export convention, not an approved mix decision."
+}

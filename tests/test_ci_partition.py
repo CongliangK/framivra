@@ -198,7 +198,24 @@ class InventoryContract(unittest.TestCase):
             result = ci.inventory(ROOT)
         self.assertEqual(result['baseline']['discovered_count'], 2346)
         self.assertEqual(result['baseline']['unique_test_ids'], 2344)
-        self.assertEqual(result['strict_counts'], {'ffmpeg': 112, 'chrome': 14, 'demo-toolchain': 5})
+        self.assertEqual(result['strict_counts'], {'ffmpeg': 128, 'chrome': 14, 'demo-toolchain': 5})
+        for selector in (
+                'tests.test_png_format_stability.TestStableSource.test_independent_ffmpeg_rgba_pixels_and_pts',
+                'tests.test_png_pts_precision.TestPngTiming.test_real_n1_first_interior_tail_and_repeat_are_timeline_correct',
+                'tests.test_png_pts_precision.TestPngTiming.test_real_n1_multilayer_alpha_positions_and_packet_pts',
+                'tests.test_png_pts_precision.TestPngTiming.test_negative_relative_seek_uses_current_then_next_source_frame'):
+            with self.subTest(selector=selector):
+                selected = [record for record in result['tests'] if record['canonical'] == selector]
+                self.assertEqual(len(selected), 1)
+                self.assertEqual(selected[0]['partition'], 'real')
+                self.assertEqual(selected[0]['strict_gates'], ['ffmpeg'])
+        native = [record for record in result['tests'] if record['canonical'].startswith(
+            'templates.promo-demo.v1.production.tests.test_native_postmix_preflight.NativePostmixTests.')]
+        self.assertEqual(len(native), 12)
+        self.assertEqual(len({record['canonical'] for record in native}), 12)
+        for record in native:
+            self.assertEqual(record['partition'], 'real')
+            self.assertEqual(record['strict_gates'], ['ffmpeg'])
         utf8_subtitle = next(record for record in result['tests'] if record['canonical'] ==
                              'apps.blender-bridge.tests.test_subs_alpha.HappyPath.'
                              'test_utf8_timeline_with_utf8_mode_disabled')

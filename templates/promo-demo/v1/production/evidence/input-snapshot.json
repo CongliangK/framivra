@@ -1,0 +1,63 @@
+{
+  "status": "PORTABLE_UPSTREAM_INPUT_IDENTITY_RECORD",
+  "inputs": [
+    {
+      "copy": "src/assets/geometry.json",
+      "sha256": "f3daf9c5ed11c000160d61ce2e6c852a232e310aaff8e80dffca0f0f0a9606d3",
+      "upstream_role": "round03/design/geometry.json"
+    },
+    {
+      "copy": "src/assets/cues.json",
+      "sha256": "329091f03cff0553c50d5ed721e53d6f167950eb2bc0e05415658f3bed5f6585",
+      "upstream_role": "rounds04-05/production/cues.json"
+    },
+    {
+      "copy": "src/assets/track-map.json",
+      "sha256": "897d04c07e8f386a2bea6b8802240f8cd612ecf191338222414e4d01ec7a943e",
+      "upstream_role": "rounds04-05/production/track-map.json"
+    },
+    {
+      "copy": "src/assets/source-bindings.json",
+      "sha256": "7fb8b5363750c6fa7bad8f0c481278309a851a7192abe5b29cebf16d37bba9e7",
+      "upstream_role": "rounds04-05/production/source-bindings.json"
+    },
+    {
+      "copy": "src/assets/timeline-blueprint.json",
+      "sha256": "13e582bb41432ae4bd45f00ff44527426eb06cc04e75196dcf5eacaa0048ef8d",
+      "upstream_role": "rounds04-05/production/timeline.v2.blueprint.json"
+    },
+    {
+      "copy": "src/assets/boundaries.json",
+      "sha256": "d4613c358c1a662bb70cfb22746f81ff477f667b3ded61df6b8aef41fe2b8440",
+      "upstream_role": "rounds04-05/design/boundaries.json"
+    },
+    {
+      "copy": "src/assets/motion-contract.json",
+      "sha256": "3deb38068dc4c2a86be819b40e4569770bd6ab7e8c9d79ec7283db34bf84c2e9",
+      "upstream_role": "rounds04-05/design/motion-contract.json"
+    },
+    {
+      "copy": "src/assets/gfx-workload.json",
+      "sha256": "14dac58f9d51781763c84b7fc6d000f2aa6d63422b31965ee155e7a5cc0aca6d",
+      "upstream_role": "rounds04-05/design/gfx-workload.json"
+    },
+    {
+      "copy": "src/assets/opening-cues.json",
+      "sha256": "ea2bd569f0b02f0d4c5d647a0a5448ef7037f9188d93d6ffa8cf575e3ae80d69",
+      "upstream_role": "opening-preview/cues.json"
+    },
+    {
+      "copy": "inputs/shapes.svg",
+      "sha256": "a41df15887ebb81f6331a25ade735f2ca5c4ff309a616f9e39fbf5d95f8b2ae1",
+      "upstream_role": "round03/design/shapes.svg"
+    },
+    {
+      "copy": "inputs/opening-reference.html",
+      "sha256": "7f0dddb60b843742339abdf87ace627f014a7a73b4cc89f538e697fb11d88b7f",
+      "upstream_role": "opening-preview/opening.html"
+    }
+  ],
+  "r04_r05_manifest_sha256": "faba9ce84481655405869df167a5529b145acff301e3fb60a8f2f99b893e1957",
+  "source_locations_omitted": true,
+  "scope": "Exact retained design/source fixtures only. Upstream review reports and execution records are retained separately and are not acceptance of a full render."
+}

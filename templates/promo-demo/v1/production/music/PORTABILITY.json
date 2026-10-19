@@ -1,0 +1,32 @@
+{
+  "authoritative_score_sha256": "93e84f1e53d38bc38669802e243bb9d86eb56f3d3081042393708279a16f6114",
+  "authoritative_mix_sha256": "5437590bbeecc4989aac9f091a763c4a6482d2fedecbfb50daeb2b17876abdab",
+  "portable_score_same_bytes": true,
+  "core_runtime_files": 89,
+  "core_runtime_all_same_bytes": true,
+  "renderer_changes": "Explicit required --scoreweft-root; only named source files validated before import; no vendored engine. Music, scheduler and DSP logic are unchanged.",
+  "guard_sha256": "fffc34497f93fabdd734e84c5aea6401ebf8df5efdbb06b818b18ce819936102",
+  "dependencies": {
+    "python": "3.12.14 tested",
+    "numpy": "2.3.5 tested",
+    "ffmpeg": "7.1.5 tested",
+    "ffprobe": "7.1.5 tested",
+    "platform": "Linux for supplied pidfd /proc render guard"
+  },
+  "network_required": false,
+  "full_portable_render_status": "PASS",
+  "vendored_engine": false,
+  "reference_scope": "Portable recipe and recorded content identity only. Raw execution/resource reports are retained separately; this file is not evidence of execution on the current machine.",
+  "recorded_reference_checks": {
+    "fresh_synthesis_without_reuse": true,
+    "external_source_hash_validation_passed": true,
+    "matched_original_one_shots": 177,
+    "processed_one_shot_bank_byte_identical": true,
+    "common_master_curve_byte_identical": true,
+    "four_stems_mix_wav_mix_flac_byte_identical": true,
+    "compared_output_files": 185,
+    "author_verification_passed": true,
+    "all_246_authoritative_frozen_entries_unchanged": true,
+    "listening_status": "Not listened by the author; user aesthetic approval remains pending."
+  }
+}

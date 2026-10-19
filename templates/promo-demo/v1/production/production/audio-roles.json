@@ -1,0 +1,210 @@
+{
+  "status": "AWAITING_USER_TIMBRE_APPROVAL_AND_FULL_SCORE; no notes/instruments/arrangement committed",
+  "format": {
+    "sample_rate": 48000,
+    "channels": 2,
+    "sample_frames_per_stem": 5760000,
+    "frame_mapping": "sample_frame = global_f*1600",
+    "timeline_windows": {
+      "T17": [
+        0,
+        3600
+      ],
+      "T18": [
+        0,
+        3600
+      ],
+      "T19": [
+        0,
+        3600
+      ],
+      "T20": [
+        0,
+        3600
+      ]
+    },
+    "tails": "All tails resolve inside [0,5760000); no looped10-second audition, silent placeholder, or exported tail extension."
+  },
+  "roles": [
+    {
+      "track": "T17",
+      "meaning": "Abstract full-film harmony/melody role; timbre, notes and arrangement unapproved.",
+      "remove_control": {
+        "window": [
+          300,
+          600
+        ],
+        "expected_difference": "Remove audible harmony/melodic narrative; prove by isolated and full-mix listening.",
+        "status": "REQUIRED_NOT_RUN"
+      }
+    },
+    {
+      "track": "T18",
+      "meaning": "Abstract rhythmic propulsion with intentional rests; no fixed tempo/instrument chosen.",
+      "remove_control": {
+        "window": [
+          810,
+          960
+        ],
+        "expected_difference": "Remove audible rhythmic propulsion in its selected active passage.",
+        "status": "REQUIRED_NOT_RUN"
+      }
+    },
+    {
+      "track": "T19",
+      "meaning": "Original tactile action feedback at actual contact cues; a contact is not a separate track.",
+      "remove_control": {
+        "window": [
+          0,
+          180
+        ],
+        "expected_difference": "Cut/imprint/trim/eye material contact feedback is audibly lost.",
+        "status": "REQUIRED_NOT_RUN"
+      }
+    },
+    {
+      "track": "T20",
+      "meaning": "Distinct short character/return gesture role, not a duplicate of T17.",
+      "remove_control": {
+        "window": [
+          190,
+          264
+        ],
+        "expected_difference": "Hero lift loses its independently audible character gesture.",
+        "status": "REQUIRED_NOT_RUN"
+      }
+    }
+  ],
+  "density_requests": [
+    {
+      "window": [
+        0,
+        300
+      ],
+      "intent": "Sparse curiosity and four actual contacts; leave recognition readable"
+    },
+    {
+      "window": [
+        300,
+        1200
+      ],
+      "intent": "Materials gain motion with three distinct assembly cues"
+    },
+    {
+      "window": [
+        1200,
+        1680
+      ],
+      "intent": "Anticipation, one flight arc, landing and reel release"
+    },
+    {
+      "window": [
+        1680,
+        2010
+      ],
+      "intent": "At most three clearly differentiated tactile interactions"
+    },
+    {
+      "window": [
+        2010,
+        2100
+      ],
+      "intent": "Deliberate reduced density or near silence"
+    },
+    {
+      "window": [
+        2100,
+        2700
+      ],
+      "intent": "Build from pull to one world-release maximum, then reduce density"
+    },
+    {
+      "window": [
+        2700,
+        2760
+      ],
+      "intent": "Allow complete world to register"
+    },
+    {
+      "window": [
+        2760,
+        3240
+      ],
+      "intent": "Thin enough for source reading; brief ordered withdrawal/restoration cues"
+    },
+    {
+      "window": [
+        3240,
+        3600
+      ],
+      "intent": "One return gesture and in-window decay; no new climax"
+    }
+  ],
+  "contact_cues": [
+    "cut",
+    "body",
+    "trim",
+    "eye",
+    "wing_card",
+    "push_A",
+    "A_meets_L",
+    "L_meets_R",
+    "F_on_strip",
+    "grasp",
+    "hook_receiver",
+    "A_left_seat",
+    "R_locks_feet",
+    "gate_open",
+    "F_hang",
+    "F_wing_catch",
+    "land",
+    "plate_down",
+    "stop_clear",
+    "Q_turn",
+    "tap_tongue",
+    "beak_flip",
+    "beak_F",
+    "buckle_seated",
+    "F_tension",
+    "P_A_starts",
+    "P_C_slide",
+    "operator_brace",
+    "carrier_stop",
+    "F_beam_contact",
+    "final_support",
+    "source_tab",
+    "F_withdraw",
+    "F_restore",
+    "middle_restore",
+    "perch"
+  ],
+  "waveform_contract": {
+    "track": "T13",
+    "visible_window": [
+      1710,
+      2160
+    ],
+    "analysis_project_window": [
+      1680,
+      2160
+    ],
+    "analysis_sample_window": [
+      2688000,
+      3456000
+    ],
+    "source": "Exact final delivered postmix PCM that will be heard, identified by SHA256, sample rate, channel count and sample count. Do not use the audition or only a detached stem.",
+    "bins": 480,
+    "bin_mapping": "Bin j in0..479 represents global project frame1680+j, samples[(1680+j)*1600,(1681+j)*1600). Store channel-aware min/max or documented stereo min/max union.",
+    "amplitude_rule": "Fixed documented mapping for the whole excerpt, no per-bin autoscaling. Low-density passage must retain its real amplitude.",
+    "reveal": "At g1710 begin revealing the paper-local waveform through a moving clip/alpha edge; cue ticks use actual global sample/frame position.",
+    "dependency": "Declare audio/waveform-S5.json in T13 cache_dependencies and record source PCM hash inside it. Changed mix requires envelope regeneration.",
+    "blocked_behavior": "Missing/unapproved PCM: visual design may show blank physical paper in review, but full production build must fail its completeness gate; T13 is not counted as verified."
+  },
+  "verification_required": [
+    "Approve timbres before full arrangement",
+    "All four stems have distinct audible content and full120-second sample window",
+    "Independent actual listening to solo and removal-control mixes",
+    "Check exact contact onset/visual cue relation in rendered output",
+    "Run final mix/encode loudness and true-peak checks through existing pipeline; do not change its standard"
+  ]
+}

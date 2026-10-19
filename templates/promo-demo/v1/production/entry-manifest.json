@@ -1,0 +1,271 @@
+{
+  "status": "DRAFT_SOURCE_NOT_PRODUCTION_READY",
+  "variant": null,
+  "effects": {
+    "path_deformation": true,
+    "material_masks": true,
+    "text_reveal": true,
+    "translucent_trails": true,
+    "gradient_alpha_reveal": true,
+    "local_blur": true
+  },
+  "production_ready": false,
+  "blockers": [
+    "INDEPENDENT_COMBINED_SOURCE_REVIEW_REQUIRED",
+    "USER_AUDIO_AUDITION_APPROVAL_REQUIRED",
+    "ACTUAL_ENGINE_AND_CAPTION_CONSUMPTION_UNVERIFIED",
+    "S3_READINESS_UNAPPROVED",
+    "S7_READINESS_UNAPPROVED",
+    "S8_READINESS_UNAPPROVED",
+    "T17_AUDIO_MISSING",
+    "T18_AUDIO_MISSING",
+    "T19_AUDIO_MISSING",
+    "T20_AUDIO_MISSING",
+    "PAPER_SOURCE_MISSING"
+  ],
+  "timeline_sha256": "957e893ce00e8a116fe130251e60f4f23662a00bccd0b413b7b4a52efa9e9b19",
+  "bundle_sha256": "d3e8362e729572030cc59aa4a3515887ed57ee33991e684cbab12c7d3d21f743",
+  "entry_count": 19,
+  "gfx_roles": 14,
+  "role_accounting": {
+    "planned": 20,
+    "visual_tracks": 15,
+    "native_caption_streams": 1,
+    "audio_roles": 4,
+    "verified_complete_contributions": null
+  },
+  "entries": [
+    {
+      "entryId": "T02.01",
+      "layerId": "T02",
+      "role": "far-workshop",
+      "src": "gfx/T02_0000_0690.html",
+      "windowStart": 0,
+      "duration": 690,
+      "paintIndex": 1
+    },
+    {
+      "entryId": "T02.02",
+      "layerId": "T02",
+      "role": "far-workshop",
+      "src": "gfx/T02_1140_3600.html",
+      "windowStart": 1140,
+      "duration": 2460,
+      "paintIndex": 1
+    },
+    {
+      "entryId": "T03.01",
+      "layerId": "T03",
+      "role": "middle-gate-carrier",
+      "src": "gfx/T03_0690_3600.html",
+      "windowStart": 690,
+      "duration": 2910,
+      "paintIndex": 2
+    },
+    {
+      "entryId": "T04.01",
+      "layerId": "T04",
+      "role": "transport-reel-guide",
+      "src": "gfx/T04_0000_3600.html",
+      "windowStart": 0,
+      "duration": 3600,
+      "paintIndex": 3
+    },
+    {
+      "entryId": "T05.01",
+      "layerId": "T05",
+      "role": "continuous-red-frame",
+      "src": "gfx/T05_0330_3600.html",
+      "windowStart": 330,
+      "duration": 3270,
+      "paintIndex": 5
+    },
+    {
+      "entryId": "T06.01",
+      "layerId": "T06",
+      "role": "stock-offcuts-fold-planes",
+      "src": "gfx/T06_0000_0139.html",
+      "windowStart": 0,
+      "duration": 139,
+      "paintIndex": 4
+    },
+    {
+      "entryId": "T06.02",
+      "layerId": "T06",
+      "role": "stock-offcuts-fold-planes",
+      "src": "gfx/T06_0690_3600.html",
+      "windowStart": 690,
+      "duration": 2910,
+      "paintIndex": 4
+    },
+    {
+      "entryId": "T07.01",
+      "layerId": "T07",
+      "role": "bird-body-head",
+      "src": "gfx/T07_0000_3600.html",
+      "windowStart": 0,
+      "duration": 3600,
+      "paintIndex": 7
+    },
+    {
+      "entryId": "T08.01",
+      "layerId": "T08",
+      "role": "bird-wings",
+      "src": "gfx/T08_0018_3600.html",
+      "windowStart": 18,
+      "duration": 3582,
+      "paintIndex": 6
+    },
+    {
+      "entryId": "T09.01",
+      "layerId": "T09",
+      "role": "tools-and-operator",
+      "src": "gfx/T09_0000_0630.html",
+      "windowStart": 0,
+      "duration": 630,
+      "paintIndex": 8
+    },
+    {
+      "entryId": "T09.02",
+      "layerId": "T09",
+      "role": "tools-and-operator",
+      "src": "gfx/T09_2280_3600.html",
+      "windowStart": 2280,
+      "duration": 1320,
+      "paintIndex": 8
+    },
+    {
+      "entryId": "T10.01",
+      "layerId": "T10",
+      "role": "ingredient-cards",
+      "src": "gfx/T10_0330_0630.html",
+      "windowStart": 330,
+      "duration": 300,
+      "paintIndex": 9
+    },
+    {
+      "entryId": "T11.01",
+      "layerId": "T11",
+      "role": "temporal-ribbons",
+      "src": "gfx/T11_0630_1200.html",
+      "windowStart": 630,
+      "duration": 570,
+      "paintIndex": 10
+    },
+    {
+      "entryId": "T12.01",
+      "layerId": "T12",
+      "role": "source-leaders",
+      "src": "gfx/T12_0960_1140.html",
+      "windowStart": 960,
+      "duration": 180,
+      "paintIndex": 12
+    },
+    {
+      "entryId": "T12.02",
+      "layerId": "T12",
+      "role": "source-leaders",
+      "src": "gfx/T12_2820_3180.html",
+      "windowStart": 2820,
+      "duration": 360,
+      "paintIndex": 12
+    },
+    {
+      "entryId": "T13.01",
+      "layerId": "T13",
+      "role": "real-pcm-waveform",
+      "src": "gfx/T13_1710_2160.html",
+      "windowStart": 1710,
+      "duration": 450,
+      "paintIndex": 11
+    },
+    {
+      "entryId": "T14.01",
+      "layerId": "T14",
+      "role": "actual-source-fields",
+      "src": "gfx/T14_0810_1140.html",
+      "windowStart": 810,
+      "duration": 330,
+      "paintIndex": 13
+    },
+    {
+      "entryId": "T14.02",
+      "layerId": "T14",
+      "role": "actual-source-fields",
+      "src": "gfx/T14_2820_3150.html",
+      "windowStart": 2820,
+      "duration": 330,
+      "paintIndex": 13
+    },
+    {
+      "entryId": "T15.01",
+      "layerId": "T15",
+      "role": "brand-wordmark",
+      "src": "gfx/T15_3360_3600.html",
+      "windowStart": 3360,
+      "duration": 240,
+      "paintIndex": 14
+    }
+  ],
+  "scene_flags": {
+    "S1": {
+      "implemented": true,
+      "geometryImplemented": null
+    },
+    "S2": {
+      "implemented": true,
+      "geometryImplemented": null
+    },
+    "S3": {
+      "implemented": false,
+      "geometryImplemented": true
+    },
+    "S4": {
+      "implemented": true,
+      "geometryImplemented": null
+    },
+    "S5": {
+      "implemented": true,
+      "geometryImplemented": null
+    },
+    "S6": {
+      "implemented": true,
+      "geometryImplemented": null
+    },
+    "S7": {
+      "implemented": false,
+      "geometryImplemented": null
+    },
+    "S8": {
+      "implemented": false,
+      "geometryImplemented": null
+    }
+  },
+  "cache_dependencies": [
+    "runtime/shared.js",
+    "runtime/effects.json",
+    "production/cues.json",
+    "production/source-bindings.json",
+    "design/geometry.json",
+    "design/shapes.svg",
+    "production/caption-font.json",
+    "src/assets/provider-review.json",
+    "production/reviews/font-outlines.json",
+    "src/assets/fonts/source-label-glyphs.json",
+    "notices/Noto-Mono-OFL-copyright.txt",
+    "notices/Noto-CJK-copyright.txt",
+    "audio/stems.json",
+    "audio/native-postmix.json",
+    "audio/waveform-S5.json",
+    "audio/native-audio-provenance.json",
+    "src/assets/fonts/brand-glyphs.json",
+    "notices/Noto-SC-OFL.txt"
+  ],
+  "claims": {
+    "node_source_only": true,
+    "browser": false,
+    "actual_engine": false,
+    "performance": false,
+    "audio_approval": false
+  }
+}
