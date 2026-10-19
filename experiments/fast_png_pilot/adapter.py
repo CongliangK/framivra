@@ -168,8 +168,16 @@ class CaptureTrace:
         self.validations.append({"expected_frames": expected_frames, "stats": copy.deepcopy(stats)})
         self.status = "request-and-render-contract-checked"
 
+    def poll_observation_report(self):
+        """Small persisted-file index; off intentionally has no poll samples."""
+        observer = getattr(self, "poll_observer", None)
+        if observer is None:
+            from .poll_observer import disabled_observation
+            return disabled_observation()
+        return copy.deepcopy(observer.descriptor)
+
     def report(self):
-        return copy.deepcopy({
+        report = {
             "schema": "fast-png-pilot-v1", "mode": self.mode, "status": self.status,
             "base_commit": BASE_COMMIT, "base_tree": BASE_TREE,
             "renderer_sha256": _sha(Path(gfx.__file__).read_bytes()),
@@ -186,10 +194,13 @@ class CaptureTrace:
             "scope_wall_s": (self.closed or time.monotonic()) - self.started,
             "encoder_internal_effect": "unknown; schema advertisement and accepted request only",
             "quality_and_performance": "not established by this trace; compare retained PNGs and whole-arm wall separately",
-        })
+        }
+        if hasattr(self, "poll_observer"):
+            report["poll_observation"] = self.poll_observation_report()
+        return copy.deepcopy(report)
 
 
-def _classes(trace, original_tab, original_browser):
+def _classes(trace, original_tab, original_browser, poll_observer=None):
     class ExperimentalTab(original_tab):
         # Complete original operations are observed, never reimplemented.
         def __init__(self, *args, **kwargs):
@@ -316,17 +327,86 @@ def _classes(trace, original_tab, original_browser):
                 trace.fail("browser-start-or-capability", error)
                 raise
 
-    return ExperimentalTab, ExperimentalBrowser
+    if poll_observer is None:
+        return ExperimentalTab, ExperimentalBrowser
+
+    # Off uses the original methods above: no poll clocks, frame inspection,
+    # records, or extra call dispatch. Only the opt-in subclass pays this cost.
+    import sys
+    from .poll_observer import POLL_EXPRESSION
+    original_call = original_tab.call
+
+    class PollObservedTab(ExperimentalTab):
+        def navigate(self, *args, **kwargs):
+            navigation = None
+            caller = None
+            try:
+                caller = sys._getframe(1)
+                navigation = poll_observer.safely("nav_enter", self,
+                    args[0] if args else kwargs.get("url"), caller)
+            except BaseException as exc:
+                poll_observer.error("caller_frame", exc)
+            finally:
+                del caller
+            previous = getattr(self, "_poll_navigation", None)
+            self._poll_navigation = navigation
+            error = None
+            try:
+                return super().navigate(*args, **kwargs)
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                poll_observer.safely("nav_exit", navigation, error)
+                self._poll_navigation = previous
+
+        def call(self, method, timeout=30, **params):
+            navigation = getattr(self, "_poll_navigation", None)
+            if navigation is None or method != "Runtime.evaluate" or params.get("expression") != POLL_EXPRESSION:
+                return super().call(method, timeout=timeout, **params)
+            record = poll_observer.safely("poll_enter", navigation)
+            result, error = None, None
+            try:
+                # The very same original receiver owns transport, Fetch handling,
+                # timeout and JSON decode. check_response remains outside its wall.
+                try:
+                    poll_observer.safely("call_enter", record)
+                    result = original_call(self, method, timeout=timeout, **params)
+                except BaseException as exc:
+                    poll_observer.safely("call_exit", record, exc)
+                    raise
+                else:
+                    poll_observer.safely("call_exit", record, None)
+                trace.check_response(method, result, params=params)
+                return result
+            except BaseException as exc:
+                error = exc
+                trace.fail(method, exc)
+                raise
+            finally:
+                poll_observer.safely("poll_exit", navigation, record, result, error)
+
+    class PollObservedBrowser(ExperimentalBrowser):
+        def open_tabs(self):
+            tabs = super().open_tabs()
+            poll_observer.safely("bind_tabs", tabs, self.generation)
+            return tabs
+
+    return PollObservedTab, PollObservedBrowser
 
 
 @contextlib.contextmanager
-def capture_scope(mode, evidence_dir):
+def capture_scope(mode, evidence_dir, *, poll_observation=False, job_context=None):
     """Temporarily adapt only b287 CDP requests in a dedicated child process.
 
     evidence_dir must not exist. Caller owns exact input/output identities, empty
     output enforcement, deadline/cancellation, output verification and A/B pairing.
     Must call trace.assert_valid(stats, expected_frames=N) after each render_page.
     """
+    if type(poll_observation) is not bool:
+        raise ValueError("poll_observation must be boolean")
+    if poll_observation and mode != "baseline":
+        raise ValueError("poll observation requires baseline PNG")
     if mode not in ("baseline", "fast"):
         raise ValueError("mode must be baseline or fast")
     if gfx.os.environ.get("VTX_GFX_NAVFREE", "0") != "0":
@@ -339,11 +419,18 @@ def capture_scope(mode, evidence_dir):
     original_functions = {name: getattr(gfx, name) for name in
                           ("_atomic_write_bytes", "_two_shot_combine")}
     trace = None
+    observer = None
+    primary_error = None
     try:
         directory = Path(evidence_dir)
         directory.mkdir(parents=True, exist_ok=False)
         trace = CaptureTrace(mode, directory)
-        gfx.Tab, gfx.Browser = _classes(trace, original_tab, original_browser)
+        if poll_observation:
+            from .poll_observer import PollObserver
+            observer = PollObserver(gfx, directory, job_context)
+            trace.poll_observer = observer
+        gfx.Tab, gfx.Browser = _classes(trace, original_tab, original_browser, observer)
+        installed_tab, installed_browser = gfx.Tab, gfx.Browser
         def observed_function(name, original):
             def observed(*args, **kwargs):
                 details = {"path": str(args[0])} if name == "_atomic_write_bytes" and args else {}
@@ -351,19 +438,46 @@ def capture_scope(mode, evidence_dir):
             return observed
         for name, original in original_functions.items():
             setattr(gfx, name, observed_function(name, original))
+        installed_functions = {name: getattr(gfx, name) for name in original_functions}
         try:
             yield trace
             if not trace.validations or trace.errors:
                 raise PilotError("scope ended without a clean render-contract validation")
         except BaseException as error:
+            primary_error = error
             trace.fail("scope", error)
             raise
         finally:
+            if observer is not None:
+                observer.restoration["installed_references_intact"] = (
+                    gfx.Tab is installed_tab and gfx.Browser is installed_browser and
+                    all(getattr(gfx, name) is installed for name, installed in installed_functions.items()))
             gfx.Tab, gfx.Browser = original_tab, original_browser
             for name, original in original_functions.items():
                 setattr(gfx, name, original)
             trace.closed = time.monotonic()
-            _write_json(directory / "trace.json", trace.report())
+            observation_failure = None
+            if observer is not None:
+                observer.restoration["original_references_restored"] = (
+                    gfx.Tab is original_tab and gfx.Browser is original_browser and
+                    all(getattr(gfx, name) is original for name, original in original_functions.items()))
+                descriptor = observer.safely("persist", trace, primary_error)
+                if descriptor is None:
+                    observer.descriptor.update(status="FAILED", qualification="INELIGIBLE",
+                                               persistence="MISSING", path=None, bytes=None, sha256=None)
+                    descriptor = observer.descriptor
+                if descriptor["status"] != "COMPLETE":
+                    observation_failure = PilotError("poll observation is " + descriptor["status"])
+                    trace.fail("poll_observation", observation_failure)
+            try:
+                _write_json(directory / "trace.json", trace.report())
+            except BaseException as error:
+                if observer is None or primary_error is None:
+                    raise
+                observer.error("trace_persistence", error)
+                observer.descriptor["trace_persistence"] = "MISSING"
+            if observation_failure is not None and primary_error is None:
+                raise observation_failure
     finally:
         gfx.Tab, gfx.Browser = original_tab, original_browser
         for name, original in original_functions.items():

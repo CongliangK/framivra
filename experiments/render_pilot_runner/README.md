@@ -4,6 +4,59 @@ Isolated opt-in experiment for the frozen TODAY plan identified in contract.py.
 Nothing imports this directory from production. It changes no CI discovery,
 selector, shard, required check, event schema, old cache or manifest.
 
+## Explicit continuous300-v1 preparation
+
+`plan --target-profile continuous300 --mode fast-png` selects the only new
+`render-pilot/2` tuple. Its fixed workload and resource-policy fields live in
+`profiles.py`; there is no arbitrary frame/window/deadline option. Omitting this
+flag preserves the complete `render-pilot/1` plan and digest. The original first
+pilot and group contracts below remain v1 contracts; no old evidence is relabelled.
+
+The new window is global 1380..1679, in original paint order T08.01 then T07.01.
+Each arm runs two original render_page calls with full original page durations,
+explicit original local frame numbers and fresh output/cache/profile storage.
+Each arm has 600 target PNGs and quality requires exactly 600 distinct
+(entry, global, local) pairs. Shared omissions, duplicates and incorrect local
+mappings fail. Setup probes are reported separately from targets from the actual
+capture trace; incomplete counts are flagged. A remains baseline PNG and B remains
+fast PNG in both AB and BA schedules. The shared pair deadline, original supervisor,
+cleanup bounds and exact decoded RGBA comparison remain in force.
+
+V2 workers retain namespace/spec/plan/arm/attempt identity, PID/PPID/PGID and the
+existing supervisor start identity, argv/cwd, Python flags/version, executable
+entry and resolved actual runtime image file identities. For the finite functions
+listed by runtime_identity.WorkerBinding, source is compiled without execution
+in that same interpreter, then complete code objects (including nested code and
+constants), module/global identity and defaults are compared. Original adapter
+delegates and restoration are checked. Source bytes alone are not loaded-code
+proof. This binds only the listed objects for this worker; mutable global values,
+third-party dependencies, the interpreter as a whole and historical runs are not
+attested. Fingerprints are interpreter/path-specific audit hints, not cross-runtime
+portable identities. A missing binding cannot pass or start the next arm.
+
+Resource observation is deliberately disabled in this source preparation. Values
+and thresholds remain unknown/unfrozen, and the pair explicitly reports
+promotion_eligible=false even if its local pixel gate passes. The controller must
+freeze current Mac resource limits and the missing-sample policy before any formal
+execution. This code does not infer Chrome limits, claim sampled peaks, or authorize
+a run. Resource status is separate from local pixels; it does not replace the
+existing deadline or cleanup. This continuous profile never enables O1 poll observation; the separate O1 mode is documented below.
+Actual Mac/Python 3.9/browser/1080p performance and resource sampling are UNRUN.
+
+Ordinary focused offline checks (no browser, real worker, security path negative,
+or CI registration):
+
+```bash
+python3 -m unittest experiments.render_pilot_runner.test_continuous300 experiments.render_pilot_runner.test_runtime_identity experiments.render_pilot_runner.test_arm_order -v
+```
+
+Planning is stdout-only and still re-reads the pinned inventory and bound payloads.
+The caller must supply paths verified on the intended executor; an offline fixture
+or a cloud path is not a qualified Mac plan. The original `run` command consumes the
+frozen plan without changing its profile/window and still requires the separately
+reviewed exact implementation commit and tree. No formal trial was performed by
+adding this option.
+
 ## Fast-PNG order-balanced replication preparation
 
 `run --arm-order AB|BA` is an optional fast-png-only execution setting. A always
@@ -235,3 +288,44 @@ JSON/list/mock tests. The old test_fresh_alias_and_traversal and similar securit
 path tests are outside the permitted run scope. They remain unchanged in source;
 do not run the full test_contract module under this restricted repair scope.
 No CI discovery/selection/required checks are changed.
+
+## Fixed O1 poll-observation A/A contract
+
+`plan --mode poll-observation` explicitly creates `render-pilot/2` with
+`target_profile=poll-observation120-v1`. It reuses the original v1 targets, batches,
+eight jobs and global/local mappings, requiring exactly 238 complete RGBA pairs.
+Both named arms use ordinary baseline PNG and the original navigation. A disables
+the observer and B enables it; AB/BA changes only arm order. Combining this mode
+with continuous300, fast PNG, group input, arbitrary targets or modified observer
+limits is refused. Omitting this new mode keeps the old v1 default unchanged;
+continuous300 remains its independently selectable fixed profile.
+
+The plan records the observer's fixed caps, schema and native clock definition.
+Both O1 arms use the same finite runtime/source binding (including the observer
+module), resource-unknown policy, PNG parameters and cleanup/deadline path.
+The extra observed subclass layer must delegate to the same frozen original Tab,
+Browser and Tab.call references. Neither side gets a new navigation implementation.
+
+One successful sidecar cannot certify an attempt. The runner retains the original
+scope exit and primary error, then independently reads trace.json and, for B,
+poll-observation.json. It checks exact bytes/SHA indices, baseline request mode,
+render validation, namespace/job/entry/global/local scope, fixed limits/source,
+closed nonempty intervals, failure/drop state and complete target navigation
+coverage. Missing trace, sidecar, descriptor or a wrong scope fails. These checks
+repeat before another arm and before quality. A's descriptor stays DISABLED with
+null measurements and has no sidecar. Failed/NOT_STARTED attempts remain in the
+arm report even if a sidecar descriptor itself says COMPLETE.
+
+Page-scope records remain separate; arm/pair reports retain their verified indices
+without pooling p95s, turning off into zero, subtracting A/A disturbance, or inferring
+actual sleep/recoverable wait. Sidecar persistence and validation remain within
+attempt/arm/pair wall and the original shared deadline. No PR221 consumer or event
+strategy is modified. Real Mac, observer perturbation, resources and any performance
+claim remain UNRUN; local PNG equality alone never grants promotion.
+
+Explicit additional offline regression (the original renderer runs only against a
+one-pixel mock CDP transport, never a browser or real supervisor worker):
+
+```bash
+python3 -m unittest experiments.render_pilot_runner.test_poll_integration -v
+```
