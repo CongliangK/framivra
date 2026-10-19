@@ -153,7 +153,13 @@ def mapped(entry, globals_):
     return [{'global': f, 'local': f-start} for f in globals_ if start <= f < start+count]
 
 
-def build_plan(bound, mode, group_plan=None):
+def build_plan(bound, mode, group_plan=None, *, target_profile=None):
+    if mode == 'poll-observation':
+        from .profiles import poll_plan, POLL120
+        return poll_plan(bound, mode, group_plan, POLL120 if target_profile is None else target_profile)
+    if target_profile is not None:
+        from .profiles import continuous_plan
+        return continuous_plan(bound, mode, group_plan, target_profile)
     require(mode in ('group', 'fast-png'), 'Only independent group or fast-png modes')
     jobs = []
     group_verified = None

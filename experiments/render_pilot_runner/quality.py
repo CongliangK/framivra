@@ -1,8 +1,10 @@
 """Full-pixel comparisons and a dense local N1 pair gate, never a full-scene claim."""
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from types import SimpleNamespace
 
 from .contract import TARGETS, WIDTH, HEIGHT, FPS, require, file_hash, digest, canonical, clock_now, CLOCK_KIND
@@ -34,23 +36,48 @@ def png_comparison(left, right, width=WIDTH, height=HEIGHT):
                     'rgba_sha256':digest(b.tobytes()),'alpha_sha256':digest(b[:,:,3].tobytes())}}
 
 
-def frame_index(arm):
+def frame_index(arm, expected_jobs=None):
     result={}
     require(arm['status']=='RENDERED_UNVERIFIED','Only completed fresh render arms may be compared')
+    if expected_jobs is not None:
+        require(canonical([a.get('job') for a in arm['attempts']]) == canonical(expected_jobs),
+                'Actual jobs differ from verified plan')
     for attempt in arm['attempts']:
         require(attempt['status']=='RENDERED_UNVERIFIED' and attempt['exit_code']==0,'Failed attempt')
+        if expected_jobs is not None:
+            expected = {(r['global'], r['local']) for r in attempt['job']['mapping']}
+            actual = [(r.get('global'), r.get('local')) for r in attempt['png']]
+            require(all(type(g) is int and type(l) is int for g,l in actual)
+                    and len(actual) == len(expected) and set(actual) == expected,
+                    'Missing, duplicate or incorrect global/local frame coverage')
+            require(len({r['path'] for r in attempt['png']}) == len(expected),
+                    'Target paths must be distinct fresh frame files')
         for row in attempt['png']:
+            if expected_jobs is not None:
+                require(Path(row['path']).name == f"f{row['local']:04d}.png",
+                        'PNG filename does not match original local frame')
             key=(attempt['job']['entry']['entryId'],row['global'])
             require(key not in result,'Duplicate rendered frame')
             p=Path(row['path'])
             require(file_hash(p)==row['sha256'],'Fresh frame changed before comparison')
             result[key]=p
+    if expected_jobs is not None:
+        require(len(set(result.values())) == len(result), 'A fresh target file cannot represent multiple entries')
     require(result,'Empty arm frame index')
     return result
 
 
-def compare_rendered_pngs(arms,deadline):
-    indices=[frame_index(arm) for arm in arms]
+def compare_rendered_pngs(arms,deadline,plan=None):
+    if plan is not None:
+        from .runner import verify_plan
+        verify_plan(plan)
+        require(plan.get('schema') == 'render-pilot/2', 'Expected verified v2 plan')
+        require([a.get('arm') for a in arms] == ['baseline','candidate'], 'Wrong named arm identities')
+        indices=[frame_index(arm, [j for j in plan['jobs'] if j['arm']==arm['arm']]) for arm in arms]
+        require(all(len(i)==plan['expected_rgba_pairs'] for i in indices),
+                'New profile requires its exact complete RGBA pair count')
+    else:
+        indices=[frame_index(arm) for arm in arms]
     require(indices[0].keys()==indices[1].keys(),'A/B targets differ')
     result={'scope':'full PNG decoded RGBA and alpha; no full-scene/audio acceptance','frames':[],'equal':True}
     for key in indices[0]:
@@ -163,15 +190,36 @@ def run_quality(spec_file):
             'full_n1_scene':'UNRUN','real_paper_background':'UNRUN: original prepared paper not supplied',
             'subtitles_audio_final_encoding':'UNRUN'}
     before=clock_now()
+    binding=None
+    if spec['plan'].get('schema')=='render-pilot/2':
+        report.update(schema='render-pilot-quality/2',runtime_identity={
+            'status':'UNKNOWN','namespace':spec.get('namespace'),'run':spec['output'],'arm':'quality',
+            'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgid(0),'argv':list(sys.argv),
+            'cwd':os.getcwd(),'reason':'source/code checks not yet complete'})
     try:
         require(spec.get('clock_kind')==CLOCK_KIND,'Unknown shared deadline clock')
+        if spec['plan'].get('schema')=='render-pilot/2':
+            from . import runner
+            from .runtime_identity import WorkerBinding
+            runner.verify_plan(spec['plan'])
+            runner.git_identity(runner.ROOT,spec['implementation']['commit'],spec['implementation']['tree'],
+                                deadline=deadline)
+            entry=sys.modules['__main__']
+            if getattr(entry,'__file__',None) != runner.__file__:
+                entry=runner
+            binding=WorkerBinding(spec,spec_file,'quality',entry)
+            report['runtime_identity']=binding.report
         arms=[json.loads((root/a/'result.json').read_bytes()) for a in ('baseline','candidate')]
-        if spec['plan']['mode']=='fast-png':
-            report['png_comparison']=compare_rendered_pngs(arms,deadline)
+        if spec['plan']['mode']=='poll-observation':
+            from .runner import verify_poll_arm
+            report['poll_observation']=[verify_poll_arm(arm,spec) for arm in arms]
+        if spec['plan']['mode'] in ('fast-png','poll-observation'):
+            report['png_comparison']=compare_rendered_pngs(arms,deadline,spec['plan']) \
+                if spec['plan'].get('schema')=='render-pilot/2' else compare_rendered_pngs(arms,deadline)
             report['equal']=report['png_comparison']['equal']
             require(report['equal'],'Full RGBA/alpha mismatch')
             report['status']='LOCAL_RGBA_PAIR_PASSED_FULL_SCENE_UNRUN'
-        else:
+        elif spec['plan']['mode']=='group':
             seqs,mapping=dense_sequences(arms,quality/'dense')
             report['mapping']=mapping
             report['compositor_sha256']=file_hash(Path(__file__).resolve().parents[2]/'vtx/composite.py')
@@ -209,9 +257,18 @@ def run_quality(spec_file):
                 write_json(quality/'result.json',report)
                 require(equal,'Dense N1 local '+background+' pair differs')
             report.update(equal=True,status='LOCAL_N1_PAIR_PASSED_REAL_BACKGROUND_FULL_SCENE_UNRUN')
+        else:
+            raise ValueError('Unsupported quality mode')
     except BaseException as exc:
         report.update(error_type=type(exc).__name__,error=str(exc))
     finally:
+        if binding is not None:
+            try:
+                binding.restored()
+            except BaseException as exc:
+                report.update(status='FAILED',equal=False)
+                binding.report['restoration']='UNKNOWN'
+                report['runtime_identity_error']={'type':type(exc).__name__,'error':str(exc)}
         report['wall_seconds']=clock_now()-before
         write_json(quality/'result.json',report)
     return 0 if report['equal'] else 1

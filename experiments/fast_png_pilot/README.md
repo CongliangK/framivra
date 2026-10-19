@@ -196,3 +196,110 @@ whose original `Tab.eval` exception could be swallowed by the static-span probe.
 The bounded response check and complete original eval observation address that
 case; its original review evidence remains retained. These offline protocol
 negatives are not claimed to be failures observed in actual Chrome.
+
+## Opt-in navigation poll observation
+
+`capture_scope(mode, evidence_dir, *, poll_observation=False, job_context=None)`
+provides a separate observation seam. Off retains the existing tab/browser method
+paths, request sequence and trace schema: it creates no observer, polls, additional
+clocks or caller-frame inspection. On is permitted only with `mode="baseline"`;
+there is no second executable entry point. The runner owns the fixed off/on,
+on/off A/A plans, shared deadline and symmetric runtime/resource evidence. This
+module does not combine observation with fast PNG or create a continuous profile.
+
+Supply the verified runner job as `job_context`. Only `entry.entryId`, `entry.src`,
+`entry.windowStart`, `batch`, `arm`, `mapping` and optional `job_id`, `run_id`,
+`attempt` are copied. Mapping rows contain integer `global`/`local` and must agree
+with `windowStart`. The caller's dictionary is never modified. Each scope is one
+page and its evidence directory identifies that scope; records refer to its
+context rather than duplicating the full mapping on each poll. Missing context,
+unknown callers or unbound mapping cannot earn COMPLETE observation status.
+
+On wraps the original `navigate` and intercepts only `Runtime.evaluate` with the
+exact frozen query/readiness expression while that navigation is active. It
+captures the original `Tab.call` reference and delegates to it. CDP timeout values,
+transport, single receiver, interleaved Fetch processing, structured-response
+validation, exception identity and production navigation/sleep remain unchanged.
+It adds no evaluate, event subscription, receiver, global tracing or sleep hook.
+The original navigation loop can still spend the original call timeout inside an
+evaluate even though its outer readiness deadline is shorter.
+
+Caller roles use one immediately released direct frame and the exact loaded code
+object plus frozen source line: `render_page:999` initial, `render_page:1060`
+flatten probe, `do_frame:857` target. The code objects are compared in-process to
+the pinned source compiled without execution; this is a bounded caller binding,
+not whole-process runtime attestation. Three calls to the same URL can have three
+different roles. Global frames come only from the supplied local mapping and the
+caller's actual local frame/URL. Unknown callers remain unknown. Targets on the
+renderer worker thread are observed normally. The scope owner-thread restriction
+continues to apply only to original browser construction. Completed `open_tabs`
+associates each actual tab with the browser's current generation and tab ordinal.
+Recovery still permanently fails the original capture trace; later successes
+cannot remove failed navigation/poll attempts or make the arm eligible.
+
+Every observation timestamp uses `clock_gettime(CLOCK_MONOTONIC)` in seconds.
+`call_start`/`call_end` bracket the delegated original call, excluding
+`check_response` and record allocation; unavoidable Python clock-boundary dispatch
+is part of the measurement overhead. `wrapper_end` is sampled after response
+validation and observation bookkeeping. It excludes the final assignment/return.
+`inter_poll_gap_seconds` is the next start minus the preceding call end within the
+same navigation. It includes validation, branch handling, observation, sleep and
+scheduling; the browser can continue working during the gap. These timestamps
+must not be mixed with legacy process-local `time.monotonic` absolute origins.
+
+`planned_sleep` is a frozen-source branch inference after a normally returned,
+parseable unmatched result, including the final unmatched poll before the loop
+notices timeout. It follows the original falsey-value coercion and partition.
+Truthy non-string values and protocol/transport errors are never ordinary
+unmatched results. Every planned branch identifies its poll and requested delay;
+its actual sleep entry/exit are null. Actual sleep duration, browser ready time
+and recoverable wait remain null with explicit reasons. Initial setup delay and
+recovery delay are outside this poll scope. Neither gaps nor residual wall time
+are reported as measured sleep or potential savings.
+
+Bounds are fixed in `poll_observer.LIMITS`, with no runtime enlargement option.
+The navigation cap covers the fixed page target ceiling, setup probes and original
+retry paths; the poll cap conservatively allows a full frozen readiness window
+per retained navigation. Conservative per-record byte reservations can become the
+first cap. Oversized URLs, record-cap exhaustion or byte-reservation exhaustion
+stop detail appends, retain the earlier samples and keep bounded scalar counts.
+They never abort or accelerate the original navigation. Overflow explicitly marks
+INCOMPLETE and disqualifies observation. A final encoded-byte check enforces the
+serialized cap as well. Observation errors and primary renderer errors remain
+separate; unclosed intervals keep null ends and a reason, never fabricated zeros.
+
+After page cleanup and restoration, on writes `poll-observation.json` once.
+`trace.poll_observation_report()` returns a small path/bytes/SHA-256 index suitable
+for the runner attempt and arm records. On also includes this index in its
+`trace.json`. The descriptor starts NOT_STARTED/MISSING and reports WRITTEN only
+after writing exact sidecar bytes. Missing persistence or serialization failure
+cannot qualify; an instrumentation/write exception does not replace a primary
+renderer exception. Off's explicit descriptor is DISABLED with null measurements,
+and off has no sidecar or new legacy trace field. A missing descriptor is UNKNOWN,
+not an implicit zero. COMPLETE requires nonempty mapped navigation/poll evidence,
+closed intervals, preserved references and no original/observation errors or
+recovery. FAILED, INCOMPLETE, UNKNOWN and NOT_STARTED remain ineligible. Scope
+exit rejects an ineligible on observation even if original stats looked valid.
+
+The capture scope's existing wall closes before sidecar serialization, as it does
+before legacy trace serialization. The enclosing attempt and whole-arm wall must
+include both writes. Consumers must validate the sidecar digest and scope, retain
+missing/failed pages through arm/pair summaries, and merge only equivalent complete
+scopes. Do not pool page p95s, subtract DISABLED nulls as zero, or relabel this
+schema for older consumers. PR221 consumers remain independent/UNSUPPORTED until
+separately reviewed; this module does not modify them.
+
+Explicit ordinary offline checks (may write Python bytecode; no browser launch):
+
+```bash
+python3 -m unittest experiments.fast_png_pilot.test_adapter experiments.fast_png_pilot.test_poll_observer -v
+python3 -m py_compile experiments/fast_png_pilot/adapter.py experiments/fast_png_pilot/poll_observer.py experiments/fast_png_pilot/test_poll_observer.py
+```
+
+The additional mocks exercise immediate/multiple/final-timeout polls, falsey and
+unparseable values, protocol/transport failures, same-URL roles, worker threads,
+actual generation/recovery contamination, bounded records, unclosed intervals,
+restoration, missing writes, off equivalence and original Fetch-interleaved receive
+handling. Mocked time provides control-flow evidence only. Actual Mac/browser
+observation, resource limits, loaded-runtime identity, quality and A/A disturbance
+measurement remain UNRUN, pending final runner integration and independent review.
