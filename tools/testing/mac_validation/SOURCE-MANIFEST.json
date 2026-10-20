@@ -1,0 +1,40 @@
+{
+  "schema": "framivra-reviewed-mac-validation-delivery/1",
+  "status": "SOURCE_DELIVERY_ONLY_PENDING_MAC_QUALIFICATION",
+  "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
+  "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
+  "runtime_source_bytes_unchanged": true,
+  "tests_executed_for_delivery": false,
+  "files": [
+    {
+      "path": "tools/testing/mac_validation/fast_png_r2/APPROVED-TEST-IDS.txt",
+      "bytes": 828,
+      "sha256": "25066458b0464df476c0b93f29180d65f611a73ff8b9c0bccda78924f48ea135",
+      "git_blob_sha1": "6d4fedbe8a88f448cb5d3d4dd4b2dafc4217c207"
+    },
+    {
+      "path": "tools/testing/mac_validation/fast_png_r2/harness.py",
+      "bytes": 27487,
+      "sha256": "a8399a33f3af0604231f0d0247413ce3f3cb4992a2ec281eba14fa6df688a4a5",
+      "git_blob_sha1": "f068c7960fe871bb37038a21fb6e80f7edd5b432"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r3/APPROVED-TEST-IDS.txt",
+      "bytes": 2432,
+      "sha256": "9f5111c9a065690065500fc98e7d1b7f026ed4c63a463a2363dce77a3cc235ac",
+      "git_blob_sha1": "8c8683b05e1a6bdd04d094d4fc3a3e9bba960489"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r3/owned_launcher.py",
+      "bytes": 29122,
+      "sha256": "f9d4c0a5a49cf2ec0c8a09d42f21d5b72486befcffc69cc78cb5955d0d10282e",
+      "git_blob_sha1": "9cfa9994ba0648d27d64a74df058c549aa0c2d60"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r3/resource_summary.py",
+      "bytes": 7879,
+      "sha256": "06ca025a3111953b3acc39c87c1735613608a16dce8ad0f819cb10d451cc0f36",
+      "git_blob_sha1": "f1ebdd108ffb595fd3fb31f2aceb49508e2e8a62"
+    }
+  ]
+}
