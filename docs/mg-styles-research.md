@@ -2,6 +2,12 @@
 
 研究对象为 [Vincentwei1021/mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15/tree/49052d80bfaf9fa8412cc9710530e5e95a3b8d8c)，固定提交 `49052d80bfaf9fa8412cc9710530e5e95a3b8d8c`，核查日期 2026-10-20。本页属于 docs 专题层，记录研究判断；模板使用入口见 [MG 模板包](../templates/mg-styles/README.md)。上游展示次序与目录数字不同，下表保留准确目录名。
 
+## 可执行制作卡与 HTML 参考
+
+[十五款直接打开的参考页](../templates/mg-styles/html/index.html) 已独立实现，每页各有两个不同题材、可编辑语义数据及播放/逐帧拖动。制作卡与该页场景源码放在一起：适用/不适用、视觉隐喻、4–6 拍分镜、不可删特征、可替语义、动作/转场/声音点和失败反例。换题材先替换因果、任务或形态链，再调整窗口和阅读段，不是把同一组统计卡换色。
+
+这些参考不同于早期 `build.py` 通用字段 Canvas prototype，也不替代下表媒体路线。HTML 3D 是投影/材质构图示意；玻璃和液态保留解析近似；字幕仅示范事件与主体禁区。控制与整数帧测试、实际 RGBA 局部测试、浏览器像素、完整媒体和听感的验收范围分别记录，详见 [验证记录](mg-styles-validation.md)。声音点仍为制作建议，参考页无音轨。
+
 ## 许可与研究材料
 
 已读取固定提交的 [LICENSE](https://github.com/Vincentwei1021/mg-styles-15/blob/49052d80bfaf9fa8412cc9710530e5e95a3b8d8c/LICENSE)、README、全部风格 prompt、全部 `index.html` 与 `cues.json`，以及入口引用的 scene、film、main、HUD 和 liquid 模块。LICENSE 为 MIT，版权行是 `Copyright (c) 2026 Vincentwei1021`；复制或实质改编其代码需要保留版权与许可。这里选择独立实现一般设计方法，未搬入上游电影、品牌、音轨、字体轮廓、贴图、照片、采样或实现代码。
@@ -64,7 +70,7 @@
 
 Canvas 的标题/副题/条目与 pace 接口仍是 prototype 的基础复用面。独立媒体源码分别具有角色/曝光、因果图、语义路线、材质/章节、显式轮廓、证据关系、目标轨迹、父子剪影、微 UI、模块布局、旅程路标、任务、隐式场或反应 cue 等输入，不能用统一数据卡示例替代各自叙事验证。系统字体角色不是实际字形加载证明；本地字体来源与许可、覆盖和文字 fit 依各路径预检及真实帧记录确认，不据“有 CJK 字体”推断任意字符覆盖。
 
-源码能力、构建器接入、完整媒体生成、技术 QC、独立艺术审查与用户观看确认是不同结论。独立媒体路径的结果也不转授给 Canvas prototype；三维底片 storyboard、逐帧 Blender 连续路线及解析 image-space 玻璃光学须保留各自近似与证据范围。
+源码能力、构建器接入、完整媒体生成、技术 QC、独立艺术审查与用户观看确认是不同结论。独立媒体路径的结果也不转授给 Canvas prototype 或新 HTML 参考；三维底片 storyboard、逐帧 Blender 连续路线及解析 image-space 玻璃光学须保留各自近似与证据范围。
 
 `build.py` 参考音仍按固定间隔音符生成，Canvas 画面按归一化 phase/pace 计算，未共享语义 cue 表。独立媒体路径可以接入时间线音轨，但不同风格的完整 `sound_sync` 仍须据实际试听与逐拍检查裁定。
 
