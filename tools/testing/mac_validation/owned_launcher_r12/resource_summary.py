@@ -5,6 +5,43 @@ import math
 import re
 from pathlib import Path
 
+CENSUS_SCHEMA = 'mac-resource-census/1'
+
+
+def validate_census(row):
+    """Validate a separate reported census; never promote candidates to owners."""
+    candidates, verified = row['census_processes'], row['verified_processes']
+    if not isinstance(candidates, list) or not candidates or not isinstance(verified, list):
+        raise ValueError('Missing census or verified-row list')
+    pids = [p['pid'] for p in candidates]
+    if any(type(pid) is not int or pid <= 0 for pid in pids) or len(set(pids)) != len(pids):
+        raise ValueError('Invalid or duplicate census PID')
+    by_pid = {p['pid']: p for p in candidates}
+    known = [p['pid'] for p in verified]
+    if len(set(known)) != len(known) or not set(known) <= set(pids):
+        raise ValueError('Verified rows not a unique census subset')
+    for p in verified:
+        if type(p.get('start_identity')) is not int or p['start_identity'] <= 0:
+            raise ValueError('Verified census row lacks kernel identity')
+        if number(p['rss_kib']) != number(by_pid[p['pid']]['rss_kib']):
+            raise ValueError('Verified census RSS mismatch')
+    unknown = set(pids) - set(known)
+    if set(row['unverified_candidate_pids']) != unknown:
+        raise ValueError('Unknown census PID set mismatch')
+    if any('start_identity' in by_pid[pid] or 'command' in by_pid[pid] for pid in unknown):
+        raise ValueError('Unverified census row carries identity or command')
+    total = sum(number(p['rss_kib']) for p in candidates)
+    subtotal = sum(number(p['rss_kib']) for p in verified)
+    if (total != number(row['reported_census_rss_kib'])
+            or subtotal != number(row['verified_live_rss_kib'])
+            or total-subtotal != number(row['unverified_reported_rss_kib'])):
+        raise ValueError('Reported census subtotals do not reconcile')
+    partial = bool(unknown or row['observation_errors']
+                   or row['census_scope_status'] != 'OBSERVED_CAPTURED_CLOSURE')
+    if row['attribution_status'] != ('PARTIAL' if unknown else 'VERIFIED_CAPTURED_ROWS'):
+        raise ValueError('Census attribution status mismatch')
+    return total*1024, partial
+
 
 def number(x):
     if isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) or x < 0:
@@ -58,8 +95,23 @@ def summarize_samples(samples):
                rss_scope='Verified live-process ps sum-RSS; qualified terminal rows excluded without estimating residual/kernel/corpse memory; shared mappings may be counted twice; between-sample peaks and short processes missed',
                interval_min_s=None, interval_max_s=None)
     times, rss, free, pcpu, cpu, missing = [], [], [], [], {}, 0
+    census = dict(sample_count=0, valid_sample_count=0, partial_sample_count=0,
+                  captured_reported_sum_rss_max_bytes=None, status='NOT_PRESENT',
+                  scope='Captured ps-reported census including unknown rows; not an upper or lower '
+                        'bound on actual memory; printed zero is not absence or terminal proof')
+    census_values = []
     for i, row in enumerate(samples):
         try:
+            if row.get('record_schema') == CENSUS_SCHEMA:
+                census['sample_count'] += 1
+                value, partial = validate_census(row)
+                number(row['wall_seconds']); number(row['disk_free_bytes'])
+                census_values.append(value)
+                census['valid_sample_count'] += 1
+                census['partial_sample_count'] += int(partial)
+                # Legacy metrics remain verified-only, never the wider census.
+                row = dict(row, processes=row['verified_processes'],
+                           tree_rss_kib=row['verified_live_rss_kib'])
             t = number(row['wall_seconds']); rows = row['processes']
             if not isinstance(rows, list) or not rows:
                 raise ValueError('No owned process rows; not zero usage')
@@ -105,8 +157,15 @@ def summarize_samples(samples):
         out.update(interval_min_s=min(delta), interval_max_s=max(delta))
     if cpu:
         out.update(sampled_observed_cpu_seconds_lower_bound=sum(cpu.values()),
-                   cumulative_cpu_coverage='PARTIAL' if missing or out['errors'] else 'SAMPLED_LOWER_BOUND')
-    out['status'] = 'UNKNOWN' if not times else 'PARTIAL' if out['errors'] else 'OBSERVED_SAMPLES'
+                   cumulative_cpu_coverage='PARTIAL' if missing or out['errors'] or census['partial_sample_count']
+                       else 'SAMPLED_LOWER_BOUND')
+    out['status'] = 'UNKNOWN' if not times else 'PARTIAL' if out['errors'] or census['partial_sample_count'] else 'OBSERVED_SAMPLES'
+    if census['sample_count']:
+        census['status'] = ('UNKNOWN' if not census_values else 'PARTIAL'
+                            if census['partial_sample_count'] or census['valid_sample_count'] != census['sample_count']
+                            else 'OBSERVED_REPORTED_CENSUS')
+        census['captured_reported_sum_rss_max_bytes'] = max(census_values) if census_values else None
+        out['diagnostic_census'] = census
     return out
 
 

@@ -24,6 +24,10 @@ MIB = 1024 ** 2
 FINAL_TREE = '7d499f03b734cb87c0b4286947b9fb60bd5d303c'
 PS_ARGV = ['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=,rss=,pcpu=,time=,args=']
 CLEAN_PS_ARGV = ['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=']
+RESOURCE_MODE_STRICT = 'strict_identity_v1'
+RESOURCE_MODE_DIAGNOSTIC = 'diagnostic_census_v1'
+RESOURCE_CENSUS_SCHEMA = 'mac-resource-census/1'
+OBSERVATION_PID_CAP = 4096
 
 
 def dump(path, data):
@@ -296,8 +300,8 @@ class OwnedRegistry:
         self.terminal_anchors = {}
         self.resource_terminal_observations = []
 
-    def update(self, rows, *, terminal_probe=None, checkpoint=None):
-        if terminal_probe is None:
+    def update(self, rows, *, terminal_probe=None, checkpoint=None, diagnostic=False):
+        if terminal_probe is None and not diagnostic:
             terminal_probe = getattr(self, 'resource_terminal_probe', None)
         if checkpoint is None:
             checkpoint = getattr(self, 'resource_checkpoint', None)
@@ -331,9 +335,13 @@ class OwnedRegistry:
             if row is None:
                 continue
             current_start = identity(pid, True)
+            # A retained identity is never replaced through the descendant walk.
+            # This authority-narrowing guard applies in both observation modes.
+            if current_start is not None and current_start != record['start_identity']:
+                raise RuntimeError('Retained process start identity changed; ownership requires review')
+            if row['pgid'] != record['pgid']:
+                raise RuntimeError('Owned process changed group; ownership requires review')
             if current_start == record['start_identity']:
-                if row['pgid'] != record['pgid']:
-                    raise RuntimeError('Owned process changed group; ownership requires review')
                 if not row.get('state', '').startswith('Z'):
                     live_owned.add(pid)
         for pid in terminal_anchors:
@@ -353,11 +361,11 @@ class OwnedRegistry:
                     if probe['returned_none'] or by_pid[probe['pid']].get('state', '').startswith('Z')]
         terminal_observations = []
         terminal_pids = set()
-        for probe in failures:
+        for probe in (() if diagnostic else failures):
             pid = probe['pid']; row = by_pid[pid]
             retained = self.processes.get(pid) or terminal_anchors.get(pid)
             descendants = [item for item in resource_related_rows(rows, {pid}) if item['pid'] != pid]
-            if (terminal_probe is None or pid == getattr(self, 'root_pid', None)
+            if (diagnostic or terminal_probe is None or pid == getattr(self, 'root_pid', None)
                     or not row.get('state', '').startswith('Z') or descendants
                     or (retained is None and row['ppid'] not in live_owned)):
                 continue
@@ -384,13 +392,16 @@ class OwnedRegistry:
         self.resource_terminal_observations = terminal_observations
         unresolved = [probe for probe in failures if probe['pid'] not in terminal_pids]
         uncovered = {row['pid'] for row in related} - live_owned - terminal_pids
+        failure = None
         if unresolved or uncovered:
             first = unresolved[0] if unresolved else dict(pid=min(uncovered),
                 retained_identity=False, started_monotonic=time.monotonic(), finished_monotonic=time.monotonic())
             verified = {key:pending_processes[key] for key in live_owned}
-            raise ResourceIdentityUnavailable(first['pid'], first['retained_identity'],
+            failure = ResourceIdentityUnavailable(first['pid'], first['retained_identity'],
                 verified, first['started_monotonic'], first['finished_monotonic'],
                 list(probes.values()), terminal_observations, coverage_failure=not unresolved)
+            if not diagnostic or getattr(self, 'root_pid', None) not in live_owned:
+                raise failure
         self.processes = pending_processes
         owned = []
         for row in rows:
@@ -405,6 +416,8 @@ class OwnedRegistry:
                 match = re.search(r'(?:^|\s)-m\s+vtx\.proc_supervisor\s+guard\s+(\d+)\s+\d+(?:\s+\d+)?\s*$', row['command'])
                 if match and int(match[1]) == generation['record']['pgid'] and row['ppid'] == host and row['pgid'] == row['pid']:
                     generation['guard'] = dict(pid=row['pid'], pgid=row['pgid'], start_identity=row['start_identity'])
+        if failure is not None:
+            raise failure
         return owned
 
     def read_ledgers(self):
@@ -820,6 +833,64 @@ def write_resource_record(stream, record):
     stream.write(json.dumps(record, allow_nan=False)+'\n'); stream.flush()
 
 
+def observe_resource_census(child, registry, runtime, rows, deadline):
+    """Observation-only closure; no raw candidate can create an owned identity."""
+    runtime.remaining(deadline, 1)
+    owned, errors, probes = [], [], []
+    try:
+        owned = registry.update(rows, checkpoint=lambda: runtime.remaining(deadline, 1),
+                                diagnostic=True)
+    except ResourceIdentityUnavailable as error:
+        probes = error.probes
+        owned = [dict(row, start_identity=error.verified_processes[row['pid']]['start_identity'])
+                 for row in rows if row['pid'] in error.verified_pids]
+    except Exception as error:
+        errors.append(type(error).__name__ + ': ' + str(error))
+    verified = {row['pid'] for row in owned}
+    # A missing root cannot be concealed by the first failed auxiliary PID.
+    if registry.root_pid not in verified:
+        errors.append('root_identity_not_verified')
+    previous = set(getattr(registry, 'resource_observation_pids', set()))
+    # Common/system groups cannot seed a host-wide diagnostic census.
+    groups = {pgid for pgid in registry.groups if type(pgid) is int and pgid > 1}
+    unsupported_groups = sorted(set(registry.groups) - groups)
+    if unsupported_groups:
+        errors.append('unsupported_observation_group')
+    anchors = previous | set(registry.processes) | {registry.root_pid}
+    anchors.update(row['pid'] for row in rows if row['pgid'] in groups)
+    related = resource_related_rows(rows, anchors)
+    observed = previous | {row['pid'] for row in related}
+    outside = sorted(row['pid'] for row in related if row['pgid'] not in groups)
+    if outside:
+        errors.append('unverified_group_boundary')
+    if len(observed) > OBSERVATION_PID_CAP:
+        errors.append('observation_pid_cap_exceeded')
+    else:
+        registry.resource_observation_pids = observed
+    evidence = resource_snapshot_evidence(rows, related, verified)
+    total = sum(positive_number(row['rss_kib']) for row in related)
+    verified_rss = sum(positive_number(row['rss_kib']) for row in owned)
+    unknown = sorted({row['pid'] for row in related} - verified)
+    runtime.remaining(deadline, 1)
+    return dict(record_schema=RESOURCE_CENSUS_SCHEMA,
+                resource_observation_mode=RESOURCE_MODE_DIAGNOSTIC,
+                verified_processes=owned, census_processes=evidence.pop('owned_related_rows'),
+                reported_census_rss_kib=total, verified_live_rss_kib=verified_rss,
+                unverified_reported_rss_kib=total-verified_rss,
+                unverified_candidate_pids=unknown, outside_trusted_group_pids=outside,
+                trusted_observation_groups=sorted(groups),
+                unsupported_observation_groups=unsupported_groups, observation_pid_count=len(observed),
+                observation_pid_cap=OBSERVATION_PID_CAP,
+                attribution_status='PARTIAL' if unknown else 'VERIFIED_CAPTURED_ROWS',
+                census_scope_status='INCOMPLETE' if errors else 'OBSERVED_CAPTURED_CLOSURE',
+                observation_errors=errors, identity_probes=probes,
+                root_returncode=child.poll(),
+                resource_scope='Captured related ps-reported sum-RSS, including uncertain rows; '
+                    'not an upper or lower bound on actual task or physical memory; '
+                    'printed zero is not absence or terminal proof',
+                **evidence)
+
+
 def observe_resources(child, registry, runtime, stream, status, deadline, started, before):
     rows = runtime.ps_resources(deadline)
     registry.resource_terminal_probe = lambda row, retained: runtime.terminal_information(row, retained, deadline)
@@ -948,34 +1019,46 @@ def observe_resources(child, registry, runtime, stream, status, deadline, starte
             raise
 
 
-def monitor(child, registry, runtime, output, roots, deadline, started, *, sample_seconds=5, use_vm_stat=False):
+def monitor(child, registry, runtime, output, roots, deadline, started, *, sample_seconds=5, use_vm_stat=False,
+            resource_observation_mode=RESOURCE_MODE_STRICT):
     budget = BudgetState(); next_size = started; total = None
     status = dict(stop_reasons=[], errors=[], samples=0, incomplete_samples=0, resource_identity_recoveries=[],
                   final_new_logical_bytes=None, final_disk_free_bytes=None,
-                  terminal_resource_status='UNKNOWN')
+                  terminal_resource_status='UNKNOWN', resource_observation_mode=resource_observation_mode)
     vm_unavailable = None
     with (output/'resource-samples.jsonl').open('x') as stream:
         try:
             while child.poll() is None:
                 runtime.remaining(deadline, 1)
                 before = runtime.clock()
-                owned, before, recovery_of = observe_resources(child, registry, runtime, stream,
-                    status, deadline, started, before)
-                if not owned:
-                    raise RuntimeError('Owned resource observation unavailable')
+                diagnostic = resource_observation_mode == RESOURCE_MODE_DIAGNOSTIC
+                if diagnostic:
+                    rows = runtime.ps_resources(deadline)
+                else:
+                    owned, before, recovery_of = observe_resources(child, registry, runtime, stream,
+                        status, deadline, started, before)
+                    if not owned:
+                        raise RuntimeError('Owned resource observation unavailable')
                 pressure, pressure_raw = runtime.pressure(deadline)
+                runtime.remaining(deadline, 1)
                 stat = os.statvfs(str(roots[0]))
+                runtime.remaining(deadline, 1)
                 row = dict(wall_seconds=before-started, utc=__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
-                           disk_free_bytes=stat.f_bavail*stat.f_frsize, processes=owned,
-                           tree_rss_kib=sum(p['rss_kib'] for p in owned), memory_free_percent=pressure,
+                           disk_free_bytes=stat.f_bavail*stat.f_frsize, memory_free_percent=pressure,
                            memory_pressure_raw=pressure_raw)
-                row['terminal_process_observations'] = list(
-                    getattr(registry, 'resource_terminal_observations', []))
-                row['resource_scope'] = ('Verified live-process ps sum-RSS; separately qualified '
-                    'terminal rows are excluded, without estimating residual/kernel/corpse memory')
-                row['tree_rss_bytes'] = row['tree_rss_kib']*1024
-                if recovery_of is not None:
-                    row['recovery_of_incomplete_sample_id'] = recovery_of
+                if diagnostic:
+                    row.update(observe_resource_census(child, registry, runtime, rows, deadline))
+                    guard_row = dict(row, tree_rss_bytes=row['reported_census_rss_kib']*1024)
+                else:
+                    row.update(processes=owned, tree_rss_kib=sum(p['rss_kib'] for p in owned))
+                    row['terminal_process_observations'] = list(
+                        getattr(registry, 'resource_terminal_observations', []))
+                    row['resource_scope'] = ('Verified live-process ps sum-RSS; separately qualified '
+                        'terminal rows are excluded, without estimating residual/kernel/corpse memory')
+                    row['tree_rss_bytes'] = row['tree_rss_kib']*1024
+                    if recovery_of is not None:
+                        row['recovery_of_incomplete_sample_id'] = recovery_of
+                    guard_row = row
                 if use_vm_stat and vm_unavailable is None:
                     try:
                         row['vm'], row['vm_raw'] = runtime.vm(deadline)
@@ -983,7 +1066,10 @@ def monitor(child, registry, runtime, output, roots, deadline, started, *, sampl
                         vm_unavailable = type(error).__name__ + ': ' + str(error)
                 if vm_unavailable is not None:
                     row['vm'] = None; row['vm_unavailable_reason'] = vm_unavailable
-                decision = budget.observe(row, total)
+                guard_row.update(vm=row.get('vm'))
+                decision = budget.observe(guard_row, total)
+                if diagnostic and row['observation_errors']:
+                    decision['stop_reasons'].append('diagnostic_observation_scope_failed')
                 if not decision['stop_reasons'] and before >= next_size:
                     total = logical_bytes(roots, runtime, deadline); next_size = runtime.clock()+60
                     row['new_logical_bytes'] = total
@@ -1038,6 +1124,10 @@ def load_spec(path):
         raise ValueError('Explicit expected browser generation count required')
     if type(spec.get('use_vm_stat', False)) is not bool:
         raise ValueError('use_vm_stat must be an explicit boolean when supplied')
+    mode = spec.get('resource_observation_mode', RESOURCE_MODE_STRICT)
+    if mode not in (RESOURCE_MODE_STRICT, RESOURCE_MODE_DIAGNOSTIC):
+        raise ValueError('Unknown resource observation mode')
+    spec['resource_observation_mode'] = mode
     if not isinstance(spec['argv'], list) or not spec['argv'] or not all(isinstance(x,str) for x in spec['argv']):
         raise ValueError('Explicit argv required')
     roots = [Path(p).absolute() for p in spec['new_output_roots']]
@@ -1049,6 +1139,13 @@ def load_spec(path):
             raise ValueError('Project and evidence must be included in logical-byte accounting')
     spec['new_output_roots'] = [str(p) for p in roots]
     return spec
+
+
+def finalize_status(result):
+    """The unchanged overall/next-arm gate, shared with pure summary checks."""
+    result['state']='PASS' if result.get('exit') == 0 and not result.get('stop_reasons') and not result.get('errors') and not result.get('primary_error') and result.get('cleanup',{}).get('status')=='PASS' else 'FAILED'
+    result['next_arm_allowed']=result['state']=='PASS'
+    return result
 
 
 def main():
@@ -1096,7 +1193,8 @@ def main():
             child=subprocess.Popen(spec['argv'],cwd=repo,env=env,stdin=subprocess.DEVNULL,stdout=stdout,stderr=stderr,start_new_session=True)
             registry=OwnedRegistry(child,owner,spec['project'],spec['expected_nested_generations'])
             dump(output/'status.json',dict(state='RUNNING',root_pid=child.pid,root_identity=registry.processes[child.pid],argv=spec['argv']))
-            result=monitor(child,registry,runtime,output,roots,deadline,started,use_vm_stat=spec.get('use_vm_stat',False))
+            result=monitor(child,registry,runtime,output,roots,deadline,started,use_vm_stat=spec.get('use_vm_stat',False),
+                resource_observation_mode=spec['resource_observation_mode'])
         except BaseException as error:
             result=dict(state='FAILED',primary_error=type(error).__name__+': '+str(error))
             if child is not None and registry is not None:
@@ -1107,8 +1205,8 @@ def main():
         result['root_pid']=child.pid if child else None
         result['root_identity']=registry.processes[child.pid] if registry else None
         result['wall_seconds_with_cleanup']=runtime.clock()-started
-        result['state']='PASS' if result.get('exit') == 0 and not result.get('stop_reasons') and not result.get('errors') and not result.get('primary_error') and result.get('cleanup',{}).get('status')=='PASS' else 'FAILED'
-        result['next_arm_allowed']=result['state']=='PASS'
+        result['resource_observation_mode']=spec['resource_observation_mode']
+        finalize_status(result)
         dump(output/'status.json',result)
     return 0 if result['state']=='PASS' else 1
 
