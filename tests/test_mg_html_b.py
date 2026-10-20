@@ -42,6 +42,30 @@ class HTMLGroupB(unittest.TestCase):
         self.assertEqual(len(data), 4)
         self.assertTrue(all(item['seek_trace_checks'] >= 18 for item in data))
 
+    def test_liquid_shortest_resolve_has_six_identical_actual_rgba_frames(self):
+        # Reuse only the mock Canvas/helper setup, avoiding the unrelated suite.
+        setup = HARNESS.split('const result=[];')[0]
+        probe = r"""
+vm.runInContext(fs.readFileSync(root+'/liquid.js','utf8'),sandbox);
+const scene=sandbox.window.MG_REFERENCE,d=JSON.parse(JSON.stringify(scene.examples[0].data));
+d.stages.forEach((s,i)=>{s.in=i*10;s.out=(i+1)*10;});
+d.stages[3].out=42;
+let refused=false;try{scene.validate(d,42,h);}catch(e){if(!/six complete held frames/.test(e.message))throw e;refused=true;}
+if(!refused)throw Error('12-frame resolve leaves only5 complete frames');
+d.stages[3].out=43;scene.validate(d,43,h);
+const rgba=[],traces=[];
+for(let f=37;f<43;f++){traces.push(draw(scene,d,f,43));const pixels=calls.find(c=>c[0]==='rgba');if(!pixels)throw Error('no actual RGBA buffer');rgba.push(pixels[1]);}
+if(new Set(rgba).size!==1||new Set(traces).size!==1)throw Error('last6 surfaces/type not held');
+draw(scene,d,36,43);if(calls.find(c=>c[0]==='rgba')[1]===rgba[0])throw Error('preceding motion drawing already identical');
+scene.examples.forEach(ex=>scene.validate(ex.data,ex.frames,h));
+console.log(JSON.stringify({minimum_resolve_frames:13,rejected:12,complete_frames:[37,38,39,40,41,42],rgba_sha256:rgba[0]}));
+"""
+        result = subprocess.run(['node','-e',setup+probe,str(HTML)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr[-4000:])
+        report = json.loads(result.stdout)
+        self.assertEqual(report['minimum_resolve_frames'],13)
+        self.assertEqual(len(report['complete_frames']),6)
+
     def test_shells_use_shared_runtime_and_independent_scene(self):
         for name in ['cel-boil','collage','morph','liquid']:
             source = (HTML / (name+'.html')).read_text()

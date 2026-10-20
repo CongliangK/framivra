@@ -100,6 +100,12 @@
         throw Error("amount must be common across stages");
       amount = s.amount ?? 1;
     });
+    // Completion starts at this integer address; count complete drawings rather
+    // than rounding a percentage of the duration (12 frames would leave only5).
+    const resolveFrames = d.stages[3].out - d.stages[3].in;
+    const completeAt = Math.ceil(0.55 * (resolveFrames - 1));
+    if (resolveFrames - completeAt < 6)
+      throw Error("resolve needs at least six complete held frames (minimum13)");
     h.label(d.stages[3].label, "final masked word", 14);
     resolveSize(d);
   }
