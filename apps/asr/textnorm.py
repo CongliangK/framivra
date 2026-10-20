@@ -31,7 +31,7 @@
      系统 libopencc 软依赖（chinese_script.py 同手法），缺库返回原文本并告警
   N7 行尾句中标点截去（rstrip_mid_punct，由 segline 逐行调用；句末类 。？！… 保留）
 
-来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.5/§3.6；
+来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.5/§3.6；
 ibus-voice-ime text_postprocess.py（cleanup_punctuation / _FILLER_RE 族 /
 _split_long_unpunctuated_runs）、chinese_script.py（ctypes opencc）。
 """
@@ -57,7 +57,7 @@ _PUNCT_STRENGTH = ("？", "！", "。", "；", "：", "，")
 # N3：空格清理
 _SPACE_AROUND_CJK_PUNCT_RE = re.compile(r"[ \t\r\f\v]*([，。！？；：、])[ \t\r\f\v]*")
 _CJK_SPACE_CJK_RE = re.compile(r"(?<=[\u4e00-\u9fff])[ \t]+(?=[\u4e00-\u9fff])")
-# 注：CJK↔拉丁边界空格按方案 N3 保留（与 IME 原实现不同，方案为权威规格），
+# 注：CJK↔拉丁边界空格按方案 N3 保留（与 IME 原实现不同，本模块 README 的 N3 规则为准），
 #     「配合 opencode」「opencode 编辑」中的空格不删。
 
 # N5：口水词（方案 §3.6 N5 分组）

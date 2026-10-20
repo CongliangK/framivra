@@ -1,4 +1,5 @@
 # imgen —— 生图 API 生图 + cover-crop 后处理
+原三模块方案的章节编号仅作历史来源：[2026-09-11 设计记录](https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md)。
 
 > **v2 结构（P2a 批次 2 起本目录迁入 `apps/imgen/`）**：manifest 见 `app.json`（kind=app；健康检查 = `imgen_cli.py --help`）。随迁清除 `spec_from_file_location`（v2 §1.4 冻结禁令）：imgen_cli.py 加载 secrets.py 与 tests/_loader.py、init.sh 探测内嵌加载统一改为 **app 根 sys.path 注入 + 普通 import**（app 目录注入不涉内核双模块，允许；保留解析落点校验哨兵防 stdlib 同名 secrets 串味）。
 
@@ -41,7 +42,7 @@
 
 轮询 `GET /api/async/detail?id=<task_id>`：status `0/1`=排队/生成中、`2`=成功、`3`=**审核拒绝（不退款不重试）**、`-1`=失败。`result` 字段四形态防御解析（str / list[str] / list[dict] / wrapper dict）。错误分类：429/5xx 可重试，4xx 立即上抛。鉴权头 `Authorization: <裸key>`（无 Bearer）。
 
-## --kind 联动矩阵（方案 §5.2 强制）
+## --kind 联动矩阵
 
 `--kind` 不但决定落位，还**联动生成档位**，保证 cover-crop 前源图 ≥ 目标（只降采样不放大）：
 
@@ -134,7 +135,7 @@ cd apps/imgen && env python3 -m unittest discover -s tests -t . -v   # 71 用例
 # 或仓根统一入口：bash scripts/run_all_tests.sh（自动发现 apps/*/tests）
 ```
 
-覆盖（方案 §9.3）：postprocess 三分支 golden+实跑断言；mock 全链（提交→轮询 0→1→2→下载→落位）；status=3 中文报错不重试不重复提交；4xx 立即上抛；URL 失效重试 ≤2 上抛；key 链优先级；付费门 0/1 次提交计数；--kind 载荷联动（bg4k=4K/16:9 等）；--ref 15 拒 14 过；空目录自建；--task-id 恢复零提交；batch 总价文案与 >50 中止。测试输入 PNG 由 ffmpeg 合成（KB 级，不落仓）；断言用 ffprobe（不依赖 PIL/numpy）。
+覆盖：postprocess 三分支 golden+实跑断言；mock 全链（提交→轮询 0→1→2→下载→落位）；status=3 中文报错不重试不重复提交；4xx 立即上抛；URL 失效重试 ≤2 上抛；key 链优先级；付费门 0/1 次提交计数；--kind 载荷联动（bg4k=4K/16:9 等）；--ref 15 拒 14 过；空目录自建；--task-id 恢复零提交；batch 总价文案与 >50 中止。测试输入 PNG 由 ffmpeg 合成（KB 级，不落仓）；断言用 ffprobe（不依赖 PIL/numpy）。
 
 ## 依赖
 

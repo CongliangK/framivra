@@ -88,7 +88,7 @@ def _collect_active_segs(c):
     段文件名只带段起点（seg{si}_{a:06d}_{key}.mp4），b = 下一段起点（末段 = c.dur）。
     以 cache/vseg/list.txt（最近一次段渲染的拼接清单）为准——直接 glob seg* 会把
     同槽旧键残留也当成生效段，产生重叠 [a,b) 区间：stat 未变的陈旧段可错误豁免
-    被篡改的现役段所在帧（清单之外的一切不参与免检，见实现报告）。"""
+    被篡改的现役段所在帧（清单之外的一切不参与免检）。"""
     vdir = c.cache / "vseg"
     lst = vdir / "list.txt"
     if not lst.exists():

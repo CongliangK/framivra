@@ -1,4 +1,5 @@
 # tts/ · IndexTTS-2.5 口播占位语音产线 + edge-tts 兜底
+原三模块方案的章节编号仅作历史来源：[2026-09-11 设计记录](https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md)。
 
 > **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
 
@@ -123,13 +124,13 @@ cd apps/tts && env python3 -m unittest discover -s tests -t . -v   # 零模型�
 ## 已验证版本（本机资产，init.sh 探测即用）
 
 - 模型：IndexTeam/IndexTTS-2.5 @ `~/AI/IndexTTS/repo/checkpoints`（11 文件五件套齐，
-  ModelScope revision 见方案 §6.1 表 #4）；代码仓 indextts（infer_v2_5.IndexTTS2）。
+  许可与固定证据见 ../../docs/third-party-licenses.md）；代码仓 indextts（infer_v2_5.IndexTTS2）。
 - 解释器：conda indextts py3.10.19 / repo `.venv` py3.11.13（官方支持区间 3.10-3.11）。
 - edge-tts @ `~/miniconda3/bin/edge-tts`（py3.13 入口脚本）；音色参考 9.9s 已核实。
 
 ## 风险
 
-- edge-tts 依赖微软非官方公开接口（无 SLA），仅作兜底不作主力（方案 §11）。
+- edge-tts 依赖微软非官方公开接口（无 SLA），仅作兜底不作主力。
 - atempo 方向坑复发风险由 golden 单测钉死（R8）；`duration_factor` 与 atempo 方向相反，
   代码注释已照录 run_v2.py 修正注记。
 - 同卡共驻（IME sidecar / ASR sidecar / NVENC）时 indextts 可能 OOM——属预期降级路径，
