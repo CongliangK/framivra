@@ -44,10 +44,7 @@ import time
 import urllib.request
 import zlib
 
-if __package__:
-    from .gfx_cli import png_invalid_reason, verify_frames
-else:  # keep the documented standalone renderer entry point usable
-    from gfx_cli import png_invalid_reason, verify_frames
+from .gfx_cli import png_invalid_reason, verify_frames
 
 try:
     import numpy  # noqa: F401
