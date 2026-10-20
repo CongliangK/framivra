@@ -1,9 +1,10 @@
 # templates/ —— 工作流模板与开发范本
 
-五个平级模板（ARCHITECTURE §4 + #177 切片）；工作流可组合 SKILL、参考资料、资产和脚本，包内布局保持自包含：
+平级模板（ARCHITECTURE §4 + #177 切片）；工作流可组合 SKILL、参考资料、资产和脚本，包内布局保持自包含：
 
 | 目录 | 是什么 | 起手模板 |
 |---|---|---|
+| `mg-styles/` | 可替换内容与整数帧节奏的原创 MG 风格工程模板 | [用法](mg-styles/README.md) |
 | `tech-talk/` | 完整 B 站科技口播工作流：六阶段 SOP、参考资料、媒体与工程模板、脚本 | 视频制作全流程 |
 | `hello-app/` | 最小应用（app）范本：产出独立素材、不进 timeline 管线 | 第三方 app |
 | `hello-plugin/` | 音频插件完整纪律范本：缝 A prepare_source + 三不变量 + 三分支 | 第三方音频插件 |
@@ -101,3 +102,5 @@ cd templates/hello-plugin && env python3 -m unittest discover -s tests -t .
 ```
 
 skill-demo 无单测（`expected_check.sh` 即其验收：真渲染 + 帧数/QC/TP 断言）。
+
+消费面变更公告（2026-10-20，独立预审通过）：新增 `mg-styles/README.md` 与原创模板源码，接口保持单作品单 HTML、整数帧、显式缓存依赖；操作 home 为包内 README，研究与验证留在 docs。云环境未安装用户的六件 live 挂载，复核为缺失，不宣称 BAD=0 或个人 Skill 已更新。
