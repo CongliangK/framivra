@@ -116,9 +116,12 @@ def validate_3d_content(data, frames=240, samples=256, width=1920, height=1080, 
     transition_frames=data.get('transition_frames',min(24,max(1,args.frames//8)))
     if type(transition_frames) is not int or not 1<=transition_frames<args.frames:
         raise ValueError('transition_frames must be a positive integer less than frames')
-    for left,right in zip(story,story[1:]):
-        if right['frame']-left['frame'] < transition_frames:
-            raise ValueError('chapters must leave room for the configured transition')
+    for index,chapter in enumerate(story):
+        end=story[index+1]['frame'] if index+1<len(story) else frames
+        # The transition reaches progress=1 at start+transition_frames. Since
+        # chapter windows exclude end, that frame must still belong to the chapter.
+        if end-chapter['frame'] <= transition_frames:
+            raise ValueError('each chapter must include its complete transition and at least one settled frame')
     data.update(palette=palette, pace=pace, objects=items, beats=beats, transition=transition, scene=scene_data,
                 scene_story=story,links=links,transition_frames=transition_frames,duration_frames=frames)
     return data

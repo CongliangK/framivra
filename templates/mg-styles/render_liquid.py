@@ -128,7 +128,7 @@ def validate_liquid_content(data,frames,font_path=None):
     for stage in normalized['stages']:
         _fit_font(stage['label'],1600,52,font_file)
         if stage['mode']=='resolve':
-            _fit_font(stage['label'],670,72,font_file)
+            _resolve_font(normalized,frames,font_file)
     return normalized
 
 
@@ -153,6 +153,35 @@ def _text(draw,text,xy,maxwidth,size,color,font_path):
     draw.text(xy,text,font=font,fill=color,anchor='mm')
 
 
+def _surface_mask(data,frame,frames):
+    """Use the identical sampled coverage mask for rendering and text fitting."""
+    from PIL import Image,ImageFilter
+    return liquid_mask(data,frame,frames,size=(960,540)).filter(ImageFilter.GaussianBlur(.55)).resize((1920,1080),Image.Resampling.LANCZOS)
+
+
+def _resolve_font(data,frames,font_file):
+    """Fit the full final glyph rectangle inside the actual final fluid mask.
+
+    Width alone does not protect a rounded contour's corners. The final text
+    sits at the final pool centre, with ten pixels of high-coverage padding.
+    Earlier resolve frames intentionally reveal this fixed layout through fluid.
+    """
+    from PIL import Image,ImageDraw
+    label=data['stages'][-1]['label']
+    mask=_surface_mask(data,frames-1,frames)
+    draw=ImageDraw.Draw(Image.new('L',(1,1)))
+    for size in range(72,11,-1):
+        font=_font(size,font_file)
+        box=draw.textbbox((960,570),label,font=font,anchor='mm')
+        if not label:
+            return font
+        padded=(box[0]-10,box[1]-10,box[2]+10,box[3]+10)
+        if (padded[0]>=0 and padded[1]>=0 and padded[2]<=1920 and padded[3]<=1080
+                and mask.crop(padded).getextrema()[0]>=250):
+            return font
+    raise ValueError('resolve text does not fit the final liquid mask even at minimum font size 12')
+
+
 def render_liquid_frame(data,frame,frames,font_path=None):
     """Return a pure RGB 1920x1080 frame, including the liquid-mask final reveal."""
     from PIL import Image,ImageDraw,ImageFilter
@@ -162,7 +191,7 @@ def render_liquid_frame(data,frame,frames,font_path=None):
     bg,ink,accent,secondary=normalized['palette']
     image=Image.new('RGB',(1920,1080),bg)
     draw=ImageDraw.Draw(image)
-    mask=liquid_mask(data,frame,frames,size=(960,540)).filter(ImageFilter.GaussianBlur(.55)).resize((1920,1080),Image.Resampling.LANCZOS)
+    mask=_surface_mask(data,frame,frames)
     shadow=Image.new('RGB',image.size,bg); shadow.paste(secondary,(0,0,1920,1080))
     image.paste(shadow,(0,12),mask.filter(ImageFilter.GaussianBlur(16)))
     fluid=Image.new('RGB',image.size,accent)
@@ -170,7 +199,7 @@ def render_liquid_frame(data,frame,frames,font_path=None):
     # A contour-following highlight is itself clipped to the fluid surface.
     fd.ellipse((520,330,1370,510),fill=secondary)
     if stage['mode']=='resolve':
-        _text(fd,stage['label'],(960,540),670,72,bg,font_file)
+        fd.text((960,570),stage['label'],font=_resolve_font(normalized,frames,font_file),fill=bg,anchor='mm')
     image.paste(fluid,(0,0),mask)
     draw=ImageDraw.Draw(image)
     # Information is composited last; soft liquid shadows cannot obscure the heading.

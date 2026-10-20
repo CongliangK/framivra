@@ -76,6 +76,41 @@ class LiquidTemplate(unittest.TestCase):
                 path=Path(tmp)/'frame.png';image.save(path)
                 with Image.open(path) as read:self.assertEqual(read.tobytes(),image.tobytes())
 
+    def test_small_amount_resolve_fits_full_glyph_rectangle_inside_real_surface(self):
+        from PIL import ImageDraw,ImageChops
+        data=liquid._normalize({},120)
+        for stage in data['stages']:stage['amount']=.65
+        data['stages'][-1]['label']='让每一个小小的想法都汇聚成我们共同期待的美好未来'
+        font_file=liquid._font_file(data)
+        old_font=liquid._fit_font(data['stages'][-1]['label'],670,72,font_file)
+        font=liquid._resolve_font(data,120,font_file)
+        draw=ImageDraw.Draw(Image.new('L',(1920,1080)))
+        box=draw.textbbox((960,570),data['stages'][-1]['label'],font=font,anchor='mm')
+        padded=(box[0]-10,box[1]-10,box[2]+10,box[3]+10)
+        surface=liquid._surface_mask(data,119,120)
+        self.assertGreaterEqual(surface.crop(padded).getextrema()[0],250)
+        self.assertLess(font.size,old_font.size)
+        # The rendered letter pixels are complete, rather than merely passing a width check.
+        glyph=Image.new('L',(1920,1080))
+        ImageDraw.Draw(glyph).text((960,570),data['stages'][-1]['label'],font=font,fill=255,anchor='mm')
+        glyph_pixels=np.array(glyph)>0
+        self.assertGreater(glyph_pixels.sum(),0)
+        self.assertTrue(np.all(np.array(surface)[glyph_pixels]>=250))
+        actual=liquid.render_liquid_frame(data,119,120)
+        expected=liquid.render_liquid_frame(data,118,120)
+        liquid.render_liquid_frame(data,0,120)
+        self.assertEqual(actual.tobytes(),liquid.render_liquid_frame(data,119,120).tobytes())
+        self.assertEqual(actual.size,(1920,1080))
+        with tempfile.TemporaryDirectory() as temp:
+            target=Path(temp)/'frame.png';actual.save(target)
+            with Image.open(target) as reopened:self.assertIsNone(ImageChops.difference(actual,reopened).getbbox())
+        data['stages'][-1]['label']='满'*80
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/'not-created'
+            with self.assertRaisesRegex(ValueError,'final liquid mask'):
+                liquid.render_liquid_frames(data,120,output)
+            self.assertFalse(output.exists())
+
     def test_schema_rejects_invalid_windows_and_output(self):
         for data,frames in (({},True),({},59),({'stages':[]},120),({'seed':False},120)):
             with self.subTest(data=data,frames=frames),self.assertRaises(ValueError):

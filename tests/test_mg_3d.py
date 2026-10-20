@@ -45,6 +45,29 @@ class ThreeDimensionalStory(unittest.TestCase):
             with self.subTest(patch=patch), self.assertRaises(ValueError):
                 self.normalize({**self.content, **patch})
 
+    def test_every_chapter_includes_a_settled_frame_before_its_exclusive_end(self):
+        data=json.loads((ROOT/'examples/three-d-continuous-a.json').read_text())
+        data['transition_frames']=15
+        # A last chapter at 119 can never finish its 15-frame transition.
+        for starts in ((0,60,119),(0,60,105),(0,15,80)):
+            candidate=deepcopy(data)
+            for chapter,frame in zip(candidate['scene_story'],starts):chapter['frame']=frame
+            with self.subTest(starts=starts),self.assertRaisesRegex(ValueError,'settled frame'):
+                MG.validate_3d_content(candidate,frames=120)
+        # Exactly one final settled frame is a valid boundary (104+15=119).
+        data['scene_story'][-1]['frame']=104
+        normalized=MG.validate_3d_content(data,frames=120)
+        final=MG.story_state(normalized,119)
+        self.assertEqual(final['chapter'],2)
+        self.assertEqual(final['progress'],1)
+        self.assertEqual(final['scales'],[(1,1,1)]*3)
+        for name in ('three-d-continuous-a.json','three-d-continuous-b.json'):
+            active=json.loads((ROOT/'examples'/name).read_text())
+            prepared=MG.validate_3d_content(active,frames=120)
+            self.assertEqual([chapter['frame'] for chapter in prepared['scene_story']],[0,40,80])
+            self.assertEqual(prepared['transition_frames'],12)
+            self.assertEqual(MG.story_state(prepared,119)['progress'],1)
+
     def test_quality_and_viewport_integer_validation(self):
         for options in ({'samples': True}, {'samples': 0}, {'samples': 257}, {'width': 1920.5}, {'height': 20}, {'engine': 'unknown'}):
             with self.subTest(options=options), self.assertRaises(ValueError):
