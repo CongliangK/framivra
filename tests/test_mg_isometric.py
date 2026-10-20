@@ -64,6 +64,11 @@ class IsometricAssembly(unittest.TestCase):
             output=Path(tmp)/'not-created'
             with self.assertRaises(ValueError):iso.render_isometric_frames(data,240,output)
             self.assertFalse(output.exists())
+        missing=example('neighborhood');missing['title']='\U0010ffff'
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp)/'not-created'
+            with self.assertRaises(ValueError):iso.render_isometric_frames(missing,240,output)
+            self.assertFalse(output.exists())
         dejavu=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
         if dejavu.is_file():
             with self.assertRaises(ValueError):iso.validate_isometric_content(example('neighborhood'),240,dejavu)

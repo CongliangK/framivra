@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import shutil
 import unittest
 
 SPEC=importlib.util.spec_from_file_location('mg_liquid',Path(__file__).resolve().parents[1]/'templates/mg-styles/render_liquid.py')
@@ -110,6 +111,29 @@ class LiquidTemplate(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'final liquid mask'):
                 liquid.render_liquid_frames(data,120,output)
             self.assertFalse(output.exists())
+
+    def test_actual_missing_glyph_rejected_in_every_text_role_without_writes(self):
+        for role in ('title','subtitle','stage'):
+            data=liquid._normalize({},120)
+            if role=='stage':data['stages'][2]['label']='坏字符'+chr(0x10ffff)
+            else:data[role]='bad '+chr(0x10ffff)
+            with self.subTest(role=role):
+                with self.assertRaisesRegex(ValueError,'font lacks required glyph'):
+                    liquid.validate_liquid_content(data,120)
+                with tempfile.TemporaryDirectory() as temp:
+                    output=Path(temp)/'frames'
+                    with self.assertRaisesRegex(ValueError,'font lacks required glyph'):
+                        liquid.render_liquid_frames(data,120,output)
+                    self.assertFalse(output.exists())
+        dejavu=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
+        if dejavu.is_file():
+            with tempfile.TemporaryDirectory() as temp:
+                renamed=Path(temp)/'custom-font.ttf'
+                shutil.copyfile(dejavu,renamed)
+                # A renamed Latin font cannot evade the actual glyph check.
+                with self.assertRaisesRegex(ValueError,'font lacks required glyph'):
+                    liquid.validate_liquid_content(second_content(),144,renamed)
+
 
     def test_schema_rejects_invalid_windows_and_output(self):
         for data,frames in (({},True),({},59),({'stages':[]},120),({'seed':False},120)):
