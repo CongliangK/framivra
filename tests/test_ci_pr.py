@@ -2,6 +2,7 @@
 import contextlib
 from collections import Counter
 import io
+import json
 import sys
 import types
 import unittest
@@ -201,8 +202,16 @@ class CuratedRegressionGate(unittest.TestCase):
                        'tests.test_doc_gates', 'tests.test_ci_pr',
                        'tests.test_fstxn', 'tests.test_proc_supervisor',
                        'tests.test_vt_entry', 'tests.safety.test_hygiene_safety',
-                       'tests.test_gfx_svg', 'tests.test_png_consumer_scope'):
+                       'tests.test_gfx_svg', 'tests.test_png_consumer_scope',
+                       'tests.test_cef_png_config'):
             self.assertIn(module, ci_pr.PR_MODULES)
+        self.assertIn('tests.test_cef_png_config', ci_pr.curated_group('3'))
+        self.assertNotIn('tests.test_cef_encode_job', ci_pr.PR_MODULES)
+        policy = json.loads((ci_pr.ROOT / 'scripts/ci_partition_policy.json').read_text())
+        self.assertEqual([row['partition'] for row in policy['placements']
+                          if row['selector'] ==
+                          'tests.test_cef_encode_job.PureSerialEncodeJobSelfTest'],
+                         ['optional'])
 
     def test_unrecognized_argument_is_an_error(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
