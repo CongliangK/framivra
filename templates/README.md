@@ -10,6 +10,8 @@
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
 
+消费面变更公告（2026-10-20，修改配方与 gfx 语义清理，落笔前范围已评审）：修订 `docs/skill/SKILL.md`、`docs/skill/references/{runbook,edit,gfx}.md` 与本公告，并同步 `docs/post-loudness.md`、`docs/ARCHITECTURE.md` 的操作指针。R1-R4 正式交付收敛为完整 all；补齐 clip/共享依赖范围，静态跨度不再依赖仓外私人脚本或 DOM 等价推断，D22 明确限于 tech-talk 工作流。文件路径集合、生产代码、CI 与模板资产不变；真实用户六件挂载未在本次云端静态检查中验证，不宣称其已安装或更新。
+
 消费面变更公告（2026-10-19，HTML 创作组织，落笔前范围已评审）：原则 home=[HTML 创作组织](../docs/skill/references/gfx.md#html-创作组织)。本次仅修订既有 Markdown：`AGENTS.md`、`README.md`、`docs/skill/SKILL.md`、`docs/skill/references/{gfx,edit,runbook}.md`、`templates/README.md`、`templates/tech-talk/SKILL.md`、`templates/tech-talk/references/production-workflow.md`、`templates/tech-talk/templates/03-assets-plan.md`、`templates/tech-talk/assets/gfx-templates/{INDEX,_tokens}.md`、`templates/skill-demo/SKILL.md`、`templates/standard-demo/README.md`、`docs/demo-fixture.md`（路径以仓根计）。路径集合、可执行模板与冻结输入不变。真实用户六件挂载复核另行留证；本公告不代表个人 Skill 已安装或更新。
 
 消费面变更公告（2026-10-17，#177 切片）：`templates/` 新增 `standard-demo/` 包（README + profiles + 冻结 benchmark manifest + OFL 字体），属挂载消费面构成变更；语义与用法 home=包内 README 与 `docs/demo-fixture.md`，本表只登记构成。
