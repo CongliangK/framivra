@@ -95,6 +95,45 @@ class PathGeometry(unittest.TestCase):
         self.assertIsNotNone(ImageChops.difference(before.crop((1400, 300, 1780, 760)), after.crop((1400, 300, 1780, 760))).getbbox())
 
     @unittest.skipUnless(READY, 'optional Pillow and separately installed Noto Serif CJK required')
+    def test_single_hold_frame_really_displays_final_fill_at_all_valid_speeds(self):
+        # Exercise the actual raster result, not just an opacity helper or DOM state.
+        for span in (2, 3, 8):
+            for speed in (1, 2, 8):
+                for kind in ('seed', 'tree', 'book', 'house', 'network'):
+                    data={'title':'Boundary', 'drawing_speed':speed, 'story':[
+                        {'object':'seed','label':'Start','in':0,'out':2,'hold':1},
+                        {'object':kind,'label':'Finish','in':2,'out':2+span,'hold':1}]}
+                    prepared=line._prepare(data,2+span)
+                    scene=prepared['scenes'][-1]
+                    final=line._render(prepared,1+span)
+                    expected_fill=line._mix(prepared['palette'][0],prepared['palette'][3],.9)
+                    # Only the hero polygons can create this exact interior colour.
+                    pixels=final.crop((960,300,1840,760))
+                    filled=sum(count for count,color in pixels.getcolors(pixels.width*pixels.height) if color==expected_fill)
+                    with self.subTest(span=span,speed=speed,object=kind):
+                        self.assertGreater(filled,100)
+                        self.assertEqual(line._hero_opacity(scene,1+span),1)
+                        reveal=scene['in']+scene['drawing_frames']
+                        before=line._render(prepared,reveal-1).crop((960,300,1840,760))
+                        self.assertNotIn(expected_fill,[color for _,color in before.getcolors(before.width*before.height)])
+
+    @unittest.skipUnless(READY, 'optional Pillow and separately installed Noto Serif CJK required')
+    def test_reveal_finishes_inside_exclusive_window_and_then_holds(self):
+        data=story_a()
+        data['drawing_speed']=2
+        prepared=line._prepare(data,180)
+        scene=prepared['scenes'][-1]
+        start=scene['in']+scene['drawing_frames']
+        opacity=[line._hero_opacity(scene,frame) for frame in range(start,scene['out'])]
+        self.assertGreater(opacity[0],0)
+        self.assertEqual(opacity,sorted(opacity))
+        self.assertEqual(opacity[-1],1)
+        self.assertGreaterEqual(opacity.count(1),2)
+        from PIL import ImageChops
+        first_full=start+opacity.index(1)
+        self.assertIsNone(ImageChops.difference(line._render(prepared,first_full),line._render(prepared,179)).getbbox())
+
+    @unittest.skipUnless(READY, 'optional Pillow and separately installed Noto Serif CJK required')
     def test_bad_cues_do_not_create_output_and_sequence_receipt_is_real(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

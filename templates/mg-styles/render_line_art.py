@@ -179,6 +179,17 @@ def _mix(bg, fg, opacity):
     return tuple(round(int(bg[j:j + 2], 16) * (1 - opacity) + int(fg[j:j + 2], 16) * opacity) for j in (1, 3, 5))
 
 
+def _hero_opacity(scene, frame):
+    """Use the inclusive completed-line frame as the first reveal frame.
+
+    Windows are [in,out): a one-frame hold has only out-1 available. It must
+    display the filled hero there, rather than waiting for nonexistent out.
+    """
+    reveal_start = scene['in'] + scene['drawing_frames']
+    reveal_frames = max(1, min(24, scene['out'] - reveal_start))
+    return min(1, max(0, (frame - reveal_start + 1) / reveal_frames))
+
+
 def _render(prepared, frame):
     from PIL import Image, ImageDraw
     _int(frame, 'frame', 0, prepared['frames'] - 1)
@@ -202,8 +213,7 @@ def _render(prepared, frame):
         line_color = _mix(bg, ink, opacity)
         is_final = i == len(prepared['scenes']) - 1
         if is_final and progress >= 1:
-            reveal_start = scene['in'] + scene['drawing_frames']
-            hero = min(1, max(0, (frame - reveal_start) / max(1, min(24, scene['out'] - reveal_start - 1))))
+            hero = _hero_opacity(scene, frame)
             for polygon in scene['fills']:
                 draw.polygon([(round(x), round(y)) for x, y in polygon], fill=_mix(bg, fill, hero * .9))
             line_color = ink
