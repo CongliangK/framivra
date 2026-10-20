@@ -51,6 +51,7 @@ PR_MODULES = (
     'apps.asr.tests.test_security_admission',
     'apps.research.tests.test_requests',
     'templates.hello-app.tests.test_hello',
+    'tests.test_png_consumer_scope',
 )
 
 

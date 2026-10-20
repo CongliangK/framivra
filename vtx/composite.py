@@ -812,40 +812,41 @@ def build_video(c: Ctx, layers=None):
     W, H = ((c.w // 2) // 2 * 2, (c.h // 2) // 2 * 2) if draft else (c.w, c.h)
     if layers is None:
         layers = prepare_layers(c)
-    tracks = c.tl["video_tracks"]
-    for L in layers:                      # 记账：本时间轴的全部 seg（含缓存命中）
-        if not L["gfx"] and L["seg"].exists() and not c.dry:
-            manifest_record(c, L["seg"], "video", L["seg"].stem)
-    plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, nframes=nframes,
-                      nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", str(DEFAULT_SEGMENTS))),
-                      layers=layers)
-    plan.write_global_ass(c.cache / ("subs_draft.ass" if draft else "subs.ass"))
-    # 默认 8（阶段三 2026-09-10 调优：voice-ime 实测 N=8 89.8s vs N=6 112.9s，-20%；
-    # 20 帧含段边界灰度差均值 0.135/最大帧均值 1.195，与 N=6 相对单 graph golden 同级——
-    # 偏差为段边界 ±1 帧固有，非 N=8 特有。NVENC 8 并发会话实测可用，探测失败自动回落串行）
-    nseg = plan.nseg
-    out_main = c.out / ("draft.mp4" if draft else "video_noaudio.mp4")
-    # --frames 与分段冲突（头窗截短逻辑基于全片坐标），回落旧单 graph；
-    # VTX_VIDEO_SEGMENTS=1 回落旧单 graph（行为逐字节等价）。
-    if nseg <= 1 or (draft and nframes):
-        enc = plan.composite(layers, out_main, True)
-    else:
-        enc = plan.render_segmented(out_main, tag="vseg_draft" if draft else "vseg")
-    # qc_clean = 仅底轨（tracks[0]）的基准画面，供 QC 做上层窗口生效比对（草稿跳过）。
-    # 性能升级（2026-09-10）：仅当底轨是 gfx（无源视频可提帧）时才渲全片基准轨——
-    # 那是第二遍全片合成（voice-ime 实测与主合成同量级）；底轨为普通视频轨时，
-    # qc 改为对每个探测帧现场从源视频提帧合成基准（像素语义等价，见 qc 内注释），
-    # video 阶段不再为 qc 付这笔全片成本。
-    if not draft and tracks and tracks[0].get("kind") == "gfx":
-        bottom = [L for L in layers if L["ti"] == 0]
-        if nseg > 1:
-            plan.render_segmented(c.cache / "qc_clean.mp4", bottom, with_subs=False, tag="vseg_qc")
+    with frame_source.png_consumer_scope(layers) as layers:
+        tracks = c.tl["video_tracks"]
+        for L in layers:                      # 记账：本时间轴的全部 seg（含缓存命中）
+            if not L["gfx"] and L["seg"].exists() and not c.dry:
+                manifest_record(c, L["seg"], "video", L["seg"].stem)
+        plan = RenderPlan(c=c, draft=draft, f=f, W=W, H=H, nframes=nframes,
+                          nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", str(DEFAULT_SEGMENTS))),
+                          layers=layers)
+        plan.write_global_ass(c.cache / ("subs_draft.ass" if draft else "subs.ass"))
+        # 默认 8（阶段三 2026-09-10 调优：voice-ime 实测 N=8 89.8s vs N=6 112.9s，-20%；
+        # 20 帧含段边界灰度差均值 0.135/最大帧均值 1.195，与 N=6 相对单 graph golden 同级——
+        # 偏差为段边界 ±1 帧固有，非 N=8 特有。NVENC 8 并发会话实测可用，探测失败自动回落串行）
+        nseg = plan.nseg
+        out_main = c.out / ("draft.mp4" if draft else "video_noaudio.mp4")
+        # --frames 与分段冲突（头窗截短逻辑基于全片坐标），回落旧单 graph；
+        # VTX_VIDEO_SEGMENTS=1 回落旧单 graph（行为逐字节等价）。
+        if nseg <= 1 or (draft and nframes):
+            enc = plan.composite(layers, out_main, True)
         else:
-            plan.composite(bottom, c.cache / "qc_clean.mp4", False)
-    msg = f"黑场画布 + {len(tracks)} 轨 {len(layers)} 层等价叠加（时移）+ 字幕｜{enc}"
-    if nseg > 1 and not (draft and nframes):
-        msg += f"｜分段并行 N={nseg}"
-    if draft:
-        msg += f"｜草稿 {W}x{H}" + (f" 前 {nframes} 帧" if nframes else "")
-    print("✓ 视频合成：" + msg)
-    c.receipt("video_draft" if draft else "video", True, msg)
+            enc = plan.render_segmented(out_main, tag="vseg_draft" if draft else "vseg")
+        # qc_clean = 仅底轨（tracks[0]）的基准画面，供 QC 做上层窗口生效比对（草稿跳过）。
+        # 性能升级（2026-09-10）：仅当底轨是 gfx（无源视频可提帧）时才渲全片基准轨——
+        # 那是第二遍全片合成（voice-ime 实测与主合成同量级）；底轨为普通视频轨时，
+        # qc 改为对每个探测帧现场从源视频提帧合成基准（像素语义等价，见 qc 内注释），
+        # video 阶段不再为 qc 付这笔全片成本。
+        if not draft and tracks and tracks[0].get("kind") == "gfx":
+            bottom = [L for L in layers if L["ti"] == 0]
+            if nseg > 1:
+                plan.render_segmented(c.cache / "qc_clean.mp4", bottom, with_subs=False, tag="vseg_qc")
+            else:
+                plan.composite(bottom, c.cache / "qc_clean.mp4", False)
+        msg = f"黑场画布 + {len(tracks)} 轨 {len(layers)} 层等价叠加（时移）+ 字幕｜{enc}"
+        if nseg > 1 and not (draft and nframes):
+            msg += f"｜分段并行 N={nseg}"
+        if draft:
+            msg += f"｜草稿 {W}x{H}" + (f" 前 {nframes} 帧" if nframes else "")
+        print("✓ 视频合成：" + msg)
+        c.receipt("video_draft" if draft else "video", True, msg)

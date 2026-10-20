@@ -201,7 +201,7 @@ class CuratedRegressionGate(unittest.TestCase):
                        'tests.test_doc_gates', 'tests.test_ci_pr',
                        'tests.test_fstxn', 'tests.test_proc_supervisor',
                        'tests.test_vt_entry', 'tests.safety.test_hygiene_safety',
-                       'tests.test_gfx_svg'):
+                       'tests.test_gfx_svg', 'tests.test_png_consumer_scope'):
             self.assertIn(module, ci_pr.PR_MODULES)
 
     def test_unrecognized_argument_is_an_error(self):
