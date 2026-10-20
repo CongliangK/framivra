@@ -508,31 +508,38 @@ def cleanup_related_rows(rows, anchors, groups=()):
 
 
 def cleanup_disappearance_recheck(registry, runtime, observed, checks, deadline, evidence):
-    """Wait only for proved absence of original retained leaves, never ownership."""
+    """Wait for a frozen retained auxiliary cohort to be absent; never adopt."""
     evidence['status'] = 'UNKNOWN'
     failed = [c for c in checks if c['status'] != 'PASS']
     if not failed or any(c.get('reason') != 'live_member_identity_unavailable'
                         or c['pgid'] == registry.root_pid for c in failed):
-        evidence['reason'] = 'failure_not_eligible_for_absent_auxiliary_leaf_recheck'
+        evidence['reason'] = 'failure_not_eligible_for_retained_auxiliary_cohort_wait'
         return None
     if not isinstance(observed, CleanupObservation):
         evidence['reason'] = 'complete_original_structural_inventory_unavailable'
         return None
     failed_pids = {c['pid'] for c in failed}
     evidence['failed_pids'] = sorted(failed_pids)
-    anchors = set(registry.processes) | set(getattr(registry, 'terminal_anchors', {}))
+    known = {pid: dict(record) for pid, record in registry.processes.items()}
+    cohort = {pid: record for pid, record in known.items()
+              if record.get('pgid') != registry.root_pid and record.get('start_identity') is not None}
+    if not failed_pids <= set(cohort):
+        evidence['reason'] = 'failed_identity_not_in_frozen_auxiliary_cohort'
+        return None
+    evidence['target_cohort_identities'] = [
+        dict(pid=pid, pgid=cohort[pid]['pgid'], start_identity=cohort[pid]['start_identity'])
+        for pid in sorted(cohort)]
+    anchors = set(known) | set(getattr(registry, 'terminal_anchors', {}))
     original = cleanup_related_rows(observed.inventory, anchors, registry.groups)
     evidence['original_related_rows'] = original
+    if any(r['pid'] not in known or r['pgid'] != known[r['pid']].get('pgid') for r in original):
+        evidence['reason'] = 'original_related_row_not_covered_by_frozen_identity'
+        return None
     if any(r['pid'] not in {c['pid'] for c in checks}
            for r in original if not r['state'].startswith('Z')):
         evidence['reason'] = 'original_related_live_coverage_unknown'
         return None
-    if any(r['pid'] != pid for pid in failed_pids
-           for r in cleanup_related_rows(observed.inventory, {pid})):
-        evidence['reason'] = 'original_failed_pid_has_visible_descendants'
-        return None
     evidence['followup_observations'] = []
-    failed_groups = {c['pid']: c['pgid'] for c in failed}
     attempt = None
     fresh = None
     query_attempted = False
@@ -557,20 +564,19 @@ def cleanup_disappearance_recheck(registry, runtime, observed, checks, deadline,
                 anchors | {r['pid'] for r in original}, registry.groups)
             attempt['related_rows'] = related
             anchors.update(r['pid'] for r in related)  # Diagnostic continuity only.
-            visible = [r for r in fresh.inventory if r['pid'] in failed_pids]
+            visible = [r for r in fresh.inventory if r['pid'] in cohort]
             attempt['pending_visible_pids'] = sorted(r['pid'] for r in visible)
-            if any(r['pgid'] != failed_groups[r['pid']] for r in visible):
+            if any(r['pgid'] != cohort[r['pid']]['pgid'] for r in visible):
                 raise RuntimeError('Pending cleanup PID changed retained PGID')
-            if any(r['pid'] != pid for pid in failed_pids
-                   for r in cleanup_related_rows(fresh.inventory, {pid})):
-                raise RuntimeError('Fresh descendants of pending failed cleanup PID')
+            if any(r['pid'] not in known or r['pgid'] != known[r['pid']].get('pgid') for r in related):
+                raise RuntimeError('Fresh related row not covered by frozen retained identity')
             if any(r['pgid'] not in registry.groups for r in related
                    if not r['state'].startswith('Z')):
                 raise RuntimeError('Fresh related live row outside retained groups')
             attempt['identity_checks'] = []
-            cleanup_identities(registry, runtime, fresh, deadline, attempt['identity_checks'])
+            cleanup_identities(SimpleNamespace(processes=known), runtime, fresh, deadline, attempt['identity_checks'])
             if any(c['status'] != 'PASS' and not (
-                   c['pid'] in failed_pids and c.get('reason') == 'live_member_identity_unavailable')
+                   c['pid'] in cohort and c.get('reason') == 'live_member_identity_unavailable')
                    for c in attempt['identity_checks']):
                 raise RuntimeError('Fresh cleanup identity coverage unknown')
             if any(r['pgid'] == registry.root_pid for r in fresh['live_rows']):
@@ -579,10 +585,10 @@ def cleanup_disappearance_recheck(registry, runtime, observed, checks, deadline,
             if not visible:
                 attempt['status'] = 'RESOLVED_ABSENT'
                 evidence.update(status='RESOLVED_ABSENT',
-                    reason='failed_leaves_absent_and_fresh_live_coverage_verified')
+                    reason='retained_auxiliary_cohort_absent_and_fresh_coverage_verified')
                 return fresh
-            # Neither S nor Z is absence or terminal identity proof. Only the
-            # original unresolved leaves may remain pending until the deadline.
+            # No printed state is absence or terminal identity proof. Every
+            # frozen cohort member must disappear, even if its identity is PASS.
             attempt['status'] = 'PENDING_ABSENCE'
     except Exception as error:
         evidence['error'] = type(error).__name__ + ': ' + str(error)
