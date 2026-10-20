@@ -45,6 +45,8 @@ python3 templates/mg-styles/build.py --style isometric --output /workspace/my-mg
 
 ## 独立媒体样板
 
+下列 Line、Sticker、Glass 命令使用有显式阅读预算的 `*-readable.json`。最后线描 beat 的 `fill_frames` / `hero_hold`、贴纸 beat 的移动/近景/拉远/总览预算、玻璃 chapter 的 `reveal_frames` / `hold_frames` 可分别调节动作完成和阅读停留；更换长文案时应一起调整拍窗，而不是只增加总帧数。
+
 选择的工具依赖缺失会明确失败。源帧编码只制作素材；剪辑、混音和正式交付仍走现有 vtx 时间线。无 HTML gfx 的工程不会启动浏览器，这与浏览器环境恢复是不同结论。所有写入在新工程目录；部分生成失败会保留日志与中间文件，排查后换新目录重建。
 
 ```bash
@@ -65,7 +67,7 @@ python3 templates/mg-styles/build_media.py --style variety-captions --content te
 ### 连续线条与液体语义
 
 ```bash
-python3 templates/mg-styles/build_media.py --style line-art --content templates/mg-styles/examples/line-art-a.json --output /workspace/my-line --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style line-art --content templates/mg-styles/examples/line-art-a-readable.json --output /workspace/my-line --frames 240 --dry
 python3 templates/mg-styles/build_media.py --style liquid --content templates/mg-styles/examples/liquid-a.json --output /workspace/my-liquid --frames 240 --dry
 python3 templates/mg-styles/build_media.py --style soft-3d --content templates/mg-styles/examples/three-d-story.json --output /workspace/my-story --frames 240 --samples 128 --three-d-mode storyboard --dry
 ```
@@ -127,9 +129,9 @@ python3 templates/mg-styles/build_media.py --style synthwave --content templates
 ### 证据贴纸、铰接拼贴、解析玻璃与机械包豪斯
 
 ```bash
-python3 templates/mg-styles/build_media.py --style sticker --content templates/mg-styles/examples/sticker/phone.json --output /workspace/my-sticker --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style sticker --content templates/mg-styles/examples/sticker/phone-readable.json --output /workspace/my-sticker --frames 360 --dry
 python3 templates/mg-styles/build_media.py --style collage --content templates/mg-styles/examples/collage-curiosity.json --output /workspace/my-collage --frames 240 --dry
-python3 templates/mg-styles/build_media.py --style aurora-glass --content templates/mg-styles/examples/aurora-glass-ideas.json --output /workspace/my-glass --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style aurora-glass --content templates/mg-styles/examples/aurora-glass-ideas-readable.json --output /workspace/my-glass --frames 300 --dry
 python3 templates/mg-styles/build_media.py --style bauhaus --content templates/mg-styles/examples/bauhaus-a.json --output /workspace/my-bauhaus --frames 180 --dry
 ```
 
