@@ -118,6 +118,7 @@ def _prepare(data,frames,font_path=None):
     if not isinstance(beats,list) or len(beats)!=4:
         raise ValueError('beats must contain four sentence cues')
     previous=0
+    timed_beats=[]
     for i,beat in enumerate(beats):
         if not isinstance(beat,dict) or beat.get('kind')!=KINDS[i]:
             raise ValueError(f'beat order must be {KINDS}')
@@ -125,8 +126,26 @@ def _prepare(data,frames,font_path=None):
         end=_int(beat.get('out'),'beat.out',start+10,frames)
         if start!=previous:raise ValueError('beats must be contiguous and begin at frame zero')
         _string(beat.get('caption'),'beat.caption')
+        duration=end-start;kind=beat['kind']
+        move=_int(beat.get('move_frames',0 if kind=='question' else min(15,duration//4)),'move_frames',0,duration)
+        reveal=_int(beat.get('reveal_frames',min(15,max(1,(duration-move)//3)) if kind=='evidence' else 0),'reveal_frames',0,duration)
+        pull=_int(beat.get('pullback_frames',min(15,max(1,(duration-move)//3)) if kind=='conclusion' else 0),'pullback_frames',0,duration)
+        overview=_int(beat.get('overview_hold_frames',max(1,(duration-move-pull)//2) if kind=='conclusion' else 0),'overview_hold_frames',0,duration)
+        close=_int(beat.get('closeup_hold_frames',duration-move-reveal-pull-overview),'closeup_hold_frames',1,duration)
+        if move+reveal+close+pull+overview!=duration:
+            raise ValueError('camera/reveal/closeup/pullback/overview budgets must exactly cover each beat')
+        if kind=='question' and move or kind!='question' and move<1:
+            raise ValueError('question starts in place; later scenes need a positive camera move budget')
+        if kind=='evidence' and reveal<1 or kind!='evidence' and reveal:
+            raise ValueError('only evidence uses a positive reveal_frames budget')
+        if kind=='conclusion' and (pull<1 or overview<1) or kind!='conclusion' and (pull or overview):
+            raise ValueError('only conclusion uses positive pullback and overview hold budgets')
+        timed_beats.append(dict(beat,move_frames=move,reveal_frames=reveal,
+                               closeup_hold_frames=close,pullback_frames=pull,
+                               overview_hold_frames=overview))
         previous=end
     if previous!=frames:raise ValueError('beats must cover all frames')
+    beats=timed_beats
     path=Path(font_path) if font_path else Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
     if not path.is_file():raise ValueError('provide a separately licensed local CJK-capable font_path')
     face=2 if path.name=='NotoSansCJK-Bold.ttc' else 0
@@ -180,16 +199,20 @@ def _progress(beat,frame):
 
 def _camera(prepared,frame):
     beat=next(b for b in prepared['beats'] if b['in']<=frame<b['out'])
-    i=KINDS.index(beat['kind']);q=_progress(beat,frame)
+    i=KINDS.index(beat['kind']);local=frame-beat['in']
     current=720+i*1440;previous=720+max(0,i-1)*1440
-    arrival=_ease(q/.34)
-    center=previous+(current-previous)*arrival
-    zoom=1.16
+    arrival=_ease(local/beat['move_frames']) if beat['move_frames'] else 1
+    center=previous+(current-previous)*arrival;zoom=1.16
     if i==3:
-        pull=_ease((q-.58)/.4)
+        pull_start=beat['move_frames']+beat['closeup_hold_frames']
+        pull=_ease((local-pull_start)/beat['pullback_frames'])
         center=center*(1-pull)+2880*pull
         zoom=1.16*(1-pull)+pull/3
     return center,540,zoom,beat
+
+
+def _evidence_progress(beat,frame):
+    return _ease((frame-beat['in']-beat['move_frames'])/beat['reveal_frames'])
 
 
 def _text(draw,style,center,y,color):
@@ -276,7 +299,9 @@ def _world(prepared,frame):
         value=(prepared['seed'] ^ (i*2654435761)) & 0xffffffff
         d.point((value%5760,180+(value//5760)%710),fill='#dce2dc')
     # The graph resolves during the overview, keeping closeup evidence unobscured.
-    relation_alpha=_ease((_progress(prepared['beats'][3],frame)-.58)/.23) if frame>=prepared['beats'][3]['in'] else 0
+    conclusion=prepared['beats'][3]
+    relation_start=conclusion['in']+conclusion['move_frames']+conclusion['closeup_hold_frames']
+    relation_alpha=_ease((frame-relation_start)/conclusion['pullback_frames'])
     def blend(target):
         return tuple(round(int(bg[j:j+2],16)*(1-relation_alpha)+int(target[j:j+2],16)*relation_alpha) for j in (1,3,5))
     relation_color=blend(second); relation_ink=blend(ink)
@@ -307,7 +332,7 @@ def _world(prepared,frame):
         d.rectangle((round(center[0]-190),round(label_y-7),round(center[0]+190),round(label_y+label_height+7)),fill=bg)
         _text(d,part['text_style'],center[0],label_y,ink)
     d.ellipse((2146,556,2174,584),fill=ink)
-    evidence_beat=prepared['beats'][2];grow=_ease(_progress(evidence_beat,frame)/.65) if frame>=evidence_beat['in'] else 0
+    evidence_beat=prepared['beats'][2];grow=_evidence_progress(evidence_beat,frame)
     maximum=max([1]+[abs(item['value']) for item in prepared['evidence'] if item['chart']=='bar'])
     for item in prepared['evidence']:
         x=item['center'][0]
@@ -362,7 +387,8 @@ def validate_sticker_content(data,frames,font_path=None):
             'font_source':'https://github.com/notofonts/noto-cjk' if font_path is None else 'user-supplied',
             'font_license':'SIL OFL 1.1' if font_path is None else 'verify separately',
             'artwork':'original program-drawn stickers; no photographs',
-            'evidence':[{'value':x['value'],'unit':x['unit'],'source':x['source']} for x in prepared['evidence']]}
+            'evidence':[{'value':x['value'],'unit':x['unit'],'source':x['source']} for x in prepared['evidence']],
+            'reading_beats':prepared['beats']}
 
 
 def render_sticker_frame(data,frame,frames,font_path=None):

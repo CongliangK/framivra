@@ -1,0 +1,36 @@
+{
+  "title": "让知识跨过围墙",
+  "subtitle": "从一间屋，走向更多的人。",
+  "drawing_speed": 1,
+  "palette": [
+    "#f7f5ee",
+    "#243b40",
+    "#598077",
+    "#c1d7be"
+  ],
+  "story": [
+    {
+      "object": "house",
+      "label": "打开一间屋",
+      "in": 0,
+      "out": 80,
+      "hold": 24
+    },
+    {
+      "object": "book",
+      "label": "共享一本书",
+      "in": 80,
+      "out": 160,
+      "hold": 24
+    },
+    {
+      "object": "network",
+      "label": "连接更多的人",
+      "in": 160,
+      "out": 240,
+      "hold": 42,
+      "fill_frames": 12,
+      "hero_hold": 30
+    }
+  ]
+}

@@ -67,7 +67,8 @@ def validate_aurora_glass_content(data,frames,font_path=None):
     if not isinstance(chapters,list) or not 2<=len(chapters)<=4:raise ValueError('chapters must contain two to four semantic micro-UI scenes')
     normalized=[];previous=0
     for chapter in chapters:
-        if not isinstance(chapter,dict) or set(chapter)!={'in','out','mode','label','detail','value','unit'}:raise ValueError('chapter needs in,out,mode,label,detail,value,unit')
+        if (not isinstance(chapter,dict) or not {'in','out','mode','label','detail','value','unit'}<=set(chapter)
+                or set(chapter)-{'in','out','mode','label','detail','value','unit','reveal_frames','hold_frames'}):raise ValueError('chapter needs in,out,mode,label,detail,value,unit')
         a,b=chapter['in'],chapter['out']
         if type(a) is not int or type(b) is not int or a!=previous or not a+30<=b<=frames:raise ValueError('chapters must be contiguous integer windows of at least thirty frames')
         if not isinstance(chapter['mode'],str) or chapter['mode'] not in MODES:raise ValueError('micro-UI mode must be chat, voice or focus')
@@ -76,7 +77,11 @@ def validate_aurora_glass_content(data,frames,font_path=None):
             if not isinstance(text,str) or not text.strip() or len(text)>limit or '\n' in text or '\r' in text:raise ValueError(f'chapter {key} must be nonempty single-line text up to {limit} characters')
         value=chapter['value']
         if type(value) not in (int,float) or not math.isfinite(value) or not 0<=value<=100:raise ValueError('chapter value must be finite in [0,100]')
-        normalized.append(dict(chapter));previous=b
+        reveal=chapter.get('reveal_frames',min(30,b-a-10))
+        hold=chapter.get('hold_frames',min(30,b-a-reveal))
+        if type(reveal) is not int or type(hold) is not int or reveal<8 or hold<6 or reveal+hold>b-a:
+            raise ValueError('chapter reveal_frames>=8 and hold_frames>=6 must fit its window')
+        normalized.append(dict(chapter,reveal_frames=reveal,hold_frames=hold));previous=b
     if previous!=frames:raise ValueError('chapters must cover all frames')
     result=dict(title=title,subtitle=subtitle,palette=list(palette),seed=seed,lens=optics,chapters=normalized)
     font=_font(result,font_path);_fit(title,1620,80,font);_fit(subtitle,1600,31,font)
@@ -138,13 +143,13 @@ def _warp_card(card,corners):
 
 
 def micro_ui_state(chapter,frame):
-    """Finish counting/toggles before the exclusive end, with a readable tail hold."""
+    """Finish semantic controls within an explicit reveal budget, then hold."""
     local=max(0,min(chapter['out']-chapter['in']-1,frame-chapter['in']))
     duration=chapter['out']-chapter['in']
-    complete=max(1,duration-1-6)
-    count_end=min(30,complete)
-    return dict(entry=min(1,local/min(14,max(1,duration//3))),
-                displayed=chapter['value'] if local>=count_end else round(chapter['value']*local/count_end),
+    reveal=chapter.get('reveal_frames',min(30,duration-10))
+    complete=max(1,reveal-1)
+    return dict(entry=min(1,local/min(14,max(1,reveal//2))),
+                displayed=chapter['value'] if local>=complete else round(chapter['value']*local/complete),
                 enabled=[local>=max(1,round(complete*(i+1)/3)) for i in range(3)])
 
 

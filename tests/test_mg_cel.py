@@ -104,11 +104,55 @@ class CelDrawings(unittest.TestCase):
             self.assertEqual(data,before)
             self.assertEqual(metadata['exposures'],data['exposures'])
 
+    def test_short_custom_exposure_cannot_silently_erase_hop(self):
+        data = example()
+        data['exposures'] = {'action':3,'body':2,'hold':3}
+        data['beats'] = [
+            {'actor':'bud','action':'hop','in':0,'out':12,'anticipation':2,'motion':4,'distance':48},
+            {'actor':'cat','action':'settle','in':12,'out':30,'anticipation':2,'motion':4}]
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)/'invalid'
+            with self.assertRaisesRegex(ValueError,'anticipation|interior'):
+                cel.render_cel_frames(data,30,output)
+            self.assertFalse(output.exists())
+        data['beats'][0].update(anticipation=3, motion=4)
+        with self.assertRaisesRegex(ValueError,'interior'):
+            cel.validate_cel_content(data,30)
+
+    def test_valid_custom_exposure_samples_visible_preparation_and_airborne_pixels(self):
+        from PIL import ImageChops
+        data = example()
+        data['exposures'] = {'action':3,'body':2,'hold':3}
+        data['beats'] = [
+            {'actor':'bud','action':'hop','in':0,'out':15,'anticipation':3,'motion':7,'distance':48},
+            {'actor':'cat','action':'settle','in':15,'out':30,'anticipation':3,'motion':7}]
+        prepared = cel._prepare(data,30)
+        actor = prepared['cast'][0]
+        poses = [cel._pose(prepared,actor,cel._sample(prepared,f)[0]) for f in range(15)]
+        self.assertLess(poses[2]['sy'], .85)
+        self.assertLess(poses[6]['y'], -100)
+        self.assertEqual([cel._sample(prepared,f)[0] for f in range(3,10)],[3,3,3,6,6,6,9])
+        # Real rendered foreground bounds move up; labels and paper are excluded.
+        def colored_bounds(image):
+            color = tuple(bytes.fromhex(prepared['palette'][2][1:]))
+            mask = image.crop((250,300,850,755)).convert('RGB')
+            from PIL import Image
+            out = Image.new('1',mask.size)
+            out.putdata([pixel == color for pixel in mask.getdata()])
+            return out.getbbox()
+        grounded = cel.render_cel_frame(data,3,30)
+        airborne = cel.render_cel_frame(data,6,30)
+        self.assertLess(colored_bounds(airborne)[1],colored_bounds(grounded)[1]-90)
+        self.assertIsNotNone(ImageChops.difference(cel.render_cel_frame(data,0,30),cel.render_cel_frame(data,2,30)).getbbox())
+        self.assertEqual(airborne.tobytes(),cel.render_cel_frame(data,8,30).tobytes())
+        cel.render_cel_frame(data,29,30)
+        self.assertEqual(airborne.tobytes(),cel.render_cel_frame(data,6,30).tobytes())
+
     def test_real_sequence_has_current_file_hashes_and_exact_size(self):
         with tempfile.TemporaryDirectory() as temp:
             data = example()
-            data['beats'] = [{'actor':'bud','action':'pop','in':0,'out':12,'anticipation':2,'motion':4},
-                             {'actor':'cat','action':'hop','in':12,'out':24,'anticipation':2,'motion':4,'distance':20}]
+            data['beats'] = [{'actor':'bud','action':'pop','in':0,'out':12,'anticipation':3,'motion':4},
+                             {'actor':'cat','action':'hop','in':12,'out':24,'anticipation':3,'motion':4,'distance':20}]
             receipt = cel.render_cel_frames(data,24,Path(temp)/'frames')
             self.assertEqual(len(list((Path(temp)/'frames').glob('f*.png'))),24)
             self.assertEqual(receipt['size'],[1920,1080])

@@ -86,6 +86,35 @@ def terrain_points(travel,layer,seed):
             for i in range(first,first+30)]
 
 
+def waypoint_projection(point,travel,font_path,horizon=580):
+    """Finite perspective until the entire marker and label leave the viewport.
+
+    The side marker exits laterally before the denominator reaches zero. A
+    conservative horizontal reject avoids giant font allocations after exit;
+    visible candidates use their actual native text/line bounds, never x gates.
+    """
+    from PIL import Image,ImageDraw
+    distance=(point['frame']-travel)/45
+    denominator=1+distance
+    if denominator<=0:return None  # Already beyond the laterally departed near plane.
+    scale=1/denominator;side=-1 if point['side']=='left' else 1
+    x=960+side*620*scale;bottom=horizon+330*scale
+    w=140*scale;height=210*scale
+    # _fit limits label advance to400; margin also covers stroke and blur support.
+    margin=64
+    if x+max(w,240)<-margin or x-max(w,240)>1920+margin:return None
+    font=_fit(point['label'],400,round(25+14*scale),font_path)
+    probe=ImageDraw.Draw(Image.new('L',(1,1)))
+    label_xy=(x,bottom-height-30)
+    label_bounds=probe.textbbox(label_xy,point['label'],font=font,anchor='mm')
+    bounds=(min(x-w-2,label_bounds[0]),min(bottom-height-2,label_bounds[1]),
+            max(x+w+2,label_bounds[2]),max(bottom+2,label_bounds[3]))
+    visible=not(bounds[2]+margin<0 or bounds[0]-margin>=1920 or bounds[3]+margin<0 or bounds[1]-margin>=1080)
+    if not visible:return None
+    return {'scale':scale,'x':x,'bottom':bottom,'width':w,'height':height,
+            'label_xy':label_xy,'label_font':font,'bounds':bounds}
+
+
 def render_synthwave_frame(data,frame,frames,font_path=None):
     import numpy as np
     from PIL import Image,ImageDraw,ImageFont,ImageFilter,ImageChops
@@ -110,16 +139,12 @@ def render_synthwave_frame(data,frame,frames,font_path=None):
         z=(i-phase)/22;row=horizon+(1080-horizon)*z*z
         gd.line((0,row,1920,row),fill=pink,width=2)
     for point in data['waypoints']:
-        # Project a world marker; a finite visibility range prevents infinity at the camera.
-        distance=(point['frame']-state['travel'])/45
-        if -.25<=distance<=4:
-            scale=1/(1+max(-.25,distance));side=-1 if point['side']=='left' else 1
-            x=960+side*620*scale;bottom_y=horizon+330*scale;w=140*scale;height=210*scale
-            gd.line((x-w,bottom_y,x-w,bottom_y-height,x+w,bottom_y-height,x+w,bottom_y),fill=cyan,width=4)
-            gd.line((x-w,bottom_y-height*.65,x+w,bottom_y-height*.65),fill=pink,width=3)
-            if 210<x<1710:
-                f=_fit(point['label'],400,round(25+14*scale),font)
-                gd.text((x,bottom_y-height-30),point['label'],font=f,fill=cyan,anchor='mm')
+        projected=waypoint_projection(point,state['travel'],font,horizon)
+        if projected is None:continue
+        x,bottom_y,w,height=(projected[k] for k in ('x','bottom','width','height'))
+        gd.line((x-w,bottom_y,x-w,bottom_y-height,x+w,bottom_y-height,x+w,bottom_y),fill=cyan,width=4)
+        gd.line((x-w,bottom_y-height*.65,x+w,bottom_y-height*.65),fill=pink,width=3)
+        gd.text(projected['label_xy'],point['label'],font=projected['label_font'],fill=cyan,anchor='mm')
     image=ImageChops.add(image,glow.filter(ImageFilter.GaussianBlur(9)))
     image=ImageChops.add(image,glow);draw=ImageDraw.Draw(image)
     mask=Image.new('L',SIZE);md=ImageDraw.Draw(mask);f=_fit(data['title'],1640,132,font)

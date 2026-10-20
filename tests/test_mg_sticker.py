@@ -32,6 +32,25 @@ class StickerExplainer(unittest.TestCase):
         self.assertGreater(sticker._camera(p,61)[0],first[0])
         self.assertLess(sticker._camera(p,61)[0],decompose[0])
 
+    def test_explicit_reading_budgets_hold_actual_chart_and_overview_pixels(self):
+        for name in ('phone-readable','water-readable'):
+            data=example(name);p=sticker._prepare(data,360)
+            proof=p['beats'][2];done=proof['in']+proof['move_frames']+proof['reveal_frames']
+            self.assertEqual(sticker._evidence_progress(proof,done),1)
+            self.assertEqual(proof['out']-done,proof['closeup_hold_frames'])
+            self.assertEqual(sticker._render(p,done).tobytes(),sticker._render(p,proof['out']-1).tobytes())
+            ending=p['beats'][3]
+            overview=ending['out']-ending['overview_hold_frames']
+            self.assertAlmostEqual(sticker._camera(p,overview)[2],1/3)
+            self.assertEqual(sticker._camera(p,overview)[:3],sticker._camera(p,359)[:3])
+            self.assertEqual(sticker._render(p,overview).tobytes(),sticker._render(p,359).tobytes())
+        for change in ({'move_frames':True},{'closeup_hold_frames':0},{'overview_hold_frames':100}):
+            data=example('phone-readable');data['beats'][3].update(change)
+            with tempfile.TemporaryDirectory() as tmp:
+                target=Path(tmp)/'not-created'
+                with self.assertRaises(ValueError):sticker.render_sticker_frames(data,360,target)
+                self.assertFalse(target.exists())
+
     def test_schema_sources_units_relations_and_fonts_fail_before_writes(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)

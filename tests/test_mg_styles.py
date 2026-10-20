@@ -81,7 +81,7 @@ for(const style of JSON.parse(process.argv[2])) {
   function context() {
    let state={}, stack=[];stacks.push(stack);
    const gradient=(kind,args)=>{operations.push([kind,...args]);return {addColorStop(...v){operations.push(['colorStop',...v])}}};
-   const methods={canvas:{},measureText:s=>({width:String(s).length*30}),
+   const methods={canvas:{},measureText:s=>({width:Array.from(String(s)).reduce((n,ch)=>n+(/[\u3000-\uffff]/.test(ch)?1:.6),0)*(parseFloat(state.font)||30)}),
     createLinearGradient:(...a)=>gradient('linearGradient',a),
     createRadialGradient:(...a)=>gradient('radialGradient',a),
     save:()=>stack.push({...state}), restore:()=>{state=stack.pop()||{}}};
@@ -100,11 +100,12 @@ for(const style of JSON.parse(process.argv[2])) {
   vm.runInContext(fs.readFileSync(root+'/runtime.js','utf8'),sandbox);
   const draw=f=>{operations=[];sandbox.window.__vtx_render(f);return JSON.stringify(operations)};
   const first=draw(45); draw(89);draw(0);
+
   if(first!==draw(45))throw Error(style+' order-dependent operations');
   for(const seed of [-2147483648,2147483647]) {
    sandbox.window.MG_CONTENT.seed=seed;
   for(let count=1;count<=6;count++) {
-   sandbox.window.MG_CONTENT.items=Array.from({length:count},(_,i)=>({label:'中文长标签<&>'+i,value:i*19}));
+   sandbox.window.MG_CONTENT.items=Array.from({length:count},(_,i)=>({label:'项'+i,value:i*19}));
    sandbox.window.MG_CONTENT.pace=count%2 ? .5 : 2;
    sandbox.window.MG_CONTENT.frames=count%2 ? 90 : 180;
   for(const frame of [0,1,9,45,80,89]) {
@@ -134,6 +135,35 @@ for(const style of JSON.parse(process.argv[2])) {
    const label=ops.find(a=>a[0]==='fillText'&&a[1]==='Build');
    if(!label || label[2]<0 || label[2]>1600)throw Error('single cel label outside canvas');
   }
+
+  if(style==='collage') {
+   Object.assign(sandbox.window.MG_CONTENT,{frames:90,hold_frames:40,pace:1});
+   const endOps=JSON.parse(draw(89));
+   if(endOps.filter(a=>a[0]==='fillText'&&a[1]===sandbox.window.MG_CONTENT.title).length!==2)throw Error('collage missing final summary');
+   const middle=draw(25);sandbox.window.MG_CONTENT.pace=2;
+   if(middle===draw(25))throw Error('collage ignored pace');
+  }
+  if(style==='hud') {
+   Object.assign(sandbox.window.MG_CONTENT,{frames:1001,hold_frames:0,pace:1});
+   const before=JSON.parse(draw(439)),after=JSON.parse(draw(440));
+   const target=(ops,r)=>ops.find(a=>a[0]==='arc'&&a[3]===r);
+   const a=target(before,5),b=target(after,9);
+   if(!a||!b||Math.hypot(a[1]-b[1],a[2]-b[2])>3)throw Error('HUD detection teleported');
+   const k=after.findIndex(o=>o[0]==='set'&&o[1]==='lineWidth'&&o[2]===7);
+   const corners=after.slice(k).filter(o=>o[0]==='lineTo').slice(0,8).filter((o,i)=>i%2===0);
+   const cx=corners.reduce((v,o)=>v+o[1],0)/4,cy=corners.reduce((v,o)=>v+o[2],0)/4;
+   if(Math.hypot(cx-b[1],cy-b[2])>1e-8)throw Error('HUD brackets not anchored to target');
+  }
+  if(style==='isometric') {
+   const ops=JSON.parse(draw(0));const start=ops.findIndex(o=>o[0]==='moveTo');
+   const a=ops[start],b=ops.slice(start+1).find(o=>o[0]==='lineTo');
+   if(Math.abs(Math.abs((b[2]-a[2])/(b[1]-a[1]))-1/Math.sqrt(3))>1e-8)throw Error('projection is not 30 degrees');
+  }
+  const originalTitle=sandbox.window.MG_CONTENT.title;
+  sandbox.window.MG_CONTENT.title='超'.repeat(180);
+  let overflow=false;try{draw(sandbox.window.MG_CONTENT.frames-1)}catch(e){overflow=/Text does not fit/.test(e.message)}
+  if(!overflow)throw Error(style+' silently shrank overlong title');
+  sandbox.window.MG_CONTENT.title=originalTitle;
 }
 """
         result = subprocess.run(['node', '-e', script, str(BUILD.parent), json.dumps(STYLES)],

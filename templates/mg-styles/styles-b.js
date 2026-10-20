@@ -107,12 +107,14 @@
       c.strokeStyle = color; c.lineWidth = 2;
       for (let j = -2; j <= 2; j++) { c.beginPath(); c.ellipse(0, j * 46, Math.sqrt(1 - (j / 3) ** 2) * 137, 18, 0, 0, TAU); c.stroke(); c.beginPath(); c.ellipse(0, 0, 24 + (j + 2) * 25, 137, m.phase * .5, 0, TAU); c.stroke(); }
       c.shadowBlur = 0;
-      const targetX = detected ? 115 : 180 * Math.sin(m.phase * 9), targetY = detected ? -75 : 130 * Math.cos(m.phase * 7);
+      // Freeze the actual detected position; no teleport at the state boundary.
+      const targetPhase = Math.min(m.phase,.44);
+      const targetX = 180 * Math.sin(targetPhase * 9), targetY = 130 * Math.cos(targetPhase * 7);
       c.fillStyle = color; circle(c, targetX, targetY, detected ? 9 : 5); c.fill();
       if (detected) { c.beginPath(); c.moveTo(targetX - 25, targetY); c.lineTo(targetX + 25, targetY); c.moveTo(targetX, targetY - 25); c.lineTo(targetX, targetY + 25); c.stroke(); }
       const size = 225 + 100 * (1 - lock);
       c.lineWidth = 7;
-      for (const sx of [-1, 1]) for (const sy of [-1, 1]) { c.beginPath(); c.moveTo(sx * (size - 50), sy * size); c.lineTo(sx * size, sy * size); c.lineTo(sx * size, sy * (size - 50)); c.stroke(); }
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) { c.beginPath(); c.moveTo(targetX + sx * (size - 50), targetY + sy * size); c.lineTo(targetX + sx * size, targetY + sy * size); c.lineTo(targetX + sx * size, targetY + sy * (size - 50)); c.stroke(); }
       c.restore(); c.save(); heading(c, m, h, ink, 100, 110, 1700);
       items.forEach((item, i) => {
         const y = 350 + i * Math.min(95, 550 / items.length), p = cue(m, .16 + i * .025, .4 + i * .025);
@@ -133,7 +135,11 @@
     },
     collage(c, m, h) {
       const [bg, ink, accent, second] = m.palette, items = countItems(m);
-      const stepFrame = Math.floor(m.f / 5) * 5, stepPhase = stepFrame / Math.max(1, m.frames - 1);
+      const active = Math.max(1,m.frames-1-(m.hold_frames||0));
+      // Stop-motion holds quantize time, while the last active frame still
+      // reaches the ending. Pacing is applied after this time sampling.
+      const stepFrame = m.f>=active ? active : Math.floor(m.f / 5)*5;
+      const stepPhase = Math.pow(stepFrame/active,m.pace);
       const motion = {...m, f: stepFrame, phase: stepPhase};
       c.save(); c.fillStyle = bg; c.fillRect(0, 0, 1920, 1080);
       // Deterministic paper fibres stay fixed in space rather than flickering.

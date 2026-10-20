@@ -171,6 +171,32 @@ def _positions(p):
     return build,final
 
 
+def causal_arrow_route(p,positions,origin,link):
+    """Route through open column gutters and an explicit upper edge lane.
+
+    Node rectangles are380x215. Gutters stay20px outside their opaque area;
+    separate 5px lanes remain below stage text and above the highest node row.
+    """
+    index=p['links'].index(link);lane=292+index*5
+    if link['from']=='origin':
+        sx,sy=origin;start=(sx+118,sy);source_gutter=sx+140
+    else:
+        sx,sy=positions[link['from']];start=(sx+190,sy);source_gutter=sx+210
+    tx,ty=positions[link['to']];target_gutter=tx-210;tip=(tx-190,ty)
+    return [start,(source_gutter,sy),(source_gutter,lane),
+            (target_gutter,lane),(target_gutter,ty),tip]
+
+
+def _partial_route(points,amount):
+    lengths=[math.hypot(b[0]-a[0],b[1]-a[1]) for a,b in zip(points,points[1:])]
+    remaining=sum(lengths)*_clamp(amount);drawn=[points[0]]
+    for a,b,length in zip(points,points[1:],lengths):
+        if remaining>=length:drawn.append(b);remaining-=length
+        elif length:
+            q=remaining/length;drawn.append((a[0]+(b[0]-a[0])*q,a[1]+(b[1]-a[1])*q));break
+    return drawn
+
+
 def _render(p,frame):
     from PIL import Image,ImageDraw
     _int(frame,'frame',0,p['frames']-1)
@@ -214,16 +240,15 @@ def _render(p,frame):
         bx,by=build[card['id']];fx,fy=final[card['id']]
         positions[card['id']]=(bx+(fx-bx)*reflow,by+(fy-by)*reflow)
         amounts[card['id']]=progress if not question else 0
-    if not question and reflow<1:
+    if not question and reflow==0:
         for link in p['links']:
-            q=_ease(amounts[link['to']]);a=(origin_x,origin_y) if link['from']=='origin' else positions[link['from']]
-            b=positions[link['to']];vx,vy=b[0]-a[0],b[1]-a[1];length=max(1,math.hypot(vx,vy));ux,uy=vx/length,vy/length
-            start=(a[0]+ux*(120 if link['from']=='origin' else 165),a[1]+uy*(100 if link['from']=='origin' else 90))
-            end=(b[0]-ux*175,b[1]-uy*95)
-            tip=(start[0]+(end[0]-start[0])*q,start[1]+(end[1]-start[1])*q)
-            if q>0:
-                d.line(tuple(round(v*S) for v in (*start,*tip)),fill=accents[2],width=8*S)
-                if q>.9:poly([tip,(tip[0]-ux*18-uy*10,tip[1]-uy*18+ux*10),(tip[0]-ux*18+uy*10,tip[1]-uy*18-ux*10)],accents[2])
+            q=_ease(amounts[link['to']])
+            route=causal_arrow_route(p,positions,(origin_x,origin_y),link)
+            points=_partial_route(route,q)
+            if q>0 and len(points)>1:
+                d.line([(round(x*S),round(y*S)) for x,y in points],fill=accents[2],width=4*S,joint='curve')
+                if q>=1:
+                    tx,ty=points[-1];poly([(tx,ty),(tx-15,ty-7),(tx-15,ty+7)],accents[2])
     for i,card in enumerate(p['cards']):
         q=amounts[card['id']]
         if not q:continue

@@ -13,6 +13,8 @@ import re
 
 W, H, SCALE, GROUND = 320, 180, 6, 139
 OBSTACLES = ('jump', 'gap', 'duck', 'collect')
+# Seven samples show launch, ascent, apex, descent and landing; <=30 world px/step.
+MIN_ACTION_FRAMES = 7
 DEFAULT_PALETTE = ['#131a31', '#f9edcc', '#f59652', '#71c6ad']
 FONT_SOURCE = 'https://github.com/notofonts/noto-cjk'
 
@@ -43,8 +45,8 @@ def _prepare(data, frames, font_path):
         if not isinstance(step, dict):
             raise ValueError('each step must be an object')
         _text(step.get('label'), f'steps[{i}].label')
-        start = _integer(step.get('in'), 'step.in', 0, frames - 2)
-        end = _integer(step.get('out'), 'step.out', start + 2, frames - 1)
+        start = _integer(step.get('in'), 'step.in', 0, frames - MIN_ACTION_FRAMES - 1)
+        end = _integer(step.get('out'), 'step.out', start + MIN_ACTION_FRAMES, frames - 1)
         if start < previous_out:
             raise ValueError('step windows must be ordered and nonoverlapping')
         if step.get('obstacle') not in OBSTACLES:
@@ -103,11 +105,16 @@ def _sprite(d, x, y, colors, frame, crouch=False):
                 d.rectangle((xx, y + row, xx, y + row), fill=colors[2] if row < 4 else colors[1])
 
 
-def _render(prepared, frame):
-    from PIL import Image, ImageDraw
+def skyline_columns(camera):
+    """World-indexed skyline: crossings retain each building's identity."""
+    offset = camera // 2
+    return [(i, i * 47 - offset) for i in range(offset // 47 - 1, (offset + W) // 47 + 2)]
+
+
+def pixel_state(prepared, frame):
+    """Seekable action samples used by the actual sprite rasterizer."""
     _integer(frame, 'frame', 0, prepared['frames'] - 1)
-    steps, reward, palette, seed = (prepared[k] for k in ('steps', 'reward', 'palette', 'seed'))
-    bg, ink, accent, second = palette
+    steps,reward=prepared['steps'],prepared['reward']
     # Resolve world position directly from the requested frame, including gaps.
     active, u, world_x = None, 0, 28
     completed = 0
@@ -125,6 +132,22 @@ def _render(prepared, frame):
     if reward_on:
         world_x += min(50, (frame - reward['in']) * 3)
     camera = max(0, world_x - 75)
+    crouch = active is not None and steps[active]['obstacle'] == 'duck' and .22 < u < .82
+    jump = 0
+    if active is not None and steps[active]['obstacle'] in ('jump', 'gap', 'collect'):
+        jump = round(math.sin(math.pi * u) * (35 if steps[active]['obstacle'] == 'gap' else 24))
+    return dict(active=active,progress=u,world_x=world_x,completed=completed,reward_on=reward_on,
+                camera=camera,crouch=crouch,jump=jump,player_x=world_x-camera,
+                player_y=GROUND-(8 if crouch else 12)-jump)
+
+
+def _render(prepared, frame):
+    from PIL import Image, ImageDraw
+    _integer(frame, 'frame', 0, prepared['frames'] - 1)
+    steps, reward, palette, seed = (prepared[k] for k in ('steps', 'reward', 'palette', 'seed'))
+    bg, ink, accent, second = palette
+    state=pixel_state(prepared,frame)
+    active,u,world_x,completed,reward_on,camera=(state[k] for k in ('active','progress','world_x','completed','reward_on','camera'))
     image = Image.new('RGB', (W, H), bg)
     d = ImageDraw.Draw(image)
     # Parallax uses integer sample addresses and the seed only; no stateful RNG.
@@ -132,8 +155,7 @@ def _render(prepared, frame):
         x = (i * 53 + seed * 7 - camera // 4) % W
         y = 38 + (i * 31 + seed) % 69
         d.point((x, y), fill=ink)
-    for i in range(12):
-        x = i * 47 - camera // 2 % 47
+    for i, x in skyline_columns(camera):
         height = 9 + (i * 11 + seed) % 31
         d.rectangle((x, GROUND - height, x + 35, GROUND), fill=second)
     d.rectangle((0, GROUND, W - 1, H - 1), fill=ink)
@@ -158,11 +180,7 @@ def _render(prepared, frame):
             d.polygon([(obstacle_x, 112), (obstacle_x + 4, 118), (obstacle_x, 124), (obstacle_x - 4, 118)], fill=accent)
         # Numeric checkpoints are grid text, separate from narrative subtitles.
         _letters(image, str(i + 1), (obstacle_x - 3, 92), ink, prepared['font'], 20, 1)
-    crouch = active is not None and steps[active]['obstacle'] == 'duck' and .22 < u < .82
-    jump = 0
-    if active is not None and steps[active]['obstacle'] in ('jump', 'gap', 'collect'):
-        jump = round(math.sin(math.pi * u) * (35 if steps[active]['obstacle'] == 'gap' else 24))
-    player_x, player_y = world_x - camera, GROUND - (8 if crouch else 12) - jump
+    crouch,player_x,player_y=(state[k] for k in ('crouch','player_x','player_y'))
     _sprite(d, player_x, player_y, palette, frame, crouch)
     # Independent progress UI and active-action text respond to cue semantics.
     d.rectangle((0, 0, W - 1, 31), fill=bg)
@@ -213,7 +231,7 @@ def render_pixel_frames(data, frames, output, font_path=None):
         _render(prepared, frame).save(output / f'f{frame:04d}.png')
     font_bytes = prepared['font_path'].read_bytes()
     report = {'frames': frames, 'fps': 30, 'size': [1920, 1080], 'native_grid': [W, H],
-              'scale': SCALE, 'sampling': 'nearest', 'text_threshold': 128,
+              'scale': SCALE, 'minimum_action_frames':MIN_ACTION_FRAMES, 'sampling': 'nearest', 'text_threshold': 128,
               'font': str(prepared['font_path']), 'font_sha256': hashlib.sha256(font_bytes).hexdigest(),
               'font_source': FONT_SOURCE if font_path is None else 'user-supplied; verify its licence separately',
               'font_license': 'SIL OFL 1.1' if font_path is None else 'not asserted for user-supplied font',

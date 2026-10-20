@@ -10,6 +10,7 @@ import re
 
 PALETTE=['#faf5e8','#202730','#e66b42','#49a69d']
 KINDS=('home','lab','hub','garden')
+MIN_LIGHT_HOLD=6
 
 
 def _font(data,path=None):
@@ -67,7 +68,7 @@ def validate_isometric_content(data,frames,font_path=None):
         if type(x) is not int or type(y) is not int or not 0<=x<grid[0] or not 0<=y<grid[1] or (x,y) in cells:raise ValueError('node coordinates must be unique integer grid cells')
         if type(height) not in (int,float) or not math.isfinite(height) or not .35<=height<=1.8:raise ValueError('height must be finite in [.35,1.8]')
         times=[node[k] for k in ('base','wall','roof','activate')]
-        if any(type(v) is not int for v in times) or not 0<=times[0]<times[1]<times[2]<times[3]<frames or times[2]-times[1]<6 or times[3]-times[2]<6:raise ValueError('assembly needs base < wall < roof < activate, six frames for walls and delayed cap')
+        if any(type(v) is not int for v in times) or not 0<=times[0]<times[1]<times[2]<times[3]<=frames-MIN_LIGHT_HOLD or times[2]-times[1]<6 or times[3]-times[2]<6:raise ValueError('assembly needs base < wall < roof < activate, six frames for walls, delayed cap and settled lights')
         deps=node.get('depends_on',[])
         if not isinstance(deps,list) or any(not isinstance(d,str) for d in deps) or len(set(deps))!=len(deps):raise ValueError('depends_on must be unique node ids')
         normalized.append(dict(node,height=height,depends_on=list(deps)));ids[identity]=normalized[-1];cells.add((x,y))
@@ -97,6 +98,12 @@ def project_iso(x,y,z=0,unit=120):
 
 def _ease(value):
     value=max(0,min(1,value));return 1-(1-value)**3
+
+
+def window_on_frame(node, level, column, frames, seed):
+    # Compress stagger only when the exclusive clip end would hide the lights.
+    delay = min(level * 2 + column + seed % 3, frames - MIN_LIGHT_HOLD - node['activate'])
+    return node['activate'] + delay
 
 
 def isometric_state(data,frame,frames):
@@ -181,7 +188,7 @@ def render_isometric_frame(data,frame,frames,font_path=None):
                     z=.22+level*.32
                     for column in range(2):
                         wx=x+.15+column*.28;wy=y+.725
-                        lit=frame>=node['activate']+level*2+column+data['seed']%3
+                        lit=frame>=window_on_frame(node,level,column,frames,data['seed'])
                         color=(bg if (level+column+data['seed'])%3 else secondary) if lit else _mix(accent,.6)
                         polygon([point(wx,wy,z),point(wx+.13,wy,z),point(wx+.13,wy,z+.13),point(wx,wy,z+.13)],color)
             if node['kind']=='hub' and node['roof_progress']>=1:

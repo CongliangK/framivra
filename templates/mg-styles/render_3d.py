@@ -49,13 +49,13 @@ def validate_3d_content(data, frames=240, samples=256, width=1920, height=1080, 
     data=deepcopy(data)
     for key in ('title', 'subtitle'):
         value = data.get(key, '')
-        if not isinstance(value, str) or len(value) > 180:
+        if not isinstance(value, str) or len(value) > 180 or '\n' in value or '\r' in value:
             raise ValueError(key + ' must be text with at most 180 characters')
     items = data.get('objects', data.get('items'))
     if not isinstance(items, list) or not 1 <= len(items) <= 6:
         raise ValueError('items must contain 1 to 6 entries')
     for item in items:
-        if not isinstance(item, dict) or not isinstance(item.get('label'), str) or len(item['label']) > 80:
+        if not isinstance(item, dict) or not isinstance(item.get('label'), str) or len(item['label']) > 80 or '\n' in item['label'] or '\r' in item['label']:
             raise ValueError('each item needs a label with at most 80 characters')
         if type(item.get('value')) not in (float, int) or not 0 <= item['value'] <= 100:
             raise ValueError('item value must be finite in [0,100]')
@@ -95,7 +95,7 @@ def validate_3d_content(data, frames=240, samples=256, width=1920, height=1080, 
             raise ValueError('each chapter needs frame, title and layout')
         if type(chapter['frame']) is not int or not previous < chapter['frame'] < args.frames:
             raise ValueError('chapter frames must be strictly increasing integer frames')
-        if not isinstance(chapter['title'],str) or len(chapter['title']) > 100:
+        if not isinstance(chapter['title'],str) or len(chapter['title']) > 100 or '\n' in chapter['title'] or '\r' in chapter['title']:
             raise ValueError('chapter title must be text with at most 100 characters')
         if chapter['layout'] not in ('scatter','assemble','result'):
             raise ValueError('chapter layout must be scatter, assemble or result')

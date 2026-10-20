@@ -25,6 +25,22 @@ def story_a():
 
 
 class PathGeometry(unittest.TestCase):
+    @unittest.skipUnless(READY, 'Pillow and font required')
+    def test_readable_examples_have_full_fill_and_thirty_identical_hold_frames(self):
+        for name in ('a','b'):
+            data=json.loads((ROOT/f'templates/mg-styles/examples/line-art-{name}-readable.json').read_text())
+            prepared=line._prepare(data,240)
+            scene=prepared['scenes'][-1]
+            self.assertEqual(scene['fill_frames'],12)
+            self.assertEqual(scene['hero_hold'],30)
+            self.assertEqual(line._hero_opacity(scene,209),1)
+            reference=line._render(prepared,210).tobytes()
+            for frame in range(210,240):
+                self.assertEqual(line._hero_opacity(scene,frame),1)
+                self.assertEqual(line._render(prepared,frame).tobytes(),reference)
+            data['story'][-1]['hero_hold']=31
+            with self.assertRaises(ValueError):line._prepare(data,240)
+
     def test_arc_length_tip_advances_by_requested_distance(self):
         points = [(0, 0), (30, 0), (30, 40)]
         lengths = line._lengths(points)

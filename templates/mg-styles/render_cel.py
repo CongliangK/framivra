@@ -105,6 +105,13 @@ def _prepare(data, frames, font_path=None):
         duration = end - start
         anticipation = _int(beat.get('anticipation', max(2, duration // 6)), 'anticipation', 2, duration - 7)
         motion = _int(beat.get('motion', max(4, duration // 3)), 'motion', 4, duration - anticipation - 3)
+        # Exposure sampling must retain anticipation and an interior motion pose.
+        # Merely accepting an analytic trajectory is insufficient: on threes a
+        # four-frame hop samples only its two grounded endpoints.
+        if anticipation < exposures['body'] + 1:
+            raise ValueError('anticipation needs at least body exposure + 1 frames for visible preparation')
+        if motion < 2 * exposures['action'] + 1:
+            raise ValueError('motion needs at least 2 * action exposure + 1 frames for an interior action drawing')
         distance = _int(beat.get('distance', 48 if beat['action'] == 'hop' else 0), 'distance', -80, 80)
         if beat['action'] != 'hop' and distance:
             raise ValueError('distance applies only to hop actions')

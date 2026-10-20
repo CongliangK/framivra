@@ -161,10 +161,19 @@ def _state(p,frame):
     return stage,u,target,values
 
 
+def hud_safe_layout(tx,ty):
+    """Keep the full search bracket between telemetry columns and above labels."""
+    bracket_max=min(129,tx-500,1420-tx)
+    name_top=max(885,math.ceil(ty+129+24))
+    status_top=max(974,name_top+34+16)
+    return {'bracket_max':bracket_max,'name_top':name_top,'status_top':status_top}
+
+
 def _render(p,frame):
     from PIL import Image,ImageDraw,ImageFilter,ImageFont
     stage,u,(tx,ty),values = _state(p,frame)
     bg,ink,accent,alert = p['palette']; color=alert if stage['mode']=='confirm' else accent
+    layout=hud_safe_layout(tx,ty)
     image = Image.new('RGB',SIZE,bg); draw=ImageDraw.Draw(image)
     def rgb(hexcolor,alpha):
         return tuple(int(hexcolor[i:i+2],16) for i in (1,3,5))+(alpha,)
@@ -194,7 +203,7 @@ def _render(p,frame):
     fd.ellipse((tx-8,ty-8,tx+8,ty+8),fill=rgb(color,marker_alpha))
     if stage['mode']!='search':
         lock=1-(1-min(1,u*2))**3 if stage['mode']=='detect' else 1
-        size=44+85*(1-lock)
+        size=44+(layout['bracket_max']-44)*(1-lock)
         for sx in (-1,1):
             for sy in (-1,1):
                 x,y=tx+sx*size,ty+sy*size
@@ -212,7 +221,7 @@ def _render(p,frame):
         draw.text(xy,value,font=font,fill=fill,anchor=anchor)
     text(p['title'],(100,72),1700,72,ink)
     text(p['subtitle'],(104,166),1700,30,ink)
-    text(p['target']['name'],(960,885),720,34,color,anchor='mt')
+    text(p['target']['name'],(960,layout['name_top']),720,34,color,anchor='mt')
     for i,(item,value) in enumerate(zip(p['telemetry'],values)):
         y=320+i*86
         text(item['label'],(100,y),360,30,color)
@@ -229,7 +238,7 @@ def _render(p,frame):
         draw.line((1450,y+57,1450+360*q,y+57),fill=color,width=3)
     # Status text is content, including the final confirmation; no English fallback.
     typed=stage['text'] if stage['mode']=='confirm' else stage['text'][:math.floor(min(1,u*3)*len(stage['text']))]
-    text(typed,(960,974),1600,40,color,anchor='mt',font_key=stage['text'])
+    text(typed,(960,layout['status_top']),1600,40,color,anchor='mt',font_key=stage['text'])
     scan=Image.new('RGBA',SIZE); sd=ImageDraw.Draw(scan)
     for y in range(0,1080,6): sd.line((0,y,1919,y),fill=(0,0,0,15),width=1)
     return Image.alpha_composite(image,scan).convert('RGB')

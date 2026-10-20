@@ -80,6 +80,28 @@ class AuroraOptics(unittest.TestCase):
             glass.render_aurora_glass_frame(data,29,90)
         self.assertIn('1.25e-08 单位',calls)
 
+    def test_explicit_micro_ui_reveal_budget_retains_completed_hold(self):
+        for name in ('ideas-readable','reflection-readable'):
+            data=glass.validate_aurora_glass_content(example(name),300)
+            for chapter in data['chapters']:
+                complete=chapter['in']+chapter['reveal_frames']-1
+                state=glass.micro_ui_state(chapter,complete)
+                self.assertEqual(state['displayed'],chapter['value'])
+                self.assertTrue(all(state['enabled']))
+                self.assertGreaterEqual(chapter['out']-complete,chapter['hold_frames'])
+                self.assertEqual(state,glass.micro_ui_state(chapter,chapter['out']-1))
+            # The slow light/lens can keep moving; completed controls remain semantic hold.
+            image=glass.render_aurora_glass_frame(data,299,300)
+            self.assertEqual(image.size,(1920,1080))
+        for change in ({'reveal_frames':True},{'hold_frames':True},{'reveal_frames':29,'hold_frames':10}):
+            data=example('ideas')
+            for i,c in enumerate(data['chapters']):c.update({'in':i*30,'out':(i+1)*30})
+            data['chapters'][0].update(change)
+            with tempfile.TemporaryDirectory() as tmp:
+                target=Path(tmp)/'not-created'
+                with self.assertRaises(ValueError):glass.render_aurora_glass_frames(data,90,target)
+                self.assertFalse(target.exists())
+
     def test_schema_glyph_fit_optics_and_window_rejection_before_writes(self):
         for edit in ({'seed':True},{'seed':2**31},{'lens':{'strength':float('nan')}},{'lens':{'radius':True}}):
             data=example('ideas');data.update(edit)

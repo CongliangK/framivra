@@ -92,6 +92,35 @@ class FlatVector(unittest.TestCase):
                     self.assertEqual(actual.tobytes(),self.frame(data,frame).tobytes())
             with self.assertRaises(ValueError):flat.render_flat_vector_frames(data,96,output,FONT)
 
+    def test_three_sibling_edges_use_open_routes_and_native_visible_lanes(self):
+        data=content()
+        data['cards']=[dict(id=key,label='结果'+key,value=i+1,detail='独立原因链') for i,key in enumerate(('a','b','c'))]
+        data['links']=[{'from':'origin','to':key} for key in ('a','b','c')]
+        data['final_order']=['a','b','c']
+        data['stages']=[{'mode':'question','in':0,'out':14,'text':'一个起点，三个结果'},
+                        {'mode':'build','in':14,'out':62,'text':'每条边都应保持可辨'},
+                        {'mode':'resolve','in':62,'out':100,'text':'整理结果'}]
+        prepared=flat._prepare(data,100,FONT);positions,_=flat._positions(prepared)
+        rectangles=[(x-190,y-107.5,x+190,y+107.5) for x,y in positions.values()]
+        image=flat.render_flat_vector_frame(data,61,100,FONT)
+        color=tuple(bytes.fromhex(flat.PALETTE[4][1:]))
+        lanes=[]
+        for link in data['links']:
+            route=flat.causal_arrow_route(prepared,positions,(300,560),link)
+            lanes.append(route[2][1])
+            for a,b in zip(route,route[1:]):
+                length=max(1,int(__import__('math').hypot(b[0]-a[0],b[1]-a[1])))
+                for step in range(length+1):
+                    x=a[0]+(b[0]-a[0])*step/length;y=a[1]+(b[1]-a[1])*step/length
+                    # Endpoints touch the intended node boundary; no segment
+                    # traverses any card's opaque interior, including siblings.
+                    self.assertFalse(any(left<x<right and top<y<bottom for left,top,right,bottom in rectangles))
+            x=round((route[2][0]+route[3][0])/2);y=round(route[2][1])
+            patch=image.crop((x-3,y-1,x+4,y+2))
+            self.assertGreater(sum(count for count,c in patch.getcolors(21) if max(abs(c[k]-color[k]) for k in range(3))<12),4)
+        self.assertEqual(len(set(lanes)),3)
+
+
     def test_shortest_build_settles_last_card_and_renders_its_text(self):
         data=json.loads((ROOT/'templates/mg-styles/examples/flat-vector-energy.json').read_text())
         # Six cards settle at local 63; locals 63..68 are six full readable frames.

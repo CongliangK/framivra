@@ -36,6 +36,40 @@ class SynthJourney(unittest.TestCase):
                 self.assertAlmostEqual(x-same[0][0],.18,places=8);matched+=1
         self.assertGreater(matched,25)
 
+    def test_waypoint_leaves_by_native_geometry_not_old_distance_or_label_gate(self):
+        from PIL import ImageChops
+        from unittest.mock import patch
+        data=self.load('night');font=s._font(data);project=s.waypoint_projection
+        # Suppress only one real scene element to isolate its native decoded ROI.
+        def difference(frame,index):
+            normal=s.render_synthwave_frame(data,frame,180)
+            def omit(point,travel,font_path,horizon=580):
+                return None if point is data['waypoints'][index] else project(point,travel,font_path,horizon)
+            with patch.object(s,'waypoint_projection',side_effect=omit):
+                absent=s.render_synthwave_frame(data,frame,180)
+            return ImageChops.difference(normal,absent)
+        for frame,index,region in ((35,0,(0,650,500,1080)),(36,0,(0,650,500,1080)),
+                                   (83,1,(1420,650,1920,1080)),(84,1,(1420,650,1920,1080))):
+            with self.subTest(frame=frame):
+                delta=difference(frame,index).crop(region)
+                self.assertIsNotNone(delta.getbbox())
+                self.assertGreater(sum(count for count,color in delta.getcolors(delta.width*delta.height) if max(color)>0),100)
+        # At f46 the first marker still has visible edge pixels; at f47 its
+        # entire line AND label have left, so culling can no longer pop the art.
+        self.assertIsNotNone(difference(46,0).getbbox())
+        self.assertIsNone(difference(47,0).getbbox())
+        label=s.waypoint_projection(data['waypoints'][0],32,font)
+        self.assertLess(label['x'],210)  # Old label gate already hid readable ink.
+        box=label['bounds'];self.assertGreater(box[2],0)
+        self.assertIsNotNone(difference(32,0).crop((0,650,350,760)).getbbox())
+        # Far projected objects are finite and remain drawable; the near-plane
+        # singularity is reached only after lateral departure.
+        far=project(dict(frame=500,label='远方',side='left'),0,font)
+        self.assertIsNotNone(far)
+        self.assertTrue(all(__import__('math').isfinite(far[k]) for k in ('x','bottom','width','height','scale')))
+        self.assertIsNone(project(data['waypoints'][0],70,font))
+
+
     def test_invalid_content_font_windows_and_values_rejected_before_write(self):
         import copy
         data=self.load('night');bad=[]

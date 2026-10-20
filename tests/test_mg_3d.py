@@ -18,6 +18,16 @@ class ThreeDimensionalStory(unittest.TestCase):
     def normalize(self, content=None, **kwargs):
         return MG.validate_3d_content(self.content if content is None else content, frames=240, **kwargs)
 
+    def test_fixed_screen_text_rejects_multiline_overflow(self):
+        for key in ('title', 'subtitle'):
+            data = deepcopy(self.content)
+            data[key] = 'A\n' * 80
+            with self.assertRaises(ValueError): self.normalize(data)
+        for field in ('objects', 'scene_story'):
+            data = deepcopy(self.content)
+            data[field][0]['label' if field == 'objects' else 'title'] = 'A\nB'
+            with self.assertRaises(ValueError): self.normalize(data)
+
     def test_valid_examples_do_not_mutate_callers(self):
         for name in ('three-d-story.json', 'three-d-materials.json'):
             content = json.loads((ROOT / 'examples' / name).read_text(encoding='utf-8'))

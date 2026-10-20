@@ -87,6 +87,27 @@ class SemanticHUD(unittest.TestCase):
             hud.validate_hud_content(data,60,FONT)
         with self.assertRaises(ValueError):hud.validate_hud_content(content(),60,'/tmp/missing-hud-font.ttf')
 
+    def test_maximum_legal_target_bracket_stays_clear_of_native_name_glyphs(self):
+        data=content()
+        for point in data['target']['points']:point.update(x=.5,y=.72)
+        original=hud.render_hud_frame(data,20,60,FONT)
+        changed=copy.deepcopy(data);changed['target']['name']='安全区文字'
+        alternative=hud.render_hud_frame(changed,20,60,FONT)
+        # Native final-RGB differences isolate the actually drawn name glyphs.
+        box=ImageChops.difference(original,alternative).getbbox()
+        self.assertIsNotNone(box)
+        layout=hud.hud_safe_layout(960,.72*1080)
+        bracket_bottom=.72*1080+layout['bracket_max']+2
+        self.assertGreaterEqual(box[1],bracket_bottom+20)
+        self.assertLessEqual(box[3],layout['status_top']-10)
+        for x in (.30,.70):
+            layout=hud.hud_safe_layout(x*1920,.72*1080)
+            self.assertGreaterEqual(x*1920-layout['bracket_max'],500)
+            self.assertLessEqual(x*1920+layout['bracket_max'],1420)
+        # Supplied normal trajectories keep their established name/status bands.
+        self.assertEqual(hud.hud_safe_layout(960,.6*1080)['name_top'],885)
+
+
     def test_sequence_evidence_and_direct_seek_match(self):
         data=content()
         with tempfile.TemporaryDirectory() as temp:

@@ -19,6 +19,26 @@ def example(name):return json.loads((ROOT/f'templates/mg-styles/examples/isometr
 
 @unittest.skipIf(Image is None,'optional Pillow required')
 class IsometricAssembly(unittest.TestCase):
+    def test_last_frame_windows_are_really_visible(self):
+        from unittest.mock import patch
+        node = dict(id='late',label='Late',kind='home',x=1,y=1,height=1.8,base=70,wall=76,roof=82,activate=88,depends_on=[])
+        data = dict(title='Lights',subtitle='',grid=[2,2],seed=2,nodes=[dict(node,id='early',x=0,y=0,base=0,wall=6,roof=12,activate=18),node],flows=[])
+        with self.assertRaises(ValueError):iso.validate_isometric_content(data,90)
+        node.update(base=66,wall=72,roof=78,activate=84)
+        data['nodes'][-1]=node
+        data = iso.validate_isometric_content(data,90)
+        for seed in (-2147483648,-1,0,2,2147483647):
+            for height in (.35,1.8):
+                for level in range(max(1,int(height/.38))):
+                    for column in range(2):
+                        self.assertLessEqual(iso.window_on_frame(node,level,column,90,seed),84)
+                        states=[f>=iso.window_on_frame(node,level,column,90,seed) for f in range(84,90)]
+                        self.assertEqual(states,[True]*6)
+        actual=iso.render_isometric_frame(data,89,90)
+        with patch.object(iso,'window_on_frame',return_value=999):
+            dark=iso.render_isometric_frame(data,89,90)
+        self.assertIsNotNone(ImageChops.difference(actual,dark).getbbox())
+
     def test_true_equal_axes_causality_delayed_caps_and_depth_order(self):
         axes=[iso.project_iso(1,0,0),iso.project_iso(0,1,0),iso.project_iso(0,0,1)]
         for axis in axes:self.assertAlmostEqual(math.hypot(*axis),120)

@@ -143,7 +143,17 @@ def _prepare(data, frames, font_path=None):
             path = _bridge(previous_tip, path[0]) + path[1:]
         lengths = _lengths(path)
         drawing_frames = max(1, math.ceil((end - start - hold) / speed))
-        scenes.append({**beat, 'hold': hold, 'drawing_frames': drawing_frames,
+        timing = {}
+        if i == len(story) - 1:
+            available = end - start - drawing_frames
+            hero_hold = _int(beat.get('hero_hold', 0), 'story.hero_hold', 0, available)
+            fill_frames = _int(beat.get('fill_frames', max(1, min(24, available - hero_hold))), 'story.fill_frames', 1, available)
+            if fill_frames + hero_hold > available:
+                raise ValueError('final fill_frames + hero_hold exceeds completed-line budget')
+            timing = dict(fill_frames=fill_frames, hero_hold=hero_hold)
+        elif 'fill_frames' in beat or 'hero_hold' in beat:
+            raise ValueError('fill_frames and hero_hold apply only to the final beat')
+        scenes.append({**beat, **timing, 'hold': hold, 'drawing_frames': drawing_frames,
                        'path': path, 'lengths': lengths, 'center': center,
                        'fills': [[transform(pt) for pt in shape] for shape in fill_shapes]})
         previous_tip, previous_end = path[-1], end
@@ -186,7 +196,7 @@ def _hero_opacity(scene, frame):
     display the filled hero there, rather than waiting for nonexistent out.
     """
     reveal_start = scene['in'] + scene['drawing_frames']
-    reveal_frames = max(1, min(24, scene['out'] - reveal_start))
+    reveal_frames = scene.get('fill_frames', max(1, min(24, scene['out'] - reveal_start)))
     return min(1, max(0, (frame - reveal_start + 1) / reveal_frames))
 
 

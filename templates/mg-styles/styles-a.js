@@ -62,7 +62,7 @@
       label(c,m,h,m.subtitle,115,225,1600,34,'sans-serif');
       const data=items(m), n=data.length, maximum=Math.max(1,...data.map(x=>Math.abs(number(x.value))));
       const unit=Math.min(115,640/Math.max(1,n));
-      const project=(x,y,z)=>[960+(x-y)*unit,680+(x+y)*unit*.5-z];
+      const project=(x,y,z)=>[960+(x-y)*unit*Math.sqrt(3)/2,680+(x+y)*unit*.5-z];
       // A common ground plane establishes a spatial system before anything grows.
       for(let i=-3;i<=3;i++) {
         c.strokeStyle=ink; c.globalAlpha=.1; c.lineWidth=2;
