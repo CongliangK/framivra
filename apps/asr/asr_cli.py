@@ -21,7 +21,7 @@ segline 锚定断句 → srt_out / tl_merge）：
   - sidecar 返回 words=[]（全失配）→ 客户端回退「整句均分」并显著告警（§3.4 步骤 3）；
   - --t2s 繁简统一仅作用于聚合完成后的显示文本（N6，绝不动锚定字流）。
 
-来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.5/§3.7。
+来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.5/§3.7。
 """
 import argparse
 import json

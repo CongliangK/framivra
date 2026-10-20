@@ -8,8 +8,8 @@
 | # | 阶段 | 入口 | 主要知识文档 |
 |---|---|---|---|
 | 1 | 调研立项 | `apps/research/`（R0-R6 多智能体） | `references/research.md` |
-| 2 | 脚本 | 写稿硬约束 | `references/narrative.md` §二 |
-| 3 | 结构预算 | 00-structure 冻结表 | 本文 §三 + `narrative.md` §二 |
+| 2 | 脚本 | 写稿硬约束 | [文风规范](voice-style.md) + [正文结构](narrative.md#二正文论证结构) |
+| 3 | 结构预算 | 00-structure 冻结表 | [结构预算](#3-结构预算) + [正文结构](narrative.md#二正文论证结构) |
 | 4 | 拍摄 | `references/shooting-guide.md` | 同左 |
 | 5 | A-roll/同步/抠像 | `apps/aroll/` `apps/sync/` `apps/matting/` | `references/aroll-pipeline.md` |
 | 6 | gfx 动效页 | 内核 gfx.md + 模板库 | `references/visual-baseline.md` + `assets/gfx-templates/` |
@@ -21,12 +21,12 @@
 
 - **入口**：`references/research.md`（R0-R6 多智能体编排为唯一执行方式；采集/评分脚本 `apps/research/`）。
 - **关键规则**：三类源最低覆盖；score_topic 量化评分（需求.30/空白.25/差异化.25/时机.20）；红队质询独立复算。
-- **验证门**：产出契约=九节 01-brief；量化分与红队质疑是「做不做」的依据（模板 `assets/brief-template.md`）。
+- **验证门**：01-brief 按 [模板](../assets/brief-template.md) 完整填写，含争议记录；量化分与红队质疑是「做不做」的依据。
 
 ## 2 脚本
 
 - **入口**：01-brief 定稿后 AI 初稿→用户审改→循环至定稿，产出 02-script（**锁定稿冻结后不再擅改**，实录差异走变更单）。
-- **关键规则**：写稿硬约束全套（语速 5.5 字/s、预判抬杠 ≥3、可信度八件、不抄清单）见 `narrative.md` §二；初稿不写分镜细节。
+- **关键规则**：文风与自检按 [voice-style](voice-style.md)；结构与可信度要求见 [正文结构](narrative.md#二正文论证结构)；初稿不写分镜细节。
 - **验证门**：用户审改是风格与事实最终把关（口播稿必须像用户自己的话）；需要 TTS 占位走 `apps/tts/`。
 
 ## 3 结构预算
@@ -71,7 +71,7 @@
 
 - **入口**：`vtx qc`（机制门）+ `apps/gates/content_gates.py`（内容门+项目门）+ R5 发布链 + R7 封面。
 - **关键规则**：mux 正式封装=libfdk_aac 192k，终检必测编码后解码 TP；4K lanczos 放大投稿版进 B 站高码率池；封面 16:10+安全区（D50）。
-- **验证门**：全冷验证链 ≈5 分钟定版口径；4K 断言 14 项；FREEZE 冻结点（md5 清单）+ CHANGELOG 变更单 + frozen timeline 三件套；收尾 `vtx gc` + snapshot 归档。
+- **验证门**：全冷验证链耗时须结合 [DEV 性能基准](../../../docs/DEV.md#一性能基准) 的项目、机器与测量条件判断，不作固定时限承诺；4K 断言 14 项；FREEZE 冻结点（md5 清单）+ CHANGELOG 变更单 + frozen timeline 三件套；收尾 `vtx gc` + snapshot 归档。
 
 ## 迭代与工作法（贯穿全程）
 

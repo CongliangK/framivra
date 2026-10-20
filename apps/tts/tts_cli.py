@@ -57,15 +57,13 @@ def new_runid() -> str:
 
 
 def print_followups(project_dir: str):
-    """repack_voice.py 同款后续命令序列（gen 完打印）。"""
+    """repack_voice.py 同款完整交付入口（gen 完打印）。"""
     tl = os.path.join(project_dir, "timeline.json")
-    print(f"\n后续命令（缺一不可，仓库根执行；final 已就位供 vtx/repack 消费）：")
-    print(f"  rm {project_dir}/cache/audio/vt_*.wav")
-    print(f"  python3 vtx/vtx.py -t {tl} prepare")
-    print(f"  python3 vtx/vtx.py -t {tl} audio   # voice 变必重跑")
-    print(f"  # v2：vtx audio 已内置限幅，无需手动 post_loudness")
-    print(f"  python3 vtx/vtx.py -t {tl} mux")
-    print(f"  python3 vtx/vtx.py -t {tl} qc && python3 vtx/vtx.py -t {tl} audit")
+    print("\n正式交付后续（仓库根执行；final 已就位，会更新项目 cache/、out/）：")
+    print(f'  python3 vtx/vtx.py -t "{tl}" all')
+    print("  完整 all 负责当前阶段回执与启用插件的 finish；检查退出码和 QC/插件结果。")
+    print("  局部音频诊断须先对当前输入 prepare，再 audio --report；最终仍运行完整 all。")
+    print("  操作与前置见 docs/skill/references/runbook.md；vtx audio 已内置限幅。")
     print(f"（实录终版替换：python3 apps/sync/repack_voice.py -t {tl}）")
 
 

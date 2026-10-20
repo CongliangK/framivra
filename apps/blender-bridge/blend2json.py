@@ -11,7 +11,7 @@ json 源路径取 scene["vtx_timeline"]（json2blend 埋的钩子）；
 - 左/右缘裁剪（dur 与 src_in/src_out 同步重算；左缘拖动会改变入点）
 不回写（检测并告警）：音频条、字幕条的一切改动。
 拒收（保留原值并报因）：dst<0、越过画布尾、素材 src 区间越界、跨族换轨、条丢失。
-产出后建议跑: python3 vtx.py -t <out.json> validate 验契约。
+产出后建议从仓根跑: python3 vtx/vtx.py -t <out.json> validate 验契约。
 """
 import copy, json, subprocess, sys
 from pathlib import Path

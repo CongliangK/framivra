@@ -17,7 +17,7 @@ gfx_tracks/project 及任何自定义扩展键原样保留；写前把旧 subtit
   - dry_run=True → 只返回新旧摘要，零写盘（不写 timeline、不产生备份）；
   - 新条目校验（in/out 整数、text 字符串、0 <= in < out）不过 → 拒绝写，保护现状。
 
-来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.7/§9.1。
+来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.7/§9.1。
 """
 import json
 import os

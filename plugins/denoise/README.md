@@ -3,7 +3,7 @@
 口播人声降噪链 v2（R-20 P2 攻坚定案）：Resemble 仅降噪 → afftdn 谱降噪 + 回
 48kHz（链内延迟补偿），以 timeline 键挂进 vtx prepare 阶段（v2 §2.2 缝 A，
 ARCHITECTURE.md 设计权威）。`scripts/denoise_voice.py` / `scripts/denoise_init.sh`
-旧路径留相对 symlink 兼容。
+旧路径留跨平台转发壳兼容。
 
 ## 链版本与升级记录
 
@@ -45,8 +45,10 @@ env python3 plugins/denoise/denoise_voice.py <in.wav> <out.wav>
 - Resemble 权重：`~/models/resemble-enhance/enhancer_stage2`（约 681MB；
   `RESEMBLE_WEIGHTS` 环境变量可覆盖根路径）
 
-一键探测/下载：`bash plugins/denoise/denoise_init.sh [--download]`
-（权重缺省走 hf-mirror.com 直连，渠道实测记录见该脚本头注释）。
+已有资产探测：`bash plugins/denoise/denoise_init.sh`；旧 `--download` 为 **BLOCKED**。
+缺权重时先读 [第三方许可](../../docs/third-party-licenses.md)；
+`env python3 scripts/model_license_policy.py plan resemble-enhance` 仅离线显示证据，
+不下载、不安装环境、不授予许可或解除旧入口门禁。
 
 ## 环境缺失的两级口径
 

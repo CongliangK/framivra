@@ -28,7 +28,7 @@ srt_out（独立 SRT）消费。
     夹取后 in >= out（整行落在时间轴外）则丢弃该行并告警
   8 输出按 in 升序 + 审计摘要（每行速率/宽度分布、告警清单）
 
-来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.4/§3.5；
+来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.4/§3.5；
 voice-ime make_subs.py split_line/speech_chars/latin_safe_cut（内化改造：
 时间从「窗口分配」改为「字级时间戳锚定」）。
 """
