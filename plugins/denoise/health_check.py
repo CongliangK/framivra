@@ -24,7 +24,7 @@ def main() -> int:
     ok = ok and py.is_file()
     weight = run_dir() / "ds/G/default/mp_rank_00_model_states.pt"
     print(f"[{'OK' if weight.is_file() else 'MISS'}] Resemble 权重 {weight}"
-          + ("" if weight.is_file() else "（bash plugins/denoise/denoise_init.sh --download）"))
+          + ("" if weight.is_file() else "（旧 --download 为 BLOCKED；许可见 docs/third-party-licenses.md；离线证据：python3 scripts/model_license_policy.py plan resemble-enhance，不下载、不授予许可）"))
     ok = ok and weight.is_file()
     print("denoise health: " + ("healthy" if ok else "unhealthy（缺件见上方 MISS 行）"))
     return 0 if ok else 1

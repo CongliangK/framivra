@@ -44,10 +44,7 @@ import time
 import urllib.request
 import zlib
 
-if __package__:
-    from .gfx_cli import png_invalid_reason, verify_frames
-else:  # keep the documented standalone renderer entry point usable
-    from gfx_cli import png_invalid_reason, verify_frames
+from .gfx_cli import png_invalid_reason, verify_frames
 
 try:
     import numpy  # noqa: F401
@@ -566,12 +563,11 @@ class Browser:
 # 绝不把失败帧的前一帧状态静默截下来。
 #
 # 特性 2 静态跨度去重（VTX_GFX_STATIC，默认 1）：页面可声明
-#   window.__vtx_static_spans = [[a,b), ...]（帧号左闭右开，承诺「此区间画面恒定」；
-#   与 __vtx_render 无关，任何页可声明，由声明生成方经序列化 hash 全等扫描产出
-#   ——DOM 全等 ⇒ 光栅全等 ⇒ 字节全等）。渲染器按跨度缩减渲染集：区间头渲染/
-#   复用，区间内缺失成员帧字节复制头帧文件（零解码零编码）。正确性由声明生成方
-#   扫描 + golden 比对双兜底，渲染器信任声明；解析失败惰性降级原路径（warning）。
-# 成员帧「缺失才复制」，已存在的不动（与现行续渲语义一致）。
+#   window.__vtx_static_spans = [[a,b], ...]（表示 [a,b)，与 __vtx_render 无关）。
+#   这是作者的像素恒定承诺，DOM 序列化相等不能证明实际像素相等。渲染器信任声明，
+#   区间头渲染/复用，缺失成员字节复制头帧文件（零解码零编码），已存在成员不动；
+#   解析失败告警后按无声明渲染。采用前关闭静态复制，以相同输入/环境实渲整个跨度
+#   并比对像素；页面或依赖变化后重验。完整合同见 docs/skill/references/gfx.md。
 # 原 foreignObject 快照/alpha 探针通路已判死（FO 图像上下文光栅化固有偏差，
 # golden 全零门槛不过），相关驱动与 VTX_GFX_BATCH* env 一并移除。
 

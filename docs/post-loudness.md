@@ -1,33 +1,11 @@
-# Post-mix loudness check
+# 响度终链与旧兼容入口
 
-> **v2 留档（2026-09-13）**：limiter 已并入 `vtx audio`（ARCHITECTURE §1.2）——
-> `all`/`audio` 产出的 out/audio.wav 恒为「归一+限幅」终态（`volume=…dB,alimiter=
-> limit=0.599:level=false:latency=true` + 复测 ±1.5 LU + 时长 ±1 采样 + 回执
-> `post_loudness` 字段），R4 链简化为 `all --until video` → `mux` → `qc`。
-> scripts/post_loudness.py 与 scripts/post_loudness.sh 保留为兼容薄壳（调 vtx.stages.post_loudness_compat；
-> 真幂等仅限「回执 sha256 一致的终态」或「I 已在 target」两种情形——对限幅损耗
-> 产物重跑会按 v1 旧语义再推增益（实测 +1.9dB 蠕升），函数打印蠕升警告）。
-> **本文以下内容留档历史链路。**
+正常渲染由 `vtx audio` 内置归一、限幅与终态检查；正式交付使用完整 `vtx all`，再核对成片 QC 与项目内容门。阶段依赖和操作顺序见 [runbook](skill/references/runbook.md)，响度分级见 [音频工程](skill/references/edit.md)。无需再追加 post_loudness 步骤。
 
-> **v2 导航**：以下为 v1 历史链路留档；v2 直接 `vtx audio`（终态语义见文件头留档说明）。
-Run after `vtx audio`, before `vtx mux` (historical):
+`scripts/post_loudness.py`、`scripts/post_loudness.sh` 与 `vtx.stages.post_loudness_compat` 当前仍存在，但不作为正式交付、恢复或补签回执流程：
 
-```sh
-python3 scripts/post_loudness.py /path/to/project --ffmpeg /path/to/ffmpeg
-```
+- 兼容重跑可能再次施加增益，改变已限幅产物的响度；它不保证重复执行保持字节或响度不变。
+- 它可替换 `out/audio.wav`，却不更新或撤销 audio/mux/qc 阶段回执。因此既有成功回执不能证明替换后产物已经验证。
+- 需要调整声音时修改 timeline，并重跑正式链；不要直接修改成片音频后沿用旧成功状态。
 
-Windows supports the same Python entrypoint and quoted paths. The Bash wrapper remains compatible. `TARGET_LUFS` (default -14) or `--target` selects the target; `FFMPEG` or `--ffmpeg` selects FFmpeg.
-
-The old wrapper treated `stages.audio.raw_i` as current WAV loudness. It actually describes the raw mix before `gain_db` was applied, so the wrapper applied the gain twice. The replacement always measures current audio bytes with EBU R128, applies the needed static gain and the existing 0.599 limiter ceiling, then measures again. Latency compensation retains sample alignment. Candidate duration must match within one 48 kHz sample and measured loudness within 1.5 LU before replacement. A failed render or verification preserves the original audio and receipt; temporary audio is removed.
-
-Only after validation does the script atomically invalidate `audio` and its `DOWNSTREAM` consumers in the existing receipt, replace audio with a same-directory candidate, then restore the previous audio stage with a `post_loudness` object containing measurements and output SHA256. It preserves input provenance and never invents a missing successful audio stage. An interrupted finalization can leave audio unacknowledged, requiring an audio rerun, but cannot leave obsolete mux/QC success. Existing raw mix metadata remains raw mix metadata. It does not update cached audio: rerunning `vtx audio` may restore the pre-postprocessed mix, so rerun this command afterward.
-
-Repeated execution is loudness-stable within measurement precision, not guaranteed bit-identical. Do not run simultaneous writers or edit timeline inputs during postprocessing. PCM WAV input is required. The limiter headroom is a heuristic; decoded AAC true peak still needs final QC. This is not certification to a Bilibili delivery standard.
-
-Regression tests:
-
-```sh
-python tests/test_post_loudness.py --ffmpeg /path/to/ffmpeg --output /path/to/evidence
-```
-
-Tests cover a real stale-raw-I reproduction, two processing passes, unchanged duration, receipt invalidation, and preservation on encoder, duration, and loudness gate failures.
+上述兼容入口的存在不代表已修复这些边界。本说明不提供调用配方；旧实现与历史测试可从版本历史追溯。源码依据：`vtx/stages.py` 的 `post_loudness_compat`，终链合同见 [ARCHITECTURE §1.2](ARCHITECTURE.md#12-响度终链合并limiter-入-build_audio-尾部)。

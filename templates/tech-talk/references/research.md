@@ -75,11 +75,11 @@ digest 必含：①供给分层表（娱乐层/工具盘点层/场景演示层/�
 
 ## 产出契约
 
-- `01-brief.md`：复制 `<video_tools>/templates/tech-talk/assets/brief-template.md`（十节+§11 争议记录，顶层章节不得增删）。
+- `01-brief.md`：复制 [brief 模板](../assets/brief-template.md)，含 §11 争议记录，顶层章节不得增删。
 - `research/`：所有原始数据 JSON + 各角色 md（supply_digest / ecosystem / demand / benchmarks / score_notes / challenge）。
 - 人工拍板项始终保留：切入角度、标题封面、时长——主编只给带推荐的选项。
 
-Brief 定稿后的下一步（脚本 → gfx 动效 → vtx 剪辑渲染）见内核 skill `references/gfx.md` 与 `references/edit.md`（本包 SKILL.md 六阶段④⑤）。
+Brief 定稿后的下一步（脚本 → gfx 动效 → vtx 剪辑渲染）见内核 `<video_tools>/docs/skill/references/gfx.md` 与同目录 `edit.md`（本包 SKILL.md 六阶段④⑤；`<video_tools>` 为本仓真实根目录）。
 
 ## 已知坑
 

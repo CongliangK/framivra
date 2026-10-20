@@ -1,8 +1,8 @@
 # sync · 双系统同步与实录替换（**管线前置素材工具**子类）
 
-v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py` 迁入；manifest 见 `app.json`，兼容 symlink：`scripts/` 下同名件 → 本目录）。
+v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py` 迁入；manifest 见 `app.json`，兼容转发壳：`scripts/` 下同名件 → 本目录）。
 
-> **子类标注（ARCHITECTURE §3.1）**：本 app 属「管线前置素材工具」——不进 timeline 管线、无插件钩子；但两件都邻接**不可逆写操作**（repack 替换 voice 轨源、sync 微重采样 conform），纪律 = **幂等 + 备份**：repack 首次运行自动备份占位到 `final_tts_backup/`，替换后必须清 `cache/audio/vt_*.wav` 重跑 prepare/audio（脚本结束打印完整序列）；sync 输出为新 out.wav，不覆写输入，conform 后复验残差 max<1.5ms 达标才判过。
+> **子类标注（ARCHITECTURE §3.1）**：本 app 属「管线前置素材工具」——不进 timeline 管线、无插件钩子；但两件都邻接**不可逆写操作**（repack 替换 voice 轨源、sync 微重采样 conform），纪律 = **幂等 + 备份**：repack 首次运行自动备份占位到 `final_tts_backup/`，替换后正式交付运行完整 `all`（脚本结束打印入口），当前回执与局部诊断前置见 [runbook](../../docs/skill/references/runbook.md)；sync 输出为新 out.wav，不覆写输入，conform 后复验残差 max<1.5ms 达标才判过。
 
 ## 用途
 
@@ -15,8 +15,8 @@ v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py`
 
 - 硬依赖（app 级，manifest requires）：ffmpeg + numpy（repack_voice 系统 python3 即可跑）
 - `sync_audio.py` 须在 **conda `denoise` 环境**运行（numpy/scipy/soundfile/soxr；scipy 仅该环境提供，doctor 的系统解释器探不到，故不进 app 级 requires）：`~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py ...`
-- 缺第三方依赖时（如系统 python3 无 scipy）不抛裸 traceback：脚本给中文指引（denoise 解释器优先读 `config.local.json` `denoise.python`，无则默认约定路径；附 pip 备选）并以专用退出码 **3** 结束；`--help` 零第三方依赖即可用（A4）
-- 全链依赖探测：`bash plugins/denoise/denoise_init.sh`（ffmpeg / denoise 环境 / Resemble 权重三探；原 scripts/denoise_init.sh 经兼容 symlink 可达）
+- 缺第三方依赖时（如系统 python3 无 scipy）不抛裸 traceback：脚本给中文指引（denoise 解释器优先读 `config.local.json` `denoise.python`，无则默认约定路径；附 pip 备选）并以专用退出码 **3** 结束；`--help` 零第三方依赖即可用
+- 全链依赖探测：`bash plugins/denoise/denoise_init.sh`（ffmpeg / denoise 环境 / Resemble 权重三探；原 scripts/denoise_init.sh 经兼容转发壳 可达）
 
 ## 健康检查
 
@@ -24,11 +24,16 @@ v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py`
 
 ## 开启步骤
 
+以下示例从 Framivra 仓库根执行；`<video_tools>` 替换为仓库绝对路径，`<项目>` 与音视频路径占位符替换为对应绝对路径。方括号表示可选部分，执行前展开或省略。
+
 ```bash
+cd "<video_tools>"
 # 双系统同步（conda denoise 环境）
-~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav> --report report.json
-# 实录替换（项目根）
-env python3 apps/sync/repack_voice.py -t timeline.json [--takes-dir assets/voice_takes] [窗口ID ...]
-# 替换后（缺一不可，脚本结束也会打印）：
-rm <项目>/cache/audio/vt_*.wav && env python3 vtx/vtx.py -t timeline.json prepare && ... audio && ... mux && ... qc
+~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py "<camera.(wav|mp4|mov)>" "<mic.wav>" "<out.wav>" --report "<项目>/report.json"
+# 实录替换（路径指向同一视频项目）
+env python3 apps/sync/repack_voice.py -t "<项目>/timeline.json" [--takes-dir "<项目>/assets/voice_takes"] [窗口ID ...]
+# 替换后正式交付（从仓库根执行，会更新项目 cache/、out/）：
+env python3 vtx/vtx.py -t "<项目>/timeline.json" all
 ```
+
+局部音频诊断须先对当前输入执行 `prepare`，再执行 `audio --report`；局部通过后仍运行完整 `all`，检查退出码与 QC/插件结果。内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish；完整配方见 [runbook](../../docs/skill/references/runbook.md)。

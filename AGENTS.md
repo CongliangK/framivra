@@ -17,7 +17,7 @@ B 站视频产线程序本体权威仓:内核 `vtx/`(timeline.json 契约+帧精
 - docs/plans* 三目录只读历史层(唯一活文件例外见 DOC-CHARTER §19)。
 - docs/skill/ 与 templates/** 文档修订即改写挂载消费面,落笔前先经消费面评审公告(DOC-CHARTER §5/§7b)。
 - 版本三源(VERSION/pyproject.toml/vtx/__init__.py)改一必三,doc_gates version_sync leaf 守护。
-- 文档化命令零写态书写(--dry/离线旗标;DOC-CHARTER §21);docs 域命令须入 bash 栅栏方受冒烟守护。
+- 文档化命令零写态书写(--dry/离线旗标);冒烟扫描面与盲区见 DOC-CHARTER §20/§21。
 
 ## 编辑纪律
 - 新建文档先读 DOC-CHARTER 定层,四层之外不设第五层。

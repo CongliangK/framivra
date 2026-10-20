@@ -13,7 +13,7 @@
 机制：帧区间 [in, out) 左闭右开 → SRT 显示区间 [in/fps, out/fps)（毫秒取整）；
 序号从 1 连续递增；条目间空行分隔；末尾以换行收束。
 
-来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.7。
+来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.7。
 """
 from pathlib import Path
 

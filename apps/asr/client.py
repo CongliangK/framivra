@@ -27,7 +27,7 @@
     ~/.local/state/framivra/asr/sidecar_<port>.pid（项目状态根，与 IME 独立）；
   - 4xx/5xx → ClientError（带服务端中文 error）；超时 → TranscribeTimeout。
 
-来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.3/§7.2/§9.1。
+来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.3/§7.2/§9.1。
 """
 import json
 import os

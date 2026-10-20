@@ -49,6 +49,7 @@ blender --background --factory-startup --python apps/blender-bridge/json2blend.p
   异常消息中的同名文本）；两路 json2blend 错误标记优先展示，再附两路尾部。
   UserWarning 等其他输出保留但不抢首展错误，滤除计数聚合为一行提示
   （`已滤除 N 行 Blender DeprecationWarning`）；子进程退出码语义不变。
+- **退出码边界**：调用未配置 `--python-exit-code`；未捕获的 Blender Python 异常可能打印 traceback 而进程仍退出 0，不能仅凭退出 0 认定脚本成功。[原始实测与范围](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/plugins/blender-bridge/REPORT-F2.md#L84-L89)。
 
 - `--draft` / `--dry-run` / `all --until <截断>` 不触发（无正式产物语义）。
 - qc 失败不阻断导出（2026-09-14 裁定：产物已就绪，存量假阴性项目也要能收尾）——

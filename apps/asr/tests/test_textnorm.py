@@ -29,7 +29,7 @@ class TestTextnormGolden(unittest.TestCase):
         self.assertEqual(textnorm.normalize_text("我 希望 你"), "我希望你")
 
     def test_n3_cjk_latin_space_kept(self):
-        # 方案 N3：CJK↔拉丁边界空格保留（与 IME 原实现不同，方案为权威规格）
+        # 方案 N3：CJK↔拉丁边界空格保留（与 IME 原实现不同，本模块 README 的 N3 规则为准）
         self.assertEqual(textnorm.normalize_text("配合 opencode 编辑"), "配合 opencode 编辑")
 
     def test_n5_inline_fillers(self):

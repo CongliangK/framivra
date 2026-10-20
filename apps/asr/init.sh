@@ -5,7 +5,7 @@
 # 幂等：检查已有专属资产（探测+引用）；缺失项失败汇总，不补齐。
 # 用法：bash apps/asr/init.sh [--download|--help]。
 # 默认不建 venv、不安装包、不下载模型；--download 在配置/venv/pip 前 BLOCKED。
-# 下方保留的旧安装分支不可由当前许可门禁放行；单资产固定快照下载不安装运行环境。
+# 单资产固定快照下载不安装运行环境；本入口只检查已有资产。
 set -euo pipefail
 
 usage() {
@@ -69,20 +69,9 @@ FAIL=0
 ok()   { echo "✓ $*"; }
 warn() { echo "⚠ $*"; }
 bad()  { echo "✗ $*"; FAIL=1; }
-# 防御式门禁：所有网络入口统一收敛；命令打印到 stderr，避免污染 curl 的 JSON 管道。
-run_network() {
-  if [[ "$DOWNLOAD" != "1" ]]; then
-    bad "网络操作已阻止；旧 --download 为 BLOCKED，准备边界见 docs/third-party-licenses.md。"
-    return 1
-  fi
-  printf '… 执行网络命令：' >&2
-  printf ' %q' "$@" >&2
-  printf '\n' >&2
-  "$@"
-}
 
 echo "== asr 模块 init（幂等；Framivra 专属资产，绝不借用输入法）=="
-[[ "$DOWNLOAD" == "1" ]] || echo "本地探测模式：不联网、不安装；旧 --download 为 BLOCKED。许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/model_license_policy.py plan <asset>。"
+echo "本地探测模式：不联网、不安装；旧 --download 为 BLOCKED。许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/model_license_policy.py plan <asset>。"
 
 # ---------------------------------------------------------------- 1. 解释器探测（项目专属环境）
 CFG_PY="$(python3 - "$ROOT/config.local.json" <<'PY' 2>/dev/null || true
@@ -106,41 +95,10 @@ elif [[ -x "$ASR/.venv/bin/python" ]]; then
 fi
 
 if [[ -z "$PY" ]]; then
-  if [[ "$DOWNLOAD" != "1" ]]; then
-    bad "无 Framivra 专属解释器（config.asr.python → apps/asr/.venv；绝不借用输入法环境）；本地模式不创建环境、不安装包。旧 --download 为 BLOCKED；独立运行环境须另行审核和准备，见 apps/asr/README.md「开启步骤」。"
-  else
-    warn "无专属解释器 → 自建 apps/asr/.venv（已显式 --download）"
-    # Windows/Git Bash 无 python3 别名 → 回退 python；失败仍走汇总。
-    SYS_PY="$(command -v python3 || command -v python || true)"
-    if [[ -z "$SYS_PY" ]]; then
-      bad "无 python3/python 解释器——Windows 装 Python 勾选 Add to PATH 后重试"
-    else
-      PYVER="$("$SYS_PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-      if [[ "${PYVER%%.*}" -lt 3 || "$PYVER" < "3.10" ]]; then
-        bad "系统 python3 版本 $PYVER < 3.10，无法自建 venv（官方建议 3.12）"
-      elif "$SYS_PY" -m venv "$ASR/.venv"; then
-        PY="$ASR/.venv/bin/python"; [[ -x "$ASR/.venv/Scripts/python.exe" ]] && PY="$ASR/.venv/Scripts/python.exe"
-        ok "解释器（新建 apps/asr/.venv）：$PY"
-      else
-        bad "自建 apps/asr/.venv 失败；旧 --download 为 BLOCKED，独立运行环境须另行审核和准备。"
-      fi
-    fi
-  fi
+  bad "无 Framivra 专属解释器（config.asr.python → apps/asr/.venv；绝不借用输入法环境）；本地模式不创建环境、不安装包。旧 --download 为 BLOCKED；独立运行环境须另行审核和准备，见 apps/asr/README.md「开启步骤」。"
 fi
 
-HAS_MS=0
 if [[ -n "$PY" ]]; then
-  if [[ "$DOWNLOAD" == "1" ]]; then
-    NEED_PACKAGES=0
-    "$PY" -I -c "import qwen_asr" 2>/dev/null || NEED_PACKAGES=1
-    "$PY" -I -c "import modelscope" 2>/dev/null || NEED_PACKAGES=1
-    if [[ "$NEED_PACKAGES" == "1" ]]; then
-      # 用项目解释器调用 pip（-I 隔离外部注入；绝不调用输入法的 pip）。
-      if ! run_network "$PY" -m pip install --timeout 60 --retries 2 -i "$TUNA" -U qwen-asr modelscope; then
-        bad "pip 安装失败；旧 --download 为 BLOCKED，依赖来源与许可须另行审核，见 docs/third-party-licenses.md。"
-      fi
-    fi
-  fi
   if "$PY" -I -c "import qwen_asr" 2>/dev/null; then
     QVER="$("$PY" -I -c "import qwen_asr; print(getattr(qwen_asr, '__version__', 'unknown'))" 2>/dev/null || echo unknown)"
     # 依赖来源验证（issue #141）：qwen_asr 必须装在解释器自身环境根内
@@ -156,14 +114,13 @@ if [[ -n "$PY" ]]; then
     printf '    未运行安装：解释器 %q；旧源 %q。许可边界见 docs/third-party-licenses.md。\n' "$PY" "$TUNA"
   fi
   if "$PY" -I -c "import modelscope" 2>/dev/null; then
-    HAS_MS=1
     ok "modelscope 可导入（仅旧下载链使用，当前 --download 入口为 BLOCKED）"
   else
     warn "缺 modelscope 包（仅旧下载链需要）；旧 --download 为 BLOCKED，本地检查不补装。许可边界见 docs/third-party-licenses.md。"
   fi
 fi
 
-# ---------------------------------------------------------------- 2. 模型探测/下载（项目专属根）
+# ---------------------------------------------------------------- 2. 模型探测（项目专属根）
 CFG_MDIR="$(python3 - "$ROOT/config.local.json" <<'PY' 2>/dev/null || true
 import json, sys, os
 try:
@@ -190,39 +147,12 @@ find_model() {  # $1=目录名 → 输出已就位根目录（空=缺）
   echo ""
 }
 
-download_model() {  # $1=目录名（Qwen3-ASR-1.7B 等）→ 下载到专属根 $MODELS_HOME/<name>
-  local name="$1" ms_bin rc=0
-  mkdir -p "$MODELS_HOME"
-  # modelscope 包无 __main__（python -m modelscope 不可执行）→ 用 venv 的 CLI 脚本；
-  # 其 shebang 可能失效 → 一律用 "$PY" 显式重解释
-  ms_bin="$(dirname "$PY")/modelscope"
-  if [[ -f "$ms_bin" ]]; then
-    run_network "$PY" "$ms_bin" download --model "Qwen/$name" --local_dir "$MODELS_HOME/$name" || rc=$?
-  else
-    run_network "$PY" -I -m modelscope download --model "Qwen/$name" --local_dir "$MODELS_HOME/$name" || rc=$?
-  fi
-  if [[ "$rc" -ne 0 ]]; then
-    bad "下载失败：Qwen/$name（ModelScope 国内直连，exit $rc）"
-    echo "  旧下载链未审查，不能切换镜像重试；许可边界与固定官方快照要求见 docs/third-party-licenses.md。"
-    return 1
-  fi
-}
-
 for name in Qwen3-ASR-1.7B Qwen3-ASR-0.6B Qwen3-ForcedAligner-0.6B; do
   root="$(find_model "$name")"
   if [[ -n "$root" ]]; then
     ok "模型 $name（复用专属资产）：$root/$name"
-  elif [[ "$DOWNLOAD" != "1" ]]; then
-    bad "缺少模型 $name（专属根 $MODELS_HOME）；本地探测不联网、绝不借用输入法模型。旧 --download 为 BLOCKED；请核对 docs/third-party-licenses.md 与离线 plan <asset>，或配置已独立准备的 asr.model_dir。"
-  elif [[ -z "$PY" || "$HAS_MS" != "1" ]]; then
-    bad "无法下载 $name：解释器/modelscope 未就绪（见上）；旧 --download 为 BLOCKED，准备边界见 docs/third-party-licenses.md。"
   else
-    echo "… 下载 Qwen/$name → $MODELS_HOME/$name（ForcedAligner 约 2GB，国内直连）"
-    if download_model "$name"; then
-      rev="$(run_network curl -fSL --connect-timeout 10 --max-time 10 "https://modelscope.cn/api/v1/models/Qwen/$name" \
-             | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Data",{}).get("Revision","unknown"))' 2>/dev/null || echo unknown)"
-      ok "模型 $name（新下载）：$MODELS_HOME/$name（ModelScope revision $rev —— 请抄录进 apps/asr/README.md「已验证版本」节）"
-    fi
+    bad "缺少模型 $name（专属根 $MODELS_HOME）；本地探测不联网、绝不借用输入法模型。旧 --download 为 BLOCKED；请核对 docs/third-party-licenses.md 与离线 plan <asset>，或配置已独立准备的 asr.model_dir。"
   fi
 done
 
