@@ -97,7 +97,8 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None,
         return "零字节"
     try:
         with open(p, "rb") as stream:
-            fh = _HashingReader(stream)
+            fh = (_HashingReader(stream)
+                  if _fingerprint is not None or _verified_size is not None else stream)
             head = fh.read(len(PNG_SIGNATURE))
             if head != PNG_SIGNATURE:
                 return f"魔数头不符（前 {len(head)} 字节 = {head[:8]!r}，期望 {PNG_SIGNATURE!r}）"
