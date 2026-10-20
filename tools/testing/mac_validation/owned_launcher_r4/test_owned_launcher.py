@@ -126,13 +126,15 @@ class FakeRegistry:
     def __init__(self,nested='PASS'):
         self.groups={self.root_pid}; self.generations={}; self.project=Path('/ordinary-unused-mock')
         self.nested=nested
+        self.processes={self.root_pid:dict(pid=self.root_pid,pgid=self.root_pid,start_identity=100)}
     def can_signal(self,pgid): return False
     def read_ledgers(self): pass
     def nested_coverage(self): return {'status':self.nested}
 
 
 def fake_runtime(observations):
-    owner=SimpleNamespace(kill_group=lambda *a,**k:False,_assert_kill_whitelisted=lambda p:None)
+    owner=SimpleNamespace(kill_group=lambda *a,**k:False,_assert_kill_whitelisted=lambda p:None,
+                          proc_starttime=lambda pid:100)
     runtime=launcher.Runtime(owner)
     runtime.observe_groups=lambda *a: next(observations)
     return runtime
@@ -169,13 +171,15 @@ class LauncherCleanupTests(unittest.TestCase):
             result=launcher.cleanup(FakeChild(),registry,runtime,request_stop=True)
         kill.assert_not_called()
         self.assertEqual(result['status'],'UNKNOWN')
-        self.assertIn(dict(action='no_signal_identity_unknown',pgid=876545),result['steps'])
+        self.assertEqual(result['steps'],[])
+        self.assertTrue(any('live_identity_coverage_unknown' in item for item in result['failure_reasons']))
 
     def test_signal_revalidates_after_lineage_check(self):
         for sig in (signal.SIGTERM,signal.SIGKILL):
             with self.subTest(sig=sig):
                 events=[]
-                registry=SimpleNamespace(can_signal=lambda pgid:events.append('identity') or False)
+                registry=SimpleNamespace(root_pid=876543,processes={876543:dict(pid=876543,pgid=876543,start_identity=100)},
+                                         can_signal=lambda pgid:events.append('identity') or False)
                 owner=SimpleNamespace(_assert_kill_whitelisted=lambda pgid:events.append('lineage'))
                 runtime=launcher.Runtime(owner)
                 with patch.object(launcher.os,'killpg') as kill:
@@ -200,10 +204,176 @@ class LauncherCleanupTests(unittest.TestCase):
         self.assertEqual(removed,[run]); self.assertEqual(result['status'],'PASS',result)
 
 
+class NaturalWaitRuntime(launcher.Runtime):
+    """Pure mock clock and inventories; never invokes ps or real sleep."""
+    def __init__(self, observations, identities, *, observation_cost=0, ledger_cost=0):
+        super().__init__(SimpleNamespace(proc_starttime=lambda pid:identities.get(pid),
+            _assert_kill_whitelisted=lambda pgid:None))
+        self.now=0.0; self.observations=iter(observations); self.last=None
+        self.observation_cost=observation_cost; self.ledger_cost=ledger_cost
+        self.deadlines=[]; self.sleeps=[]
+    def clock(self): return self.now
+    def sleep(self, seconds):
+        self.sleeps.append(seconds); self.now+=seconds
+    def observe_groups(self, groups, deadline):
+        self.remaining(deadline,1); self.deadlines.append(deadline)
+        self.now+=min(self.observation_cost,deadline-self.now)
+        try: self.last=next(self.observations)
+        except StopIteration: pass
+        if isinstance(self.last,Exception): raise self.last
+        return self.last
+
+
+class LauncherNaturalWaitTests(unittest.TestCase):
+    ROOT=876543; AUX=876545; MEMBER=876546
+    def fixture(self, observations, *, nested='PASS', identities=None, **runtime_options):
+        registry=FakeRegistry(nested); registry.groups.add(self.AUX)
+        registry.processes[self.MEMBER]=dict(pid=self.MEMBER,pgid=self.AUX,start_identity=200)
+        values={self.ROOT:100,self.MEMBER:200} if identities is None else identities
+        runtime=NaturalWaitRuntime(observations,values,**runtime_options)
+        return registry,runtime
+    def live(self, pid=None, pgid=None):
+        return {'live_rows':[dict(pid=pid or self.MEMBER,pgid=pgid or self.AUX,state='S')]}
+    def empty(self): return {'live_rows':[]}
+    def clean(self, registry, runtime, **kwargs):
+        with patch.object(launcher.os,'killpg') as kill:
+            result=launcher.cleanup(FakeChild(),registry,runtime,request_stop=False,**kwargs)
+        kill.assert_not_called()
+        return result
+
+    def test_auxiliary_natural_exit_passes_without_signal(self):
+        registry,runtime=self.fixture([self.live(),self.live(),self.empty()])
+        result=self.clean(registry,runtime)
+        self.assertEqual(result['status'],'PASS',result)
+        self.assertEqual(result['completion_basis'],'after bounded natural wait')
+        self.assertAlmostEqual(result['natural_wait']['wall_seconds'],.1)
+        self.assertEqual(result['natural_wait']['status'],'PASS')
+        self.assertTrue(result['unexpected_live_members_after_success'])
+        self.assertEqual(len(result['observations']),3)
+        self.assertEqual(result['failure_reasons'],[])
+        self.assertEqual(result['steps'],[])
+        self.assertTrue(all(c['status']=='PASS' for o in result['observations'] for c in o['identity_checks']))
+
+    def test_auxiliary_alive_at_deadline_stays_unknown(self):
+        registry,runtime=self.fixture([self.live()])
+        result=self.clean(registry,runtime,total_seconds=.3)
+        self.assertEqual(result['status'],'UNKNOWN')
+        self.assertIn('TimeoutError',result['error'])
+        self.assertAlmostEqual(result['wall_seconds'],.3)
+        self.assertAlmostEqual(result['natural_wait']['wall_seconds'],.3)
+        self.assertEqual(result['natural_wait']['status'],'UNKNOWN')
+        self.assertNotIn('completion_basis',result)
+        self.assertTrue(result['final_observation']['live_rows'])
+        self.assertEqual(result['steps'],[])
+
+    def test_missing_auxiliary_identity_stays_unknown(self):
+        registry,runtime=self.fixture([self.live(),self.empty()],identities={self.ROOT:100})
+        result=self.clean(registry,runtime)
+        self.assertEqual(result['status'],'UNKNOWN')
+        self.assertEqual(result['final_observation']['live_rows'],[])
+        check=result['observations'][0]['identity_checks'][0]
+        self.assertEqual(check['reason'],'live_member_identity_unavailable')
+        self.assertTrue(result['failure_reasons'])
+        self.assertNotIn('completion_basis',result)
+
+    def test_uncovered_auxiliary_member_stays_unknown(self):
+        registry,runtime=self.fixture([self.live(pid=self.MEMBER+1),self.empty()])
+        result=self.clean(registry,runtime)
+        self.assertEqual(result['status'],'UNKNOWN')
+        self.assertEqual(result['final_observation']['live_rows'],[])
+        check=result['observations'][0]['identity_checks'][0]
+        self.assertEqual(check['reason'],'live_member_not_covered_by_retained_identity')
+        self.assertTrue(result['failure_reasons'])
+
+    def test_missing_nested_coverage_stays_unknown(self):
+        for coverage in ({'status':'UNKNOWN','expected_generations':1,'observed_generations':0},
+                         {'status':'UNKNOWN','missing_guard_identity':['ordinary-generation']}):
+            with self.subTest(coverage=coverage):
+                registry,runtime=self.fixture([self.live(),self.empty()])
+                registry.nested_coverage=lambda:coverage
+                result=self.clean(registry,runtime)
+                self.assertEqual(result['status'],'UNKNOWN')
+                self.assertEqual(result['nested'],coverage)
+                self.assertEqual(result['final_observation']['live_rows'],[])
+                self.assertNotIn('completion_basis',result)
+
+    def test_successful_root_group_residual_stays_unknown(self):
+        registry,runtime=self.fixture([self.live(pid=self.ROOT,pgid=self.ROOT),self.empty()])
+        result=self.clean(registry,runtime)
+        self.assertEqual(result['status'],'UNKNOWN')
+        self.assertTrue(result['unexpected_root_members_after_success'])
+        self.assertTrue(result['failure_reasons'])
+        self.assertFalse(result['natural_wait']['used'])
+        self.assertEqual(result['steps'],[])
+
+    def test_auxiliary_group_never_signalable(self):
+        registry,runtime=self.fixture([self.empty()])
+        registry.can_signal=lambda pgid:True
+        for sig in (signal.SIGTERM,signal.SIGKILL):
+            with self.subTest(sig=sig), patch.object(launcher.os,'killpg') as kill:
+                result=launcher.signal_owned(registry,runtime,self.AUX,sig,10)
+                kill.assert_not_called()
+                self.assertEqual(result,dict(action='no_signal_auxiliary_group',pgid=self.AUX))
+        # A registry lacking its original explicit root record cannot confer authority.
+        registry.processes.pop(self.ROOT)
+        with patch.object(launcher.os,'killpg') as kill:
+            result=launcher.signal_owned(registry,runtime,self.ROOT,signal.SIGKILL,10)
+        kill.assert_not_called(); self.assertEqual(result['action'],'no_signal_identity_unknown')
+
+    def test_root_timeout_keeps_root_only_term_kill(self):
+        registry,runtime=self.fixture([self.live(pid=self.ROOT,pgid=self.ROOT),self.empty()])
+        registry.can_signal=lambda pgid:pgid==self.ROOT
+        child=FakeChild(True); waits=[]
+        def wait(timeout):
+            waits.append(timeout)
+            if child.returncode is None:
+                runtime.now+=timeout
+                raise subprocess.TimeoutExpired('ordinary mock root',timeout)
+            return child.returncode
+        child.wait=wait
+        def signal_root(pgid,sig):
+            self.assertEqual(pgid,self.ROOT)
+            if sig==signal.SIGKILL: child.returncode=-9
+        with patch.object(launcher.os,'killpg',side_effect=signal_root) as kill:
+            result=launcher.cleanup(child,registry,runtime,request_stop=True,total_seconds=2,term_seconds=.2,kill_reap_seconds=.5)
+        self.assertEqual(result['status'],'PASS',result)
+        self.assertEqual([call.args for call in kill.call_args_list],[(self.ROOT,signal.SIGTERM),(self.ROOT,signal.SIGKILL)])
+        self.assertEqual(waits,[.2,.5]); self.assertEqual(child.poll(),-9)
+        self.assertFalse(result['natural_wait']['eligible'])
+        self.assertFalse(result['natural_wait']['used'])
+
+    def test_observation_errors_are_sticky(self):
+        for observations in ([OSError('ordinary initial ps failure'),self.empty()],
+                             [self.live(),OSError('ordinary middle ps failure')]):
+            with self.subTest(observations=observations):
+                registry,runtime=self.fixture(observations)
+                result=self.clean(registry,runtime)
+                self.assertEqual(result['status'],'UNKNOWN')
+                self.assertTrue(result['failure_reasons'])
+                self.assertTrue(any('error' in row for row in result['observations']))
+                self.assertNotIn('completion_basis',result)
+                if isinstance(observations[0],OSError):
+                    self.assertIn('ordinary initial ps failure',result['initial_observation_error'])
+                    self.assertEqual(result['final_observation']['live_rows'],[])
+                else: self.assertIn('ordinary middle ps failure',result['error'])
+
+    def test_natural_wait_uses_remaining_cleanup_budget(self):
+        registry,runtime=self.fixture([self.live()],observation_cost=.1)
+        registry.read_ledgers=lambda:setattr(runtime,'now',runtime.now+.5)
+        result=self.clean(registry,runtime,total_seconds=1)
+        self.assertEqual(result['status'],'UNKNOWN')
+        self.assertAlmostEqual(result['wall_seconds'],1)
+        self.assertAlmostEqual(result['natural_wait']['remaining_budget_at_start_seconds'],.9)
+        self.assertAlmostEqual(result['natural_wait']['wall_seconds'],.9)
+        self.assertTrue(runtime.deadlines)
+        self.assertTrue(all(deadline==1 for deadline in runtime.deadlines))
+        self.assertLessEqual(sum(runtime.sleeps),.3)
+
+
 class LauncherOwnedProcessTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Explicit caller-bound reviewed production tree. No repository or system mutation.
+        # Fixed local reviewed production tree. No repository or system mutation.
         cls.repo=Path(os.environ['FRAMIVRA_VALIDATION_REPO']).absolute()
         sys.path.insert(0,str(cls.repo))
         from vtx import proc_supervisor

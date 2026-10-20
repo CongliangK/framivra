@@ -1,10 +1,22 @@
 {
-  "schema": "framivra-reviewed-mac-validation-delivery/2",
-  "status": "SOURCE_DELIVERY_ONLY_PENDING_MAC_QUALIFICATION",
+  "schema": "framivra-reviewed-mac-validation-delivery/4",
+  "status": "SOURCE_DELIVERY_QUALIFIED_PENDING_MAC_R4_QUALIFICATION",
+  "launcher_revision": "r4",
+  "harness_revision": "r2",
   "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
   "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
-  "runtime_source_bytes_unchanged": true,
-  "tests_executed_for_delivery": true,
+  "test_source_binding": {
+    "variable": "FRAMIVRA_VALIDATION_REPO",
+    "required_value": "verified absolute path of production checkout",
+    "source_change": "replace cloud-relative r4 launcher fixture path only; r4 methods and assertions unchanged",
+    "harness_tests_included": false
+  },
+  "test_scope": {
+    "approved_exact_ids": 35,
+    "explicit_unrun_ids": 2,
+    "new_real_auxiliary_process_tests": false,
+    "mac_qualification": "PENDING_SEPARATE_VALIDATION"
+  },
   "files": [
     {
       "path": "tools/testing/mac_validation/fast_png_r2/APPROVED-TEST-IDS.txt",
@@ -19,52 +31,61 @@
       "git_blob_sha1": "f068c7960fe871bb37038a21fb6e80f7edd5b432"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r3/APPROVED-TEST-IDS.txt",
-      "bytes": 2432,
-      "sha256": "9f5111c9a065690065500fc98e7d1b7f026ed4c63a463a2363dce77a3cc235ac",
-      "git_blob_sha1": "8c8683b05e1a6bdd04d094d4fc3a3e9bba960489"
+      "path": "tools/testing/mac_validation/owned_launcher_r4/APPROVED-TEST-IDS.txt",
+      "bytes": 3161,
+      "sha256": "0c35fb926b8336061074d65d7791a580ad3209600a9056e9ea585ba8608045f7",
+      "git_blob_sha1": "cf0b26af21559cf84c50aeaa22a90ff0f330982f"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r3/owned_launcher.py",
-      "bytes": 29122,
-      "sha256": "f9d4c0a5a49cf2ec0c8a09d42f21d5b72486befcffc69cc78cb5955d0d10282e",
-      "git_blob_sha1": "9cfa9994ba0648d27d64a74df058c549aa0c2d60"
+      "path": "tools/testing/mac_validation/owned_launcher_r4/UNRUN-TEST-IDS.txt",
+      "bytes": 168,
+      "sha256": "a3db3239dea3bb80892de11002dfb855cb865cc00c10d51939b1d1b173e182d4",
+      "git_blob_sha1": "180467e89d7d7ec09dc6e0b9ac8c4d3d06f866fb"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r3/resource_summary.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r4/owned_launcher.py",
+      "bytes": 33515,
+      "sha256": "8a85f5c440b7740f5e6ffd9f044b7d8584092b0184f9ee41655849353b0578c0",
+      "git_blob_sha1": "d6d3aa975ff0ffdd1a597022db2b7a8846930399"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r4/resource_summary.py",
       "bytes": 7879,
       "sha256": "06ca025a3111953b3acc39c87c1735613608a16dce8ad0f819cb10d451cc0f36",
       "git_blob_sha1": "f1ebdd108ffb595fd3fb31f2aceb49508e2e8a62"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r3/test_owned_launcher.py",
-      "bytes": 14666,
-      "sha256": "b1f0cdb7bd40dd7c12e6e1e54396f38df3a17e31998a40c986ae4d1b30d82072",
-      "git_blob_sha1": "dabcf75ad755446392b75e94798de5e75f42f3d2"
+      "path": "tools/testing/mac_validation/owned_launcher_r4/test_owned_launcher.py",
+      "bytes": 24580,
+      "sha256": "e4b5fc9cc9b1f85f3aee3312f607231263adcbb8e7221d566e0a63334f1d42a8",
+      "git_blob_sha1": "51db975acb9a954d4a0cc7b97bccc86b498b7cda"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r3/test_resource_summary.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r4/test_resource_summary.py",
       "bytes": 3580,
       "sha256": "f797c9553ea30471ced75175cadc06dcc92be21db88641037e91d899b8ad7670",
       "git_blob_sha1": "4bc55f14e23162881688b4f6792624babb912500"
     }
   ],
-  "test_source_binding": {
-    "variable": "FRAMIVRA_VALIDATION_REPO",
-    "required_value": "verified absolute path of production checkout",
-    "source_change": "replace cloud-relative launcher fixture path only; original assertions and test IDs unchanged",
-    "harness_tests_included": false
-  },
-  "delivery_test_result": {
-    "scope": "independent Linux run of original exact launcher/parser IDs",
+  "runtime_independent_review": {
+    "result": "PASS",
     "platform": "Linux",
-    "test_count": 27,
-    "test_runner": "python3 -B -m unittest -v with explicit 27-ID list; no discovery",
+    "approved_exact_test_ids": 35,
+    "passed": 35,
+    "failed": 0,
     "exit_code": 0,
-    "unittest_seconds": 0.246,
-    "wall_seconds": 0.36,
-    "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
-    "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
-    "mac_process_qualification": "PENDING_SEPARATE_VALIDATION"
+    "unittest_seconds": 0.372,
+    "executed_test_source_sha256": "e6efae02e446eee8cd105d8982a87b473f583292e9f3220c00fbb7f8c30abb6e",
+    "executed_runtime_sha256": "8a85f5c440b7740f5e6ffd9f044b7d8584092b0184f9ee41655849353b0578c0",
+    "actual_production_module_sha256": "6f5c92471f4479b0bf4ba94a75cf079767b142598fc7aec04741a9031fd0ddd6",
+    "explicit_unrun_ids": 2,
+    "real_self_owned_root_cases_included_in_35": 2,
+    "real_auxiliary_process_cases": 0,
+    "mac_chrome_production": "UNRUN"
+  },
+  "portable_binding_review": {
+    "result": "PASS",
+    "scope": "static comparison of the single environment-binding line, package identity and documentation",
+    "tests_executed_for_portable_binding": false
   }
 }

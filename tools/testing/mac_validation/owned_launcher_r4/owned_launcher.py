@@ -243,15 +243,17 @@ class OwnedRegistry:
                 first_observed_utc=__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(), guard=None))
 
     def can_signal(self, pgid):
-        # At least one retained exact live identity must still anchor this group.
-        for pid, record in self.processes.items():
-            if record['pgid'] == pgid and self.owner.proc_starttime(pid) == record['start_identity']:
-                try:
-                    if os.getpgid(pid) == pgid:
-                        return True
-                except ProcessLookupError:
-                    pass
-        return False
+        # Only the explicitly launched root is a signal target. An observed
+        # descendant, including a group leader, never confers signal authority.
+        record = self.processes.get(self.root_pid)
+        if pgid != self.root_pid or not record or record['pid'] != pgid or record['pgid'] != pgid:
+            return False
+        if self.owner.proc_starttime(pgid) != record['start_identity']:
+            return False
+        try:
+            return os.getpgid(pgid) == pgid
+        except ProcessLookupError:
+            return False
 
     def nested_coverage(self):
         count = len(self.generations)
@@ -263,7 +265,12 @@ class OwnedRegistry:
 
 
 def signal_owned(registry, runtime, pgid, sig, deadline):
-    """Keep the native lineage deny-list, then recheck exact ownership immediately."""
+    """Signal only the verified explicitly launched root, never an auxiliary group."""
+    if pgid != getattr(registry, 'root_pid', None):
+        return dict(action='no_signal_auxiliary_group', pgid=pgid)
+    root = getattr(registry, 'processes', {}).get(pgid)
+    if not root or root.get('pid') != pgid or root.get('pgid') != pgid or root.get('start_identity') is None:
+        return dict(action='no_signal_identity_unknown', pgid=pgid)
     runtime.remaining(deadline, 1)
     runtime.owner._assert_kill_whitelisted(pgid)
     runtime.remaining(deadline, 1)
@@ -276,24 +283,89 @@ def signal_owned(registry, runtime, pgid, sig, deadline):
         return dict(action='group_gone_before_signal', pgid=pgid)
 
 
+def cleanup_identities(registry, runtime, observed, deadline, checks):
+    """Read-only validation of every live row in the retained groups."""
+    for row in observed['live_rows']:
+        record = registry.processes.get(row['pid'])
+        check = dict(pid=row['pid'], pgid=row['pgid'], status='UNKNOWN')
+        checks.append(check)
+        if not record or record.get('pgid') != row['pgid'] or record.get('start_identity') is None:
+            check['reason'] = 'live_member_not_covered_by_retained_identity'
+            continue
+        check['retained_start_identity'] = record['start_identity']
+        check['reason'] = 'identity_probe_incomplete'
+        runtime.remaining(deadline, 1)
+        current = runtime.owner.proc_starttime(row['pid'])
+        check['observed_start_identity'] = current
+        runtime.remaining(deadline, 1)
+        if current is None:
+            check['reason'] = 'live_member_identity_unavailable'
+        elif current != record['start_identity']:
+            check['reason'] = 'live_member_identity_not_matched'
+        else:
+            check['status'] = 'PASS'
+            del check['reason']
+    return checks
+
+
 def cleanup(child, registry, runtime, *, request_stop, total_seconds=60, term_seconds=10, kill_reap_seconds=10):
     start = runtime.clock(); deadline = start + total_seconds
-    out = dict(status='UNKNOWN', steps=[], budget_seconds=total_seconds,
-               budget_kind='cooperative observation; existing owner identity/lineage queries have their own bounded calls and may overrun the remaining outer budget')
+    producer_succeeded = not request_stop and child.poll() == 0
+    out = dict(status='UNKNOWN', steps=[], observations=[], failure_reasons=[], budget_seconds=total_seconds,
+               budget_kind='cooperative observation; existing owner identity/lineage queries have their own bounded calls and may overrun the remaining outer budget',
+               natural_wait=dict(eligible=producer_succeeded, used=False, status='NOT_USED', wall_seconds=0))
     groups = registry.groups
+    natural_started = None
+    natural_finished = None
+
+    def observe(phase, observation_deadline):
+        nonlocal natural_started, natural_finished
+        entry = dict(phase=phase, cleanup_wall_seconds=runtime.clock()-start)
+        out['observations'].append(entry)
+        try:
+            observed = runtime.observe_groups(groups, observation_deadline)
+            entry['observation'] = observed
+            out['final_observation'] = observed
+            # Record the wait interval from the first observed auxiliary row.
+            auxiliary = [r for r in observed['live_rows'] if r['pgid'] != registry.root_pid]
+            if producer_succeeded and auxiliary and natural_started is None:
+                natural_started = runtime.clock()
+                out['natural_wait'].update(used=True, status='WAITING',
+                    started_cleanup_wall_seconds=natural_started-start,
+                    remaining_budget_at_start_seconds=max(0, deadline-natural_started))
+            if not observed['live_rows'] and natural_started is not None and natural_finished is None:
+                natural_finished = runtime.clock()
+            entry['identity_checks'] = []
+            cleanup_identities(registry, runtime, observed, observation_deadline, entry['identity_checks'])
+            if any(c['status'] != 'PASS' for c in entry['identity_checks']):
+                out['failure_reasons'].append(phase + ': live_identity_coverage_unknown')
+            if producer_succeeded and observed['live_rows']:
+                out['unexpected_live_members_after_success'] = True
+                if any(r['pgid'] == registry.root_pid for r in observed['live_rows']):
+                    out['unexpected_root_members_after_success'] = True
+                    out['failure_reasons'].append(phase + ': root_group_live_after_success')
+            elif auxiliary:
+                out['failure_reasons'].append(phase + ': auxiliary_group_live_without_successful_producer')
+            return observed
+        except Exception as error:
+            entry['error'] = type(error).__name__ + ': ' + str(error)
+            out['failure_reasons'].append(phase + ': observation_failed')
+            raise
+        finally:
+            entry['completed_cleanup_wall_seconds'] = runtime.clock()-start
+
     try:
         try:
-            before = runtime.observe_groups(groups, deadline)
+            before = observe('initial', deadline)
             out['initial_observation'] = before
         except (OSError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
             before = dict(live_rows=[])
             out['initial_observation_error'] = type(error).__name__ + ': ' + str(error)
             request_stop = True
-        needs_stop = request_stop or child.poll() is None or bool(before['live_rows'])
-        if not request_stop and before['live_rows']:
-            out['unexpected_live_members_after_success'] = True
+        # A successful root's residual groups are observation-only. On an actual
+        # stop, retain TERM/KILL semantics for the explicit root and no other PGID.
         root_live = child.poll() is None or any(r['pgid'] == registry.root_pid for r in before['live_rows'])
-        if needs_stop and root_live:
+        if not producer_succeeded and root_live:
             out['steps'].append(signal_owned(registry, runtime, registry.root_pid, signal.SIGTERM, deadline))
         try:
             child.wait(timeout=runtime.remaining(deadline, term_seconds))
@@ -305,18 +377,13 @@ def cleanup(child, registry, runtime, *, request_stop, total_seconds=60, term_se
                 out['unreaped_root'] = True
         runtime.remaining(deadline, 1)
         registry.read_ledgers()
-        # Retained task-owned guard/non-browser groups may outlive the top-level parent.
-        observed = runtime.observe_groups(groups, deadline)
-        for pgid in sorted({r['pgid'] for r in observed['live_rows']}):
-            out['steps'].append(signal_owned(registry, runtime, pgid, signal.SIGKILL, deadline))
-        # At most the remaining independent-observation allocation, never unbounded polling.
-        observation_deadline = min(deadline, runtime.clock() + 40)
-        while True:
-            observed = runtime.observe_groups(groups, observation_deadline)
-            out['final_observation'] = observed
-            if not observed['live_rows']:
-                break
+        # Success uses the remaining 60-second cleanup budget, never a fresh
+        # allocation. Other cleanup paths retain their <=40s observation bound.
+        observation_deadline = deadline if producer_succeeded else min(deadline, runtime.clock() + 40)
+        observed = observe('post_root_wait', observation_deadline)
+        while observed['live_rows']:
             runtime.sleep(runtime.remaining(observation_deadline, .1))
+            observed = observe('natural_wait' if producer_succeeded else 'post_stop_observation', observation_deadline)
         # Native reaper can signal on an absent leader. Do not call that branch:
         # only remove this invocation's retained run directories after empty proof.
         for generation in registry.generations.values():
@@ -326,27 +393,34 @@ def cleanup(child, registry, runtime, *, request_stop, total_seconds=60, term_se
                 if hashlib.sha256(path.read_bytes()).hexdigest() != generation['source_sha256']:
                     raise RuntimeError('Retained native ledger changed')
                 observation = runtime.observe_groups({generation['record']['pgid']}, deadline)
+                out.setdefault('run_directory_observations', []).append(dict(
+                    cleanup_wall_seconds=runtime.clock()-start, path=str(path), observation=observation))
                 if observation['live_rows']:
                     raise RuntimeError('Owned group became live before run-directory removal')
                 context = SimpleNamespace(root=registry.project, cache=registry.project/'cache',
                                           out=registry.project/'out')
                 removed = runtime.owner._remove_run_dir(context, path.parent)
                 out['steps'].append(dict(action='owner.remove_owned_run_dir', path=str(path.parent), result=removed))
-        out['root_returncode'] = child.poll()
         out['nested'] = registry.nested_coverage()
         remaining_dirs = [g['run_dir'] for g in registry.generations.values() if Path(g['run_dir']).exists()]
         out['remaining_owned_run_dirs'] = remaining_dirs
-        out['status'] = ('PASS' if out['root_returncode'] is not None and not out.get('unreaped_root')
+        out['status'] = ('PASS' if child.poll() is not None and not out.get('unreaped_root')
                          and out['nested']['status'] == 'PASS' and not remaining_dirs
                          and not any(s['action'] == 'no_signal_identity_unknown' for s in out['steps'])
-                         and not out.get('unexpected_live_members_after_success')
-                         and not out.get('initial_observation_error') else 'UNKNOWN')
+                         and not out['failure_reasons'] else 'UNKNOWN')
     except Exception as error:
         out['error'] = type(error).__name__ + ': ' + str(error)
+    out['root_returncode'] = child.poll()
     out['wall_seconds'] = runtime.clock() - start
     out['outer_budget_overrun'] = out['wall_seconds'] > total_seconds
     if out['outer_budget_overrun']:
         out['status'] = 'UNKNOWN'
+        out['failure_reasons'].append('cleanup_outer_budget_overrun')
+    if natural_started is not None:
+        out['natural_wait']['wall_seconds'] = (natural_finished if natural_finished is not None else runtime.clock()) - natural_started
+        out['natural_wait']['status'] = 'PASS' if out['status'] == 'PASS' else 'UNKNOWN'
+        if out['status'] == 'PASS':
+            out['completion_basis'] = 'after bounded natural wait'
     return out
 
 
