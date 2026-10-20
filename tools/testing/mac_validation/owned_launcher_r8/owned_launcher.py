@@ -6,6 +6,7 @@ eligible for cleanup. Observation budgets are cooperative, not OS resource limit
 """
 import argparse
 from collections import deque
+import ctypes
 import hashlib
 import importlib
 import json
@@ -96,7 +97,8 @@ class ResourceSnapshot(list):
 
 
 class ResourceIdentityUnavailable(RuntimeError):
-    def __init__(self, pid, retained, verified_processes, before, after):
+    def __init__(self, pid, retained, verified_processes, before, after, probes,
+                 terminal_observations=(), coverage_failure=False):
         label = 'retained process' if retained else 'owned descendant'
         super().__init__('Visible ' + label + ' identity unavailable; RSS coverage incomplete')
         self.pid = pid
@@ -104,6 +106,21 @@ class ResourceIdentityUnavailable(RuntimeError):
         self.verified_pids = set(self.verified_processes)
         self.probe = dict(pid=pid, retained_identity=retained, returned_none=True,
                           started_monotonic=before, finished_monotonic=after)
+        self.probes = [dict(probe) for probe in probes]
+        observed_probe = next((probe for probe in self.probes if probe['pid'] == pid), None)
+        if observed_probe is not None:
+            self.probe = dict(observed_probe)
+            if not observed_probe['returned_none']:
+                self.probe['reason'] = 'ps terminal state lacks qualified terminal coverage'
+        self.unavailable_pids = {probe['pid'] for probe in self.probes
+                                 if probe['returned_none']}
+        self.terminal_observations = [dict(record) for record in terminal_observations]
+        self.terminal_pids = {record['pid'] for record in self.terminal_observations
+                             if record['status'] == 'QUALIFIED_TERMINAL'}
+        self.coverage_failure = coverage_failure
+        if coverage_failure:
+            self.probe['returned_none'] = False
+            self.probe['reason'] = 'Candidate has no verified ownership path; no identity claim'
 
 
 class Runtime:
@@ -201,6 +218,45 @@ class Runtime:
         result = self.query(['/usr/bin/vm_stat'], deadline)
         return parse_vm_stat_snapshot(result.stdout), result.stdout
 
+    def terminal_information(self, row, retained_start_identity, deadline):
+        """Read-only BSDINFO zombie proof; never changes the owner's live API."""
+        self.remaining(deadline, 1)
+        result = dict(pid=row['pid'], ppid=row['ppid'], pgid=row['pgid'],
+            ps_state=row['state'], ps_reported_rss_kib=row['rss_kib'],
+            ps_reported_cpu_percent=row['cpu_percent'], ps_reported_cpu_time=row['cpu_time'],
+            numeric_fields_status='REPORTED_BY_PS_NOT_TERMINAL_RESOURCE_MEASUREMENTS',
+            rss_status='UNKNOWN', status='UNKNOWN',
+            started_monotonic=self.clock(), flavor=3, arg=1)
+        library = getattr(self.owner, '_DARWIN_PROC', None)
+        struct_type = getattr(self.owner, '_DarwinBSDInfo', None)
+        if library is None or struct_type is None:
+            return dict(result, reason='Frozen Darwin BSDINFO interface unavailable',
+                        finished_monotonic=self.clock())
+        info = struct_type()
+        expected = ctypes.sizeof(info)
+        ctypes.set_errno(0)
+        count = library.proc_pidinfo(row['pid'], 3, 1, ctypes.byref(info), expected)
+        result.update(returned_bytes=count, expected_bytes=expected,
+                      errno=ctypes.get_errno(), finished_monotonic=self.clock())
+        self.remaining(deadline, 1)
+        if count != expected:
+            return dict(result, reason='BSDINFO did not return one complete structure')
+        result['kernel'] = dict(pid=info.pid, ppid=info.ppid, pgid=info.pgid,
+            status=info.status, start_sec=info.start_sec, start_usec=info.start_usec)
+        if info.pid != row['pid'] or info.ppid != row['ppid'] or info.pgid != row['pgid']:
+            return dict(result, reason='BSDINFO and ps structural fields disagree')
+        if info.status != 5:
+            return dict(result, reason='BSDINFO does not confirm SZOMB')
+        if info.start_sec < 0 or not 0 <= info.start_usec < 1_000_000:
+            return dict(result, reason='BSDINFO start timeval is invalid')
+        start = info.start_sec * 1_000_000 + info.start_usec
+        result['start_identity'] = start
+        if start <= 0 or (retained_start_identity is not None and start != retained_start_identity):
+            return dict(result, reason='BSDINFO start identity is absent or not matched')
+        result['status'] = 'QUALIFIED_TERMINAL'
+        result['rss_status'] = 'NOT_APPLICABLE_TO_LIVE_RSS'
+        return result
+
 
 class OwnedRegistry:
     def __init__(self, child, owner, project, expected_nested_generations):
@@ -215,19 +271,37 @@ class OwnedRegistry:
         self.processes = {child.pid: dict(pid=child.pid, start_identity=start, pgid=child.pid)}
         self.groups = {child.pid}
         self.generations = {}
+        self.terminal_anchors = {}
+        self.resource_terminal_observations = []
 
-    def update(self, rows):
+    def update(self, rows, *, terminal_probe=None, checkpoint=None):
+        if terminal_probe is None:
+            terminal_probe = getattr(self, 'resource_terminal_probe', None)
+        if checkpoint is None:
+            checkpoint = getattr(self, 'resource_checkpoint', None)
         by_pid = {r['pid']: r for r in rows}
         live_owned = set()
         pending_processes = dict(self.processes)
+        probes = {}
+        terminal_anchors = dict(getattr(self, 'terminal_anchors', {}))
+        related = resource_related_rows(rows, set(self.processes) | set(terminal_anchors))
+        self.resource_terminal_observations = []
 
         def identity(pid, retained):
+            # A failed leaf must not suppress independent sibling branches.
+            # Cache failures too: the fixed-point walk must not retry a PID.
+            if pid in probes:
+                return probes[pid]['observed_start_identity']
+            if checkpoint is not None:
+                checkpoint()
             before = time.monotonic()
             current = self.owner.proc_starttime(pid)
             after = time.monotonic()
-            if current is None:
-                verified = {key:pending_processes[key] for key in live_owned}
-                raise ResourceIdentityUnavailable(pid, retained, verified, before, after)
+            probes[pid] = dict(pid=pid, retained_identity=retained,
+                returned_none=current is None, observed_start_identity=current,
+                started_monotonic=before, finished_monotonic=after)
+            if checkpoint is not None:
+                checkpoint()
             return current
 
         for pid, record in list(pending_processes.items()):
@@ -238,15 +312,63 @@ class OwnedRegistry:
             if current_start == record['start_identity']:
                 if row['pgid'] != record['pgid']:
                     raise RuntimeError('Owned process changed group; ownership requires review')
-                live_owned.add(pid)
+                if not row.get('state', '').startswith('Z'):
+                    live_owned.add(pid)
+        for pid in terminal_anchors:
+            if pid in by_pid and pid not in pending_processes:
+                identity(pid, False)  # Diagnostic recheck alone cannot confer ownership.
         changed = True
         while changed:
             changed = False
             for row in rows:
                 if row['pid'] not in live_owned and row['ppid'] in live_owned:
                     start = identity(row['pid'], False)
+                    if start is None or row.get('state', '').startswith('Z'):
+                        continue
                     pending_processes[row['pid']] = dict(pid=row['pid'], start_identity=start, pgid=row['pgid'])
                     live_owned.add(row['pid']); changed = True
+        failures = [probe for probe in probes.values()
+                    if probe['returned_none'] or by_pid[probe['pid']].get('state', '').startswith('Z')]
+        terminal_observations = []
+        terminal_pids = set()
+        for probe in failures:
+            pid = probe['pid']; row = by_pid[pid]
+            retained = self.processes.get(pid) or terminal_anchors.get(pid)
+            descendants = [item for item in resource_related_rows(rows, {pid}) if item['pid'] != pid]
+            if (terminal_probe is None or pid == getattr(self, 'root_pid', None)
+                    or not row.get('state', '').startswith('Z') or descendants
+                    or (retained is None and row['ppid'] not in live_owned)):
+                continue
+            if checkpoint is not None:
+                checkpoint()
+            expected_start = (probe['observed_start_identity'] if retained is None
+                              else retained['start_identity'])
+            terminal = terminal_probe(row, expected_start)
+            if (terminal['status'] == 'QUALIFIED_TERMINAL'
+                    and probe['observed_start_identity'] is not None
+                    and terminal['start_identity'] != probe['observed_start_identity']):
+                terminal = dict(terminal, status='UNKNOWN', rss_status='UNKNOWN',
+                                reason='Live and terminal identity observations disagree')
+            terminal = dict(terminal, live_identity_probe=dict(probe),
+                            ownership_status='OBSERVATION_ONLY_NOT_AN_OWNERSHIP_ANCHOR')
+            if checkpoint is not None:
+                checkpoint()
+            terminal_observations.append(terminal)
+            if terminal['status'] == 'QUALIFIED_TERMINAL':
+                terminal_pids.add(pid)
+                # Diagnostic anchors only: no ownership, group, guard or ancestry authority.
+                terminal_anchors[pid] = dict(pid=pid, start_identity=terminal['start_identity'])
+        self.terminal_anchors = terminal_anchors
+        self.resource_terminal_observations = terminal_observations
+        unresolved = [probe for probe in failures if probe['pid'] not in terminal_pids]
+        uncovered = {row['pid'] for row in related} - live_owned - terminal_pids
+        if unresolved or uncovered:
+            first = unresolved[0] if unresolved else dict(pid=min(uncovered),
+                retained_identity=False, started_monotonic=time.monotonic(), finished_monotonic=time.monotonic())
+            verified = {key:pending_processes[key] for key in live_owned}
+            raise ResourceIdentityUnavailable(first['pid'], first['retained_identity'],
+                verified, first['started_monotonic'], first['finished_monotonic'],
+                list(probes.values()), terminal_observations, coverage_failure=not unresolved)
         self.processes = pending_processes
         owned = []
         for row in rows:
@@ -518,21 +640,37 @@ def resource_snapshot_evidence(rows, related, verified_pids):
 def resource_identity_failure(error, rows, registry, child, started, sample_id):
     # Registered identities are diagnostic anchors only. Including every anchor
     # makes the conservative coverage gate independent of traversal order.
-    related = resource_related_rows(rows, set(registry.processes) | error.verified_pids | {error.pid})
+    related = resource_related_rows(rows, set(registry.processes)
+        | set(getattr(registry, 'terminal_anchors', {})) | error.verified_pids | {error.pid})
     descendants = resource_related_rows(rows, {error.pid})
     descendants = [row['pid'] for row in descendants if row['pid'] != error.pid]
     verified = [dict(row) for row in rows if row['pid'] in error.verified_pids]
     lower_bound = sum(positive_number(row['rss_kib']) for row in verified) * 1024
+    candidate_pids = {row['pid'] for row in related}
+    probed_pids = {probe['pid'] for probe in error.probes}
+    coverage = []
+    for pid in sorted(candidate_pids):
+        state = ('VERIFIED_OWNED' if pid in error.verified_pids else
+                 'QUALIFIED_TERMINAL' if pid in error.terminal_pids else
+                 'IDENTITY_UNAVAILABLE' if pid in error.unavailable_pids else
+                 'PROBED_NOT_OWNED' if pid in probed_pids else
+                 'BLOCKED_UNVERIFIED_ANCESTRY')
+        coverage.append(dict(pid=pid, status=state))
     query = getattr(rows, 'query_evidence', {})
     return dict(sample_id=sample_id, sample_status='INCOMPLETE', resource_status='UNKNOWN',
                 wall_seconds=query.get('started_monotonic', error.probe['started_monotonic'])-started,
                 error=type(error).__name__ + ': ' + str(error), failed_pid=error.pid,
                 root_identity_failure=error.pid == registry.root_pid, root_returncode=child.poll(),
                 retained_start_identity=registry.processes.get(error.pid, {}).get('start_identity'),
-                identity_probe=dict(error.probe, reason='API returned None; cause not exposed'),
+                identity_probe=dict(error.probe, reason=error.probe.get(
+                    'reason', 'API returned None; cause not exposed')),
+                identity_probes=error.probes, candidate_identity_coverage=coverage,
+                unavailable_identity_pids=sorted(error.unavailable_pids),
+                terminal_process_observations=error.terminal_observations,
+                coverage_failure=error.coverage_failure,
                 original_descendant_pids=descendants, verified_pids=sorted(error.verified_pids),
                 unverified_related_pids=sorted({row['pid'] for row in related}
-                                               - error.verified_pids - {error.pid}),
+                                               - error.verified_pids - error.terminal_pids - {error.pid}),
                 verified_process_identities=list(error.verified_processes.values()),
                 verified_rss_lower_bound_bytes=lower_bound,
                 **resource_snapshot_evidence(rows, related, error.verified_pids))
@@ -544,6 +682,8 @@ def write_resource_record(stream, record):
 
 def observe_resources(child, registry, runtime, stream, status, deadline, started, before):
     rows = runtime.ps_resources(deadline)
+    registry.resource_terminal_probe = lambda row, retained: runtime.terminal_information(row, retained, deadline)
+    registry.resource_checkpoint = lambda: runtime.remaining(deadline, 1)
     try:
         return registry.update(rows), before, None
     except ResourceIdentityUnavailable as original:
@@ -565,6 +705,9 @@ def observe_resources(child, registry, runtime, stream, status, deadline, starte
             recovery['reason'] = 'original_verified_rss_lower_bound_at_or_above_6GiB'
             status['stop_reasons'].append('tree_rss_at_or_above_6GiB')
             raise
+        if failure['coverage_failure']:
+            recovery['reason'] = 'related_candidate_has_no_verified_ownership_path'
+            raise
         if failure['root_identity_failure']:
             recovery['reason'] = 'root_identity_failure_not_recoverable'
             raise
@@ -580,15 +723,17 @@ def observe_resources(child, registry, runtime, stream, status, deadline, starte
         try:
             fresh_before = runtime.clock()
             fresh = runtime.ps_resources(deadline)
-            anchors = set(registry.processes) | {row['pid'] for row in failure['owned_related_rows']}
+            anchors = (set(registry.processes) | set(getattr(registry, 'terminal_anchors', {}))
+                       | {row['pid'] for row in failure['owned_related_rows']})
             related = resource_related_rows(fresh, anchors)
             # Until fresh identities are checked, retain only resource columns.
             recovery['fresh_snapshot'] = resource_snapshot_evidence(fresh, related, set())
-            if any(row['pid'] == original.pid for row in fresh):
-                recovery['reason'] = 'failed_pid_still_visible_including_zombie'
+            still_visible = next((row for row in fresh if row['pid'] == original.pid), None)
+            if still_visible is not None and not still_visible['state'].startswith('Z'):
+                recovery['reason'] = 'failed_pid_still_visible_nonterminal'
                 raise RuntimeError('Failed resource identity PID remains visible in fresh inventory')
-            recovery['failed_pid_visibility'] = 'confirmed_absent_after_probe'
             fresh_descendants = resource_related_rows(fresh, {original.pid})
+            fresh_descendants = [row for row in fresh_descendants if row['pid'] != original.pid]
             if fresh_descendants:
                 recovery['reason'] = 'fresh_descendants_of_absent_failed_pid'
                 recovery['fresh_failed_descendant_pids'] = [row['pid'] for row in fresh_descendants]
@@ -597,20 +742,33 @@ def observe_resources(child, registry, runtime, stream, status, deadline, starte
             if not owned:
                 raise RuntimeError('Fresh owned resource observation unavailable')
             verified = {row['pid'] for row in owned}
+            terminals = getattr(registry, 'resource_terminal_observations', [])
+            terminal_pids = {row['pid'] for row in terminals if row['status'] == 'QUALIFIED_TERMINAL'}
             recovery['fresh_snapshot'] = resource_snapshot_evidence(
                 fresh, related, verified)
-            uncovered = {row['pid'] for row in related} - verified
+            uncovered = {row['pid'] for row in related} - verified - terminal_pids
             if uncovered:
                 recovery['reason'] = 'fresh_related_identity_coverage_incomplete'
                 recovery['unverified_related_pids'] = sorted(uncovered)
                 raise RuntimeError('Fresh related process rows lack verified owned identity coverage')
-            recovery.update(status='FRESH_COMPLETE', reason='absent_leaf_and_fresh_identity_coverage')
+            if still_visible is not None and original.pid not in terminal_pids:
+                raise RuntimeError('Fresh visible failed PID lacks positive terminal proof')
+            recovery.update(status='FRESH_COMPLETE',
+                reason='fresh_live_coverage_with_qualified_terminal_rows' if terminal_pids
+                    else 'absent_leaf_and_fresh_identity_coverage',
+                failed_pid_visibility='qualified_terminal_in_fresh_snapshot' if still_visible is not None
+                    else 'confirmed_absent_after_probe',
+                terminal_process_observations=terminals)
             return owned, fresh_before, sample_id
         except Exception as error:
             recovery['fresh_error'] = type(error).__name__ + ': ' + str(error)
             if fresh is None:
                 recovery['fresh_query'] = dict(getattr(runtime, 'resource_query_evidence', {}))
             if isinstance(error, ResourceIdentityUnavailable):
+                if error.coverage_failure:
+                    recovery['reason'] = 'fresh_related_identity_coverage_incomplete'
+                    recovery['unverified_related_pids'] = sorted(
+                        {row['pid'] for row in related} - error.verified_pids - error.terminal_pids)
                 second_id = 'incomplete-' + str(status['incomplete_samples'] + 1)
                 write_resource_record(stream, resource_identity_failure(
                     error, fresh, registry, child, started, second_id))
@@ -642,6 +800,10 @@ def monitor(child, registry, runtime, output, roots, deadline, started, *, sampl
                            disk_free_bytes=stat.f_bavail*stat.f_frsize, processes=owned,
                            tree_rss_kib=sum(p['rss_kib'] for p in owned), memory_free_percent=pressure,
                            memory_pressure_raw=pressure_raw)
+                row['terminal_process_observations'] = list(
+                    getattr(registry, 'resource_terminal_observations', []))
+                row['resource_scope'] = ('Verified live-process ps sum-RSS; separately qualified '
+                    'terminal rows are excluded, without estimating residual/kernel/corpse memory')
                 row['tree_rss_bytes'] = row['tree_rss_kib']*1024
                 if recovery_of is not None:
                     row['recovery_of_incomplete_sample_id'] = recovery_of

@@ -53,8 +53,9 @@ def summarize_samples(samples):
                tree_ps_recent_cpu_percent_sum_max=None, exact_cpu_seconds_from_ps_percent=None,
                ps_percent_note='Recent decaying percentage; never integrated into exact CPU seconds',
                sampled_observed_cpu_seconds_lower_bound=None, cumulative_cpu_coverage='UNKNOWN',
+               qualified_terminal_rows_excluded_count=0,
                cpu_observation_scope='Per-(PID,start identity) observed maxima; misses unseen lifetimes and trailing CPU',
-               rss_scope='Sum-RSS; shared mappings may be counted twice; between-sample peaks and short processes missed',
+               rss_scope='Verified live-process ps sum-RSS; qualified terminal rows excluded without estimating residual/kernel/corpse memory; shared mappings may be counted twice; between-sample peaks and short processes missed',
                interval_min_s=None, interval_max_s=None)
     times, rss, free, pcpu, cpu, missing = [], [], [], [], {}, 0
     for i, row in enumerate(samples):
@@ -65,6 +66,15 @@ def summarize_samples(samples):
             pids = [p['pid'] for p in rows]
             if any(type(p) is not int or p <= 0 for p in pids) or len(set(pids)) != len(pids):
                 raise ValueError('Invalid or duplicate process IDs')
+            terminals = row.get('terminal_process_observations', [])
+            if not isinstance(terminals, list) or any(not isinstance(p, dict) for p in terminals):
+                raise ValueError('Invalid terminal observation list')
+            terminal_pids = [p['pid'] for p in terminals]
+            if (any(type(pid) is not int or pid <= 0 for pid in terminal_pids)
+                    or len(set(terminal_pids)) != len(terminal_pids)
+                    or set(terminal_pids) & set(pids)
+                    or any(p.get('status') != 'QUALIFIED_TERMINAL' for p in terminals)):
+                raise ValueError('Unqualified or overlapping terminal observation')
             r = sum(number(p['rss_kib']) for p in rows)
             if r != number(row['tree_rss_kib']):
                 raise ValueError('Tree RSS sum mismatch')
@@ -74,6 +84,7 @@ def summarize_samples(samples):
         except (KeyError, TypeError, ValueError) as e:
             out['errors'].append(dict(sample_index=i, reason=str(e))); continue
         times.append(t); rss.append(r*1024); free.append(f); pcpu.append(c)
+        out['qualified_terminal_rows_excluded_count'] += len(terminals)
         for p in rows:
             try:
                 ident = p['start_identity']

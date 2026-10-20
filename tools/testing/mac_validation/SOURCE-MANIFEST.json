@@ -1,7 +1,7 @@
 {
-  "schema": "framivra-reviewed-mac-validation-delivery/7",
-  "status": "SOURCE_DELIVERY_QUALIFIED_PENDING_MAC_R7_AND_BOUNDED_PAGE_VALIDATION",
-  "launcher_revision": "r7",
+  "schema": "framivra-reviewed-mac-validation-delivery/8",
+  "status": "SOURCE_DELIVERY_QUALIFIED_PENDING_MAC_R8_AND_ABI_VALIDATION",
+  "launcher_revision": "r8-proposal-b",
   "harness_revision": "bounded-page-r1",
   "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
   "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
@@ -10,15 +10,22 @@
     "owner": {
       "result": "PASS",
       "platform": "Linux",
-      "approved_exact_ids": 43,
-      "passed": 43,
+      "approved_exact_ids": 51,
+      "unchanged_historical_pure_mock_ids": 39,
+      "new_pure_mock_ids": 12,
+      "passed": 51,
       "failed": 0,
       "skipped": 0,
       "exit_code": 0,
-      "unittest_seconds": 0.393,
+      "unittest_seconds": 0.145,
       "executed_main_test_source_sha256": "8e0fb2f4b3c06c9fdd2b8c8bda0242563d98bf029737d14e480dceb7db347cbc",
-      "explicit_unrun_ids": 2,
-      "real_self_owned_root_cases_included_in_43": 2
+      "executed_new_test_source_sha256": "c3456b64c6359a142a7fcb712c482a5b9bb5f5d1f8ca2a5c13a2188d31e23cdb",
+      "real_process_cases_this_round": 0,
+      "round_excluded_real_process_ids": 2,
+      "round_excluded_changed_contract_mixed_ids": 2,
+      "historical_unrun_ids": 2,
+      "total_unexecuted_excluded_ids": 6,
+      "report_sha256": "9f91e35ea0a06e3448ea1fbc44265105f72a8b45dcf00494575c84c7027edd6d"
     },
     "harness": {
       "result": "PASS",
@@ -30,12 +37,13 @@
       "unittest_seconds": 0.709,
       "executed_test_source_sha256": "ccc0808955847e5f116f01a509dd3289375ea961d5f792908cfb360e743bc9b2",
       "real_validate_gfx_browser_cases": 0,
-      "author_discovery_attempt_excluded_from_exact_id_evidence": true
+      "author_discovery_attempt_excluded_from_exact_id_evidence": true,
+      "retained_historical_evidence_not_rerun": true
     }
   },
   "portable_binding_review": {
     "result": "PASS",
-    "scope": "static only; explicit environment path bindings, unchanged methods/assertions/expected identities/ID lists",
+    "scope": "static only; owner single-line explicit environment path binding; harness portable bytes unchanged; unchanged methods/assertions/expected identities; exact51 approved and6 excluded",
     "tests_executed_for_portable_binding": false,
     "required_nonempty_absolute_path_variables": {
       "both_suites": [
@@ -48,6 +56,18 @@
       ]
     },
     "missing_genuine_inputs": "BLOCKED; do not fabricate files or weaken frozen hashes"
+  },
+  "mac_abi_fixture": {
+    "status": "PASS_STATIC_SOURCE_REVIEW_ONLY",
+    "execution": "UNRUN_NOT_AUTHORIZED_BY_SOURCE_DELIVERY",
+    "source_sha256": "c4b90fee936bd4714080b3cc1f8a461582f84bb4016018437104c1268b4d6777",
+    "static_review_report_sha256": "1db883e10f846c69d344d9a184a3c942b56c8757e75ab8f78b3112beb5f2f987",
+    "ordinary_child_count": 1,
+    "child_or_group_signals": 0,
+    "ps_timeout_policy": "subprocess.run may terminate and reap only its own ps helper",
+    "maximum_cooperative_budget_seconds": 10,
+    "os_hard_timeout": false,
+    "actual_paths_and_command": "REQUIRE_SEPARATE_VERIFICATION_AND_AUTHORIZATION"
   },
   "mac_qualification": "PENDING_SEPARATE_VALIDATION",
   "files": [
@@ -70,58 +90,82 @@
       "git_blob_sha1": "e05a1a22a0c387ed6c9b8213756088fa7d4bfd56"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/APPROVED-TEST-IDS.txt",
-      "bytes": 4095,
-      "sha256": "8091c60a7e4202a54d5f67bdcd56e892406823cf1c9d708cae082659d2dfde18",
-      "git_blob_sha1": "3791c3a9cfa44f81c80c3013f9445ef8b7723e79"
+      "path": "tools/testing/mac_validation/mac_zombie_abi_r1/README.md",
+      "bytes": 3236,
+      "sha256": "850cbc8ade53641af513d9b1936a84348161eeae436361b328b88629a0dee312",
+      "git_blob_sha1": "48be398334f8e0de477465116b64c77ec17aca2f"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/UNRUN-TEST-IDS.txt",
+      "path": "tools/testing/mac_validation/mac_zombie_abi_r1/mac_zombie_observation_fixture.py",
+      "bytes": 6712,
+      "sha256": "c4b90fee936bd4714080b3cc1f8a461582f84bb4016018437104c1268b4d6777",
+      "git_blob_sha1": "832c4b7e0c5c7fe6fef588f9eb95519fcbc77400"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r8/APPROVED-TEST-IDS.txt",
+      "bytes": 5164,
+      "sha256": "e66916b7a3a15cb9a76e0d039a0eeb00b82c363c81a0d9d56eff0598440d567a",
+      "git_blob_sha1": "9d03205f4b5fc23580c5ebd1db7863e06a634c67"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r8/ROUND-EXCLUDED-TEST-IDS.txt",
+      "bytes": 411,
+      "sha256": "baf7df3c7050d2b2bc87c1c69d64e881e63df7a3c30f936616dd512458847e06",
+      "git_blob_sha1": "7e4ae106b0289a91a0cd88ec4471d0831c56d09e"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r8/UNRUN-TEST-IDS.txt",
       "bytes": 168,
       "sha256": "a3db3239dea3bb80892de11002dfb855cb865cc00c10d51939b1d1b173e182d4",
       "git_blob_sha1": "180467e89d7d7ec09dc6e0b9ac8c4d3d06f866fb"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/owned_launcher.py",
-      "bytes": 43957,
-      "sha256": "9ace5c7555b115d9342a721a9916ef1f91d4160b90b8d7e1a861d0f5b22da8f6",
-      "git_blob_sha1": "4a33ebe707459ed14d90d153bc4152524e32d6ce"
+      "path": "tools/testing/mac_validation/owned_launcher_r8/owned_launcher.py",
+      "bytes": 54473,
+      "sha256": "040545e2356ed91c2c8790f7bfeb15e62f3d5d59958ee40c35b0c4bebaa99bf7",
+      "git_blob_sha1": "8e010fbdae4f1e60eb7682782e399e2fd1e9486c"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/resource_summary.py",
-      "bytes": 7879,
-      "sha256": "06ca025a3111953b3acc39c87c1735613608a16dce8ad0f819cb10d451cc0f36",
-      "git_blob_sha1": "f1ebdd108ffb595fd3fb31f2aceb49508e2e8a62"
+      "path": "tools/testing/mac_validation/owned_launcher_r8/resource_summary.py",
+      "bytes": 8787,
+      "sha256": "ea419dfe124bc74bdbd499931470735eee61a42d13ad1f0c5c1618a3adf7b4a6",
+      "git_blob_sha1": "c5f5cdb8ea93feabea0f04edbd4b6590d93914c5"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/test_independent_coverage.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r8/test_independent_coverage.py",
       "bytes": 2159,
       "sha256": "b9303ddb87aaa25f1c1483ed12a138fff8498ac684343ce51728e022fcfac53a",
       "git_blob_sha1": "3e0c5e9cb4f7fdf16b57ecab950974e70ec83437"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/test_independent_fresh_child.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r8/test_independent_fresh_child.py",
       "bytes": 1451,
       "sha256": "d8f46de5ef5d777676f3a73ae2dc0be4c990525be88827383df95afe849844b3",
       "git_blob_sha1": "db8b31d28a3d09e76ad009028690e29f136ea1c7"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/test_independent_r5.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r8/test_independent_r5.py",
       "bytes": 2110,
       "sha256": "f5c3a10ae0ad1b27440ec8c1e6b269ee1a149ca69b7008d67ec86e363eb5af12",
       "git_blob_sha1": "f5560abf028ac0ca09367052768cc09f154fdbd5"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/test_owned_launcher.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r8/test_owned_launcher.py",
       "bytes": 37173,
       "sha256": "03c97ba4319a6c01737dad9da10ec51bead1bec112115bd9d1346c4d1c8a921b",
       "git_blob_sha1": "6fa3b250963b1e541fb896d8177b4ef8f0efd9b3"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r7/test_resource_summary.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r8/test_resource_summary.py",
       "bytes": 3580,
       "sha256": "f797c9553ea30471ced75175cadc06dcc92be21db88641037e91d899b8ad7670",
       "git_blob_sha1": "4bc55f14e23162881688b4f6792624babb912500"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r8/test_snapshot_terminal_observation.py",
+      "bytes": 15298,
+      "sha256": "c3456b64c6359a142a7fcb712c482a5b9bb5f5d1f8ca2a5c13a2188d31e23cdb",
+      "git_blob_sha1": "a8b1edd65c5cb1bd586262bffdd7903c451acb62"
     }
   ]
 }
