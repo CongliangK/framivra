@@ -10,6 +10,8 @@
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
 
+消费面变更公告（2026-10-20，skill-demo 操作指针校正，落笔前已独立评审）：`skill-demo/SKILL.md` 明确包目录与仓根、仓外副本的 `VTX_REPO` 用法及现有验收脚本的仓根路径空白限制，夹具指向包内现有文件，并说明验收脚本自行运行完整渲染与 strict QC 及其写入范围。仅改 Markdown，输入、脚本与验收判据不变；本次未执行真渲染，真实用户六件挂载未在云端验证（UNRUN）。
+
 消费面变更公告（2026-10-20，内核路由去重，落笔前已评审）：`docs/skill/SKILL.md` 保留分层方向与全部操作路由，组件全表改指已有 README、ARCHITECTURE 与 catalog。仅改 Markdown；真实用户六件挂载未在云端验证（UNRUN）。
 
 消费面变更公告（2026-10-20，仲裁与音频指导校正，落笔前已评审）：tech-talk 的仲裁指针统一指向 `tech-talk/templates/00-structure.md` 现有第四节并加稳定锚点；同步入口指向 sync 完整用法，降噪指导、混音预设描述与根配置用途说明对齐 denoise 组件。仅改 Markdown 与 JSON 描述值，登记内容、冻结纪律、数值政策、开关、结构及处理代码不变；真实用户六件挂载未在云端验证。

@@ -86,7 +86,7 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
 clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fade 统一为 alpha 淡入淡出。
 仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome。
 """
-import argparse, difflib, json, os, shutil, subprocess, sys, threading
+import argparse, difflib, json, os, shutil, sys, threading
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
@@ -1070,11 +1070,8 @@ def _main(execution=None):
     if a.command == "subs":
         # 信息性命令（render/preview/check）：不进流水线、不做 receipt 依赖门，
         # 但 subs render 写 cache 走 manifest_record 记账；--dry-run 被尊重。
-        if a.subs_extra and a.subs_extra[0] in ("render", "preview", "check"):
-            c.align_threshold = a.align_threshold
-            run_subs(c, a.subs_extra); return
-        print("✗ 用法：subs render | subs preview <时间点...> | subs check"
-              "（时间点 `12.5`=秒 / `f360`=帧号）"); sys.exit(2)
+        c.align_threshold = a.align_threshold
+        run_subs(c, a.subs_extra); return
     # 区间渲染分发（在常规阶段编排之前短路）：不进 receipt 依赖门、不写回执——
     # 预览渲染对正式产物链（out/、receipt、manifest、VERSIONS）零干扰
     if getattr(c, "range_window", None):
@@ -1095,11 +1092,8 @@ def _main(execution=None):
             idx = next(i for i, s in enumerate(STAGES) if s[0] == a.until)
             todo = STAGES[:idx + 1]
     else:
-        todo = [next((s for s in STAGES if s[0] == a.command), None)]
+        todo = [next(s for s in STAGES if s[0] == a.command)]
     names = [s[0] for s in todo] if a.command == "all" else [a.command]
-    if todo == [None]:
-        names = " | ".join([s[0] for s in STAGES] + ["clean", "gc", "df", "snapshot"])
-        print(f"✗ 未知命令：{a.command!r}（可用：{names}）"); sys.exit(2)
     qc_exit = 0
     if a.command == "all" and _pipeline_enabled():
         # 方案二阶段2：all 默认走依赖图（串行头 → 并行波 → 串行尾）；

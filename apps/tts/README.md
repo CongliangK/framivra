@@ -12,7 +12,7 @@
 | 文件 | 职责 |
 |---|---|
 | `tts_cli.py` | 总入口（系统 python3，stdlib）：`spec` / `gen` / `normalize` / `probe` |
-| `spec.py` | timeline.json voice 轨 `vt_<ID>` 事件链 → spec.json（预算=Σ链帧/30+0.02s） |
+| `spec.py` | timeline.json voice 轨 `vt_<ID>` 事件链 → spec.json（预算口径见下方 spec.json 格式节） |
 | `indextts_worker.py` | IndexTTS-2.5 重活件——**由配置解释器执行**（conda indextts py3.10 / repo venv py3.11，可 import indextts/torch），模型单次加载多窗串行 |
 | `edge_worker.py` | edge-tts 兜底引擎（晓晓 zh-CN-XiaoxiaoNeural，免 GPU 免模型，subprocess 二进制 + 同 atempo/归一链） |
 | `atempo.py` | atempo 参数纯函数（`atempo_chain(raw_s, budget_s)`，方向 raw/budget + 域外 √ 双级链）+ ffmpeg 应用器 |
