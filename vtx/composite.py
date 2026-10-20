@@ -7,7 +7,6 @@ RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
 from .hygiene import budget_gate, manifest_record, seg_key

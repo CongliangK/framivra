@@ -49,7 +49,6 @@ import platform
 import shutil
 import subprocess
 import sys
-import time
 import urllib.request
 from urllib.parse import urlparse
 from pathlib import Path
@@ -108,7 +107,6 @@ def find_binary(names, extra_paths=()):
 
 def find_chrome():
     """与 vtx.encoders.find_chrome 同源逻辑：VTX_CHROME 优先 → PATH → 标准安装路径。"""
-    exe = ".exe" if OS == "win32" else ""
     names = (os.environ.get("VTX_CHROME"), "google-chrome", "google-chrome-stable",
              "chromium", "chromium-browser", "chrome", "msedge")
     paths = []

@@ -7,7 +7,7 @@ v2 §1.3（2026-09-13）新增：解码域真峰 TP 判定项（阈 -1.0 dBFS，
 权威值、同一回执不重测）——limiter 恒在 build_audio 尾部后，成片 TP 超阈 = 上游
 削波/限幅失效，属产物可信度问题，归内核 qc。
 """
-import json, re, sys, tempfile
+import json, re, tempfile
 from contextvars import copy_context
 import operator
 from concurrent.futures import ThreadPoolExecutor

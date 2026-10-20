@@ -3,7 +3,7 @@
 由 stages/composite/qc/encoders 共用。v2 §1.4 包化：模块内相对导入；
 `python3 vtx/vtx.py ...` 经薄启动器自锚定 repo 根后照常可跑。
 """
-import contextlib, hashlib, json, os, subprocess, sys, time
+import hashlib, json, os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import ContextVar
 from fractions import Fraction
@@ -16,7 +16,7 @@ from .cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
                          receipt_fingerprint, validate_cache_dependencies,
                          verify_input_identity)
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
-from .diagnostics import emit, key_path, required_field, mark_handled, producer_exit, operation, indexed
+from .diagnostics import emit, required_field, mark_handled, producer_exit, operation, indexed
 from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
                        nvenc_retry_run)
 

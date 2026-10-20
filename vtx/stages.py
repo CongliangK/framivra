@@ -5,7 +5,7 @@ timeline 契约权威定义互指（三处需同步修改，2026-09-10 定）：
   ② vtx/timeline.schema.json —— 结构权威（字段/类型）
   ③ vtx/preview.html —— 可视化预览权威（timeline → 浏览器预览）
 """
-import hashlib, json, math, os, re, subprocess, sys, tempfile, wave
+import hashlib, json, math, re, subprocess, sys, wave
 from pathlib import Path
 
 from .hygiene import (audio_key, manifest_record, rotate_history, versions_check,
