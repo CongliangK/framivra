@@ -20,7 +20,7 @@ v2 应用（P2a 批次 1 自 `scripts/export_4k.py`、`scripts/check_4k.sh`、`s
 
 ## 健康检查
 
-`env python3 apps/publish/export_4k.py --help` 退出码 0（app.json health.command）；`bash apps/publish/check_4k.sh` 无参打印用法即通（脚本无 --help 面）。
+`env python3 apps/publish/export_4k.py --help` 退出码 0（app.json health.command）；`check_4k.sh` 无参会打印用法并非零退出，须传入待验媒体（脚本无 `--help` 面）。
 
 ## 开启步骤
 
