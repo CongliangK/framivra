@@ -256,6 +256,17 @@ sub_up|all`（仅 spng 生效；默认 `sub_up`=工单口径 `SPNG_FILTER_CHOICE
 SPNG_FILTER_CHOICE_SUB | SPNG_FILTER_CHOICE_UP`）。模式 1 落盘与一次性
 `--out-png` 共用同一编码面；`t_png_encode_us` 回执字段语义不变。
 
+Python CEF 路由可选 `VTX_CEF_PNG_ENCODER=spng|fpng`，默认仍为
+`spng` / `VTX_CEF_PNG_LEVEL=1` / `VTX_CEF_PNG_FILTER=sub_up`；spng
+level 接受 `1|2|3`，filter 接受上述集合，`sub-up`、`subup` 规范为
+`sub_up`。fpng 的 level/filter 不适用，必须取消这两个环境变量；空值、
+非法值在启动 worker 前报错，不静默忽略或回落。每页冻结一次配置并透传
+native 既有参数；规范配置进入 CEF backend identity v2 与既有回执链，
+默认也使旧 CEF 缓存失效一次，运行中改变配置会被输入复核拒绝。
+CDP/CLI 的逻辑 backend identity 不变，但共享实现文件摘要变化可能使
+CDP 环境证书自然失效；压缩配置不加入 RGBA 环境轴。此接线与普通 CPU
+合同不证明真实 CEF 性能收益或平台资格；真实 CEF 性能门仍须独立实测。
+
 - **spng**：内嵌 libspng v0.7.3（third_party/spng/，锁 third_party_locks.json）。
   编码入口 `spng_encode_image(SPNG_FMT_PNG)`——v0.7.3 编码面仅接受
   `SPNG_FMT_PNG`/`SPNG_FMT_RAW`（无 `SPNG_FMT_RGBA8` 编码支持），8-bit
