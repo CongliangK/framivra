@@ -18,6 +18,26 @@ def selected():
     return name
 
 
+def png_fast_requested():
+    """PNG compression is execution provenance, never an RGBA identity axis."""
+    raw = os.environ.get("VTX_GFX_PNG_FAST", "0")
+    if raw not in ("0", "1"):
+        raise ValueError("VTX_GFX_PNG_FAST must be 0|1")
+    enabled = raw == "1"
+    if enabled and selected() != "cdp":
+        raise ValueError("VTX_GFX_PNG_FAST=1 requires CDP; no backend fallback")
+    return enabled
+
+
+def png_capture_provenance():
+    """Empty, requested-fast accounting; no capture or capability is inferred."""
+    return {"requested_parameters": {"format": "png", "optimizeForSpeed": True},
+            "actual_parameters": None,
+            "protocol_checks": {"succeeded": 0, "failed": 0},
+            "capture_calls": {"succeeded": 0, "failed": 0},
+            "reused_frames": 0, "canvas_frames": 0, "static_copied_frames": 0}
+
+
 def electron_config():
     binary = Path(os.environ.get("VTX_ELECTRON_BIN") or
                   WORKER_DIR / "node_modules/electron/dist/electron").expanduser().resolve()
