@@ -1,0 +1,41 @@
+{
+  "title": "从想法到合力",
+  "subtitle": "相遇不是终点，连接也保留个性",
+  "seed": 3,
+  "palette": [
+    "#faf5e8",
+    "#202730",
+    "#e66b42",
+    "#49a69d"
+  ],
+  "stages": [
+    {
+      "in": 0,
+      "out": 45,
+      "mode": "gather",
+      "label": "各自出发",
+      "amount": 1
+    },
+    {
+      "in": 45,
+      "out": 108,
+      "mode": "merge",
+      "label": "找到连接",
+      "amount": 1
+    },
+    {
+      "in": 108,
+      "out": 180,
+      "mode": "split",
+      "label": "保留个性",
+      "amount": 1
+    },
+    {
+      "in": 180,
+      "out": 240,
+      "mode": "resolve",
+      "label": "一起向前",
+      "amount": 1
+    }
+  ]
+}

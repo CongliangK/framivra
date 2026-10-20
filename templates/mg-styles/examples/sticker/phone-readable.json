@@ -1,0 +1,145 @@
+{
+  "title": "拆开问题，再看证据",
+  "question": {
+    "text": "一部手机，重量从哪里来？",
+    "shape": "phone"
+  },
+  "parts": [
+    {
+      "id": "screen",
+      "label": "屏幕组件",
+      "shape": "screen"
+    },
+    {
+      "id": "power",
+      "label": "供电组件",
+      "shape": "battery"
+    },
+    {
+      "id": "logic",
+      "label": "运算组件",
+      "shape": "chip"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "display_mass",
+      "label": "屏幕示意质量",
+      "value": 35,
+      "unit": "g",
+      "source": "教学示意数据，非真实测量",
+      "chart": "bar"
+    },
+    {
+      "id": "battery_mass",
+      "label": "电池示意质量",
+      "value": 48,
+      "unit": "g",
+      "source": "教学示意数据，非真实测量",
+      "chart": "bar"
+    },
+    {
+      "id": "board_mass",
+      "label": "主板示意质量",
+      "value": 18,
+      "unit": "g",
+      "source": "教学示意数据，非真实测量",
+      "chart": "bar"
+    }
+  ],
+  "conclusion": "比较之前，先统一单位与测量口径。",
+  "relations": [
+    {
+      "from": "question",
+      "to": "screen",
+      "label": "拆分"
+    },
+    {
+      "from": "question",
+      "to": "power",
+      "label": "拆分"
+    },
+    {
+      "from": "question",
+      "to": "logic",
+      "label": "拆分"
+    },
+    {
+      "from": "screen",
+      "to": "display_mass",
+      "label": "称量"
+    },
+    {
+      "from": "power",
+      "to": "battery_mass",
+      "label": "称量"
+    },
+    {
+      "from": "logic",
+      "to": "board_mass",
+      "label": "称量"
+    },
+    {
+      "from": "display_mass",
+      "to": "conclusion",
+      "label": "共同解释"
+    },
+    {
+      "from": "battery_mass",
+      "to": "conclusion",
+      "label": "共同解释"
+    },
+    {
+      "from": "board_mass",
+      "to": "conclusion",
+      "label": "共同解释"
+    }
+  ],
+  "beats": [
+    {
+      "kind": "question",
+      "in": 0,
+      "out": 55,
+      "caption": "先把一个看似简单的问题摆出来。",
+      "move_frames": 0,
+      "reveal_frames": 0,
+      "closeup_hold_frames": 55,
+      "pullback_frames": 0,
+      "overview_hold_frames": 0
+    },
+    {
+      "kind": "decompose",
+      "in": 55,
+      "out": 120,
+      "caption": "拆成屏幕、供电、运算三个可研究部分。",
+      "move_frames": 15,
+      "reveal_frames": 0,
+      "closeup_hold_frames": 50,
+      "pullback_frames": 0,
+      "overview_hold_frames": 0
+    },
+    {
+      "kind": "evidence",
+      "in": 120,
+      "out": 240,
+      "caption": "用同一单位比较，来源与数字一起出现。",
+      "move_frames": 18,
+      "reveal_frames": 24,
+      "closeup_hold_frames": 78,
+      "pullback_frames": 0,
+      "overview_hold_frames": 0
+    },
+    {
+      "kind": "conclusion",
+      "in": 240,
+      "out": 360,
+      "caption": "拉远看：问题、结构、证据，才能连成结论。",
+      "move_frames": 15,
+      "reveal_frames": 0,
+      "closeup_hold_frames": 45,
+      "pullback_frames": 20,
+      "overview_hold_frames": 40
+    }
+  ],
+  "seed": 371
+}

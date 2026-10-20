@@ -1,0 +1,207 @@
+{
+  "title": "构成一种平衡",
+  "subtitle": "圆弧给出方向，支撑建立联结。",
+  "seed": 2147483647,
+  "palette": [
+    "#f1e9da",
+    "#111111",
+    "#df3b30",
+    "#f2b705",
+    "#2454a5"
+  ],
+  "tick_frames": 5,
+  "modules": [
+    {
+      "id": "shelter",
+      "shape": "quarter",
+      "span": 3,
+      "color": 4
+    },
+    {
+      "id": "sun",
+      "shape": "circle",
+      "span": 2,
+      "color": 3
+    },
+    {
+      "id": "bridge",
+      "shape": "bar",
+      "span": 2,
+      "color": 2
+    },
+    {
+      "id": "arrow",
+      "shape": "triangle",
+      "span": 1,
+      "color": 1
+    }
+  ],
+  "initial_layout": "apart",
+  "layouts": {
+    "apart": [
+      {
+        "id": "shelter",
+        "cell": [
+          3,
+          1
+        ],
+        "turn": 0
+      },
+      {
+        "id": "sun",
+        "cell": [
+          7,
+          1
+        ],
+        "turn": 0
+      },
+      {
+        "id": "bridge",
+        "cell": [
+          5,
+          3
+        ],
+        "turn": 0
+      },
+      {
+        "id": "arrow",
+        "cell": [
+          8,
+          0
+        ],
+        "turn": 0
+      }
+    ],
+    "align": [
+      {
+        "id": "shelter",
+        "cell": [
+          4,
+          1
+        ],
+        "turn": 1
+      },
+      {
+        "id": "sun",
+        "cell": [
+          7,
+          0
+        ],
+        "turn": 1
+      },
+      {
+        "id": "bridge",
+        "cell": [
+          6,
+          1
+        ],
+        "turn": 1
+      },
+      {
+        "id": "arrow",
+        "cell": [
+          4,
+          3
+        ],
+        "turn": 1
+      }
+    ],
+    "counterpoint": [
+      {
+        "id": "shelter",
+        "cell": [
+          3,
+          1
+        ],
+        "turn": 2
+      },
+      {
+        "id": "sun",
+        "cell": [
+          6,
+          2
+        ],
+        "turn": 2
+      },
+      {
+        "id": "bridge",
+        "cell": [
+          5,
+          1
+        ],
+        "turn": 2
+      },
+      {
+        "id": "arrow",
+        "cell": [
+          7,
+          3
+        ],
+        "turn": 2
+      }
+    ],
+    "balance": [
+      {
+        "id": "shelter",
+        "cell": [
+          4,
+          1
+        ],
+        "turn": 3
+      },
+      {
+        "id": "sun",
+        "cell": [
+          6,
+          1
+        ],
+        "turn": 3
+      },
+      {
+        "id": "bridge",
+        "cell": [
+          6,
+          2
+        ],
+        "turn": 3
+      },
+      {
+        "id": "arrow",
+        "cell": [
+          3,
+          2
+        ],
+        "turn": 3
+      }
+    ]
+  },
+  "beats": [
+    {
+      "in": 0,
+      "out": 60,
+      "label": "01  分离的形状",
+      "target": "align",
+      "axis": "center",
+      "move_frames": 10,
+      "cascade_frames": 5
+    },
+    {
+      "in": 60,
+      "out": 120,
+      "label": "02  轴心产生呼应",
+      "target": "counterpoint",
+      "axis": "corner",
+      "move_frames": 10,
+      "cascade_frames": 5
+    },
+    {
+      "in": 120,
+      "out": 180,
+      "label": "03  共同形成平衡",
+      "target": "balance",
+      "axis": "alternate",
+      "move_frames": 10,
+      "cascade_frames": 5
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "title": "晚霞 · 整理今天的收获",
+  "subtitle": "留住声音，理解片段，安排下一次出发",
+  "palette": [
+    "#28131e",
+    "#fff1e9",
+    "#d97976",
+    "#cc9955"
+  ],
+  "seed": -11,
+  "lens": {
+    "strength": 0.3,
+    "dispersion": 1.1,
+    "radius": 180
+  },
+  "chapters": [
+    {
+      "in": 0,
+      "out": 150,
+      "mode": "chat",
+      "label": "回看今天",
+      "detail": "三条值得记住的小事",
+      "value": 3,
+      "unit": "段记录",
+      "reveal_frames": 30,
+      "hold_frames": 100
+    },
+    {
+      "in": 150,
+      "out": 300,
+      "mode": "voice",
+      "label": "给明天留一句话",
+      "detail": "让期待拥有自己的声音",
+      "value": 76,
+      "unit": "秒留言",
+      "reveal_frames": 30,
+      "hold_frames": 100
+    }
+  ]
+}

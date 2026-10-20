@@ -1,0 +1,29 @@
+{
+  "title": "把节水问题讲清楚",
+  "question": {"text": "同一瓶水，哪些做法能少用一点？", "shape": "bottle"},
+  "parts": [
+    {"id": "garden", "label": "照料植物", "shape": "leaf"},
+    {"id": "reuse", "label": "循环使用", "shape": "drop"}
+  ],
+  "evidence": [
+    {"id": "change_a", "label": "方案甲用量变化", "value": -120, "unit": "mL", "source": "教学假设，需替换为实测记录", "chart": "bar"},
+    {"id": "change_b", "label": "方案乙用量变化", "value": -80, "unit": "mL", "source": "教学假设，需替换为实测记录", "chart": "bar"}
+  ],
+  "conclusion": "负值表示减少；结论必须说明比较基线。",
+  "relations": [
+    {"from": "question", "to": "garden", "label": "拆分场景"},
+    {"from": "question", "to": "reuse", "label": "拆分场景"},
+    {"from": "garden", "to": "change_a", "label": "对照测量"},
+    {"from": "reuse", "to": "change_b", "label": "对照测量"},
+    {"from": "change_a", "to": "conclusion", "label": "解释变化"},
+    {"from": "change_b", "to": "conclusion", "label": "解释变化"}
+  ],
+  "beats": [
+    {"kind": "question", "in": 0, "out": 48, "caption": "换一个问题：怎样把同一瓶水用得更好？"},
+    {"kind": "decompose", "in": 48, "out": 112, "caption": "先分清使用场景，不急着说哪个更有效。"},
+    {"kind": "evidence", "in": 112, "out": 180, "caption": "这里显示相对基线的变化，向下表示少用了。"},
+    {"kind": "conclusion", "in": 180, "out": 240, "caption": "把来源和基线讲明白，才是可复用的解释。"}
+  ],
+  "palette": ["#eef4f0", "#263b40", "#559eaf", "#b1c9a4"],
+  "seed": -715
+}

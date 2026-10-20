@@ -1,0 +1,283 @@
+{
+  "title": "让形状成为秩序",
+  "subtitle": "一个模数，三种轴心，共同的节奏。",
+  "seed": -7,
+  "palette": [
+    "#f1e9da",
+    "#111111",
+    "#df3b30",
+    "#f2b705",
+    "#2454a5"
+  ],
+  "tick_frames": 5,
+  "modules": [
+    {
+      "id": "disc",
+      "shape": "circle",
+      "span": 3,
+      "color": 2
+    },
+    {
+      "id": "arc",
+      "shape": "quarter",
+      "span": 2,
+      "color": 4
+    },
+    {
+      "id": "direction",
+      "shape": "triangle",
+      "span": 1,
+      "color": 3
+    },
+    {
+      "id": "beam",
+      "shape": "bar",
+      "span": 2,
+      "color": 1
+    },
+    {
+      "id": "half",
+      "shape": "semicircle",
+      "span": 2,
+      "color": 3
+    },
+    {
+      "id": "anchor",
+      "shape": "square",
+      "span": 1,
+      "color": 4
+    }
+  ],
+  "initial_layout": "loose",
+  "layouts": {
+    "loose": [
+      {
+        "id": "disc",
+        "cell": [
+          2,
+          1
+        ],
+        "turn": 0
+      },
+      {
+        "id": "arc",
+        "cell": [
+          7,
+          0
+        ],
+        "turn": 0
+      },
+      {
+        "id": "direction",
+        "cell": [
+          8,
+          3
+        ],
+        "turn": 0
+      },
+      {
+        "id": "beam",
+        "cell": [
+          8,
+          2
+        ],
+        "turn": 0
+      },
+      {
+        "id": "half",
+        "cell": [
+          5,
+          3
+        ],
+        "turn": 2
+      },
+      {
+        "id": "anchor",
+        "cell": [
+          4,
+          0
+        ],
+        "turn": 0
+      }
+    ],
+    "focus": [
+      {
+        "id": "disc",
+        "cell": [
+          3,
+          1
+        ],
+        "turn": 0
+      },
+      {
+        "id": "arc",
+        "cell": [
+          6,
+          1
+        ],
+        "turn": 1
+      },
+      {
+        "id": "direction",
+        "cell": [
+          7,
+          2
+        ],
+        "turn": 1
+      },
+      {
+        "id": "beam",
+        "cell": [
+          8,
+          1
+        ],
+        "turn": 1
+      },
+      {
+        "id": "half",
+        "cell": [
+          5,
+          2
+        ],
+        "turn": 3
+      },
+      {
+        "id": "anchor",
+        "cell": [
+          5,
+          1
+        ],
+        "turn": 1
+      }
+    ],
+    "rhythm": [
+      {
+        "id": "disc",
+        "cell": [
+          3,
+          1
+        ],
+        "turn": 0
+      },
+      {
+        "id": "arc",
+        "cell": [
+          5,
+          0
+        ],
+        "turn": 2
+      },
+      {
+        "id": "direction",
+        "cell": [
+          6,
+          2
+        ],
+        "turn": 2
+      },
+      {
+        "id": "beam",
+        "cell": [
+          8,
+          2
+        ],
+        "turn": 2
+      },
+      {
+        "id": "half",
+        "cell": [
+          5,
+          2
+        ],
+        "turn": 0
+      },
+      {
+        "id": "anchor",
+        "cell": [
+          6,
+          1
+        ],
+        "turn": 2
+      }
+    ],
+    "poster": [
+      {
+        "id": "disc",
+        "cell": [
+          3,
+          1
+        ],
+        "turn": 0
+      },
+      {
+        "id": "arc",
+        "cell": [
+          6,
+          1
+        ],
+        "turn": 3
+      },
+      {
+        "id": "direction",
+        "cell": [
+          7,
+          3
+        ],
+        "turn": 3
+      },
+      {
+        "id": "beam",
+        "cell": [
+          8,
+          1
+        ],
+        "turn": 3
+      },
+      {
+        "id": "half",
+        "cell": [
+          6,
+          2
+        ],
+        "turn": 1
+      },
+      {
+        "id": "anchor",
+        "cell": [
+          5,
+          2
+        ],
+        "turn": 3
+      }
+    ]
+  },
+  "beats": [
+    {
+      "in": 0,
+      "out": 60,
+      "label": "01  找到共同模数",
+      "target": "focus",
+      "axis": "center",
+      "move_frames": 10,
+      "cascade_frames": 5
+    },
+    {
+      "in": 60,
+      "out": 120,
+      "label": "02  改变旋转轴心",
+      "target": "rhythm",
+      "axis": "corner",
+      "move_frames": 10,
+      "cascade_frames": 5
+    },
+    {
+      "in": 120,
+      "out": 180,
+      "label": "03  级联形成整体",
+      "target": "poster",
+      "axis": "alternate",
+      "move_frames": 10,
+      "cascade_frames": 5
+    }
+  ]
+}

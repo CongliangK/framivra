@@ -1,0 +1,40 @@
+{
+  "title": "澄光 · 为灵感留一点空间",
+  "subtitle": "说出想法，让思绪找到清晰的下一步",
+  "seed": 31,
+  "chapters": [
+    {
+      "in": 0,
+      "out": 90,
+      "mode": "voice",
+      "label": "先把想法说出来",
+      "detail": "捕捉还没成形的念头",
+      "value": 64,
+      "unit": "秒灵感",
+      "reveal_frames": 18,
+      "hold_frames": 60
+    },
+    {
+      "in": 90,
+      "out": 180,
+      "mode": "chat",
+      "label": "一起理清线索",
+      "detail": "将零散片段汇成建议",
+      "value": 12,
+      "unit": "条建议",
+      "reveal_frames": 24,
+      "hold_frames": 60
+    },
+    {
+      "in": 180,
+      "out": 300,
+      "mode": "focus",
+      "label": "把注意力留给创造",
+      "detail": "少一点打扰，多一点专注",
+      "value": 88,
+      "unit": "专注值",
+      "reveal_frames": 30,
+      "hold_frames": 75
+    }
+  ]
+}

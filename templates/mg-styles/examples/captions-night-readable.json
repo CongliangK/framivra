@@ -1,0 +1,36 @@
+{
+  "title": "夜间送件实况反应",
+  "caption_band": "upper",
+  "subject_rect": [
+    0.2,
+    0.6,
+    0.8,
+    0.95
+  ],
+  "reactions": [
+    {
+      "in": 3,
+      "out": 48,
+      "text": "低头过门！",
+      "emotion": "emphasis",
+      "punchFrame": 25,
+      "stagger": 1
+    },
+    {
+      "in": 53,
+      "out": 98,
+      "text": "包裹在前面！",
+      "emotion": "joy",
+      "punchFrame": 80,
+      "stagger": 1
+    },
+    {
+      "in": 103,
+      "out": 148,
+      "text": "最后一跃！",
+      "emotion": "surprise",
+      "punchFrame": 128,
+      "stagger": 1
+    }
+  ]
+}

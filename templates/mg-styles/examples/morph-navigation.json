@@ -1,0 +1,9 @@
+{
+  "title": "从汇聚到出发",
+  "palette": ["#edf8fa", "#192c37", "#277e9b", "#92dbcf"],
+  "shapes": [
+    {"shape":"drop", "label":"汇聚一点力量", "in":0, "out":48, "x":810, "color":"#277e9b"},
+    {"shape":"circle", "label":"形成共同方向", "in":48, "out":108, "transition":20, "x":960, "color":"#43a9a0"},
+    {"shape":"arrow", "label":"现在向前出发", "in":108, "out":180, "transition":24, "x":1110, "color":"#d48c47"}
+  ]
+}

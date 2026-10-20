@@ -1,0 +1,196 @@
+{
+  "title": "脑洞不是凭空出现的",
+  "subtitle": "一张程序剪纸脸，把观察拼成新的想象",
+  "exposure": 3,
+  "seed": -9,
+  "parts": [
+    {
+      "id": "body",
+      "shape": "body",
+      "parent": null,
+      "x": 0.4,
+      "y": 0.7,
+      "scale": 75,
+      "angle": 8,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 0,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "left",
+      "shape": "arm",
+      "parent": "body",
+      "x": -0.5,
+      "y": -0.6,
+      "scale": 100,
+      "angle": -20,
+      "pivot": [
+        0,
+        -0.1
+      ],
+      "motion": {
+        "hinge": 28,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "head",
+      "shape": "head",
+      "parent": null,
+      "x": 0.4,
+      "y": 0.5,
+      "scale": 180,
+      "angle": -5,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 0,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "jaw",
+      "shape": "jaw",
+      "parent": "head",
+      "x": 0,
+      "y": 0.6,
+      "scale": 90,
+      "angle": 0,
+      "pivot": [
+        -0.85,
+        0
+      ],
+      "motion": {
+        "hinge": 24,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "idea",
+      "shape": "leaf",
+      "parent": null,
+      "x": 0.66,
+      "y": 0.52,
+      "scale": 80,
+      "angle": 20,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": -35,
+        "drift": [
+          150,
+          -40
+        ]
+      }
+    },
+    {
+      "id": "journey",
+      "shape": "rocket",
+      "parent": null,
+      "x": 0.76,
+      "y": 0.65,
+      "scale": 90,
+      "angle": -20,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 25,
+        "drift": [
+          -30,
+          -130
+        ]
+      }
+    },
+    {
+      "id": "world",
+      "shape": "planet",
+      "parent": null,
+      "x": 0.67,
+      "y": 0.7,
+      "scale": 65,
+      "angle": 0,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 35,
+        "drift": [
+          120,
+          0
+        ]
+      }
+    }
+  ],
+  "beats": [
+    {
+      "mode": "awaken",
+      "in": 0,
+      "out": 45,
+      "text": "先让好奇心开口",
+      "active": [
+        "jaw",
+        "left"
+      ]
+    },
+    {
+      "mode": "release",
+      "in": 45,
+      "out": 105,
+      "text": "观察跳出来，和想象碰个面",
+      "active": [
+        "idea",
+        "journey",
+        "world"
+      ]
+    },
+    {
+      "mode": "reframe",
+      "in": 105,
+      "out": 165,
+      "text": "撕开旧框架，重新拼一次",
+      "active": [
+        "idea",
+        "journey",
+        "world"
+      ]
+    },
+    {
+      "mode": "resolve",
+      "in": 165,
+      "out": 240,
+      "text": "把看见的东西，拼成没见过的答案",
+      "active": []
+    }
+  ],
+  "evidence": [
+    {
+      "label": "观察样例",
+      "value": "3 条",
+      "source": "本示例人工设置，非现实统计"
+    }
+  ]
+}

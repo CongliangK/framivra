@@ -1,0 +1,68 @@
+{
+  "title": "把一个想法，变成可用产品",
+  "subtitle": "先验证问题，再构建方案，最后交付真实价值",
+  "origin": {
+    "label": "一个想法",
+    "detail": "从用户的问题出发"
+  },
+  "cards": [
+    {
+      "id": "observe",
+      "label": "观察用户",
+      "value": 12,
+      "detail": "真实访谈，不猜需求"
+    },
+    {
+      "id": "prototype",
+      "label": "制作原型",
+      "value": 3,
+      "detail": "快速检验关键假设"
+    },
+    {
+      "id": "deliver",
+      "label": "交付改进",
+      "value": 1,
+      "detail": "用真实反馈推动下一轮"
+    }
+  ],
+  "links": [
+    {
+      "from": "origin",
+      "to": "observe"
+    },
+    {
+      "from": "observe",
+      "to": "prototype"
+    },
+    {
+      "from": "prototype",
+      "to": "deliver"
+    }
+  ],
+  "final_order": [
+    "observe",
+    "prototype",
+    "deliver"
+  ],
+  "stages": [
+    {
+      "mode": "question",
+      "in": 0,
+      "out": 36,
+      "text": "好想法，怎样成为好产品？"
+    },
+    {
+      "mode": "build",
+      "in": 36,
+      "out": 108,
+      "text": "观察带来证据，原型连接行动"
+    },
+    {
+      "mode": "resolve",
+      "in": 108,
+      "out": 180,
+      "text": "把因果链整理成一条可执行路径"
+    }
+  ],
+  "seed": -12
+}

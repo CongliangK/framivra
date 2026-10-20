@@ -1,0 +1,41 @@
+{
+  "title": "穿越夜色",
+  "destination": "抵达新的灵感站",
+  "seed": 21,
+  "waypoints": [
+    {
+      "frame": 24,
+      "label": "起点",
+      "side": "left"
+    },
+    {
+      "frame": 72,
+      "label": "光桥",
+      "side": "right"
+    }
+  ],
+  "stages": [
+    {
+      "mode": "approach",
+      "in": 0,
+      "out": 60
+    },
+    {
+      "mode": "cross",
+      "in": 60,
+      "out": 120
+    },
+    {
+      "mode": "arrive",
+      "in": 120,
+      "out": 180
+    }
+  ],
+  "tracking": [
+    {
+      "in": 65,
+      "out": 70,
+      "strength": 7
+    }
+  ]
+}

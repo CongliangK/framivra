@@ -1,0 +1,21 @@
+{
+  "title": "让零件成为系统",
+  "subtitle": "分散的问题，连接的答案",
+  "objects": [
+    {"label": "观察", "value": 35, "shape": "sphere", "material": "ceramic", "roughness": 0.28},
+    {"label": "连接", "value": 64, "shape": "torus", "material": "metal", "roughness": 0.2},
+    {"label": "形成", "value": 90, "shape": "cube", "material": "matte", "roughness": 0.65}
+  ],
+  "palette": ["#faf5e8", "#202730", "#e66b42", "#49a69d"],
+  "scene": {"layout": "stage"},
+  "scene_story": [
+    {"frame": 0, "title": "01  各自为战", "layout": "scatter"},
+    {"frame": 72, "title": "02  建立连接", "layout": "assemble"},
+    {"frame": 156, "title": "03  形成共同系统", "layout": "result"}
+  ],
+  "links": [[0, 1], [1, 2]],
+  "beats": {"reveal": 0, "settle": 72, "resolve": 180},
+  "transition_frames": 24,
+  "transition": "camera-pullback",
+  "pace": 1
+}

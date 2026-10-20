@@ -1,0 +1,9 @@
+{
+  "title": "让一个想法生长",
+  "palette": ["#faf5e8", "#202730", "#e66b42", "#49a69d"],
+  "shapes": [
+    {"shape":"circle", "label":"一个起点", "in":0, "out":60, "color":"#e66b42"},
+    {"shape":"leaf", "label":"向外生长", "in":60, "out":144, "transition":24, "color":"#49a69d"},
+    {"shape":"star", "label":"让可能发光", "in":144, "out":240, "transition":30, "color":"#e7b347"}
+  ]
+}

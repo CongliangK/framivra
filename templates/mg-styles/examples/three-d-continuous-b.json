@@ -1,0 +1,60 @@
+{
+  "title": "让不同角色共同创作",
+  "subtitle": "两种角色，一份共同创作",
+  "objects": [
+    {
+      "label": "灵感",
+      "value": 48,
+      "shape": "sphere",
+      "material": "ceramic",
+      "roughness": 0.23
+    },
+    {
+      "label": "联结",
+      "value": 85,
+      "shape": "torus",
+      "material": "metal",
+      "roughness": 0.16
+    }
+  ],
+  "palette": [
+    "#f3eee5",
+    "#302b29",
+    "#cb7248",
+    "#68948d"
+  ],
+  "scene": {
+    "layout": "arc"
+  },
+  "scene_story": [
+    {
+      "frame": 0,
+      "title": "01  两种角色",
+      "layout": "scatter"
+    },
+    {
+      "frame": 40,
+      "title": "02  找到共同位置",
+      "layout": "assemble"
+    },
+    {
+      "frame": 80,
+      "title": "03  联结产生价值",
+      "layout": "result"
+    }
+  ],
+  "links": [
+    [
+      0,
+      1
+    ]
+  ],
+  "beats": {
+    "reveal": 0,
+    "settle": 40,
+    "resolve": 96
+  },
+  "transition_frames": 12,
+  "transition": "hold",
+  "pace": 1.3
+}
