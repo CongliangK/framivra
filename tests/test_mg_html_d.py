@@ -34,6 +34,23 @@ if(id==='flat-vector'){const e=s.examples[0],d=JSON.parse(JSON.stringify(e.data)
 '''
   result=subprocess.run(['node','-e',script,str(HTML)],capture_output=True,text=True)
   self.assertEqual(result.returncode,0,result.stderr)
+ def test_all_fifteen_recipe_cards_have_eight_fields(self):
+  script=r'''
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),root=process.argv[1];
+const files=fs.readdirSync(root).filter(n=>n.endsWith('.js')&&n!=='runtime.js');
+assert.equal(files.length,15);
+const expected=['适用/不适用','视觉隐喻','4–6拍','不可删特征','可替语义','动作/转场/声音点','失败反例','编辑练习'];
+for(const file of files){
+ const sandbox={window:{}};vm.createContext(sandbox);
+ vm.runInContext(fs.readFileSync(root+'/'+file,'utf8'),sandbox);
+ const recipe=sandbox.window.MG_REFERENCE.recipe;
+ assert.deepEqual(Object.keys(recipe).sort(),expected.slice().sort(),file+' recipe keys');
+ assert.equal(typeof recipe['编辑练习'],'string',file+' exercise type');
+ assert(recipe['编辑练习'].trim().length>10,file+' concrete editing exercise');
+}
+'''
+  result=subprocess.run(['node','-e',script,str(HTML)],capture_output=True,text=True)
+  self.assertEqual(result.returncode,0,result.stderr)
  def test_shell_wiring_and_no_scene_clock(self):
   for style in ('flat-vector','hud','bauhaus','synthwave'):
    shell=(HTML/f'{style}.html').read_text();js=(HTML/f'{style}.js').read_text()
