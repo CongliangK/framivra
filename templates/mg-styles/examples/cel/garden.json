@@ -1,0 +1,16 @@
+{
+  "title": "小小勇气，慢慢长大",
+  "subtitle": "预备、尝试、落地；每一步都有自己的节奏。",
+  "seed": -2097,
+  "characters": [
+    {"id": "bud", "shape": "sprout", "label": "萌芽：先试试看", "emotion": "curious", "size": 108},
+    {"id": "cat", "shape": "cat", "label": "陪伴：一起出发", "emotion": "joy", "size": 102}
+  ],
+  "beats": [
+    {"actor": "bud", "action": "pop", "in": 0, "out": 60, "anticipation": 10, "motion": 20},
+    {"actor": "cat", "action": "hop", "in": 60, "out": 120, "anticipation": 10, "motion": 22, "distance": 60},
+    {"actor": "bud", "action": "stretch", "in": 120, "out": 180, "anticipation": 12, "motion": 22},
+    {"actor": "cat", "action": "settle", "in": 180, "out": 240, "anticipation": 10, "motion": 22}
+  ],
+  "exposures": {"action": 1, "body": 2, "hold": 3}
+}

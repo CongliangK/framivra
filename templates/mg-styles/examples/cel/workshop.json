@@ -1,0 +1,17 @@
+{
+  "title": "想法碰面，故事发生",
+  "subtitle": "惊喜不是整齐划一，而是彼此接住。",
+  "palette": ["#eef3ef", "#26363d", "#e7a466", "#8ab9bb"],
+  "seed": 314159,
+  "characters": [
+    {"id": "spark", "shape": "star", "label": "灵感来了", "emotion": "surprise", "size": 100},
+    {"id": "cloud", "shape": "blob", "label": "留一点弹性", "emotion": "calm", "size": 110},
+    {"id": "guide", "shape": "cat", "label": "轻轻接住", "emotion": "joy", "size": 96}
+  ],
+  "beats": [
+    {"actor": "spark", "action": "hop", "in": 0, "out": 60, "anticipation": 8, "motion": 20, "distance": 36},
+    {"actor": "cloud", "action": "stretch", "in": 60, "out": 120, "anticipation": 12, "motion": 24},
+    {"actor": "guide", "action": "pop", "in": 120, "out": 180, "anticipation": 10, "motion": 20},
+    {"actor": "cloud", "action": "settle", "in": 180, "out": 240, "anticipation": 10, "motion": 22}
+  ]
+}
