@@ -47,8 +47,8 @@ ffmpeg -nostdin -y -i "<视频>" -i "<同步.wav>" -map 0:v:0 -map 1:a:0 -c:v co
 
 ## 6. 降噪（D25 标准链）
 
-- 链=陷波（80Hz 高通+50/100/150Hz 工频 notch）→ Resemble 仅降噪级 → 48kHz；`plugins/denoise/denoise_voice.py`，CPU 批量几分钟量级。
-- 项目实例：50Hz 消 ~40dB、100Hz ~20dB、150Hz ~14dB；零时长漂移；语音 RMS 损失 ≤1.7dB。
+- 生产链、已验证适用域与 CLI 用法见 [denoise 插件](../../../plugins/denoise/README.md)。
+- 历史项目实例（不作现行链保证）：50Hz 消 ~40dB、100Hz ~20dB、150Hz ~14dB；零时长漂移；语音 RMS 损失 ≤1.7dB。
 - **处理对象用无损 PCM 源**（synced wav），不要解成品 AAC 再编（避免二代有损）。
 - 算法选型对照实验（备胎 MossFormer2 等）→ `shooting-guide.md` §录音。
 

@@ -49,6 +49,6 @@
   "denoise": {
     "enabled": false,
     "howto": "已有资产探测: bash plugins/denoise/denoise_init.sh；旧 --download 为 BLOCKED，许可边界见 docs/third-party-licenses.md；离线证据: python3 scripts/model_license_policy.py plan resemble-enhance（不下载、不授予许可）；手动 CLI: env python3 plugins/denoise/denoise_voice.py <in> <out>",
-    "purpose": "口播陷波+Resemble 仅降噪链（apps/aroll/语音链后处理；timeline 键 sources[].denoise 见 plugins/denoise/README.md）"
+    "purpose": "口播降噪链（apps/aroll/语音链后处理；现行处理链、适用域与 timeline 键 sources[].denoise 见 plugins/denoise/README.md）"
   }
 }

@@ -28,13 +28,13 @@
 - **管线红利**：vtx 契约中 voice 是独立轨，与 A-roll 画面分离 → 同期声与分轨补录（ADR）两条路都通。
 - **推荐路径**：①同期声·头顶 boom（电容麦吊口前上方 30-40cm，高于画框顶即不入画；心形指向对嘴、null 朝机箱）②吸音增强（相机身后/两侧永不入画：挂毛毯、堆被子、铺毛巾；GPU 空闲、机箱风扇 0dB）③分轨 ADR 保底（现场只留参考音，口播桌面近距补录，逐窗 20-40s 配漂移不累积）。
 - **桌面电容麦不可用**于 1.3-1.5m 机位（80cm 已掉 10dB 信噪，外推 ≈ -15dB）；相机内录麦的"响"是 AGC 假象（LRA 抽泵不可还原），只配当同步参考音。
-- **底噪**：本机实测 99% 为 50Hz 工频哼声（Pin 1 屏蔽悬空签名）；算法降噪链对照实验（陷波/RNNoise/DFN2/MossFormer2/Resemble）历史记录见项目源件 `voice-ime/07-shooting-guide.md` §七，通用选型见 [拍摄手册·录音](shooting-guide.md#四录音双系统与底噪)——产线现用 `plugins/denoise/denoise_voice.py`（陷波 80Hz 高通+工频 notch → Resemble 降噪级；备胎 MossFormer2）。
+- **底噪**：本机实测 99% 为 50Hz 工频哼声（Pin 1 屏蔽悬空签名）；算法降噪链对照实验（陷波/RNNoise/DFN2/MossFormer2/Resemble）历史记录见项目源件 `voice-ime/07-shooting-guide.md` §七，通用选型见 [拍摄手册·录音](shooting-guide.md#四录音双系统与底噪)；生产链与已验证适用域见 [denoise 插件](../../../plugins/denoise/README.md)。
 
 ## 双系统同步（无标记相关法，拍掌/LTC 废除）
 
 - **录制纪律三条**：①相机内录麦保持开启（=同步参考轨，音质无所谓）②声卡录制中途不中断 ③段间留 1-2s 气口（切段定位用）。
 - **长镜模式**（用户习惯拍板）：一次性连续长录避免停机重启改变语感；工作量移到后期（conform → 静音/ASR 首句切段 → 对窗体检）；逐窗独立对齐，漂移永不跨段累积。
-- **同步工具**：`env python3 <video_tools>/apps/sync/sync_audio.py 相机轨 话筒轨`——GCC-PHAT 互相关（语音本身即标记）+ 稳健线性拟合（偏移+ppm 漂移）+ 话筒轨微重采样 conform（视频永不动）+ 复验残差门（max<1.5ms）；`--report` 出 JSON（偏移/ppm/各窗置信度/离群点/verdict）。**录完先跑本工具再进管线。**
+- **同步工具**：[sync 组件用法](../../../apps/sync/README.md#开启步骤)列出所需解释器与完整命令，必填相机轨、话筒轨和输出 wav；可选 `--report <path>` 写 JSON（偏移/ppm/离群点/复验残差/verdict）。GCC-PHAT 互相关（语音本身即标记）+ 稳健线性拟合（偏移+ppm 漂移）+ 话筒轨微重采样 conform（视频永不动）+ 复验残差门（max<1.5ms）。**录完先跑本工具再进管线。**
 - 历史帧率换基记录（24fps→精确 30fps 拍板）与 60fps 否决依据留在项目源件 `voice-ime/07-shooting-guide.md` §五；通用参数见 [拍摄手册](shooting-guide.md#一相机参数m43-口播定稿d23d24)。
 
 ## 与产线的衔接
