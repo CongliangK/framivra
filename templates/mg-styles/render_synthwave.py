@@ -79,6 +79,13 @@ def journey_state(data,frame,frames):
 def _rgb(color):return tuple(int(color[i:i+2],16) for i in (1,3,5))
 
 
+def terrain_points(travel,layer,seed):
+    shift=travel*(.25+.35*layer)
+    first=math.floor(shift/80)-2
+    return [(i*80-shift,500-60*layer-65*math.sin(i*80*.006+seed+layer))
+            for i in range(first,first+30)]
+
+
 def render_synthwave_frame(data,frame,frames,font_path=None):
     import numpy as np
     from PIL import Image,ImageDraw,ImageFont,ImageFilter,ImageChops
@@ -93,11 +100,7 @@ def render_synthwave_frame(data,frame,frames,font_path=None):
         if abs(dy)<r and (row<500 or row%22<13):
             dx=math.sqrt(r*r-dy*dy);draw.line((960-dx,row,960+dx,row),fill=orange,width=1)
     for layer in range(2):
-        shift=state['travel']*(.25+.35*layer)
-        points=[(0,horizon)]
-        for x in range(-120,2100,80):
-            px=x-shift%80;peak=500-60*layer-65*math.sin(x*.006+data['seed']+layer)
-            points.append((px,peak))
+        points=[(0,horizon)]+terrain_points(state['travel'],layer,data['seed'])
         draw.polygon(points+[(1920,horizon)],fill=(24+layer*8,13,42+layer*8))
     draw.rectangle((0,horizon,1920,1080),fill=(11,8,31))
     glow=Image.new('RGB',SIZE);gd=ImageDraw.Draw(glow)

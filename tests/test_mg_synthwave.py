@@ -25,6 +25,17 @@ class SynthJourney(unittest.TestCase):
         self.assertIsNone(ImageChops.difference(s.render_synthwave_frame(data,70,180),s.render_synthwave_frame(plain,70,180)).getbbox())
         norm=s.validate_synthwave_content(data,180)
         self.assertLess(s.journey_state(norm,30,180)['travel'],s.journey_state(norm,100,180)['travel'])
+    def test_terrain_samples_remain_continuous_across_old_modulo_boundary(self):
+        # Same world vertices retain heights and move by the real camera delta,
+        # even as the leftmost offscreen sampling index changes.
+        a=s.terrain_points(133.2,1,21);b=s.terrain_points(133.5,1,21)
+        matched=0
+        for x,y in a:
+            same=[(xx,yy) for xx,yy in b if abs(yy-y)<1e-9]
+            if same:
+                self.assertAlmostEqual(x-same[0][0],.18,places=8);matched+=1
+        self.assertGreater(matched,25)
+
     def test_invalid_content_font_windows_and_values_rejected_before_write(self):
         import copy
         data=self.load('night');bad=[]
