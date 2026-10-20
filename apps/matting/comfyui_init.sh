@@ -23,8 +23,6 @@ fi
 
 ROOT="${COMFYUI_ROOT:-$HOME/AI/ComfyUI}"
 CPY="${COMFYUI_PY:-$HOME/miniconda3/envs/comfyui/bin/python}"
-CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
-PROXY="http://127.0.0.1:7890"
 ACTION="${1:-}"
 
 ok()   { echo "  ✓ $*"; }
@@ -48,36 +46,6 @@ probe() {
   fi
 }
 
-install_() {
-  echo "=== ComfyUI 安装（repo ≈500MB 代码，不含模型）==="
-  if [ ! -d "$ROOT" ]; then
-    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI "$ROOT" \
-      || https_proxy="$PROXY" git clone --depth 1 https://github.com/comfyanonymous/ComfyUI "$ROOT" \
-      || { echo "克隆失败（代理也不通），手动：git clone https://github.com/comfyanonymous/ComfyUI $ROOT"; exit 1; }
-    echo "✓ repo 已克隆 → $ROOT"
-  else
-    note "repo 已存在，跳过克隆"
-  fi
-  if [ ! -x "$CPY" ]; then
-    conda create -n comfyui python=3.12 -y || { echo "conda create 失败"; exit 1; }
-  fi
-  "$CPY" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
-  "$CPY" -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r "$ROOT/requirements.txt" \
-    || { echo "requirements 安装失败，手动跑上一行命令"; exit 1; }
-  if [ ! -x "$ROOT/start.sh" ]; then
-    cat > "$ROOT/start.sh" <<EOF
-#!/bin/bash
-source "$CONDA_SH"
-conda activate comfyui
-cd "$ROOT"
-exec python main.py --listen 127.0.0.1 --port 8188
-EOF
-    chmod +x "$ROOT/start.sh"
-    echo "✓ start.sh 已生成"
-  fi
-  echo "完成。启动：bash $0 --start ；模型 checkpoints 用 hf-mirror 下载到 $ROOT/models/ 子目录"
-}
-
 start_() {
   [ -x "$ROOT/start.sh" ] || { echo "start.sh 不存在，先 --install"; exit 1; }
   if curl -s -m 2 -o /dev/null "http://127.0.0.1:8188" 2>/dev/null; then
@@ -88,7 +56,6 @@ start_() {
 }
 
 case "$ACTION" in
-  --install) install_ ;;
   --start)   start_ ;;
   *)         probe ;;
 esac

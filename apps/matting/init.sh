@@ -29,10 +29,6 @@ MA2_W="$MA2/pretrained_models/hf2"
 BR="$HERE/BiRefNet_HR"
 TORCH_HUB="$HOME/.cache/torch/hub/checkpoints"
 RESNET="$TORCH_HUB/resnet18-5c106cde.pth"
-MIRROR="https://hf-mirror.com"
-PROXY="http://127.0.0.1:7890"
-PY="${1:-}"
-[ "$PY" = "--download" ] && shift 2>/dev/null
 
 OK=0; MISS=0
 ok()   { OK=$((OK+1));   echo "  ✓ $*"; }
@@ -61,11 +57,9 @@ if [ -d "$MA2/matanyone2" ]; then
     ok "MatAnyone2：$MA2（代码+权重齐）"
   else
     miss "MatAnyone2 缺权重 $MA2_W/model.safetensors（141MB，HF PeiqingYang/MatAnyone2）"
-    NEED_MA2_W=1
   fi
 else
   miss "MatAnyone2 克隆缺失 $MA2 —— git clone https://github.com/pq-yang/MatAnyone2 $MA2（直连失败自动走代理）+ 权重下载"
-  NEED_MA2=1; NEED_MA2_W=1
 fi
 
 # ---- 3. BiRefNet_HR 平级目录 ----
@@ -73,7 +67,6 @@ if [ -d "$BR" ] && ls "$BR"/config.json >/dev/null 2>&1; then
   ok "BiRefNet_HR：$BR"
 else
   miss "BiRefNet_HR 缺失 $BR（HF ZhengPeng7/BiRefNet_HR-matting 快照，run_birefnet_hr.py local_files_only 加载）"
-  NEED_BR=1
 fi
 
 # ---- 4. torch hub ResNet18（光流隐藏依赖，被墙假死坑）----
@@ -83,7 +76,6 @@ elif [ -s "$HERE/resnet18-5c106cde.pth" ]; then
   ok "ResNet18（脚本同目录副本）：$HERE/resnet18-5c106cde.pth"
 else
   miss "ResNet18 预置缺失 $RESNET —— download.pytorch.org/models/resnet18-5c106cde.pth（约 45MB）"
-  NEED_RESNET=1
 fi
 
 # ---- 5. ComfyUI 服务（可选，仅背景生成）----
@@ -93,43 +85,6 @@ elif [ -x "$HOME/AI/ComfyUI/start.sh" ]; then
   echo "  · ComfyUI 未运行但已配置（bash ~/AI/ComfyUI/start.sh；详见 comfyui_init.sh）"
 else
   echo "  · ComfyUI 未配置（可选，仅背景图生成需要——bash $(dirname "$0")/comfyui_init.sh --install）"
-fi
-
-# ---- --download：补缺失项 ----
-if [ "$PY" = "--download" ]; then
-  echo "--- 开始补齐缺失项 ---"
-  dl_hf() { # dl_hf <repo_id> <local_dir>
-    # heredoc 走 stdin，Git Bash 的 /c/Users/... 路径不经 MSYS 参数转换，Windows
-    # Python 会解析到盘根 \c\Users\... 下错位置——cygpath -w 转 Windows 路径兜底
-    #（非 MSYS 环境无 cygpath，原样返回，Linux/macOS 行为不变）
-    local dl_dir
-    dl_dir="$(cygpath -w "$2" 2>/dev/null || echo "$2")"
-    HF_ENDPOINT="$MIRROR" "$CPY" - <<PYEOF || return 1
-from huggingface_hub import snapshot_download
-print(snapshot_download("$1", local_dir=r"$dl_dir"))
-PYEOF
-  }
-  clone_gh() { # clone_gh <url> <dir>
-    git clone --depth 1 "$1" "$2" 2>/dev/null || \
-      https_proxy="$PROXY" git clone --depth 1 "$1" "$2"
-  }
-  if [ "${NEED_MA2:-}" = 1 ]; then
-    clone_gh "https://github.com/pq-yang/MatAnyone2" "$MA2" && echo "✓ MatAnyone2 代码已克隆"
-  fi
-  if [ "${NEED_MA2_W:-}" = 1 ] && [ -d "$MA2" ]; then
-    dl_hf "PeiqingYang/MatAnyone2" "$MA2_W" && echo "✓ MatAnyone2 权重已下载"
-  fi
-  if [ "${NEED_BR:-}" = 1 ]; then
-    dl_hf "ZhengPeng7/BiRefNet_HR-matting" "$BR" && echo "✓ BiRefNet_HR 已下载"
-  fi
-  if [ "${NEED_RESNET:-}" = 1 ]; then
-    mkdir -p "$TORCH_HUB"
-    curl -fL -o "$RESNET" "https://download.pytorch.org/models/resnet18-5c106cde.pth" \
-      || https_proxy="$PROXY" curl -fL -o "$RESNET" "https://download.pytorch.org/models/resnet18-5c106cde.pth" \
-      && echo "✓ ResNet18 已预置"
-  fi
-  echo "--- 补齐完成，重跑本脚本（不带参数）复核 ---"
-  exec bash "$HERE/init.sh"
 fi
 
 echo "--- 汇总：✓ $OK / ✗ $MISS ---"
