@@ -12,6 +12,11 @@ v2 应用（P2a 批次 1 自 `scripts/export_4k.py`、`scripts/check_4k.sh`、`s
 | `check_4k.sh` | 4K 成片规格断言（多门规格断言：分辨率/帧率双验/h264 High/yuv420p/码率 ≤20.5M/时长帧数/aac 48k copy 区间/I 帧间隔/faststart） |
 | `compare_4k_quality.py` | 画质门禁：nvenc 版 vs x264 基线同位抽帧 PSNR/SSIM（≥5 帧，或语义达标；解析失败 fail-closed exit 2） |
 
+## 输入校验
+
+- `--maxrate` 仅接受 ASCII 十进制码率，`k/K` 规范为 `k`、`m/M` 规范为 `M`；拒绝非有限值及低于 1000 bit/s 的值。两条编码链共用该解析结果。
+- 母带必须含音轨；缺失时在编码器选择、段缓存创建前以中文提示退出 2。NVENC 与 x264 回落都要求音轨直通。
+
 ## 依赖
 
 - ffmpeg / ffprobe（含 NVENC：h264_nvenc 可用则并行链，否则 --fallback-x264 回落）

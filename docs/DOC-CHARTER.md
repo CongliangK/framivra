@@ -46,7 +46,7 @@ env python3 vt.py --fix-links --dry            # 挂载链接重建预演(去 --
 19. 只读历史层条款:docs/plans、docs/plans-2026-09-11、docs/plans-v2 三目录只读,归档后不再新增独立提交;唯一活文件例外=docs/plans-v2/p5-acceptance/KNOWN-ISSUES.md(活登记表,授权回写),其余归档件一经归档不改写。
 20. 两口径辨析:docs_smoke.sh 扫描「docs/*.md」系非递归 glob,今日恰好豁免 plans* 三目录——此为「非递归现状」而非「plans* 语义豁免」,两者不是同一件事,不得混用。docs/ 新增子目录默认应入检,确需豁免须显式登记留痕,不得依赖 glob 形态的偶然豁免。
 21. 规范条款:docs 域文档化命令须写入 bash 栅栏方可获得冒烟守护;栅栏外命令属盲区,文档不得宣称盲区命令已受守护。**归属口径**:栅栏内命令须以「可冒烟形态」书写(含 python3/bash/env/node 命令词+仓路径形态),且**示范命令一律零写态**(写态命令须显式警示或以 --dry/离线旗标书写);纯系统命令(如 readlink 循环)虽入栅栏亦不属 docs_smoke 冒烟面,其正确性由校验工具与人工复核承载,文档不得宣称其已受冒烟守护。
-22. 命名约定:主题件小写 kebab(audio-audit/cache-provenance/canvas-export/post-loudness/workflow-review);归档件中文+日期后缀(主题-YYYY-MM-DD.md 式);大写角色名(DEV.md/MERGE_REPORT.md)为存量,不再新增。
+22. 命名约定:主题件小写 kebab(audio-audit/cache-provenance/canvas-export/post-loudness/workflow-review);归档件中文+日期后缀(主题-YYYY-MM-DD.md 式);大写角色名(DEV.md)为存量,不再新增。
 
 ## 5. 层间关系
 
