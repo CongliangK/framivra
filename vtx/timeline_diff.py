@@ -21,10 +21,9 @@ import sys
 from pathlib import Path
 from . import fstxn
 
-from .cache_state import declared_dependencies, file_digest
 from .composite import SEG_CUT_GUARD, choose_cutpoints
 from .encoders import seg_encoder_kind
-from .hygiene import audio_key, gfx_key, seg_key
+from .hygiene import gfx_key, seg_key
 
 DEFAULT_NSEG = 8   # 与 composite.DEFAULT_SEGMENTS 同值（避免 import 产生环形依赖，取字面量并注释）
 
@@ -426,7 +425,6 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
     edges_b = _edges(tlb, nseg)
     _, lay_a = _seg_layers_prep(tla, roota)
     lay_b = _seg_layers_prep(tlb, rootb)[1]
-    dur_a = tla["project"]["duration_frames"]
     dur_b = tlb["project"]["duration_frames"]
     inv_segs = []
     total_b = len(edges_b) - 1
