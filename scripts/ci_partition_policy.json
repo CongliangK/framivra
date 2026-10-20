@@ -2414,6 +2414,11 @@
   },
   "placements": [
     {
+      "selector": "tests.test_cef_encode_job.PureSerialEncodeJobSelfTest",
+      "partition": "optional",
+      "reason": "CEF-free native helper selftest; requires explicit VTX_TEST_CEF_ENCODE_JOB=1 and g++; no native CEF qualification"
+    },
+    {
       "selector": "tests.test_cef_frame_sync.NativeSelfTest",
       "partition": "optional",
       "reason": "native CEF optional integration; requires explicit native environment"

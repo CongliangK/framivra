@@ -52,6 +52,8 @@ PR_MODULES = (
     'apps.research.tests.test_requests',
     'templates.hello-app.tests.test_hello',
     'tests.test_png_consumer_scope',
+    'tests.test_gfx_png_fast',
+    'tests.test_cef_png_config',
 )
 
 

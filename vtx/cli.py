@@ -172,22 +172,34 @@ def _merge_cdp_stats(stats_list):
 
 def gfx(c: Ctx):
     # issue #28：任何渲染/有效性门失败均写失败回执，不允许静默计完成。
+    c._gfx_png_capture = None
     try:
         _gfx(c)
     except SystemExit as e:
         if e.code:
-            c.receipt("gfx", False, f"gfx 提前退出（退出码 {e.code}）")
+            c.receipt("gfx", False, f"gfx 提前退出（退出码 {e.code}）",
+                      **_gfx_capture_extra(c))
         raise
     except Exception as e:
-        c.receipt("gfx", False, str(e))
+        c.receipt("gfx", False, str(e), **_gfx_capture_extra(c))
         print(f"✗ gfx: {e}")
         sys.exit(1)
 
 
+def _gfx_capture_extra(c):
+    capture = getattr(c, "_gfx_png_capture", None)
+    return {"extra": {"png_capture": capture}} if capture is not None else {}
+
+
 def _gfx(c: Ctx):
+    from .gfx_backend import selected, png_fast_requested, png_capture_provenance
+    png_fast = png_fast_requested()
+    c._gfx_png_capture = png_capture_provenance() if png_fast else None
     budget_gate(c, "gfx")
     from . import gfx_svg
     if gfx_svg.route(c) == "svg-sequence":
+        if png_fast:
+            raise ValueError("VTX_GFX_PNG_FAST=1 requires CDP HTML; SVG unsupported")
         from .gfx_svg_stage import render_stage
         return render_stage(c)
     # issue #103：gfx 阶段开工前清扫上次崩溃残留的监管 Worker 孤儿组（只杀
@@ -205,7 +217,6 @@ def _gfx(c: Ctx):
     dependency_records = {}
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
-    from .gfx_backend import selected
     backend = selected()
     if strict and backend in ("cef", "electron"):
         raise DependencyError("strict dependencies require CDP; Electron/CEF/CLI unsupported")
@@ -224,13 +235,19 @@ def _gfx(c: Ctx):
             if not cdp_mod.available():
                 cdp_mod = None
         except Exception as e:
+            if png_fast:
+                raise RuntimeError("fast PNG requires available CDP; CLI fallback forbidden") from e
             print(f"⚠ CDP 渲染器不可用（{e}），回落 CLI 截图路径")
             cdp_mod = None
 
+    if png_fast and cdp_mod is None:
+        raise RuntimeError("fast PNG requires available CDP; CLI fallback forbidden")
     if strict and cdp_mod is None:
         raise DependencyError('strict dependencies require CDP; CLI downgrade forbidden')
 
     def render_cli(i_range, d, html, chrome):
+        if png_fast:
+            raise RuntimeError("fast PNG CLI fallback forbidden")
         # issue #28：强制 CLI、整页回落、帧级补渲共用退出码与产物双重校验。
         frame_list = list(i_range)
         if backend != 'cli':
@@ -273,6 +290,8 @@ def _gfx(c: Ctx):
                                           verify_inputs=lambda: c.verify_inputs("gfx"),
                                           backend_ns=backend_ns, environment=environment)
                 events.cache_hit(c, "inspect_page", frames=[0, n])
+                if png_fast:
+                    c._gfx_png_capture["reused_frames"] += n
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
             # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
             if not c.dry:
@@ -297,6 +316,8 @@ def _gfx(c: Ctx):
                 fb = list(range(off, off + sz)); off += sz
                 if not gfx_cli.verify_frames(d, fb, width=c.w, height=c.h):
                     events.cache_hit(c, "verify_frames", frames=[fb[0], fb[-1] + 1])
+                    if png_fast:
+                        c._gfx_png_capture["reused_frames"] += len(fb)
                     continue    # 整块已缓存 → 跳过（不起 Chrome、不占池槽）
                 jobs.append((cid, key, cl, n, d, html, fb,
                              events.task(c, "gfx", kind="gfx_block",
@@ -313,6 +334,22 @@ def _gfx(c: Ctx):
     # 同页多块聚合：块完成只并入聚合器，末块收尾时输出一行 ✓（路径计数求和、
     # ms/帧按帧数加权、块数标注 split×k），receipt engine_notes 同样每页一条。
     agg_lock = threading.Lock()
+
+    def record_capture(capture):
+        if not png_fast or capture is None:
+            return
+        with agg_lock:
+            summary = c._gfx_png_capture
+            if capture["actual_parameters"] is not None:
+                summary["actual_parameters"] = dict(capture["actual_parameters"])
+            for kind in ("protocol_checks", "capture_calls"):
+                for key, count in capture[kind].items():
+                    summary[kind][key] += count
+            for key in ("reused_frames", "canvas_frames", "static_copied_frames"):
+                summary[key] += capture[key]
+            if capture.get("cleanup_failures"):
+                summary.setdefault("cleanup_failures", []).extend(capture["cleanup_failures"])
+
     page_agg = {}
     for j in jobs:
         if j[6] is not None:
@@ -341,9 +378,11 @@ def _gfx(c: Ctx):
                 st = observation.attempt(cdp_mod.render_page, html, d, n, chrome_path=find_chrome(),
                                          width=c.w, height=c.h, frames=frames,
                                          ctx=c,
+                                         **({"png_fast": True} if png_fast else {}),
                                          **({"dependency_record": dependency_records[key]} if strict else {}))
             except Exception as e:
-                if strict:
+                record_capture(getattr(e, "png_capture", None))
+                if strict or png_fast:
                     gfx_cli.invalidate_page(d)
                     raise
                 # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
@@ -353,10 +392,11 @@ def _gfx(c: Ctx):
                 render_cli(fb, d, html, find_chrome())
                 st = None
             else:
+                record_capture(st.get("png_capture"))
                 if st["failed"]:
-                    if strict:
+                    if strict or png_fast:
                         gfx_cli.invalidate_page(d)
-                        raise DependencyError('strict CDP frame failure; CLI downgrade forbidden')
+                        raise DependencyError('CDP frame failure; CLI downgrade forbidden')
                     print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
                     # issue #28：补渲失败不可被 CDP 的 except 吞掉后重试成成功。
                     render_cli(st["failed"], d, html, find_chrome())
@@ -420,7 +460,8 @@ def _gfx(c: Ctx):
                     engine_notes.append(f"{cid}: {rendered_via}")
                     total += 1
     c.receipt("gfx", True, f"{total} gfx clips"
-              + ("｜" + "; ".join(engine_notes) if engine_notes else ""))
+              + ("｜" + "; ".join(engine_notes) if engine_notes else ""),
+              **_gfx_capture_extra(c))
 
 
 # STAGES = 单阶段命令分发的权威表 + 线性文档序（`all` = 依次全部执行）。
