@@ -120,7 +120,7 @@ def validate_3d_content(data, frames=240, samples=256, width=1920, height=1080, 
         if right['frame']-left['frame'] < transition_frames:
             raise ValueError('chapters must leave room for the configured transition')
     data.update(palette=palette, pace=pace, objects=items, beats=beats, transition=transition, scene=scene_data,
-                scene_story=story,links=links,transition_frames=transition_frames)
+                scene_story=story,links=links,transition_frames=transition_frames,duration_frames=frames)
     return data
 
 
@@ -147,8 +147,20 @@ def ease(value):
     return value*value*(3-2*value)
 
 
+def camera_state(data, frame):
+    """Actual orbit/elevation and look-at target, evaluated from one integer frame."""
+    phase=frame/max(1,data['duration_frames']-1)
+    azimuth=.045*math.sin(phase*math.tau)
+    resolve=ease((frame-data['beats']['resolve'])/max(1,data['duration_frames']-1-data['beats']['resolve']))
+    return {'location':(17*math.sin(azimuth),-17*math.cos(azimuth),10+.35*math.sin(phase*math.pi)),
+            'target':(.2*math.sin(phase*math.tau),0,1.5),
+            'ortho_scale':14+(.8*resolve if data['transition']=='camera-pullback' else 0)}
+
+
 def story_state(data, frame):
     """Pure, seekable chapter geometry; pace > 1 delays a transition."""
+    if type(frame) is not int or not 0<=frame<data['duration_frames']:
+        raise ValueError('frame must be an integer inside the clip')
     story=data['scene_story']
     chapter_index=max(i for i,chapter in enumerate(story) if chapter['frame']<=frame)
     chapter=story[chapter_index]
@@ -157,6 +169,7 @@ def story_state(data, frame):
     count=len(data['objects'])
     spacing=min(3.1,10/max(1,count))
     positions=[]
+    scales=[]
     def position(layout,index,radius):
         x=(index-(count-1)/2)*spacing
         scene_y=.12*x*x if data['scene']['layout']=='arc' else 0
@@ -169,10 +182,17 @@ def story_state(data, frame):
         radius=min(.86,spacing*.35)*(.48+.52*math.sqrt(item['value']/100))
         start=position(previous['layout'],index,radius)
         end=position(chapter['layout'],index,radius)
-        positions.append(tuple(a+(b-a)*progress for a,b in zip(start,end)))
+        # Pulse only during a layout transition; XY/Z scales preserve volume.
+        pulse=math.sin(math.tau*progress)*math.sin(math.pi*progress)
+        stretch=1+.2*pulse
+        scale=(stretch,stretch,1/(stretch*stretch))
+        center=list(a+(b-a)*progress for a,b in zip(start,end))
+        center[2]+=radius*(scale[2]-1)
+        positions.append(tuple(center))
+        scales.append(scale)
     connection_start=story[1]['frame']
     connections=ease(max(0,min(1,(frame-connection_start)/data['transition_frames']))**data['pace'])
-    return {'chapter':chapter_index,'progress':progress,'positions':positions,'connections':connections}
+    return {'chapter':chapter_index,'progress':progress,'positions':positions,'scales':scales,'connections':connections,'camera':camera_state(data,frame)}
 
 
 def main():
@@ -288,13 +308,15 @@ def main():
         return obj
 
     # Camera-space typography has a dedicated safe area, independent of geometry.
-    rotation=camera.rotation_euler.to_quaternion()
-    right=rotation @ Vector((1,0,0))
-    up=rotation @ Vector((0,1,0))
-    forward=rotation @ Vector((0,0,-1))
+    ui_records=[]
     aspect=args.width/args.height
     def screen_point(x,y):
-        return camera.location + forward*8 + right*((x-.5)*14) + up*((y-.5)*14/aspect)
+        rotation=camera.rotation_euler.to_quaternion()
+        right=rotation @ Vector((1,0,0))
+        up=rotation @ Vector((0,1,0))
+        forward=rotation @ Vector((0,0,-1))
+        span=camera.data.ortho_scale
+        return camera.location + forward*8 + right*((x-.5)*span) + up*((y-.5)*span/aspect)
     ui_material=bpy.data.materials.new('Camera-facing typography')
     ui_material.use_nodes=True
     nodes=ui_material.node_tree.nodes
@@ -311,6 +333,7 @@ def main():
         obj.visible_shadow=False
         obj.visible_glossy=False
         obj.visible_diffuse=False
+        ui_records.append((obj,x,y,tuple(obj.scale)))
         return obj
     title=ui_text(data.get('title',''),.5,.91,1.15,'Editable title',12)
     chapter_text=[]
@@ -361,8 +384,22 @@ def main():
     # callbacks or wall-clock animation is involved.
     for frame in range(args.frames):
         state=story_state(data,frame)
+        camera.location=state['camera']['location']
+        camera.rotation_euler=(Vector(state['camera']['target'])-camera.location).to_track_quat('-Z','Y').to_euler()
+        camera.data.ortho_scale=state['camera']['ortho_scale']
+        camera.keyframe_insert(data_path='location',frame=frame)
+        camera.keyframe_insert(data_path='rotation_euler',frame=frame)
+        camera.data.keyframe_insert(data_path='ortho_scale',frame=frame)
+        for ui,x,y,base_scale in ui_records:
+            ui.location=screen_point(x,y)
+            ui.rotation_euler=camera.rotation_euler
+            ui.scale=Vector(base_scale)*(camera.data.ortho_scale/14)
+            for prop in ('location','rotation_euler','scale'):
+                ui.keyframe_insert(data_path=prop,frame=frame)
         for obj,x,y,radius,i,base_rotation in objects:
             obj.location=state['positions'][i]
+            obj.scale=state['scales'][i]
+            obj.keyframe_insert(data_path='scale',frame=frame)
             obj.rotation_euler=(base_rotation[0],base_rotation[1]+.1*math.sin(frame/args.frames*math.pi),base_rotation[2])
             obj.keyframe_insert(data_path='location',frame=frame)
             obj.keyframe_insert(data_path='rotation_euler',frame=frame)
@@ -376,9 +413,6 @@ def main():
             rod.scale=(1,1,max(.0001,delta.length))
             for prop in ('location','rotation_euler','scale'):
                 rod.keyframe_insert(data_path=prop,frame=frame)
-        resolve=ease((frame-data['beats']['resolve'])/max(1,args.frames-1-data['beats']['resolve']))
-        camera.data.ortho_scale=14+(.8*resolve if data['transition']=='camera-pullback' else 0)
-        camera.data.keyframe_insert(data_path='ortho_scale',frame=frame)
         for index,obj in enumerate(chapter_text):
             obj.hide_render=index!=state['chapter']
             obj.keyframe_insert(data_path='hide_render',frame=frame)
@@ -394,6 +428,8 @@ def main():
         'blender': bpy.app.version_string, 'engine': args.engine, 'device':'CPU' if args.engine=='CYCLES' else 'unknown',
         'samples':args.samples, 'denoising':args.denoise, 'fps':30, 'frames':args.frames,
         'width':args.width, 'height':args.height,
+        'animation':'per_frame_3d_layout_volume_preserving_scale_and_camera_orbit',
+        'ui_binding':'camera_space_position_rotation_scale_baked_per_frame',
         'scene_story':data['scene_story'], 'links':data['links'], 'scene_layout':data['scene']['layout'], 'beats':data['beats'], 'transition':data['transition'],
         'font':str(font_path) if font_path else 'Blender built-in',
         'font_license':'unknown; verify the external font separately; no font bytes embedded',

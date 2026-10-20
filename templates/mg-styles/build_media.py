@@ -65,11 +65,13 @@ def frozen_module(name, source, bindings=None):
 
 
 def assemble(style, output, content, frames=90, background=None, samples=16,
-             dry=False, three_d_mode='full'):
+             dry=False, three_d_mode='full', render_width=1920, render_height=1080):
     if style not in STYLES: raise ValueError('unknown media style')
     if type(samples) is not int or not 1 <= samples <= 256: raise ValueError('samples must be an integer in [1,256]')
     if three_d_mode not in ('full','storyboard'): raise ValueError('unknown three_d_mode')
     if not isinstance(content,dict): raise ValueError('content must be an object')
+    if any(type(value) is not int or value < 64 for value in (render_width,render_height)) or render_width*9 != render_height*16: raise ValueError('render dimensions must be integer 16:9 sizes')
+    if style != 'soft-3d' and (render_width,render_height) != (1920,1080): raise ValueError('render dimensions only apply to the 3D producer')
     names={'soft-3d':'render_3d.py','pixel':'render_pixel.py','variety-captions':'captions.py','line-art':'render_line_art.py','liquid':'render_liquid.py'}
     renderer_name=names[style]
     sources={'build.py':(ROOT/'build.py').read_bytes(),renderer_name:(ROOT/renderer_name).read_bytes(), 'build_media.snapshot.py':SELF_SOURCE}
@@ -80,7 +82,7 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
     data=dict(content);font_path=data.pop('font_path',None)
     if font_path is not None and not Path(font_path).is_file(): raise ValueError('font_path must name an existing local font')
     if style=='soft-3d':
-        preflight=renderer.validate_3d_content(data,frames,samples)
+        preflight=renderer.validate_3d_content(data,frames,samples,width=render_width,height=render_height)
         if three_d_mode=='storyboard':
             sources['compose_3d_story.py']=(ROOT/'compose_3d_story.py').read_bytes()
             composer=frozen_module('compose_3d_story.py',sources['compose_3d_story.py'],{'_RENDERER':renderer,'_RENDERER_SHA256':hashlib.sha256(sources[renderer_name]).hexdigest()})
@@ -107,7 +109,7 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
     timeline['video_tracks']=[]
     if style=='soft-3d':
         render=output/'blender-render'
-        command=['blender','--background','--python',output/renderer_name,'--','--content',output/'creative.json','--output',render,'--frames',frames,'--width','1920','--height','1080','--samples',samples]
+        command=['blender','--background','--python',output/renderer_name,'--','--content',output/'creative.json','--output',render,'--frames',frames,'--width',render_width,'--height',render_height,'--samples',samples]
         if font_path: command += ['--font',Path(font_path).resolve()]
         if three_d_mode=='storyboard': command += ['--render-frames',','.join(map(str,plate_indices))]
         run(command,output,'blender')
@@ -144,7 +146,7 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
         try: versions[package]=importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError: versions[package]=None
     versions['ffmpeg']=subprocess.check_output(['ffmpeg','-version'],text=True).splitlines()[0]
-    receipt={'style':style,'frames':frames,'mode':three_d_mode if style=='soft-3d' else 'source-frames','renderer_sources':{name:hashlib.sha256(source).hexdigest() for name,source in sources.items()},'versions':versions,'creative_sha256':hashlib.sha256((output/'creative.json').read_bytes()).hexdigest(),'state':'sources-created; vtx all and artistic acceptance pending'}
+    receipt={'style':style,'frames':frames,'mode':three_d_mode if style=='soft-3d' else 'source-frames','source_size':[render_width,render_height] if style=='soft-3d' else [1920,1080],'project_size':[1920,1080],'renderer_sources':{name:hashlib.sha256(source).hexdigest() for name,source in sources.items()},'versions':versions,'creative_sha256':hashlib.sha256((output/'creative.json').read_bytes()).hexdigest(),'state':'sources-created; vtx all and artistic acceptance pending'}
     (output/'source-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     return timeline
 
@@ -158,10 +160,12 @@ def main():
     parser.add_argument('--frames',type=int,default=90)
     parser.add_argument('--samples',type=int,default=16)
     parser.add_argument('--dry',action='store_true')
+    parser.add_argument('--render-width',type=int,default=1920)
+    parser.add_argument('--render-height',type=int,default=1080)
     parser.add_argument('--three-d-mode',choices=('full','storyboard'),default='full')
     args=parser.parse_args()
     try:
-        result=assemble(args.style,args.output,json.loads(args.content.read_text(encoding='utf-8')),args.frames,args.background,args.samples,args.dry,args.three_d_mode)
+        result=assemble(args.style,args.output,json.loads(args.content.read_text(encoding='utf-8')),args.frames,args.background,args.samples,args.dry,args.three_d_mode,args.render_width,args.render_height)
     except (ValueError,OSError,RuntimeError,ImportError) as error: parser.error(str(error))
     if args.dry: print(json.dumps(result,indent=2))
 if __name__=='__main__':main()

@@ -78,6 +78,30 @@ class ThreeDimensionalStory(unittest.TestCase):
         changed = {**self.content, 'scene': {'layout': 'arc'}}
         self.assertNotEqual(MG.story_state(data, 120)['positions'], MG.story_state(self.normalize(changed), 120)['positions'])
 
+    def test_deformation_preserves_volume_and_has_no_accumulated_state(self):
+        content=json.loads((ROOT/'examples/three-d-continuous-a.json').read_text())
+        data=MG.validate_3d_content(content,frames=120)
+        states={frame:MG.story_state(data,frame) for frame in (0,44,48,80,119)}
+        self.assertNotEqual(states[44]['scales'],states[48]['scales'])
+        for frame,state in states.items():
+            for scale in state['scales']:
+                self.assertAlmostEqual(scale[0]*scale[1]*scale[2],1,places=12)
+                self.assertGreater(min(scale),0)
+            self.assertEqual(state,MG.story_state(data,frame))
+        self.assertEqual(states[119]['scales'],[(1,1,1)]*3)
+        for frame in (-1,120,4.5,True):
+            with self.assertRaises(ValueError):MG.story_state(data,frame)
+
+    def test_camera_has_true_translation_and_orbit(self):
+        content=json.loads((ROOT/'examples/three-d-continuous-b.json').read_text())
+        data=MG.validate_3d_content(content,frames=120)
+        start=MG.camera_state(data,0)
+        middle=MG.camera_state(data,30)
+        self.assertNotEqual(start['location'],middle['location'])
+        self.assertNotEqual(start['target'],middle['target'])
+        self.assertNotEqual(MG.camera_state(data,30),MG.camera_state(data,90))
+        self.assertEqual(middle,MG.story_state(data,30)['camera'])
+
     def test_partial_frame_selection_is_explicit(self):
         self.assertEqual(MG.requested_frames('180,0,80', 240), [180, 0, 80])
         self.assertEqual(MG.requested_frames(None, 3), [0, 1, 2])
