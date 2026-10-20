@@ -46,7 +46,7 @@ env python3 <video_tools>/apps/aroll/aup3_extract.py 口播.aup3   # Audacity �
 env python3 <video_tools>/apps/aroll/trim_takes.py ...            # VAD 掐头去尾+废片判定（ASR 配对）
 env python3 <video_tools>/apps/sync/sync_audio.py 相机轨 话筒轨   # GCC-PHAT 无标记同步（报告含偏移/ppm/verdict）
 # 音轨替换 → 口型感知全局 +200ms（默认）→ 降噪链（plugins/denoise，可选）→ 头尾真空切割 → 构图统一
-# 手册（可照抄）：_library/reports/A-roll实拍素材处理流程-2026-09-07.md
+# 手册：<video_tools>/templates/tech-talk/references/aroll-pipeline.md
 ```
 - **抠像支线**：需要「真人出现在新背景前」的镜头 → 抠像 + 背景合成，全流程见 `apps/matting/matting.md`（resolve_matte 主力，产物带 alpha ProRes4444；背景图走 `apps/imgen/` bg4k 硬接口）。
 - **④ 动效页** → 先按内核 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织) 定页内模块/独立素材边界，再读帧驱动协议 + D22 设计铁律；**优先复用本包 `assets/gfx-templates/` 已验收模板**（六件参数化页 + `_tokens.md` 设计基准；场景→模板映射表与使用步骤见 `assets/gfx-templates/INDEX.md`；改 CONST 数据不碰机制代码）；新页三件套=manifest+data-sources+自查脚本；实例页参考 `assets/gfx-examples/`。

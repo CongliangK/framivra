@@ -10,6 +10,8 @@
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
 
+消费面变更公告（2026-10-20，A-roll 活引用收敛，落笔前已评审）：tech-talk 的素材处理入口统一指向已有 aroll-pipeline 手册，ASR 指向组件现行协议；旧私人路径手册退至已核字节的固定 Git 历史。仅改 Markdown，真实用户六件挂载未在云端验证。
+
 消费面变更公告（2026-10-20，活引用校正，落笔前已评审）：edit 与 tech-talk 的拍摄/调研/流程/发布配方指向现行仓内文档，删除已完成迁移待办与重复章节数；发布脚本使用明确仓根。仅改 Markdown；真实用户六件挂载未在云端验证。
 
 消费面变更公告（2026-10-20，交付指导补齐，落笔前已评审）：sync/tts 活入口及引用的正式交付统一用完整 all；tech-talk draft 补当前 gfx 前置，操作 home 见 [runbook](../docs/skill/references/runbook.md)，耗时条件见 [DEV](../docs/DEV.md#一性能基准)。真实用户六件挂载未在云端验证。
