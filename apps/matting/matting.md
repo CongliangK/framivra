@@ -13,7 +13,7 @@
 cd <video_tools>/apps/matting/resolve_matte
 env bash matte_pipeline.sh matte_auto_v9    # 一键：清显存→建工程→9轨抠像→等演算→导出
 SKIP_GUARD=1 env bash matte_pipeline.sh proj   # 达芬奇已就绪，跳过重启
-SKIP_OPS=1    env bash matte_pipeline.sh proj   # 已抠好，仅重新导出
+SKIP_OPS=1    env bash matte_pipeline.sh proj   # 仅跳过鼠标序列，仍建工程/导入并导出，不保证无改动重导出
 ```
 产物：`out/alpha_v*/matte_V{1..9}.mov`——**ProRes 4444 yuva444p12le 带 alpha**，每轨一段真人前景。
 关键约束（细节全在 README 踩坑实录，此处只列影响排期的）：
@@ -21,7 +21,7 @@ SKIP_OPS=1    env bash matte_pipeline.sh proj   # 已抠好，仅重新导出
 - Magic Mask 演算期间达芬奇**抓住指针**，等待期间禁止任何鼠标操作。
 - 渲染只能写家目录；每轨单独 MarkIn/MarkOut；阿尔法三件套（ExportAlpha + AlphaMode=1 + ProRes4444）缺一即出废片。
 ## 路线二：自研链（备用）
-BiRefNet_HR@2048 首帧 mask → MatAnyone2 视频抠像 → guided filter 收边。依赖默认关闭，需 `bash apps/matting/init.sh --download` 配置 conda env + 两个平级克隆 + 权重。用法与坑见本目录 `README.md` 与 `docs/测试报告-背景替换与H3重绘.md`。
+BiRefNet_HR@2048 首帧 mask → MatAnyone2 视频抠像 → guided filter 收边。依赖默认关闭；`bash apps/matting/init.sh` 仅探测已有环境、克隆与权重，旧 `--download` 为 BLOCKED。准备与许可边界见本目录 [README](README.md)，实测记录见 `docs/测试报告-背景替换与H3重绘.md`。
 ## 合成侧：把带 alpha 前景放进成片
 1. **背景图**：`python3 <video_tools>/apps/imgen/imgen_cli.py gen "<prompt>" --out <项目> --kind bg4k --yes` → 恰好 3840×2160 RGB PNG 落 `assets/bg/`（硬接口契约见内核 `docs/skill/references/edit.md`「三大生成模块」节）。
 2. **首选机制：timeline.json 多轨叠加**（内核 `docs/skill/references/edit.md` 契约）——背景素材放底层轨（aroll/broll），matte_V*.mov 带 alpha 前景放**上层轨**（数组顺序＝图层顺序，末位最上），几何/透明度用 clip 的 scale/x/y/opacity。

@@ -52,15 +52,17 @@ env python3 <video_tools>/apps/sync/sync_audio.py 相机轨 话筒轨   # GCC-PH
 - **④ 动效页** → 先按内核 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织) 定页内模块/独立素材边界，再读帧驱动协议 + D22 设计铁律；**优先复用本包 `assets/gfx-templates/` 已验收模板**（六件参数化页 + `_tokens.md` 设计基准；场景→模板映射表与使用步骤见 `assets/gfx-templates/INDEX.md`；改 CONST 数据不碰机制代码）；新页三件套=manifest+data-sources+自查脚本；实例页参考 `assets/gfx-examples/`。
 - **⑤ 时间线编排**：新项目**起手复制 `assets/presets/timeline.skeleton.json`**（voice-ime v4.7 轨制抽象骨架，含占位素材原位可 validate；轨级 duck_strategy/duck_params 示范；实例化步骤见其 `_meta`），再按帧预算铺真实编排（契约速览与「素材放哪条轨」速查表见内核 `docs/skill/references/edit.md`）。**编排完先开 `preview.html` 人审，再 validate**。批量重排写幂等脚本 + `vtx snapshot` 留快照。口播字幕锚定 → `apps/asr/`（`asr_cli.py timeline` 就地合并 subtitles[]）。
 - **⑥ 渲染与 QC**：
+以下渲染命令会更新项目 `cache/`、`out/`，正式渲染可能替换已有成片；先确认项目与输出位置。draft 只用于画面迭代，局部预览不能替代完整 `all`；区间音画预览及其当前输入的 prepare/audio 前置见内核 [runbook R2](../../docs/skill/references/runbook.md#r2--时间线编排clip-窗口--轨道--字幕)。
 ```bash
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json validate        # 硬门，必跑
-python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json --draft video   # 540p 迭代预览（可加 --frames N）
+python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gfx             # 准备当前页面缓存，无 gfx 轨时无页面任务
+python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json video --draft   # 540p 画面迭代预览（可加 --frames N）
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json all             # 全流程正式渲染 → out/final.mp4
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gc              # 收尾回收缓存（先 --dry 看）
 env python3 <video_tools>/apps/gates/content_gates.py -t ... --project-gates <项目门>.json   # 内容级验证门（项目门骨架=`assets/presets/gates.json`，字段写法见其 _doc）
 bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K 投稿版断言（帧数门自动从 timeline 推导）
 ```
-  发布链：母带 1080p30 → 4K lanczos 放大投稿版（`apps/publish/export_4k.py` 8 段并行 nvenc p4，进 B 站高码率池）→ FREEZE 冻结点 + CHANGELOG 变更单（**脚本化：`scripts/freeze.py` 一键生成/追加多版本节，禁手写**，qc 段人工核对补写）→ PUBLISH-PACK 物料骨架（`scripts/publish_pack.py`，TODO 段人工补写；冻结/变更单必须落项目目录 git 区，严禁写 cache/，D52 实案）。全冷缓存冷跑预期：验证链（validate→gates）≈5 分钟（291s，2026-09-13 定版），4K 发布链另加 ~1 分钟（`scripts/bench_cold.sh --with-4k` 单列 ≈66s）。
+  发布链：母带 1080p30 → 4K lanczos 放大投稿版（`apps/publish/export_4k.py` 8 段并行 nvenc p4，进 B 站高码率池）→ FREEZE 冻结点 + CHANGELOG 变更单（**脚本化：`scripts/freeze.py` 一键生成/追加多版本节，禁手写**，qc 段人工核对补写）→ PUBLISH-PACK 物料骨架（`scripts/publish_pack.py`，TODO 段人工补写；冻结/变更单必须落项目目录 git 区，严禁写 cache/，D52 实案）。验证链与 4K 发布链的历史测量及适用条件见 [DEV 性能基准](../../docs/DEV.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
 
 ## 音频创作流程（两条支线）
 
@@ -86,7 +88,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
 
 - 视频项目工作区在 `~/文档/04_bilibili视频/`（现状快照以其 AGENTS.md 为准）：每期视频一个文件夹 + `_library/`（assets_audio / corpus / reports 方法论 / blender_bridge 符号链接）+ `_archive/`。素材、timeline、gfx、out/ 都在**各期项目文件夹**内。
 - 音频/BGM 产线 → `music` skill（music_tools / music_project 两仓）；视频是 BGM 的消费方（timeline 音轨直接引用产物，正式版挂载后走分轨审计包交付门）。
-- 环境初始化与依赖矩阵（ffmpeg/libfdk_aac/Chrome/Blender/NVENC）→ video_tools 仓 `env python3 vt.py init` 自检 / `vt.py doctor` 三检。
+- 环境初始化与依赖矩阵（ffmpeg/libfdk_aac/Chrome/Blender/NVENC）→ video_tools 仓 `env python3 vt.py init` 自检 / `env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor` 三检。
 
 ## uses 声明表（产线用法定，非最小依赖）
 

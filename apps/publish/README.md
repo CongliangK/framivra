@@ -1,6 +1,6 @@
 # publish · 4K 投稿版导出与发布链断言
 
-v2 应用（P2a 批次 1 自 `scripts/export_4k.py`、`scripts/check_4k.sh`、`scripts/compare_4k_quality.py` 迁入；manifest 见 `app.json`，兼容 symlink：`scripts/` 下同名件 → 本目录；`scripts/bench_cold.sh` 旧路径引用经 symlink 继续可达）。tests 随迁：`tests/test_export_4k.py`（本目录 `tests/`）。
+v2 应用（P2a 批次 1 自 `scripts/export_4k.py`、`scripts/check_4k.sh`、`scripts/compare_4k_quality.py` 迁入；manifest 见 `app.json`，兼容转发壳：`scripts/` 下同名件 → 本目录；`scripts/bench_cold.sh` 旧路径引用经转发壳 继续可达）。tests 随迁：`tests/test_export_4k.py`（本目录 `tests/`）。
 
 ## 用途
 

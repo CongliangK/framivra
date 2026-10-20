@@ -14,7 +14,7 @@ project+video_tracks 特征键）时自动走本模块，否则回落报告 diff
 单独推断（时长/位置变化推移切点时该层失效，但 per-clip seg 仍命中，两层分开报）。
 
 耗时预估：基准常数 + 受影响比例缩放，估算依据写入 JSON（estimate_basis）；
-常数来源 runbook 实测（audio ~40s / mux ~20s / qc ~11s / video 全片分段 N=8 ~90s）。
+历史 voice-ime 测量及指定环境见 docs/DEV.md §一；估算不是当前输入或机器的实测。
 """
 import json
 import sys
@@ -67,14 +67,14 @@ GEOM_FIELDS = ("src", "src_in", "src_out", "dst_in", "dur", "scale", "x", "y",
 # 音频事件可补丁字段：不进任何视频缓存键，只影响 audio 阶段重混——幂等补丁脚本可安全改
 AUDIO_FIELDS = ("volume", "pan", "fade_in_frames", "fade_out_frames")
 
-# 耗时预估常数（秒）。来源：runbook R1/R3 耗时基准与 DEV.md 基准行（voice-ime 实测），
-# 供 estimate_basis 引用；video 按「失效段帧数占比 × 全片渲染」+「per-clip seg 重编码」线性模型。
+# 耗时预估常数（秒），沿用历史估算；voice-ime 测量及指定环境见 docs/DEV.md §一。
+# video 按「失效段帧数占比 × 全片渲染」+「per-clip seg 重编码」线性模型。
 EST_VALIDATE = 3
 EST_PREPARE_PER_SOURCE = 2
 EST_AUDIO = 40
 EST_MUX = 20
 EST_QC = 11
-# video 全片分段渲染（含 concat 自检）：formal=voice-ime N=8 x264 1080p 实测 89.8s（DEV.md）；
+# video 全片分段渲染（含 concat 自检）：formal=voice-ime N=8 x264 1080p 历史测量注记 89.8s；
 # draft=voice-ime N=8 NVENC 540p 增量实测校准——只改 1 clip 时长（失效 2/8 段 4186 帧）
 # 实跑 46.0s，按 90s 常数估 27s 误差 -41% 超阈，校准 150s 后估 42.0s 误差 +8.7%（2026-09-12）。
 # draft 慢于 formal 的归因：draft 单段 filtergraph（61 层单线程）占比高于编码收益。
@@ -479,7 +479,7 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
     if stages["prepare"]:
         est["prepare"] = EST_PREPARE_PER_SOURCE * max(1, n_prepare)
     if stages["gfx"]:
-        est["gfx"] = 15   # 单页级重渲秒级基准（runbook R3：CDP ~15-34ms/帧）；页多时按此下限偏保守
+        est["gfx"] = 15   # 单页重渲经验下限，页多时可能低估；历史 CDP 测量见 docs/DEV.md §一
     if stages["video"]:
         total_frames = max(1, dur_b)
         inv_frames = sum(b - a for a, b in inv_segs)
@@ -497,7 +497,7 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
         est["qc"] = EST_QC
     impact["estimated_seconds"] = est
     impact["estimate_basis"] = (
-        "线性模型，基准常数来自 runbook R1/R2/R3 与 DEV.md voice-ime 实测"
+        "线性模型，沿用历史估算常数；voice-ime 历史测量及环境见 docs/DEV.md §一"
         + ("；video：" + est_basis_v if stages["video"] else "")
         + "；非实测承诺，±30% 校准口径")
 

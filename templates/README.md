@@ -10,6 +10,10 @@
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
 
+消费面变更公告（2026-10-20，交付指导补齐，落笔前已评审）：sync/tts 活入口及引用的正式交付统一用完整 all；tech-talk draft 补当前 gfx 前置，操作 home 见 [runbook](../docs/skill/references/runbook.md)，耗时条件见 [DEV](../docs/DEV.md#一性能基准)。真实用户六件挂载未在云端验证。
+
+消费面变更公告（2026-10-20，活文档事实与历史过程精简，落笔前边界已评审）：`docs/skill/SKILL.md` 的交接要求统一指向 runbook；本页及 `hello-app/README.md`、`hello-plugin/README.md`、`tech-talk/SKILL.md` 的例行 doctor 使用离线形态；`tech-talk/references/voice-ime-paradigm.md` 的基准来源指向 DEV。仅改文档，真实用户六件挂载未在本次云端检查中验证。
+
 消费面变更公告（2026-10-20，修改配方与 gfx 语义清理，落笔前范围已评审）：修订 `docs/skill/SKILL.md`、`docs/skill/references/{runbook,edit,gfx}.md` 与本公告，并同步 `docs/post-loudness.md`、`docs/ARCHITECTURE.md` 的操作指针。R1-R4 正式交付收敛为完整 all；补齐 clip/共享依赖范围，静态跨度不再依赖仓外私人脚本或 DOM 等价推断，D22 明确限于 tech-talk 工作流。文件路径集合、生产代码、CI 与模板资产不变；真实用户六件挂载未在本次云端静态检查中验证，不宣称其已安装或更新。
 
 消费面变更公告（2026-10-19，HTML 创作组织，落笔前范围已评审）：原则 home=[HTML 创作组织](../docs/skill/references/gfx.md#html-创作组织)。本次仅修订既有 Markdown：`AGENTS.md`、`README.md`、`docs/skill/SKILL.md`、`docs/skill/references/{gfx,edit,runbook}.md`、`templates/README.md`、`templates/tech-talk/SKILL.md`、`templates/tech-talk/references/production-workflow.md`、`templates/tech-talk/templates/03-assets-plan.md`、`templates/tech-talk/assets/gfx-templates/{INDEX,_tokens}.md`、`templates/skill-demo/SKILL.md`、`templates/standard-demo/README.md`、`docs/demo-fixture.md`（路径以仓根计）。路径集合、可执行模板与冻结输入不变。真实用户六件挂载复核另行留证；本公告不代表个人 Skill 已安装或更新。
@@ -41,7 +45,7 @@ tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合�
    只写字符串路径 = 注册但**默认 disabled**（§2.4 安全节——external 注册显式
    enable 才生效）。路径可相对本仓或绝对/`~/` 路径；**含 `..` 一律拒绝**。
 4. **enable**：如上把条目写成 `{"path": ..., "enabled": true}`。
-5. **doctor 验证**：`env python3 vt.py doctor`——②组件段应出现
+5. **doctor 验证**：`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`——②组件段应出现
    `[app:external]`/`[plugin:external]` 条目且 health ✓ / requires ✓；
    `env python3 vt.py apps list` / `plugins list` 出现 external 条目。
 

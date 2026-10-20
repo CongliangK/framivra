@@ -320,25 +320,25 @@ def cmd_init(a):
         r = sh([interp, str(ROOT / "apps/blender-bridge/audit_bundle.py"), "--help"])
         rec("audit_bundle", r.returncode == 0)
 
-    say("--- 4/5 大模型能力（默认关闭，按需开启；各链 init 见下）---")
+    say("--- 4/5 大模型能力（默认关闭；以下检查已有资产，许可边界见 docs/third-party-licenses.md）---")
     # matting 抠像链：细粒度探测（2026-09-11，此前只探 env 目录）
     _m = ROOT / "apps" / "matting"
     comfy_py = _conda_env_py("comfyui", "COMFYUI_PY")   # 钩子对齐 apps/matting/init.sh
     rec("comfyui_env", comfy_py.is_file(), "apps/matting/ 抠像推理 env；细探测 bash apps/matting/init.sh")
     rec("matanyone2", (_m / "MatAnyone2/pretrained_models/hf2/model.safetensors").is_file(),
-        "缺失跑：bash apps/matting/init.sh --download（github 克隆+HF 权重 141MB）")
+        "已有权重探测；旧 --download 为 BLOCKED，许可与未知项见 docs/third-party-licenses.md")
     rec("birefnet_hr", (_m / "BiRefNet_HR/config.json").is_file(),
-        "缺失跑：bash apps/matting/init.sh --download（HF ZhengPeng7/BiRefNet_HR-matting）")
+        "已有资产探测；离线证据：python3 scripts/model_license_policy.py plan birefnet-hr（不下载、不解除旧入口门禁）")
     resnet = Path("~/.cache/torch/hub/checkpoints/resnet18-5c106cde.pth").expanduser()
     rec("matting_resnet18", resnet.is_file() or (_m / "resnet18-5c106cde.pth").is_file(),
-        "MatAnyone2 光流隐藏依赖（被墙假死坑），--download 会预置")
+        "MatAnyone2 光流依赖；旧 --download 为 BLOCKED，权重许可未知项见 docs/third-party-licenses.md")
     try:
         urllib.request.urlopen("http://127.0.0.1:8188", timeout=2)
         rec("comfyui_service", True, "ComfyUI 8188 在线（背景图生成）")
     except Exception:
         rec("comfyui_service", False, "未运行（可选）：bash apps/matting/comfyui_init.sh --start")
     rw = Path.home() / "models/resemble-enhance"
-    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 需要（下载：bash plugins/denoise/denoise_init.sh --download）" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选；bash plugins/denoise/denoise_init.sh --download）")
+    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 所需目录存在（不代表权重完整或许可已确认；见 docs/third-party-licenses.md）" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选；旧 --download 为 BLOCKED；离线证据：python3 scripts/model_license_policy.py plan resemble-enhance）")
 
     say("--- 4b/5 三大生成模块 asr/tts/imgen（默认关闭，按需开启）---")
     # config 统一加载（§5.3：VTX_CONFIG > config.local.json；坏 JSON 警告 + {}；

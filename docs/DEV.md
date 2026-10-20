@@ -126,6 +126,8 @@ GPU 光栅对 gfx 截图无收益；Chrome 同源 tab 共用渲染进程，单�
 
 设想：把页面 DOM 序列化进 SVG `<foreignObject>`，经 Image→canvas→toDataURL 一次导出整帧，绕过逐帧截图。实测：文本/字体/transform/drop-shadow 与截图通路**逐位一致**，但两类固有偏差过不了 golden 全零门槛——(a) 含 `filter:blur(150px)` 的页确定性 ±1/255 抖动约 1.5% 像素；(b) 径向渐变背景页（本项目四个重页全是）固有 max|Δ|=25~61、差异像素 7-14%（渐变 dithering＋低透明度文字 AA）。**对照实验判死归因**：同一帧原件直接走同一 SVG-image 管线差异逐位相同——偏差与页面重构无关，是 SVG-image 光栅上下文固有，任何"把页面写得更标准"都救不回。相关驱动与 `VTX_GFX_BATCH` env 已整体移除。附带实测：toDataURL 编码耗时强依赖内容熵（低熵页 7.7ms、高熵 blur 页 77ms）。
 
+<a id="navfree-免导航截图判负双杀方案-v2-阶段-2"></a>
+
 ### navfree 免导航截图判负双杀（方案 v2 阶段 2）〔出处：同上，golden 报告 compare_p2_c4.json〕
 
 设想：页内 `__vtx_render(f)` 置帧态，每 tab 只导航一次（`VTX_GFX_NAVFREE=1`）。单页空闲实测 40/40 帧逐字节一致，但负载下双杀——①**像素漂移**：8 实例并发对 4 个 `__vtx_render` 页自 ~f22 起全偏（llm_post 387/u3_install 127/c5a_main_path 641/c5b_hotkey 430 帧差异，golden 全帧比对）；②**反而更慢**：同页 ms/帧 1.5-4.4× 劣于逐帧导航（DOM 突变触发整页重光栅，blur 页尤甚：g6b navfree 111-163ms vs 导航 64-126ms）。处置：`VTX_GFX_NAVFREE` 已封存(golden 证伪):默认 0，代码保留（env 门控＋页内抛错哨兵回落＋页级告警齐全）——**勿开**。
@@ -168,14 +170,14 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 - **design tokens 与模板库**：gfx-templates 七件源自 voice-ime v3.1-v3.9 九轮迭代已验收页参数化抽取；毛玻璃深底卡样式已废弃（违反白底暖色设计铁律），替代 = 白底暖色卡。〔出处：gfx.md〕
 - **pip 安全区红线来历**：voice-ime v3.7 五页（c5b/c4b/c4t/c4f/c2）因未预留 pip 安全区整版返工+全量重渲，遂成设计期硬约束。〔出处：gfx.md「pip 安全区」〕
 - **自包含底色原则来历**：透明底+深色字页面在演示层被剪短/落黑场后变黑底深字不可读（g6a_title 实案），确立「需要浅底就自带」。〔出处：gfx.md〕
-- **历史副本纪律**：`_library/bg_test/works/`（matting 四件）与 `voice-ime/cache/aup3_extract/`（aroll 两件）与本体当前逐字节一致，但属冻结历史快照——修改一律改本仓。`apps/matting/run_full_bg.sh` 与 `post_h3.sh` 为 bg_test 历史运行器，内含本机绝对路径未参数化，属收编原样保留。〔出处：README「历史副本纪律」〕
+- **历史副本纪律**：`_library/bg_test/works/`（matting）与 `voice-ime/cache/aup3_extract/`（aroll）属外部冻结历史快照，修改一律改本仓，不据旧记录宣称副本仍与本体一致。`apps/matting/run_full_bg.sh` 的项目根/works 可由参数或环境覆盖，`post_h3.sh` 的源/输入输出目录可由环境覆盖；它们仍是 bg_test 项目运行器，保留具体片段/目录假定。前者会移动样片、删除中间物并在 WORKS 下运行模型脚本，不能当通用或零写态检查使用。〔出处：README「历史副本纪律」及两脚本〕
 - **时间线预览器 preview.html**：单文件网页，内置 poc2 示例自动载入；预览级校验发现问题标红，最终以 `vtx validate` 为准。〔出处：edit.md〕
 
-## 四、2026-09-11 全面体检遗留登记（未修项，勿无声消失）
+## 四、体检遗留与验证边界
 
-体检当日修复清单见 commit 92609f3 / 898870e；以下为**有意未修/待外部条件**项：
+2026-09-11 体检修复记录见 commit 92609f3 / 898870e；以下保留仍可定位的问题与未完成的外部验证，不把旧清单整体当成当前缺陷：
 
-- **NIT 清单**（健壮性审查判 NIT，修不动代码不影响正确性）：qc.py dry 早退后 176-177 死代码、infra.py:71 恒真分支、imgen_cli.py 死变量、vtx.py render_via 字符串状态机、init.py requests 双探测、bilibili.py --retry 0 NameError、aroll/trim_takes.py 44 字节 WAV 头假定（与自家 aup3_extract 配对成立）。
+- **可定位 NIT**：`vt.py` 的 imgen_requests 检查仍两次调用 `importlib.util.find_spec("requests")`（零子进程，本地重复探测）；`vtx/qc.py` 的 dry 早退后仍有 dry 分支；`apps/aroll/trim_takes.py` 仍按 `raw[44:]` 读取固定头部的 float32 WAV，仅适配其既定输入形态，不能当通用 WAV 解析器。原体检的 infra 恒真分支与 imgen 死变量未在本轮逐项复核，不据旧行号断言仍未修。
 - **Windows 原生内核验收**：原生 x64 Python 与 Chrome/Edge 支持安装自检、CDP/CLI 图形、FFmpeg 全链、缓存命中及 gc/clean。图形环境指纹绑定浏览器发行目录、系统库/驱动文件、系统与用户字体及注册表、主机与启动边界；未知输入保持拒绝复用，不宣称跨机器像素等价。该保守闭包的扫描成本高于 Linux 口径。Chrome 使用 Job Object，宿主强杀时关闭句柄回收整棵浏览器树；文件事务使用 Windows 字节范围锁；删除使用拒绝写入与改名共享的祖先句柄及按句柄删除，拒绝 junction 祖先。原生安全回归由本地 Windows 原生测试验收，中文/空格/# 路径单双分段、冷温缓存、严格 QC、解码、黑场和真峰值门由本地 [合成 E2E](../tests/run_e2e.py) 验收；默认 CI 的 `windows-install` job 验收安装自检，原生渲染由上述本地验收覆盖。Windows CEF 与模型侧车进程生命周期不由此验收，平台专用测试仍按其实际执行报告。
 - **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；apps/asr/README.md 手动路线兜底。
 - **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。

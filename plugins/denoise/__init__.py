@@ -21,7 +21,7 @@ sources[] 级键 ``"denoise": true | {...可选参数}``——声明即该源的
   budget_gate 渲染中触发 gc 不误杀。
 
 CLI（离线手动用，命令面不变）：env python3 plugins/denoise/denoise_voice.py
-<in.wav> <out.wav>；依赖清单与下载渠道见 README.md / denoise_init.sh。
+<in.wav> <out.wav>；依赖探测见 README.md / denoise_init.sh；许可边界见 docs/third-party-licenses.md。
 """
 import hashlib
 import json

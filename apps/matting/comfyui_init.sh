@@ -7,12 +7,11 @@
 #
 # 用法：
 #   bash comfyui_init.sh            # 幂等探测：repo / env / start.sh / 8188 端口
-#   bash comfyui_init.sh --install  # 实际安装：克隆 repo + 建 env + 生成 start.sh
+#   --install 为 BLOCKED（前置许可门拒绝，不克隆、不建环境）
 #   bash comfyui_init.sh --start    # 启动服务（nohup 后台，日志 ~/AI/ComfyUI/comfyui.log）
 #
-# 网络说明：github 克隆直连失败自动走代理 http://127.0.0.1:7890；pip 走清华源，
-# torch 走 pytorch 官方 cu130 源。模型 checkpoints（flux 等）不在本脚本范围——
-# 权重须独立许可审查，不能用服务代码的许可覆盖；见 docs/third-party-licenses.md。
+# 旧未固定版本的安装分支不可由当前许可门放行；已有服务探测/启动不授予 checkpoint
+# 权利。环境与模型须独立审查，边界见 docs/third-party-licenses.md。
 set -u
 
 # Installing service code does not authorize arbitrary checkpoint downloads.
@@ -53,7 +52,7 @@ install_() {
   if [ ! -d "$ROOT" ]; then
     git clone --depth 1 https://github.com/comfyanonymous/ComfyUI "$ROOT" \
       || https_proxy="$PROXY" git clone --depth 1 https://github.com/comfyanonymous/ComfyUI "$ROOT" \
-      || { echo "克隆失败（代理也不通），手动：git clone https://github.com/comfyanonymous/ComfyUI $ROOT"; exit 1; }
+      || { echo "克隆失败（$ROOT）；旧 --install 为 BLOCKED，见 docs/third-party-licenses.md"; exit 1; }
     echo "✓ repo 已克隆 → $ROOT"
   else
     note "repo 已存在，跳过克隆"
@@ -75,11 +74,11 @@ EOF
     chmod +x "$ROOT/start.sh"
     echo "✓ start.sh 已生成"
   fi
-  echo "完成。启动：bash $0 --start ；模型 checkpoints 用 hf-mirror 下载到 $ROOT/models/ 子目录"
+  echo "完成。启动：bash $0 --start；$ROOT/models/ 的 checkpoint 权利须独立审查，见 docs/third-party-licenses.md"
 }
 
 start_() {
-  [ -x "$ROOT/start.sh" ] || { echo "start.sh 不存在，先 --install"; exit 1; }
+  [ -x "$ROOT/start.sh" ] || { echo "start.sh 不存在；旧 --install 为 BLOCKED，环境准备边界见 docs/third-party-licenses.md"; exit 1; }
   if curl -s -m 2 -o /dev/null "http://127.0.0.1:8188" 2>/dev/null; then
     echo "8188 已在线，无需启动"; exit 0
   fi
