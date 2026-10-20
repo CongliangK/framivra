@@ -33,7 +33,7 @@ templates/ **不在 registry 内置扫描范围**（内置只扫 `apps/` 与 `pl
    ]
    ```
    只写字符串 `"templates/hello-app"` = 注册但**默认 disabled**（安全节）。
-2. `env python3 vt.py doctor`——②组件段出现 `[app:external] hello-app`，
+2. `env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`——②组件段出现 `[app:external] hello-app`，
    enabled 后 health ✓ / requires ✓。
 3. `env python3 vt.py apps list`——external 条目在列。
 
@@ -53,7 +53,7 @@ cp -r templates/hello-app templates/my-app && cd templates/my-app
 # 2) 换实现：cli.py 的子命令换成你的素材产线；health_check.py 换成依赖自检
 # 3) 补依赖：app.json 的 requires.binaries / python_packages / platforms
 # 4) 注册：config.local.json 的 external_apps 加 {"path": "templates/my-app"}
-# 5) 验证：env python3 vt.py doctor && env python3 vt.py apps list
+# 5) 验证：env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor && env python3 vt.py apps list
 ```
 
 纪律红线（§3.1）：app 自包含（manifest+代码+README+tests 随目录走）、零

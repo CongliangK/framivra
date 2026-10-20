@@ -216,8 +216,8 @@ qc 要求当前 mux；单跑某阶段前置不满足会直接拒绝。可以直�
 namespace、完整帧摘要和成功 run 回执的完整页；缺失/损坏完成标记的页须全部请求新帧，
 不能把现存 PNG 补签为 Electron 成功。每个新块须有本次完整 adapter/worker 回执，
 非空 failed、非零退出、缺帧/错后端/缺错误门均硬失败，无回落。整页所有块通过、PNG
-完整性与输入身份门通过后才原子发布 complete.json。配置与入口见
-[Electron 导航接线](../experiments/gfx_electron_worker/README.md#alpha-导航与生产接线候选非原视频全片验收)。
+完整性与输入身份门通过后才原子发布 complete.json。封存路线的配置与复现入口见
+[Electron 导航接线](../experiments/gfx_electron_worker/README.md#alpha-导航与管线接线复现入口)。
 
 杀死整个写进程遗留的同目标临时件，下一次写入持该目标事务锁后清理；其他目标的
 临时件不受影响。进程崩溃发生在媒体替换与完成凭据写入之间时，留下完整旧式媒体，

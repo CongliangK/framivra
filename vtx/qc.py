@@ -7,7 +7,7 @@ v2 §1.3（2026-09-13）新增：解码域真峰 TP 判定项（阈 -1.0 dBFS，
 权威值、同一回执不重测）——limiter 恒在 build_audio 尾部后，成片 TP 超阈 = 上游
 削波/限幅失效，属产物可信度问题，归内核 qc。
 """
-import json, re, sys, tempfile
+import json, re, tempfile
 from contextvars import copy_context
 import operator
 from concurrent.futures import ThreadPoolExecutor
@@ -88,7 +88,7 @@ def _collect_active_segs(c):
     段文件名只带段起点（seg{si}_{a:06d}_{key}.mp4），b = 下一段起点（末段 = c.dur）。
     以 cache/vseg/list.txt（最近一次段渲染的拼接清单）为准——直接 glob seg* 会把
     同槽旧键残留也当成生效段，产生重叠 [a,b) 区间：stat 未变的陈旧段可错误豁免
-    被篡改的现役段所在帧（清单之外的一切不参与免检，见实现报告）。"""
+    被篡改的现役段所在帧（清单之外的一切不参与免检）。"""
     vdir = c.cache / "vseg"
     lst = vdir / "list.txt"
     if not lst.exists():

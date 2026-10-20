@@ -7,7 +7,6 @@ RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
 from .hygiene import budget_gate, manifest_record, seg_key
@@ -468,10 +467,10 @@ class RenderPlan:
         全片冷建（8 段并行 ~104 pass）墙钟实测 900s、单代 pass 占盘 ~44G，对照 v4.0
         旧链式分段 277s ≈ 3.2×（「≈4~5×」为无实测支撑的推算值已废弃；区间多层窗口
         回落路径更慢且未被该账覆盖——R4-E2' A5）。
-        gc：hygiene.gc_plan 的 known 白名单不含 vseg_pass，本目录整体落 legacy 类别
-        （判定理由=「键不含内容指纹」，对内容寻址 pass 键是误描述）随 gc 回收——
-        行为可辩护（可再生中间物，删后下次段重渲自动重建），后果=温态冻结语义失效、
-        下次渲染全冷建（R4-E2' A3 定谳；白名单补录需动 hygiene.py=P6 遗留文件，暂缓）。
+        gc：hygiene.gc_plan 的 known 白名单已包含 vseg_pass；本目录不进入
+        legacy 或 vseg/vseg_draft/vseg_qc 的整体回收列表。早期未列入白名单时
+        曾被整体回收，导致下次冷建（R4-E2' A3 历史记录）；当前回收范围以
+        hygiene.gc_plan 为准。
         -fps_mode cfr 只在最终 pass（正式段文件）：帧数/时基安全网 + 拼接自检
         （render_segmented 总帧数硬门），语义见 _composite_graph 同名注释。
         """

@@ -18,8 +18,8 @@ trap cleanup EXIT
 mkdir -p "$TMP/repo/apps/asr" "$TMP/bin" "$TMP/home"
 cp "$ASR/init.sh" "$ASR/sidecar_server.py" "$TMP/repo/apps/asr/"
 export REAL_PY HOME="$TMP/home"
-export PATH="$TMP/bin:$PATH" CALL_LOG="$TMP/calls" INSTALL_MARKER="$TMP/installed"
-export STUB_READY=0 STUB_FAIL_PIP=0
+export PATH="$TMP/bin:$PATH" CALL_LOG="$TMP/calls"
+export STUB_READY=0
 unset PYTHONPATH VT_ASR_IME_ROOT || true
 
 # 假 IME 资产（默认锚点在临时 HOME 内展开）：断言 init 绝不 import/写入它
@@ -33,9 +33,7 @@ cat > "$TMP/bin/python3" <<'SH'
 #!/usr/bin/env bash
 if [[ "${1:-}" == -m && "${2:-}" == venv ]]; then
   echo "venv $*" >> "$CALL_LOG"
-  mkdir -p "$3/bin"
-  ln -s "$STUB_BIN/fake-python" "$3/bin/python"
-  exit 0
+  exit 91
 fi
 exec "$REAL_PY" "$@"
 SH
@@ -45,7 +43,7 @@ cat > "$TMP/bin/fake-python" <<'SH'
 case "${1:-}" in
   -c)
     if [[ "$2" == *qwen_asr* || "$2" == *modelscope* ]]; then
-      [[ "$STUB_READY" == 1 || -f "$INSTALL_MARKER" ]] || exit 1
+      [[ "$STUB_READY" == 1 ]] || exit 1
       if [[ "$2" == *dirname* ]]; then
         # 依赖来源探测：报告装在自身 venv 环境根内
         echo "$(cd "$(dirname "$(dirname "$0")")" && pwd)/lib/python3.12/site-packages/qwen_asr/__init__.py"
@@ -65,31 +63,14 @@ case "${1:-}" in
 esac
 exit 1
 SH
-cat > "$TMP/bin/pip" <<'SH'
+for forbidden in pip modelscope curl; do
+  cat > "$TMP/bin/$forbidden" <<'SH'
 #!/usr/bin/env bash
-printf 'pip %s\n' "$*" >> "$CALL_LOG"
-[[ "$STUB_FAIL_PIP" == 0 ]] || exit 42
-touch "$INSTALL_MARKER"
-echo 'stub pip completed (no network)'
+printf '%s %s\n' "${0##*/}" "$*" >> "$CALL_LOG"
+exit 91
 SH
-cat > "$TMP/bin/modelscope" <<'SH'
-#!/usr/bin/env bash
-printf 'modelscope %s\n' "$*" >> "$CALL_LOG"
-while [[ $# -gt 0 ]]; do
-  if [[ "$1" == --local_dir ]]; then
-    mkdir -p "$2"; touch "$2/model.safetensors"; break
-  fi
-  shift
 done
-echo 'stub model completed (no download)'
-SH
-cat > "$TMP/bin/curl" <<'SH'
-#!/usr/bin/env bash
-printf 'curl %s\n' "$*" >> "$CALL_LOG"
-echo '{"Data":{"Revision":"stub-revision"}}'
-SH
 chmod +x "$TMP/bin/"*
-export STUB_BIN="$TMP/bin"
 SCRIPT="$TMP/repo/apps/asr/init.sh"
 MODELS_HOME="$HOME/.local/share/framivra/asr/models"
 : > "$CALL_LOG"
@@ -189,33 +170,27 @@ contains "$TMP/output" 'BLOCKED'
 no_calls
 echo 'PASS: legacy download gate stays blocked (exit 4, no network)'
 
-# 2b. 仅隔离副本覆盖门禁，以检查不可达旧分支的路径约束；这不是获准固定快照
-#     下载路线，也不证明真实安装可行。下方 pip/modelscope/curl/解释器全部为假程序。
-printf 'raise SystemExit(0)  # fixture only: exercise unreachable legacy branch\n' > "$TMP/repo/scripts/model_license_policy.py"
-run 0 --download
-contains "$CALL_LOG" 'venv -m venv'
-contains "$CALL_LOG" 'pip install --timeout 60 --retries 2'
-contains "$CALL_LOG" 'modelscope download --model Qwen/Qwen3-ASR-1.7B'
-contains "$CALL_LOG" "local_dir $MODELS_HOME/Qwen3-ASR-1.7B"
-contains "$CALL_LOG" 'curl -fSL --connect-timeout 10 --max-time 10'
-contains "$TMP/output" '执行网络命令：'
-contains "$TMP/output" '-m pip install --timeout 60 --retries 2'
-contains "$TMP/output" '-m modelscope download'
-contains "$TMP/output" 'curl -fSL'
-[[ "$(< "$CALL_LOG")" != *"$IME"* ]] || { echo 'FAIL: touched fake IME paths' >&2; exit 1; }
-echo 'PASS: stubbed unreachable legacy branch targets project-owned roots only'
-
-# 3. 同一假门禁 fixture 中就绪资产：两分支均不调用假 pip/modelscope/curl。
+# 3. 就绪资产由 fixture 直接构造；保留真实许可门禁，绝不复活旧安装器。
+mkdir -p "$TMP/repo/apps/asr/.venv/bin"
+ln -s "$TMP/bin/fake-python" "$TMP/repo/apps/asr/.venv/bin/python"
+for name in Qwen3-ASR-1.7B Qwen3-ASR-0.6B Qwen3-ForcedAligner-0.6B; do
+  mkdir -p "$MODELS_HOME/$name"
+  printf 'FAKE-OWN-WEIGHT' > "$MODELS_HOME/$name/model.safetensors"
+done
+export STUB_READY=1
 : > "$CALL_LOG"
 run 0
 no_calls
 contains "$TMP/output" '复用专属资产'
-run 0 --download
+contains "$TMP/output" 'sidecar 冒烟通过'
+[[ ! -f "$TMP/ime_calls" ]] || { echo 'FAIL: IME interpreter invoked' >&2; exit 1; }
+run 4 --download
+contains "$TMP/output" 'BLOCKED'
 no_calls
-echo 'PASS: stubbed ready interpreter/models are reused in both fixture modes'
+echo 'PASS: ready fixtures are probed locally; legacy download remains blocked'
 
-# 4. 同一假门禁 fixture 中已有解释器但缺包：普通模式不调用假 pip。
-export INSTALL_MARKER="$TMP/installed-again"
+# 4. 已有解释器但缺包：普通模式不安装，旧下载请求仍在探测前拒绝。
+export STUB_READY=0
 run 1
 no_calls
 contains "$TMP/output" '缺 qwen_asr 包'
@@ -225,18 +200,24 @@ contains "$TMP/output" '固定快照模型下载不安装运行环境'
 if grep -q '自行执行：' "$TMP/output"; then
   echo 'FAIL: missing packages recommend an unreviewed manual install' >&2; exit 1
 fi
-run 0 --download
-contains "$CALL_LOG" 'pip install --timeout 60 --retries 2'
-echo 'PASS: missing packages do not install in default mode; stubbed legacy branch remains isolated'
+run 4 --download
+contains "$TMP/output" 'BLOCKED'
+no_calls
+echo 'PASS: missing packages never trigger installation in either mode'
 
-# 5. pip 失败仍汇总且不冒然下载模型（使用新的隔离 HOME）。
+# 5. 解释器依赖就绪而专属模型缺失：默认模式失败汇总，零安装/下载。
 : > "$CALL_LOG"
-export HOME="$TMP/home-empty" INSTALL_MARKER="$TMP/not-installed" STUB_FAIL_PIP=1
-run 1 --download
-contains "$TMP/output" 'pip 安装失败'
+export HOME="$TMP/home-empty" STUB_READY=1
+mkdir -p "$HOME"
+run 1
+no_calls
+contains "$TMP/output" '缺少模型 Qwen3-ASR-1.7B'
 contains "$TMP/output" '== init 汇总 =='
-[[ "$(< "$CALL_LOG")" != *'modelscope download'* && "$(< "$CALL_LOG")" != *'curl -'* ]]
-echo 'PASS: pip failure has summary and skips model network commands'
+[[ ! -d "$HOME/.local/share/framivra/asr/models" ]] || { echo 'FAIL: default mode created model assets' >&2; exit 1; }
+run 4 --download
+contains "$TMP/output" 'BLOCKED'
+no_calls
+echo 'PASS: missing model fixtures fail locally and blocked mode cannot install'
 
 # 6. 帮助/未知参数不进入探测。
 : > "$CALL_LOG"

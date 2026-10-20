@@ -1,6 +1,6 @@
 # research · 选题调研采集/评分/样式研究工具（6 件）
 
-v2 应用（P2a 批次 1 自 `scripts/` 六件迁入；manifest 见 `app.json`，兼容 symlink：`scripts/` 下同名件 → 本目录）。R0-R6 调研编排方法论见 `templates/tech-talk/references/research.md`。
+v2 应用（P2a 批次 1 自 `scripts/` 六件迁入；manifest 见 `app.json`，兼容转发壳：`scripts/` 下同名件 → 本目录）。R0-R6 调研编排方法论见 `templates/tech-talk/references/research.md`。
 
 ## 用途
 
@@ -31,7 +31,7 @@ v2 应用（P2a 批次 1 自 `scripts/` 六件迁入；manifest 见 `app.json`�
 
 ## 健康检查
 
-`env python3 apps/research/bilibili.py --help` 退出码 0（app.json health.command；mjs 件无 --help 面，冒烟用 `node --check`）。
+`env python3 apps/research/bilibili.py --help` 退出码 0（app.json health.command）；两件 .mjs 均支持 `--help` / `-h`，帮助分支在启动 Chrome 前退出；`node --check` 仅检查语法。
 
 ## 开启步骤
 

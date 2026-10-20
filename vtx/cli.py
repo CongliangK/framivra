@@ -63,16 +63,13 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
              （串行）→ 并行波 gfx ‖ audio ‖ video 预编码（seg 预编码提前入波，墙钟与
              gfx 重叠）→ video → mux → qc（串行）；VTX_PIPELINE=0 回退线性序列（独立
              A/B 开关）。单阶段命令与各阶段产物语义/缓存键/依赖门不变。
-  （方案三阶段3 2026-09-13）`all --until <stage>`：只执行到该阶段止——R4 冷跑链
-             `vtx all` 一条龙会把 mux/qc 白跑一遍；`all --until video` → mux → qc
-             消灭双跑（v2 §1.2：limiter 已并入 vtx audio，post_loudness 步骤消亡，
-             R4 链不再有独立 post 环节）。
-             允许值 = STAGES 线性序中除 audio 外的 7 个阶段名（audio 是流水线波内
-             成员不作独立终点；线性模式按 STAGES 序字面截断，until=video 不含 audio）。
-             流水线模式映射见 _run_all_pipeline docstring。
-  （协议 v1.2 · P6 2026-09-14）all 全链（mux/qc 完成后）触发插件 finish 收尾钩子
-             （blender-bridge 自动导出 .blend 等）；qc 失败不阻断 finish（产物已就绪），
-             退出码按 qc/finish 各自失败态如实汇总；--draft/--dry-run/--until 截断链不触发。
+  `all --until <stage>`：阶段终点为 STAGES 中除 audio 外的 7 个阶段名。
+             `--until video` 仅用于中间检查：线性模式不含 audio；后续单跑 mux/qc
+             不触发 finish。流水线映射见 _run_all_pipeline；正式交付用完整 `all`，
+             合同见 docs/skill/references/runbook.md「正式交付链」。
+  完整 all 或 `all --until qc` 触发插件 finish 收尾钩子（如 blender-bridge 导出）；
+             qc 失败不阻断 finish，退出码汇总 qc/finish 失败；--draft/--dry-run
+             或停在 qc 之前的截断链不触发。
 
 模块布局（2026-09-10 单文件拆分；v2 §1.4 包化 2026-09-13：模块内全部相对导入，
 入口三通——vtx/vtx.py 薄启动器 / python3 -m vtx / pyproject console script `vtx`）：
@@ -845,9 +842,8 @@ def _main(execution=None):
                     help="explicit predecessor execution (does not bypass input validation)")
     ap.add_argument("--until", metavar="STAGE", default=None,
                     help="all 专属：只执行到该阶段止（validate|audit|prepare|gfx|video|mux|qc，"
-                         "STAGES 线性序；audio 为波内成员不作终点）。R4 冷跑链用法："
-                         "all --until video → mux → qc（免 mux/qc 白跑；v2 limiter 已并入"
-                         " audio，无 post 步）")
+                         "audio 不作终点）。--until video 仅用于中间检查：线性模式不含 audio，"
+                         "后续单跑 mux/qc 不触发 finish。正式交付用完整 all；--until qc 可收尾")
     ap.add_argument("--dry-run", "--dry", dest="dry_run", action="store_true",
                     help="只读执行计划：不删除、创建或写入文件（--dry 为兼容别名）")
     ap.add_argument("--draft", action="store_true", help="草稿模式（仅 video/mux）：540p+NVENC 快速预览，不影响正式产物")
@@ -1171,8 +1167,8 @@ def _main(execution=None):
     # 缝 D（协议 v1.2，P6）：`vtx all` 全链（mux/qc 完成后）触发插件 finish 收尾钩子
     # ——blender-bridge 类「渲染完成自动导出」动作挂此缝。qc 失败不阻断 finish
     # （final.mp4/qc_report.json 等产物已就绪——存量假阴性项目也要能到收尾），退出码
-    # 按 qc/finish 各自失败态如实汇总（任一失败 exit 1）。--draft / --dry-run /
-    # --until 截断链不触发（draft 链无正式产物；dry 不落产物；截断链非完整渲染）。
+    # 按 qc/finish 各自失败态如实汇总（任一失败 exit 1）。--draft / --dry-run 或
+    # 停在 qc 之前的 --until 不触发；all --until qc 与不截断的 all 一样可收尾。
     # 收尾失败以退出码 1 结束但产物已就绪（final.mp4 不受影响——失败可见即可）。
     finish_failed = False
     if (a.command == "all" and a.until in (None, "qc")

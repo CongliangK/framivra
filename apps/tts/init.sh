@@ -7,8 +7,8 @@
 #   3. 音色参考    config.tts.voice_ref ?: ~/音乐/5_G_Resemble仅降噪.wav
 #   4. edge-tts    config.tts.edge_bin ?: ~/miniconda3/bin/edge-tts ?: PATH
 #   5. GPU         nvidia-smi
-# 幂等：只探测打印，不写任何文件、不下载任何模型。缺 repo 时打印两条路线
-# 不自动下载。重复运行结果一致。
+# 幂等：只探测打印，不写文件、不下载模型。旧 --download 在探测前 BLOCKED；
+# 缺 repo/权重不会自动补齐，许可与辅助链边界见 docs/third-party-licenses.md。
 set -u
 
 # Fail before probing user configuration or cloning/downloading the unknown chain.
@@ -69,10 +69,10 @@ if [ -d "$CKPT" ]; then
   if [ -z "$MISS" ]; then
     mark ok "repo" "复用 $CKPT（五件权重齐）"
   else
-    mark fail "repo" "$CKPT 缺：$MISS —— 路线 a) modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir <repo>/checkpoints（国内直连）+ 代码 git clone https://github.com/index-tts/index-tts（走代理；gitclone/ghproxy 镜像 2026-09-11 实测不可用）；路线 b) 只用兜底引擎 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（注：许可见 docs/third-party-licenses.md 许可，仅作独立 CLI 兜底，装否自定）&& tts_cli.py gen --engine edge（不下载 11GB）"
+    mark fail "repo" "$CKPT 缺：$MISS；旧 --download 与未审查 IndexTTS 辅助链为 BLOCKED，见 docs/third-party-licenses.md；独立 edge CLI 的准备与用法见 apps/tts/README.md"
   fi
 else
-  mark fail "repo" "$REPO 不存在 —— 路线 a) git clone https://github.com/index-tts/index-tts（走代理）到 $REPO && modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir $REPO/checkpoints；路线 b) 只用兜底引擎 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（注：许可见 docs/third-party-licenses.md 许可，仅作独立 CLI 兜底，装否自定）&& tts_cli.py gen --engine edge（不下载 11GB）"
+  mark fail "repo" "$REPO 不存在；旧 --download 与未审查 IndexTTS 辅助链为 BLOCKED，见 docs/third-party-licenses.md；独立 edge CLI 的准备与用法见 apps/tts/README.md"
 fi
 
 # ---- 2. 解释器（indextts conda env / repo venv，官方支持 3.10-3.11）----
@@ -117,37 +117,9 @@ fi
 
 echo "--- 汇总：✓ $OK / ⚠ $WARN / ✗ $FAIL ---"
 if [ "$OK" -ge 4 ]; then
-  echo "✅ indextts 主引擎就绪（bash apps/tts/init.sh 幂等，可重复跑）"
+  echo "✓ indextts 已有资产探测就绪；未审查辅助链仍为 BLOCKED，见 docs/third-party-licenses.md"
 elif [ "$OK" -ge 1 ]; then
   echo "⚠ 部分就绪——edge 兜底可用性见上；配置后把 config.local.json tts.enabled 置 true"
 fi
 
-# ---- 可选 --download：补齐 repo / checkpoints（11GB 权重，确认后再跑）----
-# 用法：bash apps/tts/init.sh --download
-# 渠道定案（2026-09-11）：权重走 ModelScope 国内镜像直连；代码克隆 github 直连失败自动换代理
-#（公共 gitclone/ghproxy 镜像实测不可用）。
-if [ "${1:-}" = "--download" ] || [ "${2:-}" = "--download" ]; then
-  REPO="$(cfg tts.repo "$DEFAULT_REPO")"
-  echo "--- tts --download：目标 $REPO ---"
-  if [ ! -d "$REPO/.git" ] && [ ! -d "$REPO" ]; then
-    echo "[1/2] 克隆 IndexTTS 代码（直连失败自动走代理 127.0.0.1:7890）..."
-    git clone --depth 1 https://github.com/index-tts/index-tts "$REPO" \
-      || https_proxy=http://127.0.0.1:7890 git clone --depth 1 https://github.com/index-tts/index-tts "$REPO" \
-      || { echo "克隆失败；edge 兜底路线：pip install -i https://pypi.tuna.tsinghua.edu.cn/simple edge-tts（许可见 docs/third-party-licenses.md，装否自定）"; exit 1; }
-    echo "✓ 代码 → $REPO"
-  else
-    echo "[1/2] 代码已存在，跳过克隆"
-  fi
-  CKPT="$REPO/checkpoints"
-  if [ ! -e "$CKPT/config.yaml" ]; then
-    echo "[2/2] 下载权重（ModelScope 国内直连，约 11GB，数十分钟）..."
-    command -v modelscope >/dev/null 2>&1 \
-      || pip install -i https://pypi.tuna.tsinghua.edu.cn/simple modelscope
-    modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir "$CKPT" \
-      && echo "✓ 权重 → $CKPT（重跑 apps/tts/init.sh 复核）" \
-      || { echo "下载失败，手动：modelscope download --model IndexTeam/IndexTTS-2.5 --local_dir $CKPT"; exit 1; }
-  else
-    echo "[2/2] checkpoints 五件已齐，跳过"
-  fi
-fi
 exit 0

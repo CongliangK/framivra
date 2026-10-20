@@ -136,7 +136,6 @@ def _diff_audit(a, b, out):
 def _diff_subs(a, b, out):
     """subs_check：summary PASS/FAIL 翻转显著标出；results 按 index 配对，
     逐条比较文本/时间与 align/cps/overlap/width 四项的状态与 detail。"""
-    n = 0
     if a.get("summary") != b.get("summary"):
         out.append(("state", "summary", a.get("summary"), b.get("summary")))
     ra = {r.get("index", i): r for i, r in enumerate(a.get("results", []))}
