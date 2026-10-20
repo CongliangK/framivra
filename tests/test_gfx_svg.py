@@ -199,7 +199,7 @@ class SvgContract(unittest.TestCase):
         engine = self.root/'engine.bin'; engine.write_bytes(b'ordinary engine fixture')
         libraries = {'libgraphics.so': {'path': 'ordinary library fixture', 'sha256': '1'*64}}
         with mock.patch.object(gfx_svg,'engine_identity',side_effect=REAL_ENGINE_IDENTITY), \
-             mock.patch.object(gfx_svg.shutil,'which',return_value=str(engine)), \
+             mock.patch.object(gfx_svg,'inkscape_executable',return_value=str(engine)), \
              mock.patch.object(gfx_svg,'runtime_libraries',return_value=libraries), \
              mock.patch.object(gfx_svg,'_version',return_value='Inkscape fixture'):
             c=self.ctx(); first=gfx_key(c,self.clip)

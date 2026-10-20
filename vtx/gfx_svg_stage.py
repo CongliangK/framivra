@@ -7,7 +7,6 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from xml.sax.saxutils import escape
 
 from . import fstxn, gfx_svg
 from .gfx_cli import png_invalid_reason
@@ -15,11 +14,7 @@ from .hygiene import manifest_record, tmp_run
 
 
 def run_shell(executable, directory, count, width, height):
-    fontdir = directory / 'fonts'
-    config = directory / 'fonts.conf'
-    fstxn.atomic_write(config, '<?xml version="1.0"?><fontconfig><dir>' +
-                       escape(str(fontdir)) + '</dir><cachedir>' +
-                       escape(str(directory / 'font-cache')) + '</cachedir></fontconfig>')
+    gfx_svg.private_configuration(directory)
     env = gfx_svg.process_environment(directory)
     # Every action operand is generated locally; user paths never enter this language.
     actions = '\n'.join(
