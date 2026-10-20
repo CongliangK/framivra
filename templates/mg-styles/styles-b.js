@@ -117,8 +117,10 @@
       items.forEach((item, i) => {
         const y = 350 + i * Math.min(95, 550 / items.length), p = cue(m, .16 + i * .025, .4 + i * .025);
         c.textAlign = 'left'; label(c, h, item.label, 100, y, 420, 27, color, 'monospace');
-        const settleFrame = Math.round((.4 + i * .025) * (m.frames - 1));
-        const rolling = m.f < settleFrame && m.f >= settleFrame - 5;
+        const activeFrames = Math.max(1, m.frames - 1 - (m.hold_frames || 0));
+        const settleFrame = Math.round((.4 + i * .025) * activeFrames);
+        const phaseFrame = Math.round(m.phase * activeFrames);
+        const rolling = p < 1 && phaseFrame < settleFrame && phaseFrame >= settleFrame - 5;
         const settled = rolling ? ((m.seed + i * 313 + m.f * 71) % 997) : Math.round(item.value * p);
         c.textAlign = 'right'; label(c, h, settled, 1780, y, 370, 38, ink, 'monospace');
         c.fillStyle = color; c.fillRect(1450, y + 28, p * Math.min(330, 35 + Math.abs(item.value) * 2), 4);

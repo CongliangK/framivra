@@ -1,0 +1,23 @@
+{
+  "title": "从不同到协作",
+  "subtitle": "五种角色，一张关系网",
+  "objects": [
+    {"label": "灵感", "value": 48, "shape": "sphere", "material": "ceramic", "roughness": 0.23},
+    {"label": "研究", "value": 70, "shape": "cube", "material": "matte", "roughness": 0.78},
+    {"label": "联结", "value": 85, "shape": "torus", "material": "metal", "roughness": 0.16},
+    {"label": "制作", "value": 58, "shape": "cube", "material": "ceramic", "roughness": 0.35},
+    {"label": "传播", "value": 92, "shape": "sphere", "material": "metal", "roughness": 0.32}
+  ],
+  "palette": ["#f3eee5", "#302b29", "#cb7248", "#68948d"],
+  "scene": {"layout": "arc"},
+  "scene_story": [
+    {"frame": 0, "title": "01  不同的角色", "layout": "scatter"},
+    {"frame": 60, "title": "02  找到协作位置", "layout": "assemble"},
+    {"frame": 150, "title": "03  让关系产生价值", "layout": "result"}
+  ],
+  "links": [[0, 2], [1, 2], [2, 3], [2, 4]],
+  "beats": {"reveal": 0, "settle": 60, "resolve": 180},
+  "transition_frames": 30,
+  "transition": "hold",
+  "pace": 1.3
+}

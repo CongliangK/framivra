@@ -95,7 +95,7 @@ class PixelQuest(unittest.TestCase):
 
     def test_invalid_cues_and_seeds_fail_before_sequence_output(self):
         invalid = []
-        for seed in (True, -1, 2**31, 1.2, '7'):
+        for seed in (True, -(2**31)-1, 2**31, 1.2, '7'):
             data = story(); data['seed'] = seed; invalid.append(data)
         for field, value in (('in', True), ('in', -1), ('out', 0), ('out', 12), ('obstacle', 'fly')):
             data = story(); data['steps'][0][field] = value; invalid.append(data)

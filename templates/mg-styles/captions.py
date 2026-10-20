@@ -86,8 +86,8 @@ def _prepare(content, reactions, frames, width=1920,
         stagger = cue.get('stagger', 0)
         if type(stagger) is not int or not 0 <= stagger <= 5:
             raise ValueError('stagger must be integer frames in [0,5]')
-        if stagger and (len(cue['text']) + 2) * stagger + 10 > end-start:
-            raise ValueError('cue is too short for stagger reveal plus six readable frames')
+        if cue['text'].count('\n') > 2:
+            raise ValueError('reaction text supports at most three explicit lines')
         punch = cue.get('punchFrame', start)
         if type(punch) is not int or not start <= punch < end:
             raise ValueError('punchFrame must be an integer inside its cue window')
@@ -105,42 +105,87 @@ def _prepare(content, reactions, frames, width=1920,
     base_size = max(18, round(height * .075))
     layers = []
     for cue in cues:
-        layer = Image.new('RGBA', (zone_w, zone_h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(layer)
         color, symbol = EMOTIONS[cue['emotion']]
         text = symbol + '  ' + cue['text']
-        size = base_size
-        while True:
+        probe = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
+        fitted = None
+        for size in range(base_size, 11, -1):
             font = ImageFont.truetype(str(font_file), size)
-            lines = _wrap(draw, text, font, zone_w * .88)
-            line_h = round(size * 1.32)
-            if len(lines) * line_h < zone_h * .82 or size <= 12:
+            lines = _wrap(probe, text, font, zone_w * .88)
+            if len(lines) > 3:
+                continue
+            line_h = round(size * 1.5)
+            raw = []
+            for row, line in enumerate(lines):
+                cursor = 0
+                for char in line:
+                    # Bound the independent glyph, including outer stroke and offset
+                    # shadow, before allocating its bitmap. Negative bearings survive.
+                    strokes = ((5, 8, max(2, size // 11), '#111111', '#111111'),
+                               (0, 0, max(2, size // 12), color, '#171923'),
+                               (0, 0, max(1, size // 40), color, '#ffffff'))
+                    boxes = [probe.textbbox((dx, dy), char, font=font,
+                                            stroke_width=sw, anchor='lt')
+                             for dx, dy, sw, _, _ in strokes]
+                    left = min(box[0] for box in boxes)
+                    top = min(box[1] for box in boxes)
+                    right = max(box[2] for box in boxes)
+                    bottom = max(box[3] for box in boxes)
+                    glyph = Image.new('RGBA', (max(1, right-left+4), max(1, bottom-top+4)))
+                    gd = ImageDraw.Draw(glyph)
+                    for dx, dy, sw, fill, stroke in strokes:
+                        gd.text((dx-left+2, dy-top+2), char, font=font,
+                                fill=fill, stroke_width=sw, stroke_fill=stroke, anchor='lt')
+                    box = glyph.getbbox()
+                    if box and (box[0] <= 0 or box[1] <= 0 or box[2] >= glyph.width or box[3] >= glyph.height):
+                        raise ValueError('independent caption glyph would be clipped')
+                    raw.append((glyph, round(cursor)+left-2, row*line_h+top-2))
+                    cursor += probe.textlength(char, font=font)
+            left = min(x for _, x, _ in raw)
+            top = min(y for _, _, y in raw)
+            right = max(x+g.width for g, x, _ in raw)
+            bottom = max(y+g.height for g, _, y in raw)
+            # Reserve downward reveal motion, all bitmap padding, and outer margins.
+            if right-left <= zone_w-32 and bottom-top+12 <= zone_h-16:
+                fitted = raw, left, top, right, bottom
                 break
-            size -= 1
-        # Thick dark outline, white inner outline, offset shadow: classic reaction type.
-        y = (zone_h - len(lines) * line_h) // 2
-        glyphs = []
-        for line in lines:
-            x = (zone_w - draw.textlength(line, font=font)) // 2
-            draw.text((x + 5, y + 8), line, font=font, fill='#111111',
-                      stroke_width=max(2, size // 11), stroke_fill='#111111')
-            draw.text((x, y), line, font=font, fill=color,
-                      stroke_width=max(2, size // 12), stroke_fill='#171923')
-            draw.text((x, y), line, font=font, fill=color,
-                      stroke_width=max(1, size // 40), stroke_fill='#ffffff')
-            cursor = x
-            for char in line:
-                advance = draw.textlength(char, font=font)
-                glyph = Image.new('RGBA', (max(1, math.ceil(advance)+32), line_h+32), (0,0,0,0))
-                gd = ImageDraw.Draw(glyph)
-                gd.text((21,24), char, font=font, fill='#111111', stroke_width=max(2,size//11), stroke_fill='#111111')
-                gd.text((16,16), char, font=font, fill=color, stroke_width=max(2,size//12), stroke_fill='#171923')
-                gd.text((16,16), char, font=font, fill=color, stroke_width=max(1,size//40), stroke_fill='#ffffff')
-                glyphs.append((glyph, round(cursor-16), y-16))
-                cursor += advance
-            y += line_h
+        if fitted is None:
+            raise ValueError('reaction text does not fit caption zone at minimum font size 12')
+        raw, left, top, right, bottom = fitted
+        dx = (zone_w-(right-left))//2-left
+        dy = (zone_h-(bottom-top+12))//2-top
+        glyphs = [(g, x+dx, y+dy) for g, x, y in raw]
+        count = len(glyphs)  # Includes the actual emotion prefix and two spaces.
+        reveal_end = (count-1)*cue.get('stagger', 0)+3 if cue.get('stagger', 0) else 0
+        minimum = max(8, reveal_end)+6
+        if cue['out']-cue['in'] < minimum:
+            raise ValueError(f'cue needs at least {minimum} frames for prepared glyph reveal, attack and six readable frames')
+        layer = Image.new('RGBA', (zone_w, zone_h), (0, 0, 0, 0))
+        for glyph, gx, gy in glyphs:
+            if gx < 0 or gy < 0 or gx+glyph.width > zone_w or gy+glyph.height+12 > zone_h:
+                raise ValueError('prepared caption glyph exceeds caption bounds')
+            layer.alpha_composite(glyph, (gx, gy))
         layers.append((cue, layer, glyphs))
     return cues, font_file, layers, band, rect
+
+
+def validate_caption_content(content, reactions, frames, width=1920,
+                             height=1080, font_path=None):
+    """Validate without writing files; return lightweight preflight metadata.
+
+    Reactions: integer [in,out), text (up to three explicit lines), emotion,
+    optional punchFrame and stagger (0..5). Prepared glyphs include the emotion
+    symbol and two spaces. Every cue reserves eight attack frames and at least
+    six fully revealed frames; longer editorial reading holds remain the caller's
+    responsibility. Unfittable text and clipped glyphs are rejected before output.
+    """
+    cues, font, layers, band, rect = _prepare(content, reactions, frames, width, height, font_path)
+    return {'frames': frames, 'width': width, 'height': height,
+            'font_path': str(font), 'caption_band': band, 'protected_subject': list(rect),
+            'cues': [{'in': cue['in'], 'out': cue['out'], 'glyph_count': len(glyphs),
+                      'minimum_frames': max(8, (len(glyphs)-1)*cue.get('stagger',0)+3
+                                            if cue.get('stagger',0) else 0)+6}
+                     for cue, _, glyphs in layers]}
 
 
 def render_caption_frame(content, reactions, frame, frames, width=1920,
@@ -169,7 +214,7 @@ def _draw_frame(frame, width, height, layers, Image, band='lower'):
                             cell.putalpha(cell.getchannel('A').point(lambda alpha: round(alpha*amount)))
                         revealed.alpha_composite(cell, (gx, gy+round(12*(1-amount))))
                 layer = revealed
-            attack = min(1, local / max(1, min(8, (cue['out']-cue['in']) / 3)))
+            attack = min(1, local / 8)
             scale = .88 + .12 * attack + .08 * math.sin(attack * math.pi)
             # The semantic impact frame is absolute within the source video.
             punch = cue.get('punchFrame', cue['in'])

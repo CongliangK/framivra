@@ -1,0 +1,41 @@
+{
+  "title": "一滴水的旅程",
+  "subtitle": "汇集、分流、滋养，然后循环新生",
+  "seed": 7,
+  "palette": [
+    "#edf8fa",
+    "#192c37",
+    "#277e9b",
+    "#92dbcf"
+  ],
+  "stages": [
+    {
+      "in": 0,
+      "out": 60,
+      "mode": "gather",
+      "label": "水滴汇集",
+      "amount": 1.1
+    },
+    {
+      "in": 60,
+      "out": 126,
+      "mode": "merge",
+      "label": "聚成水流",
+      "amount": 1.1
+    },
+    {
+      "in": 126,
+      "out": 198,
+      "mode": "split",
+      "label": "分流滋养",
+      "amount": 1.1
+    },
+    {
+      "in": 198,
+      "out": 240,
+      "mode": "resolve",
+      "label": "循环新生",
+      "amount": 1.1
+    }
+  ]
+}

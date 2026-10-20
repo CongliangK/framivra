@@ -1,0 +1,35 @@
+{
+  "title": "从一粒种子到共同的家",
+  "subtitle": "生长，阅读，共建。",
+  "drawing_speed": 1,
+  "story": [
+    {
+      "object": "seed",
+      "label": "一粒种子",
+      "in": 0,
+      "out": 60,
+      "hold": 18
+    },
+    {
+      "object": "tree",
+      "label": "长成一棵树",
+      "in": 60,
+      "out": 120,
+      "hold": 18
+    },
+    {
+      "object": "book",
+      "label": "知识被传递",
+      "in": 120,
+      "out": 180,
+      "hold": 18
+    },
+    {
+      "object": "house",
+      "label": "一起建成家",
+      "in": 180,
+      "out": 240,
+      "hold": 24
+    }
+  ]
+}

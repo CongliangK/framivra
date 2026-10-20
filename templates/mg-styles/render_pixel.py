@@ -59,7 +59,7 @@ def _prepare(data, frames, font_path):
     if (not isinstance(palette, list) or len(palette) != 4
             or any(not isinstance(x, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', x) for x in palette)):
         raise ValueError('palette must contain four #RRGGBB colours')
-    seed = _integer(data.get('seed', 1), 'seed', 0, 2147483647)
+    seed = _integer(data.get('seed', 1), 'seed', -2147483648, 2147483647)
     path = Path(font_path) if font_path else Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
     if not path.is_file():
         raise ValueError('provide a separately licensed local CJK font_path')
@@ -220,3 +220,9 @@ def render_pixel_frames(data, frames, output, font_path=None):
               'external_assets': [], 'input_sha256': hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode()).hexdigest()}
     (output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return report
+
+
+def validate_pixel_content(data, frames, font_path=None):
+    """Validate semantic slots and external font before creating a project."""
+    prepared = _prepare(data, frames, font_path)
+    return {'font_path': str(prepared['font_path']), 'font_sha256': hashlib.sha256(prepared['font_path'].read_bytes()).hexdigest()}

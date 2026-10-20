@@ -40,4 +40,37 @@ class MediaGeometry(unittest.TestCase):
                     media.assemble('soft-3d',output,{},30,samples=samples,dry=True)
                 self.assertFalse(output.exists())
 
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'optional Pillow is unavailable')
+    def test_backend_semantics_are_checked_before_dry_or_real_writes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for style in ('pixel','soft-3d','line-art','liquid'):
+                # Liquid has a legitimate default semantic sequence; use an invalid window.
+                content={'stages':[]} if style=='liquid' else {}
+                for dry in (True,False):
+                    output=Path(temp)/(style+str(dry))
+                    with self.assertRaises(ValueError):
+                        media.assemble(style,output,content,90,dry=dry)
+                    self.assertFalse(output.exists())
+
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'optional Pillow is unavailable')
+    def test_signed_seed_dry_run_matches_pixel_renderer_contract(self):
+        content={'mission':'One parcel','steps':[{'label':'Jump','in':0,'out':45,'obstacle':'jump'}],
+                 'reward':{'text':'Delivered','in':60}}
+        with tempfile.TemporaryDirectory() as temp:
+            for seed in (-(2**31),-1,2**31-1):
+                output=Path(temp)/str(seed)
+                result=media.assemble('pixel',output,dict(content,seed=seed),90,dry=True)
+                self.assertEqual(result['style'],'pixel')
+                self.assertFalse(output.exists())
+
+    def test_frozen_renderer_executes_captured_source_not_later_file_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'renderer.py'
+            path.write_bytes(b'def meaning(): return 17\n')
+            captured=path.read_bytes()
+            renderer=media.frozen_module(str(path),captured)
+            path.write_bytes(b'def meaning(): return 99\n')
+            self.assertEqual(renderer.meaning(),17)
+            self.assertEqual(path.read_bytes(),b'def meaning(): return 99\n')
+
 if __name__=='__main__':unittest.main()

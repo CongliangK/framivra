@@ -6,6 +6,8 @@ Invoke with Blender --background --python this_file -- --content data.json
 The saved scene contains baked integer-frame transforms and can seek independently.
 """
 import argparse
+from copy import deepcopy
+from types import SimpleNamespace
 import hashlib
 import json
 import math
@@ -21,22 +23,30 @@ def arguments():
     parser.add_argument('--frames', type=int, default=30)
     parser.add_argument('--width', type=int, default=640)
     parser.add_argument('--height', type=int, default=360)
-    parser.add_argument('--samples', type=int, default=128)
+    parser.add_argument('--samples', type=int, default=256)
+    parser.add_argument('--engine', choices=('CYCLES','BLENDER_EEVEE_NEXT'), default='CYCLES')
+    parser.add_argument('--render-frames', help='Comma-separated integer keyframes for a partial preview; does not claim a complete sequence')
     parser.add_argument('--denoise', action='store_true', help='Require OpenImageDenoise support; errors are fatal')
     parser.add_argument('--font', type=Path, help='Explicit separately licensed Blender-readable font')
     return parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
 
 
-def validate(args):
+def validate_3d_content(data, frames=240, samples=256, width=1920, height=1080, engine='CYCLES'):
+    """Normalize and validate semantic content without bpy, I/O or writes."""
+    args=SimpleNamespace(frames=frames,samples=samples,width=width,height=height)
+    if any(type(value) is not int for value in (frames,samples,width,height)):
+        raise ValueError('frames, samples, width and height must be integers')
+    if engine not in ('CYCLES','BLENDER_EEVEE_NEXT'):
+        raise ValueError('unsupported render engine')
     if not 3 <= args.frames <= 18000:
         raise ValueError('frames must be in [3, 18000]')
     if not 64 <= args.width <= 3840 or not 64 <= args.height <= 2160:
         raise ValueError('width/height outside supported render bounds')
     if not 1 <= args.samples <= 256:
         raise ValueError('samples must be in [1, 256]')
-    data = json.loads(args.content.read_text(encoding='utf-8'))
     if not isinstance(data, dict):
         raise ValueError('content must be an object')
+    data=deepcopy(data)
     for key in ('title', 'subtitle'):
         value = data.get(key, '')
         if not isinstance(value, str) or len(value) > 180:
@@ -72,10 +82,97 @@ def validate(args):
     scene_data = data.get('scene', {'layout':'stage'})
     if not isinstance(scene_data,dict) or set(scene_data) != {'layout'} or scene_data['layout'] not in ('stage','arc'):
         raise ValueError('scene needs layout stage or arc')
-    data.update(palette=palette, pace=pace, objects=items, beats=beats, transition=transition, scene=scene_data)
+    story = data.get('scene_story', [
+        {'frame':0,'title':data.get('subtitle',''),'layout':'scatter'},
+        {'frame':beats['settle'],'title':'Connect','layout':'assemble'},
+        {'frame':beats['resolve'],'title':'Together','layout':'result'},
+    ])
+    if not isinstance(story,list) or not 2 <= len(story) <= 6:
+        raise ValueError('scene_story needs 2 to 6 chapters')
+    previous = -1
+    for chapter in story:
+        if not isinstance(chapter,dict) or set(chapter) != {'frame','title','layout'}:
+            raise ValueError('each chapter needs frame, title and layout')
+        if type(chapter['frame']) is not int or not previous < chapter['frame'] < args.frames:
+            raise ValueError('chapter frames must be strictly increasing integer frames')
+        if not isinstance(chapter['title'],str) or len(chapter['title']) > 100:
+            raise ValueError('chapter title must be text with at most 100 characters')
+        if chapter['layout'] not in ('scatter','assemble','result'):
+            raise ValueError('chapter layout must be scatter, assemble or result')
+        previous = chapter['frame']
+    if story[0]['frame'] != 0:
+        raise ValueError('first chapter must begin at frame zero')
+    links = data.get('links', [[i,i+1] for i in range(len(items)-1)])
+    if not isinstance(links,list) or len(links)>15:
+        raise ValueError('links must contain at most 15 object index pairs')
+    seen = set()
+    for edge in links:
+        if not isinstance(edge,list) or len(edge)!=2 or any(type(v) is not int or not 0<=v<len(items) for v in edge) or edge[0]==edge[1]:
+            raise ValueError('links need two distinct valid object indices')
+        canonical = tuple(sorted(edge))
+        if canonical in seen:
+            raise ValueError('duplicate links are not allowed')
+        seen.add(canonical)
+    transition_frames=data.get('transition_frames',min(24,max(1,args.frames//8)))
+    if type(transition_frames) is not int or not 1<=transition_frames<args.frames:
+        raise ValueError('transition_frames must be a positive integer less than frames')
+    for left,right in zip(story,story[1:]):
+        if right['frame']-left['frame'] < transition_frames:
+            raise ValueError('chapters must leave room for the configured transition')
+    data.update(palette=palette, pace=pace, objects=items, beats=beats, transition=transition, scene=scene_data,
+                scene_story=story,links=links,transition_frames=transition_frames)
+    return data
+
+
+def requested_frames(selection,frames):
+    if selection is None:
+        return list(range(frames))
+    result=[int(value) for value in selection.split(',')]
+    if not result or len(set(result))!=len(result) or any(not 0<=frame<frames for frame in result):
+        raise ValueError('render-frames must be unique frame indices within the clip')
+    return result
+
+
+def validate(args):
+    data=validate_3d_content(json.loads(args.content.read_text(encoding='utf-8')),args.frames,args.samples,args.width,args.height,args.engine)
+    requested_frames(args.render_frames,args.frames)
     if args.output.exists():
         raise ValueError('output must be a new directory')
     return data
+
+
+
+def ease(value):
+    value = max(0,min(1,value))
+    return value*value*(3-2*value)
+
+
+def story_state(data, frame):
+    """Pure, seekable chapter geometry; pace > 1 delays a transition."""
+    story=data['scene_story']
+    chapter_index=max(i for i,chapter in enumerate(story) if chapter['frame']<=frame)
+    chapter=story[chapter_index]
+    previous=story[max(0,chapter_index-1)]
+    progress=ease(max(0,min(1,(frame-chapter['frame'])/data['transition_frames']))**data['pace'])
+    count=len(data['objects'])
+    spacing=min(3.1,10/max(1,count))
+    positions=[]
+    def position(layout,index,radius):
+        x=(index-(count-1)/2)*spacing
+        scene_y=.12*x*x if data['scene']['layout']=='arc' else 0
+        if layout=='scatter':
+            return (x+math.sin(index*2.1)*.38, (-1 if index%2 else 1)*.9+scene_y, radius+.25+.35*(index%2))
+        if layout=='assemble':
+            return (x,scene_y,radius)
+        return (x*.82, .3*math.cos(index*1.7)+scene_y, radius+.55+.9*math.sin((index+.5)/count*math.pi))
+    for index,item in enumerate(data['objects']):
+        radius=min(.86,spacing*.35)*(.48+.52*math.sqrt(item['value']/100))
+        start=position(previous['layout'],index,radius)
+        end=position(chapter['layout'],index,radius)
+        positions.append(tuple(a+(b-a)*progress for a,b in zip(start,end)))
+    connection_start=story[1]['frame']
+    connections=ease(max(0,min(1,(frame-connection_start)/data['transition_frames']))**data['pace'])
+    return {'chapter':chapter_index,'progress':progress,'positions':positions,'connections':connections}
 
 
 def main():
@@ -90,12 +187,17 @@ def main():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete(use_global=False)
     scene = bpy.context.scene
-    scene.render.engine = 'CYCLES'
+    scene.render.engine = args.engine
     scene.cycles.device = 'CPU'
     scene.cycles.samples = args.samples
     scene.cycles.use_denoising = args.denoise
     scene.cycles.seed = 0
     scene.cycles.use_animated_seed = False
+    scene.cycles.max_bounces = 6
+    scene.cycles.diffuse_bounces = 2
+    scene.cycles.glossy_bounces = 3
+    if args.engine == 'BLENDER_EEVEE_NEXT':
+        scene.eevee.taa_render_samples = args.samples
     scene.render.threads_mode = 'FIXED'
     scene.render.threads = 4
     scene.render.resolution_x = args.width
@@ -136,7 +238,7 @@ def main():
         if candidate.is_file():
             font_path = candidate
     font = bpy.data.fonts.load(str(font_path)) if font_path else None
-    all_text = data.get('title','') + data.get('subtitle','') + ''.join(item['label'] for item in data['objects'])
+    all_text = data.get('title','') + data.get('subtitle','') + ''.join(item['label'] for item in data['objects']) + ''.join(c['title'] for c in data['scene_story'])
     if font is None and any(ord(c)>127 for c in all_text):
         raise ValueError('non-ASCII labels require --font or installed Noto CJK')
     bpy.ops.mesh.primitive_plane_add(size=200)
@@ -144,12 +246,12 @@ def main():
     floor.name = 'Shadow receiving ground'
     floor.data.materials.append(floor_mat)
 
-    bpy.ops.object.camera_add(location=(7, -15, 10))
+    bpy.ops.object.camera_add(location=(0, -17, 10))
     camera = bpy.context.object
     camera.name = 'Composition camera'
-    camera.rotation_euler = (Vector((0,0,2)) - camera.location).to_track_quat('-Z','Y').to_euler()
+    camera.rotation_euler = (Vector((0,0,1.5)) - camera.location).to_track_quat('-Z','Y').to_euler()
     camera.data.type = 'ORTHO'
-    camera.data.ortho_scale = 15
+    camera.data.ortho_scale = 14
     scene.camera = camera
 
     for name, position, energy, size in (
@@ -185,8 +287,35 @@ def main():
             obj.scale *= max_width / obj.dimensions.x
         return obj
 
-    title = text(data.get('title',''), (0,0,5.05), 1.05, 'Editable title', 10)
-    subtitle = text(data.get('subtitle',''), (0,0,4.15), .42, 'Editable subtitle', 10)
+    # Camera-space typography has a dedicated safe area, independent of geometry.
+    rotation=camera.rotation_euler.to_quaternion()
+    right=rotation @ Vector((1,0,0))
+    up=rotation @ Vector((0,1,0))
+    forward=rotation @ Vector((0,0,-1))
+    aspect=args.width/args.height
+    def screen_point(x,y):
+        return camera.location + forward*8 + right*((x-.5)*14) + up*((y-.5)*14/aspect)
+    ui_material=bpy.data.materials.new('Camera-facing typography')
+    ui_material.use_nodes=True
+    nodes=ui_material.node_tree.nodes
+    nodes.clear()
+    emission=nodes.new('ShaderNodeEmission')
+    emission.inputs['Color'].default_value=rgba(palette[1])
+    emission.inputs['Strength'].default_value=1
+    output=nodes.new('ShaderNodeOutputMaterial')
+    ui_material.node_tree.links.new(emission.outputs[0],output.inputs['Surface'])
+    def ui_text(body,x,y,size,name,max_width):
+        obj=text(body,screen_point(x,y),size,name,max_width)
+        obj.data.materials.clear()
+        obj.data.materials.append(ui_material)
+        obj.visible_shadow=False
+        obj.visible_glossy=False
+        obj.visible_diffuse=False
+        return obj
+    title=ui_text(data.get('title',''),.5,.91,1.15,'Editable title',12)
+    chapter_text=[]
+    for i,chapter in enumerate(data['scene_story']):
+        chapter_text.append(ui_text(chapter['title'],.5,.79,.65,'Chapter %02d'%i,12))
     objects = []
     count = len(data['objects'])
     spacing = min(3.2, 10 / count)
@@ -215,48 +344,60 @@ def main():
         obj.name = 'Value solid %02d' % i
         kind = item.get('material','ceramic')
         obj.data.materials.append(material('Object material %02d' % i,palette[2+i%2],item.get('roughness', .8 if kind=='matte' else .18 if kind=='metal' else .3), .85 if kind=='metal' else .05))
-        text(item['label'], (x,-2.8,.1), .43, 'Editable label %02d' % i, spacing*.9)
-        text(str(item['value']), (x,-2,.1), .45, 'Editable value %02d' % i, spacing*.8)
+        slot=(i+.5)/count
+        ui_text(item['label'],slot,.085,.58,'Editable label %02d'%i,12/count*.9)
+        ui_text(str(item['value']),slot,.18,.52,'Editable value %02d'%i,12/count*.8)
         objects.append((obj, x, y, radius, i, tuple(obj.rotation_euler)))
 
-    def ease(value):
-        value = max(0, min(1,value))
-        return 1-(1-value)**3
-
-    # Bake the analytic state at every integer frame. Seeking requires no handlers,
-    # simulation caches, wall clock, prior frame or browser runtime.
+    rods=[]
+    link_material=material('Relationship rods',palette[1],.4,.1)
+    for i,edge in enumerate(data['links']):
+        bpy.ops.mesh.primitive_cylinder_add(vertices=20,radius=.035,depth=1)
+        rod=bpy.context.object
+        rod.name='Relationship %02d'%i
+        rod.data.materials.append(link_material)
+        rods.append((rod,edge))
+    # Bake every requested integer frame. No simulation, prior-state integration,
+    # callbacks or wall-clock animation is involved.
     for frame in range(args.frames):
-        phase = max(0,min(1,(frame-data['beats']['reveal'])/(data['beats']['settle']-data['beats']['reveal'])))
-        phase = phase**data['pace']
+        state=story_state(data,frame)
         for obj,x,y,radius,i,base_rotation in objects:
-            enter = ease(max(0,min(1,(phase-i*.035)/(1-i*.035))))
-            hop = math.sin(enter*math.pi) * (1.3+radius)
-            squash = 1-.1*math.sin(max(0,(enter-.8)/.2)*math.pi) if enter>.8 else 1
-            obj.location = (x,y,radius*squash + hop)
-            obj.scale = (1/math.sqrt(squash),1/math.sqrt(squash),squash)
-            obj.rotation_euler = (base_rotation[0],base_rotation[1]+(1-enter)*.45,base_rotation[2]+(1-enter)*.2)
-            for prop in ('location','scale','rotation_euler'):
-                obj.keyframe_insert(data_path=prop, frame=frame)
-        resolve = ease((frame-data['beats']['resolve'])/max(1,args.frames-1-data['beats']['resolve']))
-        camera.data.ortho_scale = 15 + (resolve if data['transition']=='camera-pullback' else 0)
+            obj.location=state['positions'][i]
+            obj.rotation_euler=(base_rotation[0],base_rotation[1]+.1*math.sin(frame/args.frames*math.pi),base_rotation[2])
+            obj.keyframe_insert(data_path='location',frame=frame)
+            obj.keyframe_insert(data_path='rotation_euler',frame=frame)
+        for rod,edge in rods:
+            start=Vector(state['positions'][edge[0]])
+            end=Vector(state['positions'][edge[1]])
+            end=start+(end-start)*state['connections']
+            delta=end-start
+            rod.location=(start+end)/2
+            rod.rotation_euler=delta.to_track_quat('Z','Y').to_euler() if delta.length>1e-8 else (0,0,0)
+            rod.scale=(1,1,max(.0001,delta.length))
+            for prop in ('location','rotation_euler','scale'):
+                rod.keyframe_insert(data_path=prop,frame=frame)
+        resolve=ease((frame-data['beats']['resolve'])/max(1,args.frames-1-data['beats']['resolve']))
+        camera.data.ortho_scale=14+(.8*resolve if data['transition']=='camera-pullback' else 0)
         camera.data.keyframe_insert(data_path='ortho_scale',frame=frame)
-        for obj in (title,subtitle):
-            obj.keyframe_insert(data_path='location', frame=frame)
-    for obj,_,_,_,_,_ in objects:
-        for curve in obj.animation_data.action.fcurves:
-            for point in curve.keyframe_points:
-                point.interpolation = 'CONSTANT'
+        for index,obj in enumerate(chapter_text):
+            obj.hide_render=index!=state['chapter']
+            obj.keyframe_insert(data_path='hide_render',frame=frame)
+    for obj in bpy.data.objects:
+        if obj.animation_data and obj.animation_data.action:
+            for curve in obj.animation_data.action.fcurves:
+                for point in curve.keyframe_points:
+                    point.interpolation='CONSTANT'
     scene.frame_set(0)
-    if font is not None:
-        font.pack()
     scene.render.filepath = str(frame_dir / 'f000000.png')
     bpy.ops.wm.save_as_mainfile(filepath=str(args.output / 'scene.blend'))
     evidence = {
-        'blender': bpy.app.version_string, 'engine': 'CYCLES', 'device':'CPU',
+        'blender': bpy.app.version_string, 'engine': args.engine, 'device':'CPU' if args.engine=='CYCLES' else 'unknown',
         'samples':args.samples, 'denoising':args.denoise, 'fps':30, 'frames':args.frames,
         'width':args.width, 'height':args.height,
-        'scene_layout':data['scene']['layout'], 'beats':data['beats'], 'transition':data['transition'],
+        'scene_story':data['scene_story'], 'links':data['links'], 'scene_layout':data['scene']['layout'], 'beats':data['beats'], 'transition':data['transition'],
         'font':str(font_path) if font_path else 'Blender built-in',
+        'font_license':'unknown; verify the external font separately; no font bytes embedded',
+        'font_embedded':False,
         'font_sha256':hashlib.sha256(font_path.read_bytes()).hexdigest() if font_path else None,
         'content_sha256':hashlib.sha256(args.content.read_bytes()).hexdigest(),
         'scene_sha256':hashlib.sha256((args.output/'scene.blend').read_bytes()).hexdigest(),
@@ -264,15 +405,19 @@ def main():
                         'No soundtrack or encoded movie; integrate this sequence through a vtx timeline.',
                         'Fixed-environment determinism only; no cross-device pixel equivalence claim.'],
         'frame_sha256':[],
+        'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
-    for frame in range(args.frames):
+    rendered_frames=requested_frames(args.render_frames,args.frames)
+    evidence['rendered_frames']=rendered_frames
+    evidence['complete_sequence']=rendered_frames==list(range(args.frames))
+    for frame in rendered_frames:
         scene.frame_set(frame)
         image = frame_dir / ('f%06d.png' % frame)
         scene.render.filepath = str(image)
         try:
             bpy.ops.render.render(write_still=True)
         except RuntimeError as error:
-            (args.output / 'failure.json').write_text(json.dumps({'frame':frame,'error':str(error),'engine':'CYCLES','denoising':args.denoise},indent=2)+'\n',encoding='utf-8')
+            (args.output / 'failure.json').write_text(json.dumps({'frame':frame,'error':str(error),'engine':args.engine,'denoising':args.denoise},indent=2)+'\n',encoding='utf-8')
             raise
         evidence['frame_sha256'].append(hashlib.sha256(image.read_bytes()).hexdigest())
     (args.output / 'evidence.json').write_text(json.dumps(evidence, indent=2)+'\n', encoding='utf-8')

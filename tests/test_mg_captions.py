@@ -76,6 +76,61 @@ class ReactionCaptions(unittest.TestCase):
         with self.assertRaises(ValueError):
             captions.render_caption_frame({'subject_rect': [0, 0, 1, .9]}, self.cues, 3, 18, font_path=self.font)
 
+    def test_preflight_rejects_newline_overflow_before_output(self):
+        for text in ('\n'*100+'X', 'one\ntwo\nthree\nfour', '界'*120):
+            cues = [{'in':0, 'out':180, 'text':text, 'emotion':'surprise'}]
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as temp:
+                output = Path(temp)/'frames'
+                with self.assertRaises(ValueError):
+                    captions.render_caption_frames({}, cues, 180, output,
+                                                    width=320, height=320, font_path=self.font)
+                self.assertFalse(output.exists())
+
+    def test_prepared_prefix_controls_stagger_and_hold_boundary(self):
+        # surprise prepares !? + two spaces + A: five glyphs, not three.
+        cue = {'in':0, 'out':25, 'text':'A', 'emotion':'surprise', 'stagger':5}
+        with self.assertRaises(ValueError):
+            captions.validate_caption_content({}, [cue], 30, font_path=self.font)
+        cue['out'] = 29
+        report = captions.validate_caption_content({}, [cue], 30, font_path=self.font)
+        self.assertEqual(report['cues'][0]['glyph_count'], 5)
+        self.assertEqual(report['cues'][0]['minimum_frames'], 29)
+        # Full last-glyph reveal occurs at local 23, leaving frames 23..28.
+        full = captions.render_caption_frame({}, [cue], 23, 30, font_path=self.font)
+        end = captions.render_caption_frame({}, [cue], 28, 30, font_path=self.font)
+        self.assertEqual(full.tobytes(), end.tobytes())
+
+    def test_nonstagger_attack_and_readable_hold_boundary(self):
+        cue = {'in':0, 'out':13, 'text':'成功', 'emotion':'joy', 'stagger':0}
+        with self.assertRaises(ValueError):
+            captions.validate_caption_content({}, [cue], 14, font_path=self.font)
+        cue['out'] = 14
+        report = captions.validate_caption_content({}, [cue], 14, font_path=self.font)
+        self.assertEqual(report['cues'][0]['minimum_frames'], 14)
+        start = captions.render_caption_frame({}, [cue], 8, 14, font_path=self.font)
+        end = captions.render_caption_frame({}, [cue], 13, 14, font_path=self.font)
+        self.assertEqual(start.tobytes(), end.tobytes())
+
+    def test_individual_glyphs_and_wrapped_text_have_unclipped_bounds(self):
+        cues = [{'in':0, 'out':120, 'text':'jÅ界\n测试 italic W',
+                 'emotion':'surprise', 'stagger':2}]
+        _, _, layers, _, _ = captions._prepare({}, cues, 120, font_path=self.font)
+        for _, layer, glyphs in layers:
+            self.assertIsNotNone(layer.getbbox())
+            for glyph, x, y in glyphs:
+                box = glyph.getbbox()
+                if box:
+                    self.assertGreater(box[0], 0)
+                    self.assertGreater(box[1], 0)
+                    self.assertLess(box[2], glyph.width)
+                    self.assertLess(box[3], glyph.height)
+                self.assertGreaterEqual(x, 0)
+                self.assertGreaterEqual(y, 0)
+                self.assertLessEqual(x+glyph.width, layer.width)
+                self.assertLessEqual(y+glyph.height+12, layer.height)
+        image = captions.render_caption_frame({}, cues, 110, 120, font_path=self.font)
+        self.assertIsNotNone(image.getbbox())
+
 
 if __name__ == '__main__':
     unittest.main()

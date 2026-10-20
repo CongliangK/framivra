@@ -116,6 +116,18 @@ for(const style of JSON.parse(process.argv[2])) {
   if(draw(end)!==draw(end-5))throw Error(style+' final hold changed');
   }
   }
+  if(style==='hud') {
+   sandbox.window.MG_CONTENT.items=Array.from({length:6},(_,i)=>({label:'Target'+i,value:11+i*13}));
+   sandbox.window.MG_CONTENT.frames=90;
+   for(const hold of [0,12,44]) for(const pace of [.5,1,2]) {
+    sandbox.window.MG_CONTENT.hold_frames=hold;sandbox.window.MG_CONTENT.pace=pace;
+    const ops=JSON.parse(draw(89));
+    const numbers=ops.filter(a=>a[0]==='fillText'&&typeof a[1]==='string'&&/^\d+$/.test(a[1])).map(a=>Number(a[1]));
+    for(const item of sandbox.window.MG_CONTENT.items) {
+     if(!numbers.includes(item.value))throw Error('HUD did not settle value '+item.value+' hold '+hold+' pace '+pace);
+    }
+   }
+  }
   if(style==='cel-boil') {
    sandbox.window.MG_CONTENT.items=[{label:'Build',value:42}];
    const ops=JSON.parse(draw(45));
