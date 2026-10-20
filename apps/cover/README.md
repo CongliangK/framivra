@@ -1,6 +1,6 @@
 # cover · B 站投稿封面产线
 
-v2 应用（P2a 批次 1 自 `scripts/make_cover.py` 迁入；manifest 见 `app.json`，兼容 symlink：`scripts/make_cover.py` → 本目录）。来源决策 D50（voice-ime 首期封面收编）。
+v2 应用（P2a 批次 1 自 `scripts/make_cover.py` 迁入；manifest 见 `app.json`，兼容转发壳：`scripts/make_cover.py` → 本目录）。来源决策 D50（voice-ime 首期封面收编）。
 
 ## 用途
 
@@ -19,10 +19,12 @@ v2 应用（P2a 批次 1 自 `scripts/make_cover.py` 迁入；manifest 见 `app.
 
 ## 开启步骤
 
+以下示例从 Framivra 仓库根执行；`<video_tools>` 替换为仓库绝对路径，`<项目>` 与原图占位符替换为对应绝对路径。
+
 ```bash
-# 项目根（或任意含 --out 目录权限的位置）
-env python3 apps/cover/make_cover.py all --out <项目>/cover --bg-src <imgen原图.png> \
+cd "<video_tools>"
+env python3 apps/cover/make_cover.py all --out "<项目>/cover" --bg-src "<imgen原图.png>" \
     --title "说话 就是 打字" --sub "Linux 开源 · 语音键盘同引擎"
 # 分步：prep-bg / render / previews / qc 各自可单跑（qc 出 cover_qc.json 机器可读回执）
-env python3 apps/cover/make_cover.py qc --dir <项目>/cover
+env python3 apps/cover/make_cover.py qc --dir "<项目>/cover"
 ```

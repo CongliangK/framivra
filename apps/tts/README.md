@@ -1,8 +1,9 @@
 # tts/ · IndexTTS-2.5 口播占位语音产线 + edge-tts 兜底
+原三模块方案的章节编号仅作历史来源：[2026-09-11 设计记录](https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md)。
 
 > **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
 
-口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版；旧路径 `scripts/repack_voice.py` 经 symlink 可达）**。
+口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版；旧路径 `scripts/repack_voice.py` 经转发壳 可达）**。
 来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）
 参数化收编——硬编码窗口表 → `spec.json` 驱动；产物按 repack_voice.py 既有消费约定落位，**零协议改动**。
 
@@ -75,9 +76,10 @@ config.local.json 的 `tts.enabled` 置 `true`（键缺省时全走默认探测�
 manifest 行字段（对齐 voice-ime manifest.json + peak_db）：
 `{id, chars, budget_s, raw_s, duration_factor, final_s, peak_db}`（edge 引擎 duration_factor 恒 null）。
 
-`gen` 完成后打印 repack_voice.py 同款后续命令序列（清 prepare 缓存 → prepare → audio →
-mux → qc → audit；v2 §1.2：limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用
-`apps/sync/repack_voice.py` 替换）。
+`gen` 完成后打印 repack_voice.py 同款完整 `all` 交付入口，会更新项目 `cache/`、`out/`；
+内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish。局部音频诊断须先对当前输入
+`prepare`，再 `audio --report`，最终仍运行完整 `all` 并检查退出码与 QC/插件结果，见 [runbook](../../docs/skill/references/runbook.md)。
+limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用 `apps/sync/repack_voice.py` 替换。
 
 ## 引擎与 atempo 契约（方向坑必须钉死）
 
@@ -123,13 +125,13 @@ cd apps/tts && env python3 -m unittest discover -s tests -t . -v   # 零模型�
 ## 已验证版本（本机资产，init.sh 探测即用）
 
 - 模型：IndexTeam/IndexTTS-2.5 @ `~/AI/IndexTTS/repo/checkpoints`（11 文件五件套齐，
-  ModelScope revision 见方案 §6.1 表 #4）；代码仓 indextts（infer_v2_5.IndexTTS2）。
+  许可与固定证据见 ../../docs/third-party-licenses.md）；代码仓 indextts（infer_v2_5.IndexTTS2）。
 - 解释器：conda indextts py3.10.19 / repo `.venv` py3.11.13（官方支持区间 3.10-3.11）。
 - edge-tts @ `~/miniconda3/bin/edge-tts`（py3.13 入口脚本）；音色参考 9.9s 已核实。
 
 ## 风险
 
-- edge-tts 依赖微软非官方公开接口（无 SLA），仅作兜底不作主力（方案 §11）。
+- edge-tts 依赖微软非官方公开接口（无 SLA），仅作兜底不作主力。
 - atempo 方向坑复发风险由 golden 单测钉死（R8）；`duration_factor` 与 atempo 方向相反，
   代码注释已照录 run_v2.py 修正注记。
 - 同卡共驻（IME sidecar / ASR sidecar / NVENC）时 indextts 可能 OOM——属预期降级路径，

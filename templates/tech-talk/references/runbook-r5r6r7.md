@@ -1,7 +1,7 @@
 # runbook R5/R6/R7 · 发布链 / BGM 分轨审计 / 封面（tech-talk 产线配方）
 
 > **tech-talk 产线知识**：自内核 `docs/skill/references/runbook.md` R5/R6/R7 三节原文迁入——发布链/BGM/封面属产线配方（各依赖具体 app 组合：publish / blender-bridge / cover+imgen）。机制侧配方 R1/R2/R2s/R3/R4 与棒次协议仍在内核 runbook。
-> `<项目>` = 项目目录占位（下文用真实项目 voice-ime 作示例）；`<VTX>` = `~/.agents/skills/video/vtx/vtx.py`（符号链接，权威本体 video_tools 仓 `vtx/`）；`<video_tools>` = video_tools 仓根。
+> 先将 `VIDEO_TOOLS` 设为本仓的绝对路径；`<项目目录>` 替换为实际项目。下列配方会写入产物或替换已有文件，执行前确认项目与输出位置。
 
 ## R5 · 发布链（4K 投稿版 + 冻结）
 
@@ -11,33 +11,33 @@
 cd <项目目录>   # 例：~/文档/04_bilibili视频/voice-ime
 
 # 1) 4K 投稿版导出（方案三：8 段并行 nvenc p4，段内 lanczos 放大，concat -c copy 拼接 + aac 直通）
-env python3 $VIDEO_TOOLS/apps/publish/export_4k.py -t timeline.json
+env python3 "$VIDEO_TOOLS"/apps/publish/export_4k.py -t timeline.json
 
 # 2) 4K 断言（14 项：分辨率/帧率/h264 High/yuv420p/码率 cap/时长+帧数/aac/I 间隔/faststart）
-bash $VIDEO_TOOLS/apps/publish/check_4k.sh out/final_4k.mp4
+bash "$VIDEO_TOOLS"/apps/publish/check_4k.sh out/final_4k.mp4
 
 #    x264 软件链（lanczos + libx264 medium 单进程，--fallback-x264）为回退路径与画质对照基线
 #    （NVENC 探测失败时 export_4k.py 显式告警后自动整链回落，不静默）；画质对照门
 #    compare_4k_quality.py：PSNR ≥42dB / SSIM ≥0.99（2026-09-13 定版实测 10 帧 PSNR min 49.45dB / SSIM min 0.993247 全达标）
-env python3 $VIDEO_TOOLS/apps/publish/export_4k.py -t timeline.json --fallback-x264 -o out/final_4k_x264_ref.mp4
-env python3 $VIDEO_TOOLS/apps/publish/compare_4k_quality.py out/final_4k.mp4 out/final_4k_x264_ref.mp4
+env python3 "$VIDEO_TOOLS"/apps/publish/export_4k.py -t timeline.json --fallback-x264 -o out/final_4k_x264_ref.mp4
+env python3 "$VIDEO_TOOLS"/apps/publish/compare_4k_quality.py out/final_4k.mp4 out/final_4k_x264_ref.mp4
 
 # 3) 冻结三件套（2026-10-03 起脚本化，杜绝手写漏项/落错目录）：
 #    a. FREEZE.json + CHANGELOG.md 一键生成/追加（本包 scripts/freeze.py，多版本节历史保留，
 #       自动算 md5/size/ffprobe 元数据 + timeline _meta 摘要 + git 状态；ffprobe 缺失自动降级）：
-env python3 $VIDEO_TOOLS/templates/tech-talk/scripts/freeze.py <项目目录> \
+env python3 "$VIDEO_TOOLS"/templates/tech-talk/scripts/freeze.py <项目目录> \
     --version v1.0 --note "本版改动与验证门摘要"
 #    b. 冻结时间线快照：cp timeline.json timeline.<版本号>-frozen.json
 #    c. 生成后**人工核对**：补写 FREEZE 最新节 qc 占位段（vtx qc 分数/content_gates 各门/
 #       check_4k 断言与 verdict）与 CHANGELOG 对应 QC 行——脚本只算指纹，不替人下验证结论。
 # 4) 发布物料：PUBLISH-PACK.md 骨架（参数快照/简介/备答模板，自动填 FREEZE/timeline 字段，
 #    TODO 段人工补写）：
-env python3 $VIDEO_TOOLS/templates/tech-talk/scripts/publish_pack.py <项目目录> [--version v1.0]
+env python3 "$VIDEO_TOOLS"/templates/tech-talk/scripts/publish_pack.py <项目目录> [--version v1.0]
 ```
 
 **耗时基准**：4K 导出 ~66s（方案三 2026-09-13 实测 65.68s = 段渲染 62.8s + concat 2.1s，8 段并行 nvenc p4；段缓存全命中重跑时秒级）；check_4k 秒级。〔方案三前：x264 软件链单进程 ~2.5min〕
 
-**必跑验证门**：check_4k 全 PASS（任一 FAIL 退出码 1）。码率门覆盖用 `BITRATE_CAP_MBPS=20.5 bash check_4k.sh …`。
+**必跑验证门**：check_4k 全 PASS（任一 FAIL 退出码 1）。码率门覆盖用 `BITRATE_CAP_MBPS=20.5 bash "$VIDEO_TOOLS"/apps/publish/check_4k.sh …`。
 
 **已知坑位**：
 - **冻结纪律**：FREEZE 记录的 md5 必须与当轮产物一致；后续任何改动（哪怕只重导 4K）都要更新 FREEZE 对应条目（final_4k md5 会变、final.mp4 不变时只改一处并注明）。
@@ -55,7 +55,7 @@ env python3 $VIDEO_TOOLS/templates/tech-talk/scripts/publish_pack.py <项目目�
 
 ```bash
 cd <项目目录>   # 例：~/文档/04_bilibili视频/voice-ime
-python3 $VIDEO_TOOLS/apps/blender-bridge/audit_bundle.py -t timeline.json --prefix bgm2-
+python3 "$VIDEO_TOOLS"/apps/blender-bridge/audit_bundle.py -t timeline.json --prefix bgm2-
 # 产物：<项目>/cache/audit_bgm/  ├ mp3/（逐源 320k 试听件，内容校验缓存）
 #                               ├ timeline.json（逐轨一列审计时间线）
 #                               └ audit.blend（Blender 审计工程，交用户逐轨静音/独听）
@@ -79,14 +79,14 @@ python3 $VIDEO_TOOLS/apps/blender-bridge/audit_bundle.py -t timeline.json --pref
 
 ```bash
 # 一条龙：prep-bg(lanczos 精确画布) → render(HTML+Chrome 截图 PNG/JPG≤2MB) → previews(四端裁切) → qc(验证门)
-env python3 $VIDEO_TOOLS/apps/cover/make_cover.py all --out <项目>/cover \
+env python3 "$VIDEO_TOOLS"/apps/cover/make_cover.py all --out <项目>/cover \
     --bg-src <项目>/assets/imgen/<UTC>-<n>.png \
     --title "说话 就是 打字" --sub "Linux 开源 · 语音键盘同引擎"
 
 # 只改文案/排布重铺（bg_1920x1200.png 已在 <项目>/cover/ 内）：
-env python3 $VIDEO_TOOLS/apps/cover/make_cover.py render --out <项目>/cover --title "…" --sub "…"
-env python3 $VIDEO_TOOLS/apps/cover/make_cover.py previews --dir <项目>/cover
-env python3 $VIDEO_TOOLS/apps/cover/make_cover.py qc --dir <项目>/cover
+env python3 "$VIDEO_TOOLS"/apps/cover/make_cover.py render --out <项目>/cover --title "…" --sub "…"
+env python3 "$VIDEO_TOOLS"/apps/cover/make_cover.py previews --dir <项目>/cover
+env python3 "$VIDEO_TOOLS"/apps/cover/make_cover.py qc --dir <项目>/cover
 ```
 
 **产物契约**：`<项目>/cover/` = bg png + cover.html + cover.meta.json（参数自述）+ cover png/jpg（上传用 JPG）+ previews/{pc_16x9,thumb_384,app_138,app_43}.png + cover_qc.json。

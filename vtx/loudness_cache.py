@@ -30,7 +30,7 @@ qc/gates 并行的发布链场景下，两进程各自基于旧快照回写会�
 fcntl 时降级为仅进程内锁（本仓跨平台待验项目，Linux 为主战场）。
 root 缺省 = media 父目录的父目录（out/final.mp4 → 项目根）。
 """
-import hashlib, json, os, threading, time
+import hashlib, json, threading, time
 from pathlib import Path
 
 from .cache_state import media_stat_digest

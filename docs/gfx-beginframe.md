@@ -2,7 +2,7 @@
 
 **Issue #67 meets its negative-result research stopping condition for the tested prototype. The candidate fails the full-frame exactness gate and must not be adopted for production. Formal performance is UNRUN.** The host is undergoing substantial concurrent development, so saved wall/RSS observations cannot establish speed, efficiency or a performance NoGo. The production backend and NAVFREE default are unchanged.
 
-The isolated implementation and entry points are in [experiments/gfx_beginframe](../experiments/gfx_beginframe/README.md); its binary/distribution/protocol identity has one home in [the lock file](../experiments/gfx_beginframe/binary-lock.json). No new browser was downloaded. Original download URL and receipt are unknown and recorded as null; local Playwright distribution metadata and the actual executable hash are retained.
+The rejected prototype, its CPU checks and replay entry points are archived at [revision f1efe5f6](https://github.com/CongliangK/framivra/tree/f1efe5f688b543ca11902c9538dec02a5c265961/experiments/gfx_beginframe); its binary/distribution/protocol identity has one home in [the archived lock](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/experiments/gfx_beginframe/binary-lock.json). No new browser was downloaded. Original download URL and receipt are unknown and recorded as null; local Playwright distribution metadata and the actual executable hash are retained.
 
 ## Research premise and support
 
@@ -24,7 +24,7 @@ No-damage output requires its own screenshot response. Missing captures and page
 
 ## Functional evidence
 
-Evidence root: `/tmp/framivra-orchestration-20261018/issue67/`. These are local artifacts; [the implementation](../experiments/gfx_beginframe/README.md) includes parameterized replay and strict-verification entry points. `evidence-snapshot.json` hashes the principal records.
+Evidence root: `/tmp/framivra-orchestration-20261018/issue67/`. These are local artifacts, separate from the Git source archive. For historical reproduction, use a separate checkout of the complete revision linked above and follow its [archived README](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/experiments/gfx_beginframe/README.md), retaining the matching product libraries, locked local browser and isolated output requirements. `evidence-snapshot.json` hashes the principal records.
 
 Initial small probes passed: real c5a requests 0, 22, 1, 22 were full-frame exact; the self-contained resource fixture included an embedded font, PNG image, SVG blur, gradient and alpha. Its 21 fixed-seed requests, dual-corner diagnostics and error/new-run recovery passed. Idle BeginFrame returned `hasDamage=false` twice; a subsequent independent screenshot still matched. Eight CPU protocol checks cover exceptions, missing capture, stale identity and no-damage behavior. Independent review found that the functional runner recorded idle screenshot disagreement without rejecting the run; this is corrected. Two additional subprocess regression cases execute the actual entry point with matching or corrupted idle PNGs, checking persisted reports and exit codes. The negative case also fails against the pre-fix implementation, confirming that it detects the reported defect without a browser. These small passes do not override the pressure failure.
 

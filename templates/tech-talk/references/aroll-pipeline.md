@@ -1,6 +1,6 @@
 # aroll-pipeline · A-roll 实拍素材全链处理手册（通用化）
 
-> **来源**：`~/文档/04_bilibili视频/_library/reports/A-roll实拍素材处理流程-2026-09-07.md`（首跑实录手册）+ `终版制作经验-voice-ime-D31.md` §二。提炼日期：2026-10-03；原报告以 voice-ime 为例的部分已参数化为「<口播工程>/<素材>」表述，**项目实例**行保留首期实测量作参考。关联决策：D23（实拍规范）/D25（降噪链）/D26（双系统同步）/D31（D-A 双源）。
+> **来源**：[2026-09-07 首跑实录](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/apps/aroll/docs/A-roll实拍素材处理流程-2026-09-07.md)+ `终版制作经验-voice-ime-D31.md` §二。提炼日期：2026-10-03；原报告以 voice-ime 为例的部分已参数化为「<口播工程>/<素材>」表述，**项目实例**行保留首期实测量作参考。关联决策：D23（实拍规范）/D25（降噪链）/D26（双系统同步）/D31（D-A 双源）。
 > 拍摄端规范（怎么拍）→ `shooting-guide.md`；本文管拍完之后的全链处理。工具均在 `apps/aroll/`、`apps/sync/`、`plugins/denoise/`。
 
 ## 0. 输入与产出
@@ -18,6 +18,7 @@
 
 ## 2. ASR 配对与废片判定
 
+- ASR 独立环境、协议与 CLI 以 `<video_tools>/apps/asr/README.md` 为准（`<video_tools>` 为本仓真实根目录）。
 - 对全部 take 与视频抽轨转写 → 文本匹配配对。
 - **废片判定=视频文本是某 take 的前缀且比例低**（项目实例：12 条视频中断点 12%~70%）。
 - 16k mono wav 输入即可；转写很快。
@@ -31,8 +32,10 @@
 
 ## 4. 音轨替换重封装
 
+替换两个输入占位符；输出为当前目录的 `aligned.mp4`（`-y` 会覆盖同名文件，勿与输入同路径）。
+
 ```bash
-ffmpeg -nostdin -y -i <视频> -i <同步.wav> -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 320k -movflags +faststart
+ffmpeg -nostdin -y -i "<视频>" -i "<同步.wav>" -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 320k -movflags +faststart aligned.mp4
 ```
 
 - **`-nostdin` 必加**：`while read` 循环里 ffmpeg 会偷吃 stdin 后续行（实测踩坑）。
@@ -44,8 +47,8 @@ ffmpeg -nostdin -y -i <视频> -i <同步.wav> -map 0:v:0 -map 1:a:0 -c:v copy -
 
 ## 6. 降噪（D25 标准链）
 
-- 链=陷波（80Hz 高通+50/100/150Hz 工频 notch）→ Resemble 仅降噪级 → 48kHz；`plugins/denoise/denoise_voice.py`，CPU 批量几分钟量级。
-- 项目实例：50Hz 消 ~40dB、100Hz ~20dB、150Hz ~14dB；零时长漂移；语音 RMS 损失 ≤1.7dB。
+- 生产链、已验证适用域与 CLI 用法见 [denoise 插件](../../../plugins/denoise/README.md)。
+- 历史项目实例（不作现行链保证）：50Hz 消 ~40dB、100Hz ~20dB、150Hz ~14dB；零时长漂移；语音 RMS 损失 ≤1.7dB。
 - **处理对象用无损 PCM 源**（synced wav），不要解成品 AAC 再编（避免二代有损）。
 - 算法选型对照实验（备胎 MossFormer2 等）→ `shooting-guide.md` §录音。
 

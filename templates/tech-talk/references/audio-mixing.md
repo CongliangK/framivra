@@ -29,7 +29,7 @@
 
 ## 四、口播降噪链（D25）
 
-- 生产链=陷波（80Hz 高通+50/100/150Hz 工频 notch）→ Resemble 仅降噪级 → 48kHz（`plugins/denoise/denoise_voice.py`，timeline sources[] 声明 `denoise` 键即生效）。
+- 生产链、已验证适用域与 timeline `sources[].denoise` 用法见 [denoise 插件](../../../plugins/denoise/README.md)。
 - 备胎：MossFormer2_SE_48K（唯一抗远距极端工况）/ DFN2（全工况均衡）；DFN3 仅限输入信噪良好时（人声埋深会被整体判噪输出近静音）。
 - 处理对象用无损 PCM 源，避免二代有损；50Hz 工频哼声先查 Pin 1 屏蔽悬空（硬件换线可根治，算法链兜底）。
 

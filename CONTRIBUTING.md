@@ -39,10 +39,10 @@ bash scripts/doc_gates.sh
 ## 硬性纪律（PR 前自查）
 
 1. **版本三源同步**：`VERSION` / `pyproject.toml` / `vtx/__init__.py` 三处版本号改一必三，`doc_gates` 的 version_sync leaf 守护。版本号变更只随发布提交，日常 PR 请勿改动。
-2. **catalog 生成区禁手改**：`docs/catalog.md` 的生成区由脚本重注，任何 manifest（`app.json` / `plugin.json`）变更后必须执行：
+2. **catalog 生成区禁手改**：`docs/catalog.md` 的生成区由脚本重注，任何 manifest（`app.json` / `plugin.json`）变更后必须执行以下写入命令（更新 `docs/catalog.md` 的生成区）：
 
    ```bash
-   python3 scripts/gen_manifest_catalog.py
+   python3 scripts/gen_manifest_catalog.py --inject docs/catalog.md
    ```
 
    再跑 `bash scripts/doc_gates.sh` 确认全绿。

@@ -26,28 +26,33 @@ vt.py              统一入口：doctor / apps|plugins|templates list|check（s
 git clone https://github.com/CongliangK/framivra
 cd framivra
 python3 vt.py init                     # 依赖自检 + 安装指引 + 生成 config.local.json（幂等；--fix 自动装）
-python3 vt.py doctor                   # 三检：版本漂移 / apps+plugins manifest+health / 工作流模板完好性
+env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor  # 三检：本地引用漂移 / apps+plugins manifest+health / 工作流模板完好性
 bash scripts/new_project.sh <项目目录> 30  # 新项目脚手架（目录 + 模板 timeline.json + schema）
 python3 vtx/vtx.py -t <项目>/timeline.json validate    # 渲染前校验门（必跑）
 python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/final.mp4（--until video 可截断）
 ```
 
-可选产线初始化：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等）；`bash apps/matting/init.sh --download`（抠像链权重）。live skill 挂载（如 `~/.agents/skills/video/`，为指向本仓的符号链接）可用 `vt.py --fix-links` 重建。
+例行 doctor 使用离线形态，不 fetch；版本漂移仅相对本地已有引用。确需刷新远端引用时，联网 doctor 会执行 git fetch 写入 .git，须按写操作审查。
+
+可选产线初始化：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等）；`bash apps/matting/init.sh`（已有抠像资产探测；下载边界见 [第三方许可](docs/third-party-licenses.md)）。live skill 挂载（如 `~/.agents/skills/video/`，为指向本仓的符号链接）可用 `vt.py --fix-links` 重建。
 
 不想手动 clone？三平台一键安装（克隆模式，等价于自动跑一遍「快速开始」）见下两节：Linux/macOS（`install.sh`）与 Windows（`install_windows.ps1`）。
 
-**Linux/macOS 一键安装（克隆模式，install.sh）**——与 Windows 侧同一工作流：引导脚本克隆（或安全更新）本仓库到 `~/.local/share/framivra-repo`，再在克隆内运行幂等的 `vt.py init`；从公开稳定 Release 解析 tag 与提交，不要求 gh CLI，不替代手动克隆（上文「快速开始」clone 路径始终可用），脚本绝不 sudo、也不自动安装包管理器依赖：
+<a id="installer-trust"></a>
+
+两平台引导器的共同信任边界：脚本经 HTTPS 从 GitHub raw 下载，首次信任「HTTPS 下载通道 + 仓库当前内容」，不自称独立签名验证；可先下载审读再执行。发布者身份验证（keyless provenance，#16/#41）由资产安装通道承担，克隆引导不冒充身份验证。版本选择、固定 tag 与完整边界见 [安装选择与信任](docs/releases.md#安装选择与信任)。
+
+**Linux/macOS 一键安装（克隆模式，install.sh）**（[共同信任边界](#installer-trust)）——与 Windows 侧同一工作流：引导脚本克隆（或安全更新）本仓库到 `~/.local/share/framivra-repo`，再在克隆内运行幂等的 `vt.py init`；从公开稳定 Release 解析 tag 与提交，不要求 gh CLI，不替代手动克隆（上文「快速开始」clone 路径始终可用），脚本绝不 sudo、也不自动安装包管理器依赖：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/CongliangK/framivra/main/scripts/install.sh | bash
 ```
 
-- 自动完成：python3≥3.9 与 git 探测（缺失不自动装，给一行 apt/dnf/brew 或 python.org / git-scm.com 指引）→ 克隆/安全更新仓库 → 在克隆内跑 `vt.py init`（依赖自检 + 生成 `config.local.json`；参数原样透传，如 `bash -s -- -- --fix`；curl|bash 下有可用的 `/dev/tty` 时把交互接回终端）→ 提示 `cd` 目录与 `vt.py doctor` 用法。重复运行 = 安全更新 + 重跑幂等 init；兼容 macOS 系统自带 bash 3.2。
+- 自动完成：python3≥3.9 与 git 探测（缺失不自动装，给一行 apt/dnf/brew 或 python.org / git-scm.com 指引）→ 克隆/安全更新仓库 → 在克隆内跑 `vt.py init`（依赖自检 + 生成 `config.local.json`；参数原样透传，如 `bash -s -- -- --fix`；curl|bash 下有可用的 `/dev/tty` 时把交互接回终端）→ 提示进入仓库与 doctor 用法（例行检查用上方离线形态）。重复运行 = 安全更新 + 重跑幂等 init；兼容 macOS 系统自带 bash 3.2。
 - 更新安全语义与 Windows 版逐条对齐：克隆干净（`git status --porcelain` 为空）时显式 refspec 浅 fetch + 全限定 ref `reset --hard origin/<ref>`；克隆变脏（含未跟踪文件）时**拒绝自动更新**、不静默丢弃改动（清理或删除克隆目录后重试，或加 `--skip-update` 跳过更新直接复用）；本地提交以 `.git` 内同步标记（marker）保护，防 `reset --hard` 丢提交；上游新版本把原被忽略路径（典型 `config.local.json`）转为跟踪文件时判脏看不见，碰撞预检同样**拒绝覆盖**（先把冲突文件备份到克隆外，删除克隆目录后重装）；符号链接目录与 origin 不匹配的克隆一律拒绝覆盖。
 - 环境变量（与 Windows 侧同名同义）：`FRAMIVRA_DIR`（默认 `~/.local/share/framivra-repo`；**须为绝对路径**；**不得**用运行时数据根 `~/.local/share/video-tools`——安装运行数据会让克隆变脏、下次更新被拒；该比对为纯词法规范化（`/./`、`/../` 变体同拒，不依赖 macOS 缺失的 GNU `realpath`），但不解析符号链接——两路径经符号链接同址的极端场景不拦）、`FRAMIVRA_REPO`（默认 `https://github.com/CongliangK/framivra.git`，可信镜像可）、`FRAMIVRA_REF`（默认 `stable`；指定 `vX.Y.Z` 或 `vX.Y.Z-rc.N`；开发版显式 `main`）；空值/全空白/控制字符/短横线开头一律拒绝，空白仅 `FRAMIVRA_DIR` 放行空格（目录路径可含空格），`FRAMIVRA_REPO`/`FRAMIVRA_REF` 仍拒空白。
-- 信任边界如实说明（与 Windows 侧同口径）：引导脚本经 HTTPS 从 GitHub raw 下载，首次信任的是「HTTPS 下载通道 + 仓库当前内容」，不自称独立签名验证（可先取脚本审读后再执行）；发布者身份验证（keyless provenance，#16/#41）由资产安装通道执行，克隆引导不冒充身份验证。
 
-**Windows 一键安装（克隆模式，install_windows.ps1）**——与上节 Linux/macOS 侧同一工作流（克隆/安全更新仓库 + 仓内幂等 init），依赖公开稳定 Release 的版本定位，不要求 gh CLI：引导脚本克隆（或安全更新）本仓库到 `%LOCALAPPDATA%\framivra-repo`，再在克隆内运行幂等的 `vt.py init`；定位是快速初始化手段，不替代手动克隆（上文「快速开始」clone 路径始终可用）：
+**Windows 一键安装（克隆模式，install_windows.ps1）**（[共同信任边界](#installer-trust)）——与上节 Linux/macOS 侧同一工作流（克隆/安全更新仓库 + 仓内幂等 init），依赖公开稳定 Release 的版本定位，不要求 gh CLI：引导脚本克隆（或安全更新）本仓库到 `%LOCALAPPDATA%\framivra-repo`，再在克隆内运行幂等的 `vt.py init`；定位是快速初始化手段，不替代手动克隆（上文「快速开始」clone 路径始终可用）：
 
 ```powershell
 # Windows 原生 PowerShell 一行(无需 WSL/Git Bash;等价于自动跑一遍「快速开始」):
@@ -58,7 +63,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing htt
 - 重复运行 = 安全更新：克隆干净（`git status --porcelain` 为空）时 `git fetch` + `reset --hard origin/<ref>`；克隆变脏（含未跟踪文件）时**拒绝自动更新**、不静默丢弃改动（清理或删除克隆目录后重试，或加 `-SkipUpdate` 跳过更新直接复用）。本地提交同样拒绝自动重置（引导器以 `.git` 内同步标记识别，防 `reset --hard` 丢弃）。上游新版本把原被忽略路径（典型 `config.local.json`）转为跟踪文件时判脏看不见，碰撞预检同样**拒绝覆盖**（先把冲突文件备份到克隆外，删除克隆目录后重装）。
 - 环境变量：`FRAMIVRA_DIR`（默认 `%LOCALAPPDATA%\framivra-repo`；**须为绝对路径**，相对路径与以点/空格结尾的路径段一律拒绝；**不得**用运行时数据根 `%LOCALAPPDATA%\framivra`——安装运行数据会让克隆变脏、下次更新被拒）、`FRAMIVRA_REPO`（默认 `https://github.com/CongliangK/framivra.git`，可信镜像可）、`FRAMIVRA_REF`（默认 `stable`；指定 `vX.Y.Z` 或 `vX.Y.Z-rc.N`；开发版显式 `main`）；空值/控制字符/短横线开头一律拒绝，空白仅 `FRAMIVRA_DIR` 放行（目录路径可含空格，默认值随用户名而定），`FRAMIVRA_REPO`/`FRAMIVRA_REF` 仍拒空白。
 - 参数透传：脚本名后追加的参数原样交给 `vt.py init`（短横线开头须加引号），如 `& $env:TEMP\vt-i.ps1 '--fix'`；脚本先保存后执行，控制台直连不被吞。
-- 信任边界如实说明：引导脚本经 HTTPS 从 GitHub raw 下载，首次信任的是「HTTPS 下载通道 + 仓库当前内容」，不自称独立签名验证（可先取脚本审读后再执行）；发布者身份验证（keyless provenance，#16/#41）由资产安装通道执行，克隆引导不冒充身份验证，克隆模式不要求 gh。企业域控无 winget 的机器需手动装 Python 与 Git；隔离内网不在支持范围。
+- 企业域控无 winget 的机器需手动装 Python 与 Git；隔离内网不在支持范围。
 - 稳定源码、RC、平台资格与发行冻结规则见 [源码稳定基线](docs/releases.md)。`install.py` 的资产安装保留严格身份验证；长期安装器改进跟踪 #94。
 
 维护者发布入口（仅查看参数；真实发布需 GitHub 仓库写权限）：
@@ -102,12 +107,12 @@ bash scripts/release.sh --help
 | 基础（强烈建议） | libfdk_aac 构建 | mux 正式封装音质 | 自检，缺则回落+告警（交付须复测解码 TP） |
 | 可选 | blender / sox | blender-bridge 预览桥 / 部分音频后处理 | 自检 |
 | 可选 | NVENC（NVIDIA GPU） | `video --gpu` 渲染 | 自动探测，不可用回落 x264 |
-| **大模型（默认关闭）** | conda env comfyui + MatAnyone2/BiRefNet_HR 权重 | apps/matting 自研抠像链 | `bash apps/matting/init.sh --download` |
+| **大模型（默认关闭）** | conda env comfyui + MatAnyone2/BiRefNet_HR 权重 | apps/matting 自研抠像链 | `bash apps/matting/init.sh`（已有资产探测） |
 | **大模型（默认关闭）** | Qwen3-ASR sidecar（18085） | apps/asr 字幕产线 | `bash apps/asr/init.sh` |
 | **大模型（默认关闭）** | IndexTTS-2.5 repo（11GB 权重）+ conda indextts（edge-tts 兜底） | apps/tts 占位语音 | `bash apps/tts/init.sh` |
 | 可选 | ComfyUI 服务 127.0.0.1:8188 | apps/matting 背景图生成（post_h3.sh 消费其输出） | `bash apps/matting/comfyui_init.sh` |
 | **大模型（默认关闭）** | 生图 API key（0.1 元/张）+ requests | apps/imgen 生图 | `bash apps/imgen/init.sh` 配 key |
-| **大模型（默认关闭）** | resemble-enhance 权重 681MB + conda denoise env | plugins/denoise 口播降噪 | `bash plugins/denoise/denoise_init.sh --download` |
+| **大模型（默认关闭）** | resemble-enhance 权重 681MB + conda denoise env | plugins/denoise 口播降噪 | `bash plugins/denoise/denoise_init.sh`（已有资产探测） |
 
 ## 开发者文档与项目布局
 

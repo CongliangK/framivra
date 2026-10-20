@@ -9,8 +9,10 @@
 ```bash
 env bash matte_pipeline.sh matte_auto_v9          # 完整：清显存→建工程→抠像→导出
 SKIP_GUARD=1 env bash matte_pipeline.sh proj      # 达芬奇已就绪，跳过重启
-SKIP_OPS=1    env bash matte_pipeline.sh proj     # 已抠好，仅重新导出
+SKIP_OPS=1    env bash matte_pipeline.sh proj     # 仅跳过鼠标序列，仍建工程/导入并导出
 ```
+
+视频目录按非空值优先级选择：第二个 CLI 参数 > `VIDEOS` > `MATTE_BASE` > HOME 下原 `centered9` 默认目录；空参数或空环境变量回退到下一项。
 
 阶段明细：
 

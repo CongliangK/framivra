@@ -33,7 +33,7 @@ apps/asr/.venv；绝不借用输入法环境）：
   - build_words/_is_kept_char 等 words 构造纯函数只依赖 stdlib——系统 python3 可直接
     import（tests/test_words.py 即如此测，不加载模型）。
 
-来源：docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.3/§3.4；
+来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.3/§3.4；
 qwen_asr 0.0.6 inference/qwen3_asr.py（from_pretrained/transcribe/分块拼回）、
 inference/qwen3_forced_aligner.py（items 结构、tokenize/clean_token、ms→s）、
 ibus-voice-ime qwen_asr_server.py（模型管理/换挡/空闲卸载思路，解耦重写）。
