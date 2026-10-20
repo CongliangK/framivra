@@ -2,7 +2,7 @@
 
 本包将 [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) 的一般设计语言转化为独立编写的帧驱动程序模板。不是原片复刻。逐款设计研究与许可边界见 [研究记录](../../docs/mg-styles-research.md)。
 
-本包有两条入口：`build.py` 的十五款 Canvas **prototype**，以及 `build_media.py` 的五种独立媒体路径。前者仍是标题/标签/数值接口，尚不足以表达各风格完整叙事；后者分别接受三维场景与章节、像素任务与障碍、实际视频与反应 cue、连续线条故事、液体阶段。实现/缺失/验证状态以[研究矩阵](../../docs/mg-styles-research.md)和[验证记录](../../docs/mg-styles-validation.md)为准，不以入口数量代表完成。
+本包有两条入口：`build.py` 的十五款 Canvas **prototype**，以及 `build_media.py` 的十一种独立媒体路径。前者仍是标题/标签/数值接口，尚不足以表达各风格完整叙事；后者分别接受三维场景与章节、像素任务与障碍、实际视频与反应 cue、连续线条故事、液体阶段、角色动作、具象轮廓故事、目标轨迹与遥测。实现/缺失/验证状态以[研究矩阵](../../docs/mg-styles-research.md)和[验证记录](../../docs/mg-styles-validation.md)为准，不以入口数量代表完成。
 
 从仓根预演：
 
@@ -46,7 +46,7 @@ python3 templates/mg-styles/build.py --style isometric --output /workspace/my-mg
 ```bash
 python3 templates/mg-styles/build_media.py --style soft-3d --content templates/mg-styles/examples/three-d.json --output /workspace/my-3d --frames 30 --samples 32 --dry
 python3 templates/mg-styles/build_media.py --style pixel --content templates/mg-styles/examples/pixel.json --output /workspace/my-pixel --frames 300 --dry
-python3 templates/mg-styles/build_media.py --style variety-captions --content templates/mg-styles/examples/captions.json --background /workspace/my-pixel/media/pixel.mp4 --output /workspace/my-captions --frames 300 --dry
+python3 templates/mg-styles/build_media.py --style variety-captions --content templates/mg-styles/examples/captions.json --background /workspace/my-pixel/media/composition.mp4 --output /workspace/my-captions --frames 300 --dry
 ```
 
 去掉 `--dry` 会渲染素材、编码源媒体、创建 timeline 与日志；随后必须按内核路由执行 validate 和完整 all。背景视频须自行提供且有使用权，满足内核时基、长度与音轨约束；构建成功不等于背景已通过 validate。示例字幕的语义与示例像素任务各障碍窗口对应；换背景必须重编 cue，不能只替换文件名。字幕源按整段实际 alpha 联合边界裁成独立资产，再由时间线 x/y 放回原位；这保留原始画面，不拉大字幕。源开头/结尾各一帧淡入/淡出，以现有透明视频合成契约保留 alpha。
@@ -77,3 +77,44 @@ python3 templates/mg-styles/build_media.py --style soft-3d --content templates/m
 `--three-d-mode full` 保留逐帧 Blender 路线，`transition` 的相机拉远曲线在该模式逐帧体现。显式 `scene_story` 的章标题替代默认 subtitle，后者只用于默认故事。`storyboard` 明确使用每章已落定的真实三维底片，原生尺寸不缩放，章节之间仅作二维水平遮罩擦入，其余为构图停留。底片的原生分辨率、样本数、源帧索引、场景/字体依赖和哈希，与最终合成的逐帧映射分开记录；合成完整 240 帧不表示 Blender 已渲染完整 240 帧。
 
 两份三维故事使用不同对象数、材质、关系及章节。高采样改善噪声但不宣称完全无噪；所有画质结论以实际源底片和成片审查为准。Eevee 的 EGL/只读缓存失败路径已停止，未修改缓存或权限；当前样板使用已验证的 Cycles CPU。声音仍是未与章节同步的参考轨，画面成片通过不代表声音设计完成。
+
+
+### 角色、形变与轨迹
+
+```bash
+python3 templates/mg-styles/build_media.py --style cel-boil --content templates/mg-styles/examples/cel/garden.json --output /workspace/my-cel --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style morph --content templates/mg-styles/examples/morph-growth.json --output /workspace/my-morph --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style hud --content templates/mg-styles/examples/hud-rescue.json --output /workspace/my-hud --frames 180 --dry
+```
+
+三条路径需要 Pillow、FFmpeg 与覆盖内容的本地字体；去掉 `--dry` 会写入新工程。各示例旁另有第二套内容，修改总帧数时必须同步调整所有 `[in,out)` 窗口。实际运行与视觉结果见[验证记录](../../docs/mg-styles-validation.md)，源码存在不表示成片已验收。
+
+CEL 的 `characters` 定义 blob/cat/star/sprout 与情绪，`beats` 定义角色、动作及预备/运动帧预算；`exposures` 使用 ones/twos/threes 的整数帧保持，分别对应一、二、三帧一张画。角色压缩预备、跳跃与伸展、短 smear 和手绘效果由动作驱动；整张图按曝光保持，boil 也不在保持帧偷动。程序轮廓与系统字体不能冒称手绘原画或专用手写字体。
+
+Morph 的 `shapes` 为连续窗口的 circle/leaf/star/arrow/drop、标签、位置、尺寸、颜色与转场长度。等弧长轮廓保持统一拓扑，经圆形中介与轻挤压变成下一具象形；几何、位置和色场共同转场，非两形淡化。每形保留落定段；它不支持任意字体/图标拓扑或子部件绑定。
+
+HUD 的 `target.points` 定义按帧覆盖全长的安全区轨迹；`stages` 组织 search/detect/confirm 三类连续状态与用户文字，`telemetry` 提供标签、值和单位。扫描、括号、环和数据层级跟随轨迹与状态，确认阶段输出精确最终数值。示例遥测是解释性示意数据，不是仪器测量；没有真三维全息、物理传感器或同步音效。
+
+
+连续三维短片可以明确选择原生源尺寸与固定采样：
+
+```bash
+python3 templates/mg-styles/build_media.py --style soft-3d --content templates/mg-styles/examples/three-d-continuous-a.json --output /workspace/my-continuous --frames 120 --samples 64 --render-width 960 --render-height 540 --three-d-mode full --dry
+```
+
+去掉 `--dry` 会真正逐帧执行 Blender；此例源为原生 960×540，时间线 1920×1080 会放大素材，不称原生 1080p。每整数帧烘焙真实相机轨道/look-at、体积守恒的非均匀 squash/stretch、对象重排和关系杆；文字逐帧跟随相机保持视口布局。每章窗口包括最后章节都需留够转场完成与落定帧。这里的形变是解析网格缩放而非软体物理；质量参数、实际耗时和画面限制见[验证记录](../../docs/mg-styles-validation.md)。连续 A/B 的已启动快照不继承后续源码修复；源版本及方块接触地面局限须按该记录逐项判断。CPU 渲染耗时取实际日志估算，不把 `--dry`、场景检查或三底片合成称为完整逐帧验收。
+
+
+### 等角装配、扁平因果与合成波旅程
+
+```bash
+python3 templates/mg-styles/build_media.py --style isometric --content templates/mg-styles/examples/isometric-neighborhood.json --output /workspace/my-iso --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style flat-vector --content templates/mg-styles/examples/flat-vector-ideas.json --output /workspace/my-flat --frames 180 --dry
+python3 templates/mg-styles/build_media.py --style synthwave --content templates/mg-styles/examples/synthwave-night.json --output /workspace/my-synth --frames 180 --dry
+```
+
+三者均需 Pillow、FFmpeg 与本地字体；合成波还需 NumPy。去掉 `--dry` 写入新工程，再按内核路由完整运行。等角的 `grid/nodes` 组织 home/lab/hub/garden，每个节点显式给出 base、wall、roof、activate 帧，`depends_on` 必须先点亮；`flows` 只在两端已落定后开始。真 30° 等角投影、按空间深度排序、延迟屋盖和整体平行滑轨保持空间关系；不是透视三维模型。
+
+扁平内容的 `origin/cards/links` 定义起点、数据卡和有向因果链，`final_order` 决定结尾重排，question/build/resolve 的阶段文字及帧窗口可换。预备压缩、冲出与过冲是角色动作；主体色块扩张擦除承接布局变化。图卡数值须有内容依据，程序不会替编辑判断因果关系。
+
+合成波的 `waypoints` 给出路标到达帧、标签与左右位置，approach/cross/arrive 三段驱动前进到停车；`tracking` 只在显式窗口局部错位和 RGB 分离，落定阅读期不允许 tracking。透视网格、连续世界坐标山层、光晕与金属色场文字构成旅程；这些是二维投影与程序媒介效果，不是物理镜头、真实镀铬材质或完整模拟磁带链。各路径实际成片、字体与边界问题以[验证记录](../../docs/mg-styles-validation.md)为准。
