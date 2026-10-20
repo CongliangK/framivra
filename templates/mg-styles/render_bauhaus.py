@@ -265,7 +265,7 @@ def _receipt(prepared,font_path):
             'font_path':str(prepared['font_path']),'font_sha256':hashlib.sha256(prepared['font_path'].read_bytes()).hexdigest(),
             'font_source':'https://github.com/notofonts/noto-cjk' if prepared['font_is_default'] else 'user-supplied',
             'font_license':'SIL OFL 1.1' if prepared['font_is_default'] else 'verify separately',
-            'source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            'source_sha256':globals().get('_CAPTURED_SOURCE_SHA256') or hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'inspiration':'https://github.com/Vincentwei1021/mg-styles-15/tree/49052d80bfaf9fa8412cc9710530e5e95a3b8d8c/demos/09-bauhaus',
             'implementation':'Independent geometry and choreography; no upstream assets or source copied'}
 

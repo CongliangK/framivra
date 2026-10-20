@@ -66,6 +66,7 @@ def frozen_module(name, source, bindings=None):
     """Execute exactly the captured local renderer bytes, without live re-import."""
     module=types.ModuleType('_mg_'+name.replace('.','_'))
     module.__file__=str(ROOT/name)
+    module.__dict__['_CAPTURED_SOURCE_SHA256']=hashlib.sha256(source).hexdigest()
     module.__dict__.update(bindings or {})
     exec(compile(source,module.__file__,'exec'),module.__dict__)
     return module

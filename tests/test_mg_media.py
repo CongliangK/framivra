@@ -74,6 +74,18 @@ class MediaGeometry(unittest.TestCase):
             self.assertEqual(report['preflight']['palette'],data['palette'])
             self.assertFalse(output.exists())
 
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'optional Pillow is unavailable')
+    def test_preflight_receipt_uses_captured_renderer_hash_after_live_file_changes(self):
+        import hashlib,json
+        source=(ROOT/'render_bauhaus.py').read_bytes()
+        data=json.loads((ROOT/'examples/bauhaus-a.json').read_text())
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'renderer.py';path.write_bytes(source)
+            renderer=media.frozen_module(str(path),source)
+            path.write_bytes(b'raise RuntimeError("new source must not execute")\n')
+            report=renderer.validate_bauhaus_content(data,180)
+            self.assertEqual(report['source_sha256'],hashlib.sha256(source).hexdigest())
+
     def test_frozen_renderer_executes_captured_source_not_later_file_content(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'renderer.py'
