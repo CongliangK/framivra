@@ -23,7 +23,7 @@ json2blend.py，经 ``blender --background --factory-startup --python`` 运行�
 - 与 apps/blender-bridge（应用件）的关系：app 提供 json2blend/verify_blend/
   audit_bundle 等交互工具（命令面不变），本插件只是把「渲染完自动导出」钩进
   `vtx all` 收尾缝——关停本插件不影响主链（§0.2 关停测试）。
-- --draft / --dry-run / `all --until` 截断链不触发（cli 缝 D 接线口径）。
+- --draft / --dry-run 或停在 qc 之前的 `all --until` 不触发；`all --until qc` 可收尾。
 """
 from vtx.diagnostics import DiagnosticMessage, key_path, emit
 import hashlib

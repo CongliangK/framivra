@@ -29,7 +29,7 @@
     收尾件失败不静默）。qc 失败不阻断本钩（final.mp4 等产物已落盘，存量假阴性
     项目也要能收尾），退出码按 qc/finish 各自失败态汇总。用途：渲染完成后的
     自动导出类动作（blender-bridge 插件的 .blend 审片工程自动导出）。
-    --draft / --dry-run / --until 截断链不触发。
+    --draft / --dry-run 或停在 qc 之前的 --until 不触发；all --until qc 可收尾。
 
 插件加载走**包导入** `importlib.import_module("plugins.<name>")`（§2.3 规则，
 禁 spec_from_file_location——绕过包语义是双模块裂分的另一入口）；加载时做
@@ -322,8 +322,9 @@ def run_probe_source(c, sid: str):
 
 def run_finish(c) -> list:
     """缝 D（协议 v1.2 增补，§2.2）：管线收尾钩子——`vtx all` 全链（mux/qc 完成后）
-    由 cli 触发（--draft / --dry-run / --until 截断链不触发）。qc 失败不阻断本钩
-    （产物已就绪），cli 按 qc/finish 各自失败态汇总退出码。
+    由 cli 触发（--draft / --dry-run 或停在 qc 之前的 --until 不触发；
+    all --until qc 可收尾）。qc 失败不阻断本钩（产物已就绪），cli 按
+    qc/finish 各自失败态汇总退出码。
 
     逐个应用声明了 finish 的生效插件（约定：插件暴露 ``finish(c) -> list[str]``
     ——错误行列表，空 = 成功）。cli 汇总错误行打印并以退出码 1 结束——正式
