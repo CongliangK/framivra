@@ -854,10 +854,28 @@ def observe_resources(child, registry, runtime, stream, status, deadline, starte
         if failure['original_descendant_pids']:
             recovery['reason'] = 'original_failed_process_has_descendants'
             raise
-        if failure['unverified_related_pids']:
-            recovery['reason'] = 'original_related_identity_coverage_incomplete'
-            recovery['unverified_related_pids'] = failure['unverified_related_pids']
-            raise
+        # Freeze observation candidates, not identities or ownership. Several
+        # independently probed leaves may disappear during the same ps query.
+        unresolved = {row['pid']: row for row in failure['owned_related_rows']
+                      if row['pid'] not in original.verified_pids | original.terminal_pids}
+        probes = {probe['pid']: probe for probe in original.probes}
+        recovery['unresolved_candidate_pids'] = sorted(unresolved)
+        recovery['unresolved_candidates'] = []
+        for pid, row in sorted(unresolved.items()):
+            retained = registry.processes.get(pid) or getattr(registry, 'terminal_anchors', {}).get(pid)
+            probe = probes.get(pid)
+            descendants = [r['pid'] for r in resource_related_rows(rows, {pid}) if r['pid'] != pid]
+            recovery['unresolved_candidates'].append(dict(
+                pid=pid, ppid=row['ppid'], pgid=row['pgid'], ps_state=row['state'],
+                retained_start_identity=retained['start_identity'] if retained else None,
+                identity_probe=dict(probe) if probe is not None else None,
+                original_descendant_pids=descendants))
+            if (pid == registry.root_pid or probe is None or descendants
+                    or not (probe['returned_none'] or row['state'].startswith('Z'))
+                    or (retained is None and row['ppid'] not in original.verified_pids)):
+                recovery['reason'] = 'original_related_identity_coverage_incomplete'
+                recovery['unverified_related_pids'] = failure['unverified_related_pids']
+                raise
         recovery['fresh_query_attempted'] = True
         fresh = None
         try:
@@ -868,15 +886,22 @@ def observe_resources(child, registry, runtime, stream, status, deadline, starte
             related = resource_related_rows(fresh, anchors)
             # Until fresh identities are checked, retain only resource columns.
             recovery['fresh_snapshot'] = resource_snapshot_evidence(fresh, related, set())
-            still_visible = next((row for row in fresh if row['pid'] == original.pid), None)
-            if still_visible is not None and not still_visible['state'].startswith('Z'):
+            visible = {row['pid']: row for row in fresh if row['pid'] in unresolved}
+            still_visible = visible.get(original.pid)
+            recovery['fresh_candidate_observations'] = [
+                dict(pid=pid, visibility='VISIBLE' if pid in visible else 'OBSERVED_ABSENT',
+                     ps_state=visible[pid]['state'] if pid in visible else None)
+                for pid in sorted(unresolved)]
+            nonterminal = sorted(pid for pid, row in visible.items() if not row['state'].startswith('Z'))
+            if nonterminal:
                 recovery['reason'] = 'failed_pid_still_visible_nonterminal'
+                recovery['unresolved_visible_nonterminal_pids'] = nonterminal
                 raise RuntimeError('Failed resource identity PID remains visible in fresh inventory')
-            fresh_descendants = resource_related_rows(fresh, {original.pid})
-            fresh_descendants = [row for row in fresh_descendants if row['pid'] != original.pid]
+            fresh_descendants = sorted({row['pid'] for pid in unresolved
+                for row in resource_related_rows(fresh, {pid}) if row['pid'] != pid})
             if fresh_descendants:
                 recovery['reason'] = 'fresh_descendants_of_absent_failed_pid'
-                recovery['fresh_failed_descendant_pids'] = [row['pid'] for row in fresh_descendants]
+                recovery['fresh_failed_descendant_pids'] = fresh_descendants
                 raise RuntimeError('Fresh inventory has descendants of the absent failed resource PID')
             owned = registry.update(fresh)
             if not owned:
@@ -891,11 +916,15 @@ def observe_resources(child, registry, runtime, stream, status, deadline, starte
                 recovery['reason'] = 'fresh_related_identity_coverage_incomplete'
                 recovery['unverified_related_pids'] = sorted(uncovered)
                 raise RuntimeError('Fresh related process rows lack verified owned identity coverage')
-            if still_visible is not None and original.pid not in terminal_pids:
+            if set(visible) - terminal_pids:
                 raise RuntimeError('Fresh visible failed PID lacks positive terminal proof')
+            for record in recovery['fresh_candidate_observations']:
+                if record['pid'] in terminal_pids:
+                    record['visibility'] = 'QUALIFIED_TERMINAL'
             recovery.update(status='FRESH_COMPLETE',
                 reason='fresh_live_coverage_with_qualified_terminal_rows' if terminal_pids
-                    else 'absent_leaf_and_fresh_identity_coverage',
+                    else ('absent_leaf_and_fresh_identity_coverage' if len(unresolved) == 1
+                          else 'absent_candidate_set_and_fresh_identity_coverage'),
                 failed_pid_visibility='qualified_terminal_in_fresh_snapshot' if still_visible is not None
                     else 'confirmed_absent_after_probe',
                 terminal_process_observations=terminals)

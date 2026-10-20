@@ -1,33 +1,41 @@
 {
-  "schema": "framivra-reviewed-mac-validation-delivery/10",
-  "status": "SOURCE_DELIVERY_QUALIFIED_PENDING_ACTUAL_MAC_R10_CLEANUP_VALIDATION",
-  "launcher_revision": "r10-finite-retained-cohort",
+  "schema": "framivra-reviewed-mac-validation-delivery/11",
+  "status": "SOURCE_DELIVERY_QUALIFIED_PENDING_ACTUAL_MAC_R11_VALIDATION",
+  "launcher_revision": "r11-finite-resource-candidate-set",
   "harness_revision": "bounded-page-r1",
   "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
   "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
   "runtime_bytes_unchanged_from_independent_reviews": true,
   "independent_runtime_reviews": {
     "owner": {
-      "result": "PASS_SCOPED_SOURCE_AND_EXACT62_MOCKS",
+      "result": "PASS_SCOPED_SOURCE_AND_EXACT68_MOCKS",
       "platform": "Linux",
-      "approved_exact_ids": 62,
-      "unchanged_historical_pure_mock_ids": 57,
-      "new_pure_mock_ids": 5,
-      "passed": 62,
+      "approved_exact_ids": 68,
+      "unchanged_historical_pure_mock_ids": 62,
+      "new_pure_mock_ids": 6,
+      "passed": 68,
       "failed": 0,
+      "errors": 0,
       "skipped": 0,
       "exit_code": 0,
-      "unittest_seconds": 0.175,
+      "unittest_seconds": 0.19,
       "executed_main_test_source_sha256": "8e0fb2f4b3c06c9fdd2b8c8bda0242563d98bf029737d14e480dceb7db347cbc",
-      "executed_new_test_source_sha256": "9bfa1c38f838e51f47e5fe86703297220dc863ce7138e2e2849f25fab438e7fb",
+      "executed_new_test_source_sha256": "a5811e6f7ddb8b53040ddee716eb81daab719b8d4318b7012b4ba1a12ca298f5",
+      "runtime_sha256": "b6551bf47ce6e12575ffc0fe62fa264d408c810f18efb79e1d6fc94f3dc91ca9",
+      "exact_id_list_sha256": "a9b2ca3c510a6f407101a58e6af5a8b23197e1ffb802b89836fc37ad9d90c12e",
+      "frozen_source_manifest_sha256": "0c905b87ca9a9c58c238078c82bdee97200668212dd596cf76c2abaa1f80748b",
       "real_process_cases_this_round": 0,
       "round_excluded_real_process_ids": 2,
       "round_excluded_changed_contract_mixed_ids": 4,
       "historical_unrun_ids": 2,
       "total_unexecuted_excluded_ids": 8,
-      "new_approved_fixtures": 17,
-      "new_identity_mismatch_fixture_execution": "EXCLUDED_STATIC_GUARD_REVIEW_ONLY",
-      "report_sha256": "0d74b87951af4e92085ec4733d767c442bcb8584ee2b1a26ca856159bfb054be"
+      "new_approved_fixtures": 20,
+      "historical_additional_identity_mismatch_fixture_execution": "EXCLUDED_STATIC_GUARD_REVIEW_ONLY",
+      "report_sha256": "1136745e9cec53514a49845c4d9bb53ba5307a71a59e2708ebea44432ebabcc2",
+      "evidence_index_sha256": "d1993fdbcf2bfbbd6f50b25d8fa756cdab79ef6678862c11bc812ab803379c33",
+      "changed_runtime_function": "observe_resources",
+      "runtime_added_lines": 40,
+      "runtime_removed_lines": 11
     },
     "harness": {
       "result": "PASS",
@@ -44,8 +52,7 @@
     }
   },
   "portable_binding_review": {
-    "result": "PASS",
-    "scope": "static only; identical owner single-line explicit environment binding; harness and ABI fixture bytes unchanged; unchanged inherited methods/assertions/expected identities; exact62 approved and8 excluded",
+    "scope": "static only; identical owner single-line explicit environment binding; harness and ABI fixture bytes unchanged; unchanged inherited methods/assertions/expected identities; exact68 approved and8 excluded",
     "tests_executed_for_portable_binding": false,
     "required_nonempty_absolute_path_variables": {
       "both_suites": [
@@ -57,11 +64,12 @@
         "FRAMIVRA_VALIDATION_PLAN"
       ]
     },
-    "missing_genuine_inputs": "BLOCKED; do not fabricate files or weaken frozen hashes"
+    "missing_genuine_inputs": "BLOCKED; do not fabricate files or weaken frozen hashes",
+    "required_prior_to_publication": true
   },
   "mac_abi_fixture": {
     "status": "PASS_STATIC_SOURCE_REVIEW_ONLY",
-    "execution": "NOT_RERUN_FOR_R10_DELIVERY",
+    "execution": "NOT_RERUN_FOR_R11_DELIVERY",
     "source_sha256": "c4b90fee936bd4714080b3cc1f8a461582f84bb4016018437104c1268b4d6777",
     "static_review_report_sha256": "1db883e10f846c69d344d9a184a3c942b56c8757e75ab8f78b3112beb5f2f987",
     "ordinary_child_count": 1,
@@ -86,10 +94,10 @@
       "reported_waitpid_reaped_exitcode": 0,
       "child_or_group_signals_reported": 0,
       "independently_verified_here": false,
-      "does_not_qualify_r10_cleanup": true
+      "does_not_qualify_r11_resource_recovery_or_cleanup": true
     }
   },
-  "mac_qualification": "R10_ACTUAL_CLEANUP_AND_PRODUCTION_VALIDATION_UNRUN",
+  "mac_qualification": "R11_ACTUAL_MAC_RESOURCE_RECOVERY_AND_CLEANUP_UNRUN",
   "files": [
     {
       "path": "tools/testing/mac_validation/bounded_page_harness_r1/APPROVED-TEST-IDS.txt",
@@ -122,79 +130,85 @@
       "git_blob_sha1": "832c4b7e0c5c7fe6fef588f9eb95519fcbc77400"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/APPROVED-TEST-IDS.txt",
-      "bytes": 6369,
-      "sha256": "8986b2f835986615d4de042c0a62caa3ef52bda2868ed92d77697f6151e943da",
-      "git_blob_sha1": "b756b62769f9cd4450669e157d2b30fb6ad67907"
+      "path": "tools/testing/mac_validation/owned_launcher_r11/APPROVED-TEST-IDS.txt",
+      "bytes": 7154,
+      "sha256": "a9b2ca3c510a6f407101a58e6af5a8b23197e1ffb802b89836fc37ad9d90c12e",
+      "git_blob_sha1": "5834100d8ac145c54fb290ee2f8a29b00766a00e"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/ROUND-EXCLUDED-TEST-IDS.txt",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/ROUND-EXCLUDED-TEST-IDS.txt",
       "bytes": 636,
       "sha256": "71f836ac97df48d7ee6db3e89a30034f6c68d6c31f4f6a88fbd80334630de1bb",
       "git_blob_sha1": "95780e230de67b55709f3165d800d552bef97902"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/UNRUN-TEST-IDS.txt",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/UNRUN-TEST-IDS.txt",
       "bytes": 168,
       "sha256": "a3db3239dea3bb80892de11002dfb855cb865cc00c10d51939b1d1b173e182d4",
       "git_blob_sha1": "180467e89d7d7ec09dc6e0b9ac8c4d3d06f866fb"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/owned_launcher.py",
-      "bytes": 62272,
-      "sha256": "c8b3b5b73425f43fce2485de9207b5be95eff98d297381d8dff9ffe0ac7f8418",
-      "git_blob_sha1": "dd126d37b1d8833bdef8e5e44560587861314a23"
+      "path": "tools/testing/mac_validation/owned_launcher_r11/owned_launcher.py",
+      "bytes": 64313,
+      "sha256": "b6551bf47ce6e12575ffc0fe62fa264d408c810f18efb79e1d6fc94f3dc91ca9",
+      "git_blob_sha1": "d9c461d0e0dc25d45eb626d5e11c09f8cccf9d2a"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/resource_summary.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/resource_summary.py",
       "bytes": 8787,
       "sha256": "ea419dfe124bc74bdbd499931470735eee61a42d13ad1f0c5c1618a3adf7b4a6",
       "git_blob_sha1": "c5f5cdb8ea93feabea0f04edbd4b6590d93914c5"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_cleanup_disappearance.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_cleanup_disappearance.py",
       "bytes": 16019,
       "sha256": "71352d1e33e0761a609e891d8dd9f251355cb07ef9e5d95ae52491e01d35cb3a",
       "git_blob_sha1": "3989b89aed3e03d7b21f0e58243427b324dc0a43"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_independent_coverage.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_independent_coverage.py",
       "bytes": 2159,
       "sha256": "b9303ddb87aaa25f1c1483ed12a138fff8498ac684343ce51728e022fcfac53a",
       "git_blob_sha1": "3e0c5e9cb4f7fdf16b57ecab950974e70ec83437"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_independent_fresh_child.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_independent_fresh_child.py",
       "bytes": 1451,
       "sha256": "d8f46de5ef5d777676f3a73ae2dc0be4c990525be88827383df95afe849844b3",
       "git_blob_sha1": "db8b31d28a3d09e76ad009028690e29f136ea1c7"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_independent_r5.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_independent_r5.py",
       "bytes": 2110,
       "sha256": "f5c3a10ae0ad1b27440ec8c1e6b269ee1a149ca69b7008d67ec86e363eb5af12",
       "git_blob_sha1": "f5560abf028ac0ca09367052768cc09f154fdbd5"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_owned_launcher.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_owned_launcher.py",
       "bytes": 37173,
       "sha256": "03c97ba4319a6c01737dad9da10ec51bead1bec112115bd9d1346c4d1c8a921b",
       "git_blob_sha1": "6fa3b250963b1e541fb896d8177b4ef8f0efd9b3"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_resource_summary.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_resource_candidate_set_recovery.py",
+      "bytes": 14625,
+      "sha256": "a5811e6f7ddb8b53040ddee716eb81daab719b8d4318b7012b4ba1a12ca298f5",
+      "git_blob_sha1": "0bf33988d075314c1448c99f258cb0cdefa5036f"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_resource_summary.py",
       "bytes": 3580,
       "sha256": "f797c9553ea30471ced75175cadc06dcc92be21db88641037e91d899b8ad7670",
       "git_blob_sha1": "4bc55f14e23162881688b4f6792624babb912500"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_retained_cohort_cleanup.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_retained_cohort_cleanup.py",
       "bytes": 13595,
       "sha256": "9bfa1c38f838e51f47e5fe86703297220dc863ce7138e2e2849f25fab438e7fb",
       "git_blob_sha1": "175fca03a05033d82a7a5b906e42bccff0e750b7"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r10/test_snapshot_terminal_observation.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r11/test_snapshot_terminal_observation.py",
       "bytes": 15298,
       "sha256": "c3456b64c6359a142a7fcb712c482a5b9bb5f5d1f8ca2a5c13a2188d31e23cdb",
       "git_blob_sha1": "a8b1edd65c5cb1bd586262bffdd7903c451acb62"
@@ -202,7 +216,8 @@
   ],
   "historical_cleanup_results": {
     "r8": "UNKNOWN_UNCHANGED",
-    "r9": "UNKNOWN_UNCHANGED"
+    "r9": "UNKNOWN_UNCHANGED",
+    "r10": "UNKNOWN_UNCHANGED"
   },
   "test_diagnostic_outputs": {
     "side_effect_free": false,
@@ -212,5 +227,12 @@
       "fresh-visible-child.actual.json"
     ],
     "evidence_handling": "preserve confirmed new diagnostics with hashes and provenance; no erasure or retest to disguise checkout state"
+  },
+  "historical_r10_reverse_comparison": {
+    "result": "FAILED",
+    "resource": "INCOMPLETE",
+    "cleanup": "UNKNOWN",
+    "source": "coordinator report; original Mac raw bytes not independently read by source reviewer",
+    "not_reclassified_by_r11_mock_results": true
   }
 }
