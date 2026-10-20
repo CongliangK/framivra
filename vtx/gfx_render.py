@@ -23,7 +23,7 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 
 传输使用标准库（socket/struct/base64/hashlib/json）；CDP 后端要求 numpy
 （透明探针、双截 alpha 解算与 PNG 编解码），Pillow 提供可选 PNG 编解码快路径。
-无 numpy 时 available() 返回不可用，调用方全量回落 CLI。
+无 numpy 时 available() 返回不可用，调用方显式失败；CLI 须通过 VTX_GFX=cli 选择。
 
 独立渲染（写入 outdir）：env python3 -m vtx.gfx_render <html> <outdir> <N帧> [--tabs 4]
 """
@@ -767,10 +767,10 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     为纯缓存命中白起 Chrome；早退返回 stats 字段与正常路径完全一致。
 
     返回统计 dict；帧级失败（含浏览器崩溃自愈重试 2 次）列入 failed，
-    调用方对这些帧回落 CLI。rendered = work 帧渲染成功数（按 work 归属过滤
+    调用方据此判定阶段失败。rendered = work 帧渲染成功数（按 work 归属过滤
     failed 后扣减，deferred 复制失败成员不入该口径；static_copied 字节复制帧
     单独计数不占 rendered）。帧落盘统一走 _atomic_write_bytes（同目录 tmp +
-    os.replace 原子替换，并发双写不撕裂）。浏览器起不来抛 GfxRenderError（全页回落 CLI）。
+    os.replace 原子替换，并发双写不撕裂）。浏览器起不来抛 GfxRenderError，由调用方上报失败。
     观测字段（方案 v2 阶段 0，只加观测）：path_counts=各帧实际导出路径计数
     （canvas 校验失败回落帧同时计入实际路径与 canvas_fallback）；timings_ms=
     nav/export/decode/write 各分项 p50/p95/sum 毫秒（只含成功帧；每 tab 线程
@@ -974,7 +974,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                     if retries > 2:
                         failed.append(i)
                         my_paths["failed"] += 1  # 失败帧只计数：耗时样本只留成功帧，避免重试噪声
-                        note(f"帧 {i} 重试 2 次仍失败，交由调用方回落")
+                        note(f"帧 {i} 重试 2 次仍失败，作为失败帧上报")
                         return False
                     heal()
 
@@ -1093,8 +1093,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             with open(head_path, "rb") as fh:
                 data = fh.read()
         except OSError as e:
-            # 头帧渲染失败/不可读：成员帧交回 failed 由调用方 CLI 补渲，绝不静默丢帧
-            note(f"跨度头帧 f{head:04d}.png 不可读（{e}），{len(members)} 个成员帧交由调用方回落")
+            # 头帧渲染失败/不可读：成员帧交回 failed 由调用方判定失败，绝不静默丢帧
+            note(f"跨度头帧 f{head:04d}.png 不可读（{e}），将检查 {len(members)} 个成员帧并上报缺失项")
             for m in members:
                 if not os.path.exists(os.path.join(outdir, f"f{m:04d}.png")):
                     failed.append(m)
@@ -1104,7 +1104,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data)
                 static_copied_n += 1
             except OSError as e:
-                note(f"帧 {m} 复制头帧失败（{e}），交由调用方回落")
+                note(f"帧 {m} 复制头帧失败（{e}），作为失败帧上报")
                 failed.append(m)
     # rendered 口径（m2 修正）：= work 帧渲染成功数，按 work 归属过滤后再扣减。
     # failed 里可能混有 deferred 复制失败的成员帧（成员被跨度认领后不在 work 内），
