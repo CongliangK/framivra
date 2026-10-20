@@ -50,6 +50,36 @@ class AuroraOptics(unittest.TestCase):
                 path=Path(tmp)/'frame.png';last.save(path)
                 with Image.open(path) as read:self.assertEqual(last.tobytes(),read.tobytes())
 
+    def test_fractional_values_in_real_ui_draws_and_shortest_hold(self):
+        from PIL import ImageDraw
+        from unittest.mock import patch
+        data=example('ideas')
+        for i,chapter in enumerate(data['chapters']):
+            chapter.update({'in':i*30,'out':(i+1)*30,'mode':('chat','voice','focus')[i],
+                            'value':36.5,'unit':'单位'})
+        original=ImageDraw.ImageDraw.text
+        calls=[]
+        def record(draw,xy,text,*args,**kwargs):
+            calls.append(str(text))
+            return original(draw,xy,text,*args,**kwargs)
+        for i in range(3):
+            calls.clear()
+            with patch.object(ImageDraw.ImageDraw,'text',record):
+                image=glass.render_aurora_glass_frame(data,i*30+29,90)
+            self.assertIn('36.5 单位',calls)
+            self.assertEqual(image.mode,'RGB')
+            self.assertIsNotNone(image.crop((650,480,1300,790)).getbbox())
+            with tempfile.TemporaryDirectory() as tmp:
+                path=Path(tmp)/'fractional-ui.png';image.save(path)
+                with Image.open(path) as read:self.assertEqual(read.tobytes(),image.tobytes())
+        self.assertEqual(glass.micro_ui_state(data['chapters'][0],23)['displayed'],36.5)
+        self.assertEqual(glass.micro_ui_state(data['chapters'][0],29)['displayed'],36.5)
+        data['chapters'][0].update(value=1.25e-8,mode='voice')
+        calls.clear()
+        with patch.object(ImageDraw.ImageDraw,'text',record):
+            glass.render_aurora_glass_frame(data,29,90)
+        self.assertIn('1.25e-08 单位',calls)
+
     def test_schema_glyph_fit_optics_and_window_rejection_before_writes(self):
         for edit in ({'seed':True},{'seed':2**31},{'lens':{'strength':float('nan')}},{'lens':{'radius':True}}):
             data=example('ideas');data.update(edit)

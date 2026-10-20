@@ -13,10 +13,14 @@ MODES=('chat','voice','focus')
 PALETTE=['#111226','#f3f0ff','#7161d9','#46aabf']
 
 
+def _number(value):
+    return str(value) if type(value) is int else format(value,'.10g')
+
+
 def _font(data,path=None):
     from PIL import ImageFont
     strings=[data['title'],data['subtitle']]+[c[k] for c in data['chapters'] for k in ('label','detail','unit')]
-    text=''.join(strings)+'% 0123456789'
+    text=''.join(strings)+''.join(_number(c['value']) for c in data['chapters'])+'% 0123456789'
     candidates=[Path(path)] if path else [Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')]
     for candidate in candidates:
         if candidate.is_file():
@@ -78,7 +82,7 @@ def validate_aurora_glass_content(data,frames,font_path=None):
     font=_font(result,font_path);_fit(title,1620,80,font);_fit(subtitle,1600,31,font)
     for chapter in normalized:
         _fit(chapter['label'],570,38,font);_fit(chapter['detail'],570,27,font)
-        _fit(str(round(chapter['value']))+' '+chapter['unit'],520,48,font)
+        _fit(_number(chapter['value'])+' '+chapter['unit'],520,48,font)
         # Far cards are independently readable, not clipped miniature copies.
         _fit(chapter['label'],290,28,font);_fit(chapter['detail'],290,20,font)
     return result
@@ -140,7 +144,7 @@ def micro_ui_state(chapter,frame):
     complete=max(1,duration-1-6)
     count_end=min(30,complete)
     return dict(entry=min(1,local/min(14,max(1,duration//3))),
-                displayed=round(chapter['value']*min(1,local/count_end)),
+                displayed=chapter['value'] if local>=count_end else round(chapter['value']*local/count_end),
                 enabled=[local>=max(1,round(complete*(i+1)/3)) for i in range(3)])
 
 
@@ -163,7 +167,7 @@ def _card(scene,chapter,frame,frames,font,center,width,height,yaw,pitch,depth,sm
         d.text((pad,95+rise),chapter['detail'],font=_fit(chapter['detail'],width-2*pad,27,font),fill=text_color)
         if mode=='chat':
             d.rounded_rectangle((pad,155+rise,width-pad-55,245+rise),radius=22,fill=(255,255,255,30),outline=(255,255,255,65),width=1)
-            d.text((pad+24,170+rise),str(state['displayed'])+' '+chapter['unit'],font=_fit(str(round(chapter['value']))+' '+chapter['unit'],width-2*pad-90,43,font),fill=text_color)
+            d.text((pad+24,170+rise),_number(state['displayed'])+' '+chapter['unit'],font=_fit(_number(chapter['value'])+' '+chapter['unit'],width-2*pad-90,43,font),fill=text_color)
             for i in range(3):
                 bounce=round(3*math.sin(frame*.09-i*.7));x=width-150+i*24
                 d.ellipse((x,285+bounce,x+9,294+bounce),fill=(255,255,255,200))
@@ -173,7 +177,7 @@ def _card(scene,chapter,frame,frames,font,center,width,height,yaw,pitch,depth,sm
                 wave=(.25+.75*abs(math.sin(i*.63+frame*.07)))*chapter['value']/100
                 amp=12+55*wave
                 d.rounded_rectangle((round(x),round(220-amp+rise),round(x+5),round(220+amp+rise)),radius=2,fill=(235,241,255,215))
-            d.text((pad,310),str(round(chapter['value']))+' '+chapter['unit'],font=_fit(str(round(chapter['value']))+' '+chapter['unit'],width-2*pad,35,font),fill=text_color)
+            d.text((pad,310),_number(chapter['value'])+' '+chapter['unit'],font=_fit(_number(chapter['value'])+' '+chapter['unit'],width-2*pad,35,font),fill=text_color)
         else:
             for i in range(3):
                 y=155+i*67+rise;enabled=state['enabled'][i]
@@ -181,7 +185,7 @@ def _card(scene,chapter,frame,frames,font,center,width,height,yaw,pitch,depth,sm
                 d.line((pad+18,y+22,pad+180,y+22),fill=(255,255,255,140),width=4)
                 d.rounded_rectangle((width-pad-84,y+8,width-pad-16,y+36),radius=14,fill=(170,235,224,160) if enabled else (255,255,255,45))
                 px=width-pad-(32 if enabled else 68);d.ellipse((px-9,y+13,px+9,y+31),fill=(255,255,255,235))
-            d.text((pad,375),str(round(chapter['value']))+' '+chapter['unit'],font=_fit(str(round(chapter['value']))+' '+chapter['unit'],width-2*pad,30,font),fill=text_color)
+            d.text((pad,375),_number(chapter['value'])+' '+chapter['unit'],font=_fit(_number(chapter['value'])+' '+chapter['unit'],width-2*pad,30,font),fill=text_color)
         ui.putalpha(ui.getchannel('A').point(lambda v:round(v*entry)));card=Image.alpha_composite(card,ui)
     warped,position=_warp_card(card,card_corners(cx,cy,width,height,yaw,pitch,depth));scene.paste(warped,position,warped)
 
