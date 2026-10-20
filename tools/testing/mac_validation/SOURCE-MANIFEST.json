@@ -1,10 +1,10 @@
 {
-  "schema": "framivra-reviewed-mac-validation-delivery/1",
+  "schema": "framivra-reviewed-mac-validation-delivery/2",
   "status": "SOURCE_DELIVERY_ONLY_PENDING_MAC_QUALIFICATION",
   "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
   "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
   "runtime_source_bytes_unchanged": true,
-  "tests_executed_for_delivery": false,
+  "tests_executed_for_delivery": true,
   "files": [
     {
       "path": "tools/testing/mac_validation/fast_png_r2/APPROVED-TEST-IDS.txt",
@@ -35,6 +35,36 @@
       "bytes": 7879,
       "sha256": "06ca025a3111953b3acc39c87c1735613608a16dce8ad0f819cb10d451cc0f36",
       "git_blob_sha1": "f1ebdd108ffb595fd3fb31f2aceb49508e2e8a62"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r3/test_owned_launcher.py",
+      "bytes": 14666,
+      "sha256": "b1f0cdb7bd40dd7c12e6e1e54396f38df3a17e31998a40c986ae4d1b30d82072",
+      "git_blob_sha1": "dabcf75ad755446392b75e94798de5e75f42f3d2"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r3/test_resource_summary.py",
+      "bytes": 3580,
+      "sha256": "f797c9553ea30471ced75175cadc06dcc92be21db88641037e91d899b8ad7670",
+      "git_blob_sha1": "4bc55f14e23162881688b4f6792624babb912500"
     }
-  ]
+  ],
+  "test_source_binding": {
+    "variable": "FRAMIVRA_VALIDATION_REPO",
+    "required_value": "verified absolute path of production checkout",
+    "source_change": "replace cloud-relative launcher fixture path only; original assertions and test IDs unchanged",
+    "harness_tests_included": false
+  },
+  "delivery_test_result": {
+    "scope": "independent Linux run of original exact launcher/parser IDs",
+    "platform": "Linux",
+    "test_count": 27,
+    "test_runner": "python3 -B -m unittest -v with explicit 27-ID list; no discovery",
+    "exit_code": 0,
+    "unittest_seconds": 0.246,
+    "wall_seconds": 0.36,
+    "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
+    "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
+    "mac_process_qualification": "PENDING_SEPARATE_VALIDATION"
+  }
 }

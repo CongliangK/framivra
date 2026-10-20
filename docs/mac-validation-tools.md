@@ -10,15 +10,17 @@ The tools must consume a separate clean production checkout at PR226 commit `85f
 
 - [Owned-process launcher r3](../tools/testing/mac_validation/owned_launcher_r3/owned_launcher.py) consumes an explicit run specification. Its [resource parser](../tools/testing/mac_validation/owned_launcher_r3/resource_summary.py) must stay beside it.
 - [Production fast-PNG harness r2](../tools/testing/mac_validation/fast_png_r2/harness.py) consumes explicit production, project, inventory, and evidence paths. It does not provide its own process supervisor or automatically advance to another arm.
-- [Source manifest](../tools/testing/mac_validation/SOURCE-MANIFEST.json) records byte counts, SHA-256 and Git blob identities for the delivered runtime sources and test-ID inventories.
+- [Source manifest](../tools/testing/mac_validation/SOURCE-MANIFEST.json) records byte counts, SHA-256 and Git blob identities for the delivered runtime sources, launcher/parser test sources, and test-ID inventories.
 
-The three runtime source files are byte-for-byte copies of the independently reviewed revisions. No path adaptation, source rewriting, wrapper injection, permission change, or additional validation run was performed for this delivery.
+The three runtime source files are byte-for-byte copies of the independently reviewed revisions. The launcher test fixture path is selected by the explicit `FRAMIVRA_VALIDATION_REPO` environment variable; an absent variable fails directly. This is the only executable test-source change. The parser test source and all original test methods and assertions remain unchanged. No runtime wrapper injection or permission change is included.
 
 ## Review scope
 
-The launcher review covered 27 exact CPU/parser/mock and ordinary self-owned-process test IDs on a Linux host. The harness review covered 12 exact CPU/mock contract test IDs. These historical results do not establish that the tools have run on the Mac or that real browser/rendering acceptance passed.
+The launcher review covered 27 exact CPU/parser/mock and ordinary self-owned-process test IDs on a Linux host. The harness review covered 12 exact CPU/mock contract test IDs. These historical results do not establish that the tools have run on the Mac or that real browser/rendering acceptance passed. The portable launcher/parser test addition was independently rerun on Linux against the exact separate production checkout: all original 27 IDs passed once, exit 0, unittest elapsed 0.246 seconds. The two self-owned children were reaped after TERM and TERM/KILL respectively, and each final independent process-group observation was empty. This run does not establish Mac process or resource qualification.
 
-The two `APPROVED-TEST-IDS.txt` files are inventories of those reviewed test IDs. They are not runnable test suites or permission to execute additional tests. The original test sources depend on a separate frozen checkout and input metadata; those sources and fixtures are not included in this initial runtime-source delivery. Any later test binding must preserve the original assertions and expected source identities and identify the actual local inputs explicitly.
+The launcher/parser directory includes `test_owned_launcher.py` and `test_resource_summary.py` alongside its unchanged 27-ID inventory. Before loading those exact IDs, explicitly set `FRAMIVRA_VALIDATION_REPO` to the verified absolute path of the separate production checkout and independently verify its commit, tree, tracked cleanliness, and actual imported `vtx.proc_supervisor` file. Do not use an empty value, a relative path, a fallback checkout, discovery, or additional test IDs. The two real-process tests create only their own ordinary standard-library Python sleep/ignore-TERM children; their original signal, reap, and independent empty-group assertions are preserved. Test evidence is generated locally and must not be committed.
+
+The harness 12-ID inventory remains provenance only: its test source and bound input fixtures are not included, because they require separately verified local input metadata. The ID inventories do not grant permission to execute additional tests or real production work.
 
 ## Before use
 
