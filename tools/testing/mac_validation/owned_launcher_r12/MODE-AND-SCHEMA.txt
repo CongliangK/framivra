@@ -1,0 +1,87 @@
+Opt-in diagnostic resource census / v1
+2026-10-20. Candidate only; actual Mac qualification is UNRUN.
+
+Run-spec field resource_observation_mode defaults to strict_identity_v1.
+The only opt-in value is diagnostic_census_v1. Unknown values fail validation.
+The mode is retained in preflight/run status and each diagnostic record.
+The strict r11 observation/recovery function is unchanged. A separate narrow
+retained-start/PGID contradiction guard fails before descendant adoption in BOTH
+modes. It grants no authority and has static review only; no new identity-reuse
+or security test is selected.
+
+Diagnostic mode uses the existing ps query, original query/run deadlines, memory
+pressure source, optional vm rules, disk accounting, cadence and thresholds.
+Each cycle acquires a new validated inventory and current pressure/free values.
+No prior sample authorizes continuation. The existing 5-second post-cycle wait
+is not a maximum sample age; actual query timestamps and sample duration remain.
+No auxiliary terminal query or fresh-resource retry is made in diagnostic mode.
+
+Independent ownership traversal retains only independently verified identities.
+An unrelated auxiliary None/ps-Z/? gap does not skip verified ledger/guard work.
+The still-running root must independently appear in the current verified set.
+Positive retained identity/group contradictions, required ledger errors and
+root failures remain fatal. No raw command, PID or PGID establishes ownership.
+
+Census groups G are only the explicit root and groups established by existing
+independent ownership/ledger verification. Seeds are retained process PIDs,
+run-local diagnostic PID anchors, and visible G members. Complete captured PPID
+descendant closure is taken, including unknown intermediate nodes. Each PID is
+counted once. A raw unknown PGID does not enter G or cause group-wide expansion.
+Usable diagnostic G excludes common/system PGIDs 0/1; unsupported groups are
+recorded and fatal. Their related triggering rows remain counted through PID/PPID
+closure, but unrelated members of those common groups never seed the census.
+After verified maintenance, any candidate outside G is counted/retained but
+stops with unverified_group_boundary. Scope errors cannot be ignored.
+
+Diagnostic PID anchors are kept to run end. The union of prior anchors and the
+current census is capped at 4096 distinct PIDs, an engineering guard rather than
+a measured optimum. Overflow retains the entire current snapshot/count, leaves
+the previous anchor state intact, and stops; no eviction or truncated accounting.
+
+Every captured numeric ps RSS value counts, including uncertain S/?/Z and literal
+zero. A printed zero is a reported number, not actual zero memory, absence or
+terminal proof. Missing/malformed required values or inventories fail. Census
+reported RSS >=6 GiB stops. Pressure/swap, free <20 GiB, logical >=24 GiB and
+original deadline gates are unchanged. Stops cannot be erased by a fresh smaller
+sample. The census is neither an upper nor lower bound on actual task/physical
+memory: shared pages may be double counted, attribution can overinclude, and
+short lifetimes/escaped processes/between-sample peaks can be missed.
+
+Record schema: mac-resource-census/1 (record_schema).
+- census_processes: all unique captured related rows; unknown commands omitted.
+- verified_processes: only current independently verified live rows, with start
+  identities, for existing verified resource/CPU metrics.
+- reported_census_rss_kib: sum of all census RSS values.
+- verified_live_rss_kib: reported RSS of verified_processes.
+- unverified_reported_rss_kib: exact remainder; subtotals reconcile.
+- unverified_candidate_pids, outside_trusted_group_pids, trusted_observation_groups.
+- observation_pid_count/cap: full run-local distinct count and fixed cap.
+- attribution_status: PARTIAL or VERIFIED_CAPTURED_ROWS.
+- census_scope_status: INCOMPLETE or OBSERVED_CAPTURED_CLOSURE.
+- observation_errors, identity_probes, root_returncode, original query provenance.
+- Required pressure/free, optional vm, real duration, stop/warning fields.
+
+The record deliberately has no legacy processes/tree_rss_kib/tree_rss_bytes fields.
+The wider census enters BudgetState through an ephemeral guard input only.
+Summary validates separate census totals and emits diagnostic_census with its
+captured_reported_sum_rss_max_bytes. Existing tree-sum fields remain verified-only.
+Unknown rows never receive invented identities or enter cumulative CPU totals.
+Any uncertain attribution/scope keeps diagnostic summary PARTIAL; old incomplete
+records remain errors/partial evidence and are never rewritten or repaired.
+
+Signals, cleanup functions and owner native API are unchanged. The overall PASS
+expression and next_arm_allowed formula are unchanged, extracted verbatim into
+finalize_status for a pure gate assertion. Cleanup UNKNOWN still blocks the next
+arm. No scoped-absence exception is enabled. Complete producer output/timing can
+be reported separately, but resource PARTIAL alone is not performance promotion,
+whole-tree memory qualification, a successful paired comparison, or Mac readiness.
+
+Test selection:
+APPROVED-TEST-IDS.txt retains the inherited exact 68 selectors byte-for-byte.
+DIAGNOSTIC-TEST-IDS.txt lists six new methods / 17 ordinary mocked fixtures.
+APPROVED-ALL-TEST-IDS.txt is exactly those 68 then those six (74 methods).
+The six ROUND-EXCLUDED and two historical UNRUN selectors remain unselected.
+No discovery, actual process exercise, Mac operation, native/security/PID-reuse
+fixture, network call, installation, permission change or publication is included.
+Two inherited methods write diagnostic JSON beside their test modules. Those
+ordinary output files are evidence, not frozen source; preserve every attempt.
