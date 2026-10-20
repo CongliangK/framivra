@@ -10,6 +10,8 @@
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
 
+消费面变更公告（2026-10-20，活引用校正，落笔前已评审）：edit 与 tech-talk 的拍摄/调研/流程/发布配方指向现行仓内文档，删除已完成迁移待办与重复章节数；发布脚本使用明确仓根。仅改 Markdown；真实用户六件挂载未在云端验证。
+
 消费面变更公告（2026-10-20，交付指导补齐，落笔前已评审）：sync/tts 活入口及引用的正式交付统一用完整 all；tech-talk draft 补当前 gfx 前置，操作 home 见 [runbook](../docs/skill/references/runbook.md)，耗时条件见 [DEV](../docs/DEV.md#一性能基准)。真实用户六件挂载未在云端验证。
 
 消费面变更公告（2026-10-20，活文档事实与历史过程精简，落笔前边界已评审）：`docs/skill/SKILL.md` 的交接要求统一指向 runbook；本页及 `hello-app/README.md`、`hello-plugin/README.md`、`tech-talk/SKILL.md` 的例行 doctor 使用离线形态；`tech-talk/references/voice-ime-paradigm.md` 的基准来源指向 DEV。仅改文档，真实用户六件挂载未在本次云端检查中验证。
