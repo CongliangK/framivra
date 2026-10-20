@@ -82,7 +82,9 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
     sources={'build.py':(ROOT/'build.py').read_bytes(),renderer_name:(ROOT/renderer_name).read_bytes(), 'build_media.snapshot.py':SELF_SOURCE}
     builder=frozen_module('build.py',sources['build.py'])
     renderer=frozen_module(renderer_name,sources[renderer_name])
-    basic={key:content[key] for key in builder.DEFAULT if key in content}
+    # Only common timeline/cue inputs go to the Canvas skeleton. Backend palettes
+    # have their own schemas (flat-vector uses six colors) and are not Canvas data.
+    basic={key:content[key] for key in ('title','subtitle','seed') if key in content}
     builder.build(style,output,basic,frames,True)
     data=dict(content);font_path=data.pop('font_path',None)
     if font_path is not None and not Path(font_path).is_file(): raise ValueError('font_path must name an existing local font')

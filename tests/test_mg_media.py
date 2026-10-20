@@ -63,6 +63,17 @@ class MediaGeometry(unittest.TestCase):
                 self.assertEqual(result['style'],'pixel')
                 self.assertFalse(output.exists())
 
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'optional Pillow is unavailable')
+    def test_six_color_backend_content_is_not_revalidated_as_canvas_palette(self):
+        import json
+        data=json.loads((ROOT/'examples/flat-vector-energy.json').read_text())
+        self.assertEqual(len(data['palette']),6)
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/'flat'
+            report=media.assemble('flat-vector',output,data,240,dry=True)
+            self.assertEqual(report['preflight']['palette'],data['palette'])
+            self.assertFalse(output.exists())
+
     def test_frozen_renderer_executes_captured_source_not_later_file_content(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'renderer.py'
