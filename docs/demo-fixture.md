@@ -195,8 +195,9 @@ env python3 scripts/release_acceptance.py "v$(cat VERSION)" --candidate --chrome
 
 tests/test_demo_fixture.py 分两层，执行环境边界如下：
 
-- **合同/反例单测（ContractTests，8 例）**：无需 ffmpeg，随
-  `bash scripts/run_all_tests.sh` 与 CI 各 job 全量执行。
+- **合同/反例单测（ContractTests）**：无需 ffmpeg，由
+  `bash scripts/run_all_tests.sh` 的默认全量发现执行；普通 PR 精选集未收录本模块。
+  CI 的选择范围见 [CI 回归覆盖](DEV.md#ci-回归覆盖)，不据其他 job 通过宣称本类已执行。
 - **真实生成测试（RealGenerationTests，5 例）**：本质上绑定冻结工具链
   （ffmpeg 8.1.3 version_line+binary SHA256 双锚）。CI 的 ubuntu 发行版
   ffmpeg 永远 unsupported，因此该类**不注册进 CI strict ffmpeg 零 skip

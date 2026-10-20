@@ -720,22 +720,18 @@ def qc(c):
         v1_end = min(stacked[1] + 10, c.dur)
         v1_beg = min(stacked[1] + 2, max(v1_end - 1, 0))
         vol_span = (v1_beg, v1_end)
-    if c.dry:
-        loud_v, loud_tp, loud_hit, v1 = None, None, False, -999   # dry-run 不执行，直接走缺省
-        v1_measured = False
-    else:
-        # 三组互不依赖：帧探测（内部 8 线程并发 ffmpeg）/ ebur128 / volumedetect 并行，墙钟 ≈ max
-        with ThreadPoolExecutor(3) as gex:
-            def run_probes():
-                # 每任务独立 ffmpeg 子进程；结果按 key 回填 dict，报告顺序不受并发影响
-                # （免检项在生成阶段已被剔除，此处全部为需实测任务）
-                with ThreadPoolExecutor(8) as pex:
-                    futs = [pex.submit(copy_context().run, fn) for _, fn in tasks]
-                    for f in futs: f.result()
-            fp = gex.submit(copy_context().run, run_probes)
-            fl = gex.submit(copy_context().run, loudness)
-            fv = gex.submit(copy_context().run, lambda: vol(*vol_span) if vol_span else (-999, False))
-            loud_v, loud_tp, loud_hit = fl.result(); v1, v1_measured = fv.result(); fp.result()
+    # 三组互不依赖：帧探测（内部 8 线程并发 ffmpeg）/ ebur128 / volumedetect 并行，墙钟 ≈ max
+    with ThreadPoolExecutor(3) as gex:
+        def run_probes():
+            # 每任务独立 ffmpeg 子进程；结果按 key 回填 dict，报告顺序不受并发影响
+            # （免检项在生成阶段已被剔除，此处全部为需实测任务）
+            with ThreadPoolExecutor(8) as pex:
+                futs = [pex.submit(copy_context().run, fn) for _, fn in tasks]
+                for f in futs: f.result()
+        fp = gex.submit(copy_context().run, run_probes)
+        fl = gex.submit(copy_context().run, loudness)
+        fv = gex.submit(copy_context().run, lambda: vol(*vol_span) if vol_span else (-999, False))
+        loud_v, loud_tp, loud_hit = fl.result(); v1, v1_measured = fv.result(); fp.result()
 
     # ---- 按原顺序回填 checks（内容/顺序/名称与旧版一致）----
     ok(f"成片帧数 = {c.dur}", nb == c.dur, f"实测 {nb}（{nb_src}）",
