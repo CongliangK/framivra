@@ -18,7 +18,7 @@ v2 应用（P2a 批次 1 自 `scripts/` 六件迁入；manifest 见 `app.json`�
 ## 依赖
 
 - Python 3（stdlib urllib，零第三方包）—— 4 个 .py 件
-- node（>=18，内置 fetch/WebSocket）+ google-chrome —— 2 个 .mjs 件（CDP 端口 9333/9334，`/tmp/chrome-cdp*` 独立 user-data-dir）
+- node（须提供全局 `fetch` 与 `WebSocket`，两个入口直接使用，未内置兼容库）+ PATH 上的 google-chrome —— 2 个 .mjs 件（CDP 端口 9333/9334，`/tmp/chrome-cdp*` 独立 user-data-dir）
 - 网络（bilibili/GitHub/目标站点；本机代理纪律见全局 AGENTS.md）
 
 ## 请求失败与验证

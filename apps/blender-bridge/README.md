@@ -98,11 +98,10 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 事件映射、逐源导出、内容缓存、整段回退及验收边界见 [音频审计说明](../../docs/audio-audit.md)。审计是 duck/总混处理前的 MP3 试听；`--whole` 保留每个原事件，默认切分不会重启循环或淡变。
 
 用法：`env python3 apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json [--prefix bgm-] [--force]`
-BGM 正式版默认必做（见 music skill「交付门：分轨审计包」节）：分轨 MP3 导出 →
-审计 timeline（逐轨一列、生产音量原样、静音切分=只保留实际发声段、无 voice 轨）→
-vtx validate → json2blend →
-verify_blend 五步一键，产物落 `<项目>/cache/audit_bgm/{mp3/,timeline.json,audit.blend}`。
-MP3 按源 mtime 自动失效重转（分轨重渲后重跑即可），`--force` 强制全量。
+（从仓库根执行；会写审计目录与 MP3 缓存）。BGM 正式版的交付要求见 music skill「交付门：分轨审计包」节。
+默认产物落 `<项目>/cache/audit_bgm/{mp3/,timeline.json,audit.blend}`；`--skip-blend` 只产出 MP3 与审计 timeline，
+`--force` 强制重转全部 MP3。内容缓存复用、静音切分的保留/回退规则与失败边界统一见
+[音频审计说明](../../docs/audio-audit.md#cache-and-failure-handling)，不以源 mtime 或既有产物判定本次成功。
 
 ## 用户手剪回读协议
 

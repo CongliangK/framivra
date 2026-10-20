@@ -194,25 +194,6 @@ class SandboxCase(unittest.TestCase):
         return result
 
 
-def windows_full_path(current):
-    """win32:合并注册表 Machine+User PATH(choco/winget 装后当前进程环境
-    可能滞后,Windows CI job 自述此坑)。读不到注册表时原样返回。"""
-    if os.name != "nt":
-        return current
-    parts = []
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as key:
-            parts.append(winreg.QueryValueEx(key, "Path")[0])
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-            parts.append(winreg.QueryValueEx(key, "Path")[0])
-    except OSError:
-        return current
-    parts.append(current or "")
-    return os.pathsep.join(p for p in parts if p)
-
-
 @contextlib.contextmanager
 def serve_fixtures(directory, log_path):
     """本地 fixture 下载服务:真实 curl 打 127.0.0.1 下载,全链路(下载+SHA+
