@@ -1,37 +1,47 @@
 # Frozen Mac validation tools
 
-This Draft delivers validation tools for [PR226](https://github.com/CongliangK/framivra/pull/226). It does not change production code, CI, permissions, or security settings. Source delivery and Linux tests do not establish Mac, production, performance, or pixel-equivalence acceptance. Do not merge this branch as an acceptance result.
+This Draft delivers reviewed validation tools for [PR226](https://github.com/CongliangK/framivra/pull/226). It does not modify production code, CI, permissions, security settings, main, PR226, or PR230. Source delivery and cloud tests do not establish Mac, production, performance, or pixel-equivalence acceptance. Do not merge this branch as an acceptance result.
 
 ## Source and checkout identity
 
-The delivery branch is based on main commit `f1efe5f688b543ca11902c9538dec02a5c265961`. The separate production checkout must remain at PR226 commit `85fb352f9f95f9882222b2eacee2c887b520f495`, tree `7d499f03b734cb87c0b4286947b9fb60bd5d303c`. Keep validation tools outside that checkout; do not substitute the delivery checkout or a floating ref.
+The delivery branch is based on main commit `f1efe5f688b543ca11902c9538dec02a5c265961`. Its current sources are [owner r7](../tools/testing/mac_validation/owned_launcher_r7/owned_launcher.py), its unchanged [resource parser](../tools/testing/mac_validation/owned_launcher_r7/resource_summary.py), and [bounded-page harness r1](../tools/testing/mac_validation/bounded_page_harness_r1/harness.py). Older tool revisions remain available in Git history rather than duplicate current-tree directories.
 
-- [Launcher r4](../tools/testing/mac_validation/owned_launcher_r4/owned_launcher.py) consumes an explicit run specification. Keep its unchanged [resource parser](../tools/testing/mac_validation/owned_launcher_r4/resource_summary.py) beside it.
-- [Fast-PNG harness r2](../tools/testing/mac_validation/fast_png_r2/harness.py) remains byte-identical to its reviewed revision. It consumes explicit paths and does not provide an independent supervisor or automatically advance arms.
-- [Source manifest](../tools/testing/mac_validation/SOURCE-MANIFEST.json) records exact byte counts and SHA-256/Git blob identities.
+The separate production checkout must remain at PR226 commit `85fb352f9f95f9882222b2eacee2c887b520f495`, tree `7d499f03b734cb87c0b4286947b9fb60bd5d303c`. Keep validation tools outside that checkout; do not substitute this delivery checkout or a floating ref. [Source manifest](../tools/testing/mac_validation/SOURCE-MANIFEST.json) records exact bytes, SHA-256, Git blob identities, and the distinction between executed review bytes and statically adapted test bindings.
 
-## Launcher r4 cleanup scope
+## Owner r7 scope
 
-Only an explicitly launched Popen root with its own retained, currently matching identity may authorize signals to its root process group. An auxiliary process group never becomes a signal target, even when its members were observed as descendants. No process name grants permission. The tool does not automatically TERM or KILL auxiliary groups.
+The owner uses a conservative completeness gate for the original and fresh related-process candidate sets. Every visible related candidate must be covered by a verified identity before a complete sample is accepted; uncovered candidates remain UNKNOWN. A single bounded fresh query, when allowed, does not erase its original INCOMPLETE observation. Preserve that original row and its evidence; a later complete row is separate and linked to it. The resource summary may report PARTIAL and diagnostic errors for incomplete rows; total JSONL row count is not valid-sample count, and rows must not be removed to make errors disappear.
 
-When the producer has exited successfully and no stop was requested, already tracked auxiliary groups may be observed while they exit naturally, within the remaining original cleanup deadline. A successful root group with residual live members remains UNKNOWN. Missing identity, uncovered members, observation errors, incomplete generation/guard evidence, remaining run directories, or an exhausted deadline remain blocking. Earlier failures are sticky; later empty observations do not erase them. A successful result that used the bounded natural wait is labeled `after bounded natural wait`.
+Unverified rows retain structural fields, the full-row hash, and a command-free prefix. Full command text is retained only for actually verified rows. Candidate relationships used to reject incomplete observations do not grant ownership, signal permission, or permission to record unverified command text.
 
-The original resource accounting, limits, producer argv, production supervisor, and complete environment binding are unchanged. Natural-wait cleanup snapshots establish identity and group emptiness only; they do not establish complete RSS/CPU sampling for the cleanup tail. The cleanup deadline is cooperative, not an operating-system hard guarantee. Any previous Mac failure or UNKNOWN keeps its original result; r4 cannot retroactively qualify an earlier attempt. A new cleanup PASS describes only this outer bounded-natural-cleanup policy; it does not establish that the production supervisor itself controls or cleans the full process tree.
+The r4 resource thresholds, deadlines, cleanup policy, root-only signal boundary, producer argv, and production supervisor remain unchanged. Auxiliary process groups are never automatically signaled. Bounded natural cleanup still requires the original complete identity, generation/guard, reap, empty-group, and directory gates. Cleanup-tail snapshots establish identity/emptiness, not full-tail RSS/CPU usage. A cleanup PASS describes the outer tool policy; it does not establish production-supervisor full-tree control or erase an old failure. The cause of the earlier Mac BA identity failure remains unknown and is not retroactively attributed to a repaired race.
 
-## Exact test scope and portable binding
+## Bounded-page harness r1 scope
 
-The launcher/parser directory contains the r4 test sources, [35-ID approved list](../tools/testing/mac_validation/owned_launcher_r4/APPROVED-TEST-IDS.txt), and [two explicitly unrun IDs](../tools/testing/mac_validation/owned_launcher_r4/UNRUN-TEST-IDS.txt). The two unrun test methods remain in source; their presence is not permission to execute them.
+The harness extends the reviewed r2 thin caller with `route-run` and `pages12`; original C300 and T10 off/on semantics remain unchanged. A single `route-run` synchronously calls the canonical validate then gfx argv under the existing owner. Gfx is permitted only after validate exit, events, receipt and provenance checks pass. It adds no shell, process group, supervisor, retries, or automatic next arm. Its log destination must be a fresh child directory, not the existing owner evidence directory itself.
 
-The only portability change relative to the reviewed r4 test is selecting the production fixture through `FRAMIVRA_VALIDATION_REPO`; an absent variable fails directly. Before loading the approved exact IDs, explicitly set it to the verified absolute path of the separate production checkout and verify the commit, tree, tracked cleanliness, and actual imported `vtx.proc_supervisor` file. Do not use an empty value, relative path, fallback checkout, discovery, whole-class/module execution, or additional IDs. All r4 test methods and assertions are preserved by the portability change.
+The two-page projection retains the exact T10.01 300-frame and T12.01 180-frame clips and preserves other timeline fields. Both pages1/pages2 arms require an explicitly frozen FAST value; only PAGES differs between the arms. Attempt-overlap inspection, per-page counts and complete RGBA comparisons remain separate evidence. Overlapping render attempts do not prove simultaneous individual screenshots, full-scene performance, or safe higher concurrency. PAGES2 and the final FAST choice remain separately gated by actual baseline, resource, pixel and cleanup evidence.
 
-The approved list contains ordinary mocks/parsers and the two original self-owned standard-library Python sleep/ignore-TERM root cases. Auxiliary-process behavior is tested with mocks only. No real auxiliary process, browser, or Mac rendering is part of this cloud test qualification. Generated evidence stays local and must not be committed.
+## Portable test bindings and exact scope
 
-The frozen r4 runtime and original r4 test source passed an independent Linux run of the exact 35 approved IDs: 35/35 PASS, exit 0, 0.372 seconds, including the two self-owned root cases. The portable environment-binding change is reviewed separately and is not represented as that historical execution. The two excluded IDs, Mac, Chrome, and real production remain UNRUN in this r4 qualification.
+The [owner approved list](../tools/testing/mac_validation/owned_launcher_r7/APPROVED-TEST-IDS.txt) contains 43 exact IDs, including its three independent ordinary-mock modules. Its [UNRUN list](../tools/testing/mac_validation/owned_launcher_r7/UNRUN-TEST-IDS.txt) retains two old methods that were explicitly not run in this review round. The [harness approved list](../tools/testing/mac_validation/bounded_page_harness_r1/APPROVED-TEST-IDS.txt) contains 19 exact IDs. Do not use discovery, whole-class/module runs, additional IDs, or the owner UNRUN methods.
 
-The harness 12-ID inventory remains historical provenance only; its test suite and bound input fixtures are not included. Mac execution still requires its separate authorization and exact local input binding.
+Test binding is explicit and must use verified nonempty absolute paths:
+- `FRAMIVRA_VALIDATION_REPO`: the separate frozen production checkout, for both test suites.
+- `FRAMIVRA_VALIDATION_BOUND`: the genuine frozen bound-input project, for harness tests.
+- `FRAMIVRA_VALIDATION_INVENTORY`: the genuine frozen 114-item inventory file, for harness tests.
+- `FRAMIVRA_VALIDATION_PLAN`: the genuine frozen plan file, for harness tests.
 
-## Remaining gates
+Missing required variables fail directly. Do not substitute relative paths, defaults, another checkout, generated fixture stand-ins, or fabricated files/hashes. Independently verify checkout commit/tree, tracked cleanliness and actual imported production-module paths. The harness's existing inventory, timeline, entry and plan hash assertions remain unchanged. If any genuine input is unavailable, that suite is blocked until the genuine input is supplied; a missing plan is not permission to reconstruct different bytes or weaken its pinned hash.
 
-Before a new Mac attempt, verify all delivered source hashes, the frozen production checkout, legitimate resource-read capability, the exact authorized run specification and argv/environment, fresh project/evidence paths, and owned-process cleanup. Pixel comparison and production/performance acceptance remain separate gates. Missing evidence remains UNKNOWN and blocks advancement. The tool never grants permission to start the next stage.
+Only the owner test's repository assignment and the harness tests' four path assignments are adapted; all reviewed methods, assertions, expected identities and approved/UNRUN lists remain unchanged. The runtime files are exact reviewed bytes. These portable bindings receive static review only and are not represented as the original cloud test execution. Generated test evidence stays local and must not be committed.
 
-No media, runtime logs, input bundles, personal filesystem paths, credentials, or actual environment values are included in this source delivery.
+## Review evidence and remaining gates
+
+Independent owner review executed exactly 43 IDs: 43 PASS, 0 FAIL, 0 SKIP, exit 0, 0.393 seconds. The 43 include only the original two real self-owned standard-library sleep/ignore-TERM roots; the added process-coverage cases are ordinary mocks. The two listed old methods remained UNRUN. Independent harness review executed exactly its 19 ordinary CPU/mock IDs: 19 PASS, exit 0, 0.709 seconds, without real validate/gfx processes or browsers.
+
+The harness author's first attempt accidentally invoked default discovery after an empty argument list; it is excluded as exact-ID evidence and remains a recorded deviation. Qualification rests on the corrected exact-ID attempt and the independent exact-ID review. Neither that correction nor this delivery rewrites historical results.
+
+No additional tests are executed for this packaging change. Mac execution, a fresh authorized run specification and complete environment, exact input binding, complete pixel comparison, process cleanup, resource evidence and production/performance acceptance remain separate gates. Missing evidence remains UNKNOWN and blocks advancement. This tool delivery does not authorize the next stage.
+
+No media, raw runtime logs, input bundle, personal filesystem path, credential or captured environment value is included.

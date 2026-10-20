@@ -110,6 +110,190 @@ class LauncherBudgetTests(unittest.TestCase):
         self.assertEqual(result['terminal_resource_status'],'SKIPPED_STOP_OR_DEADLINE')
 
 
+class LauncherResourceIdentityRaceTests(unittest.TestCase):
+    """Normal mock process lifetimes and query failures; no live process probes."""
+    ROOT=876543; LEAF=876544; GRANDCHILD=876545; OTHER=876549
+
+    def process(self, pid, ppid, *, state='S', rss=128, pgid=None, command='ordinary-mock-worker'):
+        return dict(pid=pid, ppid=ppid, pgid=self.ROOT if pgid is None else pgid,
+                    state=state, rss_kib=rss, cpu_percent=0.5, cpu_time='00:00.01', command=command)
+
+    def inventory(self, rows):
+        observer=self.process(os.getpid(),1,pgid=os.getpgid(0),command='mock-observer')
+        unrelated=self.process(self.OTHER,1,pgid=self.OTHER,command='UNRELATED_PRIVATE_COMMAND')
+        return '\n'.join('{pid} {ppid} {pgid} {state} {rss_kib} {cpu_percent} {cpu_time} {command}'.format(**row)
+                         for row in [observer,unrelated]+rows)+'\n'
+
+    def run_fixture(self, original_rows, fresh, *, retained=False, identities=None, root_poll=None):
+        class Child:
+            returncode=None
+            def poll(self): return self.returncode
+            def wait(self,timeout): self.returncode=0; return 0
+        child=Child()
+        identity_values={self.ROOT:100,self.LEAF:None,self.GRANDCHILD:300} if identities is None else identities
+        def start_identity(pid):
+            value=identity_values.get(pid)
+            if pid==self.ROOT and value is None:
+                child.returncode=root_poll
+            return value
+        owner=SimpleNamespace(proc_starttime=start_identity)
+        runtime=launcher.Runtime(owner)
+        runtime.clock=lambda:1.0
+        runtime.pressure=lambda deadline:(55,'ordinary mock pressure')
+        registry=launcher.OwnedRegistry.__new__(launcher.OwnedRegistry)
+        registry.owner=owner; registry.root_pid=self.ROOT; registry.groups={self.ROOT}; registry.generations={}
+        registry.processes={self.ROOT:dict(pid=self.ROOT,pgid=self.ROOT,start_identity=100)}
+        if retained:
+            registry.processes[self.LEAF]=dict(pid=self.LEAF,pgid=self.ROOT,start_identity=200)
+        registry.read_ledgers=lambda:None
+        registry.nested_coverage=lambda:{'status':'PASS'}
+        original=self.inventory(original_rows)
+        values=[SimpleNamespace(stdout=original,returncode=0)]
+        if fresh is not None:
+            values.append(fresh if isinstance(fresh,Exception) else SimpleNamespace(
+                stdout=self.inventory(fresh) if isinstance(fresh,list) else fresh,returncode=0))
+        fs=SimpleNamespace(f_bavail=50*launcher.GIB,f_frsize=1)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(runtime,'run',side_effect=values) as run, \
+                patch.object(launcher.time,'monotonic',return_value=1.0), \
+                patch.object(launcher.os,'statvfs',return_value=fs), \
+                patch.object(launcher,'logical_bytes',return_value=0), \
+                patch.object(launcher,'cleanup',return_value={'status':'PASS'}) as clean, \
+                patch.object(launcher.os,'killpg') as kill:
+            status=launcher.monitor(child,registry,runtime,Path(tmp),[Path(tmp)],30,0)
+            samples=[json.loads(line) for line in (Path(tmp)/'resource-samples.jsonl').read_text().splitlines()]
+        kill.assert_not_called(); clean.assert_called_once()
+        return SimpleNamespace(status=status,samples=samples,calls=run.call_args_list,
+            cleanup=clean.call_args,registry=registry,original=original)
+
+    def assert_failed(self, result, queries=2):
+        self.assertEqual(result.status['samples'],0)
+        self.assertEqual(len(result.calls),queries)
+        self.assertTrue(result.status['errors'])
+        self.assertTrue(result.cleanup.kwargs['request_stop'])
+        self.assertEqual(result.status['terminal_resource_status'],'UNKNOWN')
+        self.assertEqual(result.status['resource_identity_recoveries'][0]['status'],'UNKNOWN')
+        self.assertEqual(result.samples[0]['sample_status'],'INCOMPLETE')
+        self.assertNotIn('tree_rss_bytes',result.samples[0])
+        self.assertNotIn('processes',result.samples[0])
+
+    def test_disappeared_leaf_requires_one_fresh_ps_and_preserves_original_evidence(self):
+        from resource_summary import summarize_samples
+        root=self.process(self.ROOT,1)
+        leaf=self.process(self.LEAF,self.ROOT)
+        for retained in (False,True):
+            with self.subTest(retained=retained):
+                result=self.run_fixture([root,leaf],[root],retained=retained)
+                self.assertEqual(len(result.calls),2)
+                for call in result.calls:
+                    self.assertEqual(call.args[0],launcher.PS_ARGV)
+                    self.assertTrue(call.kwargs['check']); self.assertEqual(call.kwargs['timeout'],2)
+                self.assertEqual(result.status['samples'],1); self.assertEqual(result.status['incomplete_samples'],1)
+                self.assertFalse(result.status['errors']); self.assertFalse(result.cleanup.kwargs['request_stop'])
+                failure,complete=result.samples
+                self.assertEqual(failure['failed_pid'],self.LEAF)
+                self.assertEqual(failure['identity_probe']['retained_identity'],retained)
+                self.assertTrue(failure['identity_probe']['returned_none'])
+                self.assertEqual(failure['identity_probe']['started_monotonic'],1)
+                self.assertEqual(failure['identity_probe']['finished_monotonic'],1)
+                self.assertEqual(failure['query']['snapshot_sha256'],launcher.hashlib.sha256(result.original.encode()).hexdigest())
+                self.assertEqual(failure['query']['deadline_monotonic'],30)
+                self.assertEqual({row['pid'] for row in failure['owned_related_rows']},{self.ROOT,self.LEAF})
+                self.assertEqual(len(failure['owned_related_raw_lines']),1)
+                self.assertEqual(len(failure['unverified_resource_raw_prefixes']),1)
+                failed_row=next(row for row in failure['owned_related_rows'] if row['pid']==self.LEAF)
+                self.assertNotIn('command',failed_row)
+                self.assertEqual(failed_row['command_status'],'OMITTED_UNVERIFIED_IDENTITY')
+                failed_line=next(line for line in result.original.splitlines() if line.startswith(str(self.LEAF)+' '))
+                self.assertEqual(failed_row['raw_line_sha256'],launcher.hashlib.sha256(failed_line.encode()).hexdigest())
+                self.assertEqual({row['pid'] for row in failure['verified_process_identities']},{self.ROOT})
+                self.assertNotIn('UNRELATED_PRIVATE_COMMAND',json.dumps(result.samples)+json.dumps(result.status))
+                self.assertNotIn('tree_rss_kib',failure); self.assertNotIn('processes',failure)
+                self.assertEqual(complete['tree_rss_bytes'],128*1024)
+                self.assertEqual(complete['recovery_of_incomplete_sample_id'],failure['sample_id'])
+                recovery=result.status['resource_identity_recoveries'][0]
+                self.assertEqual(recovery['status'],'FRESH_COMPLETE')
+                self.assertEqual(recovery['fresh_snapshot']['query']['deadline_monotonic'],30)
+                self.assertEqual(recovery['failed_pid_visibility'],'confirmed_absent_after_probe')
+                summary=summarize_samples(result.samples)
+                self.assertEqual(summary['valid_sample_count'],1); self.assertEqual(summary['status'],'PARTIAL')
+        with self.subTest(original_verified_rss_at_limit=True):
+            large=self.process(self.ROOT,1,rss=6*launcher.GIB//1024)
+            result=self.run_fixture([large,leaf],[root])
+            self.assert_failed(result,queries=1)
+            self.assertIn('tree_rss_at_or_above_6GiB',result.status['stop_reasons'])
+            self.assertEqual(result.samples[0]['verified_rss_lower_bound_bytes'],6*launcher.GIB)
+        with self.subTest(second_identity_failure=True):
+            fresh=[root,self.process(self.GRANDCHILD,self.ROOT)]
+            result=self.run_fixture([root,leaf],fresh,identities={self.ROOT:100})
+            self.assert_failed(result)
+            self.assertEqual(result.status['incomplete_samples'],2)
+            self.assertEqual(result.samples[1]['failed_pid'],self.GRANDCHILD)
+            self.assertNotIn(self.GRANDCHILD,result.registry.processes)
+
+    def test_visible_descendant_without_identity_remains_unknown(self):
+        root=self.process(self.ROOT,1); leaf=self.process(self.LEAF,self.ROOT)
+        for state in ('S','Z'):
+            with self.subTest(state=state):
+                result=self.run_fixture([root,leaf],[root,self.process(self.LEAF,self.ROOT,state=state)])
+                self.assert_failed(result)
+                recovery=result.status['resource_identity_recoveries'][0]
+                self.assertEqual(recovery['reason'],'failed_pid_still_visible_including_zombie')
+                self.assertNotIn('failed_pid_visibility',recovery)
+                self.assertFalse(recovery['fresh_snapshot']['owned_related_raw_lines'])
+                self.assertTrue(all('command' not in row for row in recovery['fresh_snapshot']['owned_related_rows']))
+                self.assertNotIn(self.LEAF,result.registry.processes)
+
+    def test_failed_or_invalid_fresh_ps_preserves_original_failure(self):
+        root=self.process(self.ROOT,1); leaf=self.process(self.LEAF,self.ROOT)
+        failures=[subprocess.TimeoutExpired(launcher.PS_ARGV,2),
+                  subprocess.CalledProcessError(1,launcher.PS_ARGV,output='ordinary query failure'),
+                  'malformed query line\n','',
+                  self.inventory([root,root]),
+                  '{pid} 1 {pid} S 128 0.5 00:00.01 ordinary-worker\n'.format(pid=self.ROOT)]
+        for index,fresh in enumerate(failures):
+            with self.subTest(query_failure=index):
+                result=self.run_fixture([root,leaf],fresh)
+                self.assert_failed(result)
+                failure=result.samples[0]; recovery=result.status['resource_identity_recoveries'][0]
+                self.assertEqual(failure['failed_pid'],self.LEAF)
+                self.assertEqual(failure['query']['snapshot_sha256'],launcher.hashlib.sha256(result.original.encode()).hexdigest())
+                self.assertIn('RSS coverage incomplete',recovery['original_error'])
+                self.assertTrue(recovery['fresh_error'])
+                self.assertEqual(recovery['fresh_query']['argv'],launcher.PS_ARGV)
+                self.assertEqual(recovery['fresh_query']['deadline_monotonic'],30)
+                self.assertNotEqual(recovery['fresh_query']['validation_status'],'VALID')
+
+    def test_disappeared_parent_with_uncovered_descendant_blocks_recovery(self):
+        root=self.process(self.ROOT,1); parent=self.process(self.LEAF,self.ROOT)
+        grandchild=self.process(self.GRANDCHILD,self.LEAF)
+        for new_parent in (1,self.ROOT):
+            with self.subTest(later_parent=new_parent):
+                result=self.run_fixture([root,parent,grandchild],[root,self.process(self.GRANDCHILD,new_parent)])
+                self.assert_failed(result,queries=1)
+                self.assertEqual(result.samples[0]['original_descendant_pids'],[self.GRANDCHILD])
+                self.assertEqual(result.status['resource_identity_recoveries'][0]['reason'],
+                                 'original_failed_process_has_descendants')
+                self.assertNotIn(self.GRANDCHILD,result.registry.processes)
+        with self.subTest(new_child_in_non_atomic_fresh_inventory=True):
+            result=self.run_fixture([root,parent],[root,grandchild])
+            self.assert_failed(result,queries=2)
+            recovery=result.status['resource_identity_recoveries'][0]
+            self.assertEqual(recovery['reason'],'fresh_descendants_of_absent_failed_pid')
+            self.assertEqual(recovery['fresh_failed_descendant_pids'],[self.GRANDCHILD])
+            self.assertNotIn(self.GRANDCHILD,result.registry.processes)
+
+    def test_root_identity_failure_never_uses_descendant_recovery(self):
+        root=self.process(self.ROOT,1)
+        for outcome in (None,0,1):
+            with self.subTest(root_poll=outcome):
+                result=self.run_fixture([root],[],identities={},root_poll=outcome)
+                self.assert_failed(result,queries=1)
+                self.assertTrue(result.samples[0]['root_identity_failure'])
+                self.assertEqual(result.samples[0]['root_returncode'],outcome)
+                self.assertEqual(result.status['resource_identity_recoveries'][0]['reason'],
+                                 'root_identity_failure_not_recoverable')
+
+
 class FakeChild:
     pid=876543
     def __init__(self,wait_timeout=False):

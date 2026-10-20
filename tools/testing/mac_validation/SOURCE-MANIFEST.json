@@ -1,91 +1,127 @@
 {
-  "schema": "framivra-reviewed-mac-validation-delivery/4",
-  "status": "SOURCE_DELIVERY_QUALIFIED_PENDING_MAC_R4_QUALIFICATION",
-  "launcher_revision": "r4",
-  "harness_revision": "r2",
+  "schema": "framivra-reviewed-mac-validation-delivery/7",
+  "status": "SOURCE_DELIVERY_QUALIFIED_PENDING_MAC_R7_AND_BOUNDED_PAGE_VALIDATION",
+  "launcher_revision": "r7",
+  "harness_revision": "bounded-page-r1",
   "production_commit": "85fb352f9f95f9882222b2eacee2c887b520f495",
   "production_tree": "7d499f03b734cb87c0b4286947b9fb60bd5d303c",
-  "test_source_binding": {
-    "variable": "FRAMIVRA_VALIDATION_REPO",
-    "required_value": "verified absolute path of production checkout",
-    "source_change": "replace cloud-relative r4 launcher fixture path only; r4 methods and assertions unchanged",
-    "harness_tests_included": false
+  "runtime_bytes_unchanged_from_independent_reviews": true,
+  "independent_runtime_reviews": {
+    "owner": {
+      "result": "PASS",
+      "platform": "Linux",
+      "approved_exact_ids": 43,
+      "passed": 43,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "unittest_seconds": 0.393,
+      "executed_main_test_source_sha256": "8e0fb2f4b3c06c9fdd2b8c8bda0242563d98bf029737d14e480dceb7db347cbc",
+      "explicit_unrun_ids": 2,
+      "real_self_owned_root_cases_included_in_43": 2
+    },
+    "harness": {
+      "result": "PASS",
+      "platform": "Linux",
+      "approved_exact_ids": 19,
+      "passed": 19,
+      "failed": 0,
+      "exit_code": 0,
+      "unittest_seconds": 0.709,
+      "executed_test_source_sha256": "ccc0808955847e5f116f01a509dd3289375ea961d5f792908cfb360e743bc9b2",
+      "real_validate_gfx_browser_cases": 0,
+      "author_discovery_attempt_excluded_from_exact_id_evidence": true
+    }
   },
-  "test_scope": {
-    "approved_exact_ids": 35,
-    "explicit_unrun_ids": 2,
-    "new_real_auxiliary_process_tests": false,
-    "mac_qualification": "PENDING_SEPARATE_VALIDATION"
+  "portable_binding_review": {
+    "result": "PASS",
+    "scope": "static only; explicit environment path bindings, unchanged methods/assertions/expected identities/ID lists",
+    "tests_executed_for_portable_binding": false,
+    "required_nonempty_absolute_path_variables": {
+      "both_suites": [
+        "FRAMIVRA_VALIDATION_REPO"
+      ],
+      "harness_suite": [
+        "FRAMIVRA_VALIDATION_BOUND",
+        "FRAMIVRA_VALIDATION_INVENTORY",
+        "FRAMIVRA_VALIDATION_PLAN"
+      ]
+    },
+    "missing_genuine_inputs": "BLOCKED; do not fabricate files or weaken frozen hashes"
   },
+  "mac_qualification": "PENDING_SEPARATE_VALIDATION",
   "files": [
     {
-      "path": "tools/testing/mac_validation/fast_png_r2/APPROVED-TEST-IDS.txt",
-      "bytes": 828,
-      "sha256": "25066458b0464df476c0b93f29180d65f611a73ff8b9c0bccda78924f48ea135",
-      "git_blob_sha1": "6d4fedbe8a88f448cb5d3d4dd4b2dafc4217c207"
+      "path": "tools/testing/mac_validation/bounded_page_harness_r1/APPROVED-TEST-IDS.txt",
+      "bytes": 1382,
+      "sha256": "825c43ad658fb60916daa44b82d06230f6b98ea7d7359161f63b728a6f580fd5",
+      "git_blob_sha1": "9bc05f57ab7eec9270c401e0ca2bd97f92c71c89"
     },
     {
-      "path": "tools/testing/mac_validation/fast_png_r2/harness.py",
-      "bytes": 27487,
-      "sha256": "a8399a33f3af0604231f0d0247413ce3f3cb4992a2ec281eba14fa6df688a4a5",
-      "git_blob_sha1": "f068c7960fe871bb37038a21fb6e80f7edd5b432"
+      "path": "tools/testing/mac_validation/bounded_page_harness_r1/harness.py",
+      "bytes": 41487,
+      "sha256": "e4a067f86e8914b4f9ccb40c42fbf22c95db700e36ac1c9aabad7df3c21cbdaf",
+      "git_blob_sha1": "f26807640dc9eb404277706024dbbd7337729e88"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r4/APPROVED-TEST-IDS.txt",
-      "bytes": 3161,
-      "sha256": "0c35fb926b8336061074d65d7791a580ad3209600a9056e9ea585ba8608045f7",
-      "git_blob_sha1": "cf0b26af21559cf84c50aeaa22a90ff0f330982f"
+      "path": "tools/testing/mac_validation/bounded_page_harness_r1/test_harness.py",
+      "bytes": 25737,
+      "sha256": "7c8844e28ad94c2a8796b4d2aaa1cc09555e9a122f68bafbe2661ecdcc650fd6",
+      "git_blob_sha1": "e05a1a22a0c387ed6c9b8213756088fa7d4bfd56"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r4/UNRUN-TEST-IDS.txt",
+      "path": "tools/testing/mac_validation/owned_launcher_r7/APPROVED-TEST-IDS.txt",
+      "bytes": 4095,
+      "sha256": "8091c60a7e4202a54d5f67bdcd56e892406823cf1c9d708cae082659d2dfde18",
+      "git_blob_sha1": "3791c3a9cfa44f81c80c3013f9445ef8b7723e79"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r7/UNRUN-TEST-IDS.txt",
       "bytes": 168,
       "sha256": "a3db3239dea3bb80892de11002dfb855cb865cc00c10d51939b1d1b173e182d4",
       "git_blob_sha1": "180467e89d7d7ec09dc6e0b9ac8c4d3d06f866fb"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r4/owned_launcher.py",
-      "bytes": 33515,
-      "sha256": "8a85f5c440b7740f5e6ffd9f044b7d8584092b0184f9ee41655849353b0578c0",
-      "git_blob_sha1": "d6d3aa975ff0ffdd1a597022db2b7a8846930399"
+      "path": "tools/testing/mac_validation/owned_launcher_r7/owned_launcher.py",
+      "bytes": 43957,
+      "sha256": "9ace5c7555b115d9342a721a9916ef1f91d4160b90b8d7e1a861d0f5b22da8f6",
+      "git_blob_sha1": "4a33ebe707459ed14d90d153bc4152524e32d6ce"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r4/resource_summary.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r7/resource_summary.py",
       "bytes": 7879,
       "sha256": "06ca025a3111953b3acc39c87c1735613608a16dce8ad0f819cb10d451cc0f36",
       "git_blob_sha1": "f1ebdd108ffb595fd3fb31f2aceb49508e2e8a62"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r4/test_owned_launcher.py",
-      "bytes": 24580,
-      "sha256": "e4b5fc9cc9b1f85f3aee3312f607231263adcbb8e7221d566e0a63334f1d42a8",
-      "git_blob_sha1": "51db975acb9a954d4a0cc7b97bccc86b498b7cda"
+      "path": "tools/testing/mac_validation/owned_launcher_r7/test_independent_coverage.py",
+      "bytes": 2159,
+      "sha256": "b9303ddb87aaa25f1c1483ed12a138fff8498ac684343ce51728e022fcfac53a",
+      "git_blob_sha1": "3e0c5e9cb4f7fdf16b57ecab950974e70ec83437"
     },
     {
-      "path": "tools/testing/mac_validation/owned_launcher_r4/test_resource_summary.py",
+      "path": "tools/testing/mac_validation/owned_launcher_r7/test_independent_fresh_child.py",
+      "bytes": 1451,
+      "sha256": "d8f46de5ef5d777676f3a73ae2dc0be4c990525be88827383df95afe849844b3",
+      "git_blob_sha1": "db8b31d28a3d09e76ad009028690e29f136ea1c7"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r7/test_independent_r5.py",
+      "bytes": 2110,
+      "sha256": "f5c3a10ae0ad1b27440ec8c1e6b269ee1a149ca69b7008d67ec86e363eb5af12",
+      "git_blob_sha1": "f5560abf028ac0ca09367052768cc09f154fdbd5"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r7/test_owned_launcher.py",
+      "bytes": 37173,
+      "sha256": "03c97ba4319a6c01737dad9da10ec51bead1bec112115bd9d1346c4d1c8a921b",
+      "git_blob_sha1": "6fa3b250963b1e541fb896d8177b4ef8f0efd9b3"
+    },
+    {
+      "path": "tools/testing/mac_validation/owned_launcher_r7/test_resource_summary.py",
       "bytes": 3580,
       "sha256": "f797c9553ea30471ced75175cadc06dcc92be21db88641037e91d899b8ad7670",
       "git_blob_sha1": "4bc55f14e23162881688b4f6792624babb912500"
     }
-  ],
-  "runtime_independent_review": {
-    "result": "PASS",
-    "platform": "Linux",
-    "approved_exact_test_ids": 35,
-    "passed": 35,
-    "failed": 0,
-    "exit_code": 0,
-    "unittest_seconds": 0.372,
-    "executed_test_source_sha256": "e6efae02e446eee8cd105d8982a87b473f583292e9f3220c00fbb7f8c30abb6e",
-    "executed_runtime_sha256": "8a85f5c440b7740f5e6ffd9f044b7d8584092b0184f9ee41655849353b0578c0",
-    "actual_production_module_sha256": "6f5c92471f4479b0bf4ba94a75cf079767b142598fc7aec04741a9031fd0ddd6",
-    "explicit_unrun_ids": 2,
-    "real_self_owned_root_cases_included_in_35": 2,
-    "real_auxiliary_process_cases": 0,
-    "mac_chrome_production": "UNRUN"
-  },
-  "portable_binding_review": {
-    "result": "PASS",
-    "scope": "static comparison of the single environment-binding line, package identity and documentation",
-    "tests_executed_for_portable_binding": false
-  }
+  ]
 }
