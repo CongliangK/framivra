@@ -66,6 +66,12 @@ class SemanticMorph(unittest.TestCase):
             target=Path(tmp)/'not-created'
             with self.assertRaises(ValueError):morph.render_morph_frames(data,240,target)
             self.assertFalse(target.exists())
+        missing=example('growth');missing['title']='缺字'+chr(0x10ffff)
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp)/'no-tofu'
+            with self.assertRaisesRegex(ValueError,'lacks required glyph'):
+                morph.render_morph_frames(missing,240,output)
+            self.assertFalse(output.exists())
         dejavu=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
         if dejavu.exists():
             with self.assertRaises(ValueError):morph.validate_morph_content(example('growth'),240,dejavu)

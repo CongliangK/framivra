@@ -383,9 +383,11 @@ def main():
         rod.name='Relationship %02d'%i
         rod.data.materials.append(link_material)
         rods.append((rod,edge))
+    ground_lifts=[]
     # Bake every requested integer frame. No simulation, prior-state integration,
     # callbacks or wall-clock animation is involved.
     for frame in range(args.frames):
+        scene.frame_set(frame)
         state=story_state(data,frame)
         camera.location=state['camera']['location']
         camera.rotation_euler=(Vector(state['camera']['target'])-camera.location).to_track_quat('-Z','Y').to_euler()
@@ -402,13 +404,24 @@ def main():
         for obj,x,y,radius,i,base_rotation in objects:
             obj.location=state['positions'][i]
             obj.scale=state['scales'][i]
-            obj.keyframe_insert(data_path='scale',frame=frame)
             obj.rotation_euler=(base_rotation[0],base_rotation[1]+.1*math.sin(frame/args.frames*math.pi),base_rotation[2])
-            obj.keyframe_insert(data_path='location',frame=frame)
-            obj.keyframe_insert(data_path='rotation_euler',frame=frame)
+            # Rotation changes the actual support point, especially on a beveled
+            # cube. Correct against evaluated world vertices, not nominal radius.
+            bpy.context.view_layer.update()
+            evaluated=obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            mesh=evaluated.to_mesh()
+            try:
+                minimum=min((evaluated.matrix_world@vertex.co).z for vertex in mesh.vertices)
+            finally:
+                evaluated.to_mesh_clear()
+            lift=max(0,-minimum+1e-5) if minimum<0 else 0
+            obj.location.z+=lift
+            ground_lifts.append(lift)
+            for prop in ('location','rotation_euler','scale'):
+                obj.keyframe_insert(data_path=prop,frame=frame)
         for rod,edge in rods:
-            start=Vector(state['positions'][edge[0]])
-            end=Vector(state['positions'][edge[1]])
+            start=objects[edge[0]][0].location.copy()
+            end=objects[edge[1]][0].location.copy()
             end=start+(end-start)*state['connections']
             delta=end-start
             rod.location=(start+end)/2
@@ -433,6 +446,7 @@ def main():
         'width':args.width, 'height':args.height,
         'animation':'per_frame_3d_layout_volume_preserving_scale_and_camera_orbit',
         'ui_binding':'camera_space_position_rotation_scale_baked_per_frame',
+        'ground_constraint':{'method':'evaluated_mesh_world_vertices','minimum_z':0,'maximum_applied_lift':max(ground_lifts,default=0)},
         'scene_story':data['scene_story'], 'links':data['links'], 'scene_layout':data['scene']['layout'], 'beats':data['beats'], 'transition':data['transition'],
         'font':str(font_path) if font_path else 'Blender built-in',
         'font_license':'unknown; verify the external font separately; no font bytes embedded',

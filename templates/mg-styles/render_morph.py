@@ -17,7 +17,14 @@ def _font_file(data,font_path=None):
     for path in paths:
         if path.is_file():
             if cjk and 'DejaVu' in path.name:raise ValueError('CJK text requires a CJK-capable font_path')
-            ImageFont.truetype(str(path),20)
+            font=ImageFont.truetype(str(path),40)
+            missing=font.getmask(chr(0x10ffff))
+            missing_key=(missing.size,bytes(missing))
+            for char in set(text+' → '):
+                if not char.isspace():
+                    glyph=font.getmask(char)
+                    if (glyph.size,bytes(glyph))==missing_key:
+                        raise ValueError(f'font lacks required glyph U+{ord(char):04X}')
             return path
     raise ValueError('provide an existing local font_path supporting the content')
 
