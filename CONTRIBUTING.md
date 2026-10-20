@@ -4,29 +4,31 @@
 
 ## 环境要求
 
-- Python 3.9+（仓内开发纪律建议 3.10+，与 `pyproject.toml` 的 `requires-python` 一致；仓内一律用 `env python3`，避免系统 Python 劫持问题）。
+- Python 版本下限见 [`pyproject.toml`](pyproject.toml) 的 `requires-python`；仓内命令用 `env python3`，与测试运行器保持一致。
 - ffmpeg（音视频链必需）；渲染集成检查需 Chrome/Chromium（gfx 帧驱动协议）。
-- clone 后先跑自检与初始化：
+- clone 后先初始化（会生成 `config.local.json`，属写操作），例行自检使用离线形态：
 
 ```bash
 env python3 vt.py init      # 依赖自检 + 生成 config.local.json（幂等）
-env python3 vt.py doctor    # 三检：版本漂移 / apps+plugins manifest+health / skills 完好性
+env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor  # 本地引用漂移 / apps+plugins manifest+health / 工作流模板完好性
 ```
+
+doctor 的本地引用边界与联网写操作见 [快速开始](README.md#快速开始clone-即用零安装步骤)。
 
 ## 测试入口
 
-统一测试运行器（CI 语义，任一批次失败即非零退出）：
+统一测试运行器（默认全量发现，任一批次失败即非零退出）：
 
 ```bash
 bash scripts/run_all_tests.sh
 ```
 
-默认批次为纯单测；涉及真实渲染/混音的集成检查由环境变量门控，未设置时自动跳过：
+该入口发现内核、app、plugin 和 template 的测试；执行可写临时文件或启动工具。部分媒体检查需显式启用，另有检查在 PATH 存在 FFmpeg 时自动运行，不能把未设置环境变量的运行称为纯单测。skip 表示未执行：
 
-- `VTX_TEST_CHROME` —— 指向 Chrome/Chromium 可执行文件，启用 gfx 真渲染集成检查。
-- `VTX_TEST_FFMPEG` —— 指向 ffmpeg 可执行文件（未设时回退 PATH 上的 ffmpeg），启用混音响度链集成检查。
+- `VTX_TEST_CHROME` —— 指向 Chrome/Chromium 可执行文件，启用以它为门控的 gfx 真渲染检查。
+- `VTX_TEST_FFMPEG` —— 指向 ffmpeg 可执行文件；部分测试要求显式设置，另有测试在未设置时回退 PATH。
 
-例：`env VTX_TEST_FFMPEG=$(which ffmpeg) VTX_TEST_CHROME=$(which chromium) bash scripts/run_all_tests.sh`。
+例：`env VTX_TEST_FFMPEG=$(which ffmpeg) VTX_TEST_CHROME=$(which chromium) bash scripts/run_all_tests.sh`。这组变量不启用所有可选集成；额外 opt-in 与依赖以各测试为准。普通 PR、定时与手动 CI 的选择范围见 [CI 回归覆盖](docs/DEV.md#ci-回归覆盖)。
 
 ## 文档门禁
 

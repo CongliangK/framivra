@@ -177,7 +177,7 @@ PAGES 6→8→12 无分片时全量冷 161.9/168.8/145.6s 平坦（均值，CPU 
 
 2026-09-11 体检修复记录见 commit 92609f3 / 898870e；以下保留仍可定位的问题与未完成的外部验证，不把旧清单整体当成当前缺陷：
 
-- **可定位 NIT**：`vt.py` 的 imgen_requests 检查仍两次调用 `importlib.util.find_spec("requests")`（零子进程，本地重复探测）；`vtx/qc.py` 的 dry 早退后仍有 dry 分支；`apps/aroll/trim_takes.py` 仍按 `raw[44:]` 读取固定头部的 float32 WAV，仅适配其既定输入形态，不能当通用 WAV 解析器。原体检的 infra 恒真分支与 imgen 死变量未在本轮逐项复核，不据旧行号断言仍未修。
+- **可定位 NIT**：`vt.py` 的 imgen_requests 检查仍两次调用 `importlib.util.find_spec("requests")`（零子进程，本地重复探测）；`apps/aroll/trim_takes.py` 仍按 `raw[44:]` 读取固定头部的 float32 WAV，仅适配其既定输入形态，不能当通用 WAV 解析器。原体检的 infra 恒真分支与 imgen 死变量未在本轮逐项复核，不据旧行号断言仍未修。
 - **Windows 原生内核验收**：原生 x64 Python 与 Chrome/Edge 支持安装自检、CDP/CLI 图形、FFmpeg 全链、缓存命中及 gc/clean。图形环境指纹绑定浏览器发行目录、系统库/驱动文件、系统与用户字体及注册表、主机与启动边界；未知输入保持拒绝复用，不宣称跨机器像素等价。该保守闭包的扫描成本高于 Linux 口径。Chrome 使用 Job Object，宿主强杀时关闭句柄回收整棵浏览器树；文件事务使用 Windows 字节范围锁；删除使用拒绝写入与改名共享的祖先句柄及按句柄删除，拒绝 junction 祖先。原生安全回归由本地 Windows 原生测试验收，中文/空格/# 路径单双分段、冷温缓存、严格 QC、解码、黑场和真峰值门由本地 [合成 E2E](../tests/run_e2e.py) 验收；默认 CI 的 `windows-install` job 验收安装自检，原生渲染由上述本地验收覆盖。Windows CEF 与模型侧车进程生命周期不由此验收，平台专用测试仍按其实际执行报告。
 - **asr 模块 Windows 深度移植未做**：venv 布局（.venv/Scripts/）已兼容探测，但 qwen-asr 解释器在 Windows 的可用性未验证；apps/asr/README.md 手动路线兜底。
 - **json2blend fps 类型微差**（实际不可达）：桥侧键函数取 timeline 原文 fps 类型，若手写 30.0 会与 vtx 键分叉——vtx Ctx 已拒非 int fps，故仅理论风险。
