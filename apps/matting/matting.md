@@ -13,7 +13,7 @@
 cd <video_tools>/apps/matting/resolve_matte
 env bash matte_pipeline.sh matte_auto_v9    # 一键：清显存→建工程→9轨抠像→等演算→导出
 SKIP_GUARD=1 env bash matte_pipeline.sh proj   # 达芬奇已就绪，跳过重启
-SKIP_OPS=1    env bash matte_pipeline.sh proj   # 已抠好，仅重新导出
+SKIP_OPS=1    env bash matte_pipeline.sh proj   # 仅跳过鼠标序列，仍建工程/导入并导出，不保证无改动重导出
 ```
 产物：`out/alpha_v*/matte_V{1..9}.mov`——**ProRes 4444 yuva444p12le 带 alpha**，每轨一段真人前景。
 关键约束（细节全在 README 踩坑实录，此处只列影响排期的）：
