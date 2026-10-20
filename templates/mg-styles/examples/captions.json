@@ -1,0 +1,44 @@
+{
+  "title": "像素闯关反应字幕",
+  "caption_band": "upper",
+  "subject_rect": [
+    0.2,
+    0.6,
+    0.8,
+    0.95
+  ],
+  "reactions": [
+    {
+      "in": 8,
+      "out": 55,
+      "text": "跳过去！",
+      "emotion": "emphasis",
+      "punchFrame": 30,
+      "stagger": 2
+    },
+    {
+      "in": 68,
+      "out": 115,
+      "text": "居然跨过去了！",
+      "emotion": "surprise",
+      "punchFrame": 88,
+      "stagger": 2
+    },
+    {
+      "in": 128,
+      "out": 175,
+      "text": "蹲下，稳住！",
+      "emotion": "question",
+      "punchFrame": 148,
+      "stagger": 2
+    },
+    {
+      "in": 190,
+      "out": 235,
+      "text": "最后一块证据！",
+      "emotion": "joy",
+      "punchFrame": 215,
+      "stagger": 2
+    }
+  ]
+}

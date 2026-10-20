@@ -77,29 +77,50 @@ class MGStyles(unittest.TestCase):
 const fs=require('fs'), vm=require('vm');
 const root=process.argv[1];
 for(const style of JSON.parse(process.argv[2])) {
-  let operations=[], state={}, stack=[];
-  const methods={canvas:{},measureText:s=>({width:String(s).length*30}),
-    createLinearGradient:()=>({addColorStop(){}}),
-    createRadialGradient:()=>({addColorStop(){}}),
+  let operations=[], stacks=[];
+  function context() {
+   let state={}, stack=[];stacks.push(stack);
+   const gradient=(kind,args)=>{operations.push([kind,...args]);return {addColorStop(...v){operations.push(['colorStop',...v])}}};
+   const methods={canvas:{},measureText:s=>({width:String(s).length*30}),
+    createLinearGradient:(...a)=>gradient('linearGradient',a),
+    createRadialGradient:(...a)=>gradient('radialGradient',a),
     save:()=>stack.push({...state}), restore:()=>{state=stack.pop()||{}}};
-  const ctx=new Proxy({}, {get:(o,k)=>k in state?state[k]:methods[k]||((...a)=>operations.push([k,...a])),
+   return new Proxy({}, {get:(o,k)=>k in state?state[k]:methods[k]||((...a)=>operations.push([k,...a])),
     set:(o,k,v)=>{state[k]=v;operations.push(['set',k,v]);return true;}});
-  const sandbox={window:{},document:{createElement:()=>({getContext:()=>ctx}),getElementById:()=>({getContext:()=>ctx,toDataURL:()=>''})},
+  }
+  const ctx=context();
+  const sandbox={window:{},document:{createElement:()=>{const aux=context();return {getContext:()=>aux}},getElementById:()=>({getContext:()=>ctx,toDataURL:()=>''})},
     location:{search:'?f=0'},URLSearchParams,console};
   vm.createContext(sandbox);
   for(const n of ['styles-a.js','styles-b.js','styles-c.js'])
     vm.runInContext(fs.readFileSync(root+'/'+n,'utf8'),sandbox);
   sandbox.window.MG_CONTENT={style,frames:90,title:'中文<&>内容',subtitle:'Different story',
     items:[{label:'One',value:0},{label:'Two',value:99}],
-    palette:['#faf5e8','#202730','#e66b42','#49a69d'],seed:7,pace:1};
+    palette:['#faf5e8','#202730','#e66b42','#49a69d'],seed:7,pace:1,hold_frames:12};
   vm.runInContext(fs.readFileSync(root+'/runtime.js','utf8'),sandbox);
   const draw=f=>{operations=[];sandbox.window.__vtx_render(f);return JSON.stringify(operations)};
   const first=draw(45); draw(89);draw(0);
   if(first!==draw(45))throw Error(style+' order-dependent operations');
+  for(const seed of [-2147483648,2147483647]) {
+   sandbox.window.MG_CONTENT.seed=seed;
+  for(let count=1;count<=6;count++) {
+   sandbox.window.MG_CONTENT.items=Array.from({length:count},(_,i)=>({label:'中文长标签<&>'+i,value:i*19}));
+   sandbox.window.MG_CONTENT.pace=count%2 ? .5 : 2;
+   sandbox.window.MG_CONTENT.frames=count%2 ? 90 : 180;
   for(const frame of [0,1,9,45,80,89]) {
     const result=draw(frame);
     if(/null/.test(result))throw Error(style+' non-finite operation '+frame);
-    if(stack.length)throw Error(style+' unbalanced save/restore');
+    if(stacks.some(stack=>stack.length))throw Error(style+' unbalanced save/restore');
+  }
+  const end=sandbox.window.MG_CONTENT.frames-1;
+  if(draw(end)!==draw(end-5))throw Error(style+' final hold changed');
+  }
+  }
+  if(style==='cel-boil') {
+   sandbox.window.MG_CONTENT.items=[{label:'Build',value:42}];
+   const ops=JSON.parse(draw(45));
+   const label=ops.find(a=>a[0]==='fillText'&&a[1]==='Build');
+   if(!label || label[2]<0 || label[2]>1600)throw Error('single cel label outside canvas');
   }
 }
 """
@@ -108,7 +129,7 @@ for(const style of JSON.parse(process.argv[2])) {
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_invalid_content_is_rejected_before_creating_output(self):
-        invalid = [dict(items=[]), dict(seed=True), dict(pace=0), dict(pace=True), dict(pace=float('nan')), dict(palette=['red'] * 4),
+        invalid = [dict(items=[]), dict(seed=True), dict(seed=10**400), dict(seed=-(2**31)-1), dict(seed=2**31), dict(pace=0), dict(pace=True), dict(pace=float('nan')), dict(palette=['red'] * 4),
                    dict(items=[dict(label='bad', value=float('nan'))]),
                    dict(items=[dict(label='bad', value=-1)]), dict(title=4)]
         with tempfile.TemporaryDirectory() as temp:

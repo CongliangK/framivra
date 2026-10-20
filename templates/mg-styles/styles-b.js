@@ -21,12 +21,15 @@
     morph(c, m, h) {
       const [bg, ink, accent, second] = m.palette, items = countItems(m);
       c.save(); c.fillStyle = bg; c.fillRect(0, 0, 1920, 1080);
-      const travel = cue(m, .12, .82) * Math.max(0, items.length - 1);
+      const travel = cue(m, .12, .82) * Math.max(1, items.length - 1);
       const idx = Math.min(items.length - 1, Math.floor(travel));
-      const u = travel - Math.floor(travel), bridge = Math.sin(Math.PI * u);
+      const u = items.length === 1 ? Math.min(1,travel) : travel - Math.floor(travel), bridge = Math.sin(Math.PI * u);
       // Equal angular topology keeps radial shape interpolation untangled.
       const shape = (a, k) => k % 3 === 0 ? 1 : k % 3 === 1 ? .78 + .22 * Math.cos(a * 4) : .8 + .2 * Math.cos(a * 3);
-      const radius = 220 + 18 * Math.sin(m.phase * TAU);
+      const next = Math.min(items.length - 1, idx + 1);
+      const magnitude = Math.max(1, ...items.map(item => Math.abs(item.value)));
+      const currentValue = items[idx].value * (1 - ease(u)) + items[next].value * ease(u);
+      const radius = 185 + 55 * Math.abs(currentValue) / magnitude + 12 * Math.sin(m.phase * TAU);
       c.translate(960 + 140 * Math.sin(m.phase * Math.PI), 510);
       c.rotate(.12 * Math.sin(u * TAU)); c.scale(1 + bridge * .12, 1 - bridge * .1);
       c.fillStyle = accent; c.beginPath();
@@ -39,7 +42,8 @@
       }
       c.closePath(); c.fill();
       c.strokeStyle = ink; c.lineWidth = 5; c.stroke();
-      c.fillStyle = second; circle(c, -62, -22, 18); c.fill(); circle(c, 62, -22, 18); c.fill();
+      c.textAlign = 'center'; label(c, h, Math.round(currentValue), 0, 0, radius * 1.35, 80, ink);
+      c.strokeStyle = second; c.lineWidth = 6; c.beginPath(); c.arc(0, 0, radius * .65, -Math.PI / 2, -Math.PI / 2 + TAU * Math.abs(currentValue) / magnitude); c.stroke();
       c.restore(); c.save();
       c.textAlign = 'center';
       label(c, h, m.title, 960, 140, 1660, 80, ink);
@@ -80,11 +84,15 @@
     hud(c, m, h) {
       const [, , accent, second] = m.palette, bg = '#08171c', ink = '#d7ffff';
       const items = countItems(m), lock = cue(m, .58, .73), color = lock > .5 ? second : accent;
+      const detected = m.phase >= .44, confirmed = m.phase >= .73;
       c.save(); c.fillStyle = bg; c.fillRect(0, 0, 1920, 1080);
       c.strokeStyle = color; c.lineWidth = 1; c.globalAlpha = .12;
-      for (let x = 0; x < 1920; x += 64) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, 1080); c.stroke(); }
-      for (let y = 0; y < 1080; y += 64) { c.beginPath(); c.moveTo(0, y); c.lineTo(1920, y); c.stroke(); }
+      for (let row = 0; row < 15; row++) for (let col = 0; col < 23; col++) {
+        const x = col * 90 + row % 2 * 45, y = row * 78; c.beginPath();
+        for (let k = 0; k <= 6; k++) { const a = k / 6 * TAU + Math.PI / 6, px = x + Math.cos(a) * 52, py = y + Math.sin(a) * 52; if (!k) c.moveTo(px, py); else c.lineTo(px, py); } c.stroke();
+      }
       c.globalAlpha = 1; c.translate(960, 560);
+      c.shadowColor = color; c.shadowBlur = 9;
       for (let r = 0; r < 4; r++) {
         c.save(); c.rotate((r % 2 ? -1 : 1) * m.phase * .7 + r);
         c.lineWidth = r ? 2 : 5; c.strokeStyle = color;
@@ -98,6 +106,10 @@
       // Wireframe latitude/longitude hologram, then four lock brackets converge.
       c.strokeStyle = color; c.lineWidth = 2;
       for (let j = -2; j <= 2; j++) { c.beginPath(); c.ellipse(0, j * 46, Math.sqrt(1 - (j / 3) ** 2) * 137, 18, 0, 0, TAU); c.stroke(); c.beginPath(); c.ellipse(0, 0, 24 + (j + 2) * 25, 137, m.phase * .5, 0, TAU); c.stroke(); }
+      c.shadowBlur = 0;
+      const targetX = detected ? 115 : 180 * Math.sin(m.phase * 9), targetY = detected ? -75 : 130 * Math.cos(m.phase * 7);
+      c.fillStyle = color; circle(c, targetX, targetY, detected ? 9 : 5); c.fill();
+      if (detected) { c.beginPath(); c.moveTo(targetX - 25, targetY); c.lineTo(targetX + 25, targetY); c.moveTo(targetX, targetY - 25); c.lineTo(targetX, targetY + 25); c.stroke(); }
       const size = 225 + 100 * (1 - lock);
       c.lineWidth = 7;
       for (const sx of [-1, 1]) for (const sy of [-1, 1]) { c.beginPath(); c.moveTo(sx * (size - 50), sy * size); c.lineTo(sx * size, sy * size); c.lineTo(sx * size, sy * (size - 50)); c.stroke(); }
@@ -105,14 +117,22 @@
       items.forEach((item, i) => {
         const y = 350 + i * Math.min(95, 550 / items.length), p = cue(m, .16 + i * .025, .4 + i * .025);
         c.textAlign = 'left'; label(c, h, item.label, 100, y, 420, 27, color, 'monospace');
-        const settled = Math.round(item.value * p); c.textAlign = 'right'; label(c, h, settled, 1780, y, 370, 38, ink, 'monospace');
+        const settleFrame = Math.round((.4 + i * .025) * (m.frames - 1));
+        const rolling = m.f < settleFrame && m.f >= settleFrame - 5;
+        const settled = rolling ? ((m.seed + i * 313 + m.f * 71) % 997) : Math.round(item.value * p);
+        c.textAlign = 'right'; label(c, h, settled, 1780, y, 370, 38, ink, 'monospace');
         c.fillStyle = color; c.fillRect(1450, y + 28, p * Math.min(330, 35 + Math.abs(item.value) * 2), 4);
       });
-      c.textAlign = 'center'; label(c, h, lock > .95 ? 'SIGNAL CONFIRMED' : 'ANALYSING SIGNAL', 960, 1010, 1400, 30, color, 'monospace');
+      const status = confirmed ? 'SIGNAL CONFIRMED' : detected ? 'SIGNAL DETECTED / LOCKING' : 'SEARCHING / ANALYSING SIGNAL';
+      const stateStart = confirmed ? .73 : detected ? .44 : 0;
+      const typed = status.slice(0, Math.floor(cue(m, stateStart, Math.min(1, stateStart + .12)) * status.length));
+      c.textAlign = 'center'; label(c, h, typed + (Math.floor(m.f / 12) % 2 ? ' _' : ''), 960, 1010, 1400, 30, color, 'monospace');
       c.globalAlpha = .035; c.fillStyle = '#ffffff'; for (let y = 0; y < 1080; y += 5) c.fillRect(0, y, 1920, 1); c.restore();
     },
     collage(c, m, h) {
       const [bg, ink, accent, second] = m.palette, items = countItems(m);
+      const stepFrame = Math.floor(m.f / 5) * 5, stepPhase = stepFrame / Math.max(1, m.frames - 1);
+      const motion = {...m, f: stepFrame, phase: stepPhase};
       c.save(); c.fillStyle = bg; c.fillRect(0, 0, 1920, 1080);
       // Deterministic paper fibres stay fixed in space rather than flickering.
       c.fillStyle = '#00000009'; for (let i = 0; i < 480; i++) c.fillRect((i * 491 + m.seed * 13) % 1920, (i * 137) % 1080, 1 + i % 5, 1);
@@ -122,7 +142,7 @@
       const cols = Math.min(4, items.length), rows = Math.ceil(items.length / cols);
       const w = 1620 / cols, ht = 580 / rows;
       items.forEach((item, i) => {
-        const p = cue(m, .12 + i / items.length * .42, .27 + i / items.length * .42);
+        const p = cue(motion, .12 + i / items.length * .42, .27 + i / items.length * .42);
         c.save(); c.translate(175 + (i % cols) * w + w / 2, 370 + Math.floor(i / cols) * ht + ht / 2 + (1 - p) * 90);
         c.rotate((i % 2 ? 1 : -1) * (.055 + (1 - p) * .2)); c.scale(.9 + .1 * p, .9 + .1 * p);
         c.shadowColor = '#00000030'; c.shadowBlur = 12; c.shadowOffsetY = 8;
@@ -130,15 +150,37 @@
         c.beginPath(); c.moveTo(-w * .45, -ht * .4);
         for (let j = 0; j <= 15; j++) c.lineTo(-w * .45 + j / 15 * w * .9, -ht * .4 + (j % 2) * 7);
         c.lineTo(w * .45, ht * .4); c.lineTo(-w * .45, ht * .4); c.closePath(); c.fill(); c.shadowColor = 'transparent';
-        c.fillStyle = i % 2 ? accent : second; circle(c, 0, -10, Math.min(w * .25, ht * .24)); c.fill();
+        // Oversized head and independently hinged jaw/arms form an original cut-paper puppet.
+        const unit = Math.min(w * .23, ht * .24), nod = Math.sin(stepPhase * 18 + i) * .12;
+        c.save(); c.translate(-w * .2, -ht * .02); c.scale(unit / 90, unit / 90);
+        c.strokeStyle = '#ffffff'; c.lineWidth = 7; c.fillStyle = i % 2 ? accent : second;
+        c.save(); c.rotate(nod); round(c, -37, -10, 74, 110, 8); c.fill(); c.stroke();
+        for (const side of [-1, 1]) { c.save(); c.translate(side * 35, 12); c.rotate(side * (.5 + nod)); round(c, -12, 0, 24, 83, 7); c.fill(); c.stroke(); c.restore(); } c.restore();
+        c.fillStyle = ink; c.beginPath(); c.ellipse(0, -66, 66, 54, -.08, 0, TAU); c.fill(); c.stroke();
+        c.fillStyle = '#fffdf1'; circle(c, -20, -74, 8); c.fill(); circle(c, 20, -74, 8); c.fill();
+        c.save(); c.translate(-30, -42); c.rotate((Math.floor(stepFrame / 5) + i) % 3 * .12); c.fillStyle = second; c.fillRect(0, 0, 60, 16); c.restore();
+        c.restore();
+        // Printed halftone shadows remain on the paper, separate from puppet joints.
+        c.fillStyle = '#00000025'; for (let hy = 0; hy < 6; hy++) for (let hx = 0; hx < 10; hx++) { circle(c, w * .08 + hx * w * .025, -ht * .26 + hy * ht * .035, 1.4); c.fill(); }
         c.strokeStyle = ink; c.lineWidth = 5; c.beginPath(); c.moveTo(-w * .28, ht * .05); c.lineTo(w * .28, -ht * .12); c.stroke();
-        c.textAlign = 'center'; label(c, h, item.value, 0, -10, w * .65, Math.min(80, ht * .23), ink, 'serif');
+        c.textAlign = 'center'; label(c, h, item.value, w * .16, -10, w * .42, Math.min(80, ht * .23), ink, 'serif');
         label(c, h, item.label, 0, ht * .26, w * .74, Math.min(38, ht * .15), ink, 'serif');
         // A tape strip holds each cut-out in a continuous editorial spread.
         c.fillStyle = '#e3c566aa'; c.fillRect(-w * .16, -ht * .44, w * .32, 27); c.restore();
       });
       c.textAlign = 'left'; label(c, h, m.subtitle, 110, 1000, 1640, 36, ink, 'serif');
-      c.fillStyle = accent; c.fillRect(110, 930, 180 + cue(m, .7, .9) * 1460, 8); c.restore();
+      c.fillStyle = accent; c.fillRect(110, 930, 180 + cue(m, .7, .9) * 1460, 8);
+      // A moving torn paper edge reveals the final editorial summary, without a crossfade.
+      const turn = cue(motion, .70, .84);
+      if (turn > 0) {
+        const edge = 1920 - turn * 1920; c.fillStyle = '#fffdf1'; c.beginPath(); c.moveTo(1920, 285);
+        for (let j = 0; j <= 20; j++) c.lineTo(edge + (j % 2 ? 12 : 0), 285 + j / 20 * 610);
+        c.lineTo(1920, 895); c.closePath(); c.fill();
+        c.strokeStyle = '#00000035'; c.lineWidth = 4; c.beginPath(); c.moveTo(edge, 285); c.lineTo(edge, 895); c.stroke();
+        c.save(); c.beginPath(); c.rect(edge + 24, 295, 1920 - edge - 24, 590); c.clip(); c.textAlign = 'left';
+        label(c, h, m.title, 160, 430, 1550, 80, ink, 'serif');
+        items.forEach((item, i) => { const y = 555 + i * Math.min(80, 270 / items.length); label(c, h, item.label, 170, y, 1100, Math.min(38, 240 / items.length), ink, 'serif'); c.textAlign = 'right'; label(c, h, item.value, 1730, y, 320, Math.min(48, 270 / items.length), accent, 'serif'); c.textAlign = 'left'; }); c.restore();
+      } c.restore();
     },
     'aurora-glass'(c, m, h) {
       const [bg, ink, accent, second] = m.palette;
@@ -155,6 +197,10 @@
         const p = cue(m, .08 + i / items.length * .24, .38 + i / items.length * .24);
         const x = 180 + i % cols * w, y = 360 + Math.floor(i / cols) * ht + (1 - p) * 22 + Math.sin(m.phase * 3 + i) * 5;
         c.save(); c.globalAlpha = .4 + .6 * p;
+        const frost = document.createElement('canvas'); frost.width = Math.ceil(w - 28); frost.height = Math.ceil(ht - 28);
+        const fc = frost.getContext('2d'); fc.filter = 'blur(22px)';
+        fc.drawImage(c.canvas, x - 35, y - 35, w + 42, ht + 42, -35, -35, w + 42, ht + 42);
+        c.save(); round(c, x, y, w - 28, ht - 28, 30); c.clip(); c.drawImage(frost, x, y); c.restore();
         const glass = c.createLinearGradient(x, y, x + w, y + ht); glass.addColorStop(0, '#ffffff30'); glass.addColorStop(1, '#ffffff08');
         c.fillStyle = glass; c.strokeStyle = '#ffffff65'; c.lineWidth = 2; round(c, x, y, w - 28, ht - 28, 30); c.fill(); c.stroke();
         c.textAlign = 'left'; label(c, h, item.label, x + 32, y + 52, w - 90, Math.min(32, ht * .2), ink);
@@ -169,6 +215,10 @@
       c.save(); circle(c, lx, ly, r); c.clip(); c.drawImage(sample, lx - r, ly - r); c.restore();
       c.strokeStyle = '#ffffffaa'; c.lineWidth = 3; circle(c, lx, ly, r); c.stroke();
       c.strokeStyle = '#ffffff55'; c.lineWidth = 7; c.beginPath(); c.arc(lx - 2, ly - 2, r - 7, Math.PI, Math.PI * 1.65); c.stroke();
+      // Fixed, seed-addressed dither prevents temporal noise from becoming shimmer.
+      c.fillStyle = '#ffffff'; c.globalAlpha = .035;
+      for (let i = 0; i < 2600; i++) c.fillRect((i * 733 + m.seed * 17) % 1920, (i * 389 + m.seed * 7) % 1080, 1, 1);
+      c.globalAlpha = 1;
       c.textAlign = 'left'; label(c, h, m.title, 180, 140, 1560, 84, ink); label(c, h, m.subtitle, 184, 242, 1550, 31, ink);
       c.restore();
     }

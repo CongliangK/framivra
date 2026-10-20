@@ -11,7 +11,7 @@ import wave
 
 STYLES = ('cel-boil','isometric','flat-vector','line-art','soft-3d','morph','sticker','hud','collage','aurora-glass','bauhaus','synthwave','pixel','liquid','variety-captions')
 ROOT = Path(__file__).resolve().parent
-DEFAULT = dict(title='Ideas become motion', subtitle='Observe · connect · transform', items=[dict(label='Discover',value=24),dict(label='Build',value=56),dict(label='Share',value=88)], palette=['#faf5e8','#202730','#e66b42','#49a69d'],seed=7,pace=1.0)
+DEFAULT = dict(title='Ideas become motion', subtitle='Observe · connect · transform', items=[dict(label='Discover',value=24),dict(label='Build',value=56),dict(label='Share',value=88)], palette=['#faf5e8','#202730','#e66b42','#49a69d'],seed=7,pace=1.0,hold_frames=12)
 
 def build(style, output, content=None, frames=90, dry=False):
     if style not in STYLES: raise ValueError('unknown style')
@@ -30,7 +30,8 @@ def build(style, output, content=None, frames=90, dry=False):
         if type(item['value']) not in (int,float) or not 0<=item['value']<=100: raise ValueError('item value must be finite in [0,100]')
     if not isinstance(data['palette'],list) or len(data['palette'])!=4 or any(not isinstance(c,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',c) for c in data['palette']): raise ValueError('palette needs four #RRGGBB colors')
     if type(data['pace']) not in (int,float) or not 0.5 <= data['pace'] <= 2: raise ValueError('pace must be finite in [0.5,2]')
-    if type(data['seed']) is not int: raise ValueError('seed must be an integer')
+    if type(data['seed']) is not int or not -(2**31) <= data['seed'] <= 2**31-1: raise ValueError('seed must be a signed 32-bit integer')
+    if type(data['hold_frames']) is not int or not 0 <= data['hold_frames'] < frames/2: raise ValueError('hold_frames must be integer in [0,frames/2)')
     data.update(style=style,frames=frames)
     output=Path(output)
     if output.exists(): raise ValueError('output must be a new directory')

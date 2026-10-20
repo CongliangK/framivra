@@ -19,11 +19,6 @@
   };
   const items = m => m.items || [];
   const number = v => Number.isFinite(Number(v)) ? Number(v) : 0;
-  const finish = (c,m,h) => {
-    // A finite opaque curtain gives a page-owned closing beat without exposing black.
-    const q = p(m,h,.94,1);
-    if (q > 0) { c.fillStyle=colors(m)[2]; c.fillRect(1920*(1-q),0,1920*q,1080); }
-  };
   const styles = {
     'cel-boil'(c,m,h) {
       const [bg,ink,accent,second] = colors(m);
@@ -36,7 +31,7 @@
       c.save(); c.translate(0,70*(1-open));
       label(c,m,h,m.title,130,195,1640,126,'cursive');
       for(let i=0;i<nodes.length;i++) {
-        const x=310+i*gap, y=590 + Math.sin(i*1.7)*65;
+        const x=310+(i+.5)*gap, y=590 + Math.sin(i*1.7)*65;
         const appear=p(m,h,.12+i*.035,.3+i*.035), radius=Math.min(125,gap*.37)*appear;
         c.beginPath();
         for(let j=0;j<=40;j++) {
@@ -58,7 +53,7 @@
         }
       }
       c.restore(); label(c,m,h,m.subtitle,134,975,1550,40,'cursive');
-      finish(c,m,h); c.restore();
+      c.restore();
     },
     'isometric'(c,m,h) {
       const [bg,ink,accent,second]=colors(m);
@@ -92,7 +87,7 @@
         const foot=project(x,y,0);
         label(c,m,h,d.label,foot[0]-unit*.8,foot[1]+84,unit*1.6,30,'sans-serif');
       });
-      finish(c,m,h); c.restore();
+      c.restore();
     },
     'flat-vector'(c,m,h) {
       const [bg,ink,accent,second]=colors(m);
@@ -117,7 +112,7 @@
       label(c,m,h,m.subtitle,115,967,1640,41,'sans-serif');
       // A second dot crossing the title space marks the closing handoff.
       const q=p(m,h,.80,.93); circle(c,130+(1630*q),280,14,second);
-      finish(c,m,h); c.restore();
+      c.restore();
     },
     'line-art'(c,m,h) {
       const [bg,ink,accent]=colors(m);
@@ -144,7 +139,7 @@
       label(c,m,h,m.title,130,185,1650,112,'serif');
       label(c,m,h,m.subtitle,135,961,1620,40,'serif');
       c.strokeStyle=accent; c.lineWidth=2; c.beginPath(); c.moveTo(135,230); c.lineTo(135+1650*p(m,h,.65,.85),230); c.stroke();
-      finish(c,m,h); c.restore();
+      c.restore();
     },
     'soft-3d'(c,m,h) {
       const [bg,ink,accent,second]=colors(m);
@@ -172,7 +167,7 @@
       });
       label(c,m,h,m.title,130,180,1640,112,'sans-serif');
       label(c,m,h,m.subtitle,135,258,1620,38,'sans-serif');
-      finish(c,m,h); c.restore();
+      c.restore();
     }
   };
   window.MG_STYLES = {...(window.MG_STYLES || {}), ...styles};

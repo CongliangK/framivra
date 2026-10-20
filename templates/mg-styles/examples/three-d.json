@@ -1,0 +1,35 @@
+{
+  "title": "立体设计",
+  "subtitle": "材质 · 光照 · 体积",
+  "objects": [
+    {
+      "label": "观察",
+      "value": 24,
+      "shape": "sphere",
+      "material": "ceramic"
+    },
+    {
+      "label": "连接",
+      "value": 56,
+      "shape": "cube",
+      "material": "metal",
+      "roughness": 0.12
+    },
+    {
+      "label": "改变",
+      "value": 88,
+      "shape": "torus",
+      "material": "matte"
+    }
+  ],
+  "scene": {
+    "layout": "arc"
+  },
+  "beats": {
+    "reveal": 0,
+    "settle": 10,
+    "resolve": 24
+  },
+  "transition": "camera-pullback",
+  "pace": 1
+}

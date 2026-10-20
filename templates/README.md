@@ -104,3 +104,5 @@ cd templates/hello-plugin && env python3 -m unittest discover -s tests -t .
 skill-demo 无单测（`expected_check.sh` 即其验收：真渲染 + 帧数/QC/TP 断言）。
 
 消费面变更公告（2026-10-20，独立预审通过）：新增 `mg-styles/README.md` 与原创模板源码，接口保持单作品单 HTML、整数帧、显式缓存依赖；操作 home 为包内 README，研究与验证留在 docs。云环境未安装用户的六件 live 挂载，复核为缺失，不宣称 BAD=0 或个人 Skill 已更新。
+
+消费面变更公告（2026-10-20，续批落笔前独立预审通过）：`mg-styles/README.md` 将十五入口标为 prototype，新增三款独立媒体样板操作与语义示例；不改内核或 CI。真实三维、像素网格和视频反应字幕的验收各自记录，不继承浏览器成功；云端六件用户挂载仍缺失。
