@@ -1,6 +1,6 @@
 # gates · 成片内容级验证门（发布前复检）
 
-v2 应用（P2a 批次 1 自 `scripts/content_gates.py` 迁入；manifest 见 `app.json`，兼容 symlink：`scripts/content_gates.py` → 本目录；`scripts/bench_cold.sh` 等旧路径引用经 symlink 继续可达）。tests 随迁：`tests/test_qc_gates_opt.py`（本目录 `tests/`）。
+v2 应用（P2a 批次 1 自 `scripts/content_gates.py` 迁入；manifest 见 `app.json`，兼容转发壳：`scripts/content_gates.py` → 本目录；`scripts/bench_cold.sh` 直接调用 `apps/gates/content_gates.py`，外部旧路径调用仍可经兼容壳转发）。tests 随迁：`tests/test_qc_gates_opt.py`（本目录 `tests/`）。
 
 ## 用途
 

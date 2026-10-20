@@ -6,14 +6,8 @@
 #   2. conda denoise 环境（resemble-enhance 包 + CPU torch）
 #   3. 权重 ~/models/resemble-enhance/enhancer_stage2（681MB）
 #
-# 模型下载渠道实测（2026-09-11，国内家宽 30MB 分段计速）：
-#   hf-mirror.com 直连      2.0 MB/s  ← 默认，无代理可用
-#   huggingface.co 走代理   3.9 MB/s  ← 备选，取决于代理节点
-#   huggingface.co 直连     不可达
-#   ModelScope 无此模型
-# → 权重缺失时默认 HF_ENDPOINT=https://hf-mirror.com 下载，--download 实际执行。
-#
-# 幂等：只探测打印；缺依赖打印修复命令，不自动建环境；仅 --download 会下载权重。
+# 幂等：默认只探测打印，不自动建环境；旧 mirror/latest --download 在探测前 BLOCKED。
+# 许可边界见 docs/third-party-licenses.md；离线 plan 只显示证据，不下载、不授予许可。
 set -u
 
 # Mirror/latest is not the reviewed official immutable model-card snapshot.
@@ -59,16 +53,16 @@ if [ -s "$WEIGHT_FILE" ]; then
   ok "权重 $WEIGHT_FILE ($(du -sh "$WEIGHTS" | awk '{print $1}'))"
 else
   warn "权重缺失 $WEIGHT_FILE"
-  say "    下载须审查官方固定快照与通知：python3 scripts/model_license_policy.py plan resemble-enhance"
-  say "    旧 mirror/latest --download 已阻断；已有资产探测不改变用户文件。"
+  say "    离线查看证据（不下载、不授予许可）：python3 scripts/model_license_policy.py plan resemble-enhance"
+  say "    旧 mirror/latest --download 为 BLOCKED；许可边界见 docs/third-party-licenses.md。"
 fi
 
-# --download：权重缺失时走 hf-mirror 实际下载
+# 旧 mirror/latest 下载分支：前置许可门恒拒绝，不是可用的补齐路线。
 if [ "${1:-}" = "--download" ]; then
   if [ -s "$WEIGHT_FILE" ]; then
     say "权重已存在，跳过下载"
   elif [ ! -x "$DENoise_PY" ]; then
-    say "denoise 环境缺失，先按上面命令建环境再 --download"
+    say "denoise 环境缺失；旧 --download 为 BLOCKED，见 docs/third-party-licenses.md"
     exit 1
   else
     say "开始下载权重（HF_ENDPOINT=$MIRROR）..."

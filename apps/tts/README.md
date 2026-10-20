@@ -2,7 +2,7 @@
 
 > **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
 
-口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版；旧路径 `scripts/repack_voice.py` 经 symlink 可达）**。
+口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版；旧路径 `scripts/repack_voice.py` 经转发壳 可达）**。
 来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）
 参数化收编——硬编码窗口表 → `spec.json` 驱动；产物按 repack_voice.py 既有消费约定落位，**零协议改动**。
 
@@ -75,9 +75,10 @@ config.local.json 的 `tts.enabled` 置 `true`（键缺省时全走默认探测�
 manifest 行字段（对齐 voice-ime manifest.json + peak_db）：
 `{id, chars, budget_s, raw_s, duration_factor, final_s, peak_db}`（edge 引擎 duration_factor 恒 null）。
 
-`gen` 完成后打印 repack_voice.py 同款后续命令序列（清 prepare 缓存 → prepare → audio →
-mux → qc → audit；v2 §1.2：limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用
-`apps/sync/repack_voice.py` 替换）。
+`gen` 完成后打印 repack_voice.py 同款完整 `all` 交付入口，会更新项目 `cache/`、`out/`；
+内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish。局部音频诊断须先对当前输入
+`prepare`，再 `audio --report`，最终仍运行完整 `all` 并检查退出码与 QC/插件结果，见 [runbook](../../docs/skill/references/runbook.md)。
+limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用 `apps/sync/repack_voice.py` 替换。
 
 ## 引擎与 atempo 契约（方向坑必须钉死）
 

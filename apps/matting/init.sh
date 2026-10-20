@@ -10,8 +10,8 @@
 #   3. torch hub ResNet18（MatAnyone2 光流启动静默下载，被墙即假死，须预置）
 # 可选：ComfyUI 服务（8188，仅背景图生成用）→ 见 comfyui_init.sh
 #
-# 下载渠道：HF 权重默认 hf-mirror.com（国内实测 2.0MB/s）；github 克隆直连失败自动
-# 换代理 https_proxy=$PROXY。--download 实际执行缺失项下载；不带参数只探测。
+# 不带参数只探测已有资产；旧 --download 在探测前 BLOCKED，不补齐缺件。
+# 许可限制与未知项见 docs/third-party-licenses.md；离线 plan 不下载、不授予许可。
 set -u
 
 # Do not clone code or fetch unknown weights under a blanket download switch.
@@ -38,7 +38,7 @@ OK=0; MISS=0
 ok()   { OK=$((OK+1));   echo "  ✓ $*"; }
 miss() { MISS=$((MISS+1)); echo "  ✗ $*"; }
 
-echo "=== apps/matting/init.sh（幂等探测；--download 补缺失项）==="
+echo "=== apps/matting/init.sh（已有资产探测；旧 --download 为 BLOCKED）==="
 
 # ---- 1. conda env comfyui ----
 if [ -x "$CPY" ]; then
@@ -64,7 +64,7 @@ if [ -d "$MA2/matanyone2" ]; then
     NEED_MA2_W=1
   fi
 else
-  miss "MatAnyone2 克隆缺失 $MA2 —— git clone https://github.com/pq-yang/MatAnyone2 $MA2（直连失败自动走代理）+ 权重下载"
+  miss "MatAnyone2 克隆缺失 $MA2；旧 --download 为 BLOCKED，许可限制与未知项见 docs/third-party-licenses.md"
   NEED_MA2=1; NEED_MA2_W=1
 fi
 
@@ -82,7 +82,7 @@ if [ -s "$RESNET" ]; then
 elif [ -s "$HERE/resnet18-5c106cde.pth" ]; then
   ok "ResNet18（脚本同目录副本）：$HERE/resnet18-5c106cde.pth"
 else
-  miss "ResNet18 预置缺失 $RESNET —— download.pytorch.org/models/resnet18-5c106cde.pth（约 45MB）"
+  miss "ResNet18 预置缺失 $RESNET；权重许可未知项见 docs/third-party-licenses.md，旧 --download 为 BLOCKED"
   NEED_RESNET=1
 fi
 
@@ -92,10 +92,10 @@ if curl -s -m 2 -o /dev/null "http://127.0.0.1:8188" 2>/dev/null; then
 elif [ -x "$HOME/AI/ComfyUI/start.sh" ]; then
   echo "  · ComfyUI 未运行但已配置（bash ~/AI/ComfyUI/start.sh；详见 comfyui_init.sh）"
 else
-  echo "  · ComfyUI 未配置（可选，仅背景图生成需要——bash $(dirname "$0")/comfyui_init.sh --install）"
+  echo "  · ComfyUI 未配置（可选，仅背景图生成需要；探测见 bash $(dirname "$0")/comfyui_init.sh；旧 --install 为 BLOCKED，见 docs/third-party-licenses.md）"
 fi
 
-# ---- --download：补缺失项 ----
+# ---- 旧下载分支：前置许可门恒拒绝，不是可用的补齐路线 ----
 if [ "$PY" = "--download" ]; then
   echo "--- 开始补齐缺失项 ---"
   dl_hf() { # dl_hf <repo_id> <local_dir>

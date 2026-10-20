@@ -7,7 +7,7 @@
     "enabled": false,
     "base_url": "http://127.0.0.1:8188",
     "purpose": "背景替换链（apps/matting/）：抠像本体走 conda comfyui 环境本地推理；ComfyUI 服务仅用于背景图生成（post_h3.sh 消费其输出目录）",
-    "howto": "探测: bash apps/matting/init.sh（--download 补权重）；ComfyUI 服务: bash apps/matting/comfyui_init.sh（--install/--start）"
+    "howto": "已有资产探测: bash apps/matting/init.sh；ComfyUI 服务探测: bash apps/matting/comfyui_init.sh（--start 仅启动已配置服务）；旧 --download/--install 为 BLOCKED，许可与未知项见 docs/third-party-licenses.md"
   },
   "asr": {
     "enabled": false,
@@ -28,7 +28,7 @@
     "voice_ref": "~/音乐/5_G_Resemble仅降噪.wav",
     "edge_bin": "~/miniconda3/bin/edge-tts",
     "purpose": "IndexTTS-2.5 口播占位语音（apps/tts/，参数化收编 voice-ime 产线）+ edge-tts 兜底",
-    "howto": "探测: bash apps/tts/init.sh；--download 克隆repo+ModelScope拉11GB权重；免GPU兜底 edge-tts"
+    "howto": "已有资产探测: bash apps/tts/init.sh；旧 --download 与未审查 IndexTTS 辅助链为 BLOCKED，见 docs/third-party-licenses.md；独立 edge CLI 见 apps/tts/README.md"
   },
   "imgen": {
     "enabled": false,
@@ -48,7 +48,7 @@
   },
   "denoise": {
     "enabled": false,
-    "howto": "探测/下载: bash plugins/denoise/denoise_init.sh（--download 走 hf-mirror 拉 681MB 权重）；手动 CLI: env python3 plugins/denoise/denoise_voice.py <in> <out>",
+    "howto": "已有资产探测: bash plugins/denoise/denoise_init.sh；旧 --download 为 BLOCKED，许可边界见 docs/third-party-licenses.md；离线证据: python3 scripts/model_license_policy.py plan resemble-enhance（不下载、不授予许可）；手动 CLI: env python3 plugins/denoise/denoise_voice.py <in> <out>",
     "purpose": "口播陷波+Resemble 仅降噪链（apps/aroll/语音链后处理；timeline 键 sources[].denoise 见 plugins/denoise/README.md）"
   }
 }

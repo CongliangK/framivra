@@ -77,10 +77,10 @@ def missing_env() -> list:
     miss = []
     if not conda_python().is_file():
         miss.append(f"conda denoise 环境解释器 {conda_python()}"
-                    "（修复：bash plugins/denoise/denoise_init.sh）")
+                    "（已有环境探测：bash plugins/denoise/denoise_init.sh）")
     if not (run_dir() / "ds/G/default/mp_rank_00_model_states.pt").is_file():
         miss.append(f"Resemble 权重 {run_dir()}"
-                    "（修复：bash plugins/denoise/denoise_init.sh --download）")
+                    "（旧 --download 为 BLOCKED；许可见 docs/third-party-licenses.md；离线证据：python3 scripts/model_license_policy.py plan resemble-enhance，不下载、不授予许可）")
     return miss
 
 

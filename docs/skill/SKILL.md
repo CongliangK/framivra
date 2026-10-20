@@ -62,7 +62,7 @@ video_tools/
 | BGM/配乐生成、音色、乐谱 | **路由到 `music` skill**；挂载后分轨审计包配方见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
 
 ## 推荐方式与全局铁律
-1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆棒，每棒落盘 REPORT；长命令按执行环境支持的后台会话与轮询机制运行。
+1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆分；按任务需要保留结论与证据，交接要求见 [runbook](references/runbook.md#主控-子智能体棒次协议)；长命令按执行环境支持的后台会话与轮询机制运行。
 2. **验证门优先**：validate（机制）+ content_gates（内容）+ blackdetect（零黑帧）+ 视觉抽帧（技术结论按实际渲染与相应证据判定，DOM 相等不能证明像素相等）；艺术审查与用户视觉确认按 [创作交付检查](references/gfx.md#html-创作组织) 分别记录。
 3. **迭代用 draft，正式交付用完整 all**；单独 video 可选 `--gpu`。缓存身份见 references，收尾先 `gc --dry` 查看清单，回收另按授权执行。
 4. **剪辑永远走 timeline.json + vtx**：不手写 ffmpeg 剪辑命令；改 timeline 必重跑 validate。
@@ -71,7 +71,7 @@ video_tools/
 7. 时间量一律**整数帧**；时基 30fps（≠29.97）、48kHz（每帧整 1600 采样）；区间 `[in, out)` 左闭右开。
 8. **修改任何程序或文档一律改 video_tools 仓**（live 挂载点全是符号链接）。
 
-## CLI 速查（新权威路径；scripts/ 兼容入口仅为未知消费者兜底）
+## CLI 速查（组件真实路径；scripts/ 转发入口保留既有消费者兼容）
 | 操作 | 命令 |
 |---|---|
 | 渲染前校验（必跑） | `python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json validate` |

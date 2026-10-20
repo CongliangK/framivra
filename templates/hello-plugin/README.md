@@ -91,7 +91,7 @@ cp -r templates/hello-plugin templates/my-plugin && cd templates/my-plugin
 # 3) 换实现：__init__.py 的 prepare_source/contribute_keys 换成你的处理链
 #    （产物路径模板 {audio_key}::<plugin>:{version}:{digest}.wav 保持不变）
 # 4) 注册：config.local.json external_plugins 加 {"path": "templates/my-plugin"}
-# 5) 验证：env python3 vt.py doctor && env python3 vt.py plugins list
+# 5) 验证：env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor && env python3 vt.py plugins list
 ```
 
 纪律红线（§2 协议）：三不变量缺一不可（缓存键贡献/回执指纹掺入/三分支注册态）；

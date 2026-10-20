@@ -11,7 +11,7 @@
   · 复用源特则：同一 vt_<ID> 源被多片窗引用（src_in 续接）时，用户按窗口全文连
     续朗读一份 take，脚本在第一片窗长处 ±3s 探测最低能量谷（句间气口）切分定界，
     两段按序拼接——硬切在句中会被探测谷自动纠正，找不到谷（>-45dB）回退硬切并警告；
-  · 缓存坑位：vtx prepare 缓存只看存在性，替换后必须清缓存重跑（脚本结束打印序列）。
+  · 替换后运行完整 all，刷新当前输入的阶段回执；内容寻址自动选择可复用缓存。
 
 用法：
   python3 repack_voice.py [-t timeline.json] [--takes-dir ...] [--final-dir ...] [窗口ID ...]
@@ -153,14 +153,12 @@ def main():
     if missing:
         print(f"\n⚠ takes 目录缺 {len(missing)} 窗: {' '.join(missing)}"
               f"（对应窗口保持占位）")
-    print(f"\n替换 {len(done)} 窗完成。后续命令（缺一不可，项目根执行）：")
-    print(f"  rm {ROOT}/cache/audio/vt_*.wav")
-    print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} prepare")
-    print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} audio   # voice 变必重跑")
-    print(f"  （v2：vtx audio 已内置限幅，无需手动 post_loudness）")
-    print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} mux")
-    print(f"  python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} qc && "
-          f"python3 ~/.agents/skills/video/vtx/vtx.py -t {args.timeline} audit")
+    print(f"\n替换 {len(done)} 窗完成。正式交付后续（项目根执行；会更新 cache/、out/）：")
+    print(f'  python3 ~/.agents/skills/video/vtx/vtx.py -t "{args.timeline}" all')
+    print("  完整 all 负责当前阶段回执与启用插件的 finish；检查退出码和 QC/插件结果。")
+    print("  局部音频诊断须先对当前输入 prepare，再 audio --report；最终仍运行完整 all。")
+    print("  操作与前置见 ~/.agents/skills/video/references/runbook.md。")
+    print("  vtx audio 已内置限幅，无需手动 post_loudness。")
 
 
 if __name__ == "__main__":
