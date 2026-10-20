@@ -44,10 +44,11 @@ description: 科技口播 B 站视频制作工作流范本（video 内核之上�
 ```bash
 env python3 <video_tools>/apps/aroll/aup3_extract.py 口播.aup3   # Audacity 工程提取
 env python3 <video_tools>/apps/aroll/trim_takes.py ...            # VAD 掐头去尾+废片判定（ASR 配对）
-env python3 <video_tools>/apps/sync/sync_audio.py 相机轨 话筒轨   # GCC-PHAT 无标记同步（报告含偏移/ppm/verdict）
+# 双系统同步：按下方 sync 组件用法执行（GCC-PHAT 无标记同步）
 # 音轨替换 → 口型感知全局 +200ms（默认）→ 降噪链（plugins/denoise，可选）→ 头尾真空切割 → 构图统一
-# 手册（可照抄）：_library/reports/A-roll实拍素材处理流程-2026-09-07.md
+# 手册：<video_tools>/templates/tech-talk/references/aroll-pipeline.md
 ```
+同步所需解释器、完整命令与报告参数见 [sync 组件用法](../../apps/sync/README.md#开启步骤)。
 - **抠像支线**：需要「真人出现在新背景前」的镜头 → 抠像 + 背景合成，全流程见 `apps/matting/matting.md`（resolve_matte 主力，产物带 alpha ProRes4444；背景图走 `apps/imgen/` bg4k 硬接口）。
 - **④ 动效页** → 先按内核 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织) 定页内模块/独立素材边界，再读帧驱动协议 + D22 设计铁律；**优先复用本包 `assets/gfx-templates/` 已验收模板**（六件参数化页 + `_tokens.md` 设计基准；场景→模板映射表与使用步骤见 `assets/gfx-templates/INDEX.md`；改 CONST 数据不碰机制代码）；新页三件套=manifest+data-sources+自查脚本；实例页参考 `assets/gfx-examples/`。
 - **⑤ 时间线编排**：新项目**起手复制 `assets/presets/timeline.skeleton.json`**（voice-ime v4.7 轨制抽象骨架，含占位素材原位可 validate；轨级 duck_strategy/duck_params 示范；实例化步骤见其 `_meta`），再按帧预算铺真实编排（契约速览与「素材放哪条轨」速查表见内核 `docs/skill/references/edit.md`）。**编排完先开 `preview.html` 人审，再 validate**。批量重排写幂等脚本 + `vtx snapshot` 留快照。口播字幕锚定 → `apps/asr/`（`asr_cli.py timeline` 就地合并 subtitles[]）。
@@ -66,7 +67,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
 
 ## 音频创作流程（两条支线）
 
-- **口播/同期声支线**（每期视频必经）：① 录音=电容麦/boom 同期声 + 相机内录麦常开（=同步参考轨），长镜连续录制（详见 `references/shooting.md`）；② 同步=`apps/sync/sync_audio.py`（GCC-PHAT 相关法，无需拍掌/时间码）；③ 降噪=可选插件 `plugins/denoise/denoise_voice.py`（陷波 80Hz 高通+工频 notch → Resemble 降噪级 → 48kHz；备胎 MossFormer2；timeline `sources[]` 声明 `denoise` 键即生效）；④ 入轨=timeline voice 轨事件（画面/声音同源，口型同步由构造保证；口型感知全局 +200ms）；⑤ 混音=bed 避让可选插件 `duck_strategy` 静态分段方案（`plugins/duck-static/`，与 `duck:true` 互斥）或 sidechaincompress 动态避让（启用前必做 A/B 响度对照，见内核 edit.md）+ **vtx audio 内置两遍静态增益到 -14 LUFS + alimiter 限幅终态**（post_loudness 已并入 build_audio 尾部，v2 §1.2，无独立步骤；量化口径参数化预设=`assets/presets/mixing.json`，含 duck 静态/sidechain 备用/降噪链/响度门数值），**终检必测编码后解码 TP**；⑥ 验证=`apps/gates/content_gates.py`（G1 口播−间隙响度 / G2 全片 LUFS / G3 解码域 TP（内核 qc 同阈复检）/ G7 零黑帧 / G10 帧数封装 + 项目门）。
+- **口播/同期声支线**（每期视频必经）：① 录音=电容麦/boom 同期声 + 相机内录麦常开（=同步参考轨），长镜连续录制（详见 `references/shooting.md`）；② 同步=`apps/sync/sync_audio.py`（GCC-PHAT 相关法，无需拍掌/时间码）；③ 降噪=可选 [denoise 插件](../../plugins/denoise/README.md)（生产链、适用域与 timeline `sources[].denoise` 用法以组件文档为准；备选算法见 `references/shooting-guide.md`）；④ 入轨=timeline voice 轨事件（画面/声音同源，口型同步由构造保证；口型感知全局 +200ms）；⑤ 混音=bed 避让可选插件 `duck_strategy` 静态分段方案（`plugins/duck-static/`，与 `duck:true` 互斥）或 sidechaincompress 动态避让（启用前必做 A/B 响度对照，见内核 edit.md）+ **vtx audio 内置两遍静态增益到 -14 LUFS + alimiter 限幅终态**（post_loudness 已并入 build_audio 尾部，v2 §1.2，无独立步骤；量化口径参数化预设=`assets/presets/mixing.json`，含 duck 静态/sidechain 备用/降噪链/响度门数值），**终检必测编码后解码 TP**；⑥ 验证=`apps/gates/content_gates.py`（G1 口播−间隙响度 / G2 全片 LUFS / G3 解码域 TP（内核 qc 同阈复检）/ G7 零黑帧 / G10 帧数封装 + 项目门）。
 - **BGM/音效支线** → 路由进 **`music` skill**（挂载 `~/.agents/skills/music/`，本体 music_tools 仓）：音色契约先行门 → 产线选路（公有领域改编=默认路线 / ACE-Step 时长精确 / synthlib 代码合成）→ 渲染+QC → **挂载进视频 timeline 后必做分轨审计包**（`apps/blender-bridge/audit_bundle.py`，用户 Blender 逐轨审听=交付门；配方见 `references/runbook-r5r6r7.md` R6）。授权红线：**商业音乐绝对不用**；音效宽松获取、AI 生成积极使用；现成资产在 `_library/assets_audio/`。
 
 ## 全链路闭环（推荐 SOP）

@@ -26,13 +26,16 @@ v2 应用（P2a 批次 1 自 `scripts/content_gates.py` 迁入；manifest 见 `a
 
 ## 开启步骤
 
+以下示例从 Framivra 仓库根执行；`<video_tools>` 与 `<项目>` 分别替换为仓库、视频项目的绝对路径。方括号表示可选部分，执行前展开或省略。
+
 ```bash
-# 项目根
-env python3 apps/gates/content_gates.py -t timeline.json --media out/final.mp4 \
-    --audio-wav out/audio.wav [--project-gates gates.json] [--skip G1,G7] [--count-frames] \
-    [--out out/content_gates.json]
+cd "<video_tools>"
+env python3 apps/gates/content_gates.py -t "<项目>/timeline.json" --media "<项目>/out/final.mp4" \
+    --audio-wav "<项目>/out/audio.wav" [--project-gates "<项目>/gates.json"] [--skip G1,G7] [--count-frames] \
+    [--out "<项目>/out/content_gates.json"]
 # 本 app 测试（随迁件）
 cd apps/gates && env python3 -m unittest discover -s tests -t . -v
 # repo 根全量（含本 app）
+cd "<video_tools>"
 bash scripts/run_all_tests.sh
 ```

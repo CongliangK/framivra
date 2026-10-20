@@ -39,7 +39,7 @@
     "_note": "备用方案（D47 实测校准）：轨级 duck:true+duck_params；threshold 低于口播 RMS 中位约 7dB（语音段压 8~14dB）；长流无口播段实测反常 +19dB（机制未定位）——默认不走此路"
   },
   "denoise": {
-    "chain": ["notch_50_100_150", "highpass_80hz", "resemble_denoise_only", "resample_48k"],
+    "chain": ["mono_s16_normalize", "resemble_denoise_only", "afftdn", "aresample_48k_and_atrim_delay_compensation"],
     "plugin": "plugins/denoise/denoise_voice.py（timeline sources[] 声明 denoise 键即生效）",
     "fallback": ["MossFormer2_SE_48K（抗远距极端工况）", "DFN2（全工况均衡）"],
     "source_rule": "处理对象用无损 PCM 源，避免二代有损；50Hz 工频哼声先查 Pin 1 屏蔽悬空",

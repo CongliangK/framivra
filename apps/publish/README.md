@@ -20,17 +20,21 @@ v2 应用（P2a 批次 1 自 `scripts/export_4k.py`、`scripts/check_4k.sh`、`s
 
 ## 健康检查
 
-`env python3 apps/publish/export_4k.py --help` 退出码 0（app.json health.command）；`bash apps/publish/check_4k.sh` 无参打印用法即通（脚本无 --help 面）。
+`env python3 apps/publish/export_4k.py --help` 退出码 0（app.json health.command）；`check_4k.sh` 无参会打印用法并非零退出，须传入待验媒体（脚本无 `--help` 面）。
 
 ## 开启步骤
 
+以下示例从 Framivra 仓库根执行；`<video_tools>` 与 `<项目>` 分别替换为仓库、视频项目的绝对路径。方括号表示可选部分，执行前展开或省略。
+
 ```bash
-# 项目根（vtx 主链完成、out/final.mp4 就位后）
-env python3 apps/publish/export_4k.py -t timeline.json [--media out/final.mp4] -o out/final_4k.mp4
-bash apps/publish/check_4k.sh out/final_4k.mp4          # 期望帧数可自动从 timeline.json 推导
-env python3 apps/publish/compare_4k_quality.py out/final_4k.mp4 out/final_4k_x264_ref.mp4
+cd "<video_tools>"
+# vtx 主链完成、<项目>/out/final.mp4 就位后
+env python3 apps/publish/export_4k.py -t "<项目>/timeline.json" [--media "<项目>/out/final.mp4"] -o "<项目>/out/final_4k.mp4"
+bash apps/publish/check_4k.sh "<项目>/out/final_4k.mp4"          # 期望帧数可自动从 timeline.json 推导
+env python3 apps/publish/compare_4k_quality.py "<项目>/out/final_4k.mp4" "<项目>/out/final_4k_x264_ref.mp4"
 # 本 app 测试（随迁件；NVENC 集成用例无 GPU 自动 skip）
 cd apps/publish && env python3 -m unittest discover -s tests -t . -v
 # repo 根全量（含本 app）
+cd "<video_tools>"
 bash scripts/run_all_tests.sh
 ```

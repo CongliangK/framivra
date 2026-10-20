@@ -2,7 +2,7 @@
 
 > **v2 结构（P2a 批次 1 起本目录迁入 `apps/aroll/`）**：manifest 见 `app.json`（kind=app；健康检查 = `health_check.py` 语法探针）。
 
-真人出镜素材（相机录制 + Audacity 多轨录音）的前期处理工具。全链流程手册见 `docs/A-roll实拍素材处理流程-2026-09-07.md`（掐头去尾→ASR 配对→GCC-PHAT 双系统同步→口型后移→降噪→头尾切割→头部检测 crop）。
+真人出镜素材（相机录制 + Audacity 多轨录音）的前期处理工具。现行全链流程见 [A-roll 通用手册](../../templates/tech-talk/references/aroll-pipeline.md)；[2026-09-07 首跑实录](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/apps/aroll/docs/A-roll实拍素材处理流程-2026-09-07.md) 保留原项目数据与排障过程。
 
 ## 文件清单
 

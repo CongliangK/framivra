@@ -1,5 +1,5 @@
 # 剪辑（edit）· 中间层工具站：timeline.json + vtx
-> **使用者向**：timeline.json 契约、vtx CLI 用法、音频工程规则与渲染坑表。性能基准与坑位破案详录见 `../../DEV.md`。不涉及 HTML 动效设计（→ `references/gfx.md`）、不涉及选题调研（→ `templates/tech-talk/references/research.md`）。索引见 `../SKILL.md`。
+> **使用者向**：timeline.json 契约、vtx CLI 用法、音频工程规则与渲染坑表。`<video_tools>` 为本仓真实根目录；性能基准见 `<video_tools>/docs/DEV.md`，HTML 动效设计见 [gfx](gfx.md)，选题调研见 `<video_tools>/templates/tech-talk/references/research.md`，索引见本 skill 的 SKILL.md。
 ## 铁律
 1. **AI 永远不手写 ffmpeg 剪辑命令**。剪辑 = 编写/修改 timeline.json + 调用 vtx。失误率控制靠三道闸：渲染前校验（validate）、确定性构建（vtx 生成全部 ffmpeg）、渲染后 QC。
 2. **修改 timeline.json 后必须重跑 validate**，校验失败时修数据、不绕过。
@@ -11,7 +11,7 @@ vtx CLI：        ~/.agents/skills/video/vtx/vtx.py            （符号链接�
 时间线预览器：    ~/.agents/skills/video/vtx/preview.html     （人审编排用，双击打开）
 参考实现（POC）： ~/文档/04_bilibili视频/_archive/poc2/   （外部示例项目：30s 多轨 demo，QC 全过；不随 skill 分发）
 ```
-程序本体在 video_tools 仓：`vtx/`、`apps/`、`plugins/` 的权威位置（`scripts/` 仅余兼容符号链接与少数仓内工具）是 `~/文档/01_活跃项目/video_tools/`，本 skill 内为符号链接（上文路径全部继续可用）；**修改程序一律改 video_tools 仓**。入口三通并存（详见 `docs/ARCHITECTURE.md` §5.1）：仓根 `vtx/vtx.py` 薄启动器、`python3 -m vtx`、pip console `vtx`/`vt`；实现分为 `infra`（Ctx/执行/并行）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）、`hygiene`（缓存键/gc/df/snapshot/VERSIONS）、`cache_state`（回执身份/依赖门）八个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
+程序本体在 video_tools 仓：`vtx/`、`apps/`、`plugins/` 的权威位置（`scripts/` 普通转发壳见 `<video_tools>/docs/ARCHITECTURE.md` §6.1）以 `<video_tools>` 为准；live skill 通过六件链接引用本仓（见 `<video_tools>/docs/DOC-CHARTER.md` §7）；**修改程序一律改 video_tools 仓**。入口三通并存（分发见 `<video_tools>/docs/ARCHITECTURE.md` §5.2）：仓根 `vtx/vtx.py` 薄启动器、`python3 -m vtx`、pip console `vtx`/`vt`；实现分为 `infra`（Ctx/执行/并行）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）、`hygiene`（缓存键/gc/df/snapshot/VERSIONS）、`cache_state`（回执身份/依赖门）八个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
 ## 时间线预览（人审用）
 `preview.html` 是单文件网页（无外部依赖），把 timeline.json 渲染成可视化时间线供**人类**审阅编排：视频轨/动效层/字幕/音轨分行显示，事件块带源名、时长、vol/pan/loop 标注与淡入淡出条；支持缩放、适应宽度、悬停播放头、点击事件块看全字段详情，并有**预览级校验**（整数帧、EDL 不变量、base 轨连续性、越界、同轨音频重叠等）——发现问题标红，但最终以 `vtx validate` 为准。
 ```bash
@@ -143,14 +143,11 @@ gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，
 - **响度归一**：整合响度 ≈ -14 LUFS（±1.5，EBU R128）
 - **音频并发窗口响度**：最大并发轨数的窗口有能量
 ## 与其他文档/资产的衔接
-- HTML 动效页面（gfx/*.html）的编写与设计 → 本 skill `references/gfx.md`（帧驱动协议、样式模板）
-- 选题调研与 01-brief → `templates/tech-talk/references/research.md`（产线知识，v2 迁出内核）
-- BGM/音效/环境声的选取与授权 → `~/文档/04_bilibili视频/_library/reports/音频资产与混音惯例调查.md` §四-§六（授权红线：**商业音乐不用=唯一红线**、音效/环境声宽松获取、AI 生成积极使用）；**现成资产在工作区 `_library/assets_audio/`**（Kenney/Mixkit/Sonniss 音效库 + bgm/ AI 试听样，登记见其 LICENSE.md；各期 timeline 以 `../_library/assets_audio/...` 相对引用）；**本地 BGM 产线路由进 `music` skill（~/.agents/skills/music/）**，本体在 `~/文档/01_活跃项目/music_tools/`（CLI：bgm）
-- 选题/脚本/录制规划 → 上层流程（见 `~/文档/04_bilibili视频/AGENTS.md`）
-## 方法论指针
-- **编排总纲**：`~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md`（开场模板/正文节奏/演示对位三原则/字幕 ASR 锚定/音频避让与响度链/结尾模板/验证门清单）——编排每期 timeline 前先读。
-- 用户手剪回读协议（blend2json→ASR→用户权威文本对照）→ `apps/blender-bridge/README.md`「用户手剪回读协议」节。
-- 拍摄规范速查（产线向）→ `templates/tech-talk/references/shooting.md`（装备全量手册仍在 voice-ime/07-shooting-guide.md）；**待办（拍板后执行）**：07-shooting-guide 的通用实拍规范上提为 `_library/reports/` 通用手册，项目版留本期装备记录——上提后各指针收敛。
+- HTML 动效页面（gfx/*.html）的编写与设计 → [gfx](gfx.md)（帧驱动协议、样式模板）。
+- 科技口播选题、脚本、拍摄与编排 → `<video_tools>/templates/tech-talk/references/production-workflow.md`；编排前读同目录 `narrative.md`，音频口径见同目录 `audio-mixing.md`。历史源件出处保留在各文档。
+- 现成音频资产在工作区 `_library/assets_audio/`（Kenney/Mixkit/Sonniss 音效库 + bgm/ AI 试听样，许可登记见其 LICENSE.md；各期 timeline 以 `../_library/assets_audio/...` 相对引用）；本地 BGM 产线路由进 `music` skill（`~/.agents/skills/music/`）。
+- 用户手剪回读协议（blend2json→ASR→用户权威文本对照）→ `<video_tools>/apps/blender-bridge/README.md`「用户手剪回读协议」。
+- 拍摄规范 → `<video_tools>/templates/tech-talk/references/shooting.md`（速查）/ 同目录 `shooting-guide.md`（通用手册）；项目装备记录与通用操作指引分开。
 ## 三大生成模块（asr/tts/imgen）产线接口
 三模块默认关闭（v2 迁至 `apps/asr|tts|imgen`）。开启：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等，复用本机已有资产优先）→ `config.local.json` 对应条目 `enabled:true`（模板见 `config.example.json`）。三模块互不依赖、与 vtx 零耦合，唯一耦合面 = 项目目录文件契约（timeline.json / assets/**）。
 - **字幕锚定工作流（apps/asr/，口播→subtitles[]）**：口播音频/成片 → `python3 apps/asr/asr_cli.py timeline <音频> -t <项目>/timeline.json`——sidecar 转写 + 字级时间戳 → 文本规范化断句（口水词清除/行宽 ≤18/最短 0.6s）→ subtitles[] 就地合并（旧值自动备份进 `cache/reports/`）。**合并后必须 `vtx validate` + `audit` 复核**：阅读速度 ≤9 字/s、告警逐条人工解释后才可进 `video` 阶段烧录。长音频库内自动分块（±5s 低能量边界）；`--dry-run` 只预览。端口纪律：**18081 是 IME 输入法 sidecar，本仓 ASR sidecar 默认 18085**（config `asr.base_url`）。

@@ -4,26 +4,12 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 ---
 # video · video_tools v2 内核 skill（路由索引 + 迭代回路）
 
-> **内核向**：本文件是机制文档的路由索引与全仓分层地图。机制/契约/基准留本 skill 与 docs/（任何产线通用）；产线配方（六阶段创作流程/拍摄规范/voice-ime 范式/发布链/BGM/封面）在 **`templates/tech-talk/`** 工作流包。开发者分析见 `docs/DEV.md`。
+> **内核向**：本文件是机制文档的操作路由索引。机制/契约/基准留本 skill 与 docs/（任何产线通用）；产线配方（六阶段创作流程/拍摄规范/voice-ime 范式/发布链/BGM/封面）在 **`templates/tech-talk/`** 工作流包。开发者分析见 `docs/DEV.md`。
 > **接到任务先查路由表去读对应 reference 再动手**；本文件是「路线图」，字段语义与坑表以 references 为准。创作起手、页面拆分与多人分工，先读 [HTML 创作组织](references/gfx.md#html-创作组织)。
 
-## 三层架构一页（v2）
+## 架构与组件入口
 
-```
-video_tools/
-├── vtx/            ① 内核（永不可关，宪法信条）：timeline schema/validate/diff/subs/audit/snapshot
-│                      + 渲染链 prepare/gfx/video/audio/mux + qc（含 TP）+ 混音响度终链
-│                      （两遍静态增益 -14 LUFS + alimiter 限幅已并入 audio，§1.2）
-│                      + 内容寻址缓存（gc/df/VERSIONS）+ vtx/api.py+vtx/pluginlib/
-├── docs/skill/     ① 内核文档：本索引 + references/{edit,gfx,runbook}.md + assets/ 起手模板两件
-├── apps/  (12 件)  ② 应用（产出独立素材，不进 timeline 管线；关停不影响主链）：
-│                      asr / tts / imgen / matting / aroll / cover / research /
-│                      blender-bridge / publish / bgm / gates / sync
-├── plugins/ (4 件) ② 插件（扩展 timeline.json 词汇并钩进管线）：denoise / duck-static / blender-bridge（blender_bridge 键→all 收尾自动导出 .blend）/ bgm-render（sources[].bgm→音轨直引 music_tools 工程JSON自动渲染）+ registry.json
-└── templates/      ③ 模板集合：tech-talk / skill-demo 工作流 + hello-app / hello-plugin 开发范本
-```
-
-分层判据（关停测试）：关停后主链产物不可信 → 内核；仍能可信出一期片 → apps/plugins 可卸载。apps/plugins 内部结构自包含（app.json/plugin.json + 代码 + README + tests），`env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor` 三检 / `apps|plugins|templates list`（`skills` 兼容别名）。
+内核 `vtx/` 永不可关；`apps/` / `plugins/` 提供可卸载组件，`templates/` 承载工作流与开发范本。分层判据与协议见 [ARCHITECTURE](../ARCHITECTURE.md#0-判据与四层架构)，仓库布局见 [README](../../README.md#四层架构一页)，各组件职责见 [三层路由](../../README.md#三层路由)，安装态与键面清单见 [组件目录](../catalog.md)。
 
 ## 迭代回路速查
 

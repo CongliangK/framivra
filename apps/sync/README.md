@@ -24,13 +24,16 @@ v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py`
 
 ## 开启步骤
 
+以下示例从 Framivra 仓库根执行；`<video_tools>` 替换为仓库绝对路径，`<项目>` 与音视频路径占位符替换为对应绝对路径。方括号表示可选部分，执行前展开或省略。
+
 ```bash
+cd "<video_tools>"
 # 双系统同步（conda denoise 环境）
-~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav> --report report.json
-# 实录替换（项目根）
-env python3 apps/sync/repack_voice.py -t timeline.json [--takes-dir assets/voice_takes] [窗口ID ...]
+~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py "<camera.(wav|mp4|mov)>" "<mic.wav>" "<out.wav>" --report "<项目>/report.json"
+# 实录替换（路径指向同一视频项目）
+env python3 apps/sync/repack_voice.py -t "<项目>/timeline.json" [--takes-dir "<项目>/assets/voice_takes"] [窗口ID ...]
 # 替换后正式交付（从仓库根执行，会更新项目 cache/、out/）：
-env python3 vtx/vtx.py -t <项目>/timeline.json all
+env python3 vtx/vtx.py -t "<项目>/timeline.json" all
 ```
 
 局部音频诊断须先对当前输入执行 `prepare`，再执行 `audio --report`；局部通过后仍运行完整 `all`，检查退出码与 QC/插件结果。内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish；完整配方见 [runbook](../../docs/skill/references/runbook.md)。
