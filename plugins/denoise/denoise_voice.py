@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """口播标准降噪链 v2（R-20 P2 攻坚定案；v1 2026-08-26 → v2 2026-09-20）
 
-陷波(ffmpeg) → Resemble 仅降噪级 → afftdn 谱降噪 + 回 48kHz（链内延迟补偿）。
+mono s16 规范化(ffmpeg) → Resemble 仅降噪级 → afftdn 谱降噪 + 回 48kHz（链内延迟补偿）。
 用法: denoise_voice.py <in.wav> <out.wav>
 依赖: ~/miniconda3/envs/denoise/bin/python + ~/models/resemble-enhance/
       （DENOISE_PY / RESEMBLE_WEIGHTS 环境变量可覆盖，与 denoise_init.sh 同名同义）

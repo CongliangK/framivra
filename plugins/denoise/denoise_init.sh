@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # denoise_init.sh · 口播降噪链幂等初始化探测（2026-09-11；P2b 自 scripts/ 迁入 plugins/denoise/）
 #
-# 对应 plugins/denoise/denoise_voice.py（陷波→Resemble 仅降噪→48kHz）的三项依赖：
+# 对应 plugins/denoise/denoise_voice.py（当前链顺序见模块头注）的三项依赖：
 #   1. ffmpeg
 #   2. conda denoise 环境（resemble-enhance 包 + CPU torch）
 #   3. 权重 ~/models/resemble-enhance/enhancer_stage2（681MB）
