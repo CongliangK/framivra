@@ -456,7 +456,7 @@ def main():
         'scene_sha256':hashlib.sha256((args.output/'scene.blend').read_bytes()).hexdigest(),
         'limitations':['Font licensing remains separate; selected font path/hash recorded, glyph coverage must be visually checked.',
                         'No soundtrack or encoded movie; integrate this sequence through a vtx timeline.',
-                        'Fixed-environment determinism only; no cross-device pixel equivalence claim.'],
+                        'Integer-frame scene state is deterministic; captured media hashes fix vtx inputs. External Cycles regeneration can differ in low pixel bits even in one environment.'],
         'frame_sha256':[],
         'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
