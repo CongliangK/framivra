@@ -47,7 +47,7 @@ checks 结构与 qc_report 同构（name/pass/detail），`vtx diff` 可直接�
 退出码：有 FAIL=1；WARN=0（报告为信息性检查，WARN 不阻断——与 audit 同裁定；
 FAIL 表示事故级问题必须处理）。
 """
-import json, re, statistics, sys, time
+import json, re, statistics, time
 from pathlib import Path
 
 from .hygiene import audio_key
