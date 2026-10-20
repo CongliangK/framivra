@@ -59,7 +59,8 @@ console.log(JSON.stringify(records));
     def test_completed_readable_states_and_invalid_budgets(self):
         for record in self.records:
             self.assertTrue(record['invalid_budget_rejected'])
-            self.assertGreaterEqual(len(record['recipe_fields']),6)
+            self.assertGreaterEqual(len(record['recipe_fields']),7)
+            self.assertIn('编辑练习',record['recipe_fields'])
 
     def test_local_shell_resources_and_no_scene_clock(self):
         for style in ('aurora-glass','sticker','variety-captions'):

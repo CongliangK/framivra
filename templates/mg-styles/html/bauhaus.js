@@ -17,6 +17,34 @@
     h.int(d.seed,'seed',-2147483648,2147483647);
     h.label(d.title,'title',40);
   };
+  // cell 是模块包围方格的左上格；网格、跨度和落定位置共用同一模数。
+  const GRID={x:300,y:380,unit:100,columns:11,rows:6};
+  function modulePose(d,beat,index,m,rank,local,h){
+    const old=d.layouts[index?d.beats[index-1].target:d.initial_layout].find(v=>v.id===m.id);
+    const next=d.layouts[beat.target].find(v=>v.id===m.id);
+    const tick=Math.floor(local/d.tick_frames)*d.tick_frames;
+    const u=h.ease((tick-rank*beat.cascade_frames)/beat.move_frames),z=m.span*GRID.unit;
+    // 选择最短四分之一圈路径；旋转轴随布局平移，端点方格重新对齐共同网格。
+    const delta=((next.turn-old.turn+6)%4)-2;
+    const a=old.turn*Math.PI/2,b=a+delta*Math.PI/2,angle=h.lerp(a,b,u);
+    const corner=beat.axis==='corner'||beat.axis==='alternate'&&rank%2;
+    let x=GRID.x+(h.lerp(old.cell[0],next.cell[0],u)+m.span/2)*GRID.unit;
+    let y=GRID.y+(h.lerp(old.cell[1],next.cell[1],u)+m.span/2)*GRID.unit;
+    if(corner){
+      const offset=t=>[(Math.cos(t)-Math.sin(t)-1)*z/2,(Math.sin(t)+Math.cos(t)-1)*z/2];
+      const from=offset(a),to=offset(b);
+      x-=h.lerp(from[0],to[0],u);y-=h.lerp(from[1],to[1],u);
+    }
+    return {x,y,z,angle,corner};
+  }
+  function poseCorners(p){
+    return [[-1,-1],[1,-1],[1,1],[-1,1]].map(([sx,sy])=>{
+      let x=sx*p.z/2,y=sy*p.z/2;
+      if(p.corner){x+=p.z/2;y+=p.z/2;}
+      const rx=x*Math.cos(p.angle)-y*Math.sin(p.angle),ry=x*Math.sin(p.angle)+y*Math.cos(p.angle);
+      return [p.x+rx-(p.corner?p.z/2:0),p.y+ry-(p.corner?p.z/2:0)];
+    });
+  }
   // 内容契约：有限模块、共同模数、具名布局和明确旋转轴；每拍留出落定阅读。
   function validate(d,N,h){
     base(d,N,h);
@@ -50,37 +78,37 @@
       if(!d.layouts[b.target]||!['center', 'corner', 'alternate'].includes(b.axis))throw Error('target/axis');
       h.int(b.move_frames,'move',1,40);
       h.int(b.cascade_frames,'cascade',0,15);
-      if(b.move_frames+(d.modules.length-1)*b.cascade_frames+6>b.out-b.in)throw Error('beat needs landing hold');
+      const settled=Math.ceil((b.move_frames+(d.modules.length-1)*b.cascade_frames)/d.tick_frames)*d.tick_frames;
+      if(settled+6>b.out-b.in)throw Error('beat needs quantized landing plus six hold frames');
+      const index=d.beats.indexOf(b);
+      for(let local=0;local<b.out-b.in;local++)d.modules.forEach((m,rank)=>{
+        const pts=poseCorners(modulePose(d,b,index,m,rank,local,h));
+        if(pts.some(([x,y])=>x<180-1e-6||x>1740+1e-6||y<310-1e-6||y>1040+1e-6))throw Error('rotated module leaves scene safe region');
+      });
     });
   }
   // 模数 tick 量化帧相位；级联起动、轴心旋转和布局插值共同形成秩序。
   function render(c,d,f,N,h){
     const p=d.palette,
     s=h.stage(d.beats,f),
-    index=d.beats.indexOf(s),
-    old=d.layouts[index?d.beats[index-1].target:d.initial_layout],
-    next=d.layouts[s.target],
-    tick=Math.floor((f-s.in)/d.tick_frames)*d.tick_frames;
+    index=d.beats.indexOf(s);
     c.fillStyle=p[0];
     c.fillRect(0,0,1920,1080);
     txt(c,h,d.title,110,65,1700,64,p[1]);
     txt(c,h,d.subtitle,110,155,1700,30,p[1]);
     txt(c,h,s.label,110,250,1700,34,p[1]);
     c.strokeStyle='#d3c9b8';
-    for(let x=300;x<=1620;x+=120)line(c,[[x, 335],
-    [x, 995]],'#d3c9b8',1);
-    for(let y=335;y<=995;y+=110)line(c,[[300, y],
-    [1620, y]],'#d3c9b8',1);
+    for(let column=0;column<=GRID.columns;column++){
+      const x=GRID.x+column*GRID.unit;
+      line(c,[[x,GRID.y],[x,GRID.y+GRID.rows*GRID.unit]],'#d3c9b8',1);
+    }
+    for(let row=0;row<=GRID.rows;row++){
+      const y=GRID.y+row*GRID.unit;
+      line(c,[[GRID.x,y],[GRID.x+GRID.columns*GRID.unit,y]],'#d3c9b8',1);
+    }
     // 同一个模块从上一布局移动到当前布局，避免换镜头时凭空替换形状。
     d.modules.forEach((m,i)=>{
-      const a=old.find(v=>v.id===m.id),
-      b=next.find(v=>v.id===m.id),
-      u=h.ease((tick-i*s.cascade_frames)/s.move_frames),
-      z=m.span*100,
-      x=h.lerp(a.cell[0],b.cell[0],u)*110+350,
-      y=h.lerp(a.cell[1],b.cell[1],u)*100+390,
-      angle=h.lerp(a.turn,b.turn,u)*Math.PI/2,
-      corner=s.axis==='corner'||s.axis==='alternate'&&i%2;
+      const {x,y,z,angle,corner}=modulePose(d,s,index,m,i,f-s.in,h);
       c.save();
       c.translate(x,y);
       if(corner)c.translate(-z/2,-z/2);
@@ -451,7 +479,7 @@
       "视觉隐喻": "各自独立的基本形经轴心与模数形成共同秩序。",
       "4–6拍": ["建立共同模数", "逐个引入模块", "绕轴转向", "级联重组", "形成海报", "停留阅读"],
       "不可删特征": "有限原色、统一网格、圆弧与直线、明确旋转轴、级联留读。",
-      "可替语义": "模块形状、跨度、布局、轴心、章节标签与节奏。",
+      "可替语义": "模块形状、跨度、布局、轴心、章节标签与节奏。编辑练习：单模块设tick15、move31，章节至少51帧，包含量化落定后的6帧停留。",
       "动作/转场/声音点": "离散模数 tick 与每个模块落位可标声音点；本页无音轨。",
       "失败反例": "无模数的漂浮、轴心每帧跳变、形状之间没有秩序变化。"
     },

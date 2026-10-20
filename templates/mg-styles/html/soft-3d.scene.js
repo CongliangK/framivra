@@ -5,16 +5,17 @@
   '#e66b42',
   '#49a69d'];
   const recipe= {
+    "编辑练习":"把三物体改成六物体并将 value 提至100；观察布局按最大半径收紧间距，检查每章边界与标签，再保留 transition_frames+6 的最短章窗。",
     "适用/不适用":"关系与材质说明；不用于替代真实三维成片",
     "视觉隐喻":"从分散零件到共同系统",
     "4–6拍":["提出分散问题",
-    "逐件揭示角色",
+    "并列识别角色",
     "靠近并建立连接",
     "关系整体落定",
     "保留结果阅读"],
     "不可删特征":"体积轮廓、材质对照、三章关系变化",
     "可替语义":"物体角色、值、形状、材质、连接图",
-    "动作/转场/声音点":"过渡段错峰位移；连接出现可作声音点，页面没有音轨",
+    "动作/转场/声音点":"过渡段按同一进度移动；连接出现可作声音点，页面没有音轨",
     "失败反例":"把投影渐变当成真实PBR验收，或所有物体同速弹跳"
   };
   function common(d,N,h) {
@@ -193,10 +194,14 @@
       t=h.smooth(h.clamp((f-s.frame)/(d.transition_frames??12))**(d.pace??1)),
       pos=(layout,i)=> {
         let n=d.objects.length,
-        x=960+(i-(n-1)/2)*310,
+        maxRadius=Math.max(...d.objects.map(o=>62+o.value*.48)),
+        margin=maxRadius*1.2+12,
+        spacing=n>1?Math.min(310,(1720-2*margin-160)/(n-1)):0,
+        scatter=Math.max(0,Math.min(80,(spacing-2*maxRadius)/2)),
+        x=960+(i-(n-1)/2)*spacing,
         y=600;
         if(layout==='scatter') {
-          x+=i%2?110:-110;
+          x+=i%2?scatter:-scatter;
           y+=i%2?-85:80;
         }
         if(layout==='result') {

@@ -5,6 +5,7 @@
   '#e66b42',
   '#49a69d'];
   const recipe= {
+    "编辑练习":"将第二题材的 collect 换成 gap，并调整其 out；同步后移下一动作和 reward.in，至少留出末6帧奖励阅读。",
     "适用/不适用":"任务与学习路径；不用于小字长段解释",
     "视觉隐喻":"每个障碍对应一个认知动作",
     "4–6拍":["提出任务",
@@ -33,8 +34,32 @@
       color:p[1],minSize:24
     });
   }
+  // The collectible sits at an actually sampled player contact, even in a short window.
+  function collectFrame(step) {
+    return step.in + Math.floor((step.out - step.in - 1) / 2);
+  }
+  function collectibleWorldX(step, index) {
+    const u = (collectFrame(step) - step.in) / (step.out - step.in - 1);
+    return 35 + index * 180 + Math.round(u * 180) + 4;
+  }
+  function pixelState(data, frame) {
+    const step = data.steps.find(s => s.in <= frame && frame < s.out);
+    const index = step ? data.steps.indexOf(step) : data.steps.filter(s => s.out <= frame).length;
+    const u = step ? (frame - step.in) / (step.out - step.in - 1) : 0;
+    const world = 35 + index * 180 + (step ? Math.round(u * 180) : 0);
+    const crouch = !!step && step.obstacle === 'duck' && u > .22 && u < .82;
+    const jump = step && step.obstacle !== 'duck'
+      ? Math.round(Math.sin(Math.PI * u) * (step.obstacle === 'gap' ? 35 : 24)) : 0;
+    return {
+      step, index, u, world, camera: Math.max(0, world - 75), crouch, jump,
+      playerY: 142 - (crouch ? 8 : 12) - jump,
+      collected: data.steps.map(s => s.obstacle === 'collect' && frame >= collectFrame(s)),
+      reward: frame >= data.reward.in
+    };
+  }
   window.MG_REFERENCE= {
     id:"pixel",
+    state: pixelState,
     title:"像素任务：动作承载意义",
     limits:"Canvas整数格点设计参考；六倍放大的原生网格，系统字体须在目标设备验证。无音轨。",
     examples:[ {
@@ -74,39 +99,17 @@
       }
     },
     {
-      "name":"社区修复任务",
-      "frames":300,
-      "data": {
-        "mission":"像素任务：修复社区花园",
-        "steps":[ {
-          "label":"越过倒木",
-          "in":0,
-          "out":60,
-          "obstacle":"jump"
-        },
-        {
-          "label":"跨过沟渠",
-          "in":60,
-          "out":120,
-          "obstacle":"gap"
-        },
-        {
-          "label":"穿过藤架",
-          "in":120,
-          "out":180,
-          "obstacle":"duck"
-        },
-        {
-          "label":"收集种子",
-          "in":180,
-          "out":240,
-          "obstacle":"collect"
-        }],
-        "reward": {
-          "text":"花园重新开放",
-          "in":240
-        },
-        "seed":-19
+      name: '社区修复任务',
+      frames: 240,
+      data: {
+        mission: '像素任务：修复社区花园',
+        steps: [
+          {label: '穿过藤架', in: 0, out: 48, obstacle: 'duck'},
+          {label: '收集种子', in: 48, out: 114, obstacle: 'collect'},
+          {label: '越过倒木', in: 114, out: 168, obstacle: 'jump'}
+        ],
+        reward: {text: '花园重新开放', in: 180},
+        seed: -19
       }
     }],
     recipe,
@@ -123,18 +126,15 @@
         if(!['jump','gap','duck','collect'].includes(s.obstacle))throw Error('action');
         end=s.out;
       });
-      h.int(d.reward.in,'reward',end,N-1);
+      h.int(d.reward.in,'reward',end,N-6);
       h.label(d.reward.text,'reward',40);
     },
     // Derive player and world camera directly from the action window.
     render:(c,d,f,N,h)=> {
-      const p=d.palette??P,
-      step=d.steps.find(s=>s.in<=f&&f<s.out),
-      i=step?d.steps.indexOf(step):d.steps.filter(s=>s.out<=f).length,
-      u=step?(f-step.in)/(step.out-step.in-1):0,
-      world=35+i*180+(step?Math.round(u*180):0),
-      camera=Math.max(0,world-75),
-      floor=142;
+      const p = d.palette ?? P;
+      const state = pixelState(d, f);
+      const {step, camera, world} = state;
+      const floor = 142;
       header(c, {
         mission:d.mission,palette:p
       },h);
@@ -162,20 +162,19 @@
         }
         else if(s.obstacle==='duck')c.fillRect(x-18,floor-28,36,12);
         else if(s.obstacle==='collect') {
-          c.fillRect(x-4,floor-30,8,8);
+          if (!state.collected[k]) c.fillRect(collectibleWorldX(s,k)-camera-4,floor-30,8,8);
         }
         else c.fillRect(x-6,floor-16,12,16);
       });
-      let duck=step&&step.obstacle==='duck'&&u>.22&&u<.82,
-      jump=step&&step.obstacle!=='duck'?Math.round(Math.sin(Math.PI*u)*(step.obstacle==='gap'?35:24)):0,
-      x=world-camera,
-      y=floor-(duck?8:12)-jump;
+      const duck = state.crouch;
+      const x = world - camera;
+      const y = state.playerY;
       c.fillStyle=p[2];
       c.fillRect(x,y,8,duck?8:12);
       c.fillStyle=p[0];
       c.fillRect(x+5,y+2,2,2);
       c.restore();
-      h.text(c,f>=d.reward.in?d.reward.text:(step?step.label:'准备下一步'),100,940,1720,44, {
+      h.text(c,state.reward?d.reward.text:(step?step.label:'准备下一步'),100,940,1720,44, {
         color:p[1]
       });
     }

@@ -66,6 +66,23 @@ console.log(JSON.stringify({minimum_resolve_frames:13,rejected:12,complete_frame
         self.assertEqual(report['minimum_resolve_frames'],13)
         self.assertEqual(len(report['complete_frames']),6)
 
+    def test_production_cards_offer_specific_semantic_editing_exercises(self):
+        probe = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const sandbox={window:{}};vm.createContext(sandbox);
+const terms={'cel-boil':['characters[0].shape','anticipation','motion','至少7'],collage:['jaw.pivot','head.angle','铰链'],morph:['leaf→star→arrow','transition','10帧'],liquid:['0.65','resolve.label','12帧','13帧','末6帧']};
+for(const [id,words] of Object.entries(terms)){
+ vm.runInContext(fs.readFileSync(process.argv[1]+'/'+id+'.js','utf8'),sandbox);
+ const card=sandbox.window.MG_REFERENCE.recipe;
+ assert.equal(Object.keys(card).length,8);
+ assert.equal(typeof card['编辑练习'],'string');
+ words.forEach(word=>assert(card['编辑练习'].includes(word),id+': '+word));
+ assert(card['4–6拍'].length>=4&&card['4–6拍'].length<=6);
+}
+"""
+        result = subprocess.run(['node','-e',probe,str(HTML)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+
     def test_shells_use_shared_runtime_and_independent_scene(self):
         for name in ['cel-boil','collage','morph','liquid']:
             source = (HTML / (name+'.html')).read_text()

@@ -491,6 +491,8 @@
     validate,
     render,
     recipe: {
+      编辑练习:
+        "将 chapter.mode 从 chat 计数改成 focus 开关；重新设置 reveal_frames 与 hold_frames，并延长该章 out（随后章节 in/out 一并平移），确保 reveal + hold 不超过章节时长，最后一个开关打开后仍有完整保持。",
       "适用/不适用":
         "适合短产品概念、思考工具、缓慢信息聚焦；不适合密集表格、真实光学精度或完整交互系统。",
       视觉隐喻: "思绪先成为光场，玻璃层承载短语义，镜片让注意力经过信息。",

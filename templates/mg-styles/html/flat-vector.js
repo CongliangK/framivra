@@ -74,9 +74,10 @@
     n=d.cards.length,
     cols=Math.min(3,n),
     rows=Math.ceil(n/cols),
-    pos={
-      origin:[290, 600]
-    };
+    originMove=h.ease(Math.max(0,local)/12),
+    originX=h.lerp(960,290,originMove),
+    originY=h.lerp(590,600,originMove),
+    pos={origin:[originX,originY]};
     d.cards.forEach((a,i)=>{
       const j=d.final_order.indexOf(a.id);
       pos[a.id]=[h.lerp(740+i%cols*420,960+(j%cols-(cols-1)/2)*540,re),
@@ -111,8 +112,8 @@
       [tx-204, ty+8]],colors[3]);
     });
     if(!re){
-      h.circle(c,290,600,118,colors[2]);
-      txt(c,h,d.origin.label,190,568,200,32,'#ffffff');
+      h.circle(c,originX,originY,h.lerp(145,118,originMove),colors[2]);
+      txt(c,h,d.origin.label,h.lerp(800,190,originMove),h.lerp(555,568,originMove),h.lerp(320,200,originMove),h.lerp(46,32,originMove),'#ffffff');
     }d.cards.forEach((a,i)=>{
       const q=h.clamp((local-12-i*7)/16);
       if(q<=0)return;
@@ -295,7 +296,7 @@
       "视觉隐喻": "问题生长为证据节点，再整理为行动路径。",
       "4–6拍": ["提出问题", "原点预备", "逐个建立证据", "沿因果线展开", "卡片重排", "结论停留"],
       "不可删特征": "清楚信息层级、节点完整揭示、避开卡片的因果边、最终重排。",
-      "可替语义": "问题、节点标签/数值/解释、链接与最终次序、三阶段整数窗。",
+      "可替语义": "问题、节点标签/数值/解释、链接与最终次序、三阶段整数窗。编辑练习：把三节点链改为分叉，调整build窗口并检查全部节点揭示后留读。",
       "动作/转场/声音点": "卡片预备后过冲落定；连线完成和重排落定可绑定独立声音 cue；本页无音轨。",
       "失败反例": "连线穿过兄弟卡、文字未完成就冻结、每张卡同时摇晃。"
     },

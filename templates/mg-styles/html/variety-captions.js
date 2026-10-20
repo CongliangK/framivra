@@ -289,6 +289,8 @@
     validate,
     render,
     recipe: {
+      编辑练习:
+        "先把反应词缩短，再尝试将 punchFrame 后移；cue.out 必须至少为 max(lastGlyph, in + 8, punchFrame + 5) + 6，其中 lastGlyph = in + (含情绪符号和两个空格的总字数 - 1) × stagger + 3；延长 out 前须确认真实素材仍覆盖对应动作。",
       "适用/不适用":
         "适合真实素材上的短反应、情绪强调与人工已确认的事件；不适合将长解说压成反应字幕或自动宣布人物已经成功。",
       视觉隐喻:

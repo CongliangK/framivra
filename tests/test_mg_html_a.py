@@ -16,11 +16,25 @@ for(const id of ['soft-3d','isometric','pixel','line-art']){
  const sandbox={window:{}};vm.createContext(sandbox);vm.runInContext(helpers,sandbox);
  vm.runInContext(fs.readFileSync(root+'/'+id+'.scene.js','utf8'),sandbox);
  const scene=sandbox.window.MG_REFERENCE,h=sandbox.window.MGReferenceHelpers;
- assert.equal(scene.id,id);assert.equal(scene.examples.length,2);assert.equal(Object.keys(scene.recipe).length,7);
+ assert.equal(scene.id,id);assert.equal(scene.examples.length,2);assert.equal(Object.keys(scene.recipe).length,8);
  function draw(d,f,N){let ops=[];const c=new Proxy({}, {get(t,k){if(k==='measureText')return s=>({width:Array.from(s).length*27});if(k==='createRadialGradient')return (...v)=>({addColorStop(...a){ops.push(['stop',...a]);}});if(k in t)return t[k];return (...args)=>{args.forEach(a=>{if(typeof a==='number')assert(Number.isFinite(a));});ops.push([k,...args]);};},set(t,k,v){t[k]=v;ops.push(['set',k,typeof v==='object'?'gradient':v]);return true;}});scene.render(c,d,f,N,h);return JSON.stringify(ops);}
  let traces=[];
  for(const e of scene.examples){scene.validate(e.data,e.frames,h);const before=JSON.stringify(e.data),frames=[0,Math.floor(e.frames/3),Math.floor(2*e.frames/3),e.frames-1];const baseline=frames.map(f=>draw(e.data,f,e.frames));for(const i of [3,0,2,1,3])assert.equal(draw(e.data,frames[i],e.frames),baseline[i]);assert.equal(JSON.stringify(e.data),before);assert(new Set(baseline).size>1);traces.push(baseline[3]);assert.throws(()=>scene.validate(e.data,1,h));}
  assert.notEqual(traces[0],traces[1]);
+
+ if(id==='pixel'){
+  const A=scene.examples[0],B=scene.examples[1];
+  assert.notEqual(JSON.stringify(A.data.steps.map(s=>s.obstacle)),JSON.stringify(B.data.steps.map(s=>s.obstacle)));
+  assert.notEqual(JSON.stringify(A.data.steps.map(s=>[s.in,s.out])),JSON.stringify(B.data.steps.map(s=>[s.in,s.out])));
+  const d=B.data,N=B.frames,s=d.steps.find(s=>s.obstacle==='collect'),at=s.in+Math.floor((s.out-s.in-1)/2),before=scene.state(d,at-1),hit=scene.state(d,at);
+  assert(!before.collected[d.steps.indexOf(s)]);assert(hit.collected[d.steps.indexOf(s)]);
+  const token=JSON.parse(draw(d,at-1,N)).find(o=>o[0]==='fillRect'&&o[3]===8&&o[4]===8),target=token[1]+before.camera+4;
+  assert(hit.world<=target+4&&hit.world+8>=target-4);assert(hit.playerY<=token[2]+8&&hit.playerY+12>=token[2]);
+  const collectibleCount=f=>JSON.parse(draw(d,f,N)).filter(o=>o[0]==='fillRect'&&o[3]===8&&o[4]===8).length;
+  assert.equal(collectibleCount(at-1),1);assert.equal(collectibleCount(at),0);assert.equal(collectibleCount(at+1),0);
+  const short=JSON.parse(JSON.stringify(d));short.reward.in=N-6;scene.validate(short,N,h);for(let f=N-6;f<N;f++)assert(scene.state(short,f).reward);
+  short.reward.in=N-5;assert.throws(()=>scene.validate(short,N,h));
+ }
  if(id==='isometric'){
   const origin=scene.geometry.project(0,0,0),axes=[[1,0,0],[0,1,0],[0,0,1]].map(v=>scene.geometry.project(...v).map((x,i)=>x-origin[i]));
   axes.forEach(v=>assert(Math.abs(Math.hypot(...v)-150)<1e-9));
@@ -42,6 +56,12 @@ for(const id of ['soft-3d','isometric','pixel','line-art']){
   const hold=JSON.parse(draw(short,30,36)).find(o=>o[0]==='arc'&&Math.abs(o[3]-radius)<1e-8);
   for(let f=30;f<36;f++)assert.deepEqual(JSON.parse(draw(short,f,36)).find(o=>o[0]==='arc'&&Math.abs(o[3]-radius)<1e-8),hold);
   assert.throws(()=>scene.validate(short,35,h));
+
+  const six=JSON.parse(JSON.stringify(e.data));six.objects=Array.from({length:6},(_,i)=>({...e.data.objects[0],label:'物体'+i,value:100}));six.links=[];scene.validate(six,N,h);
+  for(let f=0;f<N;f++){
+   const visible=JSON.parse(draw(six,f,N)).filter(o=>o[0]==='arc'&&Math.abs(o[3]-110)<1e-8);
+   assert.equal(visible.length,6);for(const o of visible){assert(o[1]-110>=100&&o[1]+110<=1820);assert(o[2]-110>=300&&o[2]+110<=850);}
+  }
   const endpoint=sphere(N-1);assert(Math.abs(endpoint[1]-960)<1e-8);assert(Math.abs(endpoint[2]-480)<1e-8);
  }
 
