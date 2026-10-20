@@ -2,7 +2,7 @@
 
 本包将 [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) 的一般设计语言转化为独立编写的帧驱动程序模板。不是原片复刻。逐款设计研究与许可边界见 [研究记录](../../docs/mg-styles-research.md)。
 
-本包有两条入口：`build.py` 的十五款 Canvas **prototype**，以及 `build_media.py` 的十一种独立媒体路径。前者仍是标题/标签/数值接口，尚不足以表达各风格完整叙事；后者分别接受三维场景与章节、像素任务与障碍、实际视频与反应 cue、连续线条故事、液体阶段、角色动作、具象轮廓故事、目标轨迹与遥测。实现/缺失/验证状态以[研究矩阵](../../docs/mg-styles-research.md)和[验证记录](../../docs/mg-styles-validation.md)为准，不以入口数量代表完成。
+本包有两条入口：`build.py` 的十五款 Canvas **prototype**，以及 `build_media.py` 的十五种独立媒体路径。前者仍是标题/标签/数值接口，尚不足以表达各风格完整叙事；后者分别接受三维场景与章节、像素任务与障碍、实际视频与反应 cue、连续线条故事、液体阶段、角色动作、具象轮廓故事、目标轨迹与遥测。实现/缺失/验证状态以[研究矩阵](../../docs/mg-styles-research.md)和[验证记录](../../docs/mg-styles-validation.md)为准，不以入口数量代表完成。
 
 从仓根预演：
 
@@ -102,7 +102,7 @@ HUD 的 `target.points` 定义按帧覆盖全长的安全区轨迹；`stages` �
 python3 templates/mg-styles/build_media.py --style soft-3d --content templates/mg-styles/examples/three-d-continuous-a.json --output /workspace/my-continuous --frames 120 --samples 64 --render-width 960 --render-height 540 --three-d-mode full --dry
 ```
 
-去掉 `--dry` 会真正逐帧执行 Blender；此例源为原生 960×540，时间线 1920×1080 会放大素材，不称原生 1080p。每整数帧烘焙真实相机轨道/look-at、体积守恒的非均匀 squash/stretch、对象重排和关系杆；文字逐帧跟随相机保持视口布局。每章窗口包括最后章节都需留够转场完成与落定帧。这里的形变是解析网格缩放而非软体物理；质量参数、实际耗时和画面限制见[验证记录](../../docs/mg-styles-validation.md)。连续 A/B 的已启动快照不继承后续源码修复；源版本及方块接触地面局限须按该记录逐项判断。CPU 渲染耗时取实际日志估算，不把 `--dry`、场景检查或三底片合成称为完整逐帧验收。
+去掉 `--dry` 会真正逐帧执行 Blender；此例源为原生 960×540，时间线 1920×1080 会放大素材，不称原生 1080p。每整数帧烘焙真实相机轨道/look-at、体积守恒的非均匀 squash/stretch、对象重排和关系杆；文字逐帧跟随相机保持视口布局。每章窗口包括最后章节都需留够转场完成与落定帧。这里的形变是解析网格缩放而非软体物理；质量参数、实际耗时和画面限制见[验证记录](../../docs/mg-styles-validation.md)。连续 A/B 的已启动快照不继承后续源码修复；源版本及两套旧快照的方块/环体穿地局限须按该记录逐项判断。CPU 渲染耗时取实际日志估算，不把 `--dry`、场景检查或三底片合成称为完整逐帧验收。
 
 
 ### 等角装配、扁平因果与合成波旅程
@@ -118,3 +118,23 @@ python3 templates/mg-styles/build_media.py --style synthwave --content templates
 扁平内容的 `origin/cards/links` 定义起点、数据卡和有向因果链，`final_order` 决定结尾重排，question/build/resolve 的阶段文字及帧窗口可换。预备压缩、冲出与过冲是角色动作；主体色块扩张擦除承接布局变化。图卡数值须有内容依据，程序不会替编辑判断因果关系。
 
 合成波的 `waypoints` 给出路标到达帧、标签与左右位置，approach/cross/arrive 三段驱动前进到停车；`tracking` 只在显式窗口局部错位和 RGB 分离，落定阅读期不允许 tracking。透视网格、连续世界坐标山层、光晕与金属色场文字构成旅程；这些是二维投影与程序媒介效果，不是物理镜头、真实镀铬材质或完整模拟磁带链。各路径实际成片、字体与边界问题以[验证记录](../../docs/mg-styles-validation.md)为准。
+
+
+### 证据贴纸、铰接拼贴、解析玻璃与机械包豪斯
+
+```bash
+python3 templates/mg-styles/build_media.py --style sticker --content templates/mg-styles/examples/sticker/phone.json --output /workspace/my-sticker --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style collage --content templates/mg-styles/examples/collage-curiosity.json --output /workspace/my-collage --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style aurora-glass --content templates/mg-styles/examples/aurora-glass-ideas.json --output /workspace/my-glass --frames 240 --dry
+python3 templates/mg-styles/build_media.py --style bauhaus --content templates/mg-styles/examples/bauhaus-a.json --output /workspace/my-bauhaus --frames 180 --dry
+```
+
+四者均需 Pillow、FFmpeg 与支持内容的本地字体；玻璃另需 NumPy。去掉 `--dry` 才会生成素材和时间线。十五种入口仅代表语义路径已实现，实际成片、技术与艺术检查须逐款查看[验证记录](../../docs/mg-styles-validation.md)。
+
+贴纸的 `question/parts/evidence/conclusion` 分别组织问题、分解、数据证据与结论，`relations` 定义连接，四段 `beats` 用句子引导大画布镜头，末段拉远。证据包含值、单位、来源和 bar/ring 类型；正负柱使用零基线，环图仅用于百分比。示例均明确为教学示意数据。图形为程序白边贴纸，不能称照片抠图；换入真实证据时须连同来源和口径一起编辑。
+
+拼贴的 `parts` 定义程序剪影、父子关系、局部支点、比例与运动量，`beats` 驱动 awaken/release/reframe/resolve 句拍，`exposure` 保持整张画面的定格节奏。关节和不同比例的组合形成观点，撕纸前沿承接结尾；这些是程序纸偶而非照片拼贴。可选 `evidence` 的数据必须带来源；没有自动理解音素或嘴部声音同步。
+
+玻璃的 `chapters` 指定 chat/voice/focus 微 UI、内容、值及单位，`lens` 控制折射强度、色散和半径。连续光场与镜片运动承接章节，内容按章切换和短入场，不宣称旧内容完整光学变形转场。倾斜卡片按透视单应变换，透镜使用非均匀法线偏移、分通道色散和背景采样；光学属于解析图像空间近似，不是物理路径追踪。标题和说明保持独立可读区，近卡中的小字仍需实际检查。
+
+包豪斯的 `grid/modules/layouts` 给出共享模数、基础形和各目标构图；`initial_layout/tick_frames/beats` 定义共同拍表、目标、center/corner/global/alternate 轴和级联帧量。模块沿机械旋转与模数位移重组，逐顶点轨迹极值预检保护构图区；落定必须在排除右端点的窗口内。配色为纸/墨/红/黄/蓝五色，扁平路径另为六色，两者由各后端独立校验，不受 Canvas 四色接口限制。提示音仍是共用占位轨，不会随机械拍表自动同步。
