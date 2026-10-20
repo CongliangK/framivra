@@ -1,0 +1,109 @@
+{
+  "title": "一栋楼的节能行动",
+  "subtitle": "把发现、行动与结果重新排列成清楚的计划",
+  "origin": {
+    "label": "发现浪费",
+    "detail": "同一个目标，两条改进路径"
+  },
+  "cards": [
+    {
+      "id": "light",
+      "label": "照明排查",
+      "value": 48,
+      "detail": "找到无人在场的亮灯区"
+    },
+    {
+      "id": "water",
+      "label": "用水排查",
+      "value": 16,
+      "detail": "记录持续滴漏的接头"
+    },
+    {
+      "id": "sensor",
+      "label": "安装感应",
+      "value": 24,
+      "detail": "让灯光跟随实际使用"
+    },
+    {
+      "id": "repair",
+      "label": "修复漏点",
+      "value": 12,
+      "detail": "逐一消除不必要消耗"
+    },
+    {
+      "id": "power",
+      "label": "电量下降",
+      "value": 18,
+      "detail": "对比相同时段用量"
+    },
+    {
+      "id": "saving",
+      "label": "用水下降",
+      "value": 22,
+      "detail": "观察实际节约结果"
+    }
+  ],
+  "links": [
+    {
+      "from": "origin",
+      "to": "light"
+    },
+    {
+      "from": "origin",
+      "to": "water"
+    },
+    {
+      "from": "light",
+      "to": "sensor"
+    },
+    {
+      "from": "water",
+      "to": "repair"
+    },
+    {
+      "from": "sensor",
+      "to": "power"
+    },
+    {
+      "from": "repair",
+      "to": "saving"
+    }
+  ],
+  "final_order": [
+    "light",
+    "sensor",
+    "power",
+    "water",
+    "repair",
+    "saving"
+  ],
+  "stages": [
+    {
+      "mode": "question",
+      "in": 0,
+      "out": 45,
+      "text": "浪费从哪里来？先观察，再行动"
+    },
+    {
+      "mode": "build",
+      "in": 45,
+      "out": 150,
+      "text": "两条原因链，各自连接对应行动"
+    },
+    {
+      "mode": "resolve",
+      "in": 150,
+      "out": 240,
+      "text": "重排为：发现 → 行动 → 结果"
+    }
+  ],
+  "palette": [
+    "#f5f1e8",
+    "#1e3034",
+    "#f1775c",
+    "#76c5aa",
+    "#f8c653",
+    "#95b5e6"
+  ],
+  "seed": 27
+}

@@ -1,0 +1,17 @@
+{
+  "title":"让社区连接起来",
+  "subtitle":"能源先到位，生活与创造随后发生",
+  "grid":[3,3],
+  "seed":17,
+  "nodes":[
+    {"id":"energy","label":"能源站","kind":"hub","x":0,"y":0,"height":1.1,"base":0,"wall":12,"roof":30,"activate":38},
+    {"id":"homes","label":"生活区","kind":"home","x":1,"y":1,"height":1.5,"base":42,"wall":54,"roof":78,"activate":86,"depends_on":["energy"]},
+    {"id":"lab","label":"创作室","kind":"lab","x":2,"y":0,"height":0.9,"base":90,"wall":102,"roof":126,"activate":134,"depends_on":["homes"]},
+    {"id":"park","label":"共享花园","kind":"garden","x":0,"y":2,"height":0.7,"base":90,"wall":102,"roof":120,"activate":128,"depends_on":["energy"]}
+  ],
+  "flows":[
+    {"from":"energy","to":"homes","in":90,"out":240},
+    {"from":"homes","to":"lab","in":138,"out":240},
+    {"from":"homes","to":"park","in":138,"out":240}
+  ]
+}

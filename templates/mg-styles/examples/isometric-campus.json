@@ -1,0 +1,19 @@
+{
+  "title":"知识如何成为共同成果",
+  "subtitle":"学习启动研究，研究汇入分享网络",
+  "grid":[4,3],
+  "palette":["#edf8fa","#192c37","#649cc1","#8fc9b1"],
+  "seed":-9,
+  "nodes":[
+    {"id":"school","label":"学习","kind":"home","x":0,"y":1,"height":1.4,"base":0,"wall":10,"roof":28,"activate":36},
+    {"id":"research","label":"研究","kind":"lab","x":1,"y":0,"height":1.0,"base":40,"wall":52,"roof":72,"activate":80,"depends_on":["school"]},
+    {"id":"commons","label":"交流","kind":"hub","x":2,"y":1,"height":1.7,"base":84,"wall":96,"roof":118,"activate":126,"depends_on":["research"]},
+    {"id":"garden","label":"共享空间","kind":"garden","x":1,"y":2,"height":0.8,"base":84,"wall":96,"roof":114,"activate":122,"depends_on":["school"]},
+    {"id":"studio","label":"实践","kind":"lab","x":3,"y":0,"height":0.8,"base":130,"wall":142,"roof":162,"activate":170,"depends_on":["commons"]}
+  ],
+  "flows":[
+    {"from":"school","to":"research","in":84,"out":210},
+    {"from":"research","to":"commons","in":130,"out":210},
+    {"from":"commons","to":"studio","in":174,"out":210}
+  ]
+}

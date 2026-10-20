@@ -16,7 +16,13 @@ import importlib.metadata
 
 
 ROOT = Path(__file__).resolve().parent
-STYLES = ('soft-3d', 'pixel', 'variety-captions', 'line-art', 'liquid', 'cel-boil', 'morph', 'hud')
+# The producer name binds its captured module, validator and frame writer together.
+PRODUCERS = {
+    'pixel': 'pixel', 'line-art': 'line_art', 'liquid': 'liquid',
+    'cel-boil': 'cel', 'morph': 'morph', 'hud': 'hud',
+    'isometric': 'isometric', 'flat-vector': 'flat_vector', 'synthwave': 'synthwave',
+}
+STYLES = ('soft-3d', 'variety-captions', *PRODUCERS)
 SELF_SOURCE = Path(__file__).read_bytes()
 
 
@@ -72,8 +78,7 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
     if not isinstance(content,dict): raise ValueError('content must be an object')
     if any(type(value) is not int or value < 64 for value in (render_width,render_height)) or render_width*9 != render_height*16: raise ValueError('render dimensions must be integer 16:9 sizes')
     if style != 'soft-3d' and (render_width,render_height) != (1920,1080): raise ValueError('render dimensions only apply to the 3D producer')
-    names={'soft-3d':'render_3d.py','pixel':'render_pixel.py','variety-captions':'captions.py','line-art':'render_line_art.py','liquid':'render_liquid.py','cel-boil':'render_cel.py','morph':'render_morph.py','hud':'render_hud.py'}
-    renderer_name=names[style]
+    renderer_name = ('render_'+PRODUCERS[style]+'.py') if style in PRODUCERS else ('render_3d.py' if style=='soft-3d' else 'captions.py')
     sources={'build.py':(ROOT/'build.py').read_bytes(),renderer_name:(ROOT/renderer_name).read_bytes(), 'build_media.snapshot.py':SELF_SOURCE}
     builder=frozen_module('build.py',sources['build.py'])
     renderer=frozen_module(renderer_name,sources[renderer_name])
@@ -87,11 +92,8 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
             sources['compose_3d_story.py']=(ROOT/'compose_3d_story.py').read_bytes()
             composer=frozen_module('compose_3d_story.py',sources['compose_3d_story.py'],{'_RENDERER':renderer,'_RENDERER_SHA256':hashlib.sha256(sources[renderer_name]).hexdigest()})
             plate_indices=composer.story_plate_indices(data,frames)
-    elif style=='pixel': preflight=renderer.validate_pixel_content(data,frames,font_path)
-    elif style=='line-art': preflight=renderer.validate_line_art_content(data,frames,font_path)
-    elif style=='liquid': preflight=renderer.validate_liquid_content(data,frames,font_path)
-    elif style in ('cel-boil','morph','hud'):
-        preflight=getattr(renderer,{'cel-boil':'validate_cel_content','morph':'validate_morph_content','hud':'validate_hud_content'}[style])(data,frames,font_path)
+    elif style in PRODUCERS:
+        preflight=getattr(renderer,'validate_'+PRODUCERS[style]+'_content')(data,frames,font_path)
     else:
         if background is None or not Path(background).is_file(): raise ValueError('variety-captions needs a local --background video')
         if not data.get('reactions'): raise ValueError('variety-captions needs nonempty reactions')
@@ -123,9 +125,9 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
         source=media/'scene.mp4';encode(sequence,pattern,source,output)
         timeline['sources'].append({'id':'scene','path':'media/scene.mp4'})
         timeline['video_tracks'].append({'name':'Material and light story','kind':'broll','clips':[clip('scene')]})
-    elif style in ('pixel','line-art','liquid','cel-boil','morph','hud'):
+    elif style in PRODUCERS:
         render=output/'source-frames'
-        function=getattr(renderer,{'pixel':'render_pixel_frames','line-art':'render_line_art_frames','liquid':'render_liquid_frames','cel-boil':'render_cel_frames','morph':'render_morph_frames','hud':'render_hud_frames'}[style])
+        function=getattr(renderer,'render_'+PRODUCERS[style]+'_frames')
         provenance=function(data,frames,render,font_path)
         source=media/'composition.mp4';encode(render,'f%04d.png',source,output)
         timeline['sources'].append({'id':'composition','path':'media/composition.mp4'})

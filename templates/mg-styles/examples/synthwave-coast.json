@@ -1,0 +1,62 @@
+{
+  "title": "向海边出发",
+  "destination": "沿途每一束光都是坐标",
+  "seed": -9,
+  "palette": [
+    "#0e1738",
+    "#f65b9d",
+    "#48efdd",
+    "#ffd081"
+  ],
+  "waypoints": [
+    {
+      "frame": 25,
+      "label": "城市边缘",
+      "side": "right"
+    },
+    {
+      "frame": 65,
+      "label": "山间电台",
+      "side": "left"
+    },
+    {
+      "frame": 105,
+      "label": "海风隧道",
+      "side": "right"
+    },
+    {
+      "frame": 150,
+      "label": "灯塔",
+      "side": "left"
+    }
+  ],
+  "stages": [
+    {
+      "mode": "approach",
+      "in": 0,
+      "out": 80
+    },
+    {
+      "mode": "cross",
+      "in": 80,
+      "out": 180
+    },
+    {
+      "mode": "arrive",
+      "in": 180,
+      "out": 240
+    }
+  ],
+  "tracking": [
+    {
+      "in": 90,
+      "out": 96,
+      "strength": 10
+    },
+    {
+      "in": 150,
+      "out": 154,
+      "strength": 5
+    }
+  ]
+}
