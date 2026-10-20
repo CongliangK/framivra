@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from .cache_state import declared_dependencies, file_digest, media_stat_digest
+from .cache_state import file_digest, media_stat_digest
 from .composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
                         segment_content_key, pass_content_key)
 from .hygiene import audio_key, seg_key
