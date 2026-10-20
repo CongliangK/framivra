@@ -23,7 +23,7 @@ GIB = 1024 ** 3
 MIB = 1024 ** 2
 FINAL_TREE = '7d499f03b734cb87c0b4286947b9fb60bd5d303c'
 PS_ARGV = ['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=,rss=,pcpu=,time=,args=']
-CLEAN_PS_ARGV = ['/bin/ps', '-axo', 'pid=,pgid=,stat=']
+CLEAN_PS_ARGV = ['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=']
 
 
 def dump(path, data):
@@ -94,6 +94,13 @@ class ResourceSnapshot(list):
         super().__init__(rows)
         self.query_evidence = query_evidence
         self.raw_by_pid = raw_by_pid
+
+
+class CleanupObservation(dict):
+    """Only filtered evidence serializes; full structural rows stay transient."""
+    def __init__(self, rows, **evidence):
+        super().__init__(evidence)
+        self.inventory = rows
 
 
 class ResourceIdentityUnavailable(RuntimeError):
@@ -187,23 +194,38 @@ class Runtime:
             raise ValueError('ps observer is absent or inconsistent')
 
     def observe_groups(self, groups, deadline):
-        result = self.query(CLEAN_PS_ARGV, deadline)
+        evidence = dict(argv=list(CLEAN_PS_ARGV), deadline_monotonic=deadline,
+                        started_monotonic=self.clock(), validation_status='INCOMPLETE')
+        self.cleanup_query_evidence = evidence
+        try:
+            result = self.query(CLEAN_PS_ARGV, deadline)
+        except Exception as error:
+            evidence.update(query_error=type(error).__name__ + ': ' + str(error),
+                            exit_code=getattr(error, 'returncode', None),
+                            validation_status='QUERY_FAILED')
+            raise
+        finally:
+            evidence['finished_monotonic'] = self.clock()
+        evidence.update(exit_code=result.returncode,
+                        snapshot_sha256=hashlib.sha256(result.stdout.encode()).hexdigest())
+        self.remaining(deadline, 1)
         rows = []; matching_raw_lines = []
         for line in result.stdout.splitlines():
             f = line.split()
-            if len(f) != 3:
+            if len(f) != 4:
                 raise ValueError('Malformed cleanup process inventory')
-            row = dict(pid=int(f[0]), pgid=int(f[1]), state=f[2])
-            if row['pid'] <= 0 or row['pgid'] < 0 or not re.fullmatch(r'[A-Za-z?][A-Za-z0-9+<>=_?-]*', row['state']):
+            row = dict(pid=int(f[0]), ppid=int(f[1]), pgid=int(f[2]), state=f[3])
+            if row['pid'] <= 0 or row['ppid'] < 0 or row['pgid'] < 0 or not re.fullmatch(r'[A-Za-z?][A-Za-z0-9+<>=_?-]*', row['state']):
                 raise ValueError('Invalid cleanup process fields')
             rows.append(row)
             if row['pgid'] in groups:
                 matching_raw_lines.append(line)
         self._valid_inventory(rows)
+        self.remaining(deadline, 1)
+        evidence['validation_status'] = 'VALID'
         retained = [r for r in rows if r['pgid'] in groups]
-        return dict(argv=CLEAN_PS_ARGV, exit_code=result.returncode,
+        return CleanupObservation(rows, **evidence,
                     matching_raw_lines=matching_raw_lines,
-                    snapshot_sha256=hashlib.sha256(result.stdout.encode()).hexdigest(),
                     matching_rows=retained, live_rows=[r for r in retained if not r['state'].startswith('Z')])
 
     def pressure(self, deadline):
@@ -476,6 +498,101 @@ def cleanup_identities(registry, runtime, observed, deadline, checks):
     return checks
 
 
+def cleanup_related_rows(rows, anchors, groups=()):
+    related = set(anchors) | {r['pid'] for r in rows if r['pgid'] in groups}
+    while True:
+        expanded = related | {r['pid'] for r in rows if r['ppid'] in related}
+        if expanded == related:
+            return [dict(r) for r in rows if r['pid'] in related]
+        related = expanded
+
+
+def cleanup_disappearance_recheck(registry, runtime, observed, checks, deadline, evidence):
+    """Wait only for proved absence of original retained leaves, never ownership."""
+    evidence['status'] = 'UNKNOWN'
+    failed = [c for c in checks if c['status'] != 'PASS']
+    if not failed or any(c.get('reason') != 'live_member_identity_unavailable'
+                        or c['pgid'] == registry.root_pid for c in failed):
+        evidence['reason'] = 'failure_not_eligible_for_absent_auxiliary_leaf_recheck'
+        return None
+    if not isinstance(observed, CleanupObservation):
+        evidence['reason'] = 'complete_original_structural_inventory_unavailable'
+        return None
+    failed_pids = {c['pid'] for c in failed}
+    evidence['failed_pids'] = sorted(failed_pids)
+    anchors = set(registry.processes) | set(getattr(registry, 'terminal_anchors', {}))
+    original = cleanup_related_rows(observed.inventory, anchors, registry.groups)
+    evidence['original_related_rows'] = original
+    if any(r['pid'] not in {c['pid'] for c in checks}
+           for r in original if not r['state'].startswith('Z')):
+        evidence['reason'] = 'original_related_live_coverage_unknown'
+        return None
+    if any(r['pid'] != pid for pid in failed_pids
+           for r in cleanup_related_rows(observed.inventory, {pid})):
+        evidence['reason'] = 'original_failed_pid_has_visible_descendants'
+        return None
+    evidence['followup_observations'] = []
+    failed_groups = {c['pid']: c['pgid'] for c in failed}
+    attempt = None
+    fresh = None
+    query_attempted = False
+    try:
+        while True:
+            # Same natural-wait cadence and deadline; no fresh budget or signals.
+            attempt = None
+            fresh = None
+            query_attempted = False
+            runtime.sleep(runtime.remaining(deadline, .1))
+            runtime.remaining(deadline, 1)
+            attempt = dict(status='UNKNOWN')
+            evidence['followup_observations'].append(attempt)
+            fresh = None
+            query_attempted = True
+            fresh = runtime.observe_groups(registry.groups, deadline)
+            attempt['observation'] = fresh
+            runtime.remaining(deadline, 1)
+            if not isinstance(fresh, CleanupObservation):
+                raise RuntimeError('Complete fresh structural inventory unavailable')
+            related = cleanup_related_rows(fresh.inventory,
+                anchors | {r['pid'] for r in original}, registry.groups)
+            attempt['related_rows'] = related
+            anchors.update(r['pid'] for r in related)  # Diagnostic continuity only.
+            visible = [r for r in fresh.inventory if r['pid'] in failed_pids]
+            attempt['pending_visible_pids'] = sorted(r['pid'] for r in visible)
+            if any(r['pgid'] != failed_groups[r['pid']] for r in visible):
+                raise RuntimeError('Pending cleanup PID changed retained PGID')
+            if any(r['pid'] != pid for pid in failed_pids
+                   for r in cleanup_related_rows(fresh.inventory, {pid})):
+                raise RuntimeError('Fresh descendants of pending failed cleanup PID')
+            if any(r['pgid'] not in registry.groups for r in related
+                   if not r['state'].startswith('Z')):
+                raise RuntimeError('Fresh related live row outside retained groups')
+            attempt['identity_checks'] = []
+            cleanup_identities(registry, runtime, fresh, deadline, attempt['identity_checks'])
+            if any(c['status'] != 'PASS' and not (
+                   c['pid'] in failed_pids and c.get('reason') == 'live_member_identity_unavailable')
+                   for c in attempt['identity_checks']):
+                raise RuntimeError('Fresh cleanup identity coverage unknown')
+            if any(r['pgid'] == registry.root_pid for r in fresh['live_rows']):
+                raise RuntimeError('Fresh root group live after successful producer')
+            runtime.remaining(deadline, 1)
+            if not visible:
+                attempt['status'] = 'RESOLVED_ABSENT'
+                evidence.update(status='RESOLVED_ABSENT',
+                    reason='failed_leaves_absent_and_fresh_live_coverage_verified')
+                return fresh
+            # Neither S nor Z is absence or terminal identity proof. Only the
+            # original unresolved leaves may remain pending until the deadline.
+            attempt['status'] = 'PENDING_ABSENCE'
+    except Exception as error:
+        evidence['error'] = type(error).__name__ + ': ' + str(error)
+        if attempt is not None:
+            attempt['error'] = evidence['error']
+        if fresh is None and query_attempted and attempt is not None:
+            attempt['query'] = dict(getattr(runtime, 'cleanup_query_evidence', {}))
+        return None
+
+
 def cleanup(child, registry, runtime, *, request_stop, total_seconds=60, term_seconds=10, kill_reap_seconds=10):
     start = runtime.clock(); deadline = start + total_seconds
     producer_succeeded = not request_stop and child.poll() == 0
@@ -505,8 +622,6 @@ def cleanup(child, registry, runtime, *, request_stop, total_seconds=60, term_se
                 natural_finished = runtime.clock()
             entry['identity_checks'] = []
             cleanup_identities(registry, runtime, observed, observation_deadline, entry['identity_checks'])
-            if any(c['status'] != 'PASS' for c in entry['identity_checks']):
-                out['failure_reasons'].append(phase + ': live_identity_coverage_unknown')
             if producer_succeeded and observed['live_rows']:
                 out['unexpected_live_members_after_success'] = True
                 if any(r['pgid'] == registry.root_pid for r in observed['live_rows']):
@@ -514,6 +629,25 @@ def cleanup(child, registry, runtime, *, request_stop, total_seconds=60, term_se
                     out['failure_reasons'].append(phase + ': root_group_live_after_success')
             elif auxiliary:
                 out['failure_reasons'].append(phase + ': auxiliary_group_live_without_successful_producer')
+            if any(c['status'] != 'PASS' for c in entry['identity_checks']):
+                entry['identity_coverage_status'] = 'INCOMPLETE'
+                fresh = None
+                if producer_succeeded:
+                    entry['disappearance_recheck'] = {}
+                    fresh = cleanup_disappearance_recheck(registry, runtime, observed,
+                        entry['identity_checks'], observation_deadline, entry['disappearance_recheck'])
+                if fresh is None:
+                    out['failure_reasons'].append(phase + ': live_identity_coverage_unknown')
+                    attempts = entry.get('disappearance_recheck', {}).get('followup_observations', [])
+                    latest = next((a['observation'] for a in reversed(attempts) if 'observation' in a), None)
+                    if latest is not None:
+                        out['final_observation'] = latest
+                else:
+                    observed = fresh
+                    out['final_observation'] = fresh
+                    out['recovered_incomplete_observations'] = out.get('recovered_incomplete_observations', 0) + 1
+                    if not fresh['live_rows'] and natural_started is not None and natural_finished is None:
+                        natural_finished = runtime.clock()
             return observed
         except Exception as error:
             entry['error'] = type(error).__name__ + ': ' + str(error)
@@ -525,7 +659,7 @@ def cleanup(child, registry, runtime, *, request_stop, total_seconds=60, term_se
     try:
         try:
             before = observe('initial', deadline)
-            out['initial_observation'] = before
+            out['initial_observation'] = out['observations'][0].get('observation', before)
         except (OSError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
             before = dict(live_rows=[])
             out['initial_observation_error'] = type(error).__name__ + ': ' + str(error)
