@@ -27,7 +27,6 @@ done
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 DENoise_PY="${DENOISE_PY:-$HOME/miniconda3/envs/denoise/bin/python}"
 WEIGHTS="${RESEMBLE_WEIGHTS:-$HOME/models/resemble-enhance}"
-MIRROR="https://hf-mirror.com"
 WEIGHT_FILE="$WEIGHTS/enhancer_stage2/ds/G/default/mp_rank_00_model_states.pt"
 
 OK=0; WARN=0
@@ -61,27 +60,6 @@ else
   warn "权重缺失 $WEIGHT_FILE"
   say "    下载须审查官方固定快照与通知：python3 scripts/model_license_policy.py plan resemble-enhance"
   say "    旧 mirror/latest --download 已阻断；已有资产探测不改变用户文件。"
-fi
-
-# --download：权重缺失时走 hf-mirror 实际下载
-if [ "${1:-}" = "--download" ]; then
-  if [ -s "$WEIGHT_FILE" ]; then
-    say "权重已存在，跳过下载"
-  elif [ ! -x "$DENoise_PY" ]; then
-    say "denoise 环境缺失，先按上面命令建环境再 --download"
-    exit 1
-  else
-    say "开始下载权重（HF_ENDPOINT=$MIRROR）..."
-    # heredoc 走 stdin，Git Bash 的 /c/Users/... 路径不经 MSYS 参数转换，Windows
-    # Python 会解析到盘根下错位置——cygpath -w 兜底（非 MSYS 环境原样返回）
-    DL_WEIGHTS="$(cygpath -w "$WEIGHTS" 2>/dev/null || echo "$WEIGHTS")"
-    HF_ENDPOINT="$MIRROR" "$DENoise_PY" - <<PYEOF
-from huggingface_hub import snapshot_download
-p = snapshot_download("ResembleAI/resemble-enhance", local_dir=r"$DL_WEIGHTS")
-print("done ->", p)
-PYEOF
-    [ -s "$WEIGHT_FILE" ] && ok "权重下载完成" || { warn "下载后仍未找到权重文件"; exit 1; }
-  fi
 fi
 
 say "== 结果：$OK 项就绪，$WARN 项缺失 =="
