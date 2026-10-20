@@ -70,9 +70,13 @@ def _state(p,frame):
                 q=_ease(u);x+=part['motion']['drift'][0]*q;y+=part['motion']['drift'][1]*q;a+=part['motion']['hinge']*q
             elif beat['mode']=='reframe':
                 q=1-_ease(u);x+=part['motion']['drift'][0]*q;y+=part['motion']['drift'][1]*q;a+=part['motion']['hinge']*q
-        # Rotate around the authored hinge rather than around every part's centre.
-        pivot_x,pivot_y=part['pivot'];rx,ry=_rot(pivot_x*part['scale'],pivot_y*part['scale'],a)
-        x+=pivot_x*part['scale']-rx;y+=pivot_y*part['scale']-ry
+        # The authored hinge lives in the parent's local coordinates. Rotate
+        # both sides of its compensation into world space; inherited rotation
+        # alone must never move an otherwise rigid child off its attachment.
+        pivot_x,pivot_y=part['pivot'];vx,vy=pivot_x*part['scale'],pivot_y*part['scale']
+        base_x,base_y=_rot(vx,vy,parent[2] if parent else 0)
+        rx,ry=_rot(vx,vy,a)
+        x+=base_x-rx;y+=base_y-ry
         transforms[part['id']]=(x,y,a,part['scale'])
     return held,beat,u,transforms
 

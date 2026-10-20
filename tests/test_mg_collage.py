@@ -56,6 +56,59 @@ class CollagePuppet(unittest.TestCase):
         a=collage._state(prepared,6)[3]['jaw'];b=collage._state(prepared,9)[3]['jaw']
         self.assertNotEqual(a[:3],b[:3])
 
+    def test_parent_rigid_rotation_cannot_translate_a_zero_relative_angle_child(self):
+        for angle in (90,-90,35):
+            data=content()
+            parent,child=data['parts'][:2]
+            parent['angle']=angle;parent['motion']['hinge']=0
+            child.update(scale=100,angle=0,pivot=[.5,0])
+            child['motion']['hinge']=0
+            prepared=collage._prepare(data,96,FONT)
+            transform=collage._state(prepared,9)[3]
+            px,py,pa,ps=transform['head']
+            dx,dy=collage._rot(child['x']*ps,child['y']*ps,pa)
+            with self.subTest(parent_angle=angle):
+                self.assertAlmostEqual(transform['jaw'][0],px+dx,places=9)
+                self.assertAlmostEqual(transform['jaw'][1],py+dy,places=9)
+                # With no relative rotation the pivot is visually irrelevant.
+                zero_pivot=copy.deepcopy(data);zero_pivot['parts'][1]['pivot']=[0,0]
+                self.assertIsNone(ImageChops.difference(self.frame(data,9),self.frame(zero_pivot,9)).getbbox())
+
+    def test_parent_rotation_rigidly_transports_child_geometry_with_relative_hinge(self):
+        data=content()
+        data['parts'][0]['motion']['hinge']=0
+        data['parts'][1].update(scale=100,angle=30,pivot=[.5,0])
+        data['parts'][1]['motion']['hinge']=0
+        base=collage._prepare(data,96,FONT)
+        transforms=collage._state(base,95)[3]
+        child=base['parts'][1]
+        unrotated=collage._points(child,transforms['jaw'])
+        cx,cy=transforms['head'][:2]
+        for angle in (90,-90,35):
+            rotated=copy.deepcopy(data);rotated['parts'][0]['angle']=angle
+            prepared=collage._prepare(rotated,96,FONT)
+            actual=collage._points(prepared['parts'][1],collage._state(prepared,95)[3]['jaw'])
+            for (x,y),(ax,ay) in zip(unrotated,actual):
+                dx,dy=collage._rot(x-cx,y-cy,angle)
+                self.assertAlmostEqual(ax,cx+dx,places=8)
+                self.assertAlmostEqual(ay,cy+dy,places=8)
+
+    def test_rigid_parent_rotation_propagates_through_nonzero_grandchild_pivots(self):
+        data=content()
+        data['parts'][0]['motion']['hinge']=0
+        data['parts'][1].update(scale=100,angle=0,pivot=[.5,0]);data['parts'][1]['motion']['hinge']=0
+        grandchild=data['parts'][2]
+        grandchild.update(parent='jaw',x=.1,y=.4,scale=40,angle=0,pivot=[.5,0])
+        grandchild['motion']={'hinge':0,'drift':[0,0]}
+        base=collage._prepare(data,96,FONT);initial=collage._state(base,95)[3]
+        points=collage._points(grandchild,initial['rocket']);cx,cy=initial['head'][:2]
+        data['parts'][0]['angle']=90
+        prepared=collage._prepare(data,96,FONT)
+        actual=collage._points(grandchild,collage._state(prepared,95)[3]['rocket'])
+        for (x,y),(ax,ay) in zip(points,actual):
+            dx,dy=collage._rot(x-cx,y-cy,90)
+            self.assertAlmostEqual(ax,cx+dx,places=8);self.assertAlmostEqual(ay,cy+dy,places=8)
+
     def test_transition_is_actual_torn_paper_cover_not_text_change(self):
         data=content();covered=self.frame(data,54);later=self.frame(data,69)
         self.assertNotEqual(covered.crop((200,320,1750,930)).tobytes(),later.crop((200,320,1750,930)).tobytes())

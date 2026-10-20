@@ -34,6 +34,21 @@ def _number(value):
     return str(value) if type(value) is int else format(value,'.10g')
 
 
+# Shared authored timing: all cards settle before six complete readable frames.
+BUILD_LEAD = 12
+BUILD_STAGGER = 7
+BUILD_ATTACK = 16
+BUILD_HOLD = 6
+
+
+def _minimum_build_frames(count):
+    return BUILD_LEAD + (count-1)*BUILD_STAGGER + BUILD_ATTACK + BUILD_HOLD
+
+
+def _build_progress(local,index):
+    return _clamp((local-BUILD_LEAD-index*BUILD_STAGGER)/BUILD_ATTACK)
+
+
 def _prepare(data,frames,font_path):
     from PIL import Image,ImageDraw,ImageFont
     _int(frames,'frames',90,18000)
@@ -80,7 +95,7 @@ def _prepare(data,frames,font_path):
     if not isinstance(stages,list) or len(stages)!=3:
         raise ValueError('stages require question, build and resolve')
     previous=0
-    for mode,stage,minimum in zip(MODES,stages,(14,7*len(cards)+18,38)):
+    for mode,stage,minimum in zip(MODES,stages,(14,_minimum_build_frames(len(cards)),38)):
         if not isinstance(stage,dict) or set(stage)!={'mode','in','out','text'} or stage['mode']!=mode:
             raise ValueError('each stage requires ordered mode, in, out and text')
         start=_int(stage['in'],'stage.in',previous,previous)
@@ -195,7 +210,7 @@ def _render(p,frame):
     positions={}
     amounts={}
     for i,card in enumerate(p['cards']):
-        progress=_clamp((build_local-12-i*7)/16)
+        progress=_build_progress(build_local,i)
         bx,by=build[card['id']];fx,fy=final[card['id']]
         positions[card['id']]=(bx+(fx-bx)*reflow,by+(fy-by)*reflow)
         amounts[card['id']]=progress if not question else 0

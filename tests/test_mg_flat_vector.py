@@ -24,13 +24,13 @@ def content():
             'links':[{'from':'origin','to':'learn'},{'from':'learn','to':'make'}],
             'final_order':['make','learn'],
             'stages':[{'mode':'question','in':0,'out':14,'text':'什么问题值得解决？'},
-                      {'mode':'build','in':14,'out':52,'text':'证据推动行动'},
-                      {'mode':'resolve','in':52,'out':90,'text':'把结果整理成下一步'}], 'seed':-19}
+                      {'mode':'build','in':14,'out':58,'text':'证据推动行动'},
+                      {'mode':'resolve','in':58,'out':96,'text':'把结果整理成下一步'}], 'seed':-19}
 
 
 @unittest.skipUnless(Image is not None and FONT.is_file(),'Pillow and separately licensed CJK font required')
 class FlatVector(unittest.TestCase):
-    def frame(self,data,frame):return flat.render_flat_vector_frame(data,frame,90,FONT)
+    def frame(self,data,frame):return flat.render_flat_vector_frame(data,frame,96,FONT)
 
     def test_semantic_links_and_reorder_change_real_pixels(self):
         data=content();base=self.frame(data,50)
@@ -72,25 +72,65 @@ class FlatVector(unittest.TestCase):
             for i,data in enumerate(invalid):
                 with self.subTest(i=i):
                     output=Path(temp)/str(i)
-                    with self.assertRaises(ValueError):flat.render_flat_vector_frames(data,90,output,FONT)
+                    with self.assertRaises(ValueError):flat.render_flat_vector_frames(data,96,output,FONT)
                     self.assertFalse(output.exists())
         for seed in (-(2**31),2**31-1):
-            data=content();data['seed']=seed;flat.validate_flat_vector_content(data,90,FONT)
+            data=content();data['seed']=seed;flat.validate_flat_vector_content(data,96,FONT)
         with self.assertRaises(ValueError):self.frame(content(),True)
-        with self.assertRaises(ValueError):flat.validate_flat_vector_content(content(),90,'/tmp/nonexistent-flat-font.ttf')
+        with self.assertRaises(ValueError):flat.validate_flat_vector_content(content(),96,'/tmp/nonexistent-flat-font.ttf')
 
     def test_sequence_matches_direct_seek_and_evidence(self):
         data=content()
         with tempfile.TemporaryDirectory() as temp:
             output=Path(temp)/'frames'
-            report=flat.render_flat_vector_frames(data,90,output,FONT)
-            self.assertEqual(len(list(output.glob('f*.png'))),90)
+            report=flat.render_flat_vector_frames(data,96,output,FONT)
+            self.assertEqual(len(list(output.glob('f*.png'))),96)
             self.assertEqual(report['final_order'],data['final_order'])
             self.assertEqual(report,json.loads((output/'evidence.json').read_text()))
             for frame in (0,14,52,89):
                 with Image.open(output/f'f{frame:04d}.png') as actual:
                     self.assertEqual(actual.tobytes(),self.frame(data,frame).tobytes())
-            with self.assertRaises(ValueError):flat.render_flat_vector_frames(data,90,output,FONT)
+            with self.assertRaises(ValueError):flat.render_flat_vector_frames(data,96,output,FONT)
+
+    def test_shortest_build_settles_last_card_and_renders_its_text(self):
+        data=json.loads((ROOT/'templates/mg-styles/examples/flat-vector-energy.json').read_text())
+        # Six cards settle at local 63; locals 63..68 are six full readable frames.
+        data['stages']=[{'mode':'question','in':0,'out':14,'text':'提出问题'},
+                        {'mode':'build','in':14,'out':83,'text':'逐项建立因果'},
+                        {'mode':'resolve','in':83,'out':121,'text':'完整呈现每项结果'}]
+        bad=copy.deepcopy(data);bad['stages'][1]['out']=82;bad['stages'][2]['in']=82
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/'too-short'
+            with self.assertRaises(ValueError):flat.render_flat_vector_frames(bad,121,output,FONT)
+            self.assertFalse(output.exists())
+        flat.validate_flat_vector_content(data,121,FONT)
+        changed=copy.deepcopy(data);changed['cards'][-1]['label']='终态文字在这里'
+        for frame in (77,82,120):
+            with self.subTest(frame=frame):
+                first=flat.render_flat_vector_frame(data,frame,121,FONT)
+                second=flat.render_flat_vector_frame(changed,frame,121,FONT)
+                # Only the final card label changed; verify ink in its actual
+                # lower-right caption region at build end AND resolved final.
+                region=(1280,670,1820,745)
+                self.assertIsNotNone(ImageChops.difference(first.crop(region),second.crop(region)).getbbox())
+        for local in range(63,69):
+            self.assertEqual(flat._build_progress(local,5),1)
+        for local in (63,68):
+            for field,replacement,region in (
+                    ('value',987,(1280,720,1820,805)),
+                    ('detail','完整细节可见',(1280,810,1820,875))):
+                changed=copy.deepcopy(data);changed['cards'][-1][field]=replacement
+                first=flat.render_flat_vector_frame(data,14+local,121,FONT)
+                second=flat.render_flat_vector_frame(changed,14+local,121,FONT)
+                self.assertIsNotNone(ImageChops.difference(first.crop(region),second.crop(region)).getbbox())
+        # A settled scene remains byte-identical over the full pre-transition hold.
+        self.assertEqual(flat.render_flat_vector_frame(data,77,121,FONT).tobytes(),
+                         flat.render_flat_vector_frame(data,82,121,FONT).tobytes())
+        # Already rendered examples have longer windows and remain valid.
+        for name,frames in (('flat-vector-ideas.json',180),('flat-vector-energy.json',240)):
+            example=json.loads((ROOT/'templates/mg-styles/examples'/name).read_text())
+            flat.validate_flat_vector_content(example,frames,FONT)
+
 
     def test_two_examples_replace_causal_structure_and_card_count(self):
         images=[]
