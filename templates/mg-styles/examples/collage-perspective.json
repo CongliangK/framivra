@@ -1,0 +1,195 @@
+{
+  "title": "把习惯翻个面",
+  "subtitle": "巨大脑袋、小身体，一场不按比例的纸上旅行",
+  "exposure": 2,
+  "seed": 23,
+  "parts": [
+    {
+      "id": "body",
+      "shape": "body",
+      "parent": null,
+      "x": 0.62,
+      "y": 0.71,
+      "scale": 70,
+      "angle": -8,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 0,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "arm",
+      "shape": "arm",
+      "parent": "body",
+      "x": 0.5,
+      "y": -0.6,
+      "scale": 90,
+      "angle": 20,
+      "pivot": [
+        0,
+        -0.1
+      ],
+      "motion": {
+        "hinge": -35,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "hand",
+      "shape": "hand",
+      "parent": "arm",
+      "x": 0,
+      "y": 0.95,
+      "scale": 42,
+      "angle": 0,
+      "pivot": [
+        0,
+        0.6
+      ],
+      "motion": {
+        "hinge": 20,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "head",
+      "shape": "head",
+      "parent": null,
+      "x": 0.62,
+      "y": 0.48,
+      "scale": 160,
+      "angle": 8,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 0,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "jaw",
+      "shape": "jaw",
+      "parent": "head",
+      "x": 0,
+      "y": 0.6,
+      "scale": 82,
+      "angle": 0,
+      "pivot": [
+        0.85,
+        0
+      ],
+      "motion": {
+        "hinge": -28,
+        "drift": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "world",
+      "shape": "planet",
+      "parent": null,
+      "x": 0.28,
+      "y": 0.65,
+      "scale": 78,
+      "angle": -10,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 40,
+        "drift": [
+          100,
+          -100
+        ]
+      }
+    },
+    {
+      "id": "idea",
+      "shape": "leaf",
+      "parent": null,
+      "x": 0.34,
+      "y": 0.43,
+      "scale": 75,
+      "angle": -25,
+      "pivot": [
+        0,
+        0
+      ],
+      "motion": {
+        "hinge": 25,
+        "drift": [
+          -70,
+          80
+        ]
+      }
+    }
+  ],
+  "beats": [
+    {
+      "mode": "awaken",
+      "in": 0,
+      "out": 40,
+      "text": "同一件事，能换一种看法吗？",
+      "active": [
+        "arm",
+        "hand",
+        "jaw"
+      ]
+    },
+    {
+      "mode": "release",
+      "in": 40,
+      "out": 90,
+      "text": "让熟悉的比例，暂时失去规矩",
+      "active": [
+        "world",
+        "idea"
+      ]
+    },
+    {
+      "mode": "reframe",
+      "in": 90,
+      "out": 140,
+      "text": "把问题翻过来，寻找新关系",
+      "active": [
+        "world",
+        "idea"
+      ]
+    },
+    {
+      "mode": "resolve",
+      "in": 140,
+      "out": 180,
+      "text": "新的角度，让旧日常有了新故事",
+      "active": []
+    }
+  ],
+  "palette": [
+    "#f2e9d6",
+    "#22323b",
+    "#dc7965",
+    "#87aaa1",
+    "#d4bc66"
+  ]
+}

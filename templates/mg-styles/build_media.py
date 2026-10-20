@@ -21,6 +21,7 @@ PRODUCERS = {
     'pixel': 'pixel', 'line-art': 'line_art', 'liquid': 'liquid',
     'cel-boil': 'cel', 'morph': 'morph', 'hud': 'hud',
     'isometric': 'isometric', 'flat-vector': 'flat_vector', 'synthwave': 'synthwave',
+    'sticker': 'sticker', 'collage': 'collage', 'aurora-glass': 'aurora_glass', 'bauhaus': 'bauhaus',
 }
 STYLES = ('soft-3d', 'variety-captions', *PRODUCERS)
 SELF_SOURCE = Path(__file__).read_bytes()

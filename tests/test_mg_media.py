@@ -43,7 +43,7 @@ class MediaGeometry(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec('PIL'), 'optional Pillow is unavailable')
     def test_backend_semantics_are_checked_before_dry_or_real_writes(self):
         with tempfile.TemporaryDirectory() as temp:
-            for style in ('pixel','soft-3d','line-art','liquid','cel-boil','morph','hud','isometric','flat-vector','synthwave'):
+            for style in ('pixel','soft-3d','line-art','liquid','cel-boil','morph','hud','isometric','flat-vector','synthwave','sticker','collage','aurora-glass','bauhaus'):
                 # Liquid has a legitimate default semantic sequence; use an invalid window.
                 content={'stages':[]} if style=='liquid' else {}
                 for dry in (True,False):
