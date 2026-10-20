@@ -17,11 +17,13 @@
 
 ## CI 回归覆盖
 
-普通 PR 与 main push 的 Python 检查执行 [显式精选模块](../scripts/ci_pr.py)，覆盖 CLI、契约、真实文件系统与进程安全，以及 CI 门禁反例。完整模块在独立 job 中分组执行，每个解释器必须完成全部精选分组；解释器与分组选择以 [workflow](../.github/workflows/ci.yml) 为准。该检查拒绝缺失模块、空集合、发现错误和任何 skip；成功仅代表精选回归通过，不能宣称全量回归或未运行解释器通过。
+普通 PR 与 main push 的 Python 检查执行 [显式精选模块](../scripts/ci_pr.py)，覆盖 CLI、契约、真实文件系统与进程安全，以及 CI 门禁反例。完整模块在独立 job 中分组执行，每组只在一个选定解释器上运行一次；普通事件使用 include 矩阵，不展开解释器与分组的笛卡尔积，具体配对以 [workflow](../.github/workflows/ci.yml) 为准。每个精选模块仍被执行，但普通事件不覆盖该模块与其他解释器的组合；这是明确接受的跨版本覆盖降级。该检查拒绝缺失模块、空集合、发现错误和任何 skip；成功仅代表精选回归通过，不能宣称全量回归或未运行解释器通过。
 
 既有定时与手动 workflow 执行全部受支持 Python 版本的默认全量发现；本地无参统一入口也保持全量。新增测试模块自动进入全量发现，是否加入普通 PR 精选集需评审。大规模 CLI 参数组合、其余 app/plugin/example 回归等移出普通 PR Python 检查属于明确接受的覆盖降级。FFmpeg、Chrome、Windows 安装和文档/静态门保留各自实际执行；可选平台/工具 skip 仍按默认全量 runner 的原语义报告，不计作执行成功。
 
-FFmpeg 与 Chrome 严格清单分别按完整模块分成并行组，原断言、工具预检与零 skip 约束保持；无分组参数仍执行完整清单。新增模块确定性归入其默认组。包含 FrameSource 的组及无分组命令显式预检 Chrome：无环境凭证的旧 PNG 必须真实重渲，不能补签。既有 required check 汇总名仅在所有分组实际 success 时通过，失败、取消、skip 或缺失状态均不通过。
+FFmpeg 与 Chrome 严格清单分别按完整模块分成并行组，原断言、工具预检与零 skip 约束保持；无分组参数仍执行完整清单。新增模块确定性归入其默认组。包含 FrameSource 的组及无分组命令显式预检 Chrome：无环境凭证的旧 PNG 必须真实重渲，不能补签。每个实际执行 job 直接报告结果，任一测试失败或 skip 仍使其非零退出；不串行拼接媒体组，不用单组结果冒充汇总成功。
+
+检查名迁移：workflow 不创建纯汇总 job `Core regression (all selected versions and groups)`、`FFmpeg CPU integration (no skips)`、`Chrome and pipeline CPU integration (no skips)`。普通事件也不创建未选中的解释器/精选组组合。实际必需检查配置必须独立核实：若分支保护仍要求退役名称，应在另行授权后迁移到全部实际执行检查，不能将其改名伪装、绕过或宣称已同步；读取受限时配置状态就是未知。workflow 本身不修改仓库保护或权限。
 
 CI 提速以实际 hosted 结果为准，分别报告排队、安装、测试与总耗时；精选集不承诺消除排队或媒体任务的机器波动。普通 PR 的目标时限不是强行取消任务或降低超时后声称成功。
 

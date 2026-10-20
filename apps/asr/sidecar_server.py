@@ -101,14 +101,6 @@ def _ind():
     return _IND
 
 
-def _ind_estimate_budget(path):
-    return _ind().estimate_vram_mib(path)
-
-
-def _ind_gpu_admission(required_mib, device):
-    return _ind().gpu_admission(required_mib, device=device)
-
-
 def _load_config_for_gate():
     """enabled 门禁用配置读取（issue #142）：VTX_CONFIG > 仓根 config.local.json。
     与 client.load_config 同链（此处仅 stdlib json，解析失败/缺失 → {}，

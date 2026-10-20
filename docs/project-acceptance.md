@@ -1,7 +1,10 @@
 # 项目验收包
 
-Issue #53 的独立入口是 `vtx.acceptance`，不改变渲染 CLI、缓存键或发行流程。
-`vtx.acceptance/1` 导出媒体、输入和构建证据；#43 发行执行与 #91 HTML 示例可消费同一格式，但尚未接入。
+Issue #53 的独立入口是 `vtx.acceptance`，不改变渲染 CLI 或缓存键。
+`vtx.acceptance/1` 导出媒体、输入和构建证据。[源码冻结验收](releases.md#冻结验收与发布)入口
+`scripts/release_acceptance.py` 调用本模块构建、复核独立包并执行输入/产物篡改负例；
+这说明源码中的接线，不代表当前提交已经执行或通过发行验收。公开 Demo 的操作入口与证据边界见
+[standard Demo 运行指南](demo-fixture.md#公开-standard-demo-生产运行)。
 
 ```bash
 python3 -m vtx.acceptance --help

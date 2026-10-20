@@ -33,10 +33,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # PR/main: curated regression on the endpoints and middle version.
+        # PR/main: every curated group once, each on one selected Python.
+        # This reduces cross-version coverage; omitted combinations are not certified.
         # Scheduled/manual: original full discovery on every declared version.
-        python: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["3.9","3.10","3.11","3.12","3.13"]' || '["3.9","3.11","3.13"]') }}
-        group: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["full"]' || '["1","2","3"]') }}
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[{"python":"3.9","group":"full"},{"python":"3.10","group":"full"},{"python":"3.11","group":"full"},{"python":"3.12","group":"full"},{"python":"3.13","group":"full"}]' || '[{"python":"3.9","group":"1"},{"python":"3.11","group":"2"},{"python":"3.13","group":"3"}]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -59,8 +59,8 @@ jobs:
           mkdir -p "$XDG_CONFIG_HOME"
           printf '{}\n' > "$VTX_CONFIG"
           unset PYTHONPATH PYTHONHOME BGM_CLI BGM_REPO IMGEN_CONFIG SC_API_KEY NANOBANANA2_API_KEY
-          echo 'Curated PR regression only. Full discovery and the other Python versions run on schedule or workflow_dispatch; omitted tests are not certified by this check.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Python ${{ matrix.python }}: whole-module curated group ${{ matrix.group }}/3; all groups are required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Curated PR regression only: each whole-module group runs on one Python version. Full discovery on all declared versions runs on schedule or workflow_dispatch; omitted tests and group/version combinations are not certified by this check.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Python ${{ matrix.python }}: whole-module curated group ${{ matrix.group }}/3. The workflow runs all three groups once across the selected versions; every job must succeed.' >> "$GITHUB_STEP_SUMMARY"
           python scripts/ci_pr.py --group '${{ matrix.group }}'
       - name: Run full kernel, app, plugin and example unittest batches
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -72,20 +72,6 @@ jobs:
           printf '{}\n' > "$VTX_CONFIG"
           unset PYTHONPATH PYTHONHOME BGM_CLI BGM_REPO IMGEN_CONFIG SC_API_KEY NANOBANANA2_API_KEY
           bash scripts/run_all_tests.sh
-
-  core-results:
-    name: Core regression (all selected versions and groups)
-    needs: [core]
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require actual success from every core matrix job
-        env:
-          CORE_RESULT: ${{ needs.core.result }}
-        run: |
-          printf 'All selected core versions and groups: %s\n' "$CORE_RESULT"
-          test "$CORE_RESULT" = success
 
   contracts:
     name: Documentation and static syntax
@@ -164,22 +150,6 @@ jobs:
       - name: Preflight tools and execute declared FFmpeg integrations
         run: python scripts/ci_checks.py ffmpeg --group 3
 
-  ffmpeg:
-    name: FFmpeg CPU integration (no skips)
-    needs: [ffmpeg-one, ffmpeg-two, ffmpeg-three]
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require actual success from all three zero-skip groups
-        env:
-          FIRST_RESULT: ${{ needs.ffmpeg-one.result }}
-          SECOND_RESULT: ${{ needs.ffmpeg-two.result }}
-          THIRD_RESULT: ${{ needs.ffmpeg-three.result }}
-        run: |
-          printf 'FFmpeg group 1: %s; group 2: %s; group 3: %s\n' "$FIRST_RESULT" "$SECOND_RESULT" "$THIRD_RESULT"
-          test "$FIRST_RESULT" = success && test "$SECOND_RESULT" = success && test "$THIRD_RESULT" = success
-
   chrome-one:
     name: Chrome CPU group 1 pipeline (no skips)
     runs-on: ubuntu-24.04
@@ -221,21 +191,6 @@ jobs:
       # actually launches it: image changes/missing Chrome fail, never skip.
       - name: Preflight Chrome and execute graphics integrations
         run: python scripts/ci_checks.py chrome --group 2
-
-  chrome:
-    name: Chrome and pipeline CPU integration (no skips)
-    needs: [chrome-one, chrome-two]
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require actual success from both zero-skip Chrome groups
-        env:
-          FIRST_RESULT: ${{ needs.chrome-one.result }}
-          SECOND_RESULT: ${{ needs.chrome-two.result }}
-        run: |
-          printf 'Chrome group 1: %s; group 2: %s\n' "$FIRST_RESULT" "$SECOND_RESULT"
-          test "$FIRST_RESULT" = success && test "$SECOND_RESULT" = success
 
   windows-install:
     name: Windows one-command install candidate

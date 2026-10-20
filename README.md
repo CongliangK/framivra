@@ -22,15 +22,25 @@ vt.py              统一入口：doctor / apps|plugins|templates list|check（s
 
 想先生成公开示例？按 [standard Demo 运行指南](docs/demo-fixture.md#公开-standard-demo-生产运行) 从冻结输入准备到显式 CDP / CEF 成片、查看结果；依赖资格与未验收范围在指南中说明。
 
+自建项目先满足下方[依赖矩阵](#依赖矩阵)；「零安装」指不必先 pip 安装本仓，不代表已具备外部工具或素材。以下克隆、init、脚手架及渲染均为写操作。把 PROJECT 替换为全新项目的绝对路径；脚手架会写入 timeline.json，不要指向已有工程。
+
 ```bash
 git clone https://github.com/CongliangK/framivra
 cd framivra
 python3 vt.py init                     # 依赖自检 + 安装指引 + 生成 config.local.json（幂等；--fix 自动装）
 env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor  # 三检：本地引用漂移 / apps+plugins manifest+health / 工作流模板完好性
-bash scripts/new_project.sh <项目目录> 30  # 新项目脚手架（目录 + 模板 timeline.json + schema）
-python3 vtx/vtx.py -t <项目>/timeline.json validate    # 渲染前校验门（必跑）
-python3 vtx/vtx.py -t <项目>/timeline.json all         # 全流程 → out/final.mp4（--until video 可截断）
+PROJECT="/绝对路径/新视频项目"
+bash scripts/new_project.sh "$PROJECT" 30  # 目录 + 占位 timeline.json + schema + gfx 样页
 ```
+
+脚手架不生成或下载媒体。先把含音轨的 CFR 30 fps 素材放到 `$PROJECT/assets/v01.mp4`，或修改 timeline.json 的 sources 与剪辑/音频事件以匹配自己的素材；源长度须覆盖所引用的帧区间。完成编排后，在同一 Bash 会话执行：
+
+```bash
+python3 vtx/vtx.py -t "$PROJECT/timeline.json" validate  # 渲染前校验门（必跑）
+python3 vtx/vtx.py -t "$PROJECT/timeline.json" all       # 全流程，更新项目 cache/、out/
+```
+
+完整 `all` 及 QC/插件结果成功后查看 `$PROJECT/out/final.mp4`；输出文件存在本身不是验收通过。截断或局部检查的边界见 [正式交付链](docs/skill/references/runbook.md#正式交付链r1-r4-共用)。
 
 例行 doctor 使用离线形态，不 fetch；版本漂移仅相对本地已有引用。确需刷新远端引用时，联网 doctor 会执行 git fetch 写入 .git，须按写操作审查。
 

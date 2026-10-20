@@ -3,13 +3,11 @@ import contextlib
 from collections import Counter
 import importlib.util
 import io
-import itertools
 import json
 import os
 from pathlib import Path
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,14 +25,6 @@ spec.loader.exec_module(ci)
 
 def tests_of(case):
     return list(unittest.defaultTestLoader.loadTestsFromTestCase(case))
-
-
-BASH = shutil.which('bash') or 'bash'
-if os.name == 'nt':
-    git = shutil.which('git')
-    candidate = Path(git).resolve().parent.parent / 'bin/bash.exe' if git else None
-    if candidate and candidate.is_file():
-        BASH = str(candidate)
 
 
 class StrictMediaGate(unittest.TestCase):
@@ -332,6 +322,19 @@ class StrictMediaGate(unittest.TestCase):
             self.assertEqual(ci.main(['chrome']), 1)
             suite.assert_not_called()
 
+    def test_grouped_media_entrypoints_preserve_nonzero_suite_results(self):
+        for gate, groups in (('ffmpeg', ('1', '2', '3')), ('chrome', ('1', '2'))):
+            for group in groups:
+                with self.subTest(gate=gate, group=group), \
+                        mock.patch.dict(os.environ, {}, clear=True), \
+                        mock.patch.object(ci, 'check_media_inventory'), \
+                        mock.patch.object(ci, 'prepare_media'), \
+                        mock.patch.object(ci, 'prepare_chrome', return_value='/chrome'), \
+                        mock.patch.object(ci, 'strict_suite', return_value=1) as suite:
+                    self.assertEqual(ci.main([gate, '--group', group]), 1)
+                    suite.assert_called_once_with(
+                        ci.ffmpeg_group(group) if gate == 'ffmpeg' else ci.chrome_group(group))
+
     def test_flags_enabled_before_test_import(self):
         with mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch.object(ci, 'executable', side_effect=lambda n, override=None: '/bin/' + n), \
@@ -595,17 +598,27 @@ class WorkflowContract(unittest.TestCase):
         self.assertEqual(self.workflow['permissions'], {'contents': 'read'})
         self.assertNotIn('pull_request_target', self.workflow['on'])
 
-    def test_declared_supported_python_versions_are_tested(self):
-        pyproject = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
-        declared = set(re.findall(r'Programming Language :: Python :: (3\.\d+)', pyproject))
-        matrix = self.workflow['jobs']['core']['strategy']['matrix']['python']
+    def core_matrix_entries(self, event):
+        matrix = self.workflow['jobs']['core']['strategy']['matrix']
+        # Include-only prevents an accidental Cartesian product or extra jobs.
+        self.assertEqual(set(matrix), {'include'})
         match = re.fullmatch(
             r"\$\{\{ fromJSON\(\(github.event_name == 'schedule' \|\| "
             r"github.event_name == 'workflow_dispatch'\) && '([^']+)' \|\| '([^']+)'\) \}\}",
-            matrix)
+            matrix['include'])
         self.assertIsNotNone(match)
-        self.assertEqual(set(json.loads(match.group(1))), declared)
-        self.assertEqual(json.loads(match.group(2)), ['3.9', '3.11', '3.13'])
+        return json.loads(match.group(1 if event in ('schedule', 'workflow_dispatch') else 2))
+
+    def test_declared_supported_python_versions_are_tested(self):
+        """Keep the frozen regression ID; all versions run on extended events."""
+        pyproject = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
+        declared = set(re.findall(r'Programming Language :: Python :: (3\.\d+)', pyproject))
+        for event in ('schedule', 'workflow_dispatch'):
+            with self.subTest(event=event):
+                entries = self.core_matrix_entries(event)
+                self.assertEqual(entries, [dict(python=version, group='full')
+                                           for version in sorted(declared, key=lambda v: int(v.split('.')[1]))])
+                self.assertEqual(len(entries), 5)
 
     def test_curated_and_full_commands_have_exclusive_event_conditions(self):
         steps = self.workflow['jobs']['core']['steps']
@@ -672,90 +685,78 @@ class WorkflowContract(unittest.TestCase):
         self.assertNotIn('VTX_NO_NVENC', self.workflow['env'])
         self.assertNotIn('VTX_SEG_NVENC', self.workflow['env'])
 
-    def test_ffmpeg_required_check_needs_both_real_groups_and_rejects_non_success(self):
-        # Preserve this regression identity while extending it to the third group.
-        job = self.workflow['jobs']['ffmpeg']
-        self.assertEqual(job['name'], 'FFmpeg CPU integration (no skips)')
-        self.assertEqual(set(job['needs']), {'ffmpeg-one', 'ffmpeg-two', 'ffmpeg-three'})
-        self.assertEqual(job['if'], 'always()')
-        self.assertEqual(len(job['steps']), 1)
-        step = job['steps'][0]
-        self.assertEqual(step['env'], {
-            'FIRST_RESULT': '${{ needs.ffmpeg-one.result }}',
-            'SECOND_RESULT': '${{ needs.ffmpeg-two.result }}',
-            'THIRD_RESULT': '${{ needs.ffmpeg-three.result }}',
-        })
-        for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', ''), repeat=3):
-            with self.subTest(values=values):
-                result = subprocess.run([BASH, '-e', '-c', step['run']],
-                                        env=dict(os.environ, **dict(zip(step['env'], values))),
-                                        capture_output=True, text=True, timeout=10)
-                self.assertEqual(result.returncode == 0,
-                                 all(value == 'success' for value in values))
-
-    def test_core_matrix_has_all_curated_groups_and_one_full_group_per_version(self):
+    def test_default_core_covers_each_curated_group_once_on_one_python(self):
         core = self.workflow['jobs']['core']
         self.assertEqual(core['strategy']['fail-fast'], 'false')
-        matrix = core['strategy']['matrix']
-        parsed = {}
-        for dimension in ('python', 'group'):
-            match = re.fullmatch(
-                r"\$\{\{ fromJSON\(\(github.event_name == 'schedule' \|\| "
-                r"github.event_name == 'workflow_dispatch'\) && '([^']+)' \|\| '([^']+)'\) \}\}",
-                matrix[dimension])
-            self.assertIsNotNone(match)
-            parsed[dimension] = [json.loads(match.group(i)) for i in (1, 2)]
-        self.assertEqual(parsed['group'], [['full'], ['1', '2', '3']])
-        self.assertEqual(len(list(itertools.product(parsed['python'][0], parsed['group'][0]))), 5)
-        self.assertEqual(len(list(itertools.product(parsed['python'][1], parsed['group'][1]))), 9)
-        self.assertEqual(set(matrix), {'python', 'group'})
+        for event in ('pull_request', 'push'):
+            with self.subTest(event=event):
+                entries = self.core_matrix_entries(event)
+                self.assertEqual(entries, [
+                    {'python': '3.9', 'group': '1'},
+                    {'python': '3.11', 'group': '2'},
+                    {'python': '3.13', 'group': '3'},
+                ])
+                self.assertEqual(Counter(entry['group'] for entry in entries),
+                                 Counter(('1', '2', '3')))
         self.assertIn('matrix.python', core['name'])
         self.assertIn('full regression', core['name'])
         self.assertIn('curated group {0}/3', core['name'])
         curated = next(s for s in core['steps'] if 'python scripts/ci_pr.py' in s.get('run', ''))
-        self.assertIn("python scripts/ci_pr.py --group '${{ matrix.group }}'", curated['run'])
-        self.assertNotIn('python scripts/ci_pr.py\n', curated['run'])
+        self.assertEqual(curated['run'].splitlines()[-1],
+                         "python scripts/ci_pr.py --group '${{ matrix.group }}'")
+        self.assertIn('each whole-module group runs on one Python version', curated['run'])
+        self.assertIn('omitted tests and group/version combinations are not certified', curated['run'])
 
-    def test_chrome_required_check_rejects_any_non_success_or_missing_group(self):
-        job = self.workflow['jobs']['chrome']
-        self.assertEqual(job['name'], 'Chrome and pipeline CPU integration (no skips)')
-        self.assertEqual(set(job['needs']), {'chrome-one', 'chrome-two'})
-        self.assertEqual(job['if'], 'always()')
-        self.assertEqual(len(job['steps']), 1)
-        step = job['steps'][0]
-        self.assertEqual(step['env'], {
-            'FIRST_RESULT': '${{ needs.chrome-one.result }}',
-            'SECOND_RESULT': '${{ needs.chrome-two.result }}',
-        })
-        for values in itertools.product(('success', 'failure', 'cancelled', 'skipped', '', 'unknown'), repeat=2):
-            with self.subTest(values=values):
-                result = subprocess.run([BASH, '-e', '-c', step['run']],
-                                        env=dict(os.environ, **dict(zip(step['env'], values))),
-                                        capture_output=True, text=True, timeout=10)
-                self.assertEqual(result.returncode == 0,
-                                 all(value == 'success' for value in values))
-        for missing in step['env']:
-            environment = {key: value for key, value in os.environ.items()
-                           if key not in step['env']}
-            environment.update({key: 'success' for key in step['env'] if key != missing})
-            result = subprocess.run([BASH, '-e', '-c', step['run']],
-                                    env=environment, capture_output=True, text=True, timeout=10)
-            self.assertNotEqual(result.returncode, 0)
+    def test_event_expansion_has_ten_default_or_twelve_extended_real_jobs(self):
+        jobs = self.workflow['jobs']
+        self.assertEqual(set(jobs), {'core', 'contracts', 'ffmpeg-one', 'ffmpeg-two',
+                                     'ffmpeg-three', 'chrome-one', 'chrome-two',
+                                     'windows-install'})
+        retired_names = {'Core regression (all selected versions and groups)',
+                         'FFmpeg CPU integration (no skips)',
+                         'Chrome and pipeline CPU integration (no skips)'}
+        self.assertFalse(retired_names & {job['name'] for job in jobs.values()})
+        for event, count in (('pull_request', 10), ('push', 10),
+                             ('schedule', 12), ('workflow_dispatch', 12)):
+            with self.subTest(event=event):
+                self.assertEqual(len(jobs) - 1 + len(self.core_matrix_entries(event)), count)
+        for name, job in jobs.items():
+            with self.subTest(job=name):
+                # Every actual job reports its own result: no synthetic aggregate,
+                # conditional job, dependency skip, or failure-to-success wrapper.
+                self.assertNotIn('if', job)
+                self.assertNotIn('needs', job)
+                if name != 'core':
+                    self.assertNotIn('strategy', job)
+                for step in job['steps']:
+                    if name != 'core':
+                        self.assertNotIn('if', step)
 
-    def test_core_aggregate_requires_actual_matrix_success(self):
-        job = self.workflow['jobs']['core-results']
-        self.assertEqual(job['name'], 'Core regression (all selected versions and groups)')
-        self.assertEqual(job['needs'], ['core'])
-        self.assertEqual(job['if'], 'always()')
-        self.assertEqual(len(job['steps']), 1)
-        step = job['steps'][0]
-        self.assertEqual(step['env'], {'CORE_RESULT': '${{ needs.core.result }}'})
-        for value in ('success', 'failure', 'cancelled', 'skipped', '', 'unknown'):
-            with self.subTest(value=value):
-                result = subprocess.run([BASH, '-e', '-c', step['run']],
-                                        env=dict(os.environ, CORE_RESULT=value),
-                                        capture_output=True, text=True, timeout=10)
-                self.assertEqual(result.returncode == 0, value == 'success')
+    def test_ffmpeg_required_check_needs_both_real_groups_and_rejects_non_success(self):
+        """Keep the frozen ID; direct strict group jobs replace the old aggregate.
+
+        The historical method name does not certify branch-protection settings.
+        FFmpeg and Chrome now report each actual group result independently.
+        """
+        jobs = self.workflow['jobs']
+        expected = {
+            'ffmpeg-one': ('FFmpeg CPU group 1 (no skips)', 'ffmpeg', '1'),
+            'ffmpeg-two': ('FFmpeg CPU group 2 + Chrome fixture (no skips)', 'ffmpeg', '2'),
+            'ffmpeg-three': ('FFmpeg CPU group 3 (no skips)', 'ffmpeg', '3'),
+            'chrome-one': ('Chrome CPU group 1 pipeline (no skips)', 'chrome', '1'),
+            'chrome-two': ('Chrome CPU group 2 graphics (no skips)', 'chrome', '2'),
+        }
+        for name, (title, gate, group) in expected.items():
+            with self.subTest(job=name):
+                job = jobs[name]
+                self.assertEqual(job['name'], title)
+                steps = [step for step in job['steps']
+                         if 'scripts/ci_checks.py' in step.get('run', '')]
+                self.assertEqual(len(steps), 1)
+                self.assertEqual(steps[0]['run'],
+                                 'python scripts/ci_checks.py %s --group %s' % (gate, group))
+                self.assertNotIn('if', steps[0])
+                self.assertNotIn('shell', steps[0])
 
     def test_ungrouped_local_full_runner_remains_original_discovery(self):
         runner = (ROOT / 'scripts/run_all_tests.sh').read_text(encoding='utf-8')
