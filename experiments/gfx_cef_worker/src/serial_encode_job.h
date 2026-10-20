@@ -31,14 +31,18 @@ class SerialEncodeJob {
     if (threads < 1) {
       threads = 1;
     }
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
+#endif
       for (int i = 0; i < threads; ++i) {
         workers_.emplace_back([this] { Loop(); });
       }
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     } catch (...) {
       StopAndDrain();
       throw;
     }
+#endif
   }
   ~SerialEncodeJob() { StopAndDrain(); }
   SerialEncodeJob(const SerialEncodeJob&) = delete;
@@ -121,11 +125,18 @@ class SerialEncodeJob {
       const Work work = work_;
       pending_ = false;
       lock.unlock();
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
       try {
+#endif
+        // CEF also builds this header with exceptions disabled. In that mode
+        // Work reports recoverable failure in Result; process-fatal failures
+        // cannot be captured or converted into a successful completion.
         result_.emplace(work(*payload));
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
       } catch (...) {
         error_ = std::current_exception();
       }
+#endif
       // Neither payload nor result is touched by this worker after release.
       done_.store(true, std::memory_order_release);
     }

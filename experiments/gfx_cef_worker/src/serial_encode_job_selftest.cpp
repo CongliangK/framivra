@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <future>
 #include <stdexcept>
 #include <string>
@@ -13,7 +14,14 @@ using namespace std::chrono_literals;
 
 void Require(bool condition, const char* message) {
   if (!condition) {
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     throw std::runtime_error(message);
+#else
+    // No exception recovery exists in this build. A broken assertion must
+    // terminate the isolated helper, never print PASS or continue its work.
+    std::fprintf(stderr, "FAIL: %s\n", message);
+    std::abort();
+#endif
   }
 }
 
@@ -91,9 +99,11 @@ Result Encode(Payload& payload) {
     ++value;
   }
   ++gate.touched;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
   if (payload.throw_error) {
     throw std::runtime_error("expected encode failure");
   }
+#endif
   return {!payload.fail, sum};
 }
 
@@ -173,9 +183,10 @@ void CompletedAfterDeadlineIsRejected() {
   Require(!job.TakeCompleted(), "late result exposed");
 }
 
-void ExceptionIsFailure() {
+void EncodeFailureIsNotSuccess() {
   auto gate = std::make_shared<Gate>();
   Job job(2);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
   auto payload = NewPayload(gate);
   payload->throw_error = true;
   Require(job.Start(std::move(payload), Encode), "submit rejected");
@@ -190,13 +201,23 @@ void ExceptionIsFailure() {
     expected_error = std::string(error.what()) == "expected encode failure";
   }
   Require(expected_error, "original error was lost");
-  payload = NewPayload(gate);
-  payload->fail = true;
-  Require(job.Start(std::move(payload), Encode), "completed job not reclaimable");
+#endif
+  // Explicit encoder failure is exercised in both compiler modes.
+  auto failed_payload = NewPayload(gate);
+  failed_payload->fail = true;
+  Require(job.Start(std::move(failed_payload), Encode),
+          "completed job not reclaimable");
   Require(job.FinishWait(Wait(job)), "failure did not complete");
-  done = job.TakeCompleted();
-  Require(done && done->result && !done->error && !done->result->delivered,
+  auto failed = job.TakeCompleted();
+  Require(failed && failed->result && !failed->error &&
+              !failed->result->delivered && failed->result->checksum == 10,
           "ordinary encoder failure became success");
+  Require(job.Start(NewPayload(gate), Encode), "failed job not reclaimable");
+  Require(job.FinishWait(Wait(job)), "recovery did not complete");
+  auto recovered = job.TakeCompleted();
+  Require(recovered && recovered->result && !recovered->error &&
+              recovered->result->delivered && recovered->result->checksum == 10,
+          "completed failure contaminated the next result");
 }
 
 void SerialRequestsDoNotOverlap() {
@@ -261,23 +282,36 @@ void IdleShutdown() {
 }  // namespace
 
 int main() {
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+  std::puts("SERIAL_ENCODE_JOB EXCEPTIONS enabled");
+#else
+  std::puts("SERIAL_ENCODE_JOB EXCEPTIONS disabled");
+#endif
   const std::pair<const char*, void (*)()> cases[] = {
       {"completion_visibility", CompletionVisibility},
       {"deadline_latches_failure", DeadlineLatchesFailure},
       {"completed_after_deadline_is_rejected", CompletedAfterDeadlineIsRejected},
-      {"exception_is_failure", ExceptionIsFailure},
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+      {"exception_is_failure", EncodeFailureIsNotSuccess},
+#else
+      {"result_is_failure", EncodeFailureIsNotSuccess},
+#endif
       {"serial_requests_do_not_overlap", SerialRequestsDoNotOverlap},
       {"destructor_drains_owned_payload", DestructorDrainsOwnedPayload},
       {"idle_shutdown", IdleShutdown},
   };
   for (const auto& [name, test] : cases) {
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
+#endif
       test();
       std::printf("PASS %s\n", name);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     } catch (const std::exception& error) {
       std::fprintf(stderr, "FAIL %s: %s\n", name, error.what());
       return 1;
     }
+#endif
   }
   std::puts("SERIAL_ENCODE_JOB ALL PASS (7 cases; helper only, CEF UNRUN)");
   return 0;
