@@ -65,17 +65,20 @@ class _HashingReader:
     def __init__(self, stream):
         self.stream = stream
         self.digest = hashlib.sha256()
+        self.bytes_read = 0
 
     def read(self, n):
         data = self.stream.read(n)
         self.digest.update(data)
+        self.bytes_read += len(data)
         return data
 
     def tell(self):
         return self.stream.tell()
 
 
-def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "str | None":
+def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None,
+                       _verified_size=None) -> "str | None":
     """校验单个目标 PNG：存在、非零字节、PNG 签名、完整块与 CRC、IDAT 可解码。
 
     有效返回 None；无效返回中文原因（缺失/零字节/非 PNG/截断/CRC 损坏/不支持
@@ -220,6 +223,9 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None) -> "
                         return "损坏 PNG（IEND 后有尾随数据）"
                     if _fingerprint is not None:
                         _fingerprint.append(fh.digest.hexdigest())
+                    if _verified_size is not None:
+                        # Same successfully parsed stream, never a later stat.
+                        _verified_size.append(fh.bytes_read)
                     return None
     except (OSError, struct.error) as e:
         return f"不可读或截断（{e}）"
