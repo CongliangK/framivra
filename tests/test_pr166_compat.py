@@ -151,31 +151,52 @@ class RendererEvents(unittest.TestCase):
 
     def test_renderer_driver_attribution_not_selected_backend_alias(self):
         for backend, available, expected in (('cef', False, 'cef'), ('cdp', True, 'cdp'),
-                                              ('cdp', False, 'cli'), ('cli', True, 'cli')):
+                                              ('cdp', False, None), ('cli', True, 'cli'),
+                                              ('cli', False, 'cli')):
             with self.subTest(backend=backend, available=available), tempfile.TemporaryDirectory() as td:
                 root = Path(td)
                 timeline = project(root, 1)
                 worker = root / 'worker'
                 worker.write_text('#!/bin/sh\nexit 1\n')
-                worker.chmod(0o700)
+                real_access = os.access
+
+                def fixture_access(path, mode, *args, **kwargs):
+                    # All renderers are mocked; only this fixture's executable
+                    # preflight is simulated, without changing file permissions.
+                    if Path(path) == worker and mode == os.X_OK:
+                        return True
+                    return real_access(path, mode, *args, **kwargs)
+
                 stream = Buffer()
                 execution = events.ExecutionContext(stream)
                 with mock.patch.dict(os.environ, VTX_GFX=backend, VTX_GFX_CACHE_NS='',
-                                     VTX_CEF_WORKER=str(worker)), \
+                                     VTX_CEF_WORKER=str(worker), VTX_CEF_MODE='a0'), \
+                     mock.patch('vtx.gfx_backend.os.access', side_effect=fixture_access), \
                      mock.patch.object(gfx_render, 'available', return_value=available), \
                      mock.patch.object(cli, 'budget_gate'), \
                      mock.patch.object(cli, 'find_chrome', return_value='unused'), \
-                     mock.patch.object(gfx_render, 'render_page', return_value={'failed': [], 'path_counts': {}, 'ms_per_frame': 0}), \
-                     mock.patch('vtx.gfx_cef.render_page', return_value='CEF fixture'), \
+                     mock.patch.object(gfx_render, 'render_page', return_value={'failed': [], 'path_counts': {}, 'ms_per_frame': 0}) as cdp_renderer, \
+                     mock.patch('vtx.gfx_cef.render_page', return_value='CEF fixture') as cef_renderer, \
                      mock.patch.object(cli, '_cdp_via', return_value='CDP fixture'), \
-                     mock.patch.object(gfx_cli, 'render_cli', return_value=1), \
+                     mock.patch.object(gfx_cli, 'render_cli', return_value=1) as cli_renderer, \
                      mock.patch.object(gfx_cli, 'complete_page'), \
                      contextlib.redirect_stdout(io.StringIO()):
-                    cli._gfx(Ctx(timeline, execution=execution))
-                execution.finish(0)
+                    c = Ctx(timeline, execution=execution)
+                    if expected is None:
+                        with self.assertRaisesRegex(RuntimeError, 'numpy'):
+                            cli._gfx(c)
+                    else:
+                        cli._gfx(c)
+                    for name, renderer in (('cdp', cdp_renderer), ('cef', cef_renderer),
+                                           ('cli', cli_renderer)):
+                        self.assertEqual(renderer.call_count, int(name == expected))
+                execution.finish(1 if expected is None else 0)
                 rows = events.read_events(stream.getvalue())['events']
-                block = next(r for r in rows if r['event'] == 'task_start')
-                self.assertEqual(block['extensions']['backend'], expected)
+                starts = [r for r in rows if r['event'] == 'task_start']
+                if expected is None:
+                    self.assertEqual(starts, [])
+                else:
+                    self.assertEqual(starts[0]['extensions']['backend'], expected)
 
 
 if __name__ == '__main__':
