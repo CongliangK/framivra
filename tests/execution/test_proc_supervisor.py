@@ -89,8 +89,8 @@ if ROLE == "child":
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         with open(lock_path + ".pid", "a") as pf:
             pf.write(f"{os.getpid()}\\n")
-    while True:
-        time.sleep(0.5)
+        while True:
+            time.sleep(0.5)
     raise SystemExit(0)
 
 mode, profile = sys.argv[2], sys.argv[3]
@@ -342,7 +342,8 @@ class HostSigkillDoD(_ProjectFixture):
     def test_forged_ledger_pgid_zero_is_clean_failure_never_kills_caller(self):
         # R103-1 回归（红队 poc_e/poc_cli）：伪造 pgid=0 账本 → reap 按
         # broken_ledger 干净失败（只清目录、killed=0），绝不 killpg(0)——
-        # 本测试进程能活着走到断言，本身即证明调用方进程组未被反向击杀。
+        # 本例在测试宿主内运行，必须在信号边界截获；即使防护回归，
+        # 也只能导致断言失败，不能真的向测试宿主进程组发信号。
         tmp_root = self.root / 'cache' / hygiene.TMP
         tmp_root.mkdir(parents=True)
         d = tmp_root / '20260101T000000Z-gfx_sim-fake-pgid0'
@@ -352,7 +353,14 @@ class HostSigkillDoD(_ProjectFixture):
              'host_pid': 999_999_999, 'host_start_time_ticks': 1,
              'boot_id': boot_id()}), encoding='utf-8')
         my_group = os.getpgid(0)
-        stats = reap_orphan_workers(self.ctx())
+        with mock.patch.object(proc_supervisor.os, 'killpg') as killpg:
+            try:
+                stats = reap_orphan_workers(self.ctx())
+                killpg.assert_not_called()
+            finally:
+                # 断言失败后 fixture 还会 reap；先摘掉本例伪造的账本，
+                # 避免 mock 撤销后清理路径重试同一危险目标。
+                (d / WORKER_LEDGER).unlink(missing_ok=True)
         self.assertEqual((stats['killed'], stats['stale'], stats['removed']),
                          (0, 1, 1), 'pgid=0 须按损坏账本只清目录，零击杀')
         self.assertFalse(d.exists())
