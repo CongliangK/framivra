@@ -19,6 +19,8 @@ sys.executable 指向错误解释器，见全局 AGENTS.md）
 import argparse
 import io
 import json
+import os
+import shutil
 from contextlib import redirect_stderr, redirect_stdout
 import subprocess
 import sys
@@ -108,6 +110,59 @@ class TestQualitySampling(unittest.TestCase):
                         expected.add(original_rng.randrange(total))
                     self.assertEqual(frames, sorted(expected))
                     self.assertEqual(err.getvalue(), '')
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("bash"),
+                     "check_4k.sh requires Linux GNU stat/readlink and bash")
+class TestCheck4kLiteralArguments(unittest.TestCase):
+    def test_quoted_paths_and_numeric_inputs_are_data_not_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bindir = root / 'bin'; bindir.mkdir()
+            probe = bindir / 'ffprobe'
+            probe.write_text('#!' + sys.executable + '\n' + """
+import sys
+args = sys.argv[1:]
+entry = args[args.index('-show_entries') + 1]
+audio = '-select_streams' in args and args[args.index('-select_streams') + 1] == 'a:0'
+values = {'stream=width': '3840', 'stream=height': '2160',
+          'stream=r_frame_rate': '30/1', 'stream=avg_frame_rate': '30/1',
+          'stream=codec_name': 'aac' if audio else 'h264', 'stream=profile': 'High',
+          'stream=pix_fmt': 'yuv420p', 'stream=nb_read_packets': '60',
+          'stream=bit_rate': '192000' if audio else '10000000',
+          'format=duration': '2', 'stream=sample_rate': '48000', 'packet=flags': 'K_'}
+print(values[entry])
+""")
+            probe.chmod(0o755)
+            env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ.get('PATH', ''),
+                       BITRATE_CAP_MBPS='20.5')
+            media_dir = root / "quoted ' folder"; media_dir.mkdir()
+            media = media_dir / "clip 'name.mp4"
+            media.write_bytes(b'\0\0\0\x10moov' + b'\0' * 56)
+            timeline = media_dir / 'timeline.json'
+            timeline.write_text(json.dumps({'project': {'duration_frames': 60}}))
+            marker = root / 'must-not-execute'
+            expression = f"(__import__('pathlib').Path({str(marker)!r}).touch() or 60)"
+            for name, expected_frames, cap, expected_status in (
+                    ('auto', None, '20.5', 0), ('explicit', '60', '20.5', 0),
+                    ('frame_expression', expression, '20.5', 1),
+                    ('cap_expression', '60', expression, 1),
+                    ('real_quality_failure', '60', '1', 1)):
+                with self.subTest(name=name):
+                    marker.unlink(missing_ok=True)
+                    command = ['bash', str(APP / 'check_4k.sh'), str(media)]
+                    if expected_frames is not None:
+                        command.append(expected_frames)
+                    result = subprocess.run(command, cwd=root,
+                                            env=dict(env, BITRATE_CAP_MBPS=cap),
+                                            capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, expected_status, result.stdout + result.stderr)
+                    self.assertFalse(marker.exists())
+                    if expected_status == 0:
+                        self.assertIn('PASS=14 FAIL=0', result.stdout)
+                        self.assertNotIn('SKIP', result.stdout)
+                    if name == 'real_quality_failure':
+                        self.assertIn('FAIL  5 平均码率超门', result.stdout)
 
 
 class TestMaxrate(unittest.TestCase):
