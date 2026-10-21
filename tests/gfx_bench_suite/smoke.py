@@ -52,7 +52,7 @@ elapsed_s, frames_done, est_ms_per_frame} 事实后跳过继续；引擎 gfx_ren
       [--keep-frames] [--skip-external]
       [--page-budget 秒] [--per-frame-budget 秒] [--budget-base 秒] [--stall-s 秒]
 
-退出码：0=全部执行阶段 PASS；
+退出码：0=非空执行范围通过（显式跳过其他阶段时标记 PARTIAL_SKIPPED）；
         1=任一门 FAIL（真实门失败，非超时）；
         2=环境缺置（chrome/numpy）；
         3=完成但存在受控超时（timeout 事实已记录、场景已跳过——「部分超时」）。
@@ -98,6 +98,13 @@ def _deadline_child(q, fn):
         q.put(("ok", fn()))
     except BaseException as e:                  # noqa: BLE001
         q.put(("exc", f"{type(e).__name__}: {e}"))
+
+
+def render_result_error(status, stats):
+    """One completion contract for all watchdog consumers; timeout is handled separately."""
+    if status != "ok" or not isinstance(stats, dict) or not isinstance(stats.get("failed"), list):
+        return f"invalid render result: {status} {stats}"
+    return f"render failed={stats['failed']}" if stats["failed"] else None
 
 
 class Smoke:
@@ -322,11 +329,12 @@ class Smoke:
                     out["total_frames_done"] += len(present)
                     out["timeout_wall_s"] += info["elapsed_s"]
                     continue
-                if status == "exc":
-                    self.fail("render", f"{tag}: 渲染异常 {st}")
+                error = render_result_error(status, st)
+                if error:
+                    self.fail("render", f"{tag}: {error}")
                     sc_out["pages"].append({"role": p["role"], "path": p["path"],
                                             "frames": n, "status": "exc",
-                                            "error": st})
+                                            "error": error})
                     continue
                 wall = info["wall_s"]
                 bad = verify_frames(str(d), range(n),
@@ -343,14 +351,15 @@ class Smoke:
                     self.fail("render", f"{tag}: 缺帧 {missing[:5]}")
                 sc_out["pages"].append({
                     "role": p["role"], "path": p["path"], "frames": n,
-                    "status": "ok",
+                    "status": "fail" if bad or missing else "ok",
+                    "error": f"坏帧={bad[:5]} 缺帧={missing[:5]}" if bad or missing else None,
                     "rendered": st["rendered"], "ms_total": round(st["ms_total"], 1),
                     "ms_per_frame": round(st["ms_per_frame"], 2),
                     "wall_s": wall, "transparent": st["transparent"],
                     "path_counts": {k: v for k, v in st["path_counts"].items() if v},
                     "frame_sha256": shas})
                 out["total_frames"] += n
-                out["total_frames_done"] += n
+                out["total_frames_done"] += n - len(missing)
                 out["total_ms"] += st["ms_total"]
                 # S6 分段断言（必须在清帧前——用刚采集的哈希清单，不回读文件）
                 if sid == "S6":
@@ -376,8 +385,8 @@ class Smoke:
         shas = [shas_by_idx.get(str(i)) for i in range(600)]
         seg_b = shas[120:240]
         res = {
-            "b_static_all_equal": len(set(seg_b)) == 1,
-            "b_equals_120_frames": len(seg_b),
+            "b_static_all_equal": all(value is not None for value in seg_b) and len(set(seg_b)) == 1,
+            "b_equals_120_frames": sum(value is not None for value in seg_b),
             "a_tail_ne_b_head": shas[119] != shas[120],
             "c_frames_present": all(shas[f] is not None for f in
                                     (240, 250, 260, 270, 280, 290)),
@@ -415,24 +424,27 @@ class Smoke:
                                              tag=f"{sid}__{stem}#a", phase="idempotency")
             sb, pb, ib = self.render_guarded(path, db, 100, frames=[99, 2], tabs=1,
                                              tag=f"{sid}__{stem}#b", phase="idempotency")
-            if "timeout" in (sa, sb):
-                legs = {"a": ia, "b": ib}
-                which = "a" if sa == "timeout" else "b" if sb == "timeout" else "a+b"
-                rec = {"phase": "idempotency", "page": f"{sid} {path} (leg {which})",
-                       **legs[which if which in legs else "a"]}
-                self.timeout("idempotency", rec)
+            timeout_legs = []
+            errors = []
+            for leg, status, stats, info in (("a", sa, pa, ia), ("b", sb, pb, ib)):
+                if status == "timeout":
+                    timeout_legs.append(leg)
+                    self.timeout("idempotency", {
+                        "phase": "idempotency", "page": f"{sid} {path} (leg {leg})", **info})
+                elif (error := render_result_error(status, stats)):
+                    errors.append(f"leg {leg}: {error}")
+            if errors:
+                self.fail("idempotency", f"{path}: {' / '.join(errors)}")
                 out["pages"].append({"scenario": sid, "path": path,
-                                     "tier1": "SKIP_TIMEOUT", "leg": which})
-                out["tier1_skip"] += 1
-                continue
-            if "exc" in (sa, sb):
-                detail = pa if sa == "exc" else pb
-                if sa == "exc" and sb == "exc":
-                    detail = f"{pa} / {pb}"
-                self.fail("idempotency", f"{path}: 渲染异常 {detail}")
-                out["pages"].append({"scenario": sid, "path": path,
-                                     "tier1": "FAIL", "error": detail})
+                                     "tier1": "FAIL", "error": errors,
+                                     "timeout_legs": timeout_legs})
                 out["tier1_fail"] += 1
+                continue
+            if timeout_legs:
+                out["pages"].append({"scenario": sid, "path": path,
+                                     "tier1": "SKIP_TIMEOUT", "leg": "+".join(timeout_legs),
+                                     "timeout_legs": timeout_legs})
+                out["tier1_skip"] += 1
                 continue
             try:
                 diff, pixel_equal = self.frame_diff(da / "f0002.png", db / "f0002.png")
@@ -516,12 +528,8 @@ class Smoke:
                     tag="S6__catchup", phase="s6seq")
             if ref_status == "timeout":
                 self.timeout("s6seq", {"phase": "s6seq", "page": "S6 catch-up", **info})
-            elif ref_status == "exc":
-                self.fail("s6seq", f"S6 catch-up 渲染异常 {stats}")
-            elif ref_status != "ok" or not isinstance(stats, dict) or not isinstance(stats.get("failed"), list):
-                self.fail("s6seq", f"S6 catch-up invalid result: {ref_status} {stats}")
-            elif stats["failed"]:
-                self.fail("s6seq", f"S6 catch-up failed={stats['failed']}")
+            elif (error := render_result_error(ref_status, stats)):
+                self.fail("s6seq", f"S6 catch-up {error}")
             out["references"]["failed"] = stats.get("failed") if isinstance(stats, dict) else None
         out["references"]["render_status"] = ref_status
         out["references"]["status"] = "FAIL" if len(self.failures) > ref_failures else (
@@ -537,13 +545,11 @@ class Smoke:
                 f"S6__{name}", d, len(frames), 1, "s6seq")
             if status == "timeout":
                 self.timeout("s6seq", {"phase": "s6seq", "page": name, **info})
-            elif status == "exc":
-                self.fail("s6seq", f"{name} 渲染异常 {stats}")
-            elif status != "ok" or not isinstance(stats, dict) or not isinstance(stats.get("failed"), list):
-                self.fail("s6seq", f"{name} invalid result: {status} {stats}")
-            elif stats["failed"] or stats.get("observation_error_count", 1):
-                self.fail("s6seq", f"{name} failed={stats['failed']} "
-                          f"observation_errors={stats.get('observation_errors', 'missing observation result')}")
+            elif (error := render_result_error(status, stats)):
+                self.fail("s6seq", f"{name}: {error}")
+            elif stats.get("observation_error_count", 1):
+                self.fail("s6seq", f"{name} observation_errors="
+                          f"{stats.get('observation_errors', 'missing observation result')}")
             # Disk snapshots survive watchdog termination; inspect any completed
             # prefix rather than losing observed corruption with the child.
             observed = {}
@@ -635,8 +641,9 @@ class Smoke:
                 out["pages"].append({"path": p["path"], "probe_frames": probe,
                                      "ok": False, "status": "timeout"})
                 continue
-            if status == "exc":
-                self.fail("s7", f"{p['path']}: 渲染异常 {st}")
+            error = render_result_error(status, st)
+            if error:
+                self.fail("s7", f"{p['path']}: {error}")
                 continue
             bad = verify_frames(str(d), probe,
                                 width=self.man["global_spec"]["width"],
@@ -654,7 +661,6 @@ class Smoke:
 
         def _mini_run():
             shots = 0
-            non_png = 0
             browser = gfx_render.Browser(self.chrome, 1)
             t0 = time.time()
             try:
@@ -668,15 +674,13 @@ class Smoke:
                         tab.navigate(f"{uri}?f={fi}")
                         data = tab.shot()
                         (md / f"p{pi}_f{fi:02d}.png").write_bytes(data)
-                        if not data.startswith(b"\x89PNG"):
-                            non_png += 1
                         shots += 1
                 tab.close()
             finally:
                 browser.stop()
             # 本函数跑在 fork 子进程内：self.fail() 的变更随子进程消亡，
             # 失败事实必须经返回值带回父进程裁决。
-            return {"pages": mini_pages, "frames": shots, "non_png": non_png,
+            return {"pages": mini_pages, "frames": shots, "failed": [],
                     "browser_restarts": 0,
                     "wall_s": round(time.time() - t0, 1)}
 
@@ -684,18 +688,33 @@ class Smoke:
             _mini_run, "S7__mini_run", md, 30, 1, "s7")
         if status == "timeout":
             self.timeout("s7", {"phase": "s7", "page": "mini_run", **info})
-        elif status == "exc":
-            self.fail("s7", f"mini_run: {payload}")
+        elif (render_result_error(status, payload)
+              or payload.get("frames") != 30 or payload.get("pages") != mini_pages
+              or payload.get("browser_restarts") != 0
+              or not isinstance(payload.get("wall_s"), (int, float))):
+            self.fail("s7", f"mini_run: invalid completion result: {status} {payload}")
         else:
-            out["mini_run"] = payload
-            if payload["non_png"]:
-                self.fail("s7", f"mini_run: {payload['non_png']} 帧非 PNG")
+            # Child counters/signatures are not frame evidence. Validate the exact
+            # 3 × 10 output set in the parent with the shared full PNG reader.
+            expected = {f"p{pi}_f{fi:02d}.png" for pi in range(3) for fi in range(10)}
+            actual = {p.name for p in md.glob("*.png")}
+            invalid = {name: reason for name in sorted(expected)
+                       if (reason := png_invalid_reason(
+                           md / name, width=self.man["global_spec"]["width"],
+                           height=self.man["global_spec"]["height"]))}
+            extra = sorted(actual - expected)
+            out["mini_run"] = {**payload, "non_png": len(invalid),
+                               "invalid_frames": invalid, "unexpected_frames": extra,
+                               "status": "FAIL" if invalid or extra else "PASS"}
+            if invalid or extra:
+                self.fail("s7", f"mini_run: invalid frames={invalid}, unexpected frames={extra}")
             self.note(f"s7: {len(out['pages'])} 页抽样；mini_run "
                       f"{payload['frames']} 帧单会话 {payload['wall_s']}s")
         self.report["phases"]["s7"] = out
 
     # ---------------------------------------------------------- phase: s8
     def phase_s8(self):
+        before_failures, before_timeouts = len(self.failures), len(self.timeouts)
         out = {"status": "SKIP", "checks": {}}
         ext = self.scenario("S8")["external"]
         root = Path(ext["voice_ime_root"])
@@ -705,6 +724,7 @@ class Smoke:
             self.report["phases"]["s8"] = out
             return
         if not root.is_dir():
+            out["status"] = "FAIL"
             out["reason"] = f"外部项目缺席：{root}"
             self.fail("s8", out["reason"])
             self.report["phases"]["s8"] = out
@@ -732,6 +752,8 @@ class Smoke:
             self.fail("s8", f"不变量失配 {out['checks']}")
         # bench_p2 存档口径核验：目录应不存在
         out["checks"]["bench_p2_dir_absent"] = not Path(ext["bench_p2_root"]).is_dir()
+        if not out["checks"]["bench_p2_dir_absent"]:
+            self.fail("s8", "bench_p2 存档目录仍存在")
         # 代表页抽样渲（3 页 × 1 帧）
         d = self.ev / "s8"
         if d.exists():
@@ -746,13 +768,18 @@ class Smoke:
                 tag=f"S8__{Path(page).stem}", phase="s8")
             if status == "timeout":
                 self.timeout("s8", {"phase": "s8", "page": page, **info})
-            elif status == "exc":
-                self.fail("s8", f"{page}: 渲染异常 {st}")
-            elif st["failed"]:
-                self.fail("s8", f"{page} 抽样渲 failed={st['failed']}")
+            elif (error := render_result_error(status, st)):
+                self.fail("s8", f"{page}: {error}")
             else:
-                out["checks"][f"sample_{page}"] = "ok"
-        out["status"] = "PASS"
+                bad = verify_frames(d / Path(page).stem, [0],
+                                    width=self.man["global_spec"]["width"],
+                                    height=self.man["global_spec"]["height"])
+                if bad:
+                    self.fail("s8", f"{page}: 抽样帧坏 {bad}")
+                else:
+                    out["checks"][f"sample_{page}"] = "ok"
+        out["status"] = "FAIL" if len(self.failures) > before_failures else (
+            "PARTIAL_TIMEOUT" if len(self.timeouts) > before_timeouts else "PASS")
         self.report["phases"]["s8"] = out
         self.note(f"s8: {out['checks']}")
 
@@ -763,6 +790,11 @@ class Smoke:
             result = "FAIL"
         elif self.timeouts:
             result = "PARTIAL_TIMEOUT"
+        elif not self.report["phases"] or all(p.get("status") == "SKIP"
+                                             for p in self.report["phases"].values()):
+            result = "FAIL"
+        elif any(p.get("status") == "SKIP" for p in self.report["phases"].values()):
+            result = "PARTIAL_SKIPPED"
         else:
             result = "PASS"
         self.report["result"] = result
@@ -785,7 +817,7 @@ class Smoke:
             lines.append("")
             lines.append("| 场景 | 页 | 状态 | 帧数 | ms/帧 | 备注 |")
             lines.append("|---|---|---|---|---|---|")
-            for sid, sc in ph["render"]["scenarios"].items():
+            for sid, sc in ph["render"].get("scenarios", {}).items():
                 for p in sc["pages"]:
                     if p["status"] == "ok":
                         note = f"paths={p['path_counts']}"
@@ -804,13 +836,15 @@ class Smoke:
         if "idempotency" in ph:
             lines.append("## idempotency（DoD Tier-1）")
             lines.append("")
-            for p in ph["idempotency"]["pages"]:
+            for p in ph["idempotency"].get("pages", []):
                 lines.append(f"- {p['scenario']} `{p['path']}`: "
                              f"max_abs_diff={p.get('max_abs_diff')} → {p['tier1']}")
             lines.append("")
         if "s6seq" in ph:
             lines.extend(["## s6seq（逐 occurrence；非历史 unique-frame 行数）", ""])
             for name in ("random_jump", "reverse_100"):
+                if name not in ph["s6seq"]:
+                    continue
                 seq = ph["s6seq"][name]
                 lines.append(f"- {name}: {seq['status']} · captured={seq['captured']}/"
                              f"{seq['expected']} · compared={seq['compared']}/"
@@ -820,8 +854,8 @@ class Smoke:
         if "s7" in ph:
             lines.append("## s7")
             lines.append("")
-            lines.append(f"- 抽样: {sum(1 for p in ph['s7']['pages'] if p.get('ok'))}"
-                         f"/{len(ph['s7']['pages'])} 页 OK")
+            lines.append(f"- 抽样: {sum(1 for p in ph['s7'].get('pages', []) if p.get('ok'))}"
+                         f"/{len(ph['s7'].get('pages', []))} 页 OK")
             if ph["s7"].get("mini_run"):
                 mr = ph["s7"]["mini_run"]
                 lines.append(f"- mini_run: {mr['frames']} 帧单会话 {mr['wall_s']}s"
@@ -841,19 +875,38 @@ class Smoke:
         (self.ev / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
     def run(self, phases):
+        self.failures.clear()
+        self.timeouts.clear()
+        self.report["phases"].clear()
+        available = ("manifest", "render", "idempotency", "s6seq", "s7", "s8")
+        selected = [phase for phase in available if phase in phases]
         try:
-            if "manifest" in phases:
-                self.phase_manifest()
-            if "render" in phases:
-                self.phase_render()
-            if "idempotency" in phases:
-                self.phase_idempotency()
-            if "s6seq" in phases:
-                self.phase_s6seq()
-            if "s7" in phases:
-                self.phase_s7()
-            if "s8" in phases:
-                self.phase_s8()
+            unknown = set(phases) - set(available) - {"report"}
+            if unknown or not selected:
+                self.fail("selection", f"无有效检查或未知阶段: {sorted(unknown) or phases}")
+            else:
+                for phase in selected:
+                    before_failures, before_timeouts = len(self.failures), len(self.timeouts)
+                    try:
+                        getattr(self, f"phase_{phase}")()
+                    except BaseException as error:
+                        self.fail(phase, f"未完成: {type(error).__name__}: {error}")
+                        self.report["phases"].setdefault(phase, {})["status"] = "FAIL"
+                        if isinstance(error, SystemExit):
+                            raise SystemExit(EXIT_FAIL) from error
+                        raise
+                    row = self.report["phases"].get(phase)
+                    if row is None:
+                        self.fail(phase, "阶段未产出检查报告")
+                        row = self.report["phases"][phase] = {}
+                    if len(self.failures) > before_failures:
+                        row["status"] = "FAIL"
+                    elif len(self.timeouts) > before_timeouts:
+                        row["status"] = "PARTIAL_TIMEOUT"
+                    else:
+                        row.setdefault("status", "PASS")
+                if all(p.get("status") == "SKIP" for p in self.report["phases"].values()):
+                    self.fail("selection", "所选阶段全部跳过，没有完成检查")
         finally:
             self.write_report()
         if self.failures:
@@ -867,7 +920,7 @@ class Smoke:
             for t in self.timeouts:
                 print(f"  - {t}", file=sys.stderr)
             return EXIT_TIMEOUT
-        print("\nRESULT: PASS")
+        print(f"\nRESULT: {self.report['result']}")
         return EXIT_OK
 
 

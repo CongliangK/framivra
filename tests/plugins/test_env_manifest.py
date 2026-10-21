@@ -565,6 +565,29 @@ class TestVerifyCompatibility(unittest.TestCase):
                                                                     "files": {}}
         self.assertEqual(em.verify_manifest_compatibility(a, b), [])
 
+    def test_effective_backend_must_be_known_on_both_sides(self):
+        base = stub_collect()
+        for backend in (None, "", "not-a-renderer", *em.RUNTIME_BACKENDS):
+            with self.subTest(backend=backend):
+                same = json.loads(json.dumps(base))
+                if backend is None:
+                    same["runtime_backend_truth"].pop("effective_backend")
+                else:
+                    same["runtime_backend_truth"]["effective_backend"] = backend
+                issues = em.verify_manifest_compatibility(same, same)
+                if backend in em.RUNTIME_BACKENDS:
+                    self.assertEqual(issues, [])
+                else:
+                    self.assertTrue(any("生效后端" in item for item in issues))
+                    for pair in ((base, same), (same, base)):
+                        self.assertTrue(em.verify_manifest_compatibility(*pair))
+        for a in em.RUNTIME_BACKENDS:
+            for b in em.RUNTIME_BACKENDS:
+                left, right = json.loads(json.dumps(base)), json.loads(json.dumps(base))
+                left["runtime_backend_truth"]["effective_backend"] = a
+                right["runtime_backend_truth"]["effective_backend"] = b
+                self.assertEqual(bool(em.verify_manifest_compatibility(left, right)), a != b)
+
     def test_missing_truth_section_reports_all_gaps(self):
         a = stub_collect()
         items = em.verify_manifest_compatibility(a, {"schema": "vtx.env_manifest/1"})
@@ -713,6 +736,11 @@ class TestGfxGoldenEnvGate(unittest.TestCase):
     compare --env-manifest 跨后端环境前置门禁（不兼容 → 拒绝像素比对）。"""
 
     def setUp(self):
+        from tests.gfx._environment import bind_environment
+        bind_environment(self)
+        browser = mock.patch.object(gg, "chrome_version", return_value="unit fixture; not real browser")
+        browser.start()
+        self.addCleanup(browser.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
@@ -744,6 +772,30 @@ class TestGfxGoldenEnvGate(unittest.TestCase):
                               "--env-manifest", str(self.mb)])
         self.assertEqual(rc, 0)
         self.assertIn("环境前置门禁通过", text)
+
+    def test_explicit_gate_rejects_symmetric_missing_or_unknown_backends(self):
+        self.assertEqual(self._run(["build", "-t", str(self.tp), "--golden", str(self.golden),
+                                   "--env-manifest", str(self.ma)])[0], 0)
+        original = json.loads(self.golden.read_text())
+        for backend in (None, "not-a-renderer", *em.RUNTIME_BACKENDS):
+            with self.subTest(backend=backend):
+                doc = json.loads(json.dumps(original))
+                manifest = doc["meta"]["env_manifest"]
+                if backend is None:
+                    manifest["runtime_backend_truth"].pop("effective_backend")
+                else:
+                    manifest["runtime_backend_truth"]["effective_backend"] = backend
+                self.golden.write_text(json.dumps(doc))
+                self.mb.write_text(json.dumps(manifest))
+                with mock.patch.object(gg, "hash_frames", wraps=gg.hash_frames) as hashes:
+                    rc, _ = self._run(["compare", "-t", str(self.tp), "--golden", str(self.golden),
+                                      "--env-manifest", str(self.mb)])
+                    self.assertEqual(rc, 0 if backend in em.RUNTIME_BACKENDS else 1)
+                    self.assertEqual(hashes.call_count, 1 if backend in em.RUNTIME_BACKENDS else 0)
+                # Omitting the explicit gate keeps the legacy warning contract.
+                state = gg.env_manifest_gate(doc["meta"], None)
+                self.assertEqual(state["state"], "warn")
+        self.assertEqual(gg.env_manifest_gate({}, None)["state"], "off")
 
     def test_gate_blocks_pixel_compare_on_incompatibility(self):
         self._run(["build", "-t", str(self.tp), "--golden", str(self.golden),

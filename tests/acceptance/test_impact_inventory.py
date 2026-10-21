@@ -7,6 +7,44 @@ import unittest
 from tests.runners.impact_inventory import category, delta, observe, validate_sidecars
 
 
+class GeneratedPngReconciliationOracle(unittest.TestCase):
+    """Only owned fake product bytes; no renderer, decoder or child process."""
+
+    def test_reconciliation_rejects_removed_or_rewritten_product_bytes(self):
+        from tests.runners.run_impact_gfx_reconciliation import products, product_changes
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            product = root / "cache/vseg/retained.mp4"
+            product.parent.mkdir(parents=True)
+            product.write_bytes(b"original")
+            before = products(root)
+            self.assertTrue(product_changes(before, products(root), [], {})["passed"])
+            st = product.stat()
+            product.write_bytes(b"modified")
+            os.utime(product, ns=(st.st_atime_ns, st.st_mtime_ns))
+            changed = product_changes(before, products(root), [], {})
+            self.assertFalse(changed["passed"])
+            self.assertEqual(changed["actual_rewritten"], ["cache/vseg/retained.mp4"])
+            product.unlink()
+            removed = product_changes(before, products(root), [], {})
+            self.assertFalse(removed["passed"])
+            self.assertEqual(removed["removed"], ["cache/vseg/retained.mp4"])
+
+    def test_reconciliation_requires_exact_new_frame_set(self):
+        from tests.runners.run_impact_gfx_reconciliation import products, product_changes
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            frames = root / "cache/gfx/new"
+            frames.mkdir(parents=True)
+            (frames / "f0000.png").write_bytes(b"synthetic-not-png")
+            prediction, counts = ["cache/gfx/new"], {"cache/gfx/new": 2}
+            self.assertFalse(product_changes({}, products(root), prediction, counts)["passed"])
+            (frames / "f0001.png").write_bytes(b"synthetic-not-png")
+            self.assertTrue(product_changes({}, products(root), prediction, counts)["passed"])
+            (frames / "f0002.png").write_bytes(b"extra")
+            self.assertFalse(product_changes({}, products(root), prediction, counts)["passed"])
+
+
 class ImpactInventoryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
