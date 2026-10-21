@@ -135,6 +135,12 @@ class TestMergeThresholds(unittest.TestCase):
         self.assertEqual(ar.merge_thresholds(None), {})
 
 
+def _event_context(fps=30):
+    from types import SimpleNamespace
+    return SimpleNamespace(fps=fps, spf=1 / fps, spf_samples=48000 // fps,
+                           dur=fps, cache=Path('/unused'))
+
+
 @unittest.skipUnless(FF and shutil.which("ffprobe"), "FFmpeg required")
 class TestMeasurePrimitives(unittest.TestCase):
     """测量原语：合成 wav（1s 静音 + 4s 440Hz 正弦 + 1s 静音）。"""
@@ -165,12 +171,47 @@ class TestMeasurePrimitives(unittest.TestCase):
         self.assertGreater(len(s), 40)                       # 6s @10Hz
         self.assertTrue(all(s[i][0] < s[i + 1][0] for i in range(len(s) - 1)))
         self.assertGreater(max(m for _, m, _ in s), -30.0)   # 正弦段有能量
+        self._assert_short_event_report_and_pipeline_samples_match()
 
     def test_activity_windows(self):
         wins, total = ar._activity_windows(self.c, self.wav)
         self.assertAlmostEqual(total, 6.0, delta=0.1)
         self.assertEqual(len(wins), 1)
         self.assertAlmostEqual(wins[0][0], 1.0, delta=0.5)
+
+
+    @unittest.skipUnless(FF, 'FFmpeg required')
+    def _assert_short_event_report_and_pipeline_samples_match(self):
+        from unittest.mock import patch
+        from vtx import stages
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source.wav'
+            subprocess.run([FF, '-v', 'error', '-f', 'lavfi', '-i',
+                            'sine=frequency=440:sample_rate=48000:duration=1',
+                            '-ac', '2', str(source)], check=True)
+            c = _event_context()
+            c.run = _FakeCtx().run
+            tracks = [{'name': 'voice', 'events': [{'src': 'a', 'in': 0, 'out': 10,
+                       'src_in': 3, 'volume': 0.5, 'fade_in_frames': 20,
+                       'fade_out_frames': 20}]}]
+            c.tl = {'audio_tracks': tracks}
+            with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+                 patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value=source):
+                cmd, chains, _, _ = stages._audio_graph(c)
+                main = root / 'main.wav'
+                c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
+                             '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
+                cmd, chains, mix, _, _ = ar._track_group(c, tracks)
+                ar._collect_inputs(c, tracks, cmd)
+                report = root / 'report.wav'
+                c.run(cmd + ['-filter_complex', ';'.join(chains + [mix]), '-map', '[gmix]',
+                             '-c:a', 'pcm_s16le', '-ar', '48000', str(report)])
+            import wave
+            with wave.open(str(main)) as a, wave.open(str(report)) as b:
+                self.assertEqual(a.getnframes(), 48000)
+                self.assertEqual(a.getparams(), b.getparams())
+                self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
 
 
 class _FakeCtx:
@@ -326,18 +367,13 @@ class CollectInputsPluginSource(unittest.TestCase):
 class TestSharedEventFilters(unittest.TestCase):
     """Render and diagnostic stems must consume the same event-local transform."""
 
-    def context(self, fps=30):
-        from types import SimpleNamespace
-        return SimpleNamespace(fps=fps, spf=1 / fps, spf_samples=48000 // fps,
-                               dur=fps, cache=Path('/unused'))
-
     def test_canonical_primitive_and_exact_event_boundaries(self):
         from vtx import stages
         from vtx.audio_filters import event_chain
         self.assertIs(ar.event_chain, event_chain)
         self.assertIs(stages.event_chain, event_chain)
         for fps in (24, 30):
-            c = self.context(fps)
+            c = _event_context(fps)
             e = {'src': 'a', 'in': 5, 'out': 17, 'src_in': 3, 'volume': 0.25,
                  'pan': -1, 'fade_in_frames': 20, 'fade_out_frames': 30}
             chain = event_chain(c, 2, e)
@@ -357,7 +393,7 @@ class TestSharedEventFilters(unittest.TestCase):
         e = {'src': 'a', 'in': 5, 'out': 15, 'volume': 1,
              'fade_out_frames': 20}
         tracks = [{'name': 'voice', 'events': [e]}]
-        c = self.context(); c.tl = {'audio_tracks': tracks}
+        c = _event_context(); c.tl = {'audio_tracks': tracks}
         with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
              patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value='/unused/a.wav'):
             for win in (None, (7, 12)):
@@ -369,7 +405,7 @@ class TestSharedEventFilters(unittest.TestCase):
 
     def test_fade_edge_values_preserve_production_policy(self):
         from vtx.audio_filters import event_chain
-        c = self.context()
+        c = _event_context()
         base = {'src': 'a', 'in': 0, 'out': 10, 'volume': 1}
         for value in (0, 10, 20, -1, float('inf'), float('-inf'), float('nan')):
             with self.subTest(fade=value):
@@ -394,7 +430,7 @@ class TestSharedEventFilters(unittest.TestCase):
         from vtx import stages
         event = {'src': 'a', 'in': 0, 'out': 10}
         tracks = [{'name': 'voice', 'events': [event]}]
-        c = self.context(); c.tl = {'audio_tracks': tracks}
+        c = _event_context(); c.tl = {'audio_tracks': tracks}
         _, report, _, _, _ = ar._track_group(c, tracks)
         self.assertIn('volume=1', report[0])
         with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
@@ -409,7 +445,7 @@ class TestSharedEventFilters(unittest.TestCase):
         from unittest.mock import Mock, patch
         duck = importlib.import_module('plugins.duck-static')
         with tempfile.TemporaryDirectory() as directory:
-            c = self.context(); c.out = Path(directory); c.cache = c.out / 'cache'
+            c = _event_context(); c.out = Path(directory); c.cache = c.out / 'cache'
             event = {'src': 'a', 'in': 0, 'out': 30, 'volume': 1}
             tracks = [
                 {'name': 'voice', 'events': [dict(event)], 'duck_strategy': {
@@ -443,7 +479,7 @@ class TestSharedEventFilters(unittest.TestCase):
     def test_report_without_tracks_keeps_existing_schema_and_skips_stems(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as directory:
-            c = self.context(); c.out = Path(directory); c.tl = {'audio_tracks': []}
+            c = _event_context(); c.out = Path(directory); c.tl = {'audio_tracks': []}
             (c.out / 'audio.wav').write_bytes(b'existing WAV')
             with patch.object(ar._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t) as hook, \
                  patch.object(ar, 'ebur128_summary', return_value=(-14, -2)), \
@@ -457,38 +493,6 @@ class TestSharedEventFilters(unittest.TestCase):
             self.assertEqual([x['level'] for x in report['checks']], ['PASS', 'PASS', 'INFO', 'INFO', 'PASS'])
             self.assertEqual(c.tl, {'audio_tracks': []})
 
-    @unittest.skipUnless(FF, 'FFmpeg required')
-    def test_short_event_real_report_and_pipeline_samples_match(self):
-        from unittest.mock import patch
-        from vtx import stages
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / 'source.wav'
-            subprocess.run([FF, '-v', 'error', '-f', 'lavfi', '-i',
-                            'sine=frequency=440:sample_rate=48000:duration=1',
-                            '-ac', '2', str(source)], check=True)
-            c = self.context()
-            c.run = _FakeCtx().run
-            tracks = [{'name': 'voice', 'events': [{'src': 'a', 'in': 0, 'out': 10,
-                       'src_in': 3, 'volume': 0.5, 'fade_in_frames': 20,
-                       'fade_out_frames': 20}]}]
-            c.tl = {'audio_tracks': tracks}
-            with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
-                 patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value=source):
-                cmd, chains, _, _ = stages._audio_graph(c)
-                main = root / 'main.wav'
-                c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
-                             '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
-                cmd, chains, mix, _, _ = ar._track_group(c, tracks)
-                ar._collect_inputs(c, tracks, cmd)
-                report = root / 'report.wav'
-                c.run(cmd + ['-filter_complex', ';'.join(chains + [mix]), '-map', '[gmix]',
-                             '-c:a', 'pcm_s16le', '-ar', '48000', str(report)])
-            import wave
-            with wave.open(str(main)) as a, wave.open(str(report)) as b:
-                self.assertEqual(a.getnframes(), 48000)
-                self.assertEqual(a.getparams(), b.getparams())
-                self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
 
 
 if __name__ == "__main__":
