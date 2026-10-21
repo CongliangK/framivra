@@ -169,14 +169,15 @@ class _ServeFixture(unittest.TestCase):
 
     def _teardown_worker(self):
         proc = getattr(self, "proc", None)
+        # 首选父存活守卫 EOF（worker 组长 → 组杀全树，覆盖 CEF 子进程）
+        w_fd = getattr(self, "_parent_w", None)
+        if w_fd is not None:
+            self._parent_w = None
+            try:
+                os.close(w_fd)
+            except OSError:
+                pass
         if proc is not None and proc.poll() is None:
-            # 首选父存活守卫 EOF（worker 组长 → 组杀全树，覆盖 CEF 子进程）
-            w_fd = getattr(self, "_parent_w", None)
-            if w_fd is not None:
-                try:
-                    os.close(w_fd)
-                except OSError:
-                    pass
             try:
                 proc.wait(10)
             except subprocess.TimeoutExpired:
