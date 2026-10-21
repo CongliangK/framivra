@@ -5,16 +5,13 @@
 字符串包含判断——trailing slash（末段为空）、带路径（末段为 "asr"）、大小写
 scheme（rsplit 后丢掉 host 段）等形态漏拒，校验失败仍发 GET /health。
 本测试覆盖红队实测 4 形态 + 与 independence.validate_base_url 的语义等价性，
-并以子进程跑 vt.py init（--json、死代理兜底）断言校验失败时零请求。
+并以自有 checkout 子进程跑 vt.py init --json，记录请求尝试并阻断网络。
 
-铁律：绝不向真实 18081 发任何字节——子进程用例设置 http(s)_proxy 指向本机
-丢弃端口，任何意外请求只会本地连接拒绝后走「未运行」分支被断言捕获。
+铁律：绝不向真实 18081 发任何字节——请求边界计数，不依赖代理/NO_PROXY；
+ComfyUI 的独立探针也被阻断，并与 ASR 零请求断言明确区分。
 """
 import json
-import os
-import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +21,7 @@ sys.path.insert(0, str(ROOT / "apps" / "asr"))
 
 import vt  # noqa: E402
 import independence  # noqa: E402
+from tests._support import OwnedInitCheckout  # noqa: E402
 
 
 def _raises(fn, *a):
@@ -98,32 +96,28 @@ class ShimBaseUrlSemanticsTest(unittest.TestCase):
 
 
 class DoctorNoRequestOnBadBaseUrlTest(unittest.TestCase):
-    """校验失败时绝不发 GET /health：子进程跑 vt.py init --json，VTX_CONFIG 指向
-    base_url=IME 端口带路径形态；死代理兜底确保任何意外请求不触真实 18081。"""
+    """启用 ASR 后校验仍先于请求；复制的 app 模块与 fallback 两种入口都必须拒绝。"""
 
     def test_init_rejects_before_any_request(self):
-        with tempfile.TemporaryDirectory(prefix="vtx-shim-") as td:
-            # init 会在仓根生成被 gitignore 的 config.local.json（若缺）——
-            # 快照/还原，测试后不残留工作区状态。
-            repo_cfg = ROOT / "config.local.json"
-            pre_existing = repo_cfg.exists()
-            cfg = Path(td) / "config.local.json"
-            cfg.write_text(json.dumps(
-                {"asr": {"base_url": "http://127.0.0.1:18081/asr"}}),
-                encoding="utf-8")
-            env = dict(os.environ)
-            env["VTX_CONFIG"] = str(cfg)
-            env["VTX_DOCTOR_OFFLINE"] = "1"
-            # 兜底：任何意外出网请求只会在本机丢弃端口连接拒绝（不触真实 18081）
-            env["http_proxy"] = env["https_proxy"] = "http://127.0.0.1:9"
-            env["HTTP_PROXY"] = env["HTTPS_PROXY"] = "http://127.0.0.1:9"
-            r = subprocess.run([sys.executable, str(ROOT / "vt.py"), "init", "--json"],
-                               env=env, capture_output=True, text=True, timeout=180)
-            out = r.stdout + r.stderr
-            self.assertIn("独立性校验失败", out, "未出现独立性拒绝诊断：%s" % out)
-            self.assertNotIn('"asr_sidecar": {\n      "ok": true', out)
-            if not pre_existing and repo_cfg.exists():
-                repo_cfg.unlink()
+        checkout = OwnedInitCheckout(self)
+        checkout.config.write_text(json.dumps(
+            {"asr": {"enabled": True, "base_url": "http://127.0.0.1:18081/asr"}}),
+            encoding="utf-8")
+        for provider in ("app_present", "shim"):
+            with self.subTest(provider=provider):
+                if provider == "shim":
+                    (checkout.repo / "apps/asr/independence.py").unlink()
+                r = checkout.run()
+                out = r.stdout + r.stderr
+                self.assertIn("独立性校验失败", out, "未出现独立性拒绝诊断：%s" % out)
+                self.assertNotIn('"asr_sidecar": {\n      "ok": true', out)
+                self.assertEqual(r.returncode, 0, out)
+                data = json.loads(r.stdout)
+                self.assertTrue(data["asr_enabled"]["ok"], data)
+                self.assertFalse(data["asr_sidecar"]["ok"], data)
+                # Every urlopen is recorded and raises before socket creation.
+                # The unrelated, unconditional ComfyUI probe is the only call.
+                self.assertEqual(checkout.requests(), ["http://127.0.0.1:8188"])
 
 
 if __name__ == "__main__":
