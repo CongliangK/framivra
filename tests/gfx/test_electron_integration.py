@@ -296,7 +296,7 @@ class IntegrationGates(unittest.TestCase):
         adapter = json.loads(original[2])
         with self.assertRaises(ElectronRenderError):
             gfx_electron_stage.require_result(adapter, run['frames'], self.d, 192, 96)
-        self.assertIsNone(gfx_electron_stage.cached_runs(self.d, 3, self.d.name, 192, 96,
+        self.assertIsNone(gfx_electron_stage.cached_record(self.d, 3, self.d.name, 192, 96,
                                                        gfx_backend.identity(), hygiene.gfx_cache_ns()))
         # Valid bytes behind a symlink are still not producer evidence.
         for p in [*paths, self.d / 'f0000.png', self.d / gfx_cli.COMPLETE_FILE]:

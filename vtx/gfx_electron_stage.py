@@ -122,13 +122,6 @@ def cached_record(d, n, key, width, height, backend, ns, *, expected_html=None, 
         return None
 
 
-def cached_runs(d, n, key, width, height, backend, ns, *, expected_html=None, expected_config=None):
-    """Unlike legacy CDP, unmarked PNGs can NEVER be promoted to Electron success."""
-    record = cached_record(d, n, key, width, height, backend, ns,
-                           expected_html=expected_html, expected_config=expected_config)
-    return None if record is None else record['render_runs']
-
-
 def render_stage(c, split_page):
     binary, mode, output, timeout = electron_config()  # fail even on a warm cache
     backend, ns = identity(), gfx_cache_ns()
@@ -145,8 +138,9 @@ def render_stage(c, split_page):
             if d in seen:
                 continue
             seen.add(d)
-            runs = cached_runs(d, n, key, c.w, c.h, backend, ns,
-                               expected_html=c.root / cl['src'], expected_config=(binary, mode, output, timeout))
+            record = cached_record(d, n, key, c.w, c.h, backend, ns,
+                                   expected_html=c.root / cl['src'], expected_config=(binary, mode, output, timeout))
+            runs = None if record is None else record['render_runs']
             if runs:
                 events.cache_hit(c, 'cached_runs', frames=[0, n])
                 all_runs.extend(runs)
