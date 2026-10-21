@@ -118,8 +118,8 @@ def main():
     if nb1 != nb2 or (w1, h1) != (w2, h2):
         print(f"✗ 两版不可比：nvenc {w1}x{h1}/{nb1}f vs x264 {w2}x{h2}/{nb2}f", file=sys.stderr)
         sys.exit(2)
-    if nb1 == 0:
-        print("✗ 帧数探测为 0，无法抽帧", file=sys.stderr); sys.exit(2)
+    if nb1 <= 0:
+        print("✗ 帧数探测非正，无法抽帧", file=sys.stderr); sys.exit(2)
 
     # 抽帧点位：段边界（0 + 各段起点）+ 中点 + 固定 seed 随机补足
     spans = split_frames(nb1, args.segments)
@@ -127,7 +127,10 @@ def main():
     for a, _ in spans:
         cand.add(a)
     rng = random.Random(SEED)
-    while len(cand) < max(1, args.frames):
+    target = min(nb1, max(1, args.frames))
+    if args.frames > nb1:
+        print(f"⚠ 请求最少 {args.frames} 帧，但全片仅 {nb1} 帧；改为检查全部帧", file=sys.stderr)
+    while len(cand) < target:
         cand.add(rng.randrange(nb1))
     frames = sorted(f for f in cand if 0 <= f < nb1)
     n_bound = len([a for a, _ in spans if a > 0]) + 1
