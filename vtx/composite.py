@@ -363,8 +363,8 @@ class RenderPlan:
 
         窗口放在 overlay 自身的 x 表达式，不用通用 enable：FFmpeg 6.1 会在
         消费任一输入时更新 enable，次输入半帧提前/预读会覆盖主帧的判定，导致
-        末合法帧消失或一帧空窗被填；7.1 才限制为主输入更新。overlay 的 t 在
-        两版均取实际 mainpic PTS，eval=frame 每主帧求值。窗口内 x 仍是原整数
+        末合法帧消失或一帧空窗被填；已核验的 7.0/7.1 仅由主输入更新。overlay
+        的 t 均取实际 mainpic PTS，eval=frame 每主帧求值。窗口内 x 仍是原整数
         坐标（含原有色度对齐），窗口外 NAN 规范化到 INT_MAX，交集检查直接
         透传主帧、不混合像素。无版本分支，也不改输入配对、alpha 或 EOF 行为。
 
