@@ -148,6 +148,7 @@ class TestMeasurePrimitives(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="vtx-arep-")
+        cls.addClassCleanup(cls.tmp.cleanup)
         cls.wav = Path(cls.tmp.name) / "tone.wav"
         cls.c = _FakeCtx()
         subprocess.run([FF, "-v", "error", "-y",
@@ -157,10 +158,6 @@ class TestMeasurePrimitives(unittest.TestCase):
                         "-filter_complex",
                         "[0:a][1:a][2:a]concat=n=3:v=0:a=1[aout]",
                         "-map", "[aout]", "-c:a", "pcm_s16le", str(cls.wav)], check=True)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
 
     def test_silences_detects_head_hole(self):
         sil = ar.silences(self.c, self.wav, "-45dB", 0.5)
