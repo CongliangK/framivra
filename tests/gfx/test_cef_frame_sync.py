@@ -61,17 +61,6 @@ _EVIDENCE = Path(os.environ.get("VTX_CEF_EVIDENCE_DIR",
     "/home/liangruochong/.local/state/framivra-orchestrate/evidence/issue-114"))
 
 
-def _wait_until(pred, timeout=30.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while True:
-        value = pred()
-        if value:
-            return value
-        if time.monotonic() >= deadline:
-            return pred()
-        time.sleep(interval)
-
-
 def decode_png_rgba(path):
     """纯解码 PNG（#111 起 spng 默认行滤波 SUB/UP → 按全滤波类型重建），
     返回 (w, h, rgba bytes)。"""
