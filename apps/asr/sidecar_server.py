@@ -103,18 +103,21 @@ def _ind():
 
 
 def _load_config_for_gate():
-    """enabled 门禁用配置读取（issue #142）：VTX_CONFIG > 仓根 config.local.json。
-    与 client.load_config 同链（此处仅 stdlib json，解析失败/缺失 → {}，
-    严格解析由 independence.asr_enabled 兜底：未配置=禁用）。"""
+    """仅 enabled 门禁的 stdlib 读取：选路径/顶层形状与 canonical config 一致。
+    显式 VTX_CONFIG（含 ~）一旦选中，缺失或坏配置也不回落仓根配置；
+    不导入 vtx，保留独立解释器 -I 启动。严格 enabled 解析归 independence。
+    """
     import os as _os
-    for cand in (_os.environ.get("VTX_CONFIG"),
-                 str(Path(__file__).resolve().parent.parent.parent / "config.local.json")):
-        if cand and Path(cand).is_file():
-            try:
-                return json.loads(Path(cand).read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                return {}
-    return {}
+    override = _os.environ.get("VTX_CONFIG")
+    path = (Path(override).expanduser() if override else
+            Path(__file__).resolve().parent.parent.parent / "config.local.json")
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def ensure_venv_site():

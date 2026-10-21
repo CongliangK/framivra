@@ -23,7 +23,9 @@
 铁律：只用假 HOME + 假 IME 锚点 + 临时端口；绝不触碰真实输入法（18081）。
 """
 import builtins
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
+import ast
+import io
 import json
 import os
 import signal
@@ -675,6 +677,114 @@ class TestResourceAdmission(MatrixBase):
         finally:
             sidecar_server._HOLDER = old
             sidecar_server._read_json_payload = real_read
+
+
+class TestSidecarConfigGate(unittest.TestCase):
+    """只读自有临时配置，逐项比较 canonical 路径/形状及 enabled 决策。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="asr-config-gate-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.root_config = self.root / "config.local.json"
+        self.root_config.write_text('{"asr":{"enabled":true}}', encoding="utf-8")
+        env = mock.patch.dict(os.environ, {"HOME": str(self.home)}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+        source = mock.patch.object(sidecar_server, "__file__",
+                                   str(self.root / "apps/asr/sidecar_server.py"))
+        source.start()
+        self.addCleanup(source.stop)
+        # 源码 AST 提取 canonical 的纯读取合同，不创建第二份 vtx 模块身份，
+        # 也不 import 内核依赖。保留实际函数/路径键常量，避免复制配置语义。
+        source_path = REPO_ROOT / "vtx/pluginlib/config.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        nodes = [node for node in tree.body
+                 if isinstance(node, (ast.Import, ast.ImportFrom))
+                 or (isinstance(node, ast.FunctionDef)
+                     and node.name in {"config_path", "load_config", "expand_path"})
+                 or (isinstance(node, ast.Assign)
+                     and any(isinstance(target, ast.Name)
+                             and target.id in {"REPO_ROOT", "PATH_KEYS"}
+                             for target in node.targets))]
+        namespace = {"__file__": str(source_path)}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source_path), "exec"), namespace)
+        self.canonical = SimpleNamespace(**namespace)
+        self.reads = []
+        read_text = Path.read_text
+
+        def record_read(path, *args, **kwargs):
+            self.assertTrue(path.resolve().is_relative_to(self.root),
+                            "gate must not read ambient configuration")
+            self.reads.append(path.resolve())
+            return read_text(path, *args, **kwargs)
+
+        reads = mock.patch.object(Path, "read_text", record_read)
+        reads.start()
+        self.addCleanup(reads.stop)
+
+    def assert_contract(self, selected, expected):
+        self.reads.clear()
+        with redirect_stderr(io.StringIO()):
+            canonical = self.canonical.load_config(self.root)
+            gate = sidecar_server._load_config_for_gate()
+        self.assertEqual(canonical, expected)
+        self.assertEqual(gate, canonical)
+        self.assertEqual(independence.asr_enabled(gate), independence.asr_enabled(canonical))
+        self.assertEqual(self.reads, [selected.resolve()] * (2 if selected.is_file() else 0))
+
+    def test_explicit_selection_matrix_never_falls_back(self):
+        cases = (("missing", None, {}), ("directory", None, {}),
+                 ("malformed", b'{broken', {}), ("invalid-utf8", b'\xff', {}),
+                 ("false", b'{"asr":{"enabled":false}}', {"asr": {"enabled": False}}),
+                 ("true", b'{"asr":{"enabled":true}}', {"asr": {"enabled": True}}),
+                 ("string-false", b'{"asr":{"enabled":"false"}}', {"asr": {"enabled": "false"}}),
+                 ("empty", b'{}', {}), ("bad-asr", b'{"asr":[]}', {"asr": []}),
+                 ("null", b'null', {}), ("list", b'[]', {}),
+                 ("boolean", b'true', {}), ("number", b'2', {}), ("text", b'"text"', {}))
+        old_cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, old_cwd)
+        for form in ("absolute", "relative", "tilde"):
+            for name, contents, expected in cases:
+                with self.subTest(form=form, case=name):
+                    selected = self.home / (form + "-" + name + ".json")
+                    if name == "directory":
+                        selected.mkdir()
+                    elif contents is not None:
+                        selected.write_bytes(contents)
+                    os.environ["VTX_CONFIG"] = {"absolute": str(selected),
+                                                "relative": str(selected.relative_to(self.root)),
+                                                "tilde": "~/" + selected.name}[form]
+                    self.assert_contract(selected, expected)
+
+    def test_unset_or_empty_override_uses_only_repo_root(self):
+        for override in (None, ""):
+            for contents, expected in ((None, {}), ('{bad', {}), ('[]', {}),
+                                       ('{"asr":{"enabled":false}}', {"asr": {"enabled": False}}),
+                                       ('{"asr":{"enabled":true}}', {"asr": {"enabled": True}})):
+                with self.subTest(override=override, contents=contents):
+                    if override is None:
+                        os.environ.pop("VTX_CONFIG", None)
+                    else:
+                        os.environ["VTX_CONFIG"] = override
+                    if contents is None:
+                        self.root_config.unlink(missing_ok=True)
+                    else:
+                        self.root_config.write_text(contents, encoding="utf-8")
+                    self.assert_contract(self.root_config, expected)
+
+    def test_selected_read_error_is_empty_without_fallback(self):
+        os.environ["VTX_CONFIG"] = str(self.home / "selected.json")
+        selected = Path(os.environ["VTX_CONFIG"])
+        selected.write_text('{"asr":{"enabled":true}}', encoding="utf-8")
+        with mock.patch.object(Path, "read_text", side_effect=OSError("synthetic unreadable")) as read:
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(self.canonical.load_config(self.root), {})
+                self.assertEqual(sidecar_server._load_config_for_gate(), {})
+            self.assertEqual(read.call_count, 2)
 
 
 class TestModelPlacement(unittest.TestCase):
