@@ -6,7 +6,7 @@
 
 > ⚠️ **许可证提示**：代码与权重分别审查；许可限制、未知项与下载边界见 [第三方许可](../../docs/third-party-licenses.md)。已有资产或探测就绪不代表已获用途许可。
 
-**快照性质声明**：本链脚本为 bg_test 产线实测定稿的快照（`run_full_bg.sh` 编排九段视频、`resolve_matte/step*.py` 探针、`card_points.json` 本机标定点位等）——路径已参数化，但**步骤编排与点位仍是原工程实测快照**，跨工程复用时须按 README 各节核对改写。
+**快照性质声明**：本链脚本为 bg_test 产线实测定稿的快照（`run_full_bg.sh` 编排九段视频、`card_points.json` 本机标定点位等）——路径已参数化，但**步骤编排与点位仍是原工程实测快照**，跨工程复用时须按 README 各节核对改写。
 
 ## 用途
 
@@ -20,7 +20,7 @@
 
 ## 健康检查
 
-`env python3 apps/matting/health_check.py`——compile() 纯语法检查全部 21 个 .py（零执行零副作用零 __pycache__）；`vt doctor` 经 app.json `health.command` 自动调用。
+`env python3 apps/matting/health_check.py`——compile() 纯语法检查本目录与 `resolve_matte/` 下的 .py（零执行零副作用零 __pycache__）；`vt doctor` 经 app.json `health.command` 自动调用。
 
 ## 开启步骤（默认关闭）
 
@@ -50,7 +50,7 @@
 | `run_full_bg.sh` | voice-ime 全量背景替换编排（precrop→2048 抽帧→mask→抠像→4K 合成→NVENC）。**快照性质：步骤编排为原工程实测**；路径已参数化（参数1/`VOICE_IME` 项目根、`WORKS`，默认 ~ 展开） |
 | `health_check.py` | app 健康探针（`app.json` health.command 消费；纯语法检查） |
 | `app.json` | v2 应用 manifest（kind=app；requires 空——conda/GUI 依赖见上，系统解释器探测不了） |
-| `resolve_matte/` | DaVinci Magic Mask 命令行驱动子链（`matte_pipeline.sh` 一键流水线 + step 探针 + 鼠标/显存基建，详见 `resolve_matte/README.md`） |
+| `resolve_matte/` | DaVinci Magic Mask 命令行驱动子链（`matte_pipeline.sh` 一键流水线 + 鼠标/显存基建，详见 `resolve_matte/README.md`） |
 | `docs/` | 测试报告（路线拍板依据）、抠像升级调研、背景替换总调研 |
 
 ## 用法（配置完成后）
