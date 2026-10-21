@@ -7,7 +7,7 @@
   ② 坏 JSON：警告（stderr）+ 空 {} 继续（全局化语义，不阻断）；缺文件静默 {}；
   ③ ~ 展开：已知路径型键（tts.repo 等 PATH_KEYS）自动展开；非路径键
      （asr.base_url 等）与清单外字符串值不动；expand_path 工具；
-  ④ IMGEN_CONFIG：保留读取 + stderr 废弃公告一行（VTX_CONFIG 优先于它）；
+  ④ IMGEN_CONFIG 不生效：默认路径与 VTX_CONFIG 均不读取旧变量；
   ⑤ external_apps[]/external_plugins[] 条目规范化（字符串默认 disabled，
      {path, enabled:true} 显式启用）——registry.scan_external 的输入形状。
 运行：bash scripts/run_all_tests.sh。
@@ -16,6 +16,7 @@ import io
 import json
 import os
 import sys
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -108,25 +109,28 @@ class HomeExpansion(unittest.TestCase):
 
 
 class LegacyImgenvConfig(unittest.TestCase):
+    """拒用旧变量回归；保留既有 CI 选择的 case ID，不保留旧配置行为。"""
     def test_imgen_config_deprecation_notice(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             legacy = root / "legacy.json"
             legacy.write_text('{"imgen": {"enabled": true}}', encoding="utf-8")
+            (root / "config.local.json").write_text(
+                '{"imgen": {"enabled": false}}', encoding="utf-8")
             err = io.StringIO()
             with redirect_stderr(err), mock.patch.dict(
                     os.environ, {"IMGEN_CONFIG": str(legacy)}):
                 os.environ.pop("VTX_CONFIG", None)
-                cfg = pc.load_config(root, legacy_env="IMGEN_CONFIG")
-            self.assertEqual(cfg, {"imgen": {"enabled": True}})   # 迁移期仍读
-            self.assertIn("IMGEN_CONFIG 已废弃", err.getvalue())  # stderr 公告一行
+                cfg = pc.load_config(root)
+            self.assertEqual(cfg, {"imgen": {"enabled": False}})
+            self.assertEqual(err.getvalue(), "")
             # VTX_CONFIG 同时设置时以 VTX_CONFIG 为准（不读 legacy、不打公告）
             v2 = root / "v2.json"
             v2.write_text('{"x": 1}', encoding="utf-8")
             err2 = io.StringIO()
             with redirect_stderr(err2), mock.patch.dict(
                     os.environ, {"IMGEN_CONFIG": str(legacy), "VTX_CONFIG": str(v2)}):
-                self.assertEqual(pc.load_config(root, legacy_env="IMGEN_CONFIG"), {"x": 1})
+                self.assertEqual(pc.load_config(root), {"x": 1})
             self.assertEqual(err2.getvalue(), "")
 
     def test_no_legacy_env_no_notice(self):
@@ -136,8 +140,36 @@ class LegacyImgenvConfig(unittest.TestCase):
             with redirect_stderr(err), mock.patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("IMGEN_CONFIG", None)
                 os.environ.pop("VTX_CONFIG", None)
-                pc.load_config(root, legacy_env="IMGEN_CONFIG")
+                pc.load_config(root)
             self.assertEqual(err.getvalue(), "")
+        probe = r'''import json, os, sys, tempfile
+from pathlib import Path
+from unittest import mock
+sys.path.insert(0, str(Path.cwd() / "apps" / "imgen"))
+import imgen_cli
+from vtx.pluginlib import config
+with tempfile.TemporaryDirectory() as d:
+    root = Path(d)
+    (root / "config.local.json").write_text('{"source":"default"}')
+    legacy = root / "legacy.json"
+    legacy.write_text('{"source":"legacy"}')
+    selected = root / "selected.json"
+    selected.write_text('{"source":"selected"}')
+    os.environ["IMGEN_CONFIG"] = str(legacy)
+    os.environ.pop("VTX_CONFIG", None)
+    with mock.patch.object(config, "REPO_ROOT", root), mock.patch.object(
+            imgen_cli, "cmd_postprocess", return_value=0) as command:
+        for override, expected in [(None, "default"), (str(selected), "selected")]:
+            if override:
+                os.environ["VTX_CONFIG"] = override
+            assert imgen_cli.main(["postprocess", "unused.png", "--kind", "bg4k", "-o", "unused-out.png"]) == 0
+            assert command.call_args.args[1] == {"source": expected}
+        assert not hasattr(imgen_cli, "config_path")
+        assert not hasattr(imgen_cli, "load_config")
+'''
+        result = subprocess.run([sys.executable, "-c", probe], cwd=REPO,
+                                text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class ExternalEntries(unittest.TestCase):

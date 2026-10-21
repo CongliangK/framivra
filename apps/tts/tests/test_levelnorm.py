@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import levelnorm  # noqa: E402
+import audio_processing  # noqa: E402
 
 
 def synth_wav(path, amp=0.1, dur=1.0, freq=440):
@@ -28,30 +28,55 @@ class TestLevelNorm(unittest.TestCase):
         self.wav = synth_wav(os.path.join(self.tmp, "w.wav"), amp=0.1)
 
     def test_peak_measure(self):
-        p = levelnorm.peak_db(self.wav)
+        p = audio_processing.peak_db(self.wav)
         self.assertAlmostEqual(p, -20.0, delta=0.5)
 
     def test_normalize_to_minus6(self):
-        gain = levelnorm.normalize_file(self.wav)
+        gain = audio_processing.normalize_file(self.wav)
         self.assertGreater(gain, 13.5)   # -20 → -6 约 +14dB
         self.assertLess(gain, 14.5)
-        p2 = levelnorm.peak_db(self.wav)
-        self.assertAlmostEqual(p2, levelnorm.TARGET_DB, delta=0.5)
+        p2 = audio_processing.peak_db(self.wav)
+        self.assertAlmostEqual(p2, audio_processing.TARGET_DB, delta=0.5)
 
     def test_idempotent(self):
-        g1 = levelnorm.normalize_file(self.wav)
+        g1 = audio_processing.normalize_file(self.wav)
         self.assertGreater(g1, 0)
-        g2 = levelnorm.normalize_file(self.wav)   # 已在 -6±0.5 → 不动
+        g2 = audio_processing.normalize_file(self.wav)   # 已在 -6±0.5 → 不动
         self.assertEqual(g2, 0.0)
-        self.assertAlmostEqual(levelnorm.peak_db(self.wav),
-                               levelnorm.TARGET_DB, delta=0.5)
+        self.assertAlmostEqual(audio_processing.peak_db(self.wav),
+                               audio_processing.TARGET_DB, delta=0.5)
 
     def test_already_in_band_noop(self):
         """峰值已在 -6±0.5dB 带宽内 → 不动文件（mtime/内容不变）。"""
         wav2 = synth_wav(os.path.join(self.tmp, "w6.wav"), amp=0.501)  # ≈-6.0dB
-        before = levelnorm.peak_db(wav2)
-        self.assertEqual(levelnorm.normalize_file(wav2), 0.0)
-        self.assertEqual(levelnorm.peak_db(wav2), before)
+        before = audio_processing.peak_db(wav2)
+        self.assertEqual(audio_processing.normalize_file(wav2), 0.0)
+        self.assertEqual(audio_processing.peak_db(wav2), before)
+
+
+class TestAudioProcessingCLI(unittest.TestCase):
+    def test_normalize_single_file_target_and_output(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        output = StringIO()
+        with patch.object(audio_processing.os.path, 'isdir', return_value=False), \
+             patch.object(audio_processing, 'normalize_file', return_value=6) as normalize, \
+             patch.object(audio_processing, 'peak_db', return_value=-9), redirect_stdout(output):
+            audio_processing.main(['normalize', 'input.wav', '--target', '-9'])
+        normalize.assert_called_once_with('input.wav', -9)
+        self.assertIn('peak -9 dB（增益 6）', output.getvalue())
+
+    def test_normalize_directory_and_errors(self):
+        from unittest.mock import patch
+        with patch.object(audio_processing.os.path, 'isdir', return_value=True), \
+             patch.object(audio_processing, 'normalize_dir') as normalize:
+            audio_processing.main(['normalize', 'final', '--target', '-12'])
+        normalize.assert_called_once_with('final', target_db=-12)
+        with patch.object(audio_processing.os.path, 'isdir', return_value=False), \
+             patch.object(audio_processing, 'normalize_file', side_effect=RuntimeError('failure')):
+            with self.assertRaisesRegex(RuntimeError, 'failure'):
+                audio_processing.main(['normalize', 'input.wav'])
 
 
 if __name__ == "__main__":

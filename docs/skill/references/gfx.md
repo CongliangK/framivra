@@ -6,6 +6,8 @@
 
 ## HTML 创作组织
 
+需要可改内容的原创风格样板时，从 [MG 风格集合](../../../templates/mg-styles/README.md)进入各款制作说明、典型页面与独立媒体脚本；真实技术、图像、播放和声音验收分别以其状态记录为准。
+
 **新建或重设计纯 MG（Motion Graphics）作品时，先定场景树，再分工和写页面。** 以下是创作组织原则，不改变 gfx clip/alpha/多轨渲染契约：
 
 - **同一作品默认一个 HTML 渲染入口**：背景、角色、图表、文字、粒子与转场作为同页 DOM/SVG/Canvas 场景树中的逻辑模块；章节和场景切换在页内完成。透明组件可以直接叠在同页不透明底画面上，透明本身不是拆页理由。
@@ -38,9 +40,15 @@ document.body.style.opacity = 1 - clamp01(seg(t, N/FPS - 0.4, N/FPS)); // 结尾
 - 动效时长 = 所属事件的帧数（`out`−`in`，契约字段见 `docs/ARCHITECTURE.md`）；页面内容的时间轴从 0 开始（vtx 负责把它平移到成片时间轴）。
 - vtx 默认用 CDP 常驻浏览器逐帧渲染，页面须从 `?f=` 确定性得到当前帧。CDP 与 CLI 具有独立环境身份，不承诺任意页面跨引擎像素或 PNG 字节相同。CDP 自动回落 CLI 的页不能发布成功凭证；确需 CLI 时显式 `VTX_GFX=cli` 重渲，strict 策略不支持该路径。身份与失败边界见 [缓存与回执](../../cache-provenance.md#gfx-environment)。
 - **外部依赖声明**：本地 CSS/JS/图片/字体等列入 gfx clip 的 `cache_dependencies`；真正共享的依赖列入 `project.cache_dependencies`。两级声明取并集，路径都相对 timeline 根目录；clip 依赖变更使消费它的页面换键，项目依赖变更影响全部 gfx 页。依赖必须存在且为文件。默认 legacy 不证明资源闭包，未声明间接资源不能获得可靠失效保证；strict 仅接受受限静态 HTML/CSS/本地图像字体，拒绝脚本、SVG 与网络资源，仅支持 POSIX CDP，不能用于本文的 JavaScript 动画示例。完整约束见 [HTML 依赖](../../cache-provenance.md#html-依赖)。
-- **可选 Canvas 导出通道**：预期输出全部在一个 canvas 内时，可同步绘制请求帧并提供 `window.__vtx_export_png = () => canvas.toDataURL("image/png")`。位图尺寸须匹配视口；CSS 装饰和其他 DOM 不在导出范围，若它们属于输出就不要 opt-in。函数立即返回字符串，不能等待异步资源。渲染器验证 PNG 后缓存该帧；无效导出回落同帧截图。这是逐帧可选通道，详细边界见 [Canvas 导出](../../canvas-export.md)。
+- **可选 Canvas 导出通道**：预期输出全部在一个 canvas 内时，可同步绘制请求帧并提供 `window.__vtx_export_png = () => canvas.toDataURL("image/png")`。位图尺寸须匹配视口；CSS 装饰和其他 DOM 不在导出范围，若它们属于输出就不要 opt-in。函数立即返回字符串，不能等待异步资源。渲染器验证 PNG 后缓存该帧；无效导出回落同帧截图。这是逐帧可选通道，详细边界见 [Canvas 导出](../../reference/canvas-export.md)。
 - **可选静态跨度声明**：`window.__vtx_static_spans = [[a, b], ...]` 中每对表示 `[a, b)`，须在 `[0, N)` 内、互不重叠。开启 `VTX_GFX_STATIC=1` 时，渲染器只渲头帧并将其字节复制到其余帧；它不验证区间视觉恒定。声明是作者的像素恒定承诺，DOM 序列化相等不能证明字体、图片、Canvas 位图或实际绘制结果相等。无独立验证时不声明；采用前须关闭静态复制，用相同输入/环境逐帧渲染声明区间并核对实际像素，保留证据，页面或依赖改变后重验。无需仓外私人扫描脚本；端点抽查不能代替整个跨度验证。
 - **可选 `__vtx_render(f)` 协议**：同步、幂等、与调用顺序无关；调用后的视觉状态须与 `?f=f` 新加载一致。消费者 navfree 路径未获正式采用，`VTX_GFX_NAVFREE` 保持默认 0；历史实验见 [DEV](../../DEV.md)。DOM 哈希不能代替视觉等价验证。
+
+## 显式 SVG 序列
+
+此页上文的 DOM/SVG/Canvas 指浏览器同页场景树。已有离散 SVG 帧素材时可显式使用独立的 `svg-sequence` 路由：gfx clip 的 `format` 设为 `"svg-sequence"`，`src` 指向项目根相对的 `framivra-svg-sequence/v1` manifest；其 `frame_count` 与 clip 的 `dur` 相等，帧号是 clip 局部帧。结构字段见 [timeline schema](../../../vtx/timeline.schema.json)，受支持的静态元素、路径/字体及缓存约束以 [SVG 实现](../../../vtx/gfx_svg.py) 为准。生成器只记录、不执行；不把任意 SVG 或 HTML 内嵌 SVG 当作此路线已支持。
+
+当前运行时身份只支持 Linux ELF；macOS/Windows 不在本基线的 SVG 路线支持范围。该路线要求 Inkscape 与声明字体，不支持同一时间线混用 HTML/SVG gfx，也不接受 HTML strict 依赖策略；它不是浏览器失败时的自动回退。显式真实两帧检查见 [Inkscape smoke](../../../tests/run_svg_inkscape_smoke.py)，会写指定证据目录，缺工具/字体报错；本次仅整理入口，没有重跑该集成检查。
 
 ## 独立预览与自查
 

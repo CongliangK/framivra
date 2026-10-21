@@ -1,6 +1,6 @@
 // Issue #207: CEF-free ownership regression for the real PNG writer + libspng.
 // GNU ld --wrap is test-only; no production hooks or custom spng allocator.
-// Run through VTX_TEST_PNG_OWNERSHIP=1 tests.test_cef_worker_pixel_ops.
+// Run through VTX_TEST_PNG_OWNERSHIP=1 tests.gfx.test_cef_worker_pixel_ops.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

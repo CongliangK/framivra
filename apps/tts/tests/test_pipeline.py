@@ -88,12 +88,12 @@ class TestFinishWindow(unittest.TestCase):
         ② budget 7.62（228 帧+20ms 口径）→ final 恰 7.620s 且 int(dur×30)=228
            ——占位态 vtx validate 不再被「音频源少 1 帧」拦。
         """
-        import atempo as _at
+        import audio_processing as _audio
         for budget, raw_dur in [(3.0, 3.43), (7.62, 3.0)]:
             with tempfile.TemporaryDirectory(prefix="vt_tts_q_") as td:
                 raw = synth_raw(os.path.join(td, "raw.wav"), dur=raw_dur)
                 out = os.path.join(td, "final.wav")
-                got = _at.apply_atempo(raw, budget, out)
+                got = _audio.apply_atempo(raw, budget, out)
                 self.assertAlmostEqual(got, budget, delta=0.002)
                 self.assertAlmostEqual(ffprobe_duration(out), budget, delta=0.002)
         self.assertEqual(int(7.62 * 30), 228)  # 口径自检：7.62s=228.6 帧≥228 链帧

@@ -17,7 +17,6 @@
 用法（项目根）：
   env python3 apps/publish/compare_4k_quality.py out/final_4k.mp4 out/final_4k_x264_ref.mp4
       [--frames 10] [--segments 8] [--psnr-min 42] [--ssim-min 0.99]
-  （兼容旧路径 scripts/compare_4k_quality.py 经 symlink 同义）
 
 退出码：0 = 全帧达标 PASS / 1 = 存在不达标帧 FAIL / 2 = 输入不可比（帧数不等）或
 指标解析失败（fail-closed，阶段2审查 P2-1）。

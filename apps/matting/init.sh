@@ -18,7 +18,7 @@ set -u
 for license_arg in "$@"; do
   if [ "$license_arg" = "--download" ]; then
     LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
-    python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download matting || exit "$?"
+    python3 "$LICENSE_ROOT/scripts/policy/model_license_policy.py" legacy-download matting || exit "$?"
   fi
 done
 

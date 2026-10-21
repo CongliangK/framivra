@@ -11,7 +11,7 @@ vtx CLI：        ~/.agents/skills/video/vtx/vtx.py            （符号链接�
 时间线预览器：    ~/.agents/skills/video/vtx/preview.html     （人审编排用，双击打开）
 参考实现（POC）： ~/文档/04_bilibili视频/_archive/poc2/   （外部示例项目：30s 多轨 demo，QC 全过；不随 skill 分发）
 ```
-程序本体在 video_tools 仓：`vtx/`、`apps/`、`plugins/` 的权威位置（`scripts/` 普通转发壳见 `<video_tools>/docs/ARCHITECTURE.md` §6.1）以 `<video_tools>` 为准；live skill 通过六件链接引用本仓（见 `<video_tools>/docs/DOC-CHARTER.md` §7）；**修改程序一律改 video_tools 仓**。入口三通并存（分发见 `<video_tools>/docs/ARCHITECTURE.md` §5.2）：仓根 `vtx/vtx.py` 薄启动器、`python3 -m vtx`、pip console `vtx`/`vt`；实现分为 `infra`（Ctx/执行/并行）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）、`hygiene`（缓存键/gc/df/snapshot/VERSIONS）、`cache_state`（回执身份/依赖门）八个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
+程序本体在 video_tools 仓：`vtx/`、`apps/`、`plugins/` 的权威位置（命令归属见 `<video_tools>/docs/ARCHITECTURE.md` §6.1）以 `<video_tools>` 为准；live skill 通过六件链接引用本仓（见 `<video_tools>/docs/DOC-CHARTER.md` §7）；**修改程序一律改 video_tools 仓**。入口三通并存（分发见 `<video_tools>/docs/ARCHITECTURE.md` §5.2）：仓根 `vtx/vtx.py` 薄启动器、`python3 -m vtx`、pip console `vtx`/`vt`；实现分为 `infra`（Ctx/执行/并行）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）、`hygiene`（缓存键/gc/df/snapshot/VERSIONS）、`cache_state`（回执身份/依赖门）八个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
 ## 时间线预览（人审用）
 `preview.html` 是单文件网页（无外部依赖），把 timeline.json 渲染成可视化时间线供**人类**审阅编排：视频轨/动效层/字幕/音轨分行显示，事件块带源名、时长、vol/pan/loop 标注与淡入淡出条；支持缩放、适应宽度、悬停播放头、点击事件块看全字段详情，并有**预览级校验**（整数帧、EDL 不变量、base 轨连续性、越界、同轨音频重叠等）——发现问题标红，但最终以 `vtx validate` 为准。
 ```bash
@@ -61,10 +61,21 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 
 
 ## 音频工程（build_audio 内置）
 - **音乐避让（duck）**：音轨声明 `"duck": true`（bed/amb 建议）即被 `"duck_by"`（缺省 `["voice"]`）轨的混音经 `sidechaincompress`（缺省 threshold=0.0126(-38dBFS) / ratio=4 / attack=20ms / release=1500ms / makeup=1，轨级 `duck_params` 可覆盖；2026-09-11 D47 voice-ime 实测校准）压低。**⚠ 新项目启用 duck 前必须先做「duck 开/关」A/B 响度对照，否则长节目下无口播段床乐可能反常抬高约 19dB**；床乐静态电平已足够低（低于口播 ≥5dB）时建议直接不开（破案详录见 DEV.md）。
-- **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测（分级：偏离 >3 LU 硬 FAIL、(1.5,3] WARN 放行（内容级，发布侧 G2 拦截）、≤1.5 静默通过——与 build_audio 终态校验同口径）。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。
-- **响度终链（v2 §1.2，2026-09-13）**：alimiter 限幅（`limit=0.599:level=false:latency=true`）已并入 `vtx audio`（build_audio 尾部，与区间预览统一过 limiter）——out/audio.wav 恒为「归一+限幅」终态，**audio → mux 直连，无独立 post_loudness 步骤**（不要追加旧兼容入口，风险见 [响度终链说明](../../post-loudness.md)）。终态校验分级：硬 FAIL=TP>-1.0 dBFS/时长漂移 ±1 采样/I 偏离 >3 LU；WARN=I 偏离 ∈(1.5,3]。**编码后解码 TP 终检纪律不变**（G3/qc）。
+- **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测，按下方响度终链的同一分级判定。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。
+- **响度终链（v2 §1.2，2026-09-13）**：alimiter 限幅（`limit=0.599:level=false:latency=true`）已并入 `vtx audio`（build_audio 尾部，与区间预览统一过 limiter）——out/audio.wav 恒为「归一+限幅」终态，**audio → mux 直连，无独立 post_loudness 步骤**（[既有 WAV 维护边界](#既有-wav-维护)见下方）。终态校验分级：硬 FAIL=TP>-1.0 dBFS/时长漂移 ±1 采样/I 偏离 >3 LU；WARN=I 偏离 ∈(1.5,3]（内容级，发布侧 G2 拦截），≤1.5 静默通过。**编码后解码 TP 终检纪律不变**（G3/qc）。
 - 混音链：轨内子混音（apad 补齐成片全长）→ duck → 总混音（amix normalize=0 保留音量比例）→ 两遍静态增益 -14 LUFS + alimiter 限幅（v2 §1.2 响度终链已并入 vtx audio，无独立 post 步）→ 定长裁切。
-- **BGM 分轨审计包（正式版默认必做）**：BGM 正式版本挂载进时间线后，除 vtx 渲染外必跑 `python3 <本仓>/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json`（旧库 `~/文档/04_bilibili视频/_library/blender_bridge/` 位置为兼容指针，权威副本已收编本仓）——分轨 MP3 导出 + 审计 timeline + Blender 审计工程 `audit.blend` 一键五步，产物落 `<项目>/cache/audit_bgm/`。用户在 Blender VSE 逐轨静音/独听对比才能参与混音与编排裁决（人机协作交付门；完整规程见 music skill「交付门：分轨审计包」节）。分轨或音量改动后重跑即可（MP3 按源内容与转码规格校验缓存；事件映射及整段回退见 docs/audio-audit.md）。
+- **BGM 分轨审计包（正式版默认必做）**：正式版本入时间线后，除 vtx 渲染外还须执行 [分轨审计](../../../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)；分轨或音量改动后重跑。用户在 Blender VSE 逐轨静音/独听对比后参与混音与编排裁决（人机协作交付门；完整规程见 music skill「交付门：分轨审计包」节）。命令、产物、缓存与验证边界只在组件说明维护。
+
+### 既有 WAV 维护
+
+`scripts/audio/normalize_project_audio.py` 独立归一已有项目 `out/audio.wav`，不是 timeline 重渲，也不是正式链的追加步骤。参数为 `project`（默认当前目录）、`--target`、`--ffmpeg`，输出 JSON；源码函数为 `vtx.stages.normalize_project_audio`。只读查看：
+
+```bash
+env python3 scripts/audio/normalize_project_audio.py --help
+```
+
+实际执行是**写操作**：测量、限幅与时长检查后原子替换 WAV，不更新或撤销 audio/mux/qc 回执；重复施加增益不保证字节或响度不变。它不是交付、恢复或补签回执流程，不能用旧成功回执验收新 WAV。需要调整声音时修改 timeline，重跑完整 `vtx all` 并核对成片 QC 与项目内容门；阶段顺序见 [runbook](runbook.md)，终链合同见 [ARCHITECTURE §1.2](../../ARCHITECTURE.md)。
+
 ## 渲染速度：草稿 / GPU / 缓存
 ```bash
 # 迭代预览（不碰正式产物）：540p + NVENC p4，跳过 qc_clean；改动集中片头时加 --frames

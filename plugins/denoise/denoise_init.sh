@@ -14,7 +14,7 @@ set -u
 for license_arg in "$@"; do
   if [ "$license_arg" = "--download" ]; then
     LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
-    python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download denoise || exit "$?"
+    python3 "$LICENSE_ROOT/scripts/policy/model_license_policy.py" legacy-download denoise || exit "$?"
   fi
 done
 
@@ -52,7 +52,7 @@ if [ -s "$WEIGHT_FILE" ]; then
   ok "权重 $WEIGHT_FILE ($(du -sh "$WEIGHTS" | awk '{print $1}'))"
 else
   warn "权重缺失 $WEIGHT_FILE"
-  say "    离线查看证据（不下载、不授予许可）：python3 scripts/model_license_policy.py plan resemble-enhance"
+  say "    离线查看证据（不下载、不授予许可）：python3 scripts/policy/model_license_policy.py plan resemble-enhance"
   say "    旧 mirror/latest --download 为 BLOCKED；许可边界见 docs/third-party-licenses.md。"
 fi
 

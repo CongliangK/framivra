@@ -3,7 +3,7 @@
 
 > **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
 
-口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版；旧路径 `scripts/repack_voice.py` 经转发壳 可达）**。
+口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版）**。
 来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）
 参数化收编——硬编码窗口表 → `spec.json` 驱动；产物按 repack_voice.py 既有消费约定落位，**零协议改动**。
 
@@ -15,8 +15,7 @@
 | `spec.py` | timeline.json voice 轨 `vt_<ID>` 事件链 → spec.json（预算口径见下方 spec.json 格式节） |
 | `indextts_worker.py` | IndexTTS-2.5 重活件——**由配置解释器执行**（conda indextts py3.10 / repo venv py3.11，可 import indextts/torch），模型单次加载多窗串行 |
 | `edge_worker.py` | edge-tts 兜底引擎（晓晓 zh-CN-XiaoxiaoNeural，免 GPU 免模型，subprocess 二进制 + 同 atempo/归一链） |
-| `atempo.py` | atempo 参数纯函数（`atempo_chain(raw_s, budget_s)`，方向 raw/budget + 域外 √ 双级链）+ ffmpeg 应用器 |
-| `levelnorm.py` | 峰值归一 -6dBFS（ffmpeg volumedetect + volume，幂等） |
+| `audio_processing.py` | 单一 final 音频加工模块：时长预算 atempo（raw/budget，域外拆级）+ 峰值归一 -6dBFS（volumedetect + volume，幂等）；`tempo` 子命令只计算滤镜，`normalize` 子命令支持单 WAV/目录与 `--target`，会原位写音频。参数见 `python3 apps/tts/audio_processing.py --help`。 |
 | `init.sh` | 默认本地资产探测；未审查的混合下载明确阻断，许可与恢复边界见 [第三方许可](../../docs/third-party-licenses.md) |
 | `tests/` | unittest（atempo golden / spec 预算 / levelnorm / manifest+final 格式；零模型零 GPU 零网络） |
 

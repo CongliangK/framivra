@@ -130,7 +130,7 @@ class StrictMediaGate(unittest.TestCase):
 
     def test_new_ffmpeg_selectors_have_deterministic_complete_module_ownership(self):
         names = ('tests.test_filter_threads.NewCase',
-                 'tests.test_frame_source.NewCase',
+                 'tests.gfx.test_frame_source.NewCase',
                  'tests.test_future_media.First', 'tests.test_future_media.Second')
         with mock.patch.dict(ci.MEDIA_TESTS, {'ffmpeg': names}):
             self.assertEqual(ci.ffmpeg_group('1'), names[:1])
@@ -139,7 +139,7 @@ class StrictMediaGate(unittest.TestCase):
 
     def test_empty_duplicate_or_overlapping_ffmpeg_group_configuration_fails(self):
         invalid_names = ((), ci.MEDIA_TESTS['ffmpeg'] * 2,
-                         ('tests.test_filter_threads',), ('tests.test_frame_source',),
+                         ('tests.test_filter_threads',), ('tests.gfx.test_frame_source',),
                          ('tests.test_future_media',))
         for names in invalid_names:
             with self.subTest(names=names), \
@@ -424,10 +424,10 @@ class NewBrowser(unittest.TestCase):
     def test_current_repository_cpu_media_gates_are_all_selected(self):
         with contextlib.redirect_stdout(io.StringIO()):
             inventory = ci.check_media_inventory()
-        self.assertEqual(inventory['tests.test_gfx_cache_integrity.RealBrowserIntegrity'], 'chrome')
+        self.assertEqual(inventory['tests.gfx.test_gfx_cache_integrity.RealBrowserIntegrity'], 'chrome')
         self.assertEqual(inventory['tests.test_failure_recovery.RealChromeRecovery'], 'chrome')
         self.assertEqual(inventory['tests.test_failure_recovery.RealFFmpegRecovery'], 'ffmpeg')
-        for selector in ('tests.test_gfx_cache_integrity.RealBrowserIntegrity',
+        for selector in ('tests.gfx.test_gfx_cache_integrity.RealBrowserIntegrity',
                          'tests.test_failure_recovery.RealChromeRecovery',
                          'tests.test_failure_recovery.RealFFmpegRecovery'):
             with self.subTest(selector=selector):
@@ -477,7 +477,7 @@ class SafetyCommandHangGuard(unittest.TestCase):
                 else:
                     self.assertTrue(case.vtx_environment_fixture)
                     self.assertEqual(command[:3], ['env', 'python3', '-c'])
-                    self.assertIn('from tests.gfx_environment_fixture import collect, find_chrome', command[3])
+                    self.assertIn('from tests.gfx._environment import collect, find_chrome', command[3])
                     self.assertIn("runpy.run_path(sys.argv[0], run_name='__main__')", command[3])
                     self.assertEqual(command[4], str(support.REPO / 'vtx/vtx.py'))
                 self.assertEqual(command[-3:], ['-t', str(case.timeline), 'validate'])

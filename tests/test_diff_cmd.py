@@ -155,6 +155,43 @@ class TestVtxDiffCmd(unittest.TestCase):
         """④ 未知字段通用递归兜底 + --dry-run 尊重。"""
         self._run_scenario(scenario_4_unknown_and_dryrun)
 
+    def test_named_reports_keep_distinct_duplicate_and_status_policies(self):
+        from vtx.diffcmd import diff_reports
+
+        for field, status in (("checks", "pass"), ("indicators", "status")):
+            with self.subTest(field=field):
+                a = {field: [
+                    {"name": "duplicate", status: True, "detail": "first"},
+                    {"name": "duplicate", status: False, "detail": "last"},
+                    {"name": "removed", "detail": "old"},
+                ], "future": {"value": 1}}
+                b = {field: [
+                    {"name": "duplicate", status: True, "detail": "first"},
+                    {"name": "added", "detail": "new"},
+                ], "future": {"value": 2}}
+                expected = [] if field == "checks" else [
+                    ("state", "indicators[duplicate]", "✗", "✓"),
+                    ("change", "indicators[duplicate].detail", "last", "first"),
+                ]
+                expected += [
+                    ("change", "future.value", 1, 2),
+                    ("add", f"{field}[added]", None, "new"),
+                    ("del", f"{field}[removed]", "old", None),
+                ]
+                expected.sort(key=lambda e: ({"state": 0, "change": 1, "add": 2, "del": 3}[e[0]], e[1]))
+                self.assertEqual(diff_reports(a, b), expected)
+
+        # Truthy QC values are equivalent, but audit status remains raw data.
+        for old, new in (("ok", "warn"), (None, False), ([], {})):
+            with self.subTest(old=old, new=new):
+                self.assertEqual(diff_reports(
+                    qc_rep([("x", old, "")]), qc_rep([("x", new, "")])), [])
+                changes = diff_reports(
+                    {"indicators": [{"name": "x", "status": old}]},
+                    {"indicators": [{"name": "x", "status": new}]})
+                self.assertEqual(len(changes), 1)
+                self.assertEqual(changes[0][:2], ("state", "indicators[x]"))
+
 
 def main():
     print("== vtx diff 单元测试 ==")

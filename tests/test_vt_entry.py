@@ -53,6 +53,8 @@ def _isolated_env(root):
     tools = root / "bin"; tools.mkdir()
     for name in ("env", "bash", "git", "ffmpeg", "ffprobe", "node", "google-chrome"):
         binary = shutil.which(name)
+        if name == "google-chrome" and not binary:
+            binary = shutil.which("chromium") or shutil.which("chromium-browser")
         if not binary:
             raise AssertionError(f"CLI fixture requires a real executable: {name}")
         (tools / name).symlink_to(binary)
@@ -247,13 +249,13 @@ class ListCheck(unittest.TestCase):
         self.assertNotIn("✗ FAIL", r.stdout)
         self.assertEqual([line for line in r.stdout.splitlines() if "✗" in line], [])
 
-    def test_apps_and_skills_list_ok(self):
-        for args in (("apps", "list"), ("templates", "list"), ("skills", "list"),
+    def test_apps_and_templates_list_ok(self):
+        for args in (("apps", "list"), ("templates", "list"),
                      ("apps", "check"), ("plugins", "check"),
-                     ("templates", "check"), ("skills", "check")):
+                     ("templates", "check")):
             r = _vt(*args)
             self.assertEqual(r.returncode, 0, f"{args}: {r.stdout}{r.stderr}")
-            if args[0] not in ("templates", "skills"):
+            if args[0] != "templates":
                 _assert_doctor_passes_with_optional_unavailable(self, _vt("doctor", "--json"))
 
     def test_bad_subcommand_usage_error(self):
@@ -513,12 +515,12 @@ class DoctorSkillsSection(IsolatedTemplateCase):
         self.assertEqual(len(installed[1]["uses_apps"]), 12)
         self.assertFalse(self.mount.exists())
 
-    def test_templates_cli_and_skills_alias_have_identical_results(self):
+    def test_templates_cli_rejects_retired_skills_alias(self):
         for command in ("list", "check"):
             with self.subTest(command=command):
                 canonical = self.invoke("templates", command)
                 alias = self.invoke("skills", command)
-                self.assertEqual(canonical, alias)
+                self.assertEqual(alias[0], 2, alias)
                 self.assertEqual(canonical[0], 0, canonical)
                 self.assertIn("templates/tech-talk@1.0.0", canonical[1])
                 self.assertIn("templates/skill-demo@0.1.0", canonical[1])
@@ -568,7 +570,7 @@ class TemplateMalformedFixtures(IsolatedTemplateCase):
         item = report["installed"][0]
         self.assertFalse(item["ok"], item)
         self.assertIn(message, item["error"])
-        for kind in ("templates", "skills"):
+        for kind in ("templates",):
             for command in ("list", "check"):
                 result = self.invoke(kind, command)
                 self.assertEqual(result[0], 1, result)

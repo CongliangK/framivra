@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tests.test_agent_diagnostics_operations import StageOperations
-from tests.test_agent_diagnostics_qc import _FakeContext
+from tests.qc._support import _FakeContext
 from vtx import qc
 from vtx.infra import Ctx
 

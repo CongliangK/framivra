@@ -78,7 +78,7 @@ def nvenc_concurrency(c, workers: int) -> int:
 # 管的是【本进程内】全部 NVENC 编码点：① seg 预编码（composite.prepare_layers 无
 # alpha 分支的 NVENC 任务，经 infra.run_ffmpeg_task 逐任务占槽）；② 段渲染
 # （composite.render_segmented 的 NVENC 段，批次开始一次性占 min(workers, 预算) 个
-# 槽、结束释放）。4K 导出（scripts/check_4k.sh）是独立 ffmpeg 进程，不经过本信号量
+# 槽、结束释放）。4K 导出（apps/publish/check_4k.sh）是独立 ffmpeg 进程，不经过本信号量
 # ——跨进程协调靠用户把 VTX_NVENC_BUDGET 按「预算 − 本进程并发」下调。
 # 预算默认 8：NVENC 并发拐点实测 8（超过后聚合 fps 无收益，反触发驱动会话回落，
 # 见方案二/DEV.md）。探测（nvenc_concurrency）与预算分工：探测管「NVENC 会话真

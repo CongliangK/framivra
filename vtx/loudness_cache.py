@@ -11,7 +11,7 @@ wav 域 TP 不算数（原生 aac 真峰过冲教训），跨域共享危险且�
 cache_state.media_stat_digest（首尾 64KB 采样哈希，与 hygiene._fp 同判据）。
 文件任何变动（size/mtime_ns/内容采样）→ 键变 → 自然失效重测，不跨版本复用数字。
 
-API 不依赖 Ctx（scripts/content_gates.py 侧复用）：
+API 不依赖 Ctx（apps/gates/content_gates.py 侧复用）：
   lookup(path, root=None) -> dict|None
   measure_and_store(path, run_fn, root=None) -> dict
 run_fn() -> (i_lufs, tp_dbfs)：实际测量由调用方组装（通常是一条 ffmpeg ebur128），

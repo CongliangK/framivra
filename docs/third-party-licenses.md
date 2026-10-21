@@ -11,9 +11,9 @@
 ## 零写态检查
 
 ```bash
-env python3 scripts/model_license_policy.py audit
-env python3 scripts/model_license_policy.py plan qwen-asr-1.7b
-env python3 scripts/model_license_policy.py download --help
+env python3 scripts/policy/model_license_policy.py audit
+env python3 scripts/policy/model_license_policy.py plan qwen-asr-1.7b
+env python3 scripts/policy/model_license_policy.py download --help
 ```
 
 `audit` 显示既有改编源件的未知 provenance 警告；根许可证声明不能代替改编来源/notice 的权利核实。它检查根许可证声明、内核依赖载荷与已追踪的模型/二进制扩张，保什么：清单形态、保存的证据哈希与当前默认载荷边界；不保什么：法律效力、全部数据权利、隐藏/改名二进制、任意传递依赖或外部进程行为。新增默认组件或上游资产须独立复核，不靠扩展名检查取得许可。专用测试由统一 unittest 入口发现；文档七门不自动执行法律审查或真实模型下载。
@@ -39,5 +39,5 @@ FR43 已知默认载荷硬阻塞已消除；三项可选模型实现的改编来
 `distribution_license_audit` 只读调用者提供的本地归档，不解压、不联网；输出归档 SHA-256、逐成员哈希、存在的已登记组件和适用阻塞。保什么：所检查字节的清单、已登记源码/通知完整性及已知权重扩展名检查；不保什么：未登记改名载荷、上游权利、法律兼容性、远端已发布包或外部安装环境。合法相对链接只记载目标，不跟随。真实发版须对每个最终资产单独留证，不能以本地候选构建代替。
 
 ```bash
-env python3 -m scripts.distribution_license_audit --help
+env python3 -m scripts.policy.distribution_license_audit --help
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build optional real 3D, pixel-grid or video-reaction source projects.
+"""Build independent media source projects for fifteen motion styles.
 
 Source PNG encoding is asset creation; editing, mixing and delivery use vtx.
 No browser startup, package installation or permission changes are performed.
@@ -81,20 +81,22 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
     if any(type(value) is not int or value < 64 for value in (render_width,render_height)) or render_width*9 != render_height*16: raise ValueError('render dimensions must be integer 16:9 sizes')
     if style != 'soft-3d' and (render_width,render_height) != (1920,1080): raise ValueError('render dimensions only apply to the 3D producer')
     renderer_name = ('render_'+PRODUCERS[style]+'.py') if style in PRODUCERS else ('render_3d.py' if style=='soft-3d' else 'captions.py')
-    sources={'build.py':(ROOT/'build.py').read_bytes(),renderer_name:(ROOT/renderer_name).read_bytes(), 'build_media.snapshot.py':SELF_SOURCE}
+    renderer_path = ROOT/'styles'/style/'scripts'/renderer_name
+    sources={'build.py':(ROOT/'build.py').read_bytes(),renderer_name:renderer_path.read_bytes(), 'build_media.snapshot.py':SELF_SOURCE}
     builder=frozen_module('build.py',sources['build.py'])
-    renderer=frozen_module(renderer_name,sources[renderer_name])
+    renderer=frozen_module(str(renderer_path),sources[renderer_name])
     # Only common timeline/cue inputs go to the Canvas skeleton. Backend palettes
     # have their own schemas (flat-vector uses six colors) and are not Canvas data.
     basic={key:content[key] for key in ('title','subtitle','seed') if key in content}
-    builder.build(style,output,basic,frames,True)
+    builder.build(style,output,basic,frames,True,scaffold=False)
     data=dict(content);font_path=data.pop('font_path',None)
     if font_path is not None and not Path(font_path).is_file(): raise ValueError('font_path must name an existing local font')
     if style=='soft-3d':
         preflight=renderer.validate_3d_content(data,frames,samples,width=render_width,height=render_height)
         if three_d_mode=='storyboard':
-            sources['compose_3d_story.py']=(ROOT/'compose_3d_story.py').read_bytes()
-            composer=frozen_module('compose_3d_story.py',sources['compose_3d_story.py'],{'_RENDERER':renderer,'_RENDERER_SHA256':hashlib.sha256(sources[renderer_name]).hexdigest()})
+            composer_path=renderer_path.with_name('compose_3d_story.py')
+            sources['compose_3d_story.py']=composer_path.read_bytes()
+            composer=frozen_module(str(composer_path),sources['compose_3d_story.py'],{'_RENDERER':renderer,'_RENDERER_SHA256':hashlib.sha256(sources[renderer_name]).hexdigest()})
             plate_indices=composer.story_plate_indices(data,frames)
     elif style in PRODUCERS:
         preflight=getattr(renderer,'validate_'+PRODUCERS[style]+'_content')(data,frames,font_path)
@@ -106,7 +108,7 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
         return {'style':style,'frames':frames,'mode':three_d_mode if style=='soft-3d' else 'source-frames','output':str(output),'preflight':preflight}
     for tool in (('blender','ffmpeg') if style=='soft-3d' else ('ffmpeg',)):
         if not shutil.which(tool): raise ValueError(tool+' is required for selected media path')
-    timeline=builder.build(style,output,basic,frames)
+    timeline=builder.build(style,output,basic,frames,scaffold=False)
     output=Path(output);media=output/'media';media.mkdir()
     for name,source in sources.items(): (output/name).write_bytes(source)
     renderer.__file__=str(output/renderer_name)

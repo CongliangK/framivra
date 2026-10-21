@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 
 from vtx import env_manifest as em   # noqa: E402
-import gfx_golden as gg              # noqa: E402
+from scripts.gfx import gfx_golden as gg              # noqa: E402
 from PIL import Image                # noqa: E402
 
 W, H = 32, 24   # golden 门禁测试用假帧尺寸（小图提速）
@@ -680,7 +680,7 @@ def _fill_cache(tp: Path, clips):
 
 
 class TestGfxGoldenEnvGate(unittest.TestCase):
-    """消费点接入：scripts/gfx_golden.py build --env-manifest 嵌入基线，
+    """消费点接入：scripts/gfx/gfx_golden.py build --env-manifest 嵌入基线，
     compare --env-manifest 跨后端环境前置门禁（不兼容 → 拒绝像素比对）。"""
 
     def setUp(self):

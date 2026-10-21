@@ -3,7 +3,7 @@
   "name": "phantom_key",
   "kind": "capture",
   "expect_rc": 1,
-  "cmd": ["python3", "scripts/verify_contract_surface.py", "--stages", "tests/doc_gates_golden/g11_phantom_key/stages_copy.py"],
+  "cmd": ["python3", "scripts/docs/verify_contract_surface.py", "--stages", "tests/doc_gates_golden/g11_phantom_key/stages_copy.py"],
   "attack": "KERNEL_KEYS 幻影 scope 注入:副本 KERNEL_KEYS 新增 \"ghost_scope\": {\"x\"}(schema 容器映射无此 scope;--stages 覆盖参免触真件)",
   "expected_behavior": "verify_contract_surface ① 对账:ghost_scope 键逐键列幻影(L7 FAIL: scope ghost_scope key x not in schema),summary FAIL=1,exit 1",
   "fixture": "stages_copy.py(真 vtx/stages.py 只读复制至档目录,文件头加注 golden 副本后注入幻影 scope;真件只读零触,集成席收口重验)",

@@ -13,7 +13,7 @@ infra/hygiene/cache_state/stages 依赖，反向依赖会成环）；模块内�
                 三不变量聚合入口（contribute_keys / active_plugins_digest /
                 get_cache_dirs）；P1-2 时点 plugins/ 无实体包，总线空转
   config.py     config 统一加载（§5.3：VTX_CONFIG > repo config.local.json；
-                坏 JSON 警告+{}；已知路径键 ~ 展开；IMGEN_CONFIG 废弃公告）
+                坏 JSON 警告+{}；已知路径键 ~ 展开）
 
 三不变量（§2.1）的内核接线位置（P1-2 完成，空转零行为变化）：
   ① 缓存键贡献   hygiene._current_keys（ak 并集）/ gc_plan（cache 根白名单）

@@ -142,7 +142,7 @@ target_link_libraries(shm_ring_selftest PRIVATE Threads::Threads)
 
 # ---- pixel_ops_selftest：#111 算子/双编码器/原子落盘原生自检与基准
 #      （无 CEF 依赖；(c,a) 全域穷举 + 双编码器往返 + --bench 性能证据；
-#      tests/test_cef_worker_pixel_ops.py 门控消费）。----
+#      tests/gfx/test_cef_worker_pixel_ops.py 门控消费）。----
 add_executable(pixel_ops_selftest src/pixel_ops_selftest.cpp
                                  src/pixel_ops.cpp src/png_writer.cpp
                                  ${SPNG_SOURCES} ${FPNG_SOURCES})
@@ -154,7 +154,7 @@ target_link_libraries(pixel_ops_selftest PRIVATE Threads::Threads
 # ---- frame_sync_selftest：#114 状态机原生对抗自检（无 CEF 依赖；强制注入
 #      旧 paint/跨世代同帧/重复请求/签名半更新/超时等确定性 fixture；
 #      --jsonl-out 供 Python 跨语言全量 JSON 校验；
-#      tests/test_cef_frame_sync.py 门控消费）。----
+#      tests/gfx/test_cef_frame_sync.py 门控消费）。----
 add_executable(frame_sync_selftest src/frame_sync_selftest.cpp
                                   src/frame_sync_machine.cpp
                                   src/frame_pipeline.cpp src/pixel_ops.cpp)
