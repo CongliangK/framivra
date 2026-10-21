@@ -34,9 +34,9 @@ import requests
 TMPFILES_UPLOAD_URL = "https://tmpfiles.org/api/v1/upload"
 
 # 自有服务器图床（可选通道，环境变量注入；未配置 VT_OWN_UPLOAD_SSH_TARGET 即跳过）。
-OWN_SERVER_SSH_TARGET = os.environ.get("VT_OWN_UPLOAD_SSH_TARGET") or os.environ.get("SC_IMG_SSH_TARGET", "")
-OWN_SERVER_REMOTE_DIR = os.environ.get("VT_OWN_UPLOAD_REMOTE_DIR") or os.environ.get("SC_IMG_REMOTE_DIR", "/var/www/sc-img")
-OWN_SERVER_BASE_URL = os.environ.get("VT_OWN_UPLOAD_BASE_URL") or os.environ.get("SC_IMG_BASE_URL", "")
+OWN_SERVER_SSH_TARGET = os.environ.get("VT_OWN_UPLOAD_SSH_TARGET", "")
+OWN_SERVER_REMOTE_DIR = os.environ.get("VT_OWN_UPLOAD_REMOTE_DIR") or "/var/www/sc-img"
+OWN_SERVER_BASE_URL = os.environ.get("VT_OWN_UPLOAD_BASE_URL", "")
 
 
 def _upload_proxies() -> Optional[dict]:
