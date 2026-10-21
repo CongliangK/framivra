@@ -421,6 +421,14 @@ class LegacyCertificate(unittest.TestCase):
         with self.assertRaises(gfx_cache_reader.GfxCacheError):
             gfx_cache_reader.resolve_frames(self.c, self.clip)
 
+    def canonical(self):
+        directory = gfx_dir(self.c, self.clip)
+        directory.parent.mkdir(parents=True)
+        self.legacy.rename(directory)
+        self.assertEqual(gfx_cache_reader.resolve_frames(self.c, self.clip),
+                         [directory / f'f{i:04d}.png' for i in range(2)])
+        return directory
+
     def test_verified_default_cdp_cli_stem_is_readonly_but_production_stays_closed(self):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(os.environ, VTX_GFX=backend):
@@ -438,14 +446,16 @@ class LegacyCertificate(unittest.TestCase):
                     for name in ('vtx.infra.Ctx', 'vtx.gfx_cli.complete_page',
                                  'vtx.gfx_cef.render_page', 'vtx.gfx_render.render_page',
                                  'subprocess.Popen', 'vtx.fstxn.atomic_write',
-                                 'vtx.fstxn.mkdir', 'vtx.fstxn.unlink', 'vtx.fstxn.locked_staging'):
+                                 'vtx.fstxn.mkdir', 'vtx.fstxn.unlink', 'vtx.fstxn.locked_staging',
+                                 'pathlib.Path.glob', 'pathlib.Path.rglob', 'pathlib.Path.iterdir'):
                         audit.enter_context(mock.patch(name, side_effect=AssertionError(name)))
-                    self.assertEqual(gfx_cache_reader.resolve_frames(self.c, self.clip),
-                                     [self.legacy / f'f{i:04d}.png' for i in range(2)])
+                    with self.assertRaisesRegex(gfx_cache_reader.GfxCacheError, 'rerun vtx gfx'):
+                        gfx_cache_reader.resolve_frames(self.c, self.clip)
                 self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in self.legacy.iterdir()})
 
     def test_missing_malformed_stale_wrong_geometry_count_namespace_hash_marker(self):
-        marker = self.legacy / 'complete.json'
+        directory = self.canonical()
+        marker = directory / 'complete.json'
         original = marker.read_text()
         variants = ['{bad', '{}', 'null']
         record = json.loads(original)
@@ -460,17 +470,20 @@ class LegacyCertificate(unittest.TestCase):
                 marker.write_text(value)
                 self.reject()
         marker.write_text(original)
-        write_png(self.legacy / 'f0000.png', frame=99)
+        self.assertEqual(gfx_cache_reader.resolve_frames(self.c, self.clip)[0].parent, directory)
+        write_png(directory / 'f0000.png', frame=99)
         self.reject()
 
     def test_stale_html_and_hole_rejected(self):
+        directory = self.canonical()
         page = self.root / 'page.html'
         original = page.read_text()
         page.write_text('<html>changed</html>')
         self.reject()
         page.write_text(original)
-        (self.legacy / 'f0001.png').unlink()
-        write_png(self.legacy / 'f9999.png')
+        self.assertEqual(gfx_cache_reader.resolve_frames(self.c, self.clip)[0].parent, directory)
+        (directory / 'f0001.png').unlink()
+        write_png(directory / 'f9999.png')
         self.reject()
 
     def test_existing_broken_canonical_never_hidden(self):

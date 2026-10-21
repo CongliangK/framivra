@@ -2,11 +2,8 @@
 
 No rendering, certification, marker publication or directory discovery. HTML
 caches require exact completion records with the selected backend/environment
-identity. Default CDP/CLI may use its explicitly derived legacy stem only when
-the canonical location is absent; neither location accepts unmarked PNGs.
+identity at the canonical production location; unmarked PNGs are not accepted.
 """
-from pathlib import Path
-
 from . import gfx_cli
 from .hygiene import gfx_cache_ns
 
@@ -38,7 +35,7 @@ def resolve_frames(c, clip):
     Accepts the renderer context or a read-only view with root/cache/tl/fps/w/h;
     backend selection, worker identity, dependencies and namespace use the same
     production functions as rendering. Never searches other namespaces/keys.
-    The input cache is not modified, including legacy caches without a marker.
+    The input cache is not modified; obsolete stem directories are not read.
     """
     from .frame_source import png_source
     from . import gfx_svg
@@ -54,14 +51,8 @@ def resolve_frames(c, clip):
     namespace = gfx_cache_ns()
     key = source.directory.name
     directory = source.directory
-    # Only one explicitly derived old location, never discovery. An existing
-    # canonical entry (including a broken symlink/non-directory) must fail on
+    # The canonical entry (including a broken symlink/non-directory) must fail on
     # its own merits, not be concealed by otherwise valid historical frames.
-    if (not namespace and selected() in ('cdp', 'cli')
-            and not directory.exists() and not directory.is_symlink()):
-        candidate = c.cache / Path(clip['src']).stem
-        if candidate.is_dir():
-            directory = candidate
     dependency_digest = digest(resolve(c, clip)) if policy(c) == 'strict' else None
     n = source.frame_count
     from .gfx_environment import certificate, recheck
@@ -79,7 +70,7 @@ def resolve_frames(c, clip):
             directory, n, key, c.w, c.h, backend_ns=namespace or None,
             dependency_digest=dependency_digest, environment=environment)
         if bad:
-            raise GfxCacheError(f'gfx 缓存无效 {directory}: {bad[:8]}')
+            raise GfxCacheError(f'gfx 缓存无效 {directory}: {bad[:8]}; rerun vtx gfx')
         if needs_publication:
-            raise GfxCacheError(f'gfx complete.json 缺失或与当前页合同/namespace 不符: {directory}')
+            raise GfxCacheError(f'gfx complete.json 缺失或与当前页合同/namespace 不符: {directory}; rerun vtx gfx')
     return [directory / f'f{i:04d}.png' for i in range(n)]
