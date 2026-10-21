@@ -486,6 +486,7 @@ class FaultInjectionDoD(_ServeFixture):
             for f, frame in enumerate(held, start=1):
                 self.assertEqual(frame.header["canary_frame_index"], f)
             rss_before = _vm_rss_kb(self.proc.pid)
+            self.assertGreaterEqual(rss_before, 0, "无法读取 worker 阻塞前 VmRSS")
 
             def stall_then_release():
                 time.sleep(5.0)               # 故意阻塞 5 秒（DoD 口径）
@@ -499,6 +500,7 @@ class FaultInjectionDoD(_ServeFixture):
                 self.assertEqual(frame.header["canary_frame_index"], 5)
                 bp = frame.backpressure_wait_us
             rss_after = _vm_rss_kb(self.proc.pid)
+            self.assertGreaterEqual(rss_after, 0, "无法读取 worker 阻塞后 VmRSS")
             # 背压计时入账：等待 ≈ 阻塞时长（允许 1s 收敛误差）
             self.assertGreaterEqual(bp, 4_000_000,
                                     f"backpressure_wait_us={bp}（应≈5s）")

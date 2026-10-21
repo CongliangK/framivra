@@ -405,7 +405,10 @@ class TestPassKeySubsSeparation(unittest.TestCase):
         self.assertEqual(self._p0_pkey(False), self._p0_pkey(False))
 
 
-@unittest.skipUnless(_have_ffmpeg_x264(), "需要 ffmpeg 与 libx264 编码器")
+_HAVE_FFMPEG_X264 = _have_ffmpeg_x264()
+
+
+@unittest.skipUnless(_HAVE_FFMPEG_X264, "需要 ffmpeg 与 libx264 编码器")
 class TestCrossRunDeterminism(unittest.TestCase):
     """dense-EOF 端点图的跨运行确定性（真渲染，走 RenderPlan.composite 逐层 pass 路径）。
 
@@ -499,7 +502,7 @@ class TestCrossRunDeterminism(unittest.TestCase):
                          f"输出帧数 != 段长 60：{frames}")
 
 
-@unittest.skipUnless(_have_ffmpeg_x264(), "需要 ffmpeg 与 libx264 编码器")
+@unittest.skipUnless(_HAVE_FFMPEG_X264, "需要 ffmpeg 与 libx264 编码器")
 class TestPngSourceFrameAlignment(unittest.TestCase):
     """Decode frame IDs: correct counts/PTS alone cannot detect a skipped PNG.
 

@@ -544,12 +544,11 @@ class TestCli(unittest.TestCase):
     def test_nseg_env_followed(self):
         """P2a：VTX_VIDEO_SEGMENTS 与 composite 同源取值（切点集随 env 变化）。"""
         from vtx.timeline_diff import _nseg
-        self.assertEqual(_nseg(), 8)
-        os.environ["VTX_VIDEO_SEGMENTS"] = "4"
-        try:
+        with mock.patch.dict(os.environ):
+            os.environ.pop("VTX_VIDEO_SEGMENTS", None)
+            self.assertEqual(_nseg(), 8)
+            os.environ["VTX_VIDEO_SEGMENTS"] = "4"
             self.assertEqual(_nseg(), 4)
-        finally:
-            del os.environ["VTX_VIDEO_SEGMENTS"]
 
 
 if __name__ == "__main__":
