@@ -2,7 +2,7 @@
 
 权威实现：`src/ipc_protocol.hpp`（消息/常量 + 偏移静态断言）、
 `src/shm_ring.hpp`（环布局）、`src/serve.cpp`（worker 侧）、
-`cef_client.py`（Python 消费端镜像）。测试
+`../../vtx/cef_client.py`（Python 消费端镜像）。测试
 `tests/gfx/test_cef_worker_shm.py::NativeRingSelfTest` 以
 `shm_ring_selftest --dump-ring` 跨语言锁定本表。
 
@@ -12,8 +12,8 @@
    （`alignas(64)` 后结构体 128B），无法装入「64 字节回执」。本实现以
    **冻结字段集为准**：模式 1 回执 = 完整 `FrameSlotHeader`（128B 原生
    布局）。64B 定长仅 `FrameRequest`（可达）。
-2. **Python 客户端**：唯一实现为 `vtx/cef_client.py`；本目录 `cef_client.py`
-   为实验自检兼容导入。生产 Alpha 使用同一协议，无另一套解析器。
+2. **Python 客户端**：唯一实现为 `vtx/cef_client.py`；生产 Alpha 与实验
+   自检均直接使用该客户端，无另一套解析器或兼容导入壳。
 3. **槽位状态机位置**：冻结字段集无空闲字承载生命周期状态，EMPTY/
    WRITING/READY 门置于环控制块 `SlotGate`（专享缓存行），槽头保持
    工单原样作帧描述/计时面。
@@ -49,9 +49,10 @@
 
 ## §1 传输与字节序
 
-- **控制流**：Unix Domain Socket（worker `--ipc-socket=<path>` 监听，
-  单宿主契约；`VTXCEF_SERVE_READY socket=… pid=… run_id=… slots=4`
-  stdout 行后可连接）。
+- **控制流**：Unix Domain Socket，单宿主契约。Linux 由 worker
+  `--ipc-socket=<path>` 监听，`VTXCEF_SERVE_READY socket=… pid=… run_id=… slots=4`
+  stdout 行后可连接；Darwin 由宿主经 `--ipc-fd=N` 传入已连接的 Unix
+  stream socketpair 端点，与 `--ipc-socket` 互斥，消息与 SHM 布局不变。
 - **数据流（模式 2）**：POSIX SHM 4-Slot 环。**零残留设计**：
   `shm_open(O_CREAT|O_EXCL)` → `ftruncate` → `mmap` → **立即
   `shm_unlink`** —— 解绑成功后名字消失，实体在最后 fd/映射释放后由内核
@@ -59,7 +60,7 @@
   当前实现不检查解绑返回值，不能保证任何时刻零残留。消费端 fd 经 Hello
   消息 **SCM_RIGHTS** 随带交付
   （工单「消费端映射同一 shm_open 句柄」）。
-- **字节序**：小端（目标面 linux64/x86-64）；全部消息定长、无隐式
+- **字节序**：小端（Linux x86-64 / Darwin arm64）；全部消息定长、无隐式
   填充（`<` packed 语义与 C++ 原生偏移一致，静态断言钉死）。
 
 ## §2 SHM 环布局
@@ -70,11 +71,11 @@
 slot_stride = align64(128 + frame_bytes)；frame_bytes = max_w*max_h*4
 ```
 
-### RingControl（偏移表 = cef_client.py `_CTRL_*` 镜像）
+### RingControl（偏移表 = vtx/cef_client.py `_CTRL_*` 镜像）
 
 | 偏移 | 类型 | 字段 | 语义 |
 | --- | --- | --- | --- |
-| 0 | u32 | layout_ready | 创建者 release-store `0x56545852`（"VTXR"）发布布局；消费端 acquire 自旋 |
+| 0 | u32 | layout_ready | 创建者 release-store `0x56545852`（"VTXR"）发布布局；原生消费端 acquire 自旋，Python 客户端以 `struct.unpack_from` 轮询 |
 | 4 | u32 | magic | `0x56545852` |
 | 8 | u16 | protocol_version | 1 |
 | 10 | u16 | ring_slots | 4 |
@@ -94,9 +95,10 @@ READY --Release(读者,release)--> EMPTY
 WRITING --Abandon(写者,错误路径)--> EMPTY
 ```
 
-同步语义：发布先写槽头+像素数据，后 release-store `READY`；读者
+原生同步语义：发布先写槽头+像素数据，后 release-store `READY`；原生读者
 acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数据区）。
-`seq` 为该槽累计发布序号（通知回传，ABA 防御）。
+`seq` 为该槽累计发布序号（通知回传，ABA 防御）。Python 客户端通过
+`struct` 读写槽门，不实现 C++ atomic acquire/release；快照校验见 §4。
 
 ## §3 消息（Socket 控制流）
 
@@ -151,7 +153,9 @@ spng L1 SUB|UP）→ `.tmp.<pid>.<tid>`+`rename` 原子落盘 → 回执(128B)�
 请求(64B) → **先取空槽**（4 槽全满=背压：暂停发起下一帧 BeginFrame，
 分片等待并计时 `backpressure_wait_us`，超时→TIMEOUT 通知，绝不死等）
 → OnPaint 紧凑拷入槽数据 → 填槽头 → Publish(READY) → 通知(32B: 槽索引
-+seq+背压计时) → 消费端 mmap 同 fd 零拷贝读 → 写门 EMPTY 释放。
++seq+背压计时) → Python 消费端从同 fd 的 mmap 复制 `bytes` 快照，
+复制前后校验槽门 `state=READY` 与通知 `seq` 一致 → 显式释放时校验
+同一发布世代，再写门 EMPTY。`SlotFrame.data` 不是零拷贝视图。
 
 ## §5 金丝雀约定（pages/frame_canary.html）
 

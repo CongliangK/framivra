@@ -49,10 +49,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "experiments" / "gfx_cef_worker"))
 sys.path.insert(1, str(ROOT / "scripts"))
 
-import cef_client  # noqa: E402
+from vtx import cef_client  # noqa: E402
 from scripts.gfx import gfx_golden as gg  # noqa: E402
 
 from vtx.gfx_cli import png_invalid_reason  # noqa: E402
@@ -361,7 +360,6 @@ class AtomicWriteKillWindow(unittest.TestCase):
             errors = []
 
             def requester():
-                sys.path.insert(0, str(ROOT / "experiments" / "gfx_cef_worker"))
                 try:
                     with cef_client.CefWorkerClient.connect(
                             sock, connect_timeout=30, ready_timeout=30) as client:

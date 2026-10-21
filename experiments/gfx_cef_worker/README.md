@@ -9,7 +9,7 @@ libspng/fpng 双编码原子落盘适配器）+ 阶段 3a（#114，CEF-03a：五
 二进制 → C++20 编译 `libcef_dll_wrapper` + `vtx_cef_worker`（双模式 OSR
 渲染 + 后端探针 + 监管契约 + 帧服务协议 + 双 PNG 编码后端 + 帧同步状态
 机）→ 产物全部隔离在本目录，绝不污染仓库打包面（`pyproject.toml` /
-`setup.py` / `MANIFEST.in` / `scripts/package_smoke.py`）。Python 生产接线为
+`setup.py` / `MANIFEST.in` / `tests/runners/package_smoke.py`）。Python 生产接线为
 `vtx/gfx_cef.py`，显式 `VTX_GFX=cef` 选择实验性 Alpha（见下节）；原生二进制不随
 Python wheel 分发。
 
@@ -102,7 +102,7 @@ env VTX_TEST_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worke
 | `src/frame_sync_machine.cpp` | #114 状态机实现：vtx/frame_canary.py 冻结公式的 C++ 消费镜像（P1 xor 0x5A / P2 加性 0x3C×(16,22) / α=254 / 预乘精确反像）；自检与 serve 共用同一判定核心 |
 | `src/frame_sync_selftest.cpp` | #114 原生对抗自检：旧 paint/跨世代同帧/重复请求/签名半更新/超时/早期 paint/尺寸不符/晚到回调等确定性 fixture（无 CEF 依赖；`--jsonl-out` 供 Python 跨语言校验） |
 | `pages/frame_sync_v2.html` | #114 状态机验收页：透明底 canvas（f 纯函数）+ `?f=`（Mode N）+ `__vtx_render(f)`（Mode P）+ `__vtx_originals()`（canary 位原像素上报钩子） |
-| `cef_client.py` | 兼容导入；唯一 Python 协议客户端为 `../../vtx/cef_client.py`（协议镜像见 `IPC_PROTOCOL.md`） |
+| `../../vtx/cef_client.py` | 生产与实验共用的唯一 Python 协议客户端（协议镜像见 `IPC_PROTOCOL.md`） |
 | `pages/frame_canary.html` | #110 金丝雀帧页：f 纯函数（(0,0) 像素编码帧号 + 硬边条纹防步长错位） |
 | `IPC_PROTOCOL.md` | #110 协议权威文档（环布局/偏移表/状态机/双模式时序/故障注入面/工单偏差记录） |
 | `probe_display_matrix.py` | 三态显示环境 × A0/A1 × ozone 矩阵探测（#109）：每格独立 worker 跑 `gfxA.html?f=0` 出 PNG + 内部探针（WEBGL_debug_renderer_info + chrome://gpu）→ 归类生效后端 → 落 `env_manifest.json` |
@@ -225,7 +225,9 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
 记录）。核心设计：
 
 - **SHM 名字解绑**：`shm_open(O_EXCL)` → `ftruncate` → `mmap` →
-  `shm_unlink`；消费端经 Unix Socket SCM_RIGHTS 收同一句柄零拷贝 mmap。
+  `shm_unlink`；消费端经 Unix Socket SCM_RIGHTS 收同一句柄并 mmap。
+  Python 模式 2 复制 `bytes` 快照而非零拷贝视图，复制前后校验槽门
+  state/seq，释放前再校验发布世代；具体时序见 [协议 §4](IPC_PROTOCOL.md#4-请求交付时序)。
   解绑成功后由内核随最后 fd/映射释放回收；创建窗口或解绑失败不保证零
   残留，精确边界见 [协议 §1](IPC_PROTOCOL.md#1-传输与字节序)。
 - **双模式**：模式 1 = Worker 线程池原地落盘 PNG（`.tmp`+rename 原子

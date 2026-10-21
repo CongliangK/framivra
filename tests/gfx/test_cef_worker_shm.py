@@ -42,9 +42,8 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "experiments" / "gfx_cef_worker"))
 
-import cef_client  # noqa: E402  (experiments 面；工单 vtx/ 落点由边界改道)
+from vtx import cef_client  # noqa: E402
 
 from vtx.gfx_cli import png_invalid_reason  # noqa: E402
 from tests.gfx._png import unfilter_rgba
@@ -120,13 +119,12 @@ def rgba_to_bgra(rgba):
 _HOST_SUPERVISED = r'''
 import json, os, sys, time
 from pathlib import Path
-sys.path.insert(0, sys.argv[5])
-import cef_client
+from vtx import cef_client
 from vtx.infra import Ctx
 from vtx.proc_supervisor import SupervisedProcessGroup
 
-root, ready_path, worker, url_tpl, exp_dir = (Path(sys.argv[1]), Path(sys.argv[2]),
-                                              sys.argv[3], sys.argv[4], sys.argv[5])
+root, ready_path, worker, url_tpl = (Path(sys.argv[1]), Path(sys.argv[2]),
+                                      sys.argv[3], sys.argv[4])
 c = Ctx(root / "timeline.json")
 
 
@@ -614,8 +612,7 @@ class SupervisedKillZeroResidue(unittest.TestCase):
         with err.open("wb") as err_fh:
             host = subprocess.Popen(
                 [sys.executable, "-c", _HOST_SUPERVISED, str(self.root),
-                 str(ready), _WORKER, f"{_CANARY_URL}?f={{f}}",
-                 str(ROOT / "experiments/gfx_cef_worker")],
+                 str(ready), _WORKER, f"{_CANARY_URL}?f={{f}}"],
                 cwd=str(ROOT), env={**os.environ, "PYTHONPATH": str(ROOT)},
                 stdout=subprocess.DEVNULL, stderr=err_fh)
         self.hosts.append(host)

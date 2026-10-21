@@ -306,6 +306,7 @@ class TestUntilFlag(unittest.TestCase):
         self.assertEqual(_stage_heads(r.stdout),
                          ["validate", "audit", "prepare", "gfx", "video"])
         r2 = self._dry("--until", "mux", extra_env={"VTX_PIPELINE": "0"})
+        self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
         self.assertEqual(_stage_heads(r2.stdout),
                          ["validate", "audit", "prepare", "gfx", "video", "audio", "mux"])
 

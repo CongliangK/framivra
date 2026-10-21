@@ -35,7 +35,6 @@ import os
 import signal
 import struct
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -44,9 +43,8 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "experiments" / "gfx_cef_worker"))
 
-import cef_client  # noqa: E402  (experiments 面；#110 起随 worker 同目录)
+from vtx import cef_client  # noqa: E402
 
 from vtx.gfx_cli import png_invalid_reason  # noqa: E402
 from tests.gfx._png import unfilter_rgba
