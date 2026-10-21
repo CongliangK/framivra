@@ -78,11 +78,14 @@ def check_subtitles(subs, voice_windows, fps, align_fail=ALIGN_FAIL):
     """
     results = []
     sorted_subs = sorted(subs, key=lambda s: s["in"])
-    # 相邻重叠预判（两条都标 FAIL）：按 in 排序后 out > 后条 in 即重叠
+    # 重叠预判（两条都标 FAIL）：保留此前最远 out，避免长字幕嵌套时只查相邻而漏报
     ov_idx = set()
-    for i, (a, b) in enumerate(zip(sorted_subs, sorted_subs[1:])):
-        if a["out"] > b["in"]:
-            ov_idx.update((i, i + 1))
+    farthest = None
+    for i, s in enumerate(sorted_subs):
+        if farthest is not None and sorted_subs[farthest]["out"] > s["in"]:
+            ov_idx.update((farthest, i))
+        if farthest is None or s["out"] > sorted_subs[farthest]["out"]:
+            farthest = i
     for i, s in enumerate(sorted_subs):
         dur = (s["out"] - s["in"]) / fps
         n = len(s["text"].replace("\\N", ""))
@@ -114,7 +117,7 @@ def check_subtitles(subs, voice_windows, fps, align_fail=ALIGN_FAIL):
             cps_r = {"status": "ok", "detail": f"CPS {cps:.1f}"}
         # ③ 时间重叠
         if i in ov_idx:
-            ov_r = {"status": "fail", "detail": "与相邻字幕时间重叠"}
+            ov_r = {"status": "fail", "detail": "与其他字幕时间重叠"}
         else:
             ov_r = {"status": "ok", "detail": ""}
         # ④ 行宽/行数
