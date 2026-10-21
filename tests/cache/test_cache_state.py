@@ -297,6 +297,56 @@ class StaleReceiptArchive(unittest.TestCase):
             rec = json.loads((out / 'receipt.json').read_text())
             self.assertEqual(set(rec['stages']), {'validate', 'qc'})   # 旧成功保留
 
+            # Invalid receipt containers recover on the next actual write.
+            from vtx.cache_state import load_receipt
+            bad_records = [[], None, False, 0, 'receipt',
+                           {'input_fingerprint': c.input_fingerprint}]
+            for stages in (None, [], False, 1, 'stages'):
+                bad_records.append({'input_fingerprint': c.input_fingerprint,
+                                    'stages': stages})
+            target = out / 'receipt.json'
+            for bad in bad_records:
+                with self.subTest(bad=bad):
+                    target.write_text(json.dumps(bad))
+                    before = target.read_bytes()
+                    self.assertEqual(load_receipt(target, c.input_fingerprint),
+                                     {'input_fingerprint': c.input_fingerprint, 'stages': {}})
+                    self.assertEqual(target.read_bytes(), before)
+                    with self.assertRaisesRegex(RuntimeError, 'prepare'):
+                        c.begin_stage('audio')
+                    self.assertEqual(target.read_bytes(), before)
+                    c.receipt('validate', True)
+                    recovered = json.loads(target.read_text())
+                    self.assertEqual(set(recovered['stages']), {'validate'})
+                    self.assertIs(recovered['stages']['validate']['ok'], True)
+                    self.assertFalse((out / 'receipt.prev.json').exists())
+
+            # A malformed observation is not success, but is still diagnostic
+            # history. Neither rejection nor unrelated writes may erase it.
+            bad_observations = [None, [], True, 1, 'prepare', {}]
+            bad_observations.extend({'ok': ok} for ok in
+                                    (False, None, 'false', 1, 0, [], {}))
+            for observation in bad_observations:
+                with self.subTest(observation=observation):
+                    prior = {'validate': {'ok': True, 'detail': 'prior history'},
+                             'prepare': observation, 'qc': 'diagnostic'}
+                    record = {'input_fingerprint': c.input_fingerprint,
+                              'stages': prior}
+                    target.write_text(json.dumps(record))
+                    before = target.read_bytes()
+                    self.assertEqual(load_receipt(target, c.input_fingerprint), record)
+                    self.assertEqual(target.read_bytes(), before)
+                    with self.assertRaisesRegex(RuntimeError, 'prepare'):
+                        c.begin_stage('audio')
+                    self.assertEqual(target.read_bytes(), before)
+                    c.begin_stage('audit')
+                    self.assertEqual(json.loads(target.read_text())['stages'], prior)
+                    c.receipt('audit', True)
+                    after = json.loads(target.read_text())
+                    self.assertEqual({name: after['stages'][name] for name in prior}, prior)
+                    self.assertIs(after['stages']['audit']['ok'], True)
+                    self.assertFalse((out / 'receipt.prev.json').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
