@@ -185,7 +185,7 @@ class PngSequence:
             self._interval(start, stop)
         # Deliberately no input -frames:v/-t derived from stop: legacy compositor
         # controls output bounds and EOF/repeat. Preserve its optional draft -t.
-        return ["-framerate", str(self.fps), "-start_number", str(start),
+        return ["-reinit_filter", "0", "-framerate", str(self.fps), "-start_number", str(start),
                 *options, "-i", str(self.directory / "f%04d.png")]
 
 
