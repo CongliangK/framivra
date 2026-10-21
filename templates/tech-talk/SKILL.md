@@ -83,7 +83,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
   → 收尾：vtx gc + snapshot 归档
 ```
 
-迭代遵循**修复工作法**：先问后做不脑测 / 在时间轴编排层定性（Blender=审片界面）/ 区分「编排对实现错」vs「编排本身错」/ 用户权威文本 > 代理回读推断。标准修改配方（R1-R4 机制侧见内核 runbook；R5 发布链 / R6 分轨审计 / R7 封面见 `references/runbook-r5r6r7.md`）。
+迭代遵循**修复工作法**：先问后做不脑测 / 在时间轴编排层定性（Blender=审片界面）/ 区分「编排对实现错」vs「编排本身错」/ 用户权威文本 > 代理回读推断。标准修改配方（R1-R4 机制侧见[内核编辑配方](../../docs/skill/references/edit.md)；R5 发布链 / R6 分轨审计 / R7 封面见 `references/runbook-r5r6r7.md`）。
 
 ## 产线衔接与外部资产
 

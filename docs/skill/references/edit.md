@@ -1,6 +1,6 @@
 # 剪辑与修改配方 · timeline.json + vtx
 
-本页是剪辑操作、R1–R4 修改配方与交接的唯一入口；[HTML 创作](gfx.md)、[缓存/回执](../../cache-provenance.md)、[契约](../../ARCHITECTURE.md)分别维护其机制。发布、BGM 分轨审计与封面走 [tech-talk R5/R6/R7](../../../templates/tech-talk/references/runbook-r5r6r7.md)。
+本页是剪辑操作、R1–R4 修改配方与交接的唯一入口；[HTML 创作](gfx.md)、[缓存/回执](../../cache-provenance.md)、[契约](../../ARCHITECTURE.md)分别维护其机制，开发专题从 [DEV](../../DEV.md) 路由。发布、BGM 分轨审计与封面走 [tech-talk R5/R6/R7](../../../templates/tech-talk/references/runbook-r5r6r7.md)。
 
 按任务阅读：[准备与新项目](#使用规则) → [正式交付](#正式交付链r1-r4-共用)；局部修改选 [音频](#r1--纯音频变更音量--duck--fade--bgm-源)、[编排](#r2--时间线编排clip-窗口--轨道--字幕)、[字幕](#r2s--纯字幕修订)、[gfx](#r3--gfx-页改动html--声明依赖--新页)、[冷重渲](#r4--全冷重渲新机--新副本--全链回归)。
 

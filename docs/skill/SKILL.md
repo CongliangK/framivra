@@ -23,7 +23,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 
 局部验证通过后，正式交付统一 `vtx -t <timeline.json> all`。缓存可复用不等于旧阶段成功可继承；完整链负责当前 prepare/gfx/video/audio/mux/qc 及启用插件的 finish。区间预览不走正式回执门、不替代成片验证；不会自动渲染缺失 gfx。判断整片混音前须有当前输入的 prepare/audio 成功，否则区间可能采用窗口自测增益，即使只改字幕或 HTML 也不能据其响度判断成片。报告对比使用 `vtx diff <旧报告> <新报告>`，没有 `qc diff` 子命令。
 
-阶段选项写在子命令后。`--report/--report-only` 仅 audio 可用、相互互斥且不接受 dry-run；`--gpu` 仅 video 可用。具体命令、写入位置与失败处理只在 runbook 维护；耗时记录见 [DEV](../DEV.md)。
+阶段选项写在子命令后。`--report/--report-only` 仅 audio 可用、相互互斥且不接受 dry-run；`--gpu` 仅 video 可用。具体命令、写入位置与失败处理只在 [编辑配方](references/edit.md) 维护；耗时记录见 [DEV](../DEV.md)。
 
 ## 领域路由表
 | 用户任务 / 关键词 | 先读 | 职责与边界 |
