@@ -25,10 +25,17 @@ tests/gfx_bench_suite/smoke.py（env VTX_TEST_CHROME 门控，手动/战役期�
 
 运行：python3 -m unittest tests.gfx.test_gfx_bench_suite
 """
+import contextlib
 import hashlib
+import importlib.util
+import io
+import os
+import sys
+import tempfile
 import json
 import re
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -302,6 +309,225 @@ class TestIdempotencyDoD(unittest.TestCase):
     def test_tier1_definition(self):
         tier1 = load_manifest()["comparison_tiers"]["Tier-1"]
         self.assertIn("max_abs_diff == 0", tier1["definition"])
+
+
+class TestS6SequenceVerifier(unittest.TestCase):
+    """In-process control-flow proofs, not real-browser/pixel acceptance.
+
+    Use the shared stdlib PNG fixture and real artifact validation. The renderer,
+    watchdog and pixel comparator are explicit fakes; no browser/fork is allowed.
+    """
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("s6_smoke_unit", SUITE / "smoke.py")
+        self.mod = importlib.util.module_from_spec(spec)
+        # smoke's defaults must not alter the original 28 static tests' process.
+        with mock.patch.dict(os.environ), mock.patch.object(sys, "path", list(sys.path)):
+            spec.loader.exec_module(self.mod)
+        from tests.gfx._png import png
+        self.png = png
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.case = 0
+        for patch in (mock.patch.object(self.mod.gfx_render, "render_page", self.render),
+                      mock.patch.object(self.mod.gfx_render, "Browser", side_effect=AssertionError("real browser")),
+                      mock.patch.object(self.mod.multiprocessing, "get_context", side_effect=AssertionError("real fork")),
+                      mock.patch.object(self.mod.gfx_render.subprocess, "Popen", side_effect=AssertionError("real subprocess"))):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.reset()
+
+    def reset(self):
+        self.case += 1
+        self.smoke = self.mod.Smoke("unit-only", self.root / str(self.case))
+        self.smoke.man["global_spec"].update(width=6, height=4)
+        self.smoke.note = lambda message: None
+        self.smoke.run_guarded = self.guarded
+        self.smoke.frame_diff = lambda a, b: (0 if a.read_bytes() == b.read_bytes() else 1, None)
+        self.config, self.calls, self.attempts = {}, [], []
+        self.random = [0, 450, 12, 12, 899, 13, 200, 200, 201, 599, 0]
+
+    def render(self, html, outdir, n_frames, *, chrome_path, tabs, frames):
+        d = Path(outdir)
+        d.mkdir(parents=True, exist_ok=True)
+        leg = d.parent.name if d.name == "frames" else "catchup"
+        cfg = self.config.get(leg, {})
+        self.calls.append((leg, list(frames), tabs, os.environ.get("VTX_GFX_STATIC"),
+                           os.environ.get("VTX_GFX_NAVFREE")))
+        failed = list(cfg.get("failed", []))
+        for index, fi in enumerate(cfg.get("frames", frames)):
+            data = self.png(value=min(fi, 599) % 256)
+            data = cfg.get("data", lambda i, f, data: data)(index, fi, data)
+            # Model existing engine retry behavior, without invoking the engine.
+            for attempt in range(3):
+                self.attempts.append((leg, index, attempt))
+                try:
+                    self.mod.gfx_render._atomic_write_bytes(d / f"f{fi:04d}.png", data)
+                    break
+                except OSError:
+                    if attempt == 2:
+                        failed.append(fi)
+        if cfg.get("foreign"):
+            self.mod.gfx_render._atomic_write_bytes(d / "notes.txt", b"not a frame")
+            other = d.parent / "other"
+            other.mkdir()
+            self.mod.gfx_render._atomic_write_bytes(other / "f9999.png", b"other scene")
+        return {"failed": failed, "rendered": len(frames) - len(failed), "tabs": tabs}
+
+    def guarded(self, fn, tag, outdir, work_n, tabs, phase):
+        cfg = self.config.get(tag.split("__", 1)[1], {})
+        try:
+            payload = fn()
+        except Exception as error:
+            return "exc", f"{type(error).__name__}: {error}", {"wall_s": 0}
+        if "after" in cfg:
+            cfg["after"](Path(outdir))
+        status = cfg.get("status", "ok")
+        if "payload" in cfg:
+            payload = cfg["payload"]
+        return status, payload if status == "ok" else None, {
+            "wall_s": 0, "reason": "budget", "elapsed_s": 1,
+            "budget_s": 1, "frames_done": len(list(Path(outdir).glob("*.png")))}
+
+    def run_smoke(self):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            result = self.smoke.run(["s6seq"])
+        return result, self.smoke.report["phases"]["s6seq"]
+
+    def test_complete_occurrences_preserve_order_duplicates_and_clamp(self):
+        d = self.smoke.ev / "s6seq" / "random_jump"
+        d.mkdir(parents=True)
+        (d / "step9999_f0000.png").write_bytes(b"stale")
+        self.config["random_jump"] = {"foreign": True}
+        with mock.patch.dict(os.environ, {"VTX_GFX_STATIC": "1", "VTX_GFX_NAVFREE": "1"}):
+            code, report = self.run_smoke()
+            self.assertEqual(os.environ["VTX_GFX_STATIC"], "1")
+            self.assertEqual(os.environ["VTX_GFX_NAVFREE"], "1")
+        self.assertEqual(code, self.mod.EXIT_OK)
+        self.assertEqual([c[1] for c in self.calls[1:]], [self.random, list(range(99, -1, -1))])
+        self.assertTrue(all(c[2:] == (1, "0", "0") for c in self.calls))
+        self.assertEqual(len(self.calls[0][1]), 104)
+        self.assertEqual(sum(report[n]["compared"] for n in ("random_jump", "reverse_100")), 111)
+        rows = report["random_jump"]["occurrences"]
+        self.assertEqual([r["observed_frame"] for r in rows], self.random)
+        self.assertEqual((rows[4]["requested_frame"], rows[4]["observed_frame"], rows[4]["reference_frame"]), (899, 899, 599))
+        self.assertEqual(len(list(d.glob("step*.png"))), 11)
+        self.assertNotEqual(rows[2]["artifact"], rows[3]["artifact"])
+        self.assertTrue(all(r["candidate_bytes_sha256"] == r["reference_bytes_sha256"] for r in rows))
+
+    def test_incomplete_reordered_or_extra_occurrences_fail(self):
+        for frames in (self.random[:3] + self.random[4:], sorted(self.random), self.random + [0]):
+            with self.subTest(frames=frames):
+                self.reset()
+                self.config["random_jump"] = {"frames": frames}
+                code, report = self.run_smoke()
+                self.assertEqual(code, self.mod.EXIT_FAIL)
+                self.assertEqual(report["random_jump"]["status"], "FAIL")
+                self.assertEqual(report["random_jump"]["captured"], len(frames))
+
+    def test_every_occurrence_requires_valid_reference_and_comparison(self):
+        for fault in ("first_duplicate", "candidate_corrupt", "candidate_size", "reference_corrupt",
+                      "reference_size", "reference_missing", "diff_none", "diff_exception", "hash_exception"):
+            with self.subTest(fault=fault):
+                self.reset()
+                if fault == "first_duplicate":
+                    self.config["random_jump"] = {"data": lambda i, f, data: self.png(value=42) if i == 2 else data}
+                elif fault.startswith(("candidate_", "reference_")):
+                    leg = "random_jump" if fault.startswith("candidate_") else "catchup"
+                    if fault.endswith("missing"):
+                        self.config[leg] = {"frames": []}
+                    else:
+                        bad = b"bad png" if fault.endswith("corrupt") else self.png(w=5)
+                        self.config[leg] = {"data": lambda i, f, data: bad if i == 0 else data}
+                elif fault == "hash_exception":
+                    self.smoke.frame_sha = mock.Mock(side_effect=OSError("read failed"))
+                elif fault == "diff_none":
+                    self.smoke.frame_diff = lambda a, b: (None, None)
+                else:
+                    self.smoke.frame_diff = mock.Mock(side_effect=ValueError("decode failed"))
+                code, report = self.run_smoke()
+                self.assertEqual(code, self.mod.EXIT_FAIL)
+                if fault == "first_duplicate":
+                    rows = report["random_jump"]["occurrences"]
+                    self.assertEqual([rows[i]["status"] for i in (2, 3)], ["FAIL", "PASS"])
+                    self.assertEqual((self.smoke.ev / "s6seq/random_jump/frames/f0012.png").read_bytes(), self.png(value=12))
+                if fault.startswith("reference_") or fault == "hash_exception":
+                    self.assertEqual(report["references"]["status"], "FAIL")
+                if fault in ("reference_missing", "diff_none", "diff_exception", "hash_exception"):
+                    self.assertEqual(report["random_jump"]["compared"], 0)
+                    self.assertIsNone(report["random_jump"]["max_diff"])
+                    self.assertIsNone(report["reverse_100"]["max_diff"])
+
+    def test_renderer_completion_and_failure_payload_are_not_optional(self):
+        for leg, cfg in (("catchup", {"frames": [], "failed": list(range(104))}),
+                         ("catchup", {"failed": [0]}), ("random_jump", {"failed": [12]}),
+                         ("random_jump", {"frames": []}),
+                         ("catchup", {"payload": {}}), ("random_jump", {"payload": {}}),
+                         ("catchup", {"status": "unknown"}), ("random_jump", {"status": "unknown"}),
+                         ("catchup", {"data": mock.Mock(side_effect=RuntimeError("render failed"))})):
+            with self.subTest(leg=leg, cfg=cfg):
+                self.reset()
+                self.config[leg] = cfg
+                self.assertEqual(self.run_smoke()[0], self.mod.EXIT_FAIL)
+
+    def test_observer_failure_is_sticky_but_original_writer_error_propagates(self):
+        write = self.mod.gfx_render._atomic_write_bytes
+        def fail_archive(path, data):
+            if Path(path).name == "step0002_f0012.png":
+                raise OSError("archive unavailable")
+            return write(path, data)
+        with mock.patch.object(self.mod.gfx_render, "_atomic_write_bytes", fail_archive):
+            code, report = self.run_smoke()
+        self.assertEqual(code, self.mod.EXIT_FAIL)
+        self.assertEqual(len([a for a in self.attempts if a[0] == "random_jump"]), 11)
+        self.assertEqual(report["random_jump"]["captured"], 10)
+        self.assertEqual(report["random_jump"]["occurrences"][3]["observed_frame"], 12)
+        self.assertTrue(any("archive unavailable" in error for error in self.smoke.failures))
+        self.reset()
+        match, capture = self.mod.re.fullmatch, self.smoke._capture_s6_sequence
+        observed_stats = []
+        raised = False
+        def fail_classification(pattern, value):
+            nonlocal raised
+            if pattern == r"f([0-9]+)\.png" and not raised:
+                raised = True
+                raise OSError("classification failure " + "x" * 10000)
+            return match(pattern, value)
+        def capture_stats(*args):
+            stats = capture(*args)
+            observed_stats.append(stats)
+            return stats
+        self.smoke._capture_s6_sequence = capture_stats
+        with mock.patch.object(self.mod.re, "fullmatch", fail_classification):
+            self.assertEqual(self.run_smoke()[0], self.mod.EXIT_FAIL)
+        self.assertEqual(len([a for a in self.attempts if a[0] == "random_jump"]), 11)
+        self.assertEqual(observed_stats[0]["observation_error_count"], 1)
+        self.assertLessEqual(len(observed_stats[0]["observation_errors"][0]), 200)
+        failure = OSError("engine write unavailable")
+        def render_once(*args, **kwargs):
+            self.mod.gfx_render._atomic_write_bytes(self.root / "raw.png", b"data")
+        with mock.patch.object(self.smoke, "render", render_once), \
+                mock.patch.object(self.mod.gfx_render, "_atomic_write_bytes", side_effect=failure):
+            with self.assertRaises(OSError) as caught:
+                self.smoke._capture_s6_sequence("unused", self.root, [0])
+        self.assertIs(caught.exception, failure)
+
+    def test_timeout_is_partial_unless_observable_failure_also_exists(self):
+        for fault in ("empty", "prefix", "missing_references", "corrupt_prefix", "failed_other_leg"):
+            with self.subTest(fault=fault):
+                self.reset()
+                self.config["random_jump"] = {"status": "timeout", "frames": [] if fault == "empty" else self.random[:3]}
+                if fault == "missing_references":
+                    self.config["catchup"] = {"status": "timeout", "frames": []}
+                elif fault == "corrupt_prefix":
+                    self.config["random_jump"]["data"] = lambda i, f, data: b"bad" if i == 0 else data
+                elif fault == "failed_other_leg":
+                    self.config["reverse_100"] = {"failed": [0]}
+                code, report = self.run_smoke()
+                self.assertEqual(code, self.mod.EXIT_FAIL if fault in ("corrupt_prefix", "failed_other_leg") else self.mod.EXIT_TIMEOUT)
+                self.assertLess(report["random_jump"]["compared"], 11)
+                self.assertNotEqual(self.smoke.report["result"], "PASS")
 
 
 if __name__ == "__main__":

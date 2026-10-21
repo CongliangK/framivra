@@ -328,21 +328,6 @@ class DenoiseChainIntegration(unittest.TestCase):
 from plugins.denoise import denoise_voice as dv  # noqa: E402
 
 
-def _chain_project(root: Path, denoise_value=True):
-    """最小工程(与 test_denoise.py 同构;真文件供 stat 指纹)。"""
-    src = root / "voice.wav"
-    src.write_bytes(b"RIFF dummy payload for stat digest" * 8)
-    sources = [{"id": "v", "path": str(src)}]
-    if denoise_value is not ...:
-        sources[0]["denoise"] = denoise_value
-    tl = {"version": 2,
-          "project": {"fps": 30, "duration_frames": 90, "width": 640, "height": 360},
-          "sources": sources, "video_tracks": [], "subtitles": [], "audio_tracks": []}
-    p = root / "timeline.json"
-    p.write_text(json.dumps(tl), encoding="utf-8")
-    return p
-
-
 class V2ChainFormFrozen(unittest.TestCase):
     """⑥ 链 v2 三步形态冻结面(P2 定案常数;改动即破坏 P2 判据复现基线)。"""
 
@@ -377,7 +362,7 @@ class V2ChainFormFrozen(unittest.TestCase):
     def test_three_step_order_normalize_infer_post(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            c = Ctx(_chain_project(root))
+            c = Ctx(_proj(root, denoise_value=True))
             p = dn.product_path(c, "v")
             calls = []
 
@@ -438,7 +423,7 @@ class FailHardPropagation(unittest.TestCase):
     def test_step_failure_exits_without_product(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            c = Ctx(_chain_project(root))
+            c = Ctx(_proj(root, denoise_value=True))
             p = dn.product_path(c, "v")
 
             def failing_run(cmd, **kw):
@@ -506,7 +491,7 @@ class CacheKeyV200(unittest.TestCase):
 
     def test_product_key_carries_v200(self):
         with tempfile.TemporaryDirectory() as d:
-            c = Ctx(_chain_project(Path(d)))
+            c = Ctx(_proj(Path(d), denoise_value=True))
             name = dn.product_path(c, "v").name
             self.assertIn("__denoise_2.0.0_", name)
             self.assertNotIn("__denoise_1.0.0_", name)   # v1 键形零残留

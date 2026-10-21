@@ -68,6 +68,7 @@ for _stream in (sys.stdout, sys.stderr):
 from vtx.pluginlib import config as _pcfg    # noqa: E402（统一加载，§5.3）
 from vtx.pluginlib import registry as _preg  # noqa: E402（发现/静态注册表，§2.1）
 from vtx.pluginlib.manifest import load_manifest as _load_manifest  # noqa: E402
+from vtx.browser_paths import chrome_names, chrome_install_paths  # noqa: E402
 
 
 def py3() -> str:
@@ -106,22 +107,8 @@ def find_binary(names, extra_paths=()):
 
 def find_chrome():
     """与 vtx.encoders.find_chrome 同源逻辑：VTX_CHROME 优先 → PATH → 标准安装路径。"""
-    names = (os.environ.get("VTX_CHROME"), "google-chrome", "google-chrome-stable",
-             "chromium", "chromium-browser", "chrome", "msedge")
-    paths = []
-    if OS == "win32":
-        w = os.environ.get("PROGRAMFILES", r"C:\Program Files")
-        p86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
-        la = os.environ.get("LOCALAPPDATA", "")
-        paths = [rf"{w}\Google\Chrome\Application\chrome.exe",
-                 rf"{p86}\Google\Chrome\Application\chrome.exe",
-                 rf"{la}\Google\Chrome\Application\chrome.exe",
-                 rf"{w}\Microsoft\Edge\Application\msedge.exe",
-                 rf"{p86}\Microsoft\Edge\Application\msedge.exe"]
-    elif OS == "darwin":
-        paths = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+    names = chrome_names()
+    paths = chrome_install_paths(OS)
     return find_binary([n for n in names if n], paths)
 
 

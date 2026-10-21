@@ -9,13 +9,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tests.diagnostics.test_agent_diagnostics_operations import StageOperations
+from tests.diagnostics._support import StageFixture
 from tests.qc._support import _FakeContext
 from vtx import qc
 from vtx.infra import Ctx
 
 
-class EvaluationOrder(StageOperations):
+class EvaluationOrder(StageFixture, unittest.TestCase):
     def test_negative_gfx_start_does_not_observe_missing_or_bad_duration(self):
         for duration in ('missing', None, 'bad'):
             for enabled in (False, True):

@@ -102,7 +102,7 @@ class RequestTests(unittest.TestCase):
         self.assertFalse((outside / 'stolen').exists())
 
 
-class PackageLinkTests(test_acceptance.AcceptanceTests):
+class PackageLinkTests(test_acceptance.AcceptanceFixture, unittest.TestCase):
     def observed_render(self, cmd, **kwargs):
         from vtx.events import ExecutionContext
         result = self.render(cmd, **kwargs)

@@ -45,6 +45,7 @@ import urllib.request
 import zlib
 
 from .gfx_cli import png_invalid_reason, verify_frames
+from .browser_paths import chrome_names, chrome_install_paths
 
 try:
     import numpy  # noqa: F401
@@ -412,18 +413,12 @@ class Browser:
     def _find_chrome(self):
         if self.chrome:
             return
-        for c in [os.environ.get("VTX_CHROME"), "google-chrome", "google-chrome-stable",
-                  "chromium", "chromium-browser", "chrome", "msedge"]:
+        for c in chrome_names():
             if c and (shutil.which(c) or os.path.isfile(c)):
                 self.chrome = c
                 return
         if sys.platform == "win32":   # Windows 标准安装路径（含 (x86) 的系统自带 Edge）
-            w = os.environ.get("PROGRAMFILES", r"C:\Program Files")
-            pf86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
-            for c in (rf"{w}\Google\Chrome\Application\chrome.exe",
-                      rf"{pf86}\Google\Chrome\Application\chrome.exe",
-                      rf"{w}\Microsoft\Edge\Application\msedge.exe",
-                      rf"{pf86}\Microsoft\Edge\Application\msedge.exe"):
+            for c in chrome_install_paths(sys.platform, include_user=False):
                 if os.path.isfile(c):
                     self.chrome = c
                     return

@@ -79,11 +79,6 @@ def cef_config():
     return worker, mode
 
 
-@lru_cache(maxsize=16)
-def _binary_digest(path, stat):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
 def _cef_identity():
     """All output-affecting CEF settings, including the actual native executable.
 
@@ -93,9 +88,7 @@ def _cef_identity():
     if selected() != "cef":
         return ""
     worker, mode = cef_config()
-    st = worker.stat()
-    digest = _binary_digest(str(worker), (st.st_dev, st.st_ino, st.st_size,
-                                         st.st_mtime_ns, st.st_ctime_ns))
+    digest = content_digest(worker)
     return f"cef-alpha-exact-v1|{mode}|mode-n|{digest}"
 
 

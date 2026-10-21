@@ -36,6 +36,11 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+if __package__:
+    from ._fixtures import ime_home
+else:
+    from _fixtures import ime_home
+
 ASR_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = ASR_DIR.parent.parent
 sys.path.insert(0, str(ASR_DIR))
@@ -104,14 +109,7 @@ class MatrixBase(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="vtx-fix142-")
-        self.home = Path(self.tmp.name) / "home"
-        self.home.mkdir()
-        # 假 IME 仓（锚点在假 HOME 内展开——绝不触碰真实 ~/文档 与 18081）
-        self.ime = self.home / "文档/01_活跃项目/type/ibus-voice-ime-github"
-        self.ime_model = self.ime / "vendor/models/qwen3-asr/Qwen3-ASR-1.7B"
-        self.ime_model.mkdir(parents=True)
-        (self.ime_model / "model.safetensors").write_bytes(b"FAKE-IME-WEIGHT")
-        (self.ime_model / "config.json").write_text("{}", encoding="utf-8")
+        self.home, self.ime, self.ime_model, self.env = ime_home(self.tmp.name)
         self.ime_snapshot = sorted(str(p) for p in self.ime.rglob("*"))
         # 假干净模型（假 HOME 内项目模型根，非 IME）
         self.clean_model = self.home / ".local/share/framivra/asr/models/Qwen3-ASR-0.6B"
@@ -120,13 +118,7 @@ class MatrixBase(unittest.TestCase):
         (self.clean_model / "config.json").write_text("{}", encoding="utf-8")
         # 状态根： independence 按真实 HOME 定位状态根 → 用 VTX_STATE_ROOT? 无此键，
         # 改为把 HOME 指向假 HOME 时状态根随之落在假 HOME（project_state_root 用 ~）
-        self.env = dict(os.environ)
-        self.env["HOME"] = str(self.home)
-        self.env.pop("VT_ASR_IME_ROOT", None)
-        self.env.pop("VTX_CONFIG", None)
-        for var in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
-                    "PYTHONUSERBASE", "PYTHONNOUSERSITE"):
-            self.env.pop(var, None)
+
         self._procs = []
         self._old_home = os.environ.get("HOME")
         os.environ["HOME"] = str(self.home)
