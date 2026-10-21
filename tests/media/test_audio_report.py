@@ -453,9 +453,9 @@ class TestEndToEndSynthetic(unittest.TestCase):
                                *args], capture_output=True, text=True)
 
     def _report(self, root):
-        self._run(root, "validate")
-        self._run(root, "prepare")
-        self._run(root, "audio")
+        for stage in ("validate", "prepare", "audio"):
+            result = self._run(root, stage)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         r = self._run(root, "audio", "--report-only")
         self.assertIn(r.returncode, (0, 1), r.stderr)   # FAIL 场景退出码 1；2=产物缺失等错误
         return json.loads((root / "out" / "audio_report.json").read_text(encoding="utf-8"))
