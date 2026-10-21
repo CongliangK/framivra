@@ -320,28 +320,44 @@ def prepare_chrome():
 
 
 def strict_suite(names, stream=None):
+    try:
+        return _strict_suite(names, stream)
+    except SystemExit as error:
+        # Imports, load_tests and custom run() may exit(0) without completion.
+        print('CI media gate FAILED: unexpected SystemExit(%r)' % error.code,
+              file=sys.stderr if stream is None else stream)
+        return 1
+
+
+def _strict_suite(names, stream):
+    from scripts.ci_partition import (PartitionError, flatten,
+                                      run_reconciled_suite, unique)
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    # Per-selector discovery gate: an aggregate count would let one empty
-    # selector hide behind another nonempty one (any order must be refused).
-    for name in names:
-        selected = loader.loadTestsFromNames([name])
-        if selected.countTestCases() == 0:
-            print('CI media gate: selector resolved to zero tests: %s' % name,
-                  file=sys.stderr)
+    tests = []
+    try:
+        # Preserve per-selector discovery refusal before any selected body runs.
+        for name in names:
+            selected = loader.loadTestsFromNames([name])
+            if loader.errors:
+                raise PartitionError('discovery errors in %s: %s' % (name, loader.errors))
+            if selected.countTestCases() == 0:
+                print('CI media gate: selector resolved to zero tests: %s' % name,
+                      file=sys.stderr)
+                return 1
+            tests.extend(flatten(selected))
+            suite.addTest(selected)
+        if not tests:
+            print('CI media gate requires nonempty execution; total=0', file=sys.stderr)
             return 1
-        suite.addTests(selected)
-    if suite.countTestCases() == 0:
-        print('CI media gate requires nonempty execution; total=0',
-              file=sys.stderr)
+        selected_ids = unique((test.id() for test in tests), 'media test instances')
+        instances = {id(test): test.id() for test in tests}
+        run_reconciled_suite(suite, instances, selected_ids, batch='media', stream=stream)
+    except PartitionError as error:
+        print('CI media gate FAILED: %s' % error,
+              file=sys.stderr if stream is None else stream)
         return 1
-    result = unittest.TextTestRunner(verbosity=2, stream=stream).run(suite)
-    if not result.testsRun or result.skipped:
-        print('CI media gate requires nonempty execution and ZERO skips; '
-              'executed=%d skipped=%d' % (result.testsRun, len(result.skipped)),
-              file=sys.stderr)
-        return 1
-    return 0 if result.wasSuccessful() else 1
+    return 0
 
 
 def main(argv=None):

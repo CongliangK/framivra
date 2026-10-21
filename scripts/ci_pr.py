@@ -15,8 +15,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from scripts.ci_partition import (OriginLoader, PartitionError, RecordingResult,
-                                  flatten, reconcile, unique)
+from scripts.ci_partition import (OriginLoader, PartitionError,
+                                  flatten, run_reconciled_suite, unique)
 
 # Deliberate coverage budget, not automatic discovery or the old fast partition.
 # New modules enter full discovery immediately; adding PR coverage is reviewed.
@@ -125,22 +125,8 @@ def _run_curated(names, stream):
     print('CI curated regression: %d tests; full regression NOT RUN by this '
           'command. Full coverage: scheduled/manual CI or run_all_tests.sh.'
           % expected, file=stream, flush=True)
-    def recording_result(*args, **kwargs):
-        return RecordingResult(*args, instances=instances, **kwargs)
-    result = unittest.TextTestRunner(verbosity=2, stream=stream,
-                                     resultclass=recording_result).run(suite)
-    # Reuse the reviewed lifecycle/outcome contract in memory. A unittest OK
-    # or matching testsRun count alone does not prove selected tests completed.
-    request = dict(attempt_id='in-process', batch='curated',
-                   selected=selected_ids, discovered=selected_ids)
-    receipt = dict(request, records=result.records, suite_events=result.suite_events,
-                   unittest_success=result.wasSuccessful(), testsRun=result.testsRun,
-                   skipped=len(result.skipped), failures=len(result.failures),
-                   errors=len(result.errors),
-                   unexpectedSuccesses=len(result.unexpectedSuccesses),
-                   expectedFailures=len(result.expectedFailures))
     try:
-        reconcile(request, receipt, 0 if result.wasSuccessful() else 1, strict=True)
+        run_reconciled_suite(suite, instances, selected_ids, batch='curated', stream=stream)
     except PartitionError as error:
         print('CI curated regression FAILED: %s' % error, file=stream)
         return 1

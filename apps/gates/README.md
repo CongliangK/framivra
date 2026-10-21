@@ -14,6 +14,8 @@
 - `--project-gates` 用户自定义字段相等断言（frames/first_voice_frame/*_events/duration_frames）
 - `--out out/content_gates.json` 本轮结论留档 JSON（各门 pass/detail/skip + 实测数值 + media/timeline md5 指纹 + 时间戳；默认不写）——「音频链改动后必须重跑 gates」的证据链落盘
 
+报告的 `pass` 与退出码只代表**实际执行范围**：至少一项门已执行且全部通过才是 `pass=true` / exit 0；零项检查或任一失败均为 exit 1。`complete` 表示没有跳过项；`status` 为 `pass`、`partial` 或 `fail`，成功但含显式 `--skip` / 缺少可选输入的运行打印 `PARTIAL`，不能当作五门完整验收。`skipped` 保留每项跳过原因。解码失败或缺少测量不是跳过，也不是零黑帧；失败输出不能写入响度回执。
+
 ## 依赖
 
 - ffmpeg / ffprobe（解码域测量、帧计数、封装探测）

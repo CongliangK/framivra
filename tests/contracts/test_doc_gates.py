@@ -1,11 +1,17 @@
 """Required document-gate aggregation, using isolated executable fixtures."""
+import contextlib
+import io
+import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +64,85 @@ class RequiredDocumentGates(unittest.TestCase):
     def assert_summary(self, result, passed, failed):
         self.assertIn('registry=7 output=7 header=7 对账=OK; '
                       'PASS=%s FAIL=%s SKIP=0' % (passed, failed), result.stdout)
+
+    def run_leaf(self, filename, snapshot):
+        path = self.root / 'snapshot.json'
+        path.write_text(json.dumps(snapshot), encoding='utf-8')
+        leaf = self.scripts / 'docs' / filename
+        leaf.write_bytes((ROOT / 'scripts/docs' / filename).read_bytes())
+        return subprocess.run(
+            [sys.executable, '-X', 'utf8', str(leaf),
+             '--snapshot', str(path)], cwd=self.root,
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'),
+            capture_output=True, text=True, encoding='utf-8', timeout=15)
+
+    def test_repeat_anchor_rejects_invalid_expected_and_unavailable_count(self):
+        source = self.root / 'anchors.txt'
+        source.write_text('needle\nother\nneedle\n', encoding='utf-8')
+        missing = self.root / 'missing.txt'
+        cases = ((missing, 'needle', -1, 1), (missing, 'needle', 0, 1),
+                 (source, 'needle', False, 1), (source, 'needle', '2', 1),
+                 (source, 'needle', 2, 0), (source, 'absent', 0, 0),
+                 (source, 'needle', 1, 1), (Path('-'), 'needle', 0, 1),
+                 (source, '-needle', 0, 0))
+        for path, word, expected, rc in cases:
+            with self.subTest(path=path.name, word=word, expected=expected):
+                result = self.run_leaf('verify_repeat_anchors.py', {
+                    'version': 1, 'repeat_anchors': [
+                        {'word': word, 'files': [str(path)], 'expected': [expected]}]})
+                self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+                if rc:
+                    self.assertIn('L3 FAIL:', result.stdout)
+                    self.assertNotIn('== expected OK', result.stdout)
+
+    def test_required_leaf_work_cannot_be_empty(self):
+        for filename, snapshot in (
+                ('verify_repeat_anchors.py', {'version': 1, 'repeat_anchors': []}),
+                ('verify_repeat_anchors.py', {'version': 1, 'repeat_anchors': [
+                    {'word': 'needle', 'files': [], 'expected': []}]}),
+                ('verify_charter_budget.py', {'version': 1, 'budget_items': []})):
+            with self.subTest(filename=filename, snapshot=snapshot):
+                result = self.run_leaf(filename, snapshot)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('nonempty', result.stdout + result.stderr)
+                self.assertNotIn('== expected OK', result.stdout)
+
+    def test_repeat_anchor_distinguishes_grep_result_from_execution_error(self):
+        module = runpy.run_path(str(ROOT / 'scripts/docs/verify_repeat_anchors.py'))
+        cases = ((0, b'2\n', 2), (1, b'0\n', 0), (0, b'', None),
+                 (1, b'', None), (0, b'-1\n', None), (0, b'bad\n', None),
+                 (0, b'0\n', None), (1, b'2\n', None), (2, b'0\n', None),
+                 (0, b'\xff\n', None))
+        for rc, stdout, expected in cases:
+            with self.subTest(rc=rc, stdout=stdout), contextlib.redirect_stderr(io.StringIO()):
+                with mock.patch('subprocess.run', return_value=subprocess.CompletedProcess(
+                        ['grep'], rc, stdout=stdout, stderr=b'failure')):
+                    self.assertEqual(module['live_count']('needle', 'file'), expected)
+        with mock.patch('subprocess.run', side_effect=OSError('spawn failed')), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(module['live_count']('needle', 'file'))
+
+    def test_charter_budget_rejects_nonfinite_numbers_without_changing_thresholds(self):
+        base = {'id': 'demo', 'unit': 'word', 'warning': 8, 'ceiling': 10, 'measured': 7}
+        for field in ('warning', 'ceiling', 'measured'):
+            for value in (float('nan'), float('inf'), -float('inf'), True):
+                with self.subTest(field=field, value=value):
+                    result = self.run_leaf('verify_charter_budget.py', {
+                        'version': 1, 'budget_items': [dict(base, **{field: value})]})
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('must be a finite number', result.stderr)
+        for measured, rc, marker in ((7, 0, 'OK'), (9.5, 0, 'changming=1'),
+                                     (10, 0, 'changming=1'), (10.5, 1, 'over=1')):
+            with self.subTest(measured=measured):
+                result = self.run_leaf('verify_charter_budget.py', {
+                    'version': 1, 'budget_items': [dict(base, measured=measured)]})
+                self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+                self.assertIn(marker, result.stdout)
+        huge = 10 ** 400
+        result = self.run_leaf('verify_charter_budget.py', {'version': 1, 'budget_items': [
+            dict(base, warning=huge - 1, ceiling=huge + 1, measured=huge)]})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('changming=1', result.stdout)
 
     def test_all_seven_execute_without_executable_bits(self):
         result = self.run_gate()

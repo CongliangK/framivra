@@ -42,6 +42,7 @@ https://github.com/CongliangK/framivra/tree/3d9e6622d5d06eecf55ffbe2075da1fa994f
 import argparse
 import hashlib
 import json
+import math
 import re
 import struct
 import subprocess
@@ -99,12 +100,33 @@ def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+def level(stderr, label, unit):
+    """A missing, malformed or non-finite decoder measurement is not evidence."""
+    m = re.search(rf"{label}:\s+(-?\d+(?:\.\d+)?) {unit}(?:\s|$)", stderr)
+    value = float(m.group(1)) if m else None
+    return value if value is not None and math.isfinite(value) else None
+
+
+def black_intervals(stderr):
+    """No markers means no black interval; truncated markers mean no verdict."""
+    intervals = re.findall(r"black_start:\s*(\S+)\s+black_end:\s*(\S+)", stderr)
+    if stderr.count("black_start:") != len(intervals) or stderr.count("black_end:") != len(intervals):
+        return None
+    for start, end in intervals:
+        try:
+            a, b = float(start), float(end)
+        except ValueError:
+            return None
+        if not (math.isfinite(a) and math.isfinite(b) and 0 <= a <= b):
+            return None
+    return intervals
+
+
 def lufs(a, b, src):
     r = run(["ffmpeg", "-nostdin", "-hide_banner", "-ss", f"{a:.3f}",
              "-t", f"{b-a:.3f}", "-i", str(src), "-vn",
              "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
-    m = re.search(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
-    return float(m.group(1)) if m else None
+    return level(r.stderr, "I", "LUFS") if r.returncode == 0 else None
 
 
 # G1 批量化单批上限（方案三阶段1）：bench_p2 口径 63 窗 → 4 批，进程数 63→4；
@@ -135,10 +157,11 @@ def lufs_batch(windows, src, batch=G1_BATCH):
         for j in range(len(chunk)):
             cmd += ["-map", f"[a{j}]", "-f", "null", "-"]
         r = run(cmd)
-        vals = re.findall(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
-        if r.returncode != 0 or len(vals) != len(chunk):
+        vals = [level(line, "I", "LUFS") for line in r.stderr.splitlines()
+                if re.search(r"I:\s+", line)]
+        if r.returncode != 0 or len(vals) != len(chunk) or None in vals:
             return None
-        out += [float(v) for v in vals]
+        out += vals
     return out
 
 
@@ -165,6 +188,11 @@ def moov_before_mdat(p):
 
 
 def main():
+    global ok_all
+    ok_all = True
+    GATE_ROWS.clear()
+    SKIP_ROWS.clear()
+    METRICS.clear()
     ap = argparse.ArgumentParser(description="成片内容级验证门（零耦合通用门）")
     ap.add_argument("-t", "--timeline", default="./timeline.json")
     ap.add_argument("--media", default="./out/final.mp4", help="成片（G2/G3/G7/G10 用）")
@@ -188,6 +216,8 @@ def main():
                          " 指纹（md5/size/mtime）+ 时间戳（默认不写，兼容不变）")
     args = ap.parse_args()
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
+    for name in sorted(skip):
+        note_skip(f"SKIP {name}（--skip 显式指定）")
 
     TL_PATH = Path(args.timeline)
     MEDIA = Path(args.media)
@@ -243,15 +273,17 @@ def main():
             dt = time.monotonic() - t0
             if sp_all is None or gp_all is None:
                 print("⚠ G1 批量测量失败（某批 ffmpeg 失败或 Summary 数不符），回落逐窗旧路径")
-                sp = [v for v in (lufs(a, b, asrc) for a, b in speech) if v is not None]
-                gp = [v for v in (lufs(a, b, asrc) for a, b in gaps) if v is not None]
+                sp = [lufs(a, b, asrc) for a, b in speech]
+                gp = [lufs(a, b, asrc) for a, b in gaps]
             else:
                 sp, gp = sp_all, gp_all
                 n_w = len(speech) + len(gaps)
                 n_b = (len(speech) + G1_BATCH - 1) // G1_BATCH \
                     + (len(gaps) + G1_BATCH - 1) // G1_BATCH
                 print(f"[timing] G1 批量测量（{n_w} 窗 {n_b} 批）: {dt:.1f}s")
-            if not sp or not gp:
+            if None in sp or None in gp:
+                gate("G1 口播窗−间隙窗+均匀", False, "窗口响度测量失败，不能用剩余窗口判定")
+            elif not sp or not gp:
                 note_skip(f"SKIP G1（窗不足：口播 {len(sp)} / 间隙 {len(gp)}）")
             else:
                 sv = sorted(sp)
@@ -284,14 +316,17 @@ def main():
         def meas_lufs_peak():
             r = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA), "-vn",
                      "-af", "ebur128=peak=true:framelog=quiet", "-f", "null", "-"])
-            return (re.search(r"I:\s+(-?[\d.]+) LUFS", r.stderr),
-                    re.search(r"Peak:\s+(-?[\d.]+) dBFS", r.stderr))
+            if r.returncode != 0:
+                return None, None
+            return level(r.stderr, "I", "LUFS"), level(r.stderr, "Peak", "dBFS")
 
         def detect_blacks():
             bd = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA),
                       "-vf", f"blackdetect=d={args.g7_black_d}:pix_th={args.g7_pix_th}",
                       "-an", "-f", "null", "-"])
-            return re.findall(r"black_start:(\S+)\s+black_end:(\S+)", bd.stderr)
+            if bd.returncode != 0:
+                return None
+            return black_intervals(bd.stderr)
 
         need_audio = ("G2" not in skip or "G3" not in skip)
         if need_audio:
@@ -301,18 +336,19 @@ def main():
                 mI, mP = meas_lufs_peak()
         else:
             t0 = time.monotonic()
-            if lc_hit is not None:
+            if lc_hit is not None or not need_audio:
                 r = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA),
                          "-filter_complex",
                          f"[0:v]blackdetect=d={args.g7_black_d}:pix_th={args.g7_pix_th}[vmet]",
                          "-map", "[vmet]", "-f", "null", "-"])
                 dt = time.monotonic() - t0
-                blacks = re.findall(r"black_start:(\S+)\s+black_end:(\S+)", r.stderr)
-                if r.returncode != 0:
-                    print("⚠ 黑场单链 pass 失败（响度回执命中态），回落独立 blackdetect")
+                blacks = black_intervals(r.stderr) if r.returncode == 0 else None
+                if blacks is None:
+                    print("⚠ 黑场单链 pass 失败，回落独立 blackdetect")
                     blacks = detect_blacks()
                 else:
-                    print(f"[timing] 全片解码黑场 pass（G7，响度回执命中免音频测量）: {dt:.1f}s")
+                    print(f"[timing] 全片解码黑场 pass（G7，响度回执命中免音频测量）: {dt:.1f}s"
+                          if lc_hit is not None else f"[timing] 全片解码黑场 pass（G7）: {dt:.1f}s")
             else:
                 r = run(["ffmpeg", "-nostdin", "-hide_banner", "-i", str(MEDIA),
                          "-filter_complex",
@@ -320,10 +356,10 @@ def main():
                          f"[0:v]blackdetect=d={args.g7_black_d}:pix_th={args.g7_pix_th}[vmet]",
                          "-map", "[amet]", "-map", "[vmet]", "-f", "null", "-"])
                 dt = time.monotonic() - t0
-                mI = re.search(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
-                mP = re.search(r"Peak:\s+(-?[\d.]+) dBFS", r.stderr)
-                blacks = re.findall(r"black_start:(\S+)\s+black_end:(\S+)", r.stderr)
-                if r.returncode != 0 or not mI:
+                mI = level(r.stderr, "I", "LUFS")
+                mP = level(r.stderr, "Peak", "dBFS")
+                blacks = black_intervals(r.stderr) if r.returncode == 0 else None
+                if r.returncode != 0 or mI is None or mP is None or blacks is None:
                     print("⚠ G2/G3+G7 合并解码 pass 失败，回落两步路径")
                     mI, mP = meas_lufs_peak()
                     blacks = detect_blacks()
@@ -331,31 +367,34 @@ def main():
                     print(f"[timing] 全片解码合并 pass（G2/G3+G7）: {dt:.1f}s")
         if lc_hit is not None:
             full_i, tp = lc_hit["i_lufs"], lc_hit["tp_dbfs"]
-            METRICS["G2_G3"] = {"i_lufs": full_i, "tp_dbfs": tp, "from_receipt": True}
-            gate("G2 全片响度", args.g2_lo <= full_i <= args.g2_hi,
-                 f"I={full_i} LUFS（门 [{args.g2_lo},{args.g2_hi}]，回执命中免测）")
-            gate("G3 解码真峰", tp <= args.g3_tp,
-                 f"TP={tp} dBFS（门 ≤{args.g3_tp}，解码域回执命中免测 {MEDIA}——不信 wav 域）")
         else:
-            # 归档回执：本轮实测得到完整 (I, TP) 才写（run_fn 直返现值不再解码）
-            if mI and mP:
-                _i, _p = float(mI.group(1)), float(mP.group(1))
-                loudness_cache.measure_and_store(MEDIA, lambda: (_i, _p))
-            if mI:
-                full_i = float(mI.group(1))
-                METRICS.setdefault("G2_G3", {})["i_lufs"] = full_i
-                gate("G2 全片响度", args.g2_lo <= full_i <= args.g2_hi,
-                     f"I={full_i} LUFS（门 [{args.g2_lo},{args.g2_hi}]）")
-            if mI and mP:
-                tp = float(mP.group(1))
+            full_i, tp = mI, mP
+            # 仅成功解码的完整测量可归档；失败进程的尾部 Summary 不是证据。
+            if full_i is not None and tp is not None:
+                loudness_cache.measure_and_store(MEDIA, lambda: (full_i, tp))
+        receipt_note = "，回执命中免测" if lc_hit is not None else ""
+        if "G2" not in skip:
+            if full_i is None:
+                gate("G2 全片响度", False, "解码失败或缺少综合响度测量")
+            else:
                 METRICS.setdefault("G2_G3", {}).update(
-                    {"tp_dbfs": tp, "from_receipt": False})
+                    {"i_lufs": full_i, "from_receipt": lc_hit is not None})
+                gate("G2 全片响度", args.g2_lo <= full_i <= args.g2_hi,
+                     f"I={full_i} LUFS（门 [{args.g2_lo},{args.g2_hi}]{receipt_note}）")
+        if "G3" not in skip:
+            if tp is None:
+                gate("G3 解码真峰", False, "解码失败或缺少真峰测量")
+            else:
+                METRICS.setdefault("G2_G3", {}).update(
+                    {"tp_dbfs": tp, "from_receipt": lc_hit is not None})
                 gate("G3 解码真峰", tp <= args.g3_tp,
-                     f"TP={tp} dBFS（门 ≤{args.g3_tp}，解码域测 {MEDIA}——不信 wav 域）")
+                     f"TP={tp} dBFS（门 ≤{args.g3_tp}{receipt_note}，解码域 {MEDIA}——不信 wav 域）")
     else:
-        note_skip(f"SKIP G2/G3（{MEDIA} 不存在）")
+        for name in ("G2", "G3"):
+            if name not in skip:
+                note_skip(f"SKIP {name}（{MEDIA} 不存在）")
 
-    # ---------- G7 黑闪门（结果取自上方合并解码；blacks=None = 跳过或无成片） ----------
+    # ---------- G7 黑闪门（仅成功解码的空检测列表代表零黑帧） ----------
     if "G7" in skip:
         pass
     elif blacks is not None:
@@ -364,6 +403,8 @@ def main():
         gate("G7 零黑帧", len(blacks) == 0,
              f"blackdetect(d={args.g7_black_d},pix_th={args.g7_pix_th}) 命中 {len(blacks)} 处"
              + (f"：t={[b[0] for b in blacks]}" if blacks else ""))
+    elif MEDIA.exists():
+        gate("G7 零黑帧", False, "黑场解码检测失败，不能判定零黑帧")
     else:
         note_skip("SKIP G7（无成片）")
 
@@ -374,27 +415,39 @@ def main():
     # 恢复 -count_frames 真解码计数。detail 文案注明计数口径字段以便核对。
     cnt_flag = "-count_frames" if args.count_frames else "-count_packets"
     cnt_field = "nb_read_frames" if args.count_frames else "nb_read_packets"
+    def count_media_frames():
+        fc = run(["ffprobe", "-v", "error", cnt_flag, "-select_streams", "v:0",
+                  "-show_entries", f"stream={cnt_field}", "-of", "csv=p=0", str(MEDIA)])
+        if fc.returncode != 0:
+            return None
+        try:
+            return int(fc.stdout.strip())
+        except ValueError:
+            return None
+
     if "G10" in skip:
         pass
     elif have_tl and MEDIA.exists():
         pr = run(["ffprobe", "-v", "error", "-show_entries",
                   "stream=index,codec_name,profile,bit_rate,sample_rate,channels,r_frame_rate:"
                   "format=duration:stream_tags=encoder", "-of", "json", str(MEDIA)])
-        stj = json.loads(pr.stdout)
+        stj = {}
         try:
+            if pr.returncode != 0:
+                raise ValueError("ffprobe failed")
+            stj = json.loads(pr.stdout)
             st = {s["index"]: s for s in stj["streams"]}
             fmt = stj["format"]
             v, a = st[0], st[1]
-        except (KeyError, IndexError):
+        except (ValueError, TypeError, KeyError, IndexError):
             # 非有效媒体（无 streams/format/轨序异常）——显式 FAIL 该门而非裸崩溃（R5 验收 #2）
-            METRICS["G10"] = {"media": str(MEDIA), "probe_raw_keys": sorted(stj.keys())}
+            keys = sorted(stj) if isinstance(stj, dict) else []
+            METRICS["G10"] = {"media": str(MEDIA), "probe_raw_keys": keys}
             gate("G10 帧数+封装", False,
-                 f"成片非有效媒体（ffprobe 无完整 streams/format：{sorted(stj.keys())}）")
+                 f"成片非有效媒体（ffprobe 失败或无完整 streams/format：{keys}）")
             st = fmt = v = a = None
         if st is not None:
-            fc = run(["ffprobe", "-v", "error", cnt_flag, "-select_streams", "v:0",
-                  "-show_entries", f"stream={cnt_field}", "-of", "csv=p=0", str(MEDIA)])
-            nb_read = int(fc.stdout.strip())
+            nb_read = count_media_frames()
             dur_expect = DURF / F
             fs_ok = moov_before_mdat(str(MEDIA))
             METRICS["G10"] = {"frames": nb_read, "duration_s": fmt["duration"],
@@ -422,14 +475,12 @@ def main():
         for key, want in pg.items():
             if key == "frames":
                 if MEDIA.exists():
-                    fc = run(["ffprobe", "-v", "error", cnt_flag,
-                              "-select_streams", "v:0",
-                              "-show_entries", f"stream={cnt_field}",
-                              "-of", "csv=p=0", str(MEDIA)])
-                    got = int(fc.stdout.strip())
+                    got = count_media_frames()
                     METRICS.setdefault("PG", {})[key] = got
-                    gate(f"PG:{key}", got == want,
-                         f"{got}（门 {want}，计数口径 {cnt_field}）")
+                    gate(f"PG:{key}", got is not None and got == want,
+                         f"{got}（门 {want}，计数口径 {cnt_field}；None 表示探测失败）")
+                else:
+                    note_skip(f"SKIP PG:{key}（{MEDIA} 不存在）")
             elif key == "first_voice_frame" and have_tl:
                 vo = sorted((e for tr in TL["audio_tracks"]
                              if tr["name"] == "voice" for e in tr["events"]),
@@ -449,11 +500,16 @@ def main():
             else:
                 note_skip(f"SKIP PG:{key}（无法解析的字段）")
 
+    # 空检查集不能宣称 PASS；部分检查的覆盖范围须显式留档。
+    ok_all = ok_all and bool(GATE_ROWS)
+    complete = not SKIP_ROWS
+    status = "fail" if not ok_all else ("pass" if complete else "partial")
+
     # ---------- --out JSON 留档（2026-09-14） ----------
     if args.out:
         report = {"tool": "apps/gates/content_gates.py",
                   "timestamp": time.strftime("%F %T"),
-                  "pass": ok_all,
+                  "pass": ok_all, "complete": complete, "status": status,
                   "gates": GATE_ROWS, "skipped": SKIP_ROWS, "metrics": METRICS,
                   "media": {"path": str(MEDIA), **fingerprint(MEDIA)},
                   "timeline": {"path": str(TL_PATH), "frames": DURF, "fps": F,
@@ -469,7 +525,7 @@ def main():
                         encoding="utf-8")
         print(f"[out] gates 留档 → {outp}")
 
-    print("PASS" if ok_all else "FAIL")
+    print(status.upper())
     sys.exit(0 if ok_all else 1)
 
 
