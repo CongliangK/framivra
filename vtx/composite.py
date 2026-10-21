@@ -427,14 +427,23 @@ class RenderPlan:
         Uncertified files are rebuilt. The historical .n sidecar remains an
         additional pass constraint, not proof that a nonempty file is complete.
         Warm completion records avoid re-decoding; hashing still costs file I/O.
+        Reject an unusable sidecar before that I/O, but never use a matching
+        sidecar to skip the complete-media certificate or current-byte digest.
+        Recheck it after hashing too: a sidecar changed during the media gate
+        must still fail at the original final-check point.
         """
-        if not media_cache_valid(p, seglen):
-            return False
-        if sidecar:
+        def sidecar_matches():
             try:
                 return int((p.with_suffix(p.suffix + ".n")).read_text()) == seglen
             except (OSError, ValueError):
                 return False
+
+        if sidecar and not sidecar_matches():
+            return False
+        if not media_cache_valid(p, seglen):
+            return False
+        if sidecar:
+            return sidecar_matches()
         return True  # verified producer certificate, digest and frame count
 
     def _composite_passes(self, layers_subset, out_path, with_subs, a, b, sub_file=None):
