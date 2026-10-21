@@ -54,7 +54,8 @@ _QC_SEG_RECORD = "qc_pass_segs.json"
 # can lift a constant black frame above zero (FFmpeg 7.1.5, x86_64). The same
 # filter applies to final, source and qc_clean probes; thresholds stay unchanged.
 # Schema v2 also prevents legacy v1 readers from reusing these passes on rollback.
-_QC_GRAY_FILTER = "scale=48:27:flags=bicubic+accurate_rnd,format=gray"
+_QC_GRAY_WIDTH, _QC_GRAY_HEIGHT = 48, 27
+_QC_GRAY_FILTER = f"scale={_QC_GRAY_WIDTH}:{_QC_GRAY_HEIGHT}:flags=bicubic+accurate_rnd,format=gray"
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
 
 
@@ -346,6 +347,14 @@ def qc(c):
             c.run(["ffmpeg", "-v", "error", "-y", "-ss", ss,
                    "-i", str(path), "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo", str(tmp)])
             data = tmp.read_bytes()
+            expected = _QC_GRAY_WIDTH * _QC_GRAY_HEIGHT
+            if len(data) != expected:
+                emit(c, f"ffmpeg gray sample: expected {expected} bytes, got {len(data)}",
+                     rule_id="qc.rawvideo_size", measured={"bytes": len(data)},
+                     threshold={"bytes": expected}, status="unknown",
+                     source={"provider": "ffmpeg", "resource": str(path),
+                             "measurement": "rawvideo", "frame": n, "origin": origin})
+                producer_exit()
             failed = False
             return data
         finally:
@@ -358,7 +367,7 @@ def qc(c):
     # 底轨 clip 全屏无叠层的第二遍合成，探测帧现场从源视频提帧（src_in + 帧偏移，
     # 输入 seek）过同一 crop169+scale 链即等价；无 clip 覆盖 → 黑帧（画布为黑场）。
     # 探测点均取 clip 中段，天然避开 fade 边界。
-    _BLACK = bytes(48 * 27)
+    _BLACK = bytes(_QC_GRAY_WIDTH * _QC_GRAY_HEIGHT)
     def clip_end(cl, path):
         return native("add", field(cl, "dst_in", path), field(cl, "dur", path),
                       path=path, paths=(path + ".dst_in", path + ".dur"))
