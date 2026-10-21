@@ -245,7 +245,34 @@ class StrictMediaGate(unittest.TestCase):
         return tests_of(Case)
 
     def test_success_executes(self):
-        self.assertEqual(self.suite_exit({'fixture': self.healthy_suite()}), 0)
+        events = []
+        module = types.ModuleType('media_lifecycle_fixture')
+        module.setUpModule = lambda: events.append('module_setup')
+        module.tearDownModule = lambda: events.append('module_teardown')
+        class Case(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                events.append('class_setup')
+            @classmethod
+            def tearDownClass(cls):
+                events.append('class_teardown')
+            def test_body(self):
+                self.addCleanup(lambda: events.append('cleanup'))
+                for _ in range(2):
+                    with self.subTest(part='same'):
+                        with self.subTest(part='nested'):
+                            events.append('body')
+            @unittest.expectedFailure
+            def test_expected(self):
+                events.append('expected_failure')
+                self.fail('ordinary expected failure is still supported')
+        Case.__module__ = module.__name__
+        module.Case = Case
+        with mock.patch.dict(sys.modules, {module.__name__: module}):
+            self.assertEqual(ci.strict_suite([module.__name__], stream=io.StringIO()), 0)
+        self.assertEqual(events, ['module_setup', 'class_setup', 'body', 'body',
+                                  'cleanup', 'expected_failure', 'class_teardown',
+                                  'module_teardown'])
 
     def test_skip_fails_even_when_unittest_was_successful(self):
         class Case(unittest.TestCase):
@@ -256,12 +283,80 @@ class StrictMediaGate(unittest.TestCase):
 
     def test_empty_suite_fails(self):
         self.assertEqual(self.suite_exit({'fixture': []}), 1)
+        self.assertEqual(self.suite_exit({}, names=()), 1)
+        module = types.ModuleType('media_discovery_error_fixture')
+        ran = []
+        def load_tests(loader, tests, pattern):
+            loader.loadTestsFromName('media_missing_discovery_fixture')
+            return unittest.TestSuite(self.healthy_suite(ran))
+        module.load_tests = load_tests
+        output = io.StringIO()
+        with mock.patch.dict(sys.modules, {module.__name__: module}), \
+                mock.patch.object(ci.unittest, 'TextTestRunner') as runner:
+            self.assertEqual(ci.strict_suite([module.__name__], stream=output), 1)
+            runner.assert_not_called()
+        self.assertEqual(ran, [])
+        self.assertIn('discovery errors', output.getvalue())
 
     def test_test_error_fails(self):
-        class Case(unittest.TestCase):
-            def test_broken(self):
-                raise RuntimeError('intentional')
-        self.assertEqual(self.suite_exit({'fixture': tests_of(Case)}), 1)
+        for mode in ('body_error', 'no_execution', 'no_outcome', 'no_stop',
+                     'post_stop', 'two_successes', 'subtest_without_parent',
+                     'exit_zero', 'exit_none', 'exit_nonzero'):
+            bodies = []
+            class Case(unittest.TestCase):
+                def test_broken(self):
+                    bodies.append(True)
+                    raise RuntimeError('intentional')
+                def run(self, result=None):
+                    if mode == 'body_error':
+                        return super().run(result)
+                    if mode.startswith('exit_'):
+                        raise SystemExit({'exit_zero': 0, 'exit_none': None,
+                                          'exit_nonzero': 2}[mode])
+                    if mode == 'no_execution':
+                        return result
+                    result.startTest(self)
+                    if mode in ('no_stop', 'two_successes'):
+                        result.addSuccess(self)
+                    if mode == 'two_successes':
+                        result.addSuccess(self)
+                    if mode == 'subtest_without_parent':
+                        result.addSubTest(self, unittest.case._SubTest(self, None, {}), None)
+                    if mode != 'no_stop':
+                        result.stopTest(self)
+                    if mode == 'post_stop':
+                        result.addSuccess(self)
+                    return result
+            with self.subTest(mode=mode):
+                # An ordinary passing test must not hide the incomplete one.
+                suite = tests_of(Case) + self.healthy_suite()
+                self.assertEqual(self.suite_exit({'fixture': suite}), 1)
+                self.assertEqual(bodies, [True] if mode == 'body_error' else [])
+        for code in (0, None, 2):
+            with self.subTest(discovery_exit=code), \
+                    mock.patch.object(unittest.TestLoader, 'loadTestsFromNames',
+                                      side_effect=SystemExit(code)), \
+                    mock.patch.object(ci.unittest, 'TextTestRunner') as runner:
+                self.assertEqual(ci.strict_suite(['fixture'], stream=io.StringIO()), 1)
+                runner.assert_not_called()
+            module = types.ModuleType('media_discovery_fixture')
+            def stop(*args):
+                raise SystemExit(code)
+            module.load_tests = stop
+            with self.subTest(load_tests_exit=code), \
+                    mock.patch.dict(sys.modules, {module.__name__: module}):
+                self.assertEqual(ci.strict_suite([module.__name__], stream=io.StringIO()), 1)
+        class DroppedSuite(unittest.TestSuite):
+            def run(self, result, debug=False):
+                return result
+        for suite in (DroppedSuite(self.healthy_suite()),
+                      unittest.TestSuite([DroppedSuite(self.healthy_suite())])):
+            with self.subTest(custom_suite=type(suite).__name__), \
+                    mock.patch.object(unittest.TestLoader, 'loadTestsFromNames',
+                                      return_value=suite), \
+                    mock.patch.object(ci.unittest, 'TextTestRunner') as runner:
+                self.assertEqual(ci.strict_suite(['fixture'], stream=io.StringIO()), 1)
+                runner.assert_not_called()
 
     def test_empty_selector_alongside_healthy_is_refused_either_order(self):
         for names in (['empty', 'healthy'], ['healthy', 'empty']):

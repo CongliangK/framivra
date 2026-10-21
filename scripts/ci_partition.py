@@ -460,6 +460,28 @@ def reconcile(request, receipt, exit_code, strict=False):
     return 'COMPLETE_WITH_SKIPS' if receipt['skipped'] else 'PASS'
 
 
+def run_reconciled_suite(suite, instances, selected_ids, *, batch, stream=None):
+    """Run an already selected in-process strict suite; selection stays with callers."""
+    selected_ids = unique(selected_ids, batch + ' test instances')
+    if not selected_ids:
+        raise PartitionError('empty execution selection')
+    def recording_result(*args, **kwargs):
+        return RecordingResult(*args, instances=instances, **kwargs)
+    result = unittest.TextTestRunner(verbosity=2, stream=stream,
+                                     resultclass=recording_result).run(suite)
+    # A unittest OK or matching testsRun count does not prove selected bodies
+    # completed. Both curated and media entrypoints require the same lifecycle.
+    request = dict(attempt_id='in-process', batch=batch,
+                   selected=selected_ids, discovered=selected_ids)
+    receipt = dict(request, records=result.records, suite_events=result.suite_events,
+                   unittest_success=result.wasSuccessful(), testsRun=result.testsRun,
+                   skipped=len(result.skipped), failures=len(result.failures),
+                   errors=len(result.errors),
+                   unexpectedSuccesses=len(result.unexpectedSuccesses),
+                   expectedFailures=len(result.expectedFailures))
+    return reconcile(request, receipt, 0 if result.wasSuccessful() else 1, strict=True)
+
+
 def worker(args):
     root = Path(args.root).resolve()
     os.chdir(root)
