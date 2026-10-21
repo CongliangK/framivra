@@ -126,6 +126,140 @@ class TestMixAudioChain(unittest.TestCase):
         self.assertIn(f",volume={0.0:+.2f}dB,aformat=sample_fmts=s16,{ALIMITER}[aout]", " ".join(c.calls[0]))
 
 
+class TestAudioDigestStreaming(unittest.TestCase):
+    """Real file/hash/transaction checks; mixing and measurements are stubbed."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='vtx-audio-digest-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.out = self.root / 'out'
+        self.out.mkdir()
+        self.source = self.out / 'audio.wav'
+        self.frames, self.samples_per_frame = 180, 1600
+        with wave.open(str(self.source), 'wb') as stream:
+            stream.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
+            stream.writeframes(b'\0' * self.frames * self.samples_per_frame * 4)
+        self.expected = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        self.c = SimpleNamespace(
+            out=self.out, dry=False, dur=self.frames, spf_samples=self.samples_per_frame,
+            tl={'audio_tracks': []}, receipt=mock.Mock(),
+            run=mock.Mock(return_value=self._measurement()))
+
+    @staticmethod
+    def _measurement():
+        return SimpleNamespace(returncode=0, stderr='I: -14.0 LUFS\nPeak: -3.0 dBFS\n')
+
+    @contextmanager
+    def _bounded_reads(self, fail_when=None):
+        original_open = Path.open
+        test, reads = self, []
+
+        def open_file(path, mode='r', *args, **kwargs):
+            stream = original_open(path, mode, *args, **kwargs)
+            if mode != 'rb':
+                return stream
+
+            class Reader:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return stream.__exit__(*args)
+
+                def read(self, size=-1):
+                    test.assertGreater(size, 0, 'whole-file reads are not bounded')
+                    test.assertLessEqual(size, 1024 * 1024)
+                    reads.append((Path(path), size))
+                    if fail_when is not None and fail_when(Path(path), reads):
+                        raise OSError('injected read failure')
+                    return stream.read(size)
+
+            return Reader()
+
+        with mock.patch.object(Path, 'open', open_file):
+            yield reads
+
+    def test_shared_digest_exact_bytes_and_chunk_boundaries(self):
+        path = self.root / 'hash-input.bin'
+        for size in (0, 1024 * 1024, 1024 * 1024 + 1):
+            with self.subTest(size=size):
+                content = b'x' * size
+                path.write_bytes(content)
+                with self._bounded_reads() as reads:
+                    actual = stages.recovery._digest(path)
+                self.assertEqual(actual, hashlib.sha256(content).hexdigest())
+                self.assertEqual(len(reads), size // (1024 * 1024) + 1 + bool(size % (1024 * 1024)))
+
+    def test_build_audio_hashes_in_chunks_and_dry_never_reads(self):
+        with mock.patch.object(stages, 'mix_audio_wav', return_value=(0.0, -14.0, 0, False)), \
+                self._bounded_reads() as reads, redirect_stdout(io.StringIO()):
+            stages.build_audio(self.c)
+        self.assertGreater(len(reads), 1)
+        self.assertEqual(self.c.receipt.call_args.kwargs['extra']['post_loudness']['sha256'],
+                         self.expected)
+        self.c.dry = True
+        with mock.patch.object(stages, 'mix_audio_wav', return_value=(0.0, None, 0, False)), \
+                mock.patch.object(stages.recovery, '_digest', side_effect=AssertionError('dry hash')), \
+                redirect_stdout(io.StringIO()):
+            stages.build_audio(self.c)
+
+    def test_terminal_receipt_hit_and_later_same_size_change(self):
+        previous = {'sha256': self.expected, 'gain_db': 0.0}
+        receipt = self.out / 'receipt.json'
+        receipt.write_text(json.dumps({'stages': {'audio': {'post_loudness': previous}}}))
+        before = receipt.read_bytes()
+        with self._bounded_reads(), \
+                mock.patch.object(stages.subprocess, 'run', side_effect=AssertionError('warm measurement')), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(normalize_project_audio(self.root), previous)
+        with self.source.open('r+b') as stream:
+            stream.seek(1024 * 1024 + 3)
+            stream.write(b'changed')
+        with self._bounded_reads(), \
+                mock.patch.object(stages.subprocess, 'run', side_effect=RuntimeError('new measurement')), \
+                redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'new measurement'):
+            normalize_project_audio(self.root)
+        self.assertEqual(receipt.read_bytes(), before)
+
+    def test_normalize_hashes_source_and_candidate_without_receipt_writes(self):
+        def run(command, **kwargs):
+            if '-c:a' in command:
+                shutil.copyfile(self.source, command[-1])
+            return self._measurement()
+
+        with self._bounded_reads() as reads, mock.patch.object(stages.subprocess, 'run', run), \
+                redirect_stdout(io.StringIO()):
+            result = normalize_project_audio(self.root)
+        self.assertEqual(result['sha256'], self.expected)
+        self.assertEqual(hashlib.sha256(self.source.read_bytes()).hexdigest(), self.expected)
+        paths = {path for path, _size in reads}
+        self.assertIn(self.source, paths)
+        self.assertEqual(len(paths), 2, 'source and staged output must each be hashed')
+        self.assertFalse((self.out / 'receipt.json').exists())
+
+    def test_read_failure_prevents_success_receipt_and_candidate_publication(self):
+        with mock.patch.object(stages, 'mix_audio_wav', return_value=(0.0, -14.0, 0, False)), \
+                self._bounded_reads(lambda path, reads: len(reads) == 2), \
+                redirect_stdout(io.StringIO()), self.assertRaisesRegex(OSError, 'injected read failure'):
+            stages.build_audio(self.c)
+        self.c.receipt.assert_not_called()
+        original = self.source.read_bytes()
+
+        def run(command, **kwargs):
+            if '-c:a' in command:
+                shutil.copyfile(self.source, command[-1])
+            return self._measurement()
+
+        with self._bounded_reads(lambda path, reads: path != self.source), \
+                mock.patch.object(stages.subprocess, 'run', run), redirect_stdout(io.StringIO()), \
+                self.assertRaisesRegex(OSError, 'injected read failure'):
+            normalize_project_audio(self.root)
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assertFalse((self.out / 'receipt.json').exists())
+        self.assertEqual(list(self.out.glob('.audio.wav.*.tmp')), [])
+
+
 @unittest.skipUnless(FFMPEG and shutil.which(str(FFMPEG)),
                      'Set VTX_TEST_FFMPEG or install ffmpeg on PATH')
 class TestBuildAudioValidation(unittest.TestCase):

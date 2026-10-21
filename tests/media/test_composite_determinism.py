@@ -145,7 +145,7 @@ class TestGraphCodeDigest(unittest.TestCase):
 class TestPassFreshSidecar(unittest.TestCase):
     """_pass_fresh 旁车快路径（纯文件操作，零渲染）。
 
-    语义：完成证书/字节摘要先证明媒体完整，<target>.n 内容==段长是额外约束；
+    语义：完成证书/字节摘要证明媒体完整，<target>.n 内容==段长是额外约束；
     仅有旁车不认证媒体。下方文件负控拒绝裸字节，独立 stub 证书有效后核旁车分支。
     """
 
@@ -186,7 +186,7 @@ class TestPassFreshSidecar(unittest.TestCase):
             self.assertFalse(plan._pass_fresh(p, 120))   # 文件已删
             fake = self._mk(d, b"not a media file")
             self.assertFalse(plan._pass_fresh(fake, 120))
-            # Isolate the extra .n contract after the shared completion gate.
+            # Isolate the extra .n contract alongside the shared completion gate.
             # This stub proves sidecar control flow, not real media validity.
             with mock.patch.object(composite, 'media_cache_valid', return_value=True) as valid:
                 for text, expected in ((None, False), ('119', False), ('120', True)):
@@ -197,7 +197,7 @@ class TestPassFreshSidecar(unittest.TestCase):
                         else:
                             sidecar.write_text(text)
                         self.assertEqual(plan._pass_fresh(fake, 120, sidecar=True), expected)
-                self.assertEqual(valid.call_count, 3)
+                valid.assert_called_once_with(fake, 120)
 
     def test_sidecar_corrupt_text(self):
         with tempfile.TemporaryDirectory(prefix="vtx_sc_") as td:
@@ -208,7 +208,69 @@ class TestPassFreshSidecar(unittest.TestCase):
             self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
             with mock.patch.object(composite, 'media_cache_valid', return_value=True) as valid:
                 self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
-            valid.assert_called_once_with(p, 120)
+            valid.assert_not_called()
+
+    def test_sidecar_rejection_precedes_media_io(self):
+        with tempfile.TemporaryDirectory(prefix="vtx_sc_") as td:
+            d = Path(td)
+            plan = self._plan(d)
+            p = self._mk(d)
+            sidecar = p.with_suffix('.mkv.n')
+            for contents in (None, 'not-a-number', '119', '121', ''):
+                with self.subTest(sidecar=contents):
+                    if contents is None:
+                        sidecar.unlink(missing_ok=True)
+                    else:
+                        sidecar.write_text(contents)
+                    with mock.patch.object(composite, 'media_cache_valid',
+                                           side_effect=AssertionError('unnecessary media IO')):
+                        self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
+
+    def test_matching_sidecar_still_revalidates_every_consumer(self):
+        with tempfile.TemporaryDirectory(prefix="vtx_sc_") as td:
+            d = Path(td)
+            plan = self._plan(d)
+            p = self._mk(d)
+            p.with_suffix('.mkv.n').write_text('120')
+            with mock.patch.object(composite, 'media_cache_valid',
+                                   side_effect=(True, False, True)) as valid:
+                self.assertTrue(plan._pass_fresh(p, 120, sidecar=True))
+                self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
+                self.assertTrue(plan._pass_fresh(p, 120))
+            self.assertEqual(valid.call_args_list, [mock.call(p, 120)] * 3)
+
+    def test_matching_sidecar_propagates_completion_gate_errors(self):
+        with tempfile.TemporaryDirectory(prefix="vtx_sc_") as td:
+            d = Path(td)
+            plan = self._plan(d)
+            p = self._mk(d)
+            p.with_suffix('.mkv.n').write_text('120')
+            with mock.patch.object(composite, 'media_cache_valid',
+                                   side_effect=RuntimeError('completion gate failed')):
+                with self.assertRaisesRegex(RuntimeError, 'completion gate failed'):
+                    plan._pass_fresh(p, 120, sidecar=True)
+
+    def test_sidecar_changed_during_media_gate_still_fails(self):
+        with tempfile.TemporaryDirectory(prefix="vtx_sc_") as td:
+            d = Path(td)
+            plan = self._plan(d)
+            p = self._mk(d)
+            sidecar = p.with_suffix('.mkv.n')
+            for contents in (None, 'not-a-number', '119', ''):
+                with self.subTest(sidecar_after_media_gate=contents):
+                    sidecar.write_text('120')
+
+                    def changed_during_hash(*args):
+                        if contents is None:
+                            sidecar.unlink()
+                        else:
+                            sidecar.write_text(contents)
+                        return True
+
+                    with mock.patch.object(composite, 'media_cache_valid',
+                                           side_effect=changed_during_hash) as valid:
+                        self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
+                    valid.assert_called_once_with(p, 120)
 
 
 class TestPassKeySubsSeparation(unittest.TestCase):

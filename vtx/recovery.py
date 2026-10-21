@@ -80,7 +80,7 @@ def media_cache_valid(path, frames=None, allow_short_verified=False):
         actual = rec.get('frames')
         count_ok = (frames is None or actual == frames or
                     (allow_short_verified and isinstance(actual, int) and 0 < actual <= frames))
-        return rec.get('schema') == 1 and rec.get('sha256') == _digest(path) and count_ok
+        return rec.get('schema') == 1 and count_ok and rec.get('sha256') == _digest(path)
     except (OSError, ValueError, TypeError, AttributeError):
         return False
 

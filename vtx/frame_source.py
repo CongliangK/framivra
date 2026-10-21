@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from pathlib import Path
 
-from .hygiene import gfx_dir
+from .hygiene import gfx_cache_ns, gfx_dir
 from .gfx_cli import png_invalid_reason
 
 
@@ -210,9 +210,8 @@ def png_source(c, clip):
     relative = directory.relative_to(c.cache)
     identity = str(relative) if relative.parts[0] == "gfx_exp" else directory.name
     def check_environment():
-        import json
         from .gfx_environment import certificate
-        from .gfx_cli import COMPLETE_FILE
+        from .gfx_cli import require_page_record
         expected = certificate(c)
         if expected is None:
             # Electron has no HTML environment certificate. Authenticate its
@@ -220,18 +219,14 @@ def png_source(c, clip):
             # then bind the following per-frame byte checks to that record.
             from .gfx_cache_reader import require_electron_record
             return require_electron_record(c, clip, directory)['sha256']
-        try:
-            record = json.loads((directory / COMPLETE_FILE).read_text())
-        except (OSError, ValueError) as error:
-            raise ValueError('gfx environment certificate missing; rerun vtx gfx') from error
-        if (not isinstance(record, dict) or type(record.get('schema')) is not int
-                or record['schema'] != 1
-                or record.get('environment') != expected
-                or record.get('mixed_producer')
-                or not isinstance(record.get('sha256'), list) or len(record['sha256']) != clip['dur']
-                or any(record.get(k) != v for k, v in
-                       dict(key=directory.name, frames=clip['dur'], width=c.w, height=c.h).items())):
-            raise ValueError('gfx environment certificate changed; rerun vtx gfx')
-        return record['sha256']
+        from .gfx_backend import selected
+        from .gfx_dependencies import resolve, digest, policy
+        strict = policy(c) == 'strict'
+        if strict and selected() != 'cdp':
+            raise ValueError('strict dependencies require CDP; native/CLI caches unsupported')
+        return require_page_record(
+            directory, clip['dur'], directory.name, c.w, c.h,
+            backend_ns=gfx_cache_ns() or None, environment=expected,
+            dependency_digest=digest(resolve(c, clip)) if strict else None)['sha256']
     return PngSequence(directory, identity, clip["dur"], c.fps, c.w, c.h,
                        environment_check=check_environment)

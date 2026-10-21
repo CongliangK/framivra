@@ -387,6 +387,41 @@ class MediaRecovery(unittest.TestCase):
         wav(self.target, samples=240)
         self.assertFalse(recovery.media_cache_valid(self.target))
 
+    def test_wrong_frame_obligation_rejects_before_reading_media(self):
+        self.target.write_bytes(b'certified video bytes')
+        digest = recovery._digest(self.target)
+        marker = recovery.completion_marker(self.target)
+        for actual, requested, allow_short in [(29, 30, False), (31, 30, False),
+                                               (31, 30, True), (0, 30, True),
+                                               (None, 30, True), ('30', 30, True)]:
+            with self.subTest(actual=actual, requested=requested, allow_short=allow_short):
+                marker.write_text(json.dumps({'schema': 1, 'sha256': digest,
+                                              'frames': actual}))
+                before = marker.read_bytes()
+                with mock.patch.object(recovery, '_digest',
+                                       side_effect=AssertionError('known cache miss must not hash')):
+                    self.assertFalse(recovery.media_cache_valid(
+                        self.target, requested, allow_short_verified=allow_short))
+                self.assertEqual(marker.read_bytes(), before)
+                self.assertEqual(self.target.read_bytes(), b'certified video bytes')
+
+    def test_matching_frame_obligation_still_hashes_current_media(self):
+        marker = recovery.completion_marker(self.target)
+        for actual, requested, allow_short in [(30, 30, False), (29, 30, True),
+                                               (None, None, False)]:
+            for changed in (False, True):
+                with self.subTest(actual=actual, requested=requested, changed=changed):
+                    self.target.write_bytes(b'certified media bytes')
+                    marker.write_text(json.dumps({'schema': 1,
+                                                  'sha256': recovery._digest(self.target),
+                                                  'frames': actual}))
+                    if changed:
+                        self.target.write_bytes(b'changed media bytes')
+                    with mock.patch.object(recovery, '_digest', wraps=recovery._digest) as digest:
+                        self.assertEqual(recovery.media_cache_valid(
+                            self.target, requested, allow_short_verified=allow_short), not changed)
+                    digest.assert_called_once_with(self.target)
+
     def test_failed_prepare_is_not_success_then_reuses_repaired_cache(self):
         src = self.root / 'source.wav'
         wav(src)
