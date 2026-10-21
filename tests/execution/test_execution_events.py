@@ -115,8 +115,9 @@ class EventsTests(unittest.TestCase):
         self.assertFalse(events.read_events(lines[0] + '{"schema')['complete'])
         self.assertFalse(events.read_events(lines[0])['complete'])
         self.assertFalse(events.read_events(text.rstrip())['complete'])
-        with self.assertRaises(ValueError):
-            events.read_events(lines[0] + '{broken}\n')
+        for data in ('{broken}', '{"x":1,"x":2}', 'Infinity', '-Infinity'):
+            with self.assertRaisesRegex(ValueError, 'invalid event JSON'):
+                events.read_events(lines[0] + data + '\n')
 
     def test_resume_does_not_reuse_identity(self):
         one = events.ExecutionContext()

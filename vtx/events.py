@@ -600,6 +600,20 @@ def cache_hit(c, method, *, frames=None):
                 'producer_reason': 'legacy_unknown', 'frame_range': frames})
 
 
+def strict_json_loads(text, *, duplicate='duplicate JSON field', nonfinite='nonfinite JSON number'):
+    """Decode evidence JSON; callers retain their existing error vocabulary."""
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError(duplicate.format(value=key))
+            result[key] = value
+        return result
+    def reject_constant(value):
+        raise ValueError(nonfinite.format(value=value))
+    return json.loads(text, object_pairs_hook=pairs, parse_constant=reject_constant)
+
+
 def read_events(data, replay=False):
     """Pure reducer: never execute evidence. Invalid facts raise ValueError.
 
@@ -619,18 +633,9 @@ def read_events(data, replay=False):
     lines = data.splitlines()
     for index, line in enumerate(lines):
         try:
-            def pairs(items):
-                result = {}
-                for key, value in items:
-                    if key in result:
-                        raise ValueError('duplicate JSON field')
-                    result[key] = value
-                return result
-            def reject_constant(value):
-                raise ValueError('nonfinite JSON number')
             if len(line) > MAX_EVENT_CHARS:
                 raise ValueError('oversized event')
-            row = json.loads(line, object_pairs_hook=pairs, parse_constant=reject_constant)
+            row = strict_json_loads(line)
         except (ValueError, TypeError):
             if truncated and index == len(lines) - 1:
                 break

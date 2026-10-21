@@ -168,9 +168,10 @@ class AcceptanceTests(AcceptanceFixture, unittest.TestCase):
         for name in ('../outside', '/absolute', 'a/../b', 'a//b', 'C:/file', 'a\\b'):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 a.relative(name)
-        self.timeline.write_text('{"project":{},"project":{}}')
-        with self.assertRaisesRegex(ValueError, 'duplicate'):
-            a.collect_inputs(self.timeline)
+        for data in ('{"project":{},"project":{}}', 'NaN'):
+            self.timeline.write_text(data)
+            with self.assertRaisesRegex(ValueError, 'duplicate|nonfinite'):
+                a.collect_inputs(self.timeline)
 
     def test_reanchored_gate_lie_fails_semantic_check(self):
         self.build()

@@ -84,7 +84,7 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
 契约 v2（D15 轨道等价模型）：video_tracks 所有轨道等价，数组顺序即图层顺序（[0] 最底）；
 画布为黑场，无任何覆盖性约束；kind（aroll/broll/screen/pip/gfx）纯语义标注，渲染不区分；
 clip 的 scale/x/y/opacity/fade 全部可选（缺省＝全屏不透明），fade 统一为 alpha 淡入淡出。
-仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome。
+依赖与各后端前置条件以仓根 README.md「依赖矩阵」为准。
 """
 import argparse, difflib, json, os, shutil, sys, threading
 from concurrent.futures import ThreadPoolExecutor

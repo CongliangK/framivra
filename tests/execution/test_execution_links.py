@@ -53,6 +53,7 @@ class RequestTests(unittest.TestCase):
         request = self.request()
         path = self.root / links.DIRECTORY / 'request.json'
         for data in ('{}', '{"x":1,"x":2}', ' ' * 5000,
+                     json.dumps(request).replace('{', '{"command_index":0,', 1),
                      json.dumps({**request, 'nonce': '../elsewhere'}),
                      json.dumps({**request, 'command_index': True}),
                      json.dumps({**request, 'schema_version': 'vtx.observation-request/2'})):

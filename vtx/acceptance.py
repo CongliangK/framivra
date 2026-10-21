@@ -21,7 +21,7 @@ import tempfile
 import uuid
 
 from .cache_state import file_digest, media_stat_digest
-from . import execution_links
+from . import events, execution_links
 
 SCHEMA = 'vtx.acceptance/1'
 STAGES = ('validate', 'audit', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
@@ -59,17 +59,9 @@ def regular(path):
 
 
 def read_json(path):
-    def pairs(items):
-        result = {}
-        for k, v in items:
-            if k in result:
-                raise ValueError(f'duplicate JSON key: {k}')
-            result[k] = v
-        return result
-    def invalid_constant(value):
-        raise ValueError(f'nonfinite JSON number: {value}')
-    return json.loads(regular(path).read_text(encoding='utf-8'), object_pairs_hook=pairs,
-                      parse_constant=invalid_constant)
+    return events.strict_json_loads(regular(path).read_text(encoding='utf-8'),
+                                   duplicate='duplicate JSON key: {value}',
+                                   nonfinite='nonfinite JSON number: {value}')
 
 
 def write_json(path, data):
