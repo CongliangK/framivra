@@ -89,7 +89,7 @@ env VTX_TEST_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worke
 | `src/main.cpp` | worker 入口：PDEATHSIG 首行 + `CefExecuteProcess` 子进程再入 + `--parent-alive-fd` 守卫线程（EOF→`kill(0,SIGKILL)`，仅组长）+ A0/A1 参数面（含 `--serve` 帧服务分支）+ 外置泵阶段机 + 结果 JSON（探针证据/计时/启动环境快照） |
 | `src/app_handler.{h,cpp}` | `WorkerApp`（OnBeforeCommandLineProcessing 按 A0/A1 注入开关 + OnScheduleMessagePumpWork）与 `WorkerClient`（OSR OnPaint 全帧 BGRA→RGBA、#110 serve 捕获路径、GetViewRect、console marker 探针通道）+ 共享装配（MakeWorkerSettings/CreateOsrBrowser/PumpDriver） |
 | `src/ipc_protocol.hpp` | #110 定长二进制协议：工单冻结 `FrameSlotHeader`（偏移静态断言=线上规范）+ 64B `FrameRequest` + 32B `SlotNotice` + 64B `HelloInfo`（SCM_RIGHTS 随带 SHM fd） |
-| `src/shm_ring.hpp` | #110 4-Slot POSIX SHM 环：`shm_open`→`ftruncate`→`mmap`→**立即 `shm_unlink` 零残留**；EMPTY/WRITING/READY 门（acquire/release 跨进程同步）；满环背压等待入账 |
+| `src/shm_ring.hpp` | #110 4-Slot POSIX SHM 环：`shm_open`→`ftruncate`→`mmap`→**立即尝试 `shm_unlink`**（边界见协议 §1）；EMPTY/WRITING/READY 门（acquire/release 跨进程同步）；满环背压等待入账 |
 | `src/frame_pipeline.{h,cpp}` | 帧原语：任意行步长逐行紧凑拷贝（防斜纹）、(0,0) 金丝雀解码；#111 起逆预乘迁至 pixel_ops（本文件保留 byte_len 口径兼容包装） |
 | `src/pixel_ops.{h,cpp}` | #111 正式算子 `unpremultiply_bgra_to_rgba`：65,536 项精确 LUT + AVX2 单遍混合式（块级不透明 shuffle 快路径 / gather 通用路径）+ NEON 结构交换（aarch64 编译期门控）+ 标量兜底；与 #109 标量公式逐值一致（selftest 全域穷举） |
 | `src/serve.{h,cpp}` | #110 帧服务模式：模式 1（线程池逆预乘+双后端 PNG+`.tmp.<pid>.<tid>`+rename 原子落盘，回 128B 计时回执）/ 模式 2（先取空槽再生产；满环背压停发 BeginFrame；槽索引通知） |
@@ -224,10 +224,10 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
 协议权威：`IPC_PROTOCOL.md`（布局/偏移表/状态机/时序/故障注入面/工单偏差
 记录）。核心设计：
 
-- **零残留**：`shm_open(O_EXCL)` → `mmap` → **立即 `shm_unlink`**，SHM
-  实体仅由 fd 维系（消费端经 Unix Socket SCM_RIGHTS 收同一句柄零拷贝
-  mmap）；任何进程死亡（含 SIGKILL/abort）由内核回收 —— `/dev/shm`
-  任何时刻零 `vtx_shm_*` 残留，不依赖退出/信号处理器。
+- **SHM 名字解绑**：`shm_open(O_EXCL)` → `ftruncate` → `mmap` →
+  `shm_unlink`；消费端经 Unix Socket SCM_RIGHTS 收同一句柄零拷贝 mmap。
+  解绑成功后由内核随最后 fd/映射释放回收；创建窗口或解绑失败不保证零
+  残留，精确边界见 [协议 §1](IPC_PROTOCOL.md#1-传输与字节序)。
 - **双模式**：模式 1 = Worker 线程池原地落盘 PNG（`.tmp`+rename 原子
   提交），仅回 128B 计时回执；模式 2 = 先取空槽再生产，4 槽全满即背压
   （暂停发起下一帧 BeginFrame，`backpressure_wait_us` 随通知回传并累计

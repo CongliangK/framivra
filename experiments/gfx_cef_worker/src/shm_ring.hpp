@@ -12,11 +12,11 @@
 //   发布：先写槽头+像素数据，后 release-store state=READY —— 读者
 //   acquire-load 见 READY 即看到完整帧；释放同理。
 //
-// 零残留设计（工单核心考察点）：
-//   shm_open(O_CREAT|O_EXCL) → ftruncate → mmap → 立即 shm_unlink。
-//   对象名仅在微秒级窗口存在；之后实体仅由各方持有的 fd 维系，进程
-//   死亡（含 SIGKILL/abort）即由内核回收 —— /dev/shm 任何时刻零
-//   vtx_shm_* 残留，不依赖退出处理器或信号处理器。消费端经 Unix
+// 名字解绑设计（工单核心考察点）：
+//   shm_open(O_CREAT|O_EXCL) → ftruncate → mmap → 立即尝试 shm_unlink。
+//   解绑成功后名字消失，实体在最后 fd/映射释放后由内核回收，不依赖
+//   退出/信号处理器。创建至解绑间被 SIGKILL 或解绑失败仍可能留名；
+//   当前未检查解绑返回值，不能保证任何时刻零残留。消费端经 Unix
 //   Socket SCM_RIGHTS 收到同一 fd（“映射同一 shm_open 句柄”）。
 //   满溢（背压）：4 槽全满时写者暂停（Claim 阻塞轮询，不另分配内存，
 //   RSS 由固定池界定），等待计时累计入 backpressure_wait_us。
@@ -253,8 +253,8 @@ inline std::unique_ptr<ShmRingWriter> ShmRingWriter::Create(
     ::close(fd);
     return nullptr;
   }
-  // 名字使命完成（消费端经 SCM_RIGHTS 拿 fd，不经名字）：此后任何进程
-  // 死亡，内核随最后 fd 关闭回收对象 —— /dev/shm 零 vtx_shm_* 残留。
+  // 名字使命完成（消费端经 SCM_RIGHTS 拿 fd，不经名字）：解绑成功后
+  // 名字消失，内核随最后 fd/映射释放回收对象；此处未检查解绑失败。
   ::shm_unlink(name.c_str());
 
   auto* ring = new ShmRingWriter();
@@ -295,7 +295,7 @@ inline ShmRingWriter::~ShmRingWriter() {
     ::munmap(base_, total_bytes_);
   }
   if (fd_ >= 0) {
-    ::close(fd_);  // 名字已解绑：最后一个 fd 关闭即对象消亡
+    ::close(fd_);  // 解绑成功后，最后 fd/映射释放即对象消亡
   }
 }
 
@@ -391,7 +391,6 @@ inline std::unique_ptr<ShmRingView> ShmRingView::Attach(int shm_fd,
          kRingMagic) {
     if (NowUs() - t0 > 5'000'000ull) {
       *err = "环布局就绪超时（layout_ready 未发布）";
-      ::munmap(view->base_, view->total_bytes_);
       ::close(fd);
       delete view;
       return nullptr;
@@ -401,7 +400,6 @@ inline std::unique_ptr<ShmRingView> ShmRingView::Attach(int shm_fd,
   if (view->control_->magic != kRingMagic ||
       view->control_->protocol_version != kProtocolVersion) {
     *err = "环控制块 magic/版本不符";
-    ::munmap(view->base_, view->total_bytes_);
     ::close(fd);
     delete view;
     return nullptr;
@@ -417,7 +415,6 @@ inline std::unique_ptr<ShmRingView> ShmRingView::Attach(int shm_fd,
 #endif
   if (expected_allocation != total) {
     *err = "环尺寸与几何不符（控制块字段损坏？）";
-    ::munmap(view->base_, view->total_bytes_);
     ::close(fd);
     delete view;
     return nullptr;

@@ -54,9 +54,10 @@
   stdout 行后可连接）。
 - **数据流（模式 2）**：POSIX SHM 4-Slot 环。**零残留设计**：
   `shm_open(O_CREAT|O_EXCL)` → `ftruncate` → `mmap` → **立即
-  `shm_unlink`** —— 对象名仅存在于微秒级窗口，实体由各方 fd 维系，
-  任何进程死亡（含 SIGKILL）由内核回收，`/dev/shm` 任何时刻零
-  `vtx_shm_*` 残留。消费端 fd 经 Hello 消息 **SCM_RIGHTS** 随带交付
+  `shm_unlink`** —— 解绑成功后名字消失，实体在最后 fd/映射释放后由内核
+  回收。创建到解绑之间被 SIGKILL 或解绑失败仍可能留下 `vtx_shm_*` 名字；
+  当前实现不检查解绑返回值，不能保证任何时刻零残留。消费端 fd 经 Hello
+  消息 **SCM_RIGHTS** 随带交付
   （工单「消费端映射同一 shm_open 句柄」）。
 - **字节序**：小端（目标面 linux64/x86-64）；全部消息定长、无隐式
   填充（`<` packed 语义与 C++ 原生偏移一致，静态断言钉死）。
