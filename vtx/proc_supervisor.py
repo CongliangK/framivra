@@ -592,7 +592,7 @@ class SupervisedProcessGroup:
 #   no_ledger      无账本（正常收尾后的空目录）——不动进程
 #   live_host      宿主仍存活（host_pid+starttime 吻合）——活动组，跳过一切
 #   killed         已 killpg 并等进程表清空
-#   kill_failed    击杀后仍有残活成员——保留目录与账本，后续重试
+#   kill_failed    身份未确认或击杀后仍有残活成员——保留目录与账本，后续重试
 #   already_dead   组已无存活成员（守卫/PDEATHSIG 已收走）
 #   pid_reuse      组长 pid 已被无关进程复用（starttime 不符）——只清目录不杀
 #   stale_boot     账本属旧开机（boot_id 不符）——只清目录不杀
@@ -636,6 +636,10 @@ def reap_run_dir(run_dir, *, ledger_path=None) -> str:
     current_boot = boot_id()
     if _DARWIN_PROC is not None and (current_boot is None or not rec.get("boot_id")):
         return "broken_ledger"
+    if sys.platform.startswith("linux") and (not current_boot or not rec.get("boot_id")):
+        # Linux starttime is relative to boot: matching ticks alone cannot
+        # establish ownership. Keep the ledger/profile until identity is known.
+        return "kill_failed"
     if current_boot and rec.get("boot_id") not in (None, current_boot):
         return "stale_boot"
     if proc_starttime(host_pid) == host_ticks:

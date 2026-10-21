@@ -783,20 +783,47 @@ class FailedKillRetention(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_reaper_retains_failed_kill_then_retries_successfully(self):
-        with mock.patch.object(proc_supervisor, '_DARWIN_PROC', None), \
-                mock.patch.object(proc_supervisor, 'boot_id', return_value='test-boot'), \
-                mock.patch.object(proc_supervisor, 'proc_starttime',
-                                  side_effect=lambda pid: 111 if pid == 424242 else None), \
-                mock.patch.object(proc_supervisor, 'group_live_members', return_value=[424242]), \
-                mock.patch.object(proc_supervisor, 'kill_group', return_value=False) as kill:
-            stats = reap_orphan_workers(self.c)
-            self.assertEqual((stats['killed'], stats['removed'], stats.get('kill_failed', 0)), (0, 0, 1))
-            self.assertEqual(json.loads(self.ledger.read_text()), self.record)
-            kill.assert_called_once_with(424242)
-            kill.return_value = True
-            stats = reap_orphan_workers(self.c)
-            self.assertEqual((stats['killed'], stats['removed'], stats.get('kill_failed', 0)), (1, 1, 0))
-        self.assertFalse(self.run_dir.exists())
+        absent = object()
+        for stored, current in (('test-boot', 'test-boot'), (absent, 'test-boot'),
+                                (None, 'test-boot'), ('', 'test-boot'),
+                                ('test-boot', None), ('test-boot', ''), (absent, None)):
+            with self.subTest(stored=stored, current=current):
+                self.run_dir.mkdir(parents=True, exist_ok=True)
+                record = dict(self.record)
+                if stored is absent:
+                    del record['boot_id']
+                else:
+                    record['boot_id'] = stored
+                self.ledger.write_text(json.dumps(record))
+                with mock.patch.object(proc_supervisor.sys, 'platform', 'linux'), \
+                        mock.patch.object(proc_supervisor, '_DARWIN_PROC', None), \
+                        mock.patch.object(proc_supervisor, 'boot_id', return_value=current) as boot, \
+                        mock.patch.object(proc_supervisor, 'proc_starttime',
+                                          side_effect=lambda pid: 111 if pid == 424242 else None) as start, \
+                        mock.patch.object(proc_supervisor, 'group_live_members', return_value=[424242]), \
+                        mock.patch.object(proc_supervisor, 'kill_group', return_value=False) as kill:
+                    stats = reap_orphan_workers(self.c)
+                    self.assertEqual((stats['killed'], stats['removed'], stats['kill_failed']), (0, 0, 1))
+                    self.assertEqual(json.loads(self.ledger.read_text()), record)
+                    if stored == current == 'test-boot':
+                        kill.assert_called_once_with(424242)
+                    else:
+                        start.assert_not_called()
+                        kill.assert_not_called()
+                        # The ordinary tmp context must also retain uncertain identity.
+                        with hygiene._TmpDir(self.run_dir):
+                            pass
+                        self.assertEqual(json.loads(self.ledger.read_text()), record)
+                        kill.assert_not_called()
+                    # A later reap with confirmed ownership keeps the success path.
+                    self.ledger.write_text(json.dumps(self.record))
+                    boot.return_value = 'test-boot'
+                    kill.return_value = True
+                    kill.reset_mock()
+                    stats = reap_orphan_workers(self.c)
+                    self.assertEqual((stats['killed'], stats['removed'], stats['kill_failed']), (1, 1, 0))
+                    kill.assert_called_once_with(424242)
+                self.assertFalse(self.run_dir.exists())
 
     def test_tmp_cleanup_retains_unsettled_or_uncertain_workers(self):
         for outcome in ('kill_failed', 'live_host', OSError('unknown process state')):
