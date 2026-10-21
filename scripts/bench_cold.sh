@@ -174,7 +174,7 @@ for i in $(seq 1 "$ROUNDS"); do
     if ! run_step export_4k env python3 "$REPO/apps/publish/export_4k.py" -t "$PROJ/timeline.json"; then
       echo "⚠ export_4k 异常退出（rc=$(cat "$TDIR/rc_${ROUND}_export_4k")）"; UNEXPECTED_FAIL=1
     fi
-    if ! run_step check_4k bash "$REPO/scripts/check_4k.sh" "$PROJ/out/final_4k.mp4"; then
+    if ! run_step check_4k bash "$REPO/apps/publish/check_4k.sh" "$PROJ/out/final_4k.mp4"; then
       echo "⚠ check_4k 有 FAIL（rc=$(cat "$TDIR/rc_${ROUND}_check_4k")）"; UNEXPECTED_FAIL=1
     fi
     mark "#### 发布链（4K）END"

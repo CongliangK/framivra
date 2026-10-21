@@ -13,7 +13,7 @@ STYLES = ('cel-boil','isometric','flat-vector','line-art','soft-3d','morph','sti
 ROOT = Path(__file__).resolve().parent
 DEFAULT = dict(title='Ideas become motion', subtitle='Observe · connect · transform', items=[dict(label='Discover',value=24),dict(label='Build',value=56),dict(label='Share',value=88)], palette=['#faf5e8','#202730','#e66b42','#49a69d'],seed=7,pace=1.0,hold_frames=12)
 
-def build(style, output, content=None, frames=90, dry=False):
+def build(style, output, content=None, frames=90, dry=False, *, scaffold=True):
     if style not in STYLES: raise ValueError('unknown style')
     if type(frames) is not int or frames < 30 or frames > 18000: raise ValueError('frames must be an integer between 30 and 18000')
     data = dict(DEFAULT)
@@ -35,10 +35,11 @@ def build(style, output, content=None, frames=90, dry=False):
     data.update(style=style,frames=frames)
     output=Path(output)
     if output.exists(): raise ValueError('output must be a new directory')
-    deps=['gfx/'+s for s in ('content.js','runtime.js','styles-a.js','styles-b.js','styles-c.js')]
+    deps=['gfx/'+s for s in ('content.js','runtime.js','prototype-helpers.js','prototype.js')]
     timeline={'version':2,'project':{'fps':30,'width':1920,'height':1080,'duration_frames':frames},'sources':[{'id':'cue','path':'cue.wav'}], 'video_tracks':[{'name':'MG composition','kind':'gfx','clips':[{'src':'gfx/index.html','dst_in':0,'dur':frames,'cache_dependencies':deps}]}], 'audio_tracks':[{'name':'procedural cues','events':[{'src':'cue','in':0,'out':frames,'src_in':0,'volume':1.0}]}],'subtitles':[]}
+    if not scaffold: timeline['video_tracks']=[]
     if dry: return timeline
-    gfx=output/'gfx';gfx.mkdir(parents=True)
+    output.mkdir(parents=True)
     # Original, deterministic reference cue track. Replace with editorial audio.
     with wave.open(str(output/'cue.wav'),'wb') as wav:
         wav.setparams((2,2,48000,0,'NONE','not compressed'))
@@ -52,11 +53,14 @@ def build(style, output, content=None, frames=90, dry=False):
             chunk.extend(struct.pack('<hh',value,value))
             if len(chunk)>=65536: wav.writeframesraw(chunk);chunk.clear()
         if chunk: wav.writeframesraw(chunk)
-    for name in ('runtime.js','styles-a.js','styles-b.js','styles-c.js'): shutil.copyfile(ROOT/name,gfx/name)
-    (gfx/'content.js').write_text('window.MG_CONTENT='+json.dumps(data,ensure_ascii=True,allow_nan=False)+';\n',encoding='utf-8')
-    html='<!doctype html><meta charset="utf-8"><title>MG composition</title><style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden}canvas{display:block}</style><canvas id="stage" width="1920" height="1080"></canvas>'
-    html+=''.join('<script src="'+s+'"></script>' for s in ('content.js','styles-a.js','styles-b.js','styles-c.js','runtime.js'))
-    (gfx/'index.html').write_text(html,encoding='utf-8')
+    if scaffold:
+        gfx=output/'gfx';gfx.mkdir()
+        for name in ('runtime.js','prototype-helpers.js'): shutil.copyfile(ROOT/name,gfx/name)
+        shutil.copyfile(ROOT/'styles'/style/'scripts'/'prototype.js',gfx/'prototype.js')
+        (gfx/'content.js').write_text('window.MG_CONTENT='+json.dumps(data,ensure_ascii=True,allow_nan=False)+';\n',encoding='utf-8')
+        html='<!doctype html><meta charset="utf-8"><title>MG composition</title><style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden}canvas{display:block}</style><canvas id="stage" width="1920" height="1080"></canvas>'
+        html+=''.join('<script src="'+s+'"></script>' for s in ('content.js','prototype-helpers.js','prototype.js','runtime.js'))
+        (gfx/'index.html').write_text(html,encoding='utf-8')
     (output/'timeline.json').write_text(json.dumps(timeline,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     return timeline
 

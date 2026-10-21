@@ -63,7 +63,7 @@
 
   "comparison_tiers": {
     "Tier-1": {
-      "definition": "逐像素全零差：max_abs_diff == 0（RGBA 四通道、全帧、逐像素最大绝对差；解码口径与 scripts/gfx_golden.py 同域＝PIL/RGBA 行主序）",
+      "definition": "逐像素全零差：max_abs_diff == 0（RGBA 四通道、全帧、逐像素最大绝对差；解码口径与 scripts/gfx/gfx_golden.py 同域＝PIL/RGBA 行主序）",
       "gate": "issue #106 DoD 同帧异序幂等门（见 idempotency_dod）"
     },
     "deferred": "Tier-2 及以上（容差档）由 #107 铁基线按路线实测噪声定义，本套件不预支"

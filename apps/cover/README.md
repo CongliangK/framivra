@@ -1,6 +1,6 @@
 # cover · B 站投稿封面产线
 
-v2 应用（P2a 批次 1 自 `scripts/make_cover.py` 迁入；manifest 见 `app.json`，兼容转发壳：`scripts/make_cover.py` → 本目录）。来源决策 D50（voice-ime 首期封面收编）。
+组件 manifest 见 `app.json`。来源决策 D50（voice-ime 首期封面收编）。
 
 ## 用途
 
@@ -15,7 +15,7 @@ v2 应用（P2a 批次 1 自 `scripts/make_cover.py` 迁入；manifest 见 `app.
 
 ## 健康检查
 
-`env python3 apps/cover/make_cover.py --help` 退出码 0（app.json health.command；等价经兼容旧路径 `scripts/make_cover.py --help`）。
+`env python3 apps/cover/make_cover.py --help` 退出码 0（app.json health.command）。
 
 ## 开启步骤
 

@@ -80,7 +80,7 @@ def missing_env() -> list:
                     "（已有环境探测：bash plugins/denoise/denoise_init.sh）")
     if not (run_dir() / "ds/G/default/mp_rank_00_model_states.pt").is_file():
         miss.append(f"Resemble 权重 {run_dir()}"
-                    "（旧 --download 为 BLOCKED；许可见 docs/third-party-licenses.md；离线证据：python3 scripts/model_license_policy.py plan resemble-enhance，不下载、不授予许可）")
+                    "（旧 --download 为 BLOCKED；许可见 docs/third-party-licenses.md；离线证据：python3 scripts/policy/model_license_policy.py plan resemble-enhance，不下载、不授予许可）")
     return miss
 
 

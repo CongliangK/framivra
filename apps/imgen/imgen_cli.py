@@ -113,27 +113,6 @@ def _pluginlib_config():
     return _cfg
 
 
-def config_path() -> Path:
-    """生效配置路径（v2 §5.3 语义）：VTX_CONFIG > IMGEN_CONFIG（废弃，见
-    load_config 公告）> repo 根 config.local.json。"""
-    override = os.environ.get("VTX_CONFIG")
-    if override:
-        return Path(override).expanduser()
-    legacy = os.environ.get("IMGEN_CONFIG")
-    if legacy:
-        return Path(legacy).expanduser()
-    return Path(__file__).resolve().parent.parent.parent / "config.local.json"
-
-
-def load_config() -> dict:
-    """仓库配置（v2 §5.3 统一加载入口 vtx/pluginlib/config.py，legacy_env=
-    "IMGEN_CONFIG"）：VTX_CONFIG > repo config.local.json；IMGEN_CONFIG 保留读取
-    并打废弃公告（stderr 一行，迁移期不破）；坏 JSON 一律警告 + {} 继续（原静默
-    {} 收敛到全局化语义）；路径型键自动 ~ 展开。键结构与缺省探测链不变。"""
-    return _pluginlib_config().load_config(
-        Path(__file__).resolve().parent.parent.parent, legacy_env="IMGEN_CONFIG")
-
-
 def resolve_api_base(cfg: dict) -> str:
     """优先级：env IMGEN_API_BASE（测试/mock 用）> config imgen.api_base > 默认。"""
     env = os.environ.get("IMGEN_API_BASE")
@@ -847,7 +826,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    cfg = load_config()
+    cfg = _pluginlib_config().load_config()
     try:
         if args.command == "gen":
             return cmd_gen(args, cfg)

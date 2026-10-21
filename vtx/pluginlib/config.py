@@ -5,8 +5,7 @@ imgen/imgen_cli.py；init.py 的读取随 vt.py 吸收）。只统一**加载入
 的键结构与缺省探测链不变。
 
 语义（对抗审查 P0 复审 P2-3 全局化裁定）：
-  - 路径：VTX_CONFIG 环境变量 > repo 根 config.local.json（对齐 imgen 现有
-    IMGEN_CONFIG 覆盖语义）；
+  - 路径：VTX_CONFIG 环境变量 > repo 根 config.local.json；
   - 坏 JSON：一律 **警告不阻断**、按空 {} 继续（asr 现行为推广全局——tts/imgen
     原静默 {} 收敛到此单一语义）；缺文件不警告（走默认探测链是常态）；
   - ~ 展开：**已知路径型键清单**自动展开（清单 = config.example.json 的路径型
@@ -14,8 +13,7 @@ imgen/imgen_cli.py；init.py 的读取随 vt.py 吸收）。只统一**加载入
     裁定：对全部字符串值做 ~ 展开的键语义过宽（URL/文本值会被误伤），改为
     清单内自动展开 + expand_path() 工具供其余键自理（消费方调用点的 expanduser
     幂等无害，保留不动）；
-  - IMGEN_CONFIG：保留读取并打**废弃公告**（stderr 一行；VTX_CONFIG 同时设置时
-    以 VTX_CONFIG 为准——迁移期旧变量不破）。
+  - 不读取旧组件配置环境变量；各 app 使用同一配置路径规则。
 """
 import json
 import os
@@ -68,17 +66,9 @@ def cfg_get(cfg, path: str, default):
     return node
 
 
-def load_config(repo_root=None, legacy_env: str = None) -> dict:
-    """统一加载入口（语义见模块头）。legacy_env：兼容期旧路径变量（imgen 传
-    "IMGEN_CONFIG"）——设置且 VTX_CONFIG 未设时按其指向读取并打废弃公告。"""
-    root = Path(repo_root) if repo_root else REPO_ROOT
-    path = config_path(root)
-    if legacy_env:
-        legacy = os.environ.get(legacy_env)
-        if legacy and not os.environ.get("VTX_CONFIG"):
-            print(f"⚠ {legacy_env} 已废弃（v2 统一为 VTX_CONFIG / config.local.json），"
-                  f"本次仍按其指向读取", file=sys.stderr)
-            path = Path(legacy).expanduser()
+def load_config(repo_root=None) -> dict:
+    """统一加载入口（路径、容错与展开语义见模块头）。"""
+    path = config_path(repo_root)
     if not path.is_file():
         return {}
     try:

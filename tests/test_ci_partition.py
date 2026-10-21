@@ -129,10 +129,10 @@ class InventoryContract(unittest.TestCase):
         found = copy.deepcopy(policy['baseline']['batches'])
         replacements = policy['baseline']['refresh']['replacements']
         expected = {
-            ('test_gfx_cache_integrity', 'CacheIntegrity',
+            ('gfx.test_gfx_cache_integrity', 'CacheIntegrity',
              'test_missing_or_malformed_marker_migrates_only_after_full_validation',
              'test_missing_or_malformed_marker_requires_environment_rerender'),
-            ('test_gfx_cli_fallback', 'GfxCliFallbackTests',
+            ('gfx.test_gfx_cli_fallback', 'GfxCliFallbackTests',
              'test_cli_shot_cmd_matches_legacy_flags', 'test_cli_shot_cmd_pins_visual_flags'),
             ('test_impact_identity', 'ClipDependencies',
              'test_legacy_and_empty_keys_unchanged',
@@ -155,9 +155,9 @@ class InventoryContract(unittest.TestCase):
         # These 14 additional PR #196 contracts must be protected, not merely
         # discovered as unprotected new cases after refreshing the three names.
         environment = [name for name in found['tests']
-                       if name.startswith('tests.test_gfx_environment::')]
+                       if name.startswith('tests.gfx.test_gfx_environment::')]
         self.assertEqual(len(environment), 13)
-        evidence = ('tests.test_gfx_evidence::tests.test_gfx_evidence.Evidence.'
+        evidence = ('tests.gfx.test_gfx_evidence::tests.gfx.test_gfx_evidence.Evidence.'
                     'test_production_input_environment_is_plan_bound_and_unknown_never_passes')
         self.assertIn(evidence, found['tests'])
         for name in protected + environment + [evidence]:

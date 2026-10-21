@@ -11,13 +11,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which('bash') or 'bash'
 LEAVES = (
-    ('docs_smoke', 'docs_smoke.sh'),
-    ('doc_budget', 'verify_doc_budget.py'),
-    ('repeat_anchors', 'verify_repeat_anchors.py'),
-    ('charter_budget', 'verify_charter_budget.py'),
-    ('catalog_check', 'verify_manifest_catalog.py'),
-    ('version_sync', 'verify_version_sync.py'),
-    ('contract_surface', 'verify_contract_surface.py'),
+    ('docs_smoke', 'docs/docs_smoke.sh'),
+    ('doc_budget', 'docs/verify_doc_budget.py'),
+    ('repeat_anchors', 'docs/verify_repeat_anchors.py'),
+    ('charter_budget', 'docs/verify_charter_budget.py'),
+    ('catalog_check', 'docs/verify_manifest_catalog.py'),
+    ('version_sync', 'docs/verify_version_sync.py'),
+    ('contract_surface', 'docs/verify_contract_surface.py'),
 )
 
 
@@ -28,6 +28,7 @@ class RequiredDocumentGates(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.scripts = self.root / 'scripts'
         self.scripts.mkdir()
+        (self.scripts / 'docs').mkdir()
         self.gate = self.scripts / 'doc_gates.sh'
         self.gate.write_text((ROOT / 'scripts/doc_gates.sh').read_text(encoding='utf-8'), encoding='utf-8')
         self.populate()
@@ -132,8 +133,8 @@ class RequiredDocumentGates(unittest.TestCase):
         fixture.write_text('import sys\nassert sys.flags.utf8_mode == 1\nprint("中文 ⚠")\n', encoding='utf-8')
         for _, filename in LEAVES[1:]:
             (self.scripts / filename).write_text(fixture.read_text(encoding='utf-8'), encoding='utf-8')
-        (self.scripts / 'docs_smoke.sh').write_text(
-            (ROOT / 'scripts/docs_smoke.sh').read_text(encoding='utf-8'), encoding='utf-8')
+        (self.scripts / 'docs/docs_smoke.sh').write_text(
+            (ROOT / 'scripts/docs/docs_smoke.sh').read_text(encoding='utf-8'), encoding='utf-8')
         (self.root / 'README.md').write_text('```bash\npython3 scripts/unicode_help.py\n```\n', encoding='utf-8')
         for settings in ({}, {'PYTHONUTF8': '0', 'PYTHONIOENCODING': 'cp1252'}):
             with self.subTest(settings=settings):
@@ -144,7 +145,7 @@ class RequiredDocumentGates(unittest.TestCase):
                 env = dict(os.environ)
                 env.pop('PYTHONUTF8', None); env.pop('PYTHONIOENCODING', None)
                 env.update(settings)
-                standalone = subprocess.run([BASH, str(self.scripts / 'docs_smoke.sh')],
+                standalone = subprocess.run([BASH, str(self.scripts / 'docs/docs_smoke.sh')],
                     cwd=self.root, env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
                 self.assertEqual(standalone.returncode, 0, standalone.stdout + standalone.stderr)
                 self.assertIn('--help scripts', standalone.stdout)

@@ -11,8 +11,8 @@ from unittest import mock
 
 from vtx import cli, gfx_backend, gfx_cli, gfx_environment, gfx_render, hygiene
 from vtx.infra import Ctx
-from tests.gfx_environment_fixture import bind_environment
-from tests.test_gfx_cache_integrity import png
+from tests.gfx._environment import bind_environment
+from tests.gfx.test_gfx_cache_integrity import png
 
 
 def protocol(parameter=None):

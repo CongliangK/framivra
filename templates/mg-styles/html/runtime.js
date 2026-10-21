@@ -47,7 +47,6 @@ async function draw(f,d,N){
 function render(f){h.int(f,'frame',0,frames-1);const g=generation,d=data,N=frames;queue=queue.catch(()=>{}).then(async()=>{if(g!==generation)return;await(document.fonts?.ready||Promise.resolve());if(g!==generation)return;await draw(f,d,N);if(g!==generation)return;frame=f;by('seek').value=f;by('clock').textContent=`${f} / ${N-1} · ${(f/FPS).toFixed(2)}s`;});return queue;}
 /* Capture callers await this Promise before reading pixels. No clock here. */
 window.__vtx_render=f=>{playing=false;by('play').textContent='播放';return render(f);};
-window.__setFrame=window.__vtx_render;
 window.__vtx_export_png=()=>canvas.toDataURL('image/png');
 window.__mg_reference_state=()=>({id:scene.id,frame,frames,example:index,playing});
 by('ref-title').textContent=scene.title;by('ref-limits').textContent=scene.limits||'程序图形参考；系统字体与目标浏览器需实际核验。';

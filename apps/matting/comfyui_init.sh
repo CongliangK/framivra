@@ -17,7 +17,7 @@ set -u
 # Installing service code does not authorize arbitrary checkpoint downloads.
 if [ "${1:-}" = "--install" ]; then
   LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
-  python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download comfyui || exit "$?"
+  python3 "$LICENSE_ROOT/scripts/policy/model_license_policy.py" legacy-download comfyui || exit "$?"
 fi
 
 ROOT="${COMFYUI_ROOT:-$HOME/AI/ComfyUI}"

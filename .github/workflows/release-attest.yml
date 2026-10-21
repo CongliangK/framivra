@@ -26,7 +26,7 @@ permissions: {}
 jobs:
   verify-only:
     # 用户授权的「仅验证模式」:对固定测试文件生成真 attestation,并用与
-    # scripts/verify_release.py 同款的严格策略链真实验证——这是 #16/#41
+    # scripts/release/verify_release.py 同款的严格策略链真实验证——这是 #16/#41
     # 的真实正例来源(mock 不能充当)。零发布、零 tag、零正式资产。
     if: inputs.mode == 'verify-only'
     runs-on: ubuntu-24.04
@@ -48,7 +48,7 @@ jobs:
         with:
           subject-path: ${{ runner.temp }}/provenance-test.txt
           show-snippet: false
-      - name: Verify with strict identity policy (same chain as scripts/verify_release.py)
+      - name: Verify with strict identity policy (same chain as scripts/release/verify_release.py)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -128,5 +128,5 @@ jobs:
               --deny-self-hosted-runners "${REF_ARGS[@]}"
             echo "verified: $f"
           done
-      # 发布动作(draft→publish)仍在 scripts/release_github.py 链内;
+      # 发布动作(draft→publish)仍在 scripts/release/release_github.py 链内;
       # 本 job 只生成并核验证词,不发布——正式发版需用户另行授权。

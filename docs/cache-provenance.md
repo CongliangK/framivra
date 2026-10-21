@@ -171,7 +171,7 @@ QC 的段免检记录另绑定 `vtx/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样
 FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该探针。
 `--strict` 仍全部实测。此身份不包含完整 FFmpeg/CPU 环境，环境升级不构成跨版本
 像素保证；需要重新核验时使用 strict。黑场、近黑、声明范围与泄漏的 CPU 回归见
-`tests/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。
+`tests/qc/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。
 
 `receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
 gfx html 字节 + 声明依赖内容 + 生效后端/环境身份/实验命名空间)——与缓存键同等敏感（任何缓存键会变的输入变化，

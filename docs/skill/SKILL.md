@@ -38,7 +38,8 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 | 用户任务 / 关键词 | 先读 |
 |---|---|
 | 剪辑、切素材、多轨合成、画中画、烧字幕、混音、渲染、QC、缓存治理；提到 timeline.json / vtx | `references/edit.md` |
-| 纯 MG、多角色/场景、透明叠加、动效页/图表/片头片尾/overlay 卡、写 gfx/*.html | [gfx 创作组织与协议](references/gfx.md#html-创作组织) |
+| 纯 MG、多角色/场景、透明叠加、动效页/图表/片头片尾/overlay 卡、写 gfx/*.html | [gfx 创作组织与协议](references/gfx.md#html-创作组织)，按需选 [MG 风格工程](../../templates/mg-styles/README.md) |
+| 显式 SVG 序列、Inkscape 渲染 | [SVG 序列入口与限制](references/gfx.md#显式-svg-序列) |
 | 实拍素材处理、音视频同步、降噪、响度、验证门 | `references/edit.md` + `references/runbook.md` + 各脚本 `--help` |
 | 标准修改任务（改音量/改编排/改字幕/改 gfx 页/全冷重渲） | `references/runbook.md`（R1-R4 配方） |
 | 抠像、换背景、绿幕、背景替换、Magic Mask、matte、带 alpha 前景合成 | `apps/matting/matting.md` |
@@ -57,7 +58,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 7. 时间量一律**整数帧**；时基 30fps（≠29.97）、48kHz（每帧整 1600 采样）；区间 `[in, out)` 左闭右开。
 8. **修改任何程序或文档一律改 video_tools 仓**（live 挂载点全是符号链接）。
 
-## CLI 速查（组件真实路径；scripts/ 转发入口保留既有消费者兼容）
+## CLI 速查（组件真实路径）
 | 操作 | 命令 |
 |---|---|
 | 渲染前校验（必跑） | `python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json validate` |

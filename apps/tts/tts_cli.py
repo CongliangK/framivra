@@ -4,7 +4,7 @@
 
 来源：方案 §4（2026-09-11 三大模块整合方案 v2.1）——voice-ime/assets/voice_tts/
 产线（gen.py / run_v2.py / normalize.py / refit_final.py）参数化收编：
-27 窗硬编码 → spec.json 驱动；产物按 scripts/repack_voice.py 既有消费约定
+27 窗硬编码 → spec.json 驱动；产物按 apps/sync/repack_voice.py 既有消费约定
 落位（assets/voice_tts/final/<ID>.wav，48kHz/mono/pcm_s16le，时长=链帧/30+20ms），
 vtx prepare 与 repack_voice 均原样消费，零协议改动。
 
@@ -27,7 +27,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import levelnorm  # noqa: E402
+import audio_processing  # noqa: E402
 import spec as spec_mod  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))  # v2 迁移后 tts 在 apps/ 下，仓根 = 上两级
@@ -155,7 +155,7 @@ def cmd_normalize(a):
     if not os.path.isdir(final_dir):
         raise SystemExit(f"✗ 目录不存在：{final_dir}")
     ids = set(a.ids.split(",")) if a.ids else None
-    levelnorm.normalize_dir(final_dir, ids=ids)
+    audio_processing.normalize_dir(final_dir, ids=ids)
 
 
 def cmd_probe(a):

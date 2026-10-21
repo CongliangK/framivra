@@ -828,7 +828,7 @@ int main(int argc, char* argv[]) {
   }
   if (dump_signatures) {
     // 全域签名转储（65,536 行）：每行 "f P1.b P1.g P1.r P1.a P2.b P2.g
-    // P2.r P2.a"（clean 预乘口径）。消费方：tests/test_cef_frame_sync.py
+    // P2.r P2.a"（clean 预乘口径）。消费方：tests/gfx/test_cef_frame_sync.py
     // 与 vtx/frame_canary.py 逐行比对（C++ 镜像 == 协议 home）。
     std::vector<std::string> lines;
     lines.reserve(kFrameMax + 1);

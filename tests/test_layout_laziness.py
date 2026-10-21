@@ -10,15 +10,18 @@ Run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_layout_laziness
 全部用例为隔离临时项目，零 Chrome/FFmpeg 依赖（timeline 零源：validate 全程
 不触发 ffprobe；gfx 轨只查 html 存在性）。
 """
-import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(REPO))
+from tests._support import tree_sha256
 VTX = REPO / "vtx" / "vtx.py"
 
 # 只读调用面：非干燥 df 本身就是只读体检；validate 只读部分以 --dry 计划路径
@@ -36,20 +39,6 @@ READONLY_ARGV = [
     ("clean", "--dry-run"),
     ("snapshot", "--dry-run"),
 ]
-
-
-def tree_sha256(root):
-    """项目树快照：目录/符号链接记形态，文件记内容 sha256（find+sha256sum 语义）。"""
-    result = {}
-    for path in sorted(root.rglob("*")):
-        name = path.relative_to(root).as_posix()
-        if path.is_symlink():
-            result[name] = ("symlink", os.readlink(path))
-        elif path.is_dir():
-            result[name] = ("directory",)
-        else:
-            result[name] = ("file", hashlib.sha256(path.read_bytes()).hexdigest())
-    return result
 
 
 class LayoutLazinessFixture(unittest.TestCase):

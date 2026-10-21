@@ -12,7 +12,7 @@ usage() {
   echo "用法：bash apps/asr/init.sh [--download|--help]"
   echo "  默认：仅本地探测和 sidecar 冒烟，不创建 venv、不联网；缺失项告警并汇总。"
   echo "  --download：旧 ModelScope 混合下载链未审查，前置明确 BLOCKED，不建环境或联网。"
-  echo "              许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/model_license_policy.py plan <asset>。"
+  echo "              许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/policy/model_license_policy.py plan <asset>。"
   echo "              另行批准的固定快照下载不安装运行环境，也不解除本入口门禁。"
   echo "  --help, -h：显示本帮助（不探测、不联网）。"
 }
@@ -28,7 +28,7 @@ done
 # Gate before config/venv/pip: ModelScope latest is not reviewed HF evidence.
 if [[ "$DOWNLOAD" == "1" ]]; then
   LICENSE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[2])' "${BASH_SOURCE[0]}")"
-  python3 "$LICENSE_ROOT/scripts/model_license_policy.py" legacy-download asr || exit "$?"
+  python3 "$LICENSE_ROOT/scripts/policy/model_license_policy.py" legacy-download asr || exit "$?"
 fi
 
 # v2 迁移后本脚本在 apps/asr/ 内：app 根 = 脚本所在目录，仓根 = 上两级（config.local.json）
@@ -71,7 +71,7 @@ warn() { echo "⚠ $*"; }
 bad()  { echo "✗ $*"; FAIL=1; }
 
 echo "== asr 模块 init（幂等；Framivra 专属资产，绝不借用输入法）=="
-echo "本地探测模式：不联网、不安装；旧 --download 为 BLOCKED。许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/model_license_policy.py plan <asset>。"
+echo "本地探测模式：不联网、不安装；旧 --download 为 BLOCKED。许可边界见 docs/third-party-licenses.md；离线预检：python3 scripts/policy/model_license_policy.py plan <asset>。"
 
 # ---------------------------------------------------------------- 1. 解释器探测（项目专属环境）
 CFG_PY="$(python3 - "$ROOT/config.local.json" <<'PY' 2>/dev/null || true

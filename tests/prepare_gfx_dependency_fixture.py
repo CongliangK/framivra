@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-from tests.test_gfx_cli_fallback import MINIMAL_PNG
+from tests.gfx.test_gfx_cli_fallback import MINIMAL_PNG
 
 
 def prepare(destination, font):

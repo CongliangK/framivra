@@ -95,7 +95,7 @@ class ContractTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, 'scripts/demo.py', 'preflight', '--profile', 'quick'],
             capture_output=True, cwd=REPO)
-        # rc 语义（issue #177，docs/demo-fixture.md）：preflight 是只读诊断，
+        # rc 语义（issue #177，docs/guides/demo-fixture.md）：preflight 是只读诊断，
         # 检查本身可执行并完整输出 JSON 即 rc 0——与 ffmpeg 是否在 PATH 无关；
         # 依赖可用性反映在 checks[].ok / prepare_ready，硬失败闭口在 prepare。
         self.assertEqual(result.returncode, 0)

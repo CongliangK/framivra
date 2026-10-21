@@ -7,7 +7,7 @@ description: 科技口播 B 站视频制作工作流范本（video 内核之上�
 
 > **本包是 video 内核之上的工作流范本**：科技口播视频从选题调研到 4K 投稿的全链路 SOP、阶段配方与已验收模板资产。
 > **机制契约见内核 skill**（`docs/skill/SKILL.md` 路由索引 + `docs/skill/references/`）：timeline.json 契约、vtx CLI 全阶段、gfx 帧驱动协议、D22 设计铁律、渲染坑表、缓存治理等机制文档一律不在本包重复——本包只回答「这条产线按什么顺序用哪些件」。
-> 调用约定：内核命令 `python3 <video_tools>/vtx/vtx.py …`（或挂载路径 `~/.agents/skills/video/vtx/vtx.py`）；产线 app 一律走 `apps/<name>/`、插件走 `plugins/<name>/` 新权威路径（scripts/ 兼容入口只是给未知消费者的兜底）。
+> 调用约定：内核命令 `python3 <video_tools>/vtx/vtx.py …`（或挂载路径 `~/.agents/skills/video/vtx/vtx.py`）；产线 app 一律走 `apps/<name>/`、插件走 `plugins/<name>/` 真实路径。
 
 ## 制作范本总览
 
@@ -15,7 +15,7 @@ description: 科技口播 B 站视频制作工作流范本（video 内核之上�
 
 - **一条主链**：调研立项 → 稿子与结构 → 实拍与素材 → 动效页 → 时间线编排 → 渲染与 QC → 发布链（4K/封面/冻结）。
 - **两条音频支线**：口播/同期声支线（每期必经）与 BGM/音效支线（路由 music skill + 分轨审计包交付门）。
-- **产线挂载件**：见文末「uses 声明表」——12 件 app 全量使用，denoise/duck-static 两插件可选（键声明进 timeline 才生效）。
+- **产线挂载件**：见文末「uses 声明表」——12 件 app 全量使用；denoise 已列入 uses_plugins，按素材需要选择处理，duck-static 列入 optional_plugins（键声明进 timeline 才生效）。
 - 编排层方法论（开场模板/演示对位/字幕策略/结尾模板）已提炼收编为本包 `references/narrative.md`（原外部报告 `~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md` 为历史源件）；gfx 页面写法（帧驱动协议 + D22）读内核 `docs/skill/references/gfx.md`，成熟页面范式速查见本包 `references/voice-ime-paradigm.md`。
 
 ## references/ 知识文档路由（2026-10-03 收编，宏观经验自包含、跨项目可用）
@@ -63,7 +63,7 @@ python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gc              # 收
 env python3 <video_tools>/apps/gates/content_gates.py -t ... --project-gates <项目门>.json   # 内容级验证门（项目门骨架=`assets/presets/gates.json`，字段写法见其 _doc）
 bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K 投稿版断言（帧数门自动从 timeline 推导）
 ```
-  发布链：母带 1080p30 → 4K lanczos 放大投稿版（`apps/publish/export_4k.py` 8 段并行 nvenc p4，进 B 站高码率池）→ FREEZE 冻结点 + CHANGELOG 变更单（**脚本化：`scripts/freeze.py` 一键生成/追加多版本节，禁手写**，qc 段人工核对补写）→ PUBLISH-PACK 物料骨架（`scripts/publish_pack.py`，TODO 段人工补写；冻结/变更单必须落项目目录 git 区，严禁写 cache/，D52 实案）。验证链与 4K 发布链的历史测量及适用条件见 [DEV 性能基准](../../docs/DEV.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
+  发布链：母带 1080p30 → 4K lanczos 放大投稿版（`apps/publish/export_4k.py` 8 段并行 nvenc p4，进 B 站高码率池）→ FREEZE 冻结点 + CHANGELOG 变更单（**脚本化：`scripts/freeze.py` 一键生成/追加多版本节，禁手写**，qc 段人工核对补写）→ PUBLISH-PACK 物料骨架（`scripts/publish_pack.py`，TODO 段人工补写；冻结/变更单必须落项目目录 git 区，严禁写 cache/，D52 实案）。验证链与 4K 发布链的历史测量及适用条件见 [DEV 性能基准](../../docs/reports/development-history.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
 
 ## 音频创作流程（两条支线）
 
@@ -108,7 +108,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
 | app | `apps/cover/` | B 站投稿封面产线（make_cover 一条龙） |
 | app | `apps/gates/` | 发布前内容级复检（G1/G2/G7/G10+项目门） |
 | app | `apps/publish/` | 4K 投稿版发布链与断言 |
-| plugin（可选） | `plugins/denoise/` | 口播降噪（sources[] 级键；产线定案后回填 uses_plugins） |
+| plugin（可选） | `plugins/denoise/` | 口播降噪（sources[] 级键；已登记 uses_plugins，按素材选择处理） |
 | plugin（可选） | `plugins/duck-static/` | 床乐静态分段避让（duck_strategy 键；与 duck:true 互斥） |
 
 声明数据源 `skill.json`（doctor 工作流模板段逐件在册校验，JSON 保留 skills 字段）。修改本包任何程序或文档一律改 video_tools 仓（live 挂载点全是符号链接）。

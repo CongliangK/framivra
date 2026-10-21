@@ -1,6 +1,6 @@
 # Golden 独立运行证据
 
-`scripts/gfx_golden.py verify-experiment` 是 #62 的独立严格验收入口。
+`scripts/gfx/gfx_golden.py verify-experiment` 是 #62 的独立严格验收入口。
 普通 `compare` 与旧 `--strict` 的抽样、mtime 语义保持兼容；它们不能证明独立实验。
 `verify-experiment --help` 列出必需文件参数。执行会原子替换指定报告文件。
 #102 的 `verify_manifest_compatibility` 不变，不能用忽略环境差异的开关代替它。
@@ -16,7 +16,7 @@
 
 ## 文件契约
 
-所有摘要使用 SHA256 小写 hex。对象摘要由 `scripts/gfx_evidence.py digest` 定义：
+所有摘要使用 SHA256 小写 hex。对象摘要由 `scripts/gfx/gfx_evidence.py` 的 `digest()` 定义：
 UTF-8 JSON，键排序、无空白、不转义 Unicode、不允许 NaN。输入指纹由同模块
 `input_fingerprint` 定义，覆盖实际 timeline 文件字节摘要、全部 gfx HTML 与声明依赖的路径和
 完整文件内容摘要。不声称发现未声明或网络依赖；实验运行器须提前把这些输入冻结并声明。

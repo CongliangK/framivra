@@ -29,7 +29,6 @@ NVENC 并发纪律（跨进程，对齐 vtx/encoders.py「NVENC 会话预算」�
 用法（项目根）：
   env python3 apps/publish/export_4k.py -t timeline.json [--media out/final.mp4]
       [-o out/final_4k.mp4] [--segments 8] [--fallback-x264]
-  （兼容旧路径 scripts/export_4k.py 经 symlink 同义）
 
 产出后跑规格断言：
   bash $VIDEO_TOOLS/apps/publish/check_4k.sh out/final_4k.mp4

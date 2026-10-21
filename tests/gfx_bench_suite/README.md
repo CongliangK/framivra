@@ -60,13 +60,13 @@ env VTX_TEST_CHROME=/usr/bin/google-chrome \
 快速完整性门（无 Chrome，秒级，`bash scripts/run_all_tests.sh` 自动包含）：
 
 ```bash
-env python3 -m unittest tests.test_gfx_bench_suite
+env python3 -m unittest tests.gfx.test_gfx_bench_suite
 ```
 
 ## 比对档位（Tier）
 
 - **Tier-1**（本 issue DoD 门）：`max_abs_diff == 0`——RGBA 四通道逐像素最大
-  绝对差为零（解码口径与 `scripts/gfx_golden.py` 同域）。用于同帧异序幂等
+  绝对差为零（解码口径与 `scripts/gfx/gfx_golden.py` 同域）。用于同帧异序幂等
   （`[0,1,2,3]` vs `[99,2]` 渲 `f0002`）与 S6 非顺序调度对账。
 - Tier-2+（容差档）由 #107 按路线实测噪声定义；跨引擎（SwiftShader vs 硬件 GL）
   的 S5 像素对比必须走容差档，禁止套 Tier-1。
@@ -119,5 +119,5 @@ tests/gfx_bench_suite/
 ├── pages/                # 新构页 ×5（S1/S3/S4b/S5/S6）
 ├── smoke.py              # 套件自检（Chrome CDP 实渲 + DoD 幂等门）
 └── README.md             # 本文件
-tests/test_gfx_bench_suite.py  # 快速完整性门（无 Chrome，unittest 自动发现）
+tests/gfx/test_gfx_bench_suite.py  # 快速完整性门（无 Chrome，unittest 自动发现）
 ```

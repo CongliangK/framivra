@@ -99,7 +99,7 @@ env python3 apps/imgen/imgen_cli.py postprocess <原图.png> --kind bg4k -o /tmp
 env python3 apps/imgen/imgen_cli.py gen "<原prompt>" --out <项目> --kind bg4k --task-id <task_id>
 ```
 
-环境变量（一般无需设置）：`IMGEN_API_BASE`（覆盖 API 地址，测试/mock 用）、`IMGEN_CONFIG`（覆盖 config.local.json 路径）、`IMGEN_POLL_INTERVAL`/`IMGEN_POLL_TIMEOUT`（轮询节奏）、`SC_PROXY` 等参考图上传代理、`VT_OWN_UPLOAD_SSH_TARGET`/`VT_OWN_UPLOAD_BASE_URL`（自有服务器通道，见下节）。
+环境变量（一般无需设置）：`IMGEN_API_BASE`（覆盖 API 地址，测试/mock 用）、`VTX_CONFIG`（覆盖仓根 config.local.json 路径）、`IMGEN_POLL_INTERVAL`/`IMGEN_POLL_TIMEOUT`（轮询节奏）、`SC_PROXY` 等参考图上传代理、`VT_OWN_UPLOAD_SSH_TARGET`/`VT_OWN_UPLOAD_BASE_URL`（自有服务器通道，见下节）。
 
 ## 参考图外链通道（reference_upload.py）
 
@@ -153,3 +153,5 @@ cd apps/imgen && env python3 -m unittest discover -s tests -t . -v   # 71 用例
 
 - 2026-09-11：requests 2.32.5 / ffmpeg 8.1.2 / Python 3.13（仓基线 ≥3.9 兼容语法）。端点与参数规则以本 README「API 模型表」为准。
 - 2026-09-13（封面产线实测，voice-ime/cover/COVER-REPORT.md）：**flare 端点对无害纯抽象画中文提示词两连 status=3 审核拒绝**（不退款、排队数分钟后转拒，判供应商审核误杀；同 prompt 在 sunburst 通过）——重要生成勿单独依赖 flare；**sunburst 端点忽略 payload 中的 `aspectRatio`（含 2048x1280 显式像素串）返回 1K 方图**（记账 JSON 可证载荷正确）——非 1:1 用途需下游 cover-crop（放大须标注倍数）。
+
+配置路径只由统一加载器解析：`VTX_CONFIG` > 仓根 `config.local.json`。`IMGEN_CONFIG` 不再生效；需要指定其他配置文件时设置 `VTX_CONFIG`，不会自动迁移或改写旧文件。缺文件返回空配置，坏 JSON 警告后按空配置继续；密钥解析链、付费确认与默认关闭规则不变。
