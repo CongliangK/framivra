@@ -53,12 +53,12 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
 | `{"path": ..., "enabled": true}`（分支 1：已装启用） | ✓ 放行，prepare/混音吃插件产物 |
 | `{"path": ...}` 或 `{"enabled": false}`（分支 3：已装被禁用） | ✗ `键 'hello_gain' ... 已安装但被禁用——启用后重跑` |
 | 条目存在但安装态判为未装（分支 2，测试经 mock `plugin_state` 驱动） | ✗ `键 'hello_gain' ... 未安装——vt plugins list 查看`（安装指引而非裸 Unknown key） |
-| 条目**整个移除**（= 未注册） | ⚠ `未知键 'hello_gain'` 警告不阻断 + 指纹段消失 → 旧回执失配强制重渲裸音频（见下节） |
+| 条目**整个移除**（= 未注册） | ⚠ `未知键 'hello_gain'` 警告不阻断 + 指纹段消失 → 旧回执失配（不保证重提取，见下节） |
 
 绝不静默忽略——「缺省关闭」指不写键无行为，不是写了键可跳过。注意 external
 插件的「注册面」就是 config 条目：官方插件的 registry.json 声明是永久注册
 （实体目录没了仍走分支 2 报错），external 条目移除则键直接退化为未知键警告
-——两条路都不可信复用旧产物（分支 2 阻断；条目移除靠指纹失配重渲）。机器可
+——两条路都不能沿用旧成功回执（分支 2 阻断；条目移除使指纹失配）。机器可
 复现的断言见 `tests/test_hello_plugin.py`（VTX_CONFIG 指向临时 config 驱动，
 不碰本机 config.local.json）。
 
@@ -79,8 +79,9 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
    回收（`gc --dry-run` 可先验）。
 2. **指纹段消失 → 旧回执失配**：回执指纹末尾有「生效插件清单」追加段
    （`plugins:hello-plugin@1.0.0:{参数摘要}`，§2.1 不变量 2）。卸载后该段消失——录制侧
-   （带段）与重算侧（无段）指纹失配，`vtx all` 拒绝复用旧 prepare/audio 产物，
-   必然重走裸提取。反向同理：无插件时代录的回执，装上插件后同样失配重渲。
+   （带段）与重算侧（无段）指纹失配，旧 prepare/audio 成功回执不能沿用。
+   重跑时，当前裸 WAV 若通过完整缓存凭据校验仍可复用，不保证再次提取或编码。
+   反向安装插件同样使无插件时代的旧回执失配。
 
 ## 复制本目录改名起步
 

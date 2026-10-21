@@ -4,15 +4,19 @@
 
 ## 产物身份
 
-- **gfx 页缓存** `cache/gfx/<key>/`：键 = sha1(html 字节 + 显式依赖内容 + fps +
+- **HTML gfx 页缓存** `cache/gfx/<key>/`：键 = sha1(html 字节 + 显式依赖内容 + fps +
   视口 + 时长 + [渲染环境身份](#gfx-environment))。同名页不同内容、同页换时长自然分键。
 - **CEF Alpha 身份**：显式 `VTX_GFX=cef` 将协议修订、A0/A1 模式和 worker
   可执行文件 SHA256 并入 gfx 键；缺省路由 `cache/gfx_exp/cef-alpha/<key>/`。
   `VTX_GFX_CACHE_NS` 可覆盖命名空间。生效 CEF 身份和命名空间同时进入阶段回执；
   分段与多 pass 键使用 gfx 相对 cache 的完整路径，不能跨命名空间误命中旧视频段。
 - **Electron Alpha 身份**：`VTX_GFX=electron` 将实际 binary、导航 worker、错误门、codec、Python 适配/生产门/PNG 校验/监管器及输出配置纳入同一内容键；缺省 namespace 为 `electron_b0`。只读桥复用生产 validator 核验真实 adapter/worker 回执，不补签旧 PNG。strict 依赖只支持 CDP，Electron/CEF 明确拒绝。
-- **环境边界**：CDP/CLI/CEF 的身份与未知状态见[渲染环境身份](#gfx-environment)；
-  Electron 保留独立历史身份。段中间物 `vseg_pass` 属 gc 白名单。
+- **SVG 序列身份**：显式 `svg-sequence` 使用 `cache/gfx_exp/svg_inkscape_v1/<key>/`。
+  manifest、每帧 SVG、声明字体/依赖及可选生成器文件的全文摘要，与画布/fps/帧数、
+  Inkscape/fontconfig 身份、运行库及实现摘要共同成键；生成器只记录、不执行。
+  完成凭据绑定该输入记录与逐帧 PNG SHA256，不沿用 HTML 环境证明。
+- **环境边界**：CDP/CLI/CEF 见[渲染环境身份](#gfx-environment)，Electron/SVG 各有独立身份；
+  身份匹配不证明跨后端像素等价。段中间物 `vseg_pass` 属 gc 白名单。
 - **seg 预编码** `cache/seg/<key>.mov|mp4` 与 **抽音频** `cache/audio/<key>.wav`：
   键 = sha1(源 stat 身份 + 切片/窗口/fade/编码参数)。源 stat 身份 = path + size +
   mtime_ns + **首/尾 64KB 采样哈希**；这是 Fast 采样身份，首尾不变且恢复 mtime 的中间字节修改不受保证。
@@ -170,7 +174,8 @@ FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该
 `tests/qc/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。
 
 `receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
-gfx html 字节 + 声明依赖内容 + 生效后端/环境身份/实验命名空间)——与缓存键同等敏感（任何缓存键会变的输入变化，
+生效 gfx 路由的输入身份)：HTML 绑定页面、声明依赖、后端/环境及命名空间；SVG 绑定上述独立输入记录。
+与缓存键同等敏感（任何缓存键会变的输入变化，
 回执门同样重置），但不做全量媒体哈希（GB 级 I/O 不可接受）。输入变化不继承旧的
 成功状态。CLI 在阶段开始前撤销其旧成功及下游成功，失败重跑不能保留旧 QC PASS。
 audio 要求当前 prepare，video（有 gfx 时）要求当前 gfx，mux 要求当前 video/audio，

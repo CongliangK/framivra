@@ -89,9 +89,10 @@ foreignObject 批量导出被像素差证伪，不保留其驱动或 VTX_GFX_BAT
 ## 独立预览与自查
 
 ```bash
-# 渲染任意单帧看效果（快速迭代）
+# 写操作：在项目根启动已安装的 Google Chrome，渲染单帧并覆盖 /tmp/g.png。
+html_uri="$(python3 -c 'from pathlib import Path; print(Path("gfx/gfxA.html").resolve().as_uri())')"
 google-chrome --headless --disable-gpu --window-size=1920,1080 \
-  --default-background-color=00000000 --screenshot=/tmp/g.png "file://$PWD/gfx/gfxA.html?f=48"
+  --default-background-color=00000000 --screenshot=/tmp/g.png "${html_uri}?f=48"
 # 迭代期至少检查 3 帧：入场（N*0.1）、主体（N*0.5）、结尾前（N*0.9），确认无黑块/错位
 ```
 
