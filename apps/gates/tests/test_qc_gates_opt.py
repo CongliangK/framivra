@@ -25,6 +25,8 @@
 （本机 ZCode 环境必须 env python3 前缀：AppImage 劫持 argv[0]，见全局 AGENTS.md；
 unittest 非 pytest）
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -414,17 +416,222 @@ class TestG7BlackSensitivity(unittest.TestCase):
         self.assertIn("I=-14.2", r.stdout)   # G2/G3 直接用回执值（命中免测）
 
 
+# Pure fake-decoder proofs: these do not run FFmpeg or render media.
+class TestDecodeFailureVerdicts(unittest.TestCase):
+    GOOD = "I: -14.2 LUFS\nPeak: -2.0 dBFS\n"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.media = self.root / "fake.mp4"
+        self.media.write_bytes(b"not-media")
+
+    def _gates(self, results, *, skip="", receipt=None, timeline=None, extra=()):
+        out = self.root / "report.json"
+        argv = ["gates", "--media", str(self.media), "-t",
+                str(timeline or self.root / "missing.json"), "--out", str(out),
+                "--skip", skip, *extra]
+        log = io.StringIO()
+        with patch.object(sys, "argv", argv), \
+                patch.object(content_gates, "run", side_effect=results) as run, \
+                patch.object(content_gates.loudness_cache, "lookup", return_value=receipt), \
+                patch.object(content_gates.loudness_cache, "measure_and_store") as store, \
+                contextlib.redirect_stdout(log), self.assertRaises(SystemExit) as raised:
+            content_gates.main()
+        report = json.loads(out.read_text())
+        return raised.exception.code, report, run, store, log.getvalue()
+
+    def result(self, code=0, text=None):
+        return subprocess.CompletedProcess([], code, "", self.GOOD if text is None else text)
+
+    def test_all_decoder_failures_are_explicit_failed_rows(self):
+        for text in ("decoder failed", self.GOOD):
+            with self.subTest(partial_summary=text == self.GOOD):
+                code, rep, run, store, log = self._gates([self.result(1, text)] * 3)
+                self.assertEqual(code, 1)
+                self.assertFalse(rep["pass"])
+                self.assertEqual(rep["status"], "fail")
+                self.assertEqual([row["name"].split()[0] for row in rep["gates"]],
+                                 ["G2", "G3", "G7"])
+                self.assertTrue(all(not row["pass"] for row in rep["gates"]))
+                self.assertEqual(rep["metrics"], {})
+                self.assertNotIn("命中 0 处", log)
+                self.assertEqual(run.call_count, 3)
+                store.assert_not_called()
+
+    def test_successful_fallback_preserves_real_result(self):
+        code, rep, run, store, _ = self._gates(
+            [self.result(1), self.result(), self.result(text="")])
+        self.assertEqual(code, 0)
+        self.assertTrue(rep["pass"])
+        self.assertEqual(rep["status"], "partial")  # optional timeline absent
+        self.assertFalse(rep["complete"])
+        self.assertEqual(rep["metrics"]["G7"]["blacks"], 0)
+        self.assertEqual(store.call_args.args[1](), (-14.2, -2.0))
+        self.assertEqual(run.call_count, 3)
+
+    def test_missing_peak_is_not_silent_success(self):
+        code, rep, _, store, _ = self._gates(
+            [self.result(text="I: -14.2 LUFS")] * 2 + [self.result(text="")])
+        self.assertEqual(code, 1)
+        rows = {row["name"].split()[0]: row["pass"] for row in rep["gates"]}
+        self.assertEqual(rows, {"G2": True, "G3": False, "G7": True})
+        store.assert_not_called()
+
+    def test_malformed_or_nonfinite_measurements_do_not_pass(self):
+        for value in ("", "--14", "-14.2.3", "nan", "-inf", "-" + "9" * 400):
+            with self.subTest(value=value[:20]):
+                output = f"I: {value} LUFS\nPeak: {value} dBFS\n"
+                code, rep, _, store, _ = self._gates(
+                    [self.result(text=output)] * 2 + [self.result(text="")])
+                self.assertEqual(code, 1)
+                self.assertFalse(rep["gates"][0]["pass"])
+                self.assertFalse(rep["gates"][1]["pass"])
+                store.assert_not_called()
+
+    def test_all_checks_success_is_complete(self):
+        tl = self.root / "timeline.json"
+        tl.write_text(json.dumps({"project": {"fps": 30, "duration_frames": 300},
+                                  "audio_tracks": [{"name": "voice", "events": [
+                                      {"in": 0, "out": 90}, {"in": 180, "out": 270}]}]}))
+        probe = {"streams": [{"index": 0, "r_frame_rate": "30/1"}, {"index": 1}],
+                 "format": {"duration": "10.0"}}
+        results = [self.result(), subprocess.CompletedProcess([], 0, json.dumps(probe), ""),
+                   subprocess.CompletedProcess([], 0, "300", "")]
+        with patch.object(content_gates, "lufs_batch", side_effect=[[-14, -14], [-30, -30]]), \
+                patch.object(content_gates, "moov_before_mdat", return_value=True):
+            code, rep, _, _, log = self._gates(results, timeline=tl)
+        self.assertEqual(code, 0)
+        self.assertTrue(rep["pass"])
+        self.assertTrue(rep["complete"])
+        self.assertEqual(rep["status"], "pass")
+        self.assertEqual(len(rep["gates"]), 5)
+        self.assertEqual(rep["skipped"], [])
+        self.assertTrue(log.endswith("PASS\n"))
+
+    def test_probe_failure_cannot_pass_from_partial_stdout(self):
+        tl = self.root / "timeline.json"
+        tl.write_text(json.dumps({"project": {"fps": 30, "duration_frames": 300},
+                                  "audio_tracks": []}))
+        probe = json.dumps({"streams": [{"index": 0, "r_frame_rate": "30/1"}, {"index": 1}],
+                            "format": {"duration": "10.0"}})
+        for results in ([subprocess.CompletedProcess([], 1, probe, "failed")],
+                        [subprocess.CompletedProcess([], 0, probe, ""),
+                         subprocess.CompletedProcess([], 1, "300", "failed")],
+                        [subprocess.CompletedProcess([], 0, "bad json", "")]):
+            with self.subTest(results=results), \
+                    patch.object(content_gates, "moov_before_mdat", return_value=True):
+                code, rep, _, _, _ = self._gates(
+                    results, skip="G1,G2,G3,G7", timeline=tl)
+            self.assertEqual(code, 1)
+            self.assertFalse(rep["pass"])
+            self.assertFalse(rep["gates"][0]["pass"])
+
+    def test_project_frames_failure_and_missing_media_are_not_passes(self):
+        pg = self.root / "gates.json"
+        pg.write_text(json.dumps({"frames": 300}))
+        kwargs = dict(skip="G1,G2,G3,G7,G10", extra=["--project-gates", str(pg)])
+        code, rep, _, _, _ = self._gates(
+            [subprocess.CompletedProcess([], 1, "300", "failed")], **kwargs)
+        self.assertEqual(code, 1)
+        self.assertFalse(rep["gates"][0]["pass"])
+        self.media.unlink()
+        code, rep, _, _, _ = self._gates([], **kwargs)
+        self.assertEqual(code, 1)
+        self.assertFalse(rep["complete"])
+        self.assertTrue(any("PG:frames" in row for row in rep["skipped"]))
+
+    def test_partial_black_markers_never_mean_zero_black(self):
+        for output in ("black_start:1 black_end:", "black_start: 1 black_end: 2",
+                       "black_start:1", "black_end:2", "black_start:nan black_end:2",
+                       "black_start:3 black_end:2"):
+            for receipt in (None, {"i_lufs": -14.2, "tp_dbfs": -2.0}):
+                with self.subTest(output=output, receipt=receipt):
+                    # Merged + audio fallback + black fallback, or receipt + black fallback.
+                    results = [self.result(text=self.GOOD + output)] * (3 if receipt is None else 2)
+                    code, rep, _, _, _ = self._gates(results, receipt=receipt)
+                    self.assertEqual(code, 1)
+                    self.assertFalse(rep["pass"])
+                    self.assertFalse(rep["gates"][-1]["pass"])
+
+    def test_receipt_does_not_hide_failed_blackdetect(self):
+        code, rep, _, store, _ = self._gates(
+            [self.result(1)] * 2, receipt={"i_lufs": -14.2, "tp_dbfs": -2.0})
+        self.assertEqual(code, 1)
+        self.assertFalse(rep["gates"][-1]["pass"])
+        self.assertNotIn("G7", rep["metrics"])
+        store.assert_not_called()
+
+    def test_audio_skips_are_honored_and_archived_on_receipt_path(self):
+        for skip, names in (("G2", ["G3", "G7"]), ("G3", ["G2", "G7"])):
+            with self.subTest(skip=skip):
+                code, rep, _, _, _ = self._gates(
+                    [self.result(text="")], skip=skip,
+                    receipt={"i_lufs": -14.2, "tp_dbfs": -2.0})
+                self.assertEqual(code, 0)
+                self.assertEqual([r["name"].split()[0] for r in rep["gates"]], names)
+                self.assertIn(f"SKIP {skip}（--skip 显式指定）", rep["skipped"])
+                self.assertFalse(rep["complete"])
+
+    def test_video_only_never_requests_audio_measurement(self):
+        code, rep, run, store, log = self._gates([self.result(text="")], skip="G2,G3")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(rep["gates"]), 1)
+        self.assertNotIn("ebur128", " ".join(run.call_args.args[0]))
+        self.assertIn("PARTIAL", log)
+        store.assert_not_called()
+
+    def test_audio_only_failure_never_accepts_tail_summary(self):
+        code, rep, run, store, _ = self._gates([self.result(1)], skip="G7")
+        self.assertEqual(code, 1)
+        self.assertTrue(all(not r["pass"] for r in rep["gates"]))
+        self.assertEqual(run.call_count, 1)
+        store.assert_not_called()
+
+    def test_zero_work_cannot_pass_and_main_state_resets(self):
+        first = self._gates([self.result()])[1]
+        self.assertTrue(first["pass"])
+        code, rep, run, store, _ = self._gates([], skip="G1,G2,G3,G7,G10")
+        self.assertEqual(code, 1)
+        self.assertFalse(rep["pass"])
+        self.assertEqual(rep["gates"], [])
+        self.assertEqual(rep["metrics"], {})
+        self.assertEqual(len(rep["skipped"]), 5)
+        run.assert_not_called()
+        store.assert_not_called()
+
+    def test_g1_failed_window_is_not_removed_from_population(self):
+        tl = self.root / "timeline.json"
+        tl.write_text(json.dumps({"project": {"fps": 30, "duration_frames": 300},
+                                  "audio_tracks": [{"name": "voice", "events": [
+                                      {"in": 0, "out": 90}, {"in": 180, "out": 270}]}]}))
+        with patch.object(content_gates, "lufs_batch", return_value=None), \
+                patch.object(content_gates, "lufs", side_effect=[-14, None, -30, -30]):
+            code, rep, _, _, _ = self._gates([], skip="G2,G3,G7,G10", timeline=tl)
+        self.assertEqual(code, 1)
+        self.assertFalse(rep["gates"][0]["pass"])
+        self.assertNotIn("G1", rep["metrics"])
+
+    def test_per_window_rejects_failed_process_summary(self):
+        with patch.object(content_gates, "run", return_value=self.result(1)):
+            self.assertIsNone(content_gates.lufs(0, 3, self.media))
+
+
 # ---------------------------------------------------------------- ⑥ --out JSON 留档
 class TestOutJsonArchive(unittest.TestCase):
     """--out PATH（2026-09-14）：门结论/skip/实测/输入指纹/时间戳落 JSON；
     默认不写（兼容不变）。无成片 + --skip G1 场景免 ffmpeg 走纯留档路径。"""
 
     def _gates(self, root: Path, *extra):
-        return subprocess.run(
-            ["env", "python3", "-X", "utf8", str(APP / "content_gates.py"),
-             "-t", str(root / "timeline.json"),
-             "--media", str(root / "nope.mp4"), "--skip", "G1", *extra],
-            capture_output=True, text=True, cwd=str(root))
+        argv = ["gates", "-t", str(root / "timeline.json"),
+                "--media", str(root / "nope.mp4"), "--skip", "G1", *extra]
+        log = io.StringIO()
+        with patch.object(sys, "argv", argv), \
+                patch.object(content_gates, "run", side_effect=AssertionError("unexpected decoder")), \
+                contextlib.redirect_stdout(log), self.assertRaises(SystemExit) as raised:
+            content_gates.main()
+        return subprocess.CompletedProcess(argv, raised.exception.code, log.getvalue(), "")
 
     def test_out_writes_structured_report(self):
         with tempfile.TemporaryDirectory() as d:
@@ -436,16 +643,19 @@ class TestOutJsonArchive(unittest.TestCase):
                  "audio_tracks": []}, ensure_ascii=False), encoding="utf-8")
             out = root / "out" / "content_gates.json"
             r = self._gates(root, "--out", str(out))
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
             self.assertIn("[out] gates 留档", r.stdout)
             rep = json.loads(out.read_text(encoding="utf-8"))
-            self.assertTrue(rep["pass"])
+            self.assertFalse(rep["pass"])
+            self.assertFalse(rep["complete"])
+            self.assertEqual(rep["status"], "fail")
             self.assertEqual(rep["tool"], "apps/gates/content_gates.py")
             self.assertRegex(rep["timestamp"], r"^\d{4}-\d{2}-\d{2} ")
             # skip 留档（G1 显式 skip + G2/G3/G7/G10 无成片 skip）
             joined = " ".join(rep["skipped"])
             self.assertIn("SKIP G1", joined)
-            self.assertIn("SKIP G2/G3", joined)
+            self.assertIn("SKIP G2", joined)
+            self.assertIn("SKIP G3", joined)
             # 输入指纹：timeline md5/size/mtime + frames/fps；media 不存在如实记录
             self.assertEqual(rep["timeline"]["frames"], 90)
             self.assertEqual(rep["timeline"]["fps"], 30)
@@ -466,7 +676,7 @@ class TestOutJsonArchive(unittest.TestCase):
                  "sources": [], "video_tracks": [], "subtitles": [],
                  "audio_tracks": []}, ensure_ascii=False), encoding="utf-8")
             r = self._gates(root)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
             self.assertNotIn("gates 留档", r.stdout)
             self.assertEqual(list(root.glob("**/*.json")), [root / "timeline.json"])
 
