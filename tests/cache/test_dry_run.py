@@ -11,10 +11,9 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from tests._support import cleanup_timeline, tree_sha256
+from tests._support import cleanup_timeline, tree_sha256, temporary_root
 from unittest import mock
 
 from vtx import cli, hygiene
@@ -32,9 +31,7 @@ REJECTED_DRY_FLAGS = (("--dry",), ("--dry-run", "--dry"),
 class DryRunRegression(unittest.TestCase):
     def setUp(self):
         bind_environment(self)
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.timeline = cleanup_timeline(
             self.root, subtitles=[{"in": 0, "out": 30, "text": "字幕"}])
         files = {

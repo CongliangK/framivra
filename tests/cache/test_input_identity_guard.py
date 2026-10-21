@@ -5,21 +5,19 @@ All products are synthetic and isolated in TemporaryDirectory; no media tools.
 import contextlib
 import io
 import json
-import tempfile
 import unittest
 import wave
 from pathlib import Path
 from unittest import mock
 
+from tests._support import temporary_root
 from vtx import cache_state, fstxn, hygiene, stages
 from vtx.infra import Ctx
 
 
 class InputIdentityGuard(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.path = self.root / 'timeline.json'
         with wave.open(str(self.root / 'media'), 'wb') as source:
             source.setnchannels(2)

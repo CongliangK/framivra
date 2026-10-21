@@ -14,14 +14,13 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(REPO))
-from tests._support import tree_sha256
+from tests._support import tree_sha256, temporary_root
 VTX = REPO / "vtx" / "vtx.py"
 
 # 只读调用面：非干燥 df 本身就是只读体检；validate 只读部分以 --dry-run 计划路径
@@ -44,9 +43,7 @@ REJECTED_ARGV = [(*command, flag)
 
 class LayoutLazinessFixture(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.proj = Path(self.tmp.name) / "proj"
+        self.proj = temporary_root(self) / "proj"
         (self.proj / "gfx").mkdir(parents=True)
         (self.proj / "gfx" / "title.html").write_text(
             "<canvas></canvas>", encoding="utf-8")

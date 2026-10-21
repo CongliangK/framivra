@@ -31,7 +31,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -40,7 +39,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
-from tests._support import small_timeline as _minimal_timeline
+from tests._support import small_timeline as _minimal_timeline, temporary_root
 
 from vtx import hygiene                  # noqa: E402
 from vtx.infra import Ctx                # noqa: E402
@@ -151,9 +150,7 @@ class _ProjectCase(unittest.TestCase):
     """隔离临时项目基类：建 timeline + Ctx，回收临时目录。"""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.tl = _minimal_timeline(self.root)
         self.ctx = Ctx(self.tl)
 
