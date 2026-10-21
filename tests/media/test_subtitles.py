@@ -350,6 +350,7 @@ class CliEndToEnd(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
         root = Path(self._tmp.name)
         ff = shutil.which("ffmpeg")
         src = root / "a.mp4"
@@ -371,9 +372,6 @@ class CliEndToEnd(unittest.TestCase):
         self.root = root
         self.tl = root / "timeline.json"
         self.tl.write_text(json.dumps(tl), encoding="utf-8")
-
-    def tearDown(self):
-        self._tmp.cleanup()
 
     def test_validate_and_subs_check_pass(self):
         r = self._run("validate")

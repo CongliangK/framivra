@@ -2,7 +2,8 @@
 
 门控：VTX_TEST_CEF_WORKER=<vtx_cef_worker 可执行路径>（先
 `bash experiments/gfx_cef_worker/build_cef_worker.sh`；shm_ring_selftest
-须在同目录）。未设置即跳过——本测试需要真实 CEF 二进制与多进程树。
+须在同目录）。未设置即跳过 worker 门；NativeAttachOwnership 仅以假系统
+调用验证实际 C++ header 的所有权，不需要 CEF 或真实 SHM。
 
 验收面（工单 DoD 逐条 + 端到端门）：
   1. 原生自检：shm_ring_selftest 全 PASS（槽位状态机/满溢背压/读写同步/
@@ -28,6 +29,7 @@ tests.gfx.test_cef_worker_shm -v
 """
 import json
 import os
+import shutil
 import signal
 import struct
 import subprocess
@@ -232,6 +234,79 @@ class _ServeFixture(unittest.TestCase):
         return cef_client.CefWorkerClient.connect(self.sock,
                                                   connect_timeout=timeout,
                                                   ready_timeout=timeout)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "requires GNU linker --wrap")
+class NativeAttachOwnership(unittest.TestCase):
+    """Actual C++ header with fake syscalls only: no CEF, SHM, mmap or real fd."""
+
+    def test_all_attach_paths_release_only_owned_resources_once(self):
+        cxx = shutil.which("c++")
+        if not cxx:
+            self.skipTest("requires a C++ compiler")
+        source = r'''
+#include "shm_ring.hpp"
+#include <cstdlib>
+#include <iostream>
+#include <new>
+using namespace vtx_cef;
+static std::string scenario;
+static int unmaps = 0, closes = 0, maps = 0, ticks = 0;
+alignas(64) static unsigned char bytes[2048];
+static const uint64_t total = RingGeometry::ForSize(1, 1).total_bytes;
+static void check(bool ok) { if (!ok) std::exit(1); }
+extern "C" int __wrap_dup(int fd) {
+  check(fd == 41); return scenario == "dup" ? -1 : 42;
+}
+extern "C" int __wrap_fstat(int fd, struct stat* st) {
+  check(fd == 42); st->st_size = scenario == "short" ? 1 : total;
+  return scenario == "stat" ? -1 : 0;
+}
+extern "C" void* __wrap_mmap(void*, size_t n, int prot, int flags, int fd, off_t off) {
+  check(fd == 42 && n == total && prot == (PROT_READ | PROT_WRITE) && flags == MAP_SHARED && off == 0);
+  ++maps; return scenario == "map" ? MAP_FAILED : bytes;
+}
+extern "C" int __wrap_munmap(void* p, size_t n) {
+  check(p == bytes && n == total); ++unmaps; return 0;
+}
+extern "C" int __wrap_close(int fd) { check(fd == 42); ++closes; return 0; }
+extern "C" int __wrap_clock_gettime(clockid_t, struct timespec* ts) {
+  ts->tv_sec = 6 * ++ticks; ts->tv_nsec = 0; return 0;
+}
+extern "C" int __wrap_usleep(useconds_t) { return 0; }
+int main(int argc, char** argv) {
+  check(argc == 2); scenario = argv[1];
+  auto* control = new (bytes) RingControl{};
+  control->layout_ready.store(scenario == "timeout" ? 0 : kRingMagic);
+  control->magic = scenario == "magic" ? 0 : kRingMagic;
+  control->protocol_version = scenario == "version" ? 0 : kProtocolVersion;
+  control->max_width = scenario == "geometry" ? 100 : 1;
+  control->max_height = 1;
+  std::string error;
+  auto view = ShmRingView::Attach(41, &error);
+  check(bool(view) == (scenario == "ok"));
+  if (view) { check(unmaps == 0 && closes == 0); view.reset(); }
+  else check(!error.empty());
+  check(closes == (scenario == "dup" ? 0 : 1));
+  const bool mapped = scenario == "ok" || scenario == "timeout" || scenario == "magic" || scenario == "version" || scenario == "geometry";
+  check(maps == (mapped || scenario == "map" ? 1 : 0));
+  std::cout << scenario << " unmaps=" << unmaps << " closes=" << closes << std::endl;
+  check(unmaps == (mapped ? 1 : 0));
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="vtx_shm_attach_") as td:
+            src, binary = Path(td) / "attach.cpp", Path(td) / "attach"
+            src.write_text(source, encoding="utf-8")
+            wrappers = ("dup", "fstat", "mmap", "munmap", "close", "clock_gettime", "usleep")
+            built = subprocess.run(
+                [cxx, "-std=c++17", "-pthread", "-I" + str(ROOT / "experiments/gfx_cef_worker/src"),
+                 str(src), *["-Wl,--wrap=" + name for name in wrappers], "-o", str(binary)],
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+            for case in ("dup", "stat", "short", "map", "timeout", "magic", "version", "geometry", "ok"):
+                with self.subTest(case=case):
+                    proc = subprocess.run([str(binary), case], capture_output=True, text=True, timeout=5)
+                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
 @unittest.skipUnless(_GATE and _SELFTEST and _SELFTEST.is_file(),
@@ -563,7 +638,7 @@ class SupervisedKillZeroResidue(unittest.TestCase):
         time.sleep(max(0.0, 0.105 - (time.monotonic() - t0)))
         self.assertEqual(group_live_members(pgid), [],
                          "kill -9 宿主 ~105ms 后 worker 树残活必须为 0")
-        # SHM 对象零残留（即建即解绑设计：任何时刻 /dev/shm 都无名可寻）
+        # 此测试在首帧成功后杀宿主：覆盖已解绑阶段，不证明创建窗口无残留
         self.assertEqual(_shm_residue(), [])
         # 临时目录（root_cache + socket 路径所在）由 reap 清扫
         stats = reap_orphan_workers(self.ctx())

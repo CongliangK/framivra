@@ -36,7 +36,6 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
-from tests.gfx._environment import environment_cli
 from types import SimpleNamespace
 from unittest import mock
 
@@ -44,6 +43,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:  # 独立跑（python3 tests/gfx/test_gfx_cli_fallback.py）时锚定仓根
     sys.path.insert(0, str(REPO))
 
+from tests.gfx._environment import environment_cli  # noqa: E402
 from vtx.gfx_cli import (GfxCliError, PNG_SIGNATURE, _cli_shot_cmd,  # noqa: E402
                          png_invalid_reason, render_cli, require_frames,
                          run_cli_shot, verify_frames)

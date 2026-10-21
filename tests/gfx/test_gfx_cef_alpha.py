@@ -14,13 +14,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from vtx import cli, gfx_backend, gfx_cef, hygiene
+from vtx import cef_client, cli, gfx_backend, gfx_cef, hygiene
 from vtx.cache_state import receipt_fingerprint
 from vtx.composite import RenderPlan
 from vtx.infra import Ctx
@@ -140,6 +141,254 @@ class Routing(unittest.TestCase):
                 cli.gfx(c)
             render.assert_not_called()
             self.assertFalse(c.cache.exists())
+
+@unittest.skipUnless(hasattr(cef_client.socket, "SCM_RIGHTS"), "requires POSIX SCM_RIGHTS")
+class ClientHelloOwnership(unittest.TestCase):
+    """Real client parser/validator with fake socket, fd and bytearray mapping only."""
+
+    def hello(self, magic=cef_client.HELLO_MAGIC, version=cef_client.PROTOCOL_VERSION):
+        return struct.pack(cef_client._HELLO_FMT, magic, version, 0, 123, 45, 4, 1, 1, 4,
+                           *([0] * 7))
+
+    def rights(self, *fds):
+        return [(cef_client.socket.SOL_SOCKET, cef_client.socket.SCM_RIGHTS,
+                 struct.pack(f'{len(fds)}i', *fds))]
+
+    @contextlib.contextmanager
+    def resources(self, packets):
+        class Mapping(bytearray):
+            pass
+        size = 384 + 4 * 192
+        if sys.platform == 'darwin':
+            page = cef_client.mmap.PAGESIZE
+            size = ((size + page - 1) // page) * page
+        mapping = Mapping(size)
+        mapping.close = mock.Mock()
+        struct.pack_into('<IIHH', mapping, 0, cef_client.RING_MAGIC, cef_client.RING_MAGIC, 1, 4)
+        struct.pack_into('<IIII', mapping, 12, 1, 1, 4, 192)
+        struct.pack_into('<Q', mapping, 32, 123)
+        sock = mock.Mock()
+        sock.recvmsg.side_effect = packets
+        with mock.patch.object(cef_client.os, 'close') as close, \
+                mock.patch.object(cef_client.os, 'fstat', return_value=SimpleNamespace(st_size=size)) as stat, \
+                mock.patch.object(cef_client.mmap, 'mmap', return_value=mapping) as mmap_call, \
+                mock.patch.object(cef_client.socket, 'socket', side_effect=AssertionError('real socket')), \
+                mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('real process')):
+            yield SimpleNamespace(sock=sock, mapping=mapping, close=close, stat=stat, mmap=mmap_call)
+
+    def test_complete_fragmented_hello_transfers_one_fd_once(self):
+        data = self.hello()
+        for lengths in ((64,), (1, 63), (17, 20, 27)):
+            for fd_part in range(len(lengths)):
+                with self.subTest(lengths=lengths, fd_part=fd_part):
+                    packets, offset = [], 0
+                    for index, length in enumerate(lengths):
+                        packets.append((data[offset:offset + length], self.rights(888) if index == fd_part else [], 0, None))
+                        offset += length
+                    with self.resources(packets) as r:
+                        client = cef_client.CefWorkerClient.from_socket(r.sock)
+                        self.assertEqual(client.hello['run_id'], 123)
+                        r.close.assert_not_called(); r.sock.close.assert_not_called()
+                        r.mapping.close.assert_not_called()
+                        client.close(); client.close()
+                        r.close.assert_called_once_with(888)
+                        r.mapping.close.assert_called_once_with(); r.sock.close.assert_called_once_with()
+                        self.assertEqual([c.args[0] for c in r.sock.recvmsg.call_args_list],
+                                         [64 - sum(lengths[:i]) for i in range(len(lengths))])
+
+    def test_hello_has_one_deadline_and_restores_socket_timeout(self):
+        data = self.hello()
+        packets = [(data[:1], self.rights(888), 0, None), (data[1:], [], 0, None)]
+        with self.resources(packets) as r, \
+                mock.patch.object(cef_client.time, 'monotonic', side_effect=[0, .25, 1.25]):
+            with self.assertRaisesRegex(cef_client.CefWorkerError, 'Hello.*超时'):
+                cef_client.CefWorkerClient.from_socket(r.sock, ready_timeout=1)
+            self.assertEqual(r.sock.recvmsg.call_count, 1)
+            r.close.assert_called_once_with(888); r.sock.close.assert_called_once_with()
+            r.mmap.assert_not_called()
+        with self.resources(packets) as r, \
+                mock.patch.object(cef_client.time, 'monotonic', side_effect=[0, .25, .5, .5]):
+            client = cef_client.CefWorkerClient.from_socket(r.sock, ready_timeout=1)
+            self.assertEqual(r.sock.settimeout.call_args_list,
+                             [mock.call(1), mock.call(.75), mock.call(.5), mock.call(1)])
+            client.close()
+        with self.resources(packets) as r:
+            client = cef_client.CefWorkerClient.from_socket(r.sock, ready_timeout=None)
+            self.assertEqual(r.sock.settimeout.call_args_list, [mock.call(None), mock.call(None)])
+            client.close()
+
+    def test_rejections_release_every_delivered_fd_and_partial_mapping(self):
+        data, rights = self.hello(), self.rights(888)
+        cases = [
+            ('eof', [(data[:1], rights, 0, None), (b'', [], 0, None)], [888]),
+            ('timeout', [(data[:1], rights, 0, None), cef_client.socket.timeout()], [888]),
+            ('reset', [(data[:1], rights, 0, None), ConnectionResetError()], [888]),
+            ('magic', [(self.hello(magic=0), rights, 0, None)], [888]),
+            ('version', [(self.hello(version=0), rights, 0, None)], [888]),
+            ('missing', [(data, [], 0, None)], []),
+            ('extra', [(data, self.rights(888, 889), 0, None)], [888, 889]),
+            ('later_extra', [(data[:1], rights, 0, None), (data[1:], self.rights(889), 0, None)], [888, 889]),
+            ('truncated', [(data, rights, cef_client.socket.MSG_CTRUNC, None)], [888]),
+            ('malformed', [(data, [(rights[0][0], rights[0][1], rights[0][2] + b'x')], 0, None)], [888]),
+            ('malformed_then_fd', [(data, [(rights[0][0], rights[0][1], b'x'), *rights], 0, None)], [888]),
+            *[(name, [(data, rights, 0, None)], [888]) for name in ('stat', 'map', 'ring')],
+        ]
+        for name, packets, fds in cases:
+            with self.subTest(case=name), self.resources(packets) as r:
+                if name == 'stat': r.stat.side_effect = OSError('stat')
+                if name == 'map': r.mmap.side_effect = OSError('map')
+                if name == 'ring': struct.pack_into('<I', r.mapping, 4, 0)
+                with self.assertRaises((cef_client.CefWorkerError, OSError)):
+                    cef_client.CefWorkerClient.from_socket(r.sock)
+                self.assertCountEqual(r.close.call_args_list, [mock.call(fd) for fd in fds])
+                r.sock.close.assert_called_once_with()
+                self.assertEqual(r.mapping.close.call_count, 1 if name == 'ring' else 0)
+
+    def test_close_attempts_fd_even_if_other_resource_close_raises(self):
+        for failing in ('socket', 'mapping'):
+            with self.subTest(failing=failing), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                client = cef_client.CefWorkerClient.from_socket(r.sock)
+                (r.sock.close if failing == 'socket' else r.mapping.close).side_effect = OSError(failing)
+                with self.assertRaisesRegex(OSError, failing): client.close()
+                client.close()
+                r.close.assert_called_once_with(888)
+                r.sock.close.assert_called_once_with(); r.mapping.close.assert_called_once_with()
+
+    def prepare_slot(self, r, *, header=None, notice=None, seq=5):
+        fields = dict.fromkeys(cef_client._HEADER_FIELDS, 0)
+        fields.update(magic=cef_client.SLOT_MAGIC, protocol_version=1, run_id=123,
+                      request_id=7, target_frame_index=3, canary_frame_index=3,
+                      width=1, height=1, stride=4, pixel_format=1, color_space=1)
+        fields.update(header or {})
+        struct.pack_into(cef_client._HEADER_FMT, r.mapping, 384,
+                         *(fields[k] for k in cef_client._HEADER_FIELDS))
+        struct.pack_into('<II', r.mapping, 128, 2, seq)
+        r.mapping[512:516] = b'abcd'
+        n = dict(magic=cef_client.NOTICE_MAGIC, version=1, status=0,
+                 request_id=7, frame=3, slot=0, seq=seq)
+        n.update(notice or {})
+        r.sock.recv.return_value = struct.pack(cef_client._NOTICE_FMT, n['magic'], n['version'],
+            n['status'], n['request_id'], n['frame'], n['slot'], b'\0' * 3, n['seq'], 0)
+
+    def test_slot_snapshot_and_release_bind_generation_including_wraparound(self):
+        for seq in (0, 5, 0xffffffff):
+            with self.subTest(seq=seq), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                self.prepare_slot(r, seq=seq)
+                with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                    frame = client.request_slot(3, request_id=7)
+                    self.assertEqual((frame.data, frame.seq), (b'abcd', seq))
+                    frame.release(); frame.release()
+                    self.assertEqual(client._gate(0), (0, seq))
+                    self.assertEqual(client.stats()['released'], 1)
+                r.close.assert_called_once_with(888)
+
+    def test_slot_rejects_unbound_notice_header_and_capacity_without_releasing(self):
+        cases = [('notice_' + k, {}, {k: v}) for k, v in
+                 [('request_id', 99), ('frame', 4), ('seq', 6), ('slot', 4), ('magic', 0), ('version', 0)]]
+        cases += [('header_' + k, {k: v}, {}) for k, v in
+                  [('request_id', 99), ('target_frame_index', 4), ('canary_frame_index', -1),
+                   ('status_code', 2), ('width', 0), ('height', 0), ('stride', 8),
+                   ('pixel_format', 2), ('color_space', 2), ('run_id', 999)]]
+        cases += [('oversize', {'width': 100, 'height': 100, 'stride': 400}, {}),
+                  ('invalid_error_slot', {}, {'status': 1}),
+                  ('unknown_status', {}, {'status': 99, 'slot': 255})]
+        for name, header, notice in cases:
+            with self.subTest(case=name), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                self.prepare_slot(r, header=header, notice=notice)
+                with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                    held = cef_client.SlotFrame(client, 0, 5, {}, b'', 0)
+                    with self.assertRaises(cef_client.CefWorkerError) as error, held:
+                        client.request_slot(3, request_id=7)
+                    self.assertIsNone(error.exception.status_code)
+                    self.assertTrue(client._closed)
+                    self.assertEqual(struct.unpack_from('<II', r.mapping, 128), (2, 5))
+                    self.assertEqual(struct.unpack_from('<Q', r.mapping, 56)[0], 0)
+                r.close.assert_called_once_with(888); r.mapping.close.assert_called_once_with()
+
+    def test_slot_detects_snapshot_change_and_refuses_aba_release(self):
+        for fault in ('state', 'seq', 'short', 'release_seq', 'release_close', 'body_error'):
+            with self.subTest(fault=fault), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                self.prepare_slot(r)
+                with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                    if fault in ('release_seq', 'release_close', 'body_error'):
+                        held = client.request_slot(3, request_id=7)
+                        struct.pack_into('<I', r.mapping, 132, 6)
+                        if fault == 'release_close':
+                            r.mapping.close.side_effect = OSError('mapping close failed')
+                        if fault == 'body_error':
+                            error = RuntimeError('body failure')
+                            with self.assertRaises(RuntimeError) as caught, held:
+                                raise error
+                            self.assertIs(caught.exception, error)
+                        else:
+                            with self.assertRaisesRegex(cef_client.CefWorkerError, '槽世代已变'):
+                                held.release()
+                        held.release()  # closed session: no mapping access, no second error
+                        r.close.assert_called_once_with(888)
+                    else:
+                        def read(mapping, key):
+                            data = bytearray.__getitem__(mapping, key)
+                            if isinstance(key, slice) and key.start == 512:
+                                if fault == 'short': return data[:3]
+                                struct.pack_into('<I', mapping, 128 if fault == 'state' else 132,
+                                                 0 if fault == 'state' else 6)
+                            return data
+                        with mock.patch.object(type(r.mapping), '__getitem__', read), \
+                                self.assertRaises(cef_client.CefWorkerError):
+                            client.request_slot(3, request_id=7)
+                    self.assertTrue(client._closed)
+                    self.assertEqual(struct.unpack_from('<Q', r.mapping, 56)[0], 0)
+                    if fault in ('seq', 'release_seq', 'release_close', 'body_error'):
+                        self.assertEqual(struct.unpack_from('<II', r.mapping, 128), (2, 6))
+
+    def test_slot_worker_errors_preserve_held_slots_but_transport_timeout_closes(self):
+        for status in (1, 2, 3, 4):
+            with self.subTest(status=status), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                self.prepare_slot(r)
+                with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                    held = client.request_slot(3, request_id=7)
+                    self.prepare_slot(r, notice={'status': status, 'slot': 255, 'request_id': 8, 'frame': 4})
+                    with self.assertRaises(cef_client.CefWorkerError) as error:
+                        client.request_slot(4, request_id=8)
+                    self.assertEqual(error.exception.status_code, status)
+                    self.assertFalse(client._closed)
+                    held.release()
+                    self.assertEqual(client.stats()['released'], 1)
+                    self.prepare_slot(r, seq=6, header={'request_id': 9, 'target_frame_index': 4, 'canary_frame_index': 4},
+                                      notice={'request_id': 9, 'frame': 4})
+                    with client.request_slot(4, request_id=9) as frame:
+                        self.assertEqual(frame.header['target_frame_index'], 4)
+        for error in (cef_client.socket.timeout(), KeyboardInterrupt(), SystemExit(), MemoryError()):
+            with self.subTest(error=type(error).__name__), \
+                    self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                self.prepare_slot(r)
+                r.sock.recv.side_effect = [error, r.sock.recv.return_value]
+                with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                    expected = cef_client.CefWorkerError if isinstance(error, OSError) else type(error)
+                    with self.assertRaises(expected) as caught: client.request_slot(3, request_id=7)
+                    if expected is not cef_client.CefWorkerError:
+                        self.assertIs(caught.exception, error)
+                    with self.assertRaisesRegex(cef_client.CefWorkerError, 'closed'):
+                        client.request_slot(4, request_id=8)
+                    self.assertEqual(r.sock.recv.call_count, 1)
+                    self.assertEqual(r.sock.sendall.call_count, 1)
+                    r.close.assert_called_once_with(888)
+
+    def test_ring_binds_hello_geometry_and_slot_capacity_before_slot_reads(self):
+        for offset, value in ((12, 0), (12, 2), (16, 2), (20, 8), (24, 256)):
+            with self.subTest(offset=offset), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                struct.pack_into('<I', r.mapping, offset, value)
+                with self.assertRaises(cef_client.CefWorkerError):
+                    cef_client.CefWorkerClient.from_socket(r.sock)
+                r.mapping.close.assert_called_once_with(); r.close.assert_called_once_with(888)
+                r.sock.recv.assert_not_called()
+
+    def test_regular_receipt_uses_same_exact_reader_without_ancillary(self):
+        sock = mock.Mock()
+        sock.recv.side_effect = [b'a', b'bc']
+        self.assertEqual(cef_client.CefWorkerClient._recv_exact(sock, 3, 'receipt'), b'abc')
+        sock.recvmsg.assert_not_called()
+        self.assertEqual(sock.recv.call_args_list, [mock.call(3), mock.call(2)])
 
 
 @unittest.skipUnless(WORKER and Path(WORKER).is_file(), 'requires VTX_TEST_CEF_WORKER')

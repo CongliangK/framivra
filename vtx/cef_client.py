@@ -25,6 +25,7 @@ import socket
 import struct
 import sys
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,14 +128,18 @@ class SlotFrame:
     def release(self) -> None:
         if self._released:
             return
-        self._client._release_slot(self.slot_index)
+        self._client._release_slot(self.slot_index, self.seq)
         self._released = True
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        self.release()
+    def __exit__(self, exc_type, *_):
+        try:
+            self.release()
+        except BaseException:
+            if exc_type is None:
+                raise
 
 
 class CefWorkerClient:
@@ -146,8 +151,11 @@ class CefWorkerClient:
         self.hello = hello
         size = os.fstat(shm_fd).st_size
         self._mm = mmap.mmap(shm_fd, size)  # MAP_SHARED 读写（门释放需要）
-        self._validate_ring(size)
-        self._closed = False
+        with ExitStack() as cleanup:
+            cleanup.callback(self._mm.close)
+            self._validate_ring(size)
+            self._closed = False
+            cleanup.pop_all()
 
     # ------------------------------------------------------------ 连接
 
@@ -187,32 +195,36 @@ class CefWorkerClient:
 
     @classmethod
     def from_socket(cls, sock, ready_timeout=30.0):
-        """Consume Hello from an already connected inherited socketpair."""
-        sock.settimeout(ready_timeout)
-        # Hello + SCM_RIGHTS(SHM fd) 单次 recvmsg
-        data, ancdata, _flags, _addr = sock.recvmsg(
-            64, socket.CMSG_SPACE(struct.calcsize("i")))
-        if len(data) != 64:
-            raise CefWorkerError(f"Hello 长度异常: {len(data)}")
-        shm_fd = None
-        for level, ctype, cdata in ancdata:
-            if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
-                (shm_fd,) = struct.unpack("i", cdata[:4])
-        if shm_fd is None:
-            raise CefWorkerError("Hello 未附带 SHM fd（SCM_RIGHTS 缺失）")
-        values = struct.unpack(_HELLO_FMT, data)
-        hello = {
-            "magic": values[0], "protocol_version": values[1],
-            "flags": values[2], "run_id": values[3], "pid": values[4],
-            "ring_slots": values[5], "max_width": values[6],
-            "max_height": values[7], "frame_bytes": values[8],
-        }
-        if hello["magic"] != HELLO_MAGIC:
-            raise CefWorkerError(f"Hello magic 不符: {hello['magic']:#x}")
-        if hello["protocol_version"] != PROTOCOL_VERSION:
-            raise CefWorkerError(
-                f"协议版本不符: {hello['protocol_version']}")
-        return cls(sock, shm_fd, hello)
+        """Take socket ownership; accept one complete Hello and exactly one SHM fd."""
+        with ExitStack() as cleanup:
+            cleanup.callback(sock.close)
+            sock.settimeout(ready_timeout)
+            deadline = None if ready_timeout is None else time.monotonic() + ready_timeout
+            fds = []
+
+            def own_fd(fd):
+                cleanup.callback(os.close, fd)
+                fds.append(fd)
+
+            data = cls._recv_exact(sock, 64, "Hello", receive_fd=own_fd, deadline=deadline)
+            if len(fds) != 1:
+                raise CefWorkerError(f"Hello 必须附带一个 SHM fd（实际 {len(fds)}）")
+            values = struct.unpack(_HELLO_FMT, data)
+            hello = {
+                "magic": values[0], "protocol_version": values[1],
+                "flags": values[2], "run_id": values[3], "pid": values[4],
+                "ring_slots": values[5], "max_width": values[6],
+                "max_height": values[7], "frame_bytes": values[8],
+            }
+            if hello["magic"] != HELLO_MAGIC:
+                raise CefWorkerError(f"Hello magic 不符: {hello['magic']:#x}")
+            if hello["protocol_version"] != PROTOCOL_VERSION:
+                raise CefWorkerError(
+                    f"协议版本不符: {hello['protocol_version']}")
+            sock.settimeout(ready_timeout)  # restore before the next request sends
+            client = cls(sock, fds[0], hello)
+            cleanup.pop_all()  # only a fully validated client owns socket + fd
+            return client
 
     def _validate_ring(self, size: int) -> None:
         mm = self._mm
@@ -232,8 +244,17 @@ class CefWorkerClient:
             raise CefWorkerError(f"环槽数不符: {slots}")
         if run_id != self.hello["run_id"]:
             raise CefWorkerError("环 run_id 与 Hello 不一致（跨 run 污染）")
+        width, height = struct.unpack_from("<II", mm, _CTRL_MAX_W)
+        (slot_bytes,) = struct.unpack_from("<I", mm, _CTRL_SLOT_STRIDE)
+        if (width <= 0 or height <= 0 or frame_bytes != width * height * 4
+                or (width, height, frame_bytes, slots) !=
+                   (self.hello["max_width"], self.hello["max_height"],
+                    self.hello["frame_bytes"], self.hello["ring_slots"])):
+            raise CefWorkerError("环几何/容量与 Hello 不符")
         self.frame_bytes = frame_bytes
         self.slot_stride = _align64(128 + frame_bytes)
+        if slot_bytes != self.slot_stride:
+            raise CefWorkerError("环槽步长与容量不符")
         expected = _CTRL_SIZE + self.slot_stride * RING_SLOTS
         if sys.platform == 'darwin':
             page = mmap.PAGESIZE
@@ -246,20 +267,47 @@ class CefWorkerClient:
     def _slot_offset(self, slot: int) -> int:
         return _CTRL_SIZE + self.slot_stride * slot
 
-    def _gate_state(self, slot: int) -> int:
-        return struct.unpack_from("<I", self._mm, _CTRL_GATES + slot * 64)[0]
+    def _gate(self, slot: int):
+        return struct.unpack_from("<II", self._mm, _CTRL_GATES + slot * 64)
 
-    def _release_slot(self, slot: int) -> None:
-        """READY→EMPTY（release-store 语义：Python 侧单写者即足）。"""
+    def _release_slot(self, slot: int, seq: int) -> None:
+        """Release only this published generation; closed sessions own no live slots."""
+        if self._closed:
+            return
+        if self._gate(slot) != (_GATE_READY, seq):
+            try:
+                self.close()
+            finally:
+                raise CefWorkerError("槽世代已变，拒绝释放另一次发布")
         struct.pack_into("<I", self._mm, _CTRL_GATES + slot * 64, _GATE_EMPTY)
         (released,) = struct.unpack_from("<Q", self._mm, _CTRL_RELEASED)
         struct.pack_into("<Q", self._mm, _CTRL_RELEASED, released + 1)
 
-    def _recv_exact(self, n: int, what: str) -> bytes:
+    @staticmethod
+    def _recv_exact(sock, n: int, what: str, *, receive_fd=None, deadline=None) -> bytes:
         buf = b""
         while len(buf) < n:
             try:
-                chunk = self._sock.recv(n - len(buf))
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise socket.timeout()
+                    sock.settimeout(remaining)
+                if receive_fd is None:
+                    chunk = sock.recv(n - len(buf))
+                else:
+                    fd_size = struct.calcsize("i")
+                    chunk, ancillary, flags, _ = sock.recvmsg(
+                        n - len(buf), socket.CMSG_SPACE(fd_size))
+                    malformed = False
+                    for level, kind, data in ancillary:
+                        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                            count = len(data) // fd_size
+                            for fd in struct.unpack(f"{count}i", data[:count * fd_size]):
+                                receive_fd(fd)  # own every delivered fd before any rejection
+                            malformed |= bool(len(data) % fd_size)
+                    if malformed or flags & socket.MSG_CTRUNC:
+                        raise CefWorkerError(f"{what} SHM fd 控制消息损坏/截断")
             except socket.timeout as exc:
                 raise CefWorkerError(f"等待 {what} 超时") from exc
             except (ConnectionResetError, BrokenPipeError) as exc:
@@ -291,13 +339,15 @@ class CefWorkerClient:
         values = struct.unpack_from(_HEADER_FMT, self._mm, offset)
         return dict(zip(_HEADER_FIELDS, values))
 
-    def _validate_slot_header(self, header: dict) -> None:
+    def _validate_slot_header(self, header: dict, request_id: int, frame_index: int) -> None:
         if header["magic"] != SLOT_MAGIC:
             raise CefWorkerError(f"槽头 magic 不符: {header['magic']:#x}")
         if header["protocol_version"] != PROTOCOL_VERSION:
             raise CefWorkerError(f"槽头版本不符: {header['protocol_version']}")
         if header["run_id"] != self.hello["run_id"]:
             raise CefWorkerError("槽头 run_id 陈旧（跨 run 残帧拒收）")
+        if header["request_id"] != request_id or header["target_frame_index"] != frame_index:
+            raise CefWorkerError("receipt request/frame identity mismatch")
 
     # ------------------------------------------------------------ 公共 API
 
@@ -331,15 +381,13 @@ class CefWorkerClient:
             path = os.path.abspath(path)
         self._send_request(frame_index, path, 0, request_id, expected_wh)
         self._sock.settimeout(timeout)
-        raw = self._recv_exact(128, "模式 1 回执")
+        raw = self._recv_exact(self._sock, 128, "模式 1 回执")
         (magic, version, status) = struct.unpack_from("<IHH", raw, 0)
         if magic != SLOT_MAGIC or version != PROTOCOL_VERSION:
             raise CefWorkerError(f"回执 magic/版本不符: {magic:#x}/{version}")
         values = struct.unpack_from(_HEADER_FMT, raw, 0)
         header = dict(zip(_HEADER_FIELDS, values))
-        self._validate_slot_header(header)
-        if header["request_id"] != request_id or header["target_frame_index"] != frame_index:
-            raise CefWorkerError("receipt request/frame identity mismatch")
+        self._validate_slot_header(header, request_id, frame_index)
         receipt = FrameReceipt(header=header)
         if status != STATUS_OK:
             raise CefWorkerError(
@@ -370,34 +418,52 @@ class CefWorkerClient:
         dump = dump_raw_path is not None
         path = (os.path.abspath(str(dump_raw_path)) if dump else "/dev/null")
         flags = FLAG_WANT_SLOT | (FLAG_DUMP_RAW if dump else 0)
-        self._send_request(frame_index, path, flags, request_id, (0, 0))
-        self._sock.settimeout(timeout)
-        raw = self._recv_exact(32, "槽索引通知")
-        (magic, version, status, req_id, f_idx, slot, _rsv, seq,
-         backpressure) = struct.unpack(_NOTICE_FMT, raw)
-        if magic != NOTICE_MAGIC or version != PROTOCOL_VERSION:
-            raise CefWorkerError(f"槽通知 magic/版本不符: {magic:#x}/{version}")
-        if status != STATUS_OK:
-            raise CefWorkerError(
-                f"槽帧失败 status={status} backpressure_wait_us="
-                f"{backpressure}", status_code=status)
-        if slot >= RING_SLOTS:
-            raise CefWorkerError(f"槽索引越界: {slot}")
-        # 门须已 READY（发布先于通知；acquire 语义此处由进程内一致时序保证）
-        if self._gate_state(slot) != _GATE_READY:
-            raise CefWorkerError(f"槽 {slot} 门状态非 READY")
-        offset = self._slot_offset(slot)
-        header = self._parse_header_at(offset)
-        self._validate_slot_header(header)
-        w = header["width"]
-        h = header["height"]
-        data = bytes(self._mm[offset + 128: offset + 128 + w * h * 4])
-        if dump:
-            raw_path = str(dump_raw_path) + ".raw"
-            expect = Path(raw_path)
-            if not expect.is_file():
-                raise CefWorkerError(f"dump_raw 侧写缺失: {raw_path}")
-        return SlotFrame(self, slot, seq, header, data, backpressure)
+        if self._closed:
+            raise CefWorkerError("slot client is closed")
+        try:
+            self._send_request(frame_index, path, flags, request_id, (0, 0))
+            self._sock.settimeout(timeout)
+            raw = self._recv_exact(self._sock, 32, "槽索引通知")
+            (magic, version, status, req_id, f_idx, slot, _rsv, seq,
+             backpressure) = struct.unpack(_NOTICE_FMT, raw)
+            if magic != NOTICE_MAGIC or version != PROTOCOL_VERSION:
+                raise CefWorkerError(f"槽通知 magic/版本不符: {magic:#x}/{version}")
+            if req_id != request_id or f_idx != frame_index:
+                raise CefWorkerError("slot notice request/frame identity mismatch")
+            if status != STATUS_OK:
+                if status not in (STATUS_TIMEOUT, STATUS_SIZE_MISMATCH, STATUS_JS_ERR, STATUS_DUPLICATE) or slot != 0xFF:
+                    raise CefWorkerError("无效的槽失败通知")
+                raise CefWorkerError(
+                    f"槽帧失败 status={status} backpressure_wait_us={backpressure}", status_code=status)
+            if slot >= RING_SLOTS:
+                raise CefWorkerError(f"槽索引越界: {slot}")
+            if self._gate(slot) != (_GATE_READY, seq):
+                raise CefWorkerError("槽未就绪或发布序号不符")
+            offset = self._slot_offset(slot)
+            header = self._parse_header_at(offset)
+            self._validate_slot_header(header, request_id, frame_index)
+            w, h = header["width"], header["height"]
+            size = w * h * 4
+            if (header["status_code"] != STATUS_OK or header["canary_frame_index"] != frame_index
+                    or (header["pixel_format"], header["color_space"]) != (1, 1)
+                    or (w, h) != (self.hello["max_width"], self.hello["max_height"])
+                    or w <= 0 or h <= 0 or header["stride"] != w * 4 or size > self.frame_bytes):
+                raise CefWorkerError("槽帧状态/金丝雀/格式/几何超出已验证契约")
+            data = bytes(self._mm[offset + 128:offset + 128 + size])
+            if len(data) != size or self._gate(slot) != (_GATE_READY, seq):
+                raise CefWorkerError("槽快照截断或复制时发布世代已变")
+            if dump and not Path(str(dump_raw_path) + ".raw").is_file():
+                raise CefWorkerError(f"dump_raw 侧写缺失: {dump_raw_path}.raw")
+            return SlotFrame(self, slot, seq, header, data, backpressure)
+        except BaseException as error:
+            if isinstance(error, CefWorkerError) and error.status_code is not None:
+                raise  # a bound worker error owns no slot; held slots can still be released
+            try:
+                self.close()  # protocol/transport uncertainty: never reuse or blindly release
+            finally:
+                if isinstance(error, (OSError, ValueError, struct.error)):
+                    raise CefWorkerError(f"槽传输/布局失败: {error}") from error
+                raise error
 
     def stats(self) -> dict:
         """环级账目（诊断/证据面）。"""
@@ -405,7 +471,7 @@ class CefWorkerClient:
         (published,) = struct.unpack_from("<Q", mm, _CTRL_PUBLISHED)
         (released,) = struct.unpack_from("<Q", mm, _CTRL_RELEASED)
         (backpressure,) = struct.unpack_from("<Q", mm, _CTRL_BACKPRESSURE)
-        gates = [self._gate_state(i) for i in range(RING_SLOTS)]
+        gates = [self._gate(i)[0] for i in range(RING_SLOTS)]
         return {"published": published, "released": released,
                 "backpressure_wait_us_total": backpressure, "gates": gates}
 
@@ -416,8 +482,10 @@ class CefWorkerClient:
         try:
             self._sock.close()
         finally:
-            self._mm.close()
-            os.close(self._shm_fd)
+            try:
+                self._mm.close()
+            finally:
+                os.close(self._shm_fd)
 
     def __enter__(self):
         return self

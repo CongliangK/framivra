@@ -191,17 +191,17 @@ def _seg_dialogue(subs, fps, a, b):
 
 
 def _seg_layers(c, layers_by_track, a, b):
-    """段内图层集 → 恒等集合（∩ [a,b) 与 composite.render_segmented 同判据）。"""
+    """段内图层序列（∩ [a,b) 与 composite.render_segmented 同判据及叠放顺序）。"""
     items = []
     for tr, ti, idents in layers_by_track:
         for cl, ident in zip(tr["clips"], idents):
             if cl["dst_in"] < b and cl["dst_in"] + cl["dur"] > a:
-                # 源缺失时 ident[0] 为 None——归一成标记串，保证可排序可比对
+                # 源缺失时 ident[0] 为 None——归一成标记串，保证可比对
                 # （一侧缺失一侧存在 → 值不同 → 所在段正确判失效）
                 items.append((ident[0] or "MISSING",
                               json.dumps(cl, sort_keys=True, ensure_ascii=False),
                               ident[2], ident[3]))
-    return sorted(items)
+    return items
 
 
 def _nseg() -> int:
@@ -307,16 +307,23 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
     # ---- 视频轨 / clips ----
     ta = {tr.get("name", f"#{i}"): (i, tr) for i, tr in enumerate(tla["video_tracks"])}
     tb = {tr.get("name", f"#{i}"): (i, tr) for i, tr in enumerate(tlb["video_tracks"])}
+    # Compare surviving tracks only: inserting/deleting a track is already reported
+    # below, but changing their relative z-order changes the renderer's layer list.
+    order_a = [name for name in ta if name in tb]
+    order_b = [name for name in tb if name in ta]
+    if order_a != order_b:
+        add("change", "video_tracks.order", order_a, order_b, "gen")
     for name in sorted(set(ta) | set(tb)):
+        ia, tra = ta.get(name, (None, None))
+        ib, trb = tb.get(name, (None, None))
         if name not in ta:
             add("add", f"video_tracks[{name}]", None,
-                f"kind={tb[name][1].get('kind')}, {len(tb[name][1]['clips'])} clips", "gen")
+                f"kind={trb.get('kind')}, {len(trb['clips'])} clips", "gen")
+            matched, added, deleted = [], trb["clips"], []
         elif name not in tb:
-            add("del", f"video_tracks[{name}]", f"kind={ta[name][1].get('kind')}", None, "gen")
-            continue
+            add("del", f"video_tracks[{name}]", f"kind={tra.get('kind')}", None, "gen")
+            matched, added, deleted = [], [], tra["clips"]
         else:
-            ia, tra = ta[name]
-            ib, trb = tb[name]
             if tra.get("kind") != trb.get("kind"):
                 add("change", f"video_tracks[{name}].kind", tra.get("kind"), trb.get("kind"), "gen")
             matched, added, deleted = pair_clips(tra["clips"], trb["clips"])
@@ -334,42 +341,42 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
             for x in deleted:
                 add("del", f"video_tracks[{name}].clips[{x.get('src')}@{x.get('dst_in')}]",
                     _short(x), None, "gen")
-            # 键重算（真值）：配对 clip 逐个比对 seg/gfx 键
-            for x, y in matched:
-                if tra.get("kind") == "gfx":
-                    ka = gfx_key(ca, x) if (ca.root / x["src"]).exists() else None
-                    kb = gfx_key(cb, y) if (cb.root / y["src"]).exists() else None
-                    if ka != kb:
-                        impact["gfx_invalid"].append(
-                            {"track": name, "clip": f"{y['src']}@{y['dst_in']}",
-                             "old_key": ka, "new_key": kb})
-                else:
-                    ka = _clip_seg_key(ca, tra, ia, x)
-                    kb = _clip_seg_key(cb, trb, ib, y)
-                    if ka != kb:
-                        impact["seg_invalid"].append(
-                            {"track": name, "clip": f"{y['src']}@{y['dst_in']}",
-                             "old_key": ka, "new_key": kb,
-                             "reencode_seconds_est": round((y["src_out"] - y["src_in"]) * EST_SEG_ENCODE_PER_FRAME, 1)})
-            for y in added:
-                if trb.get("kind") == "gfx":
-                    if (cb.root / y["src"]).exists():
-                        impact["gfx_invalid"].append(
-                            {"track": name, "clip": f"{y['src']}@{y['dst_in']}",
-                             "old_key": None, "new_key": gfx_key(cb, y)})
-                else:
+        # 键重算（真值）：整轨增删与现有轨内 clip 增删共用同一处理。
+        for x, y in matched:
+            if tra.get("kind") == "gfx":
+                ka = gfx_key(ca, x) if (ca.root / x["src"]).exists() else None
+                kb = gfx_key(cb, y) if (cb.root / y["src"]).exists() else None
+                if ka != kb:
+                    impact["gfx_invalid"].append(
+                        {"track": name, "clip": f"{y['src']}@{y['dst_in']}",
+                         "old_key": ka, "new_key": kb})
+            else:
+                ka = _clip_seg_key(ca, tra, ia, x)
+                kb = _clip_seg_key(cb, trb, ib, y)
+                if ka != kb:
                     impact["seg_invalid"].append(
                         {"track": name, "clip": f"{y['src']}@{y['dst_in']}",
-                         "old_key": None, "new_key": _clip_seg_key(cb, trb, ib, y),
+                         "old_key": ka, "new_key": kb,
                          "reencode_seconds_est": round((y["src_out"] - y["src_in"]) * EST_SEG_ENCODE_PER_FRAME, 1)})
-            for x in deleted:
-                if tra.get("kind") == "gfx":
-                    if (ca.root / x["src"]).exists():
-                        impact["gfx_orphan"].append(
-                            {"track": name, "clip": f"{x['src']}@{x['dst_in']}", "old_key": gfx_key(ca, x)})
-                else:
-                    impact["seg_orphan"].append(
-                        {"track": name, "clip": f"{x['src']}@{x['dst_in']}", "old_key": _clip_seg_key(ca, tra, ia, x)})
+        for y in added:
+            if trb.get("kind") == "gfx":
+                if (cb.root / y["src"]).exists():
+                    impact["gfx_invalid"].append(
+                        {"track": name, "clip": f"{y['src']}@{y['dst_in']}",
+                         "old_key": None, "new_key": gfx_key(cb, y)})
+            else:
+                impact["seg_invalid"].append(
+                    {"track": name, "clip": f"{y['src']}@{y['dst_in']}",
+                     "old_key": None, "new_key": _clip_seg_key(cb, trb, ib, y),
+                     "reencode_seconds_est": round((y["src_out"] - y["src_in"]) * EST_SEG_ENCODE_PER_FRAME, 1)})
+        for x in deleted:
+            if tra.get("kind") == "gfx":
+                if (ca.root / x["src"]).exists():
+                    impact["gfx_orphan"].append(
+                        {"track": name, "clip": f"{x['src']}@{x['dst_in']}", "old_key": gfx_key(ca, x)})
+            else:
+                impact["seg_orphan"].append(
+                    {"track": name, "clip": f"{x['src']}@{x['dst_in']}", "old_key": _clip_seg_key(ca, tra, ia, x)})
 
     # ---- 字幕 ----
     subs_a, subs_b = tla.get("subtitles", []), tlb.get("subtitles", [])

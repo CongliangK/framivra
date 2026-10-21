@@ -13,13 +13,16 @@
 运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3 前缀，
 裸 python3 的 sys.executable 被 AppImage 劫持，见全局 AGENTS.md）
 """
+import contextlib
 import copy
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -210,6 +213,116 @@ class TestSegKeyImpact(_Base):
         st = res["impact"]["stages"]
         self.assertTrue(all(not v for k, v in st.items() if k != "validate"))
         self.assertTrue(st["validate"])   # 输入变即建议 validate（~3s，与 R1/R2 口径一致）
+
+
+class TestTrackOrderAndWholeTrackImpact(_Base):
+    """Pure real key analysis; no browser, media tools, or external plugin execution."""
+
+    def setUp(self):
+        super().setUp()
+        for patcher in (
+            mock.patch.dict(os.environ, {"VTX_NO_NVENC": "1", "VTX_SEG_NVENC": "0"}),
+            mock.patch("vtx.gfx_environment.identity", return_value="unit-environment"),
+            mock.patch("vtx.pluginlib.hooks.active_plugins_digest", return_value=""),
+            mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child process")),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def timeline(self, overlap=True):
+        return _tl(
+            project={"fps": 30, "width": 1920, "height": 1080, "duration_frames": 360},
+            video_tracks=[
+                {"name": name, "kind": "aroll", "clips": [
+                    {"src": src, "src_in": 0, "src_out": 180,
+                     "dst_in": 0 if overlap else i * 180, "dur": 180}]}
+                for i, (name, src) in enumerate((("bottom", "a"), ("top", "b")))],
+            subtitles=[], audio_tracks=[])
+
+    def test_overlap_reorder_matches_production_segment_identity(self):
+        from vtx import impact
+        old = self.timeline()
+        new = copy.deepcopy(old)
+        new["video_tracks"].reverse()
+        res = diff_timelines(old, self.root, new, self.root, nseg=4)
+        self.assertEqual([e["path"] for e in res["entries"]], ["video_tracks.order"])
+        self.assertEqual(res["entries"][0]["old"], ["bottom", "top"])
+        self.assertEqual(res["entries"][0]["new"], ["top", "bottom"])
+        exact = impact.compare(impact.capture(old, self.root, nseg=4),
+                               impact.capture(new, self.root, nseg=4))
+        actual = [n for n in exact["affected_nodes"] if n["node"].startswith("vseg:")]
+        self.assertEqual(res["impact"]["vseg_invalid"]["count"], len(actual))
+        self.assertGreater(len(actual), 0)
+        self.assertTrue(res["impact"]["stages"]["video"])
+        self.assertFalse(res["impact"]["stages"]["audio"])
+        self.assertEqual(res["impact"]["seg_invalid"], [])  # preencodes remain reusable
+        self.assertEqual(res["impact"]["gfx_invalid"], [])
+        self.assertTrue(all(a < 180 for a, b in res["impact"]["vseg_invalid"]["segments"]))
+
+    def test_nonoverlapping_order_change_does_not_invalidate_unaffected_segments(self):
+        old = self.timeline(overlap=False)
+        # Leave a real quiet cut window: adjacent clips can share a guarded
+        # segment, whose ordered key correctly changes even without overlap.
+        for track in old["video_tracks"]:
+            track["clips"][0].update(dur=120, src_out=120)
+        old["video_tracks"][1]["clips"][0]["dst_in"] = 240
+        self.assertEqual(_edges(old, 2), [0, 180, 360])
+        new = copy.deepcopy(old)
+        new["video_tracks"].reverse()
+        res = diff_timelines(old, self.root, new, self.root, nseg=2)
+        self.assertEqual([e["path"] for e in res["entries"]], ["video_tracks.order"])
+        self.assertEqual(res["impact"]["vseg_invalid"]["count"], 0)
+
+    def test_whole_track_add_delete_reuses_clip_key_accounting(self):
+        for kind in ("aroll", "gfx"):
+            with self.subTest(kind=kind):
+                old = self.timeline()
+                track = copy.deepcopy(_tl()["video_tracks"][0 if kind == "aroll" else 1])
+                track["name"] = "added"
+                new = copy.deepcopy(old)
+                new["video_tracks"].insert(0, track)
+                key = "gfx" if kind == "gfx" else "seg"
+                expected = len(track["clips"])
+                forward = self.diff(old, new)
+                backward = self.diff(new, old)
+                for result, action in ((forward, "add"), (backward, "del")):
+                    self.assertEqual([(e["kind"], e["path"]) for e in result["entries"]],
+                                     [(action, "video_tracks[added]")])
+                    self.assertTrue(result["impact"]["stages"]["video"])
+                    self.assertEqual(result["impact"]["stages"]["gfx"], kind == "gfx")
+                    self.assertFalse(result["impact"]["stages"]["audio"])
+                invalid = forward["impact"][key + "_invalid"]
+                orphan = backward["impact"][key + "_orphan"]
+                self.assertEqual(len(invalid), expected)
+                self.assertEqual(len(orphan), expected)
+                self.assertTrue(all(item["old_key"] is None for item in invalid))
+                self.assertTrue(all(item["new_key"] is not None for item in invalid))
+                self.assertEqual([item["new_key"] for item in invalid],
+                                 [item["old_key"] for item in orphan])
+
+    def test_empty_added_track_has_no_phantom_gfx_work(self):
+        old = self.timeline()
+        new = copy.deepcopy(old)
+        new["video_tracks"].append({"name": "empty", "kind": "gfx", "clips": []})
+        res = self.diff(old, new)
+        self.assertEqual([e["path"] for e in res["entries"]], ["video_tracks[empty]"])
+        self.assertEqual(res["impact"]["gfx_invalid"], [])
+        self.assertFalse(res["impact"]["stages"]["gfx"])
+        self.assertEqual(res["impact"]["vseg_invalid"]["count"], 0)
+
+    def test_cli_reorder_is_diff_not_pass(self):
+        from vtx.timeline_diff import run_timeline_diff
+        old = self.timeline()
+        new = copy.deepcopy(old)
+        new["video_tracks"].reverse()
+        paths = [self.root / name for name in ("old.json", "new.json")]
+        for path, timeline in zip(paths, (old, new)):
+            path.write_text(json.dumps(timeline), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            code = run_timeline_diff(*paths)
+        self.assertEqual(code, 1)
+        self.assertIn("DIFF｜", output.getvalue())
+        self.assertNotIn("PASS｜两份 timeline 无实质差异", output.getvalue())
 
 
 class TestEmptyVideoTracks(_Base):

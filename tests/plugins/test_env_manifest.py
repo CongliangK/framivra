@@ -388,6 +388,35 @@ class TestFontsFingerprint(unittest.TestCase):
 
 
 class TestRuntimeBackendTruth(unittest.TestCase):
+    def setUp(self):
+        # collect validates runtime truth after the other collection fields.
+        # Keep that real validation path, including rejection cases, but seal
+        # its unrelated host probes with the same seams as the collection tests.
+        seams = patched_seams(cmds=stub_cmds(), texts=dict(PROC_TEXTS),
+                              bytes_=dict(FONT_BYTES), servers=[], environ=dict(ENV_X11))
+        seams.__enter__()
+        self.addCleanup(seams.__exit__, None, None, None)
+        uname = mock.Mock(system="Linux", node="unit-host", release="unit-release",
+                          version="unit-version", machine="unit-machine", processor="unit-cpu")
+        for patcher in (
+            mock.patch.object(em.platform, "uname", return_value=uname),
+            mock.patch.object(em.platform, "processor", return_value="unit-cpu"),
+            mock.patch.object(subprocess, "Popen",
+                              side_effect=AssertionError("unexpected host subprocess")),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_collection_still_reaches_real_runtime_validation(self):
+        with mock.patch.object(em, "_runtime_backend_truth",
+                               wraps=em._runtime_backend_truth) as truth:
+            manifest = em.collect_env_manifest("x", rt_info())
+            self.assertEqual(manifest["runtime_backend_truth"]["chromium_major"], 152)
+            self.assertEqual(manifest["git_sha"], em.BASELINE_SHA)
+            with self.assertRaisesRegex(ValueError, "内部接口"):
+                em.collect_env_manifest("x", None)
+        self.assertEqual(truth.call_count, 2)
+
     def test_none_rejected_no_forged_manifest(self):
         with self.assertRaises(ValueError) as ctx:
             em.collect_env_manifest("cdp-baseline", None)

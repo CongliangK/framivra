@@ -108,15 +108,16 @@ def chain(in_path, out_path, stereo: bool = False):
         denoised = str(Path(td) / "denoised.wav")
         _sh(["ffmpeg", "-y", "-v", "error", "-i", str(in_path),
              "-ac", "1", "-c:a", "pcm_s16le", normed])
-        code = f'''
-import torch, soundfile as sf
+        code = '''
+import sys, torch, soundfile as sf
 from pathlib import Path
 from resemble_enhance.enhancer.inference import denoise
-data, sr = sf.read(r"{normed}", dtype="float32")
-out, sr_out = denoise(torch.from_numpy(data), sr, "cpu", run_dir=Path(r"{rd}"))
-sf.write(r"{denoised}", out.cpu().numpy(), sr_out)
+normed, run_directory, denoised = sys.argv[1:]
+data, sr = sf.read(normed, dtype="float32")
+out, sr_out = denoise(torch.from_numpy(data), sr, "cpu", run_dir=Path(run_directory))
+sf.write(denoised, out.cpu().numpy(), sr_out)
 '''
-        _sh([str(conda_python()), "-c", code])
+        _sh([str(conda_python()), "-c", code, normed, str(rd), denoised])
         last = ["ffmpeg", "-y", "-v", "error", "-i", denoised,
                 "-af", f"{POST},aresample=48000,"
                        f"atrim=start_sample={TRIM_48K},asetpts=PTS-STARTPTS"]
