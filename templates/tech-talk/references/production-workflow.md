@@ -1,7 +1,7 @@
 # production-workflow · 科技口播视频全流程总览（九阶段）
 
 > **来源**：本包 SKILL.md 主链 + 工作区 `_library/reports/` 各方法论报告（编排方法论 / 终版制作经验 D31 / 修订迭代经验 D33-D34 / A-roll 流程 / 音频惯例调查）。提炼日期：2026-10-03。
-> **定位**：本文是**路由总纲**——每阶段一段：入口工具/配方号、关键规则、验证门；细节一律引用包内/内核对应文档，不复制。配方 R1-R4（机制侧修改）在内核 `docs/skill/references/runbook.md`，R5-R7（发布链/分轨审计/封面）在本包 `references/runbook-r5r6r7.md`。
+> **定位**：本文是**路由总纲**——每阶段一段：入口工具/配方号、关键规则、验证门；细节一律引用包内/内核对应文档，不复制。配方 R1-R4（机制侧修改）在内核 `docs/skill/references/edit.md`，R5-R7（发布链/分轨审计/封面）在本包 `references/runbook-r5r6r7.md`。
 
 ## 阶段总表
 

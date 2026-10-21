@@ -1,6 +1,6 @@
 # runbook R5/R6/R7 · 发布链 / BGM 分轨审计 / 封面（tech-talk 产线配方）
 
-> **tech-talk 产线知识**：自内核 `docs/skill/references/runbook.md` R5/R6/R7 三节原文迁入——发布链/BGM/封面属产线配方（各依赖具体 app 组合：publish / blender-bridge / cover+imgen）。机制侧配方 R1/R2/R2s/R3/R4 与棒次协议仍在内核 runbook。
+> **tech-talk 产线知识**：自内核 `docs/skill/references/edit.md` R5/R6/R7 三节原文迁入——发布链/BGM/封面属产线配方（各依赖具体 app 组合：publish / blender-bridge / cover+imgen）。机制侧配方 R1/R2/R2s/R3/R4 与棒次协议见内核 edit。
 > 先将 `VIDEO_TOOLS` 设为本仓的绝对路径；`<项目目录>` 替换为实际项目。下列配方会写入产物或替换已有文件，执行前确认项目与输出位置。
 
 ## R5 · 发布链（4K 投稿版 + 冻结）

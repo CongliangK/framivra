@@ -10,7 +10,7 @@
 | 新建项目 | `new_project.sh` 使用 `templates/gfx-starter.html`；仅用于全新项目。 |
 | 冻结演示与性能 | `demo.py` 是 [标准演示](../templates/standard-demo/README.md) 入口；`bench_cold.sh` 是显式长测工具，整理目录不运行。冻结输入不因归组重建。 |
 | 发布 | `release/release_github.py` 执行发布事务；`release/verify_release.py` 核验身份；`release/release_acceptance.py` 在隔离冻结源码上验收。真实发布需要授权。 |
-| 图形基线与证据 | `gfx/gfx_golden.py` 是命令入口，`gfx/gfx_evidence.py` 是验证库；使用说明见 [图形证据](../docs/gfx-evidence.md)。 |
+| 图形基线与证据 | `gfx/gfx_golden.py` 是命令入口，`gfx/gfx_evidence.py` 是验证库；使用说明见 [图形证据](../docs/cache-provenance.md#golden-evidence)。 |
 | 许可政策 | `policy/model_license_policy.py` 被 app/worker 消费；`policy/distribution_license_audit.py` 审计分发归档，不属于测试夹具。 |
 | 生成源件 | `gen_manifest_catalog.py` 管理 [组件目录](../docs/catalog.md) 的生成区；`generate_placeholder_media.py` 默认显示计划，`--write` 会重建媒体，须复核许可清单中的生成器与媒体哈希。 |
 | 文档门 | `doc_gates.sh` 聚合 `docs/` 下七个叶；`doc_budget.snapshot.json` 是预算事实 home。门绿不代表完整命令或媒体效果已验证。 |

@@ -1,138 +1,112 @@
-# ARCHITECTURE · v2 插件化架构设计冻结件
+# ARCHITECTURE · 系统结构与扩展契约
 
-> **本文件承载 v2 冻结契约及后续经审查的增补**；schema、插件不变量、安全边界与验收要求是权威。**修改须过对抗审查**，不接受实现者单方面改约。
-> 〔用户拍板〕/〔对抗审查裁定〕保留原决策来源；〔代码现状〕为迁移前取证标记，旧行号不是当前源码定位或新任务。历史基线见 `docs/plans-v2/`，当前操作见 `docs/skill/`。
-
----
+> 本文件是当前架构及 v2 冻结契约的权威：定义内核边界、数据流、扩展协议、安全与验收不变量。契约或稳定 API 的签名/语义变更须过独立对抗审查，不接受实现者单方面改约。操作从 [Skill](skill/SKILL.md) 路由，开发与专题从 [DEV](DEV.md) 路由；迁移过程及其一次性基线保存在[原定稿记录](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/ARCHITECTURE.md)，不是当前性能承诺或待执行清单。
 
 ## 0. 判据与四层架构
 
-### 0.1 关停测试（内核 vs 可卸载的唯一判据）
+### 0.1 内核边界
 
-对任一组件问一个问题：**把它关停后，主链产物还可信、可交付吗？**
+**把组件关停后，主链产物还可信、可交付吗？** 不可信/不可交付的能力属于永不可关的 `vtx/` 内核；可替换素材来源或交付增强属于可卸载组件。validate、渲染、混音/limiter、qc 与缓存共同构成可信产物；时间线操作、脚手架、插件运行时和公共 API 是内核配套能力，不因某项可手工替代而变成插件。
 
-- 不可信/不可交付 → **内核**（vtx/，永不可关——宪法信条）。
-- 仍能可信产出一期片 → **可卸载组件**（apps/ 或 plugins/）。
+### 0.2 应用与插件
 
-推论：validate/qc/混音响度链这类"产物可信度"的构成部分一律内核；asr/imgen 这类"素材来源替代"一律可卸载。〔用户拍板〕
+| 层 | 契约与职责 |
+|---|---|
+| `vtx/` 内核（永不可关） | timeline 结构/校验、帧精确渲染、音频终链、缓存与验收；仅内核也能完成可信出片 |
+| `apps/` 应用 | 产出独立素材或产线辅助结果，不扩展 timeline 管线；替换素材来源不改变内核语法 |
+| `plugins/` 插件 | 扩展 timeline 键并接入管线；键/钩子承担内核级稳定承诺，缺失或禁用不能忽略已声明的键 |
+| `templates/` 工作流与范本 | 组合内核/组件、配方和资产，不另设运行时或文档职责层 |
 
-### 0.2 应用(app)与插件(plugin)的定义
+ASR 只负责产出字幕素材，消费与烧录由内核 `subtitles_src` 定义；降噪通过源级插件参与 prepare。内容发布复检属于 gates 应用，TP 可信度门属于内核。调色扩展缝不预建，须有真实消费者与协议验收对象后再审查。
 
-| 维度 | 应用 app | 插件 plugin |
-|---|---|---|
-| 产物 | 产出**独立素材**，不进 timeline 管线 | **扩展 timeline.json 词汇**并钩进管线 |
-| 对主线影响 | 报错不影响渲染主线 | 装与不装，JSON 语法不同 |
-| 稳定性等级 | 维护宽松（坏了换素材来源） | **内核级稳定承诺**（键/钩子语义冻结） |
-| 判据 | 关停后主链产物不受影响 | 关停后写了对应键的 timeline 不可渲染 |
+目录和安装态唯一清单是 [catalog](catalog.md)；`docs/skill/` 承载通用操作，仓级工具归 [scripts](../scripts/README.md)，文档职责与写入权归 [DOC-CHARTER](DOC-CHARTER.md)。
 
-〔用户拍板〕例：asr 是应用（字幕是它的产物，不是它的运行时）；denoise 是插件（`sources[]` 级键，prepare 抽音频时按需触发，进 cache）。
+## 1. 内核数据流与模块
 
-### 0.3 审查裁定表（P0 四条）
+### 1.1 执行与状态
 
-| # | 裁定 | 理由 |
-|---|---|---|
-| 1 | **limiter 上内核**（不是插件） | 内核 TP 门 + limiter 若可选关 = 默认出片必挂 qc——安全链不能是可选件 |
-| 2 | **gates 留应用**，但 G3 的 TP 判定并入内核 qc | gates 是发布前内容级复检（G1/G2/G7/G10/项目门），TP 单项属产物可信度 |
-| 3 | **调色缝本轮不预建** | 无现役消费者，预建缝=无验收对象的抽象；留待真实需求出现再立 P1 协议 |
-| 4 | **字幕 = 内核 `subtitles_src` 键**（消费侧） | timeline 引用字幕文件来源属时间线词汇；与 asr 解耦（asr 只是产出该文件的一种应用） |
-
-〔对抗审查裁定〕
-
-### 0.4 目录与职责
-
-```
-video_tools/
-├── vtx/            # 内核包（永不可关〔宪法信条〕，见 §1）
-├── apps/           # 12 件应用（见 §3）
-├── plugins/        # 官方插件（denoise / duck-static，见 §2）+ registry.json
-├── docs/skill/     # 工具使用 SKILL + references + 通用 assets
-├── templates/      # tech-talk / skill-demo 工作流 + hello-app / hello-plugin 开发范本（见 §4）
-├── scripts/        # 内核工具与仓级基建：new_project / gfx_golden / bench_cold + run_all_tests / docs_smoke；组件命令见 apps/plugins 所属实现
-├── vt.py           # 统一入口（doctor/list/check/version/init，见 §5.1）
-└── pyproject.toml  # 包 video-tools，console scripts vtx/vt（见 §5.2）
+```text
+素材 + timeline.json → Ctx / validate → audit → prepare
+                                              ↓
+                                  gfx ∥ audio ∥ video 预编码
+                                              ↓
+                                         video → mux → qc → finish
 ```
 
----
+这是完整 `all` 的默认调度；**`VTX_PIPELINE=0` 仍支持线性调度**。单阶段命令不等于完整交付；`--until` 的截断映射、正式交付步骤及前置条件由 [音频与交付流程](skill/references/edit.md#正式交付链r1-r4-共用) 定义，finish 条件见 §2.5。
 
-## 1. 内核（vtx/，永不可关——宪法信条）
+| 职责 | 实现 home（均在 `vtx/`） | 边界 |
+|---|---|---|
+| 输入与时间线 | `timeline.schema.json`、`constraints.py`、`infra.Ctx`、`stages.validate`、`preview.html` | schema 是结构权威，validate 是执行校验权威，preview 是预览权威；只读预览不替代 validate，低分辨率测试上下文不等于正式项目规格 |
+| 时间线操作 | `diffcmd.py`、`timeline_diff.py`、`impact.py`、`subs.py`、`range.py` | diff/snapshot/subs/区间预览辅助迭代；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
+| 图形 | `gfx_backend.py`、`gfx_render.py`、`gfx_cli.py`、`gfx_cef.py`、`gfx_electron*.py`、`gfx_svg*.py`、`frame_source.py` | HTML 默认 CDP，支持显式 CLI、需 native worker 的 Alpha CEF、可选 Electron 复现；SVG 序列独立处理 Inkscape/字体/完成证书；FrameSource 是帧消费抽象，不是第二渲染后端 |
+| 音视频 | `stages.py`、`audio_filters.py`、`composite.py`、`encoders.py`、`qc.py`、`subtitles_src.py` | prepare 抽取源音频，audio 混音终链，video 分段合成/字幕烧录，mux 探测 libfdk_aac 并回落、原子封装与记录 VERSIONS/history，qc 判定产物 |
+| 身份与恢复 | `cache_state.py`、`hygiene.py`、`fstxn.py`、`recovery.py`、`loudness_cache.py` | 内容键、回执依赖、原子写、完成标记与跨进程锁共同决定复用；不是全源文件防篡改证明 |
+| 扩展 | `pluginlib/`、`api.py` | 前者负责发现/加载/钩子，后者是组件复用的稳定内核 API |
+| 诊断与证据 | `diagnostics.py`、`events.py`、`execution_links.py`、`acceptance.py` | 事件不绕过校验；离线 verify 不执行包内命令，完整性不等于验收通过或生产者真实性 |
+| 资源 | `resource_budget.py` | 显式调用的预算原语，不代表已自动接入全流水线 |
 
-### 1.1 能力清单
+HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺跨平台像素一致。资格见 [gfx](skill/references/gfx.md)，缓存、声明依赖及环境身份见 [缓存语义](cache-provenance.md)，事件/验收/预算见 [DEV 专题入口](DEV.md#专题入口)。
 
-内核 = 时间线操作 + 渲染 + 可信度三块，具体：
+段级多层合成采用**逐层 pass**：每 pass 恰两输入 overlay，中间 FFV1 intra 无损产物落 `cache/vseg_pass`；单层及整片回落仍用单 graph。pass 键纳入合成代码的 AST 归一化摘要，剥离注释/docstring/格式，语法级改动改变身份；`cache/vseg/.graph_digest` 供 diff 提示代码摘要漂移或段缓存被回收后的冷建风险。不把历史 overlay/framesync 实验当作当前所有输入的确定性证明。
 
-1. **时间线操作**：schema（timeline.schema.json 结构权威）/ validate / audit / diff / snapshot / subs（render/preview/check，信息性命令不进流水线〔代码现状 subs.py 模块头〕）/ clean / gc / df / preview.html（可视化预览权威）/ new_project 脚手架。契约三处互指（validate=机制权威、schema=结构权威、preview.html=预览权威〔代码现状 stages.py:1-7〕）。
-2. **HTML gfx 渲染**：CDP/Chrome 帧截图链（gfx_render.py、encoders.py 的 Chrome 定位）。
-3. **ffmpeg 合成**：prepare（音频提取）/ video（分段并行合成 + 字幕烧录）/ mux（含 libfdk_aac 探测回落、原子替换、VERSIONS/history）/ composite / encoders / 区间渲染。段级多层合成 = **逐层 pass**（每 pass 恰 2 输入 overlay，中间物 FFV1 intra 无损落 cache/vseg_pass，pass 键掺合成代码摘要（**R7 2026-09-15 起 AST 归一化口径**：剥注释/docstring/格式，纯注释提交不再翻转段键——此前原始源码哈希使「行为零变化」的注释提交也触发全片 ~900s 冷重建，实测事故 4e4b756；语法级改动仍必翻转。vtx diff 另有磁盘侧提示：`cache/vseg/.graph_digest` 记账漂移/段缓存被 gc 时显式预警冷建）；链式 N 输入 graph 的 overlay/framesync 输出节律跨运行非确定〔KNOWN-ISSUES ⑭，R4-E1-v2 修复〕；单层/整片回落仍走单 graph）。
-4. **响度终链**：两遍静态增益 -14 LUFS + **limiter 并入 build_audio 尾部**（§1.2）。
-5. **qc 含 TP 判定**（§1.3）。
-6. **`subtitles_src` 键**：timeline 可声明字幕文件来源路径，内核只负责引用与烧录语义；谁产出该文件（asr/手写/别的工具）内核不感知〔对抗审查裁定 #4〕。
-7. **内容寻址缓存**：gfx/seg/audio 键 + manifest 记账 + gc/df/snapshot/VERSIONS/budget_gate（hygiene.py）+ 回执身份/依赖门/下游失效（cache_state.py）+ 响度回执（loudness_cache.py，跨进程 flock〔代码现状 loudness_cache.py 模块头〕）。
-8. **pluginlib（vtx/pluginlib/，包）**：插件加载/注册表/钩子协议运行时（§2），与 **api.py（vtx/api.py，单文件）**（供 apps/plugins/skills 复用的稳定内核 API 面）。
-9. **内核工具留 scripts/**：new_project.sh / gfx_golden.py / bench_cold.sh 三件（渲染链自检与基准，属内核可信度基建）。
+### 1.2 响度终链
 
-### 1.2 响度终链合并（limiter 入 build_audio 尾部）
+`audio` / `all` 的 `out/audio.wav` 是归一化与限幅终态，无需项目侧可选步骤补安全链。`mix_audio_wav` 采用测量后静态增益，输出链为 `volume=…dB,aformat=sample_fmts=s16,alimiter=limit=0.599:level=false:latency=true`；整片与区间预览同增益、同限幅，s16 中间量化不能视为可删细节。
 
-v2 定稿前快照（非当前运行指引）：`vtx audio` 两遍静态增益到 -14 LUFS 但**不限幅**，峰值安全由项目侧 `scripts/post_loudness.py` 事后兜底〔代码现状 stages.py:323 mix_audio_wav docstring「峰值安全由项目侧 post_loudness.sh 的 alimiter 兜底」〕；post_loudness.py 独立进程做 测量→`volume={gain}dB,alimiter=limit=0.599:level=false:latency=true`→复测 |after-target|≤1.5 LU→时长校验（±1 采样）→**回执手术**（摘除 receipt 的 audio 阶段与 DOWNSTREAM['audio'] 全部下游，再回写 audio 阶段附 post_loudness 字段，中断不留陈旧 PASS）〔代码现状 post_loudness.py:33-67、cache_state.py:91-96〕。
+| 终态判据 | 行为 |
+|---|---|
+| 目标响度 | -14 LUFS |
+| I 偏离目标 ≤1.5 LU | 静默通过 |
+| I 偏离 ∈(1.5, 3] LU | WARN 放行，内容级问题交发布侧 G2 拦截，调整 bed 后重渲 |
+| I 偏离 >3 LU、TP >-1.0 dBFS、I/TP 解析失败 | 硬 FAIL，不放宽阈值掩盖增益或限幅问题 |
+| 整片音频时长 | 与期望值偏差最多 ±1 采样，超出 FAIL |
 
-v2 定案〔用户拍板〕：**整套逻辑吸收进 `vtx build_audio` 尾部**，即 `all`/`audio` 产出的 out/audio.wav 恒为"归一+限幅"终态；post_loudness.py/.sh 变薄壳调同一内核函数（CLI 命令面保留，§6.1），不再有独立进程语义。要点：
+`build_audio` 执行测量→增益/限幅→复测→时长校验→回执；仅整片路径写 `post_loudness`（含 input/output I、gain、target、tp_dbfs 与输出 sha256）。阶段依赖通过后，`Ctx.begin_stage("audio")` 用同一文件事务撤销 audio 及 `DOWNSTREAM["audio"]` 的成功记录，避免中断留下陈旧 PASS。`raw_i` 只是归档值，不免首测、不用于二次施增益；range 仅经指纹校验复用 `gain_db`，陈旧回执回落窗口自测并告警。
 
-- **施加位置**：alimiter 段下沉进 `mix_audio_wav` 输出链（`volume=…dB` 后追加 `,alimiter=limit=0.599:level=false:latency=true`）——build_audio 与区间预览（range.py 直调 mix_audio_wav）**统一过 limiter**，杜绝"成片有限幅、预览无限幅"的分叉〔对抗审查 P0 复审 P1-1/P1-2 裁定〕；终态校验与回执 `post_loudness` 字段仅 build_audio（win=None）路径执行。
-- **终态校验分级（总控裁定 2026-09-13 影子复验期，修订原"照搬 ±1.5"）**：机制/内容分离——硬 FAIL：限幅后 TP > -1.0 dBFS（limiter 失效）、时长漂移 ±1 采样、I 偏离目标 >3 LU（增益链断裂）；WARN：I 偏离 ∈ (1.5, 3]（限幅响度损耗属内容级——配乐密集/原始混音偏 quiet，发布侧 G2 拦截，提示调 bed 重渲）；≤1.5 静默通过（v1 语义）。证据：live voice-ime v1 回执 input_i=-14.0→output_i=-15.5（\|偏离\|=1.5 恰压线已交付），同内容 v2 浮点域限幅实测 -15.6——边界内容 + 0.1 LU 测量抖动不得成为管线 flaky 硬 FAIL。回执 post_loudness 字段增记 tp_dbfs。
-- 测量→增益→alimiter→复测→时长校验→回执，顺序与阈值逐条照搬 post_loudness.py 现实现。回执字段 `raw_i`/`gain_db` 语义保留；**勘误**（P0 复审 P1-1）：stages.py:353-356 注释所称「raw_i 供 post_loudness.sh 免首测复用」已失修——post_loudness.py:38 每次实测（旧 wrapper 误读该字段而双施 gain 的事故记录见 [历史版本响度说明](https://github.com/CongliangK/framivra/blob/cbfaed74761657401b04119602f2a87dd1fd0ee7/docs/post-loudness.md)），全仓无代码消费回执 raw_i；`gain_db` 的唯一真实消费者是 `vtx/range.py:100`（区间渲染复用整片增益）——吸收后语义不变（预览与整片同增益同限幅）。迁移时一并修正该失修注释。
-- **R4 链消费者改写清单**（吸收后随 P1 同步改）：bench_cold.sh 四处（L12/54/156/203-260 独立 post_loudness 步骤与逐步骤计时表；门 8 的 291.4s 口径随链结构重定）、tts/tts_cli.py:70 与 tts/indextts_worker.py:70 与 scripts/repack_voice.py:150 的「audio 后 mux 前必跑」提示文案、vtx/vtx.py:63-64/419 的 --until 帮助文本〔对抗审查 P0 复审 P1-3〕(行号为定稿时点存档;vtx/vtx.py 现为 30 行薄启动器,实现现位 vtx/cli.py,以现行代码为准)。
-- 干跑（--dry-run）不落产物不手术，与现行门控纪律一致。
-- R4 正式交付使用完整 `all`（操作配方见 [runbook](skill/references/runbook.md)），终链限幅由 audio 内置完成。`all --until video` 是截断检查路径：线性模式尚未运行 audio，后接单阶段 mux/qc 不触发 finish；不将该组合当作完整交付链。
+干跑不落产物、不修改回执。独立既有 WAV 维护不是该阶段事务，不更新或撤销 audio/mux/qc 回执，不能用于补签或验收新 WAV；其写态与重复处理风险归 [音频工程](skill/references/edit.md#既有-wav-维护)。
 
-### 1.3 TP 阈值权威统一
+### 1.3 TP 与 QC
 
-**解码域 TP ≤ -1.0 dBFS** 为内核 qc、gates G3 与 audio_report 的统一权威阈值〔用户拍板〕。qc 消费 loudness_cache 回执，gates G3 以同阈值、同回执做发布侧复检，避免重测；audio_report 对超阈判 FAIL。limiter 恒在 build_audio 尾部，旧 post_loudness 可选时期的 -1~+3「设计内」INFO 档不适用。
+**解码域 TP ≤-1.0 dBFS** 是内核 qc、gates G3 与 audio_report 的统一阈值；qc 与 G3 消费同一 loudness_cache 回执，G3 做发布侧复检，audio_report 对超阈判 FAIL。qc 的响度分级与 §1.2 一致，测量失败显性 FAIL；不把限幅导致的内容级损耗变成另一套内核硬门。限幅后 WAV 仍超 TP 阈须定位并提交对抗审查，不得就地放宽。
 
-限幅后 wav 域 TP 仍 > -1.0 时，应按对抗审查流程定位并上报裁定，不得就地放宽阈值。
+### 1.4 导入与 API
 
-### 1.4 包化规程
+内核用包内相对导入，外部用 `from vtx import ...` / `import vtx.xxx`，插件经 `vtx.api` 复用 `audio_key`、`resolve_source_wav`、`plugin_code_digest`、`cfg_get` 等稳定能力，不捅内部实现。`vtx/vtx.py` 源码启动器先移出自身目录、锚定仓根，再调用 `vtx.cli.main`，避免同名自遮蔽。
 
-- 内核模块使用包内相对导入；外部使用 `from vtx import ...` / `import vtx.xxx`。clone 与安装入口同码同义（§5.2）。
-- `vtx/vtx.py` 是兼容薄启动器：先把自身目录移出 sys.path、锚定 repo 根，再调用 `vtx.cli.main`，避免同名文件自遮蔽。
-- **运行时管线代码与 tests 禁止注入 repo/vtx、禁止 spec_from_file_location**。平铺与包导入混用会产生双模块实例，使 receipt/manifest/loudness 锁失去统一身份；此安全理由仍有效〔对抗审查 P0 复审 P1-2〕。
-- apps 内部不强制包化，但同样禁止注入 repo/vtx、禁止 spec_from_file_location。当前定位规则见 §6.2。
+**运行时管线、tests 与 apps 禁止注入 repo/vtx，禁止 `spec_from_file_location`**；平铺/包导入混用会产生双模块实例、拆裂回执与锁身份。apps 内部不强制包化。组件目录锚定自身文件；Blender audit_bundle 的 vtx 定位顺序是 `VTX_VTX_PY` → 向上含 `vt.py` 标记的仓根下 `vtx/vtx.py` → 技能安装路径回落。
 
----
-
-## 2. 管线扩展协议 v1（音频侧）
-
-协议先于一切钩子：**三不变量是地基**，任何插件不满足三条之一即不合规。
+## 2. 管线扩展协议
 
 ### 2.1 三不变量
 
-**不变量 1 · 缓存键贡献**。插件经 `contribute_keys(c)` 把自己的缓存键并入 gc 的存留白名单。迁移前缺口〔代码现状 hygiene.py:231-245〕：`gc_plan` 把 `cache/audio/` 下不在 `_current_keys` ak 集合内的文件、`cache/` 根下不在 known 集合内的目录一律判垃圾，而 `budget_gate` 在渲染阶段前自动触发 gc〔hygiene.py:440-455〕——插件产物若不注册键，**渲染中就会被自动回收**。denoise 缓存键构成 = `media_stat_digest(源)` + 插件名 + 版本 + 参数摘要（**勿用全文件 md5**，GB 级源全量哈希违背缓存卫生层哲学〔代码现状 hygiene.py:39-53〕）。
+**① 缓存键贡献。** 插件通过 `contribute_keys(c)` 将产物键并入 gc 白名单；渲染前的 budget_gate 可自动 gc，未登记的产物不能保活。源级产物以 `media_stat_digest(源)` / `vtx.api.audio_key` 为基础，加插件名、版本、参数与**插件代码摘要**，不得用 GB 级源全文件 md5 替代 stat 身份。代码摘要递归覆盖子目录/子包 `.py`，排除 `tests/` 与 `__pycache__/`，按根相对路径排序并编码路径/内容边界，输出 12 位摘要；测试改动不应翻转产物身份。
 
-**不变量 2 · 回执指纹**。`cache_state.receipt_fingerprint` 的迁移前组成 = timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容〔代码现状 cache_state.py:70-87〕。v2 **必须掺入「生效插件清单」**（插件名 + 版本 + 对本 timeline 生效的参数摘要 **+ 插件代码内容摘要**——红队终审 P1-1 裁定 2026-09-14：官方插件改 DEFAULTS 不 bump version、无键 external 改代码两类盲区实测使 digest 不变，掺代码摘要后「防插件升级/改默认参/改代码后旧回执放行陈旧产物」的宣称成立）。混入位置在现有哈希序末尾追加一段，不改变既有成分。**空生效清单时省略该段**〔总控裁定 2026-09-13，P1 影子基线温态复验的前提〕：无插件时间线的指纹与 v1 逐字节一致、v1 回执在 v2 下继续有效（迁移兼容）；不变量 ② 由"段的出现/内容变化"保证——装/卸/升级/改参任一状态翻转都使录制侧指纹与重算侧失配（含卸载后回落 v1 形态：带段录制的旧回执对无段重算同样失配被拒）。〔P2b 落地注：「对本 timeline 生效」= installed+enabled 且 timeline 声明了该插件任一注册键（hooks.active_plugins 的 c 过滤）——无插件键时间线生效清单恒空，省略段的 v1 兼容由此保证。〕
+自立缓存目录需登记 registry `cache_dirs`；可选 `cache_dir_keys(c) -> {目录名: 键集}` 经 `get_cache_dir_keys` 聚合，仅对已登记目录生效。gc 的 `plugin_cache` 类别按一级子目录键保留当前键、回收陈旧键，豁免 `<digest>.lock`；未声明键集的目录维持整目录白名单。`contribute_keys` 与 `cache_dir_keys` 是不变量入口，**不是钩子，不参与 hooks 对账**。外部 manifest 的 `cache_dirs` 暂无生效通道，外部音频键仍可走 contribute_keys。
 
-**不变量 3 · 安装态与键注册表**。
+**② 回执指纹。** 保留 timeline 字节、源 stat、gfx HTML 与声明依赖成分，在末尾追加生效插件的**名称+版本+全部生效参数实例摘要+代码内容摘要**。安装/卸载/升级/改参/改默认值或代码使对应身份变化，不能用旧回执放行陈旧产物。**空生效清单省略整个插件段**，保持无插件段的 v1 指纹字节兼容；有段录制的旧回执与卸载后的无段重算仍失配。
 
-- **安装态**判定 = `plugins/<name>/` 目录存在 且 `plugins/registry.json` 静态注册表未禁用。
-- `registry.json` 静态登记**全量官方插件**的键声明（manifest 的 schema_keys 汇总），同时是「未装插件报错文案」的数据源（报错能给出安装指引而非裸 Unknown key）。
-- **validate 键分支语义**（插件键出现在 timeline 时）：
-  1. 已注册 + 已安装启用 = 合法生效；
-  2. 已注册 + 未安装 = **报错 + 安装提示**；
-  3. 已安装 + 被禁用 = **报错 + 启用提示**——绝不静默忽略。「缺省关闭」指不写键无行为，**不是写了键可跳过**；
-  4. 完全未知键 = **警告不阻断**（新增行为；现状 validate 对未知键完全静默〔代码现状 stages.py:30-89 无未知键检查〕）。
-- `_meta` 为**永久自由命名空间白名单**：插件/脚本标记（现状已有 `_meta.bed_static_duck`〔bed_static_duck.py:112-118〕、`_meta.audio_report`〔audio_report.py:146〕）不触发上述分支。
+生效要求 installed+enabled、声明钩子，且 timeline 含插件任一注册键；**无键声明的钩子插件全局生效**，不是“没写键就不执行”。键扫描、生效判断、参数摘要共用 scope：`root`、`project`、`sources[]`、`audio_tracks[]`、`audio_tracks[].events[]`。
 
-### 2.2 两处钩子缝（v1 仅音频侧）
+**③ 安装态与键注册表。** `plugins/registry.json` 汇总全量官方 manifest 的键声明，并提供缺失插件的安装提示；官方实体只认 `plugins/<name>/`，目录缺失即 not_installed，不允许同名 external 顶替。对 timeline 中的插件键：
 
-**缝 A · prepare 源产物钩子**（denoise 型）：
+| 状态 | validate 结果 |
+|---|---|
+| 已注册、已安装且启用 | 合法生效 |
+| 已注册但未安装 | 报错 + 安装提示 |
+| 已安装但禁用 | 报错 + 启用提示，不能静默跳过 |
+| 完全未知 | 警告、不阻断 |
 
-- timeline `sources[]` 级键（如 `"denoise": {...}`），一源一产物进 `cache/audio/`（内容寻址，键见不变量 1）。
-- **源产物提取收敛为单一实现**：prepare 的逐源提取（stages.py:197-212）与区间渲染冷填充 `_ensure_audio_wavs`（range.py:105-119，现状为复刻的裸提取命令）合并为同一函数、同一缝触发〔对抗审查 P0 复审 P1-5 裁定〕——否则区间预览将绕过降噪裸抽 wav。声明了键的源先出降噪 wav，后续 `_audio_graph` 读取点（stages.py:235）用降噪产物而非裸提取。
-- **环境缺失 fail-hard**（权重不在/conda env 缺 → 阶段失败退出，不回落裸音频——回落=产物标注降噪实未降噪，不可信）。环境**预检通道 = doctor 组件段 health 探针**（组件级早发现）；渲染期 fail-hard 兜底在 prepare 源产物钩子内〔P2 审查 P2-3 调和本条与 v1.1 小注的矛盾：validate 期探测 conda/权重对无键时间线是纯开销，denoise 现 hooks=[prepare_source] 不挂 validate 预检、接受 prepare 期失败；需要时可经 v1.1 validate 钩子按需补挂〕。**读取点清单**：主链 `_audio_graph`、prepare 产出侧、`audio_report._collect_inputs`（P2 审查 P1-1 修复——报告的轨级 stem 渲染同走 `resolve_source_wav`，裸键读取即插件时间线报告必挂）三处一律同解析。
-- **契约 v1.1（P2b 落地细化）**：钩子契约为 `prepare_source(c, sid) -> Path | None`——插件**自算**内容寻址产物路径（形如 `cache/audio/{audio_key}::denoise:{version}:{参数摘要}.wav`；audio_key 经内核 API 面 `vtx.api.audio_key` 取得，插件禁捅内部模块）并保证产物在盘后返回（缓存命中直返/缺失产出/环境缺失打印缺什么 + exit 1）。v1 草案的 `(c, sid, wav) -> bool`（wav = 调用方裸提取键路径）会让降噪产物写进裸键——裸键名与内容不符即内容寻址破坏，已废弃。**读取点同规**：`_audio_graph` 的事件源 wav 经 `hooks.resolve_source_wav` 与 source_audio_extraction 产出侧同一解析（逐源 memo），prepare 与 graph 两处恒一致；环境预检现由 doctor health 探针承担（validate 期环境预检可经 v1.1 validate 钩子按需补挂，本轮 denoise 只注册 prepare_source）。
+`_meta` 永久作为自由命名空间，不触发上述未知键分支；插件仍可校验已知 `_meta` 标记防双施。“缺省关闭”只表示有键插件在不写键时无行为。
 
-**缝 B · 音轨事件内存变换钩子**（duck-static 型）：
+### 2.2 协议 1.1：源音频、事件与校验
 
-- 轨级键 `duck_strategy: {"mode": "static", ...}`（对象参数缺省化，缺省对齐 bed_static_duck CLI 默认：global_db -8 / duck_db -4 / voice_track "voice" / merge_gap 20 / attack 5 / release 8〔P2b 落地注：冻结稿的裸串 `"static"` 值形状细化为对象——缺省化后与 CLI 默认逐项对齐，语义不变面更窄〕），与既有 `duck: true`（sidechaincompress 动态避让〔代码现状 stages.py:268-307〕）**互斥校验**（两键同轨 = validate 报错）。
-- **validate 钩子（协议 v1.1 增补，P2b 落地）**：新增扩展点 `validate`——validate 阶段在 `_scan_plugin_keys` 后调用 `hooks.run_validate(c) -> list[str]`（错误行并入 errs 阻断；插件暴露 `validate(c) -> list[str]`，空 = 通过）。用途：① duck:true 与 duck_strategy 同轨互斥；② `_meta.bed_static_duck` 存在即报错（防现役 timeline 已用脚本烘焙过静态避让再挂插件键**双施**——提示先从 pre-duck 备份恢复）；③ 键值形状（对象 / mode 值域 / 数值参数类型 / voice_track 轨存在）早失败。仅对三分支放行后的生效插件调用，未装/禁用分支不重复报。
-- 钩子 = **纯内存 events 列表变换**：在 `_audio_graph` 构建 filtergraph 前对全量 tracks 生效，**不写回 timeline**（幂等天然成立）；变换逻辑与 bed_static_duck.py 现实现一致（全局增益×口播窗内额外衰减×切段 src_in 连续〔代码现状 bed_static_duck.py:93-109〕——P2b 起两者共用同一 transform_events 纯函数，脚本烘焙与管线渲染永不分叉）。区间渲染（`--range`）走同一 `_audio_graph` 前缝，窗口模式自动正确，无需特判。
+- **缝 A `prepare_source(c, sid) -> Path | None`**：插件自算 `cache/audio/` 内容寻址路径，保证产物在盘后返回；命中直返、缺失产出，None 表示不受理并回落裸提取。不得把加工音频写入裸提取键，`(c, sid, wav) -> bool` 不受支持。prepare 与 range 冷填充共用 `source_audio_extraction`；产出侧、`_audio_graph` 和 `audio_report._collect_inputs` 统一经 `resolve_source_wav` 逐源解析/memo，禁止旁路裸键。
+- **环境缺失 fail-hard**：已生效源插件缺权重/环境必须说明缺什么并 exit 1，不回落裸音频。doctor health 是组件环境预检通道；denoise 仅注册 prepare_source，允许在 prepare 失败，不为无键 timeline 强制额外 validate 探测。需要早检的插件可显式挂 validate。
+- **缝 B `audio_events(c, tracks) -> list`**：filtergraph 构建前，对全量 tracks 做纯内存 events 变换，**不写回 timeline**；区间渲染走同一缝。duck-static 与手动烘焙工具共用 `transform_events`，保持全局增益×口播窗额外衰减、切段 src_in 连续，不分叉算法。
+- **`validate(c) -> list[str]`**：内核扫描键后对生效插件调用；错误并入 errs 阻断，空列表通过，未安装/禁用分支不重复报错。
+
+`audio_tracks[].duck_strategy` 必须为对象，`mode` 仅 `static`；默认 `global_db=-8`、`duck_db=-4`、`voice_track="voice"`、`merge_gap=20`、`attack=5`、`release=8`（后三项为帧数）。validate 检查数值类型与 voice_track 存在，拒绝同轨 `duck: true` 动态 sidechain 与静态策略叠加；存在 `_meta.bed_static_duck` 即阻断并提示恢复 pre-duck 备份，防已烘焙时间线双施。
 
 ### 2.3 manifest schema v1
 
@@ -141,316 +115,95 @@ v2 定案〔用户拍板〕：**整套逻辑吸收进 `vtx build_audio` 尾部**
   "name": "^[a-z][a-z0-9-]*$（与目录名一致）",
   "version": "语义化版本串",
   "kind": "app | plugin",
-  "entry": { "cli": ["相对路径或空数组（bgm 类纯路由声明 app）"] },
-  "health": { "type": "command | config_key", "...": "探测命令/键名" },
-  "requires": { "core": ">=版本", "binaries": [], "python_packages": [], "platforms": [] },
+  "entry": {"cli": ["根内相对路径；纯路由 app 可为空数组"]},
+  "health": {"type": "command | config_key", "...": "命令/键名"},
+  "requires": {"core": ">=MAJOR.MINOR.PATCH", "binaries": [], "python_packages": [], "platforms": []},
   "config_keys": [],
   "docs": "README 相对路径"
 }
 ```
 
-plugin 额外：
+plugin 还声明 `extends.schema_keys: [{path, key}]` 与 `extends.hooks`。path 值域见 §2.1，hooks 值域为 `prepare_source` / `audio_events` / `validate` / `probe_source` / `finish`。manifest 静态登记 kind/键面，**代码是钩子注册的单一事实源**；加载使用 `importlib.import_module` 包导入，声明未注册或注册未声明均报错。registry hooks 缺失或为空列表时回落实体 manifest，不能通过清空表静默废掉插件。
 
-```json
-{ "extends": { "schema_keys": [{ "path": "json_pointer 风格定位", "key": "键名" }],
-               "hooks": ["prepare_source", "audio_events", "validate"] } }
-```
+**Core API 兼容门**使用 `vtx.__version__` 内核发行版本，不另设 epoch。`requires.core` 仅接受稳定三段最低版本 `>=MAJOR.MINOR.PATCH`；可选 `requires.plugin_protocol` 仅接受精确字符串 `"1.1"` / `"1.2"`，前者仅有 §2.2 三钩子，后者另含 §2.5 两钩子。显式 `"1.0"`、其他版本、空串、非字符串均拒绝，不推断、不协商范围。
 
-（hooks 值域 = 已冻结扩展点：缝 A `prepare_source` / 缝 B `audio_events` / v1.1 `validate`〔P2b 增补〕/ **v1.2 `probe_source` / `finish`〔P6 增补，见 §2.5〕**，见 §2.2。）
+实体 manifest 加载后，先判 core，再判显式协议及 manifest/有效 registry hooks 的协议值域，**然后才允许包导入和 hooks 对账**；模块已缓存也逐次检查。错误需含检测内核版本、声明值、允许协议与升级入口。discovery 保留协议值，由运行时拒绝不兼容 external，不能静默漏掉。缺少 core 或 plugin_protocol 各自按遗留策略处理，**不等于认证**；requires 对象仍必需。顶层未知 `protocol` 无协商语义，插件 version 仍是插件发行版本。矩阵见 [插件兼容](reference/plugin-core-compatibility.md)。
 
-规则〔用户拍板〕：
+### 2.4 安全边界
 
-- manifest 只**静态登记** kind + schema_keys（registry.json 的数据源）；**hooks 由代码注册为单一事实源**，加载时与 manifest 声明做一致性校验（声明了没注册 / 注册了没声明都报错）。
-- 插件加载走**包导入**（`importlib.import_module`），**禁 `spec_from_file_location`**（绕过包语义，是双模块裂分的另一入口）。
+- external 应用/插件默认 disabled，只有 config `external_apps[]` / `external_plugins[]` 的 `enabled: true` 启用；路径含 `..` 拒绝。官方插件启停由 registry 控制。
+- manifest、entry、docs 与 health 脚本解析符号链接后必须在组件根内；health 首 token 必须是根内相对脚本，拒绝绝对路径/`..`/断链/根外落点。内置目录必须留在对应扫描根内，外部件只能显式注册，不借目录符号链接冒充内置。
+- external 包导入只临时将父目录 **append** 到 sys.path，导入后摘除，并断言 `mod.__file__` 仍在插件根内，防同名模块顶替官方件或标准库；不使用 spec 加载。
+- 已生效插件加载失败或 hooks 不一致必须 fail-hard；无键插件对所有 timeline 生效，显式启用就是代码信任边界，不是隔离沙箱。其代码变化同样纳入产物与回执身份。
 
-#### 显式插件协议与 Core API 兼容门（Issue #49）
+### 2.5 协议 1.2：虚拟源与收尾
 
-Core API 版本使用 `vtx.__version__` 的内核发行版本；`requires.core` 是稳定三段版本最低要求（`>=MAJOR.MINOR.PATCH`），不另设 API epoch。插件可额外声明 `requires.plugin_protocol`，只接受精确字符串 `"1.1"` / `"1.2"`：前者使用 §2.2 的 `prepare_source` / `audio_events` / `validate`，后者另含 §2.5 的 `probe_source` / `finish`。显式 `"1.0"` 不受支持（§2.2 的旧 prepare 草案签名已废弃）；其他版本、空串或非字符串均拒绝，不推断版本、不做范围协商。
+**缝 C `probe_source(c, sid) -> {has_audio, has_video, nb_frames, fps, w, h} | None`** 返回与 Ctx.probe 同构的 facts；None 回落 ffprobe。validate 源检查与音频事件时长校验必须同走该缝，允许 music_tools 工程 JSON 等非媒体源。
 
-加载实体 manifest 后先判 `requires.core`，再判显式协议及 manifest/有效 registry hooks 是否属于该协议，最后才允许包导入与既有 hooks 对账。缓存模块也逐次检查，错误须含检测内核版本、声明值、允许协议及升级入口。协议值保留在 discovery 数据中，在运行时拒绝，避免不兼容 external 件被静默漏掉。缺少 `requires.core` 或 `requires.plugin_protocol` 各自保留遗留策略，不代表已认证；`requires` 对象本身仍必需。顶层未知 `protocol` 字段没有协议协商语义，插件 `version` 仍为插件发行版本。支持矩阵及验证边界见 [兼容性专题](reference/plugin-core-compatibility.md)。
+**缝 D `finish(c) -> list[str]`** 在完整 `all` 或 `all --until qc` 的 mux/qc 后触发，空列表成功。qc 判定失败不阻断 finish；qc/finish 任一失败最终 exit 1，正式产物已就绪不等于验收通过。draft、dry-run、终点早于 qc 的截断链不触发；单独 mux/qc 不触发，`all --until video` 在线性模式还未运行 audio。Blender 插件顶层 `blender_bridge: true|{out, verify}` 表示收尾直接导出审片工程，不需另行补隐式动作。
 
-### 2.4 安全节
+**bgm-render 的源与缓存契约：**
 
-- external 插件/应用注册**默认 disabled**（config 的 `external_plugins[]`/`external_apps[]` 条目 `enabled: true` 才生效——路径含 `..` 一律拒绝；官方内置件的启停走 `plugins/registry.json`）〔P4 审查 P2-6 调和：实现即 config 条目开关，原文"registry.json 显式 enable"为设计稿笔误〕。
-- health 探测命令必须为**插件根内相对路径**，拒绝对路径与 `..`（防 health 探针被指向任意可执行）。
-- 外部路径 resolve 后做**白名单根校验**（插件目录之外的任何路径不加载）。
-- external 模块导入锚 = 父目录 **append** 进 sys.path + 导入后即摘除 + `mod.__file__` 落点断言（防 external 父目录下同名模块顶替官方插件/stdlib——P4 审查 P1-1 裁定）。
-- **无键声明插件 = 全局生效语义**（红队终审登记）：hooks 声明但无 schema_keys 的插件（如纯 audio_events 型）对**所有** timeline 生效且无键位门——安装即信任；其代码变更由代码内容摘要兜底失效（上一条）。external 默认 disabled 是信任边界。
-- 官方声明（registry.json）的插件实体**只认 `plugins/<name>/`**——目录缺失即 not_installed（安装破损），不被同名 external 顶替身份（P4 审查 P2-2 裁定）。
-- 已知限制：external 插件 manifest 的 `cache_dirs` 声明暂无生效通道（get_cache_dirs 只读静态注册表；external 插件缓存键走 contribute_keys 的 ak 集不受影响）〔P4 审查 P2-9 记录〕。
+1. `sources[].bgm` 引用工程；probe 通过 `bgm show structure --json` 的 duration_s，必须与 render 的 build_render_plan/atrim 工程时长一致。prepare 派生 48kHz stereo s16 音频到 `cache/audio/{audio_key}::bgm:{version}:{digest}.wav`；digest 含键值、插件代码、`$ref` 拆分件及 extra_deps 内容，主工程字节不变不代表缓存有效。
+2. output 为 `master|premaster|stem:<轨名>`。轨名用 `^[A-Za-z0-9][A-Za-z0-9_.-]*$` **fullmatch**（尾随换行也拒绝），仅经 subprocess 列表参数传递。stem 取 `stems/<轨名>.bus.wav`：含 gain/pan/space 的 float32 工程全长总线分轨，不是结果 JSON 中的引擎级 stems，也不是带 loudnorm/IR 尾的 master。缺失轨名 fail-hard 并列可用轨名；分轨 facts 时长仍等于工程时长。
+3. 同工程共享一次渲染到 `cache/bgm/<render_digest>/`；render_digest 含工程字节、`$ref`、extra_deps 与代码，**不含输出选择和轨名**。成功以 tmp+os.replace 原子写 `_complete.json`，`<digest>.lock` 跨进程互斥；命中直接派生，不重复渲染。marker 完好但目标 WAV 缺失/空文件时覆盖重渲一次；不存在轨名等工程问题不触发自愈。
+4. extra_deps 文件做 sha256[:16] 内容签名，目录按排序的相对路径与文件内容摘要递归签名；跳过 `__pycache__`、`.lock`、`.tmp`。文件数 >5000 或累计 >2GiB 时降级为 `(相对路径, size, mtime_ns)` 清单签名，`DIRC:` / `DIRL:` 前缀进入 digest JSON，降级可观测但不是全内容证明。
+5. registry `cache_dirs: ["bgm"]` 与 `cache_dir_keys` 保留当前 render_digest、回收陈旧目录，弃用 bgm 后可作 legacy 回收；派生 WAV 仍经 contribute_keys。锁伴生件不得被 gc 删掉，破坏跨进程互斥。
+6. CLI 按 config `bgm.cli` → 用户 `.local/bin/bgm` → 配置 bgm.repo 的 `python3 -m bgm_gen` 解析；config 路径不存在/不可执行时尝试下一通道，全败列每通道原因，不能假成功或回落未处理产物。
 
-### 2.5 协议 v1.2 增补（P6 总控裁定，2026-09-14 重构验收期）
+## 3. 应用边界（apps/）
 
-P5 合入后的验收体检（四路深审 + 全量回归）发现三处 P1 断层与两处产线缺口，裁定如下（全部已落地）：
+### 3.1 自包含与依赖
 
-1. **缝 C `probe_source`（虚拟源 facts）**：sources[] 条目可以不是媒体文件——插件暴露
-   `probe_source(c, sid) -> {has_audio, has_video, nb_frames, fps, w, h} | None`（None=不受理，回落 ffprobe），
-   stages.validate 的源级检查与音频事件时长校验统一经此缝取 facts。动机：bgm-render 插件
-   （音轨直接引用 music_tools 工程 JSON）——工程 JSON 过 ffprobe 会误报「无音频轨/时长 0」。
-   实现件 plugins/bgm-render：probe 期 `bgm show structure --json` 取 duration_s（与 render 的
-   build_render_plan 同口径，mix 被 atrim 定长），prepare 期 `bgm render` 母带转 48k stereo s16
-   落 `cache/audio/{audio_key}::bgm:{version}:{digest}.wav`（digest = 键值+**插件代码摘要**+
-   **$ref 拆分件内容**+extra_deps 内容——主工程字节不变而 $ref 件被改时产物键仍翻转）。
-2. **缝 D `finish`（管线收尾）**：插件暴露 `finish(c) -> list[str]`（错误行；空=成功），cli 在
-   `vtx all` 全链（mux/qc 完成后）触发；qc 失败不阻断 finish（final.mp4/qc_report.json 等产物
-   已就绪——存量假阴性项目也要能收尾），退出码按 qc/finish 各自失败态如实汇总（任一失败
-   exit 1）；--draft/--dry-run 或终点早于 qc 的 `--until` 截断链不触发；`all --until qc` 仍触发。收尾失败以退出码 1
-   结束但正式产物（final.mp4）已就绪——失败可见即可。实现件 plugins/blender-bridge：顶层键
-   `blender_bridge: true|{out, verify}` 配置即 `all` 收尾自动导出 Blender 审片工程（json2blend，
-   blender --background）——「配置了就默认直接导出」。
-3. **root scope 键扫描接线**：KERNEL_KEYS["root"] 自 v2 起备而未扫（死键集）；v1.2 起顶层键纳入
-   _scan_plugin_keys（未知顶层键自此「警告不阻断」，v1 静默）——blender_bridge 类顶层插件键走
-   三分支。**hooks 键声明 scope 四值对齐**：_timeline_declares/_plugin_params_digest 的检索容器
-   与 _scan_plugin_keys 同构（root/project/sources[]/audio_tracks[]/audio_tracks[].events[]，
-   经 hooks._scope_items 单一实现）——修复体检 A-P1-2（v1 只认两 path，其余 path 声明的键
-   「validate 放行但插件永不生效」+ 参数摘要盲区）。
-4. **registry hooks 空列表 fallback**（体检 A-P1-3）：registry 条目 hooks 为空列表/缺失时
-   fallback 实体 manifest extends.hooks 声明——防注册表被手改清空后插件静默废掉（键照放行、
-   钩子永不跑、零报错）；与 _plugin_version 的 fallback 语义对齐。
-5. **插件产物键掺代码摘要**（体检 A-P1-1，红队终审 P1-1 的另一半）：回执指纹掺代码摘要后，
-   产物键侧同场景（改代码不 bump version）旧产物仍被缓存命中「洗白」——v1.2 起缝 A 型插件产物
-   键经 `vtx.api.plugin_code_digest` 掺 12 位代码摘要（denoise/hello-plugin/bgm-render 已接）；
-   `_plugin_code_digest` 的 glob 升 rglob（子目录/子包代码进摘要，A-P2-1）。
-6. **qc 响度带对齐裁定**（体检 B-P1-1）：build_audio 终态 WARN 带（I 偏离 ∈(1.5,3] 属内容级，
-   发布侧 G2 拦截）与内核 qc ±1.5 硬 FAIL 自相矛盾——边界内容 + aac 解码域 0.1~0.3 LU 漂移会
-   让 `vtx all` 在 qc 处 flaky 翻车。裁定：qc 响度项分级对齐 build_audio（>3 硬 FAIL /
-   (1.5,3] 放行带 WARN 注记 / ≤1.5 静默）；测量失败（解析不出 I/TP）显性 FAIL 不再静默消失
-   （B-P3-4）。TP 阈 -1.0 不变（§1.3 唯一权威）。
-7. **vtx.api 面扩两件**：`plugin_code_digest(name)`（产物键掺摘要的公共锚）与
-   `cfg_get(key, default)`（插件读自身 config 的唯一入口）——稳定性承诺随 API 面。
-8. **bgm-render stem 分轨 + 共享渲染缓存（2026-09-14，voice-ime 迁移暴露缺口）**：
-   `sources[].bgm.output` 值域 `master|premaster` 扩至 `master|premaster|stem:<轨名>`
-   ——轨名 `^[A-Za-z0-9][A-Za-z0-9_.-]*$`（validate 拒路径穿透），prepare 派生该轨
-   **总线分轨** `stems/<轨名>.bus.wav`（含 gain/pan/space 的 float32 工程全长 bus，
-   mixer._render_track_chain 产出；bgm render 结果 JSON 的 stems 映射是引擎级 stem，
-   bus 无映射按命名约定拼路径，缺失 fail-hard 列可用轨名；轨名不进任何 shell 字符串，
-   subprocess 列表参数）。动机：13 分轨各挂独立音轨自行混音的架构（volume 0.08~0.12
-   + duck，验收门 ≤2% 对位旧片）用 master 会引入母带 loudnorm(-14 LUFS) 与母带 IR 尾，
-   语义完全不同。**共享渲染缓存**：整工程渲染一工程一次落 `cache/bgm/<render_digest>/`
-   （render_digest = 工程字节 + $ref 件 + extra_deps + 插件代码摘要，**不含输出选择与
-   轨名**——只影响派生不影响渲染），多源同工程零重复渲染（13 源 = 1 次渲染）；
-   成功原子写 `_complete.json`（tmp+os.replace），`<digest>.lock` flock 防跨进程双写
-   （P6 并发窗防御惯例），缓存命中零渲染直接派生；目录经 registry `cache_dirs: ["bgm"]`
-   进 gc 白名单（弃用 bgm 键后作 legacy 回收），派生产物键仍走 contribute_keys。
-   probe 缝 C 口径不变（分轨时长 = 工程时长）。插件 1.0.0 → 1.1.0（产物键随代码
-   摘要自动翻转，预期重渲一次）。
-9. **bgm-render 红队修复批（2026-09-14，R1-F；插件 1.1.0 → 1.2.0）**：
-   - **目录型 extra_deps 递归签名**（F1）：`_file_sig` 遇目录改递归内容签名
-     （(相对路径, size, sha256[:16]) 排序整体哈希）——目录不再等价 MISSING
-     （README 邀请声明采样库目录，旧实现 open() 抛 IsADirectoryError 静默记
-     MISSING，与不存在路径不可区分）；`__pycache__`/`.lock`/`.tmp` 伴生件豁免
-     （hygiene gc 同惯例）；护栏：文件数 >5000 或累计 >2GiB 降级
-     (相对路径, size, mtime_ns) 清单签名，前缀 `DIRL:`/`DIRC:` 进 digest JSON
-     可观测。
-   - **gc 键级回收陈旧 render_digest 目录**（F2，方向 A）：pluginlib 新增不变量
-     ① 键级聚合 `get_cache_dir_keys(c)`（插件暴露可选 `cache_dir_keys(c) ->
-     {目录名: 键集}`，与 contribute_keys 同为不变量入口非钩子、不参与对账；
-     仅对经 registry cache_dirs 注册的目录生效，层叠语义=目录注册+键级条目）；
-     gc_plan 新类别 `plugin_cache`：cache/bgm/ 一级子目录按内容寻址键对待——
-     在当前 timeline 键集（bgm-render 供给的 render_digest 集，纯静态可算与
-     渲染期同源）内保活，不在 = 陈旧（--dry 列出、gc 实删）——修复陈旧 digest
-     目录（每个 ≈整工程渲染产物）无界累积；`<digest>.lock` 伴生件豁免
-     （B-P2-1 防删锁破跨进程互斥）；无插件声明键集 = 该类别恒空，其他
-     cache_dirs 消费者语义不变。
-   - **轨名正则 fullmatch**（F3）：re 的 `$` 允许尾随换行，`match+$` 曾放行
-     `stem:abc\n`——改 fullmatch 整串锚定。
-   - **CLI 通道存在性门**（F4）：config `bgm.cli` 指向不存在/不可执行路径 =
-     该通道不可用落下一通道（原行为 _run_bgm 里 FileNotFoundError 裸栈崩）；
-     三通道全败文案列逐通道具体原因（含 config 通道坏路径）。
-   - **plugin_code_digest 排除 tests/**（F5，统一口径对全部插件生效——
-     denoise/blender-bridge/bgm-render）：改一行测试 ≠ 插件行为变化，掺入会使
-     产物键/回执指纹无谓翻转（真工程整轮重渲）。注：此口径变化本身翻转上述
-     三插件全部产物键与回执指纹，属预期行为（本批 1.2.0 版本 bump 一并生效）。
-   - **共享缓存产物残缺自愈**（F7）：`_complete.json` 完好但目标 wav 缺失/空
-     文件（size=0 同判）→ 自动覆盖重渲一次（_ensure_shared_render force 通道）；
-     轨名不在轨集等工程侧问题不触发自愈（重渲治不了），仍 fail-hard 列可用轨名。
-   - test_vt_entry 版本断言改真比对（F6：doctor 读 registry，doctor↔registry
-     比对是同义反复永真——现锚在 plugin.json：manifest ↔ registry ↔ doctor
-     三面一致）。
+每件 app 的 manifest、代码、README、tests 随目录自包含；当前清单以 [catalog](catalog.md) 为准，不在本页重复枚举。应用可卸载不代表已启用插件的依赖可忽略：如 Blender finish 依赖其应用/工具，生效后仍须按插件失败语义处理。matting 的项目路径由组件自身锚点、环境变量或 CLI 配置，不硬编码用户目录。
 
-体检同期修复（非协议面，实现级）：gc 豁免 loudness_receipts 伴生件 .lock/.tmp（B-P2-1，
-防 budget_gate 自动 gc 删锁文件破跨进程互斥）；cache/preview、cache/report_audio 进 gc 白名单
-（B-P3-1）；区间渲染 `_receipt_audio_gain` 经 load_receipt 指纹门，陈旧回执回落窗口自测并告警
-（B-P2-2）；validate 必填键检查（events 的 src/in/out/volume、轨的 name/events——B-P2-3，缺键
-不再裸 KeyError 崩栈）；range_label 秒标签 1→3 位小数（相邻窗碰撞互覆盖，B-P3-5c）；`--frames 0`
-组合检查（B-P3-5b）；build_audio 终态复测补 framelog=quiet（B-P3-3）；load_receipt 捕 OSError
-（B-P3-5d）；df 的 cache mkdir 兜底；qc 并发窗探测帧域防御（短 timeline 越片尾/无音频事件
-TypeError，B-P3-5a）；vt.py init --fix FIX 表键名 chrome 对齐 fail 键（C-P2-1）；doctor --fix 的
-occupied 挂载项列人工（C-P2-3）；health ok=None 文本显示 ℹ（C-P3-1）；pip 布局 init 缺
-config.example.json 友好降级（C-P3-2）；活代码旧路径收敛 apps//plugins/（C-P2-2：vt.py init 段、
-bench_cold.sh、tts 提示、config.example）；edit.md duck 缺省参数勘误（D47 校准值）+ 补
-subtitles_src/插件键文档；timeline.schema.json TP 旧口径 -1.5 → -1.0 勘误。
+### 3.2 职责特例
 
----
-
-## 3. 应用（apps/，12 件）
-
-### 3.1 清单与自包含纪律
-
-12 件：**asr、tts、imgen、matting（含 resolve_matte）、aroll、cover、research、blender-bridge、publish、bgm、gates、sync**。
-
-- matting 的项目路径与 Resolve 参数由组件内 HERE 相对路径、环境变量或 CLI 配置；项目专用 runner 的输入假定与写态边界见 DEV「历史副本纪律」及组件文档。
-- bgm 为**路由声明型** app：manifest `entry.cli` 可空，职责是把 BGM 需求路由到姊妹仓 music_tools（分轨审计包交付门等知识链接），不含可执行本体。
-- gates：G3 TP 判定已上内核（§1.3），app 保留 G1/G2/G7/G10/项目门的发布前复检职责〔对抗审查裁定 #2〕。
-- sync（sync_audio + repack_voice）标注「**管线前置素材工具**」子类：不进管线，但须幂等 + 备份纪律（repack 替换 voice 轨源、sync 重采样 conform 都是不可逆写操作的近邻）。
-- 每件 app 自包含：`app.json`（manifest schema §2.3）+ 代码 + README + tests 随目录走〔用户拍板〕。
-
-### 3.2 逐件边界表（关停测试落表）
-
-**内核组成模块**（内核的组成部分而非可关停组件，不适用关停测试；列出以界定边界——渲染链/validate/qc/limiter/缓存直接构成产物可信度，diff/subs/snapshot/gc/new_project 为配套操作面，vtx/pluginlib/ 为协议运行时、vtx/api.py 为对外契约面，关停它们等于功能缺失而非"降级仍可信"〔对抗审查 P0 复审 P2-1 裁定〕）：
-
-| 组件 | 关停后果 | 归类理由 |
-|---|---|---|
-| validate | 契约无人把关，切点越界/重叠直进渲染 | 产物可信度构成 |
-| audit | 编排体检消失（建议性但影响交付判断） | 内核时间线操作〔代码现状 stages.py:92-193〕 |
-| gfx（CDP 渲染） | kind=gfx 轨全部无法渲染 | 渲染链构成 |
-| prepare | 无源音频，audio/mux 依赖门必挂 | 渲染链构成 |
-| video | 无画面 | 渲染链构成 |
-| audio（混音+响度） | 无声音/响度不可控 | 渲染链构成 |
-| mux | 无封装产物 | 渲染链构成 |
-| qc（含 TP 判定） | 质检门消失，final.mp4 可信度无从谈起 | 产物可信度构成 |
-| limiter（build_audio 尾部） | TP 失控，默认出片必挂 TP 门 | 对抗审查裁定 #1 |
-| diff | 迭代回路（影响面/推荐路径）断裂 | 内核时间线操作 |
-| subs | 字幕检查/预览/渲染消失，烧录链受损 | 内核时间线操作 |
-| snapshot | timeline 无回滚锚点 | 内核时间线操作 |
-| gc/df/缓存 | 盘膨胀失控、键集卫生失效 | 渲染基建（budget_gate 依赖） |
-| new_project | 无脚手架（可手建，属可用性而非可信度） | 内核工具，随包分发 |
-| pluginlib | 无插件加载，但**仅内核仍可出片**（这正是设计目标） | 协议运行时，关停=插件不可用而非主线不可用 |
-| api.py | 外部组件失去稳定入口，退化各自 sys.path hack | 内核对外契约面 |
-
-**应用件**（全部「关停仍能可信出一期片」→ 可卸载）：
-
-| 组件 | 关停后果 | 归类理由 |
-|---|---|---|
-| asr | 字幕换人工/其他来源听写 | 产出独立素材，不进管线 |
-| tts | 口播占位换真人录音 | 同上 |
-| imgen | 背景图换实拍/手工素材 | 同上 |
-| matting（含 resolve_matte） | 放弃抠像镜头，改原生背景拍摄 | 同上 |
-| aroll | 素材预处理退回手工（Audacity 手导出/手切） | 同上 |
-| cover | 封面手工合成 | 同上 |
-| research（6 件采集/评分/样式研究） | 调研退回人工浏览 | 独立素材产出 |
-| blender-bridge | 失去 Blender 审片预览与分轨审计包（体验降级，非可信度） | 消费 timeline 但产物不回写主线 |
-| publish（export_4k/check_4k/compare） | 4K 投稿版退回 1080p 母带直投 | 发布增强 |
-| bgm | BGM 需求自行路由 music_tools | 纯路由声明 |
-| gates | 发布前内容复检消失（内核 qc/TP 仍在） | 复检非构成 |
-| sync | 双系统同步/实录替换退回手工对齐 | 管线前置素材工具 |
-
----
+- **bgm** 是纯路由声明 app，entry.cli 可空，把配乐需求与分轨审计知识路由到 music_tools，不含执行本体。
+- **gates** 负责 G1/G2/G7/G10/项目门的发布前复检；G3 是同阈值复检，内核 qc/TP 不可关。
+- **sync** 是管线前置素材工具，sync/repack 邻接源替换与 conform 写操作，必须幂等并遵守备份纪律。
+- **Blender 审片/分轨审计**与 **publish 4K** 是可卸载的审阅/发布增强，不回写主线可信度；其具体交付门由组件 README 定义。
 
 ## 4. 模板集合（templates/）
 
-### 4.1 tech-talk
+### 4.1 工作流包
 
-```
-templates/tech-talk/
-├── skill.json     # {name, version, uses_plugins[], optional_plugins[], docs, assets}
-├── SKILL.md       # 无 frontmatter（挂载层负责元数据，本体纯文档）
-├── references/    # 产线知识（历史来源见 §8）
-├── assets/
-├── scripts/       # 项目脚手架、冻结与发布包
-└── templates/     # 四份工程文档模板，保留包内布局
-```
+tech-talk 与 skill-demo 由 `skill.json` + `SKILL.md` 配对识别；manifest 含 name/version/uses_plugins/optional_plugins/docs/assets，SKILL.md 本体无 frontmatter，references/assets/scripts/templates 随包自包含。缺配对文件、坏 JSON、非对象 manifest 或错误 uses 声明均失败；uses 按**产线用法**而非最小依赖填写，具体值只由各 skill.json 维护。
 
-uses 声明按**产线用法**而非最小依赖填写〔用户拍板〕；当前完整清单以 `templates/tech-talk/skill.json` 为准，其中 denoise 在 uses_plugins，duck-static 在 optional_plugins。
+通用 title-card/lower-third 属内核资产；voice-ime 七件 gfx、gfx-examples 与 `_tokens.md` 属 tech-talk。禁深蓝/蓝紫渐变与暖色基线是该工作流约束，不强加通用 gfx；matting 全流程归组件文档，创作路由见 [Skill](skill/SKILL.md)。
 
-### 4.2 平级范本（templates/）
+### 4.2 开发与验收范本
 
-- **hello-app**：最小 app 结构范本（manifest/health/README/tests 自包含）。
-- **skill-demo**：虚拟歌手搞笑视频工作流包骨架（零 apps/plugins 依赖的纯内核包）——
-  兼验收门 4 关停测试道具（gen_fixture.sh/gfxA.html/timeline.json/expected_check.sh 四件，
-  expected_check 以 `qc --strict` 断言全检含 TP 项）。
-- **hello-plugin**（音频插件完整纪律范本）：演示装/未装/禁用**三分支**报错文案（§2.1 不变量 3）、`contribute_keys` 缓存键贡献（§2.1 不变量 1）、环境缺失 fail-hard（§2.2 缝 A）、**卸载后缓存失效**（键出白名单 → gc 回收，验收门 6 的对照实现）。
+hello-app 示范自包含 app；hello-plugin 示范装/未装/禁用分支、缓存键贡献、环境 fail-hard 与卸载回收。两者默认 disabled，须 external 显式注册并 enable 才进入运行面；模板发现不注册、不启用、不探测它们。skill-demo 是零 apps/plugins 依赖的纯内核关停验收道具，包含素材生成、gfx、timeline 与 expected_check，后者以 `qc --strict` 断言全检含 TP。
 
-tech-talk 与 skill-demo 由现有 `skill.json` / `SKILL.md` 识别并检查；缺少配对文件、坏 JSON 或非对象 manifest、错误 uses 声明均失败。hello-app / hello-plugin 是开发范本，只有 external 显式注册和 enable 才进入组件运行面（默认 disabled，§2.4），模板发现不注册、不启用、不探测它们。
+## 5. 管理入口、分发与配置
 
----
+### 5.1 vt.py 统一入口
 
-## 5. 入口与分发
+`vt.py init` 是仓级依赖检查/初始化入口，`doctor` 检查版本、组件、工作流模板与挂载；`apps|plugins|templates list|check` 提供分层清单/体检，另有 version 与链接修复入口。
 
-### 5.1 vt.py（统一入口，吸收 init.py）
+- **版本检查**：例行使用 `VTX_DOCTOR_OFFLINE=1`，只相对本地引用报告 clean/dirty/ahead/behind；联网 fetch 会写 .git（5s 超时），按写操作审查。VERSION 仅为发布标识，**无 tag 不告警**，发行冻结门独立判定。
+- **组件检查**：manifest、health、requires 与 `import vtx` 实际解析路径；enabled 组件失败才作 FAIL 门，缺失/disabled 仅提示。health command 必须走子进程，不跨目录 import/spec；该入口用 `shutil.which` / `env python3` 找解释器，禁 `sys.executable`。
+- **模板检查**：包完好、uses、挂载链接及内核 SKILL 索引新鲜度；doctor JSON 保留 `skills` 键与既有子字段，数据来自 templates。
+- **写操作区分**：init 的 `--fix` 安装缺失基础依赖；doctor 的 `--fix` 修复三检内可自动修复的链接/注册表；`--fix-links` 重建挂载。不得混用；预演和实际操作见 [安装指南](guides/installation.md)。
 
-`vt.py init` 是仓级依赖自检与初始化的唯一入口。doctor 按 manifest 的 health 类型检查组件；command 探针走子进程，禁止跨目录 import 或 spec 加载〔对抗审查 P0 复审 P1-2〕。子进程用 `shutil.which` / `env python3` 定位解释器，**禁 `sys.executable`**（AppImage argv[0] 劫持的历史裁决）。
+### 5.2 包与命令归属
 
-子命令：
+包名 `framivra`，console scripts 为 `vtx` / `vt`。clone 可直接用仓根 vt.py 和 `python3 -m vtx`，pip 提供全局命令与稳定 import；两路径必须同码同义。
 
-- `doctor [--json|--fix]` 三检：
-  1. **版本**：例行使用 `VTX_DOCTOR_OFFLINE=1`，跳过 fetch，漂移仅相对本地已有引用；确需联网刷新时，doctor 的 git fetch 会写 .git（5s 超时），须按写操作审查。报 clean/dirty/ahead/behind 四态；VERSION 文件仅发布标识，**无 tag 不告警**。
-  2. **apps+plugins**：manifest 有效 + health 探测 + requires 依赖检查；**enabled 才 FAIL 门**（缺失/disabled 仅提示）；附「`import vtx` 实际解析路径」自检（双模块裂分的常驻哨兵）。
-  3. **工作流模板**：包完好 + uses 声明齐备 + 挂载链接有效 + 内核 SKILL.md 索引新鲜度。
-- `apps|plugins|templates list|check`：分层清单与单项体检。doctor JSON 使用 `skills` 键与既有子字段，数据来自 `templates/`。
-- `version` / `init`（原 init.py 语义；注意 **init 的 `--fix` 与 doctor 的 `--fix` 语义不同**：前者安装缺失基础依赖，后者修复三检中可自动修复项（链接/注册表），不得混用）/ `--fix-links`（重建挂载符号链接）。
+wheel 包含 `vtx` / `vtx.pluginlib`、仓级 vt 模块、schema/preview 与官方插件声明资源；setup 从唯一 registry 源复制声明，sdist 带重建所需源。**apps/plugins/templates 执行代码、仓级 scripts/docs 不属于 wheel 承诺**；打包边界以 pyproject/setup/MANIFEST 为准。
 
-### 5.2 pyproject.toml
+组件命令直达 `apps/` / `plugins/`，仓级维护命令直达 scripts 职责目录；不提供根部组件别名或旧命令转发壳。技能 live 挂载与链接修复独立于组件别名；安装器保留仓内相对链接解包及 Windows 文件/目录物化。外部工作区和挂载必须逐件实查，仓内测试不能证明外部源件存在或链接有效，缺失/待办不得核销为完成。外部三载体的未结项与本机复验状态以 [已知问题④](reference/known-issues.md#external-installation-evidence) 为准。
 
-- 包名 `video-tools`；console scripts：`vtx`（渲染 CLI）与 `vt`（§5.1 入口）。
-- **pip 包只含内核**（vtx/ 含 vtx/pluginlib/ + scripts/ 内核工具 + 内核文档）；apps/plugins/templates 不进发行包。
-- **clone 即用与 pip 安装并存**：repo 根可直接 `python3 vt.py` / `python3 -m vtx`（不依赖安装步骤）；pip 安装提供全局命令与稳定 import 路径。两路径必须同码同义（历史迁移导入检查见 §9 第 8 项）。
+### 5.3 配置
 
-### 5.3 config 统一
+唯一加载器 `vtx/pluginlib/config.py`：**`VTX_CONFIG` > 仓根 `config.local.json`**。imgen 与其他组件同入口，不读 IMGEN_CONFIG、不迁移或改写旧配置；坏 JSON 警告后按空配置继续，兼容读取 comfyui/asr/tts/imgen/denoise 键。已知路径型键自动展开 `~`，其他路径消费方用 expand_path/expanduser，不展开任意 URL/文本。config.example.json 与 gitignored config.local.json 均在仓根，插件通过 `vtx.api.cfg_get` 读取。
 
-加载入口为 `vtx/pluginlib/config.py`。唯一规则为 `VTX_CONFIG` > 仓根 `config.local.json`；imgen 与其他组件使用同一加载器，不读取 `IMGEN_CONFIG`，不迁移或改写旧配置。
+## 6. 验收不变量
 
-坏 JSON 警告后按空配置继续；旧 `comfyui/asr/tts/imgen/denoise` 键兼容读取。路径型键支持 `~`：已知清单自动展开，其余消费方使用 expand_path/expanduser；不展开任意 URL/文本字符串〔P0 复审 P2-3 及实现细化裁定〕。
-
----
-
-## 6. 命令归属与定位
-
-### 6.1 命令归属（当前）
-
-根部 `asr`、`tts`、`imgen`、`matting`、`aroll`、`blender_bridge` 六个 apps 目录别名不提供，消费路径使用 `apps/` 下真实目录。scripts/ 不提供组件转发壳，命令直接使用 apps/plugins 的所属实现；技能六项 live 挂载及 `--fix-links` / doctor `--fix` 不受根别名清理影响。安装器保留通用仓内相对链接解包与 Windows 文件/目录物化能力。
-
-2026-10-21 用户决定：仅保留当前命令入口，不保留旧命令或转发壳。组件命令走 apps/plugins，仓级维护命令走 scripts 职责目录；独立 WAV 维护与正式交付的边界见 [音频工程](skill/references/edit.md#既有-wav-维护)。[v2 迁移时的兼容承诺](https://github.com/CongliangK/framivra/blob/cbfaed74761657401b04119602f2a87dd1fd0ee7/docs/ARCHITECTURE.md#61-脚本兼容层)仅为原定稿历史，不作为现行要求；本文 §1.2 与 §9 中相关旧迁移措辞按该版本边界解释，响度、缓存和协议判据不变。
-
-### 6.2 定位改写
-
-内核导入遵守 §1.4；组件真实目录由自身文件锚定。`apps/blender-bridge/audit_bundle.py` 的 vtx 解析顺序为 VTX_VTX_PY → 向上找到含 vt.py 标记的仓根下 vtx/vtx.py → 技能安装路径回落，避免旧目录层级误指向其他副本。
-
-### 6.3 外部三载体核销清单（文件级）
-
-以下保留 #98 核销时点记录，不代表当前环境已复验：
-
-1. `music_tools/skill/SKILL.md` 源件缺失，music 技能挂载悬空：不是迁移成功；退役/恢复由其维护方处置。
-2. `~/文档/04_bilibili视频/AGENTS.md` 路径表使用 apps 真实目录；第 23 行仍泛称旧路径有兼容 symlink，属外部待限定叙述，本单只读不改。
-3. `~/文档/04_bilibili视频/_library/blender_bridge/` 六条符号链接（audit_bundle/blend2json/json2blend/subs_alpha/verify_blend/README）均直指 `video_tools/apps/blender-bridge/` 且目标存在，不经根别名；该 checkout 并非本次工作树。
-
-核销按载体逐件记录，缺失与外部待办不得记作已迁移；只读核验与消费面公告/预审凭据随 #98 提交正文登记。
-
----
-
-## 7. 路径归属
-
-### 7.1 路径映射（旧 → 新）
-
-已完成的迁移不再作为逐组件任务清单。当前目录/manifest 在 [catalog](catalog.md)；当前命令归属见 §6.1。历史定位索引保留两项：
-
-- 原根部 asr/tts/imgen/matting/aroll/blender_bridge 分别归属 apps 同名目录（Blender 使用 kebab 名 blender-bridge）；根别名不提供。
-- 原映射第 16 项的 `init.py` / `init.sh` 转发属于 v2 迁移历史；依 §6.1 当前决定，仓级初始化只使用 `vt.py init`，不提供根部旧转发壳。
-
-目录迁移与 .gitignore 改锚已落实于组件树、fixtures 反排除及仓根 .gitignore，不再要求按旧阶段重建链接或重做迁移提交。运行产物不入库、测试资产不可被忽略的纪律仍适用。
-
----
-
-## 8. 文档职责与历史裁决
-
-通用机制/契约归 `docs/skill/` 与专题 docs；科技口播配方、调研/封面/拍摄/voice-ime 范式归 `templates/tech-talk/`，matting 全流程归组件 `apps/matting/matting.md`。当前路由见 `docs/skill/SKILL.md`，不再保留已执行的逐文件搬迁任务。
-
-独有归属裁决〔用户拍板〕：通用 title-card/lower-third 起手模板留内核；voice-ime 七件 gfx 模板、gfx-examples 与 `_tokens.md` 随 tech-talk 工作流。D22 的禁深蓝/蓝紫渐变与暖色基线属于该工作流；通用 gfx 机制不强加该风格，详见 [gfx 适用范围](skill/references/gfx.md)。
-
-config.example.json / gitignored 的 config.local.json 留仓根。历史迁移基线保存在原 `docs/plans-v2/`；性能历史见 [历史性能记录](reports/development-history.md#一性能基准)，当前 R1-R4/R2s 操作与交接见 [runbook](skill/references/runbook.md)，不把历史 R3 表当作当前性能承诺。
-
----
-
-## 9. 验收不变量与历史迁移证据
-
-以下保留原九项验收职责；第 2/8 项是 v2 迁移当时的证据口径，不是新任务排期或当前机器的性能承诺。当前发行资格另见 [源码稳定基线](releases.md)，不得用旧报告代替本次实际验证。
-
-1. **全测试绿**：tests/ 全量通过（test_post_loudness.py 随 §1.2 改为直测内核函数，spec_from_file_location 加载脚本路径的旧加载方式〔代码现状 tests/media/test_post_loudness.py:7-9〕随薄壳重写）。
-2. **影子基线归一化一致（两段口径）**〔对抗审查 P0 复审 P0-1/P1-4 裁定〕：**不变段**（validate / diff / subs 全部输出 + qc 除新增 TP 项外的全部 checks）——P1/P2/P3/P5 每次复验与首跑基线（r1）逐项一致；**重锚段**（audio --report 全部输出 + qc 含 TP 项）——因 §1.2/§1.3 响度终链合并属设计内变化，P1 落地后已在影子复跑产出**重锚基线 r2**（`plans-v2/baseline-r2/`，合法性实测：解码域 TP -3.1 ≤ -1.0 ✅、整片 I -15.6 ∈ **[-15.8, -14.0]**〔合法带按实证修正：v1 交付 -15.5/v2 实测 -15.6 的边界内容 + 0.1 级域差，原 [-15.5,-14] 不可满足，超出修正带即真回归〕、判级不劣于首跑已知项 ✅），此后 P2/P3/P5 对 r2 逐项一致（`compare.sh <新目录> ../baseline-r2`）。预期差异经 `known-diffs.conf` 白名单承载（r2 建立后已清空），**白名单外任何差异即 FAIL**。
-3. **命令入口**：当前入口可解析，实际参数/退出码合同保持；原迁移的兼容要求按 §6.1 版本边界解释；docs_smoke 的覆盖与盲区以 DOC-CHARTER §20/21 为准，不声称抽取全部引用。**外部三载体**（§6.3）须另行逐件核销。
-4. **关停测试**：apps+plugins 全禁 → 仅内核仍可出片（`all` 走通 + qc 含 TP 判定通过）——§0.1 判据的实测化。
-5. **语法差异门 + 缓存身份门**：插件装/未装 timeline JSON 语法差异符合三分支语义（§2.1 不变量 3）；插件产物缓存键进 gc 白名单（渲染中 budget_gate 触发不误杀，§2.1 不变量 1）；插件升级/改参 → 回执指纹变（旧回执不放行陈旧产物，§2.1 不变量 2）。
-6. **examples 外部注册**：hello-app/hello-plugin 经 external 注册路径（默认 disabled → 显式 enable）装/卸全流程可复现，卸载后缓存失效符合预期。
-7. **三 grep 门**：(a) 活代码（py/sh/mjs/json，白名单显式豁免 docs/plans* 历史归档）零 `/home/<user>` 形态本机用户名硬编码；(b) 旧路径形态消解——当前路径以 §7.1 的组件归属核对，失效旧入口在现行代码/文档中逐条消解；(c) import 卫生——**运行时管线代码与 tests** 零 `sys.path.insert` 注入 repo/vtx、零 `spec_from_file_location`（§1.4/§2.3 的静态验证；vt.py 走子进程探测不涉 spec）。
-8. **历史性能门**：原迁移验收要求 bench 三轮中位相对 291.4s 偏差 ≤±10%，并要求 `import vtx` 冷导入 <1s〔P0 复审 P1-3〕。291.4s 是 bench_p2 旧口径，DEV §一已作废并保留原测量及重锚证据；此处只保留历史裁决，不作为新变更性能 SLA，也不以其他数字冒充等价替换。当前性能验证须约定同项目/输入/环境/链路口径。
-9. **红队通过**：对本文件 §2 协议的对抗审查（三分支绕过/缓存键伪造/回执指纹遗漏/安全节路径逃逸四类攻击面）全部未突破。
+1. **回归与真实执行**：完整架构验收要求全量回归通过；按 [CONTRIBUTING](../CONTRIBUTING.md) 执行变更检查与文档门，如实报告全量/精选、工具/平台 skip 和未运行项；门绿不等于散文正确、外部环境已核销或性能达标。
+2. **内核独立**：apps/plugins 全禁时，永不可关的纯内核完整 all 仍可出片并通过含 TP 的 qc。
+3. **插件正确性**：安装/缺失/禁用三分支、gc 保活、改版本/参数/代码的产物与回执失效、external 默认关闭→显式启用→卸载回收须实际覆盖。
+4. **入口与身份**：当前命令参数/退出码保持；clone/pip 同码同义；活代码无本机 `/home/<user>` 硬编码、失效旧入口、repo/vtx 注入或 spec 加载。运行产物不入库，测试资产不可被忽略。
+5. **安全复审**：独立对抗审查覆盖键分支绕过、缓存键伪造、回执成分遗漏、路径逃逸，不以实现者自测代替。
+6. **性能证据**：比较必须约定同项目/输入/环境/链路，原迁移影子基线及历史性能门只作溯源；当前发行资格由 [源码稳定基线](releases.md) 判定，不以旧报告、旧吞吐或未复现缺陷宣称本次验收完成。

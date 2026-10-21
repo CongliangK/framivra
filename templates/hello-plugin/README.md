@@ -31,8 +31,7 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
 
 ## 开启步骤（external 注册，三分支语义的入口）
 
-templates/ 不在 registry 内置扫描范围（内置只扫 `apps/` + `plugins/`），走
-config.local.json 的 `external_plugins`（gitignored，不入库）：
+通用的发现、注册、路径安全与 doctor 步骤见[第三方接入](../README.md#第三方接入)。本范本在仓根 `config.local.json` 中使用：
 
 ```json
 "external_plugins": [
@@ -84,13 +83,14 @@ config.local.json 的 `external_plugins`（gitignored，不入库）：
 ## 复制本目录改名起步
 
 ```bash
-cp -r templates/hello-plugin templates/my-plugin && cd templates/my-plugin
+# 写操作：创建新范本目录；以下命令均在仓根运行。
+cp -r templates/hello-plugin templates/my-plugin
 # 1) 改名：目录名与 plugin.json "name" 一致（^[a-z][a-z0-9-]*$）
 # 2) 换键：plugin.json extends.schema_keys 的 key 换成你的键名（path 目前冻结为
 #    sources[] / audio_tracks[] 两缝，hooks 值域 = prepare_source/audio_events/validate）
 # 3) 换实现：__init__.py 的 prepare_source/contribute_keys 换成你的处理链
 #    （产物路径模板 {audio_key}::<plugin>:{version}:{digest}.wav 保持不变）
-# 4) 注册：config.local.json external_plugins 加 {"path": "templates/my-plugin"}
+# 4) 注册：config.local.json external_plugins 加 {"path": "templates/my-plugin", "enabled": true}
 # 5) 验证：env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor && env python3 vt.py plugins list
 ```
 

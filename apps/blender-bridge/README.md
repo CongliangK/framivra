@@ -1,6 +1,6 @@
 # blender_bridge — timeline.json → Blender VSE 预览前端
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/blender-bridge/`）**：manifest 见 `app.json`（kind=app；健康检查 = `audit_bundle.py --help`）。随迁定位改写：audit_bundle.py 的 vtx 解析链重算为 **repo 根锚定**（自本文件向上找含 `vt.py`+`vtx/vtx.py` 的祖先；原「上级目录」在迁移后是 `apps/` 而非仓根，§6.2）；`tests/test_audio_audit.py` 随迁并清除 spec_from_file_location（app 根注入 + 普通 import，§1.4）。
+组件声明见 `app.json`（kind=app）；健康检查为 `audit_bundle.py --help`。内核入口从含 `vt.py` 与 `vtx/vtx.py` 的仓根定位；本 app 是预览与审计前端，不替代内核渲染/QC。
 
 > **使用者向**：Blender 预览桥用法与 VSE 坑表。历史校验记录与实测数据见 `../../docs/DEV.md`。
 

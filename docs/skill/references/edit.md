@@ -1,70 +1,195 @@
-# 剪辑（edit）· 中间层工具站：timeline.json + vtx
-> **使用者向**：timeline.json 契约、vtx CLI 用法、音频工程规则与渲染坑表。`<video_tools>` 为本仓真实根目录；性能基准见 `<video_tools>/docs/DEV.md`，HTML 动效设计见 [gfx](gfx.md)，选题调研见 `<video_tools>/templates/tech-talk/references/research.md`，索引见本 skill 的 SKILL.md。
-## 铁律
-1. **AI 永远不手写 ffmpeg 剪辑命令**。剪辑 = 编写/修改 timeline.json + 调用 vtx。失误率控制靠三道闸：渲染前校验（validate）、确定性构建（vtx 生成全部 ffmpeg）、渲染后 QC。
-2. **修改 timeline.json 后必须重跑 validate**，校验失败时修数据、不绕过。
-3. 所有时间量用**整数帧**；区间 `[in, out)` 左闭右开；项目时基 30fps（≠29.97）、48kHz 音频（每帧整 1600 采样）。
-## 工具位置
-```
-vtx CLI：        ~/.agents/skills/video/vtx/vtx.py            （符号链接；权威本体=~/文档/01_活跃项目/video_tools/vtx/；仅依赖 python3 标准库 + ffmpeg/ffprobe/google-chrome）
-契约 schema：    ~/.agents/skills/video/vtx/timeline.schema.json
-时间线预览器：    ~/.agents/skills/video/vtx/preview.html     （人审编排用，双击打开）
-参考实现（POC）： ~/文档/04_bilibili视频/_archive/poc2/   （外部示例项目：30s 多轨 demo，QC 全过；不随 skill 分发）
-```
-程序本体在 video_tools 仓：`vtx/`、`apps/`、`plugins/` 的权威位置（命令归属见 `<video_tools>/docs/ARCHITECTURE.md` §6.1）以 `<video_tools>` 为准；live skill 通过六件链接引用本仓（见 `<video_tools>/docs/DOC-CHARTER.md` §7）；**修改程序一律改 video_tools 仓**。入口三通并存（分发见 `<video_tools>/docs/ARCHITECTURE.md` §5.2）：仓根 `vtx/vtx.py` 薄启动器、`python3 -m vtx`、pip console `vtx`/`vt`；实现分为 `infra`（Ctx/执行/并行）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）、`hygiene`（缓存键/gc/df/snapshot/VERSIONS）、`cache_state`（回执身份/依赖门）八个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
+# 剪辑与修改配方 · timeline.json + vtx
+
+本页是剪辑操作、R1–R4 修改配方与交接的唯一入口；[HTML 创作](gfx.md)、[缓存/回执](../../cache-provenance.md)、[契约](../../ARCHITECTURE.md)分别维护其机制，开发专题从 [DEV](../../DEV.md) 路由。发布、BGM 分轨审计与封面走 [tech-talk R5/R6/R7](../../../templates/tech-talk/references/runbook-r5r6r7.md)。
+
+按任务阅读：[准备与新项目](#使用规则) → [正式交付](#正式交付链r1-r4-共用)；局部修改选 [音频](#r1--纯音频变更音量--duck--fade--bgm-源)、[编排](#r2--时间线编排clip-窗口--轨道--字幕)、[字幕](#r2s--纯字幕修订)、[gfx](#r3--gfx-页改动html--声明依赖--新页)、[冷重渲](#r4--全冷重渲新机--新副本--全链回归)。
+
+## 工具与输入
+
+剪辑用 timeline.json + vtx，不手写 FFmpeg 剪辑命令；修改后必须 validate，失败修数据、不绕过。时间量为整数帧、区间左闭右开；时基与字段由 [timeline schema](../../../vtx/timeline.schema.json) 定义。
+
+渲染入口为 `vtx/vtx.py`、`python3 -m vtx` 或安装后的 `vtx`；`vt.py` / `vt` 是仓库管理入口，不是渲染别名。实际依赖和平台资格见 [README](../../../README.md)，不能从脚本存在推定工具可用。修改程序/文档须改仓库，不改挂载副本；挂载边界见 [文档宪章](../../DOC-CHARTER.md)。
+
 ## 时间线预览（人审用）
 `preview.html` 是单文件网页（无外部依赖），把 timeline.json 渲染成可视化时间线供**人类**审阅编排：视频轨/动效层/字幕/音轨分行显示，事件块带源名、时长、vol/pan/loop 与淡入淡出帧数标注；支持缩放、适应宽度、悬停播放头、点击事件块看全字段详情，并有**预览级校验**（整数帧、EDL 不变量、同轨视频片段重叠、越界、同轨音频重叠等）——发现问题标红，但最终以 `vtx validate` 为准。
+先把 `VIDEO_TOOLS` 设为实际仓库根目录；在有桌面打开工具的平台使用：
+
 ```bash
-xdg-open ~/.agents/skills/video/vtx/preview.html
+xdg-open "$VIDEO_TOOLS/vtx/preview.html"
 # 打开后：内置 poc2 示例自动载入；「打开 timeline.json」选文件、拖拽文件到页面、或「粘贴 JSON」均可替换
 ```
-使用时机：**编排完 timeline.json → 先开预览器人工过一遍 → 再跑 validate/渲染**；用户反馈修改意见时，预览器是双方看同一份编排的共同语言。
-## 典型流程
-```bash
-# 新建视频项目（生成目录 + 模板 timeline.json）
-bash ~/.agents/skills/video/scripts/new_project.sh ~/文档/04_bilibili视频/myvideo
-# 编排：编辑 myvideo/timeline.json（契约见下），素材放 myvideo/assets/，动效页放 myvideo/gfx/
-cd ~/文档/04_bilibili视频
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json validate   # 渲染前校验门（必跑）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json --dry-run video  # 只打印将执行的 ffmpeg
-#   `--dry-run` 现已全阶段安全（gfx/qc/audit 均只预览不落副作用；cache 侧段字幕/清单为键保真的有意豁免）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json all        # 全流程 → myvideo/out/final.mp4
-# 分阶段（gfx/seg/audio 缓存全部内容寻址，源或参数一变自动换键重渲，无需手工清缓存）：
-#   validate → audit（指标体检）→ prepare（提取音频）→ gfx（渲染动效）→ video → audio → mux → qc
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json subs check    # 字幕渲染前检查（秒级，零渲染）：对齐漂移/CPS/重叠/行宽；FAIL 退出码 1
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json subs preview 12.5 f360  # 字幕单帧预览图（秒级，改字幕抽查；支持多时间点）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json subs render   # 独立产出 cache/subs.ass（字节一致自动跳过）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json diff 旧.json out/qc_report.json  # 报告对比（qc/audit/subs_check；状态翻转显著标出，DIFF 退出码 1）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc --dry    # 回收清单预览（收尾习惯）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc          # 执行回收（键集外垃圾+tmp 孤儿）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json gc --all    # 深度回收（保留 reports/VERSIONS/history/final）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json df          # 体积体检（分项占用+top-20 大文件）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json snapshot    # timeline+文本资产快照（自动留 2 份）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 清空 cache/ out/（慎用）
-```
-## 缓存卫生与体积治理
-- **内容寻址缓存**：gfx、seg、音频与合成段分别按当前输入身份选键；声明依赖、渲染环境及各产物的具体键语义统一见 [缓存与回执](../../cache-provenance.md)。旧键由 gc 回收，不例行手工删除 `cache/seg/`。
-- **`vtx gc`**：回收「当前 timeline 键集之外」的全部缓存条目 + tmp 孤儿（>24h）+ out 一次性中间物。`cache/reports/` 永不回收。`--keep-days N` 暂缓近 N 天条目。**收尾习惯：每轮「改 timeline→重渲」结束后先 `gc --dry` 看一眼再 `gc`**——cache 占用从此有上界（≈当前键集工作集），不再单调增长。
-- **证据纪律（管线级约定）**：调试渲次（整片 mp4）一律写 `cache/tmp/<runid>/`，阶段结束即删（`hygiene.tmp_run` 上下文）；需留证一律抽帧（≤10 张）或 540p 小样 ≤10MB 存 `cache/reports/evidence/`。**报告/回执/JSON 一律 `cache/reports/`，gc 永不触碰**。**tmp 选址铁律：GB 级媒体中间物严禁写系统 /tmp**（本机 /tmp 是 tmpfs，写即占 RAM/swap 且会被定期清理，长任务文件可能中途消失）；≤数十 MB 小件可用 /tmp。
-- **产物版本记账**：mux 每次成功追加 `out/VERSIONS.json`（md5/大小/timeline+audio md5）；**覆盖检测**——将覆盖的 final.mp4 与账面末条 md5 不符 → 显著告警 + 旧条目标 superseded。旧成片轮转 `out/history/`（硬链接优先），`--keep-versions N` 默认 2。
-- **快照**：改 timeline 的批量脚本（retimeline 类）改调 `vtx snapshot`（timeline+全部引用文本资产，KB 级，自动留 2 份），不手写 `.bak`。
-- **体积预算**：`VTX_CACHE_BUDGET_GB=80` 设预算后 gfx/video 阶段前超限自动跑 gc 清单提示（`VTX_GC_AUTO=1` 直接回收）；audit 报告含 volume 节（cache/out 占用+tmp 孤儿）。
-**gfx 渲染引擎**：默认 CDP 常驻浏览器；页面协议、Canvas 与静态跨度见 [gfx](gfx.md)。CDP/CLI 各有独立环境身份，不将跨引擎像素或 PNG 字节相同当作普遍保证。CDP 自动回落 CLI 的页不能发布完成凭证；显式 `VTX_GFX=cli` 重跑使用独立身份，strict 依赖策略不支持 CLI。详细边界见 [渲染环境身份](../../cache-provenance.md#gfx-environment)。
+只接受顶层 `version: 2` 的当前时间线；旧版本、缺失版本和非数值版本不会自动转换。打开、拖放或粘贴非法 JSON / 不支持的版本时显示错误，保留已载入视图。预览器只读展示，不编辑或导出时间线，也不替代最终 `vtx validate`。
 
-**回执依赖门**：`out/receipt.json` 绑定当前输入；timeline、素材、HTML、声明依赖或生效渲染身份变化，不继承旧阶段成功。单阶段前置为 audio←prepare、video←gfx（有 gfx 轨时）、mux←video+audio、qc←mux。缓存仍可按内容键复用，但不能据此跳过阶段回执。正式交付用完整 `all`，包含启用插件的 finish；操作顺序见 [runbook](runbook.md)。QC 与 audit 报告分别在 `out/qc_report.json`、`out/audit_report.json`。
+使用时机：**编排完 timeline.json → 先开预览器人工过一遍 → 再跑 validate/渲染**；用户反馈修改意见时，预览器是双方看同一份编排的共同语言。
+## 使用规则
+
+1. 先读对应配方与任务书；参数、素材或依赖不清楚时查对应 reference 和当前 CLI，不能把示例路径当作本机事实。
+2. 修改 timeline 前用 `snapshot` 留锚；修改用可重复执行的生成器或幂等补丁。重大素材迁移另保留不随自动轮转删除的长期版本。
+3. 先做对应局部验证，再走下方正式交付链。`diff` 的影响估计用于定位，不能替代当前输入回执或真实渲染。
+4. 长命令按执行环境支持的后台会话与轮询机制运行。一个项目同一时间只允许一个写入命令，运行期间不修改输入。
+5. 本文命令会写项目的 `cache/`、`out/` 或快照；正式渲染可能替换已有成片。先确认项目与输出位置，冻结项目使用独立副本，不把操作示例当成只读检查。
+
+命令约定：先将 `VIDEO_TOOLS` 设为实际仓库根目录、`PROJ` 设为本次项目的绝对路径；`OLD` 是留存的改前 timeline 路径。以下从项目目录执行，不依赖任何私人 voice-ime 工作区：
+
+新项目先选尚不存在的 `PROJ`，执行以下**写操作**创建脚手架；已有项目不重建，脚本会覆盖 timeline/schema，不能当作已有工程无损初始化。随后把素材放入 assets/、页面放入 gfx/，编辑 timeline.json。
+
+```bash
+bash "$VIDEO_TOOLS/scripts/new_project.sh" "$PROJ"
+```
+
+```bash
+export VTX="$VIDEO_TOOLS/vtx/vtx.py"
+cd "$PROJ"
+python3 "$VTX" -t timeline.json snapshot
+```
+
+## 正式交付链（R1-R4 共用）
+
+输入变化会重置阶段成功身份，包括只改音轨、字幕、HTML 或声明依赖的情况。缓存键未变可节省计算，但旧阶段成功不能直接沿用。**正式交付统一运行完整 `all`**：
+
+```bash
+python3 "$VTX" -t timeline.json all
+```
+
+它执行 validate、audit、prepare、gfx、video、audio、mux、qc，并在完整链收尾运行启用插件的 finish 钩子。默认依赖图会并行安排独立阶段；`VTX_PIPELINE=0` 则按上述线性顺序运行。完整 `all` 对两种模式都适用，无需外接 post_loudness。
+
+- `all --until video` 只适合中间检查：线性模式尚未执行 audio；截断链后单跑 mux/qc 也不会补触发 finish。`all --until qc` 可到完整收尾，但日常交付用不截断的 `all`。
+- 完整链的 QC 失败仍可执行 finish，退出码汇总 QC/finish 失败。产物存在不代表通过；检查退出码、`out/qc_report.json` 与插件结果，不把非零当预期成功。
+- 单阶段排查须满足当前身份依赖：audio←prepare；有 gfx 轨时 video←gfx；mux←video+audio；qc←mux。回执格式与失效机制见 [缓存与回执](../../cache-provenance.md#阶段回执pr1)。
+- 启用内容门的交付再执行下例；4K 导出、冻结与 BGM 审计按项目工作流的 [R5/R6/R7](../../../templates/tech-talk/references/runbook-r5r6r7.md) 完成，不将它们视作所有内核项目的固定前置。
+
+```bash
+python3 "$VIDEO_TOOLS/apps/gates/content_gates.py" -t timeline.json --media out/final.mp4
+python3 "$VTX" -t timeline.json gc --dry
+```
+
+`gc --dry` 只查看回收清单，实际回收另按任务授权执行。耗时与历史测量口径统一见 [DEV 性能基准](../../reports/development-history.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
+
+## R1 · 纯音频变更（音量 / duck / fade / BGM 源）
+
+适用：只改 `audio_tracks` 及其音频素材。快照后实施幂等修改，检查影响面：
+
+```bash
+python3 "$VTX" diff "$OLD" timeline.json --json out/tl_diff.json
+python3 "$VTX" -t timeline.json validate
+python3 "$VTX" -t timeline.json prepare
+python3 "$VTX" -t timeline.json audio --report
+```
+
+- `audio --report` 会先混音再写 `out/audio_report.json`，FAIL 返回非零；它需要当前 prepare。只对旧文件出报告的 `--report-only` 不能认证新输入。
+- 若 diff 显示视频或 gfx 受影响，转 R2/R3 追加相应预览；即使视频缓存全命中，最终仍走共用 `all`，不能跳过当前 video 回执。
+- 调 volume 改的是轨间相对比例，整片还会归一与限幅；验收要听受影响窗口，不能只看成片 LUFS。duck 开关或参数变更做 A/B 对照。
+- 补丁检查目标值，防重复施加增益。AAC 编码后的解码域真峰仍需 QC/内容门确认，WAV 通过不能代替成片通过。
+
+## R2 · 时间线编排（clip 窗口 / 轨道 / 字幕）
+
+适用：改 `video_tracks`、事件窗口、轨道或字幕。快照后修改生成器或幂等补丁，再用 `diff` 检查预期影响：
+
+```bash
+python3 "$VTX" diff "$OLD" timeline.json --json out/tl_diff.json
+python3 "$VTX" -t timeline.json validate
+python3 "$VTX" -t timeline.json gfx
+```
+
+`gfx` 为改后项目准备当前页面缓存，无 gfx 轨时没有页面渲染任务。将 `START`、`END` 设为改动邻域的真实时间点后预览（支持秒、时间码、后缀 `f` 帧号）：
+
+```bash
+python3 "$VTX" -t timeline.json video --draft --range "$START" "$END"
+```
+
+- `--range`、`--clip`、`--track` 是三种互斥的窗口选择，不能把 `--range` 与另外两项组合。`--clip` 按素材 stem 匹配，具体选窗语义见 CLI。
+- 区间产物只写 `cache/preview/range_*.mp4`，不走正式阶段回执门，不写正式成片/回执或 VERSIONS；可冷填充所需 seg/抽音频缓存，但不会自动渲染缺失 gfx。它不能代替正式交付链。
+- 若需用区间音频判断整片混音，先确保当前输入的 prepare/audio 成功，无论本次是否改音轨。否则区间可能采用窗口自测增益，只能作局部预览，不能据其响度判断成片。
+- 涉及字幕再走 R2s；涉及画面切点检查边界两侧与黑帧。内容寻址自动选择可复用缓存，不例行手工删除 cache/seg。
+
+局部验证通过后运行共用 `all`。diff 的 `advice.recommended_path` 用于选择生成器/幂等补丁，不能据其估计阶段表跳过真实依赖门。
+
+## R2s · 纯字幕修订
+
+适用：只改字幕文本或窗口。修改前留存旧字幕检查报告，快照并实施修改后：
+
+```bash
+python3 "$VTX" -t timeline.json subs check
+python3 "$VTX" -t timeline.json subs preview 12.5 f360
+```
+
+示例预览时间点应替换为实际可疑条目的时间。`subs check` 写 `out/subs_check.json`；新增 FAIL 须处理，存量问题单列，不能把已有失败记成通过。需要对照时，`PREVIOUS_REPORT` 指向保留的旧报告：
+
+```bash
+python3 "$VTX" diff "$PREVIOUS_REPORT" out/subs_check.json
+```
+
+- 无 voice 轨或无法对齐时检查会 WARN，用实际音画预览补核。阈值与背景回退语义见 [字幕预检](#字幕预检与预览subs-check--preview2026-09-12-方案四)。
+- 单张字幕预览可能使用 qc_clean 或黑场背景，不能据它确认改后全画面。按 R2 准备 gfx 并做区间音画预览，再执行共用 `all`。
+- 字幕字节进入分段缓存键；实际失效范围取决于字幕覆盖与切段边界，不承诺总是固定几个段，也不需要手工清段缓存。
+
+## R3 · gfx 页改动（HTML / 声明依赖 / 新页）
+
+先按 [HTML 创作组织](gfx.md#html-创作组织) 确认模块边界，遵守帧驱动协议；本地 CSS/JS/图片/字体按 [依赖声明](gfx.md#帧驱动协议必须遵守vtx-依赖它逐帧截图) 登记。快照后修改页面或资产：
+
+```bash
+python3 "$VTX" -t timeline.json validate
+python3 "$VTX" -t timeline.json gfx
+```
+
+核验改后实际帧、透明度、时间窗与布局，再按 R2 做区间预览，最后执行共用 `all`。HTML 或依赖变更也改变整体回执身份，不能因为音轨参数未变而省略 prepare/audio。
+
+**gfx 基准表与重测方法**：历史矩阵、静态跨度占比及重页分析统一见 [DEV 性能基准](../../reports/development-history.md#一性能基准)。这些是指定机器/项目/版本的测量，不能当作本轮性能证明。重测使用独立项目副本与已冻结的 Golden；记录输入、引擎环境、缓存冷热、耗时和像素比较结果。没有独立基准时只报告实际测量，不宣称等价或提速。
+
+**gfx env 速查**（CDP 路径；调参需重新验证）：
+
+| env | 默认 | 说明 |
+|---|---|---|
+| `VTX_GFX_PAGES` | 7 | 页级并行浏览器实例数 |
+| `VTX_GFX_SPLIT_FRAMES` | 450 | 页内分片阈值（帧，0 关闭） |
+| `VTX_GFX_SPLIT_MAX` | 3 | 单页最大分片数 |
+| `VTX_GFX_TABS` | 4 | 每实例 tab 数 |
+| `VTX_GFX_NAVFREE` | 0 | 免导航路径不用于正式交付，原因见 DEV |
+| `VTX_GFX_STATIC` | 1 | 消费作者声明的静态跨度；不证明其正确性 |
+
+CDP 页内透明探针回落与跨引擎回落不同：前者保持当前渲染身份；后者不能补签成功。显式 `VTX_GFX=cli` 使用独立身份重渲，strict 依赖策略不支持 CLI。详见 [渲染环境身份](../../cache-provenance.md#gfx-environment)。
+
+## R4 · 全冷重渲（新机 / 新副本 / 全链回归）
+
+确认依赖、资产与字体可用，在独立项目副本上运行共用完整 `all`，再做项目要求的内容门、人工视听与发布检查。需要真正冷跑时先约定并记录清理范围；不在冻结/已交付项目原位清缓存或覆盖输出。
+
+- `VTX_SEG_NVENC=0` 可用于 CPU 编码对照。GPU 探测回落、机器负载与并发设置须写入测量记录，不能混算性能。
+- `scripts/bench_cold.sh` 是会清 cache/回执并覆盖成片的历史分步基准工具，采用截断链；它不代替包含 finish 的正式交付，不直接用于已冻结项目。历史数字见 DEV，不据旧报告豁免本轮失败。
+- 中断后先查退出码、日志与当前回执；缓存修复或清理限定在已确认的项目副本内。重新运行正式交付链后再确认 QC，不凭产物存在宣布成功。
+
+## 命令正字法速查
+
+- 子命令：`all | validate | audit | prepare | gfx | video | audio | mux | qc | clean | gc | df | snapshot | subs | diff`。
+- `--draft [--frames N]`：`--draft` 只接受 video/mux；`--frames` 只接受 video draft。`--gpu` 只接受 video，不能加在 all 后。
+- `all --until` 终点：`validate | audit | prepare | gfx | video | mux | qc`，audio 不作终点；交付语义见共用链。
+- `audio --report` 与 `--report-only` 互斥，且不能与 dry-run 组合。`diff --json` 用于 timeline 影响报告，报告对比模式不接受该开关。
+- Blender 的 json2blend/verify_blend 必须由 Blender 解释器运行，具体调用见 [Blender bridge](../../../apps/blender-bridge/README.md)。发布与分轨命令不在此重复维护。
+- `subs render` 独立生成 `cache/subs.ass`，相同字节跳过；报告对比支持 qc/audit/subs_check，状态改变返回 DIFF（退出码 1），不是 `qc diff`。
+- CLI 的 `--dry-run` 只预览阶段计划，不执行渲染、测量或插件钩子，也不落字幕/清单/快照；计划输出不代表阶段执行或产物验证通过。
+- 头窗草稿：`video --draft --frames N` 后可 `mux --draft`，产物为 out/draft.mp4 与 out/draft_final.mp4，不覆盖正式成片；有 gfx 时同样需要当前 gfx 前置。正式 GPU 用 `video --gpu`；硬件不可用的回落必须读取日志，不能假定实际 NVENC。
+
+## 缓存卫生与体积治理
+
+先用 `df` 看占用、`gc --dry` 看清单；`gc` 是实际回收，`gc --all` 深度回收仍保留 reports/snapshots 与交付件。`clean` 清理 cache/（含其中证据与快照）及 out/ 可再生条目，默认保护 final、VERSIONS、history、FREEZE 等交付件；仅显式危险旗标 `--i-know-this-nukes-everything` 才将交付件也纳入删除，锁与拒绝路径仍保留。清理须单独确认范围，`--keep-days N` 可暂缓近期 gc 条目，不例行手工删 seg。完整规则见 [缓存与回执](../../cache-provenance.md)。
+
+`snapshot` 保存 timeline 与引用文本资产并自动轮转；重大迁移另留不随轮转删除的版本。mux 通过 `out/VERSIONS.json` 记账并轮转旧成片到 `out/history/`；将覆盖的 final 与末条 md5 不符会告警并标记 superseded，不把记录当作媒体未变的保证。
+
+`VTX_CACHE_BUDGET_GB` 设置预算后，gfx/video 前超限提示 gc 清单；`VTX_GC_AUTO=1` 允许直接回收，是写态选择。audit 报告 volume 节记录 cache/out 与 tmp 孤儿；临时媒体和持久证据分开，见 [交接](#主控-子智能体棒次协议)。
+
 ## audit 指标审计（建议性，不阻断渲染）
-**validate 是机制硬门，audit 是内容体检**——审计出的 ⚠ 不拦截渲染，但发布前应逐条看过。检查项：画面构成占比与模块完整性（缺 broll/screen/gfx 提示）、黑场窗口、**无声窗口**（bed 轨应全程兜底）、口播覆盖率（主流观察 83-99.7%）、全片语速（**标准值 5.5 字/s（用户拍板引导值，=主流中位）；ok 区间 4.8~6.3**，明细在 `~/文档/04_bilibili视频/_library/corpus/叙事风格分析/data/speech_rate.json`）、字幕阅读速度（>7.5 字/s 偏快、>9 过快）/最短时长/相互重叠。基准值都注明在报告里，来源是本项目自己的 39 视频语料实测。
+
+validate 是机制硬门，audit 是内容体检；报告在 `out/audit_report.json`。画面构成、黑场/无声窗、口播覆盖、语速与字幕问题须逐条解释；建议性发现不拦截渲染，输入或执行失败仍可能使审计无法运行。报告注明当前基准；科技口播的内容政策见 [工作流](../../../templates/tech-talk/references/production-workflow.md)，不把私人语料统计当作所有作品合同。
+
 ## 字幕预检与预览（subs check / preview，2026-09-12 方案四）
 - **`subs check`（零渲染，timeline 层面可跑）**：①字幕窗 vs voice 轨口播窗对齐（重叠取最大重叠窗算起点偏移，无重叠取最近外沿——滞后窗口末端为正/超前窗口起点为负；FAIL ±1.5s / WARN ±0.5s，`--align-threshold` 可调；最近窗距离 >5s 或无 voice 轨 → WARN 不静默，报告 coverage 如实扣减）；②阅读速度 CPS >9 FAIL / >7.5 WARN / <0.6s WARN（与 audit 同基准）；③字幕时间重叠双标 FAIL；④行宽 28 字×2 行 FAIL（PlayResX 1920/Fontsize 58/MarginL-R 60 推算）。报告 `out/subs_check.json` + 人类可读表格，末行 PASS/FAIL（FAIL 退出码 1，可做 CI 门）。
-- **`subs preview <秒|f帧号>...`**：单帧预览图 `out/subs_preview_f<N>.png`，单张 ≤5s。背景三级回退：qc_clean 提帧 → 图层单帧合成（素材不全自动跳过）→ 黑场兜底（WARN，仅审字幕位置/样式）。活跃集判定与真实烧录的 cs 量化逐位一致（`_fc` 同式），烧录用 `ass_head` 同源样式——预览与成片差异仅为成片有损编码噪声（红队 S7 复核口径：跨 ffmpeg 输入路径有 1px 级 AA 差，视觉无差）。
-- **迭代回路**：改字幕 → `subs check` → `subs preview` → 准备当前 gfx 缓存并做区间音画预览 → 完整 `all`。字幕字节参与段键，失效范围由实际覆盖与切段边界决定；单跑正式 video 仍需当前 gfx 成功。配方见 [runbook R2s](runbook.md)。
+- **`subs preview <秒|f帧号>...`**：单帧预览图 `out/subs_preview_f<N>.png`。背景三级回退：qc_clean 提帧 → 图层单帧合成（素材不全自动跳过）→ 黑场兜底（WARN，仅审字幕位置/样式）。活跃集判定与真实烧录的 cs 量化逐位一致（`_fc` 同式），烧录用 `ass_head` 同源样式；实际输入路径与有损编码仍可能产生像素差，不能把字幕预览当作最终成片等价证明。
+修改顺序和音画复核见 [R2s](#r2s--纯字幕修订)。
 
 ## 音频工程（build_audio 内置）
-- **音乐避让（duck）**：音轨声明 `"duck": true`（bed/amb 建议）即被 `"duck_by"`（缺省 `["voice"]`）轨的混音经 `sidechaincompress`（缺省 threshold=0.0126(-38dBFS) / ratio=4 / attack=20ms / release=1500ms / makeup=1，轨级 `duck_params` 可覆盖；2026-09-11 D47 voice-ime 实测校准）压低。**⚠ 新项目启用 duck 前必须先做「duck 开/关」A/B 响度对照，否则长节目下无口播段床乐可能反常抬高约 19dB**；床乐静态电平已足够低（低于口播 ≥5dB）时建议直接不开（破案详录见 DEV.md）。
-- **响度归一（两遍静态增益）**：第一遍 ebur128 实测原始混音 I，第二遍施加恒定 `volume` 增益到 **-14 LUFS（EBU R128，B站标准）**；QC 阶段自动复测，按下方响度终链的同一分级判定。**⚠ 不要用单遍 `loudnorm`（dynamic 模式），长节目上时变增益会随内容游走致区域塌陷**。
-- **响度终链（v2 §1.2，2026-09-13）**：alimiter 限幅（`limit=0.599:level=false:latency=true`）已并入 `vtx audio`（build_audio 尾部，与区间预览统一过 limiter）——out/audio.wav 恒为「归一+限幅」终态，**audio → mux 直连，无独立 post_loudness 步骤**（[既有 WAV 维护边界](#既有-wav-维护)见下方）。终态校验分级：硬 FAIL=TP>-1.0 dBFS/时长漂移 ±1 采样/I 偏离 >3 LU；WARN=I 偏离 ∈(1.5,3]（内容级，发布侧 G2 拦截），≤1.5 静默通过。**编码后解码 TP 终检纪律不变**（G3/qc）。
-- 混音链：轨内子混音（apad 补齐成片全长）→ duck → 总混音（amix normalize=0 保留音量比例）→ 两遍静态增益 -14 LUFS + alimiter 限幅（v2 §1.2 响度终链已并入 vtx audio，无独立 post 步）→ 定长裁切。
-- **BGM 分轨审计包（正式版默认必做）**：正式版本入时间线后，除 vtx 渲染外还须执行 [分轨审计](../../../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)；分轨或音量改动后重跑。用户在 Blender VSE 逐轨静音/独听对比后参与混音与编排裁决（人机协作交付门；完整规程见 music skill「交付门：分轨审计包」节）。命令、产物、缓存与验证边界只在组件说明维护。
+
+轨内子混音补齐全长 → duck → 保留相对比例的总混音 → 两遍静态增益 → limiter → 定长裁切；out/audio.wav 为归一+限幅终态，直接进入 mux，无额外 post_loudness 步骤。响度目标、终链参数及 FAIL/WARN 分级唯一见 [ARCHITECTURE §1.2](../../ARCHITECTURE.md#12-响度终链)。不要换成单遍 dynamic loudnorm；验收还须测 AAC 编码后解码真峰，WAV 通过不代表成片通过。
+
+`duck:true` 由 `duck_by` 指定的轨触发（默认 voice），`duck_params` 可覆盖压缩参数；新项目启用或改变 duck 必做开/关 A/B 及无口播窗口复听，不能据整片 LUFS 掩盖局部抬升。参数与历史故障见 [混音实现](../../../vtx/stages.py) 和 [开发记录](../../reports/development-history.md)。正式 BGM 的分轨审计、用户独听和重跑纪律见 [组件交付门](../../../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)。
 
 ### 既有 WAV 维护
 
@@ -74,27 +199,15 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json clean      # 
 env python3 scripts/audio/normalize_project_audio.py --help
 ```
 
-实际执行是**写操作**：测量、限幅与时长检查后原子替换 WAV，不更新或撤销 audio/mux/qc 回执；重复施加增益不保证字节或响度不变。它不是交付、恢复或补签回执流程，不能用旧成功回执验收新 WAV。需要调整声音时修改 timeline，重跑完整 `vtx all` 并核对成片 QC 与项目内容门；阶段顺序见 [runbook](runbook.md)，终链合同见 [ARCHITECTURE §1.2](../../ARCHITECTURE.md)。
+实际执行是**写操作**：测量、限幅与时长检查后原子替换 WAV，不更新或撤销 audio/mux/qc 回执；重复施加增益不保证字节或响度不变。它不是交付、恢复或补签回执流程，不能用旧成功回执验收新 WAV。需要调整声音时修改 timeline，重跑完整 `vtx all` 并核对成片 QC 与项目内容门；阶段顺序见 [正式交付链](#正式交付链r1-r4-共用)，终链合同见 [ARCHITECTURE §1.2](../../ARCHITECTURE.md)。
 
-## 渲染速度：草稿 / GPU / 缓存
-```bash
-# 迭代预览（不碰正式产物）：540p + NVENC p4，跳过 qc_clean；改动集中片头时加 --frames
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json video --draft --frames 1800
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json mux --draft    # draft.mp4 + audio.wav → draft_final.mp4
-# 正式 GPU 渲染：NVENC p7+tune hq+vbr cq17（1080p 交付透明，下游 4K 重编码无感）
-python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json video --gpu
-```
-头窗 draft 与正式 video 都需要当前 gfx 前置（有 gfx 轨时）；完整示例见 [runbook](runbook.md)。缓存命中与改动窗耗时分开记录，历史测量见 [DEV](../../DEV.md)，不承诺固定渲染时长。
-## 坑表（vtx 已内置规避，手写 ffmpeg 时必看；⚠ 规则+后果，破案详录见 DEV.md）
-- **⚠ `ffprobe -count_frames` 是逐帧解码计数，probe 一律用流头 nb_frames + count_packets 回落**，否则 validate 可能分钟级。
-- **⚠ `-frames:v N` 会触发 filter_complex 全量 drain（所有输入解到 EOF）**，draft 截短须对每路输入加 `-t`。
-- **⚠ NVENC 探测尺寸须 ≥145 宽**，过小报假失败，曾致草稿静默回落 x264——探测失败必须显式告警。
-- **⚠ 正式 mux 用 libfdk_aac 192k**：原生 `aac` 对真人素材（密集瞬态）解码真峰过冲可达 +8.5dB——终检必测编码后解码 TP，不信 wav 域 TP；vtx mux 已自动探测 libfdk_aac 并在缺失时回落+告警。
-- **⚠ qc_clean 由 video 阶段尾部生成**：渲染中断残留截断文件（moov 缺失）会使后续 qc 假失败——rm cache/qc_clean.mp4 重跑 video 即重建。
-- **⚠ 大 graph 下 framesync「窗口开启首帧」配对失败＝整层丢帧/露黑**：vtx 已内置 tpad 首尾克隆垫帧（垫帧量 1/1，加大无效且产片尾 extra 帧）；手写 ffmpeg 大图时同病同方，终检必跑 `blackdetect=d=0.01:pix_th=0.10` 全片零黑帧门。
-- **⚠ 大 graph「层窗口边界密集区」中段丢帧＝连续 PTS 空洞**：vtx 双保险=①`-filter_complex_threads 1`（overlay 链线程化无收益反引竞态）②输出端 `-fps_mode cfr -r {fps}` 复制补帧；交付遇「相邻帧逐字节相同」属预期，定稿前须帧数精确+零黑帧+断点两侧抽验三重确认。
-- **⚠ 帧号权威抽帧一律 `select=eq(n\,F)` 过滤器（配 `-vsync 0`/`-fps_mode passthrough`）**：`-ss` 有 ±1 帧不可靠区，只用于粗定位，否则帧级断言会差 1 帧误判。
-- **⚠ tpad 尾克隆帧会延后视觉切换 1 帧**：做帧级 sfx-演示联动、逐帧比对时须计入。手写 ffmpeg 其他已知坑：1. `overlay` 滤镜输入序是 `[底层][上层]`，反了会把输出缩成上层尺寸；**同尺寸输入时更隐蔽**——不报错不缩放，但 alpha 前景被背景整帧盖住（输出「没有人」，2026-09-13 matte×背景合成预览实锤）。写合成命令先问：哪个输入带 alpha？带 alpha 的一律放第二位。 2. overlay 输入流（PNG 序列/ProRes 中间片）默认从成片 t=0 播放；必须 `setpts=PTS+{in帧}/{fps}/TB` 时移 + `enable='between(t,...)'` 双保险。 3. 本机 ffmpeg 8.1.2 的 VP9 (`yuva420p`) alpha 会丢，透明中间片只用 ProRes 4444（`prores_ks -profile:v 4444 -pix_fmt yuva444p10le`）或 PNG 序列。 4. 帧精确切割用 `trim=start_frame:end_frame` + 重编码；`-ss` 前置是关键帧吸附，禁止用于精确切。 5. 素材必须是 CFR 且帧率 = 项目 fps（VFR 素材先归一化再入库）。 6. 音频循环用 `-stream_loop -1` 输入参数；`aloop` 的 size 参数会预分配巨量内存。 7. 字幕经 ASS 烧录（粒度 1 厘秒 < 1 帧）；音频 adelay 毫秒量化，误差 ≤1ms（契约已声明）。
+## 渲染排错边界
+
+- 帧精确操作使用帧号，不以 `-ss` 粗定位替代断言；素材须 CFR 且匹配项目 fps。透明素材与底层次序、窗口时移、alpha 淡出须在实际合成中检查。
+- QC 的帧数、底轨切点、上层窗口、空窗泄漏、响度和音频能量是有限技术检查；帧数准确或 CFR 补帧不能证明内容正确。检查切点两侧、黑帧与实际视听，不根据单张或 DOM 相等宣称整片通过。
+- 中断产物按 [恢复合同](../../cache-provenance.md#中断与恢复) 处理；不要根据旧建议原位删除 qc_clean 或跳过当前阶段回执。QC 报告在 `out/qc_report.json`。
+- 实现层的 framesync/tpad、probe、NVENC、字幕量化与编码故障分析在 [开发记录](../../reports/development-history.md)，不把旧机器测量当作当前性能或平台资格。
+
 ## timeline.json 契约（速览，v2 轨道等价模型）
 ```jsonc
 {
@@ -138,30 +251,24 @@ gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，
 
 **字幕来源 `subtitles_src`（v2 内核键）**：根级声明 `"subtitles_src": "subs/ep.srt"`（相对 timeline 路径），与根级 `subtitles[]` 互斥——内核只负责引用与烧录（.srt 时间戳按项目 fps 换算整帧 / .json 帧值直用），谁产出该文件（asr/手写/其他工具）内核不感知；文件内容参与回执指纹（改字幕文件即失效重渲）。
 
-**插件键（v2 §2.1 三分支：已装启用=生效 / 未装=报错+安装提示 / 禁用=报错+启用提示；`_meta` 永久自由命名空间）**：
-| 键 | 位置 | 插件 | 行为 |
-|---|---|---|---|
-| `"denoise": true\|{...}` | sources[] | plugins/denoise | 该源 prepare 音频走「陷波→Resemble 仅降噪→48k」链，产物内容寻址 |
-| `"duck_strategy": {"mode":"static",...}` | audio_tracks[] | plugins/duck-static | 床乐静态分段避让（与 `duck:true` 互斥；纯内存变换不写回 timeline） |
-| `"bgm": true\|{"output","extra_deps"}` | sources[] | plugins/bgm-render | **音轨直接引用 music_tools 工程 JSON**：validate 期供时长 facts，prepare 期自动 `bgm render` → 48k stereo s16 落内容寻址键（`output`：`master` 母带 / `premaster` 母前 / `stem:<轨名>` 该轨总线分轨 `stems/<轨>.bus.wav`，video 侧自行混音，轨名 `^[A-Za-z0-9][A-Za-z0-9_.-]*$`）；`extra_deps` 文件/目录均可（目录递归内容签名）；一工程共享渲染缓存 `cache/bgm/` 只渲一次多源派生，陈旧渲染目录由 `vtx gc` 键级回收（在用保活）；缓存命中零渲染/工程·$ref·参数变更自动重渲；详见 plugins/bgm-render/README.md |
-| `"blender_bridge": true\|{"out","verify"}` | 根级 | plugins/blender-bridge | `vtx all` 全链（qc 后）自动导出 Blender 审片工程（默认 `<项目>/preview.blend`），配置即导出免手敲命令 |
-未知键警告不阻断；插件未装/禁用时写键会 validate FAIL 并给出安装/启用指引。协议权威见 `docs/ARCHITECTURE.md` §2。
-## QC 检查项语义（qc 阶段自动执行）
-- 成片帧数/时长/分辨率与 project 声明一致
-- **底轨切点帧比对**：底轨（tracks[0]）每个切片在成片与源素材（同变换）间做像素比对——证明切点落在声明的帧上
-- **上层窗口生效**：tracks[1:] 每个 clip 采样帧与底轨基准（qc_clean）的均值差或覆盖率达标——防"叠加层出现在错误时间"
-- **空窗无泄漏**：无上层覆盖的帧上不应有叠加残留
-- **响度归一**：整合响度 ≈ -14 LUFS（±1.5，EBU R128）
-- **音频并发窗口响度**：最大并发轨数的窗口有能量
-## 与其他文档/资产的衔接
-- HTML 动效页面（gfx/*.html）的编写与设计 → [gfx](gfx.md)（帧驱动协议、样式模板）。
-- 科技口播选题、脚本、拍摄与编排 → `<video_tools>/templates/tech-talk/references/production-workflow.md`；编排前读同目录 `narrative.md`，音频口径见同目录 `audio-mixing.md`。历史源件出处保留在各文档。
-- 现成音频资产在工作区 `_library/assets_audio/`（Kenney/Mixkit/Sonniss 音效库 + bgm/ AI 试听样，许可登记见其 LICENSE.md；各期 timeline 以 `../_library/assets_audio/...` 相对引用）；本地 BGM 产线路由进 `music` skill（`~/.agents/skills/music/`）。
-- 用户手剪回读协议（blend2json→ASR→用户权威文本对照）→ `<video_tools>/apps/blender-bridge/README.md`「用户手剪回读协议」。
-- 拍摄规范 → `<video_tools>/templates/tech-talk/references/shooting.md`（速查）/ 同目录 `shooting-guide.md`（通用手册）；项目装备记录与通用操作指引分开。
-## 三大生成模块（asr/tts/imgen）产线接口
-三模块默认关闭（v2 迁至 `apps/asr|tts|imgen`）。开启：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等，复用本机已有资产优先）→ `config.local.json` 对应条目 `enabled:true`（模板见 `config.example.json`）。三模块互不依赖、与 vtx 零耦合，唯一耦合面 = 项目目录文件契约（timeline.json / assets/**）。
-- **字幕锚定工作流（apps/asr/，口播→subtitles[]）**：口播音频/成片 → `python3 apps/asr/asr_cli.py timeline <音频> -t <项目>/timeline.json`——sidecar 转写 + 字级时间戳 → 文本规范化断句（口水词清除/行宽 ≤18/最短 0.6s）→ subtitles[] 就地合并（旧值自动备份进 `cache/reports/`）。**合并后必须 `vtx validate` + `audit` 复核**：阅读速度 ≤9 字/s、告警逐条人工解释后才可进 `video` 阶段烧录。长音频库内自动分块（±5s 低能量边界）；`--dry-run` 只预览。端口纪律：**18081 是 IME 输入法 sidecar，本仓 ASR sidecar 默认 18085**（config `asr.base_url`）。
-- **TTS 占位→实录替换衔接（apps/tts/）**：`python3 apps/tts/tts_cli.py spec -t <项目>/timeline.json` 从 voice 轨 `vt_<ID>` 事件链反推每窗预算（budget=Σ链帧/30+0.02s）成 spec.json（人工校对文本）→ `python3 apps/tts/tts_cli.py gen <spec.json> --project <项目> [--engine edge]` → 产物落 **`<项目>/assets/voice_tts/final/<窗口ID>.wav`**（48kHz/mono/pcm_s16le，时长=budget±0.02s）。实录替换链同构：用户按窗录音进 `assets/voice_takes/<ID>.wav` → `python3 apps/sync/repack_voice.py -t <项目>/timeline.json` 替换占位（用法见 `--help`）→ 运行完整 `all` 正式交付，局部诊断前置见 [runbook](runbook.md)。IndexTTS 需 repo+专用解释器；`--engine edge` 免 GPU 兜底（晓晓）。
-- **背景图 bg4k 硬接口（apps/imgen/）**：`python3 apps/imgen/imgen_cli.py gen "<prompt>" --out <项目> --kind bg4k --yes` → 生图 API 生成 + lanczos cover-crop 到**恰好 3840×2160、8-bit RGB PNG** 落 `assets/bg/background_4k.png`——matting `apps/matting/run_full_bg.sh` 的 cv2.imread 直读逐像素合成，尺寸/像素格式不符即链断（模块内置 ffprobe 断言）。`bg1080p`/`vertical` 变体供口播底图；离线补裁 `apps/imgen/imgen_cli.py postprocess <原图> --kind bg4k -o <目标>`。**付费纪律：0.1 元/张，提交前确认门（无 `--yes` 时交互 y/N，非 TTY 直接中止）；审核拒绝不退款**；生成 URL 2 小时失效，原图留档 `assets/imgen/`。
-- **抠像与背景合成（apps/matting/）**：真人实拍抠像 → 带 alpha ProRes4444 → 与背景合成，全流程见 `apps/matting/matting.md`（v2 自本 skill 迁入 app 目录；resolve_matte 达芬奇 Magic Mask 为主力，`run_full_bg.sh` 自研链为历史备用）。
+## 插件与素材工具
+
+插件键遵守三分支：已安装启用才生效；未安装/禁用分别报错并提示安装/启用；未知键仍警告，`_meta` 为自由命名空间。键面和协议分别以 [组件目录](../../catalog.md) 与 [兼容门](../../reference/plugin-core-compatibility.md) 为准；不要靠改版本标签绕过协议检查。
+
+| 任务 | 唯一配方入口 | 回到渲染链前的检查 |
+|---|---|---|
+| denoise / 静态 duck / BGM 工程 / Blender finish | [denoise](../../../plugins/denoise/README.md)、[duck-static](../../../plugins/duck-static/README.md)、[bgm-render](../../../plugins/bgm-render/README.md)、[blender-bridge](../../../plugins/blender-bridge/README.md) | 按项目声明启用，检查当前 prepare 与 finish 结果 |
+| ASR 字幕锚定 | [ASR](../../../apps/asr/README.md) | 修改 timeline 前保留备份；先 dry-run，再 validate/audit 和 R2s |
+| TTS 占位与实录替换 | [TTS](../../../apps/tts/README.md)、[sync/repack](../../../apps/sync/README.md) | 先核对窗口与源文件，替换须备份；按 R1 验证后完整 all |
+| 背景生成与 alpha 合成 | [imgen](../../../apps/imgen/README.md)、[matting](../../../apps/matting/matting.md) | 生成付费先确认；尺寸、色彩/alpha 与背景接口按组件核验 |
+| 科技口播 / 拍摄 / 内容门 | [tech-talk](../../../templates/tech-talk/SKILL.md) | 使用项目工作流，不把工作流审美规则扩大为内核限制 |
+
+应用为可选素材工具，不是基础渲染前置；初始化/启用、外部服务、费用与文件契约只在组件说明维护。已声明插件的依赖仍是当前项目必要条件，不能以“可选”跳过。素材许可和实际路径由项目核验，不假定私人资产库存在。
+
+## 主控-子智能体棒次协议
+
+页面/模块边界先依 [HTML 创作组织](gfx.md#html-创作组织) 写入任务书；一棒不等于一个 HTML、clip 或轨道。
+
+1. 任务书写明仓库/项目路径、目标、允许修改范围、输出位置、验证与提交权限。
+2. 报告写结论、改动与证据、实际运行命令及耗时、遗留问题；分清通过、失败和未运行。项目报告保存在约定的持久目录，不依赖可清理临时缓存。
+3. 渲染中间物用项目 `cache/tmp/<runid>/`，留证用 `cache/reports/`；不要假定所有机器的系统 `/tmp` 都是磁盘或都可存放大文件。

@@ -193,9 +193,14 @@ class TemplateLayout(unittest.TestCase):
 
     def test_tool_skill_routes_and_deeper_dev_links(self):
         skill = REPO / "docs/skill"
-        self.assertIn("name: video\n", (skill / "SKILL.md").read_text())
-        for name in ("edit", "gfx", "runbook"):
+        skill_text = (skill / "SKILL.md").read_text()
+        self.assertIn("name: video\n", skill_text)
+        for name in ("edit", "gfx"):
             self.assertTrue((skill / "references" / (name + ".md")).is_file())
+        self.assertFalse(os.path.lexists(skill / "references/runbook.md"))
+        self.assertIn("(references/edit.md)", skill_text)
+        self.assertIn("(references/gfx.md#html-创作组织)", skill_text)
+        self.assertNotIn("references/runbook.md", skill_text)
         for name in ("edit", "gfx"):
             path = skill / "references" / (name + ".md")
             self.assertIn("../../DEV.md", path.read_text())

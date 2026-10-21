@@ -33,7 +33,7 @@ NVENC 并发纪律（跨进程，对齐 vtx/encoders.py「NVENC 会话预算」�
 产出后跑规格断言：
   bash $VIDEO_TOOLS/apps/publish/check_4k.sh out/final_4k.mp4
 
-来源：docs/plans-2026-09-11/方案三 阶段2。
+来源：https://github.com/CongliangK/framivra/tree/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/plans-2026-09-11 （方案三阶段2）。
 """
 import argparse
 import hashlib
