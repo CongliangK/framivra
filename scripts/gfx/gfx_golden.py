@@ -106,6 +106,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -691,6 +692,9 @@ def cmd_build(args) -> int:
     # ---- 定位 + 完整性预检：任一目录/帧缺失 → 列全问题后退出非零（golden 必须完整）
     errors, plan = [], []
     for src, dur in clips:
+        if type(dur) is not int or dur <= 0:
+            errors.append(f"无有效帧工作量: {src} dur={dur}")
+            continue
         html = c.root / src
         if not html.exists():
             errors.append(f"html 缺失: {src}")
@@ -821,6 +825,49 @@ def cmd_compare(args) -> int:
               f"{len(g.get('pages', {}))} 页）")
         return 1
 
+    # A selected page/instance must carry actual frame proof; an empty map is
+    # not an all-equal comparison. Full mode must retain its full-frame claim.
+    evidence_errors = []
+    for src, pv in sel.items():
+        durs = pv.get("durs") if isinstance(pv, dict) else None
+        if not isinstance(durs, dict) or not durs:
+            evidence_errors.append(f"{src}: 无实例证据")
+            continue
+        for key, inst in durs.items():
+            if not isinstance(inst, dict):
+                evidence_errors.append(f"{src} dur={key}: 实例证据无效")
+                continue
+            dur, frames = inst.get("dur"), inst.get("frames")
+            if type(dur) is not int or dur <= 0 or key != str(dur):
+                evidence_errors.append(f"{src} dur={key}: 时长证据无效")
+                continue
+            if not isinstance(frames, dict) or not frames:
+                evidence_errors.append(f"{src} dur={dur}: 无帧证据")
+                continue
+            if any(not re.fullmatch(r"[0-9]{4,}", fk) or fk != f"{int(fk):04d}"
+                   or int(fk) >= dur or not isinstance(digest, str)
+                   or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                   for fk, digest in frames.items()):
+                evidence_errors.append(f"{src} dur={dur}: 帧号/像素哈希证据无效")
+            if inst.get("mode") not in ("sample", "full"):
+                evidence_errors.append(f"{src} dur={dur}: 抽样模式无效")
+            elif inst["mode"] == "full" and set(frames) != {f"{i:04d}" for i in range(dur)}:
+                evidence_errors.append(f"{src} dur={dur}: full 证据不完整")
+            elif inst["mode"] == "sample":
+                sample = meta.get("sample")
+                if type(sample) is not int or sample <= 0:
+                    evidence_errors.append(f"{src} dur={dur}: 抽样数量证据无效")
+                elif set(frames) != {f"{i:04d}" for i in sample_frames(dur, sample)}:
+                    evidence_errors.append(f"{src} dur={dur}: sample 证据不完整")
+    if evidence_errors:
+        for error in evidence_errors:
+            print(f"✗ golden {error}")
+        if args.report:
+            atomic_write(Path(args.report), json.dumps(
+                {"ok": False, "compared_frames": 0, "evidence_errors": evidence_errors},
+                ensure_ascii=False, indent=1))
+        return 1
+
     # ---- 交叉核对 timeline 页集（B3）：timeline 有而 golden 未记录的 gfx 页 → 警告列出
     unrecorded = []
     for src, dur in gfx_clips(c):
@@ -862,12 +909,13 @@ def cmd_compare(args) -> int:
     # 后未重渲，比对恒等、无意义。默认显式警告不阻断；--strict 判失败（验收口径）。
     # 容差 2s：meta.built 字符串秒级截断，帧可能写在同一秒内但 mtime 略晚。
     stale = False
+    freshness_error = None
     try:
         built = time.mktime(time.strptime(meta.get("built", ""), "%Y-%m-%d %H:%M:%S"))
         newest = max(p.stat().st_mtime for _l, p in tasks)
         stale = bool(tasks) and newest <= built + 2
-    except (ValueError, TypeError, OSError):
-        stale = False    # built 缺失/不可解析或 stat 失败：无法判定，不拦截
+    except (ValueError, TypeError, OSError) as error:
+        freshness_error = str(error) or "无新鲜度证据"
 
     # ---- 逐实例比对
     identical, differ = [], []
@@ -883,11 +931,11 @@ def cmd_compare(args) -> int:
                 differ.append({"src": src, "dur": dur, "mode": inst.get("mode"),
                                "frame": diffs[0][0], "golden": diffs[0][1],
                                "current": diffs[0][2], "n_diff_frames": len(diffs)})
-            else:
+            elif all((src, dur, fk) in cur for fk in inst["frames"]):
                 identical.append({"src": src, "dur": dur, "mode": inst.get("mode"),
-                                  "n_frames": sum((src, dur, fk) in cur for fk in inst.get("frames", {}))})
+                                  "n_frames": len(inst["frames"])})
 
-    ok = not (differ or dir_missing or unreadable)
+    ok = bool(cur) and not (differ or dir_missing or unreadable)
     n_full = sum(1 for x in identical if x.get("mode") == "full")
     n_cmp = len(cur)  # successful hashes/comparisons, including matching frames in differing instances
     print(f"== gfx golden 比对（{len(sel)} 页，{n_cmp} 帧，golden 构建于 "
@@ -903,7 +951,9 @@ def cmd_compare(args) -> int:
               f"（内容/键已变？重建 golden 或先渲染）")
     for u in unreadable:
         print(f"  ✗ 帧缺失/损坏  {u['src']} dur={u['dur']} f{u['frame']}.png（{u['why']}）")
-    if stale and args.strict:
+    if freshness_error:
+        print(f"⚠ 新鲜度无法判定: {freshness_error}")
+    if (stale or freshness_error) and args.strict:
         ok = False    # 新鲜度防线在 --strict 下判失败（验收口径）
     if ok and stale:
         print("⚠ 新鲜度防线：被比帧 mtime 全部 ≤ golden 构建时间——缓存未重渲，比对无意义"
@@ -915,7 +965,7 @@ def cmd_compare(args) -> int:
               f"帧缺失损坏 {len(unreadable)}"
               + ("；缓存未重渲（--strict）" if stale else ""))
     if args.report:
-        report = {"ok": ok, "stale": stale, "golden": str(gp), "timeline": str(Path(args.timeline)),
+        report = {"ok": ok, "stale": stale, "freshness_error": freshness_error, "golden": str(gp), "timeline": str(Path(args.timeline)),
                   "compared_frames": n_cmp, "identical": identical, "differ": differ,
                   "dir_missing": dir_missing, "missing_or_unreadable": unreadable,
                   "unrecorded": unrecorded, "env_gate": gate}

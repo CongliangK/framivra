@@ -21,6 +21,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -73,6 +74,9 @@ class GfxGolden(unittest.TestCase):
     def setUp(self):
         from tests.gfx._environment import bind_environment
         bind_environment(self)
+        browser = mock.patch.object(gg, "chrome_version", return_value="unit fixture; not real browser")
+        browser.start()
+        self.addCleanup(browser.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
@@ -272,6 +276,77 @@ class GfxGolden(unittest.TestCase):
         self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(g)]), 0)
         self.assertTrue(g.exists())
         self.assertFalse((self.root / "golden.json.tmp").exists())
+
+
+    def test_build_zero_duration_has_no_frame_proof(self):
+        tp = _project(self.root, [("a.html", 0)])
+        context = gg.make_ctx(tp)
+        gg.hygiene.gfx_dir(context, {"src": "a.html", "dur": 0}).mkdir(parents=True)
+        golden = self.root / "golden.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(golden)]), 1)
+        self.assertFalse(golden.exists())
+
+    def test_missing_golden_proof_cannot_pass(self):
+        clips = [("a.html", 4)]
+        tp = _project(self.root, clips)
+        _fill_cache(tp, clips)
+        golden, report = self.root / "golden.json", self.root / "report.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(golden),
+                                  "--full-pages", "a.html"]), 0)
+        original = golden.read_text()
+        for fault in ("empty_durs", "empty_frames", "missing_full_frame", "missing_sample_frame", "bad_hash", "zero_duration"):
+            with self.subTest(fault=fault):
+                doc = json.loads(original)
+                inst = doc["pages"]["a.html"]["durs"]["4"]
+                if fault == "empty_durs":
+                    doc["pages"]["a.html"]["durs"] = {}
+                elif fault == "empty_frames":
+                    inst["frames"] = {}
+                elif fault == "missing_full_frame":
+                    del inst["frames"]["0001"]
+                elif fault == "missing_sample_frame":
+                    inst["mode"] = "sample"
+                    del inst["frames"]["0001"]
+                elif fault == "bad_hash":
+                    inst["frames"]["0001"] = ""
+                else:
+                    inst["dur"] = 0
+                golden.write_text(json.dumps(doc))
+                self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(golden),
+                                          "--report", str(report)]), 1)
+                self.assertFalse(json.loads(report.read_text())["ok"])
+
+    def test_strict_requires_parseable_freshness_evidence(self):
+        clips = [("a.html", 4)]
+        tp = _project(self.root, clips)
+        _fill_cache(tp, clips)
+        golden, report = self.root / "golden.json", self.root / "report.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(golden)]), 0)
+        doc = json.loads(golden.read_text())
+        doc["meta"]["built"] = "unknown"
+        golden.write_text(json.dumps(doc))
+        argv = ["compare", "-t", str(tp), "--golden", str(golden), "--report", str(report)]
+        self.assertEqual(gg.main(argv), 0)  # legacy comparison is explicitly not strict
+        self.assertIsNotNone(json.loads(report.read_text())["freshness_error"])
+        self.assertEqual(gg.main(argv + ["--strict"]), 1)
+        doc["meta"]["built"] = "2000-01-01 00:00:00"
+        golden.write_text(json.dumps(doc))
+        self.assertEqual(gg.main(argv + ["--strict"]), 0)
+
+    def test_unreadable_instance_not_reported_as_identical(self):
+        clips = [("a.html", 4)]
+        tp = _project(self.root, clips)
+        _fill_cache(tp, clips)
+        golden, report = self.root / "golden.json", self.root / "report.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(golden)]), 0)
+        directory = gg.hygiene.gfx_dir(gg.make_ctx(tp), {"src": "a.html", "dur": 4})
+        for path in directory.glob("*.png"):
+            path.unlink()
+        self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(golden),
+                                  "--report", str(report)]), 1)
+        rep = json.loads(report.read_text())
+        self.assertEqual(rep["identical"], [])
+        self.assertEqual(rep["compared_frames"], 0)
 
 
 # --------------------------------- #104 三级像素裁决：合成帧构造器（DoD 四类）
@@ -915,6 +990,13 @@ class AnalyzePerf(unittest.TestCase):
 
 
 class CompareCountRegression(unittest.TestCase):
+    def setUp(self):
+        from tests.gfx._environment import bind_environment
+        bind_environment(self)
+        browser = mock.patch.object(gg, "chrome_version", return_value="unit fixture; not real browser")
+        browser.start()
+        self.addCleanup(browser.stop)
+
     def test_difference_and_missing_count_only_successful_comparisons(self):
         with tempfile.TemporaryDirectory() as td, contextlib.redirect_stdout(io.StringIO()):
             root = Path(td)
