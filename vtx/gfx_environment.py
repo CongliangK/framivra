@@ -419,7 +419,8 @@ def _collect_darwin(backend, binary, mode):
                              {k for k in os.environ if k.startswith(('LC_', 'DYLD_', '__XPC_DYLD_', '__CF_'))})},
             'launch_flags': (list(CHROME_VISUAL_FLAGS) if backend == 'cdp' else
                              ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
-                              '--use-mock-keychain']),
+                              '--use-mock-keychain', '--windowless-frame-rate=' +
+                              os.environ.get('VTX_CEF_WINDOWLESS_FRAME_RATE', '30')]),
             'protocol': {'device_scale': 1, 'color': 'srgb',
                          'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
@@ -859,7 +860,9 @@ def collect(backend, binary, mode=None):
                 'system_locale': _files(p for p in ('/etc/localtime', '/etc/locale.conf')
                                         if Path(p).exists()),
                 'launch_flags': list(CHROME_VISUAL_FLAGS) if backend != 'cef' else
-                    ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact'],
+                    ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
+                     '--windowless-frame-rate=' +
+                     os.environ.get('VTX_CEF_WINDOWLESS_FRAME_RATE', '30')],
                 'protocol': {'device_scale': 1, 'color': 'srgb',
                              'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
                 'python_runtime': _python_runtime(),
@@ -873,13 +876,14 @@ def collect(backend, binary, mode=None):
 
 def resolve(c):
     """Pin one environment to a context; recheck() never adopts new inputs."""
-    from .gfx_backend import selected, cef_config
+    from .gfx_backend import selected, cef_config, cef_windowless_frame_rate
     from .encoders import find_chrome
     backend = selected()
     if backend == 'electron':
         return None  # frozen historical identity owned by gfx_backend
     selector = (backend, os.environ.get('VTX_CHROME'), os.environ.get('VTX_CEF_WORKER'),
-                os.environ.get('VTX_CEF_MODE'), tuple(os.environ.get(k) for k in PIXEL_ENV))
+                os.environ.get('VTX_CEF_MODE'), os.environ.get('VTX_CEF_WINDOWLESS_FRAME_RATE'),
+                tuple(os.environ.get(k) for k in PIXEL_ENV))
     if platform.system() == 'Darwin':
         selector += (tuple(sorted((k, v) for k, v in os.environ.items()
                      if k.startswith(('DYLD_', '__XPC_DYLD_', '__CF_')) or k == 'CFFIXED_USER_HOME')),)
@@ -891,7 +895,11 @@ def resolve(c):
         # Loading/validating a timeline remains possible without a renderer.
         # Unknown is diagnostic data, never a cache eligibility certificate.
         with contextlib.redirect_stdout(io.StringIO()):
-            binary, mode = cef_config() if backend == 'cef' else (find_chrome(), None)
+            if backend == 'cef':
+                binary, mode = cef_config()
+                cef_windowless_frame_rate()
+            else:
+                binary, mode = find_chrome(), None
         record = collect(backend, binary, mode)
     except (EnvironmentError, OSError, SystemExit) as error:
         record = {'schema': SCHEMA, 'status': 'unknown', 'backend': backend,

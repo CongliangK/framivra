@@ -77,6 +77,7 @@ struct RunOptions {
   std::string out_json;          // 空 = 不落结果 JSON
   std::string root_cache_path;   // 空 = 临时目录（退出时删除）
   int begin_frames = 6;          // load 后驱动的 external begin frame 数
+  int windowless_frame_rate = 30; // --windowless-frame-rate: 30|60
   int timeout_ms = 45000;        // 阶段等待上限
   int hold_ms = 0;               // 出帧后保持渲染的时长（kill 演练用）
   int parent_alive_fd = -1;      // 监管器父存活管道读端
@@ -122,6 +123,7 @@ void Usage(const char* argv0) {
       "  --out-json=<path>       输出运行结果 JSON（探针证据/计时/版本）\n"
       "  --root-cache-path=<dir> CEF root_cache_path（监管器运行目录；缺省临时目录）\n"
       "  --width=N --height=N    视口尺寸（默认 1920x1080）\n"
+      "  --windowless-frame-rate=30|60 CEF OSR maximum OnPaint rate (default 30)\n"
       "  --probe                 注入 WebGL/WebGPU 真实后端探针\n"
       "  --probe-gpu-page        渲染后再导航 chrome://gpu 提取特性（隐含 --probe）\n"
       "  --begin-frames=N        load 后驱动的 external begin frame 数（默认 6）\n"
@@ -202,6 +204,7 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
       opt->root_cache_path = v;
     } else if (num("--width=", &opt->cef.width)) {
     } else if (num("--height=", &opt->cef.height)) {
+    } else if (num("--windowless-frame-rate=", &opt->cef.windowless_frame_rate)) {
     } else if (num("--begin-frames=", &opt->begin_frames)) {
     } else if (num("--timeout-ms=", &opt->timeout_ms)) {
     } else if (num("--hold-ms=", &opt->hold_ms)) {
@@ -253,6 +256,12 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
   if (opt->cef.mode != "a0" && opt->cef.mode != "a1") {
     std::fprintf(stderr, "--mode 只接受 a0|a1，得到 %s\n",
                  opt->cef.mode.c_str());
+    return false;
+  }
+  if (opt->cef.windowless_frame_rate != 30 &&
+      opt->cef.windowless_frame_rate != 60) {
+    std::fprintf(stderr, "--windowless-frame-rate 只接受 30|60，得到 %d\n",
+                 opt->cef.windowless_frame_rate);
     return false;
   }
   // #111：编码后端名与级别在参数面即拒非法值（exit 2，不静默回落）。
@@ -638,7 +647,7 @@ int main(int argc, char* argv[]) {
     CefString url_str;
     url_str.FromString(opt.url);
     if (!vtx_cef::CreateOsrBrowser(client, url_str, opt.cef.width,
-                                   opt.cef.height)) {
+                                   opt.cef.height, opt.cef.windowless_frame_rate)) {
       exit_code = 1;
       exit_reason = "CreateBrowser 失败";
       break;

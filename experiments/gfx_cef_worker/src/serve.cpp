@@ -3,12 +3,12 @@
 // 线程模型：
 //   - 主线程：CEF UI（外置泵）+ 请求循环（导航/捕获/槽发布/回执）——
 //     OnPaint 与请求处理同线程，捕获装配无跨线程竞态；
-//   - 编码线程池（MiniPool）：模式 1 的逆预乘 + PNG 编码 + 原子落盘
+//   - 编码线程池（SerialEncodeJob）：模式 1 的逆预乘 + PNG 编码 + 原子落盘
 //     （工单「本地线程池完成」；等待期间主线程持续泵 CEF）；
 //   - --parent-alive-fd 守卫线程：main() 装配（#109 契约，本文件不重置）。
 //
 // 退出码：0 = 宿主 EOF 优雅收尾；1 = 致命初始化失败；3 = 协议错误
-// （magic/版本/路径非法）；4 = 请求中途连接断裂；5 = 空闲超时。
+// （magic/版本/路径非法）；4 = 请求中途连接断裂/编码超时；5 = 空闲超时。
 #include "serve.h"
 
 #include <fcntl.h>
@@ -17,21 +17,19 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include <atomic>
 #include <cerrno>
-#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <functional>
-#include <thread>
+#include <memory>
 #include <vector>
 
 #include "frame_pipeline.h"
 #include "ipc_protocol.hpp"
 #include "png_writer.h"
+#include "serial_encode_job.h"
 #include "shm_ring.hpp"
 
 #include "include/cef_app.h"
@@ -119,60 +117,44 @@ bool SendHelloWithFd(int conn, const HelloInfo& hello, int shm_fd) {
 
 // ---------------------------------------------------------------- 编码线程池
 
-// 最小线程池：Post 提交单任务（顺序契约：上次任务须已完成），主线程以
-// pump 等待 Done —— 重活不占 CEF UI 线程，等待期浏览器任务仍被驱动。
-class MiniPool {
- public:
-  explicit MiniPool(int n) {
-    if (n < 1) {
-      n = 1;
-    }
-    for (int i = 0; i < n; ++i) {
-      workers_.emplace_back([this] { Loop(); });
-    }
-  }
-  ~MiniPool() {
-    {
-      std::lock_guard<std::mutex> lock(mu_);
-      stop_ = true;
-      work_cv_.notify_all();
-    }
-    for (auto& t : workers_) {
-      t.join();
-    }
-  }
-  void Post(std::function<void()> task) {
-    std::lock_guard<std::mutex> lock(mu_);
-    task_ = std::move(task);
-    done_.store(false, std::memory_order_release);
-    work_cv_.notify_one();
-  }
-  bool Done() const { return done_.load(std::memory_order_acquire); }
-
- private:
-  void Loop() {
-    for (;;) {
-      std::unique_lock<std::mutex> lock(mu_);
-      work_cv_.wait(lock, [this] { return stop_ || task_ != nullptr; });
-      if (stop_ && task_ == nullptr) {
-        return;
-      }
-      auto task = std::move(task_);
-      task_ = nullptr;
-      lock.unlock();
-      if (task) {
-        task();
-      }
-      done_.store(true, std::memory_order_release);
-    }
-  }
-  std::vector<std::thread> workers_;
-  mutable std::mutex mu_;
-  std::condition_variable work_cv_;
-  std::function<void()> task_;
-  std::atomic<bool> done_{true};
-  bool stop_ = false;
+// The job owns everything an encoder can access, including the moved capture
+// storage. No per-request stack variables or RunState are shared with a worker.
+struct EncodePayload {
+  std::vector<uint8_t> bgra;
+  std::vector<uint8_t> rgba;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  PngEncodeOptions png;
+  std::string out_path;
 };
+
+struct EncodeResult {
+  bool delivered = false;
+  uint64_t t_alpha = 0;
+  uint64_t t_png = 0;
+  uint64_t t_disk = 0;
+};
+
+EncodeResult EncodeFrame(EncodePayload& payload) {
+  EncodeResult result;
+  const uint64_t t2 = NowUs();
+  UnpremultiplyToRgba(payload.bgra.data(),
+                      static_cast<size_t>(payload.width) * payload.height * 4u,
+                      payload.rgba.data());
+  result.t_alpha = NowUs() - t2;
+  std::vector<uint8_t> png;
+  const uint64_t t3 = NowUs();
+  const bool enc = EncodePngRgba(payload.rgba.data(),
+                                static_cast<int>(payload.width),
+                                static_cast<int>(payload.height),
+                                payload.png, &png);
+  result.t_png = NowUs() - t3;
+  const uint64_t t4 = NowUs();
+  result.delivered =
+      enc && AtomicWriteBytes(payload.out_path, png.data(), png.size());
+  result.t_disk = NowUs() - t4;
+  return result;
+}
 
 // ---------------------------------------------------------------- 帧生产
 
@@ -658,6 +640,7 @@ static bool ResampleExactBaseline(RunState& signed_state, PumpDriver& pump,
   window.external_begin_frame_enabled = true;
   CefBrowserSettings settings;
   settings.background_color = 0;
+  settings.windowless_frame_rate = opt.cef.windowless_frame_rate;
   const auto request = machine.request();
   const std::string url = ExpandUrlTemplate(opt.url_template, request.target_frame_index);
   PrepareJsDocument(*state, url);
@@ -1099,7 +1082,8 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   CefString initial_url;
   initial_url.FromString("about:blank");
   CefRefPtr<WorkerClient> client = new WorkerClient(&cef_opt, &state);
-  CreateOsrBrowser(client, initial_url, cef_opt.width, cef_opt.height);
+  CreateOsrBrowser(client, initial_url, cef_opt.width, cef_opt.height,
+                   cef_opt.windowless_frame_rate);
   if (!pump.Until(
           [&] {
             std::lock_guard<std::mutex> lock(state.mu);
@@ -1242,9 +1226,9 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   }
 
   // ---- 请求主循环 ----
-  MiniPool pool(opt.encode_threads);
   const size_t frame_bytes = ring->geometry().frame_bytes;
   std::vector<uint8_t> rgba(frame_bytes);
+  SerialEncodeJob<EncodePayload, EncodeResult> encode_job(opt.encode_threads);
   uint32_t document_gen = 0;
   uint32_t ok_replies = 0;
   int exit_code = 0;
@@ -1322,36 +1306,61 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
                          req.frame_index, opt, document_gen);
       }
       uint64_t t_alpha = 0, t_png = 0, t_disk = 0;
-      bool deliver_ok = r.status == kStatusOk;
-      if (deliver_ok) {
-        uint64_t t2 = 0, t3 = 0, t4 = 0;
-        pool.Post([&] {
-          t2 = NowUs();
-          UnpremultiplyToRgba(state.cap_staging.data(),
-                              static_cast<size_t>(r.width) * r.height * 4u,
-                              rgba.data());
-          t_alpha = NowUs() - t2;
-          std::vector<uint8_t> png;
-          t3 = NowUs();
-          const bool enc =
-              EncodePngRgba(rgba.data(), static_cast<int>(r.width),
-                            static_cast<int>(r.height), opt.png, &png);
-          t_png = NowUs() - t3;
-          t4 = NowUs();
-          deliver_ok = enc && AtomicWriteBytes(out_path, png.data(), png.size());
-          t_disk = NowUs() - t4;
-        });
-        pump.Until([&] { return pool.Done(); }, 60000);  // 泵着等编码完成
-        if (!deliver_ok) {
-          r.status = kStatusJsErr;  // 落盘失败以非 OK 码显形（复用 3 号档）
-          std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘失败 %s\n",
+      bool encode_terminal = false;
+      if (r.status == kStatusOk) {
+        auto payload = std::make_unique<EncodePayload>();
+        payload->width = r.width;
+        payload->height = r.height;
+        payload->png = opt.png;
+        payload->out_path = out_path;
+        payload->rgba = std::move(rgba);
+        {
+          std::lock_guard<std::mutex> lock(state.mu);
+          state.capture_armed = false;
+          state.sync_capture_armed = false;
+          state.cap_dst = nullptr;
+          payload->bgra = std::move(state.cap_staging);
+        }
+        const bool started = encode_job.Start(std::move(payload), EncodeFrame);
+        const bool completed =
+            started && pump.Until([&] { return encode_job.Done(); }, 60000);
+        if (!encode_job.FinishWait(completed)) {
+          // Late success must never reverse a deadline. Retain the job's buffers
+          // until drain/host termination; never receive another request here.
+          r.status = kStatusTimeout;
+          encode_terminal = true;
+          std::fprintf(stderr, "vtx_cef_worker: PNG 编码超时，关闭连接 %s\n",
                        out_path.c_str());
+        } else {
+          auto done = encode_job.TakeCompleted();
+          if (done) {
+            rgba = std::move(done->payload->rgba);
+            {
+              std::lock_guard<std::mutex> lock(state.mu);
+              state.cap_staging = std::move(done->payload->bgra);
+            }
+          }
+          if (!done || done->error || !done->result ||
+              !done->result->delivered) {
+            r.status = kStatusJsErr;  // 编码/落盘/异常均不可作为 OK 交付。
+            std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘失败 %s\n",
+                         out_path.c_str());
+          }
+          if (done && done->result) {
+            t_alpha = done->result->t_alpha;
+            t_png = done->result->t_png;
+            t_disk = done->result->t_disk;
+          }
         }
       }
       FrameSlotHeader receipt;
       FillReceipt(&receipt, r, run_id, req.request_id, req.frame_index,
                   t_alpha, t_png, t_disk);
       if (!SendAll(conn, &receipt, sizeof(receipt))) {
+        exit_code = 4;
+        break;
+      }
+      if (encode_terminal) {
         exit_code = 4;
         break;
       }
@@ -1453,6 +1462,10 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   // ---- 收尾：关连接 → 关浏览器 → CefShutdown → 清理 ----
   ::shutdown(conn, SHUT_RDWR);
   ::close(conn);
+  // A codec/write call cannot be safely killed as a C++ thread. Stop accepting
+  // work and join with its owned buffers/scratch intact. If it never returns,
+  // the existing host supervisor terminates the process; no timeout OK is sent.
+  encode_job.StopAndDrain();
   {
     std::lock_guard<std::mutex> lock(state.mu);
     state.sync_machine = nullptr;  // 先摘除再析构（防御晚回调）

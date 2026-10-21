@@ -12,12 +12,14 @@ from pathlib import Path
 
 from . import fstxn, gfx_cli
 from .cef_client import CefWorkerClient, CefWorkerError
-from .gfx_backend import cef_config
+from .gfx_backend import cef_config, cef_png_config, cef_windowless_frame_rate
 from .proc_supervisor import SupervisedProcessGroup, supervision_available
 
 
 def render_page(html, outdir, n_frames, *, ctx, width, height):
     worker, mode = cef_config()
+    png_encoder, png_level, png_filter = cef_png_config()
+    frame_rate = cef_windowless_frame_rate()
     if not supervision_available():
         raise RuntimeError("CEF Alpha requires verified process-tree supervision")
     if n_frames > 65536 or width < 16 or height < 16:
@@ -48,7 +50,11 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
                 "--sync-mode=n", "--sync-canary=exact", "--sync-log=sync.jsonl",
                 "--ipc-socket=ipc.sock", f"--root-cache-path={profile}",
                 f"--url-template={html.as_uri()}?f={{f}}",
-                f"--width={width}", f"--height={height}"]
+                f"--width={width}", f"--height={height}",
+                f"--windowless-frame-rate={frame_rate}",
+                f"--png-encoder={png_encoder}"]
+        if png_encoder == "spng":
+            argv.extend((f"--png-level={png_level}", f"--png-filter={png_filter}"))
         if pair:
             argv.remove("--ipc-socket=ipc.sock")
             argv.append(f"--ipc-fd={pair[1].fileno()}")
