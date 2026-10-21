@@ -15,6 +15,7 @@ budget_items,逐件判定:
 
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -33,7 +34,8 @@ def die(reason):
 
 
 def is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and (not isinstance(value, float) or math.isfinite(value)))
 
 
 def load_items(path):
@@ -49,8 +51,8 @@ def load_items(path):
     if snap.get("version") != 1:
         die("snapshot version must == 1, got %r" % (snap.get("version"),))
     items = snap.get("budget_items")
-    if not isinstance(items, list):
-        die("snapshot field budget_items missing or not a list")
+    if not isinstance(items, list) or not items:
+        die("snapshot field budget_items must be a nonempty list")
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             die("budget_items[%d] is not an object" % idx)
@@ -66,7 +68,7 @@ def load_items(path):
                 die("budget_items[%d] missing field: %s" % (idx, field))
         for field in ("ceiling", "warning", "measured"):
             if not is_number(item.get(field)):
-                die("budget_items[%d] (id=%r) field %s must be a number" % (idx, item.get("id"), field))
+                die("budget_items[%d] (id=%r) field %s must be a finite number" % (idx, item.get("id"), field))
     return items
 
 

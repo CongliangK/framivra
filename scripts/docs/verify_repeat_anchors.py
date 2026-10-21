@@ -46,16 +46,16 @@ def load_anchors(path):
     if snap.get("version") != 1:
         die("snapshot version must == 1, got %r" % (snap.get("version"),))
     anchors = snap.get("repeat_anchors")
-    if not isinstance(anchors, list):
-        die("snapshot field repeat_anchors missing or not a list")
+    if not isinstance(anchors, list) or not anchors:
+        die("snapshot field repeat_anchors must be a nonempty list")
     return anchors
 
 
 def live_count(word, relpath):
-    """grep -c -F <word> <relpath>;无匹配(rc=1,输出0)按 0;grep 本身出错按 -1。"""
+    """grep -c -F <word> <relpath>;无匹配(rc=1,输出0)按 0;错误返回 None。"""
     try:
         proc = subprocess.run(
-            ["grep", "-c", "-F", word, relpath],
+            ["grep", "-c", "-F", "--", word, os.path.abspath(relpath)],
             cwd=os.getcwd(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -63,13 +63,16 @@ def live_count(word, relpath):
         )
     except OSError as exc:
         sys.stderr.write("L3 grep spawn error for %s: %s\n" % (relpath, exc))
-        return -1
+        return None
     if proc.returncode in (0, 1):
         text = proc.stdout.decode("utf-8", "replace").strip()
         try:
-            return int(text) if text else 0
+            count = int(text)
         except ValueError:
-            return -1
+            return None
+        if (proc.returncode == 0 and count > 0) or (proc.returncode == 1 and count == 0):
+            return count
+        return None
     sys.stderr.write(
         "L3 grep error rc=%d for %s: %s\n"
         % (
@@ -78,7 +81,7 @@ def live_count(word, relpath):
             proc.stderr.decode("utf-8", "replace").strip(),
         )
     )
-    return -1
+    return None
 
 
 def main():
@@ -109,9 +112,9 @@ def main():
         word = anchor["word"]
         files = anchor.get("files")
         expected = anchor.get("expected")
-        if not isinstance(files, list) or not isinstance(expected, list):
+        if not isinstance(files, list) or not files or not isinstance(expected, list):
             fail_lines.append(
-                "L3 FAIL: anchor %s malformed (files/expected must be lists)" % word
+                "L3 FAIL: anchor %s malformed (files must be nonempty; files/expected must be lists)" % word
             )
             continue
         if len(files) != len(expected):
@@ -123,13 +126,19 @@ def main():
         counts = []
         anchor_fails = []
         for relpath, want in zip(files, expected):
-            if isinstance(want, bool) or not isinstance(want, int):
+            if isinstance(want, bool) or not isinstance(want, int) or want < 0:
                 anchor_fails.append(
-                    "L3 FAIL: anchor %s file %s malformed expected (must be int): %r"
+                    "L3 FAIL: anchor %s file %s malformed expected (must be nonnegative int): %r"
                     % (word, relpath, want)
                 )
                 continue
             live = live_count(word, relpath)
+            if live is None:
+                anchor_fails.append(
+                    "L3 FAIL: anchor %s file %s: live count unavailable"
+                    % (word, relpath)
+                )
+                continue
             counts.append(live)
             if live != want:
                 anchor_fails.append(
