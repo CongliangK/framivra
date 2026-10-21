@@ -1,15 +1,87 @@
 """#48 falsification of environment identity and production cache contracts."""
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from vtx import gfx_environment as env, gfx_cli, hygiene
 from tests.gfx._png import png
+
+
+class UnitEnvironmentIdentity(unittest.TestCase):
+    def setUp(self):
+        from tests.gfx import _environment
+        self.fixture = _environment
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.binary = self.root / 'input.bin'
+        self.binary.write_bytes(b'fixture')
+
+    @staticmethod
+    def legacy_digest(content):
+        return hashlib.sha256(json.dumps(content.hex(), sort_keys=True,
+            ensure_ascii=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+
+    def test_streamed_identity_matches_legacy_record_and_chunk_boundaries(self):
+        unit = bytes(range(256))
+        for size in (0, 1, 256, 1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1):
+            with self.subTest(size=size):
+                content = (unit * ((size + 255) // 256))[:size]
+                self.binary.write_bytes(content)
+                self.assertEqual(self.fixture.collect('cdp', self.binary)['binary'],
+                                 self.legacy_digest(content))
+
+        for path in (self.root / 'missing', self.root):
+            with self.subTest(path=path), \
+                    patch.object(Path, 'open', side_effect=AssertionError('nonfile read')):
+                self.assertEqual(self.fixture.collect('cef', path, 'offscreen'), {
+                    'schema': env.SCHEMA, 'status': 'input-bound', 'backend': 'cef',
+                    'mode': 'offscreen', 'unit_fixture': True, 'binary': str(path)})
+        record = self.fixture.collect('cdp', self.binary)
+        self.assertNotEqual(record, self.fixture.collect('cli', self.binary))
+        self.assertNotEqual(record, self.fixture.collect('cdp', self.binary, 'offscreen'))
+        other = self.root / 'same-content.bin'
+        other.write_bytes(self.binary.read_bytes())
+        self.assertEqual(record, self.fixture.collect('cdp', other))
+        self.binary.unlink()
+        self.assertEqual(self.fixture.collect('cdp', self.binary), dict(record, binary=str(self.binary)))
+
+    def test_streamed_identity_is_uncached_and_preserves_io_contract(self):
+        content = b'a' * (1024 * 1024 + 1)
+        self.binary.write_bytes(content)
+        saved = self.binary.stat()
+        before = self.fixture.collect('cdp', self.binary)
+        for position in (0, len(content) // 2, len(content) - 1):
+            with self.subTest(position=position):
+                changed = bytearray(content)
+                changed[position] = ord('b')
+                self.binary.write_bytes(changed)
+                os.utime(self.binary, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+                self.assertNotEqual(before, self.fixture.collect('cdp', self.binary))
+        self.binary.write_bytes(content)
+        self.assertEqual(before, self.fixture.collect('cdp', self.binary))
+
+        with self.subTest(operation='short reads'), \
+                patch.object(Path, 'read_bytes', side_effect=AssertionError('unbounded read')), \
+                patch.object(Path, 'open') as opened:
+            stream = opened.return_value.__enter__.return_value
+            stream.read.side_effect = [b'\x00\xff', b'\x80', b'\x01', b'']
+            record = self.fixture.collect('cdp', self.binary)
+        self.assertEqual(record['binary'], self.legacy_digest(b'\x00\xff\x80\x01'))
+        opened.assert_called_once_with('rb')
+        self.assertEqual(stream.read.call_args_list, [call(1024 * 1024)] * 4)
+        failure = OSError('injected read failure')
+        with self.subTest(operation='read error'), patch.object(Path, 'open') as opened:
+            opened.return_value.__enter__.return_value.read.side_effect = [b'prefix', failure]
+            with self.assertRaises(OSError) as caught:
+                self.fixture.collect('cdp', self.binary)
+        self.assertIs(caught.exception, failure)
 
 
 class ChromeInstallerTelemetry(unittest.TestCase):

@@ -4,16 +4,27 @@ Never used by real-browser acceptance; this does not constitute environment
 evidence. Keeping this opt-in preserves the unknown/fail-closed production path.
 """
 from pathlib import Path
+import hashlib
 import os
 from unittest import mock
 from vtx import gfx_environment as env
+
+
+def _binary_digest(path):
+    """Stream the exact legacy SHA256(JSON(hex(bytes))) without whole-file copies."""
+    digest = hashlib.sha256(b'"')
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block.hex().encode('ascii'))
+    digest.update(b'"')
+    return digest.hexdigest()
 
 
 def collect(backend, binary, mode=None):
     path = Path(binary)
     return {'schema': env.SCHEMA, 'status': 'input-bound', 'backend': backend,
             'mode': mode, 'unit_fixture': True,
-            'binary': env.digest(path.read_bytes().hex()) if path.is_file() else str(path)}
+            'binary': _binary_digest(path) if path.is_file() else str(path)}
 
 
 def find_chrome():
