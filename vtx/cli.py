@@ -612,7 +612,7 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
         for p in hygiene.cleanup_children(c, c.out):
             if not hygiene.out_protected(p.name):
                 plan["out"].extend(hygiene.cleanup_entries(c, p, "可再生 out 条目"))
-        return hygiene.CleanupPlan(c, plan)
+        return hygiene.CleanupPlan(c, hygiene.retain_media_markers(c, plan))
     if deep:
         plan = {"cache": [], "out": []}
         for root, category in ((c.cache, "cache"), (c.out, "out")):
@@ -628,19 +628,17 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
                                           or hygiene.out_protected(path.name)):
                     continue
                 plan[category].extend(hygiene.cleanup_entries(c, path, "深度回收"))
+        plan = hygiene.retain_media_markers(c, plan)
         return hygiene.CleanupPlan(c, _plan_without_linked_roots(plan, links))
     if c.cache.exists() and not c.cache.is_symlink():
         # gc_plan 会 iterdir cache/out：根为符号链接时同样不得进入（只列清单也算
         # 读穿链接目标）；cache 侧被拒后仅保留 out 的既有中间物规则
         return _plan_without_linked_roots(hygiene.gc_plan(c, keep_days), links)
-    out_keep = {"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
-                "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
-                "audit_report.json", "qc_report.json", "history", "reports"}
     plan = {"out_intermediate": []}
     for p in hygiene.cleanup_children(c, c.out):
-        if p.name not in out_keep and not hygiene.out_protected(p.name):
+        if p.name not in hygiene.GC_OUT_KEEP and not hygiene.out_protected(p.name):
             plan["out_intermediate"].extend(hygiene.cleanup_entries(c, p, "out 一次性中间物"))
-    return hygiene.CleanupPlan(c, plan)
+    return hygiene.CleanupPlan(c, hygiene.retain_media_markers(c, plan))
 
 
 def _clean_preview(c, nuke: bool):

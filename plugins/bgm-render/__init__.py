@@ -67,7 +67,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from vtx.api import audio_key as _audio_key
-from vtx.api import cfg_get, plugin_code_digest
+from vtx.api import cfg_get, media_cache_valid, plugin_code_digest
 
 VERSION = "1.2.0"
 KEY = "bgm"
@@ -455,7 +455,7 @@ def prepare_source(c, sid):
     if s is None or KEY not in s:
         return None
     out = product_path(c, sid)
-    if out.exists():
+    if media_cache_valid(out):
         return out
     which = _params(s).get("output", "master")
     if getattr(c, "dry", False):
@@ -473,7 +473,6 @@ def prepare_source(c, sid):
     if want is not None and not _wav_ok(want):
         shared, result = _ensure_shared_render(c, sid, force=True)
     src_wav = _locate_render_wav(shared, result, which, sid)
-    out.parent.mkdir(parents=True, exist_ok=True)
     # 转封装与内核裸提取同一形状（48kHz stereo pcm_s16le）——下游 _audio_graph
     # / audio_report 无感。bus stem 本就 48k f32 2ch，-ar 48000 同采样率直通
     # （零重采样损失）；44.1k 母带则重采样进项目帧网格。采样数保真不裁不补。

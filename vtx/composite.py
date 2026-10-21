@@ -424,7 +424,7 @@ class RenderPlan:
     def _pass_fresh(self, p, seglen, sidecar=False):
         """Require a verified complete-media digest and the exact segment length.
 
-        Legacy files are decoded before reuse. The historical .n sidecar is an
+        Uncertified files are rebuilt. The historical .n sidecar remains an
         additional pass constraint, not proof that a nonempty file is complete.
         Warm completion records avoid re-decoding; hashing still costs file I/O.
         """
@@ -435,7 +435,7 @@ class RenderPlan:
                 return int((p.with_suffix(p.suffix + ".n")).read_text()) == seglen
             except (OSError, ValueError):
                 return False
-        return True  # verified digest/frame count, or complete legacy decode above
+        return True  # verified producer certificate, digest and frame count
 
     def _composite_passes(self, layers_subset, out_path, with_subs, a, b, sub_file=None):
         """段内逐层 pass 合成（R4-E1-v2 核心修复，2026-09-14）：每 pass 恰 2 输入
@@ -551,15 +551,11 @@ class RenderPlan:
                 # （实测口径 R4-E2' A1d：FFV1 同输入同 argv 重复编码 4 次得 4 个
                 # 不同容器 md5——容器字节层非确定；但 4 产物解码域 framemd5 逐帧
                 # 全同，无损语义成立，只影响 pass 文件字节、不影响像素与缓存命中
-                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。落盘走 *.part.mkv
-                # 临时名 + os.replace 原子替换：并发/重入读者（帧数校验、下游
-                # pass）永远看到完整文件而非半截 mkv（FFV1 大文件写入窗口数十秒，
-                # 直接写 target 存在互踩窗口——tests 并发复渲实测踩中，R4-E1-v2）。
-                # 临时名保留 .mkv 结尾：ffmpeg 按扩展名选 muxer，.part 结尾无法
-                # 初始化（实测 Invalid argument）。
+                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。Ctx.run
+                # owns staging, publication and the completion marker for this
+                # exact target; a second .part rename would orphan its marker.
                 tail = ["-frames:v", str(seglen), "-c:v", "ffv1", "-level", "3",
-                        "-g", "1",
-                        str(target.with_name(target.stem + ".part" + target.suffix))]
+                        "-g", "1", str(target)]
             c.run(cmd + ["-filter_complex_threads", "1",
                          "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
             if c.dry:
@@ -569,9 +565,6 @@ class RenderPlan:
                 # sys.exit(1) 误杀 --dry-run（TestUntilFlag 实测回归，R4-E1-v2）
                 prev = target
                 continue
-            if not last:
-                fstxn.replace(target.with_name(target.stem + ".part" + target.suffix),
-                           target)
             if not self._pass_fresh(target, seglen):
                 print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
                       f"（framesync 节律异常/中间物损坏，禁止向下游传递）")

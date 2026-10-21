@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from vtx.api import audio_key as _audio_key
-from vtx.api import plugin_code_digest
+from vtx.api import atomic_media, media_cache_valid, plugin_code_digest
 
 from .denoise_voice import chain, conda_python, missing_env, run_dir, weights_dir
 
@@ -69,7 +69,7 @@ def prepare_source(c, sid):
     if s is None or KEY not in s:
         return None
     out = product_path(c, sid)
-    if out.exists():
+    if media_cache_valid(out):
         return out
     miss = missing_env()
     if miss:
@@ -82,7 +82,7 @@ def prepare_source(c, sid):
         print(f"  [dry-run] denoise 产物 {out.name}（v2 Resemble→afftdn+48k stereo）")
         return out
     print(f"  · denoise: {sid} → {out.name}（v2 Resemble→afftdn+48k stereo）")
-    chain(c.src_path(sid), out, stereo=True)
+    atomic_media(c, out, lambda temporary: chain(c.src_path(sid), temporary, stereo=True))
     return out
 
 

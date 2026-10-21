@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .composite import RenderPlan, choose_cutpoints, prepare_layers
 from .encoders import pick_vcodec
+from .recovery import media_cache_valid
 from .stages import mix_audio_wav
 from . import fstxn
 
@@ -196,15 +197,10 @@ def run_range(c, fa: int, fb: int):
         sl = [L for L in layers if L["cl"]["dst_in"] < b and L["cl"]["dst_in"] + L["cl"]["dur"] > a]
         key = plan._seg_content_key(a, b, sl, True, sfile)
         segp = vdir / f"rseg_{a:06d}_{b:06d}_{key}.mp4"
-        if segp.exists():
-            fr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                                 "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(segp)],
-                                capture_output=True, text=True,
-                                encoding="utf-8", errors="replace").stdout.strip()
-            if fr.isdigit() and int(fr) == b - a:
-                print(f"  ✓ 子段 {i} [{a},{b}) 已缓存，[timing] 段命中: "
-                      f"{time.monotonic() - t:.1f}s")
-                segs.append(segp); continue
+        if media_cache_valid(segp, frames=b - a):
+            print(f"  ✓ 子段 {i} [{a},{b}) 已缓存，[timing] 段命中: "
+                  f"{time.monotonic() - t:.1f}s")
+            segs.append(segp); continue
         plan.composite(sl, segp, True, a=a, b=b, sub_file=sfile)
         print(f"[timing] 段合成 [{a},{b})（{b - a} 帧，{len(sl)} 层）: "
               f"{time.monotonic() - t:.1f}s")

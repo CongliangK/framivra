@@ -17,12 +17,14 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from vtx.composite import RenderPlan, _graph_code_digest
 from vtx.constraints import ALLOWED_FPS
+from vtx.infra import Ctx
 from vtx.subs import _active_subs
 
 FPS = 30
@@ -452,20 +454,38 @@ class SubtitleFrameIntegration(unittest.TestCase):
                 {'in': 420, 'out': 421, 'text': 'START111'},
                 {'in': 514, 'out': 516, 'text': 'END207'},
                 {'in': 706, 'out': 708, 'text': 'END399'}]
-        c = SimpleNamespace(fps=30, spf=1 / 30, dur=750, dry=False, gpu=False,
-                            cache=self.root / 'cache', tl={'subtitles': subs})
+        # Use the production writer: intermediate admission requires the
+        # completion certificate published by Ctx.run's owned transaction.
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps({
+            'project': {'fps': 30, 'duration_frames': 750, 'width': 320, 'height': 180},
+            'sources': [{'id': 'black', 'path': str(source)}],
+            'video_tracks': [], 'audio_tracks': [], 'subtitles': subs,
+        }))
+        c = Ctx(timeline)
         c.cache.mkdir()
-        def run(cmd, need=True):
-            data = self.run_tool(cmd, f'pass-command-{len(self.records)}')
-            return SimpleNamespace(returncode=0, stdout=data, stderr=b'')
-        c.run = run
+        run_process = subprocess.run
+        def record_process(cmd, *args, **kwargs):
+            # Record the real subprocess result before Ctx.run applies failure
+            # handling, including staged output/inspection argv and full streams.
+            result = run_process(cmd, *args, **kwargs)
+            name = f'pass-command-{len(self.records)}'
+            for stream in ('stdout', 'stderr'):
+                data = getattr(result, stream) or b''
+                (self.root / (name + '.' + stream)).write_bytes(
+                    data.encode() if isinstance(data, str) else data)
+            self.records.append({'name': name, 'argv': list(map(str, cmd)),
+                                 'returncode': result.returncode})
+            (self.root / 'commands.json').write_text(json.dumps(self.records, indent=2))
+            return result
         p = RenderPlan(c=c, draft=False, f=1.0, W=320, H=180)
         layers = [dict(gfx=False, seg=source, x=0, y=0, w2=None, h2=None,
                        cl={'src': 'black', 'src_in': 0, 'src_out': 750,
                            'dst_in': 0, 'dur': 750}) for _ in range(2)]
         ass = self.root / 'pass.ass'; p.write_seg_ass(ass, 309, 720)
         movie = self.root / 'pass.mp4'
-        p.composite(layers, movie, True, a=309, b=720, sub_file=ass)
+        with patch.object(subprocess, 'run', side_effect=record_process):
+            p.composite(layers, movie, True, a=309, b=720, sub_file=ass)
         intermediates = list((c.cache / 'vseg_pass').glob('*.mkv'))
         self.assertEqual(len(intermediates), 1, 'must actually enter multi-layer pass path')
         self.check_movie(movie, subs, 309, 411, 'two-layer-pass')

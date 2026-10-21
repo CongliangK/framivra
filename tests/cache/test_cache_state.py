@@ -6,10 +6,12 @@ PR 原版断言 cache/<input-fingerprint>/ 目录随输入变化——整仓指�
 """
 import json, os, sys, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # repo 根（v2 §1.4 包导入）
 from vtx import hygiene
 from vtx.cache_state import media_stat_digest, receipt_fingerprint
 from vtx.infra import Ctx
+from tests._support import tree_sha256
 
 
 def _tl(root, **over):
@@ -137,6 +139,123 @@ class GcExemptions(unittest.TestCase):
             self.assertIn(str(root / 'cache' / 'legacy_junk'),
                           [str(e[0]) for e in plan['legacy']],
                           "对照组杂散目录未被回收——白名单误扩大")
+
+    @staticmethod
+    def _selected(plan, path):
+        return any(path == entry or entry in path.parents
+                   for items in plan.values() for entry, _, _ in items)
+
+    def test_completion_markers_follow_each_cleanup_mode_owner(self):
+        from vtx.cli import _cleanup_plan
+        from vtx.recovery import completion_marker
+        modes = [('normal', 'gc', {}, True), ('out-only', 'gc', {}, False),
+                 ('deep', 'gc', {'deep': True}, True),
+                 ('clean', 'clean', {}, True), ('nuke', 'clean', {'nuke': True}, True)]
+        for name, command, options, with_cache in modes:
+            with self.subTest(mode=name), tempfile.TemporaryDirectory() as td, \
+                    mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), \
+                    mock.patch('subprocess.Popen', side_effect=AssertionError('no subprocess')):
+                root = Path(td)
+                source = root / 'source.bin'; source.write_bytes(b'input bytes, no decode')
+                source_marker = root / 'source.bin.complete.json'
+                source_marker.write_bytes(b'input-side historical evidence')
+                clip = {'src': 's', 'src_in': 0, 'src_out': 30, 'dur': 30, 'dst_in': 0}
+                c = Ctx(_tl(root, sources=[{'id': 's', 'path': 'source.bin'}],
+                            video_tracks=[{'name': 'v', 'clips': [clip]}]))
+                c.dry = True
+                live = [c.out / leaf for leaf in ('final.mp4', 'draft_final.mp4', 'draft.mp4',
+                                                 'video_noaudio.mp4', 'audio.wav', 'final_4k.mp4')]
+                if with_cache:
+                    _, seg, audio = hygiene._current_keys(c)
+                    live += [c.cache / 'seg' / (key + '.mp4') for key, _ in seg]
+                    live += [c.cache / 'audio' / (key + '.wav') for key in audio]
+                for media in live:
+                    media.parent.mkdir(parents=True, exist_ok=True)
+                    media.write_bytes(b'owned media placeholder')
+                    completion_marker(media).write_bytes(b'certificate bytes are not interpreted by GC')
+                junk = [c.out / 'orphan.mp4.complete.json',
+                        completion_marker(live[0]).with_name(live[0].name + '.complete.json.complete.json'),
+                        c.out / (live[0].name + '.complete.json.bak')]
+                if with_cache:
+                    junk += [c.cache / 'audio' / 'stale.wav',
+                             c.cache / 'audio' / 'stale.wav.complete.json']
+                for path in junk:
+                    path.write_bytes(b'garbage')
+                lock = c.out / 'final.mp4.lock'; lock.write_bytes(b'')
+                evidence = c.out / 'history' / 'old.mp4'
+                evidence.parent.mkdir(); evidence.write_bytes(b'historical delivery')
+                before = tree_sha256(root)
+                plan = _cleanup_plan(c, command, **options)
+                self.assertEqual(tree_sha256(root), before, 'planning must be read-only')
+                retained = {'final.mp4', 'final_4k.mp4'}
+                if name == 'deep': retained.add('draft_final.mp4')
+                for media in live:
+                    keep = name in ('normal', 'out-only') or (name != 'nuke' and media.name in retained)
+                    self.assertEqual(self._selected(plan, media), not keep, str(media))
+                    self.assertEqual(self._selected(plan, completion_marker(media)), not keep,
+                                     str(completion_marker(media)))
+                self.assertTrue(all(self._selected(plan, path) for path in junk))
+                self.assertFalse(self._selected(plan, lock))
+                self.assertFalse(self._selected(plan, source_marker))
+                self.assertEqual(self._selected(plan, evidence), name == 'nuke')
+                if name in ('normal', 'out-only'):
+                    plan.execute()  # Only this new disposable project.
+                    for media in live:
+                        self.assertEqual(media.read_bytes(), b'owned media placeholder')
+                        self.assertTrue(completion_marker(media).is_file())
+                    self.assertFalse(any(path.exists() for path in junk))
+                    self.assertEqual(evidence.read_bytes(), b'historical delivery')
+                    self.assertEqual(source_marker.read_bytes(), b'input-side historical evidence')
+
+    def test_completion_marker_follows_retained_media_age_not_its_own(self):
+        from vtx.recovery import completion_marker
+        cases = [('audio/recent.wav', False), ('seg/recent.mp4', False),
+                 ('qc_clean.mp4', False), ('vseg/recent.mp4', True),
+                 ('vseg_draft/recent.mp4', True), ('vseg_qc/recent.mp4', True)]
+        for relative, with_lock in cases:
+            with self.subTest(media=relative), tempfile.TemporaryDirectory() as td, \
+                    mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), \
+                    mock.patch('subprocess.Popen', side_effect=AssertionError('no subprocess')):
+                root = Path(td); c = Ctx(_tl(root)); c.dry = True
+                recent = c.cache / relative
+                directory = recent.parent; directory.mkdir(parents=True)
+                old = directory / ('old' + recent.suffix)
+                for media in (recent, old):
+                    media.write_bytes(b'not a current key')
+                    marker = completion_marker(media); marker.write_bytes(b'old certificate')
+                    os.utime(marker, (1, 1))
+                os.utime(old, (1, 1))
+                if with_lock:
+                    lock = Path(str(recent) + '.lock'); lock.write_bytes(b'')
+                plan = hygiene.gc_plan(c, keep_days=7)
+                self.assertFalse(self._selected(plan, recent))
+                self.assertFalse(self._selected(plan, completion_marker(recent)))
+                self.assertTrue(self._selected(plan, old))
+                self.assertTrue(self._selected(plan, completion_marker(old)))
+                if with_lock:
+                    self.assertFalse(self._selected(plan, lock))
+                    # Without a retained lock the directory is one old deletion
+                    # candidate. Marker pairing must not rescue its contents.
+                    lock.unlink(); os.utime(directory, (1, 1))
+                    plan = hygiene.gc_plan(c, keep_days=7)
+                    self.assertTrue(self._selected(plan, recent))
+                    self.assertTrue(self._selected(plan, completion_marker(recent)))
+
+    def test_symlink_media_does_not_claim_an_owned_completion_marker(self):
+        from vtx.recovery import completion_marker
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), \
+                mock.patch('subprocess.Popen', side_effect=AssertionError('no subprocess')):
+            root = Path(td); c = Ctx(_tl(root)); c.dry = True
+            c.out.mkdir(); outside = root / 'source.wav'; outside.write_bytes(b'source')
+            media = c.out / 'audio.wav'
+            try: media.symlink_to(outside)
+            except (OSError, NotImplementedError): self.skipTest('symlinks unavailable')
+            marker = completion_marker(media); marker.write_bytes(b'not owned media')
+            plan = hygiene.gc_plan(c)
+            self.assertFalse(self._selected(plan, media))
+            self.assertTrue(self._selected(plan, marker))
+            self.assertEqual(outside.read_bytes(), b'source')
 
 class StaleReceiptArchive(unittest.TestCase):
     """⑮（2026-09-14 登记+最小修复）：回执输入指纹翻转（如 validate-only 运行在

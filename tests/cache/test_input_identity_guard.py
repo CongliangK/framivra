@@ -131,13 +131,17 @@ class InputIdentityGuard(unittest.TestCase):
         self.assertFalse((self.c.out / 'receipt.json').exists())
 
     def test_prepare_source_swap_and_fresh_context_recovery(self):
+        from vtx.recovery import atomic_media
+
         def extract(c, tasks, what):
             for _, cmd in tasks:
-                with wave.open(str(cmd[-1]), 'wb') as output:
-                    output.setnchannels(2)
-                    output.setsampwidth(2)
-                    output.setframerate(48000)
-                    output.writeframes(b'\0' * 480 * 4)
+                def produce(path):
+                    with wave.open(str(path), 'wb') as output:
+                        output.setnchannels(2)
+                        output.setsampwidth(2)
+                        output.setframerate(48000)
+                        output.writeframes(b'\0' * 480 * 4)
+                atomic_media(c, Path(cmd[-1]), produce)
         def swap(c, tasks, what):
             extract(c, tasks, what)
             self.mutate('media')

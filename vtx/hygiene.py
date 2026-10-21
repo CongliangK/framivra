@@ -32,6 +32,11 @@ KEEP_BASELINES = ("manifest.json", "qc_pass_segs.json")   # cache 根下永不�
 # B-P2-1：锁文件被 budget_gate 自动 gc 删除后新开 inode，跨进程互斥失效）按
 # 名字前缀一并豁免。
 AUDIO_KEEP = ("loudness_receipts.json",)
+# Ordinary GC also retains these regenerable outputs. Deep GC and clean have
+# their own narrower policies; the CLI's out-only branch uses this same set.
+GC_OUT_KEEP = frozenset({"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
+                         "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
+                         "audit_report.json", "qc_report.json", "history", "reports"})
 
 # A02 不可再生交付件保护清单（issue #21 / F-01）：out/ 一级条目命中即视为
 # 不可再生，普通 clean/gc 绝不删除——成片本体（final.mp4）、版本账本
@@ -123,6 +128,34 @@ def cleanup_children(c, path):
     if not cleanup_allowed(c, path) or not path.is_dir():
         return []
     return sorted(path.iterdir())
+
+
+def retain_media_markers(c, plan):
+    """Pair exact completion records with media this cleanup plan retains.
+
+    Apply after the mode and age policy, before sealing identities. This does
+    not retain any extra media or certify its contents. Orphan records, staging
+    files and similar prefixes remain garbage; source/history evidence is not
+    reclassified. Dangerous full cleanup deliberately does not call this helper.
+    """
+    from .recovery import FORMATS, completion_marker
+    selected = {path for items in plan.values() for path, _, _ in items}
+    markers = set()
+    for marker in selected:
+        owner = marker.with_suffix("").with_suffix("")
+        if (completion_marker(owner) != marker or owner.suffix.lower() not in FORMATS
+                or not any(root in owner.parents for root in (c.cache, c.out))
+                or any(part in selected for part in (owner, *owner.parents))):
+            continue
+        # Read the whole no-follow chain: a linked leaf or ancestor is not an
+        # owned media file. Protected final outputs may own markers even though
+        # cleanup_allowed(owner) correctly refuses to delete those outputs.
+        identity = fstxn.cleanup_identity(owner)
+        if identity is not None and stat.S_ISREG(identity[-1][2]):
+            markers.add(marker)
+    for category, items in plan.items():
+        plan[category] = [entry for entry in items if entry[0] not in markers]
+    return plan
 
 
 def cleanup_entries(c, path, reason, *, nuke=False):
@@ -604,20 +637,17 @@ def gc_plan(c, keep_days: int = 0):
     # out/ 一次性中间物（成片/回执/VERSIONS/history/reports 不动）
     # issue #31（B07）：fstxn 残件 .VERSIONS.json.<rand>.tmp 同理不进 out_keep
     # → 落本类被清扫（.lock 伴生件由 cleanup_allowed 保留），见上方 known 注。
-    out_keep = {"final.mp4", "draft_final.mp4", "draft.mp4", "video_noaudio.mp4",
-                "audio.wav", "receipt.json", "receipt.prev.json", "VERSIONS.json",
-                "audit_report.json", "qc_report.json", "history", "reports"}
     if c.out.exists():
         for x in cleanup_children(c, c.out):
             # A02：保护清单经 out_protected() 单源取判据（与 clean/gc --all 同一
             # 权威；out_keep 本就含全部保护名，此处判据等价合并，行为不变）
-            if x.name in out_keep or out_protected(x.name):
+            if x.name in GC_OUT_KEEP or out_protected(x.name):
                 continue
             add("out_intermediate", x, "out 一次性中间物")
     if keep_days:
         for cat in ("gfx", "seg", "audio", "plugin_cache", "legacy", "vseg"):
             plan[cat] = [e for e in plan[cat] if not fresh(e[0])]
-    return CleanupPlan(c, plan)
+    return CleanupPlan(c, retain_media_markers(c, plan))
 
 
 def gc(c, do: bool, deep: bool = False, keep_days: int = 0):

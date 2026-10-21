@@ -16,12 +16,12 @@
 时序注入手法（工单指定）：monkeypatch 在「指纹已算（Ctx 构造后）、产物已写
 （stub 执行器落盘假产物）、记账前」把 timeline/资产换成新版——全程无真实
 ffmpeg/Chrome：prepare 的提取经 mock run_parallel 落盘假 wav；mux 的封装经
-mock Ctx.run 落盘假 final（沿用 tests/ 既有 API 级 + mock 手法，
-参 test_mux_history / test_hygiene_ledger_txn）。
+真实 Ctx.run/recovery 事务，mock 子进程编码及视频检查写 owned staging；
+输入复核、原子发布、版本记账仍调用生产实现。
 
 stub 对齐注记（issue #88 根因）：「假 wav 已写」须按 B10（ca35bf6）发布协议
-落盘——recovery.audio_cache_valid 只认 .complete.json 完成证书（atomic_ffmpeg
-经 _inspect 认证后写入）或全解码+时长吻合的 legacy wav；裸字节直写终路径在
+落盘——recovery.media_cache_valid 只认 .complete.json 完成证书（atomic_ffmpeg
+经 _inspect 认证后写入）；没有证书则重建，不收养 legacy wav；裸字节直写终路径在
 B10 语义下=提取未完成，prepare 完成循环会以 incomplete extracted audio 显式
 失败（对照组误红的根因）。故 stub 一律经 _publish_wav 落「媒体+证书」终态，
 使每个场景只测身份门本身，不被完成性判定混入第二失败原因。
@@ -47,7 +47,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
-from vtx import hygiene, stages         # noqa: E402
+from vtx import hygiene, stages, recovery         # noqa: E402
 from vtx.cache_state import load_receipt  # noqa: E402
 from vtx.infra import Ctx               # noqa: E402
 
@@ -73,14 +73,14 @@ def _publish_wav(wav: Path, payload: bytes = b"FAKE-WAV"):
     """stub 执行器的「提取成功」终态 = B10（ca35bf6）发布协议对齐（issue #88）。
 
     模拟 recovery.atomic_ffmpeg 成功路径的落盘终态：媒体原子落位 + .complete.json
-    完成证书（文件名后缀与 recovery._marker 一致；字段 schema/sha256/frames 与
+    完成证书（文件名后缀与 recovery.completion_marker 一致；字段 schema/sha256/frames 与
     atomic_ffmpeg 经 _inspect 认证后写入的 wav 形态一致——frames=None、
-    sort_keys 序）。有了证书，prepare 完成循环的 audio_cache_valid 即认可提取
+    sort_keys 序）。有了证书，prepare 完成循环的 media_cache_valid 即认可提取
     完成，对照组恢复「输入不变 → 正常记账」；无证书的裸字节会被判「未完成
     提取」而显式失败，与本文件要测的身份门无关。"""
     wav.parent.mkdir(parents=True, exist_ok=True)
     wav.write_bytes(payload)
-    wav.with_name(wav.name + ".complete.json").write_text(
+    recovery.completion_marker(wav).write_text(
         json.dumps({"frames": None, "schema": 1,
                     "sha256": hashlib.sha256(payload).hexdigest()},
                    sort_keys=True), encoding="utf-8")
@@ -274,8 +274,8 @@ class ManifestGateAssetSwap(_StageNotOkMixin, unittest.TestCase):
 
 # ---------------------------------------------------------------- ④ mux VERSIONS 账（timeline）
 class MuxVersionsIdentity(_StageNotOkMixin, unittest.TestCase):
-    """封装期间改 timeline（注入点：mock Ctx.run 内「tmp 产物已写、versions_record
-    前」）：VERSIONS 不记账（timeline_md5 不得把旧输入的 final.mp4 记成新版本）、
+    """封装期间改 timeline（注入点：mock 编码完成、真实事务提交前）：
+    不发布 final、VERSIONS 不记账（timeline_md5 不得把旧输入的 final.mp4 记成新版本）、
     非零退出、receipt mux 非 ok；对照组 → 记账且 timeline_md5 = 开始时身份。"""
 
     def _run_mux(self, root: Path, mutate):
@@ -287,18 +287,20 @@ class MuxVersionsIdentity(_StageNotOkMixin, unittest.TestCase):
         (out / "audio.wav").write_bytes(b"A")
         tl_md5_0 = hashlib.md5(p.read_bytes()).hexdigest()
 
-        def fake_run(self, cmd, need=True):
-            Path(str(cmd[-1])).write_bytes(b"FAKE-FINAL")   # 产物已写（tmp 落盘）
-            mutate(p)                                        # ← 记账前注入
-            return "ok"
+        def fake_run(cmd, **kwargs):
+            if '-encoders' in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+            Path(str(cmd[-1])).write_bytes(b"FAKE-FINAL")  # owned staging only
+            mutate(p)                                     # before publication
+            return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
 
-        def fake_probe_encoders(cmd, **kw):
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        def inspect(path, kind=None):
+            return {'schema': 1, 'sha256': recovery._digest(path), 'frames': 90}
 
         err = io.StringIO()
         code = None
-        with mock.patch.object(Ctx, "run", fake_run), \
-                mock.patch("vtx.stages.subprocess.run", fake_probe_encoders), \
+        with mock.patch("vtx.infra.subprocess.run", fake_run), \
+                mock.patch.object(recovery, '_inspect', side_effect=inspect), \
                 contextlib.redirect_stderr(err):
             try:
                 stages.mux(c)
@@ -312,8 +314,9 @@ class MuxVersionsIdentity(_StageNotOkMixin, unittest.TestCase):
             _c, _tl_md5_0, code, err = self._run_mux(root, _swap_timeline)
             self.assertEqual(code, 1)
             self.assertIn("issue #32", err)   # _run_mux 返回的已是 getvalue() 字符串
-            # final.mp4 已落盘（旧输入身份产物）但 VERSIONS 不记账——新身份不赋旧产物
-            self.assertEqual((root / "out" / "final.mp4").read_bytes(), b"FAKE-FINAL")
+            # Actual transaction checks input identity before replacing final.
+            self.assertFalse((root / "out" / "final.mp4").exists())
+            self.assertFalse(recovery.completion_marker(root / "out" / "final.mp4").exists())
             self.assertFalse((root / "out" / "VERSIONS.json").exists(),
                              "输入被改后 VERSIONS 不得记账")
             self.assert_stage_not_ok(root, "mux")

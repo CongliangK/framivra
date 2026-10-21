@@ -1,4 +1,4 @@
-"""Interrupted media recovery: verified cache hits and atomic FFmpeg publication.
+"""Interrupted media recovery: certified cache hits and atomic media publication.
 
 Only single-file media outputs owned by this project participate. Pipe/null and
 image outputs retain their existing execution paths. A successful encoder plus
@@ -6,7 +6,6 @@ full decode certifies a file; timestamps or container headers alone do not.
 """
 import hashlib
 import json
-import math
 import subprocess
 import wave
 from pathlib import Path
@@ -24,7 +23,8 @@ def _digest(path):
     return h.hexdigest()
 
 
-def _marker(path):
+def completion_marker(path):
+    """The exact completion-certificate companion of an owned media output."""
     return Path(str(path) + '.complete.json')
 
 
@@ -69,83 +69,58 @@ def _inspect(path, kind=None):
 
 
 def media_cache_valid(path, frames=None, allow_short_verified=False):
-    """Read-only: trust a successful decode's digest, otherwise verify legacy data."""
+    """Read-only: require a completed producer's certificate and matching bytes.
+
+    Decodable media alone cannot prove that its producer finished. Uncertified
+    caches are rebuilt once; this function never adopts or removes old media.
+    """
     path = Path(path)
     try:
-        rec = json.loads(_marker(path).read_text())
+        rec = json.loads(completion_marker(path).read_text())
         actual = rec.get('frames')
         count_ok = (frames is None or actual == frames or
                     (allow_short_verified and isinstance(actual, int) and 0 < actual <= frames))
         return rec.get('schema') == 1 and rec.get('sha256') == _digest(path) and count_ok
     except (OSError, ValueError, TypeError, AttributeError):
-        if _marker(path).exists():
-            return False  # a damaged/mismatched certificate is not legacy media
-    rec = _inspect(path)
-    return rec is not None and (frames is None or rec['frames'] == frames)
-
-
-def audio_cache_valid(c, path, sid):
-    """Legacy extraction needs source duration, not merely a finalized short WAV.
-
-    A new successful transaction's digest certifies full command completion.
-    Older files with unknown/inexact source duration are conservatively rebuilt
-    once; their new record then permits warm reuse without source probing.
-    """
-    path = Path(path)
-    if not media_cache_valid(path):
-        return False
-    if _marker(path).exists():
-        return True
-    try:
-        with wave.open(str(path), 'rb') as audio:
-            actual = audio.getnframes()
-        source = c.src_path(sid)
-        try:
-            with wave.open(str(source), 'rb') as audio:
-                expected = round(audio.getnframes() * 48000 / audio.getframerate())
-        except (wave.Error, EOFError):
-            probe = subprocess.run(
-                ['ffprobe', '-v', 'error', '-select_streams', 'a:0',
-                 '-show_entries', 'stream=duration:format=duration', '-of', 'json', str(source)],
-                capture_output=True, text=True)
-            if probe.returncode:
-                return False
-            info = json.loads(probe.stdout)
-            streams = info.get('streams', [])
-            duration = float(streams[0].get('duration') or info.get('format', {}).get('duration'))
-            if not math.isfinite(duration) or duration <= 0:
-                return False
-            expected = round(duration * 48000)
-        return abs(actual - expected) <= 1
-    except (OSError, ValueError, TypeError, KeyError, IndexError, wave.Error, EOFError):
         return False
 
 
 def media_output(c, cmd):
     """Recognize an owned single-file output, not arbitrary FFmpeg invocations."""
-    if not cmd or not str(cmd[0]).endswith('ffmpeg') or not hasattr(c, 'root'):
+    from .infra import ensure_inside_project, is_ffmpeg_cmd
+    if not is_ffmpeg_cmd(cmd) or not hasattr(c, 'root'):
         return None
     path = Path(str(cmd[-1]))
     if path.suffix.lower() not in FORMATS:
         return None
-    from .infra import ensure_inside_project
     return ensure_inside_project(path, c.root, what='media output')
 
 
-def atomic_ffmpeg(c, cmd, execute):
-    """execute(argv) preserves caller error policy; failed encodes never publish.
+def atomic_media(c, target, producer, *, max_frames=None,
+                 before_commit=None, after_commit=None):
+    """Publish one project-owned media file only after its producer succeeds.
 
-    Same-target thread/flock exclusion also lets us retire orphan .tmp files
-    safely after a killed writer. A crash between media and marker publication
-    leaves valid legacy media, which must be decoded again before reuse.
+    producer(staging_path) must raise on failure and specify its output format
+    independently of the random .tmp suffix. Its return value is preserved.
+    The target lock covers production, full inspection, input-identity checking,
+    publication, the completion certificate and both zero-argument callbacks.
+    before_commit runs after validation, before replacement, followed by a final
+    input-identity check; after_commit runs after the certificate. Callbacks must
+    not reacquire this same target lock. Their own side effects are not rolled back.
+    An after-commit error leaves published media but propagates, never success.
+    Dry runs invoke no producer or callbacks and create no files, returning None.
     """
-    target = media_output(c, cmd)
-    if target is None or c.dry:
-        return execute(cmd)
-    # ffmpeg 经 argv 接收输出路径（子进程写者）——locked_staging 给同目录
-    # 随机名真实路径（/proc 锚定路径会被子进程拒开），提交前 inode 对账。
+    from .infra import ensure_inside_project
+    target = ensure_inside_project(Path(target), c.root, what='media output')
+    if target.suffix.lower() not in FORMATS:
+        raise ValueError('Unsupported media output: ' + str(target))
+    if c.dry:
+        return None
+
     def publish_marker():
-        fstxn.atomic_write(_marker(target), json.dumps(rec, sort_keys=True))
+        fstxn.atomic_write(completion_marker(target), json.dumps(rec, sort_keys=True))
+        if after_commit is not None:
+            after_commit()
 
     with fstxn.locked_staging(target, after_commit=publish_marker) as temporary:
         current = Path(temporary).resolve()
@@ -160,21 +135,40 @@ def atomic_ffmpeg(c, cmd, execute):
             token = orphan.name[len(prefix):-4]
             if orphan != current and token and '.' not in token:
                 fstxn.unlink(orphan)
-        # Keep the original argv and output format; only replace the destination.
-        # -y: the mkstemp staging file already exists, so a caller that omitted
-        # -y would otherwise hit FFmpeg's interactive overwrite prompt.
+        result = producer(temporary)
+        rec = _inspect(temporary, target.suffix.lower())
+        if rec is None:
+            raise RuntimeError('Media producer produced incomplete media: ' + str(target))
+        if max_frames is not None and rec['frames'] is not None and rec['frames'] > max_frames:
+            raise RuntimeError('Media producer produced more frames than requested: ' + str(target))
+        from .cache_state import verify_input_identity
+        verify_input_identity(c)
+        if before_commit is not None:
+            before_commit()
+            # History copies/hashes and ledger locks can make this callback
+            # lengthy. Do not certify inputs that changed during that window.
+            verify_input_identity(c)
+    return result
+
+
+def atomic_ffmpeg(c, cmd, execute, *, before_commit=None, after_commit=None):
+    """FFmpeg argv/error-policy adapter for the single media transaction."""
+    target = media_output(c, cmd)
+    if target is None or c.dry:
+        return execute(cmd)
+
+    def produce(temporary):
+        # mkstemp created the destination; -y prevents an overwrite prompt and
+        # -f preserves the requested format despite the staging .tmp suffix.
         staged = list(cmd[:-1]) + ['-y', '-f', FORMATS[target.suffix.lower()], str(temporary)]
         result = execute(staged)
         if getattr(result, 'returncode', 0):
             raise RuntimeError('FFmpeg failed (%s); media was not published: %s' %
                                (result.returncode, getattr(result, 'stderr', '')[-1500:]))
-        rec = _inspect(temporary, target.suffix.lower())
-        if rec is None:
-            raise RuntimeError('FFmpeg produced incomplete media: ' + str(target))
-        for option in ('-frames:v', '-vframes'):
-            # -frames:v is a cap: a short source legitimately ends before it.
-            if option in cmd and rec['frames'] is not None and rec['frames'] > int(cmd[cmd.index(option) + 1]):
-                raise RuntimeError('FFmpeg produced more frames than requested: ' + str(target))
-        from .cache_state import verify_input_identity
-        verify_input_identity(c)
-    return result
+        return result
+
+    # Both options are caps: a short source legitimately ends before the limit.
+    caps = [int(cmd[cmd.index(option) + 1]) for option in ('-frames:v', '-vframes')
+            if option in cmd]
+    return atomic_media(c, target, produce, max_frames=min(caps) if caps else None,
+                        before_commit=before_commit, after_commit=after_commit)

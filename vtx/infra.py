@@ -47,8 +47,8 @@ def _audio_duration_from_ticks(stream):
 
 
 def is_ffmpeg_cmd(cmd) -> bool:
-    """dry-run 判断收拢（原两处 str(cmd[0]).endswith("ffmpeg") 重复）。"""
-    return str(cmd[0]).endswith("ffmpeg")
+    """Shared executable identity for dry execution and media publication."""
+    return bool(cmd) and Path(str(cmd[0])).name.lower() in ('ffmpeg', 'ffmpeg.exe')
 
 
 # ---------------------------------------------------------------- 写路径安全门（issue #23 / A04）
@@ -215,7 +215,12 @@ class Ctx:
         self._pre_layers = None
 
     # ---- 基础设施 ----
-    def run(self, cmd, need=True):
+    def run(self, cmd, need=True, *, before_commit=None, after_commit=None):
+        """Execute a command; commit callbacks are for owned, need=True media only.
+
+        Dry execution invokes neither callback. The recovery transaction owns
+        callback ordering and the final target lock, not this command wrapper.
+        """
         # 与 run_ffmpeg_task 的关系（两种失败语义，不可合一）：本方法面向编排主线程，
         # 失败打印 + sys.exit 立即终止；run_ffmpeg_task 面向并行 worker 线程——线程内
         # sys.exit 不生效，改为抛 RuntimeError 由主线程统一收集后退出。
@@ -229,7 +234,8 @@ class Ctx:
                                        encoding="utf-8", errors="replace")
         try:
             with observation.scope():
-                r = atomic_ffmpeg(self, cmd, execute) if need else execute(cmd)
+                r = (atomic_ffmpeg(self, cmd, execute, before_commit=before_commit,
+                                   after_commit=after_commit) if need else execute(cmd))
                 if r.returncode:
                     observation.finish(r.returncode, RuntimeError())
         except RuntimeError as error:

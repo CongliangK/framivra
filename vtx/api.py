@@ -9,6 +9,9 @@ sys.path hack（§1.4 双模块裂分防护）。
   Ctx                     渲染上下文（timeline 加载/fps 契约/回执读写入口）
   media_stat_digest       源媒体 stat 身份（缓存键/回执指纹的公共判据）
   audio_key               prepare 裸提取音频的内容寻址键（缝 A 插件产物路径的锚）
+  atomic_media / media_cache_valid
+                          项目自有单文件媒体的原子生产与完成证书缓存校验；
+                          任意生产链复用同一锁、全读校验、输入身份与证书发布。
   plugin_code_digest      插件代码内容摘要（产物键掺入——改代码不 bump version 时
                           产物键也翻转，防旧产物被缓存命中「洗白」，P6 A-P1-1）
   resolve_source_wav      缝 A 读取点统一解析（插件产物 wav｜None=裸提取键）——
@@ -35,12 +38,14 @@ from .hygiene import gfx_key, gfx_dir, audio_key   # audio_key：缝 A 插件产
 from .stages import load_timeline_check            # 稳定性承诺随本 API 面
 from .pluginlib import config as _pl_config
 from .pluginlib.hooks import plugin_code_digest, resolve_source_wav
+from .recovery import atomic_media, media_cache_valid
 
 __all__ = [
     "Ctx", "DOWNSTREAM", "load_receipt", "media_stat_digest", "audio_key",
     "plugin_code_digest", "cfg_get", "resolve_source_wav",
     "lookup", "measure_and_store", "gfx_key", "gfx_dir", "load_timeline_check",
     "read_receipt_atomic", "write_receipt_atomic",
+    "atomic_media", "media_cache_valid",
 ]
 
 

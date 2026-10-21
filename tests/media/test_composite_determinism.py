@@ -21,7 +21,8 @@ prores alpha 10bit 层使量化点错位产生全帧 ±1 级系统性微差，E-
 上游/参数/代码任一变更自动失效（摘要=合成路径五函数联合，曾只摘路由函数 composite()
 致 _composite_passes 改动不翻转键，已修）；中间物帧数硬校验 == 段长（创建后
 -count_frames 实测 fail-fast，不 cfr 补帧）+ 帧数旁车 .n 温态快路径（FFV1 大文件
-全文件解包校验数十秒/个，温态不可用，见 _pass_fresh docstring）。合成代码摘要
+全文件解包校验数十秒/个，温态改用完成证书+字节摘要；.n 仅保额外帧数约束，
+见 _pass_fresh docstring）。合成代码摘要
 _graph_code_digest 掺段键与 pass 键（防改码后旧缓存命中「洗白」）。
 
 覆盖：
@@ -66,8 +67,21 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
 from vtx.frame_source import PngSequence
+from vtx.infra import Ctx
 from vtx import composite
 from vtx.composite import RenderPlan, _graph_code_digest
+
+
+def _render_context(root, cache, width, height, duration):
+    """Real writer/identity context; synthetic PNG inputs stay read-only fixtures."""
+    timeline = root / 'timeline.json'
+    timeline.write_text(json.dumps({
+        'project': {'fps': 30, 'duration_frames': duration, 'width': width, 'height': height},
+        'sources': [], 'video_tracks': [], 'audio_tracks': [], 'subtitles': [],
+    }))
+    c = Ctx(timeline)
+    c.cache = cache  # isolated passes within the same pinned project root
+    return c
 
 
 def _have_ffmpeg_x264() -> bool:
@@ -131,8 +145,8 @@ class TestGraphCodeDigest(unittest.TestCase):
 class TestPassFreshSidecar(unittest.TestCase):
     """_pass_fresh 旁车快路径（纯文件操作，零渲染）。
 
-    语义：sidecar 路径凭 <target>.n 内容==段长判命中；target 缺失/空文件/旁车
-    缺失/旁车损坏/旁车数值不符均不命中——ffmpeg 中断截断产物无旁车，不可伪命中。
+    语义：完成证书/字节摘要先证明媒体完整，<target>.n 内容==段长是额外约束；
+    仅有旁车不认证媒体。下方文件负控拒绝裸字节，独立 stub 证书有效后核旁车分支。
     """
 
     def _plan(self, tmp: Path):
@@ -168,10 +182,22 @@ class TestPassFreshSidecar(unittest.TestCase):
             # target 缺失 → 不命中
             p.unlink()
             self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
-            # 非 sidecar 路径（count_frames 实测）：真媒体文件才可能命中
+            # 非 sidecar 路径同样要求完成证书，而不是裸文件存在
             self.assertFalse(plan._pass_fresh(p, 120))   # 文件已删
             fake = self._mk(d, b"not a media file")
             self.assertFalse(plan._pass_fresh(fake, 120))
+            # Isolate the extra .n contract after the shared completion gate.
+            # This stub proves sidecar control flow, not real media validity.
+            with mock.patch.object(composite, 'media_cache_valid', return_value=True) as valid:
+                for text, expected in ((None, False), ('119', False), ('120', True)):
+                    with self.subTest(certified_media=True, sidecar=text):
+                        sidecar = fake.with_suffix('.mkv.n')
+                        if text is None:
+                            sidecar.unlink(missing_ok=True)
+                        else:
+                            sidecar.write_text(text)
+                        self.assertEqual(plan._pass_fresh(fake, 120, sidecar=True), expected)
+                self.assertEqual(valid.call_count, 3)
 
     def test_sidecar_corrupt_text(self):
         with tempfile.TemporaryDirectory(prefix="vtx_sc_") as td:
@@ -180,6 +206,9 @@ class TestPassFreshSidecar(unittest.TestCase):
             p = self._mk(d)
             p.with_suffix(".mkv.n").write_text("not-a-number")
             self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
+            with mock.patch.object(composite, 'media_cache_valid', return_value=True) as valid:
+                self.assertFalse(plan._pass_fresh(p, 120, sidecar=True))
+            valid.assert_called_once_with(p, 120)
 
 
 class TestPassKeySubsSeparation(unittest.TestCase):
@@ -195,7 +224,7 @@ class TestPassKeySubsSeparation(unittest.TestCase):
     全失效（下次全量冷建），属修复预期。
 
     驱动形态：c.dry=True 纯计算（dry 分支命令经 Ctx.run 只打印不执行，此处录制）
-    ——pass 键自中间物目标文件名 p{k}_{pkey}.part.mkv 提取，锁产品路径的键计算
+    ——pass 键自中间物目标文件名 p{k}_{pkey}.mkv 提取，锁产品路径的键计算
     本身，非复制品重算。零 ffmpeg 依赖（pick_vcodec 正式档无 gpu 不探测；
     _pass_fresh 对缺失产物快速 False，不触 ffprobe）。
     """
@@ -205,7 +234,7 @@ class TestPassKeySubsSeparation(unittest.TestCase):
             pass
         outs = []
 
-        def _run(cmd, need=True):   # dry：只录命令尾元（中间物 .part.mkv 路径）
+        def _run(cmd, need=True):   # dry：只录命令尾元（中间物 .mkv 路径）
             outs.append(str(cmd[-1]))
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -230,7 +259,7 @@ class TestPassKeySubsSeparation(unittest.TestCase):
                 sfile.write_text("[Script Info]\n", encoding="utf-8")
             plan._composite_passes(sl, d / "seg.mp4", with_subs, a=0, b=120,
                                    sub_file=sfile)
-        pks = re.findall(r"p(\d+)_([0-9a-f]{12})\.part\.mkv$", "\n".join(outs), re.M)
+        pks = re.findall(r"p(\d+)_([0-9a-f]{12})\.mkv$", "\n".join(outs), re.M)
         self.assertTrue(pks, f"dry 命令未录得中间物 pass 键: {outs}")
         return dict(pks)
 
@@ -288,12 +317,10 @@ class TestCrossRunDeterminism(unittest.TestCase):
         每线程独立 cache 目录（pass 中间物互不共享）：pass 键内容寻址，共享目录时
         n 线程并发写**同一个**中间物文件会互踩——FFV1 大文件写入窗口数十秒，实测
         踩中（读方拿到半截 mkv 帧数自检失败；libx264 qp0 时代窗口小侥幸通过）。
-        产品侧已加 .part 原子落盘（composite._composite_passes），此处再以隔离
+        产品侧经 Ctx.run 单一事务原子落盘（composite._composite_passes），此处再以隔离
         cache 复原「只放大到达顺序、不引入文件竞态」的实验本意；PNG 输入目录
         只读共享。
         """
-        class _Ctx:
-            pass
         with tempfile.TemporaryDirectory(prefix="vtx_det_") as td:
             d = Path(td)
             self._gen_seqs(d)
@@ -302,18 +329,11 @@ class TestCrossRunDeterminism(unittest.TestCase):
                   if L["cl"]["dst_in"] < b and L["cl"]["dst_in"] + L["cl"]["dur"] > a] \
                 if a else sl_all
 
-            def _render(idx: int):
-                c = _Ctx()
-                c.fps, c.spf, c.dur = self.FPS, 1.0 / self.FPS, self.DUR
-                c.w, c.h, c.dry = self.W, self.H, False
-                c.cache = d / f"cache{idx}"
+            contexts = [_render_context(d, d / f"cache{idx}", self.W, self.H, self.DUR)
+                        for idx in range(n)]
 
-                def _run(cmd, need=True):
-                    r = subprocess.run(cmd, capture_output=True, text=True)
-                    if r.returncode != 0 and need:
-                        raise RuntimeError(" ".join(map(str, cmd))[:200] + "\n" + r.stderr[-800:])
-                    return r
-                c.run = _run
+            def _render(idx: int):
+                c = contexts[idx]
                 plan = RenderPlan(c=c, draft=False, f=1.0, W=self.W, H=self.H,
                                   nframes=None, nseg=1, layers=[])
                 out = d / f"run{idx}.mp4"
@@ -398,19 +418,24 @@ class TestPngSourceFrameAlignment(unittest.TestCase):
                 "w2": None, "h2": None, "ti": 0}
 
     def _render(self, layers, a, b, with_subs=False):
-        from types import SimpleNamespace
         self.outputs += 1
         cache = self.root / f"render{self.outputs}"
         cache.mkdir()
         def run(argv, **kwargs):
             return subprocess.run(argv, capture_output=True, check=True, timeout=120)
-        c = SimpleNamespace(fps=self.FPS, spf=1 / self.FPS, dur=self.DUR,
-                            w=self.W, h=self.H, cache=cache, dry=False, gpu=False, run=run)
+        c = _render_context(self.root, cache, self.W, self.H, self.DUR)
         plan = RenderPlan(c=c, draft=False, f=1, W=self.W, H=self.H)
         ass = cache / "empty.ass"
         ass.write_text("\n".join(plan.ass_head()), encoding="utf-8")
         out = cache / "output.mp4"
-        plan.composite(layers, out, with_subs, a=a, b=b, sub_file=ass)
+        execute = subprocess.run
+
+        def bounded_execute(argv, **kwargs):
+            kwargs.setdefault('timeout', 120)  # preserve this fixture's writer bound
+            return execute(argv, **kwargs)
+
+        with mock.patch('vtx.infra.subprocess.run', side_effect=bounded_execute):
+            plan.composite(layers, out, with_subs, a=a, b=b, sub_file=ass)
         raw = run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(out),
                    "-f", "rawvideo", "-pix_fmt", "gray", "-"]).stdout
         count = (self.DUR if b is None else b) - a
