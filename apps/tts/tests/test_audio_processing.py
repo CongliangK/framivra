@@ -56,10 +56,27 @@ class TestAtempoChain(unittest.TestCase):
             self.assertAlmostEqual(speed, raw / budget, places=5)
 
     def test_invalid(self):
-        with self.assertRaises(ValueError):
-            audio_processing.atempo_chain(0.0, 1.0)
-        with self.assertRaises(ValueError):
-            audio_processing.atempo_chain(1.0, 0.0)
+        for invalid in (0.0, -1.0, float('nan'), float('inf'), -float('inf')):
+            for raw, budget in ((invalid, 1.0), (1.0, invalid)):
+                with self.subTest(raw=raw, budget=budget):
+                    with self.assertRaises(ValueError):
+                        audio_processing.atempo_chain(raw, budget)
+        for raw, budget in ((1e308, 1e-308), (1e-308, 1e308)):
+            with self.subTest(raw=raw, budget=budget):
+                with self.assertRaises(ValueError):
+                    audio_processing.atempo_chain(raw, budget)
+
+    def test_finite_extremes_still_produce_bounded_factors(self):
+        for raw, budget in ((1e308, 1.0), (5e-324, 1.0), (5e-324, 5e-324)):
+            with self.subTest(raw=raw, budget=budget):
+                chain = audio_processing.atempo_chain(raw, budget)
+                if raw == budget:
+                    self.assertEqual(chain, '')
+                else:
+                    factors = [float(part.split('=')[1]) for part in chain.split(',')]
+                    self.assertTrue(factors)
+                    self.assertLessEqual(len(factors), 1075)
+                    self.assertTrue(all(0.5 <= factor <= 2.0 for factor in factors))
 
     def test_canonical_cli_tempo_from_another_directory(self):
         import subprocess
