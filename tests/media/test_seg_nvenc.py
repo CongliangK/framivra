@@ -159,6 +159,140 @@ class TestSegKeyEncoderToken(unittest.TestCase):
 class TestNvencBudget(unittest.TestCase):
     def setUp(self):
         reset_nvenc_budget()
+        self.addCleanup(reset_nvenc_budget)
+        environment = mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': '8'})
+        environment.start(); self.addCleanup(environment.stop)
+        guard = mock.patch.object(encoders, 'vram_guard_tier', return_value=8)
+        guard.start(); self.addCleanup(guard.stop)
+
+    def test_invalid_request_never_initializes_allocator(self):
+        from types import SimpleNamespace
+        for value in (0, -1, True, 1.5):
+            with self.subTest(value=value), \
+                    mock.patch.object(encoders, '_nvenc_pool') as pool, \
+                    self.assertRaises(ValueError):
+                with nvenc_budget(SimpleNamespace(dry=False), value):
+                    self.fail('invalid request entered body')
+            pool.assert_not_called()
+
+    def test_batch_uses_one_frozen_effective_capacity(self):
+        from types import SimpleNamespace
+        for configured, tier, expected in ((8, 1, 1), (2, 8, 2), (8, 4, 4)):
+            with self.subTest(configured=configured, tier=tier):
+                reset_nvenc_budget()
+                with mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': str(configured)}), \
+                        mock.patch.object(encoders, 'vram_guard_tier', return_value=tier) as guard:
+                    with nvenc_budget(SimpleNamespace(dry=False), 8) as granted:
+                        self.assertEqual(granted, expected)
+                        self.assertFalse(encoders._nvenc_sem().acquire(blocking=False))
+                    with mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': '99'}), \
+                            nvenc_budget(SimpleNamespace(dry=False), 8) as granted:
+                        self.assertEqual(granted, expected)
+                    guard.assert_called_once()
+
+    def test_concurrent_batches_do_not_split_reservations(self):
+        from types import SimpleNamespace
+        semaphore = threading.Semaphore(2)
+        reservation = threading.Lock()
+        first_token = threading.Event(); second_request = threading.Event()
+        release_first = threading.Event(); first_body = threading.Event()
+        second_body = threading.Event(); acquisitions = []; failures = []
+        class RecordingLock:
+            def __enter__(self):
+                if threading.current_thread().name == 'second':
+                    second_request.set()
+                reservation.acquire()
+            def __exit__(self, *args):
+                reservation.release()
+        class Slots:
+            def acquire(self, **kwargs):
+                got = semaphore.acquire(**kwargs)
+                if got:
+                    name = threading.current_thread().name
+                    acquisitions.append(name)
+                    if len(acquisitions) == 1:
+                        first_token.set()
+                        if not second_request.wait(2):
+                            raise RuntimeError('second batch never requested slots')
+                return got
+            def release(self):
+                semaphore.release()
+        def work(first):
+            try:
+                with nvenc_budget(SimpleNamespace(dry=False), 2) as granted:
+                    self.assertEqual(granted, 2)
+                    (first_body if first else second_body).set()
+                    if first and not release_first.wait(2):
+                        raise RuntimeError('test did not release first batch')
+            except BaseException as error:
+                failures.append(error)
+        with mock.patch.object(encoders, '_nvenc_pool', return_value=(Slots(), 2)), \
+                mock.patch.object(encoders, '_NVENC_RESERVATION_LOCK', RecordingLock()):
+            first = threading.Thread(target=work, args=(True,), name='first', daemon=True)
+            second = threading.Thread(target=work, args=(False,), name='second', daemon=True)
+            first.start()
+            try:
+                self.assertTrue(first_token.wait(2))
+                second.start()
+                self.assertTrue(first_body.wait(2))
+                self.assertFalse(second_body.is_set())
+            finally:
+                release_first.set()
+                first.join(3)
+                if second.ident is not None:
+                    second.join(3)
+            self.assertFalse(first.is_alive() or second.is_alive(), 'batch reservation deadlocked')
+        self.assertEqual(failures, [])
+        self.assertEqual(acquisitions, ['first', 'first', 'second', 'second'])
+        self.assertTrue(second_body.is_set())
+
+    def test_partial_acquisition_and_body_failure_release_slots(self):
+        from types import SimpleNamespace
+        c = SimpleNamespace(dry=False)
+        sem = mock.Mock()
+        sem.acquire.side_effect = [True, KeyboardInterrupt()]
+        with mock.patch.object(encoders, '_nvenc_pool', return_value=(sem, 2)), \
+                self.assertRaises(KeyboardInterrupt):
+            with nvenc_budget(c, 2):
+                self.fail('partial reservation must not enter body')
+        self.assertEqual(sem.release.call_count, 1)
+        with mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': '2'}):
+            with self.assertRaisesRegex(RuntimeError, 'body'):
+                with nvenc_budget(c, 2):
+                    raise RuntimeError('body')
+            with nvenc_budget(c, 2) as granted:
+                self.assertEqual(granted, 2)
+
+    def test_segment_executor_matches_actual_grant_and_x264_bypasses(self):
+        import tempfile
+        from types import SimpleNamespace
+        from vtx import composite
+        for encoder, configured, tier, expected in (('NVENC p7', 8, 1, 1),
+                ('NVENC p7', 2, 8, 2), ('NVENC p7', 8, 2, 2), ('x264', 1, 1, 4)):
+            with self.subTest(encoder=encoder, tier=tier), tempfile.TemporaryDirectory() as temp:
+                reset_nvenc_budget()
+                c = SimpleNamespace(cache=Path(temp), dur=4, dry=False, gpu=True, run=mock.Mock())
+                plan = composite.RenderPlan(c, False, 1, 2, 2, layers=[], nseg=4)
+                workers = []
+                class Executor:
+                    def __init__(self, count): workers.append(count)
+                    def __enter__(self): return self
+                    def __exit__(self, *args): pass
+                    def map(self, fn, items): return map(fn, items)
+                with mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': str(configured)}), \
+                        mock.patch.object(composite, 'choose_cutpoints', return_value=[1, 2, 3]), \
+                        mock.patch.object(composite, 'pick_vcodec', return_value=([], encoder)), \
+                        mock.patch.object(composite, 'nvenc_concurrency', side_effect=lambda c, n: n), \
+                        mock.patch.object(composite.os, 'cpu_count', return_value=16), \
+                        mock.patch.object(composite, 'ThreadPoolExecutor', Executor), \
+                        mock.patch.object(composite, 'media_cache_valid', return_value=False), \
+                        mock.patch.object(plan, 'composite'), \
+                        mock.patch.object(composite.subprocess, 'run', return_value=SimpleNamespace(stdout='4')), \
+                        mock.patch.object(encoders, 'vram_guard_tier', return_value=tier) as guard:
+                    plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
+                self.assertEqual(workers, [expected])
+                self.assertEqual(guard.call_count, 0 if encoder == 'x264' else 1)
+
 
     def test_concurrency_capped_at_budget(self):
         # 预算 2：8 线程各占 1 槽做 20ms 伪工作，峰值并发必须 ≤2 且全部完成

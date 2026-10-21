@@ -71,6 +71,8 @@ def nvenc_concurrency(c, workers: int) -> int:
 # 可用」（驱动层面并发上限，探测失败回落串行）；预算管「本进程内不超发」（防
 # seg 预编码后台任务与段渲染同进程叠加——当前编排时间上不重叠，机制上封死）。
 _NVENC_SEM = None
+_NVENC_CAPACITY = None
+_NVENC_RESERVATION_LOCK = threading.Lock()
 _NVENC_SEM_LOCK = threading.Lock()
 _NVENC_OK_MEMO = None   # nvenc_ok(use_memo=True) 的进程级探测结果缓存（P2-1，见函数注释）
 
@@ -195,22 +197,26 @@ def reset_vram_guard():
         _GUARD_STATS[k] = 0
 
 
-def _nvenc_sem() -> threading.Semaphore:
-    global _NVENC_SEM
+def _nvenc_pool():
+    """Return the semaphore and its capacity from the same frozen allocation."""
+    global _NVENC_SEM, _NVENC_CAPACITY
     with _NVENC_SEM_LOCK:
         if _NVENC_SEM is None:
-            # R-07h S5：定值域并入 VRAM 档位——有效预算=min(预算, 档位)（守卫仅此
-            # 触达，一次定值 memo；探测/预算两项既有语义零变化，详见上方守卫节注）。
-            _NVENC_SEM = threading.Semaphore(nvenc_effective_budget())
-        return _NVENC_SEM
+            _NVENC_CAPACITY = nvenc_effective_budget()
+            _NVENC_SEM = threading.Semaphore(_NVENC_CAPACITY)
+        return _NVENC_SEM, _NVENC_CAPACITY
+
+
+def _nvenc_sem() -> threading.Semaphore:
+    return _nvenc_pool()[0]
 
 
 def reset_nvenc_budget():
     """仅测试用：重置惰性信号量（改 VTX_NVENC_BUDGET 后须重置才生效——信号量
     预算在首次使用时定值，进程内不改）。"""
-    global _NVENC_SEM
+    global _NVENC_SEM, _NVENC_CAPACITY
     with _NVENC_SEM_LOCK:
-        _NVENC_SEM = None
+        _NVENC_SEM = _NVENC_CAPACITY = None
 
 
 def reset_nvenc_ok_memo():
@@ -281,24 +287,31 @@ def seg_encoder_kind(c) -> str:
 
 @contextlib.contextmanager
 def nvenc_budget(c, n: int = 1):
-    """占用 n 个 NVENC 会话槽（默认 1），退出释放。阻塞等待超过 0.1s 才打一行
-    「⏳ NVENC 预算等待」（acquire 前后计时，非每帧打——避免日志噪音）。dry-run
-    下任务只打印不执行，信号量直通（不占槽）。"""
+    """Reserve up to n slots; yield the actual frozen-capacity grant.
+
+    Serialize acquisition (not work or release) so concurrent multi-slot batches
+    cannot split the remaining tokens and wait forever for one another. Dry runs
+    bypass allocation and VRAM probing entirely.
+    """
+    if type(n) is not int or n < 1:
+        raise ValueError("NVENC slot request must be a positive integer")
     if getattr(c, "dry", False):
-        yield
+        yield n
         return
-    sem = _nvenc_sem()
+    sem, capacity = _nvenc_pool()
+    granted = min(n, capacity)
     t0 = time.monotonic()
     got = 0
     try:
-        for _ in range(n):
-            while not sem.acquire(timeout=0.1):
-                pass          # 0.1s 轮询：只为统计等待时长决定是否打日志
-            got += 1
+        with _NVENC_RESERVATION_LOCK:
+            for _ in range(granted):
+                while not sem.acquire(timeout=0.1):
+                    pass
+                got += 1
         waited = time.monotonic() - t0
         if waited > 0.1:
-            print(f"⏳ NVENC 预算等待 {waited:.1f}s（申请 {n} 槽 / 预算 {nvenc_budget_value()}）")
-        yield
+            print(f"⏳ NVENC 预算等待 {waited:.1f}s（申请 {n} 槽 / 实得 {granted} / 预算 {capacity}）")
+        yield granted
     finally:
         for _ in range(got):
             sem.release()
