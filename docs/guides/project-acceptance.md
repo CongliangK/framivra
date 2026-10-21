@@ -1,6 +1,6 @@
 # 项目验收包
 
-Issue #53 的独立入口是 `vtx.acceptance`，不改变渲染 CLI 或缓存键。
+使用 `vtx.acceptance` 为项目构建独立证据包，再由接收方复核媒体、输入和构建记录；此入口不改变渲染 CLI 或缓存键。
 `vtx.acceptance/1` 导出媒体、输入和构建证据。[源码冻结验收](../releases.md#冻结验收与发布)入口
 `scripts/release/release_acceptance.py` 调用本模块构建、复核独立包并执行输入/产物篡改负例；
 这说明源码中的接线，不代表当前提交已经执行或通过发行验收。公开 Demo 的操作入口与证据边界见
@@ -24,6 +24,8 @@ python3 tests/runners/acceptance_fixture.py --help
 - build.log：两次实际命令及合并 stdout/stderr。build 保留命令、执行退出码、CPU 参数及输入稳定性。结构化命令用 $PROJECT/<workspace_timeline> 表示可搬迁的项目根；该相对文件名必须与 inputs/ 下打包 timeline 一致，原始日志仍保留实际临时路径。
 - files：除 manifest 自身外所有包文件的完整 SHA-256 与 size；未登记文件、丢失文件及内容变化均拒绝。
 
+如需核对构建与子进程事件的关联，见 [执行事件的验收桥](../reference/execution-events.md#acceptance-bridge)。关联完整性与包完整性是不同结论，缺失事件不能推定运行成功。
+
 build 返回的 manifest_sha256 必须由接收方独立留存；verify 的必填 --manifest-sha256 使用该值。包内放一份摘要不能自证。可选 --source-root 指向原项目，另复核当前输入；未传时只能复核包内输入副本，结果显式标注 live_inputs_checked=false。复核不执行包里的命令。
 
 版本化元数据拒绝未知字段，执行序列/逐命令退出码须与整体退出码一致；缺 Python/Framivra 版本拒绝。命名工具探针须匹配精确命令，成功/失败结果与异常分支字段互斥且完整；unknown 也不能缺失错误或执行结果。存在 receipt 时，两侧 input_fingerprint 必须为相同的 64 位小写 SHA-256；只有失败且无 receipt 时允许 null。源 Fast token 的大小与采样摘要由包内字节复核，mtime 仅为历史记录。回执扩展阶段保留，禁止与包保留门名称冲突。
@@ -32,7 +34,7 @@ build 返回的 manifest_sha256 必须由接收方独立留存；verify 的必�
 
 ## 信任与范围
 
-完整导出摘要是每次导出重新读取的包完整性证据。运行期 sources/receipt 仍标 Fast；其他小文件内容身份按现有实现标 Verified，不把包摘要倒推成运行期 Verified 缓存。身份语义与限制见 [缓存与回执](../cache-provenance.md)。不实现 #85 的持久化身份缓存或真实性能验收。
+完整导出摘要是每次导出重新读取的包完整性证据。运行期 sources/receipt 仍标 Fast；其他小文件内容身份按现有实现标 Verified，不把包摘要倒推成运行期 Verified 缓存。身份语义与限制见 [缓存与回执](../cache-provenance.md)。本工具不提供持久化身份缓存或真实性能验收。
 
 依赖发现限于现有回执声明面；HTML 间接引用、系统字体、插件及外部资源闭包 unknown，self_contained 固定 false。仅证实声明输入的稳定性，不声称完整复现。源码 commit、脏工作树及内核文件摘要用于定位实际构建，不把脏树冒称纯 commit。
 

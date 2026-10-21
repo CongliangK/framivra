@@ -18,19 +18,17 @@
 
 tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合根。此布局不构成 #91 的干净安装、交互与成片质量验收证据。
 
-消费面变更公告（2026-10-21）：[分轨审计正文](../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)归组件 README，[WAV 维护边界](../docs/skill/references/edit.md#既有-wav-维护)归内核音频操作节；删除重复专题、更新消费指针，操作与未验收边界不变，已在落笔前公告并经独立预审。历史公告见[冻结源记录](https://github.com/CongliangK/framivra/blob/cbfaed74761657401b04119602f2a87dd1fd0ee7/templates/README.md)；本次不宣称用户六件 live 挂载已更新或 BAD=0。
+消费面公告（2026-10-21，`refactor_docs_structure` 落笔前预审）：本次以本页为 external 注册流程唯一 home，范本只保专有接口；更新 MG 测试与内核预览指针，当前能力和未验收边界不变。[历史公告](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/templates/README.md)保留先前归组记录。本次仅核仓内链接与命令，不宣称用户机器六件 live 挂载已更新。
 
-消费面补充公告（2026-10-21，`audit_document_entrypoints` 落笔前有条件预审通过）：MG 的十五款 Canvas prototype 源码就近归入各款 `scripts/prototype.js`，共享 helper 保留单份且不混同不同绘制语义；公开 CLI 与三条路线的资格边界不变。构建仅携所选款与公共脚本，缓存依赖随实际输出更新。各款导航补齐源码入口，并只在确有 readable 输入时推荐该版本。此处不宣称用户机器六件挂载已更新；云端文件校验与真实用户挂载验收分开记录。
-
-## 第三方接入五步（复制范本 → 写 manifest → 外部注册 → enable → doctor）
+## 第三方接入
 
 1. **复制开发范本**：`cp -r templates/hello-app templates/my-app`（插件用 hello-plugin；
    工作流另参考 tech-talk / skill-demo，不走下列 app/plugin 注册）；目录名与 manifest `name` 一致
-   （`^[a-z][a-z0-9-]*$`）。
+   （`^[a-z][a-z0-9-]*$`）。复制会创建目录，须先确认目标不存在。
 2. **写 manifest**：app → `app.json`；plugin → `plugin.json`（`extends.schema_keys`
    声明扩展键，`hooks` 值域 = `prepare_source`/`audio_events`/`validate`；schema 见
    ARCHITECTURE §2.3）。`health.type=command` 的命令必须是**组件根内相对路径**。
-3. **外部注册**：编辑 `config.local.json`（gitignored，不入库；纯净 clone 先 `env python3 vt.py init` 或 `cp config.example.json config.local.json` 生成；模板
+3. **外部注册**：编辑 `config.local.json`（gitignored，不入库；纯净 clone 通过 `env python3 vt.py init` 生成，会写本地配置；配置模板见
    `config.example.json` 的 `external_apps` / `external_plugins`）：
    ```json
    "external_apps":    [{"path": "templates/my-app", "enabled": true}],
@@ -43,37 +41,16 @@ tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合�
    `[app:external]`/`[plugin:external]` 条目且 health ✓ / requires ✓；
    `env python3 vt.py apps list` / `plugins list` 出现 external 条目。
 
-## 安全节（§2.4）实测记录（P4，本机 2026-09-13）
+## external 注册的安全边界
 
-- **默认 disabled**：字符串条目注册后 doctor 显示
-  `ℹ [plugin:external] hello-plugin｜disabled（external 注册默认禁用，§2.4）`，
-  不探测不生效；doctor 结论仍 ✅。
-- **显式 enable**：`✓ [plugin:external] hello-plugin｜health ✓（exit 0｜hello-plugin
-  healthy｜ffmpeg /usr/bin/ffmpeg）｜requires ✓`；`plugins list` 显示
-  `✓ enabled hello-plugin（plugin:external，.../templates/hello-plugin）`。
-- **坏注册 ①（路径穿越）**：`{"path": "../templates/hello-plugin", "enabled": true}`
-  （目标 resolve 后合法，但含 `..`）→ registry 拒绝加载，doctor 报
-  `✗ manifest 无效：external 路径禁止包含 ..（安全节 §2.4，用绝对或相对本仓的
-  规范路径）`，enabled 坏条目计入 FAIL 门（doctor exit 1）。
-- **坏注册 ②（绝对路径 health 命令）**：临时插件 manifest 写
-  `"command": "/bin/sh -c echo pwned"` → manifest 校验拒绝
-  `✗ health.command 脚本路径 必须为相对路径（插件根内），得到绝对路径: /bin/sh`，
-  探针永不执行，doctor FAIL。
-- 坏条目只在 enabled 时 FAIL；disabled 坏条目仅提示（发现面仍完整展示错误）。
+| 配置 | 当前行为 |
+|---|---|
+| 字符串路径或未显式 enable | 默认 disabled，不执行健康探针或插件；发现面仍显示配置错误 |
+| `enabled: true` | 检查 manifest、requires 与 health；坏配置计入 doctor FAIL |
+| 注册路径含 `..` | 拒绝加载，即使 resolve 后仍落在合法目录 |
+| manifest 逃出注册目录，或 health 命令使用绝对路径/逃出组件根 | 校验拒绝，不执行探针 |
 
-## 卸载与缓存失效（验收门 6 对照，实测）
-
-从 `external_plugins` 移除 hello-plugin 后（timeline 仍声明 `hello_gain`）：
-
-- **键出白名单 → gc 可回收**：`vtx gc --dry` 将
-  `cache/audio/{audio_key}::hello:1.0.0:{digest}.wav` 列入回收清单
-  （`源指纹不在当前 timeline 键集`）。
-- **指纹段消失**：`active_plugins_digest` 由 `plugins:hello-plugin@1.0.0:{摘要}`
-  变为 `''`——录制侧（带段）与重算侧（无段）回执指纹失配，旧回执不放行陈旧
-  产物，重渲走裸提取。机器断言见 `templates/hello-plugin/tests/test_hello_plugin.py`
-  的 `CacheIdentity`。
-- validate 侧行为：条目移除 = 键退化为未知键**警告不阻断**；`enabled:false`
-  = 报错「已安装但被禁用」阻断；未装分支（mock `plugin_state`）报错+安装提示。
+插件移除、禁用、未安装三种状态并不等价；[hello-plugin 三分支及卸载缓存规则](hello-plugin/README.md)是范本行为的唯一说明，断言在其 `tests/test_hello_plugin.py`。
 
 ## 测试
 

@@ -13,7 +13,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 
 ## 迭代回路速查
 
-修改前留快照；修改后用 `vtx diff` 定位影响，再按 [runbook R1-R4](references/runbook.md) 选择局部验证：
+修改前留快照；修改后用 `vtx diff` 定位影响，再按 [编辑配方 R1-R4](references/edit.md) 选择局部验证：
 
 | 改动 | 局部验证 |
 |---|---|
@@ -31,8 +31,8 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 | 剪辑 edit、切素材、多轨合成、画中画、烧字幕、混音、渲染、QC、缓存治理；timeline.json / vtx | `references/edit.md` | timeline 契约、CLI 全阶段（validate/audit/prepare/gfx/video/audio/mux/qc/gc）、音频工程、渲染坑表、三大生成模块接口 |
 | 动效 gfx、纯 MG、多角色/场景、透明叠加、动效页/图表/片头片尾/overlay 卡、写 gfx/*.html | [gfx 创作组织与协议](references/gfx.md#html-创作组织)，按需选 [MG 风格工程](../../templates/mg-styles/README.md) | HTML 创作组织、帧驱动/依赖协议、CDP/Canvas/静态跨度、通用技术检查与按需样式；D22 仅限 tech-talk 工作流 |
 | 显式 SVG 序列、Inkscape 渲染 | [SVG 序列入口与限制](references/gfx.md#显式-svg-序列) | 独立于浏览器同页 SVG 的路线 |
-| 实拍素材处理、音视频同步、降噪、响度、验证门 | `references/edit.md` + `references/runbook.md` + 各脚本 `--help` | 管线前置素材与音频处理 |
-| 标准修改任务（改音量/改编排/改字幕/改 gfx 页/全冷重渲）、棒次 | `references/runbook.md` | R1-R4、R2s 与子智能体棒次协议；R5/R6/R7 产线配方见 `templates/tech-talk/references/runbook-r5r6r7.md` |
+| 实拍素材处理、音视频同步、降噪、响度、验证门 | `references/edit.md` + 各脚本 `--help` | 管线前置素材与音频处理 |
+| 标准修改任务（改音量/改编排/改字幕/改 gfx 页/全冷重渲）、棒次 | `references/edit.md` | R1-R4、R2s 与子智能体棒次协议；R5/R6/R7 产线配方见 `templates/tech-talk/references/runbook-r5r6r7.md` |
 | 抠像/背景合成 matting、换背景、绿幕、背景替换、Magic Mask、matte、带 alpha 前景合成 | `apps/matting/matting.md`（app 专属） | 真人实拍抠像（达芬奇主力、自研链备用）→ alpha ProRes4444 → 背景合成全流程 |
 | 科技口播全流程 SOP / 六阶段、voice-ime 范式 | `templates/tech-talk/SKILL.md` | 制作总览→六阶段→音频支线→SOP 闭环→uses 声明表；动效编排范式见 `templates/tech-talk/references/voice-ime-paradigm.md` |
 | 新选题、调研 research 可行性、对标分析、生成 01-brief | 先读 `templates/tech-talk/SKILL.md`，再 `templates/tech-talk/references/research.md` | R0-R6 多智能体调研 |
@@ -41,7 +41,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 | BGM/配乐生成、音色、乐谱 | **`music` skill** | 挂载后分轨审计包配方见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
 
 ## 推荐方式与全局铁律
-1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆分；按任务需要保留结论与证据，交接要求见 [runbook](references/runbook.md#主控-子智能体棒次协议)；长命令按执行环境支持的后台会话与轮询机制运行。
+1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆分；按任务需要保留结论与证据，交接要求见 [编辑与交接配方](references/edit.md#主控-子智能体棒次协议)；长命令按执行环境支持的后台会话与轮询机制运行。
 2. **验证门优先**：validate（机制）+ content_gates（内容）+ blackdetect（零黑帧）+ 视觉抽帧（技术结论按实际渲染与相应证据判定，DOM 相等不能证明像素相等）；艺术审查与用户视觉确认按 [创作交付检查](references/gfx.md#html-创作组织) 分别记录。
 3. **迭代用 draft，正式交付用完整 all**；单独 video 可选 `--gpu`。缓存身份见 references，收尾先 `gc --dry` 查看清单，回收另按授权执行。
 4. **剪辑永远走 timeline.json + vtx**：不手写 ffmpeg 剪辑命令；改 timeline 必重跑 validate。
@@ -54,7 +54,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 | 操作 | 命令 |
 |---|---|
 | 渲染前校验（必跑） | `python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json validate` |
-| 全流程渲染 | `... vtx.py -t <项目>/timeline.json all`（完整链含 finish；截断语义见 runbook） |
+| 全流程渲染 | `... vtx.py -t <项目>/timeline.json all`（完整链含 finish；截断语义见 edit 的正式交付链） |
 | 草稿预览 | `... video --draft [--frames N]`；`... mux --draft`；区间 `... video --draft --range <A> <B>` |
 | 正式 GPU | `... video --gpu` |
 | 字幕检查（渲染前必跑，秒级） | `... vtx.py -t <项目>/timeline.json subs check`（对齐漂移/CPS/重叠/行宽，报告 out/subs_check.json） |

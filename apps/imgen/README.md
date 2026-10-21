@@ -1,7 +1,7 @@
 # imgen —— 生图 API 生图 + cover-crop 后处理
 原三模块方案的章节编号仅作历史来源：[2026-09-11 设计记录](https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md)。
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/imgen/`）**：manifest 见 `app.json`（kind=app；健康检查 = `imgen_cli.py --help`）。随迁清除 `spec_from_file_location`（v2 §1.4 冻结禁令）：imgen_cli.py 加载 secrets.py 与 tests/_loader.py、init.sh 探测内嵌加载统一改为 **app 根 sys.path 注入 + 普通 import**（app 目录注入不涉内核双模块，允许；保留解析落点校验哨兵防 stdlib 同名 secrets 串味）。
+组件声明见 `app.json`（kind=app）；健康检查为 `imgen_cli.py --help`，不调用付费 API。本地 `secrets.py` 通过普通 import 加载并校验解析落点，拒绝同名标准库模块误载。
 
 脚本阶段写 prompt → 生图 API（api.wuyinkeji.com，nano / gpt-image / GPT-Image-2.5 三系五模型）付费生图（0.1 或 0.3 元/张按模型）→ 原图即下（URL 2 小时失效）→ ffmpeg lanczos cover-crop 到**精确尺寸** → 硬对接下游：
 - `assets/bg/background_4k.png`（3840×2160 8-bit RGB PNG）→ `apps/matting/run_full_bg.sh` 抠像逐像素合成（cv2.imread 直读、无 resize，**像素契约不过即崩**）；

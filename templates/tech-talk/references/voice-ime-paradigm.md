@@ -15,7 +15,7 @@
 - **长挂载页安全复核**：f 超出设计窗时全部动画须为 sin 连续函数/seg 窗口，无数组按 t 索引、无定格越界——g6b_endboard.html。
 - **虚线语义**：流程连线中 dashed 琥珀段=「隔层/异常/跳转」语义标记，实线墨色=正常流——e1_pain_card.html。
 
-相关实证数据（gfx 引擎矩阵/静态跨度占比/重页硬下限）见 `docs/DEV.md` §一；内核 `docs/skill/references/runbook.md` R3 说明当前局部验证方法。
+相关实证数据（gfx 引擎矩阵/静态跨度占比/重页硬下限）见 `docs/DEV.md` §一；内核 `docs/skill/references/edit.md` R3 说明当前局部验证方法。
 
 ## 编排方法论指针（上层流程）
 

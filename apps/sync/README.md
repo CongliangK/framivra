@@ -2,7 +2,7 @@
 
 组件 manifest 见 `app.json`；命令使用本目录真实路径，回归测试见本目录 `tests/`。
 
-> **子类标注（ARCHITECTURE §3.1）**：本 app 属「管线前置素材工具」——不进 timeline 管线、无插件钩子；但两件都邻接**不可逆写操作**（repack 替换 voice 轨源、sync 微重采样 conform），纪律 = **幂等 + 备份**：repack 首次运行自动备份占位到 `final_tts_backup/`，替换后正式交付运行完整 `all`（脚本结束打印入口），当前回执与局部诊断前置见 [runbook](../../docs/skill/references/runbook.md)；sync 输出为新 out.wav，不覆写输入，conform 后复验残差 max<1.5ms 达标才判过。
+> **子类标注（ARCHITECTURE §3.1）**：本 app 属「管线前置素材工具」——不进 timeline 管线、无插件钩子；但两件都邻接**不可逆写操作**（repack 替换 voice 轨源、sync 微重采样 conform），纪律 = **幂等 + 备份**：repack 首次运行自动备份占位到 `final_tts_backup/`，替换后正式交付运行完整 `all`（脚本结束打印入口），当前回执与局部诊断前置见 [runbook](../../docs/skill/references/edit.md)；sync 输出为新 out.wav，不覆写输入，conform 后复验残差 max<1.5ms 达标才判过。
 
 ## 用途
 
@@ -36,4 +36,4 @@ env python3 apps/sync/repack_voice.py -t "<项目>/timeline.json" [--takes-dir "
 env python3 vtx/vtx.py -t "<项目>/timeline.json" all
 ```
 
-局部音频诊断须先对当前输入执行 `prepare`，再执行 `audio --report`；局部通过后仍运行完整 `all`，检查退出码与 QC/插件结果。内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish；完整配方见 [runbook](../../docs/skill/references/runbook.md)。
+局部音频诊断须先对当前输入执行 `prepare`，再执行 `audio --report`；局部通过后仍运行完整 `all`，检查退出码与 QC/插件结果。内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish；完整配方见 [runbook](../../docs/skill/references/edit.md)。

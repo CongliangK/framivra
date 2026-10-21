@@ -29,7 +29,8 @@
 （metrics：G1 中位/极差、G2 I、G3 TP、G7 黑帧、G10 帧数…）、输入指纹（media/
 timeline 的 md5/size/mtime）与时间戳写成一份 JSON。默认不写（兼容不变）。
 
-方案三阶段1提速（2026-09-13，详见 docs/plans-2026-09-11/方案三）：
+方案三阶段1提速（2026-09-13，历史记录：
+https://github.com/CongliangK/framivra/tree/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/plans-2026-09-11）：
   - G1 短窗 ebur128 逐窗 spawn 改分批（≤16 窗/进程，lufs_batch），失败回落逐窗；
   - G2/G3 优先消费响度回执（vtx/loudness_cache.py，同一解码域输入全链只测一次），
     命中则全片 pass 只保留 blackdetect 链；未命中照旧测 I/TP 并归档回执；

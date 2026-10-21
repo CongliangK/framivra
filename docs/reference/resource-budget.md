@@ -1,12 +1,12 @@
 # 资源预算接口
 
-本专题归属 docs 层，覆盖 [Issue #44](https://github.com/CongliangK/framivra/issues/44) 的协作式资源记账。实现与 Python API 在 [vtx/resource_budget.py](../../vtx/resource_budget.py)，验收在 [tests/execution/test_resource_budget.py](../../tests/execution/test_resource_budget.py)。
+本接口供同机协作进程共享资源预算，按申请和释放记录占用。实现与 Python API 在 [vtx/resource_budget.py](../../vtx/resource_budget.py)，验收在 [tests/execution/test_resource_budget.py](../../tests/execution/test_resource_budget.py)。
 
 ## 能力与边界
 
 一个池统一记账 CPU、RAM、磁盘和抽象 VRAM token。四维申请全成或全败，任何已记录申请之和不超过池的配置。释放、获取下一次快照或下一次申请时，确认退出的进程占用会被回收；没有常驻服务。调用方仍需在启动工作前申请，并在工作结束后释放。
 
-这是预算接口，不是 OS/cgroup 强制隔离，不限制未接入程序的实际消耗，也不证明真实 GPU 的可用性、吞吐或并发安全。真实 GPU 调优归 #45/#65/#120/#121。现有渲染 CLI 尚未自动接入。
+这是预算接口，不是 OS/cgroup 强制隔离，不限制未接入程序的实际消耗，也不证明真实 GPU 的可用性、吞吐或并发安全。真实 GPU 的调优与验收须独立进行。现有渲染 CLI 尚未自动接入。
 
 运行要求为 Linux /proc、POSIX flock 和 fstxn 的 fd-anchored 写能力。缺失能力显式报 ResourceUnavailable，不降级到仅线程锁。一个池仅用于同一机器、同一次启动、同一个 PID namespace 的合作进程；不支持跨主机、网络文件系统或跨容器共享。使用本地可靠文件系统；磁盘损坏和掉电持久化不在原子替换保证内。
 
@@ -97,4 +97,4 @@ env python3 -B tests/runners/resource_budget_fixture.py --output "$OUTPUT"
 
 输出包含当前机器 inventory/config、主 events.jsonl、各 project-* 目录的事件与 stderr、崩溃回收前账本、最终 pool.json 和 result.json。正常返回零且 result 为 PASS 才算本次通过；失败时返回非零并保留已写文件，启动前的路径拒绝不写证据。再次执行须选新目录。进程仅自行退出，不发送信号；存储系统调用挂死仍不保证硬超时。不要在运行中移动或篡改可信输出目录。
 
-fixture 以独立项目工作目录竞争同一池，检查四维超额的全成或全败、满池/等待超时/等待取消、崩溃后重新打开回收及全量再申请，结束时检查零占用。CPU 只做合成计算；VRAM 为模拟 token，RAM/磁盘只记账，不分配对应大小。配置按本次库存生成，事件含本机身份/时序；分享前自行检查，不能把一次日志提交为通用性能数据。保留这些文件可复核 F13-B2，但不测量物理峰值，不替代 F13-B3 的真实后端验收。docs_smoke 仅检查帮助入口，不代跑 fixture。
+fixture 以独立项目工作目录竞争同一池，检查四维超额的全成或全败、满池/等待超时/等待取消、崩溃后重新打开回收及全量再申请，结束时检查零占用。CPU 只做合成计算；VRAM 为模拟 token，RAM/磁盘只记账，不分配对应大小。配置按本次库存生成，事件含本机身份/时序；分享前自行检查，不能把一次日志提交为通用性能数据。保留这些文件可复核跨项目协作式记账，但不测量物理峰值，不替代真实后端验收。docs_smoke 仅检查帮助入口，不代跑 fixture。
