@@ -311,6 +311,15 @@ class TestIdempotencyDoD(unittest.TestCase):
         self.assertIn("max_abs_diff == 0", tier1["definition"])
 
 
+def load_smoke():
+    spec = importlib.util.spec_from_file_location("smoke_unit", SUITE / "smoke.py")
+    module = importlib.util.module_from_spec(spec)
+    # The runner's command defaults must not mutate the unit test process.
+    with mock.patch.dict(os.environ), mock.patch.object(sys, "path", list(sys.path)):
+        spec.loader.exec_module(module)
+    return module
+
+
 class TestS6SequenceVerifier(unittest.TestCase):
     """In-process control-flow proofs, not real-browser/pixel acceptance.
 
@@ -319,11 +328,7 @@ class TestS6SequenceVerifier(unittest.TestCase):
     """
 
     def setUp(self):
-        spec = importlib.util.spec_from_file_location("s6_smoke_unit", SUITE / "smoke.py")
-        self.mod = importlib.util.module_from_spec(spec)
-        # smoke's defaults must not alter the original 28 static tests' process.
-        with mock.patch.dict(os.environ), mock.patch.object(sys, "path", list(sys.path)):
-            spec.loader.exec_module(self.mod)
+        self.mod = load_smoke()
         from tests.gfx._png import png
         self.png = png
         self.tmp = tempfile.TemporaryDirectory()
@@ -528,6 +533,143 @@ class TestS6SequenceVerifier(unittest.TestCase):
                 self.assertEqual(code, self.mod.EXIT_FAIL if fault in ("corrupt_prefix", "failed_other_leg") else self.mod.EXIT_TIMEOUT)
                 self.assertLess(report["random_jump"]["compared"], 11)
                 self.assertNotEqual(self.smoke.report["result"], "PASS")
+
+
+class TestSmokeVerdicts(unittest.TestCase):
+    """Synthetic control flow and PNGs only; no native/browser acceptance."""
+
+    def setUp(self):
+        self.mod = load_smoke()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.smoke = self.mod.Smoke("unit-only", self.root / "evidence")
+        self.smoke.note = lambda message: None
+        self.smoke.man["global_spec"].update(width=6, height=4)
+        self.external = self.root / "external"
+        (self.external / "gfx").mkdir(parents=True)
+        self.pages = ("g6a_title.html", "g6b_endboard.html", "c5a_main_path.html")
+        for page in self.pages:
+            (self.external / "gfx" / page).write_text("synthetic fixture")
+        (self.external / "timeline.json").write_text(json.dumps({"video_tracks": [
+            {"kind": "gfx", "clips": [{"src": page, "dur": 1, "dst_in": i}
+                                      for i, page in enumerate(self.pages)]}]}))
+        scenario = self.smoke.scenario("S8")
+        scenario["external"].update(voice_ime_root=str(self.external),
+                                    bench_p2_root=str(self.root / "absent"))
+        scenario["tracks"]["micro"]["invariants"].update(pages=3, frames=3)
+        scenario["tracks"]["macro"]["invariants"]["frames"] = 3
+        for patch in (mock.patch.object(self.mod.gfx_render, "Browser", side_effect=AssertionError("native browser")),
+                      mock.patch.object(self.mod.multiprocessing, "get_context", side_effect=AssertionError("native fork"))):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.smoke.render_guarded = self.fake_render
+
+    def fake_render(self, html, outdir, *args, **kwargs):
+        from tests.gfx._png import write_png
+        outdir.mkdir(parents=True, exist_ok=True)
+        write_png(outdir / "f0000.png", width=6, height=4)
+        return "ok", {"failed": []}, {}
+
+    def run_smoke(self, phases):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return self.smoke.run(phases)
+
+    def test_unknown_empty_or_report_only_selection_fails_without_work(self):
+        for phases in ([], ["report"], ["unknown"], ["manifest", "unknown"]):
+            with self.subTest(phases=phases):
+                self.smoke.failures.clear()
+                with mock.patch.object(self.smoke, "phase_manifest") as run:
+                    self.assertEqual(self.run_smoke(phases), self.mod.EXIT_FAIL)
+                    run.assert_not_called()
+                self.assertEqual(self.smoke.report["result"], "FAIL")
+
+    def test_phase_exception_is_archived_as_failure_before_propagation(self):
+        for phase in ("manifest", "render", "idempotency", "s6seq", "s7", "s8"):
+            with self.subTest(phase=phase):
+                self.smoke.report["phases"].clear()
+                with mock.patch.object(self.smoke, f"phase_{phase}", side_effect=RuntimeError("injected")):
+                    with self.assertRaisesRegex(RuntimeError, "injected"):
+                        self.run_smoke([phase])
+                report = json.loads((self.smoke.ev / "report.json").read_text())
+                self.assertEqual(report["result"], "FAIL")
+                self.assertEqual(report["phases"][phase]["status"], "FAIL")
+
+    def test_phase_system_exit_zero_becomes_failure(self):
+        for code in (None, 0, 7):
+            with self.subTest(code=code):
+                with mock.patch.object(self.smoke, "phase_manifest", side_effect=SystemExit(code)):
+                    with self.assertRaises(SystemExit) as raised:
+                        self.run_smoke(["manifest"])
+                self.assertEqual(raised.exception.code, self.mod.EXIT_FAIL)
+                self.assertEqual(self.smoke.report["result"], "FAIL")
+
+    def test_s8_success_and_explicit_skip_are_not_confused(self):
+        self.assertEqual(self.run_smoke(["s8"]), self.mod.EXIT_OK)
+        self.assertEqual(self.smoke.report["phases"]["s8"]["status"], "PASS")
+        self.smoke.skip_external = True
+        self.smoke.report["phases"].clear()
+        self.assertEqual(self.run_smoke(["s8"]), self.mod.EXIT_FAIL)
+        self.assertEqual(self.smoke.report["phases"]["s8"]["status"], "SKIP")
+        self.smoke.failures.clear()
+        def manifest():
+            self.smoke.report["phases"]["manifest"] = {"checks": 1}
+        with mock.patch.object(self.smoke, "phase_manifest", side_effect=manifest):
+            self.assertEqual(self.run_smoke(["manifest", "s8"]), self.mod.EXIT_OK)
+        self.assertEqual(self.smoke.report["result"], "PARTIAL_SKIPPED")
+
+    def test_s8_missing_or_invalid_proof_is_phase_failure(self):
+        for fault in ("invariants", "missing_page", "missing_frame", "invalid_payload", "failed_payload", "archived_dir"):
+            with self.subTest(fault=fault):
+                self.smoke.failures.clear()
+                scenario = self.smoke.scenario("S8")
+                scenario["tracks"]["micro"]["invariants"]["pages"] = 4 if fault == "invariants" else 3
+                page = self.external / "gfx" / self.pages[0]
+                page.write_text("fixture")
+                if fault == "missing_page":
+                    page.unlink()
+                archived = self.root / "absent"
+                if fault == "archived_dir":
+                    archived.mkdir()
+                if fault == "missing_frame":
+                    fake = lambda *a, **k: ("ok", {"failed": []}, {})
+                elif fault == "invalid_payload":
+                    fake = lambda *a, **k: ("ok", {}, {})
+                elif fault == "failed_payload":
+                    fake = lambda *a, **k: ("ok", {"failed": [0]}, {})
+                else:
+                    fake = self.fake_render
+                with mock.patch.object(self.smoke, "render_guarded", side_effect=fake):
+                    self.assertEqual(self.run_smoke(["s8"]), self.mod.EXIT_FAIL)
+                self.assertEqual(self.smoke.report["phases"]["s8"]["status"], "FAIL")
+                self.assertEqual(self.smoke.report["result"], "FAIL")
+
+    def test_s6_absent_static_hashes_are_not_equal_frame_proof(self):
+        hashes = {str(i): "static" if 120 <= i < 240 else f"frame{i}" for i in range(600)}
+        self.assertTrue(all(self.smoke._assert_s6_segments(hashes).values()))
+        for i in range(120, 240):
+            del hashes[str(i)]
+        result = self.smoke._assert_s6_segments(hashes)
+        self.assertFalse(result["b_static_all_equal"])
+        self.assertEqual(result["b_equals_120_frames"], 0)
+        self.assertTrue(self.smoke.failures)
+
+    def test_idempotency_requires_both_renderers_to_complete(self):
+        for status, stats in (("ok", {"failed": [0]}), ("unknown", {"failed": []}), ("ok", {})):
+            with self.subTest(status=status, stats=stats), \
+                    mock.patch.object(self.smoke, "_unique_pages", return_value=[("S1", "fake.html")]), \
+                    mock.patch.object(self.smoke, "render_guarded", return_value=(status, stats, {})), \
+                    mock.patch.object(self.smoke, "frame_diff", return_value=(0, True)) as compare:
+                self.assertEqual(self.run_smoke(["idempotency"]), self.mod.EXIT_FAIL)
+                compare.assert_not_called()
+                self.assertEqual(self.smoke.report["phases"]["idempotency"]["tier1_pass"], 0)
+
+    def test_s8_timeout_not_phase_pass(self):
+        info = {"reason": "budget", "elapsed_s": 1, "budget_s": 1, "frames_done": 0}
+        with mock.patch.object(self.smoke, "render_guarded", return_value=("timeout", None, info)):
+            self.assertEqual(self.run_smoke(["s8"]), self.mod.EXIT_TIMEOUT)
+        self.assertEqual(self.smoke.report["phases"]["s8"]["status"], "PARTIAL_TIMEOUT")
+        self.assertEqual(self.smoke.report["result"], "PARTIAL_TIMEOUT")
 
 
 if __name__ == "__main__":
