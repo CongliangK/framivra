@@ -13,6 +13,7 @@ from .encoders import seg_encoder_kind
 from .frame_source import png_source
 from .hygiene import manifest_record, seg_key, tmp_run
 from .infra import Ctx, filter_filename
+from .recovery import media_cache_valid
 
 # ---- 阈值常量（与 stages.audit 字幕基准对齐；2026-08-21 实测，见 stages 注释）----
 CPS_FAIL = 9.0           # 阅读速度 >9 字/s 过快（≈P99）→ FAIL
@@ -271,7 +272,7 @@ def _layer_ready(c: Ctx, f: int):
                 skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
                                "prores" if need_alpha else seg_kind)
                 seg = c.cache / "seg" / f"{skey}.{'mov' if need_alpha else 'mp4'}"
-                if not seg.exists():
+                if not media_cache_valid(seg, cl["dur"], allow_short_verified=True):
                     return None
                 layers.append({"cl": cl, "seg": seg, "x": cl.get("x", 0) if windowed else 0,
                                "y": cl.get("y", 0) if windowed else 0, "w2": None, "h2": None,
@@ -283,7 +284,7 @@ def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
     """背景帧来源三级优先：qc_clean 提帧 → 图层单帧合成 → 黑场兜底。
     返回 (png 路径|None, 来源描述)。dry 只返回描述不执行。"""
     qc = c.cache / "qc_clean.mp4"
-    if qc.exists():
+    if media_cache_valid(qc, c.dur):
         p = d / "bg.png"
         if not dry:
             c.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{f * c.spf:.6f}", "-i", str(qc),
@@ -297,7 +298,7 @@ def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
             plan.composite(layers, p, False, a=f, b=f + 1)
             c.run(["ffmpeg", "-v", "error", "-y", "-i", str(p), "-frames:v", "1", str(d / "bg.png")])
         return d / "bg.png", "图层单帧合成（with_subs=False）"
-    print(f"⚠ 帧 {f}：无 qc_clean.mp4 且图层素材不全——背景为黑场，仅字幕位置/样式预览")
+    print(f"⚠ 帧 {f}：qc_clean.mp4 缺失或未通过完成校验，且图层素材不全——背景为黑场，仅字幕位置/样式预览")
     p = d / "bg.png"
     if not dry:
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
