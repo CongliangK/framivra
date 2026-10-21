@@ -80,28 +80,8 @@ def eprint(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# config 容错（方案 §7.2，10 行内嵌同款；零跨模块 import）
+# config 容错与加载共用 vtx.pluginlib.config；保持惰性导入，--help 不载入内核。
 # ---------------------------------------------------------------------------
-
-def cfg_get(cfg: dict, path: str, default):
-    """cfg_get(cfg, "imgen.api_base", "https://...")——逐级 get，缺键/类型不符→default。"""
-    node = cfg
-    for part in path.split("."):
-        if not isinstance(node, dict) or part not in node:
-            return default
-        node = node[part]
-    if isinstance(default, bool):  # 布尔容错："false"/false 一致处理
-        if isinstance(node, str):
-            return node.strip().lower() in ("1", "true", "yes", "on")
-        return bool(node)
-    if node is None:
-        return default
-    if isinstance(default, str) and not isinstance(node, str):
-        return default      # 类型不符 → 默认（P2-3）
-    if isinstance(node, bool):
-        return default      # bool 污染非布尔键 → 默认
-    return node
-
 
 def _pluginlib_config():
     """vtx.pluginlib.config（v2 §5.3 统一加载）——repo 根追加进 sys.path 后导入
@@ -118,7 +98,7 @@ def resolve_api_base(cfg: dict) -> str:
     env = os.environ.get("IMGEN_API_BASE")
     if env:
         return env.rstrip("/")
-    return str(cfg_get(cfg, "imgen.api_base", models.BASE_URL)).rstrip("/")
+    return str(_pluginlib_config().cfg_get(cfg, "imgen.api_base", models.BASE_URL)).rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -542,8 +522,8 @@ def _resolve_key(args) -> str:
 def cmd_gen(args, cfg) -> int:
     from api_client import ImgenClient  # noqa: F401（付费链需 requests）
 
-    model_default = str(cfg_get(cfg, "imgen.model_default", "nano"))
-    confirm_enabled = bool(cfg_get(cfg, "imgen.confirm_before_submit", True))
+    model_default = str(_pluginlib_config().cfg_get(cfg, "imgen.model_default", "nano"))
+    confirm_enabled = bool(_pluginlib_config().cfg_get(cfg, "imgen.confirm_before_submit", True))
 
     if args.ref and len(args.ref) > 14:  # 前置报错（先于确认门，不浪费交互）
         eprint(f"✗ 参考图最多 14 张（生图 API 硬限制），当前 {len(args.ref)} 张")
@@ -614,9 +594,9 @@ def cmd_batch(args, cfg) -> int:
         eprint("✗ prompts.json 应为非空列表 [{prompt, kind, model, size, ratio, ref}, ...]")
         return EXIT_ERROR
 
-    price = float(cfg_get(cfg, "imgen.price_per_image", 0.1))  # 兼容旧 config；实际按模型单价
-    model_default = str(cfg_get(cfg, "imgen.model_default", "nano"))
-    confirm_enabled = bool(cfg_get(cfg, "imgen.confirm_before_submit", True))
+    price = float(_pluginlib_config().cfg_get(cfg, "imgen.price_per_image", 0.1))  # 兼容旧 config；实际按模型单价
+    model_default = str(_pluginlib_config().cfg_get(cfg, "imgen.model_default", "nano"))
+    confirm_enabled = bool(_pluginlib_config().cfg_get(cfg, "imgen.confirm_before_submit", True))
 
     specs = []
     for idx, item in enumerate(items, start=1):
