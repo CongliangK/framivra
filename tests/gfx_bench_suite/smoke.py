@@ -424,23 +424,27 @@ class Smoke:
                                              tag=f"{sid}__{stem}#a", phase="idempotency")
             sb, pb, ib = self.render_guarded(path, db, 100, frames=[99, 2], tabs=1,
                                              tag=f"{sid}__{stem}#b", phase="idempotency")
-            if "timeout" in (sa, sb):
-                legs = {"a": ia, "b": ib}
-                which = "a" if sa == "timeout" else "b" if sb == "timeout" else "a+b"
-                rec = {"phase": "idempotency", "page": f"{sid} {path} (leg {which})",
-                       **legs[which if which in legs else "a"]}
-                self.timeout("idempotency", rec)
-                out["pages"].append({"scenario": sid, "path": path,
-                                     "tier1": "SKIP_TIMEOUT", "leg": which})
-                out["tier1_skip"] += 1
-                continue
-            errors = [error for status, stats in ((sa, pa), (sb, pb))
-                      if (error := render_result_error(status, stats))]
+            timeout_legs = []
+            errors = []
+            for leg, status, stats, info in (("a", sa, pa, ia), ("b", sb, pb, ib)):
+                if status == "timeout":
+                    timeout_legs.append(leg)
+                    self.timeout("idempotency", {
+                        "phase": "idempotency", "page": f"{sid} {path} (leg {leg})", **info})
+                elif (error := render_result_error(status, stats)):
+                    errors.append(f"leg {leg}: {error}")
             if errors:
                 self.fail("idempotency", f"{path}: {' / '.join(errors)}")
                 out["pages"].append({"scenario": sid, "path": path,
-                                     "tier1": "FAIL", "error": errors})
+                                     "tier1": "FAIL", "error": errors,
+                                     "timeout_legs": timeout_legs})
                 out["tier1_fail"] += 1
+                continue
+            if timeout_legs:
+                out["pages"].append({"scenario": sid, "path": path,
+                                     "tier1": "SKIP_TIMEOUT", "leg": "+".join(timeout_legs),
+                                     "timeout_legs": timeout_legs})
+                out["tier1_skip"] += 1
                 continue
             try:
                 diff, pixel_equal = self.frame_diff(da / "f0002.png", db / "f0002.png")
@@ -657,7 +661,6 @@ class Smoke:
 
         def _mini_run():
             shots = 0
-            non_png = 0
             browser = gfx_render.Browser(self.chrome, 1)
             t0 = time.time()
             try:
@@ -671,15 +674,13 @@ class Smoke:
                         tab.navigate(f"{uri}?f={fi}")
                         data = tab.shot()
                         (md / f"p{pi}_f{fi:02d}.png").write_bytes(data)
-                        if not data.startswith(b"\x89PNG"):
-                            non_png += 1
                         shots += 1
                 tab.close()
             finally:
                 browser.stop()
             # 本函数跑在 fork 子进程内：self.fail() 的变更随子进程消亡，
             # 失败事实必须经返回值带回父进程裁决。
-            return {"pages": mini_pages, "frames": shots, "non_png": non_png,
+            return {"pages": mini_pages, "frames": shots, "failed": [],
                     "browser_restarts": 0,
                     "wall_s": round(time.time() - t0, 1)}
 
@@ -687,12 +688,26 @@ class Smoke:
             _mini_run, "S7__mini_run", md, 30, 1, "s7")
         if status == "timeout":
             self.timeout("s7", {"phase": "s7", "page": "mini_run", **info})
-        elif status == "exc":
-            self.fail("s7", f"mini_run: {payload}")
+        elif (render_result_error(status, payload)
+              or payload.get("frames") != 30 or payload.get("pages") != mini_pages
+              or payload.get("browser_restarts") != 0
+              or not isinstance(payload.get("wall_s"), (int, float))):
+            self.fail("s7", f"mini_run: invalid completion result: {status} {payload}")
         else:
-            out["mini_run"] = payload
-            if payload["non_png"]:
-                self.fail("s7", f"mini_run: {payload['non_png']} 帧非 PNG")
+            # Child counters/signatures are not frame evidence. Validate the exact
+            # 3 × 10 output set in the parent with the shared full PNG reader.
+            expected = {f"p{pi}_f{fi:02d}.png" for pi in range(3) for fi in range(10)}
+            actual = {p.name for p in md.glob("*.png")}
+            invalid = {name: reason for name in sorted(expected)
+                       if (reason := png_invalid_reason(
+                           md / name, width=self.man["global_spec"]["width"],
+                           height=self.man["global_spec"]["height"]))}
+            extra = sorted(actual - expected)
+            out["mini_run"] = {**payload, "non_png": len(invalid),
+                               "invalid_frames": invalid, "unexpected_frames": extra,
+                               "status": "FAIL" if invalid or extra else "PASS"}
+            if invalid or extra:
+                self.fail("s7", f"mini_run: invalid frames={invalid}, unexpected frames={extra}")
             self.note(f"s7: {len(out['pages'])} 页抽样；mini_run "
                       f"{payload['frames']} 帧单会话 {payload['wall_s']}s")
         self.report["phases"]["s7"] = out

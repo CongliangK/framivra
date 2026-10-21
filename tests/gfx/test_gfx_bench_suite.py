@@ -664,6 +664,93 @@ class TestSmokeVerdicts(unittest.TestCase):
                 compare.assert_not_called()
                 self.assertEqual(self.smoke.report["phases"]["idempotency"]["tier1_pass"], 0)
 
+    def test_idempotency_failure_outranks_timeout_in_either_leg(self):
+        info = {"reason": "budget", "elapsed_s": 1, "budget_s": 1, "frames_done": 0}
+        timeout = ("timeout", None, info)
+        for failure in (("ok", {"failed": [0]}, {}), ("ok", {}, {}),
+                        ("exc", "injected exception", {})):
+            for first in (True, False):
+                legs = [failure, timeout] if first else [timeout, failure]
+                with self.subTest(failure=failure, first=first), \
+                        mock.patch.object(self.smoke, "_unique_pages", return_value=[("S1", "fake.html")]), \
+                        mock.patch.object(self.smoke, "render_guarded", side_effect=legs), \
+                        mock.patch.object(self.smoke, "frame_diff") as compare:
+                    self.assertEqual(self.run_smoke(["idempotency"]), self.mod.EXIT_FAIL)
+                    self.assertEqual(self.smoke.report["result"], "FAIL")
+                    page = self.smoke.report["phases"]["idempotency"]["pages"][0]
+                    self.assertEqual(page["tier1"], "FAIL")
+                    self.assertEqual(page["timeout_legs"], ["b" if first else "a"])
+                    self.assertEqual(len(self.smoke.timeouts), 1)
+                    compare.assert_not_called()
+
+    def test_idempotency_healthy_and_timeout_only_controls(self):
+        healthy = ("ok", {"failed": []}, {})
+        timeout = ("timeout", None, {"reason": "budget", "elapsed_s": 1,
+                                   "budget_s": 1, "frames_done": 0})
+        for legs in ([healthy, healthy], [healthy, timeout], [timeout, healthy], [timeout, timeout]):
+            with self.subTest(legs=legs), \
+                    mock.patch.object(self.smoke, "_unique_pages", return_value=[("S1", "fake.html")]), \
+                    mock.patch.object(self.smoke, "render_guarded", side_effect=legs), \
+                    mock.patch.object(self.smoke, "frame_diff", return_value=(0, True)) as compare:
+                count = sum(leg[0] == "timeout" for leg in legs)
+                self.assertEqual(self.run_smoke(["idempotency"]),
+                                 self.mod.EXIT_TIMEOUT if count else self.mod.EXIT_OK)
+                self.assertEqual(len(self.smoke.timeouts), count)
+                self.assertEqual(compare.call_count, 0 if count else 1)
+                self.assertEqual(self.smoke.report["result"], "PARTIAL_TIMEOUT" if count else "PASS")
+
+    def test_s7_actual_mini_run_requires_complete_valid_pngs(self):
+        from tests.gfx._png import write_png
+        fixture = self.root / "valid.png"
+        write_png(fixture, width=6, height=4)
+        valid = fixture.read_bytes()
+        write_png(fixture, width=7, height=4)
+        wrong_size = fixture.read_bytes()
+
+        class Tab:
+            def call(self, *args, **kwargs): pass
+            def navigate(self, *args, **kwargs): pass
+            def shot(self): return data
+            def close(self): pass
+
+        class Browser:
+            def __init__(self, *args): pass
+            def start(self): pass
+            def open_tabs(self): return [Tab()]
+            def stop(self): pass
+
+        def sample(html, outdir, *args, frames, **kwargs):
+            outdir.mkdir(parents=True, exist_ok=True)
+            for i in frames:
+                write_png(outdir / f"f{i:04d}.png", width=6, height=4)
+            return "ok", {"failed": []}, {}
+
+        for fault in (None, "prefix_only", "wrong_size", "missing", "extra", "failed_payload", "bad_count", "malformed_payload"):
+            with self.subTest(fault=fault):
+                data = b"\x89PNG" if fault == "prefix_only" else wrong_size if fault == "wrong_size" else valid
+                def guarded(fn, tag, outdir, *args):
+                    payload = fn()  # Exercise the real nested _mini_run, without a native child.
+                    self.assertEqual(len(list(outdir.glob("*.png"))), 30)
+                    if fault == "missing":
+                        (outdir / "p0_f00.png").unlink()
+                    elif fault == "extra":
+                        (outdir / "p3_f00.png").write_bytes(valid)
+                    elif fault == "failed_payload":
+                        payload["failed"] = [0]
+                    elif fault == "bad_count":
+                        payload["frames"] = 29
+                    elif fault == "malformed_payload":
+                        payload = {}
+                    return "ok", payload, {}
+                with mock.patch.object(self.mod.gfx_render, "Browser", Browser), \
+                        mock.patch.object(self.smoke, "render_guarded", side_effect=sample), \
+                        mock.patch.object(self.smoke, "run_guarded", side_effect=guarded):
+                    self.assertEqual(self.run_smoke(["s7"]), self.mod.EXIT_FAIL if fault else self.mod.EXIT_OK)
+                self.assertEqual(self.smoke.report["result"], "FAIL" if fault else "PASS")
+                if not fault:
+                    mini = self.smoke.report["phases"]["s7"]["mini_run"]
+                    self.assertEqual((mini["frames"], mini["non_png"], mini["status"]), (30, 0, "PASS"))
+
     def test_s8_timeout_not_phase_pass(self):
         info = {"reason": "budget", "elapsed_s": 1, "budget_s": 1, "frames_done": 0}
         with mock.patch.object(self.smoke, "render_guarded", return_value=("timeout", None, info)):
