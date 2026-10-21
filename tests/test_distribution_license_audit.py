@@ -7,8 +7,8 @@ import tempfile
 import unittest
 import zipfile
 
-from scripts import distribution_license_audit as audit
-from scripts import model_license_policy as policy
+from scripts.policy import distribution_license_audit as audit
+from scripts.policy import model_license_policy as policy
 
 ROOT = Path(__file__).resolve().parents[1]
 

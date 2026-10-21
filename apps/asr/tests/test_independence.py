@@ -551,7 +551,7 @@ class TestOnboardingGuidance(AdversarialBase):
                 message = str(ctx.exception)
                 self.assertIn("旧 --download 为 BLOCKED", message)
                 self.assertIn("docs/third-party-licenses.md", message)
-                self.assertIn("python3 scripts/model_license_policy.py plan <asset>", message)
+                self.assertIn("python3 scripts/policy/model_license_policy.py plan <asset>", message)
                 self.assertNotIn("bash apps/asr/init.sh --download", message)
         self.assertEqual(self.http_calls, [])
         self.assert_ime_untouched()
@@ -559,7 +559,7 @@ class TestOnboardingGuidance(AdversarialBase):
     def test_readme_distinguishes_check_download_and_real_acceptance(self):
         readme = (Path(client.ASR_DIR) / "README.md").read_text(encoding="utf-8")
         self.assertIn("BLOCKED（退出码 4）", readme)
-        self.assertIn("scripts/model_license_policy.py plan qwen-asr-1.7b", readme)
+        self.assertIn("scripts/policy/model_license_policy.py plan qwen-asr-1.7b", readme)
         self.assertIn("固定快照下载不安装 qwen-asr/torch 运行环境", readme)
         self.assertIn("独立安装与真实转写 UNRUN", readme)
         self.assertNotIn("一键探测/补齐", readme)

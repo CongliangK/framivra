@@ -58,7 +58,7 @@ class ProtocolMatrixTests(unittest.TestCase):
         external.parent.mkdir()
         self.directory.rename(external)
         self.directory = external
-        patch = mock.patch.object(registry, "_external_cfg", return_value={
+        patch = mock.patch.object(registry._config, "load_config", return_value={
             "external_plugins": [{"path": str(external), "enabled": True}]})
         patch.start()
         self.addCleanup(patch.stop)

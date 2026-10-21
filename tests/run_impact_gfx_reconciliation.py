@@ -23,7 +23,7 @@ def main():
     root.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo))
-    from tests.test_frame_source import write_png
+    from tests.gfx._png import write_png
     from vtx.hygiene import gfx_dir
     from vtx.impact import capture, compare
     env = dict(os.environ, VTX_SEG_NVENC='0', VTX_NO_NVENC='1',

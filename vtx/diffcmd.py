@@ -27,11 +27,6 @@ def _num(v):
     return json.dumps(v, ensure_ascii=False) if not isinstance(v, str) else v
 
 
-def _fmt_change(old, new):
-    """值变化的展示片段：数值给 旧→新，其余同。"""
-    return f"{_num(old)} → {_num(new)}"
-
-
 def _status_of(v):
     """bool（qc pass）与字符串状态统一转符号，无 recognizer 返回 None。"""
     if isinstance(v, bool):
@@ -90,47 +85,35 @@ def _by_key(items, key):
     return d
 
 
-def _diff_qc(a, b, out):
-    """qc_report：checks 按 name 配对。pass 布尔翻转 = 状态翻转（显著），
-    detail 变化 = 值变化。"""
-    ma, mb = _by_key(a.get("checks", []), lambda x: x.get("name", "")), \
-        _by_key(b.get("checks", []), lambda x: x.get("name", ""))
+def _diff_named(a, b, out, field):
+    """Compare QC checks or audit indicators by name, preserving their policies.
+
+    QC keeps the first duplicate and compares pass truthiness; audit keeps the
+    last duplicate and compares raw status values before formatting symbols.
+    """
+    qc = field == "checks"
+    if qc:
+        ma = _by_key(a.get(field, []), lambda x: x.get("name", ""))
+        mb = _by_key(b.get(field, []), lambda x: x.get("name", ""))
+    else:
+        ma = {x.get("name", ""): x for x in a.get(field, [])}
+        mb = {x.get("name", ""): x for x in b.get(field, [])}
     for name in sorted(set(ma) | set(mb)):
-        p = f"checks[{name}]"
+        p = f"{field}[{name}]"
         if name not in ma:
             out.append(("add", p, None, mb[name].get("detail", "")))
         elif name not in mb:
             out.append(("del", p, ma[name].get("detail", ""), None))
         else:
             ca, cb = ma[name], mb[name]
-            if bool(ca.get("pass")) != bool(cb.get("pass")):
-                out.append(("state", p,
-                            "✓" if ca.get("pass") else "✗",
-                            "✓" if cb.get("pass") else "✗"))
+            sa = bool(ca.get("pass")) if qc else ca.get("status")
+            sb = bool(cb.get("pass")) if qc else cb.get("status")
+            if sa != sb:
+                out.append(("state", p, _status_of(sa) or sa, _status_of(sb) or sb))
             if ca.get("detail", "") != cb.get("detail", ""):
                 out.append(("change", f"{p}.detail",
                             ca.get("detail", ""), cb.get("detail", "")))
-
-
-def _diff_audit(a, b, out):
-    """audit_report：indicators 按 name 配对，status 变化 = 状态翻转（显著），
-    detail 变化 = 值变化。volume 等其余顶层键走通用兜底。"""
-    ka = {x.get("name", ""): x for x in a.get("indicators", [])}
-    kb = {x.get("name", ""): x for x in b.get("indicators", [])}
-    for name in sorted(set(ka) | set(kb)):
-        p = f"indicators[{name}]"
-        if name not in ka:
-            out.append(("add", p, None, kb[name].get("detail", "")))
-        elif name not in kb:
-            out.append(("del", p, ka[name].get("detail", ""), None))
-        else:
-            sa, sb = ka[name].get("status"), kb[name].get("status")
-            if sa != sb:
-                out.append(("state", p, _status_of(sa) or sa, _status_of(sb) or sb))
-            if ka[name].get("detail", "") != kb[name].get("detail", ""):
-                out.append(("change", f"{p}.detail",
-                            ka[name].get("detail", ""), kb[name].get("detail", "")))
-    return {"indicators"}
+    return {field}
 
 
 def _diff_subs(a, b, out):
@@ -183,9 +166,9 @@ def diff_reports(a, b):
     out = []
     skip = set()
     if kind == "qc" and _detect(b) == "qc":
-        _diff_qc(a, b, out); skip = {"checks"}
+        skip = _diff_named(a, b, out, "checks")
     elif kind == "audit" and _detect(b) == "audit":
-        skip = _diff_audit(a, b, out)
+        skip = _diff_named(a, b, out, "indicators")
     elif kind == "subs" and _detect(b) == "subs":
         skip = _diff_subs(a, b, out)
     out += _generic(a, b, skip)
@@ -212,7 +195,7 @@ def run_diff(old_path, new_path, dry=False):
         if kind == "state":
             print(f"  ⚡ [状态翻转] {path}: {_num(old)} → {_num(new)}")
         elif kind == "change":
-            print(f"  · [变化] {path}: {_fmt_change(old, new)}")
+            print(f"  · [变化] {path}: {_num(old)} → {_num(new)}")
         elif kind == "add":
             print(f"  + [新增] {path}: {_num(new)}")
         else:

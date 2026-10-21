@@ -26,7 +26,7 @@
 
 1. 已有资产探测：`bash apps/matting/init.sh`（conda env `comfyui`、两个平级克隆、
    torch hub ResNet18）；旧 `--download` 为 **BLOCKED**，不会补齐缺件。
-   离线证据可用 `env python3 scripts/model_license_policy.py plan matanyone2-code matanyone2-weights birefnet-hr resnet18-weights` 查看；
+   离线证据可用 `env python3 scripts/policy/model_license_policy.py plan matanyone2-code matanyone2-weights birefnet-hr resnet18-weights` 查看；
    `plan` 不下载、不安装环境、不授予许可，也不解除未知项或旧入口门禁。
    ComfyUI 服务另用 `bash apps/matting/comfyui_init.sh` 探测；`--start` 仅启动已配置服务，旧 `--install` 为 **BLOCKED**。
 2. **两个外部 git 克隆，必须与本目录平级**（脚本用相对路径 `sys.path` 引入）：

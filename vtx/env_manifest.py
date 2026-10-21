@@ -6,7 +6,7 @@ issue #102；深化 #48 D05 Chrome 环境指纹，支撑 #62/#63/#69 的像素�
 （Noto Sans CJK SC 版本不一致）或 GPU 驱动静默回退（命令行传了启用 GPU 但
 Chromium 内部回退 SwiftShader）会导致像素级幽灵差异——本模块在每次实验/
 基准启动时产出**不可伪造**的 `env_manifest.json`，作为跨后端像素比对的
-环境一致性前置门禁证据（消费方：scripts/gfx_golden.py compare --env-manifest）。
+环境一致性前置门禁证据（消费方：scripts/gfx/gfx_golden.py compare --env-manifest）。
 
 manifest 顶层 schema（"vtx.env_manifest/1"，字段名=issue #102 工单口径）：
   run_id                "YYYYMMDDTHHMMSSZ-<8位随机hex>"（UTC + secrets.token_hex）
@@ -588,7 +588,7 @@ def verify_manifest_compatibility(manifest_a: dict, manifest_b: dict) -> list:
 
     返回不兼容项列表（人读中文句子；空表=通过）。证据不可得（任一侧主版本/视口/
     字体指纹缺失）按不兼容处理——无法证明一致就不能比像素；双侧同缺某具体字体
-    家族=兼容（回退路径一致）。消费方：scripts/gfx_golden.py compare --env-manifest
+    家族=兼容（回退路径一致）。消费方：scripts/gfx/gfx_golden.py compare --env-manifest
     在跨后端像素比对前作前置门禁（非空 → 拒绝比对）。
 
     入参必须是 JSON 对象（dict）：null/字符串/列表/数字（手改或损坏的 manifest）

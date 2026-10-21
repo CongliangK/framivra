@@ -10,7 +10,7 @@
   1) edge-tts 二进制合成（晓晓 zh-CN-XiaoxiaoNeural，免鉴权；默认输出
      24kHz mp3）→ cache/tmp/<runid>/edge_<ID>.mp3
   2) ffmpeg 重采样 48k mono s16 → raw 中间物 cache/tmp/<runid>/raw_<ID>.wav
-  3) atempo.apply_atempo 贴预算 → assets/voice_tts/final/<ID>.wav
+  3) audio_processing.apply_atempo 贴预算 → assets/voice_tts/final/<ID>.wav
   4) levelnorm 峰值归一 -6dBFS（幂等）
   5) manifest 记账（duration_factor 对 edge 恒 null——无该模型参数）
 
@@ -25,8 +25,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import atempo  # noqa: E402
-import levelnorm  # noqa: E402
+import audio_processing  # noqa: E402
 
 VOICE_DEFAULT = "zh-CN-XiaoxiaoNeural"  # 晓晓：中文女声，审听级占位默认
 
@@ -71,11 +70,11 @@ def finish_window(wid: str, text: str, budget_s: float, raw_wav: str,
     纯 ffmpeg/本地文件操作（无网络），单测直接对本函数断言 manifest 字段
     与 final 格式（repack_voice.py 消费契约）。
     """
-    raw_s = atempo.probe_duration(raw_wav)
+    raw_s = audio_processing.probe_duration(raw_wav)
     final = os.path.join(final_dir, f"{wid}.wav")
-    final_s = atempo.apply_atempo(raw_wav, budget_s, final, raw_s=raw_s)
-    levelnorm.normalize_file(final)
-    peak = levelnorm.peak_db(final)
+    final_s = audio_processing.apply_atempo(raw_wav, budget_s, final, raw_s=raw_s)
+    audio_processing.normalize_file(final)
+    peak = audio_processing.peak_db(final)
     return {"id": wid, "chars": n_chars(text), "budget_s": round(budget_s, 3),
             "raw_s": round(raw_s, 2), "duration_factor": None,
             "final_s": round(final_s, 2), "peak_db": round(peak, 1)}

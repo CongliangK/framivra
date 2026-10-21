@@ -3,7 +3,7 @@
 权威实现：`src/ipc_protocol.hpp`（消息/常量 + 偏移静态断言）、
 `src/shm_ring.hpp`（环布局）、`src/serve.cpp`（worker 侧）、
 `cef_client.py`（Python 消费端镜像）。测试
-`tests/test_cef_worker_shm.py::NativeRingSelfTest` 以
+`tests/gfx/test_cef_worker_shm.py::NativeRingSelfTest` 以
 `shm_ring_selftest --dump-ring` 跨语言锁定本表。
 
 ## §0 与工单原文的偏差记录（红队必读）

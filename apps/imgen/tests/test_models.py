@@ -22,6 +22,7 @@ class EndpointConstantsTest(unittest.TestCase):
         self.assertNotIn("image_gpt_image", models.GPT_SUBMIT_PATH)
 
     def test_model_registry_uses_constants(self):
+        self.assertFalse(hasattr(models, "GPT_SIZE_CHOICES"))
         self.assertEqual(models.MODELS["nano"].submit_path, models.NANO_SUBMIT_PATH)
         self.assertEqual(models.MODELS["gpt-image"].submit_path, models.GPT_SUBMIT_PATH)
         self.assertTrue(models.MODELS["nano"].supports_aspect_ratio)

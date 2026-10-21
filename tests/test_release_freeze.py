@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
-from scripts import release_github as release
+from scripts.release import release_github as release
 
 
 class FreezeTests(unittest.TestCase):

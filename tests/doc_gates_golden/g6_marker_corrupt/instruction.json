@@ -3,7 +3,7 @@
   "name": "marker_corrupt",
   "kind": "capture",
   "expect_rc": 1,
-  "cmd": ["python3", "scripts/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g6_marker_corrupt/catalog.md"],
+  "cmd": ["python3", "scripts/docs/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g6_marker_corrupt/catalog.md"],
   "attack": "END 行错拼:<!-- END GENERATED manifest-catalog --> → <!-- END GENERATEDx -->(末字母后缀 x)",
   "expected_behavior": "rc=1。实跑留档:错拼行仍含 END GENERATED 子串,verify 计数 1/1 后入区内逐行比对,该行内容首差即列 exit 1;计数口径实现下同为红,两口径均满足本档契约,禁静默 PASS",
   "fixture": "catalog.md(基于真 docs/catalog.md 复制至档目录后按档篡改;真件只读零触,集成席收口重验)",

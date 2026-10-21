@@ -2,7 +2,7 @@
 
 > 唯一入口：`scripts/demo.py`（preflight / prepare / verify 三步）。本包只冻结
 > 公开输入定义（timeline/HTML/CSS/JS/字体/引用），所有渲染、preview、QC、CEF、
-> 性能与人工视听结论一律 **UNRUN**。专题说明见 `docs/demo-fixture.md`（docs 层）。
+> 性能与人工视听结论一律 **UNRUN**。专题说明见 `docs/guides/demo-fixture.md`（docs 层）。
 
 ## profiles
 
@@ -37,5 +37,5 @@ google/fonts 固定 hash 获取）。页面经包内 `@font-face` 本地引用�
 env python3 scripts/demo.py preflight --profile standard   # 只读体检（版本化 JSON）
 ```
 
-prepare/verify 属写态/校验命令，用法与边界见 `docs/demo-fixture.md`
+prepare/verify 属写态/校验命令，用法与边界见 `docs/guides/demo-fixture.md`
 （不在此复述，一处事实一处 home）。

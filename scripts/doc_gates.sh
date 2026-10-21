@@ -34,13 +34,13 @@ emit() {
 }
 
 REGISTRY="$(cat <<'REG_EOF'
-leaf_1:L1:docs_smoke:bash scripts/docs_smoke.sh
-leaf_2:L2:doc_budget:python3 scripts/verify_doc_budget.py
-leaf_3:L3:repeat_anchors:python3 scripts/verify_repeat_anchors.py
-leaf_4:L4:charter_budget:python3 scripts/verify_charter_budget.py
-leaf_5:L5:catalog_check:python3 scripts/verify_manifest_catalog.py --check
-leaf_6:L6:version_sync:python3 scripts/verify_version_sync.py
-leaf_7:L7:contract_surface:python3 scripts/verify_contract_surface.py
+leaf_1:L1:docs_smoke:bash scripts/docs/docs_smoke.sh
+leaf_2:L2:doc_budget:python3 scripts/docs/verify_doc_budget.py
+leaf_3:L3:repeat_anchors:python3 scripts/docs/verify_repeat_anchors.py
+leaf_4:L4:charter_budget:python3 scripts/docs/verify_charter_budget.py
+leaf_5:L5:catalog_check:python3 scripts/docs/verify_manifest_catalog.py --check
+leaf_6:L6:version_sync:python3 scripts/docs/verify_version_sync.py
+leaf_7:L7:contract_surface:python3 scripts/docs/verify_contract_surface.py
 REG_EOF
 )"
 

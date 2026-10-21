@@ -1,5 +1,5 @@
 """Sealed-package unit/adversarial tests; fake renderer is only a unit-test seam.
-The real CPU pipeline is exercised by scripts/acceptance_fixture.py.
+The real CPU pipeline is exercised by tests/runners/acceptance_fixture.py.
 """
 import copy
 import ast
@@ -377,7 +377,7 @@ class AcceptanceTests(unittest.TestCase):
                     self.verify()
 
     def test_every_fixture_probe_render_subprocess_has_explicit_env(self):
-        for path in (Path(a.__file__), a.REPO / 'scripts/acceptance_fixture.py'):
+        for path in (Path(a.__file__), a.REPO / 'tests/runners/acceptance_fixture.py'):
             tree = ast.parse(path.read_text())
             calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
                      and isinstance(node.func, ast.Attribute) and node.func.attr == 'run'

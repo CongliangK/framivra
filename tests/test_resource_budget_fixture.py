@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/resource_budget_fixture.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'tests/runners/resource_budget_fixture.py'
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'fixture requires Linux')

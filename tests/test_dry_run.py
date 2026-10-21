@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from vtx import cli, hygiene
-from tests.gfx_environment_fixture import bind_environment, environment_cli
+from tests.gfx._environment import bind_environment, environment_cli
 from vtx.infra import Ctx
 
 REPO = Path(__file__).resolve().parents[1]

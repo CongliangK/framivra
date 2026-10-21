@@ -1,6 +1,6 @@
 """C03 verifier regressions; fresh venv layout fixtures, no build downloads.
 
-The real build/wheel/sdist installation proof is scripts/package_smoke.py.
+The real build/wheel/sdist installation proof is tests/runners/package_smoke.py.
 These adversarial fixtures exercise missing metadata/resources and import leaks,
 not a substitute for running that command against actual build artifacts.
 """
@@ -17,7 +17,7 @@ import tempfile
 import unittest
 import venv
 
-from scripts import package_smoke
+from tests.runners import package_smoke
 
 REPO = Path(__file__).resolve().parents[1]
 

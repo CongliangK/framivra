@@ -3,7 +3,7 @@
   "name": "registry_drift",
   "kind": "capture",
   "expect_rc": 1,
-  "cmd": ["python3", "scripts/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g5_registry_drift/catalog.md"],
+  "cmd": ["python3", "scripts/docs/verify_manifest_catalog.py", "--check", "--catalog", "tests/doc_gates_golden/g5_registry_drift/catalog.md"],
   "attack": "GENERATED 区内 denoise 行 installed 列篡改:true → false(页与 registry/重生成单边漂移)",
   "expected_behavior": "gen 重生成与副本不等(installed 列首差),exit 1",
   "fixture": "catalog.md(基于真 docs/catalog.md 复制至档目录后按档篡改;真件只读零触,集成席收口重验)",

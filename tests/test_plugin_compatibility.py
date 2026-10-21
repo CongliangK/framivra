@@ -171,7 +171,7 @@ class LoaderCompatibilityTests(unittest.TestCase):
         external = self.root / "external" / "demo"
         external.parent.mkdir()
         self.directory.rename(external)
-        with mock.patch.object(registry, "_external_cfg", return_value={
+        with mock.patch.object(registry._config, "load_config", return_value={
                 "external_plugins": [{"path": str(external), "enabled": True}]}), \
                 mock.patch.object(hooks.importlib, "import_module") as imp:
             before = list(sys.path)
@@ -194,7 +194,7 @@ class LoaderCompatibilityTests(unittest.TestCase):
             f"    Path({str(called)!r}).touch()\n"
             "    return tracks\n")
         with _clean_import_path(), mock.patch.dict(sys.modules), mock.patch.object(
-                registry, "_external_cfg", return_value={"external_plugins": [
+                registry._config, "load_config", return_value={"external_plugins": [
                     {"path": str(external), "enabled": True}]}):
             sys.modules.pop("demo", None)
             self.data["requires"]["core"] = ">=999.0.0"
