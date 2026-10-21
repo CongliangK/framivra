@@ -587,8 +587,8 @@ def verify_manifest_compatibility(manifest_a: dict, manifest_b: dict) -> list:
     ③ 色彩空间（基准 srgb） ④ 视口尺寸 ⑤ 字体 SHA256（逐必需家族+sans-serif 回退）
 
     返回不兼容项列表（人读中文句子；空表=通过）。证据不可得（任一侧主版本/视口/
-    字体指纹缺失）按不兼容处理——无法证明一致就不能比像素；双侧同缺某具体字体
-    家族=兼容（回退路径一致）。消费方：scripts/gfx/gfx_golden.py compare --env-manifest
+    字体指纹缺失/生效后端缺失或未知）按不兼容处理——无法证明一致就不能比像素；
+    双侧同缺某具体字体家族=兼容（回退路径一致）。消费方：scripts/gfx/gfx_golden.py compare --env-manifest
     在跨后端像素比对前作前置门禁（非空 → 拒绝比对）。
 
     入参必须是 JSON 对象（dict）：null/字符串/列表/数字（手改或损坏的 manifest）
@@ -611,7 +611,10 @@ def verify_manifest_compatibility(manifest_a: dict, manifest_b: dict) -> list:
         items.append(f"Chromium 主版本不一致：a={ma} b={mb}（光栅化行为随大版本漂移）")
 
     ea, eb = ta.get("effective_backend"), tb.get("effective_backend")
-    if ea != eb:
+    if ea not in RUNTIME_BACKENDS or eb not in RUNTIME_BACKENDS:
+        items.append(f"生效后端证据不可得或未知：a={ea} b={eb}"
+                     "（无法证明一致 → 不能比像素）")
+    elif ea != eb:
         items.append(f"生效后端不一致：a={ea} b={eb}"
                      "（一侧疑似 GPU 静默回退：swiftshader/software_skia，像素不可比）")
 
