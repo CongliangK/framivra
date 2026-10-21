@@ -425,17 +425,23 @@ class GfxCliEntryTests(unittest.TestCase):
 
     def test_cli_wrong_frame_name_is_not_a_cache_hit(self):
         from vtx.hygiene import gfx_dir
-        c = self.context()
-        d = gfx_dir(c, c.tl["video_tracks"][0]["clips"][0])
-        d.mkdir(parents=True)
-        (d / "f9999.png").write_bytes(MINIMAL_PNG)
-        result = subprocess.run(
-            [*environment_cli(), "-t", str(c.tl_path), "gfx"], cwd=REPO,
-            env=dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(self._stub("nowrite"))),
-            capture_output=True, text=True, timeout=30)
+        from vtx.gfx_cli import ENV_PENDING_FILE
+        stub = self._stub("nowrite")
+        env = dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(stub), VTX_GFX_CACHE_NS="")
+        with mock.patch.dict(os.environ, env, clear=True):
+            c = self.context()
+            d = gfx_dir(c, c.tl["video_tracks"][0]["clips"][0])
+            d.mkdir(parents=True)
+            (d / "f9999.png").write_bytes(MINIMAL_PNG)
+            result = subprocess.run(
+                [*environment_cli(), "-t", str(c.tl_path), "gfx"], cwd=REPO, env=env,
+                capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertNotIn("帧已缓存", result.stdout)
         self.assertIs(json.loads((c.out / "receipt.json").read_text())["stages"]["gfx"]["ok"], False)
+        self.assertEqual(json.loads((d / ENV_PENDING_FILE).read_text())["key"], d.name)
+        self.assertEqual((d / "f9999.png").read_bytes(), MINIMAL_PNG)
+        self.assertFalse((d / "f0000.png").exists())
 
     def test_cli_garbage_idat_png_fails_and_never_cache_hits(self):
         """issue #28 R3 真 CLI 级：CRC 全对、结构完整、IDAT 垃圾的件不得蒙混。
