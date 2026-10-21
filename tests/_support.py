@@ -81,11 +81,13 @@ def _owned_init_child():
     record = {"requests": [], "help_commands": []}
 
     def guard(event, args):
-        if event == "subprocess.Popen":
-            if list(args[1]) not in allowed:
+        # Popen may use posix_spawn internally; both audit events must satisfy
+        # the same exact executable/argv boundary for the two owned programs.
+        if event in ("subprocess.Popen", "os.posix_spawn"):
+            if args[0] != sys.executable or list(args[1]) not in allowed:
                 raise AssertionError("init fixture blocked process: " + repr(args[1]))
         elif event.startswith("socket.") or event in (
-                "os.system", "os.fork", "os.forkpty", "os.posix_spawn",
+                "os.system", "os.fork", "os.forkpty",
                 "os.exec", "os.kill", "os.killpg"):
             raise AssertionError("init fixture blocked " + event)
 
