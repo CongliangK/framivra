@@ -417,6 +417,59 @@ class CliSurface(unittest.TestCase):
         ch.assert_not_called()       # 不起链、不产半链产物
 
 
+class InferencePathArguments(unittest.TestCase):
+    """Exercise generated code with inert modules, never model/FFmpeg execution."""
+
+    def test_paths_remain_literal_argv_data(self):
+        import contextlib
+        import types
+
+        for name in ("plain", 'double"quote', "single'quote", "line\nbreak",
+                     "back\\slash", "中文 目录"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                temporary = root / ("temporary-" + name)
+                weights = root / ("weights-" + name)
+                calls = []
+                with mock.patch.object(dv.tempfile, "TemporaryDirectory",
+                                       return_value=contextlib.nullcontext(str(temporary))), \
+                     mock.patch.dict(os.environ, {"RESEMBLE_WEIGHTS": str(weights)}), \
+                     mock.patch.object(dv, "_sh", side_effect=calls.append), \
+                     mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
+                    dv.chain(root / "input.wav", root / "output.wav", stereo=True)
+                self.assertEqual(len(calls), 3)
+                argv = calls[1]
+                self.assertEqual(argv[1], "-c")
+                self.assertEqual(argv[3:], [str(temporary / "normed.wav"),
+                                           str(weights / "enhancer_stage2"),
+                                           str(temporary / "denoised.wav")])
+                self.assertEqual(calls[0][-1], argv[3])
+                self.assertEqual(calls[2][calls[2].index("-i") + 1], argv[5])
+                self.assertEqual(calls[2][calls[2].index("-ac") + 1], "2")
+                self.assertNotIn(str(weights), argv[2])
+
+                data, tensor, samples = object(), object(), object()
+                output = mock.Mock()
+                output.cpu.return_value.numpy.return_value = samples
+                modules = {key: types.ModuleType(key) for key in (
+                    "torch", "soundfile", "resemble_enhance",
+                    "resemble_enhance.enhancer", "resemble_enhance.enhancer.inference")}
+                modules["torch"].from_numpy = mock.Mock(return_value=tensor)
+                sf = modules["soundfile"]
+                sf.read = mock.Mock(return_value=(data, 44100))
+                sf.write = mock.Mock()
+                inference = modules["resemble_enhance.enhancer.inference"]
+                inference.denoise = mock.Mock(return_value=(output, 44100))
+                with mock.patch.dict(sys.modules, modules), \
+                     mock.patch.object(sys, "argv", ["-c", *argv[3:]]):
+                    exec(compile(argv[2], "<inference-path-test>", "exec"), {})
+                sf.read.assert_called_once_with(argv[3], dtype="float32")
+                modules["torch"].from_numpy.assert_called_once_with(data)
+                inference.denoise.assert_called_once_with(
+                    tensor, 44100, "cpu", run_dir=Path(argv[4]))
+                sf.write.assert_called_once_with(argv[5], samples, 44100)
+
+
 class FailHardPropagation(unittest.TestCase):
     """⑧ 链中任一子进程非零 → SystemExit 1,产物不落盘(不回落裸音频)。"""
 

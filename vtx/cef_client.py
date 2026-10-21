@@ -25,6 +25,7 @@ import socket
 import struct
 import sys
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -146,8 +147,11 @@ class CefWorkerClient:
         self.hello = hello
         size = os.fstat(shm_fd).st_size
         self._mm = mmap.mmap(shm_fd, size)  # MAP_SHARED 读写（门释放需要）
-        self._validate_ring(size)
-        self._closed = False
+        with ExitStack() as cleanup:
+            cleanup.callback(self._mm.close)
+            self._validate_ring(size)
+            self._closed = False
+            cleanup.pop_all()
 
     # ------------------------------------------------------------ 连接
 
@@ -187,32 +191,36 @@ class CefWorkerClient:
 
     @classmethod
     def from_socket(cls, sock, ready_timeout=30.0):
-        """Consume Hello from an already connected inherited socketpair."""
-        sock.settimeout(ready_timeout)
-        # Hello + SCM_RIGHTS(SHM fd) 单次 recvmsg
-        data, ancdata, _flags, _addr = sock.recvmsg(
-            64, socket.CMSG_SPACE(struct.calcsize("i")))
-        if len(data) != 64:
-            raise CefWorkerError(f"Hello 长度异常: {len(data)}")
-        shm_fd = None
-        for level, ctype, cdata in ancdata:
-            if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
-                (shm_fd,) = struct.unpack("i", cdata[:4])
-        if shm_fd is None:
-            raise CefWorkerError("Hello 未附带 SHM fd（SCM_RIGHTS 缺失）")
-        values = struct.unpack(_HELLO_FMT, data)
-        hello = {
-            "magic": values[0], "protocol_version": values[1],
-            "flags": values[2], "run_id": values[3], "pid": values[4],
-            "ring_slots": values[5], "max_width": values[6],
-            "max_height": values[7], "frame_bytes": values[8],
-        }
-        if hello["magic"] != HELLO_MAGIC:
-            raise CefWorkerError(f"Hello magic 不符: {hello['magic']:#x}")
-        if hello["protocol_version"] != PROTOCOL_VERSION:
-            raise CefWorkerError(
-                f"协议版本不符: {hello['protocol_version']}")
-        return cls(sock, shm_fd, hello)
+        """Take socket ownership; accept one complete Hello and exactly one SHM fd."""
+        with ExitStack() as cleanup:
+            cleanup.callback(sock.close)
+            sock.settimeout(ready_timeout)
+            deadline = None if ready_timeout is None else time.monotonic() + ready_timeout
+            fds = []
+
+            def own_fd(fd):
+                cleanup.callback(os.close, fd)
+                fds.append(fd)
+
+            data = cls._recv_exact(sock, 64, "Hello", receive_fd=own_fd, deadline=deadline)
+            if len(fds) != 1:
+                raise CefWorkerError(f"Hello 必须附带一个 SHM fd（实际 {len(fds)}）")
+            values = struct.unpack(_HELLO_FMT, data)
+            hello = {
+                "magic": values[0], "protocol_version": values[1],
+                "flags": values[2], "run_id": values[3], "pid": values[4],
+                "ring_slots": values[5], "max_width": values[6],
+                "max_height": values[7], "frame_bytes": values[8],
+            }
+            if hello["magic"] != HELLO_MAGIC:
+                raise CefWorkerError(f"Hello magic 不符: {hello['magic']:#x}")
+            if hello["protocol_version"] != PROTOCOL_VERSION:
+                raise CefWorkerError(
+                    f"协议版本不符: {hello['protocol_version']}")
+            sock.settimeout(ready_timeout)  # restore before the next request sends
+            client = cls(sock, fds[0], hello)
+            cleanup.pop_all()  # only a fully validated client owns socket + fd
+            return client
 
     def _validate_ring(self, size: int) -> None:
         mm = self._mm
@@ -255,11 +263,31 @@ class CefWorkerClient:
         (released,) = struct.unpack_from("<Q", self._mm, _CTRL_RELEASED)
         struct.pack_into("<Q", self._mm, _CTRL_RELEASED, released + 1)
 
-    def _recv_exact(self, n: int, what: str) -> bytes:
+    @staticmethod
+    def _recv_exact(sock, n: int, what: str, *, receive_fd=None, deadline=None) -> bytes:
         buf = b""
         while len(buf) < n:
             try:
-                chunk = self._sock.recv(n - len(buf))
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise socket.timeout()
+                    sock.settimeout(remaining)
+                if receive_fd is None:
+                    chunk = sock.recv(n - len(buf))
+                else:
+                    fd_size = struct.calcsize("i")
+                    chunk, ancillary, flags, _ = sock.recvmsg(
+                        n - len(buf), socket.CMSG_SPACE(fd_size))
+                    malformed = False
+                    for level, kind, data in ancillary:
+                        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                            count = len(data) // fd_size
+                            for fd in struct.unpack(f"{count}i", data[:count * fd_size]):
+                                receive_fd(fd)  # own every delivered fd before any rejection
+                            malformed |= bool(len(data) % fd_size)
+                    if malformed or flags & socket.MSG_CTRUNC:
+                        raise CefWorkerError(f"{what} SHM fd 控制消息损坏/截断")
             except socket.timeout as exc:
                 raise CefWorkerError(f"等待 {what} 超时") from exc
             except (ConnectionResetError, BrokenPipeError) as exc:
@@ -331,7 +359,7 @@ class CefWorkerClient:
             path = os.path.abspath(path)
         self._send_request(frame_index, path, 0, request_id, expected_wh)
         self._sock.settimeout(timeout)
-        raw = self._recv_exact(128, "模式 1 回执")
+        raw = self._recv_exact(self._sock, 128, "模式 1 回执")
         (magic, version, status) = struct.unpack_from("<IHH", raw, 0)
         if magic != SLOT_MAGIC or version != PROTOCOL_VERSION:
             raise CefWorkerError(f"回执 magic/版本不符: {magic:#x}/{version}")
@@ -372,7 +400,7 @@ class CefWorkerClient:
         flags = FLAG_WANT_SLOT | (FLAG_DUMP_RAW if dump else 0)
         self._send_request(frame_index, path, flags, request_id, (0, 0))
         self._sock.settimeout(timeout)
-        raw = self._recv_exact(32, "槽索引通知")
+        raw = self._recv_exact(self._sock, 32, "槽索引通知")
         (magic, version, status, req_id, f_idx, slot, _rsv, seq,
          backpressure) = struct.unpack(_NOTICE_FMT, raw)
         if magic != NOTICE_MAGIC or version != PROTOCOL_VERSION:
@@ -416,8 +444,10 @@ class CefWorkerClient:
         try:
             self._sock.close()
         finally:
-            self._mm.close()
-            os.close(self._shm_fd)
+            try:
+                self._mm.close()
+            finally:
+                os.close(self._shm_fd)
 
     def __enter__(self):
         return self
