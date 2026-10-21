@@ -55,6 +55,14 @@ except ImportError:
 PNG_COMPRESS_LEVEL = int(os.environ.get("VTX_GFX_PNG_LEVEL", "3"))
 
 
+class GfxRenderError(RuntimeError):
+    pass
+
+
+class FastPNGError(GfxRenderError):
+    """Explicit fast capture cannot silently retry without its requested option."""
+
+
 # ---------------------------------------------------------------- PNG 最小编解码（8-bit 非交错，color_type 2/6）
 
 def png_decode_rgb(data: bytes):
@@ -287,7 +295,9 @@ class WSConn:
 class Tab:
     """一个 page target 的 CDP 会话（线程独占）。"""
 
-    def __init__(self, port, ws_path, width=1920, height=1080):
+    def __init__(self, port, ws_path, width=1920, height=1080, *, png_fast=False):
+        self.png_fast = png_fast
+        self.capture_calls = {"succeeded": 0, "failed": 0}
         self.ws = WSConn(port, ws_path)
         try:
             self._mid = 0
@@ -362,8 +372,18 @@ class Tab:
         return r.get("result", {}).get("value")
 
     def shot(self) -> bytes:
-        r = self.call("Page.captureScreenshot", format="png", timeout=30)
-        return base64.b64decode(r["data"])
+        if not self.png_fast:
+            r = self.call("Page.captureScreenshot", format="png", timeout=30)
+            return base64.b64decode(r["data"])
+        try:
+            r = self.call("Page.captureScreenshot", format="png", timeout=30,
+                          optimizeForSpeed=True)
+            data = base64.b64decode(r["data"])
+        except Exception as e:
+            self.capture_calls["failed"] += 1
+            raise FastPNGError("fast PNG capture failed; fallback forbidden") from e
+        self.capture_calls["succeeded"] += 1
+        return data
 
 
 _SUPERVISION_WARNED = False
@@ -395,7 +415,11 @@ class Browser:
     形态（裸 Popen + tempfile.mkdtemp，与 ctx=None 同路径）并一次性 stderr
     告警。ctx=None（独立直跑入口）保持原 tempfile.mkdtemp + 裸 Popen 形态。"""
 
-    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None):
+    def __init__(self, chrome_path=None, tabs=4, width=1920, height=1080, ctx=None,
+                 *, png_fast=False):
+        self.png_fast = png_fast
+        self.protocol_checks = {"succeeded": 0, "failed": 0}
+        self.capture_counters = []
         self.chrome = chrome_path
         self.tabs_n = max(1, tabs)
         self.width, self.height = width, height
@@ -486,6 +510,8 @@ class Browser:
                 time.sleep(0.2)
         else:
             raise RuntimeError("chrome devtools not ready in 15s")
+        if self.png_fast:
+            self._check_png_fast_protocol()
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/json/new?about:blank", method="PUT")
         self.tab_ws_urls = []
@@ -500,12 +526,50 @@ class Browser:
         tabs = []
         try:
             for u in self.tab_ws_urls:
-                tabs.append(Tab(self.port, u, self.width, self.height))
+                tab = Tab(self.port, u, self.width, self.height,
+                          **({"png_fast": True} if self.png_fast else {}))
+                tabs.append(tab)
+                if self.png_fast:
+                    self.capture_counters.append(tab.capture_calls)
         except BaseException:
             for t in tabs:
                 t.close()
             raise
         return tabs
+
+    def _check_png_fast_protocol(self):
+        """One bounded local protocol check per actual browser start/generation."""
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{self.port}/json/protocol", timeout=5) as response:
+                data = response.read(8 * 1024 * 1024 + 1)
+            if len(data) > 8 * 1024 * 1024:
+                raise ValueError("protocol response too large")
+            protocol = json.loads(data)
+            supported = any(
+                p.get("name") == "optimizeForSpeed" and p.get("type") == "boolean"
+                and p.get("optional") is True
+                for domain in protocol.get("domains", []) if domain.get("domain") == "Page"
+                for command in domain.get("commands", [])
+                if command.get("name") == "captureScreenshot"
+                for p in command.get("parameters", []))
+            if not supported:
+                raise ValueError("optional boolean optimizeForSpeed unavailable")
+        except Exception as e:
+            self.protocol_checks["failed"] += 1
+            raise FastPNGError("fast PNG protocol check failed; fallback forbidden") from e
+        self.protocol_checks["succeeded"] += 1
+
+    def png_capture(self):
+        from .gfx_backend import png_capture_provenance
+        result = png_capture_provenance()
+        result["protocol_checks"] = dict(self.protocol_checks)
+        for counters in self.capture_counters:
+            for key, count in counters.items():
+                result["capture_calls"][key] += count
+        if sum(result["capture_calls"].values()):
+            result["actual_parameters"] = dict(result["requested_parameters"])
+        return result
 
     def stop(self):
         # issue #103：监管态收尾统一走组停机（SIGTERM 主进程 → 宽限 → 组残员
@@ -747,9 +811,39 @@ def _atomic_write_bytes(path, data):
     fstxn.atomic_write(path, data)
 
 
+def _close_fast_browser(browser, pool, error=None, **frame_counts):
+    """Keep the primary failure and accounting even when fast cleanup also fails."""
+    cleanup_errors = []
+    for tab in pool:
+        try:
+            tab.close()
+        except BaseException as e:
+            cleanup_errors.append(("tab.close", e))
+    try:
+        browser.stop()
+    except BaseException as e:
+        cleanup_errors.append(("browser.stop", e))
+    if error is None and not cleanup_errors:
+        return
+    capture = browser.png_capture()
+    capture.update(frame_counts)
+    if cleanup_errors:
+        capture["cleanup_failures"] = [
+            {"operation": operation, "error_type": type(e).__name__}
+            for operation, e in cleanup_errors]
+    cleanup_only = error is None
+    if cleanup_only:
+        error = cleanup_errors[0][1]
+    error.png_capture = capture
+    # Preserve actual exception objects as well as bounded receipt metadata.
+    error.png_cleanup_errors = tuple(e for _, e in cleanup_errors)
+    if cleanup_only:
+        raise error
+
+
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 width=1920, height=1080, progress=None, frames=None, ctx=None,
-                dependency_record=None):
+                dependency_record=None, png_fast=None):
     """渲一页 → outdir/f{:04d}.png × n（已存在的帧跳过）。
 
     ctx（issue #103 可选）：vtx gfx 阶段传入 Ctx 后，常驻 Chrome 交
@@ -783,9 +877,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     未启用特性的页行为逐字节不变：VTX_GFX_NAVFREE=0 时零额外 eval；
     VTX_GFX_STATIC 只多一次声明读取 eval（惰性数据，像素零影响）。
     """
+    from .gfx_backend import png_fast_requested, png_capture_provenance
+    if png_fast is None:
+        png_fast = png_fast_requested()
     if dependency_record is not None:
         return render_strict_page(html_path, outdir, n_frames, chrome_path,
-                                  width, height, frames, ctx, dependency_record)
+                                  width, height, frames, ctx, dependency_record,
+                                  png_fast=png_fast)
     if not _HAS_NUMPY:
         raise GfxRenderError("numpy unavailable")
     tabs_n = tabs or int(os.environ.get("VTX_GFX_TABS", "4"))
@@ -796,21 +894,29 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     requested = list(range(n_frames) if frames is None else frames)
     work = [i for i, _ in verify_frames(outdir, requested, width=width, height=height)]
     if not work:
+        capture = png_capture_provenance() if png_fast else None
+        if capture is not None:
+            capture["reused_frames"] = len(requested)
         return {"n": n_frames, "rendered": 0, "failed": [], "transparent": None,
                 "tabs": tabs_n, "ms_total": 0.0, "ms_per_frame": 0.0,
                 "canvas_export": False, "path_counts": _empty_path_counts(),
                 "static_spans": 0,
-                "timings_ms": {c: _timings_summary([]) for c in _TIME_CATS}}
+                "timings_ms": {c: _timings_summary([]) for c in _TIME_CATS},
+                **({"png_capture": capture} if png_fast else {})}
     # Browser 构造/启动放在 work 空判之后（v2 阶段 1 页内分片）：全缓存块零
     # Chrome；ms_total 仍从启动完成后起算（与旧语义一致，不含浏览器启动耗时）
-    browser = Browser(chrome_path, tabs_n, width, height, ctx=ctx)
+    browser = Browser(chrome_path, tabs_n, width, height, ctx=ctx,
+                      **({"png_fast": True} if png_fast else {}))
     try:
         browser.start()
-    except BaseException:
+    except BaseException as e:
         # start 在下方 try(其 finally 才调 stop)之外,半途失败时 Chrome 进程
         # (起了但 devtools 未就绪/建 tab 失败)与 mkdtemp 临时目录双泄漏且调用方
         # 拿不到 stop——此处显式回收再上抛(RECP-20260916-002 主修缺陷)。
-        browser.stop()
+        if png_fast:
+            _close_fast_browser(browser, [], e)
+        else:
+            browser.stop()
         raise
     pool = []
     t0 = time.monotonic()
@@ -823,6 +929,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     static_spans_n = 0          # 特性 2：生效跨度数（stats 打 span×K）
     static_copied_n = 0         # 特性 2：字节复制成员帧数（write 成功才计数，B5 口径）
     deferred_spans = []         # [(head, [members])]：头帧本次渲染落盘后复制
+    reused_frames = len(requested) - len(work)
+    worker_errors = [None] * tabs_n
 
     def note(msg):
         """加速特性告警：progress 缺席（vtx 现行接法）也必须可见——落 stderr。"""
@@ -913,6 +1021,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         # 运行期无共享写免锁），join 后 render_page 单线程合并。
         my_paths = _empty_path_counts()
         my_times = {c: [] for c in _TIME_CATS}
+        if png_fast:
+            per_tab[idx] = (my_paths, my_times)
         gen = [browser.generation]
 
         def heal():
@@ -933,6 +1043,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                 if new_pool is not None:
                     pool = new_pool
                     gen[0] = browser.generation
+            except FastPNGError:
+                raise
             except Exception:
                 time.sleep(0.5)
 
@@ -957,6 +1069,8 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                     my_paths[path] += 1
                     gen[0] = browser.generation
                     return True
+                except FastPNGError:
+                    raise
                 except Exception:
                     if nf:
                         # navfree 失败 → 本帧转导航路径；绝不静默（页级告警一次）
@@ -990,6 +1104,13 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         # 收尾：写本 worker 的观测槽位（每槽只被所属线程写一次，无竞争）
         per_tab[idx] = (my_paths, my_times)
 
+    def fast_worker(idx):
+        try:
+            worker(idx)
+        except BaseException as e:
+            worker_errors[idx] = e
+
+    render_error = None
     try:
         pool = browser.open_tabs()
         pool[0].navigate(f"{base_uri}?f={work[0]}")
@@ -1069,15 +1190,29 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             transparent = True
         if work:
             # 缩减后 work 可能清空（缺失帧全是已缓存头帧的跨度成员）→ 零线程收尾
-            threads = [threading.Thread(target=worker, args=(k,)) for k in range(tabs_n)]
+            threads = [threading.Thread(target=fast_worker if png_fast else worker,
+                                        args=(k,)) for k in range(tabs_n)]
             for t in threads:
                 t.start()
             for t in threads:
                 t.join()
+            for error in worker_errors:
+                if error is not None:
+                    raise FastPNGError("fast PNG worker failed; fallback forbidden") from error
+    except BaseException as e:
+        render_error = e
+        raise
     finally:
-        for t in pool:
-            t.close()   # 显式释放 tab CDP fd(对端将随 stop() 退出,无害)
-        browser.stop()
+        if png_fast:
+            _close_fast_browser(browser, pool, render_error,
+                                reused_frames=reused_frames,
+                                static_copied_frames=static_copied_n,
+                                canvas_frames=sum(slot[0]["canvas"] for slot in per_tab
+                                                  if slot is not None))
+        else:
+            for t in pool:
+                t.close()   # 显式释放 tab CDP fd(对端将随 stop() 退出,无害)
+            browser.stop()
     dt = (time.monotonic() - t0) * 1000
     # —— 特性 2 延后复制：头帧已由本次渲染落盘，缺失成员字节复制头帧文件 ——
     for head, members in deferred_spans:
@@ -1121,17 +1256,18 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         for c, vals in ts_t.items():
             samples[c].extend(vals)
     path_counts["static_copied"] += static_copied_n
+    capture = browser.png_capture() if png_fast else None
+    if capture is not None:
+        capture.update(reused_frames=reused_frames, canvas_frames=path_counts["canvas"],
+                       static_copied_frames=static_copied_n)
     return {"n": n_frames, "rendered": rendered_n, "failed": sorted(set(failed)),
             "transparent": transparent, "tabs": tabs_n, "ms_total": dt,
             "ms_per_frame": dt / max(1, len(work)),
             "canvas_export": canvas_export,
             "static_spans": static_spans_n,
             "path_counts": path_counts,
-            "timings_ms": {c: _timings_summary(samples[c]) for c in _TIME_CATS}}
-
-
-class GfxRenderError(RuntimeError):
-    pass
+            "timings_ms": {c: _timings_summary(samples[c]) for c in _TIME_CATS},
+            **({"png_capture": capture} if png_fast else {})}
 
 
 def available():
@@ -1152,17 +1288,22 @@ if __name__ == "__main__":
 
 
 def render_strict_page(html_path, outdir, n_frames, chrome_path, width, height,
-                       frames, ctx, record):
+                       frames, ctx, record, *, png_fast=None):
     """Conservative static-only route, no retry, JS export or CLI downgrade.
 
     Every invocation uses a fresh enforced target. No partial-frame reuse or
     inherited completion certificate is accepted by this route.
     """
     from .gfx_dependencies import RequestPolicy, DependencyError
+    from .gfx_backend import png_fast_requested
+    if png_fast is None:
+        png_fast = png_fast_requested()
     if record.get('policy') != 'strict' or record.get('closure') != 'static-subset-v1':
         raise DependencyError('strict static contract required')
-    browser = Browser(chrome_path, 1, width, height, ctx=ctx)
+    browser = Browser(chrome_path, 1, width, height, ctx=ctx,
+                      **({"png_fast": True} if png_fast else {}))
     pool = []
+    render_error = None
     started = time.monotonic()
     requested = list(range(n_frames) if frames is None else frames)
     try:
@@ -1198,8 +1339,15 @@ def render_strict_page(html_path, outdir, n_frames, chrome_path, width, height,
                 'canvas_export': False, 'path_counts': counts, 'static_spans': 0,
                 'timings_ms': {c: _timings_summary([]) for c in _TIME_CATS},
                 'dependency_enforcement': 'fetch-pinned-local-v1',
-                'dependency_observed': sorted(tab.request_policy.observed)}
+                'dependency_observed': sorted(tab.request_policy.observed),
+                **({'png_capture': browser.png_capture()} if png_fast else {})}
+    except BaseException as e:
+        render_error = e
+        raise
     finally:
-        for tab in pool:
-            tab.close()
-        browser.stop()
+        if png_fast:
+            _close_fast_browser(browser, pool, render_error)
+        else:
+            for tab in pool:
+                tab.close()
+            browser.stop()
