@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from tests._support import cleanup_timeline
+from tests._support import cleanup_timeline, tree_sha256
 
 REPO = Path(__file__).resolve().parents[2]
 VTX = REPO / "vtx" / "vtx.py"
@@ -249,7 +249,7 @@ class CleanPreviewTest(CleanupProtectionFixture):
 
     def test_plain_clean_dry_previews_kept_deliverables(self):
         before = present(self.root)
-        result = self.run_vtx("clean", "--dry")
+        result = self.run_vtx("clean", "--dry-run")
         self.assert_ok(result)
         self.assertIn("保留不可再生交付件", result.stdout)
         self.assertIn("--i-know-this-nukes-everything", result.stdout)
@@ -260,7 +260,7 @@ class CleanPreviewTest(CleanupProtectionFixture):
 
     def test_nuke_clean_dry_previews_destruction_warning(self):
         before = present(self.root)
-        result = self.run_vtx("clean", "--i-know-this-nukes-everything", "--dry")
+        result = self.run_vtx("clean", "--i-know-this-nukes-everything", "--dry-run")
         self.assert_ok(result)
         self.assertIn("危险操作", result.stdout)
         self.assertIn("将被一并删除", result.stdout)
@@ -268,7 +268,7 @@ class CleanPreviewTest(CleanupProtectionFixture):
         self.assertEqual(present(self.root), before)
 
     def test_deep_gc_dry_mentions_protection(self):
-        result = self.run_vtx("gc", "--all", "--dry")
+        result = self.run_vtx("gc", "--all", "--dry-run")
         self.assert_ok(result)
         self.assertIn("不可再生交付件", result.stdout)
 
@@ -288,13 +288,23 @@ class NukeFlagValidationTest(CleanupProtectionFixture):
                 self.assertEqual(present(self.root), before)
 
     def test_flag_spelling_aliases_are_read_only_in_dry(self):
-        for flags in (("--dry-run",), ("--dry",), ("--dry-run", "--dry")):
+        # Registered ID retained: only full canonical spellings may preview.
+        canonical = (("--dry-run",), ("--dry-run", "--dry-run"))
+        rejected = (("--dry",), ("--dry-run", "--dry"),
+                    ("--dry", "--dry-run"), ("--dry", "--dry"),
+                    ("--dry-",), ("--dry-r",), ("--dry-ru",))
+        for flags in canonical + rejected:
             with self.subTest(flags=flags):
-                before = present(self.root)
+                before = tree_sha256(self.root)
                 result = self.run_vtx("clean", "--i-know-this-nukes-everything",
                                       *flags)
-                self.assert_ok(result)
-                self.assertEqual(present(self.root), before)
+                if flags in canonical:
+                    self.assert_ok(result)
+                    self.assertIn("危险操作", result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("unrecognized arguments:", result.stderr)
+                self.assertEqual(tree_sha256(self.root), before)
 
 
 class CleanSymlinkSafetyTest(CleanupProtectionFixture):

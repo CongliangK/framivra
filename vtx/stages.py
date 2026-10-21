@@ -464,7 +464,7 @@ def audit(c: Ctx):
                      "total_bytes": vol["total"],
                      "total_h": f"{vol['total'] / 1024**3:.2f}G",
                      "tmp_orphans": [str(x) for x in tmp_orphans(c)],
-                     "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry`"}
+                     "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry-run`"}
     if not c.dry:   # dry-run 不落 out/ 产物（audit_report 属交付诊断件，2026-09-11 门控）
         fstxn.atomic_write(c.out / "audit_report.json", json.dumps(rep, ensure_ascii=False, indent=2), root=c.root)
     warns = sum(1 for x in lines if x["status"] == "warn")

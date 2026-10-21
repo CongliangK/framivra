@@ -21,7 +21,7 @@ class NestedCleanupLinks(SandboxCase):
         # issue #21：原复现 gc_plan 把 cache/gfx/old.mp4 当垃圾并 unlink 真实交付件。
         plan = hygiene.gc_plan(c)
         self.assertFalse(any(items for items in plan.values()))
-        for argv in (("gc", "--dry"), ("gc",), ("gc", "--all"), ("clean",)):
+        for argv in (("gc", "--dry-run"), ("gc",), ("gc", "--all"), ("clean",)):
             with self.subTest(argv=argv):
                 result = self.run_vtx(*argv)
                 self.assert_ok(result)

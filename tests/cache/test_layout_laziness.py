@@ -24,21 +24,22 @@ if __name__ == "__main__" and not __package__:
 from tests._support import tree_sha256
 VTX = REPO / "vtx" / "vtx.py"
 
-# 只读调用面：非干燥 df 本身就是只读体检；validate 只读部分以 --dry 计划路径
+# 只读调用面：非干燥 df 本身就是只读体检；validate 只读部分以 --dry-run 计划路径
 # 代表（非干燥 validate 的唯一落盘 = 回执链，见 test_validate_readonly_part_*）；
 # gc/clean 的干燥变体含 --all 深度回收计划路径。
 READONLY_ARGV = [
     ("df",),
     ("df", "--dry-run"),
-    ("validate", "--dry"),
     ("validate", "--dry-run"),
-    ("gc", "--dry"),
     ("gc", "--dry-run"),
-    ("gc", "--all", "--dry"),
-    ("clean", "--dry"),
+    ("gc", "--all", "--dry-run"),
     ("clean", "--dry-run"),
     ("snapshot", "--dry-run"),
 ]
+
+REJECTED_ARGV = [(*command, flag)
+                 for command in (("validate",), ("gc",), ("gc", "--all"), ("clean",))
+                 for flag in ("--dry", "--dry-", "--dry-r", "--dry-ru")]
 
 
 class LayoutLazinessFixture(unittest.TestCase):
@@ -90,12 +91,15 @@ class ReadOnlyCommandsKeepTreeIdentical(LayoutLazinessFixture):
 
     def test_absent_roots_stay_absent(self):
         # 初始态一：cache/、out/ 均不存在——不得因体检/计划长出布局
-        for argv in READONLY_ARGV:
+        for argv, expected_rc in ([(a, 0) for a in READONLY_ARGV]
+                                  + [(a, 2) for a in REJECTED_ARGV]):
             with self.subTest(argv=argv):
                 before = tree_sha256(self.proj)
                 result = self.run_vtx(*argv)
-                self.assertEqual(result.returncode, 0,
+                self.assertEqual(result.returncode, expected_rc,
                                  result.stdout + result.stderr)
+                if expected_rc == 2:
+                    self.assertIn("unrecognized arguments:", result.stderr)
                 self.assertEqual(tree_sha256(self.proj), before, argv)
         self.assertFalse((self.proj / "cache").exists())
         self.assertFalse((self.proj / "out").exists())
@@ -103,12 +107,15 @@ class ReadOnlyCommandsKeepTreeIdentical(LayoutLazinessFixture):
     def test_existing_roots_stay_untouched(self):
         # 初始态二：cache/out 已存在——计划/体检不得改动任何条目（含陈旧缓存）
         self.populate_existing_roots()
-        for argv in READONLY_ARGV:
+        for argv, expected_rc in ([(a, 0) for a in READONLY_ARGV]
+                                  + [(a, 2) for a in REJECTED_ARGV]):
             with self.subTest(argv=argv):
                 before = tree_sha256(self.proj)
                 result = self.run_vtx(*argv)
-                self.assertEqual(result.returncode, 0,
+                self.assertEqual(result.returncode, expected_rc,
                                  result.stdout + result.stderr)
+                if expected_rc == 2:
+                    self.assertIn("unrecognized arguments:", result.stderr)
                 self.assertEqual(tree_sha256(self.proj), before, argv)
 
 

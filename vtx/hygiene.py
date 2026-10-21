@@ -27,7 +27,7 @@ GFX_EXP = "gfx_exp"
 KEEP_BASELINES = ("manifest.json", "qc_pass_segs.json")   # cache 根下永不删的记账/状态件
 # cache/audio/ 下不回收的状态件（方案三阶段1审查 P1-2）：loudness_receipts.json 是
 # 响度测量回执（loudness_cache，qc/gates 免重测依据）——语义同 manifest（报告/回执/
-# 证据不回收，见模块头），误回收只降级不破坏（回退全检/重测一轮），但 gc --dry
+# 证据不回收，见模块头），误回收只降级不破坏（回退全检/重测一轮），但 gc --dry-run
 # 持续列它会诱导误删。伴生件（.lock flock 锁文件 / .tmp 原子写残件，P6 修复
 # B-P2-1：锁文件被 budget_gate 自动 gc 删除后新开 inode，跨进程互斥失效）按
 # 名字前缀一并豁免。
@@ -585,7 +585,7 @@ def gc_plan(c, keep_days: int = 0):
     # v2 §2.1 不变量 ①（v1.2.0 键级扩展，R1-F F2）：插件 cache_dirs 的**键级
     # 条目**回收——插件经 cache_dir_keys 声明键集的目录（bgm-render 的
     # cache/bgm/<render_digest>/），一级子目录按内容寻址键对待：在当前 timeline
-    # 键集内保活，不在 = 陈旧（--dry 列出、gc 删）——修复整工程渲染缓存目录随
+    # 键集内保活，不在 = 陈旧（--dry-run 列出、gc 删）——修复整工程渲染缓存目录随
     # 工程/digest 演进无界累积。伴生件（<digest>.lock 等非目录件）按 AUDIO_KEEP
     # 同惯例豁免不回收（锁文件删除破跨进程互斥，B-P2-1；量级仅空文件）。仅对
     # 经 registry cache_dirs 注册的目录生效；无插件声明键集 = 本类恒空（通道
@@ -648,7 +648,7 @@ def gc_plan(c, keep_days: int = 0):
 
 
 def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
-    """gc 主入口。do=False 只列清单（--dry）；do=True 执行；deep 等价原 clean 但
+    """gc 主入口。do=False 只列清单（--dry-run）；do=True 执行；deep 等价原 clean 但
     保留 reports/VERSIONS/history/snapshots 等（A02：out 侧保护经 out_protected()
     单源判据，与 cli 的 gc --all 白名单同一权威；cache 侧仍留 reports/tmp/
     snapshots/记账基线）。注：CLI 的 gc/clean 统一走 vtx/cli.py _cleanup_plan
@@ -661,7 +661,7 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
         if do:
             ExecutionPolicy.EXECUTE.execute_cleanup(plan)
         print(("✓ 深度回收（保留不可再生交付件与 reports/snapshots）" if do
-               else "深度回收清单（--dry）") + f"：{gb(total)}")
+               else "深度回收清单（--dry-run）") + f"：{gb(total)}")
         return
     plan = gc_plan(c, keep_days)
     total = 0; n = 0
@@ -677,7 +677,7 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
         print("✓ 无可回收垃圾，cache/out 与当前 timeline 键集一致"); return
     print(f"合计：{n} 项，{gb(total)}")
     if not do:
-        print("（--dry 预览；执行回收请去掉 --dry 重跑 `vtx gc`）"); return
+        print("（--dry-run 预览；执行回收请去掉 --dry-run 重跑 `vtx gc`）"); return
     from .cli import ExecutionPolicy
     ExecutionPolicy.EXECUTE.execute_cleanup(plan)
     print(f"✓ 已回收 {n} 项，{gb(total)}")
@@ -1000,5 +1000,5 @@ def budget_gate(c, stage: str):
     if auto:
         print(f"✓ VTX_GC_AUTO=1 已自动回收，cache 现 {gb(dir_size(c.cache))}")
     else:
-        print("  上面为回收清单（--dry 预览）；执行 `vtx gc` 回收，或设 VTX_GC_AUTO=1 自动回收")
+        print("  上面为回收清单（--dry-run 预览）；执行 `vtx gc` 回收，或设 VTX_GC_AUTO=1 自动回收")
 

@@ -20,7 +20,7 @@
   clean      清空 cache/ 与 out/（A02/issue #21：默认保留不可再生交付件——final.mp4、
              VERSIONS.json、history/、FREEZE* 冻结凭证、final_4k*.mp4、out/reports/ 证据；
              全删需显式危险旗标 --i-know-this-nukes-everything）
-  gc         缓存回收（键集外垃圾 + tmp 孤儿 + out 中间物；--dry 只列清单，--all 深度回收，
+  gc         缓存回收（键集外垃圾 + tmp 孤儿 + out 中间物；--dry-run 只列清单，--all 深度回收，
              --keep-days N 暂缓近 N 天条目；cache/reports/ 永不回收；不可再生交付件
              任何 gc 变体都不删——全删唯一入口是 clean --i-know-this-nukes-everything）
   df         体积体检：cache/out 分项占用 + top-20 大文件 + tmp 孤儿清单
@@ -791,7 +791,7 @@ def main():
 
 def _main(execution=None):
     execution = execution if execution is not None else events.ExecutionContext()
-    ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
+    ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层", allow_abbrev=False)
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
     ap.add_argument("--events-jsonl", metavar="PATH",
                     help="optional exclusive JSONL execution evidence; independent of stdout")
@@ -801,8 +801,8 @@ def _main(execution=None):
                     help="all 专属：只执行到该阶段止（validate|audit|prepare|gfx|video|mux|qc，"
                          "audio 不作终点）。--until video 仅用于中间检查：线性模式不含 audio，"
                          "后续单跑 mux/qc 不触发 finish。正式交付用完整 all；--until qc 可收尾")
-    ap.add_argument("--dry-run", "--dry", dest="dry_run", action="store_true",
-                    help="只读执行计划：不删除、创建或写入文件（--dry 为兼容别名）")
+    ap.add_argument("--dry-run", dest="dry_run", action="store_true",
+                    help="只读执行计划：不删除、创建或写入文件")
     ap.add_argument("--draft", action="store_true", help="草稿模式（仅 video/mux）：540p+NVENC 快速预览，不影响正式产物")
     ap.add_argument("--frames", type=int, metavar="N", help="video --draft 专属：只渲前 N 帧")
     ap.add_argument("--range", nargs=2, metavar=("A", "B"),
@@ -882,7 +882,7 @@ def _main(execution=None):
     if a.report and a.report_only:
         print("--report 与 --report-only 互斥"); sys.exit(2)
     if (a.report or a.report_only) and policy.dry:
-        print("✗ --report/--report-only 与 --dry-run/--dry 冲突（报告需要真实产物测量）"); sys.exit(2)
+        print("✗ --report/--report-only 与 --dry-run 冲突（报告需要真实产物测量）"); sys.exit(2)
     if a.gpu and a.command != "video":
         print("--gpu 仅作用于 video 阶段"); sys.exit(2)
     if a.strict and a.command != "qc":

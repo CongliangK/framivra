@@ -92,7 +92,7 @@ music_tools mixer 产出），避开母带 loudnorm(-14 LUFS) 与母带 IR 尾�
    - **gc 键级回收（v1.2.0）**：`vtx gc` 常规回收旧产物键（contribute_keys
      白名单保活当前键）；共享渲染目录 `cache/bgm/` 按 **render_digest 键级**
      回收——timeline 在用的 digest 目录保活（cache_dir_keys 白名单），陈旧
-     digest 目录（工程/代码演进换键后遗留，每个 ≈整工程渲染产物）`--dry`
+     digest 目录（工程/代码演进换键后遗留，每个 ≈整工程渲染产物）`--dry-run`
      列出、`gc` 实删，不再无界累积；`<digest>.lock` 伴生件豁免（防删锁破
      跨进程互斥）；全项目弃用 bgm 键后 cache/bgm/ 整体作 legacy 回收。
 3. **下游无感**：音轨事件、混音响度终链、audio_report、区间预览全部把它当普通

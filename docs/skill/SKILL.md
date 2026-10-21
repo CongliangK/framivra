@@ -43,7 +43,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 ## 推荐方式与全局铁律
 1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆分；按任务需要保留结论与证据，交接要求见 [编辑与交接配方](references/edit.md#主控-子智能体棒次协议)；长命令按执行环境支持的后台会话与轮询机制运行。
 2. **验证门优先**：validate（机制）+ content_gates（内容）+ blackdetect（零黑帧）+ 视觉抽帧（技术结论按实际渲染与相应证据判定，DOM 相等不能证明像素相等）；艺术审查与用户视觉确认按 [创作交付检查](references/gfx.md#html-创作组织) 分别记录。
-3. **迭代用 draft，正式交付用完整 all**；单独 video 可选 `--gpu`。缓存身份见 references，收尾先 `gc --dry` 查看清单，回收另按授权执行。
+3. **迭代用 draft，正式交付用完整 all**；单独 video 可选 `--gpu`。缓存身份见 references，收尾先 `gc --dry-run` 查看清单，回收另按授权执行。
 4. **剪辑永远走 timeline.json + vtx**：不手写 ffmpeg 剪辑命令；改 timeline 必重跑 validate。
 5. **gfx 页面必须帧驱动**：动画状态 = 帧号 f 的纯函数，禁 CSS animation/transition、Date.now()、Math.random()、rAF 时序。
 6. **tech-talk 调研走 R0-R6 编排**：主编只编排不采集，采集与评分分离，红队质疑必逐条回应。
@@ -68,7 +68,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 | BGM 音轨直引工程 JSON（v1.2） | sources[] 加 `{"id":"bgm_main","path":"<music_tools 工程>.json","bgm":{"output":"master"}}`（output 双档：`master` 母带终态 / `premaster` 母前档，plugins/bgm-render `OUTPUTS`；亦可 `stem:<轨名>` 取分轨总线 bus.wav，各 stem 挂独立轨自行混音）→ validate/prepare 自动 `bgm render` → 48k stereo 入内容寻址缓存（plugins/bgm-render；一工程共享缓存只渲一次多源派生，工程/$ref/参数变更自动重渲） |
 | BGM 分轨审计包 | `python3 <video_tools>/apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json` |
 | 音视频同步 / 降噪 | `env python3 <video_tools>/apps/sync/sync_audio.py …` / `env python3 <video_tools>/plugins/denoise/denoise_voice.py …`（响度限幅已并入 vtx audio，无独立步骤） |
-| 缓存治理 | `... gc --dry` / `gc` / `df` / `snapshot` |
+| 缓存治理 | `... gc --dry-run` / `gc` / `df` / `snapshot` |
 | 时间线人审预览 | 浏览器打开 `<video_tools>/vtx/preview.html` |
 | 环境三检 / 分层清单 | `env VTX_DOCTOR_OFFLINE=1 python3 <video_tools>/vt.py doctor` / `vt.py apps|plugins|templates list` |
 

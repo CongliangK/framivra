@@ -60,10 +60,10 @@ python3 "$VTX" -t timeline.json all
 
 ```bash
 python3 "$VIDEO_TOOLS/apps/gates/content_gates.py" -t timeline.json --media out/final.mp4
-python3 "$VTX" -t timeline.json gc --dry
+python3 "$VTX" -t timeline.json gc --dry-run
 ```
 
-`gc --dry` 只查看回收清单，实际回收另按任务授权执行。耗时与历史测量口径统一见 [DEV 性能基准](../../reports/development-history.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
+`gc --dry-run` 只查看回收清单，实际回收另按任务授权执行。耗时与历史测量口径统一见 [DEV 性能基准](../../reports/development-history.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
 
 ## R1 · 纯音频变更（音量 / duck / fade / BGM 源）
 
@@ -170,7 +170,7 @@ CDP 页内透明探针回落与跨引擎回落不同：前者保持当前渲染�
 
 ## 缓存卫生与体积治理
 
-先用 `df` 看占用、`gc --dry` 看清单；`gc` 是实际回收，`gc --all` 深度回收仍保留 reports/snapshots 与交付件。`clean` 清理 cache/（含其中证据与快照）及 out/ 可再生条目，默认保护 final、VERSIONS、history、FREEZE 等交付件；仅显式危险旗标 `--i-know-this-nukes-everything` 才将交付件也纳入删除，锁与拒绝路径仍保留。清理须单独确认范围，`--keep-days N` 可暂缓近期 gc 条目，不例行手工删 seg。完整规则见 [缓存与回执](../../cache-provenance.md)。
+先用 `df` 看占用、`gc --dry-run` 看清单；`gc` 是实际回收，`gc --all` 深度回收仍保留 reports/snapshots 与交付件。`clean` 清理 cache/（含其中证据与快照）及 out/ 可再生条目，默认保护 final、VERSIONS、history、FREEZE 等交付件；仅显式危险旗标 `--i-know-this-nukes-everything` 才将交付件也纳入删除，锁与拒绝路径仍保留。清理须单独确认范围，`--keep-days N` 可暂缓近期 gc 条目，不例行手工删 seg。完整规则见 [缓存与回执](../../cache-provenance.md)。
 
 `snapshot` 保存 timeline 与引用文本资产并自动轮转；重大迁移另留不随轮转删除的版本。mux 通过 `out/VERSIONS.json` 记账并轮转旧成片到 `out/history/`；将覆盖的 final 与末条 md5 不符会告警并标记 superseded，不把记录当作媒体未变的保证。
 
