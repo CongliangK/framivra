@@ -4,6 +4,7 @@ These controls exercise the real legacy and agent entry points in separate
 processes. Frozen exits include the legacy's permissive empty containers; no
 media decoding, rendering, or optional dependency is needed.
 """
+from tests.diagnostics._support import temporary_root
 import hashlib
 import json
 import os
@@ -11,14 +12,13 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
-from tests.test_agent_diagnostics import timeline
+from tests.diagnostics._support import timeline
 
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 
 # Keep failures below the actual producer, including a deliberately deeper
 # callback frame. Only the plugin result is replaced, never fingerprinting.
@@ -48,9 +48,7 @@ def normalized_path(path):
 
 class AttributionEntryPoint(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = temporary_root(self)
         self.invocations = 0
 
     def invoke(self, value, *, legacy=False, digest_failure=None):

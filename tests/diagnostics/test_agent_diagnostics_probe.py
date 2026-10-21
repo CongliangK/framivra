@@ -1,8 +1,8 @@
 """Normally initialized probe: no origin inference and complete parsing chains."""
+from tests.diagnostics._support import temporary_root
 import contextlib
 import io
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,8 +11,7 @@ from vtx.infra import Ctx
 
 class ProbeObservation(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name); self.media = self.root/'media.wav'
+        self.root = temporary_root(self); self.media = self.root/'media.wav'
         self.media.write_bytes(b'fixture')
         self.timeline = self.root/'timeline.json'
         self.timeline.write_text(json.dumps({'project': {'fps':30, 'width':160, 'height':90, 'duration_frames':90},

@@ -1,9 +1,9 @@
 """Source-level diagnostic coverage, original indices, and legacy parity."""
+from tests.diagnostics._support import temporary_root, timeline
 import contextlib
 import copy
 import io
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,17 +13,11 @@ from vtx.infra import Ctx
 from vtx import stages
 
 
-def timeline():
-    return {'version': 2, 'project': {'fps': 30, 'width': 160, 'height': 90,
-            'duration_frames': 90}, 'sources': [], 'video_tracks': [],
-            'audio_tracks': [], 'subtitles': []}
 
 
 class Diagnostics(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = temporary_root(self)
 
     def context(self, tl):
         p = self.root / 'timeline.json'

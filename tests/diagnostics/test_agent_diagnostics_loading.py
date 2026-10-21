@@ -1,4 +1,5 @@
 """Real entry-point failures remain a single strict JSON document."""
+from tests.diagnostics._support import temporary_root
 import json
 import os
 import subprocess
@@ -6,13 +7,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from tests.test_agent_diagnostics import timeline
+from tests.diagnostics._support import timeline
 
 
 class Loading(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.path = self.root / 'timeline.json'
 
     def invoke(self, command='validate'):

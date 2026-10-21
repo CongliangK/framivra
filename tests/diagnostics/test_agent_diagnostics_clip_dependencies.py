@@ -1,5 +1,6 @@
 """Integration contracts for clip dependencies and opt-in diagnostics."""
-import contextlib, io, json, tempfile, unittest
+from tests.diagnostics._support import temporary_root
+import contextlib, io, json, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,8 +10,7 @@ from vtx.agent_diagnostics import main
 
 class ClipDependencies(unittest.TestCase):
     def setUp(self):
-        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
-        self.root=Path(temp.name)
+        self.root = temporary_root(self)
         (self.root/'exists').write_text('dependency');(self.root/'page.html').write_text('<p>fixture</p>')
     def context(self,deps,kind='gfx'):
         return SimpleNamespace(root=self.root,diagnostics=[],tl={

@@ -8,7 +8,7 @@ import unittest
 import wave
 from pathlib import Path
 
-FIXTURE = Path(__file__).parent/'fixtures/agent-diagnostics/timeline.invalid.json'
+FIXTURE = Path(__file__).parents[1]/'fixtures/agent-diagnostics/timeline.invalid.json'
 
 
 def run_fixture():

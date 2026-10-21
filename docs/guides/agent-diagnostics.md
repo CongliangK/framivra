@@ -88,7 +88,7 @@ three bundled validators, subtitle source resolution, loading/fps/dependency
 and probe failures (with opaque I/O/callback failures reported as unknown), individual audit CPS/duration/overlap/voice/gap findings,
 and actual QC metadata, frame comparisons, LUFS, true peak and audio energy.
 
-`tests/test_agent_diagnostics*.py` maps rules to emitted evidence and checks
+`tests/diagnostics/test_agent_diagnostics*.py` maps rules to emitted evidence and checks
 original indices, strict JSON, error exits, source mapping, prerequisite/path
 protection and legacy output compatibility. CPU tests are registered in the
 existing fail-closed media inventory. Real FFmpeg fixtures render through the
@@ -97,7 +97,7 @@ no successful receipt is fabricated.
 
 The public fixture `tests/fixtures/agent-diagnostics/timeline.invalid.json`
 contains seven distinct violations, including missing resources.
-`tests/test_agent_diagnostics_repair.py` copies only that exact fixture to a
+`tests/diagnostics/test_agent_diagnostics_repair.py` copies only that exact fixture to a
 new temporary directory, consumes its suggested operations through an explicit
 allowlist, creates deterministic synthetic resources and reruns the real
 validator to green. The repair implementation is test-only, cannot accept a

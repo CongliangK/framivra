@@ -1,10 +1,10 @@
 """Actual cache producers retain fingerprint bytes, order, and native failures."""
+from tests.diagnostics._support import temporary_root
 import contextlib
 import hashlib
 import io
 import json
 from pathlib import Path
-import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -16,9 +16,7 @@ from vtx.diagnostics import mark_handled
 
 class CacheOperations(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = temporary_root(self)
 
     def context(self, **values):
         timeline = {'project': {}, 'sources': [], 'video_tracks': []}

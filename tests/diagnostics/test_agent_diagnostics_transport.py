@@ -11,12 +11,12 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from tests.test_agent_diagnostics import timeline
+from tests.diagnostics._support import timeline
 from vtx.agent_diagnostics import main
 from vtx import cache_state, infra
 from vtx.diagnostics import emit, key_path
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 
 
 class UnicodeTransport(unittest.TestCase):
