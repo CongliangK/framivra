@@ -1,5 +1,6 @@
 """CPU contracts for #200; synthetic Mach-O/cache data is not Mac acceptance."""
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -236,6 +237,7 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         target = preferences / '.GlobalPreferences.plist'
         target.write_bytes(plistlib.dumps({'AppleLanguages': ['ja']}))
         before = self.collect()
+        binary_digest = hashlib.sha256(self.binary.read_bytes()).hexdigest()
         original = Path.open
         def opened(path, *args, **kwargs):
             self.assertNotEqual(path, target, 'unsupported preference alias target opened')
@@ -252,6 +254,7 @@ class DarwinEnvironmentContracts(unittest.TestCase):
             with self.subTest(relative=relative), patch.object(Path, 'open', new=opened), \
                     patch.object(cache_state.os, 'open', new=opened_fd), \
                     patch.object(env, '_hashes', {}):
+                self.assertEqual(env._file(self.binary), (str(self.binary), binary_digest))
                 with self.assertRaisesRegex(env.EnvironmentError, 'preference file symlink'):
                     self.collect()
             alias.unlink()
