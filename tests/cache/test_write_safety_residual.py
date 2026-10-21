@@ -5,13 +5,13 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests._support import temporary_root
 from vtx import fstxn, hygiene, loudness_cache, subs
 from vtx.infra import Ctx, ProjectPathError
 
@@ -20,9 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 class WriteSafetyResidual(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.base = Path(tmp.name)
+        self.base = temporary_root(self)
         self.root = self.base / 'project'
         self.root.mkdir()
         self.outside = self.base / 'outside'

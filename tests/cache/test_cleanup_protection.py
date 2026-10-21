@@ -14,10 +14,9 @@ Run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.cache.test_cleanup_prot
 import os
 import shutil
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
-from tests._support import cleanup_timeline, tree_sha256
+from tests._support import cleanup_timeline, tree_sha256, temporary_root
 
 REPO = Path(__file__).resolve().parents[2]
 VTX = REPO / "vtx" / "vtx.py"
@@ -42,9 +41,7 @@ class CleanupProtectionFixture(unittest.TestCase):
     """统一项目脚手架：时间线（gfx 轨+音频源）+ 活键缓存 + 陈旧垃圾 + 交付件。"""
 
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = temporary_root(self)
         self.timeline = cleanup_timeline(self.root)
         # 不可再生交付件（A02 保护清单全集观测：工单四类 + final_4k* + 证据目录）
         self.protected = {

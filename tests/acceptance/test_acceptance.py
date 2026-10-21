@@ -66,6 +66,14 @@ class AcceptanceFixture:
     def rewrite(self, name, value):
         (self.package / name).write_text(json.dumps(value))
 
+    def rewrite_environment(self, env, original):
+        """Reanchor one environment variant from the untouched manifest."""
+        self.rewrite('environment.json', env)
+        m = copy.deepcopy(original)
+        m['files']['environment.json'] = a.describe(self.package / 'environment.json')
+        self.rewrite('manifest.json', m)
+        self.reseal()
+
 
 class AcceptanceTests(AcceptanceFixture, unittest.TestCase):
     def test_realistic_package_and_visual_unknown(self):
@@ -250,11 +258,7 @@ class AcceptanceTests(AcceptanceFixture, unittest.TestCase):
             with self.subTest(name=name):
                 env = copy.deepcopy(self.env)
                 env.pop(name)
-                self.rewrite('environment.json', env)
-                m = copy.deepcopy(original)
-                m['files']['environment.json'] = a.describe(self.package / 'environment.json')
-                self.rewrite('manifest.json', m)
-                self.reseal()
+                self.rewrite_environment(env, original)
                 with self.assertRaises(ValueError):
                     self.verify()
 
@@ -305,22 +309,14 @@ class AcceptanceTests(AcceptanceFixture, unittest.TestCase):
                     env = copy.deepcopy(valid)
                     probe = env[slot] if slot in ('git', 'git_status') else env['tools'][slot]
                     probe.update(change)
-                    self.rewrite('environment.json', env)
-                    m = copy.deepcopy(original)
-                    m['files']['environment.json'] = a.describe(self.package / 'environment.json')
-                    self.rewrite('manifest.json', m)
-                    self.reseal()
+                    self.rewrite_environment(env, original)
                     with self.assertRaises(ValueError):
                         self.verify()
         for slot in ('git', 'git_status', 'ffmpeg', 'ffprobe'):
             env = copy.deepcopy(valid)
             parent = env if slot in ('git', 'git_status') else env['tools']
             parent[slot] = {'status': 'unknown', 'argv': parent[slot]['argv']}
-            self.rewrite('environment.json', env)
-            m = copy.deepcopy(original)
-            m['files']['environment.json'] = a.describe(self.package / 'environment.json')
-            self.rewrite('manifest.json', m)
-            self.reseal()
+            self.rewrite_environment(env, original)
             with self.assertRaises(ValueError):
                 self.verify()
 

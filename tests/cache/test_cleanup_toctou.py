@@ -3,20 +3,18 @@ import contextlib
 import io
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests._support import temporary_root
 from vtx import cli, fstxn
 from vtx.infra import Ctx, ProjectPathError
 
 
 class CleanupToctou(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = temporary_root(self)
         timeline = self.root / 'timeline.json'
         timeline.write_text(json.dumps({
             'project': {'fps': 30, 'duration_frames': 30, 'width': 640, 'height': 360},
