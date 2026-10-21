@@ -1,7 +1,7 @@
 """vtx 内核包（v2 插件化架构，永不可关——ARCHITECTURE §0.1/§1）。
 
-- 稳定公共面见 vtx.api（apps/plugins/skills 复用）；本 __init__ 只再导出
-  CLI 主入口 main 与 _stage_receipt_name（tests/execution/test_pipeline.py 等既有依赖）。
+- 稳定公共面见 vtx.api（apps/plugins/skills 复用）；本包拥有 CLI 生命周期
+  main 与纯函数 _stage_receipt_name；执行层仅在 main 调用时导入。
 - 模块内一律相对导入（§1.4）；外部一律 `from vtx import ...` / `import vtx.xxx`。
   禁止 sys.path 注入 repo/vtx——平铺/包双实例会让 infra 的 receipt 锁 /
   hygiene 的 manifest 锁 / loudness_cache 的 flock 落在两个模块对象上，
@@ -80,4 +80,43 @@ def _read_version(here=None) -> str:
 
 __version__ = _read_version()
 
-from .cli import main, _stage_receipt_name   # noqa: E402（需在 __version__ 后无依赖序，cli 为纯相对导入）
+
+def _stage_receipt_name(name: str, draft: bool) -> str:
+    """阶段回执名（现行内联规则抽 helper，2026-09-12）：draft 模式的 video/mux 记为
+    video_draft/mux_draft（receipt/依赖门/下游撤销共用同一名字），其余阶段原名。
+    线性序列与流水线两处复用（单一权威）。"""
+    return name + "_draft" if draft and name in ("video", "mux") else name
+
+
+def main():
+    """One invocation, including input-load and finish failures."""
+    import sys
+
+    from .cli import _main
+    from . import events
+    from .infra import ProjectPathError
+
+    if sys.platform == 'win32':
+        # All three entry points share this path. Redirected Windows streams
+        # may default to GBK, which cannot encode status glyphs or user paths.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except (AttributeError, OSError, ValueError):
+                pass
+    execution = events.ExecutionContext()
+    code, failure = 0, None
+    try:
+        try:
+            result = _main(execution)
+            code = result or 0
+            return result
+        except ProjectPathError as error:
+            print(f'✗ {error}', file=sys.stderr)
+            code, failure = 1, error
+            return 1
+    except BaseException as error:
+        code, failure = events.exit_code(error), error
+        raise
+    finally:
+        execution.finish(code, failure)

@@ -77,7 +77,7 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
   composite.py  切点选择 + 合成 + ass（RenderPlan）  qc.py        质检
   stages.py     validate/audit/prepare/audio/mux    gfx_render.py CDP gfx 渲染后端
   hygiene.py    缓存键/gc/df/snapshot/VERSIONS      cache_state.py 回执身份/依赖门
-  本文件(cli)   gfx 阶段 + main/argparse/STAGES 编排（vtx/vtx.py 只剩薄启动器）
+  本文件(cli)   gfx 阶段 + argparse/STAGES 编排（main 生命周期在包入口）
 
 约定：AI 智能体不应手写 ffmpeg 剪辑命令；只编写/修改 timeline.json 并调用本工具。
 每条时间量都是整数帧；区间 [in, out) 左闭右开。回执写入 out/receipt.json。
@@ -93,6 +93,7 @@ from pathlib import Path
 
 # v2 §1.4 包化：模块内全部相对导入（外部一律 from vtx import / import vtx.xxx；
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
+from . import main, _stage_receipt_name
 from .composite import build_video, prepare_layers
 from .encoders import find_chrome
 from . import gfx_cli, hygiene, fstxn, events
@@ -439,13 +440,6 @@ STAGES = [("validate", validate), ("audit", audit), ("prepare", prepare), ("gfx"
 _UNTIL_STAGES = ("validate", "audit", "prepare", "gfx", "video", "mux", "qc")
 
 
-def _stage_receipt_name(name: str, draft: bool) -> str:
-    """阶段回执名（现行内联规则抽 helper，2026-09-12）：draft 模式的 video/mux 记为
-    video_draft/mux_draft（receipt/依赖门/下游撤销共用同一名字），其余阶段原名。
-    线性序列与流水线两处复用（单一权威）。"""
-    return name + "_draft" if draft and name in ("video", "mux") else name
-
-
 def _pipeline_enabled(env=None) -> bool:
     """VTX_PIPELINE 解析（方案二阶段2 A/B 开关）：仅显式 "0" 回退线性序列，缺省与
     其他任意值（含空串/"false"/"1"）走依赖图——开关语义单值精确，避免布尔猜测。"""
@@ -759,34 +753,6 @@ def _preview_command(c, a):
         print(f"== {name} ==")
         print(f"[dry-run] 计划阶段 {name}（不执行渲染、测量或插件钩子）")
     print("[dry-run] 计划完成；未删除或写入任何文件")
-
-
-def main():
-    """One invocation, including input-load and finish failures."""
-    if sys.platform == 'win32':
-        # All three entry points share this path. Redirected Windows streams
-        # may default to GBK, which cannot encode status glyphs or user paths.
-        for stream in (sys.stdout, sys.stderr):
-            try:
-                stream.reconfigure(encoding='utf-8', errors='replace')
-            except (AttributeError, OSError, ValueError):
-                pass
-    execution = events.ExecutionContext()
-    code, failure = 0, None
-    try:
-        try:
-            result = _main(execution)
-            code = result or 0
-            return result
-        except ProjectPathError as error:
-            print(f'✗ {error}', file=sys.stderr)
-            code, failure = 1, error
-            return 1
-    except BaseException as error:
-        code, failure = events.exit_code(error), error
-        raise
-    finally:
-        execution.finish(code, failure)
 
 
 def _main(execution=None):

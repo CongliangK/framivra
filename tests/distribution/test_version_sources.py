@@ -313,5 +313,176 @@ class GateAdversarialTest(unittest.TestCase):
         self.assertEqual(proc.stdout.strip(), _repo_pyproject_name())
 
 
+class PackageEntryBoundaryTest(unittest.TestCase):
+    """Fresh owned Python children; imports/help never start tools or read live config."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="vtx-package-entry-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.config = self.root / "config.json"
+        self.config.write_text('{"fixture": true}', encoding="utf-8")
+        self.env = {"HOME": str(self.root), "USERPROFILE": str(self.root),
+                    "PATH": "", "VTX_CONFIG": str(self.config),
+                    "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+                    "LANG": "C.UTF-8"}
+        if "SystemRoot" in os.environ:
+            self.env["SystemRoot"] = os.environ["SystemRoot"]
+
+    def run_child(self, code):
+        import textwrap
+        bootstrap = r'''
+import os, sys
+from pathlib import Path
+repo = Path(sys.argv[1])
+sys.path.insert(0, str(repo))
+config = Path(os.environ["VTX_CONFIG"])
+def guard(event, args):
+    if event.startswith("socket.") or event in (
+            "subprocess.Popen", "os.posix_spawn", "os.system", "os.fork",
+            "os.forkpty", "os.exec", "os.kill", "os.killpg",
+            "os.mkdir", "os.remove", "os.rmdir", "os.rename", "os.link",
+            "os.symlink", "os.chmod", "os.chown", "os.truncate"):
+        raise AssertionError("package fixture blocked " + event)
+    if event == "open":
+        path, mode, flags = args
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            raise AssertionError("package fixture blocked file write")
+        if isinstance(path, (str, bytes, os.PathLike)):
+            target = Path(os.fsdecode(path))
+            if target.name == "config.local.json" or (target == config and not config.is_file()):
+                raise AssertionError("package fixture blocked live config")
+sys.addaudithook(guard)
+'''
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", bootstrap + textwrap.dedent(code), str(REPO)],
+            cwd=self.root, env=self.env, capture_output=True, text=True,
+            encoding="utf-8", timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def test_config_import_forbids_execution_graph(self):
+        self.run_child('''
+            class ConfigOnly:
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname.startswith("vtx.") and fullname not in (
+                            "vtx.pluginlib", "vtx.pluginlib.config"):
+                        raise AssertionError("config import loaded execution module: " + fullname)
+            sys.meta_path.insert(0, ConfigOnly())
+            import vtx
+            from vtx.pluginlib.config import load_config
+            assert load_config() == {"fixture": True}
+            assert vtx._stage_receipt_name("video", True) == "video_draft"
+            assert vtx._stage_receipt_name("audio", True) == "audio"
+            assert set(name for name in sys.modules if name.startswith("vtx.")) == {
+                "vtx.pluginlib", "vtx.pluginlib.config"}
+        ''')
+
+    def test_shared_function_identity_signature_and_import_orders(self):
+        for first in ("import vtx", "import vtx.cli"):
+            with self.subTest(first=first):
+                self.run_child(first + '''
+import inspect, vtx, vtx.cli
+assert vtx.main is vtx.cli.main
+assert vtx._stage_receipt_name is vtx.cli._stage_receipt_name
+assert str(inspect.signature(vtx.main)) == "()"
+assert str(inspect.signature(vtx._stage_receipt_name)) == "(name: str, draft: bool) -> str"
+assert vtx.main.__module__ == vtx._stage_receipt_name.__module__ == "vtx"
+for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "qc"):
+    for draft in (False, True):
+        assert vtx._stage_receipt_name(stage, draft) == (
+            stage + "_draft" if draft and stage in ("video", "mux") else stage)
+''')
+
+    def test_lifecycle_result_errors_and_finish(self):
+        self.run_child('''
+            import contextlib, io
+            from unittest import mock
+            import vtx, vtx.cli
+            from vtx import events
+            from vtx.infra import ProjectPathError
+            for result in (None, 0, 7):
+                execution = mock.Mock()
+                with mock.patch.object(events, "ExecutionContext", return_value=execution), \\
+                     mock.patch.object(vtx.cli, "_main", return_value=result) as invoke:
+                    assert vtx.main() == result
+                invoke.assert_called_once_with(execution)
+                execution.finish.assert_called_once_with(result or 0, None)
+            for error, code in ((ProjectPathError("fixture-path"), 1),
+                                (RuntimeError("fixture-failure"), 1),
+                                (SystemExit(0), 0), (SystemExit(9), 9),
+                                (SystemExit("message"), 1), (KeyboardInterrupt(), 130)):
+                execution = mock.Mock()
+                with mock.patch.object(events, "ExecutionContext", return_value=execution), \\
+                     mock.patch.object(vtx.cli, "_main", side_effect=error), \\
+                     contextlib.redirect_stderr(io.StringIO()) as stderr:
+                    if isinstance(error, ProjectPathError):
+                        assert vtx.main() == 1
+                        assert "fixture-path" in stderr.getvalue()
+                    else:
+                        try:
+                            vtx.main()
+                        except BaseException as caught:
+                            assert caught is error
+                        else:
+                            raise AssertionError("exception swallowed")
+                execution.finish.assert_called_once_with(code, error)
+            execution = mock.Mock()
+            failure = RuntimeError("finish failed")
+            execution.finish.side_effect = failure
+            with mock.patch.object(events, "ExecutionContext", return_value=execution), \\
+                 mock.patch.object(vtx.cli, "_main", return_value=None):
+                try:
+                    vtx.main()
+                except RuntimeError as caught:
+                    assert caught is failure
+                else:
+                    raise AssertionError("finish failure swallowed")
+            execution.finish.assert_called_once_with(0, None)
+        ''')
+
+    def test_windows_stream_reconfiguration_and_failure_tolerance(self):
+        self.run_child('''
+            from unittest import mock
+            import vtx, vtx.cli
+            from vtx import events
+            for failure in (None, AttributeError(), OSError(), ValueError()):
+                streams = [mock.Mock(), mock.Mock()]
+                for stream in streams:
+                    stream.reconfigure.side_effect = failure
+                execution = mock.Mock()
+                with mock.patch.object(sys, "platform", "win32"), \\
+                     mock.patch.object(sys, "stdout", streams[0]), \\
+                     mock.patch.object(sys, "stderr", streams[1]), \\
+                     mock.patch.object(events, "ExecutionContext", return_value=execution), \\
+                     mock.patch.object(vtx.cli, "_main", return_value=None):
+                    assert vtx.main() is None
+                for stream in streams:
+                    stream.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+                execution.finish.assert_called_once_with(0, None)
+        ''')
+
+    def test_three_entry_adapters_real_help(self):
+        # Third case resolves the actual console target, not an installed wrapper.
+        adapters = {
+            "script": 'runpy.run_path(str(repo / "vtx/vtx.py"), run_name="__main__")',
+            "module": 'runpy.run_module("vtx", run_name="__main__")',
+            "console-target": '''
+from importlib.metadata import EntryPoint
+import re
+text = (repo / "pyproject.toml").read_text(encoding="utf-8")
+target = re.search(r'(?m)^vtx = "([^"]+)"$', text).group(1)
+raise SystemExit(EntryPoint(name="vtx", value=target, group="console_scripts").load()())
+''',
+        }
+        for adapter, invoke in adapters.items():
+            with self.subTest(adapter=adapter):
+                result = self.run_child('import runpy\nsys.argv[:] = ["vtx", "--help"]\n'
+                                        + invoke)
+                self.assertIn("--timeline", result.stdout)
+                self.assertIn("--events-jsonl", result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
