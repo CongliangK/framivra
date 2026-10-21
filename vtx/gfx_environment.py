@@ -424,7 +424,7 @@ def _collect_darwin(backend, binary, mode):
                          'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
             'implementation': _files([_ROOT / p for p in (
-                'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py',
+                'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py', 'browser_paths.py',
                 'gfx_cef.py', 'cef_client.py')])}
 
 
@@ -567,7 +567,8 @@ def _collect_windows(backend, binary, mode):
             'protocol': {'device_scale': 1, 'color': 'srgb', 'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
             'implementation': _files([_ROOT / p for p in ('gfx_environment.py', 'gfx_backend.py',
-                'gfx_render.py', 'gfx_cli.py', 'gfx_cef.py', 'cef_client.py', 'windows_browser.py')])}
+                'gfx_render.py', 'gfx_cli.py', 'gfx_cef.py', 'cef_client.py', 'windows_browser.py',
+                'browser_paths.py')])}
 
 
 class EnvironmentError(ValueError):
@@ -864,7 +865,7 @@ def collect(backend, binary, mode=None):
                              'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
                 'python_runtime': _python_runtime(),
                 'implementation': _files([_ROOT / p for p in (
-                    'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py',
+                    'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py', 'browser_paths.py',
                     'gfx_cef.py', 'cef_client.py')])}
     except (OSError, RuntimeError, TypeError, AttributeError, plistlib.InvalidFileException,
             UnicodeError, struct.error) as e:
