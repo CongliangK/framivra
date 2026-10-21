@@ -2,7 +2,7 @@
 
 组件声明见 `app.json`（kind=app）；健康检查为 `audit_bundle.py --help`。内核入口从含 `vt.py` 与 `vtx/vtx.py` 的仓根定位；本 app 是预览与审计前端，不替代内核渲染/QC。
 
-> **使用者向**：Blender 预览桥用法与 VSE 坑表。历史校验记录与实测数据见 `../../docs/DEV.md`。
+> **使用者向**：Blender 预览桥用法与 VSE 坑表。历史校验记录与实测数据见[开发记录](../../docs/reports/development-history.md)。
 
 > 路线：不用 MCP（CLI/bpy 直连更自由）、不用外部直写 .blend（无格式规范），用 `blender --background --python` 生成。回写（Blender→json）由 blend2json.py 提供（见下）。
 
@@ -15,7 +15,7 @@
 | `blend2json.py` | 用户手剪回写桥（Blender→json，保护规则拒收危险改动） | **blender** |
 | `subs_alpha.py` | 字幕透明轨（cache/subs.ass → ProRes 4444 alpha mov） | 系统 python3 |
 | `bundle_session.py` | audit_bundle 的单次 blender 会话合并执行器（runpy 依次跑 json2blend/verify） | **blender** |
-| `tests/` | audit 真 ffmpeg 回归（`test_audio_audit.py`，10 用例） | 系统 python3 |
+| `tests/` | audit 真 ffmpeg 回归（`test_audio_audit.py`） | 系统 python3 |
 
 ## 依赖
 
@@ -43,7 +43,7 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 
 ## 历史校验记录
 
-各项目 preview.blend 的 verify 校验通过数与样帧 PSNR 记录迁移至 `../../docs/DEV.md`（迁移即测试基线一节）。
+各项目 preview.blend 的 verify 校验通过数与样帧 PSNR 历史记录由[开发记录](../../docs/reports/development-history.md#一性能基准)及其固定原文保留，不代表当前版本已复验。
 
 字幕透明轨产物：`<项目>/cache/subs_alpha.mov`（ProRes 4444 alpha）。
 
