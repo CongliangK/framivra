@@ -1323,26 +1323,42 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       }
       uint64_t t_alpha = 0, t_png = 0, t_disk = 0;
       bool deliver_ok = r.status == kStatusOk;
+      bool encode_timed_out = false;
       if (deliver_ok) {
-        uint64_t t2 = 0, t3 = 0, t4 = 0;
         pool.Post([&] {
-          t2 = NowUs();
-          UnpremultiplyToRgba(state.cap_staging.data(),
-                              static_cast<size_t>(r.width) * r.height * 4u,
-                              rgba.data());
-          t_alpha = NowUs() - t2;
-          std::vector<uint8_t> png;
-          t3 = NowUs();
-          const bool enc =
-              EncodePngRgba(rgba.data(), static_cast<int>(r.width),
-                            static_cast<int>(r.height), opt.png, &png);
-          t_png = NowUs() - t3;
-          t4 = NowUs();
-          deliver_ok = enc && AtomicWriteBytes(out_path, png.data(), png.size());
-          t_disk = NowUs() - t4;
+          try {
+            const uint64_t t2 = NowUs();
+            UnpremultiplyToRgba(state.cap_staging.data(),
+                                static_cast<size_t>(r.width) * r.height * 4u,
+                                rgba.data());
+            t_alpha = NowUs() - t2;
+            std::vector<uint8_t> png;
+            const uint64_t t3 = NowUs();
+            const bool enc =
+                EncodePngRgba(rgba.data(), static_cast<int>(r.width),
+                              static_cast<int>(r.height), opt.png, &png);
+            t_png = NowUs() - t3;
+            const uint64_t t4 = NowUs();
+            deliver_ok = enc && AtomicWriteBytes(out_path, png.data(), png.size());
+            t_disk = NowUs() - t4;
+          } catch (...) {
+            // Keep task completion observable even if allocation/encoding throws.
+            deliver_ok = false;
+          }
         });
-        pump.Until([&] { return pool.Done(); }, 60000);  // 泵着等编码完成
-        if (!deliver_ok) {
+        if (!pump.Until([&] { return pool.Done(); }, 60000)) {
+          encode_timed_out = true;
+          // This is a reply deadline, not cancellation of a blocking writer.
+          // Keep every capture/output owned until Done's acquire synchronizes
+          // with the task. Never acknowledge success or accept another request
+          // while an old task could still publish to its output path. The host
+          // process owner remains responsible for a hard kill of stuck I/O.
+          while (!pump.Until([&] { return pool.Done(); }, 60000)) {
+          }
+          r.status = kStatusTimeout;
+          std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘超时，任务已收尾 %s\n",
+                       out_path.c_str());
+        } else if (!deliver_ok) {
           r.status = kStatusJsErr;  // 落盘失败以非 OK 码显形（复用 3 号档）
           std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘失败 %s\n",
                        out_path.c_str());
@@ -1353,6 +1369,10 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
                   t_alpha, t_png, t_disk);
       if (!SendAll(conn, &receipt, sizeof(receipt))) {
         exit_code = 4;
+        break;
+      }
+      if (encode_timed_out) {
+        exit_code = 4;  // Failed request: drained task, no output/request reuse.
         break;
       }
       if (r.status == kStatusOk) {
