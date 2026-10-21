@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""client 单测（方案 §9.1：mock sidecar 本地 http.server 随机端口——转写/4xx/超时；
->200s 输入透传不切分断言）。零模型零网络（mock server 绑 127.0.0.1 随机端口）。"""
+'Sidecar client and CLI endpoint selection contracts.'
+
+
+# client contracts
+# client 单测（方案 §9.1：mock sidecar 本地 http.server 随机端口——转写/4xx/超时；
+# >200s 输入透传不切分断言）。零模型零网络（mock server 绑 127.0.0.1 随机端口）。
 import json
 import os
 import subprocess
@@ -169,6 +173,36 @@ class TestClient(unittest.TestCase):
         self.assertFalse(client.cfg_get({"a": {"b": "false"}}, "a.b", True))
         self.assertTrue(client.cfg_get({"a": {"b": "1"}}, "a.b", False))
         self.assertTrue(client.cfg_get({"a": {"b": True}}, "a.b", False))
+
+
+# cli baseurl contracts
+# test_cli_baseurl.py · --base-url 主级/子级位置回归（P1-1，终审 2026-09-11）
+#
+# subparser 的 default=None 会覆盖主级已解析值 → 主级 --base-url 被静默丢弃。
+# 修复：子级 default=argparse.SUPPRESS。本测钉死两种位置等价。
+CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "asr_cli.py")
+
+
+def run(args):
+    return subprocess.run([sys.executable, CLI] + args,
+                          capture_output=True, text=True, timeout=60)
+
+
+class TestBaseUrlPosition(unittest.TestCase):
+    def test_prefix_position_honored(self):
+        """主级位置：--base-url X sidecar health → 请求打到 X（不被默认覆盖）。"""
+        r = run(["--base-url", "http://127.0.0.1:19999", "sidecar", "health"])
+        self.assertIn("19999", r.stdout + r.stderr)
+
+    def test_suffix_position_honored(self):
+        """子级位置：sidecar health --base-url X → 同样生效。"""
+        r = run(["sidecar", "health", "--base-url", "http://127.0.0.1:19999"])
+        self.assertIn("19999", r.stdout + r.stderr)
+
+    def test_default_when_absent(self):
+        """未传 → config/默认 18085。"""
+        r = run(["sidecar", "health"])
+        self.assertIn("18085", r.stdout + r.stderr)
 
 
 if __name__ == "__main__":

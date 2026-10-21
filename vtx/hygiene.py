@@ -734,7 +734,7 @@ def snapshot(c, keep: int = None):
         if tr.get('kind') == 'gfx':
             texts.update(cl['src'] for cl in tr.get('clips', []))
     # v2 subtitles_src（§1.1 条目 6）：引用的字幕文件同为文本资产——快照含它
-    # 才有完整回滚锚点。空串 = 未声明（tests/media/test_subtitles_src.py 契约），
+    # 才有完整回滚锚点。空串 = 未声明（tests/media/test_subtitles.py 契约），
     # 不得当作非法引用拒绝。
     sub_src = c.tl.get('subtitles_src')
     if isinstance(sub_src, str) and sub_src:
