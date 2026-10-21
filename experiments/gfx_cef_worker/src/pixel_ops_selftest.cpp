@@ -5,7 +5,7 @@
 //   pixel_ops_selftest               正确性全套（PASS/FAIL；全部 PASS 退出 0）
 //   pixel_ops_selftest --bench       追加 1080p 性能基准（含 4 线程并发编码）
 //   pixel_ops_selftest --bench-json  基准结果以 BENCH_JSON:<单行 JSON> 输出
-//                                    （tests/test_cef_worker_pixel_ops.py 采集）
+//                                    （tests/gfx/test_cef_worker_pixel_ops.py 采集）
 //
 // 正确性用例面（对应工单验收/父工单验证门）：
 //   1. lut_full_domain    LUT == 标量公式：(c,a)∈[0,255]² 全域 65,536 组穷举

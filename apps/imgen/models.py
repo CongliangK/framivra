@@ -36,7 +36,6 @@ GPT_RATIO_CHOICES = (
     "auto", "1:1", "3:2", "2:3", "16:9", "9:16", "4:3", "3:4",
     "21:9", "9:21", "1:3", "3:1", "2:1", "1:2",
 )
-GPT_SIZE_CHOICES = GPT_RATIO_CHOICES  # 兼容名（上游 core/models.py:18）
 
 # GPT-Image-2.5 三端点（/doc/78/79/80）共用 aspectRatio（比例或 WxH 像素串）。
 GPT25_FAMILY = ("gpt-2.5", "gpt-2.5-sunburst", "gpt-2.5-flare")

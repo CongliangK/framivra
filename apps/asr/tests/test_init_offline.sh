@@ -134,7 +134,7 @@ no_calls
 contains "$TMP/output" '本地探测模式：不联网'
 contains "$TMP/output" '旧 --download 为 BLOCKED'
 contains "$TMP/output" 'docs/third-party-licenses.md'
-contains "$TMP/output" 'python3 scripts/model_license_policy.py plan <asset>'
+contains "$TMP/output" 'python3 scripts/policy/model_license_policy.py plan <asset>'
 contains "$TMP/output" '独立运行环境须另行审核和准备'
 if grep -q '请运行 bash apps/asr/init.sh --download' "$TMP/output"; then
   echo 'FAIL: missing assets recommend the blocked downloader' >&2; exit 1
@@ -147,12 +147,12 @@ echo 'PASS: default missing interpreter is local-only, never falls back to IME'
 # 2a. 许可门禁不变：旧 --download 一律 BLOCKED（exit 4），零网络命令。
 #     拷贝真实 policy + inventory + 本地证据件到隔离副本（只读复用，不改真实树）。
 REAL_ROOT="$(cd "$ASR/../.." && pwd)"
-mkdir -p "$TMP/repo/scripts" "$TMP/repo/docs" \
+mkdir -p "$TMP/repo/scripts/policy" "$TMP/repo/docs" \
   "$TMP/repo/experiments/gfx_cef_worker/third_party/spng" \
   "$TMP/repo/experiments/gfx_cef_worker/third_party/fpng" \
   "$TMP/repo/templates/standard-demo/profiles/standard/v1/fonts" \
   "$TMP/repo/experiments/gfx_electron_worker"
-cp "$REAL_ROOT/scripts/model_license_policy.py" "$TMP/repo/scripts/"
+cp "$REAL_ROOT/scripts/policy/model_license_policy.py" "$TMP/repo/scripts/policy/"
 cp "$REAL_ROOT/docs/model-license-inventory.json" "$TMP/repo/docs/"
 cp "$REAL_ROOT/LICENSE" "$TMP/repo/" 2>/dev/null || true
 cp "$REAL_ROOT/experiments/gfx_cef_worker/third_party/spng/spng.c" \

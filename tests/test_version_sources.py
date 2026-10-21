@@ -15,7 +15,7 @@ vtx._read_version 回退链（B01 起）：
      子进程 import 断言 __version__ 取 metadata 值；无 dist-info 时回落字面量
      （== 三源值）。真正 venv + pip install wheel 冒烟 = C03 工单，此处不建
      venv 不产 wheel，只落版本源逻辑与布局校验。
-  ④ L6 门本身：python3 scripts/verify_version_sync.py exit 0（本机未装
+  ④ L6 门本身：python3 scripts/docs/verify_version_sync.py exit 0（本机未装
      framivra → ④ metadata skip 行；已装且同步 → OK 行）。
 
 运行：bash scripts/run_all_tests.sh；或独立跑
@@ -180,7 +180,7 @@ class GateScriptTest(unittest.TestCase):
 
     def test_l6_version_sync_gate_passes(self):
         proc = subprocess.run(
-            ["env", "python3", str(REPO / "scripts" / "verify_version_sync.py")],
+            ["env", "python3", str(REPO / "scripts/docs/verify_version_sync.py")],
             capture_output=True, text=True, cwd=str(REPO), timeout=120)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("L6 version sync: VERSION==pyproject==vtx ==", proc.stdout)
@@ -195,8 +195,8 @@ class GateAdversarialTest(unittest.TestCase):
         root = Path(tmp)
         shutil.copytree(REPO / "vtx", root / "vtx",
                         ignore=shutil.ignore_patterns("__pycache__"))
-        (root / "scripts").mkdir()
-        shutil.copy2(REPO / "scripts/verify_version_sync.py", root / "scripts/")
+        (root / "scripts/docs").mkdir(parents=True)
+        shutil.copy2(REPO / "scripts/docs/verify_version_sync.py", root / "scripts/docs/")
         shutil.copy2(REPO / "pyproject.toml", root)
         shutil.copy2(REPO / "VERSION", root)
         return root
@@ -206,7 +206,7 @@ class GateAdversarialTest(unittest.TestCase):
         if pythonpath is not None:
             env["PYTHONPATH"] = str(pythonpath)
         return subprocess.run(
-            ["env", "python3", str(root / "scripts/verify_version_sync.py")],
+            ["env", "python3", str(root / "scripts/docs/verify_version_sync.py")],
             capture_output=True, text=True, cwd=str(root), env=env, timeout=120)
 
     def _runtime_version(self, root):

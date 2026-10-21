@@ -8,7 +8,7 @@ import sys
 # Stop this unreviewed legacy chain before third-party imports or output writes.
 import importlib.util
 from pathlib import Path
-_policy_path = Path(__file__).resolve().parents[2] / "scripts" / "model_license_policy.py"
+_policy_path = Path(__file__).resolve().parents[2] / "scripts" / "policy" / "model_license_policy.py"
 _policy_spec = importlib.util.spec_from_file_location("framivra_matting_license_policy", _policy_path)
 _policy = importlib.util.module_from_spec(_policy_spec)
 _policy_spec.loader.exec_module(_policy)

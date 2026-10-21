@@ -1,6 +1,6 @@
 # research · 选题调研采集/评分/样式研究工具（6 件）
 
-v2 应用（P2a 批次 1 自 `scripts/` 六件迁入；manifest 见 `app.json`，兼容转发壳：`scripts/` 下同名件 → 本目录）。R0-R6 调研编排方法论见 `templates/tech-talk/references/research.md`。
+组件 manifest 见 `app.json`；命令使用本目录真实路径。R0-R6 调研编排方法论见 `templates/tech-talk/references/research.md`。
 
 ## 用途
 

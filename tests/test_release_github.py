@@ -104,9 +104,9 @@ class GithubRelease(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.repo = self.root / 'repo'
         self.repo.mkdir()
-        (self.repo / 'scripts').mkdir()
+        (self.repo / 'scripts/release').mkdir(parents=True)
         (self.repo / 'vtx').mkdir()
-        for name in ('release.sh', 'release_github.py', 'install.sh'):
+        for name in ('release/release_github.py', 'install.sh'):
             shutil.copyfile(REPO / 'scripts' / name, self.repo / 'scripts' / name)
         (self.repo / 'VERSION').write_text('2.0.1\n')
         (self.repo / 'pyproject.toml').write_text('[project]\nname="framivra"\nversion = "2.0.1"\n')
@@ -149,9 +149,9 @@ class GithubRelease(unittest.TestCase):
                    "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m); "
                    "m.verify_freeze_evidence=lambda *a: None; "
                    "m.build_public_summary=lambda *a: None; "
-                   "sys.modules['verify_release']=types.SimpleNamespace(verify_artifact=lambda *a,**kw: (_ for _ in ()).throw(ValueError('unsigned')) if __import__('os').environ.get('MOCK_PROVENANCE_FAIL') else 1); "
+                   "sys.modules['scripts.release.verify_release']=types.SimpleNamespace(verify_artifact=lambda *a,**kw: (_ for _ in ()).throw(ValueError('unsigned')) if __import__('os').environ.get('MOCK_PROVENANCE_FAIL') else 1); "
                    "sys.exit(m.main(sys.argv[2:]))")
-        return subprocess.run([sys.executable, '-c', harness, str(self.repo / 'scripts/release_github.py'),
+        return subprocess.run([sys.executable, '-c', harness, str(self.repo / 'scripts/release/release_github.py'),
                                'v2.0.1', *args], cwd=self.repo, env={**self.env, **env},
                               text=True, capture_output=True, timeout=30)
 
@@ -382,7 +382,7 @@ class GithubRelease(unittest.TestCase):
 
     def test_invalid_version_refuses_before_network(self):
         for version in ('../oops', 'v2.0.1;echo', 'v2.0', '', 'v٢.٠.١'):
-            result = subprocess.run(['bash', str(self.repo / 'scripts/release.sh'), version],
+            result = subprocess.run([sys.executable, str(self.repo / 'scripts/release/release_github.py'), version],
                 cwd=self.repo, env=self.env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(self.state()['calls'], [])

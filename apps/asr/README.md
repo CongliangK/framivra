@@ -152,7 +152,7 @@ audit 同阈值）；相邻去重叠不破 `in+min_dur` 下限（极冲突保留
    单资产证据与限制，不下载、不安装，也不表示已获得用途许可：
 
    ```bash
-   env python3 scripts/model_license_policy.py plan qwen-asr-1.7b
+   env python3 scripts/policy/model_license_policy.py plan qwen-asr-1.7b
    ```
 
    另行确认许可、固定官方快照、证据哈希和用途后，受支持的单资产下载接口才可使用；

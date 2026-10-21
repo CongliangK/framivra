@@ -52,10 +52,6 @@ def load_static_registry(repo_root=None) -> dict:
     return {"plugins": {k: v for k, v in data["plugins"].items() if isinstance(v, dict)}}
 
 
-def _external_cfg(repo_root=None):
-    return _config.load_config(repo_root=_root(repo_root))
-
-
 def scan_builtin(repo_root=None) -> list:
     """内置扫描 apps/ 与 plugins/（目录存在才扫）。返回 entry 列表：
 
@@ -101,7 +97,7 @@ def scan_external(repo_root=None) -> list:
     命令的根内相对校验由 manifest.py 安全节把关。坏条目产出 errors entry 不崩。
     """
     root = _root(repo_root)
-    cfg = _external_cfg(root)
+    cfg = _config.load_config(repo_root=_root(root))
     entries = []
     for kind, key in (("app", "external_apps"), ("plugin", "external_plugins")):
         for item in _config.external_entries(cfg, key):

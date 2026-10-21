@@ -10,8 +10,7 @@ P3 增量覆盖面(P2 版 test_denoise.py 之上,兼容共存零改动):
   ⑨ stereo 48k 契约:插件产物终步 -ac 2;CLI 缺省无 -ac(=mono);
   ⑩ 缓存键 2.0.0:产物键含 __denoise_2.0.0_;plugin.json/__init__.py/
      registry.json/README 四处版本一致(#12 P3 复核机检化);
-  ⑪ symlink 契约(#10):scripts/denoise_voice.py、scripts/denoise_init.sh 为
-     指向 plugins/denoise/ 真身的兼容 symlink(指向不改变)。
+  ⑪ canonical 入口契约：plugins/denoise/ 内命令直接可用。
 运行:repo 根 `bash scripts/run_all_tests.sh`(批次三自动发现);本插件内独立跑:
 cd plugins/denoise && env python3 -m unittest discover -s tests -t . -v
 （本机纪律:env python3 前缀,AppImage argv[0] 劫持,见全局 AGENTS.md）。
@@ -235,15 +234,13 @@ class CacheKeyV200(unittest.TestCase):
         # 1.0.0 历史记载不在残留断言面(#12 口径=denoise 域四处)。
 
 
-class SymlinkIntegrity(unittest.TestCase):
-    """⑪ symlink 契约(#10):scripts/ 兼容 symlink 指向 plugins/denoise 真身。"""
+class CanonicalEntrypoints(unittest.TestCase):
+    """⑪ canonical 入口位于插件目录，不依赖旧 scripts 转发器。"""
 
-    def test_scripts_symlinks_resolve_to_plugin(self):
+    def test_plugin_entrypoints_are_owned_files(self):
         for name in ("denoise_voice.py", "denoise_init.sh"):
-            link = REPO / "scripts" / name
             real = REPO / "plugins" / "denoise" / name
-            self.assertFalse(link.is_symlink(), f"scripts/{name} 应为跨平台转发器")
-            self.assertIn("../plugins/denoise/" + name, link.read_text(encoding="utf-8"))
+            self.assertFalse(real.is_symlink(), f"plugins/denoise/{name} owns its source")
             self.assertTrue(real.is_file(), f"真身 plugins/denoise/{name} 在盘")
 
 

@@ -30,7 +30,7 @@ def main():
     # project directories: its constructor downloads independently licensed auxiliaries.
     import importlib.util
     from pathlib import Path
-    policy_path = Path(__file__).resolve().parents[2] / "scripts" / "model_license_policy.py"
+    policy_path = Path(__file__).resolve().parents[2] / "scripts" / "policy" / "model_license_policy.py"
     policy_spec = importlib.util.spec_from_file_location("framivra_model_license_policy", policy_path)
     policy = importlib.util.module_from_spec(policy_spec)
     policy_spec.loader.exec_module(policy)

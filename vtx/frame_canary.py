@@ -15,7 +15,7 @@ Worker 又失去帧同步锚点」的逻辑悖论（对齐 CEF Issue #4166 的 M
       右下块 = P2 签名色（v2 独立第二因子，通道互换+独立校验和）：
                R=f&0xFF；G=(f>>8)&0xFF；
                B=((16*(f&0xFF) + 22*((f>>8)&0xFF) + 0xC3))&0xFF；A=255。
-  消费端（scripts/gfx_golden.py verify-canary）读取落盘 PNG：左上块按 P1 公式
+  消费端（scripts/gfx/gfx_golden.py verify-canary）读取落盘 PNG：左上块按 P1 公式
   解码 f_TL、右下块按 P2 公式解码 f_BR；f_TL == f_BR == 请求帧 → ok；
   f_TL ≠ f_BR（两块各自解码成功）→ torn_frame；块内水平双色带 → torn_frame；
   右下块无可解码 P2 结构 → 双像素确认不可能 → ambiguous_signature（v1 曾豁免
@@ -139,7 +139,7 @@ BeginFrame 驱动，消费 harness 以 throwaway 截图兜底触发）；页面�
     wrong_frame_* 归因升级为「双像素交集单例、物理模型内可信」。
 
 本模块纯标准库（验证/剥离只碰 2 像素邻域 + 两个 8x8 块，无需 numpy/PIL；
-PNG 解码由调用方负责——scripts/gfx_golden._decode_rgba、测试 PIL 均可）。
+PNG 解码由调用方负责——scripts.gfx.gfx_golden._decode_rgba、测试 PIL 均可）。
 """
 from __future__ import annotations
 

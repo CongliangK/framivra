@@ -20,7 +20,7 @@
 调用方可直接替换。纯标准库，无 numpy/websocket 依赖（CLI 回落态不因加速后端
 缺依赖而失效）。
 
-独立测试：python3 -m unittest tests.test_gfx_cli_fallback（假 chrome stub，
+独立测试：python3 -m unittest tests.gfx.test_gfx_cli_fallback（假 chrome stub，
 无需真 Chrome）。
 """
 import hashlib

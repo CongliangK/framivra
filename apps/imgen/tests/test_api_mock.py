@@ -211,7 +211,7 @@ class ApiMockTestCase(unittest.TestCase):
         env = os.environ.copy()
         env.pop("SC_API_KEY", None)
         env.pop("NANOBANANA2_API_KEY", None)
-        env["IMGEN_CONFIG"] = os.path.join(self._tmp.name, "no_such_config.json")
+        env["VTX_CONFIG"] = os.path.join(self._tmp.name, "no_such_config.json")
         env["IMGEN_API_BASE"] = self.mock.base
         env["IMGEN_POLL_INTERVAL"] = "0.05"
         env["IMGEN_POLL_TIMEOUT"] = "20"

@@ -27,7 +27,7 @@ B 站视频产线程序本体权威仓:内核 `vtx/`(timeline.json 契约+帧精
 ## H home 指针(一事实一家,禁复制)
 - 文档层规则与写入权→docs/DOC-CHARTER.md
 - 契约权威(v2 冻结件)→docs/ARCHITECTURE.md
-- 开发纪律/演进史/基准/依赖原则(默认标准库,成熟库按需评估)→docs/DEV.md
+- 当前开发纪律/依赖原则→docs/DEV.md;演进史与历史基准→docs/reports/development-history.md
 - 组件清单→docs/catalog.md;缓存与回执语义→docs/cache-provenance.md
 - 创作拆页与分工→docs/skill/references/gfx.md「HTML 创作组织」。
 - 操作路由→docs/skill/SKILL.md;工作流包→templates/tech-talk/;人类面→README.md

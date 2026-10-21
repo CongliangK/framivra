@@ -2,8 +2,7 @@
 
 床乐全局增益 + 口播窗静态避让（voice-ime D32/D34/D35 决策：静态分段替代
 sidechaincompress，规避长流异常），以 timeline 键挂进 vtx 混音 graph（v2 §2.2
-缝 B，ARCHITECTURE.md 设计权威）。`scripts/bed_static_duck.py` 旧路径留相对
-转发壳兼容。
+缝 B，ARCHITECTURE.md 设计权威）。独立命令使用本目录的 `bed_static_duck.py`。
 
 ## timeline 键用法（管线内，推荐）
 

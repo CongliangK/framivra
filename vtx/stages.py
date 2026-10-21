@@ -14,6 +14,7 @@ from .infra import Ctx, run_parallel
 from .diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
                           source_structure, mark_handled, operation)
 from . import fstxn
+from .audio_filters import event_chain
 from .pluginlib import hooks as _plugin_hooks
 from .pluginlib import registry as _plugin_registry
 
@@ -576,21 +577,7 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
     for ti, tr in enumerate(atracks):
         ev_lbls = []
         for _ti, _tr, e in [x for x in evs if x[0] == ti]:
-            dur = e["out"] - e["in"]; sin = e.get("src_in", 0)
-            # fade 钳制 ≤ 事件时长（D-A 2026-10-05：fade>时长 → afade st<0 报错；
-            # duck-static 插件已在上游切段时钳制，此处兜底手写 timeline 的同类错）
-            fi = min(e["fade_in_frames"], dur) if e.get("fade_in_frames") else 0
-            fo = min(e["fade_out_frames"], dur) if e.get("fade_out_frames") else 0
-            fl = [f"atrim=start_sample={sin*c.spf_samples}:end_sample={(sin+dur)*c.spf_samples}", "asetpts=PTS-STARTPTS"]
-            fl.append(f"volume={e['volume']}")
-            if e.get("pan"):
-                p = e["pan"]; lg = min(1.5, 1 - p * .5); rg = min(1.5, 1 + p * .5)
-                fl.append(f"pan=stereo|c0={lg:.3f}*c0|c1={rg:.3f}*c1")
-            if fi: fl.append(f"afade=t=in:st=0:d={fi*c.spf:.6f}")
-            if fo:
-                fl.append(f"afade=t=out:st={(dur-fo)*c.spf:.6f}:d={fo*c.spf:.6f}")
-            fl.append(f"adelay=delays={e['in']/c.fps*1000:.3f}:all=1")
-            chains.append(f"[{k}:a]" + ",".join(fl) + f"[e{k}]")
+            chains.append(event_chain(c, k, e))
             ev_lbls.append(f"[e{k}]")
             k += 1
         if not ev_lbls: continue     # 窗口内无事件的轨：不进混音（静音轨无贡献）
@@ -762,19 +749,15 @@ def build_audio(c: Ctx):
     c.receipt("audio", True, msg, extra=extra)
 
 
-def post_loudness_compat(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
-    """v2 兼容重跑（scripts/post_loudness.py 薄壳的内核实现，2026-09-13）：
-    响度终链已并入 vtx audio（ARCHITECTURE §1.2），`vtx audio` 产出的 out/audio.wav
-    恒为「归一+限幅」终态，R4 链不再需要独立 post 步。本函数保留旧 CLI 命令面的
-    行为：对项目 out/audio.wav 再走一遍「测 I → volume={gain}dB,alimiter → 复测
-    ±1.5 LU → 时长 ±1 采样 → 原子替换」。**幂等性收窄声明（P1 对抗审查 F1 修正）**：
-    真幂等仅两种情形——①audio.wav 与回执 post_loudness.sha256 一致（已是终态，
-    直接跳过返回已有测量）；②当前 I 已在 target（gain≈0）。对因限幅损耗停在
-    target-1.5~target-2 的产物（voice-ime 类配乐密集内容，实测重跑一次 +1.9dB
-    蠕升），本函数会按 v1 旧语义把响度再推向 target 并**改变交付响度**——打印
-    蠕升警告；v2 正常链路无需本命令。与旧实现的差异（v2 单写者语义）：不做回执
-    摘除-回写手术（audio 阶段回执照常有效），返回测量 dict（含 tp_dbfs）由调用
-    方打印。"""
+def normalize_project_audio(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
+    """Normalize an existing project's out/audio.wav without rerendering.
+
+    Measure loudness, apply gain and limiting, verify loudness/duration, then
+    atomically replace the WAV. Return measurements including the output hash.
+    A matching terminal receipt skips processing; otherwise repeated limiting
+    can change delivered loudness. This operation does not update or invalidate
+    audio/mux/QC receipts. Use the normal vtx audio pipeline for delivery.
+    """
     if not math.isfinite(target):
         raise ValueError("Target must be finite")
     source = Path(project).resolve() / "out" / "audio.wav"
@@ -790,9 +773,9 @@ def post_loudness_compat(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
             prev = None
         if isinstance(prev, dict) and prev.get("sha256") == sha_now:
             print("v2: audio.wav 与回执 post_loudness.sha256 一致（已是 vtx audio 终态），"
-                  "跳过兼容重跑")
+                  "跳过音频维护处理")
             return prev
-    print("v2: 兼容重跑（v1 post_loudness 语义；v2 正常链路无需本命令）")
+    print("音频维护：处理现有 WAV（正式渲染链无需本命令）")
 
     def measure(path):
         r = subprocess.run([ffmpeg, "-hide_banner", "-nostats", "-i", str(path),
@@ -808,7 +791,7 @@ def post_loudness_compat(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
     seconds = _wav_seconds(source)
     gain = target - before
     if abs(gain) > 0.1:
-        print(f"⚠ 本次将再施加 {gain:+.1f}dB 增益（v1 旧语义：把当前响度推回 target）——"
+        print(f"⚠ 本次将再施加 {gain:+.1f}dB 增益（把当前响度推回 target）——"
               "对限幅损耗产物重跑会改变交付响度；v2 正常链路（vtx audio）已内置限幅，"
               "如需调整响度请改 timeline 后重渲")
     # ffmpeg 子进程写者：locked_staging 给同目录随机名真实路径（子进程不能

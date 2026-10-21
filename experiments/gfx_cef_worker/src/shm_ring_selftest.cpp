@@ -1,6 +1,6 @@
 // shm_ring_selftest.cpp — 4-Slot SHM 环与协议原生自检（issue #110）。
 //
-// 无 CEF 依赖（tests/test_cef_worker_shm.py 门控调用；构建产物与
+// 无 CEF 依赖（tests/gfx/test_cef_worker_shm.py 门控调用；构建产物与
 // vtx_cef_worker 同目录）。用例面（工单 DoD 的原生层）：
 //   1. layout          偏移表/几何断言（与 ipc_protocol.hpp 静态断言互证）
 //   2. state_machine   EMPTY→WRITING→READY→EMPTY 状态机走查（含 Abandon）

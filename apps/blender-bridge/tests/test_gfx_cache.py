@@ -26,7 +26,7 @@ from vtx.gfx_environment import certificate
 # app discovery owns a different `tests` package; load the shared unit seam by
 # its exact file, never substitute a fake worker for real environment evidence.
 _spec = importlib.util.spec_from_file_location(
-    'gfx_environment_fixture', REPO / 'tests/gfx_environment_fixture.py')
+    'gfx_environment_fixture', REPO / 'tests/gfx/_environment.py')
 _environment_fixture = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_environment_fixture)
 
@@ -240,7 +240,7 @@ class RealBlenderCache(CacheFixture):
             'import sys,runpy,importlib.util\nfrom unittest.mock import patch\n'
             + 'sys.path.insert(0, ' + repr(str(REPO)) + ')\n'
             + '_s=importlib.util.spec_from_file_location("gfx_environment_fixture", '
-            + repr(str(REPO / 'tests/gfx_environment_fixture.py')) + ')\n'
+            + repr(str(REPO / 'tests/gfx/_environment.py')) + ')\n'
             + '_f=importlib.util.module_from_spec(_s);_s.loader.exec_module(_f)\n'
             + 'with patch("vtx.gfx_environment.collect", side_effect=_f.collect), '
             + 'patch("vtx.encoders.find_chrome", side_effect=_f.find_chrome):\n'

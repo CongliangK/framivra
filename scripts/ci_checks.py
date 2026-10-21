@@ -20,15 +20,15 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MEDIA_TESTS = {
     'ffmpeg': (
-        'tests.test_qc_probe_ownership.ProbeOwnership.test_real_ffmpeg_parallel_raw_outputs',
+        'tests.qc.test_qc_probe_ownership.ProbeOwnership.test_real_ffmpeg_parallel_raw_outputs',
         'tests.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
-        'tests.test_agent_diagnostics_qc.TestQCDiagnosticsCPU',
-        'tests.test_qc_sampling.SamplingMediaContract',
-        'tests.test_agent_diagnostics_loading.Loading.test_invalid_media_probe_is_structured',
-        'tests.test_agent_diagnostics_repair.FixtureRepair.test_seven_rule_repair_reaches_actual_validate_green',
+        'tests.qc.test_agent_diagnostics_qc.TestQCDiagnosticsCPU',
+        'tests.qc.test_qc_sampling.SamplingMediaContract',
+        'tests.diagnostics.test_agent_diagnostics_loading.Loading.test_invalid_media_probe_is_structured',
+        'tests.diagnostics.test_agent_diagnostics_repair.FixtureRepair.test_seven_rule_repair_reaches_actual_validate_green',
         'tests.test_filter_threads',
         'tests.test_composite_determinism',
-        'tests.test_frame_source',
+        'tests.gfx.test_frame_source',
         'tests.test_post_loudness',
         'tests.test_mux_history',
         'tests.test_audio_report.TestEndToEndSynthetic',
@@ -50,15 +50,15 @@ MEDIA_TESTS = {
         'tests.test_range_render.TestRangeIntegration',
         'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
         'tests.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
-        'tests.test_graphics_portability.SubtitleIntegration',
+        'tests.gfx.test_graphics_portability.SubtitleIntegration',
     ),
     'chrome': (
-        'tests.test_graphics_portability.BrowserIntegration',
-        'tests.test_graphics_portability.NavfreeSpanIntegration',
+        'tests.gfx.test_graphics_portability.BrowserIntegration',
+        'tests.gfx.test_graphics_portability.NavfreeSpanIntegration',
         'tests.test_pipeline.TestPipelineIntegration',
-        'tests.test_gfx_cache_integrity.RealBrowserIntegrity',
+        'tests.gfx.test_gfx_cache_integrity.RealBrowserIntegrity',
         'tests.test_failure_recovery.RealChromeRecovery',
-        'tests.test_frame_canary.TestChromeCanary',
+        'tests.gfx.test_frame_canary.TestChromeCanary',
     ),
     # Frozen-toolchain batch (#177): RealGenerationTests bind the frozen demo
     # toolchain (ffmpeg 8.1.3 dual anchor). CI's ubuntu ffmpeg can never match,
@@ -79,8 +79,8 @@ FFMPEG_GROUP_ONE_MODULES = (
     'tests.test_filter_threads',
 )
 FFMPEG_GROUP_TWO_MODULES = (
-    'tests.test_frame_source',
-    'tests.test_agent_diagnostics_repair',
+    'tests.gfx.test_frame_source',
+    'tests.diagnostics.test_agent_diagnostics_repair',
     'tests.test_audio_report',
 )
 
@@ -367,8 +367,8 @@ def main(argv=None):
                      else chrome_group(args.group))
         prepare_media(args.gate)  # before imports: decorators see enabled gates
         if args.gate == 'ffmpeg' and any(
-                name == 'tests.test_frame_source' or
-                name.startswith('tests.test_frame_source.') for name in names):
+                name == 'tests.gfx.test_frame_source' or
+                name.startswith('tests.gfx.test_frame_source.') for name in names):
             # The generated-PNG consumer now rerenders uncertified legacy PNGs.
             # Declare its real Chrome dependency without enabling other suites.
             os.environ['VTX_CHROME'] = prepare_chrome()

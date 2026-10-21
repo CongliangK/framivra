@@ -4,7 +4,7 @@ on:
     paths:
       - '.github/workflows/gfx-dependency-acceptance.yml'
       - 'tests/run_gfx_dependency_acceptance.py'
-      - 'tests/test_gfx_dependency_acceptance.py'
+      - 'tests/gfx/test_gfx_dependency_acceptance.py'
 permissions:
   contents: read
 concurrency:

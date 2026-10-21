@@ -10,34 +10,17 @@
 | `hello-plugin/` | 音频插件完整纪律范本：缝 A prepare_source + 三不变量 + 三分支 | 第三方音频插件 |
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
+| `demo-timeline-svg/` | Linux / macOS arm64 身份实现的 Inkscape 静态 SVG 生产输入；无 SKILL.md，不入 workflow 扫描；原生全链与视听未验收 | [用法与依赖边界](demo-timeline-svg/README.md#实际依赖与字体) |
 
-消费面变更公告（2026-10-20，skill-demo 操作指针校正，落笔前已独立评审）：`skill-demo/SKILL.md` 明确包目录与仓根、仓外副本的 `VTX_REPO` 用法及现有验收脚本的仓根路径空白限制，夹具指向包内现有文件，并说明验收脚本自行运行完整渲染与 strict QC 及其写入范围。仅改 Markdown，输入、脚本与验收判据不变；本次未执行真渲染，真实用户六件挂载未在云端验证（UNRUN）。
-
-消费面变更公告（2026-10-20，内核路由去重，落笔前已评审）：`docs/skill/SKILL.md` 保留分层方向与全部操作路由，组件全表改指已有 README、ARCHITECTURE 与 catalog。仅改 Markdown；真实用户六件挂载未在云端验证（UNRUN）。
-
-消费面变更公告（2026-10-20，仲裁与音频指导校正，落笔前已评审）：tech-talk 的仲裁指针统一指向 `tech-talk/templates/00-structure.md` 现有第四节并加稳定锚点；同步入口指向 sync 完整用法，降噪指导、混音预设描述与根配置用途说明对齐 denoise 组件。仅改 Markdown 与 JSON 描述值，登记内容、冻结纪律、数值政策、开关、结构及处理代码不变；真实用户六件挂载未在云端验证。
-
-消费面变更公告（2026-10-20，A-roll 活引用收敛，落笔前已评审）：tech-talk 的素材处理入口统一指向已有 aroll-pipeline 手册，ASR 指向组件现行协议；旧私人路径手册退至已核字节的固定 Git 历史。仅改 Markdown，真实用户六件挂载未在云端验证。
-
-消费面变更公告（2026-10-20，活引用校正，落笔前已评审）：edit 与 tech-talk 的拍摄/调研/流程/发布配方指向现行仓内文档，删除已完成迁移待办与重复章节数；发布脚本使用明确仓根。仅改 Markdown；真实用户六件挂载未在云端验证。
-
-消费面变更公告（2026-10-20，交付指导补齐，落笔前已评审）：sync/tts 活入口及引用的正式交付统一用完整 all；tech-talk draft 补当前 gfx 前置，操作 home 见 [runbook](../docs/skill/references/runbook.md)，耗时条件见 [DEV](../docs/DEV.md#一性能基准)。真实用户六件挂载未在云端验证。
-
-消费面变更公告（2026-10-20，活文档事实与历史过程精简，落笔前边界已评审）：`docs/skill/SKILL.md` 的交接要求统一指向 runbook；本页及 `hello-app/README.md`、`hello-plugin/README.md`、`tech-talk/SKILL.md` 的例行 doctor 使用离线形态；`tech-talk/references/voice-ime-paradigm.md` 的基准来源指向 DEV。仅改文档，真实用户六件挂载未在本次云端检查中验证。
-
-消费面变更公告（2026-10-20，修改配方与 gfx 语义清理，落笔前范围已评审）：修订 `docs/skill/SKILL.md`、`docs/skill/references/{runbook,edit,gfx}.md` 与本公告，并同步 `docs/post-loudness.md`、`docs/ARCHITECTURE.md` 的操作指针。R1-R4 正式交付收敛为完整 all；补齐 clip/共享依赖范围，静态跨度不再依赖仓外私人脚本或 DOM 等价推断，D22 明确限于 tech-talk 工作流。文件路径集合、生产代码、CI 与模板资产不变；真实用户六件挂载未在本次云端静态检查中验证，不宣称其已安装或更新。
-
-消费面变更公告（2026-10-19，HTML 创作组织，落笔前范围已评审）：原则 home=[HTML 创作组织](../docs/skill/references/gfx.md#html-创作组织)。本次仅修订既有 Markdown：`AGENTS.md`、`README.md`、`docs/skill/SKILL.md`、`docs/skill/references/{gfx,edit,runbook}.md`、`templates/README.md`、`templates/tech-talk/SKILL.md`、`templates/tech-talk/references/production-workflow.md`、`templates/tech-talk/templates/03-assets-plan.md`、`templates/tech-talk/assets/gfx-templates/{INDEX,_tokens}.md`、`templates/skill-demo/SKILL.md`、`templates/standard-demo/README.md`、`docs/demo-fixture.md`（路径以仓根计）。路径集合、可执行模板与冻结输入不变。真实用户六件挂载复核另行留证；本公告不代表个人 Skill 已安装或更新。
-
-消费面变更公告（2026-10-17，#177 切片）：`templates/` 新增 `standard-demo/` 包（README + profiles + 冻结 benchmark manifest + OFL 字体），属挂载消费面构成变更；语义与用法 home=包内 README 与 `docs/demo-fixture.md`，本表只登记构成。
-
-`vt templates list|check` 从 `skill.json` / `SKILL.md` 识别并检查 tech-talk 与 skill-demo；旧 `vt skills list|check` 及 doctor JSON 的 `skills` 字段保持兼容。发现不会执行工作流。hello-app / hello-plugin 由各自组件 manifest 区分，不作为 workflow 检查。
+`vt templates list|check` 从 `skill.json` / `SKILL.md` 识别并检查 tech-talk 与 skill-demo；doctor JSON 的工作流检查字段为 `skills`。发现不会执行工作流。hello-app / hello-plugin 由各自组件 manifest 区分，不作为 workflow 检查。
 
 `templates/` **不在 registry 内置扫描范围**（内置只扫 `apps/` 与 `plugins/`）。hello-app / hello-plugin 只有经过下述 external 显式注册与 enable 才能使用，不自动安装、启用或探测。工作流模板不走 app/plugin external 注册。
 
-消费面变更公告（2026-10-16，结构方案经独立审查）：工具使用文档位于 `docs/skill/`；完整工作流及范本位于 `templates/`。平台注册根 `~/.agents/skills/video/` 保持，六件挂载为 `SKILL.md`、`references`、`assets`、`vtx`、`scripts`、`templates`。旧仓根路径无别名；旧 `skills` 挂载请先用 `python3 vt.py --fix-links --dry` 检查，实际修复只清理确证指向本仓退役路径的符号链接，用户文件与外来链接保留。真实用户挂载修复须另行授权。
-
 tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合根。此布局不构成 #91 的干净安装、交互与成片质量验收证据。
+
+消费面变更公告（2026-10-21）：[分轨审计正文](../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)归组件 README，[WAV 维护边界](../docs/skill/references/edit.md#既有-wav-维护)归内核音频操作节；删除重复专题、更新消费指针，操作与未验收边界不变，已在落笔前公告并经独立预审。历史公告见[冻结源记录](https://github.com/CongliangK/framivra/blob/cbfaed74761657401b04119602f2a87dd1fd0ee7/templates/README.md)；本次不宣称用户六件 live 挂载已更新或 BAD=0。
+
+消费面补充公告（2026-10-21，`audit_document_entrypoints` 落笔前有条件预审通过）：MG 的十五款 Canvas prototype 源码就近归入各款 `scripts/prototype.js`，共享 helper 保留单份且不混同不同绘制语义；公开 CLI 与三条路线的资格边界不变。构建仅携所选款与公共脚本，缓存依赖随实际输出更新。各款导航补齐源码入口，并只在确有 readable 输入时推荐该版本。此处不宣称用户机器六件挂载已更新；云端文件校验与真实用户挂载验收分开记录。
 
 ## 第三方接入五步（复制范本 → 写 manifest → 外部注册 → enable → doctor）
 
@@ -102,19 +85,3 @@ cd templates/hello-plugin && env python3 -m unittest discover -s tests -t .
 ```
 
 skill-demo 无单测（`expected_check.sh` 即其验收：真渲染 + 帧数/QC/TP 断言）。
-
-消费面变更公告（2026-10-20，独立预审通过）：新增 `mg-styles/README.md` 与原创模板源码，接口保持单作品单 HTML、整数帧、显式缓存依赖；操作 home 为包内 README，研究与验证留在 docs。云环境未安装用户的六件 live 挂载，复核为缺失，不宣称 BAD=0 或个人 Skill 已更新。
-
-消费面变更公告（2026-10-20，续批落笔前独立预审通过）：`mg-styles/README.md` 将十五入口标为 prototype，新增三款独立媒体样板操作与语义示例；不改内核或 CI。真实三维、像素网格和视频反应字幕的验收各自记录，不继承浏览器成功；云端六件用户挂载仍缺失。
-
-消费面变更公告（2026-10-20，第三批落笔前独立预审通过）：MG 包补连续语义线条、隐式液体场和真实三维章节/底片合成方法；明确逐帧模式、二维合成及字体依赖的证据边界，预检与快照规则对齐实现。仅模板、必要测试与审计文档；无内核、CI、性能或权限变更，用户六件挂载仍缺失。
-
-消费面变更公告（2026-10-20，第四批落笔前独立预审通过）：MG 包增加 CEL 角色打帧、具象轮廓变形、轨迹 HUD 三种独立媒体操作说明；技术运行、艺术抽审与待验分别记载，不继承 Canvas 浏览器验收。六件个人挂载缺失状态未变。
-
-消费面变更公告（2026-10-20，连续三维说明经独立验证席预审）：MG 包注明 full 模式的真实相机、体积守恒形变与锁屏文字；原生源尺寸与时间线输出尺寸、运行状态与几何限制分列，storyboard 仍明确为二维板片合成。
-
-消费面变更公告（2026-10-20，第五批落笔前独立验证席预审）：MG 包增等角装配、扁平因果与合成波旅程媒体接口；明确程序图形边界、独立字体和零写态预演，不以入口数量宣称艺术验收。
-
-消费面变更公告（2026-10-20，第六批落笔前新独立复审席预审）：MG 包补贴纸解释、铰接拼贴、解析玻璃和机械包豪斯操作；明确程序插画/图像空间光学的限制，语义输入与真实验收状态分列，未改内核、CI 或权限。
-
-消费面变更公告（2026-10-20，独立复审预审通过）：MG 三维说明区分按帧状态确定、固定素材哈希复用与外部 Blender 跨进程重生成的像素一致性；实际重复帧差异只归验证记录，未修改时间线契约、门槛或渲染参数。

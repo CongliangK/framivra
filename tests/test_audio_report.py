@@ -135,6 +135,12 @@ class TestMergeThresholds(unittest.TestCase):
         self.assertEqual(ar.merge_thresholds(None), {})
 
 
+def _event_context(fps=30):
+    from types import SimpleNamespace
+    return SimpleNamespace(fps=fps, spf=1 / fps, spf_samples=48000 // fps,
+                           dur=fps, cache=Path('/unused'))
+
+
 @unittest.skipUnless(FF and shutil.which("ffprobe"), "FFmpeg required")
 class TestMeasurePrimitives(unittest.TestCase):
     """测量原语：合成 wav（1s 静音 + 4s 440Hz 正弦 + 1s 静音）。"""
@@ -165,12 +171,47 @@ class TestMeasurePrimitives(unittest.TestCase):
         self.assertGreater(len(s), 40)                       # 6s @10Hz
         self.assertTrue(all(s[i][0] < s[i + 1][0] for i in range(len(s) - 1)))
         self.assertGreater(max(m for _, m, _ in s), -30.0)   # 正弦段有能量
+        self._assert_short_event_report_and_pipeline_samples_match()
 
     def test_activity_windows(self):
         wins, total = ar._activity_windows(self.c, self.wav)
         self.assertAlmostEqual(total, 6.0, delta=0.1)
         self.assertEqual(len(wins), 1)
         self.assertAlmostEqual(wins[0][0], 1.0, delta=0.5)
+
+
+    @unittest.skipUnless(FF, 'FFmpeg required')
+    def _assert_short_event_report_and_pipeline_samples_match(self):
+        from unittest.mock import patch
+        from vtx import stages
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source.wav'
+            subprocess.run([FF, '-v', 'error', '-f', 'lavfi', '-i',
+                            'sine=frequency=440:sample_rate=48000:duration=1',
+                            '-ac', '2', str(source)], check=True)
+            c = _event_context()
+            c.run = _FakeCtx().run
+            tracks = [{'name': 'voice', 'events': [{'src': 'a', 'in': 0, 'out': 10,
+                       'src_in': 3, 'volume': 0.5, 'fade_in_frames': 20,
+                       'fade_out_frames': 20}]}]
+            c.tl = {'audio_tracks': tracks}
+            with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+                 patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value=source):
+                cmd, chains, _, _ = stages._audio_graph(c)
+                main = root / 'main.wav'
+                c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
+                             '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
+                cmd, chains, mix, _, _ = ar._track_group(c, tracks)
+                ar._collect_inputs(c, tracks, cmd)
+                report = root / 'report.wav'
+                c.run(cmd + ['-filter_complex', ';'.join(chains + [mix]), '-map', '[gmix]',
+                             '-c:a', 'pcm_s16le', '-ar', '48000', str(report)])
+            import wave
+            with wave.open(str(main)) as a, wave.open(str(report)) as b:
+                self.assertEqual(a.getnframes(), 48000)
+                self.assertEqual(a.getparams(), b.getparams())
+                self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
 
 
 class _FakeCtx:
@@ -319,6 +360,139 @@ class CollectInputsPluginSource(unittest.TestCase):
             cmd2 = []
             audio_report._collect_inputs(c, tracks, cmd2)
         self.assertIn(str(naked), cmd2)
+
+
+
+
+class TestSharedEventFilters(unittest.TestCase):
+    """Render and diagnostic stems must consume the same event-local transform."""
+
+    def test_canonical_primitive_and_exact_event_boundaries(self):
+        from vtx import stages
+        from vtx.audio_filters import event_chain
+        self.assertIs(ar.event_chain, event_chain)
+        self.assertIs(stages.event_chain, event_chain)
+        for fps in (24, 30):
+            c = _event_context(fps)
+            e = {'src': 'a', 'in': 5, 'out': 17, 'src_in': 3, 'volume': 0.25,
+                 'pan': -1, 'fade_in_frames': 20, 'fade_out_frames': 30}
+            chain = event_chain(c, 2, e)
+            self.assertIn(f'atrim=start_sample={3*c.spf_samples}:end_sample={15*c.spf_samples}', chain)
+            self.assertIn('volume=0.25,pan=stereo|c0=1.500*c0|c1=0.500*c1', chain)
+            self.assertIn(f'afade=t=in:st=0:d={12/fps:.6f}', chain)
+            self.assertIn(f'afade=t=out:st=0.000000:d={12/fps:.6f}', chain)
+            self.assertTrue(chain.endswith(f'adelay=delays={5/fps*1000:.3f}:all=1[e2]'))
+            for bus_filter in ('amix=', 'sidechaincompress=', 'alimiter=', 'apad=', 'atempo='):
+                self.assertNotIn(bus_filter, chain)
+            # Audio events have no speed field in the timeline contract.
+            self.assertEqual(e['fade_out_frames'], 30)
+
+    def test_main_and_report_graphs_share_fades_and_window_offsets(self):
+        from unittest.mock import patch
+        from vtx import stages
+        e = {'src': 'a', 'in': 5, 'out': 15, 'volume': 1,
+             'fade_out_frames': 20}
+        tracks = [{'name': 'voice', 'events': [e]}]
+        c = _event_context(); c.tl = {'audio_tracks': tracks}
+        with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+             patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value='/unused/a.wav'):
+            for win in (None, (7, 12)):
+                _, main, _, _ = stages._audio_graph(c, win=win)
+                _, report, _, _, _ = ar._track_group(c, tracks)
+                self.assertEqual(main[0], report[0])
+                self.assertIn('afade=t=out:st=0.000000:d=0.333333', report[0])
+                self.assertIn('adelay=delays=166.667', report[0])
+
+    def test_fade_edge_values_preserve_production_policy(self):
+        from vtx.audio_filters import event_chain
+        c = _event_context()
+        base = {'src': 'a', 'in': 0, 'out': 10, 'volume': 1}
+        for value in (0, 10, 20, -1, float('inf'), float('-inf'), float('nan')):
+            with self.subTest(fade=value):
+                event = dict(base, fade_out_frames=value)
+                chain = event_chain(c, 0, event)
+                # No new validation/automatic zeroing: production min semantics
+                # remain exact, including invalid values rejected upstream.
+                fade = min(value, 10) if value else 0
+                if fade:
+                    self.assertIn(f'afade=t=out:st={(10-fade)/30:.6f}:d={fade/30:.6f}', chain)
+                else:
+                    self.assertNotIn('afade=', chain)
+        with self.assertRaises(TypeError):
+            event_chain(c, 0, dict(base, fade_out_frames='invalid'))
+        with self.assertRaisesRegex(KeyError, 'out'):
+            event_chain(c, 0, {'in': 0})
+        with self.assertRaises(TypeError):
+            event_chain(c, 0, {'in': 0, 'out': 10, 'fade_out_frames': 'invalid'})
+
+    def test_consumers_keep_distinct_missing_volume_policy(self):
+        from unittest.mock import patch
+        from vtx import stages
+        event = {'src': 'a', 'in': 0, 'out': 10}
+        tracks = [{'name': 'voice', 'events': [event]}]
+        c = _event_context(); c.tl = {'audio_tracks': tracks}
+        _, report, _, _, _ = ar._track_group(c, tracks)
+        self.assertIn('volume=1', report[0])
+        with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+             patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value='/unused/a.wav'):
+            with self.assertRaises(KeyError):
+                stages._audio_graph(c)
+
+    def test_report_uses_plugin_events_without_modifying_timeline_or_outputs(self):
+        import copy
+        import importlib
+        from contextlib import ExitStack
+        from unittest.mock import Mock, patch
+        duck = importlib.import_module('plugins.duck-static')
+        with tempfile.TemporaryDirectory() as directory:
+            c = _event_context(); c.out = Path(directory); c.cache = c.out / 'cache'
+            event = {'src': 'a', 'in': 0, 'out': 30, 'volume': 1}
+            tracks = [
+                {'name': 'voice', 'events': [dict(event)], 'duck_strategy': {
+                    'mode': 'static', 'voice_track': 'cue', 'global_db': -8}},
+                {'name': 'cue', 'events': [dict(event, **{'in': 10, 'out': 20})]},
+                {'name': 'bed', 'events': [dict(event)], 'duck': True},
+            ]
+            c.tl = {'audio_tracks': tracks}; original = copy.deepcopy(c.tl)
+            expected = duck.audio_events(c, tracks)
+            self.assertNotEqual(expected[0]['events'], tracks[0]['events'])
+            wav = c.out / 'audio.wav'; wav.write_bytes(b'existing WAV')
+            receipt = c.out / 'receipt.json'; receipt.write_bytes(b'existing receipt')
+            c.receipt = Mock()
+            with ExitStack() as stack:
+                hook = stack.enter_context(patch.object(ar._plugin_hooks, 'run_audio_events', side_effect=duck.audio_events))
+                render = stack.enter_context(patch.object(ar, 'render_stems', return_value=(wav, wav, wav)))
+                for name, value in [('ebur128_summary', (-14, -2)),
+                                    ('_activity_windows', ([], 1)),
+                                    ('ebur128_series', []), ('silences', [])]:
+                    stack.enter_context(patch.object(ar, name, return_value=value))
+                self.assertEqual(ar.run_report(c), 0)
+            hook.assert_called_once_with(c, tracks)
+            self.assertEqual(render.call_args.args[1], [expected[0]])
+            self.assertEqual(render.call_args.args[2], [expected[2]])
+            self.assertEqual(c.tl, original)
+            self.assertEqual(wav.read_bytes(), b'existing WAV')
+            self.assertEqual(receipt.read_bytes(), b'existing receipt')
+            c.receipt.assert_not_called()
+            self.assertTrue((c.out / 'audio_report.json').is_file())
+
+    def test_report_without_tracks_keeps_existing_schema_and_skips_stems(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            c = _event_context(); c.out = Path(directory); c.tl = {'audio_tracks': []}
+            (c.out / 'audio.wav').write_bytes(b'existing WAV')
+            with patch.object(ar._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t) as hook, \
+                 patch.object(ar, 'ebur128_summary', return_value=(-14, -2)), \
+                 patch.object(ar, 'silences', return_value=[]), \
+                 patch.object(ar, 'render_stems') as render:
+                self.assertEqual(ar.run_report(c), 0)
+            hook.assert_called_once_with(c, [])
+            render.assert_not_called()
+            report = json.loads((c.out / 'audio_report.json').read_text())
+            self.assertEqual(set(report), {'summary', 'fail', 'warn', 'thresholds', 'source', 'checks'})
+            self.assertEqual([x['level'] for x in report['checks']], ['PASS', 'PASS', 'INFO', 'INFO', 'PASS'])
+            self.assertEqual(c.tl, {'audio_tracks': []})
+
 
 
 if __name__ == "__main__":

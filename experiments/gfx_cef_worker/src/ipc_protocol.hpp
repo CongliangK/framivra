@@ -82,7 +82,7 @@ struct alignas(64) FrameSlotHeader {
 };
 
 // 偏移表 = 线上规范（Python 镜像 cef_client.py 必须与此逐字段一致；
-// tests/test_cef_worker_shm.py 用 shm_ring_selftest --dump-ring 跨语言锁定）。
+// tests/gfx/test_cef_worker_shm.py 用 shm_ring_selftest --dump-ring 跨语言锁定）。
 static_assert(sizeof(FrameSlotHeader) == 128, "槽头 64 对齐后定长 128");
 static_assert(offsetof(FrameSlotHeader, magic) == 0);
 static_assert(offsetof(FrameSlotHeader, protocol_version) == 4);

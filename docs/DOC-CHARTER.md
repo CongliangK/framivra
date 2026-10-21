@@ -40,12 +40,12 @@ env python3 vt.py --fix-links --dry            # 挂载链接重建预演(去 --
 
 ## 4. docs 层(专题与历史层)
 
-16. 职责:专题与历史层——治辖专题文档(DEV/audio-audit/cache-provenance/canvas-export/post-loudness/workflow-review)与计划归档(plans*)。
+16. 职责:专题与历史层——DEV 统一路由；guides 放操作指南，reference 放接口/结果语义，reports 放研究与复审记录；既有契约、治理与生成入口保持固定位置，plans* 保持原位只读。物理分组不增加文档职责层。
 17. 读者:开发者与审计。
 18. 写入权:文档维护者辖域;plans* 为只读历史层,适用第 19 条。
 19. 只读历史层条款:docs/plans、docs/plans-2026-09-11、docs/plans-v2 三目录只读,归档后不再新增独立提交;唯一活文件例外=docs/plans-v2/p5-acceptance/KNOWN-ISSUES.md(活登记表,授权回写),其余归档件一经归档不改写。
 20. 扫描面:docs_smoke.sh 递归扫描 docs/**/*.md、templates/**/*.md,并扫描根 README.md 与 apps/*/README.md。docs 下按首层目录名的 plans 前缀显式豁免历史层,不是非递归 glob 的偶然漏检;新增子目录默认入检,新增豁免须登记留痕。
-21. 规范条款:文档化命令优先写入 bash 栅栏;扫描器也识别栅栏外行内码、表格、列表中符合命令词与路径形态的候选,再按 lead 判定入检或 SKIP-登记,并非任意散文都受守护。**示范命令一律零写态**(写态命令须显式警示或以 --dry/离线旗标书写)。冒烟仅检查已识别脚本的 --help 或语法,不执行整条示例、不验证参数语义/业务效果;纯系统命令、未识别路径与 SKIP 均不得声称已获执行验证。覆盖边界以 scripts/docs_smoke.sh 的提取/方法规则及实出结果为准,其余由源码核对与人工复核承载。
+21. 规范条款:文档化命令优先写入 bash 栅栏;扫描器也识别栅栏外行内码、表格、列表中符合命令词与路径形态的候选,再按 lead 判定入检或 SKIP-登记,并非任意散文都受守护。**示范命令一律零写态**(写态命令须显式警示或以 --dry/离线旗标书写)。冒烟仅检查已识别脚本的 --help 或语法,不执行整条示例、不验证参数语义/业务效果;纯系统命令、未识别路径与 SKIP 均不得声称已获执行验证。覆盖边界以 scripts/docs/docs_smoke.sh 的提取/方法规则及实出结果为准,其余由源码核对与人工复核承载。
 22. 命名约定:主题件小写 kebab(audio-audit/cache-provenance/canvas-export/post-loudness/workflow-review);归档件中文+日期后缀(主题-YYYY-MM-DD.md 式);大写角色名(DEV.md)为存量,不再新增。
 
 ## 5. 层间关系
@@ -63,7 +63,7 @@ env python3 vt.py --fix-links --dry            # 挂载链接重建预演(去 --
 > 增补说明:本节条款 27~35 纯增补,现行条款 1~26 一字不改。各条机检判据见条内;极限诚实声明(C4)随条载明,门不覆盖处不假装覆盖。
 
 27. **归属唯一(one home per fact)**:每一事实只有一个家=其职责所属层;他处只准链接,链接须可解析。同一事实在两处以上重复表述=可审查缺陷。叙事时态清理:当前状态是唯一合法时态,历史演变留给 commit/台账/ERRATUM,禁 previously/now/no longer/renamed 式叙述。口诀:bug→postmortem/台账,理由→决策记录,操作→references,契约→ARCHITECTURE 与 schema,安装态事实→catalog 区,数值政策→预算源件,常备指令→根 README 与 SKILL 路由。机检:重复锚检查(leaf_3,登记词族对照);语义全量查重=review(散文抽查)——门只保已登记词族。
-28. **数值型政策只许一处 home(硬条款)**:数值型政策(字数/条数/编制/配额/版本类上限与同值约束)只允许一处 home;散文只许链接+提取命令,复述数值=可审查缺陷。预算唯一 home=仓内 scripts/doc_budget.snapshot.json 快照(单一来源,单位逐件显式 word|char 禁字节,口径命令随件);快照修订须过评审并载实测依据,换锚登记(旧锚/新锚/归因/申请人/复核可五字段)随修订强制。机检:预算门 leaf_2(`python3 scripts/verify_doc_budget.py`)及 leaf_4 的预算数值判断只比较快照所载 measured 与阈值,不重读目标文件、不执行 extract_cmd;当前字数须另行实测,门绿不代表现文合预算。
+28. **数值型政策只许一处 home(硬条款)**:数值型政策(字数/条数/编制/配额/版本类上限与同值约束)只允许一处 home;散文只许链接+提取命令,复述数值=可审查缺陷。预算唯一 home=仓内 scripts/doc_budget.snapshot.json 快照(单一来源,单位逐件显式 word|char 禁字节,口径命令随件);快照修订须过评审并载实测依据,换锚登记(旧锚/新锚/归因/申请人/复核可五字段)随修订强制。机检:预算门 leaf_2(`python3 scripts/docs/verify_doc_budget.py`)及 leaf_4 的预算数值判断只比较快照所载 measured 与阈值,不重读目标文件、不执行 extract_cmd;当前字数须另行实测,门绿不代表现文合预算。
 29. **冻结文书封印(分级)**:冻结类文书实行分级封印——A 类(签发令/封盘件/总验收单)整件 SHA-256;B 类 append 族(台账/回执册/批台账)以节哈希封冻结节(合法追加不触节锚),节哈希细则与过渡态人工核归质量复核(review);C 类机制件不入封印面,走普通 review+负例交叉;A 类封印面清单闭合程序=封印申报+复核双载。封印程序:签发令生效后 T+1 工作日内,封印席对 A 类逐件双录(收档哈希=宣称哈希),侧车 manifest 自身内容哈希载入签发令追注行作外部锚;换锚=换锚登记五字段+合法追注重录;封印哈希对原样字节流零规范化。角色分工:封印席(文书产出方)/verifier(独立复核)/外部锚(签发令)。机检:封印 verifier(候机制件落地;落地前过渡态=双录留痕+人工核,本条以纪律条款效力先行——极限诚实声明)。
 30. **挂载消费面清单表(唯一 home)**:挂载消费面清单表=消费面构成事实的唯一 home:六件挂载+docs/skill/ 全件+templates/** 文档面逐件钉名(路径+字节+锚定日),登记件随仓 docs 留档;件增减与表不符即红。**「字节」列显式标注为落表时点快照列,非对账维度——对账维度=路径与存在性。**消费面语义事实仍归各写入权方(§5/§7b),本表只保构成完整。机检:清单表对账(候机制件落地;过渡=readlink 六件 BAD=0 手动锚,§7a 同款)。
 31. **变更联动判据**:①挂载消费面(docs/skill/ 或 templates/** 文档面)任何 commit 必携:挂载复核输出(六件 BAD=0)+消费面变更公告登记行;②组件 manifest(app.json/plugin.json)或 plugins/registry.json 任何变更 commit 必携 catalog 重注(`python3 scripts/gen_manifest_catalog.py --inject docs/catalog.md`),否则文档门红=变更联动失职;③登记行与重注随 commit 三证,commit 面抽检归 review 分工。机检:②已落地(catalog_check leaf_5);①=抽检+本地纪律。
