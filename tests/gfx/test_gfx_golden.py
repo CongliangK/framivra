@@ -316,6 +316,36 @@ class GfxGolden(unittest.TestCase):
                                           "--report", str(report)]), 1)
                 self.assertFalse(json.loads(report.read_text())["ok"])
 
+    def test_declared_duration_and_sample_do_not_expand_unproved_work(self):
+        clips = [("a.html", 4)]
+        tp = _project(self.root, clips)
+        _fill_cache(tp, clips)
+        golden, report = self.root / "golden.json", self.root / "report.json"
+        self.assertEqual(gg.main(["build", "-t", str(tp), "--golden", str(golden),
+                                  "--full-pages", "a.html"]), 0)
+        original = golden.read_text()
+        huge = 10 ** 100
+        for mode in ("full", "sample"):
+            with self.subTest(mode=mode):
+                doc = json.loads(original)
+                inst = doc["pages"]["a.html"]["durs"].pop("4")
+                inst.update(dur=huge, mode=mode)
+                doc["pages"]["a.html"]["durs"][str(huge)] = inst
+                doc["meta"]["sample"] = huge - 1
+                golden.write_text(json.dumps(doc))
+                with mock.patch.object(gg, "sample_frames", side_effect=AssertionError("unbounded sample")):
+                    self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(golden),
+                                              "--report", str(report)]), 1)
+                self.assertFalse(json.loads(report.read_text())["ok"])
+        # Oversampling a tiny duration means all frames, not huge sampling work.
+        self.assertEqual(gg.sample_frames(4, huge), [0, 1, 2, 3])
+        doc = json.loads(original)
+        doc["pages"]["a.html"]["durs"]["4"]["mode"] = "sample"
+        doc["meta"]["sample"] = huge
+        golden.write_text(json.dumps(doc))
+        with mock.patch.object(gg, "sample_frames", side_effect=AssertionError("unbounded sample")):
+            self.assertEqual(gg.main(["compare", "-t", str(tp), "--golden", str(golden)]), 0)
+
     def test_strict_requires_parseable_freshness_evidence(self):
         clips = [("a.html", 4)]
         tp = _project(self.root, clips)

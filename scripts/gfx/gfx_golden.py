@@ -180,6 +180,8 @@ def _split_names(s: str):
 
 def sample_frames(dur: int, sample: int):
     """抽样帧号：[0, dur//2, dur-1] + 均匀补足到 ≥sample（含首中尾），升序去重。"""
+    if sample >= dur:
+        return list(range(dur))
     idx = {0, dur // 2, dur - 1}
     if sample > len(idx) and dur > 1:
         idx.update(round(k * (dur - 1) / (sample - 1)) for k in range(sample))
@@ -851,12 +853,18 @@ def cmd_compare(args) -> int:
                 evidence_errors.append(f"{src} dur={dur}: 帧号/像素哈希证据无效")
             if inst.get("mode") not in ("sample", "full"):
                 evidence_errors.append(f"{src} dur={dur}: 抽样模式无效")
-            elif inst["mode"] == "full" and set(frames) != {f"{i:04d}" for i in range(dur)}:
+            elif inst["mode"] == "full" and len(frames) != dur:
                 evidence_errors.append(f"{src} dur={dur}: full 证据不完整")
             elif inst["mode"] == "sample":
                 sample = meta.get("sample")
                 if type(sample) is not int or sample <= 0:
                     evidence_errors.append(f"{src} dur={dur}: 抽样数量证据无效")
+                elif len(frames) < min(dur, sample):
+                    evidence_errors.append(f"{src} dur={dur}: sample 证据不完整")
+                elif sample >= dur:
+                    # Canonical unique in-range keys plus dur entries prove full coverage.
+                    if len(frames) != dur:
+                        evidence_errors.append(f"{src} dur={dur}: sample 证据不完整")
                 elif set(frames) != {f"{i:04d}" for i in sample_frames(dur, sample)}:
                     evidence_errors.append(f"{src} dur={dur}: sample 证据不完整")
     if evidence_errors:
