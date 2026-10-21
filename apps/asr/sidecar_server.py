@@ -31,7 +31,7 @@ apps/asr/.venv；绝不借用输入法环境）：
   - R10 降级：from_pretrained 的 forced_aligner 关键字参数若因库版本演进失败 →
     显式组装（Qwen3ForcedAligner.from_pretrained + 挂回 wrapper.forced_aligner）。
   - build_words/_is_kept_char 等 words 构造纯函数只依赖 stdlib——系统 python3 可直接
-    import（tests/test_words.py 即如此测，不加载模型）。
+    import（tests/test_recognition_text.py 即如此测，不加载模型）。
 
 来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.3/§3.4；
 qwen_asr 0.0.6 inference/qwen3_asr.py（from_pretrained/transcribe/分块拼回）、

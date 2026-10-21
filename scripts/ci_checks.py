@@ -38,7 +38,7 @@ MEDIA_TESTS = {
         'tests.execution.test_pipeline.TestReceiptConcurrentLock',
         'tests.execution.test_pipeline.TestUntilFlag',
         'tests.plugins.test_pluginlib.ThreeBranchCli',
-        'tests.media.test_subtitles_src.CliEndToEnd',
+        'tests.media.test_subtitles.CliEndToEnd',
         'apps.blender-bridge.tests.test_audio_audit.AudioAuditIntegration',
         'apps.blender-bridge.tests.test_subs_alpha.HappyPath',
         'apps.gates.tests.test_qc_gates_opt.TestG1BatchEquivalence',
