@@ -1,7 +1,7 @@
 """30-page generated-PNG CPU consumer reconciliation, NOT HTML acceptance.
 
 Prepopulate valid deterministic PNGs only for new gfx identities, then use real
-CLI gfx validation and video consumers. Track every PNG's size/mtime and every
+CLI gfx validation and video consumers. Track every PNG's size/mtime/content and every
 video product; compare exact path sets against saved input-impact snapshots.
 """
 import argparse
@@ -13,6 +13,19 @@ import subprocess
 import sys
 import time
 from types import SimpleNamespace
+
+
+def products(root):
+    from tests.runners.impact_inventory import observe
+    return observe(root)["products"]
+
+
+def product_changes(before, after, predicted_new, gfx_frames):
+    from tests.runners.impact_inventory import delta
+    result = delta(before, after, predicted_new, gfx_frames)
+    # Preserve the earlier report field while using the shared exact-file oracle.
+    result["actual_rewritten"] = result["rewritten"]
+    return result
 
 
 def main():
@@ -62,37 +75,29 @@ def main():
             if result.returncode:
                 raise RuntimeError(f'{label}-{stage}: exit {result.returncode}')
 
-    def products():
-        files = {p.relative_to(root).as_posix(): [p.stat().st_size, p.stat().st_mtime_ns]
-                 for folder, pattern in [('gfx', '*/*.png'), ('vseg', '*.mp4'), ('vseg_qc', '*.mp4'), ('vseg_pass', '*.mkv')]
-                 for p in (root / 'cache' / folder).glob(pattern)}
-        paths = {str(Path(name).parent) if name.startswith('cache/gfx/') else name for name in files}
-        return files, paths
-
     commands, results = [], []
     render('cold')
     before = capture(tl, root)
-    initial_files, initial_paths = products()
+    initial_files = products(root)
     render('noop')
-    assert products() == (initial_files, initial_paths), 'warm no-op rewrote products'
+    assert products(root) == initial_files, 'warm no-op rewrote products'
 
     def check(label):
-        nonlocal before, initial_files, initial_paths
+        nonlocal before, initial_files
         after = capture(tl, root)
         predicted = compare(before, after)
         render(label)
-        current, paths = products()
-        new = sorted(paths - initial_paths)
-        rewritten = sorted(p for p in current.keys() & initial_files.keys() if current[p] != initial_files[p])
-        passed = new == predicted['new_artifacts'] and not rewritten
-        results.append(dict(case=label, passed=passed, predicted=predicted,
-                            actual_new=new, actual_rewritten=rewritten))
+        current = products(root)
+        gfx_frames = {gfx_dir(c, cl).relative_to(root).as_posix(): cl['dur']
+                      for cl in tl['video_tracks'][0]['clips']}
+        changes = product_changes(initial_files, current, predicted['new_artifacts'], gfx_frames)
+        results.append(dict(case=label, predicted=predicted, **changes))
         (root / 'reconciliation.json').write_text(json.dumps(dict(
             coverage='generated PNG producer + real gfx validator and CPU video consumer; NOT browser HTML',
             environment={k: env[k] for k in ('VTX_SEG_NVENC', 'VTX_NO_NVENC', 'VTX_VIDEO_SEGMENTS', 'VTX_VIDEO_WORKERS')},
             commands=commands, results=results), indent=2))
-        assert passed, f'{label}: predicted/actual mismatch'
-        before, initial_files, initial_paths = after, current, paths
+        assert changes['passed'], f'{label}: predicted/actual mismatch'
+        before, initial_files = after, current
 
     def middle_edit(name):
         path = root / name
