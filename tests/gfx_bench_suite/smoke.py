@@ -63,17 +63,19 @@ import hashlib
 import json
 import multiprocessing
 import os
+import re
 import shutil
 import signal
 import sys
 import time
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from vtx import gfx_render                      # noqa: E402
-from vtx.gfx_cli import verify_frames           # noqa: E402
+from vtx.gfx_cli import png_invalid_reason, verify_frames           # noqa: E402
 
 MANIFEST_PATH = REPO / "tests" / "gfx_bench_suite" / "suite_manifest.json"
 DEFAULT_EVIDENCE = Path("/tmp/framivra-evidence/issue-106")
@@ -452,107 +454,166 @@ class Smoke:
                   f"{out['tier1_fail']} FAIL / {out['tier1_skip']} SKIP(timeout)")
 
     # ---------------------------------------------------------- phase: s6seq
+    def _capture_s6_sequence(self, html, outdir, frames):
+        """Observe successful engine writes, before repeated frame names overwrite.
+
+        This runs only inside the watchdog child, with one worker. Setup probes
+        do not write frames. Observation failures are sticky, not renderer retry
+        exceptions; errors from the original engine write still propagate.
+        """
+        raw = (outdir / "frames").resolve()
+        write = gfx_render._atomic_write_bytes
+        ordinal = 0
+        errors = []
+
+        def observe(path, data):
+            nonlocal ordinal
+            write(path, data)
+            index = None
+            try:
+                target = Path(path)
+                match = re.fullmatch(r"f([0-9]+)\.png", target.name)
+                if match is None or target.parent.resolve() != raw:
+                    return
+                index = ordinal
+                ordinal += 1
+                write(outdir / f"step{index:04d}_f{int(match[1]):04d}.png", data)
+            except Exception as error:                         # noqa: BLE001
+                # Classification and archival are both observer work, never a
+                # reason to retry a successful render. Retain a failed ordinal.
+                label = "classification" if index is None else f"step {index}"
+                errors.append(f"{label}: {type(error).__name__}: {error}"[:200])
+
+        with mock.patch.dict(os.environ, {"VTX_GFX_STATIC": "0", "VTX_GFX_NAVFREE": "0"}), \
+                mock.patch.object(gfx_render, "_atomic_write_bytes", observe):
+            stats = self.render(html, raw, max(frames) + 1, frames=frames, tabs=1)
+        # Keep child IPC bounded: per-occurrence evidence is on disk, not in
+        # SimpleQueue (the watchdog joins before receiving its final payload).
+        return {**stats, "observation_error_count": len(errors),
+                "observation_errors": errors[:3]}
+
     def phase_s6seq(self):
-        out = {"skipped_refs": []}
-        s6p = None
-        for p in self.scenario("S6")["pages"]:
-            s6p = p
+        sc = self.scenario("S6")
+        page = sc["pages"][0]
+        sequences = {"random_jump": list(sc["sequences"]["random_jump"]["frames"]),
+                     "reverse_100": list(range(99, -1, -1))}
+        last = page["frames"] - 1
+        size = {key: self.man["global_spec"][key] for key in ("width", "height")}
+        out = {"engine_env": {"VTX_GFX_STATIC": "0", "VTX_GFX_NAVFREE": "0"},
+               "tabs": 1, "skipped_refs": []}
         full = self.ev / "smoke" / "S6__timing_adversarial"
-        # 对账帧补齐：render 阶段默认清帧后仅存首/中/尾样本（f0000/f0300/f0599），
-        # random_jump/reverse_100 的其余对账帧「缺哪些补哪些」（Tier-1 同口径；
-        # 幂等门已证帧态纯函数，补渲帧与全量渲帧逐像素等值）。注意不能以
-        # f0599 缺席为补渲条件——成功跑恰留 f0599 样本，会把 108 帧对账
-        # 静默降级为 3 帧（Phase-0 缺陷，2026-10-15 修正：按 need-have 补）。
-        need = {0, 12, 13, 200, 201, 450, 599}
-        need |= set(range(100))
-        have = {int(fp.stem[1:]) for fp in full.glob("f*.png")} \
-            if full.is_dir() else set()
-        missing = sorted(need - have)
+        need = sorted({min(fi, last) for frames in sequences.values() for fi in frames})
+        missing = [fi for fi, _ in verify_frames(full, need, **size)]
+        ref_status = "ok"
+        ref_failures = len(self.failures)
+        out["references"] = {"required": len(need), "catchup_frames": missing}
         if missing:
-            status, _, info = self.render_guarded(
-                s6p["path"], full, 900, frames=missing, tabs=1,
-                tag="S6__catchup", phase="s6seq")
+            # Preserve the reference catch-up workload; this is not a shortcut
+            # or a claim that historical unique-frame rows proved the sequence.
+            with mock.patch.dict(os.environ, out["engine_env"]):
+                ref_status, stats, info = self.render_guarded(
+                    page["path"], full, 900, frames=missing, tabs=1,
+                    tag="S6__catchup", phase="s6seq")
+            if ref_status == "timeout":
+                self.timeout("s6seq", {"phase": "s6seq", "page": "S6 catch-up", **info})
+            elif ref_status == "exc":
+                self.fail("s6seq", f"S6 catch-up 渲染异常 {stats}")
+            elif ref_status != "ok" or not isinstance(stats, dict) or not isinstance(stats.get("failed"), list):
+                self.fail("s6seq", f"S6 catch-up invalid result: {ref_status} {stats}")
+            elif stats["failed"]:
+                self.fail("s6seq", f"S6 catch-up failed={stats['failed']}")
+            out["references"]["failed"] = stats.get("failed") if isinstance(stats, dict) else None
+        out["references"]["render_status"] = ref_status
+        out["references"]["status"] = "FAIL" if len(self.failures) > ref_failures else (
+            "SKIP_TIMEOUT" if ref_status == "timeout" else "PASS")
+        for name, frames in sequences.items():
+            before = len(self.failures)
+            d = self.ev / "s6seq" / name
+            if d.exists():
+                shutil.rmtree(d)
+            d.mkdir(parents=True)
+            status, stats, info = self.run_guarded(
+                lambda: self._capture_s6_sequence(page["path"], d, frames),
+                f"S6__{name}", d, len(frames), 1, "s6seq")
             if status == "timeout":
-                self.timeout("s6seq", {"phase": "s6seq", "page": "S6 catch-up",
-                                       **info})
+                self.timeout("s6seq", {"phase": "s6seq", "page": name, **info})
             elif status == "exc":
-                self.fail("s6seq", f"S6 catch-up 渲染异常 {info.get('wall_s')}s")
-        seqs = self.scenario("S6")["sequences"]
-        # random_jump（含重复帧去重渲染）
-        rj = seqs["random_jump"]["frames"]
-        d = self.ev / "s6seq" / "random_jump"
-        if d.exists():
-            shutil.rmtree(d)
-        status, st, info = self.render_guarded(s6p["path"], d, 900,
-                                               frames=sorted(set(rj)), tabs=1,
-                                               tag="S6__random_jump", phase="s6seq")
-        if status == "timeout":
-            self.timeout("s6seq", {"phase": "s6seq", "page": "random_jump", **info})
-        elif status == "exc" or (status == "ok" and st["failed"]):
-            self.fail("s6seq", f"random_jump status={status} failed="
-                              f"{st.get('failed') if status == 'ok' else st}")
-        diffs = {}
-        for fi in sorted(set(rj)):
-            ref = fi if fi < 600 else 599       # 页内钳制：f≥N 定格终态
-            if not (full / f"f{ref:04d}.png").is_file():
-                out["skipped_refs"].append(f"f{fi:04d}(ref f{ref:04d} 缺席)")
-                continue
-            fp = d / f"f{fi:04d}.png"
-            if not fp.is_file():
-                if status == "ok":
-                    self.fail("s6seq", f"random_jump f{fi:04d} 未产出")
-                continue
-            try:
-                diff, _ = self.frame_diff(fp, full / f"f{ref:04d}.png")
-            except Exception as e:                              # noqa: BLE001
-                self.fail("s6seq", f"random_jump f{fi:04d} 比对异常 "
-                                   f"{type(e).__name__}: {e}")
-                continue
-            diffs[str(fi)] = diff
-            if diff != 0:
-                self.fail("s6seq", f"random_jump f{fi:04d} vs 全量渲 f{ref:04d} "
-                                   f"max_abs_diff={diff}")
-        out["random_jump"] = {"frames": rj, "diffs_vs_full": diffs,
-                              "max_diff": max(diffs.values()) if diffs else None}
-        # reverse_100
-        rev = list(range(99, -1, -1))
-        d2 = self.ev / "s6seq" / "reverse_100"
-        if d2.exists():
-            shutil.rmtree(d2)
-        status2, st2, info2 = self.render_guarded(s6p["path"], d2, 100, frames=rev,
-                                                  tabs=1, tag="S6__reverse_100",
-                                                  phase="s6seq")
-        if status2 == "timeout":
-            self.timeout("s6seq", {"phase": "s6seq", "page": "reverse_100", **info2})
-        elif status2 == "exc" or (status2 == "ok" and st2["failed"]):
-            self.fail("s6seq", f"reverse_100 status={status2} failed="
-                              f"{st2.get('failed') if status2 == 'ok' else st2}")
-        md = 0
-        for fi in rev:
-            ref = full / f"f{fi:04d}.png"
-            fp = d2 / f"f{fi:04d}.png"
-            if not ref.is_file():
-                out["skipped_refs"].append(f"rev f{fi:04d}(ref 缺席)")
-                continue
-            if not fp.is_file():
-                if status2 == "ok":
-                    self.fail("s6seq", f"reverse_100 f{fi:04d} 未产出")
-                continue
-            try:
-                diff, _ = self.frame_diff(fp, ref)
-            except Exception as e:                              # noqa: BLE001
-                self.fail("s6seq", f"reverse_100 f{fi:04d} 比对异常 "
-                                   f"{type(e).__name__}: {e}")
-                continue
-            md = max(md, diff if diff is not None else 9999)
-            if diff != 0:
-                self.fail("s6seq", f"reverse_100 f{fi:04d} max_abs_diff={diff}")
-        out["reverse_100"] = {"length": 100, "max_diff_vs_full": md}
+                self.fail("s6seq", f"{name} 渲染异常 {stats}")
+            elif status != "ok" or not isinstance(stats, dict) or not isinstance(stats.get("failed"), list):
+                self.fail("s6seq", f"{name} invalid result: {status} {stats}")
+            elif stats["failed"] or stats.get("observation_error_count", 1):
+                self.fail("s6seq", f"{name} failed={stats['failed']} "
+                          f"observation_errors={stats.get('observation_errors', 'missing observation result')}")
+            # Disk snapshots survive watchdog termination; inspect any completed
+            # prefix rather than losing observed corruption with the child.
+            observed = {}
+            captures = sorted(d.glob("step*.png"))
+            for fp in captures:
+                match = re.fullmatch(r"step([0-9]+)_f([0-9]+)\.png", fp.name)
+                if match is None or int(match[1]) in observed or int(match[1]) >= len(frames):
+                    self.fail("s6seq", f"{name} unexpected observation {fp.name}")
+                    continue
+                observed[int(match[1])] = (int(match[2]), fp)
+            rows, diffs = [], []
+            for index, fi in enumerate(frames):
+                ref_frame = min(fi, last)
+                ref = full / f"f{ref_frame:04d}.png"
+                actual, fp = observed.get(index, (None, d / f"step{index:04d}_f{fi:04d}.png"))
+                row = {"index": index, "requested_frame": fi, "observed_frame": actual,
+                       "reference_frame": ref_frame, "artifact": str(fp.relative_to(self.ev)),
+                       "reference_artifact": str(ref.relative_to(self.ev)),
+                       "max_abs_diff": None}
+                errors, skipped = [], []
+                if actual is not None and actual != fi:
+                    errors.append(f"观察顺序错误：期望 f{fi}，实际 f{actual}")
+                for label, path, timed_out in (("candidate", fp, status == "timeout"),
+                                               ("reference", ref, ref_status == "timeout")):
+                    reason = png_invalid_reason(path, **size)
+                    if reason is not None:
+                        if timed_out and not path.exists():
+                            skipped.append(f"{label}: timeout 未产出")
+                        else:
+                            errors.append(f"{label}: {reason}")
+                            if label == "reference":
+                                out["references"]["status"] = "FAIL"
+                        if label == "reference":
+                            out["skipped_refs"].append(f"{name}[{index}] f{fi} (ref f{ref_frame})")
+                    else:
+                        try:
+                            row[f"{label}_bytes_sha256"] = self.frame_sha(path)
+                        except OSError as error:
+                            errors.append(f"{label} 读取异常: {error}")
+                            if label == "reference":
+                                out["references"]["status"] = "FAIL"
+                if not errors and not skipped:
+                    try:
+                        diff, _ = self.frame_diff(fp, ref)
+                        if type(diff) is not int or diff < 0:
+                            raise ValueError("无有效像素差（尺寸不一致或比较未完成）")
+                        row["max_abs_diff"] = diff
+                        diffs.append(diff)
+                        if diff != 0:
+                            errors.append(f"max_abs_diff={diff}")
+                    except Exception as error:                 # noqa: BLE001
+                        errors.append(f"比对异常 {type(error).__name__}: {error}")
+                row["status"] = "FAIL" if errors else "SKIP_TIMEOUT" if skipped else "PASS"
+                row["errors"], row["skipped"] = errors, skipped
+                for error in errors:
+                    self.fail("s6seq", f"{name}[{index}] f{fi}: {error}")
+                rows.append(row)
+            result = "FAIL" if len(self.failures) > before else (
+                "SKIP_TIMEOUT" if status == "timeout" or len(diffs) != len(frames) else "PASS")
+            out[name] = {"frames": frames, "render_status": status, "status": result,
+                         "expected": len(frames), "captured": len(captures),
+                         "compared": len(diffs), "occurrences": rows,
+                         "max_diff": max(diffs) if diffs else None}
+        out["references"]["validated"] = len({
+            row["reference_frame"] for name in sequences for row in out[name]["occurrences"]
+            if "reference_bytes_sha256" in row})
         self.report["phases"]["s6seq"] = out
-        self.note(f"s6seq: random_jump max_diff={out['random_jump']['max_diff']} "
-                  f"reverse_100 max_diff={md}"
-                  + (f"；跳过对账帧 {len(out['skipped_refs'])} 个（ref 缺席）"
-                     if out["skipped_refs"] else ""))
+        self.note("s6seq: " + "; ".join(
+            f"{name} {out[name]['status']} compared={out[name]['compared']}/{len(frames)} "
+            f"max_diff={out[name]['max_diff']}" for name, frames in sequences.items()))
 
     # ---------------------------------------------------------- phase: s7
     def phase_s7(self):
@@ -748,15 +809,13 @@ class Smoke:
                              f"max_abs_diff={p.get('max_abs_diff')} → {p['tier1']}")
             lines.append("")
         if "s6seq" in ph:
-            rj = ph["s6seq"]["random_jump"]
-            lines.append("## s6seq")
-            lines.append("")
-            lines.append(f"- random_jump diffs_vs_full: {rj['diffs_vs_full']}")
-            lines.append(f"- reverse_100 max_diff_vs_full: "
-                         f"{ph['s6seq']['reverse_100']['max_diff_vs_full']}")
-            if ph["s6seq"].get("skipped_refs"):
-                lines.append(f"- 跳过对账帧（ref 缺席）: "
-                             f"{ph['s6seq']['skipped_refs'][:10]}…")
+            lines.extend(["## s6seq（逐 occurrence；非历史 unique-frame 行数）", ""])
+            for name in ("random_jump", "reverse_100"):
+                seq = ph["s6seq"][name]
+                lines.append(f"- {name}: {seq['status']} · captured={seq['captured']}/"
+                             f"{seq['expected']} · compared={seq['compared']}/"
+                             f"{seq['expected']} · max_diff={seq['max_diff']}")
+            lines.append("- 每次原始请求、观察帧号、钳制参考帧、PNG 字节哈希与裁决见 report.json。")
             lines.append("")
         if "s7" in ph:
             lines.append("## s7")

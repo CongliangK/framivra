@@ -5,26 +5,12 @@
 import contextlib, os, shutil, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+from .browser_paths import chrome_names, chrome_install_paths
 
 
 def find_chrome() -> str:
     """跨平台定位 Chrome/Chromium：环境变量 VTX_CHROME 优先，其次 PATH 常见名，再退标准安装路径。"""
-    cands = [os.environ.get("VTX_CHROME")] if os.environ.get("VTX_CHROME") else []
-    cands += ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-              "chrome", "msedge"]  # msedge 同为 Chromium 内核，headless 截图兼容
-    w = os.environ.get("PROGRAMFILES", r"C:\Program Files")
-    pf86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
-    lapp = os.environ.get("LOCALAPPDATA", "")
-    if sys.platform == "win32":
-        cands += [rf"{w}\Google\Chrome\Application\chrome.exe",
-                  rf"{pf86}\Google\Chrome\Application\chrome.exe",
-                  rf"{lapp}\Google\Chrome\Application\chrome.exe",
-                  rf"{w}\Microsoft\Edge\Application\msedge.exe",
-                  rf"{pf86}\Microsoft\Edge\Application\msedge.exe"]  # 系统自带 Edge 默认装 (x86) 目录（只装 Edge 的出厂机 gfx 链不断）
-    elif sys.platform == "darwin":
-        cands += ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                  "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+    cands = (*chrome_names(), *chrome_install_paths(sys.platform))
     for c in cands:
         if c and (shutil.which(c) or os.path.isfile(c)):
             return c
