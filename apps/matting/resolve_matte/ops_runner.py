@@ -79,9 +79,10 @@ def main():
     a = ap.parse_args()
     seq = json.load(open(a.sequence))
     print(f"序列: {a.sequence}  共 {len(seq['steps'])} 步")
-    g = mouse_ctl.getgeometry()
-    print(f"达芬奇窗口: id={g['id']} ({g['x']},{g['y']}) {g['w']}x{g['h']}")
-    mouse_ctl.activate()
+    if not a.dry:
+        g = mouse_ctl.getgeometry()
+        print(f"达芬奇窗口: id={g['id']} ({g['x']},{g['y']}) {g['w']}x{g['h']}")
+        mouse_ctl.activate()
     for i, s in enumerate(seq["steps"]):
         if i < a.start or (a.end is not None and i >= a.end):
             continue
