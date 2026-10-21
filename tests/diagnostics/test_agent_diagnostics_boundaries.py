@@ -4,6 +4,7 @@ Expected exits are frozen from the pre-diagnostics CLI, not inferred from the
 implementation under test. In particular, empty object collections and valid
 subtitle intervals without string text remain accepted by that CLI.
 """
+from tests.diagnostics._support import temporary_root
 import contextlib
 import copy
 import io
@@ -11,16 +12,15 @@ import json
 import re
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.test_agent_diagnostics import timeline
+from tests.diagnostics._support import timeline
 from vtx.agent_diagnostics import main
 
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 
 
 def _path(path):
@@ -123,9 +123,7 @@ CACHE_PRODUCERS = {
 
 class BoundaryEntryPoint(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = temporary_root(self)
 
     def write_timeline(self, value, name='agent'):
         directory = self.root / name

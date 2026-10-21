@@ -9,27 +9,7 @@ from unittest import mock
 
 import vtx
 from vtx.pluginlib import compatibility, hooks, manifest, registry
-from tests.test_pluginlib import _make_plugin_dir
-
-_SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
-
-
-class _clean_import_path:
-    """import 卫生：用例内还原洁净 sys.path——先序测试（如 test_cef_worker_pixel_ops
-    顶层）可能把仓内 scripts/ 常驻注入 sys.path，令同名顶层模块 demo（scripts/demo.py，
-    #177 唯一入口）顶替本用例的 external 插件；hooks 落点断言按设计拒绝，属测试
-    环境问题而非被测行为，故在用例内还原。"""
-
-    def __enter__(self):
-        self.saved = sys.path[:]
-        sys.path[:] = [p for p in sys.path
-                       if Path(p or '.').resolve() != _SCRIPTS_DIR.resolve()]
-        return self
-
-    def __exit__(self, *exc):
-        sys.path[:] = self.saved
-        return None
-
+from tests._support import _make_plugin_dir, _clean_import_path
 
 class CoreConstraintTests(unittest.TestCase):
     def test_supported_minimums(self):

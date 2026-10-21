@@ -1,15 +1,15 @@
 """Reached native operations: precise origins, unchanged exceptions and controls."""
+from tests.diagnostics._support import temporary_root
 import contextlib
 import copy
 import io
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tests.test_agent_diagnostics import timeline
+from tests.diagnostics._support import timeline
 from vtx import stages
 from vtx.diagnostics import operation, required_field
 from vtx.infra import Ctx
@@ -70,8 +70,7 @@ class IdentityExit(unittest.TestCase):
 
 class StageOperations(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = temporary_root(self)
         self.tl = timeline()
         self.tl['sources'] = [{'id': 's', 'path': 's.wav'}]
         (self.root/'s.wav').touch()

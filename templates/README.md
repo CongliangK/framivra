@@ -10,7 +10,7 @@
 | `hello-plugin/` | 音频插件完整纪律范本：缝 A prepare_source + 三不变量 + 三分支 | 第三方音频插件 |
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
 | `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
-| `demo-timeline-svg/` | Linux / Inkscape 静态 SVG 生产输入；无 SKILL.md，不入 workflow 扫描；原生全链与视听未验收 | [用法与依赖边界](demo-timeline-svg/README.md#实际依赖与字体) |
+| `demo-timeline-svg/` | Linux / macOS arm64 身份实现的 Inkscape 静态 SVG 生产输入；无 SKILL.md，不入 workflow 扫描；原生全链与视听未验收 | [用法与依赖边界](demo-timeline-svg/README.md#实际依赖与字体) |
 
 `vt templates list|check` 从 `skill.json` / `SKILL.md` 识别并检查 tech-talk 与 skill-demo；doctor JSON 的工作流检查字段为 `skills`。发现不会执行工作流。hello-app / hello-plugin 由各自组件 manifest 区分，不作为 workflow 检查。
 

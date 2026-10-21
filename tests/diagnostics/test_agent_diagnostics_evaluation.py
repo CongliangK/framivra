@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tests.test_agent_diagnostics_operations import StageOperations
+from tests.diagnostics.test_agent_diagnostics_operations import StageOperations
 from tests.qc._support import _FakeContext
 from vtx import qc
 from vtx.infra import Ctx
