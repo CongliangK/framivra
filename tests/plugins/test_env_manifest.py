@@ -668,9 +668,12 @@ class TestCli(unittest.TestCase):
     def test_collect_rejects_argv_only_runtime_info(self):
         info = self.dir / "rt.json"
         info.write_text(json.dumps(rt_info(source="argv")), encoding="utf-8")
-        rc, text = self._run(["collect", "--backend-id", "x",
-                              "--runtime-info", str(info),
-                              "--out", str(self.dir / "m.json")])
+        with patched_seams(cmds=stub_cmds(), texts=dict(PROC_TEXTS),
+                           bytes_=dict(FONT_BYTES), servers=[], environ=dict(ENV_X11)), \
+             mock.patch.object(em, "_collect_os_kernel", return_value={}):
+            rc, text = self._run(["collect", "--backend-id", "x",
+                                  "--runtime-info", str(info),
+                                  "--out", str(self.dir / "m.json")])
         self.assertEqual(rc, 1)
         self.assertIn("拒绝生成", text)
         self.assertFalse((self.dir / "m.json").exists())
