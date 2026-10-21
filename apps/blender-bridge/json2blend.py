@@ -53,8 +53,8 @@ def audio_src(sid):
     """音轨事件源路径解析：插件产物映射优先（虚拟源/降噪源），否则源路径。
     JSON 虚拟源无映射 → None（记 error：先跑 vtx prepare/all 渲出产物）。"""
     p = SRC[sid]
-    if p.suffix.lower() == ".json":
-        w = RESOLVED.get(sid)
+    w = RESOLVED.get(sid)
+    if sid in RESOLVED or p.suffix.lower() == ".json":
         return Path(w) if w else None
     return p
 
@@ -88,12 +88,11 @@ sc["vtx_generator"] = "json2blend.py"
 seq = sc.sequence_editor_create().strips  # Blender 5.x: sequences → strips
 
 _probe = {}
-def probe(sid):
-    """ffprobe 源 (w, h, 总帧数)；纯音频源（含虚拟源产物 wav）按 format.duration×
+def probe(path):
+    """ffprobe 已选路径 (w, h, 总帧数)；纯音频源（含虚拟源产物 wav）按 format.duration×
     FPS 折算帧数——v1 音频源恒 (0,0,0) 使 loop 事件必报「无法测帧数」（bgm 床乐
     loop 平铺是常用形态，P6 修）。"""
-    if sid not in _probe:
-        path = audio_src(sid) or SRC[sid]
+    if path not in _probe:
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                             "-count_frames", "-show_entries",
                             "stream=width,height,nb_read_frames",
@@ -113,8 +112,8 @@ def probe(sid):
                 n = round(float(r2.stdout.strip()) * FPS)
             except ValueError:
                 n = 0
-        _probe[sid] = (w, h, n)
-    return _probe[sid]
+        _probe[path] = (w, h, n)
+    return _probe[path]
 
 def kf_linear(strip, prop, points):
     """(帧, 值) → 关键帧（5.x 无 animation_data 可寻，插值取默认；预览近似）。
@@ -197,7 +196,7 @@ for ti, tr in enumerate(tl["audio_tracks"], start=1):
             errors.append(f"音频源缺失 {sid}: {path}"); continue
         src_in, t_in, t_out = ev.get("src_in", 0), ev["in"], ev["out"]
         if ev.get("loop"):
-            total = probe(sid)[2]
+            total = probe(path)[2]
             if not total:
                 errors.append(f"loop 音频无法测帧数 {sid}"); continue
             reps = -(-(t_out - t_in) // total)
@@ -243,7 +242,7 @@ for ti, tr in enumerate(tl["video_tracks"]):
                 errors.append(f"视频源缺失 {name}: {clip['src']} -> {path}")
                 continue
             st = seq.new_movie(name, str(path), ch, int(clip["dst_in"] - clip.get("src_in", 0)))
-            place(st, ti, CH_V, clip, *probe(clip["src"])[:2])
+            place(st, ti, CH_V, clip, *probe(path)[:2])
             stats["video"] += 1
 
 # ---------- 字幕：透明视频轨（subs_alpha.mov，与终渲同源） ----------
