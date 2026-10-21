@@ -3,10 +3,123 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
 import wave
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
+
+
+class OwnedInitCheckout:
+    """Copied init CLI contract fixture, not hardware/model acceptance.
+
+    No live local config or ambient credentials enter the child. Cleanup is
+    registered before copying; init can create/keep config only in this tree.
+    """
+
+    def __init__(self, case):
+        temporary = tempfile.TemporaryDirectory(prefix="vt-owned-init-")
+        case.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.repo = self.root / "repo"
+        source = _SCRIPTS_DIR.parent
+        paths = ["vt.py", "VERSION", "config.example.json", "tests/__init__.py",
+                 "tests/_support.py", "scripts/new_project.sh",
+                 "apps/asr/independence.py"]
+        paths += [p.relative_to(source).as_posix()
+                  for p in sorted((source / "vtx").rglob("*.py"))]
+        paths += ["apps/blender-bridge/" + name for name in
+                  ("json2blend.py", "verify_blend.py", "blend2json.py",
+                   "subs_alpha.py", "audit_bundle.py")]
+        for name in paths:
+            src, dst = source / name, self.repo / name
+            if src.is_symlink():
+                raise AssertionError("init fixture requires regular source: " + name)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+        home = self.root / "home"
+        home.mkdir()
+        self.config = self.root / "config.json"
+        self.config.write_text("{}", encoding="utf-8")
+        self.log = self.root / "requests.json"
+        self.env = {"HOME": str(home), "USERPROFILE": str(home),
+                    "XDG_CONFIG_HOME": str(home / "config"),
+                    "XDG_CACHE_HOME": str(home / "cache"),
+                    "XDG_DATA_HOME": str(home / "data"),
+                    "TMPDIR": str(self.root), "TMP": str(self.root), "TEMP": str(self.root),
+                    "PATH": "", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+                    "VTX_CONFIG": str(self.config), "VTX_DOCTOR_OFFLINE": "1",
+                    "VT_MOUNT_ROOT": str(home / "video"), "LANG": "C.UTF-8"}
+        # Windows needs its system directory to load the selected interpreter;
+        # do not copy the rest of the caller's environment (including proxies).
+        if "SystemRoot" in os.environ:
+            self.env["SystemRoot"] = os.environ["SystemRoot"]
+
+    def run(self, *, cwd=None):
+        command = [sys.executable, "-I", "-B", "-c",
+                   "import sys; sys.path.insert(0, sys.argv[1]); "
+                   "from tests._support import _owned_init_child; "
+                   "raise SystemExit(_owned_init_child())",
+                   str(self.repo), str(self.log)]
+        return subprocess.run(command, cwd=cwd or self.repo, env=self.env,
+                              capture_output=True, text=True, timeout=90)
+
+    def requests(self):
+        return json.loads(self.log.read_text(encoding="utf-8"))["requests"]
+
+
+def _owned_init_child():
+    """Execute the copied CLI with named dependency data and zero network I/O."""
+    import urllib.request
+    from unittest import mock
+
+    root, log = map(Path, sys.argv[1:3])
+    allowed = [[sys.executable, str(root / name), "--help"] for name in
+               ("vtx/vtx.py", "apps/blender-bridge/audit_bundle.py")]
+    record = {"requests": [], "help_commands": []}
+
+    def guard(event, args):
+        if event == "subprocess.Popen":
+            if list(args[1]) not in allowed:
+                raise AssertionError("init fixture blocked process: " + repr(args[1]))
+        elif event.startswith("socket.") or event in (
+                "os.system", "os.fork", "os.forkpty", "os.posix_spawn",
+                "os.exec", "os.kill", "os.killpg"):
+            raise AssertionError("init fixture blocked " + event)
+
+    sys.addaudithook(guard)
+
+    def no_request(request, *args, **kwargs):
+        url = request.full_url if isinstance(request, urllib.request.Request) else str(request)
+        if len(record["requests"]) >= 8:
+            raise AssertionError("init fixture exceeded request-attempt bound")
+        record["requests"].append(url)
+        raise OSError("owned init fixture: network is forbidden")
+
+    def help_only(command, **kwargs):
+        if command not in allowed:
+            raise AssertionError("init fixture blocked command: " + repr(command))
+        record["help_commands"].append(command)
+        return subprocess.run(command, capture_output=True, text=True, timeout=30)
+
+    with mock.patch.object(urllib.request, "urlopen", side_effect=no_request):
+        import vt
+        # These tests own JSON/cwd/request-order contracts, not dependency
+        # availability. Only the two copied Python --help programs really run.
+        with mock.patch.object(vt, "find_binary", side_effect=lambda names:
+                               "fixture:" + names[0] if names[0] in ("ffmpeg", "ffprobe") else None), \
+             mock.patch.object(vt, "find_chrome", return_value="fixture:chrome"), \
+             mock.patch.object(vt, "tool_version", return_value="fixture:ffmpeg version"), \
+             mock.patch.object(vt, "ffmpeg_encoders", return_value=""), \
+             mock.patch.object(vt, "py3", return_value=sys.executable), \
+             mock.patch.object(vt, "sh", side_effect=help_only):
+            sys.argv[:] = [str(root / "vt.py"), "init", "--json"]
+            try:
+                return vt.main()
+            finally:
+                log.write_text(json.dumps(record), encoding="utf-8")
 
 
 def tree_sha256(root):

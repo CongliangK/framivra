@@ -10,13 +10,14 @@
      dry 只报告；真实修复产出**相对**符号链接指向本仓对应目录；templates 链接目标
      不存在时跳过并提示；
   ⑤ canonical init：`vt.py init --json` 输出既有 JSON 键结构（七小节自检键齐全，
-     32 键全集）——init 在 repo 根生成 config.local.json 的副作用在测试内复原。
+     32 键全集）——init 只在自有临时 checkout 生成 config.local.json。
   ⑥ doctor --fix（P4）：挂载链接联动重建（VT_MOUNT_ROOT 隔离）+ 无可修复项时
      明确说明 + live 挂载属其他仓只报人工项（安全门）+ registry.json 缺字段
      回填幂等；--json 输出含 fix 段。
   ⑦ skills 兼容段发现 templates/tech-talk 与 skill-demo；app/plugin 示例不激活、
      不探测；坏 workflow 明确 FAIL；退役 skills 挂载只清理可证明属于本仓的链接。
-运行：bash scripts/run_all_tests.sh。子进程一律 env python3（argv[0] 劫持纪律）。
+运行：bash scripts/run_all_tests.sh。既有冒烟子进程用 env python3；自有 init
+fixture 用当前测试解释器的 -I -B 子进程，隔离环境注入与源码字节码写入。
 """
 import json
 import os
@@ -29,6 +30,10 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(REPO))
+
+from tests._support import OwnedInitCheckout
 
 INIT_KEYS = [
     "python", "ffmpeg", "ffprobe", "chrome",                       # 1/5 基础
@@ -117,9 +122,6 @@ def _assert_doctor_passes_with_optional_unavailable(case, result):
     return data
 
 
-
-if __name__ == "__main__" and not __package__:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 class DoctorComponentBranches(unittest.TestCase):
     """Named fixtures exercise real health/FAIL gates, not global health mocks."""
@@ -315,44 +317,32 @@ class FixLinks(unittest.TestCase):
 class CanonicalInitEntry(unittest.TestCase):
     """Canonical initialization preserves JSON structure across caller directories."""
     def setUp(self):
-        root = tempfile.TemporaryDirectory(prefix="vt-init-env-")
-        self.addCleanup(root.cleanup)
-        self.env = _isolated_env(root.name)
+        self.checkout = OwnedInitCheckout(self)
 
     def test_init_json_key_structure(self):
-        cfg_file = REPO / "config.local.json"
-        existed = cfg_file.exists()
-        content = cfg_file.read_text(encoding="utf-8") if existed else None
-        try:
-            r = subprocess.run(["env", "python3", str(REPO / "vt.py"), "init", "--json"],
-                               capture_output=True, text=True, cwd=str(REPO), env=self.env)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            d = json.loads(r.stdout)
-            missing = [k for k in INIT_KEYS if k not in d]
-            self.assertEqual(missing, [], f"init --json 缺既有结构键：{missing}")
-            # 每项都是 {ok, detail} 形（既有 JSON 结构）
-            for k, v in d.items():
-                self.assertEqual(sorted(v), ["detail", "ok"], f"{k} 结构不符")
-        finally:
-            if existed:
-                cfg_file.write_text(content, encoding="utf-8")
-            elif cfg_file.exists():
-                cfg_file.unlink()                       # 复原测试副作用（生成件）
+        r = self.checkout.run()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        d = json.loads(r.stdout)
+        missing = [k for k in INIT_KEYS if k not in d]
+        self.assertEqual(missing, [], f"init --json 缺既有结构键：{missing}")
+        # 每项都是 {ok, detail} 形（既有 JSON 结构）
+        for k, v in d.items():
+            self.assertEqual(sorted(v), ["detail", "ok"], f"{k} 结构不符")
+        self.assertEqual((self.checkout.repo / "config.local.json").read_bytes(),
+                         (self.checkout.repo / "config.example.json").read_bytes())
 
     def test_init_via_vt_equivalent(self):
-        cfg_file = REPO / "config.local.json"
-        existed = cfg_file.exists()
-        try:
-            r1 = _vt("init", "--json", env_extra=self.env)
-            with tempfile.TemporaryDirectory(prefix="vt-init-cwd-") as elsewhere:
-                r2 = subprocess.run(["env", "python3", str(REPO / "vt.py"), "init", "--json"],
-                                    capture_output=True, text=True, cwd=elsewhere, env=self.env)
-            self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
-            self.assertEqual(r1.returncode, r2.returncode)
-            self.assertEqual(json.loads(r1.stdout), json.loads(r2.stdout))  # canonical 入口不依赖调用者 cwd
-        finally:
-            if not existed and cfg_file.exists():
-                cfg_file.unlink()
+        cfg_file = self.checkout.repo / "config.local.json"
+        content = b'{"fixture": "preserve existing local config"}\n'
+        cfg_file.write_bytes(content)
+        r1 = self.checkout.run()
+        elsewhere = self.checkout.root / "elsewhere"
+        elsewhere.mkdir()
+        r2 = self.checkout.run(cwd=elsewhere)
+        self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
+        self.assertEqual(r1.returncode, r2.returncode)
+        self.assertEqual(json.loads(r1.stdout), json.loads(r2.stdout))  # canonical 入口不依赖调用者 cwd
+        self.assertEqual(cfg_file.read_bytes(), content)
 
 
 class VtxRegression(unittest.TestCase):
