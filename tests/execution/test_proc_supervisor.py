@@ -25,15 +25,14 @@ import io
 import json
 import os
 import signal
-import struct
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import zlib
 from pathlib import Path
 from unittest import mock
+from tests.gfx._png import png
 
 from vtx import cli, gfx_cli, gfx_render, hygiene, proc_supervisor
 from vtx.infra import Ctx
@@ -43,16 +42,6 @@ from vtx.proc_supervisor import (SupervisedProcessGroup, WORKER_LEDGER,
 
 ROOT = Path(__file__).resolve().parents[2]
 _LINUX_PROC = Path("/proc/self/stat").is_file()
-
-
-def chunk(tag, data):
-    return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
-
-
-def png(w=6, h=4, value=0, filter_byte=0):
-    return (gfx_cli.PNG_SIGNATURE + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))
-            + chunk(b'IDAT', zlib.compress((bytes([filter_byte]) + bytes([value]) * (w * 4)) * h))
-            + chunk(b'IEND', b''))
 
 
 def stats(n):
