@@ -13,9 +13,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import wave
 from pathlib import Path
-from tests._support import tree_sha256
+from tests._support import cleanup_timeline, tree_sha256
 from unittest import mock
 
 from vtx import cli, hygiene
@@ -35,26 +34,8 @@ class DryRunRegression(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        (self.root / "assets").mkdir()
-        with wave.open(str(self.root / "assets" / "voice.wav"), "wb") as wav:
-            wav.setnchannels(2)
-            wav.setsampwidth(2)
-            wav.setframerate(48000)
-            wav.writeframes(b"\0" * (48000 * 4))
-        (self.root / "gfx").mkdir()
-        (self.root / "gfx" / "title.html").write_text("<canvas></canvas>")
-        self.timeline = self.root / "timeline.json"
-        self.timeline.write_text(json.dumps({
-            "version": 2,
-            "project": {"fps": 30, "width": 1920, "height": 1080,
-                        "duration_frames": 30},
-            "sources": [{"id": "voice", "path": "assets/voice.wav"}],
-            "video_tracks": [{"name": "title", "kind": "gfx", "clips": [
-                {"src": "gfx/title.html", "dst_in": 0, "dur": 30}]}],
-            "audio_tracks": [{"name": "voice", "events": [
-                {"src": "voice", "in": 0, "out": 30}]}],
-            "subtitles": [{"in": 0, "out": 30, "text": "字幕"}]
-        }))
+        self.timeline = cleanup_timeline(
+            self.root, subtitles=[{"in": 0, "out": 30, "text": "字幕"}])
         files = {
             "cache/gfx/stale/f0000.png": b"old png",
             "cache/seg/stale.mp4": b"old segment",

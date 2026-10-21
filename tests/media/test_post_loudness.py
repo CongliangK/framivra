@@ -23,7 +23,7 @@ import hashlib, json, math, os, shutil, struct, sys, tempfile, unittest, wave
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 import io
 
 REPO = Path(__file__).resolve().parents[2]
@@ -176,92 +176,81 @@ class TestBuildAudioValidation(unittest.TestCase):
         (self.root / "measurements.json").write_text(
             json.dumps({"first": first, "second": pl2}, indent=2), encoding="utf-8")
 
+    @contextmanager
+    def _terminal_ebur128(self, stderr):
+        """Replace only the completed final-file measurement, with a hit witness."""
+        real_run, terminal = self.c.run, []
+
+        def run(cmd, need=True):
+            result = real_run(cmd, need)
+            argv = list(map(str, cmd))
+            if ("ebur128=peak=true:framelog=quiet" in argv and
+                    "null" in argv and str(self.c.out / "audio.wav") in argv):
+                terminal.append(argv)
+                result.stderr = stderr
+            return result
+
+        with mock.patch.object(self.c, "run", side_effect=run):
+            try:
+                yield
+            finally:
+                self.assertEqual(len(terminal), 1, "必须命中且仅命中终态 ebur128 复测")
+
     def test_loudness_recheck_failure_exits(self):
-        real_run, calls = self.c.run, []
-
-        def run3(cmd, need=True):
-            calls.append(list(map(str, cmd)))
-            if len(calls) == 3:                       # 第 3 次 = 终态复测 → 偏离目标
-                return SimpleNamespace(returncode=0, stderr="  I:          -30.0 LUFS\n")
-            return real_run(cmd, need)
-
-        self.c.run = run3
-        with self.assertRaises(SystemExit) as cm:
+        # 保留原有缺失 Peak 拒绝分支，不误称 dev>3（另有独立测试）。
+        buf = io.StringIO()
+        with self._terminal_ebur128("  I:          -30.0 LUFS\n"), \
+                self.assertRaises(SystemExit) as cm, redirect_stdout(buf):
             stages.build_audio(self.c)
         self.assertEqual(cm.exception.code, 1)
+        self.assertIn("终态复测未捕获真峰", buf.getvalue())
+        self.assertNotIn("增益链断裂", buf.getvalue())
         rec = json.loads((self.c.out / "receipt.json").read_text(encoding="utf-8"))
         self.assertNotIn("audio", rec["stages"], "FAIL 路径不写 audio 回执")
 
     def test_loudness_deviation_warns_not_fails(self):
-        """分级裁定（ARCHITECTURE §1.2 2026-09-13）：偏离 ∈ (1.5, 3] = WARN 不阻断
-        （限幅响度损耗属内容级——live voice-ime 实测 -15.5/-15.6 压线证据）。"""
-        real_run = self.c.run
-
-        def run3(cmd, need=True):
-            r = real_run(cmd, need)
-            if "ebur128=peak=true" in " ".join(map(str, cmd)) and "null" in map(str, cmd):
-                # 终态复测：整段替换（I 解析取末值、Peak 取首值，追加会混入真实值）
-                r.stderr = "  I:          -16.0 LUFS\n  Peak:        -5.0 dBFS\n"
-            return r
-
-        self.c.run = run3
-        stages.build_audio(self.c)                       # 不抛 SystemExit 即 WARN 路径
+        """偏离 ∈ (1.5, 3] 是内容级 WARN，不阻断。"""
+        buf = io.StringIO()
+        with self._terminal_ebur128("  I:          -16.0 LUFS\n  Peak:        -5.0 dBFS\n"), \
+                redirect_stdout(buf):
+            stages.build_audio(self.c)
+        self.assertIn("限幅响度损耗", buf.getvalue())
         rec = json.loads((self.c.out / "receipt.json").read_text(encoding="utf-8"))
         pl = rec["stages"]["audio"]["post_loudness"]
         self.assertEqual(pl["output_i"], -16.0)
         self.assertEqual(pl["tp_dbfs"], -5.0)
 
     def test_tp_over_limit_fails(self):
-        """TP > -1.0 = 硬 FAIL（limiter 失效，机制错误）。"""
-        real_run = self.c.run
-
-        def run3(cmd, need=True):
-            r = real_run(cmd, need)
-            if "ebur128=peak=true" in " ".join(map(str, cmd)) and "null" in map(str, cmd):
-                r.stderr = "  I:          -14.0 LUFS\n  Peak:        +0.5 dBFS\n"
-            return r
-
-        self.c.run = run3
-        with self.assertRaises(SystemExit) as cm:
+        """TP > -1.0 = 硬 FAIL；有效数字必须先通过 Peak 解析。"""
+        buf = io.StringIO()
+        with self._terminal_ebur128("  I:          -14.0 LUFS\n  Peak:        0.5 dBFS\n"), \
+                self.assertRaises(SystemExit) as cm, redirect_stdout(buf):
             stages.build_audio(self.c)
         self.assertEqual(cm.exception.code, 1)
+        self.assertIn("终态真峰 0.5 dBFS > -1.0", buf.getvalue())
+        self.assertIn("limiter 失效", buf.getvalue())
+        self.assertNotIn("未捕获真峰", buf.getvalue())
 
     def test_dev_over_3_fails_explicitly(self):
-        """P1 审查 F7：dev > 3 的显式路径（与 TP 解析失败路径区分）。"""
-        real_run = self.c.run
-
-        def run3(cmd, need=True):
-            r = real_run(cmd, need)
-            if "ebur128=peak=true" in " ".join(map(str, cmd)) and "null" in map(str, cmd):
-                r.stderr = "  I:          -18.0 LUFS\n  Peak:        -5.0 dBFS\n"
-            return r
-
-        self.c.run = run3
+        """dev > 3 的独立路径（有效 TP，不是解析失败）。"""
         buf = io.StringIO()
-        with self.assertRaises(SystemExit) as cm, redirect_stdout(buf):
+        with self._terminal_ebur128("  I:          -18.0 LUFS\n  Peak:        -5.0 dBFS\n"), \
+                self.assertRaises(SystemExit) as cm, redirect_stdout(buf):
             stages.build_audio(self.c)
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("增益链断裂", buf.getvalue())
 
     def test_dev_boundaries_warn_and_silent(self):
-        """P1 审查 F7：dev 恰 3.0 → WARN 不阻断；dev 恰 1.5 → 静默（裁定边界）。"""
-        real_run = self.c.run
-
-        def mk_run(i_str):
-            def run3(cmd, need=True):
-                r = real_run(cmd, need)
-                if "ebur128=peak=true" in " ".join(map(str, cmd)) and "null" in map(str, cmd):
-                    r.stderr = f"  I:          {i_str} LUFS\n  Peak:        -5.0 dBFS\n"
-                return r
-            return run3
-
-        for i_str, want_warn in (("-17.0", True), ("-15.5", False)):   # dev=3.0 / dev=1.5
-            self.c.run = mk_run(i_str)
+        """dev 恰 3.0 → WARN 不阻断；dev 恰 1.5 → 静默。"""
+        for i_str, want_warn in (("-17.0", True), ("-15.5", False)):
             buf = io.StringIO()
-            with redirect_stdout(buf):
-                stages.build_audio(self.c)          # 两档均不得 SystemExit
-            self.assertIn("限幅响度损耗" if want_warn else "", buf.getvalue())
-            if not want_warn:
+            with self.subTest(output_i=i_str), \
+                    self._terminal_ebur128(f"  I:          {i_str} LUFS\n  Peak:        -5.0 dBFS\n"), \
+                    redirect_stdout(buf):
+                stages.build_audio(self.c)
+            if want_warn:
+                self.assertIn("限幅响度损耗", buf.getvalue())
+            else:
                 self.assertNotIn("限幅响度损耗", buf.getvalue())
             rec = json.loads((self.c.out / "receipt.json").read_text(encoding="utf-8"))
             self.assertIn("post_loudness", rec["stages"]["audio"])

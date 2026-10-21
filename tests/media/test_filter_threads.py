@@ -31,6 +31,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -70,18 +71,22 @@ class TestFilterThreadsEnv(unittest.TestCase):
         self.assertEqual(self._get(None), 1)   # bench_p2 A/B 后默认维持 1
 
     def test_valid_values(self):
-        self.assertEqual(self._get("1"), 1)
-        self.assertEqual(self._get("4"), 4)    # 显式解锁多线程
-        # 采纳值封顶 cpu 核数（<16 核机上 16 会被截断，按机器实际上限断言才可移植）
-        self.assertEqual(self._get("16"), min(16, os.cpu_count() or 8))
+        for cpu, cap in ((1, 1), (2, 2), (3, 3), (4, 4), (8, 8), (32, 32),
+                         (None, 8), (0, 8)):
+            for requested in (1, 4, 16):
+                with self.subTest(cpu=cpu, requested=requested), \
+                        mock.patch('vtx.infra.os.cpu_count', return_value=cpu):
+                    self.assertEqual(self._get(str(requested)), min(requested, cap))
 
     def test_invalid_falls_back_to_1(self):
         for bad in ("0", "-1", "abc", "", "4.5", " 4"):
             self.assertEqual(self._get(bad), 1, repr(bad))
 
     def test_oversized_capped_to_cpu_count(self):
-        # 超大值封顶 cpu 核数：滤镜线程超核数无收益只增调度开销（对齐 io_workers）
-        self.assertEqual(self._get("999999"), max(1, os.cpu_count() or 8))
+        for cpu, cap in ((1, 1), (2, 2), (3, 3), (4, 4), (8, 8), (32, 32),
+                         (None, 8), (0, 8)):
+            with self.subTest(cpu=cpu), mock.patch('vtx.infra.os.cpu_count', return_value=cpu):
+                self.assertEqual(self._get("999999"), cap)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and _HAVE_X264,
