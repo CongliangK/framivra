@@ -366,6 +366,7 @@ class SubtitleFrameIntegration(unittest.TestCase):
         cache = project / 'cache/vseg'
         before = {p.name: (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
                   for p in cache.glob('*.mp4')}
+        self.assertTrue(before, 'segmented run must publish vseg media before the warm-cache check')
         self.cli(timeline, ['video'], 'formal-warm')
         after = {p.name: (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
                  for p in cache.glob('*.mp4')}
