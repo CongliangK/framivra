@@ -57,7 +57,7 @@ blender --background --factory-startup --python apps/blender-bridge/json2blend.p
 - blender 不在 PATH → `vtx all` 收尾 exit 1（final.mp4 已就绪不受影响）——配置了
   就要导出，失败必须可见，不静默跳过。
 - 键在插件未装/禁用时走三分支报错（`vt plugins list` 查看），绝不静默忽略。
-- **源产物映射**：导出前经内核缝 A 解析插件产物并传给 `json2blend.py`；当前 `audio_src` 仅对 `.json` 虚拟源使用该映射，缺映射则报错。普通媒体源仍引用原路径，即使映射中有降噪 wav 也不采用，不能据此认定预览音轨与成片同源。
+- **源产物映射**：导出前经内核缝 A 解析插件产物并传给 `json2blend.py`；音频优先使用映射（含普通媒体的降噪 wav），无映射的 `.json` 虚拟源报错，其余源保留原路径。视频仍用原素材，探测缓存按实际路径隔离；选中同源音频不代表预览混音与成片等价。
 
 ## 关停测试（§0.2）
 

@@ -9,7 +9,7 @@
      （排序后比较，容差 0.05——批量完成序不保证，G1 只用中位/极差）；
   ③ G10 计数口径等值：同一合成 h264 mp4 的 -count_packets 与 -count_frames
      帧数相等（默认口径切换的等价性前提）；
-  ④ qc 命中段免检（合成项目实跑 vtx prepare→video→audio→mux→qc，构造参考
+  ④ qc 命中段免检（合成项目实跑 vtx validate→prepare→video→audio→mux→qc，构造参考
      tests/execution/test_pipeline.py）：
      a) 首轮全过→记录生成；第二轮 qc 检查项数/顺序不变、4 项像素探测免检；
      b) 改写一个 vseg 段文件（同名字不同内容，stat 失配）→ 该段探测项实测、
@@ -252,19 +252,24 @@ class TestQcSegmentExemption(unittest.TestCase):
         cls.addClassCleanup(tmp.cleanup)
         root = Path(tmp.name)
         assets = root / "assets"; assets.mkdir(parents=True)
+        dur = 180   # 6s；pip 放后半段（130-160）使 2 段切点在 ~69 帧找到静默帧
+        fps = 30
+        # Both base clips consume 90 source frames. The leak probe at final
+        # frame 179 reads b:89; a 2s/60-frame source silently hid a missing
+        # sample before QC began rejecting incomplete rawvideo measurements.
+        source_seconds = (dur - dur // 2) / fps
         for name, hz in (("a", 330), ("b", 550)):
             subprocess.run(["ffmpeg", "-v", "error", "-y",
-                            "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=2",
-                            "-f", "lavfi", "-i", f"sine=frequency={hz}:duration=2",
+                            "-f", "lavfi", "-i", f"testsrc2=s=640x360:r={fps}:d={source_seconds}",
+                            "-f", "lavfi", "-i", f"sine=frequency={hz}:duration={source_seconds}",
                             "-c:v", "libx264", "-preset", "ultrafast",
                             "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
                             str(assets / f"{name}.mp4")], check=True)
-        dur = 180   # 6s；pip 放后半段（130-160）使 2 段切点在 ~69 帧找到静默帧
         cls.proj = root / "proj"; cls.proj.mkdir()
         cls.tl = cls.proj / "timeline.json"
         cls.tl.write_text(json.dumps({
             "version": 2,
-            "project": {"fps": 30, "width": 640, "height": 360,
+            "project": {"fps": fps, "width": 640, "height": 360,
                         "duration_frames": dur},
             "sources": [{"id": n, "path": str(assets / f"{n}.mp4")}
                         for n in ("a", "b")],
@@ -284,7 +289,8 @@ class TestQcSegmentExemption(unittest.TestCase):
                     {"src": "b", "in": dur // 2, "out": dur, "volume": 0.6}]}]
         }, ensure_ascii=False), encoding="utf-8")
         # 全链（无 gfx 轨 → 不需要 Chrome）：VTX_VIDEO_SEGMENTS=2 → cache/vseg 两段
-        for cmd in ("prepare", "video", "audio", "mux", "qc"):
+        # Validate generated sources against the clip bounds before rendering.
+        for cmd in ("validate", "prepare", "video", "audio", "mux", "qc"):
             r = _run_vtx(cls.tl, cmd, extra_env={"VTX_VIDEO_SEGMENTS": "2"})
             assert r.returncode == 0, f"{cmd} 阶段失败:\n{r.stdout}\n{r.stderr}"
         rep = json.loads((cls.proj / "out" / "qc_report.json")

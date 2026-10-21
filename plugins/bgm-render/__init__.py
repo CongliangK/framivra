@@ -59,8 +59,6 @@ import json
 import math
 import os
 import re
-import shlex
-import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -68,6 +66,7 @@ from pathlib import Path
 
 from vtx.api import audio_key as _audio_key
 from vtx.api import cfg_get, media_cache_valid, plugin_code_digest
+from .health_check import bgm_cmd
 
 VERSION = "1.2.0"
 KEY = "bgm"
@@ -78,65 +77,14 @@ STEM_PREFIX = "stem:"
 # 匹配一律 fullmatch（R1-F F3）：re 的 $ 允许尾随换行（"abc\n" 曾被 match+$ 放行，
 # 轨名带 \n 会拼出跨行路径），fullmatch 才是整串锚定。
 _STEM_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_DEFAULT_REPO = "~/文档/01_活跃项目/music_tools"
 RENDER_CACHE_DIR = "bgm"              # cache/ 下共享渲染目录名（registry cache_dirs 对齐）
 _COMPLETE = "_complete.json"          # 共享渲染完整标记（渲染成功后原子写）
 
 
 # ---------------------------------------------------------------- config / CLI 解析
-def _bgm_cmd(c=None):
-    """bgm CLI 解析 → (argv 前缀, 额外 env)。三通道：config bgm.cli >
-    ~/.local/bin/bgm > python3 -m bgm_gen（PYTHONPATH=config bgm.repo）。
-    v1.2.0（R1-F F4）：通道解析目标不在盘/不可执行 = 该通道不可用，落下一通道
-    （config bgm.cli 指向不存在路径原会在 _run_bgm 里 FileNotFoundError 裸栈崩）；
-    全败返回 (None, 逐通道缺什么说明——含 config 通道的具体坏路径)。"""
-    fails = []
-    cli = cfg_get("bgm.cli", "")
-    if cli:
-        expanded = os.path.expanduser(cli)
-        if os.name == 'nt':
-            # Apply Windows argv quoting, preserving backslashes in paths.
-            import ctypes
-            from ctypes import wintypes
-            shell = ctypes.WinDLL('shell32', use_last_error=True)
-            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-            shell.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
-            shell.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
-            kernel.LocalFree.argtypes = [ctypes.c_void_p]
-            count = ctypes.c_int()
-            pointer = shell.CommandLineToArgvW(expanded, ctypes.byref(count))
-            if not pointer:
-                raise ctypes.WinError(ctypes.get_last_error())
-            try:
-                argv = [pointer[i] for i in range(count.value)]
-            finally:
-                kernel.LocalFree(pointer)
-        else:
-            argv = shlex.split(expanded)
-        # 存在性/可执行门：shutil.which 对含分隔符的路径按字面探测、裸命令名查
-        # PATH，且只认可执行件——非执行文件过了这道门也会在 subprocess 处崩。
-        if argv and shutil.which(argv[0]):
-            return argv, None
-        fails.append(f"config bgm.cli 指向不存在/不可执行路径（{cli}）")
-    wrapper = Path.home() / ".local" / "bin" / "bgm"
-    if wrapper.is_file():
-        return [str(wrapper)], None
-    repo = Path(os.path.expanduser(cfg_get("bgm.repo", _DEFAULT_REPO)))
-    py = sys.executable if os.name == "nt" else shutil.which("python3")
-    if repo.is_dir() and py:
-        env = dict(os.environ)
-        env["PYTHONPATH"] = str(repo) + (os.pathsep + env["PYTHONPATH"]
-                                         if env.get("PYTHONPATH") else "")
-        return [py, "-m", "bgm_gen"], env
-    fails.append(f"~/.local/bin/bgm 不在（{wrapper}）")
-    fails.append(f"bgm.repo（{repo}）不可用或缺 python3")
-    return None, ("bgm CLI 不可解析：" + "；".join(fails)
-                  + "——config 配置见 config.example.json bgm 节")
-
-
 def _run_bgm(c, args, what):
     """bgm 子命令执行（fail-hard：解析失败/退出非零打印缺什么 + exit 1）。"""
-    cmd, env = _bgm_cmd(c)
+    cmd, env = bgm_cmd(cfg_get)
     if cmd is None:
         print(f"✗ bgm-render 环境缺失（fail-hard）：{env}", file=sys.stderr)
         sys.exit(1)

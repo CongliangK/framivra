@@ -1,4 +1,5 @@
 """Real FFmpeg audit regressions; set VTX_AUDIT_SCRIPT to compare an older script."""
+import ast
 import json
 import math
 import os
@@ -158,6 +159,57 @@ class AudioAuditIntegration(unittest.TestCase):
 
 
 class AudioAuditMapping(unittest.TestCase):
+    def test_blender_resolved_audio_and_original_video_use_separate_paths(self):
+        # Extract only these functions: importing the entry point would run bpy.
+        tree = ast.parse((APP / 'json2blend.py').read_text(encoding='utf-8'))
+        namespace = {'Path': Path, 'subprocess': subprocess}
+        exec(compile(ast.Module(body=[node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in ('audio_src', 'probe')],
+            type_ignores=[]), 'json2blend.py', 'exec'), namespace)
+        rendered = Path('/owned/cache/处理 audio.wav')
+        missing = Path('/owned/missing.wav')
+        for suffix in ('.wav', '.MP4', '.json', '.JSON'):
+            original = Path('/owned/source' + suffix)
+            namespace['SRC'] = {'s': original}
+            for mapping, expected in (({}, None if suffix.lower() == '.json' else original),
+                    ({'s': str(rendered)}, rendered), ({'s': str(missing)}, missing),
+                    *[({'s': value}, None) for value in (None, '', False, 0, [], {})]):
+                with self.subTest(suffix=suffix, mapping=mapping):
+                    namespace['RESOLVED'] = mapping
+                    self.assertEqual(namespace['audio_src']('s'), expected)
+            for value in (True, 1, ['bad'], {'bad': 'path'}):
+                namespace['RESOLVED'] = {'s': value}
+                with self.subTest(suffix=suffix, value=value), self.assertRaises(TypeError):
+                    namespace['audio_src']('s')
+        for mapping in (None, [], 42, 'bad'):
+            namespace['RESOLVED'] = mapping
+            with self.subTest(mapping=mapping), self.assertRaises(AttributeError):
+                namespace['audio_src']('s')
+        namespace['RESOLVED'] = {'unknown': str(rendered)}
+        with self.assertRaises(KeyError):
+            namespace['audio_src']('unknown')
+        video = Path('/owned/source.MP4')
+        namespace.update(SRC={'s': video}, RESOLVED={'s': str(rendered)})
+        audio = namespace['audio_src']('s')
+        for fps in (24, 30.0):
+            for order in ((audio, video), (video, audio)):
+                namespace.update(FPS=fps, _probe={})
+                def result(cmd, **kwargs):
+                    text = ('1920,1080,90' if cmd[-1] == str(video) else
+                            '2.5' if 'format=duration' in cmd else '')
+                    return subprocess.CompletedProcess(cmd, 0, text, '')
+                with self.subTest(fps=fps, order=order), patch.object(
+                        subprocess, 'run', side_effect=result) as run:
+                    for path in order + order:
+                        self.assertEqual(namespace['probe'](path),
+                            (1920, 1080, 90) if path == video else (0, 0, round(2.5 * fps)))
+                    self.assertEqual(run.call_count, 3)
+                    self.assertEqual(set(namespace['_probe']), {audio, video})
+        # Both callers probe the same path they pass to new_sound/new_movie.
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'probe']
+        self.assertEqual([ast.unparse(call) for call in calls], ['probe(path)', 'probe(path)'])
+
     def test_source_intersection_has_independent_time_origin(self):
         e={'src':'a','src_in':40,'in':300,'out':360,'volume':0.4,'pan':-0.5}
         parts, reason=audit_module.split_event(e,[(0,45),(55,65),(90,120)])

@@ -549,25 +549,46 @@ class TestQCActualOperations(unittest.TestCase):
         self.assertEqual(context.diagnostics, [])
 
     def test_empty_rawvideo_is_measurement_failure_not_fabricated_metric(self):
-        context = self.context(covered=True)
-        context.tl['video_tracks'] = [{'name': 'base', 'clips': [
-            {'src': 'a', 'src_in': 0, 'dst_in': 0, 'dur': 24}]}]
-        original = context.run
-        def run(command, **kwargs):
-            result = original(command, **kwargs)
-            if 'rawvideo' in command:
-                Path(command[-1]).write_bytes(b'')
-            return result
-        context.run = run
-        _, record = self.fault(context, ZeroDivisionError)
-        self.assertEqual(record['json_path'], '$')
-        self.assertEqual(record['rule_id'], 'qc.metadata_operation')
-        self.assertEqual(record['source']['measurement'], 'rawvideo')
-        self.assertEqual(record['source']['origin'], '$.video_tracks[0].clips[0]')
-        self.assertEqual(record['source']['frame'], 2)
-        self.assertEqual(len(context.diagnostics), 1)
-        self.assertEqual(sum('rawvideo' in command for command in context.commands), 2)
-        self.assertEqual(context.receipts, [])
+        # A zero-exit fake producer is not evidence of a real FFmpeg failure.
+        for length, position in ((n, p) for n in (0, 1, 1295, 1296, 1297) for p in (1, 2)):
+            with self.subTest(length=length, position=position):
+                context = self.context(covered=True)
+                context.tl['video_tracks'] = [{'name': 'base', 'clips': [
+                    {'src': 'a', 'src_in': 0, 'dst_in': 0, 'dur': 24}]}]
+                original = context.run
+                def run(command, **kwargs):
+                    result = original(command, **kwargs)
+                    if 'rawvideo' in command:
+                        count = sum('rawvideo' in cmd for cmd in context.commands)
+                        Path(command[-1]).write_bytes(bytes([100]) * (length if count == position else 1296))
+                    return result
+                context.run = run
+                if length == 1296:
+                    self.execute(context)
+                    self.assertTrue(context.receipts[-1][0][1])
+                    self.assertFalse(any(d['rule_id'] == 'qc.rawvideo_size' for d in context.diagnostics))
+                    continue
+                with self.assertRaises(SystemExit) as caught:
+                    self.execute(context)
+                self.assertEqual(caught.exception.code, 1)
+                self.assertTrue(getattr(caught.exception, '_vtx_diagnostic_handled', False))
+                record = context.diagnostics[-1]
+                self.assertEqual(record['json_path'], '$')
+                self.assertEqual(record['rule_id'], 'qc.rawvideo_size')
+                self.assertEqual(record['status'], 'unknown')
+                self.assertEqual(record['measured'], {'bytes': length})
+                self.assertEqual(record['threshold'], {'bytes': 48 * 27})
+                self.assertEqual(record['source']['provider'], 'ffmpeg')
+                self.assertEqual(record['source']['resource'], str(context.src_path('a')))
+                self.assertEqual(record['source']['measurement'], 'rawvideo')
+                self.assertEqual(record['source']['origin'], '$.video_tracks[0].clips[0]')
+                self.assertEqual(record['source']['frame'], 2)
+                self.assertEqual(len(context.diagnostics), 1)
+                self.assertEqual(sum('rawvideo' in command for command in context.commands), position)
+                self.assertEqual(context.receipts, [])
+                self.assertFalse((context.out / 'qc_report.json').exists())
+                self.assertFalse((context.cache / qc._QC_SEG_RECORD).exists())
+                self.assertFalse(list(context.cache.glob('qc_probe*')))
 
     def test_loudness_cache_values_and_native_exception_identity(self):
         for kwargs, exception, field_name in [({'loud': 'bad'}, TypeError, 'i_lufs'),

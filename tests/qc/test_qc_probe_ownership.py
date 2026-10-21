@@ -127,8 +127,8 @@ class ProbeOwnership(unittest.TestCase):
         helper = next(node for node in ast.walk(tree)
                       if isinstance(node, ast.FunctionDef) and node.name == 'gray_frame')
         module = ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[]))
-        for producer_fails in (False, True):
-            with self.subTest(producer_fails=producer_fails):
+        for failure_at in ('none', 'producer', 'read', 'shape'):
+            with self.subTest(failure_at=failure_at):
                 c = self.context()
                 primary = PermissionError('producer failure')
                 cleanup = PermissionError('cleanup failure')
@@ -139,21 +139,41 @@ class ProbeOwnership(unittest.TestCase):
                     def cleanup(self):
                         self.inner.cleanup()
                         raise cleanup
-                if producer_fails:
-                    def run(*args, **kwargs):
+                original = c.run; original_read = Path.read_bytes
+                payload = bytes(range(256)) * 5 + bytes(range(16))
+                def run(cmd, **kwargs):
+                    if failure_at == 'producer':
                         raise primary
-                    c.run = run
+                    result = original(cmd, **kwargs)
+                    Path(cmd[-1]).write_bytes(b'x' if failure_at == 'shape' else payload)
+                    return result
+                def read(path):
+                    if failure_at == 'read' and path.name == 'qc_probe_frame.raw':
+                        raise primary
+                    return original_read(path)
+                c.run = run
                 env = dict(qc.__dict__, c=c)
                 exec(compile(module, 'production-gray-frame', 'exec'), env)
+                if failure_at == 'none':
+                    c.w = 64; c.h = 48  # Project/crop dimensions do not set the gray sample size.
+                    self.assertEqual(env['gray_frame'](c.out / 'final.mp4', 0, 'crop=64:48'), payload)
+                    self.assertEqual(c.commands[-1][c.commands[-1].index('-vf') + 1],
+                                     'crop=64:48,scale=48:27:flags=bicubic+accurate_rnd,format=gray')
                 sibling = c.cache / 'qc_probe_sibling'
                 sibling.mkdir(); (sibling / 'keep').write_bytes(b'keep')
                 try:
                     raise ValueError('unrelated caller exception')
                 except ValueError:
-                    with patch.object(qc.tempfile, 'TemporaryDirectory', Temp):
-                        with self.assertRaises(PermissionError) as caught:
+                    with patch.object(qc.tempfile, 'TemporaryDirectory', Temp), \
+                            patch.object(Path, 'read_bytes', read):
+                        with self.assertRaises(SystemExit if failure_at == 'shape' else PermissionError) as caught:
                             env['gray_frame'](c.out / 'final.mp4', 0)
-                self.assertIs(caught.exception, primary if producer_fails else cleanup)
+                if failure_at == 'shape':
+                    self.assertEqual(caught.exception.code, 1)
+                    self.assertEqual(c.diagnostics[-1]['rule_id'], 'qc.rawvideo_size')
+                else:
+                    self.assertIs(caught.exception, primary if failure_at != 'none' else cleanup)
+                    self.assertEqual(c.diagnostics, [])
                 self.assertEqual((sibling / 'keep').read_bytes(), b'keep')
                 self.assertEqual(list(c.cache.glob('qc_probe*')), [sibling])
 

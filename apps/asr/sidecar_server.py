@@ -39,6 +39,7 @@ inference/qwen3_forced_aligner.py（items 结构、tokenize/clean_token、ms→s
 ibus-voice-ime qwen_asr_server.py（模型管理/换挡/空闲卸载思路，解耦重写）。
 """
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import sys
@@ -102,18 +103,21 @@ def _ind():
 
 
 def _load_config_for_gate():
-    """enabled 门禁用配置读取（issue #142）：VTX_CONFIG > 仓根 config.local.json。
-    与 client.load_config 同链（此处仅 stdlib json，解析失败/缺失 → {}，
-    严格解析由 independence.asr_enabled 兜底：未配置=禁用）。"""
+    """仅 enabled 门禁的 stdlib 读取：选路径/顶层形状与 canonical config 一致。
+    显式 VTX_CONFIG（含 ~）一旦选中，缺失或坏配置也不回落仓根配置；
+    不导入 vtx，保留独立解释器 -I 启动。严格 enabled 解析归 independence。
+    """
     import os as _os
-    for cand in (_os.environ.get("VTX_CONFIG"),
-                 str(Path(__file__).resolve().parent.parent.parent / "config.local.json")):
-        if cand and Path(cand).is_file():
-            try:
-                return json.loads(Path(cand).read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                return {}
-    return {}
+    override = _os.environ.get("VTX_CONFIG")
+    path = (Path(override).expanduser() if override else
+            Path(__file__).resolve().parent.parent.parent / "config.local.json")
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def ensure_venv_site():
@@ -315,7 +319,8 @@ class ModelHolder:
         self._lock = threading.Lock()
         self._model = None          # 已加载 wrapper（常驻）
         self._loaded_path = ""
-        self._on_gpu = False
+        self._on_gpu = False        # 请求可用，不代表失败后物理 GPU 驻留已清除
+        self._needs_cpu_cleanup = False  # 部分迁移/清理失败后需重试的自有资源
         self._gpu_device = None
         self._last = time.monotonic()
         self._stop = threading.Event()
@@ -340,8 +345,12 @@ class ModelHolder:
         try:
             self._ensure_gpu_locked()
             self._last = time.monotonic()
+            self._on_gpu = True       # 仅完整 placement + lease 退出成功才提交 ready
+            self._needs_cpu_cleanup = False
             return self._model
         except BaseException:
+            self._needs_cpu_cleanup = self._needs_cpu_cleanup or self._on_gpu
+            self._on_gpu = False
             self._lock.release()      # 加载失败不得持锁（否则后续请求死锁）
             raise
 
@@ -361,9 +370,10 @@ class ModelHolder:
         while not self._stop.wait(self._interval):
             try:
                 with self._lock:
-                    if not self._on_gpu:
+                    if not (self._on_gpu or self._needs_cpu_cleanup):
                         continue
-                    if time.monotonic() - self._last < self.idle_timeout:
+                    if (not self._needs_cpu_cleanup
+                            and time.monotonic() - self._last < self.idle_timeout):
                         continue
                     self._to_cpu_locked()
             except Exception as exc:      # watchdog 永不死
@@ -372,33 +382,65 @@ class ModelHolder:
     def _ensure_gpu_locked(self):
         if self._model is not None and self._on_gpu:
             return
+        if self._needs_cpu_cleanup:
+            self._to_cpu_locked()  # 未完成回收先重试，成功后才重新准入
         if self._model is None:
             self._load_locked()
             return
-        inner = getattr(self._model, "model", None)
-        if inner is not None:
+        target = self._gpu_device or self.device_map
+        with self._gpu_admission_locked(self.active_path, target):
             _log("模型重新上 GPU：%s" % self._loaded_path)
-            inner.to(self._gpu_device)
-            self._resync_device()
-            self._empty_cache_guard()
-            self._on_gpu = True
+            self._move_model_locked(target)
+
+    @contextmanager
+    def _gpu_admission_locked(self, path, device):
+        # 首次加载与 CPU 恢复共用准入：lease 覆盖检查及整个资源获取过程，
+        # 不嵌套加锁，也不停止/卸载任何外部服务来腾显存。
+        ind = _ind()
+        required = self.vram_budget_mib or ind.estimate_vram_mib(path)
+        placement_started = False
+        recovered = False
+
+        def recover_placement():
+            nonlocal recovered
+            recovered = True
+            self._on_gpu = False
+            if self._model is not None:
+                try:
+                    self._to_cpu_locked()
+                except BaseException as exc:
+                    try:
+                        _log("⚠ 模型获取失败后的 CPU 回收未完成：%s" % exc)
+                    except BaseException:
+                        pass  # 诊断失败不得替换 placement/lease 主错误
+
+        try:
+            with ind.admission_lease():
+                decision = ind.gpu_admission(required, device=device)
+                if not decision["allowed"]:
+                    _log("✗ 资源准入拒绝：%s" % decision["reason"])
+                    raise RuntimeError("资源准入拒绝：%s" % decision["reason"])
+                _log("资源准入：%s" % decision["reason"])
+                placement_started = True
+                try:
+                    yield
+                except BaseException:
+                    recover_placement()  # body 失败仍在 lease 内回收
+                    raise
+        except BaseException:
+            self._on_gpu = False
+            # 退出失败发生在 body 成功后，也必须回收；不重复回收 body 的失败。
+            # 准入/enter 拒绝未开始 placement，不移动现有模型。
+            if placement_started and not recovered:
+                recover_placement()
+            raise
 
     def _load_locked(self):
-        # issue #142 通用资源准入（先于一切模型 import/加载）：与 IME 端点零依赖，
-        # 只读 nvidia-smi；不足/不可测即安全拒绝——绝不以“先 OOM 再换小模型”当
-        # 唯一保护，绝不停止/卸载任何外部服务腾显存。并发准入经项目状态根
-        # flock 串行（防两路并发凭同一份空闲显存同时过关）。
-        ind = _ind()
-        required = self.vram_budget_mib or ind.estimate_vram_mib(self.asr_path)
+        # 准入先于模型 import/加载；OOM 换挡仅作次级保护。
         attempts = [self.asr_path]
         comp = companion_path(self.asr_path)
         tried = set()
-        with ind.admission_lease():
-            decision = ind.gpu_admission(required, device=self.device_map)
-            if not decision["allowed"]:
-                _log("✗ 资源准入拒绝：%s" % decision["reason"])
-                raise RuntimeError("资源准入拒绝：%s" % decision["reason"])
-            _log("资源准入：%s" % decision["reason"])
+        with self._gpu_admission_locked(self.asr_path, self.device_map):
             from qwen_asr import Qwen3ASRModel  # 延迟 import：准入通过后才动依赖
             kw = {"dtype": self._torch_dtype(), "device_map": self.device_map,
                   "max_inference_batch_size": 1, "max_new_tokens": self.max_new_tokens}
@@ -433,12 +475,12 @@ class ModelHolder:
                     self._empty_cache_guard()
                     raise
                 self._model = model
+                self._needs_cpu_cleanup = True
                 self._loaded_path = path
                 inner = getattr(model, "model", None)
                 self._gpu_device = getattr(inner, "device", None) or self.device_map
                 self._resync_device()
-                self._on_gpu = True
-                _log("模型就绪：%s（耗时 %.1fs）" % (path, time.monotonic() - t0))
+                _log("模型已加载：%s（耗时 %.1fs）" % (path, time.monotonic() - t0))
                 return
             raise RuntimeError("模型加载失败：%s" % self.asr_path)
 
@@ -481,20 +523,30 @@ class ModelHolder:
         if fa is not None and fa_model is not None:
             fa.device = getattr(fa_model, "device", getattr(fa, "device", None))
 
-    def _to_cpu_locked(self):
+    def _move_model_locked(self, device):
+        """移动 ASR 与对齐器；失败时保留真实设备缓存，禁止报告整体已就绪。"""
+        self._on_gpu = False
+        self._needs_cpu_cleanup = self._model is not None
         m = self._model
-        if m is None:
-            return
         inner = getattr(m, "model", None)
-        if inner is not None:
-            inner.to("cpu")
+        if inner is None:
+            raise RuntimeError("模型缺少可迁移的 ASR model，无法恢复设备状态")
         fa = getattr(m, "forced_aligner", None)
         fa_model = getattr(fa, "model", None) if fa is not None else None
-        if fa_model is not None:
-            fa_model.to("cpu")
-        self._resync_device()
-        self._empty_cache_guard()
-        self._on_gpu = False
+        try:
+            inner.to(device)
+            if fa_model is not None:
+                fa_model.to(device)
+        finally:
+            self._resync_device()
+            self._empty_cache_guard()
+
+    def _to_cpu_locked(self):
+        if self._model is None:
+            self._needs_cpu_cleanup = False
+            return
+        self._move_model_locked("cpu")
+        self._needs_cpu_cleanup = False
         _log("模型空闲卸载至 CPU（VRAM 已释放）：%s" % self._loaded_path)
 
     @staticmethod
