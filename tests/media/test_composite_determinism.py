@@ -243,6 +243,7 @@ class TestPassKeySubsSeparation(unittest.TestCase):
             c = _Ctx()
             c.fps, c.spf, c.dur = 30, 1.0 / 30, 4.0
             c.w, c.h, c.dry = 64, 64, True
+            c.root = d
             c.cache = d / "cache"
             c.run = _run
             plan = RenderPlan(c=c, draft=False, f=1.0, W=64, H=64,

@@ -443,6 +443,7 @@ class TestSharedEventFilters(unittest.TestCase):
         duck = importlib.import_module('plugins.duck-static')
         with tempfile.TemporaryDirectory() as directory:
             c = _event_context(); c.out = Path(directory); c.cache = c.out / 'cache'
+            c.root = c.out
             event = {'src': 'a', 'in': 0, 'out': 30, 'volume': 1}
             tracks = [
                 {'name': 'voice', 'events': [dict(event)], 'duck_strategy': {
@@ -477,6 +478,7 @@ class TestSharedEventFilters(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as directory:
             c = _event_context(); c.out = Path(directory); c.tl = {'audio_tracks': []}
+            c.root = c.out
             (c.out / 'audio.wav').write_bytes(b'existing WAV')
             with patch.object(ar._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t) as hook, \
                  patch.object(ar, 'ebur128_summary', return_value=(-14, -2)), \
