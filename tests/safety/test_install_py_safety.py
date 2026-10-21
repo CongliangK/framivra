@@ -588,5 +588,89 @@ class InstallerLocalPrimitives(unittest.TestCase):
         self.assertIsNone(lock.handle)
 
 
+class InstallerPathUndo(unittest.TestCase):
+    """Lifecycle PATH checks use an in-memory registry, never the host registry."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="installer-path-undo-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.selected, self.other = self.root / "selected", self.root / "other"
+        for target in (self.selected, self.other):
+            (target / "bin").mkdir(parents=True)
+            (target / ".vt-install.json").write_text("{}", encoding="utf-8")
+        self.installer = _load_installer()
+        self.value = os.pathsep.join((str(self.selected / "bin"), "",
+                                     str(self.other / "bin"), " untouched "))
+        self.registry = types.SimpleNamespace(
+            HKEY_CURRENT_USER=1, KEY_READ=2, KEY_WRITE=4, REG_EXPAND_SZ=7,
+            OpenKey=mock.MagicMock(),
+            QueryValueEx=mock.Mock(side_effect=lambda *a: (self.value, 7)),
+            SetValueEx=mock.Mock(side_effect=self.write_value))
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(mock.patch.object(self.installer, "IS_WINDOWS", True))
+        self.stack.enter_context(mock.patch.dict(sys.modules, {"winreg": self.registry}))
+
+    def write_value(self, key, name, reserved, kind, value):
+        self.assertEqual((name, reserved, kind), ("Path", 0, 7))
+        self.value = value
+
+    def test_explicit_undo_dry_run_has_no_registry_write(self):
+        before = self.value
+        self.assertEqual(self.installer.main(["--undo", str(self.selected), "--dry-run"]), 0)
+        self.assertEqual(self.value, before)
+        self.registry.SetValueEx.assert_not_called()
+        self.assertEqual(self.registry.OpenKey.call_args.args[-1], self.registry.KEY_READ)
+        self.assertTrue(self.selected.is_dir())
+
+    def test_explicit_undo_removes_only_selected_install_and_is_idempotent(self):
+        self.assertEqual(self.installer.main(["--undo", str(self.selected)]), 0)
+        self.assertEqual(self.value, os.pathsep.join(("", str(self.other / "bin"), " untouched ")))
+        self.assertTrue(self.selected.is_dir())
+        self.assertTrue((self.selected / "bin").is_dir())
+        self.assertEqual(self.installer.main(["--undo", str(self.selected)]), 0)
+        self.registry.SetValueEx.assert_called_once()
+
+    def test_undo_without_value_honors_dir(self):
+        self.assertEqual(self.installer.main(["--undo", "--dir", str(self.selected)]), 0)
+        self.assertNotIn(str(self.selected / "bin"), self.value)
+        self.assertIn(str(self.other / "bin"), self.value)
+
+    def test_explicit_undo_precedes_dir(self):
+        self.assertEqual(self.installer.main(["--undo", str(self.selected), "--dir", str(self.other)]), 0)
+        self.assertNotIn(str(self.selected / "bin"), self.value)
+        self.assertIn(str(self.other / "bin"), self.value)
+
+    def test_uninstall_removes_only_its_own_path_entry(self):
+        self.assertEqual(self.installer.uninstall(self.selected, False), 0)
+        self.assertFalse(self.selected.exists())
+        self.assertTrue(self.other.is_dir())
+        self.assertIn(str(self.other / "bin"), self.value)
+        self.assertNotIn(str(self.selected / "bin"), self.value)
+
+    def test_unmarked_target_does_not_write_registry(self):
+        (self.selected / ".vt-install.json").unlink()
+        before = self.value
+        self.installer.undo_path(self.selected)
+        self.assertEqual(self.value, before)
+        self.registry.OpenKey.assert_not_called()
+
+    def test_uninstall_path_failure_reports_manual_target_cleanup(self):
+        self.registry.OpenKey.side_effect = OSError("fixture registry unavailable")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.installer.uninstall(self.selected, False), 0)
+        self.assertFalse(self.selected.exists())
+        self.assertIn("请手动从用户 PATH 移除 %s" % (self.selected / "bin"), output.getvalue())
+        self.assertNotIn("稍后手动运行 --undo", output.getvalue())
+        self.assertTrue(self.other.exists())
+
+    def test_missing_path_value_is_not_created(self):
+        self.registry.QueryValueEx.side_effect = FileNotFoundError
+        self.installer.undo_path(self.selected)
+        self.registry.SetValueEx.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

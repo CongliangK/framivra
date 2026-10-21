@@ -45,7 +45,7 @@ def load_static_registry(repo_root=None) -> dict:
         print(f"⚠ plugins/registry.json 解析失败（{e}）——按空注册表继续"
               "（插件键三分支退化为未知键警告）", file=sys.stderr)
         return {"plugins": {}}
-    if not isinstance(data, dict) or not isinstance(data.get("plugins", {}), dict):
+    if not isinstance(data, dict) or not isinstance(data.get("plugins"), dict):
         print("⚠ plugins/registry.json 结构不符（须为 {\"plugins\": {...}}）——"
               "按空注册表继续", file=sys.stderr)
         return {"plugins": {}}
@@ -242,6 +242,8 @@ def plugin_module_dir(name: str, repo_root=None):
     root = _root(repo_root)
     builtin = root / "plugins" / name
     if builtin.is_dir():
+        if not builtin.resolve().is_relative_to((root / "plugins").resolve()):
+            return None, None  # A rejected builtin must not become an import anchor.
         return builtin, "builtin"
     for e in scan_external(repo_root):
         if (e["kind"] == "plugin" and e["name"] == name

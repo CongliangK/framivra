@@ -168,7 +168,7 @@ plugin 还声明 `extends.schema_keys: [{path, key}]` 与 `extends.hooks`。path
 
 ### 4.1 工作流包
 
-tech-talk 与 skill-demo 由 `skill.json` + `SKILL.md` 配对识别；manifest 含 name/version/uses_plugins/optional_plugins/docs/assets，SKILL.md 本体无 frontmatter，references/assets/scripts/templates 随包自包含。缺配对文件、坏 JSON、非对象 manifest 或错误 uses 声明均失败；uses 按**产线用法**而非最小依赖填写，具体值只由各 skill.json 维护。
+tech-talk 与 skill-demo 由 `skill.json` + `SKILL.md` 配对识别；manifest 含 name/version/uses_plugins/optional_plugins/docs/assets，`SKILL.md` 是工作流正文；发现检查不要求有无 frontmatter（tech-talk 含元数据，skill-demo 无），references/assets/scripts/templates 随包自包含。缺配对文件、坏 JSON、非对象 manifest 或错误 uses 声明均失败；uses 按**产线用法**而非最小依赖填写，具体值只由各 skill.json 维护。
 
 通用 title-card/lower-third 属内核资产；voice-ime 七件 gfx、gfx-examples 与 `_tokens.md` 属 tech-talk。禁深蓝/蓝紫渐变与暖色基线是该工作流约束，不强加通用 gfx；matting 全流程归组件文档，创作路由见 [Skill](skill/SKILL.md)。
 

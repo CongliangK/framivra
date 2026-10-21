@@ -1,11 +1,15 @@
-"""aroll CLI 参数面单测（A4 缺陷1）。
+"""aroll CLI 参数、序列化输入与 float32 WAV 提取/裁剪回归。
 
 - aup3_extract.py / trim_takes.py --help：退出码 0、有 usage、有中文描述；
 - 假 .aup3（非 SQLite）/ 文件不存在：报错干净（无 traceback）、退出非零。
+- 44100/48000Hz WAV 保持采样率、气口秒数与合法格式；畸形输入不写产物。
 
 运行：cd apps/aroll && env python3 -m unittest discover -s tests -t .
-（仅用标准库 + 子进程 list 形式传参，无 shell 注入面。）
+（标准库 + numpy；CLI 子进程用 list 传参，WAV 用小型临时数组，无模型或 FFmpeg。）
 """
+import contextlib
+import io
+import json
 import sqlite3
 import struct
 import subprocess
@@ -17,6 +21,8 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_DIR))
 import aup3_extract
+import trim_takes
+from wav_float32 import read_wav_float32
 
 
 def run_cli(args):
@@ -47,6 +53,72 @@ class TrimTakesHelpTests(unittest.TestCase):
         self.assertIn("usage:", r.stdout)
         self.assertIn("src_dir", r.stdout)     # 位置参数顺序不变
         self.assertIn("掐头去尾", r.stdout)     # 中文描述
+
+
+class FloatWavPipelineTests(unittest.TestCase):
+    def _trim(self, root, samples, rate):
+        source, output = root / "source", root / "output"
+        source.mkdir()
+        aup3_extract.write_wav_float32(source / "track01_voice.wav", samples, rate)
+        with contextlib.redirect_stdout(io.StringIO()):
+            trim_takes.main(source, output)
+        return (output / "take01_voice.wav").read_bytes(), json.loads(
+            (output / "takes_index.json").read_text())[0]
+
+    def test_extracted_wav_keeps_44100_and_48000_rates(self):
+        np = trim_takes.np
+        for rate in (44100, 48000):
+            with self.subTest(rate=rate), tempfile.TemporaryDirectory() as directory:
+                samples = (.2 * np.sin(2 * np.pi * 1000 * np.arange(rate) / rate)).astype("<f4")
+                raw, index = self._trim(Path(directory), samples, rate)
+                # Independent header/duration oracle, not the shared reader.
+                self.assertEqual(struct.unpack_from("<I", raw, 24)[0], rate)
+                self.assertEqual(struct.unpack_from("<I", raw, 40)[0], rate * 4)
+                self.assertEqual(raw[44:], samples.tobytes())
+                self.assertEqual(index["orig_s"], 1.0)
+                self.assertEqual(index["new_s"], 1.0)
+
+    def test_padding_remains_in_seconds_at_48000(self):
+        np, rate = trim_takes.np, 48000
+        samples = np.zeros(rate, dtype="<f4")
+        samples[19200:28800] = .2 * np.sin(2 * np.pi * 1000 * np.arange(9600) / rate)
+        with tempfile.TemporaryDirectory() as directory:
+            raw, index = self._trim(Path(directory), samples, rate)
+        # Speech [0.4,0.6]s plus 150/250ms pad, allowing frame/RMS quantization.
+        self.assertAlmostEqual(index["head_cut_s"], .25, delta=.04)
+        self.assertAlmostEqual(index["tail_cut_s"], .15, delta=.04)
+        self.assertEqual(struct.unpack_from("<I", raw, 24)[0], rate)
+        self.assertEqual(index["new_samples"], (len(raw) - 44) // 4)
+        self.assertAlmostEqual(index["new_s"], index["new_samples"] / rate, places=3)
+
+    def test_malformed_or_unsupported_wav_is_rejected_before_output(self):
+        np = trim_takes.np
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "canonical.wav"
+            aup3_extract.write_wav_float32(path, np.ones(4096, dtype="<f4"), 48000)
+            valid = path.read_bytes()
+            cases = {"short": valid[:40], "truncated": valid[:-4], "trailing": valid + b"\0"}
+            for name, offset, format_, value in (
+                    ("riff_size", 4, "I", len(valid)), ("fmt_size", 16, "I", 18),
+                    ("pcm", 20, "H", 1), ("stereo", 22, "H", 2),
+                    ("zero_rate", 24, "I", 0), ("byte_rate", 28, "I", 48000),
+                    ("alignment", 32, "H", 2), ("bits", 34, "H", 16),
+                    ("data_size", 40, "I", 3)):
+                raw = bytearray(valid)
+                struct.pack_into("<" + format_, raw, offset, value)
+                cases[name] = bytes(raw)
+            for name, raw in cases.items():
+                with self.subTest(name=name):
+                    source, output = root / name, root / (name + "-out")
+                    source.mkdir()
+                    invalid = source / "track01_voice.wav"
+                    invalid.write_bytes(raw)
+                    with self.assertRaises(ValueError):
+                        read_wav_float32(invalid)
+                    with self.assertRaises(ValueError):
+                        trim_takes.main(source, output)
+                    self.assertEqual(list(output.iterdir()), [])
 
 
 class Aup3BadInputTests(unittest.TestCase):

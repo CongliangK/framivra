@@ -26,8 +26,8 @@ tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合�
    工作流另参考 tech-talk / skill-demo，不走下列 app/plugin 注册）；目录名与 manifest `name` 一致
    （`^[a-z][a-z0-9-]*$`）。复制会创建目录，须先确认目标不存在。
 2. **写 manifest**：app → `app.json`；plugin → `plugin.json`（`extends.schema_keys`
-   声明扩展键，`hooks` 值域 = `prepare_source`/`audio_events`/`validate`；schema 见
-   ARCHITECTURE §2.3）。`health.type=command` 的命令必须是**组件根内相对路径**。
+   声明扩展键；`extends.hooks` 的当前值域与协议见
+   [ARCHITECTURE §2.3](../docs/ARCHITECTURE.md#23-manifest-schema-v1)）。`health.type=command` 的命令必须是**组件根内相对路径**。
 3. **外部注册**：编辑 `config.local.json`（gitignored，不入库；纯净 clone 通过 `env python3 vt.py init` 生成，会写本地配置；配置模板见
    `config.example.json` 的 `external_apps` / `external_plugins`）：
    ```json
@@ -57,8 +57,8 @@ tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合�
 `bash scripts/run_all_tests.sh`（批次四发现 `templates/*/tests`）；单目录独立跑：
 
 ```bash
-cd templates/hello-app    && env python3 -m unittest discover -s tests -t .
-cd templates/hello-plugin && env python3 -m unittest discover -s tests -t .
+(cd templates/hello-app && env python3 -m unittest discover -s tests -t .)
+(cd templates/hello-plugin && env python3 -m unittest discover -s tests -t .)
 ```
 
 skill-demo 无单测（`expected_check.sh` 即其验收：真渲染 + 帧数/QC/TP 断言）。
