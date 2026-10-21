@@ -362,11 +362,6 @@ def verify_dir_assets(resolved_dir, what, required=True):
             % (what, _SINGLE_WEIGHT_NAME, _INDEX_NAME))
 
 
-def verify_weight_links(resolved_dir, what, required=True):
-    """兼容别名（旧接入面）：委托目录级审计 verify_dir_assets。"""
-    return verify_dir_assets(resolved_dir, what, required=required)
-
-
 def verify_model_dir(path, what="asr.model_dir", check_weights=False):
     """模型目录独立性 + 链接关系校验，返回 resolve 路径。
     - resolve 追真身：symlink 指进 IME 即拒绝；

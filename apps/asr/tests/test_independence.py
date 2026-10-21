@@ -247,14 +247,14 @@ class TestPathInjection(AdversarialBase):
 
     def test_symlinked_aligner_weight_into_ime_rejected(self):
         # D3 aligner 变体：aligner 目录权重 symlink → IME（nlink=1），
-        # verify_weight_links(required=False) 同样拒绝
+        # verify_dir_assets(required=False) 同样拒绝
         ime_w = self.ime / "vendor/models/qwen3-asr/Qwen3-ASR-1.7B/model.safetensors"
         d = Path(self.tmp.name) / "own-aligner/fsmn-vad"
         d.mkdir(parents=True)
         (d / "model.safetensors").symlink_to(ime_w)
         resolved = independence.verify_model_dir(str(d), "aligner")
         with self.assertRaises(independence.AsrIndependenceError) as ctx:
-            independence.verify_weight_links(resolved, "aligner", required=False)
+            independence.verify_dir_assets(resolved, "aligner", required=False)
         self.assertIn("符号链接", str(ctx.exception))
         self.assert_ime_untouched()
 

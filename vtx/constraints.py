@@ -9,7 +9,7 @@ fps/分辨率约束曾三面各说各话（本单修复标的）：
   - infra.Ctx 构造时经 fps_error() 设硬门（ValueError，cli.py main 捕获打印）；
   - schema 为静态文件不做生成：project.fps 为 enum、width/height 为 const，
     取值是本模块 ALLOWED_FPS / ALLOWED_SIZES 的字面镜像（description 互指），
-    漂移由 tests/test_fps_constraints.py 解析比对守护，不一致即测试 FAIL；
+    漂移由 tests/media/test_fps_constraints.py 解析比对守护，不一致即测试 FAIL；
   - preview.html 内嵌 CONSTRAINTS 镜像（唯一允许的同步抄写点，同测试解析
     比对），validate() 据此判定 fps 与分辨率。
 
@@ -39,7 +39,7 @@ ALLOWED_SIZES = ((1920, 1080),)
 
 def fps_error(fps):
     """fps 判定：合法返回 None，非法返回错误消息（infra 硬门直接 raise 该
-    消息；tests/test_fps_constraints.py 三面边界矩阵以本函数为 infra 面判定）。
+    消息；tests/media/test_fps_constraints.py 三面边界矩阵以本函数为 infra 面判定）。
     bool 显式拒绝（bool 是 int 子类，True 若漏守将数值等值于 1）。
     """
     if isinstance(fps, bool) or not isinstance(fps, (int, float)):

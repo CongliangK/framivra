@@ -54,7 +54,7 @@ sans-serif 回退）、色彩空间（srgb）、视口尺寸、生效后端（GP
 半截 JSON。CLI：`python3 -m vtx.env_manifest collect|verify --help`。
 
 tests 经 _run_cmd / _read_text / _read_bytes / _list_x_servers 四个 seam 注入桩
-（tests/test_env_manifest.py 全密封离线，不起真 nvidia-smi/fc-list/git/chrome）。
+（tests/plugins/test_env_manifest.py 全密封离线，不起真 nvidia-smi/fc-list/git/chrome）。
 """
 from __future__ import annotations   # requires-python>=3.9：dict|None 注解需之
 

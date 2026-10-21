@@ -12,7 +12,7 @@ from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concu
 from .hygiene import budget_gate, manifest_record, seg_key
 from . import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
-from . import probe_cache, fstxn
+from . import fstxn
 from .recovery import media_cache_valid
 from .frame_source import png_source
 from . import frame_source, gfx_cli
@@ -304,7 +304,7 @@ class RenderPlan:
         # draft 缺 3 / r1 缺 8 且伴 [6180,6193) 近黑崩溃带 / r2 缺 6 / r3 垫帧扩版
         # 缺 10——垫帧参数无关，病灶在次输入流传输中段），当时归因调度竞态故强制 1。
         # 该竞态归因已于 2026-09-12 证伪过时：61 层 ±20 帧密集端点复现图（exp6d
-        # 形态，收编为 tests/test_filter_threads.py）threads=1 与 4 输出 MD5 逐位
+        # 形态，收编为 tests/media/test_filter_threads.py）threads=1 与 4 输出 MD5 逐位
         # 一致，且 4 快 1.9×（26.17s vs 13.54s）。默认暂不放开 4（bench_p2 全链
         # A/B，2026-09-12）：真实项目前 3 段存在与线程数无关的跨运行非确定性
         # （同 argv 复渲 4 次 4 个 md5，与 v3.6「病灶非确定性、与线程数无关」记载

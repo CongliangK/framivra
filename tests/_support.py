@@ -56,3 +56,22 @@ def _make_plugin_dir(root: Path, name="demo", **over):
     m.update(over)
     (d / "plugin.json").write_text(json.dumps(m), encoding="utf-8")
     return d, m
+
+
+def small_timeline(root: Path) -> Path:
+    """最小合法 timeline（无源无轨——Ctx 构造不触 ffmpeg；对齐 test_cache_state 形态）。"""
+    tl = {"project": {"fps": 30, "duration_frames": 90, "width": 640, "height": 360},
+          "sources": [], "video_tracks": [], "subtitles": [], "audio_tracks": []}
+    p = root / "timeline.json"
+    p.write_text(json.dumps(tl), encoding="utf-8")
+    return p
+
+
+def full_hd_timeline(root: Path, **over):
+    tl = {"version": 2,
+          "project": {"fps": 30, "duration_frames": 180, "width": 1920, "height": 1080},
+          "sources": [], "video_tracks": [], "subtitles": [], "audio_tracks": []}
+    tl.update(over)
+    p = root / "timeline.json"
+    p.write_text(json.dumps(tl), encoding="utf-8")
+    return p

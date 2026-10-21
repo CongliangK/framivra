@@ -145,7 +145,7 @@ class Ctx:
         # fps 契约前置校验（B02/issue #26 / F-04 / #4 三面统一，2026-10-13）：
         # 允许值单一来源 constraints.ALLOWED_FPS——D24 换基后全管线固定 30fps
         # （≠29.97；24/25/50/60 及 NTSC 非整数帧率一律拒绝），schema/preview 同源
-        # 判定，tests/test_fps_constraints.py 守护三面一致。旧门收「可整除 48000 的
+        # 判定，tests/media/test_fps_constraints.py 守护三面一致。旧门收「可整除 48000 的
         # 任意正整数」（24/25/50/60 全放行）与 schema const 30 漂移，即本单标的。
         # 数值等值的 30.0 归一为 int 30（JSON Schema const 数学等值语义，三面同判）。
         _fps_err = fps_error(self.fps)
@@ -479,7 +479,7 @@ def io_workers() -> int:
 # v3.6 时代（2026-09-08）强制 1 的依据——「多线程 filtergraph 下 framesync 窗口
 # 边界密集带调度竞态致主链丢帧」——已被 61 层 ±20 帧密集端点复现图证伪
 # （2026-09-11/12 两轮：threads=1 与 4 输出 MD5 逐位一致，4 快 1.9×，实验收编于
-# tests/test_filter_threads.py）。但 bench_p2 全链 A/B（2026-09-12 阶段1 验收）后
+# tests/media/test_filter_threads.py）。但 bench_p2 全链 A/B（2026-09-12 阶段1 验收）后
 # 默认仍保持 1，两条实测依据：①真实项目（voice-ime 16746f/69 层）前 3 段——恰为
 # 输入路数最多的 15/11/13 路——存在与线程数无关的跨运行输出非确定性（同 argv
 # 隔离复渲 4 次 4 个 md5；seg03-07 五段 t1/t4/基线逐字节全等），逐字节等价门不可

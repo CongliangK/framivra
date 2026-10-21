@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tests.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation, check_gc_contract
+from tests.runners.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation, check_gc_contract
 from vtx.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
@@ -153,7 +153,7 @@ class AcceptanceContracts(unittest.TestCase):
     def test_worker_observes_real_policy_response_and_ack_with_mock_transport(self):
         from vtx import cli, gfx_render
         from vtx.gfx_dependencies import RequestPolicy
-        from tests.run_gfx_dependency_acceptance import worker
+        from tests.runners.run_gfx_dependency_acceptance import worker
         record=resolve(self.c,self.tl['video_tracks'][0]['clips'][0])
         for injection in (None, 'local', 'external'):
             with self.subTest(injection=injection):
@@ -181,7 +181,7 @@ class AcceptanceContracts(unittest.TestCase):
                 trace=self.root/('trace-'+str(injection)+'.json')
                 with patch.object(gfx_render.WSConn,'send_text',send), \
                         patch.object(gfx_render.WSConn,'recv_msg',receive), \
-                        patch('tests.run_gfx_dependency_acceptance.prepare_font_observation', return_value={}), \
+                        patch('tests.runners.run_gfx_dependency_acceptance.prepare_font_observation', return_value={}), \
                         patch.object(cli,'main',side_effect=invoke):
                     if injection:
                         with self.assertRaises(DependencyError):
@@ -205,7 +205,7 @@ class AcceptanceContracts(unittest.TestCase):
         from contextlib import nullcontext
         from vtx import cli,gfx_render
         from vtx.gfx_dependencies import RequestPolicy
-        from tests.run_gfx_dependency_acceptance import worker
+        from tests.runners.run_gfx_dependency_acceptance import worker
         record=resolve(self.c,self.tl['video_tracks'][0]['clips'][0])
         for injection in ('local','external'):
             for regression in ('disabled','swallowed'):
@@ -228,7 +228,7 @@ class AcceptanceContracts(unittest.TestCase):
                     with patch.object(gfx_render.WSConn,'send_text',send), \
                             patch.object(gfx_render.WSConn,'recv_msg',recv), \
                             (patch.object(RequestPolicy,'check',return_value=None) if regression=='disabled' else nullcontext()), \
-                            patch('tests.run_gfx_dependency_acceptance.prepare_font_observation', return_value={}), \
+                            patch('tests.runners.run_gfx_dependency_acceptance.prepare_font_observation', return_value={}), \
                         patch.object(cli,'main',side_effect=invoke):
                         if regression=='disabled':
                             with self.assertRaisesRegex(AssertionError,'was not rejected'):
@@ -263,7 +263,7 @@ class AcceptanceContracts(unittest.TestCase):
         with self.assertRaises(AssertionError):check_static_failure(row,'undeclared dependency')
 
     def native_fixture(self,failed=False):
-        from tests.test_execution_events import Buffer
+        from tests.execution.test_execution_events import Buffer
         from vtx import events
         stream=Buffer(); execution=events.ExecutionContext(stream)
         receipt={'stages':{},'timeline':hashlib.sha256(self.c.tl_path.read_bytes()).hexdigest()}
@@ -322,7 +322,7 @@ class AcceptanceContracts(unittest.TestCase):
         with self.assertRaises(AssertionError):validate()
 
     def test_real_cli_static_failure_and_validate_success_require_native_evidence(self):
-        from tests.run_gfx_dependency_acceptance import worker
+        from tests.runners.run_gfx_dependency_acceptance import worker
         from vtx import gfx_render
         trace_path=self.root/'actual-cli.json'
         with patch.object(gfx_render.Browser,'start',side_effect=AssertionError('unexpected browser')) as browser:
@@ -343,7 +343,7 @@ class AcceptanceContracts(unittest.TestCase):
             browser.assert_not_called()
 
     def test_real_cli_runtime_failure_wrap_keeps_attempt_cause_and_failed_receipt(self):
-        from tests.run_gfx_dependency_acceptance import worker
+        from tests.runners.run_gfx_dependency_acceptance import worker
         from vtx import cli,gfx_render
         from vtx.gfx_dependencies import RequestPolicy
         def reject(*args,**kwargs):
@@ -364,7 +364,7 @@ class AcceptanceContracts(unittest.TestCase):
             receipt=receipt,failed=True,runtime=True)
 
     def test_business_success_with_missing_native_sink_is_insufficient(self):
-        from tests.run_gfx_dependency_acceptance import worker
+        from tests.runners.run_gfx_dependency_acceptance import worker
         from vtx import events
         trace_path=self.root/'sink-failed.json'
         with patch.object(events,'open_sink',side_effect=OSError('controlled sink unavailable')):
@@ -490,7 +490,7 @@ class AcceptanceContracts(unittest.TestCase):
 
     def test_worker_prepares_owned_tab_before_fetch_and_never_reenables(self):
         from vtx import cli, gfx_render
-        from tests.run_gfx_dependency_acceptance import worker
+        from tests.runners.run_gfx_dependency_acceptance import worker
         sent = []
         def init(ws, *args, **kwargs): ws.queue = []
         def send(ws, data):
@@ -522,7 +522,7 @@ class AcceptanceContracts(unittest.TestCase):
                          [dict(target_id='owned',frame_id='owned',url='about:blank')])
 
     def test_gc_contract_distinguishes_current_keys_and_disposable_vseg(self):
-        from tests.impact_inventory import observe
+        from tests.runners.impact_inventory import observe
         from vtx.hygiene import gfx_dir, gc_plan
         from vtx import cli
         import os
@@ -577,7 +577,7 @@ class AcceptanceContracts(unittest.TestCase):
         for tool in ('ffmpeg', 'ffprobe'):
             self.assertLess(workflow.index(install), workflow.index('command -v ' + tool))
             self.assertIn(tool + ' -version', workflow)
-        harness = (root/'tests/run_gfx_dependency_acceptance.py').read_text()
+        harness = (root/'tests/runners/run_gfx_dependency_acceptance.py').read_text()
         self.assertIn("for tool in ('ffmpeg', 'ffprobe'):", harness)
         self.assertIn("run([tool, '-version'], tool + '-version', limit=10)", harness)
         self.assertEqual(MAX_EVIDENCE,20*1024*1024)

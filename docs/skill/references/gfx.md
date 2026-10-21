@@ -48,7 +48,7 @@ document.body.style.opacity = 1 - clamp01(seg(t, N/FPS - 0.4, N/FPS)); // 结尾
 
 此页上文的 DOM/SVG/Canvas 指浏览器同页场景树。已有离散 SVG 帧素材时可显式使用独立的 `svg-sequence` 路由：gfx clip 的 `format` 设为 `"svg-sequence"`，`src` 指向项目根相对的 `framivra-svg-sequence/v1` manifest；其 `frame_count` 与 clip 的 `dur` 相等，帧号是 clip 局部帧。结构字段见 [timeline schema](../../../vtx/timeline.schema.json)，受支持的静态元素、路径/字体及缓存约束以 [SVG 实现](../../../vtx/gfx_svg.py) 为准。生成器只记录、不执行；不把任意 SVG 或 HTML 内嵌 SVG 当作此路线已支持。
 
-运行时身份实现支持 Linux ELF 与 macOS arm64，Windows 不支持；具体工具、应用分发与声明字体要求见 [实际依赖与字体](../../../templates/demo-timeline-svg/README.md#实际依赖与字体)。代码支持不等于对应平台或作品已验收。不支持同一时间线混用 HTML/SVG gfx，也不接受 HTML strict 依赖策略；它不是浏览器失败时的自动回退。显式真实两帧检查见 [Inkscape smoke](../../../tests/run_svg_inkscape_smoke.py)，会写指定证据目录，缺工具/字体报错；该检查不代替完整音视频链和人工视听验收。
+运行时身份实现支持 Linux ELF 与 macOS arm64，Windows 不支持；具体工具、应用分发与声明字体要求见 [实际依赖与字体](../../../templates/demo-timeline-svg/README.md#实际依赖与字体)。代码支持不等于对应平台或作品已验收。不支持同一时间线混用 HTML/SVG gfx，也不接受 HTML strict 依赖策略；它不是浏览器失败时的自动回退。显式真实两帧检查见 [Inkscape smoke](../../../tests/runners/run_svg_inkscape_smoke.py)，会写指定证据目录，缺工具/字体报错；该检查不代替完整音视频链和人工视听验收。
 
 ## 独立预览与自查
 

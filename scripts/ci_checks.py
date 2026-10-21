@@ -21,24 +21,24 @@ ROOT = Path(__file__).resolve().parents[1]
 MEDIA_TESTS = {
     'ffmpeg': (
         'tests.qc.test_qc_probe_ownership.ProbeOwnership.test_real_ffmpeg_parallel_raw_outputs',
-        'tests.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
+        'tests.acceptance.test_acceptance.AcceptanceTests.test_actual_ffreport_does_not_write_outside_package',
         'tests.qc.test_agent_diagnostics_qc.TestQCDiagnosticsCPU',
         'tests.qc.test_qc_sampling.SamplingMediaContract',
         'tests.diagnostics.test_agent_diagnostics_loading.Loading.test_invalid_media_probe_is_structured',
         'tests.diagnostics.test_agent_diagnostics_repair.FixtureRepair.test_seven_rule_repair_reaches_actual_validate_green',
-        'tests.test_filter_threads',
-        'tests.test_composite_determinism',
+        'tests.media.test_filter_threads',
+        'tests.media.test_composite_determinism',
         'tests.gfx.test_frame_source',
-        'tests.test_post_loudness',
-        'tests.test_mux_history',
-        'tests.test_audio_report.TestEndToEndSynthetic',
-        'tests.test_audio_report.TestMeasurePrimitives',
-        'tests.test_audio_duration_ffmpeg.RealAudioDurationTest',
-        'tests.test_failure_recovery.RealFFmpegRecovery',
-        'tests.test_pipeline.TestReceiptConcurrentLock',
-        'tests.test_pipeline.TestUntilFlag',
-        'tests.test_pluginlib.ThreeBranchCli',
-        'tests.test_subtitles_src.CliEndToEnd',
+        'tests.media.test_post_loudness',
+        'tests.media.test_mux_history',
+        'tests.media.test_audio_report.TestEndToEndSynthetic',
+        'tests.media.test_audio_report.TestMeasurePrimitives',
+        'tests.media.test_audio_duration_ffmpeg.RealAudioDurationTest',
+        'tests.execution.test_failure_recovery.RealFFmpegRecovery',
+        'tests.execution.test_pipeline.TestReceiptConcurrentLock',
+        'tests.execution.test_pipeline.TestUntilFlag',
+        'tests.plugins.test_pluginlib.ThreeBranchCli',
+        'tests.media.test_subtitles_src.CliEndToEnd',
         'apps.blender-bridge.tests.test_audio_audit.AudioAuditIntegration',
         'apps.blender-bridge.tests.test_subs_alpha.HappyPath',
         'apps.gates.tests.test_qc_gates_opt.TestG1BatchEquivalence',
@@ -47,17 +47,17 @@ MEDIA_TESTS = {
         'apps.gates.tests.test_qc_gates_opt.TestG7BlackSensitivity',
         'plugins.blender-bridge.tests.test_blender_bridge_plugin.'
         'SubsAlphaProbe.test_real_ffprobe_rejects_truncated_garbage',
-        'tests.test_range_render.TestRangeIntegration',
-        'tests.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
-        'tests.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
+        'tests.media.test_range_render.TestRangeIntegration',
+        'tests.media.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
+        'tests.cache.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
         'tests.gfx.test_graphics_portability.SubtitleIntegration',
     ),
     'chrome': (
         'tests.gfx.test_graphics_portability.BrowserIntegration',
         'tests.gfx.test_graphics_portability.NavfreeSpanIntegration',
-        'tests.test_pipeline.TestPipelineIntegration',
+        'tests.execution.test_pipeline.TestPipelineIntegration',
         'tests.gfx.test_gfx_cache_integrity.RealBrowserIntegrity',
-        'tests.test_failure_recovery.RealChromeRecovery',
+        'tests.execution.test_failure_recovery.RealChromeRecovery',
         'tests.gfx.test_frame_canary.TestChromeCanary',
     ),
     # Frozen-toolchain batch (#177): RealGenerationTests bind the frozen demo
@@ -67,7 +67,7 @@ MEDIA_TESTS = {
     # class cannot silently disappear, and runs zero-skip via gate
     # 'demo-toolchain' in developer/cloud frozen-toolchain environments.
     'demo-toolchain': (
-        'tests.test_demo_fixture.RealGenerationTests',
+        'tests.contracts.test_demo_fixture.RealGenerationTests',
     ),
 }
 
@@ -75,18 +75,18 @@ MEDIA_TESTS = {
 # The original heavy pair stays in group 1; group 2 holds modules whose current
 # environment-identity work dominates the former remainder. New modules use 3.
 FFMPEG_GROUP_ONE_MODULES = (
-    'tests.test_subtitle_frame_boundaries',
-    'tests.test_filter_threads',
+    'tests.media.test_subtitle_frame_boundaries',
+    'tests.media.test_filter_threads',
 )
 FFMPEG_GROUP_TWO_MODULES = (
     'tests.gfx.test_frame_source',
     'tests.diagnostics.test_agent_diagnostics_repair',
-    'tests.test_audio_report',
+    'tests.media.test_audio_report',
 )
 
 # Hosted timings put the cold/warm pipeline at ~210s and the rest at ~65s.
 # Keep every selected class/method of a module together; new modules use 2.
-CHROME_GROUP_ONE_MODULES = ('tests.test_pipeline',)
+CHROME_GROUP_ONE_MODULES = ('tests.execution.test_pipeline',)
 
 
 def chrome_group(group):

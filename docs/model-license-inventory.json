@@ -1134,7 +1134,7 @@
     },
     "gfx-environment-evidence": {
       "kind": "data",
-      "source": "tests/run_gfx_environment_acceptance.py",
+      "source": "tests/runners/run_gfx_environment_acceptance.py",
       "license_status": "DECLARED",
       "license_identifier": "MIT",
       "default_payload": true,

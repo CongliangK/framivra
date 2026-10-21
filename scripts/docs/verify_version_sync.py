@@ -12,7 +12,7 @@
   ④ importlib.metadata 的已安装发行包版本(framivra,名字取 pyproject
      [project].name 行):已安装 → 须与三源同值,不等 exit 1;未安装 → 打印
      skip 行,不判败(开发机常态不装;真正 venv+wheel 安装冒烟=C03 工单,
-     版本源逻辑与布局冒烟=tests/test_version_sources.py)。
+     版本源逻辑与布局冒烟=tests/distribution/test_version_sources.py)。
   ④ 的查询名双源同步判(B01 红队对抗补):③ 运行时同时打印 vtx._DIST_NAME
      (vtx/__init__.py 内置常量,wheel 布局的权威回退名),与 pyproject name 行
      不等 → exit 1——堵「篡改 name 行换 ④ 查询名 → 已装陈旧 dist 被静默 skip」
@@ -131,7 +131,7 @@ def main():
     version_meta = _metadata_version(dist_name)
     if version_meta is None:
         print("L6 version sync: importlib.metadata(%s) not installed — skipped "
-              "(wheel-install smoke deferred to C03; layout smoke=tests/test_version_sources.py)"
+              "(wheel-install smoke deferred to C03; layout smoke=tests/distribution/test_version_sources.py)"
               % dist_name)
         sys.exit(0)
     if version_meta != version_ok:

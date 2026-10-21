@@ -64,7 +64,7 @@ class ChromeInstallerTelemetry(unittest.TestCase):
     def test_e2e_failure_diagnostics_survive_cp1252_parent(self):
         import subprocess
         import sys
-        script = Path(__file__).resolve().parents[1] / 'run_e2e.py'
+        script = Path(__file__).resolve().parents[1] / 'runners' / 'run_e2e.py'
         output = self.root / 'e2e-output'
         code = '''import runpy,sys,subprocess
 from unittest.mock import patch

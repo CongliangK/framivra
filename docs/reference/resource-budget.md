@@ -1,6 +1,6 @@
 # 资源预算接口
 
-本专题归属 docs 层，覆盖 [Issue #44](https://github.com/CongliangK/framivra/issues/44) 的协作式资源记账。实现与 Python API 在 [vtx/resource_budget.py](../../vtx/resource_budget.py)，验收在 [tests/test_resource_budget.py](../../tests/test_resource_budget.py)。
+本专题归属 docs 层，覆盖 [Issue #44](https://github.com/CongliangK/framivra/issues/44) 的协作式资源记账。实现与 Python API 在 [vtx/resource_budget.py](../../vtx/resource_budget.py)，验收在 [tests/execution/test_resource_budget.py](../../tests/execution/test_resource_budget.py)。
 
 ## 能力与边界
 
@@ -75,14 +75,14 @@ snapshot 返回独立的 limits、used、available、active_leases、reclaimed_l
 以下测试只使用临时目录、CPU 线程/进程与模拟显存 token，不启动 GPU 程序、不改变 OS 设置。测试子进程只在自身测试范围内退出或被终止。
 
 ```bash
-env python3 -m unittest tests.test_resource_budget -v
+env python3 -m unittest tests.execution.test_resource_budget -v
 ```
 
 上述测试命令会写临时目录，属于显式测试写操作。该 unittest 模块命令不在当前 docs_smoke 的仓路径匹配面，必须实际运行；文档门通过不代表测试已执行，更不代表真实 GPU 或全平台验收。独立测试覆盖多进程/线程竞争、四维原子性、超额/资源缺失、取消/超时、锁等待、异常退出/僵尸/PID 复用、坏状态和失败写入。全仓回归与独立评审仍是合入前提。
 
 ### 保留跨项目验收证据
 
-自包含 fixture 为 [tests/runners/resource_budget_fixture.py](../../tests/runners/resource_budget_fixture.py)，回归为 [tests/test_resource_budget_fixture.py](../../tests/test_resource_budget_fixture.py)。在 checkout 根目录先查看零写态帮助：
+自包含 fixture 为 [tests/runners/resource_budget_fixture.py](../../tests/runners/resource_budget_fixture.py)，回归为 [tests/execution/test_resource_budget_fixture.py](../../tests/execution/test_resource_budget_fixture.py)。在 checkout 根目录先查看零写态帮助：
 
 ```bash
 env python3 -B tests/runners/resource_budget_fixture.py --help

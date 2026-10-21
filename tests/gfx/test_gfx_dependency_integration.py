@@ -107,7 +107,7 @@ class IntegratedDependencyOperations(unittest.TestCase):
     def test_strict_cdp_failure_preserves_failed_attempt_task_and_original_exception(self):
         from vtx import cli, events, gfx_cli, gfx_render
         from vtx.infra import Ctx
-        from tests.test_execution_events import Buffer
+        from tests.execution.test_execution_events import Buffer
         self.write('page.html', '<p>plain</p>')
         self.tl.update(version=2, subtitles=[], audio_tracks=[])
         self.tl['project'].update(fps=30, width=64, height=64, duration_frames=2,

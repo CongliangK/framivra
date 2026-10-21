@@ -19,10 +19,10 @@
 
 ## 复现与证据
 
-诊断探针 [tests/probe_color_encoding.py](../../tests/probe_color_encoding.py) 默认不参加测试套件，要求四档真实可用；失败即报错，不用 CPU 代替 NVENC。它在启动命令前及返回后持久记录 argv、状态、返回码和 stderr，并在退出时保存部分结果。工具缺失记录 launch_failed 与异常，返回码为空；命令非零或解析异常保留失败状态并非零退出。ffprobe 流/格式信息、SPS trace、解码摘要及 mux 对比随完成阶段保存。completed 只表示采集命令完成，矩阵与 mux 是否符合要求仍须读取结果判断。只运行帮助为零写态：
+诊断探针 [tests/runners/probe_color_encoding.py](../../tests/runners/probe_color_encoding.py) 默认不参加测试套件，要求四档真实可用；失败即报错，不用 CPU 代替 NVENC。它在启动命令前及返回后持久记录 argv、状态、返回码和 stderr，并在退出时保存部分结果。工具缺失记录 launch_failed 与异常，返回码为空；命令非零或解析异常保留失败状态并非零退出。ffprobe 流/格式信息、SPS trace、解码摘要及 mux 对比随完成阶段保存。completed 只表示采集命令完成，矩阵与 mux 是否符合要求仍须读取结果判断。只运行帮助为零写态：
 
 ```bash
-python3 tests/probe_color_encoding.py --help
+python3 tests/runners/probe_color_encoding.py --help
 ```
 
 实际运行 **有写入**：使用帮助中的 `--output` 参数指定一个不存在的临时目录；只写该目录的合成素材和测量结果。

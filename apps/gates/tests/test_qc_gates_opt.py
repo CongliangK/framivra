@@ -10,7 +10,7 @@
   ③ G10 计数口径等值：同一合成 h264 mp4 的 -count_packets 与 -count_frames
      帧数相等（默认口径切换的等价性前提）；
   ④ qc 命中段免检（合成项目实跑 vtx prepare→video→audio→mux→qc，构造参考
-     tests/test_pipeline.py）：
+     tests/execution/test_pipeline.py）：
      a) 首轮全过→记录生成；第二轮 qc 检查项数/顺序不变、4 项像素探测免检；
      b) 改写一个 vseg 段文件（同名字不同内容，stat 失配）→ 该段探测项实测、
         其他段项仍免检；
@@ -214,7 +214,7 @@ def _run_vtx(tl: Path, *args, extra_env=None):
 @unittest.skipUnless(shutil.which("ffmpeg"), "qc 免检集成需要 ffmpeg（真实渲染合成项目）")
 class TestQcSegmentExemption(unittest.TestCase):
     """合成项目（180 帧，两源两 clip 底轨 + 后半段 pip 窗口 + 字幕 + voice 轨——
-    qc 可全过形态，构造对齐 tests/test_pipeline.py；pip 放 130-160 使 2 段切点
+    qc 可全过形态，构造对齐 tests/execution/test_pipeline.py；pip 放 130-160 使 2 段切点
     落在 ~69 帧的静默带）实跑全链，再按序验证免检四性质。方法名 01-04 强制执行
     顺序（unittest 按名排序，状态跨用例递进）。"""
 

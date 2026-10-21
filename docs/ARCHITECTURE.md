@@ -369,7 +369,7 @@ tech-talk 与 skill-demo 由现有 `skill.json` / `SKILL.md` 识别并检查；�
 
 ### 5.1 vt.py（统一入口，吸收 init.py）
 
-`vt.py init` 承载依赖自检，`init.py` 保留参数/退出码透传。doctor 按 manifest 的 health 类型检查组件；command 探针走子进程，禁止跨目录 import 或 spec 加载〔对抗审查 P0 复审 P1-2〕。子进程用 `shutil.which` / `env python3` 定位解释器，**禁 `sys.executable`**（AppImage argv[0] 劫持的历史裁决）。
+`vt.py init` 是仓级依赖自检与初始化的唯一入口。doctor 按 manifest 的 health 类型检查组件；command 探针走子进程，禁止跨目录 import 或 spec 加载〔对抗审查 P0 复审 P1-2〕。子进程用 `shutil.which` / `env python3` 定位解释器，**禁 `sys.executable`**（AppImage argv[0] 劫持的历史裁决）。
 
 子命令：
 
@@ -425,7 +425,7 @@ tech-talk 与 skill-demo 由现有 `skill.json` / `SKILL.md` 识别并检查；�
 已完成的迁移不再作为逐组件任务清单。当前目录/manifest 在 [catalog](catalog.md)；当前命令归属见 §6.1。历史定位索引保留两项：
 
 - 原根部 asr/tts/imgen/matting/aroll/blender_bridge 分别归属 apps 同名目录（Blender 使用 kebab 名 blender-bridge）；根别名不提供。
-- 原映射第 16 项：`init.py` / `init.sh` 均转发 `vt.py init`，保留旧入口参数与退出码。
+- 原映射第 16 项的 `init.py` / `init.sh` 转发属于 v2 迁移历史；依 §6.1 当前决定，仓级初始化只使用 `vt.py init`，不提供根部旧转发壳。
 
 目录迁移与 .gitignore 改锚已落实于组件树、fixtures 反排除及仓根 .gitignore，不再要求按旧阶段重建链接或重做迁移提交。运行产物不入库、测试资产不可被忽略的纪律仍适用。
 
@@ -445,7 +445,7 @@ config.example.json / gitignored 的 config.local.json 留仓根。历史迁移�
 
 以下保留原九项验收职责；第 2/8 项是 v2 迁移当时的证据口径，不是新任务排期或当前机器的性能承诺。当前发行资格另见 [源码稳定基线](releases.md)，不得用旧报告代替本次实际验证。
 
-1. **全测试绿**：tests/ 全量通过（test_post_loudness.py 随 §1.2 改为直测内核函数，spec_from_file_location 加载脚本路径的旧加载方式〔代码现状 tests/test_post_loudness.py:7-9〕随薄壳重写）。
+1. **全测试绿**：tests/ 全量通过（test_post_loudness.py 随 §1.2 改为直测内核函数，spec_from_file_location 加载脚本路径的旧加载方式〔代码现状 tests/media/test_post_loudness.py:7-9〕随薄壳重写）。
 2. **影子基线归一化一致（两段口径）**〔对抗审查 P0 复审 P0-1/P1-4 裁定〕：**不变段**（validate / diff / subs 全部输出 + qc 除新增 TP 项外的全部 checks）——P1/P2/P3/P5 每次复验与首跑基线（r1）逐项一致；**重锚段**（audio --report 全部输出 + qc 含 TP 项）——因 §1.2/§1.3 响度终链合并属设计内变化，P1 落地后已在影子复跑产出**重锚基线 r2**（`plans-v2/baseline-r2/`，合法性实测：解码域 TP -3.1 ≤ -1.0 ✅、整片 I -15.6 ∈ **[-15.8, -14.0]**〔合法带按实证修正：v1 交付 -15.5/v2 实测 -15.6 的边界内容 + 0.1 级域差，原 [-15.5,-14] 不可满足，超出修正带即真回归〕、判级不劣于首跑已知项 ✅），此后 P2/P3/P5 对 r2 逐项一致（`compare.sh <新目录> ../baseline-r2`）。预期差异经 `known-diffs.conf` 白名单承载（r2 建立后已清空），**白名单外任何差异即 FAIL**。
 3. **命令入口**：当前入口可解析，实际参数/退出码合同保持；原迁移的兼容要求按 §6.1 版本边界解释；docs_smoke 的覆盖与盲区以 DOC-CHARTER §20/21 为准，不声称抽取全部引用。**外部三载体**（§6.3）须另行逐件核销。
 4. **关停测试**：apps+plugins 全禁 → 仅内核仍可出片（`all` 走通 + qc 含 TP 判定通过）——§0.1 判据的实测化。

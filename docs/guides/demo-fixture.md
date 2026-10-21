@@ -193,7 +193,7 @@ env python3 scripts/release/release_acceptance.py "v$(cat VERSION)" --candidate 
 
 ## 测试与门禁
 
-tests/test_demo_fixture.py 分两层，执行环境边界如下：
+tests/contracts/test_demo_fixture.py 分两层，执行环境边界如下：
 
 - **合同/反例单测（ContractTests）**：无需 ffmpeg，由
   `bash scripts/run_all_tests.sh` 的默认全量发现执行；普通 PR 精选集未收录本模块。

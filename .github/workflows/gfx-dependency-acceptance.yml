@@ -3,7 +3,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/gfx-dependency-acceptance.yml'
-      - 'tests/run_gfx_dependency_acceptance.py'
+      - 'tests/runners/run_gfx_dependency_acceptance.py'
       - 'tests/gfx/test_gfx_dependency_acceptance.py'
 permissions:
   contents: read
@@ -47,7 +47,7 @@ jobs:
           export VTX_CONFIG="$HOME/config.json"
           mkdir -p "$XDG_CONFIG_HOME"
           printf '{}\n' > "$VTX_CONFIG"
-          python tests/run_gfx_dependency_acceptance.py --output "$RUNNER_TEMP/issue47-dependencies"
+          python tests/runners/run_gfx_dependency_acceptance.py --output "$RUNNER_TEMP/issue47-dependencies"
       - name: Enforce artifact byte budget even on failure
         id: evidence_budget
         if: always()

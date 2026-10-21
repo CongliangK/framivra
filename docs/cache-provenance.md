@@ -132,8 +132,8 @@ plist 及 ByHost 文件内容摘要，不读取 Chrome profile/history，也不�
 不可读 cache、loader 覆盖均拒绝；不支持 Rosetta、Darwin CLI/Electron 或其他浏览器。
 首次收集读取实际文件；后续沿用 inode/size/mtime/ctime 哈希 memo，仍复核成员与
 元数据。CPU 合成测试不代表实机验收，输入绑定不证明跨平台像素一致。
-真实 CDP 缓存验收入口见 [Darwin 集成运行器](../tests/run_macos_cdp_acceptance.py)，
-全链音视频与字幕入口见 [端到端运行器](../tests/run_e2e.py)。其他平台继续拒绝。
+真实 CDP 缓存验收入口见 [Darwin 集成运行器](../tests/runners/run_macos_cdp_acceptance.py)，
+全链音视频与字幕入口见 [端到端运行器](../tests/runners/run_e2e.py)。其他平台继续拒绝。
 
 缺少环境字段的旧页不得补签成功，即使所有 PNG 都能解码。首次使用须重渲，
 旧目录保留供审计。中断续渲只允许本解析器生成且绑定当前页合同的
@@ -158,7 +158,7 @@ CDP 自动回落 CLI 的页明确失败，不发布完成凭证或成功回执�
 启动真实浏览器，参数和前置工具通过零写态帮助查看：
 
 ```bash
-env python3 tests/run_gfx_environment_acceptance.py --help
+env python3 tests/runners/run_gfx_environment_acceptance.py --help
 ```
 
 ## 阶段回执（PR#1）
@@ -212,9 +212,9 @@ namespace、完整帧摘要和成功 run 回执的完整页；缺失/损坏完�
 
 - `python -m unittest discover -s tests -v`：内容/时间戳/依赖/同名页面/回执失效
   测试，以及可选 Chrome/FFmpeg 集成用例（`VTX_TEST_CHROME` / `VTX_TEST_FFMPEG`）。
-- `python tests/run_cache_regression.py --repo <checkout> --output <new-dir> --ffmpeg <executable> --chrome <executable>`：初次渲染→同长素材替换且恢复时间戳→修改
+- `python tests/runners/run_cache_regression.py --repo <checkout> --output <new-dir> --ffmpeg <executable> --chrome <executable>`：初次渲染→同长素材替换且恢复时间戳→修改
   字幕/HTML→不清缓存重跑→独立冷启动对照。比较完整 180 帧的缩略 RGB 与解码 PCM。
-- `tests/run_e2e.py` 与 `tests/verify_e2e.py`：12 秒单段/并行全流程、严格 QC、
+- `tests/runners/run_e2e.py` 与 `tests/runners/verify_e2e.py`：12 秒单段/并行全流程、严格 QC、
   接缝和音频对照。
 
 Windows 实测旧候选版本暖/冷最大单帧平均差 100.64/255、音频不一致且旧成片字节

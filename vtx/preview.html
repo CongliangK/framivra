@@ -51,10 +51,6 @@
   .hbtn:hover{background:#fff;color:var(--navy)}
   #drop{font-size:11px;color:rgba(255,255,255,.62);white-space:nowrap}
 
-  /* v1 兼容通知条 */
-  #banner{background:var(--paper);border-bottom:1px solid var(--ink);color:var(--ink);font-size:12px;
-          padding:5px 14px;flex:0 0 auto}
-
   /* 校验问题面板 */
   #vpanel{display:none;max-height:200px;overflow:auto;background:var(--white);border-bottom:1px solid var(--ink);
           padding:8px 14px;flex:0 0 auto}
@@ -112,7 +108,7 @@
   .secline::after{content:"";flex:1;height:0;border-top:1px dashed var(--hairline)}
   .secline span{background:var(--white);padding:0 5px;white-space:nowrap}
 
-  /* 事件块（v1.1：纯色粗描边，块内禁一切渐变与纹理） */
+  /* 事件块（纯色粗描边，块内禁一切渐变与纹理） */
   .blk{position:absolute;top:6px;bottom:6px;border:2px solid var(--ink);border-radius:var(--r-blk);
        overflow:hidden;cursor:pointer;display:flex;align-items:center;padding:0 6px;font-size:11px;
        font-weight:500;white-space:nowrap;color:var(--ink)}
@@ -122,7 +118,7 @@
   .blk.sel{border:3px solid var(--ink);z-index:3}
   .gstar{position:absolute;left:2px;top:2px;width:16px;height:16px;color:var(--ink);opacity:.6;pointer-events:none}
   .blk.c-gfx{padding-left:24px}
-  /* 窄块去掉水平 padding：v1.1 的 2px 描边下 border-box 地板 = padding12+border4=16px，
+  /* 窄块去掉水平 padding：2px 描边下 border-box 地板 = padding12+border4=16px，
      指定宽 <16px 时归零 padding 才能按实际宽度渲染（维持 D6 裁定） */
   .blk.tiny{padding-left:0;padding-right:0}
 
@@ -194,7 +190,6 @@
     <span id="drop">或将 JSON 拖到页面</span>
   </div>
 </header>
-<div id="banner" hidden></div>
 <div id="vpanel"></div>
 <div id="main">
   <div id="tlwrap">
@@ -223,7 +218,7 @@
 
 <script>
 /* B02/issue #26 三面统一（2026-10-13）：fps/分辨率允许值单一来源=vtx/constraints.py，
-   下面一行是唯一同步抄写点（tests/test_fps_constraints.py 解析比对，漂移即 FAIL）；
+   下面一行是唯一同步抄写点（tests/media/test_fps_constraints.py 解析比对，漂移即 FAIL）；
    schema const / infra.Ctx fps 门 / 本页 validate() 三面据此同判。 */
 const CONSTRAINTS = {"fps":[30],"sizes":[[1920,1080]],"audio_sample_rate":48000};
 const SAMPLE = {"version":2,"project":{"fps":30,"width":1920,"height":1080,"duration_frames":720},"sources":[{"id":"v01","path":"assets/V01_01.mp4","transform":"crop_center_scale"},{"id":"v02","path":"assets/V01_02.mp4","transform":"crop_center_scale"},{"id":"v03","path":"assets/V01_03.mp4","transform":"crop_center_scale"},{"id":"v04","path":"assets/V02_01.mp4","transform":"crop_center_scale"},{"id":"v05","path":"assets/V02_02.mp4","transform":"crop_center_scale"},{"id":"v06","path":"assets/V03_01.mp4","transform":"crop_center_scale"},{"id":"v07","path":"assets/V03_02.mp4","transform":"crop_center_scale"},{"id":"v08","path":"assets/V04_01.mp4","transform":"crop_center_scale"}],"video_tracks":[{"name":"aroll","kind":"aroll","clips":[{"src":"v01","src_in":0,"src_out":96,"dst_in":0,"dur":96,"fade_in_frames":12},{"src":"v02","src_in":24,"src_out":108,"dst_in":96,"dur":84},{"src":"v03","src_in":0,"src_out":144,"dst_in":180,"dur":144,"fade_out_frames":12},{"src":"v04","src_in":12,"src_out":96,"dst_in":324,"dur":84},{"src":"v05","src_in":0,"src_out":120,"dst_in":408,"dur":120},{"src":"v06","src_in":0,"src_out":96,"dst_in":528,"dur":96,"fade_out_frames":12},{"src":"v01","src_in":24,"src_out":120,"dst_in":624,"dur":96}]},{"name":"pip","kind":"pip","clips":[{"src":"v07","src_in":0,"src_out":96,"dst_in":48,"dur":96,"scale":0.26,"x":1460,"y":90,"opacity":0.92,"fade_in_frames":12,"fade_out_frames":12}]},{"name":"gfx","kind":"gfx","clips":[{"src":"gfx/gfxA.html","dst_in":0,"dur":192},{"src":"gfx/gfxB.html","dst_in":240,"dur":192},{"src":"gfx/gfxC.html","dst_in":528,"dur":168}]}],"subtitles":[{"in":12,"out":88,"text":"示例字幕 01 · 帧对齐验证"},{"in":100,"out":172,"text":"示例字幕 02 · 硬切 @frame 96"},{"in":184,"out":260,"text":"示例字幕 03 · PiP 双视频轨"},{"in":330,"out":400,"text":"示例字幕 04 · 四轨混音窗口"},{"in":412,"out":500,"text":"示例字幕 05 · 图表动效层"},{"in":532,"out":610,"text":"示例字幕 06 · 下三分之一条"},{"in":628,"out":700,"text":"示例字幕 07 · 端板淡出"}],"audio_tracks":[{"name":"bed","events":[{"src":"v05","in":0,"out":720,"volume":0.22,"loop":true}]},{"name":"voice","events":[{"src":"v03","src_in":0,"in":60,"out":252,"volume":0.85,"fade_in_frames":12,"fade_out_frames":20},{"src":"v03","src_in":24,"in":360,"out":528,"volume":0.85,"fade_in_frames":12,"fade_out_frames":20}]},{"name":"sfx","events":[{"src":"v06","src_in":0,"in":96,"out":132,"volume":0.7},{"src":"v06","src_in":12,"in":240,"out":276,"volume":0.7},{"src":"v06","src_in":24,"in":432,"out":468,"volume":0.7},{"src":"v06","src_in":36,"in":528,"out":564,"volume":0.7},{"src":"v06","src_in":48,"in":648,"out":684,"volume":0.7}]},{"name":"amb","events":[{"src":"v08","src_in":0,"in":400,"out":500,"volume":0.3,"pan":-0.6,"fade_in_frames":24,"fade_out_frames":24},{"src":"v08","src_in":0,"in":530,"out":630,"volume":0.3,"pan":0.6,"fade_in_frames":24,"fade_out_frames":24}]}]};
@@ -254,28 +249,20 @@ const HINT=`<div class="empty">
 <p>校验为预览级快查，最终以 <code>vtx validate</code> 为准。</p>
 </div>`;
 
-/* ---------- 载入（兼容 v1：overlays 数组 → 合成 gfx 轨；role 忽略） ---------- */
-function normalize(tl){
-  if(tl.version!==2){
-    const tracks=(tl.video_tracks||[]).map(t=>({name:t.name,kind:t.role==="base"?"aroll":(t.kind||"pip"),clips:t.clips}));
-    if(tl.overlays?.length) tracks.push({name:"gfx(v1)","kind":"gfx",
-      clips:tl.overlays.map(o=>({src:o.src,dst_in:o.in,dur:o.out-o.in,x:o.x,y:o.y}))});
-    tl={...tl,version:2,video_tracks:tracks};
-  }
-  return tl;
-}
-function load(tl, banner){
-  TL=normalize(tl); $("detail").innerHTML=HINT;
-  $("banner").hidden=!banner; if(banner) $("banner").textContent=banner;
+/* ---------- 载入（仅当前 v2 契约，不转换旧时间线） ---------- */
+function load(tl){
+  if(!tl || typeof tl!=="object" || Array.isArray(tl) || tl.version!==2)
+    throw new Error("仅支持 version: 2 的时间线；旧版本或缺失版本不会自动转换，请使用当前 v2 工程。");
+  TL=tl; $("detail").innerHTML=HINT;
   render(); fit();
 }
-function loadText(txt, isSample){
-  try{ const tl=JSON.parse(txt); load(tl, isSample?null:(tl.version===2?null:"检测到 v1 契约，已按兼容模式展示（gfx 合成轨）")); }
-  catch(e){ alert("JSON 解析失败："+e.message); }
+function loadText(txt){
+  try{ load(JSON.parse(txt)); }
+  catch(e){ alert("时间线载入失败："+e.message); }
 }
 $("bOpen").onclick=()=>$("file").click();
 $("file").onchange=e=>{ const f=e.target.files[0]; if(!f)return; f.text().then(t=>loadText(t)); };
-$("bSample").onclick=()=>loadText(JSON.stringify(SAMPLE), true);
+$("bSample").onclick=()=>loadText(JSON.stringify(SAMPLE));
 $("bPaste").onclick=()=>$("dlg").showModal();
 $("bLoad").onclick=()=>{ $("dlg").close(); loadText($("paste").value); };
 $("bCancel").onclick=()=>$("dlg").close();
@@ -470,7 +457,7 @@ $("scroll").addEventListener("mousemove",e=>{
 });
 $("scroll").addEventListener("mouseleave",()=>{ const ph=$("playhead"); if(ph) ph.style.display="none"; $("timecur").textContent="—"; });
 
-loadText(JSON.stringify(SAMPLE), true);
+loadText(JSON.stringify(SAMPLE));
 </script>
 </body>
 </html>
