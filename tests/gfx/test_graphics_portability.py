@@ -21,6 +21,236 @@ from vtx import infra
 from vtx import cli as vtx
 
 
+class CDPDeadlineMock(unittest.TestCase):
+    """Owned clock/byte stream only: exercise the real Tab and WS frame loops."""
+
+    class Socket:
+        def __init__(self, clock, data, *, timeout=20, delays=(), send_delay=0, chunk=None):
+            self.clock, self.data = clock, bytearray(data)
+            self.timeout, self.delays = timeout, list(delays)
+            self.send_delay, self.chunk = send_delay, chunk
+            self.calls, self.sent, self.closed = [], [], 0
+            self.error = None
+
+        def gettimeout(self): return self.timeout
+        def settimeout(self, value): self.timeout = value
+        def close(self): self.closed += 1
+
+        def sendall(self, data):
+            self.calls.append(('send', self.timeout))
+            self.clock[0] += self.send_delay
+            if self.error and self.error[0] == 'send': raise self.error[1]
+            self.sent.append(data)
+
+        def recv(self, n):
+            self.calls.append(('recv', self.timeout))
+            self.clock[0] += self.delays.pop(0) if self.delays else 0
+            if self.error and self.error[0] == 'recv': raise self.error[1]
+            n = min(n, self.chunk) if self.chunk else n
+            data = bytes(self.data[:n]); del self.data[:n]
+            return data
+
+    def setUp(self):
+        self.clock = [0.0]
+        for patcher in (mock.patch.object(gfx.time, 'monotonic', lambda: self.clock[0]),
+                        mock.patch.object(gfx.os, 'urandom', lambda n: b'\0' * n)):
+            patcher.start(); self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def frame(message, op=0x81, length_bytes=0, masked=False):
+        data = json.dumps(message).encode() if isinstance(message, dict) else message
+        length_bytes = length_bytes or (2 if len(data) >= 126 else 0)
+        tag = (126 if length_bytes == 2 else 127) if length_bytes else len(data)
+        return (bytes([op, tag | (0x80 if masked else 0)])
+                + (len(data).to_bytes(length_bytes, 'big') if length_bytes else b'')
+                + (b'\0' * 4 if masked else b'') + data)
+
+    def tab(self, data=None, **kwargs):
+        self.clock[0] = 0
+        sock = self.Socket(self.clock, self.frame({'id': 1, 'result': {'ok': True}})
+                           if data is None else data, **kwargs)
+        ws = gfx.WSConn.__new__(gfx.WSConn); ws.sock = sock; ws._rbuf = bytearray()
+        tab = gfx.Tab.__new__(gfx.Tab)
+        tab.ws, tab._mid, tab.request_policy, tab._policy_commands = ws, 0, None, set()
+        return tab, sock
+
+    def assert_timeout(self, tab, sock, timeout=1):
+        previous = sock.timeout
+        with self.assertRaisesRegex(TimeoutError, 'CDP Runtime.evaluate timeout'):
+            tab.call('Runtime.evaluate', timeout=timeout)
+        self.assertEqual(sock.timeout, previous)
+        self.assertEqual(sock.closed, 1)
+        self.assertIsNone(tab.ws._deadline)
+
+    def test_matching_reply_before_at_and_after_deadline(self):
+        for delay in (.999, 1, 2):
+            with self.subTest(delay=delay):
+                tab, sock = self.tab(delays=[0, delay])
+                if delay < 1:
+                    self.assertEqual(tab.call('Runtime.evaluate', timeout=1), {'ok': True})
+                    self.assertEqual(sock.closed, 0)
+                    self.assertEqual(sock.timeout, 20)
+                    self.assertIsNone(tab.ws._deadline)
+                else:
+                    self.assert_timeout(tab, sock)
+        for timeout in (0, -1):
+            tab, sock = self.tab()
+            self.assert_timeout(tab, sock, timeout)
+            self.assertEqual(sock.calls, [])
+
+    def test_send_consumes_the_same_deadline(self):
+        tab, sock = self.tab(send_delay=1)
+        self.assert_timeout(tab, sock)
+        self.assertEqual([op for op, _ in sock.calls], ['send'])
+
+    def test_remaining_timeout_never_extends_socket_timeout_and_restores(self):
+        for previous in (None, 20, .05):
+            with self.subTest(previous=previous):
+                tab, sock = self.tab(timeout=previous, send_delay=.2, delays=[.2, .2])
+                self.assertEqual(tab.call('Runtime.evaluate', timeout=1), {'ok': True})
+                for (_, actual), remaining in zip(sock.calls, (1, .8, .6)):
+                    self.assertAlmostEqual(actual, remaining if previous is None else min(previous, remaining))
+                self.assertEqual(len(sock.calls), 3)
+                self.assertEqual(sock.timeout, previous)
+                self.assertIsNone(tab.ws._deadline)
+
+    def test_control_and_fragment_floods_cannot_refresh_deadline(self):
+        reply = self.frame({'id': 1, 'result': {'ok': True}})
+        for op in (0x89, 0x8a, 0x00):
+            with self.subTest(op=op):
+                data = ((self.frame(b'', 0x01) + self.frame(b'', op) * 20
+                         + self.frame(json.dumps({'id': 1, 'result': {'ok': True}}).encode(), 0x80))
+                        if op == 0 else self.frame(b'p', op) * 20 + reply)
+                tab, sock = self.tab(data, delays=[.1] * 100)
+                self.assert_timeout(tab, sock)
+                self.assertTrue(sock.data)
+                self.assertLess(len(sock.sent), 20)
+
+    def test_fragmentation_ping_mask_and_extended_lengths_preserve_success(self):
+        reply = json.dumps({'id': 1, 'result': {'ok': True, 'padding': 'x' * 130}}).encode()
+        for width in (2, 8):
+            data = (self.frame(reply[:12], 0x01) + self.frame(b'p', 0x89)
+                    + self.frame(b'p', 0x8a) + self.frame(reply[12:], 0x80, width, True))
+            tab, sock = self.tab(data, chunk=1, delays=[.001] * 300)
+            self.assertEqual(tab.call('Runtime.evaluate', timeout=1), {'ok': True, 'padding': 'x' * 130})
+            self.assertEqual(sock.sent[-1][0], 0x8a)
+            self.assertEqual(sock.closed, 0)
+            self.assertEqual(sock.timeout, 20)
+
+    def test_partial_header_extended_length_mask_and_body_are_bounded(self):
+        reply = self.frame({'id': 1, 'result': {'ok': True}}, length_bytes=8, masked=True)
+        for delays in ([1], [0, 1], [0, 0, 1], [0, 0, 0, 1]):
+            with self.subTest(delays=delays):
+                tab, sock = self.tab(reply, delays=delays)
+                self.assert_timeout(tab, sock)
+        tab, sock = self.tab(reply, chunk=1, delays=[.1] * 100)
+        self.assert_timeout(tab, sock)
+        self.assertTrue(sock.data)
+
+    def test_buffered_control_frames_and_delayed_recv_facade_are_bounded(self):
+        tab, sock = self.tab(b'')
+        tab.ws._rbuf = bytearray(self.frame(b'', 0x8a) * 100)
+        def ticking():
+            self.clock[0] += .1
+            return self.clock[0]
+        with mock.patch.object(gfx.time, 'monotonic', ticking):
+            self.assert_timeout(tab, sock)
+        self.assertFalse(any(op == 'recv' for op, _ in sock.calls))
+        tab, sock = self.tab()
+        def late_reply():
+            self.clock[0] = 2
+            return 1, json.dumps({'id': 1, 'result': {'ok': True}})
+        with mock.patch.object(tab.ws, 'recv_msg', late_reply):
+            self.assert_timeout(tab, sock)
+
+    def test_strict_ack_is_drained_and_errors_still_propagate(self):
+        event = {'method': 'Fetch.requestPaused', 'params': {'requestId': 'owned'}}
+        response = {'id': 1, 'result': {'ok': True}}
+        for outcome in ('success', 'error', 'timeout'):
+            with self.subTest(outcome=outcome):
+                ack = {'id': 2, 'error': {'message': 'denied'}} if outcome == 'error' else {'id': 2, 'result': {}}
+                tab, sock = self.tab(b''.join(self.frame(m) for m in (event, response, ack)),
+                                     delays=[0, 0, 0, 0, 1] if outcome == 'timeout' else [])
+                policy = tab.request_policy = mock.Mock()
+                policy.response.return_value = ('Fetch.fulfillRequest', {'requestId': 'owned'})
+                if outcome == 'timeout':
+                    self.assert_timeout(tab, sock)
+                    self.assertEqual(tab._policy_commands, {2})
+                elif outcome == 'error':
+                    with self.assertRaisesRegex(RuntimeError, 'strict request enforcement failed'):
+                        tab.call('Runtime.evaluate', timeout=1)
+                else:
+                    self.assertEqual(tab.call('Runtime.evaluate', timeout=1), {'ok': True})
+                    policy.check.assert_called_once_with()
+                self.assertEqual(len(sock.sent), 2)
+                if outcome != 'timeout':
+                    self.assertEqual(tab._policy_commands, set())
+                    self.assertFalse(sock.data)
+                    self.assertEqual(sock.closed, 0)
+                self.assertEqual(sock.timeout, 20)
+                self.assertIsNone(tab.ws._deadline)
+
+    def test_policy_check_cannot_return_late_success(self):
+        tab, sock = self.tab()
+        tab.request_policy = mock.Mock()
+        tab.request_policy.check.side_effect = lambda: self.clock.__setitem__(0, 1)
+        self.assert_timeout(tab, sock)
+
+    def test_policy_response_cannot_send_after_deadline(self):
+        event = {'method': 'Fetch.requestPaused', 'params': {'requestId': 'owned'}}
+        tab, sock = self.tab(self.frame(event))
+        tab.request_policy = mock.Mock()
+        def response(params):
+            self.clock[0] = 1
+            return 'Fetch.fulfillRequest', {'requestId': 'owned'}
+        tab.request_policy.response.side_effect = response
+        self.assert_timeout(tab, sock)
+        self.assertEqual(len(sock.sent), 1)
+        self.assertEqual(tab._policy_commands, {2})
+
+    def test_io_exceptions_restore_timeout_and_deadline(self):
+        for phase in ('send', 'recv'):
+            for error in (OSError('owned failure'), TimeoutError('owned timeout'), KeyboardInterrupt('owned stop')):
+                with self.subTest(phase=phase, error=type(error).__name__):
+                    tab, sock = self.tab(); sock.error = (phase, error)
+                    if isinstance(error, TimeoutError):
+                        self.assert_timeout(tab, sock)
+                    else:
+                        with self.assertRaises(type(error)) as caught:
+                            tab.call('Runtime.evaluate', timeout=1)
+                        self.assertIs(caught.exception, error)
+                        self.assertEqual(sock.closed, 0)
+                    self.assertEqual(sock.timeout, 20)
+                    self.assertIsNone(tab.ws._deadline)
+
+    def test_protocol_errors_and_prior_scope_are_preserved(self):
+        for data, kind in ((b'', ConnectionError), (self.frame(b'', 0x88), ConnectionError),
+                           (self.frame(b'not-json'), ValueError),
+                           (self.frame({'id': 1, 'error': {'message': 'owned'}}), RuntimeError)):
+            tab, sock = self.tab(data); tab.ws._deadline = 99
+            with self.assertRaises(kind): tab.call('Runtime.evaluate', timeout=1)
+            self.assertEqual(sock.timeout, 20)
+            self.assertEqual(tab.ws._deadline, 99)
+            self.assertEqual(sock.closed, 0)
+
+    def test_initialization_failure_keeps_fd_cleanup(self):
+        tab, sock = self.tab(delays=[0, 31])
+        def init(ws, *args, **kwargs):
+            ws.sock, ws._rbuf = sock, bytearray()
+        with mock.patch.object(gfx.WSConn, '__init__', init):
+            with self.assertRaises(TimeoutError): gfx.Tab(1, '/owned')
+        self.assertGreaterEqual(sock.closed, 1)
+        self.assertEqual(sock.timeout, 20)
+
+    def test_standalone_transport_keeps_its_original_timeout(self):
+        tab, sock = self.tab(timeout=.5)
+        tab.ws.send_text('owned')
+        op, data = tab.ws.recv_msg()
+        self.assertEqual((op, json.loads(data)['result']), (1, {'ok': True}))
+        self.assertEqual(sock.calls, [('send', .5), ('recv', .5), ('recv', .5)])
+        self.assertEqual(sock.closed, 0)
+
+
 def _cached_png(value=0):
     """A real 6×4 cache fixture; file existence alone is not validity."""
     import numpy as np

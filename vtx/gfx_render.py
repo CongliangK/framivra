@@ -174,6 +174,30 @@ _WS_FRAME_MAX = 1 << 30   # 单帧 1GiB 防御上限：流错乱时防内存爆
 
 
 class WSConn:
+    # Tab owns this scope; control frames and partial reads share its deadline.
+    _deadline = None
+
+    def _remaining(self):
+        if self._deadline is None:
+            return None
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("WebSocket call deadline exceeded")
+        return remaining
+
+    def _io(self, operation, *args):
+        remaining = self._remaining()
+        if remaining is None:
+            return operation(*args)
+        previous = self.sock.gettimeout()
+        try:
+            self.sock.settimeout(remaining if previous is None else min(previous, remaining))
+            result = operation(*args)
+            self._remaining()  # A late successful read/write is not an on-time result.
+            return result
+        finally:
+            self.sock.settimeout(previous)
+
     def __init__(self, port, path, timeout=20):
         self._rbuf = bytearray()   # 握手响应同包尾随的帧字节（罕见），交 recv 消费
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
@@ -227,19 +251,21 @@ class WSConn:
             hdr += struct.pack(">Q", n)
         mask = os.urandom(4)
         hdr += mask
-        self.sock.sendall(bytes(hdr) + bytes(b ^ mask[i & 3] for i, b in enumerate(payload)))
+        self._io(self.sock.sendall, bytes(hdr) + bytes(b ^ mask[i & 3] for i, b in enumerate(payload)))
 
     def send_text(self, text):
         self._send_frame(0x1, text.encode())
 
     def _recv_exact(self, n):
+        self._remaining()
         buf = bytearray(self._rbuf[:n])
         del self._rbuf[:len(buf)]
         while len(buf) < n:
-            chunk = self.sock.recv(n - len(buf))
+            chunk = self._io(self.sock.recv, n - len(buf))
             if not chunk:
                 raise ConnectionError("ws closed")
             buf += chunk
+        self._remaining()
         return bytes(buf)
 
     def recv_msg(self):
@@ -306,39 +332,54 @@ class Tab:
         self.ws.close()
 
     def call(self, method, timeout=30, **params):
-        self._mid += 1
-        mid = self._mid
-        self.ws.send_text(json.dumps({"id": mid, "method": method, "params": params}))
         deadline = time.monotonic() + timeout
-        response = None
-        events_seen = 0
-        while time.monotonic() < deadline:
-            op, data = self.ws.recv_msg()
-            if op == 0x8:
-                raise ConnectionError("ws close frame")
-            msg = json.loads(data)
-            if msg.get("id") == mid:
-                if "error" in msg:
-                    raise RuntimeError(f"{method}: {msg['error']}")
-                response = msg.get("result", {})
-            if msg.get('id') in self._policy_commands:
-                self._policy_commands.remove(msg['id'])
-                if 'error' in msg:
-                    raise RuntimeError(f"strict request enforcement failed: {msg['error']}")
-            if msg.get('method') == 'Fetch.requestPaused' and self.request_policy is not None:
-                events_seen += 1
-                if events_seen > 10000 or len(self._policy_commands) >= 256:
-                    raise RuntimeError('strict request event budget exceeded')
-                command, args = self.request_policy.response(msg['params'])
-                self._mid += 1
-                self._policy_commands.add(self._mid)
-                self.ws.send_text(json.dumps({'id': self._mid, 'method': command, 'params': args}))
-            if response is not None and not self._policy_commands:
-                if self.request_policy is not None:
-                    self.request_policy.check()
-                return response
-            # Other events have no effect on the single-threaded legacy client.
-        raise TimeoutError(f"CDP {method} timeout")
+        previous = getattr(self.ws, "_deadline", None)
+        self.ws._deadline = deadline
+        try:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"CDP {method} timeout")
+            self._mid += 1
+            mid = self._mid
+            self.ws.send_text(json.dumps({"id": mid, "method": method, "params": params}))
+            response = None
+            events_seen = 0
+            while time.monotonic() < deadline:
+                op, data = self.ws.recv_msg()
+                if time.monotonic() >= deadline:
+                    break
+                if op == 0x8:
+                    raise ConnectionError("ws close frame")
+                msg = json.loads(data)
+                if msg.get("id") == mid:
+                    if "error" in msg:
+                        raise RuntimeError(f"{method}: {msg['error']}")
+                    response = msg.get("result", {})
+                if msg.get('id') in self._policy_commands:
+                    self._policy_commands.remove(msg['id'])
+                    if 'error' in msg:
+                        raise RuntimeError(f"strict request enforcement failed: {msg['error']}")
+                if msg.get('method') == 'Fetch.requestPaused' and self.request_policy is not None:
+                    events_seen += 1
+                    if events_seen > 10000 or len(self._policy_commands) >= 256:
+                        raise RuntimeError('strict request event budget exceeded')
+                    command, args = self.request_policy.response(msg['params'])
+                    self._mid += 1
+                    self._policy_commands.add(self._mid)
+                    self.ws.send_text(json.dumps({'id': self._mid, 'method': command, 'params': args}))
+                if response is not None and not self._policy_commands:
+                    if self.request_policy is not None:
+                        self.request_policy.check()
+                    if time.monotonic() < deadline:
+                        return response
+                    break
+                # Other events have no effect on the single-threaded legacy client.
+            raise TimeoutError(f"CDP {method} timeout")
+        except TimeoutError as exc:
+            # A timed-out frame may be partially consumed; never reuse that stream.
+            self.ws.close()
+            raise TimeoutError(f"CDP {method} timeout") from exc
+        finally:
+            self.ws._deadline = previous
 
     def navigate(self, url, timeout=5.0):
         """导航并等待新文档就绪。坑：Page.navigate 返回时旧文档可能仍在，
