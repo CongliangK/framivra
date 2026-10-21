@@ -71,7 +71,7 @@
 
 - **入口**：`vtx qc`（机制门）+ `apps/gates/content_gates.py`（内容门+项目门）+ R5 发布链 + R7 封面。
 - **关键规则**：mux 正式封装=libfdk_aac 192k，终检必测编码后解码 TP；4K lanczos 放大投稿版进 B 站高码率池；封面 16:10+安全区（D50）。
-- **验证门**：全冷验证链耗时须结合 [DEV 性能基准](../../../docs/DEV.md#一性能基准) 的项目、机器与测量条件判断，不作固定时限承诺；4K 断言 14 项；FREEZE 冻结点（md5 清单）+ CHANGELOG 变更单 + frozen timeline 三件套；收尾 `vtx gc` + snapshot 归档。
+- **验证门**：全冷验证链耗时须结合 [DEV 性能基准](../../../docs/reports/development-history.md#一性能基准) 的项目、机器与测量条件判断，不作固定时限承诺；4K 断言 14 项；FREEZE 冻结点（md5 清单）+ CHANGELOG 变更单 + frozen timeline 三件套；收尾 `vtx gc` + snapshot 归档。
 
 ## 迭代与工作法（贯穿全程）
 

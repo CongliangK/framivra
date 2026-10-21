@@ -76,7 +76,7 @@ env VTX_GFX=cef VTX_CEF_MODE=a0 VTX_GFX_PAGES=2 \
 
 ```bash
 env VTX_TEST_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker" \
-  python3 -m unittest tests.test_gfx_cef_alpha -v
+  python3 -m unittest tests.gfx.test_gfx_cef_alpha -v
 ```
 
 ## 目录
@@ -127,22 +127,22 @@ python3 experiments/gfx_cef_worker/probe_display_matrix.py [--xvfb-prefix /tmp/x
 
 # 监管 DoD 验收（kill -9 宿主 → 100ms 树归零 → reap 残留=0）
 VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
-  python3 -m unittest tests.test_cef_worker_supervision -v
+  python3 -m unittest tests.gfx.test_cef_worker_supervision -v
 
 # #110 帧服务 DoD 验收（4-Slot SHM 环 + 定长协议：原生自检/逐字节一致/
 # 故障注入三连/监管 kill 零残留；同门控变量）
 VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
-  python3 -m unittest tests.test_cef_worker_shm -v
+  python3 -m unittest tests.gfx.test_cef_worker_shm -v
 
 # #111 算子/双编码器 DoD 验收（全域穷举/双后端 Tier-1 互证/崩溃窗口/
 # 性能证据采集；同门控变量，pixel_ops_selftest 须在同目录）
 VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
-  python3 -m unittest tests.test_cef_worker_pixel_ops -v
+  python3 -m unittest tests.gfx.test_cef_worker_pixel_ops -v
 
 # #114 帧同步状态机 DoD 验收（原生对抗自检 + 真实 CEF Mode N/P +
 # 全故障注入 + JSONL 跨语言校验；frame_sync_selftest 须在同目录）
 VTX_TEST_CEF_WORKER=$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker \
-  python3 -m unittest tests.test_cef_frame_sync -v
+  python3 -m unittest tests.gfx.test_cef_frame_sync -v
 
 # 原生自检（无 CEF 依赖，可独立跑）
 experiments/gfx_cef_worker/build/bin/shm_ring_selftest
@@ -236,7 +236,7 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
   (0,0) 金丝雀像素核实帧号（不符即拒绝计数）+ 槽头 run_id 跨 run 残帧
   拒收；SIMD 逆预乘与 #109 标量公式 (c,a) 全组合穷举一致。
 
-验收（门控测试 `tests/test_cef_worker_shm.py`，`VTX_TEST_CEF_WORKER` 同
+验收（门控测试 `tests/gfx/test_cef_worker_shm.py`，`VTX_TEST_CEF_WORKER` 同
 #109）：槽读出 == `.raw` 直写 == #109 一次性 PNG 解码帧逐字节一致
 （A0；A1 同帧证据加分项）；DoD 故障注入三连（尺寸不符→SIZE_MISMATCH、
 消费端阻塞 5s→背压 4.97s 计时入账 + RSS 增量 4.7MB≪64MB 预算、
@@ -271,7 +271,7 @@ SPNG_FILTER_CHOICE_SUB | SPNG_FILTER_CHOICE_UP`）。模式 1 落盘与一次性
   `fwrite`+`fflush`+`fclose` 返回值全零校验 → `rename()` 原子替换；异常
   路径 `unlink` 临时件。写者被 SIGKILL 的崩溃窗口内：目标 `f*.png` 恒为
   完整件或不存在（绝无半件），可能残留的 `*.tmp.<pid>.*` 为可辨识可清扫
-  模式（tests/test_cef_worker_pixel_ops.py::AtomicWriteKillWindow 实证）。
+  模式（tests/gfx/test_cef_worker_pixel_ops.py::AtomicWriteKillWindow 实证）。
 - **正确性**：逆预乘算子与 #109 标量公式 (c,a)∈[0,255]² **全域穷举**
   零失配（LUT 与 SIMD 双分支分别穷举）；双编码器产物解码回 RGBA 与输入
   逐字节一致，spng/fpng 两路像素 Tier-1 全等（#104 `analyze_frame_diff`）。
@@ -373,7 +373,7 @@ vtx_cef_worker … --sync --sync-mode=p --url-template="file://…/frame_sync_v2
 vtx_cef_worker … --sync --sync-fault=stale_canary --sync-pump-timeout-ms=3000
 ```
 
-验收（门控测试 `tests/test_cef_frame_sync.py`，`VTX_TEST_CEF_WORKER` 同
+验收（门控测试 `tests/gfx/test_cef_frame_sync.py`，`VTX_TEST_CEF_WORKER` 同
 #109；#115 契约：不使用 MEDIA_CONDITIONS 保留字）：
 
 - **原生对抗自检** `frame_sync_selftest`（108 项断言全 PASS）：旧 paint、

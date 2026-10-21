@@ -4,7 +4,7 @@ v1 时代本文件经 spec_from_file_location 加载 scripts/post_loudness.py（
 语义：测 I→增益+限幅→复测→回执摘除-回写手术）。v2（P1-1，2026-09-13）响度终链
 并入内核：alimiter 下沉进 stages.mix_audio_wav 输出链、build_audio 尾部做终态
 校验（复测 ±1.5 LU + 时长 ±1 采样 + 回执 post_loudness 字段）、
-scripts/post_loudness.py 变薄壳调 stages.post_loudness_compat。本文件改为直测
+旧 scripts/post_loudness.py 入口现已退役。本文件直测仍保留的
 内核函数（包导入，无 spec 加载——§1.4 / 验收门 1）：
   ① mix_audio_wav 输出链构造（mock c.run）：第二遍命令必含
      volume={gain}dB,aformat=sample_fmts=s16,alimiter=…（s16 量化中间步复刻 v1 域，P5 门 8）——win=None /
@@ -13,7 +13,7 @@ scripts/post_loudness.py 变薄壳调 stages.post_loudness_compat。本文件改
      stages.audio 附 post_loudness 字段（input_i=raw_i/output_i/gain_db/target/
      sha256）；复测超 ±1.5 LU → exit 1；时长漂移 >1 采样 → exit 1；--dry-run
      跳过校验与 sha256（无回执）；
-  ③ post_loudness_compat（真实 ffmpeg）：两遍幂等（第二遍 gain≈0、output_i 稳定）、
+  ③ normalize_project_audio（真实 ffmpeg）：两遍幂等（第二遍 gain≈0、output_i 稳定）、
      编码失败保留原文件、不写回执手术（receipt.json 字节不动）。
 运行：env python3 -m unittest tests.test_post_loudness -v（本机 ZCode 环境必须
 env python3 前缀：AppImage 劫持 argv[0]，裸 python3 的 sys.executable 指向错误
@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
 from vtx import stages
-from vtx.stages import (TARGET_LUFS, mix_audio_wav, post_loudness_compat)
+from vtx.stages import (TARGET_LUFS, mix_audio_wav, normalize_project_audio)
 
 FFMPEG = os.environ.get('VTX_TEST_FFMPEG') or shutil.which('ffmpeg')
 OUTPUT = None
@@ -300,7 +300,7 @@ class TestBuildAudioValidation(unittest.TestCase):
 @unittest.skipUnless(FFMPEG and shutil.which(str(FFMPEG)),
                      'Set VTX_TEST_FFMPEG or install ffmpeg on PATH')
 class TestPostLoudnessCompat(unittest.TestCase):
-    """③ post_loudness_compat（scripts/post_loudness.py 薄壳内核）：幂等 + 保原 +
+    """③ normalize_project_audio（内核音频回归 API）：幂等 + 保原 +
     不做回执手术。"""
 
     def setUp(self):
@@ -324,14 +324,15 @@ class TestPostLoudnessCompat(unittest.TestCase):
             ensure_ascii=False), encoding="utf-8")
 
     def test_idempotent_and_no_receipt_surgery(self):
+        self._assert_canonical_cli_contract()
         before_receipt = self.receipt.read_bytes()
-        first = post_loudness_compat(self.root, FFMPEG)
-        second = post_loudness_compat(self.root, FFMPEG)
+        first = normalize_project_audio(self.root, FFMPEG)
+        second = normalize_project_audio(self.root, FFMPEG)
         self.assertLess(abs(second["gain_db"]), 0.2, "已限幅文件二遍 gain≈0")
         self.assertLess(abs(second["output_i"] - first["output_i"]), 0.2)
         self.assertEqual(second["target"], -14.0)
         self.assertEqual(self.receipt.read_bytes(), before_receipt,
-                         "v2 兼容重跑不做回执摘除-回写手术")
+                         "现存 WAV 维护不做回执摘除-回写手术")
         rec = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.assertEqual(set(rec["stages"]), {"audio", "video", "mux", "qc"})
         self.assertFalse(list(self.out.glob(".post-*")), "临时件已清理")
@@ -351,7 +352,7 @@ class TestPostLoudnessCompat(unittest.TestCase):
 
         with mock.patch.object(stages.subprocess, "run", run3):
             with self.assertRaisesRegex(RuntimeError, "encoder failure"):
-                post_loudness_compat(self.root, FFMPEG)
+                normalize_project_audio(self.root, FFMPEG)
         self.assertEqual(before, ((self.out / "audio.wav").read_bytes(),
                                    self.receipt.read_bytes()))
         self.assertFalse(list(self.out.glob(".post-*")))
@@ -359,7 +360,35 @@ class TestPostLoudnessCompat(unittest.TestCase):
     def test_missing_audio_raises(self):
         (self.out / "audio.wav").unlink()
         with self.assertRaises(FileNotFoundError):
-            post_loudness_compat(self.root, FFMPEG)
+            normalize_project_audio(self.root, FFMPEG)
+
+    def _assert_canonical_cli_contract(self):
+        import contextlib
+        import importlib.util
+        import io
+        path = Path(__file__).resolve().parents[1] / 'scripts/audio/normalize_project_audio.py'
+        spec = importlib.util.spec_from_file_location('audio_maintenance_fixture', path)
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.object(sys, 'path', list(sys.path)):
+            spec.loader.exec_module(module)
+        argv = [str(path), 'project', '--target', '-16', '--ffmpeg', 'custom-ffmpeg']
+        for failure in (False, True):
+            with self.subTest(failure=failure):
+                output, errors = io.StringIO(), io.StringIO()
+                with mock.patch.object(sys, 'argv', argv), \
+                     mock.patch.object(module, 'normalize_project_audio',
+                                       return_value={'target': -16, 'project': 'project'},
+                                       side_effect=ValueError('invalid audio') if failure else None) as normalize, \
+                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    code = module.main()
+                normalize.assert_called_once_with('project', 'custom-ffmpeg', -16)
+                self.assertEqual(code, 1 if failure else 0)
+                if failure:
+                    self.assertEqual(output.getvalue(), '')
+                    self.assertIn('FATAL: invalid audio', errors.getvalue())
+                else:
+                    self.assertEqual(json.loads(output.getvalue()), {'target': -16, 'project': 'project'})
+                    self.assertEqual(errors.getvalue(), '')
 
 
 if __name__ == '__main__':

@@ -57,7 +57,7 @@ class TemplateLayout(unittest.TestCase):
     def test_canary_and_experiment_fixture_paths_are_canonical(self):
         page = REPO / "templates/skill-demo/gfxA.html"
         self.assertTrue(page.is_file())
-        for rel in ("tests/test_frame_canary.py",
+        for rel in ("tests/gfx/test_frame_canary.py",
                     "experiments/gfx_electron_worker/drill_sigkill.py",
                     "experiments/gfx_electron_worker/run_gfx_electron_worker.py"):
             tree = ast.parse((REPO / rel).read_text())
@@ -81,7 +81,7 @@ class TemplateLayout(unittest.TestCase):
 class DocsSmokeTemplateCoverage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        shell = (REPO / "scripts/docs_smoke.sh").read_text()
+        shell = (REPO / "scripts/docs/docs_smoke.sh").read_text()
         cls.source = shell.split("<<'PYEOF'\n", 1)[1].rsplit("\nPYEOF", 1)[0]
 
     def test_collection_includes_all_template_and_tool_skill_documents_once(self):

@@ -52,6 +52,8 @@ from pathlib import Path
 
 from .hygiene import audio_key
 from . import fstxn
+from .audio_filters import event_chain
+from .pluginlib import hooks as _plugin_hooks
 
 # ---- 阈值常量（出处见模块头判级阈值表）----
 LUFS_TARGET = -14.0        # stages.TARGET_LUFS / qc.TARGET_LUFS 同一权威值
@@ -207,21 +209,6 @@ def _mean_s_in(series, windows):
 
 
 # ---------------------------------------------------------------- stem 渲染
-def _event_chain(c, k, e):
-    """单事件链（与 stages._audio_graph 逐字段一致：atrim/asetpts/volume/pan/fade/adelay）。"""
-    dur = e["out"] - e["in"]; sin = e.get("src_in", 0)
-    fl = [f"atrim=start_sample={sin*c.spf_samples}:end_sample={(sin+dur)*c.spf_samples}",
-          "asetpts=PTS-STARTPTS", f"volume={e.get('volume', 1)}"]
-    if e.get("pan"):
-        p = e["pan"]; lg = min(1.5, 1 - p * .5); rg = min(1.5, 1 + p * .5)
-        fl.append(f"pan=stereo|c0={lg:.3f}*c0|c1={rg:.3f}*c1")
-    if e.get("fade_in_frames"): fl.append(f"afade=t=in:st=0:d={e['fade_in_frames']*c.spf:.6f}")
-    if e.get("fade_out_frames"):
-        fl.append(f"afade=t=out:st={(dur-e['fade_out_frames'])*c.spf:.6f}:d={e['fade_out_frames']*c.spf:.6f}")
-    fl.append(f"adelay=delays={e['in']/c.fps*1000:.3f}:all=1")
-    return f"[{k}:a]" + ",".join(fl) + f"[e{k}]"
-
-
 def _pad(c):
     return f"apad=whole_dur={c.dur*c.spf:.3f},atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS"
 
@@ -235,7 +222,7 @@ def _track_group(c, tracks):
     for tr in tracks:
         ev_lbls = []
         for e in tr["events"]:
-            chains.append(_event_chain(c, k, e)); ev_lbls.append(f"[e{k}]"); k += 1
+            chains.append(event_chain(c, k, e, require_volume=False)); ev_lbls.append(f"[e{k}]"); k += 1
         if not ev_lbls:
             tk_lbls.append(None); continue
         if len(ev_lbls) == 1:
@@ -254,7 +241,7 @@ def _track_group(c, tracks):
 
 
 def _collect_inputs(c, tracks, cmd):
-    """把轨事件的源 wav 逐事件挂到 -i（与 _event_chain 的 [k:a] 事件序号一一同序；
+    """把轨事件的源 wav 逐事件挂到 -i（与 event_chain 的 [k:a] 事件序号一一同序；
     loop 事件加 stream_loop。不去重——输入序号必须严格等于事件序号）。
     源解析走 hooks.resolve_source_wav（P2 审查 P1-1 修复）：denoise 等缝 A 插件
     源的裸键按设计永不产出，主链 _audio_graph 已走产物键，本处必须同解析——
@@ -353,7 +340,9 @@ def run_report(c, json_path=None):
         check("整片真峰 TP", "INFO", "ebur128 peak 测量失败")
 
     # 2/3) 轨级：人声 vs duck 床乐响度差 + duck 咬合/回升（stem 现场渲染）
-    atracks = c.tl["audio_tracks"]
+    # Match the render graph's pure event transforms before selecting stems.
+    # Keep the original timeline and final WAV/receipts untouched.
+    atracks = _plugin_hooks.run_audio_events(c, c.tl["audio_tracks"])
     duck_tr = [tr for tr in atracks if tr.get("duck")]
     by_names = {n for tr in duck_tr for n in tr.get("duck_by", ["voice"])}
     voice_tr = [tr for tr in atracks if tr["name"] in by_names]

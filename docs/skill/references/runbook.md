@@ -38,7 +38,7 @@ python3 "$VIDEO_TOOLS/apps/gates/content_gates.py" -t timeline.json --media out/
 python3 "$VTX" -t timeline.json gc --dry
 ```
 
-`gc --dry` 只查看回收清单，实际回收另按任务授权执行。耗时与历史测量口径统一见 [DEV 性能基准](../../DEV.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
+`gc --dry` 只查看回收清单，实际回收另按任务授权执行。耗时与历史测量口径统一见 [DEV 性能基准](../../reports/development-history.md#一性能基准)，不据旧项目数字承诺当前机器耗时。
 
 ## R1 · 纯音频变更（音量 / duck / fade / BGM 源）
 
@@ -56,7 +56,7 @@ python3 "$VTX" -t timeline.json audio --report
 - 调 volume 改的是轨间相对比例，整片还会归一与限幅；验收要听受影响窗口，不能只看成片 LUFS。duck 开关或参数变更做 A/B 对照。
 - 补丁检查目标值，防重复施加增益。AAC 编码后的解码域真峰仍需 QC/内容门确认，WAV 通过不能代替成片通过。
 
-**耗时基准指针**：audio、mux、QC 历史测量与 diff 估计常数的来源见 [DEV 性能基准](../../DEV.md#一性能基准)；本配方不另维护估时表。
+**耗时基准指针**：audio、mux、QC 历史测量与 diff 估计常数的来源见 [DEV 性能基准](../../reports/development-history.md#一性能基准)；本配方不另维护估时表。
 
 ## R2 · 时间线编排（clip 窗口 / 轨道 / 字幕）
 
@@ -111,7 +111,7 @@ python3 "$VTX" -t timeline.json gfx
 
 核验改后实际帧、透明度、时间窗与布局，再按 R2 做区间预览，最后执行共用 `all`。HTML 或依赖变更也改变整体回执身份，不能因为音轨参数未变而省略 prepare/audio。
 
-**gfx 基准表与重测方法**：历史矩阵、静态跨度占比及重页分析统一见 [DEV 性能基准](../../DEV.md#一性能基准)。这些是指定机器/项目/版本的测量，不能当作本轮性能证明。重测使用独立项目副本与已冻结的 Golden；记录输入、引擎环境、缓存冷热、耗时和像素比较结果。没有独立基准时只报告实际测量，不宣称等价或提速。
+**gfx 基准表与重测方法**：历史矩阵、静态跨度占比及重页分析统一见 [DEV 性能基准](../../reports/development-history.md#一性能基准)。这些是指定机器/项目/版本的测量，不能当作本轮性能证明。重测使用独立项目副本与已冻结的 Golden；记录输入、引擎环境、缓存冷热、耗时和像素比较结果。没有独立基准时只报告实际测量，不宣称等价或提速。
 
 **gfx env 速查**（CDP 路径；调参需重新验证）：
 

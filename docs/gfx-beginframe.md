@@ -6,7 +6,7 @@ The rejected prototype, its CPU checks and replay entry points are archived at [
 
 ## Research premise and support
 
-[DEV's historical NAVFREE record](DEV.md#navfree-免导航截图判负双杀方案-v2-阶段-2) records concurrent pixel drift and slower rendering. It does not identify a screenshot-versus-animation-clock race. The history establishes a reason to investigate, without establishing that BeginFrame is necessary or sufficient.
+[DEV's historical NAVFREE record](reports/development-history.md#navfree-免导航截图判负双杀方案-v2-阶段-2) records concurrent pixel drift and slower rendering. It does not identify a screenshot-versus-animation-clock race. The history establishes a reason to investigate, without establishing that BeginFrame is necessary or sufficient.
 
 The locked local shell actually created an `enableBeginFrameControl` target. Its first BeginFrame call explicitly required `--run-all-compositor-stages-before-draw`; supplying that flag produced screenshots of real content. The live protocol was captured and checked against the lock. A remote schema was not treated as evidence of implementation support.
 

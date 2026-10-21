@@ -335,13 +335,14 @@ CefSettings MakeWorkerSettings(const std::string& root_cache_path) {
 }
 
 bool CreateOsrBrowser(CefRefPtr<CefClient> client, const CefString& url,
-                      int width, int height) {
+                      int width, int height, int windowless_frame_rate) {
   CefWindowInfo window_info;
   window_info.SetAsWindowless(0);
   window_info.shared_texture_enabled = false;
   window_info.external_begin_frame_enabled = true;
   CefBrowserSettings browser_settings;
   browser_settings.background_color = 0;  // 透明（gfxA 协议要求 alpha 通道）
+  browser_settings.windowless_frame_rate = windowless_frame_rate;
   (void)width;  // OSR 视口由 GetViewRect 提供（client 持有 Options）
   (void)height;
   return CefBrowserHost::CreateBrowser(window_info, client, url,

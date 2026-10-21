@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 import zlib
 
-from tests.gfx_environment_fixture import bind_environment
+from tests.gfx._environment import bind_environment
 from vtx import gfx_backend, gfx_cef, hygiene
 from vtx.cache_state import load_receipt, receipt_fingerprint
 from vtx.infra import Ctx
@@ -57,6 +57,7 @@ class ConfigContract(_Fixture):
     def test_defaults_keep_legacy_cef_config_shape(self):
         self.assertEqual(gfx_backend.cef_config(), (self.worker.resolve(), 'a0'))
         self.assertEqual(gfx_backend.cef_png_config(), ('spng', 1, 'sub_up'))
+        self.assertEqual(gfx_backend.cef_windowless_frame_rate(), 30)
         self.assertIsInstance(gfx_backend.cef_png_config(), tuple)
 
     def test_spng_native_domain(self):
@@ -97,6 +98,16 @@ class ConfigContract(_Fixture):
                     with self.assertRaisesRegex(ValueError, name + ' is not applicable to fpng'):
                         gfx_backend.cef_png_config()
 
+    def test_windowless_frame_rate_accepts_only_30_or_60(self):
+        for value in ('30', '60'):
+            with mock.patch.dict(os.environ, VTX_CEF_WINDOWLESS_FRAME_RATE=value):
+                self.assertEqual(gfx_backend.cef_windowless_frame_rate(), int(value))
+        for value in ('', ' 30', '30 ', '0', '1', '59', '61', '+60', '060'):
+            with self.subTest(value=value), mock.patch.dict(
+                    os.environ, VTX_CEF_WINDOWLESS_FRAME_RATE=value):
+                with self.assertRaisesRegex(ValueError, 'VTX_CEF_WINDOWLESS_FRAME_RATE'):
+                    gfx_backend.cef_windowless_frame_rate()
+
     def test_non_cef_identity_ignores_cef_png_options(self):
         for backend in ('cdp', 'cli'):
             with self.subTest(backend=backend), mock.patch.dict(os.environ, VTX_GFX=backend):
@@ -116,11 +127,13 @@ class IdentityContract(_Fixture):
         with mock.patch.object(gfx_backend, '_cef_identity', return_value=legacy):
             previous = self.snapshot()
         current = self.snapshot()
-        self.assertEqual(current[0], f'cef-alpha-exact-v2|a0|mode-n|{digest}|["spng",1,"sub_up"]')
+        self.assertEqual(current[0], f'cef-alpha-exact-v3|a0|mode-n|{digest}|[["spng",1,"sub_up"],30]')
         for old, new in zip(previous, current):
             self.assertNotEqual(old, new)
         with mock.patch.dict(os.environ, VTX_CEF_PNG_ENCODER='spng',
                              VTX_CEF_PNG_LEVEL='1', VTX_CEF_PNG_FILTER='sub_up'):
+            self.assertEqual(self.snapshot(), current)
+        with mock.patch.dict(os.environ, VTX_CEF_WINDOWLESS_FRAME_RATE='30'):
             self.assertEqual(self.snapshot(), current)
 
     def test_canonical_aliases_share_identity(self):
@@ -140,9 +153,11 @@ class IdentityContract(_Fixture):
                     snapshots.append(self.snapshot())
         with mock.patch.dict(os.environ, VTX_CEF_PNG_ENCODER='fpng'):
             snapshots.append(self.snapshot())
+        with mock.patch.dict(os.environ, VTX_CEF_WINDOWLESS_FRAME_RATE='60'):
+            snapshots.append(self.snapshot())
         # Includes the three preregistered arms plus all supported spng axes.
         for identities in zip(*snapshots):
-            self.assertEqual(len(set(identities)), 16)
+            self.assertEqual(len(set(identities)), 17)
 
     def test_mode_and_native_bytes_remain_identity_axes(self):
         original = self.snapshot()
@@ -156,7 +171,8 @@ class IdentityContract(_Fixture):
 
     def test_config_change_rejects_inflight_context(self):
         for changes in ({'VTX_CEF_PNG_ENCODER': 'fpng'}, {'VTX_CEF_PNG_LEVEL': '2'},
-                        {'VTX_CEF_PNG_FILTER': 'none'}):
+                        {'VTX_CEF_PNG_FILTER': 'none'},
+                        {'VTX_CEF_WINDOWLESS_FRAME_RATE': '60'}):
             with self.subTest(changes=changes):
                 context = Ctx(self.timeline)
                 context.receipt('gfx', True, 'unit metadata only')
@@ -170,7 +186,8 @@ class IdentityContract(_Fixture):
 
     def test_config_change_revokes_downstream_receipt(self):
         for changes in ({'VTX_CEF_PNG_ENCODER': 'fpng'}, {'VTX_CEF_PNG_LEVEL': '3'},
-                        {'VTX_CEF_PNG_FILTER': 'all'}):
+                        {'VTX_CEF_PNG_FILTER': 'all'},
+                        {'VTX_CEF_WINDOWLESS_FRAME_RATE': '60'}):
             with self.subTest(changes=changes):
                 context = Ctx(self.timeline)
                 for stage in ('gfx', 'video', 'mux', 'qc'):
@@ -253,6 +270,7 @@ class ArgvContract(_Fixture):
             '--sync-canary=exact', '--sync-log=sync.jsonl', '--ipc-socket=ipc.sock',
             f'--root-cache-path={self.root / "profile"}',
             f'--url-template={self.page.as_uri()}?f={{f}}', '--width=16', '--height=16',
+            '--windowless-frame-rate=30',
             '--png-encoder=spng', '--png-level=3', '--png-filter=sub_up',
             '--ozone-platform=headless'])
         self.assertEqual(captured['kwargs']['backend_id'], 'cef_a0')
@@ -265,7 +283,13 @@ class ArgvContract(_Fixture):
                          ['--png-encoder=fpng'])
         self.assertIn('--mode=a1', captured['argv'])
         self.assertIn('--sync-canary=exact', captured['argv'])
+        self.assertIn('--windowless-frame-rate=30', captured['argv'])
         self.assertNotIn('--ozone-platform=headless', captured['argv'])
+
+    def test_60_frame_rate_is_passed_to_worker(self):
+        with mock.patch.dict(os.environ, VTX_CEF_WINDOWLESS_FRAME_RATE='60'):
+            captured = self.render_mocked()
+        self.assertIn('--windowless-frame-rate=60', captured['argv'])
 
     def test_render_freezes_png_config_once(self):
         captured = self.render_mocked(
@@ -274,15 +298,21 @@ class ArgvContract(_Fixture):
                          ['--png-encoder=spng', '--png-level=1', '--png-filter=sub_up'])
         self.assertEqual(gfx_backend.cef_png_config(), ('fpng', None, None))
 
+    def test_render_freezes_frame_rate_config_once(self):
+        captured = self.render_mocked(
+            mutate_before_argv=lambda: os.environ.update(VTX_CEF_WINDOWLESS_FRAME_RATE='60'))
+        self.assertIn('--windowless-frame-rate=30', captured['argv'])
+
     def test_invalid_config_fails_before_worker(self):
         context = SimpleNamespace(cache=self.root / 'cache')
         for changes in ({'VTX_CEF_PNG_ENCODER': ''}, {'VTX_CEF_PNG_LEVEL': '4'},
                         {'VTX_CEF_PNG_FILTER': ''},
-                        {'VTX_CEF_PNG_ENCODER': 'fpng', 'VTX_CEF_PNG_LEVEL': '1'}):
+                        {'VTX_CEF_PNG_ENCODER': 'fpng', 'VTX_CEF_PNG_LEVEL': '1'},
+                        {'VTX_CEF_WINDOWLESS_FRAME_RATE': '45'}):
             with self.subTest(changes=changes), mock.patch.dict(os.environ, changes), \
                  mock.patch.object(gfx_cef, 'SupervisedProcessGroup') as group, \
                  mock.patch.object(gfx_cef.socket, 'socketpair') as pair:
-                with self.assertRaisesRegex(ValueError, 'VTX_CEF_PNG_'):
+                with self.assertRaisesRegex(ValueError, 'VTX_CEF_'):
                     gfx_cef.render_page(self.page, self.root / 'frames', 2,
                                         ctx=context, width=16, height=16)
                 group.assert_not_called()

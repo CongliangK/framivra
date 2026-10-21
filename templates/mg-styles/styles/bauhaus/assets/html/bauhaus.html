@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bauhaus 制作参考</title>
+<link rel="stylesheet" href="../../../../html/references.css">
+<main>
+<h1 id="ref-title">bauhaus 制作参考</h1>
+<p id="ref-limits">
+</p>
+<!-- 场景只读取整数帧；下面的控制界面不进入捕获画面。 -->
+<canvas id="stage" width="1920" height="1080" aria-label="按整数帧绘制的设计参考">
+</canvas>
+<section class="controls" aria-label="播放与逐帧控制">
+<button id="play">播放</button>
+<button id="previous">前一帧</button>
+<button id="next">后一帧</button>
+<input id="seek" type="range" min="0" max="239" step="1" value="0" aria-label="当前帧">
+<output id="clock">
+</output>
+<label>题材 <select id="example">
+</select>
+</label>
+</section>
+<details>
+<summary>替换语义内容与节奏</summary>
+<label>总帧数 <input id="frames" type="number" min="30" max="18000" step="1">
+</label>
+<textarea id="content" spellcheck="false" aria-label="本风格语义内容JSON">
+</textarea>
+<button id="apply">校验并应用内容</button>
+</details>
+<p id="error" role="status">
+</p>
+<section id="recipe" aria-label="制作思路卡">
+</section>
+</main>
+<script src="../../../../html/scene-helpers.js"></script>
+<script src="bauhaus.js">
+</script>
+<script src="../../../../html/runtime.js">
+</script>
+</html>

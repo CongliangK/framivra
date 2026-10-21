@@ -61,7 +61,7 @@ python3 "$VIDEO_TOOLS"/apps/blender-bridge/audit_bundle.py -t timeline.json --pr
 #                               └ audit.blend（Blender 审计工程，交用户逐轨静音/独听）
 ```
 
-**重跑规则**：分轨或音量改动后**重跑即可**——MP3 按源内容和转码规格校验缓存；`--force` 强制全量重转。草稿/内部迭代轮不要求，正式版必做（人机协作交付门）。`--whole` 保留所有原事件；默认切分的 loop/fade 回退和审听边界见 `docs/audio-audit.md`。
+**重跑规则**：分轨或音量改动后**重跑即可**——MP3 按源内容和转码规格校验缓存；`--force` 强制全量重转。草稿/内部迭代轮不要求，正式版必做（人机协作交付门）。`--whole` 保留所有原事件；默认切分的 loop/fade 回退和审听边界见 [分轨审计说明](../../../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)。
 
 **耗时基准**：分钟级（逐轨 ffmpeg 转码 + json2blend + verify_blend）。
 

@@ -60,11 +60,9 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-try:  # 同目录模块;脚本直跑时 scripts/ 已在 sys.path,导入式测试需显式补
-    import verify_release
-except ImportError:  # pragma: no cover
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import verify_release
+# The public installer stays at scripts/install.py; verification has one owner.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.release import verify_release
 
 # Windows 控制台常见 cp1252/GBK 代码页,直接 print 中文会 UnicodeEncodeError
 # 崩溃(hosted windows-2025 实测)。与 vt.py 同款 UTF-8 reconfigure;失败静默

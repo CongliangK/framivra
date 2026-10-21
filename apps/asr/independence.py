@@ -263,7 +263,7 @@ def _reject_entry(resolved_dir, what, name, reason):
     raise AsrIndependenceError(
         "%s 的 %s %s——已拒绝（任何情况下禁止借用输入法/他人权重）；"
         "旧 --download 为 BLOCKED；独立资产准备须先核对 docs/third-party-licenses.md "
-        "与离线 python3 scripts/model_license_policy.py plan <asset>" % (what, name, reason))
+        "与离线 python3 scripts/policy/model_license_policy.py plan <asset>" % (what, name, reason))
 
 
 def _audit_single_entry(d, what, name, is_weight):
@@ -358,7 +358,7 @@ def verify_dir_assets(resolved_dir, what, required=True):
         raise AsrIndependenceError(
             "%s 缺少权重承载形态（%s 或 %s+分片）："
             "旧 --download 为 BLOCKED；独立资产准备须先核对 docs/third-party-licenses.md "
-            "与离线 python3 scripts/model_license_policy.py plan <asset>"
+            "与离线 python3 scripts/policy/model_license_policy.py plan <asset>"
             % (what, _SINGLE_WEIGHT_NAME, _INDEX_NAME))
 
 

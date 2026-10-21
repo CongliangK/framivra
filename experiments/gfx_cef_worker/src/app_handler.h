@@ -38,6 +38,7 @@ struct Options {
   std::string ozone_platform = "headless";  // 仅 a1：headless|x11|wayland
   int width = 1920;
   int height = 1080;
+  int windowless_frame_rate = 30;  // --windowless-frame-rate: 30|60
   bool probe = false;                  // 注入 WebGL/WebGPU 探针
   bool probe_gpu_page = false;         // 额外导航 chrome://gpu 提取特性
   // #110 serve/故障注入：视图实际渲染尺寸（GetViewRect 取此值；0=width/
@@ -132,7 +133,7 @@ CefSettings MakeWorkerSettings(const std::string& root_cache_path);
 // 透明背景），返回 CreateBrowser 同步结果（浏览器实例经 OnAfterCreated
 // 异步送达 RunState::browser）。
 bool CreateOsrBrowser(CefRefPtr<CefClient> client, const CefString& url,
-                      int width, int height);
+                      int width, int height, int windowless_frame_rate);
 
 // 外置泵驱动器（#109 main.cpp 泵语义原样抽提）：OnScheduleMessagePumpWork
 // 唤醒即时干活；空闲保底每 ~8ms 一拍；Until 完成后补一拍。

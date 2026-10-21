@@ -59,11 +59,21 @@ def _darwin_bundle(root):
             if not target.is_relative_to(root):
                 raise EnvironmentError(f'Darwin bundle link escapes distribution: {p}')
             relative = str(p.relative_to(root))
-            if p.is_symlink():
-                links[relative] = [os.readlink(p), str(target.relative_to(root))]
-            if p.is_file():
-                files[relative] = list(_file(p))
-            elif not p.is_dir():
+            link = p.is_symlink()
+            link_text = os.readlink(p) if link else None
+            if link:
+                links[relative] = [link_text, str(target.relative_to(root))]
+            target_stat = target.stat()
+            if stat.S_ISREG(target_stat.st_mode):
+                # `target` is already the canonical strict resolution above.
+                # Reuse it and its stat instead of resolving/statting it again
+                # in _file; the helper still hashes bytes and checks the file
+                # token both before and after the read. Check the lexical entry
+                # after hashing: regular files need only lstat, while links are
+                # re-resolved and compared with their captured link text.
+                files[relative] = list(_file_resolved(
+                    target, target_stat, verify_entry=(p, link_text, target_stat)))
+            elif not stat.S_ISDIR(target_stat.st_mode):
                 raise EnvironmentError(f'unknown Darwin bundle member: {p}')
     if not files:
         raise EnvironmentError(f'empty Darwin app distribution: {root}')
@@ -409,7 +419,8 @@ def _collect_darwin(backend, binary, mode):
                              {k for k in os.environ if k.startswith(('LC_', 'DYLD_', '__XPC_DYLD_', '__CF_'))})},
             'launch_flags': (list(CHROME_VISUAL_FLAGS) if backend == 'cdp' else
                              ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
-                              '--use-mock-keychain']),
+                              '--use-mock-keychain', '--windowless-frame-rate=' +
+                              os.environ.get('VTX_CEF_WINDOWLESS_FRAME_RATE', '30')]),
             'protocol': {'device_scale': 1, 'color': 'srgb',
                          'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
@@ -609,13 +620,34 @@ def _file_token(path, st):
 def _file(path):
     p = Path(path).resolve(strict=True)
     st = p.stat()
-    if not p.is_file():
+    return _file_resolved(p, st)
+
+
+def _file_resolved(p, st, *, verify_entry=None):
+    """Hash a canonical regular file, optionally checking its bundle alias."""
+    p = Path(p)
+    if not stat.S_ISREG(st.st_mode):
         raise EnvironmentError(f'not a regular environment input: {p}')
     token = _file_token(p, st)
+
+    def check_entry():
+        if verify_entry is None:
+            return
+        entry, expected_link, entry_stat = verify_entry
+        entry = Path(entry)
+        if expected_link is None:
+            current = entry.lstat()
+            if stat.S_ISLNK(current.st_mode) or (current.st_dev, current.st_ino) != (
+                    entry_stat.st_dev, entry_stat.st_ino):
+                raise EnvironmentError(f'Darwin bundle member changed while hashing: {entry}')
+        elif (entry.resolve(strict=True) != p or os.readlink(entry) != expected_link):
+            raise EnvironmentError(f'Darwin bundle link changed while hashing: {entry}')
+
     if os.name != 'nt':
         with _lock:
             old = _hashes.get(str(p))
             if old and old[0] == token:
+                check_entry()
                 return str(p), old[1]
     h = hashlib.sha256()
     with p.open('rb') as stream:
@@ -624,6 +656,7 @@ def _file(path):
     after = p.stat()
     if token != _file_token(p, after):
         raise EnvironmentError(f'environment input changed while hashing: {p}')
+    check_entry()
     if os.name != 'nt':
         with _lock:
             _hashes[str(p)] = token, h.hexdigest()
@@ -827,7 +860,9 @@ def collect(backend, binary, mode=None):
                 'system_locale': _files(p for p in ('/etc/localtime', '/etc/locale.conf')
                                         if Path(p).exists()),
                 'launch_flags': list(CHROME_VISUAL_FLAGS) if backend != 'cef' else
-                    ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact'],
+                    ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
+                     '--windowless-frame-rate=' +
+                     os.environ.get('VTX_CEF_WINDOWLESS_FRAME_RATE', '30')],
                 'protocol': {'device_scale': 1, 'color': 'srgb',
                              'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
                 'python_runtime': _python_runtime(),
@@ -841,13 +876,14 @@ def collect(backend, binary, mode=None):
 
 def resolve(c):
     """Pin one environment to a context; recheck() never adopts new inputs."""
-    from .gfx_backend import selected, cef_config
+    from .gfx_backend import selected, cef_config, cef_windowless_frame_rate
     from .encoders import find_chrome
     backend = selected()
     if backend == 'electron':
         return None  # frozen historical identity owned by gfx_backend
     selector = (backend, os.environ.get('VTX_CHROME'), os.environ.get('VTX_CEF_WORKER'),
-                os.environ.get('VTX_CEF_MODE'), tuple(os.environ.get(k) for k in PIXEL_ENV))
+                os.environ.get('VTX_CEF_MODE'), os.environ.get('VTX_CEF_WINDOWLESS_FRAME_RATE'),
+                tuple(os.environ.get(k) for k in PIXEL_ENV))
     if platform.system() == 'Darwin':
         selector += (tuple(sorted((k, v) for k, v in os.environ.items()
                      if k.startswith(('DYLD_', '__XPC_DYLD_', '__CF_')) or k == 'CFFIXED_USER_HOME')),)
@@ -859,7 +895,11 @@ def resolve(c):
         # Loading/validating a timeline remains possible without a renderer.
         # Unknown is diagnostic data, never a cache eligibility certificate.
         with contextlib.redirect_stdout(io.StringIO()):
-            binary, mode = cef_config() if backend == 'cef' else (find_chrome(), None)
+            if backend == 'cef':
+                binary, mode = cef_config()
+                cef_windowless_frame_rate()
+            else:
+                binary, mode = find_chrome(), None
         record = collect(backend, binary, mode)
     except (EnvironmentError, OSError, SystemExit) as error:
         record = {'schema': SCHEMA, 'status': 'unknown', 'backend': backend,

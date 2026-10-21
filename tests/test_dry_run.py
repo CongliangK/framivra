@@ -4,7 +4,6 @@ Run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_dry_run
 All writable fixtures are isolated temporary projects; no Chrome/FFmpeg required.
 """
 import contextlib
-import hashlib
 import io
 import itertools
 import json
@@ -16,10 +15,11 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from tests._support import tree_sha256
 from unittest import mock
 
 from vtx import cli, hygiene
-from tests.gfx_environment_fixture import bind_environment, environment_cli
+from tests.gfx._environment import bind_environment, environment_cli
 from vtx.infra import Ctx
 
 REPO = Path(__file__).resolve().parents[1]
@@ -27,20 +27,6 @@ VTX = REPO / "vtx" / "vtx.py"
 DRY_FLAGS = (("--dry-run",), ("--dry",), ("--dry-run", "--dry"),
              ("--dry", "--dry-run"), ("--dry-run", "--dry-run"),
              ("--dry", "--dry"))
-
-
-def tree_sha256(root):
-    """Compare directory entries (including empty dirs/links) and every file byte."""
-    result = {}
-    for path in sorted(root.rglob("*")):
-        name = path.relative_to(root).as_posix()
-        if path.is_symlink():
-            result[name] = ("symlink", os.readlink(path))
-        elif path.is_dir():
-            result[name] = ("directory",)
-        else:
-            result[name] = ("file", hashlib.sha256(path.read_bytes()).hexdigest())
-    return result
 
 
 class DryRunRegression(unittest.TestCase):

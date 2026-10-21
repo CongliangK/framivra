@@ -25,7 +25,6 @@
                          §2.3）。无可自动修复项时明确说明。
   apps|plugins|templates list|check
                          list = 注册表 + 安装态清单；check = doctor 组件段单层体检
-                         skills list|check 为 templates 的兼容拼法
   version                VERSION 内容 + git HEAD 短哈希
   init [--fix] [--json]  原 init.py 语义（七小节自检 + --fix 自动装基础依赖 +
                          config.local.json 幂等生成）
@@ -326,7 +325,7 @@ def cmd_init(a):
     rec("matanyone2", (_m / "MatAnyone2/pretrained_models/hf2/model.safetensors").is_file(),
         "已有权重探测；旧 --download 为 BLOCKED，许可与未知项见 docs/third-party-licenses.md")
     rec("birefnet_hr", (_m / "BiRefNet_HR/config.json").is_file(),
-        "已有资产探测；离线证据：python3 scripts/model_license_policy.py plan birefnet-hr（不下载、不解除旧入口门禁）")
+        "已有资产探测；离线证据：python3 scripts/policy/model_license_policy.py plan birefnet-hr（不下载、不解除旧入口门禁）")
     resnet = Path("~/.cache/torch/hub/checkpoints/resnet18-5c106cde.pth").expanduser()
     rec("matting_resnet18", resnet.is_file() or (_m / "resnet18-5c106cde.pth").is_file(),
         "MatAnyone2 光流依赖；旧 --download 为 BLOCKED，权重许可未知项见 docs/third-party-licenses.md")
@@ -336,7 +335,7 @@ def cmd_init(a):
     except Exception:
         rec("comfyui_service", False, "未运行（可选）：bash apps/matting/comfyui_init.sh --start")
     rw = Path.home() / "models/resemble-enhance"
-    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 所需目录存在（不代表权重完整或许可已确认；见 docs/third-party-licenses.md）" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选；旧 --download 为 BLOCKED；离线证据：python3 scripts/model_license_policy.py plan resemble-enhance）")
+    rec("resemble_weights", rw.is_dir(), "denoise_voice.py 所需目录存在（不代表权重完整或许可已确认；见 docs/third-party-licenses.md）" if rw.is_dir() else "缺 ~/models/resemble-enhance（denoise 可选；旧 --download 为 BLOCKED；离线证据：python3 scripts/policy/model_license_policy.py plan resemble-enhance）")
 
     say("--- 4b/5 三大生成模块 asr/tts/imgen（默认关闭，按需开启）---")
     # config 统一加载（§5.3：VTX_CONFIG > config.local.json；坏 JSON 警告 + {}；
@@ -696,9 +695,9 @@ def _doctor_components(json_out: bool, kind_filter=None) -> dict:
                     # 使用点 fail-hard（渲染链/钩子；health 探针自述「允许
                     # unhealthy 不崩，安装期探测」）。python_packages/platforms
                     # 缺失同样降 ℹ（hosted windows-2025 新 shell 实测：裸
-                    # Python 无 numpy/requests 属正常安装态而非损坏——vtx 内核
-                    # 纯 stdlib，numpy/requests 仅个别内置 app 声明；与缺
-                    # blender/node 同一「能力面」语义）。
+                    # Python 缺 numpy/requests 不等于安装损坏；本处只对内置
+                    # 组件依赖降级，不代表渲染依赖齐备。默认 CDP 图形后端
+                    # 需要 NumPy，具体依赖与回退边界见 README 依赖矩阵）。
                     soft = [m.split(":", 1)[1] if ":" in m else m for m in missing]
                     unavailable.extend(f"缺 {b}" for b in soft)
                     if h_ok is False:
@@ -1104,7 +1103,7 @@ def cmd_doctor(a) -> int:
 
 # ================================================================ list / check / version
 def cmd_list(kind: str) -> int:
-    if kind in ("templates", "skills"):
+    if kind == "templates":
         sk = _doctor_skills(json_out=False)
         return 1 if sk["fail"] else 0
     comp = _doctor_components(json_out=True, kind_filter=("app" if kind == "apps" else "plugin"))
@@ -1127,8 +1126,8 @@ def cmd_list(kind: str) -> int:
 
 
 def cmd_check(kind: str) -> int:
-    """check = doctor 组件段单层（apps → app；plugins → plugin；templates/skills → 工作流段）。"""
-    if kind in ("templates", "skills"):
+    """check = doctor 组件段单层（apps → app；plugins → plugin；templates → 工作流段）。"""
+    if kind == "templates":
         sk = _doctor_skills(json_out=False)
         print("templates check：" + ("✅" if not sk["fail"] else "❌"))
         return 1 if sk["fail"] else 0
@@ -1225,8 +1224,8 @@ def cmd_fix_links(dry: bool) -> int:
 def main():
     ap = argparse.ArgumentParser(description="vt —— Framivra v2 统一入口（doctor/list/check/version/init/--fix-links）")
     ap.add_argument("command", nargs="?", default=None,
-                    help="doctor | apps|plugins|templates list|check（skills 兼容）| version | init")
-    ap.add_argument("sub", nargs="?", default=None, help="list | check（apps/plugins/templates；skills 兼容）")
+                    help="doctor | apps|plugins|templates list|check| version | init")
+    ap.add_argument("sub", nargs="?", default=None, help="list | check（apps/plugins/templates）")
     ap.add_argument("--json", action="store_true", help="doctor/init：机器可读输出")
     ap.add_argument("--fix", action="store_true",
                     help="init：安装缺失基础依赖；doctor：修复可自动修复项（挂载链接重建 + "
@@ -1244,7 +1243,7 @@ def main():
         return cmd_init(a)
     if a.command == "doctor":
         return cmd_doctor(a)
-    if a.command in ("apps", "plugins", "templates", "skills"):
+    if a.command in ("apps", "plugins", "templates"):
         if a.sub == "list":
             return cmd_list(a.command)
         if a.sub == "check":

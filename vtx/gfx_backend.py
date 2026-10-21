@@ -100,6 +100,14 @@ def cef_png_config():
     return encoder, int(level), filter_name
 
 
+def cef_windowless_frame_rate():
+    """Requested CEF OSR OnPaint maximum used by each newly created browser."""
+    value = os.environ.get("VTX_CEF_WINDOWLESS_FRAME_RATE", "30")
+    if value not in ("30", "60"):
+        raise ValueError("VTX_CEF_WINDOWLESS_FRAME_RATE must be 30|60")
+    return int(value)
+
+
 @lru_cache(maxsize=16)
 def _binary_digest(path, stat):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -116,11 +124,12 @@ def _cef_identity():
         return ""
     worker, mode = cef_config()
     png_config = cef_png_config()
+    frame_rate = cef_windowless_frame_rate()
     st = worker.stat()
     digest = _binary_digest(str(worker), (st.st_dev, st.st_ino, st.st_size,
                                          st.st_mtime_ns, st.st_ctime_ns))
-    return (f"cef-alpha-exact-v2|{mode}|mode-n|{digest}|"
-            + json.dumps(png_config, separators=(",", ":")))
+    return (f"cef-alpha-exact-v3|{mode}|mode-n|{digest}|"
+            + json.dumps([png_config, frame_rate], separators=(",", ":")))
 
 
 def identity():

@@ -39,6 +39,8 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from tests._support import _make_plugin_dir
+
 from vtx import hygiene
 from vtx.cache_state import receipt_fingerprint
 from vtx.infra import Ctx
@@ -60,23 +62,6 @@ def _tl(root: Path, **over):
 
 
 # ---------------------------------------------------------------- manifest
-def _make_plugin_dir(root: Path, name="demo", **over):
-    d = root / name
-    d.mkdir(parents=True)
-    (d / "cli.py").write_text("print('ok')\n", encoding="utf-8")
-    (d / "health.py").write_text("print('healthy')\n", encoding="utf-8")
-    (d / "README.md").write_text("# demo\n", encoding="utf-8")
-    m = {"name": name, "version": "1.0.0", "kind": "plugin",
-         "entry": {"cli": ["cli.py"]},
-         "health": {"type": "command", "command": "health.py"},
-         "requires": {"core": ">=2.0.0", "binaries": [], "python_packages": [], "platforms": []},
-         "config_keys": [],
-         "docs": "README.md",
-         "extends": {"schema_keys": [{"path": "sources[]", "key": "demo"}],
-                     "hooks": ["prepare_source"]}}
-    m.update(over)
-    (d / "plugin.json").write_text(json.dumps(m), encoding="utf-8")
-    return d, m
 
 
 class ManifestValidation(unittest.TestCase):

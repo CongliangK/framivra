@@ -640,6 +640,7 @@ static bool ResampleExactBaseline(RunState& signed_state, PumpDriver& pump,
   window.external_begin_frame_enabled = true;
   CefBrowserSettings settings;
   settings.background_color = 0;
+  settings.windowless_frame_rate = opt.cef.windowless_frame_rate;
   const auto request = machine.request();
   const std::string url = ExpandUrlTemplate(opt.url_template, request.target_frame_index);
   PrepareJsDocument(*state, url);
@@ -1081,7 +1082,8 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   CefString initial_url;
   initial_url.FromString("about:blank");
   CefRefPtr<WorkerClient> client = new WorkerClient(&cef_opt, &state);
-  CreateOsrBrowser(client, initial_url, cef_opt.width, cef_opt.height);
+  CreateOsrBrowser(client, initial_url, cef_opt.width, cef_opt.height,
+                   cef_opt.windowless_frame_rate);
   if (!pump.Until(
           [&] {
             std::lock_guard<std::mutex> lock(state.mu);

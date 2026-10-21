@@ -1,6 +1,6 @@
 # sync · 双系统同步与实录替换（**管线前置素材工具**子类）
 
-v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py` 迁入；manifest 见 `app.json`，兼容转发壳：`scripts/` 下同名件 → 本目录）。
+组件 manifest 见 `app.json`；命令使用本目录真实路径，回归测试见本目录 `tests/`。
 
 > **子类标注（ARCHITECTURE §3.1）**：本 app 属「管线前置素材工具」——不进 timeline 管线、无插件钩子；但两件都邻接**不可逆写操作**（repack 替换 voice 轨源、sync 微重采样 conform），纪律 = **幂等 + 备份**：repack 首次运行自动备份占位到 `final_tts_backup/`，替换后正式交付运行完整 `all`（脚本结束打印入口），当前回执与局部诊断前置见 [runbook](../../docs/skill/references/runbook.md)；sync 输出为新 out.wav，不覆写输入，conform 后复验残差 max<1.5ms 达标才判过。
 
@@ -16,7 +16,7 @@ v2 应用（P2a 批次 1 自 `scripts/sync_audio.py`、`scripts/repack_voice.py`
 - 硬依赖（app 级，manifest requires）：ffmpeg + numpy（repack_voice 系统 python3 即可跑）
 - `sync_audio.py` 须在 **conda `denoise` 环境**运行（numpy/scipy/soundfile/soxr；scipy 仅该环境提供，doctor 的系统解释器探不到，故不进 app 级 requires）：`~/miniconda3/envs/denoise/bin/python apps/sync/sync_audio.py ...`
 - 缺第三方依赖时（如系统 python3 无 scipy）不抛裸 traceback：脚本给中文指引（denoise 解释器优先读 `config.local.json` `denoise.python`，无则默认约定路径；附 pip 备选）并以专用退出码 **3** 结束；`--help` 零第三方依赖即可用
-- 全链依赖探测：`bash plugins/denoise/denoise_init.sh`（ffmpeg / denoise 环境 / Resemble 权重三探；原 scripts/denoise_init.sh 经兼容转发壳 可达）
+- 全链依赖探测：`bash plugins/denoise/denoise_init.sh`（ffmpeg / denoise 环境 / Resemble 权重三探）
 
 ## 健康检查
 

@@ -1126,7 +1126,7 @@
         "scripts/install.sh",
         "scripts/install_windows.ps1",
         "scripts/install.py",
-        "scripts/release_github.py",
+        "scripts/release/release_github.py",
         "experiments/gfx_cef_worker/CMakeLists.txt"
       ],
       "installed_version": "UNVERIFIED: host/runtime/build artifact not inspected",

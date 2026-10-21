@@ -5,14 +5,14 @@
 cwd 锚定仓根(由本件位置推定为 <repo>/tests/doc_gates_golden/ 的上两级)。
 总 11 档,golden_<n> 按序编号:
 
-  g1  scripts/verify_doc_budget.py     --snapshot g1_snapshot_tampered                          (measured>ceiling 篡改;捕获)
-  g2  scripts/verify_repeat_anchors.py --snapshot g2_snapshot_phantom                            (幻词锚;捕获)
-  g3  scripts/verify_charter_budget.py --snapshot g3_snapshot_over                               (measured>ceiling;捕获)
-  g4~g8 各档 catalog 副本篡改/破坏 → scripts/verify_manifest_catalog.py --check(捕获)
+  g1  scripts/docs/verify_doc_budget.py     --snapshot g1_snapshot_tampered                          (measured>ceiling 篡改;捕获)
+  g2  scripts/docs/verify_repeat_anchors.py --snapshot g2_snapshot_phantom                            (幻词锚;捕获)
+  g3  scripts/docs/verify_charter_budget.py --snapshot g3_snapshot_over                               (measured>ceiling;捕获)
+  g4~g8 各档 catalog 副本篡改/破坏 → scripts/docs/verify_manifest_catalog.py --check(捕获)
       g4_manifest_tamper/g5_registry_drift/g6_marker_corrupt/g7_double_inject/g8_marker_missing
   g9~g10 编码/尾空白差异 → 同上(吸收,期望 exit 0)
       g9_bom_absorb/g10_trailing_ws
-  g11 KERNEL_KEYS 幻影 scope 副本 → scripts/verify_contract_surface.py --stages <副本>(幻影键;捕获)
+  g11 KERNEL_KEYS 幻影 scope 副本 → scripts/docs/verify_contract_surface.py --stages <副本>(幻影键;捕获)
 
 rc 反转语义=「每档断言符合」:
   捕获类(g1~g8,g11)期望被测 verifier exit 1;吸收类(g9,g10)期望 exit 0。
@@ -41,15 +41,15 @@ REPO_ROOT = os.path.dirname(os.path.dirname(GOLDEN_DIR))
 # g1~g3 维持原断言(捕获类,期望被测门 exit 1;R5 起 g1 仅对照仓内快照)。
 BASE_GATES = [
     ("g1", "snapshot-tamper", [
-        sys.executable or "python3", "scripts/verify_doc_budget.py",
+        sys.executable or "python3", "scripts/docs/verify_doc_budget.py",
         "--snapshot", "tests/doc_gates_golden/g1_snapshot_tampered.json",
     ], 1),
     ("g2", "phantom-anchor", [
-        sys.executable or "python3", "scripts/verify_repeat_anchors.py",
+        sys.executable or "python3", "scripts/docs/verify_repeat_anchors.py",
         "--snapshot", "tests/doc_gates_golden/g2_snapshot_phantom.json",
     ], 1),
     ("g3", "charter-over-ceiling", [
-        sys.executable or "python3", "scripts/verify_charter_budget.py",
+        sys.executable or "python3", "scripts/docs/verify_charter_budget.py",
         "--snapshot", "tests/doc_gates_golden/g3_snapshot_over.json",
     ], 1),
 ]

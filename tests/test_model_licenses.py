@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts import model_license_policy as policy
+from scripts.policy import model_license_policy as policy
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -174,7 +174,7 @@ class EntryBoundaries(unittest.TestCase):
     def _stage(self, directory, script):
         root = Path(directory) / "checkout"
         evidence_paths = [v["local_path"] for v in policy.load_inventory()["evidence"].values() if v.get("local_path")]
-        for relative in (script, "scripts/model_license_policy.py", "docs/model-license-inventory.json", *evidence_paths):
+        for relative in (script, "scripts/policy/model_license_policy.py", "docs/model-license-inventory.json", *evidence_paths):
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, destination)

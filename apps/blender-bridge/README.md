@@ -53,7 +53,7 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 - clip：`frame_final_start=dst_in`，`frame_final_end=dst_in+dur`（右开区间语义一致）；源偏移＝src_in
 - 全屏 clip：crop169（16:9 中心裁切）+ 等比拉满（vtx L313）
 - 窗口 clip（scale/x/y 任一存在）：scale 相对**源原始尺寸**（vtx L306-311，非画布 fit）、x/y=左上角像素
-- gfx：复用内核只读解析器 `vtx/gfx_cache_reader.py`，按当前 `VTX_GFX`、worker 身份、`VTX_GFX_CACHE_NS` 与内容键定位，逐帧校验连续编号/PNG/完成摘要。Electron 复用生产 validator 验证真实 adapter/worker 回执与当前 binary/JS/settings 身份；CEF 或非空 namespace 必须已有匹配 `complete.json`，不搜索其它 namespace 或旧键；默认 CDP/CLI 的当前 canonical 目录允许无标记 PNG；仅当该目录缺失时，才可回落到明确派生的 `cache/<stem>/`，且须已有与当前 key、宽高、帧数、连续帧覆盖及逐 PNG SHA256 完整匹配的 `complete.json`。缺失/过期/损坏证书拒绝，当前目录损坏不回落；CEF、其它后端及非空 namespace 不启用旧 stem。Blender 进程继承同一渲染环境，独立调用须使用生成缓存时的环境。
+- gfx：复用内核只读解析器 `vtx/gfx_cache_reader.py`，按当前 `VTX_GFX`、worker 身份、`VTX_GFX_CACHE_NS` 与内容键定位，逐帧校验连续编号/PNG/完成摘要。Electron 复用生产 validator 验证真实 adapter/worker 回执与当前 binary/JS/settings 身份；CEF 或非空 namespace 必须已有匹配 `complete.json`，不搜索其它 namespace 或旧键；默认 CDP/CLI 的当前 canonical 目录同样须有匹配当前环境与页合同的 `complete.json`，不接受无标记 PNG；仅当该目录缺失时，才可回落到明确派生的 `cache/<stem>/`，且须已有与当前环境、key、宽高、帧数、连续帧覆盖及逐 PNG SHA256 完整匹配的 `complete.json`。缺失/过期/损坏证书拒绝，当前目录损坏不回落；CEF、其它后端及非空 namespace 不启用旧 stem。Blender 进程继承同一渲染环境，独立调用须使用生成缓存时的环境。
 - 字幕：**不经 Blender 文字渲染**——vtx 的 subs.ass 经 `alphamerge 透明画布 + ass:alpha=1` 渲成
   透明视频轨叠加，与终渲像素同源（libass 同库同字体）
 - fade_in/out：blend_alpha/volume 关键帧（插值取默认，预览近似）
@@ -95,13 +95,43 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 
 ## 分轨审计包 audit_bundle.py（人机协作交付门）
 
-事件映射、逐源导出、内容缓存、整段回退及验收边界见 [音频审计说明](../../docs/audio-audit.md)。审计是 duck/总混处理前的 MP3 试听；`--whole` 保留每个原事件，默认切分不会重启循环或淡变。
+从仓库根运行下列命令会写审计目录与 MP3 缓存；默认产物为 `<项目>/cache/audit_bgm/{mp3/,timeline.json,audit.blend}`。`--skip-blend` 只产出 MP3 与审计 timeline，`--force` 强制重转全部 MP3。BGM 正式版的交付要求见 music skill「交付门：分轨审计包」节。
 
-用法：`env python3 apps/blender-bridge/audit_bundle.py -t <项目>/timeline.json [--prefix bgm-] [--force]`
-（从仓库根执行；会写审计目录与 MP3 缓存）。BGM 正式版的交付要求见 music skill「交付门：分轨审计包」节。
-默认产物落 `<项目>/cache/audit_bgm/{mp3/,timeline.json,audit.blend}`；`--skip-blend` 只产出 MP3 与审计 timeline，
-`--force` 强制重转全部 MP3。内容缓存复用、静音切分的保留/回退规则与失败边界统一见
-[音频审计说明](../../docs/audio-audit.md#cache-and-failure-handling)，不以源 mtime 或既有产物判定本次成功。
+`apps/blender-bridge/audit_bundle.py` exports the selected tracks for listening before ducking and master loudness processing. Production media is never modified. MP3 is a lossy preview; a validated audit timeline is not proof that its mix equals the delivered film.
+
+```bash
+python apps/blender-bridge/audit_bundle.py -t /project/timeline.json --prefix bed --prefix sfx --skip-blend
+# Preserve every event without silence detection:
+python apps/blender-bridge/audit_bundle.py -t /project/timeline.json --prefix bed --whole --skip-blend
+```
+
+Python, FFmpeg and ffprobe must be on PATH. These commands work with quoted Windows paths; omit `--skip-blend` only when Blender is installed. Cross-drive media directories use absolute paths and therefore require rebasing if moved to another computer.
+
+### Event fidelity
+
+Every referenced source is exported and retains its source ID. A track can use several files; repeated references share an export. `--whole` copies every event including its volume, pan, source offset, loop and fade fields. Track-level ducking is deliberately excluded and listed in `_meta.excluded_duck_tracks`.
+
+Default silence detection runs on the original first audio stream, not MP3 padding. Source content `[a,b)` is intersected with an event's `[src_in, src_in + out - in)`; intersection `[u,v)` becomes `src_in=u, in=event.in+u-src_in, out=event.in+v-src_in`. This preserves late placements and reused source excerpts. Seconds are rounded outward to frames, then overlapping/adjacent frame spans are merged. Detection failure exits nonzero.
+
+Loop and fade events remain whole: naively splitting them would restart their cycle or envelope. Events with no detected content also remain whole, retaining quiet/silent intentional material and a valid nonempty track. Each such fallback is printed and recorded in `_meta.whole_fallbacks`. Detection thresholds are approximate; use `--whole` for conservative review.
+
+An audio-only audit does not inherit `project.cache_dependencies` from a relocated visual project. Removed declarations are listed in its metadata. The exported media itself is tracked by vtx as ordinary sources.
+
+### Cache and failure handling
+
+MP3 names are based on source bytes, conversion settings and FFmpeg version, with output SHA256 checked before reuse. Same-time/same-size replacement, a different source and a damaged MP3 cannot silently reuse old audio. The first audio stream is exported at 48 kHz stereo, 320k libmp3lame. Equal source bytes share a single transcode job. Old track-name/mtime files are not trusted or deleted automatically.
+
+Encoding and strict candidate decoding finish before atomic MP3 replacement. Failures before replacement preserve any valid cached MP3 and its receipt, and clean the candidate. A missing/corrupt receipt causes regeneration. The directory as a whole is not transactional: use the command exit status and successful validate output, not the presence of a prior timeline or `.blend`, to determine success. Do not edit sources or run multiple writers against the same audit directory during a build. This change does not introduce automatic cache garbage collection.
+
+### Regression coverage and remaining limits
+
+```bash
+cd apps/blender-bridge && env PYTHONDONTWRITEBYTECODE=1 env python3 -m unittest discover -s tests -t . -v
+```
+
+Tests use synthetic audio and real FFmpeg/vtx validation for relocated dependencies, multiple sources and volumes, delayed nonzero source offsets, actual trimming, whole/fallback behavior, all-silent audio, content replacement with preserved timestamps, corrupt-cache repair, forced-encoder failure preservation and production timeline overwrite rejection. Additional boundary tests cover detector failure, subframe merging and cross-drive fallback. Set `VTX_AUDIT_TEST_OUTPUT` to keep fixtures/logs; otherwise temporary fixtures are cleaned. FFmpeg-dependent tests explicitly skip when unavailable; a skipped run is not acceptance.
+
+Blender playback is a separate boundary. In particular, `json2blend.py` loop expansion with nonzero source offsets and `verify_blend.py`'s limited audio-field checks still require focused Blender tests. Retaining fields in JSON does not certify Blender playback equivalence. Linux/macOS, multiwriter behavior and long-form projects have not been established by the Windows regression.
 
 ## 用户手剪回读协议
 

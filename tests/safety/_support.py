@@ -127,7 +127,7 @@ class SandboxCase(unittest.TestCase):
                 "from unittest.mock import patch\n"
                 "del sys.argv[0]\n"
                 "sys.path[0] = os.path.dirname(os.path.dirname(sys.argv[0]))\n"
-                "from tests.gfx_environment_fixture import collect, find_chrome\n"
+                "from tests.gfx._environment import collect, find_chrome\n"
                 "after = %r\n"
                 "if after is not None: faulthandler.dump_traceback_later(after, repeat=False)\n"
                 "try:\n"

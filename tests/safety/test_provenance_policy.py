@@ -39,7 +39,7 @@ def _load(name, path):
     return module
 
 
-VERIFY_PY = REPO / "scripts" / "verify_release.py"
+VERIFY_PY = REPO / "scripts/release" / "verify_release.py"
 INSTALL_PY = REPO / "scripts" / "install.py"
 
 

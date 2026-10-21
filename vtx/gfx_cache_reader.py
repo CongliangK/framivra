@@ -1,9 +1,9 @@
 """Read-only gfx consumer for bridges: production routing and PNG integrity.
 
-No rendering, certification, marker publication or directory discovery. CEF and
-experimental namespaces require an existing exact completion record. The default
-CDP/CLI route accepts unmarked PNGs only at the current canonical directory;
-its derived legacy stem requires an exact current completion certificate.
+No rendering, certification, marker publication or directory discovery. HTML
+caches require exact completion records with the selected backend/environment
+identity. Default CDP/CLI may use its explicitly derived legacy stem only when
+the canonical location is absent; neither location accepts unmarked PNGs.
 """
 from pathlib import Path
 
@@ -37,7 +37,6 @@ def resolve_frames(c, clip):
     namespace = gfx_cache_ns()
     key = source.directory.name
     directory = source.directory
-    legacy = False
     # Only one explicitly derived old location, never discovery. An existing
     # canonical entry (including a broken symlink/non-directory) must fail on
     # its own merits, not be concealed by otherwise valid historical frames.
@@ -45,10 +44,9 @@ def resolve_frames(c, clip):
             and not directory.exists() and not directory.is_symlink()):
         candidate = c.cache / Path(clip['src']).stem
         if candidate.is_dir():
-            directory, legacy = candidate, True
+            directory = candidate
     dependency_digest = digest(resolve(c, clip)) if policy(c) == 'strict' else None
     n = source.frame_count
-    marker = directory / gfx_cli.COMPLETE_FILE
     from .gfx_backend import identity
     from .gfx_environment import certificate, recheck
     environment = certificate(c)
@@ -59,7 +57,9 @@ def resolve_frames(c, clip):
         if cached_runs(directory, n, key, c.w, c.h, identity(), namespace,
                        expected_html=c.root / clip['src'], expected_config=electron_config()) is None:
             raise GfxCacheError(f'Electron gfx 完成记录/身份/producer 回执无效: {directory}')
-    elif environment is not None or legacy or namespace or marker.exists() or dependency_digest is not None:
+    else:
+        # For non-Electron backends certificate() returns a bound environment
+        # or raises; no uncertified PNG-only path is reachable.
         # inspect_page's second result also detects absent/malformed records,
         # unsupported schemas, missing hashes and mismatched backend_ns. Unlike
         # a renderer, a read-only consumer must not recertify any of these.
@@ -70,10 +70,4 @@ def resolve_frames(c, clip):
             raise GfxCacheError(f'gfx 缓存无效 {directory}: {bad[:8]}')
         if needs_publication:
             raise GfxCacheError(f'gfx complete.json 缺失或与当前页合同/namespace 不符: {directory}')
-    else:
-        # Default CDP/CLI compatibility still validates exact frame numbers and
-        # real PNG bytes. A glob/count cannot establish contiguous coverage.
-        bad = gfx_cli.verify_frames(directory, range(n), width=c.w, height=c.h)
-        if bad:
-            raise GfxCacheError(f'gfx 缓存无效 {directory}: {bad[:8]}')
     return [directory / f'f{i:04d}.png' for i in range(n)]

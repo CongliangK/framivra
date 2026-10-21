@@ -3,5 +3,5 @@
 sh 法 bash -n 语法门，零执行，必 PASS。
 
 ```bash
-bash scripts/docs_smoke.sh
+bash scripts/docs/docs_smoke.sh
 ```

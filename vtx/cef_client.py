@@ -4,7 +4,7 @@
 
 协议权威：experiments/gfx_cef_worker/IPC_PROTOCOL.md（偏移表与
 src/ipc_protocol.hpp 静态断言、src/shm_ring.hpp 控制块布局逐字段一致；
-tests/test_cef_worker_shm.py 以 shm_ring_selftest --dump-ring 跨语言锁定）。
+tests/gfx/test_cef_worker_shm.py 以 shm_ring_selftest --dump-ring 跨语言锁定）。
 
 职责：
   - 连接 worker serve 模式 Unix Socket，收 Hello + SCM_RIGHTS(SHM fd)；
