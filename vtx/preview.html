@@ -258,19 +258,27 @@ function load(tl){
   render(tl,scale);
   TL=tl; PXF=scale; $("zoom").value=scale; $("detail").innerHTML=HINT;
 }
-function loadText(txt){
+let loadGeneration=0;
+function loadText(txt, generation=++loadGeneration){
+  if(generation!==loadGeneration) return;
   try{ load(JSON.parse(txt)); }
   catch(e){ alert("时间线载入失败："+e.message); }
 }
+async function loadFile(file){
+  // Latest input intent wins, even if its read/parse fails; keep the last valid view.
+  const generation=++loadGeneration;
+  try{ loadText(await file.text(),generation); }
+  catch(e){ if(generation===loadGeneration) alert("时间线载入失败："+e.message); }
+}
 $("bOpen").onclick=()=>$("file").click();
-$("file").onchange=e=>{ const f=e.target.files[0]; if(!f)return; f.text().then(t=>loadText(t)); };
+$("file").onchange=e=>{ const f=e.target.files[0]; if(f) return loadFile(f); };
 $("bSample").onclick=()=>loadText(JSON.stringify(SAMPLE));
 $("bPaste").onclick=()=>$("dlg").showModal();
 $("bLoad").onclick=()=>{ $("dlg").close(); loadText($("paste").value); };
 $("bCancel").onclick=()=>$("dlg").close();
 $("bX").onclick=()=>$("dlg").close();
 document.addEventListener("dragover",e=>e.preventDefault());
-document.addEventListener("drop",e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) f.text().then(t=>loadText(t)); });
+document.addEventListener("drop",e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) return loadFile(f); });
 
 /* ---------- 校验（预览级，v2 语义） ---------- */
 function validate(tl){

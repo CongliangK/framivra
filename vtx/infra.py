@@ -104,7 +104,8 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
     无阶段记录/读写失败均静默直过（旁证尽力而为，不进主链失败路径）。"""
     try:
         old = json.loads(f.read_text(encoding="utf-8"))
-        if (old.get("input_fingerprint") not in (None, fingerprint)
+        if (isinstance(old, dict)
+                and old.get("input_fingerprint") not in (None, fingerprint)
                 and old.get("stages")):
             # B06：旁证轮转同样走 fstxn 原子写（tmp+os.replace）——调用方已持
             # receipt.json 事务锁，prev 伴生件无须再拿第二把锁文件；写一半被杀
@@ -437,7 +438,8 @@ class Ctx:
                    for ti, t in indexed(self, required_field(self, self.tl, 'video_tracks', '$'), '$.video_tracks')):
                 dependencies['video'] = dependencies['video_draft'] = ['gfx']
             missing = [name for name in dependencies.get(stage, [])
-                       if not rec['stages'].get(name, {}).get('ok')]
+                       if not isinstance(rec['stages'].get(name), dict)
+                       or rec['stages'][name].get('ok') is not True]
             if missing:
                 error = RuntimeError('当前输入要求先成功完成阶段: ' + ', '.join(missing) +
                                      '（输入已变化，旧成功不继承；请按序重跑或直接 vtx all）')

@@ -1,4 +1,7 @@
-"""Shell argument/stage contract only: never execute Resolve or media tools."""
+"""Matting shell stages and operation preview: never execute Resolve or media tools."""
+import contextlib
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -7,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -156,6 +160,73 @@ class MattingPipelineArguments(unittest.TestCase):
                               "exit": result.returncode, "calls": [],
                               "stdout": result.stdout, "stderr": result.stderr})
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+SCRIPT = ROOT / "apps/matting/resolve_matte/ops_runner.py"
+STEPS = [
+    {"op": "click", "x": 1, "y": 2},
+    {"op": "move", "x": 3, "y": 4},
+    {"op": "drag", "from": [1, 2], "to": [3, 4]},
+    {"op": "key", "keys": "Return"},
+    {"op": "type", "text": "fixture only"},
+    {"op": "wait", "ms": 500},
+    {"op": "shell", "cmd": "NEVER EXECUTE THIS FIXTURE"},
+]
+
+
+class MattingOperationPreview(unittest.TestCase):
+    def setUp(self):
+        self.mouse = mock.Mock()
+        self.mouse.getgeometry.return_value = {"id": 1, "x": 0, "y": 0, "w": 10, "h": 10}
+        with mock.patch.dict(sys.modules, {"mouse_ctl": self.mouse}):
+            spec = importlib.util.spec_from_file_location("matte_ops_fixture", SCRIPT)
+            self.ops = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self.ops)
+        self.tmp = tempfile.TemporaryDirectory(prefix="matte-ops-test-")
+        self.addCleanup(self.tmp.cleanup)
+        self.sequence = Path(self.tmp.name) / "sequence.json"
+        self.sequence.write_text(json.dumps({"steps": STEPS}), encoding="utf-8")
+
+    def invoke(self, *args):
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", [str(SCRIPT), str(self.sequence), *args]), \
+                contextlib.redirect_stdout(output):
+            self.ops.main()
+        return output.getvalue()
+
+    def test_dry_prints_every_operation_without_ui_process_or_sleep(self):
+        with mock.patch.object(self.ops.subprocess, "run", side_effect=AssertionError("no shell")) as run, \
+                mock.patch.object(self.ops.time, "sleep", side_effect=AssertionError("no sleep")) as sleep:
+            output = self.invoke("--dry")
+        self.assertEqual(self.mouse.mock_calls, [])
+        run.assert_not_called()
+        sleep.assert_not_called()
+        for index, step in enumerate(STEPS):
+            self.assertIn(f"[{index}]\n", output)
+            self.assertIn("  " + step["op"], output)
+        self.assertNotIn("达芬奇窗口", output)
+        self.assertIn("完成", output)
+
+    def test_dry_range_preserves_exclusive_end_without_ui(self):
+        with mock.patch.object(self.ops.subprocess, "run", side_effect=AssertionError("no shell")), \
+                mock.patch.object(self.ops.time, "sleep", side_effect=AssertionError("no sleep")):
+            output = self.invoke("--dry", "--from", "2", "--to", "4")
+        self.assertEqual(self.mouse.mock_calls, [])
+        for index in range(len(STEPS)):
+            self.assertEqual(f"[{index}]\n" in output, 2 <= index < 4)
+
+    def test_execution_keeps_activation_before_fake_actions(self):
+        with mock.patch.object(self.ops.subprocess, "run", return_value=mock.Mock(returncode=0)) as run, \
+                mock.patch.object(self.ops.time, "sleep") as sleep:
+            output = self.invoke()
+        self.assertEqual(self.mouse.mock_calls, [
+            mock.call.getgeometry(), mock.call.activate(), mock.call.click(1, 2, 1, False),
+            mock.call.move(3, 4, False), mock.call.drag(1, 2, 3, 4, screen=False),
+            mock.call.key("Return"), mock.call.type_text("fixture only"),
+        ])
+        run.assert_called_once_with(STEPS[-1]["cmd"], shell=True)
+        self.assertEqual(sleep.call_count, len(STEPS) + 1)
+        self.assertIn("达芬奇窗口", output)
 
 
 if __name__ == "__main__":

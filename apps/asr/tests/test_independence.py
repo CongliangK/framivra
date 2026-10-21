@@ -19,8 +19,11 @@
   I. 资产清单（版本/来源/SHA256）接口正反例；
   J. 复用链成员已删除（ime_root/ime_sidecar_alive/_ime_root/_ime_sidecar_alive 不存在）。
 """
+import contextlib
+import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -434,24 +437,183 @@ class TestProcessOwnership(AdversarialBase):
 
     def test_stop_refuses_foreign_pid_zero_signals(self):
         self.arm_kill_sentinel()
-        # pid 文件指向本测试进程（cmdline 不含 sidecar_server.py）
+        # Valid current record, but a foreign command: test attribution, not parsing.
         port = 18185
         pf = independence.pid_file(port)
         pf.parent.mkdir(parents=True, exist_ok=True)
-        pf.write_text(str(os.getpid()))
+        pf.write_text(json.dumps({"pid": self.FAKE_PID, "start_time": 700, "port": port}))
         real_health = client.health
         client.health = lambda *a, **kw: None      # 不发真实请求
         try:
-            self.assertFalse(client.stop_sidecar(base_url="http://127.0.0.1:%d" % port,
-                                                 cfg={}))
+            with self._fake_proc() as proc:
+                proc["argv"] = ["python", "/tmp/unrelated.py"]
+                self.assertFalse(client.stop_sidecar(base_url="http://127.0.0.1:%d" % port,
+                                                     cfg={}))
         finally:
             client.health = real_health
         self.assertTrue(pf.exists())               # pid 文件保留供排查
 
+    FAKE_PID = 42424242
+
+    @contextlib.contextmanager
+    def _fake_proc(self):
+        """All process observations are synthesized; never read a real /proc PID."""
+        pid = self.FAKE_PID
+        state = {"argv": ["python", "-I", str(independence.ASR_DIR / "sidecar_server.py"),
+                          "--port", "18085"],
+                 "state": "S", "started": 700, "present": True, "error": None}
+        read_bytes, read_text = Path.read_bytes, Path.read_text
+
+        def contents(path, binary):
+            expected = "/proc/%d/%s" % (pid, "cmdline" if binary else "stat")
+            self.assertEqual(str(path), expected)
+            if not state["present"]:
+                raise FileNotFoundError(str(path))
+            if state["error"] is not None:
+                raise state["error"]
+            if binary:
+                return b"\0".join(x.encode() for x in state["argv"]) + b"\0"
+            return "%d (fake process) %s" % (pid, " ".join(
+                [state["state"]] + ["0"] * 18 + [str(state["started"])]))
+
+        def bytes_(path, *args, **kwargs):
+            return (contents(path, True) if str(path).startswith("/proc/")
+                    else read_bytes(path, *args, **kwargs))
+
+        def text_(path, *args, **kwargs):
+            return (contents(path, False) if str(path).startswith("/proc/")
+                    else read_text(path, *args, **kwargs))
+
+        with mock.patch.object(Path, "read_bytes", bytes_), mock.patch.object(Path, "read_text", text_):
+            yield state
+
     def test_pid_owns_sidecar_requires_cmdline_match(self):
-        self.assertFalse(independence.pid_owns_sidecar(os.getpid(), 18085))
-        self.assertFalse(independence.pid_owns_sidecar(None, 18085))
-        self.assertFalse(independence.pid_owns_sidecar(1, 18085))
+        script = str(independence.ASR_DIR / "sidecar_server.py")
+        valid = ["python", "-I", script, "--port", "18085"]
+        cases = [
+            (valid, 700, True),
+            (["python", script, "--port", "18085"], 700, True),
+            (["python", "-I", script, "--port=18085"], 700, True),
+            (["python", "", script, "--port", "18085"], 700, False),
+            (["python", "-I", "", script, "--port", "18085"], 700, False),
+            (["python", "/tmp/sidecar_server.py.copy", "--port", "18085"], 700, False),
+            (["python", "-c", "print('sidecar_server.py --port 18085')"], 700, False),
+            (["python", "/tmp/unrelated.py", "--model", script, "--port", "18085"], 700, False),
+            (["python", script, "--port", "19000", "--model", "18085"], 700, False),
+            (["python", script, "--port", "180850"], 700, False),
+            (valid + ["--port", "19000"], 700, False),
+            (valid + ["--port=18085"], 700, False),
+            (["python", script, "--port"], 700, False),
+            (valid, None, False), (valid, True, False), (valid, 0, False),
+            (valid, "700", False), (valid, 701, False),
+        ]
+        with self._fake_proc() as proc:
+            for argv, started, expected in cases:
+                with self.subTest(argv=argv, started=started):
+                    proc["argv"] = argv
+                    self.assertEqual(independence.pid_owns_sidecar(
+                        self.FAKE_PID, 18085, started), expected)
+            proc["argv"] = valid
+            for state in ("Z", "X", "x"):
+                with self.subTest(state=state):
+                    proc["state"] = state
+                    self.assertFalse(independence.pid_owns_sidecar(self.FAKE_PID, 18085, 700))
+            for pid in (None, 1, True, "42424242"):
+                with self.subTest(pid=pid):
+                    self.assertFalse(independence.pid_owns_sidecar(pid, 18085, 700))
+
+    def test_pid_record_requires_current_identity(self):
+        port = 18085
+        valid = {"pid": self.FAKE_PID, "start_time": 700, "port": port}
+        pf = independence.pid_file(port)
+        pf.parent.mkdir(parents=True)
+        records = [valid, self.FAKE_PID, {"pid": self.FAKE_PID},
+                   dict(valid, pid=True), dict(valid, pid=1),
+                   dict(valid, start_time=None), dict(valid, start_time=True),
+                   dict(valid, start_time="700"), dict(valid, start_time=0),
+                   dict(valid, port=19000), dict(valid, port=True),
+                   {"pid": self.FAKE_PID, "start_time": 700}]
+        with self._fake_proc():
+            for record in records:
+                with self.subTest(record=record):
+                    pf.write_text(json.dumps(record))
+                    expected = record == valid
+                    self.assertEqual(independence.read_pid_record(port), valid if expected else None)
+                    self.assertEqual(client._sidecar_attribution("http://127.0.0.1:18085"), expected)
+                    if not expected:
+                        with mock.patch.object(client, "health", return_value=None), \
+                                mock.patch("os.kill", side_effect=AssertionError("invalid record signal")) as kill:
+                            self.assertFalse(client.stop_sidecar("http://127.0.0.1:18085", cfg={}))
+                        kill.assert_not_called()
+                        self.assertFalse(pf.exists(), "Malformed record cleanup is not stop success")
+
+    def test_stop_retains_record_until_process_exit_observed(self):
+        port = 18085
+        pf = independence.pid_file(port)
+        pf.parent.mkdir(parents=True)
+        record = {"pid": self.FAKE_PID, "start_time": 700, "port": port}
+        cases = [("term_ignored", False), ("http_down_process_live", False),
+                 ("unreadable", False), ("bad_stat", False), ("signal_denied", False),
+                 ("gone", True), ("pid_reused", True), ("zombie", True),
+                 ("dead", True), ("signal_races_exit", True)]
+        self.arm_popen_sentinel()
+        with mock.patch("socket.socket", side_effect=AssertionError("network prohibited")):
+            for mode, expected in cases:
+                with self.subTest(mode=mode), self._fake_proc() as proc:
+                    pf.write_text(json.dumps(record))
+
+                    def signal_(pid, sig):
+                        self.assertEqual((pid, sig), (self.FAKE_PID, signal.SIGTERM))
+                        if mode == "signal_denied":
+                            raise PermissionError("controlled signal denial")
+                        if mode in ("gone", "signal_races_exit"):
+                            proc["present"] = False
+                        elif mode == "pid_reused":
+                            proc["started"] = 701
+                        elif mode == "zombie":
+                            proc["state"] = "Z"
+                        elif mode == "dead":
+                            proc["state"] = "X"
+                        elif mode == "unreadable":
+                            proc["error"] = PermissionError("controlled unreadable stat")
+                        elif mode == "bad_stat":
+                            proc["started"] = "bad"
+                        if mode == "signal_races_exit":
+                            raise ProcessLookupError("controlled exit race")
+
+                    stderr = io.StringIO()
+                    with mock.patch.object(client, "health", return_value=(
+                            None if mode == "http_down_process_live" else {"status": "ok"})), \
+                            mock.patch("os.kill", side_effect=signal_) as kill, \
+                            mock.patch.object(client.time, "monotonic", side_effect=[0., 0., 11.]), \
+                            mock.patch.object(client.time, "sleep"), contextlib.redirect_stderr(stderr):
+                        self.assertEqual(client.stop_sidecar(
+                            "http://127.0.0.1:18085", cfg={}), expected)
+                    kill.assert_called_once_with(self.FAKE_PID, signal.SIGTERM)
+                    self.assertEqual(pf.exists(), not expected)
+                    if expected:
+                        self.assertIn("✓ sidecar 已停止", stderr.getvalue())
+                    else:
+                        self.assertEqual(json.loads(pf.read_text()), record)
+                        self.assertNotIn("✓ sidecar 已停止", stderr.getvalue())
+
+    def test_initial_stale_identity_is_retained_without_signal(self):
+        port = 18085
+        pf = independence.pid_file(port)
+        pf.parent.mkdir(parents=True)
+        record = {"pid": self.FAKE_PID, "start_time": 700, "port": port}
+        with self._fake_proc() as proc:
+            for mode in ("gone", "reused", "unreadable", "bad_stat"):
+                with self.subTest(mode=mode):
+                    pf.write_text(json.dumps(record))
+                    proc.update(present=mode != "gone", started=(701 if mode == "reused" else "bad"
+                                if mode == "bad_stat" else 700),
+                                error=PermissionError("controlled denial") if mode == "unreadable" else None)
+                    with mock.patch.object(client, "health", return_value=None), \
+                            mock.patch("os.kill", side_effect=AssertionError("unattributed signal")) as kill:
+                        self.assertFalse(client.stop_sidecar("http://127.0.0.1:18085", cfg={}))
+                    kill.assert_not_called()
+                    self.assertEqual(json.loads(pf.read_text()), record)
 
     def test_healthy_unattributed_service_not_reused(self):
         # 验收 H：端口健康但无法归属 → 拒绝复用、零拉起

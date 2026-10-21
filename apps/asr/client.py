@@ -378,7 +378,8 @@ def stop_sidecar(base_url=None, cfg=None):
     只报错（issue #141/#142：绝不向外部/输入法进程发信号）。
 
     语义（issue #142）：停止自有服务**不受 enabled 门禁限制**——禁用态下
-    回收本项目残留 sidecar 是安全收敛动作；只读 health 探测用于判断收尾态。"""
+    回收本项目残留 sidecar 是安全收敛动作。HTTP 断开不是进程退出证明；
+    发信号后必须观察原启动身份结束，超时或无法读取状态时保留记录并失败。"""
     cfg = cfg if cfg is not None else load_config()
     preflight(cfg)
     base_url = base_url or cfg_get(cfg, "asr.base_url", DEFAULT_BASE_URL)
@@ -401,26 +402,29 @@ def stop_sidecar(base_url=None, cfg=None):
     pid = rec["pid"]
     if not independence.pid_owns_sidecar(pid, port,
                                          start_time=rec.get("start_time")):
-        detail = "进程不存在或 cmdline 不符"
-        if rec.get("start_time") is None:
-            detail += "；旧格式 pid 记录无启动时刻，请升级记录（重启 sidecar 自动生成）"
-        else:
-            detail += "或启动时刻不符（PID 可能已被复用）"
-        print("✗ pid %d 无法归属到本项目 sidecar（%s）——拒绝发信号；"
-              "pid 记录保留供排查：%s" % (pid, detail, pf), file=sys.stderr)
+        print("✗ pid %d 无法归属到本项目 sidecar（进程不存在、cmdline/端口或启动时刻不符）"
+              "——拒绝发信号；pid 记录保留供排查：%s" % (pid, pf), file=sys.stderr)
         return False
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        pass
+        pass  # The attributed process may exit between checking and signaling.
+    except OSError as exc:
+        print("✗ 无法停止 sidecar（pid %d）：%s；pid 记录保留供重试" % (pid, exc),
+              file=sys.stderr)
+        return False
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if health(base_url, timeout=0.5) is None:
-            break
+    while True:
+        if independence.pid_exit_observed(pid, rec["start_time"]):
+            pf.unlink(missing_ok=True)
+            print("✓ sidecar 已停止（pid %d）" % pid, file=sys.stderr)
+            return True
+        if time.monotonic() >= deadline:
+            print("✗ 未能确认 sidecar 已停止（pid %d）；pid 记录保留供重试" % pid,
+                  file=sys.stderr)
+            return False
         time.sleep(0.3)
-    pf.unlink(missing_ok=True)
-    print("✓ sidecar 已停止（pid %d）" % pid, file=sys.stderr)
-    return True
+
 
 
 # ---------------------------------------------------------------- 音频抽取

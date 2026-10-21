@@ -462,6 +462,10 @@ def load_receipt(path, fingerprint):
     # OSError（P6 修复 B-P3-5d）：权限类读失败与缺失/损坏同语义（空表），不裸栈
     except (OSError, ValueError):
         record = {}
-    if record.get('input_fingerprint') != fingerprint:
+    if (not isinstance(record, dict)
+            or record.get('input_fingerprint') != fingerprint
+            or not isinstance(record.get('stages'), dict)):
         record = {'input_fingerprint': fingerprint, 'stages': {}}
+    # Malformed observations remain diagnostic history. Consumers must require
+    # literal success for their own prerequisites, not erase unrelated stages.
     return record

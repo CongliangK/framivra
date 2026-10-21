@@ -73,6 +73,39 @@ let prevented = false;
 handlers.drop({preventDefault() {prevented = true;},
   dataTransfer: {files: [{text: async () => JSON.stringify(SAMPLE)}]}});
 await Promise.resolve(); assert.equal(prevented, true); assert.deepEqual(TL, SAMPLE);
+// File reads may complete out of order; a newer input intent owns the view.
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
+const startRead=(kind,read)=>kind==='file'
+  ? $('file').onchange({target:{files:[{text:read}]}})
+  : handlers.drop({preventDefault(){},dataTransfer:{files:[{text:read}]}});
+for(const oldKind of ['file','drop']) for(const newKind of ['file','drop']){
+  const old=deferred(), latest=deferred();
+  const oldTask=startRead(oldKind,()=>old.promise), latestTask=startRead(newKind,()=>latest.promise);
+  latest.resolve(JSON.stringify(edited));await latestTask;assert.deepEqual(TL,edited);
+  old.resolve(JSON.stringify(SAMPLE));await oldTask;assert.deepEqual(TL,edited);
+}
+for(const kind of ['file','drop']) for(const action of ['sample','paste','invalid-paste']){
+  const old=deferred(), task=startRead(kind,()=>old.promise);
+  if(action==='sample') $('bSample').onclick();
+  else {$('paste').value=action==='paste'?JSON.stringify(edited):'{bad json';$('bLoad').onclick();}
+  const chosen=TL,n=alerts.length;
+  old.resolve(JSON.stringify({...SAMPLE,_meta:{note:'stale'}}));await task;
+  assert.equal(TL,chosen);assert.equal(alerts.length,n);
+}
+for(const kind of ['file','drop']){
+  const old=deferred(), task=startRead(kind,()=>old.promise);$('bSample').onclick();
+  const n=alerts.length;old.reject(new Error('stale read failure'));await task;
+  assert.equal(alerts.length,n);assert.deepEqual(TL,SAMPLE);
+  const chosen=TL;
+  await startRead(kind,()=>Promise.reject(new Error('current read failure')));
+  assert.equal(alerts.length,n+1);assert.match(alerts.at(-1),/current read failure/);assert.equal(TL,chosen);
+  await startRead(kind,()=>{throw new Error('synchronous read failure');});
+  assert.equal(alerts.length,n+2);assert.match(alerts.at(-1),/synchronous read failure/);assert.equal(TL,chosen);
+}
+// Opening then canceling a paste dialog is not a replacement input intent.
+const pending=deferred(), pendingTask=startRead('file',()=>pending.promise);
+$('bPaste').onclick();$('bCancel').onclick();pending.resolve(JSON.stringify(edited));
+await pendingTask;assert.deepEqual(TL,edited);
 for (const button of ["bCancel", "bX"]) {
   $("bPaste").onclick(); $(button).onclick(); assert.equal($("dlg").open, false);
 }

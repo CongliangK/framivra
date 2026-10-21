@@ -650,19 +650,44 @@ def pid_file(port):
     return project_state_root() / ("sidecar_%d.pid" % int(port))
 
 
+def _read_pid_stat(pid):
+    """Read one process identity/state; preserve missing vs unreadable failures."""
+    data = (Path("/proc") / str(pid) / "stat").read_text()
+    head, separator, tail = data.rpartition(")")  # comm may contain spaces or ')'
+    if not separator or not head.startswith(str(pid) + " ("):
+        raise ValueError("Invalid process stat identity")
+    tail = tail.split()
+    try:
+        state, started = tail[0], int(tail[19])
+    except (IndexError, ValueError) as exc:
+        raise ValueError("Invalid process stat") from exc
+    if len(state) != 1 or not state.isalpha() or started <= 0:
+        raise ValueError("Invalid process state/start time")
+    return state, started
+
+
 def pid_start_time(pid):
-    """/proc/<pid>/stat 的 starttime（field 22，时钟嘀嗒）——进程身份的启动时刻
-    因子：PID 被内核回收复用后 starttime 必变（issue #142：陈旧 PID/PID 重用
-    不得导致向外部进程发信号）。读不到 → None。"""
+    """/proc starttime (field 22), or None when identity cannot be read."""
     try:
-        data = (Path("/proc") / str(int(pid)) / "stat").read_text()
+        return _read_pid_stat(int(pid))[1]
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def pid_exit_observed(pid, start_time):
+    """Positive evidence that an already-attributed process has terminated.
+
+    Missing /proc, a different start identity or zombie/dead state ends the old
+    process. Permission errors or malformed stat are unknown, never success.
+    This is only a post-attribution stop observation, not signal authority.
+    """
+    try:
+        state, started = _read_pid_stat(pid)
+    except FileNotFoundError:
+        return True
     except (OSError, ValueError):
-        return None
-    tail = data.rpartition(")")[2].split()   # comm 可含空格/括号：取最后 ')' 之后
-    try:
-        return int(tail[19])                  # tail[0]=state(field3) → field22=index19
-    except (IndexError, ValueError):
-        return None
+        return False
+    return started != start_time or state in ("Z", "X", "x")
 
 
 def write_pid_record(port, pid, extra=None):
@@ -678,52 +703,61 @@ def write_pid_record(port, pid, extra=None):
 
 
 def read_pid_record(port):
-    """读 pid 记录；兼容 #141 时代的纯数字旧格式（无 start_time → None，
-    归属校验退化为 cmdline 单因子并在 stop 时给出升级提示）。损坏 → None。"""
-    pf = pid_file(port)
+    """Read the current JSON pid/start_time/port identity; invalid means None.
+
+    Callers may clear a malformed record, but must not call that a successful stop.
+    A valid record that fails process attribution remains available for diagnosis.
+    """
     try:
-        raw = pf.read_text(encoding="utf-8").strip()
-    except OSError:
+        rec = json.loads(pid_file(port).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
-    if raw.startswith("{"):
-        try:
-            rec = json.loads(raw)
-        except ValueError:
-            return None
-        if isinstance(rec, dict) and isinstance(rec.get("pid"), int):
-            return rec
+    if not isinstance(rec, dict):
         return None
-    try:
-        return {"pid": int(raw), "start_time": None, "port": int(port), "legacy": True}
-    except ValueError:
+    if (type(rec.get("pid")) is not int or rec["pid"] <= 1
+            or type(rec.get("start_time")) is not int or rec["start_time"] <= 0
+            or type(rec.get("port")) is not int or rec["port"] != port):
         return None
+    return rec
 
 
 def pid_owns_sidecar(pid, port, start_time=None):
-    """pid 是否真的是本项目 sidecar——三因子归属（issue #142）：
-    ① /proc cmdline 同时含 sidecar_server.py 与端口；② pid 存活；
-    ③ 记录在案的 start_time 与 /proc 实测一致（PID 重用防御；旧格式记录
-    无 start_time 时跳过该因子并在调用方提示升级）。
-    无法证明即 False——绝不向无法归属的进程发信号。"""
-    if not pid or int(pid) <= 1:
+    """Require the current sidecar script, exact port and recorded start identity.
+
+    Recognize the launcher's isolated Python invocation and direct Python script
+    invocation. Text inside -c code or another option is not an executed script.
+    Missing identity is not a weaker compatibility mode: attribution fails shut.
+    """
+    if (type(pid) is not int or pid <= 1 or type(port) is not int
+            or not 0 < port < 65536
+            or type(start_time) is not int or start_time <= 0):
         return False
-    pid = int(pid)
-    cmdline_file = Path("/proc") / str(pid) / "cmdline"
     try:
-        raw = cmdline_file.read_bytes()
+        raw = (Path("/proc") / str(pid) / "cmdline").read_bytes()
     except OSError:
         return False
-    parts = [p.decode("utf-8", "replace") for p in raw.split(b"\0") if p]
-    joined = " ".join(parts)
-    if not ("sidecar_server.py" in joined
-            and (("--port" in parts and str(int(port)) in parts)
-                 or ("--port %d" % int(port)) in joined)):
+    # Remove only the terminal separator; empty argv entries still occupy slots.
+    parts = [p.decode("utf-8", "replace") for p in raw.removesuffix(b"\0").split(b"\0")]
+    script_index = 2 if len(parts) > 1 and parts[1] == "-I" else 1
+    if (len(parts) <= script_index
+            or parts[script_index] != str(ASR_DIR / "sidecar_server.py")):
         return False
-    if start_time is not None:
-        now = pid_start_time(pid)
-        if now is None or int(start_time) != now:
-            return False
-    return True
+    args = parts[script_index + 1:]
+    ports = []
+    for i, arg in enumerate(args):
+        if arg == "--port":
+            if i + 1 >= len(args):
+                return False
+            ports.append(args[i + 1])
+        elif arg.startswith("--port="):
+            ports.append(arg.partition("=")[2])
+    if ports != [str(port)]:
+        return False
+    try:
+        state, started = _read_pid_stat(pid)
+    except (OSError, ValueError):
+        return False
+    return state not in ("Z", "X", "x") and started == start_time
 
 
 # ---------------------------------------------------------------- 总 preflight
