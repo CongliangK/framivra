@@ -11,14 +11,13 @@ clean 新路径的符号链接安全（不回退波1 A03 红线）。
 Run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.cache.test_cleanup_protection
 全部用例为隔离临时项目，无 Chrome/FFmpeg 依赖。
 """
-import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
-import wave
 from pathlib import Path
+from tests._support import cleanup_timeline
 
 REPO = Path(__file__).resolve().parents[2]
 VTX = REPO / "vtx" / "vtx.py"
@@ -46,26 +45,7 @@ class CleanupProtectionFixture(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        (self.root / "assets").mkdir()
-        with wave.open(str(self.root / "assets" / "voice.wav"), "wb") as wav:
-            wav.setnchannels(2)
-            wav.setsampwidth(2)
-            wav.setframerate(48000)
-            wav.writeframes(b"\0" * (48000 * 4))
-        (self.root / "gfx").mkdir()
-        (self.root / "gfx" / "title.html").write_text("<canvas></canvas>")
-        self.timeline = self.root / "timeline.json"
-        self.timeline.write_text(json.dumps({
-            "version": 2,
-            "project": {"fps": 30, "width": 1920, "height": 1080,
-                        "duration_frames": 30},
-            "sources": [{"id": "voice", "path": "assets/voice.wav"}],
-            "video_tracks": [{"name": "title", "kind": "gfx", "clips": [
-                {"src": "gfx/title.html", "dst_in": 0, "dur": 30}]}],
-            "audio_tracks": [{"name": "voice", "events": [
-                {"src": "voice", "in": 0, "out": 30}]}],
-            "subtitles": []
-        }))
+        self.timeline = cleanup_timeline(self.root)
         # 不可再生交付件（A02 保护清单全集观测：工单四类 + final_4k* + 证据目录）
         self.protected = {
             "out/final.mp4": b"FINAL", "out/VERSIONS.json": b"VERSIONS",
