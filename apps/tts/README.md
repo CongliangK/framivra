@@ -3,9 +3,7 @@
 
 组件声明见 `app.json`（kind=app）；健康检查为 `tts_cli.py --help`，不加载模型。`tts.repo/python/voice_ref/edge_bin` 支持 `~` 路径。**当前 IndexTTS worker 是许可拒绝入口，不执行推理**：CLI 仍可选择它，但在配置解释器可用并进入 worker 后，当前政策返回退出码 4，先于上游导入、资产读取与项目产物创建。改配置或已有权重不能解除阻断；恢复条件见[第三方许可与运行边界](../../docs/third-party-licenses.md)。
 
-口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版）**。
-来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）
-参数化收编——硬编码窗口表 → `spec.json` 驱动；产物按 repack_voice.py 既有消费约定落位，**零协议改动**。
+工作流：**按 `spec.json` 生成 TTS 占位 → `apps/sync/repack_voice.py` 替换为实录终版**；产物遵守下文消费契约，历史产线记录见文末。
 
 ## 用途
 
@@ -15,7 +13,7 @@
 | `spec.py` | timeline.json voice 轨 `vt_<ID>` 事件链 → spec.json（预算口径见下方 spec.json 格式节） |
 | `indextts_worker.py` | 由配置解释器调用的许可拒绝入口；当前不加载模型、不生成音频 |
 | `edge_worker.py` | edge-tts 兜底引擎（晓晓 zh-CN-XiaoxiaoNeural，免 GPU 免模型，subprocess 二进制 + 同 atempo/归一链） |
-| `audio_processing.py` | 单一 final 音频加工模块：时长预算 atempo（raw/budget，域外拆级）+ 峰值归一 -6dBFS（volumedetect + volume，幂等）；`tempo` 子命令只计算滤镜，`normalize` 子命令支持单 WAV/目录与 `--target`，会原位写音频。参数见 `python3 apps/tts/audio_processing.py --help`。 |
+| `audio_processing.py` | 共享 final 加工（volumedetect + volume）；算法见下文 atempo/峰值契约。`tempo` 只计算滤镜；`normalize` 支持单 WAV/目录、`--target`，原位写音频。参数见 `python3 apps/tts/audio_processing.py --help`。 |
 | `init.sh` | 默认本地资产探测；未审查的混合下载明确阻断，许可与恢复边界见 [第三方许可](../../docs/third-party-licenses.md) |
 | `tests/` | unittest（atempo golden / spec 预算 / levelnorm / manifest+final 格式；零模型零 GPU 零网络） |
 
@@ -65,8 +63,7 @@ env python3 apps/tts/tts_cli.py normalize --project <项目>   # 原位修改 fi
 }
 ```
 
-- `budget_s = max(每个事件的 src_in + (out - in)) / fps + 0.02`——与 repack_voice.py
-  「事件链帧 + 20ms 句尾保护」严格同口径（TAIL_MS 同款；run_v2 的 +0.02 防取整少 1 帧余量）。
+- `budget_s = max(每个事件的 src_in + (out - in)) / fps + 0.02`：与 repack_voice.py 的 TAIL_MS 同口径，保留 20ms 句尾保护。
 - `text` 由 `spec` 子命令置空、**人工校对后回填**（逐字稿在脚本/字幕侧，勿让模型念窗口 ID）。
 - `fps`/`n_events` 为对账辅助字段，消费方只读 `id/text/budget_s`。
 

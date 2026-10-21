@@ -39,7 +39,6 @@
 时间线回执失效，依赖代码摘要的插件产物键改变，首次运行需完整重建一次。
 旧缓存不自动删除；没有生效插件的时间线不追加插件段，回执身份不受此次算法
 变更影响。包内移动文件会改变摘要；插件整根迁移且相对路径/内容不变时摘要稳定。
-算法可独立发布，不以 #47/#48 为前置。
 
 此处仍保留读取失败时的标记降级以及既有递归扫描行为；它不是原子目录快照或
 对抗篡改证明。插件文件在一次命令期间应保持不变。
@@ -149,13 +148,9 @@ CDP 自动回落 CLI 的页明确失败，不发布完成凭证或成功回执�
 `input_environment_sha256`，运行回执须提供匹配、完整且非 unknown 的
 `input_environment` 凭证；原有真实运行门不减弱。
 
-真实验收摘要与每帧摘要见
-[环境验收证据](../tests/fixtures/gfx-environment/acceptance-2026-10-18.json)。
-该受控夹具覆盖完整 HTML、JavaScript 和系统文本字体，不是整片性能或跨机像素证明。
-浏览器版本不同也可能逐帧相等，缓存仍须按身份分离。CEF 运行库负例为同一 worker、
-同一路径下替换 libcef.so 文件（追加不参与装载的 ELF 尾字节），证明内容失效；
-它不是运行库版本升级成功的声明。复现实验会向显式指定的新证据目录写入文件并
-启动真实浏览器，参数和前置工具通过零写态帮助查看：
+[环境验收证据](../tests/fixtures/gfx-environment/acceptance-2026-10-18.json)覆盖 HTML、JavaScript 与系统文本字体，不证明整片性能或跨机像素一致；浏览器版本不同即使像素相同也须分键。
+CEF 负例仅在同一 worker、同一路径的 libcef.so 追加不参与装载的 ELF 尾字节，证明内容失效，不证明库版本升级成功。
+实际复现会启动浏览器并写入指定的新证据目录；参数与工具要求可先用零写态帮助查看：
 
 ```bash
 env python3 tests/runners/run_gfx_environment_acceptance.py --help
@@ -235,11 +230,8 @@ mux 的历史轮转/旧版核对在替换前回调中执行，VERSIONS 记账在
 - `tests/runners/run_e2e.py` 与 `tests/runners/verify_e2e.py`：12 秒单段/并行全流程、严格 QC、
   接缝和音频对照。
 
-Windows 实测旧候选版本暖/冷最大单帧平均差 100.64/255、音频不一致且旧成片字节
-完全不变；修复版本差为 0、音频一致，成片已更新。Linux 侧由上述合成回归 +
-voice-ime 真实工程 E2E 复验（合并裁定见 merge commit f0c98dd 与
-`vtx/cache_state.py` 模块头）。这是确定性合成用例的正确性结果，
-不是长视频或跨平台性能结论。
+Windows 修复前后数值与 Linux/voice-ime 复验见[固定回归记录](https://github.com/CongliangK/framivra/blob/f0c98dd104a4674f0ae6eb84622462cad0ad6006/docs/cache-provenance.md#回归)；架构裁定见 `vtx/cache_state.py` 模块头。
+这些受控正确性结果不证明长视频或跨平台性能，当前版本仍须实际执行上述回归。
 
 ## 质量与证据标签（#90，契约评审候选）
 
@@ -312,18 +304,14 @@ retired_artifacts、conservative_nodes 和 uncertainties。建议重跑阶段只
 媒体仍使用现有 Fast 采样身份，首尾不变且恢复 mtime 的中间字节修改不受保证（#85）；
 声明依赖使用完整摘要，包含这种中间字节修改。该报告不是 Verified 身份证明。
 
-pass/vseg 键与实际渲染共享纯身份函数和段 ASS 字节生成。抽取 pass 身份函数会改变
-合成代码摘要，因此升级后视频合成段与 pass 中间物一次性冷重建；旧缓存不自动删除。
-不固定旧摘要来伪造兼容。gfx 后端实现、QC 质量等级与此分析合同独立。
+pass/vseg 与渲染共享身份函数和段 ASS 字节；合成代码摘要变化须冷建视频段及 pass，不沿用旧摘要或自动删旧缓存。
+gfx 后端实现、QC 质量等级与此分析合同独立。
 
 
-HTML 验收夹具保留 90 帧/页长 profile；受限 workflow 显式选择 48 帧/页 correctness
-profile，仍为 30 场景、1080p/30fps、生产编码质量及八段。字幕按比例落在第八页
-（48 帧 profile 为 [341,357)），完整解码、warm 字节/mtime、全部 mutation 和 raw delta
-断言保持。原 2700 帧 hosted 运行在主视频完成后、QC 合成阶段触及既有 900 秒上限，
-未通过验收；不能据此判定生产回归或 OOM。48 帧 profile 的通过须由最终版本实际运行
-证明。900 秒命令、3000 秒边界预算及 65 分钟作业上限不延长。事件 JSONL 和有界
-失败路径/大小清单只辅助定位，不替代完整库存、解码或成功回执。
+[HTML 验收运行器](../tests/runners/run_impact_html_reconciliation.py)支持 90 帧/页长 profile 与受限 workflow 的 48 帧/页 correctness profile；均保留 30 场景、1080p/30fps、生产编码质量、八段及第八页字幕（48 帧时 [341,357)）。
+完整解码、warm 字节/mtime、全部 mutation/raw delta 断言不减；900 秒命令、3000 秒边界预算、65 分钟作业上限不延长。
+旧 2700 帧 hosted 运行在主视频完成后的 QC 合成触及 900 秒，验收失败，未据此定位生产回归或 OOM；48 帧 profile 是否通过仍以最终版本实跑为准。
+事件 JSONL 和有界失败路径/大小清单仅辅助定位，不替代完整库存、解码或成功回执。
 
 <a id="golden-evidence"></a>
 
@@ -348,7 +336,7 @@ profile，仍为 30 场景、1080p/30fps、生产编码质量及八段。字幕�
 所有摘要使用 SHA256 小写 hex。对象摘要由 `scripts/gfx/gfx_evidence.py` 的 `digest()` 定义：
 UTF-8 JSON，键排序、无空白、不转义 Unicode、不允许 NaN。输入指纹由同模块
 `input_fingerprint` 定义，覆盖实际 timeline 文件字节摘要、全部 gfx HTML 与声明依赖的路径和
-完整文件内容摘要。不声称发现未声明或网络依赖；实验运行器须提前把这些输入冻结并声明。
+完整文件内容摘要；验证前后重读 timeline 并与 Ctx 载入字节对账。不声称发现未声明或网络依赖；运行器须提前冻结并声明输入。
 
 计划对象：
 - schema = `vtx.gfx_comparison_plan/1`
@@ -413,7 +401,6 @@ OS 须有 system/release/version/machine，CPU 须有非 unknown 型号；显示
 运行可显式使用 {"status":"not_applicable","reason":"software_backend"}，不能把 null 或
 unavailable 当控制项已核验。#102 采集器的 unavailable 仍原样保留，严格验收不能静默放行。
 
-输入指纹绑定实际 timeline 文件字节 SHA256，验证前后重读并与 Ctx 载入字节对账。
 帧文件身份从解码所用的已打开文件描述符取得，基线和候选全部实例的 inode 集合须不相交，
 包括错编号、跨实例硬链接和符号链接。缺实例及缺帧计数分别包含回执与 Golden 的遗漏。
 

@@ -42,13 +42,9 @@ blender --background --factory-startup --python apps/blender-bridge/json2blend.p
   脚本、无 bpy，经当前解释器运行），生成后校验通过才写键。项目根取 timeline
   文件自身路径的父目录，不跟随 timeline 符号链接。`cache/subs.ass` 缺失 →
   报错并指引先跑 `vtx -t <timeline.json> subs render`；生成失败含完整命令与原因。
-- **失败信息滤噪（缺陷2修复，2026-10-11）**：Blender 5.x 的 DeprecationWarning
-  （如 `'ImageStrip.frame_final_end' is expected to be removed in Blender 6.0`）
-  打在 stderr、json2blend 的真实 `!` 错误行打在 stdout——失败文本只滤除
-  `path:line: DeprecationWarning:` 警告块及缩进上下文（不删 traceback 源码或
-  异常消息中的同名文本）；两路 json2blend 错误标记优先展示，再附两路尾部。
-  UserWarning 等其他输出保留但不抢首展错误，滤除计数聚合为一行提示
-  （`已滤除 N 行 Blender DeprecationWarning`）；子进程退出码语义不变。
+- **失败信息滤噪**：仅滤除 `path:line: DeprecationWarning:` 警告块及缩进上下文，不删 traceback 源码或异常消息中的同名文本。
+  stdout/stderr 的 json2blend `!` 错误标记优先，再附两路尾部；UserWarning 等输出保留但不抢首展错误。
+  计数合并为 `已滤除 N 行 Blender DeprecationWarning`，子进程退出码语义不变。
 - **退出码边界**：调用未配置 `--python-exit-code`；未捕获的 Blender Python 异常可能打印 traceback 而进程仍退出 0，不能仅凭退出 0 认定脚本成功。[原始实测与范围](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/plugins/blender-bridge/REPORT-F2.md#L84-L89)。
 
 - `--draft` / `--dry-run` 或停在 qc 之前的 `all --until` 不触发；`all --until qc` 与完整 `all` 一样可执行 finish。
