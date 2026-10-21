@@ -22,7 +22,6 @@ import io
 import json
 import os
 from pathlib import Path
-import shlex
 import shutil
 import subprocess
 import sys
@@ -63,24 +62,9 @@ class InstallerSandbox(SandboxCase):
         base_url, self._server_holder = self._fixtures_stack.enter_context(
             serve_fixtures(self.fixtures, self.sandbox / "curl-calls.jsonl"))
         self._server_holder["releases_json"] = b'{"latest":"9.9.9"}'
-        # 原生 .cmd 可由 Windows 子进程执行;不依赖 choco/winget/真实 FFmpeg。
-        self.ffmpeg = self.command_fixture(
-            "ffmpeg", "printf 'ffmpeg version 6.1 fixture\\n'\n",
-            "@echo off\r\necho ffmpeg version 6.1 fixture\r\n")
-        # 不把 curl 的宿主目录(及其它真实依赖)混回 PATH。安装器以裸名
-        # 调 curl,Windows 必须提供真 curl.exe(CreateProcess 不查找 .cmd)。
-        if os.name == "nt":
-            curl = Path(os.environ["SystemRoot"]) / "System32" / "curl.exe"
-            self.assertTrue(curl.is_file(), "本地 HTTP fixture 需要 Windows 内建 curl.exe")
-            shutil.copyfile(curl, self.bin / "curl.exe")
-        else:
-            curl = shutil.which("curl")
-            self.assertIsNotNone(curl, "本地 HTTP fixture 需要原生 curl")
-            self.command_fixture(
-                "curl", 'exec %s -q --noproxy "*" "$@"\n' % shlex.quote(curl), "")
-        self.env.update({"PATH": str(self.bin), "CURL_HOME": str(self.home),
-                         "NO_PROXY": "*", "no_proxy": "*",
-                         "SAFETY_CURL_LOG": str(self.sandbox / "curl-calls.jsonl"),
+        self.ffmpeg, dependency_env = _install_fixture.dependency_fixtures(self.bin, self.home)
+        self.env.update(dependency_env)
+        self.env.update({"SAFETY_CURL_LOG": str(self.sandbox / "curl-calls.jsonl"),
                          "VIDEO_TOOLS_DL_BASE": base_url})
         # 进程内调用也使用同一受控 PATH/回环源,不能被 Linux 主机 ffmpeg 掩盖。
         os.environ.update({key: self.env[key] for key in (
