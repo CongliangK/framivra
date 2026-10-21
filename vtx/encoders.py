@@ -86,7 +86,7 @@ def nvenc_budget_value() -> int:
 # 三项守卫的第三项（①并发探测 nvenc_concurrency／②预算信号量两项既有语义零变化）：
 # nvidia-smi 查 used → 档位映射，并入信号量定值域：有效预算=min(VTX_NVENC_BUDGET, 档位)。
 # 求值=进程内一次定值（同 _NVENC_SEM／_NVENC_OK_MEMO memo 先例），仅在 NVENC 首次占槽
-# （_nvenc_sem 定值）时触达；非 NVENC 任务/dry/探测路径零调用。分态效力（修订件修 3）：
+# （_nvenc_pool 定值）时触达；非 NVENC 任务/dry/探测路径零调用。分态效力（修订件修 3）：
 # 入场态（窗起 VRAM 高位）=守卫防御；窗内爬升态=memo 不追踪爬升、守卫无直接防御，
 # 由重试队列（瞬时型）+耗尽 fail-fast 失败清单（持续型）承接——如实声明。
 #
@@ -182,7 +182,7 @@ def vram_guard_tier():
 
 def nvenc_effective_budget() -> int:
     """有效预算=min(VTX_NVENC_BUDGET, VRAM 档位)；fail-open（档位 None）=预算原值。
-    仅由 _nvenc_sem 定值域调用（NVENC 首次占槽），进程内一次定值。"""
+    仅由 _nvenc_pool 定值域调用（NVENC 首次占槽），进程内一次定值。"""
     b = nvenc_budget_value()
     t = vram_guard_tier()
     return b if t is None else min(b, t)
@@ -205,10 +205,6 @@ def _nvenc_pool():
             _NVENC_CAPACITY = nvenc_effective_budget()
             _NVENC_SEM = threading.Semaphore(_NVENC_CAPACITY)
         return _NVENC_SEM, _NVENC_CAPACITY
-
-
-def _nvenc_sem() -> threading.Semaphore:
-    return _nvenc_pool()[0]
 
 
 def reset_nvenc_budget():

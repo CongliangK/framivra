@@ -184,7 +184,7 @@ class TestNvencBudget(unittest.TestCase):
                         mock.patch.object(encoders, 'vram_guard_tier', return_value=tier) as guard:
                     with nvenc_budget(SimpleNamespace(dry=False), 8) as granted:
                         self.assertEqual(granted, expected)
-                        self.assertFalse(encoders._nvenc_sem().acquire(blocking=False))
+                        self.assertFalse(encoders._nvenc_pool()[0].acquire(blocking=False))
                     with mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': '99'}), \
                             nvenc_budget(SimpleNamespace(dry=False), 8) as granted:
                         self.assertEqual(granted, expected)
