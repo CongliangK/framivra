@@ -105,6 +105,7 @@ def _context(root: Path, tl: dict):
 class _Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         (self.root / "music").mkdir()
         # 伪 bgm CLI + 调用日志
@@ -116,9 +117,10 @@ class _Base(unittest.TestCase):
         argv = [sys.executable, str(fake)]
         command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
         cfg.write_text(json.dumps({"bgm": {"cli": command}}), encoding="utf-8")
-        self._old_env = os.environ.get("VTX_CONFIG")
-        os.environ["VTX_CONFIG"] = str(cfg)
-        os.environ["FAKE_LOG"] = str(self.log)
+        env = mock.patch.dict(os.environ, {"VTX_CONFIG": str(cfg),
+                                          "FAKE_LOG": str(self.log)})
+        env.start()
+        self.addCleanup(env.stop)
         # 音乐工程（含 $ref 拆分件）+ 时长标记
         self.ref_file = self.root / "music" / "strings_part.json"
         self.ref_file.write_text('{"notes": [1, 2, 3]}', encoding="utf-8")
@@ -132,14 +134,6 @@ class _Base(unittest.TestCase):
         # 桩 render 的分轨清单（对齐伪工程 tracks：strings/kick）
         (self.root / "music" / "tracks.txt").write_text("strings\nkick\n",
                                                         encoding="utf-8")
-
-    def tearDown(self):
-        if self._old_env is None:
-            os.environ.pop("VTX_CONFIG", None)
-        else:
-            os.environ["VTX_CONFIG"] = self._old_env
-        os.environ.pop("FAKE_LOG", None)
-        self._tmp.cleanup()
 
     def _tl(self, bgm=...):
         src = {"id": "bgm_main", "path": "music/ep.json"}
@@ -528,8 +522,10 @@ class StaleDigestGc(_Base):
     实删陈旧后在用产物不受影响、重跑 prepare 零渲染。"""
 
     def test_gc_lists_and_recycles_stale_digest_only(self):
-        os.environ["VTX_SEG_NVENC"] = "0"    # gc_plan 纯计算（seg 编码器免探测）
-        self.addCleanup(os.environ.pop, "VTX_SEG_NVENC", None)
+        # gc_plan 纯计算（seg 编码器免探测）
+        env = mock.patch.dict(os.environ, {"VTX_SEG_NVENC": "0"})
+        env.start()
+        self.addCleanup(env.stop)
         tl = self._tl_srcs({"id": "s1", "path": "music/ep.json",
                             "bgm": {"output": "stem:strings"}})
         c = _context(self.root, tl)
