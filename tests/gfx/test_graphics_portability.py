@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 sys.path.insert(0, os.environ.get('VTX_TEST_MODULE_DIR', str(Path(__file__).resolve().parents[2])))
@@ -554,17 +555,32 @@ class AtomicWriteAndResilienceMock(unittest.TestCase):
         bad = b'CORRUPT-BYTES-' * 300                     # 与 good 长度不同，混合必可检出
         with tempfile.TemporaryDirectory(prefix='vtx_atomic_') as tmp:
             target = Path(tmp) / 'f0000.png'
-            for _ in range(64):
+            def write_pair():
+                target.unlink(missing_ok=True)  # 每轮必须有新产物，不能复用上轮字节。
                 barrier = threading.Barrier(2)
 
-                def w(payload):
+                def write(payload):
                     barrier.wait(timeout=10)
                     gfx._atomic_write_bytes(str(target), payload)
 
-                t1 = threading.Thread(target=w, args=(good,))
-                t2 = threading.Thread(target=w, args=(bad,))
-                t1.start(); t2.start(); t1.join(); t2.join()
-                self.assertIn(target.read_bytes(), (good, bad))  # 完整字节之一，无交错混合
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [pool.submit(write, payload) for payload in (good, bad)]
+                    for future in futures:
+                        future.result()  # 任一线程异常必须在测试线程中失败。
+
+            for _ in range(64):
+                write_pair()
+                self.assertIn(target.read_bytes(), (good, bad))
+            real_write = gfx._atomic_write_bytes
+            for rejected in (good, bad):
+                def fail_one(path, payload):
+                    if payload == rejected:
+                        raise OSError('injected writer failure')
+                    return real_write(path, payload)
+                with self.subTest(rejected_bytes=len(rejected)), \
+                        mock.patch.object(gfx, '_atomic_write_bytes', side_effect=fail_one), \
+                        self.assertRaisesRegex(OSError, 'injected writer failure'):
+                    write_pair()
             self.assertEqual(list(Path(tmp).glob('.*.tmp*')), [])  # 成功路径不留 tmp
 
     def test_atomic_write_failure_cleans_tmp_keeps_target(self):

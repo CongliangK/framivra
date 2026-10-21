@@ -119,6 +119,10 @@ class TestGraphCodeDigest(unittest.TestCase):
         完整且每个名字确为 RenderPlan 可取源码的函数（改名/删函数立即显式失败，
         强迫维护者同步本表）。
         """
+        required = {"composite", "_composite_graph", "_composite_passes",
+                    "_layer_chain", "_layer_input_args"}
+        self.assertTrue(required <= set(composite._SYNTH_FUNCS),
+                        f"摘要遗漏合成路径：{sorted(required - set(composite._SYNTH_FUNCS))}")
         for name in composite._SYNTH_FUNCS:
             self.assertTrue(hasattr(RenderPlan, name), f"_SYNTH_FUNCS 名单过期：{name}")
             inspect.getsource(getattr(RenderPlan, name))   # 取不到即抛
