@@ -79,6 +79,27 @@ def cef_config():
     return worker, mode
 
 
+def cef_png_config():
+    """Canonical native PNG options; spng-only axes are never ignored."""
+    encoder = os.environ.get("VTX_CEF_PNG_ENCODER", "spng")
+    if encoder not in ("spng", "fpng"):
+        raise ValueError("VTX_CEF_PNG_ENCODER must be spng|fpng; no silent fallback")
+    if encoder == "fpng":
+        for name in ("VTX_CEF_PNG_LEVEL", "VTX_CEF_PNG_FILTER"):
+            if name in os.environ:
+                raise ValueError(f"{name} is not applicable to fpng; unset it")
+        return encoder, None, None
+    level = os.environ.get("VTX_CEF_PNG_LEVEL", "1")
+    if level not in ("1", "2", "3"):
+        raise ValueError("VTX_CEF_PNG_LEVEL must be 1|2|3 for spng")
+    filter_name = os.environ.get("VTX_CEF_PNG_FILTER", "sub_up")
+    if filter_name in ("sub-up", "subup"):
+        filter_name = "sub_up"
+    if filter_name not in ("none", "sub", "up", "sub_up", "all"):
+        raise ValueError("VTX_CEF_PNG_FILTER must be none|sub|up|sub_up|all for spng")
+    return encoder, int(level), filter_name
+
+
 @lru_cache(maxsize=16)
 def _binary_digest(path, stat):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -87,16 +108,19 @@ def _binary_digest(path, stat):
 def _cef_identity():
     """All output-affecting CEF settings, including the actual native executable.
 
-    Default CDP/CLI keep the legacy key axis. CEF never shares it. Runtime
-    resources must remain the locked distribution deployed beside the worker.
+    CDP/CLI keep their logical backend key axis; this module is also hashed as
+    renderer implementation evidence. Runtime resources must remain the locked
+    distribution deployed beside the worker.
     """
     if selected() != "cef":
         return ""
     worker, mode = cef_config()
+    png_config = cef_png_config()
     st = worker.stat()
     digest = _binary_digest(str(worker), (st.st_dev, st.st_ino, st.st_size,
                                          st.st_mtime_ns, st.st_ctime_ns))
-    return f"cef-alpha-exact-v1|{mode}|mode-n|{digest}"
+    return (f"cef-alpha-exact-v2|{mode}|mode-n|{digest}|"
+            + json.dumps(png_config, separators=(",", ":")))
 
 
 def identity():
