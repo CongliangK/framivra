@@ -359,6 +359,7 @@ def contribute_keys(c) -> set:
 _PLUGIN_CODE_DIGEST_VERSION = b"vtx-plugin-code-v2\0"
 
 
+# 插件代码摘要的公开权威实现；内部参数摘要也直接复用，不设兼容别名。
 def plugin_code_digest(name: str, repo_root=None) -> str:
     """插件代码内容摘要（红队终审 P1-1 裁定 2026-09-14；P6 公共化经 vtx.api 供
     插件产物键复用——A-P1-1：产物键侧同样要掺代码摘要，否则改代码不 bump
@@ -394,15 +395,11 @@ def plugin_code_digest(name: str, repo_root=None) -> str:
     return h.hexdigest()[:12]
 
 
-# 兼容别名（内部调用点沿用旧名；语义同 plugin_code_digest）
-_plugin_code_digest = plugin_code_digest
-
-
 def _plugin_params_digest(c, name: str) -> str:
     """对本 timeline 生效的插件参数摘要 = 显式键值 + **插件代码内容摘要**：
     键声明（registry 静态注册表 + external manifest，P4 起经 registry.key_map
     双源）在 timeline 中的取值（收集全部实例——P1 审查 F2），叠加
-    `_plugin_code_digest`（红队终审 P1-1：官方插件改 DEFAULTS 不 bump version、
+    `plugin_code_digest`（红队终审 P1-1：官方插件改 DEFAULTS 不 bump version、
     无键 external 改代码两类盲区实测会使 digest 不变 → 旧回执放行陈旧产物，
     与 §2.1 宣称冲突——掺代码摘要后宣称成立）。"""
     picked = {}
@@ -418,7 +415,7 @@ def _plugin_params_digest(c, name: str) -> str:
                     picked.setdefault(f"{info.get('path')}:{key}", []).append(it[key])
     except Exception:
         pass   # 摘要失败不阻断指纹——退化为无参数成分（宁弱不崩）
-    blob = json.dumps({"params": picked, "code": _plugin_code_digest(name)},
+    blob = json.dumps({"params": picked, "code": plugin_code_digest(name)},
                       ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:12]
 

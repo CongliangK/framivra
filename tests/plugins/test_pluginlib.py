@@ -739,11 +739,11 @@ class FakePluginBus(unittest.TestCase):
             c = Ctx(_tl(root))
             with mock.patch("vtx.pluginlib.registry.plugin_module_dir",
                             return_value=(fake, "builtin")):
-                d1 = pl_hooks._plugin_code_digest("duck-static")
-                d2 = pl_hooks._plugin_code_digest("duck-static")
+                d1 = pl_hooks.plugin_code_digest("duck-static")
+                d2 = pl_hooks.plugin_code_digest("duck-static")
                 (fake / "__init__.py").write_text(
                     src + "\n# 改默认参（不 bump version 的代码变更）\n", encoding="utf-8")
-                d3 = pl_hooks._plugin_code_digest("duck-static")
+                d3 = pl_hooks.plugin_code_digest("duck-static")
             self.assertEqual(d1, d2)      # 同码同摘要（幂等）
             self.assertNotEqual(d2, d3)   # 改 DEFAULTS → 摘要变
 
@@ -759,14 +759,14 @@ class FakePluginBus(unittest.TestCase):
             (fake / "tests" / "test_x.py").write_text("# v1\n", encoding="utf-8")
             with mock.patch("vtx.pluginlib.registry.plugin_module_dir",
                             return_value=(fake, "builtin")):
-                d1 = pl_hooks._plugin_code_digest("duck-static")
+                d1 = pl_hooks.plugin_code_digest("duck-static")
                 (fake / "tests" / "test_x.py").write_text(
                     "# v2 改一行测试（不 bump version 不改行为）\n", encoding="utf-8")
                 (fake / "tests" / "test_new.py").write_text("# 新增测试文件\n",
                                                             encoding="utf-8")
-                d2 = pl_hooks._plugin_code_digest("duck-static")
+                d2 = pl_hooks.plugin_code_digest("duck-static")
                 (fake / "__init__.py").write_text("X = 2\n", encoding="utf-8")
-                d3 = pl_hooks._plugin_code_digest("duck-static")
+                d3 = pl_hooks.plugin_code_digest("duck-static")
             self.assertEqual(d1, d2, "tests/ 内容变化不得翻转代码摘要")
             self.assertNotEqual(d2, d3, "插件本体代码变化仍须翻转摘要")
 

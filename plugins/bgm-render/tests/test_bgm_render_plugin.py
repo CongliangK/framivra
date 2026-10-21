@@ -524,7 +524,7 @@ class DirExtraDepsSig(_Base):
 
 
 class StaleDigestGc(_Base):
-    """gc 键级回收陈旧 render_digest 目录（R1-F F2）：--dry 只列陈旧、在用保活；
+    """gc 键级回收陈旧 render_digest 目录（R1-F F2）：--dry-run 只列陈旧、在用保活；
     实删陈旧后在用产物不受影响、重跑 prepare 零渲染。"""
 
     def test_gc_lists_and_recycles_stale_digest_only(self):
@@ -543,7 +543,7 @@ class StaleDigestGc(_Base):
         live = _bgm.render_cache_dir(c, "s1")
         self.assertNotEqual(stale.name, live.name)
         self.assertTrue(stale.is_dir() and live.is_dir())
-        # gc --dry：陈旧目录进清单、在用目录不在
+        # gc --dry-run：陈旧目录进清单、在用目录不在
         plan = hygiene.gc_plan(c)
         listed = {str(p) for p, _, _ in plan["plugin_cache"]}
         self.assertIn(str(stale), listed, "陈旧 render_digest 目录须可被 gc 观测")

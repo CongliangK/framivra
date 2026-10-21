@@ -52,6 +52,23 @@ class TestGradeLufs(unittest.TestCase):
 
 
 class TestGradeTp(unittest.TestCase):
+    # Same cases exercise the pure grader and the real report/JSON/exit path.
+    cases = (
+        ("default_fail", {}, -0.5, "FAIL", -1),
+        ("default_boundary", {}, -1, "PASS", -1),
+        ("relaxed_both", {"tp_warn": 0, "tp_fail": 0}, -0.5, "FAIL", -1),
+        ("relaxed_boundary", {"tp_warn": 0, "tp_fail": 0}, -1, "PASS", -1),
+        ("relaxed_warn", {"tp_warn": 0}, -0.5, "FAIL", -1),
+        ("relaxed_fail", {"tp_fail": 0}, -0.5, "FAIL", -1),
+        ("stricter_both", {"tp_warn": -2, "tp_fail": -2}, -1.5, "FAIL", -2),
+        ("stricter_boundary", {"tp_warn": -2, "tp_fail": -2}, -2, "PASS", -2),
+        ("stricter_warn", {"tp_warn": -3, "tp_fail": 0}, -2.5, "FAIL", -3),
+        ("stricter_fail", {"tp_warn": 0, "tp_fail": -3}, -3, "PASS", -3),
+        ("large_finite", {"tp_warn": 1e308, "tp_fail": 1e308}, -0.5, "FAIL", -1),
+    )
+    invalid_values = (None, True, False, "0", "-2", "NaN", [], {},
+                      float("nan"), float("inf"), float("-inf"), 10 ** 400)
+
     def test_above_minus_one_fails(self):
         # v2 §1.3（2026-09-13）：-1.0 dBFS 为唯一权威阈（与 G3/内核 qc 同口径）——
         # limiter 已并入 vtx audio，> -1 即 FAIL；旧 -1~+3「设计内」INFO 档废除
@@ -62,6 +79,139 @@ class TestGradeTp(unittest.TestCase):
     def test_pass(self):
         self.assertEqual(ar.grade_tp(-2.0)[0], "PASS")
         self.assertEqual(ar.grade_tp(-1.0)[0], "PASS")   # 边界含
+
+    def test_overrides_cannot_relax_authoritative_ceiling(self):
+        for name, overrides, tp, expected, threshold in self.cases:
+            with self.subTest(case=name):
+                level, detail = ar.grade_tp(tp, warn=overrides.get("tp_warn", ar.TP_WARN_DBTP),
+                                             fail=overrides.get("tp_fail", ar.TP_FAIL_DBTP))
+                self.assertEqual(level, expected)
+                self.assertIn(f"> {threshold:g}" if expected == "FAIL" else f"≤{threshold:g}", detail)
+
+    def test_invalid_thresholds_and_measurements_fail_closed(self):
+        for invalid in self.invalid_values:
+            with self.subTest(value=repr(invalid)):
+                for key in ("warn", "fail"):
+                    level, detail = ar.grade_tp(-2, **{key: invalid})
+                    self.assertEqual(level, "FAIL")
+                    self.assertIn("阈值无效", detail)
+                level, detail = ar.grade_tp(invalid)
+                self.assertEqual(level, "FAIL")
+                self.assertIn("测量无效", detail)
+
+    def _report(self, overrides, tp, *, stderr=None, returncode=0):
+        """Actual report with fixture stderr only: no native media or plugin execution."""
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            wav = root / "audio.wav"
+            wav.write_bytes(b"owned fake WAV; no native media measurement")
+            receipt = root / "receipt.json"
+            receipt.write_bytes(b"existing receipt")
+            timeline = {"audio_tracks": [], "_meta": {"audio_report": overrides}}
+            original = json.dumps(timeline, sort_keys=True)
+            calls = []
+
+            def fake_run(argv):
+                self.assertEqual(argv[0], "ffmpeg")
+                self.assertEqual(argv[argv.index("-i") + 1], str(wav))
+                af = argv[argv.index("-af") + 1]
+                self.assertIn(af, ("ebur128=peak=true:framelog=quiet", "silencedetect=noise=-45dB:d=1.5"))
+                calls.append(af)
+                summary = (f"I: -14.0 LUFS\nTrue peak:\n Peak: {tp} dBFS\n"
+                           if stderr is None else stderr)
+                return SimpleNamespace(returncode=returncode if af.startswith("ebur128") else 0,
+                                       stdout="", stderr=summary if af.startswith("ebur128") else "")
+
+            c = SimpleNamespace(tl=timeline, root=root, out=root, cache=root / "cache", dur=300,
+                                spf=1 / 30, run=fake_run)
+            with mock.patch.object(ar._plugin_hooks, "run_audio_events", side_effect=lambda c, tracks: tracks), \
+                 mock.patch.object(ar, "render_stems") as render, redirect_stdout(StringIO()):
+                rc = ar.run_report(c)
+            render.assert_not_called()
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(json.dumps(timeline, sort_keys=True), original)
+            self.assertEqual(wav.read_bytes(), b"owned fake WAV; no native media measurement")
+            self.assertEqual(receipt.read_bytes(), b"existing receipt")
+            report = json.loads((root / "audio_report.json").read_text(),
+                                parse_constant=lambda value: self.fail(f"Non-finite JSON: {value}"))
+            self.assertEqual(Path(report["source"]), wav)
+            return rc, report
+
+    def test_report_uses_effective_thresholds_and_exit_status(self):
+        for name, overrides, tp, expected, threshold in self.cases:
+            with self.subTest(case=name):
+                rc, report = self._report(overrides, tp)
+                check = next(row for row in report["checks"] if row["name"] == "整片真峰 TP")
+                self.assertEqual(rc, 1 if expected == "FAIL" else 0)
+                self.assertEqual(report["summary"], expected)
+                self.assertEqual(check["level"], expected)
+                self.assertEqual(check["pass"], expected == "PASS")
+                self.assertEqual(check["measured"], {"tp_dbfs": tp})
+                self.assertEqual(report["thresholds"]["tp_warn"], threshold)
+                self.assertEqual(report["thresholds"]["tp_fail"], threshold)
+                self.assertEqual(set(report["thresholds"]), set(ar.OVERRIDABLE))
+                self.assertIn(f"> {threshold:g}" if expected == "FAIL" else f"≤{threshold:g}", check["detail"])
+
+    def test_report_rejects_invalid_tp_overrides_without_nonfinite_json(self):
+        for invalid in self.invalid_values:
+            for key in ("tp_warn", "tp_fail"):
+                with self.subTest(key=key, value=repr(invalid)):
+                    rc, report = self._report({key: invalid}, -2)
+                    check = next(row for row in report["checks"] if row["name"] == "整片真峰 TP")
+                    self.assertEqual(rc, 1)
+                    self.assertEqual(report["summary"], "FAIL")
+                    self.assertEqual(check["level"], "FAIL")
+                    self.assertFalse(check["pass"])
+                    self.assertIn("阈值无效", check["detail"])
+                    self.assertIsNone(report["thresholds"]["tp_warn"])
+                    self.assertIsNone(report["thresholds"]["tp_fail"])
+
+    def test_report_requires_finite_wav_measurements_but_not_optional_stems(self):
+        cases = [("missing_both", "", ("FAIL", "FAIL")),
+                 ("missing_i", "True peak:\n Peak: -2 dBFS", ("FAIL", "PASS")),
+                 ("missing_tp", "I: -14 LUFS", ("PASS", "FAIL"))]
+        for unit in ("", "garbage", "dB", "dBFSgarbage"):
+            cases.append((f"invalid_tp_unit_{unit}", f"I: -14 LUFS\nTrue peak:\n Peak: -2 {unit}",
+                          ("PASS", "FAIL")))
+        cases.append(("invalid_i_unit", "I: -14 LUFSgarbage\nTrue peak:\n Peak: -2 dBFS",
+                      ("FAIL", "PASS")))
+        for token in ("NaN", "inf", "-inf", "1e999", "-1.2.3", "-1garbage", "--1",
+                      "-1_0", "-１", "9" * 400):
+            cases.extend(((f"invalid_i_{token}", f"I: {token} LUFS\nTrue peak:\n Peak: -2 dBFS",
+                           ("FAIL", "PASS")),
+                          (f"invalid_tp_{token}", f"I: -14 LUFS\nTrue peak:\n Peak: {token} dBFS",
+                           ("PASS", "FAIL"))))
+        for name, stderr, expected in cases:
+            with self.subTest(case=name):
+                rc, report = self._report({}, -2, stderr=stderr)
+                self.assertEqual(rc, 1)
+                self.assertEqual(report["summary"], "FAIL")
+                self.assertEqual([row["level"] for row in report["checks"]],
+                                 [*expected, "INFO", "INFO", "PASS"])
+                for row in report["checks"][:2]:
+                    self.assertEqual(row["pass"], row["level"] == "PASS")
+        rc, report = self._report({}, -1, stderr="I: -1.4e1 LUFS\nTrue peak:\n Peak: -1e0 dBFS")
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["summary"], "PASS")
+        self.assertEqual([row["level"] for row in report["checks"]],
+                         ["PASS", "PASS", "INFO", "INFO", "PASS"])
+
+    def test_report_rejects_failed_measurement_even_with_valid_looking_stderr(self):
+        rc, report = self._report({}, -2, returncode=1)
+        self.assertEqual(rc, 1)
+        self.assertEqual(report["summary"], "FAIL")
+        self.assertEqual([row["level"] for row in report["checks"][:2]], ["FAIL", "FAIL"])
+
+    def test_report_requires_existing_wav(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            c = SimpleNamespace(tl={"audio_tracks": []}, out=Path(directory), run=mock.Mock())
+            self.assertEqual(ar.run_report(c), 2)
+            c.run.assert_not_called()
+            self.assertFalse((c.out / "audio_report.json").exists())
 
 
 class TestGradeLoudnessDiff(unittest.TestCase):

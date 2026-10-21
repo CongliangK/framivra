@@ -3,7 +3,7 @@
 不依赖 mux/成片：判级对象 = out/audio.wav（整片 LUFS/TP、静音空洞）+ 由 timeline 与
 cache/audio 源 wav 现场渲染的轨级 stem（人声活动响度 vs duck 床乐响度差、duck 咬合/
 回升时间）。所有判级阈值集中本模块头，出处 = v4.1–v4.3 实测事故值（voice-ime），
-可被 timeline `_meta.audio_report` 覆盖（同名键覆盖同值）。
+可被 timeline `_meta.audio_report` 覆盖（同名键覆盖同值；TP 只能收紧权威阈）。
 
 判级阈值表（出处）：
   LUFS  |I-(-14)|≤1.5 PASS / ≤2.5 WARN / 其余 FAIL
@@ -47,7 +47,7 @@ checks 结构与 qc_report 同构（name/pass/detail），`vtx diff` 可直接�
 退出码：有 FAIL=1；WARN=0（报告为信息性检查，WARN 不阻断——与 audit 同裁定；
 FAIL 表示事故级问题必须处理）。
 """
-import json, re, statistics, time
+import json, math, re, statistics, time
 from pathlib import Path
 
 from .hygiene import audio_key
@@ -89,12 +89,31 @@ def grade_lufs(i, tol=LUFS_TOL, warn_tol=LUFS_WARN_TOL, target=LUFS_TARGET):
     return "FAIL", f"实测 {i:.1f} LUFS，偏差 {i-target:+.1f} 超 WARN 容差 {warn_tol}"
 
 
+def _finite_number(value):
+    """阈值/测量只接受有限数字，不把布尔值或字符串当作数值。"""
+    try:
+        return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _tp_threshold(warn, fail):
+    """兼容双覆盖键，但有效阈永不放宽权威上限；无效配置没有有效阈。"""
+    if not all(_finite_number(value) for value in (warn, fail)):
+        return None
+    return min(TP_FAIL_DBTP, warn, fail)
+
+
 def grade_tp(tp, warn=TP_WARN_DBTP, fail=TP_FAIL_DBTP):
     """TP 判级（v2 §1.3 权威口径）：阈 -1.0 dBFS，> 阈即 FAIL——limiter 已并入
     vtx audio（§1.2），audio.wav 域 TP 应稳定 ≤-1，超阈 = 上游削波/限幅失效；
     ≤ 阈 PASS。warn/fail 双参数仅为 _meta.audio_report 覆盖键兼容保留，判定取
-    两者较严值（覆盖出现分歧时不放宽权威阈）。"""
-    thr = min(warn, fail)
+    两者与权威阈的最严值；无效覆盖/测量判 FAIL，不允许 NaN 绕过比较。"""
+    thr = _tp_threshold(warn, fail)
+    if thr is None:
+        return "FAIL", "TP 阈值无效（tp_warn/tp_fail 必须为有限数值）"
+    if not _finite_number(tp):
+        return "FAIL", "TP 测量无效（必须为有限数值）"
     if tp > thr:
         return "FAIL", f"实测 TP {tp:.1f} dBTP > {thr:g}（vtx audio 已内置 alimiter，超阈请查上游削波）"
     return "PASS", f"实测 TP {tp:.1f} dBTP（≤{thr:g}）"
@@ -158,12 +177,25 @@ def merge_thresholds(tl):
 
 # ---------------------------------------------------------------- ffmpeg 测量
 def ebur128_summary(c, wav):
-    """→ (I LUFS | None, TP dBFS | None)：ebur128=peak=true Summary。"""
+    """→ (I LUFS | None, TP dBFS | None)；失败/无效值不可作通过依据。"""
     r = c.run(["ffmpeg", "-nostats", "-i", str(wav), "-af", "ebur128=peak=true:framelog=quiet",
                "-f", "null", "-"])
-    mI = re.search(r"I:\s*(-?[\d.]+) LUFS", r.stderr)
-    mT = re.search(r"True peak:\s*\n?\s*Peak:\s*(-?[\d.]+)", r.stderr)
-    return (float(mI.group(1)) if mI else None, float(mT.group(1)) if mT else None)
+    if r.returncode != 0:
+        return None, None
+
+    def value(pattern):
+        match = re.search(pattern, r.stderr)
+        if match and re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?",
+                                  match.group(1)):
+            try:
+                measured = float(match.group(1))
+            except ValueError:
+                return None
+            return measured if _finite_number(measured) else None
+        return None
+
+    return (value(r"I:\s*(\S+)[ \t]+LUFS(?!\S)"),
+            value(r"True peak:\s*Peak:\s*(\S+)[ \t]+dBFS(?!\S)"))
 
 
 def ebur128_series(c, wav, ss=None, t=None):
@@ -311,6 +343,8 @@ def run_report(c, json_path=None):
     """出音频一等报告；返回退出码（FAIL=1 / 其余 0）。写 JSON 报告 + 人读摘要。"""
     t0 = time.time()
     thr = merge_thresholds(c.tl)
+    tp_threshold = _tp_threshold(thr.get("tp_warn", TP_WARN_DBTP),
+                                 thr.get("tp_fail", TP_FAIL_DBTP))
     wav = c.out / "audio.wav"
     checks = []
     def check(name, level, detail, measured=None):
@@ -327,17 +361,14 @@ def run_report(c, json_path=None):
 
     # 1) 整片 LUFS / TP（判级对象 = audio.wav 本体，与 mux/成片无关）
     i_lufs, tp = ebur128_summary(c, wav)
-    if i_lufs is not None:
+    if _finite_number(i_lufs):
         lv, dt = grade_lufs(i_lufs, tol=thr.get("lufs_tol", LUFS_TOL),
                             warn_tol=thr.get("lufs_warn_tol", LUFS_WARN_TOL))
         check("整片响度 I", lv, dt, {"i_lufs": i_lufs, "target": LUFS_TARGET})
     else:
-        check("整片响度 I", "INFO", "ebur128 测量失败")
-    if tp is not None:
-        lv, dt = grade_tp(tp, warn=thr.get("tp_warn", TP_WARN_DBTP), fail=thr.get("tp_fail", TP_FAIL_DBTP))
-        check("整片真峰 TP", lv, dt, {"tp_dbfs": tp})
-    else:
-        check("整片真峰 TP", "INFO", "ebur128 peak 测量失败")
+        check("整片响度 I", "FAIL", "ebur128 测量失败或无有限响度值")
+    lv, dt = grade_tp(tp, warn=thr.get("tp_warn", TP_WARN_DBTP), fail=thr.get("tp_fail", TP_FAIL_DBTP))
+    check("整片真峰 TP", lv, dt, {"tp_dbfs": tp if _finite_number(tp) else None})
 
     # 2/3) 轨级：人声 vs duck 床乐响度差 + duck 咬合/回升（stem 现场渲染）
     # Match the render graph's pure event transforms before selecting stems.
@@ -416,7 +447,9 @@ def run_report(c, json_path=None):
            "thresholds": {**{k: v for k, v in zip(OVERRIDABLE, [
                LUFS_TOL, LUFS_WARN_TOL, TP_WARN_DBTP, TP_FAIL_DBTP, DIFF_FAIL_BELOW,
                DIFF_WARN_BELOW, DIFF_PASS_MAX, DUCK_ATTACK_PASS, DUCK_ATTACK_FAIL,
-               DUCK_RELEASE_PASS, DUCK_RELEASE_FAIL, HOLE_WARN, HOLE_FAIL])}, **thr},
+               DUCK_RELEASE_PASS, DUCK_RELEASE_FAIL, HOLE_WARN, HOLE_FAIL])}, **thr,
+               # Both legacy keys describe the one effective TP ceiling, not the request.
+               "tp_warn": tp_threshold, "tp_fail": tp_threshold},
            "source": str(wav), "checks": checks}
     jp = Path(json_path) if json_path else c.out / "audio_report.json"
     fstxn.atomic_write(jp, json.dumps(rep, ensure_ascii=False, indent=2), root=None if json_path else c.root)

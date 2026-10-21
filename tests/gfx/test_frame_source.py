@@ -316,7 +316,11 @@ class TestGeneratedPngConsumerIntegration(unittest.TestCase):
 
 class TestSubtitleReadiness(unittest.TestCase):
     def test_preview_checks_only_requested_frame_and_full_consumer_still_fails(self):
-        from vtx import subs
+        import contextlib
+        import io
+        from tests._support import tree_sha256
+        from vtx import recovery, subs
+        from vtx.hygiene import seg_key
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             source = PngSequence(root, 'partial', 24, 30, 16, 16)
@@ -337,6 +341,78 @@ class TestSubtitleReadiness(unittest.TestCase):
                     plan._layer_input_args(full_layer, 0)
                 source.frame_path(0).unlink()
                 self.assertIsNone(subs._layer_ready(c, 0))
+
+        # Owned single-file caches use the producer's shared certificate reader;
+        # these synthetic bytes test selection, not media decoding/publication.
+        states = ('missing_marker', 'malformed_marker', 'nonobject_marker',
+                  'wrong_schema', 'changed_media', 'wrong_frames', 'missing_media',
+                  'short', 'valid')
+        for owner, alpha in (('seg', False), ('seg', True), ('qc_clean', False)):
+            for state in states:
+                with self.subTest(owner=owner, alpha=alpha, state=state), \
+                        tempfile.TemporaryDirectory() as td:
+                    root = Path(td)
+                    cache = root / 'cache'
+                    (cache / 'seg').mkdir(parents=True)
+                    original = root / 'original.mp4'
+                    original.write_bytes(b'user input has no completion certificate')
+                    clip = dict(src='source', src_in=0, src_out=24, dur=24, dst_in=0)
+                    if alpha:
+                        clip['opacity'] = .5
+                    c = SimpleNamespace(root=root, cache=cache, fps=30, spf=1/30,
+                                        dur=24, w=16, h=16, dry=False, run=mock.Mock(),
+                                        src_path=lambda sid: original,
+                                        tl={'video_tracks': [{'kind': 'aroll', 'clips': [clip]}]})
+                    key = seg_key(c, clip, 0, 0, False, alpha, 'prores' if alpha else 'x264')
+                    seg = cache / 'seg' / (key + ('.mov' if alpha else '.mp4'))
+                    qc = cache / 'qc_clean.mp4'
+                    target = seg if owner == 'seg' else qc
+                    for media in {seg, target}:
+                        media.write_bytes(b'completed fixture media')
+                        recovery.completion_marker(media).write_text(json.dumps({
+                            'schema': 1, 'sha256': hashlib.sha256(media.read_bytes()).hexdigest(),
+                            'frames': 24}))
+                    marker = recovery.completion_marker(target)
+                    record = json.loads(marker.read_text())
+                    if state == 'missing_marker':
+                        marker.unlink()
+                    elif state == 'malformed_marker':
+                        marker.write_text('{broken')
+                    elif state == 'nonobject_marker':
+                        marker.write_text('[]')
+                    elif state in ('wrong_schema', 'wrong_frames', 'short'):
+                        record['schema' if state == 'wrong_schema' else 'frames'] = (
+                            2 if state == 'wrong_schema' else 25 if state == 'wrong_frames' else 12)
+                        marker.write_text(json.dumps(record))
+                    elif state == 'changed_media':
+                        target.write_bytes(b'interrupted replacement')
+                    elif state == 'missing_media':
+                        target.unlink()
+                    valid = state == 'valid' or (owner == 'seg' and state == 'short')
+                    expected = ('cache/qc_clean.mp4' if owner == 'qc_clean' and valid else
+                                '图层单帧' if owner == 'qc_clean' or valid else '兜底')
+                    before = tree_sha256(root)
+                    with mock.patch.object(subs, 'seg_encoder_kind', return_value='x264'), \
+                            mock.patch.object(composite.RenderPlan, 'composite') as render, \
+                            mock.patch.object(recovery, '_inspect', side_effect=AssertionError('read-only cache')), \
+                            contextlib.redirect_stdout(io.StringIO()) as output:
+                        for dry in (True, False):
+                            c.run.reset_mock()
+                            render.reset_mock()
+                            path, description = subs._bg_frame(c, 18, root, dry)
+                            self.assertEqual(path, root / 'bg.png')
+                            self.assertIn(expected, description)
+                            self.assertEqual(c.run.call_count, 0 if dry else 1)
+                            self.assertEqual(render.call_count, int(not dry and expected == '图层单帧'))
+                            if not dry and expected == 'cache/qc_clean.mp4':
+                                self.assertIn(str(qc), c.run.call_args.args[0])
+                        self.assertEqual(tree_sha256(root), before)  # No legacy adoption/cleanup.
+                        if expected == '兜底':
+                            self.assertIn('未通过完成校验', output.getvalue())
+                        if owner == 'qc_clean' and valid:
+                            c.run.side_effect = RuntimeError('decoder failed')
+                            with self.assertRaisesRegex(RuntimeError, 'decoder failed'):
+                                subs._bg_frame(c, 18, root, False)
 
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
     def test_partial_preview_renders_and_missing_current_uses_black_fallback(self):

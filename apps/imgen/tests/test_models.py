@@ -5,7 +5,10 @@
 重点防回归：gpt 端点 /api/async/image_gpt 无 `_image` 后缀变体（红队 P0-1）；
 参考图 14 张上限；nano 与 gpt 参数差异（size 语义 / aspectRatio 交不交）。
 """
+import os
+import sys
 import unittest
+from unittest import mock
 
 from . import _loader   # v2 P2a：tests 成包后相对导入
 
@@ -20,6 +23,32 @@ class EndpointConstantsTest(unittest.TestCase):
         self.assertEqual(models.GPT_SUBMIT_PATH, "/api/async/image_gpt")
         self.assertEqual(models.DETAIL_PATH, "/api/async/detail")
         self.assertNotIn("image_gpt_image", models.GPT_SUBMIT_PATH)
+
+        # Upload constants bind only current names at import; no upload is invoked.
+        fields = ("SSH_TARGET", "REMOTE_DIR", "BASE_URL")
+        defaults = ("", "/var/www/sc-img", "")
+        current = ("fixture-host", "/fixture/current", "https://current.invalid/images")
+        obsolete = ("obsolete-host", "/fixture/obsolete", "https://obsolete.invalid/images")
+        cases = ((None, None, None), ("", "", ""), current, (" ", " ", " "),
+                 (current[0], None, None), (None, current[1], None),
+                 (None, None, current[2]))
+        for values in cases:
+            expected = tuple(value or default for value, default in zip(values, defaults))
+            for old_values in ((None, None, None), ("", "", ""), obsolete):
+                env = {prefix + field: value
+                       for prefix, configured in (("VT_OWN_UPLOAD_", values), ("SC_IMG_", old_values))
+                       for field, value in zip(fields, configured) if value is not None}
+                with self.subTest(current=values, obsolete=old_values), \
+                        mock.patch.dict(os.environ, env, clear=True), \
+                        mock.patch.dict(sys.modules, {"requests": mock.Mock(spec=())}), \
+                        mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected subprocess")):
+                    sys.modules.pop("reference_upload", None)
+                    upload = _loader.load("reference_upload")
+                    self.assertEqual(tuple(getattr(upload, "OWN_SERVER_" + field) for field in fields),
+                                     expected)
+                    os.environ.update({"VT_OWN_UPLOAD_" + field: "changed-after-import" for field in fields})
+                    self.assertEqual(tuple(getattr(upload, "OWN_SERVER_" + field) for field in fields),
+                                     expected)
 
     def test_model_registry_uses_constants(self):
         self.assertFalse(hasattr(models, "GPT_SIZE_CHOICES"))

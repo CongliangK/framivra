@@ -68,7 +68,7 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
 把 `cache/audio/` 下不在当前键集内的文件一律判垃圾）。唯一通道 =
 `contribute_keys(c)`（`__init__.py` 已实现）：返回本 timeline 全部声明
 `hello_gain` 源的产物键 stem，由内核 `hygiene._current_keys` 并入 ak 存留集——
-`vtx gc --dry` 可见插件产物不在回收清单。
+`vtx gc --dry-run` 可见插件产物不在回收清单。
 
 ## 卸载后缓存为何失效（验收门 6 对照语义）
 
@@ -76,7 +76,7 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
 
 1. **键出白名单 → gc 回收**：插件不生效 → `contribute_keys` 空转 →
    `cache/audio/{audio_key}__hello_...wav` 不再在存留键集内 → `vtx gc` 将其列入
-   回收（`gc --dry` 可先验）。
+   回收（`gc --dry-run` 可先验）。
 2. **指纹段消失 → 旧回执失配**：回执指纹末尾有「生效插件清单」追加段
    （`plugins:hello-plugin@1.0.0:{参数摘要}`，§2.1 不变量 2）。卸载后该段消失——录制侧
    （带段）与重算侧（无段）指纹失配，`vtx all` 拒绝复用旧 prepare/audio 产物，

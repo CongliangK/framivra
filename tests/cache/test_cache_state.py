@@ -85,8 +85,8 @@ class CacheIdentity(unittest.TestCase):
 
 class GcExemptions(unittest.TestCase):
     """方案三阶段1审查 P1-2：两个新状态件（loudness_receipts.json / qc_pass_segs.json）
-    不进 gc 回收清单（gc_plan 即 `vtx gc --dry` 的计算路径）——回执/记录被回收只是
-    优雅降级（全检/重测一轮），但 gc --dry 持续列出会诱导误删。"""
+    不进 gc 回收清单（gc_plan 即 `vtx gc --dry-run` 的计算路径）——回执/记录被回收只是
+    优雅降级（全检/重测一轮），但 gc --dry-run 持续列出会诱导误删。"""
 
     def test_new_state_files_exempt_from_gc_plan(self):
         with tempfile.TemporaryDirectory() as d:
@@ -115,7 +115,7 @@ class GcExemptions(unittest.TestCase):
         legacy 类别随 gc 回收——pass 中间物可再生，但温态冻结语义失效、下次渲染
         全冷建（900s ≈ 3.2× 旧链式，KNOWN-ISSUES ⑭ 在案）。修复=known 集补录
         （hygiene.py :265-267），豁免语义与同族先例 preview 一致（整目录豁免）。
-        c.dry=True 纯计算路径（gc_plan 即 `vtx gc --dry` 的计算侧，无副作用）。
+        c.dry=True 纯计算路径（gc_plan 即 `vtx gc --dry-run` 的计算侧，无副作用）。
         对照组：cache 根下白名单外杂散目录仍须落 legacy——豁免不得扩大到整个
         cache 根（镜像 test_new_state_files_exempt_from_gc_plan 对照组先例）。
         """

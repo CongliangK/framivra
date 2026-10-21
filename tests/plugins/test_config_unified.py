@@ -12,6 +12,7 @@
      {path, enabled:true} 显式启用）——registry.scan_external 的输入形状。
 运行：bash scripts/run_all_tests.sh。
 """
+import ast
 import io
 import json
 import os
@@ -21,6 +22,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Optional
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
@@ -210,6 +213,94 @@ class CfgGet(unittest.TestCase):
         self.assertIs(pc.cfg_get(cfg, "flag_on", False), True)              # 布尔容错
         self.assertIs(pc.cfg_get(cfg, "flag_off", True), False)
         self.assertEqual(pc.cfg_get(cfg, "asr.port", "/default/py"), "/default/py")  # str 默认实得非 str（P2-3）→ default
+
+
+class ImgenConfigSemantics(unittest.TestCase):
+    """只执行真实源码的配置表达式与纯确认门；不 import/运行 API 或 key 链。"""
+
+    @classmethod
+    def setUpClass(cls):
+        path = REPO / "apps" / "imgen" / "imgen_cli.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        cls.functions = {node.name: node for node in tree.body
+                         if isinstance(node, ast.FunctionDef)}
+        cls.namespace = {"__file__": str(path), "Path": Path, "sys": sys,
+                         "os": os, "Optional": Optional,
+                         "models": SimpleNamespace(BASE_URL="https://example.invalid")}
+        selected = [node for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "BATCH_WARN_THRESHOLD"
+                            for target in node.targets)]
+        selected += [cls.functions[name] for name in (
+            "_pluginlib_config", "resolve_api_base", "confirm_paid_submit")]
+        exec(compile(ast.Module(body=selected, type_ignores=[]), str(path), "exec"),
+             cls.namespace)
+
+    def config_assignments(self, command, cfg, yes=False):
+        # 刻意排除函数中的 import/API/key/文件写入，只取这四个真实赋值。
+        assignments = [node for node in ast.walk(self.functions[command])
+                       if isinstance(node, ast.Assign)
+                       and len(node.targets) == 1
+                       and isinstance(node.targets[0], ast.Name)
+                       and node.targets[0].id in (
+                           "model_default", "price", "confirm_enabled", "gate_yes")]
+        self.assertEqual(len(assignments), 4)
+        # cmd_gen 的 price 来自纯模型常量；与本测试配置语义无关，不执行。
+        assignments = [node for node in assignments
+                       if command == "cmd_batch" or node.targets[0].id != "price"]
+        namespace = {**self.namespace, "cfg": cfg, "args": SimpleNamespace(yes=yes)}
+        exec(compile(ast.Module(body=assignments, type_ignores=[]),
+                     "<imgen-config-expressions>", "exec"), namespace)
+        return namespace
+
+    def test_shared_helper_is_canonical_not_a_local_copy(self):
+        self.assertNotIn("cfg_get", self.functions)
+        self.assertIs(self.namespace["_pluginlib_config"]().cfg_get, pc.cfg_get)
+
+    def test_confirmation_defaults_and_explicit_values(self):
+        cases = [("missing", {}, True), ("missing-key", {"imgen": {}}, True)]
+        cases += [("root", value, True) for value in (None, [], [1], "bad", False, 9)]
+        cases += [("section", {"imgen": value}, True)
+                  for value in (None, [], [1], "bad", False, 9)]
+        cases += [("value", {"imgen": {"confirm_before_submit": value}}, expected)
+                  for value, expected in (
+                      (None, True), (False, False), (True, True), (0, False), (1, True),
+                      ("false", False), ("0", False), ("NO", False), ("off", False),
+                      ("true", True), ("1", True), (" Yes ", True), ("ON", True),
+                      ("", False), ("garbage", False))]
+        for command in ("cmd_gen", "cmd_batch"):
+            for kind, cfg, enabled in cases:
+                for yes in (False, True):
+                    with self.subTest(command=command, kind=kind, cfg=cfg, yes=yes):
+                        values = self.config_assignments(command, cfg, yes)
+                        self.assertIs(values["confirm_enabled"], enabled)
+                        self.assertIs(values["gate_yes"], yes or not enabled)
+                        allowed = self.namespace["confirm_paid_submit"](
+                            1, 0.1, values["gate_yes"], False, stderr=io.StringIO())
+                        self.assertIs(allowed, yes or not enabled)
+                        # >50 张二次确认不因 config 或 --yes 失效。
+                        self.assertFalse(self.namespace["confirm_paid_submit"](
+                            51, 0.1, values["gate_yes"], False, stderr=io.StringIO()))
+
+    def test_other_imgen_defaults_preserve_existing_types(self):
+        cases = [({}, "nano", 0.1, "https://example.invalid"),
+                 ({"model_default": None, "price_per_image": None, "api_base": None},
+                  "nano", 0.1, "https://example.invalid"),
+                 ({"model_default": True, "price_per_image": True, "api_base": 9},
+                  "nano", 0.1, "https://example.invalid"),
+                 ({"model_default": "gpt-image", "price_per_image": 0.3,
+                   "api_base": "https://configured.invalid/"},
+                  "gpt-image", 0.3, "https://configured.invalid")]
+        with mock.patch.dict(os.environ, {}, clear=True):
+            for imgen, model, price, api_base in cases:
+                cfg = {"imgen": imgen}
+                with self.subTest(cfg=cfg):
+                    self.assertEqual(self.config_assignments("cmd_gen", cfg)["model_default"], model)
+                    values = self.config_assignments("cmd_batch", cfg)
+                    self.assertEqual(values["model_default"], model)
+                    self.assertEqual(values["price"], price)
+                    self.assertEqual(self.namespace["resolve_api_base"](cfg), api_base)
+            os.environ["IMGEN_API_BASE"] = "https://override.invalid/"
+            self.assertEqual(self.namespace["resolve_api_base"]({}), "https://override.invalid")
 
 
 if __name__ == "__main__":

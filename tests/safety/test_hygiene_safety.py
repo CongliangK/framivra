@@ -90,13 +90,13 @@ class CleanupSafety(SandboxCase):
     def test_gc_dry_flag_preserves_exact_tree(self):
         self.garbage()
         before = self.tree()
-        self.assert_ok(self.run_vtx("gc", "--dry"))
+        self.assert_ok(self.run_vtx("gc", "--dry-run"))
         self.assertEqual(self.tree(), before)
 
     def test_gc_deep_dry_preserves_exact_tree(self):
         self.garbage()
         before = self.tree()
-        self.assert_ok(self.run_vtx("gc", "--all", "--dry"))
+        self.assert_ok(self.run_vtx("gc", "--all", "--dry-run"))
         self.assertEqual(self.tree(), before)
 
     def test_gc_preserves_evidence_and_deliverables_and_is_idempotent(self):

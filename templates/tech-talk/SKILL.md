@@ -59,7 +59,7 @@ python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json validate        # 硬
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gfx             # 准备当前页面缓存，无 gfx 轨时无页面任务
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json video --draft   # 540p 画面迭代预览（可加 --frames N）
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json all             # 全流程正式渲染 → out/final.mp4
-python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gc              # 收尾回收缓存（先 --dry 看）
+python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gc              # 收尾回收缓存（先 --dry-run 看）
 env python3 <video_tools>/apps/gates/content_gates.py -t ... --project-gates <项目门>.json   # 内容级验证门（项目门骨架=`assets/presets/gates.json`，字段写法见其 _doc）
 bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K 投稿版断言（帧数门自动从 timeline 推导）
 ```

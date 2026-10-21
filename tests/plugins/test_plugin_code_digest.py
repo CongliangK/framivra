@@ -125,7 +125,7 @@ class PluginCodeDigest(unittest.TestCase):
         self.assertNotEqual(first, hashlib.sha1(b"module.pyVALUE = 1\n").hexdigest()[:12])
         with mock.patch.object(hooks, "_PLUGIN_CODE_DIGEST_VERSION", b"future\0"):
             self.assertNotEqual(first, self.digest())
-        self.assertIs(hooks._plugin_code_digest, hooks.plugin_code_digest)
+        self.assertFalse(hasattr(hooks, "_plugin_code_digest"))
 
     def test_addition_and_removal_change_identity(self):
         self.write("module.py")

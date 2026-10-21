@@ -47,7 +47,8 @@ def config_path(repo_root=None) -> Path:
 def cfg_get(cfg, path: str, default):
     """逐级容错读（asr/tts/imgen §7.2 同款语义的单一实现）：
     缺键/None → default；布尔容错（"false"/false 一致处理）；类型不符
-    （默认 str 实得非 str、或 bool 污染非布尔键）→ default。"""
+    （默认 str 实得非 str、或 bool 污染非布尔键）→ default。
+    例：cfg_get(cfg, "imgen.api_base", "https://...")。"""
     node = cfg
     for key in path.split("."):
         if not isinstance(node, dict) or key not in node:
@@ -55,14 +56,14 @@ def cfg_get(cfg, path: str, default):
         node = node[key]
     if node is None:
         return default
-    if isinstance(default, bool):
+    if isinstance(default, bool):  # 布尔容错："false"/false 一致处理
         if isinstance(node, str):
             return node.strip().lower() in ("1", "true", "yes", "on")
         return bool(node)
     if isinstance(default, str) and not isinstance(node, str):
-        return default
+        return default      # 类型不符 → 默认（P2-3）
     if isinstance(node, bool):
-        return default
+        return default      # bool 污染非布尔键 → 默认
     return node
 
 

@@ -1,4 +1,4 @@
-"""A01: every CLI dry spelling is a read-only plan, including cleanup/snapshot.
+"""A01: canonical CLI dry plans and rejected old spellings are read-only.
 
 Run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.cache.test_dry_run
 All writable fixtures are isolated temporary projects; no Chrome/FFmpeg required.
@@ -23,9 +23,10 @@ from vtx.infra import Ctx
 
 REPO = Path(__file__).resolve().parents[2]
 VTX = REPO / "vtx" / "vtx.py"
-DRY_FLAGS = (("--dry-run",), ("--dry",), ("--dry-run", "--dry"),
-             ("--dry", "--dry-run"), ("--dry-run", "--dry-run"),
-             ("--dry", "--dry"))
+DRY_FLAGS = (("--dry-run",), ("--dry-run", "--dry-run"))
+REJECTED_DRY_FLAGS = (("--dry",), ("--dry-run", "--dry"),
+                      ("--dry", "--dry-run"), ("--dry", "--dry"),
+                      ("--dry-",), ("--dry-r",), ("--dry-ru",))
 
 
 class DryRunRegression(unittest.TestCase):
@@ -88,18 +89,29 @@ class DryRunRegression(unittest.TestCase):
         self.assertEqual(tree_sha256(self.root), before, args)
         return result
 
+    def assert_rejected_read_only(self, *args, env_extra=None):
+        before = tree_sha256(self.root)
+        result = self.run_vtx(*args, env_extra=env_extra)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("unrecognized arguments:", result.stderr)
+        self.assertEqual(tree_sha256(self.root), before, args)
+        return result
+
     def test_cleanup_aliases_positions_and_gc_options(self):
-        # Both spellings, both orders, repetitions, before/after/split around command.
+        # Keep the registered ID: canonical/repeated flags plan; old/prefix flags fail.
+        # Both orders and before/after/split positions remain covered.
         commands = [("clean",), ("snapshot",), ("gc",), ("gc", "--all")]
         commands += [("gc", *deep, "--keep-days", days)
                      for deep, days in itertools.product(((), ("--all",)), ("0", "7"))]
-        for command, flags in itertools.product(commands, DRY_FLAGS):
+        for command, flags in itertools.product(commands, DRY_FLAGS + REJECTED_DRY_FLAGS):
             argv_variants = [(*flags, *command), (*command, *flags)]
             if len(flags) == 2:
                 argv_variants.append((flags[0], *command, flags[1]))
             for argv in argv_variants:
                 with self.subTest(argv=argv):
-                    self.assert_read_only(*argv)
+                    check = (self.assert_read_only if flags in DRY_FLAGS
+                             else self.assert_rejected_read_only)
+                    check(*argv)
 
     def test_all_other_commands_and_render_options_are_read_only(self):
         commands = [(name,) for name, _ in cli.STAGES] + [
@@ -117,12 +129,16 @@ class DryRunRegression(unittest.TestCase):
         # Tiny budget plus auto GC deliberately makes the legacy budget path dangerous.
         env = {"VTX_CACHE_BUDGET_GB": "0.000000001", "VTX_GC_AUTO": "1",
                "VTX_SNAPSHOT_KEEP": "0"}
-        for command, flags in itertools.product(commands, DRY_FLAGS):
+        for command, flags in itertools.product(commands, DRY_FLAGS + REJECTED_DRY_FLAGS):
             with self.subTest(command=command, flags=flags):
-                self.assert_read_only(*command, *flags, env_extra=env)
-        for flags in DRY_FLAGS:
-            self.assert_read_only("all", "--until", "video", *flags,
-                                  env_extra={**env, "VTX_PIPELINE": "0"})
+                check = (self.assert_read_only if flags in DRY_FLAGS
+                         else self.assert_rejected_read_only)
+                check(*command, *flags, env_extra=env)
+        for flags in DRY_FLAGS + REJECTED_DRY_FLAGS:
+            check = (self.assert_read_only if flags in DRY_FLAGS
+                     else self.assert_rejected_read_only)
+            check("all", "--until", "video", *flags,
+                  env_extra={**env, "VTX_PIPELINE": "0"})
 
     def test_missing_cache_out_are_not_created(self):
         empty = self.root / "new_project"
@@ -135,9 +151,11 @@ class DryRunRegression(unittest.TestCase):
         }))
         for command, flags in itertools.product(
                 [("gc",), ("gc", "--all"), ("clean",), ("snapshot",), ("df",),
-                 ("all",), ("subs", "preview", "0")], DRY_FLAGS):
+                 ("all",), ("subs", "preview", "0")], DRY_FLAGS + REJECTED_DRY_FLAGS):
             with self.subTest(command=command, flags=flags):
-                self.assert_read_only(*flags, *command)
+                check = (self.assert_read_only if flags in DRY_FLAGS
+                         else self.assert_rejected_read_only)
+                check(*flags, *command)
         self.assertFalse((empty / "cache").exists())
         self.assertFalse((empty / "out").exists())
 
@@ -177,7 +195,7 @@ class DryRunRegression(unittest.TestCase):
                     stack.enter_context(mock.patch.object(
                         owner, name, side_effect=AssertionError(f"unexpected {name}")))
                 stack.enter_context(mock.patch.object(
-                    sys, "argv", ["vtx", "-t", str(self.timeline), command, "--dry"]))
+                    sys, "argv", ["vtx", "-t", str(self.timeline), command, "--dry-run"]))
                 stack.enter_context(mock.patch.dict(os.environ, {"VTX_NO_NVENC": "1"}))
                 stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                 cli.main()
@@ -238,7 +256,7 @@ class DryRunRegression(unittest.TestCase):
         for victim in (self.root / "cache", self.root / "out"):
             shutil.rmtree(victim)
             victim.symlink_to(store)
-        for argv in (("gc", "--dry-run"), ("clean", "--dry-run"), ("gc", "--all", "--dry"),
+        for argv in (("gc", "--dry-run"), ("clean", "--dry-run"), ("gc", "--all", "--dry-run"),
                      ("gc",), ("gc", "--all"), ("clean",)):
             with self.subTest(argv=argv):
                 before = tree_sha256(self.root)

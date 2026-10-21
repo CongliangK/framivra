@@ -20,7 +20,7 @@
   clean      清空 cache/ 与 out/（A02/issue #21：默认保留不可再生交付件——final.mp4、
              VERSIONS.json、history/、FREEZE* 冻结凭证、final_4k*.mp4、out/reports/ 证据；
              全删需显式危险旗标 --i-know-this-nukes-everything）
-  gc         缓存回收（键集外垃圾 + tmp 孤儿 + out 中间物；--dry 只列清单，--all 深度回收，
+  gc         缓存回收（键集外垃圾 + tmp 孤儿 + out 中间物；--dry-run 只列清单，--all 深度回收，
              --keep-days N 暂缓近 N 天条目；cache/reports/ 永不回收；不可再生交付件
              任何 gc 变体都不删——全删唯一入口是 clean --i-know-this-nukes-everything）
   df         体积体检：cache/out 分项占用 + top-20 大文件 + tmp 孤儿清单
@@ -77,7 +77,7 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
   composite.py  切点选择 + 合成 + ass（RenderPlan）  qc.py        质检
   stages.py     validate/audit/prepare/audio/mux    gfx_render.py CDP gfx 渲染后端
   hygiene.py    缓存键/gc/df/snapshot/VERSIONS      cache_state.py 回执身份/依赖门
-  本文件(cli)   gfx 阶段 + main/argparse/STAGES 编排（vtx/vtx.py 只剩薄启动器）
+  本文件(cli)   gfx 阶段 + argparse/STAGES 编排（main 生命周期在包入口）
 
 约定：AI 智能体不应手写 ffmpeg 剪辑命令；只编写/修改 timeline.json 并调用本工具。
 每条时间量都是整数帧；区间 [in, out) 左闭右开。回执写入 out/receipt.json。
@@ -93,6 +93,7 @@ from pathlib import Path
 
 # v2 §1.4 包化：模块内全部相对导入（外部一律 from vtx import / import vtx.xxx；
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
+from . import main, _stage_receipt_name
 from .composite import build_video, prepare_layers
 from .encoders import find_chrome
 from . import gfx_cli, hygiene, fstxn, events
@@ -439,13 +440,6 @@ STAGES = [("validate", validate), ("audit", audit), ("prepare", prepare), ("gfx"
 _UNTIL_STAGES = ("validate", "audit", "prepare", "gfx", "video", "mux", "qc")
 
 
-def _stage_receipt_name(name: str, draft: bool) -> str:
-    """阶段回执名（现行内联规则抽 helper，2026-09-12）：draft 模式的 video/mux 记为
-    video_draft/mux_draft（receipt/依赖门/下游撤销共用同一名字），其余阶段原名。
-    线性序列与流水线两处复用（单一权威）。"""
-    return name + "_draft" if draft and name in ("video", "mux") else name
-
-
 def _pipeline_enabled(env=None) -> bool:
     """VTX_PIPELINE 解析（方案二阶段2 A/B 开关）：仅显式 "0" 回退线性序列，缺省与
     其他任意值（含空串/"false"/"1"）走依赖图——开关语义单值精确，避免布尔猜测。"""
@@ -761,37 +755,9 @@ def _preview_command(c, a):
     print("[dry-run] 计划完成；未删除或写入任何文件")
 
 
-def main():
-    """One invocation, including input-load and finish failures."""
-    if sys.platform == 'win32':
-        # All three entry points share this path. Redirected Windows streams
-        # may default to GBK, which cannot encode status glyphs or user paths.
-        for stream in (sys.stdout, sys.stderr):
-            try:
-                stream.reconfigure(encoding='utf-8', errors='replace')
-            except (AttributeError, OSError, ValueError):
-                pass
-    execution = events.ExecutionContext()
-    code, failure = 0, None
-    try:
-        try:
-            result = _main(execution)
-            code = result or 0
-            return result
-        except ProjectPathError as error:
-            print(f'✗ {error}', file=sys.stderr)
-            code, failure = 1, error
-            return 1
-    except BaseException as error:
-        code, failure = events.exit_code(error), error
-        raise
-    finally:
-        execution.finish(code, failure)
-
-
 def _main(execution=None):
     execution = execution if execution is not None else events.ExecutionContext()
-    ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层")
+    ap = argparse.ArgumentParser(description="vtx 视频剪辑中间层", allow_abbrev=False)
     ap.add_argument("-t", "--timeline", default="timeline.json", help="timeline.json 路径（默认 ./timeline.json）")
     ap.add_argument("--events-jsonl", metavar="PATH",
                     help="optional exclusive JSONL execution evidence; independent of stdout")
@@ -801,8 +767,8 @@ def _main(execution=None):
                     help="all 专属：只执行到该阶段止（validate|audit|prepare|gfx|video|mux|qc，"
                          "audio 不作终点）。--until video 仅用于中间检查：线性模式不含 audio，"
                          "后续单跑 mux/qc 不触发 finish。正式交付用完整 all；--until qc 可收尾")
-    ap.add_argument("--dry-run", "--dry", dest="dry_run", action="store_true",
-                    help="只读执行计划：不删除、创建或写入文件（--dry 为兼容别名）")
+    ap.add_argument("--dry-run", dest="dry_run", action="store_true",
+                    help="只读执行计划：不删除、创建或写入文件")
     ap.add_argument("--draft", action="store_true", help="草稿模式（仅 video/mux）：540p+NVENC 快速预览，不影响正式产物")
     ap.add_argument("--frames", type=int, metavar="N", help="video --draft 专属：只渲前 N 帧")
     ap.add_argument("--range", nargs=2, metavar=("A", "B"),
@@ -882,7 +848,7 @@ def _main(execution=None):
     if a.report and a.report_only:
         print("--report 与 --report-only 互斥"); sys.exit(2)
     if (a.report or a.report_only) and policy.dry:
-        print("✗ --report/--report-only 与 --dry-run/--dry 冲突（报告需要真实产物测量）"); sys.exit(2)
+        print("✗ --report/--report-only 与 --dry-run 冲突（报告需要真实产物测量）"); sys.exit(2)
     if a.gpu and a.command != "video":
         print("--gpu 仅作用于 video 阶段"); sys.exit(2)
     if a.strict and a.command != "qc":

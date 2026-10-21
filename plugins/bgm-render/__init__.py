@@ -499,7 +499,7 @@ def cache_dir_keys(c) -> dict:
     """不变量 ① 的键级扩展（v1.2.0 R1-F F2）：cache/bgm/ 的内容寻址键级白名单
     = 当前 timeline 全部 bgm 源的 render_digest 目录名。digest 纯静态可算
     （工程字节 + $ref + extra_deps + 代码摘要，不跑 CLI）——gc 期与渲染期同源
-    同值。cache/bgm/<digest>/ 在清单内 = 在用保活；不在 = 陈旧（gc --dry 列出、
+    同值。cache/bgm/<digest>/ 在清单内 = 在用保活；不在 = 陈旧（gc --dry-run 列出、
     gc 回收）——修复陈旧 render_digest 目录（每个 ≈整工程渲染产物）无界累积。"""
     keys = set()
     for s in c.tl.get("sources", []):
