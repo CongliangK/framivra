@@ -70,6 +70,29 @@ class DarwinSvgIdentity(unittest.TestCase):
             lib.write_bytes(lib.read_bytes() + b'changed library bytes')
             self.assertNotEqual(first, gfx_svg._darwin_runtime(self.main))
 
+    def test_bundle_fast_path_binds_canonical_files_and_internal_links(self):
+        from hashlib import sha256
+        resource = self.resources / 'share/inkscape/resource.dat'
+        resource.write_bytes(b'bound resource')
+        alias = self.resources / 'resource-alias'
+        alias.symlink_to('share/inkscape/resource.dat')
+        with mock.patch.object(gfx_environment, '_file',
+                               side_effect=AssertionError('bundle repeated generic resolution')):
+            first = gfx_environment._darwin_bundle(self.app)
+        self.assertEqual(first['files']['Contents/Resources/resource-alias'],
+                         [str(resource.resolve()), sha256(b'bound resource').hexdigest()])
+        self.assertEqual(first['links']['Contents/Resources/resource-alias'],
+                         ['share/inkscape/resource.dat', 'Contents/Resources/share/inkscape/resource.dat'])
+        resource.write_bytes(b'changed resource')
+        self.assertNotEqual(first, gfx_environment._darwin_bundle(self.app))
+
+    def test_bundle_still_rejects_external_member_links(self):
+        outside = self.root / 'outside.dat'
+        outside.write_bytes(b'outside')
+        (self.resources / 'outside-alias').symlink_to(outside)
+        with self.assertRaisesRegex(gfx_environment.EnvironmentError, 'escapes'):
+            gfx_environment._darwin_bundle(self.app)
+
     def test_standalone_helper_executable_path_is_its_own(self):
         helper = self.resources / 'lib/gio/modules/helper'
         lib = self.resources / 'lib/gio/modules/libhelper.dylib'
