@@ -22,6 +22,8 @@
 
 铁律：只用假 HOME + 假 IME 锚点 + 临时端口；绝不触碰真实输入法（18081）。
 """
+import builtins
+from contextlib import contextmanager
 import json
 import os
 import signal
@@ -32,6 +34,8 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -671,6 +675,216 @@ class TestResourceAdmission(MatrixBase):
         finally:
             sidecar_server._HOLDER = old
             sidecar_server._read_json_payload = real_read
+
+
+class TestModelPlacement(unittest.TestCase):
+    """纯内存设备/准入矩阵；不加载 torch/模型、不探测 GPU 或启动服务。"""
+
+    class FakeDevice:
+        def __init__(self, owner, name, device):
+            self.owner, self.name, self.device = owner, name, device
+            self.failures = {}
+
+        def to(self, device):
+            self.owner.events.append((self.name, device, self.owner.lease_depth))
+            failure = self.failures.get(device)
+            if failure is not None:
+                raise failure
+            self.device = device
+
+    def setUp(self):
+        self.events = []
+        self.lease_depth = 0
+        self.allowed = True
+        self.lease_error = None
+        self.ind = SimpleNamespace(admission_lease=self.lease,
+                                   gpu_admission=self.admit,
+                                   estimate_vram_mib=self.estimate)
+        for target, value in (("_ind", lambda: self.ind),
+                              ("_log", lambda message: None)):
+            patcher = mock.patch.object(sidecar_server, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        cache = mock.patch.object(sidecar_server.ModelHolder, "_empty_cache_guard",
+                                  lambda holder: None)
+        cache.start()
+        self.addCleanup(cache.stop)
+        real_import = builtins.__import__
+
+        def guarded_import(name, *args, **kwargs):
+            if name.split(".")[0] in ("torch", "qwen_asr"):
+                raise AssertionError("pure placement test must not import " + name)
+            return real_import(name, *args, **kwargs)
+
+        for target in ("subprocess.Popen", "subprocess.run", "os.kill", "socket.socket"):
+            guard = mock.patch(target, side_effect=AssertionError("native operation forbidden"))
+            guard.start()
+            self.addCleanup(guard.stop)
+        imports = mock.patch("builtins.__import__", side_effect=guarded_import)
+        imports.start()
+        self.addCleanup(imports.stop)
+
+    @contextmanager
+    def lease(self):
+        self.assertEqual(self.lease_depth, 0, "admission must not nest leases")
+        self.events.append(("lease", "enter"))
+        if self.lease_error is not None:
+            raise self.lease_error
+        self.lease_depth += 1
+        try:
+            yield
+        finally:
+            self.lease_depth -= 1
+            self.events.append(("lease", "exit"))
+
+    def estimate(self, path):
+        self.events.append(("estimate", path))
+        return 3072
+
+    def admit(self, required, device):
+        self.assertEqual(self.lease_depth, 1)
+        self.events.append(("admit", required, device))
+        return {"allowed": self.allowed, "reason": "synthetic admission"}
+
+    def holder(self, *, aligner=True, device="cuda:1", budget=None):
+        holder = sidecar_server.ModelHolder("initial-1.7B", device_map="cuda:0",
+                                            vram_budget_mib=budget, idle_timeout=0)
+        model = SimpleNamespace(model=self.FakeDevice(self, "asr", device), device=device)
+        model.forced_aligner = (SimpleNamespace(model=self.FakeDevice(self, "aligner", device),
+                                               device=device) if aligner else None)
+        holder._model, holder._loaded_path = model, "loaded-companion-0.6B"
+        holder._on_gpu, holder._gpu_device = True, device
+        return holder
+
+    def assert_devices(self, holder, device):
+        self.assertEqual(holder._model.model.device, device)
+        self.assertEqual(holder._model.device, device)
+        fa = holder._model.forced_aligner
+        if fa is not None:
+            self.assertEqual(fa.model.device, device)
+            self.assertEqual(fa.device, device)
+
+    def test_idle_resume_matrix_and_ready_noop(self):
+        for aligner in (False, True):
+            for device in ("cpu", "cuda:1"):
+                for budget in (None, 8192):
+                    with self.subTest(aligner=aligner, device=device, budget=budget):
+                        holder = self.holder(aligner=aligner, device=device, budget=budget)
+                        for _ in range(2):
+                            holder._to_cpu_locked()
+                            self.assertFalse(holder._on_gpu)
+                            self.assert_devices(holder, "cpu")
+                            self.events.clear()
+                            self.assertIs(holder.acquire(), holder._model)
+                            holder.release()
+                            self.assertTrue(holder._on_gpu)
+                            self.assert_devices(holder, device)
+                            expected = ([] if budget else [("estimate", holder.active_path)])
+                            expected += [("lease", "enter"), ("admit", budget or 3072, device),
+                                         ("asr", device, 1)]
+                            if aligner:
+                                expected.append(("aligner", device, 1))
+                            expected.append(("lease", "exit"))
+                            self.assertEqual(self.events, expected)
+                            holder.acquire()
+                            holder.release()
+                            self.assertEqual(self.events, expected, "ready state must be a no-op")
+
+    def test_denied_cold_and_resume_preserve_state_and_unlock(self):
+        self.allowed = False
+        for cold in (False, True):
+            with self.subTest(cold=cold):
+                holder = self.holder()
+                holder._to_cpu_locked()
+                if cold:
+                    holder._model, holder._loaded_path = None, ""
+                self.events.clear()
+                with mock.patch.object(sidecar_server, "companion_path", return_value=None):
+                    with self.assertRaisesRegex(RuntimeError, "资源准入拒绝"):
+                        holder.acquire()
+                self.assertFalse(holder._on_gpu)
+                if cold:
+                    self.assertIsNone(holder._model)
+                else:
+                    self.assert_devices(holder, "cpu")
+                self.assertEqual(self.events, [("estimate", holder.active_path),
+                                              ("lease", "enter"),
+                                              ("admit", 3072, "cuda:0" if cold else "cuda:1"),
+                                              ("lease", "exit")])
+                self.assertTrue(holder._lock.acquire(blocking=False))
+                holder._lock.release()
+
+    def test_lease_failure_does_not_move_or_admit(self):
+        holder = self.holder()
+        holder._to_cpu_locked()
+        self.events.clear()
+        self.lease_error = RuntimeError("synthetic lease failure")
+        with self.assertRaises(RuntimeError) as caught:
+            holder.acquire()
+        self.assertIs(caught.exception, self.lease_error)
+        self.assertEqual(self.events, [("estimate", holder.active_path), ("lease", "enter")])
+        self.assert_devices(holder, "cpu")
+        self.assertFalse(holder._on_gpu)
+
+    def test_move_failure_rolls_back_both_and_preserves_error(self):
+        for failing in ("asr", "aligner"):
+            for error_type in (RuntimeError, KeyboardInterrupt):
+                with self.subTest(failing=failing, error_type=error_type):
+                    holder = self.holder()
+                    holder._to_cpu_locked()
+                    error = error_type("synthetic move failure")
+                    target = holder._model.model if failing == "asr" else holder._model.forced_aligner.model
+                    target.failures["cuda:1"] = error
+                    self.events.clear()
+                    with self.assertRaises(error_type) as caught:
+                        holder.acquire()
+                    self.assertIs(caught.exception, error)
+                    self.assertFalse(holder._on_gpu)
+                    self.assert_devices(holder, "cpu")
+                    self.assertEqual(self.events[-3:], [("asr", "cpu", 1),
+                                                       ("aligner", "cpu", 1), ("lease", "exit")])
+                    self.assertTrue(holder._lock.acquire(blocking=False))
+                    holder._lock.release()
+                    target.failures.clear()
+                    holder.acquire()
+                    holder.release()
+                    self.assertTrue(holder._on_gpu)
+                    self.assert_devices(holder, "cuda:1")
+
+    def test_rollback_failure_preserves_primary_error_and_actual_devices(self):
+        holder = self.holder()
+        holder._to_cpu_locked()
+        primary = RuntimeError("aligner restore failed")
+        holder._model.forced_aligner.model.failures["cuda:1"] = primary
+        holder._model.model.failures["cpu"] = RuntimeError("rollback failed")
+        with self.assertRaises(RuntimeError) as caught:
+            holder.acquire()
+        self.assertIs(caught.exception, primary)
+        self.assertFalse(holder._on_gpu)
+        self.assertEqual(holder._model.device, "cuda:1")
+        self.assertEqual(holder._model.forced_aligner.device, "cpu")
+        self.assertEqual(self.lease_depth, 0)
+
+    def test_partial_offload_failure_is_not_ready(self):
+        holder = self.holder()
+        failure = RuntimeError("aligner offload failed")
+        holder._model.forced_aligner.model.failures["cpu"] = failure
+        with self.assertRaises(RuntimeError) as caught:
+            holder._to_cpu_locked()
+        self.assertIs(caught.exception, failure)
+        self.assertFalse(holder._on_gpu)
+        self.assertEqual(holder._model.device, "cpu")
+        self.assertEqual(holder._model.forced_aligner.device, "cuda:1")
+
+    def test_missing_inner_model_fails_closed(self):
+        holder = self.holder()
+        holder._model.model = None
+        holder._on_gpu = False
+        with self.assertRaisesRegex(RuntimeError, "缺少可迁移"):
+            holder.acquire()
+        self.assertFalse(holder._on_gpu)
+        self.assertTrue(holder._lock.acquire(blocking=False))
+        holder._lock.release()
 
 
 class TestZeroImeContact(MatrixBase):

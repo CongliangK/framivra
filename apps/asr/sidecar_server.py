@@ -39,6 +39,7 @@ inference/qwen3_forced_aligner.py（items 结构、tokenize/clean_token、ms→s
 ibus-voice-ime qwen_asr_server.py（模型管理/换挡/空闲卸载思路，解耦重写）。
 """
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import sys
@@ -375,30 +376,40 @@ class ModelHolder:
         if self._model is None:
             self._load_locked()
             return
-        inner = getattr(self._model, "model", None)
-        if inner is not None:
+        target = self._gpu_device or self.device_map
+        with self._gpu_admission_locked(self.active_path, target):
             _log("模型重新上 GPU：%s" % self._loaded_path)
-            inner.to(self._gpu_device)
-            self._resync_device()
-            self._empty_cache_guard()
+            try:
+                self._move_model_locked(target)
+            except BaseException:
+                # 迁移可部分成功；回收自有资源且保留原始错误，绝不以混合设备推理。
+                try:
+                    self._to_cpu_locked()
+                except BaseException as exc:
+                    _log("⚠ 模型恢复失败后的 CPU 回收未完成：%s" % exc)
+                raise
             self._on_gpu = True
 
-    def _load_locked(self):
-        # issue #142 通用资源准入（先于一切模型 import/加载）：与 IME 端点零依赖，
-        # 只读 nvidia-smi；不足/不可测即安全拒绝——绝不以“先 OOM 再换小模型”当
-        # 唯一保护，绝不停止/卸载任何外部服务腾显存。并发准入经项目状态根
-        # flock 串行（防两路并发凭同一份空闲显存同时过关）。
+    @contextmanager
+    def _gpu_admission_locked(self, path, device):
+        # 首次加载与 CPU 恢复共用准入：lease 覆盖检查及整个资源获取过程，
+        # 不嵌套加锁，也不停止/卸载任何外部服务来腾显存。
         ind = _ind()
-        required = self.vram_budget_mib or ind.estimate_vram_mib(self.asr_path)
-        attempts = [self.asr_path]
-        comp = companion_path(self.asr_path)
-        tried = set()
+        required = self.vram_budget_mib or ind.estimate_vram_mib(path)
         with ind.admission_lease():
-            decision = ind.gpu_admission(required, device=self.device_map)
+            decision = ind.gpu_admission(required, device=device)
             if not decision["allowed"]:
                 _log("✗ 资源准入拒绝：%s" % decision["reason"])
                 raise RuntimeError("资源准入拒绝：%s" % decision["reason"])
             _log("资源准入：%s" % decision["reason"])
+            yield
+
+    def _load_locked(self):
+        # 准入先于模型 import/加载；OOM 换挡仅作次级保护。
+        attempts = [self.asr_path]
+        comp = companion_path(self.asr_path)
+        tried = set()
+        with self._gpu_admission_locked(self.asr_path, self.device_map):
             from qwen_asr import Qwen3ASRModel  # 延迟 import：准入通过后才动依赖
             kw = {"dtype": self._torch_dtype(), "device_map": self.device_map,
                   "max_inference_batch_size": 1, "max_new_tokens": self.max_new_tokens}
@@ -481,20 +492,27 @@ class ModelHolder:
         if fa is not None and fa_model is not None:
             fa.device = getattr(fa_model, "device", getattr(fa, "device", None))
 
-    def _to_cpu_locked(self):
+    def _move_model_locked(self, device):
+        """移动 ASR 与对齐器；失败时保留真实设备缓存，禁止报告整体已就绪。"""
+        self._on_gpu = False
         m = self._model
-        if m is None:
-            return
         inner = getattr(m, "model", None)
-        if inner is not None:
-            inner.to("cpu")
+        if inner is None:
+            raise RuntimeError("模型缺少可迁移的 ASR model，无法恢复设备状态")
         fa = getattr(m, "forced_aligner", None)
         fa_model = getattr(fa, "model", None) if fa is not None else None
-        if fa_model is not None:
-            fa_model.to("cpu")
-        self._resync_device()
-        self._empty_cache_guard()
-        self._on_gpu = False
+        try:
+            inner.to(device)
+            if fa_model is not None:
+                fa_model.to(device)
+        finally:
+            self._resync_device()
+            self._empty_cache_guard()
+
+    def _to_cpu_locked(self):
+        if self._model is None:
+            return
+        self._move_model_locked("cpu")
         _log("模型空闲卸载至 CPU（VRAM 已释放）：%s" % self._loaded_path)
 
     @staticmethod
