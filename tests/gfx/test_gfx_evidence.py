@@ -35,6 +35,9 @@ class Evidence(unittest.TestCase):
             'variable_axes': [], 'arms': {s: {'run_id': s, 'backend_id': 'cdp',
             'effective_backend': 'software_skia', 'chromium_version': '152.0.1.2',
             'config': {'capture': 'png'}} for s in ('baseline', 'candidate')}}
+        image = io.BytesIO()
+        Image.new('RGBA', (64, 48), (100, 20, 30, 128)).save(image, format='PNG')
+        frame_bytes, frame_sha = image.getvalue(), None
         self.runs = {}
         for side in self.plan['arms']:
             d = self.root / side
@@ -42,8 +45,10 @@ class Evidence(unittest.TestCase):
             frames = {}
             for i in range(4):
                 p = d / f'f{i:04d}.png'
-                Image.new('RGBA', (64, 48), (100, 20, 30, 128)).save(p)
-                frames[f'{i:04d}'] = {'run_id': side, 'origin': 'rendered', 'sha256': gg.hash_frame(p)}
+                p.write_bytes(frame_bytes)
+                if frame_sha is None:
+                    frame_sha = gg.hash_frame(p)
+                frames[f'{i:04d}'] = {'run_id': side, 'origin': 'rendered', 'sha256': frame_sha}
             rt = ge.env_manifest._runtime_backend_truth('cdp', {
                 'effective_backend': 'software_skia', 'source': 'cdp',
                 'chromium_version': '152.0.1.2', 'viewport': '64x48', 'color_space': 'srgb',

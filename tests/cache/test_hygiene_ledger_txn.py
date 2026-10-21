@@ -97,58 +97,40 @@ def _run(c, mode):
 _run(c, sys.argv[3])
 '''
 
-# 时机①：mutator 已返回、tmp 写盘前自杀（包裹 fstxn.locked_update 注入）。
-WORKER_KILL_PRE_TMP = '''
+# 同一 worker 明示三个崩溃时点；argv[4] 选择，不能回落成正常完成。
+WORKER_CRASH = '''
 import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from vtx.infra import Ctx
 from vtx import fstxn, hygiene
 c = Ctx(Path(sys.argv[2]))
-real_update = fstxn.locked_update
+phase = sys.argv[4]
+if phase not in ("before_tmp", "before_replace", "after_replace"):
+    raise ValueError("unknown crash phase: " + phase)
 
-def killer(path, mutator, **kw):
-    def wrap(rec):
-        new = mutator(rec)
-        os.kill(os.getpid(), signal.SIGKILL)   # 时机①：新值已算出、tmp 未写
-        return new
-    return real_update(path, wrap, **kw)
+if phase == "before_tmp":
+    real_update = fstxn.locked_update
 
-fstxn.locked_update = killer
-''' + CRASH_RUN
+    def killer(path, mutator, **kw):
+        def wrap(rec):
+            new = mutator(rec)
+            os.kill(os.getpid(), signal.SIGKILL)   # 时机①：新值已算出、tmp 未写
+            return new
+        return real_update(path, wrap, **kw)
 
-# 时机②：tmp 已写满、os.replace 将发未发（补 os.replace 前自杀）。
-WORKER_KILL_PRE_REPLACE = '''
-import os, signal, sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from vtx.infra import Ctx
-from vtx import hygiene
-c = Ctx(Path(sys.argv[2]))
-real_replace = os.replace
+    fstxn.locked_update = killer
+else:
+    real_replace = os.replace
 
-def kill_before(a, b, **kwargs):
-    os.kill(os.getpid(), signal.SIGKILL)   # 时机②：tmp 落盘后、replace 前
-    real_replace(a, b, **kwargs)
+    def kill_at_replace(a, b, **kwargs):
+        if phase == "before_replace":
+            os.kill(os.getpid(), signal.SIGKILL)   # 时机②：tmp 落盘后、replace 前
+        real_replace(a, b, **kwargs)
+        if phase == "after_replace":
+            os.kill(os.getpid(), signal.SIGKILL)   # 时机③：replace 已完成
 
-os.replace = kill_before
-''' + CRASH_RUN
-
-# 时机③：os.replace 已完成后自杀（old-or-new 不变量的「新值」一侧）。
-WORKER_KILL_POST_REPLACE = '''
-import os, signal, sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from vtx.infra import Ctx
-from vtx import hygiene
-c = Ctx(Path(sys.argv[2]))
-real_replace = os.replace
-
-def kill_after(a, b, **kwargs):
-    real_replace(a, b, **kwargs)
-    os.kill(os.getpid(), signal.SIGKILL)   # 时机③：replace 已完成
-
-os.replace = kill_after
+    os.replace = kill_at_replace
 ''' + CRASH_RUN
 
 
@@ -348,7 +330,7 @@ class CrashSafety(_ProjectCase):
     def test_kill_before_tmp_write_keeps_old_value_manifest(self):
         target = self._seed("manifest")
         old = target.read_text(encoding="utf-8")
-        _run_py(WORKER_KILL_PRE_TMP, REPO, self.tl, "manifest", expect_rc=-9)
+        _run_py(WORKER_CRASH, REPO, self.tl, "manifest", "before_tmp", expect_rc=-9)
         # 时机①：新值未落 tmp、replace 永不发生 → 旧值原样、可解析
         self.assertEqual(target.read_text(encoding="utf-8"), old)
         json.loads(target.read_text(encoding="utf-8"))
@@ -361,7 +343,7 @@ class CrashSafety(_ProjectCase):
             with self.subTest(mode=mode):
                 target = self._seed(mode)
                 old = target.read_text(encoding="utf-8")
-                _run_py(WORKER_KILL_PRE_REPLACE, REPO, self.tl, mode, expect_rc=-9)
+                _run_py(WORKER_CRASH, REPO, self.tl, mode, "before_replace", expect_rc=-9)
                 self.assertEqual(target.read_text(encoding="utf-8"), old)
                 json.loads(target.read_text(encoding="utf-8"))
                 self.assert_only_sanctioned_tmp(target)
@@ -381,12 +363,12 @@ class CrashSafety(_ProjectCase):
     def test_kill_after_replace_leaves_new_value(self):
         # 时机③：replace 已完成 → 目标为新值（old-or-new 不变量的另一半）
         target = self._seed("manifest")
-        _run_py(WORKER_KILL_POST_REPLACE, REPO, self.tl, "manifest", expect_rc=-9)
+        _run_py(WORKER_CRASH, REPO, self.tl, "manifest", "after_replace", expect_rc=-9)
         rec = json.loads(target.read_text(encoding="utf-8"))
         self.assertEqual([e["stage"] for e in rec["entries"]],
                          ["seed-stage", "crash-stage"])
         target = self._seed("versions")
-        _run_py(WORKER_KILL_POST_REPLACE, REPO, self.tl, "versions", expect_rc=-9)
+        _run_py(WORKER_CRASH, REPO, self.tl, "versions", "after_replace", expect_rc=-9)
         rec = json.loads(target.read_text(encoding="utf-8"))
         self.assertEqual([e["cmd"] for e in rec["versions"]],
                          ["seed-mux", "crash-mux"])

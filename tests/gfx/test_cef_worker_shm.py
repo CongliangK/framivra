@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT / "experiments" / "gfx_cef_worker"))
 import cef_client  # noqa: E402  (experiments 面；工单 vtx/ 落点由边界改道)
 
 from vtx.gfx_cli import png_invalid_reason  # noqa: E402
+from tests.gfx._png import unfilter_rgba
 from vtx.infra import Ctx  # noqa: E402
 from vtx.proc_supervisor import (  # noqa: E402
     SupervisedProcessGroup, group_live_members, reap_orphan_workers)
@@ -103,35 +104,7 @@ def decode_png_rgba(path):
     assert bpc == 8 and color == 6, "8-bit RGBA 假设"
     stride = w * 4 + 1
     assert len(raw) == stride * h, "IDAT 总量与 IHDR 尺寸不符"
-    out = bytearray(w * h * 4)
-    prev = bytearray(w * 4)
-    for y in range(h):
-        ftype = raw[y * stride]
-        row = bytearray(raw[y * stride + 1:(y + 1) * stride])
-        if ftype == 1:  # Sub
-            for i in range(4, len(row)):
-                row[i] = (row[i] + row[i - 4]) & 255
-        elif ftype == 2:  # Up
-            for i in range(len(row)):
-                row[i] = (row[i] + prev[i]) & 255
-        elif ftype == 3:  # Average
-            for i in range(len(row)):
-                left = row[i - 4] if i >= 4 else 0
-                row[i] = (row[i] + (left + prev[i]) // 2) & 255
-        elif ftype == 4:  # Paeth
-            for i in range(len(row)):
-                a = row[i - 4] if i >= 4 else 0
-                b = prev[i]
-                c = prev[i - 4] if i >= 4 else 0
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-                row[i] = (row[i] + pred) & 255
-        else:
-            assert ftype == 0, f"非法定行滤波类型 {ftype}"
-        out[y * w * 4:(y + 1) * w * 4] = row
-        prev = row
-    return w, h, bytes(out)
+    return w, h, unfilter_rgba(w, h, raw)
 
 
 def rgba_to_bgra(rgba):

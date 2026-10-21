@@ -18,6 +18,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+if __package__:
+    from ._fixtures import ime_home
+else:
+    from _fixtures import ime_home
+
 ASR_DIR = Path(__file__).resolve().parent.parent
 SIDECAR = ASR_DIR / "sidecar_server.py"
 
@@ -27,22 +32,8 @@ class SidecarLaunchIndependenceTest(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="vtx-asr-sidecar-launch-")
-        self.home = Path(self.tmp.name) / "home"
-        self.home.mkdir()
-        # 假 IME 仓（默认锚点 ~/文档/01_活跃项目/type/ibus-voice-ime-github 在
-        # 假 HOME 内展开——绝不触碰真实 ~/文档）
-        self.ime = self.home / "文档/01_活跃项目/type/ibus-voice-ime-github"
-        self.ime_model = self.ime / "vendor/models/qwen3-asr/Qwen3-ASR-1.7B"
-        self.ime_model.mkdir(parents=True)
-        (self.ime_model / "model.safetensors").write_bytes(b"FAKE-IME-WEIGHT")
-        (self.ime_model / "config.json").write_text("{}", encoding="utf-8")
-        self.env = dict(os.environ)
-        self.env["HOME"] = str(self.home)
-        self.env.pop("VT_ASR_IME_ROOT", None)
-        self.env.pop("VTX_CONFIG", None)
-        for var in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
-                    "PYTHONUSERBASE", "PYTHONNOUSERSITE"):
-            self.env.pop(var, None)
+        self.home, self.ime, self.ime_model, self.env = ime_home(self.tmp.name)
+
 
     def tearDown(self):
         self.tmp.cleanup()
