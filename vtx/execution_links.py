@@ -11,7 +11,7 @@ from pathlib import Path
 import stat
 import uuid
 
-from .events import observation_warning
+from .events import observation_warning, strict_json_loads
 
 REQUEST_SCHEMA = 'vtx.observation-request/1'
 SCHEMA = 'vtx.execution-links/1'
@@ -25,19 +25,6 @@ def _uuid(value):
     if not isinstance(value, str) or str(uuid.UUID(value)) != value:
         raise ValueError('noncanonical observation UUID')
     return value
-
-
-def _json(text):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError('duplicate observation JSON key')
-            result[key] = value
-        return result
-    def invalid(value):
-        raise ValueError('nonfinite observation value')
-    return json.loads(text, object_pairs_hook=pairs, parse_constant=invalid)
 
 
 def validate_request(request, index=None, export_id=None):
@@ -106,6 +93,13 @@ def _read_at(fd, name, limit=None):
         os.close(child)
 
 
+def _read_request(fd, index=None, export_id=None):
+    data = _read_at(fd, 'request.json', MAX_REQUEST)
+    request = strict_json_loads(data, duplicate='duplicate observation JSON key',
+                               nonfinite='nonfinite observation value')
+    return validate_request(request, index, export_id)
+
+
 def _initialize(project):
     """Exclusive reservation prevents copied inputs from supplying requests."""
     fd = _directory(project)
@@ -148,7 +142,7 @@ def prepare_request(project, export_id, index, *, enabled=True):
             else:
                 raise ValueError('initial observation request collision')
         else:
-            validate_request(_json(_read_at(fd, 'request.json', MAX_REQUEST)), index - 1, export_id)
+            _read_request(fd, index - 1, export_id)
         child = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                         0o600, dir_fd=fd)
         with os.fdopen(child, 'w', encoding='utf-8') as stream:
@@ -177,7 +171,7 @@ def open_response(timeline_path, command_role, *, dry=False):
     fd = responses = None
     try:
         fd = _bridge(project)
-        request = validate_request(_json(_read_at(fd, 'request.json', MAX_REQUEST)))
+        request = _read_request(fd)
         if request['role'] != command_role:
             raise ValueError('observation role mismatch')
         responses = os.open('responses', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -202,7 +196,7 @@ def response_bytes(project, request):
     fd = _bridge(project)
     responses = None
     try:
-        if validate_request(_json(_read_at(fd, 'request.json', MAX_REQUEST))) != request:
+        if _read_request(fd) != request:
             return None
         responses = os.open('responses', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
         _private(responses, directory=True)
