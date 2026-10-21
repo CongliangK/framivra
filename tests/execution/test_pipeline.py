@@ -233,14 +233,21 @@ class TestUntilFlag(unittest.TestCase):
     （audio 是波成员不拆）+（video 时）video 尾；{mux,qc}→与缺省全链同一编排。
     线性模式（VTX_PIPELINE=0）按 STAGES 序字面截断（until=video 不含 audio）。"""
 
+    @classmethod
+    def setUpClass(cls):
+        assets_tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(assets_tmp.cleanup)
+        # CLI planning only reads these identical media inputs. Keep every
+        # project's timeline/cache/out separate while encoding the inputs once.
+        cls.assets = _synth_assets(Path(assets_tmp.name))
+        assert cls.assets is not None, "setUpClass 已 skipUnless 保证 ffmpeg 在位"
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
-        assets = _synth_assets(root)
-        assert assets is not None, "setUpClass 已 skipUnless 保证 ffmpeg 在位"
         self.tl = root / "timeline.json"
         # dur=90：_synth_timeline 的 pip clip（dst_in=20/dur=30）要求 ≥50 帧
-        self.tl.write_text(json.dumps(_synth_timeline(root, assets, dur=90)),
+        self.tl.write_text(json.dumps(_synth_timeline(root, self.assets, dur=90)),
                            encoding="utf-8")
 
     def tearDown(self):

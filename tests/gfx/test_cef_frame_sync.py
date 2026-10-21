@@ -49,6 +49,7 @@ sys.path.insert(0, str(ROOT / "experiments" / "gfx_cef_worker"))
 import cef_client  # noqa: E402  (experiments 面；#110 起随 worker 同目录)
 
 from vtx.gfx_cli import png_invalid_reason  # noqa: E402
+from tests.gfx._png import unfilter_rgba
 
 _LINUX_PROC = Path("/proc/self/stat").is_file()
 _WORKER = os.environ.get("VTX_TEST_CEF_WORKER", "")
@@ -87,36 +88,7 @@ def decode_png_rgba(path):
             idat += body
         pos += 12 + length
     raw = zlib.decompress(idat)
-    stride = w * 4 + 1
-    out = bytearray(w * h * 4)
-    prev = bytearray(w * 4)
-    for y in range(h):
-        ftype = raw[y * stride]
-        row = bytearray(raw[y * stride + 1:(y + 1) * stride])
-        if ftype == 1:
-            for i in range(4, len(row)):
-                row[i] = (row[i] + row[i - 4]) & 255
-        elif ftype == 2:
-            for i in range(len(row)):
-                row[i] = (row[i] + prev[i]) & 255
-        elif ftype == 3:
-            for i in range(len(row)):
-                left = row[i - 4] if i >= 4 else 0
-                row[i] = (row[i] + (left + prev[i]) // 2) & 255
-        elif ftype == 4:
-            for i in range(len(row)):
-                a = row[i - 4] if i >= 4 else 0
-                b = prev[i]
-                c = prev[i - 4] if i >= 4 else 0
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-                row[i] = (row[i] + pred) & 255
-        else:
-            assert ftype == 0, f"非法定行滤波类型 {ftype}"
-        out[y * w * 4:(y + 1) * w * 4] = row
-        prev = row
-    return w, h, bytes(out)
+    return w, h, unfilter_rgba(w, h, raw)
 
 
 def load_jsonl(path):

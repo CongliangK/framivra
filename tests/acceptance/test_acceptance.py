@@ -16,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vtx import acceptance as a
 
 
-class AcceptanceTests(unittest.TestCase):
+class AcceptanceFixture:
+    """Shared package fixture without inheritable test methods."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -66,6 +68,8 @@ class AcceptanceTests(unittest.TestCase):
     def rewrite(self, name, value):
         (self.package / name).write_text(json.dumps(value))
 
+
+class AcceptanceTests(AcceptanceFixture, unittest.TestCase):
     def test_realistic_package_and_visual_unknown(self):
         self.build()
         report = self.verify()

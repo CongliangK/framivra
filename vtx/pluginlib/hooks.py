@@ -227,6 +227,15 @@ def _load_plugin_module(name: str):
     return mod
 
 
+def _declared_hook(plugin, hook_name):
+    """Resolve one declared callable without changing caller iteration or exits."""
+    if hook_name not in _plugin_hooks_declared(plugin["name"]):
+        return None
+    mod = _load_plugin_module(plugin["name"])
+    fn = getattr(mod, hook_name, None) if mod else None
+    return fn if callable(fn) else None
+
+
 def run_prepare_source(c, sid: str):
     """缝 A：源级键插件的产物钩子（stages.source_audio_extraction 内统一触发）。
 
@@ -239,11 +248,8 @@ def run_prepare_source(c, sid: str):
     产物；prepare 提取与 _audio_graph 读取经 resolve_source_wav 同一解析。
     """
     for p in active_plugins(c):
-        if "prepare_source" not in _plugin_hooks_declared(p["name"]):
-            continue
-        mod = _load_plugin_module(p["name"])
-        fn = getattr(mod, "prepare_source", None) if mod else None
-        if callable(fn):
+        fn = _declared_hook(p, "prepare_source")
+        if fn is not None:
             got = fn(c, sid)
             if got is not None:
                 return Path(got)
@@ -265,11 +271,8 @@ def run_audio_events(c, tracks) -> list:
     ``audio_events(c, tracks) -> list``——纯内存变换不写回 timeline）。无插件 =
     原样返回（P1-2 恒等）。"""
     for p in active_plugins(c):
-        if "audio_events" not in _plugin_hooks_declared(p["name"]):
-            continue
-        mod = _load_plugin_module(p["name"])
-        fn = getattr(mod, "audio_events", None) if mod else None
-        if callable(fn):
+        fn = _declared_hook(p, "audio_events")
+        if fn is not None:
             tracks = fn(c, tracks)
     return tracks
 
@@ -286,11 +289,8 @@ def run_validate(c) -> list:
     标记）、键值形状（mode 值域/数值参数类型）等插件级契约的早失败。"""
     errs = []
     for p in active_plugins(c):
-        if "validate" not in _plugin_hooks_declared(p["name"]):
-            continue
-        mod = _load_plugin_module(p["name"])
-        fn = getattr(mod, "validate", None) if mod else None
-        if callable(fn):
+        fn = _declared_hook(p, "validate")
+        if fn is not None:
             got = fn(c)
             if isinstance(got, (list, tuple)):
                 # Structured string subclasses retain source evidence; third-party
@@ -309,11 +309,8 @@ def run_probe_source(c, sid: str):
     sources[] 引用非媒体文件（music_tools 工程 JSON 等）时由插件供给 facts。
     无插件受理 → None（调用方照旧 ffprobe，v1 行为）。"""
     for p in active_plugins(c):
-        if "probe_source" not in _plugin_hooks_declared(p["name"]):
-            continue
-        mod = _load_plugin_module(p["name"])
-        fn = getattr(mod, "probe_source", None) if mod else None
-        if callable(fn):
+        fn = _declared_hook(p, "probe_source")
+        if fn is not None:
             got = fn(c, sid)
             if isinstance(got, dict):
                 return got
@@ -332,11 +329,8 @@ def run_finish(c) -> list:
     自动导出失败须可见）。插件自行打印进度行。"""
     errs = []
     for p in active_plugins(c):
-        if "finish" not in _plugin_hooks_declared(p["name"]):
-            continue
-        mod = _load_plugin_module(p["name"])
-        fn = getattr(mod, "finish", None) if mod else None
-        if callable(fn):
+        fn = _declared_hook(p, "finish")
+        if fn is not None:
             got = fn(c)
             if isinstance(got, (list, tuple)):
                 errs.extend(str(x) for x in got)

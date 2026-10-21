@@ -172,17 +172,21 @@ class InventoryContract(unittest.TestCase):
         found = copy.deepcopy(policy['baseline']['batches'])
         originals = ci.policy_inventory(found, policy, {}, {})
         aliases = [r for r in originals if r['discovery_module'] != r['id'].rsplit('.', 2)[0]]
-        self.assertEqual(len(aliases), 2)
-        for record in aliases:
-            matching = [r for r in originals
-                        if r['batch'] == record['batch'] and r['id'] == record['id']]
-            self.assertEqual(len(matching), 2)
-            for occurrence in matching:
-                missing = copy.deepcopy(found)
-                missing[occurrence['batch']].remove(occurrence['instance'])
-                with self.subTest(instance=occurrence['instance']), self.assertRaisesRegex(
-                        ci.PartitionError, 'missing baseline test IDs'):
-                    ci.policy_inventory(missing, policy, {}, {})
+        self.assertEqual(len(aliases), 0)
+        # Approved current aliases are retired, but the generic guard must
+        # still protect both occurrences of any future imported TestCase.
+        alias_found = {'tests': [instance(), instance(origin='tests.test_alias')]}
+        alias_policy = policy_for(alias_found)
+        alias_records = ci.policy_inventory(alias_found, alias_policy, {}, {})
+        self.assertEqual(len(alias_records), 2)
+        self.assertEqual(len({r['key'] for r in alias_records}), 2)
+        self.assertEqual(len({r['id'] for r in alias_records}), 1)
+        for occurrence in alias_records:
+            missing = copy.deepcopy(alias_found)
+            missing[occurrence['batch']].remove(occurrence['instance'])
+            with self.subTest(instance=occurrence['instance']), self.assertRaisesRegex(
+                    ci.PartitionError, 'missing baseline test IDs'):
+                ci.policy_inventory(missing, alias_policy, {}, {})
         unknown = instance('test_future', module='tests.test_future')
         found['tests'].append(unknown)
         records = ci.policy_inventory(found, policy, {}, {})
@@ -196,8 +200,8 @@ class InventoryContract(unittest.TestCase):
     def test_current_repository_inventory_preserves_original_and_strict_scopes(self):
         with contextlib.redirect_stdout(io.StringIO()):
             result = ci.inventory(ROOT)
-        self.assertEqual(result['baseline']['discovered_count'], 2341)
-        self.assertEqual(result['baseline']['unique_test_ids'], 2339)
+        self.assertEqual(result['baseline']['discovered_count'], 2307)
+        self.assertEqual(result['baseline']['unique_test_ids'], 2307)
         self.assertEqual(result['strict_counts'], {'ffmpeg': 117, 'chrome': 14, 'demo-toolchain': 5})
         utf8_subtitle = next(record for record in result['tests'] if record['canonical'] ==
                              'apps.blender-bridge.tests.test_subs_alpha.HappyPath.'
