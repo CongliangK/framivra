@@ -29,16 +29,19 @@ def nvenc_ok(c, use_memo: bool = False) -> bool:
     # 协调）。pick_vcodec 不用 memo（保持默认 use_memo=False）：成片编码器探测失败
     # 回落 x264 的告警语义要保持即时性（每次真探测）。
     global _NVENC_OK_MEMO
-    if use_memo and _NVENC_OK_MEMO is not None:
-        return _NVENC_OK_MEMO
-    if c.dry: return True
-    # 探测尺寸须 ≥ NVENC 最小宽 145（128 会假失败）
-    r = c.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:d=0.04",
-               "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], need=False)
-    ok = r != "" and r.returncode == 0
-    if use_memo:
-        _NVENC_OK_MEMO = ok
-    return ok
+    # GC and preencoding can enter their first memo probe in the same pipeline
+    # wave. Serialize that decision, not ordinary live encoder probes or slots.
+    with _NVENC_OK_MEMO_LOCK if use_memo else contextlib.nullcontext():
+        if use_memo and _NVENC_OK_MEMO is not None:
+            return _NVENC_OK_MEMO
+        if c.dry: return True
+        # 探测尺寸须 ≥ NVENC 最小宽 145（128 会假失败）
+        r = c.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:d=0.04",
+                   "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], need=False)
+        ok = r != "" and r.returncode == 0
+        if use_memo:
+            _NVENC_OK_MEMO = ok
+        return ok
 
 
 def nvenc_concurrency(c, workers: int) -> int:
@@ -75,6 +78,9 @@ _NVENC_CAPACITY = None
 _NVENC_RESERVATION_LOCK = threading.Lock()
 _NVENC_SEM_LOCK = threading.Lock()
 _NVENC_OK_MEMO = None   # nvenc_ok(use_memo=True) 的进程级探测结果缓存（P2-1，见函数注释）
+# Separate from session allocation; reentrant so a test probe callback may
+# reset the memo without deadlocking its own thread.
+_NVENC_OK_MEMO_LOCK = threading.RLock()
 
 
 def nvenc_budget_value() -> int:
@@ -216,9 +222,15 @@ def reset_nvenc_budget():
 
 
 def reset_nvenc_ok_memo():
-    """仅测试用：清空 nvenc_ok(use_memo=True) 的进程级探测缓存。"""
+    """仅测试用：清空 nvenc_ok(use_memo=True) 的进程级探测缓存。
+
+    Another thread's in-flight memo probe finishes before reset clears it.
+    A same-thread probe callback may reset; that probe's eventual result still
+    becomes the memo, as before the first-probe serialization.
+    """
     global _NVENC_OK_MEMO
-    _NVENC_OK_MEMO = None
+    with _NVENC_OK_MEMO_LOCK:
+        _NVENC_OK_MEMO = None
 
 
 # ---------------- S5 失败 seg 重试队列（R-07h 签发版 §二.2：机制落本模块，失败语义落 infra） ----------------

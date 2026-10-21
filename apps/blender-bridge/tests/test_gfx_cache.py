@@ -181,10 +181,13 @@ class ReadOnlyCache(CacheFixture):
                 # A separate read-only view tests the old stem layout without
                 # moving or aliasing any modern cache directory.
                 old = SimpleNamespace(**dict(vars(self.c), cache=self.root / ('old-' + backend)))
-                self.seed(old.cache / 'page', marker=False)
                 from vtx import gfx_cache_reader
-                with self.assertRaises(gfx_cache_reader.GfxCacheError):
-                    gfx_cache_reader.resolve_frames(old, self.clip)
+                for marker in (False, True):
+                    self.seed(old.cache / 'page', ns=None, marker=marker)
+                    before = self.snapshot()
+                    with self.assertRaisesRegex(gfx_cache_reader.GfxCacheError, 'rerun vtx gfx'):
+                        gfx_cache_reader.resolve_frames(old, self.clip)
+                    self.assertEqual(self.snapshot(), before)
 
     def test_incomplete_modern_default_does_not_fall_back_to_stem(self):
         with mock.patch.dict(os.environ, {'VTX_GFX': 'cdp', 'VTX_GFX_CACHE_NS': ''}):
@@ -315,7 +318,7 @@ class RealBlenderCache(CacheFixture):
                     gfx_cli.complete_page(legacy, 3, gfx_key(old, self.clip), 8, 6,
                                           verify_inputs=lambda: None, environment=certificate(old))
                     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in legacy.iterdir()}
-                    self.export()
+                    self.export(expected=1)  # certified old names are not current cache locations
                     self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns)
                                               for p in legacy.iterdir()})
                 finally:

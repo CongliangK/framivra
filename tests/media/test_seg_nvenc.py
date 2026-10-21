@@ -21,6 +21,7 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
@@ -49,6 +50,22 @@ class _KeyCtx:
 
 
 _CL = {"src": "README.md", "src_in": 0, "src_out": 90, "dur": 90}
+
+
+class _SignaledRLock:
+    """Observe a named thread before acquisition, not after a blocked probe."""
+    def __init__(self, thread_name, arrived):
+        self.lock = threading.RLock()
+        self.thread_name, self.arrived = thread_name, arrived
+
+    def __enter__(self):
+        if threading.current_thread().name == self.thread_name:
+            self.arrived.set()
+        self.lock.acquire()
+        return self
+
+    def __exit__(self, *args):
+        self.lock.release()
 
 
 class TestSegEncoderKind(unittest.TestCase):
@@ -130,6 +147,165 @@ class TestNvencOkMemo(unittest.TestCase):
         class DryCtx: dry = True
         self.assertEqual(seg_encoder_kind(DryCtx()), "x264")
 
+    def test_concurrent_first_calls_share_encoder_and_cache_key(self):
+        for first_ok in (True, False):
+            with self.subTest(first_probe_succeeded=first_ok):
+                reset_nvenc_ok_memo()
+                first_probe, second_arrived, release = (threading.Event() for _ in range(3))
+                calls, results, errors = [], {}, []
+
+                class Context(_KeyCtx):
+                    dry = False
+
+                    def run(self, command, need=True):
+                        index = len(calls)
+                        calls.append(threading.current_thread().name)
+                        if index == 0:
+                            first_probe.set()
+                            if not release.wait(3):
+                                raise AssertionError('first probe was not released')
+                        else:
+                            # Baseline reaches a second probe; the serialized
+                            # path signals from lock entry instead, never from
+                            # a two-probe barrier that would deadlock the fix.
+                            second_arrived.set()
+                        ok = first_ok if index == 0 else not first_ok
+                        return SimpleNamespace(returncode=0 if ok else 1)
+
+                def choose():
+                    try:
+                        c = Context()
+                        kind = seg_encoder_kind(c)
+                        results[threading.current_thread().name] = (
+                            kind, seg_key(c, _CL, 0, 0, False, False, kind))
+                    except BaseException as error:
+                        errors.append(error)
+
+                with mock.patch.object(encoders, '_NVENC_OK_MEMO_LOCK',
+                                       _SignaledRLock('gc', second_arrived)):
+                    first = threading.Thread(target=choose, name='prepare', daemon=True)
+                    second = threading.Thread(target=choose, name='gc', daemon=True)
+                    first.start()
+                    try:
+                        self.assertTrue(first_probe.wait(3))
+                        second.start()
+                        self.assertTrue(second_arrived.wait(3))
+                    finally:
+                        release.set()
+                        first.join(3)
+                        if second.ident is not None:
+                            second.join(3)
+                    self.assertFalse(first.is_alive() or second.is_alive())
+                self.assertEqual(errors, [])
+                self.assertEqual(calls, ['prepare'])
+                self.assertEqual(results['prepare'], results['gc'])
+                self.assertEqual(results['prepare'][0], 'nvenc' if first_ok else 'x264')
+
+    def test_probe_exception_releases_lock_without_caching(self):
+        for error in (RuntimeError('probe failed'), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                reset_nvenc_ok_memo()
+                c = SimpleNamespace(dry=False, run=mock.Mock(side_effect=[
+                    error, SimpleNamespace(returncode=0)]))
+                result, failures = [], []
+
+                def retry():
+                    try:
+                        result.append(encoders.nvenc_ok(c, use_memo=True))
+                    except BaseException as failure:
+                        failures.append(failure)
+
+                with mock.patch.object(encoders, '_NVENC_OK_MEMO_LOCK', threading.RLock()):
+                    with self.assertRaises(type(error)):
+                        encoders.nvenc_ok(c, use_memo=True)
+                    self.assertIsNone(encoders._NVENC_OK_MEMO)
+                    worker = threading.Thread(target=retry, daemon=True)
+                    worker.start()
+                    worker.join(3)
+                    self.assertFalse(worker.is_alive(), 'failed probe retained the memo lock')
+                self.assertEqual(failures, [])
+                self.assertEqual(result, [True])
+                self.assertEqual(c.run.call_count, 2)
+
+    def test_nonmemo_and_disabled_calls_bypass_memo_lock(self):
+        c, calls = self._ctx_with_probe(fail=False)
+        with mock.patch.object(encoders, '_NVENC_OK_MEMO_LOCK') as lock:
+            lock.__enter__.side_effect = AssertionError('unexpected memo lock')
+            for _ in range(3):
+                self.assertTrue(encoders.nvenc_ok(c))
+            with mock.patch.dict(os.environ, {'VTX_NO_NVENC': '1'}):
+                self.assertFalse(encoders.nvenc_ok(c, use_memo=True))
+        self.assertEqual(len(calls), 3)
+        self.assertIsNone(encoders._NVENC_OK_MEMO)
+
+    def test_dry_probe_does_not_initialize_memo(self):
+        c = SimpleNamespace(dry=True, run=mock.Mock(side_effect=AssertionError('dry probe')))
+        self.assertTrue(encoders.nvenc_ok(c, use_memo=True))
+        self.assertIsNone(encoders._NVENC_OK_MEMO)
+        c.run.assert_not_called()
+
+    def test_same_thread_reset_in_probe_callback_does_not_deadlock(self):
+        result, errors = [], []
+
+        def probe(command, need=True):
+            reset_nvenc_ok_memo()
+            return SimpleNamespace(returncode=0)
+
+        def work():
+            try:
+                result.append(encoders.nvenc_ok(SimpleNamespace(dry=False, run=probe),
+                                               use_memo=True))
+            except BaseException as error:
+                errors.append(error)
+
+        with mock.patch.object(encoders, '_NVENC_OK_MEMO_LOCK', threading.RLock()):
+            worker = threading.Thread(target=work, daemon=True)
+            worker.start()
+            worker.join(3)
+            self.assertFalse(worker.is_alive(), 'same-thread reset deadlocked')
+        self.assertEqual(errors, [])
+        self.assertEqual(result, [True])
+        self.assertIs(encoders._NVENC_OK_MEMO, True)
+
+    def test_other_thread_reset_clears_finished_probe(self):
+        entered, resetting, release = (threading.Event() for _ in range(3))
+        results, errors = [], []
+
+        def probe(command, need=True):
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError('probe was not released')
+            return SimpleNamespace(returncode=0)
+
+        def work():
+            try:
+                results.append(encoders.nvenc_ok(SimpleNamespace(dry=False, run=probe),
+                                                use_memo=True))
+            except BaseException as error:
+                errors.append(error)
+
+        with mock.patch.object(encoders, '_NVENC_OK_MEMO_LOCK',
+                               _SignaledRLock('reset', resetting)):
+            worker = threading.Thread(target=work, daemon=True)
+            reset = threading.Thread(target=reset_nvenc_ok_memo, name='reset', daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                reset.start()
+                self.assertTrue(resetting.wait(3))
+            finally:
+                release.set()
+                worker.join(3)
+                if reset.ident is not None:
+                    reset.join(3)
+            self.assertFalse(worker.is_alive() or reset.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [True])
+        self.assertIsNone(encoders._NVENC_OK_MEMO)
+        c, calls = self._ctx_with_probe(fail=True)
+        self.assertFalse(encoders.nvenc_ok(c, use_memo=True))
+        self.assertEqual(len(calls), 1)
+
 
 class TestSegKeyEncoderToken(unittest.TestCase):
     def test_different_encoder_different_key(self):
@@ -166,7 +342,6 @@ class TestNvencBudget(unittest.TestCase):
         guard.start(); self.addCleanup(guard.stop)
 
     def test_invalid_request_never_initializes_allocator(self):
-        from types import SimpleNamespace
         for value in (0, -1, True, 1.5):
             with self.subTest(value=value), \
                     mock.patch.object(encoders, '_nvenc_pool') as pool, \
@@ -176,7 +351,6 @@ class TestNvencBudget(unittest.TestCase):
             pool.assert_not_called()
 
     def test_batch_uses_one_frozen_effective_capacity(self):
-        from types import SimpleNamespace
         for configured, tier, expected in ((8, 1, 1), (2, 8, 2), (8, 4, 4)):
             with self.subTest(configured=configured, tier=tier):
                 reset_nvenc_budget()
@@ -191,7 +365,6 @@ class TestNvencBudget(unittest.TestCase):
                     guard.assert_called_once()
 
     def test_concurrent_batches_do_not_split_reservations(self):
-        from types import SimpleNamespace
         semaphore = threading.Semaphore(2)
         reservation = threading.Lock()
         first_token = threading.Event(); second_request = threading.Event()
@@ -247,7 +420,6 @@ class TestNvencBudget(unittest.TestCase):
         self.assertTrue(second_body.is_set())
 
     def test_partial_acquisition_and_body_failure_release_slots(self):
-        from types import SimpleNamespace
         c = SimpleNamespace(dry=False)
         sem = mock.Mock()
         sem.acquire.side_effect = [True, KeyboardInterrupt()]
@@ -265,7 +437,6 @@ class TestNvencBudget(unittest.TestCase):
 
     def test_segment_executor_matches_actual_grant_and_x264_bypasses(self):
         import tempfile
-        from types import SimpleNamespace
         from vtx import composite
         for encoder, configured, tier, expected in (('NVENC p7', 8, 1, 1),
                 ('NVENC p7', 2, 8, 2), ('NVENC p7', 8, 2, 2), ('x264', 1, 1, 4)):
@@ -334,7 +505,6 @@ class TestPrepareProducerDedup(unittest.TestCase):
 
     def setUp(self):
         import tempfile
-        from types import SimpleNamespace
         from vtx import composite
         self.composite = composite
         temporary = tempfile.TemporaryDirectory(prefix='vtx-seg-producers-')

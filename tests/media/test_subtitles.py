@@ -124,9 +124,34 @@ class SpeedOverlapWidth(unittest.TestCase):
         self.assertEqual(rep['results'][0]['cps']['status'], 'warn')
 
     def test_overlapping_subs_both_fail(self):
-        rep = mk([{'in': 60, 'out': 120, 'text': '大家好'},
-                  {'in': 90, 'out': 150, 'text': '插进来了'}], [(60, 300)])
-        self.assertEqual([r['overlap']['status'] for r in rep['results']], ['fail', 'fail'])
+        cases = [
+            ('original pair', [(60, 120, '大家好'), (90, 150, '插进来了')], ['fail', 'fail']),
+            ('nested gap', [(0, 150, 'A'), (30, 60, 'B'), (90, 120, 'C')],
+             ['fail', 'fail', 'fail']),
+            ('nested touching', [(0, 150, 'A'), (30, 60, 'B'), (60, 120, 'C')],
+             ['fail', 'fail', 'fail']),
+            ('same start', [(0, 30, 'A'), (0, 150, 'B'), (60, 120, 'C')],
+             ['fail', 'fail', 'fail']),
+            ('unsorted nested', [(90, 120, 'C'), (0, 150, 'A'), (30, 60, 'B')],
+             ['fail', 'fail', 'fail']),
+            ('touching only', [(0, 30, 'A'), (30, 60, 'B'), (60, 90, 'C')],
+             ['ok', 'ok', 'ok']),
+            ('disjoint', [(0, 30, 'A'), (60, 90, 'B'), (120, 150, 'C')],
+             ['ok', 'ok', 'ok']),
+            ('overlap then isolated', [(0, 60, 'A'), (30, 60, 'B'), (60, 90, 'C')],
+             ['fail', 'fail', 'ok']),
+            ('one frame', [(0, 1, 'A'), (0, 1, 'B'), (1, 2, 'C')],
+             ['fail', 'fail', 'ok']),
+            ('single', [(0, 30, 'A')], ['ok']),
+            ('empty', [], []),
+        ]
+        for name, cues, expected in cases:
+            with self.subTest(name=name):
+                rep = mk([{'in': a, 'out': b, 'text': text} for a, b, text in cues],
+                         [(60, 300)])
+                self.assertEqual([r['overlap']['status'] for r in rep['results']], expected)
+                self.assertEqual([r['overlap']['detail'] for r in rep['results']],
+                                 ['与其他字幕时间重叠' if s == 'fail' else '' for s in expected])
 
     def test_three_lines_fails(self):
         rep = mk([{'in': 60, 'out': 120, 'text': '第一行\\N第二行\\N第三行'}], [(60, 300)])
