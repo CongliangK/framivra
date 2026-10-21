@@ -1,12 +1,7 @@
 # asr —— Qwen3-ASR + ForcedAligner 字幕产线
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/asr/`）**：manifest 见 `app.json`（kind=app；健康检查 = `asr_cli.py --help`）。
-> **IME 解耦（issue #141，2026-10-17）**：ASR 与语音输入法彻底解耦——旧键
-> `VT_ASR_IME_ROOT` / `asr.ime_root` 已废除（出现即迁移错误）；解释器/模型探测链
-> 不再含 IME 仓；共驻降档（探测 18081）与「任意健康服务即可复用」均已删除。
-> **安全准入（issue #142，2026-10-18）**：`asr.enabled` 门禁全入口实际执行；
-> sidecar 进程归属三因子（cmdline+端口+启动时刻）；通用 GPU/显存准入
-> （`nvidia-smi` 只读预算，不依赖 IME 端点）。单一接口见 `independence.py`。
+组件声明见 `app.json`（kind=app）；健康检查为 `asr_cli.py --help`，不加载模型。
+`asr.enabled` 在所有执行入口生效；环境、模型与输入法资产隔离。sidecar 以 cmdline、端口、启动时刻三因子核对归属，GPU/显存准入只读 `nvidia-smi` 预算，不访问 IME 端点。准入实现唯一入口为 `independence.py`；拒绝的配置与准备边界见下文。
 
 音频/视频 → sidecar 转写（字级时间戳）→ 文本规范化 → 锚定式断句聚合 → 帧级
 `timeline.json subtitles[]` 合并（保护其他字段、写前备份）+ 独立 SRT。模块自有轻量

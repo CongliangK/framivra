@@ -1,8 +1,8 @@
 # 动效（gfx）· HTML 帧驱动动效页
 
-> **使用者向**：动效页设计协议与样式模式库。坑位来历与实测数据见 `../../DEV.md`。
+> 动效页面的创作组织、帧驱动、Canvas 导出与静态跨度协议；渲染操作见 [剪辑配方](edit.md)，历史试验见 [开发记录](../../reports/development-history.md)。
 
-编写供 vtx 渲染的 HTML 动效页面（全屏画面或透明叠层）。本文档管**设计协议与样式模式库**；页面的渲染、时移、合成、QC 由同 skill `references/edit.md` 的 vtx CLI 完成。索引见 `../SKILL.md`。
+编写供 vtx 渲染的 HTML 动效页面（全屏画面或透明叠层）。本文档管**设计协议与样式模式库**；页面的渲染、时移、合成、QC 由 vtx CLI 完成。索引见 [SKILL](../SKILL.md)。
 
 ## HTML 创作组织
 
@@ -40,9 +40,45 @@ document.body.style.opacity = 1 - clamp01(seg(t, N/FPS - 0.4, N/FPS)); // 结尾
 - 动效时长 = 所属事件的帧数（`out`−`in`，契约字段见 `docs/ARCHITECTURE.md`）；页面内容的时间轴从 0 开始（vtx 负责把它平移到成片时间轴）。
 - vtx 默认用 CDP 常驻浏览器逐帧渲染，页面须从 `?f=` 确定性得到当前帧。CDP 与 CLI 具有独立环境身份，不承诺任意页面跨引擎像素或 PNG 字节相同。CDP 自动回落 CLI 的页不能发布成功凭证；确需 CLI 时显式 `VTX_GFX=cli` 重渲，strict 策略不支持该路径。身份与失败边界见 [缓存与回执](../../cache-provenance.md#gfx-environment)。
 - **外部依赖声明**：本地 CSS/JS/图片/字体等列入 gfx clip 的 `cache_dependencies`；真正共享的依赖列入 `project.cache_dependencies`。两级声明取并集，路径都相对 timeline 根目录；clip 依赖变更使消费它的页面换键，项目依赖变更影响全部 gfx 页。依赖必须存在且为文件。默认 legacy 不证明资源闭包，未声明间接资源不能获得可靠失效保证；strict 仅接受受限静态 HTML/CSS/本地图像字体，拒绝脚本、SVG 与网络资源，仅支持 POSIX CDP，不能用于本文的 JavaScript 动画示例。完整约束见 [HTML 依赖](../../cache-provenance.md#html-依赖)。
-- **可选 Canvas 导出通道**：预期输出全部在一个 canvas 内时，可同步绘制请求帧并提供 `window.__vtx_export_png = () => canvas.toDataURL("image/png")`。位图尺寸须匹配视口；CSS 装饰和其他 DOM 不在导出范围，若它们属于输出就不要 opt-in。函数立即返回字符串，不能等待异步资源。渲染器验证 PNG 后缓存该帧；无效导出回落同帧截图。这是逐帧可选通道，详细边界见 [Canvas 导出](../../reference/canvas-export.md)。
-- **可选静态跨度声明**：`window.__vtx_static_spans = [[a, b], ...]` 中每对表示 `[a, b)`，须在 `[0, N)` 内、互不重叠。开启 `VTX_GFX_STATIC=1` 时，渲染器只渲头帧并将其字节复制到其余帧；它不验证区间视觉恒定。声明是作者的像素恒定承诺，DOM 序列化相等不能证明字体、图片、Canvas 位图或实际绘制结果相等。无独立验证时不声明；采用前须关闭静态复制，用相同输入/环境逐帧渲染声明区间并核对实际像素，保留证据，页面或依赖改变后重验。无需仓外私人扫描脚本；端点抽查不能代替整个跨度验证。
 - **可选 `__vtx_render(f)` 协议**：同步、幂等、与调用顺序无关；调用后的视觉状态须与 `?f=f` 新加载一致。消费者 navfree 路径未获正式采用，`VTX_GFX_NAVFREE` 保持默认 0；历史实验见 [DEV](../../DEV.md)。DOM 哈希不能代替视觉等价验证。
+
+## Canvas 导出与静态跨度
+
+两者都是可选声明，不要求为性能重写页面。帧、视口、字体与依赖仍须满足上方协议；输入或依赖变化后重新核验，不据声明本身授予像素等价。
+
+### Canvas 导出
+
+仅在**全部预期画面都位于一个 canvas** 时提供以下同步接口；CSS 装饰、其他 DOM 和未完成的异步资产不在导出内，属于画面时不要 opt-in：
+
+```javascript
+// 按 ?f=N 同步画完当前帧后再暴露函数；返回字符串而非 Promise。
+window.__vtx_export_png = () => canvas.toDataURL('image/png');
+```
+
+位图宽高必须等于实际视口，格式为 8-bit RGB/RGBA PNG；叠层用透明 canvas。渲染器检查 data URL、PNG 签名、块边界/CRC、IHDR 尺寸/格式、IDAT 与完整 IEND；这是包络检查，不是任意不可信 PNG 的完整安全解码器。
+
+有效导出直接缓存该帧，绕过截图路径；无效导出回落**同一帧**的白黑双背景截图。未声明接口的页保留原截图路径，包括 CDP 透明背景 override 与 flatten 守卫。`canvas_export` 只表示页面 opt-in，实际路径看逐帧计数（失败回落另计 canvas_fallback），不能据布尔值断言全部帧走快路。缓存身份见 [缓存与回执](../../cache-provenance.md)。
+
+### 静态跨度
+
+```javascript
+// 整数帧、左闭右开、[0,N) 内且不重叠；这是作者的像素恒定承诺。
+window.__vtx_static_spans = [[40, 184], [540, 772]];
+```
+
+`VTX_GFX_STATIC=1` 为默认值：区间头帧渲染或复用，缺失成员从头帧逐字节复制（static_copied 计数、span×k 标签）；已有成员不动。头帧不在当前分片范围也会按需加入渲染。缺失/部分声明只优化明确范围；解析失败告警后退回逐帧渲染。作者不得依赖运行器宽松解析来接受重叠或不合法声明。
+
+渲染器**不验证区间视觉恒定**。DOM 序列化相等不能证明字体、图片、Canvas 位图或最终绘制结果相等；端点抽查也不能代替全区间验证。采用前关闭静态复制，用相同输入/环境逐帧渲染整个声明区间，核对实际像素并保留证据；页面或依赖改变后重验，无独立验证就不声明。无需私人扫描/注入脚本，不将呼吸、数字滚动等随 f/t 变化的画面列入跨度。严格实验对 static_copy 的额外证明见 [Golden 证据](../../cache-provenance.md#golden-evidence)。
+
+### 可移植性与验证
+
+CDP/CLI 用 `Path.resolve().as_uri()` 生成本地 HTML URL，保留 Windows 盘符并编码空格、Unicode 与 `#`；字幕路径分别按 FFmpeg 选项/滤镜解析层转义，参数直接传递而不经 shell。分段 concat 使用 UTF-8 绝对斜杠路径和 concat 引号，不能手改为受特殊目录名影响的相对 URL。
+
+[图形回归](../../../tests/gfx/test_graphics_portability.py)覆盖坏 PNG/尺寸、Canvas 回落、透明合成、静态跨度、特殊字符路径和字幕烧录；CPU 规则测试不等于真实浏览器验证。按 [测试入口](../../../tests/README.md) 运行，真实集成还需 NumPy、`VTX_TEST_CHROME` 与具 subtitles filter 的 `VTX_TEST_FFMPEG`，未提供时明确 skip。临时 fixture 无需私人媒体，TEMP/TMP 可指定适合容量的目录。
+
+全链合成验证是**写操作**：`python3 tests/runners/run_e2e.py --repo <checkout> --output <new-directory> --ffmpeg <executable> --chrome <executable>` 要求输出目录不存在，以单段/双段各跑完整链、strict QC、完整解码、黑帧/真峰与全片缩略对照；再用 `python3 tests/runners/verify_e2e.py <output-directory> --ffmpeg <executable>` 核对逐样本音频及含接缝/字幕/gfx 边界的全分辨率样帧。两入口均需 NumPy；执行结果才是本版本证据。
+
+foreignObject 批量导出被像素差证伪，不保留其驱动或 VTX_GFX_BATCH；NAVFREE 和 BeginFrame 的否决与未测边界见 [开发记录](../../reports/development-history.md)。这些历史结果不证明其他通道提速，`__vtx_render` 也不构成生产资格。
 
 ## 显式 SVG 序列
 
@@ -93,7 +129,7 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
 
 起手模板（内核通用件）：本 skill `assets/title-card.html`（标题卡）和 `assets/lower-third.html`（下三分之一条），按已确定的页面边界复制或取用其页内组件，再改文案与配色。
 
-页面写好后如何挂进时间线（timeline 里 kind=gfx 的 clip、帧序列渲染），见 `references/edit.md`。
+页面写好后如何挂进时间线（timeline 里 kind=gfx 的 clip、帧序列渲染），见 [剪辑配方](edit.md)。
 
 ## 模板库（→ templates/tech-talk/assets/gfx-templates/）
 

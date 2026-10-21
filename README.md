@@ -1,115 +1,70 @@
-# Framivra —— 可复现、帧精确的视频制作工具箱（v2 插件化架构）
+# Framivra —— 可复现、帧精确的视频制作工具箱
 
-> **Framivra**（小写 `framivra`，读 "frame-ee-vra"）:frame + 自造后缀。仓目录与文档内路径占位沿用 `video_tools` 历史路径名,品牌名以本行与 pyproject 包名为准。**本仓是什么**:B 站视频产线的程序本体权威仓。**内核** `vtx/` = timeline.json 契约 + 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ 混音响度终链（-14 LUFS + limiter）+ 内容寻址缓存——关停它主链产物不可信，故永不可关（宪法信条）。产线知识在 `templates/tech-talk/` 工作流包（科技口播六阶段 SOP + 调研/拍摄/封面/发布链配方）；机制契约文档在 `docs/skill/`（路由索引 `docs/skill/SKILL.md`）。git 管理，大模型能力默认关闭。
-
-> **姊妹项目 Music Tools**：本仓专注「视频」产线。BGM / 配乐 / 床乐 / 音效 / 响度 QC / 分轨混音需求请移步姊妹仓 music_tools（本仓 `apps/bgm` 为路由声明）——music_tools 产出的 BGM 挂载进本仓 timeline.json 后，由 `apps/blender-bridge/audit_bundle.py` 生成分轨审计包供 Blender 逐轨裁决。
+Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/` 提供 timeline.json 契约、帧精确渲染、混音响度终链与内容寻址缓存，**永不可关**；科技口播工作流在 `templates/tech-talk/`，执行技能在 `docs/skill/`。文档中的 `video_tools` 是路径占位名，不是另一套安装。大模型能力默认关闭。
 
 ## 四层架构一页
 
-```
-vtx/            ① 内核（永不可关，宪法信条）：渲染链 + validate/qc + 响度终链 + 缓存 + vtx/api.py 对外面 + vtx/pluginlib/ 协议运行时
-docs/skill/     ① 内核文档：SKILL.md 路由索引 + references/{edit,gfx,runbook}.md + assets/ 起手模板
-apps/  (12 件)  ② 应用：产出独立素材不进 timeline 管线，关停不影响主链
-plugins/ (4 件) ② 插件：扩展 timeline.json 词汇并钩进管线（denoise / duck-static / blender-bridge / bgm-render + registry.json）
-templates/      ③ 模板集合：工作流、MG 风格工程与 app/plugin 开发范本（集合入口 templates/README.md）
-scripts/           安装/发布/创作公共入口；内部文档与政策工具按职责分组（见 scripts/README.md）
-vt.py              统一入口：doctor / apps|plugins|templates list|check / version / init / --fix-links
-```
+| 目录 / 入口 | 职责 |
+|---|---|
+| `vtx/` | 永不可关的内核：渲染、validate/QC、响度、缓存、`api.py` 与 `pluginlib/` |
+| `apps/`、`plugins/` | 独立素材/产线应用与 timeline 管线扩展；安装态、键与 hooks 见 [catalog](docs/catalog.md) |
+| `docs/skill/`、`templates/` | 工具技能与[工作流/开发范本集合](templates/README.md) |
+| `scripts/`、`vt.py` | [仓级工具](scripts/README.md)；doctor、组件/模板 list/check、version、init 与链接修复 |
 
-分层判据（关停测试）：关停后主链产物**不可信** → 内核；**仍能可信出一期片** → 可卸载（apps/plugins）。apps/plugins 每件自包含（app.json/plugin.json + 代码 + README + tests）。
+关停后主链产物不可信的是内核；仍能可信出片的是可卸载组件。apps/plugins 每件自包含（app.json/plugin.json + 代码 + README + tests）。**可卸载不等于无依赖**：已启用插件可以依赖相应 app，不能删除依赖后继续宣称扩展生效；[协议与边界](docs/ARCHITECTURE.md#3-应用边界apps)为准。
 
 ## 快速开始（clone 即用，零安装步骤）
 
-想先生成公开示例？按 [standard Demo 运行指南](docs/guides/demo-fixture.md#公开-standard-demo-生产运行) 从冻结输入准备到显式 CDP / CEF 成片、查看结果；依赖资格与未验收范围在指南中说明。
-
-自建项目先满足下方[依赖矩阵](#依赖矩阵)；「零安装」指不必先 pip 安装本仓，不代表已具备外部工具或素材。以下克隆、init、脚手架及渲染均为写操作。把 PROJECT 替换为全新项目的绝对路径；脚手架会写入 timeline.json，不要指向已有工程。
+公开样片从 [standard Demo](docs/guides/demo-fixture.md#公开-standard-demo-生产运行) 起步。自建项目先满足[依赖矩阵](#依赖矩阵)；「零安装」仅指不必 pip 安装本仓，不包含外部工具或媒体。以下克隆、初始化、脚手架与渲染均为**写操作**；`PROJECT` 必须是全新项目的绝对路径，避免覆盖已有 timeline。
 
 ```bash
 git clone https://github.com/CongliangK/framivra
 cd framivra
-python3 vt.py init                     # 依赖自检 + 安装指引 + 生成 config.local.json（幂等；--fix 自动装）
-env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor  # 三检：本地引用漂移 / apps+plugins manifest+health / 工作流模板完好性
+python3 vt.py init                     # 幂等依赖自检/指引，生成 config.local.json；--fix 自动装
+env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor
 PROJECT="/绝对路径/新视频项目"
-bash scripts/new_project.sh "$PROJECT" 30  # 目录 + 占位 timeline.json + schema + gfx 样页
+bash scripts/new_project.sh "$PROJECT" 30
 ```
 
-脚手架不生成或下载媒体。先把含音轨的 CFR 30 fps 素材放到 `$PROJECT/assets/v01.mp4`，或修改 timeline.json 的 sources 与剪辑/音频事件以匹配自己的素材；源长度须覆盖所引用的帧区间。完成编排后，在同一 Bash 会话执行：
+脚手架不生成或下载媒体。把含音轨的 CFR 30 fps 素材放到 `$PROJECT/assets/v01.mp4`，或修改 timeline 的 sources、剪辑与音频事件匹配素材；源长度须覆盖引用区间。完成编排后，在同一 Bash 会话执行：
 
 ```bash
-python3 vtx/vtx.py -t "$PROJECT/timeline.json" validate  # 渲染前校验门（必跑）
-python3 vtx/vtx.py -t "$PROJECT/timeline.json" all       # 全流程，更新项目 cache/、out/
+python3 vtx/vtx.py -t "$PROJECT/timeline.json" validate
+python3 vtx/vtx.py -t "$PROJECT/timeline.json" all
 ```
 
-完整 `all` 及 QC/插件结果成功后查看 `$PROJECT/out/final.mp4`；输出文件存在本身不是验收通过。截断或局部检查的边界见 [正式交付链](docs/skill/references/runbook.md#正式交付链r1-r4-共用)。
+完整 `all` 及 QC/插件结果成功后查看 `$PROJECT/out/final.mp4`；输出存在不是验收通过。[正式交付链](docs/skill/references/edit.md#正式交付链r1-r4-共用)说明当前回执、截断链和局部预览的边界。
 
-例行 doctor 使用离线形态，不 fetch；版本漂移仅相对本地已有引用。确需刷新远端引用时，联网 doctor 会执行 git fetch 写入 .git，须按写操作审查。
-
-可选产线初始化：`bash apps/asr/init.sh` / `bash apps/tts/init.sh` / `bash apps/imgen/init.sh`（幂等）；`bash apps/matting/init.sh`（已有抠像资产探测；下载边界见 [第三方许可](docs/third-party-licenses.md)）。live skill 挂载（如 `~/.agents/skills/video/`，为指向本仓的符号链接）可用 `vt.py --fix-links` 重建。
+例行 doctor 使用上述离线形态，只比较本地已有引用；联网 doctor 会 `git fetch` 写 `.git`。live skill 符号链接（如 `~/.agents/skills/video/`）的修复先用 `python3 vt.py --fix-links --dry` 预演，实际修复须按写操作处理。
 
 <a id="installer-trust"></a>
 
-不想手动 clone？见 [Linux/macOS 与 Windows 安装指南](docs/guides/installation.md)：包含平台命令、依赖准备、参数透传、共同信任与安全更新边界。执行前先阅读；引导器会写配置和更新源码，不是零写态检查。
-
-维护者发布入口（仅查看参数；真实发布需 GitHub 仓库写权限）：
-
-```bash
-env python3 scripts/release/release_github.py --help
-```
+自动安装及更新见 [Linux/macOS 与 Windows 安装指南](docs/guides/installation.md)：执行前阅读其信任、源码更新与下载边界。发布维护见 [releases](docs/releases.md)；`env python3 scripts/release/release_github.py --help` 仅查看参数，不执行发布。
 
 ## 三层路由
 
-**开始创作**：纯 MG、多场景/角色与透明叠加先读 [HTML 创作组织](docs/skill/references/gfx.md#html-创作组织)，再到 [MG 风格工程](templates/mg-styles/README.md) 选择款式；科技口播从 tech-talk 工作流起步。
-
-**内核**：`docs/skill/SKILL.md`（路由索引 + 迭代回路速查）→ `docs/skill/references/edit.md`（timeline 契约 + vtx 全阶段 + 坑表）、`gfx.md`（帧驱动协议 + D22 设计铁律）、`runbook.md`（修改配方 R1-R4 + 棒次协议）。
-
-**apps/**（12 件，一句话）：
-
-| app | 职责 |
-|---|---|
-| `apps/asr/` | Qwen3-ASR + ForcedAligner 字幕产线（口播→subtitles[] 锚定），默认关闭 |
-| `apps/tts/` | IndexTTS-2.5 / edge-tts 口播占位语音（spec.json 贴预算），默认关闭 |
-| `apps/imgen/` | 生图 API 生图 + cover-crop 后处理（bg4k 硬接口 3840×2160），默认关闭 |
-| `apps/matting/` | 抠像/背景替换两路线（resolve_matte 达芬奇主力 + 自研链备用；专属文档 matting.md） |
-| `apps/aroll/` | A-roll 素材工具（aup3 提取 / VAD 掐头去尾） |
-| `apps/cover/` | B 站投稿封面产线（make_cover.py 一条龙 + QC 门，D50） |
-| `apps/research/` | 选题调研 6 件（bilibili / github_repos / score_topic / 设计研究三件） |
-| `apps/blender-bridge/` | timeline ↔ Blender VSE 双向预览桥 + BGM 分轨审计包 |
-| `apps/publish/` | 4K 投稿版发布链（export_4k / check_4k / compare_4k_quality） |
-| `apps/bgm/` | BGM 需求路由声明（本体 music_tools 姊妹仓，无可执行件） |
-| `apps/gates/` | 发布前内容级复检（G1/G2/G7/G10 + 项目门；G3 TP 已上内核 qc） |
-| `apps/sync/` | 双系统同步（GCC-PHAT）与实录 take 替换（管线前置素材工具） |
-
-**plugins/**（4 件）：`plugins/denoise/`——口播降噪（`sources[].denoise`，缝 A prepare 源产物钩子）；`plugins/duck-static/`——床乐静态分段避让（`audio_tracks[].duck_strategy`，缝 B 音轨事件内存变换）；`plugins/blender-bridge/`——顶层键 `blender_bridge` 配置即 `vtx all` 收尾自动导出 Blender 审片工程（缝 D finish，协议 v1.2）；`plugins/bgm-render/`——`sources[].bgm` 音轨直接引用 music_tools 工程 JSON，自动渲染母带入内容寻址缓存（缝 A+C，协议 v1.2）。协议 v1/v1.2 与 registry.json 见 `docs/ARCHITECTURE.md` §2/§2.5。
-
-**templates/**：集合入口见 [templates/README.md](templates/README.md)。`tech-talk/` 是完整科技口播 B 站流程（六阶段 / 音频支线 / 全链 SOP / 模板资产），与纯内核 `skill-demo/`、开发范本 `hello-app/` / `hello-plugin/` 平级；产线任务先读 tech-talk 的 SKILL.md。`python3 vt.py templates list|check` 检查工作流模板；doctor JSON 的工作流检查字段为 `skills`。
+- **创作**：[Skill](docs/skill/SKILL.md) → [编辑与修改配方](docs/skill/references/edit.md) / [HTML 创作组织](docs/skill/references/gfx.md#html-创作组织)。纯 MG 从 [风格集合](templates/mg-styles/README.md) 选起点；科技口播从 [tech-talk](templates/tech-talk/SKILL.md) 起步。
+- **组件**：[catalog](docs/catalog.md) 找 app/plugin，再读其 README。BGM、配乐与分轨混音由姊妹仓 music_tools 产出，`apps/bgm` 负责路由；挂入 timeline 后可用 [Blender 分轨审计](apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)参与混音裁决。
+- **工作流**：[templates](templates/README.md) 包含完整流程、纯内核示例与开发范本；`python3 vt.py templates list|check` 检查工作流模板，doctor JSON 对应字段为 `skills`。
 
 ## 依赖矩阵
 
-| 层级 | 依赖 | 用途 | 状态 |
-|---|---|---|---|
-| 基础（必需） | python3≥3.9、ffmpeg/ffprobe、Chrome/Chromium/Edge | vtx 渲染与 gfx 帧截图 | vt.py init 自检 |
-| 默认 CDP 图形后端（必需） | NumPy | gfx PNG 处理；显式 `VTX_GFX=cli` 是独立浏览器截图路径，不要求 NumPy，缓存环境身份与支持范围分别记录于[缓存说明](docs/cache-provenance.md#gfx-environment) | 不由标准库承诺覆盖 |
-| 基础（强烈建议） | libfdk_aac 构建 | mux 正式封装音质 | 自检，缺则回落+告警（交付须复测解码 TP） |
-| 可选 | blender / sox | blender-bridge 预览桥 / 部分音频后处理 | 自检 |
-| 可选 | NVENC（NVIDIA GPU） | `video --gpu` 渲染 | 自动探测，不可用回落 x264 |
-| **大模型（默认关闭）** | conda env comfyui + MatAnyone2/BiRefNet_HR 权重 | apps/matting 自研抠像链 | `bash apps/matting/init.sh`（已有资产探测） |
-| **大模型（默认关闭）** | Qwen3-ASR sidecar（18085） | apps/asr 字幕产线 | `bash apps/asr/init.sh` |
-| **大模型（默认关闭）** | IndexTTS-2.5 repo（11GB 权重）+ conda indextts（edge-tts 兜底） | apps/tts 占位语音 | `bash apps/tts/init.sh` |
-| 可选 | ComfyUI 服务 127.0.0.1:8188 | apps/matting 背景图生成（post_h3.sh 消费其输出） | `bash apps/matting/comfyui_init.sh` |
-| **大模型（默认关闭）** | 生图 API key（0.1 元/张）+ requests | apps/imgen 生图 | `bash apps/imgen/init.sh` 配 key |
-| **大模型（默认关闭）** | resemble-enhance 权重 681MB + conda denoise env | plugins/denoise 口播降噪 | `bash plugins/denoise/denoise_init.sh`（已有资产探测） |
+| 使用范围 | 依赖与边界 |
+|---|---|
+| 基础渲染 | Python ≥3.9、FFmpeg/ffprobe、Chrome/Chromium/Edge；`vt.py init` 自检 |
+| 默认 CDP gfx | NumPy；显式 `VTX_GFX=cli` 不要求 NumPy，但有独立[环境身份与支持边界](docs/cache-provenance.md#gfx-environment) |
+| 正式 AAC 封装 | 强烈建议 libfdk_aac；缺失回落并告警，交付仍须复测编码后解码真峰 |
+| 可选媒体工具 | Blender、SoX；`video --gpu` 可用 NVIDIA NVENC，探测失败回落 x264 |
+| 默认关闭的模型/服务 | [ASR](apps/asr/README.md)、[TTS](apps/tts/README.md)、[生图 API](apps/imgen/README.md)、[抠像/ComfyUI](apps/matting/README.md)、[降噪](plugins/denoise/README.md)：各 owner 维护解释器、服务、权重、配置与启用要求 |
+
+默认标准库策略不代表所有后端只需标准库。模型与第三方资产的下载/许可限制见[第三方许可](docs/third-party-licenses.md)，不能把探测已有资产当作允许自动下载。
 
 ## 开发者文档与项目布局
 
-> 智能体请循 `AGENTS.md`（行为指南/门禁速览/写态红线）；本 README 为人类面。
+[ARCHITECTURE](docs/ARCHITECTURE.md) 定当前结构与契约；[DEV](docs/DEV.md#专题入口) 路由开发专题与 [CI 覆盖](docs/DEV.md#ci-回归覆盖)；[CONTRIBUTING](CONTRIBUTING.md) 给测试/提交流程；编码智能体先读 [AGENTS](AGENTS.md)。[reports](docs/reports/README.md) 仅承载历史结论和证据，不代表当前能力验收。
 
-- 架构设计权威：`docs/ARCHITECTURE.md`（v2 四层架构 / 插件协议 / 迁移映射 / 验收门）。
-- 开发与专题入口：[DEV](docs/DEV.md) 路由到操作指南、接口语义与研究记录；性能基准和演进史归入研究记录，实际支持与未验收边界以各专题为准。
-- 测试：`bash scripts/run_all_tests.sh`（`python3 -m unittest discover -s tests`；集成用例需 VTX_TEST_CHROME/VTX_TEST_FFMPEG）。
-- 工作区（非 git 仓）：各期视频项目目录 + `_library/`（方法论/资产/blender_bridge 挂载，例如 `~/videos/projects/`）——**修改一律改本仓**，工作区历史副本为冻结快照。音频工具见姊妹仓 music_tools。
+视频项目与 `_library/` 放在独立工作区（例如 `~/videos/projects/`），不放仓内。程序修改一律改本仓；工作区历史副本是冻结快照。
 
 ## License
 
-本项目许可证与版权声明见仓根 [LICENSE](LICENSE)，不替代上游代码、模型/辅助权重、API 服务与输出权利。
-
-第三方许可、固定官方证据与默认载荷/可选下载边界统一见 [第三方许可](docs/third-party-licenses.md)；未知或受限资产不算合规通过，未审查的自动下载明确阻断。默认源码/内核未捆绑权重或外部工具二进制，与安装器的可选下载不是同一声明。
+本仓 [LICENSE](LICENSE) 不替代上游代码、权重、服务与输出权利。[第三方许可](docs/third-party-licenses.md) 是固定证据与载荷/下载边界的唯一入口；未知或受限资产不算合规通过。默认源码未捆绑权重或工具二进制，不等于安装器的可选下载都已审查。

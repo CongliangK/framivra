@@ -443,7 +443,7 @@ class RenderPlan:
         主输入，层序与旧链式 graph 逐位同序（视觉合成语义不变）。
 
         为什么必须拆 pass（证据链全部在案 /tmp/vtx_r4/FINDINGS.md、
-        docs/plans-v2/p5-acceptance/KNOWN-ISSUES.md ⑭）：链式 N 输入 graph 下
+        docs/reference/known-issues.md ⑭）：链式 N 输入 graph 下
         overlay/framesync 的输出节律存在跨运行随机的丢帧/配对滞后——E-A5 showinfo
         直证：canvas+L9+L11 双 overlay 最小图 2 次复渲，一版 L11 输出缺 4 帧
         （pts 2054~2057）且其后 1 帧内容迟到，另一版 L9 输出旧帧内容；错帧全程

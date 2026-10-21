@@ -1,6 +1,6 @@
 # aroll —— A-roll 实拍素材处理工具
 
-> **v2 结构（P2a 批次 1 起本目录迁入 `apps/aroll/`）**：manifest 见 `app.json`（kind=app；健康检查 = `health_check.py` 语法探针）。
+组件声明见 `app.json`（kind=app）；`health_check.py` 只做语法探测，不执行素材处理。
 
 真人出镜素材（相机录制 + Audacity 多轨录音）的前期处理工具。现行全链流程见 [A-roll 通用手册](../../templates/tech-talk/references/aroll-pipeline.md)；[2026-09-07 首跑实录](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/apps/aroll/docs/A-roll实拍素材处理流程-2026-09-07.md) 保留原项目数据与排障过程。
 

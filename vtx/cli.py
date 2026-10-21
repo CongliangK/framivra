@@ -66,7 +66,7 @@ prepare、video 需 gfx（有 gfx 轨时）、mux 需 video+audio、qc 需 mux�
   `all --until <stage>`：阶段终点为 STAGES 中除 audio 外的 7 个阶段名。
              `--until video` 仅用于中间检查：线性模式不含 audio；后续单跑 mux/qc
              不触发 finish。流水线映射见 _run_all_pipeline；正式交付用完整 `all`，
-             合同见 docs/skill/references/runbook.md「正式交付链」。
+             合同见 docs/skill/references/edit.md「正式交付链」。
   完整 all 或 `all --until qc` 触发插件 finish 收尾钩子（如 blender-bridge 导出）；
              qc 失败不阻断 finish，退出码汇总 qc/finish 失败；--draft/--dry-run
              或停在 qc 之前的截断链不触发。

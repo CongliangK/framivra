@@ -157,7 +157,7 @@ def main():
     print(f'  python3 ~/.agents/skills/video/vtx/vtx.py -t "{args.timeline}" all')
     print("  完整 all 负责当前阶段回执与启用插件的 finish；检查退出码和 QC/插件结果。")
     print("  局部音频诊断须先对当前输入 prepare，再 audio --report；最终仍运行完整 all。")
-    print("  操作与前置见 ~/.agents/skills/video/references/runbook.md。")
+    print("  操作与前置见 ~/.agents/skills/video/references/edit.md。")
     print("  vtx audio 已内置限幅，无需手动 post_loudness。")
 
 

@@ -1,6 +1,6 @@
 # matting —— A-roll 抠像 / 背景替换链
 
-> **v2 结构（P2a 批次 3 起本目录迁入 `apps/matting/`）**：manifest 见 `app.json`（kind=app；健康检查 = `health_check.py` 语法探针，compile() 全部 21 个 .py 零执行零副作用）。随迁参数化收编（§3.1）：resolve_matte 8 件 `sys.path.insert` 硬编码改 HERE 相对；voice-ime 素材/微信收稿/ComfyUI 输出等项目路径改 **CLI 参数 / env（`MATTE_BASE`/`MATTE_SRC`/`MATTE_OUT`/`MATTE_DRX`/`RESOLVE_DEBUG_LOG`/`VOICE_IME`/`WORKS`/`SRC`/`COMFYUI_OUT`/`VIDEOS`）> `~` 展开默认**，无参无 env 时展开值与原硬编码逐字节同。
+组件声明见 `app.json`（kind=app）；`health_check.py` 以 `compile()` 检查 Python 文件，不执行抠像。项目路径优先使用 CLI 参数或环境变量（`MATTE_BASE`/`MATTE_SRC`/`MATTE_OUT`/`MATTE_DRX`/`RESOLVE_DEBUG_LOG`/`VOICE_IME`/`WORKS`/`SRC`/`COMFYUI_OUT`/`VIDEOS`），缺省路径展开 `~`。
 
 真人出镜视频的背景替换管线（bg_test 实测定稿路线）：**BiRefNet_HR@2048 生成首帧 mask → MatAnyone2 视频抠像 → guided filter 收边 → 与新背景合成**。另有 `resolve_matte/` 子链（DaVinci Resolve 21 Studio Magic Mask 命令行驱动，见 `resolve_matte/README.md`）。
 

@@ -53,7 +53,7 @@ env python3 <video_tools>/apps/aroll/trim_takes.py ...            # VAD 掐头�
 - **④ 动效页** → 先按内核 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织) 定页内模块/独立素材边界，再读帧驱动协议 + D22 设计铁律；**优先复用本包 `assets/gfx-templates/` 已验收模板**（六件参数化页 + `_tokens.md` 设计基准；场景→模板映射表与使用步骤见 `assets/gfx-templates/INDEX.md`；改 CONST 数据不碰机制代码）；新页三件套=manifest+data-sources+自查脚本；实例页参考 `assets/gfx-examples/`。
 - **⑤ 时间线编排**：新项目**起手复制 `assets/presets/timeline.skeleton.json`**（voice-ime v4.7 轨制抽象骨架，含占位素材原位可 validate；轨级 duck_strategy/duck_params 示范；实例化步骤见其 `_meta`），再按帧预算铺真实编排（契约速览与「素材放哪条轨」速查表见内核 `docs/skill/references/edit.md`）。**编排完先开 `preview.html` 人审，再 validate**。批量重排写幂等脚本 + `vtx snapshot` 留快照。口播字幕锚定 → `apps/asr/`（`asr_cli.py timeline` 就地合并 subtitles[]）。
 - **⑥ 渲染与 QC**：
-以下渲染命令会更新项目 `cache/`、`out/`，正式渲染可能替换已有成片；先确认项目与输出位置。draft 只用于画面迭代，局部预览不能替代完整 `all`；区间音画预览及其当前输入的 prepare/audio 前置见内核 [runbook R2](../../docs/skill/references/runbook.md#r2--时间线编排clip-窗口--轨道--字幕)。
+以下渲染命令会更新项目 `cache/`、`out/`，正式渲染可能替换已有成片；先确认项目与输出位置。draft 只用于画面迭代，局部预览不能替代完整 `all`；区间音画预览及其当前输入的 prepare/audio 前置见内核 [runbook R2](../../docs/skill/references/edit.md#r2--时间线编排clip-窗口--轨道--字幕)。
 ```bash
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json validate        # 硬门，必跑
 python3 <video_tools>/vtx/vtx.py -t <项目>/timeline.json gfx             # 准备当前页面缓存，无 gfx 轨时无页面任务
@@ -83,7 +83,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
   → 收尾：vtx gc + snapshot 归档
 ```
 
-迭代遵循**修复工作法**：先问后做不脑测 / 在时间轴编排层定性（Blender=审片界面）/ 区分「编排对实现错」vs「编排本身错」/ 用户权威文本 > 代理回读推断。标准修改配方（R1-R4 机制侧见内核 runbook；R5 发布链 / R6 分轨审计 / R7 封面见 `references/runbook-r5r6r7.md`）。
+迭代遵循**修复工作法**：先问后做不脑测 / 在时间轴编排层定性（Blender=审片界面）/ 区分「编排对实现错」vs「编排本身错」/ 用户权威文本 > 代理回读推断。标准修改配方（R1-R4 机制侧见[内核编辑配方](../../docs/skill/references/edit.md)；R5 发布链 / R6 分轨审计 / R7 封面见 `references/runbook-r5r6r7.md`）。
 
 ## 产线衔接与外部资产
 

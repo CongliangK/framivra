@@ -20,13 +20,15 @@
 | [liquid](styles/liquid/README.md) | 汇聚、融合、分离与揭示 |
 | [variety-captions](styles/variety-captions/README.md) | 反应事件、逐字与主体禁区 |
 
-本包将 [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) 的一般设计语言转化为独立编写的帧驱动模板，不是原片复刻；[研究记录](../../docs/reports/mg-styles/research.md)说明来源与许可边界。[验证记录](../../docs/reports/mg-styles/validation.md)保留历史快照及失败，不将入口数量当作完成。
+本包将 [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) 的一般设计语言转化为独立编写的帧驱动模板，不是原片复刻；[来源与许可](../../docs/reports/mg-styles/status.md#来源与许可)说明来源与许可边界。[验证记录](../../docs/reports/mg-styles/validation.md)保留历史快照及失败，不将入口数量当作完成。
 
 ## 选择入口
 
 - **学制作、换题材**：进入上表某款 README，打开其典型 HTML；也可用 [HTML 总预览](html/index.html)。两题材、短制作卡、播放器与 JSON 编辑均在款内。共享[HTML 捕获协议](html/README.md)；HTML 尚无浏览器字体/像素/完整播放验收，也没有实际音轨。
 - **生成独立媒体工程**：用该款 README 的 `build_media.py --content ... --dry`，按真实角色、任务、轨迹、章节等语义编辑 JSON；源码在款内 `scripts/`。需要的 Pillow/NumPy/Blender/FFmpeg 与本地字体按所选路径提供，缺失明确失败。
 - **试验早期 Canvas prototype**：仍用根 `build.py`。十五款保留 prototype 状态，统一标题/条目接口不足以表达完整叙事，不能继承媒体路线的验证。每款实现位于自己的 `scripts/prototype.js`；共用 `runtime.js` 与 `prototype-helpers.js`，构建仅打包所选款实现及公共依赖。
+
+款内 HTML 的题材编辑与[内核只读时间线预览](../../docs/skill/references/edit.md#时间线预览人审用)是不同工具，不互换输入或验收结论。当前回归入口为 [`tests/gfx/test_mg_html.py`](../../tests/gfx/test_mg_html.py)（HTML 命令流与控制逻辑）和 [`tests/gfx/test_mg_styles.py`](../../tests/gfx/test_mg_styles.py)（prototype）；逐款媒体测试同在 `tests/gfx/`，不代表真实浏览器像素或完整成片验收。
 
 ## 媒体工程与交付
 

@@ -23,36 +23,23 @@ import），enabled 件的探针失败计入 doctor FAIL 门。
 
 ## 开启步骤（external 注册，默认 disabled）
 
-templates/ **不在 registry 内置扫描范围**（内置只扫 `apps/` 与 `plugins/`），
-须走 config.local.json 的 external 注册（v2 §2.4 安全节，文件 gitignored 不入库）：
+通用的发现、注册、路径安全与 doctor 步骤见[第三方接入](../README.md#第三方接入)。本范本在仓根 `config.local.json` 中使用：
 
-1. 编辑 `config.local.json` 的 `external_apps`（模板见 `config.example.json`）：
-   ```json
-   "external_apps": [
-     {"path": "templates/hello-app", "enabled": true}
-   ]
-   ```
-   只写字符串 `"templates/hello-app"` = 注册但**默认 disabled**（安全节）。
-2. `env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor`——②组件段出现 `[app:external] hello-app`，
-   enabled 后 health ✓ / requires ✓。
-3. `env python3 vt.py apps list`——external 条目在列。
+```json
+"external_apps": [{"path": "templates/hello-app", "enabled": true}]
+```
 
-## 如何被 doctor 发现
-
-发现三路（`vtx/pluginlib/registry.py`）：①内置扫描 `apps/`+`plugins/`（不含
-templates/）；②config 的 `external_apps[]`/`external_plugins[]`——**本范本走的
-就是这条路**（默认 disabled，显式 enable 才生效）；③`plugins/registry.json`
-静态注册表（仅官方插件）。external 条目 resolve 后做白名单根校验：manifest
-与 health 命令必须落在注册目录内，路径含 `..` 一律拒绝。
+只写字符串路径或省略 `enabled` 会保持 disabled，不会自动启用。
 
 ## 复制本目录改名起步
 
 ```bash
-cp -r templates/hello-app templates/my-app && cd templates/my-app
+# 写操作：创建新范本目录；以下命令均在仓根运行。
+cp -r templates/hello-app templates/my-app
 # 1) 改名：目录名与 app.json 的 "name" 必须一致（^[a-z][a-z0-9-]*$）
 # 2) 换实现：cli.py 的子命令换成你的素材产线；health_check.py 换成依赖自检
 # 3) 补依赖：app.json 的 requires.binaries / python_packages / platforms
-# 4) 注册：config.local.json 的 external_apps 加 {"path": "templates/my-app"}
+# 4) 注册：config.local.json 的 external_apps 加 {"path": "templates/my-app", "enabled": true}
 # 5) 验证：env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor && env python3 vt.py apps list
 ```
 

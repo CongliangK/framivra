@@ -25,7 +25,7 @@
 3. **演示渲染与验收**：`env VTX_REPO="<video_tools>" bash expected_check.sh`
    自行执行 validate、完整 all 与 strict QC，生成 `out/final.mp4` 后断言产物存在、
    帧数 90、QC 全 PASS（含 TP 项）；无需先另跑 all。脚本的固定帧数断言仅用于
-   本演示，自有作品的正式交付用内核 [完整链](../../docs/skill/references/runbook.md#正式交付链r1-r4-共用)。
+   本演示，自有作品的正式交付用内核 [完整链](../../docs/skill/references/edit.md#正式交付链r1-r4-共用)。
 
 ## 声明
 

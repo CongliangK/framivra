@@ -1,7 +1,7 @@
 # tts/ · IndexTTS-2.5 口播占位语音产线 + edge-tts 兜底
 原三模块方案的章节编号仅作历史来源：[2026-09-11 设计记录](https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md)。
 
-> **v2 结构（P2a 批次 2 起本目录迁入 `apps/tts/`）**：manifest 见 `app.json`（kind=app；健康检查 = `tts_cli.py --help`）。config 默认值本就 `~` 展开型（`tts.repo/python/voice_ref/edge_bin`），无随迁参数化项；仅定位改写：spec.py/tts_cli.py 的仓根推导与 init.sh 的 ROOT 改为 apps/ 上两级。
+组件声明见 `app.json`（kind=app）；健康检查为 `tts_cli.py --help`，不加载模型。`tts.repo/python/voice_ref/edge_bin` 支持 `~` 路径；资产准备和写入边界见下文。
 
 口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版）**。
 来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）
@@ -77,7 +77,7 @@ manifest 行字段（对齐 voice-ime manifest.json + peak_db）：
 
 `gen` 完成后打印 repack_voice.py 同款完整 `all` 交付入口，会更新项目 `cache/`、`out/`；
 内容寻址自动选择可复用缓存，完整链负责当前阶段回执及启用插件的 finish。局部音频诊断须先对当前输入
-`prepare`，再 `audio --report`，最终仍运行完整 `all` 并检查退出码与 QC/插件结果，见 [runbook](../../docs/skill/references/runbook.md)。
+`prepare`，再 `audio --report`，最终仍运行完整 `all` 并检查退出码与 QC/插件结果，见 [runbook](../../docs/skill/references/edit.md)。
 limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用 `apps/sync/repack_voice.py` 替换。
 
 ## 引擎与 atempo 契约（方向坑必须钉死）

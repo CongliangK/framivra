@@ -4,7 +4,7 @@ This validates renderer-produced receipts, not their authors' honesty. A runner 
 freeze the plan before starting either arm, record actual runtime evidence, and
 write the completed receipt only after all frames succeed. It must not manufacture
 receipts by inspecting an old cache. No timestamps establish render provenance.
-The versioned wire format and trust boundary live in docs/gfx-evidence.md.
+The versioned wire format and trust boundary live in docs/cache-provenance.md#golden-evidence.
 """
 import hashlib
 import json
