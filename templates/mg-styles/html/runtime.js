@@ -34,7 +34,7 @@ if(!scene||typeof scene.render!=='function'||typeof scene.validate!=='function')
 const params=new URLSearchParams(location.search);
 if(params.get('capture')==='1'||params.has('f'))document.documentElement.classList.add('capture');
 const by=id=>document.getElementById(id),canvas=by('stage'),ctx=canvas.getContext('2d');
-let index=0,data,frames,frame=0,playing=false,startTime=0,startFrame=0,queue=Promise.resolve(),generation=0;
+let index=0,data,frames,frame=0,playing=false,startTime=0,startFrame=0,queue=Promise.resolve(),generation=0,playback=0;
 const copy=v=>JSON.parse(JSON.stringify(v));
 function error(e){playing=false;by('play').textContent='播放';by('error').textContent=String(e.message||e);}
 function loadExample(i){const ex=scene.examples[i];scene.validate(ex.data,ex.frames,h);index=i;data=copy(ex.data);frames=ex.frames;frame=0;playing=false;generation++;by('play').textContent='播放';by('seek').max=frames-1;by('frames').value=frames;by('content').value=JSON.stringify(data,null,2);by('error').textContent='';return render(0);}
@@ -57,8 +57,9 @@ by('seek').addEventListener('input',()=>{playing=false;by('play').textContent='�
 by('previous').addEventListener('click',()=>window.__vtx_render(Math.max(0,frame-1)).catch(error));
 by('next').addEventListener('click',()=>window.__vtx_render(Math.min(frames-1,frame+1)).catch(error));
 by('apply').addEventListener('click',()=>{try{const next=JSON.parse(by('content').value),N=Number(by('frames').value);h.int(N,'frames',30,18000);scene.validate(next,N,h);data=next;frames=N;frame=0;playing=false;generation++;by('seek').max=N-1;by('play').textContent='播放';by('error').textContent='';render(0).catch(error);}catch(e){error(e);}});
-async function tick(now){if(!playing)return;const wanted=Math.min(frames-1,startFrame+Math.floor((now-startTime)*FPS/1000));try{await render(wanted);}catch(e){error(e);return;}if(wanted===frames-1){playing=false;by('play').textContent='播放';return;}if(playing)requestAnimationFrame(tick);}
-by('play').addEventListener('click',()=>{playing=!playing;by('play').textContent=playing?'暂停':'播放';if(playing){startFrame=frame===frames-1?0:frame;startTime=performance.now();requestAnimationFrame(tick);}});
+/* Only the current playback owns callbacks, including one awaiting a draw. */
+async function tick(now,owner){if(!playing||owner!==playback)return;const wanted=Math.min(frames-1,startFrame+Math.floor((now-startTime)*FPS/1000));try{await render(wanted);}catch(e){if(playing&&owner===playback)error(e);return;}if(!playing||owner!==playback)return;if(wanted===frames-1){playing=false;by('play').textContent='播放';return;}requestAnimationFrame(now=>tick(now,owner));}
+by('play').addEventListener('click',()=>{const owner=++playback;playing=!playing;by('play').textContent=playing?'暂停':'播放';if(playing){startFrame=frame===frames-1?0:frame;startTime=performance.now();requestAnimationFrame(now=>tick(now,owner));}});
 const requested=Number(new URLSearchParams(location.search).get('f')||0);
 window.MG_REFERENCE_READY=loadExample(0).then(()=>render(clamp(Math.trunc(requested),0,frames-1))).catch(e=>{error(e);throw e;});
 })();
