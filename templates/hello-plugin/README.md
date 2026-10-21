@@ -9,12 +9,13 @@
 `volume=N dB`（ffmpeg volume 滤镜，无重依赖），产物内容寻址：
 
 ```
-cache/audio/{audio_key}::hello:{version}:{value_digest}.wav
+cache/audio/{audio_key}__hello_{version}_{value_digest}_{code_digest}.wav
 ```
 
 与官方 denoise 插件同为**缝 A · prepare 源产物钩子**（§2.2）：`audio_key` 经
 内核 API 面 `vtx.api.audio_key` 取得；裸提取键 `cache/audio/{audio_key}.wav`
-永不被插件产物污染（契约 v1.1——插件自算产物路径）。
+永不被插件产物污染（契约 v1.1——插件自算产物路径）。代码摘要经
+`vtx.api.plugin_code_digest` 取得，实际命名以 [`product_path`](./__init__.py) 为准。
 
 ## 依赖
 
@@ -22,7 +23,8 @@ cache/audio/{audio_key}::hello:{version}:{value_digest}.wav
 
 ## 健康检查
 
-```
+```bash
+# 在仓库根运行；只探测 PATH，不执行 ffmpeg。
 env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健康
 ```
 
@@ -73,7 +75,7 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
 从 `external_plugins` 移除本插件后，两条独立通道同时失效：
 
 1. **键出白名单 → gc 回收**：插件不生效 → `contribute_keys` 空转 →
-   `cache/audio/{audio_key}::hello:...wav` 不再在存留键集内 → `vtx gc` 将其列入
+   `cache/audio/{audio_key}__hello_...wav` 不再在存留键集内 → `vtx gc` 将其列入
    回收（`gc --dry` 可先验）。
 2. **指纹段消失 → 旧回执失配**：回执指纹末尾有「生效插件清单」追加段
    （`plugins:hello-plugin@1.0.0:{参数摘要}`，§2.1 不变量 2）。卸载后该段消失——录制侧
@@ -82,14 +84,15 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
 
 ## 复制本目录改名起步
 
+扩展键作用域与 hooks 值域以 [manifest schema](../../docs/ARCHITECTURE.md#23-manifest-schema-v1) 为准。
+
 ```bash
 # 写操作：创建新范本目录；以下命令均在仓根运行。
 cp -r templates/hello-plugin templates/my-plugin
 # 1) 改名：目录名与 plugin.json "name" 一致（^[a-z][a-z0-9-]*$）
-# 2) 换键：plugin.json extends.schema_keys 的 key 换成你的键名（path 目前冻结为
-#    sources[] / audio_tracks[] 两缝，hooks 值域 = prepare_source/audio_events/validate）
-# 3) 换实现：__init__.py 的 prepare_source/contribute_keys 换成你的处理链
-#    （产物路径模板 {audio_key}::<plugin>:{version}:{digest}.wav 保持不变）
+# 2) 换键：plugin.json extends.schema_keys 与 __init__.py KEY 保持一致
+# 3) 换实现：__init__.py 的 prepare_source/contribute_keys 换成你的处理链；
+#    product_path 统一生成带输入、版本、参数及代码摘要的产物路径
 # 4) 注册：config.local.json external_plugins 加 {"path": "templates/my-plugin", "enabled": true}
 # 5) 验证：env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor && env python3 vt.py plugins list
 ```

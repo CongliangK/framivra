@@ -17,11 +17,13 @@
 
 全链中的 ASR 文本配对（Qwen3-ASR sidecar `127.0.0.1:18085`）与 Resemble 降噪属大模型能力，默认关闭；其中：
 
-- `sync_audio.py`（GCC-PHAT 双系统音频同步）已随 P2a 迁入 **`apps/sync/`**（本 app 的姊妹应用）；`denoise_voice.py` 真身在 **`plugins/denoise/`**（P2b 迁入，`../../scripts/` 仅为兼容转发壳），链为 v2：规范化 → Resemble 仅降噪（conda）→ afftdn 谱降噪 + 回 48kHz（v1 陷波级已弃用，R-20 P2 定案）。运行分别需要 conda `denoise` 环境（numpy/scipy/soundfile/soxr）与 `~/models/resemble-enhance` 权重。
+- 双系统音频同步由 [sync](../sync/README.md) 提供；降噪由 [denoise 插件](../../plugins/denoise/README.md) 提供。命令、处理链和环境要求以各组件说明为准。
 - **迁移/新机配置**：在仓库根运行 `bash plugins/denoise/denoise_init.sh` 探测已有 ffmpeg / denoise 环境 / 权重；旧 `--download` 为 BLOCKED。缺件准备见 [denoise 依赖环境](../../plugins/denoise/README.md#依赖环境requires)，许可边界见 [第三方许可](../../docs/third-party-licenses.md)。
-- 开启状态记录在仓库根 `config.local.json`（asr / tts 项）。
+- ASR 的配置与开启步骤见 [ASR 说明](../asr/README.md#开启步骤默认关闭)；denoise 的 timeline 键用法见其组件说明。
 
 ## 用法
+
+以下命令在仓库根运行，会向指定输出目录写入 WAV 与报告；运行前确认输入与输出路径。
 
 ```bash
 env python3 apps/aroll/aup3_extract.py <项目.aup3> <输出目录>   # 提取各轨 WAV + structure.json 报告
