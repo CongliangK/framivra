@@ -170,7 +170,19 @@ class InventoryContract(unittest.TestCase):
     def test_refreshed_baseline_preserves_alias_occurrences_and_unknown_tests(self):
         policy = ci.load_json(ROOT / 'scripts/ci_partition_policy.json')
         found = copy.deepcopy(policy['baseline']['batches'])
+        # The optional native helper is newer than the protected baseline.
+        # Its placement must still fail closed when discovery omits it.
+        with self.assertRaises(ci.PartitionError) as raised:
+            ci.policy_inventory(found, policy, {}, {})
+        self.assertEqual(str(raised.exception), 'stale/empty placement selector: '
+                         'tests.test_cef_encode_job.PureSerialEncodeJobSelfTest')
+        helper = instance('test_completion_and_timeout_contract',
+                          module='tests.test_cef_encode_job',
+                          case='PureSerialEncodeJobSelfTest')
+        found['tests'].append(helper)
         originals = ci.policy_inventory(found, policy, {}, {})
+        self.assertEqual([(r['instance'], r['partition']) for r in originals
+                          if r['new_since_baseline']], [(helper, 'optional')])
         aliases = [r for r in originals if r['discovery_module'] != r['id'].rsplit('.', 2)[0]]
         self.assertEqual(len(aliases), 2)
         for record in aliases:
@@ -190,8 +202,10 @@ class InventoryContract(unittest.TestCase):
         added = next(r for r in records if r['instance'] == unknown)
         self.assertEqual(added['partition'], 'fast')
         self.assertTrue(added['new_since_baseline'])
-        self.assertEqual({r['key'] for r in originals},
+        self.assertEqual({r['key'] for r in originals if not r['new_since_baseline']},
                          {r['key'] for r in records if not r['new_since_baseline']})
+        self.assertEqual({r['key'] for r in originals},
+                         {r['key'] for r in records if r['instance'] != unknown})
 
     def test_current_repository_inventory_preserves_original_and_strict_scopes(self):
         with contextlib.redirect_stdout(io.StringIO()):
