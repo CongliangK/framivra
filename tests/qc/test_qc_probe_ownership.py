@@ -157,6 +157,47 @@ class ProbeOwnership(unittest.TestCase):
                 self.assertEqual((sibling / 'keep').read_bytes(), b'keep')
                 self.assertEqual(list(c.cache.glob('qc_probe*')), [sibling])
 
+    def test_gfx_bbox_owns_parallel_outputs_and_preserves_legacy_symlink(self):
+        c = self.context(); c.w = c.h = 2
+        png_dir = c.cache / 'gfx_fixture'; png_dir.mkdir()
+        (png_dir / 'f0000.png').write_bytes(
+            b'\x89PNG\r\n\x1a\n' + b'\0' * 4 + b'IHDR' + (2).to_bytes(4, 'big') * 2)
+        sentinel = c.root / 'sentinel'; sentinel.write_bytes(b'keep')
+        legacy = c.cache / 'qc_gfx_bbox.raw'; legacy.symlink_to(sentinel)
+        tree = ast.parse(Path(qc.__file__).read_text())
+        helper = next(node for node in ast.walk(tree)
+                      if isinstance(node, ast.FunctionDef) and node.name == 'gfx_content_crop')
+        module = ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[]))
+        env = dict(qc.__dict__, c=c, gfx_dir=lambda *_: png_dir)
+        exec(compile(module, 'production-gfx-bbox', 'exec'), env)
+        paths = []; barrier = threading.Barrier(2, timeout=5)
+        def run(cmd, **kwargs):
+            self.assertIs(kwargs.get('need'), False)
+            target = Path(cmd[-1]); paths.append(target)
+            target.write_bytes(bytes([255]) * 16)
+            barrier.wait()
+        c.run = run
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(2) as executor:
+            results = list(executor.map(lambda _: env['gfx_content_crop']({'dur': 1}), range(2)))
+        self.assertEqual(results, ['2:2:0:0'] * 2)
+        self.assertEqual(len(set(paths)), 2)
+        self.assertTrue(all(not p.parent.exists() for p in paths))
+        self.assertEqual(sentinel.read_bytes(), b'keep')
+        self.assertTrue(legacy.is_symlink())
+        # Failure and short output preserve the existing whole-frame fallback,
+        # without consulting an old shared raw file or leaving owned outputs.
+        for write_short in (False, True):
+            def failed_run(cmd, **kwargs):
+                paths.append(Path(cmd[-1]))
+                if write_short:
+                    Path(cmd[-1]).write_bytes(b'x')
+            c.run = failed_run
+            self.assertIsNone(env['gfx_content_crop']({'dur': 1}))
+        self.assertTrue(all(not p.parent.exists() for p in paths))
+        self.assertEqual(sentinel.read_bytes(), b'keep')
+        self.assertTrue(legacy.is_symlink())
+
     def test_temporary_directory_create_failure_propagates(self):
         c = self.context(); failure = PermissionError('create failure')
         with patch.object(qc.tempfile, 'TemporaryDirectory', side_effect=failure), \
