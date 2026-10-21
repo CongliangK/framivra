@@ -21,6 +21,8 @@ import sqlite3
 import struct
 import sys
 
+from wav_float32 import write_wav_float32
+
 FT = {0: 'CharSize', 1: 'StartTag', 2: 'EndTag', 3: 'String', 4: 'Int', 5: 'Bool',
       6: 'Long', 7: 'LongLong', 8: 'SizeT', 9: 'Float', 10: 'Double', 11: 'Data',
       12: 'Raw', 13: 'Push', 14: 'Pop', 15: 'Name', 16: 'Blob'}
@@ -143,16 +145,6 @@ def findall(node, tag, out=None):
             out.append(c)
         findall(c, tag, out)
     return out
-
-
-def write_wav_float32(path, samples_f32, rate):
-    """单声道 float32 WAV（WAVE_FORMAT_IEEE_FLOAT, tag=3），零第三方依赖。"""
-    data = samples_f32.astype('<f4').tobytes()
-    with open(path, 'wb') as f:
-        f.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVE')
-        f.write(b'fmt ' + struct.pack('<IHHIIHH', 16, 3, 1, rate, rate * 4, 4, 32))
-        f.write(b'data' + struct.pack('<I', len(data)))
-        f.write(data)
 
 
 def extract_all(aup3_path, out_dir):
