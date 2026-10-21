@@ -32,7 +32,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -82,6 +82,15 @@ class ManifestValidation(unittest.TestCase):
             self.assertIn("nonexistent_hook", joined)  # hooks 值域（已冻结扩展点）
             self.assertIn("{path, key}", joined)       # schema_keys 形状
             self.assertGreater(len(errors), 5)         # 收集全部错误不崩（非首错即止）
+        for label, fields in (
+                ("entry.cli", {"entry": {"cli": ["bad\0.py"]}}),
+                ("health.command", {"health": {"type": "command", "command": "bad\0.py --check"}}),
+                ("docs", {"docs": "bad\0.md"})):
+            with self.subTest(path=label), tempfile.TemporaryDirectory() as d:
+                pdir, _ = _make_plugin_dir(Path(d), **fields)
+                data, errors = pl_manifest.load_manifest(pdir)
+                self.assertIsNone(data)
+                self.assertTrue(any(label in error and "无法安全解析" in error for error in errors))
 
     def test_bad_kind_rejected(self):
         with tempfile.TemporaryDirectory() as d:
@@ -231,6 +240,23 @@ class ManifestFileEscape(unittest.TestCase):
             self.assertIsNone(demo[0]["manifest"])
             self.assertTrue(any("扫描根" in e for e in demo[0]["manifest_errors"]),
                             demo[0]["manifest_errors"])
+            # Static rejection must also stop the registered runtime bus before
+            # package import; a symlink cannot acquire builtin trust implicitly.
+            data = json.loads((pdir / "plugin.json").read_text())
+            data["extends"] = {"hooks": ["audio_events"],
+                               "schema_keys": [{"path": "root", "key": "demo"}]}
+            (pdir / "plugin.json").write_text(json.dumps(data))
+            (root / "plugins" / "registry.json").write_text(json.dumps({"plugins": {
+                "demo": {"installed": True, "enabled": True, "version": "1.0.0",
+                         "hooks": ["audio_events"],
+                         "keys": [{"path": "root", "key": "demo"}]}}}))
+            from types import SimpleNamespace
+            with mock.patch.object(pl_registry, "REPO_ROOT", root), \
+                    mock.patch.object(pl_hooks.importlib, "import_module") as importer:
+                self.assertEqual(pl_registry.plugin_module_dir("demo"), (None, None))
+                with self.assertRaisesRegex(RuntimeError, "缺少有效 manifest 导入锚"):
+                    pl_hooks.run_audio_events(SimpleNamespace(tl={"demo": True}), [])
+                importer.assert_not_called()
 
 
 # ---------------------------------------------------------------- registry
@@ -250,6 +276,14 @@ class RegistryTest(unittest.TestCase):
         self.assertTrue(reg["duck-static"]["installed"])
         self.assertEqual(reg["duck-static"]["version"], "1.0.0")
         self.assertEqual(reg["duck-static"]["hooks"], ["validate", "audio_events"])
+        for data in ({}, [], {"plugins": None}, {"plugins": []}):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as d:
+                root = Path(d); (root / "plugins").mkdir()
+                (root / "plugins" / "registry.json").write_text(json.dumps(data))
+                warning = io.StringIO()
+                with redirect_stderr(warning):
+                    self.assertEqual(pl_registry.load_static_registry(root), {"plugins": {}})
+                self.assertIn("结构不符", warning.getvalue())
 
     def test_lookup_key(self):
         name, ki = pl_registry.lookup_key("denoise", REPO)

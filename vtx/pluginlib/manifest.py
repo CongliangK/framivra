@@ -55,6 +55,9 @@ def _check_rel_inside(root: Path, value: str, label: str, errors: list,
     except OSError:
         errors.append(f"{label} 指向的文件不存在（含断链）: {value}")
         return None
+    except (ValueError, RuntimeError) as error:
+        errors.append(f"{label} 路径无法安全解析: {value!r}（{error}）")
+        return None
     if not resolved.is_relative_to(root_real):
         errors.append(
             f"{label} 符号链接解析后落在插件根外（安全节 §2.4）: {value} -> {resolved}")
