@@ -1,5 +1,5 @@
 """Real entry-point failures remain a single strict JSON document."""
-from tests.diagnostics._support import temporary_root
+from tests._support import temporary_root
 import json
 import os
 import subprocess

@@ -29,34 +29,8 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
 from scripts.gfx import gfx_golden as gg  # noqa: E402
 from PIL import Image    # noqa: E402
-
-W, H = 64, 48
-
-
-def _make_frame(path: Path, i: int, tamper: bool = False):
-    """第 i 帧内容随帧号确定变化；tamper=True 改一个像素（模拟渲染差异）。"""
-    im = Image.new("RGBA", (W, H), (i % 256, (i * 7) % 256, (i * 13) % 256, 255))
-    if tamper:
-        im.putpixel((0, 0), (255, 255, 255, 0))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    im.save(path)
-
-
-def _project(root: Path, clips):
-    """clips = [(src, dur)]：写假 html + timeline.json，返回 timeline 路径。"""
-    for src, _ in clips:
-        p = root / src
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("<html><body>fake gfx page</body></html>", encoding="utf-8")
-    tl = {"project": {"fps": 30, "duration_frames": sum(d for _, d in clips),
-                      "width": 1920, "height": 1080},
-          "sources": [], "video_tracks": [{"name": "gfx", "kind": "gfx",
-                                           "clips": [{"src": s, "dst_in": 0, "dur": d}
-                                                     for s, d in clips]}],
-          "subtitles": [], "audio_tracks": []}
-    tp = root / "timeline.json"
-    tp.write_text(json.dumps(tl), encoding="utf-8")
-    return tp
+from tests._support import golden_project as _project, temporary_root
+from tests.gfx._png import golden_frame as _make_frame
 
 
 def _fill_cache(tp: Path, clips, skip=(), tamper=()):
@@ -77,9 +51,7 @@ class GfxGolden(unittest.TestCase):
         browser = mock.patch.object(gg, "chrome_version", return_value="unit fixture; not real browser")
         browser.start()
         self.addCleanup(browser.stop)
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.root = temporary_root(self)
 
     def test_build_sample_and_full(self):
         """抽样页取 ≥sample 帧且含首中尾；--full-pages 页全帧；mode 标记正确。"""
@@ -429,9 +401,7 @@ class AnalyzeFrameDiffTiers(unittest.TestCase):
     """#104 DoD：四类人工合成帧，分类准确率必须 100%。"""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.root = temporary_root(self)
 
     def _analyze(self, ref, cand, heatmap_out=None):
         rp, cp = self.root / "ref.png", self.root / "cand.png"
@@ -491,9 +461,7 @@ class AnalyzeFrameDiffEdges(unittest.TestCase):
     """#104 裁决边界：容差分界 / 反例 / 输入口径 / 异常。"""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.root = temporary_root(self)
 
     def _analyze(self, ref, cand):
         rp, cp = self.root / "ref.png", self.root / "cand.png"
@@ -645,10 +613,8 @@ class AnalyzeHeatmap(unittest.TestCase):
     """#104 热力图：Tier-2/3 产出、Tier-1 不产；绿/红分工；原子写。"""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
+        self.root = temporary_root(self)
         self.hm = self.root / "heat"
-        self.addCleanup(self._tmp.cleanup)
 
     def _analyze(self, ref, cand, name="f0000"):
         rp, cp = self.root / "ref.png", self.root / "cand.png"
@@ -686,9 +652,7 @@ class AnalyzeCli(unittest.TestCase):
     """#104 analyze CLI：目录配对/单文件/缺帧/类型混用/退出码/报告与热力图。"""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.root = temporary_root(self)
 
     def _dirs(self, pairs):
         """pairs = {帧号: (ref_arr, cand_arr)} → 写出 ref/ cand/ 两帧目录。"""
@@ -790,9 +754,7 @@ class AnalyzeCorridorEquivalence(unittest.TestCase):
     """
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.root = temporary_root(self)
 
     _EQ_FIELDS = ("tier", "labels", "w", "h", "max_abs_diff", "max_abs_diff_rgb",
                   "max_abs_diff_alpha", "n_diff_pixels", "semi_diff_pixels",

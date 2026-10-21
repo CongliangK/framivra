@@ -8,21 +8,19 @@ import os
 import shutil
 from pathlib import Path
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vtx import acceptance as a
+from tests._support import temporary_root
 
 
 class AcceptanceFixture:
     """Shared package fixture without inheritable test methods."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = temporary_root(self)
         self.source = self.root / 'source'
         self.source.mkdir()
         self.timeline = self.source / 'timeline.json'

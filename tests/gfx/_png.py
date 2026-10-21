@@ -51,3 +51,13 @@ def unfilter_rgba(w, h, raw):
         out[y * w * 4:(y + 1) * w * 4] = row
         prev = row
     return bytes(out)
+
+
+def golden_frame(path, i, tamper=False, *, size=(64, 48)):
+    """第 i 帧内容随帧号确定变化；tamper=True 改一个像素（模拟渲染差异）。"""
+    from PIL import Image
+    im = Image.new("RGBA", size, (i % 256, (i * 7) % 256, (i * 13) % 256, 255))
+    if tamper:
+        im.putpixel((0, 0), (255, 255, 255, 0))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im.save(path)

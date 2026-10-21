@@ -4,7 +4,7 @@ These controls exercise the real legacy and agent entry points in separate
 processes. Frozen exits include the legacy's permissive empty containers; no
 media decoding, rendering, or optional dependency is needed.
 """
-from tests.diagnostics._support import temporary_root
+from tests._support import temporary_root
 import hashlib
 import json
 import os

@@ -1,5 +1,5 @@
 """Normally initialized probe: no origin inference and complete parsing chains."""
-from tests.diagnostics._support import temporary_root
+from tests._support import temporary_root
 import contextlib
 import io
 import json

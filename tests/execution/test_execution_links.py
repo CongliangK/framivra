@@ -4,7 +4,6 @@ import io
 import json
 import os
 from pathlib import Path
-import tempfile
 import unittest
 import uuid
 from unittest.mock import patch
@@ -12,13 +11,12 @@ from unittest.mock import patch
 from vtx import acceptance as a
 from vtx import execution_links as links
 from tests.acceptance import test_acceptance
+from tests._support import temporary_root
 
 
 class RequestTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = temporary_root(self)
         self.timeline = self.root / 'timeline.json'
         self.timeline.write_text('{}')
         self.export = str(uuid.uuid4())

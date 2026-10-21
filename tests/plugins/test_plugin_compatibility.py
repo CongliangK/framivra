@@ -9,7 +9,7 @@ from unittest import mock
 
 import vtx
 from vtx.pluginlib import compatibility, hooks, manifest, registry
-from tests._support import _make_plugin_dir, _clean_import_path
+from tests._support import _make_plugin_dir, _clean_import_path, temporary_root
 
 class CoreConstraintTests(unittest.TestCase):
     def test_supported_minimums(self):
@@ -46,9 +46,7 @@ class CoreConstraintTests(unittest.TestCase):
 
 class LoaderCompatibilityTests(unittest.TestCase):
     def setUp(self):
-        temp = tempfile.TemporaryDirectory()
-        self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name)
+        self.root = temporary_root(self)
         self.directory, self.data = _make_plugin_dir(self.root / "plugins")
         self.data["extends"]["hooks"] = ["audio_events"]
         self.data["extends"]["schema_keys"] = [{"path": "root", "key": "demo"}]
@@ -200,9 +198,7 @@ class LoaderCompatibilityTests(unittest.TestCase):
 
 class ProtocolMatrixTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = temporary_root(self)
         self.directory, self.data = _make_plugin_dir(self.root / "plugins")
         self.data["extends"] = {"hooks": ["audio_events"], "schema_keys": []}
         self.registry_file = self.root / "plugins" / "registry.json"

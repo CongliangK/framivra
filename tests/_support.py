@@ -12,6 +12,29 @@ import wave
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
 
 
+def temporary_root(test):
+    temporary = tempfile.TemporaryDirectory()
+    test.addCleanup(temporary.cleanup)
+    return Path(temporary.name)
+
+
+def golden_project(root: Path, clips):
+    """clips = [(src, dur)]：写假 html + timeline.json，返回 timeline 路径。"""
+    for src, _ in clips:
+        p = root / src
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("<html><body>fake gfx page</body></html>", encoding="utf-8")
+    tl = {"project": {"fps": 30, "duration_frames": sum(d for _, d in clips),
+                      "width": 1920, "height": 1080},
+          "sources": [], "video_tracks": [{"name": "gfx", "kind": "gfx",
+                                           "clips": [{"src": s, "dst_in": 0, "dur": d}
+                                                     for s, d in clips]}],
+          "subtitles": [], "audio_tracks": []}
+    tp = root / "timeline.json"
+    tp.write_text(json.dumps(tl), encoding="utf-8")
+    return tp
+
+
 class OwnedInitCheckout:
     """Copied init CLI contract fixture, not hardware/model acceptance.
 
