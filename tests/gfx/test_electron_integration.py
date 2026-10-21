@@ -112,6 +112,9 @@ class IntegrationGates(unittest.TestCase):
                 Ctx(self.p)
 
     def test_explicit_cli_never_calls_electron_or_cdp(self):
+        # This route test fakes rendering; do not inspect the host browser.
+        from tests.gfx._environment import bind_environment
+        bind_environment(self)
         with mock.patch.dict(os.environ, VTX_GFX='cli'), \
                 mock.patch.object(gfx_electron_stage, 'render_page', side_effect=AssertionError('Electron')), \
                 mock.patch('vtx.gfx_render.render_page', side_effect=AssertionError('CDP')), \
@@ -120,7 +123,9 @@ class IntegrationGates(unittest.TestCase):
             def render(frames, d, html, chrome, **kw):
                 self.assertEqual(chrome, 'unit-cli')
                 for f in frames: (d / f'f{f:04d}.png').write_bytes(png(192, 96, f))
-            with mock.patch.object(gfx_cli, 'render_cli', side_effect=render): cli.gfx(c)
+            with mock.patch.object(gfx_cli, 'render_cli', side_effect=render) as renderer:
+                cli.gfx(c)
+                renderer.assert_called()
             self.assertTrue((hygiene.gfx_dir(c, self.cl) / gfx_cli.COMPLETE_FILE).exists())
 
     def test_split_complete_warm_hit_and_receipt_identity(self):
