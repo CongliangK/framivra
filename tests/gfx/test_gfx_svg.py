@@ -488,6 +488,41 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
             self.assertEqual(set(gfx_svg.runtime_libraries('/fixture/engine')), {self.loader.name})
         self.assertEqual(ldd.call_count, 5)
 
+        # The path can become a link at the _file boundary. Its real return
+        # tuple, not an earlier caller resolution, must bind path and bytes.
+        real_file = self.environment._file
+        for slot in ('library', 'loader'):
+            for warm in (False, True):
+                with self.subTest(slot=slot, warm=warm):
+                    changing = self.root / f'changing-{slot}-{warm}.so'
+                    changing.write_bytes(b'original path bytes')
+                    target = self.root / f'target-{slot}-{warm}.so'
+                    target.write_bytes(b'redirected file bytes')
+                    expected = (str(target), gfx_svg.digest(b'redirected file bytes'))
+                    if warm:
+                        real_file(changing)
+                        real_file(target)
+                    observed = []
+                    def redirect(path):
+                        if Path(path) == changing:
+                            changing.unlink(); changing.symlink_to(target)
+                            value = real_file(path)
+                            observed.append(value)
+                            return value
+                        return real_file(path)
+                    member = changing if slot == 'library' else self.library
+                    loader = changing if slot == 'loader' else self.loader
+                    self.result.stdout = f'libgraphics.so => {member} (0x1234)\n{loader} (0x5678)\n'
+                    with mock.patch.object(gfx_svg.subprocess, 'run', return_value=self.result) as ldd, \
+                            mock.patch.object(self.environment, '_file', side_effect=redirect):
+                        record = gfx_svg.runtime_libraries('/fixture/engine')
+                    name = 'libgraphics.so' if slot == 'library' else changing.name
+                    self.assertEqual(observed, [expected])
+                    self.assertEqual(record[name], {'path': expected[0], 'sha256': expected[1]})
+                    ldd.assert_called_once()
+                    self.assertEqual(ldd.call_args.kwargs['timeout'], 15)
+                    self.assertEqual(ldd.call_args.kwargs['env'], gfx_svg.process_environment())
+
     def test_warm_closure_cannot_hide_errors_or_nonregular_members(self):
         with mock.patch.object(gfx_svg.subprocess, 'run', return_value=self.result):
             gfx_svg.runtime_libraries('/fixture/engine')
@@ -503,6 +538,23 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
             self.result.returncode = 0
             self.library.unlink(); self.library.mkdir()
             with self.assertRaises(ValueError): gfx_svg.runtime_libraries('/fixture/engine')
+
+            missing = self.root / 'missing.so'
+            broken = self.root / 'broken.so'; broken.symlink_to(missing)
+            loop = self.root / 'loop.so'; loop.symlink_to(loop)
+            refused = [missing, broken, loop]
+            if hasattr(os, 'mkfifo'):
+                fifo = self.root / 'fifo.so'; os.mkfifo(fifo)
+                refused.append(fifo)
+            for path in refused:
+                with self.subTest(path=path.name):
+                    self.result.stdout = f'libgraphics.so => {path} (0x1234)\n{self.loader} (0x5678)\n'
+                    with self.assertRaises((OSError, ValueError, RuntimeError)):
+                        gfx_svg.runtime_libraries('/fixture/engine')
+            with mock.patch.object(gfx_svg.subprocess, 'run',
+                                   side_effect=subprocess.TimeoutExpired('/fixture/ldd', 15)):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    gfx_svg.runtime_libraries('/fixture/engine')
 
 
 if __name__ == '__main__': unittest.main()
