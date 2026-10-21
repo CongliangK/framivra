@@ -253,8 +253,10 @@ const HINT=`<div class="empty">
 function load(tl){
   if(!tl || typeof tl!=="object" || Array.isArray(tl) || tl.version!==2)
     throw new Error("仅支持 version: 2 的时间线；旧版本或缺失版本不会自动转换，请使用当前 v2 工程。");
-  TL=tl; $("detail").innerHTML=HINT;
-  render(); fit();
+  // Build and validate the complete view off-DOM before replacing live state.
+  const scale=fitScale(tl);
+  render(tl,scale);
+  TL=tl; PXF=scale; $("zoom").value=scale; $("detail").innerHTML=HINT;
 }
 function loadText(txt){
   try{ load(JSON.parse(txt)); }
@@ -319,41 +321,47 @@ function validate(tl){
 
 /* ---------- 渲染 ---------- */
 function durF(tl){
-  if(tl.project?.duration_frames) return tl.project.duration_frames;
+  const duration=tl.project?.duration_frames;
+  if(duration!==undefined&&!Number.isSafeInteger(duration)) throw new Error("project.duration_frames 须为有限安全整数");
+  if(duration>0) return duration;
   let m=0; (tl.video_tracks||[]).forEach(t=>t.clips.forEach(c=>m=Math.max(m,c.dst_in+c.dur)));
   (tl.audio_tracks||[]).forEach(t=>t.events.forEach(e=>m=Math.max(m,e.out)));
+  if(!Number.isSafeInteger(m)||m<0) throw new Error("时间线区间须为有限安全整数");
   return m||1;
 }
-function render(){
-  const C=$("content"); C.innerHTML="";
-  if(!TL){ return; }
-  const D=durF(TL), fps=TL.project?.fps||CONSTRAINTS.fps[0], W=Math.max(D*PXF, 600);
+function render(tl=TL, pxf=PXF){
+  if(!tl) return;
+  const C=document.createElement("div");
+  const D=durF(tl), rawFps=tl.project?.fps, fps=CONSTRAINTS.fps.includes(rawFps)?rawFps:CONSTRAINTS.fps[0], W=Math.max(D*pxf,600);
+  const iss=validate(tl), errs=iss.filter(i=>i.lv==="err").length, warns=iss.length-errs;
   const ruler=document.createElement("div"); ruler.className="row head";
-  ruler.innerHTML=`<div class="lbl">标尺 · ${fps}FPS</div><div class="lane" id="lane0" style="width:${W}px"></div>`;
+  ruler.innerHTML=`<div class="lbl">标尺 · ${esc(rawFps??fps)}FPS</div><div class="lane" id="lane0" style="width:${W}px"></div>`;
   C.appendChild(ruler);
   const L=ruler.querySelector("#lane0");
-  let labEvery=1; while(labEvery*fps*PXF<70) labEvery*=2;
+  let labEvery=1; while(labEvery*fps*pxf<70) labEvery*=2;
   const frag=document.createDocumentFragment();
-  for(let f=0;f<=D;f++){
+  // Bound ruler work for long timelines without dropping any event blocks.
+  const tickStep=D>20000?Math.max(1,Math.ceil(D/(2000*fps))*fps):1;
+  for(let f=0;f<=D;f+=tickStep){
     const isSec=f%fps===0;
     if(!isSec){                                   /* 次刻度与逐帧刻度按缩放密度节流，避免重绘洪泛 */
-      if(f%4===0){ if(PXF<0.5) continue; }
-      else if(PXF<3) continue;
+      if(f%4===0){ if(pxf<0.5) continue; }
+      else if(pxf<3) continue;
     }
     const t=document.createElement("div");
     t.className="tick"+(isSec?" major":"");
-    t.style.left=f*PXF+"px"; frag.appendChild(t);
-    if(isSec&&(f/fps)%labEvery===0){ const lb=document.createElement("span"); lb.className="tlab"; lb.textContent=(f/fps)+"s"; lb.style.left=f*PXF+"px"; frag.appendChild(lb); }
+    t.style.left=f*pxf+"px"; frag.appendChild(t);
+    if(isSec&&(f/fps)%labEvery===0){ const lb=document.createElement("span"); lb.className="tlab"; lb.textContent=(f/fps)+"s"; lb.style.left=f*pxf+"px"; frag.appendChild(lb); }
   }
   L.appendChild(frag);
   /* 行定义：视频区自上而下 = 图层从上到下（数组倒序）；字幕、音频各自分区 */
-  const VT=TL.video_tracks||[];
+  const VT=tl.video_tracks||[];
   const rows=[];
   rows.push({kind:"sec", title:"视频 · 等价轨道，自上而下＝上层在上（数组顺序＝图层顺序）", cls:"s-vid"});
   for(let i=VT.length-1;i>=0;i--) rows.push({kind:"v",t:VT[i]});
-  if(TL.subtitles?.length){ rows.push({kind:"sec", title:"字幕 · ASS 烧录于全部图层之上", cls:"s-sub"}); rows.push({kind:"sub"}); }
+  if(tl.subtitles?.length){ rows.push({kind:"sec", title:"字幕 · ASS 烧录于全部图层之上", cls:"s-sub"}); rows.push({kind:"sub"}); }
   rows.push({kind:"sec", title:"音频 · 混音（amix 不归一 + 限幅）", cls:"s-aud"});
-  (TL.audio_tracks||[]).forEach(t=>rows.push({kind:"a",t}));
+  (tl.audio_tracks||[]).forEach(t=>rows.push({kind:"a",t}));
   rows.forEach(r=>{
     const row=document.createElement("div"); row.className="row"+(r.kind==="sec"?" sec "+r.cls:"");
     const lbl=document.createElement("div"); lbl.className="lbl";
@@ -361,48 +369,52 @@ function render(){
     if(r.kind==="sec"){ lbl.textContent=r.title.split(" · ")[0];
       lane.innerHTML=`<div class="secline"><span>${esc(r.title)}</span></div>`; }
     if(r.kind==="v"){
-      const kd=r.t.kind||"other", vcls="c-"+(VC[kd]?kd:"other");
-      const cn=KIND_CN[kd], cnLat=cn&&/^[A-Za-z0-9\- ]+$/.test(cn);
+      const kd=r.t.kind||"other", vcls="c-"+(Object.hasOwn(VC,kd)?kd:"other");
+      const cn=Object.hasOwn(KIND_CN,kd)?KIND_CN[kd]:undefined, cnLat=cn&&/^[A-Za-z0-9\- ]+$/.test(cn);
       const roleTxt=((cn&&!cnLat)?cn+" ":"")+(cnLat?cn:(kd||"")).toUpperCase();
-      lbl.innerHTML=`<span class="l1"><i class="dt ${vcls}"></i><b>${esc(r.t.name)}</b></span><span class="l2">${roleTxt} · ${r.t.clips.length} CLIPS</span>`;
-      r.t.clips.forEach(c=>blk(lane,vcls,c.src,c,vcls));
+      lbl.innerHTML=`<span class="l1"><i class="dt ${vcls}"></i><b>${esc(r.t.name)}</b></span><span class="l2">${esc(roleTxt)} · ${r.t.clips.length} CLIPS</span>`;
+      r.t.clips.forEach(c=>blk(lane,vcls,c.src,c,vcls,pxf));
     }
     if(r.kind==="a"){
-      const a=AMAP[r.t.name]||"a-other";
+      const a=Object.hasOwn(AMAP,r.t.name)?AMAP[r.t.name]:"a-other";
       lbl.innerHTML=`<span class="l1"><i class="dt ${a}"></i><b>${esc(r.t.name)}</b></span><span class="l2">AUDIO · ${r.t.events.length} 事件</span>`;
-      r.t.events.forEach((e,i)=>blk(lane,a,(e.src||"?")+"#"+(i+1),e,a));
+      r.t.events.forEach((e,i)=>blk(lane,a,(e.src||"?")+"#"+(i+1),e,a,pxf));
     }
-    if(r.kind==="sub"){ lbl.innerHTML=`<span class="l1"><i class="dt c-sub"></i><b>字幕</b></span><span class="l2">SUBTITLE · ${TL.subtitles.length} 条</span>`;
-      TL.subtitles.forEach((s,i)=>blk(lane,"c-sub",(i+1)+" · "+s.text,s,"c-sub")); }
+    if(r.kind==="sub"){ lbl.innerHTML=`<span class="l1"><i class="dt c-sub"></i><b>字幕</b></span><span class="l2">SUBTITLE · ${tl.subtitles.length} 条</span>`;
+      tl.subtitles.forEach((s,i)=>blk(lane,"c-sub",(i+1)+" · "+s.text,s,"c-sub",pxf)); }
     row.appendChild(lbl); row.appendChild(lane); C.appendChild(row);
   });
   C.style.width=(148+W)+"px";
   const ph=document.createElement("div"); ph.id="playhead"; C.appendChild(ph);
   /* meta + 画面构成统计 + 校验 */
-  const nEv=(TL.audio_tracks||[]).reduce((s,t)=>s+t.events.length,0);
-  const kindPct={};
-  VT.forEach(t=>{ const kd=KIND_CN[t.kind]||t.kind||"other";
+  const nEv=(tl.audio_tracks||[]).reduce((s,t)=>s+t.events.length,0);
+  const kindPct=Object.create(null);
+  VT.forEach(t=>{ const kd=Object.hasOwn(KIND_CN,t.kind)?KIND_CN[t.kind]:(t.kind||"other");
     kindPct[kd]=(kindPct[kd]||0)+t.clips.reduce((s,c)=>s+c.dur,0)/D*100; });
-  const comp=Object.entries(kindPct).map(([k,v])=>`<b>${k}</b> ${v.toFixed(0)}%`).join(" / ");
-  $("meta").innerHTML=`<span class="chip"><b>${(D/fps).toFixed(1)}s</b> / ${D}f</span>
-    <span class="chip"><b>${fps}</b>fps</span><span class="chip"><b>${TL.project?.width}x${TL.project?.height}</b></span>
-    <span class="chip">源 <b>${(TL.sources||[]).length}</b></span>
+  const comp=Object.entries(kindPct).map(([k,v])=>`<b>${esc(k)}</b> ${v.toFixed(0)}%`).join(" / ");
+  const meta=`<span class="chip"><b>${(D/fps).toFixed(1)}s</b> / ${D}f</span>
+    <span class="chip"><b>${esc(rawFps??fps)}</b>fps</span><span class="chip"><b>${esc(tl.project?.width)}x${esc(tl.project?.height)}</b></span>
+    <span class="chip">源 <b>${(tl.sources||[]).length}</b></span>
     <span class="chip">视频轨 <b>${VT.length}</b></span>
     <span class="chip">画面构成 ${comp}</span>
-    <span class="chip">字幕 <b>${(TL.subtitles||[]).length}</b></span>
-    <span class="chip">音轨 <b>${(TL.audio_tracks||[]).length}</b>/<b>${nEv}</b></span>`;
-  const iss=validate(TL), errs=iss.filter(i=>i.lv==="err").length, warns=iss.length-errs;
+    <span class="chip">字幕 <b>${(tl.subtitles||[]).length}</b></span>
+    <span class="chip">音轨 <b>${(tl.audio_tracks||[]).length}</b>/<b>${nEv}</b></span>`;
+  const badge=(errs?I.cross:I.check)+`<span>${errs?`${errs} 错误${warns?` / ${warns} 警告`:""}`:(warns?`${warns} 警告`:"校验通过")}</span>`;
+  const panel=iss.length?iss.map(i=>`<li class="${i.lv}">${i.lv==="err"?I.cross:I.warn}<span>${esc(i.m)}</span></li>`).join(""):"";
+  // No live DOM or model changes occur until every candidate node is ready.
+  $("content").replaceChildren(...C.childNodes); $("content").style.width=C.style.width;
+  $("meta").innerHTML=meta;
   const vb=$("vbadge");
   vb.className=errs?"bad":"";
-  vb.innerHTML=(errs?I.cross:I.check)+`<span>${errs?`${errs} 错误${warns?` / ${warns} 警告`:""}`:(warns?`${warns} 警告`:"校验通过")}</span>`;
+  vb.innerHTML=badge;
   $("vpanel").style.display="none";
-  $("vpanel").innerHTML=iss.length?iss.map(i=>`<li class="${i.lv}">${i.lv==="err"?I.cross:I.warn}<span>${esc(i.m)}</span></li>`).join(""):"";
+  $("vpanel").innerHTML=panel;
   vb.onclick=()=>{ const p=$("vpanel"); p.style.display=p.style.display==="block"?"none":"block"; };
 }
-function blk(lane, cls, name, e, idt){
+function blk(lane, cls, name, e, idt, scale=PXF){
   const inF=e.dst_in??e.in, outF=inF+(e.dur??(e.out-e.in));
   const b=document.createElement("div"); b.className="blk "+cls;
-  b.style.left=inF*PXF+"px"; b.style.width=Math.max((outF-inF)*PXF,3)+"px";
+  b.style.left=inF*scale+"px"; b.style.width=Math.max((outF-inF)*scale,3)+"px";
   if(parseFloat(b.style.width)<16) b.classList.add("tiny");
   const meta=[];
   if(e.dur!==undefined||e.out) meta.push(`${outF-inF}f`);
@@ -411,7 +423,7 @@ function blk(lane, cls, name, e, idt){
   if(e.fade_out_frames) meta.push(`fo ${e.fade_out_frames}`);
   if(e.pan!==undefined) meta.push(`pan ${e.pan>0?"R":"L"}${Math.abs(e.pan)}`);
   if(e.loop) meta.push("loop");
-  b.innerHTML=`<span class="nm">${esc(name)}</span>`+(meta.length&&parseFloat(b.style.width)>90?`<span class="meta">${meta.join(" · ")}</span>`:"");
+  b.innerHTML=`<span class="nm">${esc(name)}</span>`+(meta.length&&parseFloat(b.style.width)>90?`<span class="meta">${esc(meta.join(" · "))}</span>`:"");
   if(cls==="c-gfx") b.insertAdjacentHTML("beforeend",I.star);
   b.onclick=()=>{ document.querySelectorAll(".blk.sel").forEach(x=>x.classList.remove("sel")); b.classList.add("sel"); showDetail(e,name,idt); };
   lane.appendChild(b);
@@ -420,26 +432,28 @@ function showDetail(e,name,idt){
   const fps=TL.project?.fps||CONSTRAINTS.fps[0];
   const inF=e.dst_in??e.in, outF=inF+(e.dur??(e.out-e.in));
   const sec=f=>`${fm(f/fps)}s`;
-  let h=`<div class="dt-head"><i class="dt ${idt||"c-other"}"></i><div><div class="dname">${esc(name)}</div><div class="dlab">DETAILS</div></div></div><table>`;
-  h+=`<tr><td>成片窗口</td><td>${inF}–${outF} f（${sec(inF)} → ${sec(outF)}）</td></tr>`;
-  if(e.dur!==undefined) h+=`<tr><td>时长</td><td>${e.dur} f = ${sec(e.dur)}</td></tr>`;
+  let h=`<div class="dt-head"><i class="dt ${esc(idt||"c-other")}"></i><div><div class="dname">${esc(name)}</div><div class="dlab">DETAILS</div></div></div><table>`;
+  h+=`<tr><td>成片窗口</td><td>${esc(inF)}–${esc(outF)} f（${sec(inF)} → ${sec(outF)}）</td></tr>`;
+  if(e.dur!==undefined) h+=`<tr><td>时长</td><td>${esc(e.dur)} f = ${sec(e.dur)}</td></tr>`;
   if(e.src!==undefined){ const s=TL.sources?.find(x=>x.id===e.src);
     h+=`<tr><td>源</td><td>${esc(e.src)}${s?` · ${esc(s.path)}`:""}</td></tr>`; }
   if(e.src_in!==undefined){
-    h+=`<tr><td>源内窗口</td><td>${e.src_in}–${e.src_out??e.src_in+e.dur} f（${sec(e.src_in)} → ${sec(e.src_out??e.src_in+e.dur)}）</td></tr>`;
+    h+=`<tr><td>源内窗口</td><td>${esc(e.src_in)}–${esc(e.src_out??e.src_in+e.dur)} f（${sec(e.src_in)} → ${sec(e.src_out??e.src_in+e.dur)}）</td></tr>`;
     if(e.src_out!==undefined&&e.src_out-e.src_in!==e.dur) h+=`<tr><td colspan="2" class="derr">${I.warn}src_out-src_in ≠ dur（EDL 校验失败，以 vtx validate 为准）</td></tr>`;
   }
   for(const k of["text","scale","x","y","opacity","volume","pan","loop","transform"]) if(e[k]!==undefined) h+=`<tr><td>${k}</td><td>${esc(e[k])}</td></tr>`;
-  if(e.fade_in_frames) h+=`<tr><td>淡入(alpha)</td><td>${e.fade_in_frames} f = ${sec(e.fade_in_frames)}</td></tr>`;
-  if(e.fade_out_frames) h+=`<tr><td>淡出(alpha)</td><td>${e.fade_out_frames} f = ${sec(e.fade_out_frames)}</td></tr>`;
+  if(e.fade_in_frames) h+=`<tr><td>淡入(alpha)</td><td>${esc(e.fade_in_frames)} f = ${sec(e.fade_in_frames)}</td></tr>`;
+  if(e.fade_out_frames) h+=`<tr><td>淡出(alpha)</td><td>${esc(e.fade_out_frames)} f = ${sec(e.fade_out_frames)}</td></tr>`;
   h+=`</table><details><summary>原始 JSON</summary><pre>${esc(JSON.stringify(e,null,2))}</pre></details>`;
   $("detail").innerHTML=h;
 }
 
 /* ---------- 缩放 / 播放头 ---------- */
+function fitScale(tl){
+  return Math.min(24,Math.max(0.4,($("scroll").clientWidth-180)/durF(tl)));
+}
 function fit(){
-  const D=durF(TL||SAMPLE);
-  PXF=Math.min(24,Math.max(0.4,($("scroll").clientWidth-180)/D));
+  PXF=fitScale(TL||SAMPLE);
   $("zoom").value=PXF; render();
 }
 $("zoom").oninput=e=>{ PXF=+e.target.value; render(); };

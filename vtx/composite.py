@@ -8,7 +8,7 @@ import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from .encoders import pick_vcodec, nvenc_budget, nvenc_budget_value, nvenc_concurrency, seg_encoder_kind
+from .encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind
 from .hygiene import budget_gate, manifest_record, seg_key
 from . import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
@@ -645,19 +645,23 @@ class RenderPlan:
         workers = min(len(edges) - 1, max(1, (os.cpu_count() or 8) // 4))
         if workers > 1 and not c.dry and enc.startswith("NVENC"):
             workers = nvenc_concurrency(c, workers)
-        print(f"  段间并行：{workers} 线程")
         if c.dry:
+            print(f"  段间并行：{workers} 线程")
             segs = [render_one(si) for si in range(len(edges) - 1)]
         else:
-            # NVENC 会话预算（方案二阶段3）：批次开始一次性占 min(workers, 预算) 个槽、
+            # NVENC 会话预算：批次获取同一冻结分配器授予的有效槽数、
             # 结束释放。与探测的分工（见 encoders.nvenc_budget 注释）：nvenc_concurrency
             # 管「会话真可用」（workers 已被它钳到驱动可用会话数），nvenc_budget 管
             # 「本进程内不超发」（防段渲染与 seg 预编码等进程内其他 NVENC 点叠加）——
             # 批次级整段持有，不与逐任务的探测钳制重复。x264 段不占预算。
-            batch = (nvenc_budget(c, min(workers, nvenc_budget_value()))
-                     if enc.startswith("NVENC") else contextlib.nullcontext())
-            with batch, ThreadPoolExecutor(workers) as ex:
-                segs = list(ex.map(render_one, range(len(edges) - 1)))   # map 保序 → concat 顺序确定
+            batch = (nvenc_budget(c, workers)
+                     if enc.startswith("NVENC") else contextlib.nullcontext(workers))
+            with batch as granted:
+                print(f"  段间并行：{granted} 线程")
+                # The executor must not outnumber the slots actually reserved
+                # from the same frozen (configuration + VRAM) allocator.
+                with ThreadPoolExecutor(granted) as ex:
+                    segs = list(ex.map(render_one, range(len(edges) - 1)))   # map 保序 → concat 顺序确定
         lst = vdir / "list.txt"
         # PR#1（Windows 实测）：相对路径 concat 项在含 '#' 等特殊字符的目录下会被
         # 按清单目录做 URL 基准解析出错；绝对 POSIX 路径 + 引号转义规避（-safe 0 已带）。

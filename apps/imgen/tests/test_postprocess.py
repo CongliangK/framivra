@@ -6,10 +6,13 @@
 缩小（4K 源→1080p）。测试输入 PNG 全部 ffmpeg 合成（KB 级，不依赖 PIL/numpy），
 断言用 ffprobe（width/height/pix_fmt）。
 """
+import base64
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from . import _loader   # v2 P2a：tests 成包后相对导入
 
@@ -52,6 +55,54 @@ class FilterGoldenTest(unittest.TestCase):
         self.assertEqual(postprocess.kind_target("vertical"), (1080, 1920))
         with self.assertRaises(ValueError):
             postprocess.kind_target("raw")  # postprocess 必须 crop 目标
+
+
+class SameFileSafetyTest(unittest.TestCase):
+    PNG = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=")
+
+    def test_same_file_aliases_are_rejected_before_external_tools(self):
+        for alias in ("same", "normalized", "symlink", "hardlink"):
+            with self.subTest(alias=alias), tempfile.TemporaryDirectory() as d:
+                src = Path(d) / "source.png"
+                src.write_bytes(self.PNG)
+                dst = src
+                if alias == "normalized":
+                    (Path(d) / "nested").mkdir()
+                    dst = Path(d) / "nested" / ".." / src.name
+                elif alias in ("symlink", "hardlink"):
+                    dst = Path(d) / "alias.png"
+                    try:
+                        dst.symlink_to(src) if alias == "symlink" else os.link(src, dst)
+                    except (OSError, NotImplementedError) as exc:
+                        self.skipTest(f"host cannot create {alias}: {exc}")
+                with mock.patch.object(postprocess, "probe_image",
+                                       return_value={"width": 1, "height": 1, "pix_fmt": "rgb24"}) as probe, \
+                        mock.patch.object(postprocess.subprocess, "run",
+                                          return_value=SimpleNamespace(returncode=1, stderr="same input")) as runner:
+                    with self.assertRaisesRegex(postprocess.PostprocessError, "不同"):
+                        postprocess.cover_crop(src, dst, 1, 1)
+                probe.assert_not_called()
+                runner.assert_not_called()
+                self.assertEqual(src.read_bytes(), self.PNG)
+                self.assertEqual(dst.read_bytes(), self.PNG)
+
+    def test_distinct_output_still_runs_and_verifies(self):
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = Path(d) / "source.png", Path(d) / "out.png"
+            src.write_bytes(self.PNG)
+            info = {"width": 1, "height": 1, "pix_fmt": "rgb24"}
+            def render(argv, **kwargs):
+                self.assertEqual(argv[-1], str(dst))
+                dst.write_bytes(self.PNG)
+                return SimpleNamespace(returncode=0, stderr="")
+            with mock.patch.object(postprocess, "probe_image", return_value=info) as probe, \
+                    mock.patch.object(postprocess.subprocess, "run", side_effect=render) as runner:
+                self.assertEqual(postprocess.cover_crop(src, dst, 1, 1), dst)
+            self.assertEqual(probe.call_args_list, [mock.call(src), mock.call(dst)])
+            runner.assert_called_once()
+            self.assertEqual(src.read_bytes(), self.PNG)
+            self.assertEqual(dst.read_bytes(), self.PNG)
 
 
 class RealCropTest(unittest.TestCase):

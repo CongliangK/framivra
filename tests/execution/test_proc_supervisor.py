@@ -89,8 +89,8 @@ if ROLE == "child":
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         with open(lock_path + ".pid", "a") as pf:
             pf.write(f"{os.getpid()}\\n")
-    while True:
-        time.sleep(0.5)
+        while True:
+            time.sleep(0.5)
     raise SystemExit(0)
 
 mode, profile = sys.argv[2], sys.argv[3]
@@ -302,7 +302,7 @@ class HostSigkillDoD(_ProjectFixture):
         self.assertIsNotNone(guard.poll(), '守卫随父存活管道关闭退出')
         self.assertEqual(reap_orphan_workers(c),
                          {'ledgers': 0, 'killed': 0, 'live_host': 0,
-                          'stale': 0, 'removed': 0})
+                          'stale': 0, 'removed': 0, 'kill_failed': 0})
 
     def test_reap_never_kills_on_pid_reuse_boot_mismatch_or_broken_ledger(self):
         # 防误杀三态：PID 回绕（starttime 不符）/ 旧开机账本（boot_id 不符）/
@@ -342,7 +342,8 @@ class HostSigkillDoD(_ProjectFixture):
     def test_forged_ledger_pgid_zero_is_clean_failure_never_kills_caller(self):
         # R103-1 回归（红队 poc_e/poc_cli）：伪造 pgid=0 账本 → reap 按
         # broken_ledger 干净失败（只清目录、killed=0），绝不 killpg(0)——
-        # 本测试进程能活着走到断言，本身即证明调用方进程组未被反向击杀。
+        # 本例在测试宿主内运行，必须在信号边界截获；即使防护回归，
+        # 也只能导致断言失败，不能真的向测试宿主进程组发信号。
         tmp_root = self.root / 'cache' / hygiene.TMP
         tmp_root.mkdir(parents=True)
         d = tmp_root / '20260101T000000Z-gfx_sim-fake-pgid0'
@@ -352,7 +353,14 @@ class HostSigkillDoD(_ProjectFixture):
              'host_pid': 999_999_999, 'host_start_time_ticks': 1,
              'boot_id': boot_id()}), encoding='utf-8')
         my_group = os.getpgid(0)
-        stats = reap_orphan_workers(self.ctx())
+        with mock.patch.object(proc_supervisor.os, 'killpg') as killpg:
+            try:
+                stats = reap_orphan_workers(self.ctx())
+                killpg.assert_not_called()
+            finally:
+                # 断言失败后 fixture 还会 reap；先摘掉本例伪造的账本，
+                # 避免 mock 撤销后清理路径重试同一危险目标。
+                (d / WORKER_LEDGER).unlink(missing_ok=True)
         self.assertEqual((stats['killed'], stats['stale'], stats['removed']),
                          (0, 1, 1), 'pgid=0 须按损坏账本只清目录，零击杀')
         self.assertFalse(d.exists())
@@ -535,7 +543,7 @@ class LineageWhitelistDrillTests(_ProjectFixture):
         self.assertEqual(rep['reap_status'], 'lineage_denied')
         self.assertEqual(rep['stats'], {'ledgers': 1, 'killed': 0,
                                         'live_host': 0, 'stale': 1,
-                                        'removed': 1})
+                                        'removed': 1, 'kill_failed': 0})
         self.assertFalse(rep['ledger_dir_exists'], '账本目录须按陈旧语义清理')
         self.assertTrue(rep['canary_alive'], '同组金丝雀存活=零击杀铁证')
         self.assertIn(os.getpid(), group_live_members(os.getpgid(0)),
@@ -760,6 +768,119 @@ class SandboxCacheNamespaceTests(_ProjectFixture):
                 self.assertTrue(d1.is_dir() and d2.is_dir())
             self.assertFalse(d2.exists())
         self.assertFalse(d1.exists())
+
+
+class FailedKillRetention(unittest.TestCase):
+    """Pure mocked signaling over owned temporary files; never spawn or signal."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='failed-kill-retention-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps(dict(
+            project=dict(fps=30, width=640, height=360, duration_frames=30),
+            sources=[], video_tracks=[], audio_tracks=[], subtitles=[])))
+        self.c = Ctx(timeline)
+        self.run_dir = self.c.cache / 'tmp' / 'owned-run'
+        self.run_dir.mkdir(parents=True)
+        self.ledger = self.run_dir / WORKER_LEDGER
+        self.record = dict(schema=1, pgid=424242, start_time_ticks=111,
+                           host_pid=424243, host_start_time_ticks=222, boot_id='test-boot')
+        self.ledger.write_text(json.dumps(self.record))
+        for name in ('killpg', 'kill'):
+            patcher = mock.patch.object(proc_supervisor.os, name,
+                                       side_effect=AssertionError('real signal forbidden'))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_reaper_retains_failed_kill_then_retries_successfully(self):
+        with mock.patch.object(proc_supervisor, '_DARWIN_PROC', None), \
+                mock.patch.object(proc_supervisor, 'boot_id', return_value='test-boot'), \
+                mock.patch.object(proc_supervisor, 'proc_starttime',
+                                  side_effect=lambda pid: 111 if pid == 424242 else None), \
+                mock.patch.object(proc_supervisor, 'group_live_members', return_value=[424242]), \
+                mock.patch.object(proc_supervisor, 'kill_group', return_value=False) as kill:
+            stats = reap_orphan_workers(self.c)
+            self.assertEqual((stats['killed'], stats['removed'], stats.get('kill_failed', 0)), (0, 0, 1))
+            self.assertEqual(json.loads(self.ledger.read_text()), self.record)
+            kill.assert_called_once_with(424242)
+            kill.return_value = True
+            stats = reap_orphan_workers(self.c)
+            self.assertEqual((stats['killed'], stats['removed'], stats.get('kill_failed', 0)), (1, 1, 0))
+        self.assertFalse(self.run_dir.exists())
+
+    def test_tmp_cleanup_retains_unsettled_or_uncertain_workers(self):
+        for outcome in ('kill_failed', 'live_host', OSError('unknown process state')):
+            with self.subTest(outcome=outcome):
+                self.run_dir.mkdir(parents=True, exist_ok=True)
+                self.ledger.write_text(json.dumps(self.record))
+                kwargs = ({'side_effect': outcome} if isinstance(outcome, Exception)
+                          else {'return_value': outcome})
+                with mock.patch.object(proc_supervisor, 'reap_run_dir', **kwargs):
+                    with hygiene._TmpDir(self.run_dir):
+                        pass
+                self.assertTrue(self.ledger.is_file())
+        with mock.patch.object(proc_supervisor, 'reap_run_dir', return_value='already_dead'):
+            with hygiene._TmpDir(self.run_dir):
+                pass
+        self.assertFalse(self.run_dir.exists())
+
+    def supervisor(self):
+        group = SupervisedProcessGroup(self.c, [], backend_id='test')
+        group.run_dir = self.run_dir
+        group.pgid = 424242
+        group._tmp = hygiene._TmpDir(self.run_dir)
+        group._stopped = False
+        return group
+
+    def test_stop_retains_failed_kill_even_before_ledger_publication(self):
+        for published in (True, False):
+            with self.subTest(published=published):
+                self.run_dir.mkdir(parents=True, exist_ok=True)
+                self.ledger.write_text(json.dumps(self.record))
+                if not published:
+                    self.ledger.unlink()
+                group = self.supervisor()
+                group.proc = mock.Mock()
+                group.proc.poll.return_value = None
+                with mock.patch.object(proc_supervisor, 'group_live_members', return_value=[424242]), \
+                        mock.patch.object(proc_supervisor, 'kill_group', return_value=False), \
+                        mock.patch.object(group, '_close_pipe_and_reap_guard') as close, \
+                        mock.patch.object(group, '_unlink_ledger') as unlink:
+                    group.stop()
+                    group.stop()  # idempotent and does not lose the retained directory
+                close.assert_called_once_with()
+                unlink.assert_not_called()
+                self.assertTrue(self.run_dir.is_dir())
+                self.assertEqual(self.ledger.exists(), published)
+
+    def test_stop_termination_exception_still_closes_guard_and_retains(self):
+        group = self.supervisor()
+        original = RuntimeError('termination failed')
+        with mock.patch.object(group, '_terminate_worker', side_effect=original), \
+                mock.patch.object(group, '_close_pipe_and_reap_guard') as close:
+            with self.assertRaises(RuntimeError) as caught:
+                group.stop()
+        self.assertIs(caught.exception, original)
+        close.assert_called_once_with()
+        self.assertTrue(self.ledger.is_file())
+
+    def test_stop_success_removes_ledger_before_guard_then_tmp(self):
+        group = self.supervisor()
+        def close():
+            self.assertFalse(self.ledger.exists())
+            self.assertTrue(self.run_dir.is_dir())
+        with mock.patch.object(group, '_terminate_worker', return_value=True), \
+                mock.patch.object(group, '_close_pipe_and_reap_guard', side_effect=close) as closed:
+            group.stop()
+        closed.assert_called_once_with()
+        self.assertFalse(self.run_dir.exists())
+
+    def test_cli_reports_incomplete_reaping_as_failure(self):
+        stats = dict(ledgers=1, killed=0, live_host=0, stale=0, removed=0, kill_failed=1)
+        with mock.patch('vtx.infra.Ctx', return_value=self.c), \
+                mock.patch.object(proc_supervisor, 'reap_orphan_workers', return_value=stats):
+            self.assertEqual(proc_supervisor.main(['reap', str(self.root / 'timeline.json')]), 1)
 
 
 if __name__ == '__main__':

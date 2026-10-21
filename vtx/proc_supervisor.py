@@ -334,7 +334,7 @@ def kill_group(pgid, *, timeout: float = 10.0) -> bool:
     if wait_group_empty(pgid, timeout):
         return True
     print(f"⚠ 监管器：进程组 {pgid} 击杀后 {timeout}s 仍有残活成员 "
-          f"{group_live_members(pgid)}（目录移除照常，残员交由账本下轮清扫）")
+          f"{group_live_members(pgid)}（保留目录与账本，供后续清扫重试）")
     return False
 
 
@@ -488,19 +488,27 @@ class SupervisedProcessGroup:
             raise
 
     def stop(self):
-        """正常收尾（幂等）：优雅停组 → 删账本 → 关管道收守卫 → tmp_run 收尾。
-        半启动（start 中途异常）同样安全：各槽位 None 自守。"""
+        """Stop owned workers; retain recovery evidence unless termination completed."""
         if self._stopped and self._tmp is None:
             return
         self._stopped = True
+        completed = False
         try:
-            self._terminate_worker()
-            self._unlink_ledger()
-            self._close_pipe_and_reap_guard()
+            completed = self._terminate_worker()
+            if completed:
+                self._unlink_ledger()
         finally:
-            if self._tmp is not None:
-                tmp, self._tmp = self._tmp, None
-                tmp.__exit__(None, None, None)   # 账本已删→清扫 no-op + rmtree
+            try:
+                self._close_pipe_and_reap_guard()
+            finally:
+                if self._tmp is not None:
+                    tmp, self._tmp = self._tmp, None
+                    if completed:
+                        tmp.__exit__(None, None, None)
+                    else:
+                        # A half-start may not have published its ledger yet.
+                        # Do not delegate this decision to ledger-only cleanup.
+                        print(f"⚠ 监管器：Worker 组尚未确认清空，保留运行目录/账本: {self.run_dir}")
 
     def __enter__(self):
         return self.start()
@@ -519,11 +527,13 @@ class SupervisedProcessGroup:
                 pass
         if self.pgid is not None and group_live_members(self.pgid):
             try:
-                kill_group(self.pgid)   # 残员兜底（僵尸不计）
+                if not kill_group(self.pgid):   # 残员兜底（僵尸不计）
+                    return False
             except LineageKillDenied as e:
                 # 自起子会话 Worker 组不可能命中白名单；真命中说明谱系被
                 # 异常改写——告警并继续收尾（删账本/清目录），零击杀。
-                print(f"⚠ 监管器：{e}——Worker 组拒杀，残员交 reap 按账本处理")
+                print(f"⚠ 监管器：{e}——Worker 组拒杀，按既定零击杀语义收尾")
+        return True
 
     def _ledger_path(self) -> Path:
         return self.run_dir / WORKER_LEDGER
@@ -582,6 +592,7 @@ class SupervisedProcessGroup:
 #   no_ledger      无账本（正常收尾后的空目录）——不动进程
 #   live_host      宿主仍存活（host_pid+starttime 吻合）——活动组，跳过一切
 #   killed         已 killpg 并等进程表清空
+#   kill_failed    击杀后仍有残活成员——保留目录与账本，后续重试
 #   already_dead   组已无存活成员（守卫/PDEATHSIG 已收走）
 #   pid_reuse      组长 pid 已被无关进程复用（starttime 不符）——只清目录不杀
 #   stale_boot     账本属旧开机（boot_id 不符）——只清目录不杀
@@ -634,7 +645,8 @@ def reap_run_dir(run_dir, *, ledger_path=None) -> str:
         return "pid_reuse"   # pid 已归无关进程：宁可放过，绝不误杀
     if leader is not None or group_live_members(pgid):
         try:
-            kill_group(pgid)   # 白名单在最内层入口拦截谱系组（R3 必经）
+            if not kill_group(pgid):   # 白名单在最内层入口拦截谱系组（R3 必经）
+                return "kill_failed"
         except LineageKillDenied as e:
             print(f"⚠ 监管器：{e}——按 broken/stale 语义只清目录（零击杀）")
             return "lineage_denied"
@@ -664,7 +676,7 @@ def reap_orphan_workers(c) -> dict:
     """扫描 cache/tmp/ 下残留 .worker_pgid.json（工单项 2）：核对 starttime
     一致后 killpg，等进程表清空再安全移除临时 Profile 目录。宿主仍存活的
     活动组跳过（并行 vtx 进程互不误杀）。返回统计 dict；空项目零写态。"""
-    stats = {"ledgers": 0, "killed": 0, "live_host": 0, "stale": 0, "removed": 0}
+    stats = {"ledgers": 0, "killed": 0, "live_host": 0, "stale": 0, "removed": 0, "kill_failed": 0}
     tmp_root = Path(c.cache) / hygiene.TMP
     if not tmp_root.is_dir():
         return stats
@@ -675,6 +687,10 @@ def reap_orphan_workers(c) -> dict:
         status = reap_run_dir(run_dir)
         if status == "live_host":
             stats["live_host"] += 1
+            continue
+        if status == "kill_failed":
+            stats["kill_failed"] += 1
+            print(f"⚠ 监管器：组击杀未完成，保留运行目录/账本: {run_dir}")
             continue
         if status == "killed":
             stats["killed"] += 1
@@ -703,10 +719,11 @@ def main(argv=None) -> int:
             return 2
         from .infra import Ctx
         stats = reap_orphan_workers(Ctx(Path(argv[1])))
-        print(f"✓ 孤儿 Worker 清扫：账本 {stats['ledgers']} 份，击杀 {stats['killed']} 组，"
+        marker = "⚠" if stats["kill_failed"] else "✓"
+        print(f"{marker} 孤儿 Worker 清扫：账本 {stats['ledgers']} 份，击杀 {stats['killed']} 组，"
               f"存活宿主跳过 {stats['live_host']}，陈旧 {stats['stale']}，"
-              f"移除目录 {stats['removed']}")
-        return 0
+              f"移除目录 {stats['removed']}，未完成保留 {stats['kill_failed']}")
+        return 1 if stats["kill_failed"] else 0
     print("vtx.proc_supervisor：子命令 = guard <pgid> <fd>（内部）| "
           "reap <timeline.json>（孤儿 Worker 清扫）")
     return 2

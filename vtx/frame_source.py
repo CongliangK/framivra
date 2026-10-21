@@ -215,7 +215,11 @@ def png_source(c, clip):
         from .gfx_cli import COMPLETE_FILE
         expected = certificate(c)
         if expected is None:
-            return  # historical Electron has its independent producer checks
+            # Electron has no HTML environment certificate. Authenticate its
+            # independent producer contract lazily, never during preparation,
+            # then bind the following per-frame byte checks to that record.
+            from .gfx_cache_reader import require_electron_record
+            return require_electron_record(c, clip, directory)['sha256']
         try:
             record = json.loads((directory / COMPLETE_FILE).read_text())
         except (OSError, ValueError) as error:

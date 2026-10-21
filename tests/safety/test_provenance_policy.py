@@ -19,8 +19,11 @@ import contextlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -30,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO))
 
 from _support import SandboxCase, serve_fixtures  # noqa: E402
+import _install_fixture  # noqa: E402
 
 
 def _load(name, path):
@@ -41,6 +45,34 @@ def _load(name, path):
 
 VERIFY_PY = REPO / "scripts/release" / "verify_release.py"
 INSTALL_PY = REPO / "scripts" / "install.py"
+INSTALL_FIXTURE = Path(__file__).with_name("_install_fixture.py")
+
+
+class InstallerFixtureRouting(unittest.TestCase):
+    """No installer/HTTP/registry is executed by these host-isolation controls."""
+
+    def test_provenance_cli_uses_host_integration_optout_entrypoint(self):
+        case = SimpleNamespace(target=Path("owned/installed"), root=Path("owned"), env={})
+        with mock.patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            InstallerCliProvenanceGate._run(case, "--no-provenance")
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:2], [sys.executable, str(INSTALL_FIXTURE)])
+        self.assertNotIn(str(INSTALL_PY), argv)
+        self.assertIn("--no-provenance", argv)
+        self.assertIn("--non-interactive", argv)
+
+    def test_dependency_path_contains_only_temporary_fixtures(self):
+        before = dict(os.environ)
+        with tempfile.TemporaryDirectory(prefix="provenance-deps-") as temporary:
+            root = Path(temporary)
+            ffmpeg, env = _install_fixture.dependency_fixtures(root / "bin", root / "home")
+            self.assertEqual(env["PATH"], str(root / "bin"))
+            self.assertEqual(Path(shutil.which("ffmpeg", path=env["PATH"])), ffmpeg)
+            self.assertIsNone(shutil.which("winget", path=env["PATH"]))
+            self.assertIsNotNone(shutil.which("curl", path=env["PATH"]))
+            self.assertEqual(env["NO_PROXY"], "*")
+            self.assertIn(b"ffmpeg version 6.1 fixture", ffmpeg.read_bytes())
+        self.assertEqual(dict(os.environ), before)
 
 
 class VerifyReleaseModule(unittest.TestCase):
@@ -213,6 +245,9 @@ class InstallerCliProvenanceGate(SandboxCase):
             serve_fixtures(self.fixtures, self.hits))
         holder["releases_json"] = b'{"latest":"9.9.9"}'
         self.base_url = base_url
+        self.bin = self.sandbox / "bin"
+        self.ffmpeg, dependency_env = _install_fixture.dependency_fixtures(self.bin, self.home)
+        self.env.update(dependency_env)
         # 最小官方形制载荷(vt.py+VERSION+vtx/__init__.py)。
         import hashlib
         import io
@@ -232,7 +267,7 @@ class InstallerCliProvenanceGate(SandboxCase):
 
     def _run(self, *flags):
         return subprocess.run(
-            [sys.executable, str(INSTALL_PY), "--dir", str(self.target),
+            [sys.executable, str(INSTALL_FIXTURE), "--dir", str(self.target),
              "--version", "9.9.9", "--non-interactive", *flags],
             cwd=self.root, env=self.env, capture_output=True, text=True,
             encoding="utf-8", errors="replace",

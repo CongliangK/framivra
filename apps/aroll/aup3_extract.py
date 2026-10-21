@@ -26,32 +26,39 @@ FT = {0: 'CharSize', 1: 'StartTag', 2: 'EndTag', 3: 'String', 4: 'Int', 5: 'Bool
       12: 'Raw', 13: 'Push', 14: 'Pop', 15: 'Name', 16: 'Blob'}
 
 
+class Aup3FormatError(ValueError):
+    """Malformed or truncated serialized project data."""
+
+
 class R:
     def __init__(self, b):
         self.b, self.i = b, 0
 
     def u8(self):
-        v = self.b[self.i]; self.i += 1; return v
+        return self.raw(1)[0]
 
     def u16(self):
-        v = struct.unpack_from('<H', self.b, self.i)[0]; self.i += 2; return v
+        return struct.unpack('<H', self.raw(2))[0]
 
     def u32(self):
-        v = struct.unpack_from('<I', self.b, self.i)[0]; self.i += 4; return v
+        return struct.unpack('<I', self.raw(4))[0]
 
     def i32(self):
-        v = struct.unpack_from('<i', self.b, self.i)[0]; self.i += 4; return v
+        return struct.unpack('<i', self.raw(4))[0]
 
     def i64(self):
-        v = struct.unpack_from('<q', self.b, self.i)[0]; self.i += 8; return v
+        return struct.unpack('<q', self.raw(8))[0]
 
     def f32(self):
-        v = struct.unpack_from('<f', self.b, self.i)[0]; self.i += 4; return v
+        return struct.unpack('<f', self.raw(4))[0]
 
     def f64(self):
-        v = struct.unpack_from('<d', self.b, self.i)[0]; self.i += 8; return v
+        return struct.unpack('<d', self.raw(8))[0]
 
     def raw(self, n):
+        if n < 0 or n > len(self.b) - self.i:
+            raise Aup3FormatError(f'invalid length {n} at offset {self.i} '
+                                  f'({len(self.b) - self.i} bytes remaining)')
         v = self.b[self.i:self.i + n]; self.i += n; return v
 
 
@@ -274,3 +281,5 @@ if __name__ == '__main__':
                  '（确认是 Audacity 3.x 的 .aup3 文件且未损坏）')
     except OSError as e:  # 输出目录不可写等文件系统错误
         sys.exit(f'aup3_extract: 文件/目录访问失败：{e}')
+    except Aup3FormatError as e:
+        sys.exit(f'aup3_extract: 工程数据损坏：{e}')

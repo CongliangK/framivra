@@ -182,6 +182,18 @@ class ExternalEntries(unittest.TestCase):
         plugins = pc.external_entries(cfg, "external_plugins")
         self.assertTrue(plugins[0]["malformed"])
         self.assertTrue(plugins[1]["malformed"])
+        # Explicit JSON true is the code-trust boundary, not truthiness or == 1.
+        for key in ("external_apps", "external_plugins"):
+            for value in (True, False, None, 0, 1, -1, 0.0, 1.0, "true", "false",
+                          "0", "1", "", [], [1], {}, {"enabled": True}):
+                with self.subTest(key=key, enabled=value):
+                    original = {key: [{"path": "/never-imported", "enabled": value}]}
+                    before = json.dumps(original, sort_keys=True)
+                    self.assertEqual(pc.external_entries(original, key),
+                                     [{"path": "/never-imported", "enabled": value is True}])
+                    self.assertEqual(json.dumps(original, sort_keys=True), before)
+            self.assertEqual(pc.external_entries({key: [{"path": "/never-imported"}]}, key),
+                             [{"path": "/never-imported", "enabled": False}])
 
     def test_missing_key_returns_empty(self):
         self.assertEqual(pc.external_entries({}, "external_apps"), [])

@@ -30,7 +30,7 @@ qc/gates 并行的发布链场景下，两进程各自基于旧快照回写会�
 fcntl 时降级为仅进程内锁（本仓跨平台待验项目，Linux 为主战场）。
 root 缺省 = media 父目录的父目录（out/final.mp4 → 项目根）。
 """
-import hashlib, json, threading, time
+import hashlib, json, math, threading, time
 from pathlib import Path
 
 from .cache_state import media_stat_digest
@@ -83,6 +83,16 @@ def _write_entry_locked(rp: Path, key: str, entry: dict):
         pass  # Ordinary storage failures remain advisory; safety errors propagate.
 
 
+def _measurement(value):
+    """Missing/nonfinite/non-numeric measurements are unavailable, never a hit."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except OverflowError:  # JSON integers can exceed the finite float domain.
+        return None
+
+
 def lookup(path, root=None):
     """按内容键查回执；命中返回 entry dict（含 i_lufs/tp_dbfs），未命中/文件缺失
     /条目残缺返回 None（调用方回落真实测量）。只读不写：写入侧 tmp+os.replace
@@ -93,18 +103,18 @@ def lookup(path, root=None):
         return None
     with _LOCK:
         e = _load(_receipts_path(path, root))["entries"].get(k[0])
-    if isinstance(e, dict) and isinstance(e.get("i_lufs"), (int, float)) \
-            and isinstance(e.get("tp_dbfs"), (int, float)):
+    if isinstance(e, dict) and _measurement(e.get("i_lufs")) is not None \
+            and _measurement(e.get("tp_dbfs")) is not None:
         return e
     return None
 
 
 def measure_and_store(path, run_fn, root=None):
     """测量并归档：run_fn() -> (i_lufs, tp_dbfs)。失败（i/tp 为 None 或文件不可
-    stat）不落回执（下次重测）。返回 {"i_lufs": ..., "tp_dbfs": ...}。"""
+    stat；非有限/非数字测量按 None）不落回执（下次重测）。返回 {"i_lufs": ..., "tp_dbfs": ...}。"""
     path = Path(path)
     k = _key_of(path)
-    i, tp = run_fn()
+    i, tp = (_measurement(value) for value in run_fn())
     if k is None or i is None or tp is None:
         return {"i_lufs": i, "tp_dbfs": tp}
     entry = dict(k[1], i_lufs=float(i), tp_dbfs=float(tp),

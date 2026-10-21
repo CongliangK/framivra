@@ -112,6 +112,9 @@ class IntegrationGates(unittest.TestCase):
                 Ctx(self.p)
 
     def test_explicit_cli_never_calls_electron_or_cdp(self):
+        # This route test fakes rendering; do not inspect the host browser.
+        from tests.gfx._environment import bind_environment
+        bind_environment(self)
         with mock.patch.dict(os.environ, VTX_GFX='cli'), \
                 mock.patch.object(gfx_electron_stage, 'render_page', side_effect=AssertionError('Electron')), \
                 mock.patch('vtx.gfx_render.render_page', side_effect=AssertionError('CDP')), \
@@ -120,7 +123,9 @@ class IntegrationGates(unittest.TestCase):
             def render(frames, d, html, chrome, **kw):
                 self.assertEqual(chrome, 'unit-cli')
                 for f in frames: (d / f'f{f:04d}.png').write_bytes(png(192, 96, f))
-            with mock.patch.object(gfx_cli, 'render_cli', side_effect=render): cli.gfx(c)
+            with mock.patch.object(gfx_cli, 'render_cli', side_effect=render) as renderer:
+                cli.gfx(c)
+                renderer.assert_called()
             self.assertTrue((hygiene.gfx_dir(c, self.cl) / gfx_cli.COMPLETE_FILE).exists())
 
     def test_split_complete_warm_hit_and_receipt_identity(self):
@@ -135,6 +140,77 @@ class IntegrationGates(unittest.TestCase):
         self.assertEqual(rec['stages']['gfx']['effective_backend'], 'electron')
         self.assertEqual(rec['gfx_backend'], rec['stages']['gfx']['gfx_backend'])
         self.assertEqual(len(rec['stages']['gfx']['cached_page_keys']), 1)
+
+    def test_png_consumer_is_lazy_but_requires_producer_completion(self):
+        from vtx import frame_source, gfx_cache_reader
+        from vtx.composite import prepare_layers
+        with mock.patch.object(gfx_cache_reader, 'require_electron_record',
+                               side_effect=AssertionError('eager completion IO')), \
+                mock.patch('vtx.composite.seg_encoder_kind', return_value='x264'), \
+                mock.patch('vtx.composite.run_parallel'):
+            source = frame_source.png_source(self.c, self.cl)
+            layers = prepare_layers(self.c)
+        self.assertFalse(source.directory.exists())
+        self.assertEqual(layers[0]['source'].directory, source.directory)
+        self.d.mkdir(parents=True)
+        for frame in range(3):
+            source.frame_path(frame).write_bytes(png(192, 96, value=frame))
+        # Valid PNGs without producer evidence must fail before FFmpeg arguments.
+        plan = RenderPlan(self.c, False, 1, self.c.w, self.c.h)
+        with self.assertRaisesRegex(ValueError, 'producer'):
+            plan._layer_input_args(layers[0], 0)
+        self.assertFalse((self.d / gfx_cli.COMPLETE_FILE).exists())
+        self.run_gfx()
+        source.require_ready(1, 2)
+
+    def test_png_consumer_rechecks_marker_receipts_identity_and_pixels(self):
+        from vtx.frame_source import png_source, png_consumer_scope
+        self.run_gfx()
+        source = png_source(self.c, self.cl)
+        marker = self.d / gfx_cli.COMPLETE_FILE
+        record = json.loads(marker.read_text())
+        evidence = self.d / '.electron' / record['render_runs'][0]['run_id']
+        mutations = [(marker, None), (marker, b'{}'),
+                     (evidence / 'request.json', b'{}'),
+                     (evidence / 'adapter-result.json', b'{}'),
+                     (evidence / 'result.json', b'{}'),
+                     (source.frame_path(0), png(192, 96, value=42)),
+                     (self.root / 'page.html', b'<html>changed current source</html>'),
+                     (self.binary, b'changed current executable')]
+        layer = {'gfx': True, 'source': source}
+        with png_consumer_scope([layer]) as scoped:
+            bound = scoped[0]['source']
+            bound.require_ready()
+            for path, replacement in mutations:
+                with self.subTest(path=path.name, replacement=replacement):
+                    original = path.read_bytes()
+                    if replacement is None: path.unlink()
+                    else: path.write_bytes(replacement)
+                    before = {p: p.read_bytes() for p in self.d.rglob('*') if p.is_file()}
+                    try:
+                        with mock.patch.object(gfx_electron_stage, 'render_page',
+                                               side_effect=AssertionError('consumer rendered')), \
+                                self.assertRaises(ValueError):
+                            bound.require_ready(0, 1)
+                        self.assertEqual(before, {p: p.read_bytes() for p in self.d.rglob('*')
+                                                  if p.is_file()})
+                    finally:
+                        path.write_bytes(original)
+            source.require_ready()
+
+    def test_png_consumer_binds_post_authentication_bytes_to_marker_hashes(self):
+        from vtx import frame_source, gfx_cache_reader
+        self.run_gfx()
+        source = frame_source.png_source(self.c, self.cl)
+        authenticate = gfx_cache_reader.require_electron_record
+        def replace_after_authentication(*args):
+            record = authenticate(*args)
+            source.frame_path(1).write_bytes(png(192, 96, value=42))
+            return record
+        with mock.patch.object(gfx_cache_reader, 'require_electron_record',
+                               side_effect=replace_after_authentication), \
+                self.assertRaisesRegex(ValueError, 'digest changed'):
+            source.require_ready(1, 2)
 
     def test_blender_reader_uses_exact_completed_electron_cache(self):
         from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
@@ -220,7 +296,7 @@ class IntegrationGates(unittest.TestCase):
         adapter = json.loads(original[2])
         with self.assertRaises(ElectronRenderError):
             gfx_electron_stage.require_result(adapter, run['frames'], self.d, 192, 96)
-        self.assertIsNone(gfx_electron_stage.cached_runs(self.d, 3, self.d.name, 192, 96,
+        self.assertIsNone(gfx_electron_stage.cached_record(self.d, 3, self.d.name, 192, 96,
                                                        gfx_backend.identity(), hygiene.gfx_cache_ns()))
         # Valid bytes behind a symlink are still not producer evidence.
         for p in [*paths, self.d / 'f0000.png', self.d / gfx_cli.COMPLETE_FILE]:

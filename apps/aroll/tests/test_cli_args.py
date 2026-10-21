@@ -6,6 +6,8 @@
 运行：cd apps/aroll && env python3 -m unittest discover -s tests -t .
 （仅用标准库 + 子进程 list 形式传参，无 shell 注入面。）
 """
+import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,8 @@ import unittest
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(APP_DIR))
+import aup3_extract
 
 
 def run_cli(args):
@@ -46,6 +50,52 @@ class TrimTakesHelpTests(unittest.TestCase):
 
 
 class Aup3BadInputTests(unittest.TestCase):
+    def test_serialized_reads_reject_invalid_lengths_without_advancing(self):
+        for length in (-5, -1, 2, 2**31 - 1):
+            with self.subTest(length=length):
+                reader = aup3_extract.R(b'x')
+                with self.assertRaises(aup3_extract.Aup3FormatError):
+                    reader.raw(length)
+                self.assertEqual(reader.i, 0)
+        for method, size in [('u8', 1), ('u16', 2), ('u32', 4), ('i32', 4),
+                             ('i64', 8), ('f32', 4), ('f64', 8)]:
+            with self.subTest(method=method):
+                reader = aup3_extract.R(b'\0' * (size - 1))
+                with self.assertRaises(aup3_extract.Aup3FormatError):
+                    getattr(reader, method)()
+                self.assertEqual(reader.i, 0)
+
+    def test_variable_length_tokens_reject_bad_data_and_preserve_valid_data(self):
+        for token in (3, 11, 12, 16):
+            prefix = bytes([token]) + (struct.pack('<H', 1) if token in (3, 16) else b'')
+            for length in (-5, -1, 2, 2**31 - 1):
+                with self.subTest(token=token, length=length):
+                    with self.assertRaises(aup3_extract.Aup3FormatError):
+                        aup3_extract.parse_doc(prefix + struct.pack('<i', length) + b'x', {1: 'name'}, 1)
+            for payload in (b'', b'x'):
+                with self.subTest(token=token, payload=payload):
+                    events = aup3_extract.parse_doc(prefix + struct.pack('<i', len(payload)) + payload,
+                                                   {1: 'name'}, 1)
+                    expected = ('attr', 'name', payload.decode()) if token == 3 else (
+                        ('blob', 'name', payload) if token == 16 else
+                        (aup3_extract.FT[token], payload.decode()))
+                    self.assertEqual(events, [expected])
+        self.assertEqual(aup3_extract.parse_dict(b'\0\1\x0f\1\0\1\0x'), {1: 'x'})
+        with self.assertRaises(aup3_extract.Aup3FormatError):
+            aup3_extract.parse_dict(b'\0\1\x0f\1\0\2\0x')
+
+    def test_malformed_serialized_project_reports_clean_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / 'malformed.aup3'
+            with sqlite3.connect(project) as con:
+                con.execute('CREATE TABLE project (id INTEGER, dict BLOB, doc BLOB)')
+                con.execute('INSERT INTO project VALUES (1, ?, ?)',
+                            (b'\0\1', bytes.fromhex('0bfbffffff')))
+            r = run_cli(['aup3_extract.py', str(project), str(Path(td) / 'out')])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn('Traceback', r.stderr)
+        self.assertIn('工程数据损坏', r.stderr)
+
     def test_fake_aup3_reports_clean_error(self):
         with tempfile.TemporaryDirectory() as td:
             fake = Path(td) / "fake.aup3"

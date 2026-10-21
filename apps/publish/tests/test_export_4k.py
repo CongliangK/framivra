@@ -19,7 +19,9 @@ sys.executable 指向错误解释器，见全局 AGENTS.md）
 import argparse
 import io
 import json
-from contextlib import redirect_stderr
+import os
+import shutil
+from contextlib import redirect_stderr, redirect_stdout
 import subprocess
 import sys
 import tempfile
@@ -34,6 +36,7 @@ sys.path.insert(0, str(APP))               # export_4k.py 非包成员，按路�
 sys.path.insert(0, str(REPO))              # repo 根（v2 §1.4 包导入，不再注入 repo/vtx）
 
 import export_4k
+import compare_4k_quality
 from export_4k import (NVENC_ARGS, SCALE_4K, fallback_x264_cmd, project_root,
                        seg_cmd, seg_key, split_frames)
 
@@ -52,6 +55,114 @@ def write_timeline(td: Path, frames: int, fps: int = 30, w: int = 640, h: int = 
                                           "duration_frames": frames}}),
                   encoding="utf-8")
     return tl
+
+
+class TestQualitySampling(unittest.TestCase):
+    def test_nonpositive_media_frame_count_fails_before_extracting(self):
+        for total in (0, -1):
+            with self.subTest(total=total), \
+                 mock.patch.object(sys, 'argv', ['compare', 'a', 'b']), \
+                 mock.patch.object(compare_4k_quality, 'probe', return_value=(640, 360, 30, total)), \
+                 mock.patch.object(compare_4k_quality, 'extract_frame') as extract, \
+                 mock.patch.object(compare_4k_quality, 'raw_metric') as metric, \
+                 redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit:
+                compare_4k_quality.main()
+            self.assertEqual(exit.exception.code, 2)
+            extract.assert_not_called()
+            metric.assert_not_called()
+
+    def test_sampling_is_bounded_and_preserves_normal_seed_sequence(self):
+        for total, requested in ((1, 10), (2, 10), (9, 10), (30, 100),
+                                 (100, 10), (100, 0), (100, -1)):
+            with self.subTest(total=total, requested=requested):
+                rng = compare_4k_quality.random.Random(compare_4k_quality.SEED)
+                calls = []
+                def bounded_randrange(stop):
+                    calls.append(stop)
+                    if len(calls) > 100 + 10 * total:
+                        raise AssertionError('sampler failed to terminate within bounded draws')
+                    return rng.randrange(stop)
+                bounded_rng = SimpleNamespace(randrange=bounded_randrange)
+                extracted = []
+                def extract(path, n, fps, dst):
+                    extracted.append((path, n))
+                out, err = io.StringIO(), io.StringIO()
+                with mock.patch.object(sys, 'argv', ['compare', 'a', 'b', '--frames', str(requested)]), \
+                     mock.patch.object(compare_4k_quality, 'probe', return_value=(640, 360, 30, total)), \
+                     mock.patch.object(compare_4k_quality.random, 'Random', return_value=bounded_rng), \
+                     mock.patch.object(compare_4k_quality, 'extract_frame', side_effect=extract), \
+                     mock.patch.object(compare_4k_quality, 'raw_metric', return_value='average:inf All:1.0'), \
+                     redirect_stdout(out), redirect_stderr(err), self.assertRaises(SystemExit) as exit:
+                    compare_4k_quality.main()
+                self.assertEqual(exit.exception.code, 0)
+                frames = [n for path, n in extracted if path == 'a']
+                self.assertEqual(frames, [n for path, n in extracted if path == 'b'])
+                self.assertEqual(frames, sorted(set(frames)))
+                self.assertTrue(all(0 <= n < total for n in frames))
+                if requested > total:
+                    self.assertEqual(frames, list(range(total)))
+                    self.assertIn('检查全部帧', err.getvalue())
+                else:
+                    # Reproduce the previous valid-input sampling algorithm unchanged.
+                    expected = {0, total // 2, *(a for a, _ in split_frames(total, 8))}
+                    original_rng = compare_4k_quality.random.Random(compare_4k_quality.SEED)
+                    while len(expected) < max(1, requested):
+                        expected.add(original_rng.randrange(total))
+                    self.assertEqual(frames, sorted(expected))
+                    self.assertEqual(err.getvalue(), '')
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("bash"),
+                     "check_4k.sh requires Linux GNU stat/readlink and bash")
+class TestCheck4kLiteralArguments(unittest.TestCase):
+    def test_quoted_paths_and_numeric_inputs_are_data_not_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bindir = root / 'bin'; bindir.mkdir()
+            probe = bindir / 'ffprobe'
+            probe.write_text('#!' + sys.executable + '\n' + """
+import sys
+args = sys.argv[1:]
+entry = args[args.index('-show_entries') + 1]
+audio = '-select_streams' in args and args[args.index('-select_streams') + 1] == 'a:0'
+values = {'stream=width': '3840', 'stream=height': '2160',
+          'stream=r_frame_rate': '30/1', 'stream=avg_frame_rate': '30/1',
+          'stream=codec_name': 'aac' if audio else 'h264', 'stream=profile': 'High',
+          'stream=pix_fmt': 'yuv420p', 'stream=nb_read_packets': '60',
+          'stream=bit_rate': '192000' if audio else '10000000',
+          'format=duration': '2', 'stream=sample_rate': '48000', 'packet=flags': 'K_'}
+print(values[entry])
+""")
+            probe.chmod(0o755)
+            env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ.get('PATH', ''),
+                       BITRATE_CAP_MBPS='20.5')
+            media_dir = root / "quoted ' folder"; media_dir.mkdir()
+            media = media_dir / "clip 'name.mp4"
+            media.write_bytes(b'\0\0\0\x10moov' + b'\0' * 56)
+            timeline = media_dir / 'timeline.json'
+            timeline.write_text(json.dumps({'project': {'duration_frames': 60}}))
+            marker = root / 'must-not-execute'
+            expression = f"(__import__('pathlib').Path({str(marker)!r}).touch() or 60)"
+            for name, expected_frames, cap, expected_status in (
+                    ('auto', None, '20.5', 0), ('explicit', '60', '20.5', 0),
+                    ('frame_expression', expression, '20.5', 1),
+                    ('cap_expression', '60', expression, 1),
+                    ('real_quality_failure', '60', '1', 1)):
+                with self.subTest(name=name):
+                    marker.unlink(missing_ok=True)
+                    command = ['bash', str(APP / 'check_4k.sh'), str(media)]
+                    if expected_frames is not None:
+                        command.append(expected_frames)
+                    result = subprocess.run(command, cwd=root,
+                                            env=dict(env, BITRATE_CAP_MBPS=cap),
+                                            capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, expected_status, result.stdout + result.stderr)
+                    self.assertFalse(marker.exists())
+                    if expected_status == 0:
+                        self.assertIn('PASS=14 FAIL=0', result.stdout)
+                        self.assertNotIn('SKIP', result.stdout)
+                    if name == 'real_quality_failure':
+                        self.assertIn('FAIL  5 平均码率超门', result.stdout)
 
 
 class TestMaxrate(unittest.TestCase):
