@@ -51,13 +51,13 @@ blender --background --factory-startup --python apps/blender-bridge/json2blend.p
   （`已滤除 N 行 Blender DeprecationWarning`）；子进程退出码语义不变。
 - **退出码边界**：调用未配置 `--python-exit-code`；未捕获的 Blender Python 异常可能打印 traceback 而进程仍退出 0，不能仅凭退出 0 认定脚本成功。[原始实测与范围](https://github.com/CongliangK/framivra/blob/f1efe5f688b543ca11902c9538dec02a5c265961/plugins/blender-bridge/REPORT-F2.md#L84-L89)。
 
-- `--draft` / `--dry-run` / `all --until <截断>` 不触发（无正式产物语义）。
+- `--draft` / `--dry-run` 或停在 qc 之前的 `all --until` 不触发；`all --until qc` 与完整 `all` 一样可执行 finish。
 - qc 失败不阻断导出（2026-09-14 裁定：产物已就绪，存量假阴性项目也要能收尾）——
   `vtx all` 退出码按 qc/finish 各自失败态如实汇总（任一失败 exit 1）。
 - blender 不在 PATH → `vtx all` 收尾 exit 1（final.mp4 已就绪不受影响）——配置了
   就要导出，失败必须可见，不静默跳过。
 - 键在插件未装/禁用时走三分支报错（`vt plugins list` 查看），绝不静默忽略。
-- **源产物映射（P6）**：导出前经内核缝 A 解析插件产物（bgm 工程 JSON 源的渲染 wav、denoise 源的降噪 wav），映射传给 json2blend——.blend 里音轨听到的与成片同源（v1 直引源路径，虚拟源会挂、降噪源听原始音）。
+- **源产物映射**：导出前经内核缝 A 解析插件产物并传给 `json2blend.py`；当前 `audio_src` 仅对 `.json` 虚拟源使用该映射，缺映射则报错。普通媒体源仍引用原路径，即使映射中有降噪 wav 也不采用，不能据此认定预览音轨与成片同源。
 
 ## 关停测试（§0.2）
 
