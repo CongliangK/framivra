@@ -8,6 +8,8 @@ HTML 已有两种题材：**社区能源与生活**（240 帧）；**校园知�
 
 ## 动画与媒体制作
 
+能力边界：等角2.5D，不是自由透视摄影机、复杂交通或真实AO。
+
 等角的 `grid/nodes` 组织 home/lab/hub/garden，每个节点显式给出 base、wall、roof、activate 帧，`depends_on` 必须先点亮；`flows` 只在两端已落定后开始。真 30° 等角投影、按空间深度排序、延迟屋盖和整体平行滑轨保持空间关系；不是透视三维模型。
 
 媒体语义输入（下方预演命令给出起手例子）：
@@ -29,4 +31,4 @@ python3 templates/mg-styles/build_media.py --style isometric --content templates
 
 真实等距投影的Canvas构图参考；不是工程模拟或媒体路径像素等价副本。无音轨。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

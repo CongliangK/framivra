@@ -8,6 +8,8 @@ HTML 已有两种题材：**让形状成为秩序**（180 帧）；**构成一�
 
 ## 动画与媒体制作
 
+能力边界：受控模数几何，非自由矢量或完整套色印刷；机械声未验。
+
 包豪斯的 `grid/modules/layouts` 给出共享模数、基础形和各目标构图；`initial_layout/tick_frames/beats` 定义共同拍表、目标、center/corner/frame/alternate 轴和级联帧量。模块沿机械旋转与模数位移重组，逐顶点轨迹极值预检保护构图区；落定必须在排除右端点的窗口内。配色为纸/墨/红/黄/蓝五色，扁平路径另为六色，两者由各后端独立校验，不受 Canvas 四色接口限制。提示音仍是共用占位轨，不会随机械拍表自动同步。
 
 媒体语义输入（下方预演命令给出起手例子）：
@@ -29,4 +31,4 @@ python3 templates/mg-styles/build_media.py --style bauhaus --content templates/m
 
 程序图形参考；浏览器字体与成片质量仍需独立视觉验收。无内置声音。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

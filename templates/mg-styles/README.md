@@ -1,6 +1,6 @@
 # MG 风格模板
 
-按风格阅读和取用：每款目录集中制作思路、典型 HTML、两题材、媒体输入与独立脚本。制作卡在该款场景源码与页面中维护；完整技术、图像、声音与用户观看状态见[状态矩阵](../../docs/reports/mg-styles/status.md)。
+按风格阅读和取用：每款目录集中制作思路、典型 HTML、两题材、媒体输入与独立脚本。制作卡在该款场景源码与页面中维护；各款能力限制在其 README，三路线共通资格见[验收边界](#验收边界)，不能由入口或测试项数推定成片完成。
 
 | 风格包 | 制作主线 |
 |---|---|
@@ -20,7 +20,7 @@
 | [liquid](styles/liquid/README.md) | 汇聚、融合、分离与揭示 |
 | [variety-captions](styles/variety-captions/README.md) | 反应事件、逐字与主体禁区 |
 
-本包将 [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) 的一般设计语言转化为独立编写的帧驱动模板，不是原片复刻；[来源与许可](../../docs/reports/mg-styles/status.md#来源与许可)说明来源与许可边界。[验证记录](../../docs/reports/mg-styles/validation.md)保留历史快照及失败，不将入口数量当作完成。
+本包独立实现一般设计语言，不是原片复刻；资产使用须遵守[来源与许可](#来源与许可)。
 
 ## 选择入口
 
@@ -36,9 +36,31 @@
 
 先用款内 `--dry` 命令预检。去掉 `--dry` 会渲染源素材、编码并创建新工程，拒绝覆盖已有目录；部分失败保留日志与中间文件。随后按[内核路由](../../docs/skill/SKILL.md)依次 validate 和完整 all，生成成功不等于技术、艺术、声音验收完成。素材、cache/out、截图和字体保存在仓外，不提交 Git。媒体无 HTML gfx 时不会启动浏览器。
 
-输出保存捕获的 renderer/composer 源码与哈希；系统字体不复制。默认本机 Noto CJK 的来源和 SIL OFL 1.1 另记回执，指定 `font_path` 时由调用方核查许可与覆盖；系统字体与环境改变可能影响字形。三维源重生成和冻结媒体消费分别判定，已知严格重生成差异见验证记录，不改变门槛。
+输出保存捕获的 renderer/composer 源码与哈希；系统字体不复制。默认本机 Noto CJK 的来源和 SIL OFL 1.1 另记回执，指定 `font_path` 时由调用方核查许可与覆盖；系统字体与环境改变可能影响字形。三维源重生成和冻结媒体消费分别判定，已知严格差异见[验收边界](#验收边界)，不改变门槛。
 
 反应字幕须提供有权使用的本地背景视频，其长度/格式/音轨仍须经 validate，换背景必须重编 cue。三维 `full` 为逐帧 Blender，`storyboard` 为底片合成，后者不能冒称完整 Blender 帧序列。声音目前是未同步语义拍点的固定参考提示音，不是完成的配乐或声音设计。
+
+## 验收边界
+
+资格依据是 **2026-10-20 Linux 冻结研究**，不是当前源码或环境重跑。legacy Canvas prototype、独立 HTML 与 Pillow/NumPy/Blender 普通媒体分别验收；旧源码、影片、回执和 PR 合入不向后续字节转授通过。
+
+- **Canvas / HTML**：输入、帧状态/命令流及局部真实 RGBA 检查不证明可读性；浏览器字体/像素、真实 HTML 成片与实时播放仍 **UNRUN**。历史补音频只修复音频支路，不代表浏览器或 all 成功，未绕过权限或 sandbox。
+- **普通媒体**：优选15款/30片通过源帧→编码→timeline all→strict QC8/8→全片解码/帧数/零黑场，以及全帧静态条带和选定原生关键帧审查。普通 broll/timeline 无 gfx clips，不授予浏览器资格；静态全帧不等于逐帧原生全检、实时观看、听审或用户艺术终验，后三项仍未完成；局部复验不覆盖全部合法输入。
+- **声音**：固定半秒网格提示音未消费视觉 cue，音频数值检查不证明听感或语义同步。旧28片的音频/条带索引不能证明或改指优选新30片；新影片须由自身证据绑定。AAC 尾 padding 不等于 stream 错位，双声道元数据不等于空间声。
+- **三维**：A 外部源重生成严格 **FAIL**（3像素差1级），B仅 f47 单帧 **PASS**；冻结媒体消费通过不能覆盖源重生成失败。storyboard 不是连续 Blender 序列；参数、失败引擎及精确边界归 [Soft 3D](styles/soft-3d/README.md#验收限制)。
+- **挂载**：历史六件 live 挂载 MISSING；源码验证不证明用户挂载 BAD=0，真实挂载仍未验，须按[文档消费面](../../docs/DOC-CHARTER.md#消费面)单独核验。
+
+`source-receipt.json` 只绑定执行时捕获的源码、输入与环境，live 源码不继承旧回执。历史媒体、大文件与字体未上传 Git；[固定状态原文](https://github.com/CongliangK/framivra/blob/2f14b574f9ed431978e988ee2906c58912b45488/docs/reports/mg-styles/status.md#已验证媒体与能力边界)保留优选媒体路径，[证据身份与逐批验证](https://github.com/CongliangK/framivra/blob/2f14b574f9ed431978e988ee2906c58912b45488/docs/reports/mg-styles/validation.md#结论与证据身份)保留仓外原件、索引和音频证据，不能把历史路径当公开下载地址。
+
+冻结 provenance：媒体126项对应 `dac7457fe628001cedbb648776affdc0b9ef76c9`；HTML历史11项对应 `436306580cd86e4b6080611702b806655d931fae`、最终13项对应 `a29d82ca209d589127901de5766b382263c19454`；`f3ea10e3c2b4662614cf0a5b2d0dc476d950a576` 的 D4 recipe 仅轻量检查，不是完整 suite 重跑。[冻结源码与独审](https://github.com/CongliangK/framivra/blob/2f14b574f9ed431978e988ee2906c58912b45488/docs/reports/mg-styles/validation.md#冻结源码与独审)及[失败与未验原文](https://github.com/CongliangK/framivra/blob/2f14b574f9ed431978e988ee2906c58912b45488/docs/reports/mg-styles/validation.md#失败与未验项目)保留精确归属与原始失败；旧失败不因修正版通过或文档整理变绿。
+
+## 来源与许可
+
+研究固定于上游 [mg-styles-15@49052d80](https://github.com/Vincentwei1021/mg-styles-15/tree/49052d80bfaf9fa8412cc9710530e5e95a3b8d8c)，提取叙事/构图/运动方法后独立实现；未搬入上游代码、影片、品牌、音轨、字体轮廓、照片、贴图或采样。制作卡和两题材用于替换语义关系，不是同组统计卡换色；各款完整Signature与艺术质量不能由入口数或上游AI评分认证。
+
+上游[MIT许可](https://github.com/Vincentwei1021/mg-styles-15/blob/49052d80bfaf9fa8412cc9710530e5e95a3b8d8c/LICENSE)版权为 `Copyright (c) 2026 Vincentwei1021`；将来复制或实质改编代码仍须保留声明。根MIT不自动覆盖第三方OFL字体轮廓、采样、纸纹、HDRI、照片、Natural Earth数据或BSD-3-Clause highlight。模板以程序图形及系统字体为基础，新增资产逐件核许可；本机Noto CJK的SIL-1.1核查不能授予未知字体许可，字体未打包。
+
+完整上游观察与早期能力矩阵见[固定研究原文](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/mg-styles/research.md)；逐轮独审见[固定复审原文](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/mg-styles/review.md)。
 
 ## Canvas prototype 接口
 

@@ -8,6 +8,8 @@ HTML 已有两种题材：**萌芽和陪伴**（240 帧）；**纸上工作坊**
 
 ## 动画与媒体制作
 
+能力边界：有限程序角色/曝光模拟，非艺术家逐张绘制或任意角色输入。
+
 CEL 的 `characters` 定义 blob/cat/star/sprout 与情绪，`beats` 定义角色、动作及预备/运动帧预算；`exposures` 使用 ones/twos/threes 的整数帧保持，分别对应一、二、三帧一张画。角色压缩预备、跳跃与伸展、短 smear 和手绘效果由动作驱动；整张图按曝光保持，boil 也不在保持帧偷动。程序轮廓与系统字体不能冒称手绘原画或专用手写字体。
 
 媒体语义输入（下方预演命令给出起手例子）：
@@ -29,4 +31,4 @@ python3 templates/mg-styles/build_media.py --style cel-boil --content templates/
 
 原创建模参考，复用媒体语义 schema；浏览器字体、实际视频时序和音轨仍需单独验收。本页无声音。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

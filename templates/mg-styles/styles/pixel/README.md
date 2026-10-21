@@ -8,6 +8,8 @@ HTML 已有两种题材：**知识碎片任务**（300 帧）；**社区修复�
 
 ## 动画与媒体制作
 
+能力边界：有限程序精灵与阈值栅格字体，非专门像素字库/完整芯片音乐。
+
 `mission/steps/reward` 将任务、障碍动作与奖励串成故事。画面在原生320×180整数网格绘制并最近邻放大；jump/gap/duck/collect有不同动作，末段留出奖励阅读时间。文字是系统字体点阵化，不是专用像素字库。
 
 媒体语义输入（下方预演命令给出起手例子）：
@@ -30,4 +32,4 @@ python3 templates/mg-styles/build_media.py --style pixel --content templates/mg-
 
 Canvas整数格点设计参考；六倍放大的原生网格，系统字体须在目标设备验证。无音轨。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

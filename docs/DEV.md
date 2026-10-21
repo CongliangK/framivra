@@ -10,7 +10,7 @@
 | 身份、缓存与执行结果 | [缓存/回执](cache-provenance.md)、[执行事件](reference/execution-events.md)、[资源预算](reference/resource-budget.md)、[插件兼容](reference/plugin-core-compatibility.md) |
 | 媒体实现 | [Canvas 导出](skill/references/gfx.md#canvas-导出与静态跨度)、[响度终链](skill/references/edit.md#音频工程build_audio-内置)、[编码色彩](reports/development-history.md#色彩编码)、[Golden 证据](cache-provenance.md#golden-evidence) |
 | 组件与未解决问题 | [组件目录](catalog.md)、[已知问题](reference/known-issues.md)；具体命令和输入限制归各组件 README |
-| 决策与实验依据 | [性能/故障/工具演进](reports/development-history.md)、[产线复审](reports/development-history.md#产线复审)、[MG 证据](reports/mg-styles/status.md)、[BeginFrame 判负](reports/development-history.md#beginframe) |
+| 决策与实验依据 | [性能/故障/工具演进](reports/development-history.md)、[产线复审](reports/development-history.md#产线复审)、[MG 验收边界](../templates/mg-styles/README.md#验收边界)、[BeginFrame 判负](reports/development-history.md#beginframe) |
 
 ## 依赖与发布原则
 

@@ -8,6 +8,8 @@ HTML 已有两种题材：**把一个想法，变成可用产品**（180 帧）�
 
 ## 动画与媒体制作
 
+能力边界：受控因果图与基本形rig，非任意矢量/关节角色；正式声效未验。
+
 扁平内容的 `origin/cards/links` 定义起点、数据卡和有向因果链，`final_order` 决定结尾重排，question/build/resolve 的阶段文字及帧窗口可换。预备压缩、冲出与过冲是角色动作；主体色块扩张擦除承接布局变化。图卡数值须有内容依据，程序不会替编辑判断因果关系。
 
 媒体语义输入（下方预演命令给出起手例子）：
@@ -29,4 +31,4 @@ python3 templates/mg-styles/build_media.py --style flat-vector --content templat
 
 程序图形参考；浏览器字体与成片质量仍需独立视觉验收。无内置声音。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

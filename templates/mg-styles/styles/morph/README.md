@@ -8,6 +8,8 @@ HTML 已有两种题材：**想法生长**（240 帧）；**汇聚到出发**（
 
 ## 动画与媒体制作
 
+能力边界：有限单闭合轮廓，非孔洞/任意多部件拓扑。
+
 Morph 的 `shapes` 为连续窗口的 circle/leaf/star/arrow/drop、标签、位置、尺寸、颜色与转场长度。等弧长轮廓保持统一拓扑，经圆形中介与轻挤压变成下一具象形；几何、位置和色场共同转场，非两形淡化。每形保留落定段；它不支持任意字体/图标拓扑或子部件绑定。
 
 媒体语义输入（下方预演命令给出起手例子）：
@@ -29,4 +31,4 @@ python3 templates/mg-styles/build_media.py --style morph --content templates/mg-
 
 原创建模参考，复用媒体语义 schema；浏览器字体、实际视频时序和音轨仍需单独验收。本页无声音。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

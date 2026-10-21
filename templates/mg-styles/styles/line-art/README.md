@@ -8,6 +8,8 @@ HTML 已有两种题材：**种子到共同的家**（240 帧）；**知识跨�
 
 ## 动画与媒体制作
 
+能力边界：有限语义线条，非任意路径/字形动画；末30帧满色源RGBA相同不等于人类读完。
+
 线条路径需要 Pillow 与本地字体；液体路径还需要 NumPy。线条内容使用 `story` 中的对象语义、标签和连续整数帧窗口。可选 seed/tree/book/house/network 轮廓按实际几何弧长绘制，桥接上一对象的笔尾与下一对象的笔头，旧线渐弱；末对象由原轮廓转面，保持单一连续画布。`hold` 保留语义阅读段，`drawing_speed` 改变绘制/停留分配。两份例子分别为生长建造与知识连接，不是固定正弦线改标签。
 
 媒体语义输入（优先 `readable` 版）：
@@ -31,4 +33,4 @@ python3 templates/mg-styles/build_media.py --style line-art --content templates/
 
 按语义路径重建的Canvas参考；非媒体路径像素等价副本。最后实色与阅读预算可换。无音轨。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

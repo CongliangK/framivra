@@ -1,7 +1,6 @@
 # 研究结论与验收边界
 
 - [开发决策与历史基准](development-history.md)：渲染路线、性能、故障、CEF Alpha 和安全复盘。
-- [MG 模板状态与来源](mg-styles/status.md)：可用范围、近似能力和许可；[验证摘要](mg-styles/validation.md)区分源码检查、实际媒体、失败与未验项。
 - [CEF Alpha 机器证据索引](cef-alpha-145-evidence.json)保留原始文件哈希。
 
 这里只保留影响理解和判断的结论；逐轮过程、旧矩阵与完整引证由各节固定提交链接追溯。历史通过不转授给当前源码，原失败和未运行项目不因精简变成通过。当前开发入口见 [DEV](../DEV.md)。
