@@ -571,7 +571,7 @@ class CliResolution(_Base):
         fakehome = self.root / "home"                # 无 ~/.local/bin/bgm
         fakehome.mkdir()
         with mock.patch("pathlib.Path.home", return_value=fakehome):
-            cmd, why = _bgm._bgm_cmd()
+            cmd, why = _bgm.bgm_cmd(_bgm.cfg_get)
             self.assertIsNone(cmd)
             self.assertIn("config bgm.cli 指向不存在", why,
                           "全败文案须列 config 通道具体原因")
@@ -590,7 +590,7 @@ class CliResolution(_Base):
         fakehome = self.root / "home"
         fakehome.mkdir()
         with mock.patch("pathlib.Path.home", return_value=fakehome):
-            cmd, why = _bgm._bgm_cmd()
+            cmd, why = _bgm.bgm_cmd(_bgm.cfg_get)
         self.assertIsNone(cmd)
         self.assertIn("不可执行", why)
 
@@ -601,8 +601,74 @@ class CliResolution(_Base):
         wrapper = fakehome / ".local" / "bin" / "bgm"
         wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
         with mock.patch("pathlib.Path.home", return_value=fakehome):
-            cmd, env = _bgm._bgm_cmd()
+            cmd, env = _bgm.bgm_cmd(_bgm.cfg_get)
         self.assertEqual(cmd, [str(wrapper)], "坏 config 通道须落 ~/.local/bin/bgm")
+
+
+    def test_health_and_runtime_command_matrix(self):
+        import ctypes
+        from types import SimpleNamespace
+
+        health = importlib.import_module("plugins.bgm-render.health_check")
+        home = self.root / "home"
+        wrapper = home / ".local/bin/bgm"
+        wrapper.parent.mkdir(parents=True)
+        repo = home / "文档/01_活跃项目/music_tools"
+        repo.mkdir(parents=True)
+        plain = self.root / "plain file"
+        plain.write_text("not executable", encoding="utf-8")
+        windows = [r"C:\Program Files\Music\bgm.exe", r"C:\music\score.json"]
+        shell, kernel = mock.Mock(), mock.Mock()
+        def windows_argv(command, count):
+            self.assertEqual(command, subprocess.list2cmdline(windows))
+            count._obj.value = len(windows)
+            return windows
+        shell.CommandLineToArgvW.side_effect = windows_argv
+        cases = (
+            ("configured", '"/owned/bgm cli" --quiet', False, str(repo), "posix", ["/owned/bgm cli", "--quiet"]),
+            ("bad-config-wrapper", "/missing/bgm", True, str(repo), "posix", [str(wrapper)]),
+            ("nonexecutable-repo", str(plain), False, str(repo), "posix", ["/owned/python3", "-m", "bgm_gen"]),
+            ("default-repo", "", False, None, "posix", ["/owned/python3", "-m", "bgm_gen"]),
+            ("missing-all", "/missing/bgm", False, str(self.root / "absent"), "posix", None),
+            ("windows-quoted", subprocess.list2cmdline(windows), False, str(repo), "nt", windows),
+            ("windows-repo", "", False, str(repo), "nt", [sys.executable, "-m", "bgm_gen"]),
+        )
+        for name, cli, has_wrapper, configured_repo, platform, expected in cases:
+            with self.subTest(case=name):
+                if has_wrapper:
+                    wrapper.write_text("owned fixture, never executed", encoding="utf-8")
+                else:
+                    wrapper.unlink(missing_ok=True)
+                self._cfg(**({"cli": cli, "repo": configured_repo} if configured_repo else {"cli": cli}))
+                env = {"HOME": str(home), "USERPROFILE": str(home), "VTX_CONFIG": os.environ["VTX_CONFIG"],
+                       "PYTHONPATH": "/owned/prior", "OWNED_BGM": "kept"}
+                separator = ";" if platform == "nt" else os.pathsep
+                platform_os = SimpleNamespace(name=platform, path=os.path, pathsep=separator, environ=env)
+                def which(command):
+                    return command if command in ("/owned/bgm cli", windows[0]) else (
+                        "/owned/python3" if command == "python3" and platform != "nt" else None)
+                with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(Path, "home", return_value=home), \
+                     mock.patch.object(health, "os", platform_os), mock.patch.object(health.shutil, "which", side_effect=which), \
+                     mock.patch.object(ctypes, "WinDLL", side_effect=[shell, kernel, shell, kernel], create=True), \
+                     mock.patch.object(subprocess, "run", return_value=mock.Mock(returncode=0, stdout="ok")) as run, \
+                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(health.main(), 0 if expected else 1)
+                    if expected is None:
+                        with self.assertRaises(SystemExit) as stopped:
+                            _bgm._run_bgm(None, ["--help"], "探测")
+                        self.assertEqual(stopped.exception.code, 1)
+                        run.assert_not_called()
+                        continue
+                    probe = run.call_args
+                    self.assertEqual(_bgm._run_bgm(None, ["--help"], "探测"), "ok")
+                    self.assertEqual(probe.args[0], expected + ["--help"])
+                    self.assertEqual(run.call_args.args, probe.args)
+                    self.assertEqual(run.call_args.kwargs["env"], probe.kwargs["env"])
+                    self.assertEqual(probe.kwargs["timeout"], 15)
+                    expected_env = dict(env, PYTHONPATH=str(repo) + separator + env["PYTHONPATH"]) if expected[-2:] == ["-m", "bgm_gen"] else None
+                    self.assertEqual(probe.kwargs["env"], expected_env)
+                    self.assertEqual(dict(os.environ), env)
+        kernel.LocalFree.assert_called_with(windows)
 
 
 class ValidateHook(_Base):
