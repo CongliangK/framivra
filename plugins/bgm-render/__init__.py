@@ -319,14 +319,14 @@ def _read_complete(marker: Path):
 
 
 @contextmanager
-def _flock(lock_path: Path):
+def _flock(lock_path: Path, *, root=None):
     """跨进程排他锁（flock；对齐 loudness_cache.py 的 .lock 惯例：锁文件随目录
     存在、随 fd 关闭自动释放，异常路径不残留锁态）。prepare 内核侧串行，此锁防
     的是多 vtx 进程/区间预览并发触发同一工程的渲染双写。"""
     # fstxn owns the cross-platform lock backend and preserves the existing
     # <digest>.lock name. This plugin always supplies that suffix.
     target = lock_path.with_name(lock_path.name[:-5])
-    with fstxn.file_lock(target):
+    with fstxn.file_lock(target, root=root):
         yield
 
 
@@ -345,7 +345,7 @@ def _ensure_shared_render(c, sid, force: bool = False):
     result = None if force else _read_complete(marker)
     if result is not None:
         return shared, result
-    with _flock(shared.parent / f"{shared.name}.lock"):
+    with _flock(shared.parent / f"{shared.name}.lock", root=c.root):
         result = None if force else _read_complete(marker)
         if result is not None:     # 双检：持锁期间他进程可能已完成（force 跳过）
             return shared, result

@@ -466,9 +466,9 @@ class Smoke:
         ordinal = 0
         errors = []
 
-        def observe(path, data):
+        def observe(path, data, *, root=None):
             nonlocal ordinal
-            write(path, data)
+            write(path, data, root=root)
             index = None
             try:
                 target = Path(path)

@@ -466,7 +466,7 @@ def audit(c: Ctx):
                      "tmp_orphans": [str(x) for x in tmp_orphans(c)],
                      "note": "详细分项见 `vtx df`；回收见 `vtx gc --dry`"}
     if not c.dry:   # dry-run 不落 out/ 产物（audit_report 属交付诊断件，2026-09-11 门控）
-        fstxn.atomic_write(c.out / "audit_report.json", json.dumps(rep, ensure_ascii=False, indent=2))
+        fstxn.atomic_write(c.out / "audit_report.json", json.dumps(rep, ensure_ascii=False, indent=2), root=c.root)
     warns = sum(1 for x in lines if x["status"] == "warn")
     print(f"审计：{len(lines)} 项指标，{warns} 条建议"
           + ("（dry-run，报告未落盘）" if c.dry else "（详见 out/audit_report.json，建议性不阻断）"))
@@ -497,14 +497,14 @@ def source_audio_extraction(c: Ctx, sid: str):
     p = _plugin_hooks.run_prepare_source(c, sid)
     if p is not None:
         return p, None         # 缝 A：源声明了插件键（如 denoise）→ 插件产物
-    fstxn.mkdir(wav.parent)
+    fstxn.mkdir(wav.parent, root=c.root)
     cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(sid)),
            "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(wav)]
     return wav, cmd
 
 
 def prepare(c: Ctx):
-    fstxn.mkdir(c.cache / "audio")
+    fstxn.mkdir(c.cache / "audio", root=c.root)
     tasks = []
     for s in c.tl["sources"]:
         # 内容寻址键（2026-09-11 治理升级）：源变了键就变，旧 wav 由 gc 回收；
@@ -796,7 +796,7 @@ def normalize_project_audio(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
               "如需调整响度请改 timeline 后重渲")
     # ffmpeg 子进程写者：locked_staging 给同目录随机名真实路径（子进程不能
     # 经 /proc 锚定），成功后原子替换回 source。
-    with fstxn.locked_staging(source) as candidate:
+    with fstxn.locked_staging(source, root=project) as candidate:
         r = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", str(source), "-af",
                             f"volume={gain:.3f}dB,alimiter=limit=0.599:level=false:latency=true",
                             "-c:a", "pcm_s16le", "-ar", "48000", '-f', 'wav', str(candidate)],

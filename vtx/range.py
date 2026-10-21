@@ -179,7 +179,7 @@ def run_range(c, fa: int, fb: int):
                       nseg=int(os.environ.get("VTX_VIDEO_SEGMENTS", "8")))
     # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
     # preview 目录自建（parents 兜底零音频事件、prepare_layers 未先建 cache 的边角）。
-    vdir = c.cache / "preview"; fstxn.mkdir(vdir)
+    vdir = c.cache / "preview"; fstxn.mkdir(vdir, root=c.root)
     bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in layers]
     t = time.monotonic()
     cuts = choose_cutpoints(bounds, c.dur, plan.nseg)   # 与整片同一切点集
@@ -211,7 +211,7 @@ def run_range(c, fa: int, fb: int):
     lst = vdir / f"range_{la}_{lb}.list.txt"
     # 与 composite.render_segmented 同一转义法：绝对 POSIX 路径 + 引号转义（-safe 0 已带）
     fstxn.atomic_write(lst, "".join(
-        "file '" + s.resolve().as_posix().replace("'", "'\\''") + "'\n" for s in segs))
+        "file '" + s.resolve().as_posix().replace("'", "'\\''") + "'\n" for s in segs), root=c.root)
     t = time.monotonic()
     c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
            "-c", "copy", str(tmpv)])

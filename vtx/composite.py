@@ -225,7 +225,7 @@ class RenderPlan:
         lines = self.ass_head()
         for s in c.tl["subtitles"]:
             lines.append(f"Dialogue: 0,{self._fc(s['in'])},{self._fc(s['out'])},Def,,0,0,0,,{s['text']}")
-        fstxn.atomic_write(path, "\n".join(lines))
+        fstxn.atomic_write(path, "\n".join(lines), root=self.c.root)
 
     def segment_ass_bytes(self, a, b):
         """Clip in frame space, then quantize on the segment's local clock.
@@ -246,7 +246,7 @@ class RenderPlan:
         return "\n".join(lines).encode("utf-8")
 
     def write_seg_ass(self, path, a, b):
-        fstxn.atomic_write(path, self.segment_ass_bytes(a, b).decode("utf-8"))
+        fstxn.atomic_write(path, self.segment_ass_bytes(a, b).decode("utf-8"), root=self.c.root)
 
     # ---------------------------------------------------------------- 单 graph / 逐层 pass 合成
     def composite(self, layers_subset, out_path, with_subs, a=0, b=None, sub_file=None):
@@ -480,7 +480,7 @@ class RenderPlan:
         """
         c = self.c
         seglen = b - a
-        pdir = c.cache / "vseg_pass"; fstxn.mkdir(pdir)
+        pdir = c.cache / "vseg_pass"; fstxn.mkdir(pdir, root=self.c.root)
         prev_key = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
         prev = None            # None = 主输入用 canvas（pass0）
         n = len(layers_subset)
@@ -572,7 +572,7 @@ class RenderPlan:
             if not last:
                 # 帧数硬校验通过后落旁车（_pass_fresh sidecar 快路径的凭据，
                 # 见其 docstring；截断/中断产物到不了这里，不会误发旁车）
-                fstxn.atomic_write(target.with_suffix(target.suffix + ".n"), str(seglen))
+                fstxn.atomic_write(target.with_suffix(target.suffix + ".n"), str(seglen), root=self.c.root)
             prev = target
         return enc
 
@@ -610,7 +610,7 @@ class RenderPlan:
         lset = self.layers if layer_set is None else layer_set
         # B03（issue #27 / F-05）：布局延迟创建——cli 不再无条件 mkdir cache/，
         # 段目录自建（parents 兜底 fresh 项目直渲本目录的首个落笔点）。
-        vdir = c.cache / tag; fstxn.mkdir(vdir)
+        vdir = c.cache / tag; fstxn.mkdir(vdir, root=self.c.root)
         bounds = [(L["cl"]["dst_in"], L["cl"]["dst_in"] + L["cl"]["dur"]) for L in lset]
         cuts = choose_cutpoints(bounds, c.dur, self.nseg)
         edges = [0] + cuts + [c.dur]
@@ -665,12 +665,12 @@ class RenderPlan:
         def concat_entry(path):
             name = path.resolve().as_posix().replace("'", "'\\''")
             return f"file '{name}'\n"
-        fstxn.atomic_write(lst, "".join(concat_entry(s) for s in segs))
+        fstxn.atomic_write(lst, "".join(concat_entry(s) for s in segs), root=self.c.root)
         # 记录本代段缓存对应的合成代码摘要（R7）：vtx diff 据此在 timeline 侧 0 失效
         # 时仍能提示「代码摘要已漂移 → 磁盘段缓存全冷重建」，避免影响面误报温态。
         if not c.dry:
             try:
-                fstxn.atomic_write(vdir / ".graph_digest", _graph_code_digest())
+                fstxn.atomic_write(vdir / ".graph_digest", _graph_code_digest(), root=self.c.root)
             except OSError:
                 pass
         c.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
@@ -700,7 +700,7 @@ def prepare_layers(c: Ctx):
     整片与区间共用同一份 cache/seg——区间渲染不得另造键或另写命名空间。本函数只做
     seg/gfx 缓存侧副作用；manifest 记账与回执由调用方负责（区间渲染不记账不写回执）。
     """
-    fstxn.mkdir(c.cache / "seg")
+    fstxn.mkdir(c.cache / "seg", root=c.root)
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
     # 需要 alpha（opacity<1 或 fade）→ ProRes 4444；纯不透明全屏 → libx264。所有轨道等价。

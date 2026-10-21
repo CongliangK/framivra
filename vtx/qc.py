@@ -137,7 +137,7 @@ def _write_qc_pass_record(c, frames_nb, checks):
            "segs": segs, "checks": mem}
     try:
         fstxn.atomic_write(c.cache / _QC_SEG_RECORD,
-                           json.dumps(rec, ensure_ascii=False, indent=1))
+                           json.dumps(rec, ensure_ascii=False, indent=1), root=c.root)
     except OSError:
         pass
 
@@ -924,7 +924,7 @@ def qc(c):
     from .quality import qc_quality
     rep["skipped_probes"] = skipped_probes
     rep["quality"] = qc_quality(rep)
-    fstxn.atomic_write(c.out / "qc_report.json", json.dumps(rep, ensure_ascii=False, indent=2))
+    fstxn.atomic_write(c.out / "qc_report.json", json.dumps(rep, ensure_ascii=False, indent=2), root=c.root)
     failed = [x for x in rep["checks"] if not x["pass"]]
     print("质量标签：" + rep["quality"]["display"] + "（visual_content=unknown）")
     print(f"QC：{len(rep['checks']) - len(failed)}/{len(rep['checks'])} 通过")

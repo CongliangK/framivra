@@ -94,7 +94,7 @@ def ensure_inside_project(path, root, *, what: str = "写路径") -> Path:
     return target
 
 
-def _archive_stale_receipt(f: Path, fingerprint: str):
+def _archive_stale_receipt(f: Path, fingerprint: str, *, root):
     """⑮ 最小修复（2026-09-14 登记+修复，KNOWN-ISSUES ⑮）：回执输入指纹即将
     翻转时（timeline/源/插件代码变更，或 validate-only 等单阶段运行在新指纹下
     落笔），旧 receipt.json 的全量阶段记录会被 load_receipt 归零覆盖（voice-ime
@@ -111,7 +111,7 @@ def _archive_stale_receipt(f: Path, fingerprint: str):
             # receipt.json 事务锁，prev 伴生件无须再拿第二把锁文件；写一半被杀
             # 不再留下截断的 prev.json。
             fstxn.atomic_write(f.parent / "receipt.prev.json",
-                               json.dumps(old, ensure_ascii=False, indent=2))
+                               json.dumps(old, ensure_ascii=False, indent=2), root=root)
     except (OSError, ValueError, TypeError):
         pass
 
@@ -164,10 +164,6 @@ class Ctx:
         self.spf = 1.0 / self.fps
         self.spf_samples = AUDIO_SAMPLE_RATE // self.fps   # 30fps → 1600（24fps 时代为 2000），须整除
         self.cache = self.root / "cache"; self.out = self.root / "out"
-        # issue #59（返工项）：写目标的符号链接解析边界显式注册给 fstxn——
-        # 唯一权威 = c.root（timeline 所在目录），取代按 cache/out 目录名猜测。
-        # 见 fstxn.bind_project_root 契约；无 Ctx 的库级调用不受影响。
-        fstxn.bind_project_root(self.root)
         # v2 subtitles_src（§1.1 条目 6）：timeline 加载点解析——load 后 self.tl
         # ["subtitles"] 即为解析结果（各阶段无感）；解析失败/互斥错误记入
         # self.subtitles_errors 由 validate FAIL。subtitles_src 原文已参与输入
@@ -383,7 +379,7 @@ class Ctx:
         observation = None
 
         def _mutate(rec):
-            _archive_stale_receipt(f, self.input_fingerprint)   # ⑮ 指纹翻转旁证轮转
+            _archive_stale_receipt(f, self.input_fingerprint, root=self.root)   # ⑮ 指纹翻转旁证轮转
             if ok:
                 verify_input_identity(self)
             rec["timeline"] = self.timeline_sha256
@@ -409,7 +405,7 @@ class Ctx:
             nonlocal observation
             observation = ref
             return fstxn.locked_update(f, _mutate,
-                                      load=lambda p: load_receipt(p, self.input_fingerprint))
+                                      load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
 
         try:
             self.execution.receipt(stage, ok, write)
@@ -429,7 +425,7 @@ class Ctx:
 
         def _mutate(rec):
             verify_input_identity(self)
-            _archive_stale_receipt(f, self.input_fingerprint)
+            _archive_stale_receipt(f, self.input_fingerprint, root=self.root)
             dependencies = {'audio': ['prepare'], 'mux': ['video', 'audio'],
                             'mux_draft': ['video_draft', 'audio'], 'qc': ['mux']}
             if any(operation(self, lambda: t.get('kind') == 'gfx',
@@ -458,7 +454,7 @@ class Ctx:
         # 依赖门判定与下游撤销的读-改-写跨进程同样串行化；门失败（RuntimeError）
         # 时 tmp 清残件、receipt.json 保持旧值。dry 早退在锁外。
         fstxn.locked_update(f, _mutate,
-                            load=lambda p: load_receipt(p, self.input_fingerprint))
+                            load=lambda p: load_receipt(p, self.input_fingerprint), root=self.root)
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]

@@ -18,7 +18,8 @@ class SharedIdentity(unittest.TestCase):
                    'cl': {'src': 'page.html', 'dst_in': 0, 'dur': 90},
                    'x': 0, 'y': 0, 'w2': None, 'h2': None}]
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'subs.ass'
+            c.root = Path(tmp)
+            path = c.root / 'subs.ass'
             plan.write_seg_ass(path, 30, 90)
             self.assertEqual(path.read_bytes(), plan.segment_ass_bytes(30, 90))
             old = hashlib.sha1()

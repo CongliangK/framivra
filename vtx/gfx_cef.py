@@ -24,7 +24,7 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
         raise ValueError("CEF exact protocol requires <=65536 frames and viewport >=16x16")
     html, outdir = Path(html).resolve(), Path(outdir)
     report = ctx.cache / "reports" / "cef"
-    fstxn.mkdir(report)
+    fstxn.mkdir(report, root=ctx.root)
     key, receipts, descriptors = f"{outdir.name}-{secrets.token_hex(4)}", [], []
     worker_env = dict(os.environ)
     pair = socket.socketpair() if sys.platform == 'darwin' else None
@@ -60,7 +60,7 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
     try:
         # Preserve native logs on FAILURE as well as success. No unread pipes;
         # staging protects report destinations against symlink substitution.
-        with fstxn.locked_staging(report / f"{key}.worker.log") as logpath:
+        with fstxn.locked_staging(report / f"{key}.worker.log", root=ctx.root) as logpath:
             try:
                 with open(logpath, "wb") as log:
                     with SupervisedProcessGroup(ctx, argv, backend_id=f"cef_{mode}",
@@ -96,7 +96,7 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
                                     # Page completion rechecks pinned inputs before
                                     # certification (same gate as CDP, not per-frame
                                     # project-wide media sampling at production scale).
-                                    fstxn.atomic_write(target, source.read_bytes())
+                                    fstxn.atomic_write(target, source.read_bytes(), root=ctx.root)
                                     receipts.append(h)
                             rc = group.proc.wait(timeout=15)
                             if rc:
@@ -104,8 +104,8 @@ def render_page(html, outdir, n_frames, *, ctx, width, height):
                         finally:
                             sync = group.run_dir / "sync.jsonl"
                             if sync.is_file():
-                                fstxn.atomic_write(report / f"{key}.sync.jsonl", sync.read_bytes())
-                            fstxn.atomic_write(report / f"{key}.receipts.json", json.dumps(receipts, indent=2))
+                                fstxn.atomic_write(report / f"{key}.sync.jsonl", sync.read_bytes(), root=ctx.root)
+                            fstxn.atomic_write(report / f"{key}.receipts.json", json.dumps(receipts, indent=2), root=ctx.root)
             except Exception as error:
                 failure = error
         if failure is not None:

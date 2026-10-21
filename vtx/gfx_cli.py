@@ -349,14 +349,15 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_dige
     return sorted(bad), old != current
 
 
-def invalidate_page(outdir):
+def invalidate_page(outdir, *, root=None):
     """Revoke completion before modifying frames; no-op if already absent."""
-    fstxn.unlink(Path(outdir) / COMPLETE_FILE)
+    fstxn.unlink(Path(outdir) / COMPLETE_FILE, root=root)
 
 
 def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=None,
                   dependency_digest=None, dependency_enforcement=None, dependency_observed=None,
-                  backend_identity=None, render_runs=None, environment=None, mixed_producer=False):
+                  backend_identity=None, render_runs=None, environment=None, mixed_producer=False,
+                  root=None):
     """Validate the whole page and pin-input gate before atomic publication.
 
     Caller invokes only on non-dry paths after all blocks/fallbacks finish.
@@ -367,40 +368,40 @@ def complete_page(outdir, n, key, width, height, *, verify_inputs, backend_ns=No
     """
     record, bad = _page_record(outdir, n, key, width, height, backend_ns)
     if bad:
-        invalidate_page(outdir)
+        invalidate_page(outdir, root=root)
         raise GfxCliError(f"gfx 完成检查失败：{bad}")
     if dependency_digest is not None:
         if dependency_enforcement != 'fetch-pinned-local-v1':
-            invalidate_page(outdir)
+            invalidate_page(outdir, root=root)
             raise GfxCliError('strict completion requires runtime enforcement evidence')
         record['dependency_digest'] = dependency_digest
         record['dependency_enforcement'] = dependency_enforcement
         if not isinstance(dependency_observed, list) or not dependency_observed:
-            invalidate_page(outdir)
+            invalidate_page(outdir, root=root)
             raise GfxCliError('strict completion requires observed local requests')
         record['dependency_observed'] = dependency_observed
     verify_inputs()
     if environment is not None:
         if not isinstance(environment, dict) or environment.get('status') != 'input-bound':
-            invalidate_page(outdir)
+            invalidate_page(outdir, root=root)
             raise GfxCliError('unknown environment cannot publish completion')
         if mixed_producer:
-            invalidate_page(outdir)
-            fstxn.unlink(Path(outdir) / ENV_PENDING_FILE)
+            invalidate_page(outdir, root=root)
+            fstxn.unlink(Path(outdir) / ENV_PENDING_FILE, root=root)
             raise GfxCliError('CDP/CLI mixed environment cannot publish completion; '
                               'rerun explicitly with VTX_GFX=cli for a separate identity')
         record['environment'] = environment
     if backend_identity is not None:
         record["backend_identity"] = backend_identity
         record["render_runs"] = render_runs
-    fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True))
-    fstxn.unlink(Path(outdir) / ENV_PENDING_FILE)
+    fstxn.atomic_write(Path(outdir) / COMPLETE_FILE, json.dumps(record, sort_keys=True), root=root)
+    fstxn.unlink(Path(outdir) / ENV_PENDING_FILE, root=root)
 
 
-def begin_environment_page(outdir, environment, key, n, width, height):
+def begin_environment_page(outdir, environment, key, n, width, height, *, root=None):
     if environment is not None:
         record = dict(environment=environment, key=key, frames=n, width=width, height=height)
-        fstxn.atomic_write(Path(outdir) / ENV_PENDING_FILE, json.dumps(record, sort_keys=True))
+        fstxn.atomic_write(Path(outdir) / ENV_PENDING_FILE, json.dumps(record, sort_keys=True), root=root)
 
 
 def _cli_shot_cmd(chrome, i, d, html, width, height):
@@ -421,7 +422,7 @@ def _rc_error(cmd, proc) -> str:
     return msg
 
 
-def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
+def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None, *, root=None):
     """渲一帧：执行 Chrome 截图命令并校验产物。
 
     非零退出码 → GfxCliError（完整命令 + 退出码 + stderr 尾部）；
@@ -435,8 +436,8 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
         # /proc 锚定路径（沙箱/yama 拒开他人 fd 项），故走 locked_staging：
         # 同目录随机名真实路径（不可预置），提交前 inode 对账，无效产物
         # 永不占住固定名（issue #59）。
-        fstxn.unlink(png)
-        with fstxn.locked_staging(png) as tmp:
+        fstxn.unlink(png, root=root)
+        with fstxn.locked_staging(png, root=root) as tmp:
             # A default-profile Chrome may forward this request to an already
             # running desktop browser and exit 0 without a screenshot. A fresh
             # profile also excludes extensions/preferences from cache identity.
@@ -471,7 +472,7 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None):
 
 
 def render_cli(i_range, d, html, chrome, width=1920, height=1080,
-               workers=6, timeout=None):
+               workers=6, timeout=None, *, root=None):
     """并行渲一批帧（默认 6 并发，与原 cli.py 回落路径一致）。
 
     逐帧走 run_cli_shot（退出码 + 产物双重检查）；失败聚合成一条
@@ -485,7 +486,7 @@ def render_cli(i_range, d, html, chrome, width=1920, height=1080,
 
     def one(i):
         try:
-            run_cli_shot(i, d, html, chrome, width, height, timeout)
+            run_cli_shot(i, d, html, chrome, width, height, timeout, root=root)
         except GfxCliError as e:
             errs.append((i, str(e)))
 

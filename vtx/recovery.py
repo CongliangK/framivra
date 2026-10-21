@@ -118,11 +118,11 @@ def atomic_media(c, target, producer, *, max_frames=None,
         return None
 
     def publish_marker():
-        fstxn.atomic_write(completion_marker(target), json.dumps(rec, sort_keys=True))
+        fstxn.atomic_write(completion_marker(target), json.dumps(rec, sort_keys=True), root=c.root)
         if after_commit is not None:
             after_commit()
 
-    with fstxn.locked_staging(target, after_commit=publish_marker) as temporary:
+    with fstxn.locked_staging(target, after_commit=publish_marker, root=c.root) as temporary:
         current = Path(temporary).resolve()
         prefix = '.' + target.name + '.'
         for orphan in target.parent.iterdir():
@@ -134,7 +134,7 @@ def atomic_media(c, target, producer, *, max_frames=None,
             # In particular, never claim .<target>.complete.json.<token>.tmp.
             token = orphan.name[len(prefix):-4]
             if orphan != current and token and '.' not in token:
-                fstxn.unlink(orphan)
+                fstxn.unlink(orphan, root=c.root)
         result = producer(temporary)
         rec = _inspect(temporary, target.suffix.lower())
         if rec is None:

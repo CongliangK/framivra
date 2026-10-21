@@ -21,13 +21,15 @@ inode 对账 + dir_fd 原子替换）：
     的平台（如 Windows、部分 macOS）不抛错瘫痪，而是显式降级回本模块原先的
     基线安全等级（mkstemp + os.replace + ensure_inside_project 锁守卫），降级
     一次性记录到 stderr 并可经 write_capability() 观测（'fd-anchored'|'legacy'）。
-  - 写目标的符号链接解析边界由显式项目根（bind_project_root，Ctx 构造时以
-    c.root 注册）判定，不再按 cache/out 目录名猜测。
+  - 项目写者显式传入 root=c.root；每次操作独立校验所有目标的父链，不依赖
+    Ctx 构造顺序或线程上下文。root=None 保留独立库调用的任意输出路径契约。
   - 子进程写者（ffmpeg/chrome）经 locked_staging 拿同目录随机名真实路径：
     /proc 锚定路径会被子进程沙箱/yama 拒开，故以 O_EXCL 随机名 + 提交前
     inode 对账收口。
 
 API（上下文管理器 + mutator 两形态）：
+  所有路径型写入口接收 keyword-only root=None；项目写者必须传入所属根。
+  fd/token 型清理原语沿用已钉扎的描述符/完整祖先身份，不读取隐式项目状态。
   locked_write(path)            CM：持锁 + 代管同目录 tmp；yield /proc 锚定的
                                  tmp Path（进程内写者专用——置换 tmp 目录项不
                                  影响已开 inode），调用方填充内容，正常退出经
@@ -59,7 +61,7 @@ from pathlib import Path
 __all__ = ["locked_write", "locked_staging", "locked_update", "atomic_write",
            "cleanup_identity", "remove_pinned", "mkdir", "unlink", "replace",
            "pinned_parent", "fd_path", "entry_identity", "flock_at", "remove_at",
-           "check_regular_at", "bind_project_root", "write_capability", "file_lock"]
+           "check_regular_at", "write_capability", "file_lock"]
 
 # Capture the real APIs once: tests may instrument the final unlink syscall.
 _CLEANUP_DIR_FD_APIS = (os.open, os.stat, os.unlink, os.rmdir)
@@ -233,36 +235,24 @@ def _write_error(path, reason):
     return ProjectPathError(f"拒绝写入 {path}（issue #23/#59）：{reason}")
 
 
-# ---------------------------------------------------------------- 显式项目根
-_PROJECT_ROOT = None   # 进程级项目根（bind_project_root 注册；None=未声明）
+# ---------------------------------------------------------------- 显式操作所有权
 
+def _write_target(path, *, root=None):
+    """Resolve only the parent: atomic replacement never follows the leaf.
 
-def bind_project_root(root):
-    """显式声明本进程的项目根（issue #59 返工：取代按 cache/out 目录名猜根）。
-
-    写目标的符号链接解析边界以唯一权威为准——infra.Ctx 构造时以 c.root 注册。
-    声明在根内的路径：父链全解析后必须仍落在根内（指向根外的链接 = 拒绝
-    写入；指向根内的链接 = 允许，与 infra.ensure_inside_project 同判据）。
-    根外路径与未声明根的库级调用（独立测试/gfx_render 单文件模式）退回
-    「全解析父链、不设包含判定」口径。幂等；root=None 清除绑定（测试用）。"""
-    global _PROJECT_ROOT
-    _PROJECT_ROOT = Path(os.path.abspath(root)) if root is not None else None
-
-
-def _write_target(path):
-    """收口写目标：NUL 拒绝 + 父链全解析（叶子绝不解析——原子替换替换的是
-    目录项，绝不解析到链接受害者）+ 显式根包含判定（见 bind_project_root）。"""
+    A supplied root owns this operation, not the process. Every target must be
+    within it after parent resolution, including explicitly outside paths.
+    root=None is the standalone library contract (no project containment).
+    No descriptors or mutable binding survive the operation.
+    """
     try:
         p = Path(os.path.abspath(path))
-        if '\x00' in str(p):
+        if '\x00' in str(p) or (root is not None and '\x00' in str(root)):
             raise ValueError('NUL in path')
         parent = p.parent.resolve()
-        root = _PROJECT_ROOT
         if root is not None:
-            real = root.resolve()
-            declared_inside = p == root or root in p.parents \
-                or p == real or real in p.parents
-            if declared_inside and parent != real and real not in parent.parents:
+            real = Path(root).resolve()
+            if parent != real and real not in parent.parents:
                 raise _write_error(p, '符号链接或路径逃逸项目根')
         return parent / p.name
     except (OSError, RuntimeError, ValueError) as error:
@@ -323,7 +313,7 @@ def _require_fd_writes(path, *, what="写入"):
 
 
 @contextlib.contextmanager
-def pinned_parent(path, *, create=True):
+def pinned_parent(path, *, create=True, root=None):
     """Open/create every directory component via a no-follow pinned parent fd.
 
     Holding the final descriptor protects all subsequent mkdir/open/rename from
@@ -332,7 +322,7 @@ def pinned_parent(path, *, create=True):
     调用方 with 体内的异常（含 OSError）原样穿透——loudness 回执的 advisory
     吞错与既有测试对原始 OSError 的断言都依赖该语义。要求
     write_capability() == 'fd-anchored'。"""
-    p = _write_target(path)
+    p = _write_target(path, root=root)
     _require_fd_writes(p)
     descriptors = []
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -366,13 +356,14 @@ def fd_path(fd):
     return Path('/proc') / str(os.getpid()) / 'fd' / str(fd)
 
 
-def mkdir(path):
+def mkdir(path, *, root=None):
     """Create a directory without following a preplanted or exchanged link;
     platforms without fd primitives degrade to Path.mkdir (main 安全等级)."""
+    anchor = _write_target(Path(path) / '.directory-anchor', root=root)
     if _legacy_guard():
-        Path(path).mkdir(parents=True, exist_ok=True)
+        anchor.parent.mkdir(parents=True, exist_ok=True)
         return Path(path)
-    with pinned_parent(Path(path) / '.directory-anchor'):
+    with pinned_parent(anchor, root=root):
         pass
     return Path(path)
 
@@ -471,31 +462,31 @@ class _Txn:
 
 
 @contextlib.contextmanager
-def _flock_for(path: Path):
+def _flock_for(path: Path, *, root=None):
     """目标文件的跨进程排他锁（锁文件 = <目标名>.lock）：fd 锚定平台经锚定
     目录 + flock_at（O_NOFOLLOW 创建）；降级平台经 main 锁守卫
     （ensure_inside_project 判定后常规创建）。持有者与 _transaction 的锁
     互斥（同一 <目标名>.lock inode 的 flock）。"""
+    p = _write_target(path, root=root)
     if _legacy_guard():
-        with _legacy_flock_for(path):
+        with _legacy_flock_for(p):
             yield
         return
-    p = _write_target(path)
-    with pinned_parent(p) as (parent, name, target):
+    with pinned_parent(p, root=root) as (parent, name, target):
         with flock_at(parent, name, what=target):
             yield
 
 
 @contextlib.contextmanager
-def file_lock(path):
+def file_lock(path, *, root=None):
     """Hold both lock layers for a target without writing it (<target>.lock)."""
-    target = Path(path)
-    with _thread_lock_for(target), _flock_for(target):
+    target = _write_target(path, root=root)
+    with _thread_lock_for(target), _flock_for(target, root=root):
         yield
 
 
 @contextlib.contextmanager
-def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None):
+def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None, root=None):
     """事务核心：两层锁 + tmp 代管；被包裹方置 txn.commit 后正常退出才替换。
 
     fd 锚定平台：随机名 O_EXCL tmp + 提交前 inode 对账（tmp 目录项中途被置换
@@ -503,7 +494,7 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None)
     写者，见 locked_staging），否则 /proc 锚定（进程内写者）。
     allow_symlink=True：允许末段符号链接目标被原子替换（账本目标侧免疫）。
     降级平台：mkstemp + os.replace + main 锁守卫（原 main 行为）。"""
-    p = _write_target(path)
+    p = _write_target(path, root=root)
     if _legacy_guard():
         with _thread_lock_for(p), _legacy_flock_for(p):
             fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=".tmp",
@@ -519,7 +510,7 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None)
             finally:
                 txn.tmp.unlink(missing_ok=True)   # 成功路径已被 replace 移走；失败/中止清残件
         return
-    with _thread_lock_for(p), pinned_parent(p) as (parent, name, target):
+    with _thread_lock_for(p), pinned_parent(p, root=root) as (parent, name, target):
         with flock_at(parent, name, what=target):
             _regular_leaf(parent, name, target, allow_symlink=allow_symlink)
             tempname = '.' + name + '.' + secrets.token_hex(16) + '.tmp'
@@ -545,7 +536,7 @@ def _transaction(path, *, allow_symlink=False, staging=False, after_commit=None)
 
 
 @contextlib.contextmanager
-def locked_write(path):
+def locked_write(path, *, root=None):
     """持锁 + 原子写上下文管理器：yield 同目录临时文件 Path（/proc 锚定形态，
     进程内写者专用——见模块头 issue #59 节）。
 
@@ -555,13 +546,13 @@ def locked_write(path):
     正常退出 → os.replace(tmp, p) 原子落盘并释放两层锁；异常退出 → 清残件、
     目标保持旧值。调用方须实际写 tmp（with 体正常走完即提交 tmp 现有内容，
     未写 = 用空文件替换目标）。"""
-    with _transaction(path) as txn:
+    with _transaction(path, root=root) as txn:
         yield txn.tmp
         txn.commit = True   # 调用方 with 体正常走完 = 待提交
 
 
 @contextlib.contextmanager
-def locked_staging(path, *, after_commit=None):
+def locked_staging(path, *, after_commit=None, root=None):
     """持锁 + 随机名真实 staging 路径（子进程写者专用：ffmpeg/chrome 等外部
     进程经 argv 接收输出路径）。
 
@@ -572,7 +563,7 @@ def locked_staging(path, *, after_commit=None):
     # The callback runs after publication but before either target lock is released.
     # It must not reacquire this non-reentrant target lock. If it fails, media
     # remains published and the error propagates; no success is fabricated.
-    with _transaction(path, staging=True, after_commit=after_commit) as txn:
+    with _transaction(path, staging=True, after_commit=after_commit, root=root) as txn:
         yield txn.tmp
         txn.commit = True
 
@@ -591,7 +582,7 @@ def _default_dump(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 
-def locked_update(path, mutator, *, load=None, default=None, dump=None):
+def locked_update(path, mutator, *, load=None, default=None, dump=None, root=None):
     """「读-改-写」文件事务：读 → mutator → 原子写回，整段持两层锁。
 
     - load：自定义读取 (path) -> data（infra 注入 load_receipt 携带指纹门）；
@@ -603,7 +594,7 @@ def locked_update(path, mutator, *, load=None, default=None, dump=None):
     返回 mutator 的返回值（中止时 None）。崩溃安全见模块头 ②：中断/被杀后
     目标要么旧值要么新值，永不为截断 JSON。"""
     reader = load if load is not None else (lambda p: _default_load(p, default))
-    with _transaction(path, allow_symlink=True) as txn:
+    with _transaction(path, allow_symlink=True, root=root) as txn:
         new = mutator(reader(path))
         if new is not None:
             txn.tmp.write_text((dump or _default_dump)(new), encoding="utf-8")
@@ -611,43 +602,45 @@ def locked_update(path, mutator, *, load=None, default=None, dump=None):
     return new
 
 
-def unlink(path):
+def unlink(path, *, root=None):
     """Remove a leaf in a pinned directory, never following its ancestors;
     degrade to Path.unlink(missing_ok=True) on platforms without fd writes."""
+    p = _write_target(path, root=root)
     if _legacy_guard():
-        Path(path).unlink(missing_ok=True)
+        p.unlink(missing_ok=True)
         return
-    p = _write_target(path)
     if not p.parent.exists():
         return
-    with pinned_parent(p, create=False) as (parent, name, target):
+    with pinned_parent(p, create=False, root=root) as (parent, name, target):
         try:
             os.unlink(name, dir_fd=parent)
         except FileNotFoundError:
             pass
 
 
-def replace(source, target):
+def replace(source, target, *, root=None):
     """No-follow pinned-parent replacement for already generated owned files
     (mux tmp→final 等)；降级平台等价 os.replace（main 行为）。"""
+    source = _write_target(source, root=root)
+    target = _write_target(target, root=root)
     if _legacy_guard():
         os.replace(source, target)
         return
-    with pinned_parent(source, create=False) as (srcfd, srcname, srcpath):
-        with pinned_parent(target) as (dstfd, dstname, dstpath):
+    with pinned_parent(source, create=False, root=root) as (srcfd, srcname, srcpath):
+        with pinned_parent(target, root=root) as (dstfd, dstname, dstpath):
             _regular_leaf(srcfd, srcname, srcpath)
             _regular_leaf(dstfd, dstname, dstpath)
             os.replace(srcname, dstname, src_dir_fd=srcfd, dst_dir_fd=dstfd)
 
 
-def atomic_write(path, data):
+def atomic_write(path, data, *, root=None):
     """无锁原子写（tmp + os.replace）：调用方已持锁区段内的伴生件写入用
     （如 _archive_stale_receipt 的 receipt.prev.json——receipt.json 锁的持有
     者独占轮转，无需再拿第二把锁文件）。str 按 UTF-8 编码，bytes 直写。
     目标目录不存在时自动建；写失败抛原始异常（残件在 finally 清理）；
     fd 锚定平台附提交前 inode 对账（issue #59），降级平台为 main 行为。"""
     payload = data if isinstance(data, bytes) else str(data).encode("utf-8")
-    p = _write_target(path)
+    p = _write_target(path, root=root)
     if _legacy_guard():
         p.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix="." + p.name + ".", suffix=".tmp",
@@ -659,7 +652,7 @@ def atomic_write(path, data):
         finally:
             Path(name).unlink(missing_ok=True)   # 成功路径已被 replace 移走；失败清残件
         return
-    with pinned_parent(p) as (parent, name, target):
+    with pinned_parent(p, root=root) as (parent, name, target):
         _regular_leaf(parent, name, target)
         tempname = '.' + name + '.' + secrets.token_hex(16) + '.tmp'
         fd = os.open(tempname, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
