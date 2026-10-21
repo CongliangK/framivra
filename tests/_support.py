@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import wave
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
 
@@ -75,3 +76,28 @@ def full_hd_timeline(root: Path, **over):
     p = root / "timeline.json"
     p.write_text(json.dumps(tl), encoding="utf-8")
     return p
+
+
+def cleanup_timeline(root: Path, *, subtitles=()) -> Path:
+    """清理用例共用的1秒音频+gfx项目；缓存、交付件及CLI合同仍由各用例负责。"""
+    (root / "assets").mkdir()
+    with wave.open(str(root / "assets" / "voice.wav"), "wb") as wav:
+        wav.setnchannels(2)
+        wav.setsampwidth(2)
+        wav.setframerate(48000)
+        wav.writeframes(b"\0" * (48000 * 4))
+    (root / "gfx").mkdir()
+    (root / "gfx" / "title.html").write_text("<canvas></canvas>")
+    timeline = root / "timeline.json"
+    timeline.write_text(json.dumps({
+        "version": 2,
+        "project": {"fps": 30, "width": 1920, "height": 1080,
+                    "duration_frames": 30},
+        "sources": [{"id": "voice", "path": "assets/voice.wav"}],
+        "video_tracks": [{"name": "title", "kind": "gfx", "clips": [
+            {"src": "gfx/title.html", "dst_in": 0, "dur": 30}]}],
+        "audio_tracks": [{"name": "voice", "events": [
+            {"src": "voice", "in": 0, "out": 30}]}],
+        "subtitles": list(subtitles)
+    }))
+    return timeline

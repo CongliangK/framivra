@@ -394,7 +394,7 @@ class TestBackoffNoSlot(unittest.TestCase):
 
             def probe(delay):
                 backoff.append(delay)
-                sem = encoders._nvenc_sem()
+                sem = encoders._nvenc_pool()[0]
                 got = sem.acquire(blocking=False)
                 self.assertTrue(got, "退避等待期持槽=违反占槽纪律（R3）")
                 sem.release()

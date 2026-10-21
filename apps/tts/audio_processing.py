@@ -8,6 +8,7 @@ band, so quiet synthesized speech can drive the downstream ducking threshold.
 These are the shared primitives used by the TTS worker and maintenance CLI.
 """
 import argparse
+import math
 import os
 import subprocess
 
@@ -25,9 +26,11 @@ def atempo_chain(raw_s: float, budget_s: float) -> str:
       - 域内单级 "atempo=1.199475"；域外 n 级同值串联 "atempo=√r,atempo=√r"
         （更极端依次再拆，n 级全同值）。
     """
-    if raw_s <= 0 or budget_s <= 0:
+    if not math.isfinite(raw_s) or not math.isfinite(budget_s) or raw_s <= 0 or budget_s <= 0:
         raise ValueError(f"时长非法：raw={raw_s}s budget={budget_s}s")
     r = raw_s / budget_s
+    if not math.isfinite(r) or r <= 0:
+        raise ValueError(f"时长比非法：raw={raw_s}s budget={budget_s}s")
     if abs(r - 1.0) < 1e-9:
         return ""
     n = 1

@@ -156,6 +156,40 @@ class HTMLGroupB(unittest.TestCase):
         self.assertEqual(len(data), 4)
         self.assertTrue(all(item['seek_trace_checks'] >= 18 for item in data))
 
+    def test_collage_root_sentinel_and_user_identifiers(self):
+        # Actual scene drawing operations, not browser/native pixels.
+        setup = HARNESS.split('const result=[];')[0]
+        probe = r"""
+const assert=require('assert');
+vm.runInContext(fs.readFileSync(root+'/../styles/collage/assets/html/collage.js','utf8'),sandbox);
+const scene=sandbox.window.MG_REFERENCE,N=120;
+const part=(id,x,y)=>({id,shape:'planet',parent:null,x,y,scale:30,angle:0,
+ pivot:[0,0],motion:{hinge:0,drift:[0,0]}});
+const original={title:'Root anchors',seed:0,exposure:3,
+ parts:[part('base',.4,.5),part('second',.6,.5),part('third',.7,.6),
+ {...part('child',.3,.3),parent:'base',scale:24}],
+ beats:['awaken','release','reframe','resolve'].map((mode,i)=>({mode,
+  in:30*i,out:30*(i+1),text:mode,active:[]}))};
+scene.validate(original,N,h);
+const frames=[0,31,91,119],expected=frames.map(f=>draw(scene,original,f,N));
+for(const id of ['null','constructor']){
+ const renamed=JSON.parse(JSON.stringify(original));
+ renamed.parts[0].id=id;renamed.parts[3].parent=id;
+ scene.validate(renamed,N,h);const snapshot=JSON.stringify(renamed);
+ for(const index of [3,0,2,1,3])assert.equal(draw(scene,renamed,frames[index],N),expected[index],
+  'renaming an id must preserve root anchors and actual child links: '+id);
+ assert.equal(JSON.stringify(renamed),snapshot,'input must not mutate');
+}
+for(const id of ['__proto__','hasOwnProperty','toString']){
+ const invalid=JSON.parse(JSON.stringify(original));invalid.parts[0].id=id;
+ invalid.parts[3].parent=id;assert.throws(()=>scene.validate(invalid,N,h));
+}
+const missing=JSON.parse(JSON.stringify(original));missing.parts[3].parent='constructor';
+assert.throws(()=>scene.validate(missing,N,h),'inherited object keys are not declared parents');
+"""
+        result = subprocess.run(['node','-e',setup+probe,str(HTML)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr[-4000:])
+
     def test_liquid_shortest_resolve_has_six_identical_actual_rgba_frames(self):
         # Reuse only the mock Canvas/helper setup, avoiding the unrelated suite.
         setup = HARNESS.split('const result=[];')[0]

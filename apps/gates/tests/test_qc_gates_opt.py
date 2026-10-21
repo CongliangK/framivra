@@ -33,6 +33,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]  # apps/gates/（app 根；tests 随 app 迁入 P2a）
@@ -85,6 +86,31 @@ class TestLoudnessReceipt(unittest.TestCase):
         r = loudness_cache.measure_and_store(self.media, lambda: (None, None))
         self.assertIsNone(r["i_lufs"])
         self.assertIsNone(loudness_cache.lookup(self.media))
+
+    def test_invalid_measurements_never_hit_or_escape_as_numbers(self):
+        invalid = (None, True, False, float('nan'), float('inf'), -float('inf'),
+                   'NaN', [], {}, 10**1000)
+        key = loudness_cache._key_of(self.media)[0]
+        receipt = loudness_cache._receipts_path(self.media)
+        receipt.parent.mkdir(parents=True)
+        for field in ('i_lufs', 'tp_dbfs'):
+            for value in invalid:
+                with self.subTest(field=field, value_type=type(value).__name__):
+                    entry = dict(i_lufs=-14, tp_dbfs=-2)
+                    entry[field] = value
+                    receipt.write_text(json.dumps({'entries': {key: entry}}))
+                    self.assertIsNone(loudness_cache.lookup(self.media))
+                    with patch.object(loudness_cache, '_write_entry_locked') as write:
+                        measured = loudness_cache.measure_and_store(
+                            self.media, lambda: (entry['i_lufs'], entry['tp_dbfs']))
+                    self.assertIsNone(measured[field])
+                    other = 'tp_dbfs' if field == 'i_lufs' else 'i_lufs'
+                    self.assertEqual(measured[other], entry[other])
+                    write.assert_not_called()
+        # Valid integer zero is a measurement (quality thresholds judge it).
+        result = loudness_cache.measure_and_store(self.media, lambda: (0, -2))
+        self.assertEqual(result, dict(i_lufs=0, tp_dbfs=-2))
+        self.assertEqual(loudness_cache.lookup(self.media)['i_lufs'], 0)
 
     def test_missing_file_lookup_none(self):
         self.media.unlink()

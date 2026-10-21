@@ -471,10 +471,13 @@ def qc(c):
             ph = int.from_bytes(head[20:24], "big")
             if pw <= 0 or ph <= 0:
                 return None
-            tmp = c.cache / "qc_gfx_bbox.raw"
-            c.run(["ffmpeg", "-v", "error", "-y", "-i", str(png), "-vf", "format=rgba",
-                   "-frames:v", "1", "-f", "rawvideo", str(tmp)], need=False)
-            raw = tmp.read_bytes(); tmp.unlink()
+            # Each probe owns its output; never follow a preplaced shared leaf
+            # or consume another concurrent probe's bytes after a failed run.
+            with tempfile.TemporaryDirectory(prefix="qc_gfx_", dir=c.cache) as work:
+                tmp = Path(work) / "bbox.raw"
+                c.run(["ffmpeg", "-v", "error", "-y", "-i", str(png), "-vf", "format=rgba",
+                       "-frames:v", "1", "-f", "rawvideo", str(tmp)], need=False)
+                raw = tmp.read_bytes()
             if len(raw) < pw * ph * 4:
                 return None
             # alpha>24 视为内容（与 QC_PIXEL_DIFF 同量级的存在性阈）；

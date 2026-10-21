@@ -81,9 +81,9 @@
       b = h.stage(d.beats, t),
       local = t - b.in,
       u = local / Math.max(1, b.out - b.in - exposure),
-      tr = {};
+      tr = Object.create(null);
     d.parts.forEach((p) => {
-      const par = tr[p.parent];
+      const par = p.parent === null ? null : tr[p.parent];
       let x, y, a;
       if (par) {
         const [rx, ry] = rot(p.x * par.s, p.y * par.s, par.a);

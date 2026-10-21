@@ -21,13 +21,13 @@ class PreviewContract(unittest.TestCase):
         script = """
 const assert = require('node:assert/strict');
 const CONSTRAINTS = %s, SAMPLE = %s;
-let TL = null, renders = 0, fits = 0;
+let TL = null, PXF = 6, renders = 0, fits = 0;
 const nodes = {}, handlers = {}, HINT = 'details', alerts = [];
 const $ = id => nodes[id] ||= {value: '', innerHTML: '', click() {this.clicked = true;},
   showModal() {this.open = true;}, close() {this.open = false;}};
 const document = {addEventListener: (event, fn) => handlers[event] = fn};
 const alert = message => alerts.push(message);
-const render = () => renders++, fit = () => fits++;
+const render = () => renders++, fitScale = () => {fits++; return 1;};
 %s
 %s
 (async () => {
@@ -80,6 +80,109 @@ for (const button of ["bCancel", "bX"]) {
 """ % (json.dumps(_constant("CONSTRAINTS")), json.dumps(_constant("SAMPLE")),
        loader, validators)
         result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+    def test_full_render_is_transactional_and_untrusted_values_are_text(self):
+        """Runs actual page JS against inert DOM sinks, not browser pixel proof."""
+        script = r"""
+const assert = require('node:assert/strict'), vm = require('node:vm');
+const created = [], alerts = [], nodes = {}, handlers = {};
+class Element {
+  constructor(tag='div') {
+    this.tag=tag; this.style={}; this.children=[]; this.dataset={};
+    this.className=''; this.value=''; this.html=''; this.clientWidth=1000;
+    this.offsetWidth=148; this.scrollLeft=0; this.events={}; created.push(this);
+    this.classList={add: c => {this.className += ' '+c;},
+      remove: c => {this.className=this.className.split(' ').filter(v=>v!==c).join(' ');}};
+  }
+  // Intentionally inert: records every HTML string; never interprets/runs a tag.
+  set innerHTML(value) {
+    this.html=String(value); this.children=[];
+    if(this.html.includes('id="lane0"')) this.lane0=new Element();
+  }
+  get innerHTML() {return this.html;}
+  get childNodes() {return this.children;}
+  appendChild(child) {this.children.push(child); return child;}
+  replaceChildren(...children) {this.children=children; this.html='';}
+  querySelector(selector) {return selector==='#lane0'?this.lane0:null;}
+  insertAdjacentHTML(_, html) {this.html += html;}
+  addEventListener(name, fn) {this.events[name]=fn;}
+  getBoundingClientRect() {return {left:0};}
+  click() {} showModal() {this.open=true;} close() {this.open=false;}
+}
+const document={getElementById: id => nodes[id] ||= new Element(),
+  createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment'),
+  querySelectorAll: () => [], querySelector: () => null,
+  addEventListener: (name, fn) => handlers[name]=fn};
+const box={document, window:{addEventListener(){}}, URLSearchParams, assert, created,
+  alerts, alert: text => alerts.push(text)};
+vm.createContext(box);
+vm.runInContext(%s,box,{timeout:2000});
+vm.runInContext(`
+const clone=()=>JSON.parse(JSON.stringify(SAMPLE));
+const current=TL, before=JSON.stringify(TL), priorNodes=[...$('content').childNodes];
+const block=created.find(e=>e.className.startsWith('blk ')), oldClick=block.onclick;
+block.onclick();
+const details=$('detail').innerHTML, meta=$('meta').innerHTML, zoom=$('zoom').value;
+const badInputs=[{...clone(),sources:{}},
+  {...clone(),video_tracks:[{name:'bad',kind:'broll',clips:null}]},
+  {...clone(),audio_tracks:[{name:'bad',events:null}]},
+  {...clone(),video_tracks:[{name:'late error',kind:{},clips:[]}]},
+  {...clone(),project:{...SAMPLE.project,duration_frames:'not frames'}},
+  {...clone(),project:{...SAMPLE.project,duration_frames:1e100}}];
+for(const bad of badInputs){
+  const n=alerts.length; loadText(JSON.stringify(bad));
+  assert.equal(alerts.length,n+1); assert.equal(TL,current);
+  assert.equal(JSON.stringify(TL),before); assert.equal($('zoom').value,zoom);
+  assert.equal($('detail').innerHTML,details); assert.equal($('meta').innerHTML,meta);
+  assert.equal($('content').childNodes.length,priorNodes.length);
+  priorNodes.forEach((node,i)=>assert.equal($('content').childNodes[i],node));
+  assert.equal(block.onclick,oldClick); block.onclick();
+  assert.equal($('detail').innerHTML,details);
+}
+const marker='<img data-audit-marker="inert">';
+const cases=[
+  t=>t.video_tracks[0].kind=marker,
+  t=>t.project.width=marker, t=>t.project.height=marker, t=>t.project.fps=marker,
+  t=>t.audio_tracks[0].events[0].volume=marker,
+  t=>t.video_tracks[0].clips[0].fade_in_frames=marker,
+  t=>t.video_tracks[0].clips[0].fade_out_frames=marker,
+  t=>t.video_tracks[0].clips[0].src_in=marker,
+  t=>t.video_tracks[0].clips[0].src_out=marker,
+  t=>t.video_tracks[0].clips[0].dur=marker,
+  t=>t.video_tracks[0].clips[0].dst_in=marker,
+];
+for(const mutate of cases){
+  const t=clone(); mutate(t); const first=created.length, n=alerts.length;
+  loadText(JSON.stringify(t)); assert.equal(alerts.length,n);
+  const newBlocks=created.slice(first).filter(e=>e.className.startsWith('blk '));
+  for(const e of newBlocks){e.onclick(); assert(!/<img/i.test($('detail').innerHTML));}
+  assert(created.slice(first).every(e=>!/<img/i.test(e.innerHTML)));
+  assert(!/<img/i.test($('meta').innerHTML));
+  assert(JSON.stringify(TL).includes('data-audit-marker'));
+}
+for(const reserved of ['__proto__','constructor','toString']){
+  const t=clone();t.video_tracks[0].kind=reserved;t.audio_tracks[0].name=reserved;
+  const n=alerts.length;loadText(JSON.stringify(t));assert.equal(alerts.length,n);
+}
+for(const fps of [-1,0,1e308]){
+  const t=clone();t.project.fps=fps;loadText(JSON.stringify(t));
+  assert.equal(TL.project.fps,fps);assert.equal($('vbadge').className,'bad');
+}
+const long=clone();long.project.duration_frames=1e12;
+const count=created.length;loadText(JSON.stringify(long));
+assert.equal(TL.project.duration_frames,1e12);assert(created.length-count<6000);
+// Valid v2 clips retain all transforms, dependencies, subtitles and detail routes.
+const final=clone();final.video_tracks[2].clips[0].cache_dependencies=['gfx/custom.js'];
+final._meta={note:'retained extension'};loadText(JSON.stringify(final));
+assert.deepEqual(TL,final);assert.equal($('vbadge').className,'');
+const clip=created.filter(e=>e.className.startsWith('blk ')).at(-1);clip.onclick();
+assert($('detail').innerHTML.includes('DETAILS'));
+`,box,{timeout:2000});
+""" % json.dumps(re.search(r'<script>([\s\S]*)</script>', PREVIEW_HTML).group(1))
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True,
+                                timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

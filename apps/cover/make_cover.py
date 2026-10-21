@@ -238,7 +238,9 @@ def build_html(p, bg_name):
         SUB_MAX_V=int(SUB_MAX_V * 100), SUB_SIZE=p["sub_size"], SUB_WEIGHT=p["sub_weight"],
         LS=p["sub_ls"], SUB_COLOR=sub_color, TITLE_SPANS=spans,
         SUB_TEXT=html.escape(p["sub"]),
-        META_ONE=f"canvas {w}x{h} · D50 · {p['title']}/{p['sub']}",
+        # Comment text is a separate HTML context from the visible escaped spans.
+        META_ONE=html.escape(f"canvas {w}x{h} · D50 · {p['title']}/{p['sub']}")
+            .replace("--", "&#45;&#45;"),
     )
     return HTML_TEMPLATE.substitute(t), meta
 

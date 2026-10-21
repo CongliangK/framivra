@@ -121,6 +121,9 @@ def cover_crop(
     src, dst = Path(src), Path(dst)
     if not src.is_file():
         raise PostprocessError(f"输入图片不存在: {src}")
+    # ffmpeg cannot edit in place; failure cleanup must never unlink the source.
+    if dst.exists() and src.samefile(dst):
+        raise PostprocessError("输入和输出必须是不同的图片文件")
 
     try:
         src_info = probe_image(src)

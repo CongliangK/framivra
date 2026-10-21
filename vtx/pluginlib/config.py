@@ -108,7 +108,7 @@ def external_entries(cfg: dict, key: str):
         if isinstance(item, str):
             out.append({"path": item, "enabled": False})
         elif isinstance(item, dict) and isinstance(item.get("path"), str):
-            out.append({"path": item["path"], "enabled": bool(item.get("enabled", False))})
+            out.append({"path": item["path"], "enabled": item.get("enabled") is True})
         else:
             out.append({"path": item, "enabled": False, "malformed": True})
     return out

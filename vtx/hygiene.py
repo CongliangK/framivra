@@ -427,7 +427,8 @@ class _TmpDir:
     def __enter__(self): return self.path
 
     def __exit__(self, et, ev, tb):
-        _sweep_tmp_worker_ledger(self.path)
+        if not _sweep_tmp_worker_ledger(self.path):
+            return False
         if self.identity is not None:
             fstxn.remove_pinned(self.path, self.identity,
                                 preserve=lambda p: p.name.endswith('.lock'))
@@ -436,28 +437,27 @@ class _TmpDir:
         return False
 
 
-def _sweep_tmp_worker_ledger(path: Path):
-    """issue #103：tmp_run 伴生 PID 账本清扫——目录内若有 .worker_pgid.json
-    且其进程组仍有存活成员（宿主已死），先 killpg 等进程表清空，再让调用方
-    删目录。正常监管收尾（SupervisedProcessGroup.stop）已先删账本，此处恒为
-    no-op；本清扫只兜「删目录与杀进程被拆开」的异常/旁路路径（如 stop 中途
-    崩溃、外部直接 rmtree 前）。惰性导入 proc_supervisor（它正向依赖本模块，
-    顶层互引会环）；失败只告警，不阻断目录删除——Linux 上 unlink 不受打开
-    文件影响，真正的残员由 reap_orphan_workers 下轮收口。"""
+def _sweep_tmp_worker_ledger(path: Path) -> bool:
+    """Allow tmp deletion only after its worker ledger has a settled outcome.
+
+    Failed/uncertain termination retains the profile and ledger for a later reap.
+    No ledger and the existing broken/stale/lineage-denied policies still permit
+    cleanup; no signaling authority is added here.
+    """
     try:
         from . import proc_supervisor as _ps
         ledger = Path(path) / _ps.WORKER_LEDGER
         if not ledger.is_file():
-            return
+            return True
         status = _ps.reap_run_dir(path, ledger_path=ledger)
-        if status == "live_host":
-            # 宿主仍存活却走到了 tmp_run 删除（supervisor.stop 中途崩溃等旁路）：
-            # 删目录可能留下持锁残员——只告警不阻断，reap_orphan_workers 下轮兜底。
-            # killed/already_dead 已等进程表清空，删除是安全收尾，无需告警。
-            print(f"⚠ tmp_run 清扫：目录 {Path(path).name} 的 Worker 组宿主仍存活，"
-                  f"目录删除可能留下持锁残员（issue #103）")
-    except Exception as e:   # 清扫是防御层，任何失败不伤 tmp_run 主语义
-        print(f"⚠ tmp_run PID 账本清扫失败（不影响目录删除）: {e}")
+        if status in ("live_host", "kill_failed"):
+            print(f"⚠ tmp_run 清扫：Worker 组未确认清空（{status}），"
+                  f"保留目录/账本: {path}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠ tmp_run PID 账本清扫失败，保留目录/账本: {e}")
+        return False
 
 
 def dir_size(p: Path) -> int:
