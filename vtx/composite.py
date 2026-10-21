@@ -352,7 +352,7 @@ class RenderPlan:
     def _layer_chain(self, L, k, cur, a, seglen, idx):
         """单层次输入滤镜段与 overlay 段。返回 (slave_part, overlay_part, out_label)。
 
-        enable 遵守 timeline 的整数帧半开区间 [dst_in, dst_out)。between 的
+        可见窗口遵守 timeline 的整数帧半开区间 [dst_in, dst_out)。between 的
         两端包含，故右界放在最后合法帧 rel_out-1 与首个非法帧 rel_out 的中点，
         全片与段内共用，不依赖 %.6f 的量化方向；30fps 下余量约半帧。
         历史实现（2026-09-10）曾刻意复刻旧全片 t1=%.6f(dst_out·spf)：
@@ -361,11 +361,18 @@ class RenderPlan:
         2026-10-21 的真实逐帧反例后撤销该兼容取舍，不保留旧窗口分支。t0 不变：
         dst_in 帧恒显示（pre 半帧放宽兜住量化方向），rel_in−1 帧恒不显示。
 
+        窗口放在 overlay 自身的 x 表达式，不用通用 enable：FFmpeg 6.1 会在
+        消费任一输入时更新 enable，次输入半帧提前/预读会覆盖主帧的判定，导致
+        末合法帧消失或一帧空窗被填；7.1 才限制为主输入更新。overlay 的 t 在
+        两版均取实际 mainpic PTS，eval=frame 每主帧求值。窗口内 x 仍是原整数
+        坐标（含原有色度对齐），窗口外 NAN 规范化到 INT_MAX，交集检查直接
+        透传主帧、不混合像素。无版本分支，也不改输入配对、alpha 或 EOF 行为。
+
         次输入提前半帧 + 头垫 1 帧（rel_in=0 无余量除外）：PNG 序列输入瞬间涌入时
         framesync 对「次帧 PTS 恰等于主帧」的首帧偶发配对失败（该层 dst_in 首帧整
         帧丢失=黑帧，非确定性复现，2026-08-25 voice-ime 轮7；v3.5 渲染棒五点 100%
         复现 3859/6049/6499/11779/14029，A/B 已证编码器无关）。次帧恒早于主帧半个
-        采样后 framesync 始终取「最近过去帧」配对；enable 窗口同步放宽半帧。
+        采样后 framesync 始终取「最近过去帧」配对；可见窗口同步放宽半帧。
         段内换算（2026-09-10）：时移基准取 max(rel_in, 0)——跨段界层的输入已被
         -ss/start_number 截到段起点（流首内容=全局帧 a）；rel_in==0 仅出现在 a=0
         （切点静默约束保证中段切点 ±20 帧内无任何 dst_in）。
@@ -376,14 +383,14 @@ class RenderPlan:
         /tmp/vtx_r4/repro_seg0{0,1,2}_new.log）。尾垫的保留价值收窄为：消除段内
         EOF 裁决触发面（次输入 EOF 前丢帧/近-EOF 渐暗族的边界条件）——最终段文件
         的确定性已由逐层 pass 结构保证（_composite_passes），垫帧本身不承担确定性
-        语义。尾垫及末帧内容保持不变，但可见性由半开 enable 窗口约束：主链
+        语义。尾垫及末帧内容保持不变，但可见性由半开窗口约束：主链
         rel_out-1 帧仍可取合法末帧，rel_out 及之后必须直通主帧，不能因 clone
         存在而延长图层。旧 incl_end 的 ¼ 帧规则已因上述端点反例撤销。
         v3.6「stop 过大→片尾
         extra 帧」教训不适用：输出端恒有 -frames:v 硬钳 + 拼接后总帧数 ffprobe
         硬门（render_segmented），extra 帧无法逸出。
         eof_action=repeat（非 pass；ffmpeg≥5 枚举名）：pass 在「窗口右端点主帧遇
-        次输入 EOF」时直通丢层（黑帧）；repeat 克隆尾帧，窗口外由 enable=0 屏蔽。
+        次输入 EOF」时直通丢层（黑帧）；repeat 克隆尾帧，窗口外由 x=NAN 屏蔽。
         """
         c, draft, f = self.c, self.draft, self.f
         cl = L["cl"]
@@ -413,8 +420,9 @@ class RenderPlan:
         # doing only format=rgba can be negotiated away for initially-RGBA input.
         png_rgba = "scale=iw:ih:flags=neighbor+bitexact,format=rgba," if L["gfx"] else ""
         slave = f"[{idx}:v]{png_rgba}{shrink}{pad}{timing}[L{k}T]"
-        ov = (f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
-              f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
+        ov = (f"[{cur}][L{k}T]overlay=x='if(between(t,{lo:.6f},{t1:.6f}),"
+              f"{int(L['x'] * f)},NAN)':y={int(L['y'] * f)}:format=auto:"
+              f"eval=frame:eof_action=repeat[L{k}]")
         return slave, ov, f"L{k}"
 
     def _pass_fresh(self, p, seglen, sidecar=False):

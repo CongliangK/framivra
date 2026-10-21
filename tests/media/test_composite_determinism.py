@@ -144,21 +144,27 @@ class TestGraphCodeDigest(unittest.TestCase):
 
 
 class TestLayerHalfOpenWindow(unittest.TestCase):
-    """The emitted enable interval must match integer-frame [in, out) intent.
+    """The emitted visibility interval must match integer-frame [in, out) intent.
 
     Inspect the actual shared graph fragment, not a copy of its edge formula.
     These rational-clock checks supplement, not replace, real pixel/PTS tests.
     """
 
-    def _active(self, start, end, origin, stop, gfx=True):
+    def _active(self, start, end, origin, stop, gfx=True, x=0, y=0, scale=1):
         c = SimpleNamespace(fps=30, spf=1 / 30)
-        plan = RenderPlan(c=c, draft=False, f=1, W=64, H=64)
+        plan = RenderPlan(c=c, draft=scale != 1, f=scale, W=64, H=64)
         layer = {'cl': {'dst_in': start, 'dur': end - start},
-                 'gfx': gfx, 'x': 0, 'y': 0}
+                 'gfx': gfx, 'x': x, 'y': y}
         _, overlay, _ = plan._layer_chain(layer, 0, 'base', origin, stop - origin, 1)
-        match = re.search(r"enable='between\(t,([^,]+),([^\)]+)\)'", overlay)
+        # Generic enable on FFmpeg 6.1 is overwritten by secondary-input
+        # lookahead. Only overlay's own per-main-frame x expression may gate.
+        self.assertNotIn('enable=', overlay)
+        match = re.search(r"overlay=x='if\(between\(t,([^,]+),([^\)]+)\),"
+                          r"(-?\d+),NAN\)':y=(-?\d+):", overlay)
         self.assertIsNotNone(match, overlay)
-        lo, hi = map(Fraction, match.groups())
+        lo, hi = map(Fraction, match.groups()[:2])
+        self.assertEqual(tuple(map(int, match.groups()[2:])), (int(x * scale), int(y * scale)))
+        self.assertIn('eval=frame', overlay)
         self.assertIn('eof_action=repeat', overlay)
         return [frame for frame in range(origin, stop)
                 if lo <= Fraction(frame - origin, 30) <= hi]
@@ -172,6 +178,13 @@ class TestLayerHalfOpenWindow(unittest.TestCase):
                         with self.subTest(origin=origin, start=start, end=end, gfx=gfx):
                             self.assertEqual(self._active(start, end, origin, 65, gfx),
                                              list(range(max(origin, start), end)))
+        # Visible coordinates retain integer/chroma normalization, including
+        # negative, partially/fully offscreen positions and draft scaling.
+        for x, y in ((-3, -1), (1, 3), (65, 66)):
+            for scale in (1, 0.5):
+                with self.subTest(x=x, y=y, scale=scale):
+                    self.assertEqual(self._active(1, 60, 0, 65, x=x, y=y, scale=scale),
+                                     list(range(1, 60)))
 
     def test_one_frame_clips_and_exact_cut_boundaries(self):
         for origin in (0, 29, 30, 31, 32, 59, 60, 61, 62):
