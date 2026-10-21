@@ -89,8 +89,8 @@ def require_result(st, frames, outdir, width, height, *, expected_html=None, exp
             "path_counts": st["path_counts"], "versions": st.get("versions", {})}
 
 
-def cached_runs(d, n, key, width, height, backend, ns, *, expected_html=None, expected_config=None):
-    """Unlike legacy CDP, unmarked PNGs can NEVER be promoted to Electron success."""
+def cached_record(d, n, key, width, height, backend, ns, *, expected_html=None, expected_config=None):
+    """Authenticate completion and producer receipts; return the bound PNG hashes too."""
     try:
         d = Path(d).absolute()
         marker = d / gfx_cli.COMPLETE_FILE
@@ -117,9 +117,16 @@ def cached_runs(d, n, key, width, height, backend, ns, *, expected_html=None, ex
             if require_result(adapter, run['frames'], d, width, height,
                               expected_html=expected_html, expected_config=expected_config) != run:
                 return None
-        return runs
+        return record
     except (OSError, ValueError, TypeError, KeyError, AttributeError, ElectronRenderError):
         return None
+
+
+def cached_runs(d, n, key, width, height, backend, ns, *, expected_html=None, expected_config=None):
+    """Unlike legacy CDP, unmarked PNGs can NEVER be promoted to Electron success."""
+    record = cached_record(d, n, key, width, height, backend, ns,
+                           expected_html=expected_html, expected_config=expected_config)
+    return None if record is None else record['render_runs']
 
 
 def render_stage(c, split_page):

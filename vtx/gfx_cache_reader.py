@@ -15,6 +15,23 @@ class GfxCacheError(ValueError):
     """The selected gfx cache cannot safely supply the requested strip."""
 
 
+def require_electron_record(c, clip, directory):
+    """Read-only authentication shared by bridges and lazy PNG consumers."""
+    from .gfx_backend import electron_config, identity, selected
+    from .gfx_dependencies import policy
+    from .gfx_electron_stage import cached_record
+    if selected() != 'electron':
+        raise GfxCacheError('Electron completion requires the selected Electron backend')
+    if policy(c) == 'strict':
+        raise GfxCacheError('strict dependencies require CDP; native/CLI caches unsupported')
+    record = cached_record(directory, clip['dur'], directory.name, c.w, c.h,
+                           identity(), gfx_cache_ns(), expected_html=c.root / clip['src'],
+                           expected_config=electron_config())
+    if record is None:
+        raise GfxCacheError(f'Electron gfx 完成记录/身份/producer 回执无效: {directory}; rerun vtx gfx')
+    return record
+
+
 def resolve_frames(c, clip):
     """Return exactly f0000..f(dur-1) from this context's selected gfx directory.
 
@@ -47,16 +64,11 @@ def resolve_frames(c, clip):
             directory = candidate
     dependency_digest = digest(resolve(c, clip)) if policy(c) == 'strict' else None
     n = source.frame_count
-    from .gfx_backend import identity
     from .gfx_environment import certificate, recheck
     environment = certificate(c)
     recheck(c)
     if selected() == 'electron':
-        from .gfx_electron_stage import cached_runs
-        from .gfx_backend import electron_config
-        if cached_runs(directory, n, key, c.w, c.h, identity(), namespace,
-                       expected_html=c.root / clip['src'], expected_config=electron_config()) is None:
-            raise GfxCacheError(f'Electron gfx 完成记录/身份/producer 回执无效: {directory}')
+        require_electron_record(c, clip, directory)
     else:
         # For non-Electron backends certificate() returns a bound environment
         # or raises; no uncertified PNG-only path is reachable.
