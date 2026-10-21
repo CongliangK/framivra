@@ -199,7 +199,7 @@ class SvgContract(unittest.TestCase):
         engine = self.root/'engine.bin'; engine.write_bytes(b'ordinary engine fixture')
         libraries = {'libgraphics.so': {'path': 'ordinary library fixture', 'sha256': '1'*64}}
         with mock.patch.object(gfx_svg,'engine_identity',side_effect=REAL_ENGINE_IDENTITY), \
-             mock.patch.object(gfx_svg.shutil,'which',return_value=str(engine)), \
+             mock.patch.object(gfx_svg,'inkscape_executable',return_value=str(engine)), \
              mock.patch.object(gfx_svg,'runtime_libraries',return_value=libraries), \
              mock.patch.object(gfx_svg,'_version',return_value='Inkscape fixture'):
             c=self.ctx(); first=gfx_key(c,self.clip)
@@ -218,6 +218,58 @@ class SvgContract(unittest.TestCase):
         with mock.patch.object(subprocess,'Popen',return_value=process) as popen:
             gfx_svg_stage.run_shell('/test/inkscape',self.root,2,1920,1080)
         self.assertEqual(popen.call_args.kwargs['env'],env)
+
+    def test_shell_pins_transparent_black_on_every_export(self):
+        process = mock.Mock()
+        process.communicate.return_value = ('', '')
+        process.returncode = 0
+        process.poll.return_value = 0
+        with mock.patch.object(subprocess, 'Popen', return_value=process) as popen:
+            gfx_svg_stage.run_shell('/test/inkscape', self.root, 2, 1920, 1080)
+        self.assertEqual(popen.call_args.args[0], ['/test/inkscape', '--shell'])
+        actions = process.communicate.call_args.args[0].splitlines()
+        self.assertEqual(actions, [
+            f'file-open:f{i:04d}.svg;export-type:png;export-area-page;'
+            'export-width:1920;export-height:1080;'
+            'export-background:#000000;export-background-opacity:0;'
+            f'export-filename:f{i:04d}.png;export-do;file-close'
+            for i in range(2)] + ['quit'])
+        self.assertEqual(process.communicate.call_args.kwargs['timeout'], 30)
+
+    def test_background_stage_change_rejects_old_completion_and_renders_cold(self):
+        stage = Path(gfx_svg_stage.__file__)
+        current = stage.read_bytes()
+        background = b'export-background:#000000;'
+        self.assertEqual(current.count(background), 1)
+        previous = current.replace(background, b'')
+        read_bytes = Path.read_bytes
+        def old_source(path):
+            return previous if path == stage else read_bytes(path)
+        # Only model the prior implementation bytes, never alter source on disk.
+        with mock.patch.object(Path, 'read_bytes', old_source):
+            old_context = self._publish_mock_frames(2)
+            old_record = gfx_svg.resolve(old_context, self.clip)
+            old_directory = gfx_dir(old_context, self.clip)
+        self.assertEqual(old_record['implementation']['gfx_svg_stage.py'], gfx_svg.digest(previous))
+        marker = old_directory / gfx_svg.COMPLETE_FILE
+        original_marker = marker.read_bytes()
+        c = self.ctx()
+        record = gfx_svg.resolve(c, self.clip)
+        self.assertEqual(record['implementation']['gfx_svg_stage.py'], gfx_svg.digest(current))
+        self.assertNotEqual(gfx_svg.record_key(old_record), gfx_svg.record_key(record))
+        self.assertNotEqual(old_directory, gfx_dir(c, self.clip))
+        with self.assertRaisesRegex(ValueError, 'does not match inputs'):
+            gfx_svg.completion(c, self.clip, old_directory)
+        def render(executable, directory, count, width, height):
+            for i in range(count):
+                write_png(directory / f'f{i:04d}.png', width, height, frame=i)
+        with mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render) as engine:
+            gfx_svg_stage.render_stage(c)
+            engine.assert_called_once()
+            png_source(c, self.clip).require_ready()
+            gfx_svg_stage.render_stage(c)
+            engine.assert_called_once()
+        self.assertEqual(marker.read_bytes(), original_marker)
 
     def test_bounded_manifest_and_svg_reads(self):
         item=self.root/'ordinary.txt'; item.write_bytes(b'a'*65)

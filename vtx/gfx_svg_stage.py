@@ -7,7 +7,6 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from xml.sax.saxutils import escape
 
 from . import fstxn, gfx_svg
 from .gfx_cli import png_invalid_reason
@@ -15,16 +14,15 @@ from .hygiene import manifest_record, tmp_run
 
 
 def run_shell(executable, directory, count, width, height):
-    fontdir = directory / 'fonts'
-    config = directory / 'fonts.conf'
-    fstxn.atomic_write(config, '<?xml version="1.0"?><fontconfig><dir>' +
-                       escape(str(fontdir)) + '</dir><cachedir>' +
-                       escape(str(directory / 'font-cache')) + '</cachedir></fontconfig>')
+    gfx_svg.private_configuration(directory)
     env = gfx_svg.process_environment(directory)
+    # Pin transparent background RGB as well as alpha; Inkscape defaults to white.
+    # The stage source digest in resolve() also invalidates pre-change PNG caches.
     # Every action operand is generated locally; user paths never enter this language.
     actions = '\n'.join(
         f'file-open:f{i:04d}.svg;export-type:png;export-area-page;'
-        f'export-width:{width};export-height:{height};export-background-opacity:0;'
+        f'export-width:{width};export-height:{height};'
+        'export-background:#000000;export-background-opacity:0;'
         f'export-filename:f{i:04d}.png;export-do;file-close'
         for i in range(count)) + '\nquit\n'
     proc = subprocess.Popen([executable, '--shell'], cwd=directory, env=env,

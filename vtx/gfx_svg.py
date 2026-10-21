@@ -10,13 +10,18 @@ import math
 import os
 import stat
 import sys
+import ctypes
+import platform
+import plistlib
 import json
 import re
 import shutil
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 FORMAT = 'framivra-svg-sequence/v1'
 NAMESPACE = 'svg_inkscape_v1'
@@ -260,7 +265,7 @@ def inspect_svg(data, width, height, *, fonts, families=()):
 _PROCESS_ENV = {'PATH': os.defpath, 'LANG': 'C', 'LC_ALL': 'C',
                 'LANGUAGE': 'en', 'TZ': 'UTC', 'GIO_USE_VFS': 'local',
                 'GIO_USE_PROXY_RESOLVER': 'dummy', 'NO_AT_BRIDGE': '1',
-                'OMP_NUM_THREADS': '1'}
+                'OMP_NUM_THREADS': '1', 'PANGOCAIRO_BACKEND': 'fc'}
 
 
 def process_environment(directory=None):
@@ -277,11 +282,29 @@ def process_environment(directory=None):
     return env
 
 
+def private_configuration(directory):
+    """Configure only declared fonts, including Inkscape's extra font folders."""
+    from . import fstxn
+    directory = Path(directory)
+    for name in ('home', 'config', 'cache', 'data', 'inkscape-profile', 'fonts', 'font-cache'):
+        (directory / name).mkdir(parents=True, exist_ok=True)
+    fstxn.atomic_write(directory / 'fonts.conf', '<?xml version="1.0"?><fontconfig><dir>' +
+                       escape(str(directory / 'fonts')) + '</dir><cachedir>' +
+                       escape(str(directory / 'font-cache')) + '</cachedir></fontconfig>')
+    # Inkscape otherwise adds its distribution/user font dirs on top of FcConfig.
+    fstxn.atomic_write(directory / 'inkscape-profile/preferences.xml',
+                      '<inkscape version="1"><group id="options"><group id="font" '
+                      'use_fontsdir_system="0" use_fontsdir_user="0" '
+                      'custom_fontdirs=""/></group></inkscape>')
+
+
 def runtime_libraries(executable):
-    """Actual ELF dependency closure, including its loader; never an OS seal."""
+    """Actual platform dependency closure and loader; never an OS version seal."""
     from .cache_state import file_digest
+    if sys.platform == 'darwin':
+        return _darwin_runtime(executable)
     if sys.platform != 'linux':
-        raise ValueError('SVG-sequence runtime identity currently supports Linux ELF only')
+        raise ValueError('SVG-sequence runtime identity supports Linux ELF and macOS arm64 only')
     ldd = shutil.which('ldd', path=os.defpath)
     if ldd is None:
         raise ValueError('SVG-sequence runtime identity requires system ldd')
@@ -314,10 +337,128 @@ def runtime_libraries(executable):
     return dict(sorted(libraries.items()))
 
 
+def _darwin_runtime(executable):
+    """Bind native dependencies and actual dyld cache, including dlopen resources.
+
+    Inkscape requires a self-contained app. The standalone fontconfig inspector
+    may use an external installed library closure (e.g. Homebrew). Unknown or
+    ambiguous runpaths fail closed instead of substituting an OS version seal.
+    """
+    from . import gfx_environment as ge
+    if platform.machine() != 'arm64':
+        raise ValueError('SVG-sequence macOS requires native arm64')
+    executable = Path(executable).resolve(strict=True)
+    ge._darwin_native(executable)
+    bundle = next((p for p in executable.parents if p.suffix == '.app'), None)
+    distribution = ge._darwin_bundle(bundle) if bundle else None
+    lib = ctypes.CDLL(None)
+    contains = lib._dyld_shared_cache_contains_path
+    contains.argtypes, contains.restype = [ctypes.c_char_p], ctypes.c_bool
+    files, dependencies, visited = {}, {}, set()
+
+    def expand(value, loader, entry):
+        for prefix, base in (('@loader_path', loader.parent), ('@executable_path', entry.parent)):
+            if value == prefix or value.startswith(prefix + '/'):
+                return base / value[len(prefix):].lstrip('/')
+        if value.startswith('/'):
+            return Path(value)
+        raise ValueError(f'unresolved SVG Darwin library path: {value}')
+
+    def walk(path, entry, inherited=()):
+        path = path.resolve(strict=True)
+        commands = ge._darwin_load_commands(path)
+        if commands is None:
+            raise ValueError(f'non-native SVG Darwin dependency: {path}')
+        ge._darwin_native(path)
+        deps, rpaths, filetype = commands
+        if filetype == 2:
+            entry, inherited = path, ()
+        search = tuple(dict.fromkeys([str(expand(r, path, entry).resolve()) for r in rpaths] + list(inherited)))
+        state = (str(path), str(entry), search)
+        if state in visited:
+            return
+        if len(visited) >= 4096:
+            raise ValueError('SVG Darwin dependency inventory exceeds budget')
+        visited.add(state)
+        files[str(path)] = ge._file(path)[1]
+        resolved = {}
+        for dep in deps:
+            if dep.startswith(('/usr/lib/', '/System/Library/')) and contains(os.fsencode(dep)):
+                resolved[dep] = 'system-cache'
+                continue
+            choices = ([Path(r) / dep[len('@rpath/'):] for r in search]
+                       if dep.startswith('@rpath/') else [expand(dep, path, entry)])
+            matches = {p.resolve(strict=True) for p in choices if p.is_file()}
+            if len(matches) != 1:
+                raise ValueError(f'unresolved/ambiguous SVG Darwin dependency: {path}: {dep}')
+            target = matches.pop()
+            if bundle and not target.is_relative_to(bundle):
+                raise ValueError(f'external SVG Darwin app dependency: {target}')
+            resolved[dep] = str(target)
+            walk(target, entry, search)
+        previous = dependencies.get(str(path))
+        if previous is not None and previous != resolved:
+            raise ValueError(f'context-dependent SVG Darwin dependency: {path}')
+        dependencies[str(path)] = resolved
+
+    walk(executable, executable)
+    if distribution:
+        # Modules loaded by GIO/Pango/GTK need identity even when absent from
+        # LC_LOAD_DYLIB. Python extensions/standalone tools are hashed as app
+        # resources; static SVG PNG export does not execute those programs.
+        commands = ge._darwin_load_commands(executable)
+        inherited = tuple(str(expand(r, executable, executable).resolve()) for r in commands[1])
+        module_roots = tuple(bundle / 'Contents/Resources/lib' / name for name in
+                             ('gio/modules', 'gdk-pixbuf-2.0', 'gtk-3.0', 'pango'))
+        for value in distribution['files'].values():
+            path = Path(value[0])
+            if (any(path.is_relative_to(root) for root in module_roots)
+                    and ge._darwin_load_commands(path) is not None):
+                walk(path, executable, inherited)
+    return {'resolver': 'darwin-arm64-svg/1', 'files': dict(sorted(files.items())),
+            'dependencies': dict(sorted(dependencies.items())),
+            'distribution': distribution, 'system_cache': ge._darwin_cache(*ge._darwin_dyld()),
+            'loader': {'path': '/usr/lib/dyld', 'sha256': ge._file('/usr/lib/dyld')[1]}}
+
+
+def inkscape_executable():
+    """Explicit override, PATH, then macOS app; never execute a launcher shim."""
+    name = os.environ.get('VTX_INKSCAPE') or shutil.which('inkscape')
+    if not name and sys.platform == 'darwin':
+        for root in (Path('/Applications'), Path.home() / 'Applications'):
+            candidate = root / 'Inkscape.app/Contents/MacOS/inkscape'
+            if candidate.is_file():
+                name = str(candidate)
+                break
+    if not name:
+        raise ValueError('SVG-sequence requires installed Inkscape (PATH or VTX_INKSCAPE)')
+    executable = Path(name).resolve(strict=True)
+    if sys.platform == 'darwin':
+        from .gfx_environment import _darwin_native
+        _darwin_native(executable)
+        if executable.parent.name != 'MacOS' or executable.parent.parent.name != 'Contents':
+            raise ValueError('SVG macOS requires a real Inkscape app Mach-O executable; launcher scripts unsupported')
+        bundle = executable.parent.parent.parent
+        info = plistlib.loads((bundle / 'Contents/Info.plist').read_bytes())
+        if (bundle.suffix != '.app' or info.get('CFBundleIdentifier') != 'org.inkscape.Inkscape'
+                or info.get('CFBundleExecutable') != executable.name
+                or not (bundle / 'Contents/Resources/share/inkscape').is_dir()):
+            raise ValueError('SVG macOS requires the self-contained Inkscape app distribution')
+    return str(executable)
+
+
+def _inspect_command(argv):
+    # macOS Inkscape rewrites XDG paths beneath HOME. Introspection must never
+    # see the user's profile or create state there, even on a dry-run load.
+    with tempfile.TemporaryDirectory(prefix='vtx-svg-inspect-') as private:
+        private_configuration(private)
+        return subprocess.run(argv, capture_output=True, text=True, timeout=15,
+                              env=process_environment(private))
+
+
 @lru_cache(maxsize=8)
 def _version(executable, sha256, runtime_digest):
-    result = subprocess.run([executable, '--version'], capture_output=True, text=True,
-                            timeout=15, env=process_environment())
+    result = _inspect_command([executable, '--version'])
     if result.returncode or not result.stdout.strip().startswith('Inkscape '):
         raise ValueError('unable to identify installed Inkscape')
     return result.stdout.strip()
@@ -325,10 +466,7 @@ def _version(executable, sha256, runtime_digest):
 
 def engine_identity():
     from .cache_state import file_digest
-    executable = shutil.which('inkscape')
-    if executable is None:
-        raise ValueError('SVG-sequence requires installed Inkscape on PATH')
-    executable = str(Path(executable).resolve())
+    executable = inkscape_executable()
     binary_hash = file_digest(executable)
     libraries = runtime_libraries(executable)
     return {'name': 'inkscape', 'executable': executable, 'sha256': binary_hash,
@@ -340,9 +478,7 @@ def engine_identity():
 @lru_cache(maxsize=32)
 def _font_faces(executable, path, sha256, runtime_digest):
     from .cache_state import file_digest
-    result = subprocess.run([executable, '-f', '%{family}\t%{style}\t%{index}\n', path],
-                            capture_output=True, text=True, timeout=15,
-                            env=process_environment())
+    result = _inspect_command([executable, '-f', '%{family}\t%{style}\t%{index}\n', path])
     if result.returncode or not result.stdout.strip() or file_digest(path) != sha256:
         raise ValueError('declared SVG font could not be identified or changed during inspection')
     faces = []
@@ -354,8 +490,7 @@ def _font_faces(executable, path, sha256, runtime_digest):
 
 @lru_cache(maxsize=8)
 def _fontconfig_version(executable, sha256, runtime_digest):
-    result = subprocess.run([executable, '--version'], capture_output=True, text=True,
-                            timeout=15, env=process_environment())
+    result = _inspect_command([executable, '--version'])
     if result.returncode:
         raise ValueError('unable to identify fontconfig')
     return (result.stdout + result.stderr).strip()
@@ -436,8 +571,10 @@ def resolve(c, clip):
             except (ValueError, OSError) as error:
                 raise ValueError(f'SVG frame {index} ({frame}): {error}') from error
             seen.add(frame)
-    code = {name: digest(Path(__file__).with_name(name).read_bytes())
-            for name in ('gfx_svg.py', 'gfx_svg_stage.py')}
+    code_names = ['gfx_svg.py', 'gfx_svg_stage.py']
+    if sys.platform == 'darwin':
+        code_names.append('gfx_environment.py')
+    code = {name: digest(Path(__file__).with_name(name).read_bytes()) for name in code_names}
     return {'producer': PRODUCER, 'manifest': clip['src'], 'files': files,
             'frames': frames, 'fonts': fonts, 'font_faces': font_faces,
             'fontconfig': fontconfig, 'fps': c.fps, 'width': c.w,
