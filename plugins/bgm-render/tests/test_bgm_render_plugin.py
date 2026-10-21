@@ -53,7 +53,8 @@ sys.path.insert(0, str(REPO))
 
 _bgm = importlib.import_module("plugins.bgm-render")
 
-from vtx import hygiene                        # noqa: E402
+from vtx import hygiene, recovery              # noqa: E402
+from vtx.infra import Ctx                       # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks   # noqa: E402
 
 FAKE_BGM = r'''import json, os, subprocess, sys
@@ -88,28 +89,17 @@ else:
 '''
 
 
-class _Ctx:
-    """prepare/probe/gc 消费的最小上下文（tl/fps/src_path/cache/out/run/dry 鸭子类型；
-    out 供 hygiene.gc_plan 的 out_intermediate 扫描）。"""
+def _context(root: Path, tl: dict):
+    """Use the production writer and pinned identity, not a duplicate executor.
 
-    def __init__(self, root: Path, tl: dict, fps: int = 30):
-        self.tl = tl
-        self.root = root
-        self.fps = fps
-        self.cache = root / "cache"
-        self.out = root / "out"
-        self.dry = False
-        self._paths = {s["id"]: s["path"] for s in tl.get("sources", [])}
-
-    def src_path(self, sid):
-        return self.root / self._paths[sid]
-
-    def run(self, cmd, need=True):
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
-        if r.returncode != 0 and need:
-            raise RuntimeError((r.stderr or "")[-500:])
-        return r
+    Each snapshot owns its timeline file so constructing another context cannot
+    silently invalidate an earlier context's still-live input snapshot.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=root,
+                                     prefix="timeline-", suffix=".json", delete=False) as stream:
+        json.dump(tl, stream)
+        timeline = Path(stream.name)
+    return Ctx(timeline)
 
 
 class _Base(unittest.TestCase):
@@ -162,7 +152,7 @@ class _Base(unittest.TestCase):
                 "audio_tracks": []}
 
     def _ctx(self, bgm=...):
-        return _Ctx(self.root, self._tl(bgm))
+        return _context(self.root, self._tl(bgm))
 
     def _tl_srcs(self, *srcs):
         """多源 timeline（共享渲染缓存场景：多源可指向同一工程）。"""
@@ -209,6 +199,7 @@ class PrepareSource(_Base):
         c = self._ctx(True)
         out = _bgm.prepare_source(c, "bgm_main")
         self.assertTrue(out.is_file(), "产物应已落盘")
+        self.assertTrue(recovery.media_cache_valid(out))
         self.assertEqual(len(self._calls()), 1, "首次 prepare 应触发一次 render")
         with wave.open(str(out), "rb") as w:
             self.assertEqual((w.getframerate(), w.getnchannels(), w.getsampwidth()),
@@ -216,6 +207,41 @@ class PrepareSource(_Base):
         out2 = _bgm.prepare_source(c, "bgm_main")
         self.assertEqual(out2, out)
         self.assertEqual(len(self._calls()), 1, "缓存命中不得再渲染")
+        # Missing certificates, even on readable short PCM, require derivation
+        # again; the independent multi-file render cache remains reusable.
+        recovery.completion_marker(out).unlink()
+        with wave.open(str(out), "wb") as audio:
+            audio.setnchannels(2); audio.setsampwidth(2); audio.setframerate(48000)
+            audio.writeframes(b"\0" * 240 * 4)
+        self.assertFalse(recovery.media_cache_valid(out))
+        with mock.patch.object(c, "run", wraps=c.run) as derive:
+            self.assertEqual(_bgm.prepare_source(c, "bgm_main"), out)
+        self.assertEqual(derive.call_count, 1)
+        self.assertTrue(recovery.media_cache_valid(out))
+        self.assertEqual(len(self._calls()), 1, "重派生不得重新渲染共享工程")
+        out.unlink()
+        recovery.completion_marker(out).unlink()
+        staged = []
+
+        def failed_conversion(cmd, **kwargs):
+            staged.append(Path(cmd[-1]))
+            with wave.open(str(cmd[-1]), "wb") as audio:
+                audio.setnchannels(2); audio.setsampwidth(2); audio.setframerate(48000)
+                audio.writeframes(b"\0" * 240 * 4)
+            return subprocess.CompletedProcess(cmd, 1, "", "failed after readable short WAV")
+
+        with mock.patch("vtx.infra.subprocess.run", side_effect=failed_conversion) as convert, \
+                mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
+            with self.assertRaises(SystemExit) as failure:
+                _bgm.prepare_source(c, "bgm_main")
+        self.assertEqual(failure.exception.code, 1)
+        self.assertEqual(convert.call_count, 1)
+        self.assertFalse(out.exists())
+        self.assertFalse(staged[0].exists())
+        self.assertFalse(recovery.completion_marker(out).exists())
+        self.assertEqual(_bgm.prepare_source(c, "bgm_main"), out)
+        self.assertTrue(recovery.media_cache_valid(out))
+        self.assertEqual(len(self._calls()), 1, "失败派生重试仍复用同一共享工程")
 
     def test_output_param_premaster(self):
         c = self._ctx({"output": "premaster"})
@@ -284,7 +310,7 @@ class SharedRenderCache(_Base):
         tl = self._tl_srcs(
             {"id": "s1", "path": "music/ep.json", "bgm": {"output": "stem:strings"}},
             {"id": "s2", "path": "music/ep.json", "bgm": {"output": "stem:kick"}})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         o1 = _bgm.prepare_source(c, "s1")
         o2 = _bgm.prepare_source(c, "s2")
         self.assertEqual(self._render_calls(), 1,
@@ -330,7 +356,7 @@ class SharedRenderCache(_Base):
             {"id": "m", "path": "music/ep.json", "bgm": True},
             {"id": "s", "path": "music/ep.json",
              "bgm": {"output": "stem:strings"}})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         self.assertTrue(_bgm.prepare_source(c, "m").is_file())
         self.assertTrue(_bgm.prepare_source(c, "s").is_file())
         self.assertEqual(self._render_calls(), 1)
@@ -340,7 +366,7 @@ class SharedRenderCache(_Base):
         tl = self._tl_srcs(
             {"id": "s1", "path": "music/ep.json", "bgm": {"output": "stem:strings"}},
             {"id": "s2", "path": "music/ep.json", "bgm": {"output": "stem:kick"}})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         o1 = _bgm.prepare_source(c, "s1")
         _bgm.prepare_source(c, "s2")
         self.assertEqual(self._render_calls(), 1)
@@ -355,7 +381,7 @@ class SharedRenderCache(_Base):
         错轨名是工程侧问题，不得触发自愈白渲一次）。"""
         tl = self._tl_srcs({"id": "s1", "path": "music/ep.json",
                             "bgm": {"output": "stem:nope"}})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
             with self.assertRaises(SystemExit) as cm:
@@ -372,7 +398,7 @@ class SharedRenderCache(_Base):
         不完整并覆盖重渲一次（不再 fail-hard 要人手删目录）。"""
         tl = self._tl_srcs({"id": "s1", "path": "music/ep.json",
                             "bgm": {"output": "stem:strings"}})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         o1 = _bgm.prepare_source(c, "s1")
         self.assertEqual(self._render_calls(), 1)
         shared = _bgm.render_cache_dir(c, "s1")
@@ -388,7 +414,7 @@ class SharedRenderCache(_Base):
         """空文件（size=0）同判残缺：截断为 0 → 自愈重渲（下游读空 wav 必炸）。"""
         tl = self._tl_srcs({"id": "s1", "path": "music/ep.json",
                             "bgm": {"output": "stem:strings"}})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         o1 = _bgm.prepare_source(c, "s1")
         shared = _bgm.render_cache_dir(c, "s1")
         o1.unlink()
@@ -400,7 +426,7 @@ class SharedRenderCache(_Base):
     def test_marker_intact_but_master_missing_self_heals(self):
         """master 产物残缺同走自愈（结果 JSON 映射的产物被外部删除）。"""
         tl = self._tl_srcs({"id": "m", "path": "music/ep.json", "bgm": True})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         o1 = _bgm.prepare_source(c, "m")
         shared = _bgm.render_cache_dir(c, "m")
         o1.unlink()
@@ -433,12 +459,12 @@ class SharedRenderCache(_Base):
         tl = self._tl_srcs(
             {"id": "s1", "path": "music/ep.json", "bgm": {"output": "stem:strings"}},
             {"id": "s2", "path": "music/ep.json", "bgm": {"output": "stem:kick"}})
-        keys = _bgm.contribute_keys(_Ctx(self.root, tl))
+        keys = _bgm.contribute_keys(_context(self.root, tl))
         self.assertEqual(len(keys), 2, "每个 bgm 源一个产物键（白名单保活）")
         # v1.2.0 键级白名单（R1-F F2）：同 timeline 的 render_digest 集——gc 据此
         # 保活在用共享渲染目录、回收陈旧目录
-        dkeys = _bgm.cache_dir_keys(_Ctx(self.root, tl))
-        self.assertEqual(dkeys, {"bgm": {_bgm.render_digest(_Ctx(self.root, tl), "s1")}})
+        dkeys = _bgm.cache_dir_keys(_context(self.root, tl))
+        self.assertEqual(dkeys, {"bgm": {_bgm.render_digest(_context(self.root, tl), "s1")}})
 
 
 class DirExtraDepsSig(_Base):
@@ -506,12 +532,13 @@ class StaleDigestGc(_Base):
         self.addCleanup(os.environ.pop, "VTX_SEG_NVENC", None)
         tl = self._tl_srcs({"id": "s1", "path": "music/ep.json",
                             "bgm": {"output": "stem:strings"}})
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         _bgm.prepare_source(c, "s1")
         stale = _bgm.render_cache_dir(c, "s1")
         self.assertEqual(self._render_calls(), 1)
         self.proj.write_text(self.proj.read_text(encoding="utf-8") + "\n",
                              encoding="utf-8")          # 工程字节变 → 新 digest 目录
+        c = _context(self.root, tl)                       # new pinned input identity
         _bgm.prepare_source(c, "s1")
         live = _bgm.render_cache_dir(c, "s1")
         self.assertNotEqual(stale.name, live.name)
@@ -582,7 +609,7 @@ class ValidateHook(_Base):
     def test_clean_passes(self):
         for good in (True, {}, {"output": "master"},
                      {"output": "premaster", "extra_deps": ["a.json"]}):
-            self.assertEqual(_bgm.validate(_Ctx(self.root, self._tl(good))), [])
+            self.assertEqual(_bgm.validate(_context(self.root, self._tl(good))), [])
 
     def test_bad_shapes_fail(self):
         cases = ["yes", 42,
@@ -590,14 +617,14 @@ class ValidateHook(_Base):
                  {"unknown": 1},                # 未知参数
                  {"extra_deps": "a.json"}]      # extra_deps 非列表
         for bad in cases:
-            errs = _bgm.validate(_Ctx(self.root, self._tl(bad)))
+            errs = _bgm.validate(_context(self.root, self._tl(bad)))
             self.assertTrue(errs, f"期望报错：{bad!r}")
 
     def test_stem_output_valid(self):
         """stem:<轨名> 值域：合法轨名（字母数字/_./-，字母数字开头）通过。"""
         for good in ({"output": "stem:piano-sal"}, {"output": "stem:bgm-drums"},
                      {"output": "stem:a1_b.c-d"}, {"output": "stem:vln2"}):
-            self.assertEqual(_bgm.validate(_Ctx(self.root, self._tl(good))), [],
+            self.assertEqual(_bgm.validate(_context(self.root, self._tl(good))), [],
                              f"期望通过：{good!r}")
 
     def test_stem_output_invalid(self):
@@ -615,13 +642,13 @@ class ValidateHook(_Base):
                  {"output": 42},                  # 非字符串
                  {"output": ["stem:strings"]}]    # 非字符串（列表）
         for bad in cases:
-            errs = _bgm.validate(_Ctx(self.root, self._tl(bad)))
+            errs = _bgm.validate(_context(self.root, self._tl(bad)))
             self.assertTrue(errs, f"期望报错：{bad!r}")
 
     def test_path_must_be_json(self):
         tl = self._tl(True)
         tl["sources"][0]["path"] = "music/final.wav"
-        errs = _bgm.validate(_Ctx(self.root, tl))
+        errs = _bgm.validate(_context(self.root, tl))
         self.assertTrue(any(".json" in e for e in errs))
 
 
@@ -668,7 +695,7 @@ class RealChainIntegration(_Base):
                           "width": 640, "height": 360},
               "sources": [{"id": "bgm_main", "path": "minimal.json", "bgm": True}],
               "video_tracks": [], "subtitles": [], "audio_tracks": []}
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         f = _bgm.probe_source(c, "bgm_main")
         self.assertEqual(f["nb_frames"], 120)     # minimal duration 4.0s × 30fps
         out = _bgm.prepare_source(c, "bgm_main")
@@ -694,7 +721,7 @@ class RealChainIntegration(_Base):
               "sources": [{"id": "bgm_stem", "path": "minimal.json",
                            "bgm": {"output": f"stem:{first_track}"}}],
               "video_tracks": [], "subtitles": [], "audio_tracks": []}
-        c = _Ctx(self.root, tl)
+        c = _context(self.root, tl)
         f = _bgm.probe_source(c, "bgm_stem")
         self.assertEqual(f["nb_frames"], 120)     # 分轨时长 = 工程时长（缝 C 口径不变）
         out = _bgm.prepare_source(c, "bgm_stem")

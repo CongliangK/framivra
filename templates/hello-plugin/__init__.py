@@ -30,12 +30,11 @@ v2 ARCHITECTURE §4.2 / §2.2 缝 A / §2.1 三不变量——第三方音频插
 import hashlib
 import json
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 from vtx.api import audio_key as _audio_key
-from vtx.api import plugin_code_digest
+from vtx.api import media_cache_valid, plugin_code_digest
 
 VERSION = "1.0.0"
 KEY = "hello_gain"
@@ -85,7 +84,7 @@ def prepare_source(c, sid):
     if s is None or KEY not in s:
         return None
     out = product_path(c, sid)
-    if out.exists():
+    if media_cache_valid(out):
         return out
     db = _gain_db(s[KEY])
     ffmpeg = shutil.which("ffmpeg")
@@ -98,16 +97,10 @@ def prepare_source(c, sid):
         print(f"  [dry-run] hello 产物 {out.name}（volume={db:+g}dB，48k stereo）")
         return out
     print(f"  · hello: {sid} → {out.name}（volume={db:+g}dB）")
-    out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [ffmpeg, "-v", "error", "-y", "-i", str(c.src_path(sid)),
            "-vn", "-af", f"volume={db}dB",
            "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(out)]
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
-    if r.returncode != 0:
-        print("✗ hello 产出失败：" + " ".join(cmd)[:200], file=sys.stderr)
-        print(r.stderr[-1500:], file=sys.stderr)
-        sys.exit(1)
+    c.run(cmd)
     return out
 
 

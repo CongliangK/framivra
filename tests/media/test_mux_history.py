@@ -6,9 +6,9 @@
 os.link（硬链接）把旧 final 轮转进 out/history/——历史副本与 live 件共享 inode；
 旧实现让 ffmpeg -y 直接写 final 路径（原地 O_TRUNC 同一 inode）→ 每次渲染把 live
 件与全部 history「保留」副本一并改写为最新内容（三名一 inode），历史保留只剩文件
-名里的 md5。修复（stages.mux）：ffmpeg 先写 out/.final.tmp.mp4，成功后 os.replace
-到 final——replace 只换目录项，旧 inode（含 history 硬链接组）内容原样保留；失败
-时 finally 清理半写 tmp；dry-run 语义不变（不落产物）。
+名里的 md5。当前修复由 Ctx.run 的 final-target 单一事务提供随机 staging 与
+原子替换；同一锁内轮转旧 inode、发布完成证书并记录版本，失败不发布半写媒体。
+
 
 运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3
 前缀：AppImage 劫持 argv[0]，见全局 AGENTS.md）
@@ -25,7 +25,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx import stages          # noqa: E402
+from vtx import stages, recovery          # noqa: E402
 from vtx.infra import Ctx  # noqa: E402
 
 
@@ -101,7 +101,8 @@ class TestMuxPreservesHistory(unittest.TestCase):
         self.assertTrue(new.startswith(b"\x00\x00\x00"))   # 真实 mp4（ftyp box 头）
         self.assertGreater(len(new), 1000)
         self.assertNotEqual(final.stat().st_ino, hist.stat().st_ino)
-        self.assertFalse((self.out / ".final.tmp.mp4").exists(), "成功路径不留 tmp")
+        self.assertEqual(list(self.out.glob(".final.mp4.*.tmp")), [], "成功路径不留 owned staging")
+        self.assertTrue(recovery.media_cache_valid(final, 30))
         # mux 成功记账（成功全链跑完的旁证）
         self.assertTrue((self.out / "VERSIONS.json").exists())
 
@@ -110,22 +111,39 @@ class TestMuxPreservesHistory(unittest.TestCase):
         c.dry = False
         final = self.out / "final.mp4"
         final.write_bytes(b"OLD" * 64)
-        tmp = self.out / ".final.tmp.mp4"
-        tmp.write_bytes(b"HALF-WRITTEN")             # 模拟 ffmpeg 失败遗留的半写件
-        with mock.patch.object(c, "run", side_effect=SystemExit(1)):
+        marker = recovery.completion_marker(final)
+        marker.write_bytes(b'old completion evidence')
+        staging = []
+
+        def interrupted(argv, **kwargs):
+            if '-encoders' in argv:
+                return subprocess.CompletedProcess(argv, 0, 'aac', '')
+            path = Path(argv[-1])
+            self.assertNotEqual(path, final)
+            self.assertNotEqual(path.name, '.final.tmp.mp4')
+            staging.append(path)
+            path.write_bytes(b'HALF-WRITTEN')
+            raise SystemExit(1)
+
+        with mock.patch('vtx.infra.subprocess.run', side_effect=interrupted):
             with self.assertRaises(SystemExit):
                 stages.mux(c)
-        self.assertFalse(tmp.exists(), "失败路径必须清理半写 tmp")
+        self.assertEqual(len(staging), 1)
+        self.assertFalse(staging[0].exists(), "失败路径必须清理自己持有的 staging")
         self.assertEqual(final.read_bytes(), b"OLD" * 64, "final 未被失败 mux 动过")
+        self.assertEqual(marker.read_bytes(), b'old completion evidence')
 
     def test_dry_run_does_not_touch_products(self):
         c = self._ctx()
         c.dry = True
         final = self.out / "final.mp4"
         final.write_bytes(b"DRY" * 64)
+        companions = [recovery.completion_marker(final), final.with_name(final.name + '.lock')]
+        before = {p: p.read_bytes() if p.exists() else None for p in companions}
         stages.mux(c)                                # dry：不轮转/不 replace/不记账
         self.assertEqual(final.read_bytes(), b"DRY" * 64)
-        self.assertFalse((self.out / ".final.tmp.mp4").exists())
+        self.assertEqual(list(self.out.glob(".final.mp4.*.tmp")), [])
+        self.assertEqual({p: p.read_bytes() if p.exists() else None for p in companions}, before)
         self.assertFalse((self.out / "history").exists(),
                          "dry-run 不得轮转/创建真实产物链")
 

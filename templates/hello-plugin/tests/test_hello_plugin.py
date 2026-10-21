@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import wave
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 from pathlib import Path
@@ -37,7 +38,7 @@ sys.path.insert(0, str(PLUGIN_DIR.parent))      # templates/ —— 包导入锚
 
 hello = importlib.import_module("hello-plugin")  # noqa: E402（连字符目录名经 import_module）
 
-from vtx import hygiene                         # noqa: E402
+from vtx import hygiene, recovery               # noqa: E402
 from vtx.cache_state import receipt_fingerprint  # noqa: E402
 from vtx.infra import Ctx                       # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks     # noqa: E402
@@ -228,9 +229,16 @@ class PrepareSourceContract(ExternalCfgTestBase):
         out = hello.prepare_source(c, "v")
         self.assertIsNotNone(out)
         self.assertTrue(out.is_file(), "产物应在盘")
+        self.assertTrue(recovery.media_cache_valid(out))
         # 缓存命中：同 ctx 二次调用直返不重产（不触环境探测）
         with mock.patch("shutil.which", return_value=None):
             self.assertEqual(hello.prepare_source(c, "v"), out)
+        certificate = recovery.completion_marker(out)
+        certificate.unlink()
+        with mock.patch.object(c, "run", wraps=c.run) as derive:
+            self.assertEqual(hello.prepare_source(c, "v"), out)
+        self.assertEqual(derive.call_count, 1, "无完成证书必须重建而非重新认证旧件")
+        self.assertTrue(recovery.media_cache_valid(out))
         r = subprocess.run(["ffprobe", "-v", "error", "-show_streams",
                             "-of", "json", str(out)], capture_output=True, text=True)
         s = json.loads(r.stdout)["streams"][0]
@@ -259,6 +267,32 @@ class PrepareSourceContract(ExternalCfgTestBase):
                 hello.prepare_source(c, "v")
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("fail-hard", err.getvalue())   # 打印缺什么，不回落裸音频
+        target = hello.product_path(c, "v")
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                staged = []
+
+                def failed(cmd, **kwargs):
+                    staged.append(Path(cmd[-1]))
+                    with wave.open(str(cmd[-1]), "wb") as audio:
+                        audio.setnchannels(2); audio.setsampwidth(2); audio.setframerate(48000)
+                        audio.writeframes(b"\0" * 240 * 4)
+                    if interrupted:
+                        raise KeyboardInterrupt()
+                    return subprocess.CompletedProcess(cmd, 1, "", "failed after finalized short WAV")
+
+                with mock.patch.object(hello.shutil, "which", return_value="ffmpeg.exe"), \
+                        mock.patch("vtx.infra.subprocess.run", side_effect=failed) as run, \
+                        mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
+                    with self.assertRaises(KeyboardInterrupt if interrupted else SystemExit) as failure:
+                        hello.prepare_source(c, "v")
+                if not interrupted:
+                    self.assertEqual(failure.exception.code, 1)
+                self.assertEqual(run.call_count, 1)
+                self.assertNotEqual(staged[0], target)
+                self.assertFalse(staged[0].exists())
+                self.assertFalse(target.exists())
+                self.assertFalse(recovery.completion_marker(target).exists())
 
 
 class ManifestAndHealth(unittest.TestCase):

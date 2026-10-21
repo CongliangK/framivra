@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest import mock
 
@@ -38,6 +39,7 @@ sys.path.insert(0, str(REPO))
 from plugins import denoise as dn            # noqa: E402（repo 根锚定后导入）
 
 from vtx import hygiene                      # noqa: E402
+from vtx import recovery                     # noqa: E402
 from vtx.cache_state import receipt_fingerprint   # noqa: E402
 from vtx.infra import Ctx                    # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks  # noqa: E402
@@ -60,6 +62,17 @@ def _proj(root: Path, denoise_value=..., second_declaring=False):
     p = root / "timeline.json"
     p.write_text(json.dumps(tl), encoding="utf-8")
     return p
+
+
+def _write_pcm(path, samples=480):
+    """Small valid output for real transaction inspection; no media tool."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(2)
+        audio.setsampwidth(2)
+        audio.setframerate(48000)
+        audio.writeframes(b"\0" * samples * 4)
 
 
 class ProductPathSemantics(unittest.TestCase):
@@ -109,14 +122,34 @@ class PrepareSourceContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             c = Ctx(_proj(Path(d), denoise_value=True))
             p = dn.product_path(c, "v")
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(b"cached")
+            dn.atomic_media(c, p, _write_pcm)
             # 环境缺失亦可命中缓存（产物已在盘，无须环境）
             with mock.patch("plugins.denoise.missing_env", return_value=["缺 X"]), \
                  mock.patch("plugins.denoise.denoise_voice.subprocess.run") as run:
                 got = dn.prepare_source(c, "v")
             self.assertEqual(Path(got), p)
             run.assert_not_called()
+            original = p.read_bytes()
+            marker = recovery.completion_marker(p)
+            certified = marker.read_bytes()
+            for state in ("missing", "malformed", "changed-media"):
+                with self.subTest(state=state):
+                    p.write_bytes(original)
+                    marker.write_bytes(certified)
+                    if state == "missing":
+                        marker.unlink()
+                    elif state == "malformed":
+                        marker.write_text("{}")
+                    else:
+                        _write_pcm(p, samples=240)
+                    # Even finalized PCM is not completion evidence. Without a
+                    # certificate the real environment gate must run, not hit.
+                    with mock.patch.object(dn, "missing_env", return_value=["缺 X"]), \
+                            mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
+                        with self.assertRaises(SystemExit) as failure:
+                            dn.prepare_source(c, "v")
+                    self.assertEqual(failure.exception.code, 1)
+                    self.assertFalse(dn.media_cache_valid(p))
 
     def test_missing_env_fails_hard(self):
         with tempfile.TemporaryDirectory() as d:
@@ -138,9 +171,8 @@ class PrepareSourceContract(unittest.TestCase):
 
             def fake_run(cmd, **kw):
                 calls.append(cmd)
-                if str(cmd[-1]) == str(p):       # 终步 ffmpeg 落产物
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_bytes(b"produced")
+                if cmd[0] == "ffmpeg" and "-af" in cmd:
+                    _write_pcm(cmd[-1])          # actual transaction staging
                 return self._fake_result()
 
             with mock.patch("plugins.denoise.missing_env", return_value=[]), \
@@ -168,7 +200,11 @@ class PrepareSourceContract(unittest.TestCase):
             self.assertIn("aresample=48000", af)            # 回 48k（v2 形态）
             self.assertIn("atrim=start_sample=", af)        # 链内延迟补偿
             self.assertIn("-ac", final)                     # 插件产物 stereo 契约
-            self.assertEqual(final[-1], str(p))             # 直接落产物键
+            self.assertNotEqual(final[-1], str(p))          # 不直写最终产物
+            self.assertEqual(Path(final[-1]).parent, p.parent)
+            self.assertFalse(Path(final[-1]).exists())
+            self.assertEqual(final[-3:-1], ["-f", "wav"])
+            self.assertTrue(dn.media_cache_valid(p))
 
     def test_dry_run_no_artifact(self):
         with tempfile.TemporaryDirectory() as d:
@@ -247,9 +283,8 @@ class StagesWiring(unittest.TestCase):
             p = dn.product_path(c, "v")
 
             def fake_run(cmd, **kw):
-                if str(cmd[-1]) == str(p):      # 终步 ffmpeg 落产物
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_bytes(b"produced")
+                if cmd[0] == "ffmpeg" and "-af" in cmd:
+                    _write_pcm(cmd[-1])
                 r = mock.Mock()
                 r.returncode, r.stderr = 0, ""
                 return r
@@ -368,9 +403,8 @@ class V2ChainFormFrozen(unittest.TestCase):
 
             def fake_run(cmd, **kw):
                 calls.append([str(x) for x in cmd])
-                if cmd[-1] == p:
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_bytes(b"produced")
+                if cmd[0] == "ffmpeg" and "-af" in cmd:
+                    _write_pcm(cmd[-1])
                 r = mock.Mock()
                 r.returncode, r.stderr = 0, ""
                 return r
@@ -388,6 +422,7 @@ class V2ChainFormFrozen(unittest.TestCase):
             self.assertTrue(af.startswith(dv.POST + ",aresample=48000,"))
             self.assertIn(f"atrim=start_sample={dv.TRIM_48K}", af)
             self.assertIn("asetpts=PTS-STARTPTS", af)
+            self.assertTrue(dn.media_cache_valid(p))
 
 
 class CliSurface(unittest.TestCase):
@@ -474,25 +509,49 @@ class FailHardPropagation(unittest.TestCase):
     """⑧ 链中任一子进程非零 → SystemExit 1,产物不落盘(不回落裸音频)。"""
 
     def test_step_failure_exits_without_product(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            c = Ctx(_proj(root, denoise_value=True))
-            p = dn.product_path(c, "v")
+        for step, interrupted in ((1, False), (2, False), (3, False), (3, True)):
+            with self.subTest(step=step, interrupted=interrupted), tempfile.TemporaryDirectory() as d:
+                c = Ctx(_proj(Path(d), denoise_value=True))
+                p = dn.product_path(c, "v")
+                calls = []
 
-            def failing_run(cmd, **kw):
-                if cmd[0] == "ffmpeg" and str(cmd[-1]).endswith("normed.wav"):
-                    r = mock.Mock()
-                    r.returncode, r.stderr = 1, "boom at normalize"
-                    return r
-                raise AssertionError("首步失败后不得继续起后续子进程")
+                def failing_run(cmd, **kw):
+                    calls.append(cmd)
+                    if len(calls) == 3:
+                        # Fully readable short PCM still must not be published
+                        # if the final producer step reports failure/interruption.
+                        _write_pcm(cmd[-1], samples=240)
+                    if len(calls) == step:
+                        if interrupted:
+                            raise KeyboardInterrupt()
+                        return subprocess.CompletedProcess(cmd, 1, "", "injected step failure")
+                    self.assertLess(len(calls), step, "failure must stop the chain")
+                    return subprocess.CompletedProcess(cmd, 0, "", "")
 
-            with mock.patch("plugins.denoise.missing_env", return_value=[]), \
-                 mock.patch("plugins.denoise.denoise_voice.subprocess.run",
-                            side_effect=failing_run):
-                with self.assertRaises(SystemExit) as cm:
-                    dn.prepare_source(c, "v")
-            self.assertEqual(cm.exception.code, 1)
-            self.assertFalse(p.exists())     # 不产半链产物
+                with mock.patch.object(dn, "missing_env", return_value=[]), \
+                        mock.patch("plugins.denoise.denoise_voice.subprocess.run", side_effect=failing_run), \
+                        mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
+                    with self.assertRaises(KeyboardInterrupt if interrupted else SystemExit) as cm:
+                        dn.prepare_source(c, "v")
+                if not interrupted:
+                    self.assertEqual(cm.exception.code, 1)
+                self.assertEqual(len(calls), step)
+                self.assertFalse(p.exists())
+                self.assertFalse(recovery.completion_marker(p).exists())
+                self.assertFalse(list(p.parent.glob(".*.tmp")))
+
+                def repaired(cmd, **kw):
+                    if cmd[0] == "ffmpeg" and "-af" in cmd:
+                        _write_pcm(cmd[-1])
+                    return subprocess.CompletedProcess(cmd, 0, "", "")
+
+                with mock.patch.object(dn, "missing_env", return_value=[]), \
+                        mock.patch("plugins.denoise.denoise_voice.subprocess.run", side_effect=repaired) as run:
+                    self.assertEqual(dn.prepare_source(c, "v"), p)
+                    self.assertEqual(run.call_count, 3)
+                    self.assertEqual(dn.prepare_source(c, "v"), p)
+                    self.assertEqual(run.call_count, 3)
+                self.assertTrue(dn.media_cache_valid(p))
 
     def test_cli_step_failure_exits_nonzero(self):
         def failing_run(cmd, **kw):
@@ -532,7 +591,7 @@ class Stereo48kContract(unittest.TestCase):
         self.assertIn("-ac", final)
         self.assertEqual(final[final.index("-ac") + 1], "2")
         self.assertIn("aresample=48000", final[final.index("-af") + 1])
-        self.assertEqual(final[-3:], ["-c:a", "pcm_s16le", final[-1]])
+        self.assertEqual(final[-5:], ["-c:a", "pcm_s16le", "-f", "wav", final[-1]])
 
     def test_cli_default_mono(self):
         final = self._final_cmd(stereo=False)

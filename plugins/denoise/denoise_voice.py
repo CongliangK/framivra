@@ -123,7 +123,7 @@ sf.write(denoised, out.cpu().numpy(), sr_out)
                        f"atrim=start_sample={TRIM_48K},asetpts=PTS-STARTPTS"]
         if stereo:
             last += ["-ac", "2"]
-        last += ["-c:a", "pcm_s16le", str(out_path)]
+        last += ["-c:a", "pcm_s16le", "-f", "wav", str(out_path)]
         _sh(last)
 
 

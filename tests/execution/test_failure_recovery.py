@@ -126,16 +126,65 @@ class MediaRecovery(unittest.TestCase):
     def test_success_publishes_verified_media_and_warm_hit(self):
         recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
         self.assertTrue(self.target.exists())
-        self.assertTrue(recovery._marker(self.target).exists())
+        self.assertTrue(recovery.completion_marker(self.target).exists())
         with mock.patch.object(recovery, '_inspect', side_effect=AssertionError('warm decode')):
             self.assertTrue(recovery.media_cache_valid(self.target))
         self.target.unlink()
         for has_marker in (True, False):
             if not has_marker:
-                recovery._marker(self.target).unlink()
+                recovery.completion_marker(self.target).unlink()
             with self.subTest(missing_target=True, has_marker=has_marker), mock.patch.object(
                     recovery.subprocess, 'run', side_effect=AssertionError('missing media must not probe')):
                 self.assertFalse(recovery.media_cache_valid(self.target))
+
+        # Preview segments use the same certificate/frame obligation, not a
+        # container header that can survive an interrupted encoder.
+        from vtx import range as ranges
+
+        class StopAfterCacheCheck(Exception):
+            pass
+
+        for state in ('missing_marker', 'malformed_marker', 'changed_media',
+                      'wrong_frames', 'missing_media', 'valid'):
+            with self.subTest(preview=state), tempfile.TemporaryDirectory() as d:
+                c = context(Path(d))
+                directory = c.cache / 'preview'
+                directory.mkdir(parents=True)
+                plan = ranges.RenderPlan(c, True, .5, 32, 24)
+                subtitle = directory / 'subs_000000_000030.ass'
+                plan.write_seg_ass(subtitle, 0, 30)
+                key = plan._seg_content_key(0, 30, [], True, subtitle)
+                target = directory / f'rseg_000000_000030_{key}.mp4'
+
+                def inspect(path, kind):
+                    return {'schema': 1, 'sha256': recovery._digest(path), 'frames': 30}
+
+                # Only publication's media inspection is stubbed. The cache
+                # decision below reads the real certificate and media bytes.
+                with mock.patch.object(recovery, '_inspect', side_effect=inspect):
+                    recovery.atomic_media(c, target, lambda path: path.write_bytes(b'mock mp4'))
+                marker = recovery.completion_marker(target)
+                if state == 'missing_marker':
+                    marker.unlink()
+                elif state == 'malformed_marker':
+                    marker.write_text('{broken')
+                elif state == 'changed_media':
+                    target.write_bytes(b'changed mp4')
+                elif state == 'wrong_frames':
+                    record = json.loads(marker.read_text())
+                    record['frames'] = 29
+                    marker.write_text(json.dumps(record))
+                elif state == 'missing_media':
+                    target.unlink()
+                with mock.patch.object(ranges, 'prepare_layers', return_value=[]), \
+                        mock.patch.object(ranges.RenderPlan, 'composite') as composite, \
+                        mock.patch.object(ranges, 'pick_vcodec', side_effect=StopAfterCacheCheck), \
+                        mock.patch.object(subprocess, 'run', side_effect=AssertionError('warm probe')) as probe, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaises(StopAfterCacheCheck):
+                        ranges.run_range(c, 0, 30)
+                self.assertEqual(composite.call_count, 0 if state == 'valid' else 1)
+                probe.assert_not_called()
 
     def test_interruption_preserves_good_target_and_no_new_marker(self):
         wav(self.target)
@@ -146,7 +195,7 @@ class MediaRecovery(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             recovery.atomic_ffmpeg(self.c, self.cmd, interrupted)
         self.assertEqual(self.target.read_bytes(), old)
-        self.assertFalse(recovery._marker(self.target).exists())
+        self.assertFalse(recovery.completion_marker(self.target).exists())
         self.assertEqual(list(self.target.parent.glob('.*.tmp')), [])
 
     def test_success_exit_with_invalid_media_cannot_publish(self):
@@ -156,7 +205,7 @@ class MediaRecovery(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             recovery.atomic_ffmpeg(self.c, self.cmd, invalid)
         self.assertFalse(self.target.exists())
-        self.assertFalse(recovery._marker(self.target).exists())
+        self.assertFalse(recovery.completion_marker(self.target).exists())
 
     def test_changed_input_blocks_publication(self):
         def mutate(cmd):
@@ -307,7 +356,10 @@ class MediaRecovery(unittest.TestCase):
 
     def test_legacy_and_digest_mismatch_require_actual_complete_wav(self):
         wav(self.target)
-        self.assertTrue(recovery.media_cache_valid(self.target))
+        original = self.target.read_bytes()
+        with mock.patch.object(recovery, '_inspect', side_effect=AssertionError('legacy adoption')):
+            self.assertFalse(recovery.media_cache_valid(self.target))
+        self.assertEqual(self.target.read_bytes(), original)
         recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
         self.target.write_bytes(self.target.read_bytes()[:-4])
         self.assertFalse(recovery.media_cache_valid(self.target))
@@ -322,6 +374,8 @@ class MediaRecovery(unittest.TestCase):
         out, cmd = stages.source_audio_extraction(self.c, 's')
         self.assertIsNotNone(cmd)
         wav(out)
+        self.assertIsNotNone(stages.source_audio_extraction(self.c, 's')[1])
+        recovery.atomic_ffmpeg(self.c, cmd, self.encode)
         self.assertIsNone(stages.source_audio_extraction(self.c, 's')[1])
         out.write_bytes(out.read_bytes()[:-4])
         self.assertIsNotNone(stages.source_audio_extraction(self.c, 's')[1])
@@ -366,15 +420,255 @@ class MediaRecovery(unittest.TestCase):
         with mock.patch.object(recovery.fstxn, 'atomic_write', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
                 recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
-        self.assertFalse(recovery._marker(self.target).exists())
-        # The encoder finished: this is good legacy media, not a false marker.
-        self.assertTrue(recovery.media_cache_valid(self.target))
+        self.assertFalse(recovery.completion_marker(self.target).exists())
+        # Complete bytes without the publication certificate are rebuilt once.
+        with mock.patch.object(recovery, '_inspect', side_effect=AssertionError('legacy adoption')):
+            self.assertFalse(recovery.media_cache_valid(self.target))
 
     def test_dry_has_no_staging_marker_or_lock(self):
         self.c.dry = True
         before = sorted(self.root.rglob('*'))
         run_ffmpeg_task(self.c, 'dry', self.cmd)
         self.assertEqual(sorted(self.root.rglob('*')), before)
+
+
+    def test_generic_transaction_callbacks_share_target_lock_and_result(self):
+        target = self.target
+        wav(target, samples=240)
+        old = target.read_bytes()
+        order = []
+        token = object()
+
+        def producer(staging):
+            self.assertTrue(recovery.fstxn._thread_lock_for(target).locked())
+            self.assertNotEqual(Path(staging), target)
+            wav(staging)
+            order.append('producer')
+            return token
+
+        def before():
+            self.assertTrue(recovery.fstxn._thread_lock_for(target).locked())
+            self.assertEqual(target.read_bytes(), old)
+            self.assertFalse(recovery.completion_marker(target).exists())
+            order.append('before')
+
+        def after():
+            self.assertTrue(recovery.fstxn._thread_lock_for(target).locked())
+            self.assertTrue(recovery.media_cache_valid(target))
+            self.assertNotEqual(target.read_bytes(), old)
+            order.append('after')
+
+        result = recovery.atomic_media(self.c, target, producer,
+                                       before_commit=before, after_commit=after)
+        self.assertIs(result, token)
+        self.assertEqual(order, ['producer', 'before', 'after'])
+        self.assertFalse(recovery.fstxn._thread_lock_for(target).locked())
+
+    def test_generic_transaction_failures_preserve_owned_state_and_propagate(self):
+        for phase, error in [('producer', KeyboardInterrupt()), ('producer', SystemExit(9)),
+                             ('before', RuntimeError('before')), ('after', RuntimeError('after'))]:
+            with self.subTest(phase=phase, error=type(error).__name__):
+                recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
+                old = self.target.read_bytes()
+                marker = recovery.completion_marker(self.target)
+                old_marker = marker.read_bytes()
+
+                def producer(staging):
+                    wav(staging, samples=240)
+                    if phase == 'producer':
+                        raise error
+
+                def before():
+                    if phase == 'before':
+                        raise error
+
+                def after():
+                    if phase == 'after':
+                        raise error
+
+                with self.assertRaises(type(error)) as caught:
+                    recovery.atomic_media(self.c, self.target, producer,
+                                          before_commit=before, after_commit=after)
+                self.assertIs(caught.exception, error)
+                if phase == 'after':
+                    self.assertNotEqual(self.target.read_bytes(), old)
+                    self.assertTrue(recovery.media_cache_valid(self.target))
+                else:
+                    self.assertEqual(self.target.read_bytes(), old)
+                    self.assertEqual(marker.read_bytes(), old_marker)
+                self.assertFalse(recovery.fstxn._thread_lock_for(self.target).locked())
+                self.assertEqual(list(self.target.parent.glob('.*.tmp')), [])
+
+    def test_generic_dry_and_output_recognition_preserve_execution_boundary(self):
+        for executable, accepted in [('ffmpeg', True), ('ffmpeg.exe', True),
+                                     (str(self.root / 'bin' / 'ffmpeg'), True),
+                                     ('notffmpeg', False), ('ffmpeg-helper', False)]:
+            with self.subTest(executable=executable):
+                self.assertEqual(recovery.media_output(self.c, [executable, str(self.target)]),
+                                 self.target if accepted else None)
+        producer = mock.Mock(side_effect=AssertionError('producer must not execute'))
+        self.c.dry = True
+        before = sorted(self.root.rglob('*'))
+        self.assertIsNone(recovery.atomic_media(self.c, self.target, producer,
+                                               before_commit=producer, after_commit=producer))
+        with mock.patch('vtx.infra.subprocess.run', side_effect=AssertionError('dry executable')):
+            self.c.run(['ffmpeg.exe', '-y', str(self.target)],
+                       before_commit=producer, after_commit=producer)
+            run_ffmpeg_task(self.c, 'dry exe', ['ffmpeg.exe', '-y', str(self.target)])
+        self.assertEqual(sorted(self.root.rglob('*')), before)
+        self.c.dry = False
+        with self.assertRaises(ValueError):
+            recovery.atomic_media(self.c, self.target.with_suffix('.png'), producer)
+        from vtx.infra import ProjectPathError
+        with self.assertRaises(ProjectPathError):
+            recovery.atomic_media(self.c, self.root.parent / 'outside.wav', producer)
+        producer.assert_not_called()
+
+    def test_before_commit_input_change_is_rechecked_before_publication(self):
+        recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
+        old = self.target.read_bytes()
+        marker = recovery.completion_marker(self.target)
+        old_marker = marker.read_bytes()
+        effect = self.root / 'before-effect'
+
+        def before():
+            effect.write_text('completed callback effect is not rolled back')
+            self.c.tl_path.write_bytes(self.c.tl_path.read_bytes() + b' ')
+
+        with self.assertRaises(RuntimeError):
+            recovery.atomic_media(self.c, self.target, lambda path: wav(path, samples=240),
+                                  before_commit=before)
+        self.assertEqual(self.target.read_bytes(), old)
+        self.assertEqual(marker.read_bytes(), old_marker)
+        self.assertTrue(effect.is_file())
+        self.assertEqual(list(self.target.parent.glob('.*.tmp')), [])
+
+    def test_ffmpeg_adapter_retains_frame_caps_and_nonzero_result_failure(self):
+        target = self.target.with_suffix('.mkv')
+        def encode(argv):
+            Path(argv[-1]).write_bytes(b'inert video')
+            return subprocess.CompletedProcess(argv, 0, '', '')
+        for options, frames, succeeds in [(['-frames:v', '3'], 2, True),
+                                         (['-vframes', '1'], 2, False),
+                                         (['-frames:v', '3', '-vframes', '1'], 2, False)]:
+            with self.subTest(options=options):
+                target.unlink(missing_ok=True)
+                recovery.completion_marker(target).unlink(missing_ok=True)
+                with mock.patch.object(recovery, '_inspect', side_effect=lambda path, kind: {
+                        'schema': 1, 'frames': frames, 'sha256': recovery._digest(path)}):
+                    if succeeds:
+                        recovery.atomic_ffmpeg(self.c, ['ffmpeg', *options, str(target)], encode)
+                        self.assertTrue(recovery.media_cache_valid(target, 3, allow_short_verified=True))
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            recovery.atomic_ffmpeg(self.c, ['ffmpeg', *options, str(target)], encode)
+                        self.assertFalse(target.exists())
+        with mock.patch.object(recovery, '_inspect', side_effect=AssertionError('failed encoder inspection')):
+            with self.assertRaises(RuntimeError):
+                recovery.atomic_ffmpeg(self.c, self.cmd,
+                                       lambda argv: subprocess.CompletedProcess(argv, 1, '', 'failed'))
+        self.assertFalse(self.target.exists())
+
+    def test_mux_two_writers_keep_history_digest_and_timeline_under_final_lock(self):
+        # Real mux/Ctx.run/fstxn/history/VERSIONS with an inert encoder and
+        # explicit fake video inspection. No media/browser subprocess is run.
+        import hashlib
+        final = self.c.out / 'final.mp4'
+        final.parent.mkdir(parents=True)
+        final.write_bytes(b'OLD FINAL')
+        old_inode = final.stat().st_ino
+        path_b = self.root / 'timeline-b.json'
+        tl_b = dict(self.c.tl, label='second writer')
+        path_b.write_text(json.dumps(tl_b))
+        c_b = Ctx(path_b)
+        first_recorded = threading.Event()
+        second_attempt = threading.Event()
+        encoded_second = threading.Event()
+        original_lock = recovery.fstxn._thread_lock_for
+        original_record = stages.versions_record
+        errors = []
+        payloads = {'first': b'FIRST ENCODE', 'second': b'SECOND ENCODE'}
+
+        class BoundedFinalLock:
+            # A lock-order regression must fail inside the safety mocks, not
+            # leave a daemon waiting forever after those mocks are removed.
+            def __enter__(self):
+                if not original_lock(final).acquire(timeout=5):
+                    raise RuntimeError('final lock acquisition exceeded test deadline')
+                return self
+
+            def __exit__(self, *exc):
+                original_lock(final).release()
+
+        def lock(path):
+            if Path(path) == final:
+                if threading.current_thread().name == 'second':
+                    second_attempt.set()
+                return BoundedFinalLock()
+            return original_lock(path)
+
+        def execute(argv, **kwargs):
+            if '-encoders' in argv:
+                return subprocess.CompletedProcess(argv, 0, 'aac', '')
+            name = threading.current_thread().name
+            self.assertTrue(original_lock(final).locked())
+            self.assertNotEqual(Path(argv[-1]), final)
+            if name == 'second':
+                encoded_second.set()
+            Path(argv[-1]).write_bytes(payloads[name])
+            return subprocess.CompletedProcess(argv, 0, '', '')
+
+        def inspect(path, kind=None):
+            return {'schema': 1, 'sha256': recovery._digest(path), 'frames': 30}
+
+        def record(ctx, path, label):
+            self.assertTrue(original_lock(final).locked())
+            self.assertTrue(recovery.media_cache_valid(final, 30))
+            self.assertEqual(final.read_bytes(), payloads[threading.current_thread().name])
+            original_record(ctx, path, label)
+            if threading.current_thread().name == 'first':
+                first_recorded.set()
+                if not second_attempt.wait(5):
+                    raise RuntimeError('second writer did not attempt final lock')
+                self.assertFalse(encoded_second.is_set())
+
+        def worker(ctx):
+            try:
+                stages.mux(ctx)
+            except BaseException as error:
+                errors.append(error)
+
+        with mock.patch('subprocess.Popen', side_effect=AssertionError('no external process')), \
+                mock.patch('vtx.infra.subprocess.run', execute), \
+                mock.patch.object(recovery, '_inspect', inspect), \
+                mock.patch.object(recovery.fstxn, '_thread_lock_for', lock), \
+                mock.patch.object(stages, 'versions_record', record):
+            first = threading.Thread(target=worker, args=(self.c,), name='first', daemon=True)
+            second = threading.Thread(target=worker, args=(c_b,), name='second', daemon=True)
+            first.start()
+            try:
+                self.assertTrue(first_recorded.wait(5))
+                second.start()
+            finally:
+                first.join(10)
+                if second.ident is not None:
+                    second.join(10)
+            self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(encoded_second.is_set())
+        versions = json.loads((self.c.out / 'VERSIONS.json').read_text())['versions']
+        self.assertEqual([(row['timeline_md5'], row['md5']) for row in versions],
+                         [(self.c.timeline_md5, hashlib.md5(payloads['first']).hexdigest()),
+                          (c_b.timeline_md5, hashlib.md5(payloads['second']).hexdigest())])
+        history = list((self.c.out / 'history').glob('final_*.mp4'))
+        old = next(path for path in history if path.read_bytes() == b'OLD FINAL')
+        self.assertEqual(old.stat().st_ino, old_inode)
+        self.assertIn(payloads['first'], [path.read_bytes() for path in history])
+        self.assertEqual(final.read_bytes(), payloads['second'])
+        self.assertTrue(recovery.media_cache_valid(final, 30))
+        self.assertFalse((self.c.out / '.final.tmp.mp4').exists())
+        self.assertFalse(recovery.completion_marker(self.c.out / '.final.tmp.mp4').exists())
+        self.assertEqual(list(self.c.out.glob('.*.tmp')), [])
 
 
 @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG')
@@ -423,13 +717,13 @@ class RealFFmpegRecovery(unittest.TestCase):
                 self.assertEqual(len({layer['seg'] for layer in layers}), 1)
                 target = layers[0]['seg']
                 before = (target.read_bytes(), target.stat().st_mtime_ns,
-                          recovery._marker(target).read_bytes())
+                          recovery.completion_marker(target).read_bytes())
                 self.assertEqual(composite.prepare_layers(c), layers)
                 self.assertEqual(encode.call_count, 1)
                 self.assertEqual(before, (target.read_bytes(), target.stat().st_mtime_ns,
-                                          recovery._marker(target).read_bytes()))
+                                          recovery.completion_marker(target).read_bytes()))
             self.assertTrue(recovery.media_cache_valid(target, 6))
-            record = json.loads(recovery._marker(target).read_text())
+            record = json.loads(recovery.completion_marker(target).read_text())
             self.assertEqual(record['sha256'], recovery._digest(target))
             frames = self._decoded_rgb_frames(target)
             self.assertEqual(len(frames), 6)
@@ -442,6 +736,18 @@ class RealFFmpegRecovery(unittest.TestCase):
             self.assertTrue(recovery.media_cache_valid(final, 72))
             rendered = self._decoded_rgb_frames(final)
             self.assertEqual(len(rendered), 72)
+            passes = list((c.cache / 'vseg_pass').glob('*.mkv'))
+            self.assertTrue(passes, 'actual multilayer path must publish intermediate passes')
+            self.assertTrue(all(recovery.media_cache_valid(path, 72) for path in passes))
+            self.assertFalse(any('.part.' in path.name for path in (c.cache / 'vseg_pass').iterdir()))
+            with mock.patch.object(c, 'run', wraps=c.run) as warm:
+                plan.composite(layers, final, False, a=0, b=c.dur)
+                self.assertEqual(warm.call_count, 0, 'all passes including final must be certified warm hits')
+                final.unlink()
+                recovery.completion_marker(final).unlink()
+                plan.composite(layers, final, False, a=0, b=c.dur)
+                self.assertEqual(warm.call_count, 1, 'only the missing final pass must be rebuilt')
+            self.assertEqual(self._decoded_rgb_frames(final), rendered)
             for start in range(0, 72, 6):
                 self.assertGreater(len(set(rendered[start:start + 6])), 1)
             # A deliberate consumer-only plan with no scheduling builds the unchanged oracle.
@@ -540,9 +846,13 @@ class RealFFmpegRecovery(unittest.TestCase):
             self.assertEqual(len(list((c.cache / 'seg').glob('*.mp4'))), 1)
             self.assertEqual(list((c.cache / 'seg').glob('*.complete.json')), [])
             self.assertFalse(json.loads((c.out / 'receipt.json').read_text())['stages'].get('video', {}).get('ok', False))
-            # Existing legacy-media recovery fully verifies the committed file.
-            with mock.patch.object(infra, '_run_ffmpeg_task', side_effect=AssertionError('legacy re-encode')):
-                self.assertEqual(len(composite.prepare_layers(c)), 12)
+            # Missing completion evidence requires one rebuild, never adoption.
+            with mock.patch.object(infra, '_run_ffmpeg_task', wraps=infra._run_ffmpeg_task) as retry:
+                layers = composite.prepare_layers(c)
+                self.assertEqual(len(layers), 12)
+                self.assertEqual(retry.call_count, 1)
+                self.assertEqual(composite.prepare_layers(c), layers)
+                self.assertEqual(retry.call_count, 1)
 
     def test_prepare_verified_short_source_semantics_are_unchanged(self):
         from vtx import composite, infra
