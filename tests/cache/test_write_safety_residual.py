@@ -291,12 +291,16 @@ class WriteSafetyResidual(unittest.TestCase):
         timeline.write_text(json.dumps(self.tl))
         return Ctx(timeline)
 
-    def test_context_ownership_survives_interleaved_nested_and_threaded_contexts(self):
-        # All three roots belong to this one fixture; "outside" is not ambient data.
-        (self.root / 'out').symlink_to(self.outside, target_is_directory=True)
+    def write_modes(self):
         for native in (False, True):
             if native and not fstxn._probe_fd_writes():
                 continue
+            yield native
+
+    def test_context_ownership_survives_interleaved_nested_and_threaded_contexts(self):
+        # All three roots belong to this one fixture; "outside" is not ambient data.
+        (self.root / 'out').symlink_to(self.outside, target_is_directory=True)
+        for native in self.write_modes():
             with mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
                 for operation in ('receipt', 'begin_stage'):
                     def rejected():
@@ -335,9 +339,7 @@ class WriteSafetyResidual(unittest.TestCase):
         sibling = self.root / 'sibling'
         sibling.mkdir()
         nested.out.symlink_to(sibling, target_is_directory=True)
-        for native in (False, True):
-            if native and not fstxn._probe_fd_writes():
-                continue
+        for native in self.write_modes():
             with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
                 Ctx(self.timeline)
                 for operation in (lambda: nested.receipt('validate', True),
@@ -353,9 +355,7 @@ class WriteSafetyResidual(unittest.TestCase):
         def enter(manager):
             with manager:
                 self.fail('unsafe transaction body entered')
-        for native in (False, True):
-            if native and not fstxn._probe_fd_writes():
-                continue
+        for native in self.write_modes():
             with mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
                 for target in (self.root / 'out/victim', self.victim):
                     operations = {
@@ -380,9 +380,7 @@ class WriteSafetyResidual(unittest.TestCase):
                             self.assertEqual(list(self.outside.iterdir()), [self.victim])
 
     def test_receipt_owners_share_locks_not_project_state(self):
-        for native in (False, True):
-            if native and not fstxn._probe_fd_writes():
-                continue
+        for native in self.write_modes():
             with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
                 a2, b = Ctx(self.timeline), self.other_context()
                 self.c.out.mkdir(exist_ok=True)
@@ -407,9 +405,7 @@ class WriteSafetyResidual(unittest.TestCase):
         directory.mkdir()
         alias = self.root / 'alias'
         alias.symlink_to(directory, target_is_directory=True)
-        for native in (False, True):
-            if native and not fstxn._probe_fd_writes():
-                continue
+        for native in self.write_modes():
             with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
                 fstxn.mkdir(alias / 'nested', root=self.root)
                 fstxn.atomic_write(alias / 'nested/data', b'inside', root=self.root)
@@ -430,9 +426,7 @@ class WriteSafetyResidual(unittest.TestCase):
         shared = self.base / 'shared-library-cache'
         shared.mkdir()
         (self.outside / 'cache').symlink_to(shared, target_is_directory=True)
-        for native in (False, True):
-            if native and not fstxn._probe_fd_writes():
-                continue
+        for native in self.write_modes():
             with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
                 Ctx(self.timeline)
                 fstxn.atomic_write(alias / 'standalone.json', '{}')
