@@ -406,7 +406,7 @@ def manifest_record(c, path: Path, stage: str, key: str = ""):
         # fstxn._flock_for。损坏账本经 _load_manifest 显式失败（取舍见其注释），
         # 由下方既有外层兜底降级为 ⚠ 警告：渲染不受影响，账本不被静默清零。
         fstxn.locked_update(_manifest_path(c), _mutate,
-                            load=_load_manifest, dump=_dump_manifest)
+                            load=_load_manifest, dump=_dump_manifest, root=c.root)
     except InputIdentityError as e:
         c.reject_input_identity(stage, e)
     except Exception as e:
@@ -439,10 +439,7 @@ def tmp_run(c, label: str, *, unique: bool = False):
     # issue #23（A04）：tmp 也属衍生写路径——预置 cache/tmp → 根外 的符号链接
     # 会把 GB 级中间物写穿到链接目标；解析后必须仍落在 cache 内。
     ensure_inside_project(d, c.cache, what="tmp 中间物目录")
-    if not fstxn._legacy_guard():
-        fstxn.mkdir(d)
-    else:   # 降级平台（issue #59 返工）：基线安全等级 = 原 main 行为
-        d.mkdir(parents=True, exist_ok=True)
+    fstxn.mkdir(d, root=c.root)
     return _TmpDir(d)
 
 
@@ -808,7 +805,7 @@ def snapshot(c, keep: int = None):
         return dst
     # fd 锚定平台：父目录锚定 + 未发布 staging 树——写窗与失败清理都不依赖
     # 可被置换的 snapshots/cache 祖先路径（issue #59 快照 TOCTOU 写窗）。
-    with fstxn.pinned_parent(dst) as (parent, name, target):
+    with fstxn.pinned_parent(dst, root=c.root) as (parent, name, target):
         with fstxn.flock_at(parent, '.publish', what=dst.parent / '.publish'):
             try:
                 existing = os.stat(name, dir_fd=parent, follow_symlinks=False)
@@ -907,7 +904,7 @@ def versions_check(c, product: Path) -> bool:
     # _load_versions 显式失败上抛（取舍见 _load_ledger 注释）；os.replace 不
     # 跟随末段符号链接，issue #23（A04）目标侧免疫保持。
     return fstxn.locked_update(f, _mutate, load=_load_versions,
-                               dump=_dump_versions) is not None
+                               dump=_dump_versions, root=c.root) is not None
 
 
 def versions_record(c, product: Path, label: str):
@@ -938,7 +935,7 @@ def versions_record(c, product: Path, label: str):
     # mux（取舍见 _load_ledger 注释）——终片已落盘不受影响，人工修复账本后
     # 重跑 mux 即补记。A04 符号链接免疫同 versions_check。
     try:
-        fstxn.locked_update(f, _mutate, load=_load_versions, dump=_dump_versions)
+        fstxn.locked_update(f, _mutate, load=_load_versions, dump=_dump_versions, root=c.root)
     except InputIdentityError as e:
         c.reject_input_identity(label, e)
 
@@ -966,11 +963,11 @@ def rotate_history(c, product: Path, keep: int):
         for old in olds[:len(olds) - keep] if len(olds) > keep else []:
             old.unlink()
         return
-    fstxn.mkdir(hdir)
+    fstxn.mkdir(hdir, root=c.root)
     md5 = _md5_file(product)[:8]
     dst = hdir / f"{product.stem}_{time.strftime('%Y%m%d-%H%M%S')}_{md5}{product.suffix}"
-    with fstxn.pinned_parent(product, create=False) as (srcfd, srcname, source):
-        with fstxn.pinned_parent(dst) as (dstfd, dstname, target):
+    with fstxn.pinned_parent(product, create=False, root=c.root) as (srcfd, srcname, source):
+        with fstxn.pinned_parent(dst, root=c.root) as (dstfd, dstname, target):
             fstxn.check_regular_at(srcfd, srcname, what=source)
             fstxn.check_regular_at(dstfd, dstname, what=target)
             try:
@@ -978,7 +975,7 @@ def rotate_history(c, product: Path, keep: int):
                         follow_symlinks=False)
             except OSError:
                 inputfd = os.open(srcname, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=srcfd)
-                with os.fdopen(inputfd, 'rb') as stream, fstxn.locked_write(dst) as tmp:
+                with os.fdopen(inputfd, 'rb') as stream, fstxn.locked_write(dst, root=c.root) as tmp:
                     with tmp.open('wb') as output:
                         shutil.copyfileobj(stream, output)
             keep = max(0, keep)

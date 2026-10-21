@@ -730,7 +730,7 @@ def plan_static_spans(spans, want, outdir, *, width=None, height=None):
     return work, copy_now, deferred, n_spans
 
 
-def _atomic_write_bytes(path, data):
+def _atomic_write_bytes(path, data, *, root=None):
     """帧落盘原子化（M1）：同目录临时文件写完整字节 → os.replace 原子替换目标。
     背景：同页 split×k 时多个 render_page 并发写同一 outdir（跨度头帧可被两块
     同时渲染并双写），直接 truncate/write 交错会产生撕裂 PNG 并经 deferred 复制
@@ -739,7 +739,7 @@ def _atomic_write_bytes(path, data):
     字节内容与直接 write 完全一致（像素零影响）；tmp 名由 mkstemp 保证同目录
     唯一（O_EXCL），成功路径 tmp 已被 replace 移走、异常路径 finally 清理，
     两种路径均不留 tmp 残留。"""
-    fstxn.atomic_write(path, data)
+    fstxn.atomic_write(path, data, root=root)
 
 
 def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
@@ -786,7 +786,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     tabs_n = tabs or int(os.environ.get("VTX_GFX_TABS", "4"))
     html_path = os.path.abspath(html_path)
     outdir = os.path.abspath(outdir)
-    fstxn.mkdir(outdir)
+    fstxn.mkdir(outdir, root=ctx.root if ctx is not None else None)
     base_uri = Path(html_path).resolve().as_uri()
     requested = list(range(n_frames) if frames is None else frames)
     work = [i for i, _ in verify_frames(outdir, requested, width=width, height=height)]
@@ -943,7 +943,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
                         raise ConnectionError("tab lost after browser restart")
                     png, path, timing = do_frame(pool[idx], i, navfree=nf)
                     t0 = time.monotonic()
-                    _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png)
+                    _atomic_write_bytes(os.path.join(outdir, f"f{i:04d}.png"), png, root=ctx.root if ctx is not None else None)
                     my_times["write"].append(time.monotonic() - t0)
                     for c in ("nav", "export", "decode"):
                         my_times[c].append(timing[c])
@@ -1016,7 +1016,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             try:
                 with open(head_path, "rb") as fh:
                     data = fh.read()
-                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data)
+                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data, root=ctx.root if ctx is not None else None)
                 static_copied_n += 1
             except OSError as e:
                 note(f"帧 {m} 复制头帧失败（{e}），改渲染")
@@ -1092,7 +1092,7 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
             continue
         for m in members:
             try:
-                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data)
+                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data, root=ctx.root if ctx is not None else None)
                 static_copied_n += 1
             except OSError as e:
                 note(f"帧 {m} 复制头帧失败（{e}），交由调用方回落")
@@ -1183,7 +1183,7 @@ def render_strict_page(html_path, outdir, n_frames, chrome_path, width, height,
             png = tab.shot()
             tab.call('Runtime.evaluate', expression='true', returnByValue=True)
             tab.request_policy.check(require_complete=True)
-            _atomic_write_bytes(str(Path(outdir) / f'f{frame:04d}.png'), png)
+            _atomic_write_bytes(str(Path(outdir) / f'f{frame:04d}.png'), png, root=ctx.root if ctx is not None else None)
         counts = _empty_path_counts()
         counts['override'] = len(requested)
         elapsed = (time.monotonic() - started) * 1000

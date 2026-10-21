@@ -583,7 +583,7 @@ class SupervisedProcessGroup:
                "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         fstxn.atomic_write(self._ledger_path(),
                            json.dumps(rec, ensure_ascii=False, indent=2,
-                                      sort_keys=True))
+                                      sort_keys=True), root=self.c.root)
 
 
 # ---------------------------------------------------------------- 账本清扫 / reap

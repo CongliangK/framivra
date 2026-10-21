@@ -258,7 +258,7 @@ def render_stems(c, voice_tracks, bed_tracks, workdir):
     """渲染 3 个 stem（响度归一前口径）：人声 stem / 床乐 raw stem / 床乐 duck 后 stem。
     bed duck 用各轨 duck_params 逐轨 sidechaincompress（key = 人声 stem），与
     stages._audio_graph 同一机制。返回 (voice_wav, bed_raw_wav, bed_duck_wav)。"""
-    fstxn.mkdir(workdir)
+    fstxn.mkdir(workdir, root=c.root)
     vw, rw, dw = workdir / "stem_voice.wav", workdir / "stem_bed_raw.wav", workdir / "stem_bed_duck.wav"
     # 1) 人声 stem
     cmd, chains, mix, _k, _lbls = _track_group(c, voice_tracks)
@@ -419,7 +419,7 @@ def run_report(c, json_path=None):
                DUCK_RELEASE_PASS, DUCK_RELEASE_FAIL, HOLE_WARN, HOLE_FAIL])}, **thr},
            "source": str(wav), "checks": checks}
     jp = Path(json_path) if json_path else c.out / "audio_report.json"
-    fstxn.atomic_write(jp, json.dumps(rep, ensure_ascii=False, indent=2))
+    fstxn.atomic_write(jp, json.dumps(rep, ensure_ascii=False, indent=2), root=None if json_path else c.root)
     print(f"音频报告：{summary}（PASS {len(checks)-n_fail-n_warn} / WARN {n_warn} / FAIL {n_fail}）"
           f"（[timing] {time.time()-t0:.1f}s，JSON {jp}）")
     return 1 if n_fail else 0

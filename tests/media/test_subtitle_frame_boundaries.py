@@ -31,7 +31,7 @@ FPS = 30
 
 
 def plan(subtitles, width=160, height=90, draft=False):
-    c = SimpleNamespace(fps=FPS, tl={'subtitles': subtitles}, gpu=False)
+    c = SimpleNamespace(fps=FPS, tl={'subtitles': subtitles}, gpu=False, root=None)
     return RenderPlan(c=c, draft=draft, f=width / 1920, W=width, H=height)
 
 

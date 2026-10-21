@@ -235,12 +235,12 @@ def _gfx(c: Ctx):
         frame_list = list(i_range)
         if backend != 'cli':
             mixed_pages.add(str(d))
-            gfx_cli.fstxn.unlink(Path(d) / gfx_cli.ENV_PENDING_FILE)
+            gfx_cli.fstxn.unlink(Path(d) / gfx_cli.ENV_PENDING_FILE, root=c.root)
         observation = events.task(c, "gfx", kind="gfx_fallback",
                                   metadata={"backend": "cli", **events.frame_metadata(frame_list)})
         with observation.scope():
             return observation.attempt(gfx_cli.render_cli, frame_list, d, html, chrome,
-                                       width=c.w, height=c.h)
+                                       width=c.w, height=c.h, root=c.root)
 
     # 页内分片开关（方案 v2 阶段 1）：VTX_GFX_SPLIT_FRAMES 为块大小阈值，
     # VTX_GFX_SPLIT_MAX（默认 3）为单页最大块数。默认 450（2026-09-12 定版，
@@ -271,16 +271,16 @@ def _gfx(c: Ctx):
                 if needs_marker and not c.dry:
                     gfx_cli.complete_page(d, n, key, c.w, c.h,
                                           verify_inputs=lambda: c.verify_inputs("gfx"),
-                                          backend_ns=backend_ns, environment=environment)
+                                          backend_ns=backend_ns, environment=environment, root=c.root)
                 events.cache_hit(c, "inspect_page", frames=[0, n])
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
             # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
             if not c.dry:
-                fstxn.mkdir(d)
-                gfx_cli.invalidate_page(d)
+                fstxn.mkdir(d, root=c.root)
+                gfx_cli.invalidate_page(d, root=c.root)
                 for i, _ in bad:
-                    fstxn.unlink(d / f"f{i:04d}.png")
-                gfx_cli.begin_environment_page(d, environment, key, n, c.w, c.h)
+                    fstxn.unlink(d / f"f{i:04d}.png", root=c.root)
+                gfx_cli.begin_environment_page(d, environment, key, n, c.w, c.h, root=c.root)
             html = (c.root / cl["src"]).resolve()
             # 页内分片（方案 v2 阶段 1，默认关）：SPLIT_FRAMES>0 且页帧数超阈值时把
             # [0,n) 切成 min(SPLIT_MAX, ceil(n/阈值)) 个连续块，每块独立一次
@@ -329,7 +329,7 @@ def _gfx(c: Ctx):
             rendered_via = render_page(html, d, n, ctx=c, width=c.w, height=c.h)
             gfx_cli.complete_page(d, n, key, c.w, c.h,
                                   verify_inputs=lambda: c.verify_inputs("gfx"),
-                                  backend_ns=backend_ns, environment=environment)
+                                  backend_ns=backend_ns, environment=environment, root=c.root)
             manifest_record(c, d, "gfx", key)
             print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
             return cid, rendered_via
@@ -344,7 +344,7 @@ def _gfx(c: Ctx):
                                          **({"dependency_record": dependency_records[key]} if strict else {}))
             except Exception as e:
                 if strict:
-                    gfx_cli.invalidate_page(d)
+                    gfx_cli.invalidate_page(d, root=c.root)
                     raise
                 # CDP 块级失败：只回落本块帧区间（frames=None 时整页，与现行一致）
                 fb = range(n) if frames is None else frames
@@ -355,7 +355,7 @@ def _gfx(c: Ctx):
             else:
                 if st["failed"]:
                     if strict:
-                        gfx_cli.invalidate_page(d)
+                        gfx_cli.invalidate_page(d, root=c.root)
                         raise DependencyError('strict CDP frame failure; CLI downgrade forbidden')
                     print(f"⚠ {cid}: CDP 帧 {st['failed']} 失败，回落 CLI 补渲")
                     # issue #28：补渲失败不可被 CDP 的 except 吞掉后重试成成功。
@@ -373,7 +373,7 @@ def _gfx(c: Ctx):
                                   **({'dependency_digest': digest(dependency_records[key]),
                                       'dependency_enforcement': st.get('dependency_enforcement'),
                                       'dependency_observed': st.get('dependency_observed')}
-                                     if strict else {}))
+                                     if strict else {}), root=c.root)
             print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
             manifest_record(c, d, "gfx", key)
             return cid, rendered_via
@@ -400,7 +400,7 @@ def _gfx(c: Ctx):
         gfx_cli.complete_page(d, n, key, c.w, c.h,
                               verify_inputs=lambda: c.verify_inputs("gfx"),
                               backend_ns=backend_ns, environment=environment,
-                              mixed_producer=str(d) in mixed_pages)
+                              mixed_producer=str(d) in mixed_pages, root=c.root)
         print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
         manifest_record(c, d, "gfx", key)
         return cid, rendered_via

@@ -75,7 +75,7 @@ def wait_either(a, b, timeout):
     return a.exists() or b.exists()
 
 if role == 'first':
-    def slow_marker(path, data):
+    def slow_marker(path, data, *, root=None):
         payload = data if isinstance(data, bytes) else str(data).encode('utf-8')
         tmp = path.parent / ('.' + path.name + '.' + secrets.token_hex(16) + '.tmp')
         with open(tmp, 'wb') as stream:
@@ -227,11 +227,11 @@ class MediaRecovery(unittest.TestCase):
 
     def test_marker_published_after_media_while_target_lock_held(self):
         original = recovery.fstxn.atomic_write
-        def checked(path, data):
+        def checked(path, data, *, root=None):
             self.assertTrue(self.target.exists())
             self.assertTrue(recovery.fstxn._thread_lock_for(self.target).locked())
             self.assertEqual(json.loads(data)['sha256'], recovery._digest(self.target))
-            return original(path, data)
+            return original(path, data, root=root)
         with mock.patch.object(recovery.fstxn, 'atomic_write', checked):
             recovery.atomic_ffmpeg(self.c, self.cmd, self.encode)
 
@@ -287,14 +287,14 @@ class MediaRecovery(unittest.TestCase):
             if threading.current_thread().name == 'second' and Path(path) == self.target:
                 second_lock_attempt.set()
             return original_lock(path)
-        def write(path, data):
+        def write(path, data, *, root=None):
             if threading.current_thread().name == 'first':
                 marker_entered.set()
                 if not second_lock_attempt.wait(5):
                     raise RuntimeError('second writer never attempted target lock')
                 self.assertTrue(original_lock(self.target).locked())
                 self.assertFalse(second_encoded.is_set())
-            return original_write(path, data)
+            return original_write(path, data, root=root)
         def encode(argv):
             if threading.current_thread().name == 'second':
                 second_encoded.set()
@@ -834,10 +834,10 @@ class RealFFmpegRecovery(unittest.TestCase):
             c.receipt('video', True)
             c.begin_stage('video')
             original_write = recovery.fstxn.atomic_write
-            def fail_marker(path, data):
+            def fail_marker(path, data, *, root=None):
                 if str(path).endswith('.mp4.complete.json'):
                     raise OSError('injected marker publication failure')
-                return original_write(path, data)
+                return original_write(path, data, root=root)
             with mock.patch.object(recovery.fstxn, 'atomic_write', side_effect=fail_marker), \
                     mock.patch.object(infra, '_run_ffmpeg_task', wraps=infra._run_ffmpeg_task) as encode, \
                     self.assertRaisesRegex(OSError, 'marker publication failure'):
@@ -942,8 +942,8 @@ class RealChromeRecovery(unittest.TestCase):
                 original_start(browser)
                 browsers.append(browser)
             killed = []
-            def interrupt(path, data):
-                original_write(path, data)
+            def interrupt(path, data, *, root=None):
+                original_write(path, data, root=root)
                 if not killed:
                     proc = browsers[-1].proc
                     killed.append(proc.pid)

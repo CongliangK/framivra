@@ -282,20 +282,20 @@ def process_environment(directory=None):
     return env
 
 
-def private_configuration(directory):
+def private_configuration(directory, *, root=None):
     """Configure only declared fonts, including Inkscape's extra font folders."""
     from . import fstxn
     directory = Path(directory)
     for name in ('home', 'config', 'cache', 'data', 'inkscape-profile', 'fonts', 'font-cache'):
-        (directory / name).mkdir(parents=True, exist_ok=True)
+        fstxn.mkdir(directory / name, root=root)
     fstxn.atomic_write(directory / 'fonts.conf', '<?xml version="1.0"?><fontconfig><dir>' +
                        escape(str(directory / 'fonts')) + '</dir><cachedir>' +
-                       escape(str(directory / 'font-cache')) + '</cachedir></fontconfig>')
+                       escape(str(directory / 'font-cache')) + '</cachedir></fontconfig>', root=root)
     # Inkscape otherwise adds its distribution/user font dirs on top of FcConfig.
     fstxn.atomic_write(directory / 'inkscape-profile/preferences.xml',
                       '<inkscape version="1"><group id="options"><group id="font" '
                       'use_fontsdir_system="0" use_fontsdir_user="0" '
-                      'custom_fontdirs=""/></group></inkscape>')
+                      'custom_fontdirs=""/></group></inkscape>', root=root)
 
 
 def runtime_libraries(executable):

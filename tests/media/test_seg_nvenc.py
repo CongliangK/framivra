@@ -271,7 +271,7 @@ class TestNvencBudget(unittest.TestCase):
                 ('NVENC p7', 2, 8, 2), ('NVENC p7', 8, 2, 2), ('x264', 1, 1, 4)):
             with self.subTest(encoder=encoder, tier=tier), tempfile.TemporaryDirectory() as temp:
                 reset_nvenc_budget()
-                c = SimpleNamespace(cache=Path(temp), dur=4, dry=False, gpu=True, run=mock.Mock())
+                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4, dry=False, gpu=True, run=mock.Mock())
                 plan = composite.RenderPlan(c, False, 1, 2, 2, layers=[], nseg=4)
                 workers = []
                 class Executor:

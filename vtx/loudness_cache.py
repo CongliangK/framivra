@@ -67,7 +67,7 @@ def _load(rp: Path) -> dict:
         return {"entries": {}}
 
 
-def _write_entry_locked(rp: Path, key: str, entry: dict):
+def _write_entry_locked(rp: Path, key: str, entry: dict, *, root):
     """跨进程互斥的读-改-写（方案三阶段3）：threading.Lock 管进程内并发（同进程
     qc 与 gates 不会并存，此锁防的是未来进程内多线程消费），flock 管跨进程——
     qc 与 content_gates 两进程同时归档时，无 flock 则后写者基于旧快照回写会丢
@@ -78,7 +78,7 @@ def _write_entry_locked(rp: Path, key: str, entry: dict):
         return data
     try:
         fstxn.locked_update(rp, mutate, load=_load,
-                            dump=lambda data: json.dumps(data, ensure_ascii=False, indent=1))
+                            dump=lambda data: json.dumps(data, ensure_ascii=False, indent=1), root=root)
     except OSError:
         pass  # Ordinary storage failures remain advisory; safety errors propagate.
 
@@ -119,5 +119,5 @@ def measure_and_store(path, run_fn, root=None):
         return {"i_lufs": i, "tp_dbfs": tp}
     entry = dict(k[1], i_lufs=float(i), tp_dbfs=float(tp),
                  when=time.strftime("%F %T"))
-    _write_entry_locked(_receipts_path(path, root), k[0], entry)
+    _write_entry_locked(_receipts_path(path, root), k[0], entry, root=root)
     return {"i_lufs": i, "tp_dbfs": tp}

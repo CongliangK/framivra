@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -270,10 +272,10 @@ class WriteSafetyResidual(unittest.TestCase):
         self.assertEqual(self.victim.read_bytes(), b'unchanged')
         (cache / 'gfx').symlink_to(self.outside, target_is_directory=True)
         with self.assertRaises(ProjectPathError):
-            gfx_render._atomic_write_bytes(cache / 'gfx/f0000.png', b'frame')
+            gfx_render._atomic_write_bytes(cache / 'gfx/f0000.png', b'frame', root=self.root)
         (cache / 'seg').symlink_to(self.outside, target_is_directory=True)
         with self.assertRaises(ProjectPathError):
-            fstxn.mkdir(cache / 'seg/nested')
+            fstxn.mkdir(cache / 'seg/nested', root=self.root)
         self.assertEqual(list(self.outside.iterdir()), [self.victim])
         report = self.root / 'out/qc_report.json'
         report.parent.mkdir()
@@ -282,12 +284,172 @@ class WriteSafetyResidual(unittest.TestCase):
             fstxn.atomic_write(report, '{"checks": []}')
         self.assertEqual(self.victim.read_bytes(), b'unchanged')
 
+    def other_context(self, parent=None):
+        other = (self.base if parent is None else parent) / 'other-project'
+        other.mkdir(exist_ok=True)
+        timeline = other / 'timeline.json'
+        timeline.write_text(json.dumps(self.tl))
+        return Ctx(timeline)
+
+    def test_context_ownership_survives_interleaved_nested_and_threaded_contexts(self):
+        # All three roots belong to this one fixture; "outside" is not ambient data.
+        (self.root / 'out').symlink_to(self.outside, target_is_directory=True)
+        for native in (False, True):
+            if native and not fstxn._probe_fd_writes():
+                continue
+            with mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
+                for operation in ('receipt', 'begin_stage'):
+                    def rejected():
+                        with self.assertRaises(ProjectPathError):
+                            if operation == 'receipt':
+                                self.c.receipt('validate', True)
+                            else:
+                                self.c.begin_stage('validate')
+                    rejected()  # owner remains enforced before any other Ctx exists
+                    for interleave in ('sequential', 'nested', 'threaded'):
+                        with self.subTest(native=native, operation=operation, interleave=interleave):
+                            if interleave == 'threaded':
+                                ready = threading.Event()
+                                def construct():
+                                    self.other_context()
+                                    ready.set()
+                                def write():
+                                    self.assertTrue(ready.wait(10))
+                                    rejected()
+                                with ThreadPoolExecutor(2) as pool:
+                                    tasks = [pool.submit(write), pool.submit(construct)]
+                                    for task in tasks:
+                                        task.result(timeout=15)
+                            elif interleave == 'nested':
+                                with fstxn.locked_write(self.root / 'nested.json', root=self.root) as tmp:
+                                    self.other_context()
+                                    rejected()
+                                    tmp.write_text('{}')
+                            else:
+                                self.other_context()
+                                rejected()
+                            self.assertEqual(list(self.outside.iterdir()), [self.victim])
+
+    def test_nested_project_cannot_borrow_parent_context_ownership(self):
+        nested = self.other_context(self.root)
+        sibling = self.root / 'sibling'
+        sibling.mkdir()
+        nested.out.symlink_to(sibling, target_is_directory=True)
+        for native in (False, True):
+            if native and not fstxn._probe_fd_writes():
+                continue
+            with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
+                Ctx(self.timeline)
+                for operation in (lambda: nested.receipt('validate', True),
+                                  lambda: nested.begin_stage('validate')):
+                    with self.assertRaises(ProjectPathError):
+                        operation()
+                self.assertEqual(list(sibling.iterdir()), [])
+
+    def test_explicit_owner_rejects_every_write_entry_before_mutation(self):
+        (self.root / 'out').symlink_to(self.outside, target_is_directory=True)
+        source = self.root / 'source'
+        source.write_bytes(b'owned')
+        def enter(manager):
+            with manager:
+                self.fail('unsafe transaction body entered')
+        for native in (False, True):
+            if native and not fstxn._probe_fd_writes():
+                continue
+            with mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
+                for target in (self.root / 'out/victim', self.victim):
+                    operations = {
+                        'atomic': lambda: fstxn.atomic_write(target, b'bad', root=self.root),
+                        'update': lambda: fstxn.locked_update(target, lambda _: self.fail('unsafe read'), root=self.root),
+                        'write': lambda: enter(fstxn.locked_write(target, root=self.root)),
+                        'staging': lambda: enter(fstxn.locked_staging(target, root=self.root)),
+                        'lock': lambda: enter(fstxn.file_lock(target, root=self.root)),
+                        'mkdir': lambda: fstxn.mkdir(target / 'new', root=self.root),
+                        'unlink': lambda: fstxn.unlink(target, root=self.root),
+                        'replace-target': lambda: fstxn.replace(source, target, root=self.root),
+                        'replace-source': lambda: fstxn.replace(target, source, root=self.root),
+                    }
+                    if native:
+                        operations['parent'] = lambda: enter(fstxn.pinned_parent(target, root=self.root))
+                    for name, run in operations.items():
+                        with self.subTest(native=native, target=target, operation=name):
+                            with self.assertRaises(ProjectPathError):
+                                run()
+                            self.assertEqual(self.victim.read_bytes(), b'unchanged')
+                            self.assertEqual(source.read_bytes(), b'owned')
+                            self.assertEqual(list(self.outside.iterdir()), [self.victim])
+
+    def test_receipt_owners_share_locks_not_project_state(self):
+        for native in (False, True):
+            if native and not fstxn._probe_fd_writes():
+                continue
+            with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
+                a2, b = Ctx(self.timeline), self.other_context()
+                self.c.out.mkdir(exist_ok=True)
+                old = {'input_fingerprint': 'stale', 'stages': {'old': {'ok': True}}}
+                (self.c.out / 'receipt.json').write_text(json.dumps(old))
+                def write(item):
+                    c, stage = item
+                    c.receipt(stage, True)
+                with ThreadPoolExecutor(6) as pool:
+                    list(pool.map(write, [(c, f'{i}-{j}') for i, c in enumerate((self.c, a2, b))
+                                          for j in range(4)]))
+                for c, owners in ((self.c, (0, 1)), (b, (2,))):
+                    receipt = json.loads((c.out / 'receipt.json').read_text())
+                    self.assertEqual(receipt['input_fingerprint'], c.input_fingerprint)
+                    self.assertEqual(set(receipt['stages']), {f'{i}-{j}' for i in owners for j in range(4)})
+                    self.assertFalse(list(c.out.glob('.*.tmp')))
+                self.assertEqual(json.loads((self.c.out / 'receipt.prev.json').read_text()), old)
+                self.assertEqual(list(self.outside.iterdir()), [self.victim])
+
+    def test_explicit_owner_allows_internal_links_and_ledger_leaf_replacement(self):
+        directory = self.root / 'storage'
+        directory.mkdir()
+        alias = self.root / 'alias'
+        alias.symlink_to(directory, target_is_directory=True)
+        for native in (False, True):
+            if native and not fstxn._probe_fd_writes():
+                continue
+            with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
+                fstxn.mkdir(alias / 'nested', root=self.root)
+                fstxn.atomic_write(alias / 'nested/data', b'inside', root=self.root)
+                target = alias / 'ledger'
+                target.symlink_to(self.victim)
+                fstxn.locked_update(target, lambda _: {'owned': True}, root=self.root)
+                self.assertFalse(target.is_symlink())
+                self.assertEqual(json.loads(target.read_text()), {'owned': True})
+                target.unlink()
+                self.assertEqual(self.victim.read_bytes(), b'unchanged')
+
+    def test_library_outputs_do_not_inherit_any_context_root(self):
+        alias = self.root / 'library-output'
+        alias.symlink_to(self.outside, target_is_directory=True)
+        media = self.outside / 'out/media.wav'
+        media.parent.mkdir()
+        media.write_bytes(b'library measurement input')
+        shared = self.base / 'shared-library-cache'
+        shared.mkdir()
+        (self.outside / 'cache').symlink_to(shared, target_is_directory=True)
+        for native in (False, True):
+            if native and not fstxn._probe_fd_writes():
+                continue
+            with self.subTest(native=native), mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', native):
+                Ctx(self.timeline)
+                fstxn.atomic_write(alias / 'standalone.json', '{}')
+                self.other_context()
+                loudness_cache.measure_and_store(media, lambda: (-14.0, -1.5))
+                self.assertTrue((shared / 'audio/loudness_receipts.json').is_file())
+                fstxn.locked_update(alias / 'standalone.json', lambda _: {'library': True})
+                self.assertEqual(json.loads((self.outside / 'standalone.json').read_text()), {'library': True})
+                self.assertEqual(self.victim.read_bytes(), b'unchanged')
+
     def test_unsupported_platform_degrades_to_legacy_without_paralysis(self):
         """issue #59 返工：能力缺失平台不得抛错瘫痪——写入仍成功、降级标记
         显式可观测（write_capability()=='legacy' + stderr 一次性记录）。"""
         target = self.root / 'cache/fixed.json'
         marker = io.StringIO()
         with mock.patch.object(fstxn, '_FD_WRITE_SUPPORT', False), \
+                mock.patch.object(fstxn, '_DEGRADED_NOTICED', False), \
                 contextlib.redirect_stderr(marker):
             self.assertEqual(fstxn.write_capability(), 'legacy')
             fstxn.atomic_write(target, b'legacy payload')

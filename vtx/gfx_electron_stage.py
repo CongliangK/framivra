@@ -152,8 +152,8 @@ def render_stage(c, split_page):
         if c.dry:
             print(f"  [dry-run] gfx {cl['src']}[{key}]: electron b0 {n} 帧 {c.w}×{c.h}; ns={ns}")
             continue
-        fstxn.mkdir(d)
-        gfx_cli.invalidate_page(d)
+        fstxn.mkdir(d, root=c.root)
+        gfx_cli.invalidate_page(d, root=c.root)
         # Every block must produce fresh receipts. Never skip a valid-looking old
         # PNG in an incomplete Electron page; one bad block prevents completion.
         sizes = split_page(n, split_frames, split_max) or [n]
@@ -183,7 +183,7 @@ def render_stage(c, split_page):
         with ThreadPoolExecutor(min(workers, len(blocks))) as pool:
             runs = list(pool.map(run, blocks))
         gfx_cli.complete_page(d, n, key, c.w, c.h, verify_inputs=lambda: c.verify_inputs("gfx"),
-                              backend_ns=ns, backend_identity=backend, render_runs=runs)
+                              backend_ns=ns, backend_identity=backend, render_runs=runs, root=c.root)
         manifest_record(c, d, "gfx", key)
         all_runs.extend(runs)
         print(f"✓ {Path(cl['src']).stem}[{key}]: electron b0 {n} 帧，split×{len(blocks)}，零回落")

@@ -473,10 +473,10 @@ class TestS6SequenceVerifier(unittest.TestCase):
 
     def test_observer_failure_is_sticky_but_original_writer_error_propagates(self):
         write = self.mod.gfx_render._atomic_write_bytes
-        def fail_archive(path, data):
+        def fail_archive(path, data, *, root=None):
             if Path(path).name == "step0002_f0012.png":
                 raise OSError("archive unavailable")
-            return write(path, data)
+            return write(path, data, root=root)
         with mock.patch.object(self.mod.gfx_render, "_atomic_write_bytes", fail_archive):
             code, report = self.run_smoke()
         self.assertEqual(code, self.mod.EXIT_FAIL)

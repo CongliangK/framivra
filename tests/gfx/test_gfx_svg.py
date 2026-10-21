@@ -116,7 +116,7 @@ class SvgContract(unittest.TestCase):
         self.assertEqual(gfx_svg.route(self.ctx()), 'svg-sequence')
 
     def test_producer_completion_warm_reader_and_corruption(self):
-        def render(executable, directory, count, width, height):
+        def render(executable, directory, count, width, height, *, root=None):
             for i in range(count): write_png(directory / f'f{i:04d}.png',width,height,frame=i)
         c = self.ctx()
         with mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render) as engine:
@@ -260,7 +260,7 @@ class SvgContract(unittest.TestCase):
         self.assertNotEqual(old_directory, gfx_dir(c, self.clip))
         with self.assertRaisesRegex(ValueError, 'does not match inputs'):
             gfx_svg.completion(c, self.clip, old_directory)
-        def render(executable, directory, count, width, height):
+        def render(executable, directory, count, width, height, *, root=None):
             for i in range(count):
                 write_png(directory / f'f{i:04d}.png', width, height, frame=i)
         with mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render) as engine:
@@ -296,7 +296,7 @@ class SvgContract(unittest.TestCase):
         self.manifest['frame_count']=n; self.manifest['frames']=[f'f{i}.svg' for i in range(n)]
         for name in self.manifest['frames']: (self.root/name).write_text(SVG)
         self.save(); c=self.ctx()
-        def render(executable,directory,count,width,height):
+        def render(executable,directory,count,width,height, *, root=None):
             for i in range(count): write_png(directory/f'f{i:04d}.png',width,height,frame=i)
         with mock.patch.object(gfx_svg_stage,'run_shell',side_effect=render): gfx_svg_stage.render_stage(c)
         return c

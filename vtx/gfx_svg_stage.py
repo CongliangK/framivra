@@ -13,8 +13,8 @@ from .gfx_cli import png_invalid_reason
 from .hygiene import manifest_record, tmp_run
 
 
-def run_shell(executable, directory, count, width, height):
-    gfx_svg.private_configuration(directory)
+def run_shell(executable, directory, count, width, height, *, root=None):
+    gfx_svg.private_configuration(directory, root=root)
     env = gfx_svg.process_environment(directory)
     # Pin transparent background RGB as well as alpha; Inkscape defaults to white.
     # The stage source digest in resolve() also invalidates pre-change PNG caches.
@@ -70,22 +70,22 @@ def render_stage(c):
             except (OSError, ValueError):
                 pass
             # Serialize this key's publication. Failure never leaves a valid marker.
-            with fstxn.locked_write(directory / gfx_svg.COMPLETE_FILE) as marker:
-                fstxn.unlink(directory / gfx_svg.COMPLETE_FILE)
+            with fstxn.locked_write(directory / gfx_svg.COMPLETE_FILE, root=c.root) as marker:
+                fstxn.unlink(directory / gfx_svg.COMPLETE_FILE, root=c.root)
                 with tmp_run(c, 'svg-inkscape', unique=True) as staging:
                     staging = staging.resolve()
                     for i, name in enumerate(record['frames']):
                         data = gfx_svg.read_input(c, name, limit=gfx_svg.MAX_SVG_BYTES)
                         if gfx_svg.digest(data) != record['files'][name]:
                             raise ValueError('SVG input changed before rendering')
-                        fstxn.atomic_write(staging / f'f{i:04d}.svg', data)
+                        fstxn.atomic_write(staging / f'f{i:04d}.svg', data, root=c.root)
                     for i, name in enumerate(record['fonts']):
                         data = gfx_svg.read_input(c, name)
                         if gfx_svg.digest(data) != record['files'][name]:
                             raise ValueError('SVG font changed before rendering')
-                        fstxn.atomic_write(staging / 'fonts' / f'font{i}{Path(name).suffix.lower()}', data)
+                        fstxn.atomic_write(staging / 'fonts' / f'font{i}{Path(name).suffix.lower()}', data, root=c.root)
                     started = time.monotonic()
-                    run_shell(record['engine']['executable'], staging, clip['dur'], c.w, c.h)
+                    run_shell(record['engine']['executable'], staging, clip['dur'], c.w, c.h, root=c.root)
                     raster_seconds = time.monotonic() - started
                     hashes = []
                     for i in range(clip['dur']):
@@ -99,7 +99,7 @@ def render_stage(c):
                     if gfx_svg.resolve(c, clip) != record:
                         raise ValueError('SVG identity changed during rendering')
                     for i in range(clip['dur']):
-                        fstxn.replace(staging / f'f{i:04d}.png', directory / f'f{i:04d}.png')
+                        fstxn.replace(staging / f'f{i:04d}.png', directory / f'f{i:04d}.png', root=c.root)
                     marker.write_text(json.dumps({'format': 'framivra-svg-completion/v1',
                         'key': key, 'input': record, 'sha256': hashes,
                         'experimental': True, 'batch_count': 1, 'raster_seconds': raster_seconds}, sort_keys=True), encoding='utf-8')
