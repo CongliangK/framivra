@@ -1,7 +1,7 @@
-# tts/ · IndexTTS-2.5 口播占位语音产线 + edge-tts 兜底
+# tts/ · 口播占位语音与音频加工
 原三模块方案的章节编号仅作历史来源：[2026-09-11 设计记录](https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md)。
 
-组件声明见 `app.json`（kind=app）；健康检查为 `tts_cli.py --help`，不加载模型。`tts.repo/python/voice_ref/edge_bin` 支持 `~` 路径；资产准备和写入边界见下文。
+组件声明见 `app.json`（kind=app）；健康检查为 `tts_cli.py --help`，不加载模型。`tts.repo/python/voice_ref/edge_bin` 支持 `~` 路径。**当前 IndexTTS worker 是许可拒绝入口，不执行推理**：CLI 仍可选择它，但在配置解释器可用并进入 worker 后，当前政策返回退出码 4，先于上游导入、资产读取与项目产物创建。改配置或已有权重不能解除阻断；恢复条件见[第三方许可与运行边界](../../docs/third-party-licenses.md)。
 
 口播语音的两段式工作流：**TTS 占位（本模块，正向）→ 实录替换（`apps/sync/repack_voice.py` 既有链，终版）**。
 来源：voice-ime/assets/voice_tts/ 产线（gen.py / run_v2.py / normalize.py / refit_final.py，2026-08 实战 27 窗）
@@ -13,7 +13,7 @@
 |---|---|
 | `tts_cli.py` | 总入口（系统 python3，stdlib）：`spec` / `gen` / `normalize` / `probe` |
 | `spec.py` | timeline.json voice 轨 `vt_<ID>` 事件链 → spec.json（预算口径见下方 spec.json 格式节） |
-| `indextts_worker.py` | IndexTTS-2.5 重活件——**由配置解释器执行**（conda indextts py3.10 / repo venv py3.11，可 import indextts/torch），模型单次加载多窗串行 |
+| `indextts_worker.py` | 由配置解释器调用的许可拒绝入口；当前不加载模型、不生成音频 |
 | `edge_worker.py` | edge-tts 兜底引擎（晓晓 zh-CN-XiaoxiaoNeural，免 GPU 免模型，subprocess 二进制 + 同 atempo/归一链） |
 | `audio_processing.py` | 单一 final 音频加工模块：时长预算 atempo（raw/budget，域外拆级）+ 峰值归一 -6dBFS（volumedetect + volume，幂等）；`tempo` 子命令只计算滤镜，`normalize` 子命令支持单 WAV/目录与 `--target`，会原位写音频。参数见 `python3 apps/tts/audio_processing.py --help`。 |
 | `init.sh` | 默认本地资产探测；未审查的混合下载明确阻断，许可与恢复边界见 [第三方许可](../../docs/third-party-licenses.md) |
@@ -22,35 +22,41 @@
 ## 依赖
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（atempo 应用器、时长实测、峰值归一、volumedetect）；CLI 面（tts_cli/spec）系统 python3 stdlib 零第三方依赖。
-- **indextts 引擎（conda/venv 级，不进 requires）**：IndexTTS-2.5 repo + 11GB 权重 + conda `indextts` py3.10（或 repo `.venv` py3.11）——`bash apps/tts/init.sh` 仅探测；未知辅助链在下载和 worker 构造前阻断。
+- **indextts 路径**：配置解释器用于启动拒绝入口，不代表推理可用；`init.sh` / `probe` 的资产存在性结果不能解除许可阻断。
 - **edge 兜底引擎**：`edge-tts` 二进制（默认 `~/miniconda3/bin/edge-tts`，`tts.edge_bin` 可改；pip 安装）。
 
 ## 健康检查
 
 `env python3 apps/tts/tts_cli.py --help` 退出码 0（app.json health.command；CLI 面系统 python3 即可跑，不涉模型/解释器）。资产态另探：`tts_cli.py probe` / `bash apps/tts/init.sh`。
 
-## 开启步骤
+## 操作与写入边界
 
-先读 [第三方许可与运行边界](../../docs/third-party-licenses.md)：存在权重不等于已审查权利，IndexTTS 辅助链未解除阻断时 worker 退出非零且不创建产物。下列生成步骤并不是未知权重的许可授权；edge 客户端许可与服务/输出权利也须分开。
+先读[第三方许可与运行边界](../../docs/third-party-licenses.md)。`gen` 缺省取 `spec.engine`，再缺省为当前阻断的 `indextts`；需要独立 edge 路径时显式传 `--engine edge`。edge 客户端许可与在线服务/输出权利须分开审查，不因客户端可安装而获得授权。
+
+只读命令（`gen --dry-run` 只列窗口，不验证引擎可用性）：
 
 ```bash
-bash apps/tts/init.sh                                        # 1) 资产探测（幂等，只打印）
-env python3 apps/tts/tts_cli.py spec -t <项目>/timeline.json -o /tmp/spec.json
-# 2) 人工校对回填 spec.json 各窗 text（timeline voice 轨不含文本）
-env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目>            # indextts（默认）
-env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目> --engine edge   # 免 GPU 兜底
-env python3 apps/tts/tts_cli.py normalize --project <项目>   # final/ 批量峰值归一（幂等，可独立重跑）
-env python3 apps/tts/tts_cli.py probe                       # 快速资产探测
+env python3 apps/tts/tts_cli.py --help
+env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目> --engine edge --dry-run
 ```
 
-config.local.json 的 `tts.enabled` 置 `true`（键缺省时全走默认探测链，旧配置无需重生成）；GPU 排程与 ASR sidecar/NVENC 错峰，OOM 属预期降级路径（退出码 3 + 提示 `--engine edge`）。
+下列命令**会写文件**；edge 生成还会调用在线服务与本地 FFmpeg，运行前确认服务条件、依赖和目标项目：
+
+```bash
+env python3 apps/tts/tts_cli.py spec -t <项目>/timeline.json -o /tmp/spec.json
+# 人工校对回填 spec.json 各窗 text（timeline voice 轨不含文本）
+env python3 apps/tts/tts_cli.py gen /tmp/spec.json --project <项目> --engine edge
+env python3 apps/tts/tts_cli.py normalize --project <项目>   # 原位修改 final/ 音频
+```
+
+`tts_cli.py probe` / `bash apps/tts/init.sh` 只作资产探测，也可能调用本地 `nvidia-smi`；不是推理验收。`tts.enabled` 不是 worker 阻断的解除开关。
 
 ## spec.json 格式（windows[].id 即 `vt_<ID>` 去前缀）
 
 ```json
 {
   "version": 1,
-  "engine": "indextts",
+  "engine": "edge",
   "voice_ref": "~/音乐/5_G_Resemble仅降噪.wav",
   "fps": 30,
   "windows": [
@@ -69,7 +75,7 @@ config.local.json 的 `tts.enabled` 置 `true`（键缺省时全走默认探测�
 | 产物 | 位置 | 格式 |
 |---|---|---|
 | final 成品 | `<项目>/assets/voice_tts/final/<ID>.wav` | 48kHz / mono / pcm_s16le，时长=budget±0.02s |
-| raw 中间物（22.05k / edge 转码） | `<项目>/cache/tmp/<runid>/` | 可再生中间物（hygiene tmp 纪律） |
+| raw 中间物（edge 转码） | `<项目>/cache/tmp/<runid>/` | 可再生中间物（hygiene tmp 纪律） |
 | manifest 记账 | `<项目>/cache/reports/tts_manifest_<runid>.json` | gc 永不触碰 |
 
 manifest 行字段（对齐 voice-ime manifest.json + peak_db）：
@@ -82,33 +88,16 @@ limiter 已并入 vtx audio，无需手动 post_loudness；实录终版用 `apps
 
 ## 引擎与 atempo 契约（方向坑必须钉死）
 
-- **indextts**（默认）：克隆 `tts.voice_ref` 音色（本人真声，预览音色≈终版），需 GPU + repo；
-  逐窗流程 = 自然语速 infer → 偏差>7% 时 `duration_factor=clamp(budget/raw, 0.5, 2.0)`
-  重生成一次 → atempo 精确贴预算 → 峰值归一。4080 RTF≈0.2，27 窗量级 2-4 分钟（voice-ime 实测）。
-  OOM/失败 → 退出码 3 + 中文降级提示 `--engine edge`。
-- **edge**：晓晓 zh-CN-XiaoxiaoNeural，免鉴权免 GPU，审听级占位；默认输出 24kHz mp3 →
-  ffmpeg 重采样 48k mono s16 → 同 atempo/归一链。
-- **atempo 方向**（gen.py 前车之鉴，R8）：`atempo=X` = 播放速度 X 倍 → 输出时长 = 输入/X，
-  贴预算必须 **`atempo = raw / budget`**。voice-ime gen.py 首版写反成 budget/raw，27 窗 final
-  全部反向偏离，2026-08-30 refit_final.py 实测定向修正（:19-24）。本仓以 run_v2.py 修正版为
-  唯一实现，golden 单测钉死：raw=9.14 / budget=7.62 → `atempo=1.199475`。
-  单级域 [0.5, 2.0]，域外双级 `atempo=√r,atempo=√r`（更极端依次再拆）；raw≈budget（|r-1|<1e-9）
-  返回空串不加滤镜。
-- **精确落点**：atempo 滤镜内部按帧重采样，输出有 ~0.3% 样本量化漂移（2026-09-11 集成验收
-  实测 7.5989s vs 7.62 预算，占位态少 1 帧被 vtx validate 拦）——`apply_atempo` 统一以
-  `apad`（无限尾静音）+ `-t budget` 收口：输出样本数恰为 round(budget×48000)，长裁短补。
-  尾部 ≤20ms 静音与「链帧+20ms 句尾保护」同语义；峰值归一按 max 计不受尾静音影响。
-- **duration_factor 方向**（勿与 atempo 混淆，run_v2 修正注记照录）：是 IndexTTS2 的模型参数、
-  语义=时长倍率（A7 实证：自然 5.5s 传 1.21 → 6.8s），过长的句传 budget/实测（<1）说短——
-  方向恰与 atempo 相反。
-- **峰值归一 -6dBFS**（normalize.py 实证）：IndexTTS 克隆低电平参考致 raw 批次 mean -44~-51dB，
-  直接混音会被 bed 淹没且 duck 失效；-6dBFS 明显高于 duck 阈值（-30.4dBFS）且不削波。幂等
-  （已在 -6±0.5dB 内不动）。
+- **indextts**：当前仅拒绝执行，不提供旧推理流程或 OOM 降级承诺。历史模型参数、宿主版本和性能记录见下方历史入口。
+- **edge**：默认晓晓 zh-CN-XiaoxiaoNeural，经在线 edge-tts 生成音频，再由 FFmpeg 转为 48k mono s16，应用同一 atempo/归一链；不使用本地模型或 GPU。
+- **atempo 方向**：`atempo=X` 表示播放速度 X 倍，输出时长为输入/X；贴预算必须 **`atempo = raw / budget`**。当前唯一实现是 `audio_processing.atempo_chain`，golden 单测钉死 raw=9.14 / budget=7.62 → `atempo=1.199475`。
+  单级域 [0.5, 2.0]，域外拆成若干同值级；raw≈budget（|r-1|<1e-9）返回空串，不变速。
+- **落点与格式**：`apply_atempo` 用 `apad` + `-t budget` 长裁短补，并转为 48kHz/mono/pcm_s16le；预算计算中的 20ms 句尾保护不变。
+- **峰值归一**：默认 -6dBFS，峰值与目标相差小于 0.5dB 时不改写；`normalize` 原位替换音频，不是只读分析。
 
 ## 音色参考要求
 
-config `tts.voice_ref`（默认 `~/音乐/5_G_Resemble仅降噪.wav`，9.9s 本人真声）：5-10s 干声、
-单一说话人、电平正常；换人声改此键即可。仅 indextts 引擎需要。
+`tts.voice_ref` 是旧 IndexTTS 路径传入 worker 的参数，当前拒绝入口不读取它；edge 不使用此音色参考。配置此键不意味着已恢复克隆能力。
 
 ## 测试
 
@@ -121,17 +110,9 @@ cd apps/tts && env python3 -m unittest discover -s tests -t . -v   # 零模型�
 两片窗链和、非 vt_ 跳过）、levelnorm（-20dBFS→-6±0.5、幂等）、manifest 字段 + final 格式
 （ffprobe 断言 48000/mono/pcm_s16le，repack 兼容）。
 
-## 已验证版本（本机资产，init.sh 探测即用）
+## 历史依据与当前限制
 
-- 模型：IndexTeam/IndexTTS-2.5 @ `~/AI/IndexTTS/repo/checkpoints`（11 文件五件套齐，
-  许可与固定证据见 ../../docs/third-party-licenses.md）；代码仓 indextts（infer_v2_5.IndexTTS2）。
-- 解释器：conda indextts py3.10.19 / repo `.venv` py3.11.13（官方支持区间 3.10-3.11）。
-- edge-tts @ `~/miniconda3/bin/edge-tts`（py3.13 入口脚本）；音色参考 9.9s 已核实。
+2026-08 的 voice-ime 窗口实测、2026-09-11 的 atempo 落点修正，以及旧模型/解释器/音色参考记录保留在[固定历史全文](https://github.com/CongliangK/framivra/blob/f596efc5e0712d6c47c1e906f31fdd6f6c4e51f4/apps/tts/README.md)；这些记录不证明当前宿主就绪，也不解除当前 worker 阻断。历史 `duration_factor` 是模型时长倍率，与 atempo 方向相反，不是当前 edge 链的参数。
 
-## 风险
-
-- edge-tts 依赖微软非官方公开接口（无 SLA），仅作兜底不作主力。
-- atempo 方向坑复发风险由 golden 单测钉死（R8）；`duration_factor` 与 atempo 方向相反，
-  代码注释已照录 run_v2.py 修正注记。
-- 同卡共驻（IME sidecar / ASR sidecar / NVENC）时 indextts 可能 OOM——属预期降级路径，
-  退出码 3 + 提示 `--engine edge`。
+- edge-tts 依赖在线接口；本仓不保证服务可用性或输出权利。
+- 纯函数、合成 WAV 和 mock 测试不等于实际在线合成、模型推理或 GPU 验收。

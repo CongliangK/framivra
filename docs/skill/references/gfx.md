@@ -110,7 +110,7 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
   x=x+Math.imul(x^x>>>7,61|x)^x;return((x^x>>>14)>>>0)/4294967296}}  // seeded 伪随机
 ```
 
-## 样式模式库（按需取用；起手模板在本 skill assets/，实例页见 tech-talk assets/）
+## 样式模式库（按需取用；实例页见 tech-talk assets/）
 
 实例页在 `templates/tech-talk/assets/gfx-examples/`（源自 poc1/poc2 已验证页面），下表实例位置均相对该目录；它们供取用页内手法，页面组织先按上文「HTML 创作组织」决定：
 
@@ -127,7 +127,7 @@ function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15
 | 半透明卡片 | 透明底色 + 描边/阴影；按项目风格选择色调，tech-talk 使用下方 D22 约定 | gfxA |
 | 漂移渐变背景 | 径向渐变 div 按 `sin/cos(t)` 平移；配色按项目约定，实际渲染需检查边界与性能 | motion / endboard.html |
 
-起手模板（内核通用件）：本 skill `assets/title-card.html`（标题卡）和 `assets/lower-third.html`（下三分之一条），按已确定的页面边界复制或取用其页内组件，再改文案与配色。
+本 skill 的 `assets/title-card.html` 与 `assets/lower-third.html` 是保留原样的历史 24fps 基准输入，不是可直接用于当前 30fps 协议的起手模板。新页可从 [现有 30fps 模板用途索引](../../../templates/tech-talk/assets/gfx-templates/INDEX.md) 按全屏或透明叠层用途选取；仍须核对各页的布局边界与所属工作流约定。
 
 页面写好后如何挂进时间线（timeline 里 kind=gfx 的 clip、帧序列渲染），见 [剪辑配方](edit.md)。
 

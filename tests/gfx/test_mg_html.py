@@ -370,11 +370,11 @@ class ReferenceRuntime(unittest.TestCase):
         script = r'''
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 (async()=>{
-let depth=0,resets=0,capture=false,seen=[];
+let depth=0,resets=0,capture=false,seen=[],callbacks=[],now=0;
 const ctx={save(){depth++},restore(){depth--},fillRect(){},measureText(s){return {width:Array.from(s).length*30}},fillText(){}};
 const elements={};function el(id){return elements[id]??=(id==='stage'?{getContext:()=>ctx,toDataURL:()=>'',set width(v){depth=0;resets++},set height(v){depth=0;resets++}}:{textContent:'',value:0,append(){},appendChild(){},addEventListener(n,fn){this[n]=fn}})};
 const scene={id:'fault-test',title:'Test',examples:[{name:'A',frames:30,data:{}}],recipe:{'分镜':['开始','完成']},validate(){},render(c,d,f){if(f===1)throw Error('intentional');seen.push(f)}};
-const sandbox={window:{MG_REFERENCE:scene},document:{getElementById:el,createElement:()=>el(Math.random()),fonts:{ready:Promise.resolve()},documentElement:{classList:{add(c){capture=c==='capture'}}}},location:{search:'?capture=1'},URLSearchParams,performance:{now:()=>0},requestAnimationFrame(){}};
+const sandbox={window:{MG_REFERENCE:scene},document:{getElementById:el,createElement:()=>el(Math.random()),fonts:{ready:Promise.resolve()},documentElement:{classList:{add(c){capture=c==='capture'}}}},location:{search:'?capture=1'},URLSearchParams,performance:{now:()=>now},requestAnimationFrame(fn){callbacks.push(fn)}};
 vm.createContext(sandbox);vm.runInContext(fs.readFileSync(process.argv[1]+'/html/runtime.js','utf8'),sandbox);
 await sandbox.window.MG_REFERENCE_READY;assert.equal(sandbox.window.__setFrame,undefined);assert(capture);assert.equal(depth,0);
 await assert.rejects(sandbox.window.__vtx_render(1),/intentional/);assert.equal(depth,0);
@@ -383,11 +383,36 @@ assert.throws(()=>sandbox.window.__vtx_render(1.5),/integer/);
 const h=sandbox.window.MGReferenceHelpers;
 assert.throws(()=>h.text(ctx,'长'.repeat(180),20,20,100,40,{minSize:24,maxLines:2,height:100}),/does not fit/);assert.equal(depth,0);
 const fit=h.text(ctx,'四个字',20,20,70,40,{minSize:24,maxLines:2,height:100});assert.equal(fit.lines.length,2);assert(fit.size>=24);assert.equal(depth,0);
+// A paused callback must not become a second loop after a new play intent.
+async function drain(at){now=at;const pending=callbacks.splice(0);await Promise.all(pending.map(fn=>fn(now)));}
+const initialSeen=seen.length;
+el('play').click();el('play').click();el('play').click();
+assert.equal(callbacks.length,2);await drain(100);assert.deepEqual(seen.slice(initialSeen),[5]);assert.equal(callbacks.length,1);
+await drain(200);assert.deepEqual(seen.slice(initialSeen),[5,8]);assert.equal(callbacks.length,1);
+// An old draw completing or failing after restart cannot stop the new owner.
+const originalRender=scene.render;
+for(const rejects of [false,true]){
+ let enter,finish;const entered=new Promise(resolve=>enter=resolve);
+ scene.render=(...args)=>{if(args[2]===29){enter();return new Promise((resolve,reject)=>{finish=()=>rejects?reject(Error('stale draw')):resolve()})}return originalRender(...args)};
+ now+=1000;const old=callbacks.shift()(now);await entered;
+ el('play').click();el('play').click();assert(sandbox.window.__mg_reference_state().playing);assert.equal(callbacks.length,1);
+ finish();await old;assert(sandbox.window.__mg_reference_state().playing);assert.equal(el('error').textContent,'');assert.equal(callbacks.length,1);
+ scene.render=originalRender;await drain(now+100);assert(sandbox.window.__mg_reference_state().playing);assert.equal(callbacks.length,1);
+}
+// Capture/seek pauses and the final-frame stop still retire the current loop.
+await sandbox.window.__vtx_render(10);await drain(now+100);assert.equal(callbacks.length,0);assert.equal(sandbox.window.__mg_reference_state().frame,10);assert(!sandbox.window.__mg_reference_state().playing);
+el('seek').value=12;el('seek').input();await sandbox.window.__vtx_render(12);assert.equal(sandbox.window.__mg_reference_state().frame,12);
+el('play').click();await drain(now+1000);assert.equal(sandbox.window.__mg_reference_state().frame,29);assert(!sandbox.window.__mg_reference_state().playing);assert.equal(callbacks.length,0);
+// A failure belonging to the current playback still surfaces and stops it.
+await sandbox.window.__vtx_render(0);el('play').click();await drain(now+34);assert.match(el('error').textContent,/intentional/);assert(!sandbox.window.__mg_reference_state().playing);assert.equal(callbacks.length,0);
+console.log('runtime-owner-cases-complete');
+
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
         result = subprocess.run(['node', '-e', script, str(STYLES)], text=True,
                                 capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('runtime-owner-cases-complete', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()
