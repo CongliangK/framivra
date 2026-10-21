@@ -412,7 +412,11 @@ class RenderPlan:
             # again can round even a nominally integral offset (e.g. dst=63).
             ticks = 2 * int(eff) - 3 * head
             timing = f"settb=1/{2 * c.fps},setpts=PTS+{ticks}"
-        slave = f"[{idx}:v]{shrink}{pad}{timing}[L{k}T]"
+        # PNG inputs can change between RGB and RGBA. Reinit is disabled at
+        # input, so convert each frame through swscale before tpad/framesync;
+        # doing only format=rgba can be negotiated away for initially-RGBA input.
+        png_rgba = "scale=iw:ih:flags=neighbor+bitexact,format=rgba," if L["gfx"] else ""
+        slave = f"[{idx}:v]{png_rgba}{shrink}{pad}{timing}[L{k}T]"
         ov = (f"[{cur}][L{k}T]overlay={int(L['x'] * f)}:{int(L['y'] * f)}:format=auto:"
               f"enable='between(t,{lo:.6f},{t1:.6f})':eof_action=repeat[L{k}]")
         return slave, ov, f"L{k}"

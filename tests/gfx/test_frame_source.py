@@ -5,9 +5,11 @@ import hashlib
 import json
 import os
 import struct
+import subprocess
 import tempfile
 import unittest
 import zlib
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -37,7 +39,7 @@ class TestPngSequence(unittest.TestCase):
         for start in (0, 2, 1, 3, 0):
             options = ['-t', '0.100']
             self.assertEqual(self.source.input_args(start, start + 1, options=options, ready=False),
-                             ['-framerate', '30', '-start_number', str(start), *options,
+                             ['-reinit_filter', '0', '-framerate', '30', '-start_number', str(start), *options,
                               '-i', str(self.path / 'f%04d.png')])
         for a, b in ((-1, 1), (0, 5), (4, 4), (2, 1)):
             with self.assertRaises(ValueError):
@@ -80,6 +82,20 @@ class TestPngSequence(unittest.TestCase):
         layer = {'gfx': True, 'cl': {'dst_in': 0}, 'source': self.source}
         with self.assertRaisesRegex(ValueError, 'not ready'):
             plan._layer_input_args(layer, 0)
+
+    def test_png_converter_is_before_padding_and_video_path_is_unchanged(self):
+        c = SimpleNamespace(fps=30, spf=1 / 30)
+        plan = composite.RenderPlan(c=c, draft=False, f=1, W=16, H=16)
+        gfx = {'gfx': True, 'cl': {'dst_in': 0, 'dur': 4}, 'source': self.source,
+               'x': 0, 'y': 0, 'w2': None, 'h2': None}
+        slave, _, _ = plan._layer_chain(gfx, 0, 'cv', 0, 4, 1)
+        self.assertIn('[1:v]scale=iw:ih:flags=neighbor+bitexact,format=rgba,tpad=', slave)
+        self.assertLess(slave.index('format=rgba'), slave.index('tpad='))
+        video = dict(gfx, gfx=False, seg=self.path / 'ordinary.mkv')
+        self.assertEqual(plan._layer_input_args(video, 0), ['-i', str(video['seg'])])
+        video_slave, _, _ = plan._layer_chain(video, 0, 'cv', 0, 4, 1)
+        self.assertNotIn('format=rgba', video_slave)
+        self.assertNotIn('scale=iw:ih:flags=neighbor+bitexact', video_slave)
 
 
 class TestMigrationIdentity(unittest.TestCase):
@@ -140,6 +156,109 @@ class TestMigrationIdentity(unittest.TestCase):
         self.assertEqual(a, plan._seg_content_key(0, 4, [layer], False, None))
         layer['source'] = dataclasses.replace(layer['source'], identity='newkey')
         self.assertNotEqual(a, plan._seg_content_key(0, 4, [layer], False, None))
+
+
+class TestPngDynamicFormatIntegration(unittest.TestCase):
+    """Optional exact filterchain test; skipped unless the pinned ffmpeg is supplied."""
+    @staticmethod
+    def _write_typed_png(path, width, height, pixel):
+        from tests.gfx._png import chunk
+        channels = len(pixel)
+        rows = b''.join(b'\0' + bytes(pixel) * width for _ in range(height))
+        path.write_bytes(b'\x89PNG\r\n\x1a\n'
+                         + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8,
+                                                       6 if channels == 4 else 2, 0, 0, 0))
+                         + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+
+    @staticmethod
+    def _framehash(ffmpeg, plan, source, count):
+        layer = {'gfx': True, 'cl': {'dst_in': 0, 'dur': count}, 'source': source,
+                 'x': 0, 'y': 0, 'w2': None, 'h2': None}
+        args = plan._layer_input_args(layer, 0)
+        slave, _, _ = plan._layer_chain(layer, 0, 'unused', 0, count, 0)
+        graph = slave.replace('[L0T]', '[out]')
+        cmd = [ffmpeg, '-v', 'error', '-filter_complex_threads', '1', *args,
+               '-filter_complex', graph, '-map', '[out]', '-frames:v', str(count),
+               '-fps_mode', 'passthrough', '-pix_fmt', 'rgba', '-f', 'framehash',
+               '-hash', 'sha256', '-']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode:
+            raise AssertionError(f'ffmpeg exited {result.returncode}: {result.stderr}')
+        tb = None
+        frames = []
+        for line in result.stdout.splitlines():
+            if line.startswith('#tb '):
+                tb = Fraction(line.rsplit(':', 1)[1].strip())
+            elif line and not line.startswith('#'):
+                fields = [field.strip() for field in line.split(',')]
+                frames.append((int(fields[2]), fields[-1]))
+        if tb is None:
+            raise AssertionError(f'framehash omitted time base: {result.stdout}')
+        return tb, frames
+
+    def test_framehash_binds_png_input_and_production_filterchain(self):
+        with tempfile.TemporaryDirectory(prefix='png_framehash_contract_') as td:
+            directory = Path(td)
+            for i in range(2):
+                self._write_typed_png(directory / f'f{i:04d}.png', 8, 8,
+                                      (10 + i, 20, 30, 0 if i == 0 else 1))
+            source = PngSequence(directory, 'fixture', 2, 30, 8, 8)
+            plan = composite.RenderPlan(c=SimpleNamespace(fps=30, spf=1 / 30, dry=False),
+                                        draft=False, f=1, W=8, H=8)
+            fake = SimpleNamespace(returncode=0, stderr='', stdout=(
+                '#tb 0: 1/60\n'
+                '0, 0, 0, 2, 2048, ' + 'a' * 64 + '\n'
+                '0, 2, 2, 2, 2048, ' + 'b' * 64 + '\n'))
+            with mock.patch.object(subprocess, 'run', return_value=fake) as run:
+                tb, frames = self._framehash('/pinned/ffmpeg', plan, source, 2)
+            self.assertEqual(tb, Fraction(1, 60))
+            self.assertEqual(frames, [(0, 'a' * 64), (2, 'b' * 64)])
+            argv = run.call_args.args[0]
+            self.assertEqual(argv[argv.index('-reinit_filter') + 1], '0')
+            self.assertIn('-fps_mode', argv)
+            self.assertIn('passthrough', argv)
+            graph = argv[argv.index('-filter_complex') + 1]
+            self.assertIn('[0:v]scale=iw:ih:flags=neighbor+bitexact,format=rgba,tpad=', graph)
+
+    @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'),
+                         'set VTX_TEST_FFMPEG to pinned ffmpeg executable')
+    def test_mixed_rgb_rgba_chain_matches_normalized_rgba_oracle(self):
+        count, width, height = 10, 8, 8
+        with tempfile.TemporaryDirectory(prefix='png_dynamic_format_') as td:
+            root = Path(td)
+            mixed, oracle = root / 'mixed', root / 'oracle'
+            mixed.mkdir()
+            oracle.mkdir()
+            for i in range(count):
+                rgb = (19 + i * 7, 73 + i * 3, 141 + i * 5)
+                rgba = (*rgb, 0 if i == 1 else 1 if i == 5 else 96 + i)
+                pixel = rgb if i % 2 == 0 else rgba
+                self._write_typed_png(mixed / f'f{i:04d}.png', width, height, pixel)
+                full_rgba = (*pixel, 255) if len(pixel) == 3 else pixel
+                self._write_typed_png(oracle / f'f{i:04d}.png', width, height, full_rgba)
+            mixed_source = PngSequence(mixed, 'mixed', count, 30, width, height)
+            oracle_source = PngSequence(oracle, 'oracle', count, 30, width, height)
+            plan = composite.RenderPlan(c=SimpleNamespace(fps=30, spf=1 / 30, dry=False),
+                                        draft=False, f=1, W=width, H=height)
+            mixed_tb, mixed_frames = self._framehash(os.environ['VTX_TEST_FFMPEG'],
+                                                      plan, mixed_source, count)
+            oracle_tb, oracle_frames = self._framehash(os.environ['VTX_TEST_FFMPEG'],
+                                                        plan, oracle_source, count)
+            self.assertEqual(len(mixed_frames), count)
+            self.assertEqual(len(oracle_frames), count)
+            self.assertEqual([Fraction(pts) * mixed_tb for pts, _ in mixed_frames],
+                             [Fraction(i, 30) for i in range(count)])
+            self.assertEqual([Fraction(pts) * oracle_tb for pts, _ in oracle_frames],
+                             [Fraction(i, 30) for i in range(count)])
+            expected_hashes = []
+            for i in range(count):
+                rgb = (19 + i * 7, 73 + i * 3, 141 + i * 5)
+                pixel = rgb if i % 2 == 0 else (*rgb, 0 if i == 1 else 1 if i == 5 else 96 + i)
+                full_rgba = (*pixel, 255) if len(pixel) == 3 else pixel
+                expected_hashes.append(hashlib.sha256(bytes(full_rgba) * (width * height)).hexdigest())
+            self.assertEqual([digest for _, digest in mixed_frames], expected_hashes)
+            self.assertEqual([digest for _, digest in oracle_frames], expected_hashes)
+            self.assertEqual(mixed_frames, oracle_frames)
 
 
 class TestGeneratedPngConsumerIntegration(unittest.TestCase):
