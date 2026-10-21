@@ -218,7 +218,7 @@ def _conda_env_py(env, hook):
 # 语义单一 home=apps/asr/independence.py；此处必须逐条对齐，尤其 validate_base_url
 # 用 urlparse 端口判断（scheme/host/port）而非字符串包含——trailing slash、带路径、
 # 裸 host:port、大小写 scheme 一律不得漏拒；校验失败即 raise，调用方在发
-# GET /health 之前 fail-closed。tests/test_vt_asr_shim.py 守护漂移。
+# GET /health 之前 fail-closed。tests/plugins/test_vt_asr_shim.py 守护漂移。
 _ASR_IME_PORT = 18081   # 与 independence.IME_PORT 同值（事实 home 在彼处）
 
 

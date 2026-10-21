@@ -6,11 +6,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/impact-html-acceptance.yml'
-      - 'tests/run_impact_html_reconciliation.py'
-      - 'tests/test_impact_html_harness.py'
-      - 'tests/impact_inventory.py'
-      - 'tests/test_impact_inventory.py'
-      - 'tests/run_impact_reconciliation.py'
+      - 'tests/runners/run_impact_html_reconciliation.py'
+      - 'tests/acceptance/test_impact_html_harness.py'
+      - 'tests/runners/impact_inventory.py'
+      - 'tests/acceptance/test_impact_inventory.py'
+      - 'tests/runners/run_impact_reconciliation.py'
   workflow_dispatch:
 
 permissions:
@@ -53,10 +53,10 @@ jobs:
           export VTX_CONFIG="$HOME/config.json"
           mkdir -p "$XDG_CONFIG_HOME"
           printf '{}\n' > "$VTX_CONFIG"
-          python tests/run_impact_html_reconciliation.py --frames-per-page 48 --output "$RUNNER_TEMP/impact-html"
+          python tests/runners/run_impact_html_reconciliation.py --frames-per-page 48 --output "$RUNNER_TEMP/impact-html"
       - name: Preserve media trim subtitle duration and audio reconciliation
         timeout-minutes: 8
-        run: python tests/run_impact_reconciliation.py --output "$RUNNER_TEMP/impact-media"
+        run: python tests/runners/run_impact_reconciliation.py --output "$RUNNER_TEMP/impact-media"
       - name: Upload bounded acceptance evidence even on failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

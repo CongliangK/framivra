@@ -145,9 +145,9 @@ cd apps/imgen && env python3 -m unittest discover -s tests -t . -v   # 71 用例
 
 `env python3 apps/imgen/imgen_cli.py --help` 退出码 0（app.json health.command；不触网不扣费）。key 链配置态另探：`imgen_cli.py key status`（只读本地）。
 
-## 待集成事项
+## 集成入口
 
-集成事项已于 2026-09-11 全部落地（根 README/init.py/config.example.json/edit.md 均已更新）。
+仓级初始化使用 `vt.py init`，操作见 [快速开始](../../README.md#快速开始clone-即用零安装步骤)；[配置模板](../../config.example.json)与[编排接口](../../docs/skill/references/edit.md)分别维护配置和项目文件契约。
 
 ## 已验证版本
 

@@ -13,7 +13,7 @@ vtx CLI：        ~/.agents/skills/video/vtx/vtx.py            （符号链接�
 ```
 程序本体在 video_tools 仓：`vtx/`、`apps/`、`plugins/` 的权威位置（命令归属见 `<video_tools>/docs/ARCHITECTURE.md` §6.1）以 `<video_tools>` 为准；live skill 通过六件链接引用本仓（见 `<video_tools>/docs/DOC-CHARTER.md` §7）；**修改程序一律改 video_tools 仓**。入口三通并存（分发见 `<video_tools>/docs/ARCHITECTURE.md` §5.2）：仓根 `vtx/vtx.py` 薄启动器、`python3 -m vtx`、pip console `vtx`/`vt`；实现分为 `infra`（Ctx/执行/并行）、`encoders`（NVENC/x264/libfdk 探测与封装）、`composite`（滤镜图构建）、`qc`、`stages`（各阶段编排）、`gfx_render`（CDP 引擎）、`hygiene`（缓存键/gc/df/snapshot/VERSIONS）、`cache_state`（回执身份/依赖门）八个模块；历史版本回滚锚点在 git 历史。入口自定位、无硬编码主目录路径；迁移=整个 video_tools 仓拷走 + 更新符号链接（前提：目标机器有 ffmpeg + 浏览器）。
 ## 时间线预览（人审用）
-`preview.html` 是单文件网页（无外部依赖），把 timeline.json 渲染成可视化时间线供**人类**审阅编排：视频轨/动效层/字幕/音轨分行显示，事件块带源名、时长、vol/pan/loop 标注与淡入淡出条；支持缩放、适应宽度、悬停播放头、点击事件块看全字段详情，并有**预览级校验**（整数帧、EDL 不变量、base 轨连续性、越界、同轨音频重叠等）——发现问题标红，但最终以 `vtx validate` 为准。
+`preview.html` 是单文件网页（无外部依赖），把 timeline.json 渲染成可视化时间线供**人类**审阅编排：视频轨/动效层/字幕/音轨分行显示，事件块带源名、时长、vol/pan/loop 与淡入淡出帧数标注；支持缩放、适应宽度、悬停播放头、点击事件块看全字段详情，并有**预览级校验**（整数帧、EDL 不变量、同轨视频片段重叠、越界、同轨音频重叠等）——发现问题标红，但最终以 `vtx validate` 为准。
 ```bash
 xdg-open ~/.agents/skills/video/vtx/preview.html
 # 打开后：内置 poc2 示例自动载入；「打开 timeline.json」选文件、拖拽文件到页面、或「粘贴 JSON」均可替换
@@ -123,7 +123,7 @@ python3 ~/.agents/skills/video/vtx/vtx.py -t myvideo/timeline.json video --gpu
   ]
 }
 ```
-**v2 核心语义**：所有视频轨道等价，无 base 特权、无全覆盖要求（空洞帧＝黑场，是规划问题不是校验错误）；`kind`（aroll/broll/screen/pip/gfx）纯语义标注，渲染机制完全不区分，只服务于编排规范、预览着色与画面构成统计；clip 的 `scale/x/y/opacity` 全部可选（缺省＝全屏不透明，全屏走 transform 归一）；fade 统一为 **alpha 淡入淡出**（无下层时自然露出黑场＝视觉淡黑）。旧 v1（role+overlays）不被 vtx 接受，预览器可只读兼容显示。
+**v2 核心语义**：所有视频轨道等价，无 base 特权、无全覆盖要求（空洞帧＝黑场，是规划问题不是校验错误）；`kind`（aroll/broll/screen/pip/gfx）纯语义标注，渲染机制完全不区分，只服务于编排规范、预览着色与画面构成统计；clip 的 `scale/x/y/opacity` 全部可选（缺省＝全屏不透明，全屏走 transform 归一）；fade 统一为 **alpha 淡入淡出**（无下层时自然露出黑场＝视觉淡黑）。内核与预览器均只接受 `version: 2`，不接受或自动转换旧 v1（role+overlays）及缺失版本的时间线。
 **"这个素材放哪条轨"速查**：
 | 素材 | 轨道 | 说明 |
 |---|---|---|

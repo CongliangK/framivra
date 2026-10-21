@@ -193,9 +193,9 @@ GPU 竞争由 #142 通用资源准入处理，绝不停/降输入法。
 | 18081 | 语音输入法 sidecar 专用端口——本仓**绝不绑定/探测/复用**（绑定即 fail-closed 报错；issue #141） |
 | 18085 | 本模块 sidecar 默认端口（`--port` / config `asr.base_url` 可改；指向 18081 即拒绝） |
 
-## 待集成事项
+## 集成入口
 
-集成事项已于 2026-09-11 全部落地（根 README/init.py/config.example.json/edit.md 均已更新）。
+仓级初始化使用 `vt.py init`，操作见 [快速开始](../../README.md#快速开始clone-即用零安装步骤)；[配置模板](../../config.example.json)与[编排接口](../../docs/skill/references/edit.md)分别维护配置和项目文件契约。
 
 ## 测试
 

@@ -1,0 +1,1 @@
+"""Contracts regression tests."""

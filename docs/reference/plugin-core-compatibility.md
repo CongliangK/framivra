@@ -37,7 +37,7 @@ Core API 发行版本取自 `vtx.__version__`（源码版本声明见 [VERSION](
 临时插件 fixture 覆盖允许/拒绝矩阵、协议/核心错误优先级、坏类型、遗留字段、内置清单、registry 漂移、所有执行入口、external 真实发现及导入、缓存模块改 manifest 后重新拒绝。拒绝时检查导入路径不变、零导入/零钩子副作用。CPU 回归命令：
 
 ```bash
-env python3 -m unittest tests.test_plugin_protocol_matrix tests.test_plugin_compatibility tests.test_pluginlib tests.test_plugin_code_digest tests.test_protocol_v12
+env python3 -m unittest tests.plugins.test_plugin_protocol_matrix tests.plugins.test_plugin_compatibility tests.plugins.test_pluginlib tests.plugins.test_plugin_code_digest tests.plugins.test_protocol_v12
 ```
 
 这些检查保协议门和加载时序，不证明第三方实现语义正确、第三方代码可信或外部服务可用。

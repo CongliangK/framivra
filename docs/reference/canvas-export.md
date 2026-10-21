@@ -114,11 +114,11 @@ before acceptance. Existing CDP socket ResourceWarnings are outside this patch's
 
 ## Full pipeline regression
 
-`tests/run_e2e.py --repo <checkout> --output <new-directory> --ffmpeg <executable> --chrome <executable>`
+`tests/runners/run_e2e.py --repo <checkout> --output <new-directory> --ffmpeg <executable> --chrome <executable>`
 generates synthetic 12-second media and independently runs all stages with one
 and two video segments, then strict QC, full decode, black-frame/true-peak checks
 and a 360-frame downscaled comparison. The output directory must not exist.
-`tests/verify_e2e.py <output-directory> --ffmpeg <executable>` compares decoded audio
+`tests/runners/verify_e2e.py <output-directory> --ffmpeg <executable>` compares decoded audio
 sample-for-sample and checks 19 full-resolution frames, including the segment seam,
 subtitle boundaries and graphics boundaries. Both scripts require NumPy.
 

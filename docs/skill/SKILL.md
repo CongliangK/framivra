@@ -26,27 +26,19 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 阶段选项写在子命令后。`--report/--report-only` 仅 audio 可用、相互互斥且不接受 dry-run；`--gpu` 仅 video 可用。具体命令、写入位置与失败处理只在 runbook 维护；耗时记录见 [DEV](../DEV.md)。
 
 ## 领域路由表
-| 领域 | 文档 | 管什么 |
+| 用户任务 / 关键词 | 先读 | 职责与边界 |
 |---|---|---|
-| 剪辑 edit | `references/edit.md` | timeline.json 契约 + vtx CLI 全阶段（validate/audit/prepare/gfx/video/audio/mux/qc/gc）+ 音频工程 + 渲染坑表 + 缓存治理 + 三大生成模块接口 |
-| 动效 gfx | `references/gfx.md` | HTML 创作组织、帧驱动/依赖协议、CDP/Canvas/静态跨度、通用技术检查与按需样式；D22 仅限 tech-talk 工作流 |
-| 修改配方/棒次 | `references/runbook.md` | 标准修改配方 R1-R4、R2s 与子智能体棒次协议（R5/R6/R7 产线配方 → `templates/tech-talk/references/runbook-r5r6r7.md`） |
-| 抠像/背景合成 matting | `apps/matting/matting.md`（app 专属文档） | 真人实拍抠像（达芬奇 Magic Mask 主力 + 自研链备用）→ 带 alpha ProRes4444 → 背景合成全流程；内核路由即本行 |
-| 调研 research / 封面 cover / 拍摄规范 / voice-ime 范式 | `templates/tech-talk/references/`（research.md / cover.md / shooting.md / voice-ime-paradigm.md） | 产线知识：R0-R6 多智能体调研、B 站封面产线、实拍规范、动效编排范式 |
-| 科技口播全流程 SOP / 六阶段 | `templates/tech-talk/SKILL.md` | 工作流范本（制作总览→六阶段→音频支线→SOP 闭环→uses 声明表） |
-
-| 用户任务 / 关键词 | 先读 |
-|---|---|
-| 剪辑、切素材、多轨合成、画中画、烧字幕、混音、渲染、QC、缓存治理；提到 timeline.json / vtx | `references/edit.md` |
-| 纯 MG、多角色/场景、透明叠加、动效页/图表/片头片尾/overlay 卡、写 gfx/*.html | [gfx 创作组织与协议](references/gfx.md#html-创作组织)，按需选 [MG 风格工程](../../templates/mg-styles/README.md) |
-| 显式 SVG 序列、Inkscape 渲染 | [SVG 序列入口与限制](references/gfx.md#显式-svg-序列) |
-| 实拍素材处理、音视频同步、降噪、响度、验证门 | `references/edit.md` + `references/runbook.md` + 各脚本 `--help` |
-| 标准修改任务（改音量/改编排/改字幕/改 gfx 页/全冷重渲） | `references/runbook.md`（R1-R4 配方） |
-| 抠像、换背景、绿幕、背景替换、Magic Mask、matte、带 alpha 前景合成 | `apps/matting/matting.md` |
-| 新选题、调研可行性、对标分析、生成 01-brief | `templates/tech-talk/`（先读其 SKILL.md，再 `references/research.md`） |
-| 制作/修改 B 站投稿封面、封面文案、封面裁切预览 | `templates/tech-talk/references/cover.md` |
-| 实拍怎么拍（机位/打光/录音/双系统） | `templates/tech-talk/references/shooting.md` |
-| BGM/配乐生成、音色、乐谱 | **路由到 `music` skill**；挂载后分轨审计包配方见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
+| 剪辑 edit、切素材、多轨合成、画中画、烧字幕、混音、渲染、QC、缓存治理；timeline.json / vtx | `references/edit.md` | timeline 契约、CLI 全阶段（validate/audit/prepare/gfx/video/audio/mux/qc/gc）、音频工程、渲染坑表、三大生成模块接口 |
+| 动效 gfx、纯 MG、多角色/场景、透明叠加、动效页/图表/片头片尾/overlay 卡、写 gfx/*.html | [gfx 创作组织与协议](references/gfx.md#html-创作组织)，按需选 [MG 风格工程](../../templates/mg-styles/README.md) | HTML 创作组织、帧驱动/依赖协议、CDP/Canvas/静态跨度、通用技术检查与按需样式；D22 仅限 tech-talk 工作流 |
+| 显式 SVG 序列、Inkscape 渲染 | [SVG 序列入口与限制](references/gfx.md#显式-svg-序列) | 独立于浏览器同页 SVG 的路线 |
+| 实拍素材处理、音视频同步、降噪、响度、验证门 | `references/edit.md` + `references/runbook.md` + 各脚本 `--help` | 管线前置素材与音频处理 |
+| 标准修改任务（改音量/改编排/改字幕/改 gfx 页/全冷重渲）、棒次 | `references/runbook.md` | R1-R4、R2s 与子智能体棒次协议；R5/R6/R7 产线配方见 `templates/tech-talk/references/runbook-r5r6r7.md` |
+| 抠像/背景合成 matting、换背景、绿幕、背景替换、Magic Mask、matte、带 alpha 前景合成 | `apps/matting/matting.md`（app 专属） | 真人实拍抠像（达芬奇主力、自研链备用）→ alpha ProRes4444 → 背景合成全流程 |
+| 科技口播全流程 SOP / 六阶段、voice-ime 范式 | `templates/tech-talk/SKILL.md` | 制作总览→六阶段→音频支线→SOP 闭环→uses 声明表；动效编排范式见 `templates/tech-talk/references/voice-ime-paradigm.md` |
+| 新选题、调研 research 可行性、对标分析、生成 01-brief | 先读 `templates/tech-talk/SKILL.md`，再 `templates/tech-talk/references/research.md` | R0-R6 多智能体调研 |
+| 制作/修改 B 站投稿封面 cover、封面文案、封面裁切预览 | `templates/tech-talk/references/cover.md` | B 站封面产线 |
+| 实拍怎么拍、拍摄规范（机位/打光/录音/双系统） | `templates/tech-talk/references/shooting.md` | 实拍规范 |
+| BGM/配乐生成、音色、乐谱 | **`music` skill** | 挂载后分轨审计包配方见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
 
 ## 推荐方式与全局铁律
 1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆分；按任务需要保留结论与证据，交接要求见 [runbook](references/runbook.md#主控-子智能体棒次协议)；长命令按执行环境支持的后台会话与轮询机制运行。

@@ -247,7 +247,7 @@ class IntegrationGates(unittest.TestCase):
 
     def test_electron_events_use_actual_backend_and_reader_accepts_it(self):
         from vtx import events
-        from tests.test_execution_events import Buffer
+        from tests.execution.test_execution_events import Buffer
         stream = Buffer()
         self.c.execution = events.ExecutionContext(stream)
         self.run_gfx()

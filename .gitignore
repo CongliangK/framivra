@@ -50,6 +50,8 @@ apps/imgen/.venv/
 
 # 内容寻址缓存（vtx 产物缓存，可再生，不入库）
 cache/
+# Cache-domain source tests are not generated runtime caches.
+!tests/cache/
 
 # matting 平级克隆（init.sh --download 重建，不入库；P2a 迁移 apps/ 改锚）
 apps/matting/MatAnyone2/

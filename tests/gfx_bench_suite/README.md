@@ -5,6 +5,8 @@
 > 场景定义不再变更；消费方以 commit sha 锁定。本 README 只是操作入口，
 > 规格冲突时以 manifest 为准。
 
+冻结 manifest 的说明文字保留历史工具名 `scripts/gfx_golden.py`，以维持已锁定的完整文件哈希；当前工具入口为 `scripts/gfx/gfx_golden.py`。该说明仅映射历史引用，不提供旧命令入口，也不改变冻结场景或测量身份。
+
 ## 消费方（谁在用这套件）
 
 | issue | 用途 | 关键场景 |

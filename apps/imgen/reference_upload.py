@@ -55,10 +55,6 @@ class ReferenceUploadError(RuntimeError):
     """本地参考图外链失败。"""
 
 
-def is_data_url(value: str) -> bool:
-    return value.strip().lower().startswith("data:image/")
-
-
 def looks_like_url(value: str) -> bool:
     parsed = urlparse(value.strip())
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)

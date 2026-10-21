@@ -620,16 +620,6 @@ def gc_plan(c, keep_days: int = 0):
     return CleanupPlan(c, plan)
 
 
-def _out_deliverable(name: str) -> bool:
-    """out/ 交付件白名单模式（2026-09-14 补，红队 gc --dry 实证遗漏）：
-    final_4k*.mp4 = apps/publish/export_4k.py 发布件（runbook R5 4K 链产物，
-    final_4k_x264_ref.mp4 质量对照件同前缀）；FREEZE*.json = runbook 步骤 6
-    冻结记录（md5 清单证据）。两者此前落「out 一次性中间物」分类被 gc 列为
-    可回收——发布件/冻结证据不可再生，属白名单遗漏交付件。
-    A02 起并入 out_protected() 保护清单（模式部分仍由本函数承载）。"""
-    return any(fnmatch.fnmatch(name, p) for p in OUT_PROTECTED_PATTERNS)
-
-
 def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     """gc 主入口。do=False 只列清单（--dry）；do=True 执行；deep 等价原 clean 但
     保留 reports/VERSIONS/history/snapshots 等（A02：out 侧保护经 out_protected()
@@ -744,7 +734,7 @@ def snapshot(c, keep: int = None):
         if tr.get('kind') == 'gfx':
             texts.update(cl['src'] for cl in tr.get('clips', []))
     # v2 subtitles_src（§1.1 条目 6）：引用的字幕文件同为文本资产——快照含它
-    # 才有完整回滚锚点。空串 = 未声明（tests/test_subtitles_src.py 契约），
+    # 才有完整回滚锚点。空串 = 未声明（tests/media/test_subtitles_src.py 契约），
     # 不得当作非法引用拒绝。
     sub_src = c.tl.get('subtitles_src')
     if isinstance(sub_src, str) and sub_src:

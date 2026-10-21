@@ -1,7 +1,7 @@
 """vtx 内核包（v2 插件化架构，永不可关——ARCHITECTURE §0.1/§1）。
 
 - 稳定公共面见 vtx.api（apps/plugins/skills 复用）；本 __init__ 只再导出
-  CLI 主入口 main 与 _stage_receipt_name（tests/test_pipeline.py 等既有依赖）。
+  CLI 主入口 main 与 _stage_receipt_name（tests/execution/test_pipeline.py 等既有依赖）。
 - 模块内一律相对导入（§1.4）；外部一律 `from vtx import ...` / `import vtx.xxx`。
   禁止 sys.path 注入 repo/vtx——平铺/包双实例会让 infra 的 receipt 锁 /
   hygiene 的 manifest 锁 / loudness_cache 的 flock 落在两个模块对象上，
@@ -62,7 +62,7 @@ def _read_version(here=None) -> str:
     package-data 预留通道）→ pyproject.toml version 行（源树缺 VERSION 时与
     三源纪律一致）→ importlib.metadata（wheel 安装布局权威源）→ 内置字面量
     （与三源同步）。版本串供标识及显式 requires.core 兼容门使用。
-    here=包目录，默认本包；测试注入模拟布局（tests/test_version_sources.py）。"""
+    here=包目录，默认本包；测试注入模拟布局（tests/distribution/test_version_sources.py）。"""
     here = Path(here) if here is not None else Path(__file__).resolve().parent
     for candidate in (here.parent / "VERSION", here / "VERSION"):
         try:

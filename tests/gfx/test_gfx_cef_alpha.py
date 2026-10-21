@@ -3,7 +3,7 @@
 VTX_TEST_CEF_WORKER enables real CEF (no Chrome/IME service involved).
 VTX_CEF_EVIDENCE_DIR optionally retains the complete fixture and native logs.
 """
-from tests.test_execution_events import Buffer
+from tests.execution.test_execution_events import Buffer
 from tests.gfx._environment import bind_environment
 from vtx import events, gfx_cli, gfx_render
 

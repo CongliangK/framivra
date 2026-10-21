@@ -41,7 +41,7 @@ killpg(0, SIGKILL)（线程在 read 上阻塞、EOF 后第一件事就是 killpg
 Python 忙活）；并建议对自派生的子进程同样挂 PDEATHSIG。
 
 红线：进程状态绝不写 manifest.json（会破坏 hygiene._load_manifest 与
-tests/test_hygiene_ledger_txn.py）——账本是 tmp_run 目录内的独立文件，
+tests/cache/test_hygiene_ledger_txn.py）——账本是 tmp_run 目录内的独立文件，
 随目录生命周期消亡。
 
 运行目录纪律：工作目录与浏览器 --user-data-dir / root_cache_path 统一分配在
@@ -53,7 +53,7 @@ Darwin 无 PDEATHSIG，父存活管道守卫须完成就绪握手后 start() 才
 其他平台拒绝编造监管账本；CEF 接入点在监管不可用时明确失败。
 
 纯标准库（ctypes 用于 prctl 与 Darwin libproc）。独立测试：python3 -m unittest
-tests.test_proc_supervisor -v（真实进程树演练，只杀本测试自起子进程）。
+tests.execution.test_proc_supervisor -v（真实进程树演练，只杀本测试自起子进程）。
 """
 import ctypes
 import json

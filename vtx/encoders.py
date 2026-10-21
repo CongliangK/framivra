@@ -239,7 +239,7 @@ def reset_nvenc_ok_memo():
 # 0.5→1.0s 退避窗 ≪ 分钟级编码任务，快速失败终局不被显著推迟）。判别（修 11）：
 # 重试成功=瞬时型／重试耗尽=环境型，随失败清单行+护栏计数留档。
 # 占槽纪律（冻结）：重试循环位于占槽域之外——每次尝试独立占槽，退避等待期不持槽
-# （微测断言退避期峰值并发 ≤ 有效预算：tests/test_nvenc_oom_guard.py TestBackoffNoSlot）。
+# （微测断言退避期峰值并发 ≤ 有效预算：tests/media/test_nvenc_oom_guard.py TestBackoffNoSlot）。
 # 重试=原 argv 原样重发：cmd 列表对象原样重用、逐元素全等（编码命令一字不动红线）。
 NVENC_RETRY_N = 2                 # 重试次数上限（总尝试=1+N=3）
 NVENC_RETRY_ATTEMPTS = NVENC_RETRY_N + 1

@@ -69,7 +69,7 @@ if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
     echo "✓ ffmpeg：$(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f1-3)"
     echo "✓ ffprobe：$(command -v ffprobe)"
 else
-    echo "✗ ffmpeg/ffprobe 缺失（postprocess cover-crop 必需）；请先跑根 init.sh 或系统包管理器安装"
+    echo "✗ ffmpeg/ffprobe 缺失（postprocess cover-crop 必需）；请在仓库根运行 python3 vt.py init --fix 或用系统包管理器安装"
 fi
 
 echo "== imgen init 完成（探测仅本地，未发生任何 API 提交/扣费）=="
