@@ -8,7 +8,9 @@ HTML 已有两种题材：**穿越夜色**（180 帧）；**向海边出发**（
 
 ## 动画与媒体制作
 
-合成波的 `waypoints` 给出路标到达帧、标签与左右位置，approach/cross/arrive 三段驱动前进到停车；`tracking` 只在显式窗口局部错位和 RGB 分离，落定阅读期不允许 tracking。透视网格、连续世界坐标山层、光晕与金属色场文字构成旅程；这些是二维投影与程序媒介效果，不是物理镜头、真实镀铬材质或完整模拟磁带链。各路径实际成片、字体与边界问题以[验证记录](../../../../docs/reports/mg-styles/validation.md)为准。
+能力边界：图像镀铬、VHS事件近似，非物理材质/完整磁带信号链。
+
+合成波的 `waypoints` 给出路标到达帧、标签与左右位置，approach/cross/arrive 三段驱动前进到停车；`tracking` 只在显式窗口局部错位和 RGB 分离，落定阅读期不允许 tracking。透视网格、连续世界坐标山层、光晕与金属色场文字构成旅程；这些是二维投影与程序媒介效果，不是物理镜头、真实镀铬材质或完整模拟磁带链。各路径实际成片、字体与边界问题以[验收边界](../../README.md#验收边界)为准。
 
 媒体语义输入（下方预演命令给出起手例子）：
 
@@ -29,4 +31,4 @@ python3 templates/mg-styles/build_media.py --style synthwave --content templates
 
 程序图形参考；浏览器字体与成片质量仍需独立视觉验收。无内置声音。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

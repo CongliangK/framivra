@@ -8,6 +8,8 @@ HTML 已有两种题材：**手机：单位与证据**（360 帧）；**节水�
 
 ## 动画与媒体制作
 
+能力边界：程序贴纸，外部来源由输入声明、不自动核实；总览不是细字阅读位置。
+
 贴纸的 `question/parts/evidence/conclusion` 分别组织问题、分解、数据证据与结论，`relations` 定义连接，四段 `beats` 用句子引导大画布镜头，末段拉远。证据包含值、单位、来源和 bar/ring 类型；正负柱使用零基线，环图仅用于百分比。示例均明确为教学示意数据。图形为程序白边贴纸，不能称照片抠图；换入真实证据时须连同来源和口径一起编辑。
 
 媒体语义输入（优先 `readable` 版）：
@@ -31,4 +33,4 @@ python3 templates/mg-styles/build_media.py --style sticker --content templates/m
 
 原创程序图标/白边贴纸参考，不含照片抠图。来源字段是编辑声明，渲染器不会核实。总览用于看关系，细证据需在近景阅读；HTML尚无本环境浏览器像素验收。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

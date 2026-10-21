@@ -8,6 +8,8 @@ HTML 已有两种题材：**合力 · 完整末态留读**（270 帧）；**水�
 
 ## 动画与媒体制作
 
+能力边界：隐式场近似，非物理流体/复杂体积守恒；HTML最短末态6帧不是长文阅读验收。
+
 液体内容使用 gather→merge→split→resolve 四段，标签、整数窗口、统一 amount、seed 和配色可换。标量场等势轮廓产生真实融合颈、断裂与延迟小滴，最终液体遮罩揭示结论；它不是 Navier–Stokes 物理求解器。各段 amount 需一致以保持边界连续。解析连通性在低分辨率检查，实际画面以较高采样遮罩抗锯齿；文字预检覆盖中央窄区，最小字号仍超界就拒绝。
 
 媒体语义输入（下方预演命令给出起手例子）：
@@ -29,4 +31,4 @@ python3 templates/mg-styles/build_media.py --style liquid --content templates/mg
 
 CPU隐式液面参考，不是物理流体或镜面仿真；4px场采样。当前浏览器未获启动验证，字体与视频需另验；无音轨。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。

@@ -8,6 +8,8 @@ HTML 已有两种题材：**观察拼出想象**（240 帧）；**换个角度 �
 
 ## 动画与媒体制作
 
+能力边界：程序纸偶而非照片拼贴；无音素口型，B结论100帧只证明该例留时。
+
 拼贴的 `parts` 定义程序剪影、父子关系、局部支点、比例与运动量，`beats` 驱动 awaken/release/reframe/resolve 句拍，`exposure` 保持整张画面的定格节奏。关节和不同比例的组合形成观点，撕纸前沿承接结尾；这些是程序纸偶而非照片拼贴。可选 `evidence` 的数据必须带来源；没有自动理解音素或嘴部声音同步。
 
 媒体语义输入（优先 `readable` 版）：
@@ -30,4 +32,4 @@ python3 templates/mg-styles/build_media.py --style collage --content templates/m
 
 原创建模参考，复用媒体语义 schema；浏览器字体、实际视频时序和音轨仍需单独验收。本页无声音。
 
-三条路线分别验收：[当前状态](../../../../docs/reports/mg-styles/status.md)、[历史记录](../../../../docs/reports/mg-styles/validation.md)；[共享捕获协议](../../html/README.md)。
+三条路线分别验收：[资格与历史证据](../../README.md#验收边界)；[共享捕获协议](../../html/README.md)。
