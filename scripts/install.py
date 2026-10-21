@@ -278,14 +278,41 @@ def safe_extract(archive_path, destination):
                     target.chmod(target.stat().st_mode | 0o111)
         except tarfile.TarError as error:
             raise InstallError("载荷解包失败(%s)" % error) from error
-        # 第二遍处理符号链接(目标此刻已就位)。
+        # 链接目的地不能位于另一链接下:否则创建链接本身就会跟随父链接写盘。
+        link_paths = {name.lower() for name in symlinks}
+        for path, linkname in pending_links:
+            if any(str(parent).lower() in link_paths for parent in path.parents):
+                raise InstallError("符号链接目的地位于另一链接下: %s" % str(path))
+        # 第二遍处理符号链接(普通文件/目录此刻已就位)。
         for path, linkname in pending_links:
             _materialize_link(destination, path, linkname)
+        if not IS_WINDOWS:
+            # 单个链接的词法规范化不足以证明完整链接图安全:先跟随链接再
+            # 处理 .. 可能越根,且目标链接可能在归档中后出现。允许根内悬空
+            # 链接,但全图解析的越根/循环必须使整个 staging 被调用方弃置。
+            root = destination.resolve()
+            for path, linkname in pending_links:
+                try:
+                    link = destination / Path(*path.parts)
+                    try:
+                        # Python 3.13+ non-strict resolve 不再为循环抛异常;
+                        # stat 独立拒绝 ELOOP,但保留合法根内 dangling 语义。
+                        link.stat()
+                    except FileNotFoundError:
+                        pass
+                    link.resolve(strict=False).relative_to(root)
+                except (ValueError, RuntimeError, OSError) as error:
+                    raise InstallError("符号链接目标越出载荷根或形成循环: %s -> %s"
+                                       % (str(path), linkname)) from error
     return symlinks
 
 
 def _resolve_within(root, link_path, linkname):
     """解析符号链接目标的载荷根内绝对 PurePosixPath;越根返回 None。"""
+    # 与成员名相同的跨平台语法:反斜杠/冒号不得在 Windows 上变成
+    # 路径分隔符、盘符或 ADS;合法 ../plugins 相对目标仍然允许。
+    if not linkname or "\\" in linkname or ":" in linkname or linkname.startswith("/"):
+        return None
     base = link_path.parent
     resolved = PurePosixPath(*(base.parts + PurePosixPath(linkname).parts)) \
         if not PurePosixPath(linkname).is_absolute() else PurePosixPath(linkname)
@@ -314,6 +341,12 @@ def _materialize_link(root, link_path, linkname):
         dest.symlink_to(linkname)
         return
     # win32:物化(不调用 os.symlink)。
+    try:
+        source = source.resolve()
+        source.relative_to(root.resolve())
+    except (ValueError, RuntimeError, OSError) as error:
+        raise InstallError("符号链接目标越出载荷根: %s -> %s"
+                           % (str(link_path), linkname)) from error
     if source.is_dir():
         shutil.copytree(source, dest)
     elif source.is_file():
@@ -444,12 +477,16 @@ class InstallLock:
                 self.handle.seek(0)
                 msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError:
+                self.handle.close()
+                self.handle = None
                 raise InstallError("另一安装正在进行(%s)——请稍后重试" % self.path)
         else:
             import fcntl
             try:
                 fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
+                self.handle.close()
+                self.handle = None
                 raise InstallError("另一安装正在进行(%s)——请稍后重试" % self.path)
         return self
 
@@ -464,7 +501,9 @@ class InstallLock:
                 fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
         finally:
             self.handle.close()
-            self.path.unlink(missing_ok=True)
+            self.handle = None
+            # 保留稳定 inode:解锁后另一进程可能已持有此文件的锁,unlink
+            # 会让后继安装创建新 inode 并与该进程同时进入安装事务。
         return False
 
 

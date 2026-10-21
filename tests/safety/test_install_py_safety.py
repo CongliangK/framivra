@@ -27,6 +27,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -481,6 +483,125 @@ class InstallerSandbox(SandboxCase):
                     guard.assert_not_called()
                 self.assertFalse((self.sandbox / "curl-calls.jsonl").exists())
                 self.assertFalse(self.target.exists())
+
+
+class InstallerLocalPrimitives(unittest.TestCase):
+    """只调用临时目录中的归档/锁 helper;无安装、下载、HTTP 或系统集成。"""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="installer-primitives-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.installer = _load_installer()
+
+    def extract(self, links, name="payload"):
+        archive = self.root / (name + ".tar.gz")
+        with tarfile.open(archive, "w:gz") as tar:
+            data = b"owned payload"
+            member = tarfile.TarInfo("b/payload")
+            member.size = len(data)
+            tar.addfile(member, io.BytesIO(data))
+            for path, target in links:
+                member = tarfile.TarInfo(path)
+                member.type = tarfile.SYMTYPE
+                member.linkname = target
+                tar.addfile(member)
+        destination = self.root / name
+        self.installer.safe_extract(archive, destination)
+        return destination
+
+    def test_link_destination_cannot_follow_another_link(self):
+        sentinel = self.root / "outside"
+        sentinel.write_bytes(b"unchanged")
+        with self.assertRaises(self.installer.InstallError):
+            self.extract([("a/link", "../b"), ("a/link/x", "../../outside")])
+        self.assertEqual(sentinel.read_bytes(), b"unchanged")
+        self.assertFalse((self.root / "payload/b/x").is_symlink())
+
+    @unittest.skipIf(os.name == "nt", "POSIX link graph; Windows materializes copies")
+    def test_complete_link_graph_rejects_escape_in_either_archive_order(self):
+        sentinel = self.root / "outside"
+        sentinel.write_bytes(b"unchanged")
+        links = [("a/link", "../b"), ("out", "a/link/../../outside")]
+        for index, ordered in enumerate((links, links[::-1])):
+            with self.subTest(order=index), self.assertRaises(self.installer.InstallError):
+                self.extract(ordered, "payload%d" % index)
+        self.assertEqual(sentinel.read_bytes(), b"unchanged")
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink and dangling-link semantics")
+    def test_cycle_rejected_but_internal_dangling_and_parent_targets_allowed(self):
+        with self.assertRaises(self.installer.InstallError):
+            self.extract([("a", "b/link"), ("b/link", "../a")], "cycle")
+        destination = self.extract(
+            [("scripts/data", "../b/payload"), ("scripts/missing", "../b/absent")])
+        self.assertEqual((destination / "scripts/data").read_bytes(), b"owned payload")
+        self.assertTrue((destination / "scripts/missing").is_symlink())
+        self.assertFalse((destination / "scripts/missing").exists())
+
+    def test_windows_target_spellings_rejected_on_every_host(self):
+        for index, target in enumerate((r"..\outside", "b/payload:stream", r"C:\outside")):
+            with self.subTest(target=target), self.assertRaises(self.installer.InstallError):
+                self.extract([("link", target)], "bad%d" % index)
+
+    @unittest.skipIf(os.name == "nt", "POSIX ELOOP; newer resolve behavior is simulated")
+    def test_cycle_rejected_even_when_non_strict_resolve_does_not_raise(self):
+        real_resolve = Path.resolve
+
+        def permissive_resolve(path, *args, **kwargs):
+            if path.name in ("a", "link"):
+                return path.absolute()
+            return real_resolve(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "resolve", permissive_resolve), \
+                self.assertRaises(self.installer.InstallError):
+            self.extract([("a", "b/link"), ("b/link", "../a")])
+
+    def test_windows_materialization_retains_internal_parent_target(self):
+        with mock.patch.object(self.installer, "IS_WINDOWS", True), \
+                mock.patch.object(os, "symlink", side_effect=AssertionError("symlink forbidden")):
+            destination = self.extract([("scripts/data", "../b/payload")])
+        self.assertFalse((destination / "scripts/data").is_symlink())
+        self.assertEqual((destination / "scripts/data").read_bytes(), b"owned payload")
+
+    @unittest.skipIf(os.name == "nt", "controlled real fcntl inode handoff")
+    def test_unlock_handoff_keeps_one_inode_and_failed_contender_closes(self):
+        import fcntl
+        first = self.installer.InstallLock(self.root / "installed")
+        second = self.installer.InstallLock(self.root / "installed")
+        contender = self.installer.InstallLock(self.root / "installed")
+        first.__enter__()
+        first_fd = first.handle.fileno()
+        real_flock = fcntl.flock
+
+        def acquire_second_at_unlock(fd, operation):
+            real_flock(fd, operation)
+            if fd == first_fd and operation == fcntl.LOCK_UN:
+                second.__enter__()
+
+        try:
+            with mock.patch.object(fcntl, "flock", side_effect=acquire_second_at_unlock):
+                first.__exit__(None, None, None)
+            self.assertEqual(first.path.stat().st_ino, os.fstat(second.handle.fileno()).st_ino)
+            with self.assertRaises(self.installer.InstallError):
+                contender.__enter__()
+            self.assertIsNone(contender.handle)
+        finally:
+            for lock in (contender, second, first):
+                if lock.handle is not None:
+                    lock.__exit__(None, None, None)
+
+    def test_failed_windows_lock_closes_open_handle(self):
+        windows = types.SimpleNamespace(LK_NBLCK=1, locking=mock.Mock(side_effect=OSError("busy")))
+        lock = self.installer.InstallLock(self.root / "installed")
+        handle = (self.root / "handle").open("a+b")
+        self.addCleanup(handle.close)
+        with mock.patch.object(self.installer, "IS_WINDOWS", True), \
+                mock.patch.dict(sys.modules, {"msvcrt": windows}), \
+                mock.patch("builtins.open", return_value=handle), \
+                self.assertRaises(self.installer.InstallError):
+            lock.__enter__()
+        self.assertTrue(handle.closed)
+        self.assertIsNone(lock.handle)
 
 
 if __name__ == "__main__":

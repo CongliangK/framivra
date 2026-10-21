@@ -100,19 +100,36 @@ function Invoke-Git {
 # 会静默覆盖用户文件。在 fetch 之后、reset 之前比对「远端目标 commit 将跟踪
 # 的路径集」(ls-tree)与「本地被忽略文件集」(ls-files -o -i
 # --exclude-standard):完全同名,或目录前缀碰撞(ignored 文件 a 对 incoming
-# 目录 a/x,或反之)都算冲突。特殊字符路径在非 -z 输出下由 git 统一做 C 风格
-# 引号转义且一行一径,两侧遵循同一转义规则与同一仓库配置,按引号形态比对
-# 语义等价;预检自身任何故障(git 非零退出)一律 fail-closed 拒绝更新。
+# 目录 a/x,或反之)都算冲突。Git 的整路径 C 引号不保留目录前缀关系:
+# 用已探测的 Python 接收 -z 原始路径,转 ASCII JSON,避免 PowerShell 5.1
+# 原生命令输出的代码页/换行损失;仍使用 PowerShell 原有大小写比较语义。
+# 预检自身任何故障(git/Python 非零退出或 JSON 无效)一律 fail-closed。
 function Assert-NoIgnoredCollision {
   param([string]$TargetRef)
-  $tree = Invoke-Git -Quiet @('-C', $Dir, 'ls-tree', '-r', '--name-only', $TargetRef)
-  if ($tree.Code -ne 0) { throw '[bootstrap] ignored 碰撞预检失败(ls-tree;fail-closed),拒绝自动更新。' }
-  $files = Invoke-Git -Quiet @('-C', $Dir, 'ls-files', '-o', '-i', '--exclude-standard')
-  if ($files.Code -ne 0) { throw '[bootstrap] ignored 碰撞预检失败(ls-files;fail-closed),拒绝自动更新。' }
+  $collisionCode = @'
+import json, subprocess, sys
+def paths(*args):
+    raw = subprocess.check_output(['git', '-C', sys.argv[1], *args])
+    return [p.decode('utf-8', 'surrogateescape') for p in raw.split(b'\0') if p]
+incoming = paths('ls-tree', '-r', '--name-only', '-z', sys.argv[2])
+ignored = paths('ls-files', '-o', '-i', '--exclude-standard', '-z')
+print(json.dumps({'incoming': incoming, 'ignored': ignored}, ensure_ascii=True))
+'@
+  $collisionArgs = if ($py.Length -gt 1) { $py[1..($py.Length - 1)] } else { @() }
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'SilentlyContinue'
+  try {
+    # 原生命令无法启动时 LASTEXITCODE 可保留上次的 0,不得当空枚举成功。
+    $LASTEXITCODE = $null
+    $pathJson = & $py[0] $collisionArgs -c $collisionCode $Dir $TargetRef 2>$null
+    $probeCode = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $prev }
+  if ($null -eq $probeCode -or $probeCode -ne 0 -or -not $pathJson) { throw '[bootstrap] ignored 碰撞预检失败(路径枚举;fail-closed),拒绝自动更新。' }
+  $paths = $pathJson | ConvertFrom-Json -ErrorAction Stop
   $incoming = @{}
-  foreach ($line in @($tree.Output)) { if ($line) { $incoming["$line"] = $true } }
+  foreach ($line in @($paths.incoming)) { if ($line) { $incoming["$line"] = $true } }
   $hits = @()
-  foreach ($line in @($files.Output)) {
+  foreach ($line in @($paths.ignored)) {
     if (-not $line) { continue }
     $clash = $incoming.ContainsKey("$line")
     if (-not $clash) {

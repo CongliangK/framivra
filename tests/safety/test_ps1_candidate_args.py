@@ -18,10 +18,15 @@ install_windows.ps1 已重构为克隆模式(克隆/安全更新仓库 + 运行 
 红队实证纯文本 in 断言只钉到注释/错误消息(删 reset --hard 执行行、删
 marker 写入、把数据根比较改成 if ($false) 后测试仍绿),故克隆模式哨兵
 改为行级结构断言:关键行为 token 必须出现在剥 '#' 注释后的代码行,调用类
-(reset/status/fetch/clone/ls-tree/ls-files)必须钉在含 Invoke-Git 的实际
-执行行上。
+(reset/status/fetch/clone)必须钉在含 Invoke-Git 的实际执行行上;
+ls-tree/ls-files 则核内嵌 Python 的 -z 枚举和实际 Python 调用。
 """
 
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -154,11 +159,19 @@ class Ps1CloneModeStructure(unittest.TestCase):
 
     def test_collision_precheck_enumerates_both_sides(self):
         self.assert_code_line(
-            ["Invoke-Git", "'ls-tree'", "'--name-only'"],
+            ["incoming = paths(", "'ls-tree'", "'--name-only'", "'-z'"],
             "碰撞预检枚举远端将跟踪路径集(ls-tree)的执行行")
         self.assert_code_line(
-            ["Invoke-Git", "'ls-files'", "'--exclude-standard'"],
+            ["ignored = paths(", "'ls-files'", "'--exclude-standard'", "'-z'"],
             "碰撞预检枚举本地被忽略文件集(ls-files)的执行行")
+        self.assert_code_line(
+            ["& $py[0]", "-c $collisionCode", "$Dir $TargetRef"],
+            "原始路径传输 helper 的实际调用行")
+        self.assert_code_line(
+            ["$LASTEXITCODE = $null"], "路径枚举前清除陈旧退出码")
+        self.assert_code_line(
+            ["$null -eq $probeCode", "$probeCode -ne 0", "-not $pathJson", "throw"],
+            "路径枚举未启动、失败或空输出必须拒绝更新")
 
     def test_fetch_and_clone_invocations(self):
         self.assert_code_line(
@@ -188,6 +201,102 @@ class Ps1CloneModeStructure(unittest.TestCase):
             (["& $py[0] $pyArgs 'vt.py' 'init'"], "克隆内运行 vt.py init 的执行行"),
         ):
             self.assert_code_line(tokens, what)
+
+
+class Ps1CollisionPathTransport(unittest.TestCase):
+    """运行 PS1 内嵌 Python/Git 字节传输,不把它声称为原生 PS1 验证。"""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="ps1-collision-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.git("init", "--quiet")
+        source = PS1.read_text(encoding="utf-8-sig")
+        self.code = source.split("$collisionCode = @'\n", 1)[1].split("\n'@", 1)[0]
+        self.function = "function Assert-NoIgnoredCollision {" + source.split(
+            "function Assert-NoIgnoredCollision {", 1)[1].split("\nfunction Assert-BootstrapVar", 1)[0]
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-C", str(self.repo), *args], stderr=subprocess.PIPE)
+
+    def tree_with_ignored_collision(self, reverse=False):
+        prefix = "用户 data"
+        incoming = prefix if reverse else prefix + "/payload"
+        ignored = prefix + "/payload" if reverse else prefix
+        path = self.repo / incoming
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"incoming")
+        self.git("add", "--", incoming)
+        tree = self.git("write-tree").decode("ascii").strip()
+        self.git("read-tree", "--empty")  # index only; never reset/update a checkout
+        path.unlink()
+        if path.parent != self.repo:
+            path.parent.rmdir()
+        path = self.repo / ignored
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"owned sentinel")
+        (self.repo / ".gitignore").write_text("*\n", encoding="utf-8")
+        return tree, incoming, ignored
+
+    def test_unicode_directory_prefix_survives_git_transport_in_both_directions(self):
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse):
+                if reverse:
+                    shutil.rmtree(self.repo)
+                    self.repo.mkdir()
+                    self.git("init", "--quiet")
+                tree, incoming, ignored = self.tree_with_ignored_collision(reverse)
+                raw = subprocess.check_output([sys.executable, "-c", self.code, str(self.repo), tree])
+                self.assertTrue(raw.isascii(), "PowerShell 5.1 transport must be ASCII JSON")
+                paths = json.loads(raw)
+                self.assertEqual(paths["incoming"], [incoming])
+                self.assertIn(ignored, paths["ignored"])
+                self.assertTrue(incoming.startswith(ignored + "/") or ignored.startswith(incoming + "/"))
+                self.assertEqual((self.repo / ignored).read_bytes(), b"owned sentinel")
+
+    def test_git_enumeration_error_is_not_empty_success(self):
+        result = subprocess.run([sys.executable, "-c", self.code, str(self.repo), "missing-ref"],
+                                capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b"")
+
+    @unittest.skipUnless(shutil.which("powershell") or shutil.which("pwsh"),
+                         "native PowerShell unavailable; transport tests are not native validation")
+    def test_native_powershell_rejects_unicode_prefix_collision(self):
+        tree, _, ignored = self.tree_with_ignored_collision()
+        script = self.root / "collision.ps1"
+        script.write_text("param($Dir, $TargetRef, $Python)\n$ErrorActionPreference = 'Stop'\n"
+                          "$py = @($Python)\n" + self.function +
+                          "\ntry { Assert-NoIgnoredCollision $TargetRef } catch {\n"
+                          "  if ($_.Exception.Message.Contains('本地被忽略的文件')) {\n"
+                          "    Write-Output 'IGNORED_COLLISION_REJECTED'; exit 73\n"
+                          "  }; throw\n}\n",
+                          encoding="utf-8-sig")
+        result = subprocess.run([shutil.which("powershell") or shutil.which("pwsh"), "-NoProfile",
+                                 "-File", str(script), str(self.repo), tree, sys.executable],
+                                capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 73, result.stderr)
+        self.assertIn(b"IGNORED_COLLISION_REJECTED", result.stdout)
+        self.assertEqual((self.repo / ignored).read_bytes(), b"owned sentinel")
+
+    @unittest.skipUnless(shutil.which("powershell") or shutil.which("pwsh"),
+                         "native PowerShell unavailable; startup failure not natively validated")
+    def test_native_powershell_rejects_python_startup_failure_with_stale_zero_exit(self):
+        tree, _, ignored = self.tree_with_ignored_collision()
+        script = self.root / "startup-failure.ps1"
+        script.write_text("param($Dir, $TargetRef, $Python)\n$ErrorActionPreference = 'Stop'\n"
+                          "$py = @($Python)\n$LASTEXITCODE = 0\n" + self.function +
+                          "\ntry { Assert-NoIgnoredCollision $TargetRef } catch {\n"
+                          "  Write-Output 'ENUMERATION_FAILED_CLOSED'; exit 74\n}\n",
+                          encoding="utf-8-sig")
+        result = subprocess.run([shutil.which("powershell") or shutil.which("pwsh"), "-NoProfile",
+                                 "-File", str(script), str(self.repo), tree, str(self.root / "missing-python")],
+                                capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 74, result.stderr)
+        self.assertIn(b"ENUMERATION_FAILED_CLOSED", result.stdout)
+        self.assertEqual((self.repo / ignored).read_bytes(), b"owned sentinel")
 
 
 if __name__ == "__main__":
