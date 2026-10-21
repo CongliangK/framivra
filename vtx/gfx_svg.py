@@ -300,7 +300,7 @@ def private_configuration(directory, *, root=None):
 
 def runtime_libraries(executable):
     """Actual platform dependency closure and loader; never an OS version seal."""
-    from .cache_state import file_digest
+    from .gfx_environment import _file
     if sys.platform == 'darwin':
         return _darwin_runtime(executable)
     if sys.platform != 'linux':
@@ -331,7 +331,7 @@ def runtime_libraries(executable):
         path = str(Path(path).resolve())
         if name in libraries:
             raise ValueError('ambiguous SVG runtime library dependency')
-        libraries[name] = {'path': path, 'sha256': file_digest(path)}
+        libraries[name] = {'path': path, 'sha256': _file(path)[1]}
     if not loader_found or not libraries:
         raise ValueError('SVG runtime dynamic loader was not identified')
     return dict(sorted(libraries.items()))
@@ -465,9 +465,9 @@ def _version(executable, sha256, runtime_digest):
 
 
 def engine_identity():
-    from .cache_state import file_digest
+    from .gfx_environment import _file
     executable = inkscape_executable()
-    binary_hash = file_digest(executable)
+    binary_hash = _file(executable)[1]
     libraries = runtime_libraries(executable)
     return {'name': 'inkscape', 'executable': executable, 'sha256': binary_hash,
             'version': _version(executable, binary_hash, digest(canonical(libraries))),
@@ -497,12 +497,12 @@ def _fontconfig_version(executable, sha256, runtime_digest):
 
 
 def fontconfig_identity():
-    from .cache_state import file_digest
+    from .gfx_environment import _file
     executable = shutil.which('fc-scan')
     if executable is None:
         raise ValueError('SVG-sequence requires fontconfig fc-scan on PATH')
     executable = str(Path(executable).resolve())
-    sha256 = file_digest(executable)
+    sha256 = _file(executable)[1]
     libraries = runtime_libraries(executable)
     return {'executable': executable, 'sha256': sha256, 'libraries': libraries,
             'version': _fontconfig_version(executable, sha256, digest(canonical(libraries)))}
@@ -571,9 +571,7 @@ def resolve(c, clip):
             except (ValueError, OSError) as error:
                 raise ValueError(f'SVG frame {index} ({frame}): {error}') from error
             seen.add(frame)
-    code_names = ['gfx_svg.py', 'gfx_svg_stage.py']
-    if sys.platform == 'darwin':
-        code_names.append('gfx_environment.py')
+    code_names = ['gfx_svg.py', 'gfx_svg_stage.py', 'gfx_environment.py']
     code = {name: digest(Path(__file__).with_name(name).read_bytes()) for name in code_names}
     return {'producer': PRODUCER, 'manifest': clip['src'], 'files': files,
             'frames': frames, 'fonts': fonts, 'font_faces': font_faces,
