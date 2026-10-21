@@ -328,10 +328,12 @@ def runtime_libraries(executable):
             path = match.group(1)
             name = Path(path).name
             loader_found = True
-        path = str(Path(path).resolve())
         if name in libraries:
             raise ValueError('ambiguous SVG runtime library dependency')
-        libraries[name] = {'path': path, 'sha256': _file(path)[1]}
+        # Keep the canonical path paired with the file actually hashed, even
+        # if a dependency path was redirected before _file resolved it.
+        path, sha256 = _file(path)
+        libraries[name] = {'path': path, 'sha256': sha256}
     if not loader_found or not libraries:
         raise ValueError('SVG runtime dynamic loader was not identified')
     return dict(sorted(libraries.items()))
