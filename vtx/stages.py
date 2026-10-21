@@ -5,7 +5,7 @@ timeline 契约权威定义互指（三处需同步修改，2026-09-10 定）：
   ② vtx/timeline.schema.json —— 结构权威（字段/类型）
   ③ vtx/preview.html —— 可视化预览权威（timeline → 浏览器预览）
 """
-import hashlib, json, math, re, subprocess, sys, wave
+import json, math, re, subprocess, sys, wave
 from pathlib import Path
 
 from .hygiene import (audio_key, manifest_record, rotate_history, versions_check,
@@ -13,7 +13,7 @@ from .hygiene import (audio_key, manifest_record, rotate_history, versions_check
 from .infra import Ctx, run_parallel
 from .diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
                           source_structure, mark_handled, operation)
-from . import fstxn
+from . import fstxn, recovery
 from .audio_filters import event_chain
 from .pluginlib import hooks as _plugin_hooks
 from .pluginlib import registry as _plugin_registry
@@ -745,7 +745,7 @@ def build_audio(c: Ctx):
         extra["post_loudness"] = {
             "input_i": raw_i, "output_i": after, "gain_db": gain,
             "target": TARGET_LUFS, "tp_dbfs": round(after_tp, 2),
-            "sha256": hashlib.sha256(out_wav.read_bytes()).hexdigest()}
+            "sha256": recovery._digest(out_wav)}
     c.receipt("audio", True, msg, extra=extra)
 
 
@@ -763,7 +763,7 @@ def normalize_project_audio(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
     source = Path(project).resolve() / "out" / "audio.wav"
     if not source.is_file():
         raise FileNotFoundError(f"audio source not found: {source}")
-    sha_now = hashlib.sha256(source.read_bytes()).hexdigest()
+    sha_now = recovery._digest(source)
     receipt = source.parent / "receipt.json"
     if receipt.is_file():
         try:
@@ -811,7 +811,7 @@ def normalize_project_audio(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
             raise ValueError("Post-processing changed audio duration")
         result = {"input_i": before, "output_i": after, "gain_db": gain, "target": target,
                   "tp_dbfs": round(after_tp, 2) if after_tp is not None else None,
-                  "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest()}
+                  "sha256": recovery._digest(candidate)}
     return result
 
 
