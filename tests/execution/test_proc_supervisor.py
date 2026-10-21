@@ -543,7 +543,7 @@ class LineageWhitelistDrillTests(_ProjectFixture):
         self.assertEqual(rep['reap_status'], 'lineage_denied')
         self.assertEqual(rep['stats'], {'ledgers': 1, 'killed': 0,
                                         'live_host': 0, 'stale': 1,
-                                        'removed': 1})
+                                        'removed': 1, 'kill_failed': 0})
         self.assertFalse(rep['ledger_dir_exists'], '账本目录须按陈旧语义清理')
         self.assertTrue(rep['canary_alive'], '同组金丝雀存活=零击杀铁证')
         self.assertIn(os.getpid(), group_live_members(os.getpgid(0)),
