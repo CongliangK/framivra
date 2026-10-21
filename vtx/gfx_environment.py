@@ -649,18 +649,20 @@ def _file_resolved(p, st, *, verify_entry=None):
             if old and old[0] == token:
                 check_entry()
                 return str(p), old[1]
-    h = hashlib.sha256()
-    with p.open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
-            h.update(block)
+    from .cache_state import file_digest
+    try:
+        content_hash = file_digest(p)
+    except ValueError as error:
+        # Keep environment failures in this resolver's fail-closed error domain.
+        raise EnvironmentError(str(error)) from error
     after = p.stat()
     if token != _file_token(p, after):
         raise EnvironmentError(f'environment input changed while hashing: {p}')
     check_entry()
     if os.name != 'nt':
         with _lock:
-            _hashes[str(p)] = token, h.hexdigest()
-    return str(p), h.hexdigest()
+            _hashes[str(p)] = token, content_hash
+    return str(p), content_hash
 
 
 def _files(paths):

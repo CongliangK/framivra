@@ -84,6 +84,105 @@ class UnitEnvironmentIdentity(unittest.TestCase):
         self.assertIs(caught.exception, failure)
 
 
+class CheckedEnvironmentDigest(unittest.TestCase):
+    """Owned file facts; no host inventory, browser or native media commands."""
+    def setUp(self):
+        from vtx import cache_state
+        self.checked = cache_state
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.path = self.root / 'library.bin'
+        self.path.write_bytes(b'library A')
+        memo = patch.object(env, '_hashes', {})
+        memo.start(); self.addCleanup(memo.stop)
+
+    def test_regular_and_symlink_share_only_unchanged_file_facts(self):
+        alias = self.root / 'alias.bin'; alias.symlink_to(self.path)
+        expected = (str(self.path), hashlib.sha256(b'library A').hexdigest())
+        with patch.object(self.checked, 'file_digest', wraps=self.checked.file_digest) as read:
+            self.assertEqual(env._file(self.path), expected)
+            self.assertEqual(env._file(alias), expected)
+            self.assertEqual(env._file(self.path), expected)
+        self.assertEqual(read.call_count, 3 if os.name == 'nt' else 1)
+
+    def test_restored_mtime_replacement_and_alias_retarget_invalidate(self):
+        alias = self.root / 'alias.bin'; alias.symlink_to(self.path)
+        original = env._file(alias); saved = self.path.stat()
+        self.path.write_bytes(b'library B')
+        os.utime(self.path, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+        self.assertNotEqual(original, env._file(alias))
+        replacement = self.root / 'replacement.bin'
+        replacement.write_bytes(b'library C')
+        os.utime(replacement, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+        replacement.replace(self.path)
+        self.assertEqual(env._file(alias)[1], hashlib.sha256(b'library C').hexdigest())
+        other = self.root / 'other.bin'; other.write_bytes(b'library D')
+        alias.unlink(); alias.symlink_to(other)
+        self.assertEqual(env._file(alias), (str(other), hashlib.sha256(b'library D').hexdigest()))
+
+    def test_read_failure_is_not_memoized_and_retry_reads_again(self):
+        failure = OSError('owned injected read failure')
+        with patch.object(self.checked, 'file_digest', side_effect=failure):
+            with self.assertRaises(OSError) as caught:
+                env._file(self.path)
+        self.assertIs(caught.exception, failure)
+        self.assertNotIn(str(self.path), env._hashes)
+        with patch.object(self.checked, 'file_digest', wraps=self.checked.file_digest) as read:
+            self.assertEqual(env._file(self.path)[1], hashlib.sha256(b'library A').hexdigest())
+        read.assert_called_once_with(self.path)
+
+    def test_read_time_mutation_and_checked_value_error_fail_closed(self):
+        original = self.checked.file_digest
+        def changed(path):
+            value = original(path)
+            self.path.write_bytes(b'library changed during read')
+            return value
+        with patch.object(self.checked, 'file_digest', side_effect=changed):
+            with self.assertRaisesRegex(env.EnvironmentError, 'changed while hashing'):
+                env._file(self.path)
+        self.assertNotIn(str(self.path), env._hashes)
+        with patch.object(self.checked, 'file_digest', side_effect=ValueError('not regular')):
+            with self.assertRaisesRegex(env.EnvironmentError, 'not regular'):
+                env._file(self.path)
+        self.assertNotIn(str(self.path), env._hashes)
+
+    def test_nonregular_and_missing_inputs_never_gain_a_digest(self):
+        with patch.object(self.checked, 'file_digest', side_effect=AssertionError('nonfile read')):
+            with self.assertRaises(env.EnvironmentError): env._file(self.root)
+            with self.assertRaises(OSError): env._file(self.root / 'missing')
+        self.assertEqual(env._hashes, {})
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'POSIX FIFO primitive unavailable')
+    def test_regular_to_fifo_open_race_is_nonblocking_and_refused(self):
+        original = os.open
+        descriptors = []
+        def replaced(path, flags, *args, **kwargs):
+            if Path(path) == self.path:
+                self.assertTrue(flags & os.O_NONBLOCK)
+                self.path.unlink(); os.mkfifo(self.path)
+                fd = original(path, flags, *args, **kwargs)
+                descriptors.append(fd)
+                return fd
+            return original(path, flags, *args, **kwargs)
+        with patch.object(self.checked.os, 'open', side_effect=replaced):
+            with self.assertRaisesRegex(env.EnvironmentError, 'not a regular file'):
+                env._file(self.path)
+        self.assertEqual(len(descriptors), 1)
+        with self.assertRaises(OSError): os.fstat(descriptors[0])
+        self.assertNotIn(str(self.path), env._hashes)
+
+    def test_windows_policy_simulation_still_reads_every_call(self):
+        # Only the no-memo branch is simulated; this is not native Windows QA.
+        token = lambda path, st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+        with patch.object(env, 'os', SimpleNamespace(name='nt')), \
+                patch.object(env, '_file_token', side_effect=token), \
+                patch.object(self.checked, 'file_digest', wraps=self.checked.file_digest) as read:
+            self.assertEqual(env._file(self.path), env._file(self.path))
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(env._hashes, {})
+
+
 class ChromeInstallerTelemetry(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

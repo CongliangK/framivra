@@ -2,6 +2,7 @@
 import contextlib
 import copy
 import io
+import os
 import stat
 import json
 import subprocess
@@ -194,6 +195,21 @@ class SvgContract(unittest.TestCase):
             data = SVG.replace('<rect width="100" height="100" fill="red"/>',f'<rect {attr}/>').encode()
             with self.subTest(attr=attr), self.assertRaises(ValueError):
                 gfx_svg.inspect_svg(data,1920,1080,fonts=[])
+
+    def test_shared_environment_digest_implementation_is_bound(self):
+        from vtx import gfx_environment
+        c = self.ctx()
+        first = gfx_svg.resolve(c, self.clip)
+        source = Path(gfx_environment.__file__)
+        original = source.read_bytes()
+        self.assertEqual(first['implementation']['gfx_environment.py'], gfx_svg.digest(original))
+        read_bytes = Path.read_bytes
+        def changed(path):
+            return original + b'\n# changed resolver fixture\n' if path == source else read_bytes(path)
+        with mock.patch.object(Path, 'read_bytes', changed):
+            second = gfx_svg.resolve(c, self.clip)
+            self.assertNotEqual(gfx_svg.record_key(first), gfx_svg.record_key(second))
+            with self.assertRaises(InputIdentityError): verify_input_identity(c)
 
     def test_runtime_library_digest_changes_identity(self):
         engine = self.root/'engine.bin'; engine.write_bytes(b'ordinary engine fixture')
@@ -414,5 +430,79 @@ class SvgContract(unittest.TestCase):
             self.assertNotIn('PASS',output.getvalue())
             self.assertNotIn('黑场',output.getvalue())
             self.assertFalse(hasattr(c,'_svg_consumer_sources'))
+
+class LinuxSvgRuntimeDigest(unittest.TestCase):
+    """Fresh ldd closure every call, shared byte facts only for runtime files."""
+    def setUp(self):
+        from vtx import cache_state, gfx_environment
+        self.checked, self.environment = cache_state, gfx_environment
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.engine = self.root / 'engine'; self.engine.write_bytes(b'engine')
+        self.fc = self.root / 'fc-scan'; self.fc.write_bytes(b'fontconfig')
+        self.library = self.root / 'libgraphics.so'; self.library.write_bytes(b'graphics A')
+        self.loader = self.root / 'ld-linux.so'; self.loader.write_bytes(b'loader')
+        self.output = f'libgraphics.so => {self.library} (0x1234)\n{self.loader} (0x5678)\n'
+        self.result = SimpleNamespace(returncode=0, stdout=self.output)
+        patches = [mock.patch.object(gfx_svg.sys, 'platform', 'linux'),
+            mock.patch.object(gfx_environment, '_hashes', {}),
+            mock.patch.object(gfx_svg, 'inkscape_executable', return_value=str(self.engine)),
+            mock.patch.object(gfx_svg.shutil, 'which', side_effect=lambda name, **kw:
+                              str(self.fc) if name == 'fc-scan' else '/fixture/ldd'),
+            mock.patch.object(gfx_svg, '_version', return_value='Inkscape fixture'),
+            mock.patch.object(gfx_svg, '_fontconfig_version', return_value='fontconfig fixture')]
+        for item in patches:
+            item.start(); self.addCleanup(item.stop)
+
+    def test_shared_libraries_skip_only_unchanged_bytes_not_ldd(self):
+        with mock.patch.object(gfx_svg.subprocess, 'run', return_value=self.result) as ldd, \
+                mock.patch.object(self.checked, 'file_digest', wraps=self.checked.file_digest) as read:
+            first = gfx_svg.engine_identity(), gfx_svg.fontconfig_identity()
+            second = gfx_svg.engine_identity(), gfx_svg.fontconfig_identity()
+        self.assertEqual(first, second)
+        self.assertEqual(ldd.call_count, 4)
+        self.assertEqual(read.call_count, 12 if os.name == 'nt' else 4)
+        expected = {'libgraphics.so': {'path': str(self.library), 'sha256': gfx_svg.digest(b'graphics A')},
+                    self.loader.name: {'path': str(self.loader), 'sha256': gfx_svg.digest(b'loader')}}
+        self.assertEqual(first[0]['libraries'], expected)
+        self.assertEqual(first[1]['libraries'], expected)
+
+    def test_warm_library_bytes_paths_and_membership_are_rechecked(self):
+        alias = self.root / 'alias.so'; alias.symlink_to(self.library)
+        self.result.stdout = self.output.replace(str(self.library), str(alias))
+        with mock.patch.object(gfx_svg.subprocess, 'run', return_value=self.result) as ldd:
+            first = gfx_svg.runtime_libraries('/fixture/engine')
+            saved = self.library.stat(); self.library.write_bytes(b'graphics B')
+            os.utime(self.library, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+            changed = gfx_svg.runtime_libraries('/fixture/engine')
+            self.assertNotEqual(first, changed)
+            other = self.root / 'other.so'; other.write_bytes(b'graphics C')
+            alias.unlink(); alias.symlink_to(other)
+            redirected = gfx_svg.runtime_libraries('/fixture/engine')
+            self.assertEqual(redirected['libgraphics.so']['path'], str(other))
+            self.assertNotEqual(changed, redirected)
+            self.result.stdout += f'extra.so => {self.library} (0x9999)\n'
+            added = gfx_svg.runtime_libraries('/fixture/engine')
+            self.assertIn('extra.so', added)
+            self.result.stdout = f'{self.loader} (0x5678)\n'
+            self.assertEqual(set(gfx_svg.runtime_libraries('/fixture/engine')), {self.loader.name})
+        self.assertEqual(ldd.call_count, 5)
+
+    def test_warm_closure_cannot_hide_errors_or_nonregular_members(self):
+        with mock.patch.object(gfx_svg.subprocess, 'run', return_value=self.result):
+            gfx_svg.runtime_libraries('/fixture/engine')
+            for output in ('', 'unresolved dependency\n',
+                           f'libgraphics.so => {self.library} (0x1234)\n',
+                           self.output + f'libgraphics.so => {self.library} (0x1234)\n'):
+                with self.subTest(output=output):
+                    self.result.stdout = output
+                    with self.assertRaises(ValueError): gfx_svg.runtime_libraries('/fixture/engine')
+            self.result.stdout = self.output
+            self.result.returncode = 1
+            with self.assertRaises(ValueError): gfx_svg.runtime_libraries('/fixture/engine')
+            self.result.returncode = 0
+            self.library.unlink(); self.library.mkdir()
+            with self.assertRaises(ValueError): gfx_svg.runtime_libraries('/fixture/engine')
+
 
 if __name__ == '__main__': unittest.main()

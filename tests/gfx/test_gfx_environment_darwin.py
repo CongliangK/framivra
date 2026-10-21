@@ -1,5 +1,6 @@
 """CPU contracts for #200; synthetic Mach-O/cache data is not Mac acceptance."""
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from vtx import gfx_environment as env
+from vtx import cache_state, gfx_environment as env
 
 
 def macho(dependencies=(), rpaths=()):
@@ -236,16 +237,24 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         target = preferences / '.GlobalPreferences.plist'
         target.write_bytes(plistlib.dumps({'AppleLanguages': ['ja']}))
         before = self.collect()
+        binary_digest = hashlib.sha256(self.binary.read_bytes()).hexdigest()
         original = Path.open
         def opened(path, *args, **kwargs):
             self.assertNotEqual(path, target, 'unsupported preference alias target opened')
             return original(path, *args, **kwargs)
+        original_fd = cache_state.os.open
+        def opened_fd(path, flags, *args, **kwargs):
+            self.assertNotEqual(Path(path), target, 'unsupported preference alias target opened')
+            return original_fd(path, flags, *args, **kwargs)
         for relative in ('com.google.Chrome.plist',
                          'ByHost/com.google.Chrome.fixture-host.plist',
                          'ByHost/com.apple.CoreText.fixture-host.plist'):
             alias = preferences / relative
             alias.symlink_to(os.path.relpath(target, alias.parent))
-            with self.subTest(relative=relative), patch.object(Path, 'open', new=opened):
+            with self.subTest(relative=relative), patch.object(Path, 'open', new=opened), \
+                    patch.object(cache_state.os, 'open', new=opened_fd), \
+                    patch.object(env, '_hashes', {}):
+                self.assertEqual(env._file(self.binary), (str(self.binary), binary_digest))
                 with self.assertRaisesRegex(env.EnvironmentError, 'preference file symlink'):
                     self.collect()
             alias.unlink()

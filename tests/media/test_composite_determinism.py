@@ -61,6 +61,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
@@ -140,6 +141,69 @@ class TestGraphCodeDigest(unittest.TestCase):
         for name in composite._SYNTH_FUNCS:
             self.assertTrue(hasattr(RenderPlan, name), f"_SYNTH_FUNCS 名单过期：{name}")
             inspect.getsource(getattr(RenderPlan, name))   # 取不到即抛
+
+
+class TestLayerHalfOpenWindow(unittest.TestCase):
+    """The emitted visibility interval must match integer-frame [in, out) intent.
+
+    Inspect the actual shared graph fragment, not a copy of its edge formula.
+    These rational-clock checks supplement, not replace, real pixel/PTS tests.
+    """
+
+    def _active(self, start, end, origin, stop, gfx=True, x=0, y=0, scale=1):
+        c = SimpleNamespace(fps=30, spf=1 / 30)
+        plan = RenderPlan(c=c, draft=scale != 1, f=scale, W=64, H=64)
+        layer = {'cl': {'dst_in': start, 'dur': end - start},
+                 'gfx': gfx, 'x': x, 'y': y}
+        _, overlay, _ = plan._layer_chain(layer, 0, 'base', origin, stop - origin, 1)
+        # Generic enable on FFmpeg 6.1 is overwritten by secondary-input
+        # lookahead. Only overlay's own per-main-frame x expression may gate.
+        self.assertNotIn('enable=', overlay)
+        match = re.search(r"overlay=x='if\(between\(t,([^,]+),([^\)]+)\),"
+                          r"(-?\d+),NAN\)':y=(-?\d+):", overlay)
+        self.assertIsNotNone(match, overlay)
+        lo, hi = map(Fraction, match.groups()[:2])
+        self.assertEqual(tuple(map(int, match.groups()[2:])), (int(x * scale), int(y * scale)))
+        self.assertIn('eval=frame', overlay)
+        self.assertIn('eof_action=repeat', overlay)
+        return [frame for frame in range(origin, stop)
+                if lo <= Fraction(frame - origin, 30) <= hi]
+
+    def test_all_endpoint_quantization_classes_and_segment_origins(self):
+        # At 30fps, out % 3 covers all six-decimal rounding directions.
+        for origin in (0, 30, 31, 32):
+            for start in (0, 1, 33, 34, 35):
+                for end in (60, 61, 62):
+                    for gfx in (False, True):
+                        with self.subTest(origin=origin, start=start, end=end, gfx=gfx):
+                            self.assertEqual(self._active(start, end, origin, 65, gfx),
+                                             list(range(max(origin, start), end)))
+        # Visible coordinates retain integer/chroma normalization, including
+        # negative, partially/fully offscreen positions and draft scaling.
+        for x, y in ((-3, -1), (1, 3), (65, 66)):
+            for scale in (1, 0.5):
+                with self.subTest(x=x, y=y, scale=scale):
+                    self.assertEqual(self._active(1, 60, 0, 65, x=x, y=y, scale=scale),
+                                     list(range(1, 60)))
+
+    def test_one_frame_clips_and_exact_cut_boundaries(self):
+        for origin in (0, 29, 30, 31, 32, 59, 60, 61, 62):
+            for start in (0, 1, 2, 59, 60, 61, 62):
+                with self.subTest(origin=origin, start=start):
+                    self.assertEqual(self._active(start, start + 1, origin, 65),
+                                     [start] if start >= origin else [])
+
+    def test_adjacent_and_empty_windows_have_exact_active_sets(self):
+        for clips in (((0, 60), (60, 61), (61, 62)),
+                      ((1, 60), (61, 62))):
+            for origin in (0, 30, 31, 32, 60):
+                active = [set(self._active(start, end, origin, 65))
+                          for start, end in clips]
+                for frame in range(origin, 65):
+                    with self.subTest(clips=clips, origin=origin, frame=frame):
+                        self.assertEqual([i for i, frames in enumerate(active) if frame in frames],
+                                         [i for i, (start, end) in enumerate(clips)
+                                          if start <= frame < end])
 
 
 class TestPassFreshSidecar(unittest.TestCase):
@@ -439,8 +503,9 @@ class TestCrossRunDeterminism(unittest.TestCase):
 class TestPngSourceFrameAlignment(unittest.TestCase):
     """Decode frame IDs: correct counts/PTS alone cannot detect a skipped PNG.
 
-    Keep the legacy visibility-window policy outside this clock regression;
-    delayed-layer checks cover every frame inside the clip's active interval.
+    The original clock cases checked only inside each clip's active interval.
+    The half-open case also checks every emitted frame across adjacent clips
+    and empty windows; equal MD5s cannot establish correct visibility.
     """
 
     W, H, FPS, DUR = 160, 96, 30, 300
@@ -467,8 +532,8 @@ class TestPngSourceFrameAlignment(unittest.TestCase):
         self.sources = {self.DUR: self.source}
         self.outputs = 0
 
-    def _layer(self, dst=0, y=0):
-        duration = self.DUR - dst
+    def _layer(self, dst=0, y=0, duration=None):
+        duration = self.DUR - dst if duration is None else duration
         if duration not in self.sources:
             directory = self.root / f"frames{duration}"
             directory.mkdir()
@@ -480,13 +545,14 @@ class TestPngSourceFrameAlignment(unittest.TestCase):
                 "source": self.sources[duration], "gfx": True, "x": 0, "y": y,
                 "w2": None, "h2": None, "ti": 0}
 
-    def _render(self, layers, a, b, with_subs=False):
+    def _render(self, layers, a, b, with_subs=False, duration=None):
         self.outputs += 1
         cache = self.root / f"render{self.outputs}"
         cache.mkdir()
         def run(argv, **kwargs):
             return subprocess.run(argv, capture_output=True, check=True, timeout=120)
-        c = _render_context(self.root, cache, self.W, self.H, self.DUR)
+        duration = self.DUR if duration is None else duration
+        c = _render_context(self.root, cache, self.W, self.H, duration)
         plan = RenderPlan(c=c, draft=False, f=1, W=self.W, H=self.H)
         ass = cache / "empty.ass"
         ass.write_text("\n".join(plan.ass_head()), encoding="utf-8")
@@ -501,7 +567,7 @@ class TestPngSourceFrameAlignment(unittest.TestCase):
             plan.composite(layers, out, with_subs, a=a, b=b, sub_file=ass)
         raw = run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(out),
                    "-f", "rawvideo", "-pix_fmt", "gray", "-"]).stdout
-        count = (self.DUR if b is None else b) - a
+        count = (duration if b is None else b) - a
         self.assertEqual(len(raw), count * self.W * self.H)
         probe = json.loads(run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                                "-show_streams", "-show_frames", "-of", "json", str(out)]).stdout)
@@ -536,6 +602,25 @@ class TestPngSourceFrameAlignment(unittest.TestCase):
                 ids = self._render([self._layer(), self._layer(7, 48)], 41, 123, with_subs)
                 self.assertEqual(ids(24), list(range(42, 124)))
                 self.assertEqual(ids(72), list(range(35, 117)))
+
+    def test_half_open_adjacent_clips_and_gap_keep_exact_frame_ids(self):
+        # Distinct rows expose an old layer even when its successor is opaque.
+        # A separate alpha/source-pixel oracle covers transparent overlap; this
+        # fixture exercises the actual single-graph and multi-pass producers.
+        stop = 66
+        for end in (60, 61, 62):
+            layers = [self._layer(1, duration=end - 1),
+                      self._layer(end, y=48, duration=1),
+                      self._layer(end + 2, y=48, duration=1)]
+            for origin, boundary in ((0, None), (0, stop), (31, stop)):
+                with self.subTest(end=end, origin=origin, boundary=boundary):
+                    ids = self._render(layers, origin, boundary, duration=stop)
+                    top = [frame if 1 <= frame < end else 0
+                           for frame in range(origin, stop)]
+                    bottom = [1 if frame in (end, end + 2) else value
+                              for frame, value in zip(range(origin, stop), top)]
+                    self.assertEqual(ids(24), top)
+                    self.assertEqual(ids(72), bottom)
 
 
 if __name__ == "__main__":
