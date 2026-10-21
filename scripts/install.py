@@ -595,33 +595,37 @@ def write_shims(target, wizard):
     log("已写 shim 与用户 PATH:%s(新开终端生效;--undo 可逆)" % shim_dir)
 
 
-def undo_path():
-    """win32 --undo:移除 HKCU PATH 条目(不动安装目录与 shim 文件)。"""
+def undo_path(target, dry_run=False):
+    """win32 --undo:仅移除所选安装的 HKCU PATH 条目，保留目录与 shim。"""
     if not IS_WINDOWS:
         die("--undo 仅适用于 Windows(PATH/shim 写入面);POSIX 请用 --uninstall")
+    target = Path(target)
+    if not (target / ".vt-install.json").is_file():
+        warn("%s 无安装器标记，未修改用户 PATH" % target)
+        return
     import winreg
-    marker_candidates = []
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
-                        winreg.KEY_READ | winreg.KEY_WRITE) as key:
+    wanted = os.path.normcase(os.path.abspath(str(_shim_dir(target))))
+    access = winreg.KEY_READ if dry_run else winreg.KEY_READ | winreg.KEY_WRITE
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, access) as key:
         try:
             current, kind = winreg.QueryValueEx(key, "Path")
         except FileNotFoundError:
             current, kind = "", winreg.REG_EXPAND_SZ
-        entries = []
+        entries, removed = [], []
         for part in (current or "").split(os.pathsep):
-            part = part.strip()
-            if not part:
-                continue
-            bin_dir = Path(part)
-            if bin_dir.name == "bin" and (bin_dir.parent / ".vt-install.json").is_file():
-                marker_candidates.append(str(bin_dir))
-                continue
-            entries.append(part)
-        winreg.SetValueEx(key, "Path", 0, kind, os.pathsep.join(entries))
-    if not marker_candidates:
-        warn("用户 PATH 中未发现本安装器写入的条目(--undo 幂等,无需处理)")
+            if part.strip() and os.path.normcase(os.path.abspath(part.strip())) == wanted:
+                removed.append(part)
+            else:
+                entries.append(part)
+        if removed and not dry_run:
+            winreg.SetValueEx(key, "Path", 0, kind, os.pathsep.join(entries))
+    if not removed:
+        warn("用户 PATH 中未发现所选安装的条目(--undo 幂等,无需处理)")
+    elif dry_run:
+        log("[dry-run] 将移除用户 PATH 条目:%s(保留安装目录与 shim)" % ", ".join(removed))
     else:
-        log("已移除用户 PATH 条目:%s" % ", ".join(marker_candidates))
+        log("已移除用户 PATH 条目:%s" % ", ".join(removed))
+
 
 
 # ---------------------------------------------------------------- 依赖面 ----
@@ -879,19 +883,19 @@ def uninstall(target, dry_run):
         log("[dry-run] 将删除 %s(有标记,允许)" % target)
         return 0
     if IS_WINDOWS:
-        undo_path_quiet()
+        undo_path_quiet(target)
     _remove_tree(target)
     log("已卸载 %s" % target)
     return 0
 
 
-def undo_path_quiet():
+def undo_path_quiet(target):
     try:
-        undo_path()
+        undo_path(target)
     except SystemExit:
         raise
     except Exception as error:  # 卸载主流程不应被 PATH 清理小故障阻断
-        warn("PATH/shim 清理失败(%s)——可稍后手动运行 --undo" % error)
+        warn("PATH 清理失败(%s)——请手动从用户 PATH 移除 %s" % (error, _shim_dir(target)))
 
 
 def rollback(target, dry_run):
@@ -948,13 +952,13 @@ def main(argv=None):
     parser.add_argument("--rollback", nargs="?", const="", metavar="DIR",
                         help="升级失败回退(恢复最近的 .bak-* 备份)")
     parser.add_argument("--undo", nargs="?", const="", metavar="DIR",
-                        help="仅 Windows:移除 shim 与用户 PATH 条目(不动安装目录)")
+                        help="仅 Windows:移除所选安装的用户 PATH 条目(保留安装目录与 shim)")
     args = parser.parse_args(argv)
     if sys.version_info < (3, 9):
         die("需要 python ≥3.9(当前 %s)" % sys.version.split()[0])
     try:
         if args.undo is not None:
-            return undo_path() or 0
+            return undo_path(resolve_target(args.undo or args.dir), args.dry_run) or 0
         if args.uninstall is not None:
             return uninstall(resolve_target(args.uninstall or args.dir), args.dry_run)
         if args.rollback is not None:
