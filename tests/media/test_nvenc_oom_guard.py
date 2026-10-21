@@ -251,7 +251,8 @@ class TestState4HalfBreak(GuardTestCase):
             with self.assertRaises(SystemExit) as cm:
                 infra.run_parallel(_Ctx(), tasks, "seg 预编码")
         self.assertEqual(cm.exception.code, 1)
-        self.assertEqual([fake.n(f"t{i:02d}") for i in range(36)], [1] * 36)  # 成功件
+        self.assertEqual([fake.n(f"t{i:02d}") for i in (*range(36), 39, 40)],
+                         [1] * 38)  # 所有原本成功件，包括失败任务之后的两件
         self.assertEqual(fake.n("t36"), 2)                    # 瞬时型：首败+重试成
         self.assertEqual(fake.n("t37"), 2)                    # 逐件尝试次数独立记账
         self.assertEqual(fake.n("t38"), 3)                    # 环境型：1+N=3

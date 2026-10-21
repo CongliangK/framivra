@@ -55,7 +55,9 @@ class TestStageReceiptName(unittest.TestCase):
 class TestPipelineEnabled(unittest.TestCase):
     def test_default_on(self):
         self.assertTrue(_pipeline_enabled({}))
-        self.assertTrue(_pipeline_enabled())   # 缺省读进程环境（测试机未设即 True）
+        with mock.patch.dict(os.environ):
+            os.environ.pop("VTX_PIPELINE", None)
+            self.assertTrue(_pipeline_enabled())   # 明确测试缺省，而非宿主配置
 
     def test_explicit_zero_falls_back(self):
         self.assertFalse(_pipeline_enabled({"VTX_PIPELINE": "0"}))
@@ -105,6 +107,7 @@ def _synth_timeline(root: Path, assets: Path, dur=90) -> dict:
 
 def _run_vtx(tl: Path, *args, extra_env=None):
     env = dict(os.environ)
+    env.pop("VTX_PIPELINE", None)  # 缺省拓扑与宿主配置隔离；显式线性模式仍由调用者覆盖。
     env.update(extra_env or {})
     return subprocess.run(
         ["env", "python3", "-X", "utf8", str(REPO / "vtx" / "vtx.py"),
