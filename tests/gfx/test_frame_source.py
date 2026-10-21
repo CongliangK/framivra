@@ -1,4 +1,4 @@
-"""PNG FrameSource contracts and the exact, one-time cache identity migration."""
+"""PNG FrameSource contracts and direct source-based graph identity."""
 import dataclasses
 import inspect
 import hashlib
@@ -111,16 +111,15 @@ class TestMigrationIdentity(unittest.TestCase):
         legacy_source = ''.join(composite._normalized_ast_src(m['source']) for m in fixture['methods'])
         expected = hashlib.sha1(legacy_source.encode('utf-8')).hexdigest()[:12]
         composite._graph_code_digest.cache_clear()
-        # Issue #52 extracts pass identity after #68's exact migration. Keep
-        # the old mapping intact, but never alias this new implementation.
-        self.assertIn(expected, composite._PNG_MIGRATION_DIGESTS.values())
+        # The pinned historical digest is a negative control, not a cache alias
+        # for the current implementation or any later source mutation.
         source = ''.join(composite._normalized_ast_src(inspect.getsource(
             getattr(composite.RenderPlan, name))) for name in composite._SYNTH_FUNCS)
         source += composite._normalized_ast_src(inspect.getsource(frame_source))
         source += composite._normalized_ast_src(inspect.getsource(composite.gfx_cli))
         current = composite._graph_code_digest()
         self.assertEqual(current, hashlib.sha1(source.encode('utf-8')).hexdigest()[:12])
-        self.assertNotIn(current, composite._PNG_MIGRATION_DIGESTS.values())
+        self.assertNotEqual(current, expected)
         original = inspect.getsource
         for target, before, after in (
             (frame_source, '"-framerate"', '"-r"'),
@@ -136,15 +135,21 @@ class TestMigrationIdentity(unittest.TestCase):
                     return text
                 with mock.patch.object(inspect, 'getsource', side_effect=changed):
                     composite._graph_code_digest.cache_clear()
-                    self.assertNotIn(composite._graph_code_digest(), composite._PNG_MIGRATION_DIGESTS.values())
+                    self.assertNotEqual(composite._graph_code_digest(), expected)
                     self.assertNotEqual(composite._graph_code_digest(), current)
 
     def test_unknown_ast_form_cannot_use_any_migration_alias(self):
         normalize = composite._normalized_ast_src
+        unknown = lambda source: normalize(source) + 'UNKNOWN_AST_FORM'
+        source = ''.join(unknown(inspect.getsource(getattr(composite.RenderPlan, name)))
+                         for name in composite._SYNTH_FUNCS)
+        source += unknown(inspect.getsource(frame_source))
+        source += unknown(inspect.getsource(composite.gfx_cli))
         with mock.patch.object(composite, '_normalized_ast_src',
-                               side_effect=lambda source: normalize(source) + 'UNKNOWN_AST_FORM'):
+                               side_effect=unknown):
             composite._graph_code_digest.cache_clear()
-            self.assertNotIn(composite._graph_code_digest(), composite._PNG_MIGRATION_DIGESTS.values())
+            self.assertEqual(composite._graph_code_digest(),
+                             hashlib.sha1(source.encode('utf-8')).hexdigest()[:12])
 
     def test_identity_ignores_location_but_not_content(self):
         c = SimpleNamespace(gpu=False)
