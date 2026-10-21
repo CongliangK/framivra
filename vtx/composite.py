@@ -352,12 +352,13 @@ class RenderPlan:
     def _layer_chain(self, L, k, cur, a, seglen, idx):
         """单层次输入滤镜段与 overlay 段。返回 (slave_part, overlay_part, out_label)。
 
-        enable 界值（2026-09-10 定稿，确定性取舍，不依赖浮点量化运气）：旧全片
-        graph 的 t1 = %.6f(dst_out·spf)，dst_out 帧是否显示取决于量化方向——
-        dst_out·10⁶ mod fps == 0（整）或 > 1/2（进位）→ t1 ≥ 帧 pts → dst_out 帧
-        显示（层重复末帧）；< 1/2 → 提前 1 帧切层。段内用显式偏移复刻该取舍：
-          含 dst_out → t1 = (rel_out+¼帧)·spf；不含 → (rel_out−½帧)·spf。
-        两者均落在帧网格 ±¼~½ 帧，比较余量 ≥ 1/120s，无浮点边界。t0 同理：
+        enable 遵守 timeline 的整数帧半开区间 [dst_in, dst_out)。between 的
+        两端包含，故右界放在最后合法帧 rel_out-1 与首个非法帧 rel_out 的中点，
+        全片与段内共用，不依赖 %.6f 的量化方向；30fps 下余量约半帧。
+        历史实现（2026-09-10）曾刻意复刻旧全片 t1=%.6f(dst_out·spf)：
+        dst_out·10⁶ mod fps 为 0 或 >fps/2 时包含 dst_out，段内用 +¼ 帧重现。
+        这会使相邻透明层旧末帧与新首帧叠加、空窗多留一帧，违反公开半开合同；
+        2026-10-21 的真实逐帧反例后撤销该兼容取舍，不保留旧窗口分支。t0 不变：
         dst_in 帧恒显示（pre 半帧放宽兜住量化方向），rel_in−1 帧恒不显示。
 
         次输入提前半帧 + 头垫 1 帧（rel_in=0 无余量除外）：PNG 序列输入瞬间涌入时
@@ -375,9 +376,10 @@ class RenderPlan:
         /tmp/vtx_r4/repro_seg0{0,1,2}_new.log）。尾垫的保留价值收窄为：消除段内
         EOF 裁决触发面（次输入 EOF 前丢帧/近-EOF 渐暗族的边界条件）——最终段文件
         的确定性已由逐层 pass 结构保证（_composite_passes），垫帧本身不承担确定性
-        语义。语义不变论证（仍成立）：垫出的克隆尾帧 pts ≥ rel_out，enable 右端
-        t1 ≤ (rel_out+¼)·spf，窗口外帧 enable=0 直通主帧；incl_end 的 ¼ 帧规则
-        拾取的首个克隆帧内容==原尾帧（v3.5 r5/r6 已证）。v3.6「stop 过大→片尾
+        语义。尾垫及末帧内容保持不变，但可见性由半开 enable 窗口约束：主链
+        rel_out-1 帧仍可取合法末帧，rel_out 及之后必须直通主帧，不能因 clone
+        存在而延长图层。旧 incl_end 的 ¼ 帧规则已因上述端点反例撤销。
+        v3.6「stop 过大→片尾
         extra 帧」教训不适用：输出端恒有 -frames:v 硬钳 + 拼接后总帧数 ffprobe
         硬门（render_segmented），extra 帧无法逸出。
         eof_action=repeat（非 pass；ffmpeg≥5 枚举名）：pass 在「窗口右端点主帧遇
@@ -387,16 +389,10 @@ class RenderPlan:
         cl = L["cl"]
         rel_in = cl["dst_in"] - a
         rel_out = rel_in + cl["dur"]
-        g_out = cl["dst_in"] + cl["dur"]
-        m = (g_out * 10**6) % c.fps
-        incl_end = (m == 0) or (2 * m > c.fps)
         eff = max(rel_in, 0)
         pre = 0.5 if rel_in != 0 else 0
         lo = rel_in * c.spf - pre * c.spf
-        if a:
-            t1 = (rel_out + (0.25 if incl_end else -0.5)) * c.spf
-        else:
-            t1 = rel_out * c.spf   # a=0 回落路径：与旧公式逐字节一致
+        t1 = (rel_out - 0.5) * c.spf
         head = 1 if pre else 0                       # 头垫 1 帧（v3.5 修复，保持）
         stop = max(1, seglen - rel_out + 2)          # 尾垫至段尾+2；跨右界层自然退化为 1
         pad = ("tpad="
