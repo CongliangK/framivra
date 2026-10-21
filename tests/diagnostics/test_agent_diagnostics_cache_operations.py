@@ -1,5 +1,5 @@
 """Actual cache producers retain fingerprint bytes, order, and native failures."""
-from tests.diagnostics._support import temporary_root
+from tests._support import temporary_root
 import contextlib
 import hashlib
 import io

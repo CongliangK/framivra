@@ -2,10 +2,9 @@
 import contextlib
 import copy
 import io
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from tests import _support
 
 
 def timeline():
@@ -14,17 +13,11 @@ def timeline():
             'audio_tracks': [], 'subtitles': []}
 
 
-def temporary_root(test):
-    temporary = tempfile.TemporaryDirectory()
-    test.addCleanup(temporary.cleanup)
-    return Path(temporary.name)
-
-
 class StageFixture:
     """Shared stage context only; test obligations stay in their owning TestCases."""
 
     def setUp(self):
-        self.root = temporary_root(self)
+        self.root = _support.temporary_root(self)
         self.tl = timeline()
         self.tl['sources'] = [{'id': 's', 'path': 's.wav'}]
         (self.root/'s.wav').touch()

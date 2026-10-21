@@ -4,7 +4,7 @@ Expected exits are frozen from the pre-diagnostics CLI, not inferred from the
 implementation under test. In particular, empty object collections and valid
 subtitle intervals without string text remain accepted by that CLI.
 """
-from tests.diagnostics._support import temporary_root
+from tests._support import temporary_root
 import contextlib
 import copy
 import io

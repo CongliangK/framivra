@@ -1,5 +1,6 @@
 """Source-level diagnostic coverage, original indices, and legacy parity."""
-from tests.diagnostics._support import temporary_root, timeline
+from tests._support import temporary_root
+from tests.diagnostics._support import timeline
 import contextlib
 import copy
 import io

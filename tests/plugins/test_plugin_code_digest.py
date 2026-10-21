@@ -2,20 +2,18 @@
 import hashlib
 import importlib
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from vtx.pluginlib import hooks
+from tests._support import temporary_root
 
 
 class PluginCodeDigest(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name) / "plugin"
+        self.root = temporary_root(self) / "plugin"
         self.root.mkdir()
         patch = mock.patch.object(hooks._registry, "plugin_module_dir",
                                   return_value=(self.root, "builtin"))

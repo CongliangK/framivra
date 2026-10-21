@@ -17,7 +17,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -28,7 +27,8 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from vtx import env_manifest as em   # noqa: E402
 from scripts.gfx import gfx_golden as gg              # noqa: E402
-from PIL import Image                # noqa: E402
+from tests.gfx._png import golden_frame as _make_frame  # noqa: E402
+from tests._support import golden_project as _project, temporary_root
 
 W, H = 32, 24   # golden 门禁测试用假帧尺寸（小图提速）
 
@@ -610,9 +610,7 @@ class TestVerifyCompatibility(unittest.TestCase):
 
 class TestWriteManifest(unittest.TestCase):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.dir = temporary_root(self)
 
     def test_roundtrip_via_fstxn_atomic_write_no_tmp_residue(self):
         m = stub_collect()
@@ -635,9 +633,7 @@ class TestWriteManifest(unittest.TestCase):
 
 class TestCli(unittest.TestCase):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.dir = temporary_root(self)
 
     def _run(self, argv):
         buf = io.StringIO()
@@ -701,34 +697,12 @@ class TestCli(unittest.TestCase):
                 self.assertIn("不是 JSON 对象", text, payload)
 
 
-def _make_frame(path: Path, i: int):
-    im = Image.new("RGBA", (W, H), (i % 256, (i * 7) % 256, (i * 13) % 256, 255))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    im.save(path)
-
-
-def _project(root: Path, clips):
-    for src, _ in clips:
-        p = root / src
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("<html><body>fake gfx page</body></html>", encoding="utf-8")
-    tl = {"project": {"fps": 30, "duration_frames": sum(d for _, d in clips),
-                      "width": 1920, "height": 1080},
-          "sources": [], "video_tracks": [{"name": "gfx", "kind": "gfx",
-                                           "clips": [{"src": s, "dst_in": 0, "dur": d}
-                                                     for s, d in clips]}],
-          "subtitles": [], "audio_tracks": []}
-    tp = root / "timeline.json"
-    tp.write_text(json.dumps(tl), encoding="utf-8")
-    return tp
-
-
 def _fill_cache(tp: Path, clips):
     c = gg.make_ctx(tp)
     for src, dur in clips:
         d = c.cache / "gfx" / gg.hygiene.gfx_key(c, {"src": src, "dur": dur})
         for i in range(dur):
-            _make_frame(d / f"f{i:04d}.png", i)
+            _make_frame(d / f"f{i:04d}.png", i, size=(W, H))
 
 
 class TestGfxGoldenEnvGate(unittest.TestCase):
@@ -741,9 +715,7 @@ class TestGfxGoldenEnvGate(unittest.TestCase):
         browser = mock.patch.object(gg, "chrome_version", return_value="unit fixture; not real browser")
         browser.start()
         self.addCleanup(browser.stop)
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
+        self.root = temporary_root(self)
         self.tp = _project(self.root, [("pages/a.html", 6)])
         _fill_cache(self.tp, [("pages/a.html", 6)])
         self.golden = self.root / "golden.json"
