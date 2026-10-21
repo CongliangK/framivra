@@ -1,6 +1,6 @@
 {
-  "_comment": "video_tools 本地能力开关（模板）。init（vt.py init）将本文件复制为 config.local.json（gitignored）。大模型相关能力默认全部关闭，需用户显式配置开启。v2 起配置统一经 vtx/pluginlib/config.py 加载（VTX_CONFIG 环境变量 > 本文件；坏 JSON 警告并按空配置继续；路径型键自动 ~ 展开）。开启某项能力前，以对应目录 README 的依赖清单与开启步骤为准。",
-  "_comment_external": "external_apps / external_plugins（v2 §2.4 安全节）：仓外 app/plugin 根目录注册。条目 = 绝对或 ~/ 路径字符串（默认 disabled），或 {\"path\": ..., \"enabled\": true} 显式启用；路径 resolve 后做白名单根校验（manifest/health 命令必须落在该目录内）；external 插件即使 enabled 仍须 plugins/registry.json 未禁用才生效。官方件不在此注册（随仓分发）。",
+  "_comment": "video_tools 本地能力开关（模板）。init（vt.py init）将本文件复制为 config.local.json（gitignored）。大模型相关能力默认全部关闭，需用户显式配置开启。v2 起配置统一经 vtx/pluginlib/config.py 加载（VTX_CONFIG 环境变量 > config.local.json；坏 JSON 警告并按空配置继续；路径型键自动 ~ 展开）。开启某项能力前，以对应目录 README 的依赖清单与开启步骤为准。",
+  "_comment_external": "external_apps / external_plugins（v2 §2.4 安全节）：仓外 app/plugin 根目录注册。条目 = 本仓相对、绝对或 ~/ 路径字符串（默认 disabled），或 {\"path\": ..., \"enabled\": true} 显式启用；路径 resolve 后做白名单根校验（manifest/health 命令必须落在该目录内）；独立 external 插件由条目 enabled 显式启用，仍须通过 manifest/钩子校验；官方同名插件只认 plugins/<name>/ 与 registry 安装态，不允许 external 顶替。官方件不在此注册（随仓分发）。",
   "external_apps": [],
   "external_plugins": [],
   "comfyui": {
