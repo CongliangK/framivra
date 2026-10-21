@@ -440,7 +440,8 @@ class PageEnvironmentContracts(unittest.TestCase):
 
     def test_frame_source_requires_certificate_and_rejects_valid_png_replacement(self):
         from vtx.frame_source import png_source
-        c = SimpleNamespace(root=self.d, cache=self.d.parent, w=6, h=4, fps=30)
+        c = SimpleNamespace(root=self.d, cache=self.d.parent, w=6, h=4, fps=30,
+                            tl={'project': {}})
         with patch('vtx.frame_source.gfx_dir', return_value=self.d), \
                 patch.object(env, 'certificate', return_value=self.environment):
             source = png_source(c, {'src': 'p.html', 'dur': 2})

@@ -26,6 +26,7 @@
 import hashlib
 import os
 import json
+import re
 import struct
 import subprocess
 import tempfile
@@ -267,6 +268,18 @@ COMPLETE_FILE = "complete.json"
 ENV_PENDING_FILE = 'environment.pending.json'
 
 
+def _page_metadata(n, key, width, height, backend_ns=None):
+    record = {"schema": 1, "key": key, "width": width, "height": height,
+              "frames": n}
+    # issue #103：实验命名空间可选元数据（VTX_GFX_CACHE_NS 路由 gfx_exp 的页
+    # 打来源标）。缺省（正式态）不写字段——complete.json 字节形状与既有完全
+    # 一致；ns 本身决定目录（gfx_exp/<ns>/<key>），故不单独标记每帧失效。
+    # 元数据形状仍参与 exact record 比较：producer 须重签，read-only consumer 拒绝。
+    if backend_ns:
+        record["backend_ns"] = backend_ns
+    return record
+
+
 def _page_record(outdir, n, key, width, height, backend_ns=None):
     digests, bad = [], []
     for i in range(n):
@@ -276,32 +289,15 @@ def _page_record(outdir, n, key, width, height, backend_ns=None):
         if reason:
             bad.append((i, reason))
         digests.append(got[0] if got else None)
-    record = {"schema": 1, "key": key, "width": width, "height": height,
-              "frames": n, "sha256": digests}
-    # issue #103：实验命名空间可选元数据（VTX_GFX_CACHE_NS 路由 gfx_exp 的页
-    # 打来源标）。缺省（正式态）不写字段——complete.json 字节形状与既有完全
-    # 一致；ns 本身决定目录（gfx_exp/<ns>/<key>），故它不进 inspect_page 的
-    # 失效合同字段，只作审计溯源。
-    if backend_ns:
-        record["backend_ns"] = backend_ns
+    record = _page_metadata(n, key, width, height, backend_ns)
+    record['sha256'] = digests
     return record, bad
 
 
-def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_digest=None,
-                 environment=None):
-    """Return bad frames plus whether a completion record needs publication.
-
-    Missing/unreadable legacy markers never skip validation: complete valid
-    legacy frames can be certified without Chrome. Partial pages resume only
-    valid frames. A recognized marker with changed contract invalidates every
-    frame; changed valid PNG bytes invalidate that frame by SHA256. All hits
-    still undergo full PNG validation; the marker alone cannot certify a hit.
-    """
-    current, bad = _page_record(outdir, n, key, width, height, backend_ns)
-    try:
-        old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        old = None
+def _inspect_page_record(old, current, bad, *, dependency_digest=None,
+                         environment=None, resumable=False):
+    """Compare one exact page contract; callers own bytes and publication policy."""
+    n = current['frames']
     if environment is None and isinstance(old, dict):
         # Integrity-only callers do not certify the environment. Production
         # lookups always supply their independently resolved expected record.
@@ -312,12 +308,6 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_dige
         if not isinstance(environment, dict) or environment.get('status') != 'input-bound':
             return [(i, 'unknown environment cannot certify cache reuse') for i in range(n)], True
         current['environment'] = environment
-        try:
-            pending = json.loads((Path(outdir) / ENV_PENDING_FILE).read_text())
-        except (OSError, ValueError):
-            pending = None
-        resumable = old is None and pending == {
-            'environment': environment, 'key': key, 'frames': n, 'width': width, 'height': height}
         if (not resumable and (not isinstance(old, dict) or type(old.get('schema')) is not int
                 or old['schema'] != 1
                 or old.get('environment') != environment or old.get('mixed_producer', False)
@@ -347,6 +337,59 @@ def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_dige
         if old != current:
             return [(i, 'strict page contract changed') for i in range(n)], True
     return sorted(bad), old != current
+
+
+def inspect_page(outdir, n, key, width, height, backend_ns=None, dependency_digest=None,
+                 environment=None):
+    """Return bad frames plus whether a completion record needs publication.
+
+    Missing/unreadable legacy markers never skip validation: complete valid
+    legacy frames can be certified without Chrome. Partial pages resume only
+    valid frames. A recognized marker with changed contract invalidates every
+    frame; changed valid PNG bytes invalidate that frame by SHA256. All hits
+    still undergo full PNG validation; the marker alone cannot certify a hit.
+    """
+    current, bad = _page_record(outdir, n, key, width, height, backend_ns)
+    try:
+        old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        old = None
+    resumable = False
+    if environment is not None and old is None:
+        try:
+            pending = json.loads((Path(outdir) / ENV_PENDING_FILE).read_text())
+        except (OSError, ValueError):
+            pending = None
+        resumable = pending == {
+            'environment': environment, 'key': key, 'frames': n, 'width': width, 'height': height}
+    return _inspect_page_record(old, current, bad, dependency_digest=dependency_digest,
+                                environment=environment, resumable=resumable)
+
+
+def require_page_record(outdir, n, key, width, height, *, backend_ns=None,
+                        dependency_digest=None, environment):
+    """Read-only HTML proof; actual PNG bytes remain the consumer's responsibility.
+
+    No legacy adoption or pending-page resume: only an exact existing completion
+    may supply expected hashes. Comparing its hashes with themselves checks the
+    record shape, not image integrity; consumers must bind every requested PNG.
+    """
+    try:
+        old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError('gfx environment certificate missing; rerun vtx gfx') from error
+    hashes = old.get('sha256') if isinstance(old, dict) else None
+    if (environment is None or not isinstance(hashes, list) or len(hashes) != n
+            or any(not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value)
+                   for value in hashes)):
+        raise ValueError('gfx environment certificate changed; rerun vtx gfx')
+    current = _page_metadata(n, key, width, height, backend_ns)
+    current['sha256'] = hashes
+    bad, needs_publication = _inspect_page_record(
+        old, current, [], dependency_digest=dependency_digest, environment=environment)
+    if bad or needs_publication:
+        raise ValueError('gfx environment certificate changed; rerun vtx gfx')
+    return old
 
 
 def invalidate_page(outdir, *, root=None):

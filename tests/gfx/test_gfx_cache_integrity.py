@@ -236,6 +236,163 @@ class RealBrowserIntegrity(unittest.TestCase):
 
 
 
+class CompletionConsumers(unittest.TestCase):
+    """Lazy and whole-page consumers share proof, not their byte-read scope."""
+    def setUp(self):
+        bind_environment(self)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / 'page.html').write_text('<html><body>inert</body></html>')
+        self.clip = dict(src='page.html', dst_in=0, dur=3)
+        self.c = SimpleNamespace(root=self.root, cache=self.root / 'cache',
+                                 fps=30, w=16, h=16, tl={'project': {}})
+        patch = mock.patch.dict(os.environ, VTX_GFX='cdp', VTX_GFX_CACHE_NS='selected')
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def publish(self, *, strict=False):
+        self.c.tl['project'] = {'gfx_dependency_policy': 'strict'} if strict else {}
+        self.directory = gfx_dir(self.c, self.clip)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        for i in range(3):
+            write_png(self.directory / f'f{i:04d}.png', frame=i)
+        extra = {}
+        if strict:
+            from vtx.gfx_dependencies import resolve, digest
+            extra = dict(dependency_digest=digest(resolve(self.c, self.clip)),
+                         dependency_enforcement='fetch-pinned-local-v1',
+                         dependency_observed=[(self.root / 'page.html').as_uri()])
+        gfx_cli.complete_page(self.directory, 3, self.directory.name, 16, 16,
+                              verify_inputs=lambda: None, backend_ns='selected',
+                              environment=certificate(self.c), **extra)
+        self.marker = self.directory / gfx_cli.COMPLETE_FILE
+        return json.loads(self.marker.read_text())
+
+    def consumers(self):
+        return [('interval', lambda: frame_source.png_source(self.c, self.clip).require_ready(0, 1)),
+                ('bridge', lambda: gfx_cache_reader.resolve_frames(self.c, self.clip))]
+
+    def reject(self):
+        for name, consume in self.consumers():
+            with self.subTest(consumer=name), self.assertRaises(ValueError):
+                consume()
+
+    def test_completion_metadata_shape_is_exact_for_both_consumers(self):
+        record = self.publish()
+        for _, consume in self.consumers():
+            consume()
+        variants = [dict(record, **change) for change in (
+            {'schema': True}, {'schema': 2}, {'key': 'other'}, {'width': 15},
+            {'height': 15}, {'frames': 2}, {'backend_ns': 'other'},
+            {'environment': {}}, {'mixed_producer': True}, {'mixed_producer': False},
+            {'extra': 'not producer evidence'}, {'sha256': []},
+            {'sha256': [record['sha256'][0], None, record['sha256'][2]]},
+            {'sha256': [record['sha256'][0], 'not-a-digest', record['sha256'][2]]})]
+        variants.extend({k: v for k, v in record.items() if k != field}
+                        for field in ('backend_ns', 'environment', 'sha256'))
+        for variant in variants:
+            with self.subTest(record=variant):
+                self.marker.write_text(json.dumps(variant))
+                self.reject()
+
+    def test_strict_runtime_evidence_is_required_by_both_consumers(self):
+        record = self.publish(strict=True)
+        for _, consume in self.consumers():
+            consume()
+        variants = [dict(record, **change) for change in (
+            {'dependency_digest': 'wrong'}, {'dependency_enforcement': 'other'},
+            {'dependency_observed': []}, {'dependency_observed': [1]})]
+        variants.extend({k: v for k, v in record.items() if k != field}
+                        for field in ('dependency_digest', 'dependency_enforcement', 'dependency_observed'))
+        for variant in variants:
+            with self.subTest(record=variant):
+                self.marker.write_text(json.dumps(variant))
+                self.reject()
+
+    def test_pending_frames_are_never_adopted_by_read_only_consumers(self):
+        self.publish()
+        self.marker.unlink()
+        gfx_cli.begin_environment_page(self.directory, certificate(self.c),
+                                       self.directory.name, 3, 16, 16)
+        before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in self.directory.iterdir()}
+        with mock.patch.object(gfx_cli, 'complete_page', side_effect=AssertionError('read-only')):
+            self.reject()
+        self.assertEqual(before, {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                                  for p in self.directory.iterdir()})
+
+    def test_producer_inspection_preserves_pending_resume_and_exact_repair(self):
+        record = self.publish()
+        pending_path = self.directory / gfx_cli.ENV_PENDING_FILE
+        matching = dict(environment=certificate(self.c), key=self.directory.name,
+                        frames=3, width=16, height=16)
+        def inspect():
+            return gfx_cli.inspect_page(self.directory, 3, self.directory.name, 16, 16,
+                                        backend_ns='selected', environment=certificate(self.c))
+        for marker, pending, resume in (
+                (None, matching, True), ('{unreadable', matching, True),
+                ('null', matching, True), (None, None, False),
+                (None, dict(matching, key='other'), False),
+                (json.dumps(dict(record, schema=999)), matching, False),
+                (json.dumps(dict(record, schema=True)), matching, False)):
+            with self.subTest(marker=marker, pending=pending):
+                if marker is None:
+                    self.marker.unlink(missing_ok=True)
+                else:
+                    self.marker.write_text(marker)
+                if pending is None:
+                    pending_path.unlink(missing_ok=True)
+                else:
+                    pending_path.write_text(json.dumps(pending))
+                bad, needs_publication = inspect()
+                self.assertTrue(needs_publication)
+                self.assertEqual([i for i, _ in bad], [] if resume else [0, 1, 2])
+        self.marker.write_text(json.dumps(record))
+        write_png(self.directory / 'f0001.png', frame=99)
+        self.assertEqual(inspect(), ([(1, '帧内容与完成标记不符')], True))
+        record = self.publish(strict=True)
+        self.marker.unlink()
+        gfx_cli.begin_environment_page(self.directory, certificate(self.c),
+                                       self.directory.name, 3, 16, 16)
+        bad, needs_publication = gfx_cli.inspect_page(
+            self.directory, 3, self.directory.name, 16, 16, backend_ns='selected',
+            environment=certificate(self.c), dependency_digest=record['dependency_digest'])
+        self.assertEqual(bad, [(i, 'strict dependency enforcement certificate missing') for i in range(3)])
+        self.assertTrue(needs_publication)
+
+    def test_interval_does_not_scan_unrequested_frames_or_change_input_bounds(self):
+        self.publish(strict=True)
+        source = frame_source.png_source(self.c, self.clip)
+        (self.directory / 'f0002.png').unlink()
+        args = source.input_args(0, 1)
+        self.assertEqual(args, ['-reinit_filter', '0', '-framerate', '30', '-start_number', '0',
+                                '-i', str(self.directory / 'f%04d.png')])
+        with self.assertRaises(ValueError):
+            gfx_cache_reader.resolve_frames(self.c, self.clip)
+        write_png(self.directory / 'f0000.png', frame=99)
+        with self.assertRaisesRegex(ValueError, 'digest changed'):
+            source.require_ready(0, 1)
+
+    def test_shared_proof_failure_revokes_scoped_png_facts(self):
+        record = self.publish(strict=True)
+        source = frame_source.png_source(self.c, self.clip)
+        with frame_source.png_consumer_scope([{'gfx': True, 'source': source}]) as layers, \
+             mock.patch.object(frame_source, 'png_invalid_reason',
+                               wraps=frame_source.png_invalid_reason) as parses:
+            bound = layers[0]['source']
+            bound.require_ready(0, 1)
+            bound.require_ready(0, 1)
+            self.assertEqual(parses.call_count, 1)
+            self.marker.write_text(json.dumps(dict(record, backend_ns='other')))
+            with self.assertRaises(ValueError):
+                bound.input_args(0, 1)
+            self.assertFalse(bound._png_facts.scope.active)
+            self.assertFalse(bound._png_facts.facts)
+            self.marker.write_text(json.dumps(record))
+            bound.require_ready(0, 1)
+            self.assertEqual(parses.call_count, 2)
+
+
 class LegacyCertificate(unittest.TestCase):
     def setUp(self):
         bind_environment(self)
