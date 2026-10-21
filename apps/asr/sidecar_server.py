@@ -319,7 +319,8 @@ class ModelHolder:
         self._lock = threading.Lock()
         self._model = None          # 已加载 wrapper（常驻）
         self._loaded_path = ""
-        self._on_gpu = False
+        self._on_gpu = False        # 请求可用，不代表失败后物理 GPU 驻留已清除
+        self._needs_cpu_cleanup = False  # 部分迁移/清理失败后需重试的自有资源
         self._gpu_device = None
         self._last = time.monotonic()
         self._stop = threading.Event()
@@ -344,8 +345,12 @@ class ModelHolder:
         try:
             self._ensure_gpu_locked()
             self._last = time.monotonic()
+            self._on_gpu = True       # 仅完整 placement + lease 退出成功才提交 ready
+            self._needs_cpu_cleanup = False
             return self._model
         except BaseException:
+            self._needs_cpu_cleanup = self._needs_cpu_cleanup or self._on_gpu
+            self._on_gpu = False
             self._lock.release()      # 加载失败不得持锁（否则后续请求死锁）
             raise
 
@@ -365,9 +370,10 @@ class ModelHolder:
         while not self._stop.wait(self._interval):
             try:
                 with self._lock:
-                    if not self._on_gpu:
+                    if not (self._on_gpu or self._needs_cpu_cleanup):
                         continue
-                    if time.monotonic() - self._last < self.idle_timeout:
+                    if (not self._needs_cpu_cleanup
+                            and time.monotonic() - self._last < self.idle_timeout):
                         continue
                     self._to_cpu_locked()
             except Exception as exc:      # watchdog 永不死
@@ -376,22 +382,15 @@ class ModelHolder:
     def _ensure_gpu_locked(self):
         if self._model is not None and self._on_gpu:
             return
+        if self._needs_cpu_cleanup:
+            self._to_cpu_locked()  # 未完成回收先重试，成功后才重新准入
         if self._model is None:
             self._load_locked()
             return
         target = self._gpu_device or self.device_map
         with self._gpu_admission_locked(self.active_path, target):
             _log("模型重新上 GPU：%s" % self._loaded_path)
-            try:
-                self._move_model_locked(target)
-            except BaseException:
-                # 迁移可部分成功；回收自有资源且保留原始错误，绝不以混合设备推理。
-                try:
-                    self._to_cpu_locked()
-                except BaseException as exc:
-                    _log("⚠ 模型恢复失败后的 CPU 回收未完成：%s" % exc)
-                raise
-            self._on_gpu = True
+            self._move_model_locked(target)
 
     @contextmanager
     def _gpu_admission_locked(self, path, device):
@@ -399,13 +398,42 @@ class ModelHolder:
         # 不嵌套加锁，也不停止/卸载任何外部服务来腾显存。
         ind = _ind()
         required = self.vram_budget_mib or ind.estimate_vram_mib(path)
-        with ind.admission_lease():
-            decision = ind.gpu_admission(required, device=device)
-            if not decision["allowed"]:
-                _log("✗ 资源准入拒绝：%s" % decision["reason"])
-                raise RuntimeError("资源准入拒绝：%s" % decision["reason"])
-            _log("资源准入：%s" % decision["reason"])
-            yield
+        placement_started = False
+        recovered = False
+
+        def recover_placement():
+            nonlocal recovered
+            recovered = True
+            self._on_gpu = False
+            if self._model is not None:
+                try:
+                    self._to_cpu_locked()
+                except BaseException as exc:
+                    try:
+                        _log("⚠ 模型获取失败后的 CPU 回收未完成：%s" % exc)
+                    except BaseException:
+                        pass  # 诊断失败不得替换 placement/lease 主错误
+
+        try:
+            with ind.admission_lease():
+                decision = ind.gpu_admission(required, device=device)
+                if not decision["allowed"]:
+                    _log("✗ 资源准入拒绝：%s" % decision["reason"])
+                    raise RuntimeError("资源准入拒绝：%s" % decision["reason"])
+                _log("资源准入：%s" % decision["reason"])
+                placement_started = True
+                try:
+                    yield
+                except BaseException:
+                    recover_placement()  # body 失败仍在 lease 内回收
+                    raise
+        except BaseException:
+            self._on_gpu = False
+            # 退出失败发生在 body 成功后，也必须回收；不重复回收 body 的失败。
+            # 准入/enter 拒绝未开始 placement，不移动现有模型。
+            if placement_started and not recovered:
+                recover_placement()
+            raise
 
     def _load_locked(self):
         # 准入先于模型 import/加载；OOM 换挡仅作次级保护。
@@ -447,12 +475,12 @@ class ModelHolder:
                     self._empty_cache_guard()
                     raise
                 self._model = model
+                self._needs_cpu_cleanup = True
                 self._loaded_path = path
                 inner = getattr(model, "model", None)
                 self._gpu_device = getattr(inner, "device", None) or self.device_map
                 self._resync_device()
-                self._on_gpu = True
-                _log("模型就绪：%s（耗时 %.1fs）" % (path, time.monotonic() - t0))
+                _log("模型已加载：%s（耗时 %.1fs）" % (path, time.monotonic() - t0))
                 return
             raise RuntimeError("模型加载失败：%s" % self.asr_path)
 
@@ -498,6 +526,7 @@ class ModelHolder:
     def _move_model_locked(self, device):
         """移动 ASR 与对齐器；失败时保留真实设备缓存，禁止报告整体已就绪。"""
         self._on_gpu = False
+        self._needs_cpu_cleanup = self._model is not None
         m = self._model
         inner = getattr(m, "model", None)
         if inner is None:
@@ -514,8 +543,10 @@ class ModelHolder:
 
     def _to_cpu_locked(self):
         if self._model is None:
+            self._needs_cpu_cleanup = False
             return
         self._move_model_locked("cpu")
+        self._needs_cpu_cleanup = False
         _log("模型空闲卸载至 CPU（VRAM 已释放）：%s" % self._loaded_path)
 
     @staticmethod

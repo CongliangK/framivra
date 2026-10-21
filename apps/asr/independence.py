@@ -585,7 +585,8 @@ def admission_lease():
     """并发准入互斥（issue #142）：项目状态根下原生文件锁，串行化跨进程的
     「查显存 → 加载模型」临界区，防两路并发同时通过同一份空闲显存检查。
     用法：with admission_lease(): ...（获取失败=锁文件不可写时 fail-closed raise）。
-    只锁本项目自有状态文件，不触碰任何外部进程。"""
+    只锁本项目自有状态文件，不触碰任何外部进程。错误优先级为业务/加锁错误
+    > 解锁错误 > close 错误；总会尝试 close，次级清理失败仅诊断，不替换主错误。"""
     path = project_state_root() / "admission.lock"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -596,6 +597,9 @@ def admission_lease():
             % (path, exc)) from None
 
     class _Lease:
+        def __init__(self):
+            self._locked = False
+
         def __enter__(self):
             try:
                 if os.name == "nt":
@@ -620,24 +624,45 @@ def admission_lease():
                 else:
                     import fcntl
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            except OSError as exc:
-                fh.close()
-                raise AsrIndependenceError(
-                    "资源准入锁不可用（%s）——fail-closed 拒绝并发加载：%s"
-                    % (path, exc)) from None
+                self._locked = True
+            except BaseException as exc:
+                # 尚未持锁：复用相同的 close-only 清理与错误优先级。
+                self.__exit__(type(exc), exc, exc.__traceback__)
+                if isinstance(exc, OSError):
+                    raise AsrIndependenceError(
+                        "资源准入锁不可用（%s）——fail-closed 拒绝并发加载：%s"
+                        % (path, exc)) from None
+                raise
             return self
 
-        def __exit__(self, *exc):
+        def __exit__(self, exc_type=None, exc_value=None, traceback=None):
+            cleanup_errors = []
+            if self._locked:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        fh.seek(0)
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except BaseException as error:
+                    cleanup_errors.append(error)
+                finally:
+                    self._locked = False
             try:
-                if os.name == "nt":
-                    import msvcrt
-                    fh.seek(0)
-                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            finally:
                 fh.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+            if cleanup_errors:
+                primary = exc_value if exc_value is not None else cleanup_errors.pop(0)
+                for error in cleanup_errors:
+                    try:
+                        print("⚠ 资源准入锁清理失败（保留主错误）：%s" % error, file=sys.stderr)
+                    except BaseException:
+                        pass  # 诊断输出失败同样不得遮蔽真实主错误
+                if exc_value is None:
+                    raise primary
             return False
 
     return _Lease()
