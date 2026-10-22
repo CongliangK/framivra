@@ -758,7 +758,17 @@ class InstallerPathUndo(unittest.TestCase):
                     result = self.run_windows_shim(
                         target, name, caller, dict(env, VT_TEST_EXIT=str(signed)), arguments)
                     self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-                    observed = json.loads(result.stdout)
+                    try:
+                        observed = json.loads(result.stdout)
+                    except json.JSONDecodeError:
+                        # Retain bounded evidence, then preserve the original error.
+                        for label, output in (("stdout", result.stdout), ("stderr", result.stderr)):
+                            excerpt = output if len(output) <= 4096 else (
+                                output[:2048] + "\n...[truncated]...\n" + output[-2048:])
+                            print("launcher JSON diagnostic name=%s returncode=%#x %s chars=%d: %r"
+                                  % (name, result.returncode, label, len(output), excerpt),
+                                  file=sys.stderr)
+                        raise
                     self.assertEqual(os.path.normcase(observed["executable"]),
                                      os.path.normcase(str(python)))
                     self.assertEqual(os.path.normcase(observed["prefix"]),
