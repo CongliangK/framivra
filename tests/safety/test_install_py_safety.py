@@ -728,7 +728,8 @@ class InstallerPathUndo(unittest.TestCase):
             encoding="utf-8")
         return target, python, bootstrap_python, caller, env, site_marker
 
-    def run_windows_shim(self, target, name, caller, env, arguments='""', delayed=False):
+    def run_windows_shim(self, target, name, caller, env, arguments='""', delayed=False,
+                         raw=False):
         cmd = str(Path(os.environ["SystemRoot"]) / "System32/cmd.exe")
         # Environment substitution is nonrecursive: literal %PATH% in these
         # values remains data. Pass a raw cmd command line, not CRT-escaped /c.
@@ -740,9 +741,12 @@ class InstallerPathUndo(unittest.TestCase):
             command = '"%s" /d /v:on /s /c "%s.cmd delayed"' % (cmd, name)
         else:
             command = '"%s" /d /v:off /s /c ""%%VT_TEST_SHIM%%" %%VT_TEST_ARGS%%"' % cmd
-        return subprocess.run(command, cwd=caller, env=env, input="stdin fixture\n",
-                              capture_output=True, text=True, encoding="utf-8",
-                              errors="strict", timeout=30,
+        # Raw input keeps the CRLF bytes produced by Windows text-mode stdin.
+        return subprocess.run(command, cwd=caller, env=env,
+                              input=b"stdin fixture\r\n" if raw else "stdin fixture\n",
+                              capture_output=True, text=not raw,
+                              encoding=None if raw else "utf-8",
+                              errors=None if raw else "strict", timeout=30,
                               creationflags=subprocess.CREATE_NO_WINDOW)
 
     @unittest.skipUnless(os.name == "nt", "requires native Windows cmd/executables")
@@ -751,24 +755,45 @@ class InstallerPathUndo(unittest.TestCase):
         expected = ["", "中文 空格", "amp & value", "%PATH%", "!bang!", "apostrophe's",
                     "(parens)", "end slash\\", 'a"b']
         arguments = r'''"" "中文 空格" "amp & value" "%PATH%" "!bang!" "apostrophe's" "(parens)" "end slash\\" "a\"b"'''
+        # Measure cmd's localized output independently of the product trampoline.
+        # Keep the reference ASCII: even B's absolute path may contain Unicode.
+        env = dict(env, VT_TEST_REFERENCE_PYTHON=str(bootstrap))
+        (target / "bin/shell-reference.cmd").write_bytes((
+            "@echo off\r\n"
+            "setlocal EnableExtensions DisableDelayedExpansion\r\n"
+            'set "ERRORLEVEL="\r\n'
+            '"%VT_TEST_REFERENCE_PYTHON%" -I -S -X utf8 -c "import os,sys; '
+            "sys.stdin.read(); sys.exit(int(os.environ['VT_TEST_EXIT']))\"\r\n"
+            "exit /b %errorlevel%\r\n").encode("ascii"))
+        reference = self.run_windows_shim(
+            target, "shell-reference", caller, dict(env, VT_TEST_EXIT="0"), arguments,
+            raw=True)
+        self.assertEqual(reference.returncode, 0, reference.stdout + reference.stderr)
+        self.assertEqual(reference.stdout, b"")
+        self.assertEqual(reference.stderr, b"")
         for name in ("vt", "vtx"):
             for code in (0, 37, 0x80000000, 0xc000013a, 0xffffffff):
                 with self.subTest(name=name, code=code):
                     signed = code - 0x100000000 if code > 0x7fffffff else code
+                    case_env = dict(env, VT_TEST_EXIT=str(signed))
+                    raw = code == 0xc000013a
                     result = self.run_windows_shim(
-                        target, name, caller, dict(env, VT_TEST_EXIT=str(signed)), arguments)
+                        target, name, caller, case_env, arguments, raw=raw)
                     self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-                    try:
+                    if raw:
+                        reference = self.run_windows_shim(
+                            target, "shell-reference", caller, case_env, arguments, raw=True)
+                        self.assertEqual(reference.returncode, code,
+                                         reference.stdout + reference.stderr)
+                        self.assertEqual(result.stderr, reference.stderr)
+                        self.assertTrue(result.stdout.endswith(reference.stdout),
+                                        (result.stdout[-4096:], reference.stdout[-4096:]))
+                        # Remove only the complete measured shell suffix. Empty
+                        # suffixes retain all JSON; extra product output still fails.
+                        payload = result.stdout[:len(result.stdout) - len(reference.stdout)]
+                        observed = json.loads(payload.decode("utf-8", "strict"))
+                    else:
                         observed = json.loads(result.stdout)
-                    except json.JSONDecodeError:
-                        # Retain bounded evidence, then preserve the original error.
-                        for label, output in (("stdout", result.stdout), ("stderr", result.stderr)):
-                            excerpt = output if len(output) <= 4096 else (
-                                output[:2048] + "\n...[truncated]...\n" + output[-2048:])
-                            print("launcher JSON diagnostic name=%s returncode=%#x %s chars=%d: %r"
-                                  % (name, result.returncode, label, len(output), excerpt),
-                                  file=sys.stderr)
-                        raise
                     self.assertEqual(os.path.normcase(observed["executable"]),
                                      os.path.normcase(str(python)))
                     self.assertEqual(os.path.normcase(observed["prefix"]),
