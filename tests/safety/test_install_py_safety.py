@@ -16,6 +16,7 @@ PATH 仅含临时 fixture,不借用主机 FFmpeg/winget。Windows 用原生 .cmd
 不把 POSIX shebang 当作 CreateProcess 可执行文件;curl 仅访问回环载荷服务。
 """
 import argparse
+import ast
 import contextlib
 import hashlib
 import io
@@ -589,7 +590,7 @@ class InstallerLocalPrimitives(unittest.TestCase):
 
 
 class InstallerPathUndo(unittest.TestCase):
-    """Lifecycle PATH checks use an in-memory registry, never the host registry."""
+    """PATH/launcher checks use an in-memory registry, never the host registry."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="installer-path-undo-")
@@ -615,6 +616,388 @@ class InstallerPathUndo(unittest.TestCase):
     def write_value(self, key, name, reserved, kind, value):
         self.assertEqual((name, reserved, kind), ("Path", 0, 7))
         self.value = value
+
+    def write_shims(self, target, python):
+        with mock.patch.object(self.installer.sys, "executable", python):
+            self.installer.write_shims(target, self.installer.Wizard(False))
+
+    def test_shims_store_exact_python_as_ascii_without_codepage_changes(self):
+        # This is generation/lifecycle coverage on every host, not a cmd emulator.
+        python = str(self.root / "解释器 & %PATH% !bang! ('venv')" / "python.exe")
+        self.write_shims(self.selected, python)
+        launcher = (self.selected / "bin/_vt_launcher.py").read_bytes().decode("ascii")
+        binding = next(node for node in ast.parse(launcher).body
+                       if isinstance(node, ast.Assign)
+                       and any(isinstance(t, ast.Name) and t.id == "BOUND_PYTHON"
+                               for t in node.targets))
+        self.assertEqual(ast.literal_eval(binding.value), python)
+        for name in ("vt", "vtx"):
+            content = (self.selected / ("bin/" + name + ".cmd")).read_bytes()
+            self.assertNotIn(b"\n", content.replace(b"\r\n", b""))
+            text = content.decode("ascii")
+            self.assertIn("setlocal EnableExtensions DisableDelayedExpansion", text)
+            self.assertIn('set "ERRORLEVEL="', text)
+            self.assertIn(f'-I -S -X utf8 "%~dp0_vt_launcher.py" {name} %*', text)
+            self.assertNotIn("chcp", text.lower())
+            self.assertNotIn("PYTHONPATH", text)
+        self.assertEqual({p.name for p in (self.selected / "bin").iterdir()},
+                         {"vt.cmd", "vtx.cmd", "_vt_launcher.py"})
+        self.registry.SetValueEx.assert_not_called()  # already on this user's PATH
+        before = self.value
+        second = str(self.root / "replacement" / "python.exe")
+        self.write_shims(self.selected, second)
+        self.assertIn("BOUND_PYTHON = " + ascii(second),
+                      (self.selected / "bin/_vt_launcher.py").read_text("ascii"))
+        self.assertEqual(self.value, before)
+        self.registry.SetValueEx.assert_not_called()
+
+    def test_shim_skip_and_invalid_interpreter_do_not_write(self):
+        target = self.root / "not-created"
+        wizard = self.installer.Wizard(False)
+        wizard.choices["shims_path"] = False
+        with mock.patch.object(self.installer.sys, "executable", None):
+            self.installer.write_shims(target, wizard)
+        self.assertFalse(target.exists())
+        for python in (None, "", "python.exe"):
+            with self.subTest(python=python), self.assertRaises(self.installer.InstallError):
+                self.write_shims(target, python)
+            self.assertFalse(target.exists())
+        self.registry.OpenKey.assert_not_called()
+
+    def test_missing_path_value_adds_only_this_shim_directory(self):
+        self.registry.QueryValueEx.side_effect = FileNotFoundError
+        self.write_shims(self.selected, sys.executable)
+        self.assertEqual(self.value, str(self.selected / "bin"))
+        self.registry.SetValueEx.assert_called_once()
+
+    def test_checkout_reuse_does_not_silently_rebind_python(self):
+        (self.selected / "vt.py").write_text("# fixture\n", encoding="ascii")
+        (self.selected / "vtx").mkdir()
+        self.write_shims(self.selected, sys.executable)
+        before = (self.selected / "bin/_vt_launcher.py").read_bytes()
+        with mock.patch.object(self.installer.sys, "executable", str(self.root / "other.exe")), \
+                mock.patch.object(self.installer, "fetch", side_effect=AssertionError("no fetch")):
+            self.assertEqual(self.installer.main(
+                ["--dir", str(self.selected), "--version", "9.9.9", "--non-interactive",
+                 "--verify-provenance"]), 0)
+        self.assertEqual((self.selected / "bin/_vt_launcher.py").read_bytes(), before)
+        self.registry.SetValueEx.assert_not_called()
+
+    def windows_launcher_fixture(self):
+        """Real distinct venv executables, no host PATH/registry or batch Python fake."""
+        import venv
+        bound = self.root / "解释器 & %PATH% !home! (A)"
+        bootstrap = self.root / "bootstrap-B"
+        for directory in (bound, bootstrap):
+            venv.EnvBuilder(with_pip=False).create(directory)
+        python = bound / "Scripts/python.exe"
+        bootstrap_python = bootstrap / "Scripts/python.exe"
+        (bound / "Lib/site-packages/_framivra_bound_probe.py").write_text(
+            "TOKEN = 'only-in-bound-A'\n", encoding="ascii")
+        target = self.root / "安装 & %PATH% !root! (vt)"
+        target.mkdir()
+        (target / "vtx").mkdir()
+        (target / "vtx/__init__.py").write_bytes(b"")
+        program = (
+            "import json, os, sys\n"
+            "import _framivra_bound_probe\n"
+            "print(json.dumps(dict(executable=sys.executable, prefix=sys.prefix,\n"
+            "    argv=sys.argv[1:], cwd=os.getcwd(), token=_framivra_bound_probe.TOKEN,\n"
+            "    stdin=sys.stdin.read())), flush=True)\n"
+            "sys.exit(int(os.environ.get('VT_TEST_EXIT', '0')))\n")
+        for file in (target / "vt.py", target / "vtx/__main__.py"):
+            file.write_text(program, encoding="ascii")
+        self.write_shims(target, str(python))
+        caller = self.root / "caller"
+        caller.mkdir()
+        env = dict(os.environ, PATH=str(bootstrap / "Scripts"), ERRORLEVEL="0",
+                   PATHEXT=".COM;.EXE;.BAT;.CMD")
+        # Prove PATH chooses B, while the application-only probe is unavailable.
+        probe = subprocess.run(
+            [str(bootstrap_python), "-I", "-S", "-c",
+             "import importlib.util,json,sys; print(json.dumps([sys.executable,"
+             "importlib.util.find_spec('_framivra_bound_probe') is None]))"],
+            cwd=caller, env=env, capture_output=True, text=True, timeout=30, check=True)
+        actual, missing = json.loads(probe.stdout)
+        self.assertEqual(os.path.normcase(actual), os.path.normcase(str(bootstrap_python)))
+        self.assertTrue(missing)
+        # The isolated B must not import its own sitecustomize before switching.
+        site_marker = self.root / "bootstrap-site-ran"
+        (bootstrap / "Lib/site-packages/sitecustomize.py").write_text(
+            "from pathlib import Path\nPath(%r).write_text('unexpected')\n" % str(site_marker),
+            encoding="utf-8")
+        return target, python, bootstrap_python, caller, env, site_marker
+
+    def run_windows_shim(self, target, name, caller, env, arguments='""', delayed=False,
+                         raw=False):
+        cmd = str(Path(os.environ["SystemRoot"]) / "System32/cmd.exe")
+        # Environment substitution is nonrecursive: literal %PATH% in these
+        # values remains data. Pass a raw cmd command line, not CRT-escaped /c.
+        env = dict(env, VT_TEST_SHIM=str(target / ("bin/" + name + ".cmd")),
+                   VT_TEST_ARGS=arguments)
+        if delayed:
+            # The caller must not consume ! before entering the shim. Resolve its
+            # basename from cwd; the shim's own %~dp0 still contains literal !.
+            command = '"%s" /d /v:on /s /c "%s.cmd delayed"' % (cmd, name)
+        else:
+            command = '"%s" /d /v:off /s /c ""%%VT_TEST_SHIM%%" %%VT_TEST_ARGS%%"' % cmd
+        # Raw input keeps the CRLF bytes produced by Windows text-mode stdin.
+        return subprocess.run(command, cwd=caller, env=env,
+                              input=b"stdin fixture\r\n" if raw else "stdin fixture\n",
+                              capture_output=True, text=not raw,
+                              encoding=None if raw else "utf-8",
+                              errors=None if raw else "strict", timeout=30,
+                              creationflags=subprocess.CREATE_NO_WINDOW)
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows cmd/executables")
+    def test_windows_shims_bind_python_preserve_argv_cwd_and_dword_exit(self):
+        target, python, bootstrap, caller, env, site_marker = self.windows_launcher_fixture()
+        expected = ["", "中文 空格", "amp & value", "%PATH%", "!bang!", "apostrophe's",
+                    "(parens)", "end slash\\", 'a"b']
+        arguments = r'''"" "中文 空格" "amp & value" "%PATH%" "!bang!" "apostrophe's" "(parens)" "end slash\\" "a\"b"'''
+        # Measure cmd's localized output independently of the product trampoline.
+        # Keep the reference ASCII: even B's absolute path may contain Unicode.
+        env = dict(env, VT_TEST_REFERENCE_PYTHON=str(bootstrap))
+        (target / "bin/shell-reference.cmd").write_bytes((
+            "@echo off\r\n"
+            "setlocal EnableExtensions DisableDelayedExpansion\r\n"
+            'set "ERRORLEVEL="\r\n'
+            '"%VT_TEST_REFERENCE_PYTHON%" -I -S -X utf8 -c "import os,sys; '
+            "sys.stdin.read(); sys.exit(int(os.environ['VT_TEST_EXIT']))\"\r\n"
+            "exit /b %errorlevel%\r\n").encode("ascii"))
+        reference = self.run_windows_shim(
+            target, "shell-reference", caller, dict(env, VT_TEST_EXIT="0"), arguments,
+            raw=True)
+        self.assertEqual(reference.returncode, 0, reference.stdout + reference.stderr)
+        self.assertEqual(reference.stdout, b"")
+        self.assertEqual(reference.stderr, b"")
+        for name in ("vt", "vtx"):
+            for code in (0, 37, 0x80000000, 0xc000013a, 0xffffffff):
+                with self.subTest(name=name, code=code):
+                    signed = code - 0x100000000 if code > 0x7fffffff else code
+                    case_env = dict(env, VT_TEST_EXIT=str(signed))
+                    raw = code == 0xc000013a
+                    result = self.run_windows_shim(
+                        target, name, caller, case_env, arguments, raw=raw)
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                    if raw:
+                        reference = self.run_windows_shim(
+                            target, "shell-reference", caller, case_env, arguments, raw=True)
+                        self.assertEqual(reference.returncode, code,
+                                         reference.stdout + reference.stderr)
+                        self.assertEqual(result.stderr, reference.stderr)
+                        self.assertTrue(result.stdout.endswith(reference.stdout),
+                                        (result.stdout[-4096:], reference.stdout[-4096:]))
+                        # Remove only the complete measured shell suffix. Empty
+                        # suffixes retain all JSON; extra product output still fails.
+                        payload = result.stdout[:len(result.stdout) - len(reference.stdout)]
+                        observed = json.loads(payload.decode("utf-8", "strict"))
+                    else:
+                        observed = json.loads(result.stdout)
+                    self.assertEqual(os.path.normcase(observed["executable"]),
+                                     os.path.normcase(str(python)))
+                    self.assertEqual(os.path.normcase(observed["prefix"]),
+                                     os.path.normcase(str(python.parent.parent)))
+                    self.assertEqual(observed["argv"], expected)
+                    self.assertEqual(observed["cwd"], str(caller))
+                    self.assertEqual(observed["token"], "only-in-bound-A")
+                    self.assertEqual(observed["stdin"], "stdin fixture\n")
+            result = self.run_windows_shim(target, name, target / "bin", env, delayed=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)["argv"], ["delayed"])
+        self.assertFalse(site_marker.exists())
+        moved = self.root / "搬迁 & %PATH% !target!"
+        target.rename(moved)
+        for name in ("vt", "vtx"):
+            result = self.run_windows_shim(moved, name, caller, env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)["token"], "only-in-bound-A")
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows cmd/executables")
+    def test_windows_shims_fail_closed_without_bound_python_or_bootstrap(self):
+        target, python, bootstrap, caller, env, _ = self.windows_launcher_fixture()
+        for binding in (self.root / "missing-python.exe", self.root / "invalid-python.exe"):
+            if binding.name.startswith("invalid"):
+                binding.write_text("not an executable\n", encoding="ascii")
+            self.write_shims(target, str(binding))
+            for name in ("vt", "vtx"):
+                with self.subTest(binding=binding, name=name):
+                    result = self.run_windows_shim(target, name, caller, env)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("cannot start installed Python", result.stderr)
+                    self.assertIn("--upgrade --dir", result.stderr)
+                    self.assertEqual(result.stdout, "")
+        self.write_shims(target, str(python))
+        empty = self.root / "empty-path"
+        empty.mkdir()
+        for name in ("vt", "vtx"):
+            result = self.run_windows_shim(target, name, caller, dict(env, PATH=str(empty)))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no Python bootstrap found", result.stderr)
+            self.assertEqual(result.stdout, "")
+
+    @unittest.skipUnless(os.name == "nt", "requires an owned native Windows console")
+    def test_windows_launcher_waits_for_console_signal_cleanup(self):
+        # Exercise the added trampoline, not cmd's pre-existing Ctrl-C prompt or
+        # venv redirectors. Distinct-venv binding is covered by real cmd above.
+        # Only a private CREATE_NEW_CONSOLE controller may broadcast. Never attach
+        # to the test runner's console, or use taskkill/PIDs for cleanup.
+        target = self.selected
+        python = getattr(sys, "_base_executable", sys.executable)
+        self.write_shims(target, python)
+        (target / "vt.py").write_text(r'''
+import json, os, signal, sys, time
+from pathlib import Path
+case = os.environ["VT_SIGNAL_CASE"]
+def cleanup(*_):
+    time.sleep(0.6)  # Longer than subprocess.call's KeyboardInterrupt grace.
+    Path(os.environ["VT_CLEANUP"]).write_text("cleaned", encoding="ascii")
+    sys.exit(37)
+if case != "default_break":
+    signal.signal(signal.SIGINT if case == "int" else signal.SIGBREAK, cleanup)
+ready = Path(os.environ["VT_READY"])
+staging = ready.with_suffix(".tmp")
+staging.write_text(json.dumps(dict(
+    pid=os.getpid(), case=case, executable=sys.executable)), encoding="ascii")
+staging.replace(ready)
+# If safety validation fails, no event is sent and this fixture self-terminates.
+deadline = float(os.environ["VT_FIXTURE_DEADLINE"])
+while time.monotonic() < deadline:
+    time.sleep(0.05)
+sys.exit(99)
+''', encoding="ascii")
+        controller = self.root / "private-console-controller.py"
+        controller.write_text(r'''
+import ctypes, json, os, signal, subprocess, sys, time
+from ctypes import wintypes as w
+from pathlib import Path
+k = ctypes.WinDLL("kernel32", use_last_error=True)
+def api(name, result, *args):
+    function = getattr(k, name)
+    function.restype, function.argtypes = result, args
+    return function
+close = api("CloseHandle", w.BOOL, w.HANDLE)
+console = api("GetConsoleProcessList", w.DWORD, ctypes.POINTER(w.DWORD), w.DWORD)
+open_process = api("OpenProcess", w.HANDLE, w.DWORD, w.BOOL, w.DWORD)
+wait = api("WaitForSingleObject", w.DWORD, w.HANDLE, w.DWORD)
+terminate = api("TerminateProcess", w.BOOL, w.HANDLE, w.UINT)
+times = api("GetProcessTimes", w.BOOL, w.HANDLE, *([ctypes.POINTER(w.FILETIME)] * 4))
+generate = api("GenerateConsoleCtrlEvent", w.BOOL, w.DWORD, w.DWORD)
+input_cp = api("GetConsoleCP", w.UINT)
+output_cp = api("GetConsoleOutputCP", w.UINT)
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+def console_pids():
+    entries = (w.DWORD * 64)()
+    count = console(entries, len(entries))
+    require(0 < count <= len(entries), "unknown/truncated console membership")
+    return set(entries[:count])
+def identity(handle):
+    values = [w.FILETIME() for _ in range(4)]
+    require(times(handle, *(ctypes.byref(value) for value in values)), "process times failed")
+    return (values[0].dwHighDateTime << 32) | values[0].dwLowDateTime
+own = os.getpid()
+require(console_pids() == {own}, "controller did not start in an exclusive console")
+codepages = (input_cp(), output_cp())
+require(all(codepages), "console code pages unavailable")
+signal.signal(signal.SIGINT, lambda *_: None)
+signal.signal(signal.SIGBREAK, lambda *_: None)
+child, handles, identities, owned = None, {}, {}, set()
+expires = time.monotonic() + 15
+try:
+    child = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=dict(os.environ, VT_FIXTURE_DEADLINE=str(expires)))
+    ready = Path(os.environ["VT_READY"])
+    deadline = time.monotonic() + 10
+    while not ready.exists() and time.monotonic() < deadline:
+        require(child.poll() is None, "bootstrap exited before readiness")
+        time.sleep(0.02)
+    require(ready.exists(), "application readiness timed out")
+    record = json.loads(ready.read_text("ascii"))
+    require(record["case"] == os.environ["VT_SIGNAL_CASE"], "stale readiness")
+    require(os.path.normcase(record["executable"]) == os.path.normcase(os.environ["VT_BOUND"]),
+            "wrong application interpreter")
+    require(child.poll() is None, "bootstrap exited before signal validation")
+    members = {own, child.pid, record["pid"]}
+    require(len(members) == 3 and console_pids() == members, "unexpected console process")
+    for pid in members:
+        # Hold query/synchronize/terminate handles, not just reusable numeric PIDs.
+        handle = open_process(0x1000 | 0x100000 | 1, False, pid)
+        require(handle, "cannot pin console process identity")
+        handles[pid] = handle
+        identities[pid] = identity(handle)
+    require(identities[own] <= identities[child.pid] <= identities[record["pid"]],
+            "unexpected process creation order")
+    # Enumeration and broadcast are not atomic. A dedicated, non-shared console
+    # plus two matching observations fails closed on every observed change.
+    require(console_pids() == members, "console membership changed")
+    require(all(wait(handle, 0) == 258 and identity(handle) == identities[pid]
+                for pid, handle in handles.items()), "process identity/liveness changed")
+    require(child.poll() is None, "owned bootstrap exited before signal")
+    owned = members - {own}
+    event = 0 if os.environ["VT_SIGNAL_CASE"] == "int" else 1
+    require(generate(event, 0), "console event failed")
+    stdout, stderr = child.communicate(timeout=12)
+    require((input_cp(), output_cp()) == codepages, "console code pages changed")
+    print(json.dumps(dict(code=child.returncode, members=len(members),
+                          stdout=stdout.decode("utf-8"), stderr=stderr.decode("utf-8"))))
+finally:
+    failed, errors = sys.exc_info()[0] is not None, []
+    # Before validation we cannot claim to reap A. Wait past its absolute fixture
+    # deadline (not 15 seconds after startup) before temporary-directory cleanup.
+    if child is not None and not owned:
+        time.sleep(max(0, expires + 1 - time.monotonic()))
+    # Every retained, verified handle gets a cleanup attempt; never look up PIDs
+    # afresh. One shared five-second budget bounds all waits, not five per object.
+    deadline = time.monotonic() + 5
+    for pid in owned:
+        handle = handles[pid]
+        try:
+            if wait(handle, 0) == 258 and identity(handle) == identities[pid]:
+                require(terminate(handle, 98), "owned process cleanup failed")
+        except Exception as exc:
+            errors.append(str(exc))
+    try:
+        if child is not None and child.poll() is None:
+            child.terminate()  # Popen's already-owned process handle only.
+            child.wait(timeout=max(0, deadline - time.monotonic()))
+    except Exception as exc:
+        errors.append(str(exc))
+    for pid in owned:
+        try:
+            require(wait(handles[pid], max(0, int((deadline - time.monotonic()) * 1000))) == 0,
+                    "owned process cleanup timed out")
+        except Exception as exc:
+            errors.append(str(exc))
+    for handle in handles.values():
+        if not close(handle):
+            errors.append("CloseHandle failed")
+    if errors:
+        print("; ".join(errors), file=sys.stderr)
+        if not failed:
+            raise RuntimeError("private console cleanup failed")
+''', encoding="ascii")
+        for case in ("int", "break", "default_break"):
+            with self.subTest(case=case):
+                ready, cleaned = self.root / (case + "-ready"), self.root / (case + "-cleaned")
+                signal_env = dict(os.environ, VT_SIGNAL_CASE=case, VT_READY=str(ready),
+                                  VT_CLEANUP=str(cleaned), VT_BOUND=python)
+                result = subprocess.run(
+                    [python, "-I", "-S", str(controller), python, "-I", "-S",
+                     "-X", "utf8", str(target / "bin/_vt_launcher.py"), "vt"],
+                    cwd=self.root, env=signal_env, capture_output=True, text=True,
+                    encoding="utf-8", timeout=35, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                observation = json.loads(result.stdout)
+                self.assertEqual(observation["members"], 3)
+                self.assertEqual(observation["code"],
+                                 0xc000013a if case == "default_break" else 37, observation)
+                if case == "default_break":
+                    self.assertFalse(cleaned.exists())
+                else:
+                    self.assertEqual(cleaned.read_text("ascii"), "cleaned")
 
     def test_explicit_undo_dry_run_has_no_registry_write(self):
         before = self.value
