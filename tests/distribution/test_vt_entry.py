@@ -19,6 +19,7 @@
 运行：bash scripts/run_all_tests.sh。既有冒烟子进程用 env python3；自有 init
 fixture 用当前测试解释器的 -I -B 子进程，隔离环境注入与源码字节码写入。
 """
+import contextlib
 import json
 import os
 import shutil
@@ -314,15 +315,119 @@ class FixLinks(unittest.TestCase):
                          (REPO / "vtx").resolve())
 
 
+class PythonProbeEncoding(unittest.TestCase):
+    """Real Python probes; legacy parent decoding is simulated, not Windows QA."""
+
+    def setUp(self):
+        import vt
+        self.vt = vt
+        temporary = tempfile.TemporaryDirectory(prefix="vt-probe-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "中文 & probe"
+        self.root.mkdir()
+        self.script = self.root / "health.py"
+        self.env = {"HOME": str(self.root), "USERPROFILE": str(self.root), "PATH": "",
+                    "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0",
+                    "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+        if "SystemRoot" in os.environ:
+            self.env["SYSTEMROOT"] = os.environ["SystemRoot"]
+        self.manifest = {"health": {"type": "command", "command": "health.py"}}
+
+    @contextlib.contextmanager
+    def legacy_defaults(self):
+        # Real pipes/processes, but force cp1252 for unspecified text decoding
+        # on every platform/Python version. Binary capture is left untouched.
+        popen = subprocess.Popen
+
+        def legacy_popen(*args, **kwargs):
+            if (kwargs.get("text") or kwargs.get("universal_newlines")) and not kwargs.get("encoding"):
+                kwargs["encoding"] = "cp1252"
+            return popen(*args, **kwargs)
+
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+             mock.patch.object(subprocess, "Popen", side_effect=legacy_popen), \
+             mock.patch.object(self.vt, "py3", return_value=sys.executable):
+            try:
+                yield
+            finally:
+                self.assertEqual(dict(os.environ), self.env, "probe mutated the parent environment")
+
+    def test_unicode_both_streams_and_exit_status_are_preserved(self):
+        stdout, stderr = "可用 中文路径🐈\r\n第二行\r末行\n", "错误详情：参数 ✓\r\n第二行\r末行\n"
+        for code in (0, 7):
+            with self.subTest(code=code):
+                # Keep the requested newline bytes on Windows too, without
+                # overriding the encoding supplied by the production helper.
+                self.script.write_text(
+                    "import sys\nsys.stdout.reconfigure(newline='')\nsys.stderr.reconfigure(newline='')\n"
+                    "sys.stdout.write(%r)\nsys.stderr.write(%r)\nraise SystemExit(%d)\n"
+                    % (stdout, stderr, code), encoding="utf-8")
+                with self.legacy_defaults():
+                    result = self.vt._python_probe([sys.executable, str(self.script)], timeout=10)
+                self.assertEqual(result.returncode, code)
+                self.assertEqual(result.stdout, "可用 中文路径🐈\n第二行\n末行\n")
+                self.assertEqual(result.stderr, "错误详情：参数 ✓\n第二行\n末行\n")
+
+    def test_invalid_utf8_in_either_stream_is_not_silent_success(self):
+        for stream in ("stdout", "stderr"):
+            with self.subTest(stream=stream):
+                self.script.write_text("import sys\nsys.%s.buffer.write(b'valid\\xffinvalid')\n" % stream,
+                                       encoding="utf-8")
+                with self.legacy_defaults(), self.assertRaises(UnicodeDecodeError):
+                    self.vt._python_probe([sys.executable, str(self.script)], timeout=10)
+                with self.legacy_defaults():
+                    ok, detail = self.vt._probe_health(self.manifest, self.root)
+                self.assertFalse(ok)
+                self.assertIn("health 探测失败", detail)
+                self.assertIn("utf-8", detail)
+
+    def test_health_preserves_unicode_and_nonzero_failure(self):
+        for code in (0, 7):
+            with self.subTest(code=code):
+                self.script.write_text("print('可用 中文路径🐈')\nraise SystemExit(%d)\n" % code,
+                                       encoding="utf-8")
+                with self.legacy_defaults():
+                    ok, detail = self.vt._probe_health(self.manifest, self.root)
+                self.assertEqual(ok, code == 0)
+                self.assertEqual(detail, "exit %d｜可用 中文路径🐈" % code)
+
+    def test_health_timeout_remains_failure_and_is_forwarded(self):
+        with self.legacy_defaults(), \
+             mock.patch.object(subprocess, "run", side_effect=subprocess.TimeoutExpired("health.py", 10)) as run:
+            ok, detail = self.vt._probe_health(self.manifest, self.root)
+        self.assertFalse(ok)
+        self.assertIn("health 探测超时", detail)
+        run.assert_called_once_with([sys.executable, str(self.script)], capture_output=True,
+                                    env=dict(self.env, PYTHONIOENCODING="utf-8"), timeout=10)
+
+    def test_native_sh_does_not_inherit_python_probe_encoding_policy(self):
+        with mock.patch.object(subprocess, "run") as run:
+            self.vt.sh(["native-tool", "--version"], timeout=3)
+        run.assert_called_once_with(["native-tool", "--version"], capture_output=True, text=True, timeout=3)
+
+
 class CanonicalInitEntry(unittest.TestCase):
     """Canonical initialization preserves JSON structure across caller directories."""
     def setUp(self):
         self.checkout = OwnedInitCheckout(self)
 
     def test_init_json_key_structure(self):
+        self.checkout.env.update(PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
         r = self.checkout.run()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "", "init must not hide a reader-thread exception")
         d = json.loads(r.stdout)
+        self.assertTrue(d["vtx_cli"]["ok"], d["vtx_cli"])
+        self.assertTrue(d["audit_bundle"]["ok"], d["audit_bundle"])
+        record = json.loads(self.checkout.log.read_text(encoding="utf-8"))
+        self.assertEqual([Path(argv[1]).name for argv in record["help_commands"]],
+                         ["vtx.py", "audit_bundle.py"])
+        self.assertEqual(len(record["help_results"]), 2)
+        for result, description in zip(record["help_results"],
+                                       ("vtx 视频剪辑中间层", "BGM 分轨审计包生成器")):
+            self.assertEqual(result["returncode"], 0, result)
+            self.assertIn(description, result["stdout"])
+            self.assertEqual(result["stderr"], "")
         missing = [k for k in INIT_KEYS if k not in d]
         self.assertEqual(missing, [], f"init --json 缺既有结构键：{missing}")
         # 每项都是 {ok, detail} 形（既有 JSON 结构）
@@ -330,6 +435,18 @@ class CanonicalInitEntry(unittest.TestCase):
             self.assertEqual(sorted(v), ["detail", "ok"], f"{k} 结构不符")
         self.assertEqual((self.checkout.repo / "config.local.json").read_bytes(),
                          (self.checkout.repo / "config.example.json").read_bytes())
+
+    def test_init_invalid_probe_output_is_not_reported_healthy(self):
+        for stream in ("stdout", "stderr"):
+            with self.subTest(stream=stream):
+                (self.checkout.repo / "vtx/vtx.py").write_text(
+                    "import sys\nsys.%s.buffer.write(b'bad\\xffoutput')\n" % stream,
+                    encoding="utf-8")
+                result = self.checkout.run()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("UnicodeDecodeError", result.stderr)
+                self.assertNotIn("Exception in thread", result.stderr)
 
     def test_init_via_vt_equivalent(self):
         cfg_file = self.checkout.repo / "config.local.json"

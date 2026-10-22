@@ -125,6 +125,8 @@ music_tools mixer 产出），避开母带 loudnorm(-14 LUFS) 与母带 IR 尾�
 `python3 -m bgm_gen`（PYTHONPATH=`bgm.repo`）——三通道全败才 fail-hard
 （打印逐通道缺什么，含 config 通道的具体坏路径 + exit 1，不静默回落裸提取）。
 
+`bgm render ... --quiet` 与 `bgm show structure --json` 的 stdout（包括前置日志和尾部 JSON）须为 UTF-8，成功退出但含非法字节时插件会在解析及写入 `_complete.json` 前拒收。
+
 ## 关停测试（§0.2）
 
 卸载本插件：写了 `bgm` 键的 timeline validate FAIL（三分支报「未安装——vt plugins

@@ -6,6 +6,7 @@ Doctor health/dependency subprocesses and HTTP remain mocked; no ASR/IME probes.
 import argparse
 import ast
 import contextlib
+import hashlib
 import importlib
 import io
 import json
@@ -254,6 +255,119 @@ class TemplateLayout(unittest.TestCase):
         self.assertIn("apps/*/tests plugins/*/tests templates/*/tests", runner)
         self.assertEqual({p.parent.name for p in (REPO / "templates").glob("*/tests")},
                          {"hello-app", "hello-plugin"})
+
+
+class TemplateFreezeProbe(unittest.TestCase):
+    """Standalone template JSON boundary; real pipes, not FFprobe or media evidence."""
+
+    def setUp(self):
+        self.freeze = runpy.run_path(
+            str(REPO / "templates/tech-talk/scripts/freeze.py"), run_name="freeze_fixture")
+        temporary = tempfile.TemporaryDirectory(prefix="template-freeze-probe-")
+        self.addCleanup(temporary.cleanup)
+        self.project = Path(temporary.name)
+        self.media = self.project / "out/final.mp4"
+        self.media.parent.mkdir()
+        # Only bytes for the fingerprint. No test invokes FFprobe on this file.
+        self.artifact = b"controlled probe fixture, not media\n"
+        self.media.write_bytes(self.artifact)
+
+    def capture(self, stdout, stderr=b"", code=0):
+        popen = subprocess.Popen
+        calls = []
+        worker = ("import sys\n"
+                  f"sys.stdout.buffer.write({stdout!r})\n"
+                  f"sys.stderr.buffer.write({stderr!r})\n"
+                  f"raise SystemExit({code})\n")
+
+        def controlled_popen(command, **kwargs):
+            calls.append((command, dict(kwargs)))
+            # Exercise real pipe decoding under a legacy default, even on UTF-8
+            # hosts. Binary capture and the parent locale remain unchanged.
+            if (kwargs.get("text") or kwargs.get("universal_newlines")) and not kwargs.get("encoding"):
+                kwargs["encoding"] = "cp1252"
+            return popen([sys.executable, "-c", worker], **kwargs)
+
+        with mock.patch.object(shutil, "which", return_value="fixture-ffprobe"), \
+                mock.patch.object(subprocess, "Popen", side_effect=controlled_popen):
+            info = self.freeze["probe_file"](str(self.media))
+        self.assertEqual(len(calls), 1)
+        command, kwargs = calls[0]
+        self.assertEqual(command, ["fixture-ffprobe", "-v", "error", "-print_format", "json",
+                                   "-show_format", "-show_streams", str(self.media)])
+        self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(kwargs["stderr"], subprocess.PIPE)
+        for option in ("text", "universal_newlines", "encoding", "errors"):
+            self.assertFalse(kwargs.get(option), option)
+        self.assertEqual(set(info), {"path", "md5", "size_bytes", "ffprobe"})
+        self.assertEqual(info["path"], os.path.join("out", "final.mp4"))
+        self.assertEqual(info["md5"], hashlib.md5(self.artifact).hexdigest())
+        self.assertEqual(info["size_bytes"], len(self.artifact))
+        self.assertEqual(self.media.read_bytes(), self.artifact)
+        self.assertFalse((self.project / "out/FREEZE.json").exists())
+        self.assertFalse((self.project / "CHANGELOG.md").exists())
+        return info["ffprobe"]
+
+    def test_utf8_json_ignores_unrelated_unicode_fields_and_unused_stderr(self):
+        video = dict(codec_name="h264", width=640, height=360, r_frame_rate="30/1", pix_fmt="yuv420p")
+        audio = dict(codec_name="aac", sample_rate="48000", channels=2, bit_rate="128000")
+        document = {"format": {"duration": "2.000000", "bit_rate": "256000",
+                                "filename": "可用/中文 final.mp4", "tags": {"title": "非消费字段"}},
+                    "streams": [dict(video, codec_type="video", tags={"title": "可用视频"}),
+                                dict(audio, codec_type="audio", tags={"title": "可用音频"})]}
+        payload = json.dumps(document, ensure_ascii=False).encode("utf-8")
+        with self.assertRaises(UnicodeDecodeError):
+            payload.decode("cp1252")
+        result = self.capture(payload, stderr=b"unused diagnostic: \x81\xff")
+        self.assertEqual(result, {"duration_s": "2.000000", "bit_rate": "256000",
+                                  "video": video, "audio": audio})
+
+    def test_invalid_utf8_stays_explicit_failure_not_metadata(self):
+        for invalid in (b"\xff", b"\xc0\xaf", b"\xe4\xb8", b"\xed\xa0\x80", b"\xf4\x90\x80\x80"):
+            with self.subTest(invalid=invalid):
+                payload = b'{"format":{"filename":"' + invalid + b'"},"streams":[]}'
+                result = self.capture(payload)
+                self.assertTrue(result.startswith("（ffprobe 执行失败已跳过："), result)
+                self.assertIn("utf-8", result)
+
+    def test_malformed_json_and_non_utf8_json_encodings_stay_failures(self):
+        document = '{"format":{},"streams":[]}'
+        payloads = [b"{", b"null", b"[]", document.encode("utf-8-sig"),
+                    document.encode("utf-16"), document.encode("utf-32")]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                result = self.capture(payload)
+                self.assertTrue(result.startswith("（ffprobe 执行失败已跳过："), result)
+
+    def test_nonzero_exit_stays_check_true_failure_even_with_valid_json(self):
+        result = self.capture(b'{"format":{},"streams":[]}', stderr=b"diagnostic \xff", code=7)
+        self.assertTrue(result.startswith("（ffprobe 执行失败已跳过："), result)
+        self.assertIn("non-zero exit status 7", result)
+
+    def test_timeout_and_launch_failure_keep_degraded_result_and_options(self):
+        for error in (subprocess.TimeoutExpired("fixture-ffprobe", 60), OSError("fixture launch failure")):
+            with self.subTest(error=type(error).__name__), \
+                    mock.patch.object(shutil, "which", return_value="fixture-ffprobe"), \
+                    mock.patch.object(subprocess, "run", side_effect=error) as run:
+                info = self.freeze["probe_file"](str(self.media))
+                self.assertEqual(info["ffprobe"], f"（ffprobe 执行失败已跳过：{error}）")
+                run.assert_called_once_with(
+                    ["fixture-ffprobe", "-v", "error", "-print_format", "json",
+                     "-show_format", "-show_streams", str(self.media)],
+                    capture_output=True, timeout=60, check=True)
+
+    def test_missing_tool_skips_and_missing_artifact_still_raises(self):
+        with mock.patch.object(shutil, "which", return_value=None), \
+                mock.patch.object(subprocess, "run") as run:
+            info = self.freeze["probe_file"](str(self.media))
+            self.assertEqual(info["ffprobe"], "（ffprobe 不可用，已跳过元数据字段）")
+            run.assert_not_called()
+        with mock.patch.object(shutil, "which") as which, \
+                mock.patch.object(subprocess, "run") as run:
+            with self.assertRaises(FileNotFoundError):
+                self.freeze["probe_file"](str(self.project / "missing.mp4"))
+            which.assert_not_called()
+            run.assert_not_called()
 
 
 class DocsSmokeTemplateCoverage(unittest.TestCase):
