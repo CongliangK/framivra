@@ -45,7 +45,7 @@ import urllib.request
 import zlib
 
 from .gfx_cli import png_invalid_reason, verify_frames
-from .browser_paths import chrome_names, chrome_install_paths
+from .browser_paths import find_chrome_candidate
 
 try:
     import numpy  # noqa: F401
@@ -454,16 +454,9 @@ class Browser:
     def _find_chrome(self):
         if self.chrome:
             return
-        for c in chrome_names():
-            if c and (shutil.which(c) or os.path.isfile(c)):
-                self.chrome = c
-                return
-        if sys.platform == "win32":   # Windows 标准安装路径（含 (x86) 的系统自带 Edge）
-            for c in chrome_install_paths(sys.platform, include_user=False):
-                if os.path.isfile(c):
-                    self.chrome = c
-                    return
-        raise RuntimeError("no chrome found")
+        self.chrome = find_chrome_candidate(sys.platform)
+        if not self.chrome:
+            raise RuntimeError("no chrome found")
 
     def start(self):
         self._find_chrome()

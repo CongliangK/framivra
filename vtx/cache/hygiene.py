@@ -92,10 +92,11 @@ class CleanupPlan(dict):
     Metadata is not a category: previews and old iteration consumers still see
     exactly the same dict shape. Only sealed plans authorize execution.
     """
-    def __init__(self, c, items, *, nuke=False):
+    def __init__(self, c, items, *, nuke=False, worker_runs=()):
         super().__init__(items)
         self.root = Path(os.path.abspath(c.root))
         self.nuke = nuke
+        self.worker_runs = tuple(Path(os.path.abspath(p)) for p in worker_runs)
         self.identities = {}
         for entries in self.values():
             for path, _, _ in entries:
@@ -120,7 +121,13 @@ class CleanupPlan(dict):
                 path = Path(os.path.abspath(path))
                 if path not in self.identities:
                     raise ProjectPathError(f"拒绝清理 {path}：条目不在原计划中")
-                fstxn.remove_pinned(path, self.identities[path], preserve=self.preserve)
+                guard = next((run for run in self.worker_runs if run == path or run in path.parents), None)
+                if guard is None:
+                    fstxn.remove_pinned(path, self.identities[path], preserve=self.preserve)
+                else:
+                    from ..runtime.proc_supervisor import WORKER_LEDGER
+                    fstxn.remove_pinned(path, self.identities[path], preserve=self.preserve,
+                                        retain_if_present=(guard, WORKER_LEDGER))
 
 
 def cleanup_children(c, path):
@@ -628,8 +635,24 @@ def gc_plan(c, keep_days: int = 0):
         if d.exists(): add("vseg", d, "分段渲染中间物（可再生）")
     for x in [c.cache / "qc_clean.mp4", c.cache / "subs.ass", c.cache / "subs_draft.ass"]:
         if x.exists(): add("legacy", x, "一次性中间物（可再生）")
+    worker_runs = []
+    from ..runtime.proc_supervisor import WORKER_LEDGER
     for x in cleanup_children(c, c.cache / TMP):
         if x.is_dir() and cleanup_allowed(c, x) and x.stat().st_mtime < time.time() - 86400:
+            info = x.lstat()
+            if stat.S_ISDIR(info.st_mode) and not getattr(info, 'st_file_attributes', 0) & 0x400:
+                # GC never parses or reaps worker ledgers. Even broken/stale
+                # markers belong to the supervisor. Links/junctions remain
+                # unlink-only leaves; never inspect their targets for markers.
+                try:
+                    (x / WORKER_LEDGER).lstat()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    continue
+                else:
+                    continue
+                worker_runs.append(x)
             add("tmp", x, "tmp 孤儿（>24h）")
     # out/ 一次性中间物（成片/回执/VERSIONS/history/reports 不动）
     # issue #31（B07）：fstxn 残件 .VERSIONS.json.<rand>.tmp 同理不进 out_keep
@@ -644,7 +667,7 @@ def gc_plan(c, keep_days: int = 0):
     if keep_days:
         for cat in ("gfx", "seg", "audio", "plugin_cache", "legacy", "vseg"):
             plan[cat] = [e for e in plan[cat] if not fresh(e[0])]
-    return CleanupPlan(c, retain_media_markers(c, plan))
+    return CleanupPlan(c, retain_media_markers(c, plan), worker_runs=worker_runs)
 
 
 def gc(c, do: bool, deep: bool = False, keep_days: int = 0):

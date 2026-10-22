@@ -103,7 +103,7 @@ def cleanup_identity(path):
     return tuple(result)
 
 
-def remove_pinned(path, expected, *, preserve):
+def remove_pinned(path, expected, *, preserve, retain_if_present=None):
     """Delete relative to pinned no-follow directory descriptors, never paths.
 
     The plan binds the whole ancestry including the project/cache/out root.
@@ -115,12 +115,24 @@ def remove_pinned(path, expected, *, preserve):
     and deletes by handle. There is no unsafe path-based fallback.
     This protects namespace substitution, not a hostile process physically
     moving unrelated protected inodes into an authorized garbage directory.
+    retain_if_present=(directory, basename) optionally retains a candidate when
+    its pinned directory/ancestor contains any such entry. It does not parse the
+    marker or synchronize with producers creating it after the check.
     """
     if expected is None:
         return
+    path = Path(os.path.abspath(path))
+    if retain_if_present is not None:
+        directory, marker = retain_if_present
+        directory = Path(os.path.abspath(directory))
+        if ((directory != path and directory not in path.parents)
+                or not isinstance(marker, str) or not marker or marker in ('.', '..')
+                or Path(marker).name != marker):
+            raise ValueError('retention guard requires an ancestor directory and marker basename')
+        retain_if_present = directory, marker
     if os.name == 'nt':
         from .windows_cleanup import remove_pinned as windows_remove_pinned
-        return windows_remove_pinned(path, expected, preserve)
+        return windows_remove_pinned(path, expected, preserve, retain_if_present)
     # #56 语义：清理侧（删除）无降级——缺 fd 原语的平台显式拒绝（实时探测
     # os.supports_dir_fd，不走写侧降级缓存；与写路径的 #59 降级契约互不覆盖）。
     if (not getattr(os, 'O_NOFOLLOW', 0) or not getattr(os, 'O_DIRECTORY', 0)
@@ -128,7 +140,6 @@ def remove_pinned(path, expected, *, preserve):
             or os.stat not in os.supports_follow_symlinks
             or os.listdir not in os.supports_fd):
         raise _cleanup_error(path, "平台不支持安全 dir_fd/O_NOFOLLOW 清理")
-    path = Path(os.path.abspath(path))
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     descriptors = []
     try:
@@ -136,11 +147,31 @@ def remove_pinned(path, expected, *, preserve):
         descriptors.append(fd)
         if entry_identity(os.fstat(fd)) != expected[0]:
             raise _cleanup_error(path, "计划根身份已变化")
+        guard_fd = fd if retain_if_present and retain_if_present[0] == Path(path.anchor) else None
         for index, name in enumerate(path.parts[1:-1], 1):
             fd = os.open(name, flags, dir_fd=fd)
             descriptors.append(fd)
             if entry_identity(os.fstat(fd)) != expected[index]:
                 raise _cleanup_error(path, "计划祖先身份已变化")
+            if retain_if_present and Path(*path.parts[:index + 1]) == retain_if_present[0]:
+                guard_fd = fd
+        # Validate the complete planned chain/leaf before the optional retention
+        # decision, preserving identity-refusal precedence. Never inspect a
+        # replacement pathname instead of the directory pinned above.
+        if retain_if_present:
+            if entry_identity(os.stat(path.name, dir_fd=fd, follow_symlinks=False)) != expected[-1]:
+                raise _cleanup_error(path, "计划条目身份已变化")
+            if retain_if_present[0] == path:
+                guard_fd = os.open(path.name, flags, dir_fd=fd)
+                descriptors.append(guard_fd)
+                if entry_identity(os.fstat(guard_fd)) != expected[-1]:
+                    raise _cleanup_error(path, "目录在打开时被置换")
+            try:
+                os.stat(retain_if_present[1], dir_fd=guard_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                return
         remove_at(fd, path.name, expected[-1], what=path, preserve=preserve)
     except FileNotFoundError:
         # Another collector already removed the entry/ancestor. No deletion is

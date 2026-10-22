@@ -105,18 +105,10 @@ user timeline, and is not a production auto-editor.
 
 ### Attribution coverage boundary
 
-- Reached validation predicates: retain precise rule, original index, measurement,
-  constraint and suggested action; an ordinary producer failure is handled.
-- Direct required-field/iterable access and other annotated loading operations:
-  retain precise diagnostics for the exact exception raised by that operation.
-- Native preparation operations: retain operation-level evidence without inventing a
-  completed validation or QC finding. Provider failures remain identified as provider
-  evidence rather than a guessed input defect.
-- Opaque I/O/callback interruptions: retain the original exception as unknown at
-  `$`; a later malformed field is not evidence of the cause. Validation is not
-  rerun after loading fails.
-
-The structural regression matrix distinguishes these categories explicitly.
+The structural regression matrix distinguishes the precise predicate, native-operation,
+provider and opaque-interruption evidence defined in the [JSON contract](#json-contract).
+Opaque I/O/callback interruptions retain the original exception as unknown at `$`.
 Unknown opaque failures are not counted as precise hard-gate coverage. Full
 Issue #100 acceptance requires the source-operation catalog, independent review,
-repair-to-green fixture and relevant aggregate results on the exact candidate. A changed-file count is not a diagnostic-path inventory.
+repair-to-green fixture and relevant aggregate results on the exact candidate.
+A changed-file count is not a diagnostic-path inventory.

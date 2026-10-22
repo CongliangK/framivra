@@ -1,5 +1,6 @@
-"""Shared browser candidates; callers own lookup and failure policies."""
+"""Shared browser discovery; callers own failure policies."""
 import os
+import shutil
 
 
 def chrome_names():
@@ -26,3 +27,11 @@ def chrome_install_paths(platform, *, include_user=True):
                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
     return ()
+
+
+def find_chrome_candidate(platform):
+    """Return the first available candidate, retaining its name/path spelling."""
+    for candidate in (*chrome_names(), *chrome_install_paths(platform)):
+        if candidate and (shutil.which(candidate) or os.path.isfile(candidate)):
+            return candidate
+    return None

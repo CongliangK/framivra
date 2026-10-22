@@ -82,6 +82,18 @@ class WindowsCleanup(unittest.TestCase):
             self.remove()
         self.assertTrue((self.target / 'new.lock').is_file())
 
+    def test_marker_guard_retains_pinned_root_and_ancestor(self):
+        for leaf in (self.target, self.target / 'data'):
+            with self.subTest(leaf=leaf):
+                expected = fstxn.cleanup_identity(leaf)
+                marker = self.target / '.worker_pgid.json'
+                marker.write_text('unsettled')
+                fstxn.remove_pinned(leaf, expected, preserve=lambda p: False,
+                                    retain_if_present=(self.target, marker.name))
+                self.assertEqual((self.target / 'data').read_text(), 'owned')
+                self.assertEqual(marker.read_text(), 'unsettled')
+                marker.unlink()
+
     def test_junction_ancestor_refused(self):
         outside = self.root / 'outside'; outside.mkdir()
         (outside / 'data').write_text('protected')
@@ -94,6 +106,30 @@ class WindowsCleanup(unittest.TestCase):
             with pinned(link, directory=True):
                 self.fail('junction accepted')
         self.assertEqual((outside / 'data').read_text(), 'protected')
+
+    def test_gc_internal_junction_remains_unlink_only(self):
+        from types import SimpleNamespace
+        from vtx.cache import hygiene
+        from vtx.runtime.proc_supervisor import WORKER_LEDGER
+        cache = self.root / 'cache'
+        run = cache / 'tmp' / 'worker'
+        run.mkdir(parents=True)
+        (run / 'data').write_text('owned')
+        (run / WORKER_LEDGER).write_text('unsettled')
+        os.utime(run, (1, 1))
+        link = run.with_name('alias')
+        result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(run)], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.addCleanup(lambda: link.rmdir() if link.exists() else None)
+        c = SimpleNamespace(root=self.root, cache=cache, out=self.root / 'out')
+        with patch.object(hygiene, '_current_keys', return_value=(set(), set(), set())), \
+                patch.object(hygiene._plugin_hooks, 'get_cache_dirs', return_value=set()), \
+                patch.object(hygiene._plugin_hooks, 'get_cache_dir_keys', return_value={}):
+            plan = hygiene.gc_plan(c)
+        plan.execute()
+        self.assertFalse(os.path.lexists(link))
+        self.assertEqual((run / 'data').read_text(), 'owned')
+        self.assertTrue((run / WORKER_LEDGER).is_file())
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows Job Objects required')
