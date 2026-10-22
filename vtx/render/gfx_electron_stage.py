@@ -1,5 +1,4 @@
 """Fail-closed public Electron scheduling/completion, separate from legacy CDP fallback."""
-import hashlib
 import json
 import re
 import os
@@ -75,13 +74,14 @@ def require_result(st, frames, outdir, width, height, *, expected_html=None, exp
             reject("missing/duplicate/out-of-order frame receipt")
         for r in receipts:
             p = Path(outdir) / f"f{r['frame']:04d}.png"
+            fingerprint = []
             if (type(r.get('frame')) is not int or p.resolve(strict=True) != p
                     or r.get('url') != frame_url(expected_html, r['frame'])
                     or r.get('output') != str(p)
                     or r.get("path") != OUTPUT or r.get("page_error_fence_passed") is not True
                     or r.get("baseline_veto_passed") is not True or r.get("png_semantics_passed") is not True
-                    or gfx_cli.png_invalid_reason(p, width=width, height=height)
-                    or r.get("sha256") != hashlib.sha256(p.read_bytes()).hexdigest()):
+                    or gfx_cli.png_invalid_reason(p, width=width, height=height, _fingerprint=fingerprint)
+                    or r.get("sha256") != fingerprint[0]):
                 reject("frame verification")
     except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
         reject(str(exc))

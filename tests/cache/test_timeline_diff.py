@@ -413,6 +413,54 @@ class TestEmptyVideoTracks(_Base):
 
 
 class TestAdvice(_Base):
+    def test_duck_strategy_add_remove_change_and_unchanged(self):
+        """静态避让参数只影响音频；同值对照仍是无变化。"""
+        strategy = {"mode": "static", "global_db": -8}
+        changed = {"mode": "static", "global_db": -6}
+        for label, before, after in (("add", None, strategy),
+                                     ("remove", strategy, None),
+                                     ("change", strategy, changed),
+                                     ("unchanged", strategy, strategy)):
+            with self.subTest(label=label):
+                old, new = _tl(), _tl()
+                for tl, value in ((old, before), (new, after)):
+                    bed = tl["audio_tracks"][1]
+                    bed["duck"] = False  # 动态与静态避让互斥。
+                    if value is not None:
+                        bed["duck_strategy"] = copy.deepcopy(value)
+                res = self.diff(old, new)
+                touched = before != after
+                self.assertEqual([e["path"] for e in res["entries"]],
+                                 ["audio_tracks[bed].duck_strategy"] if touched else [])
+                self.assertEqual(res["impact"]["stages"], {
+                    "validate": touched, "prepare": False, "gfx": False,
+                    "video": False, "audio": touched, "mux": touched, "qc": touched})
+                self.assertEqual(res["impact"]["vseg_invalid"]["count"], 0)
+                if touched:
+                    self.assertEqual(res["entries"][0]["category"], "patch")
+                    self.assertIn("patch_script", res["advice"]["recommended_path"])
+                    self.assertGreater(res["impact"]["estimated_seconds"]["audio"], 0)
+
+    def test_project_duration_rebuilds_audio_tail(self):
+        """项目时基影响混音；fps 子例仅测历史 diff，不声明运行时支持。"""
+        for key, before, after in (("duration_frames", 360, 420),
+                                   ("duration_frames", 420, 360),
+                                   ("duration_frames", 360, 360),
+                                   ("fps", 30, 60), ("fps", 60, 30), ("fps", 30, 30)):
+            with self.subTest(key=key, before=before, after=after):
+                old, new = _tl(), _tl()
+                old["project"][key] = before
+                new["project"][key] = after
+                res = self.diff(old, new)
+                touched = before != after
+                self.assertEqual([e["path"] for e in res["entries"]],
+                                 [f"project.{key}"] if touched else [])
+                self.assertEqual(res["impact"]["stages"], {
+                    "validate": touched, "prepare": False, "gfx": touched and key == "fps",
+                    "video": touched, "audio": touched, "mux": touched, "qc": touched})
+                if touched:
+                    self.assertGreater(res["impact"]["estimated_seconds"]["audio"], 0)
+
     def test_geometry_goes_generator(self):
         def fn(tl):
             tl["video_tracks"][0]["clips"][0]["dur"] += 10

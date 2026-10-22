@@ -127,9 +127,9 @@ def render_page(html_path, outdir, n_frames, *, width=1920, height=1080,
             continue
         target = outdir / f"f{f:04d}.png"
         try:
-            reason = png_invalid_reason(target, width=width, height=height)
-            digest = hashlib.sha256(target.read_bytes()).hexdigest()
-            if (reason or digest != receipt.get("sha256") or receipt.get("path") != output
+            fingerprint = []
+            reason = png_invalid_reason(target, width=width, height=height, _fingerprint=fingerprint)
+            if (reason or fingerprint[0] != receipt.get("sha256") or receipt.get("path") != output
                     or receipt.get("url") != frame_url(page, f)
                     or receipt.get("output") != str(target) or target.resolve() != target):
                 errors[str(f)] = f"output_verification:{reason or 'receipt mismatch'}"

@@ -38,7 +38,7 @@ def pinned(path, *, delete=False, directory=False):
         kernel.CloseHandle(handle)
 
 
-def remove_pinned(path, expected, preserve):
+def remove_pinned(path, expected, preserve, retain_if_present=None):
     from .fstxn import entry_identity, _cleanup_error
     path = Path(os.path.abspath(path))
     chain = list(reversed(path.parents))
@@ -48,19 +48,31 @@ def remove_pinned(path, expected, preserve):
                 _, info, _ = stack.enter_context(pinned(ancestor, directory=True))
                 if entry_identity(info) != expected[index]:
                     raise ValueError('cleanup ancestor identity changed')
-            _remove(path, expected[-1], preserve)
+            _remove(path, expected[-1], preserve, retain_if_present)
     except FileNotFoundError:
         return
     except (OSError, ValueError) as error:
         raise _cleanup_error(path, f'Windows pinned cleanup refused ({error})') from error
 
 
-def _remove(path, expected, preserve):
+def _remove(path, expected, preserve, retain_if_present=None):
     from .fstxn import entry_identity
     # Deleting a reparse leaf removes the link itself, never its destination.
     with pinned(path, delete=True) as (handle, info, kernel):
         if entry_identity(info) != expected:
             raise ValueError('cleanup entry identity changed')
+        # Every ancestor and the selected leaf are pinned before this lookup.
+        # Any marker type retains; permission/I/O uncertainty fails closed.
+        if retain_if_present:
+            directory, marker = retain_if_present
+            if directory == path and (not stat.S_ISDIR(info.st_mode) or info.st_file_attributes & 0x400):
+                raise ValueError('retention directory is a reparse point or not a directory')
+            try:
+                (directory / marker).lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                return False
         if preserve(path):
             return False
         if stat.S_ISDIR(info.st_mode) and not info.st_file_attributes & 0x400:

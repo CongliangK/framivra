@@ -201,7 +201,8 @@ jobs:
     # 解包,非 file:// 捷径)→ 中文/空格/& 目录安装 → 新 shell(注册表重建
     # PATH)运行 vt doctor 成功门。
     # 注意:vt doctor 在 Windows 全绿依赖 doctor 面修复(PR-A1)先行合入;
-    # Windows 全测试套件适配是 #54 后续范围,本 job 只跑跨平台安装安全套件。
+    # Windows 全测试套件适配是 #54 后续范围;本 job 跑跨平台安装安全套件、
+    # 安装端到端及两项定向原生清理回归,不代表 Windows 全套测试。
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -220,6 +221,13 @@ jobs:
       - name: Run cross-platform installer safety suite
         shell: pwsh
         run: python -m unittest tests.safety.test_install_py_safety -v
+      - name: Run two native Windows cleanup regressions (zero skips)
+        shell: pwsh
+        run: |
+          python -c "import os, sys; from scripts.ci_checks import strict_suite; sys.exit(strict_suite(sys.argv[1:]) if os.name == 'nt' else 'Windows native cleanup checks require Windows')" `
+            tests.distribution.test_windows_native.WindowsCleanup.test_gc_internal_junction_remains_unlink_only `
+            tests.distribution.test_windows_native.WindowsCleanup.test_marker_guard_retains_pinned_root_and_ancestor
+          if ($LASTEXITCODE -ne 0) { throw "Windows native cleanup regressions failed" }
       - name: Build git-archive payload and serve it locally
         shell: pwsh
         run: |

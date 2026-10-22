@@ -4,19 +4,9 @@
 
 ## 当前实现矩阵
 
-Core API 发行版本取自 `vtx.__version__`（源码版本声明见 [VERSION](../../VERSION)），不在本表复制版本号。下表描述本仓 [兼容门实现](../../vtx/pluginlib/compatibility.py)，不外推未来版本。插件自己的 `version` 与协议标识独立。
+版本源、允许协议及 hooks、拒绝未知协议和先 core 后协议的顺序以 [ARCHITECTURE §2.3](../ARCHITECTURE.md#23-manifest-schema-v1) 为准；[兼容门实现](../../vtx/pluginlib/compatibility.py) 不外推未来版本。core 低于下限或检测版本不可解析即拒绝，不再检查协议。协议字符串带空白/前缀同样拒绝，不做版本猜测或范围协商；旧 prepare 草案签名不支持。允许的协议仍须通过声明/实现对账。
 
-显式 `requires.core` 必须先通过：低于下限或内核版本不可解析即拒绝，不再检查协议；不能用协议版本绕过内核门。core 门通过后的协议结果如下：
-
-| requires.plugin_protocol | 允许的 hooks | 运行时结果 |
-| --- | --- | --- |
-| `"1.1"` | prepare_source、audio_events、validate | 支持；仍须通过声明/实现对账 |
-| `"1.2"` | 上行 + probe_source、finish | 支持；仍须通过声明/实现对账 |
-| `"1.0"` 或未知版本 | 无 | 拒绝；旧 prepare 草案签名不支持 |
-| 空串、带空白/前缀、非字符串等 | 无 | 拒绝；不做版本猜测/范围协商 |
-| 缺字段 | 现有已知 hooks | 未版本化路径，非矩阵认证 |
-
-内置 denoise、duck-static、bgm-render、blender-bridge 均未声明协议字段，保留现有行为；前两者还未声明 core 下限。缺少单个约束字段只跳过对应门，不跳过另一个显式约束；整个 `requires` 对象缺失仍是 schema 错误。顶层未知 `protocol` 字段继续按额外字段处理，不参与兼容判断。
+内置 denoise、duck-static、bgm-render、blender-bridge 均未声明协议字段，保留现有已知 hooks 行为，属于未版本化路径而非矩阵认证；前两者还未声明 core 下限。缺少单个约束字段只跳过对应门，不跳过另一个显式约束。
 
 ## 内核最低要求
 
