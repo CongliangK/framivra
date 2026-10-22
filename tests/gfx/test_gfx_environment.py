@@ -252,6 +252,51 @@ with patch.object(subprocess, 'run', side_effect=results):
         self.assertNotIn(b'UnicodeEncodeError', result.stderr)
         self.assertFalse(json.loads((output / 'results.json').read_text(encoding='utf-8'))['pass'])
 
+        # Exercise the real summary expression without launching the media run;
+        # provenance is diagnostic evidence, not an additional pass predicate.
+        import ast
+        tree = ast.parse(script.read_text(encoding='utf-8'), filename=str(script))
+        summary = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == 'summary'
+                               for target in node.targets))
+        source_hashes = next(value for key, value in zip(summary.keys, summary.values)
+                             if isinstance(key, ast.Constant) and key.value == 'source_sha256')
+        expression = compile(ast.Expression(source_hashes), str(script), 'eval')
+        fixture_repo = self.root / 'source-repo'
+        source_root = fixture_repo / 'vtx'
+        sources = {
+            'pluginlib/__init__.py': b'# plugin package\n',
+            'media/nested/event.py': b'VALUE = 1\n',
+            'media/__init__.py': b'# media package\n',
+            'event.py': b'VALUE = 0\n',
+            '__init__.py': b'# root package\n',
+        }
+        for name, content in sources.items():
+            path = source_root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        (source_root / 'media' / 'README.txt').write_text('not Python')
+        (fixture_repo / 'outside.py').write_text('# not in the package\n')
+
+        def collect_source_hashes():
+            return eval(expression, {'repo': fixture_repo, 'hashlib': hashlib})
+
+        with self.subTest(contract='recursive source paths preserve same basenames'):
+            before = collect_source_hashes()
+            self.assertEqual(list(before), sorted(sources))
+            self.assertEqual(before, {name: hashlib.sha256(content).hexdigest()
+                                      for name, content in sources.items()})
+        with self.subTest(contract='one changed byte updates only its nested digest'):
+            changed = source_root / 'media' / 'nested' / 'event.py'
+            saved = changed.stat()
+            changed.write_bytes(b'VALUE = 2\n')
+            os.utime(changed, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+            after = collect_source_hashes()
+            self.assertEqual(list(after), list(before))
+            self.assertEqual(after['media/nested/event.py'], hashlib.sha256(b'VALUE = 2\n').hexdigest())
+            self.assertEqual([name for name in before if before[name] != after[name]],
+                             ['media/nested/event.py'])
+
     def test_reparse_telemetry_directory_and_pma_fail_closed(self):
         original = Path.lstat
         for target in (self.setup, self.pma):

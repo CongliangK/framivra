@@ -176,7 +176,7 @@ class InputIdentityGuard(unittest.TestCase):
         self.assertFalse((self.c.out / 'receipt.json').exists())
 
     def test_subtitles_changed_during_resolution_are_rejected(self):
-        from vtx import subtitles_src
+        from vtx.media import subtitles_src
         self.tl['subtitles_src'] = 'subtitles.json'
         self.tl.pop('subtitles')
         self.path.write_text(json.dumps(self.tl))

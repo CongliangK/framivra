@@ -14,7 +14,7 @@ from .infra import Ctx, run_parallel
 from .diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
                           source_structure, mark_handled, operation)
 from . import fstxn, recovery
-from .audio_filters import event_chain
+from .media.audio_filters import event_chain
 from .pluginlib import hooks as _plugin_hooks
 from .pluginlib import registry as _plugin_registry
 
@@ -229,7 +229,7 @@ def validate(c: Ctx):
                     err(f"""切割越界: {field(tr, 'name', tp)} src={field(cl, 'src', cp)} src_out={field(cl, 'src_out', cp)} > 实测 {operation(c, lambda: observe("i['nb_frames']", i['nb_frames']), path=cp, rule='probe.metadata_operation', operands={'operation': "i['nb_frames']"}, source={'provider': 'source facts', 'provider_path': "'nb_frames'"}, status='unknown')}""", cp + '.src_out', 'validate.clip_source_bounds', {'value': observed.get(key_path(cp, 'src_out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get("i['nb_frames']", {'status': 'not_observed'}), 'unit': 'frames'})
             clip_fade(cl, cp, tr, tp)
     # v2 subtitles_src（§1.1 条目 6）：加载点解析错误在此 FAIL——互斥/文件缺失/
-    # 解析失败（infra.Ctx 构造期记入，语义裁定见 vtx/subtitles_src.py 模块头）。
+    # 解析失败（infra.Ctx 构造期记入，语义裁定见 vtx/media/subtitles_src.py 模块头）。
     for e in getattr(c, "subtitles_errors", []):
         err(e, "$.subtitles_src", 'validate.subtitle_source', None, None)
     for si, s in indexed(c, field(c.tl, "subtitles", "$"), "$.subtitles"):

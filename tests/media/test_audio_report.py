@@ -516,7 +516,7 @@ class TestSharedEventFilters(unittest.TestCase):
 
     def test_canonical_primitive_and_exact_event_boundaries(self):
         from vtx import stages
-        from vtx.audio_filters import event_chain
+        from vtx.media.audio_filters import event_chain
         self.assertIs(ar.event_chain, event_chain)
         self.assertIs(stages.event_chain, event_chain)
         for fps in (24, 30):
@@ -551,7 +551,7 @@ class TestSharedEventFilters(unittest.TestCase):
                 self.assertIn('adelay=delays=166.667', report[0])
 
     def test_fade_edge_values_preserve_production_policy(self):
-        from vtx.audio_filters import event_chain
+        from vtx.media.audio_filters import event_chain
         c = _event_context()
         base = {'src': 'a', 'in': 0, 'out': 10, 'volume': 1}
         for value in (0, 10, 20, -1, float('inf'), float('-inf'), float('nan')):
