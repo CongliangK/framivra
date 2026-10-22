@@ -78,6 +78,20 @@ class Diagnostics(unittest.TestCase):
                 self.assertIsNotNone(found[0]['measured'])
                 self.assertIsNotNone(found[0]['threshold'])
                 self.assertTrue(found[0]['suggested_actions'])
+        for missing_source in (False, True):
+            t = copy.deepcopy(base)
+            cl = t['video_tracks'][0]['clips'][0]
+            cl['fade_in_frames'] = 'bad'
+            if missing_source:
+                cl['src'] = 'unknown'
+                expected = 'validate.clip_source'
+            else:
+                del cl['src_in']
+                expected = 'validate.clip_source_range'
+            records, code = self.validate(t, {'source.mp4': facts})
+            self.assertEqual(code, 1)
+            self.assertIn(expected, [r['rule_id'] for r in records])
+            self.assertNotIn('validate.clip_fade', [r['rule_id'] for r in records])
         for rule, changes in [('validate.source_fps', {'fps':24}),
                               ('validate.source_audio', {'has_audio':False}),
                               ('validate.clip_video', {'has_video':False})]:
@@ -111,6 +125,16 @@ class Diagnostics(unittest.TestCase):
                 self.assertEqual(found[0]['json_path'], '$.video_tracks[0].clips[0]')
                 self.assertEqual(found[0]['measured'], {'value': 11, 'unit': 'frames'})
                 self.assertEqual(found[0]['threshold'], {'max': 10, 'unit': 'frames'})
+
+        for effects in ({}, {'fade_in_frames': 'bad'}):
+            t = timeline()
+            t['video_tracks'] = [{'name': 'gfx', 'kind': 'gfx', 'clips': [
+                dict(src='page.html', dst_in=-1, **effects)]}]
+            records, code = self.validate(t)
+            self.assertEqual(code, 1)
+            bounds = next(r for r in records if r['rule_id'] == 'validate.clip_bounds')
+            self.assertEqual(bounds['measured']['end'], {'status': 'not_observed'})
+            self.assertNotIn('validate.clip_fade', [r['rule_id'] for r in records])
 
     def test_unknown_is_warning_runtime_small_canvas_is_valid(self):
         t = timeline(); t['unrecognized'] = True
