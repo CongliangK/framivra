@@ -25,6 +25,7 @@ import plistlib
 import struct
 import uuid
 import stat
+from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA = 'vtx.gfx-environment/1'
 CHROME_VISUAL_FLAGS = ('--headless', '--disable-gpu', '--hide-scrollbars',
@@ -267,7 +268,58 @@ def _darwin_cache(path, loaded_uuid):
                 or subheader[88:104] != record[:16]):
             raise EnvironmentError(f'mismatched Darwin dyld subcache: {member}')
         paths.append(member)
-    return {'uuid': str(uuid.UUID(bytes=loaded_uuid)), 'files': _files(paths)}
+    return {'uuid': str(uuid.UUID(bytes=loaded_uuid)), 'files': _darwin_cache_files(paths)}
+
+
+def _darwin_cache_files(paths):
+    """Hash a validated Darwin cache closure with a small bounded worker pool."""
+    ordered = sorted(set(map(str, paths)))
+    if len(ordered) < 2:
+        return _files(ordered)
+
+    # Keep _files' path normalization and result ordering, while allowing the
+    # large independent cache members to be read and hashed concurrently.
+    with ThreadPoolExecutor(max_workers=min(4, len(ordered))) as executor:
+        pending = [executor.submit(_file, path) for path in ordered]
+        results = [future.result() for future in pending]
+    return dict(sorted(results))
+
+
+def _collect_darwin_renderer(backend, executable, root, architecture, mode):
+    """Collect renderer inputs independent of the active system cache bytes."""
+    runtime = _darwin_bundle(root)
+    if not any('/Frameworks/' in p for p in runtime['files']):
+        raise EnvironmentError('Darwin Chrome framework distribution is missing')
+    if backend == 'cef' and not any('Chromium Embedded Framework.framework/' in p for p in runtime['files']):
+        raise EnvironmentError('Darwin CEF framework distribution is missing')
+    dependencies = _darwin_dependencies(root, runtime)
+    application_domains = _darwin_application_domains(root, dependencies)
+    boot = _command(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid']).strip()
+    if not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', boot):
+        raise EnvironmentError('unknown Darwin host/boot identity')
+    version = _command([str(executable), '--sanity' if backend == 'cef' else '--version']).strip()
+    if not version:
+        raise EnvironmentError('empty actual Darwin renderer version')
+    system = _files(['/System/Library/CoreServices/SystemVersion.plist', '/usr/lib/dyld'] +
+                    ([Path('/etc/localtime')] if Path('/etc/localtime').exists() else []))
+    browser = _files([executable])
+    return {'browser': browser, 'version': version, 'runtime': {str(root): runtime},
+            'architecture': architecture, 'dependencies': dependencies,
+            'application_domains': application_domains,
+            'host_boot': {'boot_session_uuid': boot, 'hostname': platform.node()},
+            'os': list(platform.uname()), 'system_locale': system,
+            'tools': _files(['/usr/sbin/sysctl']),
+            'environment': {k: os.environ.get(k) for k in sorted(set(PIXEL_ENV) |
+                             {k for k in os.environ if k.startswith(('LC_', 'DYLD_', '__XPC_DYLD_', '__CF_'))})},
+            'launch_flags': (list(CHROME_VISUAL_FLAGS) if backend == 'cdp' else
+                             ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
+                              '--use-mock-keychain']),
+            'protocol': {'device_scale': 1, 'color': 'srgb',
+                         'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
+            'python_runtime': _python_runtime(),
+            'implementation': _files([_ROOT / p for p in (
+                'render/gfx_environment.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
+                'render/gfx_cef.py', 'render/cef_client.py')])}
 
 
 def _darwin_font_inventory():
@@ -329,13 +381,23 @@ def _darwin_application_domains(root, dependencies):
     return sorted(domains)
 
 
-def _darwin_fonts(libraries, application_domains):
+def _darwin_font_catalog():
+    """Collect CoreText inputs independent of application preference domains."""
     paths, names = _darwin_font_inventory()
     if not paths or not names or any(not Path(p).is_absolute() for p in paths):
         raise EnvironmentError('unknown/empty CoreText font inventory')
+    resources = _tree(Path(_CORETEXT) / 'Resources')
+    return {'files': _files(paths), 'tools': _files([sys.executable, _ROOT / 'render/gfx_environment.py']),
+            'urls': paths, 'postscript_names': names, 'resources': resources}
+
+
+def _darwin_fonts(libraries, application_domains, catalog=None):
+    if catalog is None:
+        catalog = _darwin_font_catalog()
+    paths, names = catalog['urls'], catalog['postscript_names']
+    resources = catalog['resources']
     # NSUserDefaults searches the application domain before the global domain.
     # Hash only the named preference files, never Chrome profiles or raw values.
-    resources = _tree(Path(_CORETEXT) / 'Resources')
     preferences = []
     domains = sorted(set(application_domains) | {'.GlobalPreferences', 'com.apple.CoreText', 'com.apple.ATS'})
     names_by_domain = {domain + '.plist' for domain in domains}
@@ -364,11 +426,10 @@ def _darwin_fonts(libraries, application_domains):
         preferences.extend(selected)
     configs = {value[0]: value[1] for value in resources.values()}
     configs.update(_files(preferences))
-    return {'files': _files(paths), 'configs': configs,
+    return {'files': catalog['files'], 'configs': configs,
             'inventory': {'urls': paths, 'postscript_names': names, 'resources': resources,
                           'application_domains': application_domains},
-            'tools': _files([sys.executable, _ROOT / 'render/gfx_environment.py']),
-            'libraries': libraries}
+            'tools': catalog['tools'], 'libraries': libraries}
 
 
 def _collect_darwin(backend, binary, mode):
@@ -389,43 +450,29 @@ def _collect_darwin(backend, binary, mode):
             or (backend == 'cdp' and info.get('CFBundleIdentifier') != 'com.google.Chrome')):
         raise EnvironmentError('Darwin resolver supports the Google Chrome app bundle only')
     architecture = _darwin_native(executable)
-    cache = _darwin_cache(*_darwin_dyld())
+    cache_path, cache_uuid = _darwin_dyld()
+    # Cache bytes, renderer inputs, and CoreText inputs are independent identity axes.
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        cache_future = executor.submit(_darwin_cache, cache_path, cache_uuid)
+        renderer_future = executor.submit(_collect_darwin_renderer, backend, executable, root,
+                                         architecture, mode)
+        font_future = executor.submit(_darwin_font_catalog)
+        cache = cache_future.result()
+        renderer = renderer_future.result()
+        font_catalog = font_future.result()
     libraries = cache['files']
-    runtime = _darwin_bundle(root)
-    if not any('/Frameworks/' in p for p in runtime['files']):
-        raise EnvironmentError('Darwin Chrome framework distribution is missing')
-    if backend == 'cef' and not any('Chromium Embedded Framework.framework/' in p for p in runtime['files']):
-        raise EnvironmentError('Darwin CEF framework distribution is missing')
-    dependencies = _darwin_dependencies(root, runtime)
-    application_domains = _darwin_application_domains(root, dependencies)
-    boot = _command(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid']).strip()
-    if not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', boot):
-        raise EnvironmentError('unknown Darwin host/boot identity')
-    version = _command([str(executable), '--sanity' if backend == 'cef' else '--version']).strip()
-    if not version:
-        raise EnvironmentError('empty actual Darwin renderer version')
-    system = _files(['/System/Library/CoreServices/SystemVersion.plist', '/usr/lib/dyld'] +
-                    ([Path('/etc/localtime')] if Path('/etc/localtime').exists() else []))
+    fonts = _darwin_fonts(libraries, renderer['application_domains'], font_catalog)
     return {'schema': SCHEMA, 'status': 'input-bound', 'pixel_equivalence': 'unproven',
             'backend': backend, 'mode': mode, 'platform_resolver': 'darwin-arm64-' + backend + '/1',
-            'browser': _files([executable]), 'version': version,
-            'runtime': {str(root): runtime}, 'libraries': libraries,
-            'system_cache': cache, 'architecture': architecture, 'dependencies': dependencies,
-            'fonts': _darwin_fonts(libraries, application_domains),
-            'host_boot': {'boot_session_uuid': boot, 'hostname': platform.node()},
-            'os': list(platform.uname()), 'system_locale': system,
-            'tools': _files(['/usr/sbin/sysctl']),
-            'environment': {k: os.environ.get(k) for k in sorted(set(PIXEL_ENV) |
-                             {k for k in os.environ if k.startswith(('LC_', 'DYLD_', '__XPC_DYLD_', '__CF_'))})},
-            'launch_flags': (list(CHROME_VISUAL_FLAGS) if backend == 'cdp' else
-                             ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
-                              '--use-mock-keychain']),
-            'protocol': {'device_scale': 1, 'color': 'srgb',
-                         'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
-            'python_runtime': _python_runtime(),
-            'implementation': _files([_ROOT / p for p in (
-                'render/gfx_environment.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
-                'render/gfx_cef.py', 'render/cef_client.py')])}
+            'browser': renderer['browser'], 'version': renderer['version'],
+            'runtime': renderer['runtime'], 'libraries': libraries,
+            'system_cache': cache, 'architecture': renderer['architecture'],
+            'dependencies': renderer['dependencies'], 'fonts': fonts,
+            'host_boot': renderer['host_boot'], 'os': renderer['os'],
+            'system_locale': renderer['system_locale'], 'tools': renderer['tools'],
+            'environment': renderer['environment'], 'launch_flags': renderer['launch_flags'],
+            'protocol': renderer['protocol'], 'python_runtime': renderer['python_runtime'],
+            'implementation': renderer['implementation']}
 
 
 def _windows_registry(root, name):

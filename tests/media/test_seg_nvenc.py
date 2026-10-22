@@ -19,7 +19,7 @@ import os
 import sys
 import threading
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -473,6 +473,11 @@ class TestNvencBudget(unittest.TestCase):
                     def __init__(self, count): workers.append(count)
                     def __enter__(self): return self
                     def __exit__(self, *args): pass
+                    def submit(self, fn, *args):
+                        future = Future()
+                        try: future.set_result(fn(*args))
+                        except BaseException as exc: future.set_exception(exc)
+                        return future
                     def map(self, fn, items): return map(fn, items)
                 with mock.patch.dict(os.environ, {'VTX_NVENC_BUDGET': str(configured)}), \
                         mock.patch.object(composite, 'choose_cutpoints', return_value=[1, 2, 3]), \
@@ -488,6 +493,228 @@ class TestNvencBudget(unittest.TestCase):
                 self.assertEqual(workers, [expected])
                 self.assertEqual(guard.call_count, 0 if encoder == 'x264' else 1)
 
+
+    def test_native_arm64_x264_schedules_heavier_segments_first_and_reorders_results(self):
+        import tempfile
+        from vtx.pipeline import composite
+
+        with tempfile.TemporaryDirectory() as temp:
+            c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=12,
+                                dry=False, gpu=False, run=mock.Mock())
+            layers = [
+                {"cl": {"dst_in": 0, "dur": 12}},
+                {"cl": {"dst_in": 0, "dur": 5}},
+                {"cl": {"dst_in": 7, "dur": 5}},
+            ]
+            plan = composite.RenderPlan(c, False, 1, 1280, 720,
+                                        layers=layers, nseg=4)
+            submitted, worker_counts, observed_ranges = [], [], []
+
+            class Executor:
+                def __init__(self, count): worker_counts.append(count)
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def submit(self, fn, *args):
+                    submitted.append(args[0])
+                    future = Future()
+                    try: future.set_result(fn(*args))
+                    except BaseException as exc: future.set_exception(exc)
+                    return future
+                def map(self, fn, items): return map(fn, items)
+
+            class Observation:
+                def __init__(self, metadata): self.metadata = metadata
+                def call(self, fn, *args):
+                    observed_ranges.append(self.metadata["frame_range"])
+                    return fn(*args)
+
+            with mock.patch.object(composite, 'choose_cutpoints', return_value=[2, 5, 7]), \
+                    mock.patch.object(composite, 'pick_vcodec', return_value=([], 'x264')), \
+                    mock.patch.object(composite, 'platform') as host_platform, \
+                    mock.patch.object(composite.sys, 'platform', 'darwin'), \
+                    mock.patch.object(composite.os, 'cpu_count', return_value=8), \
+                    mock.patch.object(composite, 'ThreadPoolExecutor', Executor), \
+                    mock.patch.object(composite.events, 'task', side_effect=lambda c, kind, metadata: Observation(metadata)), \
+                    mock.patch.object(plan, '_seg_content_key', return_value='key'), \
+                    mock.patch.object(composite, 'media_cache_valid', return_value=False), \
+                    mock.patch.object(plan, 'composite'), \
+                    mock.patch.object(composite.subprocess, 'run', return_value=SimpleNamespace(stdout='12')):
+                host_platform.machine.return_value = 'arm64'
+                plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
+
+            self.assertEqual(worker_counts, [4])
+            # Estimated work: [4, 6, 4, 10]; ties use the original segment index.
+            self.assertEqual(submitted, [3, 1, 0, 2])
+            self.assertEqual(observed_ranges, [[7, 12], [2, 5], [0, 2], [5, 7]])
+            entries = (Path(temp) / 'vseg' / 'list.txt').read_text().splitlines()
+            self.assertEqual([Path(line[6:-1]).name.split('_')[0] for line in entries],
+                             ['seg00', 'seg01', 'seg02', 'seg03'])
+
+    def test_native_arm64_x264_failure_waits_for_running_segments(self):
+        import tempfile
+        from vtx.pipeline import composite
+
+        with tempfile.TemporaryDirectory() as temp:
+            c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4,
+                                dry=False, gpu=False, run=mock.Mock())
+            plan = composite.RenderPlan(c, False, 1, 640, 480, layers=[], nseg=4)
+            barrier = threading.Barrier(4)
+            finished = set()
+            lock = threading.Lock()
+
+            def composite_segment(_sl, _out, _subs, *, a, b, **_kwargs):
+                barrier.wait(timeout=3)
+                if a == 0:
+                    raise RuntimeError('segment failure')
+                with lock:
+                    finished.add(a)
+
+            with mock.patch.object(composite, 'choose_cutpoints', return_value=[1, 2, 3]), \
+                    mock.patch.object(composite, 'pick_vcodec', return_value=([], 'x264')), \
+                    mock.patch.object(composite.platform, 'machine', return_value='arm64'), \
+                    mock.patch.object(composite.sys, 'platform', 'darwin'), \
+                    mock.patch.object(composite.os, 'cpu_count', return_value=8), \
+                    mock.patch.object(plan, '_seg_content_key', return_value='key'), \
+                    mock.patch.object(composite, 'media_cache_valid', return_value=False), \
+                    mock.patch.object(plan, 'composite', side_effect=composite_segment), \
+                    mock.patch.object(composite.subprocess, 'run', return_value=SimpleNamespace(stdout='4')):
+                with self.assertRaisesRegex(RuntimeError, 'segment failure'):
+                    plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
+
+            self.assertEqual(finished, {1, 2, 3})
+            c.run.assert_not_called()
+
+    def test_native_arm64_x264_failure_cancels_pending_before_join(self):
+        import tempfile
+        from vtx.pipeline import composite
+
+        for phase in ('result', 'submit'):
+            for error_type in (RuntimeError, SystemExit, KeyboardInterrupt):
+                with self.subTest(phase=phase, error=error_type.__name__), \
+                        tempfile.TemporaryDirectory() as temp:
+                    failure = error_type('segment failure')
+                    c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=10,
+                                        dry=False, gpu=False, run=mock.Mock())
+                    plan = composite.RenderPlan(c, False, 1, 640, 480, layers=[], nseg=10)
+                    submitted, started, finished, exits, worker_counts = {}, [], set(), [], []
+
+                    def composite_segment(_sl, _out, _subs, *, a, b, **_kwargs):
+                        if phase == 'result' and a == 0:
+                            raise failure
+                        finished.add(a)
+
+                    def finish(future, fn, si):
+                        try:
+                            future.set_result(fn(si))
+                        except BaseException as exc:
+                            future.set_exception(exc)
+
+                    class Executor:
+                        # Real Future states, deterministic worker scheduling:
+                        # four running jobs and five pending jobs at the failure.
+                        def __init__(self, count):
+                            self.count = count
+                            worker_counts.append(count)
+                        def __enter__(self): return self
+                        def submit(self, fn, si):
+                            if phase == 'submit' and si == 9:
+                                raise failure
+                            future = Future()
+                            future.cancel = mock.Mock(wraps=future.cancel)
+                            future.result = mock.Mock(wraps=future.result)
+                            submitted[si] = future, fn
+                            if sum(f.running() for f, _ in submitted.values()) < self.count:
+                                future.set_running_or_notify_cancel()
+                                started.append(si)
+                            if phase == 'result' and si == 0:
+                                finish(future, fn, si)
+                            return future
+                        def __exit__(self, _type, error, _traceback):
+                            exits.append((error, set(finished),
+                                          {si for si, (f, _) in submitted.items()
+                                           if f.cancelled()}))
+                            # Like shutdown(wait=True), drain every job that was
+                            # not cancelled; it must not cancel pending work itself.
+                            for si, (future, fn) in submitted.items():
+                                if future.done():
+                                    continue
+                                if not future.running():
+                                    future.set_running_or_notify_cancel()
+                                    started.append(si)
+                                finish(future, fn, si)
+
+                    with mock.patch.object(composite, 'choose_cutpoints', return_value=list(range(1, 10))), \
+                            mock.patch.object(composite, 'pick_vcodec', return_value=([], 'x264')), \
+                            mock.patch.object(composite.platform, 'machine', return_value='arm64'), \
+                            mock.patch.object(composite.sys, 'platform', 'darwin'), \
+                            mock.patch.object(composite.os, 'cpu_count', return_value=16), \
+                            mock.patch.object(composite, 'ThreadPoolExecutor', Executor), \
+                            mock.patch.object(plan, '_seg_content_key', return_value='key'), \
+                            mock.patch.object(composite, 'media_cache_valid', return_value=False), \
+                            mock.patch.object(plan, 'composite', side_effect=composite_segment), \
+                            mock.patch.object(composite.subprocess, 'run') as probe:
+                        with self.assertRaises(error_type) as caught:
+                            plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
+
+                    self.assertIs(caught.exception, failure)
+                    self.assertEqual(worker_counts, [4])
+                    running = set(range(1, 5)) if phase == 'result' else set(range(4))
+                    pending = set(range(5, 10)) if phase == 'result' else set(range(4, 9))
+                    self.assertEqual(exits, [(failure, set(), pending)])
+                    self.assertEqual(finished, running)
+                    self.assertEqual(started, list(range(5 if phase == 'result' else 4)))
+                    self.assertEqual(list(submitted), list(range(10 if phase == 'result' else 9)))
+                    for si, (future, _) in submitted.items():
+                        future.cancel.assert_called_once_with()
+                        self.assertEqual(future.result.call_count,
+                                         int(phase == 'result' and si == 0))
+                        self.assertTrue(future.done())
+                    c.run.assert_not_called()
+                    probe.assert_not_called()
+                    self.assertFalse((Path(temp) / 'vseg' / 'list.txt').exists())
+
+    def test_x264_worker_expansion_requires_native_arm64_small_canvas_known_cpu_and_live_run(self):
+        import tempfile
+        from vtx.pipeline import composite
+
+        cases = [
+            ('eligible', 'darwin', 'arm64', 1280, 720, 8, False, 4),
+            ('unknown cpu', 'darwin', 'arm64', 1280, 720, None, False, 2),
+            ('other os', 'linux', 'arm64', 1280, 720, 8, False, 2),
+            ('other arch', 'darwin', 'x86_64', 1280, 720, 8, False, 2),
+            ('4k canvas', 'darwin', 'arm64', 3840, 2160, 8, False, 2),
+            ('dry run', 'darwin', 'arm64', 1280, 720, 8, True, 2),
+        ]
+        for name, os_name, arch, width, height, cpus, dry, expected in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as temp:
+                c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=4,
+                                    dry=dry, gpu=False, run=mock.Mock())
+                plan = composite.RenderPlan(c, False, 1, width, height, layers=[], nseg=4)
+                worker_counts = []
+
+                class Executor:
+                    def __init__(self, count): worker_counts.append(count)
+                    def __enter__(self): return self
+                    def __exit__(self, *args): pass
+                    def submit(self, fn, *args):
+                        future = Future()
+                        try: future.set_result(fn(*args))
+                        except BaseException as exc: future.set_exception(exc)
+                        return future
+                    def map(self, fn, items): return map(fn, items)
+
+                with mock.patch.object(composite, 'choose_cutpoints', return_value=[1, 2, 3]), \
+                        mock.patch.object(composite, 'pick_vcodec', return_value=([], 'x264')), \
+                        mock.patch.object(composite, 'platform') as host_platform, \
+                        mock.patch.object(composite.sys, 'platform', os_name), \
+                        mock.patch.object(composite.os, 'cpu_count', return_value=cpus), \
+                        mock.patch.object(composite, 'ThreadPoolExecutor', Executor), \
+                        mock.patch.object(plan, '_seg_content_key', return_value='key'), \
+                        mock.patch.object(composite, 'media_cache_valid', return_value=True), \
+                        mock.patch.object(composite.subprocess, 'run', return_value=SimpleNamespace(stdout='4')):
+                    host_platform.machine.return_value = arch
+                    plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
+                self.assertEqual(worker_counts, [] if dry else [expected])
 
     def test_concurrency_capped_at_budget(self):
         # 预算 2：8 线程各占 1 槽做 20ms 伪工作，峰值并发必须 ≤2 且全部完成
