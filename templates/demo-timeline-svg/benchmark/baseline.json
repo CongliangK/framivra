@@ -1,0 +1,25 @@
+{
+  "format": "framivra-source-baseline/v1",
+  "baseline_id": "framivra-promo-timeline-svg-30s",
+  "role": "primary-public-demo-and-performance-source",
+  "source": {
+    "repository": "https://github.com/CongliangK/framivra",
+    "commit": "c063185756f6cdcfc6e366ce0b0229ea43106b87",
+    "path": "templates/demo-timeline-svg",
+    "git_tree": "d5c869e3b998bbf61f7a1969293546066275ed17",
+    "provenance": "SOURCES.json",
+    "font_lock": "fonts.lock.json",
+    "vendor_lock": "vendor/scoreweft/SOURCES.json"
+  },
+  "workload": {
+    "timeline": "timeline.json",
+    "duration_frames": 900,
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "gfx_format": "svg-sequence",
+    "audio": "authored premaster bed and the same short cue at both original timeline events"
+  },
+  "scope": "Defines source inputs only; actual engine, toolchain, generated inputs, configuration, measurements, QC and human review are recorded separately.",
+  "usage": "../README.md#主性能基线"
+}

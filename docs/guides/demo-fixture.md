@@ -1,6 +1,8 @@
-# demo-fixture —— standard-demo 输入与公开运行入口（#177 / #91）
+# demo-fixture —— standard-demo 冻结功能与发布回归（#177 / #91）
 
-> 事实 home：本专题是 demo 工程输入包（templates/standard-demo/）与唯一入口
+公开主宣传 Demo 与主性能源已改为 [JSON 时间线作品](../../templates/demo-timeline-svg/README.md#主性能基线)。本页保留旧 standard 功能 fixture；它不是被截断的宣传片，SVG 作品也不替代其 HTML/CDP/CEF、字幕和普通视频覆盖。
+
+> 事实 home：本专题是冻结输入包（templates/standard-demo/）及其入口
 > scripts/demo.py 的说明 home。包内构成与 profile 对照见
 > [输入包说明](../../templates/standard-demo/README.md)。demo.py 只做输入准备与核验，
 > 其 realization.json 中 renderer/QC/CEF 的 UNRUN 不代表后续生产命令的结果。
@@ -45,9 +47,9 @@ env python3 scripts/demo.py verify --project /tmp/demo-quick
 symlink/缺文件/大小或哈希不符 → 非零退出。`--pixels` 附加解码原始像素
 rgb24 全量指纹核验（F2 级证据，默认 verify 已含帧数/尺寸/帧率/PTS/PCM）。
 
-## 公开 standard Demo 生产运行
+## standard 功能 fixture 生产运行
 
-从根 README 的 clone 步骤进入仓库后，在同一个 Bash 会话执行以下步骤。
+以下是功能与发布回归配方，不是主宣传片或新性能基线。完成根 README 的 clone 步骤后，在同一个 Bash 会话执行。
 这是现有生产 CLI 的操作配方，不是本提交已跑通的证明。当前源码的 CDP/CEF
 公开成片及人工视听仍须实际执行；历史 CDP 验收与稳定资格见
 [源码稳定基线](../releases.md)，不能移植为当前版本或 CEF 的 PASS。
@@ -145,7 +147,7 @@ source.commit/source.status、config.json、preflight/prepare/verify 日志和�
 30 fps、12 秒，不把目标值当测量值。实际查看/播放字幕、剪辑点、动效、透明图层
 并听音频后另记判断；命令退出 0、QC 和输入核验都不能代替人工视听。
 
-### 修改、预览、恢复与性能基线
+### 修改、预览、恢复与功能后端对照
 
 只编辑上述项目副本的 gfx/canvas.html 样式或 timeline.json 字幕，保留原始 input。
 例如对 CEF 副本修改 canvas 样式后，仍用原 backend 运行；这些 CEF 步骤需要真实

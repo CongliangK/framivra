@@ -9,8 +9,8 @@
 | `hello-app/` | 最小应用（app）范本：产出独立素材、不进 timeline 管线 | 第三方 app |
 | `hello-plugin/` | 音频插件完整纪律范本：缝 A prepare_source + 三不变量 + 三分支 | 第三方音频插件 |
 | `skill-demo/` | 虚拟歌手搞笑视频工作流包骨架：零依赖纯内核出片 + 验收门 4 道具 | 第三方工作流包 |
-| `standard-demo/` | #177/#91 冻结公开版本化 demo 工程输入包（quick/standard/gfx-stress + benchmark 冻结锚；唯一入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描） | demo 工程输入 |
-| `demo-timeline-svg/` | Linux / macOS arm64 身份实现的 Inkscape 静态 SVG 生产输入；无 SKILL.md，不入 workflow 扫描；原生全链与视听未验收 | [用法与依赖边界](demo-timeline-svg/README.md#实际依赖与字体) |
+| `demo-timeline-svg/` | 主宣传 Demo 与主性能源输入；静态 SVG 作品，新性能实测与视听仍 UNRUN；无 SKILL.md，不入 workflow 扫描 | [源基线、运行与依赖](demo-timeline-svg/README.md#主性能基线) |
+| `standard-demo/` | 旧冻结功能/发布回归输入（quick/standard/gfx-stress 与原 benchmark 锚）；本包入口 `scripts/demo.py`；无 SKILL.md，不入 workflow 扫描 | [功能 fixture](../docs/guides/demo-fixture.md) |
 
 `vt templates list|check` 从 `skill.json` / `SKILL.md` 识别并检查 tech-talk 与 skill-demo；doctor JSON 的工作流检查字段为 `skills`。发现不会执行工作流。hello-app / hello-plugin 由各自组件 manifest 区分，不作为 workflow 检查。
 
@@ -18,7 +18,7 @@
 
 tech-talk 的内部 `templates/` 保存四份工程文档，不展开到集合根。此布局不构成 #91 的干净安装、交互与成片质量验收证据。
 
-消费面公告（2026-10-21，`refactor_docs_structure` 落笔前预审）：本次以本页为 external 注册流程唯一 home，范本只保专有接口；更新 MG 测试与内核预览指针，当前能力和未验收边界不变。[历史公告](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/templates/README.md)保留先前归组记录。本次仅核仓内链接与命令，不宣称用户机器六件 live 挂载已更新。
+消费面公告（2026-10-22，落笔前独立预审）：主 Demo/性能源入口改指现有 JSON 时间线作品，操作统一在其 README；旧功能覆盖、冻结输入、发布门和挂载路径不变。不宣称新全片实测或用户机器 live 挂载已验；[先前公告](https://github.com/CongliangK/framivra/blob/c063185756f6cdcfc6e366ce0b0229ea43106b87/templates/README.md)保留于固定版本。
 
 ## 第三方接入
 

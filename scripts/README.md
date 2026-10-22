@@ -8,7 +8,8 @@
 |---|---|
 | 安装 | `install.sh`、`install_windows.ps1` 是克隆引导；`install.py` 是独立资产安装器。参数先看 `--help`；安装会写入目标目录。 |
 | 新建项目 | `new_project.sh` 使用 `templates/gfx-starter.html`；仅用于全新项目。 |
-| 冻结演示与性能 | `demo.py` 是 [标准演示](../templates/standard-demo/README.md) 入口；`bench_cold.sh` 是显式长测工具，整理目录不运行。冻结输入不因归组重建。 |
+| 主宣传 Demo / 性能源 | 使用模板已有 `build_demo.js` 与产品 `all`；[唯一源基线与用法](../templates/demo-timeline-svg/README.md#主性能基线)，不经 `demo.py`。 |
+| 冻结功能 fixture / 旧长测 | `demo.py` 只准备/核验 [standard-demo](../templates/standard-demo/README.md)；`bench_cold.sh` 保持其旧显式长测用途，不用于新宣传基线。冻结输入不重建。 |
 | 发布 | `release/release_github.py` 执行发布事务；`release/verify_release.py` 核验身份；`release/release_acceptance.py` 在隔离冻结源码上验收。真实发布需要授权。 |
 | 图形基线与证据 | `gfx/gfx_golden.py` 是命令入口，`gfx/gfx_evidence.py` 是验证库；使用说明见 [图形证据](../docs/cache-provenance.md#golden-evidence)。 |
 | 许可政策 | `policy/model_license_policy.py` 被 app/worker 消费；`policy/distribution_license_audit.py` 审计分发归档，不属于测试夹具。 |
