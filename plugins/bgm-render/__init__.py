@@ -52,8 +52,8 @@ sources[] 级键 ``"bgm": true | {"output": "master|premaster|stem:<轨名>",
 config 键（vtx.api.cfg_get）：``bgm.cli``（bgm 包装脚本路径，优先）；
 ``bgm.repo``（music_tools 仓根，python3 -m bgm_gen 兜底通道的 PYTHONPATH）。
 """
-from vtx.diagnostics import DiagnosticMessage, key_path, emit
-from vtx import fstxn
+from vtx.runtime.diagnostics import DiagnosticMessage, key_path, emit
+from vtx.runtime import fstxn
 import hashlib
 import json
 import math

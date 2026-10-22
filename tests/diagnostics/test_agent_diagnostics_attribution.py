@@ -309,7 +309,7 @@ class AttributionEntryPoint(unittest.TestCase):
 
     def test_direct_access_handles_only_its_own_exception(self):
         from types import SimpleNamespace
-        from vtx.diagnostics import required_field, indexed
+        from vtx.runtime.diagnostics import required_field, indexed
         for operation, value, rule in ((required_field, {}, 'load.required_field'),
                                        (indexed, None, 'load.iterable')):
             records = []

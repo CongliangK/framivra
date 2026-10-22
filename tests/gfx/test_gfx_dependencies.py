@@ -464,7 +464,9 @@ class IntegratedDependencyOperations(unittest.TestCase):
         self.assertEqual(diagnostics[0]['json_path'], '$.video_tracks[0].clips[0].src')
 
     def test_strict_cdp_failure_preserves_failed_attempt_task_and_original_exception(self):
-        from vtx import cli, events, gfx_cli, gfx_render
+        from vtx import cli
+        from vtx.runtime import events
+        from vtx import gfx_cli, gfx_render
         from vtx.infra import Ctx
         from tests.execution.test_execution_events import Buffer
         self.write('page.html', '<p>plain</p>')

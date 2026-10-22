@@ -11,7 +11,9 @@ from pathlib import Path
 from unittest import mock
 
 from tests._support import temporary_root
-from vtx import cache_state, fstxn, hygiene, stages
+from vtx import cache_state
+from vtx.runtime import fstxn
+from vtx import hygiene, stages
 from vtx.infra import Ctx
 
 

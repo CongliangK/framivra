@@ -32,10 +32,7 @@ import subprocess
 import tempfile
 import zlib
 
-if __package__:
-    from . import fstxn
-else:
-    import fstxn
+from .runtime import fstxn
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -495,7 +492,7 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None, *, r
                 staged.insert(2, '--no-first-run')
                 staged.insert(3, '--no-default-browser-check')
                 if os.name == 'nt':
-                    from .windows_browser import run_browser
+                    from .runtime.windows_browser import run_browser
                     proc = run_browser(staged, timeout=timeout)
                 else:
                     proc = subprocess.run(staged, capture_output=True, timeout=timeout)

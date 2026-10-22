@@ -6,11 +6,11 @@
 宿主进程 os.kill(SIGKILL) → 断言（#103 三重防线）：
   ① 守卫 EOF → killpg：Electron 进程组残活成员 == 0（轮询 /proc，僵尸不计）；
   ② 无任何进程的 cwd/argv 还落在监管运行目录内（防 pgid 外漏网，如自换进程组者）；
-  ③ python3 -m vtx.proc_supervisor reap（账本 starttime+boot_id 核验后 killpg）→
+  ③ python3 -m vtx.runtime.proc_supervisor reap（账本 starttime+boot_id 核验后 killpg）→
      cache/tmp 下该运行目录被安全移除：临时目录残留 == 0。
 
 安全边界（09:22 事故铁律）：本脚本只 kill 自己 spawn 的宿主子进程（start_new_session=True
-隔离子进程内跑全部被测代码）；Electron 树的击杀全部由 vtx.proc_supervisor 的守卫与
+隔离子进程内跑全部被测代码）；Electron 树的击杀全部由 vtx.runtime.proc_supervisor 的守卫与
 reap 完成（谱系白名单必经）。自造临时项目锚定在系统 /tmp 下的抛弃目录，不碰仓内
 cache/。演练成功退出 0 并打印 JSON 证据行 DRILL_RESULT <json>。
 """
@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from vtx.infra import Ctx                                        # noqa: E402
 from vtx.hygiene import TMP                                      # noqa: E402
-from vtx.proc_supervisor import (WORKER_LEDGER,                  # noqa: E402
+from vtx.runtime.proc_supervisor import (WORKER_LEDGER,                  # noqa: E402
                                  group_live_members, reap_orphan_workers)
 
 DRIVER = EXP_DIR / "run_gfx_electron_worker.py"

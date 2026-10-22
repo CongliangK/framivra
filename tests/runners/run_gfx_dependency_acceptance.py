@@ -233,7 +233,9 @@ def prepare_font_observation(tab, call, owned_target):
 
 def worker(timeline, trace_path, injection=None, stage="gfx"):
     """Observe actual production calls; never fabricate a Fetch result or pixels."""
-    from vtx import cli, gfx_render, gfx_cli, events, gfx_dependencies
+    from vtx import cli, gfx_render, gfx_cli
+    from vtx.runtime import events
+    from vtx import gfx_dependencies
     from vtx.gfx_dependencies import RequestPolicy
     trace = dict(font_observation_targets=[], protocol=[], requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False,
         screenshot_attempts=0, production_failures=[], propagated_production_failure=False,
@@ -416,7 +418,7 @@ def check_static_failure(trace, expected_reason):
 def check_native_events(path, trace, *, timeline, stage, identity, failed=False,
                         receipt=None, runtime=False, gfx_attempts=None):
     """Required original event validator plus invocation/receipt/failure binding."""
-    from vtx.events import read_events
+    from vtx.runtime.events import read_events
     invocation = trace['invocation']
     assert invocation == dict(stage=stage, timeline=str(timeline),
         timeline_sha256=hashlib.sha256(timeline.read_bytes()).hexdigest(),

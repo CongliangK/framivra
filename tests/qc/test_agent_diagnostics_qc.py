@@ -69,7 +69,7 @@ class TestQCDiagnostics(unittest.TestCase):
                 else:
                     self.assertEqual(len(on[2]['checks']), 11 if params.get('covered') else 12)
                     self.assertEqual(set(on[2]), {'checks', 'skipped_probes', 'quality'})
-                    from vtx.quality import qc_quality
+                    from vtx.runtime.quality import qc_quality
                     self.assertEqual(on[2]['quality'], qc_quality(on[2]))
                     self.assertEqual(enabled.receipts[-1][1],
                                      {'extra': {'skipped_probes': on[2]['skipped_probes']}})

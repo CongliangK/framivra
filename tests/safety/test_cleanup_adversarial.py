@@ -10,7 +10,8 @@ try:
 except ImportError:
     from _support import REPO, SandboxCase
 
-from vtx import fstxn, hygiene
+from vtx.runtime import fstxn
+from vtx import hygiene
 
 
 class NestedCleanupLinks(SandboxCase):

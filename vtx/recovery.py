@@ -10,7 +10,7 @@ import subprocess
 import wave
 from pathlib import Path
 
-from . import fstxn
+from .runtime import fstxn
 
 FORMATS = {'.wav': 'wav', '.mp4': 'mp4', '.mov': 'mov', '.mkv': 'matroska'}
 

@@ -25,7 +25,7 @@ manifest 顶层 schema（"vtx.env_manifest/1"，字段名=issue #102 工单口�
                         与 xdpyinfo 精确识别当前是否运行在 Xvfb 虚拟帧缓冲下
   gpu_driver_and_vram   nvidia-smi 单查（2.0s 超时）→ {"gpus":[…]}；任何失效
                         fail-open 记录字符串 "unavailable"（同源
-                        vtx/encoders._vram_query_used_mib 的安全调用方式）
+                        vtx/media/encoders._vram_query_used_mib 的安全调用方式）
   fonts_fingerprint    {status, required:{<家族>:{status,files:{路径:sha256}}},
                         "sans-serif":{…}}——fc-list : file family 枚举项目必需字体
                         （字幕烧录用 Noto Sans CJK SC=vtx/composite.py ass_head、
@@ -50,7 +50,7 @@ sans-serif 回退）、色彩空间（srgb）、视口尺寸、生效后端（GP
 证据不可得按不兼容处理（无法证明一致 = 不能比像素）。双侧同缺某字体=兼容
 （回退路径一致，回退目标由 sans-serif 指纹另行把关）。
 
-落盘走 vtx/fstxn.atomic_write（同目录 tmp + os.replace）：并发或中断下不产生
+落盘走 vtx/runtime/fstxn.atomic_write（同目录 tmp + os.replace）：并发或中断下不产生
 半截 JSON。CLI：`python3 -m vtx.env_manifest collect|verify --help`。
 
 tests 经 _run_cmd / _read_text / _read_bytes / _list_x_servers 四个 seam 注入桩
@@ -70,10 +70,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-if __package__:   # 包内一律相对导入（vtx/__init__ §1.4）；flat 实例仅限
-    from .fstxn import atomic_write   # `python3 vtx/env_manifest.py` 直跑——
-else:             # atomic_write 无锁无状态，不涉 receipt/manifest 锁裂分面
-    from fstxn import atomic_write
+# 包内一律相对导入（vtx/__init__ §1.4）；CLI 使用 -m vtx.env_manifest。
+from .runtime.fstxn import atomic_write
 
 __all__ = ["collect_env_manifest", "verify_manifest_compatibility",
            "write_manifest", "classify_gl_backend", "main"]
@@ -116,7 +114,7 @@ _X_SERVER_COMMS = ("Xvfb", "Xorg", "Xwayland", "Xvnc")
 def _run_cmd(argv, timeout):
     """安全子进程调用（fail-open）：命令不可得（OSError/FileNotFoundError）、
     超时（TimeoutExpired）或任何 SubprocessError → None，绝不抛出伤采集主链。
-    调用方式同源 vtx/encoders._vram_query_used_mib（capture_output+text+2s 级超时）。"""
+    调用方式同源 vtx/media/encoders._vram_query_used_mib（capture_output+text+2s 级超时）。"""
     try:
         return subprocess.run(list(argv), capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=timeout)
@@ -634,7 +632,7 @@ def verify_manifest_compatibility(manifest_a: dict, manifest_b: dict) -> list:
 
 
 def write_manifest(path, manifest: dict) -> Path:
-    """manifest 落盘（issue #102：走 vtx/fstxn.atomic_write——同目录 tmp +
+    """manifest 落盘（issue #102：走 vtx/runtime/fstxn.atomic_write——同目录 tmp +
     os.replace，并发/中断下不产生半截 JSON）。"""
     payload = json.dumps(manifest, ensure_ascii=False, indent=2)
     atomic_write(Path(path), payload)

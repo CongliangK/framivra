@@ -37,7 +37,7 @@
    `--png-filter=none|sub|up|sub_up|all`（默认 `sub_up`=工单口径）作为
    逃生档；协议本身零改动（回执计时字段不变）。
 7. **#111 原子落盘临时名**：工单口径 `.f{:04d}.png.tmp.<pid>.<tid>`
-   （`vtx/fstxn.py` 语义的 C++ 镜像）已按此实现（#110 的裸 `.tmp` 后缀
+   （`vtx/runtime/fstxn.py` 语义的 C++ 镜像）已按此实现（#110 的裸 `.tmp` 后缀
    升级）；写者 SIGKILL 崩溃窗口内目标恒完整或不存在，`*.tmp.<pid>.*`
    残件为可辨识可清扫模式。
 8. **#114 status_code 增补 4 号档（DUPLICATE）**：工单冻结语义仅

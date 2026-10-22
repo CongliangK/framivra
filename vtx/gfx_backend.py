@@ -62,7 +62,7 @@ def _electron_identity():
     files = [binary, WORKER_DIR / "navigation_worker.mjs", WORKER_DIR / "page_error_gate.mjs",
              WORKER_DIR / "pixel_codec.mjs", Path(__file__), ROOT / "vtx/gfx_electron.py",
              ROOT / "vtx/gfx_electron_stage.py", ROOT / "vtx/gfx_cli.py",
-             ROOT / "vtx/proc_supervisor.py"]
+             ROOT / "vtx/runtime/proc_supervisor.py"]
     digests = [content_digest(p) for p in files]
     return "electron-alpha/1|" + json.dumps(
         [mode, "N", output, timeout, digests], separators=(",", ":"))

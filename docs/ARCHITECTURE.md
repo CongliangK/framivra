@@ -38,13 +38,13 @@ ASR 只负责产出字幕素材，消费与烧录由内核 `subtitles_src` 定�
 | 职责 | 实现 home（均在 `vtx/`） | 边界 |
 |---|---|---|
 | 输入与时间线 | `timeline.schema.json`、`constraints.py`、`infra.Ctx`、`stages.validate`、`preview.html` | schema 是结构权威，validate 是执行校验权威，preview 是预览权威；只读预览不替代 validate，低分辨率测试上下文不等于正式项目规格 |
-| 时间线操作 | `diffcmd.py`、`timeline_diff.py`、`impact.py`、`subs.py`、`range.py` | diff/snapshot/subs/区间预览辅助迭代；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
+| 时间线操作 | `diffcmd.py`、`timeline_diff.py`、`impact.py`、`media/subs.py`、`range.py` | diff/snapshot/subs/区间预览辅助迭代；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
 | 图形 | `gfx_backend.py`、`gfx_render.py`、`gfx_cli.py`、`gfx_cef.py`、`gfx_electron*.py`、`gfx_svg*.py`、`frame_source.py` | HTML 默认 CDP，支持显式 CLI、需 native worker 的 Alpha CEF、可选 Electron 复现；SVG 序列独立处理 Inkscape/字体/完成证书；FrameSource 是帧消费抽象，不是第二渲染后端 |
-| 音视频 | `stages.py`、`media/audio_filters.py`、`composite.py`、`encoders.py`、`qc.py`、`media/subtitles_src.py` | prepare 抽取源音频，audio 混音终链，video 分段合成/字幕烧录，mux 探测 libfdk_aac 并回落、原子封装与记录 VERSIONS/history，qc 判定产物 |
-| 身份与恢复 | `cache_state.py`、`hygiene.py`、`fstxn.py`、`recovery.py`、`loudness_cache.py` | 内容键、回执依赖、原子写、完成标记与跨进程锁共同决定复用；不是全源文件防篡改证明 |
+| 音视频 | `stages.py`、`media/audio_filters.py`、`composite.py`、`media/encoders.py`、`qc.py`、`media/subtitles_src.py` | prepare 抽取源音频，audio 混音终链，video 分段合成/字幕烧录，mux 探测 libfdk_aac 并回落、原子封装与记录 VERSIONS/history，qc 判定产物 |
+| 身份与恢复 | `cache_state.py`、`hygiene.py`、`runtime/fstxn.py`、`recovery.py`、`media/loudness_cache.py` | 内容键、回执依赖、原子写、完成标记与跨进程锁共同决定复用；不是全源文件防篡改证明 |
 | 扩展 | `pluginlib/`、`api.py` | 前者负责发现/加载/钩子，后者是组件复用的稳定内核 API |
-| 诊断与证据 | `diagnostics.py`、`events.py`、`execution_links.py`、`acceptance.py` | 事件不绕过校验；离线 verify 不执行包内命令，完整性不等于验收通过或生产者真实性 |
-| 资源 | `resource_budget.py` | 显式调用的预算原语，不代表已自动接入全流水线 |
+| 诊断与证据 | `runtime/diagnostics.py`、`runtime/events.py`、`runtime/execution_links.py`、`acceptance.py` | 事件不绕过校验；离线 verify 不执行包内命令，完整性不等于验收通过或生产者真实性 |
+| 资源 | `runtime/resource_budget.py` | 显式调用的预算原语，不代表已自动接入全流水线 |
 
 HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺跨平台像素一致。资格见 [gfx](skill/references/gfx.md)，缓存、声明依赖及环境身份见 [缓存语义](cache-provenance.md)，事件/验收/预算见 [DEV 专题入口](DEV.md#专题入口)。
 

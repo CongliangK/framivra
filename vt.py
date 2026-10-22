@@ -106,7 +106,7 @@ def find_binary(names, extra_paths=()):
 
 
 def find_chrome():
-    """与 vtx.encoders.find_chrome 同源逻辑：VTX_CHROME 优先 → PATH → 标准安装路径。"""
+    """与 vtx.media.encoders.find_chrome 同源逻辑：VTX_CHROME 优先 → PATH → 标准安装路径。"""
     names = chrome_names()
     paths = chrome_install_paths(OS)
     return find_binary([n for n in names if n], paths)

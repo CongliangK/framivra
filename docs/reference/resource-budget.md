@@ -1,6 +1,6 @@
 # 资源预算接口
 
-本接口供同机协作进程共享资源预算，按申请和释放记录占用。实现与 Python API 在 [vtx/resource_budget.py](../../vtx/resource_budget.py)，验收在 [tests/execution/test_resource_budget.py](../../tests/execution/test_resource_budget.py)。
+本接口供同机协作进程共享资源预算，按申请和释放记录占用。实现与 Python API 在 [vtx/runtime/resource_budget.py](../../vtx/runtime/resource_budget.py)，验收在 [tests/execution/test_resource_budget.py](../../tests/execution/test_resource_budget.py)。
 
 ## 能力与边界
 
@@ -31,7 +31,7 @@ detect_inventory(disk_path) 只读当前运行机器：CPU affinity（不可读�
 
 ```python
 from pathlib import Path
-from vtx.resource_budget import Resources, ResourceBudget, detect_inventory
+from vtx.runtime.resource_budget import Resources, ResourceBudget, detect_inventory
 
 path = Path(".vtx-resource-budget/pool.json")
 inventory = detect_inventory(Path.cwd())
@@ -60,9 +60,9 @@ Lease 支持上下文管理，工作抛异常也释放。重复 release 返回 F
 
 ## 账本、退出回收与恢复
 
-记账复用 [fstxn.py](../../vtx/fstxn.py) 的路径线程锁、fd 锚定目录、普通文件验证和原子写，以及同名 .lock flock 协议。由于通用事务 API 为无限等待，预算内部只增加非阻塞锁等待适配器来检查 deadline/Event，没有第二个工作队列或调度服务。
+记账复用 [fstxn.py](../../vtx/runtime/fstxn.py) 的路径线程锁、fd 锚定目录、普通文件验证和原子写，以及同名 .lock flock 协议。由于通用事务 API 为无限等待，预算内部只增加非阻塞锁等待适配器来检查 deadline/Event，没有第二个工作队列或调度服务。
 
-退出检测复用 [proc_supervisor.py](../../vtx/proc_supervisor.py) 的 boot/starttime 与 /proc 解析。PID 被复用、已消失和 zombie 状态可回收；身份读取不确定时保留占用。不会扫描后终止其他程序。预算归属于申请进程：该进程必须覆盖实际工作生命周期；自行派生的工作若比申请进程活得久，需由存活的实际工作进程自己申请，不能指望预算器追踪整个进程树。
+退出检测复用 [proc_supervisor.py](../../vtx/runtime/proc_supervisor.py) 的 boot/starttime 与 /proc 解析。PID 被复用、已消失和 zombie 状态可回收；身份读取不确定时保留占用。不会扫描后终止其他程序。预算归属于申请进程：该进程必须覆盖实际工作生命周期；自行派生的工作若比申请进程活得久，需由存活的实际工作进程自己申请，不能指望预算器追踪整个进程树。
 
 snapshot 返回独立的 limits、used、available、active_leases、reclaimed_leases；snapshot/reap 会回写确认死亡的租约，故不是零写态检查。reap 可重复调用，无需后台轮询。
 

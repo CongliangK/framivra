@@ -16,7 +16,7 @@ timeline**（幂等天然成立）；区间渲染走同一缝（窗口模式自�
 - CLI（离线手动烘焙 timeline，命令面与 _meta 标记语义不变）：
   env python3 plugins/duck-static/bed_static_duck.py（scripts/ 留 symlink 兼容）。
 """
-from vtx.diagnostics import DiagnosticMessage, key_path, emit, operation
+from vtx.runtime.diagnostics import DiagnosticMessage, key_path, emit, operation
 from .bed_static_duck import DEFAULTS, transform_events, voice_windows
 
 KEY = "duck_strategy"

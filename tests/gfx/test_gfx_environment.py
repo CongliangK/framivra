@@ -433,7 +433,7 @@ class EnvironmentContracts(unittest.TestCase):
         c = SimpleNamespace(w=6, h=4, fps=30)
         record = self.collect()
         with patch.object(env, 'collect', return_value=record), \
-                patch('vtx.encoders.find_chrome', return_value=str(self.binary)):
+                patch('vtx.media.encoders.find_chrome', return_value=str(self.binary)):
             cert = env.certificate(c)
             self.assertEqual(env.verify_certificate(cert), cert['sha256'])
             env.recheck(c)
@@ -442,7 +442,7 @@ class EnvironmentContracts(unittest.TestCase):
                 with self.assertRaises(env.EnvironmentError):
                     env.recheck(c)
         with patch.object(env, 'collect', side_effect=env.EnvironmentError('unavailable')), \
-                patch('vtx.encoders.find_chrome', return_value=str(self.binary)):
+                patch('vtx.media.encoders.find_chrome', return_value=str(self.binary)):
             unknown = SimpleNamespace(w=6, h=4, fps=30)
             self.assertEqual(env.resolve(unknown)['status'], 'unknown')
             for _ in range(2):

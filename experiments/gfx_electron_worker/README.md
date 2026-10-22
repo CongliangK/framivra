@@ -6,7 +6,7 @@ GFX 离屏渲染双路线战役**路线 B（Electron Offscreen Rendering）**起
 最小 JS/Node 代码量验证 Electron OSR 的无头可运行性——离屏加载一页 gfx 帧
 （`gfxA.html?f=0`）→ 捕获首帧 PNG → 采集渲染环境真值（`process.versions` 三元组 +
 GPU 内部接口实测）→ 干净退出；严格锁定 Electron 版本；B0/B1 双模式独立进程启动；
-并接入 `vtx/proc_supervisor.py`（#103）的进程组卫生体系。此最小探针本身**不接线 `vtx/` 生产
+并接入 `vtx/runtime/proc_supervisor.py`（#103）的进程组卫生体系。此最小探针本身**不接线 `vtx/` 生产
 gfx 管线**（导航接线见下节）；下游熔断门 K1（单帧 IPC + PNG 编码 > 18ms 熔断）
 的测量也不在本目录范围。
 
@@ -133,7 +133,7 @@ WebGL 探针实测 `ANGLE (NVIDIA Corporation, NVIDIA GeForce RTX 4080 … OpenG
 - 帧出口用 `capturePage().toPNG()`（PNG 编码路径），不经 `NativeImage.toBitmap()`，
   规避 Electron ≥ 43 的 toBitmap 默认 sRGB 归一化变更面。
 
-## 进程组卫生（接入 #103 `vtx/proc_supervisor.py`）
+## 进程组卫生（接入 #103 `vtx/runtime/proc_supervisor.py`）
 
 - 宿主驱动用 `SupervisedProcessGroup`（`backend_id="gfx_elec"`）拉起 Electron：
   运行目录 `cache/tmp/<UTC>-gfx_elec-<pid>-<n>/`，`app.setPath('userData', …)`

@@ -95,15 +95,16 @@ from pathlib import Path
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
 from . import main, _stage_receipt_name
 from .composite import build_video, prepare_layers
-from .encoders import find_chrome
-from . import gfx_cli, hygiene, fstxn, events
+from .media.encoders import find_chrome
+from . import gfx_cli, hygiene
+from .runtime import fstxn, events
 from .hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
                       manifest_record, snapshot)
 from .infra import (Ctx, ProjectPathError, ensure_inside_project,
                     run_wave)
 from .qc import qc
 from .stages import audit, build_audio, mux, prepare, validate
-from .subs import run_subs
+from .media.subs import run_subs
 
 
 # ---------------------------------------------------------------- gfx
@@ -195,7 +196,7 @@ def _gfx(c: Ctx):
     # 账本核验过、宿主已死的组；并行 vtx 进程的活动组由账本 host 字段跳过）。
     # dry 零写态纪律：dry 跳过（reap 有目录移除动作）。
     if not c.dry:
-        from .proc_supervisor import reap_orphan_workers
+        from .runtime.proc_supervisor import reap_orphan_workers
         reap_orphan_workers(c)
     # issue #103：实验命名空间（VTX_GFX_CACHE_NS）——整阶段取一次：gfx_dir 路由
     # 与 complete.json 的 backend_ns 元数据同源；非法值在此显式失败（不静默落
@@ -717,7 +718,7 @@ def _preview_command(c, a):
             c.align_threshold = a.align_threshold
             run_subs(c, a.subs_extra)  # check/render 的 dry 分支是纯读
         else:
-            from .subs import _parse_points
+            from .media.subs import _parse_points
             for frame, _ in _parse_points(a.subs_extra[1:], c):
                 print(f"[dry-run] subs preview → {c.out / f'subs_preview_f{frame}.png'}")
         return
@@ -936,7 +937,7 @@ def _main(execution=None):
     if not policy.dry and a.command not in ("df", "clean", "gc", "snapshot", "diff"):
         role = ("all_until_mux" if a.command == "all" and a.until == "mux" else
                 "qc_strict" if a.command == "qc" and a.strict else None)
-        from .execution_links import open_response
+        from .runtime.execution_links import open_response
         stream, request = open_response(tp, role)
         if stream is not None:
             execution.activate(stream, request)
@@ -1045,7 +1046,7 @@ def _main(execution=None):
     # 音频纯报告分发（方案五阶段3，区间渲染同款短路）：只读已有产物，不进依赖门、
     # 不做 receipt——报告对正式产物链零干扰（写 out/audio_report.json 一个报告件）
     if a.report_only:
-        from .audio_report import run_report
+        from .media.audio_report import run_report
         sys.exit(run_report(c, json_path=a.json))
     if a.command == "all":
         todo = STAGES
@@ -1078,7 +1079,7 @@ def _main(execution=None):
             # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
             # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
             if name == "audio" and a.report:
-                from .audio_report import run_report
+                from .media.audio_report import run_report
                 rc = run_report(c, json_path=a.json)
                 if rc: sys.exit(rc)
     # 缝 D（协议 v1.2，P6）：`vtx all` 全链（mux/qc 完成后）触发插件 finish 收尾钩子

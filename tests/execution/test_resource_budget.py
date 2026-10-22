@@ -12,13 +12,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
-from vtx import fstxn, resource_budget as rb
+from vtx.runtime import fstxn, resource_budget as rb
 
 REPO = Path(__file__).resolve().parents[2]
 WORKER = r'''
 import json, os, sys, time
 from pathlib import Path
-from vtx import resource_budget as rb
+from vtx.runtime import resource_budget as rb
 path, mode = Path(sys.argv[1]), sys.argv[2]
 budget = rb.ResourceBudget(path)
 if mode == "compete":
@@ -43,7 +43,7 @@ elif mode == "lock":
         tmp.write_text(path.read_text())
         print("ready", flush=True)
         sys.stdin.readline()
-'''.replace('from vtx import resource_budget as rb', 'from vtx import fstxn, resource_budget as rb')
+'''.replace('from vtx.runtime import resource_budget as rb', 'from vtx.runtime import fstxn, resource_budget as rb')
 
 
 @unittest.skipUnless(os.path.exists('/proc/self/stat') and fstxn.fcntl is not None,
@@ -426,7 +426,7 @@ class BudgetCase(unittest.TestCase):
         code = """
 import os, sys
 from pathlib import Path
-from vtx import fstxn, resource_budget as rb
+from vtx.runtime import fstxn, resource_budget as rb
 path = Path(sys.argv[1])
 budget = rb.ResourceBudget(path)
 lock = fstxn._thread_lock_for(path)

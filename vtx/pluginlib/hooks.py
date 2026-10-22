@@ -39,7 +39,7 @@ P2b 起 plugins/ 有实体包（denoise / duck-static）。「生效」按 timel
 插件段（v1 逐字节兼容）、总线空转，内核零行为变化（三不变量接线见
 pluginlib/__init__.py 接线表）。
 """
-from ..diagnostics import indexed
+from ..runtime.diagnostics import indexed
 
 import hashlib
 import importlib

@@ -8,7 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 from tests._support import temporary_root
-from vtx import cli, fstxn
+from vtx import cli
+from vtx.runtime import fstxn
 from vtx.infra import Ctx, ProjectPathError
 
 

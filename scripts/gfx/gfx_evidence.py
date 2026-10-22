@@ -358,7 +358,7 @@ def verify(c, clips, golden, plan, candidate):
         report["same_version_causal"] = False
     for key in ("different_frames", "missing_frames", "unknown_provenance", "uncovered_instances"):
         report[key + "_count"] = len(report[key])
-    from vtx.quality import golden_quality
+    from vtx.runtime.quality import golden_quality
     report["quality"] = golden_quality(report, fixed_environment=bool(report["ok"] and not changed))
     report["quality_cost"] = {"scope": "strict_golden_verification",
                               "wall_seconds": time.perf_counter() - started,

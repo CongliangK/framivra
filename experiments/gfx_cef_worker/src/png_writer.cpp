@@ -288,7 +288,7 @@ bool WritePngRgba(const std::string& path, const uint8_t* rgba, int width,
 
 bool AtomicWriteBytes(const std::string& final_path, const uint8_t* data,
                       size_t len) {
-  // 命名规范：同目录 <final>.tmp.<pid>.<tid>（vtx/fstxn.py 语义的 C++ 镜像；
+  // 命名规范：同目录 <final>.tmp.<pid>.<tid>（vtx/runtime/fstxn.py 语义的 C++ 镜像；
   // pid+tid 保证并发编码线程互不碰撞，残件模式 *.tmp.<pid>.* 可辨识可清扫）。
   char suffix[64];
 #if defined(__APPLE__)

@@ -25,7 +25,7 @@ json2blend.py，经 ``blender --background --factory-startup --python`` 运行�
   `vtx all` 收尾缝——关停本插件不影响主链（§0.2 关停测试）。
 - --draft / --dry-run 或停在 qc 之前的 `all --until` 不触发；`all --until qc` 可收尾。
 """
-from vtx.diagnostics import DiagnosticMessage, key_path, emit
+from vtx.runtime.diagnostics import DiagnosticMessage, key_path, emit
 import hashlib
 import json
 import math

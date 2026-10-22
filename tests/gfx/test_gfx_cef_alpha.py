@@ -5,7 +5,8 @@ VTX_CEF_EVIDENCE_DIR optionally retains the complete fixture and native logs.
 """
 from tests.execution.test_execution_events import Buffer
 from tests.gfx._environment import bind_environment
-from vtx import events, gfx_cli, gfx_render
+from vtx.runtime import events
+from vtx import gfx_cli, gfx_render
 
 import contextlib
 import io
@@ -395,7 +396,7 @@ class ClientHelloOwnership(unittest.TestCase):
 class NativeProduction(unittest.TestCase):
     def _assert_structure_css_veto(self, name, css):
         from vtx.cef_client import CefWorkerError
-        from vtx.proc_supervisor import SupervisedProcessGroup
+        from vtx.runtime.proc_supervisor import SupervisedProcessGroup
         with tempfile.TemporaryDirectory(prefix=f'cef_dom_{name}_') as td:
             root = Path(td).resolve()
             p = project(root, n=1)
@@ -602,7 +603,7 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden}
     def test_page_protocol_failures_are_native_timeouts(self):
         import socket
         from vtx.cef_client import CefWorkerClient, CefWorkerError
-        from vtx.proc_supervisor import SupervisedProcessGroup
+        from vtx.runtime.proc_supervisor import SupervisedProcessGroup
         with tempfile.TemporaryDirectory(prefix='cef_protocol_') as td:
             root = Path(td).resolve()
             p = project(root)
@@ -698,7 +699,7 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
                 (Path(evidence) / 'production-fixture/startup.log').write_text(result.stdout + result.stderr)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('Mode N native-exact', result.stdout)
-            from vtx import events as execution_events
+            from vtx.runtime import events as execution_events
             observed = execution_events.read_events((root / 'cef-events.jsonl').read_bytes())
             self.assertTrue(observed['complete'])
             self.assertTrue(observed['events'][-1]['extensions']['evidence_complete'])

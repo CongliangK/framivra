@@ -31,7 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx import audio_report as ar
+from vtx.media import audio_report as ar
 
 VTX = REPO / "vtx" / "vtx.py"
 FF = shutil.which("ffmpeg")
@@ -489,7 +489,7 @@ class CollectInputsPluginSource(unittest.TestCase):
 
     def test_inputs_use_plugin_product_path(self):
         from types import SimpleNamespace
-        from vtx import audio_report
+        from vtx.media import audio_report
         product = Path("/tmp/fake") / "cache/audio/abc::denoise:1.0.0:d41.wav"
         naked = Path("/tmp/fake") / "cache/audio/abc.wav"
         c = SimpleNamespace(cache=Path("/tmp/fake/cache"))

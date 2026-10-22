@@ -322,7 +322,7 @@ class IntegrationGates(unittest.TestCase):
         self.assertFalse(self.d.exists())
 
     def test_electron_events_use_actual_backend_and_reader_accepts_it(self):
-        from vtx import events
+        from vtx.runtime import events
         from tests.execution.test_execution_events import Buffer
         stream = Buffer()
         self.c.execution = events.ExecutionContext(stream)

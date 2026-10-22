@@ -17,7 +17,10 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from vtx import cli, events, execution_links, qc, encoders
+from vtx import cli
+from vtx.runtime import events, execution_links
+from vtx import qc
+from vtx.media import encoders
 from tests.execution import test_execution_links
 from vtx.infra import Ctx, run_ffmpeg_task, run_parallel, run_wave
 

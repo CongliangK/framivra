@@ -50,10 +50,10 @@ FAIL 表示事故级问题必须处理）。
 import json, math, re, statistics, time
 from pathlib import Path
 
-from .hygiene import audio_key
-from . import fstxn
-from .media.audio_filters import event_chain
-from .pluginlib import hooks as _plugin_hooks
+from ..hygiene import audio_key
+from ..runtime import fstxn
+from .audio_filters import event_chain
+from ..pluginlib import hooks as _plugin_hooks
 
 # ---- 阈值常量（出处见模块头判级阈值表）----
 LUFS_TARGET = -14.0        # stages.TARGET_LUFS / qc.TARGET_LUFS 同一权威值
@@ -278,7 +278,7 @@ def _collect_inputs(c, tracks, cmd):
     源解析走 hooks.resolve_source_wav（P2 审查 P1-1 修复）：denoise 等缝 A 插件
     源的裸键按设计永不产出，主链 _audio_graph 已走产物键，本处必须同解析——
     否则 denoise 时间线 audio --report 的轨级 stem 渲染读不存在的裸键直接 FAIL。"""
-    from .pluginlib import hooks as _hooks
+    from ..pluginlib import hooks as _hooks
     for tr in tracks:
         for e in tr["events"]:
             wav = _hooks.resolve_source_wav(c, e["src"]) or \

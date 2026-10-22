@@ -12,7 +12,9 @@ from pathlib import Path
 from unittest import mock
 
 from tests._support import temporary_root
-from vtx import fstxn, hygiene, loudness_cache, subs
+from vtx.runtime import fstxn
+from vtx import hygiene
+from vtx.media import loudness_cache, subs
 from vtx.infra import Ctx, ProjectPathError
 
 REPO = Path(__file__).resolve().parents[2]

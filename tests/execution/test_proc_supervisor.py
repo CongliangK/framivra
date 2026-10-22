@@ -1,4 +1,4 @@
-"""issue #103：外置多进程树卫生监管器（vtx/proc_supervisor.py）与沙箱缓存隔离。
+"""issue #103：外置多进程树卫生监管器（vtx/runtime/proc_supervisor.py）与沙箱缓存隔离。
 
 两类夹具，全部只杀本测试自起子进程树（sleep/锁文件链），测试结束零残留：
 
@@ -34,9 +34,10 @@ from pathlib import Path
 from unittest import mock
 from tests.gfx._png import png
 
-from vtx import cli, gfx_cli, gfx_render, hygiene, proc_supervisor
+from vtx import cli, gfx_cli, gfx_render, hygiene
+from vtx.runtime import proc_supervisor
 from vtx.infra import Ctx
-from vtx.proc_supervisor import (SupervisedProcessGroup, WORKER_LEDGER,
+from vtx.runtime.proc_supervisor import (SupervisedProcessGroup, WORKER_LEDGER,
                                  boot_id, group_live_members, proc_starttime,
                                  reap_orphan_workers)
 
@@ -122,7 +123,7 @@ HOST_PROGRAM = r'''
 import json, os, sys, time
 from pathlib import Path
 from vtx.infra import Ctx
-from vtx.proc_supervisor import SupervisedProcessGroup
+from vtx.runtime.proc_supervisor import SupervisedProcessGroup
 
 root, ready_path, mode, sim = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
 c = Ctx(root / "timeline.json")
@@ -372,7 +373,7 @@ mid_pid = int(sys.argv[6]) if len(sys.argv) > 6 else None
 sys.path.insert(0, str(ROOT))
 from vtx import hygiene
 from vtx.infra import Ctx
-from vtx.proc_supervisor import (WORKER_LEDGER, LineageKillDenied, boot_id,
+from vtx.runtime.proc_supervisor import (WORKER_LEDGER, LineageKillDenied, boot_id,
                                  group_live_members, kill_group,
                                  proc_starttime, reap_orphan_workers,
                                  reap_run_dir)

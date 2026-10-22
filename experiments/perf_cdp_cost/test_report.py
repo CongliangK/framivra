@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from vtx.events import ExecutionContext
+from vtx.runtime.events import ExecutionContext
 from . import report as r
 
 

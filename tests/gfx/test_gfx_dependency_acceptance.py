@@ -264,7 +264,7 @@ class AcceptanceContracts(unittest.TestCase):
 
     def native_fixture(self,failed=False):
         from tests.execution.test_execution_events import Buffer
-        from vtx import events
+        from vtx.runtime import events
         stream=Buffer(); execution=events.ExecutionContext(stream)
         receipt={'stages':{},'timeline':hashlib.sha256(self.c.tl_path.read_bytes()).hexdigest()}
         error=DependencyError('strict runtime request rejected') if failed else None
@@ -373,7 +373,7 @@ class AcceptanceContracts(unittest.TestCase):
 
     def test_business_success_with_missing_native_sink_is_insufficient(self):
         from tests.runners.run_gfx_dependency_acceptance import worker
-        from vtx import events
+        from vtx.runtime import events
         trace_path=self.root/'sink-failed.json'
         with patch.object(events,'open_sink',side_effect=OSError('controlled sink unavailable')):
             worker(self.c.tl_path,trace_path,stage='validate')

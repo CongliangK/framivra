@@ -1,6 +1,6 @@
 r"""subs check 纯函数单元测试（零渲染）：check_subtitles(subs, voice_windows, fps)。
 
-构造最小帧坐标输入直接调用 vtx/subs.py 的纯函数，不触 ffmpeg/文件系统。
+构造最小帧坐标输入直接调用 vtx/media/subs.py 的纯函数，不触 ffmpeg/文件系统。
 运行：env python3 -X utf8 tests/media/test_subtitles.py
 
 tests/media/test_subtitles.py —— v2 §1.1 条目 6：内核 subtitles_src 键。
@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from tests._support import full_hd_timeline as _tl
-from vtx import subs as subs_mod
+from vtx.media import subs as subs_mod
 from vtx.infra import Ctx
 from vtx.media.subtitles_src import parse_srt, parse_subs_json, resolve_subtitles_src
 

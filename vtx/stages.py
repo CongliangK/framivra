@@ -11,9 +11,10 @@ from pathlib import Path
 from .hygiene import (audio_key, manifest_record, rotate_history, versions_check,
                      versions_record)
 from .infra import Ctx, run_parallel
-from .diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
+from .runtime.diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
                           source_structure, mark_handled, operation)
-from . import fstxn, recovery
+from .runtime import fstxn
+from . import recovery
 from .media.audio_filters import event_chain
 from .pluginlib import hooks as _plugin_hooks
 from .pluginlib import registry as _plugin_registry
@@ -496,7 +497,7 @@ def source_audio_extraction(c: Ctx, sid: str):
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
     from .recovery import media_cache_valid
     if media_cache_valid(wav):
-        from .events import cache_hit
+        from .runtime.events import cache_hit
         cache_hit(c, "media_cache_valid")
         return wav, None
     p = _plugin_hooks.run_prepare_source(c, sid)

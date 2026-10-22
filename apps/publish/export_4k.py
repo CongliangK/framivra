@@ -20,7 +20,7 @@ NVENC 探测（合成帧须 ≥145 宽——128px 假失败坑见 DEV.md §二�
 自检：concat 后流头帧数必须 == project.duration_frames，不等报错退出（对齐
 render_segmented 拼接自检）。
 
-NVENC 并发纪律（跨进程，对齐 vtx/encoders.py「NVENC 会话预算」注释口径）：本脚本
+NVENC 并发纪律（跨进程，对齐 vtx/media/encoders.py「NVENC 会话预算」注释口径）：本脚本
 8 段并行是独立进程，不占 vtx 进程内 VTX_NVENC_BUDGET 信号量（该预算只管 vtx 本
 进程的 seg 预编码/段渲染）。若与 vtx 的 NVENC 阶段并行运行，两进程会话数叠加可能
 超驱动并发上限（拐点实测 8）——须自行下调本脚本并发（--segments）或错峰运行

@@ -8,7 +8,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import fstxn, gfx_svg
+from .runtime import fstxn
+from . import gfx_svg
 from .gfx_cli import png_invalid_reason
 from .hygiene import manifest_record, tmp_run
 

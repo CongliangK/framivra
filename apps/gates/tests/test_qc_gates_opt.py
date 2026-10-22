@@ -44,7 +44,7 @@ sys.path.insert(0, str(REPO))              # repo 根（v2 §1.4 包导入，不
 sys.path.insert(0, str(APP))               # content_gates.py 非包成员，按路径导入
 
 import content_gates              # noqa: E402（main() 有 __main__ 守卫，导入无副作用）
-from vtx import loudness_cache   # noqa: E402
+from vtx.media import loudness_cache   # noqa: E402
 
 
 # ---------------------------------------------------------------- ① 响度回执
@@ -130,7 +130,7 @@ class TestLoudnessCrossProcessLock(unittest.TestCase):
 import sys, time
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])   # repo 根（v2 §1.4 包导入）
-from vtx import loudness_cache
+from vtx.media import loudness_cache
 root = Path(sys.argv[2]); tag = sys.argv[3]
 for _ in range(2000):            # 起跑门：等对端 import/构造完（go 文件由测试侧落）
     if (root / "go").exists(): break

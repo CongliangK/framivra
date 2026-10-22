@@ -11,7 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from vtx import gfx_svg, gfx_svg_stage, fstxn
+from vtx import gfx_svg, gfx_svg_stage
+from vtx.runtime import fstxn
 from vtx.cache_state import InputIdentityError, verify_input_identity
 from vtx.frame_source import png_source
 from vtx.gfx_cache_reader import resolve_frames
@@ -385,7 +386,8 @@ class SvgContract(unittest.TestCase):
         return run,calls
 
     def test_preview_operation_uses_scoped_svg_snapshot(self):
-        from vtx import subs, composite, frame_source
+        from vtx.media import subs
+        from vtx import composite, frame_source
         counts=[]
         for n in (2,4):
             c=self._publish_mock_frames(n); c.gpu=False
@@ -407,7 +409,8 @@ class SvgContract(unittest.TestCase):
             self.assertFalse(hasattr(c,'_svg_consumer_sources'))
 
     def test_preview_content_change_cannot_print_pass(self):
-        from vtx import subs, composite
+        from vtx.media import subs
+        from vtx import composite
         c=self._publish_mock_frames(2); c.gpu=False; run,calls=self._preview_mock(c,mutate=True); output=io.StringIO()
         with mock.patch.object(c,'run',side_effect=run), \
              mock.patch.object(subs,'seg_encoder_kind',return_value='x264'), \
@@ -418,7 +421,8 @@ class SvgContract(unittest.TestCase):
         self.assertFalse(hasattr(c,'_svg_consumer_sources'))
 
     def test_preview_svg_cache_failure_cannot_print_pass(self):
-        from vtx import subs, composite, frame_source
+        from vtx.media import subs
+        from vtx import composite, frame_source
         for change in ('pixels','truncated','marker','missing'):
             c=self._publish_mock_frames(2); c.gpu=False; source=png_source(c,self.clip)
             run,calls=self._preview_mock(c); output=io.StringIO()

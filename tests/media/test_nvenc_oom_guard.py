@@ -45,8 +45,9 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from vtx import encoders, infra
-from vtx.encoders import (NVENC_RETRY_ATTEMPTS, NVENC_RETRY_N,
+from vtx.media import encoders
+from vtx import infra
+from vtx.media.encoders import (NVENC_RETRY_ATTEMPTS, NVENC_RETRY_N,
                           nvenc_budget_value, nvenc_effective_budget,
                           nvenc_guard_stats, nvenc_retry_backoff,
                           nvenc_retry_run, reset_nvenc_budget,

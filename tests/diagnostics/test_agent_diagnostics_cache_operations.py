@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 from vtx import cache_state, stages
 from vtx.infra import Ctx
 from vtx.agent_diagnostics import main
-from vtx.diagnostics import mark_handled
+from vtx.runtime.diagnostics import mark_handled
 
 
 class CacheOperations(unittest.TestCase):

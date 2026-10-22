@@ -22,7 +22,7 @@ import stat
 import operator
 from pathlib import Path, PosixPath, WindowsPath
 
-from .diagnostics import emit, indexed, mark_handled, operation, required_field
+from .runtime.diagnostics import emit, indexed, mark_handled, operation, required_field
 
 SAMPLE_BYTES = 65536   # 源媒体首/尾采样字节数（stat 身份的内容成分）
 
