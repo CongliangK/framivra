@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO))
 from vtx.composite import RenderPlan, _graph_code_digest
 from vtx.constraints import ALLOWED_FPS
 from vtx.infra import Ctx
-from vtx.subs import _active_subs
+from vtx.media.subs import _active_subs
 
 FPS = 30
 

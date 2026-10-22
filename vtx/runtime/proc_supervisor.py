@@ -23,7 +23,7 @@ Chromium/CEF/Electron 会派生 Browser、GPU、Zygote、Renderer 多级子进�
   C. 账本 + reap_orphan_workers(c)：每个监管组在 tmp_run 目录写
      .worker_pgid.json（pgid/boot_id/start_time_ticks/host_pid/...）。
      宿主被 -9 后守卫若也失效（极端），下一次 gfx 阶段启动 / 手动
-     `python3 -m vtx.proc_supervisor reap <timeline.json>` 扫描 cache/tmp/
+     `python3 -m vtx.runtime.proc_supervisor reap <timeline.json>` 扫描 cache/tmp/
      账本：核对 /proc/<pid>/stat 第 22 字段 starttime（防 PID 回绕误杀）与
      boot_id 后 killpg，等进程表清空再安全移除临时 Profile 目录。
 
@@ -66,11 +66,9 @@ import sys
 import time
 from pathlib import Path
 
-if __package__:   # 包内相对导入（vtx/__init__ §1.4）
-    from . import fstxn, hygiene
-else:             # flat 直跑（python3 vtx/proc_supervisor.py）仅留最小依赖面
-    import fstxn
-    import hygiene
+# 包内相对导入（vtx/__init__ §1.4）；命令入口为 -m vtx.runtime.proc_supervisor。
+from . import fstxn
+from .. import hygiene
 
 __all__ = ["SupervisedProcessGroup", "reap_orphan_workers", "reap_run_dir",
            "kill_group", "group_live_members", "proc_starttime", "boot_id",
@@ -81,7 +79,7 @@ __all__ = ["SupervisedProcessGroup", "reap_orphan_workers", "reap_run_dir",
 # 名字是两模块间的共享契约，改动须两侧同审）
 WORKER_LEDGER = ".worker_pgid.json"
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # backend_id 进入 tmp_run 目录名（<UTC>-gfx_<backend_id>-<pid>-<n>），收紧字符集
 _BACKEND_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
@@ -358,7 +356,7 @@ def _make_pdeathsig_preexec(expected_ppid: int):
 # ---------------------------------------------------------------- 守卫进程
 
 def _guard_main(pgid: int, alive_fd: int, ready_fd=None):
-    """守卫子进程主循环（python3 -m vtx.proc_supervisor guard <pgid> <fd>）：
+    """守卫子进程主循环（python3 -m vtx.runtime.proc_supervisor guard <pgid> <fd>）：
     阻塞读父存活管道 → EOF（宿主死亡/收尾关写端）→ 立即 killpg(SIGKILL)。
     守卫不经 PDEATHSIG、自成会话（不在 Worker 组内，killpg 打不到自己）。
     关键路径刻意只做一次 killpg syscall（不预扫 /proc）：EOF 距宿主死亡仅
@@ -456,7 +454,7 @@ class SupervisedProcessGroup:
             self._write_ledger()
             ready_r, ready_w = os.pipe()
             self.guard_proc = subprocess.Popen(
-                [sys.executable, "-m", "vtx.proc_supervisor",
+                [sys.executable, "-m", "vtx.runtime.proc_supervisor",
                  "guard", str(self.pgid), str(r_fd), str(ready_w)],
                 cwd=str(_REPO_ROOT), start_new_session=True, pass_fds=(r_fd, ready_w),
                 stdout=subprocess.DEVNULL, stderr=self._stderr,
@@ -710,7 +708,7 @@ def reap_orphan_workers(c) -> dict:
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["guard"]:
-        # 内部守卫子命令：python3 -m vtx.proc_supervisor guard <pgid> <fd>
+        # 内部守卫子命令：python3 -m vtx.runtime.proc_supervisor guard <pgid> <fd>
         if len(argv) not in (3, 4):
             print("usage: guard <pgid> <alive_fd>", file=sys.stderr)
             return 2
@@ -721,14 +719,14 @@ def main(argv=None) -> int:
         if len(argv) != 2:
             print("usage: reap <timeline.json>", file=sys.stderr)
             return 2
-        from .infra import Ctx
+        from ..infra import Ctx
         stats = reap_orphan_workers(Ctx(Path(argv[1])))
         marker = "⚠" if stats["kill_failed"] else "✓"
         print(f"{marker} 孤儿 Worker 清扫：账本 {stats['ledgers']} 份，击杀 {stats['killed']} 组，"
               f"存活宿主跳过 {stats['live_host']}，陈旧 {stats['stale']}，"
               f"移除目录 {stats['removed']}，未完成保留 {stats['kill_failed']}")
         return 1 if stats["kill_failed"] else 0
-    print("vtx.proc_supervisor：子命令 = guard <pgid> <fd>（内部）| "
+    print("vtx.runtime.proc_supervisor：子命令 = guard <pgid> <fd>（内部）| "
           "reap <timeline.json>（孤儿 Worker 清扫）")
     return 2
 

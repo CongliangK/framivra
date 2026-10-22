@@ -12,7 +12,7 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from vtx import events
+from vtx.runtime import events
 from vtx.infra import run_parallel, run_wave
 from tests.execution.test_execution_events import Buffer, fixture
 

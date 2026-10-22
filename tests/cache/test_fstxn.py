@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tests/cache/test_fstxn.py —— vtx/fstxn 共享文件事务工具验收（B05+B06；issue #29/#30 /
+"""tests/cache/test_fstxn.py —— vtx/runtime/fstxn 共享文件事务工具验收（B05+B06；issue #29/#30 /
 F-08 / #8 的 receipt 部分）。
 
 覆盖：
@@ -32,7 +32,7 @@ sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
 from tests._support import small_timeline as _minimal_timeline
 
-from vtx import fstxn
+from vtx.runtime import fstxn
 
 PYTHON = os.environ.get('VTX_TEST_PYTHON') or (sys.executable if not sys.executable.endswith('.AppImage') else shutil.which('python3'))
 
@@ -42,7 +42,7 @@ WORKER_COUNTER = '''
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from vtx import fstxn
+from vtx.runtime import fstxn
 target, n = Path(sys.argv[2]), int(sys.argv[3])
 for _ in range(n):
     fstxn.locked_update(target, lambda d: {"n": d.get("n", 0) + 1}, default={"n": 0})
@@ -65,7 +65,7 @@ WORKER_KILL = '''
 import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from vtx import fstxn
+from vtx.runtime import fstxn
 with fstxn.locked_write(Path(sys.argv[2])) as tmp:
     tmp.write_text('{"stages": {"half": tru', encoding="utf-8")
     if os.name == "nt":

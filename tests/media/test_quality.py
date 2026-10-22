@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from vtx.quality import classify, qc_quality, receipt_quality
+from vtx.runtime.quality import classify, qc_quality, receipt_quality
 from vtx.infra import Ctx
 
 
@@ -22,7 +22,7 @@ class Quality(unittest.TestCase):
         self.assertEqual(classify(scope='x', evidence=e)['display'], 'Verified Exact')
 
     def test_all_status_combinations_have_one_deterministic_display(self):
-        from vtx.quality import FIELDS, STATUSES
+        from vtx.runtime.quality import FIELDS, STATUSES
         for values in itertools.product(sorted(STATUSES), repeat=len(FIELDS)):
             evidence = dict(zip(FIELDS, values))
             q = classify(scope='fixture', evidence=evidence)

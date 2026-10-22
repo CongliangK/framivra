@@ -7,13 +7,13 @@ check_subtitles(subs, voice_windows, fps)——可脱离视频/音频产物独�
 import hashlib, json, re, sys
 from pathlib import Path
 
-from . import fstxn
-from .composite import RenderPlan
+from ..runtime import fstxn
+from ..composite import RenderPlan
 from .encoders import seg_encoder_kind
-from .frame_source import png_source
-from .hygiene import manifest_record, seg_key, tmp_run
-from .infra import Ctx, filter_filename
-from .recovery import media_cache_valid
+from ..frame_source import png_source
+from ..hygiene import manifest_record, seg_key, tmp_run
+from ..infra import Ctx, filter_filename
+from ..recovery import media_cache_valid
 
 # ---- 阈值常量（与 stages.audit 字幕基准对齐；2026-08-21 实测，见 stages 注释）----
 CPS_FAIL = 9.0           # 阅读速度 >9 字/s 过快（≈P99）→ FAIL
@@ -259,7 +259,7 @@ def _layer_ready(c: Ctx, f: int):
                 try:
                     source.require_ready(rel, rel + 1)
                 except ValueError:
-                    from . import gfx_svg
+                    from .. import gfx_svg
                     if gfx_svg.is_svg(cl):
                         raise  # Explicit SVG cache failures cannot become a successful black preview.
                     return None
@@ -343,10 +343,10 @@ def _run_preview(c: Ctx, tokens, dry: bool, *, before_summary=None):
 
 
 def run_preview(c: Ctx, tokens, dry: bool):
-    from . import gfx_svg
+    from .. import gfx_svg
     if gfx_svg.route(c) != 'svg-sequence':
         return _run_preview(c, tokens, dry)
-    from .cache_state import verify_input_identity
+    from ..cache_state import verify_input_identity
     verify_input_identity(c)
     # _layer_ready and RenderPlan both retain this exact context and source.
     # Exceptions/cancellation only clear scope; cleanup never replaces errors.

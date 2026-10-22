@@ -10,10 +10,11 @@ import socket
 import sys
 from pathlib import Path
 
-from . import fstxn, gfx_cli
+from .runtime import fstxn
+from . import gfx_cli
 from .cef_client import CefWorkerClient, CefWorkerError
 from .gfx_backend import cef_config
-from .proc_supervisor import SupervisedProcessGroup, supervision_available
+from .runtime.proc_supervisor import SupervisedProcessGroup, supervision_available
 
 
 def render_page(html, outdir, n_frames, *, ctx, width, height):

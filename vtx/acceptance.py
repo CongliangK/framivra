@@ -21,7 +21,7 @@ import tempfile
 import uuid
 
 from .cache_state import file_digest, media_stat_digest
-from . import events, execution_links
+from .runtime import events, execution_links
 
 SCHEMA = 'vtx.acceptance/1'
 STAGES = ('validate', 'audit', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')

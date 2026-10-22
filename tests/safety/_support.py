@@ -132,7 +132,7 @@ class SandboxCase(unittest.TestCase):
                 "if after is not None: faulthandler.dump_traceback_later(after, repeat=False)\n"
                 "try:\n"
                 "    with patch('vtx.gfx_environment.collect', side_effect=collect), "
-                "patch('vtx.encoders.find_chrome', side_effect=find_chrome):\n"
+                "patch('vtx.media.encoders.find_chrome', side_effect=find_chrome):\n"
                 "        runpy.run_path(sys.argv[0], run_name='__main__')\n"
                 "finally:\n"
                 "    faulthandler.cancel_dump_traceback_later()\n"

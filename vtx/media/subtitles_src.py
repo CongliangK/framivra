@@ -22,7 +22,7 @@ timeline 根级可选键 `subtitles_src`（字符串，相对 timeline.json 的�
   - `.json`：v1 subtitles[] 同构列表（帧值直用），也接受 {"subtitles": [...]}
     包裹形。
 """
-from ..diagnostics import DiagnosticMessage, DiagnosticValueError
+from ..runtime.diagnostics import DiagnosticMessage, DiagnosticValueError
 
 import json
 import re

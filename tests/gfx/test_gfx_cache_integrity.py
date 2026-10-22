@@ -187,7 +187,7 @@ class CacheIntegrity(unittest.TestCase):
 
     def test_atomic_marker_failure_does_not_certify_or_leave_tmp(self):
         self.frames()
-        with mock.patch('vtx.fstxn.os.replace', side_effect=OSError('injected interruption')):
+        with mock.patch('vtx.runtime.fstxn.os.replace', side_effect=OSError('injected interruption')):
             with self.assertRaises(OSError):
                 self.complete()
         self.assertFalse((self.d / gfx_cli.COMPLETE_FILE).exists())
@@ -442,8 +442,8 @@ class LegacyCertificate(unittest.TestCase):
                 with contextlib.ExitStack() as audit:
                     for name in ('vtx.infra.Ctx', 'vtx.gfx_cli.complete_page',
                                  'vtx.gfx_cef.render_page', 'vtx.gfx_render.render_page',
-                                 'subprocess.Popen', 'vtx.fstxn.atomic_write',
-                                 'vtx.fstxn.mkdir', 'vtx.fstxn.unlink', 'vtx.fstxn.locked_staging',
+                                 'subprocess.Popen', 'vtx.runtime.fstxn.atomic_write',
+                                 'vtx.runtime.fstxn.mkdir', 'vtx.runtime.fstxn.unlink', 'vtx.runtime.fstxn.locked_staging',
                                  'pathlib.Path.glob', 'pathlib.Path.rglob', 'pathlib.Path.iterdir'):
                         audit.enter_context(mock.patch(name, side_effect=AssertionError(name)))
                     with self.assertRaisesRegex(gfx_cache_reader.GfxCacheError, 'rerun vtx gfx'):

@@ -93,7 +93,7 @@ def main():
     import sys
 
     from .cli import _main
-    from . import events
+    from .runtime import events
     from .infra import ProjectPathError
 
     if sys.platform == 'win32':

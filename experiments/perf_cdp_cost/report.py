@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import sys
 
-from vtx import events
+from vtx.runtime import events
 
 VERSION = 'cdp-cost-ledger/1'
 TIMINGS = ('nav', 'export', 'decode', 'write')

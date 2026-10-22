@@ -10,8 +10,8 @@
 
 - 不可信 timeline 的资产字段不得将写入引向允许根之外：路径收口见 [`ensure_inside_project`](vtx/infra.py)，穿越、绝对路径及符号链接用例见 [`test_timeline_escape_safety.py`](tests/safety/test_timeline_escape_safety.py)。这不禁止正常的项目外素材读取，也不表示任意输入内容均安全。
 - external 插件默认 disabled，须显式启用；启用即信任其执行代码，非沙箱隔离。契约见 [ARCHITECTURE §2.4](docs/ARCHITECTURE.md)，实现见 [`pluginlib/registry.py`](vtx/pluginlib/registry.py)。
-- 保留清理执行器身份钉扎（[`hygiene.py`](vtx/hygiene.py) / [`fstxn.remove_pinned`](vtx/fstxn.py)）与渲染窗口输入身份复核（[`cache_state.verify_input_identity`](vtx/cache_state.py) / [`infra.py`](vtx/infra.py)）。这些检查针对相应计划或输入身份变化，不承诺消除所有竞态。
-- [`fstxn.py`](vtx/fstxn.py) 保留进程内锁、可用平台上的跨进程 flock 与临时文件原子替换；fd 锚定写依平台能力启用，能力不足时显式降级。锁约束协作写者，原子替换不等于恶意同用户进程隔离，也不承诺断电持久性；平台边界以该模块说明为准。
+- 保留清理执行器身份钉扎（[`hygiene.py`](vtx/hygiene.py) / [`fstxn.remove_pinned`](vtx/runtime/fstxn.py)）与渲染窗口输入身份复核（[`cache_state.verify_input_identity`](vtx/cache_state.py) / [`infra.py`](vtx/infra.py)）。这些检查针对相应计划或输入身份变化，不承诺消除所有竞态。
+- [`fstxn.py`](vtx/runtime/fstxn.py) 保留进程内锁、可用平台上的跨进程 flock 与临时文件原子替换；fd 锚定写依平台能力启用，能力不足时显式降级。锁约束协作写者，原子替换不等于恶意同用户进程隔离，也不承诺断电持久性；平台边界以该模块说明为准。
 
 ### 声明接受面
 

@@ -15,10 +15,10 @@ import json, os, re, subprocess, sys, time
 from pathlib import Path
 
 from .composite import RenderPlan, choose_cutpoints, prepare_layers
-from .encoders import pick_vcodec
+from .media.encoders import pick_vcodec
 from .recovery import media_cache_valid
 from .stages import mix_audio_wav
-from . import fstxn
+from .runtime import fstxn
 
 # 音频窗口事件纳入外延（帧）：兜住 sidechaincompress release（1500ms）与淡出尾巴
 AUDIO_MARGIN_FRAMES = 60

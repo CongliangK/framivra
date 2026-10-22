@@ -399,7 +399,7 @@ for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "q
             import contextlib, io
             from unittest import mock
             import vtx, vtx.cli
-            from vtx import events
+            from vtx.runtime import events
             from vtx.infra import ProjectPathError
             for result in (None, 0, 7):
                 execution = mock.Mock()
@@ -445,7 +445,7 @@ for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "q
         self.run_child('''
             from unittest import mock
             import vtx, vtx.cli
-            from vtx import events
+            from vtx.runtime import events
             for failure in (None, AttributeError(), OSError(), ValueError()):
                 streams = [mock.Mock(), mock.Mock()]
                 for stream in streams:

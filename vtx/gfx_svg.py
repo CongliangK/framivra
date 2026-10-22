@@ -284,7 +284,7 @@ def process_environment(directory=None):
 
 def private_configuration(directory, *, root=None):
     """Configure only declared fonts, including Inkscape's extra font folders."""
-    from . import fstxn
+    from .runtime import fstxn
     directory = Path(directory)
     for name in ('home', 'config', 'cache', 'data', 'inkscape-profile', 'fonts', 'font-cache'):
         fstxn.mkdir(directory / name, root=root)

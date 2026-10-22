@@ -19,10 +19,10 @@ project+video_tracks 特征键）时自动走本模块，否则回落报告 diff
 import json
 import sys
 from pathlib import Path
-from . import fstxn
+from .runtime import fstxn
 
 from .composite import SEG_CUT_GUARD, choose_cutpoints
-from .encoders import seg_encoder_kind
+from .media.encoders import seg_encoder_kind
 from .hygiene import gfx_key, seg_key
 
 DEFAULT_NSEG = 8   # 与 composite.DEFAULT_SEGMENTS 同值（避免 import 产生环形依赖，取字面量并注释）

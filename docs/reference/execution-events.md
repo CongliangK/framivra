@@ -1,6 +1,6 @@
 # Execution observations
 
-`vtx/events.py` defines optional, local JSONL observations. `--events-jsonl PATH`
+`vtx/runtime/events.py` defines optional, local JSONL observations. `--events-jsonl PATH`
 selects an exclusively created file in an existing directory; stdout retains its
 human-readable format. Existing destinations and unsafe paths are never adopted.
 Dry plans and read-only commands do not create event files. A sink error produces
@@ -15,7 +15,7 @@ own invocation boundary. No evidence is written merely by constructing a context
 
 ## Interpretation
 
-The event schema and accepted vocabulary live in `vtx/events.py`. Each sink
+The event schema and accepted vocabulary live in `vtx/runtime/events.py`. Each sink
 serializes complete lines under one lock, assigning run-relative sequence IDs.
 Task occurrences have independent IDs, even when they reuse the same content.
 Workers receive captured task objects; overlapping stages do not share mutable
@@ -74,7 +74,7 @@ not native renderer/process cleanup.
 
 ## Acceptance bridge
 
-`vtx/execution_links.py` owns the fixed private request/response bridge. An exporter
+`vtx/runtime/execution_links.py` owns the fixed private request/response bridge. An exporter
 allocates its export UUID before launching children, issues a fresh nonce and role
 for each attempted command, and retains only the matching response. The CLI reads
 from the timeline's project directory, independently of its working directory.

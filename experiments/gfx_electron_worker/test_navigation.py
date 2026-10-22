@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 from vtx.gfx_electron import ElectronRenderError, WORKER_DIR, render_page
-from vtx.proc_supervisor import group_live_members, reap_orphan_workers
+from vtx.runtime.proc_supervisor import group_live_members, reap_orphan_workers
 
 
 class ContractTests(unittest.TestCase):

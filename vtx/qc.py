@@ -13,8 +13,9 @@ import operator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import loudness_cache, fstxn
-from .diagnostics import (emit, producer_exit, required_field, operation,
+from .media import loudness_cache
+from .runtime import fstxn
+from .runtime.diagnostics import (emit, producer_exit, required_field, operation,
                           key_path, subtitle_location)
 from .composite import _gfx_scaled_size
 from .hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
@@ -690,7 +691,7 @@ def qc(c):
     # 响度归一验证（EBU R128 整合响度应 ≈ 目标值）——与帧探测并行。
     # 方案三阶段1（2026-09-13）：①加 -vn 免整遍视频解码（-f null 默认流选择会连
     # 视频一起解码，本机实测 4.9s→0.4s）；②peak=true 顺带测 TP 归档回执
-    # （vtx/loudness_cache.py——同一解码域输入全链只测一次）；③先查回执，命中免测
+    # （vtx/media/loudness_cache.py——同一解码域输入全链只测一次）；③先查回执，命中免测
     # （内容键绑定，文件任何变动自然失效重测，不跨版本复用数字）。
     # v2 §1.3（2026-09-13）：TP 从「只归档回执」升为内核 qc 判定项（阈 -1.0 dBFS，
     # 与 gates G3 同一权威值、同一回执不重测）——检查项见下方 checks 回填段。
@@ -941,7 +942,7 @@ def qc(c):
        suggested_actions=[{"op": "inspect_audio_mix", "params": {
            "json_path": "$.audio_tracks", "frame": stacked[1] if stacked else None,
            "fields": ["src", "in", "out", "volume"]}}])
-    from .quality import qc_quality
+    from .runtime.quality import qc_quality
     rep["skipped_probes"] = skipped_probes
     rep["quality"] = qc_quality(rep)
     fstxn.atomic_write(c.out / "qc_report.json", json.dumps(rep, ensure_ascii=False, indent=2), root=c.root)

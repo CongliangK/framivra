@@ -5,7 +5,7 @@
 import contextlib, os, shutil, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
-from .browser_paths import chrome_names, chrome_install_paths
+from ..browser_paths import chrome_names, chrome_install_paths
 
 
 def find_chrome() -> str:

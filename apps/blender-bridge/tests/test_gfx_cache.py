@@ -246,7 +246,7 @@ class RealBlenderCache(CacheFixture):
             + repr(str(REPO / 'tests/gfx/_environment.py')) + ')\n'
             + '_f=importlib.util.module_from_spec(_s);_s.loader.exec_module(_f)\n'
             + 'with patch("vtx.gfx_environment.collect", side_effect=_f.collect), '
-            + 'patch("vtx.encoders.find_chrome", side_effect=_f.find_chrome):\n'
+            + 'patch("vtx.media.encoders.find_chrome", side_effect=_f.find_chrome):\n'
             + '    runpy.run_path(' + repr(str(script)) + ', run_name="__main__")\n')
         return [shutil.which('blender'), '--background', '--factory-startup',
                 '--python', str(wrapper), '--', *map(str, args)]

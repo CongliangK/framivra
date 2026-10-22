@@ -3,7 +3,7 @@ import importlib
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from vtx.diagnostics import DiagnosticMessage
+from vtx.runtime.diagnostics import DiagnosticMessage
 from vtx.pluginlib import hooks
 
 

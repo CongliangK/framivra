@@ -19,7 +19,7 @@
 //   - force-color-profile=srgb + hide-scrollbars 命令行开关。
 //
 // 进程组卫生（#103 协作契约，锦上添花层；权威层是宿主侧守卫+账本）：
-//   宿主经 vtx.proc_supervisor.SupervisedProcessGroup 在 argv 尾部追加
+//   宿主经 vtx.runtime.proc_supervisor.SupervisedProcessGroup 在 argv 尾部追加
 //   --parent-alive-fd=<fd>（匿名管道读端）。主进程用 fs.createReadStream(null, {fd})
 //   阻塞守听；end/close（宿主暴毙 → 内核关闭写端 → EOF）后立即
 //   process.kill(-process.pid, 'SIGKILL') 自毁整棵 Electron（Main+GPU+Zygote+Renderer）。

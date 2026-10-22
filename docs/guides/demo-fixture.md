@@ -175,7 +175,7 @@ env python3 scripts/release/release_acceptance.py "v$(cat VERSION)" --candidate 
 按 CDP/CEF、CEF/CDP、CDP/CEF 至少三轮交错配对，失败也保留。这里的冷项目不含
 既有 cache/out，不等于清空宿主页缓存；暖跑单列。使用现有 events 解析器确认
 事件完整后读取 run_terminal 的 CLI 观察时长和 scope=stage 的阶段时长；调用
-`vtx.events.read_events` 的 complete 必须为 true，事件写失败不会让渲染失败。它们
+`vtx.runtime.events.read_events` 的 complete 必须为 true，事件写失败不会让渲染失败。它们
 不含全部启动/收尾，不把并发阶段相加当总墙钟，完整命令墙钟见 *.time.txt。
 事件资源字段未测，不虚报 RSS；准备成本与 all/strict QC 分开。没有实际同输入
 成片和配对数据时不选优化方向，不声称 CEF 提速。

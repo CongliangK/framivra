@@ -13,9 +13,9 @@
 import fnmatch, hashlib, itertools, json, os, re, shutil, time, stat, secrets
 from pathlib import Path
 
-from . import fstxn
+from .runtime import fstxn
 from .cache_state import InputIdentityError, verify_input_identity
-from .encoders import seg_encoder_kind
+from .media.encoders import seg_encoder_kind
 from .infra import ProjectPathError, ensure_inside_project
 from .pluginlib import hooks as _plugin_hooks
 
@@ -475,7 +475,7 @@ def _sweep_tmp_worker_ledger(path: Path) -> bool:
     cleanup; no signaling authority is added here.
     """
     try:
-        from . import proc_supervisor as _ps
+        from .runtime import proc_supervisor as _ps
         ledger = Path(path) / _ps.WORKER_LEDGER
         if not ledger.is_file():
             return True

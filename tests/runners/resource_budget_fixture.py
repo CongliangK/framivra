@@ -18,7 +18,7 @@ import traceback
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-from vtx.resource_budget import (BudgetCancelled, BudgetExceeded, BudgetTimeout,
+from vtx.runtime.resource_budget import (BudgetCancelled, BudgetExceeded, BudgetTimeout,
                                  ResourceBudget, Resources, ResourceUnavailable,
                                  detect_inventory)
 

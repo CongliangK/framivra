@@ -8,7 +8,7 @@
 
 - **G1** 口播窗−间隙窗中位响度差 + 口播窗均匀极差（批量 ebur128，失败回落逐窗）
 - **G2** 全片综合响度 ∈ [-15.5, -14] LUFS（解码域）
-- **G3** 编码后解码真峰 ≤ -1.0 dBFS（**与内核 qc 同阈值 -1.0、消费同一 `vtx/loudness_cache` 回执不重测**——TP 单项判定权威已上内核，此处保留为发布侧复检，§1.3）
+- **G3** 编码后解码真峰 ≤ -1.0 dBFS（**与内核 qc 同阈值 -1.0、消费同一 `vtx/media/loudness_cache` 回执不重测**——TP 单项判定权威已上内核，此处保留为发布侧复检，§1.3）
 - **G7** blackdetect 零黑帧
 - **G10** 帧数/时长/帧率断言（-count_packets 默认口径）+ 打包编码器报告
 - `--project-gates` 用户自定义字段相等断言（frames/first_voice_frame/*_events/duration_frames）
@@ -20,7 +20,7 @@
 
 - ffmpeg / ffprobe（解码域测量、帧计数、封装探测）
 - numpy（系统 python3）
-- 内核包 vtx（`from vtx import loudness_cache`——响度回执共享；requires.core >= 2.0.0）
+- 内核包 vtx（`from vtx.media import loudness_cache`——响度回执共享；requires.core >= 2.0.0）
 
 ## 健康检查
 

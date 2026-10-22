@@ -15,7 +15,7 @@ from unittest.mock import patch
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from vtx import fstxn
+from vtx.runtime import fstxn
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows kernel APIs required')
@@ -51,14 +51,14 @@ class WindowsCleanup(unittest.TestCase):
         self.assertEqual(victim.read_text(), 'protected')
 
     def test_open_ancestors_cannot_be_renamed(self):
-        from vtx.windows_cleanup import pinned
+        from vtx.runtime.windows_cleanup import pinned
         with pinned(self.target, directory=True):
             with self.assertRaises(OSError):
                 self.target.rename(self.root / 'moved')
         self.assertTrue((self.target / 'data').is_file())
 
     def test_pinned_directory_rejects_reparse_write_handle(self):
-        from vtx.windows_cleanup import pinned
+        from vtx.runtime.windows_cleanup import pinned
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
             ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
@@ -78,7 +78,7 @@ class WindowsCleanup(unittest.TestCase):
             children = original(iterator)
             (self.target / 'new.lock').write_text('keep new child')
             return children
-        with patch('vtx.windows_cleanup.sorted', side_effect=late_child, create=True):
+        with patch('vtx.runtime.windows_cleanup.sorted', side_effect=late_child, create=True):
             self.remove()
         self.assertTrue((self.target / 'new.lock').is_file())
 
@@ -89,7 +89,7 @@ class WindowsCleanup(unittest.TestCase):
         result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(outside)], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.addCleanup(lambda: link.rmdir() if link.exists() else None)
-        from vtx.windows_cleanup import pinned
+        from vtx.runtime.windows_cleanup import pinned
         with self.assertRaises(ValueError):
             with pinned(link, directory=True):
                 self.fail('junction accepted')
@@ -128,7 +128,7 @@ class WindowsBrowserJob(unittest.TestCase):
         self.fail('tree did not start')
 
     def test_close_kills_entire_tree(self):
-        from vtx.windows_browser import BrowserJob
+        from vtx.runtime.windows_browser import BrowserJob
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             job = BrowserJob(self.tree(root))
@@ -138,7 +138,7 @@ class WindowsBrowserJob(unittest.TestCase):
     def test_host_termination_kills_entire_tree(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            code = 'from vtx.windows_browser import BrowserJob; import sys,json,time; job=BrowserJob(json.loads(sys.argv[1])); time.sleep(120)'
+            code = 'from vtx.runtime.windows_browser import BrowserJob; import sys,json,time; job=BrowserJob(json.loads(sys.argv[1])); time.sleep(120)'
             host = subprocess.Popen([sys.executable, '-c', code, json.dumps(self.tree(root))])
             self.addCleanup(lambda: host.kill() if host.poll() is None else None)
             def kill():
@@ -257,7 +257,7 @@ class WindowsCliFailures(unittest.TestCase):
                         output = next(s.split('=', 1)[1] for s in cmd if s.startswith('--screenshot='))
                         Path(output).write_bytes(b'invalid png')
                     return subprocess.CompletedProcess(cmd, 7 if mode == 'nonzero' else 0, b'', b'fixture')
-                with self.subTest(mode=mode), patch('vtx.windows_browser.run_browser', side_effect=shot):
+                with self.subTest(mode=mode), patch('vtx.runtime.windows_browser.run_browser', side_effect=shot):
                     with self.assertRaises(GfxCliError):
                         run_cli_shot(0, root, html, 'chrome.exe', width=640, height=360)
                     self.assertFalse((root / 'f0000.png').exists())

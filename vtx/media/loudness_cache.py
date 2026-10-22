@@ -33,8 +33,8 @@ root 缺省 = media 父目录的父目录（out/final.mp4 → 项目根）。
 import hashlib, json, math, threading, time
 from pathlib import Path
 
-from .cache_state import media_stat_digest
-from . import fstxn
+from ..cache_state import media_stat_digest
+from ..runtime import fstxn
 
 _LOCK = threading.Lock()
 

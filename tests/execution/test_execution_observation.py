@@ -9,7 +9,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from vtx import events, execution_links
+from vtx.runtime import events, execution_links
 from tests.execution import test_execution_links
 from tests.execution.test_execution_events import Buffer
 

@@ -567,7 +567,7 @@ def _collect_windows(backend, binary, mode):
             'protocol': {'device_scale': 1, 'color': 'srgb', 'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
             'implementation': _files([_ROOT / p for p in ('gfx_environment.py', 'gfx_backend.py',
-                'gfx_render.py', 'gfx_cli.py', 'gfx_cef.py', 'cef_client.py', 'windows_browser.py',
+                'gfx_render.py', 'gfx_cli.py', 'gfx_cef.py', 'cef_client.py', 'runtime/windows_browser.py',
                 'browser_paths.py')])}
 
 
@@ -877,7 +877,7 @@ def collect(backend, binary, mode=None):
 def resolve(c):
     """Pin one environment to a context; recheck() never adopts new inputs."""
     from .gfx_backend import selected, cef_config
-    from .encoders import find_chrome
+    from .media.encoders import find_chrome
     backend = selected()
     if backend == 'electron':
         return None  # frozen historical identity owned by gfx_backend

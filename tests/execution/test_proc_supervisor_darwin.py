@@ -8,8 +8,8 @@ import sys
 import unittest
 from unittest import mock
 
-from vtx import proc_supervisor
-from vtx.proc_supervisor import boot_id, group_live_members, proc_starttime
+from vtx.runtime import proc_supervisor
+from vtx.runtime.proc_supervisor import boot_id, group_live_members, proc_starttime
 
 
 @unittest.skipUnless(sys.platform == 'darwin', 'Darwin kernel identity')

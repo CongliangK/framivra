@@ -3,7 +3,7 @@
 This opt-in experiment reads existing evidence. It does not import renderers,
 start browsers, benchmark, scan directories, read recorded PNG paths, inspect
 processes, change cache state or grant performance/quality acceptance. It uses
-Python's standard library and the existing pure `vtx.events.read_events` reducer.
+Python's standard library and the existing pure `vtx.runtime.events.read_events` reducer.
 Run from the repository root. No installation is needed.
 
 ## Explicit inputs and output

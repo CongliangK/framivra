@@ -6,7 +6,8 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import events, fstxn, gfx_cli
+from .runtime import events, fstxn
+from . import gfx_cli
 from .gfx_backend import OUTPUT, electron_config, identity
 from .gfx_electron import PAGE_ERROR_GATE, ElectronRenderError, expected_request, frame_url, render_page
 from .hygiene import gfx_cache_ns, gfx_dir, gfx_key, manifest_record

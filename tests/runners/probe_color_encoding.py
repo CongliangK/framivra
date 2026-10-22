@@ -1,7 +1,7 @@
 """Opt-in synthetic color diagnostic; not a full compositor/QC acceptance test."""
 import argparse,hashlib,json,pathlib,subprocess,sys,types
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[2]))
-from vtx.encoders import pick_vcodec
+from vtx.media.encoders import pick_vcodec
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output',type=pathlib.Path,required=True,help='new evidence directory; synthetic files only')
 P=parser.parse_args().output

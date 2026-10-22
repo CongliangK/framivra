@@ -519,7 +519,8 @@ class TestSubtitleReadiness(unittest.TestCase):
         import contextlib
         import io
         from tests._support import tree_sha256
-        from vtx import recovery, subs
+        from vtx import recovery
+        from vtx.media import subs
         from vtx.hygiene import seg_key
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -617,7 +618,7 @@ class TestSubtitleReadiness(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
     def test_partial_preview_renders_and_missing_current_uses_black_fallback(self):
         import subprocess
-        from vtx import subs
+        from vtx.media import subs
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             sequence = root / 'partial'

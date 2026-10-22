@@ -269,7 +269,7 @@ class DarwinEnvironmentContracts(unittest.TestCase):
             plistlib.dumps({'AppleLanguages': ['ja']}))
         alias = preferences / 'ByHost/com.google.Chrome.fixture-host.plist'
         context = SimpleNamespace(w=32, h=16, fps=30)
-        with patch('vtx.encoders.find_chrome', return_value=str(self.binary)):
+        with patch('vtx.media.encoders.find_chrome', return_value=str(self.binary)):
             env.certificate(context)
             alias.symlink_to('../.GlobalPreferences.plist')
             with self.assertRaisesRegex(env.EnvironmentError, 'preference file symlink'):
@@ -441,14 +441,14 @@ class DarwinEnvironmentContracts(unittest.TestCase):
     def test_unknown_is_diagnostic_but_cannot_be_certified(self):
         self.font.unlink()
         context = SimpleNamespace(w=32, h=16, fps=30)
-        with patch('vtx.encoders.find_chrome', return_value=str(self.binary)):
+        with patch('vtx.media.encoders.find_chrome', return_value=str(self.binary)):
             self.assertEqual(env.resolve(context)['status'], 'unknown')
             with self.assertRaises(env.EnvironmentError):
                 env.certificate(context)
 
     def test_new_loader_override_cannot_reuse_pinned_certificate(self):
         context = SimpleNamespace(w=32, h=16, fps=30)
-        with patch('vtx.encoders.find_chrome', return_value=str(self.binary)):
+        with patch('vtx.media.encoders.find_chrome', return_value=str(self.binary)):
             env.certificate(context)
             with patch.dict(os.environ, {'DYLD_INSERT_LIBRARIES': '/unbound/library'}):
                 with self.assertRaisesRegex(env.EnvironmentError, 'override'):
@@ -456,7 +456,7 @@ class DarwinEnvironmentContracts(unittest.TestCase):
 
     def test_recheck_refuses_input_change_and_offline_certificate_requires_cache(self):
         context = SimpleNamespace(w=32, h=16, fps=30)
-        with patch('vtx.encoders.find_chrome', return_value=str(self.binary)):
+        with patch('vtx.media.encoders.find_chrome', return_value=str(self.binary)):
             certificate = env.certificate(context)
             env.recheck(context)
             self.resource.write_bytes(b'resource B')

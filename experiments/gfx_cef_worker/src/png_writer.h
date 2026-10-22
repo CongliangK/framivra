@@ -17,7 +17,7 @@
 //
 // 落盘：AtomicWriteBytes —— 同目录 .tmp.<pid>.<tid> 临时名 + fwrite/fflush/
 // fclose 全零返回校验 + rename() 原子替换（vtx/gfx_render.py:_atomic_write_bytes
-// 与 vtx/fstxn.py 命名规范的 C++ 镜像）。
+// 与 vtx/runtime/fstxn.py 命名规范的 C++ 镜像）。
 #ifndef GFX_CEF_WORKER_PNG_WRITER_H_
 #define GFX_CEF_WORKER_PNG_WRITER_H_
 

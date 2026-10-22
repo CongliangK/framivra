@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from vtx.diagnostics import DiagnosticMessage, emit
+from vtx.runtime.diagnostics import DiagnosticMessage, emit
 from vtx.infra import Ctx
 from vtx import stages
 

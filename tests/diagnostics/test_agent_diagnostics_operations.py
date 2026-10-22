@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tests.diagnostics._support import StageFixture
-from vtx.diagnostics import operation, required_field
+from vtx.runtime.diagnostics import operation, required_field
 from vtx.infra import Ctx
 
 
@@ -47,7 +47,7 @@ class NativeOperations(unittest.TestCase):
 class IdentityExit(unittest.TestCase):
     def test_only_actual_handled_identity_failure_transfers_to_exit(self):
         from vtx.cache_state import InputIdentityError
-        from vtx.diagnostics import mark_handled
+        from vtx.runtime.diagnostics import mark_handled
         for handled in (False, True):
             error = InputIdentityError('identity changed')
             if handled:

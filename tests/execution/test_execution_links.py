@@ -9,7 +9,7 @@ import uuid
 from unittest.mock import patch
 
 from vtx import acceptance as a
-from vtx import execution_links as links
+from vtx.runtime import execution_links as links
 from tests.acceptance import test_acceptance
 from tests._support import temporary_root
 
@@ -103,7 +103,7 @@ class RequestTests(unittest.TestCase):
 
 class PackageLinkTests(test_acceptance.AcceptanceFixture, unittest.TestCase):
     def observed_render(self, cmd, **kwargs):
-        from vtx.events import ExecutionContext
+        from vtx.runtime.events import ExecutionContext
         result = self.render(cmd, **kwargs)
         role = links.ROLES[0 if cmd[5] == 'all' else 1]
         stream, request = links.open_response(cmd[4], role)
@@ -212,7 +212,7 @@ class PackageLinkTests(test_acceptance.AcceptanceFixture, unittest.TestCase):
             self.verify()
 
     def test_receipt_commit_reference_and_tamper(self):
-        from vtx.events import ExecutionContext
+        from vtx.runtime.events import ExecutionContext
         def render(cmd, **kwargs):
             result = self.render(cmd, **kwargs)
             role = links.ROLES[0 if cmd[5] == 'all' else 1]

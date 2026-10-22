@@ -35,7 +35,7 @@ def bind_environment(test):
     patch = mock.patch.object(env, 'collect', side_effect=collect)
     patch.start()
     test.addCleanup(patch.stop)
-    browser = mock.patch('vtx.encoders.find_chrome', side_effect=find_chrome)
+    browser = mock.patch('vtx.media.encoders.find_chrome', side_effect=find_chrome)
     browser.start()
     test.addCleanup(browser.stop)
 
@@ -46,5 +46,5 @@ def environment_cli():
             "import runpy\nfrom unittest.mock import patch\n"
             "from tests.gfx._environment import collect, find_chrome\n"
             "with patch('vtx.gfx_environment.collect', side_effect=collect), "
-            "patch('vtx.encoders.find_chrome', side_effect=find_chrome):\n"
+            "patch('vtx.media.encoders.find_chrome', side_effect=find_chrome):\n"
             "    runpy.run_module('vtx', run_name='__main__')\n"]

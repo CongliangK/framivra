@@ -11,13 +11,13 @@ from pathlib import Path
 
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
-from . import fstxn, events
+from .runtime import fstxn, events
 from .cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
                          receipt_fingerprint, validate_cache_dependencies,
                          verify_input_identity)
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
-from .diagnostics import emit, required_field, mark_handled, producer_exit, operation, indexed
-from .encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
+from .runtime.diagnostics import emit, required_field, mark_handled, producer_exit, operation, indexed
+from .media.encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
                        nvenc_retry_run)
 
 
@@ -392,7 +392,7 @@ class Ctx:
                 rec["stages"][stage]["gfx_backend"] = self.gfx_backend
             if extra:
                 rec["stages"][stage].update(extra)   # 结构化附加字段（如 audio 的响度数据），不改旧字段
-            from .quality import receipt_quality
+            from .runtime.quality import receipt_quality
             rec["quality"] = receipt_quality(rec)
             return rec
 
@@ -446,7 +446,7 @@ class Ctx:
                 raise error
             for name in DOWNSTREAM.get(stage, []) + [stage]:
                 rec['stages'].pop(name, None)
-            from .quality import receipt_quality
+            from .runtime.quality import receipt_quality
             rec["quality"] = receipt_quality(rec)
             return rec
 

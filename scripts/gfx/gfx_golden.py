@@ -117,7 +117,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # v2 §1.4 包化：注入 repo 根 + 包导入（不再注入 repo/vtx）
 from vtx.infra import Ctx   # noqa: E402
-from vtx.fstxn import atomic_write
+from vtx.runtime.fstxn import atomic_write
 from vtx import hygiene     # noqa: E402
 from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
 from vtx import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
@@ -977,7 +977,7 @@ def cmd_compare(args) -> int:
                   "compared_frames": n_cmp, "identical": identical, "differ": differ,
                   "dir_missing": dir_missing, "missing_or_unreadable": unreadable,
                   "unrecorded": unrecorded, "env_gate": gate}
-        from vtx.quality import classify
+        from vtx.runtime.quality import classify
         report["quality"] = classify(scope="legacy_golden_comparison")
         atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
@@ -1061,7 +1061,7 @@ def cmd_analyze(args) -> int:
                   "compared": len(frames),
                   "tiers": {TIER_EXACT: n_t1, TIER_PREMUL: n_t2, TIER_FAIL: n_t3},
                   "frames": frames, "errors": errors}
-        from vtx.quality import classify
+        from vtx.runtime.quality import classify
         report["quality"] = classify(scope="legacy_golden_comparison")
         atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
@@ -1161,7 +1161,7 @@ def cmd_verify_canary(args) -> int:
                                "no_canary": buckets[fc.ST_NO_CANARY],
                                "ambiguous_signature": buckets[fc.ST_AMBIGUOUS],
                                "errors": len(errors)}}
-        from vtx.quality import classify
+        from vtx.runtime.quality import classify
         report["quality"] = classify(scope="legacy_golden_comparison")
         atomic_write(Path(args.report), json.dumps(report, ensure_ascii=False, indent=1))
         print(f"  报告已写入 {args.report}")
@@ -1242,7 +1242,7 @@ def main(argv=None) -> int:
                             load(args.candidate_run))
         except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError) as error:
             report = {"ok": False, "errors": [str(error)]}
-        from vtx.quality import classify
+        from vtx.runtime.quality import classify
         report.setdefault("quality", classify(scope="declared_gfx_instances:decoded_RGBA8"))
         report["report_written"] = True
         try:

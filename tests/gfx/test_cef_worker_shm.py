@@ -48,7 +48,7 @@ from vtx import cef_client  # noqa: E402
 from vtx.gfx_cli import png_invalid_reason  # noqa: E402
 from tests.gfx._png import unfilter_rgba
 from vtx.infra import Ctx  # noqa: E402
-from vtx.proc_supervisor import (  # noqa: E402
+from vtx.runtime.proc_supervisor import (  # noqa: E402
     SupervisedProcessGroup, group_live_members, reap_orphan_workers)
 
 _LINUX_PROC = Path("/proc/self/stat").is_file()
@@ -121,7 +121,7 @@ import json, os, sys, time
 from pathlib import Path
 from vtx import cef_client
 from vtx.infra import Ctx
-from vtx.proc_supervisor import SupervisedProcessGroup
+from vtx.runtime.proc_supervisor import SupervisedProcessGroup
 
 root, ready_path, worker, url_tpl = (Path(sys.argv[1]), Path(sys.argv[2]),
                                       sys.argv[3], sys.argv[4])

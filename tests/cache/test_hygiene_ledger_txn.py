@@ -4,7 +4,7 @@
 （issue #31 / B07，关联 F-09/#9：线程锁≠跨进程锁、写中断可损坏 JSON）。
 
 hygiene 的三处「读-改-写」（manifest_record / versions_check / versions_record）
-自 B07 起统一走 vtx/fstxn.locked_update（B05/B06 引入的共享底层：进程内
+自 B07 起统一走 vtx/runtime/fstxn.locked_update（B05/B06 引入的共享底层：进程内
 per-path 线程锁 → <目标名>.lock 的 flock 跨进程互斥 → tmp→os.replace 原子替换）。
 本文件按工单验收「并发写入和模拟崩溃后记录保持一致或可恢复」对账：
 
@@ -102,7 +102,7 @@ import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from vtx.infra import Ctx
-from vtx import fstxn, hygiene
+from vtx.runtime import fstxn; from vtx import hygiene
 c = Ctx(Path(sys.argv[2]))
 phase = sys.argv[4]
 if phase not in ("before_tmp", "before_replace", "after_replace"):
