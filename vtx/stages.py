@@ -145,6 +145,9 @@ def validate(c: Ctx):
                          operands={'operation': description, 'paths': paths or [path]},
                          source={'provider': 'source facts', 'provider_path': fact},
                          status='unknown')
+    def clip_fade(cl, cp, tr, tp):
+        if native(cp, lambda: observe("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)) > field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur')]):
+            err(f"fade 总长超过片段: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_fade', {'value': observed.get("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
     from .cache_state import validate_cache_dependencies
     try:
         validate_cache_dependencies(c)
@@ -200,6 +203,9 @@ def validate(c: Ctx):
             if native(cp, lambda: field(cl, 'dst_in', cp) < 0, 'comparison', paths=[key_path(cp, 'dst_in')]) or native(cp, lambda: observe("field(cl, 'dst_in', cp) + field(cl, 'dur', cp)", field(cl, 'dst_in', cp) + field(cl, 'dur', cp)) > c.dur, 'comparison', paths=['$.project.duration_frames', key_path(cp, 'dst_in'), key_path(cp, 'dur')]):
                 err(f"{field(tr, 'name', tp)}: clip 区间越界 @dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_bounds', {'start': observed.get(key_path(cp, 'dst_in'), {'status': 'not_observed'}), 'end': observed.get("field(cl, 'dst_in', cp) + field(cl, 'dur', cp)", {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'unit': 'frames'})
             if kind == "gfx":
+                # Negative starts deliberately short-circuit before observing dur.
+                if field(cl, 'dst_in', cp) >= 0:
+                    clip_fade(cl, cp, tr, tp)
                 from . import gfx_svg
                 if gfx_svg.is_svg(cl):
                     try:
@@ -221,8 +227,7 @@ def validate(c: Ctx):
                     err(f"视频 clip 引用了纯音频源: {field(tr, 'name', tp)} src={field(cl, 'src', cp)}", cp + '.src', 'validate.clip_video', {'has_video': False}, {'has_video': True})
                 elif provider(cp+'.src', lambda: field(cl, 'src_out', cp) > observe("i['nb_frames']", i['nb_frames']), 'comparison', fact='$.nb_frames', paths=[key_path(cp, 'src_out')]):
                     err(f"""切割越界: {field(tr, 'name', tp)} src={field(cl, 'src', cp)} src_out={field(cl, 'src_out', cp)} > 实测 {operation(c, lambda: observe("i['nb_frames']", i['nb_frames']), path=cp, rule='probe.metadata_operation', operands={'operation': "i['nb_frames']"}, source={'provider': 'source facts', 'provider_path': "'nb_frames'"}, status='unknown')}""", cp + '.src_out', 'validate.clip_source_bounds', {'value': observed.get(key_path(cp, 'src_out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get("i['nb_frames']", {'status': 'not_observed'}), 'unit': 'frames'})
-            if native(cp, lambda: observe("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)) > field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur')]):
-                err(f"fade 总长超过片段: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_fade', {'value': observed.get("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
+            clip_fade(cl, cp, tr, tp)
     # v2 subtitles_src（§1.1 条目 6）：加载点解析错误在此 FAIL——互斥/文件缺失/
     # 解析失败（infra.Ctx 构造期记入，语义裁定见 vtx/subtitles_src.py 模块头）。
     for e in getattr(c, "subtitles_errors", []):

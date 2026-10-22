@@ -167,6 +167,21 @@ class SvgContract(unittest.TestCase):
         self.assertEqual(props['format']['enum'],['html','svg-sequence'])
         self.assertIn('gfxFormats.size>1',(root/'vtx/preview.html').read_text())
 
+    def test_svg_fade_total_cannot_bypass_common_validation(self):
+        from vtx.stages import validate
+        for fade_out in (1, 2):
+            self.clip.update(fade_in_frames=1, fade_out_frames=fade_out)
+            self.save()
+            c = self.ctx(); c.diagnostics = []
+            with contextlib.redirect_stdout(io.StringIO()):
+                if fade_out == 1:
+                    validate(c)
+                else:
+                    with self.assertRaises(SystemExit):
+                        validate(c)
+            self.assertEqual([r['rule_id'] for r in c.diagnostics].count('validate.clip_fade'),
+                             int(fade_out == 2))
+
     def test_unknown_attributes_namespaces_and_style_rejected(self):
         rectangle = '<rect width="100" height="100" fill="red"/>'
         for replacement in [

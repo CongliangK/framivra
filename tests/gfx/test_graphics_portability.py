@@ -13,6 +13,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.environ.get('VTX_TEST_MODULE_DIR', str(Path(__file__).resolve().parents[2])))
@@ -52,7 +53,9 @@ class CDPDeadlineMock(unittest.TestCase):
 
     def setUp(self):
         self.clock = [0.0]
-        for patcher in (mock.patch.object(gfx.time, 'monotonic', lambda: self.clock[0]),
+        # Keep the test runner's shared stdlib clock real throughout subtests.
+        clock = SimpleNamespace(monotonic=lambda: self.clock[0])
+        for patcher in (mock.patch.object(gfx, 'time', clock),
                         mock.patch.object(gfx.os, 'urandom', lambda n: b'\0' * n)):
             patcher.start(); self.addCleanup(patcher.stop)
 

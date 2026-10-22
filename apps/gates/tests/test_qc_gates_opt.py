@@ -311,7 +311,7 @@ class TestQcSegmentExemption(unittest.TestCase):
         # 首轮全过 → 记录已生成（segs ≥2、checks 全 True）
         rec = json.loads((self.proj / "cache" / "qc_pass_segs.json")
                          .read_text(encoding="utf-8"))
-        self.assertEqual(rec["version"], 2)
+        self.assertEqual(rec["version"], 3)
         self.assertGreaterEqual(len(rec["segs"]), 2)
         self.assertTrue(all(rec["checks"].values()))
         self.assertEqual(self.first_report.get("skipped_probes"), [])

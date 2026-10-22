@@ -41,6 +41,13 @@ load(current);
 assert.equal(TL, current);
 assert.equal(JSON.stringify(current), before);
 assert.equal(validate(current).filter(issue => issue.lv === 'err').length, 0);
+for(const format of ['html','svg-sequence']) for(const total of [10,11]) {
+  const t=JSON.parse(JSON.stringify(current));
+  t.video_tracks=[{name:'gfx',kind:'gfx',clips:[{src:'page',format,dst_in:0,dur:10,
+    fade_in_frames:4,fade_out_frames:total-4}]}];
+  assert.equal(validate(t).filter(issue=>issue.lv==='err' && /fade 总长/.test(issue.m)).length,
+               Number(total>10));
+}
 assert.equal(durF(current), current.project.duration_frames);
 for (const old of [null, [], 'text', {}, {version: 1, overlays: [{src: 'old.html', in: 0, out: 30}]},
                    {version: 3}, {version: '2'}]) {

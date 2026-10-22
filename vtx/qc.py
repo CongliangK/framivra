@@ -16,6 +16,7 @@ from pathlib import Path
 from . import loudness_cache, fstxn
 from .diagnostics import (emit, producer_exit, required_field, operation,
                           key_path, subtitle_location)
+from .composite import _gfx_scaled_size
 from .hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
@@ -36,7 +37,7 @@ TARGET_LUFS = -14            # 项目目标响度（EBU R128，与 stages.build_
 QC_TP_MAX = -1.0             # 解码域真峰阈（dBFS，v2 §1.3：G3 的 -1.0 为唯一权威）
 
 # ---- QC 命中段免检记录（方案三阶段1，2026-09-13）----
-# 记录 cache/qc_pass_segs.json：{"version":2,"final":{size,mtime_ns,frames},
+# 记录 cache/qc_pass_segs.json：{"version":3,"final":{size,mtime_ns,frames},
 # "probe_filter":采样表达式,"segs":[{name,a,b,key,size,mtime_ns}],
 # "checks":{检查名:上轮是否 pass}}。
 # 免检判定（非 --strict，见 qc() 内）：final (size,mtime_ns) 与记录一致 + 检查项
@@ -53,7 +54,8 @@ _QC_SEG_RECORD = "qc_pass_segs.json"
 # Keep bicubic sampling, but avoid the imprecise optimized vertical path that
 # can lift a constant black frame above zero (FFmpeg 7.1.5, x86_64). The same
 # filter applies to final, source and qc_clean probes; thresholds stay unchanged.
-# Schema v2 also prevents legacy v1 readers from reusing these passes on rollback.
+# Schema revisions also reject legacy readers on rollback: v2 changed gray
+# sampling; v3 projects gfx content bounds through the shared scale geometry.
 _QC_GRAY_WIDTH, _QC_GRAY_HEIGHT = 48, 27
 _QC_GRAY_FILTER = f"scale={_QC_GRAY_WIDTH}:{_QC_GRAY_HEIGHT}:flags=bicubic+accurate_rnd,format=gray"
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
@@ -65,7 +67,7 @@ def _load_qc_pass_record(c):
         rec = json.loads((c.cache / _QC_SEG_RECORD).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(rec, dict) or rec.get("version") != 2:
+    if not isinstance(rec, dict) or rec.get("version") != 3:
         return None
     if rec.get("probe_filter") != _QC_GRAY_FILTER:
         return None   # Old sampling results cannot exempt the new probe contract.
@@ -132,7 +134,7 @@ def _write_qc_pass_record(c, frames_nb, checks):
         st = (c.out / "final.mp4").stat()
     except OSError:
         return
-    rec = {"version": 2, "probe_filter": _QC_GRAY_FILTER,
+    rec = {"version": 3, "probe_filter": _QC_GRAY_FILTER,
            "final": {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
                      "frames": frames_nb},
            "segs": segs, "checks": mem}
@@ -462,12 +464,14 @@ def qc(c):
 
     def gfx_content_crop(cl):
         """gfx overlay 内容域 crop（R-05 探针口径对齐，2026-09-17 定谳单）：
-        从 png 稳态帧（dur//2）alpha 通道提取内容 bbox，叠加 clip x/y 放置偏移，
+        从 png 稳态帧（dur//2）alpha 通道提取内容 bbox，按合成实际尺寸投影，
+        再叠加 clip x/y 放置偏移（不是缩放后 alpha 阈值的精确 bbox），
         偶对齐后作 fdiff 采样域。背景：c4_mini 类「全画布 png+小内容条带」页
         （内容仅占画布 4.63%）在整帧 48:27 口径被稀释——放置域实测 cover 82%
         vs 整帧 2.9%，双阈双低误判「未生效」恒红。png 缺失/读取失败/内容全透明
         （空页）/矩形退化 → None 回落整帧口径（旧行为）。仅改采样域：阈值、
-        检查名、checks 数量全部不变；域内信号单调不弱于整帧，既有 PASS 不翻。"""
+        检查名、checks 数量全部不变。历史案例中裁域避免了信号稀释；当前仅修正
+        源内容域的几何投影，不承诺任意内容经 Lanczos 后的统计或 PASS 单调。"""
         try:
             png = gfx_dir(c, cl) / f"f{cl['dur'] // 2:04d}.png"
             if not png.is_file():
@@ -508,13 +512,20 @@ def qc(c):
                     x1 = j
             if x0 < 0 or y0 < 0:
                 return None   # 内容全透明（空页）→ 回落整帧，判定将如实 FAIL
+            # Project the source alpha>24 half-open domain, not Lanczos fringes.
+            # Integer floor/ceil use the actual even dimensions, not nominal sc;
+            # the decoded raw frame stays source-sized even for a huge upscale.
+            w2, h2 = _gfx_scaled_size(pw, ph, cl.get("scale", 1))
+            x0 = x0 * w2 // pw; y0 = y0 * h2 // ph
+            x1 = ((x1 + 1) * w2 + pw - 1) // pw
+            y1 = ((y1 + 1) * h2 + ph - 1) // ph
             ox = int(cl.get("x", 0)); oy = int(cl.get("y", 0))
             cx0 = max(0, x0 + ox); cy0 = max(0, y0 + oy)
-            cx1 = min(c.w, x1 + 1 + ox); cy1 = min(c.h, y1 + 1 + oy)
+            cx1 = min(c.w, x1 + ox); cy1 = min(c.h, y1 + oy)
             w = cx1 - cx0; h = cy1 - cy0
             if w < 2 or h < 2:
                 return None
-            w -= w % 2; h -= h % 2   # 偶对齐（对齐 composite 放置 //2*2 口径）
+            w -= w % 2; h -= h % 2   # crop 宽高偶对齐；放置坐标仍为 int(x/y)。
             return f"{w}:{h}:{cx0}:{cy0}"
         except Exception:
             return None   # 任何失败回落整帧——探针永不因本 helper 阻断 qc

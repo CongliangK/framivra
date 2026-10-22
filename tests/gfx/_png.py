@@ -13,9 +13,14 @@ def chunk(tag, data):
     return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
 
 
-def png(w=6, h=4, value=0, filter_byte=0):
+def png(w=6, h=4, value=0, filter_byte=0, *, rgba=None):
+    if rgba is None:
+        rows = (bytes([filter_byte]) + bytes([value]) * (w * 4)) * h
+    else:
+        assert len(rgba) == w * h * 4
+        rows = b''.join(bytes([filter_byte]) + rgba[y*w*4:(y+1)*w*4] for y in range(h))
     return (gfx_cli.PNG_SIGNATURE + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))
-            + chunk(b'IDAT', zlib.compress((bytes([filter_byte]) + bytes([value]) * (w * 4)) * h))
+            + chunk(b'IDAT', zlib.compress(rows))
             + chunk(b'IEND', b''))
 
 

@@ -164,7 +164,7 @@
                   "type": "number",
                   "exclusiveMinimum": 0,
                   "maximum": 1,
-                  "description": "相对源尺寸的缩放；缺省=全屏铺满（经 transform 归一到项目分辨率）"
+                  "description": "相对源尺寸的缩放；缺省=全屏铺满（经 transform 归一到项目分辨率）。gfx 的非默认 scale 按源 PNG 尺寸向下取偶数；最终尺寸（含 draft 缩放）任一边不足 2 像素时报错。"
                 },
                 "x": {
                   "type": "integer",
