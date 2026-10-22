@@ -18,7 +18,7 @@ import wave
 from unittest import mock
 
 from vtx.cli import commands as cli
-from vtx.render import gfx_backend, gfx_cli, gfx_electron_stage
+from vtx.render import gfx_backend, gfx_cli, gfx_electron, gfx_electron_stage
 from vtx.cache import hygiene
 from vtx.cache.cache_state import InputIdentityError, verify_input_identity
 from vtx.pipeline.composite import RenderPlan
@@ -98,6 +98,68 @@ class IntegrationGates(unittest.TestCase):
                 mock.patch.object(cli, 'find_chrome', side_effect=AssertionError('forbidden Chrome lookup')), \
                 contextlib.redirect_stdout(io.StringIO()):
             cli.gfx(self.c)
+
+    def test_each_png_gate_hashes_only_its_validated_stream(self):
+        read_bytes = Path.read_bytes
+
+        def no_png_read_bytes(path):
+            if path.suffix == '.png':
+                raise AssertionError('PNG must be hashed by its validation stream')
+            return read_bytes(path)
+
+        for gate in ('adapter', 'stage'):
+            for case in ('valid', 'malformed', 'geometry', 'wrong_hash', 'uppercase_hash'):
+                with self.subTest(gate=gate, case=case):
+                    directory = self.root / f'{gate}-{case}'
+                    directory.mkdir()
+                    st = self.fake_render(self.root / 'page.html', directory, 1, frames=[0],
+                                          mode='b0', output=gfx_backend.OUTPUT, timeout_s=15)
+                    result = Path(st['evidence_dir']) / 'result.json'
+                    raw = json.loads(result.read_text())
+                    target = directory / 'f0000.png'
+                    if case in ('malformed', 'geometry'):
+                        data = b'not PNG' if case == 'malformed' else png(64, 96)
+                        target.write_bytes(data)
+                        raw['frames'][0]['sha256'] = hashlib.sha256(data).hexdigest()
+                    elif case == 'wrong_hash':
+                        raw['frames'][0]['sha256'] = '0' * 64
+                    elif case == 'uppercase_hash':
+                        raw['frames'][0]['sha256'] = raw['frames'][0]['sha256'].upper()
+                    result.write_text(json.dumps(raw))
+                    with mock.patch.object(Path, 'read_bytes', no_png_read_bytes):
+                        if gate == 'stage':
+                            with mock.patch.object(gfx_cli, 'png_invalid_reason',
+                                                   wraps=gfx_cli.png_invalid_reason) as validate:
+                                call = lambda: gfx_electron_stage.require_result(
+                                    st, [0], directory, 192, 96, expected_html=self.root / 'page.html',
+                                    expected_config=(self.binary, 'b0', gfx_backend.OUTPUT, 15))
+                                if case == 'valid':
+                                    self.assertEqual(call()['frames'], [0])
+                                else:
+                                    with self.assertRaises(gfx_electron.ElectronRenderError):
+                                        call()
+                        else:
+                            run = uuid.UUID(int=1)
+                            raw['run_id'] = run.hex
+                            process = mock.MagicMock()
+                            process.proc.wait.return_value = 0
+
+                            def enter():
+                                (directory / '.electron' / run.hex / 'result.json').write_text(json.dumps(raw))
+                                return process
+
+                            process.__enter__.side_effect = enter
+                            with mock.patch.object(gfx_electron, 'supervision_available', return_value=True), \
+                                    mock.patch.object(gfx_electron, 'SupervisedProcessGroup', return_value=process), \
+                                    mock.patch.object(gfx_electron.uuid, 'uuid4', return_value=run), \
+                                    mock.patch.object(gfx_electron, 'png_invalid_reason',
+                                                      wraps=gfx_cli.png_invalid_reason) as validate:
+                                summary = gfx_electron.render_page(
+                                    self.root / 'page.html', directory, 1, width=192, height=96,
+                                    ctx=self.c, electron_path=self.binary)
+                            self.assertEqual(summary['failed'], [] if case == 'valid' else [0])
+                        self.assertEqual(validate.call_count, 1)
+                        self.assertIn('_fingerprint', validate.call_args.kwargs)
 
     def test_selector_unknown_is_rejected_and_cef_retained(self):
         for value in ('typo', '', 'ElectronGPU'):

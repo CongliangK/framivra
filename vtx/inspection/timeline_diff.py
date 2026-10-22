@@ -394,7 +394,10 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
     # ---- 音轨 ----
     ata = {t.get("name", f"#{i}"): t for i, t in enumerate(tla.get("audio_tracks", []))}
     atb = {t.get("name", f"#{i}"): t for i, t in enumerate(tlb.get("audio_tracks", []))}
-    audio_changed = bool(impact["audio_prepare_new"] or impact["audio_orphan"])
+    # 混音按 fps 换算帧域事件、按项目时长补齐/裁切；事件不变也可能需要重新混音。
+    audio_changed = (bool(impact["audio_prepare_new"] or impact["audio_orphan"])
+                     or any(tla["project"][k] != tlb["project"][k]
+                            for k in ("fps", "duration_frames")))
     for name in sorted(set(ata) | set(atb)):
         if name not in ata:
             add("add", f"audio_tracks[{name}]", None, f"{len(atb[name]['events'])} events", "patch")
@@ -405,7 +408,7 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
             audio_changed = True
             continue
         xa, xb = ata[name], atb[name]
-        for k in ("duck", "duck_by", "duck_params"):
+        for k in ("duck", "duck_by", "duck_params", "duck_strategy"):
             if xa.get(k) != xb.get(k):
                 add("change", f"audio_tracks[{name}].{k}", _short(xa.get(k)), _short(xb.get(k)), "patch")
                 audio_changed = True

@@ -2,18 +2,17 @@
 
 无副作用（除探测子进程本身）；全部行为与拆分前逐字一致。
 """
-import contextlib, os, shutil, subprocess, sys, threading, time
+import contextlib, os, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
-from ..render.browser_paths import chrome_names, chrome_install_paths
+from ..render.browser_paths import find_chrome_candidate
 
 
 def find_chrome() -> str:
     """跨平台定位 Chrome/Chromium：环境变量 VTX_CHROME 优先，其次 PATH 常见名，再退标准安装路径。"""
-    cands = (*chrome_names(), *chrome_install_paths(sys.platform))
-    for c in cands:
-        if c and (shutil.which(c) or os.path.isfile(c)):
-            return c
+    candidate = find_chrome_candidate(sys.platform)
+    if candidate:
+        return candidate
     print("✗ 找不到 Chrome/Chromium（gfx 帧截图需要）。可设环境变量 VTX_CHROME 指定可执行文件路径"); sys.exit(1)
 
 

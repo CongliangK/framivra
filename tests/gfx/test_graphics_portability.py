@@ -18,8 +18,46 @@ from unittest import mock
 
 sys.path.insert(0, os.environ.get('VTX_TEST_MODULE_DIR', str(Path(__file__).resolve().parents[2])))
 from vtx.render import gfx_render as gfx
+from vtx.render import browser_paths
+from vtx.media import encoders
 from vtx.pipeline import infra
 from vtx.cli import commands as vtx
+
+
+class BrowserDiscoveryMock(unittest.TestCase):
+    def test_both_callers_share_candidate_order_and_platform_fallbacks(self):
+        env = {'VTX_CHROME': '/custom/chrome', 'PROGRAMFILES': r'C:\Program Files',
+               'PROGRAMFILES(X86)': r'C:\Program Files (x86)', 'LOCALAPPDATA': r'C:\Users\fixture\AppData\Local'}
+        for platform in ('linux', 'darwin', 'win32'):
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sys, 'platform', platform):
+                candidates = [c for c in (*browser_paths.chrome_names(),
+                                         *browser_paths.chrome_install_paths(platform)) if c]
+                # Every fallback alone, plus competing later candidates: env and
+                # PATH retain priority; names are returned, not which()'s expansion.
+                for index, expected in enumerate(candidates):
+                    for available in ({expected}, set(candidates[index:])):
+                        with self.subTest(platform=platform, expected=expected, available=available), \
+                                mock.patch.object(browser_paths.shutil, 'which', side_effect=lambda c:
+                                                  '/resolved/' + c if c in available and c in candidates[:7] else None), \
+                                mock.patch.object(browser_paths.os.path, 'isfile', side_effect=lambda c: c in available):
+                            self.assertEqual(encoders.find_chrome(), expected)
+                            browser = gfx.Browser()
+                            browser._find_chrome()
+                            self.assertEqual(browser.chrome, expected)
+
+    def test_explicit_browser_override_and_distinct_failure_policies(self):
+        browser = gfx.Browser(chrome_path='/explicit/chrome')
+        with mock.patch.object(gfx, 'find_chrome_candidate', side_effect=AssertionError('explicit override')):
+            browser._find_chrome()
+        self.assertEqual(browser.chrome, '/explicit/chrome')
+        with mock.patch.object(browser_paths.shutil, 'which', return_value=None), \
+                mock.patch.object(browser_paths.os.path, 'isfile', return_value=False):
+            with self.assertRaisesRegex(RuntimeError, '^no chrome found$'):
+                gfx.Browser()._find_chrome()
+            with mock.patch('builtins.print') as output, self.assertRaises(SystemExit) as failure:
+                encoders.find_chrome()
+            self.assertEqual(failure.exception.code, 1)
+            output.assert_called_once_with('✗ 找不到 Chrome/Chromium（gfx 帧截图需要）。可设环境变量 VTX_CHROME 指定可执行文件路径')
 
 
 class CDPDeadlineMock(unittest.TestCase):
