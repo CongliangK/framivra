@@ -550,7 +550,7 @@ class TestNvencBudget(unittest.TestCase):
             self.assertEqual([Path(line[6:-1]).name.split('_')[0] for line in entries],
                              ['seg00', 'seg01', 'seg02', 'seg03'])
 
-    def test_native_arm64_x264_failure_waits_for_all_submitted_segments(self):
+    def test_native_arm64_x264_failure_waits_for_running_segments(self):
         import tempfile
         from vtx.pipeline import composite
 
@@ -582,6 +582,96 @@ class TestNvencBudget(unittest.TestCase):
                     plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
 
             self.assertEqual(finished, {1, 2, 3})
+            c.run.assert_not_called()
+
+    def test_native_arm64_x264_failure_cancels_pending_before_join(self):
+        import tempfile
+        from vtx.pipeline import composite
+
+        for phase in ('result', 'submit'):
+            for error_type in (RuntimeError, SystemExit, KeyboardInterrupt):
+                with self.subTest(phase=phase, error=error_type.__name__), \
+                        tempfile.TemporaryDirectory() as temp:
+                    failure = error_type('segment failure')
+                    c = SimpleNamespace(root=Path(temp), cache=Path(temp), dur=10,
+                                        dry=False, gpu=False, run=mock.Mock())
+                    plan = composite.RenderPlan(c, False, 1, 640, 480, layers=[], nseg=10)
+                    submitted, started, finished, exits, worker_counts = {}, [], set(), [], []
+
+                    def composite_segment(_sl, _out, _subs, *, a, b, **_kwargs):
+                        if phase == 'result' and a == 0:
+                            raise failure
+                        finished.add(a)
+
+                    def finish(future, fn, si):
+                        try:
+                            future.set_result(fn(si))
+                        except BaseException as exc:
+                            future.set_exception(exc)
+
+                    class Executor:
+                        # Real Future states, deterministic worker scheduling:
+                        # four running jobs and five pending jobs at the failure.
+                        def __init__(self, count):
+                            self.count = count
+                            worker_counts.append(count)
+                        def __enter__(self): return self
+                        def submit(self, fn, si):
+                            if phase == 'submit' and si == 9:
+                                raise failure
+                            future = Future()
+                            future.cancel = mock.Mock(wraps=future.cancel)
+                            future.result = mock.Mock(wraps=future.result)
+                            submitted[si] = future, fn
+                            if sum(f.running() for f, _ in submitted.values()) < self.count:
+                                future.set_running_or_notify_cancel()
+                                started.append(si)
+                            if phase == 'result' and si == 0:
+                                finish(future, fn, si)
+                            return future
+                        def __exit__(self, _type, error, _traceback):
+                            exits.append((error, set(finished),
+                                          {si for si, (f, _) in submitted.items()
+                                           if f.cancelled()}))
+                            # Like shutdown(wait=True), drain every job that was
+                            # not cancelled; it must not cancel pending work itself.
+                            for si, (future, fn) in submitted.items():
+                                if future.done():
+                                    continue
+                                if not future.running():
+                                    future.set_running_or_notify_cancel()
+                                    started.append(si)
+                                finish(future, fn, si)
+
+                    with mock.patch.object(composite, 'choose_cutpoints', return_value=list(range(1, 10))), \
+                            mock.patch.object(composite, 'pick_vcodec', return_value=([], 'x264')), \
+                            mock.patch.object(composite.platform, 'machine', return_value='arm64'), \
+                            mock.patch.object(composite.sys, 'platform', 'darwin'), \
+                            mock.patch.object(composite.os, 'cpu_count', return_value=16), \
+                            mock.patch.object(composite, 'ThreadPoolExecutor', Executor), \
+                            mock.patch.object(plan, '_seg_content_key', return_value='key'), \
+                            mock.patch.object(composite, 'media_cache_valid', return_value=False), \
+                            mock.patch.object(plan, 'composite', side_effect=composite_segment), \
+                            mock.patch.object(composite.subprocess, 'run') as probe:
+                        with self.assertRaises(error_type) as caught:
+                            plan.render_segmented(Path(temp) / 'out.mp4', with_subs=False)
+
+                    self.assertIs(caught.exception, failure)
+                    self.assertEqual(worker_counts, [4])
+                    running = set(range(1, 5)) if phase == 'result' else set(range(4))
+                    pending = set(range(5, 10)) if phase == 'result' else set(range(4, 9))
+                    self.assertEqual(exits, [(failure, set(), pending)])
+                    self.assertEqual(finished, running)
+                    self.assertEqual(started, list(range(5 if phase == 'result' else 4)))
+                    self.assertEqual(list(submitted), list(range(10 if phase == 'result' else 9)))
+                    for si, (future, _) in submitted.items():
+                        future.cancel.assert_called_once_with()
+                        self.assertEqual(future.result.call_count,
+                                         int(phase == 'result' and si == 0))
+                        self.assertTrue(future.done())
+                    c.run.assert_not_called()
+                    probe.assert_not_called()
+                    self.assertFalse((Path(temp) / 'vseg' / 'list.txt').exists())
 
     def test_x264_worker_expansion_requires_native_arm64_small_canvas_known_cpu_and_live_run(self):
         import tempfile

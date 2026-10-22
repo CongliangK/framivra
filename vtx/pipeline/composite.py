@@ -734,9 +734,15 @@ class RenderPlan:
                             key=lambda si: (-estimated_work(si), si),
                         )
                         futures = {}
-                        for si in submit_order:
-                            futures[si] = ex.submit(render_one, si)
-                        segs = [futures[si].result() for si in range(segment_count)]
+                        try:
+                            for si in submit_order:
+                                futures[si] = ex.submit(render_one, si)
+                            segs = [futures[si].result() for si in range(segment_count)]
+                        finally:
+                            # Match map's pending-work cancellation on failure;
+                            # the executor still joins segments already running.
+                            for future in futures.values():
+                                future.cancel()
                     else:
                         segs = list(ex.map(render_one, range(segment_count)))  # map 保序 → concat 顺序确定
         lst = vdir / "list.txt"

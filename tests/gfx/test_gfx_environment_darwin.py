@@ -1,4 +1,5 @@
 """CPU contracts for #200; synthetic Mach-O/cache data is not Mac acceptance."""
+import contextlib
 import copy
 import hashlib
 import json
@@ -344,72 +345,168 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         with self.assertRaises(env.EnvironmentError):
             self.collect()
 
+    @contextlib.contextmanager
+    def collecting(self, collect, release):
+        results, errors = [], []
+        returned = threading.Event()
+
+        def run():
+            try:
+                results.append(collect())
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                returned.set()
+
+        driver = threading.Thread(target=run, daemon=True)
+        driver.start()
+        try:
+            yield results, errors, returned
+        finally:
+            # Assertions and worker failures must not strand an event waiter.
+            release.set()
+            driver.join(timeout=5)
+            self.assertFalse(driver.is_alive(), 'identity collector did not finish')
+
+    def joined_failure(self, collect, started, release, finished, workers):
+        shutdown_entered = threading.Event()
+        shutdown_waits = []
+
+        class ObservedExecutor(env.ThreadPoolExecutor):
+            def __init__(self, max_workers=None, **kwargs):
+                self.observed = max_workers == workers
+                super().__init__(max_workers=max_workers, **kwargs)
+
+            def shutdown(self, wait=True, **kwargs):
+                if self.observed:
+                    shutdown_waits.append(wait)
+                    shutdown_entered.set()
+                return super().shutdown(wait=wait, **kwargs)
+
+        with patch.object(env, 'ThreadPoolExecutor', ObservedExecutor), \
+                self.collecting(collect, release) as (results, errors, returned):
+            self.assertTrue(started.wait(timeout=5), 'later worker did not start')
+            self.assertTrue(shutdown_entered.wait(timeout=5), 'collector did not enter shutdown')
+            # Observe the real executor's join boundary, not a timing window.
+            self.assertEqual(shutdown_waits, [True])
+            self.assertFalse(finished.is_set())
+            self.assertFalse(returned.is_set())
+        self.assertTrue(finished.is_set())
+        self.assertEqual(results, [], 'failed collection published a partial result')
+        self.assertEqual(len(errors), 1)
+        return errors[0]
+
     def test_darwin_cache_hashing_is_bounded_parallel_and_matches_serial_mapping(self):
         paths = []
         for index in range(7):
             path = self.root / f'cache-member-{index}'
-            path.write_bytes(f'cache bytes {index}'.encode())
+            path.write_bytes(bytes([index]) * (1024 * 1024) + f'tail {index}'.encode())
             paths.append(path)
         alias = self.root / 'cache-member-alias'
         alias.symlink_to(paths[2].name)
         inputs = [paths[5], alias, paths[0], paths[2], paths[5], *paths[1:5], paths[6]]
-        original_file = env._file
+        # The serial oracle must not warm the parallel collection's memo.
         with patch.object(env, '_hashes', {}):
             expected = env._files(inputs)
-            barrier = threading.Barrier(4)
-            state_lock = threading.Lock()
-            active = 0
-            peak = 0
-            observed = []
+        self.assertEqual(expected, {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths})
+        original_digest, original_read = cache_state.file_digest, cache_state.os.read
+        current = threading.local()
+        state_lock = threading.Lock()
+        readers_ready, release = threading.Event(), threading.Event()
+        active = peak = 0
+        byte_counts = []
 
-            def overlapping_file(path):
-                nonlocal active, peak
+        def digest(path):
+            nonlocal active
+            current.first, current.count = True, 0
+            try:
+                return original_digest(path)
+            finally:
                 with state_lock:
-                    active += 1
-                    peak = max(peak, active)
-                    observed.append(str(path))
-                try:
-                    barrier.wait(timeout=5)
-                    return original_file(path)
-                finally:
-                    with state_lock:
+                    if not current.first:
                         active -= 1
+                    byte_counts.append((str(path), current.count))
+                del current.first
 
-            with patch.object(env, '_file', side_effect=overlapping_file):
-                actual = env._darwin_cache_files(inputs)
+        def read(fd, size):
+            nonlocal active, peak
+            block = original_read(fd, size)
+            if hasattr(current, 'first'):
+                current.count += len(block)
+                if current.first:
+                    current.first = False
+                    with state_lock:
+                        active += 1
+                        peak = max(peak, active)
+                        if active == 4:
+                            readers_ready.set()
+                    self.assertTrue(release.wait(timeout=5), 'cold readers were not released')
+            return block
 
-        self.assertEqual(actual, expected)
+        with patch.object(env, '_hashes', {}), \
+                patch.object(env, '_file', wraps=env._file) as files, \
+                patch.object(cache_state, 'file_digest', new=digest), \
+                patch.object(cache_state.os, 'read', new=read), \
+                self.collecting(lambda: env._darwin_cache_files(inputs), release) as (results, errors, returned):
+            self.assertTrue(readers_ready.wait(timeout=5), 'four cold byte readers did not overlap')
+            self.assertFalse(returned.is_set())
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [expected])
+        self.assertEqual(list(results[0]), sorted(expected))
         self.assertEqual(peak, 4)
-        self.assertLessEqual(peak, 4)
-        self.assertEqual(sorted(observed), sorted(set(map(str, inputs))))
+        self.assertEqual(sorted(str(call.args[0]) for call in files.call_args_list),
+                         sorted(set(map(str, inputs))))
+        self.assertEqual({path for path, _ in byte_counts}, set(map(str, paths)))
+        self.assertTrue(all(count == Path(path).stat().st_size for path, count in byte_counts))
 
-    def test_darwin_cache_hash_worker_error_propagates_after_all_workers_finish(self):
+    def test_darwin_cache_hash_worker_error_joins_and_preserves_only_checked_memo(self):
         paths = []
         for index in range(6):
             path = self.root / f'cache-error-member-{index}'
             path.write_bytes(f'cache bytes {index}'.encode())
             paths.append(path)
-        ordered = sorted(set(map(str, paths)))
-        original_file = env._file
-        lock = threading.Lock()
-        finished = []
+        original_digest = cache_state.file_digest
+        started, release, finished = threading.Event(), threading.Event(), threading.Event()
         failure = PermissionError('denied cache bytes')
 
-        def failing_file(path):
-            try:
-                if str(path) == ordered[1]:
-                    raise failure
-                return original_file(path)
-            finally:
-                with lock:
-                    finished.append(str(path))
+        def digest(path):
+            if path == paths[0]:
+                self.assertTrue(started.wait(timeout=5), 'later cache worker did not start')
+                raise failure
+            if path == paths[1]:
+                started.set()
+                try:
+                    self.assertTrue(release.wait(timeout=5), 'later cache worker was not released')
+                    return original_digest(path)
+                finally:
+                    finished.set()
+            return original_digest(path)
 
-        with patch.object(env, '_hashes', {}), patch.object(env, '_file', side_effect=failing_file):
-            with self.assertRaises(PermissionError) as caught:
-                env._darwin_cache_files(paths)
-
-        self.assertIs(caught.exception, failure)
-        self.assertEqual(sorted(finished), ordered)
+        with patch.object(env, '_hashes', {}):
+            with patch.object(cache_state, 'file_digest', new=digest):
+                caught = self.joined_failure(lambda: env._darwin_cache_files(paths),
+                                             started, release, finished, 4)
+            self.assertIs(caught, failure)
+            self.assertNotIn(str(paths[0]), env._hashes)
+            if os.name != 'nt':
+                self.assertEqual(set(env._hashes), set(map(str, paths[1:])))
+            with patch.object(cache_state, 'file_digest', wraps=original_digest) as reads:
+                recovered = env._darwin_cache_files(paths)
+            self.assertEqual(sorted(str(call.args[0]) for call in reads.call_args_list),
+                             list(map(str, paths if os.name == 'nt' else paths[:1])))
+            self.assertEqual(recovered, {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths})
+            changed = paths[1]
+            saved = changed.stat()
+            changed.write_bytes(b'cache bytes X')
+            os.utime(changed, ns=(saved.st_atime_ns, saved.st_mtime_ns))
+            with patch.object(cache_state, 'file_digest', wraps=original_digest) as reads:
+                rechecked = env._darwin_cache_files(paths)
+            expected = dict(recovered)
+            expected[str(changed)] = hashlib.sha256(changed.read_bytes()).hexdigest()
+            self.assertNotEqual(rechecked, recovered)
+            self.assertEqual(rechecked, expected)
+            self.assertEqual(sorted(str(call.args[0]) for call in reads.call_args_list),
+                             list(map(str, paths if os.name == 'nt' else [changed])))
 
     def test_darwin_three_identity_axes_overlap_and_preserve_font_preferences(self):
         barrier = threading.Barrier(3)
@@ -441,7 +538,6 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         fonts = record['fonts']
         self.assertIs(fonts['libraries'], record['libraries'])
         self.assertIs(record['system_cache']['files'], record['libraries'])
-        self.assertEqual(fonts['libraries'], record['system_cache']['files'])
         self.assertEqual(fonts['files'], env._files([self.font]))
         self.assertIn(str(preference_file), fonts['configs'])
         self.assertIn('urls', fonts['inventory'])
@@ -484,52 +580,58 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         self.assertTrue(cache_finished.is_set())
         self.assertTrue(renderer_finished.is_set())
 
-    def test_darwin_cache_failure_waits_for_renderer_and_is_reported_first(self):
-        barrier = threading.Barrier(2)
-        renderer_finished = threading.Event()
-        cache_error = PermissionError('cache bytes denied')
-        renderer_error = RuntimeError('renderer inventory failed')
+    def test_darwin_early_axis_failure_joins_later_font_and_reports_first_error(self):
+        original_cache, original_catalog = env._darwin_cache, env._darwin_font_catalog
+        for failing_axis in ('cache', 'renderer'):
+            with self.subTest(failing_axis=failing_axis):
+                started, release, finished = threading.Event(), threading.Event(), threading.Event()
+                cache_error = PermissionError('cache bytes denied')
+                renderer_error = RuntimeError('renderer inventory failed')
+                renderer_finished = threading.Event()
 
-        def cache(*args):
-            barrier.wait(timeout=5)
-            raise cache_error
+                def cache(*args):
+                    if failing_axis == 'cache':
+                        self.assertTrue(started.wait(timeout=5), 'font worker did not start')
+                        raise cache_error
+                    return original_cache(*args)
 
-        def renderer(*args):
-            barrier.wait(timeout=5)
-            renderer_finished.set()
-            raise renderer_error
+                def renderer(*args):
+                    self.assertTrue(started.wait(timeout=5), 'font worker did not start')
+                    renderer_finished.set()
+                    raise renderer_error
 
-        with patch.object(env, '_darwin_cache', side_effect=cache), \
-                patch.object(env, '_collect_darwin_renderer', side_effect=renderer):
-            with self.assertRaises(env.EnvironmentError) as caught:
-                self.collect()
+                def catalog():
+                    started.set()
+                    try:
+                        self.assertTrue(release.wait(timeout=5), 'font worker was not released')
+                        return original_catalog()
+                    finally:
+                        finished.set()
 
-        self.assertIs(caught.exception.__cause__, cache_error)
-        self.assertTrue(renderer_finished.is_set())
+                with patch.object(env, '_darwin_cache', side_effect=cache), \
+                        patch.object(env, '_collect_darwin_renderer', side_effect=renderer), \
+                        patch.object(env, '_darwin_font_catalog', side_effect=catalog), \
+                        patch.object(env, '_darwin_fonts', wraps=env._darwin_fonts) as fonts:
+                    caught = self.joined_failure(self.collect, started, release, finished, 3)
+                self.assertIsInstance(caught, env.EnvironmentError)
+                self.assertIs(caught.__cause__, cache_error if failing_axis == 'cache' else renderer_error)
+                self.assertTrue(renderer_finished.is_set())
+                fonts.assert_not_called()
 
-    def test_darwin_renderer_failure_waits_for_cache_and_fails_closed(self):
-        barrier = threading.Barrier(2)
-        cache_finished = threading.Event()
-        renderer_error = RuntimeError('renderer inventory failed')
-        original_cache = env._darwin_cache
+    def test_darwin_svg_runtime_uses_real_shared_cache_hash_helper(self):
+        from vtx.render import gfx_svg
+        original_file = env._file
 
-        def cache(*args):
-            barrier.wait(timeout=5)
-            result = original_cache(*args)
-            cache_finished.set()
-            return result
+        def file(path):
+            return original_file(self.system_file if str(path) == '/usr/lib/dyld' else path)
 
-        def renderer(*args):
-            barrier.wait(timeout=5)
-            raise renderer_error
-
-        with patch.object(env, '_darwin_cache', side_effect=cache), \
-                patch.object(env, '_collect_darwin_renderer', side_effect=renderer):
-            with self.assertRaises(env.EnvironmentError) as caught:
-                self.collect()
-
-        self.assertIs(caught.exception.__cause__, renderer_error)
-        self.assertTrue(cache_finished.is_set())
+        with patch.object(env, '_hashes', {}), patch.object(env, '_file', side_effect=file), \
+                patch.object(env, '_darwin_cache_files', wraps=env._darwin_cache_files) as cache_files:
+            record = gfx_svg._darwin_runtime(self.binary)
+        cache_files.assert_called_once_with([self.cache, self.subcache])
+        self.assertEqual(record['system_cache']['files'],
+                         {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                          for p in (self.cache, self.subcache)})
 
     def test_invalid_boot_empty_font_inventory_and_unknown_app_fail_closed(self):
         self.boot = 'unknown'
