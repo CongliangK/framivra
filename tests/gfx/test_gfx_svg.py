@@ -116,8 +116,8 @@ class SvgContract(unittest.TestCase):
         self.assertEqual(gfx_svg.route(self.ctx()), 'svg-sequence')
 
     def test_producer_completion_warm_reader_and_corruption(self):
-        def render(executable, directory, count, width, height, *, root=None):
-            for i in range(count): write_png(directory / f'f{i:04d}.png',width,height,frame=i)
+        def render(executable, directory, count, width, height, *, root=None, indices=None):
+            for i in (range(count) if indices is None else indices): write_png(directory / f'f{i:04d}.png',width,height,frame=i)
         c = self.ctx()
         with mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render) as engine:
             gfx_svg_stage.render_stage(c)
@@ -133,6 +133,70 @@ class SvgContract(unittest.TestCase):
         marker.write_text(json.dumps(value))
         with self.assertRaises(ValueError): resolve_frames(c,self.clip)
 
+        # New cases stay inside this existing contract ID; no selector changes.
+        cases = [(['red'], [], [0]), (['red', 'red'], [], [0]),
+                 (['red', 'blue'], [], [0, 1]),
+                 (['red', 'blue', 'blue'], [], [0, 1]),
+                 (['red', 'blue', 'red', 'blue'], [], [0, 1, 3]),
+                 (['red', 'red'], ['font.ttf'], [0, 1])]
+        for case, (colors, fonts, expected) in enumerate(cases):
+            with self.subTest(colors=colors, fonts=fonts):
+                self.clip['dst_in'] = 0; self.clip['dur'] = len(colors)
+                self.manifest.update(frame_count=len(colors), fonts=fonts,
+                                     frames=[f'case{case}-{i}.svg' for i in range(len(colors))])
+                for name, color in zip(self.manifest['frames'], colors):
+                    (self.root / name).write_text(SVG.replace('red', color))
+                if fonts: (self.root / 'font.ttf').write_bytes(b'font')
+                self.save(); c = self.ctx()
+                with mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render) as engine, \
+                     mock.patch.object(gfx_svg_stage, 'png_invalid_reason',
+                                       wraps=gfx_svg_stage.png_invalid_reason) as validated:
+                    gfx_svg_stage.render_stage(c)
+                checked = [Path(call.args[0]).name for call in validated.call_args_list]
+                for i in range(len(colors)):
+                    self.assertIn(f'f{i:04d}.png', checked)
+                self.assertEqual(engine.call_args.kwargs['indices'], expected)
+                source = png_source(c, self.clip); source.require_ready()
+                paths = [source.frame_path(i) for i in range(len(colors))]
+                self.assertTrue(all(stat.S_ISREG(p.lstat().st_mode) for p in paths))
+                self.assertEqual(len({(p.stat().st_dev, p.stat().st_ino) for p in paths}), len(paths))
+                marker = json.loads((source.directory / gfx_svg.COMPLETE_FILE).read_text())
+                self.assertEqual(marker['export_count'], len(expected))
+                self.assertEqual(marker['materialized_count'], len(colors) - len(expected))
+                self.assertEqual(len(marker['sha256']), len(colors))
+                if len(expected) < len(colors):
+                    duplicate = next(i for i in range(len(colors)) if i not in expected)
+                    representative = colors.index(colors[duplicate])
+                    self.assertEqual(paths[representative].read_bytes(), paths[duplicate].read_bytes())
+                    before = paths[duplicate].read_bytes()
+                    paths[representative].write_bytes(b'mutated')
+                    self.assertEqual(paths[duplicate].read_bytes(), before)
+        # Duplicate source-path entries also retain independent frame files.
+        record = gfx_svg.resolve(c, self.clip)
+        record['fonts'] = []
+        record['frames'] = ['same.svg', 'other.svg', 'same.svg']
+        record['files'] = {'same.svg': 'a', 'other.svg': 'b'}
+        record['export_reuse'] = {'proof': 'font-free-rects/v1', 'frames': ['same.svg', 'other.svg']}
+        self.assertEqual(gfx_svg_stage.reuse_group(record), [0, 2])
+        record['export_reuse']['proof'] = 'future'
+        self.assertEqual(gfx_svg_stage.reuse_group(record), [])
+
+        # Even a simulated digest collision cannot skip a byte-different SVG.
+        self.clip['dur'] = 2
+        self.manifest.update(frame_count=2, fonts=[], frames=['collision0.svg', 'collision1.svg'])
+        (self.root / 'collision0.svg').write_text(SVG)
+        (self.root / 'collision1.svg').write_text(SVG.replace('red', 'blue'))
+        self.save()
+        digest = gfx_svg.digest
+        def collision(data):
+            return '0' * 64 if data.startswith(b'<svg ') else digest(data)
+        with mock.patch.object(gfx_svg, 'digest', side_effect=collision):
+            c = self.ctx()
+            with mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render) as engine:
+                gfx_svg_stage.render_stage(c)
+            self.assertEqual(engine.call_args.kwargs['indices'], [0, 1])
+            png_source(c, self.clip).require_ready()
+
     def test_unmarked_pngs_and_old_html_marker_never_adopted(self):
         c=self.ctx(); directory=gfx_dir(c,self.clip); directory.mkdir(parents=True)
         for i in range(2): write_png(directory/f'f{i:04d}.png',1920,1080)
@@ -144,6 +208,67 @@ class SvgContract(unittest.TestCase):
         with mock.patch.object(gfx_svg_stage,'run_shell',side_effect=RuntimeError('engine failed')):
             with self.assertRaises(RuntimeError): gfx_svg_stage.render_stage(c)
         self.assertFalse((gfx_dir(c,self.clip)/gfx_svg.COMPLETE_FILE).exists())
+
+        original_copy = gfx_svg_stage.copy_png
+        for mode in ('missing', 'corrupt', 'copy-error', 'copy-corrupt',
+                     'copy-different', 'source-changed', 'input-changed', 'identity-changed'):
+            with self.subTest(mode=mode):
+                (self.root / 'f0.svg').write_text(SVG)
+                (self.root / 'f1.svg').write_text(SVG)
+                c = self.ctx()
+                directory = gfx_dir(c, self.clip)
+                def render(executable, staging, count, width, height, *, root=None, indices=None):
+                    if mode == 'missing': return
+                    for i in indices:
+                        write_png(staging / f'f{i:04d}.png', width, height)
+                    if mode == 'corrupt': (staging / 'f0000.png').write_bytes(b'bad')
+                    if mode == 'input-changed': (self.root / 'f1.svg').write_text(SVG.replace('red', 'blue'))
+                def copying(src, dst, fingerprint, size, *, root):
+                    if mode == 'copy-error': raise OSError('copy failure')
+                    if mode == 'source-changed': write_png(src, 1920, 1080, frame=1)
+                    original_copy(src, dst, fingerprint, size, root=root)
+                    if mode == 'copy-corrupt': dst.write_bytes(b'bad')
+                    if mode == 'copy-different': write_png(dst, 1920, 1080, frame=1)
+                # engine_identity's patch is managed by setUp, keep changes scoped.
+                identity = mock.Mock(return_value=ENGINE)
+                def render_with_identity(*args, **kwargs):
+                    render(*args, **kwargs)
+                    if mode == 'identity-changed': identity.return_value = dict(ENGINE, version='changed')
+                with mock.patch.object(gfx_svg, 'engine_identity', identity), \
+                     mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render_with_identity), \
+                     mock.patch.object(gfx_svg_stage, 'copy_png', side_effect=copying):
+                    if mode in ('input-changed', 'identity-changed'):
+                        with self.assertRaises(SystemExit) as rejected:
+                            gfx_svg_stage.render_stage(c)
+                        self.assertEqual(rejected.exception.code, 1)
+                    else:
+                        with self.assertRaises((ValueError, OSError, InputIdentityError)):
+                            gfx_svg_stage.render_stage(c)
+                self.assertFalse((directory / gfx_svg.COMPLETE_FILE).exists())
+        (self.root / 'f1.svg').write_text(SVG)
+        # A same-size mutation in the opened read stream cannot match the bound
+        # fingerprint; this simulates a source modification during streamed copy.
+        src, dst = self.root / 'copy-source.png', self.root / 'copy-target.png'
+        write_png(src, 1920, 1080)
+        observed, sizes = [], []
+        self.assertIsNone(gfx_svg_stage.png_invalid_reason(src, _fingerprint=observed, _verified_size=sizes))
+        fdopen = os.fdopen
+        @contextlib.contextmanager
+        def changed_stream(fd, mode):
+            with fdopen(fd, mode) as stream:
+                class Changed:
+                    def fileno(self): return stream.fileno()
+                    def read(self, size):
+                        data = stream.read(size)
+                        return bytes([data[0] ^ 1]) + data[1:] if data else data
+                yield Changed()
+        with mock.patch.object(gfx_svg_stage.os, 'fdopen', changed_stream):
+            with self.assertRaisesRegex(ValueError, 'changed during copy'):
+                original_copy(src, dst, observed[0], sizes[0], root=self.root)
+        self.assertFalse(dst.exists())
+        link = self.root / 'copy-link.png'; link.symlink_to(src)
+        with self.assertRaisesRegex(ValueError, 'regular file'):
+            original_copy(link, dst, observed[0], sizes[0], root=self.root)
 
     def test_dry_run_does_not_launch_or_write(self):
         c=self.ctx(); c.dry=True
@@ -190,9 +315,17 @@ class SvgContract(unittest.TestCase):
             '<rect xmlns="" width="100"/>',
             '<x:rect xmlns:x="urn:ordinary-unknown" width="100"/>',
             '<rect xmlns:x="urn:ordinary-unknown" x:opacity="0.5"/>',
+            '<image href="asset.png"/>', '<rect xml:base="elsewhere/"/>',
+            '<animate attributeName="fill"/>', '<rect width="1em"/>',
         ]:
             with self.subTest(replacement=replacement), self.assertRaises(ValueError):
                 gfx_svg.inspect_svg(SVG.replace(rectangle, replacement).encode(),1920,1080,fonts=[])
+
+        self.assertTrue(gfx_svg.inspect_svg(SVG.encode(), 1920, 1080, fonts=[]))
+        for data, fonts in [(SVG.encode(), ['font.ttf']),
+                            (SVG.replace('fill="red"', 'fill="red" opacity="0.5"').encode(), []),
+                            (SVG.replace('<rect', '<g><rect').replace('/></svg>', '/></g></svg>').encode(), [])]:
+            self.assertFalse(gfx_svg.inspect_svg(data, 1920, 1080, fonts=fonts))
 
     def test_svg_xml_encoding_is_explicit(self):
         for data in [SVG.encode('utf-16-le'),
@@ -266,6 +399,16 @@ class SvgContract(unittest.TestCase):
             for i in range(2)] + ['quit'])
         self.assertEqual(process.communicate.call_args.kwargs['timeout'], 30)
 
+        with mock.patch.object(subprocess, 'Popen', return_value=process):
+            gfx_svg_stage.run_shell('/test/inkscape', self.root, 150, 1920, 1080,
+                                    indices=[0, 5, 149])
+        actions = process.communicate.call_args.args[0].splitlines()
+        self.assertEqual(len(actions), 4)
+        for line, index in zip(actions, [0, 5, 149]):
+            self.assertIn(f'file-open:f{index:04d}.svg;', line)
+            self.assertIn(f'export-filename:f{index:04d}.png;', line)
+        self.assertEqual(process.communicate.call_args.kwargs['timeout'], 750)
+
     def test_background_stage_change_rejects_old_completion_and_renders_cold(self):
         stage = Path(gfx_svg_stage.__file__)
         current = stage.read_bytes()
@@ -290,8 +433,8 @@ class SvgContract(unittest.TestCase):
         self.assertNotEqual(old_directory, gfx_dir(c, self.clip))
         with self.assertRaisesRegex(ValueError, 'does not match inputs'):
             gfx_svg.completion(c, self.clip, old_directory)
-        def render(executable, directory, count, width, height, *, root=None):
-            for i in range(count):
+        def render(executable, directory, count, width, height, *, root=None, indices=None):
+            for i in (range(count) if indices is None else indices):
                 write_png(directory / f'f{i:04d}.png', width, height, frame=i)
         with mock.patch.object(gfx_svg_stage, 'run_shell', side_effect=render) as engine:
             gfx_svg_stage.render_stage(c)
@@ -326,8 +469,8 @@ class SvgContract(unittest.TestCase):
         self.manifest['frame_count']=n; self.manifest['frames']=[f'f{i}.svg' for i in range(n)]
         for name in self.manifest['frames']: (self.root/name).write_text(SVG)
         self.save(); c=self.ctx()
-        def render(executable,directory,count,width,height, *, root=None):
-            for i in range(count): write_png(directory/f'f{i:04d}.png',width,height,frame=i)
+        def render(executable,directory,count,width,height, *, root=None, indices=None):
+            for i in (range(count) if indices is None else indices): write_png(directory/f'f{i:04d}.png',width,height,frame=i)
         with mock.patch.object(gfx_svg_stage,'run_shell',side_effect=render): gfx_svg_stage.render_stage(c)
         return c
 

@@ -14,7 +14,7 @@ project+video_tracks 特征键）时自动走本模块，否则回落报告 diff
 单独推断（时长/位置变化推移切点时该层失效，但 per-clip seg 仍命中，两层分开报）。
 
 耗时预估：基准常数 + 受影响比例缩放，估算依据写入 JSON（estimate_basis）；
-历史 voice-ime 测量及指定环境见 docs/DEV.md §一；估算不是当前输入或机器的实测。
+模型与历史 voice-ime 校准边界见 docs/ARCHITECTURE.md#耗时估算；估算不是当前输入或机器的实测。
 """
 import json
 import sys
@@ -66,7 +66,7 @@ GEOM_FIELDS = ("src", "src_in", "src_out", "dst_in", "dur", "scale", "x", "y",
 # 音频事件可补丁字段：不进任何视频缓存键，只影响 audio 阶段重混——幂等补丁脚本可安全改
 AUDIO_FIELDS = ("volume", "pan", "fade_in_frames", "fade_out_frames")
 
-# 耗时预估常数（秒），沿用历史估算；voice-ime 测量及指定环境见 docs/DEV.md §一。
+# 耗时预估常数（秒），沿用历史估算；模型边界及来源见 docs/ARCHITECTURE.md#耗时估算。
 # video 按「失效段帧数占比 × 全片渲染」+「per-clip seg 重编码」线性模型。
 EST_VALIDATE = 3
 EST_PREPARE_PER_SOURCE = 2
@@ -487,7 +487,7 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
     if stages["prepare"]:
         est["prepare"] = EST_PREPARE_PER_SOURCE * max(1, n_prepare)
     if stages["gfx"]:
-        est["gfx"] = 15   # 单页重渲经验下限，页多时可能低估；历史 CDP 测量见 docs/DEV.md §一
+        est["gfx"] = 15   # 单页重渲经验下限，页多时可能低估；模型边界见 docs/ARCHITECTURE.md#耗时估算
     if stages["video"]:
         total_frames = max(1, dur_b)
         inv_frames = sum(b - a for a, b in inv_segs)
@@ -505,7 +505,7 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
         est["qc"] = EST_QC
     impact["estimated_seconds"] = est
     impact["estimate_basis"] = (
-        "线性模型，沿用历史估算常数；voice-ime 历史测量及环境见 docs/DEV.md §一"
+        "线性模型，沿用历史估算常数；模型与 voice-ime 校准边界见 docs/ARCHITECTURE.md#耗时估算"
         + ("；video：" + est_basis_v if stages["video"] else "")
         + "；非实测承诺，±30% 校准口径")
 

@@ -505,6 +505,10 @@ class TestAdvice(_Base):
             tl["video_tracks"][0]["clips"][0]["dur"] += 10
         res = self.diff(_tl(), self.edit(_tl(), fn))
         self.assertIn("voice-ime", res["impact"]["estimate_basis"])
+        self.assertIn("docs/ARCHITECTURE.md#耗时估算", res["impact"]["estimate_basis"])
+        self.assertNotIn("docs/DEV.md §一", res["impact"]["estimate_basis"])
+        self.assertIn('<a id="耗时估算"></a>',
+                      (REPO / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8"))
         self.assertGreater(res["impact"]["estimated_seconds"].get("video", 0), 0)
 
 
@@ -552,6 +556,11 @@ class TestCli(unittest.TestCase):
         for key in ("entries", "impact", "advice"):
             self.assertIn(key, d)
         self.assertEqual(d["impact"]["vseg_invalid"]["count"], 0)
+        basis = d["impact"]["estimate_basis"]
+        self.assertIn("docs/ARCHITECTURE.md#耗时估算", basis)
+        self.assertNotIn("docs/DEV.md §一", basis)
+        self.assertIn(basis, r.stdout)
+        self.assertNotIn("docs/DEV.md §一", r.stdout)
 
     def test_report_diff_not_rerouted(self):
         a = self._write("qa.json", {"checks": [{"name": "x", "pass": True, "detail": "1"}]})
