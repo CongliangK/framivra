@@ -52,7 +52,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
-from vtx import frame_canary as fc   # noqa: E402
+from vtx.render import frame_canary as fc   # noqa: E402
 from scripts.gfx import gfx_golden as gg              # noqa: E402
 from PIL import Image                # noqa: E402
 
@@ -814,7 +814,7 @@ class TestChromeCanary(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from vtx import gfx_render
+        from vtx.render import gfx_render
         cls.d = Path(tempfile.mkdtemp(prefix="fc_chrome_"))
         cls.page = cls.d / "page.html"
         cls.page.write_text(_PAGE, encoding="utf-8")

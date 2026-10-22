@@ -10,7 +10,7 @@ from pathlib import Path
 from ..runtime import fstxn
 from ..composite import RenderPlan
 from .encoders import seg_encoder_kind
-from ..frame_source import png_source
+from ..render.frame_source import png_source
 from ..hygiene import manifest_record, seg_key, tmp_run
 from ..infra import Ctx, filter_filename
 from ..recovery import media_cache_valid
@@ -259,7 +259,7 @@ def _layer_ready(c: Ctx, f: int):
                 try:
                     source.require_ready(rel, rel + 1)
                 except ValueError:
-                    from .. import gfx_svg
+                    from ..render import gfx_svg
                     if gfx_svg.is_svg(cl):
                         raise  # Explicit SVG cache failures cannot become a successful black preview.
                     return None
@@ -343,7 +343,7 @@ def _run_preview(c: Ctx, tokens, dry: bool, *, before_summary=None):
 
 
 def run_preview(c: Ctx, tokens, dry: bool):
-    from .. import gfx_svg
+    from ..render import gfx_svg
     if gfx_svg.route(c) != 'svg-sequence':
         return _run_preview(c, tokens, dry)
     from ..cache_state import verify_input_identity

@@ -17,7 +17,9 @@ import uuid
 import wave
 from unittest import mock
 
-from vtx import cli, gfx_backend, gfx_cli, gfx_electron_stage, hygiene
+from vtx import cli
+from vtx.render import gfx_backend, gfx_cli, gfx_electron_stage
+from vtx import hygiene
 from vtx.cache_state import InputIdentityError, verify_input_identity
 from vtx.composite import RenderPlan
 from vtx.infra import Ctx
@@ -92,7 +94,7 @@ class IntegrationGates(unittest.TestCase):
     def run_gfx(self, renderer=None):
         with mock.patch.object(gfx_electron_stage, 'render_page', side_effect=renderer or self.fake_render), \
                 mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('forbidden CLI fallback')), \
-                mock.patch('vtx.gfx_render.render_page', side_effect=AssertionError('forbidden CDP fallback')), \
+                mock.patch('vtx.render.gfx_render.render_page', side_effect=AssertionError('forbidden CDP fallback')), \
                 mock.patch.object(cli, 'find_chrome', side_effect=AssertionError('forbidden Chrome lookup')), \
                 contextlib.redirect_stdout(io.StringIO()):
             cli.gfx(self.c)
@@ -117,7 +119,7 @@ class IntegrationGates(unittest.TestCase):
         bind_environment(self)
         with mock.patch.dict(os.environ, VTX_GFX='cli'), \
                 mock.patch.object(gfx_electron_stage, 'render_page', side_effect=AssertionError('Electron')), \
-                mock.patch('vtx.gfx_render.render_page', side_effect=AssertionError('CDP')), \
+                mock.patch('vtx.render.gfx_render.render_page', side_effect=AssertionError('CDP')), \
                 mock.patch.object(cli, 'find_chrome', return_value='unit-cli'):
             c = Ctx(self.p)
             def render(frames, d, html, chrome, **kw):
@@ -142,7 +144,7 @@ class IntegrationGates(unittest.TestCase):
         self.assertEqual(len(rec['stages']['gfx']['cached_page_keys']), 1)
 
     def test_png_consumer_is_lazy_but_requires_producer_completion(self):
-        from vtx import frame_source, gfx_cache_reader
+        from vtx.render import frame_source, gfx_cache_reader
         from vtx.composite import prepare_layers
         with mock.patch.object(gfx_cache_reader, 'require_electron_record',
                                side_effect=AssertionError('eager completion IO')), \
@@ -164,7 +166,7 @@ class IntegrationGates(unittest.TestCase):
         source.require_ready(1, 2)
 
     def test_png_consumer_rechecks_marker_receipts_identity_and_pixels(self):
-        from vtx.frame_source import png_source, png_consumer_scope
+        from vtx.render.frame_source import png_source, png_consumer_scope
         self.run_gfx()
         source = png_source(self.c, self.cl)
         marker = self.d / gfx_cli.COMPLETE_FILE
@@ -199,7 +201,7 @@ class IntegrationGates(unittest.TestCase):
             source.require_ready()
 
     def test_png_consumer_binds_post_authentication_bytes_to_marker_hashes(self):
-        from vtx import frame_source, gfx_cache_reader
+        from vtx.render import frame_source, gfx_cache_reader
         self.run_gfx()
         source = frame_source.png_source(self.c, self.cl)
         authenticate = gfx_cache_reader.require_electron_record
@@ -213,7 +215,7 @@ class IntegrationGates(unittest.TestCase):
             source.require_ready(1, 2)
 
     def test_blender_reader_uses_exact_completed_electron_cache(self):
-        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        from vtx.render.gfx_cache_reader import resolve_frames, GfxCacheError
         self.run_gfx()
         expected = [self.d / f'f{f:04d}.png' for f in range(3)]
         self.assertEqual(resolve_frames(self.c, self.cl), expected)
@@ -233,7 +235,7 @@ class IntegrationGates(unittest.TestCase):
         with self.assertRaises(GfxCacheError): resolve_frames(self.c, self.cl)
 
     def test_reader_rejects_missing_or_corrupt_actual_producer_receipts(self):
-        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        from vtx.render.gfx_cache_reader import resolve_frames, GfxCacheError
         self.run_gfx()
         record = json.loads((self.d / gfx_cli.COMPLETE_FILE).read_text())
         run = record['render_runs'][0]
@@ -247,7 +249,7 @@ class IntegrationGates(unittest.TestCase):
         self.assertEqual(len(resolve_frames(self.c, self.cl)), 3)
 
     def test_current_caller_rejects_forged_provenance_readonly_and_producer(self):
-        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        from vtx.render.gfx_cache_reader import resolve_frames, GfxCacheError
         cases = [
             ('result.json', lambda o: o['frames'][0].update(url='file:///unrelated-source.html?f=0')),
             ('result.json', lambda o: o['frames'][0].update(output='/unrelated/f0000.png')),
@@ -276,8 +278,8 @@ class IntegrationGates(unittest.TestCase):
                 self.assertFalse((self.d / gfx_cli.COMPLETE_FILE).exists())
 
     def test_combined_external_binding_and_missing_context_fail_closed(self):
-        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
-        from vtx.gfx_electron import ElectronRenderError
+        from vtx.render.gfx_cache_reader import resolve_frames, GfxCacheError
+        from vtx.render.gfx_electron import ElectronRenderError
         self.run_gfx()
         marker = json.loads((self.d / gfx_cli.COMPLETE_FILE).read_text())
         run = marker['render_runs'][0]; ev = self.d / '.electron' / run['run_id']
@@ -316,7 +318,7 @@ class IntegrationGates(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'strict dependencies require CDP'):
                 cli._gfx(self.c)
             launch.assert_not_called()
-        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        from vtx.render.gfx_cache_reader import resolve_frames, GfxCacheError
         with self.assertRaisesRegex(GfxCacheError, 'strict dependencies require CDP'):
             resolve_frames(self.c, self.cl)
         self.assertFalse(self.d.exists())
@@ -377,7 +379,7 @@ class IntegrationGates(unittest.TestCase):
         def keys():
             c = Ctx(self.p); c.dry = True; c.gpu = False
             d = hygiene.gfx_dir(c, self.cl)
-            from vtx.frame_source import png_source
+            from vtx.render.frame_source import png_source
             layer = dict(gfx=True, pngdir=d, source=png_source(c, self.cl),
                          cl=self.cl, x=0, y=0, w2=None, h2=None)
             plan = RenderPlan(c, False, 1, c.w, c.h)
@@ -425,7 +427,7 @@ class RealPublicIntegration(unittest.TestCase):
         p = project(self.root)
         c = Ctx(p); cl = c.tl['video_tracks'][0]['clips'][0]; d = hygiene.gfx_dir(c, cl)
         with mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('CLI fallback')), \
-                mock.patch('vtx.gfx_render.render_page', side_effect=AssertionError('CDP fallback')):
+                mock.patch('vtx.render.gfx_render.render_page', side_effect=AssertionError('CDP fallback')):
             cli.gfx(c)
             marker = json.loads((d / gfx_cli.COMPLETE_FILE).read_text())
             self.assertEqual(len(marker['render_runs']), 3)
@@ -502,7 +504,7 @@ div{position:absolute;left:50px;top:20px;width:100px;height:50px;background:rgba
 from pathlib import Path
 from types import SimpleNamespace
 sys.path.insert(0,{str(bridge.parents[1])!r})
-from vtx.gfx_cache_reader import resolve_frames
+from vtx.render.gfx_cache_reader import resolve_frames
 root=Path({str(self.root)!r}); tl=json.loads((root/'timeline.json').read_text())
 c=SimpleNamespace(root=root,cache=root/'cache',tl=tl,fps=30,w=192,h=96)
 bpy.ops.wm.open_mainfile(filepath={str(blend)!r})

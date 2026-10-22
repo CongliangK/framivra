@@ -464,7 +464,7 @@ function applyState() {
   }
   return true;
 }
-// —— v2 双像素 Canary（vtx/frame_canary.py 冻结公式镜像）——
+// —— v2 双像素 Canary（vtx/render/frame_canary.py 冻结公式镜像）——
 var KEY1 = CLEAN ? 0x5A : 0xA5, KEY2 = CLEAN ? 0x3C : 0xC3;
 function cP1(fr) {
   var hi = (fr >> 8) & 255, lo = fr & 255;

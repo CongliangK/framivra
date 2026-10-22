@@ -11,8 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from vtx import gfx_svg
-from vtx import gfx_environment
+from vtx.render import gfx_svg
+from vtx.render import gfx_environment
 
 
 def macho(path, *, deps=(), rpaths=(), filetype=6, cpu=0x100000c):
@@ -49,9 +49,9 @@ class DarwinSvgIdentity(unittest.TestCase):
             return ('/usr/lib/dyld', 'd' * 64) if str(path) == '/usr/lib/dyld' else original_file(path)
         with mock.patch.object(gfx_svg.platform, 'machine', return_value='arm64'), \
              mock.patch.object(gfx_svg.ctypes, 'CDLL', return_value=SimpleNamespace(_dyld_shared_cache_contains_path=contains)), \
-             mock.patch('vtx.gfx_environment._darwin_dyld', return_value=('cache', b'uuid')), \
-             mock.patch('vtx.gfx_environment._darwin_cache', return_value={'uuid': 'fixture', 'files': {}}), \
-             mock.patch('vtx.gfx_environment._file', side_effect=digest):
+             mock.patch('vtx.render.gfx_environment._darwin_dyld', return_value=('cache', b'uuid')), \
+             mock.patch('vtx.render.gfx_environment._darwin_cache', return_value={'uuid': 'fixture', 'files': {}}), \
+             mock.patch('vtx.render.gfx_environment._file', side_effect=digest):
             yield
 
     def test_loader_closure_and_distribution_bytes_are_bound(self):

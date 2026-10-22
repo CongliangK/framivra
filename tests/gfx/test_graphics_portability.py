@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.environ.get('VTX_TEST_MODULE_DIR', str(Path(__file__).resolve().parents[2])))
-from vtx import gfx_render as gfx
+from vtx.render import gfx_render as gfx
 from vtx import infra
 from vtx import cli as vtx
 

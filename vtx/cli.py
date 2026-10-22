@@ -96,7 +96,8 @@ from pathlib import Path
 from . import main, _stage_receipt_name
 from .composite import build_video, prepare_layers
 from .media.encoders import find_chrome
-from . import gfx_cli, hygiene
+from .render import gfx_cli
+from . import hygiene
 from .runtime import fstxn, events
 from .hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
                       manifest_record, snapshot)
@@ -188,9 +189,9 @@ def gfx(c: Ctx):
 
 def _gfx(c: Ctx):
     budget_gate(c, "gfx")
-    from . import gfx_svg
+    from .render import gfx_svg
     if gfx_svg.route(c) == "svg-sequence":
-        from .gfx_svg_stage import render_stage
+        from .render.gfx_svg_stage import render_stage
         return render_stage(c)
     # issue #103：gfx 阶段开工前清扫上次崩溃残留的监管 Worker 孤儿组（只杀
     # 账本核验过、宿主已死的组；并行 vtx 进程的活动组由账本 host 字段跳过）。
@@ -202,19 +203,19 @@ def _gfx(c: Ctx):
     # 与 complete.json 的 backend_ns 元数据同源；非法值在此显式失败（不静默落
     # 正式缓存破坏隔离）。
     backend_ns = gfx_cache_ns()
-    from .gfx_dependencies import policy, resolve, digest, DependencyError
+    from .render.gfx_dependencies import policy, resolve, digest, DependencyError
     strict = policy(c) == 'strict'
     dependency_records = {}
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
-    from .gfx_backend import selected
+    from .render.gfx_backend import selected
     backend = selected()
     if strict and backend in ("cef", "electron"):
         raise DependencyError("strict dependencies require CDP; Electron/CEF/CLI unsupported")
     if backend == "electron":
-        from .gfx_electron_stage import render_stage
+        from .render.gfx_electron_stage import render_stage
         return render_stage(c, _split_page)
-    from .gfx_environment import certificate
+    from .render.gfx_environment import certificate
     environment = certificate(c) if any(t.get('kind') == 'gfx' and t.get('clips')
                                          for t in c.tl['video_tracks']) else None
     mixed_pages = set()
@@ -222,7 +223,7 @@ def _gfx(c: Ctx):
     cdp_mod = None
     if use_cdp:
         try:
-            from . import gfx_render as cdp_mod
+            from .render import gfx_render as cdp_mod
             if not cdp_mod.available():
                 cdp_mod = None
         except Exception as e:
@@ -327,7 +328,7 @@ def _gfx(c: Ctx):
         cid, key, cl, n, d, html, frames, observation = job
         st = None
         if backend == "cef":
-            from .gfx_cef import render_page
+            from .render.gfx_cef import render_page
             rendered_via = render_page(html, d, n, ctx=c, width=c.w, height=c.h)
             gfx_cli.complete_page(d, n, key, c.w, c.h,
                                   verify_inputs=lambda: c.verify_inputs("gfx"),

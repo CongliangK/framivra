@@ -15,7 +15,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from vtx import gfx_environment
+from vtx.render import gfx_environment
 from tests.runners.run_gfx_environment_acceptance import observe
 
 

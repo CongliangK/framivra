@@ -43,9 +43,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-from vtx import cef_client  # noqa: E402
+from vtx.render import cef_client  # noqa: E402
 
-from vtx.gfx_cli import png_invalid_reason  # noqa: E402
+from vtx.render.gfx_cli import png_invalid_reason  # noqa: E402
 from tests.gfx._png import unfilter_rgba
 from vtx.infra import Ctx  # noqa: E402
 from vtx.runtime.proc_supervisor import (  # noqa: E402
@@ -119,7 +119,7 @@ def rgba_to_bgra(rgba):
 _HOST_SUPERVISED = r'''
 import json, os, sys, time
 from pathlib import Path
-from vtx import cef_client
+from vtx.render import cef_client
 from vtx.infra import Ctx
 from vtx.runtime.proc_supervisor import SupervisedProcessGroup
 

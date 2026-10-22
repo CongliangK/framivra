@@ -159,7 +159,7 @@ def _host_controls(m):
 
 def _manifest(run, expected, viewport):
     if 'input_environment_sha256' in expected:
-        from vtx.gfx_environment import verify_certificate
+        from vtx.render.gfx_environment import verify_certificate
         sha = verify_certificate(run.get('input_environment'))
         require(sha == expected['input_environment_sha256'],
                 'actual/declared gfx input environment mismatch')

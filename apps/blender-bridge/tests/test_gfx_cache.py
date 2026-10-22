@@ -20,8 +20,8 @@ import zlib
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 from vtx.api import gfx_dir, gfx_key
-from vtx import gfx_cli
-from vtx.gfx_environment import certificate
+from vtx.render import gfx_cli
+from vtx.render.gfx_environment import certificate
 
 # app discovery owns a different `tests` package; load the shared unit seam by
 # its exact file, never substitute a fake worker for real environment evidence.
@@ -84,11 +84,11 @@ class CacheFixture(unittest.TestCase):
 
 class ReadOnlyCache(CacheFixture):
     def resolve(self):
-        from vtx import gfx_cache_reader
+        from vtx.render import gfx_cache_reader
         return gfx_cache_reader.resolve_frames(self.c, self.clip)
 
     def assert_rejected(self):
-        from vtx import gfx_cache_reader
+        from vtx.render import gfx_cache_reader
         with self.assertRaises(gfx_cache_reader.GfxCacheError):
             self.resolve()
 
@@ -181,7 +181,7 @@ class ReadOnlyCache(CacheFixture):
                 # A separate read-only view tests the old stem layout without
                 # moving or aliasing any modern cache directory.
                 old = SimpleNamespace(**dict(vars(self.c), cache=self.root / ('old-' + backend)))
-                from vtx import gfx_cache_reader
+                from vtx.render import gfx_cache_reader
                 for marker in (False, True):
                     self.seed(old.cache / 'page', ns=None, marker=marker)
                     before = self.snapshot()
@@ -208,7 +208,7 @@ class ReadOnlyCache(CacheFixture):
         self.assert_rejected()
 
     def test_strict_canonical_bridge_requires_dependency_certificate(self):
-        from vtx.gfx_dependencies import resolve, digest
+        from vtx.render.gfx_dependencies import resolve, digest
         with mock.patch.dict(os.environ, VTX_GFX='cdp', VTX_GFX_CACHE_NS=''):
             self.tl['project']['gfx_dependency_policy'] = 'strict'
             d = self.seed(marker=False)
@@ -245,7 +245,7 @@ class RealBlenderCache(CacheFixture):
             + '_s=importlib.util.spec_from_file_location("gfx_environment_fixture", '
             + repr(str(REPO / 'tests/gfx/_environment.py')) + ')\n'
             + '_f=importlib.util.module_from_spec(_s);_s.loader.exec_module(_f)\n'
-            + 'with patch("vtx.gfx_environment.collect", side_effect=_f.collect), '
+            + 'with patch("vtx.render.gfx_environment.collect", side_effect=_f.collect), '
             + 'patch("vtx.media.encoders.find_chrome", side_effect=_f.find_chrome):\n'
             + '    runpy.run_path(' + repr(str(script)) + ', run_name="__main__")\n')
         return [shutil.which('blender'), '--background', '--factory-startup',

@@ -6,7 +6,7 @@ VTX_CEF_EVIDENCE_DIR optionally retains the complete fixture and native logs.
 from tests.execution.test_execution_events import Buffer
 from tests.gfx._environment import bind_environment
 from vtx.runtime import events
-from vtx import gfx_cli, gfx_render
+from vtx.render import gfx_cli, gfx_render
 
 import contextlib
 import io
@@ -22,13 +22,16 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from vtx import cef_client, cli, gfx_backend, gfx_cef, hygiene
+from vtx.render import cef_client
+from vtx import cli
+from vtx.render import gfx_backend, gfx_cef
+from vtx import hygiene
 from vtx.cache_state import receipt_fingerprint
 from vtx.composite import RenderPlan
 from vtx.infra import Ctx
 from tests.gfx.test_cef_frame_sync import decode_png_rgba
 from tests.gfx._png import write_png
-from vtx.frame_source import PngSequence, png_source
+from vtx.render.frame_source import PngSequence, png_source
 from vtx.hygiene import gfx_key
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,7 +111,7 @@ class Routing(unittest.TestCase):
     def test_downstream_segment_keys_include_namespace_route(self):
         plan = SimpleNamespace(c=SimpleNamespace(cache=self.root / 'cache'),
                                W=64, H=48, draft=False)
-        from vtx.frame_source import png_source
+        from vtx.render.frame_source import png_source
         c = Ctx(self.p)
         clip = c.tl['video_tracks'][0]['clips'][0]
         with mock.patch.dict(os.environ, VTX_GFX_CACHE_NS='one'):
@@ -124,7 +127,7 @@ class Routing(unittest.TestCase):
         with mock.patch.dict(os.environ, VTX_GFX='cef'), \
                 mock.patch.object(gfx_cef, 'render_page', side_effect=RuntimeError('native failed')), \
                 mock.patch.object(cli.gfx_cli, 'render_cli') as fallback, \
-                mock.patch('vtx.gfx_render.render_page') as cdp:
+                mock.patch('vtx.render.gfx_render.render_page') as cdp:
             c = Ctx(self.p)
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
                 cli.gfx(c)
@@ -395,7 +398,7 @@ class ClientHelloOwnership(unittest.TestCase):
 @unittest.skipUnless(WORKER and Path(WORKER).is_file(), 'requires VTX_TEST_CEF_WORKER')
 class NativeProduction(unittest.TestCase):
     def _assert_structure_css_veto(self, name, css):
-        from vtx.cef_client import CefWorkerError
+        from vtx.render.cef_client import CefWorkerError
         from vtx.runtime.proc_supervisor import SupervisedProcessGroup
         with tempfile.TemporaryDirectory(prefix=f'cef_dom_{name}_') as td:
             root = Path(td).resolve()
@@ -481,7 +484,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent
         # 底图（3072/3072）曾被 exact 验收接受进入 S5。宿主侧结构证据 =
         # 既有握手/状态机通道的 JS_ERR 显式失败；错误帧必须被拒，不得
         # 发布像素、不得进入 S5_ONPAINT_VERIFIED。
-        from vtx.cef_client import CefWorkerError
+        from vtx.render.cef_client import CefWorkerError
         with tempfile.TemporaryDirectory(prefix='cef_js_throw_') as td:
             root = Path(td).resolve()
             p = project(root, n=1)
@@ -602,7 +605,7 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden}
 
     def test_page_protocol_failures_are_native_timeouts(self):
         import socket
-        from vtx.cef_client import CefWorkerClient, CefWorkerError
+        from vtx.render.cef_client import CefWorkerClient, CefWorkerError
         from vtx.runtime.proc_supervisor import SupervisedProcessGroup
         with tempfile.TemporaryDirectory(prefix='cef_protocol_') as td:
             root = Path(td).resolve()
@@ -795,7 +798,7 @@ class RendererEvents(unittest.TestCase):
                      mock.patch.object(cli, 'budget_gate'), \
                      mock.patch.object(cli, 'find_chrome', return_value='unused'), \
                      mock.patch.object(gfx_render, 'render_page', return_value={'failed': [], 'path_counts': {}, 'ms_per_frame': 0}), \
-                     mock.patch('vtx.gfx_cef.render_page', return_value='CEF fixture'), \
+                     mock.patch('vtx.render.gfx_cef.render_page', return_value='CEF fixture'), \
                      mock.patch.object(cli, '_cdp_via', return_value='CDP fixture'), \
                      mock.patch.object(gfx_cli, 'render_cli', return_value=1), \
                      mock.patch.object(gfx_cli, 'complete_page'), \

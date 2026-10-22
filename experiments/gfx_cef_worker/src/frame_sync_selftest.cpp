@@ -9,7 +9,7 @@
 //   --jsonl-out=<path>     供 Python 侧跨语言全量 JSON 校验消费；
 //   --dump-signatures      输出 65,536 行 "f b g r a b g r a"（P1/P2 clean
 //                          预乘签名，空格分隔）到 stdout 后退出 0 —— 与
-//                          vtx/frame_canary.py 全域逐字节比对（协议 C++ 镜像
+//                          vtx/render/frame_canary.py 全域逐字节比对（协议 C++ 镜像
 //                          与唯一 home 的冻结一致性证据）。
 // 退出 0 = ALL PASS。
 #include <algorithm>
@@ -582,7 +582,7 @@ void TestFormulaVectors() {
   Check(m1 == Bgra{90, 254, 254, 254}, "formula: f=0xFFFF P1={90,254,254,254}");
   const Bgra m2 = SignatureBgraPremulP2(0xFFFF);
   Check(m2 == Bgra{22, 254, 254, 254}, "formula: f=0xFFFF P2={22,254,254,254}");
-  // 预乘舍入口径：floor((2C·254+255)/510)（与 vtx/frame_canary 一致）。
+  // 预乘舍入口径：floor((2C·254+255)/510)（与 vtx/render/frame_canary 一致）。
   Check(PremulRound(90, 254) == 90 && PremulRound(22, 254) == 22 &&
             PremulRound(255, 254) == 254 && PremulRound(1, 254) == 1,
         "formula: 预乘半向上舍入向量");
@@ -829,7 +829,7 @@ int main(int argc, char* argv[]) {
   if (dump_signatures) {
     // 全域签名转储（65,536 行）：每行 "f P1.b P1.g P1.r P1.a P2.b P2.g
     // P2.r P2.a"（clean 预乘口径）。消费方：tests/gfx/test_cef_frame_sync.py
-    // 与 vtx/frame_canary.py 逐行比对（C++ 镜像 == 协议 home）。
+    // 与 vtx/render/frame_canary.py 逐行比对（C++ 镜像 == 协议 home）。
     std::vector<std::string> lines;
     lines.reserve(kFrameMax + 1);
     char buf[64];

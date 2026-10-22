@@ -10,7 +10,7 @@ libspng/fpng 双编码原子落盘适配器）+ 阶段 3a（#114，CEF-03a：五
 渲染 + 后端探针 + 监管契约 + 帧服务协议 + 双 PNG 编码后端 + 帧同步状态
 机）→ 产物全部隔离在本目录，绝不污染仓库打包面（`pyproject.toml` /
 `setup.py` / `MANIFEST.in` / `tests/runners/package_smoke.py`）。Python 生产接线为
-`vtx/gfx_cef.py`，显式 `VTX_GFX=cef` 选择实验性 Alpha（见下节）；原生二进制不随
+`vtx/render/gfx_cef.py`，显式 `VTX_GFX=cef` 选择实验性 Alpha（见下节）；原生二进制不随
 Python wheel 分发。
 
 ## macOS arm64 构建（#202）
@@ -99,13 +99,15 @@ env VTX_TEST_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worke
 | `third_party/spng/`、`third_party/fpng/` | #111 内嵌第三方源码：libspng v0.7.3（`spng.c`+`spng.h`，BSD-2-Clause）与 fpng（`fpng.cpp`+`fpng.h`，Unlicense）单文件上游源，随 git 入库 |
 | `third_party_locks.json` | #111 第三方源码版本锁：精确版本/来源 URL/size/sha256 哈希锚定（CEF 锁同纪律；改版本必须整包重锁） |
 | `src/frame_sync_machine.hpp` | #114 五阶段单调世代状态机 `FrameSyncStateMachine`：`(document_gen, request_id, target_frame_index)` 三元组 + S0→S5 严格序 + v2 双像素 Canary 闸门（早期丢弃/陈旧与半更新拒收/精确匹配接受+原地恢复）+ JSONL 全事件面（无 CEF 依赖） |
-| `src/frame_sync_machine.cpp` | #114 状态机实现：vtx/frame_canary.py 冻结公式的 C++ 消费镜像（P1 xor 0x5A / P2 加性 0x3C×(16,22) / α=254 / 预乘精确反像）；自检与 serve 共用同一判定核心 |
+| `src/frame_sync_machine.cpp` | #114 状态机实现：vtx/render/frame_canary.py 冻结公式的 C++ 消费镜像（P1 xor 0x5A / P2 加性 0x3C×(16,22) / α=254 / 预乘精确反像）；自检与 serve 共用同一判定核心 |
 | `src/frame_sync_selftest.cpp` | #114 原生对抗自检：旧 paint/跨世代同帧/重复请求/签名半更新/超时/早期 paint/尺寸不符/晚到回调等确定性 fixture（无 CEF 依赖；`--jsonl-out` 供 Python 跨语言校验） |
 | `pages/frame_sync_v2.html` | #114 状态机验收页：透明底 canvas（f 纯函数）+ `?f=`（Mode N）+ `__vtx_render(f)`（Mode P）+ `__vtx_originals()`（canary 位原像素上报钩子） |
-| `../../vtx/cef_client.py` | 生产与实验共用的唯一 Python 协议客户端（协议镜像见 `IPC_PROTOCOL.md`） |
+| `../../vtx/render/cef_client.py` | 生产与实验共用的唯一 Python 协议客户端（协议镜像见 `IPC_PROTOCOL.md`） |
 | `pages/frame_canary.html` | #110 金丝雀帧页：f 纯函数（(0,0) 像素编码帧号 + 硬边条纹防步长错位） |
 | `IPC_PROTOCOL.md` | #110 协议权威文档（环布局/偏移表/状态机/双模式时序/故障注入面/工单偏差记录） |
 | `probe_display_matrix.py` | 三态显示环境 × A0/A1 × ozone 矩阵探测（#109）：每格独立 worker 跑 `gfxA.html?f=0` 出 PNG + 内部探针（WEBGL_debug_renderer_info + chrome://gpu）→ 归类生效后端 → 落 `env_manifest.json` |
+
+验收页保留原始字节与历史源码路径；当前像素协议实现在 `vtx/render/frame_canary.py`，不提供旧入口。
 
 构建产物（均不入库，`.gitignore` 在册）：
 
@@ -340,7 +342,7 @@ SUB|UP` 与（b）`unpremultiply + spng(level=1)` 单帧单核 ≤8ms、4 线程
   `--sync-pump-timeout-ms` 可调）。S1–S3 期间同样泵送（推进 rAF）——期间
   到达的 OnPaint 全部早期丢弃（`early_paint_dropped`）。
 - **S5 验签闸门**（`FeedPaint`）：尺寸卫兵 → Clean 双像素与期望帧预乘
-  签名**逐字节全等**才匹配（对齐 `vtx/frame_canary.py` 的
+  签名**逐字节全等**才匹配（对齐 `vtx/render/frame_canary.py` 的
   `accept_paint_bgra_inplace` 口径；Diagnostic 走双角 8×8 uniform 解码）。
   陈旧帧拒收并归因（双像素候选交集单例 → `stale_paint:rendered=N`）、
   半更新签名拒收（P1 新 P2 旧 → `half_signature`）、无签名/歧义拒收

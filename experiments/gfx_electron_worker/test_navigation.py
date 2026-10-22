@@ -16,7 +16,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
-from vtx.gfx_electron import ElectronRenderError, WORKER_DIR, render_page
+from vtx.render.gfx_electron import ElectronRenderError, WORKER_DIR, render_page
 from vtx.runtime.proc_supervisor import group_live_members, reap_orphan_workers
 
 
@@ -184,7 +184,7 @@ class RealNavigationTests(unittest.TestCase):
         code='''from pathlib import Path
 from types import SimpleNamespace
 import sys
-from vtx.gfx_electron import render_page
+from vtx.render.gfx_electron import render_page
 p=Path(sys.argv[2]);c=SimpleNamespace(root=p,cache=p/'cache',out=p/'out')
 render_page(sys.argv[1],p/'frames',1,width=192,height=96,ctx=c,timeout_s=120)
 '''

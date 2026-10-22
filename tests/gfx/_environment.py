@@ -7,7 +7,7 @@ from pathlib import Path
 import hashlib
 import os
 from unittest import mock
-from vtx import gfx_environment as env
+from vtx.render import gfx_environment as env
 
 
 def _binary_digest(path):
@@ -45,6 +45,6 @@ def environment_cli():
     return [sys.executable, '-c',
             "import runpy\nfrom unittest.mock import patch\n"
             "from tests.gfx._environment import collect, find_chrome\n"
-            "with patch('vtx.gfx_environment.collect', side_effect=collect), "
+            "with patch('vtx.render.gfx_environment.collect', side_effect=collect), "
             "patch('vtx.media.encoders.find_chrome', side_effect=find_chrome):\n"
             "    runpy.run_module('vtx', run_name='__main__')\n"]

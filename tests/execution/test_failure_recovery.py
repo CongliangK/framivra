@@ -963,7 +963,7 @@ class RealFFmpegRecovery(unittest.TestCase):
 @unittest.skipUnless(os.environ.get('VTX_TEST_CHROME'), 'set VTX_TEST_CHROME')
 class RealChromeRecovery(unittest.TestCase):
     def test_kill_own_browser_reuses_completed_frames(self):
-        from vtx import gfx_render
+        from vtx.render import gfx_render
         with tempfile.TemporaryDirectory(prefix='vtx-kill-chrome-') as d:
             root = Path(d)
             html = root / 'page.html'

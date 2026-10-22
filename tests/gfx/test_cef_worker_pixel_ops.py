@@ -9,7 +9,7 @@
   1. 原生自检：pixel_ops_selftest 全 PASS——(c,a)∈[0,255]² 全域穷举
      （含 A∈{0,1,2,127,128,254,255}×C 全通道）SIMD==标量零失配、双编码器
      往返逐字节一致、原子写语义；
-  2. 一次性路径（--out-png）双后端产物过 vtx/gfx_cli.py:png_invalid_reason
+  2. 一次性路径（--out-png）双后端产物过 vtx/render/gfx_cli.py:png_invalid_reason
      (width=1920, height=1080)，且 {spng L1, spng L3, fpng, zlib} 四路像素
      互相 Tier-1 全等（#104 analyze_frame_diff）+ 金丝雀像素核验；
   3. serve 模式 1：--png-encoder=spng 与 =fpng 两 worker 同帧 f 产物过
@@ -51,10 +51,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(1, str(ROOT / "scripts"))
 
-from vtx import cef_client  # noqa: E402
+from vtx.render import cef_client  # noqa: E402
 from scripts.gfx import gfx_golden as gg  # noqa: E402
 
-from vtx.gfx_cli import png_invalid_reason  # noqa: E402
+from vtx.render.gfx_cli import png_invalid_reason  # noqa: E402
 
 from tests.gfx.test_cef_worker_shm import _CANARY_URL, _GATE, _WORKER  # noqa: E402
 from tests.gfx.test_cef_worker_shm import _ServeFixture  # noqa: E402

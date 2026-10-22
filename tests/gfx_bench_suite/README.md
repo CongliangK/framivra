@@ -5,7 +5,7 @@
 > 场景定义不再变更；消费方以 commit sha 锁定。本 README 只是操作入口，
 > 规格冲突时以 manifest 为准。
 
-冻结 manifest 的说明文字保留历史工具名 `scripts/gfx_golden.py`，以维持已锁定的完整文件哈希；当前工具入口为 `scripts/gfx/gfx_golden.py`。该说明仅映射历史引用，不提供旧命令入口，也不改变冻结场景或测量身份。
+冻结 manifest 与页面保留历史源码/工具路径，以维持已锁定的原始字节哈希；当前源码为 `vtx/render/gfx_render.py`，工具入口为 `scripts/gfx/gfx_golden.py`。该说明仅映射历史引用，不提供旧命令入口，也不改变冻结场景或测量身份。
 
 ## 消费方（谁在用这套件）
 
@@ -57,7 +57,7 @@ env VTX_TEST_CHROME=/usr/bin/google-chrome \
 
 击杀后记录 `{reason, budget_s, elapsed_s, frames_done, est_ms_per_frame}` 事实并
 跳过继续；**超时不是 FAIL**，退出码区分：`0`=全 PASS；`1`=门 FAIL；`2`=环境缺置；
-`3`=完成但存在受控超时（部分超时）。引擎 `vtx/gfx_render.py` 与冻结规格零改动。
+`3`=完成但存在受控超时（部分超时）。引擎 `vtx/render/gfx_render.py` 与冻结规格零改动。
 
 快速完整性门（无 Chrome，秒级，`bash scripts/run_all_tests.sh` 自动包含）：
 
@@ -75,7 +75,7 @@ env python3 -m unittest tests.gfx.test_gfx_bench_suite
 
 ## 引擎口径（跑套件时的环境）
 
-- 引擎：`vtx/gfx_render.py render_page`（Chrome CDP 常驻浏览器，
+- 引擎：`vtx/render/gfx_render.py render_page`（Chrome CDP 常驻浏览器，
   `--headless --disable-gpu`；S5 WebGL 走 SwiftShader）。
 - 建议环境：`VTX_GFX_TABS=4`（生产定版）、`VTX_GFX_STATIC=0`（防御性：套件
   页面全部刻意不声明静态跨度/canvas 导出——声明会绕过被测代码路径）、
@@ -96,7 +96,7 @@ env python3 -m unittest tests.gfx.test_gfx_bench_suite
   0.29–0.55s、`render_page` tabs=4 单帧 1.19s、**全量 300 帧 98.97s
   （317ms/帧，304 截 p50=0.95s/p99=1.45s/max=1.49s，0 异常）**；28 核合成
   饱和争用下 6.9s/帧仍 300/300 完成——S3 本身不慢；
-- **机制推证**（`vtx/gfx_render.py`）：重度争用（#102 全量测试等并发 Chrome
+- **机制推证**（`vtx/render/gfx_render.py`）：重度争用（#102 全量测试等并发 Chrome
   舰队）把 SwiftShader 重 blur 单帧光栅推过引擎 WS socket **20s 硬超时** →
   `socket.timeout` → `heal()`=整浏览器冷重启 → 每帧重试≤2 败→帧弃**不落盘**
   → 下一帧重复，≈75 帧/tab × ~100s/帧 ≈ **2h+ 零帧**；旧 harness 逐页完成

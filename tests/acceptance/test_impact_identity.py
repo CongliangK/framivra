@@ -224,7 +224,7 @@ class ClipDependencies(SnapshotImpact):
 
     def test_environment_migration_preserves_empty_dependency_equivalence(self):
         from vtx.hygiene import gfx_key
-        from vtx.gfx_environment import identity
+        from vtx.render.gfx_environment import identity
         from vtx.timeline_diff import DiffCtx
         from vtx.cache_state import file_digest
         c = DiffCtx(self.tl, self.root)

@@ -226,7 +226,7 @@ class TestGitState(unittest.TestCase):
     def test_dirty_descendant_baseline(self):
         cmds = {
             "git rev-parse HEAD": "abc123def0000000000000000000000000000000\n",
-            "git status --porcelain": "?? vtx/env_manifest.py\n M vtx/gfx_render.py\n",
+            "git status --porcelain": "?? vtx/env_manifest.py\n M vtx/render/gfx_render.py\n",
             f"git merge-base --is-ancestor {em.BASELINE_SHA} HEAD": CP0,
         }
         g = self._git(cmds)

@@ -233,10 +233,11 @@ def prepare_font_observation(tab, call, owned_target):
 
 def worker(timeline, trace_path, injection=None, stage="gfx"):
     """Observe actual production calls; never fabricate a Fetch result or pixels."""
-    from vtx import cli, gfx_render, gfx_cli
+    from vtx import cli
+    from vtx.render import gfx_render, gfx_cli
     from vtx.runtime import events
-    from vtx import gfx_dependencies
-    from vtx.gfx_dependencies import RequestPolicy
+    from vtx.render import gfx_dependencies
+    from vtx.render.gfx_dependencies import RequestPolicy
     trace = dict(font_observation_targets=[], protocol=[], requests=[], acknowledgements=[], metrics=[], fallback_calls=0, injected=False,
         screenshot_attempts=0, production_failures=[], propagated_production_failure=False,
         invocation=dict(stage=stage, timeline=str(timeline),
@@ -531,7 +532,7 @@ def main():
     try:
         from PIL import Image
         from vtx.infra import Ctx
-        from vtx.gfx_dependencies import resolve
+        from vtx.render.gfx_dependencies import resolve
         from vtx.hygiene import gfx_dir, gc_plan
         from vtx.impact import capture, compare
         from tests.runners.impact_inventory import observe, delta, validate_sidecars, is_pass_sidecar

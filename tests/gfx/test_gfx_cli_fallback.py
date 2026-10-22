@@ -2,7 +2,7 @@
 """tests/gfx/test_gfx_cli_fallback.py —— gfx Chrome CLI 回退路径退出码与 PNG 产物校验
 （B04 / issue #28 / F-06 / #6）。
 
-被测对象 vtx/gfx_cli.py：`vtx gfx` 的 CLI 回退（VTX_GFX=cli、CDP 不可用整页
+被测对象 vtx/render/gfx_cli.py：`vtx gfx` 的 CLI 回退（VTX_GFX=cli、CDP 不可用整页
 回落、CDP 帧级失败补渲）原先不检查每个 chrome --headless --screenshot 子进程
 的退出码、完成度靠 PNG 数量推断，损坏 PNG 会被当作缓存命中。本测试用假
 chrome 可执行脚本（stub，无需真 Chrome，POSIX shebang 直 exec）覆盖五类行为：
@@ -44,7 +44,7 @@ if str(REPO) not in sys.path:  # 独立跑（python3 tests/gfx/test_gfx_cli_fall
     sys.path.insert(0, str(REPO))
 
 from tests.gfx._environment import environment_cli  # noqa: E402
-from vtx.gfx_cli import (GfxCliError, PNG_SIGNATURE, _cli_shot_cmd,  # noqa: E402
+from vtx.render.gfx_cli import (GfxCliError, PNG_SIGNATURE, _cli_shot_cmd,  # noqa: E402
                          png_invalid_reason, render_cli, require_frames,
                          run_cli_shot, verify_frames)
 
@@ -425,7 +425,7 @@ class GfxCliEntryTests(unittest.TestCase):
 
     def test_cli_wrong_frame_name_is_not_a_cache_hit(self):
         from vtx.hygiene import gfx_dir
-        from vtx.gfx_cli import ENV_PENDING_FILE
+        from vtx.render.gfx_cli import ENV_PENDING_FILE
         stub = self._stub("nowrite")
         env = dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(stub), VTX_GFX_CACHE_NS="")
         with mock.patch.dict(os.environ, env, clear=True):
@@ -497,8 +497,8 @@ class GfxCliEntryTests(unittest.TestCase):
                 renderer = mock.Mock(side_effect=RuntimeError("CDP boom")) if whole_page else mock.Mock(
                     return_value={"failed": [0], "path_counts": {}})
                 fake = SimpleNamespace(available=lambda: True, render_page=renderer)
-                with mock.patch.dict(sys.modules, {"vtx.gfx_render": fake}), \
-                     mock.patch("vtx.gfx_render", fake, create=True), \
+                with mock.patch.dict(sys.modules, {"vtx.render.gfx_render": fake}), \
+                     mock.patch("vtx.render.gfx_render", fake, create=True), \
                      mock.patch.object(cli, "find_chrome", return_value=str(self._stub("writefail"))), \
                      mock.patch.dict(os.environ, {"VTX_GFX": "cdp"}):
                     with self.assertRaises(SystemExit) as cm:
@@ -516,8 +516,8 @@ class GfxCliEntryTests(unittest.TestCase):
             return {"failed": [], "rendered": 1, "ms_total": 1, "tabs": 1,
                     "path_counts": {}, "timings_ms": {}}
         fake = SimpleNamespace(available=lambda: True, render_page=render)
-        with mock.patch.dict(sys.modules, {"vtx.gfx_render": fake}), \
-             mock.patch("vtx.gfx_render", fake, create=True), \
+        with mock.patch.dict(sys.modules, {"vtx.render.gfx_render": fake}), \
+             mock.patch("vtx.render.gfx_render", fake, create=True), \
              mock.patch.object(cli, "find_chrome", return_value="unused"), \
              mock.patch.dict(os.environ, {"VTX_GFX": "cdp", "VTX_GFX_SPLIT_FRAMES": "1"}):
             with self.assertRaises(SystemExit) as cm:

@@ -32,7 +32,7 @@ CHROME_VISUAL_FLAGS = ('--headless', '--disable-gpu', '--hide-scrollbars',
                        '--font-render-hinting=none')
 _lock = threading.RLock()
 _hashes = {}
-_ROOT = Path(__file__).resolve().parent
+_ROOT = Path(__file__).resolve().parents[1]
 # PNG compression and scheduling are deliberately provenance only.
 PIXEL_ENV = ('LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'LC_NUMERIC', 'TZ',
              'FONTCONFIG_FILE', 'FONTCONFIG_PATH', 'FONTCONFIG_SYSROOT',
@@ -367,7 +367,7 @@ def _darwin_fonts(libraries, application_domains):
     return {'files': _files(paths), 'configs': configs,
             'inventory': {'urls': paths, 'postscript_names': names, 'resources': resources,
                           'application_domains': application_domains},
-            'tools': _files([sys.executable, _ROOT / 'gfx_environment.py']),
+            'tools': _files([sys.executable, _ROOT / 'render/gfx_environment.py']),
             'libraries': libraries}
 
 
@@ -424,8 +424,8 @@ def _collect_darwin(backend, binary, mode):
                          'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
             'implementation': _files([_ROOT / p for p in (
-                'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py', 'browser_paths.py',
-                'gfx_cef.py', 'cef_client.py')])}
+                'render/gfx_environment.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
+                'render/gfx_cef.py', 'render/cef_client.py')])}
 
 
 def _windows_registry(root, name):
@@ -558,7 +558,7 @@ def _collect_windows(backend, binary, mode):
                         if executable.name.lower() == 'chrome.exe' else _tree(executable.parent))},
             'libraries': libraries, 'graphics_libraries': _files(drivers),
             'fonts': {'files': _files(font_paths), 'configs': {'registry': digest(registry)},
-                      'tools': _files([sys.executable, _ROOT / 'gfx_environment.py']), 'libraries': libraries},
+                      'tools': _files([sys.executable, _ROOT / 'render/gfx_environment.py']), 'libraries': libraries},
             'registry': registry,
             'host_boot': {'machine_guid': digest(machine), 'boot_filetime': _windows_boot()},
             'os': list(platform.uname()), 'environment': {k: os.environ.get(k) for k in
@@ -566,9 +566,9 @@ def _collect_windows(backend, binary, mode):
             'launch_flags': list(CHROME_VISUAL_FLAGS),
             'protocol': {'device_scale': 1, 'color': 'srgb', 'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
-            'implementation': _files([_ROOT / p for p in ('gfx_environment.py', 'gfx_backend.py',
-                'gfx_render.py', 'gfx_cli.py', 'gfx_cef.py', 'cef_client.py', 'runtime/windows_browser.py',
-                'browser_paths.py')])}
+            'implementation': _files([_ROOT / p for p in ('render/gfx_environment.py', 'render/gfx_backend.py',
+                'render/gfx_render.py', 'render/gfx_cli.py', 'render/gfx_cef.py', 'render/cef_client.py', 'runtime/windows_browser.py',
+                'render/browser_paths.py')])}
 
 
 class EnvironmentError(ValueError):
@@ -649,7 +649,7 @@ def _file_resolved(p, st, *, verify_entry=None):
             if old and old[0] == token:
                 check_entry()
                 return str(p), old[1]
-    from .cache_state import file_digest
+    from ..cache_state import file_digest
     try:
         content_hash = file_digest(p)
     except ValueError as error:
@@ -867,8 +867,8 @@ def collect(backend, binary, mode=None):
                              'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
                 'python_runtime': _python_runtime(),
                 'implementation': _files([_ROOT / p for p in (
-                    'gfx_environment.py', 'gfx_backend.py', 'gfx_render.py', 'gfx_cli.py', 'browser_paths.py',
-                    'gfx_cef.py', 'cef_client.py')])}
+                    'render/gfx_environment.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
+                    'render/gfx_cef.py', 'render/cef_client.py')])}
     except (OSError, RuntimeError, TypeError, AttributeError, plistlib.InvalidFileException,
             UnicodeError, struct.error) as e:
         raise EnvironmentError(f'gfx environment unknown; cache reuse refused: {e}') from e
@@ -877,7 +877,7 @@ def collect(backend, binary, mode=None):
 def resolve(c):
     """Pin one environment to a context; recheck() never adopts new inputs."""
     from .gfx_backend import selected, cef_config
-    from .media.encoders import find_chrome
+    from ..media.encoders import find_chrome
     backend = selected()
     if backend == 'electron':
         return None  # frozen historical identity owned by gfx_backend

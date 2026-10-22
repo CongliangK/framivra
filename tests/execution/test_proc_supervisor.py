@@ -34,7 +34,9 @@ from pathlib import Path
 from unittest import mock
 from tests.gfx._png import png
 
-from vtx import cli, gfx_cli, gfx_render, hygiene
+from vtx import cli
+from vtx.render import gfx_cli, gfx_render
+from vtx import hygiene
 from vtx.runtime import proc_supervisor
 from vtx.infra import Ctx
 from vtx.runtime.proc_supervisor import (SupervisedProcessGroup, WORKER_LEDGER,

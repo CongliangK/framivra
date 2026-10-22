@@ -151,7 +151,7 @@ def crop169_dims(w, h):
 # this entry point to its own checkout and use the canonical vtx package (no
 # copied key formula, alternate module name or global installed checkout).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from vtx import gfx_cache_reader
+from vtx.render import gfx_cache_reader
 
 # Only the fields consumed by the read-only production cache resolver; do not
 # construct a new pipeline Ctx or run prepare/render/receipt writers in Blender.

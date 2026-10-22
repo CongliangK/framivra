@@ -171,9 +171,9 @@ class Ctx:
         # Pin before resolving external subtitles so changes during loading are
         # caught too. Hash exactly the bytes parsed above, not a second read.
         validate_cache_dependencies(self)
-        from .gfx_backend import selected, identity
+        from .render.gfx_backend import selected, identity
         from .hygiene import gfx_cache_ns
-        from . import gfx_svg
+        from .render import gfx_svg
         if gfx_svg.route(self) == 'svg-sequence':
             self.gfx_backend = {'requested_backend': 'svg-sequence',
                                 'identity': gfx_svg.engine_identity(),
@@ -185,7 +185,7 @@ class Ctx:
         self.input_fingerprint = receipt_fingerprint(
             self, timeline_bytes=self.timeline_bytes)
         if self.gfx_backend is not None and getattr(self, '_gfx_environment', None):
-            from .gfx_environment import identity as environment_identity
+            from .render.gfx_environment import identity as environment_identity
             self.gfx_backend['environment_identity'] = environment_identity(self)
             self.gfx_backend['environment_evidence'] = (
                 self._gfx_environment[1]['status'] + '; pixel equivalence unproven')

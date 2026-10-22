@@ -68,7 +68,7 @@ for _stream in (sys.stdout, sys.stderr):
 from vtx.pluginlib import config as _pcfg    # noqa: E402（统一加载，§5.3）
 from vtx.pluginlib import registry as _preg  # noqa: E402（发现/静态注册表，§2.1）
 from vtx.pluginlib.manifest import load_manifest as _load_manifest  # noqa: E402
-from vtx.browser_paths import chrome_names, chrome_install_paths  # noqa: E402
+from vtx.render.browser_paths import chrome_names, chrome_install_paths  # noqa: E402
 
 
 def py3() -> str:

@@ -222,7 +222,7 @@ class TestTrackOrderAndWholeTrackImpact(_Base):
         super().setUp()
         for patcher in (
             mock.patch.dict(os.environ, {"VTX_NO_NVENC": "1", "VTX_SEG_NVENC": "0"}),
-            mock.patch("vtx.gfx_environment.identity", return_value="unit-environment"),
+            mock.patch("vtx.render.gfx_environment.identity", return_value="unit-environment"),
             mock.patch("vtx.pluginlib.hooks.active_plugins_digest", return_value=""),
             mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child process")),
         ):

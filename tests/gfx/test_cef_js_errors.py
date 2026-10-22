@@ -18,7 +18,7 @@ import traceback
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from vtx.cef_client import CefWorkerClient, CefWorkerError
+from vtx.render.cef_client import CefWorkerClient, CefWorkerError
 
 GREEN = "document.querySelector('#content').style.background='rgb(17,231,47)';"
 # Per-request status contract: real JS errors are JS_ERR(3), while an

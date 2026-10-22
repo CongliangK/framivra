@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import patch
 
 from tests._support import temporary_root
-from vtx import gfx_dependencies as deps, hygiene, gfx_render, gfx_cli
+from vtx.render import gfx_dependencies as deps
+from vtx import hygiene
+from vtx.render import gfx_render, gfx_cli
 import copy
 from vtx import cache_state
 
@@ -33,7 +35,7 @@ class DependencyContracts(unittest.TestCase):
         self.tl['project']['gfx_dependency_policy'] = 'strict'
 
     def test_resource_free_legacy_vector(self):
-        from vtx.gfx_environment import identity
+        from vtx.render.gfx_environment import identity
         blob = ((self.root / 'page.html').read_bytes() + b'|environment:'
                 + identity(self.c).encode() + b'|30|1x1|2')
         self.assertEqual(hygiene.gfx_key(self.c, self.clip), hashlib.sha1(blob).hexdigest()[:12])
@@ -466,7 +468,7 @@ class IntegratedDependencyOperations(unittest.TestCase):
     def test_strict_cdp_failure_preserves_failed_attempt_task_and_original_exception(self):
         from vtx import cli
         from vtx.runtime import events
-        from vtx import gfx_cli, gfx_render
+        from vtx.render import gfx_cli, gfx_render
         from vtx.infra import Ctx
         from tests.execution.test_execution_events import Buffer
         self.write('page.html', '<p>plain</p>')
