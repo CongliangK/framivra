@@ -189,7 +189,7 @@ class Ctx:
             self.gfx_backend['environment_identity'] = environment_identity(self)
             self.gfx_backend['environment_evidence'] = (
                 self._gfx_environment[1]['status'] + '; pixel equivalence unproven')
-        from .subtitles_src import resolve_subtitles_src
+        from .media.subtitles_src import resolve_subtitles_src
         resolve_subtitles_src(self)
         verify_input_identity(self)
         # PR#1 合入：声明依赖快速失败 + 回执输入身份（注意：不是缓存目录键——

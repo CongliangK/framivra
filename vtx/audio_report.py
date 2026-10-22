@@ -52,7 +52,7 @@ from pathlib import Path
 
 from .hygiene import audio_key
 from . import fstxn
-from .audio_filters import event_chain
+from .media.audio_filters import event_chain
 from .pluginlib import hooks as _plugin_hooks
 
 # ---- 阈值常量（出处见模块头判级阈值表）----

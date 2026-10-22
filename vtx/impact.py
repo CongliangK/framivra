@@ -46,7 +46,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                         fps=int(p['fps']), w=p['width'], h=p['height'], gpu=gpu)
     sources = {s['id']: s for s in tl['sources']}
     c.src_path = lambda sid: root / sources[sid]['path']
-    from .subtitles_src import resolve_subtitles_src
+    from .media.subtitles_src import resolve_subtitles_src
     resolve_subtitles_src(c)
     if getattr(c, 'subtitles_errors', []):
         raise ValueError('; '.join(c.subtitles_errors))

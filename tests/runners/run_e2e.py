@@ -69,7 +69,7 @@ checks={'cache':cache_checks,'same_frame_count':len(d)==360,'mean_rgb_difference
 for case in ['parallel','single']:
     text=(root/(case+'-signal.txt')).read_text(errors='replace');peaks=re.findall(r'Peak:\s*(-?[\d.]+) dBFS',text)
     checks[case]={'no_black_intervals':'black_start:' not in text,'true_peak_dbfs':float(peaks[-1]) if peaks else None}
-summary={'steps':results,'checks':checks,'source_sha256':{str(p.relative_to(repo)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (repo/'vtx').glob('*.py')}}
+summary={'steps':results,'checks':checks,'source_sha256':{p.relative_to(repo/'vtx').as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((repo/'vtx').rglob('*.py'))}}
 summary['pass']=all(c['unchanged'] for c in cache_checks.values()) and len(cache_checks)==2 and all(r['exit']==0 for r in results) and checks['comparison_pass'] and checks['same_frame_count'] and all(checks[c]['no_black_intervals'] and checks[c]['true_peak_dbfs'] is not None and checks[c]['true_peak_dbfs']<=-1 for c in ['parallel','single'])
 (root/'results.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps(checks,indent=2))
 

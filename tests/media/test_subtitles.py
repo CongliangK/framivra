@@ -34,7 +34,7 @@ sys.path.insert(0, str(REPO))
 from tests._support import full_hd_timeline as _tl
 from vtx import subs as subs_mod
 from vtx.infra import Ctx
-from vtx.subtitles_src import parse_srt, parse_subs_json, resolve_subtitles_src
+from vtx.media.subtitles_src import parse_srt, parse_subs_json, resolve_subtitles_src
 
 
 FPS = 30
@@ -247,7 +247,7 @@ class ParseSrt(unittest.TestCase):
         # half-up 语义直接测换算函数：0.5 帧边界 → 1（Python round() 是 banker's
         # 会给 0）。30fps + 整数毫秒的 SRT 永远到不了 .5 帧（30ms|1000 无解），
         # 该语义为 24/25fps 等项目时基与未来毫秒精度输入预留。
-        from vtx.subtitles_src import _sec_to_frame
+        from vtx.media.subtitles_src import _sec_to_frame
         self.assertEqual(_sec_to_frame(0.5, 1), 1)
         self.assertEqual(_sec_to_frame(1.5, 1), 2)
         # 30fps 整数毫秒：1016ms → 30.48 帧 → 30（非边界，两舍入法一致）
