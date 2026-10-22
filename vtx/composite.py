@@ -28,6 +28,18 @@ _SYNTH_FUNCS = ("composite", "_composite_graph", "_composite_passes",
                 "_layer_chain", "_layer_input_args")
 
 
+def _clip_alpha_filters(cl, spf):
+    """Shared media/PNG alpha effects, evaluated on the original clip clock."""
+    filters = []
+    if cl.get("fade_in_frames"):
+        filters.append(f"fade=t=in:st=0:d={cl['fade_in_frames']*spf:.6f}:alpha=1")
+    if cl.get("fade_out_frames"):
+        filters.append(f"fade=t=out:st={(cl['dur']-cl['fade_out_frames'])*spf:.6f}:d={cl['fade_out_frames']*spf:.6f}:alpha=1")
+    if cl.get("opacity", 1) < 1:
+        filters.append(f"colorchannelmixer=aa={cl['opacity']}")
+    return filters
+
+
 def _normalized_ast_src(source: str) -> str:
     """源码 → 去注释/去 docstring/去格式的 AST 归一化文本。
 
@@ -90,6 +102,7 @@ def _graph_code_digest() -> str:
     # This is source identity, not a proof of runtime/library equivalence.
     source += _normalized_ast_src(inspect.getsource(frame_source))
     source += _normalized_ast_src(inspect.getsource(gfx_cli))
+    source += _normalized_ast_src(inspect.getsource(_clip_alpha_filters))
     return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
 
 
@@ -399,7 +412,32 @@ class RenderPlan:
         # input, so convert each frame through swscale before tpad/framesync;
         # doing only format=rgba can be negotiated away for initially-RGBA input.
         png_rgba = "scale=iw:ih:flags=neighbor+bitexact,format=rgba," if L["gfx"] else ""
-        slave = f"[{idx}:v]{png_rgba}{shrink}{pad}{timing}[L{k}T]"
+        effects = []
+        if L["gfx"]:
+            sc = cl.get("scale", 1)
+            if sc != 1:
+                w2 = int(L["source"].width * sc) // 2 * 2
+                h2 = int(L["source"].height * sc) // 2 * 2
+                if min(w2, h2) < 2 or (draft and min(int(w2 * f) // 2 * 2, int(h2 * f) // 2 * 2) < 2):
+                    # FFmpeg interprets dimension zero as the original size;
+                    # never silently turn an unrepresentable scale into no-op.
+                    raise ValueError(f"gfx scale={sc} produces dimensions below 2 pixels (draft={bool(draft)})")
+                effects.append(f"scale={w2}:{h2}:flags=lanczos")
+            # image2 restarts PTS at zero after start_number. Restore clip-local
+            # integer ticks for the shared fades, then undo that offset before
+            # tpad and the existing double-tick framesync clock. Synthetic clone
+            # frames must never advance a fade or restart it at a segment cut.
+            offset = max(0, -rel_in) if cl.get("fade_in_frames") or cl.get("fade_out_frames") else 0
+            if offset:
+                effects.append(f"setpts=PTS+{offset}")
+            effects += _clip_alpha_filters(cl, c.spf)
+            if offset:
+                effects.append(f"setpts=PTS-{offset}")
+                # setpts can clear frame-rate metadata; restore the PNG's CFR
+                # before tpad converts durations and timestamps cloned frames.
+                effects.append(f"fps={c.fps}")
+        postprocess = "".join(effect + "," for effect in effects)
+        slave = f"[{idx}:v]{png_rgba}{postprocess}{shrink}{pad}{timing}[L{k}T]"
         ov = (f"[{cur}][L{k}T]overlay=x='if(between(t,{lo:.6f},{t1:.6f}),"
               f"{int(L['x'] * f)},NAN)':y={int(L['y'] * f)}:format=auto:"
               f"eval=frame:eof_action=repeat[L{k}]")
@@ -736,11 +774,7 @@ def prepare_layers(c: Ctx):
                            "prores" if need_alpha else seg_kind)
             if need_alpha:
                 vf.append("format=yuva420p")
-                if cl.get("fade_in_frames"):
-                    vf.append(f"fade=t=in:st=0:d={cl['fade_in_frames']*c.spf:.6f}:alpha=1")
-                if cl.get("fade_out_frames"):
-                    vf.append(f"fade=t=out:st={(cl['dur']-cl['fade_out_frames'])*c.spf:.6f}:d={cl['fade_out_frames']*c.spf:.6f}:alpha=1")
-                if cl.get("opacity", 1) < 1: vf.append(f"colorchannelmixer=aa={cl['opacity']}")
+                vf += _clip_alpha_filters(cl, c.spf)
                 seg = c.cache / "seg" / f"{skey}.mov"
                 vcodec_seg = ["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"]
             else:

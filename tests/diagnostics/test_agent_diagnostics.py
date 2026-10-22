@@ -97,6 +97,21 @@ class Diagnostics(unittest.TestCase):
         self.assertEqual(unknown['json_path'], '$.audio_tracks[1].events[0]["a.b\\"c"]')
         self.assertEqual(unknown['severity'], 'warning')
 
+    def test_gfx_fade_total_uses_common_semantic_gate(self):
+        (self.root / 'page.html').write_text('<html></html>')
+        for total in (10, 11):
+            t = timeline()
+            t['video_tracks'] = [{'name': 'gfx', 'kind': 'gfx', 'clips': [
+                dict(src='page.html', dst_in=0, dur=10, fade_in_frames=4, fade_out_frames=total - 4)]}]
+            records, code = self.validate(t)
+            found = [r for r in records if r['rule_id'] == 'validate.clip_fade']
+            self.assertEqual(code, int(total > 10))
+            self.assertEqual(len(found), int(total > 10))
+            if found:
+                self.assertEqual(found[0]['json_path'], '$.video_tracks[0].clips[0]')
+                self.assertEqual(found[0]['measured'], {'value': 11, 'unit': 'frames'})
+                self.assertEqual(found[0]['threshold'], {'max': 10, 'unit': 'frames'})
+
     def test_unknown_is_warning_runtime_small_canvas_is_valid(self):
         t = timeline(); t['unrecognized'] = True
         records, code = self.validate(t)

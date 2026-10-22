@@ -310,12 +310,12 @@ function validate(tl){
           err(`轨 ${t.name}[${i}]: cache_dependencies 须为非空文件路径数组`);
       }
       if(c.format!==undefined&&(t.kind!=="gfx"||!["html","svg-sequence"].includes(c.format))) err(`轨 ${t.name}[${i}]: 不支持的 gfx format`);
+      if((c.fade_in_frames||0)+(c.fade_out_frames||0)>c.dur) err(`轨 ${t.name}[${i}] fade 总长超过片段`);
       if(t.kind==="gfx") return;
       if(!srcIds.has(c.src)) err(`轨 ${t.name}[${i}] 引用不存在的源 ${c.src}`);
       if(c.src_in!==undefined&&!allF(c.src_in)) err(`轨 ${t.name}[${i}]: src_in 非整数`);
       if(c.src_out!==undefined&&c.src_in!==undefined&&c.src_out-c.src_in!==c.dur)
         err(`轨 ${t.name}[${i}] ${c.src}: src_out-src_in(${c.src_out-c.src_in}) ≠ dur(${c.dur})`);
-      if((c.fade_in_frames||0)+(c.fade_out_frames||0)>c.dur) err(`轨 ${t.name}[${i}] fade 总长超过片段`);
     });
   });
   (tl.subtitles||[]).forEach((s,i)=>{ if(s.in>=s.out) err(`字幕[${i}] in≥out`); if(dur&&s.out>dur) err(`字幕[${i}] 超出总时长`); });

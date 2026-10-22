@@ -236,7 +236,7 @@ env python3 scripts/audio/normalize_project_audio.py --help
   ]
 }
 ```
-**v2 核心语义**：所有视频轨道等价，无 base 特权、无全覆盖要求（空洞帧＝黑场，是规划问题不是校验错误）；`kind`（aroll/broll/screen/pip/gfx）纯语义标注，渲染机制完全不区分，只服务于编排规范、预览着色与画面构成统计；clip 的 `scale/x/y/opacity` 全部可选（缺省＝全屏不透明，全屏走 transform 归一）；fade 统一为 **alpha 淡入淡出**（无下层时自然露出黑场＝视觉淡黑）。内核与预览器均只接受 `version: 2`，不接受或自动转换旧 v1（role+overlays）及缺失版本的时间线。
+**v2 核心语义**：所有视频轨道等价，无 base 特权、无全覆盖要求（空洞帧＝黑场，是规划问题不是校验错误）；`kind`（aroll/broll/screen/pip/gfx）纯语义标注，渲染机制完全不区分，只服务于编排规范、预览着色与画面构成统计；clip 的 `scale/x/y/opacity` 全部可选（缺省＝全屏不透明，全屏走 transform 归一）；fade 统一为 **alpha 淡入淡出**（无下层时自然露出黑场＝视觉淡黑）。gfx 的非默认 scale 按源 PNG 尺寸向下取偶数；最终尺寸（含 draft 缩放）任一边不足 2 像素时报错。内核与预览器均只接受 `version: 2`，不接受或自动转换旧 v1（role+overlays）及缺失版本的时间线。
 **"这个素材放哪条轨"速查**：
 | 素材 | 轨道 | 说明 |
 |---|---|---|

@@ -79,7 +79,7 @@ class TestPngSequence(unittest.TestCase):
     def test_consumer_fails_before_ffmpeg(self):
         c = SimpleNamespace(fps=30, dry=False)
         plan = composite.RenderPlan(c=c, draft=False, f=1, W=16, H=16)
-        layer = {'gfx': True, 'cl': {'dst_in': 0}, 'source': self.source}
+        layer = {'gfx': True, 'cl': {'dst_in': 0, 'opacity': 0, 'scale': 0.5}, 'source': self.source}
         with self.assertRaisesRegex(ValueError, 'not ready'):
             plan._layer_input_args(layer, 0)
 
@@ -96,6 +96,44 @@ class TestPngSequence(unittest.TestCase):
         video_slave, _, _ = plan._layer_chain(video, 0, 'cv', 0, 4, 1)
         self.assertNotIn('format=rgba', video_slave)
         self.assertNotIn('scale=iw:ih:flags=neighbor+bitexact', video_slave)
+
+    def test_effects_use_clip_clock_before_padding_and_defaults_are_noop(self):
+        plan = composite.RenderPlan(c=SimpleNamespace(fps=30, spf=1 / 30),
+                                    draft=True, f=0.5, W=16, H=16)
+        layer = {'gfx': True, 'cl': {'dst_in': 5, 'dur': 135}, 'x': 4, 'y': 2, 'source': self.source}
+        original = plan._layer_chain(layer, 0, 'cv', 50, 50, 1)
+        layer['cl'].update(scale=1, opacity=1, fade_in_frames=0, fade_out_frames=0)
+        self.assertEqual(plan._layer_chain(layer, 0, 'cv', 50, 50, 1), original)
+        layer['cl'].update(scale=0.5, opacity=0.5, fade_in_frames=60, fade_out_frames=50)
+        slave, _, _ = plan._layer_chain(layer, 0, 'cv', 50, 50, 1)
+        effects = ('scale=8:8:flags=lanczos,'
+                   'setpts=PTS+45,fade=t=in:st=0:d=2.000000:alpha=1,'
+                   'fade=t=out:st=2.833333:d=1.666667:alpha=1,'
+                   'colorchannelmixer=aa=0.5,setpts=PTS-45,fps=30,')
+        self.assertIn('format=rgba,' + effects + 'scale=trunc(iw*0.5/2)*2', slave)
+        self.assertLess(slave.index('setpts=PTS-45'), slave.index('tpad='))
+        self.assertLess(slave.index('fps=30'), slave.index('tpad='))
+        self.assertIn('settb=1/60,setpts=PTS+-3', slave)
+        # Ordinary media already received the very same alpha filters in its
+        # preprocessing pass; composition must not apply the effects twice.
+        layer['gfx'] = False
+        self.assertNotIn('fade=', plan._layer_chain(layer, 0, 'cv', 50, 50, 1)[0])
+        self.assertEqual(composite._clip_alpha_filters(layer['cl'], 1 / 30), [
+            'fade=t=in:st=0:d=2.000000:alpha=1',
+            'fade=t=out:st=2.833333:d=1.666667:alpha=1', 'colorchannelmixer=aa=0.5'])
+
+    def test_scale_cannot_turn_zero_dimensions_into_original_size(self):
+        layer = {'gfx': True, 'cl': dict(dst_in=0, dur=4), 'source': self.source, 'x': 0, 'y': 0}
+        for draft, factor, minimum in ((False, 1, 0.125), (True, 0.5, 0.25)):
+            plan = composite.RenderPlan(c=SimpleNamespace(fps=30, spf=1 / 30),
+                                        draft=draft, f=factor, W=16, H=16)
+            layer['cl']['scale'] = minimum
+            self.assertIn(f'scale={int(16 * minimum)}:{int(16 * minimum)}:flags=lanczos',
+                          plan._layer_chain(layer, 0, 'cv', 0, 4, 1)[0])
+            for scale in (0.01, minimum / 2):
+                layer['cl']['scale'] = scale
+                with self.assertRaisesRegex(ValueError, 'dimensions below 2 pixels'):
+                    plan._layer_chain(layer, 0, 'cv', 0, 4, 1)
 
 
 class TestMigrationIdentity(unittest.TestCase):
@@ -117,6 +155,7 @@ class TestMigrationIdentity(unittest.TestCase):
             getattr(composite.RenderPlan, name))) for name in composite._SYNTH_FUNCS)
         source += composite._normalized_ast_src(inspect.getsource(frame_source))
         source += composite._normalized_ast_src(inspect.getsource(composite.gfx_cli))
+        source += composite._normalized_ast_src(inspect.getsource(composite._clip_alpha_filters))
         current = composite._graph_code_digest()
         self.assertEqual(current, hashlib.sha1(source.encode('utf-8')).hexdigest()[:12])
         self.assertNotEqual(current, expected)
@@ -125,6 +164,7 @@ class TestMigrationIdentity(unittest.TestCase):
             (frame_source, '"-framerate"', '"-r"'),
             (composite.RenderPlan._layer_input_args, 'max(0, -rel_in)', 'max(1, -rel_in)'),
             (composite.gfx_cli, '_MAX_ZLIB_OUT = 1 << 20', '_MAX_ZLIB_OUT = 1 << 19'),
+            (composite._clip_alpha_filters, ':alpha=1', ':alpha=0'),
         ):
             with self.subTest(target=target):
                 def changed(obj):
@@ -145,6 +185,7 @@ class TestMigrationIdentity(unittest.TestCase):
                          for name in composite._SYNTH_FUNCS)
         source += unknown(inspect.getsource(frame_source))
         source += unknown(inspect.getsource(composite.gfx_cli))
+        source += unknown(inspect.getsource(composite._clip_alpha_filters))
         with mock.patch.object(composite, '_normalized_ast_src',
                                side_effect=unknown):
             composite._graph_code_digest.cache_clear()
@@ -265,9 +306,158 @@ class TestPngDynamicFormatIntegration(unittest.TestCase):
             self.assertEqual([digest for _, digest in oracle_frames], expected_hashes)
             self.assertEqual(mixed_frames, oracle_frames)
 
+    def _effect_render(self, source, clip, start, stop, *, draft=False):
+        factor = 0.5 if draft else 1
+        width, height = int(source.width * factor), int(source.height * factor)
+        plan = composite.RenderPlan(c=SimpleNamespace(fps=30, spf=1 / 30, dry=False),
+                                    draft=draft, f=factor, W=width, H=height)
+        layer = {'gfx': True, 'cl': clip, 'source': source,
+                 'x': clip.get('x', 0), 'y': clip.get('y', 0)}
+        args = plan._layer_input_args(layer, start)
+        slave, overlay, label = plan._layer_chain(layer, 0, 'base', start, stop - start, 1)
+        cmd = [os.environ['VTX_TEST_FFMPEG'], '-v', 'error', '-filter_complex_threads', '1',
+               '-f', 'lavfi', '-i', f'color=blue:s={width}x{height}:r=30,format=rgba',
+               *args, '-filter_complex', ';'.join(['[0:v]null[base]', slave, overlay]),
+               '-map', f'[{label}]', '-frames:v', str(stop - start), '-threads', '1',
+               '-fps_mode', 'passthrough', '-pix_fmt', 'rgba', '-f', 'rawvideo', '-']
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        size = width * height * 4
+        self.assertEqual(len(result.stdout), (stop - start) * size)
+        return [result.stdout[i:i + size] for i in range(0, len(result.stdout), size)]
+
+    @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'),
+                         'set VTX_TEST_FFMPEG to pinned ffmpeg executable')
+    def test_effect_pixels_and_clip_clock_survive_seek_scale_and_draft(self):
+        def assert_frames_equal(actual, expected):
+            self.assertEqual(len(actual), len(expected))
+            # Compare all bytes; a failed assertion need not diff entire images.
+            self.assertEqual([n for n, (left, right) in enumerate(zip(actual, expected))
+                              if left != right], [])
+        with tempfile.TemporaryDirectory(prefix='png_effects_') as td:
+            directory = Path(td)
+            pixels = []
+            for n in range(135):
+                pixel = (60 + n, 80, 160)
+                if n % 2:
+                    pixel += (0 if n == 1 else 1 if n == 3 else 128,)
+                pixels.append(pixel)
+                self._write_typed_png(directory / f'f{n:04d}.png', 32, 24, pixel)
+            source = PngSequence(directory, 'effects', 135, 30, 32, 24)
+            before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.iterdir()}
+            clip = dict(dst_in=5, dur=135, fade_in_frames=60, fade_out_frames=50, opacity=0.5)
+            whole = self._effect_render(source, clip, 0, 150)
+            split = sum((self._effect_render(source, clip, a, b)
+                         for a, b in ((0, 50), (50, 100), (100, 150))), [])
+            assert_frames_equal(split, whole)  # Every frame, not just cut neighbors.
+            for frame, raw in enumerate(whole):
+                expected = (0, 0, 255)
+                if 5 <= frame < 140:
+                    n = frame - 5
+                    pixel = pixels[n]
+                    alpha = (pixel[3] if len(pixel) == 4 else 255) / 255
+                    alpha *= 0.5 * min(1, n / 60, (135 - n) / 50)
+                    expected = tuple(round(pixel[i] * alpha + (255 if i == 2 else 0) * (1 - alpha))
+                                     for i in range(3))
+                for actual, value in zip(raw[:3], expected):
+                    self.assertLessEqual(abs(actual - value), 2, (frame, raw[:4], expected))
+                self.assertEqual(raw[3], 255)
+            # Subtitle one-frame/range windows seek into the same original clock.
+            for frame in (5, 49, 50, 51, 99, 100, 101, 139):
+                assert_frames_equal(self._effect_render(source, clip, frame, frame + 1), whole[frame:frame + 1])
+            plain = dict(dst_in=5, dur=135)
+            default = dict(plain, scale=1, opacity=1, fade_in_frames=0, fade_out_frames=0)
+            assert_frames_equal(self._effect_render(source, plain, 0, 10),
+                                self._effect_render(source, default, 0, 10))
+            transparent = self._effect_render(source, dict(plain, opacity=0), 0, 10)
+            self.assertTrue(all(frame == bytes((0, 0, 255, 255)) * (32 * 24) for frame in transparent))
+            for draft, scale, scaled_w, scaled_h in (
+                    (False, 0.5, 16, 12), (True, 0.5, 8, 6),
+                    (False, 0.125, 4, 2), (True, 0.25, 4, 2)):
+                scaled = self._effect_render(source, dict(plain, scale=scale, x=4, y=2), 5, 6, draft=draft)[0]
+                factor = 0.5 if draft else 1
+                width, height = int(32 * factor), int(24 * factor)
+                for y in range(height):
+                    for x in range(width):
+                        inside = (4 * factor <= x < 4 * factor + scaled_w and
+                                  2 * factor <= y < 2 * factor + scaled_h)
+                        expected = pixels[0] if inside else (0, 0, 255)
+                        at = (y * width + x) * 4
+                        self.assertEqual(tuple(scaled[at:at + 3]), expected, (draft, scale, x, y))
+            for draft, scale in ((False, 0.05), (True, 0.125)):
+                with self.assertRaisesRegex(ValueError, 'below 2 pixels'):
+                    self._effect_render(source, dict(plain, scale=scale), 5, 6, draft=draft)
+            self.assertEqual(before, {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                      for p in directory.iterdir()})
+
+
+        # Seeking to the last PNG must survive fps EOF handling, not merely
+        # produce an all-transparent frame that could hide a dropped image.
+        with tempfile.TemporaryDirectory(prefix='png_effects_eof_') as td:
+            short = PngSequence(Path(td), 'fade-eof', 7, 30, 32, 24)
+            for n in range(7):
+                self._write_typed_png(short.frame_path(n), 32, 24, (240, 80, 160, 128))
+            short_clip = dict(dst_in=2, dur=7, fade_in_frames=3, fade_out_frames=3, opacity=0.5)
+            whole = self._effect_render(short, short_clip, 0, 12)
+            for stop in (9, 10):
+                with self.subTest(last_png_only=True, stop=stop):
+                    assert_frames_equal(self._effect_render(short, short_clip, 8, stop), whole[8:stop])
+            for actual, expected in zip(whole[8][:3], (20, 7, 247)):
+                self.assertLessEqual(abs(actual - expected), 2)
+            self.assertEqual(whole[9], bytes((0, 0, 255, 255)) * (32 * 24))
+
 
 class TestGeneratedPngConsumerIntegration(unittest.TestCase):
     """CPU consumer coverage; generated PNGs deliberately need no browser."""
+    @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
+    def test_effects_through_single_graph_and_segment_passes(self):
+        from vtx.infra import Ctx
+        with tempfile.TemporaryDirectory(prefix='png_effect_passes_') as td:
+            root = Path(td)
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps(dict(version=2,
+                project=dict(fps=30, width=32, height=24, duration_frames=150),
+                sources=[], video_tracks=[], audio_tracks=[], subtitles=[])))
+            c = Ctx(timeline)
+            layers = []
+            for name, count, pixel, clip in (
+                ('blue', 150, (0, 0, 255), dict(dst_in=0, dur=150)),
+                ('red', 135, (240, 0, 0, 128), dict(dst_in=5, dur=135,
+                  fade_in_frames=60, fade_out_frames=50, opacity=0.5))):
+                directory = root / name; directory.mkdir()
+                source = PngSequence(directory, name, count, 30, 32, 24)
+                for n in range(count):
+                    TestPngDynamicFormatIntegration._write_typed_png(source.frame_path(n), 32, 24, pixel)
+                layers.append(dict(gfx=True, cl=clip, source=source, x=0, y=0, w2=None, h2=None))
+            plan = composite.RenderPlan(c=c, draft=False, f=1, W=32, H=24)
+            ass = root / 'empty.ass'; ass.write_text('\n'.join(plan.ass_head()))
+            def render(a, b):
+                target = root / f'output-{a}-{b}.mkv'
+                # Lossless output isolates the production filter/pass paths
+                # from delivery codec quantization. Writer/certification remain real.
+                with mock.patch.object(composite, 'pick_vcodec', return_value=(
+                        ['-c:v', 'ffv1', '-pix_fmt', 'bgra', '-threads', '1'], 'ffv1')):
+                    plan.composite(layers, target, True, a=a, b=b, sub_file=ass)
+                result = subprocess.run([os.environ['VTX_TEST_FFMPEG'], '-v', 'error',
+                    '-i', str(target), '-threads', '1', '-pix_fmt', 'rgba', '-f', 'rawvideo', '-'],
+                    capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(result.stdout), ((150 if b is None else b) - a) * 32 * 24 * 4)
+                return result.stdout
+            whole = render(0, None)
+            split = b''.join(render(a, b) for a, b in ((0, 50), (50, 100), (100, 150)))
+            self.assertEqual(len(split), len(whole))
+            size = 32 * 24 * 4
+            self.assertEqual([frame for frame in range(150)
+                              if split[frame * size:(frame + 1) * size] !=
+                              whole[frame * size:(frame + 1) * size]], [])
+            for frame in range(150):
+                alpha = (128 / 255 * 0.5 * min(1, (frame - 5) / 60, (140 - frame) / 50)
+                         if 5 <= frame < 140 else 0)
+                pixel = whole[frame * 32 * 24 * 4:frame * 32 * 24 * 4 + 4]
+                self.assertLessEqual(abs(pixel[0] - round(240 * alpha)), 2, (frame, pixel))
+                self.assertLessEqual(abs(pixel[2] - round(255 * (1 - alpha))), 2, (frame, pixel))
+
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
     def test_full_warm_draft_range_and_missing_frame_failure(self):
         import json
