@@ -28,7 +28,7 @@ manifest 顶层 schema（"vtx.env_manifest/1"，字段名=issue #102 工单口�
                         vtx/media/encoders._vram_query_used_mib 的安全调用方式）
   fonts_fingerprint    {status, required:{<家族>:{status,files:{路径:sha256}}},
                         "sans-serif":{…}}——fc-list : file family 枚举项目必需字体
-                        （字幕烧录用 Noto Sans CJK SC=vtx/composite.py ass_head、
+                        （字幕烧录用 Noto Sans CJK SC=vtx/pipeline/composite.py ass_head、
                         gfx 模板引用的 Inter / JetBrains Mono），外加 fc-match 解析
                         系统无衬线回退；哈希=字体文件真实内容 sha256（非路径）
   runtime_backend_truth 生效后端唯一权威（见下），视口/色彩空间同居于此（一事一家）
@@ -92,7 +92,7 @@ SOURCE_REQUIRED_EVIDENCE = {
     "electron": ("gpu_feature_status", "gpu_info_complete"),  # GPUFeatureStatus + GPUInfo
 }
 
-# 项目必需字体（issue #102）：Noto Sans CJK SC=字幕烧录（vtx/composite.py
+# 项目必需字体（issue #102）：Noto Sans CJK SC=字幕烧录（vtx/pipeline/composite.py
 # ass_head 的 libass 字体）、Inter/JetBrains Mono=gfx HTML 模板引用；
 # sans-serif=系统无衬线回退（fc-match 解析），四者同入指纹。
 REQUIRED_FONT_FAMILIES = ("Noto Sans CJK SC", "Inter", "JetBrains Mono")

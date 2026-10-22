@@ -493,7 +493,7 @@ class EnvironmentContracts(unittest.TestCase):
 
     def test_environment_key_and_receipt_axes_share_dependency_resolver(self):
         from tests.gfx._environment import bind_environment
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         bind_environment(self)
         (self.root / 'p.html').write_text('<html>text</html>')
         tp = self.root / 'timeline.json'

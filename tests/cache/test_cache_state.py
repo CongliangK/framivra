@@ -10,7 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # repo 根（v2 §1.4 包导入）
 from vtx.cache import hygiene
 from vtx.cache.cache_state import media_stat_digest, receipt_fingerprint
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from tests._support import tree_sha256
 
 
@@ -146,7 +146,7 @@ class GcExemptions(unittest.TestCase):
                    for items in plan.values() for entry, _, _ in items)
 
     def test_completion_markers_follow_each_cleanup_mode_owner(self):
-        from vtx.cli import _cleanup_plan
+        from vtx.cli.commands import _cleanup_plan
         from vtx.cache.recovery import completion_marker
         modes = [('normal', 'gc', {}, True), ('out-only', 'gc', {}, False),
                  ('deep', 'gc', {'deep': True}, True),

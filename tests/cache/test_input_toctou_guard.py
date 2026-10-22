@@ -48,10 +48,10 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
 from vtx.cache import hygiene
-from vtx import stages
+from vtx.pipeline import stages
 from vtx.cache import recovery         # noqa: E402
 from vtx.cache.cache_state import load_receipt  # noqa: E402
-from vtx.infra import Ctx               # noqa: E402
+from vtx.pipeline.infra import Ctx               # noqa: E402
 
 
 def _tl(root: Path, **over) -> Path:
@@ -301,7 +301,7 @@ class MuxVersionsIdentity(_StageNotOkMixin, unittest.TestCase):
 
         err = io.StringIO()
         code = None
-        with mock.patch("vtx.infra.subprocess.run", fake_run), \
+        with mock.patch("vtx.pipeline.infra.subprocess.run", fake_run), \
                 mock.patch.object(recovery, '_inspect', side_effect=inspect), \
                 contextlib.redirect_stderr(err):
             try:

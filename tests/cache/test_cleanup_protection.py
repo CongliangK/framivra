@@ -79,7 +79,7 @@ class CleanupProtectionFixture(unittest.TestCase):
         self.wav_size = (self.root / "assets/voice.wav").stat().st_size
         # 活键缓存（当前 timeline 键集内，正常 gc 须保活）
         from vtx.cache import hygiene
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         c = Ctx(self.timeline)
         live_gfx = self.root / "cache/gfx" / hygiene.gfx_key(
             c, c.tl["video_tracks"][0]["clips"][0])

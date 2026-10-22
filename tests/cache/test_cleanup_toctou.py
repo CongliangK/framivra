@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest import mock
 
 from tests._support import temporary_root
-from vtx import cli
+from vtx.cli import commands as cli
 from vtx.runtime import fstxn
-from vtx.infra import Ctx, ProjectPathError
+from vtx.pipeline.infra import Ctx, ProjectPathError
 
 
 class CleanupToctou(unittest.TestCase):

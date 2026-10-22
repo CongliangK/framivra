@@ -106,7 +106,7 @@ def main():
     from vtx.render.gfx_cli import png_invalid_reason
     from vtx.cache.hygiene import gfx_dir
     from vtx.inspection.impact import capture, compare
-    from vtx.infra import Ctx
+    from vtx.pipeline.infra import Ctx
     env = dict(os.environ, VTX_SEG_NVENC='0', VTX_NO_NVENC='1',
                VTX_VIDEO_SEGMENTS='8', VTX_GFX='cdp',
                VTX_GFX_PAGES='2', VTX_GFX_TABS='1', VTX_GFX_STATIC='1',

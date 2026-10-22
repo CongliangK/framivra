@@ -35,9 +35,9 @@ class StageFixture:
             probe=lambda path:{'fps':30,'has_video':True,'has_audio':True,'nb_frames':90})
 
     def run_stage(self, c, stage):
-        from vtx import stages
+        from vtx.pipeline import stages
         out=io.StringIO(); error=None
-        with contextlib.redirect_stdout(out), patch('vtx.stages._plugin_hooks.run_probe_source',return_value=None):
+        with contextlib.redirect_stdout(out), patch('vtx.pipeline.stages._plugin_hooks.run_probe_source',return_value=None):
             try:
                 getattr(stages, stage)(c)
             except BaseException as caught:

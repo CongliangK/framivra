@@ -379,12 +379,12 @@ sys.addaudithook(guard)
         ''')
 
     def test_shared_function_identity_signature_and_import_orders(self):
-        for first in ("import vtx", "import vtx.cli"):
+        for first in ("import vtx", "import vtx.cli.commands"):
             with self.subTest(first=first):
                 self.run_child(first + '''
-import inspect, vtx, vtx.cli
-assert vtx.main is vtx.cli.main
-assert vtx._stage_receipt_name is vtx.cli._stage_receipt_name
+import inspect, vtx, vtx.cli.commands
+assert vtx.main is vtx.cli.commands.main
+assert vtx._stage_receipt_name is vtx.cli.commands._stage_receipt_name
 assert str(inspect.signature(vtx.main)) == "()"
 assert str(inspect.signature(vtx._stage_receipt_name)) == "(name: str, draft: bool) -> str"
 assert vtx.main.__module__ == vtx._stage_receipt_name.__module__ == "vtx"
@@ -398,13 +398,13 @@ for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "q
         self.run_child('''
             import contextlib, io
             from unittest import mock
-            import vtx, vtx.cli
+            import vtx, vtx.cli.commands
             from vtx.runtime import events
-            from vtx.infra import ProjectPathError
+            from vtx.pipeline.infra import ProjectPathError
             for result in (None, 0, 7):
                 execution = mock.Mock()
                 with mock.patch.object(events, "ExecutionContext", return_value=execution), \\
-                     mock.patch.object(vtx.cli, "_main", return_value=result) as invoke:
+                     mock.patch.object(vtx.cli.commands, "_main", return_value=result) as invoke:
                     assert vtx.main() == result
                 invoke.assert_called_once_with(execution)
                 execution.finish.assert_called_once_with(result or 0, None)
@@ -414,7 +414,7 @@ for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "q
                                 (SystemExit("message"), 1), (KeyboardInterrupt(), 130)):
                 execution = mock.Mock()
                 with mock.patch.object(events, "ExecutionContext", return_value=execution), \\
-                     mock.patch.object(vtx.cli, "_main", side_effect=error), \\
+                     mock.patch.object(vtx.cli.commands, "_main", side_effect=error), \\
                      contextlib.redirect_stderr(io.StringIO()) as stderr:
                     if isinstance(error, ProjectPathError):
                         assert vtx.main() == 1
@@ -431,7 +431,7 @@ for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "q
             failure = RuntimeError("finish failed")
             execution.finish.side_effect = failure
             with mock.patch.object(events, "ExecutionContext", return_value=execution), \\
-                 mock.patch.object(vtx.cli, "_main", return_value=None):
+                 mock.patch.object(vtx.cli.commands, "_main", return_value=None):
                 try:
                     vtx.main()
                 except RuntimeError as caught:
@@ -444,7 +444,7 @@ for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "q
     def test_windows_stream_reconfiguration_and_failure_tolerance(self):
         self.run_child('''
             from unittest import mock
-            import vtx, vtx.cli
+            import vtx, vtx.cli.commands
             from vtx.runtime import events
             for failure in (None, AttributeError(), OSError(), ValueError()):
                 streams = [mock.Mock(), mock.Mock()]
@@ -455,7 +455,7 @@ for stage in ("validate", "audit", "prepare", "gfx", "video", "audio", "mux", "q
                      mock.patch.object(sys, "stdout", streams[0]), \\
                      mock.patch.object(sys, "stderr", streams[1]), \\
                      mock.patch.object(events, "ExecutionContext", return_value=execution), \\
-                     mock.patch.object(vtx.cli, "_main", return_value=None):
+                     mock.patch.object(vtx.cli.commands, "_main", return_value=None):
                     assert vtx.main() is None
                 for stream in streams:
                     stream.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")

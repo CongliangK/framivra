@@ -16,10 +16,10 @@ from pathlib import Path
 from tests._support import cleanup_timeline, tree_sha256, temporary_root
 from unittest import mock
 
-from vtx import cli
+from vtx.cli import commands as cli
 from vtx.cache import hygiene
 from tests.gfx._environment import bind_environment, environment_cli
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 
 REPO = Path(__file__).resolve().parents[2]
 VTX = REPO / "vtx" / "vtx.py"

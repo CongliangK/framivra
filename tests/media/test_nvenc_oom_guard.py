@@ -24,7 +24,7 @@
       指数；TestQuerySeam nvidia-smi 超时阈值 2.0s+解析边界实测（patch encoders 侧
       subprocess.run，不起真 nvidia-smi）；TestBackoffNoSlot 退避期不持槽（占槽纪律）。
 
-不真编码：subprocess.run 以假执行器替身（patch 点 vtx.infra.subprocess.run——替身体
+不真编码：subprocess.run 以假执行器替身（patch 点 vtx.pipeline.infra.subprocess.run——替身体
 即「槽内工作体」，峰值采样点）；档位/退避时钟全注入桩，不起 nvidia-smi、零真等待。
 setUp 统一重置预算信号量/守卫 memo/护栏计数并注入退避记录器，teardown 还原，
 不对既有测试件泄漏（本件按字母序先于 test_seg_nvenc 执行，状态零外溢）。
@@ -46,7 +46,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from vtx.media import encoders
-from vtx import infra
+from vtx.pipeline import infra
 from vtx.media.encoders import (NVENC_RETRY_ATTEMPTS, NVENC_RETRY_N,
                           nvenc_budget_value, nvenc_effective_budget,
                           nvenc_guard_stats, nvenc_retry_backoff,

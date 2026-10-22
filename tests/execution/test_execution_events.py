@@ -17,12 +17,12 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from vtx import cli
+from vtx.cli import commands as cli
 from vtx.runtime import events, execution_links
 from vtx.inspection import qc
 from vtx.media import encoders
 from tests.execution import test_execution_links
-from vtx.infra import Ctx, run_ffmpeg_task, run_parallel, run_wave
+from vtx.pipeline.infra import Ctx, run_ffmpeg_task, run_parallel, run_wave
 
 
 class Buffer(io.StringIO):
@@ -139,7 +139,7 @@ class EventsTests(unittest.TestCase):
             ref = json.loads((c.out / 'receipt.json').read_text())['stages']['validate']['observed_by']
             before = execution.seq
             with execution.task('prepare', kind='stage').scope():
-                with patch('vtx.infra.fstxn.locked_update', side_effect=OSError('SECRET')):
+                with patch('vtx.pipeline.infra.fstxn.locked_update', side_effect=OSError('SECRET')):
                     with self.assertRaises(OSError):
                         c.receipt('prepare', True)
             rows = self.rows()
@@ -178,7 +178,7 @@ class EventsTests(unittest.TestCase):
     def test_worker_actual_attempts_and_existing_failure_selection(self):
         execution = self.execution()
         c = SimpleNamespace(execution=execution, dry=False)
-        with patch('vtx.infra.subprocess.run', return_value=SimpleNamespace(returncode=1, stderr='secret')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with patch('vtx.pipeline.infra.subprocess.run', return_value=SimpleNamespace(returncode=1, stderr='secret')), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 run_parallel(c, [('same', ['fake']), ('same', ['fake'])], 'fixture')
         rows = self.rows(1)
@@ -458,7 +458,7 @@ class OwnedExecutorTests(unittest.TestCase):
             execution.finish()
             return events.read_events(stream.getvalue()), parent.task_id
         with tempfile.TemporaryDirectory() as temp, \
-             patch('vtx.infra.subprocess.run', side_effect=fake_run), \
+             patch('vtx.pipeline.infra.subprocess.run', side_effect=fake_run), \
              patch('vtx.inspection.qc.loudness_cache.lookup', return_value=None), \
              patch('vtx.inspection.qc.loudness_cache.measure_and_store', side_effect=measure), \
              contextlib.redirect_stdout(io.StringIO()), ThreadPoolExecutor(2) as pool:
@@ -484,7 +484,7 @@ class OwnedExecutorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             stream = Buffer(); execution = events.ExecutionContext(stream)
             c = Ctx(fixture(Path(temp)), execution=execution)
-            with patch('vtx.infra.subprocess.run', side_effect=fake_run):
+            with patch('vtx.pipeline.infra.subprocess.run', side_effect=fake_run):
                 with execution.task('video', kind='stage').scope() as parent:
                     self.assertEqual(encoders.nvenc_concurrency(c, 3), 3)
             execution.finish()

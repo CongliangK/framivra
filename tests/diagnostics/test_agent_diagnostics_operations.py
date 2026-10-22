@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from tests.diagnostics._support import StageFixture
 from vtx.runtime.diagnostics import operation, required_field
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 
 
 class NativeOperations(unittest.TestCase):

@@ -328,7 +328,7 @@ class AttributionEntryPoint(unittest.TestCase):
 
     def test_identity_matches_unwrapped_producer_with_and_without_diagnostics(self):
         from vtx.cache.cache_state import receipt_fingerprint as producer
-        from vtx.infra import Ctx, receipt_fingerprint as annotated
+        from vtx.pipeline.infra import Ctx, receipt_fingerprint as annotated
 
         value = timeline()
         value['sources'] = [{'id': 'z', 'path': 'z.asset'},

@@ -15,7 +15,7 @@ from tests._support import temporary_root
 from vtx.runtime import fstxn
 from vtx.cache import hygiene
 from vtx.media import loudness_cache, subs
-from vtx.infra import Ctx, ProjectPathError
+from vtx.pipeline.infra import Ctx, ProjectPathError
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -262,7 +262,7 @@ class WriteSafetyResidual(unittest.TestCase):
         self.assertEqual(list(self.outside.iterdir()), [self.victim])
 
     def test_fixed_text_frame_and_directories_reject_external_links(self):
-        from vtx import composite
+        from vtx.pipeline import composite
         from vtx.render import gfx_render
         from vtx.inspection import qc
         cache = self.root / 'cache'

@@ -34,11 +34,11 @@ from pathlib import Path
 from unittest import mock
 from tests.gfx._png import png
 
-from vtx import cli
+from vtx.cli import commands as cli
 from vtx.render import gfx_cli, gfx_render
 from vtx.cache import hygiene
 from vtx.runtime import proc_supervisor
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.runtime.proc_supervisor import (SupervisedProcessGroup, WORKER_LEDGER,
                                  boot_id, group_live_members, proc_starttime,
                                  reap_orphan_workers)
@@ -124,7 +124,7 @@ while True:
 HOST_PROGRAM = r'''
 import json, os, sys, time
 from pathlib import Path
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.runtime.proc_supervisor import SupervisedProcessGroup
 
 root, ready_path, mode, sim = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -374,7 +374,7 @@ scratch, out, timeline_src = Path(sys.argv[3]), Path(sys.argv[4]), Path(sys.argv
 mid_pid = int(sys.argv[6]) if len(sys.argv) > 6 else None
 sys.path.insert(0, str(ROOT))
 from vtx.cache import hygiene
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.runtime.proc_supervisor import (WORKER_LEDGER, LineageKillDenied, boot_id,
                                  group_live_members, kill_group,
                                  proc_starttime, reap_orphan_workers,
@@ -897,7 +897,7 @@ class FailedKillRetention(unittest.TestCase):
 
     def test_cli_reports_incomplete_reaping_as_failure(self):
         stats = dict(ledgers=1, killed=0, live_host=0, stale=0, removed=0, kill_failed=1)
-        with mock.patch('vtx.infra.Ctx', return_value=self.c), \
+        with mock.patch('vtx.pipeline.infra.Ctx', return_value=self.c), \
                 mock.patch.object(proc_supervisor, 'reap_orphan_workers', return_value=stats):
             self.assertEqual(proc_supervisor.main(['reap', str(self.root / 'timeline.json')]), 1)
 

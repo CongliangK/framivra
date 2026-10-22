@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO))
 
 from tests._support import full_hd_timeline as _tl
 from vtx.media import subs as subs_mod
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.media.subtitles_src import parse_srt, parse_subs_json, resolve_subtitles_src
 
 

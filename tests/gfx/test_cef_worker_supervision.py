@@ -34,7 +34,7 @@ from pathlib import Path
 
 from vtx.render.gfx_cli import png_invalid_reason
 from vtx.cache.hygiene import TMP
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.runtime.proc_supervisor import (WORKER_LEDGER, SupervisedProcessGroup,
                                  group_live_members, reap_orphan_workers)
 
@@ -73,7 +73,7 @@ def _pgrep_worker_count() -> int:
 _HOST_PROGRAM = r'''
 import json, os, sys, time
 from pathlib import Path
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.runtime.proc_supervisor import SupervisedProcessGroup
 
 root, ready_path, worker, gfx_url = (Path(sys.argv[1]), Path(sys.argv[2]),

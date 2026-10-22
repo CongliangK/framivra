@@ -68,9 +68,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
 from vtx.render.frame_source import PngSequence
-from vtx.infra import Ctx
-from vtx import composite
-from vtx.composite import RenderPlan, _graph_code_digest
+from vtx.pipeline.infra import Ctx
+from vtx.pipeline import composite
+from vtx.pipeline.composite import RenderPlan, _graph_code_digest
 
 
 def _render_context(root, cache, width, height, duration):
@@ -539,7 +539,7 @@ class TestPngSourceFrameAlignment(unittest.TestCase):
             kwargs.setdefault('timeout', 120)  # preserve this fixture's writer bound
             return execute(argv, **kwargs)
 
-        with mock.patch('vtx.infra.subprocess.run', side_effect=bounded_execute):
+        with mock.patch('vtx.pipeline.infra.subprocess.run', side_effect=bounded_execute):
             plan.composite(layers, out, with_subs, a=a, b=b, sub_file=ass)
         raw = run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(out),
                    "-f", "rawvideo", "-pix_fmt", "gray", "-"]).stdout

@@ -719,7 +719,7 @@ def main(argv=None) -> int:
         if len(argv) != 2:
             print("usage: reap <timeline.json>", file=sys.stderr)
             return 2
-        from ..infra import Ctx
+        from ..pipeline.infra import Ctx
         stats = reap_orphan_workers(Ctx(Path(argv[1])))
         marker = "⚠" if stats["kill_failed"] else "✓"
         print(f"{marker} 孤儿 Worker 清扫：账本 {stats['ledgers']} 份，击杀 {stats['killed']} 组，"

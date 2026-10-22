@@ -53,7 +53,7 @@ WORKER_RECEIPT = '''
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 c = Ctx(Path(sys.argv[2]))
 stage, iters = sys.argv[3], int(sys.argv[4])
 for k in range(iters):
@@ -282,7 +282,7 @@ class MultiProcessConcurrency(unittest.TestCase):
                 self.assertTrue(rec["stages"][f"s{i}"]["ok"])
                 self.assertEqual(rec["stages"][f"s{i}"]["detail"], "iter 4")
             # 身份门完好：跨进程指纹一致（全部 worker 与终态回执同一 input_fingerprint）
-            from vtx.infra import Ctx
+            from vtx.pipeline.infra import Ctx
             self.assertEqual(rec["input_fingerprint"], Ctx(tl).input_fingerprint)
             # 主回执本体是合法整体 JSON（非撕裂半写件）
             json.loads((root / "out" / "receipt.json").read_text(encoding="utf-8"))

@@ -42,7 +42,7 @@ class ImpactRepairRegressions(unittest.TestCase):
 
     def test_numeric_fps_matches_ctx_and_invalid_fps_rejected(self):
         from vtx.cache.hygiene import gfx_key
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         before = capture(self.tl, self.root, nseg=2)
         self.tl['project']['fps'] = 30.0
         self.path.write_text(json.dumps(self.tl))
@@ -105,7 +105,7 @@ with patch('vtx.cache.cache_state.os.open', side_effect=swapped):
         self.assertEqual(process.returncode, 0, process.stderr)
 
     def test_qc_graph_uses_bottom_only_no_subtitles_and_exact_pass_keys(self):
-        from vtx.composite import pass_content_key, _graph_code_digest
+        from vtx.pipeline.composite import pass_content_key, _graph_code_digest
         self.tl['video_tracks'].append(dict(kind='gfx', name='overlay', clips=[
             dict(src='page.html', dst_in=35, dur=130)]))
         before = capture(self.tl, self.root, nseg=2)

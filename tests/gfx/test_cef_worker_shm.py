@@ -47,7 +47,7 @@ from vtx.render import cef_client  # noqa: E402
 
 from vtx.render.gfx_cli import png_invalid_reason  # noqa: E402
 from tests.gfx._png import unfilter_rgba
-from vtx.infra import Ctx  # noqa: E402
+from vtx.pipeline.infra import Ctx  # noqa: E402
 from vtx.runtime.proc_supervisor import (  # noqa: E402
     SupervisedProcessGroup, group_live_members, reap_orphan_workers)
 
@@ -120,7 +120,7 @@ _HOST_SUPERVISED = r'''
 import json, os, sys, time
 from pathlib import Path
 from vtx.render import cef_client
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.runtime.proc_supervisor import SupervisedProcessGroup
 
 root, ready_path, worker, url_tpl = (Path(sys.argv[1]), Path(sys.argv[2]),

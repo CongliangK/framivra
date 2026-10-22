@@ -54,7 +54,7 @@ sys.path.insert(0, str(REPO))
 _bgm = importlib.import_module("plugins.bgm-render")
 
 from vtx.cache import hygiene, recovery              # noqa: E402
-from vtx.infra import Ctx                       # noqa: E402
+from vtx.pipeline.infra import Ctx                       # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks   # noqa: E402
 
 FAKE_BGM = r'''import json, os, subprocess, sys
@@ -224,7 +224,7 @@ class PrepareSource(_Base):
                 audio.writeframes(b"\0" * 240 * 4)
             return subprocess.CompletedProcess(cmd, 1, "", "failed after readable short WAV")
 
-        with mock.patch("vtx.infra.subprocess.run", side_effect=failed_conversion) as convert, \
+        with mock.patch("vtx.pipeline.infra.subprocess.run", side_effect=failed_conversion) as convert, \
                 mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
             with self.assertRaises(SystemExit) as failure:
                 _bgm.prepare_source(c, "bgm_main")
@@ -723,7 +723,7 @@ class InvariantsAndBranches(_Base):
         self.assertIn("__bgm_", key)
 
     def test_three_branch_not_installed(self):
-        from vtx.stages import _scan_plugin_keys
+        from vtx.pipeline.stages import _scan_plugin_keys
         c = self._ctx(True)
         errs = []
         with mock.patch("vtx.pluginlib.registry.plugin_state",

@@ -17,7 +17,7 @@ from ..media import loudness_cache
 from ..runtime import fstxn
 from ..runtime.diagnostics import (emit, producer_exit, required_field, operation,
                           key_path, subtitle_location)
-from ..composite import _gfx_scaled_size
+from ..pipeline.composite import _gfx_scaled_size
 from ..cache.hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----

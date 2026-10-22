@@ -177,7 +177,7 @@ class BusIntegration(unittest.TestCase):
 
     def test_three_branch_not_installed(self):
         # 键未装 → validate FAIL（三分支：报「未安装」+ 指引）
-        from vtx.stages import _scan_plugin_keys
+        from vtx.pipeline.stages import _scan_plugin_keys
         c = _FakeCtx(_tl(self.root, True), self.root)
         errs = []
         with mock.patch("vtx.pluginlib.registry.plugin_state",

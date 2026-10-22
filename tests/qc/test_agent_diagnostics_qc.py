@@ -25,7 +25,7 @@ from pathlib import Path
 from unittest import mock
 
 from vtx.inspection import qc
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from tests.qc._support import _FakeContext, _run_qc
 
 REPO = Path(__file__).resolve().parents[2]

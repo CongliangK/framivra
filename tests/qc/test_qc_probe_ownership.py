@@ -10,7 +10,7 @@ import threading
 import unittest
 from unittest.mock import patch
 from vtx.inspection import qc
-from vtx import composite
+from vtx.pipeline import composite
 from vtx.render.frame_source import PngSequence
 from tests.gfx._png import png
 from tests.qc._support import _FakeContext, _run_qc

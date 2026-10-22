@@ -119,7 +119,7 @@ class ProbeBranches(unittest.TestCase):
         from io import StringIO
         from types import SimpleNamespace
         from unittest.mock import patch
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'timeline.json';t=timeline()
             t['sources']=[{'id':'s','path':'asset.mp4'}];path.write_text(json.dumps(t))

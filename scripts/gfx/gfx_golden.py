@@ -116,7 +116,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # v2 §1.4 包化：注入 repo 根 + 包导入（不再注入 repo/vtx）
-from vtx.infra import Ctx   # noqa: E402
+from vtx.pipeline.infra import Ctx   # noqa: E402
 from vtx.runtime.fstxn import atomic_write
 from vtx.cache import hygiene     # noqa: E402
 from vtx.inspection import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）

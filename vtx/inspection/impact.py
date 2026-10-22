@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ..cache.cache_state import file_digest, media_stat_digest
-from ..composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
+from ..pipeline.composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
                         segment_content_key, pass_content_key)
 from ..cache.hygiene import audio_key, seg_key
 
@@ -38,7 +38,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
     tl = copy.deepcopy(timeline)
     root = Path(root).resolve()
     p = tl['project']
-    from ..constraints import fps_error
+    from ..pipeline.constraints import fps_error
     error = fps_error(p.get('fps'))
     if error:
         raise ValueError(error)

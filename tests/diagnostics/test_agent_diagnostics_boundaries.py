@@ -284,7 +284,7 @@ def callback(context):
     print("plugin callback stdout")
     print("plugin callback stderr", file=sys.stderr)
     raise errors[sys.argv[2]]
-with patch("vtx.stages._plugin_hooks.run_validate", side_effect=callback):
+with patch("vtx.pipeline.stages._plugin_hooks.run_validate", side_effect=callback):
     raise SystemExit(main(["-t", sys.argv[1], "validate", "--format", "agent-json"]))
 '''
 
@@ -363,7 +363,7 @@ with patch("vtx.pluginlib.hooks.active_plugins_digest",
         path = self.write_timeline(timeline())
         interruption = KeyboardInterrupt('user interrupted')
         output, errors = io.StringIO(), io.StringIO()
-        with patch('vtx.stages._plugin_hooks.run_validate', side_effect=interruption), \
+        with patch('vtx.pipeline.stages._plugin_hooks.run_validate', side_effect=interruption), \
                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             with self.assertRaises(KeyboardInterrupt) as caught:
                 main(['-t', str(path), 'validate', '--format', 'agent-json'])

@@ -40,10 +40,10 @@ hello = importlib.import_module("hello-plugin")  # noqa: E402（连字符目录�
 
 from vtx.cache import hygiene, recovery               # noqa: E402
 from vtx.cache.cache_state import receipt_fingerprint  # noqa: E402
-from vtx.infra import Ctx                       # noqa: E402
+from vtx.pipeline.infra import Ctx                       # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks     # noqa: E402
 from vtx.pluginlib.manifest import load_manifest  # noqa: E402
-from vtx.stages import validate, _scan_plugin_keys  # noqa: E402
+from vtx.pipeline.stages import validate, _scan_plugin_keys  # noqa: E402
 
 EXT_PATH = str(PLUGIN_DIR)
 
@@ -282,7 +282,7 @@ class PrepareSourceContract(ExternalCfgTestBase):
                     return subprocess.CompletedProcess(cmd, 1, "", "failed after finalized short WAV")
 
                 with mock.patch.object(hello.shutil, "which", return_value="ffmpeg.exe"), \
-                        mock.patch("vtx.infra.subprocess.run", side_effect=failed) as run, \
+                        mock.patch("vtx.pipeline.infra.subprocess.run", side_effect=failed) as run, \
                         mock.patch("subprocess.Popen", side_effect=AssertionError("unexpected child")):
                     with self.assertRaises(KeyboardInterrupt if interrupted else SystemExit) as failure:
                         hello.prepare_source(c, "v")

@@ -10,8 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from vtx.runtime.diagnostics import DiagnosticMessage, emit
-from vtx.infra import Ctx
-from vtx import stages
+from vtx.pipeline.infra import Ctx
+from vtx.pipeline import stages
 
 
 
@@ -31,7 +31,7 @@ class Diagnostics(unittest.TestCase):
         c = self.context(tl)
         if probes:
             c.probe = lambda p: probes[Path(p).name]
-        with contextlib.redirect_stdout(io.StringIO()), patch('vtx.stages._plugin_hooks.run_probe_source', return_value=None):
+        with contextlib.redirect_stdout(io.StringIO()), patch('vtx.pipeline.stages._plugin_hooks.run_probe_source', return_value=None):
             try:
                 stages.validate(c)
                 code = 0
@@ -147,8 +147,8 @@ class Diagnostics(unittest.TestCase):
         for state in ('not_installed','disabled','broken'):
             with self.subTest(state=state):
                 c=self.context(t)
-                with patch('vtx.stages._plugin_registry.lookup_key',return_value=('fixture',{'path':'project'})), \
-                     patch('vtx.stages._plugin_registry.plugin_state',return_value=state):
+                with patch('vtx.pipeline.stages._plugin_registry.lookup_key',return_value=('fixture',{'path':'project'})), \
+                     patch('vtx.pipeline.stages._plugin_registry.plugin_state',return_value=state):
                     errors=[];warnings=stages._scan_plugin_keys(c,errors)
                 self.assertEqual(len(errors),1)
                 self.assertEqual(warnings,[])
@@ -156,7 +156,7 @@ class Diagnostics(unittest.TestCase):
                 self.assertEqual(c.diagnostics[0]['json_path'],'$.project["extension"]')
                 self.assertEqual(c.diagnostics[0]['measured']['state'],state)
         c=self.context(t)
-        with patch('vtx.stages._plugin_registry.lookup_key',return_value=('fixture',{'path':'sources[]'})):
+        with patch('vtx.pipeline.stages._plugin_registry.lookup_key',return_value=('fixture',{'path':'sources[]'})):
             errors=[];warnings=stages._scan_plugin_keys(c,errors)
         self.assertEqual(errors,[])
         self.assertEqual(len(warnings),1)
@@ -203,7 +203,7 @@ class Diagnostics(unittest.TestCase):
         json.dumps(c.diagnostics,allow_nan=False)
 
     def test_opaque_plugin_error_has_no_invented_precision(self):
-        with patch('vtx.stages._plugin_hooks.run_validate',return_value=['opaque third-party failure']):
+        with patch('vtx.pipeline.stages._plugin_hooks.run_validate',return_value=['opaque third-party failure']):
             records,code=self.validate(timeline())
         self.assertEqual(code,1)
         self.assertEqual(records[0]['rule_id'],'unknown')

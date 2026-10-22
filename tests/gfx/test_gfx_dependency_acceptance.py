@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 from tests.runners.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation, check_gc_contract
 from vtx.render.gfx_dependencies import resolve, DependencyError
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.inspection.impact import capture, compare
 
 
@@ -151,7 +151,7 @@ class AcceptanceContracts(unittest.TestCase):
         with self.assertRaises(AssertionError):check_trace(good,set(),rejected=True,target='file:///a.png')
 
     def test_worker_observes_real_policy_response_and_ack_with_mock_transport(self):
-        from vtx import cli
+        from vtx.cli import commands as cli
         from vtx.render import gfx_render
         from vtx.render.gfx_dependencies import RequestPolicy
         from tests.runners.run_gfx_dependency_acceptance import worker
@@ -204,7 +204,7 @@ class AcceptanceContracts(unittest.TestCase):
 
     def test_disabled_or_swallowed_production_rejection_cannot_pass_negative(self):
         from contextlib import nullcontext
-        from vtx import cli
+        from vtx.cli import commands as cli
         from vtx.render import gfx_render
         from vtx.render.gfx_dependencies import RequestPolicy
         from tests.runners.run_gfx_dependency_acceptance import worker
@@ -347,7 +347,7 @@ class AcceptanceContracts(unittest.TestCase):
     def test_real_cli_runtime_failure_wrap_keeps_attempt_cause_and_failed_receipt(self):
         from tests.runners.run_gfx_dependency_acceptance import worker
         from tests.gfx._environment import bind_environment
-        from vtx import cli
+        from vtx.cli import commands as cli
         from vtx.render import gfx_render
         from vtx.render.gfx_dependencies import RequestPolicy
         bind_environment(self)  # The renderer is fake; host browser identity is not under test.
@@ -500,7 +500,7 @@ class AcceptanceContracts(unittest.TestCase):
             prepare_font_observation(object(),unsupported,'owned')
 
     def test_worker_prepares_owned_tab_before_fetch_and_never_reenables(self):
-        from vtx import cli
+        from vtx.cli import commands as cli
         from vtx.render import gfx_render
         from tests.runners.run_gfx_dependency_acceptance import worker
         sent = []
@@ -536,7 +536,7 @@ class AcceptanceContracts(unittest.TestCase):
     def test_gc_contract_distinguishes_current_keys_and_disposable_vseg(self):
         from tests.runners.impact_inventory import observe
         from vtx.cache.hygiene import gfx_dir, gc_plan
-        from vtx import cli
+        from vtx.cli import commands as cli
         import os
         current = [gfx_dir(self.c, cl).relative_to(self.project).as_posix()
                    for cl in self.tl['video_tracks'][0]['clips']]

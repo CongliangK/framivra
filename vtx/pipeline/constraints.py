@@ -2,7 +2,7 @@
 
 fps/分辨率约束曾三面各说各话（本单修复标的）：
   - timeline.schema.json：project.fps const 30（结构权威）；
-  - vtx/infra.py Ctx：收「可整除 48000 的任意正整数」——24/25/50/60 全放行；
+  - vtx/pipeline/infra.py Ctx：收「可整除 48000 的任意正整数」——24/25/50/60 全放行；
   - vtx/preview.html：示例 24fps，且 validate() 根本不校验 fps。
 同一时间线三面判定漂移。本模块自此为唯一取值点：
 

@@ -1,13 +1,13 @@
 """B02 / issue #26 / F-04 / #4：fps/分辨率约束三面一致性（2026-10-13）。
 
 三面与单一来源：
-  - 单一取值点 vtx/constraints.py：ALLOWED_FPS=(30,)（D24 换基，全管线固定
+  - 单一取值点 vtx/pipeline/constraints.py：ALLOWED_FPS=(30,)（D24 换基，全管线固定
     30fps 精确，≠29.97；NTSC 23.976/29.97/59.94、PAL 25/50、电影 24、高帧率
     60 一律拒绝）、ALLOWED_SIZES=((1920,1080),)、AUDIO_SAMPLE_RATE=48000
     （30fps → 每帧整 1600 采样，atrim 采样网格不漂移）；
   - 结构权威 timeline.schema.json：project.fps enum [30] / width,height const
     ——代码允许集的静态镜像，本测试解析比对防漂移；
-  - 机制权威 vtx/infra.py Ctx 前置门：经 fps_error() 判定（数值等值 30.0
+  - 机制权威 vtx/pipeline/infra.py Ctx 前置门：经 fps_error() 判定（数值等值 30.0
     归一 int 30）；分辨率门有意不设在 infra（降采样渲染测试夹具依赖，见
     constraints.py 模块头），由 schema/preview 两面把门；
   - 预览权威 vtx/preview.html：内嵌 CONSTRAINTS 镜像（唯一同步抄写点）+
@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # repo 根（v2 §1.4 包导入）
 
-from vtx.constraints import (ALLOWED_FPS, ALLOWED_SIZES, AUDIO_SAMPLE_RATE,
+from vtx.pipeline.constraints import (ALLOWED_FPS, ALLOWED_SIZES, AUDIO_SAMPLE_RATE,
                              fps_error, size_error)
 
 REPO = Path(__file__).resolve().parents[2]
@@ -231,10 +231,10 @@ class PreviewFace(unittest.TestCase):
 
 
 class InfraFace(unittest.TestCase):
-    """机制面（vtx/infra.py Ctx 前置门，判定同源 constraints.fps_error）。"""
+    """机制面（vtx/pipeline/infra.py Ctx 前置门，判定同源 constraints.fps_error）。"""
 
     def test_fps_30_constructs(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             c = Ctx(_write_tl(d, 30))
             self.assertEqual(c.fps, 30)
@@ -243,7 +243,7 @@ class InfraFace(unittest.TestCase):
             self.assertIsInstance(c.spf_samples, int)
 
     def test_fps_30_float_normalized_to_int(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             c = Ctx(_write_tl(d, 30.0))
             self.assertEqual(c.fps, 30)
@@ -254,13 +254,13 @@ class InfraFace(unittest.TestCase):
     def test_gate_wired_to_single_source(self):
         # 并入自 test_constraints.py：硬门无影子实现——infra 直接消费
         # constraints.fps_error（同一函数对象，非复刻）
-        from vtx import constraints, infra
+        from vtx.pipeline import constraints, infra
         self.assertIs(infra.fps_error, constraints.fps_error)
 
     def test_garbage_rejected_by_ctx_gate(self):
         # 并入自 test_constraints.py：Ctx 级类型错值拒绝（JSON 解析后可能到达
         # 门的真实类型），报错须指路唯一允许值 30
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         for bad in (0, "30", True, [30]):
             with self.subTest(fps=bad):
                 with tempfile.TemporaryDirectory() as d:
@@ -269,7 +269,7 @@ class InfraFace(unittest.TestCase):
                     self.assertIn("30", str(cm.exception))
 
     def test_boundary_matrix_matches_fps_error(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         for f in BOUNDARY_FPS:
             with tempfile.TemporaryDirectory() as d:
                 if fps_error(f) is None:
@@ -280,7 +280,7 @@ class InfraFace(unittest.TestCase):
                         Ctx(_write_tl(d, f))
 
     def test_reject_message_names_fixed_timebase(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         for f in (24, 29.97, 23.976, 60):
             with tempfile.TemporaryDirectory() as d:
                 with self.assertRaises(ValueError) as cm:
@@ -291,7 +291,7 @@ class InfraFace(unittest.TestCase):
 
     def test_ntsc_message_mentions_non_integer(self):
         # 并入自 test_constraints.py：NTSC 非整数帧率报错须点名「非整数」
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError) as cm:
                 Ctx(_write_tl(d, 29.97))
@@ -300,7 +300,7 @@ class InfraFace(unittest.TestCase):
     def test_no_resolution_gate_by_design(self):
         """infra 面有意不设分辨率门（降采样渲染测试夹具依赖，constraints.py
         模块头裁定）；分辨率门设在 schema/preview 两面。"""
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             c = Ctx(_write_tl(d, 30, width=640, height=360))
             self.assertEqual((c.w, c.h), (640, 360))

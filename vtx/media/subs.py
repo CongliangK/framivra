@@ -8,11 +8,11 @@ import hashlib, json, re, sys
 from pathlib import Path
 
 from ..runtime import fstxn
-from ..composite import RenderPlan
+from ..pipeline.composite import RenderPlan
 from .encoders import seg_encoder_kind
 from ..render.frame_source import png_source
 from ..cache.hygiene import manifest_record, seg_key, tmp_run
-from ..infra import Ctx, filter_filename
+from ..pipeline.infra import Ctx, filter_filename
 from ..cache.recovery import media_cache_valid
 
 # ---- 阈值常量（与 stages.audit 字幕基准对齐；2026-08-21 实测，见 stages 注释）----

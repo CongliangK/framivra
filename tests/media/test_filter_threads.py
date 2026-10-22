@@ -37,7 +37,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx.infra import filter_threads
+from vtx.pipeline.infra import filter_threads
 
 
 def _have_libx264() -> bool:
@@ -75,7 +75,7 @@ class TestFilterThreadsEnv(unittest.TestCase):
                          (None, 8), (0, 8)):
             for requested in (1, 4, 16):
                 with self.subTest(cpu=cpu, requested=requested), \
-                        mock.patch('vtx.infra.os.cpu_count', return_value=cpu):
+                        mock.patch('vtx.pipeline.infra.os.cpu_count', return_value=cpu):
                     self.assertEqual(self._get(str(requested)), min(requested, cap))
 
     def test_invalid_falls_back_to_1(self):
@@ -85,7 +85,7 @@ class TestFilterThreadsEnv(unittest.TestCase):
     def test_oversized_capped_to_cpu_count(self):
         for cpu, cap in ((1, 1), (2, 2), (3, 3), (4, 4), (8, 8), (32, 32),
                          (None, 8), (0, 8)):
-            with self.subTest(cpu=cpu), mock.patch('vtx.infra.os.cpu_count', return_value=cpu):
+            with self.subTest(cpu=cpu), mock.patch('vtx.pipeline.infra.os.cpu_count', return_value=cpu):
                 self.assertEqual(self._get("999999"), cap)
 
 

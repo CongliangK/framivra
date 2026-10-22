@@ -7,7 +7,7 @@
   - cache/reports/ 永不回收（报告/回执/证据）；out/VERSIONS.json、out/history/ 永不回收。
   - A02（issue #21 / F-01）：不可再生交付件保护清单（OUT_PROTECTED_*，out_protected()）
     对 clean/gc 全量生效——普通 clean/gc 绝不删除；全删唯一入口 = clean
-    --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli.py）。
+    --i-know-this-nukes-everything 显式危险旗标（见 vtx/cli/commands.py）。
   - 回收只由显式命令或预算门触发，无后台守护、无静默删除。
 """
 import fnmatch, hashlib, itertools, json, os, re, shutil, time, stat, secrets
@@ -16,7 +16,7 @@ from pathlib import Path
 from ..runtime import fstxn
 from .cache_state import InputIdentityError, verify_input_identity
 from ..media.encoders import seg_encoder_kind
-from ..infra import ProjectPathError, ensure_inside_project
+from ..pipeline.infra import ProjectPathError, ensure_inside_project
 from ..pluginlib import hooks as _plugin_hooks
 
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
@@ -43,7 +43,7 @@ GC_OUT_KEEP = frozenset({"final.mp4", "draft_final.mp4", "draft.mp4", "video_noa
 # （VERSIONS.json）、历史轮转（history/）、发布冻结凭证（FREEZE*，runbook
 # 步骤 6 冻结记录）、4K 发布件（final_4k*.mp4，apps/publish/export_4k 产物）
 # 与证据目录（reports/，gc 既有白名单同款）。全删除唯一入口 = clean
-# --i-know-this-nukes-everything（vtx/cli.py 显式危险旗标）；gc/gc --all
+# --i-know-this-nukes-everything（vtx/cli/commands.py 显式危险旗标）；gc/gc --all
 # 无任何变体可删保护件。清单是全仓唯一权威：clean 保护、gc --all 白名单、
 # gc_plan out 豁免都经 out_protected() 取判据，禁在各处复制名单。
 OUT_PROTECTED_NAMES = ("final.mp4", "VERSIONS.json")
@@ -651,11 +651,11 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     """gc 主入口。do=False 只列清单（--dry-run）；do=True 执行；deep 等价原 clean 但
     保留 reports/VERSIONS/history/snapshots 等（A02：out 侧保护经 out_protected()
     单源判据，与 cli 的 gc --all 白名单同一权威；cache 侧仍留 reports/tmp/
-    snapshots/记账基线）。注：CLI 的 gc/clean 统一走 vtx/cli.py _cleanup_plan
+    snapshots/记账基线）。注：CLI 的 gc/clean 统一走 vtx/cli/commands.py _cleanup_plan
     （计划-预览-执行三段），本函数供 budget_gate 与直调方使用。"""
     if deep:
         # issue #21/#30：预算门/直调与 CLI 复用同一安全计划，不保留绕过入口。
-        from ..cli import ExecutionPolicy, _cleanup_plan
+        from ..cli.commands import ExecutionPolicy, _cleanup_plan
         plan = _cleanup_plan(c, "gc", deep=True)
         total = sum(size for items in plan.values() for _, size, _ in items)
         if do:
@@ -678,7 +678,7 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     print(f"合计：{n} 项，{gb(total)}")
     if not do:
         print("（--dry-run 预览；执行回收请去掉 --dry-run 重跑 `vtx gc`）"); return
-    from ..cli import ExecutionPolicy
+    from ..cli.commands import ExecutionPolicy
     ExecutionPolicy.EXECUTE.execute_cleanup(plan)
     print(f"✓ 已回收 {n} 项，{gb(total)}")
 

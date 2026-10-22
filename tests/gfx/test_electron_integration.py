@@ -17,12 +17,12 @@ import uuid
 import wave
 from unittest import mock
 
-from vtx import cli
+from vtx.cli import commands as cli
 from vtx.render import gfx_backend, gfx_cli, gfx_electron_stage
 from vtx.cache import hygiene
 from vtx.cache.cache_state import InputIdentityError, verify_input_identity
-from vtx.composite import RenderPlan
-from vtx.infra import Ctx
+from vtx.pipeline.composite import RenderPlan
+from vtx.pipeline.infra import Ctx
 from tests.gfx._png import png
 
 
@@ -145,11 +145,11 @@ class IntegrationGates(unittest.TestCase):
 
     def test_png_consumer_is_lazy_but_requires_producer_completion(self):
         from vtx.render import frame_source, gfx_cache_reader
-        from vtx.composite import prepare_layers
+        from vtx.pipeline.composite import prepare_layers
         with mock.patch.object(gfx_cache_reader, 'require_electron_record',
                                side_effect=AssertionError('eager completion IO')), \
-                mock.patch('vtx.composite.seg_encoder_kind', return_value='x264'), \
-                mock.patch('vtx.composite.run_parallel'):
+                mock.patch('vtx.pipeline.composite.seg_encoder_kind', return_value='x264'), \
+                mock.patch('vtx.pipeline.composite.run_parallel'):
             source = frame_source.png_source(self.c, self.cl)
             layers = prepare_layers(self.c)
         self.assertFalse(source.directory.exists())
@@ -385,7 +385,7 @@ class IntegrationGates(unittest.TestCase):
             plan = RenderPlan(c, False, 1, c.w, c.h)
             commands = []
             c.run = commands.append
-            with mock.patch('vtx.composite.pick_vcodec', return_value=(['-c:v','libx264'], 'x264')):
+            with mock.patch('vtx.pipeline.composite.pick_vcodec', return_value=(['-c:v','libx264'], 'x264')):
                 plan._composite_passes([layer, layer], c.out / 'seg.mp4', False, 0, 3)
             return (d, c.input_fingerprint, plan._seg_content_key(0, 3, [layer], False, None), commands[0][-1])
         a = keys()

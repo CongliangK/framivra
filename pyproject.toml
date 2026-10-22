@@ -1,6 +1,6 @@
 # pyproject.toml —— v2 包化（ARCHITECTURE §5.2）
 # 包名 framivra（项目品牌名；仓目录沿用 video_tools 历史路径名）；
-# console scripts 双入口：`vtx`（渲染 CLI，vtx.cli:main）与
+# console scripts 双入口：`vtx`（渲染 CLI，vtx.cli.commands:main）与
 # `vt`（统一入口 doctor/list/check/version/init/--fix-links，vt:main）。
 # vt.py 在仓根（不在 vtx/ 包内），经 py-modules 以顶层模块身份进发行包。
 # pip 包只含内核（vtx/ 含 pluginlib + vt.py）；apps/plugins/templates
@@ -47,11 +47,11 @@ Homepage = "https://github.com/CongliangK/framivra"
 Repository = "https://github.com/CongliangK/framivra"
 
 [project.scripts]
-vtx = "vtx.cli:main"
+vtx = "vtx.cli.commands:main"
 vt = "vt:main"
 
 [tool.setuptools]
-packages = ["vtx", "vtx.pluginlib", "vtx.media", "vtx.runtime", "vtx.render", "vtx.cache", "vtx.inspection"]
+packages = ["vtx", "vtx.pluginlib", "vtx.media", "vtx.runtime", "vtx.render", "vtx.cache", "vtx.inspection", "vtx.pipeline", "vtx.cli"]
 py-modules = ["vt"]
 
 [tool.setuptools.package-data]

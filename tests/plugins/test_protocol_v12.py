@@ -34,7 +34,7 @@ sys.path.insert(0, str(REPO))
 from vtx.cache import hygiene
 from vtx.pluginlib import hooks as pl_hooks
 from vtx.pluginlib import registry as pl_registry
-from vtx.stages import _scan_plugin_keys, validate
+from vtx.pipeline.stages import _scan_plugin_keys, validate
 
 
 def _write(root: Path, tl: dict) -> Path:
@@ -53,7 +53,7 @@ def _tl(**over):
 
 class RootScopeScan(unittest.TestCase):
     def test_unknown_root_key_warns(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             c = Ctx(_write(root, _tl(mystery_top_key={"a": 1})))
@@ -64,7 +64,7 @@ class RootScopeScan(unittest.TestCase):
                                 for w in warns))
 
     def test_blender_bridge_key_active_passes(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             c = Ctx(_write(root, _tl(blender_bridge=True)))
@@ -74,7 +74,7 @@ class RootScopeScan(unittest.TestCase):
             self.assertFalse(warns)
 
     def test_blender_bridge_not_installed_errors(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             c = Ctx(_write(root, _tl(blender_bridge=True)))
@@ -121,7 +121,7 @@ print(json.dumps({'duration_s': duration}, indent=2))
     def _ctx(self, events):
         tl = _tl(sources=[{"id": "bgm_main", "path": "bgm.json", "bgm": True}],
                  audio_tracks=[{"name": "bed", "events": events}])
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         return Ctx(_write(self.root, tl))
 
     def test_validate_passes_with_virtual_source(self):
@@ -180,7 +180,7 @@ class GcLoudnessSidecarExemption(unittest.TestCase):
             (root / "cache" / "audio" / "loudness_receipts.json").write_text("{}", encoding="utf-8")
             (root / "cache" / "audio" / "loudness_receipts.json.lock").write_text("", encoding="utf-8")
             (root / "cache" / "audio" / "loudness_receipts.json.tmp").write_text("", encoding="utf-8")
-            from vtx.infra import Ctx
+            from vtx.pipeline.infra import Ctx
             c = Ctx(_write(root, _tl()))
             with contextlib.redirect_stdout(io.StringIO()):
                 plan = hygiene.gc_plan(c)
@@ -203,7 +203,7 @@ class GcOutDeliverableExemption(unittest.TestCase):
             for n in ("final_4k.mp4", "final_4k_x264_ref.mp4", "FREEZE.json",
                       "FREEZE_v47.json", "tmp_junk.bin"):
                 (out / n).write_bytes(b"x" * 8)
-            from vtx.infra import Ctx
+            from vtx.pipeline.infra import Ctx
             c = Ctx(_write(root, _tl()))
             with contextlib.redirect_stdout(io.StringIO()):
                 plan = hygiene.gc_plan(c)
@@ -220,7 +220,7 @@ class ValidateRequiredKeys(unittest.TestCase):
     def _run(self, tl):
         import io
         from contextlib import redirect_stdout
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             c = Ctx(_write(root, tl))
@@ -250,8 +250,8 @@ class ValidateRequiredKeys(unittest.TestCase):
 
 class RangeStaleReceipt(unittest.TestCase):
     def test_stale_fingerprint_returns_none(self):
-        from vtx.range import _receipt_audio_gain
-        from vtx.infra import Ctx
+        from vtx.pipeline.range import _receipt_audio_gain
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "out").mkdir()
@@ -264,8 +264,8 @@ class RangeStaleReceipt(unittest.TestCase):
                                   "指纹失配的陈旧回执不得供给区间增益（B-P2-2）")
 
     def test_fresh_receipt_supplies_gain(self):
-        from vtx.range import _receipt_audio_gain
-        from vtx.infra import Ctx
+        from vtx.pipeline.range import _receipt_audio_gain
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "out").mkdir()
