@@ -72,8 +72,8 @@ def probe_file(path):
         out = subprocess.run(
             [ffprobe, "-v", "error", "-print_format", "json",
              "-show_format", "-show_streams", path],
-            capture_output=True, text=True, timeout=60, check=True).stdout
-        d = json.loads(out)
+            capture_output=True, timeout=60, check=True).stdout
+        d = json.loads(out.decode("utf-8"))
         fmt = d.get("format", {})
         vstream = next((s for s in d.get("streams", []) if s.get("codec_type") == "video"), {})
         astream = next((s for s in d.get("streams", []) if s.get("codec_type") == "audio"), {})

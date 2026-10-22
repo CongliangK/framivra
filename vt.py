@@ -81,6 +81,21 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
+def _python_probe(cmd, *, timeout=None):
+    """Capture Python probe text with one UTF-8 contract on both sides.
+
+    Native tools keep sh()'s separate encoding contract. Decode after binary
+    capture: a Windows reader-thread decode failure can otherwise silently
+    return None even when the child exits zero. Invalid UTF-8 must propagate.
+    """
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    result = subprocess.run(cmd, capture_output=True, env=env, timeout=timeout)
+    # Preserve text=True's universal-newline behavior, without lossy decoding.
+    result.stdout = result.stdout.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    result.stderr = result.stderr.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return result
+
+
 def _read_version() -> str:
     try:
         return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -287,7 +302,7 @@ def cmd_init(a):
     if interp is None:
         rec("vtx_cli", False, "找不到 python3 解释器（PATH）")
     else:
-        r = sh([interp, str(ROOT / "vtx" / "vtx.py"), "--help"])
+        r = _python_probe([interp, str(ROOT / "vtx" / "vtx.py"), "--help"])
         rec("vtx_cli", r.returncode == 0, "vtx/vtx.py（渲染 CLI）")
     rec("new_project", (ROOT / "scripts/new_project.sh").is_file(), "scripts/new_project.sh（bash 脚本；Windows 需 Git Bash/WSL）")
     for f in ("json2blend.py", "verify_blend.py", "blend2json.py", "subs_alpha.py"):
@@ -301,7 +316,7 @@ def cmd_init(a):
     if interp is None:
         rec("audit_bundle", False, "找不到 python3 解释器（PATH）")
     else:
-        r = sh([interp, str(ROOT / "apps/blender-bridge/audit_bundle.py"), "--help"])
+        r = _python_probe([interp, str(ROOT / "apps/blender-bridge/audit_bundle.py"), "--help"])
         rec("audit_bundle", r.returncode == 0)
 
     say("--- 4/5 大模型能力（默认关闭；以下检查已有资产，许可边界见 docs/third-party-licenses.md）---")
@@ -548,8 +563,7 @@ def _probe_health(manifest: dict, comp_dir: Path) -> tuple:
         if not argv:
             return None, "health.command 为空"
         try:
-            r = subprocess.run([interp, str(comp_dir / argv[0]), *argv[1:]],
-                               capture_output=True, text=True, timeout=10)
+            r = _python_probe([interp, str(comp_dir / argv[0]), *argv[1:]], timeout=10)
         except subprocess.TimeoutExpired:
             return False, f"health 探测超时（>10s）：{health.get('command')}"
         except Exception as e:

@@ -31,6 +31,7 @@ import threading
 import unittest
 from unittest import mock
 import urllib.request
+import venv
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -430,6 +431,77 @@ class TestEnvInjection(AdversarialBase):
         self.assertEqual(
             independence.verify_module_from_own_env(str(py), "qwen_asr"),
             str(origin))
+
+    def test_module_origin_real_unicode_path_uses_utf8_bytes(self):
+        # 私有、无 pip 的真实解释器环境，仅导入自编 stub；不安装/导入真实模型。
+        env_root = Path(self.tmp.name) / "独立 环境 café"
+        venv.EnvBuilder(with_pip=False, symlinks=False).create(env_root)
+        py = env_root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        layout = self._real_run(
+            [str(py), "-I", "-c", "import sys,sysconfig;sys.stdout.buffer.write("
+             "sysconfig.get_path('purelib').encode('utf-8'))"],
+            capture_output=True, timeout=30, env=independence.sandbox_env())
+        self.assertEqual(layout.returncode, 0, layout.stderr)
+        site = Path(layout.stdout.decode("utf-8")).resolve()
+        site.relative_to(env_root.resolve())
+        module = site / "qwen_asr"
+        module.mkdir()
+        origin = module / "__init__.py"
+        origin.write_text(
+            "import sys\n"
+            "assert sys.flags.isolated == 1\n"
+            "assert sys.flags.ignore_environment == 1\n"
+            "assert sys.flags.no_user_site == 1\n"
+            # 受控非 UTF-8 文本流；不是 Windows 默认编码或真实 ASR 验收。
+            "sys.stdout.reconfigure(encoding='cp1252', errors='replace')\n",
+            encoding="utf-8")
+        with mock.patch.dict(os.environ, {"PYTHONIOENCODING": "ascii:replace",
+                                          "PYTHONUTF8": "0"}):
+            self.assertEqual(
+                independence.verify_module_from_own_env(str(py), "qwen_asr"),
+                str(origin.resolve()))
+        self.assertEqual(self.http_calls, [])
+        self.assert_ime_untouched()
+
+    def test_module_origin_invalid_utf8_fails_closed(self):
+        py = Path(self.tmp.name) / "ownenv/bin/python"
+        prefix = str(py.parent.parent / "lib/qwen_asr").encode("utf-8") + b"/"
+        self.arm_popen_sentinel()
+        for malformed in (b"\xff", b"\xc3", b"\xc0\xaf", b"\xed\xa0\x80"):
+            with self.subTest(malformed=malformed):
+                result = subprocess.CompletedProcess([], 0, prefix + malformed + b".py", b"")
+                with mock.patch.object(independence.subprocess, "run", return_value=result):
+                    self.assertIsNone(independence.interpreter_module_origin(py, "qwen_asr"))
+                    with self.assertRaises(independence.AsrIndependenceError) as ctx:
+                        independence.verify_module_from_own_env(py, "qwen_asr")
+                    self.assertIn("不可导入", str(ctx.exception))
+                    with mock.patch.object(independence, "verify_interpreter", return_value=str(py)), \
+                            mock.patch.object(client, "_py_imports", return_value=True):
+                        self.assertIsNone(client.probe_python({"asr": {"python": str(py)}}))
+        self.assertEqual(self.http_calls, [])
+        self.assertEqual(self.popen_calls, [])
+        self.assert_ime_untouched()
+
+    def test_module_origin_probe_keeps_isolated_binary_capture(self):
+        py = Path(self.tmp.name) / "独立 环境/bin/python"
+        result = subprocess.CompletedProcess([], 0, b"", b"")
+        injected = {var: str(self.ime) for var in independence.SANDBOX_STRIP_VARS}
+        self.arm_popen_sentinel()
+        with mock.patch.dict(os.environ, injected), \
+                mock.patch.object(independence.subprocess, "run", return_value=result) as run:
+            self.assertIsNone(independence.interpreter_module_origin(py, "qwen_asr"))
+            run.assert_called_once()
+            argv = run.call_args.args[0]
+            self.assertEqual(argv[:3], [str(py), "-I", "-c"])
+            self.assertEqual(len(argv), 4)
+            self.assertEqual(run.call_args.kwargs,
+                             {"capture_output": True, "timeout": 30,
+                              "env": independence.sandbox_env()})
+            for var in independence.SANDBOX_STRIP_VARS:
+                self.assertNotIn(var, run.call_args.kwargs["env"])
+        self.assertEqual(self.http_calls, [])
+        self.assertEqual(self.popen_calls, [])
+        self.assert_ime_untouched()
 
 
 class TestProcessOwnership(AdversarialBase):

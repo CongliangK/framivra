@@ -183,7 +183,8 @@ def sandbox_env():
 def interpreter_module_origin(py_bin, module):
     """在 py_bin 内 import module 并返回其文件真实路径；失败 None。
     依赖来源验证的底料：不仅看 import 成功，还要看模块来自哪里。"""
-    code = ("import %s,sys;sys.stdout.write(%s.__file__ or '')" % (module, module))
+    code = ("import %s,sys;sys.stdout.buffer.write("
+            "(%s.__file__ or '').encode('utf-8'))" % (module, module))
     try:
         r = subprocess.run([str(py_bin), "-I", "-c", code],
                            capture_output=True, timeout=30, env=sandbox_env())
@@ -191,7 +192,10 @@ def interpreter_module_origin(py_bin, module):
         return None
     if r.returncode != 0:
         return None
-    origin = r.stdout.decode("utf-8", "replace").strip()
+    try:
+        origin = r.stdout.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
     return str(Path(origin).resolve()) if origin else None
 
 

@@ -88,14 +88,22 @@ def _run_bgm(c, args, what):
     if cmd is None:
         print(f"✗ bgm-render 环境缺失（fail-hard）：{env}", file=sys.stderr)
         sys.exit(1)
-    r = subprocess.run(cmd + args, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", env=env)
+    # Capture bytes so decoding happens here, not in Windows pipe reader threads.
+    r = subprocess.run(cmd + args, capture_output=True, env=env)
     if r.returncode != 0:
         print(f"✗ bgm-render：{what} 失败（{' '.join(cmd)} {' '.join(args[:2])} …，"
               f"exit {r.returncode}）：", file=sys.stderr)
-        print((r.stderr or r.stdout or "")[-1500:], file=sys.stderr)
+        diagnostic = (r.stderr or r.stdout or b"").decode("utf-8", errors="replace")
+        print(diagnostic.replace("\r\n", "\n").replace("\r", "\n")[-1500:],
+              file=sys.stderr)
         sys.exit(1)
-    return r.stdout
+    try:
+        stdout = r.stdout.decode("utf-8")
+    except UnicodeDecodeError as e:
+        print(f"✗ bgm-render：{what} 输出不是有效 UTF-8（{e}）", file=sys.stderr)
+        sys.exit(1)
+    # Preserve text=True's universal newlines for the tail-JSON line boundary.
+    return stdout.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _tail_json(stdout: str, what: str):

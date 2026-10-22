@@ -2,7 +2,7 @@
 
 Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/` 提供 timeline.json 契约、帧精确渲染、混音响度终链与内容寻址缓存，**永不可关**；科技口播工作流在 `templates/tech-talk/`，执行技能在 `docs/skill/`。文档中的 `video_tools` 是路径占位名，不是另一套安装。大模型能力默认关闭。
 
-## 四层架构一页
+## 目录导航
 
 | 目录 / 入口 | 职责 |
 |---|---|

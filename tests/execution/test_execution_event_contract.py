@@ -2,7 +2,6 @@
 import contextlib
 import copy
 import io
-import json
 from pathlib import Path
 import subprocess
 import sys
@@ -14,11 +13,7 @@ from unittest.mock import patch
 
 from vtx.runtime import events
 from vtx.pipeline.infra import run_parallel, run_wave
-from tests.execution.test_execution_events import Buffer, fixture
-
-
-def encode(rows):
-    return ''.join(json.dumps(row) + '\n' for row in rows)
+from tests.execution.test_execution_events import Buffer, encode, fixture
 
 
 class ContractTests(unittest.TestCase):

@@ -75,7 +75,7 @@ def main() -> int:
         return 1
     via = cmd[0]
     try:
-        r = subprocess.run(cmd + ["--help"], capture_output=True, text=True,
+        r = subprocess.run(cmd + ["--help"], capture_output=True,
                            timeout=15, env=env)
     except (OSError, subprocess.TimeoutExpired) as e:
         print(f"[MISS] bgm CLI（{via}）不可执行：{e}")

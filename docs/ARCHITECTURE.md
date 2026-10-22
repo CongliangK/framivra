@@ -183,7 +183,7 @@ hello-app 示范自包含 app；hello-plugin 示范装/未装/禁用分支、缓
 `vt.py init` 是仓级依赖检查/初始化入口，`doctor` 检查版本、组件、工作流模板与挂载；`apps|plugins|templates list|check` 提供分层清单/体检，另有 version 与链接修复入口。
 
 - **版本检查**：例行使用 `VTX_DOCTOR_OFFLINE=1`，只相对本地引用报告 clean/dirty/ahead/behind；联网 fetch 会写 .git（5s 超时），按写操作审查。VERSION 仅为发布标识，**无 tag 不告警**，发行冻结门独立判定。
-- **组件检查**：manifest、health、requires 与 `import vtx` 实际解析路径；enabled 组件失败才作 FAIL 门，缺失/disabled 仅提示。health command 必须走子进程，不跨目录 import/spec；该入口用 `shutil.which` / `env python3` 找解释器，禁 `sys.executable`。
+- **组件检查**：manifest、health、requires 与 `import vtx` 实际解析路径；enabled 组件失败才作 FAIL 门，缺失/disabled 仅提示。health command 必须走子进程，不跨目录 import/spec；该入口用 `shutil.which` / `env python3` 找解释器，禁 `sys.executable`。vt 直接启动的 Python 初始化/健康探针以 `PYTHONIOENCODING=utf-8` 启动，双流严格 UTF-8 解码并统一换行；非法字节判失败，不猜编码或有损替换。
 - **模板检查**：包完好、uses、挂载链接及内核 SKILL 索引新鲜度；doctor JSON 保留 `skills` 键与既有子字段，数据来自 templates。
 - **写操作区分**：init 的 `--fix` 安装缺失基础依赖；doctor 的 `--fix` 修复三检内可自动修复的链接/注册表；`--fix-links` 重建挂载。不得混用；预演和实际操作见 [安装指南](guides/installation.md)。
 
@@ -191,7 +191,7 @@ hello-app 示范自包含 app；hello-plugin 示范装/未装/禁用分支、缓
 
 包名 `framivra`，console scripts 为 `vtx` / `vt`。clone 可直接用仓根 vt.py 和 `python3 -m vtx`，pip 提供全局命令与稳定 import；两路径必须同码同义。
 
-wheel 包含 `vtx` / `vtx.pluginlib`、仓级 vt 模块、schema/preview 与官方插件声明资源；setup 从唯一 registry 源复制声明，sdist 带重建所需源。**apps/plugins/templates 执行代码、仓级 scripts/docs 不属于 wheel 承诺**；打包边界以 pyproject/setup/MANIFEST 为准。
+wheel 包含 `vtx` 内核及其职责子包、仓级 vt 模块、schema/preview 与官方插件声明资源；setup 从唯一 registry 源复制声明，sdist 带重建所需源。**apps/plugins/templates 执行代码、仓级 scripts/docs 不属于 wheel 承诺**；打包边界以 pyproject/setup/MANIFEST 为准。
 
 组件命令直达 `apps/` / `plugins/`，仓级维护命令直达 scripts 职责目录；不提供根部组件别名或旧命令转发壳。技能 live 挂载与链接修复独立于组件别名；安装器保留仓内相对链接解包及 Windows 文件/目录物化。外部工作区和挂载必须逐件实查，仓内测试不能证明外部源件存在或链接有效，缺失/待办不得核销为完成。外部三载体的未结项与本机复验状态以 [已知问题④](reference/known-issues.md#external-installation-evidence) 为准。
 

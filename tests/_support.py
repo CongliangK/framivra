@@ -87,7 +87,7 @@ class OwnedInitCheckout:
                    "raise SystemExit(_owned_init_child())",
                    str(self.repo), str(self.log)]
         return subprocess.run(command, cwd=cwd or self.repo, env=self.env,
-                              capture_output=True, text=True, timeout=90)
+                              capture_output=True, text=True, encoding="utf-8", timeout=90)
 
     def requests(self):
         return json.loads(self.log.read_text(encoding="utf-8"))["requests"]
@@ -101,7 +101,7 @@ def _owned_init_child():
     root, log = map(Path, sys.argv[1:3])
     allowed = [[sys.executable, str(root / name), "--help"] for name in
                ("vtx/vtx.py", "apps/blender-bridge/audit_bundle.py")]
-    record = {"requests": [], "help_commands": []}
+    record = {"requests": [], "help_commands": [], "help_results": []}
 
     def guard(event, args):
         # Popen may use posix_spawn internally; both audit events must satisfy
@@ -127,10 +127,15 @@ def _owned_init_child():
         if command not in allowed:
             raise AssertionError("init fixture blocked command: " + repr(command))
         record["help_commands"].append(command)
-        return subprocess.run(command, capture_output=True, text=True, timeout=30)
+        kwargs.setdefault("timeout", 30)
+        result = python_probe(command, **kwargs)
+        record["help_results"].append({"stdout": result.stdout, "stderr": result.stderr,
+                                       "returncode": result.returncode})
+        return result
 
     with mock.patch.object(urllib.request, "urlopen", side_effect=no_request):
         import vt
+        python_probe = vt._python_probe
         # These tests own JSON/cwd/request-order contracts, not dependency
         # availability. Only the two copied Python --help programs really run.
         with mock.patch.object(vt, "find_binary", side_effect=lambda names:
@@ -139,7 +144,8 @@ def _owned_init_child():
              mock.patch.object(vt, "tool_version", return_value="fixture:ffmpeg version"), \
              mock.patch.object(vt, "ffmpeg_encoders", return_value=""), \
              mock.patch.object(vt, "py3", return_value=sys.executable), \
-             mock.patch.object(vt, "sh", side_effect=help_only):
+             mock.patch.object(vt, "sh", side_effect=AssertionError("init fixture blocked native command")), \
+             mock.patch.object(vt, "_python_probe", side_effect=help_only):
             sys.argv[:] = [str(root / "vt.py"), "init", "--json"]
             try:
                 return vt.main()

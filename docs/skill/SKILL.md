@@ -9,7 +9,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 
 ## 架构与组件入口
 
-内核 `vtx/` 永不可关；`apps/` / `plugins/` 提供可卸载组件，`templates/` 承载工作流与开发范本。分层判据与协议见 [ARCHITECTURE](../ARCHITECTURE.md#0-判据与四层架构)，仓库布局见 [README](../../README.md#四层架构一页)，各组件职责见 [三层路由](../../README.md#三层路由)，安装态与键面清单见 [组件目录](../catalog.md)。
+内核 `vtx/` 永不可关；`apps/` / `plugins/` 提供可卸载组件，`templates/` 承载工作流与开发范本。分层判据与协议见 [ARCHITECTURE](../ARCHITECTURE.md#0-判据与四层架构)，仓库布局见 [README](../../README.md#目录导航)，各组件职责见 [三层路由](../../README.md#三层路由)，安装态与键面清单见 [组件目录](../catalog.md)。
 
 ## 迭代回路速查
 

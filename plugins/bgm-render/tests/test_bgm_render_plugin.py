@@ -21,6 +21,8 @@
     降级 DIRL 清单签名）；marker 完好但产物残缺（缺文件/空文件）自愈覆盖重渲
     （错轨名不触发白渲）；gc 键级回收陈旧 render_digest 目录（在用保活、实删后
     重跑零渲染）；config bgm.cli 指向不存在/不可执行路径落下一通道不裸崩。
+  ⑩ CLI 机器 stdout 严格 UTF-8：有效 Unicode 路径/换行无损；非法成功输出
+    不写完整标记、不记 probe memo；非零退出保 stderr 优先与安全替换诊断。
 
 伪 bgm CLI：bash 桩（show structure 打 duration；render 用 ffmpeg sine 产
 mix_master/mix_premaster.wav + tracks.txt 每轨的 stems/<轨>.bus.wav（48k f32，
@@ -62,6 +64,12 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ['FAKE_LOG'], 'a', encoding='utf-8') as log:
     log.write(' '.join(args) + '\n')
+reply_file = Path(__file__).with_name('fake_reply.json')
+if reply_file.is_file():
+    reply = json.loads(reply_file.read_text(encoding='utf-8'))
+    sys.stdout.buffer.write(bytes.fromhex(reply['stdout']))
+    sys.stderr.buffer.write(bytes.fromhex(reply['stderr']))
+    sys.exit(reply['returncode'])
 command = args[0]
 project = Path(args[-1] if command == 'show' else args[1])
 duration_file = project.parent / 'duration.txt'
@@ -248,6 +256,122 @@ class PrepareSource(_Base):
         out = _bgm.prepare_source(c, "bgm_main")
         self.assertFalse(out.exists())
         self.assertEqual(self._calls(), [])
+
+
+class MachineOutputProtocol(_Base):
+    """Controlled raw CLI bytes; no external music_tools or audio rendering."""
+
+    def _reply(self, stdout, stderr=b"", returncode=0):
+        (self.root / "fake_reply.json").write_text(json.dumps({
+            "stdout": stdout.hex(), "stderr": stderr.hex(), "returncode": returncode,
+        }), encoding="utf-8")
+
+    def test_render_unicode_paths_round_trip(self):
+        c = self._ctx(True)
+        directory = self.root / "音乐 é 🎵"
+        result = {"master": str(directory / "母带�.wav"),
+                  "premaster": str(directory / "母前.wav"), "duration_s": 4.0}
+        stdout = ("渲染日志\r" + json.dumps(result, ensure_ascii=False, indent=2)
+                  .replace("\n", "\r") + "\r").encode("utf-8")
+        self._reply(stdout, stderr=b"non-machine diagnostic: \xff")
+        shared, actual = _bgm._ensure_shared_render(c, "bgm_main")
+        self.assertEqual(actual, result)
+        self.assertEqual(_bgm._read_complete(shared / _bgm._COMPLETE), result)
+        for output in ("master", "premaster"):
+            path, error = _bgm._resolve_render_wav(shared, actual, output, "bgm_main")
+            self.assertIsNone(error)
+            self.assertEqual(path, Path(result[output]))
+        self.assertEqual(_bgm._ensure_shared_render(c, "bgm_main"), (shared, result))
+        self.assertEqual(self._render_calls(), 1)
+
+    def test_show_utf8_json_preserves_newlines_and_memo(self):
+        for newline in ("\n", "\r\n", "\r"):
+            with self.subTest(newline=repr(newline)):
+                c = self._ctx(True)
+                view = {"duration_s": 2.5, "project": "音乐 é 🎵"}
+                stdout = ("解析日志" + newline + json.dumps(view, ensure_ascii=False, indent=2)
+                          .replace("\n", newline) + newline).encode("utf-8")
+                self._reply(stdout, stderr=b"diagnostic: \xfe")
+                before = len(self._calls())
+                facts = _bgm.probe_source(c, "bgm_main")
+                self.assertEqual(facts["bgm_duration_s"], 2.5)
+                self.assertEqual(facts["nb_frames"], 75)
+                self.assertIs(_bgm.probe_source(c, "bgm_main"), facts)
+                self.assertEqual(len(self._calls()), before + 1)
+
+    def test_render_invalid_utf8_fails_before_completion(self):
+        c = self._ctx(True)
+        self._reply(b'{"master":"music/\xff.wav","duration_s":4}')
+        errors = io.StringIO()
+        with mock.patch.object(c, "run", side_effect=AssertionError("unexpected derivation")) as derive, \
+             contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as stopped:
+                _bgm.prepare_source(c, "bgm_main")
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertIn("输出不是有效 UTF-8", errors.getvalue())
+        shared = _bgm.render_cache_dir(c, "bgm_main")
+        self.assertFalse((shared / _bgm._COMPLETE).exists())
+        self.assertFalse((shared / (_bgm._COMPLETE + ".tmp")).exists())
+        self.assertFalse(_bgm.product_path(c, "bgm_main").exists())
+        self.assertEqual(self._render_calls(), 1, "拒收编码错误不得进入残缺产物重渲")
+        derive.assert_not_called()
+
+    def test_show_invalid_utf8_fails_before_memo(self):
+        c = self._ctx(True)
+        self._reply(b'{"duration_s":4,"project":"\xff"}')
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as stopped:
+                _bgm.probe_source(c, "bgm_main")
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertIn("输出不是有效 UTF-8", errors.getvalue())
+        self.assertNotIn("bgm_main", c._bgm_render_probe)
+        self.assertFalse((_bgm.render_cache_dir(c, "bgm_main") / _bgm._COMPLETE).exists())
+        self.assertEqual(len(self._calls()), 1)
+
+    def test_nonzero_exit_preserves_diagnostic_priority(self):
+        cases = (
+            ("stderr", b"unrelated stdout: \xff",
+             ("x" * 1600 + "失败诊断\r\n").encode("utf-8") + b"\xfe"),
+            ("stdout-fallback", ("y" * 1600 + "失败 stdout\r").encode("utf-8") + b"\xff", b""),
+            ("empty", b"", b""),
+        )
+        for consumer in ("render", "show"):
+            for name, stdout, stderr in cases:
+                with self.subTest(consumer=consumer, diagnostic=name):
+                    c = self._ctx(True)
+                    self._reply(stdout, stderr=stderr, returncode=7)
+                    errors = io.StringIO()
+                    with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+                        with self.assertRaises(SystemExit) as stopped:
+                            if consumer == "render":
+                                _bgm._ensure_shared_render(c, "bgm_main")
+                            else:
+                                _bgm.probe_source(c, "bgm_main")
+                    self.assertEqual(stopped.exception.code, 1)
+                    message = errors.getvalue()
+                    self.assertIn("exit 7", message)
+                    self.assertNotIn("输出不是有效 UTF-8", message)
+                    self.assertNotIn("输出解析失败", message)
+                    expected = (stderr or stdout).decode("utf-8", errors="replace")
+                    expected = expected.replace("\r\n", "\n").replace("\r", "\n")[-1500:]
+                    self.assertEqual(message.split("：\n", 1)[1], expected + "\n")
+                    self.assertFalse((_bgm.render_cache_dir(c, "bgm_main") / _bgm._COMPLETE).exists())
+                    self.assertNotIn("bgm_main", getattr(c, "_bgm_render_probe", {}))
+
+    def test_runtime_execution_errors_propagate(self):
+        cmd = [sys.executable, "-m", "bgm_gen"]
+        env = dict(os.environ)
+        for error in (OSError("owned launch failure"),
+                      subprocess.TimeoutExpired(cmd + ["show"], 15,
+                                                output=b"\xff", stderr=b"\xfe")):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch.object(_bgm, "bgm_cmd", return_value=(cmd, env)), \
+                     mock.patch.object(_bgm.subprocess, "run", side_effect=error) as run:
+                    with self.assertRaises(type(error)) as stopped:
+                        _bgm._run_bgm(None, ["show"], "探测")
+                self.assertIs(stopped.exception, error)
+                run.assert_called_once_with(cmd + ["show"], capture_output=True, env=env)
 
 
 class DigestIdentity(_Base):
@@ -646,7 +770,7 @@ class CliResolution(_Base):
                 with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(Path, "home", return_value=home), \
                      mock.patch.object(health, "os", platform_os), mock.patch.object(health.shutil, "which", side_effect=which), \
                      mock.patch.object(ctypes, "WinDLL", side_effect=[shell, kernel, shell, kernel], create=True), \
-                     mock.patch.object(subprocess, "run", return_value=mock.Mock(returncode=0, stdout="ok")) as run, \
+                     mock.patch.object(subprocess, "run", return_value=mock.Mock(returncode=0, stdout=b"ok")) as run, \
                      contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(health.main(), 0 if expected else 1)
                     if expected is None:
@@ -660,11 +784,77 @@ class CliResolution(_Base):
                     self.assertEqual(probe.args[0], expected + ["--help"])
                     self.assertEqual(run.call_args.args, probe.args)
                     self.assertEqual(run.call_args.kwargs["env"], probe.kwargs["env"])
+                    self.assertEqual(run.call_args.kwargs, {"capture_output": True,
+                                                            "env": probe.kwargs["env"]})
                     self.assertEqual(probe.kwargs["timeout"], 15)
+                    self.assertTrue(probe.kwargs["capture_output"])
+                    self.assertNotIn("text", probe.kwargs)
+                    self.assertNotIn("encoding", probe.kwargs)
+                    self.assertNotIn("errors", probe.kwargs)
                     expected_env = dict(env, PYTHONPATH=str(repo) + separator + env["PYTHONPATH"]) if expected[-2:] == ["-m", "bgm_gen"] else None
                     self.assertEqual(probe.kwargs["env"], expected_env)
                     self.assertEqual(dict(os.environ), env)
         kernel.LocalFree.assert_called_with(windows)
+
+    def test_health_binary_output_preserves_returncode(self):
+        """Real controlled children emit arbitrary bytes; health uses only exit status."""
+        health = importlib.import_module("plugins.bgm-render.health_check")
+        child = (
+            "import sys; "
+            "assert sys.argv[4:] == ['--help']; "
+            "sys.stdout.buffer.write(bytes.fromhex(sys.argv[2])); "
+            "sys.stderr.buffer.write(bytes.fromhex(sys.argv[3])); "
+            "sys.exit(int(sys.argv[1]))"
+        )
+        payloads = (
+            ("ascii", b"help output\n", b"help diagnostic\n"),
+            ("arbitrary-bytes", bytes(range(256)), bytes(reversed(range(256)))),
+        )
+        real_run = subprocess.run
+        for name, stdout, stderr in payloads:
+            for returncode in (0, 7):
+                with self.subTest(payload=name, returncode=returncode):
+                    cmd = [sys.executable, "-c", child, str(returncode),
+                           stdout.hex(), stderr.hex()]
+                    env = dict(os.environ)
+                    completed = []
+                    def run_child(*args, **kwargs):
+                        result = real_run(*args, **kwargs)
+                        completed.append(result)
+                        return result
+                    output = io.StringIO()
+                    with mock.patch.object(health, "bgm_cmd", return_value=(cmd, env)), \
+                         mock.patch.object(health.subprocess, "run", side_effect=run_child) as run, \
+                         contextlib.redirect_stdout(output):
+                        self.assertEqual(health.main(), 0 if returncode == 0 else 1)
+                    run.assert_called_once_with(cmd + ["--help"], capture_output=True,
+                                                timeout=15, env=env)
+                    self.assertEqual(completed[0].returncode, returncode)
+                    self.assertEqual(completed[0].stdout, stdout)
+                    self.assertEqual(completed[0].stderr, stderr)
+                    status = "OK" if returncode == 0 else "MISS"
+                    detail = "" if returncode == 0 else f"——--help 退出码 {returncode}"
+                    self.assertEqual(output.getvalue(),
+                                     f"[{status}] bgm CLI（经 {cmd[0]}）{detail}\n")
+
+    def test_health_execution_errors_remain_unhealthy(self):
+        """Keep the original OSError/15-second timeout handling, without waiting 15s."""
+        health = importlib.import_module("plugins.bgm-render.health_check")
+        cmd = [sys.executable, "-m", "bgm_gen"]
+        env = dict(os.environ)
+        for error in (OSError("owned launch failure"),
+                      subprocess.TimeoutExpired(cmd + ["--help"], 15,
+                                                output=b"\xff", stderr=b"\xfe")):
+            with self.subTest(error=type(error).__name__):
+                output = io.StringIO()
+                with mock.patch.object(health, "bgm_cmd", return_value=(cmd, env)), \
+                     mock.patch.object(health.subprocess, "run", side_effect=error) as run, \
+                     contextlib.redirect_stdout(output):
+                    self.assertEqual(health.main(), 1)
+                run.assert_called_once_with(cmd + ["--help"], capture_output=True,
+                                            timeout=15, env=env)
+                self.assertEqual(output.getvalue(),
+                                 f"[MISS] bgm CLI（{cmd[0]}）不可执行：{error}\n")
 
 
 class ValidateHook(_Base):
