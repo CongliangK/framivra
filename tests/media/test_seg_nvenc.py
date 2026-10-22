@@ -68,10 +68,33 @@ class _SignaledRLock:
         self.lock.release()
 
 
+def _isolate_mock_nvenc_environment(test):
+    # Only dry/fake-probe fixtures opt out; restore inherited CPU-only guards
+    # even if a later setUp step or the test body raises.
+    environment = mock.patch.dict(os.environ, {}, clear=False)
+    environment.start()
+    test.addCleanup(environment.stop)
+    for name in ('VTX_NO_NVENC', 'VTX_SEG_NVENC'):
+        os.environ.pop(name, None)
+
+
 class TestSegEncoderKind(unittest.TestCase):
     def setUp(self):
+        _isolate_mock_nvenc_environment(self)
         reset_nvenc_budget()
         reset_nvenc_ok_memo()   # 类内 dry 短路判定不得被前序用例的 memo 污染
+
+    def test_mock_environment_restores_inherited_cpu_guards(self):
+        with mock.patch.dict(os.environ, {'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0'}):
+            before = dict(os.environ)
+            probe = unittest.TestCase()
+            try:
+                _isolate_mock_nvenc_environment(probe)
+                self.assertNotIn('VTX_NO_NVENC', os.environ)
+                self.assertNotIn('VTX_SEG_NVENC', os.environ)
+            finally:
+                probe.doCleanups()
+            self.assertTrue(dict(os.environ) == before, 'fixture did not restore inherited environment')
 
     def test_default_is_nvenc(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -104,6 +127,7 @@ class TestNvencOkMemo(unittest.TestCase):
     不 memo，每次都探。"""
 
     def setUp(self):
+        _isolate_mock_nvenc_environment(self)
         reset_nvenc_ok_memo()
 
     def _ctx_with_probe(self, fail):
