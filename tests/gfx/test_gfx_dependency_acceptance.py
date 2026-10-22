@@ -344,8 +344,10 @@ class AcceptanceContracts(unittest.TestCase):
 
     def test_real_cli_runtime_failure_wrap_keeps_attempt_cause_and_failed_receipt(self):
         from tests.runners.run_gfx_dependency_acceptance import worker
+        from tests.gfx._environment import bind_environment
         from vtx import cli,gfx_render
         from vtx.gfx_dependencies import RequestPolicy
+        bind_environment(self)  # The renderer is fake; host browser identity is not under test.
         def reject(*args,**kwargs):
             policy=RequestPolicy(kwargs['dependency_record'])
             policy.violation=DependencyError('controlled mock runtime denial')
@@ -353,10 +355,16 @@ class AcceptanceContracts(unittest.TestCase):
         trace_path=self.root/'actual-runtime.json'
         with patch.object(cli,'budget_gate'),patch.object(gfx_render,'available',return_value=True), \
                 patch.object(cli,'find_chrome',return_value='mock-chrome'), \
-                patch.object(gfx_render,'render_page',side_effect=reject):
+                patch.object(gfx_render,'render_page',side_effect=reject) as renderer:
             with self.assertRaises(SystemExit):worker(self.c.tl_path,trace_path)
+        self.assertEqual(renderer.call_count,len(self.tl['video_tracks'][0]['clips']))
+        self.assertEqual({call.args[0] for call in renderer.call_args_list},
+                         {self.project/clip['src'] for clip in self.tl['video_tracks'][0]['clips']})
         tr=json.loads(trace_path.read_text())
         self.assertTrue(tr['propagated_production_failure'])
+        self.assertEqual([(f['reason'], f['resource']) for f in tr['production_failures']],
+                         [('strict runtime request rejected',
+                           str(DependencyError('controlled mock runtime denial')))] * renderer.call_count)
         self.assertEqual(tr['terminal_exception_type'],'SystemExit')
         receipt=json.loads((self.project/'out/receipt.json').read_text())
         check_native_events(trace_path.with_suffix('.events.jsonl'),tr,timeline=self.c.tl_path,

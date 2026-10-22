@@ -150,6 +150,11 @@ class TestAudioDigestStreaming(unittest.TestCase):
     def _measurement():
         return SimpleNamespace(returncode=0, stderr='I: -14.0 LUFS\nPeak: -3.0 dBFS\n')
 
+    def _run_normalization(self, command, **kwargs):
+        if '-c:a' in command:
+            shutil.copyfile(self.source, command[-1])
+        return self._measurement()
+
     @contextmanager
     def _bounded_reads(self, fail_when=None):
         original_open = Path.open
@@ -223,12 +228,7 @@ class TestAudioDigestStreaming(unittest.TestCase):
         self.assertEqual(receipt.read_bytes(), before)
 
     def test_normalize_hashes_source_and_candidate_without_receipt_writes(self):
-        def run(command, **kwargs):
-            if '-c:a' in command:
-                shutil.copyfile(self.source, command[-1])
-            return self._measurement()
-
-        with self._bounded_reads() as reads, mock.patch.object(stages.subprocess, 'run', run), \
+        with self._bounded_reads() as reads, mock.patch.object(stages.subprocess, 'run', self._run_normalization), \
                 redirect_stdout(io.StringIO()):
             result = normalize_project_audio(self.root)
         self.assertEqual(result['sha256'], self.expected)
@@ -246,13 +246,8 @@ class TestAudioDigestStreaming(unittest.TestCase):
         self.c.receipt.assert_not_called()
         original = self.source.read_bytes()
 
-        def run(command, **kwargs):
-            if '-c:a' in command:
-                shutil.copyfile(self.source, command[-1])
-            return self._measurement()
-
         with self._bounded_reads(lambda path, reads: path != self.source), \
-                mock.patch.object(stages.subprocess, 'run', run), redirect_stdout(io.StringIO()), \
+                mock.patch.object(stages.subprocess, 'run', self._run_normalization), redirect_stdout(io.StringIO()), \
                 self.assertRaisesRegex(OSError, 'injected read failure'):
             normalize_project_audio(self.root)
         self.assertEqual(self.source.read_bytes(), original)
