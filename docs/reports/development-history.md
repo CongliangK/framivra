@@ -90,3 +90,11 @@ c5a完整历史前缀到f22的反例在149与153两版、各两次独立运行�
 #103复审两次杀掉宿主桌面会话。scope启动未setsid，与systemd用户管理器同组；r2b把缺隔离的变异代码in-process执行，组级SIGKILL击中宿主。真实缺陷包括伪造pgid=0及未拒自身/祖先组；工作树/证据未损坏，不把事故归为无关环境抖动。[原始时间线和责任复盘](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/%E7%BA%A2%E9%98%9FPoC%E6%8E%80%E7%BF%BB%E6%A1%8C%E9%9D%A2%E4%BC%9A%E8%AF%9D%E4%BA%8B%E6%95%85-2026-10-15.md)保留取证。
 
 安全结论：kill/killpg/信号类动态实验**禁止in-process直跑**，须在 `start_new_session=True` 隔离子进程内；变异演示按必然突破被测防护看待。当次复审改用静态分析、安全测试及既有隔离证据。报告时谱系白名单防线在途，DSH harness统一setsid经用户裁决仅记backlog、**未实施**；本页不推断后续部署状态或授权改安全设置。
+
+## Mac 原生验证 #303（2026-10-22）
+
+在集成后的源码 `98d14621d6e962040b6c7996732ee0cbe269596b`（tree `061c8b7de5364ce56b5374f1ce27a2000c356903`）上，Darwin/arm64 CDP 四帧验收、CDP 合成单双分段全链与缓存回归通过；CEF 锁定 worker 的同输入全链和 strict QC 也通过。两片均为 1080p30、360 帧、12 秒，整数 PTS 连续；解码 PCM SHA 相同。CEF receipt 和日志绑定 Alpha a0/Mode N 原生渲染且无回落。此前候选树 `84dbf2d` 的 Alpha 模块 28 项测试（其中 `NativeProduction` 8 项）通过；集成 main 上另重跑受影响的 `test_full_pipeline_fixture`。该计数不把 mock/合同项算作原生项，也不把此前候选全模块结果冒充为集成 main 全模块重跑。
+
+两后端的 HTML 局部编辑复用、字幕重建、预览隔离、缺源失败闭口及恢复、损坏 WAV 恢复和 strict QC 均有分开证据。缺源失败保留空 stages 的原始失败回执，exit 1 且 final SHA 未变；输入恢复后 all 与 strict QC 退出 0。坏 WAV 恢复为原始 SHA，输入、音频输出及 final SHA 保持不变。媒体测量见机器索引；关键帧中 Canvas 字体栅格/宽度存在可见后端差异，**未声称跨后端像素相等**。字幕/叠层关键帧已抽查，完整正常速度视听及人工听审 **UNRUN**。
+
+获准的 `.zprofile` PATH 修复后，三种 zsh 启动模式、实际 Python 子进程和离线 doctor 均选中 FFmpeg/ffprobe 9.0.2；旧 Homebrew FFmpeg 8 损坏项保留且未改。正式 standard preflight 因锁要求 8.1.3 而 **BLOCKED**；Mac SVG 模板因缺既有 Inkscape、锁定字体和 `jsonschema` **BLOCKED**。Linux `/proc` 专属 CEF 矩阵未在 Mac 运行，Darwin `fstxn` 仍为 `legacy`；CI 也不是本机验证范围。故本任务整体 **PARTIAL**，Issue #303 仍开放，Mac 合成验收不等于正式发行通过。[机器摘要与脱敏证据哈希索引](mac-native-303-evidence.json)给出逐项状态和本地证据相对路径；大日志与预览留在任务证据目录。
