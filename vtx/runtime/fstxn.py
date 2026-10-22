@@ -69,7 +69,7 @@ _WRITE_DIR_FD_APIS = (os.open, os.mkdir, os.stat, os.unlink, os.rename)
 
 
 def _cleanup_error(path, reason):
-    from ..infra import ProjectPathError
+    from ..pipeline.infra import ProjectPathError
     return ProjectPathError(f"拒绝清理 {path}：{reason}")
 
 
@@ -231,7 +231,7 @@ def _thread_lock_for(path: Path) -> threading.Lock:
 
 
 def _write_error(path, reason):
-    from ..infra import ProjectPathError
+    from ..pipeline.infra import ProjectPathError
     return ProjectPathError(f"拒绝写入 {path}（issue #23/#59）：{reason}")
 
 
@@ -256,7 +256,7 @@ def _write_target(path, *, root=None):
                 raise _write_error(p, '符号链接或路径逃逸项目根')
         return parent / p.name
     except (OSError, RuntimeError, ValueError) as error:
-        from ..infra import ProjectPathError
+        from ..pipeline.infra import ProjectPathError
         if isinstance(error, ProjectPathError):
             raise
         raise _write_error(path, f'非法路径（{error}）') from error
@@ -393,7 +393,7 @@ def _legacy_flock_for(path: Path):
     """降级平台的锁守卫（原 main 行为）：锁文件经 ensure_inside_project 判定
     后常规创建/打开。延迟导入防模块期环（infra 顶层已 import fstxn）。"""
     path.parent.mkdir(parents=True, exist_ok=True)   # 锁文件须目录先在
-    from ..infra import ensure_inside_project
+    from ..pipeline.infra import ensure_inside_project
     ensure_inside_project(path.parent / (path.name + ".lock"), path.parent,
                           what="事务锁文件")
     with open(path.parent / (path.name + ".lock"), "a+b") as lf:

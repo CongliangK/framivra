@@ -8,16 +8,16 @@ timeline 契约权威定义互指（三处需同步修改，2026-09-10 定）：
 import json, math, re, subprocess, sys, wave
 from pathlib import Path
 
-from .cache.hygiene import (audio_key, manifest_record, rotate_history, versions_check,
+from ..cache.hygiene import (audio_key, manifest_record, rotate_history, versions_check,
                      versions_record)
 from .infra import Ctx, run_parallel
-from .runtime.diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
+from ..runtime.diagnostics import (emit, key_path, subtitle_location, required_field, indexed,
                           source_structure, mark_handled, operation)
-from .runtime import fstxn
-from .cache import recovery
-from .media.audio_filters import event_chain
-from .pluginlib import hooks as _plugin_hooks
-from .pluginlib import registry as _plugin_registry
+from ..runtime import fstxn
+from ..cache import recovery
+from ..media.audio_filters import event_chain
+from ..pluginlib import hooks as _plugin_hooks
+from ..pluginlib import registry as _plugin_registry
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 收拢）----
 TARGET_LUFS = -14.0      # 项目目标响度（EBU R128，与 qc.py 同一权威值）
@@ -149,7 +149,7 @@ def validate(c: Ctx):
     def clip_fade(cl, cp, tr, tp):
         if native(cp, lambda: observe("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)) > field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur')]):
             err(f"fade 总长超过片段: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_fade', {'value': observed.get("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
-    from .cache.cache_state import validate_cache_dependencies
+    from ..cache.cache_state import validate_cache_dependencies
     try:
         validate_cache_dependencies(c)
     except (ValueError, OSError) as error:
@@ -207,7 +207,7 @@ def validate(c: Ctx):
                 # Negative starts deliberately short-circuit before observing dur.
                 if field(cl, 'dst_in', cp) >= 0:
                     clip_fade(cl, cp, tr, tp)
-                from .render import gfx_svg
+                from ..render import gfx_svg
                 if gfx_svg.is_svg(cl):
                     try:
                         gfx_svg.resolve(c, cl)
@@ -464,7 +464,7 @@ def audit(c: Ctx):
            "indicators": lines}
     # 体积体检（2026-09-11 治理升级）：cache/out 占用与 tmp 孤儿常驻审计报告——
     # 体积异常从人眼发现变体检常驻项
-    from .cache.hygiene import df as _df, tmp_orphans
+    from ..cache.hygiene import df as _df, tmp_orphans
     vol = _df(c, quiet=True)
     rep["volume"] = {"cache_bytes": vol["cache"], "out_bytes": vol["out"],
                      "total_bytes": vol["total"],
@@ -495,9 +495,9 @@ def source_audio_extraction(c: Ctx, sid: str):
     命令，不入 run_parallel 任务表；降噪是瓶颈本身，串行可接受）。
     """
     wav = c.cache / "audio" / f"{audio_key(c, sid)}.wav"
-    from .cache.recovery import media_cache_valid
+    from ..cache.recovery import media_cache_valid
     if media_cache_valid(wav):
-        from .runtime.events import cache_hit
+        from ..runtime.events import cache_hit
         cache_hit(c, "media_cache_valid")
         return wav, None
     p = _plugin_hooks.run_prepare_source(c, sid)

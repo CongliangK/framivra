@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from vtx.composite import RenderPlan, _graph_code_digest, segment_content_key
+from vtx.pipeline.composite import RenderPlan, _graph_code_digest, segment_content_key
 
 
 class SharedIdentity(unittest.TestCase):
@@ -40,7 +40,7 @@ class SharedIdentity(unittest.TestCase):
         self.assertNotEqual(key([a]), key([a[:-1] + (32,)]))
 
     def test_identity_helper_input_mutations_are_visible(self):
-        from vtx.composite import pass_content_key
+        from vtx.pipeline.composite import pass_content_key
         base = ('upstream', {'dur': 90}, 0, 0, None, None)
         original = pass_content_key('previous', 0, base, 'graph')
         variants = [('other', 0, base, 'graph'), ('previous', 1, base, 'graph'),

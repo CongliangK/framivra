@@ -35,7 +35,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
 from vtx import _stage_receipt_name        # __init__ 再导出（v2 §1.4）
-from vtx.cli import _pipeline_enabled
+from vtx.cli.commands import _pipeline_enabled
 
 
 class TestStageReceiptName(unittest.TestCase):
@@ -127,7 +127,7 @@ class TestReceiptConcurrentLock(unittest.TestCase):
     """
 
     def test_8_threads_no_lost_receipts(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             assets = _synth_assets(root)
@@ -345,7 +345,7 @@ class TestAllFinishSurvivesQcFailure(unittest.TestCase):
 
     def _run_main(self, tl_path, qc_ok=True, linear=False, argv=None):
         """伪阶段全链跑 cli.main()，返回 (exit_code, finish_calls, stdout, receipt)。"""
-        import vtx.cli as cli_mod
+        import vtx.cli.commands as cli_mod
         import vtx.pluginlib.hooks as pl_hooks
         calls = []
 

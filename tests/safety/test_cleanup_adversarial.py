@@ -120,7 +120,7 @@ with p.open("a+b") as f:
                     fstxn.atomic_write(f, json.dumps(snapshot))
                 # A 恢复提交后，B 正常事务追加阶段；两阶段均保留而非后写覆盖。
                 b = subprocess.run([sys.executable, "-c",
-                    "from vtx.infra import Ctx; from pathlib import Path; "
+                    "from vtx.pipeline.infra import Ctx; from pathlib import Path; "
                     "import sys; Ctx(Path(sys.argv[1])).receipt('sB', True)", str(c.tl_path)],
                     cwd=REPO, env=self.env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(b.returncode, 0, b.stdout + b.stderr)

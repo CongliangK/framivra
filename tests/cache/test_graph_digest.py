@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from vtx.composite import _graph_code_digest, _normalized_ast_src
+from vtx.pipeline.composite import _graph_code_digest, _normalized_ast_src
 
 
 SRC = '''\
@@ -74,7 +74,7 @@ class TestNormalizedAst(unittest.TestCase):
         """五个合成函数是类方法（带缩进）：真实 _graph_code_digest 不得退化为
         原始字节哈希（空转形态的端到端断言）。"""
         import inspect
-        from vtx import composite as vc
+        from vtx.pipeline import composite as vc
         raw = "".join(inspect.getsource(getattr(vc.RenderPlan, n))
                       for n in vc._SYNTH_FUNCS)
         import hashlib

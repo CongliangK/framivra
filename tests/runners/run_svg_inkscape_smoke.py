@@ -15,10 +15,10 @@ from xml.sax.saxutils import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from vtx.render import gfx_svg
-from vtx.cli import _gfx
+from vtx.cli.commands import _gfx
 from vtx.render.frame_source import png_source
 from vtx.render.gfx_cache_reader import resolve_frames
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 
 
 def main():

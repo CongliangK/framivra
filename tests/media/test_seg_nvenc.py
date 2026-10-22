@@ -461,7 +461,7 @@ class TestNvencBudget(unittest.TestCase):
 
     def test_segment_executor_matches_actual_grant_and_x264_bypasses(self):
         import tempfile
-        from vtx import composite
+        from vtx.pipeline import composite
         for encoder, configured, tier, expected in (('NVENC p7', 8, 1, 1),
                 ('NVENC p7', 2, 8, 2), ('NVENC p7', 8, 2, 2), ('x264', 1, 1, 4)):
             with self.subTest(encoder=encoder, tier=tier), tempfile.TemporaryDirectory() as temp:
@@ -529,7 +529,7 @@ class TestPrepareProducerDedup(unittest.TestCase):
 
     def setUp(self):
         import tempfile
-        from vtx import composite
+        from vtx.pipeline import composite
         self.composite = composite
         temporary = tempfile.TemporaryDirectory(prefix='vtx-seg-producers-')
         self.addCleanup(temporary.cleanup)
@@ -679,7 +679,7 @@ class TestPrepareProducerDedup(unittest.TestCase):
     def test_dry_run_prints_one_producer_without_media_or_receipt(self):
         import contextlib
         import io
-        from vtx import infra
+        from vtx.pipeline import infra
         self.c.dry = True
         output = io.StringIO()
         with mock.patch.object(self.composite, 'run_parallel', infra.run_parallel), \
@@ -694,7 +694,7 @@ class TestPrepareProducerDedup(unittest.TestCase):
     def test_producer_failure_blocks_all_dependants_without_extra_retries(self):
         import contextlib
         import io
-        from vtx import infra
+        from vtx.pipeline import infra
         for workers in (1, 3):
             with self.subTest(workers=workers):
                 self.c.verify_inputs.reset_mock()
@@ -723,7 +723,7 @@ class TestPrepareProducerDedup(unittest.TestCase):
     def test_unique_producer_cancellation_is_not_retried_or_swallowed(self):
         import contextlib
         import io
-        from vtx import infra
+        from vtx.pipeline import infra
         with mock.patch.object(self.composite, 'run_parallel', infra.run_parallel), \
                 mock.patch.object(infra, 'run_ffmpeg_task', side_effect=KeyboardInterrupt) as encode, \
                 contextlib.redirect_stdout(io.StringIO()), \

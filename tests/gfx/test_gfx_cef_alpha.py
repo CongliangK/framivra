@@ -23,12 +23,12 @@ import unittest
 from unittest import mock
 
 from vtx.render import cef_client
-from vtx import cli
+from vtx.cli import commands as cli
 from vtx.render import gfx_backend, gfx_cef
 from vtx.cache import hygiene
 from vtx.cache.cache_state import receipt_fingerprint
-from vtx.composite import RenderPlan
-from vtx.infra import Ctx
+from vtx.pipeline.composite import RenderPlan
+from vtx.pipeline.infra import Ctx
 from tests.gfx.test_cef_frame_sync import decode_png_rgba
 from tests.gfx._png import write_png
 from vtx.render.frame_source import PngSequence, png_source

@@ -10,8 +10,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from vtx.cache import cache_state
-from vtx import stages
-from vtx.infra import Ctx
+from vtx.pipeline import stages
+from vtx.pipeline.infra import Ctx
 from vtx.agent_diagnostics import main
 from vtx.runtime.diagnostics import mark_handled
 

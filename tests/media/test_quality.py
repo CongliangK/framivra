@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from vtx.runtime.quality import classify, qc_quality, receipt_quality
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 
 
 class Quality(unittest.TestCase):

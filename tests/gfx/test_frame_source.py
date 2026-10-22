@@ -17,7 +17,7 @@ from unittest import mock
 from tests._support import temporary_root
 from tests.gfx._png import write_png
 
-from vtx import composite
+from vtx.pipeline import composite
 from vtx.render import frame_source
 from vtx.render.frame_source import PngSequence, png_source
 
@@ -417,7 +417,7 @@ class TestGeneratedPngConsumerIntegration(unittest.TestCase):
     """CPU consumer coverage; generated PNGs deliberately need no browser."""
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
     def test_effects_through_single_graph_and_segment_passes(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         with tempfile.TemporaryDirectory(prefix='png_effect_passes_') as td:
             root = Path(td)
             timeline = root / 'timeline.json'
@@ -472,7 +472,7 @@ class TestGeneratedPngConsumerIntegration(unittest.TestCase):
         import sys
         import math
         import wave
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         repo = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory(prefix='framesource_cli_') as td:
             root = Path(td)

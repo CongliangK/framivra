@@ -41,7 +41,7 @@ from plugins import denoise as dn            # noqa: E402（repo 根锚定后导
 from vtx.cache import hygiene                      # noqa: E402
 from vtx.cache import recovery                     # noqa: E402
 from vtx.cache.cache_state import receipt_fingerprint   # noqa: E402
-from vtx.infra import Ctx                    # noqa: E402
+from vtx.pipeline.infra import Ctx                    # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks  # noqa: E402
 
 
@@ -275,7 +275,7 @@ class StagesWiring(unittest.TestCase):
     vtx prepare/audio --dry-run 的 -i 路径即插件产物）。"""
 
     def test_extraction_and_graph_read_plugin_product(self):
-        from vtx.stages import _audio_graph, source_audio_extraction
+        from vtx.pipeline.stages import _audio_graph, source_audio_extraction
         from vtx.api import audio_key
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

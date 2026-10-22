@@ -21,8 +21,8 @@ except ImportError:   # 非 POSIX 平台无跨进程 flock
     fcntl = None
 
 from vtx.cache import recovery
-from vtx import stages
-from vtx.infra import Ctx, run_ffmpeg_task
+from vtx.pipeline import stages
+from vtx.pipeline.infra import Ctx, run_ffmpeg_task
 
 
 def wav(path, samples=480):
@@ -59,7 +59,7 @@ tl_path.write_text(json.dumps({'project': {'fps': 30, 'width': 64,
                                'sources': [], 'video_tracks': [],
                                'audio_tracks': [], 'subtitles': []}))
 from vtx.cache import recovery
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 c = Ctx(tl_path)
 cmd = ['ffmpeg', '-y', str(target)]
 
@@ -140,7 +140,7 @@ class MediaRecovery(unittest.TestCase):
 
         # Preview segments use the same certificate/frame obligation, not a
         # container header that can survive an interrupted encoder.
-        from vtx import range as ranges
+        from vtx.pipeline import range as ranges
 
         class StopAfterCacheCheck(Exception):
             pass
@@ -434,7 +434,7 @@ class MediaRecovery(unittest.TestCase):
         def invalid(argv, **kwargs):
             Path(argv[-1]).write_bytes(b'half WAV')
             return subprocess.CompletedProcess(argv, -9, '', 'owned worker killed')
-        with mock.patch('vtx.infra.subprocess.run', invalid), \
+        with mock.patch('vtx.pipeline.infra.subprocess.run', invalid), \
                 contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 stages.prepare(self.c)
@@ -445,11 +445,11 @@ class MediaRecovery(unittest.TestCase):
         self.assertFalse(out.exists())
         def encode(argv, **kwargs):
             return self.encode(argv)
-        with mock.patch('vtx.infra.subprocess.run', encode):
+        with mock.patch('vtx.pipeline.infra.subprocess.run', encode):
             stages.prepare(self.c)
         rec = json.loads((self.c.out / 'receipt.json').read_text())
         self.assertTrue(rec['stages']['prepare']['ok'])
-        with mock.patch('vtx.infra.subprocess.run', side_effect=AssertionError('warm extraction')):
+        with mock.patch('vtx.pipeline.infra.subprocess.run', side_effect=AssertionError('warm extraction')):
             stages.prepare(self.c)
 
     def test_marker_write_failure_does_not_certify_bad_media(self):
@@ -547,7 +547,7 @@ class MediaRecovery(unittest.TestCase):
         before = sorted(self.root.rglob('*'))
         self.assertIsNone(recovery.atomic_media(self.c, self.target, producer,
                                                before_commit=producer, after_commit=producer))
-        with mock.patch('vtx.infra.subprocess.run', side_effect=AssertionError('dry executable')):
+        with mock.patch('vtx.pipeline.infra.subprocess.run', side_effect=AssertionError('dry executable')):
             self.c.run(['ffmpeg.exe', '-y', str(self.target)],
                        before_commit=producer, after_commit=producer)
             run_ffmpeg_task(self.c, 'dry exe', ['ffmpeg.exe', '-y', str(self.target)])
@@ -555,7 +555,7 @@ class MediaRecovery(unittest.TestCase):
         self.c.dry = False
         with self.assertRaises(ValueError):
             recovery.atomic_media(self.c, self.target.with_suffix('.png'), producer)
-        from vtx.infra import ProjectPathError
+        from vtx.pipeline.infra import ProjectPathError
         with self.assertRaises(ProjectPathError):
             recovery.atomic_media(self.c, self.root.parent / 'outside.wav', producer)
         producer.assert_not_called()
@@ -675,7 +675,7 @@ class MediaRecovery(unittest.TestCase):
                 errors.append(error)
 
         with mock.patch('subprocess.Popen', side_effect=AssertionError('no external process')), \
-                mock.patch('vtx.infra.subprocess.run', execute), \
+                mock.patch('vtx.pipeline.infra.subprocess.run', execute), \
                 mock.patch.object(recovery, '_inspect', inspect), \
                 mock.patch.object(recovery.fstxn, '_thread_lock_for', lock), \
                 mock.patch.object(stages, 'versions_record', record):
@@ -741,7 +741,7 @@ class RealFFmpegRecovery(unittest.TestCase):
         return [result.stdout[i:i + stride] for i in range(0, len(result.stdout), stride)]
 
     def test_prepare_duplicate_consumers_cold_warm_frames_and_markers(self):
-        from vtx import composite, infra
+        from vtx.pipeline import composite, infra
         with tempfile.TemporaryDirectory(prefix='vtx-seg-dedup-') as directory, \
                 mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
             c = self._seg_context(Path(directory))
@@ -795,7 +795,7 @@ class RealFFmpegRecovery(unittest.TestCase):
             self.assertEqual(self._decoded_rgb_frames(reference), rendered)
 
     def test_prepare_different_source_trim_and_alpha_stay_separate(self):
-        from vtx import composite, infra
+        from vtx.pipeline import composite, infra
         with tempfile.TemporaryDirectory(prefix='vtx-seg-variants-') as directory, \
                 mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
             c = self._seg_context(Path(directory), variants=True)
@@ -814,7 +814,7 @@ class RealFFmpegRecovery(unittest.TestCase):
                                 self._decoded_rgb_frames(layers[-2]['seg']))
 
     def test_prepare_failed_unique_encoder_blocks_consumers_and_can_retry(self):
-        from vtx import composite, infra
+        from vtx.pipeline import composite, infra
         with tempfile.TemporaryDirectory(prefix='vtx-seg-failure-') as directory, \
                 mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
             c = self._seg_context(Path(directory))
@@ -841,7 +841,7 @@ class RealFFmpegRecovery(unittest.TestCase):
                 self.assertEqual(retry.call_count, 1)
 
     def test_prepare_rejects_source_change_before_unique_producer_commit(self):
-        from vtx import composite, infra
+        from vtx.pipeline import composite, infra
         with tempfile.TemporaryDirectory(prefix='vtx-seg-source-change-') as directory, \
                 mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
             c = self._seg_context(Path(directory))
@@ -863,7 +863,7 @@ class RealFFmpegRecovery(unittest.TestCase):
             self.assertFalse(json.loads((c.out / 'receipt.json').read_text())['stages'].get('video', {}).get('ok', False))
 
     def test_prepare_marker_failure_still_propagates_without_success_receipt(self):
-        from vtx import composite, infra
+        from vtx.pipeline import composite, infra
         with tempfile.TemporaryDirectory(prefix='vtx-seg-marker-failure-') as directory, \
                 mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
             c = self._seg_context(Path(directory))
@@ -891,7 +891,7 @@ class RealFFmpegRecovery(unittest.TestCase):
                 self.assertEqual(retry.call_count, 1)
 
     def test_prepare_verified_short_source_semantics_are_unchanged(self):
-        from vtx import composite, infra
+        from vtx.pipeline import composite, infra
         with tempfile.TemporaryDirectory(prefix='vtx-seg-short-') as directory, \
                 mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}):
             c = self._seg_context(Path(directory), frames=18)
@@ -921,7 +921,7 @@ class RealFFmpegRecovery(unittest.TestCase):
             shutil.copyfile(target, sibling)
             sibling_bytes = sibling.read_bytes()
             old = target.read_bytes()
-            worker = '''import json,subprocess,sys\nfrom pathlib import Path\nfrom vtx.infra import Ctx\nc=Ctx(Path(sys.argv[1]))\noriginal=subprocess.run\ndef run(cmd,**kw):\n if cmd[0]=='ffmpeg':\n  p=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)\n  print('OWNED_FFMPEG_PID='+str(p.pid),flush=True)\n  out,err=p.communicate()\n  return subprocess.CompletedProcess(cmd,p.returncode,out.decode(),err.decode())\n return original(cmd,**kw)\nsubprocess.run=run\nc.run(['ffmpeg','-v','error','-y','-re','-f','lavfi','-i','color=blue:s=64x48:r=30:d=30','-c:v','libx264','-preset','ultrafast','-tune','zerolatency','-g','1','-flush_packets','1','-movflags','frag_keyframe+empty_moov',sys.argv[2]])\n'''
+            worker = '''import json,subprocess,sys\nfrom pathlib import Path\nfrom vtx.pipeline.infra import Ctx\nc=Ctx(Path(sys.argv[1]))\noriginal=subprocess.run\ndef run(cmd,**kw):\n if cmd[0]=='ffmpeg':\n  p=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)\n  print('OWNED_FFMPEG_PID='+str(p.pid),flush=True)\n  out,err=p.communicate()\n  return subprocess.CompletedProcess(cmd,p.returncode,out.decode(),err.decode())\n return original(cmd,**kw)\nsubprocess.run=run\nc.run(['ffmpeg','-v','error','-y','-re','-f','lavfi','-i','color=blue:s=64x48:r=30:d=30','-c:v','libx264','-preset','ultrafast','-tune','zerolatency','-g','1','-flush_packets','1','-movflags','frag_keyframe+empty_moov',sys.argv[2]])\n'''
             proc = subprocess.Popen([sys.executable, '-c', worker, str(c.tl_path), str(target)],
                                     cwd=Path(__file__).resolve().parents[2],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,

@@ -92,9 +92,9 @@ def main():
     """One invocation, including input-load and finish failures."""
     import sys
 
-    from .cli import _main
+    from .cli.commands import _main
     from .runtime import events
-    from .infra import ProjectPathError
+    from .pipeline.infra import ProjectPathError
 
     if sys.platform == 'win32':
         # All three entry points share this path. Redirected Windows streams

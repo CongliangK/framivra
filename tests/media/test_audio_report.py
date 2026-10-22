@@ -330,7 +330,7 @@ class TestMeasurePrimitives(unittest.TestCase):
     @unittest.skipUnless(FF, 'FFmpeg required')
     def _assert_short_event_report_and_pipeline_samples_match(self):
         from unittest.mock import patch
-        from vtx import stages
+        from vtx.pipeline import stages
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'source.wav'
@@ -515,7 +515,7 @@ class TestSharedEventFilters(unittest.TestCase):
     """Render and diagnostic stems must consume the same event-local transform."""
 
     def test_canonical_primitive_and_exact_event_boundaries(self):
-        from vtx import stages
+        from vtx.pipeline import stages
         from vtx.media.audio_filters import event_chain
         self.assertIs(ar.event_chain, event_chain)
         self.assertIs(stages.event_chain, event_chain)
@@ -536,7 +536,7 @@ class TestSharedEventFilters(unittest.TestCase):
 
     def test_main_and_report_graphs_share_fades_and_window_offsets(self):
         from unittest.mock import patch
-        from vtx import stages
+        from vtx.pipeline import stages
         e = {'src': 'a', 'in': 5, 'out': 15, 'volume': 1,
              'fade_out_frames': 20}
         tracks = [{'name': 'voice', 'events': [e]}]
@@ -574,7 +574,7 @@ class TestSharedEventFilters(unittest.TestCase):
 
     def test_consumers_keep_distinct_missing_volume_policy(self):
         from unittest.mock import patch
-        from vtx import stages
+        from vtx.pipeline import stages
         event = {'src': 'a', 'in': 0, 'out': 10}
         tracks = [{'name': 'voice', 'events': [event]}]
         c = _event_context(); c.tl = {'audio_tracks': tracks}

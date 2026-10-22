@@ -28,7 +28,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx.composite import SEG_CUT_GUARD, choose_cutpoints
+from vtx.pipeline.composite import SEG_CUT_GUARD, choose_cutpoints
 from vtx.inspection.timeline_diff import DiffCtx, _clip_seg_key, _edges, diff_timelines, is_timeline
 
 VTX = REPO / "vtx" / "vtx.py"

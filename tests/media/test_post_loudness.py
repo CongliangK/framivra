@@ -29,8 +29,8 @@ import io
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx import stages
-from vtx.stages import (TARGET_LUFS, mix_audio_wav, normalize_project_audio)
+from vtx.pipeline import stages
+from vtx.pipeline.stages import (TARGET_LUFS, mix_audio_wav, normalize_project_audio)
 
 FFMPEG = os.environ.get('VTX_TEST_FFMPEG') or shutil.which('ffmpeg')
 OUTPUT = None
@@ -272,7 +272,7 @@ class TestBuildAudioValidation(unittest.TestCase):
         self._mk_ctx()
 
     def _mk_ctx(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         self.c = Ctx(self.tl)
         self.c.cache.mkdir(parents=True, exist_ok=True)
         self.c.out.mkdir(parents=True, exist_ok=True)

@@ -93,19 +93,19 @@ from pathlib import Path
 
 # v2 §1.4 包化：模块内全部相对导入（外部一律 from vtx import / import vtx.xxx；
 # sys.path 锚定由 vtx/vtx.py 薄启动器或 python3 -m vtx / pip 安装保证）。
-from . import main, _stage_receipt_name
-from .composite import build_video, prepare_layers
-from .media.encoders import find_chrome
-from .render import gfx_cli
-from .cache import hygiene
-from .runtime import fstxn, events
-from .cache.hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
+from .. import main, _stage_receipt_name
+from ..pipeline.composite import build_video, prepare_layers
+from ..media.encoders import find_chrome
+from ..render import gfx_cli
+from ..cache import hygiene
+from ..runtime import fstxn, events
+from ..cache.hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
                       manifest_record, snapshot)
-from .infra import (Ctx, ProjectPathError, ensure_inside_project,
+from ..pipeline.infra import (Ctx, ProjectPathError, ensure_inside_project,
                     run_wave)
-from .inspection.qc import qc
-from .stages import audit, build_audio, mux, prepare, validate
-from .media.subs import run_subs
+from ..inspection.qc import qc
+from ..pipeline.stages import audit, build_audio, mux, prepare, validate
+from ..media.subs import run_subs
 
 
 # ---------------------------------------------------------------- gfx
@@ -189,33 +189,33 @@ def gfx(c: Ctx):
 
 def _gfx(c: Ctx):
     budget_gate(c, "gfx")
-    from .render import gfx_svg
+    from ..render import gfx_svg
     if gfx_svg.route(c) == "svg-sequence":
-        from .render.gfx_svg_stage import render_stage
+        from ..render.gfx_svg_stage import render_stage
         return render_stage(c)
     # issue #103：gfx 阶段开工前清扫上次崩溃残留的监管 Worker 孤儿组（只杀
     # 账本核验过、宿主已死的组；并行 vtx 进程的活动组由账本 host 字段跳过）。
     # dry 零写态纪律：dry 跳过（reap 有目录移除动作）。
     if not c.dry:
-        from .runtime.proc_supervisor import reap_orphan_workers
+        from ..runtime.proc_supervisor import reap_orphan_workers
         reap_orphan_workers(c)
     # issue #103：实验命名空间（VTX_GFX_CACHE_NS）——整阶段取一次：gfx_dir 路由
     # 与 complete.json 的 backend_ns 元数据同源；非法值在此显式失败（不静默落
     # 正式缓存破坏隔离）。
     backend_ns = gfx_cache_ns()
-    from .render.gfx_dependencies import policy, resolve, digest, DependencyError
+    from ..render.gfx_dependencies import policy, resolve, digest, DependencyError
     strict = policy(c) == 'strict'
     dependency_records = {}
     total = 0
     engine_notes = []          # 每页渲染引擎与耗时（receipt 用）
-    from .render.gfx_backend import selected
+    from ..render.gfx_backend import selected
     backend = selected()
     if strict and backend in ("cef", "electron"):
         raise DependencyError("strict dependencies require CDP; Electron/CEF/CLI unsupported")
     if backend == "electron":
-        from .render.gfx_electron_stage import render_stage
+        from ..render.gfx_electron_stage import render_stage
         return render_stage(c, _split_page)
-    from .render.gfx_environment import certificate
+    from ..render.gfx_environment import certificate
     environment = certificate(c) if any(t.get('kind') == 'gfx' and t.get('clips')
                                          for t in c.tl['video_tracks']) else None
     mixed_pages = set()
@@ -223,7 +223,7 @@ def _gfx(c: Ctx):
     cdp_mod = None
     if use_cdp:
         try:
-            from .render import gfx_render as cdp_mod
+            from ..render import gfx_render as cdp_mod
             if not cdp_mod.available():
                 cdp_mod = None
         except Exception as e:
@@ -328,7 +328,7 @@ def _gfx(c: Ctx):
         cid, key, cl, n, d, html, frames, observation = job
         st = None
         if backend == "cef":
-            from .render.gfx_cef import render_page
+            from ..render.gfx_cef import render_page
             rendered_via = render_page(html, d, n, ctx=c, width=c.w, height=c.h)
             gfx_cli.complete_page(d, n, key, c.w, c.h,
                                   verify_inputs=lambda: c.verify_inputs("gfx"),
@@ -719,7 +719,7 @@ def _preview_command(c, a):
             c.align_threshold = a.align_threshold
             run_subs(c, a.subs_extra)  # check/render 的 dry 分支是纯读
         else:
-            from .media.subs import _parse_points
+            from ..media.subs import _parse_points
             for frame, _ in _parse_points(a.subs_extra[1:], c):
                 print(f"[dry-run] subs preview → {c.out / f'subs_preview_f{frame}.png'}")
         return
@@ -899,7 +899,7 @@ def _main(execution=None):
             if len(a.subs_extra) != 1:
                 print("Usage: diff --capture-impact <timeline.json> [--json NEW_PATH]")
                 sys.exit(2)
-            from .inspection.timeline_diff import run_impact_capture
+            from ..inspection.timeline_diff import run_impact_capture
             sys.exit(run_impact_capture(a.subs_extra[0], a.json, a.dry_run))
         if len(a.subs_extra) != 2:
             print("✗ 用法：diff <旧报告.json> <新报告.json>"
@@ -907,8 +907,8 @@ def _main(execution=None):
         # 时间线语义 diff（方案五阶段2）：两参均为 timeline JSON（含 project+video_tracks
         # 特征键）时自动走 timeline_diff；否则维持报告对比（diffcmd）——一个 diff 入口，
         # 按输入特征分流，最小惊讶。坏 JSON / 类型不一致（timeline 混报告）给分类文案。
-        from .inspection.diffcmd import run_diff
-        from .inspection.timeline_diff import is_timeline
+        from ..inspection.diffcmd import run_diff
+        from ..inspection.timeline_diff import is_timeline
         ja, jb = a.subs_extra
         try:
             da = json.loads(Path(ja).read_text(encoding="utf-8"))
@@ -918,13 +918,13 @@ def _main(execution=None):
             sys.exit(2)
         if (isinstance(da, dict) and
                 str(da.get("schema", "")).startswith("framivra-impact-snapshot-")):
-            from .inspection.timeline_diff import run_snapshot_diff
+            from ..inspection.timeline_diff import run_snapshot_diff
             sys.exit(run_snapshot_diff(da, jb, a.json, a.dry_run))
         tl_a, tl_b = is_timeline(da), is_timeline(db)
         if tl_a and tl_b:
             if a.json and a.dry_run:
                 print("✗ --json 落盘与 --dry-run 冲突（diff 为纯读命令，dry 下不写文件）"); sys.exit(2)
-            from .inspection.timeline_diff import run_timeline_diff
+            from ..inspection.timeline_diff import run_timeline_diff
             sys.exit(run_timeline_diff(ja, jb, json_path=a.json, dry=a.dry_run))
         if tl_a != tl_b:
             print(f"✗ 两参类型不一致（{ja if tl_a else jb} 是 timeline，"
@@ -938,7 +938,7 @@ def _main(execution=None):
     if not policy.dry and a.command not in ("df", "clean", "gc", "snapshot", "diff"):
         role = ("all_until_mux" if a.command == "all" and a.until == "mux" else
                 "qc_strict" if a.command == "qc" and a.strict else None)
-        from .runtime.execution_links import open_response
+        from ..runtime.execution_links import open_response
         stream, request = open_response(tp, role)
         if stream is not None:
             execution.activate(stream, request)
@@ -961,7 +961,7 @@ def _main(execution=None):
     c.keep_versions = a.keep_versions if a.keep_versions is not None else 2
     # 区间渲染（方案五阶段1）：解析窗口帧区间；独立命名空间路径，绕过 receipt 依赖门
     if range_flags:
-        from .range import parse_timespec, window_from_clip, window_from_track
+        from ..pipeline.range import parse_timespec, window_from_clip, window_from_track
         try:
             if a.range:
                 fa, fb = parse_timespec(a.range[0], c.fps), parse_timespec(a.range[1], c.fps)
@@ -1041,13 +1041,13 @@ def _main(execution=None):
     # 区间渲染分发（在常规阶段编排之前短路）：不进 receipt 依赖门、不写回执——
     # 预览渲染对正式产物链（out/、receipt、manifest、VERSIONS）零干扰
     if getattr(c, "range_window", None):
-        from .range import run_range
+        from ..pipeline.range import run_range
         run_range(c, *c.range_window)
         return
     # 音频纯报告分发（方案五阶段3，区间渲染同款短路）：只读已有产物，不进依赖门、
     # 不做 receipt——报告对正式产物链零干扰（写 out/audio_report.json 一个报告件）
     if a.report_only:
-        from .media.audio_report import run_report
+        from ..media.audio_report import run_report
         sys.exit(run_report(c, json_path=a.json))
     if a.command == "all":
         todo = STAGES
@@ -1080,7 +1080,7 @@ def _main(execution=None):
             # audio --report：混音阶段（含依赖门/receipt）完成后附加一等报告（方案五阶段3）；
             # 报告判 FAIL 时以报告退出码覆盖（阶段本身成功，但报告是本次运行的结论）
             if name == "audio" and a.report:
-                from .media.audio_report import run_report
+                from ..media.audio_report import run_report
                 rc = run_report(c, json_path=a.json)
                 if rc: sys.exit(rc)
     # 缝 D（协议 v1.2，P6）：`vtx all` 全链（mux/qc 完成后）触发插件 finish 收尾钩子
@@ -1092,7 +1092,7 @@ def _main(execution=None):
     finish_failed = False
     if (a.command == "all" and a.until in (None, "qc")
             and not c.draft and not c.dry):
-        from .pluginlib import hooks as _plugin_hooks
+        from ..pluginlib import hooks as _plugin_hooks
         with events.task(c, "finish", kind="stage").scope() as observation:
             _finish_errs = _plugin_hooks.run_finish(c)
             if _finish_errs:

@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx.range import (parse_timespec, range_label, window_from_clip,
+from vtx.pipeline.range import (parse_timespec, range_label, window_from_clip,
                         window_from_track, select_segments)
 
 
@@ -221,7 +221,7 @@ class TestRangeIntegration(unittest.TestCase):
     含音轨、帧数精确、不写 out/ 与 receipt。"""
 
     def test_range_render(self):
-        from vtx.range import run_range  # noqa: F401  （经 CLI 子进程实跑，见下）
+        from vtx.pipeline.range import run_range  # noqa: F401  （经 CLI 子进程实跑，见下）
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             assets = root / "assets"; assets.mkdir()

@@ -120,7 +120,7 @@ class DependencyContracts(unittest.TestCase):
         self.assertEqual(responses, [])
 
     def test_no_strict_cli_downgrade(self):
-        from vtx import cli
+        from vtx.cli import commands as cli
         self.strict()
         self.c.dry = True
         with patch.object(cli, 'budget_gate'), patch.dict(os.environ, {'VTX_GFX':'cli'}):
@@ -140,8 +140,8 @@ class DependencyContracts(unittest.TestCase):
         self.assertFalse((out / gfx_cli.COMPLETE_FILE).exists())
 
     def test_cdp_crash_never_calls_cli(self):
-        from vtx import cli
-        from vtx.infra import Ctx
+        from vtx.cli import commands as cli
+        from vtx.pipeline.infra import Ctx
         self.strict()
         self.tl.update(version=2, sources=[], subtitles=[], audio_tracks=[])
         self.tl['project'].update(fps=30, width=1, height=1, duration_frames=2)
@@ -466,10 +466,10 @@ class IntegratedDependencyOperations(unittest.TestCase):
         self.assertEqual(diagnostics[0]['json_path'], '$.video_tracks[0].clips[0].src')
 
     def test_strict_cdp_failure_preserves_failed_attempt_task_and_original_exception(self):
-        from vtx import cli
+        from vtx.cli import commands as cli
         from vtx.runtime import events
         from vtx.render import gfx_cli, gfx_render
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         from tests.execution.test_execution_events import Buffer
         self.write('page.html', '<p>plain</p>')
         self.tl.update(version=2, subtitles=[], audio_tracks=[])
@@ -501,7 +501,7 @@ class IntegratedDependencyOperations(unittest.TestCase):
         self.assertEqual(list(self.root.rglob(gfx_cli.COMPLETE_FILE)), [])
 
     def test_actual_context_offline_missing_and_invalid_declarations(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         self.tl.update(version=2, subtitles=[], audio_tracks=[])
         for mode in ('legacy', 'strict'):
             for case in ('missing', 'bad-syntax', 'missing-declaration', 'bad-declaration'):

@@ -233,7 +233,7 @@ def prepare_font_observation(tab, call, owned_target):
 
 def worker(timeline, trace_path, injection=None, stage="gfx"):
     """Observe actual production calls; never fabricate a Fetch result or pixels."""
-    from vtx import cli
+    from vtx.cli import commands as cli
     from vtx.render import gfx_render, gfx_cli
     from vtx.runtime import events
     from vtx.render import gfx_dependencies
@@ -531,7 +531,7 @@ def main():
         return content.decode(errors='replace')
     try:
         from PIL import Image
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         from vtx.render.gfx_dependencies import resolve
         from vtx.cache.hygiene import gfx_dir, gc_plan
         from vtx.inspection.impact import capture, compare

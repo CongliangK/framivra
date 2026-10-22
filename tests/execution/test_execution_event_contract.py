@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from vtx.runtime import events
-from vtx.infra import run_parallel, run_wave
+from vtx.pipeline.infra import run_parallel, run_wave
 from tests.execution.test_execution_events import Buffer, fixture
 
 
@@ -203,7 +203,7 @@ class ContractTests(unittest.TestCase):
                     if wave:
                         run_wave(c, [('one', lambda: (_ for _ in ()).throw(FileNotFoundError('SECRET')))])
                     else:
-                        with patch('vtx.infra.subprocess.run', side_effect=FileNotFoundError('SECRET')):
+                        with patch('vtx.pipeline.infra.subprocess.run', side_effect=FileNotFoundError('SECRET')):
                             run_parallel(c, [('one', ['missing'])], 'fixture')
                 except BaseException as error:
                     execution.finish(events.exit_code(error), error)

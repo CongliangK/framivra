@@ -2,7 +2,7 @@
 """run_gfx_electron_worker.py — gfx_electron_worker 的 vtx 宿主驱动（issue #112 ELEC-01）。
 
 职责（issue #112「接入 vtx/runtime/proc_supervisor.py」工单项的 Python 侧）：
-  1. 以 vtx.infra.Ctx 锚定项目 cache/，用 vtx.runtime.proc_supervisor.SupervisedProcessGroup
+  1. 以 vtx.pipeline.infra.Ctx 锚定项目 cache/，用 vtx.runtime.proc_supervisor.SupervisedProcessGroup
      拉起 Electron 宿主（backend_id="gfx_elec" → 运行目录 cache/tmp/<UTC>-gfx_elec-*/，
      userData 即其中的 profile/，与工单「app.setPath('userData', cache/tmp/<UTC>-gfx_elec/)」
      同一落点族）；
@@ -34,7 +34,7 @@ REPO_ROOT = EXP_DIR.parents[1]
 sys.path.insert(0, str(REPO_ROOT))   # vtx 包导入（驱动可从任意 cwd 运行）
 
 from vtx.inspection import env_manifest                                   # noqa: E402
-from vtx.infra import Ctx                                       # noqa: E402
+from vtx.pipeline.infra import Ctx                                       # noqa: E402
 from vtx.runtime.proc_supervisor import SupervisedProcessGroup          # noqa: E402
 
 DEFAULT_TIMELINE = REPO_ROOT / "templates" / "skill-demo" / "timeline.json"

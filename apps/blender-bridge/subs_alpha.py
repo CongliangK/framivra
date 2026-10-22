@@ -11,7 +11,7 @@ import json, subprocess, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from vtx.infra import filter_filename
+from vtx.pipeline.infra import filter_filename
 
 # 保留 timeline 符号链接所在项目的根，不跳到链接目标项目的 cache。
 tl_path = Path(sys.argv[1]).absolute()

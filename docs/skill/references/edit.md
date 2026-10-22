@@ -189,11 +189,11 @@ validate 是机制硬门，audit 是内容体检；报告在 `out/audit_report.j
 
 轨内子混音补齐全长 → duck → 保留相对比例的总混音 → 两遍静态增益 → limiter → 定长裁切；out/audio.wav 为归一+限幅终态，直接进入 mux，无额外 post_loudness 步骤。响度目标、终链参数及 FAIL/WARN 分级唯一见 [ARCHITECTURE §1.2](../../ARCHITECTURE.md#12-响度终链)。不要换成单遍 dynamic loudnorm；验收还须测 AAC 编码后解码真峰，WAV 通过不代表成片通过。
 
-`duck:true` 由 `duck_by` 指定的轨触发（默认 voice），`duck_params` 可覆盖压缩参数；新项目启用或改变 duck 必做开/关 A/B 及无口播窗口复听，不能据整片 LUFS 掩盖局部抬升。参数与历史故障见 [混音实现](../../../vtx/stages.py) 和 [开发记录](../../reports/development-history.md)。正式 BGM 的分轨审计、用户独听和重跑纪律见 [组件交付门](../../../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)。
+`duck:true` 由 `duck_by` 指定的轨触发（默认 voice），`duck_params` 可覆盖压缩参数；新项目启用或改变 duck 必做开/关 A/B 及无口播窗口复听，不能据整片 LUFS 掩盖局部抬升。参数与历史故障见 [混音实现](../../../vtx/pipeline/stages.py) 和 [开发记录](../../reports/development-history.md)。正式 BGM 的分轨审计、用户独听和重跑纪律见 [组件交付门](../../../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)。
 
 ### 既有 WAV 维护
 
-`scripts/audio/normalize_project_audio.py` 独立归一已有项目 `out/audio.wav`，不是 timeline 重渲，也不是正式链的追加步骤。参数为 `project`（默认当前目录）、`--target`、`--ffmpeg`，输出 JSON；源码函数为 `vtx.stages.normalize_project_audio`。只读查看：
+`scripts/audio/normalize_project_audio.py` 独立归一已有项目 `out/audio.wav`，不是 timeline 重渲，也不是正式链的追加步骤。参数为 `project`（默认当前目录）、`--target`、`--ffmpeg`，输出 JSON；源码函数为 `vtx.pipeline.stages.normalize_project_audio`。只读查看：
 
 ```bash
 env python3 scripts/audio/normalize_project_audio.py --help

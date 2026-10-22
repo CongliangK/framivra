@@ -273,7 +273,7 @@ class WindowsCliEncoding(unittest.TestCase):
                 'width': 640, 'height': 360, 'duration_frames': 30},
                 'sources': [], 'video_tracks': [], 'subtitles': [], 'audio_tracks': []}), encoding='utf-8')
             entries = [[str(repo / 'vtx/vtx.py')], ['-m', 'vtx'],
-                       ['-c', 'from vtx.cli import main; main()']]
+                       ['-c', 'from vtx.cli.commands import main; main()']]
             for entry in entries:
                 result = subprocess.run([sys.executable, *entry, '-t', str(timeline), 'validate'],
                     cwd=repo, env=dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='gbk'),

@@ -14,8 +14,8 @@ import unittest
 from unittest import mock
 from tests.qc._support import _FakeContext, _run_qc
 from vtx.inspection import qc
-from vtx import stages
-from vtx.infra import Ctx
+from vtx.pipeline import stages
+from vtx.pipeline.infra import Ctx
 
 REPO = Path(__file__).resolve().parents[2]
 

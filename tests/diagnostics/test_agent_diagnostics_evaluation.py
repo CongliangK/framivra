@@ -12,7 +12,7 @@ from unittest.mock import patch
 from tests.diagnostics._support import StageFixture
 from tests.qc._support import _FakeContext
 from vtx.inspection import qc
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 
 
 class EvaluationOrder(StageFixture, unittest.TestCase):

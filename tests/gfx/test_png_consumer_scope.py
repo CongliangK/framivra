@@ -13,10 +13,10 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 from unittest import mock
 
-from vtx import composite
+from vtx.pipeline import composite
 from vtx.render import frame_source, gfx_svg
 from vtx.render.frame_source import PngSequence, png_source, png_consumer_scope
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from tests._support import temporary_root
 from tests.gfx._png import write_png
 

@@ -6,7 +6,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 
 
 class ProbeObservation(unittest.TestCase):

@@ -37,10 +37,10 @@ ASR 只负责产出字幕素材，消费与烧录由内核 `subtitles_src` 定�
 
 | 职责 | 实现 home（均在 `vtx/`） | 边界 |
 |---|---|---|
-| 输入与时间线 | `timeline.schema.json`、`constraints.py`、`infra.Ctx`、`stages.validate`、`preview.html` | schema 是结构权威，validate 是执行校验权威，preview 是预览权威；只读预览不替代 validate，低分辨率测试上下文不等于正式项目规格 |
-| 时间线操作 | `inspection/diffcmd.py`、`inspection/timeline_diff.py`、`inspection/impact.py`、`media/subs.py`、`range.py` | diff/snapshot/subs/区间预览辅助迭代；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
+| 输入与时间线 | `timeline.schema.json`、`pipeline/constraints.py`、`pipeline/infra.Ctx`、`pipeline/stages.validate`、`preview.html` | schema 是结构权威，validate 是执行校验权威，preview 是预览权威；只读预览不替代 validate，低分辨率测试上下文不等于正式项目规格 |
+| 时间线操作 | `inspection/diffcmd.py`、`inspection/timeline_diff.py`、`inspection/impact.py`、`media/subs.py`、`pipeline/range.py` | diff/snapshot/subs/区间预览辅助迭代；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
 | 图形 | `render/gfx_backend.py`、`render/gfx_render.py`、`render/gfx_cli.py`、`render/gfx_cef.py`、`render/gfx_electron*.py`、`render/gfx_svg*.py`、`render/frame_source.py` | HTML 默认 CDP，支持显式 CLI、需 native worker 的 Alpha CEF、可选 Electron 复现；SVG 序列独立处理 Inkscape/字体/完成证书；FrameSource 是帧消费抽象，不是第二渲染后端 |
-| 音视频 | `stages.py`、`media/audio_filters.py`、`composite.py`、`media/encoders.py`、`inspection/qc.py`、`media/subtitles_src.py` | prepare 抽取源音频，audio 混音终链，video 分段合成/字幕烧录，mux 探测 libfdk_aac 并回落、原子封装与记录 VERSIONS/history，qc 判定产物 |
+| 音视频 | `pipeline/stages.py`、`media/audio_filters.py`、`pipeline/composite.py`、`media/encoders.py`、`inspection/qc.py`、`media/subtitles_src.py` | prepare 抽取源音频，audio 混音终链，video 分段合成/字幕烧录，mux 探测 libfdk_aac 并回落、原子封装与记录 VERSIONS/history，qc 判定产物 |
 | 身份与恢复 | `cache/cache_state.py`、`cache/hygiene.py`、`runtime/fstxn.py`、`cache/recovery.py`、`media/loudness_cache.py` | 内容键、回执依赖、原子写、完成标记与跨进程锁共同决定复用；不是全源文件防篡改证明 |
 | 扩展 | `pluginlib/`、`api.py` | 前者负责发现/加载/钩子，后者是组件复用的稳定内核 API |
 | 诊断与证据 | `runtime/diagnostics.py`、`runtime/events.py`、`runtime/execution_links.py`、`inspection/acceptance.py` | 事件不绕过校验；离线 verify 不执行包内命令，完整性不等于验收通过或生产者真实性 |
@@ -72,7 +72,7 @@ HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺�
 
 ### 1.4 导入与 API
 
-内核用包内相对导入，外部用 `from vtx import ...` / `import vtx.xxx`，插件经 `vtx.api` 复用 `audio_key`、`resolve_source_wav`、`plugin_code_digest`、`cfg_get` 等稳定能力，不捅内部实现。`vtx/vtx.py` 源码启动器先移出自身目录、锚定仓根，再调用 `vtx.cli.main`，避免同名自遮蔽。
+内核用包内相对导入，外部用 `from vtx import ...` / `import vtx.xxx`，插件经 `vtx.api` 复用 `audio_key`、`resolve_source_wav`、`plugin_code_digest`、`cfg_get` 等稳定能力，不捅内部实现。`vtx/vtx.py` 源码启动器先移出自身目录、锚定仓根，再调用 `vtx.cli.commands.main`，避免同名自遮蔽。
 
 **运行时管线、tests 与 apps 禁止注入 repo/vtx，禁止 `spec_from_file_location`**；平铺/包导入混用会产生双模块实例、拆裂回执与锁身份。apps 内部不强制包化。组件目录锚定自身文件；Blender audit_bundle 的 vtx 定位顺序是 `VTX_VTX_PY` → 向上含 `vt.py` 标记的仓根下 `vtx/vtx.py` → 技能安装路径回落。
 

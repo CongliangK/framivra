@@ -17,7 +17,7 @@ from vtx.cache.cache_state import InputIdentityError, verify_input_identity
 from vtx.render.frame_source import png_source
 from vtx.render.gfx_cache_reader import resolve_frames
 from vtx.cache.hygiene import gfx_dir, gfx_key
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from tests._support import temporary_root
 from tests.gfx._png import write_png
 
@@ -167,7 +167,7 @@ class SvgContract(unittest.TestCase):
         self.assertIn('gfxFormats.size>1',(root/'vtx/preview.html').read_text())
 
     def test_svg_fade_total_cannot_bypass_common_validation(self):
-        from vtx.stages import validate
+        from vtx.pipeline.stages import validate
         for fade_out in (1, 2):
             self.clip.update(fade_in_frames=1, fade_out_frames=fade_out)
             self.save()
@@ -387,7 +387,7 @@ class SvgContract(unittest.TestCase):
 
     def test_preview_operation_uses_scoped_svg_snapshot(self):
         from vtx.media import subs
-        from vtx import composite
+        from vtx.pipeline import composite
         from vtx.render import frame_source
         counts=[]
         for n in (2,4):
@@ -411,7 +411,7 @@ class SvgContract(unittest.TestCase):
 
     def test_preview_content_change_cannot_print_pass(self):
         from vtx.media import subs
-        from vtx import composite
+        from vtx.pipeline import composite
         c=self._publish_mock_frames(2); c.gpu=False; run,calls=self._preview_mock(c,mutate=True); output=io.StringIO()
         with mock.patch.object(c,'run',side_effect=run), \
              mock.patch.object(subs,'seg_encoder_kind',return_value='x264'), \
@@ -423,7 +423,7 @@ class SvgContract(unittest.TestCase):
 
     def test_preview_svg_cache_failure_cannot_print_pass(self):
         from vtx.media import subs
-        from vtx import composite
+        from vtx.pipeline import composite
         from vtx.render import frame_source
         for change in ('pixels','truncated','marker','missing'):
             c=self._publish_mock_frames(2); c.gpu=False; source=png_source(c,self.clip)

@@ -22,9 +22,9 @@ from unittest.mock import patch
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from vtx.composite import RenderPlan, _graph_code_digest
-from vtx.constraints import ALLOWED_FPS
-from vtx.infra import Ctx
+from vtx.pipeline.composite import RenderPlan, _graph_code_digest
+from vtx.pipeline.constraints import ALLOWED_FPS
+from vtx.pipeline.infra import Ctx
 from vtx.media.subs import _active_subs
 
 FPS = 30

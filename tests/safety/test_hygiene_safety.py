@@ -182,7 +182,7 @@ class CleanupSafety(SandboxCase):
         self.assert_outside_unchanged()
 
     # 红队对抗复审（A01 波）：以下两个用例走 CLI 面（run_vtx gc），统一清理
-    # 路径已在 vtx/cli.py _cleanup_plan 拒绝符号链接根，转为常跑回归；A04
+    # 路径已在 vtx/cli/commands.py _cleanup_plan 拒绝符号链接根，转为常跑回归；A04
     # （issue #23）落地 hygiene.snapshot 的写前校验后，直调面的三个用例同样
     # 转为常跑回归（修在 vtx/cache/hygiene.py，2026-10-13 随 A04 波合入）。
     def test_gc_symlinked_cache_root_cannot_delete_external_files(self):

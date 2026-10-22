@@ -394,7 +394,7 @@ class GfxCliEntryTests(unittest.TestCase):
     _stub = GfxCliFallbackTests._stub
 
     def context(self, n=1):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         timeline = self.tmp / "timeline.json"
         timeline.write_text(json.dumps({
             "version": 2,
@@ -490,7 +490,7 @@ class GfxCliEntryTests(unittest.TestCase):
                 self.assertIs(rec["stages"]["gfx"]["ok"], False)
 
     def test_cdp_whole_page_and_frame_fallback_fail_with_false_receipt(self):
-        from vtx import cli
+        from vtx.cli import commands as cli
         c = self.context()
         for whole_page in (True, False):
             with self.subTest(whole_page=whole_page):
@@ -508,7 +508,7 @@ class GfxCliEntryTests(unittest.TestCase):
                 self.assertIs(json.loads((c.out / "receipt.json").read_text())["stages"]["gfx"]["ok"], False)
 
     def test_cdp_split_final_gate_rejects_invalid_frames(self):
-        from vtx import cli
+        from vtx.cli import commands as cli
         c = self.context(2)
         def render(html, d, n, **kwargs):
             for i in kwargs["frames"]:

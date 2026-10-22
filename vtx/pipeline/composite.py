@@ -8,14 +8,14 @@ import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from .media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind
-from .cache.hygiene import budget_gate, manifest_record, seg_key
-from .runtime import events
+from ..media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind
+from ..cache.hygiene import budget_gate, manifest_record, seg_key
+from ..runtime import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
-from .runtime import fstxn
-from .cache.recovery import media_cache_valid
-from .render.frame_source import png_source
-from .render import frame_source, gfx_cli
+from ..runtime import fstxn
+from ..cache.recovery import media_cache_valid
+from ..render.frame_source import png_source
+from ..render import frame_source, gfx_cli
 
 # ---- 命名常量（值不变，仅命名；2026-09-10 模块化拆分收拢）----
 SEG_CUT_GUARD = 20      # 切点静默半径：±guard 帧内不得有任何层端点（多段 framesync 病灶带）

@@ -14,8 +14,8 @@ from tests._support import temporary_root
 from vtx.cache import cache_state
 from vtx.runtime import fstxn
 from vtx.cache import hygiene
-from vtx import stages
-from vtx.infra import Ctx
+from vtx.pipeline import stages
+from vtx.pipeline.infra import Ctx
 
 
 class InputIdentityGuard(unittest.TestCase):
@@ -107,7 +107,7 @@ class InputIdentityGuard(unittest.TestCase):
                             self.mutate('timeline.json')
                         return value
                     # Only change once: failure receipt must be free to commit.
-                    with mock.patch('vtx.infra.load_receipt', side_effect=load):
+                    with mock.patch('vtx.pipeline.infra.load_receipt', side_effect=load):
                         self.rejects(gate)
                 else:
                     original_load = getattr(hygiene, loader)

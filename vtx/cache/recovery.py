@@ -87,7 +87,7 @@ def media_cache_valid(path, frames=None, allow_short_verified=False):
 
 def media_output(c, cmd):
     """Recognize an owned single-file output, not arbitrary FFmpeg invocations."""
-    from ..infra import ensure_inside_project, is_ffmpeg_cmd
+    from ..pipeline.infra import ensure_inside_project, is_ffmpeg_cmd
     if not is_ffmpeg_cmd(cmd) or not hasattr(c, 'root'):
         return None
     path = Path(str(cmd[-1]))
@@ -110,7 +110,7 @@ def atomic_media(c, target, producer, *, max_frames=None,
     An after-commit error leaves published media but propagates, never success.
     Dry runs invoke no producer or callbacks and create no files, returning None.
     """
-    from ..infra import ensure_inside_project
+    from ..pipeline.infra import ensure_inside_project
     target = ensure_inside_project(Path(target), c.root, what='media output')
     if target.suffix.lower() not in FORMATS:
         raise ValueError('Unsupported media output: ' + str(target))

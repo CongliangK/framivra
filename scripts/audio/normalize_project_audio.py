@@ -13,7 +13,7 @@ from pathlib import Path
 # v2 §1.4：注入 repo 根（不再注入 repo/vtx——平铺/包双实例会让锁形同虚设）
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from vtx.stages import normalize_project_audio
+from vtx.pipeline.stages import normalize_project_audio
 
 
 def main():

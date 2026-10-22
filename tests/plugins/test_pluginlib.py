@@ -45,12 +45,12 @@ from tests._support import _make_plugin_dir
 
 from vtx.cache import hygiene
 from vtx.cache.cache_state import receipt_fingerprint
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 from vtx.pluginlib import config as pl_config
 from vtx.pluginlib import hooks as pl_hooks
 from vtx.pluginlib import manifest as pl_manifest
 from vtx.pluginlib import registry as pl_registry
-from vtx.stages import _scan_plugin_keys
+from vtx.pipeline.stages import _scan_plugin_keys
 
 
 # ---------------------------------------------------------------- manifest

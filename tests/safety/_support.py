@@ -87,7 +87,7 @@ class SandboxCase(unittest.TestCase):
         self.put(self.timeline, json.dumps(self.tl).encode())
 
     def context(self):
-        from vtx.infra import Ctx
+        from vtx.pipeline.infra import Ctx
         c = Ctx(self.timeline)
         c.gpu = False
         c.cache.mkdir(exist_ok=True)

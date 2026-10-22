@@ -31,11 +31,11 @@ sys.path hack（§1.4 双模块裂分防护）。
 import json, os, tempfile
 from pathlib import Path
 
-from .infra import Ctx
+from .pipeline.infra import Ctx
 from .cache.cache_state import DOWNSTREAM, load_receipt, media_stat_digest
 from .media.loudness_cache import lookup, measure_and_store
 from .cache.hygiene import gfx_key, gfx_dir, audio_key   # audio_key：缝 A 插件产物路径锚（§2.2），
-from .stages import load_timeline_check            # 稳定性承诺随本 API 面
+from .pipeline.stages import load_timeline_check            # 稳定性承诺随本 API 面
 from .pluginlib import config as _pl_config
 from .pluginlib.hooks import plugin_code_digest, resolve_source_wav
 from .cache.recovery import atomic_media, media_cache_valid

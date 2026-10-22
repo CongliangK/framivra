@@ -24,11 +24,11 @@ from unittest import mock
 
 from tests.gfx._png import png, chunk
 
-from vtx import cli
+from vtx.cli import commands as cli
 from vtx.render import gfx_cli, gfx_render
 from vtx.cache import hygiene
 from vtx.render import gfx_environment
-from vtx.infra import Ctx
+from vtx.pipeline.infra import Ctx
 
 
 
@@ -443,7 +443,7 @@ class LegacyCertificate(unittest.TestCase):
                     frame_source.png_source(self.c, self.clip).require_ready()
                 before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in self.legacy.iterdir()}
                 with contextlib.ExitStack() as audit:
-                    for name in ('vtx.infra.Ctx', 'vtx.render.gfx_cli.complete_page',
+                    for name in ('vtx.pipeline.infra.Ctx', 'vtx.render.gfx_cli.complete_page',
                                  'vtx.render.gfx_cef.render_page', 'vtx.render.gfx_render.render_page',
                                  'subprocess.Popen', 'vtx.runtime.fstxn.atomic_write',
                                  'vtx.runtime.fstxn.mkdir', 'vtx.runtime.fstxn.unlink', 'vtx.runtime.fstxn.locked_staging',

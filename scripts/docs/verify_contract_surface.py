@@ -8,7 +8,7 @@ a green L7 means the three surfaces agree at these exact contents,
 not that the contract is right。
 
 对账三则:
-  ① vtx/stages.py 的 KERNEL_KEYS(ast.literal_eval 提取,不 import 不执行)对照
+  ① vtx/pipeline/stages.py 的 KERNEL_KEYS(ast.literal_eval 提取,不 import 不执行)对照
      timeline.schema.json 容器键域。容器映射:
        root                    = properties
        project                 = properties.project.properties
@@ -24,7 +24,7 @@ not that the contract is right。
 
 用法:
   python3 scripts/docs/verify_contract_surface.py [--stages P] [--schema P] [--edit P] [--registry P]
-  默认 = vtx/stages.py / vtx/timeline.schema.json / docs/skill/references/edit.md /
+  默认 = vtx/pipeline/stages.py / vtx/timeline.schema.json / docs/skill/references/edit.md /
   plugins/registry.json;路径一律按仓根解析(cwd 锚仓根)。
   四覆盖参=测试缝,供 golden 免触真件。
 
@@ -186,8 +186,8 @@ def collect_properties_keys(node, acc):
 def main():
     parser = argparse.ArgumentParser(
         description="L7 三源键面对账门(KERNEL_KEYS/schema/edit.md fence/registry)")
-    parser.add_argument("--stages", default="vtx/stages.py",
-                        help="KERNEL_KEYS 来源(vtx/stages.py)")
+    parser.add_argument("--stages", default="vtx/pipeline/stages.py",
+                        help="KERNEL_KEYS 来源(vtx/pipeline/stages.py)")
     parser.add_argument("--schema", default="vtx/timeline.schema.json",
                         help="结构权威(vtx/timeline.schema.json)")
     parser.add_argument("--edit", default="docs/skill/references/edit.md",
