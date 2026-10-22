@@ -10,7 +10,7 @@
 每个矩阵格（cell）独立起一个 vtx_cef_worker（隔离会话 + 独立临时
 root_cache_path），加载 templates/skill-demo/gfxA.html?f=0 出一张
 1920x1080 PNG，并用内部探针（WEBGL_debug_renderer_info + chrome://gpu）
-记录真实生效后端；后端可归类时按 vtx/env_manifest 的不可伪造契约落
+记录真实生效后端；后端可归类时按 vtx/inspection/env_manifest 的不可伪造契约落
 env_manifest.json（runtime_gpu_info.source=cef）。
 
 证据落档（--out-dir，默认 /tmp/framivra-evidence/issue-109/matrix/）：
@@ -25,7 +25,7 @@ env_manifest.json（runtime_gpu_info.source=cef）。
       [--out-dir DIR] [--xvfb-prefix DIR] [--timeout N] [--cells a,b]
 
 独立可跑（不依赖 vtx 包可直接降级为纯矩阵记录，无 manifest）；
-默认自动把仓根加入 sys.path 以复用 vtx/env_manifest（证据一致性）。
+默认自动把仓根加入 sys.path 以复用 vtx/inspection/env_manifest（证据一致性）。
 """
 from __future__ import annotations
 
@@ -93,10 +93,10 @@ def build_cmd(cell: dict, worker: Path, xvfb_prefix: Path):
 
 
 def classify(result: dict) -> str:
-    """worker 结果 → 生效后端（vtx.env_manifest 词表）；不可得返回 ""。"""
+    """worker 结果 → 生效后端（vtx.inspection.env_manifest 词表）；不可得返回 ""。"""
     try:
         sys.path.insert(0, str(REPO_ROOT))
-        from vtx.env_manifest import classify_gl_backend
+        from vtx.inspection.env_manifest import classify_gl_backend
     except Exception:
         return ""  # 降级：纯矩阵记录
     probe = result.get("page_probe") or {}
@@ -204,7 +204,7 @@ def _gpu_features(result) -> dict:
 
 def _collect_manifest(cell: dict, result: dict, backend: str):
     try:
-        from vtx import env_manifest
+        from vtx.inspection import env_manifest
     except Exception:
         return None
     probe = result.get("page_probe") or {}

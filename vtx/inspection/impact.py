@@ -12,10 +12,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from .cache_state import file_digest, media_stat_digest
-from .composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
+from ..cache.cache_state import file_digest, media_stat_digest
+from ..composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
                         segment_content_key, pass_content_key)
-from .hygiene import audio_key, seg_key
+from ..cache.hygiene import audio_key, seg_key
 
 SCHEMA = 'framivra-impact-snapshot-v2'
 
@@ -38,7 +38,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
     tl = copy.deepcopy(timeline)
     root = Path(root).resolve()
     p = tl['project']
-    from .constraints import fps_error
+    from ..constraints import fps_error
     error = fps_error(p.get('fps'))
     if error:
         raise ValueError(error)
@@ -46,7 +46,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                         fps=int(p['fps']), w=p['width'], h=p['height'], gpu=gpu)
     sources = {s['id']: s for s in tl['sources']}
     c.src_path = lambda sid: root / sources[sid]['path']
-    from .media.subtitles_src import resolve_subtitles_src
+    from ..media.subtitles_src import resolve_subtitles_src
     resolve_subtitles_src(c)
     if getattr(c, 'subtitles_errors', []):
         raise ValueError('; '.join(c.subtitles_errors))
@@ -74,14 +74,14 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                 if not gfx and 'cache_dependencies' in clip:
                     raise ValueError('clip.cache_dependencies is only valid on gfx tracks')
                 if gfx:
-                    from .render import gfx_svg
+                    from ..render import gfx_svg
                     if gfx_svg.is_svg(clip):
                         svg_record = gfx_svg.resolve(c, clip)
                         dependencies = {str(root / path): value for path, value in svg_record['files'].items()}
                         dependency_record = {'closure': 'static-svg-explicit'}
                         inputs.update(svg_sequence=svg_record, dependencies=dependencies)
                     else:
-                        from .render.gfx_dependencies import resolve
+                        from ..render.gfx_dependencies import resolve
                         dependency_record = resolve(c, clip)
                         dependencies = {entry['path']: entry['sha256']
                                         for entry in dependency_record['dependencies']}
@@ -91,7 +91,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                         observed_files[root / clip['src']] = inputs['html']
                     for path, value in dependencies.items():
                         observed_files[Path(path)] = value
-                    from .render.frame_source import png_source
+                    from ..render.frame_source import png_source
                     source = png_source(c, clip)
                     key = source.directory.name
                     artifact = str(source.directory.relative_to(root))
@@ -169,7 +169,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
         if not draft and tracks and tracks[0].get('kind') == 'gfx':
             bottom = [L for L in layers if L[0].startswith('clip:0:')]
             add_segment_nodes(bottom, 'vseg_qc', False, 'qc:')
-    from .pluginlib.hooks import active_plugins_digest
+    from ..pluginlib.hooks import active_plugins_digest
     if active_plugins_digest(c):
         warnings.extend({'node': node, 'reason': 'active_plugin_dependencies_unmodeled'}
                         for node in nodes)

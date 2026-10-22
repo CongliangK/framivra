@@ -247,7 +247,7 @@ class TestSplitFrames(unittest.TestCase):
 
 class TestSegKey(unittest.TestCase):
     def _key(self, td, content, a=100, b=200, rewrite=True):
-        from vtx.cache_state import media_stat_digest
+        from vtx.cache.cache_state import media_stat_digest
         p = td / "m.mp4"
         if rewrite or not p.exists():
             p.write_bytes(content)

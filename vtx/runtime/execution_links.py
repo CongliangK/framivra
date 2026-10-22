@@ -232,7 +232,7 @@ def _evidence(data, request, exit_code):
 
 def retain_attempt(project, output, request, launch_status, exit_code, *, enabled=True):
     """Retain only the issued request and its selected child response."""
-    from ..acceptance import write_json
+    from ..inspection.acceptance import write_json
     index = request['command_index']
     request_path = f'artifacts/execution-requests/{index}.json'
     (Path(output) / request_path).parent.mkdir(exist_ok=True)
@@ -262,14 +262,14 @@ def not_attempted(index):
 
 
 def seal(output, export_id, rows):
-    from ..acceptance import write_json
+    from ..inspection.acceptance import write_json
     write_json(Path(output) / SIDECAR, {'schema_version': SCHEMA, 'export_id': export_id,
                                       'commands': rows})
 
 
 def verify_links(package, manifest, receipt):
     """Verify correlation after acceptance's inventory/hash checks, never execute."""
-    from ..acceptance import read_json, keys, regular
+    from ..inspection.acceptance import read_json, keys, regular
     inventory = manifest['files']
     references = [(name, row['observed_by']) for name, row in receipt.get('stages', {}).items()
                   if 'observed_by' in row]

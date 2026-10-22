@@ -520,9 +520,9 @@ class TestSubtitleReadiness(unittest.TestCase):
         import contextlib
         import io
         from tests._support import tree_sha256
-        from vtx import recovery
+        from vtx.cache import recovery
         from vtx.media import subs
-        from vtx.hygiene import seg_key
+        from vtx.cache.hygiene import seg_key
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             source = PngSequence(root, 'partial', 24, 30, 16, 16)

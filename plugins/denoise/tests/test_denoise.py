@@ -38,9 +38,9 @@ sys.path.insert(0, str(REPO))
 
 from plugins import denoise as dn            # noqa: E402（repo 根锚定后导入）
 
-from vtx import hygiene                      # noqa: E402
-from vtx import recovery                     # noqa: E402
-from vtx.cache_state import receipt_fingerprint   # noqa: E402
+from vtx.cache import hygiene                      # noqa: E402
+from vtx.cache import recovery                     # noqa: E402
+from vtx.cache.cache_state import receipt_fingerprint   # noqa: E402
 from vtx.infra import Ctx                    # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks  # noqa: E402
 

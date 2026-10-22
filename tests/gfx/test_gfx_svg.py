@@ -13,10 +13,10 @@ from unittest import mock
 
 from vtx.render import gfx_svg, gfx_svg_stage
 from vtx.runtime import fstxn
-from vtx.cache_state import InputIdentityError, verify_input_identity
+from vtx.cache.cache_state import InputIdentityError, verify_input_identity
 from vtx.render.frame_source import png_source
 from vtx.render.gfx_cache_reader import resolve_frames
-from vtx.hygiene import gfx_dir, gfx_key
+from vtx.cache.hygiene import gfx_dir, gfx_key
 from vtx.infra import Ctx
 from tests._support import temporary_root
 from tests.gfx._png import write_png
@@ -453,7 +453,7 @@ class SvgContract(unittest.TestCase):
 class LinuxSvgRuntimeDigest(unittest.TestCase):
     """Fresh ldd closure every call, shared byte facts only for runtime files."""
     def setUp(self):
-        from vtx import cache_state
+        from vtx.cache import cache_state
         from vtx.render import gfx_environment
         self.checked, self.environment = cache_state, gfx_environment
         self.root = temporary_root(self).resolve()

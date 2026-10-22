@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import call, patch
 
 from vtx.render import gfx_environment as env, gfx_cli
-from vtx import hygiene
+from vtx.cache import hygiene
 from tests._support import temporary_root
 from tests.gfx._png import png
 
@@ -86,7 +86,7 @@ class UnitEnvironmentIdentity(unittest.TestCase):
 class CheckedEnvironmentDigest(unittest.TestCase):
     """Owned file facts; no host inventory, browser or native media commands."""
     def setUp(self):
-        from vtx import cache_state
+        from vtx.cache import cache_state
         self.checked = cache_state
         self.root = temporary_root(self).resolve()
         self.path = self.root / 'library.bin'

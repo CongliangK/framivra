@@ -13,11 +13,11 @@
 import fnmatch, hashlib, itertools, json, os, re, shutil, time, stat, secrets
 from pathlib import Path
 
-from .runtime import fstxn
+from ..runtime import fstxn
 from .cache_state import InputIdentityError, verify_input_identity
-from .media.encoders import seg_encoder_kind
-from .infra import ProjectPathError, ensure_inside_project
-from .pluginlib import hooks as _plugin_hooks
+from ..media.encoders import seg_encoder_kind
+from ..infra import ProjectPathError, ensure_inside_project
+from ..pluginlib import hooks as _plugin_hooks
 
 REPORTS = "reports"          # cache/reports/：gc 永不触碰
 TMP = "tmp"                  # cache/tmp/<runid>/：一次性中间物，gc 清扫孤儿
@@ -222,10 +222,10 @@ def gfx_key(c, cl) -> str:
     图片/字体/样式/脚本）内容入键——改依赖即重渲；未声明/网络资产不追踪
     （cache-provenance.md）。项目级依赖与可选 clip.cache_dependencies 合并；片段依赖只影响声明页。
     """
-    from .render import gfx_svg
+    from ..render import gfx_svg
     if gfx_svg.is_svg(cl):
         return gfx_svg.key(c, cl)
-    from .render.gfx_dependencies import resolve, identity, read_regular_bytes
+    from ..render.gfx_dependencies import resolve, identity, read_regular_bytes
     record = resolve(c, cl)
     if record['policy'] == 'legacy' and record['legacy_key_safe']:
         # Explicit compatibility adapter: only proven resource-free inert HTML.
@@ -236,11 +236,11 @@ def gfx_key(c, cl) -> str:
             blob += b"|" + entry['path'].encode() + b"\0" + entry['sha256'].encode()
     else:
         blob = b'gfx-dependencies-v1|' + identity(record)
-    from .render.gfx_backend import identity as backend_identity
+    from ..render.gfx_backend import identity as backend_identity
     backend = backend_identity()
     if backend:
         blob += b"|backend:" + backend.encode()
-    from .render.gfx_environment import identity as environment_identity
+    from ..render.gfx_environment import identity as environment_identity
     environment = environment_identity(c)
     if environment:
         blob += b"|environment:" + environment.encode()
@@ -264,13 +264,13 @@ def gfx_cache_ns() -> str:
     命名空间本身不入 gfx_key，同一后端页面在两个 ns 下同键异目录；CEF 身份
     另入键，详见 docs/cache-provenance.md）。非法值显式 ValueError：实验配置写错
     宁可大声失败，绝不静默回落正式缓存破坏隔离。"""
-    from .render.gfx_backend import selected
+    from ..render.gfx_backend import selected
     backend = selected()  # unknown selectors fail even on a warm cache
     ns = os.environ.get("VTX_GFX_CACHE_NS", "").strip()
     if not ns and backend == "electron":
         ns = "electron_b0"
     if not ns:
-        from .render.gfx_backend import selected
+        from ..render.gfx_backend import selected
         return "cef-alpha" if selected() == "cef" else ""
     if not _NS_RE.fullmatch(ns) or len(ns) > _NS_MAX:
         shown = ns if len(ns) <= 32 else ns[:32] + "…"
@@ -284,7 +284,7 @@ def gfx_cache_ns() -> str:
 def gfx_dir(c, cl) -> Path:
     # issue #103：实验态（VTX_GFX_CACHE_NS 非空）整树路由 cache/gfx_exp/<ns>/<key>/，
     # 与正式 cache/gfx/<key> 物理隔离；默认空 = 原路径逐字节不变。
-    from .render import gfx_svg
+    from ..render import gfx_svg
     if gfx_svg.is_svg(cl):
         return c.cache / GFX_EXP / gfx_svg.NAMESPACE / gfx_key(c, cl)
     ns = gfx_cache_ns()
@@ -475,7 +475,7 @@ def _sweep_tmp_worker_ledger(path: Path) -> bool:
     cleanup; no signaling authority is added here.
     """
     try:
-        from .runtime import proc_supervisor as _ps
+        from ..runtime import proc_supervisor as _ps
         ledger = Path(path) / _ps.WORKER_LEDGER
         if not ledger.is_file():
             return True
@@ -655,7 +655,7 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     （计划-预览-执行三段），本函数供 budget_gate 与直调方使用。"""
     if deep:
         # issue #21/#30：预算门/直调与 CLI 复用同一安全计划，不保留绕过入口。
-        from .cli import ExecutionPolicy, _cleanup_plan
+        from ..cli import ExecutionPolicy, _cleanup_plan
         plan = _cleanup_plan(c, "gc", deep=True)
         total = sum(size for items in plan.values() for _, size, _ in items)
         if do:
@@ -678,7 +678,7 @@ def gc(c, do: bool, deep: bool = False, keep_days: int = 0):
     print(f"合计：{n} 项，{gb(total)}")
     if not do:
         print("（--dry-run 预览；执行回收请去掉 --dry-run 重跑 `vtx gc`）"); return
-    from .cli import ExecutionPolicy
+    from ..cli import ExecutionPolicy
     ExecutionPolicy.EXECUTE.execute_cleanup(plan)
     print(f"✓ 已回收 {n} 项，{gb(total)}")
 

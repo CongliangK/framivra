@@ -23,7 +23,7 @@ def main():
     root.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(repo))
-    from vtx.impact import capture, compare
+    from vtx.inspection.impact import capture, compare
     from tests.runners.impact_inventory import POLICY, observe, delta, validate_sidecars
     env = dict(os.environ, VTX_SEG_NVENC='0', VTX_VIDEO_SEGMENTS='8')
     (root / 'inventory-policy.json').write_text(json.dumps(POLICY, indent=2))

@@ -47,8 +47,10 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
-from vtx import hygiene, stages, recovery         # noqa: E402
-from vtx.cache_state import load_receipt  # noqa: E402
+from vtx.cache import hygiene
+from vtx import stages
+from vtx.cache import recovery         # noqa: E402
+from vtx.cache.cache_state import load_receipt  # noqa: E402
 from vtx.infra import Ctx               # noqa: E402
 
 

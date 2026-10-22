@@ -11,9 +11,10 @@ from pathlib import Path
 from unittest import mock
 
 from tests._support import temporary_root
-from vtx import cache_state
+from vtx.cache import cache_state
 from vtx.runtime import fstxn
-from vtx import hygiene, stages
+from vtx.cache import hygiene
+from vtx import stages
 from vtx.infra import Ctx
 
 
@@ -131,7 +132,7 @@ class InputIdentityGuard(unittest.TestCase):
         self.assertFalse((self.c.out / 'receipt.json').exists())
 
     def test_prepare_source_swap_and_fresh_context_recovery(self):
-        from vtx.recovery import atomic_media
+        from vtx.cache.recovery import atomic_media
 
         def extract(c, tasks, what):
             for _, cmd in tasks:

@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from .media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind
-from .hygiene import budget_gate, manifest_record, seg_key
+from .cache.hygiene import budget_gate, manifest_record, seg_key
 from .runtime import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
 from .runtime import fstxn
-from .recovery import media_cache_valid
+from .cache.recovery import media_cache_valid
 from .render.frame_source import png_source
 from .render import frame_source, gfx_cli
 

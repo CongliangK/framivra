@@ -11,7 +11,7 @@ except ImportError:
     from _support import REPO, SandboxCase
 
 from vtx.runtime import fstxn
-from vtx import hygiene
+from vtx.cache import hygiene
 
 
 class NestedCleanupLinks(SandboxCase):

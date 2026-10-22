@@ -37,8 +37,8 @@ def main():
     repo = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(repo))
     from tests.gfx._png import write_png
-    from vtx.hygiene import gfx_dir
-    from vtx.impact import capture, compare
+    from vtx.cache.hygiene import gfx_dir
+    from vtx.inspection.impact import capture, compare
     env = dict(os.environ, VTX_SEG_NVENC='0', VTX_NO_NVENC='1',
                VTX_VIDEO_SEGMENTS='8', VTX_VIDEO_WORKERS='2')
     tl = dict(version=2, project=dict(fps=30, width=64, height=64,

@@ -32,13 +32,13 @@ import json, os, tempfile
 from pathlib import Path
 
 from .infra import Ctx
-from .cache_state import DOWNSTREAM, load_receipt, media_stat_digest
+from .cache.cache_state import DOWNSTREAM, load_receipt, media_stat_digest
 from .media.loudness_cache import lookup, measure_and_store
-from .hygiene import gfx_key, gfx_dir, audio_key   # audio_key：缝 A 插件产物路径锚（§2.2），
+from .cache.hygiene import gfx_key, gfx_dir, audio_key   # audio_key：缝 A 插件产物路径锚（§2.2），
 from .stages import load_timeline_check            # 稳定性承诺随本 API 面
 from .pluginlib import config as _pl_config
 from .pluginlib.hooks import plugin_code_digest, resolve_source_wav
-from .recovery import atomic_media, media_cache_valid
+from .cache.recovery import atomic_media, media_cache_valid
 
 __all__ = [
     "Ctx", "DOWNSTREAM", "load_receipt", "media_stat_digest", "audio_key",

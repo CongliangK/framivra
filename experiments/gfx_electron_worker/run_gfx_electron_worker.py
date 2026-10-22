@@ -8,7 +8,7 @@
      同一落点族）；
   2. 等 main.mjs 渲完 gfxA.html?f=0 首帧并落盘 frame_f0000.png / truth.json / result.json；
   3. 用 truth.json 的内部接口实测值（getGPUFeatureStatus + getGPUInfo('complete') +
-     process.versions 三元组）构造 runtime_gpu_info，经 vtx.env_manifest 生成
+     process.versions 三元组）构造 runtime_gpu_info，经 vtx.inspection.env_manifest 生成
      env_manifest.json（vtx.env_manifest/1 形态，供 gfx_golden 跨后端比对门禁消费）。
 
 用法：
@@ -33,7 +33,7 @@ EXP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = EXP_DIR.parents[1]
 sys.path.insert(0, str(REPO_ROOT))   # vtx 包导入（驱动可从任意 cwd 运行）
 
-from vtx import env_manifest                                   # noqa: E402
+from vtx.inspection import env_manifest                                   # noqa: E402
 from vtx.infra import Ctx                                       # noqa: E402
 from vtx.runtime.proc_supervisor import SupervisedProcessGroup          # noqa: E402
 

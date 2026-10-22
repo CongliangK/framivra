@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 from tests._support import temporary_root
 from vtx.render import gfx_dependencies as deps
-from vtx import hygiene
+from vtx.cache import hygiene
 from vtx.render import gfx_render, gfx_cli
 import copy
-from vtx import cache_state
+from vtx.cache import cache_state
 
 
 class DependencyContracts(unittest.TestCase):
@@ -347,7 +347,7 @@ class DependencyContracts(unittest.TestCase):
                     deps.resolve(self.c, self.clip)
 
     def test_impact_retains_unknown_style_closure_warning(self):
-        from vtx.impact import capture
+        from vtx.inspection.impact import capture
         self.write('page.html', '<style/>body{background:url("p.png")}</style>')
         self.tl.update(sources=[], audio_tracks=[], subtitles=[])
         self.tl['project'].update(fps=30, width=1, height=1, duration_frames=2)

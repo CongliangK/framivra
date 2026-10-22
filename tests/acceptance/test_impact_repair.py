@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from vtx.impact import capture, compare
+from vtx.inspection.impact import capture, compare
 
 
 class ImpactRepairRegressions(unittest.TestCase):
@@ -35,13 +35,13 @@ class ImpactRepairRegressions(unittest.TestCase):
 
     def test_regular_file_hash_preserves_all_binary_bytes(self):
         import hashlib
-        from vtx.cache_state import file_digest
+        from vtx.cache.cache_state import file_digest
         data = b'line\r\n\x1a\0' + bytes(range(256)) * 8193
         path = self.root / 'binary'; path.write_bytes(data)
         self.assertEqual(file_digest(path), hashlib.sha256(data).hexdigest())
 
     def test_numeric_fps_matches_ctx_and_invalid_fps_rejected(self):
-        from vtx.hygiene import gfx_key
+        from vtx.cache.hygiene import gfx_key
         from vtx.infra import Ctx
         before = capture(self.tl, self.root, nseg=2)
         self.tl['project']['fps'] = 30.0
@@ -85,14 +85,14 @@ class ImpactRepairRegressions(unittest.TestCase):
 import os, sys
 from pathlib import Path
 from unittest.mock import patch
-from vtx.cache_state import file_digest
+from vtx.cache.cache_state import file_digest
 p = Path(sys.argv[1]); original = os.open
 
 def swapped(path, flags):
     p.unlink(); os.mkfifo(p)
     return original(path, flags)
 
-with patch('vtx.cache_state.os.open', side_effect=swapped):
+with patch('vtx.cache.cache_state.os.open', side_effect=swapped):
     try:
         file_digest(p)
     except ValueError as error:

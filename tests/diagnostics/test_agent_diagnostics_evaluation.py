@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from tests.diagnostics._support import StageFixture
 from tests.qc._support import _FakeContext
-from vtx import qc
+from vtx.inspection import qc
 from vtx.infra import Ctx
 
 

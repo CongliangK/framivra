@@ -1,15 +1,15 @@
 """PR#1 合入后的缓存/回执溯源测试（适配 main 13bed7a per-产物内容寻址架构）。
 
 PR 原版断言 cache/<input-fingerprint>/ 目录随输入变化——整仓指纹布局在合并中
-被放弃（见 docs/cache-provenance.md 与 vtx/cache_state.py 模块头），等效断言
+被放弃（见 docs/cache-provenance.md 与 vtx/cache/cache_state.py 模块头），等效断言
 改为：gfx 内容键 / 源 stat 采样指纹 / 回执 input_fingerprint 随内容变化。
 """
 import json, os, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # repo 根（v2 §1.4 包导入）
-from vtx import hygiene
-from vtx.cache_state import media_stat_digest, receipt_fingerprint
+from vtx.cache import hygiene
+from vtx.cache.cache_state import media_stat_digest, receipt_fingerprint
 from vtx.infra import Ctx
 from tests._support import tree_sha256
 
@@ -147,7 +147,7 @@ class GcExemptions(unittest.TestCase):
 
     def test_completion_markers_follow_each_cleanup_mode_owner(self):
         from vtx.cli import _cleanup_plan
-        from vtx.recovery import completion_marker
+        from vtx.cache.recovery import completion_marker
         modes = [('normal', 'gc', {}, True), ('out-only', 'gc', {}, False),
                  ('deep', 'gc', {'deep': True}, True),
                  ('clean', 'clean', {}, True), ('nuke', 'clean', {'nuke': True}, True)]
@@ -208,7 +208,7 @@ class GcExemptions(unittest.TestCase):
                     self.assertEqual(source_marker.read_bytes(), b'input-side historical evidence')
 
     def test_completion_marker_follows_retained_media_age_not_its_own(self):
-        from vtx.recovery import completion_marker
+        from vtx.cache.recovery import completion_marker
         cases = [('audio/recent.wav', False), ('seg/recent.mp4', False),
                  ('qc_clean.mp4', False), ('vseg/recent.mp4', True),
                  ('vseg_draft/recent.mp4', True), ('vseg_qc/recent.mp4', True)]
@@ -242,7 +242,7 @@ class GcExemptions(unittest.TestCase):
                     self.assertTrue(self._selected(plan, completion_marker(recent)))
 
     def test_symlink_media_does_not_claim_an_owned_completion_marker(self):
-        from vtx.recovery import completion_marker
+        from vtx.cache.recovery import completion_marker
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.dict(os.environ, {'VTX_SEG_NVENC': '0'}), \
                 mock.patch('subprocess.Popen', side_effect=AssertionError('no subprocess')):
@@ -298,7 +298,7 @@ class StaleReceiptArchive(unittest.TestCase):
             self.assertEqual(set(rec['stages']), {'validate', 'qc'})   # 旧成功保留
 
             # Invalid receipt containers recover on the next actual write.
-            from vtx.cache_state import load_receipt
+            from vtx.cache.cache_state import load_receipt
             bad_records = [[], None, False, 0, 'receipt',
                            {'input_fingerprint': c.input_fingerprint}]
             for stages in (None, [], False, 1, 'stages'):

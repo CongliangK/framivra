@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 from tests.diagnostics._support import timeline
 from vtx.agent_diagnostics import main
-from vtx import cache_state, infra
+from vtx.cache import cache_state
+from vtx import infra
 from vtx.runtime.diagnostics import emit, key_path
 
 REPO = Path(__file__).resolve().parents[2]

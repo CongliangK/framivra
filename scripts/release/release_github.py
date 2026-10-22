@@ -246,7 +246,7 @@ REQUIRED_OBSERVATIONS = {'local_edit': {'cache_edit'}, 'failure_recovery': {'cac
 
 
 def validate_cache_observation(name, data, commit, tag):
-    from vtx.acceptance import relative
+    from vtx.inspection.acceptance import relative
     if not isinstance(data, dict) or data.get('schema') != 'framivra.' + name + '/1' or data.get('commit') != commit or data.get('tag') != tag:
         raise ReleaseError('cache observation source identity mismatch')
     def sha(value):
@@ -341,11 +341,11 @@ def verify_freeze_evidence(path, commit, tag, assets):
     """Seal evidence bytes and strict required outcomes; human truth remains review.
 
     保 commit/tag/asset/evidence 字节绑定及 required 全通过；不保生产者诚实、
-    未声明平台或人类视听质量。独立验收包由 vtx.acceptance.verify 复验。
+    未声明平台或人类视听质量。独立验收包由 vtx.inspection.acceptance.verify 复验。
     """
     if path is None:
         raise ReleaseError('freeze evidence is required before staging/publishing')
-    from vtx.acceptance import read_json, relative, regular, verify
+    from vtx.inspection.acceptance import read_json, relative, regular, verify
     path = regular(path)
     data = read_json(path)
     if set(data) != {'schema', 'commit', 'tag', 'assets', 'gates', 'acceptance'} or data['schema'] != 'framivra.freeze/1':
@@ -433,7 +433,7 @@ def build_public_summary(evidence, work):
     The complete acceptance package remains local. This summary is not a public
     replay bundle and does not upgrade unknown visual/platform qualifications.
     """
-    from vtx.acceptance import read_json, relative, regular
+    from vtx.inspection.acceptance import read_json, relative, regular
     evidence = regular(evidence)
     data = read_json(evidence)
     package = evidence.parent / relative(data['acceptance']['path'])

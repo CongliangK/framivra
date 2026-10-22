@@ -24,7 +24,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from vtx import qc
+from vtx.inspection import qc
 from vtx.infra import Ctx
 from tests.qc._support import _FakeContext, _run_qc
 

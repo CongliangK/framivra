@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from pathlib import Path
 
-from ..hygiene import gfx_cache_ns, gfx_dir
+from ..cache.hygiene import gfx_cache_ns, gfx_dir
 from .gfx_cli import png_invalid_reason
 
 

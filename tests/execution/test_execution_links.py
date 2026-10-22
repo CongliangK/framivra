@@ -8,7 +8,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from vtx import acceptance as a
+from vtx.inspection import acceptance as a
 from vtx.runtime import execution_links as links
 from tests.acceptance import test_acceptance
 from tests._support import temporary_root

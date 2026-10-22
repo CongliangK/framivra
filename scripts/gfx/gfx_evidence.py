@@ -14,8 +14,8 @@ import time
 from pathlib import Path
 
 from PIL import Image
-from vtx import env_manifest
-from vtx.cache_state import declared_dependencies
+from vtx.inspection import env_manifest
+from vtx.cache.cache_state import declared_dependencies
 
 
 def digest(value):

@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 from vtx import cli
 from vtx.runtime import events, execution_links
-from vtx import qc
+from vtx.inspection import qc
 from vtx.media import encoders
 from tests.execution import test_execution_links
 from vtx.infra import Ctx, run_ffmpeg_task, run_parallel, run_wave
@@ -459,8 +459,8 @@ class OwnedExecutorTests(unittest.TestCase):
             return events.read_events(stream.getvalue()), parent.task_id
         with tempfile.TemporaryDirectory() as temp, \
              patch('vtx.infra.subprocess.run', side_effect=fake_run), \
-             patch('vtx.qc.loudness_cache.lookup', return_value=None), \
-             patch('vtx.qc.loudness_cache.measure_and_store', side_effect=measure), \
+             patch('vtx.inspection.qc.loudness_cache.lookup', return_value=None), \
+             patch('vtx.inspection.qc.loudness_cache.measure_and_store', side_effect=measure), \
              contextlib.redirect_stdout(io.StringIO()), ThreadPoolExecutor(2) as pool:
             futures = [pool.submit(run, Path(temp) / str(i)) for i in range(2)]
             results = [f.result() for f in futures]

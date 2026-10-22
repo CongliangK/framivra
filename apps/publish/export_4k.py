@@ -8,7 +8,7 @@
 8 段并行 nvenc p4 实测 236fps（60s 片段 7.6s），全片外推 ~71s。
 
 段缓存（对齐 composite.render_segmented 惯例）：段文件名含内容寻址键
-sha1(媒体 stat 指纹 + 段区间/放大/编码参数)[:12]（stat 指纹复用 vtx/cache_state.
+sha1(媒体 stat 指纹 + 段区间/放大/编码参数)[:12]（stat 指纹复用 vtx/cache/cache_state.
 media_stat_digest），命中且流头帧数==段长跳过重编——发布链重跑（如断言后改参数重导）
 段全命中时墙钟秒级。
 
@@ -51,7 +51,7 @@ from pathlib import Path
 # P2a 迁入 apps/publish/ 后深一层：parents[0]=apps/publish、[1]=apps、[2]=repo 根
 # （经 scripts/ 兼容 symlink 调用时 resolve() 先归位到本文件，两路径同锚定）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from vtx.cache_state import media_stat_digest
+from vtx.cache.cache_state import media_stat_digest
 
 SCALE_4K = "scale=3840:2160:flags=lanczos"
 DEFAULT_MAXRATE = "20M"  # 给 192k 音轨与 MP4 封装留出 20.5M 文件门余量
@@ -194,7 +194,7 @@ def nvenc_probe() -> bool:
 
 def seg_cmd(media, a: int, nframes: int, fps: int, scale: str, codec, out):
     """单段编码命令。-ss 输入 seek（-i 之前）transcode 下帧精确；seek 时刻取
-    (a-0.2)/fps 保证输出首帧=全局帧 a（vtx/qc.py gray_frame 同款语义，a=0 用 0）。"""
+    (a-0.2)/fps 保证输出首帧=全局帧 a（vtx/inspection/qc.py gray_frame 同款语义，a=0 用 0）。"""
     ss = "0" if a == 0 else f"{(a - 0.2) / fps:.6f}"
     return ["ffmpeg", "-v", "error", "-y", "-ss", ss, "-i", str(media),
             "-vf", scale, "-frames:v", str(nframes), "-an", *codec,

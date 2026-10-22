@@ -5,7 +5,7 @@ caches require exact completion records with the selected backend/environment
 identity at the canonical production location; unmarked PNGs are not accepted.
 """
 from . import gfx_cli
-from ..hygiene import gfx_cache_ns
+from ..cache.hygiene import gfx_cache_ns
 
 
 class GfxCacheError(ValueError):

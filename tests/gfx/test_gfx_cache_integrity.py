@@ -9,7 +9,7 @@ from tests._support import temporary_root
 from tests.gfx._environment import bind_environment
 from vtx.render import frame_source, gfx_cache_reader
 from vtx.render.gfx_environment import certificate
-from vtx.hygiene import gfx_dir, gfx_key
+from vtx.cache.hygiene import gfx_dir, gfx_key
 
 import contextlib
 import io
@@ -26,7 +26,7 @@ from tests.gfx._png import png, chunk
 
 from vtx import cli
 from vtx.render import gfx_cli, gfx_render
-from vtx import hygiene
+from vtx.cache import hygiene
 from vtx.render import gfx_environment
 from vtx.infra import Ctx
 

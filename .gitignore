@@ -50,6 +50,8 @@ apps/imgen/.venv/
 
 # 内容寻址缓存（vtx 产物缓存，可再生，不入库）
 cache/
+# Canonical cache-domain implementation is source, not runtime output.
+!/vtx/cache/
 # Cache-domain source tests are not generated runtime caches.
 !tests/cache/
 

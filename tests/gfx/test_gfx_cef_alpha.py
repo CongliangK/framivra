@@ -25,14 +25,14 @@ from unittest import mock
 from vtx.render import cef_client
 from vtx import cli
 from vtx.render import gfx_backend, gfx_cef
-from vtx import hygiene
-from vtx.cache_state import receipt_fingerprint
+from vtx.cache import hygiene
+from vtx.cache.cache_state import receipt_fingerprint
 from vtx.composite import RenderPlan
 from vtx.infra import Ctx
 from tests.gfx.test_cef_frame_sync import decode_png_rgba
 from tests.gfx._png import write_png
 from vtx.render.frame_source import PngSequence, png_source
-from vtx.hygiene import gfx_key
+from vtx.cache.hygiene import gfx_key
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKER = os.environ.get('VTX_TEST_CEF_WORKER', '')
@@ -838,7 +838,7 @@ class MainIntegration(unittest.TestCase):
                 self.assertNotEqual(original, gfx_key(c, dict(clip, src='same.html')))
                 source = png_source(c, clip)
                 self.assertEqual(source.identity, 'gfx_exp/integration/' + original)
-                from vtx.impact import capture
+                from vtx.inspection.impact import capture
                 first = capture(c.tl, root)
                 with mock.patch.dict(os.environ, VTX_GFX_CACHE_NS='another'):
                     second = capture(c.tl, root)

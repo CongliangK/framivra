@@ -41,7 +41,7 @@ sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
 from tests._support import small_timeline as _minimal_timeline, temporary_root
 
-from vtx import hygiene                  # noqa: E402
+from vtx.cache import hygiene                  # noqa: E402
 from vtx.infra import Ctx                # noqa: E402
 
 # ---- 子进程 worker（-c 注入；argv[1]=repo 根，其余见各脚本）----
@@ -54,7 +54,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from vtx.infra import Ctx
-from vtx import hygiene
+from vtx.cache import hygiene
 c = Ctx(Path(sys.argv[2]))
 mode, wid, iters, threads = sys.argv[3], sys.argv[4], int(sys.argv[5]), int(sys.argv[6])
 
@@ -102,7 +102,7 @@ import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from vtx.infra import Ctx
-from vtx.runtime import fstxn; from vtx import hygiene
+from vtx.runtime import fstxn; from vtx.cache import hygiene
 c = Ctx(Path(sys.argv[2]))
 phase = sys.argv[4]
 if phase not in ("before_tmp", "before_replace", "after_replace"):

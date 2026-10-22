@@ -649,7 +649,7 @@ def _file_resolved(p, st, *, verify_entry=None):
             if old and old[0] == token:
                 check_entry()
                 return str(p), old[1]
-    from ..cache_state import file_digest
+    from ..cache.cache_state import file_digest
     try:
         content_hash = file_digest(p)
     except ValueError as error:

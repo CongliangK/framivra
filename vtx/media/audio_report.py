@@ -50,7 +50,7 @@ FAIL 表示事故级问题必须处理）。
 import json, math, re, statistics, time
 from pathlib import Path
 
-from ..hygiene import audio_key
+from ..cache.hygiene import audio_key
 from ..runtime import fstxn
 from .audio_filters import event_chain
 from ..pluginlib import hooks as _plugin_hooks

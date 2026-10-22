@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from tests.runners.run_impact_html_reconciliation import fixture, middle_edit
-from vtx.impact import capture, compare
+from vtx.inspection.impact import capture, compare
 
 
 class HtmlHarnessTests(unittest.TestCase):

@@ -51,7 +51,7 @@ vtx = "vtx.cli:main"
 vt = "vt:main"
 
 [tool.setuptools]
-packages = ["vtx", "vtx.pluginlib", "vtx.media", "vtx.runtime", "vtx.render"]
+packages = ["vtx", "vtx.pluginlib", "vtx.media", "vtx.runtime", "vtx.render", "vtx.cache", "vtx.inspection"]
 py-modules = ["vt"]
 
 [tool.setuptools.package-data]

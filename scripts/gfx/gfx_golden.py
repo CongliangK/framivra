@@ -77,15 +77,15 @@ golden JSON 结构（自包含、无歧义）：
       [--env-manifest env_manifest.json]
 
 跨后端环境前置门禁（issue #102）：build --env-manifest 把渲染运行产出的
-env_manifest.json（vtx/env_manifest.py，不可伪造的环境指纹）嵌入 golden.meta；
+env_manifest.json（vtx/inspection/env_manifest.py，不可伪造的环境指纹）嵌入 golden.meta；
 compare --env-manifest 提供当前后端实测 manifest 时，先经
-vtx.env_manifest.verify_manifest_compatibility 比对 Chromium 主版本/生效后端
+vtx.inspection.env_manifest.verify_manifest_compatibility 比对 Chromium 主版本/生效后端
 （GPU 静默回退检出）/色彩空间/视口/字体 SHA256——任一不兼容即拒绝像素比对
 （exit 1，不比错环境下的像素）。golden 含 manifest 而 compare 未提供 → 显式
 警告门禁未激活（不阻断同机常规回环）；compare 提供而 golden 未嵌入 → 显式报错。
 
 实现要点：
-  - 缓存键/帧目录定位直接复用 vtx/hygiene.gfx_key（v2 §1.4 包导入，注入 repo 根）——
+  - 缓存键/帧目录定位直接复用 vtx/cache/hygiene.gfx_key（v2 §1.4 包导入，注入 repo 根）——
     golden 与渲染器永远同一套键；键逻辑若变，compare 以「目录缺失」显式失败并提示
     重建 golden，绝不静默错比。
   - 帧缺失/目录缺失在 build 即报错退出非零（golden 必须完整，宁缺毋滥）。
@@ -118,8 +118,8 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # v2 §1.4 包化：注入 repo 根 + 包导入（不再注入 repo/vtx）
 from vtx.infra import Ctx   # noqa: E402
 from vtx.runtime.fstxn import atomic_write
-from vtx import hygiene     # noqa: E402
-from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
+from vtx.cache import hygiene     # noqa: E402
+from vtx.inspection import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
 from vtx.render import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
 
 # 纯导出（issue #105 r4 v2 语义）：v1 时消费方（选帧/抽样管道）经本模块
@@ -748,7 +748,7 @@ def cmd_build(args) -> int:
             "viewport": f"{c.w}x{c.h}",
             "hash": HASH_DESC,
             "frame_naming": "f{:04d}.png（帧号从 0）",
-            "key_algo": "cache/gfx/<键> 键 = vtx/hygiene.gfx_key = "
+            "key_algo": "cache/gfx/<键> 键 = vtx/cache/hygiene.gfx_key = "
                         "sha1(html字节+显式依赖+fps+视口+时长)[:12]",
             "sample": sample,
             "full_pages": full_names,
@@ -797,11 +797,11 @@ def cmd_compare(args) -> int:
         for it in gate["items"]:
             print(f"  ✗ 环境门禁 {it}")
         print(f"✗ 跨后端环境前置门禁未通过：{len(gate['items'])} 项不兼容，"
-              "拒绝像素比对（vtx/env_manifest，issue #102）")
+              "拒绝像素比对（vtx/inspection/env_manifest，issue #102）")
         return 1
     if gate["state"] == "pass":
         print("✓ 环境前置门禁通过：Chromium 主版本/生效后端/色彩空间/视口/"
-              "字体 SHA256 一致（vtx/env_manifest）")
+              "字体 SHA256 一致（vtx/inspection/env_manifest）")
     elif gate["state"] == "warn":
         print("⚠ golden 含环境 manifest 但未提供 --env-manifest：跨后端环境"
               "一致性门禁未激活（跨后端比对务必提供）")
@@ -1185,7 +1185,7 @@ def main(argv=None) -> int:
     b.add_argument("--sample", type=int, default=5,
                    help="抽检页每 clip 帧数下限（默认 5；[0, dur//2, dur-1]+均匀补足）")
     b.add_argument("--env-manifest", default="",
-                   help="环境指纹 manifest JSON（渲染运行产出，vtx/env_manifest.py 采集）；"
+                   help="环境指纹 manifest JSON（渲染运行产出，vtx/inspection/env_manifest.py 采集）；"
                         "嵌入 golden.meta 供 compare 跨后端前置门禁（issue #102，可空）")
 
     b.add_argument("--run-evidence", default="", help="embed baseline run receipt for verify-experiment; does not certify it")

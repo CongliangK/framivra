@@ -68,7 +68,7 @@ env VTX_GFX=electron VTX_ELECTRON_MODE=b0 VTX_GFX_CACHE_NS=electron_alpha_fresh 
 | `package-lock.json` | npm 锁文件（`npm ci` 可复现安装的依据） |
 | `main.mjs` | Electron 主进程最小宿主：B0/B1 双模式、offscreen 硬化、首帧捕获、GPU/版本真值采集、`--parent-alive-fd` 自毁守听 |
 | `preload.cjs` | 隔离世界 preload（sandbox+contextIsolation）：页面 load 后回传自证（`f` 参数、`devicePixelRatio`） |
-| `run_gfx_electron_worker.py` | vtx 宿主驱动：`SupervisedProcessGroup` 拉起 Electron → 首帧核验 → `vtx.env_manifest` 生成 `env_manifest.json` |
+| `run_gfx_electron_worker.py` | vtx 宿主驱动：`SupervisedProcessGroup` 拉起 Electron → 首帧核验 → `vtx.inspection.env_manifest` 生成 `env_manifest.json` |
 | `drill_sigkill.py` | kill -9 强杀宿主卫生演练（DoD；只杀自起进程） |
 
 `node_modules/`（约 283MB，含 Electron 二进制）不入库（`.gitignore` 在册）。
