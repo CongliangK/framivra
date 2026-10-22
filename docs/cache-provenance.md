@@ -35,31 +35,19 @@
 返回值保持 12 位十六进制 SHA1 摘要；独立算法 token 定义在
 `vtx/pluginlib/hooks.py`，不依赖插件或内核发行版本。
 
-**发布/迁移说明：这是缓存身份 breaking change。** 升级后，使用生效插件的
-时间线回执失效，依赖代码摘要的插件产物键改变，首次运行需完整重建一次。
-旧缓存不自动删除；没有生效插件的时间线不追加插件段，回执身份不受此次算法
-变更影响。包内移动文件会改变摘要；插件整根迁移且相对路径/内容不变时摘要稳定。
-
-此处仍保留读取失败时的标记降级以及既有递归扫描行为；它不是原子目录快照或
-对抗篡改证明。插件文件在一次命令期间应保持不变。
+产物/回执失效与无插件段兼容性见 [三不变量](ARCHITECTURE.md#21-三不变量)；旧缓存不自动删除。
+包内移动文件改变摘要；整根迁移且相对路径/内容不变时摘要稳定。读取失败采用标记降级，
+不是原子目录快照或防篡改证明，命令期间插件文件应保持不变。
+旧算法升级的重建要求见[固定迁移记录](https://github.com/CongliangK/framivra/blob/6f93f4aea95b59e52f8be04b6d4ac74be384aa79/docs/cache-provenance.md#插件代码身份与升级说明86)。
 
 ## HTML 依赖
 
-外部 CSS、JavaScript、图片、字体等本地依赖需显式列出（PR#1：`cache_dependencies`
-参与 gfx 缓存键与回执身份），例如：
-
-```json
-"project": {
-  "fps": 30, "width": 1920, "height": 1080, "duration_frames": 180,
-  "cache_dependencies": ["gfx/style.css", "gfx/logo.png"]
-}
-```
-
-不存在或非文件依赖会报错（Ctx 构造即快速失败）。项目级依赖变化会使全部 gfx 页重渲。
-gfx clip 可选 `cache_dependencies: ["gfx/page.css"]`，与项目声明取并集，只影响声明它的
-页面。两级路径均相对 timeline 根目录；非空片段声明按解析后的路径去重排序，全量
-内容哈希捕获恢复 mtime 的中间字节修改。共享 resolver 输出路径、全文摘要、声明来源、
-HTML 的规范 file URI、策略版本及闭包状态；gfx/回执/impact/GC/diff 消费同一合同。
+本地 CSS、JavaScript、图片、字体等依赖通过 `project.cache_dependencies` 或 gfx clip 的
+`cache_dependencies` 显式声明，参与 gfx 键与回执身份；字段结构见 [timeline schema](../vtx/timeline.schema.json)。
+不存在或非文件依赖在 Ctx 构造时失败。项目依赖变化使全部 gfx 页重渲；clip 声明与
+项目声明取并集，仅影响声明它的页面。两级路径均相对 timeline 根目录；非空片段声明
+按解析后的路径去重排序，全文哈希捕获恢复 mtime 的中间字节修改。共享 resolver 输出
+路径、全文摘要、声明来源、HTML 规范 file URI、策略版本与闭包状态；gfx/回执/impact/GC/diff 消费同一合同。
 仅经静态子集确认无资源引用的 legacy HTML 保留历史键；资源型或未知 HTML 显式迁移
 到 v1 键，避免同字节不同目录别名。旧目录不自动删除，不能冒充 strict 命中。
 
@@ -142,19 +130,14 @@ CDP 自动回落 CLI 的页明确失败，不发布完成凭证或成功回执�
 `VTX_GFX=cli` 重跑获得独立身份。回落前撤销 pending，防止混合帧被续签；
 带 `mixed_producer` 的历史页也不允许复用或消费。
 
-`input-bound` 仅表示所列输入已绑定，`pixel_equivalence=unproven` 不因摘要相等
-变成像素等价或 Verified Exact。生效 GPU/Chromium 内部接口、实际字体消费和独立
-全帧对照仍由 #102/#62 的运行证据承担。Golden 冻结计划可为每臂指定
-`input_environment_sha256`，运行回执须提供匹配、完整且非 unknown 的
-`input_environment` 凭证；原有真实运行门不减弱。
+`input-bound` 仅表示输入绑定；`pixel_equivalence=unproven` 不因摘要相等变成像素等价或 Verified Exact。
+生效 GPU/Chromium 内部接口、实际字体消费与独立全帧对照由 [Golden 证据](#golden-evidence)承担。
+冻结计划每臂可指定 `input_environment_sha256`；回执须提供匹配、完整且非 unknown 的
+`input_environment` 凭证，真实运行门不减弱。
 
-[环境验收证据](../tests/fixtures/gfx-environment/acceptance-2026-10-18.json)覆盖 HTML、JavaScript 与系统文本字体，不证明整片性能或跨机像素一致；浏览器版本不同即使像素相同也须分键。
-CEF 负例仅在同一 worker、同一路径的 libcef.so 追加不参与装载的 ELF 尾字节，证明内容失效，不证明库版本升级成功。
-实际复现会启动浏览器并写入指定的新证据目录；参数与工具要求可先用零写态帮助查看：
-
-```bash
-env python3 tests/runners/run_gfx_environment_acceptance.py --help
-```
+[环境验收证据](../tests/fixtures/gfx-environment/acceptance-2026-10-18.json)覆盖 HTML、JavaScript 与系统文本字体，不证明整片性能或跨机像素一致。
+CEF 负例仅在同一 worker、同一路径的 libcef.so 追加不参与装载的 ELF 尾字节，证明内容失效而非库升级成功。
+浏览器版本变化即使像素相同也分键；[复现运行器](../tests/runners/run_gfx_environment_acceptance.py)会启动浏览器并写入指定的新证据目录。
 
 ## 阶段回执（PR#1）
 
@@ -176,11 +159,10 @@ FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该
 成功状态。CLI 在阶段开始前撤销其旧成功及下游成功，失败重跑不能保留旧 QC PASS。
 audio 要求当前 prepare，video（有 gfx 时）要求当前 gfx，mux 要求当前 video/audio，
 qc 要求当前 mux；单跑某阶段前置不满足会直接拒绝。可以直接运行 `all` 完成依赖顺序。
-旧工程首次需完整重建一次；不直接认领旧产物。
+缺少当前身份凭据的旧产物须重建，不直接认领。
 
-历史缓存保留以便恢复和审计；工具的显式 `clean` 仍删除项目 cache/ 与 out/。本次不
-自动删除用户旧工程或媒体。回执是流程来源检查，不是对最终文件外部篡改的完整性证明
-（源指纹的采样哈希亦非对抗性保证）。
+旧缓存保留供恢复和审计，不自动删除用户旧工程或媒体；显式清理见 [中断与恢复](#中断与恢复)。
+回执只检查流程来源，不证明最终文件未被外部篡改；源采样指纹亦非对抗性保证。
 
 ## 中断与恢复
 
@@ -215,6 +197,9 @@ mux 的历史轮转/旧版核对在替换前回调中执行，VERSIONS 记账在
 原媒体，但已发生的历史清理/提示状态不撤销；替换后回调失败会报错，已发布媒体
 不回滚，也不会记阶段成功。dry-run 不调用生产者或提交回调。
 
+普通 `clean` 清理 cache/（含其中证据与快照）及 out/ 可再生条目，默认保护 final、VERSIONS、
+history、reports、FREEZE 与 final_4k 等交付件；保护清单以 [`out_protected`](../vtx/hygiene.py) 为准。
+只有显式危险旗标 `clean --i-know-this-nukes-everything` 将交付件纳入删除，锁与拒绝路径仍保留。
 普通 clean/gc（含 gc --all）按各自模式和年龄规则决定媒体去留，再保留其精确
 完成凭据：owner 必须是 cache/ 或 out/ 下现存、路径链无符号链接的普通媒体文件，
 且 owner 及祖先不在本次删除计划中。凭据保留不扩大媒体保留范围、不认证内容；
@@ -224,12 +209,9 @@ mux 的历史轮转/旧版核对在替换前回调中执行，VERSIONS 记账在
 
 ## 回归
 
-- `python -m unittest discover -s tests -v`：内容/时间戳/依赖/同名页面/回执失效
-  测试，以及可选 Chrome/FFmpeg 集成用例（`VTX_TEST_CHROME` / `VTX_TEST_FFMPEG`）。
-- `python tests/runners/run_cache_regression.py --repo <checkout> --output <new-dir> --ffmpeg <executable> --chrome <executable>`：初次渲染→同长素材替换且恢复时间戳→修改
-  字幕/HTML→不清缓存重跑→独立冷启动对照。比较完整 180 帧的缩略 RGB 与解码 PCM。
-- `tests/runners/run_e2e.py` 与 `tests/runners/verify_e2e.py`：12 秒单段/并行全流程、严格 QC、
-  接缝和音频对照。
+测试入口与工具开关见 [贡献指南](../CONTRIBUTING.md#测试入口)，覆盖内容/时间戳/依赖/同名页面/回执失效及可选 Chrome/FFmpeg 集成。
+- [缓存回归](../tests/runners/run_cache_regression.py)：同长素材替换并恢复时间戳、修改字幕/HTML 后不清缓存重跑，与独立冷启动对照完整 180 帧缩略 RGB 和解码 PCM。
+- [E2E 运行器](../tests/runners/run_e2e.py)与[独立验证器](../tests/runners/verify_e2e.py)：12 秒单段/并行全流程、严格 QC、接缝和音频对照。
 
 Windows 修复前后数值与 Linux/voice-ime 复验见[固定回归记录](https://github.com/CongliangK/framivra/blob/f0c98dd104a4674f0ae6eb84622462cad0ad6006/docs/cache-provenance.md#回归)；架构裁定见 `vtx/cache_state.py` 模块头。
 这些受控正确性结果不证明长视频或跨平台性能，当前版本仍须实际执行上述回归。
@@ -244,8 +226,8 @@ Windows 修复前后数值与 Linux/voice-ime 复验见[固定回归记录](http
 |---|---|---|
 | Preview | 明确标识的草稿/近似用途 | 完整质量门、复现或像素一致 |
 | Production | production_gates 与 visual_content 均显式 passed | 输入身份、重复构建、逐像素一致 |
-| Reproducible | Verified 内容身份、已验证环境身份、固定环境独立重复比较均 passed | 视觉意图正确、跨环境一致 |
-| Verified Exact | #62 严格独立 Golden 验证通过，内容/环境身份齐全，限定范围逐帧 RGBA8 像素一致 | 最终 MP4 字节、音频、未声明依赖、范围外内容正确 |
+| Reproducible | content_identity、environment_identity、repeat_comparison 全 passed：Verified 内容身份、已验证环境、固定环境独立重复比较 | 视觉意图正确、跨环境一致 |
+| Verified Exact | strict_exact、content_identity、environment_identity 全 passed：严格独立 Golden 通过、身份齐全、限定范围逐帧 RGBA8 一致 | 最终 MP4 字节、音频、未声明依赖、范围外内容正确 |
 
 规范化 evidence 含 production_gates、visual_content、content_identity、
 environment_identity、repeat_comparison、strict_exact；值仅为 passed、failed、partial、
@@ -254,10 +236,8 @@ content_identity=passed 表示所述 scope 内 Verified 完整内容身份，不
 分类器消费可信生产者的规范化观察，不认证任意 JSON 的真实性；旁车没有签名。
 
 唯一 display 优先规则为 Verified Exact → Reproducible → purpose → unknown。
-purpose 独立保留 Preview / Production / unknown；reproducible 与 verified_exact 分别
-保留布尔资格。Exact 须 strict_exact、content_identity、environment_identity 全 passed；
-Reproducible 须后三者中的 strict_exact 换为 repeat_comparison 后全 passed。
-Production 须两个质量门全 passed。显式 preview 优先决定用途；证据标签不抹去用途。
+purpose 独立保留 Preview / Production / unknown；reproducible 与 verified_exact 分别保留布尔资格。
+显式 preview 优先决定用途；证据标签不抹去用途。
 
 普通阶段回执绑定 final_movie 范围，每次落笔/撤销阶段重算标签，不继承旧最高标签。
 草稿成功可标 Preview；正式 mux/qc 存在时不用保留的草稿替代正式结论。
@@ -281,8 +261,8 @@ Production 须两个质量门全 passed。显式 preview 优先决定用途；�
 
 ## 修改影响快照（#52，CPU 分析面）
 
-两份旧/新 timeline 都会读取当前素材，不能还原原位修改前的字节。新增
-`diff --capture-impact` 保存修改前输入身份；随后以快照与当前 timeline 对比。
+旧/新 timeline 都读取当前素材，不能还原原位修改前的字节；须先用
+`diff --capture-impact` 保存修改前输入身份，再以快照与当前 timeline 对比。
 捕获为 CPU/x264、formal、当前 `VTX_VIDEO_SEGMENTS` 合同，不探测 GPU。
 必须显式设置 `VTX_SEG_NVENC=0`；snapshot 的 execution 字段记录实际分析参数。
 以下只输出 JSON 到标准输出，零项目写入：
@@ -297,21 +277,19 @@ env VTX_SEG_NVENC=0 python3 vtx/vtx.py diff --capture-impact timeline.json --dry
 retired_artifacts、conservative_nodes 和 uncertainties。建议重跑阶段只是分析结果，
 不改变 all 的编排。未变音频不建议重混，不表示 all 会自动跳过 audio。
 
-快照比较要求同一项目根。v2 快照补齐 gfx 底轨的 QC 基准段与无字幕 pass，拒绝旧 v1
-快照（需重新捕获），避免把遗漏节点误当新产物。主图与 QC 各自计算切点；草稿
+快照比较要求同一项目根；v2 包含 gfx 底轨 QC 基准段与无字幕 pass，拒绝旧 v1（须重新捕获），
+不得把遗漏节点误当新产物。主图与 QC 各自计算切点；草稿
 使用 vseg_draft，正式 gfx 底轨另含 vseg_qc。缓存路径集合依据修改前完整温缓存假设，不检查产物是否
 缺失/损坏，也不把历史其他代缓存算作必然命中。未知依赖明确列出并扩大保守节点集；
 静态声明不证明动态 JavaScript、网络或插件闭包。窗口媒体缺少尺寸探测时列为未知。
-媒体仍使用现有 Fast 采样身份，首尾不变且恢复 mtime 的中间字节修改不受保证（#85）；
-声明依赖使用完整摘要，包含这种中间字节修改。该报告不是 Verified 身份证明。
+媒体沿用 [Fast 采样身份](#产物身份)，声明依赖使用完整摘要；该报告不是 Verified 身份证明。
 
 pass/vseg 与渲染共享身份函数和段 ASS 字节；合成代码摘要变化须冷建视频段及 pass，不沿用旧摘要或自动删旧缓存。
 gfx 后端实现、QC 质量等级与此分析合同独立。
 
-
-[HTML 验收运行器](../tests/runners/run_impact_html_reconciliation.py)支持 90 帧/页长 profile 与受限 workflow 的 48 帧/页 correctness profile；均保留 30 场景、1080p/30fps、生产编码质量、八段及第八页字幕（48 帧时 [341,357)）。
-完整解码、warm 字节/mtime、全部 mutation/raw delta 断言不减；900 秒命令、3000 秒边界预算、65 分钟作业上限不延长。
-旧 2700 帧 hosted 运行在主视频完成后的 QC 合成触及 900 秒，验收失败，未据此定位生产回归或 OOM；48 帧 profile 是否通过仍以最终版本实跑为准。
+[HTML 验收运行器](../tests/runners/run_impact_html_reconciliation.py)提供 90/48 帧 profile；场景、编码、字幕范围与预算由运行器及[对应 workflow](../.github/workflows/impact-html-acceptance.yml)维护。
+两者均要求完整解码、warm 字节/mtime 与全部 mutation/raw delta 断言，不是性能基准。
+[旧长 profile 超时记录](https://github.com/CongliangK/framivra/blob/6f93f4aea95b59e52f8be04b6d4ac74be384aa79/docs/cache-provenance.md#修改影响快照52cpu-分析面)仍为失败，未据此定位生产回归或 OOM；48 帧 profile 须以最终版本实跑判定。
 事件 JSONL 和有界失败路径/大小清单仅辅助定位，不替代完整库存、解码或成功回执。
 
 <a id="golden-evidence"></a>
