@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再�
 from vtx.media import encoders
 from vtx.media.encoders import (nvenc_budget, nvenc_budget_value, reset_nvenc_budget,
                           reset_nvenc_ok_memo, seg_encoder_kind)
-from vtx.hygiene import seg_key
+from vtx.cache.hygiene import seg_key
 
 
 class _KindCtx:

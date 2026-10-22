@@ -101,7 +101,7 @@ if (OPTS.mode === 'b0') app.disableHardwareAcceleration();   // B0：软件输�
 if (Number.isInteger(OPTS.parentAliveFd)) armParentAliveWatchdog(OPTS.parentAliveFd);
 
 // ---------------------------------------------------------------- 生效后端归类
-// 词表与优先序对齐 vtx/env_manifest.classify_gl_backend（swiftshader > software >
+// 词表与优先序对齐 vtx/inspection/env_manifest.classify_gl_backend（swiftshader > software >
 // vulkan > nvidia）；证据只采渲染进程内部接口（GPUInfo/GPUFeatureStatus/WebGL
 // 探针），严禁转录命令行启动参数。B0 硬件加速已关，无匹配时归 software_skia（Skia
 // 软件光栅）。注：env_manifest 词表无 AMD/Intel 独立桶——非 NVIDIA 硬件 GL 亦按

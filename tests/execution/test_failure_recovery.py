@@ -20,7 +20,8 @@ try:
 except ImportError:   # 非 POSIX 平台无跨进程 flock
     fcntl = None
 
-from vtx import recovery, stages
+from vtx.cache import recovery
+from vtx import stages
 from vtx.infra import Ctx, run_ffmpeg_task
 
 
@@ -57,7 +58,7 @@ tl_path.write_text(json.dumps({'project': {'fps': 30, 'width': 64,
                                            'height': 48, 'duration_frames': 30},
                                'sources': [], 'video_tracks': [],
                                'audio_tracks': [], 'subtitles': []}))
-from vtx import recovery
+from vtx.cache import recovery
 from vtx.infra import Ctx
 c = Ctx(tl_path)
 cmd = ['ffmpeg', '-y', str(target)]
@@ -330,7 +331,7 @@ class MediaRecovery(unittest.TestCase):
         script = self.root / 'duplicate_writer.py'
         script.write_text(_DUPLICATE_WRITER_SOURCE)
         env = dict(os.environ,
-                   PYTHONPATH=str(Path(recovery.__file__).resolve().parent.parent))
+                   PYTHONPATH=str(Path(recovery.__file__).resolve().parents[2]))
         first = subprocess.Popen([sys.executable, str(script), str(self.root), 'first'],
                                  env=env, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True)

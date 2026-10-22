@@ -1,4 +1,4 @@
-"""Project acceptance package v1. Run with python -m vtx.acceptance --help.
+"""Project acceptance package v1. Run with python -m vtx.inspection.acceptance --help.
 
 An externally retained manifest digest anchors integrity, not producer honesty.
 Full hashes here seal exported evidence; they do not upgrade runtime cache keys.
@@ -20,14 +20,14 @@ import sys
 import tempfile
 import uuid
 
-from .cache_state import file_digest, media_stat_digest
-from .runtime import events, execution_links
+from ..cache.cache_state import file_digest, media_stat_digest
+from ..runtime import events, execution_links
 
 SCHEMA = 'vtx.acceptance/1'
 STAGES = ('validate', 'audit', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
 STATUSES = {'passed', 'failed', 'skipped', 'unknown'}
 RESERVED_GATES = {'process', 'input_stability', 'tool_versions', 'visual_content', 'media'}
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 ENV_POLICY = 'isolated: PATH, temporary HOME/XDG_CONFIG_HOME, LC_ALL=C.UTF-8, optional SYSTEMROOT, explicit overrides only'
 
 
@@ -86,7 +86,7 @@ def collect_inputs(timeline):
             for clip in track.get('clips', []):
                 names.setdefault(relative(clip['src']), 'gfx')
     from types import SimpleNamespace
-    from .cache_state import all_declared_dependencies
+    from ..cache.cache_state import all_declared_dependencies
     for name in all_declared_dependencies(SimpleNamespace(tl=tl)):
         names.setdefault(relative(name), 'declared_dependency')
     if tl.get('subtitles_src'):
@@ -121,7 +121,7 @@ def capture(argv, allow_empty=False):
 
 
 def environment():
-    from . import __version__
+    from .. import __version__
     return {'python': platform.python_version(), 'framivra': __version__,
             'platform': platform.platform(),
             'git': capture(['git', '-C', str(REPO), 'rev-parse', 'HEAD']),

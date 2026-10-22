@@ -66,7 +66,7 @@ class FreezeTests(unittest.TestCase):
                     'git_status': {'status': 'passed', 'stdout': ''}}))
         self.package_result = {'gates': {name: {'status': 'passed'} for name in
            ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc', 'process', 'input_stability', 'tool_versions', 'media')}}
-        verifier = mock.patch('vtx.acceptance.verify', return_value=self.package_result)
+        verifier = mock.patch('vtx.inspection.acceptance.verify', return_value=self.package_result)
         verifier.start(); self.addCleanup(verifier.stop)
         self.path = self.root / 'freeze.json'
 
@@ -205,7 +205,7 @@ class FreezeTests(unittest.TestCase):
            ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc', 'process', 'input_stability', 'tool_versions', 'media')}}
         (self.root / 'package').mkdir(exist_ok=True)
         (self.root / 'package/environment.json').write_text(json.dumps({'git': {'status': 'passed', 'stdout': self.commit}, 'git_status': {'status': 'passed', 'stdout': ''}}))
-        with mock.patch('vtx.acceptance.verify', return_value=result), mock.patch.object(release, 'observed_cdp', return_value='cdp'):
+        with mock.patch('vtx.inspection.acceptance.verify', return_value=result), mock.patch.object(release, 'observed_cdp', return_value='cdp'):
             self.verify()
             result['gates']['qc']['status'] = 'unknown'
             with self.assertRaisesRegex(release.ReleaseError, 'qc'): self.verify()

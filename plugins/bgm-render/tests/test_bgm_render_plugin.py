@@ -53,7 +53,7 @@ sys.path.insert(0, str(REPO))
 
 _bgm = importlib.import_module("plugins.bgm-render")
 
-from vtx import hygiene, recovery              # noqa: E402
+from vtx.cache import hygiene, recovery              # noqa: E402
 from vtx.infra import Ctx                       # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks   # noqa: E402
 

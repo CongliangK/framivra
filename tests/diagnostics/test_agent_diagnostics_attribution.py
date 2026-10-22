@@ -327,7 +327,7 @@ class AttributionEntryPoint(unittest.TestCase):
         self.assertEqual(list(indexed(context, {}, '$.input')), [])
 
     def test_identity_matches_unwrapped_producer_with_and_without_diagnostics(self):
-        from vtx.cache_state import receipt_fingerprint as producer
+        from vtx.cache.cache_state import receipt_fingerprint as producer
         from vtx.infra import Ctx, receipt_fingerprint as annotated
 
         value = timeline()

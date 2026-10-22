@@ -68,7 +68,7 @@ from pathlib import Path
 
 # 包内相对导入（vtx/__init__ §1.4）；命令入口为 -m vtx.runtime.proc_supervisor。
 from . import fstxn
-from .. import hygiene
+from ..cache import hygiene
 
 __all__ = ["SupervisedProcessGroup", "reap_orphan_workers", "reap_run_dir",
            "kill_group", "group_live_members", "proc_starttime", "boot_id",

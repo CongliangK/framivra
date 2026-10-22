@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
 from vtx.composite import SEG_CUT_GUARD, choose_cutpoints
-from vtx.timeline_diff import DiffCtx, _clip_seg_key, _edges, diff_timelines, is_timeline
+from vtx.inspection.timeline_diff import DiffCtx, _clip_seg_key, _edges, diff_timelines, is_timeline
 
 VTX = REPO / "vtx" / "vtx.py"
 
@@ -240,7 +240,7 @@ class TestTrackOrderAndWholeTrackImpact(_Base):
             subtitles=[], audio_tracks=[])
 
     def test_overlap_reorder_matches_production_segment_identity(self):
-        from vtx import impact
+        from vtx.inspection import impact
         old = self.timeline()
         new = copy.deepcopy(old)
         new["video_tracks"].reverse()
@@ -311,7 +311,7 @@ class TestTrackOrderAndWholeTrackImpact(_Base):
         self.assertEqual(res["impact"]["vseg_invalid"]["count"], 0)
 
     def test_cli_reorder_is_diff_not_pass(self):
-        from vtx.timeline_diff import run_timeline_diff
+        from vtx.inspection.timeline_diff import run_timeline_diff
         old = self.timeline()
         new = copy.deepcopy(old)
         new["video_tracks"].reverse()
@@ -543,7 +543,7 @@ class TestCli(unittest.TestCase):
 
     def test_nseg_env_followed(self):
         """P2a：VTX_VIDEO_SEGMENTS 与 composite 同源取值（切点集随 env 变化）。"""
-        from vtx.timeline_diff import _nseg
+        from vtx.inspection.timeline_diff import _nseg
         with mock.patch.dict(os.environ):
             os.environ.pop("VTX_VIDEO_SEGMENTS", None)
             self.assertEqual(_nseg(), 8)

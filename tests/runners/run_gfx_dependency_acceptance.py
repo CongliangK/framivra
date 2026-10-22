@@ -533,8 +533,8 @@ def main():
         from PIL import Image
         from vtx.infra import Ctx
         from vtx.render.gfx_dependencies import resolve
-        from vtx.hygiene import gfx_dir, gc_plan
-        from vtx.impact import capture, compare
+        from vtx.cache.hygiene import gfx_dir, gc_plan
+        from vtx.inspection.impact import capture, compare
         from tests.runners.impact_inventory import observe, delta, validate_sidecars, is_pass_sidecar
         chrome = shutil.which('google-chrome') or shutil.which('google-chrome-stable')
         font = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')

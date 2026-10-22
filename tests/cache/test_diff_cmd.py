@@ -156,7 +156,7 @@ class TestVtxDiffCmd(unittest.TestCase):
         self._run_scenario(scenario_4_unknown_and_dryrun)
 
     def test_named_reports_keep_distinct_duplicate_and_status_policies(self):
-        from vtx.diffcmd import diff_reports
+        from vtx.inspection.diffcmd import diff_reports
 
         for field, status in (("checks", "pass"), ("indicators", "status")):
             with self.subTest(field=field):

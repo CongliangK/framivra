@@ -137,7 +137,7 @@ class PluginCodeDigest(unittest.TestCase):
 
     def test_package_move_reaches_product_key_and_receipt(self):
         from vtx.api import plugin_code_digest
-        from vtx.cache_state import receipt_fingerprint
+        from vtx.cache.cache_state import receipt_fingerprint
 
         denoise = importlib.import_module("plugins.denoise")
         source = self.write("first/module.py")
@@ -161,7 +161,7 @@ class PluginCodeDigest(unittest.TestCase):
             self.assertNotEqual(receipt, receipt_fingerprint(context))
 
     def test_no_active_plugins_preserves_receipt_fingerprint(self):
-        from vtx.cache_state import receipt_fingerprint
+        from vtx.cache.cache_state import receipt_fingerprint
 
         timeline = self.root.parent / "timeline.json"
         timeline.write_bytes(b"{}")

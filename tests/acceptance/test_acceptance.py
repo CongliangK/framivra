@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from vtx import acceptance as a
+from vtx.inspection import acceptance as a
 from tests._support import temporary_root
 
 

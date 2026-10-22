@@ -16,7 +16,8 @@ from pathlib import Path
 from tests._support import cleanup_timeline, tree_sha256, temporary_root
 from unittest import mock
 
-from vtx import cli, hygiene
+from vtx import cli
+from vtx.cache import hygiene
 from tests.gfx._environment import bind_environment, environment_cli
 from vtx.infra import Ctx
 

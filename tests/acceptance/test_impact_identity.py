@@ -78,11 +78,11 @@ class SnapshotImpact(unittest.TestCase):
                 {'src': page, 'dst_in': i * 90, 'dur': 90})
 
     def snapshot(self):
-        from vtx.impact import capture
+        from vtx.inspection.impact import capture
         return capture(self.tl, self.root)
 
     def test_scene_eight_edit_has_no_unrelated_page_misses(self):
-        from vtx.impact import compare
+        from vtx.inspection.impact import compare
         before = self.snapshot()
         (self.root / 'page7.html').write_text('<p>New title</p>')
         after = self.snapshot()
@@ -95,7 +95,7 @@ class SnapshotImpact(unittest.TestCase):
 
     def test_declared_dependency_middle_bytes_restored_mtime(self):
         import os
-        from vtx.impact import compare
+        from vtx.inspection.impact import compare
         before = self.snapshot()
         path = self.root / 'shared.bin'
         st = path.stat()
@@ -107,14 +107,14 @@ class SnapshotImpact(unittest.TestCase):
         self.assertFalse(result['audio_mix_changed'])
 
     def test_noop_roundtrip(self):
-        from vtx.impact import compare
+        from vtx.inspection.impact import compare
         before = json.loads(json.dumps(self.snapshot()))
         result = compare(before, self.snapshot())
         self.assertEqual(result['affected_nodes'], [])
         self.assertEqual(result['new_artifacts'], [])
 
     def test_missing_dependency_never_certified_unchanged(self):
-        from vtx.impact import compare
+        from vtx.inspection.impact import compare
         (self.root / 'shared.bin').unlink()
         result = compare(self.snapshot(), self.snapshot())
         self.assertTrue(result['affected_nodes'])
@@ -150,7 +150,7 @@ class SnapshotImpact(unittest.TestCase):
 
     def test_fast_media_blind_spot_is_explicit(self):
         import os
-        from vtx.impact import capture, compare
+        from vtx.inspection.impact import capture, compare
         path = self.root / 'large.media'
         path.write_bytes(b'a' * 262144)
         tl = {'project': self.tl['project'],
@@ -164,7 +164,7 @@ class SnapshotImpact(unittest.TestCase):
         self.assertIn('source_media_fast_sampled_identity_not_verified', result['limitations'])
 
     def test_windowed_media_without_probe_is_unknown(self):
-        from vtx.impact import capture, compare
+        from vtx.inspection.impact import capture, compare
         (self.root / 'media').write_bytes(b'a')
         tl = {'project': self.tl['project'], 'sources': [{'id': 's', 'path': 'media'}],
               'video_tracks': [{'kind': 'aroll', 'clips': [
@@ -186,8 +186,8 @@ class ClipDependencies(SnapshotImpact):
 
     def test_local_middle_bytes_restore_mtime_exact_page_and_receipt(self):
         import os
-        from vtx.impact import compare
-        from vtx.cache_state import receipt_fingerprint, verify_input_identity, InputIdentityError
+        from vtx.inspection.impact import compare
+        from vtx.cache.cache_state import receipt_fingerprint, verify_input_identity, InputIdentityError
         ctx = SimpleNamespace(root=self.root, tl=self.tl)
         timeline_bytes = json.dumps(self.tl).encode()
         old_receipt = receipt_fingerprint(ctx, timeline_bytes=timeline_bytes)
@@ -208,8 +208,8 @@ class ClipDependencies(SnapshotImpact):
 
     def test_union_alias_order_and_cwd(self):
         import os
-        from vtx.hygiene import gfx_key
-        from vtx.timeline_diff import DiffCtx
+        from vtx.cache.hygiene import gfx_key
+        from vtx.inspection.timeline_diff import DiffCtx
         c = DiffCtx(self.tl, self.root)
         first = gfx_key(c, self.clip)
         self.clip['cache_dependencies'] = ['./shared.bin', './local.bin', 'local.bin']
@@ -223,10 +223,10 @@ class ClipDependencies(SnapshotImpact):
         self.assertEqual(first, gfx_key(c, self.clip))
 
     def test_environment_migration_preserves_empty_dependency_equivalence(self):
-        from vtx.hygiene import gfx_key
+        from vtx.cache.hygiene import gfx_key
         from vtx.render.gfx_environment import identity
-        from vtx.timeline_diff import DiffCtx
-        from vtx.cache_state import file_digest
+        from vtx.inspection.timeline_diff import DiffCtx
+        from vtx.cache.cache_state import file_digest
         c = DiffCtx(self.tl, self.root)
         cl = self.tl['video_tracks'][0]['clips'][0]
         blob = (self.root / cl['src']).read_bytes()
@@ -240,8 +240,8 @@ class ClipDependencies(SnapshotImpact):
         self.assertEqual(gfx_key(c, cl), expected)
 
     def test_missing_local_only_invalidates_declaring_page(self):
-        from vtx.impact import compare
-        from vtx.cache_state import validate_cache_dependencies
+        from vtx.inspection.impact import compare
+        from vtx.cache.cache_state import validate_cache_dependencies
         (self.root / 'local.bin').unlink()
         with self.assertRaisesRegex(ValueError, 'not a file'):
             validate_cache_dependencies(SimpleNamespace(tl=self.tl, root=self.root))
@@ -250,8 +250,8 @@ class ClipDependencies(SnapshotImpact):
         self.assertIn('clip:0:7', result['conservative_nodes'])
 
     def test_invalid_and_unresolved_declarations(self):
-        from vtx.cache_state import validate_cache_dependencies
-        from vtx.impact import compare
+        from vtx.cache.cache_state import validate_cache_dependencies
+        from vtx.inspection.impact import compare
         for value in (None, 'local.bin', [1], [''], ['  '], ['a\0b'], ['https://example.invalid/a'], ['.']):
             with self.subTest(value=value):
                 self.clip['cache_dependencies'] = value
@@ -262,13 +262,13 @@ class ClipDependencies(SnapshotImpact):
                 self.assertTrue(any(n['node'] == 'clip:0:7' for n in result['affected_nodes']))
 
     def test_non_gfx_declaration_rejected(self):
-        from vtx.cache_state import all_declared_dependencies
+        from vtx.cache.cache_state import all_declared_dependencies
         self.tl['video_tracks'][0]['kind'] = 'aroll'
         with self.assertRaisesRegex(ValueError, 'only valid on gfx'):
             all_declared_dependencies(SimpleNamespace(tl=self.tl))
 
     def test_acceptance_collects_clip_inputs(self):
-        from vtx.acceptance import collect_inputs
+        from vtx.inspection.acceptance import collect_inputs
         path = self.root / 'timeline.json'; path.write_text(json.dumps(self.tl))
         names = collect_inputs(path)
         self.assertEqual(names['local.bin'], 'declared_dependency')

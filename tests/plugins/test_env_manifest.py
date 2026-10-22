@@ -1,4 +1,4 @@
-"""tests/plugins/test_env_manifest.py — vtx/env_manifest 单测（issue #102）。
+"""tests/plugins/test_env_manifest.py — vtx/inspection/env_manifest 单测（issue #102）。
 
 全密封离线：子进程经 em._run_cmd seam 注入桩、文件读经 _read_text/_read_bytes
 seam、进程表经 _list_x_servers seam、环境变量经 patch.dict——不起真
@@ -25,7 +25,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 
-from vtx import env_manifest as em   # noqa: E402
+from vtx.inspection import env_manifest as em   # noqa: E402
 from scripts.gfx import gfx_golden as gg              # noqa: E402
 from tests.gfx._png import golden_frame as _make_frame  # noqa: E402
 from tests._support import golden_project as _project, temporary_root
@@ -226,7 +226,7 @@ class TestGitState(unittest.TestCase):
     def test_dirty_descendant_baseline(self):
         cmds = {
             "git rev-parse HEAD": "abc123def0000000000000000000000000000000\n",
-            "git status --porcelain": "?? vtx/env_manifest.py\n M vtx/render/gfx_render.py\n",
+            "git status --porcelain": "?? vtx/inspection/env_manifest.py\n M vtx/render/gfx_render.py\n",
             f"git merge-base --is-ancestor {em.BASELINE_SHA} HEAD": CP0,
         }
         g = self._git(cmds)

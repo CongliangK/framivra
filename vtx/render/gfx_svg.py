@@ -479,7 +479,7 @@ def engine_identity():
 
 @lru_cache(maxsize=32)
 def _font_faces(executable, path, sha256, runtime_digest):
-    from ..cache_state import file_digest
+    from ..cache.cache_state import file_digest
     result = _inspect_command([executable, '-f', '%{family}\t%{style}\t%{index}\n', path])
     if result.returncode or not result.stdout.strip() or file_digest(path) != sha256:
         raise ValueError('declared SVG font could not be identified or changed during inspection')
@@ -555,7 +555,7 @@ def resolve(c, clip):
         font_faces[font] = _font_faces(fontconfig['executable'], str(input_path(c, font)), files[font], digest(canonical(fontconfig)))
     if 'generator' in manifest:
         add(manifest['generator'])
-    from ..cache_state import declared_dependencies
+    from ..cache.cache_state import declared_dependencies
     for name in declared_dependencies(c, clip):
         # Existing adapter may canonicalize clip-local unions to absolute names.
         path = Path(name)

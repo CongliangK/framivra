@@ -29,7 +29,7 @@ REPO_ROOT = EXP_DIR.parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from vtx.infra import Ctx                                        # noqa: E402
-from vtx.hygiene import TMP                                      # noqa: E402
+from vtx.cache.hygiene import TMP                                      # noqa: E402
 from vtx.runtime.proc_supervisor import (WORKER_LEDGER,                  # noqa: E402
                                  group_live_members, reap_orphan_workers)
 

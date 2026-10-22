@@ -19,11 +19,11 @@ project+video_tracks 特征键）时自动走本模块，否则回落报告 diff
 import json
 import sys
 from pathlib import Path
-from .runtime import fstxn
+from ..runtime import fstxn
 
-from .composite import SEG_CUT_GUARD, choose_cutpoints
-from .media.encoders import seg_encoder_kind
-from .hygiene import gfx_key, seg_key
+from ..composite import SEG_CUT_GUARD, choose_cutpoints
+from ..media.encoders import seg_encoder_kind
+from ..cache.hygiene import gfx_key, seg_key
 
 DEFAULT_NSEG = 8   # 与 composite.DEFAULT_SEGMENTS 同值（避免 import 产生环形依赖，取字面量并注释）
 
@@ -45,7 +45,7 @@ def _cold_rebuild_hints(project_root: Path) -> list:
     hints = []
     vdir = project_root / "cache" / "vseg"
     try:
-        from .composite import _graph_code_digest
+        from ..composite import _graph_code_digest
         recorded = (vdir / ".graph_digest").read_text(encoding="utf-8").strip()
         current = _graph_code_digest()
         if recorded != current:
@@ -183,7 +183,7 @@ def _layer_ident(c, tr, ti, cl):
 def _seg_dialogue(subs, fps, a, b):
     """Use the renderer's exact clipped, local-clock ASS dialogue bytes."""
     from types import SimpleNamespace
-    from .composite import RenderPlan
+    from ..composite import RenderPlan
     c = SimpleNamespace(fps=fps, tl={"subtitles": subs})
     plan = RenderPlan(c=c, draft=False, f=1.0, W=1920, H=1080)
     return "\n".join(line for line in plan.segment_ass_bytes(a, b).decode("utf-8").splitlines()

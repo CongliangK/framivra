@@ -36,7 +36,7 @@ from tests.gfx._png import png
 
 from vtx import cli
 from vtx.render import gfx_cli, gfx_render
-from vtx import hygiene
+from vtx.cache import hygiene
 from vtx.runtime import proc_supervisor
 from vtx.infra import Ctx
 from vtx.runtime.proc_supervisor import (SupervisedProcessGroup, WORKER_LEDGER,
@@ -373,7 +373,7 @@ ROOT, role = Path(sys.argv[1]), sys.argv[2]
 scratch, out, timeline_src = Path(sys.argv[3]), Path(sys.argv[4]), Path(sys.argv[5])
 mid_pid = int(sys.argv[6]) if len(sys.argv) > 6 else None
 sys.path.insert(0, str(ROOT))
-from vtx import hygiene
+from vtx.cache import hygiene
 from vtx.infra import Ctx
 from vtx.runtime.proc_supervisor import (WORKER_LEDGER, LineageKillDenied, boot_id,
                                  group_live_members, kill_group,

@@ -78,7 +78,7 @@ class CleanupProtectionFixture(unittest.TestCase):
         os.utime(self.root / "cache/tmp/orphan", (1, 1))
         self.wav_size = (self.root / "assets/voice.wav").stat().st_size
         # 活键缓存（当前 timeline 键集内，正常 gc 须保活）
-        from vtx import hygiene
+        from vtx.cache import hygiene
         from vtx.infra import Ctx
         c = Ctx(self.timeline)
         live_gfx = self.root / "cache/gfx" / hygiene.gfx_key(
@@ -119,18 +119,18 @@ class ProtectionListTest(unittest.TestCase):
     """保护清单谓词真值表（hygiene.out_protected，A02 唯一权威判据）。"""
 
     def test_protected_names(self):
-        from vtx.hygiene import out_protected
+        from vtx.cache.hygiene import out_protected
         for name in PROTECTED_NAMES:
             self.assertTrue(out_protected(name), f"应保护: {name}")
 
     def test_unprotected_names(self):
-        from vtx.hygiene import out_protected
+        from vtx.cache.hygiene import out_protected
         for name in UNPROTECTED_NAMES:
             self.assertFalse(out_protected(name), f"不应保护: {name}")
 
     def test_pattern_sources_are_the_protection_list(self):
         # 单源校验：生产保护谓词直接使用统一模式清单，不保留第二个模式入口
-        from vtx import hygiene
+        from vtx.cache import hygiene
         self.assertEqual(hygiene.out_protected("FREEZE_v47.json"), True)
         self.assertEqual(hygiene.out_protected("freeze.json"), False)
         self.assertEqual(set(hygiene.OUT_PROTECTED_PATTERNS),

@@ -141,7 +141,7 @@ CEF 负例仅在同一 worker、同一路径的 libcef.so 追加不参与装载�
 
 ## 阶段回执（PR#1）
 
-QC 的段免检记录另绑定 `vtx/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样表达式。
+QC 的段免检记录另绑定 `vtx/inspection/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样表达式。
 记录 schema 为 v3：gfx 源 alpha 内容 bbox 按合成器实际尺寸投影，再平移、裁至画布；
 这不是 Lanczos 后重新阈值测得的 bbox。新读取器拒绝 v1/v2（即使 filter 相同），
 旧读取器也拒绝 v3，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
@@ -198,7 +198,7 @@ mux 的历史轮转/旧版核对在替换前回调中执行，VERSIONS 记账在
 不回滚，也不会记阶段成功。dry-run 不调用生产者或提交回调。
 
 普通 `clean` 清理 cache/（含其中证据与快照）及 out/ 可再生条目，默认保护 final、VERSIONS、
-history、reports、FREEZE 与 final_4k 等交付件；保护清单以 [`out_protected`](../vtx/hygiene.py) 为准。
+history、reports、FREEZE 与 final_4k 等交付件；保护清单以 [`out_protected`](../vtx/cache/hygiene.py) 为准。
 只有显式危险旗标 `clean --i-know-this-nukes-everything` 将交付件纳入删除，锁与拒绝路径仍保留。
 普通 clean/gc（含 gc --all）按各自模式和年龄规则决定媒体去留，再保留其精确
 完成凭据：owner 必须是 cache/ 或 out/ 下现存、路径链无符号链接的普通媒体文件，
@@ -213,7 +213,7 @@ history、reports、FREEZE 与 final_4k 等交付件；保护清单以 [`out_pro
 - [缓存回归](../tests/runners/run_cache_regression.py)：同长素材替换并恢复时间戳、修改字幕/HTML 后不清缓存重跑，与独立冷启动对照完整 180 帧缩略 RGB 和解码 PCM。
 - [E2E 运行器](../tests/runners/run_e2e.py)与[独立验证器](../tests/runners/verify_e2e.py)：12 秒单段/并行全流程、严格 QC、接缝和音频对照。
 
-Windows 修复前后数值与 Linux/voice-ime 复验见[固定回归记录](https://github.com/CongliangK/framivra/blob/f0c98dd104a4674f0ae6eb84622462cad0ad6006/docs/cache-provenance.md#回归)；架构裁定见 `vtx/cache_state.py` 模块头。
+Windows 修复前后数值与 Linux/voice-ime 复验见[固定回归记录](https://github.com/CongliangK/framivra/blob/f0c98dd104a4674f0ae6eb84622462cad0ad6006/docs/cache-provenance.md#回归)；架构裁定见 `vtx/cache/cache_state.py` 模块头。
 这些受控正确性结果不证明长视频或跨平台性能，当前版本仍须实际执行上述回归。
 
 ## 质量与证据标签（#90，契约评审候选）

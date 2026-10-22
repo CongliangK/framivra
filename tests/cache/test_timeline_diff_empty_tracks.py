@@ -15,7 +15,7 @@ import sys
 import tempfile
 import unittest
 
-from vtx.timeline_diff import diff_timelines
+from vtx.inspection.timeline_diff import diff_timelines
 
 ROOT = Path(__file__).resolve().parents[2]
 FFMPEG = os.environ.get("VTX_TEST_FFMPEG") or shutil.which("ffmpeg")

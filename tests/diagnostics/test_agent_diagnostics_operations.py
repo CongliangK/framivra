@@ -46,7 +46,7 @@ class NativeOperations(unittest.TestCase):
 
 class IdentityExit(unittest.TestCase):
     def test_only_actual_handled_identity_failure_transfers_to_exit(self):
-        from vtx.cache_state import InputIdentityError
+        from vtx.cache.cache_state import InputIdentityError
         from vtx.runtime.diagnostics import mark_handled
         for handled in (False, True):
             error = InputIdentityError('identity changed')

@@ -142,7 +142,7 @@ class FrameBoundaryContracts(unittest.TestCase):
                     self.assertEqual(json.dumps(subs, sort_keys=True), before)
 
     def test_impact_analysis_uses_same_bytes_and_accepts_30_point_zero(self):
-        from vtx.timeline_diff import _seg_dialogue
+        from vtx.inspection.timeline_diff import _seg_dialogue
         subs = [{'in': 310, 'out': 329, 'text': 'TEST'}]
         for fps in (30, 30.0):
             p = plan(subs); p.c.fps = fps
@@ -167,7 +167,7 @@ class FrameBoundaryContracts(unittest.TestCase):
                 self.assertEqual(json.dumps(equivalent.c.tl, sort_keys=True), original)
 
     def test_fractional_or_non_numeric_frames_are_never_truncated(self):
-        from vtx.timeline_diff import _seg_dialogue
+        from vtx.inspection.timeline_diff import _seg_dialogue
         for value in (310.5, -1, True, '310', None, float('nan'), float('inf')):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 plan([])._fc(value)

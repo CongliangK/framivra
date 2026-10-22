@@ -19,8 +19,8 @@ from unittest import mock
 
 from vtx import cli
 from vtx.render import gfx_backend, gfx_cli, gfx_electron_stage
-from vtx import hygiene
-from vtx.cache_state import InputIdentityError, verify_input_identity
+from vtx.cache import hygiene
+from vtx.cache.cache_state import InputIdentityError, verify_input_identity
 from vtx.composite import RenderPlan
 from vtx.infra import Ctx
 from tests.gfx._png import png

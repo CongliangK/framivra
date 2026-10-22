@@ -11,7 +11,7 @@ from unittest.mock import patch
 from tests.runners.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation, check_gc_contract
 from vtx.render.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
-from vtx.impact import capture, compare
+from vtx.inspection.impact import capture, compare
 
 
 class AcceptanceContracts(unittest.TestCase):
@@ -535,7 +535,7 @@ class AcceptanceContracts(unittest.TestCase):
 
     def test_gc_contract_distinguishes_current_keys_and_disposable_vseg(self):
         from tests.runners.impact_inventory import observe
-        from vtx.hygiene import gfx_dir, gc_plan
+        from vtx.cache.hygiene import gfx_dir, gc_plan
         from vtx import cli
         import os
         current = [gfx_dir(self.c, cl).relative_to(self.project).as_posix()

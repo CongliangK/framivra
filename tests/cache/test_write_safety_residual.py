@@ -13,7 +13,7 @@ from unittest import mock
 
 from tests._support import temporary_root
 from vtx.runtime import fstxn
-from vtx import hygiene
+from vtx.cache import hygiene
 from vtx.media import loudness_cache, subs
 from vtx.infra import Ctx, ProjectPathError
 
@@ -264,7 +264,7 @@ class WriteSafetyResidual(unittest.TestCase):
     def test_fixed_text_frame_and_directories_reject_external_links(self):
         from vtx import composite
         from vtx.render import gfx_render
-        from vtx import qc
+        from vtx.inspection import qc
         cache = self.root / 'cache'
         cache.mkdir()
         (cache / 'subs.ass').symlink_to(self.victim)

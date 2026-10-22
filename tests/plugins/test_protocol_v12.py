@@ -31,7 +31,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from vtx import hygiene
+from vtx.cache import hygiene
 from vtx.pluginlib import hooks as pl_hooks
 from vtx.pluginlib import registry as pl_registry
 from vtx.stages import _scan_plugin_keys, validate

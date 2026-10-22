@@ -12,7 +12,7 @@ from pathlib import Path
 # PR#1 合入（2026-09-11）：回执侧溯源（依赖门/下游失效/输入身份绑定）。
 # 缓存布局仍用 main 13bed7a 的 per-产物内容寻址键（hygiene.py）——见 cache_state.py 模块头合并裁定。
 from .runtime import fstxn, events
-from .cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
+from .cache.cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
                          receipt_fingerprint, validate_cache_dependencies,
                          verify_input_identity)
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
@@ -172,7 +172,7 @@ class Ctx:
         # caught too. Hash exactly the bytes parsed above, not a second read.
         validate_cache_dependencies(self)
         from .render.gfx_backend import selected, identity
-        from .hygiene import gfx_cache_ns
+        from .cache.hygiene import gfx_cache_ns
         from .render import gfx_svg
         if gfx_svg.route(self) == 'svg-sequence':
             self.gfx_backend = {'requested_backend': 'svg-sequence',
@@ -224,7 +224,7 @@ class Ctx:
         if self.dry and is_ffmpeg_cmd(cmd):
             print("[dry-run]", " ".join(map(str, cmd))[:300] + (" …" if len(cmd) > 20 else ""))
             return ""
-        from .recovery import atomic_ffmpeg
+        from .cache.recovery import atomic_ffmpeg
         observation = events.task(self, kind="process")
         def execute(argv):
             return observation.attempt(subprocess.run, argv, capture_output=True, text=True,
@@ -504,7 +504,7 @@ def filter_threads() -> int:
     return 1
 
 def run_ffmpeg_task(c: Ctx, label: str, cmd, nvenc: bool = False, *, observation=None):
-    from .recovery import atomic_ffmpeg
+    from .cache.recovery import atomic_ffmpeg
     observation = observation or events.task(c, kind='ffmpeg')
     with observation.scope():
         return atomic_ffmpeg(c, cmd, lambda argv: _run_ffmpeg_task(c, label, argv, nvenc))

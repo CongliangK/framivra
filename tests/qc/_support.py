@@ -4,7 +4,7 @@ import io
 import json
 import types
 from pathlib import Path
-from vtx import qc
+from vtx.inspection import qc
 
 class _FakeContext:
     def __init__(self, root, *, enabled=False, loud=-14, tp=-2, energy=-25,

@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from vtx.acceptance import build, safe_path, safe_environment, verify, write_json
+from vtx.inspection.acceptance import build, safe_path, safe_environment, verify, write_json
 
 
 def tamper_negatives(root, digest):

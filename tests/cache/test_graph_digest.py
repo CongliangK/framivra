@@ -87,7 +87,7 @@ class TestColdRebuildHints(unittest.TestCase):
 
     def test_hint_on_digest_drift(self):
         import tempfile
-        from vtx.timeline_diff import _cold_rebuild_hints
+        from vtx.inspection.timeline_diff import _cold_rebuild_hints
         with tempfile.TemporaryDirectory() as td:
             vdir = Path(td) / "cache" / "vseg"
             vdir.mkdir(parents=True)
@@ -101,7 +101,7 @@ class TestColdRebuildHints(unittest.TestCase):
 
     def test_hint_on_empty_vseg(self):
         import tempfile
-        from vtx.timeline_diff import _cold_rebuild_hints
+        from vtx.inspection.timeline_diff import _cold_rebuild_hints
         with tempfile.TemporaryDirectory() as td:
             vdir = Path(td) / "cache" / "vseg"
             vdir.mkdir(parents=True)
@@ -112,7 +112,7 @@ class TestColdRebuildHints(unittest.TestCase):
         """红队必修回归：gc 对 vseg 是整目录 rmtree——目录不存在必须报冷建，
         不得静默（原实现恰好在该最常见形态下漏报）。"""
         import tempfile
-        from vtx.timeline_diff import _cold_rebuild_hints
+        from vtx.inspection.timeline_diff import _cold_rebuild_hints
         with tempfile.TemporaryDirectory() as td:
             hints = _cold_rebuild_hints(Path(td))
             self.assertTrue(any("不存在" in h and "冷建" in h for h in hints), hints)

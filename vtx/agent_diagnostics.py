@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from .runtime.diagnostics import emit, mark_handled
 from .infra import Ctx, ProjectPathError, ensure_inside_project
 from .stages import audit, validate
-from .qc import qc
+from .inspection.qc import qc
 
 
 def main(argv=None):

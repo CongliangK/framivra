@@ -139,18 +139,18 @@ def main(argv=None):
     package_timeline = package_input / 'timeline.json'
     declared = json.loads(package_timeline.read_text()); declared['project']['cache_dependencies'] = ['fonts/NotoSansSC-VF.ttf']
     package_timeline.write_text(json.dumps(declared, ensure_ascii=False, indent=2) + '\n')
-    package_built = command('package-build', [sys.executable, '-m', 'vtx.acceptance', 'build', package_timeline, package, '--chrome', args.chrome.resolve()], expected=2)
+    package_built = command('package-build', [sys.executable, '-m', 'vtx.inspection.acceptance', 'build', package_timeline, package, '--chrome', args.chrome.resolve()], expected=2)
     manifest = release.digest(package / 'manifest.json')
-    package_verified = command('package-verify', [sys.executable, '-m', 'vtx.acceptance', 'verify', package,
+    package_verified = command('package-verify', [sys.executable, '-m', 'vtx.inspection.acceptance', 'verify', package,
           '--manifest-sha256', manifest, '--source-root', package_input], expected=2)
     retained = package / 'artifacts/final.mp4'; retained_bytes = retained.read_bytes()
     retained.write_bytes(retained_bytes + b'tamper')
-    package_tamper = command('package-tamper-rejected', [sys.executable, '-m', 'vtx.acceptance', 'verify', package,
+    package_tamper = command('package-tamper-rejected', [sys.executable, '-m', 'vtx.inspection.acceptance', 'verify', package,
             '--manifest-sha256', manifest], expected=1)
     retained.write_bytes(retained_bytes)
     source_input = package_input / 'a.mp4'; source_bytes = source_input.read_bytes()
     source_input.write_bytes(source_bytes + b'tamper')
-    input_tamper = command('input-tamper-rejected', [sys.executable, '-m', 'vtx.acceptance', 'verify', package,
+    input_tamper = command('input-tamper-rejected', [sys.executable, '-m', 'vtx.inspection.acceptance', 'verify', package,
             '--manifest-sha256', manifest, '--source-root', package_input], expected=1)
     source_input.write_bytes(source_bytes)
     gate('independent_package', [package_built, package_verified, package_tamper, input_tamper])

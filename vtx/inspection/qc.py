@@ -13,12 +13,12 @@ import operator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .media import loudness_cache
-from .runtime import fstxn
-from .runtime.diagnostics import (emit, producer_exit, required_field, operation,
+from ..media import loudness_cache
+from ..runtime import fstxn
+from ..runtime.diagnostics import (emit, producer_exit, required_field, operation,
                           key_path, subtitle_location)
-from .composite import _gfx_scaled_size
-from .hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
+from ..composite import _gfx_scaled_size
+from ..cache.hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
 QC_CUT_MEAN_MAX = 6.0        # 底轨切点帧比对：平均像素差上限
@@ -942,7 +942,7 @@ def qc(c):
        suggested_actions=[{"op": "inspect_audio_mix", "params": {
            "json_path": "$.audio_tracks", "frame": stacked[1] if stacked else None,
            "fields": ["src", "in", "out", "volume"]}}])
-    from .runtime.quality import qc_quality
+    from ..runtime.quality import qc_quality
     rep["skipped_probes"] = skipped_probes
     rep["quality"] = qc_quality(rep)
     fstxn.atomic_write(c.out / "qc_report.json", json.dumps(rep, ensure_ascii=False, indent=2), root=c.root)

@@ -51,7 +51,7 @@ sans-serif 回退）、色彩空间（srgb）、视口尺寸、生效后端（GP
 （回退路径一致，回退目标由 sans-serif 指纹另行把关）。
 
 落盘走 vtx/runtime/fstxn.atomic_write（同目录 tmp + os.replace）：并发或中断下不产生
-半截 JSON。CLI：`python3 -m vtx.env_manifest collect|verify --help`。
+半截 JSON。CLI：`python3 -m vtx.inspection.env_manifest collect|verify --help`。
 
 tests 经 _run_cmd / _read_text / _read_bytes / _list_x_servers 四个 seam 注入桩
 （tests/plugins/test_env_manifest.py 全密封离线，不起真 nvidia-smi/fc-list/git/chrome）。
@@ -70,8 +70,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# 包内一律相对导入（vtx/__init__ §1.4）；CLI 使用 -m vtx.env_manifest。
-from .runtime.fstxn import atomic_write
+# 包内一律相对导入（vtx/__init__ §1.4）；CLI 使用 -m vtx.inspection.env_manifest。
+from ..runtime.fstxn import atomic_write
 
 __all__ = ["collect_env_manifest", "verify_manifest_compatibility",
            "write_manifest", "classify_gl_backend", "main"]
@@ -533,7 +533,7 @@ def collect_env_manifest(backend_id: str, runtime_gpu_info: dict | None = None) 
     """
     if not isinstance(backend_id, str) or not backend_id:
         raise ValueError("backend_id 必须是非空 str（后端路线标识，如 cef-route-a）")
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     return {
         "schema": "vtx.env_manifest/1",
         "run_id": _new_run_id(),
@@ -650,7 +650,7 @@ def _load_json_file(path_str: str):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        prog="python3 -m vtx.env_manifest",
+        prog="python3 -m vtx.inspection.env_manifest",
         description="跨后端渲染环境指纹采集器（issue #102）：采集 env_manifest.json "
                     "并做跨后端一致性门禁（供 gfx_golden 跨后端像素比对前置校验）")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -659,7 +659,7 @@ def main(argv=None) -> int:
     c.add_argument("--backend-id", required=True,
                    help="后端路线标识（如 cdp-baseline / cef-route-a / electron-route-b）")
     c.add_argument("--runtime-info", required=True,
-                   help="渲染进程内部接口实测值 JSON 路径（结构见 vtx/env_manifest.py 模块头；"
+                   help="渲染进程内部接口实测值 JSON 路径（结构见 vtx/inspection/env_manifest.py 模块头；"
                         "CDP=Browser.getVersion+SystemInfo.getInfo / CEF=CefGetVersion+GL 探针 /"
                         " Electron=GPUFeatureStatus+GPUInfo）")
     c.add_argument("--out", required=True, help="输出 env_manifest.json 路径")

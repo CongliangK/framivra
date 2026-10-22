@@ -97,13 +97,13 @@ from . import main, _stage_receipt_name
 from .composite import build_video, prepare_layers
 from .media.encoders import find_chrome
 from .render import gfx_cli
-from . import hygiene
+from .cache import hygiene
 from .runtime import fstxn, events
-from .hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
+from .cache.hygiene import (budget_gate, df, gfx_key, gfx_dir, gfx_cache_ns,
                       manifest_record, snapshot)
 from .infra import (Ctx, ProjectPathError, ensure_inside_project,
                     run_wave)
-from .qc import qc
+from .inspection.qc import qc
 from .stages import audit, build_audio, mux, prepare, validate
 from .media.subs import run_subs
 
@@ -899,7 +899,7 @@ def _main(execution=None):
             if len(a.subs_extra) != 1:
                 print("Usage: diff --capture-impact <timeline.json> [--json NEW_PATH]")
                 sys.exit(2)
-            from .timeline_diff import run_impact_capture
+            from .inspection.timeline_diff import run_impact_capture
             sys.exit(run_impact_capture(a.subs_extra[0], a.json, a.dry_run))
         if len(a.subs_extra) != 2:
             print("✗ 用法：diff <旧报告.json> <新报告.json>"
@@ -907,8 +907,8 @@ def _main(execution=None):
         # 时间线语义 diff（方案五阶段2）：两参均为 timeline JSON（含 project+video_tracks
         # 特征键）时自动走 timeline_diff；否则维持报告对比（diffcmd）——一个 diff 入口，
         # 按输入特征分流，最小惊讶。坏 JSON / 类型不一致（timeline 混报告）给分类文案。
-        from .diffcmd import run_diff
-        from .timeline_diff import is_timeline
+        from .inspection.diffcmd import run_diff
+        from .inspection.timeline_diff import is_timeline
         ja, jb = a.subs_extra
         try:
             da = json.loads(Path(ja).read_text(encoding="utf-8"))
@@ -918,13 +918,13 @@ def _main(execution=None):
             sys.exit(2)
         if (isinstance(da, dict) and
                 str(da.get("schema", "")).startswith("framivra-impact-snapshot-")):
-            from .timeline_diff import run_snapshot_diff
+            from .inspection.timeline_diff import run_snapshot_diff
             sys.exit(run_snapshot_diff(da, jb, a.json, a.dry_run))
         tl_a, tl_b = is_timeline(da), is_timeline(db)
         if tl_a and tl_b:
             if a.json and a.dry_run:
                 print("✗ --json 落盘与 --dry-run 冲突（diff 为纯读命令，dry 下不写文件）"); sys.exit(2)
-            from .timeline_diff import run_timeline_diff
+            from .inspection.timeline_diff import run_timeline_diff
             sys.exit(run_timeline_diff(ja, jb, json_path=a.json, dry=a.dry_run))
         if tl_a != tl_b:
             print(f"✗ 两参类型不一致（{ja if tl_a else jb} 是 timeline，"

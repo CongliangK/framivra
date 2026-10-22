@@ -424,7 +424,7 @@ class GfxCliEntryTests(unittest.TestCase):
                 self.assertNotIn("渲染 1 帧（", result.stdout)
 
     def test_cli_wrong_frame_name_is_not_a_cache_hit(self):
-        from vtx.hygiene import gfx_dir
+        from vtx.cache.hygiene import gfx_dir
         from vtx.render.gfx_cli import ENV_PENDING_FILE
         stub = self._stub("nowrite")
         env = dict(os.environ, VTX_GFX="cli", VTX_CHROME=str(stub), VTX_GFX_CACHE_NS="")

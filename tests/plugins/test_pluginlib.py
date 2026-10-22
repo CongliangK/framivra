@@ -43,8 +43,8 @@ from tests._support import full_hd_timeline as _tl
 
 from tests._support import _make_plugin_dir
 
-from vtx import hygiene
-from vtx.cache_state import receipt_fingerprint
+from vtx.cache import hygiene
+from vtx.cache.cache_state import receipt_fingerprint
 from vtx.infra import Ctx
 from vtx.pluginlib import config as pl_config
 from vtx.pluginlib import hooks as pl_hooks

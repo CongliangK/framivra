@@ -38,8 +38,8 @@ sys.path.insert(0, str(PLUGIN_DIR.parent))      # templates/ —— 包导入锚
 
 hello = importlib.import_module("hello-plugin")  # noqa: E402（连字符目录名经 import_module）
 
-from vtx import hygiene, recovery               # noqa: E402
-from vtx.cache_state import receipt_fingerprint  # noqa: E402
+from vtx.cache import hygiene, recovery               # noqa: E402
+from vtx.cache.cache_state import receipt_fingerprint  # noqa: E402
 from vtx.infra import Ctx                       # noqa: E402
 from vtx.pluginlib import hooks as pl_hooks     # noqa: E402
 from vtx.pluginlib.manifest import load_manifest  # noqa: E402

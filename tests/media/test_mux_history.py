@@ -25,7 +25,8 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
 
-from vtx import stages, recovery          # noqa: E402
+from vtx import stages
+from vtx.cache import recovery          # noqa: E402
 from vtx.infra import Ctx  # noqa: E402
 
 

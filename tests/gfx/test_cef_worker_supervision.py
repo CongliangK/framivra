@@ -33,7 +33,7 @@ import unittest
 from pathlib import Path
 
 from vtx.render.gfx_cli import png_invalid_reason
-from vtx.hygiene import TMP
+from vtx.cache.hygiene import TMP
 from vtx.infra import Ctx
 from vtx.runtime.proc_supervisor import (WORKER_LEDGER, SupervisedProcessGroup,
                                  group_live_members, reap_orphan_workers)

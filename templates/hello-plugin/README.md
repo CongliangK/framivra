@@ -67,7 +67,7 @@ env python3 templates/hello-plugin/health_check.py   # 探 ffmpeg，exit 0 = 健
 插件产物若不注册键，渲染中就会被 budget_gate 自动触发的 gc 当垃圾回收（gc_plan
 把 `cache/audio/` 下不在当前键集内的文件一律判垃圾）。唯一通道 =
 `contribute_keys(c)`（`__init__.py` 已实现）：返回本 timeline 全部声明
-`hello_gain` 源的产物键 stem，由内核 `hygiene._current_keys` 并入 ak 存留集——
+`hello_gain` 源的产物键 stem，由内核 `vtx.cache.hygiene._current_keys` 并入 ak 存留集——
 `vtx gc --dry-run` 可见插件产物不在回收清单。
 
 ## 卸载后缓存为何失效（验收门 6 对照语义）

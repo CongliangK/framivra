@@ -2,7 +2,7 @@
 （无 chrome 依赖），覆盖 build 抽样/全帧、帧缺失报错、compare 全零/差异/帧缺失、
 同页双 dur 并列、名单逐项零匹配报错（B2）、缓存未重渲新鲜度防线（B1 默认警告/
 --strict 失败）、页 html 改键后 compare 显式失败（目录缺失，绝不静默错比）。
-golden 键与帧目录定位复用 vtx/hygiene.gfx_key（与渲染器同键）。
+golden 键与帧目录定位复用 vtx/cache/hygiene.gfx_key（与渲染器同键）。
 
 #104 起扩展：analyze_frame_diff 三级像素裁决（Tier-1 Exact / Tier-2
 Premul-Equivalent / Tier-3 Failure+labels）——DoD 四类合成帧分类准确率 100%、

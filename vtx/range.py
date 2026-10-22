@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .composite import RenderPlan, choose_cutpoints, prepare_layers
 from .media.encoders import pick_vcodec
-from .recovery import media_cache_valid
+from .cache.recovery import media_cache_valid
 from .stages import mix_audio_wav
 from .runtime import fstxn
 
@@ -101,7 +101,7 @@ def _receipt_audio_gain(c):
     ebur128 测量。无回执/**回执与当前输入身份不符**（P6 修复 B-P2-2：timeline/源
     已变更而未重跑 vtx audio 时，v1 直读陈旧 gain_db 会拿旧混音增益渲新内容且无
     提示——现经 load_receipt 指纹门，失配回落窗口自测并打印陈旧告警）时返回 None。"""
-    from .cache_state import load_receipt
+    from .cache.cache_state import load_receipt
     f = c.out / "receipt.json"
     had_file = f.exists()
     try:
