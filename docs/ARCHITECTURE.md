@@ -88,7 +88,7 @@ HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺�
 
 自立缓存目录需登记 registry `cache_dirs`；可选 `cache_dir_keys(c) -> {目录名: 键集}` 经 `get_cache_dir_keys` 聚合，仅对已登记目录生效。gc 的 `plugin_cache` 类别按一级子目录键保留当前键、回收陈旧键，豁免 `<digest>.lock`；未声明键集的目录维持整目录白名单。`contribute_keys` 与 `cache_dir_keys` 是不变量入口，**不是钩子，不参与 hooks 对账**。外部 manifest 的 `cache_dirs` 暂无生效通道，外部音频键仍可走 contribute_keys。
 
-**② 回执指纹。** 保留 timeline 字节、源 stat、gfx HTML 与声明依赖成分，在末尾追加生效插件的**名称+版本+全部生效参数实例摘要+代码内容摘要**。安装/卸载/升级/改参/改默认值或代码使对应身份变化，不能用旧回执放行陈旧产物。**空生效清单省略整个插件段**，保持无插件段的 v1 指纹字节兼容；有段录制的旧回执与卸载后的无段重算仍失配。
+**② 回执指纹。** 保留 timeline 字节、源 stat、gfx HTML 与声明依赖成分，纳入生效插件的**名称+版本+全部生效参数实例摘要+代码内容摘要**。安装/卸载/升级/改参/改默认值或代码使对应身份变化，不能用旧回执放行陈旧产物。**空生效清单只省略插件段**，不恢复历史整体指纹；音频实现始终纳入唯一当前身份，材料与升级恢复见 [回执语义](cache-provenance.md)。有段录制的旧回执与卸载后的无段重算仍失配。
 
 生效要求 installed+enabled、声明钩子，且 timeline 含插件任一注册键；**无键声明的钩子插件全局生效**，不是“没写键就不执行”。键扫描、生效判断、参数摘要共用 scope：`root`、`project`、`sources[]`、`audio_tracks[]`、`audio_tracks[].events[]`。
 

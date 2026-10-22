@@ -168,7 +168,9 @@ class PluginCodeDigest(unittest.TestCase):
         context = SimpleNamespace(tl={}, tl_path=timeline, root=self.root.parent)
         with mock.patch.object(hooks, "active_plugins", return_value=[]):
             self.assertEqual(hooks.active_plugins_digest(context), "")
-            self.assertEqual(receipt_fingerprint(context), hashlib.sha256(b"{}").hexdigest())
+            current = receipt_fingerprint(context)
+            self.assertEqual(receipt_fingerprint(context), current)
+            self.assertNotEqual(current, hashlib.sha256(b"{}").hexdigest())
 
 
 if __name__ == "__main__":

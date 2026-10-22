@@ -19,6 +19,10 @@ from vtx.runtime.diagnostics import mark_handled
 class CacheOperations(unittest.TestCase):
     def setUp(self):
         self.root = temporary_root(self)
+        package = Path(cache_state.__file__).resolve().parents[1]
+        self.audio_material = b'audio-implementation\0' + b''.join(
+            f"vtx/{name}:{hashlib.sha256((package / name).read_bytes()).hexdigest()}\n".encode()
+            for name in ('pipeline/stages.py', 'media/audio_filters.py'))
 
     def context(self, **values):
         timeline = {'project': {}, 'sources': [], 'video_tracks': []}
@@ -171,7 +175,7 @@ class CacheOperations(unittest.TestCase):
         for field in ('sources', 'video_tracks'):
             for empty in ([], {}, ''):
                 c = self.context(**{field: empty})
-                self.assertEqual(self.fingerprint(c), hashlib.sha256(b'timeline').hexdigest())
+                self.assertEqual(self.fingerprint(c), hashlib.sha256(b'timeline' + self.audio_material).hexdigest())
                 self.assertEqual(c.diagnostics, [])
         # #52 now traverses every track for clip dependency declarations.
         c = self.context(video_tracks=[{'kind': 'ordinary', 'clips': None}])
@@ -230,7 +234,7 @@ class CacheOperations(unittest.TestCase):
             c = self.context()
             with patch('vtx.pluginlib.hooks.active_plugins_digest', return_value=value):
                 self.assertEqual(cache_state.receipt_fingerprint(c),
-                                 hashlib.sha256(b'timeline').hexdigest())
+                                 hashlib.sha256(b'timeline' + self.audio_material).hexdigest())
             self.assertEqual(c.diagnostics, [])
 
     def test_opaque_plugin_callbacks_and_custom_encode_keep_same_error(self):
@@ -354,7 +358,10 @@ class CacheOperations(unittest.TestCase):
                          '$.video_tracks[1].clips[0]', True)])
                     expected = [b'timeline', b'a:media:a\n', b'a:media:a\n', b'z:media:z\n',
                                 b'graphic:file:graphic\n', b'second:file:second\n',
-                                b'first:file:first\n', b'subtitles_src:file:subtitle\n', b'plugins']
+                                b'first:file:first\n', b'subtitles_src:file:subtitle\n', b'plugins',
+                                b'audio-implementation\0',
+                                b'vtx/pipeline/stages.py:file:stages.py\n',
+                                b'vtx/media/audio_filters.py:file:audio_filters.py\n']
                     self.assertEqual(updates, expected)
                     self.assertEqual(fingerprint, real_sha256(b''.join(expected)).hexdigest())
                     self.assertEqual(c.tl_path.read_bytes.call_count, 0 if supplied else 1)
@@ -370,14 +377,46 @@ class CacheOperations(unittest.TestCase):
                         ('is_file', 'z'), ('media', 'z'),
                         ('is_file', 'graphic'), ('file', 'graphic'),
                         ('file', 'second'), ('file', 'first'),
-                        ('is_file', 'subtitle'), ('file', 'subtitle')])
+                        ('is_file', 'subtitle'), ('file', 'subtitle'),
+                        ('file', 'stages.py'), ('file', 'audio_filters.py')])
                     self.assertEqual(getattr(c, 'diagnostics', []), [])
 
     def test_surrogate_subtitle_path_is_not_eagerly_encoded_or_rejected(self):
         c = self.context(subtitles_src='\ud800')
-        expected = hashlib.sha256(b'timeline' + b'subtitles_src:MISSING\n').hexdigest()
+        expected = hashlib.sha256(b'timeline' + b'subtitles_src:MISSING\n' + self.audio_material).hexdigest()
         self.assertEqual(self.fingerprint(c), expected)
         self.assertEqual(c.diagnostics, [])
+
+    def test_audio_sources_follow_existing_providers_and_fail_without_input_attribution(self):
+        package = Path(cache_state.__file__).resolve().parents[1]
+        paths = [package / name for name in ('pipeline/stages.py', 'media/audio_filters.py')]
+        real_digest = cache_state.file_digest
+        for route in ('svg-sequence', 'cdp'):
+            for missing in paths:
+                with self.subTest(route=route, missing=missing):
+                    c = self.context()
+                    error = FileNotFoundError(str(missing))
+                    def digest(path):
+                        if path == missing:
+                            raise error
+                        return real_digest(path)
+                    with patch('vtx.render.gfx_svg.route', return_value=route), \
+                            patch.object(cache_state, 'file_digest', side_effect=digest) as reads:
+                        self.assert_opaque(c, error, lambda: self.fingerprint(c))
+                    self.assertEqual([call.args[0] for call in reads.call_args_list],
+                                     paths[:paths.index(missing) + 1])
+        for provider in ('vtx.pluginlib.hooks.active_plugins_digest',
+                         'vtx.cache.cache_state._append_gfx_dependency_identity',
+                         'vtx.render.gfx_backend.identity',
+                         'vtx.render.gfx_environment.identity'):
+            with self.subTest(provider=provider):
+                c = self.context(video_tracks=[{'kind': 'gfx', 'clips': [{'src': 'missing'}]}])
+                error = RuntimeError(provider)
+                with patch(provider, side_effect=error), \
+                        patch('vtx.render.gfx_svg.route', return_value='cdp'), \
+                        patch.object(cache_state, 'file_digest', side_effect=FileNotFoundError) as reads:
+                    self.assert_opaque(c, error, lambda: cache_state.receipt_fingerprint(c))
+                reads.assert_not_called()
 
     def test_identity_mismatch_is_only_emitted_after_successful_recheck(self):
         c = self.context()

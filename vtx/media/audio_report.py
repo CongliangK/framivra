@@ -37,7 +37,8 @@ cache/audio 源 wav 现场渲染的轨级 stem（人声活动响度 vs duck 床�
   均值之差（stem 均为响度归一前的原始混音，差值不受整片静态增益影响）。
   duck 包络：bed_raw 与 bed_duck 双 stem 的 ebur128 瞬时响度 M 之差（10Hz 采样）
   = 床乐增益包络；attack/release 取各活动窗测量值的中位。
-  静音空洞：对整片 audio.wav silencedetect(noise=-45dB,d=1.5)。
+  静音空洞：对整片 audio.wav silencedetect(noise=-45dB,d=min(1.5,hole_warn))。
+  hole_warn 仅调整片中/片尾 WARN 下限；片头 >1.5s FAIL 固定不随覆盖放宽。
 
 CLI 语义（最小惊讶裁定）：`audio --report` = 照常跑 audio 混音阶段（含依赖门/receipt）
 后附加出报告；`audio --report-only` = 纯报告模式，只读已有 out/audio.wav + cache/audio
@@ -52,7 +53,7 @@ from pathlib import Path
 
 from ..cache.hygiene import audio_key
 from ..runtime import fstxn
-from .audio_filters import event_chain
+from .audio_filters import duck_track_indices, event_chain, key_group_chains, track_mix
 from ..pluginlib import hooks as _plugin_hooks
 
 # ---- 阈值常量（出处见模块头判级阈值表）----
@@ -133,31 +134,35 @@ def grade_loudness_diff(diff, fail_b=DIFF_FAIL_BELOW, warn_b=DIFF_WARN_BELOW,
     return "WARN", f"人声-床乐差 {diff:.1f}dB > {pass_max:g}（床乐过弱）"
 
 
-def grade_duck(depth, attack, release):
+def grade_duck(depth, attack, release, *, attack_pass=DUCK_ATTACK_PASS,
+               attack_fail=DUCK_ATTACK_FAIL, release_pass=DUCK_RELEASE_PASS,
+               release_fail=DUCK_RELEASE_FAIL):
     """depth=duck 深度(dB，负值)；attack/release=秒（release None=窗后未回升）。"""
     if depth is None or depth > -DUCK_DEPTH_MIN:
         return "FAIL", f"duck 深度 {depth if depth is None else round(depth, 1)}dB（|深度|<{DUCK_DEPTH_MIN:g}dB = 避让未生效）"
-    a_ok = attack is not None and attack <= DUCK_ATTACK_PASS
-    r_ok = release is not None and release <= DUCK_RELEASE_PASS
+    a_ok = attack is not None and attack <= attack_pass
+    r_ok = release is not None and release <= release_pass
     if a_ok and r_ok:
-        return "PASS", (f"咬合 {attack:.2f}s（<{DUCK_ATTACK_PASS:g}s，v4.2 attack=20ms 锚，实测 0.05s）"
-                        f"，回升 {release:.2f}s（≤{DUCK_RELEASE_PASS:g}s，v4.2 实测锚）")
-    if (attack is None or attack > DUCK_ATTACK_FAIL) or (release is None or release > DUCK_RELEASE_FAIL):
-        return "FAIL", (f"咬合 {attack if attack is None else round(attack, 2)}s（>{DUCK_ATTACK_FAIL:g}s 判 FAIL）"
+        return "PASS", (f"咬合 {attack:.2f}s（<{attack_pass:g}s，v4.2 attack=20ms 锚，实测 0.05s）"
+                        f"，回升 {release:.2f}s（≤{release_pass:g}s，v4.2 实测锚）")
+    if (attack is None or attack > attack_fail) or (release is None or release > release_fail):
+        return "FAIL", (f"咬合 {attack if attack is None else round(attack, 2)}s（>{attack_fail:g}s 判 FAIL）"
                         f"，回升 {release if release is None else round(release, 2)}s"
-                        f"（>{DUCK_RELEASE_FAIL:g}s 或未回升判 FAIL）")
+                        f"（>{release_fail:g}s 或未回升判 FAIL）")
     return "WARN", (f"咬合 {attack:.2f}s / 回升 {release:.2f}s：显著劣化于 v4.2 锚"
-                    f"（attack {DUCK_ATTACK_PASS:g}s / release {DUCK_RELEASE_PASS:g}s）")
+                    f"（attack {attack_pass:g}s / release {release_pass:g}s）")
 
 
 def grade_holes(holes, total_dur=None, open_fail_min=HOLE_WARN, warn=HOLE_WARN, fail=HOLE_FAIL):
     """holes=[(s,e)]（秒）；片头（s<0.2）超 open_fail_min 即 FAIL（v4.3 事故）；
-    片中 >fail FAIL；片尾（e 距片尾 <0.5s）>fail 只 WARN（BGM 淡出属正常编排）。"""
-    if not holes: return "PASS", f"无 >{warn:g}s 近静音空洞"
+    片中 >fail FAIL；片尾（e 距片尾 <0.5s）>fail 只 WARN（BGM 淡出属正常编排）。
+    WARN 下限包含等值，保留默认 silencedetect d=1.5 的边界；片头 FAIL 独立。"""
     def is_tail(h): return total_dur is not None and total_dur - h[1] < 0.5
     fails = [h for h in holes
              if (h[1] - h[0] > fail and not is_tail(h))
              or (h[0] < 0.2 and h[1] - h[0] > open_fail_min)]
+    holes = [h for h in holes if h[1] - h[0] >= warn or h in fails]
+    if not holes: return "PASS", f"无 ≥{warn:g}s 近静音空洞"
     fmt = "、".join(f"{s:.1f}-{e:.1f}s({e-s:.1f}s)" for s, e in holes[:8])
     if fails:
         return "FAIL", f"{len(holes)} 处空洞（FAIL {len(fails)} 处）：{fmt}"
@@ -172,6 +177,17 @@ def merge_thresholds(tl):
         ov = {k: meta[k] for k in OVERRIDABLE if k in meta}
     except AttributeError:
         pass
+    # TP keeps its existing fail-closed report and authoritative ceiling. Duck
+    # and hole overrides must be usable before measurement or effective JSON.
+    for keys, defaults in (
+            (("duck_attack_pass", "duck_attack_fail"), (DUCK_ATTACK_PASS, DUCK_ATTACK_FAIL)),
+            (("duck_release_pass", "duck_release_fail"), (DUCK_RELEASE_PASS, DUCK_RELEASE_FAIL)),
+            (("hole_warn", "hole_fail"), (HOLE_WARN, HOLE_FAIL))):
+        values = [ov.get(key, default) for key, default in zip(keys, defaults)]
+        if (not all(_finite_number(value) for value in values)
+                or any(value < 0 for value in values)
+                or any(a > b for a, b in zip(values, values[1:]))):
+            raise ValueError(f"audio_report 阈值无效：{', '.join(keys)} 必须为有限、非负、有序数值")
     return ov
 
 
@@ -241,10 +257,6 @@ def _mean_s_in(series, windows):
 
 
 # ---------------------------------------------------------------- stem 渲染
-def _pad(c):
-    return f"apad=whole_dur={c.dur*c.spf:.3f},atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS"
-
-
 def _track_group(c, tracks):
     """一组音轨 → (cmd, chains, mix_chain, k, tk_lbls)。轨间 amix、轨内事件 amix，
     全长 apad 对齐（与整片混音同一时间网格，双 stem 的 M 差才逐帧可比）。
@@ -257,11 +269,7 @@ def _track_group(c, tracks):
             chains.append(event_chain(c, k, e, require_volume=False)); ev_lbls.append(f"[e{k}]"); k += 1
         if not ev_lbls:
             tk_lbls.append(None); continue
-        if len(ev_lbls) == 1:
-            chains.append(f"{ev_lbls[0]}{_pad(c)}[tg{k}]")
-        else:
-            chains.append(f"{''.join(ev_lbls)}amix=inputs={len(ev_lbls)}:duration=longest:normalize=0,"
-                          f"{_pad(c)}[tg{k}]")
+        chains.append(track_mix(c, ev_lbls, f"[tg{k}]"))
         tk_lbls.append(f"[tg{k}]")
     lbls = [x for x in tk_lbls if x]
     if not lbls: return cmd, chains, None, k, tk_lbls
@@ -288,38 +296,52 @@ def _collect_inputs(c, tracks, cmd):
 
 def render_stems(c, voice_tracks, bed_tracks, workdir):
     """渲染 3 个 stem（响度归一前口径）：人声 stem / 床乐 raw stem / 床乐 duck 后 stem。
-    bed duck 用各轨 duck_params 逐轨 sidechaincompress（key = 人声 stem），与
-    stages._audio_graph 同一机制。返回 (voice_wav, bed_raw_wav, bed_duck_wav)。"""
+    bed duck 用各轨 duck_params 与自己 duck_by 对应的 PCM 人声组逐轨压缩，与
+    stages._audio_graph 共享选轨/组图机制，但保留 stem 量化层。全体人声仅供汇总测量，
+    不作为不同组的共同 key。返回 (voice_wav, bed_raw_wav, bed_duck_wav)。"""
     fstxn.mkdir(workdir, root=c.root)
     vw, rw, dw = workdir / "stem_voice.wav", workdir / "stem_bed_raw.wav", workdir / "stem_bed_duck.wav"
+    tracks = voice_tracks + bed_tracks
+    # voice_tracks is the available key projection; optional non-duck beds stay raw.
+    _, key_groups = duck_track_indices(tracks, {ti for ti, tr in enumerate(tracks)
+                                              if tr["events"] and (ti < len(voice_tracks) or tr.get("duck"))})
+    key_wavs = [workdir / f"stem_key_{gi}.wav" for gi in range(len(key_groups))]
     # 1) 人声 stem
-    cmd, chains, mix, _k, _lbls = _track_group(c, voice_tracks)
+    cmd, chains, mix, _k, labels = _track_group(c, voice_tracks)
     _collect_inputs(c, voice_tracks, cmd)
+    chains.extend(key_group_chains(dict(enumerate(labels)), key_groups))
+    outputs = ["-map", "[vout]", "-c:a", "pcm_s16le", "-ar", "48000", str(vw)]
+    for gi, path in enumerate(key_wavs):
+        outputs += ["-map", f"[keyg{gi}]", "-c:a", "pcm_s16le", "-ar", "48000", str(path)]
     c.run(cmd + ["-filter_complex", ";".join(chains + [mix.replace("[gmix]", "[vout]")]),
-                 "-map", "[vout]", "-c:a", "pcm_s16le", "-ar", "48000", str(vw)])
+                 *outputs])
     # 2+3) 床乐 raw / duck 双输出（duck key = 人声 stem 文件）。每个轨子混标签要被
     # raw 混音与 sidechaincompress 各消费一次 → 先 asplit=2 复制（标签只能消费一次）
+    # 各组 key 文件只分给自己的目标；相同 key 集合共用一份文件，不使用全体人声替代。
     cmd, chains, mix, n, tk_lbls = _track_group(c, bed_tracks)
     _collect_inputs(c, bed_tracks, cmd)               # 先挂床乐源 wav（序号=事件序号）
     vk = n                                            # 人声 stem 的输入序号
-    cmd += ["-i", str(vw)]
-    j_sc, duck_lbls, raw_lbls = 0, [], []
+    keyed = {ti for targets in key_groups.values() for ti in targets}
+    for gi, targets in enumerate(key_groups.values()):
+        cmd += ["-i", str(key_wavs[gi])]
+        chains.append(f"[{vk+gi}:a]asplit={len(targets)}" + "".join(f"[sc{ti}]" for ti in targets))
+    duck_lbls, raw_lbls = [], []
     for j, tr in enumerate(bed_tracks):
         lbl = tk_lbls[j]
         if lbl is None:
             continue
         chains.append(f"{lbl}asplit=2[raw{j}][tk{j}]")
         raw_lbls.append(f"[raw{j}]")
-        if not tr.get("duck"):
+        ti = len(voice_tracks) + j
+        if ti not in keyed:
             duck_lbls.append(f"[tk{j}]")               # 非 duck 轨原样进 duck 终混
             continue
         dp = tr.get("duck_params", {})
-        chains.append(f"[tk{j}][sc{j_sc}]sidechaincompress="
+        chains.append(f"[tk{j}][sc{ti}]sidechaincompress="
                       f"threshold={dp.get('threshold', 0.0126)}:ratio={dp.get('ratio', 4)}:"
                       f"attack={dp.get('attack_ms', 20)}:release={dp.get('release_ms', 1500)}:"
                       f"makeup={dp.get('makeup', 1)}[td{j}]")
         duck_lbls.append(f"[td{j}]")
-        j_sc += 1
     def _mixto(lbls, out):
         """lbls → 终链：多轨 amix 后接 aresample；单轨直连（amix inputs=1 非法）。"""
         head = "".join(lbls) + f"amix=inputs={len(lbls)}:duration=longest:normalize=0," \
@@ -327,7 +349,6 @@ def render_stems(c, voice_tracks, bed_tracks, workdir):
         return head + f"aresample=48000[{out}]"
     chains.append(_mixto(raw_lbls, "braw"))
     if duck_lbls:
-        chains.append(f"[{vk}:a]asplit={j_sc}" + "".join(f"[sc{i}]" for i in range(j_sc)))
         chains.append(_mixto(duck_lbls, "bduck"))
     else:
         chains.append("[braw]anull[bduck]")   # 无 duck 轨：raw/duck 同一信号
@@ -374,9 +395,10 @@ def run_report(c, json_path=None):
     # Match the render graph's pure event transforms before selecting stems.
     # Keep the original timeline and final WAV/receipts untouched.
     atracks = _plugin_hooks.run_audio_events(c, c.tl["audio_tracks"])
-    duck_tr = [tr for tr in atracks if tr.get("duck")]
-    by_names = {n for tr in duck_tr for n in tr.get("duck_by", ["voice"])}
-    voice_tr = [tr for tr in atracks if tr["name"] in by_names]
+    present = {ti for ti, tr in enumerate(atracks) if tr["events"]}
+    duck_tis, key_groups = duck_track_indices(atracks, present)
+    voice_tis = [ti for ti in present if any(ti in keys for keys in key_groups)]
+    duck_tr, voice_tr = [atracks[ti] for ti in duck_tis], [atracks[ti] for ti in voice_tis]
     if not duck_tr or not voice_tr:
         check("人声-床乐响度差", "INFO", "timeline 无 duck 轨或无 duck_by 人声轨，跳过轨级检查")
         check("duck 咬合/回升", "INFO", "同上")
@@ -424,7 +446,11 @@ def run_report(c, json_path=None):
             r_obs = [x for x in releases if x is not None]   # None=该窗后 5s 未观测到回升
             lv, dt = grade_duck(statistics.median(depths),
                                 statistics.median(attacks) if attacks else None,
-                                statistics.median(r_obs) if r_obs else None)
+                                statistics.median(r_obs) if r_obs else None,
+                                attack_pass=thr.get("duck_attack_pass", DUCK_ATTACK_PASS),
+                                attack_fail=thr.get("duck_attack_fail", DUCK_ATTACK_FAIL),
+                                release_pass=thr.get("duck_release_pass", DUCK_RELEASE_PASS),
+                                release_fail=thr.get("duck_release_fail", DUCK_RELEASE_FAIL))
             check("duck 咬合/回升", lv, dt,
                   {"depth_db": round(statistics.median(depths), 1),
                    "windows": len(depths),
@@ -433,7 +459,7 @@ def run_report(c, json_path=None):
             check("duck 咬合/回升", "INFO", "活动窗内未观测到有效避让段")
 
     # 4) 静音空洞（整片 audio.wav，含片头）
-    holes = silences(c, wav, HOLE_NOISE, HOLE_MIN_D)
+    holes = silences(c, wav, HOLE_NOISE, min(HOLE_MIN_D, thr.get("hole_warn", HOLE_WARN)))
     dur = c.dur * c.spf
     lv, dt = grade_holes(holes, total_dur=dur,
                          warn=thr.get("hole_warn", HOLE_WARN), fail=thr.get("hole_fail", HOLE_FAIL))

@@ -15,6 +15,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import venv
 
 import sys
@@ -72,6 +73,34 @@ class PackageVerifierTest(unittest.TestCase):
         self.assertEqual(data["versions"]["metadata"], self.version)
         self.assertEqual(data["resources"], self.hashes)
         self.assertTrue(all(state == "not_installed" for state in data["plugin_states"].values()))
+        # Copied installed-source layout, not an actual built/installed wheel.
+        material = b'{}audio-implementation\0' + b''.join(
+            f"{name}:{hashlib.sha256((REPO / name).read_bytes()).hexdigest()}\n".encode()
+            for name in ('vtx/pipeline/stages.py', 'vtx/media/audio_filters.py'))
+        code = ("from pathlib import Path; from types import SimpleNamespace\n"
+                "from unittest.mock import patch; from vtx.cache import cache_state\n"
+                "c=SimpleNamespace(tl={},root=Path.cwd())\n"
+                "with patch('vtx.render.gfx_backend.identity', return_value=''), "
+                "patch('vtx.cache.hygiene.gfx_cache_ns', return_value=''):\n"
+                " print(cache_state.receipt_fingerprint(c,timeline_bytes=b'{}'))")
+        proc = subprocess.run([str(self.python), "-I", "-c", code], cwd=self.outside,
+                              env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), hashlib.sha256(material).hexdigest())
+        self.assertFalse((self.site / '.git').exists())
+        for name in ('vtx/pipeline/stages.py', 'vtx/media/audio_filters.py'):
+            source = self.site / name
+            content = source.read_bytes()
+            source.unlink()
+            try:
+                proc = subprocess.run([str(self.python), "-I", "-c", code], cwd=self.outside,
+                                      env=self.env, capture_output=True, text=True, timeout=60)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn('FileNotFoundError', proc.stderr)
+                self.assertNotIn('ImportError', proc.stderr)
+                self.assertIn(Path(name).name, proc.stderr)
+            finally:
+                source.write_bytes(content)
 
     def test_wrong_expected_version_fails(self):
         proc = self.verify(expected="0.0.1")
@@ -163,6 +192,28 @@ class SdistSafetyTest(unittest.TestCase):
             self.assertFalse((target / "docs" / "skill").exists())
             self.assertEqual((target / "plugins/registry.json").read_bytes(),
                              (REPO / "plugins/registry.json").read_bytes())
+            from types import SimpleNamespace
+            from vtx.cache import cache_state
+            c = SimpleNamespace(root=Path(tmp), tl={})
+            expected = cache_state.receipt_fingerprint(c, timeline_bytes=b'{}')
+            # The relocated no-Git source is read through the same package-relative
+            # lookup; importing from this fixture is not a wheel installation.
+            with mock.patch.object(cache_state, '__file__', str(target / 'vtx/cache/cache_state.py')):
+                self.assertEqual(cache_state.receipt_fingerprint(c, timeline_bytes=b'{}'), expected)
+                for relative in ('vtx/pipeline/stages.py', 'vtx/media/audio_filters.py'):
+                    source = target / relative
+                    original = source.read_bytes()
+                    source.write_bytes(original + b'\n# changed implementation fixture\n')
+                    self.assertNotEqual(cache_state.receipt_fingerprint(c, timeline_bytes=b'{}'), expected)
+                    source.unlink()
+                    with self.assertRaises(FileNotFoundError):
+                        cache_state.receipt_fingerprint(c, timeline_bytes=b'{}')
+                    source.mkdir()
+                    with self.assertRaisesRegex(ValueError, 'not a regular file'):
+                        cache_state.receipt_fingerprint(c, timeline_bytes=b'{}')
+                    source.rmdir()
+                    source.write_bytes(original)
+                    self.assertEqual(cache_state.receipt_fingerprint(c, timeline_bytes=b'{}'), expected)
 
 
 if __name__ == "__main__":

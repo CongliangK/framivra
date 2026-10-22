@@ -82,6 +82,100 @@ class CacheIdentity(unittest.TestCase):
             rec = json.loads((root / 'out/receipt.json').read_text())
             self.assertEqual(list(rec['stages']), ['validate'])
 
+    def test_audio_implementation_change_revokes_chain_without_discarding_history_or_keys(self):
+        import contextlib
+        import hashlib
+        import io
+        import wave
+        from vtx.cache import cache_state
+        from vtx.pipeline import stages
+        from vtx.pipeline.range import _receipt_audio_gain
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch('vtx.render.gfx_environment.identity', return_value='fixed-gfx-environment'):
+            root = Path(d)
+            names = ('voice', 'cue', 'bed', 'amb')
+            for name in names:
+                with wave.open(str(root / f'{name}.wav'), 'wb') as wav:
+                    wav.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
+                    wav.writeframes(b'\x01\0' * 2 * 48000 * 12)
+            keys = [{'name': name, 'events': [dict(src=name, **{'in': start, 'out': start + 60}, volume=2)]}
+                    for name, start in (('voice', 30), ('cue', 210))]
+            beds = [{'name': name, 'duck': True, 'duck_by': [key],
+                     'events': [dict(src=name, **{'in': 0, 'out': 360}, volume=0.25)]}
+                    for name, key in (('bed', 'voice'), ('amb', 'cue'))]
+            path = _tl(root, project=dict(fps=30, duration_frames=360, width=640, height=360),
+                       sources=[dict(id=name, path=f'{name}.wav') for name in names],
+                       audio_tracks=keys + beds)
+            (root / 'page.html').write_text('canvas')
+            clip = dict(src='page.html', dur=30)
+            (root / 'out/history').mkdir(parents=True)
+            for name in ('audio.wav', 'final.mp4', 'history/old.mp4', 'failure.log'):
+                (root / 'out' / name).write_bytes(b'keep ' + name.encode())
+            target = root / 'out/receipt.json'
+            real_digest = cache_state.file_digest
+            package = Path(cache_state.__file__).resolve().parents[1]
+            for relative in ('pipeline/stages.py', 'media/audio_filters.py'):
+                with self.subTest(source=relative):
+                    old = Ctx(path)
+                    record = {'input_fingerprint': old.input_fingerprint, 'stages': {
+                        name: {'ok': True} for name in ('prepare', 'video', 'video_draft',
+                                                       'audio', 'mux', 'mux_draft', 'qc')}}
+                    record['stages']['audio']['gain_db'] = 2.5
+                    record['stages']['failed'] = {'ok': False, 'detail': 'original failure',
+                                                  'observed_by': {'stderr': 'keep evidence'}}
+                    record['stages']['diagnostic'] = 'malformed but retained'
+                    target.write_text(json.dumps(record))
+                    record_bytes = target.read_bytes()
+                    self.assertEqual(_receipt_audio_gain(old), 2.5)
+                    before = tree_sha256(old.out)
+                    raw = [hygiene.audio_key(old, name) for name in names]
+                    gfx = hygiene.gfx_key(old, clip)
+                    changed = package / relative
+                    def digest(p):
+                        value = real_digest(p)
+                        return hashlib.sha256((value + ':changed').encode()).hexdigest() if p == changed else value
+                    with mock.patch.object(cache_state, 'file_digest', side_effect=digest):
+                        current = Ctx(path)
+                        self.assertNotEqual(current.input_fingerprint, old.input_fingerprint)
+                        self.assertEqual(receipt_fingerprint(current), current.input_fingerprint)
+                        self.assertEqual(cache_state.load_receipt(target, current.input_fingerprint)['stages'], {})
+                        with contextlib.redirect_stdout(io.StringIO()) as message:
+                            gain = _receipt_audio_gain(current)
+                        self.assertIsNone(gain)
+                        self.assertIn('区间增益改用窗口自测', message.getvalue())
+                        with mock.patch.object(current, 'run', return_value=mock.Mock(stderr='I: -20.0 LUFS')) as run:
+                            measured = stages.mix_audio_wav(current, root / 'preview.wav',
+                                                            win=(0, 360), gain_override=gain)
+                        self.assertEqual(run.call_count, 2)
+                        self.assertIn('ebur128=', ' '.join(run.call_args_list[0].args[0]))
+                        self.assertEqual(measured[:3], (stages.TARGET_LUFS + 20, -20.0, 4))
+                        self.assertTrue(measured[3])
+                        self.assertEqual(tree_sha256(current.out), before)
+                        self.assertEqual([hygiene.audio_key(current, name) for name in names], raw)
+                        self.assertEqual(hygiene.gfx_key(current, clip), gfx)
+                        for stage in ('mux', 'mux_draft', 'qc'):
+                            with mock.patch.object(current, 'run') as run:
+                                with self.assertRaisesRegex(RuntimeError, '先成功完成阶段'):
+                                    current.begin_stage(stage)
+                                run.assert_not_called()
+                            self.assertEqual(target.read_bytes(), record_bytes)
+                        current.receipt('validate', True)
+                        self.assertEqual(json.loads((current.out / 'receipt.prev.json').read_text()), record)
+                        self.assertEqual(set(json.loads(target.read_text())['stages']), {'validate'})
+                        for name in ('audio.wav', 'final.mp4', 'history/old.mp4', 'failure.log'):
+                            self.assertEqual((current.out / name).read_bytes(), b'keep ' + name.encode())
+                        # Current synthetic success chain still satisfies the same gates.
+                        for stage in ('prepare', 'audio', 'video', 'video_draft', 'mux', 'mux_draft', 'qc'):
+                            current.begin_stage(stage)
+                            current.receipt(stage, True, extra={'gain_db': 2.5} if stage == 'audio' else None)
+                        self.assertIs(json.loads(target.read_text())['stages']['qc']['ok'], True)
+                        with mock.patch.object(current, 'run') as run:
+                            result = stages.mix_audio_wav(current, root / 'preview.wav', win=(0, 360),
+                                                          gain_override=_receipt_audio_gain(current))
+                        run.assert_called_once()
+                        self.assertNotIn('ebur128=', ' '.join(run.call_args.args[0]))
+                        self.assertEqual(result[:2], (2.5, None))
+
 
 class GcExemptions(unittest.TestCase):
     """方案三阶段1审查 P1-2：两个新状态件（loudness_receipts.json / qc_pass_segs.json）

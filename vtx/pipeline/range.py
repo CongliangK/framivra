@@ -98,9 +98,8 @@ def _receipt_audio_gain(c):
     """读 out/receipt.json 里整片 audio 阶段记录的静态增益（只读，不写回执）。
     窗口局部内容响度 ≠ 全片响度——窗口自测增益会把安静段（如片头 bed-only）放大到
     削波（实测 0-6s 窗自测 +15.7dB → max 0dB）；复用整片增益保持听感一致，且免一遍
-    ebur128 测量。无回执/**回执与当前输入身份不符**（P6 修复 B-P2-2：timeline/源
-    已变更而未重跑 vtx audio 时，v1 直读陈旧 gain_db 会拿旧混音增益渲新内容且无
-    提示——现经 load_receipt 指纹门，失配回落窗口自测并打印陈旧告警）时返回 None。"""
+    ebur128 测量。无回执或回执与当前输入/实现身份不符时返回 None；经统一
+    load_receipt 指纹门拒绝旧 gain，失配回落窗口自测并打印陈旧告警。"""
     from ..cache.cache_state import load_receipt
     f = c.out / "receipt.json"
     had_file = f.exists()
@@ -112,7 +111,7 @@ def _receipt_audio_gain(c):
         return None
     finally:
         if had_file and gain_is_stale(c, f):
-            print("  ⚠ 整片回执与当前输入不符（timeline/源已变更未重跑 vtx audio）——"
+            print("  ⚠ 整片回执与当前输入/实现不符（请按序重跑或运行 vtx all）——"
                   "区间增益改用窗口自测")
 
 

@@ -35,9 +35,8 @@
 禁 spec_from_file_location——绕过包语义是双模块裂分的另一入口）；加载时做
 hooks 声明↔代码注册一致性对账（声明了没注册 / 注册了没声明都报错，§2.3）。
 P2b 起 plugins/ 有实体包（denoise / duck-static）。「生效」按 timeline 过滤
-（active_plugins 的 c 参数）：无插件键时间线 = 空生效清单——回执指纹省略
-插件段（v1 逐字节兼容）、总线空转，内核零行为变化（三不变量接线见
-pluginlib/__init__.py 接线表）。
+（active_plugins 的 c 参数；无键声明的钩子全局生效）。空生效清单时回执只省略
+插件段，不省略其他当前身份；总线空转（三不变量接线见 pluginlib/__init__.py）。
 """
 from ..runtime.diagnostics import indexed
 
@@ -55,7 +54,7 @@ HOOK_NAMES = ("prepare_source", "audio_events", "validate",
               "probe_source", "finish")   # v1.1 + validate；v1.2 + 缝 C/D（§2.2）
 
 
-def _plugin_hooks_declared(name: str, repo_root=None) -> list:
+def _plugin_hooks_declared(name: str, repo_root=None, *, entry=None) -> list:
     """插件声明的 hooks（registry 条目 hooks 字段**非空**列表 > 实体 manifest
     extends.hooks）。registry 条目 hooks 为空列表/缺失时 fallback 实体 manifest
     声明（P6 修复 A-P1-3：registry 被手改清空 hooks 会让插件静默废掉——键照放行、
@@ -64,54 +63,46 @@ def _plugin_hooks_declared(name: str, repo_root=None) -> list:
     reg = _registry.declared_plugins(repo_root).get(name)
     if reg is not None and isinstance(reg.get("hooks"), list) and reg["hooks"]:
         return [h for h in reg["hooks"] if isinstance(h, str)]
-    for e in _registry.discover(repo_root):
-        if e["name"] == name and e["manifest"]:
-            declared = (e["manifest"].get("extends", {}) or {}).get("hooks")
-            if isinstance(declared, list):
-                return [h for h in declared if isinstance(h, str)]
+    entry = _registry.resolve_plugin(name, repo_root) if entry is None else entry
+    if entry and entry["manifest"]:
+        return list((entry["manifest"].get("extends", {}) or {}).get("hooks", []))
     return []
 
 
 def active_plugins(c=None, repo_root=None) -> list:
-    """生效插件清单（installed+enabled 且声明了钩子 且 **本 timeline 声明了其键**）
-    → [{name, version, module}]。
+    """生效插件清单（installed+enabled、有钩子，且无键声明或本 timeline 声明了其键）
+    → [{name, version, module, entry}]；entry 是本次解析的实体，不跨运行缓存。
 
     候选双源（P4）：plugins/registry.json 静态注册表（官方件）+ **已发现 external
     实体**（第三方件——不进静态注册表，manifest 即声明面；验收门 6 的注册路径）。
-    P2b 起 c 参数生效（「对本 timeline 生效」过滤，§2.1 不变量 ② 的"空生效
-    清单"前提）：timeline 未声明插件的任一注册键 → 该插件不计入——无插件键
-    时间线的 active_plugins_digest 恒 ""（指纹省略段，与 v1 逐字节一致）、
-    contribute_keys/两缝空转（v1 行为）。c=None（无上下文，list/doctor 展示
-    等机器态）不过滤。
+    c 参数按 timeline 的注册键过滤声明了键的插件；无键声明的钩子全局生效。
+    空生效清单的 active_plugins_digest 为 ""，只省略插件段而非其他当前身份，
+    contribute_keys/两缝空转。c=None（list/doctor 等展示态）不过滤。
     """
-    names = list(sorted(_registry.declared_plugins(repo_root)))
-    for e in _registry.discover(repo_root):
-        if (e["kind"] == "plugin" and e["source"] == "external"
-                and e["manifest"] and e.get("dir") and e["dir"].is_dir()):
-            if e["name"] not in names:
-                names.append(e["name"])
+    external = _registry._external_by_name(repo_root)
+    names = set(_registry.declared_plugins(repo_root)) | {
+        name for name, entry in external.items() if entry["enabled"]}
     out = []
     for name in sorted(names):
-        if _registry.plugin_state(name, repo_root) != "active":
+        entry = _registry.resolve_plugin(name, repo_root, external=external)
+        if _registry.plugin_state(name, repo_root, entry=entry) != "active":
             continue
-        if not _plugin_hooks_declared(name, repo_root):
+        if not _plugin_hooks_declared(name, repo_root, entry=entry):
             continue
-        if c is not None and not _timeline_declares(c, name, repo_root):
+        if c is not None and not _timeline_declares(c, name, repo_root, external=external):
             continue
-        out.append({"name": name, "version": _plugin_version(name, repo_root),
-                    "module": None})
+        out.append({"name": name, "version": _plugin_version(name, repo_root, entry=entry),
+                    "module": None, "entry": entry})
     return out
 
 
-def _plugin_version(name: str, repo_root=None) -> str:
-    """插件版本（registry 条目 > 实体 manifest——external 件无 registry 条目）。"""
-    entry = _registry.declared_plugins(repo_root).get(name)
-    if entry is not None:
-        return str(entry.get("version", "?"))
-    for e in _registry.discover(repo_root):
-        if e["name"] == name and e["manifest"]:
-            return str(e["manifest"].get("version", "?"))
-    return "?"
+def _plugin_version(name: str, repo_root=None, *, entry=None) -> str:
+    """插件版本（registry 条目 > 已解析的实体 manifest）。"""
+    declared = _registry.declared_plugins(repo_root).get(name)
+    if declared is not None:
+        return str(declared.get("version", "?"))
+    entry = _registry.resolve_plugin(name, repo_root) if entry is None else entry
+    return str(entry["manifest"].get("version", "?")) if entry and entry["manifest"] else "?"
 
 
 def _scope_items(tl, path, c=None):
@@ -135,7 +126,7 @@ def _scope_items(tl, path, c=None):
     return []
 
 
-def _timeline_declares(c, name: str, repo_root=None) -> bool:
+def _timeline_declares(c, name: str, repo_root=None, *, external=None) -> bool:
     """timeline 是否声明了插件注册键中的任一键（「对本 timeline 生效」判定）。
 
     键位检索用全量键声明（registry 静态注册表 + external 实体 manifest，P4 起经
@@ -146,7 +137,7 @@ def _timeline_declares(c, name: str, repo_root=None) -> bool:
     tl = getattr(c, "tl", None) if c is not None else None
     if not isinstance(tl, dict):
         return True
-    key_map = _registry.key_map(repo_root)
+    key_map = _registry.key_map(repo_root, external=external)
     has_keys = False
     for key, info in sorted(key_map.items()):
         if info.get("plugin") != name:
@@ -159,7 +150,7 @@ def _timeline_declares(c, name: str, repo_root=None) -> bool:
     return not has_keys
 
 
-def _load_plugin_module(name: str):
+def _load_plugin_module(name: str, *, entry=None):
     """包导入 + hooks 声明↔代码注册一致性对账（§2.3：hooks 由代码注册为单一
     事实源，manifest/registry 声明为对账面——声明了没注册 / 注册了没声明都报错）。
 
@@ -179,16 +170,18 @@ def _load_plugin_module(name: str):
     注：contribute_keys 是不变量 ① 入口而非钩子（不在 HOOK_NAMES 值域），
     不参与对账。"""
     try:
-        d, origin = _registry.plugin_module_dir(name)
+        entry = _registry.resolve_plugin(name) if entry is None else entry
+        d, origin = _registry.plugin_module_dir(name, entry=entry)
         if d is None:
             raise RuntimeError(f"插件 {name} 缺少有效 manifest 导入锚，拒绝加载")
-        manifest, errors = load_manifest(d)
+        manifest, errors = ((entry["manifest"], entry["manifest_errors"])
+                            if entry is not None else load_manifest(d))
         if errors:
             from vtx import __version__
             raise RuntimeError(f"插件 {name}: 检测内核版本 {__version__!r}; "
                                f"manifest 无效：{'; '.join(errors)}")
         require_compatible_core(name, manifest)
-        require_compatible_protocol(name, manifest, _plugin_hooks_declared(name))
+        require_compatible_protocol(name, manifest, _plugin_hooks_declared(name, entry=entry))
         if origin == "external":
             # P4 审查 P1-1 修正：append（官方包/stdlib 优先）+ 导入后即摘除 +
             # mod.__file__ 落点断言——insert(0) 且常驻会让 external 父目录下的
@@ -213,7 +206,7 @@ def _load_plugin_module(name: str):
     except Exception as e:
         raise RuntimeError(
             f"插件 plugins/{name} 已生效但模块加载失败（安装破损？）：{e}") from e
-    declared = set(_plugin_hooks_declared(name))
+    declared = set(_plugin_hooks_declared(name, entry=entry))
     exposed = {h for h in HOOK_NAMES if callable(getattr(mod, h, None))}
     unregistered, undeclared = declared - exposed, exposed - declared
     if unregistered or undeclared:
@@ -229,9 +222,10 @@ def _load_plugin_module(name: str):
 
 def _declared_hook(plugin, hook_name):
     """Resolve one declared callable without changing caller iteration or exits."""
-    if hook_name not in _plugin_hooks_declared(plugin["name"]):
+    entry = plugin.get("entry")
+    if hook_name not in _plugin_hooks_declared(plugin["name"], entry=entry):
         return None
-    mod = _load_plugin_module(plugin["name"])
+    mod = _load_plugin_module(plugin["name"], entry=entry)
     fn = getattr(mod, hook_name, None) if mod else None
     return fn if callable(fn) else None
 
@@ -346,7 +340,7 @@ def contribute_keys(c) -> set:
     """
     keys = set()
     for p in active_plugins(c):
-        mod = _load_plugin_module(p["name"])
+        mod = _load_plugin_module(p["name"], entry=p.get("entry"))
         fn = getattr(mod, "contribute_keys", None) if mod else None
         if callable(fn):
             got = fn(c)
@@ -423,11 +417,10 @@ def _plugin_params_digest(c, name: str) -> str:
 def active_plugins_digest(c) -> str:
     """不变量 ②（§2.1）：生效插件名+版本+参数摘要 → 回执指纹的追加段。
 
-    **空生效清单返回 ""（指纹侧省略段）**——无插件时间线的回执指纹与 v1 逐字节
-    一致，v1 回执在 v2 下继续有效（影子基线温态复验依赖此兼容）。不变量 ② 由
-    "段的出现/内容变化"保证：插件安装/卸载/升级/改默认参/键值变 → 返回值出现
-    或变化 → 录制侧指纹与重算侧失配 → 旧回执拒绝（含卸载后回落 v1 形态时，
-    带段录制的旧回执对无段重算同样失配）。
+    **空生效清单返回 ""（指纹侧只省略插件段）**；其余当前身份材料仍须匹配，
+    不承诺历史整体指纹兼容。插件安装/卸载/升级/改默认参/键值变 → 返回值出现
+    或变化 → 录制侧指纹与重算侧失配 → 旧回执拒绝；卸载后的无段重算同样
+    拒绝此前带段录制的回执。
     """
     act = active_plugins(c)
     if not act:
@@ -468,7 +461,7 @@ def get_cache_dir_keys(c=None, repo_root=None) -> dict:
     dict（空转）。"""
     out = {}
     for p in active_plugins(c, repo_root):
-        mod = _load_plugin_module(p["name"])
+        mod = _load_plugin_module(p["name"], entry=p.get("entry"))
         fn = getattr(mod, "cache_dir_keys", None) if mod else None
         if callable(fn):
             got = fn(c)

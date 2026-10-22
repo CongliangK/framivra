@@ -1113,7 +1113,10 @@ def cmd_list(kind: str) -> int:
     for it in comp["entries"]:
         # 红队 P2-2 修正：fail 优先；enabled 以插件实际状态为准（registry enabled:false
         # 的发现件此前误显 "✓ enabled"——it["enabled"] 只反映发现来源不是启停）
-        st = _preg.plugin_state(it["name"]) if it["kind"] == "plugin" else ("active" if it["enabled"] else "disabled")
+        if it["manifest_errors"]:
+            st = "unknown" if it["enabled"] else "disabled"
+        else:
+            st = _preg.plugin_state(it["name"]) if it["kind"] == "plugin" else ("active" if it["enabled"] else "disabled")
         state = "✗ FAIL" if it["fail"] else {"active": "✓ enabled", "disabled": "ℹ disabled"}.get(st, "ℹ 未安装")
         print(f"  {state:9s} {it['name']}（{it['kind']}:{it['source']}，{it['dir']}）")
     if kind == "plugins":
