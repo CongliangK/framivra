@@ -260,6 +260,30 @@ def inspect_svg(data, width, height, *, fonts, families=()):
             _attribute(name, attr, value, families=families)
 
 
+    # Positive, deliberately smaller reuse domain; expanding the accepted SVG
+    # grammar must not implicitly expand byte-identical export reuse. No fonts,
+    # references, inheritance, transforms or resources in this proof version.
+    eligible = not fonts and set(root.attrib) == {'width', 'height', 'viewBox'}
+    for element in nodes:
+        if element is root:
+            continue
+        if element.tag != '{' + SVG_NS + '}rect':
+            eligible = False
+            continue
+        if set(element.attrib) - {'x', 'y', 'width', 'height', 'fill'}:
+            eligible = False
+        for attr, value in element.attrib.items():
+            if attr == 'fill':
+                eligible &= bool(re.fullmatch(r'#[0-9a-fA-F]{6}|red|green|blue|black|white', value))
+            else:
+                eligible &= bool(re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', value))
+        if list(element) or (element.text or '').strip():
+            eligible = False
+    if any((e.tail or '').strip() for e in nodes) or (root.text or '').strip():
+        eligible = False
+    return bool(eligible)
+
+
 # Explicit environment for both introspection and raster subprocesses. No
 # inherited locale, loader, font, GTK, or Pango overrides can affect pixels.
 _PROCESS_ENV = {'PATH': os.defpath, 'LANG': 'C', 'LC_ALL': 'C',
@@ -564,12 +588,14 @@ def resolve(c, clip):
     families = {family.strip() for faces in font_faces.values() for face in faces
                 for family in face['family'].split(',')}
     seen = set()
+    reusable = []
     for index, frame in enumerate(frames):
         if not isinstance(frame, str):
             raise ValueError('SVG manifest.frames must contain file paths')
         if frame not in seen:
             try:
-                inspect_svg(add(frame, limit=MAX_SVG_BYTES), c.w, c.h, fonts=fonts, families=families)
+                if inspect_svg(add(frame, limit=MAX_SVG_BYTES), c.w, c.h, fonts=fonts, families=families):
+                    reusable.append(frame)
             except (ValueError, OSError) as error:
                 raise ValueError(f'SVG frame {index} ({frame}): {error}') from error
             seen.add(frame)
@@ -577,6 +603,7 @@ def resolve(c, clip):
     code = {name: digest(Path(__file__).with_name(name).read_bytes()) for name in code_names}
     return {'producer': PRODUCER, 'manifest': clip['src'], 'files': files,
             'frames': frames, 'fonts': fonts, 'font_faces': font_faces,
+            'export_reuse': {'proof': 'font-free-rects/v1', 'frames': reusable},
             'fontconfig': fontconfig, 'fps': c.fps, 'width': c.w,
             'height': c.h, 'frame_count': clip['dur'], 'engine': engine_identity(),
             'implementation': code,

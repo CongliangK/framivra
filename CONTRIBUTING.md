@@ -19,6 +19,10 @@ python3 -m unittest discover -s tests/gfx -t . -v
 python3 -m unittest discover -s tests/qc -t . -v
 ```
 
+## 信号实验隔离
+
+kill/killpg/信号类动态实验**禁止 in-process 直跑**，须在 `start_new_session=True` 隔离子进程内；变异演示按必然突破被测防护看待。停止新增本地 TOCTOU 加固，但不撤既有防御/在途 B08 回归；这不授予改动安全设置或部署宿主隔离的权限。历史责任与当时未实施项见[研究索引](docs/reports/development-history.md#安全与治理裁定)。
+
 ## 文档门禁
 
 文档 / manifest 改动必须运行聚合门，任一 leaf FAIL 总非零；它不证明散文语义、真实渲染或严格成片验收：

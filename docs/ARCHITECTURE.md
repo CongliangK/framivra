@@ -38,7 +38,7 @@ ASR 只负责产出字幕素材，消费与烧录由内核 `subtitles_src` 定�
 | 职责 | 实现 home（均在 `vtx/`） | 边界 |
 |---|---|---|
 | 输入与时间线 | `timeline.schema.json`、`pipeline/constraints.py`、`pipeline/infra.Ctx`、`pipeline/stages.validate`、`preview.html` | schema 是结构权威，validate 是执行校验权威，preview 是预览权威；只读预览不替代 validate，低分辨率测试上下文不等于正式项目规格 |
-| 时间线操作 | `inspection/diffcmd.py`、`inspection/timeline_diff.py`、`inspection/impact.py`、`media/subs.py`、`pipeline/range.py` | diff/snapshot/subs/区间预览辅助迭代；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
+| 时间线操作 | `inspection/diffcmd.py`、`inspection/timeline_diff.py`、`inspection/impact.py`、`media/subs.py`、`pipeline/range.py` | diff/snapshot/subs/区间预览辅助迭代（[耗时估算](#耗时估算)）；subs 的 render/preview/check 是信息性命令，不自动进入流水线 |
 | 图形 | `render/gfx_backend.py`、`render/gfx_render.py`、`render/gfx_cli.py`、`render/gfx_cef.py`、`render/gfx_electron*.py`、`render/gfx_svg*.py`、`render/frame_source.py` | HTML 默认 CDP，支持显式 CLI、需 native worker 的 Alpha CEF、可选 Electron 复现；SVG 序列独立处理 Inkscape/字体/完成证书；FrameSource 是帧消费抽象，不是第二渲染后端 |
 | 音视频 | `pipeline/stages.py`、`media/audio_filters.py`、`pipeline/composite.py`、`media/encoders.py`、`inspection/qc.py`、`media/subtitles_src.py` | prepare 抽取源音频，audio 混音终链，video 分段合成/字幕烧录，mux 探测 libfdk_aac 并回落、原子封装与记录 VERSIONS/history，qc 判定产物 |
 | 身份与恢复 | `cache/cache_state.py`、`cache/hygiene.py`、`runtime/fstxn.py`、`cache/recovery.py`、`media/loudness_cache.py` | 内容键、回执依赖、原子写、完成标记与跨进程锁共同决定复用；不是全源文件防篡改证明 |
@@ -49,6 +49,10 @@ ASR 只负责产出字幕素材，消费与烧录由内核 `subtitles_src` 定�
 HTML strict 依赖闭包**仅适用 CDP**；环境身份/资源闭包不承诺跨平台像素一致。资格见 [gfx](skill/references/gfx.md)，缓存、声明依赖及环境身份见 [缓存语义](cache-provenance.md)，事件/验收/预算见 [DEV 专题入口](DEV.md#专题入口)。
 
 段级多层合成采用**逐层 pass**：每 pass 恰两输入 overlay，中间 FFV1 intra 无损产物落 `cache/vseg_pass`；单层及整片回落仍用单 graph。pass 键纳入合成代码的 AST 归一化摘要，剥离注释/docstring/格式，语法级改动改变身份；`cache/vseg/.graph_digest` 供 diff 提示代码摘要漂移或段缓存被回收后的冷建风险。不把历史 overlay/framesync 实验当作当前所有输入的确定性证明。
+
+<a id="耗时估算"></a>
+
+**耗时估算。** timeline diff 的 `estimated_seconds` / `estimate_basis` 是迭代规划启发式：[当前实现与常量](../vtx/inspection/timeline_diff.py)为权威。video 按失效 vseg 帧数 / max(1, 新 timeline 总帧数) × draft 全片常数 + 失效 clip 重编码估计；当前计算不切换 formal 常数。其余需重跑阶段按固定值或源计数估算，gfx 为单页经验下限，页多可能低估；分项求和不是并行调度实测墙钟。[历史 voice-ime 校准](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/development-history.md)不保证新机器、素材或冷建耗时；输出的 ±30% 是校准口径，不是精度承诺。
 
 ### 1.2 响度终链
 
