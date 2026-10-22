@@ -49,3 +49,11 @@ FFmpeg+vtx 为本体，Blender 为可选交换/审计；当前数据流、静态
 
 - 2026-10-14 外部红队核定只做内容审读，未跑套件/核对线上 issue；初版独审 **FAIL（2阻断/5次要）**，修稿不等于新实测。TOCTOU 裁定归[贡献指南](../../CONTRIBUTING.md#信号实验隔离)；依赖、安装及 v2 契约原则归 DEV/ARCHITECTURE。[27项原裁定](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/%E5%A4%96%E9%83%A8%E7%BA%A2%E9%98%9F%E6%8A%A5%E5%91%8A%E7%BB%88%E5%AE%A1%E6%A0%B8%E5%AE%9A-2026-10-14.md) 保留当时 CEF 待议等历史状态。
 - #103 两次组级信号杀掉宿主会话是隔离缺陷，不是无关环境抖动。动态实验硬限制归[贡献指南](../../CONTRIBUTING.md#信号实验隔离)；当时谱系防线在途、DSH harness 统一 setsid 仅 backlog 未实施，不据此推断后续部署或授予安全设置改动。[事故原文](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reports/%E7%BA%A2%E9%98%9FPoC%E6%8E%80%E7%BF%BB%E6%A1%8C%E9%9D%A2%E4%BC%9A%E8%AF%9D%E4%BA%8B%E6%95%85-2026-10-15.md)保留时间线与责任取证。
+
+## Mac 原生验证 #303（2026-10-22）
+
+在集成后的源码 `98d14621d6e962040b6c7996732ee0cbe269596b`（tree `061c8b7de5364ce56b5374f1ce27a2000c356903`）上，Darwin/arm64 CDP 四帧验收、CDP 合成单双分段全链与缓存回归通过；CEF 锁定 worker 的同输入全链和 strict QC 也通过。两片均为 1080p30、360 帧、12 秒，整数 PTS 连续；解码 PCM SHA 相同。CEF receipt 和日志绑定 Alpha a0/Mode N 原生渲染且无回落。此前候选树 `84dbf2d` 的 Alpha 模块 28 项测试（其中 `NativeProduction` 8 项）通过；集成 main 上另重跑受影响的 `test_full_pipeline_fixture`。该计数不把 mock/合同项算作原生项，也不把此前候选全模块结果冒充为集成 main 全模块重跑。
+
+两后端的 HTML 局部编辑复用、字幕重建、预览隔离、缺源失败闭口及恢复、损坏 WAV 恢复和 strict QC 均有分开证据。缺源失败保留空 stages 的原始失败回执，exit 1 且 final SHA 未变；输入恢复后 all 与 strict QC 退出 0。坏 WAV 恢复为原始 SHA，输入、音频输出及 final SHA 保持不变。媒体测量见机器索引；关键帧中 Canvas 字体栅格/宽度存在可见后端差异，**未声称跨后端像素相等**。字幕/叠层关键帧已抽查，完整正常速度视听及人工听审 **UNRUN**。
+
+获准的 `.zprofile` PATH 修复后，三种 zsh 启动模式、实际 Python 子进程和离线 doctor 均选中 FFmpeg/ffprobe 9.0.2；旧 Homebrew FFmpeg 8 损坏项保留且未改。正式 standard preflight 因锁要求 8.1.3 而 **BLOCKED**；Mac SVG 模板因缺既有 Inkscape、锁定字体和 `jsonschema` **BLOCKED**。Linux `/proc` 专属 CEF 矩阵未在 Mac 运行，Darwin `fstxn` 仍为 `legacy`；CI 也不是本机验证范围。故本任务整体 **PARTIAL**，Issue #303 仍开放，Mac 合成验收不等于正式发行通过。[机器摘要与脱敏证据哈希索引](mac-native-303-evidence.json)给出逐项状态和本地证据相对路径；大日志与预览留在任务证据目录。

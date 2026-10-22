@@ -112,6 +112,10 @@ add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
                              src/png_writer.cpp src/serve.cpp
                              src/frame_sync_machine.cpp src/js_error_observer.cpp
                              ${SPNG_SOURCES} ${FPNG_SOURCES})
+# serve.cpp catches allocation/encoding failures in the worker thread. CEF's
+# upstream flags disable exceptions for the whole executable, so keep exception
+# support local to this translation unit and preserve that failure path.
+set_source_files_properties(src/serve.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
 # CEF 官方 exe 属性宏：CEF flag 集（含 -std=c++20 -O3 -Wall -Wextra -Werror，
 # 与目录级工单 flag 同语义）+ include 路径。
 SET_EXECUTABLE_TARGET_PROPERTIES(vtx_cef_worker)
