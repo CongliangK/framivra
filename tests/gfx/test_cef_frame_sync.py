@@ -44,9 +44,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-from vtx import cef_client  # noqa: E402
+from vtx.render import cef_client  # noqa: E402
 
-from vtx.gfx_cli import png_invalid_reason  # noqa: E402
+from vtx.render.gfx_cli import png_invalid_reason  # noqa: E402
 from tests.gfx._png import unfilter_rgba
 
 _LINUX_PROC = Path("/proc/self/stat").is_file()

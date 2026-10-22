@@ -207,7 +207,7 @@ def validate(c: Ctx):
                 # Negative starts deliberately short-circuit before observing dur.
                 if field(cl, 'dst_in', cp) >= 0:
                     clip_fade(cl, cp, tr, tp)
-                from . import gfx_svg
+                from .render import gfx_svg
                 if gfx_svg.is_svg(cl):
                     try:
                         gfx_svg.resolve(c, cl)

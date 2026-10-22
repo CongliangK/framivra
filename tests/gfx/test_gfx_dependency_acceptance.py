@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from tests.runners.run_gfx_dependency_acceptance import fixture, check_trace, restore_edit, MAX_EVIDENCE, font_provenance, copy_font_with_notice, check_no_products, check_static_failure, check_native_events, check_round_counts, ProtocolObserver, evidence_url, prepare_font_observation, check_gc_contract
-from vtx.gfx_dependencies import resolve, DependencyError
+from vtx.render.gfx_dependencies import resolve, DependencyError
 from vtx.infra import Ctx
 from vtx.impact import capture, compare
 
@@ -151,8 +151,9 @@ class AcceptanceContracts(unittest.TestCase):
         with self.assertRaises(AssertionError):check_trace(good,set(),rejected=True,target='file:///a.png')
 
     def test_worker_observes_real_policy_response_and_ack_with_mock_transport(self):
-        from vtx import cli, gfx_render
-        from vtx.gfx_dependencies import RequestPolicy
+        from vtx import cli
+        from vtx.render import gfx_render
+        from vtx.render.gfx_dependencies import RequestPolicy
         from tests.runners.run_gfx_dependency_acceptance import worker
         record=resolve(self.c,self.tl['video_tracks'][0]['clips'][0])
         for injection in (None, 'local', 'external'):
@@ -203,8 +204,9 @@ class AcceptanceContracts(unittest.TestCase):
 
     def test_disabled_or_swallowed_production_rejection_cannot_pass_negative(self):
         from contextlib import nullcontext
-        from vtx import cli,gfx_render
-        from vtx.gfx_dependencies import RequestPolicy
+        from vtx import cli
+        from vtx.render import gfx_render
+        from vtx.render.gfx_dependencies import RequestPolicy
         from tests.runners.run_gfx_dependency_acceptance import worker
         record=resolve(self.c,self.tl['video_tracks'][0]['clips'][0])
         for injection in ('local','external'):
@@ -323,7 +325,7 @@ class AcceptanceContracts(unittest.TestCase):
 
     def test_real_cli_static_failure_and_validate_success_require_native_evidence(self):
         from tests.runners.run_gfx_dependency_acceptance import worker
-        from vtx import gfx_render
+        from vtx.render import gfx_render
         trace_path=self.root/'actual-cli.json'
         with patch.object(gfx_render.Browser,'start',side_effect=AssertionError('unexpected browser')) as browser:
             worker(self.c.tl_path,trace_path,stage='validate')
@@ -345,8 +347,9 @@ class AcceptanceContracts(unittest.TestCase):
     def test_real_cli_runtime_failure_wrap_keeps_attempt_cause_and_failed_receipt(self):
         from tests.runners.run_gfx_dependency_acceptance import worker
         from tests.gfx._environment import bind_environment
-        from vtx import cli,gfx_render
-        from vtx.gfx_dependencies import RequestPolicy
+        from vtx import cli
+        from vtx.render import gfx_render
+        from vtx.render.gfx_dependencies import RequestPolicy
         bind_environment(self)  # The renderer is fake; host browser identity is not under test.
         def reject(*args,**kwargs):
             policy=RequestPolicy(kwargs['dependency_record'])
@@ -497,7 +500,8 @@ class AcceptanceContracts(unittest.TestCase):
             prepare_font_observation(object(),unsupported,'owned')
 
     def test_worker_prepares_owned_tab_before_fetch_and_never_reenables(self):
-        from vtx import cli, gfx_render
+        from vtx import cli
+        from vtx.render import gfx_render
         from tests.runners.run_gfx_dependency_acceptance import worker
         sent = []
         def init(ws, *args, **kwargs): ws.queue = []

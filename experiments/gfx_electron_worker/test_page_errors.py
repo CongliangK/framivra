@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 import uuid
 
-from vtx.gfx_electron import PAGE_ERROR_GATE, WORKER_DIR, render_page
+from vtx.render.gfx_electron import PAGE_ERROR_GATE, WORKER_DIR, render_page
 
 
 class GateUnitTests(unittest.TestCase):

@@ -103,7 +103,7 @@ def main():
     evidence = root / 'evidence'
     evidence.mkdir()
     from PIL import Image
-    from vtx.gfx_cli import png_invalid_reason
+    from vtx.render.gfx_cli import png_invalid_reason
     from vtx.hygiene import gfx_dir
     from vtx.impact import capture, compare
     from vtx.infra import Ctx

@@ -12,13 +12,13 @@ gfx 管线**（导航接线见下节）；下游熔断门 K1（单帧 IPC + PNG 
 
 ## Alpha 导航与管线接线（复现入口）
 
-入口为 [gfx_electron.py](../../vtx/gfx_electron.py) 的
+入口为 [gfx_electron.py](../../vtx/render/gfx_electron.py) 的
 `render_page(html_path, outdir, n_frames, *, width=1920, height=1080, frames=None, ctx=None, timeout_s=15, electron_path=None, mode="b0", output="electron_native_topng", progress=None)`。
 `ctx` 必填，以现有监管器分配项目内 profile/账本并回收进程组。输出
 `f{frame:04d}.png`；结果含 `failed`、`path_counts`、requested/effective backend、
 run_id、退出码与逐次证据目录。**调用方必须把非空 failed 当硬失败**；不读取旧帧作成功证据，
 不静默回落。公共入口显式 `VTX_GFX=electron`；未知值硬失败，默认仍为 CDP，
-CDP/CLI 保留自身历史回落规则。配置由 [gfx_backend.py](../../vtx/gfx_backend.py) 校验：
+CDP/CLI 保留自身历史回落规则。配置由 [gfx_backend.py](../../vtx/render/gfx_backend.py) 校验：
 `VTX_ELECTRON_BIN` 指向可执行文件（默认本目录忽略区 node_modules 的 Electron），
 `VTX_ELECTRON_MODE=b0`、`VTX_ELECTRON_OUTPUT=electron_native_topng` 是本实现唯一支持组合；
 `VTX_ELECTRON_TIMEOUT` 为每帧秒数（默认 15）。B1/GPU/shared 路由不在本接线支持范围。

@@ -53,7 +53,7 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 - clip：`frame_final_start=dst_in`，`frame_final_end=dst_in+dur`（右开区间语义一致）；源偏移＝src_in
 - 全屏 clip：crop169（16:9 中心裁切）+ 等比拉满（vtx L313）
 - 窗口 clip（scale/x/y 任一存在）：scale 相对**源原始尺寸**（vtx L306-311，非画布 fit）、x/y=左上角像素
-- gfx：复用内核只读解析器 `vtx/gfx_cache_reader.py`，只从生产 `gfx_dir` 按当前 `VTX_GFX`、worker 身份、`VTX_GFX_CACHE_NS` 与内容键定位，逐帧校验连续编号/PNG/完成摘要。Electron 复用生产 validator 验证真实 adapter/worker 回执与当前 binary/JS/settings 身份；HTML 缓存必须已有与当前环境、key、宽高、帧数、连续帧覆盖及逐 PNG SHA256 完整匹配的 `complete.json`，不接受无标记 PNG，不搜索其它 namespace、旧键或 `cache/<stem>/`。缺失/过期/损坏证书一律拒绝、不补签；请重新运行 `vtx gfx` 生成当前目录（会写入项目缓存），再导出。Blender 进程继承同一渲染环境，独立调用须使用生成缓存时的环境。
+- gfx：复用内核只读解析器 `vtx/render/gfx_cache_reader.py`，只从生产 `gfx_dir` 按当前 `VTX_GFX`、worker 身份、`VTX_GFX_CACHE_NS` 与内容键定位，逐帧校验连续编号/PNG/完成摘要。Electron 复用生产 validator 验证真实 adapter/worker 回执与当前 binary/JS/settings 身份；HTML 缓存必须已有与当前环境、key、宽高、帧数、连续帧覆盖及逐 PNG SHA256 完整匹配的 `complete.json`，不接受无标记 PNG，不搜索其它 namespace、旧键或 `cache/<stem>/`。缺失/过期/损坏证书一律拒绝、不补签；请重新运行 `vtx gfx` 生成当前目录（会写入项目缓存），再导出。Blender 进程继承同一渲染环境，独立调用须使用生成缓存时的环境。
 - 字幕：**不经 Blender 文字渲染**——vtx 的 subs.ass 经 `alphamerge 透明画布 + ass:alpha=1` 渲成
   透明视频轨叠加，与终渲像素同源（libass 同库同字体）
 - fade_in/out：blend_alpha/volume 关键帧（插值取默认，预览近似）

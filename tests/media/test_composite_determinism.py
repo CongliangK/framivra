@@ -67,7 +67,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入）
 
-from vtx.frame_source import PngSequence
+from vtx.render.frame_source import PngSequence
 from vtx.infra import Ctx
 from vtx import composite
 from vtx.composite import RenderPlan, _graph_code_digest

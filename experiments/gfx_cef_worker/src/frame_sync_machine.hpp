@@ -22,7 +22,7 @@
 //   - 全事件序列 JSONL 日志：每帧从 S3 到 S5 的 rejected_stale_paint_count
 //     与 accepted_elapsed_us_since_ready 等逐事件可观测。
 //
-// 协议对齐：唯一 home = vtx/frame_canary.py（#105 r4 / #137 v2 冻结件）。
+// 协议对齐：唯一 home = vtx/render/frame_canary.py（#105 r4 / #137 v2 冻结件）。
 // 本文件是其 C++ 消费镜像：Clean wire 名 clean_1px_restore 实为 (0,0)/(1,0)
 // 两像素；P1 xor 键 0x5A / P2 加性键 0x3C / 系数 (16,22) / α=254 均为冻结值，
 // 禁止回退旧单像素公式或只验第一像素。Diagnostic 为双对角 8×8 块。
@@ -245,7 +245,7 @@ class FrameSyncStateMachine {
 };
 
 // ---------------------------------------------------------------- canary 编解码
-// （vtx/frame_canary.py 冻结公式的 C++ 镜像；公式变更必须两端同步）
+// （vtx/render/frame_canary.py 冻结公式的 C++ 镜像；公式变更必须两端同步）
 
 inline constexpr uint8_t kCleanXorKey = 0x5A;   // P1 xor 键（clean 冻结值）
 inline constexpr uint8_t kClean2AddKey = 0x3C;  // P2 加性键（clean 冻结值）
@@ -268,7 +268,7 @@ struct Bgra {
 };
 
 // 半向上舍入预乘：floor((2*c*a + 255)/510) == round(c*a/255)（对 a=255 恒等、
-// a=254 与 vtx/frame_canary._premul_bgra 逐值一致）。
+// a=254 与 vtx/render/frame_canary._premul_bgra 逐值一致）。
 inline uint8_t PremulRound(uint8_t c, uint8_t a) {
   return static_cast<uint8_t>((2 * static_cast<int>(c) * a + 255) / 510);
 }

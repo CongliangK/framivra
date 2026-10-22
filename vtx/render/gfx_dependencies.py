@@ -39,7 +39,7 @@ def read_regular_bytes(path):
 
 
 def policy(c):
-    from .cache_state import _get
+    from ..cache_state import _get
     project = _get(c, c.tl, 'project', '$', {})
     value = _get(c, project, 'gfx_dependency_policy', '$.project', 'legacy')
     if value not in ('legacy', 'strict'):
@@ -228,7 +228,7 @@ def resolve(c, clip, *, html_path=None, origin='$'):
     # Keep native producer operations in cache_state, so its operation-level
     # diagnostic annotations survive integration. Do not attribute file I/O to
     # a broad synthetic diagnostic operation here.
-    from .cache_state import resolved_declarations, _field, _path
+    from ..cache_state import resolved_declarations, _field, _path
     selected = policy(c)
     if selected == 'strict' and os.name != 'posix':
         raise DependencyError('strict v1 currently requires POSIX file URI semantics')
@@ -299,7 +299,7 @@ class RequestPolicy:
                 raise DependencyError('undeclared runtime request', url)
             # file_digest supplies the regular-file/nonblocking defense before
             # reading; bytes are checked again and are what Chrome receives.
-            from .cache_state import file_digest
+            from ..cache_state import file_digest
             if file_digest(path) != self.expected[str(path)]:
                 raise DependencyError('dependency changed before delivery', url)
             data = read_regular_bytes(path)

@@ -9,7 +9,7 @@ qualified for actual pixels, paint readiness, speed improvement or production us
 
 - Baseline commit: `b8cffd07bbf8694d207bf9e012f45381d31bbe3d`.
 - Baseline tree: `a0d12eaccc2a3fd029706f745e973aa19b9fb19b`.
-- Existing behavior: [Tab.call and Tab.navigate](https://github.com/CongliangK/framivra/blob/b8cffd07bbf8694d207bf9e012f45381d31bbe3d/vtx/gfx_render.py#L310-L361).
+- Existing behavior: [Tab.call and Tab.navigate](https://github.com/CongliangK/framivra/blob/b8cffd07bbf8694d207bf9e012f45381d31bbe3d/vtx/render/gfx_render.py#L310-L361).
 - Protocol references: [Page](https://chromedevtools.github.io/devtools-protocol/tot/Page/)
   (`navigate`, `frameNavigated`, `lifecycleEvent`) and
   [Runtime](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/)

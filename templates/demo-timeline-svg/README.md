@@ -38,7 +38,7 @@ python3 -m vtx -t templates/demo-timeline-svg/timeline.json all
 - 图形生成：Node.js 标准库，无 npm 依赖。当前实现按 Node 18+ API 编写。
 - 完整结构自测：`test_schema.py` 使用已有 `jsonschema` 校验仓库真实 `vtx/timeline.schema.json`，这是仅用于测试的依赖。缺少时明确返回 BLOCKED，不安装、不降级成部分验证、不报告通过。复制到仓外的模板，两项自测均可用 `--schema` 指定对应产品 schema。
 - 程序配乐：Python 3.9+、NumPy、FFmpeg。顺序合成，生成器子进程超时受限，不包含外部采样、音色库、模型或下载器。首次审计环境为 Python 3.12.14、NumPy 2.3.5、FFmpeg 7.1.5；不承诺不同运行时跨版本位级相同。
-- 原生输出：SVG 运行时身份实现支持 Linux ELF 与 macOS arm64，Windows 不支持。必须已有 Framivra、Inkscape、Fontconfig 的 `fc-scan`、FFmpeg/FFprobe；Linux 另需 system `ldd`。macOS 要求自包含 Inkscape.app 的真实 arm64 Mach-O 可执行文件及可解析依赖，不接受启动脚本。按 `VTX_INKSCAPE`、PATH 顺序定位；macOS 未找到时再查系统或用户 Applications 中的 Inkscape.app。后端版本、二进制及运行库身份和字体 face 身份由产品回执记录；私有配置隔离用户环境，仅使用声明字体。实现边界见 [SVG 后端](../../vtx/gfx_svg.py)，代码支持不等于对应平台或作品已通过真实渲染、音频终链与人工视听验收；resvg 不是此模板的生产依赖。
+- 原生输出：SVG 运行时身份实现支持 Linux ELF 与 macOS arm64，Windows 不支持。必须已有 Framivra、Inkscape、Fontconfig 的 `fc-scan`、FFmpeg/FFprobe；Linux 另需 system `ldd`。macOS 要求自包含 Inkscape.app 的真实 arm64 Mach-O 可执行文件及可解析依赖，不接受启动脚本。按 `VTX_INKSCAPE`、PATH 顺序定位；macOS 未找到时再查系统或用户 Applications 中的 Inkscape.app。后端版本、二进制及运行库身份和字体 face 身份由产品回执记录；私有配置隔离用户环境，仅使用声明字体。实现边界见 [SVG 后端](../../vtx/render/gfx_svg.py)，代码支持不等于对应平台或作品已通过真实渲染、音频终链与人工视听验收；resvg 不是此模板的生产依赖。
 - 真实文本字体：Noto Sans CJK SC Regular/Bold 与 DejaVu Sans Book/Bold。确切文件、字重、TTC face index、版本和 SHA256 的唯一清单是 `fonts.lock.json`。不接受静默 fallback；准备时必须匹配固定字节。
 
 生成器会先检查项目内已准备的字体，再检查锁文件内的 Linux 系统路径提示。该提示不是 Mac 路径，也不保证其他电脑已装字体。已有相同字体文件时可指定包含清单所列原文件名的目录：

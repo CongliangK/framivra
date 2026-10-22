@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from tests.gfx._png import write_png
 from tests._support import temporary_root
 from tests.gfx._environment import bind_environment
-from vtx import frame_source, gfx_cache_reader
-from vtx.gfx_environment import certificate
+from vtx.render import frame_source, gfx_cache_reader
+from vtx.render.gfx_environment import certificate
 from vtx.hygiene import gfx_dir, gfx_key
 
 import contextlib
@@ -24,7 +24,10 @@ from unittest import mock
 
 from tests.gfx._png import png, chunk
 
-from vtx import cli, gfx_cli, gfx_render, hygiene, gfx_environment
+from vtx import cli
+from vtx.render import gfx_cli, gfx_render
+from vtx import hygiene
+from vtx.render import gfx_environment
 from vtx.infra import Ctx
 
 
@@ -258,7 +261,7 @@ class CompletionConsumers(unittest.TestCase):
             write_png(self.directory / f'f{i:04d}.png', frame=i)
         extra = {}
         if strict:
-            from vtx.gfx_dependencies import resolve, digest
+            from vtx.render.gfx_dependencies import resolve, digest
             extra = dict(dependency_digest=digest(resolve(self.c, self.clip)),
                          dependency_enforcement='fetch-pinned-local-v1',
                          dependency_observed=[(self.root / 'page.html').as_uri()])
@@ -440,8 +443,8 @@ class LegacyCertificate(unittest.TestCase):
                     frame_source.png_source(self.c, self.clip).require_ready()
                 before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in self.legacy.iterdir()}
                 with contextlib.ExitStack() as audit:
-                    for name in ('vtx.infra.Ctx', 'vtx.gfx_cli.complete_page',
-                                 'vtx.gfx_cef.render_page', 'vtx.gfx_render.render_page',
+                    for name in ('vtx.infra.Ctx', 'vtx.render.gfx_cli.complete_page',
+                                 'vtx.render.gfx_cef.render_page', 'vtx.render.gfx_render.render_page',
                                  'subprocess.Popen', 'vtx.runtime.fstxn.atomic_write',
                                  'vtx.runtime.fstxn.mkdir', 'vtx.runtime.fstxn.unlink', 'vtx.runtime.fstxn.locked_staging',
                                  'pathlib.Path.glob', 'pathlib.Path.rglob', 'pathlib.Path.iterdir'):

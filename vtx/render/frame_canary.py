@@ -760,7 +760,7 @@ def restore_clean_2px_rgba_inplace(arr, expected_frame=None,
 
 _JS_TEMPLATE = r"""(function () {
   "use strict";
-  // vtx/frame_canary.py 注入桥（issue #105 v2 双像素签名）：?f= 帧驱动页面的
+  // vtx/render/frame_canary.py 注入桥（issue #105 v2 双像素签名）：?f= 帧驱动页面的
   // 零侵入帧同步水印。帧号与页面协议同源（?f=）；Canary 状态 = f 的纯函数
   // （诊断叠加层，非页面动画）。
   var MODE = "__VTX_CANARY_MODE__";

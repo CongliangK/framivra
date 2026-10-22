@@ -11,11 +11,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from vtx import gfx_svg, gfx_svg_stage
+from vtx.render import gfx_svg, gfx_svg_stage
 from vtx.runtime import fstxn
 from vtx.cache_state import InputIdentityError, verify_input_identity
-from vtx.frame_source import png_source
-from vtx.gfx_cache_reader import resolve_frames
+from vtx.render.frame_source import png_source
+from vtx.render.gfx_cache_reader import resolve_frames
 from vtx.hygiene import gfx_dir, gfx_key
 from vtx.infra import Ctx
 from tests._support import temporary_root
@@ -54,9 +54,9 @@ class SvgContract(unittest.TestCase):
         return Ctx(self.root / 'timeline.json')
 
     def test_explicit_route_never_calls_html_identity(self):
-        with mock.patch('vtx.gfx_dependencies.resolve', side_effect=AssertionError('HTML resolver invoked')), \
-             mock.patch('vtx.gfx_environment.identity', side_effect=AssertionError('browser environment invoked')), \
-             mock.patch('vtx.gfx_environment.recheck', side_effect=AssertionError('browser recheck invoked')):
+        with mock.patch('vtx.render.gfx_dependencies.resolve', side_effect=AssertionError('HTML resolver invoked')), \
+             mock.patch('vtx.render.gfx_environment.identity', side_effect=AssertionError('browser environment invoked')), \
+             mock.patch('vtx.render.gfx_environment.recheck', side_effect=AssertionError('browser recheck invoked')):
             c = self.ctx()
             self.assertEqual(c.gfx_backend['requested_backend'], 'svg-sequence')
             self.assertEqual(gfx_svg.route(c), 'svg-sequence')
@@ -211,7 +211,7 @@ class SvgContract(unittest.TestCase):
                 gfx_svg.inspect_svg(data,1920,1080,fonts=[])
 
     def test_shared_environment_digest_implementation_is_bound(self):
-        from vtx import gfx_environment
+        from vtx.render import gfx_environment
         c = self.ctx()
         first = gfx_svg.resolve(c, self.clip)
         source = Path(gfx_environment.__file__)
@@ -387,7 +387,8 @@ class SvgContract(unittest.TestCase):
 
     def test_preview_operation_uses_scoped_svg_snapshot(self):
         from vtx.media import subs
-        from vtx import composite, frame_source
+        from vtx import composite
+        from vtx.render import frame_source
         counts=[]
         for n in (2,4):
             c=self._publish_mock_frames(n); c.gpu=False
@@ -422,7 +423,8 @@ class SvgContract(unittest.TestCase):
 
     def test_preview_svg_cache_failure_cannot_print_pass(self):
         from vtx.media import subs
-        from vtx import composite, frame_source
+        from vtx import composite
+        from vtx.render import frame_source
         for change in ('pixels','truncated','marker','missing'):
             c=self._publish_mock_frames(2); c.gpu=False; source=png_source(c,self.clip)
             run,calls=self._preview_mock(c); output=io.StringIO()
@@ -451,7 +453,8 @@ class SvgContract(unittest.TestCase):
 class LinuxSvgRuntimeDigest(unittest.TestCase):
     """Fresh ldd closure every call, shared byte facts only for runtime files."""
     def setUp(self):
-        from vtx import cache_state, gfx_environment
+        from vtx import cache_state
+        from vtx.render import gfx_environment
         self.checked, self.environment = cache_state, gfx_environment
         self.root = temporary_root(self).resolve()
         self.engine = self.root / 'engine'; self.engine.write_bytes(b'engine')

@@ -8,10 +8,10 @@ import subprocess
 import time
 from pathlib import Path
 
-from .runtime import fstxn
+from ..runtime import fstxn
 from . import gfx_svg
 from .gfx_cli import png_invalid_reason
-from .hygiene import manifest_record, tmp_run
+from ..hygiene import manifest_record, tmp_run
 
 
 def run_shell(executable, directory, count, width, height, *, root=None):

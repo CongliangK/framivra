@@ -31,7 +31,7 @@ golden JSON 结构（自包含、无歧义）：
   env python3 scripts/gfx/gfx_golden.py verify-canary --png f0013.png [--frame 13] \
       [--mode ...]                       # 单帧模式；--frame 缺省取文件名帧号
 
-双轨帧同步水印校验（issue #105 r4，vtx/frame_canary.py v2 双像素签名协议）：
+双轨帧同步水印校验（issue #105 r4，vtx/render/frame_canary.py v2 双像素签名协议）：
   verify-canary 读取落盘 PNG 的 Canary 水印解码 rendered_frame_index 并核验
   校验和；rendered_frame_index != requested_frame_index（帧目录模式
   requested = 文件名帧号）立即计入 wrong_frame_count，并区分七态「滞后 1 帧
@@ -92,7 +92,7 @@ vtx.env_manifest.verify_manifest_compatibility 比对 Chromium 主版本/生效�
   - 并行：ThreadPoolExecutor（PIL C 解码释放 GIL）；GFX_GOLDEN_WORKERS 可调，
     默认 min(8, cpu)。目标：3530 帧 1080p 解码 hash ≈ 2-3 分钟内。
   - 纯标准库 + PIL；#104 深度审计另用 numpy（向量化；仓库既有依赖面——
-    vtx/gfx_render 可选加速与 apps/gates 均在用，非新引入）；不改 vtx/（只读复用）。
+    vtx/render/gfx_render 可选加速与 apps/gates 均在用，非新引入）；不改 vtx/（只读复用）。
   - #104 性能包络（1080p 分析段中位，本机 numpy 2.5；PNG 解码 ~35-55ms 属 I/O，
     不在预算内，见 decode_ms 字段）：全部 Tier-1/Tier-2 通过态路径 ≤15ms——
     Tier-1 走 memcmp 级快路径；Tier-2 先试全画幅 uint8/uint16 快速走廊（三
@@ -120,7 +120,7 @@ from vtx.infra import Ctx   # noqa: E402
 from vtx.runtime.fstxn import atomic_write
 from vtx import hygiene     # noqa: E402
 from vtx import env_manifest  # noqa: E402  （issue #102 跨后端环境前置门禁）
-from vtx import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
+from vtx.render import frame_canary as fc  # noqa: E402  （issue #105 双轨帧同步水印协议）
 
 # 纯导出（issue #105 r4 v2 语义）：v1 时消费方（选帧/抽样管道）经本模块
 # 预避开预乘塌缩孪生帧号（12 帧不可确认）；v2 双像素联合孪生全域空、全帧
@@ -1071,7 +1071,7 @@ def cmd_analyze(args) -> int:
 # ------------------------------------------------ verify-canary（issue #105 帧同步水印校验）
 
 def _verify_one_canary(path: Path, requested: int, mode: str) -> dict:
-    """单帧 Canary 校验（PNG 解码 → vtx/frame_canary 帧级裁决）。
+    """单帧 Canary 校验（PNG 解码 → vtx/render/frame_canary 帧级裁决）。
 
     返回 {"frame": "0013", "requested": 13, **裁决dict}；解码失败抛 ValueError
     （CLI 归入 errors，不崩栈）。"""

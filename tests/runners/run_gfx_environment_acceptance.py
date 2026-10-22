@@ -59,7 +59,7 @@ def observe(chrome, html, environment):
     """Actual browser version, active renderer and consumed font, independent of flags."""
     code = '''
 import json, urllib.request
-from vtx.gfx_render import Browser, WSConn
+from vtx.render.gfx_render import Browser, WSConn
 b=Browser(chrome_path=CHROME,tabs=1,width=640,height=180)
 try:
  b.start(); t=b.open_tabs()[0]
@@ -132,7 +132,7 @@ def main():
         expected = receipt['gfx_backend']['environment_identity'].split('|')[-1]
         # Each marker contains a viewport-bound certificate; receipt binds axes
         # before viewport (the timeline already binds viewport in its own bytes).
-        from vtx.gfx_environment import digest
+        from vtx.render.gfx_environment import digest
         entries = [f for f in entries if digest({k: v for k, v in
             json.loads(f.read_text())['environment']['axes'].items() if k not in ('viewport', 'fps')}) == expected]
         assert len(entries) == 1, [str(e) for e in entries]

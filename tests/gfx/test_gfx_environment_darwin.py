@@ -11,7 +11,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from vtx import cache_state, gfx_environment as env
+from vtx import cache_state
+from vtx.render import gfx_environment as env
 
 
 def macho(dependencies=(), rpaths=()):

@@ -25,10 +25,10 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 （透明探针、双截 alpha 解算与 PNG 编解码），Pillow 提供可选 PNG 编解码快路径。
 无 numpy 时 available() 返回不可用，调用方全量回落 CLI。
 
-独立渲染（写入 outdir）：env python3 -m vtx.gfx_render <html> <outdir> <N帧> [--tabs 4]
+独立渲染（写入 outdir）：env python3 -m vtx.render.gfx_render <html> <outdir> <N帧> [--tabs 4]
 """
 import base64
-from .runtime import fstxn
+from ..runtime import fstxn
 import hashlib
 from pathlib import Path
 import json
@@ -478,7 +478,7 @@ class Browser:
             # 真实降级 = 回落 #103 之前的无监管路径 + 一次性 stderr 告警
             # （macOS 是 install.sh 官方支持平台，gfx 阶段不得硬失败），
             # 而非让 _write_ledger 的 RuntimeError 打死整个 CDP 默认路径。
-            from .runtime.proc_supervisor import supervision_available
+            from ..runtime.proc_supervisor import supervision_available
             supervised = supervision_available()
             if not supervised and sys.platform != "win32":
                 _warn_supervision_degraded()
@@ -486,7 +486,7 @@ class Browser:
             # issue #103：监管态——argv 由运行目录动态拼（--user-data-dir 落
             # tmp_run 的 profile/）；supervisor 尾追 --parent-alive-fd=<fd>
             # （Chrome 忽略未知开关，fd 由守卫持有强制全树归零，不依赖协作）。
-            from .runtime.proc_supervisor import SupervisedProcessGroup
+            from ..runtime.proc_supervisor import SupervisedProcessGroup
             self.group = SupervisedProcessGroup(
                 self.ctx,
                 lambda run_dir, profile: [
@@ -505,7 +505,7 @@ class Browser:
                     f"--user-data-dir={self.user_data_dir}",
                     "--no-first-run", "--no-default-browser-check", "about:blank"]
             if sys.platform == "win32":
-                from .runtime.windows_browser import BrowserJob
+                from ..runtime.windows_browser import BrowserJob
                 self.windows_job = BrowserJob(argv)
                 self.proc = self.windows_job.proc
             else:

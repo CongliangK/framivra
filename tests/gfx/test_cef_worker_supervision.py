@@ -32,7 +32,7 @@ import time
 import unittest
 from pathlib import Path
 
-from vtx.gfx_cli import png_invalid_reason
+from vtx.render.gfx_cli import png_invalid_reason
 from vtx.hygiene import TMP
 from vtx.infra import Ctx
 from vtx.runtime.proc_supervisor import (WORKER_LEDGER, SupervisedProcessGroup,

@@ -6,11 +6,11 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .runtime import events, fstxn
+from ..runtime import events, fstxn
 from . import gfx_cli
 from .gfx_backend import OUTPUT, electron_config, identity
 from .gfx_electron import PAGE_ERROR_GATE, ElectronRenderError, expected_request, frame_url, render_page
-from .hygiene import gfx_cache_ns, gfx_dir, gfx_key, manifest_record
+from ..hygiene import gfx_cache_ns, gfx_dir, gfx_key, manifest_record
 
 
 def require_result(st, frames, outdir, width, height, *, expected_html=None, expected_config=None):

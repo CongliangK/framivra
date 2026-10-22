@@ -74,8 +74,8 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from vtx import gfx_render                      # noqa: E402
-from vtx.gfx_cli import png_invalid_reason, verify_frames           # noqa: E402
+from vtx.render import gfx_render                      # noqa: E402
+from vtx.render.gfx_cli import png_invalid_reason, verify_frames           # noqa: E402
 
 MANIFEST_PATH = REPO / "tests" / "gfx_bench_suite" / "suite_manifest.json"
 DEFAULT_EVIDENCE = Path("/tmp/framivra-evidence/issue-106")
@@ -951,7 +951,7 @@ def main():
                     help="停滞闸：N 秒无新帧落盘即提前击杀（默认 300；0=关）")
     args = ap.parse_args()
     if not gfx_render.available():
-        print("numpy 不可用（vtx.gfx_render.available()=False）", file=sys.stderr)
+        print("numpy 不可用（vtx.render.gfx_render.available()=False）", file=sys.stderr)
         return EXIT_ENV
     chrome = find_chrome()
     if not chrome:

@@ -17,8 +17,9 @@ from unittest import mock
 from tests._support import temporary_root
 from tests.gfx._png import write_png
 
-from vtx import composite, frame_source
-from vtx.frame_source import PngSequence, png_source
+from vtx import composite
+from vtx.render import frame_source
+from vtx.render.frame_source import PngSequence, png_source
 
 
 

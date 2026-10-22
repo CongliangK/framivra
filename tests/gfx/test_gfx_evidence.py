@@ -102,7 +102,7 @@ class Evidence(unittest.TestCase):
         self.assertIsNone(r['quality_cost']['render_seconds'])
 
     def test_production_input_environment_is_plan_bound_and_unknown_never_passes(self):
-        from vtx import gfx_environment as environment
+        from vtx.render import gfx_environment as environment
         axes = {'schema': environment.SCHEMA, 'status': 'input-bound', 'backend': 'cdp',
                 'pixel_equivalence': 'unproven', 'version': 'fixture version',
                 'viewport': {'width': 64, 'height': 48},

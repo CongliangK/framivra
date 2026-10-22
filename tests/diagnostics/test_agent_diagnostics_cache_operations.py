@@ -339,7 +339,7 @@ class CacheOperations(unittest.TestCase):
                     # Isolate that separate phase: these deliberately nonexistent
                     # files/digest strings test only native ordering and callbacks.
                     with patch.object(cache_state, '_append_gfx_dependency_identity') as gfx_identity, \
-                            patch('vtx.gfx_environment.identity', return_value=''), \
+                            patch('vtx.render.gfx_environment.identity', return_value=''), \
                             patch.object(cache_state.hashlib, 'sha256', Hash), \
                             patch.object(Path, 'is_file', is_file), \
                             patch.object(cache_state, 'media_stat_digest', side_effect=media), \

@@ -2,7 +2,7 @@
 
 权威实现：`src/ipc_protocol.hpp`（消息/常量 + 偏移静态断言）、
 `src/shm_ring.hpp`（环布局）、`src/serve.cpp`（worker 侧）、
-`../../vtx/cef_client.py`（Python 消费端镜像）。测试
+`../../vtx/render/cef_client.py`（Python 消费端镜像）。测试
 `tests/gfx/test_cef_worker_shm.py::NativeRingSelfTest` 以
 `shm_ring_selftest --dump-ring` 跨语言锁定本表。
 
@@ -12,7 +12,7 @@
    （`alignas(64)` 后结构体 128B），无法装入「64 字节回执」。本实现以
    **冻结字段集为准**：模式 1 回执 = 完整 `FrameSlotHeader`（128B 原生
    布局）。64B 定长仅 `FrameRequest`（可达）。
-2. **Python 客户端**：唯一实现为 `vtx/cef_client.py`；生产 Alpha 与实验
+2. **Python 客户端**：唯一实现为 `vtx/render/cef_client.py`；生产 Alpha 与实验
    自检均直接使用该客户端，无另一套解析器或兼容导入壳。
 3. **槽位状态机位置**：冻结字段集无空闲字承载生命周期状态，EMPTY/
    WRITING/READY 门置于环控制块 `SlotGate`（专享缓存行），槽头保持
@@ -71,7 +71,7 @@
 slot_stride = align64(128 + frame_bytes)；frame_bytes = max_w*max_h*4
 ```
 
-### RingControl（偏移表 = vtx/cef_client.py `_CTRL_*` 镜像）
+### RingControl（偏移表 = vtx/render/cef_client.py `_CTRL_*` 镜像）
 
 | 偏移 | 类型 | 字段 | 语义 |
 | --- | --- | --- | --- |

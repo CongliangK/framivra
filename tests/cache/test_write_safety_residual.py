@@ -262,7 +262,9 @@ class WriteSafetyResidual(unittest.TestCase):
         self.assertEqual(list(self.outside.iterdir()), [self.victim])
 
     def test_fixed_text_frame_and_directories_reject_external_links(self):
-        from vtx import composite, gfx_render, qc
+        from vtx import composite
+        from vtx.render import gfx_render
+        from vtx import qc
         cache = self.root / 'cache'
         cache.mkdir()
         (cache / 'subs.ass').symlink_to(self.victim)

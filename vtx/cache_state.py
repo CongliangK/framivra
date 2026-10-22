@@ -205,7 +205,7 @@ def resolved_declarations(c, clip=None, *, origin='$'):
         try:
             value = file_digest(c.root / item)
         except (OSError, ValueError) as error:
-            from .gfx_dependencies import DependencyError
+            from .render.gfx_dependencies import DependencyError
             raise DependencyError('declared dependency unreadable', path, origins[path], detail=str(error)) from error
         entries.append({'path': path, 'sha256': value, 'origins': origins[path], 'declaration': item})
     return entries
@@ -268,7 +268,7 @@ def validate_cache_dependencies(c):
             mark_handled(error)
             raise error
 
-    from . import gfx_svg
+    from .render import gfx_svg
     try:
         svg_route = gfx_svg.route(c)
     except ValueError as error:
@@ -297,7 +297,7 @@ def validate_cache_dependencies(c):
                         mark_handled(error)
                         raise
         return
-    from .gfx_dependencies import policy, resolve
+    from .render.gfx_dependencies import policy, resolve
     if policy(c) == 'strict':
         for ti, track in _indexed(c, _get(c, c.tl, 'video_tracks', '$', []), '$.video_tracks'):
             track_origin = f'$.video_tracks[{ti}]'
@@ -314,9 +314,9 @@ def verify_input_identity(c):
     """Re-read inputs; never adopt the current identity for an in-flight build."""
     try:
         current = receipt_fingerprint(c)
-        from . import gfx_svg
+        from .render import gfx_svg
         if gfx_svg.route(c) != 'svg-sequence':
-            from .gfx_environment import recheck
+            from .render.gfx_environment import recheck
             recheck(c)
     except (OSError, ValueError, RuntimeError) as e:
         raise InputIdentityError(
@@ -337,9 +337,9 @@ def verify_input_identity(c):
 
 def _append_gfx_dependency_identity(c, h, gfx_inputs):
     """Versioned #47 suffix; historical serialization stays an explicit adapter."""
-    from .gfx_dependencies import resolve, identity, policy
+    from .render.gfx_dependencies import resolve, identity, policy
     for clip, path, origin, exists in gfx_inputs:
-        from . import gfx_svg
+        from .render import gfx_svg
         if gfx_svg.is_svg(clip):
             h.update(b'svg-sequence|' + gfx_svg.canonical(gfx_svg.resolve(c, clip)))
             continue
@@ -429,17 +429,17 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # Append only after all historical producer operations succeed. The shared
     # #47 record adds path/closure identity without reordering native failures.
     _append_gfx_dependency_identity(c, h, gfx_inputs)
-    from . import gfx_svg
+    from .render import gfx_svg
     if gfx_svg.route(c) == 'svg-sequence':
         return h.hexdigest()
     # Selected renderer and namespace revoke downstream success as well.
-    from .gfx_backend import identity
+    from .render.gfx_backend import identity
     from .hygiene import gfx_cache_ns
     backend, namespace = identity(), gfx_cache_ns()
     if backend or namespace:
         h.update(f"gfx-backend:{backend}|ns:{namespace}\n".encode())
     if gfx_inputs:
-        from .gfx_environment import identity as environment_identity
+        from .render.gfx_environment import identity as environment_identity
         environment = environment_identity(c)
         if environment:
             h.update(environment.encode())

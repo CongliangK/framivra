@@ -1,7 +1,7 @@
 """Deterministic PNG fixtures shared by graphics regressions."""
 import struct
 import zlib
-from vtx import gfx_cli
+from vtx.render import gfx_cli
 
 def write_png(path, width=16, height=16, frame=0):
     raw = b''.join(b'\0' + bytes((frame * 7 % 256, y * 11 % 256, 180, frame * 13 % 256)) * width

@@ -53,7 +53,7 @@
 
 项目可选 `gfx_dependency_policy: "strict"`，默认 `legacy` 保持原渲染行为并报告闭包
 未证明。strict v1 只接受惰性 HTML、声明的本地栅格图、样式及字体；HTML 白名单见
-`vtx/gfx_dependencies.py`。CSS 支持带引号的 `@import "x.css";`、`url("x.png")`、
+`vtx/render/gfx_dependencies.py`。CSS 支持带引号的 `@import "x.css";`、`url("x.png")`、
 有限样式函数及 font-face/media/supports；递归引用必须逐项声明。
 HTML 子集要求显式配对的非 void 标签，拒绝隐式闭合、非 void 自闭合和 raw-text
 内部嵌套标签；CSS 字符串及圆/方/花括号边界必须完整配对。语法不确定时 legacy
@@ -80,7 +80,7 @@ Golden 使用原始完整 clip 重建身份；旧 Golden schema 无法表达同 
 
 ## 渲染环境身份（#48）
 
-`vtx/gfx_environment.py` 是 CDP/CLI/CEF 共享解析器，追加于 #47 依赖身份之后，
+`vtx/render/gfx_environment.py` 是 CDP/CLI/CEF 共享解析器，追加于 #47 依赖身份之后，
 同时进入 gfx 键和阶段输入指纹；下游分段沿用 gfx 身份。CDP 与 CLI 分键。
 环境记录以 `vtx.gfx-environment/1` 编号，页完成凭证保存完整字段与 SHA256，
 阶段回执记录环境摘要和可信状态。收集只读，不启动浏览器。

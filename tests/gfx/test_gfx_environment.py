@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
 
-from vtx import gfx_environment as env, gfx_cli, hygiene
+from vtx.render import gfx_environment as env, gfx_cli
+from vtx import hygiene
 from tests._support import temporary_root
 from tests.gfx._png import png
 
@@ -557,7 +558,7 @@ class PageEnvironmentContracts(unittest.TestCase):
         self.assertFalse((self.d / gfx_cli.ENV_PENDING_FILE).exists())
 
     def test_read_only_consumer_rejects_legacy_and_accepts_current_certificate(self):
-        from vtx.gfx_cache_reader import resolve_frames, GfxCacheError
+        from vtx.render.gfx_cache_reader import resolve_frames, GfxCacheError
         c = SimpleNamespace(root=self.d, cache=self.d, w=6, h=4, fps=30,
                             tl={'project': {}})
         source = SimpleNamespace(directory=self.d, frame_count=2)
@@ -565,7 +566,7 @@ class PageEnvironmentContracts(unittest.TestCase):
         def publish():
             gfx_cli.complete_page(self.d, 2, self.d.name, 6, 4, verify_inputs=lambda: None,
                                   environment=self.environment)
-        with patch('vtx.frame_source.png_source', return_value=source), \
+        with patch('vtx.render.frame_source.png_source', return_value=source), \
                 patch.object(env, 'certificate', return_value=self.environment), \
                 patch.object(env, 'recheck'), patch.dict(os.environ, VTX_GFX='cdp', VTX_GFX_CACHE_NS=''):
             with self.assertRaises(GfxCacheError):
@@ -574,10 +575,10 @@ class PageEnvironmentContracts(unittest.TestCase):
             self.assertEqual(len(resolve_frames(c, {'src': 'p.html', 'dur': 2})), 2)
 
     def test_frame_source_requires_certificate_and_rejects_valid_png_replacement(self):
-        from vtx.frame_source import png_source
+        from vtx.render.frame_source import png_source
         c = SimpleNamespace(root=self.d, cache=self.d.parent, w=6, h=4, fps=30,
                             tl={'project': {}})
-        with patch('vtx.frame_source.gfx_dir', return_value=self.d), \
+        with patch('vtx.render.frame_source.gfx_dir', return_value=self.d), \
                 patch.object(env, 'certificate', return_value=self.environment):
             source = png_source(c, {'src': 'p.html', 'dur': 2})
             with self.assertRaisesRegex(ValueError, 'certificate missing'):

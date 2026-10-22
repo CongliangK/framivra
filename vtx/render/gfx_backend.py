@@ -6,7 +6,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 WORKER_DIR = ROOT / "experiments/gfx_electron_worker"
 OUTPUT = "electron_native_topng"
 
@@ -60,8 +60,8 @@ def _electron_identity():
         return ""
     binary, mode, output, timeout = electron_config()
     files = [binary, WORKER_DIR / "navigation_worker.mjs", WORKER_DIR / "page_error_gate.mjs",
-             WORKER_DIR / "pixel_codec.mjs", Path(__file__), ROOT / "vtx/gfx_electron.py",
-             ROOT / "vtx/gfx_electron_stage.py", ROOT / "vtx/gfx_cli.py",
+             WORKER_DIR / "pixel_codec.mjs", Path(__file__), ROOT / "vtx/render/gfx_electron.py",
+             ROOT / "vtx/render/gfx_electron_stage.py", ROOT / "vtx/render/gfx_cli.py",
              ROOT / "vtx/runtime/proc_supervisor.py"]
     digests = [content_digest(p) for p in files]
     return "electron-alpha/1|" + json.dumps(

@@ -74,14 +74,14 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                 if not gfx and 'cache_dependencies' in clip:
                     raise ValueError('clip.cache_dependencies is only valid on gfx tracks')
                 if gfx:
-                    from . import gfx_svg
+                    from .render import gfx_svg
                     if gfx_svg.is_svg(clip):
                         svg_record = gfx_svg.resolve(c, clip)
                         dependencies = {str(root / path): value for path, value in svg_record['files'].items()}
                         dependency_record = {'closure': 'static-svg-explicit'}
                         inputs.update(svg_sequence=svg_record, dependencies=dependencies)
                     else:
-                        from .gfx_dependencies import resolve
+                        from .render.gfx_dependencies import resolve
                         dependency_record = resolve(c, clip)
                         dependencies = {entry['path']: entry['sha256']
                                         for entry in dependency_record['dependencies']}
@@ -91,7 +91,7 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                         observed_files[root / clip['src']] = inputs['html']
                     for path, value in dependencies.items():
                         observed_files[Path(path)] = value
-                    from .frame_source import png_source
+                    from .render.frame_source import png_source
                     source = png_source(c, clip)
                     key = source.directory.name
                     artifact = str(source.directory.relative_to(root))

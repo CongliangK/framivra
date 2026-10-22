@@ -150,7 +150,7 @@ class WindowsEnvironment(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import shutil
-        from vtx import gfx_environment as env
+        from vtx.render import gfx_environment as env
         chrome = Path(os.environ.get('VTX_TEST_CHROME', r'C:\Program Files\Google\Chrome\Application\chrome.exe'))
         if not chrome.is_file():
             raise AssertionError('native Windows resolver tests require Chrome')
@@ -168,7 +168,7 @@ class WindowsEnvironment(unittest.TestCase):
         cls.tmp.cleanup()
 
     def test_actual_axes_and_offline_certificate(self):
-        from vtx import gfx_environment as env
+        from vtx.render import gfx_environment as env
         axes = dict(self.base, viewport={'width': 640, 'height': 360}, fps=30)
         cert = {'schema': env.SCHEMA, 'status': 'input-bound', 'axes': axes, 'sha256': env.digest(axes)}
         self.assertEqual(env.verify_certificate(cert), cert['sha256'])
@@ -180,7 +180,7 @@ class WindowsEnvironment(unittest.TestCase):
         self.assertTrue(axes['fonts']['configs'])
 
     def test_runtime_registry_and_boot_changes_invalidate(self):
-        from vtx import gfx_environment as env
+        from vtx.render import gfx_environment as env
         self.library.write_bytes(b'fixture runtime B')
         changed = env.collect('cdp', self.binary)
         self.assertNotEqual(env.digest(self.base), env.digest(changed))
@@ -194,7 +194,7 @@ class WindowsEnvironment(unittest.TestCase):
         self.assertNotEqual(env.digest(changed), env.digest(changed_registry))
 
     def test_unreadable_inputs_and_unsupported_backend_fail_closed(self):
-        from vtx import gfx_environment as env
+        from vtx.render import gfx_environment as env
         with patch.object(env, '_files', side_effect=PermissionError('fixture unreadable')):
             with self.assertRaises(env.EnvironmentError):
                 env.collect('cdp', self.binary)
@@ -203,7 +203,7 @@ class WindowsEnvironment(unittest.TestCase):
 
     def test_telemetry_exclusion_keeps_fonts_resources_registry_and_boot_bound(self):
         from types import SimpleNamespace
-        from vtx import gfx_environment as env
+        from vtx.render import gfx_environment as env
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, LOCALAPPDATA=d):
             fonts = Path(d) / 'Microsoft/Windows/Fonts'; fonts.mkdir(parents=True)
             font = fonts / 'fixture.ttf'; font.write_bytes(b'font A')
@@ -232,7 +232,7 @@ class WindowsEnvironment(unittest.TestCase):
 
     def test_same_metadata_token_never_reuses_windows_content_hash(self):
         from types import SimpleNamespace
-        from vtx import gfx_environment as env
+        from vtx.render import gfx_environment as env
         content = self.library.read_bytes()
         self.addCleanup(self.library.write_bytes, content)
         with patch.object(env, '_file_token', return_value=('identical metadata token',)):
@@ -248,7 +248,7 @@ class WindowsEnvironment(unittest.TestCase):
 @unittest.skipUnless(os.name == 'nt', 'Windows staging and CLI failure contract')
 class WindowsCliFailures(unittest.TestCase):
     def test_nonzero_and_success_without_valid_png_are_failures(self):
-        from vtx.gfx_cli import run_cli_shot, GfxCliError
+        from vtx.render.gfx_cli import run_cli_shot, GfxCliError
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); html = root / '中文 # page.html'; html.write_text('<html/>')
             for mode in ('nonzero', 'missing', 'invalid'):
