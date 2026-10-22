@@ -8,6 +8,7 @@ import plistlib
 import struct
 import tempfile
 from types import SimpleNamespace
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -343,6 +344,193 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         with self.assertRaises(env.EnvironmentError):
             self.collect()
 
+    def test_darwin_cache_hashing_is_bounded_parallel_and_matches_serial_mapping(self):
+        paths = []
+        for index in range(7):
+            path = self.root / f'cache-member-{index}'
+            path.write_bytes(f'cache bytes {index}'.encode())
+            paths.append(path)
+        alias = self.root / 'cache-member-alias'
+        alias.symlink_to(paths[2].name)
+        inputs = [paths[5], alias, paths[0], paths[2], paths[5], *paths[1:5], paths[6]]
+        original_file = env._file
+        with patch.object(env, '_hashes', {}):
+            expected = env._files(inputs)
+            barrier = threading.Barrier(4)
+            state_lock = threading.Lock()
+            active = 0
+            peak = 0
+            observed = []
+
+            def overlapping_file(path):
+                nonlocal active, peak
+                with state_lock:
+                    active += 1
+                    peak = max(peak, active)
+                    observed.append(str(path))
+                try:
+                    barrier.wait(timeout=5)
+                    return original_file(path)
+                finally:
+                    with state_lock:
+                        active -= 1
+
+            with patch.object(env, '_file', side_effect=overlapping_file):
+                actual = env._darwin_cache_files(inputs)
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(peak, 4)
+        self.assertLessEqual(peak, 4)
+        self.assertEqual(sorted(observed), sorted(set(map(str, inputs))))
+
+    def test_darwin_cache_hash_worker_error_propagates_after_all_workers_finish(self):
+        paths = []
+        for index in range(6):
+            path = self.root / f'cache-error-member-{index}'
+            path.write_bytes(f'cache bytes {index}'.encode())
+            paths.append(path)
+        ordered = sorted(set(map(str, paths)))
+        original_file = env._file
+        lock = threading.Lock()
+        finished = []
+        failure = PermissionError('denied cache bytes')
+
+        def failing_file(path):
+            try:
+                if str(path) == ordered[1]:
+                    raise failure
+                return original_file(path)
+            finally:
+                with lock:
+                    finished.append(str(path))
+
+        with patch.object(env, '_hashes', {}), patch.object(env, '_file', side_effect=failing_file):
+            with self.assertRaises(PermissionError) as caught:
+                env._darwin_cache_files(paths)
+
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(sorted(finished), ordered)
+
+    def test_darwin_three_identity_axes_overlap_and_preserve_font_preferences(self):
+        barrier = threading.Barrier(3)
+        original_cache = env._darwin_cache
+        original_bundle = env._darwin_bundle
+        original_catalog = env._darwin_font_catalog
+        preferences = self.root / 'Library/Preferences'
+        preferences.mkdir(parents=True)
+        preference_file = preferences / 'com.google.Chrome.plist'
+        preference_file.write_bytes(b'font preference fixture')
+
+        def cache(*args):
+            barrier.wait(timeout=5)
+            return original_cache(*args)
+
+        def bundle(*args):
+            barrier.wait(timeout=5)
+            return original_bundle(*args)
+
+        def catalog(*args):
+            barrier.wait(timeout=5)
+            return original_catalog(*args)
+
+        with patch.object(env, '_darwin_cache', side_effect=cache), \
+                patch.object(env, '_darwin_bundle', side_effect=bundle), \
+                patch.object(env, '_darwin_font_catalog', side_effect=catalog):
+            record = self.collect()
+
+        fonts = record['fonts']
+        self.assertIs(fonts['libraries'], record['libraries'])
+        self.assertIs(record['system_cache']['files'], record['libraries'])
+        self.assertEqual(fonts['libraries'], record['system_cache']['files'])
+        self.assertEqual(fonts['files'], env._files([self.font]))
+        self.assertIn(str(preference_file), fonts['configs'])
+        self.assertIn('urls', fonts['inventory'])
+        self.assertIn('postscript_names', fonts['inventory'])
+        self.assertIn('resources', fonts['inventory'])
+        self.assertEqual(fonts['tools'], env._files([env.sys.executable,
+                                                   env._ROOT / 'render/gfx_environment.py']))
+
+    def test_darwin_font_catalog_failure_waits_for_cache_and_renderer(self):
+        barrier = threading.Barrier(3)
+        cache_finished = threading.Event()
+        renderer_finished = threading.Event()
+        font_error = PermissionError('CoreText font bytes denied')
+        original_cache = env._darwin_cache
+        original_renderer = env._collect_darwin_renderer
+
+        def cache(*args):
+            barrier.wait(timeout=5)
+            result = original_cache(*args)
+            cache_finished.set()
+            return result
+
+        def renderer(*args):
+            barrier.wait(timeout=5)
+            result = original_renderer(*args)
+            renderer_finished.set()
+            return result
+
+        def catalog(*args):
+            barrier.wait(timeout=5)
+            raise font_error
+
+        with patch.object(env, '_darwin_cache', side_effect=cache), \
+                patch.object(env, '_collect_darwin_renderer', side_effect=renderer), \
+                patch.object(env, '_darwin_font_catalog', side_effect=catalog):
+            with self.assertRaises(env.EnvironmentError) as caught:
+                self.collect()
+
+        self.assertIs(caught.exception.__cause__, font_error)
+        self.assertTrue(cache_finished.is_set())
+        self.assertTrue(renderer_finished.is_set())
+
+    def test_darwin_cache_failure_waits_for_renderer_and_is_reported_first(self):
+        barrier = threading.Barrier(2)
+        renderer_finished = threading.Event()
+        cache_error = PermissionError('cache bytes denied')
+        renderer_error = RuntimeError('renderer inventory failed')
+
+        def cache(*args):
+            barrier.wait(timeout=5)
+            raise cache_error
+
+        def renderer(*args):
+            barrier.wait(timeout=5)
+            renderer_finished.set()
+            raise renderer_error
+
+        with patch.object(env, '_darwin_cache', side_effect=cache), \
+                patch.object(env, '_collect_darwin_renderer', side_effect=renderer):
+            with self.assertRaises(env.EnvironmentError) as caught:
+                self.collect()
+
+        self.assertIs(caught.exception.__cause__, cache_error)
+        self.assertTrue(renderer_finished.is_set())
+
+    def test_darwin_renderer_failure_waits_for_cache_and_fails_closed(self):
+        barrier = threading.Barrier(2)
+        cache_finished = threading.Event()
+        renderer_error = RuntimeError('renderer inventory failed')
+        original_cache = env._darwin_cache
+
+        def cache(*args):
+            barrier.wait(timeout=5)
+            result = original_cache(*args)
+            cache_finished.set()
+            return result
+
+        def renderer(*args):
+            barrier.wait(timeout=5)
+            raise renderer_error
+
+        with patch.object(env, '_darwin_cache', side_effect=cache), \
+                patch.object(env, '_collect_darwin_renderer', side_effect=renderer):
+            with self.assertRaises(env.EnvironmentError) as caught:
+                self.collect()
+
+        self.assertIs(caught.exception.__cause__, renderer_error)
+        self.assertTrue(cache_finished.is_set())
+
     def test_invalid_boot_empty_font_inventory_and_unknown_app_fail_closed(self):
         self.boot = 'unknown'
         with self.assertRaisesRegex(env.EnvironmentError, 'host/boot'):
@@ -471,7 +659,13 @@ class DarwinEnvironmentContracts(unittest.TestCase):
                 env.verify_certificate(bad)
 
     def test_unreadable_cache_does_not_fall_back_to_uuid_only(self):
-        with patch.object(env, '_files', side_effect=PermissionError('denied cache bytes')):
+        original_file = env._file
+        cache_paths = {str(self.cache.resolve()), str(self.subcache.resolve())}
+        def unreadable_cache(path):
+            if str(Path(path).resolve()) in cache_paths:
+                raise PermissionError('denied cache bytes')
+            return original_file(path)
+        with patch.object(env, '_file', side_effect=unreadable_cache):
             with self.assertRaisesRegex(env.EnvironmentError, 'denied cache bytes'):
                 self.collect()
 

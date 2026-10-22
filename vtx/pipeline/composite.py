@@ -4,7 +4,7 @@
 RenderPlan.composite(a=0/b=None) 保留（VTX_VIDEO_SEGMENTS=1 与
 --draft --frames 回落路径共用同一段代码）。
 """
-import ast, contextlib, functools, hashlib, inspect, json, os, subprocess, sys, textwrap
+import ast, contextlib, functools, hashlib, inspect, json, os, platform, subprocess, sys, textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -680,7 +680,24 @@ class RenderPlan:
             self.composite(sl, segp, with_subs, a=a, b=b, sub_file=sfile)
             return segp
         # NVENC 会话上限探测：并发发起 workers 路编码探测，任一失败回落串行
-        workers = min(len(edges) - 1, max(1, (os.cpu_count() or 8) // 4))
+        cpu_count = os.cpu_count()
+        segment_count = len(edges) - 1
+        workers = min(segment_count, max(1, (cpu_count or 8) // 4))
+        native_arm64_x264 = (
+            sys.platform == "darwin"
+            and platform.machine() == "arm64"
+            and enc.startswith("x264")
+            and self.W * self.H <= 1920 * 1080
+            and not c.dry
+            and isinstance(cpu_count, int)
+            and not isinstance(cpu_count, bool)
+            and cpu_count > 0
+        )
+        if native_arm64_x264:
+            workers = max(
+                workers,
+                min(segment_count, 4, max(1, cpu_count // 2)),
+            )
         if workers > 1 and not c.dry and enc.startswith("NVENC"):
             workers = nvenc_concurrency(c, workers)
         if c.dry:
@@ -699,7 +716,29 @@ class RenderPlan:
                 # The executor must not outnumber the slots actually reserved
                 # from the same frozen (configuration + VRAM) allocator.
                 with ThreadPoolExecutor(granted) as ex:
-                    segs = list(ex.map(render_one, range(len(edges) - 1)))   # map 保序 → concat 顺序确定
+                    if native_arm64_x264:
+                        # Submit larger estimated segments first to reduce the
+                        # tail, then collect futures by segment index so concat
+                        # retains the original frame order.
+                        def estimated_work(si):
+                            a, b = edges[si], edges[si + 1]
+                            overlap_count = sum(
+                                L["cl"]["dst_in"] < b
+                                and L["cl"]["dst_in"] + L["cl"]["dur"] > a
+                                for L in lset
+                            )
+                            return (b - a) * max(1, overlap_count)
+
+                        submit_order = sorted(
+                            range(segment_count),
+                            key=lambda si: (-estimated_work(si), si),
+                        )
+                        futures = {}
+                        for si in submit_order:
+                            futures[si] = ex.submit(render_one, si)
+                        segs = [futures[si].result() for si in range(segment_count)]
+                    else:
+                        segs = list(ex.map(render_one, range(segment_count)))  # map 保序 → concat 顺序确定
         lst = vdir / "list.txt"
         # PR#1（Windows 实测）：相对路径 concat 项在含 '#' 等特殊字符的目录下会被
         # 按清单目录做 URL 基准解析出错；绝对 POSIX 路径 + 引号转义规避（-safe 0 已带）。
