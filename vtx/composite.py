@@ -40,6 +40,19 @@ def _clip_alpha_filters(cl, spf):
     return filters
 
 
+def _gfx_scaled_size(width, height, scale, *, draft=False, factor=1):
+    """Formal PNG dimensions shared by composition and QC geometry."""
+    if scale == 1:
+        return width, height
+    w2 = int(width * scale) // 2 * 2
+    h2 = int(height * scale) // 2 * 2
+    if min(w2, h2) < 2 or (draft and min(int(w2 * factor) // 2 * 2, int(h2 * factor) // 2 * 2) < 2):
+        # FFmpeg interprets dimension zero as the original size;
+        # never silently turn an unrepresentable scale into no-op.
+        raise ValueError(f"gfx scale={scale} produces dimensions below 2 pixels (draft={bool(draft)})")
+    return w2, h2
+
+
 def _normalized_ast_src(source: str) -> str:
     """源码 → 去注释/去 docstring/去格式的 AST 归一化文本。
 
@@ -103,6 +116,7 @@ def _graph_code_digest() -> str:
     source += _normalized_ast_src(inspect.getsource(frame_source))
     source += _normalized_ast_src(inspect.getsource(gfx_cli))
     source += _normalized_ast_src(inspect.getsource(_clip_alpha_filters))
+    source += _normalized_ast_src(inspect.getsource(_gfx_scaled_size))
     return hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
 
 
@@ -416,12 +430,8 @@ class RenderPlan:
         if L["gfx"]:
             sc = cl.get("scale", 1)
             if sc != 1:
-                w2 = int(L["source"].width * sc) // 2 * 2
-                h2 = int(L["source"].height * sc) // 2 * 2
-                if min(w2, h2) < 2 or (draft and min(int(w2 * f) // 2 * 2, int(h2 * f) // 2 * 2) < 2):
-                    # FFmpeg interprets dimension zero as the original size;
-                    # never silently turn an unrepresentable scale into no-op.
-                    raise ValueError(f"gfx scale={sc} produces dimensions below 2 pixels (draft={bool(draft)})")
+                w2, h2 = _gfx_scaled_size(L["source"].width, L["source"].height, sc,
+                                          draft=draft, factor=f)
                 effects.append(f"scale={w2}:{h2}:flags=lanczos")
             # image2 restarts PTS at zero after start_number. Restore clip-local
             # integer ticks for the shared fades, then undo that offset before

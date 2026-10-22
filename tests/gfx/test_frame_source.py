@@ -123,6 +123,9 @@ class TestPngSequence(unittest.TestCase):
             'fade=t=out:st=2.833333:d=1.666667:alpha=1', 'colorchannelmixer=aa=0.5'])
 
     def test_scale_cannot_turn_zero_dimensions_into_original_size(self):
+        for scale, expected in ((1, (35, 27)), (0.5, (16, 12)), (0.75, (26, 20)), (1.5, (52, 40))):
+            with self.subTest(scale=scale):
+                self.assertEqual(composite._gfx_scaled_size(35, 27, scale), expected)
         layer = {'gfx': True, 'cl': dict(dst_in=0, dur=4), 'source': self.source, 'x': 0, 'y': 0}
         for draft, factor, minimum in ((False, 1, 0.125), (True, 0.5, 0.25)):
             plan = composite.RenderPlan(c=SimpleNamespace(fps=30, spf=1 / 30),
@@ -156,6 +159,7 @@ class TestMigrationIdentity(unittest.TestCase):
         source += composite._normalized_ast_src(inspect.getsource(frame_source))
         source += composite._normalized_ast_src(inspect.getsource(composite.gfx_cli))
         source += composite._normalized_ast_src(inspect.getsource(composite._clip_alpha_filters))
+        source += composite._normalized_ast_src(inspect.getsource(composite._gfx_scaled_size))
         current = composite._graph_code_digest()
         self.assertEqual(current, hashlib.sha1(source.encode('utf-8')).hexdigest()[:12])
         self.assertNotEqual(current, expected)
@@ -165,6 +169,7 @@ class TestMigrationIdentity(unittest.TestCase):
             (composite.RenderPlan._layer_input_args, 'max(0, -rel_in)', 'max(1, -rel_in)'),
             (composite.gfx_cli, '_MAX_ZLIB_OUT = 1 << 20', '_MAX_ZLIB_OUT = 1 << 19'),
             (composite._clip_alpha_filters, ':alpha=1', ':alpha=0'),
+            (composite._gfx_scaled_size, '// 2 * 2', '// 2 * 4'),
         ):
             with self.subTest(target=target):
                 def changed(obj):
@@ -186,6 +191,7 @@ class TestMigrationIdentity(unittest.TestCase):
         source += unknown(inspect.getsource(frame_source))
         source += unknown(inspect.getsource(composite.gfx_cli))
         source += unknown(inspect.getsource(composite._clip_alpha_filters))
+        source += unknown(inspect.getsource(composite._gfx_scaled_size))
         with mock.patch.object(composite, '_normalized_ast_src',
                                side_effect=unknown):
             composite._graph_code_digest.cache_clear()

@@ -159,13 +159,14 @@ env python3 tests/runners/run_gfx_environment_acceptance.py --help
 ## 阶段回执（PR#1）
 
 QC 的段免检记录另绑定 `vtx/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样表达式。
-记录 schema 升为 v2：新读取器拒绝 v1（即使 filter 相同），旧 v1 读取器也拒绝 v2，
-因此升级和回退均重新测量。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
+记录 schema 为 v3：gfx 源 alpha 内容 bbox 按合成器实际尺寸投影，再平移、裁至画布；
+这不是 Lanczos 后重新阈值测得的 bbox。新读取器拒绝 v1/v2（即使 filter 相同），
+旧读取器也拒绝 v3，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
 实测后刷新；不删除媒体、
 重编码或放宽阈值。当前表达式保留 bicubic 并开启准确舍入，避免已观察到的
 FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该探针。
-`--strict` 仍全部实测。此身份不包含完整 FFmpeg/CPU 环境，环境升级不构成跨版本
-像素保证；需要重新核验时使用 strict。黑场、近黑、声明范围与泄漏的 CPU 回归见
+`--strict` 禁用段像素免检，响度仍可能复用回执缓存。此身份不包含完整 FFmpeg/CPU 环境，环境升级不构成跨版本
+像素保证；重测段像素使用 strict，独立响度/TP 需另直接解码测量。黑场、近黑、声明范围与泄漏的 CPU 回归见
 `tests/qc/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。
 
 `receipt.json` 绑定 input_fingerprint = sha256(timeline 字节 + 源 stat 身份 +
