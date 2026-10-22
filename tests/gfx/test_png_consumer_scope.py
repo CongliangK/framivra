@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import os
-import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -17,14 +16,13 @@ from unittest import mock
 from vtx import composite, frame_source, gfx_svg
 from vtx.frame_source import PngSequence, png_source, png_consumer_scope
 from vtx.infra import Ctx
+from tests._support import temporary_root
 from tests.gfx._png import write_png
 
 
 class PngConsumerScopeContract(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = temporary_root(self)
         self.source = self.make_source('frames')
         self.layers = [self.layer(self.source)]
 
@@ -324,9 +322,7 @@ class PngConsumerScopeContract(unittest.TestCase):
 
 class SvgPngConsumerGateContract(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = temporary_root(self)
         self.engine = dict(name='inkscape', version='ordinary mock version',
                            executable='/test/inkscape', sha256='e' * 64)
         for name, value in (

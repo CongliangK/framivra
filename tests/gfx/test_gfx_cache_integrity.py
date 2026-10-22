@@ -5,6 +5,7 @@ VTX_TEST_CHROME enables the small real-browser cache-repair check explicitly.
 """
 from types import SimpleNamespace
 from tests.gfx._png import write_png
+from tests._support import temporary_root
 from tests.gfx._environment import bind_environment
 from vtx import frame_source, gfx_cache_reader
 from vtx.gfx_environment import certificate
@@ -240,9 +241,7 @@ class CompletionConsumers(unittest.TestCase):
     """Lazy and whole-page consumers share proof, not their byte-read scope."""
     def setUp(self):
         bind_environment(self)
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         (self.root / 'page.html').write_text('<html><body>inert</body></html>')
         self.clip = dict(src='page.html', dst_in=0, dur=3)
         self.c = SimpleNamespace(root=self.root, cache=self.root / 'cache',
@@ -396,9 +395,7 @@ class CompletionConsumers(unittest.TestCase):
 class LegacyCertificate(unittest.TestCase):
     def setUp(self):
         bind_environment(self)
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         (self.root / 'page.html').write_text('<html><body>inert</body></html>')
         self.clip = dict(src='page.html', dst_in=0, dur=2)
         self.c = SimpleNamespace(root=self.root, cache=self.root / 'cache',
