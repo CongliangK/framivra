@@ -3,11 +3,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from tests._support import temporary_root
 from vtx import gfx_dependencies as deps, hygiene, gfx_render, gfx_cli
 import copy
 from vtx import cache_state
@@ -17,9 +17,7 @@ class DependencyContracts(unittest.TestCase):
     def setUp(self):
         from tests.gfx._environment import bind_environment
         bind_environment(self)
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.clip = {'src': 'page.html', 'dur': 2}
         self.tl = {'project': {}, 'video_tracks': [{'kind': 'gfx', 'clips': [self.clip]}]}
         self.c = SimpleNamespace(root=self.root, tl=self.tl, fps=30, w=1, h=1)
@@ -378,9 +376,7 @@ class IntegratedDependencyOperations(unittest.TestCase):
     def setUp(self):
         from tests.gfx._environment import bind_environment
         bind_environment(self)
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.clip = {'src': 'page.html', 'dur': 2}
         self.tl = {'project': {}, 'sources': [],
                    'video_tracks': [{'kind': 'gfx', 'clips': [self.clip]}]}

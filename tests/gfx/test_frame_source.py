@@ -14,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from tests._support import temporary_root
 from tests.gfx._png import write_png
 
 from vtx import composite, frame_source
@@ -24,9 +25,7 @@ from vtx.frame_source import PngSequence, png_source
 
 class TestPngSequence(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.path = Path(self.tmp.name)
+        self.path = temporary_root(self)
         self.source = PngSequence(self.path, 'contentkey', 4, 30, 16, 16)
 
     def test_contract_and_immutable(self):

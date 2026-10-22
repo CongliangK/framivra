@@ -31,12 +31,12 @@ import importlib.util
 import io
 import os
 import sys
-import tempfile
 import json
 import re
 import unittest
 from unittest import mock
 from pathlib import Path
+from tests._support import temporary_root
 
 REPO = Path(__file__).resolve().parents[2]
 SUITE = REPO / "tests" / "gfx_bench_suite"
@@ -331,9 +331,7 @@ class TestS6SequenceVerifier(unittest.TestCase):
         self.mod = load_smoke()
         from tests.gfx._png import png
         self.png = png
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.case = 0
         for patch in (mock.patch.object(self.mod.gfx_render, "render_page", self.render),
                       mock.patch.object(self.mod.gfx_render, "Browser", side_effect=AssertionError("real browser")),
@@ -540,9 +538,7 @@ class TestSmokeVerdicts(unittest.TestCase):
 
     def setUp(self):
         self.mod = load_smoke()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = temporary_root(self)
         self.smoke = self.mod.Smoke("unit-only", self.root / "evidence")
         self.smoke.note = lambda message: None
         self.smoke.man["global_spec"].update(width=6, height=4)

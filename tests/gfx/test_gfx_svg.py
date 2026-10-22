@@ -6,7 +6,6 @@ import os
 import stat
 import json
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +17,7 @@ from vtx.frame_source import png_source
 from vtx.gfx_cache_reader import resolve_frames
 from vtx.hygiene import gfx_dir, gfx_key
 from vtx.infra import Ctx
+from tests._support import temporary_root
 from tests.gfx._png import write_png
 
 REAL_ENGINE_IDENTITY = gfx_svg.engine_identity
@@ -28,9 +28,7 @@ SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBo
 
 class SvgContract(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = temporary_root(self)
         self.engine = mock.patch.object(gfx_svg, 'engine_identity', return_value=ENGINE)
         self.engine.start(); self.addCleanup(self.engine.stop)
         for method, value in [('fontconfig_identity', {'executable': '/test/fc-scan', 'version': 'fontconfig test', 'sha256': 'f'*64}),
@@ -451,8 +449,7 @@ class LinuxSvgRuntimeDigest(unittest.TestCase):
     def setUp(self):
         from vtx import cache_state, gfx_environment
         self.checked, self.environment = cache_state, gfx_environment
-        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name).resolve()
+        self.root = temporary_root(self).resolve()
         self.engine = self.root / 'engine'; self.engine.write_bytes(b'engine')
         self.fc = self.root / 'fc-scan'; self.fc.write_bytes(b'fontconfig')
         self.library = self.root / 'libgraphics.so'; self.library.write_bytes(b'graphics A')

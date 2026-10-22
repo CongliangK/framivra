@@ -4,12 +4,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
 
 from vtx import gfx_environment as env, gfx_cli, hygiene
+from tests._support import temporary_root
 from tests.gfx._png import png
 
 
@@ -17,9 +17,7 @@ class UnitEnvironmentIdentity(unittest.TestCase):
     def setUp(self):
         from tests.gfx import _environment
         self.fixture = _environment
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = temporary_root(self)
         self.binary = self.root / 'input.bin'
         self.binary.write_bytes(b'fixture')
 
@@ -89,9 +87,7 @@ class CheckedEnvironmentDigest(unittest.TestCase):
     def setUp(self):
         from vtx import cache_state
         self.checked = cache_state
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name).resolve()
+        self.root = temporary_root(self).resolve()
         self.path = self.root / 'library.bin'
         self.path.write_bytes(b'library A')
         memo = patch.object(env, '_hashes', {})
@@ -185,9 +181,7 @@ class CheckedEnvironmentDigest(unittest.TestCase):
 
 class ChromeInstallerTelemetry(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name).resolve() / 'Application'
+        self.root = temporary_root(self).resolve() / 'Application'
         self.root.mkdir()
         (self.root / 'chrome.exe').write_bytes(b'browser')
         self.setup = self.root / 'SetupMetrics'; self.setup.mkdir()
@@ -339,9 +333,7 @@ with patch.object(subprocess, 'run', side_effect=results):
 
 class EnvironmentContracts(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name).resolve()
+        self.root = temporary_root(self).resolve()
         self.dist = self.root / 'dist'; self.dist.mkdir()
         self.binary = self.dist / 'chrome'; self.binary.write_bytes(b'\x7fELFfixture')
         self.font = self.root / 'font.ttf'; self.font.write_bytes(b'font A')
@@ -517,8 +509,7 @@ class EnvironmentContracts(unittest.TestCase):
 
 class PageEnvironmentContracts(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        self.d = Path(tmp.name)
+        self.d = temporary_root(self)
         self.environment = {'schema': env.SCHEMA, 'sha256': 'unit-only', 'status': 'input-bound'}
         for i in range(2):
             (self.d / f'f{i:04d}.png').write_bytes(png())
