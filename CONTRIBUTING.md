@@ -10,6 +10,8 @@
 bash scripts/run_all_tests.sh
 ```
 
+macOS 默认 `/var`、`/tmp` 是符号链接，遇到仓库的物理路径检查时可用已存在的物理 `TMPDIR=/private/var/tmp` 运行同一全套（`export TMPDIR=/private/var/tmp`）；这只是改用真实物理路径，不忽略、不放宽任何 symlink 检查。
+
 `VTX_TEST_CHROME` 指向 Chrome/Chromium，启用对应真实 gfx 检查；`VTX_TEST_FFMPEG` 指向 FFmpeg，部分测试显式门控，另有测试回退 PATH。因此未设置变量不等于纯单测，skip 不等于通过，也不能把这些变量当作启用所有可选集成。实际 opt-in 以测试为准，[CI 覆盖](docs/DEV.md#ci-回归覆盖)区分普通 PR、定时与手动范围。
 
 可按领域检查；辅助模块不另设运行器，工具与平台门控仍有效：

@@ -292,6 +292,126 @@ class CDPDeadlineMock(unittest.TestCase):
         self.assertEqual(sock.closed, 0)
 
 
+class CDPNavigateFontReadinessMock(unittest.TestCase):
+    """e801 regression: real Tab.navigate must await document.fonts.ready once
+    the NEW document is confirmed (location.search match), inside the same
+    bounded navigate deadline, failing loud on JS error / non-True / timeout.
+    Legacy navigate previously returned on readyState=complete alone, letting
+    900-frame legacy renders rasterize with pending webfonts while strict
+    already gated on fonts.ready. Scripted CDP byte frames only — no real
+    browser, no rendering, fully deterministic owned clock."""
+
+    URL = 'file:///fixture/page.html?f=1'
+
+    def setUp(self):
+        self.clock = [0.0]
+        clock = SimpleNamespace(
+            monotonic=lambda: self.clock[0],
+            sleep=lambda s: self.clock.__setitem__(0, self.clock[0] + s))
+        for patcher in (mock.patch.object(gfx, 'time', clock),
+                        mock.patch.object(gfx.os, 'urandom', lambda n: b'\0' * n)):
+            patcher.start(); self.addCleanup(patcher.stop)
+
+    def tab(self, messages, delays=()):
+        sock = CDPDeadlineMock.Socket(
+            self.clock,
+            b''.join(CDPDeadlineMock.frame(m) for m in messages),
+            delays=list(delays))
+        ws = gfx.WSConn.__new__(gfx.WSConn); ws.sock = sock; ws._rbuf = bytearray()
+        tab = gfx.Tab.__new__(gfx.Tab)
+        tab.ws, tab._mid, tab.request_policy, tab._policy_commands = ws, 0, None, set()
+        return tab, sock
+
+    @staticmethod
+    def sent(sock):
+        msgs = []
+        for blob in sock.sent:            # raw masked client frames
+            tag, ln, i = blob[1] & 0x7F, blob[1] & 0x7F, 2
+            if tag == 126:
+                ln, i = int.from_bytes(blob[2:4], 'big'), 4
+            elif tag == 127:
+                ln, i = int.from_bytes(blob[2:10], 'big'), 10
+            if blob[1] & 0x80:
+                mask, i = blob[i:i + 4], i + 4
+                data = bytes(b ^ mask[k % 4] for k, b in enumerate(blob[i:i + ln]))
+            else:
+                data = blob[i:i + ln]
+            msgs.append(json.loads(data))
+        return msgs
+
+    def test_old_page_complete_then_new_document_gates_fonts(self):
+        # First probe sees the OLD document already complete (?f=0): it must
+        # NOT be mistaken for the new page and must NOT trigger the fonts
+        # gate; only after the correct ?f=1 document is observed is
+        # fonts.ready awaited and proven True.
+        tab, sock = self.tab([
+            {'id': 1, 'result': {}},
+            {'id': 2, 'result': {'result': {'value': '?f=0|complete'}}},
+            {'id': 3, 'result': {'result': {'value': '?f=1|complete'}}},
+            {'id': 4, 'result': {'result': {'value': True}}},
+        ])
+        self.assertIsNone(tab.navigate(self.URL, timeout=5))
+        msgs = self.sent(sock)
+        self.assertEqual([m['method'] for m in msgs],
+                         ['Page.navigate', 'Runtime.evaluate', 'Runtime.evaluate',
+                          'Runtime.evaluate'])
+        self.assertIn('location.search', msgs[1]['params']['expression'])
+        fonts = [m for m in msgs
+                 if 'fonts.ready' in m.get('params', {}).get('expression', '')]
+        self.assertEqual(len(fonts), 1)                 # exactly one fonts gate
+        self.assertEqual(msgs.index(fonts[0]), 3)       # only after ?f=1 probe
+        self.assertIs(fonts[0]['params'].get('awaitPromise'), True)
+        self.assertIs(fonts[0]['params'].get('returnByValue'), True)
+        self.assertEqual(sock.closed, 0)
+
+    def test_pending_fonts_are_waited_not_skipped(self):
+        # Correct new document, but fonts.ready resolves late (its reply
+        # payload lands 1s in): navigate must still be waiting at that moment
+        # and then succeed — never proceed on an unproven font state.
+        tab, sock = self.tab([
+            {'id': 1, 'result': {}},
+            {'id': 2, 'result': {'result': {'value': '?f=1|complete'}}},
+            {'id': 3, 'result': {'result': {'value': True}}},
+        ], delays=[0, 0, 0, 0, 0, 1.0])
+        self.assertIsNone(tab.navigate(self.URL, timeout=5))
+        self.assertGreaterEqual(self.clock[0], 1.0)
+        self.assertEqual(sock.closed, 0)
+
+    def test_font_gate_js_exception_fails_loud(self):
+        tab, sock = self.tab([
+            {'id': 1, 'result': {}},
+            {'id': 2, 'result': {'result': {'value': '?f=1|complete'}}},
+            {'id': 3, 'result': {'result': {'type': 'object'},
+                                 'exceptionDetails': {'text': 'owned font explosion'}}},
+        ])
+        with self.assertRaisesRegex(gfx.GfxRenderError, 'font readiness check failed'):
+            tab.navigate(self.URL, timeout=5)
+        self.assertEqual(sock.closed, 0)   # loud, without killing the stream
+
+    def test_font_gate_non_true_fails_loud(self):
+        tab, sock = self.tab([
+            {'id': 1, 'result': {}},
+            {'id': 2, 'result': {'result': {'value': '?f=1|complete'}}},
+            {'id': 3, 'result': {'result': {'type': 'boolean', 'value': False}}},
+        ])
+        with self.assertRaisesRegex(gfx.GfxRenderError, 'font readiness unproven'):
+            tab.navigate(self.URL, timeout=5)
+        self.assertEqual(sock.closed, 0)
+
+    def test_font_gate_timeout_is_bounded_and_loud(self):
+        # The fonts reply exists but lands past the remaining navigate budget
+        # (6s recv delay vs 5s deadline): the wait stays bounded, the stream is
+        # discarded (never reused half-consumed) and the cause is explicit.
+        tab, sock = self.tab([
+            {'id': 1, 'result': {}},
+            {'id': 2, 'result': {'result': {'value': '?f=1|complete'}}},
+            {'id': 3, 'result': {'result': {'value': True}}},
+        ], delays=[0, 0, 0, 0, 0, 6.0])
+        with self.assertRaisesRegex(TimeoutError, 'font readiness timeout'):
+            tab.navigate(self.URL, timeout=5)
+        self.assertEqual(sock.closed, 1)
+
+
 def _cached_png(value=0):
     """A real 6×4 cache fixture; file existence alone is not validity."""
     import numpy as np

@@ -384,7 +384,12 @@ class Tab:
     def navigate(self, url, timeout=5.0):
         """导航并等待新文档就绪。坑：Page.navigate 返回时旧文档可能仍在，
         readyState=="complete" 是旧页的（曾致全部帧渲成 f=0 的空页）——
-        必须等 location.search 变成目标 url 的 query 才是新文档。"""
+        必须等 location.search 变成目标 url 的 query 才是新文档。
+        新文档确定后，仍在同一 navigate deadline 内 await document.fonts.ready
+        （e801：legacy 逐帧渲染只等 readyState=complete 就截图，webfont 未就绪
+        的帧会以错误字形落盘；strict 路线早已等 ready，本处补齐同判据）。
+        禁止以任意 sleep 代替 ready：JS 异常/非 True/超时一律 fail-loud，
+        交由上层既有重试/失败语义处理，绝不带未证实的字体状态返回。"""
         self.call("Page.navigate", url=url, timeout=10)
         want = ("?" + url.split("?", 1)[1]) if "?" in url else ""
         deadline = time.monotonic() + timeout
@@ -395,6 +400,19 @@ class Tab:
             val = r.get("result", {}).get("value") or ""
             search, _, ready = val.partition("|")
             if search == want and ready == "complete":
+                try:
+                    r = self.call("Runtime.evaluate",
+                                  expression="document.fonts.ready.then(()=>true)",
+                                  awaitPromise=True, returnByValue=True,
+                                  timeout=max(0.05, deadline - time.monotonic()))
+                except TimeoutError as exc:
+                    raise TimeoutError(f"font readiness timeout: {url}") from exc
+                details = r.get("exceptionDetails")
+                if details:
+                    raise GfxRenderError(
+                        f"font readiness check failed ({details.get('text', 'JS error')}): {url}")
+                if r.get("result", {}).get("value") is not True:
+                    raise GfxRenderError(f"font readiness unproven: {url}")
                 return
             time.sleep(0.02)
         raise TimeoutError(f"page load timeout: {url}")
