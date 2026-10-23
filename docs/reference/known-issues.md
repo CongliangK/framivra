@@ -12,6 +12,10 @@
 | ⑭ | 合成冷建与字节级确定性 | 中 | 逐层 pass 已采用，普通 GC 保留 `vseg_pass`，键种子包含 `with_subs`。历史实测的温态复用一致不能推出清缓存冷建逐位一致：仍登记 overlay 冷建窄带像素差异与 FFV1 容器字节非确定性。清缓存重渲不等于原交付件；既有 R-03 验收口径为视觉等价与温态 md5 全等，字节级闭合未立项，不据此宣称新素材已验收。 |
 | - | `PYTHONUTF8=1` 与 venv 下的解释器身份变体 | 低 | 保留历史风险登记及当时的 `env -u PYTHONUTF8` 规避记录；未据此宣称当前宿主或任意 venv 已复验。 |
 
+## Mac 全片资格
+
+当前 30 秒作品的 Mac 全链、性能和人工视听资格须由最终 engine 与真实环境重新建立，不能从平台实现支持推定通过。执行前核对已有 Inkscape、固定字体与 jsonschema，缺依赖即报告阻塞；不自动安装或改用户环境。Linux 专属 CEF 矩阵不代表 Mac，Darwin 文件事务仍须按实际实现边界核验。操作与依赖唯一 home 见 [30 秒基线](../../templates/demo-timeline-svg/README.md#主性能基线)。
+
 ## 色彩编码
 
 #101 留存报告尚未验收；未查询线上状态。`59811757809642534591e77ee86669aeccbcdbf7` 的 Linux/FFmpeg8.1.3/RTX4080 单帧 RGB24 八色块显示默认 YUV420P 同 BT.601 limited、不同 BT.709 limited；不覆盖任意 YUV 输入、完整图、原色/传递函数。**不能仅贴 bt709/tv 标签**：先设计实际矩阵/范围转换及原色/传递函数来源，保留既有 YUV 解释；改像素须独审、重建 Golden，不称“仅元数据零差”。新标签零差、完整 Golden/QC、响度与多帧全链帧数均 **UNRUN**。[固定原测量](https://github.com/CongliangK/framivra/blob/3d9e6622d5d06eecf55ffbe2075da1fa994f93f5/docs/reference/color-encoding.md) 保留样本、失败与摘要；仓外临时证据不等于持久归档。

@@ -6,7 +6,7 @@
 
 | 需要解决的问题 | 当前入口 |
 |---|---|
-| 安装与项目验收 | [安装/更新](guides/installation.md)、[公开 Demo](guides/demo-fixture.md)、[代理诊断](guides/agent-diagnostics.md)、[验收包](guides/project-acceptance.md)、[Blender 分轨审计](../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门) |
+| 安装与项目验收 | [安装/更新](guides/installation.md)、[公开 Demo](../templates/demo-timeline-svg/README.md#主性能基线)、[代理诊断](guides/agent-diagnostics.md)、[验收包](guides/project-acceptance.md)、[Blender 分轨审计](../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门) |
 | 身份、缓存与执行结果 | [缓存/回执](cache-provenance.md)、[执行事件](reference/execution-events.md)、[资源预算](reference/resource-budget.md)、[插件兼容](reference/plugin-core-compatibility.md) |
 | 媒体实现 | [Canvas 导出](skill/references/gfx.md#canvas-导出与静态跨度)、[响度终链](skill/references/edit.md#音频工程build_audio-内置)、[编码色彩边界](reference/known-issues.md#色彩编码)、[Golden 证据](cache-provenance.md#golden-evidence) |
 | 组件与未解决问题 | [组件目录](catalog.md)、[已知问题](reference/known-issues.md)；具体命令和输入限制归各组件 README |
@@ -35,7 +35,19 @@
 
 ## 支持与验证边界
 
-- **Windows 原生内核**：x64 Python 与 Chrome/Edge 覆盖安装自检、CDP/CLI、FFmpeg 全链、缓存与 gc/clean。环境指纹绑定浏览器发行目录、系统库/驱动、系统/用户字体及注册表、主机与启动边界；未知输入拒绝复用，不承诺跨机器像素等价，保守扫描成本高于 Linux。Chrome 由 Job Object 在宿主强杀后回收整树，事务使用字节范围锁，删除以拒绝写入/改名共享的祖先句柄与按句柄删除并拒绝 junction 祖先。原生安全由本地 Windows 测试、中文/空格/# 路径单双分段/冷温缓存/严格 QC/解码/黑场/真峰值由本地 [合成 E2E](../tests/runners/run_e2e.py) 验收；默认 CI windows-install 只验安装。**Windows CEF 与模型侧车生命周期不在该验收内**，平台专用测试必须分别报告。
+- **Windows 原生内核**：x64 Python 与 Chrome/Edge 覆盖安装自检、CDP/CLI、FFmpeg 全链、缓存与 gc/clean。环境指纹绑定浏览器发行目录、系统库/驱动、系统/用户字体及注册表、主机与启动边界；未知输入拒绝复用，不承诺跨机器像素等价，保守扫描成本高于 Linux。Chrome 由 Job Object 在宿主强杀后回收整树，事务使用字节范围锁，删除以拒绝写入/改名共享的祖先句柄与按句柄删除并拒绝 junction 祖先。原生安全由本地 Windows 测试、中文/空格/# 路径单双分段/冷温缓存/严格 QC/解码/黑场/真峰值由本地 [E2E 运行器](../tests/runners/run_e2e.py) 的显式 `--scope capability` 及[独立验证器](../tests/runners/verify_e2e.py) 的同一 scope 验收；默认 CI windows-install 覆盖安装安全/安装端到端及两项定向原生清理，并非 Windows 全套。**Windows CEF 与模型侧车生命周期不在该验收内**，平台专用测试必须分别报告。
+  当前 Windows 不支持主片 SVG；capability 只验独立 HTML/字幕/普通媒体机制，不授完整 30 秒或发布资格，也不自动 skip 主片后标完整通过。默认 `--scope full` 仍要求主片 900 帧与机制 180 帧两者全链；run/verify scope 必须一致，当前候选是否通过只以实际证据判断。
+
+  以下为写操作（生成媒体与缓存，调用本地 FFmpeg/浏览器）。从仓根在 PowerShell 执行，替换为已有工具路径；全新 RUN 不得复用：
+
+  ```powershell
+  $RUN = Join-Path $env:TEMP ("framivra-capability-" + [guid]::NewGuid().ToString("N"))
+  $FFMPEG = "C:\path\to\ffmpeg.exe"; $CHROME = "C:\path\to\chrome.exe"
+  python tests/runners/run_e2e.py --repo "$PWD" --output "$RUN" --ffmpeg "$FFMPEG" --chrome "$CHROME" --scope capability
+  if ($LASTEXITCODE -ne 0) { throw "capability run failed" }
+  python tests/runners/verify_e2e.py "$RUN" --ffmpeg "$FFMPEG" --scope capability
+  if ($LASTEXITCODE -ne 0) { throw "capability verification failed" }
+  ```
 - **模型与素材限制**：ASR 兼容探测 `.venv/Scripts/`，不代表 Windows qwen-asr 解释器已验收，手动路线见 [ASR](../apps/asr/README.md)。`apps/aroll/trim_takes.py` 按 `raw[44:]` 读取既定 float32 WAV，不是通用 WAV 解析器。
 - **桥接 fps 身份**：constraints 接受数值等值的 `30.0`，Ctx 归一为 int；json2blend 的只读上下文保留原文 fps，而 gfx_key 纳入 fps 文本。不能以“非 int 已拒绝”排除差异；该输入的缓存复用须单独核对。
 - **声明依赖**：未列入 cache_dependencies 的外链变化不保证触发重渲，必须按工程检查声明，见 [缓存语义](cache-provenance.md)。

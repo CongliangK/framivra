@@ -211,7 +211,7 @@ history、reports、FREEZE 与 final_4k 等交付件；保护清单以 [`out_pro
 
 测试入口与工具开关见 [贡献指南](../CONTRIBUTING.md#测试入口)，覆盖内容/时间戳/依赖/同名页面/回执失效及可选 Chrome/FFmpeg 集成。
 - [缓存回归](../tests/runners/run_cache_regression.py)：同长素材替换并恢复时间戳、修改字幕/HTML 后不清缓存重跑，与独立冷启动对照完整 180 帧缩略 RGB 和解码 PCM。
-- [E2E 运行器](../tests/runners/run_e2e.py)与[独立验证器](../tests/runners/verify_e2e.py)：12 秒单段/并行全流程、严格 QC、接缝和音频对照。
+- [E2E 运行器](../tests/runners/run_e2e.py)与[独立验证器](../tests/runners/verify_e2e.py)：默认 `--scope full` 对唯一 30 秒主片与独立机制探针均保单段/并行全流程、冷/暖缓存、严格 QC、全解码及像素/音频对照；探针另保浏览器、字幕跨切和普通媒体能力，不是第二公开 Demo 或性能基线。显式 `--scope capability` 只授[独立机制范围](DEV.md#支持与验证边界)，run/verify 必须同 scope，不代替完整主片或发布门。full 可显式转发 `--fonts-dir DIR` / `--audio-inputs DIR` 到[唯一准备入口](../templates/demo-timeline-svg/README.md#准备与正式运行)；capability 拒绝这两项未使用输入。设计覆盖不代表最终候选已实跑通过。
 
 Windows 修复前后数值与 Linux/voice-ime 复验见[固定回归记录](https://github.com/CongliangK/framivra/blob/f0c98dd104a4674f0ae6eb84622462cad0ad6006/docs/cache-provenance.md#回归)；架构裁定见 `vtx/cache/cache_state.py` 模块头。
 这些受控正确性结果不证明长视频或跨平台性能，当前版本仍须实际执行上述回归。
