@@ -52,8 +52,22 @@ def track_mix(c, labels, out):
     """Mix nonempty event labels and pad one track on the shared sample grid."""
     head = (labels[0] if len(labels) == 1 else
             f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:normalize=0,")
-    return (f"{head}apad=whole_dur={c.dur*c.spf:.3f},"
+    return (f"{head}apad=whole_len={c.dur*c.spf_samples},"
             f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS{out}")
+
+
+def duck_chains(c, signal, key, out, *, threshold, ratio, attack, release, makeup):
+    """Keep private compressor inputs alive through the exact project boundary.
+
+    Call after fanout so padding cannot extend an audible/raw branch. The trim
+    immediately after compression bounds both otherwise unbounded input pads.
+    """
+    padded_signal = f"{out[:-1]}_signal]"
+    padded_key = f"{out[:-1]}_key]"
+    return [f"{signal}apad{padded_signal}", f"{key}apad{padded_key}",
+            f"{padded_signal}{padded_key}sidechaincompress=threshold={threshold}:ratio={ratio}:"
+            f"attack={attack}:release={release}:makeup={makeup},"
+            f"atrim=end_sample={c.dur*c.spf_samples}{out}"]
 
 
 def event_chain(c, k, e, *, require_volume=True):

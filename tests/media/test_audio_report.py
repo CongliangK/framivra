@@ -421,7 +421,6 @@ class TestMeasurePrimitives(unittest.TestCase):
 
     def test_duck_graph_single_and_multiple_keys_remain_audible(self):
         import wave
-        from vtx.pipeline import stages
         # Zero-volume beds isolate preservation of the key streams. This does
         # not equate quantized report stems with the production float duck bus.
         for names in (['voice'], ['voice', 'cue']):
@@ -431,15 +430,8 @@ class TestMeasurePrimitives(unittest.TestCase):
                 keys = [{'name': name, 'events': [dict(event)]} for name in names]
                 beds = [{'name': f'bed{i}', 'duck': True, 'duck_by': [name],
                          'events': [dict(event, volume=0)]} for i, name in enumerate(names)]
-                c.tl = {'audio_tracks': keys + beds}
-                main = c.root / 'main.wav'
-                with mock.patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
-                     mock.patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value=self.wav):
-                    cmd, chains, _, used = stages._audio_graph(c)
-                    self.assertTrue(used)
-                    c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
-                                 '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
-                    voice, raw, duck = ar.render_stems(c, keys, beds, c.root / 'stems')
+                main, (voice, raw, duck) = self._render_duck_fixture(c, keys, beds,
+                                                                   lambda c, sid: self.wav)
                 with wave.open(str(main)) as a, wave.open(str(voice)) as b:
                     self.assertEqual(a.getnframes(), 48000)
                     self.assertEqual(a.getparams(), b.getparams())
@@ -450,12 +442,64 @@ class TestMeasurePrimitives(unittest.TestCase):
                     with wave.open(str(path)) as stream:
                         self.assertEqual(stream.getnframes(), 48000)
                         self.assertFalse(any(stream.readframes(stream.getnframes())))
+        self._assert_unity_duck_pcm_matches_source()
+
+    def _render_duck_fixture(self, c, keys, beds, source_of):
+        from vtx.pipeline import stages
+        c.tl = {'audio_tracks': keys + beds}
+        main = c.root / 'main.wav'
+        with mock.patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+             mock.patch.object(stages._plugin_hooks, 'resolve_source_wav', side_effect=source_of):
+            cmd, chains, _, used = stages._audio_graph(c)
+            self.assertTrue(used)
+            c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
+                         '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
+            stems = ar.render_stems(c, keys, beds, c.root / 'stems')
+        return main, stems
+
+    def _assert_unity_duck_pcm_matches_source(self):
+        from array import array
+        import wave
+        with tempfile.TemporaryDirectory() as directory:
+            c = _event_context(); c.root = Path(directory); c.run = self.c.run
+            # Independent even-integer stereo PCM makes gains 0.5/1/1.5 exact,
+            # with distinct nonzero channels through the final sample (no fades).
+            samples = array('h', (value for i in range(48000)
+                                 for value in (2000 + 2 * (i % 251), -4000 - 2 * (i % 257))))
+
+            def pcm(numerator):
+                scaled = array('h', (value * numerator // 2 for value in samples))
+                if sys.byteorder != 'little':
+                    scaled.byteswap()
+                return scaled.tobytes()
+
+            source = c.root / 'source.wav'
+            with wave.open(str(source), 'wb') as stream:
+                stream.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
+                stream.writeframes(pcm(2))
+            event = {'src': 'a', 'in': 0, 'out': 30}
+            keys = [{'name': name, 'events': [dict(event, volume=volume)]}
+                    for name, volume in (('voice', 0), ('cue', 0.5))]
+            beds = [{'name': 'bed', 'duck': True, 'duck_by': ['voice'],
+                     'duck_params': {'threshold': 0.01, 'ratio': 8, 'attack_ms': 5,
+                                     'release_ms': 100, 'makeup': 1},
+                     'events': [dict(event, volume=1)]}]
+            main, (voice, raw, duck) = self._render_duck_fixture(c, keys, beds, lambda c, sid: source)
+            # A silent private key gives unity compression; the audible cue is
+            # not a key. Compare each full output to source arithmetic, not peers.
+            for path, numerator in ((raw, 2), (duck, 2), (voice, 1), (main, 3)):
+                with self.subTest(output=path.name), wave.open(str(path)) as stream:
+                    self.assertEqual((stream.getnchannels(), stream.getsampwidth(),
+                                      stream.getframerate(), stream.getnframes()), (2, 2, 48000, 48000))
+                    actual = stream.readframes(48000)
+                    self.assertEqual(len(actual), 48000 * 4)
+                    self.assertTrue(actual == pcm(numerator),
+                                    f'{path.name} must match independent stereo PCM through sample N-1')
 
     def test_distinct_duck_keys_only_attenuate_their_own_nonzero_bed(self):
         from array import array
         import math
         import wave
-        from vtx.pipeline import stages
         with tempfile.TemporaryDirectory() as directory:
             c = _event_context(); c.dur = 360; c.root = Path(directory); c.run = self.c.run
             frequencies = {'voice': 1500, 'cue': 2100, 'bed': 331, 'amb': 523}
@@ -469,27 +513,26 @@ class TestMeasurePrimitives(unittest.TestCase):
                      'duck_params': {'threshold': 0.01, 'ratio': 8, 'attack_ms': 5, 'release_ms': 100},
                      'events': [{'src': name, 'in': 0, 'out': 360, 'volume': 0.25}]}
                     for name, key in (('bed', 'voice'), ('amb', 'cue'))]
-            c.tl = {'audio_tracks': keys + beds}
-            main = c.root / 'main.wav'
-            with mock.patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
-                 mock.patch.object(stages._plugin_hooks, 'resolve_source_wav', side_effect=lambda c, sid: c.root / f'{sid}.wav'):
-                cmd, chains, _, used = stages._audio_graph(c)
-                self.assertTrue(used)
-                c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
-                             '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
-                _voice, raw, duck = ar.render_stems(c, keys, beds, c.root / 'stems')
+            main, (_voice, raw, duck) = self._render_duck_fixture(c, keys, beds,
+                                                                lambda c, sid: c.root / f'{sid}.wav')
+
+            def samples_at(path, start):
+                with wave.open(str(path)) as stream:
+                    self.assertEqual((stream.getframerate(), stream.getsampwidth(), stream.getnframes()),
+                                     (48000, 2, 12 * 48000))
+                    self.assertEqual(stream.getnchannels(), 2)
+                    stream.setpos(round(start * 48000))
+                    pcm = stream.readframes(48000)
+                self.assertEqual(len(pcm), 48000 * 4)
+                samples = array('h', pcm)
+                if sys.byteorder != 'little':
+                    samples.byteswap()
+                return samples
 
             def amplitude(path, frequency, start):
                 # One-second integer-frequency projection separates both nonzero
                 # beds from each other and the audible keys, without numpy/FFT.
-                with wave.open(str(path)) as stream:
-                    self.assertEqual((stream.getframerate(), stream.getsampwidth(), stream.getnframes()),
-                                     (48000, 2, 12 * 48000))
-                    stream.setpos(round(start * 48000))
-                    samples = array('h', stream.readframes(48000))
-                    if sys.byteorder != 'little':
-                        samples.byteswap()
-                    mono = samples[::stream.getnchannels()]
+                mono = samples_at(path, start)[::2]
                 phase = 2 * math.pi * frequency / 48000
                 real = sum(value * math.cos(phase * i) for i, value in enumerate(mono))
                 imag = sum(value * math.sin(phase * i) for i, value in enumerate(mono))
@@ -510,6 +553,18 @@ class TestMeasurePrimitives(unittest.TestCase):
                     else:
                         self.assertLess(ratios[0], 0.5, f'{path.name}:{name} must duck for its own key')
             print('duck key isolation own/other amplitude ratios:', json.dumps(measured, sort_keys=True))
+            for name in ('bed', 'amb'):
+                self.assertGreater(amplitude(raw, frequencies[name], 11), 0.02,
+                                   'both raw beds must remain audible in the terminal second')
+            # These keys end at 9s with 100ms release and unity makeup. Compare
+            # every stereo tail sample; allow one PCM LSB for cross-path rounding
+            # near quantization half-ties, not missing content or output padding.
+            reference = samples_at(raw, 11)
+            for path in (main, duck):
+                with self.subTest(tail_output=path.name):
+                    tail = samples_at(path, 11)
+                    self.assertLessEqual(max(abs(a - b) for a, b in zip(tail, reference)), 1,
+                                         f'{path.name} must preserve both beds through sample N-1')
 
 
     @unittest.skipUnless(FF, 'FFmpeg required')
@@ -530,20 +585,26 @@ class TestMeasurePrimitives(unittest.TestCase):
             c.tl = {'audio_tracks': tracks}
             with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
                  patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value=source):
-                cmd, chains, _, _ = stages._audio_graph(c)
-                main = root / 'main.wav'
-                c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
-                             '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
-                cmd, chains, mix, _, _ = ar._track_group(c, tracks)
-                ar._collect_inputs(c, tracks, cmd)
-                report = root / 'report.wav'
-                c.run(cmd + ['-filter_complex', ';'.join(chains + [mix]), '-map', '[gmix]',
-                             '-c:a', 'pcm_s16le', '-ar', '48000', str(report)])
-            import wave
-            with wave.open(str(main)) as a, wave.open(str(report)) as b:
-                self.assertEqual(a.getnframes(), 48000)
-                self.assertEqual(a.getparams(), b.getparams())
-                self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
+                for frames in (30, 31, 32):
+                    with self.subTest(duration_frames=frames):
+                        c.dur = frames
+                        cmd, chains, _, _ = stages._audio_graph(c)
+                        main = root / f'main-{frames}.wav'
+                        c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
+                                     '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
+                        cmd, chains, mix, _, _ = ar._track_group(c, tracks)
+                        ar._collect_inputs(c, tracks, cmd)
+                        report = root / f'report-{frames}.wav'
+                        c.run(cmd + ['-filter_complex', ';'.join(chains + [mix]), '-map', '[gmix]',
+                                     '-c:a', 'pcm_s16le', '-ar', '48000', str(report)])
+                        import wave
+                        with wave.open(str(main)) as a, wave.open(str(report)) as b:
+                            if frames == 30:
+                                self.assertEqual(a.getnframes(), 48000)
+                            self.assertEqual(a.getnframes(), c.dur * c.spf_samples)
+                            self.assertEqual(b.getnframes(), c.dur * c.spf_samples)
+                            self.assertEqual(a.getparams(), b.getparams())
+                            self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
 
 
 class _FakeCtx:
@@ -591,62 +652,52 @@ class TestEndToEndSynthetic(unittest.TestCase):
 
     FPS, DUR = 30, 600     # 20s 工程
 
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory(prefix="vtx-arep-e2e-")
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
     def _tone(self, path, freq, dur, amp=0.4):
         subprocess.run([FF, "-v", "error", "-y", "-f", "lavfi", "-i",
                         f"sine=frequency={freq}:sample_rate=48000:duration={dur}",
                         "-af", f"volume={amp}", "-ac", "2", "-c:a", "pcm_s16le",
                         str(path)], check=True)
 
-    def _project(self, tag, bed_db=0.0, head_silence_s=0.0):
-        root = Path(self.tmp.name) / tag
-        (root / "out").mkdir(parents=True)
-        self._tone(root / "voice.wav", 440, 6.0, 0.8)      # 口播电平（相对床乐高 ~16dB）
-        self._tone(root / "bed.wav", 220, 20.0 - head_silence_s, 0.12)
-        f = self.FPS
-        tl = {
-            "version": 2,
-            "project": {"fps": self.FPS, "width": 1920, "height": 1080,
-                        "duration_frames": self.DUR},
-            "sources": [{"id": "voice", "path": "voice.wav"},
-                        {"id": "bed", "path": "bed.wav"}],
-            "video_tracks": [], "subtitles": [],
-            "audio_tracks": [
-                {"name": "voice", "events": [
-                    {"src": "voice", "in": 3 * f, "out": 9 * f, "volume": 1.0},
-                    {"src": "voice", "in": 12 * f, "out": 18 * f, "volume": 1.0}]},
-                {"name": "bgm", "duck": True,
-                 "duck_params": {"threshold": 0.0126, "ratio": 4, "attack_ms": 20,
-                                 "release_ms": 1500, "makeup": 1},
-                 "events": [{"src": "bed", "in": round(head_silence_s * f),
-                             "out": self.DUR,
-                             "volume": round(0.12 * 10 ** (bed_db / 20) / 0.12, 4)}]},
-            ],
-        }
-        (root / "timeline.json").write_text(json.dumps(tl), encoding="utf-8")
-        return root
-
     def _run(self, root, *args):
         return subprocess.run([sys.executable, str(VTX), "-t", str(root / "timeline.json"),
                                *args], capture_output=True, text=True)
 
-    def _report(self, root):
-        for stage in ("validate", "prepare", "audio"):
-            result = self._run(root, stage)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        r = self._run(root, "audio", "--report-only")
-        self.assertIn(r.returncode, (0, 1), r.stderr)   # FAIL 场景退出码 1；2=产物缺失等错误
-        return json.loads((root / "out" / "audio_report.json").read_text(encoding="utf-8"))
+    def _report(self, tag, bed_db=0.0, head_silence_s=0.0):
+        with tempfile.TemporaryDirectory(prefix="vtx-arep-e2e-") as directory:
+            root = Path(directory) / tag
+            (root / "out").mkdir(parents=True)
+            self._tone(root / "voice.wav", 440, 6.0, 0.8)      # 口播电平（相对床乐高 ~16dB）
+            self._tone(root / "bed.wav", 220, 20.0 - head_silence_s, 0.12)
+            f = self.FPS
+            tl = {
+                "version": 2,
+                "project": {"fps": self.FPS, "width": 1920, "height": 1080,
+                            "duration_frames": self.DUR},
+                "sources": [{"id": "voice", "path": "voice.wav"},
+                            {"id": "bed", "path": "bed.wav"}],
+                "video_tracks": [], "subtitles": [],
+                "audio_tracks": [
+                    {"name": "voice", "events": [
+                        {"src": "voice", "in": 3 * f, "out": 9 * f, "volume": 1.0},
+                        {"src": "voice", "in": 12 * f, "out": 18 * f, "volume": 1.0}]},
+                    {"name": "bgm", "duck": True,
+                     "duck_params": {"threshold": 0.0126, "ratio": 4, "attack_ms": 20,
+                                     "release_ms": 1500, "makeup": 1},
+                     "events": [{"src": "bed", "in": round(head_silence_s * f),
+                                 "out": self.DUR,
+                                 "volume": round(0.12 * 10 ** (bed_db / 20) / 0.12, 4)}]},
+                ],
+            }
+            (root / "timeline.json").write_text(json.dumps(tl), encoding="utf-8")
+            for stage in ("validate", "prepare", "audio"):
+                result = self._run(root, stage)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            r = self._run(root, "audio", "--report-only")
+            self.assertIn(r.returncode, (0, 1), r.stderr)   # FAIL 场景退出码 1；2=产物缺失等错误
+            return json.loads((root / "out" / "audio_report.json").read_text(encoding="utf-8"))
 
     def test_scenarios(self):
-        base = self._report(self._project("base"))
+        base = self._report("base")
         diff_chk = next(c for c in base["checks"] if c["name"] == "人声-床乐响度差")
         self.assertIn(diff_chk["level"], ("PASS", "WARN"))       # 基线床乐正常
         duck_chk = next(c for c in base["checks"] if c["name"] == "duck 咬合/回升")
@@ -654,7 +705,7 @@ class TestEndToEndSynthetic(unittest.TestCase):
         # 400ms 积分与瞬时起振影响，判级在合成素材上不可锚定——v4.2 判级见 voice-ime 实测）
         self.assertLess(duck_chk["measured"]["depth_db"], -3.0)
 
-        v41 = self._report(self._project("v41", bed_db=4.6))     # v4.1 事故态
+        v41 = self._report("v41", bed_db=4.6)     # v4.1 事故态
         d41 = next(c for c in v41["checks"] if c["name"] == "人声-床乐响度差")
         d41_v = d41["measured"]["voice_s"] - d41["measured"]["bed_duck_s"]
         base_v = diff_chk["measured"]["voice_s"] - diff_chk["measured"]["bed_duck_s"]
@@ -662,7 +713,7 @@ class TestEndToEndSynthetic(unittest.TestCase):
         self.assertLess(d41_v, base_v)                           # +4.6dB 后差值收窄
         self.assertLess(d41_v, base_v - 3.0)                     # 收窄量接近 4.6dB
 
-        v43 = self._report(self._project("v43", head_silence_s=3.6))   # v4.3 片头静音
+        v43 = self._report("v43", head_silence_s=3.6)   # v4.3 片头静音
         holes = next(c for c in v43["checks"] if c["name"] == "静音空洞")
         self.assertEqual(holes["level"], "FAIL")
         self.assertTrue(holes["measured"]["holes"][0][0] < 0.2)        # 空洞从片头开始
@@ -748,7 +799,6 @@ class TestSharedEventFilters(unittest.TestCase):
         import copy
         from contextlib import redirect_stdout
         from io import StringIO
-        from types import SimpleNamespace
         from vtx.pipeline import stages
         cases = (
             ('disjoint', ['voice'], ['cue'], None, {'bed': {'voice'}, 'amb': {'cue'}}),

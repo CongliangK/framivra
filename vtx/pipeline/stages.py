@@ -15,7 +15,7 @@ from ..runtime.diagnostics import (emit, key_path, subtitle_location, required_f
                           source_structure, mark_handled, operation)
 from ..runtime import fstxn
 from ..cache import recovery
-from ..media.audio_filters import duck_track_indices, event_chain, key_group_chains, track_mix
+from ..media.audio_filters import duck_chains, duck_track_indices, event_chain, key_group_chains, track_mix
 from ..pluginlib import hooks as _plugin_hooks
 from ..pluginlib import registry as _plugin_registry
 
@@ -604,8 +604,8 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
             atk = dp.get("attack_ms", DUCK_ATTACK_MS)
             rel = dp.get("release_ms", DUCK_RELEASE_MS)
             mkup = dp.get("makeup", DUCK_MAKEUP)
-            chains.append(f"{trk_lbl[ti]}[sc{ti}]sidechaincompress=threshold={thr}:ratio={rat}:"
-                          f"attack={atk}:release={rel}:makeup={mkup}[td{ti}]")
+            chains.extend(duck_chains(c, trk_lbl[ti], f"[sc{ti}]", f"[td{ti}]",
+                                      threshold=thr, ratio=rat, attack=atk, release=rel, makeup=mkup))
             trk_lbl[ti] = f"[td{ti}]"
             print(f"  duck[{atracks[ti]['name']}]: threshold={thr} ratio={rat} "
                   f"attack={atk}ms release={rel}ms makeup={mkup}")

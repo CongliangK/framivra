@@ -53,7 +53,7 @@ from pathlib import Path
 
 from ..cache.hygiene import audio_key
 from ..runtime import fstxn
-from .audio_filters import duck_track_indices, event_chain, key_group_chains, track_mix
+from .audio_filters import duck_chains, duck_track_indices, event_chain, key_group_chains, track_mix
 from ..pluginlib import hooks as _plugin_hooks
 
 # ---- 阈值常量（出处见模块头判级阈值表）----
@@ -337,10 +337,10 @@ def render_stems(c, voice_tracks, bed_tracks, workdir):
             duck_lbls.append(f"[tk{j}]")               # 非 duck 轨原样进 duck 终混
             continue
         dp = tr.get("duck_params", {})
-        chains.append(f"[tk{j}][sc{ti}]sidechaincompress="
-                      f"threshold={dp.get('threshold', 0.0126)}:ratio={dp.get('ratio', 4)}:"
-                      f"attack={dp.get('attack_ms', 20)}:release={dp.get('release_ms', 1500)}:"
-                      f"makeup={dp.get('makeup', 1)}[td{j}]")
+        chains.extend(duck_chains(c, f"[tk{j}]", f"[sc{ti}]", f"[td{j}]",
+                                  threshold=dp.get('threshold', 0.0126), ratio=dp.get('ratio', 4),
+                                  attack=dp.get('attack_ms', 20), release=dp.get('release_ms', 1500),
+                                  makeup=dp.get('makeup', 1)))
         duck_lbls.append(f"[td{j}]")
     def _mixto(lbls, out):
         """lbls → 终链：多轨 amix 后接 aresample；单轨直连（amix inputs=1 非法）。"""
