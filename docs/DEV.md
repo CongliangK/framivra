@@ -22,20 +22,20 @@
 
 | 执行面 | 覆盖与失败语义 |
 |---|---|
-| 普通 PR / main push 的 Python 检查 | [显式精选模块](../scripts/ci_pr.py)，覆盖 CLI、契约、真实文件系统/进程安全与 CI 反例；各完整模块分组，每组只在一个选定解释器运行一次，include 矩阵不作解释器×分组笛卡尔积；具体配对以 [workflow](../.github/workflows/ci.yml) 为准 |
-| 定时 / 手动 Python 检查 | 全部受支持 Python 版本的默认全量发现；本地无参统一入口也保持全量，新模块自动进入全量，是否纳入普通 PR 精选需评审 |
-| FFmpeg / Chrome 严格清单 | 按完整模块并行分组；无分组参数仍执行全清单，新模块确定性归默认组，原断言、工具预检、零 skip 约束不变；含 FrameSource 的组及无分组命令显式预检 Chrome，无环境凭证旧 PNG 必须真实重渲，不补签 |
-| Windows / 文档与静态门 | 各 job 只证明自己实际执行的检查；Windows 安装 CI 不替代本地原生渲染验收 |
+| 普通 PR / main push | [CI](../.github/workflows/ci.yml) 在 Python 3.9 / 3.13 运行[显式冒烟模块](../scripts/ci_pr.py)，并保留文档与静态门；冒烟只需标准库，不安装 FFmpeg、浏览器或第三方 Python 包，不执行真实媒体集成 |
+| 定时 / 手动 Python 检查 | 独立的 [Integration regression](../.github/workflows/integration.yml) 保留全部受支持 Python 版本的默认全量发现；本地无参统一入口也保持全量，新模块自动进入全量，是否纳入冒烟需评审 |
+| 定时 / 手动 FFmpeg / Chrome 严格清单 | 按完整模块并行分组；无分组参数仍执行全清单，新模块确定性归默认组，原断言、工具预检、零 skip 约束不变；含 FrameSource 的组及无分组命令显式预检 Chrome，无环境凭证旧 PNG 必须真实重渲，不补签 |
+| 定时 / 手动 Windows 安装检查 | 同属 Integration regression，保留安装安全、安装端到端与定向原生清理；不替代本地原生渲染验收 |
 
-精选检查拒绝缺失模块、空集合、发现错误及任何 skip；各媒体严格 job 任一失败/skip 也非零退出，不用单组冒充汇总、不串行拼接媒体组。默认全量 runner 的可选工具/平台 skip 保持其报告语义，**skip 不是成功执行**。
+冒烟检查拒绝缺失模块、空集合、发现错误及任何 skip；各媒体严格 job 任一失败/skip 也非零退出，不用单组冒充汇总、不串行拼接媒体组。默认全量 runner 的可选工具/平台 skip 保持其报告语义，**skip 不是成功执行**。
 
-普通事件不覆盖每个模块×每个解释器，大规模 CLI 参数组合及其余 app/plugin/example 回归也不全在精选集；这是明确接受的跨版本/范围覆盖降级，不得把精选通过说成全量或未运行解释器通过。分支保护须独立核对全部实际执行检查；退役名称或未选组合不能伪造为已通过，迁移设置须另行授权，读取受限时状态就是未知。workflow 不修改仓库保护或权限。
+普通 CI 不证明真实渲染、媒体工具链、Windows 安装或全量跨版本回归通过；大规模 CLI 参数组合及其余 app/plugin/example 回归也不全在冒烟集。这是明确接受的覆盖降级，不得把冒烟通过说成全量或未运行路径通过。两个 workflow 使用独立并发组，普通事件不创建集成检查的 skip 占位；专用验收 workflow 仍按各自触发条件运行。分支保护须独立核对实际所需检查；退役名称或未运行检查不能伪造为已通过，迁移设置须另行授权，读取受限时状态就是未知。workflow 不修改仓库保护或权限。
 
 性能以实际 hosted 结果拆分报告排队、安装、测试与总耗时；不承诺消除排队/机器波动，不靠取消任务、降低超时或旧报告宣称提速完成。测试执行入口和 opt-in 变量只在 [CONTRIBUTING](../CONTRIBUTING.md#测试入口) 维护。
 
 ## 支持与验证边界
 
-- **Windows 原生内核**：x64 Python 与 Chrome/Edge 覆盖安装自检、CDP/CLI、FFmpeg 全链、缓存与 gc/clean。环境指纹绑定浏览器发行目录、系统库/驱动、系统/用户字体及注册表、主机与启动边界；未知输入拒绝复用，不承诺跨机器像素等价，保守扫描成本高于 Linux。Chrome 由 Job Object 在宿主强杀后回收整树，事务使用字节范围锁，删除以拒绝写入/改名共享的祖先句柄与按句柄删除并拒绝 junction 祖先。原生安全由本地 Windows 测试、中文/空格/# 路径单双分段/冷温缓存/严格 QC/解码/黑场/真峰值由本地 [E2E 运行器](../tests/runners/run_e2e.py) 的显式 `--scope capability` 及[独立验证器](../tests/runners/verify_e2e.py) 的同一 scope 验收；默认 CI windows-install 覆盖安装安全/安装端到端及两项定向原生清理，并非 Windows 全套。**Windows CEF 与模型侧车生命周期不在该验收内**，平台专用测试必须分别报告。
+- **Windows 原生内核**：x64 Python 与 Chrome/Edge 覆盖安装自检、CDP/CLI、FFmpeg 全链、缓存与 gc/clean。环境指纹绑定浏览器发行目录、系统库/驱动、系统/用户字体及注册表、主机与启动边界；未知输入拒绝复用，不承诺跨机器像素等价，保守扫描成本高于 Linux。Chrome 由 Job Object 在宿主强杀后回收整树，事务使用字节范围锁，删除以拒绝写入/改名共享的祖先句柄与按句柄删除并拒绝 junction 祖先。原生安全由本地 Windows 测试、中文/空格/# 路径单双分段/冷温缓存/严格 QC/解码/黑场/真峰值由本地 [E2E 运行器](../tests/runners/run_e2e.py) 的显式 `--scope capability` 及[独立验证器](../tests/runners/verify_e2e.py) 的同一 scope 验收；定时 / 手动 CI windows-install 覆盖安装安全/安装端到端及两项定向原生清理，并非 Windows 全套。**Windows CEF 与模型侧车生命周期不在该验收内**，平台专用测试必须分别报告。
   当前 Windows 不支持主片 SVG；capability 只验独立 HTML/字幕/普通媒体机制，不授完整 30 秒或发布资格，也不自动 skip 主片后标完整通过。默认 `--scope full` 仍要求主片 900 帧与机制 180 帧两者全链；run/verify scope 必须一致，当前候选是否通过只以实际证据判断。
 
   以下为写操作（生成媒体与缓存，调用本地 FFmpeg/浏览器）。从仓根在 PowerShell 执行，替换为已有工具路径；全新 RUN 不得复用：
