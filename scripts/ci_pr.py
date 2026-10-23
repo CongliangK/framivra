@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Curated PR regression, intentionally narrower than run_all_tests.sh.
+"""Standard-library PR smoke, intentionally narrower than run_all_tests.sh.
 
-The explicit modules retain CLI/contracts, real filesystem/process safety, and
-CI negative controls. Full discovery remains the local default and runs in the
-scheduled/manual CI matrix. A missing/empty module or any skipped test fails.
+Only the explicit whole modules below run, with no third-party/media setup.
+Full discovery and strict media checks run in scheduled/manual integration CI.
+A missing/empty module, incomplete execution or any skipped test fails.
 """
 import argparse
 import importlib
@@ -18,71 +18,14 @@ if str(ROOT) not in sys.path:
 from scripts.ci_partition import (OriginLoader, PartitionError,
                                   flatten, run_reconciled_suite, unique)
 
-# Deliberate coverage budget, not automatic discovery or the old fast partition.
-# New modules enter full discovery immediately; adding PR coverage is reviewed.
+# Deliberate smoke coverage, not automatic discovery or a latency guarantee.
+# New modules enter full discovery; ordinary PR inclusion requires review.
 PR_MODULES = (
-    'tests.ci.test_ci_checks',
-    'tests.ci.test_ci_partition',
-    'tests.contracts.test_doc_gates',
     'tests.ci.test_ci_pr',
-    'tests.safety.test_cleanup_adversarial',
-    'tests.safety.test_hygiene_safety',
-    'tests.safety.test_plugin_paths_safety',
-    'tests.safety.test_timeline_escape_safety',
-    'tests.cache.test_fstxn',
-    'tests.cache.test_cleanup_toctou',
-    'tests.cache.test_input_identity_guard',
-    'tests.cache.test_input_toctou_guard',
-    'tests.execution.test_proc_supervisor',
-    'tests.execution.test_resource_budget',
-    'tests.distribution.test_vt_entry',
-    'tests.media.test_fps_constraints',
-    'tests.plugins.test_config_unified',
-    'tests.plugins.test_protocol_v12',
-    'tests.plugins.test_plugin_compatibility',
-    'tests.plugins.test_plugin_code_digest',
-    'tests.cache.test_graph_digest',
-    'tests.gfx.test_gfx_svg',
-    'tests.media.test_audio_duration',
-    'tests.cache.test_timeline_diff',
-    'tests.execution.test_execution_event_contract',
     'tests.distribution.test_version_sources',
-    'apps.asr.tests.test_security_admission',
-    'apps.research.tests.test_requests',
-    'templates.hello-app.tests.test_hello',
-    'tests.gfx.test_png_consumer_scope',
+    'tests.cache.test_graph_digest',
+    'tests.plugins.test_config_unified',
 )
-
-
-# Whole-module placement from current hosted timings, including Python 3.9.
-# PR_MODULES remains the complete curated inventory. Additional selected
-# modules default to group 3; every test inside a module follows that module.
-PR_GROUP_ONE_MODULES = (
-    'tests.safety.test_hygiene_safety',
-    'tests.execution.test_proc_supervisor',
-)
-PR_GROUP_TWO_MODULES = (
-    'tests.cache.test_input_identity_guard',
-    'tests.cache.test_timeline_diff',
-)
-
-
-def curated_group(group):
-    if group not in ('1', '2', '3'):
-        raise ValueError('unknown curated group: %s' % group)
-    placed = PR_GROUP_ONE_MODULES + PR_GROUP_TWO_MODULES
-    if (not PR_MODULES or len(set(PR_MODULES)) != len(PR_MODULES) or
-            len(set(placed)) != len(placed) or
-            not set(placed) <= set(PR_MODULES)):
-        raise ValueError('empty, duplicate or unknown curated group modules')
-    groups = {
-        '1': tuple(name for name in PR_MODULES if name in PR_GROUP_ONE_MODULES),
-        '2': tuple(name for name in PR_MODULES if name in PR_GROUP_TWO_MODULES),
-        '3': tuple(name for name in PR_MODULES if name not in placed),
-    }
-    if not all(groups.values()):
-        raise ValueError('empty curated group')
-    return groups[group]
 
 
 def run_curated(names=PR_MODULES, stream=None):
@@ -92,7 +35,7 @@ def run_curated(names=PR_MODULES, stream=None):
         # Import/load_tests/custom TestCase.run may exit(0) before any result.
         # Such an exit is never a successful gate. KeyboardInterrupt remains
         # uncaught so a real interruption cannot become success either.
-        print('CI curated regression FAILED: unexpected SystemExit(%r)'
+        print('CI standard-library smoke FAILED: unexpected SystemExit(%r)'
               % error.code, file=sys.stderr if stream is None else stream)
         return 1
 
@@ -100,7 +43,7 @@ def run_curated(names=PR_MODULES, stream=None):
 def _run_curated(names, stream):
     stream = sys.stderr if stream is None else stream
     if not names or len(set(names)) != len(names):
-        print('CI curated regression FAILED: empty or duplicate module list',
+        print('CI standard-library smoke FAILED: empty or duplicate module list',
               file=stream)
         return 1
     loader = OriginLoader()
@@ -119,36 +62,26 @@ def _run_curated(names, stream):
         selected_ids = unique((instances[id(test)] for test in tests),
                               'curated test instances')
     except (ImportError, AttributeError, RuntimeError) as error:
-        print('CI curated regression FAILED: %s' % error, file=stream)
+        print('CI standard-library smoke FAILED: %s' % error, file=stream)
         return 1
     expected = suite.countTestCases()
-    print('CI curated regression: %d tests; full regression NOT RUN by this '
+    print('CI standard-library smoke: %d tests; full regression NOT RUN by this '
           'command. Full coverage: scheduled/manual CI or run_all_tests.sh.'
           % expected, file=stream, flush=True)
     try:
-        run_reconciled_suite(suite, instances, selected_ids, batch='curated', stream=stream)
+        run_reconciled_suite(suite, instances, selected_ids, batch='smoke', stream=stream)
     except PartitionError as error:
-        print('CI curated regression FAILED: %s' % error, file=stream)
+        print('CI standard-library smoke FAILED: %s' % error, file=stream)
         return 1
     return 0
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--group', choices=('1', '2', '3'),
-                        help='execute one of three complete curated module groups')
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
-    try:
-        names = curated_group(args.group) if args.group else PR_MODULES
-    except ValueError as error:
-        print('CI curated regression FAILED: %s' % error, file=sys.stderr)
-        return 1
-    if args.group:
-        print('CI curated group %s/3: %d whole modules on Python %s' %
-              (args.group, len(names), sys.version.split()[0]), flush=True)
-    return run_curated(names)
+    return run_curated(PR_MODULES)
 
 
 if __name__ == '__main__':
