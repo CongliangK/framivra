@@ -1,0 +1,46 @@
+{
+  "format": "framivra-generated-input-lock/v1",
+  "baseline_id": "framivra-promo-timeline-svg-30s",
+  "source_git_tree": "d5c869e3b998bbf61f7a1969293546066275ed17",
+  "provenance": {
+    "tools": {
+      "python": {
+        "version_line": "Python 3.12.14",
+        "binary_sha256": "fa67443527ed9647f760d807e2a38f26340757123e643c4639cf273ed15d5ea7"
+      },
+      "node": {
+        "version_line": "v24.19.0",
+        "binary_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+      },
+      "ffmpeg": {
+        "version_line": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "binary_sha256": "e8a8d46f5225f3062cec7c07fb145d58ae73c603cb740dcd5bad34bfb54e455a"
+      },
+      "ffprobe": {
+        "version_line": "ffprobe version 7.1.5-0+deb13u1 Copyright (c) 2007-2026 the FFmpeg developers",
+        "binary_sha256": "cefc5f81c0b18429cdbf8fa5a89e1e9c759235e10f93f9b329ff1b2fdff26f46"
+      }
+    },
+    "numpy_version": "2.3.5"
+  },
+  "audio": {
+    "assets/audio/bed-premaster.wav": {
+      "sha256": "e7cc3c4ef9b08a5849ba9841bfca889fec1e47d4b2db09c0b9ccac21711ed42e",
+      "size": 8640044,
+      "pcm_sha256": "91684f4b548f971315208c185e9d55656fdf2086c45ab028986b906387465c1b",
+      "sample_frames": 1440000,
+      "sample_rate": 48000,
+      "channels": 2,
+      "sample_width": 3
+    },
+    "assets/audio/content-cue.wav": {
+      "sha256": "6df219c973964d20a1bda1f6f28b366b291c351e61e810feff9189d6121ed456",
+      "size": 326444,
+      "pcm_sha256": "424c32db014e22bb48db67d6d44ed93a48fa7f322a47d0fc1c778930179147d1",
+      "sample_frames": 54400,
+      "sample_rate": 48000,
+      "channels": 2,
+      "sample_width": 3
+    }
+  }
+}

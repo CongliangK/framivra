@@ -227,25 +227,95 @@ class ChromeInstallerTelemetry(unittest.TestCase):
         unknown.unlink(); self.pma.unlink(); self.setup.rmdir()
         self.assertNotEqual(before, self.collect())
 
+    def test_e2e_capability_rejects_unused_public_inputs_before_writing(self):
+        import subprocess
+        import sys
+        script = Path(__file__).resolve().parents[1] / 'runners/run_e2e.py'
+        output = self.root / 'must-not-exist'
+        for option, value in ((name, value) for name in ('--fonts-dir', '--audio-inputs') for value in ('unused-input', '')):
+            with self.subTest(option=option, value=value):
+                result = subprocess.run([sys.executable, str(script), '--repo', str(script.parents[2]),
+                    '--output', str(output), '--ffmpeg', sys.executable, '--chrome', sys.executable,
+                    '--scope', 'capability', option, value], capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'require --scope full', result.stderr)
+                self.assertFalse(output.exists())
+
+    def test_e2e_verifier_rejects_missing_mismatched_or_forged_scope(self):
+        import subprocess
+        import sys
+        script = Path(__file__).resolve().parents[1] / 'runners/verify_e2e.py'
+        good = {'scope': 'capability', 'workloads': ['capability'], 'pass': True,
+                'full_pass': False, 'release_pass': False}
+        for field, value in (('missing', None), ('scope', None), ('scope', 'full'), ('workloads', ['promo', 'capability']),
+                             ('pass', False), ('full_pass', True), ('release_pass', True)):
+            data = dict(good)
+            if field == 'missing': data.pop('scope')
+            else: data[field] = value
+            (self.root / 'results.json').write_text(json.dumps(data))
+            with self.subTest(field=field):
+                result = subprocess.run([sys.executable, str(script), str(self.root),
+                    '--scope', 'capability', '--ffmpeg', 'never-launch-media'], capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b'scope/workloads must exactly match', result.stderr)
+        (self.root / 'results.json').write_text(json.dumps(good))
+        result = subprocess.run([sys.executable, str(script), str(self.root), '--ffmpeg', 'never-launch-media'], capture_output=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(b'scope/workloads must exactly match', result.stderr)
+        code = '''import runpy,sys,subprocess
+from unittest.mock import patch
+sys.argv = sys.argv[1:]
+with patch.object(subprocess, 'check_output', side_effect=RuntimeError('matched scope before media')):
+    runpy.run_path(sys.argv[0], run_name='__main__')
+'''
+        for scope in ('full', 'capability'):
+            data = dict(good, scope=scope, full_pass=scope == 'full',
+                        workloads=['promo', 'capability'] if scope == 'full' else ['capability'])
+            (self.root / 'results.json').write_text(json.dumps(data))
+            result = subprocess.run([sys.executable, '-c', code, str(script), str(self.root),
+                '--scope', scope], capture_output=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn(b'matched scope before media', result.stderr)
+
     def test_e2e_failure_diagnostics_survive_cp1252_parent(self):
         import subprocess
         import sys
         script = Path(__file__).resolve().parents[1] / 'runners' / 'run_e2e.py'
-        output = self.root / 'e2e-output'
-        code = '''import runpy,sys,subprocess
+        code = '''import runpy,sys,subprocess,os
+from pathlib import Path
 from unittest.mock import patch
-sys.argv = [sys.argv[1], '--repo', sys.argv[2], '--output', sys.argv[3], '--ffmpeg', sys.executable, '--chrome', sys.executable]
-results = [subprocess.CompletedProcess([], n, '中文诊断\\n'.encode('utf-8'), b'') for n in (0,0,1)]
-with patch.object(subprocess, 'run', side_effect=results):
-    runpy.run_path(sys.argv[0], run_name='__main__')
+options = sys.argv[4:]
+sys.argv = [sys.argv[1], '--repo', sys.argv[2], '--output', sys.argv[3], '--ffmpeg', sys.executable, '--chrome', sys.executable] + options
+results = [subprocess.CompletedProcess([], n, '中文诊断\\n'.encode('utf-8'), b'') for n in (1,)]
+with patch.object(subprocess, 'run', side_effect=results) as run:
+    try:
+        runpy.run_path(sys.argv[0], run_name='__main__')
+    finally:
+        assert run.call_args.kwargs['env']['VTX_GFX'] == ' CEF '
+        argv = run.call_args.args[0]
+        expected = '_capability_fixture.py' if 'capability' in options else 'demo.py'
+        assert Path(argv[1]).name == expected
+        for option in ('--fonts-dir', '--audio-inputs'):
+            if option in options:
+                value = options[options.index(option) + 1]
+                assert argv[argv.index(option) + 1] == (value if os.path.isabs(value) else str(Path.cwd() / value))
 '''
-        child_env = dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='cp1252')
-        result = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code,
-            str(script), str(script.parent.parent), str(output)], env=child_env, capture_output=True)
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn('中文诊断', result.stdout.decode('utf-8'))
-        self.assertNotIn(b'UnicodeEncodeError', result.stderr)
-        self.assertFalse(json.loads((output / 'results.json').read_text(encoding='utf-8'))['pass'])
+        child_env = dict(os.environ, PYTHONUTF8='0', PYTHONIOENCODING='cp1252', VTX_GFX=' CEF ')
+        cases = ([], ['--scope', 'full', '--fonts-dir', 'relative-fonts', '--audio-inputs', 'relative-audio'],
+                 ['--scope', 'full', '--fonts-dir', str(self.root / 'fonts-link'), '--audio-inputs', str(self.root / 'audio-link')],
+                 ['--scope', 'capability'])
+        for index, options in enumerate(cases):
+            with self.subTest(options=options):
+                output = self.root / ('e2e-output-' + str(index))
+                result = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code,
+                    str(script), str(script.parent.parent.parent), str(output)] + options,
+                    cwd=self.root, env=child_env, capture_output=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('中文诊断', result.stdout.decode('utf-8'))
+                self.assertNotIn(b'UnicodeEncodeError', result.stderr)
+                summary = json.loads((output / 'results.json').read_text(encoding='utf-8'))
+                self.assertFalse(summary['pass']); self.assertFalse(summary['full_pass']); self.assertFalse(summary['release_pass'])
+                self.assertEqual(summary['scope'], 'capability' if 'capability' in options else 'full')
 
         # Exercise the real summary expression without launching the media run;
         # provenance is diagnostic evidence, not an additional pass predicate.

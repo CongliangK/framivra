@@ -15,7 +15,7 @@ Framivra（读 "frame-ee-vra"）是 B 站视频产线的程序仓。内核 `vtx/
 
 ## 快速开始（clone 即用，零安装步骤）
 
-公开主 Demo 与主性能输入从 [30 秒 JSON 时间线作品](templates/demo-timeline-svg/README.md#主性能基线) 起步；[standard](docs/guides/demo-fixture.md#standard-功能-fixture-生产运行) 保留为功能与发布回归 fixture。自建项目先满足[依赖矩阵](#依赖矩阵)；「零安装」仅指不必 pip 安装本仓，不包含外部工具或媒体。以下克隆、初始化、脚手架与渲染均为**写操作**；`PROJECT` 必须是全新项目的绝对路径，避免覆盖已有 timeline。
+公开主 Demo 与主性能输入从 [30 秒 JSON 时间线作品](templates/demo-timeline-svg/README.md#主性能基线) 起步；浏览器、字幕和普通媒体能力由独立机制测试覆盖。自建项目先满足[依赖矩阵](#依赖矩阵)；「零安装」仅指不必 pip 安装本仓，不包含外部工具或媒体。以下克隆、初始化、脚手架与渲染均为**写操作**；`PROJECT` 必须是全新项目的绝对路径，避免覆盖已有 timeline。
 
 ```bash
 git clone https://github.com/CongliangK/framivra

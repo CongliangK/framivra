@@ -3,8 +3,8 @@
 使用 `vtx.inspection.acceptance` 为项目构建独立证据包，再由接收方复核媒体、输入和构建记录；此入口不改变渲染 CLI 或缓存键。
 `vtx.acceptance/1` 导出媒体、输入和构建证据。[源码冻结验收](../releases.md#冻结验收与发布)入口
 `scripts/release/release_acceptance.py` 调用本模块构建、复核独立包并执行输入/产物篡改负例；
-这说明源码中的接线，不代表当前提交已经执行或通过发行验收。功能/发布回归 fixture 的操作入口与证据边界见
-[standard 功能 fixture 运行指南](demo-fixture.md#standard-功能-fixture-生产运行)。
+这说明源码中的接线，不代表当前提交已经执行或通过发行验收。唯一 Demo 的操作入口与证据边界见
+[30 秒主性能基线](../../templates/demo-timeline-svg/README.md#主性能基线)；发布中的浏览器、字幕与普通媒体能力另由独立机制探针验证。
 
 ```bash
 python3 -m vtx.inspection.acceptance --help

@@ -25,11 +25,18 @@ class LicenseInventory(unittest.TestCase):
         data = policy.load_inventory()
         self.assertEqual({k for k, v in data["assets"].items() if v["default_payload"]},
                          {"framivra", "vendored-fpng", "vendored-libspng", "placeholder-media",
-                      "electron-worker-source", "demo-noto-sans-sc", "gfx-environment-evidence"})
-        self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_status"], "DECLARED")
-        self.assertEqual(data["assets"]["demo-noto-sans-sc"]["license_identifier"], "OFL-1.1")
-        self.assertIn("templates/standard-demo/profiles/standard/v1/fonts/NotoSansSC-VF.ttf",
-                      data["assets"]["demo-noto-sans-sc"]["files_sha256"])
+                      "electron-worker-source", "gfx-environment-evidence"})
+        # Current Demo fonts are external pinned inputs; their full notices stay in source.
+        template = ROOT / "templates/demo-timeline-svg"
+        fonts = json.loads((template / "fonts.lock.json").read_text())["fonts"]
+        self.assertEqual({f["license"] for f in fonts},
+                         {"SIL Open Font License 1.1",
+                          "Bitstream Vera license; DejaVu changes public domain"})
+        for notice, expected in {
+            'Noto-CJK-copyright.txt': '849f4ea9c214fa4ac3593b770c699f387534b11ce671264c1b10d85bdcb5997b',
+            'DejaVu-copyright.txt': 'e81d9dced49fea2a7d576cbea283873de58563c5d488f954deb282843c3ea79c',
+        }.items():
+            self.assertEqual(hashlib.sha256((template / "licenses" / notice).read_bytes()).hexdigest(), expected)
         for name in ("matanyone2-weights", "qwen-emotion", "chrome-binary", "music-tools-assets", "imgen-api"):
             self.assertEqual(data["assets"][name]["license_status"], "UNKNOWN")
         self.assertEqual(data["assets"]["matanyone2-code"]["license_status"], "RESTRICTED")

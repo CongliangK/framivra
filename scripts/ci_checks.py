@@ -5,7 +5,7 @@ Media suites are deliberately enumerated: passing them does not certify model,
 Blender, GPU, release, or external-service integrations. Every selected test
 must execute (zero skips) and missing tools are failures before discovery.
 The 'demo-toolchain' gate is the same strict contract scoped to the frozen
-demo toolchain; it is not run on CI's stock ubuntu ffmpeg (see MEDIA_TESTS).
+Demo input anchor; the existing opt-in batch remains separate (see MEDIA_TESTS).
 """
 import argparse
 import ast
@@ -60,12 +60,12 @@ MEDIA_TESTS = {
         'tests.execution.test_failure_recovery.RealChromeRecovery',
         'tests.gfx.test_frame_canary.TestChromeCanary',
     ),
-    # Frozen-toolchain batch (#177): RealGenerationTests bind the frozen demo
-    # toolchain (ffmpeg 8.1.3 dual anchor). CI's ubuntu ffmpeg can never match,
-    # so this batch is NOT executed by the CI ffmpeg job; it stays strictly
+    # Input-anchor batch: RealGenerationTests bind the canonical Demo inputs.
+    # Generation provenance and actual input identity are checked separately.
+    # This batch is NOT executed by the CI ffmpeg job; it stays strictly
     # inventoried (media_inventory anchors on VTX_TEST_DEMO_TOOLCHAIN) so the
     # class cannot silently disappear, and runs zero-skip via gate
-    # 'demo-toolchain' in developer/cloud frozen-toolchain environments.
+    # 'demo-toolchain' in developer/cloud environments with verified inputs.
     'demo-toolchain': (
         'tests.contracts.test_demo_fixture.RealGenerationTests',
     ),
@@ -295,8 +295,8 @@ def prepare_media(kind):
     if kind == 'ffmpeg':
         os.environ.update(VTX_AUDIO_REPORT_INTEG='1', VTX_RANGE_INTEG='1')
     elif kind == 'demo-toolchain':
-        # Opt-in frozen-toolchain batch: strict zero-skip semantics, but only
-        # meaningful where the toolchain matches the frozen demo manifest.
+        # Opt-in input-anchor batch: preserve strict zero-skip semantics;
+        # missing dependencies or unverified inputs remain hard failures.
         os.environ['VTX_TEST_DEMO_TOOLCHAIN'] = '1'
     else:
         chrome = prepare_chrome()

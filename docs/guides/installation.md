@@ -30,7 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing htt
 
 ## 共同更新安全边界
 
-重复执行是安全更新后重跑幂等 init。克隆干净（`git status --porcelain` 为空）才 fetch 并 `reset --hard origin/<ref>`；Linux/macOS 使用显式 refspec 浅 fetch 与全限定 ref。下列情况拒绝自动更新，不静默丢改动：
+重复执行会安全更新并重跑幂等 init。仅干净克隆（`git status --porcelain` 为空）才 fetch 并 `reset --hard`：`main` 用 `refs/remotes/origin/main`；`stable` 先解析发行 tag，与显式 tag 均核验后使用 `refs/tags/<tag>`。Linux/macOS 显式 refspec 浅 fetch。下列情况拒绝更新，不静默丢改动：
 
 - 脏克隆（含未跟踪文件）；清理或删除克隆后重试，或用 Linux/macOS `--skip-update`、Windows `-SkipUpdate` 直接复用。
 - 本地提交偏离 `.git` 内同步 marker，避免 reset 丢提交。

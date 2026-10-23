@@ -150,7 +150,6 @@ REAL_ROOT="$(cd "$ASR/../.." && pwd)"
 mkdir -p "$TMP/repo/scripts/policy" "$TMP/repo/docs" \
   "$TMP/repo/experiments/gfx_cef_worker/third_party/spng" \
   "$TMP/repo/experiments/gfx_cef_worker/third_party/fpng" \
-  "$TMP/repo/templates/standard-demo/profiles/standard/v1/fonts" \
   "$TMP/repo/experiments/gfx_electron_worker"
 cp "$REAL_ROOT/scripts/policy/model_license_policy.py" "$TMP/repo/scripts/policy/"
 cp "$REAL_ROOT/docs/model-license-inventory.json" "$TMP/repo/docs/"
@@ -160,8 +159,6 @@ cp "$REAL_ROOT/experiments/gfx_cef_worker/third_party/spng/spng.c" \
    "$TMP/repo/experiments/gfx_cef_worker/third_party/spng/"
 cp "$REAL_ROOT/experiments/gfx_cef_worker/third_party/fpng/LICENSE" \
    "$TMP/repo/experiments/gfx_cef_worker/third_party/fpng/"
-cp "$REAL_ROOT/templates/standard-demo/profiles/standard/v1/fonts/OFL.txt" \
-   "$TMP/repo/templates/standard-demo/profiles/standard/v1/fonts/"
 cp "$REAL_ROOT/experiments/gfx_electron_worker/SOURCE-LICENSE-NOTICE.txt" \
    "$TMP/repo/experiments/gfx_electron_worker/"
 : > "$CALL_LOG"

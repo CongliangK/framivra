@@ -234,15 +234,19 @@ REQUIRED_FREEZE_GATES = frozenset(('isolated_install', 'public_demo_render', 'pu
 # Order and exact exit results are policy, not producer-selected expectations.
 REQUIRED_FREEZE_STEPS = {
     'isolated_install': (('bootstrap', 0), ('isolated-mount', 0), ('isolated-mount-check', 0)),
-    'public_demo_render': (('demo-prepare', 0), ('demo-input-verify', 0), ('demo-all', 0)),
-    'public_demo_qc': (('demo-qc', 0),),
+    'public_demo_render': (('demo-prepare', 0), ('demo-input-verify', 0), ('demo-all', 0),
+                           ('capability-prepare', 0), ('capability-all', 0)),
+    'public_demo_qc': (('demo-qc', 0), ('demo-media-probe', 0), ('demo-decode', 0)),
     'local_edit': (('edit-gfx', 0), ('edit-preview', 0), ('edit-all', 0), ('edit-qc', 0)),
     'failure_recovery': (('expected-invalid-input', 1), ('recovery-all', 0), ('recovery-qc', 0)),
     'independent_package': (('package-build', 2), ('package-verify', 2),
-                            ('package-tamper-rejected', 1), ('input-tamper-rejected', 1)),
+                            ('package-tamper-rejected', 1), ('input-tamper-rejected', 1),
+                            ('main-package-build', 2), ('main-package-verify', 2),
+                            ('main-package-tamper-rejected', 1), ('main-input-tamper-rejected', 1),
+                            ('main-package-media-probe', 0)),
     'distribution_license': (('license-archive', 0), ('license-audit', 0)),
 }
-REQUIRED_OBSERVATIONS = {'local_edit': {'cache_edit'}, 'failure_recovery': {'cache_recovery'}}
+REQUIRED_OBSERVATIONS = {'public_demo_qc': {'demo_receipt'}, 'local_edit': {'cache_edit'}, 'failure_recovery': {'cache_recovery'}}
 
 
 def validate_cache_observation(name, data, commit, tag):
@@ -294,7 +298,7 @@ def validate_cache_observation(name, data, commit, tag):
 
 
 def observed_cache_edit(data, baseline_log, edit_log):
-    """Bind cache snapshots to actual standard-demo worker/hit observations."""
+    """Bind cache snapshots to actual capability-probe worker/hit observations."""
     baseline = Path(baseline_log).read_text(encoding='utf-8')
     edited = Path(edit_log).read_text(encoding='utf-8')
     def key(text, page, cached=False):
@@ -321,11 +325,11 @@ def observed_cache_edit(data, baseline_log, edit_log):
 
 
 def observed_cdp(path):
-    """Observe cold standard-demo worker completion, never the requested knob."""
+    """Observe cold capability-probe worker completion, never the requested knob."""
     text = Path(path).read_text(encoding='utf-8', errors='strict')
     lines = [line for line in text.splitlines() if re.search(r'✓ (?:canvas|dom)\[', line)]
     if len(lines) != 2:
-        raise ReleaseError('missing cold CDP worker observations for both demo pages')
+        raise ReleaseError('missing cold CDP worker observations for both capability pages')
     for page in ('canvas', 'dom'):
         matching = [line for line in lines if re.search(r'✓ ' + page + r'\[', line)]
         if len(matching) != 1 or not re.search(r'渲染 60 帧.*CDP .*failed×0(?:[,， )]|$)', matching[0]):
@@ -335,6 +339,112 @@ def observed_cdp(path):
     if '回落 CLI' in text or '回落CLI' in text:
         raise ReleaseError('CLI downgrade is outside the CDP baseline qualification')
     return 'cdp'
+
+
+# Fixed originals accompany the main package's fonts and source, not legal clearance.
+PROMO_NOTICES = {
+    'licenses/Noto-CJK-copyright.txt': '849f4ea9c214fa4ac3593b770c699f387534b11ce671264c1b10d85bdcb5997b',
+    'licenses/DejaVu-copyright.txt': 'e81d9dced49fea2a7d576cbea283873de58563c5d488f954deb282843c3ea79c',
+    'vendor/scoreweft/LICENSE': 'b6541ab9c22abc362bd46c9472a48242c9cb6612ef00aa73ad28533ef0c16eb6',
+    'LICENSE': '1b117841b971e70787f3af7161bd51b6b14a2b0b771f469c7fc4e81504cdac44',
+}
+
+
+def promo_notices(project):
+    from vtx.inspection.acceptance import regular
+    for name, expected in PROMO_NOTICES.items():
+        if digest(regular(project / name)) != expected:
+            raise ReleaseError('public Demo package notice bytes changed: ' + name)
+    return list(PROMO_NOTICES)
+
+
+def promo_frames(project):
+    """The fixed public work requires its complete ordered SVG frame closure."""
+    from vtx.inspection.acceptance import read_json
+    timeline = read_json(project / 'timeline.json')
+    clips = [clip for track in timeline.get('video_tracks', []) for clip in track.get('clips', [])]
+    expected = [f'gfx/frames-svg/f{frame:04d}.svg' for frame in range(900)]
+    if (timeline.get('project', {}).get('duration_frames') != 900 or len(clips) != 1
+        or clips[0].get('format') != 'svg-sequence' or clips[0].get('dur') != 900
+        or clips[0].get('src') != 'gfx/demo.frames.json'
+        or read_json(project / 'gfx/demo.frames.json').get('frames') != expected):
+        raise ReleaseError('public Demo package must contain its complete 900 SVG frame sequence')
+    return expected
+
+
+def read_gate(root, data, name):
+    """Bind a gate report to the freeze identity before consuming its claims."""
+    from vtx.inspection.acceptance import read_json, relative, regular
+    row = data['gates'][name]
+    commit, tag = data['commit'], data['tag']
+    if not isinstance(row, dict) or set(row) != {'status', 'path', 'sha256'} or row['status'] != 'passed':
+        raise ReleaseError('required freeze gate did not pass: ' + name)
+    evidence_file = regular(root / relative(row['path']))
+    if digest(evidence_file) != row['sha256']:
+        raise ReleaseError('freeze gate evidence bytes changed: ' + name)
+    report = read_json(evidence_file)
+    if (set(report) != {'schema', 'commit', 'tag', 'gate', 'status', 'steps', 'observations'} or
+        report['schema'] != 'framivra.freeze-gate/2' or report['commit'] != commit or
+        report['tag'] != tag or report['gate'] != name or report['status'] != 'passed' or
+        not isinstance(report['steps'], list) or not report['steps']):
+        raise ReleaseError('invalid freeze gate report: ' + name)
+    return report
+
+
+def step_log(root, report, role):
+    """Resolve exactly one policy-named raw log, never positional evidence."""
+    from vtx.inspection.acceptance import relative, regular
+    rows = [row for row in report['steps'] if isinstance(row, dict) and row.get('role') == role]
+    if len(rows) != 1:
+        raise ReleaseError('required unique raw log role missing: ' + role)
+    row = rows[0]
+    if (set(row) != {'role', 'source_commit', 'argv', 'exit_code', 'expected_exit', 'log', 'sha256'} or
+        not isinstance(row['argv'], list) or not row['argv']):
+        raise ReleaseError('invalid freeze command evidence: ' + role)
+    required_exit = dict(REQUIRED_FREEZE_STEPS[report['gate']]).get(role)
+    if (required_exit is None or row['source_commit'] != report['commit']
+        or type(row['exit_code']) is not int or row['exit_code'] != required_exit
+        or type(row['expected_exit']) is not int or row['expected_exit'] != required_exit):
+        raise ReleaseError('required freeze step identity or exit disagrees: ' + role)
+    if row['log'] != role + '.log':
+        raise ReleaseError('required raw log identity disagrees: ' + role)
+    path = regular(root / relative(row['log']))
+    if digest(path) != row['sha256']:
+        raise ReleaseError('freeze raw log bytes changed: ' + role)
+    return path
+
+
+def media_command(video, *, decode=False):
+    """Fixed real-media commands shared by producer and evidence consumer."""
+    if decode:
+        return ['ffmpeg', '-v', 'error', '-i', str(video), '-f', 'null', '-']
+    return ['ffprobe', '-v', 'error', '-count_frames', '-select_streams', 'v:0',
+            '-show_entries', 'stream=nb_read_frames,width,height,r_frame_rate', '-of', 'json', str(video)]
+
+
+def media_log(root, report, role, video):
+    path = step_log(root, report, role)
+    row = next(row for row in report['steps'] if row['role'] == role)
+    if row['argv'] != media_command(video, decode=role == 'demo-decode'):
+        raise ReleaseError('real media command or target disagrees: ' + role)
+    return path
+
+
+def observed_promo(receipt_path, media_probe_path):
+    """Require real complete SVG stage evidence and decoded main-film geometry."""
+    from vtx.inspection.acceptance import read_json
+    receipt = read_json(receipt_path)
+    stages = receipt.get('stages', {})
+    if any(stages.get(stage, {}).get('ok') is not True for stage in
+           ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')):
+        raise ReleaseError('public Demo required pipeline stage did not pass')
+    if stages['gfx'].get('svg_producer') != 'framivra-svg-inkscape/v1':
+        raise ReleaseError('public Demo lacks actual SVG producer evidence')
+    streams = read_json(media_probe_path).get('streams')
+    if (not isinstance(streams, list) or len(streams) != 1 or
+        streams[0] != {'nb_read_frames': '900', 'width': 1920, 'height': 1080, 'r_frame_rate': '30/1'}):
+        raise ReleaseError('public Demo decoded media must be 900 frames at 1920x1080 and 30 fps')
+    return 'svg-sequence'
 
 
 def verify_freeze_evidence(path, commit, tag, assets):
@@ -348,7 +458,7 @@ def verify_freeze_evidence(path, commit, tag, assets):
     from vtx.inspection.acceptance import read_json, relative, regular, verify
     path = regular(path)
     data = read_json(path)
-    if set(data) != {'schema', 'commit', 'tag', 'assets', 'gates', 'acceptance'} or data['schema'] != 'framivra.freeze/1':
+    if set(data) != {'schema', 'commit', 'tag', 'assets', 'gates', 'acceptance'} or data['schema'] != 'framivra.freeze/2':
         raise ReleaseError('invalid freeze evidence schema')
     if data['commit'] != commit or data['tag'] != tag:
         raise ReleaseError('freeze evidence belongs to a different commit/tag')
@@ -358,31 +468,14 @@ def verify_freeze_evidence(path, commit, tag, assets):
     if not isinstance(gates, dict) or set(gates) != REQUIRED_FREEZE_GATES:
         raise ReleaseError('freeze evidence required gates missing or unknown')
     for name, row in gates.items():
-        if not isinstance(row, dict) or set(row) != {'status', 'path', 'sha256'} or row['status'] != 'passed':
-            raise ReleaseError('required freeze gate did not pass: ' + name)
-        evidence_file = regular(path.parent / relative(row['path']))
-        if digest(evidence_file) != row['sha256']:
-            raise ReleaseError('freeze gate evidence bytes changed: ' + name)
-        report = read_json(evidence_file)
-        if (set(report) != {'schema', 'commit', 'tag', 'gate', 'status', 'steps', 'observations'} or
-            report['schema'] != 'framivra.freeze-gate/2' or report['commit'] != commit or
-            report['tag'] != tag or report['gate'] != name or report['status'] != 'passed' or
-            not isinstance(report['steps'], list) or not report['steps']):
-            raise ReleaseError('invalid freeze gate report: ' + name)
+        report = read_gate(path.parent, data, name)
         required = REQUIRED_FREEZE_STEPS[name]
         if len(report['steps']) != len(required):
             raise ReleaseError('required freeze steps missing or extra: ' + name)
-        for step, (role, required_exit) in zip(report['steps'], required):
-            if (not isinstance(step, dict) or set(step) != {'role', 'source_commit', 'argv', 'exit_code', 'expected_exit', 'log', 'sha256'} or
-                not isinstance(step['argv'], list) or not step['argv'] or type(step['exit_code']) is not int):
-                raise ReleaseError('invalid freeze command evidence: ' + name)
-            if (step['role'] != role or step['source_commit'] != commit or
-                type(step['expected_exit']) is not int or step['expected_exit'] != required_exit or step['exit_code'] != required_exit):
+        for step, (role, _) in zip(report['steps'], required):
+            if not isinstance(step, dict) or step.get('role') != role:
                 raise ReleaseError('required freeze step identity or exit disagrees: ' + role)
-            if step['log'] != role + '.log':
-                raise ReleaseError('required raw log identity disagrees: ' + role)
-            if digest(regular(path.parent / relative(step['log']))) != step['sha256']:
-                raise ReleaseError('freeze raw log bytes changed: ' + name)
+            step_log(path.parent, report, role)
         observations = report['observations']
         if not isinstance(observations, dict) or set(observations) != REQUIRED_OBSERVATIONS.get(name, set()):
             raise ReleaseError('required cache observations missing or unknown: ' + name)
@@ -393,37 +486,77 @@ def verify_freeze_evidence(path, commit, tag, assets):
             if digest(observation_path) != record['sha256']:
                 raise ReleaseError('cache observation bytes changed')
             observation = read_json(observation_path)
-            validate_cache_observation(observation_name, observation, commit, tag)
+            if observation_name == 'demo_receipt':
+                observed_promo(observation_path, media_log(path.parent, report, 'demo-media-probe', path.parent / 'promo-demo/out/final.mp4'))
+                media_log(path.parent, report, 'demo-decode', path.parent / 'promo-demo/out/final.mp4')
+            else:
+                validate_cache_observation(observation_name, observation, commit, tag)
             if observation_name == 'cache_edit':
-                observed_cache_edit(observation, path.parent / 'demo-all.log', path.parent / 'edit-gfx.log')
+                observed_cache_edit(observation, path.parent / 'capability-all.log', path.parent / 'edit-gfx.log')
         if name == 'independent_package':
-            for step, expected_error in zip(report['steps'][2:], ('file digest mismatch: artifacts/final.mp4', 'live input changed: a.mp4')):
-                rejected = read_json(path.parent / relative(step['log']))
+            for role, expected_error in (
+                ('package-tamper-rejected', 'file digest mismatch: artifacts/final.mp4'),
+                ('input-tamper-rejected', 'live input changed: source-left.mp4'),
+                ('main-package-tamper-rejected', 'file digest mismatch: artifacts/final.mp4'),
+                ('main-input-tamper-rejected', 'live input changed: gfx/frames-svg/f0000.svg')):
+                rejected = read_json(step_log(path.parent, report, role))
                 if rejected.get('error') != expected_error:
                     raise ReleaseError('tamper rejection reason does not match the actual probe')
         if name == 'public_demo_render':
-            observed_cdp(path.parent / relative(report['steps'][-1]['log']))
+            observed_cdp(step_log(path.parent, report, 'capability-all'))
         if name == 'distribution_license':
             audit = read_json(path.parent / relative(report['steps'][-1]['log']))
             if audit.get('integrity_checks_passed') is not True or audit.get('release_blockers'):
                 raise ReleaseError('distribution license blockers remain')
-    package = data['acceptance']
-    if not isinstance(package, dict) or set(package) != {'path', 'manifest_sha256'}:
-        raise ReleaseError('independent acceptance package is required')
-    package_root = path.parent / relative(package['path'])
-    result = verify(package_root, package['manifest_sha256'])
-    observed_cdp(package_root / 'build.log')
-    environment = read_json(package_root / 'environment.json')
-    if environment.get('git', {}).get('status') != 'passed' or environment['git']['stdout'].strip() != commit:
-        raise ReleaseError('acceptance package was built by a different commit')
-    if environment.get('git_status', {}).get('status') != 'passed' or environment['git_status']['stdout'].strip():
-        raise ReleaseError('acceptance package renderer working tree was not clean')
-    # Existing acceptance explicitly leaves visual_content unknown. Required stage
-    # checks remain strict; visual scope is disclosed by the stable support policy.
-    for name in ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc', 'process',
-                 'input_stability', 'tool_versions', 'media'):
-        if result['gates'].get(name, {}).get('status') != 'passed':
-            raise ReleaseError('required acceptance gate did not pass: ' + name)
+    packages = data['acceptance']
+    if not isinstance(packages, dict) or set(packages) != {'public_demo', 'capability_probe'}:
+        raise ReleaseError('both independent acceptance packages are required')
+    roots = []
+    for role, package in packages.items():
+        if not isinstance(package, dict) or set(package) != {'path', 'manifest_sha256', 'source_root'}:
+            raise ReleaseError('independent acceptance package is required: ' + role)
+        package_root = path.parent / relative(package['path'])
+        if package_root in roots:
+            raise ReleaseError('independent acceptance package roles must not alias')
+        roots.append(package_root)
+        prefix = 'main-' if role == 'public_demo' else ''
+        if package['source_root'] != prefix + 'package-input':
+            raise ReleaseError('independent package live source binding disagrees: ' + role)
+        source_root = path.parent / relative(package['source_root'])
+        package_gate = read_gate(path.parent, data, 'independent_package')
+        built = read_json(step_log(path.parent, package_gate, prefix + 'package-build'))
+        checked = read_json(step_log(path.parent, package_gate, prefix + 'package-verify'))
+        verified_step = next(row for row in package_gate['steps'] if row['role'] == prefix + 'package-verify')
+        expected = ['-m', 'vtx.inspection.acceptance', 'verify', str(package_root),
+                    '--manifest-sha256', package['manifest_sha256'], '--source-root', str(source_root)]
+        if (built.get('manifest_sha256') != package['manifest_sha256']
+            or verified_step['argv'][1:] != expected or checked.get('integrity_verified') is not True
+            or checked.get('live_inputs_checked') is not True):
+            raise ReleaseError('independent package manifest or live source binding disagrees: ' + role)
+        result = verify(package_root, package['manifest_sha256'], source_root)
+        if role == 'capability_probe':
+            observed_cdp(package_root / 'build.log')
+        else:
+            frames = promo_frames(package_root / 'inputs')
+            manifest = read_json(package_root / 'manifest.json')
+            if not set(frames).issubset(row['source_path'] for row in manifest['inputs']):
+                raise ReleaseError('public Demo package input frame closure is incomplete')
+            if not set(PROMO_NOTICES).issubset(row['source_path'] for row in manifest['inputs']):
+                raise ReleaseError('public Demo package notice closure is incomplete')
+            promo_notices(package_root / 'inputs')
+            observed_promo(package_root / 'artifacts/receipt.json',
+                           media_log(path.parent, package_gate, 'main-package-media-probe', package_root / 'artifacts/final.mp4'))
+        environment = read_json(package_root / 'environment.json')
+        if environment.get('git', {}).get('status') != 'passed' or environment['git']['stdout'].strip() != commit:
+            raise ReleaseError('acceptance package was built by a different commit')
+        if environment.get('git_status', {}).get('status') != 'passed' or environment['git_status']['stdout'].strip():
+            raise ReleaseError('acceptance package renderer working tree was not clean')
+        # Visual content and general dependency closure remain unknown. Required
+        # stage checks stay strict for BOTH independently rebuilt packages.
+        for name in ('validate', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc', 'process',
+                     'input_stability', 'tool_versions', 'media'):
+            if result['gates'].get(name, {}).get('status') != 'passed':
+                raise ReleaseError('required acceptance gate did not pass: ' + role + '/' + name)
     return data
 
 
@@ -436,7 +569,7 @@ def build_public_summary(evidence, work):
     from vtx.inspection.acceptance import read_json, relative, regular
     evidence = regular(evidence)
     data = read_json(evidence)
-    package = evidence.parent / relative(data['acceptance']['path'])
+    package = evidence.parent / relative(data['acceptance']['public_demo']['path'])
     env = read_json(package / 'environment.json')
     versions = {'python': env['python']}
     for tool in ('ffmpeg', 'ffprobe'):
@@ -447,10 +580,20 @@ def build_public_summary(evidence, work):
         versions[tool] = match[1]
     if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', versions['python']):
         raise ReleaseError('invalid public Python version')
-    summary = {'schema': 'framivra.public-freeze-summary/1', 'version': data['tag'][1:],
+    render = read_gate(evidence.parent, data, 'public_demo_render')
+    qc = read_gate(evidence.parent, data, 'public_demo_qc')
+    receipt_record = qc['observations']['demo_receipt']
+    receipt = regular(evidence.parent / relative(receipt_record['path']))
+    if digest(receipt) != receipt_record['sha256']:
+        raise ReleaseError('public Demo receipt bytes changed')
+    summary = {'schema': 'framivra.public-freeze-summary/2', 'version': data['tag'][1:],
        'tag': data['tag'], 'source_commit': data['commit'], 'core_asset_sha256': data['assets'],
        'gates': {name: data['gates'][name]['status'] for name in sorted(REQUIRED_FREEZE_GATES)},
-       'tool_versions': versions, 'backend_observed': observed_cdp(evidence.parent / relative(read_json(evidence.parent / data['gates']['public_demo_render']['path'])['steps'][-1]['log'])), 'support_scope': ['Linux', 'CPU encoding', 'CDP', 'public standard-demo', 'kernel CLI'],
+       'tool_versions': versions, 'backend_observed': {
+           'public_demo': observed_promo(receipt, media_log(evidence.parent, qc, 'demo-media-probe', evidence.parent / 'promo-demo/out/final.mp4')),
+           'capability_probe': observed_cdp(step_log(evidence.parent, render, 'capability-all'))},
+       'support_scope': ['Linux', 'CPU encoding', '30-second SVG public Demo',
+                         'CDP, subtitles and ordinary media capability probe', 'kernel CLI'],
        'limitations': ['Full acceptance package and raw logs retained locally; summary is not a replay bundle',
            'Visual content remains unknown; no human audiovisual approval claimed',
            'macOS, Windows, CEF, Electron, GPU and optional model applications are unqualified',

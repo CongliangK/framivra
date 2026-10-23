@@ -856,22 +856,6 @@
       "license_identifier": "MIT",
       "evidence": "electron-source-authorization"
     },
-    "demo-noto-sans-sc": {
-      "kind": "font",
-      "source": "https://github.com/google/fonts/tree/2894aab31764f10f29c421bdfd2340d3b382d384/ofl/notosanssc",
-      "license_status": "DECLARED",
-      "license_identifier": "OFL-1.1",
-      "default_payload": true,
-      "evidence": "demo-noto-sans-sc-ofl",
-      "distribution": [
-        "git-source"
-      ],
-      "files_sha256": {
-        "templates/standard-demo/profiles/standard/v1/fonts/NotoSansSC-VF.ttf": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
-        "templates/standard-demo/profiles/standard/v1/fonts/OFL.txt": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
-      },
-      "notes": "Bundled demo font Noto Sans SC variable (upstream file NotoSansSC[wght].ttf) vendored from google/fonts pinned revision; local copy is a rename only, bytes byte-for-byte verified against the pinned upstream revision (sha256 match). OFL-1.1: the bundled OFL.txt full text travels with the font; reserved font names stay with upstream. This records source/license declarations and hashes; it is not a legal certification or rights grant."
-    },
     "cef-runtime": {
       "kind": "external-binary",
       "source": "https://bitbucket.org/chromiumembedded/cef",
@@ -1392,13 +1376,6 @@
       "revision": "d9ce4aab52fec57b770f689550fbbde1a860243b",
       "url": "https://github.com/CongliangK/framivra/blob/d9ce4aab52fec57b770f689550fbbde1a860243b/experiments/gfx_cef_worker/third_party/spng/spng.c",
       "scope": "Full source bytes preserve PNG Reference Library License version 2 and all embedded SIMD attributions; license begins after the libpng derivation comment."
-    },
-    "demo-noto-sans-sc-ofl": {
-      "local_path": "templates/standard-demo/profiles/standard/v1/fonts/OFL.txt",
-      "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
-      "revision": "2894aab31764f10f29c421bdfd2340d3b382d384",
-      "url": "https://github.com/google/fonts/blob/2894aab31764f10f29c421bdfd2340d3b382d384/ofl/notosanssc/OFL.txt",
-      "scope": "Bundled OFL.txt is the byte-identical upstream SIL Open Font License 1.1 text pinned at the last google/fonts revision that touched ofl/notosanssc/OFL.txt; the same revision state carries the vendored variable font binary (NotoSansSC-VF.ttf, upstream NotoSansSC[wght].ttf, sha256 a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da). Not a rights grant."
     },
     "placeholder-generation": {
       "url": "https://github.com/CongliangK/framivra/blob/2dda5e2652bf025d146d1215a0442d8f627dd584/scripts/generate_placeholder_media.py",

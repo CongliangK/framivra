@@ -86,22 +86,34 @@ def main(argv=None):
        'sys.exit(0 if all(x["ok"] for x in rows.values()) else 1)')
     checked = command('isolated-mount-check', [sys.executable, '-c', mount_script, mount, source])
     gate('isolated_install', [installed, mounted, checked])
-    project = out / 'standard-demo'
-    prepared = command('demo-prepare', [sys.executable, 'scripts/demo.py', 'prepare', '--profile', 'standard', '--output', project])
-    input_verified = command('demo-input-verify', [sys.executable, 'scripts/demo.py', 'verify', '--project', project, '--pixels'])
+    promo = project = out / 'promo-demo'
+    prepared = command('demo-prepare', [sys.executable, 'scripts/demo.py', 'prepare', '--output', project])
+    input_verified = command('demo-input-verify', [sys.executable, 'scripts/demo.py', 'verify', '--project', project])
     timeline = project / 'timeline.json'
     prefix = [sys.executable, '-m', 'vtx', '-t', timeline]
     rendered = command('demo-all', prefix + ['all'])
-    release.observed_cdp(out / rendered['log'])
-    gate('public_demo_render', [prepared, input_verified, rendered])
-    gate('public_demo_qc', [command('demo-qc', prefix + ['qc', '--strict'])])
+    promo_qc = command('demo-qc', prefix + ['qc', '--strict'])
+    media_probe = command('demo-media-probe', release.media_command(project / 'out/final.mp4'))
+    decoded = command('demo-decode', release.media_command(project / 'out/final.mp4', decode=True))
+    receipt = out / 'demo-receipt.json'
+    shutil.copyfile(project / 'out/receipt.json', receipt)
+    release.observed_promo(receipt, out / media_probe['log'])
+    gate('public_demo_qc', [promo_qc, media_probe, decoded], {'demo_receipt': receipt})
+    # Browser/subtitle/ordinary-media capabilities are not attributed to SVG.
+    project = out / 'capability-probe'
+    probe_prepared = command('capability-prepare', [sys.executable, 'tests/runners/_capability_fixture.py', '--output', project])
+    timeline = project / 'timeline.json'
+    prefix = [sys.executable, '-m', 'vtx', '-t', timeline]
+    probe_rendered = command('capability-all', prefix + ['all'])
+    release.observed_cdp(out / probe_rendered['log'])
+    gate('public_demo_render', [prepared, input_verified, rendered, probe_prepared, probe_rendered])
     original = timeline.read_bytes()
     def cache_snapshot():
         return {str(p.relative_to(project)): {'sha256': release.digest(p), 'mtime_ns': p.stat().st_mtime_ns}
                 for p in (project / 'cache').rglob('*') if p.is_file() and p.suffix in ('.png', '.mp4', '.wav')}
     baseline_cache = cache_snapshot()
     html = project / 'gfx/canvas.html'; html_original = html.read_bytes()
-    html.write_text(html.read_text().replace('rgba(255,255,255,0.15)', 'rgba(80,180,255,0.25)'))
+    html.write_text(html.read_text().replace('#2abfa0', '#a06cff'))
     edit_gfx = command('edit-gfx', prefix + ['gfx'])
     edit_preview = command('edit-preview', prefix + ['video', '--draft', '--range', '30f', '90f'])
     modified = json.loads(original); modified['subtitles'][0]['text'] = 'Stable source local edit / 局部修改'
@@ -114,7 +126,7 @@ def main(argv=None):
         raise RuntimeError('HTML edit lacks both unrelated cache reuse and invalidated output evidence')
     write(out / 'cache-edit-observation.json', {'schema': 'framivra.cache_edit/1', 'commit': commit, 'tag': args.tag, 'reused': reused, 'created': created, 'before': baseline_cache, 'after': edit_cache, 'html_before_sha256': hashlib.sha256(html_original).hexdigest(), 'html_after_sha256': release.digest(html)})
     release.observed_cache_edit(json.loads((out / 'cache-edit-observation.json').read_text()),
-                                out / 'demo-all.log', out / 'edit-gfx.log')
+                                out / 'capability-all.log', out / 'edit-gfx.log')
     gate('local_edit', edit_rows, {'cache_edit': out / 'cache-edit-observation.json'})
     html.write_bytes(html_original)
     invalid = json.loads(original); invalid['sources'][0]['path'] = 'missing-source-for-release-negative.mp4'
@@ -133,27 +145,41 @@ def main(argv=None):
     write(out / 'cache-recovery-observation.json', {'schema': 'framivra.cache_recovery/1', 'commit': commit, 'tag': args.tag, 'path': str(damaged.relative_to(project)), 'before_sha256': old_hash, 'corrupted_sha256': corrupted_hash,
          'after_sha256': release.digest(damaged), 'injected_bytes': 'INTERRUPTED RELEASE ACCEPTANCE CACHE'})
     gate('failure_recovery', [failed, recovered, command('recovery-qc', prefix + ['qc', '--strict'])], {'cache_recovery': out / 'cache-recovery-observation.json'})
-    package = out / 'acceptance'
-    package_input = out / 'package-input'
-    shutil.copytree(project, package_input, ignore=shutil.ignore_patterns('out', 'cache'))
-    package_timeline = package_input / 'timeline.json'
-    declared = json.loads(package_timeline.read_text()); declared['project']['cache_dependencies'] = ['fonts/NotoSansSC-VF.ttf']
-    package_timeline.write_text(json.dumps(declared, ensure_ascii=False, indent=2) + '\n')
-    package_built = command('package-build', [sys.executable, '-m', 'vtx.inspection.acceptance', 'build', package_timeline, package, '--chrome', args.chrome.resolve()], expected=2)
-    manifest = release.digest(package / 'manifest.json')
-    package_verified = command('package-verify', [sys.executable, '-m', 'vtx.inspection.acceptance', 'verify', package,
-          '--manifest-sha256', manifest, '--source-root', package_input], expected=2)
-    retained = package / 'artifacts/final.mp4'; retained_bytes = retained.read_bytes()
-    retained.write_bytes(retained_bytes + b'tamper')
-    package_tamper = command('package-tamper-rejected', [sys.executable, '-m', 'vtx.inspection.acceptance', 'verify', package,
-            '--manifest-sha256', manifest], expected=1)
-    retained.write_bytes(retained_bytes)
-    source_input = package_input / 'a.mp4'; source_bytes = source_input.read_bytes()
-    source_input.write_bytes(source_bytes + b'tamper')
-    input_tamper = command('input-tamper-rejected', [sys.executable, '-m', 'vtx.inspection.acceptance', 'verify', package,
-            '--manifest-sha256', manifest, '--source-root', package_input], expected=1)
-    source_input.write_bytes(source_bytes)
-    gate('independent_package', [package_built, package_verified, package_tamper, input_tamper])
+    packages = {}; package_rows = []
+    # Each package is an isolated all -> strict-QC build, not packaging an old movie.
+    for role, prefix, original_project, directory, changed_input in (
+        ('capability_probe', '', project, 'acceptance', 'source-left.mp4'),
+        ('public_demo', 'main-', promo, 'main-acceptance', 'gfx/frames-svg/f0000.svg')):
+        package = out / directory
+        package_input = out / (prefix + 'package-input')
+        shutil.copytree(original_project, package_input, ignore=shutil.ignore_patterns('out', 'cache', '.generated'))
+        package_timeline = package_input / 'timeline.json'
+        if role == 'public_demo':
+            # Declare the manifest's complete frame closure only in this private copy.
+            declared = json.loads(package_timeline.read_text())
+            frames = release.promo_frames(package_input)
+            shutil.copyfile(source / 'LICENSE', package_input / 'LICENSE')
+            notices = release.promo_notices(package_input)
+            declared['project']['cache_dependencies'] = sorted(set(declared['project'].get('cache_dependencies', []) + frames + notices))
+            write(package_timeline, declared)
+        chrome = ['--chrome', args.chrome.resolve()] if role == 'capability_probe' else []
+        package_rows.append(command(prefix + 'package-build', [sys.executable, '-m', 'vtx.inspection.acceptance',
+            'build', package_timeline, package] + chrome, expected=2))
+        manifest = release.digest(package / 'manifest.json')
+        verify = [sys.executable, '-m', 'vtx.inspection.acceptance', 'verify', package, '--manifest-sha256', manifest]
+        live_inputs = ['--source-root', package_input]
+        package_rows.append(command(prefix + 'package-verify', verify + live_inputs, expected=2))
+        for tamper_role, target, extra in (
+            ('package-tamper-rejected', package / 'artifacts/final.mp4', []),
+            ('input-tamper-rejected', package_input / changed_input, live_inputs)):
+            original_bytes = target.read_bytes()
+            target.write_bytes(original_bytes + b'tamper')
+            package_rows.append(command(prefix + tamper_role, verify + extra, expected=1))
+            target.write_bytes(original_bytes)
+        if role == 'public_demo':
+            package_rows.append(command('main-package-media-probe', release.media_command(package / 'artifacts/final.mp4')))
+        packages[role] = {'path': package.name, 'manifest_sha256': manifest, 'source_root': package_input.name}
+    gate('independent_package', package_rows)
     assets = out / 'assets'; assets.mkdir()
     paths = release.build_assets(source, args.tag, commit, assets)
     # Inspect a prefixed copy because the distribution checker requires one root.
@@ -165,9 +191,9 @@ def main(argv=None):
         raise RuntimeError('distribution license gate blocked; inspect license-audit.log')
     gate('distribution_license', [license_archived, audit])
     evidence = out / 'freeze.json'
-    write(evidence, {'schema': 'framivra.freeze/1', 'commit': commit, 'tag': args.tag,
+    write(evidence, {'schema': 'framivra.freeze/2', 'commit': commit, 'tag': args.tag,
         'assets': {p.name: release.digest(p) for p in paths}, 'gates': gates,
-        'acceptance': {'path': package.name, 'manifest_sha256': manifest}})
+        'acceptance': packages})
     release.verify_freeze_evidence(evidence, commit, args.tag, paths)
     summary = release.build_public_summary(evidence, assets)
     print('Public summary for review: ' + str(summary))
