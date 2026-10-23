@@ -32,10 +32,10 @@ probe() {
   echo "=== comfyui_init.sh 探测 ==="
   [ -d "$ROOT" ] && ok "repo：$ROOT" || miss "repo 缺失：$ROOT"
   if [ -x "$CPY" ]; then
-    "$CPY" -c "import torch" 2>/dev/null && ok "env：$CPY（torch 可导入）" \
-      || miss "env 存在但 torch 不可导入（$CPY）"
+    "$CPY" -c "import torch" 2>/dev/null && ok "env：${CPY}（torch 可导入）" \
+      || miss "env 存在但 torch 不可导入（${CPY}）"
   else
-    miss "conda env comfyui 缺失（$CPY）"
+    miss "conda env comfyui 缺失（${CPY}）"
   fi
   [ -x "$ROOT/start.sh" ] && ok "start.sh：$ROOT/start.sh" || note "start.sh 未生成"
   if curl -s -m 2 -o /dev/null "http://127.0.0.1:8188" 2>/dev/null; then
@@ -51,7 +51,7 @@ start_() {
     echo "8188 已在线，无需启动"; exit 0
   fi
   nohup bash "$ROOT/start.sh" > "$ROOT/comfyui.log" 2>&1 &
-  echo "已后台启动（pid $!），日志 $ROOT/comfyui.log；就绪探测：curl http://127.0.0.1:8188"
+  echo "已后台启动（pid ${!}），日志 $ROOT/comfyui.log；就绪探测：curl http://127.0.0.1:8188"
 }
 
 case "$ACTION" in

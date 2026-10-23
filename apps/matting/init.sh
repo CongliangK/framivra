@@ -43,30 +43,30 @@ if [ -x "$CPY" ]; then
     "$CPY" -c "import $m" 2>/dev/null || DEP_MISS="$DEP_MISS $m"
   done
   if [ -z "$DEP_MISS" ]; then
-    ok "comfyui env：$CPY（六项依赖齐）"
+    ok "comfyui env：${CPY}（六项依赖齐）"
   else
     miss "comfyui env 缺依赖:$DEP_MISS —— $CPY -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple opencv-python omegaconf hydra-core safetensors transformers"
   fi
 else
-  miss "conda env comfyui 不存在（$CPY）—— conda create -n comfyui python=3.11 && $HOME/miniconda3/envs/comfyui/bin/pip install torch --index-url https://download.pytorch.org/whl/cu130 && $HOME/miniconda3/envs/comfyui/bin/pip install -i https://pypi.tuna.tsinghua.edu.cn/simple opencv-python numpy Pillow omegaconf hydra-core safetensors transformers"
+  miss "conda env comfyui 不存在（${CPY}）—— conda create -n comfyui python=3.11 && $HOME/miniconda3/envs/comfyui/bin/pip install torch --index-url https://download.pytorch.org/whl/cu130 && $HOME/miniconda3/envs/comfyui/bin/pip install -i https://pypi.tuna.tsinghua.edu.cn/simple opencv-python numpy Pillow omegaconf hydra-core safetensors transformers"
 fi
 
 # ---- 2. MatAnyone2 平级克隆（代码 + 权重）----
 if [ -d "$MA2/matanyone2" ]; then
   if [ -s "$MA2_W/model.safetensors" ]; then
-    ok "MatAnyone2：$MA2（代码+权重齐）"
+    ok "MatAnyone2：${MA2}（代码+权重齐）"
   else
     miss "MatAnyone2 缺权重 $MA2_W/model.safetensors（141MB，HF PeiqingYang/MatAnyone2）"
   fi
 else
-  miss "MatAnyone2 克隆缺失 $MA2；旧 --download 为 BLOCKED，许可限制与未知项见 docs/third-party-licenses.md"
+  miss "MatAnyone2 克隆缺失 ${MA2}；旧 --download 为 BLOCKED，许可限制与未知项见 docs/third-party-licenses.md"
 fi
 
 # ---- 3. BiRefNet_HR 平级目录 ----
 if [ -d "$BR" ] && ls "$BR"/config.json >/dev/null 2>&1; then
   ok "BiRefNet_HR：$BR"
 else
-  miss "BiRefNet_HR 缺失 $BR（HF ZhengPeng7/BiRefNet_HR-matting 快照，run_birefnet_hr.py local_files_only 加载）"
+  miss "BiRefNet_HR 缺失 ${BR}（HF ZhengPeng7/BiRefNet_HR-matting 快照，run_birefnet_hr.py local_files_only 加载）"
 fi
 
 # ---- 4. torch hub ResNet18（光流隐藏依赖，被墙假死坑）----
@@ -75,7 +75,7 @@ if [ -s "$RESNET" ]; then
 elif [ -s "$HERE/resnet18-5c106cde.pth" ]; then
   ok "ResNet18（脚本同目录副本）：$HERE/resnet18-5c106cde.pth"
 else
-  miss "ResNet18 预置缺失 $RESNET；权重许可未知项见 docs/third-party-licenses.md，旧 --download 为 BLOCKED"
+  miss "ResNet18 预置缺失 ${RESNET}；权重许可未知项见 docs/third-party-licenses.md，旧 --download 为 BLOCKED"
 fi
 
 # ---- 5. ComfyUI 服务（可选，仅背景生成）----
