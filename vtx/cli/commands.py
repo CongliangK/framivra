@@ -248,8 +248,14 @@ def _gfx(c: Ctx):
     # 页内分片开关（方案 v2 阶段 1）：VTX_GFX_SPLIT_FRAMES 为块大小阈值，
     # VTX_GFX_SPLIT_MAX（默认 3）为单页最大块数。默认 450（2026-09-12 定版，
     # 基准 28 页 12024 帧：PAGES=7+SPLIT450 冷跑 129.8/131.9s，RSS 15.0-15.2GB）。
-    split_frames = max(0, int(os.environ.get("VTX_GFX_SPLIT_FRAMES", "450")))
-    split_max = max(1, int(os.environ.get("VTX_GFX_SPLIT_MAX", "3")))
+    if backend == "cef":
+        from ..render.gfx_backend import cef_scheduling_options
+        cef_schedule = cef_scheduling_options()
+        split_frames = cef_schedule["split_frames"]
+        split_max = cef_schedule["split_max"]
+    else:
+        split_frames = max(0, int(os.environ.get("VTX_GFX_SPLIT_FRAMES", "450")))
+        split_max = max(1, int(os.environ.get("VTX_GFX_SPLIT_MAX", "3")))
 
     jobs = []   # (cid, key, cl, n, d, html, frames|None) 待渲块；frames=None=整页现行语义
     seen = set()
@@ -293,10 +299,10 @@ def _gfx(c: Ctx):
                     fstxn.unlink(d / f"f{i:04d}.png", root=c.root)
                 gfx_cli.begin_environment_page(d, environment, key, n, c.w, c.h, root=c.root)
             html = (c.root / cl["src"]).resolve()
-            # 页内分片（方案 v2 阶段 1，默认关）：SPLIT_FRAMES>0 且页帧数超阈值时把
+            # 页内分片：SPLIT_FRAMES>0 且页帧数超阈值时把
             # [0,n) 切成 min(SPLIT_MAX, ceil(n/阈值)) 个连续块，每块独立一次
-            # render_page（独立 Chrome 实例）；dry-run / CLI 回落态不拆。
-            sizes = (None if (c.dry or cdp_mod is None or strict)
+            # render_page（独立 CDP/CEF worker）；dry-run / CLI 回落态不拆。
+            sizes = (None if (c.dry or (cdp_mod is None and backend != "cef") or strict)
                      else _split_page(n, split_frames, split_max))
             if sizes is None:
                 jobs.append((cid, key, cl, n, d, html, None,
@@ -311,7 +317,7 @@ def _gfx(c: Ctx):
                     continue    # 整块已缓存 → 跳过（不起 Chrome、不占池槽）
                 jobs.append((cid, key, cl, n, d, html, fb,
                              events.task(c, "gfx", kind="gfx_block",
-                                         metadata={"page_id": page_id, "backend": "cdp", "frame_range": [fb[0], fb[-1] + 1]}))); put += 1
+                                         metadata={"page_id": page_id, "backend": backend, "frame_range": [fb[0], fb[-1] + 1]}))); put += 1
             if put == 0:        # 页级帧数门已滤全缓存，理论不可达；防御性兜底
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1
 
@@ -319,7 +325,10 @@ def _gfx(c: Ctx):
     # 收益递减；真正的并行单位是浏览器实例×页。VTX_GFX_PAGES 控制并行页数
     # （默认 7：2026-09-12 定版，PAGES=8 峰值 RSS 16.5-20.4GB 破 16GB 线，
     # 7 页 15.0-15.2GB 达标且 129.8-131.9s 仅比 8 页慢 ~2%）。
-    page_workers = max(1, int(os.environ.get("VTX_GFX_PAGES", "7")))
+    # CEF blocks share this one stage-wide pool with other pages; never create
+    # a nested pool per page. Each native worker owns its isolated browsers.
+    page_workers = (cef_schedule["pages"] if backend == "cef" else
+                    max(1, int(os.environ.get("VTX_GFX_PAGES", "7"))))
 
     # 同页多块聚合：块完成只并入聚合器，末块收尾时输出一行 ✓（路径计数求和、
     # ms/帧按帧数加权、块数标注 split×k），receipt engine_notes 同样每页一条。
@@ -337,13 +346,11 @@ def _gfx(c: Ctx):
         st = None
         if backend == "cef":
             from ..render.gfx_cef import render_page
-            rendered_via = render_page(html, d, n, ctx=c, width=c.w, height=c.h)
-            gfx_cli.complete_page(d, n, key, c.w, c.h,
-                                  verify_inputs=lambda: c.verify_inputs("gfx"),
-                                  backend_ns=backend_ns, environment=environment, root=c.root)
-            manifest_record(c, d, "gfx", key)
-            print(f"✓ {cid}[{key}]: 渲染 {n} 帧（含 alpha，{rendered_via}）")
-            return cid, rendered_via
+            st = observation.attempt(render_page, html, d, n, ctx=c,
+                                     width=c.w, height=c.h, frames=frames)
+            # Block completion is not page completion: the shared aggregator
+            # below certifies only after every disjoint block has succeeded.
+            # Native failures escape unchanged; CEF never falls back to CDP/CLI.
         if cdp_mod is not None:
             try:
                 # 视口宽高传项目分辨率（render_page 默认 1920×1080，非 1080p 项目此前错渲）。
@@ -372,11 +379,12 @@ def _gfx(c: Ctx):
                     # issue #28：补渲失败不可被 CDP 的 except 吞掉后重试成成功。
                     render_cli(st["failed"], d, html, find_chrome())
                     st["path_counts"]["cli_fallback"] = len(st["failed"])
-        if cdp_mod is None:
+        if cdp_mod is None and backend != "cef":
             render_cli(range(n), d, html, find_chrome())
         if frames is None:
             # —— 整页单块（SPLIT 关或页不超阈值）：日志格式与现行逐字节一致 ——
-            rendered_via = "cli 6 并发" if st is None else _cdp_via(st)
+            rendered_via = (st if backend == "cef" else
+                            "cli 6 并发" if st is None else _cdp_via(st))
             gfx_cli.complete_page(d, n, key, c.w, c.h,
                                   verify_inputs=lambda: c.verify_inputs("gfx"),
                                   backend_ns=backend_ns,
@@ -400,7 +408,11 @@ def _gfx(c: Ctx):
         k = len(blocks)
         stats_list = [s for _, s in blocks if s is not None]
         n_cli = sum(1 for _, s in blocks if s is None)
-        if stats_list:
+        if backend == "cef":
+            rendered_via = "；".join(dict.fromkeys(stats_list))
+            if k > 1:
+                rendered_via += f"，split×{k}"
+        elif stats_list:
             rendered_via = _cdp_via(_merge_cdp_stats(stats_list))
             if n_cli:
                 rendered_via += f"，{n_cli} 块CLI回落"

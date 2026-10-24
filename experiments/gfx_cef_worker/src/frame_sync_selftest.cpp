@@ -16,9 +16,12 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <future>
+#include <limits>
 #include <string>
 #include <vector>
 
+#include "external_pump_schedule.hpp"
 #include "frame_sync_machine.hpp"
 
 using namespace vtx_cef;
@@ -71,6 +74,24 @@ struct FrameBuf {
     SetPx(0, 0, SignatureBgraPremulP1(f));
     SetPx(1, 0, SignatureBgraPremulP2(f));
   }
+  // Exact proof: frame16 + request32 inside the original 8x8 footprint.
+  void DrawExact(int f, uint32_t request, bool relocated) {
+    const int mask = relocated ? 65535 : 0;
+    for (uint32_t y = 0; y < 8; ++y) {
+      const int value = (y < 4 ? f : y < 6 ? static_cast<int>(request & 65535u)
+                                          : static_cast<int>(request >> 16u)) ^ mask;
+      uint8_t one[3], two[3];
+      SignatureRgbP1(true, value, one);
+      SignatureRgbP2(true, value, two);
+      for (uint32_t x = 0; x < 8; ++x) {
+        SetPx(relocated ? w - 8 + x : x, y,
+              Bgra{one[2], one[1], one[0], 255});
+        SetPx(relocated ? x : w - 8 + x, h - 8 + y,
+              Bgra{two[2], two[1], two[0], 255});
+      }
+    }
+  }
+
   // 诊断双对角 8x8 Canary（不透明 → 预乘恒等）。
   void DrawCanaryDiag(int f) {
     uint8_t p1[3], p2[3];
@@ -95,12 +116,8 @@ struct Harness {
 
   // 标准推进：S1 →（assets）→ S2 →（canary+原像素）→ S3。
   bool AdvanceToS3(const RequestDesc& d, const uint8_t orig_rgba[2][4],
-                   uint64_t now, const FrameBuf* baseline = nullptr) {
+                   uint64_t now) {
     if (!m.BeginRequest(d, now)) return false;
-    if (baseline != nullptr && !m.SetExactBaseline(baseline->px.data(),
-        static_cast<size_t>(baseline->w) * 4u, baseline->w, baseline->h, now + 1)) {
-      return false;
-    }
     PageEvent a;
     a.phase = PageEvent::Phase::kAssetsReady;
     a.document_gen = d.document_gen;
@@ -573,6 +590,15 @@ void TestDiagnosticMode() {
 
 // ⑪ 冻结公式已知值向量 + 预乘解码闭环（含 P1 单像素孪生帧 23167/23168）。
 void TestFormulaVectors() {
+  bool inverse_exact = true;
+  for (int value = 0; value < 256; ++value) {
+    std::vector<int> exhaustive;
+    for (int c = 0; c < 256; ++c) {
+      if ((508 * c + 255) / 510 == value) exhaustive.push_back(c);
+    }
+    inverse_exact = inverse_exact && PremulCands(static_cast<uint8_t>(value)) == exhaustive;
+  }
+  Check(inverse_exact, "formula: constant-time closed inverse == exhaustive 256x256 forward map");
   const Bgra z1 = SignatureBgraPremulP1(0);
   Check(z1 == Bgra{90, 0, 0, 254}, "formula: f=0 P1={90,0,0,254}");
   const Bgra z2 = SignatureBgraPremulP2(0);
@@ -677,20 +703,22 @@ void TestNativeExact() {
   d.document_gen = 9; d.request_id = 7; d.target_frame_index = 258;
   d.canary = CanaryMode::kExact; d.expected_w = 64; d.expected_h = 48;
   FrameBuf original(64, 48), first = original, second = original;
-  Check(t.AdvanceToS3(d, nullptr, 1000, &original), "exact: S3 without page originals");
-  Check(!t.m.SetExactBaseline(original.px.data(), 64 * 4, 64, 48, 1250),
-        "exact: baseline cannot be replaced after S1");
+  PageEvent identity;
+  identity.document_gen = d.document_gen;
+  identity.request_id = d.request_id;
+  identity.target_frame_index = d.target_frame_index;
+  Check(t.AdvanceToS3(d, nullptr, 1000), "exact: S3 without page originals");
+  Check(t.m.ArmExactBaseline(identity, 0, 1250) &&
+        !t.m.ArmExactBaseline(identity, 0, 1251),
+        "exact: unsigned readiness cannot be replaced/re-armed");
+  Check(std::any_of(t.lines.begin(), t.lines.end(), [](const auto& line) {
+          return line.find("\"event\":\"exact_baseline_veto_armed\"") != std::string::npos &&
+                 line.find("\"role\":\"equality_veto_only\"") != std::string::npos &&
+                 line.find("\"restoration_source\":false") != std::string::npos;
+        }), "exact: public audit contract preserves unsigned veto-only role");
   Check(t.m.EnterPumping(1300), "exact: S4");
-  first.DrawCanaryDiag(258);
-  uint8_t p1[3], p2[3];
-  SignatureRgbP1(true, 258 ^ 65535, p1);
-  SignatureRgbP2(true, 258 ^ 65535, p2);
-  for (uint32_t y = 0; y < 8; ++y) {
-    for (uint32_t x = 0; x < 8; ++x) {
-      second.SetPx(64 - 8 + x, y, Bgra{p1[2], p1[1], p1[0], 255});
-      second.SetPx(x, 48 - 8 + y, Bgra{p2[2], p2[1], p2[0], 255});
-    }
-  }
+  first.DrawExact(258, d.request_id, false);
+  second.DrawExact(258, d.request_id, true);
   std::vector<uint8_t> dst(original.px.size(), 0xAA);
   auto feed = [&](FrameBuf& b) {
     return t.m.FeedPaint(b.px.data(), 64 * 4, 64, 48, dst.data(), 1500);
@@ -710,61 +738,66 @@ void TestNativeExact() {
   torn.SetPx(63, 0, Bgra{1, 2, 3, 255});
   Check(feed(torn).disposition == PaintDisposition::kRejectedStale,
         "exact: half-updated second probe rejected");
-  auto v = feed(second);
+  Check(feed(second).disposition != PaintDisposition::kAccepted && t.m.needs_baseline_veto(),
+        "exact: both signed phases still require independent full-byte veto");
+  Check(t.m.FeedExactBaselinePaint(identity, original.px.data(), 64 * 4,
+        64, 48, dst.data(), 1550, 1).disposition != PaintDisposition::kAccepted,
+        "exact: one native unsigned equality insufficient");
+  const auto v = t.m.FeedExactBaselinePaint(identity, original.px.data(), 64 * 4,
+                                           64, 48, dst.data(), 1560, 2);
   Check(v.disposition == PaintDisposition::kAccepted && v.decoded_frame == 258,
         "exact: both decoded tokens establish original frame");
   Check(v.restored && !v.restore_from_reported, "exact: native restoration only");
   Check(dst == original.px, "exact: EVERY BGRA byte restored (nonuniform corners)");
   t.m.Reset(1600, "done");
 
-  // The equality veto must cover ALL corners too, and never supply a single
-  // output byte. Both signed phases agree in every case below.
+  // Preserve every original equality-veto negative: EACH corner, interior,
+  // and missing reference. All signed phases agree in every fixture below.
   const uint32_t points[][2] = {{0, 0}, {63, 0}, {0, 47}, {63, 47}, {20, 20}};
   for (size_t i = 0; i <= 5; ++i) {
     Harness reject;
     FrameBuf wrong = original;
-    if (i < 5) {
-      wrong.px[wrong.Off(points[i][0], points[i][1])] ^= 1;
-    }
-    Check(reject.AdvanceToS3(d, nullptr, 2000, i < 5 ? &wrong : nullptr),
+    if (i < 5) wrong.px[wrong.Off(points[i][0], points[i][1])] ^= 1;
+    Check(reject.AdvanceToS3(d, nullptr, 2000),
           "exact veto: S3 with mismatched or absent baseline");
+    if (i < 5) Check(reject.m.ArmExactBaseline(identity, 0, 2250), "exact veto: native readiness");
     Check(reject.m.EnterPumping(2300), "exact veto: S4");
     std::vector<uint8_t> untouched(original.px.size(), 0xAA);
     reject.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, untouched.data(), 2400);
     const auto denied = reject.m.FeedPaint(second.px.data(), 64 * 4, 64, 48,
-                                           untouched.data(), 2500);
-    Check(denied.disposition == PaintDisposition::kRejectedStale &&
-              !reject.m.accepted(), "exact veto: matching signatures cannot bypass baseline");
+                                          untouched.data(), 2500);
+    Check(denied.disposition != PaintDisposition::kAccepted && !reject.m.accepted(),
+          "exact veto: matching signatures cannot bypass baseline");
     Check(untouched == std::vector<uint8_t>(original.px.size(), 0xAA),
           "exact veto: neither candidate nor baseline published on rejection");
-    Check(reject.m.counters().requests_accepted == 0,
-          "exact veto: zero S5 acceptances");
-    PageEvent identity;
-    identity.document_gen = d.document_gen;
-    identity.request_id = d.request_id;
-    identity.target_frame_index = d.target_frame_index;
-    for (int sample = 0; sample < 3; ++sample) {
+    Check(reject.m.counters().requests_accepted == 0, "exact veto: zero S5 acceptances");
+    for (int sample = 1; sample <= 3; ++sample) {
       const auto veto = reject.m.FeedExactBaselinePaint(identity,
-          wrong.px.data(), 64 * 4, 64, 48, untouched.data(), 2600 + sample);
+          wrong.px.data(), 64 * 4, 64, 48, untouched.data(), 2600 + sample, sample);
       Check(veto.disposition != PaintDisposition::kAccepted &&
             untouched == std::vector<uint8_t>(original.px.size(), 0xAA),
-            "exact resample: persistent one-byte/corner veto or missing baseline stays closed");
+            "exact veto: persistent one-byte/corner veto or missing baseline stays closed");
     }
+    if (i < 5) Check(std::any_of(reject.lines.begin(), reject.lines.end(), [](const auto& line) {
+          return line.find("\"event\":\"exact_baseline_mismatch\"") != std::string::npos &&
+                 line.find("\"reason\":\"probe_content_perturbation\"") != std::string::npos &&
+                 line.find("\"cause_unproven\":true") != std::string::npos;
+        }), "exact veto: mismatch audit preserves contract without claiming an unproven cause");
   }
 
+  // An early stable blank never establishes identity and can only delay/veto.
+  // Two later fresh native equalities can certify the frozen signed candidate.
   Harness resample;
   FrameBuf blank(64, 48);
   std::fill(blank.px.begin(), blank.px.end(), 0);
-  Check(resample.AdvanceToS3(d, nullptr, 3000, &blank), "resample: initial blank baseline");
+  Check(resample.AdvanceToS3(d, nullptr, 3000) &&
+        resample.m.ArmExactBaseline(identity, 0, 3250), "resample: initial blank is only a veto");
   Check(resample.m.EnterPumping(3300), "resample: S4");
-  PageEvent identity;
-  identity.document_gen = d.document_gen;
-  identity.request_id = d.request_id;
-  identity.target_frame_index = d.target_frame_index;
   std::fill(dst.begin(), dst.end(), 0xAA);
+  uint64_t sequence = 0;
   auto sample = [&](const PageEvent& id, const FrameBuf& b) {
     return resample.m.FeedExactBaselinePaint(id, b.px.data(), 64 * 4,
-                                            64, 48, dst.data(), 3600);
+                                            64, 48, dst.data(), 3600, ++sequence);
   };
   Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
         "resample: unsigned equality before signed phases cannot accept");
@@ -772,11 +805,13 @@ void TestNativeExact() {
   Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
         "resample: first signature only cannot accept");
   resample.m.FeedPaint(second.px.data(), 64 * 4, 64, 48, dst.data(), 3500);
-  Check(resample.m.needs_baseline_resample(), "resample: freeze fully signed mismatched candidate");
+  Check(resample.m.needs_baseline_veto(), "resample: freeze fully signed candidate");
+  Check(sample(identity, blank).disposition != PaintDisposition::kAccepted &&
+        sample(identity, blank).disposition != PaintDisposition::kAccepted,
+        "resample: two initial stable blanks cannot accept signed target");
   Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
         "resample: one equal paint insufficient");
-  auto stale = identity;
-  ++stale.document_gen;
+  auto stale = identity; ++stale.document_gen;
   Check(sample(stale, original).disposition != PaintDisposition::kAccepted,
         "resample: foreign identity rejected and consecutive equality reset");
   Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
@@ -786,7 +821,7 @@ void TestNativeExact() {
   Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
         "resample: equality restarts after differing paint");
   Check(resample.m.FeedExactBaselinePaint(identity, nullptr, 64 * 4,
-      64, 48, dst.data(), 3600).disposition != PaintDisposition::kAccepted,
+      64, 48, dst.data(), 3600, ++sequence).disposition != PaintDisposition::kAccepted,
         "resample: bad buffer cannot accept");
   Check(sample(identity, original).disposition != PaintDisposition::kAccepted &&
         dst == std::vector<uint8_t>(original.px.size(), 0xAA),
@@ -802,12 +837,323 @@ void TestNativeExact() {
         "resample: late S5 baseline cannot republish");
   resample.m.Reset(3700, "done");
   ++d.request_id;
-  Check(resample.AdvanceToS3(d, nullptr, 4000, &blank), "resample: new request");
-  Check(resample.m.EnterPumping(4300) && !resample.m.needs_baseline_resample(),
+  Check(resample.AdvanceToS3(d, nullptr, 4000), "resample: new request");
+  Check(resample.m.EnterPumping(4300) && !resample.m.needs_baseline_veto(),
         "resample: pending candidate cleared across request");
   Check(sample(identity, original).disposition != PaintDisposition::kAccepted,
         "resample: previous candidate/identity cannot accept new request");
   resample.m.FailRequest("done", 4400);
+}
+
+void TestExactBaselineBatchBoundary() {
+  for (const auto drive : {DriveMode::kModeN, DriveMode::kModeP}) {
+    Harness t;
+    RequestDesc d;
+    d.document_gen = 9; d.request_id = 7; d.target_frame_index = 258;
+    d.canary = CanaryMode::kExact; d.drive = drive;
+    d.expected_w = 32; d.expected_h = 24;
+    PageEvent id;
+    id.document_gen = d.document_gen; id.request_id = d.request_id;
+    id.target_frame_index = d.target_frame_index;
+    FrameBuf original(32, 24), first = original, second = original, mismatch = original;
+    first.DrawExact(d.target_frame_index, d.request_id, false);
+    second.DrawExact(d.target_frame_index, d.request_id, true);
+    mismatch.px.back() ^= 1;
+    const std::vector<uint8_t> untouched(original.px.size(), 0xAA);
+    auto dst = untouched;
+    Check(t.AdvanceToS3(d, nullptr, 1000) &&
+          t.m.ArmExactBaseline(id, 10, 1250) && t.m.EnterPumping(1300),
+          "batch veto: native-ready request");
+    t.m.FeedPaint(first.px.data(), 32 * 4, 32, 24, dst.data(), 1400);
+    t.m.FeedPaint(second.px.data(), 32 * 4, 32, 24, dst.data(), 1500);
+    uint64_t now = 1600;
+    auto sample = [&](const FrameBuf& frame, uint64_t sequence) {
+      return t.m.FeedExactBaselinePaint(id, frame.px.data(), 32 * 4, 32, 24,
+                                        dst.data(), ++now, sequence);
+    };
+    Check(sample(mismatch, 11).disposition != PaintDisposition::kAccepted &&
+          sample(original, 12).disposition != PaintDisposition::kAccepted,
+          "batch veto: M,E pair cannot accept");
+    t.m.DiscardExactBaselinePartialMatch();
+    Check(sample(original, 13).disposition != PaintDisposition::kAccepted &&
+          sample(mismatch, 14).disposition != PaintDisposition::kAccepted &&
+          !t.m.accepted() && dst == untouched,
+          "batch veto: next E,M pair must inspect latest mismatch, not accept cross-batch E,E");
+    t.m.DiscardExactBaselinePartialMatch();
+    Check(t.m.needs_baseline_veto() && !t.m.ArmExactBaseline(id, 0, ++now),
+          "batch veto: reset preserves candidate and one-time readiness binding");
+    Check(sample(original, 10).disposition != PaintDisposition::kAccepted &&
+          sample(original, 14).disposition != PaintDisposition::kAccepted && dst == untouched,
+          "batch veto: reset cannot lower readiness floor or replay last native paint");
+    Check(sample(original, 15).disposition != PaintDisposition::kAccepted &&
+          sample(original, 16).disposition == PaintDisposition::kAccepted && dst == original.px,
+          "batch veto: fresh E,E pair still accepts exact signed reconstruction");
+  }
+}
+
+void TestRequestBoundExact() {
+  for (const auto drive : {DriveMode::kModeN, DriveMode::kModeP}) {
+    Harness t;
+    RequestDesc d;
+    d.document_gen = 17; d.request_id = 0x89ABCDEFu;
+    d.target_frame_index = 0x1234; d.drive = drive;
+    d.canary = CanaryMode::kExact;
+    d.expected_w = 64; d.expected_h = 48;
+    FrameBuf original(64, 48);
+    // All four corners contain nonuniform native premultiplied alpha bytes.
+    for (uint32_t y = 0; y < original.h; ++y) {
+      for (uint32_t x = 0; x < original.w; ++x) {
+        const auto a = static_cast<uint8_t>((x * 17 + y * 29) & 255);
+        original.SetPx(x, y, Bgra{static_cast<uint8_t>(x % (a + 1u)),
+            static_cast<uint8_t>(y % (a + 1u)), static_cast<uint8_t>((x ^ y) % (a + 1u)), a});
+      }
+    }
+    FrameBuf first = original, second = original;
+    first.DrawExact(d.target_frame_index, d.request_id, false);
+    second.DrawExact(d.target_frame_index, d.request_id, true);
+    const std::vector<uint8_t> sentinel(original.px.size(), 0xAA);
+    auto dst = sentinel;
+    PageEvent id;
+    id.document_gen = d.document_gen; id.request_id = d.request_id;
+    id.target_frame_index = d.target_frame_index;
+    auto sample = [&](const PageEvent& identity, const FrameBuf& b, uint64_t seq) {
+      return t.m.FeedExactBaselinePaint(identity, b.px.data(), 64 * 4,
+                                       64, 48, dst.data(), 1600 + seq, seq);
+    };
+    auto feed = [&](const FrameBuf& b) {
+      return t.m.FeedPaint(b.px.data(), 64 * 4, 64, 48, dst.data(), 1500);
+    };
+    Check(!t.m.ArmExactBaseline(id, 100, 1), "request-bound exact: S0 readiness cannot arm");
+    Check(t.AdvanceToS3(d, nullptr, 1000), "request-bound exact: no serial baseline or navigation required by core");
+    Check(sample(id, original, 1).disposition != PaintDisposition::kAccepted,
+          "exact: initial baseline cannot bypass two signed proof phases");
+    Check(!t.m.PaintMayAdvance(first.px.data(), 64 * 4, 64, 48),
+          "request-bound exact: positive signature before S4 still early");
+    Check(t.m.EnterPumping(1300), "request-bound exact: enter S4");
+    Check(sample(id, original, 101).disposition != PaintDisposition::kAccepted && dst == sentinel,
+          "request-bound exact: unsigned equality before signed phases cannot publish");
+    Check(t.m.PaintMayAdvance(first.px.data(), 64 * 4, 64, 48),
+          "request-bound exact: first positive candidate requires renderer fence");
+    const auto one = feed(first);
+    Check(one.disposition != PaintDisposition::kAccepted && one.decoded_request_id == d.request_id &&
+          one.decoded_frame == d.target_frame_index && t.m.needs_relocation(),
+          "request-bound exact: native first probe decodes frame AND all32 request bits, not S5");
+    Check(!t.m.PaintMayAdvance(first.px.data(), 64 * 4, 64, 48) &&
+          feed(first).disposition == PaintDisposition::kRejectedStale,
+          "request-bound exact: queued first-phase bytes cannot satisfy relocation");
+    FrameBuf wrong = original;
+    wrong.DrawExact(d.target_frame_index, d.request_id - 1u, true);
+    Check(!t.m.PaintMayAdvance(wrong.px.data(), 64 * 4, 64, 48) &&
+          feed(wrong).disposition == PaintDisposition::kRejectedStale,
+          "request-bound exact: same frame stale request token rejected");
+    wrong = original;
+    wrong.DrawExact(d.target_frame_index - 1, d.request_id, true);
+    const auto wrong_frame = feed(wrong);
+    Check(wrong_frame.disposition == PaintDisposition::kRejectedStale &&
+          wrong_frame.decoded_frame == d.target_frame_index - 1,
+          "request-bound exact: right request cannot substitute for decoded target frame");
+    wrong = second;
+    wrong.px[wrong.Off(20, 20)] ^= 1;
+    Check(t.m.PaintMayAdvance(wrong.px.data(), 64 * 4, 64, 48) &&
+          feed(wrong).disposition == PaintDisposition::kRejectedStale && dst == sentinel,
+          "request-bound exact: positive signature is NOT full-content verification");
+    Check(feed(second).disposition != PaintDisposition::kAccepted &&
+          t.m.needs_baseline_veto() && dst == sentinel,
+          "request-bound exact: both signed phases freeze output but do not publish");
+    Check(!t.m.PaintMayAdvance(second.px.data(), 64 * 4, 64, 48),
+          "request-bound exact: frozen candidate never recopies/re-fences signed paints");
+    Check(sample(id, original, 101).disposition != PaintDisposition::kAccepted &&
+          sample(id, original, 102).disposition != PaintDisposition::kAccepted,
+          "request-bound exact: samples without native readiness arm cannot accept");
+    auto foreign = id; ++foreign.document_gen;
+    Check(!t.m.ArmExactBaseline(foreign, 100, 1600), "request-bound exact: wrong-generation readiness rejected");
+    Check(t.m.ArmExactBaseline(id, 100, 1601) &&
+          !t.m.ArmExactBaseline(id, 0, 1602),
+          "request-bound exact: readiness floor armed exactly once, cannot be rewound");
+    Check(sample(id, original, 0).disposition != PaintDisposition::kAccepted &&
+          sample(id, original, 100).disposition != PaintDisposition::kAccepted,
+          "request-bound exact: unsequenced and pre-ready native paints rejected");
+    Check(sample(id, original, 101).disposition != PaintDisposition::kAccepted,
+          "request-bound exact: one distinct post-ready equality insufficient");
+    Check(sample(id, original, 101).disposition != PaintDisposition::kAccepted &&
+          sample(id, original, 102).disposition != PaintDisposition::kAccepted,
+          "request-bound exact: duplicate native paint resets consecutive evidence");
+    wrong = original; wrong.px[wrong.Off(63, 47) + 3] ^= 1;
+    Check(sample(id, wrong, 103).disposition != PaintDisposition::kAccepted &&
+          sample(id, original, 104).disposition != PaintDisposition::kAccepted,
+          "request-bound exact: corner alpha mismatch resets full-byte veto");
+    Check(sample(foreign, original, 105).disposition != PaintDisposition::kAccepted &&
+          sample(id, original, 106).disposition != PaintDisposition::kAccepted && dst == sentinel,
+          "request-bound exact: foreign identity resets equality, output remains untouched");
+    const auto accepted = sample(id, original, 107);
+    Check(accepted.disposition == PaintDisposition::kAccepted &&
+          accepted.decoded_frame == d.target_frame_index &&
+          accepted.decoded_request_id == d.request_id && dst == original.px &&
+          accepted.restored && !accepted.restore_from_reported,
+          "request-bound exact: two native equalities publish exact signed BGRA/alpha and decoded identity");
+    const auto source = drive == DriveMode::kModeP ? "persistent_unsigned" : "concurrent_unsigned_navigation";
+    Check(std::any_of(t.lines.begin(), t.lines.end(), [&](const auto& line) {
+            return line.find(source) != std::string::npos &&
+                   line.find("\"consecutive_equal_paints\":2") != std::string::npos;
+          }), "request-bound exact: audit labels actual independent baseline source");
+    dst = sentinel;
+    Check(sample(id, original, 108).disposition != PaintDisposition::kAccepted && dst == sentinel,
+          "request-bound exact: late baseline cannot republish accepted bytes");
+    t.m.Reset(1800, "done");
+    const uint32_t old_request = d.request_id;
+    ++d.request_id;
+    Check(t.AdvanceToS3(d, nullptr, 2000) && t.m.EnterPumping(2300),
+          "request-bound exact: repeated same frame starts a new request-token domain");
+    Check(!t.m.PaintMayAdvance(first.px.data(), 64 * 4, 64, 48) &&
+          feed(first).disposition == PaintDisposition::kRejectedStale &&
+          !t.m.needs_relocation() && !t.m.needs_baseline_veto(),
+          "request-bound exact: previous same-frame signed paint cannot advance new request");
+    t.m.FailRequest("fixture", 2400);
+    d.request_id = old_request;
+    Check(!t.m.BeginRequest(d, 2500), "request-bound exact: non-adjacent request replay rejected after failure");
+    d.request_id = std::numeric_limits<uint32_t>::max();
+    Check(t.m.BeginRequest(d, 2600), "request-bound exact: full32 request range allowed");
+    t.m.Reset(2700, "fixture");
+    d.request_id = 0;
+    Check(!t.m.BeginRequest(d, 2800), "request-bound exact: request wrap to zero fails closed");
+    d.request_id = 1;
+    Check(!t.m.BeginRequest(d, 2900), "request-bound exact: request wrap cannot reuse old proof token");
+  }
+}
+
+void TestPrefilterAndProbeCorruption() {
+  for (const auto mode : {CanaryMode::kClean, CanaryMode::kDiagnostic, CanaryMode::kExact}) {
+    Harness t;
+    RequestDesc d;
+    d.document_gen = 1; d.request_id = 0x12345678u;
+    d.target_frame_index = 0x2345; d.expected_w = 32; d.expected_h = 24;
+    d.canary = mode;
+    FrameBuf good(32, 24);
+    if (mode == CanaryMode::kClean) good.DrawCanaryClean(d.target_frame_index);
+    else if (mode == CanaryMode::kDiagnostic) good.DrawCanaryDiag(d.target_frame_index);
+    else good.DrawExact(d.target_frame_index, d.request_id, false);
+    std::vector<uint8_t> dst(good.px.size(), 0xAA);
+    Check(!t.m.PaintMayAdvance(good.px.data(), 32 * 4, 32, 24) &&
+          t.m.FeedPaint(good.px.data(), 32 * 4, 32, 24, dst.data(), 0).disposition == PaintDisposition::kLateDropped,
+          "prefilter: S0 is late (never early or positive)");
+    Check(t.AdvanceToS3(d, nullptr, 1) && t.m.EnterPumping(301), "prefilter: signed test state");
+    const auto before = t.m.request_stats();
+    const auto events = t.lines.size();
+    Check(t.m.PaintMayAdvance(good.px.data(), 32 * 4, 32, 24) &&
+          t.m.request_stats().paints_fed == before.paints_fed && t.lines.size() == events &&
+          t.m.state() == State::S4_COMPOSITOR_PUMPING,
+          "prefilter: positive classification is pure, not acceptance/state advance");
+    Check(!t.m.PaintMayAdvance(nullptr, 32 * 4, 32, 24) &&
+          !t.m.PaintMayAdvance(good.px.data(), 7, 32, 24) &&
+          !t.m.PaintMayAdvance(good.px.data(), 32 * 4 - 1, 32, 24) &&
+          !t.m.PaintMayAdvance(good.px.data(), 32 * 4, 31, 24),
+          "prefilter: null/short stride/wrong dimensions rejected without reading probes");
+    bool all_rejected = true;
+    for (size_t i = 0; i < good.px.size(); ++i) {
+      const size_t pixel = i / 4, x = pixel % 32, y = pixel / 32;
+      const bool probe = mode == CanaryMode::kClean ? i < 8 :
+          ((x < 8 && y < 8) || (x >= 24 && y >= 16));
+      if (!probe) continue;
+      auto bad = good; bad.px[i] ^= 1;
+      if (t.m.PaintMayAdvance(bad.px.data(), 32 * 4, 32, 24) ||
+          t.m.FeedPaint(bad.px.data(), 32 * 4, 32, 24, dst.data(), 400).disposition == PaintDisposition::kAccepted ||
+          t.m.needs_relocation() || t.m.state() != State::S4_COMPOSITOR_PUMPING) {
+        all_rejected = false; break;
+      }
+    }
+    Check(all_rejected && dst == std::vector<uint8_t>(good.px.size(), 0xAA),
+          "prefilter: every single probe-byte corruption rejects without output/state advance");
+    Check(t.m.FeedPaint(good.px.data(), 8, 32, 24, dst.data(), 500).disposition == PaintDisposition::kRejectedStale,
+          "prefilter: FeedPaint enforces full row stride, not only eight bytes");
+    t.m.FailRequest("fixture", 600);
+  }
+}
+
+void TestOwnedExactPaint() {
+  Harness t;
+  RequestDesc d;
+  d.document_gen = 1; d.request_id = 0xFEDCBA98u; d.target_frame_index = 65535;
+  d.expected_w = 16; d.expected_h = 16;
+  d.canary = CanaryMode::kExact;
+  FrameBuf original(16, 16), first = original, second = original;
+  first.DrawExact(d.target_frame_index, d.request_id, false);
+  second.DrawExact(d.target_frame_index, d.request_id, true);
+  auto owned = first.px;
+  const auto* allocation = owned.data();
+  std::vector<uint8_t> dst(original.px.size(), 0xAA);
+  Check(t.AdvanceToS3(d, nullptr, 0), "owned: ready");
+  Check(t.m.FeedOwnedPaint(owned, 16, 16, dst.data(), 300).disposition == PaintDisposition::kEarlyDropped &&
+        owned.data() == allocation && owned == first.px,
+        "owned: early candidate retains storage/content, never borrowed by verifier");
+  Check(t.m.EnterPumping(400), "owned: S4");
+  auto malformed = owned; malformed.pop_back();
+  Check(t.m.FeedOwnedPaint(malformed, 16, 16, dst.data(), 401).disposition == PaintDisposition::kRejectedStale &&
+        !t.m.needs_relocation(), "owned: wrong vector length rejects before signature reads");
+  const auto one = t.m.FeedOwnedPaint(owned, 16, 16, dst.data(), 500);
+  Check(one.disposition != PaintDisposition::kAccepted && t.m.needs_relocation() && owned.empty(),
+        "owned: fenced first native storage transferred, not whole-frame copied");
+  // The caller may immediately recycle its now-empty storage; the retained
+  // immutable first frame must remain independent of the caller's vector.
+  owned.assign(original.px.size(), 0xEE);
+  auto second_owned = second.px;
+  const auto* second_allocation = second_owned.data();
+  Check(t.m.FeedOwnedPaint(second_owned, 16, 16, dst.data(), 600).disposition != PaintDisposition::kAccepted &&
+        t.m.needs_baseline_veto() && second_owned.data() == second_allocation && second_owned == second.px,
+        "owned: phase2 keeps caller storage and freezes reconstructed original buffer");
+  PageEvent id; id.document_gen = d.document_gen; id.request_id = d.request_id;
+  id.target_frame_index = d.target_frame_index;
+  Check(t.m.ArmExactBaseline(id, 10, 700), "owned: baseline ready floor");
+  Check(t.m.FeedExactBaselinePaint(id, original.px.data(), 16 * 4, 16, 16,
+        dst.data(), 800, 11).disposition != PaintDisposition::kAccepted,
+        "owned: transferred storage still requires first veto");
+  Check(t.m.FeedExactBaselinePaint(id, original.px.data(), 16 * 4, 16, 16,
+        dst.data(), 900, 12).disposition == PaintDisposition::kAccepted && dst == original.px,
+        "owned: byte-exact output survives caller reuse and all-corner minimum geometry");
+}
+
+void TestExternalPumpSchedule() {
+  using S = ExternalPumpSchedule;
+  Check(S::DeadlineUs(1234, 0) == 1234 && S::DeadlineUs(1234, -1) == 1234 &&
+        S::DeadlineUs(1234, 9) == 10234, "pump: immediate/negative/delayed deadline policy");
+  Check(S::DeadlineUs(1234, std::numeric_limits<int64_t>::max()) == S::kNoDeadline - 1 &&
+        S::DeadlineUs(S::kNoDeadline, 1) == S::kNoDeadline - 1,
+        "pump: overflowing delays saturate without becoming immediate/no-work");
+  S s;
+  Check(s.deadline_us() == S::kNoDeadline, "pump: initially no scheduled work");
+  s.Schedule(0, 100); s.Schedule(20, 200);
+  Check(s.deadline_us() == 20200, "pump: positive delay replaces/cancels previous schedule (CEF contract)");
+  s.ConsumeDue(300);
+  Check(s.deadline_us() == 20200, "pump: early explicit pump preserves future timer");
+  s.ConsumeDue(20200); s.Schedule(0, 20201);
+  Check(s.deadline_us() == 20201, "pump: callback after consume remains pending (reentrant CEF work)");
+  s.ConsumeDue(20201);
+  Check(s.deadline_us() == S::kNoDeadline, "pump: due work consumed once");
+  const auto now = S::NowUs();
+  s.Schedule(10000, now);
+  s.NotifyWork();
+  // Sticky notification must survive arrival BEFORE WaitUntil starts.
+  s.WaitUntil(now + 1000000);
+  Check(s.deadline_us() == S::DeadlineUs(now, 10000),
+        "pump: native completion wake does not erase/replace CEF future timer");
+  S asynchronous;
+  auto waiter = std::async(std::launch::async, [&] {
+    asynchronous.WaitUntil(S::NowUs() + 3000000);
+  });
+  asynchronous.Schedule(0, S::NowUs());
+  const bool woken = waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+  if (!woken) asynchronous.NotifyWork();
+  waiter.get();
+  Check(woken, "pump: other-thread immediate callback wakes without lost-before-wait race");
+  S completion;
+  auto encoder_waiter = std::async(std::launch::async, [&] {
+    completion.WaitUntil(S::NowUs() + 3000000);
+  });
+  completion.NotifyWork();
+  const bool encoder_woken = encoder_waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+  if (!encoder_woken) completion.Schedule(0, S::NowUs());
+  encoder_waiter.get();
+  Check(encoder_woken && completion.deadline_us() == S::kNoDeadline,
+        "pump: native encoder completion independently wakes predicate waiter");
 }
 
 }  // namespace
@@ -846,7 +1192,12 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
+  TestRequestBoundExact();
+  TestPrefilterAndProbeCorruption();
+  TestExternalPumpSchedule();
+  TestOwnedExactPaint();
   TestNativeExact();
+  TestExactBaselineBatchBoundary();
   TestHappyPathClean();
   TestEarlyPaintDropped();
   TestStalePaintReject();

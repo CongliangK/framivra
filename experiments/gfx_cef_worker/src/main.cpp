@@ -67,6 +67,9 @@
 namespace {
 
 using Clock = std::chrono::steady_clock;
+// Diagnostic capability label, not a protocol gate or performance claim. The
+// host still fingerprints the actual binary and its deployed CEF distribution.
+constexpr const char* kWorkerImplementation = "paired-exact-v1";
 
 // ---------------------------------------------------------------- 运行选项
 
@@ -97,6 +100,7 @@ struct RunOptions {
   // ---- #114 帧同步状态机（--sync；详见 frame_sync_machine.h）----
   bool sync = false;                   // 启用五阶段状态机驱动
   std::string sync_mode = "n";         // n = 逐帧导航（?f=N）| p = 常驻页
+  std::string reference_context = "shared";  // unsigned exact browser profile
   std::string sync_log;                // JSONL 全事件日志路径
   std::string sync_canary = "clean";   // clean | diagnostic | exact (Alpha production)
   std::string sync_fault = "none";     // 对抗注入面（见 Usage）
@@ -121,6 +125,7 @@ void Usage(const char* argv0) {
       "  --out-png=<path>        输出 PNG（默认尺寸 1920x1080）\n"
       "  --out-json=<path>       输出运行结果 JSON（探针证据/计时/版本）\n"
       "  --root-cache-path=<dir> CEF root_cache_path（监管器运行目录；缺省临时目录）\n"
+      "  --capture-fps=1..240    OSR capture-rate request (default 120; not timeline FPS)\n"
       "  --width=N --height=N    视口尺寸（默认 1920x1080）\n"
       "  --probe                 注入 WebGL/WebGPU 真实后端探针\n"
       "  --probe-gpu-page        渲染后再导航 chrome://gpu 提取特性（隐含 --probe）\n"
@@ -137,7 +142,7 @@ void Usage(const char* argv0) {
       "  --fault-abort-after-frames=N  abort_after_frame 的 N（默认 1）\n"
       "  --slot-wait-timeout-ms=N      4 槽全满背压等待上限（默认 15000）\n"
       "  --serve-idle-timeout-ms=N     无请求空闲上限（默认 120000）\n"
-      "  --encode-threads=N            模式 1 编码线程池大小（默认 2）\n"
+      "  --encode-threads=1..16        模式 1 编码线程池大小（默认 2；明确有界）\n"
       "\n"
       "#111 PNG 编码后端（模式 1 落盘与 --out-png 共用；详见 README「双 PNG 编码后端」）:\n"
       "  --png-encoder=spng|fpng|zlib  spng=libspng v0.7.3 SUB|UP 滤波（默认，推荐）；\n"
@@ -151,6 +156,7 @@ void Usage(const char* argv0) {
       "#114 帧同步状态机（五阶段 S0→S5 + v2 双像素 Canary；搭配 --serve）:\n"
       "  --sync                  启用 FrameSyncStateMachine（替代固定 settle 等待）\n"
       "  --sync-mode=n|p         n = 逐帧导航 ?f=N（默认）；p = 常驻页 __vtx_render(N)\n"
+      "  --reference-context=shared|isolated  unsigned exact browser context (default shared)\n"
       "  --sync-log=<path>       JSONL 全事件日志（状态转移/paint 判定/时序/计数）\n"
       "  --sync-canary=clean|diagnostic|exact  exact = native cross-capture (production Alpha)\n"
       "                          clean = v2 双像素（默认）；diagnostic = 8x8\n"
@@ -177,9 +183,17 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
       if (v.empty()) {
         return false;
       }
+      if (!std::all_of(v.begin(), v.end(), [](char ch) {
+            return ch >= '0' && ch <= '9';
+          })) {
+        std::fprintf(stderr, "参数值非法: %s\n", arg.c_str());
+        std::exit(2);
+      }
+      errno = 0;
       char* end = nullptr;
       const long n = std::strtol(v.c_str(), &end, 10);
-      if (end == nullptr || *end != '\0' || n < 0 || n > 1000000000L) {
+      if (errno == ERANGE || end == v.c_str() || *end != '\0' ||
+          n < 0 || n > 1000000000L) {
         std::fprintf(stderr, "参数值非法: %s\n", arg.c_str());
         std::exit(2);
       }
@@ -202,6 +216,7 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
       opt->root_cache_path = v;
     } else if (num("--width=", &opt->cef.width)) {
     } else if (num("--height=", &opt->cef.height)) {
+    } else if (num("--capture-fps=", &opt->cef.capture_fps)) {
     } else if (num("--begin-frames=", &opt->begin_frames)) {
     } else if (num("--timeout-ms=", &opt->timeout_ms)) {
     } else if (num("--hold-ms=", &opt->hold_ms)) {
@@ -216,6 +231,8 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
       opt->sync = true;
     } else if (const std::string v = value("--sync-mode="); !v.empty()) {
       opt->sync_mode = v;
+    } else if (const std::string v = value("--reference-context="); !v.empty()) {
+      opt->reference_context = v;
     } else if (const std::string v = value("--sync-log="); !v.empty()) {
       opt->sync_log = v;
     } else if (const std::string v = value("--sync-canary="); !v.empty()) {
@@ -253,6 +270,20 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
   if (opt->cef.mode != "a0" && opt->cef.mode != "a1") {
     std::fprintf(stderr, "--mode 只接受 a0|a1，得到 %s\n",
                  opt->cef.mode.c_str());
+    return false;
+  }
+  if (opt->reference_context != "shared" && opt->reference_context != "isolated") {
+    std::fprintf(stderr, "--reference-context requires shared|isolated, got %s\n",
+                 opt->reference_context.c_str());
+    return false;
+  }
+  if (opt->cef.capture_fps < 1 || opt->cef.capture_fps > 240) {
+    std::fprintf(stderr, "--capture-fps requires 1..240, got %d\n", opt->cef.capture_fps);
+    return false;
+  }
+  if (opt->encode_threads < 1 || opt->encode_threads > 16) {
+    std::fprintf(stderr, "--encode-threads 只接受 1..16，得到 %d\n",
+                 opt->encode_threads);
     return false;
   }
   // #111：编码后端名与级别在参数面即拒非法值（exit 2，不静默回落）。
@@ -453,8 +484,8 @@ int Sanity() {
   ok = wrapper_ok && ok;
 
   if (ok) {
-    std::printf("SANITY OK: cef=%s chromium=%s (libcef.so 与版本锁一致)\n",
-                CEF_VERSION, VTX_CHROME_VERSION_STRING);
+    std::printf("SANITY OK: cef=%s chromium=%s worker=%s (libcef.so 与版本锁一致)\n",
+                CEF_VERSION, VTX_CHROME_VERSION_STRING, kWorkerImplementation);
     return 0;
   }
   std::fprintf(stderr, "SANITY FAIL: libcef.so 与编译期版本锁不一致\n");
@@ -571,6 +602,7 @@ int main(int argc, char* argv[]) {
     sopt.png = png_opt;              // #111 模式 1 编码后端/级别/滤波
     sopt.sync = opt.sync;            // #114 五阶段状态机
     sopt.sync_mode = opt.sync_mode;
+    sopt.reference_context = opt.reference_context;
     sopt.sync_log = opt.sync_log;
     sopt.sync_canary = opt.sync_canary;
     sopt.sync_fault = opt.sync_fault;
@@ -623,34 +655,49 @@ int main(int argc, char* argv[]) {
 
   int exit_code = 0;
   std::string exit_reason = "ok";
+  // Keep callback owners alive through every early failure and checked close.
+  vtx_cef::PumpDriver pump{&state};
+  CefRefPtr<vtx_cef::WorkerClient> client =
+      new vtx_cef::WorkerClient(&opt.cef, &state);
+  CefRefPtr<CefBrowser> browser;
+  bool creation_requested = false;
+  const auto pump_until = [&](const std::function<bool()>& done,
+                              int timeout_ms) -> bool {
+    return pump.Until([&] { return state.closed.load() || done(); }, timeout_ms) &&
+           !state.closed.load();
+  };
+  const auto reject_closed = [&]() {
+    if (!state.closed.load()) return false;
+    exit_code = 1;
+    exit_reason = "浏览器已关闭（OnBeforeClose）";
+    return true;
+  };
+  const auto close_browser = [&]() {
+    if (!vtx_cef::CloseServeBrowser(state, pump, browser, creation_requested)) {
+      // Unresolved CEF callbacks cannot outlive this stack. No stdio or joins.
+      vtx_cef::ExitUnclosedServe(exit_code != 0 ? exit_code : 1);
+    }
+    client = nullptr;
+  };
   do {
-    // ===== 外置泵（#110 抽提为 PumpDriver，语义与 #109 逐拍一致）。
-    vtx_cef::PumpDriver pump{&state};
-    const auto pump_once = [&]() { pump.Once(); };
-    const auto pump_until = [&](const std::function<bool()>& done,
-                                int timeout_ms) -> bool {
-      return pump.Until(done, timeout_ms);
-    };
-
     // ===== 建窗：OSR（windowless + external begin frame + 非 shared texture）
-    CefRefPtr<vtx_cef::WorkerClient> client =
-        new vtx_cef::WorkerClient(&opt.cef, &state);
     CefString url_str;
     url_str.FromString(opt.url);
-    if (!vtx_cef::CreateOsrBrowser(client, url_str, opt.cef.width,
-                                   opt.cef.height)) {
+    creation_requested = vtx_cef::CreateOsrBrowser(
+        client, url_str, opt.cef.width, opt.cef.height, opt.cef.capture_fps);
+    if (!creation_requested) {
       exit_code = 1;
       exit_reason = "CreateBrowser 失败";
       break;
     }
     // 建窗为异步：OnAfterCreated 捕获 browser 引用
-    CefRefPtr<CefBrowser> browser;
     if (!pump_until(
             [&]() {
               std::lock_guard<std::mutex> lock(state.mu);
               return state.browser != nullptr;
             },
             opt.timeout_ms)) {
+      if (reject_closed()) break;
       exit_code = 124;
       exit_reason = "浏览器创建超时（OnAfterCreated 未回）";
       break;
@@ -662,6 +709,7 @@ int main(int argc, char* argv[]) {
 
     // 阶段 1：等首屏加载完成（is_loading 翻转）
     if (!pump_until([&]() { return state.loaded.load(); }, opt.timeout_ms)) {
+      if (reject_closed()) break;
       exit_code = 124;
       exit_reason = "页面加载超时（isLoading 未翻转）";
       break;
@@ -670,6 +718,7 @@ int main(int argc, char* argv[]) {
         std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0)
             .count());
     pump_until([]() { return false; }, 250);  // 字体/布局落定余量
+    if (reject_closed()) break;
 
     // 阶段 2（--probe）：页面内真实后端探针（WebGL/WebGPU）
     if (opt.cef.probe) {
@@ -689,10 +738,12 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    if (reject_closed()) break;
+
     // 阶段 3：external begin frame 驱动出帧（OSR 无内部 vsync）
     Clock::time_point t_first_paint = Clock::now();
     bool painted = false;
-    for (int i = 0; i < opt.begin_frames && !painted; ++i) {
+    for (int i = 0; i < opt.begin_frames && !painted && !state.closed.load(); ++i) {
       const int before = state.paints.load(std::memory_order_relaxed);
       browser->GetHost()->SendExternalBeginFrame();
       if (pump_until(
@@ -706,6 +757,7 @@ int main(int argc, char* argv[]) {
         }
       }
     }
+    if (reject_closed()) break;
     const int ms_first_paint =
         painted ? static_cast<int>(std::chrono::duration_cast<
                                        std::chrono::milliseconds>(
@@ -757,6 +809,7 @@ int main(int argc, char* argv[]) {
       browser->GetMainFrame()->LoadURL("chrome://gpu/");
       if (pump_until([&]() { return state.loaded.load(); }, opt.timeout_ms)) {
         pump_until([]() { return false; }, 400);  // WebUI 渲染落定
+        if (reject_closed()) break;
         browser->GetMainFrame()->ExecuteJavaScript(
             vtx_cef::BuildGpuPageProbeJs(), "vtx_cef_gpu_probe", 0);
         const bool got = pump_until(
@@ -781,20 +834,23 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    if (reject_closed()) break;
+
     // 阶段 6（--hold-ms）：保持合成循环活跃（监管 kill 演练的"渲染途中"）
     if (opt.hold_ms > 0 && exit_code == 0) {
       const auto hold_until =
           Clock::now() + std::chrono::milliseconds(opt.hold_ms);
-      while (Clock::now() < hold_until) {
+      while (Clock::now() < hold_until && !state.closed.load()) {
         browser->GetHost()->SendExternalBeginFrame();
-        pump_once();
+        pump.Once();
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
       }
     }
 
+    if (reject_closed()) break;
+
     // ===== 收尾：优雅关浏览器 → 等回调 → 结果 JSON → CefShutdown
-    browser->GetHost()->CloseBrowser(true);
-    pump_until([&]() { return state.closed.load(); }, 5000);
+    close_browser();
 
     if (!opt.out_json.empty()) {
       const int ms_total = static_cast<int>(
@@ -814,6 +870,8 @@ int main(int argc, char* argv[]) {
       std::string js = "{\n";
       js += "  \"worker\": \"vtx_cef_worker/issue-109\",\n";
       js += "  \"cef_version\": \"" + std::string(CEF_VERSION) + "\",\n";
+      js += "  \"worker_implementation\": \"" + std::string(kWorkerImplementation) + "\",\n";
+      js += "  \"capture_fps_requested\": " + std::to_string(opt.cef.capture_fps) + ",\n";
       js += "  \"chromium_version\": \"" +
             std::string(VTX_CHROME_VERSION_STRING) + "\",\n";
       js += "  \"mode\": \"" + opt.cef.mode + "\",\n";
@@ -861,6 +919,8 @@ int main(int argc, char* argv[]) {
     }
   } while (false);
 
+  // Also owns creation/load/probe failures. Idempotent after the normal close.
+  close_browser();
   CefShutdown();
   if (owns_cache) {
     std::error_code ec;

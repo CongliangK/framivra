@@ -43,13 +43,28 @@ struct ServeOptions {
   // ---- #114 frame sync（五阶段状态机驱动；详见 frame_sync_machine.hpp）----
   bool sync = false;                 // --sync：启用 FrameSyncStateMachine
   std::string sync_mode = "n";       // n = 逐帧导航（?f=N）；p = 常驻页
-  std::string sync_log;              // --sync-log：JSONL 全事件日志路径
+  // Explicit experimental context axis, not a fallback or proof relaxation.
+  // isolated gives only the unsigned browser an in-memory request context.
+  std::string reference_context = "shared";  // shared | isolated
+  std::string sync_log;              // JSONL proof + adapter_timing. Parallel
+                                    // capture stage durations overlap; do NOT sum.
+  // exact: two-position signed native capture + mandatory full-byte unsigned
+  // veto. N navigates both browsers concurrently; P keeps two resident pages
+  // and requires a complete __vtx_render(f) (sync or awaited Promise). Neither
+  // mode supplies output bytes from the unsigned browser; P fails require a
+  // worker restart, never a silent fallback to N or an unverified screenshot.
   std::string sync_canary = "clean"; // clean | diagnostic | exact (Alpha production)
   std::string sync_fault = "none";   // none|stale_canary|no_canary|no_ready|
                                      // early_burst（对抗注入面）
   int sync_pump_timeout_ms = 5000;   // S4 泵送硬超时（工单冻结 5000ms）
   int sync_ready_timeout_ms = 20000; // S1→S3 就绪信号等待上限
 };
+
+// Shared checked closure for serve and one-shot owners. False means CEF still
+// owns pending callbacks: do not unwind their RunState or call CefShutdown.
+bool CloseServeBrowser(RunState& state, PumpDriver& pump,
+                       CefRefPtr<CefBrowser>& browser, bool creation_requested);
+[[noreturn]] void ExitUnclosedServe(int status);
 
 // 阻塞服务直至宿主断开/空闲超时/致命错误；返回进程退出码。
 // argc/argv 透传自 main（CefMainArgs 需真实命令行）。

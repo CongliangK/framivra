@@ -14,6 +14,9 @@ struct JsErrorGate {
   bool failed = false;
   uint32_t sent = 0;  // lifetime monotonic, including same-URL navigations
   uint32_t done = 0;
+  // Native renderer getpid(), authenticated by the same document/fence binding.
+  // Diagnostic only: unknown=0 and NEVER used by JsCheckpointResult.
+  int64_t renderer_pid = 0;
 };
 enum class JsCheckpointOutcome { kPending, kPassed, kTimeout, kObserverError };
 inline int JsCheckpointRemainingMs(uint64_t now, uint64_t deadline) {

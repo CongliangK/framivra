@@ -21,9 +21,17 @@
 
 #include <zlib.h>
 
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#elif defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 
@@ -31,7 +39,36 @@
 #include "spng.h"
 
 namespace vtx_cef {
+
+void PngBuffer::FreeBytes::operator()(uint8_t* data) const noexcept {
+  std::free(data);
+}
+
+struct PngBufferAccess {
+  static void Adopt(PngBuffer* png, void* bytes, size_t len) noexcept {
+    png->clear();
+    png->allocated_.reset(static_cast<uint8_t*>(bytes));
+    png->allocated_size_ = len;
+  }
+  static std::vector<uint8_t>* Vector(PngBuffer* png) { return &png->bytes_; }
+};
+
 namespace {
+
+bool ImageSize(int width, int height, size_t* row_bytes, size_t* frame_bytes) {
+  if (width <= 0 || height <= 0 ||
+      static_cast<size_t>(width) > std::numeric_limits<size_t>::max() / 4u) {
+    return false;
+  }
+  const size_t row = static_cast<size_t>(width) * 4u;
+  if (static_cast<size_t>(height) > std::numeric_limits<size_t>::max() / row) {
+    return false;
+  }
+  *row_bytes = row;
+  *frame_bytes = row * static_cast<size_t>(height);
+  return true;
+}
+
 
 // ---------------------------------------------------------------- zlib 遗留
 //（#109 逻辑原样：filter-0 扫描线 + 单 IDAT + Z_DEFAULT_COMPRESSION）
@@ -101,63 +138,214 @@ bool EncodeZlibLegacy(const uint8_t* rgba, int width, int height,
   return true;
 }
 
+// Exact libspng SUB/UP score: min(delta, 256-delta), with subtraction
+// modulo 256. Ties choose SUB (its PNG filter number precedes UP). SIMD sums
+// byte magnitudes rather than using a different heuristic or sampled rows.
+struct FilterScores { uint64_t sub = 0, up = 0; };
+
+inline unsigned ByteMagnitude(uint8_t value) {
+  return std::min<unsigned>(value, 256u - value);
+}
+
+[[maybe_unused]] FilterScores ScoreSubUpScalar(const uint8_t* row, const uint8_t* previous,
+                               size_t size) {
+  FilterScores sum;
+  for (size_t i = 0; i < size; ++i) {
+    const uint8_t left = i < 4 ? 0 : row[i - 4];
+    sum.sub += ByteMagnitude(static_cast<uint8_t>(row[i] - left));
+    sum.up += ByteMagnitude(static_cast<uint8_t>(row[i] - previous[i]));
+  }
+  return sum;
+}
+
+#if defined(__x86_64__) || defined(__i386__)
+__attribute__((target("avx2")))
+FilterScores ScoreSubUpAvx2(const uint8_t* row, const uint8_t* previous,
+                             size_t size) {
+  FilterScores sum;
+  size_t i = 0;
+  for (; i < std::min<size_t>(4, size); ++i) {
+    sum.sub += ByteMagnitude(row[i]);
+    sum.up += ByteMagnitude(static_cast<uint8_t>(row[i] - previous[i]));
+  }
+  __m256i sub = _mm256_setzero_si256(), up = _mm256_setzero_si256();
+  const __m256i zero = _mm256_setzero_si256();
+  for (; size - i >= 32; i += 32) {
+    const __m256i current = _mm256_loadu_si256(
+        reinterpret_cast<const __m256i*>(row + i));
+    const __m256i left = _mm256_loadu_si256(
+        reinterpret_cast<const __m256i*>(row + i - 4));
+    const __m256i above = _mm256_loadu_si256(
+        reinterpret_cast<const __m256i*>(previous + i));
+    sub = _mm256_add_epi64(sub, _mm256_sad_epu8(
+        _mm256_abs_epi8(_mm256_sub_epi8(current, left)), zero));
+    up = _mm256_add_epi64(up, _mm256_sad_epu8(
+        _mm256_abs_epi8(_mm256_sub_epi8(current, above)), zero));
+  }
+  alignas(32) uint64_t sub_lanes[4], up_lanes[4];
+  _mm256_store_si256(reinterpret_cast<__m256i*>(sub_lanes), sub);
+  _mm256_store_si256(reinterpret_cast<__m256i*>(up_lanes), up);
+  for (int lane = 0; lane < 4; ++lane) {
+    sum.sub += sub_lanes[lane];
+    sum.up += up_lanes[lane];
+  }
+  for (; i < size; ++i) {
+    sum.sub += ByteMagnitude(static_cast<uint8_t>(row[i] - row[i - 4]));
+    sum.up += ByteMagnitude(static_cast<uint8_t>(row[i] - previous[i]));
+  }
+  return sum;
+}
+#elif defined(__aarch64__)
+FilterScores ScoreSubUpNeon(const uint8_t* row, const uint8_t* previous,
+                             size_t size) {
+  FilterScores sum;
+  size_t i = 0;
+  for (; i < std::min<size_t>(4, size); ++i) {
+    sum.sub += ByteMagnitude(row[i]);
+    sum.up += ByteMagnitude(static_cast<uint8_t>(row[i] - previous[i]));
+  }
+  uint32x4_t sub = vdupq_n_u32(0), up = vdupq_n_u32(0);
+  for (; size - i >= 16; i += 16) {
+    const uint8x16_t current = vld1q_u8(row + i);
+    const uint8x16_t left = vld1q_u8(row + i - 4);
+    const uint8x16_t above = vld1q_u8(previous + i);
+    const uint8x16_t sub_abs = vreinterpretq_u8_s8(
+        vabsq_s8(vreinterpretq_s8_u8(vsubq_u8(current, left))));
+    const uint8x16_t up_abs = vreinterpretq_u8_s8(
+        vabsq_s8(vreinterpretq_s8_u8(vsubq_u8(current, above))));
+    sub = vpadalq_u16(sub, vpaddlq_u8(sub_abs));
+    up = vpadalq_u16(up, vpaddlq_u8(up_abs));
+  }
+  sum.sub += vaddvq_u32(sub);
+  sum.up += vaddvq_u32(up);
+  for (; i < size; ++i) {
+    sum.sub += ByteMagnitude(static_cast<uint8_t>(row[i] - row[i - 4]));
+    sum.up += ByteMagnitude(static_cast<uint8_t>(row[i] - previous[i]));
+  }
+  return sum;
+}
+#endif
+
+int SelectSubUpFilter(const uint8_t* row, const uint8_t* previous, size_t size) {
+  // Retain upstream's overflow sentinel and tie behavior for enormous rows.
+  // Normal worker viewports are far below this bound.
+  if (size > static_cast<size_t>(INT32_MAX / 128)) return SPNG_FILTER_CHOICE_SUB | SPNG_FILTER_CHOICE_UP;
+  using ScoreFn = FilterScores (*)(const uint8_t*, const uint8_t*, size_t);
+#if defined(__x86_64__) || defined(__i386__)
+  static const ScoreFn score = __builtin_cpu_supports("avx2") ? ScoreSubUpAvx2
+                                                               : ScoreSubUpScalar;
+#elif defined(__aarch64__)
+  static const ScoreFn score = ScoreSubUpNeon;
+#else
+  static const ScoreFn score = ScoreSubUpScalar;
+#endif
+  const FilterScores sum = score(row, previous, size);
+  return sum.sub <= sum.up ? SPNG_FILTER_CHOICE_SUB : SPNG_FILTER_CHOICE_UP;
+}
+
 // ---------------------------------------------------------------- libspng
-bool EncodeSpng(const uint8_t* rgba, int width, int height, int level,
-                SpngFilter filter, std::vector<uint8_t>* png) {
+bool EncodeSpngOwned(const uint8_t* rgba, int width, int height, int level,
+                      SpngFilter filter, PngRowSource source, void* user,
+                      PngEncodeWorkspace* workspace, PngBuffer* png) {
   std::unique_ptr<spng_ctx, decltype(&spng_ctx_free)> ctx(
       spng_ctx_new(SPNG_CTX_ENCODER), &spng_ctx_free);
   if (ctx == nullptr) {
     std::fprintf(stderr, "png_writer: spng_ctx_new 失败\n");
     return false;
   }
-  bool ok = false;
-  do {
-    if (spng_set_option(ctx.get(), SPNG_ENCODE_TO_BUFFER, 1) != 0) {
-      std::fprintf(stderr, "png_writer: SPNG_ENCODE_TO_BUFFER 设置失败\n");
-      break;
+  if (spng_set_option(ctx.get(), SPNG_ENCODE_TO_BUFFER, 1) != 0) {
+    std::fprintf(stderr, "png_writer: SPNG_ENCODE_TO_BUFFER 设置失败\n");
+    return false;
+  }
+  spng_ihdr ihdr{};
+  ihdr.width = static_cast<uint32_t>(width);
+  ihdr.height = static_cast<uint32_t>(height);
+  ihdr.bit_depth = 8;
+  ihdr.color_type = SPNG_COLOR_TYPE_TRUECOLOR_ALPHA;
+  if (spng_set_ihdr(ctx.get(), &ihdr) != 0 ||
+      spng_set_option(ctx.get(), SPNG_IMG_COMPRESSION_LEVEL, level) != 0 ||
+      spng_set_option(ctx.get(), SPNG_FILTER_CHOICE,
+                      static_cast<int>(filter)) != 0) {
+    std::fprintf(stderr, "png_writer: spng 头/选项设置失败\n");
+    return false;
+  }
+  const size_t row_bytes = static_cast<size_t>(width) * 4u;
+  const size_t frame_bytes = row_bytes * static_cast<size_t>(height);
+  int ret = 0;
+  if (source == nullptr) {
+    ret = spng_encode_image(ctx.get(), rgba, frame_bytes, SPNG_FMT_PNG,
+                             SPNG_ENCODE_FINALIZE);
+  } else {
+    // libspng copies each submitted row before returning. Convert a small tile,
+    // encode it while it is cache-hot, then reuse the same allocation. No full
+    // RGBA frame is written and read back for the default spng path.
+    const size_t tile_rows = std::min<size_t>(16, static_cast<size_t>(height));
+    workspace->rgba.resize(row_bytes * tile_rows);
+    const bool select_sub_up = filter == SpngFilter::kSubUp;
+    if (select_sub_up) workspace->previous_row.assign(row_bytes, 0);
+    ret = spng_encode_image(ctx.get(), nullptr, 0, SPNG_FMT_PNG,
+                             SPNG_ENCODE_PROGRESSIVE | SPNG_ENCODE_FINALIZE);
+    if (ret == 0) {
+      for (size_t first = 0; first < static_cast<size_t>(height); first += tile_rows) {
+        const size_t count = std::min(tile_rows, static_cast<size_t>(height) - first);
+        if (!source(user, first, count, workspace->rgba.data())) return false;
+        for (size_t row = 0; row < count; ++row) {
+          const uint8_t* current = workspace->rgba.data() + row * row_bytes;
+          if (select_sub_up) {
+            const uint8_t* previous = row == 0 ? workspace->previous_row.data()
+                                               : current - row_bytes;
+            // v0.7.3 allows FILTER_CHOICE updates between progressive rows.
+            // Set exactly the same winner as get_best_filter(), but avoid its
+            // two scalar score passes; spng still filters/compresses the row.
+            ret = spng_set_option(ctx.get(), SPNG_FILTER_CHOICE,
+                                   SelectSubUpFilter(current, previous, row_bytes));
+            if (ret != 0) return false;
+          }
+          ret = spng_encode_row(ctx.get(), current, row_bytes);
+          const bool last = first + row + 1 == static_cast<size_t>(height);
+          if (ret != (last ? SPNG_EOI : 0)) {
+            std::fprintf(stderr, "png_writer: spng_encode_row 失败: %s\n",
+                         spng_strerror(ret));
+            return false;
+          }
+        }
+        if (select_sub_up && first + count < static_cast<size_t>(height)) {
+          std::memcpy(workspace->previous_row.data(),
+                       workspace->rgba.data() + (count - 1) * row_bytes, row_bytes);
+        }
+      }
+      ret = 0;  // The final row returned EOI and finalized the PNG.
     }
-    struct spng_ihdr ihdr;
-    std::memset(&ihdr, 0, sizeof(ihdr));
-    ihdr.width = static_cast<uint32_t>(width);
-    ihdr.height = static_cast<uint32_t>(height);
-    ihdr.bit_depth = 8;   // 8-bit
-    ihdr.color_type = 6;  // RGBA
-    // 工单口径：SUB|UP 滤波选择（可用 --png-filter 改）+ 压缩级别
-    // （1..3；3 对齐 VTX_GFX_PNG_LEVEL）。
-    if (spng_set_ihdr(ctx.get(), &ihdr) != 0 ||
-        spng_set_option(ctx.get(), SPNG_IMG_COMPRESSION_LEVEL, level) != 0 ||
-        spng_set_option(ctx.get(), SPNG_FILTER_CHOICE,
-                        static_cast<int>(filter)) != 0) {
-      std::fprintf(stderr, "png_writer: spng 头/选项设置失败\n");
-      break;
-    }
-    // v0.7.3 编码面仅接受 SPNG_FMT_PNG/SPNG_FMT_RAW：8-bit RGBA 输入布局
-    // 与 SPNG_FMT_PNG 逐字节一致（行内像素字节，滤波字节由本库生成）。
-    const size_t len =
-        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-    const int ret = spng_encode_image(ctx.get(), rgba, len, SPNG_FMT_PNG,
-                                      SPNG_ENCODE_FINALIZE);
-    if (ret != 0) {
-      std::fprintf(stderr, "png_writer: spng_encode_image 失败: %s\n",
-                   spng_strerror(ret));
-      break;
-    }
-    size_t out_len = 0;
-    int err = 0;
-    // spng_ctx_new uses the standard allocator. Adopt before validating length
-    // so success, defensive rejection, and vector allocation failure all free it.
-    std::unique_ptr<void, decltype(&std::free)> buf(
-        spng_get_png_buffer(ctx.get(), &out_len, &err), &std::free);
-    if (buf == nullptr || out_len == 0) {
-      std::fprintf(stderr, "png_writer: spng_get_png_buffer 失败: %s\n",
-                   spng_strerror(err));
-      break;
-    }
-    png->assign(static_cast<const uint8_t*>(buf.get()),
-                static_cast<const uint8_t*>(buf.get()) + out_len);
-    ok = true;
-  } while (false);
-  return ok;
+  }
+  if (ret != 0) {
+    std::fprintf(stderr, "png_writer: spng_encode_image 失败: %s\n",
+                 spng_strerror(ret));
+    return false;
+  }
+  size_t out_len = 0;
+  int err = 0;
+  // Adopt before checking length: even a defensive rejection of a non-null,
+  // empty result must free the transferred allocation exactly once.
+  std::unique_ptr<void, decltype(&std::free)> buf(
+      spng_get_png_buffer(ctx.get(), &out_len, &err), &std::free);
+  if (buf == nullptr || out_len == 0 || err != 0) {
+    std::fprintf(stderr, "png_writer: spng_get_png_buffer 失败: %s\n",
+                 spng_strerror(err));
+    return false;
+  }
+  PngBufferAccess::Adopt(png, buf.release(), out_len);
+  return true;
+}
+
+bool EncodeSpng(const uint8_t* rgba, int width, int height, int level,
+                SpngFilter filter, std::vector<uint8_t>* png) {
+  PngBuffer owned;
+  if (!EncodeSpngOwned(rgba, width, height, level, filter, nullptr, nullptr,
+                       nullptr, &owned)) return false;
+  // Legacy vector API remains byte-compatible. New production callers retain
+  // the owned buffer and avoid this copy entirely.
+  png->assign(owned.data(), owned.data() + owned.size());
+  return true;
 }
 
 // ---------------------------------------------------------------- fpng
@@ -245,7 +433,9 @@ void PngEncoderGlobalInit() {
 
 bool EncodePngRgba(const uint8_t* rgba, int width, int height,
                    const PngEncodeOptions& opt, std::vector<uint8_t>* png) {
-  if (rgba == nullptr || png == nullptr || width <= 0 || height <= 0) {
+  size_t row_bytes = 0, frame_bytes = 0;
+  if (rgba == nullptr || png == nullptr ||
+      !ImageSize(width, height, &row_bytes, &frame_bytes)) {
     return false;
   }
   switch (opt.encoder) {
@@ -264,6 +454,49 @@ bool EncodePngRgba(const uint8_t* rgba, int width, int height,
 }
 
 bool EncodePngRgba(const uint8_t* rgba, int width, int height,
+                   const PngEncodeOptions& opt, PngBuffer* png) {
+  size_t row_bytes = 0, frame_bytes = 0;
+  if (rgba == nullptr || png == nullptr ||
+      !ImageSize(width, height, &row_bytes, &frame_bytes)) return false;
+  PngBuffer next;
+  bool ok = false;
+  if (opt.encoder == PngEncoder::kSpng) {
+    if (opt.level < 1 || opt.level > 3) return false;
+    ok = EncodeSpngOwned(rgba, width, height, opt.level, opt.spng_filter,
+                         nullptr, nullptr, nullptr, &next);
+  } else {
+    ok = EncodePngRgba(rgba, width, height, opt, PngBufferAccess::Vector(&next));
+  }
+  if (!ok) return false;
+  *png = std::move(next);
+  return true;
+}
+
+bool EncodePngRgbaRows(int width, int height, const PngEncodeOptions& opt,
+                       PngRowSource source, void* user,
+                       PngEncodeWorkspace* workspace, PngBuffer* png) {
+  size_t row_bytes = 0, frame_bytes = 0;
+  if (source == nullptr || workspace == nullptr || png == nullptr ||
+      !ImageSize(width, height, &row_bytes, &frame_bytes)) return false;
+  PngBuffer next;
+  if (opt.encoder == PngEncoder::kSpng) {
+    if (opt.level < 1 || opt.level > 3) return false;
+    if (!EncodeSpngOwned(nullptr, width, height, opt.level, opt.spng_filter,
+                         source, user, workspace, &next)) return false;
+  } else {
+    // Alternate encoders consume a contiguous frame. Preserve their behavior,
+    // reuse the allocation between frames, and never silently switch backend.
+    workspace->rgba.resize(frame_bytes);
+    if (!source(user, 0, static_cast<size_t>(height), workspace->rgba.data()) ||
+        !EncodePngRgba(workspace->rgba.data(), width, height, opt, &next)) {
+      return false;
+    }
+  }
+  *png = std::move(next);
+  return true;
+}
+
+bool EncodePngRgba(const uint8_t* rgba, int width, int height,
                    std::vector<uint8_t>* png) {
   // #110 兼容口径：zlib 遗留编码器（t_png_encode_us 计时段语义不变；
   // filter/level 字段对该后端无效）。
@@ -279,7 +512,7 @@ bool WritePngRgba(const std::string& path, const uint8_t* rgba, int width,
   if (!rgba || width <= 0 || height <= 0) {
     return false;
   }
-  std::vector<uint8_t> png;
+  PngBuffer png;
   if (!EncodePngRgba(rgba, width, height, opt, &png)) {
     return false;
   }

@@ -36,18 +36,35 @@ profile 不访问系统登录钥匙串，以免非交互关停等待钥匙串授
 
 CEF 通过 `VTX_GFX=cef` 显式选择；未知后端值拒绝执行，默认仍为 CDP。CEF 初始化、
 验签或输出失败直接使 gfx 阶段失败，**不回落 CDP/CLI**。Python 客户端在 `vtx/`，
-worker 及同目录锁定 CEF 运行库须另行构建。仅平台完整进程监管可用时启动（Linux `/proc`，macOS `libproc`）；
+worker 及同目录锁定 CEF 运行库须另行构建。升级后必须重编 worker：生产在首帧前
+核验 Hello 的 paired-exact bit1，旧 protocol-v1 worker 也会早拒绝；`--sanity` 的
+`worker=paired-exact-v1` 仅为诊断标签，不替代能力握手或实际二进制身份。
+仅平台完整进程监管可用时启动（Linux `/proc`，macOS `libproc`）；
 worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处理不可信页面**。
 
-生产 CEF 固定使用 **Mode N**：每帧导航原页面 `?f=N`，不要求页面实现
-`__vtx_render` 或 `__vtx_originals`，不修改项目 HTML。原生 `--sync-canary=exact`
-在同一文档中先验 TL/BR 不透明探针，再移至 TR/BL（反转帧号 token）复验；
-两次捕获的非覆盖区域须逐字节一致，再交叉恢复实际遮挡像素。签名导航之前，
-另一次全新导航只等待资源就绪并取得连续一致的原生画面，**从未插入见证 DOM**；
-完整重建像素（含四角）必须与此 baseline 逐字节相同，否则拒绝输出、不能进入 S5。
+生产 CEF 默认 **Mode N**：每帧导航原页面 `?f=N`，不要求页面实现
+`__vtx_render` 或 `__vtx_originals`，不修改项目 HTML。每个 worker 保持签名与
+无见证两个浏览器；Mode N 两路导航可重叠，但同源浏览器可能共享 renderer，
+不据此声称 CPU 渲染翻倍。默认 `VTX_CEF_REFERENCE_CONTEXT=shared`；显式
+`isolated` 仅让无见证浏览器使用独立内存 request context，签名浏览器仍用全局
+context，不改安全开关、不失败回落。独立 context 改变存储/缓存共享语义，不能
+自动证明页面兼容；用日志中原生 renderer PID 确认是否实际分进程，而非由配置推断。
+显式 `VTX_CEF_SYNC_MODE=p` 才使用常驻双页：页面须
+实现帧纯函数 `__vtx_render(N)`；exact P 等待返回的 Promise 完成，再核布局、
+字体和图像，不额外等待双 rAF（N 不变）。钩子返回/Promise resolve 前须完成目标帧
+状态与绘制提交，不能仅排队后续 timer/rAF/worker 绘制后提前返回；原生 paint 证明仍必需。
+缺钩子或未完成 Promise 以原就绪 deadline 的 TIMEOUT 拒绝，钩子异常/
+未处理拒绝由 JS_ERR 闸门拒绝。失败的常驻会话不得继续发帧，须重启 worker；不猜测
+钩子、不修改 HTML、不回落 N。旧 clean/diagnostic P 仍拒绝 thenable。
+原生 `--sync-canary=exact` 在同一文档先验 TL/BR 的 8×8 分带不透明探针
+（16 位帧号 + 32 位 request_id），再移至 TR/BL（反转 token）复验；
+两次捕获的非覆盖区域须逐字节一致，再交叉恢复实际遮挡像素。独立浏览器
+**从未插入见证 DOM**；资源/请求就绪后两个不同 OnPaint 的完整像素（含四角）
+须分别与冻结的签名重建结果逐字节相同，否则拒绝输出、不能进入 S5。
 这个 baseline 仅有否决权，不提供目标帧证明，也不贡献任何恢复或输出字节。
 输出为签名捕获的 BGRA 预乘像素经现有逆预乘/PNG 链的结果，**不使用邻行像素猜测**。
-页面仍须遵守帧纯函数协议；异步视觉变化、根元素特效或结构选择器（如
+页面仍须遵守帧纯函数协议，不依赖跨页消息、共享 storage 写入顺序或 Service Worker
+客户端数量；既有全局 worker 池也有此前提。异步视觉变化、根元素特效或结构选择器（如
 `body:last-child`、`html:has`）的见证副作用可能导致显式超时，不承诺任意网页兼容。
 `clean` 旧实验通道的邻域兜底不用于生产。renderer 在页面 inline script 前安装
 可信错误观察器，并在接受捕获像素前核对 renderer fence：未捕获异常、语法错误、
@@ -56,7 +73,9 @@ worker 当前禁用 Chromium sandbox，**只渲染受信任本地 HTML，不处�
 这些有限反例不构成任意网页正确性或不可信输入安全保证；短片 fixture 也不代替完整项目验收。
 
 缓存身份与路由权威见 [cache-provenance](../../docs/cache-provenance.md)。
-原生逐事件日志、进程日志、逐帧回执保留在项目 `cache/reports/cef/`；失败亦保留。
+原生逐事件日志、进程日志、逐帧回执及 `*.pipeline.json` 保留在项目
+`cache/reports/cef/`；失败亦保留。后者记录块墙钟、请求往返、宿主校验/提交耗时、
+配置和完成状态；原生回执的分项不是完整导航/帧墙钟，不能相加当作 gfx 总耗时。
 所有运行 scratch/profile 落监管 `cache/tmp/`；Linux 长路径通过父 fd 别名访问，
 macOS 使用继承的 Unix socketpair fd 连接，不依赖 `/proc`。
 
@@ -65,19 +84,123 @@ macOS 使用继承的 Unix socketpair fd 连接，不依赖 `/proc`。
 不能以小 fixture 通过替代完整视频验收。没有上传步骤。
 
 ```bash
-# PROJECT_COPY 由验收主控设置；worker 旁须有锁定运行库与资源文件。
-env VTX_GFX=cef VTX_CEF_MODE=a0 VTX_GFX_PAGES=2 \
-  VTX_GFX_CACHE_NS=cef-alpha-20261016 \
-  VTX_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker" \
-  python3 vtx/vtx.py -t "${PROJECT_COPY:?}/timeline.json" all
+# PROJECT_COPY 为新副本；CEF_WORKER 使用上方平台对应的真实原生入口。
+env VTX_GFX=cef VTX_CEF_MODE=a0 VTX_CEF_SYNC_MODE=n VTX_GFX_PAGES=2 \
+  VTX_CEF_WORKER="${CEF_WORKER:?}" \
+  python3 -m vtx -t "${PROJECT_COPY:?}/timeline.json" all
 ```
 
 真实后端、全像素透明/不透明恢复、缓存补帧和短片全链 fixture：
 
 ```bash
-env VTX_TEST_CEF_WORKER="$PWD/experiments/gfx_cef_worker/build/bin/vtx_cef_worker" \
-  python3 -m unittest tests.gfx.test_gfx_cef_alpha -v
+env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
+  python3 -m unittest tests.gfx.test_gfx_cef_alpha tests.gfx.test_cef_runtime_config -v
 ```
+
+### 有界调度与 Mac 性能交接
+
+| 配置 | 默认 / 范围 |
+| --- | --- |
+| `VTX_CEF_SYNC_MODE` | `n` / `n\|p`；生产 exact P 等待 Promise 钩子 |
+| `VTX_CEF_REFERENCE_CONTEXT` | `shared` / `shared\|isolated`；只改变无见证浏览器的 request context |
+| `VTX_CEF_CAPTURE_FPS` | `120` / `1..240`；OSR 采样率请求，签名/无见证两路同值，不是 timeline FPS |
+| `VTX_CEF_PNG_ENCODER`、`VTX_CEF_PNG_LEVEL`、`VTX_CEF_PNG_FILTER` | `spng` / `spng\|fpng\|zlib`；`1` / `1..3`；`sub_up` / `none\|sub\|up\|sub_up\|all` |
+| `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；当前每 worker 仅一帧在途，增加线程不等于帧编码并行 |
+| `VTX_GFX_PAGES`、`VTX_GFX_SPLIT_FRAMES`、`VTX_GFX_SPLIT_MAX` | `7` / `1..32`；`450` / `0..65536`（0 关闭分片）；`3` / `1..32` |
+
+页与帧块共用**一个**全局 worker 池；不是页数乘块数的嵌套池。末块才做整页完成认证。
+每 worker 最多一个原生请求在途、两个交替输出路径；下一请求与上一帧宿主校验/提交
+重叠，仍保原子文件事务和最终全帧校验。配置、实际 worker 与 Python 适配实现均绑定
+CEF 缓存身份；改变配置后的第一次运行不是同身份暖态。双浏览器有额外常驻开销，峰值
+RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1` 验正确性，再单独评估
+2/3/4，不默认推满 32；默认 7 不代表经过本机资源测定，线程上限亦非容量保证。
+`--capture-fps` 只改变内部采样请求；锁定 CEF 154 的
+[ClampFrameRate](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/osr_util.cc)
+保留正值，传至 [SetMinCapturePeriod](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/video_consumer_osr.cc)。
+但 [ExternalBeginFrame](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/render_widget_host_view_osr.cc)
+仍受默认 interval 与 pending 合并影响；120 是请求值，不保证实际 120Hz 或 2×。
+timeline 帧率、尺寸、codec 与像素证明不变；日志记录请求值，配置变化仍使缓存身份变化。
+无见证浏览器仅在 readiness 后收集两次真实 paint 时复制快照，闲置签名浏览器不复制；
+丢弃的回调仍递增 native paint 序号，重新启用时清旧缓冲并建立新 floor，不减少证明样本。
+原生 capture 与 encode 目前仍串行；只有实测 encode 在 gfx 临界路径占比显著时才值得
+考虑双 ticket 流水，其理想单 worker 节省上界为 `min(C,E)/(C+E)`，不是线程数倍增。
+
+构建后在 Mac 用真实 bundle 入口设置 `CEF_WORKER`，运行上面的原生测试；
+Linux 专属测试的 SKIP 不算 Mac 通过。`v2.2.0`（`7c76ab9`）是已冻结的源码发布
+基线，不是 CEF 优化版或 Mac 性能验收。**当前真实 CEF/Mac 全链性能仍为 UNRUN。**
+
+配对评估入口是 [`scripts/gfx/bench_cef.py`](../../scripts/gfx/bench_cef.py) 的
+`plan/run/report`。只复用**原来已核验的 30 秒/900 帧/1080p30 HTML 派生输入**；
+canonical SVG 主基线不进入 CEF，工具拒绝用它替代。输入、两份独立干净源码 checkout、
+两端已构建的原生 worker 与现有 Python/FFmpeg/ffprobe 均须固定身份；不得改 HTML、
+安装软件、包装 FFmpeg 或改全局 PATH 来让测试通过。同机字体与 CEF 运行库须另行固定，
+worker 哈希不证明整套 SDK；受控环境不复刻未记录的历史配置。工具不构建、不重试、不清缓存，
+不调用旧 `bench_cold.sh`（其 GNU/Linux 清理流程会删除传入项目的 cache）。
+
+以下从候选仓运行，先设置**已有绝对路径**：`BASELINE_REPO`、`CANDIDATE_REPO`、
+`ORIGINAL_HTML`、`PYTHON`、`FFMPEG`、`FFPROBE`；源码仓与原项目须彼此独立。Mac worker
+必须使用 bundle 内真实二进制，不能填 `build/bin/vtx_cef_worker` 启动脚本。
+`plan` 只读预检并输出计划；它与 `--help` 都不启动渲染、不证明性能或质量。
+
+```bash
+BENCH="${CANDIDATE_REPO:?}/scripts/gfx/bench_cef.py"
+BUNDLE=experiments/gfx_cef_worker/build/bin/vtx_cef_worker.app/Contents/MacOS/vtx_cef_worker
+ARGS=(--project "${ORIGINAL_HTML:?}" --rounds 3
+  --baseline-repo "${BASELINE_REPO:?}" --baseline-worker "$BASELINE_REPO/$BUNDLE"
+  --candidate-repo "$CANDIDATE_REPO" --candidate-worker "$CANDIDATE_REPO/$BUNDLE"
+  --python "${PYTHON:?}" --ffmpeg "${FFMPEG:?}" --ffprobe "${FFPROBE:?}")
+"$PYTHON" -B "$BENCH" plan "${ARGS[@]}"
+```
+
+**下面是实际写操作**：先核准 `BENCH_PARENT` 为原项目与两仓之外、已有且可写的
+绝对目录；`BENCH_OUTPUT` 必须尚不存在，工具拒绝复用，也不删除已有输出或原缓存。
+每轮每端复制全新项目，先冷后暖，默认三轮交替 AB/BA（共 12 次完整 `all`）；
+冷态仅指项目 `cache/out` 全新，**不是 OS 冷缓存**，暖态复用同副本及同配置。
+
+```bash
+BENCH_OUTPUT="${BENCH_PARENT:?}/cef-bench-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+"$PYTHON" -B "$BENCH" run "${ARGS[@]}" --output "$BENCH_OUTPUT"
+# 只读重算报告，不重跑命令、不改证据：
+"$PYTHON" -B "$BENCH" report "$BENCH_OUTPUT"
+"$PYTHON" -B "$BENCH" report "$BENCH_OUTPUT" --json
+```
+
+默认固定 Mode N/shared、单 worker、关闭分片；先验证该档，再分别评估并发/配置。
+上表配置可用 `--common-set KEY=VALUE` 同改两端；候选单独变更
+须同时声明 `--candidate-set KEY=VALUE --ablation <说明>`，不得当作纯代码提速。
+完整 `all` 的外层墙钟是主计时；之后另跑 `qc --strict` 和媒体核验，复制、strict QC、
+媒体哈希计算均不计入该墙钟。保存 `run.json`、`summary.json`、`report.md`，并保留
+逐轮 events、日志、回执、native/pipeline 证据。报告分别展示 strict QC、900 帧/PTS/音频
+检查及配对 decoded-video/PCM 一致性；它们互不替代，也不等于人工视觉验收。
+RSS 采样会重复计算共享页且漏掉瞬时峰值，不是精确物理内存/完整树峰值；CPU 采样
+只是已观测用量下界。旧 worker 缺失的分项或未知资源写 unavailable/null，不补 0。
+失败与不完整轮次保留，不挑选最好成绩；原始证据可能含本地路径，分享前须审查。
+
+一次成功运行的定位顺序：外层 CLI 墙钟定总边界，execution events 划分程序内串行/
+并行 wave/尾段（wave 取最早开始至最晚结束，不累加子任务）；按
+`pipeline.json` 的 execution/task/attempt 关联 gfx 块，块内 submit/receive/validate/commit
+相对区间显示真实重叠。原生 `adapter_timing` 的 capture/queue/alpha/png/disk 可分解
+单请求耗时，但 signed/unsigned readiness、proof、veto 是同一起点的重叠 offset，不能
+相加；详见 [IPC 计时边界](IPC_PROTOCOL.md)。跨 worker 不累加墙钟，
+native steady clock 与 Python clock 不假定同 epoch；失败缺失的计时写不可用而非 0。
+事件外启动/退出合计进入 U，缺同 clock 锚点时不捏造其各自细分。单 worker 归因须固定
+`PAGES=1`；新增分片收益另列，不混作单 worker 加速。一次 run 可定位瓶颈，不等于对照证明。
+
+理论预算：默认依赖图 `all` 墙钟为 `T=H+max(G,A,L)+R`；G/A/L 为 gfx/音频/预编码
+从同一 wave 起点至各支完成的 elapsed（含调度等待），不是各自不同起点的 duration。
+H 包括进程启动、环境身份与 validate/audit/prepare，R 包括 video/mux/qc/finish 和退出。
+同一计时窗口下，令 `U=H+R`、`B=max(A,L)`、gfx 有效加速 `r`、新增 gfx 临界开销 `d`，
+在其它阶段耗时不变的条件下，
+`T_new=U+max(G/r+d,B)`；主判据是同输入/机器/后端/配置复测的 `T_new≤0.5T_base`。
+若复测基线仍为历史 `516.166s`，目标才对应 `258.083s`，要求 `U+B≤258.083`、
+`r≥G/(258.083-U-d)` 且分母为正。忽略新增开销时，3× gfx
+仍要求原临界 gfx 占比至少 75%，4× 至少 2/3；仅 2× gfx 不能抵消非零串行尾。
+`r` 必须计入与音频/预编码的资源竞争，不能由线程数或单帧微基准代入。
+报告需冷/暖各至少三对完整合格证据；主目标只看冷态完整 `all` 配对耗时比中位数 ≤0.5。
+暖态另列缓存效率与退化，不要求也减半，不与冷态互比；暖态错误仍阻断完整验收。耗时下降为
+`(1-T_new/T_base)×100%`，吞吐提升为 `(T_base/T_new-1)×100%`，两者不能混称：
+耗时下降 50% 对应吞吐提升 100%。上述预算是条件而非成绩，不能用冷暖差估计 G、
+相加并行阶段或从旧 CEF/CDP 总耗时宣称达标；目标 Mac 全链未跑仍写 **UNRUN**。
 
 ## 目录
 
