@@ -402,6 +402,7 @@ class InstallShBash32Guard(unittest.TestCase):
             "plugins/denoise/denoise_init.sh",
             "scripts/bench_cold.sh",
             "experiments/gfx_cef_worker/build_cef_worker.sh",
+            "templates/tech-talk/scripts/new_project.sh",
         ):
             lines = (REPO / relative).read_text(encoding="utf-8").splitlines()
             for number, line in enumerate(lines, 1):

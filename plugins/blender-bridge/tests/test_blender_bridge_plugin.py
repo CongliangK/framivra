@@ -35,6 +35,7 @@ REPO = Path(__file__).resolve().parents[3]   # plugins/blender-bridge/tests → 
 sys.path.insert(0, str(REPO))
 
 _bb = importlib.import_module("plugins.blender-bridge")
+_health = importlib.import_module("plugins.blender-bridge.health_check")
 
 from vtx.pluginlib import hooks as pl_hooks   # noqa: E402
 
@@ -154,6 +155,27 @@ class FinishWiring(unittest.TestCase):
         c = _FakeCtx(_tl(self.root, True), self.root)
         errs = _bb.finish(c)
         self.assertTrue(errs and "blender 不在 PATH" in errs[0])
+        with mock.patch.object(_health.subprocess, "run") as run:
+            self.assertEqual(_health.main(), 1)
+        run.assert_not_called()
+
+    def test_health_checks_only_version_and_reports_probe_failures(self):
+        for output, code, expected in (("Blender 4.3.2\n", 0, 1),
+                ("Blender 4.4.0\n", 0, 0), ("Blender 5.2.1 LTS\n", 0, 0),
+                ("unrecognized", 0, 1), ("Blender 5.2.1\n", 1, 1),
+                (subprocess.TimeoutExpired(["blender", "--version"], 5), 0, 1),
+                (OSError("cannot execute"), 0, 1)):
+            with self.subTest(output=output, code=code), \
+                 mock.patch.object(_health.shutil, "which", return_value="/blender"), \
+                 mock.patch.object(_health.subprocess, "run",
+                    return_value=subprocess.CompletedProcess([], code, output, ""),
+                    side_effect=output if isinstance(output, Exception) else None) as run, \
+                 mock.patch("builtins.print") as printed:
+                self.assertEqual(_health.main(), expected)
+                self.assertEqual(run.call_args.args[0], ["/blender", "--version"])
+                self.assertEqual(run.call_args.kwargs["timeout"], 5)
+                text = "\n".join(str(call.args[0]) for call in printed.call_args_list)
+                self.assertIn("MISS" if expected else "仅版本前置满足；运行时 API 未验证", text)
 
 
 class BusIntegration(unittest.TestCase):

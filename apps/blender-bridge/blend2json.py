@@ -18,6 +18,10 @@ from pathlib import Path
 
 import bpy
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bundle_session import require_modern_vse
+
+require_modern_vse(bpy)
 argv = sys.argv[sys.argv.index("--") + 1:]
 blend_path = Path(argv[0]).resolve()
 bpy.ops.wm.open_mainfile(filepath=str(blend_path))

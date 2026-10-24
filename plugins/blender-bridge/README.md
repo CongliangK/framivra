@@ -52,6 +52,7 @@ blender --background --factory-startup --python apps/blender-bridge/json2blend.p
   `vtx all` 退出码按 qc/finish 各自失败态如实汇总（任一失败 exit 1）。
 - blender 不在 PATH → `vtx all` 收尾 exit 1（final.mp4 已就绪不受影响）——配置了
   就要导出，失败必须可见，不静默跳过。
+- [Blender 版本/API 前置](../../apps/blender-bridge/README.md#依赖)由应用件统一检查；doctor 仅用限时 `blender --version` 探测版本，不启动 Blender 会话，也不宣称运行时 API 或业务验证通过。
 - 键在插件未装/禁用时走三分支报错（`vt plugins list` 查看），绝不静默忽略。
 - **源产物映射**：导出前经内核缝 A 解析插件产物并传给 `json2blend.py`；音频优先使用映射（含普通媒体的降噪 wav），无映射的 `.json` 虚拟源报错，其余源保留原路径。视频仍用原素材，探测缓存按实际路径隔离；选中同源音频不代表预览混音与成片等价。
 
