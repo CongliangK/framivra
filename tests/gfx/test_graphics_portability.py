@@ -39,11 +39,66 @@ class BrowserDiscoveryMock(unittest.TestCase):
                         with self.subTest(platform=platform, expected=expected, available=available), \
                                 mock.patch.object(browser_paths.shutil, 'which', side_effect=lambda c:
                                                   '/resolved/' + c if c in available and c in candidates[:7] else None), \
-                                mock.patch.object(browser_paths.os.path, 'isfile', side_effect=lambda c: c in available):
+                                mock.patch.object(browser_paths.os.path, 'isfile', side_effect=lambda c:
+                                                  c.removeprefix('/resolved/') in available), \
+                                mock.patch.object(browser_paths.os, 'access', return_value=True), \
+                                mock.patch('builtins.open', mock.mock_open(read_data=b'\x7fELFfixture')):
                             self.assertEqual(encoders.find_chrome(), expected)
                             browser = gfx.Browser()
                             browser._find_chrome()
                             self.assertEqual(browser.chrome, expected)
+
+        # Real owned bytes distinguish a distro launcher from its native
+        # payload. No host search, wrapper execution or browser launch occurs.
+        import vt as doctor
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); path_dir = root / 'bin'; path_dir.mkdir()
+            distro = root / 'distro'; distro.mkdir()
+            wrapper = path_dir / 'chromium'
+            wrapper.write_bytes(b'#!/bin/sh\nexit 99\n'); wrapper.chmod(0o755)
+            native_path = path_dir / 'msedge'
+            native_path.write_bytes(b'\x7fELFpath'); native_path.chmod(0o755)
+            native_install = distro / 'chromium'
+            native_install.write_bytes(b'\x7fELFdistro'); native_install.chmod(0o755)
+            def which(candidate):
+                path = path_dir / candidate
+                return str(path) if path.is_file() else None
+            def assert_selected(expected):
+                self.assertEqual(browser_paths.find_chrome_candidate('linux'), expected)
+                self.assertEqual(encoders.find_chrome(), expected)
+                browser = gfx.Browser(); browser._find_chrome()
+                self.assertEqual(browser.chrome, expected)
+                self.assertEqual(doctor.find_chrome(), which(expected) or expected)
+            with mock.patch.dict(os.environ, {'VTX_CHROME': '', 'PATH': str(path_dir)}, clear=True), \
+                    mock.patch.object(sys, 'platform', 'linux'), \
+                    mock.patch.object(doctor, 'OS', 'linux'), \
+                    mock.patch.object(browser_paths.shutil, 'which', side_effect=which), \
+                    mock.patch.object(browser_paths, 'chrome_install_paths', return_value=(str(native_install),)), \
+                    mock.patch.object(subprocess, 'run', side_effect=AssertionError('no execution')), \
+                    mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('no execution')):
+                assert_selected('msedge')  # Native PATH still precedes install paths.
+                native_path.unlink()
+                assert_selected(str(native_install))  # Wrapper is never selected.
+                for invalid in (b'#!/bin/sh\nexit 99\n', b'', b'\x7fEL'):
+                    native_install.write_bytes(invalid)
+                    self.assertIsNone(browser_paths.find_chrome_candidate('linux'))
+                    self.assertIsNone(doctor.find_chrome())
+                native_install.write_bytes(b'\x7fELFdistro')
+                with mock.patch.object(browser_paths.os, 'access', return_value=False) as access:
+                    self.assertIsNone(browser_paths.find_chrome_candidate('linux'))
+                    access.assert_any_call(str(native_install), os.X_OK)
+                with mock.patch('builtins.open', side_effect=PermissionError('unreadable')):
+                    self.assertIsNone(browser_paths.find_chrome_candidate('linux'))
+                native_install.unlink(); native_install.mkdir()
+                self.assertIsNone(browser_paths.find_chrome_candidate('linux'))
+                # A same-named cwd file is not executable by a bare argv name
+                # when PATH does not resolve it; do not certify it by isfile.
+                with mock.patch.object(browser_paths, 'chrome_install_paths', return_value=()), \
+                        mock.patch.object(browser_paths.shutil, 'which', return_value=None), \
+                        mock.patch.object(browser_paths.os.path, 'isfile', return_value=True), \
+                        mock.patch.object(browser_paths.os, 'access', return_value=True), \
+                        mock.patch('builtins.open', mock.mock_open(read_data=b'\x7fELFcwd')):
+                    self.assertIsNone(browser_paths.find_chrome_candidate('linux'))
 
     def test_explicit_browser_override_and_distinct_failure_policies(self):
         browser = gfx.Browser(chrome_path='/explicit/chrome')
@@ -58,6 +113,45 @@ class BrowserDiscoveryMock(unittest.TestCase):
                 encoders.find_chrome()
             self.assertEqual(failure.exception.code, 1)
             output.assert_called_once_with('✗ 找不到 Chrome/Chromium（gfx 帧截图需要）。可设环境变量 VTX_CHROME 指定可执行文件路径')
+
+        from vtx.render import gfx_environment
+        import vt as doctor
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            override = root / 'custom-browser'
+            override.write_bytes(b'#!/bin/sh\nexit 99\n'); override.chmod(0o755)
+            native = root / 'chromium'
+            native.write_bytes(b'\x7fELFdistro'); native.chmod(0o755)
+            override_executable = [True]
+            def which(candidate):
+                return (str(override) if override_executable[0] and
+                        candidate in ('custom-browser', str(override)) else None)
+            with mock.patch.object(sys, 'platform', 'linux'), \
+                    mock.patch.object(doctor, 'OS', 'linux'), \
+                    mock.patch.object(browser_paths.shutil, 'which', side_effect=which), \
+                    mock.patch.object(browser_paths, 'chrome_install_paths', return_value=(str(native),)), \
+                    mock.patch.object(gfx_environment.platform, 'system', return_value='Linux'), \
+                    mock.patch.object(subprocess, 'run', side_effect=AssertionError('no execution')):
+                for explicit in (str(override), 'custom-browser'):
+                    with self.subTest(override=explicit), mock.patch.dict(os.environ, VTX_CHROME=explicit):
+                        self.assertEqual(encoders.find_chrome(), explicit)
+                        browser = gfx.Browser(); browser._find_chrome()
+                        self.assertEqual(browser.chrome, explicit)
+                        self.assertEqual(doctor.find_chrome(), str(override))
+                        # Explicit scripts retain the existing fail-loud
+                        # renderer-identity contract, not native substitution.
+                        with self.assertRaisesRegex(gfx_environment.EnvironmentError, 'native ELF renderer required'):
+                            gfx_environment.collect('cdp', explicit)
+                # Preserve the existing caller distinction: the renderer keeps
+                # an explicit file for fail-loud launch, doctor requires which.
+                override_executable[0] = False; override.chmod(0o644)
+                with mock.patch.dict(os.environ, VTX_CHROME=str(override)):
+                    self.assertEqual(encoders.find_chrome(), str(override))
+                    self.assertEqual(doctor.find_chrome(), str(native))
+                # Missing overrides retain the previous availability fallback.
+                with mock.patch.dict(os.environ, VTX_CHROME=str(root / 'missing')):
+                    self.assertEqual(browser_paths.find_chrome_candidate('linux'), str(native))
+                    self.assertEqual(doctor.find_chrome(), str(native))
 
 
 class CDPDeadlineMock(unittest.TestCase):

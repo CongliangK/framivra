@@ -142,9 +142,10 @@ CEF 负例仅在同一 worker、同一路径的 libcef.so 追加不参与装载�
 ## 阶段回执（PR#1）
 
 QC 的段免检记录另绑定 `vtx/inspection/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样表达式。
-记录 schema 为 v3：gfx 源 alpha 内容 bbox 按合成器实际尺寸投影，再平移、裁至画布；
-这不是 Lanczos 后重新阈值测得的 bbox。新读取器拒绝 v1/v2（即使 filter 相同），
-旧读取器也拒绝 v3，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
+记录 schema 为 v4：视频探针显式选择首个视频流，原生 alpha 底轨使用黑画布合成基准；
+gfx 源 alpha 内容 bbox 仍按合成器实际尺寸投影，再平移、裁至画布，
+不是 Lanczos 后重新阈值测得的 bbox。当前读取器拒绝 v1/v2/v3（即使 filter 相同），
+旧读取器也拒绝 v4，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
 实测后刷新；不删除媒体、
 重编码或放宽阈值。当前表达式保留 bicubic 并开启准确舍入，避免已观察到的
 FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该探针。
