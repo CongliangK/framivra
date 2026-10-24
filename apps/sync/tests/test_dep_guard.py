@@ -157,6 +157,65 @@ class RootConfigGuidanceTests(unittest.TestCase):
         self.assertIn("需先创建 denoise 环境", r.stderr)
         self.assertNotIn("config.local.json denoise.python 已配置", r.stderr)
 
+    def test_config_shapes_keep_missing_dependency_guidance(self):
+        cpu = self.python
+        gpu = self.home / "gpu" / "python"
+        gpu.parent.mkdir()
+        gpu.touch()  # 提示路径夹具，不执行解释器或加载模型。
+        default = self.home / "miniconda3" / "envs" / "denoise" / "bin" / "python"
+        default.parent.mkdir(parents=True)
+        self.env.update(VTX_CONFIG=self.config, USERPROFILE=self.home,
+                        PATH=str(self.repo / "no-external-tools"))
+        cases = [
+            ("top-list", "[1]", None),
+            ("top-bool", "true", None),
+            ("top-number", "1", None),
+            ("top-string", '"invalid"', None),
+            ("denoise-list", '{"denoise": [1]}', None),
+            ("denoise-bool", '{"denoise": true}', None),
+            ("denoise-number", '{"denoise": 1}', None),
+            ("denoise-string", '{"denoise": "invalid"}', None),
+            ("empty-object", "{}", None),
+            ("null", "null", None),
+            ("empty-list", "[]", None),
+            ("false", "false", None),
+            ("zero", "0", None),
+            ("empty-string", '""', None),
+            ("python-non-string", '{"denoise": {"python": true}}', None),
+            ("python-blank", '{"denoise": {"python": "  "}}', None),
+            ("missing-file", None, None),
+            ("empty-file", "", None),
+            ("bad-json", "{", None),
+            ("configured-cpu", json.dumps({"denoise": {"python": f"  {cpu}  "}}), cpu),
+            ("configured-gpu", json.dumps({"denoise": {"python": " ~/gpu/python "}}), gpu),
+        ]
+        example = "apps/sync/sync_audio.py <camera.(wav|mp4|mov)> <mic.wav> <out.wav>"
+        for installed_default in (False, True):
+            if installed_default:
+                default.touch()
+            for name, payload, configured in cases:
+                with self.subTest(config=name, installed_default=installed_default):
+                    if payload is None:
+                        self.config.unlink()
+                    else:
+                        self.config.write_text(payload, encoding="utf-8")
+                    r = self.run_sync(hide=("numpy", "scipy", "soundfile", "soxr"))
+                    self.assert_missing(r)
+                    self.assertEqual(r.stdout, "")
+                    if configured:
+                        hint = f"  {configured} {example}   # config.local.json denoise.python 已配置的解释器"
+                    elif installed_default:
+                        hint = f"  {default} {example}   # 本机已安装 denoise 环境"
+                    else:
+                        hint = (f"  ~/miniconda3/envs/denoise/bin/python {example}   "
+                                "# 默认约定路径（本机未检测到，需先创建 denoise 环境）")
+                    self.assertEqual(r.stderr.splitlines(), [
+                        "sync_audio: 缺少第三方依赖：numpy, scipy, soundfile, soxr",
+                        "本工具须在 conda denoise 环境（numpy/scipy/soundfile/soxr）中运行，推荐：",
+                        hint,
+                        f"或给当前解释器补装：{sys.executable} -m pip install numpy scipy soundfile soxr",
+                    ])
+
     @unittest.skipIf(importlib.util.find_spec("scipy") is not None,
                      "当前解释器已装 scipy，无法复现缺依赖路径")
     def test_real_base_python_uses_temporary_repo_root_config(self):

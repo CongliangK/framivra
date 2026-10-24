@@ -599,5 +599,87 @@ class TestPngSourceFrameAlignment(unittest.TestCase):
                     self.assertEqual(ids(72), bottom)
 
 
+@unittest.skipUnless(_HAVE_FFMPEG_X264, "需要 ffmpeg 与 libx264 编码器")
+class TestMediaSourcePreparation(unittest.TestCase):
+    def test_native_alpha_and_multistream_selection_preserve_pixels(self):
+        """Decode source regions, not just the prepared codec or frame count."""
+        from tests.gfx._png import png
+        from vtx.cache.hygiene import _current_keys
+        from vtx.inspection.impact import capture
+        from vtx.inspection.timeline_diff import DiffCtx, _clip_seg_key
+        from vtx.media.subs import _layer_ready
+        with tempfile.TemporaryDirectory(prefix='vtx-media-alpha-') as directory, \
+             mock.patch.dict(os.environ, {'VTX_NO_NVENC': '1', 'VTX_SEG_NVENC': '0'}):
+            root = Path(directory)
+            width, height = 96, 54
+            def run(argv):
+                return subprocess.run(argv, capture_output=True, check=True, timeout=30).stdout
+            for name, color in (('alpha', lambda x: (255, 0, 0, (0, 128, 255)[x // 32])),
+                                ('opaque', lambda x: (0, 255, 0, 255))):
+                data = bytes(channel for y in range(height) for x in range(width) for channel in color(x))
+                (root / f'{name}.png').write_bytes(png(width, height, rgba=data))
+                codec = (['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le']
+                         if name == 'alpha' else ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'])
+                run(['ffmpeg', '-v', 'error', '-y', '-loop', '1', '-framerate', '30',
+                     '-i', str(root / f'{name}.png'), '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo',
+                     '-frames:v', '3', '-t', '0.1', *codec, '-c:a', 'pcm_s16le', str(root / f'{name}.mov')])
+            for first, second in (('alpha', 'opaque'), ('opaque', 'alpha')):
+                run(['ffmpeg', '-v', 'error', '-y', '-i', str(root / f'{first}.mov'),
+                     '-i', str(root / f'{second}.mov'), '-map', '0:v:0', '-map', '1:v:0',
+                     '-map', '0:a:0', '-c', 'copy', '-disposition:v:0', '0',
+                     '-disposition:v:1', 'default', str(root / f'{first}-first.mov')])
+            cases = [(name, name, {}) for name in ('alpha', 'opaque', 'alpha-first', 'opaque-first')]
+            cases += [('alpha-fades', 'alpha', {'fade_in_frames': 1, 'fade_out_frames': 2}),
+                      ('alpha-window', 'alpha', {'scale': .5, 'x': 24, 'y': 13}),
+                      ('opaque-opacity', 'opaque', {'opacity': .5})]
+            for label, name, changes in cases:
+                with self.subTest(source=label):
+                    project = root / label
+                    project.mkdir()
+                    clip = dict(src='s', src_in=0, src_out=3, dst_in=0, dur=3)
+                    clip.update(changes)
+                    timeline = dict(version=2, project=dict(fps=30, width=width, height=height, duration_frames=3),
+                        sources=[dict(id='s', path=str(root / f'{name}.mov'))],
+                        video_tracks=[dict(name='bottom', kind='aroll', clips=[clip])],
+                        subtitles=[], audio_tracks=[])
+                    path = project / 'timeline.json'
+                    path.write_text(json.dumps(timeline))
+                    c = Ctx(path)
+                    layers = composite.prepare_layers(c)
+                    source = layers[0]['seg']
+                    alpha = name.startswith('alpha')
+                    need_alpha = alpha or bool(changes.get('opacity', 1) < 1)
+                    self.assertEqual(source.suffix, '.mov' if need_alpha else '.mp4')
+                    self.assertIn((source.stem, need_alpha), _current_keys(c)[1])
+                    self.assertEqual(_layer_ready(c, 0)[0]['seg'], source)
+                    diff_context = DiffCtx(timeline, project)
+                    self.assertEqual(_clip_seg_key(diff_context, timeline['video_tracks'][0], 0, clip), source.stem)
+                    snapshot = capture(timeline, project, nseg=2, probe=c.probe)
+                    self.assertEqual(snapshot['nodes']['clip:0:0']['key'], source.stem)
+                    self.assertEqual(any(n.startswith('qc:vseg:') for n in snapshot['nodes']), alpha)
+                    out = project / 'output.mp4'
+                    RenderPlan(c, False, 1, width, height).composite(layers, out, False)
+                    raw = run(['ffmpeg', '-v', 'error', '-i', str(out), '-vf', 'select=eq(n\\,2)', '-frames:v', '1',
+                               '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'])
+                    for x, level in ((16, 0), (48, 128), (80, 255)):
+                        pixel = raw[(27 * width + x) * 3:(27 * width + x) * 3 + 3]
+                        if label == 'alpha-fades':
+                            level = round(level / 2)
+                        elif label == 'alpha-window' and x != 48:
+                            level = 0
+                        expected = (level, 0, 0) if alpha else (0, 128 if changes else 255, 0)
+                        self.assertTrue(all(abs(value - target) <= 4 for value, target in zip(pixel, expected)),
+                                        (label, x, list(pixel), expected))
+                    # Every fresh cut reference decodes the original source,
+                    # not the seg under test, and preserves effects/placement.
+                    reference_dir = project / 'source-reference'
+                    reference_dir.mkdir()
+                    reference = composite.render_source_frame(c, clip, 2, reference_dir)
+                    ref = run(['ffmpeg', '-v', 'error', '-i', str(reference), '-frames:v', '1',
+                               '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'])
+                    self.assertEqual(len(raw), len(ref))
+                    self.assertLess(sum(abs(a - b) for a, b in zip(raw, ref)) / len(raw), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

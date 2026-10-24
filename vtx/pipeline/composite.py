@@ -8,7 +8,7 @@ import ast, contextlib, functools, hashlib, inspect, json, os, platform, subproc
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from ..media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind
+from ..media.encoders import pick_vcodec, nvenc_budget, nvenc_concurrency, seg_encoder_kind, seg_needs_alpha
 from ..cache.hygiene import budget_gate, manifest_record, seg_key
 from ..runtime import events
 from .infra import Ctx, run_parallel, filter_filename, filter_threads
@@ -778,6 +778,18 @@ class RenderPlan:
 
 
 # ---------------------------------------------------------------- 图层预处理（整片与区间渲染共用）
+def _media_geometry(c, cl):
+    """Share the original clip transform with fresh-source QC references."""
+    windowed = any(k in cl for k in ('scale', 'x', 'y'))
+    if windowed:
+        info = c.probe(c.src_path(cl['src']))
+        scale = cl.get('scale', 1.0)
+        width = int(info['w'] * scale) // 2 * 2
+        height = int(info['h'] * scale) // 2 * 2
+        return windowed, cl.get('x', 0), cl.get('y', 0), width, height, [f'scale={width}:{height}:flags=lanczos']
+    return windowed, 0, 0, None, None, [c.crop169(cl['src']), f'scale={c.w}:{c.h}:flags=lanczos']
+
+
 def prepare_layers(c: Ctx):
     """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
     （每项 {cl, seg|source, x, y, w2, h2, gfx, ti}，顺序=图层序）。
@@ -789,7 +801,7 @@ def prepare_layers(c: Ctx):
     fstxn.mkdir(c.cache / "seg", root=c.root)
     tracks = c.tl["video_tracks"]
     # 统一预处理：全屏 clip（无 scale/x/y）经 transform 归一到项目分辨率；窗口 clip 按 scale 缩放。
-    # 需要 alpha（opacity<1 或 fade）→ ProRes 4444；纯不透明全屏 → libx264。所有轨道等价。
+    # Native alpha、opacity<1 或 fade → ProRes 4444；不透明源 → libx264/NVENC。所有轨道等价。
     layers = []      # 每项: {cl, seg|source, x, y, w2, h2|None, gfx:bool, ti}
     enc_tasks = []   # (label, cmd, nvenc)：待并行编码的 seg（缓存命中的不进列表）；
                      # nvenc=True 的任务在 run_ffmpeg_task 里占 NVENC 会话预算槽
@@ -809,19 +821,11 @@ def prepare_layers(c: Ctx):
                                "x": cl.get("x", 0), "y": cl.get("y", 0), "w2": None, "h2": None,
                                "gfx": True, "ti": ti})
                 continue
-            windowed = any(k in cl for k in ("scale", "x", "y"))
-            need_alpha = cl.get("opacity", 1) < 1 or cl.get("fade_in_frames") or cl.get("fade_out_frames")
+            windowed, x, y, w2, h2, geometry = _media_geometry(c, cl)
+            need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
             vf = [f"trim=start_frame={cl['src_in']}:end_frame={cl['src_out']}", "setpts=PTS-STARTPTS",
                   f"fps={c.fps}"]
-            if windowed:
-                sc = cl.get("scale", 1.0)
-                i = c.probe(c.src_path(cl["src"]))
-                w2 = int(i["w"] * sc) // 2 * 2; h2 = int(i["h"] * sc) // 2 * 2
-                vf.append(f"scale={w2}:{h2}:flags=lanczos")
-                x, y = cl.get("x", 0), cl.get("y", 0)
-            else:
-                vf += [c.crop169(cl["src"]), f"scale={c.w}:{c.h}:flags=lanczos"]
-                w2 = h2 = None; x, y = 0, 0
+            vf += geometry
             # seg 内容寻址键（2026-09-11 治理升级）：键 = sha1(源指纹+切片/窗口/fade/编码
             # 参数)[:12]。源或 clip 参数变了键就变，旧 seg 由 gc 回收——不再依赖
             # 「源/clip 变更后须手工 rm cache/seg」（旧 D29 注释）。
@@ -846,7 +850,7 @@ def prepare_layers(c: Ctx):
                                   "-pix_fmt", "yuv420p"]
             label = f"seg t{ti:02d}c{ci:02d}（{cl['dur']} 帧）"
             cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(c.src_path(cl["src"])),
-                   "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
+                   "-map", "0:v:0", "-vf", ",".join(vf), "-frames:v", str(cl["dur"]), "-an",
                    *vcodec_seg, str(seg)]
             nvenc = not need_alpha and seg_kind == "nvenc"
             signature = (tuple(cmd), nvenc)
@@ -877,6 +881,45 @@ def prepare_layers(c: Ctx):
     stage = "video_draft" if getattr(c, "draft", False) else "video"
     c.verify_inputs(None if getattr(c, "range_window", None) else stage)
     return layers
+
+
+def needs_qc_clean(c):
+    """Native-alpha bottom tracks need the same black-canvas reference as gfx."""
+    tracks = c.tl['video_tracks']
+    if not tracks:
+        return False
+    if tracks[0].get('kind') == 'gfx':
+        return True
+    # Warm every distinct source before QC's parallel cut references. Do not
+    # short-circuit after the first alpha source and race cold metadata probes.
+    sources = dict.fromkeys(cl['src'] for cl in tracks[0]['clips'])
+    alpha = [seg_needs_alpha({}, c.probe(c.src_path(sid))) for sid in sources]
+    return any(alpha)
+
+
+def render_source_frame(c, clip, frame, directory):
+    """Fresh original-media cut reference, using the production compositor.
+
+    Do not read prepared seg pixels: that would compare a cached trim with
+    itself. Restore clip-local time for the shared fades, preserve alpha, then
+    let RenderPlan apply the ordinary black canvas and window placement.
+    """
+    _, x, y, width, height, geometry = _media_geometry(c, clip)
+    source_frame = clip['src_in'] + frame
+    seek = max(0, (source_frame - .2) / c.fps)
+    filters = [f'setpts=PTS-STARTPTS+{frame}/{c.fps}/TB', *geometry,
+               'format=yuva420p', *_clip_alpha_filters(clip, c.spf)]
+    c.run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{seek:.6f}',
+           '-i', str(c.src_path(clip['src'])), '-map', '0:v:0', '-an',
+           '-vf', ','.join(filters), '-frames:v', '1', '-pix_fmt', 'rgba',
+           str(directory / 'f0000.png')])
+    source = frame_source.PngSequence(directory, 'qc-source-frame', 1, c.fps,
+                                      width or c.w, height or c.h)
+    layer = dict(cl={'dst_in': 0, 'dur': 1}, source=source, gfx=True,
+                 x=x, y=y, w2=None, h2=None, ti=0)
+    output = directory / 'reference.mp4'
+    RenderPlan(c, False, 1, c.w, c.h).composite([layer], output, False, a=0, b=1)
+    return output
 
 
 def build_video(c: Ctx, layers=None):
@@ -915,11 +958,12 @@ def build_video(c: Ctx, layers=None):
         else:
             enc = plan.render_segmented(out_main, tag="vseg_draft" if draft else "vseg")
         # qc_clean = 仅底轨（tracks[0]）的基准画面，供 QC 做上层窗口生效比对（草稿跳过）。
-        # 性能升级（2026-09-10）：仅当底轨是 gfx（无源视频可提帧）时才渲全片基准轨——
+        # Native-alpha 底轨也需要这个真实黑画布基准，原始 RGB 不能替代 alpha 合成。
+        # 历史性能升级（2026-09-10）：仅当底轨是 gfx（无源视频可提帧）时才渲全片基准轨——
         # 那是第二遍全片合成（voice-ime 实测与主合成同量级）；底轨为普通视频轨时，
         # qc 改为对每个探测帧现场从源视频提帧合成基准（像素语义等价，见 qc 内注释），
         # video 阶段不再为 qc 付这笔全片成本。
-        if not draft and tracks and tracks[0].get("kind") == "gfx":
+        if not draft and needs_qc_clean(c):
             bottom = [L for L in layers if L["ti"] == 0]
             if nseg > 1:
                 plan.render_segmented(c.cache / "qc_clean.mp4", bottom, with_subs=False, tag="vseg_qc")

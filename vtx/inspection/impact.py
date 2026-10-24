@@ -9,13 +9,15 @@ import contextlib
 import io
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 from ..cache.cache_state import file_digest, media_stat_digest
 from ..pipeline.composite import (RenderPlan, _graph_code_digest, choose_cutpoints,
-                        segment_content_key, pass_content_key)
+                        segment_content_key, pass_content_key, needs_qc_clean)
 from ..cache.hygiene import audio_key, seg_key
+from ..media.encoders import seg_needs_alpha, probe_video_alpha
 
 SCHEMA = 'framivra-impact-snapshot-v2'
 
@@ -29,8 +31,10 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
             probe=None):
     """Capture identities without rendering or writing project state.
 
-    The caller explicitly pins execution options. Windowed media require a
-    read-only dimension probe; missing probes become unknown, never guessed.
+    The caller explicitly pins execution options. Media alpha needs a read-only
+    metadata probe (optional FFprobe by default); a supplied probe must include
+    has_alpha. Windowed media additionally require supplied dimensions. Missing
+    evidence becomes unknown, never an invented opaque identity.
     Current source-media identity remains Fast (stat + head/tail samples).
     """
     if encoder not in ('x264', 'nvenc') or not isinstance(nseg, int) or nseg < 1:
@@ -52,6 +56,18 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
         raise ValueError('; '.join(c.subtitles_errors))
     nodes, layers, warnings = {}, [], []
     observed_files = {}
+    source_probes = {}
+    def source_info(path):
+        if path not in source_probes:
+            try:
+                source_probes[path] = (probe or probe_video_alpha)(path)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                source_probes[path] = error
+        value = source_probes[path]
+        if isinstance(value, Exception):
+            raise ValueError(str(value)) from value
+        return value
+    c.probe = source_info
     source_ids = {}
     for sid in sources:
         try:
@@ -101,12 +117,11 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
                         warnings.append({'node': ident, 'reason': 'gfx_dependency_closure_unproven'})
                 else:
                     windowed = any(k in clip for k in ('scale', 'x', 'y'))
-                    alpha = bool(clip.get('opacity', 1) < 1 or
-                                 clip.get('fade_in_frames') or clip.get('fade_out_frames'))
+                    alpha = seg_needs_alpha(clip, source_info(c.src_path(clip['src'])))
                     if windowed:
                         if probe is None:
                             raise ValueError('windowed media dimensions unavailable')
-                        dims = probe(c.src_path(clip['src']))
+                        dims = source_info(c.src_path(clip['src']))
                         w2 = int(dims['w'] * clip.get('scale', 1.0)) // 2 * 2
                         h2 = int(dims['h'] * clip.get('scale', 1.0)) // 2 * 2
                     else:
@@ -166,7 +181,13 @@ def capture(timeline, root, *, nseg=8, draft=False, gpu=False, encoder='x264',
     else:
         add_segment_nodes(layers, 'vseg_draft' if draft else 'vseg', True)
         tracks = tl['video_tracks']
-        if not draft and tracks and tracks[0].get('kind') == 'gfx':
+        try:
+            bottom_clean = not draft and needs_qc_clean(c)
+        except (OSError, ValueError, KeyError, RuntimeError):
+            # Unknown source alpha cannot establish that no QC-reference cache
+            # is needed. Its unknown upstream keys keep these nodes conservative.
+            bottom_clean = not draft and bool(tracks)
+        if bottom_clean:
             bottom = [L for L in layers if L[0].startswith('clip:0:')]
             add_segment_nodes(bottom, 'vseg_qc', False, 'qc:')
     from ..pluginlib.hooks import active_plugins_digest

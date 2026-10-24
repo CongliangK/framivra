@@ -884,6 +884,40 @@ class FailedKillRetention(unittest.TestCase):
         close.assert_called_once_with()
         self.assertTrue(self.ledger.is_file())
 
+    def test_unreaped_owned_root_retains_recovery_evidence(self):
+        group = self.supervisor()
+        group.proc = mock.Mock()
+        group.proc.poll.return_value = None
+        group.proc.wait.side_effect = subprocess.TimeoutExpired('owned worker', 5)
+        with mock.patch.object(proc_supervisor, 'group_live_members', return_value=[]), \
+                mock.patch.object(group, '_close_pipe_and_reap_guard'):
+            group.stop()
+        self.assertTrue(self.ledger.is_file())
+        self.assertEqual(group.proc.wait.call_count, 2)
+
+    def test_lineage_denial_keeps_existing_zero_kill_cleanup_policy(self):
+        group = self.supervisor()
+        group.proc = mock.Mock()
+        group.proc.poll.return_value = None
+        group.proc.wait.side_effect = subprocess.TimeoutExpired('owned worker', 5)
+        with mock.patch.object(proc_supervisor, 'group_live_members', return_value=[424242]), \
+                mock.patch.object(proc_supervisor, 'kill_group',
+                                  side_effect=proc_supervisor.LineageKillDenied('denied')):
+            self.assertTrue(group._terminate_worker())
+        # This inherited broken/stale cleanup exception must not add a wait or
+        # another signal after the lineage whitelist has denied the group.
+        group.proc.wait.assert_called_once_with(group.kill_grace)
+        group.proc.kill.assert_not_called()
+
+    def test_guard_capture_streams_are_closed_after_wait(self):
+        group = self.supervisor()
+        guard = group.guard_proc = mock.Mock()
+        group._close_pipe_and_reap_guard()
+        guard.wait.assert_called_once_with(3)
+        for stream in (guard.stdin, guard.stdout, guard.stderr):
+            stream.close.assert_called_once_with()
+        self.assertIsNone(group.guard_proc)
+
     def test_stop_success_removes_ledger_before_guard_then_tmp(self):
         group = self.supervisor()
         def close():
@@ -900,6 +934,53 @@ class FailedKillRetention(unittest.TestCase):
         with mock.patch('vtx.pipeline.infra.Ctx', return_value=self.c), \
                 mock.patch.object(proc_supervisor, 'reap_orphan_workers', return_value=stats):
             self.assertEqual(proc_supervisor.main(['reap', str(self.root / 'timeline.json')]), 1)
+
+
+@unittest.skipUnless(_LINUX_PROC, 'requires Linux process-state observation')
+class OwnedRootReaping(unittest.TestCase):
+    def test_forced_group_shutdown_reaps_the_owned_root(self):
+        # All signaling code, including the regression's finally cleanup, runs
+        # in an isolated session. The worker is exclusively owned by this probe.
+        script = r'''
+import json, signal, subprocess, sys, tempfile, time
+from pathlib import Path
+from vtx.pipeline.infra import Ctx
+from vtx.runtime.proc_supervisor import SupervisedProcessGroup
+with tempfile.TemporaryDirectory(prefix='vtx-owned-root-') as temporary:
+    root = Path(temporary)
+    timeline = root / 'timeline.json'
+    timeline.write_text(json.dumps(dict(
+        project=dict(fps=30, width=64, height=48, duration_frames=30),
+        sources=[], video_tracks=[], audio_tracks=[], subtitles=[])))
+    worker = root / 'worker.py'
+    ready = root / 'ready'
+    worker.write_text('import signal,time,pathlib,sys\n'
+                      'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                      'pathlib.Path(sys.argv[1]).touch()\ntime.sleep(20)\n')
+    group = SupervisedProcessGroup(Ctx(timeline),
+        [sys.executable, str(worker), str(ready)], backend_id='owned_root', kill_grace=.05)
+    try:
+        group.start()
+        deadline = time.monotonic() + 3
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ready.exists(), 'worker did not become ready'
+        pid = group.proc.pid
+        group.stop()
+        assert group.proc.returncode == -signal.SIGKILL, group.proc.returncode
+        assert not Path(f'/proc/{pid}').exists(), 'owned root remains unreaped'
+        assert not group.run_dir.exists(), 'successful shutdown left a run directory'
+    finally:
+        group.stop()
+        if group.proc is not None:
+            if group.proc.poll() is None:
+                group.proc.kill()
+            group.proc.wait(timeout=5)
+'''
+        result = subprocess.run([sys.executable, '-c', script], cwd=ROOT,
+                                start_new_session=True, capture_output=True,
+                                text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

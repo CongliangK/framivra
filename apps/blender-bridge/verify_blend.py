@@ -5,6 +5,10 @@ import json, sys
 from pathlib import Path
 import bpy
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bundle_session import require_modern_vse
+
+require_modern_vse(bpy)
 argv = sys.argv[sys.argv.index("--") + 1:]
 tl = json.loads(Path(argv[0]).read_text())
 P = tl["project"]

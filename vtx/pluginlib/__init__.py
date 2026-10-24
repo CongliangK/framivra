@@ -18,6 +18,6 @@ infra/hygiene/cache_state/stages 依赖，反向依赖会成环）；模块内�
 三不变量（§2.1）的内核接线位置（P1-2 完成，空转零行为变化）：
   ① 缓存键贡献   hygiene._current_keys（ak 并集）/ gc_plan（cache 根白名单）
                  → hooks.contribute_keys / hooks.get_cache_dirs
-  ② 回执指纹     cache_state.receipt_fingerprint 末尾追加 hooks.active_plugins_digest
+  ② 回执指纹     cache_state.receipt_fingerprint 纳入 hooks.active_plugins_digest
   ③ 安装态三分支 stages.validate 插件键扫描 → registry.lookup_key / plugin_state
 """

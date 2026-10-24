@@ -270,7 +270,7 @@ PY_COLLISION
     )" || COLLISION_RC=$?
     case "$COLLISION_RC" in
       0) ;;
-      2) fail "本地被忽略的文件与新版本跟踪路径冲突,拒绝覆盖以防数据丢失:$COLLISION。处理:先把冲突文件备份到克隆目录外,删除整个克隆目录后重跑本命令(上游新版本已把上述路径转为跟踪文件,本地文件不会自动迁移);或临时改用其他 FRAMIVRA_DIR。" ;;
+      2) fail "本地被忽略的文件与新版本跟踪路径冲突,拒绝覆盖以防数据丢失:${COLLISION}。处理:先把冲突文件备份到克隆目录外,删除整个克隆目录后重跑本命令(上游新版本已把上述路径转为跟踪文件,本地文件不会自动迁移);或临时改用其他 FRAMIVRA_DIR。" ;;
       *) fail 'ignored 碰撞预检失败(fail-closed),拒绝自动更新。' ;;
     esac
     MARKER="$DIR/.git/$MARKER_NAME"

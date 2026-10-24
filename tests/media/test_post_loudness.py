@@ -210,7 +210,7 @@ class TestAudioDigestStreaming(unittest.TestCase):
             stages.build_audio(self.c)
 
     def test_terminal_receipt_hit_and_later_same_size_change(self):
-        previous = {'sha256': self.expected, 'gain_db': 0.0}
+        previous = {'sha256': self.expected, 'gain_db': 0.0, 'target': TARGET_LUFS}
         receipt = self.out / 'receipt.json'
         receipt.write_text(json.dumps({'stages': {'audio': {'post_loudness': previous}}}))
         before = receipt.read_bytes()
@@ -226,6 +226,40 @@ class TestAudioDigestStreaming(unittest.TestCase):
                 redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'new measurement'):
             normalize_project_audio(self.root)
         self.assertEqual(receipt.read_bytes(), before)
+
+    def test_terminal_receipt_requires_same_target_before_skipping(self):
+        receipt = self.out / 'receipt.json'
+        for name, saved_target, target, skip in (
+                ('same', {'target': -14}, -14.0, True),
+                ('different', {'target': -14}, -16.0, False),
+                ('missing', {}, -14.0, False)):
+            with self.subTest(case=name):
+                previous = {'sha256': self.expected, 'gain_db': 0.0, **saved_target}
+                receipt.write_text(json.dumps({'stages': {'audio': {'post_loudness': previous},
+                                                        'mux': {'ok': True}, 'qc': {'ok': True}}}))
+                before = self.source.read_bytes(), receipt.read_bytes()
+                calls = []
+
+                def run(command, **kwargs):
+                    calls.append(command)
+                    if '-c:a' in command:
+                        shutil.copyfile(self.source, command[-1])
+                    measured = -14 if len(calls) == 1 else target
+                    return SimpleNamespace(returncode=0, stderr=f'I: {measured} LUFS\nPeak: -3.0 dBFS\n')
+
+                with self._bounded_reads(), mock.patch.object(stages.subprocess, 'run', side_effect=run), \
+                        redirect_stdout(io.StringIO()):
+                    result = normalize_project_audio(self.root, target=target)
+                self.assertEqual(len(calls), 0 if skip else 3)
+                self.assertEqual(result['target'], target)
+                if skip:
+                    self.assertEqual(result, previous)
+                else:
+                    self.assertEqual(result['gain_db'], target + 14)
+                    self.assertIn(f'volume={target + 14:.3f}dB,{ALIMITER}', calls[1])
+                    self.assertEqual(result['sha256'], self.expected)
+                self.assertEqual((self.source.read_bytes(), receipt.read_bytes()), before)
+                self.assertEqual(list(self.out.glob('.audio.wav.*.tmp')), [])
 
     def test_normalize_hashes_source_and_candidate_without_receipt_writes(self):
         with self._bounded_reads() as reads, mock.patch.object(stages.subprocess, 'run', self._run_normalization), \
@@ -474,6 +508,26 @@ class TestPostLoudnessCompat(unittest.TestCase):
         self.assertEqual(before, ((self.out / "audio.wav").read_bytes(),
                                    self.receipt.read_bytes()))
         self.assertFalse(list(self.out.glob(".post-*")))
+
+    def test_terminal_receipt_target_change_reprocesses_current_wav(self):
+        first = normalize_project_audio(self.root, FFMPEG)
+        rec = json.loads(self.receipt.read_text(encoding='utf-8'))
+        rec['stages']['audio']['post_loudness'] = first
+        self.receipt.write_text(json.dumps(rec), encoding='utf-8')
+        before = self.receipt.read_bytes()
+        with mock.patch.object(stages.subprocess, 'run', side_effect=AssertionError('same target reprocessed')):
+            self.assertEqual(normalize_project_audio(self.root, FFMPEG, target=-14), first)
+        changed = normalize_project_audio(self.root, FFMPEG, target=-16)
+        self.assertEqual(changed['target'], -16)
+        self.assertAlmostEqual(changed['input_i'], first['output_i'], delta=0.2)
+        self.assertAlmostEqual(changed['output_i'], -16, delta=1.5)
+        self.assertLess(changed['gain_db'], -1.5)
+        self.assertNotEqual(changed['sha256'], first['sha256'])
+        self.assertEqual(changed['sha256'], hashlib.sha256((self.out / 'audio.wav').read_bytes()).hexdigest())
+        with wave.open(str(self.out / 'audio.wav')) as stream:
+            self.assertEqual(stream.getnframes(), 48000 * 2)
+        self.assertEqual(self.receipt.read_bytes(), before)
+        self.assertEqual(list(self.out.glob('.audio.wav.*.tmp')), [])
 
     def test_missing_audio_raises(self):
         (self.out / "audio.wav").unlink()

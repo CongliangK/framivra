@@ -148,7 +148,7 @@ class RegistryHooksFallback(unittest.TestCase):
                       "manifest_errors": []}
         with mock.patch.object(pl_registry, "declared_plugins",
                                return_value={"duck-static": {"hooks": []}}), \
-             mock.patch.object(pl_registry, "discover", return_value=[fake_entry]):
+             mock.patch.object(pl_registry, "scan_builtin", return_value=[fake_entry]):
             got = pl_hooks._plugin_hooks_declared("duck-static")
         self.assertEqual(got, ["validate", "audio_events"],
                          "registry hooks 空列表须 fallback 实体 manifest 声明")

@@ -15,7 +15,8 @@ from ..runtime.diagnostics import (emit, key_path, subtitle_location, required_f
                           source_structure, mark_handled, operation)
 from ..runtime import fstxn
 from ..cache import recovery
-from ..media.audio_filters import event_chain
+from ..media.audio_filters import duck_chains, duck_track_indices, event_chain, key_group_chains, track_mix
+from ..media import union_intervals
 from ..pluginlib import hooks as _plugin_hooks
 from ..pluginlib import registry as _plugin_registry
 
@@ -296,16 +297,9 @@ def validate(c: Ctx):
 # ---------------------------------------------------------------- audit
 # 指标审计（建议性）：对照主流 UP主 实测基准（叙事风格分析/画面构成与节奏，2026-08-21）
 # 检查的是"编排合理性"而非机制合法性——只提示，不阻断渲染。validate 是硬门，audit 是体检。
-def _union(wins):
-    out = []
-    for s, e in sorted(wins):
-        if out and s <= out[-1][1]: out[-1] = (out[-1][0], max(out[-1][1], e))
-        else: out.append((s, e))
-    return out
-
 def _complement(wins, total):
     out, cur = [], 0.0
-    for s, e in _union(wins):
+    for s, e in union_intervals(wins):
         if s > cur: out.append((cur, s))
         cur = max(cur, e)
     if cur < total: out.append((cur, total))
@@ -339,7 +333,7 @@ def audit(c: Ctx):
             cp = f'{tp}.clips[{ci}]'
             kind_wins[kd].append(calc(cp, lambda: (field(cl, 'dst_in', cp) * c.spf,
                 (field(cl, 'dst_in', cp) + field(cl, 'dur', cp)) * c.spf), 'clip interval in seconds'))
-    comp = {kd: sum(e - s for s, e in calc("$.video_tracks", lambda: _union(w), "union intervals")) for kd, w in kind_wins.items()}
+    comp = {kd: sum(e - s for s, e in calc("$.video_tracks", lambda: union_intervals(w), "union intervals")) for kd, w in kind_wins.items()}
     comp_s = " / ".join(f"{k} {calc('$.project.duration_frames', lambda: v/D*100, 'composition percentage'):.0f}%" for k, v in calc("$.video_tracks", lambda: sorted(comp.items()), "sort composition kinds"))
     metric('画面构成', 'audit.composition', '$.video_tracks',
            {'by_kind': comp, 'total': D, 'unit': 's'}, None)
@@ -395,7 +389,7 @@ def audit(c: Ctx):
             ep = f'{voice_path}.events[{ei}]'
             voice_windows.append(calc(ep, lambda: (field(e, 'in', ep)*c.spf,
                                                    field(e, 'out', ep)*c.spf), 'voice interval in seconds'))
-        vw = calc(voice_path, lambda: _union(voice_windows), 'union voice intervals')
+        vw = calc(voice_path, lambda: union_intervals(voice_windows), 'union voice intervals')
         cov = calc(voice_path, lambda: sum(e - s for s, e in vw) / D, 'voice coverage / project duration')
         st = "ok" if 0.70 <= cov <= 0.98 else "warn"
         metric('口播覆盖率', 'audit.voice_coverage', voice_path, {'value': cov, 'unit': 'ratio'},
@@ -570,6 +564,13 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
         return wav_of[sid]
 
     evs = [(ti, tr, e) for ti, tr in enumerate(atracks) for e in tr["events"] if inside(e)]
+    if win is not None and not evs:
+        # A valid preview may lie wholly in a silent gap. With no inputs amix
+        # is invalid; synthesize only the exact window, without changing the
+        # full-project path or its terminal loudness checks.
+        silence = (f"anullsrc=r=48000:cl=stereo,atrim=end_sample={(fb-fa)*c.spf_samples},"
+                   "asetpts=PTS-STARTPTS")
+        return cmd, [silence], 0, False
     for ti, tr, e in evs:
         if e.get("loop"): cmd += ["-stream_loop", "-1"]
         cmd += ["-i", str(_wav(e["src"]))]
@@ -587,54 +588,30 @@ def _audio_graph(c: Ctx, win=None, margin_frames: int = 60):
             ev_lbls.append(f"[e{k}]")
             k += 1
         if not ev_lbls: continue     # 窗口内无事件的轨：不进混音（静音轨无贡献）
-        pad = (f"apad=whole_dur={c.dur*c.spf:.3f},"
-               f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS")
-        if len(ev_lbls) == 1:
-            chains.append(f"{ev_lbls[0]}{pad}[t{ti}]")
-        else:
-            chains.append(f"{''.join(ev_lbls)}amix=inputs={len(ev_lbls)}:duration=longest:normalize=0,{pad}[t{ti}]")
+        chains.append(track_mix(c, ev_lbls, f"[t{ti}]"))
         trk_lbl[ti] = f"[t{ti}]"
     # 音乐避让：duck:true 的轨被 duck_by（默认 voice）的混音经 sidechaincompress 压低
-    duck_tis = [ti for ti in present if atracks[ti].get("duck")]
-    duck_used = False
-    if duck_tis:
-        by_names = {n for ti in duck_tis for n in atracks[ti].get("duck_by", ["voice"])}
-        sc_tis = [ti for ti in present if trk_lbl.get(ti) and atracks[ti]["name"] in by_names
-                  and ti not in duck_tis]
-        if sc_tis:
-            duck_used = True
-            if len(sc_tis) == 1:
-                # 修复（2026-09-10，voice-ime BGM v2 轮定位）：asplit=恰 N 路把 sidechain 轨
-                # （voice）整轨吞尽，终混仍引用原标签→该 ffmpeg 版本静默解析为空流=口播
-                # 整轨缺失（复现：最小三轨 bed+voice+duck bgm）。多分一路并重绑原轨标签，
-                # 终混引用恢复有效。
-                chains.append(f"{trk_lbl[sc_tis[0]]}asplit={len(duck_tis) + 1}" +
-                              "".join(f"[sc{j}]" for j in range(len(duck_tis))) +
-                              trk_lbl[sc_tis[0]])
-            else:
-                # 同族修复：多 sidechain 轨先各自 asplit 保一路原标签再 amix 做 key，
-                # 否则 amix 消费原标签后终混同样丢这些轨。
-                for ti in sc_tis:
-                    chains.append(f"{trk_lbl[ti]}asplit=2[scx{ti}]{trk_lbl[ti]}")
-                chains.append(f"{''.join(f'[scx{ti}]' for ti in sc_tis)}"
-                              f"amix=inputs={len(sc_tis)}:duration=longest:normalize=0[scm]")
-                chains.append(f"[scm]asplit={len(duck_tis)}" + "".join(f"[sc{j}]" for j in range(len(duck_tis))))
-            for j, ti in enumerate(duck_tis):
-                # 轨级 duck_params 覆盖缺省（2026-09-11）：threshold 线性值 / ratio /
-                # attack_ms / release_ms / makeup，单位与 sidechaincompress 一致
-                dp = atracks[ti].get("duck_params", {})
-                thr = dp.get("threshold", DUCK_THRESHOLD)
-                rat = dp.get("ratio", DUCK_RATIO)
-                atk = dp.get("attack_ms", DUCK_ATTACK_MS)
-                rel = dp.get("release_ms", DUCK_RELEASE_MS)
-                mkup = dp.get("makeup", DUCK_MAKEUP)
-                chains.append(f"{trk_lbl[ti]}[sc{j}]sidechaincompress=threshold={thr}:ratio={rat}:"
-                              f"attack={atk}:release={rel}:makeup={mkup}[td{ti}]")
-                trk_lbl[ti] = f"[td{ti}]"
-                print(f"  duck[{atracks[ti]['name']}]: threshold={thr} ratio={rat} "
-                      f"attack={atk}ms release={rel}ms makeup={mkup}")
-        else:
-            print("⚠ duck 声明无效：找不到 duck_by 指向的非 duck 轨，跳过避让")
+    duck_tis, key_groups = duck_track_indices(atracks, present)
+    duck_used = bool(key_groups)
+    chains.extend(key_group_chains(trk_lbl, key_groups))
+    for gi, targets in enumerate(key_groups.values()):
+        chains.append(f"[keyg{gi}]asplit={len(targets)}" + "".join(f"[sc{ti}]" for ti in targets))
+        for ti in targets:
+            # 轨级 duck_params 覆盖缺省（2026-09-11）：threshold 线性值 / ratio /
+            # attack_ms / release_ms / makeup，单位与 sidechaincompress 一致
+            dp = atracks[ti].get("duck_params", {})
+            thr = dp.get("threshold", DUCK_THRESHOLD)
+            rat = dp.get("ratio", DUCK_RATIO)
+            atk = dp.get("attack_ms", DUCK_ATTACK_MS)
+            rel = dp.get("release_ms", DUCK_RELEASE_MS)
+            mkup = dp.get("makeup", DUCK_MAKEUP)
+            chains.extend(duck_chains(c, trk_lbl[ti], f"[sc{ti}]", f"[td{ti}]",
+                                      threshold=thr, ratio=rat, attack=atk, release=rel, makeup=mkup))
+            trk_lbl[ti] = f"[td{ti}]"
+            print(f"  duck[{atracks[ti]['name']}]: threshold={thr} ratio={rat} "
+                  f"attack={atk}ms release={rel}ms makeup={mkup}")
+    if len(duck_tis) > sum(map(len, key_groups.values())):
+        print("⚠ duck 声明无效：找不到 duck_by 指向的非 duck 轨，跳过避让")
     # 总混音头（不归一，保留音量比例）：全片补齐到 dur；窗口模式多一截 atrim 到
     # [fa,fb) 采样网格（apad 定长在上游已保证窗口尾不足时有静音可截）。
     tail = (f"atrim=end_sample={c.dur*c.spf_samples},asetpts=PTS-STARTPTS"
@@ -760,9 +737,10 @@ def normalize_project_audio(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
 
     Measure loudness, apply gain and limiting, verify loudness/duration, then
     atomically replace the WAV. Return measurements including the output hash.
-    A matching terminal receipt skips processing; otherwise repeated limiting
-    can change delivered loudness. This operation does not update or invalidate
-    audio/mux/QC receipts. Use the normal vtx audio pipeline for delivery.
+    A terminal receipt matching both WAV hash and target skips processing;
+    otherwise repeated limiting can change delivered loudness. A new target
+    reprocesses this WAV, not the original sources. This operation does not update
+    or invalidate audio/mux/QC receipts. Use the normal vtx audio pipeline for delivery.
     """
     if not math.isfinite(target):
         raise ValueError("Target must be finite")
@@ -777,8 +755,9 @@ def normalize_project_audio(project, ffmpeg="ffmpeg", target=TARGET_LUFS):
             prev = ((rec.get("stages") or {}).get("audio") or {}).get("post_loudness")
         except Exception:
             prev = None
-        if isinstance(prev, dict) and prev.get("sha256") == sha_now:
-            print("v2: audio.wav 与回执 post_loudness.sha256 一致（已是 vtx audio 终态），"
+        if (isinstance(prev, dict) and prev.get("sha256") == sha_now
+                and prev.get("target") == target):
+            print("v2: audio.wav 与回执 post_loudness.sha256 及 target 一致（已是 vtx audio 终态），"
                   "跳过音频维护处理")
             return prev
     print("音频维护：处理现有 WAV（正式渲染链无需本命令）")

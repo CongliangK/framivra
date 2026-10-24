@@ -38,8 +38,9 @@ def _denoise_interpreter():
         Path(__file__).resolve().parents[2] / "config.local.json")
     try:
         with open(os.path.expanduser(cfg_path), encoding="utf-8") as f:
-            denoise = (json.load(f) or {}).get("denoise") or {}
-        p = denoise.get("python")
+            config = json.load(f)
+        denoise = config.get("denoise") if isinstance(config, dict) else None
+        p = denoise.get("python") if isinstance(denoise, dict) else None
         if isinstance(p, str) and p.strip():
             cfg_py = os.path.expanduser(p.strip())
     except (OSError, ValueError):

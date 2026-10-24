@@ -27,6 +27,7 @@ import hashlib
 import os
 import json
 import re
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -35,6 +36,7 @@ import zlib
 from ..runtime import fstxn
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 # PNG 魔数头（RFC 2083 §3 及 spec：8 字节签名）。任务口径「\x89PNG」为其前 4
 # 字节；校验取完整 8 字节签名（严格更强：前缀对而后缀错同样判损坏）。
@@ -462,6 +464,42 @@ def _rc_error(cmd, proc) -> str:
     return msg
 
 
+def _run_cli_browser(cmd, directory, timeout, *, root=None):
+    """Capture one owned browser and clean its tree before returning or raising."""
+    if os.name == 'nt':
+        from ..runtime.windows_browser import run_browser
+        return run_browser(cmd, timeout=timeout)
+    from ..runtime.proc_supervisor import SupervisedProcessGroup, supervision_available
+    if not supervision_available():
+        # Preserve the existing unsupported-platform route; do not invent
+        # process identities or signal an unverified process group.
+        return subprocess.run(cmd, capture_output=True, timeout=timeout)
+    project = Path(directory if root is None else root).resolve()
+    context = SimpleNamespace(root=project, cache=project / 'cache')
+    argv = list(cmd)
+    # The supervisor owns a private cwd. Resolve executable lookup in the
+    # caller's cwd first, including a relative PATH entry or './chrome'.
+    executable = shutil.which(str(argv[0]))
+    if executable is not None or os.path.dirname(str(argv[0])):
+        argv[0] = str(Path(executable or argv[0]).absolute())
+    group = SupervisedProcessGroup(
+        context, lambda run, profile: [
+            '--user-data-dir=' + str(profile) if str(arg).startswith('--user-data-dir=') else arg
+            for arg in argv], backend_id='cli', stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        with group:
+            stdout, stderr = group.proc.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(group.proc.args, group.proc.returncode, stdout, stderr)
+    finally:
+        # Stop the tree before closing its capture streams. Popen's context
+        # manager would wait before group.__exit__, hanging after an exception
+        # when a descendant inherited a capture pipe.
+        if group.proc is not None:
+            for stream in (group.proc.stdout, group.proc.stderr):
+                if stream is not None:
+                    stream.close()
+
+
 def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None, *, root=None):
     """渲一帧：执行 Chrome 截图命令并校验产物。
 
@@ -485,21 +523,17 @@ def run_cli_shot(i, d, html, chrome, width=1920, height=1080, timeout=None, *, r
                 # Chrome chooses its encoder by filename extension and silently
                 # exits 0 for the transaction's .tmp suffix. Render a .png in
                 # the private profile, then copy into the pinned staging inode.
-                output = Path(profile) / 'frame.png'
+                output = Path(profile).resolve() / 'frame.png'
                 staged = [f'--screenshot={output}' if str(arg).startswith('--screenshot=') else arg
                           for arg in cmd]
                 staged.insert(1, '--user-data-dir=' + profile)
                 staged.insert(2, '--no-first-run')
                 staged.insert(3, '--no-default-browser-check')
-                if os.name == 'nt':
-                    from ..runtime.windows_browser import run_browser
-                    proc = run_browser(staged, timeout=timeout)
-                else:
-                    proc = subprocess.run(staged, capture_output=True, timeout=timeout)
+                proc = _run_cli_browser(staged, d, timeout, root=root)
                 if proc.returncode == 0 and output.is_file():
                     tmp.write_bytes(output.read_bytes())
             if proc.returncode != 0:
-                raise GfxCliError(_rc_error(staged, proc) + f'\n    原目标：--screenshot={png}')
+                raise GfxCliError(_rc_error(proc.args, proc) + f'\n    原目标：--screenshot={png}')
             reason = png_invalid_reason(tmp, width=width, height=height)
             if reason == '零字节':
                 reason = '零字节（截图缺失或未写入有效产物）'

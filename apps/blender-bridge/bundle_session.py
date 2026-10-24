@@ -11,12 +11,35 @@ audit_bundle.py 步骤④⑤合并（2026-09-11 提速）：原先两次 blender
   blender --background --factory-startup --python bundle_session.py -- \
       <timeline.json> <out.blend> <json2blend.py 路径> <verify_blend.py 路径>
 
-退出码：json2blend 失败即停止（verify 依赖其产物）；任一步失败退出码 1。
+退出码：json2blend 失败即停止；脚本非零退出码原样传递，未捕获异常退出码 1。
 输出标记 [bundle/step4] [bundle/step5]，供 audit_bundle 解析/转发。
 """
 import runpy
 import sys
 import traceback
+
+
+MIN_BLENDER_VERSION = (4, 4, 0)
+
+
+def blender_version_error(version):
+    """Shared prerequisite; a sufficient version is not runtime qualification."""
+    if tuple(version) < MIN_BLENDER_VERSION:
+        minimum = '.'.join(map(str, MIN_BLENDER_VERSION))
+        return f"需要 Blender >= {minimum}，当前 {'.'.join(map(str, version))}"
+    return ""
+
+
+def require_modern_vse(bpy):
+    error = blender_version_error(bpy.app.version)
+    missing = [name for name in ("strips", "strips_all")
+               if name not in bpy.types.SequenceEditor.bl_rna.properties]
+    if missing:
+        error = (error or f"Blender {bpy.app.version_string}") + \
+            f"；缺少现代 VSE API: {', '.join(missing)}"
+    if error:
+        print(f"错误: blender-bridge {error}", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def _run_step(py_path, label):
@@ -47,4 +70,5 @@ def main():
     sys.exit(rc)
 
 
-main()
+if __name__ == "__main__":
+    main()

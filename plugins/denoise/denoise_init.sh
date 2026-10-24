@@ -39,7 +39,7 @@ fi
 
 # 2) conda denoise 环境
 if [ -x "$DENoise_PY" ] && "$DENoise_PY" -c "import resemble_enhance" 2>/dev/null; then
-  ok "denoise 环境 $DENoise_PY（resemble_enhance 可导入）"
+  ok "denoise 环境 ${DENoise_PY}（resemble_enhance 可导入）"
 else
   warn "denoise 环境缺失，修复命令："
   say "    conda create -n denoise python=3.10 -y"

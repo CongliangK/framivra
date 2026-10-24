@@ -130,6 +130,9 @@ def scan_external(repo_root=None) -> list:
                 entries.append(entry)
                 continue
             manifest, errors = load_manifest(d)
+            if kind == "plugin" and manifest and manifest["kind"] != "plugin":
+                errors = ["external_plugins 条目须为 kind=plugin，不能以 app 身份执行"]
+                manifest = None
             entry["name"] = (manifest or {}).get("name") or d.name
             entry["manifest"] = manifest
             entry["manifest_errors"] = errors
@@ -137,41 +140,93 @@ def scan_external(repo_root=None) -> list:
     return entries
 
 
+def _external_by_name(repo_root=None, *, entries=None) -> dict:
+    """Resolve plugin identities once; discovery keeps every diagnostic row.
+
+    Identical resolved roots with identical authorization are one identity.
+    Different roots or contradictory authorization never acquire a winner.
+    Apps occupy a separate namespace and cannot supply plugin metadata.
+    """
+    groups = {}
+    for entry in scan_external(repo_root) if entries is None else entries:
+        if entry["kind"] == "plugin":
+            groups.setdefault(entry["name"], []).append(entry)
+    out = {}
+    for name, group in groups.items():
+        first = group[0]
+        if len({(e["dir"], e["enabled"]) for e in group}) > 1:
+            detail = "; ".join(f"{e['dir']} (enabled={e['enabled']})" for e in group)
+            error = f"external 插件 {name} 身份歧义（同名目录或启用状态冲突）: {detail}"
+            for entry in group:
+                entry["manifest_errors"].append(error)
+            # No path/manifest from either conflicting identity may be consumed.
+            first = dict(first, dir=None, manifest=None, enabled=any(
+                e["enabled"] for e in group), manifest_errors=[error], ambiguous=True)
+        out[name] = first
+    return out
+
+
 def discover(repo_root=None) -> list:
-    """全量组件清单（内置 + external），按 (kind, name) 排序。entry 结构见上。"""
-    entries = scan_builtin(repo_root) + scan_external(repo_root)
+    """全量组件清单（内置 + external），保留禁用/损坏/歧义条目供 doctor 诊断。"""
+    external = scan_external(repo_root)
+    _external_by_name(entries=external)
+    entries = scan_builtin(repo_root) + external
     return sorted(entries, key=lambda e: (e["kind"], str(e["name"])))
 
 
-def _external_by_name(repo_root=None) -> dict:
-    return {e["name"]: e for e in scan_external(repo_root) if e.get("name")}
+def resolve_plugin(name: str, repo_root=None, *, external=None):
+    """One physical plugin identity for state, declarations and import.
 
-
-def plugin_state(name: str, repo_root=None) -> str:
-    """插件安装态 → active | not_installed | disabled | unknown（三分支判定核心）。
-
-    installed = registry 声明 installed:true **且** plugins/<name>/ 目录存在
-    （或 external 实体目录存在）；未进静态注册表的实体（external/第三方）目录
-    在即 installed，enabled 取 config 条目（external 默认 disabled，§2.4）。
+    Official declarations and builtin directories retain precedence; external
+    records cannot replace an absent official installation. Discovery remains
+    non-throwing for manifest errors, while enabled external failures are not
+    filtered out before the execution bus can reject them.
     """
     root = _root(repo_root)
-    reg = load_static_registry(root)["plugins"].get(name)
+    builtin = next((e for e in scan_builtin(root)
+                    if e["kind"] == "plugin" and e["name"] == name), None)
+    if builtin is not None or name in declared_plugins(root):
+        return builtin
+    entries = _external_by_name(root) if external is None else external
+    entry = entries.get(name)
+    if entry and (entry.get("ambiguous") or
+                  (entry["enabled"] and entry["manifest_errors"])):
+        raise RuntimeError(f"external 插件 {name} 无法加载: "
+                           + "; ".join(entry["manifest_errors"]))
+    return entry
+
+
+def plugin_state(name: str, repo_root=None, *, entry=None) -> str:
+    """插件安装态 → active | not_installed | disabled | unknown。
+
+    官方件仍须 registry installed:true 且 plugins/<name>/ 在盘；external
+    状态与导入/声明使用同一实体，启用但损坏或身份歧义明确报错。
+    """
+    root = _root(repo_root)
+    reg = declared_plugins(root).get(name)
     if reg is not None:
-        # P4 审查 P2-2：官方声明的插件只认 plugins/<name>/ 实体——目录缺失即
-        # not_installed（安装破损 fail-hard），**不得**被同名 external 顶替
-        # （否则第三方以官方身份运行且版本号仍报官方）。
         installed = bool(reg.get("installed", False)) and (root / "plugins" / name).is_dir()
-    else:
-        ext = _external_by_name(root).get(name)
-        installed = ext is not None and ext["dir"] is not None and ext["dir"].is_dir()
-    if not installed:
-        return "not_installed"
-    if reg is not None:
         enabled = bool(reg.get("enabled", True))
     else:
-        ext = _external_by_name(root).get(name)
-        enabled = bool(ext and ext.get("enabled"))
+        entry = resolve_plugin(name, root) if entry is None else entry
+        installed = (entry is not None and entry["source"] == "external"
+                     and entry["dir"] is not None and entry["dir"].is_dir())
+        enabled = bool(entry and entry["enabled"])
+    if not installed:
+        return "not_installed"
     return "active" if enabled else "disabled"
+
+
+def _plugin_entries(repo_root=None, *, external=None):
+    """Canonical manifest entries for key consumers, without app collisions."""
+    selected = [e for e in scan_builtin(repo_root) if e["kind"] == "plugin"]
+    reserved = set(declared_plugins(repo_root)) | {e["name"] for e in selected}
+    entries = _external_by_name(repo_root) if external is None else external
+    for name, entry in entries.items():
+        if name in reserved or (not entry["enabled"] and entry["manifest_errors"]):
+            continue
+        selected.append(resolve_plugin(name, repo_root, external=entries))
+    return sorted(selected, key=lambda e: e["name"])
 
 
 def lookup_key(key: str, repo_root=None):
@@ -186,8 +241,8 @@ def lookup_key(key: str, repo_root=None):
         for ki in entry.get("keys", []):
             if isinstance(ki, dict) and ki.get("key") == key:
                 return name, ki
-    for e in discover(root):
-        if e["kind"] != "plugin" or not e["manifest"]:
+    for e in _plugin_entries(root):
+        if not e["manifest"]:
             continue
         for ki in (e["manifest"].get("extends", {}) or {}).get("schema_keys", []):
             if isinstance(ki, dict) and ki.get("key") == key:
@@ -207,7 +262,7 @@ def registry_key_map(repo_root=None) -> dict:
     return out
 
 
-def key_map(repo_root=None) -> dict:
+def key_map(repo_root=None, *, external=None) -> dict:
     """全量键声明汇总（静态注册表 + external 实体 manifest，P4）：
     {key: {"plugin": name, "path": path}}。
 
@@ -217,8 +272,8 @@ def key_map(repo_root=None) -> dict:
     与 lookup_key 同一双源同一优先序：静态注册表优先，external manifest 并入。"""
     out = registry_key_map(repo_root)
     import sys as _sys
-    for e in discover(repo_root):
-        if e["kind"] != "plugin" or not e["manifest"] or e["source"] != "external":
+    for e in _plugin_entries(repo_root, external=external):
+        if not e["manifest"] or e["source"] != "external":
             continue
         for ki in (e["manifest"].get("extends", {}) or {}).get("schema_keys", []):
             if not (isinstance(ki, dict) and isinstance(ki.get("key"), str)):
@@ -233,23 +288,19 @@ def key_map(repo_root=None) -> dict:
     return out
 
 
-def plugin_module_dir(name: str, repo_root=None):
-    """插件实体目录定位（hooks._load_plugin_module 的导入锚，P4）：
-    → (dir | None, "builtin" | "external" | None)。
-
-    plugins/<name>/ 优先（官方件）；否则 external 注册目录（manifest 有效且目录在盘
-    ——坏条目/坏 manifest 不作导入锚）。"""
+def plugin_module_dir(name: str, repo_root=None, *, entry=None):
+    """Selected plugin import anchor; rejected builtin symlinks stay rejected."""
     root = _root(repo_root)
-    builtin = root / "plugins" / name
-    if builtin.is_dir():
-        if not builtin.resolve().is_relative_to((root / "plugins").resolve()):
-            return None, None  # A rejected builtin must not become an import anchor.
-        return builtin, "builtin"
-    for e in scan_external(repo_root):
-        if (e["kind"] == "plugin" and e["name"] == name
-                and e.get("dir") and e["dir"].is_dir() and e["manifest"]):
-            return e["dir"], "external"
-    return None, None
+    entry = resolve_plugin(name, root) if entry is None else entry
+    if entry is None or entry["dir"] is None:
+        return None, None
+    directory, source = entry["dir"], entry["source"]
+    if source == "builtin":
+        if not directory.resolve().is_relative_to((root / "plugins").resolve()):
+            return None, None
+    elif not entry["manifest"]:
+        return None, None
+    return directory, source
 
 
 def declared_plugins(repo_root=None) -> dict:

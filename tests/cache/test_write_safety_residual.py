@@ -131,6 +131,115 @@ class WriteSafetyResidual(unittest.TestCase):
         self.assertEqual((dst / 'timeline.json').read_bytes(), self.timeline.read_bytes())
         self.assertEqual((dst / 'gfx/page.html').read_text(), '<p>hello</p>')
 
+    def test_snapshot_same_second_tracks_asset_bytes_and_is_idempotent(self):
+        asset = self.root / 'page.html'
+        asset.write_bytes(b'<p>old</p>')
+        self.gfx('page.html')
+        with mock.patch.object(hygiene.time, 'strftime', return_value='20000101T000000Z'):
+            first = hygiene.snapshot(self.c)
+            asset.write_bytes(b'<p>new</p>')
+            second = hygiene.snapshot(self.c)
+            repeated = hygiene.snapshot(self.c)
+        self.assertNotEqual(first, second)
+        self.assertEqual(second, repeated)
+        self.assertEqual((first / 'page.html').read_bytes(), b'<p>old</p>')
+        self.assertEqual((second / 'page.html').read_bytes(), b'<p>new</p>')
+
+    def test_snapshot_copies_project_and_clip_text_dependencies_not_binary(self):
+        files = {'page.html': b'<p>hello</p>', 'theme.CSS': b'p{color:red}',
+                 'script.js': b'const value = 1;', 'data.json': b'{"value": 1}',
+                 'image.png': b'\x89PNG\r\n\x1a\n', 'font.woff2': b'wOF2'}
+        for name, data in files.items():
+            (self.root / name).write_bytes(data)
+        self.tl['project']['cache_dependencies'] = ['theme.CSS', 'image.png', 'font.woff2']
+        self.tl['video_tracks'] = [{'kind': 'gfx', 'clips': [
+            {'src': 'page.html', 'dst_in': 0, 'dur': 30,
+             'cache_dependencies': ['script.js', 'data.json', 'theme.CSS']}]}]
+        self.save()
+        original = Path.read_bytes
+        def read(path):
+            if path.name in ('image.png', 'font.woff2'):
+                raise AssertionError('snapshot must not read binary dependencies')
+            return original(path)
+        with mock.patch.object(Path, 'read_bytes', read):
+            dst = hygiene.snapshot(self.c)
+        for name in ('page.html', 'theme.CSS', 'script.js', 'data.json'):
+            self.assertEqual((dst / name).read_bytes(), files[name])
+        self.assertFalse((dst / 'image.png').exists())
+        self.assertFalse((dst / 'font.woff2').exists())
+
+    def test_snapshot_dependency_change_and_timeline_change_get_distinct_names(self):
+        dependency = self.root / 'theme.css'
+        dependency.write_bytes(b'p{color:red}')
+        self.tl['project']['cache_dependencies'] = ['theme.css']
+        self.save()
+        with mock.patch.object(hygiene.time, 'strftime', return_value='20000101T000000Z'):
+            first = hygiene.snapshot(self.c, keep=3)
+            dependency.write_bytes(b'p{color:blue}')
+            second = hygiene.snapshot(self.c, keep=3)
+            self.tl['_meta'] = {'revision': 2}
+            self.save()
+            third = hygiene.snapshot(self.c, keep=3)
+        self.assertEqual(len({first, second, third}), 3)
+        self.assertEqual((first / 'theme.css').read_bytes(), b'p{color:red}')
+        self.assertEqual((second / 'theme.css').read_bytes(), b'p{color:blue}')
+        self.assertEqual((third / 'timeline.json').read_bytes(), self.timeline.read_bytes())
+
+    def test_snapshot_external_text_dependency_fails_before_writing(self):
+        dependency = self.outside / 'theme.css'
+        dependency.write_bytes(b'p{color:red}')
+        self.tl['project']['cache_dependencies'] = [str(dependency)]
+        self.save()
+        with self.assertRaises(ProjectPathError):
+            hygiene.snapshot(self.c)
+        self.assert_no_snapshot()
+        self.assertEqual(dependency.read_bytes(), b'p{color:red}')
+
+    def test_snapshot_dependency_cannot_shadow_canonical_timeline_name(self):
+        self.timeline = self.root / 'edit.json'
+        dependency = self.root / 'timeline.json'
+        dependency.write_bytes(b'{"independent_asset": true}')
+        self.tl['project']['cache_dependencies'] = ['timeline.json']
+        self.save()
+        with self.assertRaisesRegex(ProjectPathError, 'timeline.json'):
+            hygiene.snapshot(self.c)
+        self.assert_no_snapshot()
+        self.assertEqual(dependency.read_bytes(), b'{"independent_asset": true}')
+        # A declaration of the actual selected timeline remains deduplicated.
+        self.timeline = dependency
+        self.save()
+        dst = hygiene.snapshot(self.c)
+        self.assertEqual((dst / 'timeline.json').read_bytes(), dependency.read_bytes())
+
+    def test_snapshot_same_second_rotation_never_discards_new_publication(self):
+        asset = self.root / 'page.html'
+        asset.write_text('0')
+        self.gfx('page.html')
+        for legacy in sorted({hygiene.fstxn._legacy_guard(), True}):
+            with self.subTest(legacy=legacy), mock.patch.object(
+                    hygiene.fstxn, '_legacy_guard', return_value=legacy), mock.patch.object(
+                    hygiene.time, 'strftime', return_value=f'2000010{int(legacy) + 1}T000000Z'):
+                for revision in range(5):
+                    asset.write_text(str(revision))
+                    # Old entries deliberately have equal, future timestamps.
+                    # Timestamp precision/order alone cannot keep the new one.
+                    snapshots = self.root / 'cache/snapshots'
+                    if snapshots.exists():
+                        for old in snapshots.iterdir():
+                            if old.is_dir():
+                                os.utime(old, ns=(2000000000000000000, 2000000000000000000))
+                    dst = hygiene.snapshot(self.c, keep=1)
+                    self.assertEqual((dst / 'page.html').read_text(), str(revision))
+                    self.assertEqual([p for p in snapshots.iterdir() if p.is_dir()], [dst])
+                    self.assertEqual(hygiene.snapshot(self.c, keep=1), dst)
+                removed = hygiene.snapshot(self.c, keep=0)
+                # Existing identical snapshots remain idempotent: keep=0 is
+                # applied only to a new publication, matching historical use.
+                self.assertTrue(removed.exists())
+                asset.write_text('zero-retention')
+                removed = hygiene.snapshot(self.c, keep=0)
+                self.assertFalse(removed.exists())
+
     def test_cli_invalid_source_and_lock_fail_without_traceback(self):
         for src in ('', '.', 'bad\x00.html'):
             with self.subTest(src=src):

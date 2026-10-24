@@ -68,7 +68,7 @@ for _stream in (sys.stdout, sys.stderr):
 from vtx.pluginlib import config as _pcfg    # noqa: E402（统一加载，§5.3）
 from vtx.pluginlib import registry as _preg  # noqa: E402（发现/静态注册表，§2.1）
 from vtx.pluginlib.manifest import load_manifest as _load_manifest  # noqa: E402
-from vtx.render.browser_paths import chrome_names, chrome_install_paths  # noqa: E402
+from vtx.render.browser_paths import chrome_names, chrome_install_paths, find_chrome_candidate  # noqa: E402
 
 
 def py3() -> str:
@@ -122,6 +122,11 @@ def find_binary(names, extra_paths=()):
 
 def find_chrome():
     """与 vtx.media.encoders.find_chrome 同源逻辑：VTX_CHROME 优先 → PATH → 标准安装路径。"""
+    if OS == "linux":
+        candidate = find_chrome_candidate(OS, allow_override_file=False)
+        # doctor reports the resolved path, while renderer callers retain the
+        # candidate's spelling. Both must select the same native Linux browser.
+        return (shutil.which(candidate) or candidate) if candidate else None
     names = chrome_names()
     paths = chrome_install_paths(OS)
     return find_binary([n for n in names if n], paths)
@@ -1113,7 +1118,10 @@ def cmd_list(kind: str) -> int:
     for it in comp["entries"]:
         # 红队 P2-2 修正：fail 优先；enabled 以插件实际状态为准（registry enabled:false
         # 的发现件此前误显 "✓ enabled"——it["enabled"] 只反映发现来源不是启停）
-        st = _preg.plugin_state(it["name"]) if it["kind"] == "plugin" else ("active" if it["enabled"] else "disabled")
+        if it["manifest_errors"]:
+            st = "unknown" if it["enabled"] else "disabled"
+        else:
+            st = _preg.plugin_state(it["name"]) if it["kind"] == "plugin" else ("active" if it["enabled"] else "disabled")
         state = "✗ FAIL" if it["fail"] else {"active": "✓ enabled", "disabled": "ℹ disabled"}.get(st, "ℹ 未安装")
         print(f"  {state:9s} {it['name']}（{it['kind']}:{it['source']}，{it['dir']}）")
     if kind == "plugins":

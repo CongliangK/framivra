@@ -30,6 +30,10 @@ except ImportError:
     print("  blender --background --factory-startup --python json2blend.py -- <timeline.json> <out.blend>", file=sys.stderr)
     sys.exit(2)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bundle_session import require_modern_vse
+
+require_modern_vse(bpy)
 argv = sys.argv[sys.argv.index("--") + 1:]
 # 相对素材/cache 属于 timeline 文件所在项目，不能跟随其符号链接到别的项目。
 tl_path, blend_path = Path(argv[0]).absolute(), Path(argv[1]).resolve()
@@ -85,7 +89,7 @@ sc.name = tl_path.stem
 sc["vtx_timeline"] = str(tl_path)
 sc["vtx_generator"] = "json2blend.py"
 
-seq = sc.sequence_editor_create().strips  # Blender 5.x: sequences → strips
+seq = sc.sequence_editor_create().strips
 
 _probe = {}
 def probe(path):

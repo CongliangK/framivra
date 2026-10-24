@@ -47,7 +47,7 @@ class _FakeContext:
         return 'crop=1920:1080'
 
     def probe(self, src):
-        return {'w': 1920, 'h': 1080}
+        return {'w': 1920, 'h': 1080, 'has_alpha': False}
 
     def run(self, cmd, **kwargs):
         self.commands.append(tuple(cmd))

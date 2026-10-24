@@ -2,6 +2,8 @@
 import hashlib
 import importlib
 import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,11 +42,29 @@ class PluginCodeDigest(unittest.TestCase):
     def test_same_basename_is_stable_across_traversal_order(self):
         paths = [self.write("z/module.py", b"Z = 1\n"),
                  self.write("a/module.py", b"A = 1\n")]
-        with mock.patch.object(Path, "rglob", return_value=iter(paths)):
+        original = Path.iterdir
+        with mock.patch.object(Path, "iterdir", lambda p: iter(sorted(original(p)))):
             first = self.digest()
-        with mock.patch.object(Path, "rglob", return_value=iter(reversed(paths))):
+        with mock.patch.object(Path, "iterdir", lambda p: iter(sorted(original(p), reverse=True))):
             second = self.digest()
         self.assertEqual(first, second)
+        # Global logical ordering must match the existing v2 format, including
+        # aliases that would otherwise interleave differently during a DFS.
+        shared = self.root.parent / 'shared'
+        shared.mkdir()
+        (shared / 'module.py').write_bytes(b'SHARED = 1\n')
+        for name in ('a-link', 'z-link'):
+            (self.root / name).symlink_to(shared, target_is_directory=True)
+        files = paths + [self.root / name / 'module.py' for name in ('a-link', 'z-link')]
+        expected = hashlib.sha1(hooks._PLUGIN_CODE_DIGEST_VERSION + b'DIR\0')
+        for path in sorted(files, key=lambda p: p.relative_to(self.root).as_posix()):
+            relative = path.relative_to(self.root).as_posix().encode('utf-8')
+            data = path.read_bytes()
+            expected.update(len(relative).to_bytes(8, 'big') + relative)
+            expected.update(b'CONTENT\0' + len(data).to_bytes(8, 'big') + data)
+        self.assertEqual(self.digest(), expected.hexdigest()[:12])
+        with mock.patch.object(Path, "iterdir", lambda p: iter(sorted(original(p), reverse=True))):
+            self.assertEqual(self.digest(), expected.hexdigest()[:12])
 
     def test_plugin_root_location_does_not_change_identity(self):
         self.write("子包/内容.py")
@@ -77,6 +97,27 @@ class PluginCodeDigest(unittest.TestCase):
         source.write_bytes(b"VALUE = 2\n")
         os.utime(source, ns=(original.st_atime_ns, original.st_mtime_ns))
         self.assertNotEqual(first, self.digest())
+        # Fresh imports follow linked subpackages; their bytes need the same
+        # content sensitivity, without making the physical target path a key.
+        shared = self.root.parent / 'shared'
+        shared.mkdir()
+        source = shared / 'module.py'
+        source.write_bytes(b'VALUE = 1\n')
+        linked = self.root / 'linked'
+        linked.symlink_to(shared, target_is_directory=True)
+        first = self.digest()
+        self.assertEqual(first, self.digest())
+        original = source.stat()
+        source.write_bytes(b'VALUE = 2\n')
+        os.utime(source, ns=(original.st_atime_ns, original.st_mtime_ns))
+        second = self.digest()
+        self.assertNotEqual(first, second)
+        equivalent = self.root.parent / 'equivalent'
+        equivalent.mkdir()
+        (equivalent / 'module.py').write_bytes(source.read_bytes())
+        linked.unlink()
+        linked.symlink_to(equivalent, target_is_directory=True)
+        self.assertEqual(second, self.digest())
 
     def test_nested_exclusions_and_non_python_files_do_not_change_identity(self):
         self.write("package/module.py")
@@ -88,6 +129,14 @@ class PluginCodeDigest(unittest.TestCase):
         self.assertEqual(first, self.digest())
         self.write("package/testing/module.py")
         self.assertNotEqual(first, self.digest())
+        shared = self.root.parent / 'shared'
+        shared.mkdir()
+        (shared / 'module.py').write_bytes(b'SHARED = 1\n')
+        for name in ('tests', '__pycache__'):
+            (self.root / 'package/testing' / name).symlink_to(shared, target_is_directory=True)
+        first = self.digest()
+        (shared / 'module.py').write_bytes(b'SHARED = 2\n')
+        self.assertEqual(first, self.digest())
 
     def test_exclusions_are_relative_to_plugin_root(self):
         moved = self.root.parent / "__pycache__" / "plugin"
@@ -104,6 +153,19 @@ class PluginCodeDigest(unittest.TestCase):
         self.write("module.py", b"MISSING")
         readable = self.digest()
         with mock.patch.object(Path, "read_bytes", side_effect=OSError("unreadable")):
+            missing = self.digest()
+            self.assertEqual(missing, self.digest())
+        self.assertNotEqual(readable, missing)
+        directory = self.root / 'subpackage'
+        directory.mkdir()
+        (directory / 'module.py').write_bytes(b'VALUE = 1\n')
+        readable = self.digest()
+        original = Path.iterdir
+        def denied(path):
+            if path == directory:
+                raise PermissionError('unreadable subpackage')
+            return original(path)
+        with mock.patch.object(Path, 'iterdir', denied):
             missing = self.digest()
             self.assertEqual(missing, self.digest())
         self.assertNotEqual(readable, missing)
@@ -126,6 +188,22 @@ class PluginCodeDigest(unittest.TestCase):
         with mock.patch.object(hooks, "_PLUGIN_CODE_DIGEST_VERSION", b"future\0"):
             self.assertNotEqual(first, self.digest())
         self.assertFalse(hasattr(hooks, "_plugin_code_digest"))
+        # Preserve rglob's less-common no-link matches too: .py itself and a
+        # directory named *.py (historically a MISSING record plus its files).
+        self.write('.py')
+        self.write('package.py/module.py')
+        expected = hashlib.sha1(hooks._PLUGIN_CODE_DIGEST_VERSION + b'DIR\0')
+        for path in sorted(self.root.rglob('*.py'),
+                           key=lambda p: p.relative_to(self.root).as_posix()):
+            relative = path.relative_to(self.root).as_posix().encode('utf-8')
+            expected.update(len(relative).to_bytes(8, 'big') + relative)
+            try:
+                data = path.read_bytes()
+            except OSError:
+                expected.update(b'MISSING\0')
+            else:
+                expected.update(b'CONTENT\0' + len(data).to_bytes(8, 'big') + data)
+        self.assertEqual(self.digest(), expected.hexdigest()[:12])
 
     def test_addition_and_removal_change_identity(self):
         self.write("module.py")
@@ -134,6 +212,45 @@ class PluginCodeDigest(unittest.TestCase):
         self.assertNotEqual(first, self.digest())
         added.unlink()
         self.assertEqual(first, self.digest())
+        # Cycles must be finite without globally deduplicating ordinary aliases.
+        # Isolated children give a regressed traversal a bounded test timeout.
+        script = ('from pathlib import Path; from unittest import mock; import sys; '
+                  'from vtx.pluginlib import hooks; '
+                  'root=Path(sys.argv[1]); '
+                  'patch=mock.patch.object(hooks._registry,"plugin_module_dir",'
+                  'return_value=(root,"external")); patch.start(); '
+                  'print(hooks.plugin_code_digest("example"))')
+        def child_digest():
+            result = subprocess.run([sys.executable, '-B', '-c', script, str(self.root)],
+                                    cwd=Path(__file__).resolve().parents[2],
+                                    capture_output=True, text=True, timeout=5,
+                                    start_new_session=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
+        with self.subTest(cycle='self'):
+            link = self.root / 'loop'
+            link.symlink_to(self.root, target_is_directory=True)
+            cycle = child_digest()
+            self.assertNotEqual(first, cycle)
+            self.assertEqual(cycle, child_digest())
+            link.unlink()
+            self.assertEqual(first, self.digest())
+        with self.subTest(cycle='cross-linked'):
+            left = self.root / 'left'
+            right = self.root / 'right'
+            left.mkdir()
+            right.mkdir()
+            (left / 'other').symlink_to(right, target_is_directory=True)
+            (right / 'other').symlink_to(left, target_is_directory=True)
+            cycle = child_digest()
+            self.assertEqual(cycle, child_digest())
+            (right / 'module.py').write_bytes(b'VALUE = 3\n')
+            self.assertNotEqual(cycle, child_digest())
+            # Changing a cycle's logical target must not collapse its identity.
+            previous = child_digest()
+            (left / 'other').unlink()
+            (left / 'other').symlink_to(left, target_is_directory=True)
+            self.assertNotEqual(previous, child_digest())
 
     def test_package_move_reaches_product_key_and_receipt(self):
         from vtx.api import plugin_code_digest
@@ -159,6 +276,18 @@ class PluginCodeDigest(unittest.TestCase):
             self.assertNotEqual(code, plugin_code_digest("denoise"))
             self.assertNotEqual(product, denoise.product_path(context, "s1"))
             self.assertNotEqual(receipt, receipt_fingerprint(context))
+            shared = self.root.parent / 'shared'
+            shared.mkdir()
+            linked_source = shared / 'module.py'
+            linked_source.write_bytes(b'VALUE = 1\n')
+            (self.root / 'linked').symlink_to(shared, target_is_directory=True)
+            code = plugin_code_digest('denoise')
+            product = denoise.product_path(context, 's1')
+            receipt = receipt_fingerprint(context)
+            linked_source.write_bytes(b'VALUE = 2\n')
+            self.assertNotEqual(code, plugin_code_digest('denoise'))
+            self.assertNotEqual(product, denoise.product_path(context, 's1'))
+            self.assertNotEqual(receipt, receipt_fingerprint(context))
 
     def test_no_active_plugins_preserves_receipt_fingerprint(self):
         from vtx.cache.cache_state import receipt_fingerprint
@@ -168,7 +297,9 @@ class PluginCodeDigest(unittest.TestCase):
         context = SimpleNamespace(tl={}, tl_path=timeline, root=self.root.parent)
         with mock.patch.object(hooks, "active_plugins", return_value=[]):
             self.assertEqual(hooks.active_plugins_digest(context), "")
-            self.assertEqual(receipt_fingerprint(context), hashlib.sha256(b"{}").hexdigest())
+            current = receipt_fingerprint(context)
+            self.assertEqual(receipt_fingerprint(context), current)
+            self.assertNotEqual(current, hashlib.sha256(b"{}").hexdigest())
 
 
 if __name__ == "__main__":

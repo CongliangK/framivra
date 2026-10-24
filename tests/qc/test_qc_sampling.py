@@ -41,15 +41,17 @@ class SamplingCacheContract(unittest.TestCase):
                 self.assertEqual(code, 0)
                 path = c.cache / qc._QC_SEG_RECORD
                 current = json.loads(path.read_text())
-                self.assertEqual(current['version'], 3)
+                self.assertEqual(current['version'], 4)
                 self.assertEqual(current['probe_filter'], qc._QC_GRAY_FILTER)
-                # Previous readers require version == 1 or == 2 before any reuse.
+                # Previous readers require their exact version before any reuse.
                 self.assertNotEqual(current['version'], 1)
                 self.assertNotEqual(current['version'], 2)
+                self.assertNotEqual(current['version'], 3)
                 for version, value in ((1, None), (1, qc._QC_GRAY_FILTER),
                         (2, None), (2, 'scale=48:27,format=gray'),
                         (2, 'other-filter'), (2, qc._QC_GRAY_FILTER),
-                        (3, None), (3, 'other-filter'), (4, qc._QC_GRAY_FILTER)):
+                        (3, None), (3, 'other-filter'), (3, qc._QC_GRAY_FILTER),
+                        (4, None), (4, 'other-filter'), (5, qc._QC_GRAY_FILTER)):
                     old = dict(current, version=version)
                     if value is None:
                         old.pop('probe_filter')

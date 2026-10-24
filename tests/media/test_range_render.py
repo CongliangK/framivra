@@ -220,6 +220,58 @@ class TestRangeIntegration(unittest.TestCase):
     """小型合成 timeline 实跑：无 gfx / 2 轨 / 有音频与字幕，验证产物落点、
     含音轨、帧数精确、不写 out/ 与 receipt。"""
 
+    def test_silent_gap_window_renders_exact_audio_without_formal_writes(self):
+        import math
+        import struct
+        import wave
+        from vtx.pipeline.infra import Ctx
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'voice.wav'
+            with wave.open(str(source), 'wb') as audio:
+                audio.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
+                audio.writeframes(b''.join(struct.pack('<hh', value, value)
+                                  for i in range(48000)
+                                  for value in [round(3000 * math.sin(2 * math.pi * 440 * i / 48000))]))
+            tl = TestCliGuards._min_tl()
+            tl['sources'] = [{'id': 'voice', 'path': source.name}]
+            tl['audio_tracks'] = [{'name': 'voice', 'events': [
+                {'src': 'voice', 'in': 0, 'out': 30, 'volume': 1}]}]
+            timeline = root / 'timeline.json'
+            timeline.write_text(json.dumps(tl), encoding='utf-8')
+            source_before, timeline_before = source.read_bytes(), timeline.read_bytes()
+            for has_receipt in (False, True):
+                if has_receipt:
+                    (root / 'out').mkdir()
+                    receipt = {'input_fingerprint': Ctx(timeline).input_fingerprint,
+                               'stages': {'audio': {'ok': True, 'gain_db': 3.25}}}
+                    (root / 'out' / 'receipt.json').write_text(json.dumps(receipt), encoding='utf-8')
+                    (root / 'out' / 'audio.wav').write_bytes(b'keep formal audio')
+                formal_before = {p.name: p.read_bytes() for p in (root / 'out').glob('*')}
+                for end in (151, 181):
+                    with self.subTest(has_receipt=has_receipt, end=end):
+                        # Both windows lie beyond the only event and its 60-frame
+                        # selection margin; no prepared source WAV is needed.
+                        result = subprocess.run(
+                            [sys.executable, str(REPO / 'vtx' / 'vtx.py'), '-t', str(timeline),
+                             'video', '--draft', '--range', '150f', f'{end}f'],
+                            capture_output=True, text=True, cwd=str(REPO))
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        stem = f'range_5.000_{range_label(end, FPS)}'
+                        preview = root / 'cache' / 'preview'
+                        self.assertTrue((preview / f'{stem}.mp4').is_file())
+                        with wave.open(str(preview / f'{stem}.wav'), 'rb') as audio:
+                            self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                                              audio.getframerate(), audio.getnframes()),
+                                             (2, 2, 48000, (end - 150) * 1600))
+                            self.assertEqual(audio.readframes(audio.getnframes()),
+                                             bytes((end - 150) * 1600 * 4))
+                        self.assertEqual({p.name: p.read_bytes() for p in (root / 'out').glob('*')},
+                                         formal_before)
+                        self.assertFalse((root / 'cache' / 'audio').exists())
+                        self.assertEqual(source.read_bytes(), source_before)
+                        self.assertEqual(timeline.read_bytes(), timeline_before)
+
     def test_range_render(self):
         from vtx.pipeline.range import run_range  # noqa: F401  （经 CLI 子进程实跑，见下）
         with tempfile.TemporaryDirectory() as d:

@@ -16,6 +16,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import tempfile
 import unittest
@@ -29,6 +30,8 @@ from vtx.render import gfx_cli, gfx_render
 from vtx.cache import hygiene
 from vtx.render import gfx_environment
 from vtx.pipeline.infra import Ctx
+from vtx.pipeline.composite import prepare_layers
+from vtx.runtime import events
 
 
 
@@ -77,13 +80,212 @@ class CacheIntegrity(unittest.TestCase):
             (d / f'f{i:04d}.png').write_bytes(png(value=i))
         return stats(len(work))
 
-    def run_gfx(self, renderer=None, split='0'):
+    def run_gfx(self, renderer=None, split='0', pages='1'):
         with mock.patch.dict(os.environ, VTX_GFX='cdp', VTX_GFX_SPLIT_FRAMES=split,
-                             VTX_GFX_PAGES='1'), \
+                             VTX_GFX_SPLIT_MAX='3', VTX_GFX_PAGES=pages), \
+                mock.patch.object(cli, 'find_chrome', return_value='unit-fixture-chrome'), \
                 mock.patch.object(gfx_render, 'available', return_value=True), \
                 mock.patch.object(gfx_render, 'render_page', side_effect=renderer or self.renderer), \
                 contextlib.redirect_stdout(io.StringIO()):
             cli.gfx(self.c)
+
+    def duplicate_clips(self, *, project=None, **changes):
+        timeline = json.loads(self.timeline.read_text())
+        first = dict(src='page.html', dst_in=0, dur=3)
+        second = dict(first, dst_in=3, x=2, y=1, scale=.5, opacity=.75,
+                      fade_in_frames=1)
+        second.update(changes)
+        timeline['video_tracks'][0]['clips'] = [first, second]
+        timeline['project'].update(project or {})
+        timeline['project']['duration_frames'] = max(cl['dst_in'] + cl['dur']
+                                                     for cl in (first, second))
+        self.timeline.write_text(json.dumps(timeline))
+        self.c = Ctx(self.timeline)
+        self.cl = self.c.tl['video_tracks'][0]['clips'][0]
+        self.key, self.d = hygiene.gfx_key(self.c, self.cl), hygiene.gfx_dir(self.c, self.cl)
+        self.d.mkdir(parents=True, exist_ok=True)
+
+    def assert_gfx_layers(self):
+        # Exercise the real compositor preparation and authenticated PNG consumer,
+        # without probing an encoder or invoking FFmpeg.
+        with mock.patch.dict(os.environ, VTX_SEG_NVENC='0'):
+            layers = prepare_layers(self.c)
+        clips = self.c.tl['video_tracks'][0]['clips']
+        self.assertEqual(len(layers), len(clips))
+        for layer, clip in zip(layers, clips):
+            self.assertIs(layer['cl'], clip)
+            self.assertEqual((layer['x'], layer['y'], layer['ti'], layer['gfx']),
+                             (clip.get('x', 0), clip.get('y', 0), 0, True))
+            self.assertEqual((layer['w2'], layer['h2']), (None, None))
+            source = layer['source']
+            self.assertEqual(source.directory, hygiene.gfx_dir(self.c, clip))
+            self.assertEqual(source.frame_count, clip['dur'])
+            self.assertEqual(source.input_args()[-1], str(source.directory / 'f%04d.png'))
+
+    def test_duplicate_clips_produce_once_per_block_and_keep_layers(self):
+        self.duplicate_clips()
+        for pages, split in (('1', '0'), ('3', '0'), ('1', '1'), ('3', '1')):
+            shutil.rmtree(self.d)
+            self.d.mkdir()
+            for state, repaired in (('cold', [0, 1, 2]), ('warm', []),
+                                    ('corrupt', [1]), ('partial', [2])):
+                with self.subTest(pages=pages, split=split, state=state):
+                    if state == 'corrupt':
+                        (self.d / 'f0001.png').write_bytes(b'broken')
+                    elif state == 'partial':
+                        (self.d / 'f0002.png').unlink()
+                    self.rendered.clear()
+                    stream = io.StringIO()
+                    self.c.execution = events.ExecutionContext(stream)
+                    renderer = mock.Mock(side_effect=self.renderer)
+                    with mock.patch.object(gfx_cli, 'inspect_page', wraps=gfx_cli.inspect_page) as inspect, \
+                            mock.patch.object(gfx_cli, 'complete_page', wraps=gfx_cli.complete_page) as complete:
+                        self.run_gfx(renderer, split=split, pages=pages)
+                    expected = len(repaired) if split == '1' else int(bool(repaired))
+                    self.assertEqual(renderer.call_count, expected)
+                    self.assertEqual(inspect.call_count, 2)
+                    self.assertEqual(complete.call_count, int(bool(repaired)))
+                    self.assertCountEqual(self.rendered, repaired)
+                    self.assertCountEqual([call.kwargs['frames'] for call in renderer.call_args_list],
+                                          [[i] for i in repaired] if split == '1' else
+                                          ([None] if repaired else []))
+                    detail = json.loads((self.c.out / 'receipt.json').read_text())['stages']['gfx']['detail']
+                    self.assertTrue(detail.startswith('2 gfx clips'))
+                    self.assert_gfx_layers()
+                    with mock.patch.object(stream, 'close'):
+                        self.c.execution.finish(0)
+                    observed = events.read_events(stream.getvalue())
+                    self.assertTrue(observed['complete'])
+                    blocks = [row for row in observed['events']
+                              if row['event'] == 'task_start' and row['scope'] == 'gfx_block']
+                    self.assertEqual(len(blocks), expected)
+                    self.assertEqual(len({row['extensions']['page_id'] for row in blocks}),
+                                     int(bool(repaired)))
+                    self.assertEqual(len({row['task_id'] for row in blocks}), expected)
+
+    def test_duplicate_clips_dry_preserves_bytes_and_schedules_one_page(self):
+        self.duplicate_clips()
+        for state in ('cold', 'warm', 'corrupt'):
+            with self.subTest(state=state):
+                self.c.dry = False
+                if state == 'warm':
+                    self.frames()
+                    self.complete()
+                elif state == 'corrupt':
+                    (self.d / 'f0001.png').write_bytes(b'broken')
+                before = {str(p.relative_to(self.root)): p.read_bytes() if p.is_file() else None
+                          for p in self.root.rglob('*')}
+                self.c.dry = True
+                renderer = mock.Mock(side_effect=AssertionError('dry producer'))
+                with mock.patch.object(cli.events, 'task', wraps=cli.events.task) as task, \
+                        mock.patch.object(self.c, 'receipt', wraps=self.c.receipt) as receipt:
+                    self.run_gfx(renderer, split='1', pages='3')
+                renderer.assert_not_called()
+                self.assertEqual(sum(call.kwargs.get('kind') == 'gfx_block'
+                                     for call in task.call_args_list), int(state != 'warm'))
+                self.assertEqual(receipt.call_args.args, ('gfx', True, '2 gfx clips'))
+                after = {str(p.relative_to(self.root)): p.read_bytes() if p.is_file() else None
+                         for p in self.root.rglob('*')}
+                self.assertEqual(before, after)
+
+    def test_duplicate_clips_failure_and_cancellation_cannot_certify(self):
+        self.duplicate_clips()
+        for failure, code in ((stats(0), 1), (SystemExit(130), 130)):
+            with self.subTest(failure=type(failure).__name__):
+                shutil.rmtree(self.d)
+                self.d.mkdir()
+                renderer = mock.Mock(side_effect=failure) if isinstance(failure, BaseException) else \
+                    mock.Mock(return_value=failure)
+                with self.assertRaises(SystemExit) as raised:
+                    self.run_gfx(renderer, pages='3')
+                self.assertEqual(raised.exception.code, code)
+                self.assertEqual(renderer.call_count, 1)
+                self.assertFalse((self.d / gfx_cli.COMPLETE_FILE).exists())
+                self.assertFalse(json.loads((self.c.out / 'receipt.json').read_text())['stages']['gfx']['ok'])
+                for clip in self.c.tl['video_tracks'][0]['clips']:
+                    with self.assertRaises(ValueError):
+                        frame_source.png_source(self.c, clip).require_ready()
+                retry = mock.Mock(side_effect=self.renderer)
+                self.run_gfx(retry, pages='3')
+                self.assertEqual(retry.call_count, 1)
+                self.assert_gfx_layers()
+
+    def test_duplicate_clips_do_not_skip_later_input_or_cache_validation(self):
+        for policy in ('legacy', 'strict'):
+            with self.subTest(policy=policy):
+                self.duplicate_clips(project={'gfx_dependency_policy': policy})
+                inspect = gfx_cli.inspect_page
+                calls = []
+                def check(*args, **kwargs):
+                    calls.append(args)
+                    if len(calls) == 2:
+                        raise ValueError('second clip validation failed')
+                    return inspect(*args, **kwargs)
+                renderer = mock.Mock(side_effect=AssertionError('unvalidated clip'))
+                with mock.patch.object(gfx_cli, 'inspect_page', side_effect=check), \
+                        mock.patch.object(cli, 'gfx_key', wraps=cli.gfx_key) as key, \
+                        self.assertRaises(SystemExit):
+                    self.run_gfx(renderer)
+                self.assertEqual(key.call_count, 2)
+                self.assertEqual(len(calls), 2)
+                renderer.assert_not_called()
+                self.assertFalse((self.d / gfx_cli.COMPLETE_FILE).exists())
+
+    def test_distinct_source_duration_and_dependency_keep_separate_jobs(self):
+        (self.root / 'copy.html').write_bytes((self.root / 'page.html').read_bytes())
+        (self.root / 'asset.txt').write_text('declared dependency')
+        for change in ({'src': 'copy.html'}, {'dur': 4}, {'cache_dependencies': ['asset.txt']}):
+            with self.subTest(change=change):
+                self.duplicate_clips(**change)
+                shutil.rmtree(self.c.cache)
+                renderer = mock.Mock(side_effect=self.renderer)
+                self.run_gfx(renderer, pages='1')
+                self.assertEqual(renderer.call_count, 2)
+                calls = renderer.call_args_list
+                self.assertEqual(len({call.args[1] for call in calls}), 1 if 'src' in change else 2)
+                self.assertEqual([call.args[0].name for call in calls],
+                                 ['page.html', change.get('src', 'page.html')])
+                self.assert_gfx_layers()
+
+    def test_duplicate_strict_clips_keep_dependency_completion(self):
+        self.duplicate_clips(project={'gfx_dependency_policy': 'strict'})
+        def render(html, d, n, **kwargs):
+            result = self.renderer(html, d, n, **kwargs)
+            result.update(dependency_enforcement='fetch-pinned-local-v1',
+                          dependency_observed=[kwargs['dependency_record']['html_uri']])
+            return result
+        renderer = mock.Mock(side_effect=render)
+        self.run_gfx(renderer, split='1', pages='3')
+        self.assertEqual(renderer.call_count, 1)  # strict does not split or fall back
+        self.assertIsNone(renderer.call_args.kwargs['frames'])
+        record = json.loads((self.d / gfx_cli.COMPLETE_FILE).read_text())
+        self.assertEqual(record['dependency_enforcement'], 'fetch-pinned-local-v1')
+        self.assertEqual(record['dependency_observed'], [(self.root / 'page.html').as_uri()])
+        self.assert_gfx_layers()
+        renderer.reset_mock()
+        self.run_gfx(renderer, pages='3')
+        renderer.assert_not_called()
+
+    def test_duplicate_cef_clips_dispatch_once_without_cdp_or_cli(self):
+        worker = self.root / 'fake-worker'
+        worker.write_text('#!/bin/sh\nexit 99\n')
+        worker.chmod(0o700)
+        def render(html, d, n, **kwargs):
+            for i in range(n):
+                (d / f'f{i:04d}.png').write_bytes(png(16, 16, value=i))
+            return 'unit-fixture CEF'
+        with mock.patch.dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=str(worker),
+                             VTX_CEF_MODE='a0', VTX_GFX_PAGES='3', VTX_GFX_SPLIT_FRAMES='1'), \
+                mock.patch('vtx.render.gfx_cef.render_page', side_effect=render) as renderer, \
+                mock.patch.object(gfx_render, 'render_page', side_effect=AssertionError('CDP')), \
+                mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('CLI')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.duplicate_clips(project={'width': 16, 'height': 16})
+            cli.gfx(self.c)
+            self.assertEqual(renderer.call_count, 1)
+            self.assert_gfx_layers()
+            cli.gfx(self.c)
+            self.assertEqual(renderer.call_count, 1)
 
     def test_missing_or_malformed_marker_requires_environment_rerender(self):
         self.frames()

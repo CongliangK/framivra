@@ -99,7 +99,7 @@ class TestGradeTp(unittest.TestCase):
                 self.assertEqual(level, "FAIL")
                 self.assertIn("测量无效", detail)
 
-    def _report(self, overrides, tp, *, stderr=None, returncode=0):
+    def _report(self, overrides, tp, *, stderr=None, returncode=0, holes=(), duck_times=None):
         """Actual report with fixture stderr only: no native media or plugin execution."""
         from contextlib import redirect_stdout
         from io import StringIO
@@ -111,26 +111,47 @@ class TestGradeTp(unittest.TestCase):
             receipt = root / "receipt.json"
             receipt.write_bytes(b"existing receipt")
             timeline = {"audio_tracks": [], "_meta": {"audio_report": overrides}}
+            if duck_times is not None:
+                timeline["audio_tracks"] = [{"name": "voice", "events": [{}]},
+                                            {"name": "bed", "duck": True, "events": [{}]}]
             original = json.dumps(timeline, sort_keys=True)
             calls = []
+            min_hole = min(ar.HOLE_MIN_D, overrides.get("hole_warn", ar.HOLE_WARN))
 
             def fake_run(argv):
                 self.assertEqual(argv[0], "ffmpeg")
                 self.assertEqual(argv[argv.index("-i") + 1], str(wav))
                 af = argv[argv.index("-af") + 1]
-                self.assertIn(af, ("ebur128=peak=true:framelog=quiet", "silencedetect=noise=-45dB:d=1.5"))
+                self.assertIn(af, ("ebur128=peak=true:framelog=quiet",
+                                   f"silencedetect=noise=-45dB:d={min_hole}"))
                 calls.append(af)
                 summary = (f"I: -14.0 LUFS\nTrue peak:\n Peak: {tp} dBFS\n"
                            if stderr is None else stderr)
+                silence = "".join(f"silence_start: {s}\nsilence_end: {e}\n"
+                                  for s, e in holes if e - s >= min_hole)
                 return SimpleNamespace(returncode=returncode if af.startswith("ebur128") else 0,
-                                       stdout="", stderr=summary if af.startswith("ebur128") else "")
+                                       stdout="", stderr=summary if af.startswith("ebur128") else silence)
 
             c = SimpleNamespace(tl=timeline, root=root, out=root, cache=root / "cache", dur=300,
                                 spf=1 / 30, run=fake_run)
+            stems = tuple(root / name for name in ("voice.wav", "raw.wav", "duck.wav"))
+
+            def series(_c, path):
+                attack, release = duck_times
+                times = sorted({1 + i / 8 for i in range(57)} | {1 + attack, 3 + release})
+                return [(t, -20 - (10 if path == stems[2] and 1 + attack <= t < 3 + release else 0),
+                         -14 if path == stems[0] else -36) for t in times]
+
             with mock.patch.object(ar._plugin_hooks, "run_audio_events", side_effect=lambda c, tracks: tracks), \
-                 mock.patch.object(ar, "render_stems") as render, redirect_stdout(StringIO()):
+                 mock.patch.object(ar, "render_stems", return_value=stems) as render, \
+                 mock.patch.object(ar, "_activity_windows", return_value=([(1, 3)], 10)), \
+                 mock.patch.object(ar, "ebur128_series", side_effect=series), redirect_stdout(StringIO()):
                 rc = ar.run_report(c)
-            render.assert_not_called()
+            if duck_times is None:
+                render.assert_not_called()
+            else:
+                render.assert_called_once_with(c, timeline["audio_tracks"][:1],
+                                                timeline["audio_tracks"][1:], c.cache / "report_audio")
             self.assertEqual(len(calls), 2)
             self.assertEqual(json.dumps(timeline, sort_keys=True), original)
             self.assertEqual(wav.read_bytes(), b"owned fake WAV; no native media measurement")
@@ -212,6 +233,78 @@ class TestGradeTp(unittest.TestCase):
             self.assertEqual(ar.run_report(c), 2)
             c.run.assert_not_called()
             self.assertFalse((c.out / "audio_report.json").exists())
+
+    def test_report_duck_overrides_reach_grader_summary_and_json(self):
+        cases = (
+            ({}, (0.0625, 2), "PASS"),
+            ({"duck_attack_pass": 0.03125}, (0.0625, 2), "WARN"),
+            ({"duck_attack_pass": 0.015625, "duck_attack_fail": 0.03125}, (0.0625, 2), "FAIL"),
+            ({"duck_attack_pass": 0.125}, (0.125, 2), "PASS"),
+            ({"duck_attack_fail": 0.5}, (0.5, 2), "WARN"),
+            ({"duck_release_pass": 1}, (0.0625, 2), "WARN"),
+            ({"duck_release_pass": 1, "duck_release_fail": 1.5}, (0.0625, 2), "FAIL"),
+            ({"duck_release_pass": 3}, (0.0625, 3), "PASS"),
+            ({"duck_release_fail": 4.5}, (0.0625, 4.5), "WARN"),
+            ({}, (0.0625, 2.5), "PASS"),
+            ({}, (0.0625, 4), "WARN"),
+        )
+        for overrides, times, expected in cases:
+            with self.subTest(overrides=overrides, times=times):
+                rc, report = self._report(overrides, -2, duck_times=times)
+                check = next(row for row in report["checks"] if row["name"] == "duck 咬合/回升")
+                self.assertEqual(check["level"], expected)
+                self.assertEqual(check["pass"], expected == "PASS")
+                self.assertEqual(check["measured"], {"depth_db": -10, "windows": 1, "no_release_windows": 0})
+                self.assertEqual((rc, report["summary"]), (int(expected == "FAIL"), expected))
+                for key, value in overrides.items():
+                    self.assertEqual(report["thresholds"][key], value)
+
+    def test_report_hole_override_controls_detection_but_not_opening_fail(self):
+        cases = (
+            ({}, (2, 3), "PASS"),
+            ({}, (2, 3.5), "WARN"),
+            ({"hole_warn": 0.5}, (2, 3), "WARN"),
+            ({"hole_warn": 0.5}, (2, 2.5), "WARN"),
+            ({"hole_warn": 3}, (2, 4), "PASS"),
+            ({"hole_warn": 3}, (2, 5), "WARN"),
+            ({"hole_warn": 3}, (2, 5.1), "FAIL"),
+            ({"hole_warn": 3}, (6, 10), "WARN"),
+            ({"hole_warn": 3}, (0, 1.6), "FAIL"),
+            ({"hole_warn": 3}, (0, 1.5), "PASS"),
+            ({}, (0, 1.5), "WARN"),
+        )
+        for overrides, hole, expected in cases:
+            with self.subTest(overrides=overrides, hole=hole):
+                rc, report = self._report(overrides, -2, holes=[hole])
+                check = next(row for row in report["checks"] if row["name"] == "静音空洞")
+                self.assertEqual((check["level"], report["summary"], rc),
+                                 (expected, expected, int(expected == "FAIL")))
+                self.assertEqual(check["pass"], expected == "PASS")
+                detected = [list(hole)] if hole[1] - hole[0] >= min(1.5, overrides.get("hole_warn", 1.5)) else []
+                self.assertEqual(check["measured"]["holes"], detected)
+                self.assertEqual(report["thresholds"]["hole_warn"], overrides.get("hole_warn", ar.HOLE_WARN))
+
+    def test_report_rejects_invalid_duck_hole_thresholds_before_measurement(self):
+        from types import SimpleNamespace
+        keys = ("duck_attack_pass", "duck_attack_fail", "duck_release_pass",
+                "duck_release_fail", "hole_warn", "hole_fail")
+        cases = [{key: value} for key in keys for value in (*self.invalid_values, -0.1)]
+        cases += [{"duck_attack_pass": 0.4}, {"duck_attack_fail": 0.05},
+                  {"duck_release_pass": 5}, {"duck_release_fail": 2},
+                  {"hole_warn": 4}, {"hole_fail": 1}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "audio.wav").write_bytes(b"existing WAV")
+            for overrides in cases:
+                with self.subTest(overrides=overrides):
+                    c = SimpleNamespace(tl={"audio_tracks": [], "_meta": {"audio_report": overrides}},
+                                        out=root, run=mock.Mock(side_effect=AssertionError(
+                                            'measurement reached before rejecting invalid threshold')))
+                    with self.assertRaisesRegex(ValueError, "audio_report 阈值无效"):
+                        ar.run_report(c)
+                    c.run.assert_not_called()
+                    self.assertFalse((root / "audio_report.json").exists())
+                    self.assertEqual((root / "audio.wav").read_bytes(), b"existing WAV")
 
 
 class TestGradeLoudnessDiff(unittest.TestCase):
@@ -326,6 +419,153 @@ class TestMeasurePrimitives(unittest.TestCase):
         self.assertEqual(len(wins), 1)
         self.assertAlmostEqual(wins[0][0], 1.0, delta=0.5)
 
+    def test_duck_graph_single_and_multiple_keys_remain_audible(self):
+        import wave
+        # Zero-volume beds isolate preservation of the key streams. This does
+        # not equate quantized report stems with the production float duck bus.
+        for names in (['voice'], ['voice', 'cue']):
+            with self.subTest(keys=names), tempfile.TemporaryDirectory() as directory:
+                c = _event_context(); c.root = Path(directory); c.run = self.c.run
+                event = {'src': 'a', 'in': 0, 'out': 30, 'src_in': 30, 'volume': 0.25}
+                keys = [{'name': name, 'events': [dict(event)]} for name in names]
+                beds = [{'name': f'bed{i}', 'duck': True, 'duck_by': [name],
+                         'events': [dict(event, volume=0)]} for i, name in enumerate(names)]
+                main, (voice, raw, duck) = self._render_duck_fixture(c, keys, beds,
+                                                                   lambda c, sid: self.wav)
+                with wave.open(str(main)) as a, wave.open(str(voice)) as b:
+                    self.assertEqual(a.getnframes(), 48000)
+                    self.assertEqual(a.getparams(), b.getparams())
+                    samples = a.readframes(a.getnframes())
+                    self.assertTrue(any(samples), 'the final mix must retain audible keys')
+                    self.assertEqual(samples, b.readframes(b.getnframes()))
+                for path in (raw, duck):
+                    with wave.open(str(path)) as stream:
+                        self.assertEqual(stream.getnframes(), 48000)
+                        self.assertFalse(any(stream.readframes(stream.getnframes())))
+        self._assert_unity_duck_pcm_matches_source()
+
+    def _render_duck_fixture(self, c, keys, beds, source_of):
+        from vtx.pipeline import stages
+        c.tl = {'audio_tracks': keys + beds}
+        main = c.root / 'main.wav'
+        with mock.patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+             mock.patch.object(stages._plugin_hooks, 'resolve_source_wav', side_effect=source_of):
+            cmd, chains, _, used = stages._audio_graph(c)
+            self.assertTrue(used)
+            c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
+                         '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
+            stems = ar.render_stems(c, keys, beds, c.root / 'stems')
+        return main, stems
+
+    def _assert_unity_duck_pcm_matches_source(self):
+        from array import array
+        import wave
+        with tempfile.TemporaryDirectory() as directory:
+            c = _event_context(); c.root = Path(directory); c.run = self.c.run
+            # Independent even-integer stereo PCM makes gains 0.5/1/1.5 exact,
+            # with distinct nonzero channels through the final sample (no fades).
+            samples = array('h', (value for i in range(48000)
+                                 for value in (2000 + 2 * (i % 251), -4000 - 2 * (i % 257))))
+
+            def pcm(numerator):
+                scaled = array('h', (value * numerator // 2 for value in samples))
+                if sys.byteorder != 'little':
+                    scaled.byteswap()
+                return scaled.tobytes()
+
+            source = c.root / 'source.wav'
+            with wave.open(str(source), 'wb') as stream:
+                stream.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
+                stream.writeframes(pcm(2))
+            event = {'src': 'a', 'in': 0, 'out': 30}
+            keys = [{'name': name, 'events': [dict(event, volume=volume)]}
+                    for name, volume in (('voice', 0), ('cue', 0.5))]
+            beds = [{'name': 'bed', 'duck': True, 'duck_by': ['voice'],
+                     'duck_params': {'threshold': 0.01, 'ratio': 8, 'attack_ms': 5,
+                                     'release_ms': 100, 'makeup': 1},
+                     'events': [dict(event, volume=1)]}]
+            main, (voice, raw, duck) = self._render_duck_fixture(c, keys, beds, lambda c, sid: source)
+            # A silent private key gives unity compression; the audible cue is
+            # not a key. Compare each full output to source arithmetic, not peers.
+            for path, numerator in ((raw, 2), (duck, 2), (voice, 1), (main, 3)):
+                with self.subTest(output=path.name), wave.open(str(path)) as stream:
+                    self.assertEqual((stream.getnchannels(), stream.getsampwidth(),
+                                      stream.getframerate(), stream.getnframes()), (2, 2, 48000, 48000))
+                    actual = stream.readframes(48000)
+                    self.assertEqual(len(actual), 48000 * 4)
+                    self.assertTrue(actual == pcm(numerator),
+                                    f'{path.name} must match independent stereo PCM through sample N-1')
+
+    def test_distinct_duck_keys_only_attenuate_their_own_nonzero_bed(self):
+        from array import array
+        import math
+        import wave
+        with tempfile.TemporaryDirectory() as directory:
+            c = _event_context(); c.dur = 360; c.root = Path(directory); c.run = self.c.run
+            frequencies = {'voice': 1500, 'cue': 2100, 'bed': 331, 'amb': 523}
+            for name, frequency in frequencies.items():
+                subprocess.run([FF, '-v', 'error', '-f', 'lavfi', '-i',
+                                f'sine=frequency={frequency}:sample_rate=48000:duration=12',
+                                '-ac', '2', '-c:a', 'pcm_s16le', str(c.root / f'{name}.wav')], check=True)
+            keys = [{'name': name, 'events': [{'src': name, 'in': start, 'out': start + 60, 'volume': 2}]}
+                    for name, start in (('voice', 30), ('cue', 210))]
+            beds = [{'name': name, 'duck': True, 'duck_by': [key],
+                     'duck_params': {'threshold': 0.01, 'ratio': 8, 'attack_ms': 5, 'release_ms': 100},
+                     'events': [{'src': name, 'in': 0, 'out': 360, 'volume': 0.25}]}
+                    for name, key in (('bed', 'voice'), ('amb', 'cue'))]
+            main, (_voice, raw, duck) = self._render_duck_fixture(c, keys, beds,
+                                                                lambda c, sid: c.root / f'{sid}.wav')
+
+            def samples_at(path, start):
+                with wave.open(str(path)) as stream:
+                    self.assertEqual((stream.getframerate(), stream.getsampwidth(), stream.getnframes()),
+                                     (48000, 2, 12 * 48000))
+                    self.assertEqual(stream.getnchannels(), 2)
+                    stream.setpos(round(start * 48000))
+                    pcm = stream.readframes(48000)
+                self.assertEqual(len(pcm), 48000 * 4)
+                samples = array('h', pcm)
+                if sys.byteorder != 'little':
+                    samples.byteswap()
+                return samples
+
+            def amplitude(path, frequency, start):
+                # One-second integer-frequency projection separates both nonzero
+                # beds from each other and the audible keys, without numpy/FFT.
+                mono = samples_at(path, start)[::2]
+                phase = 2 * math.pi * frequency / 48000
+                real = sum(value * math.cos(phase * i) for i, value in enumerate(mono))
+                imag = sum(value * math.sin(phase * i) for i, value in enumerate(mono))
+                return 2 * math.hypot(real, imag) / (48000 * 32768)
+
+            measured = {}
+            for path in (main, raw, duck):
+                for name, own, other in (('bed', 1.75, 7.75), ('amb', 7.75, 1.75)):
+                    frequency = frequencies[name]
+                    baseline = amplitude(path, frequency, 5)
+                    self.assertGreater(baseline, 0.02, 'both bed tracks must be nonzero')
+                    ratios = [amplitude(path, frequency, start) / baseline for start in (own, other)]
+                    measured[f'{path.name}:{name}'] = ratios
+                    self.assertAlmostEqual(ratios[1], 1, delta=0.05,
+                                           msg=f'{path.name}:{name} must not duck for the other key')
+                    if path == raw:
+                        self.assertAlmostEqual(ratios[0], 1, delta=0.05)
+                    else:
+                        self.assertLess(ratios[0], 0.5, f'{path.name}:{name} must duck for its own key')
+            print('duck key isolation own/other amplitude ratios:', json.dumps(measured, sort_keys=True))
+            for name in ('bed', 'amb'):
+                self.assertGreater(amplitude(raw, frequencies[name], 11), 0.02,
+                                   'both raw beds must remain audible in the terminal second')
+            # These keys end at 9s with 100ms release and unity makeup. Compare
+            # every stereo tail sample; allow one PCM LSB for cross-path rounding
+            # near quantization half-ties, not missing content or output padding.
+            reference = samples_at(raw, 11)
+            for path in (main, duck):
+                with self.subTest(tail_output=path.name):
+                    tail = samples_at(path, 11)
+                    self.assertLessEqual(max(abs(a - b) for a, b in zip(tail, reference)), 1,
+                                         f'{path.name} must preserve both beds through sample N-1')
+
 
     @unittest.skipUnless(FF, 'FFmpeg required')
     def _assert_short_event_report_and_pipeline_samples_match(self):
@@ -345,20 +585,80 @@ class TestMeasurePrimitives(unittest.TestCase):
             c.tl = {'audio_tracks': tracks}
             with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
                  patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value=source):
-                cmd, chains, _, _ = stages._audio_graph(c)
-                main = root / 'main.wav'
-                c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
-                             '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
-                cmd, chains, mix, _, _ = ar._track_group(c, tracks)
-                ar._collect_inputs(c, tracks, cmd)
-                report = root / 'report.wav'
-                c.run(cmd + ['-filter_complex', ';'.join(chains + [mix]), '-map', '[gmix]',
-                             '-c:a', 'pcm_s16le', '-ar', '48000', str(report)])
-            import wave
-            with wave.open(str(main)) as a, wave.open(str(report)) as b:
-                self.assertEqual(a.getnframes(), 48000)
-                self.assertEqual(a.getparams(), b.getparams())
-                self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
+                for frames in (30, 31, 32):
+                    with self.subTest(duration_frames=frames):
+                        c.dur = frames
+                        cmd, chains, _, _ = stages._audio_graph(c)
+                        main = root / f'main-{frames}.wav'
+                        c.run(cmd + ['-filter_complex', ';'.join(chains) + '[out]', '-map', '[out]',
+                                     '-c:a', 'pcm_s16le', '-ar', '48000', str(main)])
+                        cmd, chains, mix, _, _ = ar._track_group(c, tracks)
+                        ar._collect_inputs(c, tracks, cmd)
+                        report = root / f'report-{frames}.wav'
+                        c.run(cmd + ['-filter_complex', ';'.join(chains + [mix]), '-map', '[gmix]',
+                                     '-c:a', 'pcm_s16le', '-ar', '48000', str(report)])
+                        import wave
+                        with wave.open(str(main)) as a, wave.open(str(report)) as b:
+                            if frames == 30:
+                                self.assertEqual(a.getnframes(), 48000)
+                            self.assertEqual(a.getnframes(), c.dur * c.spf_samples)
+                            self.assertEqual(b.getnframes(), c.dur * c.spf_samples)
+                            self.assertEqual(a.getparams(), b.getparams())
+                            self.assertEqual(a.readframes(a.getnframes()), b.readframes(b.getnframes()))
+
+    @unittest.skipUnless(FF, 'FFmpeg required')
+    def test_frame_offsets_are_sample_exact_in_main_window_and_report(self):
+        import struct
+        import wave
+        from vtx.pipeline import stages
+        from vtx.pipeline.constraints import ALLOWED_FPS, AUDIO_SAMPLE_RATE
+        self.assertEqual((ALLOWED_FPS, AUDIO_SAMPLE_RATE), ((30,), 48000))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source.wav'
+            # Nonzero, varying stereo PCM exposes a one-sample shift at either
+            # boundary, including src_in trims and wrapped loop source samples.
+            pcm = b''.join(struct.pack('<hh', 100 + i % 101, -200 - i % 97)
+                           for i in range(4800))
+            with wave.open(str(source), 'wb') as output:
+                output.setparams((2, 2, AUDIO_SAMPLE_RATE, 0, 'NONE', 'not compressed'))
+                output.writeframes(pcm)
+            for start, loop in ((0, False), (1, False), (2, True), (3, False),
+                                (4, False), (7, True), (301, False)):
+                length = 4 if loop else 2
+                c = _event_context(); c.dur = 330
+                event = {'src': 'a', 'in': start, 'out': start + length,
+                         'src_in': 1, 'volume': 1, 'loop': loop}
+                tracks = [{'name': 'voice', 'events': [event]}]
+                c.tl = {'audio_tracks': tracks}
+                trimmed = (pcm * 2)[6400:6400 + length * 6400]
+                expected = (bytes(start * 6400) + trimmed +
+                            bytes((c.dur - start - length) * 6400))
+                with mock.patch.object(stages._plugin_hooks, 'run_audio_events',
+                                       side_effect=lambda c, t: t), \
+                     mock.patch.object(stages._plugin_hooks, 'resolve_source_wav',
+                                       return_value=source):
+                    for mode in ('main', 'window', 'report'):
+                        with self.subTest(start=start, loop=loop, mode=mode):
+                            if mode == 'report':
+                                cmd, chains, mix, _, _ = ar._track_group(c, tracks)
+                                ar._collect_inputs(c, tracks, cmd)
+                                graph = ';'.join(chains + [mix.replace('[gmix]', '[out]')])
+                            else:
+                                win = (start, start + length) if mode == 'window' else None
+                                cmd, chains, _, _ = stages._audio_graph(c, win=win)
+                                graph = ';'.join(chains) + '[out]'
+                            output = root / 'output.wav'
+                            subprocess.run(cmd + ['-filter_complex', graph, '-map', '[out]',
+                                                  '-c:a', 'pcm_s16le', '-ar', '48000', str(output)],
+                                           check=True, capture_output=True)
+                            with wave.open(str(output), 'rb') as rendered:
+                                actual = rendered.readframes(rendered.getnframes())
+                                self.assertEqual((rendered.getnchannels(), rendered.getsampwidth(),
+                                                  rendered.getframerate()), (2, 2, 48000))
+                            wanted = trimmed if mode == 'window' else expected
+                            self.assertEqual(len(actual), len(wanted))
+                            self.assertEqual(actual, wanted)
 
 
 class _FakeCtx:
@@ -406,62 +706,52 @@ class TestEndToEndSynthetic(unittest.TestCase):
 
     FPS, DUR = 30, 600     # 20s 工程
 
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory(prefix="vtx-arep-e2e-")
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
     def _tone(self, path, freq, dur, amp=0.4):
         subprocess.run([FF, "-v", "error", "-y", "-f", "lavfi", "-i",
                         f"sine=frequency={freq}:sample_rate=48000:duration={dur}",
                         "-af", f"volume={amp}", "-ac", "2", "-c:a", "pcm_s16le",
                         str(path)], check=True)
 
-    def _project(self, tag, bed_db=0.0, head_silence_s=0.0):
-        root = Path(self.tmp.name) / tag
-        (root / "out").mkdir(parents=True)
-        self._tone(root / "voice.wav", 440, 6.0, 0.8)      # 口播电平（相对床乐高 ~16dB）
-        self._tone(root / "bed.wav", 220, 20.0 - head_silence_s, 0.12)
-        f = self.FPS
-        tl = {
-            "version": 2,
-            "project": {"fps": self.FPS, "width": 1920, "height": 1080,
-                        "duration_frames": self.DUR},
-            "sources": [{"id": "voice", "path": "voice.wav"},
-                        {"id": "bed", "path": "bed.wav"}],
-            "video_tracks": [], "subtitles": [],
-            "audio_tracks": [
-                {"name": "voice", "events": [
-                    {"src": "voice", "in": 3 * f, "out": 9 * f, "volume": 1.0},
-                    {"src": "voice", "in": 12 * f, "out": 18 * f, "volume": 1.0}]},
-                {"name": "bgm", "duck": True,
-                 "duck_params": {"threshold": 0.0126, "ratio": 4, "attack_ms": 20,
-                                 "release_ms": 1500, "makeup": 1},
-                 "events": [{"src": "bed", "in": round(head_silence_s * f),
-                             "out": self.DUR,
-                             "volume": round(0.12 * 10 ** (bed_db / 20) / 0.12, 4)}]},
-            ],
-        }
-        (root / "timeline.json").write_text(json.dumps(tl), encoding="utf-8")
-        return root
-
     def _run(self, root, *args):
         return subprocess.run([sys.executable, str(VTX), "-t", str(root / "timeline.json"),
                                *args], capture_output=True, text=True)
 
-    def _report(self, root):
-        for stage in ("validate", "prepare", "audio"):
-            result = self._run(root, stage)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        r = self._run(root, "audio", "--report-only")
-        self.assertIn(r.returncode, (0, 1), r.stderr)   # FAIL 场景退出码 1；2=产物缺失等错误
-        return json.loads((root / "out" / "audio_report.json").read_text(encoding="utf-8"))
+    def _report(self, tag, bed_db=0.0, head_silence_s=0.0):
+        with tempfile.TemporaryDirectory(prefix="vtx-arep-e2e-") as directory:
+            root = Path(directory) / tag
+            (root / "out").mkdir(parents=True)
+            self._tone(root / "voice.wav", 440, 6.0, 0.8)      # 口播电平（相对床乐高 ~16dB）
+            self._tone(root / "bed.wav", 220, 20.0 - head_silence_s, 0.12)
+            f = self.FPS
+            tl = {
+                "version": 2,
+                "project": {"fps": self.FPS, "width": 1920, "height": 1080,
+                            "duration_frames": self.DUR},
+                "sources": [{"id": "voice", "path": "voice.wav"},
+                            {"id": "bed", "path": "bed.wav"}],
+                "video_tracks": [], "subtitles": [],
+                "audio_tracks": [
+                    {"name": "voice", "events": [
+                        {"src": "voice", "in": 3 * f, "out": 9 * f, "volume": 1.0},
+                        {"src": "voice", "in": 12 * f, "out": 18 * f, "volume": 1.0}]},
+                    {"name": "bgm", "duck": True,
+                     "duck_params": {"threshold": 0.0126, "ratio": 4, "attack_ms": 20,
+                                     "release_ms": 1500, "makeup": 1},
+                     "events": [{"src": "bed", "in": round(head_silence_s * f),
+                                 "out": self.DUR,
+                                 "volume": round(0.12 * 10 ** (bed_db / 20) / 0.12, 4)}]},
+                ],
+            }
+            (root / "timeline.json").write_text(json.dumps(tl), encoding="utf-8")
+            for stage in ("validate", "prepare", "audio"):
+                result = self._run(root, stage)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            r = self._run(root, "audio", "--report-only")
+            self.assertIn(r.returncode, (0, 1), r.stderr)   # FAIL 场景退出码 1；2=产物缺失等错误
+            return json.loads((root / "out" / "audio_report.json").read_text(encoding="utf-8"))
 
     def test_scenarios(self):
-        base = self._report(self._project("base"))
+        base = self._report("base")
         diff_chk = next(c for c in base["checks"] if c["name"] == "人声-床乐响度差")
         self.assertIn(diff_chk["level"], ("PASS", "WARN"))       # 基线床乐正常
         duck_chk = next(c for c in base["checks"] if c["name"] == "duck 咬合/回升")
@@ -469,7 +759,7 @@ class TestEndToEndSynthetic(unittest.TestCase):
         # 400ms 积分与瞬时起振影响，判级在合成素材上不可锚定——v4.2 判级见 voice-ime 实测）
         self.assertLess(duck_chk["measured"]["depth_db"], -3.0)
 
-        v41 = self._report(self._project("v41", bed_db=4.6))     # v4.1 事故态
+        v41 = self._report("v41", bed_db=4.6)     # v4.1 事故态
         d41 = next(c for c in v41["checks"] if c["name"] == "人声-床乐响度差")
         d41_v = d41["measured"]["voice_s"] - d41["measured"]["bed_duck_s"]
         base_v = diff_chk["measured"]["voice_s"] - diff_chk["measured"]["bed_duck_s"]
@@ -477,7 +767,7 @@ class TestEndToEndSynthetic(unittest.TestCase):
         self.assertLess(d41_v, base_v)                           # +4.6dB 后差值收窄
         self.assertLess(d41_v, base_v - 3.0)                     # 收窄量接近 4.6dB
 
-        v43 = self._report(self._project("v43", head_silence_s=3.6))   # v4.3 片头静音
+        v43 = self._report("v43", head_silence_s=3.6)   # v4.3 片头静音
         holes = next(c for c in v43["checks"] if c["name"] == "静音空洞")
         self.assertEqual(holes["level"], "FAIL")
         self.assertTrue(holes["measured"]["holes"][0][0] < 0.2)        # 空洞从片头开始
@@ -514,6 +804,116 @@ class CollectInputsPluginSource(unittest.TestCase):
 class TestSharedEventFilters(unittest.TestCase):
     """Render and diagnostic stems must consume the same event-local transform."""
 
+    def _graph_routes(self, argv, available=None):
+        """Trace actual generated edges across PCM files; reject dangling/reused outputs."""
+        import re
+        available = available or {}
+        inputs = [argv[i + 1] for i, token in enumerate(argv) if token == '-i']
+        labels = {f'[{i}:a]': {'sources': available.get(path, {path}), 'parents': [], 'uses': 0}
+                  for i, path in enumerate(inputs)}
+        produced, compressors = [], []
+        graph = argv[argv.index('-filter_complex') + 1]
+        for chain in graph.split(';'):
+            head = re.match(r'((?:\[[^\]]+\])+)(.*)', chain)
+            self.assertIsNotNone(head, chain)
+            parents = [labels.setdefault(label, {'parents': None, 'uses': 0})
+                       for label in re.findall(r'\[[^\]]+\]', head[1])]
+            for node in parents:
+                node['uses'] += 1
+            tail = re.search(r'((?:\[[^\]]+\])+)$', head[2])
+            self.assertIsNotNone(tail, chain)
+            if head[2].startswith('sidechaincompress='):
+                self.assertEqual(len(parents), 2)
+                compressors.append(parents)
+            for label in re.findall(r'\[[^\]]+\]', tail[1]):
+                node = labels.get(label)
+                if node is None or node['parents'] is not None:
+                    node = {'uses': 0}
+                node['parents'] = parents
+                labels[label] = node
+                produced.append(node)
+
+        def sources(node, seen=()):
+            self.assertNotIn(id(node), seen, 'cycle in generated audio labels')
+            self.assertIsNotNone(node['parents'], 'unresolved audio label')
+            return set(node.get('sources', ())).union(
+                *(sources(parent, (*seen, id(node))) for parent in node['parents']))
+
+        outputs = {}
+        maps = [i for i, token in enumerate(argv) if token == '-map']
+        for i, stop in zip(maps, maps[1:] + [len(argv)]):
+            node = labels[argv[i + 1]]
+            node['uses'] += 1
+            outputs[argv[stop - 1]] = sources(node)
+        for node in produced:
+            self.assertEqual(node['uses'], 1, 'each graph output must have exactly one consumer')
+        return outputs, [(sources(bed), sources(key)) for bed, key in compressors]
+
+    def test_distinct_duck_keys_reach_only_their_own_compressors(self):
+        import copy
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from vtx.pipeline import stages
+        cases = (
+            ('disjoint', ['voice'], ['cue'], None, {'bed': {'voice'}, 'amb': {'cue'}}),
+            ('same_group', ['voice', 'cue'], ['cue', 'voice'], None,
+             {'bed': {'voice', 'cue'}, 'amb': {'voice', 'cue'}}),
+            ('overlap', ['voice', 'cue'], ['cue'], None,
+             {'bed': {'voice', 'cue'}, 'amb': {'cue'}}),
+            ('missing', ['voice'], ['missing'], None, {'bed': {'voice'}}),
+            ('default', None, ['cue'], None, {'bed': {'voice'}, 'amb': {'cue'}}),
+            ('window', ['voice'], ['cue'], (0, 90), {'bed': {'voice'}, 'amb': {'cue'}}),
+        )
+        for name, bed_keys, amb_keys, win, expected in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                c = _event_context(); c.dur = 360; c.root = c.out = Path(directory); c.cache = c.root / 'cache'
+                tracks = [{'name': name, 'events': [{'src': name, 'in': start, 'out': stop, 'volume': volume}]}
+                          for name, start, stop, volume in
+                          [('voice', 30, 90, 1), ('cue', 210, 270, 1), ('bed', 0, 360, 0.25), ('amb', 0, 360, 0.25)]]
+                for tr, keys in zip(tracks[2:], (bed_keys, amb_keys)):
+                    tr['duck'] = True
+                    if keys is not None:
+                        tr['duck_by'] = keys
+                c.tl = {'audio_tracks': tracks}; before = copy.deepcopy(c.tl)
+                (c.out / 'audio.wav').write_bytes(b'existing WAV')
+                c.run = mock.Mock()
+                with mock.patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t) as hook, \
+                     mock.patch.object(stages._plugin_hooks, 'resolve_source_wav', side_effect=lambda c, sid: c.root / f'{sid}.wav'), \
+                     mock.patch.object(ar, 'ebur128_summary', return_value=(-14, -2)), \
+                     mock.patch.object(ar, '_activity_windows', return_value=([], 12)), \
+                     mock.patch.object(ar, 'ebur128_series', return_value=[]), \
+                     mock.patch.object(ar, 'silences', return_value=[]), redirect_stdout(StringIO()):
+                    cmd, chains, _, used = stages._audio_graph(c, win=win, margin_frames=0)
+                    self.assertTrue(used)
+                    main, main_edges = self._graph_routes(cmd + ['-filter_complex', ';'.join(chains) + '[main]',
+                                                                '-map', '[main]', str(c.root / 'main.wav')])
+                    self.assertEqual(ar.run_report(c), 0)
+                hook.assert_has_calls([mock.call(c, tracks), mock.call(c, tracks)])
+                self.assertEqual(hook.call_count, 2)
+                self.assertEqual(c.run.call_count, 2)
+                rendered, stem_edges = {}, []
+                for call in c.run.call_args_list:
+                    outputs, edges = self._graph_routes(call.args[0], rendered)
+                    rendered.update(outputs); stem_edges.extend(edges)
+
+                def routes(edges):
+                    self.assertTrue(all(len(bed) == 1 for bed, _ in edges))
+                    return {Path(next(iter(bed))).stem: {Path(path).stem for path in key} for bed, key in edges}
+
+                main_expected = {'bed': {'voice'}} if win else expected
+                self.assertEqual(len(main_edges), len(main_expected))
+                self.assertEqual(len(stem_edges), len(expected))
+                self.assertEqual(routes(main_edges), main_expected)
+                self.assertEqual(routes(stem_edges), expected)
+                stem_cmd = c.run.call_args.args[0]
+                key_files = [stem_cmd[i + 1] for i, token in enumerate(stem_cmd)
+                             if token == '-i' and stem_cmd[i + 1] in rendered]
+                self.assertEqual(len(key_files), len({frozenset(keys) for keys in expected.values()}),
+                                 'identical target key sets must share one PCM key file')
+                audible = {Path(path).stem for path in next(iter(main.values()))}
+                self.assertEqual(audible, {'voice', 'bed', 'amb'} if win else {'voice', 'cue', 'bed', 'amb'})
+                self.assertEqual(c.tl, before)
+
     def test_canonical_primitive_and_exact_event_boundaries(self):
         from vtx.pipeline import stages
         from vtx.media.audio_filters import event_chain
@@ -528,7 +928,7 @@ class TestSharedEventFilters(unittest.TestCase):
             self.assertIn('volume=0.25,pan=stereo|c0=1.500*c0|c1=0.500*c1', chain)
             self.assertIn(f'afade=t=in:st=0:d={12/fps:.6f}', chain)
             self.assertIn(f'afade=t=out:st=0.000000:d={12/fps:.6f}', chain)
-            self.assertTrue(chain.endswith(f'adelay=delays={5/fps*1000:.3f}:all=1[e2]'))
+            self.assertTrue(chain.endswith(f'adelay=delays={5*c.spf_samples}S:all=1[e2]'))
             for bus_filter in ('amix=', 'sidechaincompress=', 'alimiter=', 'apad=', 'atempo='):
                 self.assertNotIn(bus_filter, chain)
             # Audio events have no speed field in the timeline contract.
@@ -543,12 +943,98 @@ class TestSharedEventFilters(unittest.TestCase):
         c = _event_context(); c.tl = {'audio_tracks': tracks}
         with patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
              patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value='/unused/a.wav'):
-            for win in (None, (7, 12)):
-                _, main, _, _ = stages._audio_graph(c, win=win)
-                _, report, _, _, _ = ar._track_group(c, tracks)
-                self.assertEqual(main[0], report[0])
-                self.assertIn('afade=t=out:st=0.000000:d=0.333333', report[0])
-                self.assertIn('adelay=delays=166.667', report[0])
+            for events in ([e], [e, dict(e, **{'in': 20, 'out': 30})]):
+                tracks[0]['events'] = events
+                for win in (None, (7, 12)):
+                    _, main, _, _ = stages._audio_graph(c, win=win)
+                    _, report, _, k, _ = ar._track_group(c, tracks)
+                    self.assertEqual(main[0], report[0])
+                    self.assertIn('afade=t=out:st=0.000000:d=0.333333', report[0])
+                    self.assertIn('adelay=delays=8000S:all=1', report[0])
+                    self.assertEqual(main[-2].replace('[t0]', '[track]'),
+                                     report[-1].replace(f'[tg{k}]', '[track]'))
+
+    def test_active_duck_keys_match_render_and_report_consumers(self):
+        import copy
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from types import SimpleNamespace
+        from vtx.pipeline import stages
+        event = {'src': 'a', 'in': 0, 'out': 30, 'volume': 1}
+
+        def track(name, **kwargs):
+            return dict(name=name, events=[dict(event)], **kwargs)
+
+        voice, bed = track('voice'), track('bed', duck=True)
+        # Empty events are a runtime/report-only boundary, not schema-valid input.
+        cases = (
+            ('single_key', [voice, bed], [0], [1], {1: (0,)}),
+            ('duck_key', [dict(voice, duck=True), bed], [], [0, 1], {}),
+            ('empty_key', [dict(voice, events=[]), bed], [], [1], {}),
+            ('empty_duck', [voice, dict(bed, events=[])], [], [], {}),
+            ('missing_key', [voice, dict(bed, duck_by=['missing'])], [], [1], {}),
+            ('multiple_keys', [voice, track('cue'), bed, track('amb', duck=True, duck_by=['cue'])],
+             [0, 1], [2, 3], {2: (0,), 3: (1,)}),
+            ('mixed_duck_key', [dict(voice, duck=True), track('cue'),
+                               dict(bed, duck_by=['voice', 'cue'])], [1], [0, 2], {2: (1,)}),
+            ('empty_ignored', [voice, bed, track('empty', duck=True) | {'events': []}], [0], [1], {1: (0,)}),
+        )
+        for name, transformed, keys, ducks, targets in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                c = _event_context(); c.root = c.out = Path(directory); c.cache = c.root / 'cache'
+                # Every case changes the plugin result rather than selecting the original list.
+                c.tl = {'audio_tracks': copy.deepcopy([voice, bed])}
+                before = copy.deepcopy(c.tl)
+                wav = c.out / 'audio.wav'; wav.write_bytes(b'existing WAV')
+                receipt = c.out / 'receipt.json'; receipt.write_bytes(b'existing receipt')
+                c.run = mock.Mock(return_value=SimpleNamespace(returncode=0, stderr='', stdout=''))
+                with mock.patch.object(ar._plugin_hooks, 'run_audio_events', return_value=transformed) as hook, \
+                     mock.patch.object(ar._plugin_hooks, 'resolve_source_wav', return_value='/unused/a.wav') as resolve, \
+                     mock.patch.object(ar, 'render_stems', wraps=ar.render_stems) as render, \
+                     mock.patch.object(ar, 'ebur128_summary', return_value=(-14, -2)), \
+                     mock.patch.object(ar, '_activity_windows', return_value=([], 1)), \
+                     mock.patch.object(ar, 'ebur128_series', return_value=[]), \
+                     mock.patch.object(ar, 'silences', return_value=[]), redirect_stdout(StringIO()):
+                    _, chains, count, used = stages._audio_graph(c)
+                    self.assertEqual(ar.run_report(c), 0)
+                self.assertEqual(hook.call_args_list, [mock.call(c, c.tl['audio_tracks'])] * 2)
+                self.assertEqual(count, sum(len(tr['events']) for tr in transformed))
+                self.assertEqual(used, bool(keys and ducks))
+                graph = ';'.join(chains)
+                self.assertEqual(graph.count('sidechaincompress='), len(targets))
+                if keys and ducks:
+                    render.assert_called_once_with(c, [transformed[i] for i in keys],
+                                                    [transformed[i] for i in ducks], c.cache / 'report_audio')
+                    self.assertEqual(c.run.call_count, 2)
+                    stem_graph = c.run.call_args.args[0][c.run.call_args.args[0].index('-filter_complex') + 1]
+                    self.assertEqual(stem_graph.count('sidechaincompress='), len(targets))
+                    for i in keys:
+                        split = f'asplit={1 + sum(i in group for group in set(targets.values()))}'
+                        self.assertIn(f'[t{i}]{split}', graph)
+                        self.assertIn(f'[t{i}]', chains[-1], 'key must remain audible in the final mix')
+                else:
+                    render.assert_not_called()
+                    c.run.assert_not_called()
+                self.assertEqual(resolve.call_count, 1 + (sum(len(transformed[i]['events']) for i in keys + ducks)
+                                                         if keys and ducks else 0))
+                self.assertEqual(c.tl, before)
+                self.assertEqual((wav.read_bytes(), receipt.read_bytes()), (b'existing WAV', b'existing receipt'))
+
+    def test_duck_selection_keeps_window_filter_before_union(self):
+        from vtx.pipeline import stages
+        c = _event_context()
+        c.tl = {'audio_tracks': [
+            {'name': 'voice', 'events': [{'src': 'a', 'in': 0, 'out': 10, 'volume': 1}]},
+            {'name': 'bed', 'duck': True, 'events': [{'src': 'a', 'in': 20, 'out': 30, 'volume': 1}]},
+        ]}
+        with mock.patch.object(stages._plugin_hooks, 'run_audio_events', side_effect=lambda c, t: t), \
+             mock.patch.object(stages._plugin_hooks, 'resolve_source_wav', return_value='/unused/a.wav'):
+            for win, margin, expected in ((None, 0, True), ((20, 30), 0, False), ((20, 30), 60, True)):
+                with self.subTest(win=win, margin=margin):
+                    _, chains, count, used = stages._audio_graph(c, win=win, margin_frames=margin)
+                    self.assertEqual(used, expected)
+                    self.assertEqual(count, 2 if expected else 1)
+                    self.assertEqual(';'.join(chains).count('sidechaincompress='), int(expected))
 
     def test_fade_edge_values_preserve_production_policy(self):
         from vtx.media.audio_filters import event_chain

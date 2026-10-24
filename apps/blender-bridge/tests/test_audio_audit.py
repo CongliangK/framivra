@@ -1,5 +1,6 @@
 """Real FFmpeg audit regressions; set VTX_AUDIT_SCRIPT to compare an older script."""
 import ast
+import io
 import json
 import math
 import os
@@ -9,6 +10,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import wave
@@ -20,6 +22,7 @@ REPO = APP.parent.parent
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 import audit_bundle as audit_module   # noqa: E402
+import bundle_session
 
 SCRIPT = Path(os.environ.get('VTX_AUDIT_SCRIPT', APP / 'audit_bundle.py'))
 
@@ -36,6 +39,27 @@ class ValidationInterpreter(unittest.TestCase):
              patch.dict(os.environ, {"APPIMAGE": "/opt/app.AppImage"}), \
              patch.object(audit_module.shutil, "which", return_value="/usr/bin/python3"):
             self.assertEqual(audit_module.validation_python(), "/usr/bin/python3")
+
+    def test_blender_requires_minimum_version_and_both_modern_properties(self):
+        for version, properties, ok in (
+                ((4, 3, 2), ("strips", "strips_all"), False),
+                ((4, 4, 0), ("strips", "strips_all"), True),
+                ((5, 2, 1), ("strips", "strips_all"), True),
+                ((5, 2, 1), ("strips",), False),
+                ((5, 2, 1), ("strips_all",), False)):
+            bpy = SimpleNamespace(app=SimpleNamespace(version=version, version_string=str(version)),
+                types=SimpleNamespace(SequenceEditor=SimpleNamespace(
+                    bl_rna=SimpleNamespace(properties=properties))))
+            with self.subTest(version=version, properties=properties), \
+                 patch.object(sys, "stderr", io.StringIO()) as err:
+                if ok:
+                    self.assertIsNone(bundle_session.require_modern_vse(bpy))
+                    self.assertEqual(err.getvalue(), "")
+                else:
+                    with self.assertRaises(SystemExit) as raised:
+                        bundle_session.require_modern_vse(bpy)
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("blender-bridge", err.getvalue())
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')

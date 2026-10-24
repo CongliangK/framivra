@@ -183,7 +183,8 @@ class Diagnostics(unittest.TestCase):
                 self.assertIn(rule,[r['rule_id'] for r in records])
 
     def test_audit_is_advisory_and_individual(self):
-        t=timeline(); t['audio_tracks']=[{'name':'voice','events':[{'src':'x','in':0,'out':30,'volume':1}]}]
+        t=timeline(); t['audio_tracks']=[{'name':'voice','events':[
+            {'src':'x','in':a,'out':b,'volume':1} for a,b in [(15,30),(0,15),(5,20)]]}]
         t['subtitles']=[{'in':10,'out':20,'text':'a'*20},{'in':0,'out':15,'text':'b'*10}]
         c=self.context(t)
         with contextlib.redirect_stdout(io.StringIO()): stages.audit(c)
@@ -192,6 +193,7 @@ class Diagnostics(unittest.TestCase):
         self.assertEqual(r['measured']['previous_index'],1)
         self.assertEqual(len([x for x in c.diagnostics if x['rule_id']=='audit.subtitle_cps']),2)
         self.assertTrue({'audit.voice_coverage','audit.voice_rate','audit.video_gap','audit.audio_gap'} <= {r['rule_id'] for r in c.diagnostics})
+        self.assertEqual(next(r['measured']['value'] for r in c.diagnostics if r['rule_id']=='audit.voice_coverage'), 1/3)
         self.assertFalse(any(x['severity']=='error' for x in c.diagnostics))
 
     def test_str_compatible_metadata_and_finite_json(self):

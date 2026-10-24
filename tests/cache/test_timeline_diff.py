@@ -75,6 +75,13 @@ class _Base(unittest.TestCase):
         (root / "bgm.wav").write_bytes(b"m" * 256)
         (root / "page.html").write_bytes(b"<html></html>")
         self.root = root
+        # Byte-only key fixtures are not media. Supply an explicit opaque probe
+        # fact; keep the real key analysis and all original impact assertions.
+        for target in ('vtx.inspection.timeline_diff.probe_video_alpha',
+                       'vtx.inspection.impact.probe_video_alpha'):
+            patch = mock.patch(target, return_value={'has_alpha': False})
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -171,6 +178,17 @@ class TestSegKeyImpact(_Base):
                 truth_new.add(_clip_seg_key(cb, tr, 0, cl))
         reported = {x["old_key"] for x in inv} | {x["new_key"] for x in inv}
         self.assertEqual(reported, truth ^ truth_new)
+        # Frozen/missing media and unavailable tools remain usable for semantic
+        # diff, but cannot make an opaque key claim. Each side probes a source
+        # once even when it has many consumers and a segment-analysis pass.
+        with mock.patch('vtx.inspection.timeline_diff.probe_video_alpha',
+                        side_effect=FileNotFoundError('ffprobe unavailable')) as probe:
+            unknown = self.diff(old, new)
+        self.assertEqual(probe.call_count, 4)  # two sources in each context
+        self.assertEqual(len(unknown['impact']['identity_unknown']), 4)
+        self.assertTrue(all('ffprobe unavailable' in item['reason']
+                            for item in unknown['impact']['identity_unknown']))
+        self.assertEqual(unknown['n_entries'], res['n_entries'])
 
     def test_unrelated_clip_change_no_extra_invalid(self):
         """改 gfx 页 dur → 不产生任何 seg 失效（gfx 键失效单独报）。"""

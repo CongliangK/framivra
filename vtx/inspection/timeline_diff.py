@@ -9,20 +9,23 @@
 project+video_tracks 特征键）时自动走本模块，否则回落报告 diff（diffcmd）。
 `--json PATH` 把机器可读结果落盘。纯读命令：不写任何产物、不做 receipt。
 
-准确性口径（硬门槛）：失效 seg 键集合 == 按公式（hygiene.seg_key）重算的集合，
+准确性口径（输入可观测时）：失效 seg 键集合 == 按公式（hygiene.seg_key）重算的集合，
 不多报——无关 clip 改动不产生受影响段；分段合成（vseg）层另按段内容键决定因素
 单独推断（时长/位置变化推移切点时该层失效，但 per-clip seg 仍命中，两层分开报）。
+Native-alpha 源元数据可用时只读探测；缺素材/工具时另列 identity_unknown，不把
+缺失证据推定为不透明，也不据失效计数保证这些源可复用。
 
 耗时预估：基准常数 + 受影响比例缩放，估算依据写入 JSON（estimate_basis）；
 模型与历史 voice-ime 校准边界见 docs/ARCHITECTURE.md#耗时估算；估算不是当前输入或机器的实测。
 """
 import json
+import subprocess
 import sys
 from pathlib import Path
 from ..runtime import fstxn
 
 from ..pipeline.composite import SEG_CUT_GUARD, choose_cutpoints
-from ..media.encoders import seg_encoder_kind
+from ..media.encoders import seg_encoder_kind, seg_needs_alpha, probe_video_alpha
 from ..cache.hygiene import gfx_key, seg_key
 
 DEFAULT_NSEG = 8   # 与 composite.DEFAULT_SEGMENTS 同值（避免 import 产生环形依赖，取字面量并注释）
@@ -84,7 +87,9 @@ EST_SEG_ENCODE_PER_FRAME = 0.05   # per-clip seg 重编码（x264 veryfast 1080p
 class DiffCtx:
     """键计算最小上下文：只提供 hygiene 键函数用到的属性（tl/root/fps/w/h/src_path）。
     不走 Ctx（其构造会校验 cache_dependencies 强制存在、算全量回执指纹——diff 是
-    纯读命令，对 frozen 历史文件不该有这些前置要求）。"""
+    纯读命令，对 frozen 历史文件不该有这些前置要求）。Native alpha is probed
+    read-only once per source; unavailable media/tools leave explicit unknowns.
+    """
 
     dry = True   # seg 编码器判定（seg_encoder_kind→nvenc_ok）按 dry 短路：diff 纯读，
                  # 不真探测 NVENC（env 判定仍生效，与真实运行同一 VTX_SEG_NVENC 口径）
@@ -95,9 +100,20 @@ class DiffCtx:
         self.fps = tl["project"]["fps"]
         self.w = tl["project"]["width"]
         self.h = tl["project"]["height"]
+        self.probes = {}
+        self.identity_unknown = {}
 
     def src_path(self, sid):
         return self.root / next(s for s in self.tl["sources"] if s["id"] == sid)["path"]
+
+    def probe(self, path):
+        if path not in self.probes:
+            try:
+                self.probes[path] = probe_video_alpha(path)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                self.probes[path] = None
+                self.identity_unknown[str(path)] = str(error)
+        return self.probes[path]
 
 
 # ---------------------------------------------------------------- 识别与加载
@@ -156,13 +172,13 @@ def _clip_seg_key(c, tr, ti, cl):
     源缺失（timeline 引用了不存在的媒体）返回 None——两侧同缺则视为相等，不多报。"""
     try:
         windowed = any(k in cl for k in ("scale", "x", "y"))
-        need_alpha = (cl.get("opacity", 1) < 1 or
-                      cl.get("fade_in_frames") or cl.get("fade_out_frames"))
+        need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
         # 编码器 token 与 composite.prepare_layers 同源（方案二阶段3）：两侧同一 env
         # 口径，token 同值不影响「改 clip → 键变」的失效判定。
         return seg_key(c, cl, ti, 0, windowed, need_alpha,
                        "prores" if need_alpha else seg_encoder_kind(c))   # ci 不参与键，占位 0
-    except OSError:
+    except (OSError, ValueError) as error:
+        c.identity_unknown.setdefault(str(c.src_path(cl['src'])), str(error))
         return None
 
 
@@ -225,7 +241,7 @@ def _edges(tl, nseg):
 
 # ---------------------------------------------------------------- 主 diff
 def diff_timelines(tla, roota, tlb, rootb, nseg=None):
-    """两份 timeline → 机器可读 dict（entries/impact/advice）。纯函数：无副作用。"""
+    """两份 timeline → dict；不写项目状态，可选只读源探测缺失时显式未知。"""
     if nseg is None:
         nseg = _nseg()
     ca, cb = DiffCtx(tla, roota), DiffCtx(tlb, rootb)
@@ -433,8 +449,8 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
     # ---- 分段合成（vseg）段键失效推断：切点/段决定因素为纯函数，直接重算比对 ----
     edges_a = _edges(tla, nseg)
     edges_b = _edges(tlb, nseg)
-    _, lay_a = _seg_layers_prep(tla, roota)
-    lay_b = _seg_layers_prep(tlb, rootb)[1]
+    _, lay_a = _seg_layers_prep(tla, roota, c=ca)
+    lay_b = _seg_layers_prep(tlb, rootb, c=cb)[1]
     dur_b = tlb["project"]["duration_frames"]
     inv_segs = []
     total_b = len(edges_b) - 1
@@ -510,13 +526,16 @@ def diff_timelines(tla, roota, tlb, rootb, nseg=None):
         + "；非实测承诺，±30% 校准口径")
 
     advice["recommended_path"] = _recommended_path(advice, stages)
+    impact['identity_unknown'] = [dict(side=side, source=source, reason=reason)
+        for side, context in (('old', ca), ('new', cb))
+        for source, reason in sorted(context.identity_unknown.items())]
     return {"kind": "timeline", "entries": entries, "impact": impact, "advice": advice,
             "n_entries": len(entries)}
 
 
-def _seg_layers_prep(tl, root):
+def _seg_layers_prep(tl, root, *, c=None):
     """(DiffCtx, [(tr, ti, [ident per clip])])——段图层恒等的预计算。"""
-    c = DiffCtx(tl, root)
+    c = DiffCtx(tl, root) if c is None else c
     layers = []
     for ti, tr in enumerate(tl["video_tracks"]):
         idents = [_layer_ident(c, tr, ti, cl) for cl in tr["clips"]]
@@ -564,7 +583,7 @@ def run_timeline_diff(old_path, new_path, json_path=None, dry=False):
         else:
             print(f"  - [删除] {e['path']}: {_short(e['old'], 60)}")
     if res["entries"]:
-        print(f"── 影响面（缓存键重算比对，键为纯函数即真值）──")
+        print(f"── 影响面（可观测输入的缓存键重算比对；未知源另列）──")
         print(f"  seg 失效需重编码：{len(impact['seg_invalid'])} 个 clip"
               + (f"：{'、'.join(x['clip'] for x in impact['seg_invalid'][:8])}"
                  if impact["seg_invalid"] else ""))
@@ -600,6 +619,9 @@ def run_timeline_diff(old_path, new_path, json_path=None, dry=False):
     # 正是本机制的核心场景——原实现挂在 if entries 分支内，无差异时静默漏报。
     for line in _cold_rebuild_hints(Path(new_path).parent):
         print(line)
+    for unknown in impact['identity_unknown']:
+        print(f"  ⚠ seg identity unknown ({unknown['side']}): {unknown['source']}; "
+              f"{unknown['reason']}（不可据失效计数断言缓存可复用）")
     if res["entries"]:
         print(f"DIFF｜共 {len(res['entries'])} 条差异；受影响段 "
               f"{impact['vseg_invalid']['count']}/{impact['vseg_invalid']['total']}，"

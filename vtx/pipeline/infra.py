@@ -18,7 +18,7 @@ from ..cache.cache_state import (DOWNSTREAM, InputIdentityError, load_receipt,
 from .constraints import AUDIO_SAMPLE_RATE, fps_error
 from ..runtime.diagnostics import emit, required_field, mark_handled, producer_exit, operation, indexed
 from ..media.encoders import (NVENC_RETRY_ATTEMPTS, nvenc_budget, nvenc_guard_note,
-                       nvenc_retry_run)
+                       nvenc_retry_run, video_alpha_info)
 
 
 _probe_json_path = ContextVar("vtx_probe_json_path", default="$")
@@ -268,7 +268,7 @@ class Ctx:
         # validate+video 每次进程合计 ~2.5min 纯浪费）。mp4/mov 流头 nb_frames 即精确；
         # 流头缺失才回落 -count_packets（仅解封装，秒级）。
         r = self.run(["ffprobe", "-v", "error", "-print_format", "json",
-                      "-show_streams", "-show_format", str(path)])
+                      "-show_streams", "-show_format", "-show_pixel_formats", str(path)])
         d = metadata(lambda: json.loads(r.stdout), '$', 'decode ffprobe JSON')
         v = metadata(lambda: next((s for s in d['streams'] if s['codec_type'] == 'video'), None), '$.streams', 'select video stream')
         a = metadata(lambda: next((s for s in d['streams'] if s['codec_type'] == 'audio'), None), '$.streams', 'select audio stream')
@@ -328,6 +328,7 @@ class Ctx:
                     "w": metadata(lambda: int(v['width']), '$.streams[video].width', 'video width integer'),
                     "h": metadata(lambda: int(v['height']), '$.streams[video].height', 'video height integer'),
                     "has_video": True, "has_audio": a is not None}
+            info.update(video_alpha_info(v, d.get('pixel_formats', [])))
         else:  # 纯音频源（音效/BGM/环境声文件）：时长换算到项目帧网格，仅供音频事件引用
             dur = None
             duration_pointer = ['$.streams[0].duration_ts', '$.streams[0].time_base']
@@ -465,7 +466,7 @@ class Ctx:
         cw = i["w"] - i["w"] % 2
         ch = int(i["w"] * 9 / 16); ch -= ch % 2
         if ch > i["h"]: ch = i["h"] - i["h"] % 2; cw = int(i["h"] * 16 / 9); cw -= cw % 2
-        return f"crop={cw}:{ch}:0:{(i['h'] - ch) // 2}"
+        return f"crop={cw}:{ch}:{(i['w'] - cw) // 2}:{(i['h'] - ch) // 2}"
 
 
 # ---------------------------------------------------------------- 并行基础设施（阶段三 2026-09-10）

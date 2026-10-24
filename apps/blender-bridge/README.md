@@ -21,6 +21,7 @@
 
 - **app 级（manifest requires，doctor 可探测）**：ffmpeg / ffprobe（audit_bundle 逐源导出与内容检测，系统 python3 即可跑）。
 - **blender 解释器（app.json `requires.binaries` 含 blender）**：json2blend / verify_blend / blend2json / bundle_session 须由 **blender** 运行（`blender --background --python <脚本>`）——依赖 bpy，系统 python3 无法 import。本机 Blender 5.2.1 LTS（`~/.local/opt/blender-5.2.1-linux-x64`，符号链接 `~/.local/bin/blender`）。
+- **版本/API 前置**：Blender >=4.4，且具备 `SequenceEditor.strips` / `strips_all`（[4.4 引入的现代 VSE API](https://developer.blender.org/docs/release_notes/4.4/python_api/#video-sequencer-strips)）；不适配旧名称。三个 Blender 脚本在读取项目或改动场景前检查，不满足即 exit 2。版本/API 前置通过不代表所有 4.4+ 版本已完成业务验证。
 
 ## 健康检查
 

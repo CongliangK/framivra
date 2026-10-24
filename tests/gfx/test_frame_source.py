@@ -469,10 +469,14 @@ class TestGeneratedPngConsumerIntegration(unittest.TestCase):
         import json
         import os
         import subprocess
-        import sys
         import math
         import wave
+        from tests.gfx._environment import bind_environment, environment_cli
         from vtx.pipeline.infra import Ctx
+        from vtx.render import gfx_cli, gfx_environment
+        # Generated PNGs exercise real FFmpeg consumers, not browser identity.
+        # Bind the same explicit fixture identity in this process and the CLI.
+        bind_environment(self)
         repo = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory(prefix='framesource_cli_') as td:
             root = Path(td)
@@ -494,13 +498,18 @@ class TestGeneratedPngConsumerIntegration(unittest.TestCase):
             source.directory.mkdir(parents=True)
             for i in range(18):
                 write_png(source.frame_path(i), 64, 64, i)
+            # Unmarked PNGs cannot attest a browser environment. Publish this
+            # generated fixture through the real whole-page validator instead.
+            gfx_cli.complete_page(source.directory, 18, source.directory.name, 64, 64,
+                                  verify_inputs=lambda: c.verify_inputs('gfx'),
+                                  environment=gfx_environment.certificate(c), root=c.root)
             env = dict(os.environ, VTX_NO_NVENC='1', VTX_SEG_NVENC='0', VTX_VIDEO_SEGMENTS='2')
             def run(*args, ok=True):
-                result = subprocess.run([sys.executable, str(repo / 'vtx/vtx.py'), '-t', str(tl), *args],
-                                        capture_output=True, text=True, env=env)
+                result = subprocess.run([*environment_cli(), '-t', str(tl), *args],
+                                        capture_output=True, text=True, env=env, cwd=repo)
                 self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
                 return result
-            run('gfx')  # Certify generated fixture cache; no browser rendering.
+            run('gfx')  # Verify certified generated fixture cache; no browser rendering.
             run('video')
             warm = run('video')
             self.assertIn('已缓存', warm.stdout)
@@ -561,8 +570,11 @@ class TestSubtitleReadiness(unittest.TestCase):
                     clip = dict(src='source', src_in=0, src_out=24, dur=24, dst_in=0)
                     if alpha:
                         clip['opacity'] = .5
+                    # These synthetic source bytes are opaque; alpha=True above
+                    # continues to exercise the authored-opacity encoder path.
                     c = SimpleNamespace(root=root, cache=cache, fps=30, spf=1/30,
                                         dur=24, w=16, h=16, dry=False, run=mock.Mock(),
+                                        probe=mock.Mock(return_value={'has_alpha': False}),
                                         src_path=lambda sid: original,
                                         tl={'video_tracks': [{'kind': 'aroll', 'clips': [clip]}]})
                     key = seg_key(c, clip, 0, 0, False, alpha, 'prores' if alpha else 'x264')
