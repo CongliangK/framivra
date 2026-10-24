@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from tests._support import full_hd_timeline as _tl
-from vtx.media import subs as subs_mod
+from vtx.media import subs as subs_mod, union_intervals
 from vtx.pipeline.infra import Ctx
 from vtx.media.subtitles_src import parse_srt, parse_subs_json, resolve_subtitles_src
 
@@ -48,7 +48,8 @@ class NormalAllGreen(unittest.TestCase):
     def test_aligned_reasonable_subs_pass(self):
         # voice 窗口 [60,150)（2-5s），字幕 60-120 帧（30 条字 /2s = 15 CPS？不——
         # 8 字/2s = 4 CPS），对齐偏移 0
-        rep = mk([{'in': 60, 'out': 120, 'text': '大家好今天讲剪映'}], [(60, 150)])
+        rep = mk([{'in': 60, 'out': 120, 'text': '大家好今天讲剪映'}],
+                 union_intervals([(90, 150), (60, 90), (75, 120)]))
         self.assertEqual(rep['summary'], 'PASS')
         self.assertEqual(rep['coverage'], '1/1')
         r = rep['results'][0]

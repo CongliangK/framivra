@@ -5,38 +5,38 @@
   "provenance": {
     "tools": {
       "python": {
-        "version_line": "Python 3.12.14",
-        "binary_sha256": "fa67443527ed9647f760d807e2a38f26340757123e643c4639cf273ed15d5ea7"
+        "version_line": "Python 3.14.3",
+        "binary_sha256": "cbf84109626aa1013bbe408fbb9590bd0f1c1548f038b2221c6b8b87de26ca43"
       },
       "node": {
-        "version_line": "v24.19.0",
-        "binary_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+        "version_line": "v24.14.1",
+        "binary_sha256": "849eadb22bf36ee34f9e5f59d6eb409a47ef531b3b2e5fdafb9e807b5399d090"
       },
       "ffmpeg": {
-        "version_line": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
-        "binary_sha256": "e8a8d46f5225f3062cec7c07fb145d58ae73c603cb740dcd5bad34bfb54e455a"
+        "version_line": "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers",
+        "binary_sha256": "cd6c07522328add01e219c5a7d61f5d7bf1c06d09211ea67aa619caceb1526de"
       },
       "ffprobe": {
-        "version_line": "ffprobe version 7.1.5-0+deb13u1 Copyright (c) 2007-2026 the FFmpeg developers",
-        "binary_sha256": "cefc5f81c0b18429cdbf8fa5a89e1e9c759235e10f93f9b329ff1b2fdff26f46"
+        "version_line": "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers",
+        "binary_sha256": "596c9ab3777bf5f7a90ef8d997920383013237b4b1c4b2919728639670d6010c"
       }
     },
-    "numpy_version": "2.3.5"
+    "numpy_version": "2.4.2"
   },
   "audio": {
     "assets/audio/bed-premaster.wav": {
-      "sha256": "e7cc3c4ef9b08a5849ba9841bfca889fec1e47d4b2db09c0b9ccac21711ed42e",
+      "sha256": "a20f1695d8bdf6da658047c3e33d153ec25443f48f207ca9d5084c93de496a59",
       "size": 8640044,
-      "pcm_sha256": "91684f4b548f971315208c185e9d55656fdf2086c45ab028986b906387465c1b",
+      "pcm_sha256": "c22833fe3ed26e3ece60327912ce3aaf14ef9f9e0c4bc08e4dd01271568153e9",
       "sample_frames": 1440000,
       "sample_rate": 48000,
       "channels": 2,
       "sample_width": 3
     },
     "assets/audio/content-cue.wav": {
-      "sha256": "6df219c973964d20a1bda1f6f28b366b291c351e61e810feff9189d6121ed456",
+      "sha256": "1e8554582f112b48d201ea1d0c6a04cef9e5fcd384f06fb696293a8b27f60838",
       "size": 326444,
-      "pcm_sha256": "424c32db014e22bb48db67d6d44ed93a48fa7f322a47d0fc1c778930179147d1",
+      "pcm_sha256": "5f1b9a1be908c5d64e40609f1f87f1078bae5a83e29bf1dcbfd57b9c048e5e77",
       "sample_frames": 54400,
       "sample_rate": 48000,
       "channels": 2,

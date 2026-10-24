@@ -12,8 +12,8 @@
     + 源媒体 stat 身份（path+size+mtime_ns+首尾采样哈希，同 hygiene._fp 哲学）+
     gfx html 字节 + 声明依赖（cache_dependencies）内容。任何缓存键会变的输入变化，
     回执门同样重置；不做全量媒体哈希。Electron Alpha 另追加显式后端身份与
-    namespace（gfx_backend.py）；其已列出的实现代码变化自动失效。其他实现升级
-    不做全仓代码哈希，须显式隔离或清理旧缓存。
+    namespace（gfx_backend.py）；其已列出的实现代码变化自动失效。正式音频的
+    stages.py/audio_filters.py 全文也纳入回执；不扫描全仓或完整工具链环境。
 """
 import hashlib
 import json
@@ -351,16 +351,12 @@ def _append_gfx_dependency_identity(c, h, gfx_inputs):
 
 
 def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
-    """回执输入身份：timeline 字节 + 源 stat 身份 + gfx html 字节 + 声明依赖内容
-    + subtitles_src 文件内容（v2 §1.1 条目 6）+ 生效插件摘要段（v2 §2.1 不变量 ②）。
+    """唯一当前回执身份：timeline/源/gfx/声明依赖/字幕/插件及音频实现。
 
-    v2 两处追加（均在现有哈希序末尾，不改既有成分）：
-      - subtitles_src：文件内容 digest（对齐 gfx html/声明依赖处理方式；未声明
-        该键的 timeline 不追加任何字节），文件变更 → 回执失效；
-      - active_plugins_digest：生效插件名+版本+参数摘要——**空生效清单时省略
-        该段**（无插件时间线的指纹与 v1 逐字节一致，v1 回执在 v2 下继续有效；
-        影子基线温态复验依赖此兼容）。不变量 ② 仍成立：插件安装/卸载/升级/
-        参数变化 → 段出现或内容变化 → 录制侧指纹与重算侧失配 → 旧回执拒绝。
+    空生效插件省略插件段，不省略音频实现；不接受历史整体指纹。
+    包内 stages.py/audio_filters.py 的固定相对路径与全文 SHA256 绑定正式
+    混音图、测量和增益实现。缺源码直接失败；无 Git/cwd/安装绝对路径成分，
+    不覆盖无源码 pyc/zipimport 或完整工具链，也不改 raw/GFX/seg 内容键。
     """
     h = hashlib.sha256()
     h.update(c.tl_path.read_bytes() if timeline_bytes is None else timeline_bytes)
@@ -416,10 +412,8 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
         p = _path(c, src, '$.subtitles_src')
         digest = file_digest(p) if p.is_file() else 'MISSING'
         h.update(_encode(c, 'subtitles_src:' + digest + '\n', '$.subtitles_src'))
-    # v2 §2.1 不变量 ②：生效插件清单摘要段（迟导入便于测试替身；pluginlib 零 vtx
-    # 依赖无环）。空生效清单时省略段——无插件时间线指纹与 v1 逐字节一致（v1 回执
-    # 继续有效，影子基线温态复验依赖）；插件装/卸/升级/改参时段出现或内容变，
-    # 录制指纹与重算失配即拒绝陈旧产物。
+    # 生效插件清单摘要段（迟导入避免环）；空清单只省略此段。插件装/卸/
+    # 升级/改参使段出现或内容变化，不能借空段恢复历史整体指纹。
     from ..pluginlib.hooks import active_plugins_digest
     _pdigest = active_plugins_digest(c)
     if _pdigest:
@@ -430,19 +424,24 @@ def receipt_fingerprint(c, *, timeline_bytes=None) -> str:
     # #47 record adds path/closure identity without reordering native failures.
     _append_gfx_dependency_identity(c, h, gfx_inputs)
     from ..render import gfx_svg
-    if gfx_svg.route(c) == 'svg-sequence':
-        return h.hexdigest()
-    # Selected renderer and namespace revoke downstream success as well.
-    from ..render.gfx_backend import identity
-    from .hygiene import gfx_cache_ns
-    backend, namespace = identity(), gfx_cache_ns()
-    if backend or namespace:
-        h.update(f"gfx-backend:{backend}|ns:{namespace}\n".encode())
-    if gfx_inputs:
-        from ..render.gfx_environment import identity as environment_identity
-        environment = environment_identity(c)
-        if environment:
-            h.update(environment.encode())
+    if gfx_svg.route(c) != 'svg-sequence':
+        # Selected renderer and namespace revoke downstream success as well.
+        from ..render.gfx_backend import identity
+        from .hygiene import gfx_cache_ns
+        backend, namespace = identity(), gfx_cache_ns()
+        if backend or namespace:
+            h.update(f"gfx-backend:{backend}|ns:{namespace}\n".encode())
+        if gfx_inputs:
+            from ..render.gfx_environment import identity as environment_identity
+            environment = environment_identity(c)
+            if environment:
+                h.update(environment.encode())
+    # After all input/provider operations, for every route. Re-read both small
+    # package sources on every check; missing/unreadable sources fail closed.
+    h.update(b'audio-implementation\0')
+    package = Path(__file__).resolve().parents[1]
+    for relative in ('pipeline/stages.py', 'media/audio_filters.py'):
+        h.update(f"vtx/{relative}:{file_digest(package / relative)}\n".encode())
     return h.hexdigest()
 
 

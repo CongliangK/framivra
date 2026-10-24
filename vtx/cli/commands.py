@@ -252,6 +252,7 @@ def _gfx(c: Ctx):
     split_max = max(1, int(os.environ.get("VTX_GFX_SPLIT_MAX", "3")))
 
     jobs = []   # (cid, key, cl, n, d, html, frames|None) 待渲块；frames=None=整页现行语义
+    seen = set()
     for tr in c.tl["video_tracks"]:
         if tr.get("kind") != "gfx": continue
         for cl in tr["clips"]:
@@ -277,6 +278,13 @@ def _gfx(c: Ctx):
                                           backend_ns=backend_ns, environment=environment, root=c.root)
                 events.cache_hit(c, "inspect_page", frames=[0, n])
                 print(f"✓ {cid}[{key}]: {n} 帧已缓存"); total += 1; continue
+            # Keep every clip's input/cache checks; only share queued production.
+            # Legacy inert HTML can share a directory across distinct source paths.
+            producer = (d, cl["src"])
+            if producer in seen:
+                total += 1
+                continue
+            seen.add(producer)
             # dry-run 不清缓存、不 mkdir；保留有效帧供 CDP 分块复用。
             if not c.dry:
                 fstxn.mkdir(d, root=c.root)

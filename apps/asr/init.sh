@@ -105,12 +105,12 @@ if [[ -n "$PY" ]]; then
     QORIGIN="$("$PY" -I -c 'import qwen_asr,os;print(os.path.dirname(os.path.dirname(qwen_asr.__file__)))' 2>/dev/null || true)"
     VENV_ROOT="$(cd "$(dirname "$PY")/.." && pwd)"
     if [[ -n "$QORIGIN" && "$QORIGIN" == "$VENV_ROOT"* ]]; then
-      ok "qwen-asr 可导入且来源为专属环境：$QVER（$("$PY" --version 2>&1)）"
+      ok "qwen-asr 可导入且来源为专属环境：${QVER}（$("$PY" --version 2>&1)）"
     else
-      bad "qwen_asr 来源异常（$QORIGIN，应位于 $VENV_ROOT 内）——疑似外部注入，已拒绝"
+      bad "qwen_asr 来源异常（${QORIGIN}，应位于 $VENV_ROOT 内）——疑似外部注入，已拒绝"
     fi
   else
-    bad "专属解释器缺 qwen_asr 包：$PY；绝不借用输入法环境。旧 --download 为 BLOCKED；独立依赖须另行审核和准备，固定快照模型下载不安装运行环境。"
+    bad "专属解释器缺 qwen_asr 包：${PY}；绝不借用输入法环境。旧 --download 为 BLOCKED；独立依赖须另行审核和准备，固定快照模型下载不安装运行环境。"
     printf '    未运行安装：解释器 %q；旧源 %q。许可边界见 docs/third-party-licenses.md。\n' "$PY" "$TUNA"
   fi
   if "$PY" -I -c "import modelscope" 2>/dev/null; then
@@ -150,9 +150,9 @@ find_model() {  # $1=目录名 → 输出已就位根目录（空=缺）
 for name in Qwen3-ASR-1.7B Qwen3-ASR-0.6B Qwen3-ForcedAligner-0.6B; do
   root="$(find_model "$name")"
   if [[ -n "$root" ]]; then
-    ok "模型 $name（复用专属资产）：$root/$name"
+    ok "模型 ${name}（复用专属资产）：$root/$name"
   else
-    bad "缺少模型 $name（专属根 $MODELS_HOME）；本地探测不联网、绝不借用输入法模型。旧 --download 为 BLOCKED；请核对 docs/third-party-licenses.md 与离线 plan <asset>，或配置已独立准备的 asr.model_dir。"
+    bad "缺少模型 ${name}（专属根 ${MODELS_HOME}）；本地探测不联网、绝不借用输入法模型。旧 --download 为 BLOCKED；请核对 docs/third-party-licenses.md 与离线 plan <asset>，或配置已独立准备的 asr.model_dir。"
   fi
 done
 
@@ -168,7 +168,7 @@ if [[ -n "$PY" ]]; then
     if [[ "$code" == "2" ]]; then
       bad "端口 $PORT 被占用——换 --port / config asr.base_url"
     else
-      bad "sidecar 冒烟失败（exit $code）"
+      bad "sidecar 冒烟失败（exit ${code}）"
     fi
   fi
 fi

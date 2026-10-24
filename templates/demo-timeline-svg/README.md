@@ -31,7 +31,7 @@ python3 -m vtx -t "$PROJECT/timeline.json" qc --strict > "$RUN/qc-strict.log" 2>
 
 prepare 默认真实生成全 900 SVG、manifest、字体副本、母带前音乐与短声，必须命中唯一 canonical 输入锁；保完整源/输入核验、真实 schema 和产品 validate 的日志。生成工具版本与二进制 SHA 只是出处，不是消费端平台白名单。
 
-Mac 等平台可将同一两个 canonical WAV 私有移交到仅含 `bed-premaster.wav` / `content-cue.wav` 的物理目录，并给 preflight 与 prepare 显式增加 `--audio-inputs DIR`。入口先核编码字节、全部 PCM 与规格，再用原生成器备齐图形、复制音频并按同一完整标准复核；不要求未用的 NumPy，不下载、不自动 fallback、不接纳新 hash 或新增平台锁。缺移交文件或字节不同即失败；GitHub 不上传音频二进制。该路线记为 `canonical-transfer`，不冒充本机音频生成。
+当前 canonical 生成方是本仓冻结的 macOS arm64 工具链（Python 3.14.3、NumPy 2.4.2、FFmpeg-full 9.0.2、Node 24.14.1，均为本机 Homebrew arm64 二进制），2026-10-23 由两次独立真实生成（结构规格、源码、字体完全相同，两个 WAV 全字段逐字节相等）后重新冻结 `benchmark/input-lock.json`。其他机器（如 Linux x86_64）不重生成音频：把同一两个 canonical WAV 私有移交到仅含 `bed-premaster.wav` / `content-cue.wav` 的物理目录，并给 preflight 与 prepare 显式增加 `--audio-inputs DIR`。入口先核编码字节、全部 PCM 与规格，再用原生成器备齐图形、复制音频并按同一完整标准复核；不要求未用的 NumPy，不下载、不自动 fallback、不接纳新 hash 或新增平台锁。缺移交文件或字节不同即失败；GitHub 不上传音频二进制。该路线记为 `canonical-transfer`，不冒充本机音频生成。2026-10-23 前的旧 Linux x86_64 锁（Python 3.12.14、NumPy 2.3.5、FFmpeg 7.1.5）整件原字节见[父提交固定版本](https://github.com/CongliangK/framivra/blob/f71e09d56b21346834b8a6853798d4568cc90bbb/templates/demo-timeline-svg/benchmark/input-lock.json)与仓外迁移记录，历史不删不改，另立平行活动锁不允许。
 
 准备成功不等于原生渲染或视听通过。`all` 复用正式视频、音频、封装与普通 QC；strict QC 是单独一次调用。不要用裸 `--graphics-only` 的不完整输入绕过完整验证。
 
@@ -45,7 +45,7 @@ Mac 等平台可将同一两个 canonical WAV 私有移交到仅含 `bed-premast
 
 - 图形生成：Node.js 标准库，无 npm 依赖。当前实现按 Node 18+ API 编写。
 - 完整结构自测（prepare 内部调用）：`test_schema.py` 使用已有 `jsonschema` 校验仓库真实 `vtx/timeline.schema.json`，这是仅用于测试的依赖。缺少时明确返回 BLOCKED，不安装、不降级成部分验证、不报告通过。复制到仓外的模板，两项自测均可用 `--schema` 指定对应产品 schema。
-- 程序配乐：Python 3.9+、NumPy、FFmpeg。顺序合成，生成器子进程超时受限，不包含外部采样、音色库、模型或下载器。首次审计环境为 Python 3.12.14、NumPy 2.3.5、FFmpeg 7.1.5；不承诺不同运行时跨版本位级相同。
+- 程序配乐：Python 3.9+、NumPy、FFmpeg。顺序合成，生成器子进程超时受限，不包含外部采样、音色库、模型或下载器。当前 canonical 冻结环境为 macOS arm64（Apple M4，Darwin）：Python 3.14.3、NumPy 2.4.2、FFmpeg-full 9.0.2（2026-10-23 重冻结）；首审环境为 Linux x86_64 的 Python 3.12.14、NumPy 2.3.5、FFmpeg 7.1.5（旧锁见上文父提交固定链接）；不承诺不同运行时跨版本位级相同。
 - SVG 实际依赖：prepare 内的产品 validate 也会调用 SVG 引擎与字体身份探针；`prepare_ready` 仅表示已列预检项通过，不代表这些探针或完整原生能力已通过。SVG 运行时身份实现支持 Linux ELF 与 macOS arm64，Windows 不支持。必须已有 Framivra、Inkscape、Fontconfig 的 `fc-scan`、FFmpeg/FFprobe；Linux 另需 system `ldd`。macOS 要求自包含 Inkscape.app 的真实 arm64 Mach-O 可执行文件及可解析依赖，不接受启动脚本。按 `VTX_INKSCAPE`、PATH 顺序定位；macOS 未找到时再查系统或用户 Applications 中的 Inkscape.app。后端版本、二进制及运行库身份和声明字体文件的 face 枚举清单由产品回执记录；须核对锁内期望 face，枚举不证明逐字形实际选面；私有配置隔离用户环境，仅使用声明字体。实现边界见 [SVG 后端](../../vtx/render/gfx_svg.py)，代码支持不等于对应平台或作品已通过真实渲染、音频终链与人工视听验收；resvg 不是此模板的生产依赖。
 - 真实文本字体：Noto Sans CJK SC Regular/Bold 与 DejaVu Sans Book/Bold。确切文件、字重、TTC face index、版本和 SHA256 的唯一清单是 `fonts.lock.json`。不接受静默 fallback；准备时必须匹配固定字节。
 

@@ -390,6 +390,27 @@ class InstallShBash32Guard(unittest.TestCase):
         text = INSTALL_SH.read_text(encoding="utf-8")
         for token in self.FORBIDDEN:
             self.assertNotIn(token, text, "bash4+ 特性禁用: %r" % token)
+        # Bash 3.2 can consume adjacent non-ASCII text as part of an unbraced
+        # variable name. Guard the affected diagnostic sources without running
+        # installers, downloaders, benchmarks or project-generation scripts.
+        for relative in (
+            "scripts/install.sh",
+            "apps/asr/init.sh",
+            "apps/matting/init.sh",
+            "apps/matting/comfyui_init.sh",
+            "apps/tts/init.sh",
+            "plugins/denoise/denoise_init.sh",
+            "scripts/bench_cold.sh",
+            "experiments/gfx_cef_worker/build_cef_worker.sh",
+        ):
+            lines = (REPO / relative).read_text(encoding="utf-8").splitlines()
+            for number, line in enumerate(lines, 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                with self.subTest(script=relative, line=number):
+                    self.assertNotRegex(
+                        line, r"\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7f])",
+                        "brace variables before non-ASCII text for Bash 3.2")
 
 
 if __name__ == "__main__":

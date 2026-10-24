@@ -8,8 +8,9 @@ import hashlib, json, re, sys
 from pathlib import Path
 
 from ..runtime import fstxn
+from . import union_intervals
 from ..pipeline.composite import RenderPlan
-from .encoders import seg_encoder_kind
+from .encoders import seg_encoder_kind, seg_needs_alpha
 from ..render.frame_source import png_source
 from ..cache.hygiene import manifest_record, seg_key, tmp_run
 from ..pipeline.infra import Ctx, filter_filename
@@ -29,17 +30,6 @@ MAX_LINE_CHARS = 28
 
 
 # ---------------------------------------------------------------- check（纯逻辑）
-def _union(wins):
-    """区间并集（帧坐标，[in,out)）；相邻/重叠合并。"""
-    out = []
-    for a, b in sorted(wins):
-        if out and a <= out[-1][1]:
-            out[-1] = (out[-1][0], max(out[-1][1], b))
-        else:
-            out.append((a, b))
-    return out
-
-
 def _match_voice(sub, wins, fps):
     """字幕 → voice 窗口匹配。返回 (窗口|None, 偏移秒|None, 最近距离秒, 参照描述|None)。
 
@@ -157,7 +147,7 @@ def _print_check_report(rep, align_fail):
 def run_check(c: Ctx, align_fail: float, dry: bool):
     """subs check 入口：零渲染，仅 timeline 文本；无任何产物也可跑。"""
     voice_tr = [tr for tr in c.tl.get("audio_tracks", []) if tr.get("name") == "voice"]
-    wins = _union([(e["in"], e["out"]) for tr in voice_tr for e in tr.get("events", [])])
+    wins = union_intervals([(e["in"], e["out"]) for tr in voice_tr for e in tr.get("events", [])])
     rep = check_subtitles(c.tl.get("subtitles", []), wins, c.fps, align_fail)
     _print_check_report(rep, align_fail)
     out = c.out / "subs_check.json"
@@ -270,8 +260,7 @@ def _layer_ready(c: Ctx, f: int):
                                "w2": None, "h2": None, "gfx": True, "ti": ti})
             else:
                 windowed = any(k in cl for k in ("scale", "x", "y"))
-                need_alpha = (cl.get("opacity", 1) < 1 or cl.get("fade_in_frames")
-                              or cl.get("fade_out_frames"))
+                need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
                 skey = seg_key(c, cl, ti, ci, windowed, need_alpha,
                                "prores" if need_alpha else seg_kind)
                 seg = c.cache / "seg" / f"{skey}.{'mov' if need_alpha else 'mp4'}"

@@ -474,7 +474,7 @@ class TestQCActualOperations(unittest.TestCase):
                 ({'w': 10}, KeyError, '$.h'), ({'w': None, 'h': 10}, TypeError, None)]:
             with self.subTest(response=response):
                 context = self.context()
-                context.probe = mock.Mock(return_value=response)
+                context.probe = mock.Mock(return_value=dict(response, has_alpha=False))
                 _, record = self.fault(context, exception)
                 self.assertEqual(record['rule_id'], 'qc.metadata_operation')
                 self.assertEqual(record['source']['provider'], 'source_probe')
@@ -482,7 +482,11 @@ class TestQCActualOperations(unittest.TestCase):
                 if pointer:
                     self.assertEqual(normalized(record['source']['provider_path']), pointer)
                 self.assertNotEqual(record['json_path'], '$.project.width')
-                context.probe.assert_called_once()
+                # Two bottom-source alpha decisions precede the original upper
+                # window dimension read; the malformed width/height still fails
+                # at that exact native operation and is diagnosed only once.
+                self.assertEqual(context.probe.call_args_list,
+                                 [mock.call(context.src_path(s)) for s in ('b', 'a', 'a')])
 
     def test_subtitle_and_audio_interval_matrix_and_external_origin(self):
         for kind, field_name, value in [('subtitles', 'in', 'bad'), ('subtitles', 'out', []),

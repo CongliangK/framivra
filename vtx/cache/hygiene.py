@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ..runtime import fstxn
 from .cache_state import InputIdentityError, verify_input_identity
-from ..media.encoders import seg_encoder_kind
+from ..media.encoders import seg_encoder_kind, seg_needs_alpha
 from ..pipeline.infra import ProjectPathError, ensure_inside_project
 from ..pluginlib import hooks as _plugin_hooks
 
@@ -311,13 +311,20 @@ def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: 
     失效由 gc 回收（内容寻址设计使然，正常）。
     """
     src = c.src_path(cl["src"])
-    spec = ["seg", _fp(src), str(cl["src_in"]), str(cl["src_out"]), str(cl["dur"]),
+    # Bind decoding to the same first video stream used by Ctx.probe. Legacy
+    # auto-selected (default/largest) streams can differ even for opaque clips.
+    spec = ["seg:decode-v0-alpha-v2", _fp(src), str(cl["src_in"]), str(cl["src_out"]), str(cl["dur"]),
             repr(cl.get("scale")), repr(cl.get("x")), repr(cl.get("y")),
             repr(cl.get("opacity")), repr(cl.get("fade_in_frames")),
             repr(cl.get("fade_out_frames")),
             "win" if windowed else "full", "alpha" if need_alpha else "opaque",
             encoder,
             f"{c.fps}|{c.w}x{c.h}"]
+    # Full-frame normalization now centers wide inputs horizontally too. Old
+    # left-cropped segs have valid media certificates but the wrong pixels;
+    # invalidate only this path, leaving explicit window geometry unchanged.
+    if not windowed:
+        spec.append("crop-center-v2")
     return _sha1("|".join(spec).encode())
 
 
@@ -543,8 +550,7 @@ def _current_keys(c):
             else:
                 if c.src_path(cl["src"]).exists() and "src_in" in cl:
                         windowed = any(k in cl for k in ("scale", "x", "y"))
-                        need_alpha = (cl.get("opacity", 1) < 1 or
-                                      cl.get("fade_in_frames") or cl.get("fade_out_frames"))
+                        need_alpha = seg_needs_alpha(cl, c.probe(c.src_path(cl['src'])))
                         seg.add((seg_key(c, cl, ti, ci, windowed, need_alpha,
                                          "prores" if need_alpha else seg_kind),
                                  need_alpha))
@@ -756,9 +762,16 @@ def df(c, quiet: bool = False):
 
 
 # ---------------------------------------------------------------- snapshot
+_SNAPSHOT_TEXT_SUFFIXES = frozenset({
+    '.html', '.htm', '.css', '.js', '.mjs', '.cjs', '.json', '.svg',
+    '.ass', '.srt', '.vtt', '.txt', '.xml', '.py', '.yaml', '.yml',
+})
+
+
 def snapshot(c, keep: int = None):
-    """timeline.json + 其引用的全部文本资产 → cache/snapshots/<UTC>-<md5[:8]>/。
-    只收文本（html/js/json/ass，KB 级），媒体不入快照。只留最近 keep 份。
+    """timeline.json + 其引用的全部文本资产 → cache/snapshots/<UTC>-<内容摘要>/。
+    只收文本（html/js/json/ass，KB 级），媒体不入快照。声明依赖按
+    _SNAPSHOT_TEXT_SUFFIXES 收文本，不读取图片/字体/媒体。只留最近 keep 份。
 
     issue #23（A04 / P0，工单点名补齐）相对路径安全校验：资产引用串来自不可信
     的 timeline，快照落点不得照搬引用串——「../」「绝对路径」「预置的 snapshots
@@ -776,9 +789,6 @@ def snapshot(c, keep: int = None):
     keep = keep if keep is not None else int(os.environ.get("VTX_SNAPSHOT_KEEP", "2"))
     if keep < 0:
         raise ProjectPathError('快照保留数不能为负')
-    md5 = tl_md5(c)
-    dst = c.cache / 'snapshots' / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{md5[:8]}"
-    ensure_inside_project(dst, c.cache, what='快照目录')
     texts = set()
     for tr in c.tl.get('video_tracks', []):
         if tr.get('kind') == 'gfx':
@@ -789,6 +799,11 @@ def snapshot(c, keep: int = None):
     sub_src = c.tl.get('subtitles_src')
     if isinstance(sub_src, str) and sub_src:
         texts.add(sub_src)
+    # Use the existing declaration collector so project and clip dependencies
+    # retain their timeline-relative spellings (including distinct aliases).
+    from .cache_state import all_declared_dependencies
+    texts.update(item for item in all_declared_dependencies(c)
+                 if Path(item).suffix.lower() in _SNAPSHOT_TEXT_SUFFIXES)
     # issue #59：先校验并读完一切，再建任何 staging——空串/'.'/目录 src、
     # 读取失败都发生在首个写动作之前（不留半途快照）。
     payloads = {'timeline.json': c.tl_path.read_bytes()}
@@ -798,7 +813,6 @@ def snapshot(c, keep: int = None):
         relative = Path(item)
         if relative.is_absolute() or '..' in relative.parts or not relative.parts:
             raise ProjectPathError(f'快照落点拒绝不安全资产引用（issue #23/#59）：{item!r}')
-        ensure_inside_project(dst / relative, dst, what='快照落点')
         src = ensure_inside_project(c.root / relative, c.root, what='快照文本资产')
         if not src.exists():
             print(f'  ⚠ 快照跳过不存在的资产: {item}')
@@ -806,22 +820,46 @@ def snapshot(c, keep: int = None):
         if not src.is_file():
             raise ProjectPathError(f'快照文本资产不是文件：{item!r}')
         if str(relative) == 'timeline.json':
+            if src.resolve() != c.tl_path.resolve():
+                raise ProjectPathError('快照文本资产 timeline.json 与时间线保留文件名冲突')
             continue
         try:
             payloads[str(relative)] = src.read_bytes()
         except OSError as error:
             raise ProjectPathError(f'快照文本资产无法读取：{item!r}（{error}）') from error
+    # Bind exactly the bytes being published, not just timeline.json. Two edits
+    # in the same second must not silently reuse an earlier asset snapshot.
+    digest = hashlib.sha256(b'vtx-snapshot-v1\0')
+    for relative, data in sorted(payloads.items()):
+        name = relative.encode('utf-8')
+        digest.update(len(name).to_bytes(8, 'big'))
+        digest.update(name)
+        digest.update(len(data).to_bytes(8, 'big'))
+        digest.update(data)
+    dst = c.cache / 'snapshots' / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{digest.hexdigest()[:16]}"
+    ensure_inside_project(dst, c.cache, what='快照目录')
+    for relative in payloads:
+        ensure_inside_project(dst / relative, dst, what='快照落点')
     if fstxn._legacy_guard():
         # 降级平台（issue #59 返工）：校验照旧，写机制回落 main 行为（路径形态
         # mkdir + 直接写 + rmtree 轮转）——无 fd 锚定，基线安全等级。
         if dst.exists():
-            print(f"✓ 快照已存在（同 timeline md5）：{dst.name}"); return dst
+            print(f"✓ 快照已存在（同文本内容）：{dst.name}"); return dst
         dst.mkdir(parents=True)
         for relative, data in payloads.items():
             op = dst / relative
             op.parent.mkdir(parents=True, exist_ok=True)
             op.write_bytes(data)
-        snaps = sorted((c.cache / "snapshots").iterdir())
+        # The hash suffix is not chronological within one second. Keep this
+        # publication last even on coarse timestamp filesystems; order older
+        # entries by modification time with a deterministic name tie-breaker.
+        def snapshot_order(path):
+            try:
+                modified = path.lstat().st_mtime_ns
+            except OSError:
+                modified = 0  # Best-effort legacy cleanup still tolerates loss.
+            return path == dst, modified, path.name
+        snaps = sorted((c.cache / "snapshots").iterdir(), key=snapshot_order)
         for old in snaps[:len(snaps) - keep] if len(snaps) > keep else []:
             shutil.rmtree(old, ignore_errors=True)
         print(f'✓ 快照 {dst.name}（{len(payloads)} 个文本文件；保留最近 {keep} 份）')
@@ -837,7 +875,7 @@ def snapshot(c, keep: int = None):
             if existing is not None:
                 if not stat.S_ISDIR(existing.st_mode):
                     raise ProjectPathError('快照目标不是普通目录')
-                print(f'✓ 快照已存在（同 timeline md5）：{dst.name}')
+                print(f'✓ 快照已存在（同文本内容）：{dst.name}')
                 return dst
             stage = '.' + name + '.' + secrets.token_hex(16) + '.tmp'
             os.mkdir(stage, dir_fd=parent)
@@ -866,8 +904,11 @@ def snapshot(c, keep: int = None):
             for oldname in sorted(os.listdir(parent)):
                 info = os.stat(oldname, dir_fd=parent, follow_symlinks=False)
                 if stat.S_ISDIR(info.st_mode) and not oldname.startswith('.'):
-                    snaps.append((oldname, fstxn.entry_identity(info)))
-            for oldname, oldidentity in snaps[:max(0, len(snaps) - keep)]:
+                    snaps.append((oldname, fstxn.entry_identity(info), info.st_mtime_ns))
+            # Pin the new publication last independently of timestamp precision
+            # or hash ordering. keep=0 still removes every snapshot, as before.
+            snaps.sort(key=lambda item: (item[0] == name, item[2], item[0]))
+            for oldname, oldidentity, _ in snaps[:max(0, len(snaps) - keep)]:
                 fstxn.remove_at(parent, oldname, oldidentity, what=dst.parent / oldname,
                                 preserve=lambda p: p.name.endswith('.lock'))
     print(f'✓ 快照 {dst.name}（{len(payloads)} 个文本文件；保留最近 {keep} 份）')

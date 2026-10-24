@@ -16,7 +16,7 @@
      并入 ak（gc 键集不变）/get_cache_dirs 空集/cache 白名单不变/键级通道
      get_cache_dir_keys 恒空 dict（R1-F F2）；
      receipt_fingerprint 末尾含 active_plugins_digest 段（mock 替身验证指纹随
-     插件段变化——v1 回执 v2 下失效属设计内；真实插件路径的正例见
+     插件段变化——旧回执因插件身份失配而失效属设计内；真实插件路径的正例见
      plugins/denoise/tests）；
   ⑤ 两缝：run_prepare_source 契约 v1.1（(c,sid)->Path|None，未受理 → None）/
      run_audio_events 恒等；hooks 声明↔代码注册对账（§2.3）；插件代码摘要
@@ -390,7 +390,7 @@ class InvariantsIdle(unittest.TestCase):
             self.assertEqual(pl_hooks.get_cache_dirs(), {"bgm"})
             # 键级通道（v1.2.0 R1-F F2）同空转：无插件键时间线恒空 dict
             self.assertEqual(pl_hooks.get_cache_dir_keys(c), {})
-            # 空生效清单返回 ""（指纹侧省略段）——v1 回执兼容的前提
+            # 空生效清单返回 ""，指纹侧只省略插件段，不省略其他当前身份
             self.assertEqual(pl_hooks.active_plugins_digest(c), "")
             # ak 并入空集 → _current_keys 与 P1-1 等价（sources 空 → ak 空）
             gfx, seg, ak = hygiene._current_keys(c)
@@ -418,8 +418,8 @@ class InvariantsIdle(unittest.TestCase):
             self.assertNotEqual(fp1, fp2)
             # 空转稳定（幂等）
             self.assertEqual(fp1, receipt_fingerprint(c))
-            # 空段显式省略：digest="" 时指纹与空转逐字节一致——v1 回执在 v2 下
-            # 继续有效（无插件时间线指纹与 v1 相同），影子基线温态复验依赖此。
+            # 空段显式省略：同一当前音频实现下，digest="" 与空转逐字节一致；
+            # 这是当前身份幂等正控，不是历史整体指纹兼容证明。
             with mock.patch("vtx.pluginlib.hooks.active_plugins_digest",
                             return_value=""):
                 self.assertEqual(receipt_fingerprint(c), fp1)

@@ -44,7 +44,7 @@ for arg in "$@"; do
     --with-4k) WITH_4K=1 ;;
     *) if [ -z "$ROUNDS" ]; then ROUNDS="$arg"
        elif [ -z "$PROJ" ]; then PROJ="$arg"
-       else echo "多余参数：$arg（用法：bench_cold.sh [轮数] [项目目录] [--with-4k]）"; exit 1; fi ;;
+       else echo "多余参数：${arg}（用法：bench_cold.sh [轮数] [项目目录] [--with-4k]）"; exit 1; fi ;;
   esac
 done
 ROUNDS="${ROUNDS:-3}"
@@ -79,7 +79,7 @@ wait_quiet() {   # 负载回落等待（骨架沿用+机器纪律）：load<3 �
     ch=$(pgrep -c -x chrome 2>/dev/null || true); ch="${ch:-0}"
     if [ "$load" -lt 3 ] && [ "$ff" -eq 0 ] && [ "$ch" -eq 0 ]; then return 0; fi
     if [ "$waited" -ge 600 ]; then
-      echo "警告：10 分钟未回落（load=$load ffmpeg=$ff chrome=$ch），超时放行（数字可能偏脏）"
+      echo "警告：10 分钟未回落（load=$load ffmpeg=$ff chrome=${ch}），超时放行（数字可能偏脏）"
       return 1
     fi
     sleep 15; waited=$((waited+15))
@@ -133,7 +133,7 @@ median_of() {   # 中位数（文件集 TDIR/$1_<轮>；偶数取中间两数均
     if (n % 2) printf "%.1f", a[(n+1)/2]; else printf "%.1f", (a[n/2]+a[n/2+1])/2 }'
 }
 
-echo "== vtx 冷跑基准（方案三阶段3 验证链编排）：$ROUNDS 轮，项目 $PROJ，with-4k=$WITH_4K，起始 $(date '+%F %T') =="
+echo "== vtx 冷跑基准（方案三阶段3 验证链编排）：$ROUNDS 轮，项目 ${PROJ}，with-4k=${WITH_4K}，起始 $(date '+%F %T') =="
 echo "==   repo=$REPO  VTX_IO_WORKERS=${VTX_IO_WORKERS:-默认}  VTX_PIPELINE=${VTX_PIPELINE:-默认1}  VTX_GFX_PAGES=${VTX_GFX_PAGES:-默认7} =="
 wait_quiet || true
 
@@ -141,7 +141,7 @@ UNEXPECTED_FAIL=0
 for i in $(seq 1 "$ROUNDS"); do
   ROUND="$i"
   LOG="$LOGDIR/vtx_bench_${DATE}_r${i}.log"
-  echo "--- 第 $i/$ROUNDS 轮（日志 $LOG，负载 $(uptime | sed 's/.*load average: //')，起 $(date '+%F %T')）---"
+  echo "--- 第 $i/$ROUNDS 轮（日志 ${LOG}，负载 $(uptime | sed 's/.*load average: //')，起 $(date '+%F %T')）---"
   : > "$LOG"
 
   # —— 真实冷清理（方案三.4）——
@@ -267,9 +267,9 @@ DEST="$PROJ/cache/bench_cold_${DATE}.log"
 {
   echo ""
   echo "=================================================================="
-  echo "== bench_cold 归档追加 $(date '+%F %T')（with-4k=$WITH_4K，VTX_IO_WORKERS=${VTX_IO_WORKERS:-默认}）=="
+  echo "== bench_cold 归档追加 $(date '+%F %T')（with-4k=${WITH_4K}，VTX_IO_WORKERS=${VTX_IO_WORKERS:-默认}）=="
   for i in $(seq 1 "$ROUNDS"); do
-    echo "---- 逐轮日志 r$i：/tmp/vtx_bench_${DATE}_r${i}.log ----"
+    echo "---- 逐轮日志 r${i}：/tmp/vtx_bench_${DATE}_r${i}.log ----"
     cat "$LOGDIR/vtx_bench_${DATE}_r${i}.log"
     echo ""
   done
@@ -277,7 +277,7 @@ DEST="$PROJ/cache/bench_cold_${DATE}.log"
   cat "$SUMMARY"
 } >> "$DEST"
 echo ""
-echo "===== 完成：汇总 $SUMMARY；归档追加 $DEST ====="
+echo "===== 完成：汇总 ${SUMMARY}；归档追加 $DEST ====="
 if [ "$UNEXPECTED_FAIL" -ne 0 ]; then
   echo "⚠ 本基准有非预期退出（见各步 rc）——数字可用性自查"
   exit 1

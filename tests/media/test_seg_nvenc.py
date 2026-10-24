@@ -349,11 +349,50 @@ class TestSegKeyEncoderToken(unittest.TestCase):
         # ti/ci 不参与键（既有语义，token 化后不得回退）
         self.assertEqual(seg_key(c, _CL, 0, 0, False, False, "nvenc"),
                          seg_key(c, _CL, 5, 9, False, False, "nvenc"))
+        # The source's central 16:9 region must survive wide, tall and odd-sized
+        # inputs; explicit window transforms still bypass this crop entirely.
+        from vtx.pipeline.infra import Ctx
+        for width, height, expected in (
+                (480, 180, 'crop=320:180:80:0'),
+                (320, 240, 'crop=320:180:0:30'),
+                (320, 180, 'crop=320:180:0:0'),
+                (481, 181, 'crop=320:180:80:0'),
+                (321, 241, 'crop=320:180:0:30')):
+            with self.subTest(width=width, height=height):
+                context = SimpleNamespace(src_path=lambda sid: sid,
+                    probe=lambda path: {'w': width, 'h': height})
+                self.assertEqual(Ctx.crop169(context, 'source'), expected)
+        # Upgrade on unchanged source bytes must not adopt old left-crop media.
+        from vtx.cache import hygiene
+        original_hash = hygiene._sha1
+        def old_crop_key(payload):
+            return original_hash(payload.removesuffix(b'|crop-center-v2'))
+        for windowed in (False, True):
+            with self.subTest(windowed=windowed):
+                current = seg_key(c, _CL, 0, 0, windowed, False, 'x264')
+                with mock.patch.object(hygiene, '_sha1', side_effect=old_crop_key):
+                    previous = seg_key(c, _CL, 0, 0, windowed, False, 'x264')
+                self.assertEqual(current == previous, windowed)
 
     def test_alpha_bit_still_distinguishes(self):
         c = _KeyCtx()
         self.assertNotEqual(seg_key(c, _CL, 0, 0, False, True, "prores"),
                             seg_key(c, _CL, 0, 0, False, False, "prores"))
+        formats = [{'name': name, 'flags': {'alpha': alpha}}
+                   for name, alpha in (('rgba', 1), ('yuva444p12le', 1),
+                                       ('rgb0', 0), ('x2rgb10le', 0), ('yuv420p', 0))]
+        for name, expected in (('rgba', True), ('yuva444p12le', True),
+                               ('rgb0', False), ('x2rgb10le', False), ('yuv420p', False)):
+            with self.subTest(pixel_format=name):
+                info = encoders.video_alpha_info({'pix_fmt': name}, formats)
+                self.assertIs(info['has_alpha'], expected)
+                self.assertIs(encoders.seg_needs_alpha(_CL, info), expected)
+                for effect in ({'opacity': .5}, {'fade_in_frames': 1}, {'fade_out_frames': 1}):
+                    self.assertTrue(encoders.seg_needs_alpha(dict(_CL, **effect), info))
+        for stream in ({}, {'pix_fmt': 'unknown'},
+                       {'pix_fmt': 'yuv420p', 'codec_name': 'vp9', 'tags': {'ALPHA_MODE': '1'}}):
+            with self.subTest(unknown=stream), self.assertRaisesRegex(ValueError, 'alpha identity unavailable'):
+                encoders.seg_needs_alpha(_CL, encoders.video_alpha_info(stream, formats))
 
 
 class TestNvencBudget(unittest.TestCase):
@@ -770,7 +809,7 @@ class TestPrepareProducerDedup(unittest.TestCase):
             w=64, h=48, dry=False,
             tl={'video_tracks': [{'kind': 'broll', 'clips': self.clips}]},
             src_path=lambda sid: self.root / (sid + '.mp4'),
-            probe=lambda path: {'w': 64, 'h': 48},
+            probe=lambda path: {'w': 64, 'h': 48, 'has_alpha': False},
             crop169=mock.Mock(return_value='crop=64:36:0:6'),
             verify_inputs=mock.Mock())
         for name, target, kwargs in (
@@ -830,6 +869,25 @@ class TestPrepareProducerDedup(unittest.TestCase):
                 self.assertEqual(tasks[0][2], kind == 'nvenc')
                 self.assertIn('h264_nvenc' if kind == 'nvenc' else 'libx264', tasks[0][1])
         self.assertNotEqual(*keys)
+        # Native alpha is independent of clip opacity/fades, and every reader
+        # must resolve the producer's same ProRes key, including GC and preview.
+        from vtx.cache import hygiene
+        from vtx.media import subs
+        self.c.probe = lambda path: {'w': 64, 'h': 48, 'has_alpha': True}
+        self.c.tl['sources'] = []
+        layers, tasks = self.prepare()
+        native = layers[0]['seg']
+        self.assertEqual(native.suffix, '.mov')
+        self.assertIn('prores_ks', tasks[0][1])
+        self.assertFalse(tasks[0][2])
+        self.assertNotIn(native, keys)
+        with mock.patch.object(hygiene, 'seg_encoder_kind', return_value='nvenc'), \
+             mock.patch.object(hygiene._plugin_hooks, 'contribute_keys', return_value=set()), \
+             mock.patch.object(subs, 'seg_encoder_kind', return_value='nvenc'), \
+             mock.patch.object(subs, 'media_cache_valid', return_value=True):
+            self.assertIn((native.stem, True), hygiene._current_keys(self.c)[1])
+            self.assertEqual(subs._layer_ready(self.c, 0)[0]['seg'], native)
+        self.c.probe = lambda path: {'w': 64, 'h': 48, 'has_alpha': False}
         for clip in self.clips:
             clip['opacity'] = 0.5
         layers, tasks = self.prepare()

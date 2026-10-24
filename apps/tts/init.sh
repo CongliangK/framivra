@@ -67,9 +67,9 @@ if [ -d "$CKPT" ]; then
     [ -e "$CKPT/$n" ] || MISS="$MISS $n"
   done
   if [ -z "$MISS" ]; then
-    mark ok "repo" "复用 $CKPT（五件权重齐）"
+    mark ok "repo" "复用 ${CKPT}（五件权重齐）"
   else
-    mark fail "repo" "$CKPT 缺：$MISS；旧 --download 与未审查 IndexTTS 辅助链为 BLOCKED，见 docs/third-party-licenses.md；独立 edge CLI 的准备与用法见 apps/tts/README.md"
+    mark fail "repo" "$CKPT 缺：${MISS}；旧 --download 与未审查 IndexTTS 辅助链为 BLOCKED，见 docs/third-party-licenses.md；独立 edge CLI 的准备与用法见 apps/tts/README.md"
   fi
 else
   mark fail "repo" "$REPO 不存在；旧 --download 与未审查 IndexTTS 辅助链为 BLOCKED，见 docs/third-party-licenses.md；独立 edge CLI 的准备与用法见 apps/tts/README.md"
@@ -82,7 +82,7 @@ if [ -x "$PY" ]; then
 else
   PY2="$REPO/.venv/bin/python"
   if [ -x "$PY2" ]; then
-    mark ok "解释器" "$($PY2 --version 2>&1) @ $PY2（config tts.python 缺省回退 repo venv）"
+    mark ok "解释器" "$($PY2 --version 2>&1) @ ${PY2}（config tts.python 缺省回退 repo venv）"
   else
     mark fail "解释器" "$PY 与 $PY2 均不可用 —— conda create -n indextts python=3.10 && conda activate indextts && cd $REPO && pip install -e .（按 repo 说明装依赖），或只用 --engine edge"
   fi
@@ -91,7 +91,7 @@ fi
 # ---- 3. 音色参考（本人干声 5-10s，克隆音色用）----
 VR="$(cfg tts.voice_ref "$DEFAULT_VOICE_REF")"
 if [ -f "$VR" ]; then
-  mark ok "音色参考" "$VR（$(du -h "$VR" | cut -f1)）"
+  mark ok "音色参考" "${VR}（$(du -h "$VR" | cut -f1)）"
 else
   mark warn "音色参考" "$VR 缺 —— 放任意 5-10s 单一说话人干声（电平正常），改 config tts.voice_ref 指向它；仅 edge 引擎可无此文件"
 fi

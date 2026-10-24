@@ -17,7 +17,7 @@ from ..media import loudness_cache
 from ..runtime import fstxn
 from ..runtime.diagnostics import (emit, producer_exit, required_field, operation,
                           key_path, subtitle_location)
-from ..pipeline.composite import _gfx_scaled_size
+from ..pipeline.composite import _gfx_scaled_size, needs_qc_clean, render_source_frame
 from ..cache.hygiene import gfx_dir   # R-05 探针口径对齐：gfx 内容域 bbox 需定位 png 序列目录
 
 # ---- QC 阈值命名常量（值不变，仅命名；2026-09-10 收拢）----
@@ -56,7 +56,9 @@ _QC_SEG_RECORD = "qc_pass_segs.json"
 # can lift a constant black frame above zero (FFmpeg 7.1.5, x86_64). The same
 # filter applies to final, source and qc_clean probes; thresholds stay unchanged.
 # Schema revisions also reject legacy readers on rollback: v2 changed gray
-# sampling; v3 projects gfx content bounds through the shared scale geometry.
+# sampling; v3 projects gfx content bounds through the shared scale geometry;
+# v4 binds video stream zero and compares native alpha over the black canvas.
+_QC_RECORD_VERSION = 4
 _QC_GRAY_WIDTH, _QC_GRAY_HEIGHT = 48, 27
 _QC_GRAY_FILTER = f"scale={_QC_GRAY_WIDTH}:{_QC_GRAY_HEIGHT}:flags=bicubic+accurate_rnd,format=gray"
 _VSEG_NAME = re.compile(r"^seg(\d+)_(\d{6})_([0-9a-f]{12})\.mp4$")
@@ -68,7 +70,7 @@ def _load_qc_pass_record(c):
         rec = json.loads((c.cache / _QC_SEG_RECORD).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(rec, dict) or rec.get("version") != 3:
+    if not isinstance(rec, dict) or rec.get("version") != _QC_RECORD_VERSION:
         return None
     if rec.get("probe_filter") != _QC_GRAY_FILTER:
         return None   # Old sampling results cannot exempt the new probe contract.
@@ -135,7 +137,7 @@ def _write_qc_pass_record(c, frames_nb, checks):
         st = (c.out / "final.mp4").stat()
     except OSError:
         return
-    rec = {"version": 3, "probe_filter": _QC_GRAY_FILTER,
+    rec = {"version": _QC_RECORD_VERSION, "probe_filter": _QC_GRAY_FILTER,
            "final": {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
                      "frames": frames_nb},
            "segs": segs, "checks": mem}
@@ -324,6 +326,7 @@ def qc(c):
                      else "duration_fps_estimate")
     tracks = field(c.tl, "video_tracks", "$")
     bottom_gfx = bool(tracks) and get(field(tracks, 0, "$.video_tracks"), "kind", "$.video_tracks[0]") == "gfx"
+    bottom_clean = needs_qc_clean(c)
 
     # ---- 帧提取原语：-ss 输入 seek + -frames:v 1（精确取帧）----
     # 关键正确性点：-ss 在 -i 前（输出流帧号从 0 重计）→ 不再保留 select=eq(n,N)，
@@ -348,7 +351,7 @@ def qc(c):
         failed = True  # Local outcome, independent of a caller's handled exception.
         try:
             c.run(["ffmpeg", "-v", "error", "-y", "-ss", ss,
-                   "-i", str(path), "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo", str(tmp)])
+                   "-i", str(path), "-map", "0:v:0", "-an", "-vf", vf, "-frames:v", "1", "-f", "rawvideo", str(tmp)])
             data = tmp.read_bytes()
             expected = _QC_GRAY_WIDTH * _QC_GRAY_HEIGHT
             if len(data) != expected:
@@ -367,8 +370,9 @@ def qc(c):
                 if not failed:
                     raise  # A cleanup failure cannot replace a producer/I/O failure.
     # 底轨基准帧（等价于全片 qc_clean.mp4 在该帧的像素）：qc_clean 本就是 tracks[0]
-    # 底轨 clip 全屏无叠层的第二遍合成，探测帧现场从源视频提帧（src_in + 帧偏移，
-    # 输入 seek）过同一 crop169+scale 链即等价；无 clip 覆盖 → 黑帧（画布为黑场）。
+    # 底轨 clip 的第二遍合成；native-alpha 与 gfx 用真实 qc_clean，其他源保留
+    # 现场提帧（src_in + 帧偏移，输入 seek）及既有 crop169+scale 路径。
+    # 无 clip 覆盖 → 黑帧（画布为黑场）。
     # 探测点均取 clip 中段，天然避开 fade 边界。
     _BLACK = bytes(_QC_GRAY_WIDTH * _QC_GRAY_HEIGHT)
     def clip_end(cl, path):
@@ -389,7 +393,7 @@ def qc(c):
     def bottom_frame(df: int, tag: str, post_crop: str = None, *, origin="$") -> bytes:
         if not tracks:  # No video layers: the compositor's canvas is still black.
             return _BLACK
-        if bottom_gfx:  # 底轨是 gfx（无源视频）：回落全片 qc_clean 基准轨
+        if bottom_clean:  # gfx/native alpha needs the black-canvas composite reference.
             return gray_frame(c.cache / "qc_clean.mp4", df,
                               pre_crop=f"crop={post_crop}" if post_crop else "", tag=tag,
                               origin=origin)
@@ -548,9 +552,18 @@ def qc(c):
         sf = native("add", field(cl, "src_in", path), j, path=path,
                     paths=(path + ".src_in", "sample_offset"))
         a = bottom_frame(df, tag=f"c{df}_", origin=path)
-        b = gray_frame(c.src_path(field(cl, "src", path)), sf,
-                       pre_crop=f"{c.crop169(field(cl, 'src', path))},scale={c.w}:{c.h}:flags=lanczos",
-                       tag=f"c{df}_", origin=path)
+        if bottom_clean:
+            # Once any native-alpha clip activates the bottom reference, every
+            # cut in that track needs its actual effects/window geometry, even
+            # a neighboring opaque source. Reuse RenderPlan, not a parallel
+            # overlay formula or the prepared cache under test.
+            with tempfile.TemporaryDirectory(prefix='qc_source_', dir=c.cache) as temporary:
+                reference = render_source_frame(c, cl, j, Path(temporary))
+                b = gray_frame(reference, 0, tag=f'c{df}_', origin=path)
+        else:
+            b = gray_frame(c.src_path(field(cl, "src", path)), sf,
+                           pre_crop=f"{c.crop169(field(cl, 'src', path))},scale={c.w}:{c.h}:flags=lanczos",
+                           tag=f"c{df}_", origin=path)
         mean = mean_difference(a, b, path, df)
         # 检查名仍显示 clip 起点；工作索引绝不取代原 timeline 索引。
         cut_frames[key] = df

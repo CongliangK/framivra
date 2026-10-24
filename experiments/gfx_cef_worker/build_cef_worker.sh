@@ -125,7 +125,7 @@ if [ -n "$CEF_ROOT" ]; then
   log "已解包且目录名与锁 cef_version 一致，跳过: $CEF_ROOT"
 else
   if [ -n "$STALE_DIRS" ]; then
-    fail "存在版本不匹配的解包目录: $STALE_DIRS（锁 cef_version=$CEF_VERSION，要求 ${EXPECTED_DIR_PREFIX} 或 ${EXPECTED_DIR_PREFIX}_*）——请清理旧解包目录，或整包重锁对齐后重试"
+    fail "存在版本不匹配的解包目录: ${STALE_DIRS}（锁 cef_version=${CEF_VERSION}，要求 ${EXPECTED_DIR_PREFIX} 或 ${EXPECTED_DIR_PREFIX}_*）——请清理旧解包目录，或整包重锁对齐后重试"
   fi
   log "解包: $ARCHIVE_PATH"
   top_dir="$(python3 - "$ARCHIVE_PATH" <<'PY'
@@ -172,7 +172,7 @@ for item in "${issue_runtime[@]}" "${optional_release[@]}"; do
   if [ -f "$CEF_ROOT/Release/$item" ]; then
     cp -f "$CEF_ROOT/Release/$item" "$BIN_DIR/"
   else
-    log "分发包不含 $item（按 CEF Linux 清单属正常），跳过"
+    log "分发包不含 ${item}（按 CEF Linux 清单属正常），跳过"
   fi
 done
 for item in icudtl.dat chrome_100_percent.pak chrome_200_percent.pak resources.pak; do

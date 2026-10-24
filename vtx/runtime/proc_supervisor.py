@@ -531,6 +531,19 @@ class SupervisedProcessGroup:
                 # 自起子会话 Worker 组不可能命中白名单；真命中说明谱系被
                 # 异常改写——告警并继续收尾（删账本/清目录），零击杀。
                 print(f"⚠ 监管器：{e}——Worker 组拒杀，按既定零击杀语义收尾")
+                # Preserve the inherited broken/stale cleanup exception. This
+                # is not proof of termination and must not add another signal
+                # or wait after the lineage whitelist has denied the group.
+                return True
+        if self.proc is not None:
+            try:
+                # group_live_members deliberately excludes zombies. Group KILL
+                # therefore needs an explicit wait for our owned direct child;
+                # otherwise stop() removes the ledger but retains a zombie and
+                # an unset Popen returncode until that object is collected.
+                self.proc.wait(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                return False
         return True
 
     def _ledger_path(self) -> Path:
@@ -560,6 +573,13 @@ class SupervisedProcessGroup:
                     guard.wait(3)
                 except subprocess.TimeoutExpired:   # pragma: no cover
                     print(f"⚠ 监管器：守卫 pid={guard.pid} 强杀后仍未退出")
+            finally:
+                # A caller may request PIPE for worker diagnostics; the guard
+                # receives its own independent pipe, not the worker's stream.
+                # Reap and close that owned capture instead of relying on GC.
+                for stream in (guard.stdin, guard.stdout, guard.stderr):
+                    if stream is not None:
+                        stream.close()
 
     def _write_ledger(self):
         """>>> 红线：账本是 tmp_run 目录内的独立文件，绝不入 manifest.json。"""

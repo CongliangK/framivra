@@ -64,6 +64,126 @@ def _minimal_png() -> bytes:
 MINIMAL_PNG = _minimal_png()
 
 
+@unittest.skipUnless(sys.platform.startswith('linux') and Path('/proc/self/stat').is_file(),
+                     'requires Linux isolated process-tree observation')
+class CliProcessTree(unittest.TestCase):
+    def test_owned_children_are_cleaned_on_success_failure_timeout_and_interrupt(self):
+        script = r"""
+import ctypes, json, os, signal, subprocess, sys, tempfile, threading, time
+from pathlib import Path
+from vtx.render.gfx_cli import GfxCliError, run_cli_shot
+# Process-local adoption lets this isolated test reap its own grandchildren;
+# no host process or global setting is modified.
+assert ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) == 0
+mode = sys.argv[1]
+with tempfile.TemporaryDirectory(prefix='vtx-cli-tree-') as temporary:
+    root = Path(temporary)
+    out = root / 'out'; out.mkdir()
+    html = root / 'page.html'; html.write_text('owned fixture')
+    unrelated = root / 'cache' / 'tmp' / 'unrelated-run' / '.worker_pgid.json'
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_text('unrelated recovery evidence')
+    pidfile = root / 'child.pid'
+    browser = root / 'browser'
+    browser.write_text('#!' + sys.executable + '\n' + '''
+import pathlib, subprocess, sys, time
+mode = MODE
+options = {} if mode in ('timeout', 'interrupt') else dict(
+    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)'], **options)
+pathlib.Path(PIDFILE).write_text(str(child.pid))
+if mode in ('timeout', 'interrupt'):
+    time.sleep(20)
+else:
+    output = next(arg.split('=', 1)[1] for arg in sys.argv if arg.startswith('--screenshot='))
+    pathlib.Path(output).write_bytes(PNG)
+    sys.exit(3 if mode == 'nonzero' else 0)
+'''.replace('MODE', repr(mode)).replace('PIDFILE', repr(str(pidfile))).replace('PNG', __PNG_REPR__))
+    browser.chmod(0o700)
+    done = threading.Event()
+    def interrupt():
+        deadline = time.monotonic() + 5
+        while not pidfile.exists() and time.monotonic() < deadline and not done.is_set():
+            time.sleep(.01)
+        if pidfile.exists() and not done.wait(.05):
+            os.kill(os.getpid(), signal.SIGINT)
+    thread = threading.Thread(target=interrupt) if mode == 'interrupt' else None
+    if thread:
+        thread.start()
+    child = None
+    started = time.monotonic()
+    try:
+        try:
+            # A relative executable/output spelling must retain its old meaning
+            # when the supervisor changes the worker's current directory.
+            os.chdir(root)
+            run_cli_shot(0, Path('out'), Path('page.html'), './browser',
+                         width=1, height=1, timeout=.5 if mode == 'timeout' else 5,
+                         root=root)
+        except KeyboardInterrupt:
+            assert mode == 'interrupt'
+        except GfxCliError as error:
+            assert mode in ('timeout', 'nonzero'), str(error)
+        else:
+            assert mode == 'success', mode
+        child = int(pidfile.read_text())
+        reaped, _ = os.waitpid(child, os.WNOHANG)
+        assert reaped == child, 'owned browser child survived ' + mode
+        child = None
+        assert (out / 'f0000.png').exists() == (mode == 'success')
+        assert list((root / 'cache' / 'tmp').glob('*/.worker_pgid.json')) == [unrelated]
+        assert unrelated.read_text() == 'unrelated recovery evidence'
+        assert time.monotonic() - started < 10, 'cleanup exceeded its bound'
+    finally:
+        done.set()
+        if thread:
+            thread.join(timeout=6)
+        if child is None and pidfile.exists():
+            candidate = int(pidfile.read_text())
+            try:
+                reaped, _ = os.waitpid(candidate, os.WNOHANG)
+                if not reaped:
+                    child = candidate
+            except ChildProcessError:
+                pass
+        if child is not None:
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os.waitpid(child, 0)
+        os.chdir('/')
+""".replace('__PNG_REPR__', repr(repr(MINIMAL_PNG)))
+        for mode in ('timeout', 'interrupt', 'success', 'nonzero'):
+            with self.subTest(mode=mode):
+                result = subprocess.run([sys.executable, '-c', script, mode], cwd=REPO,
+                                        env={**os.environ, 'PYTHONPATH': str(REPO)},
+                                        start_new_session=True, capture_output=True,
+                                        text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class CliProcessRouting(unittest.TestCase):
+    def test_windows_keeps_job_object_runner(self):
+        from vtx.render import gfx_cli
+        result = subprocess.CompletedProcess(['browser'], 0, b'out', b'err')
+        with mock.patch.object(gfx_cli.os, 'name', 'nt'), \
+                mock.patch('vtx.runtime.windows_browser.run_browser', return_value=result) as run:
+            self.assertIs(gfx_cli._run_cli_browser(['browser'], '.', 2), result)
+        run.assert_called_once_with(['browser'], timeout=2)
+
+    def test_unavailable_supervision_preserves_legacy_route(self):
+        from vtx.render import gfx_cli
+        result = subprocess.CompletedProcess(['browser'], 0, b'out', b'err')
+        with mock.patch.object(gfx_cli.os, 'name', 'posix'), \
+                mock.patch('vtx.runtime.proc_supervisor.supervision_available', return_value=False), \
+                mock.patch('vtx.runtime.proc_supervisor.SupervisedProcessGroup') as group, \
+                mock.patch.object(gfx_cli.subprocess, 'run', return_value=result) as run:
+            self.assertIs(gfx_cli._run_cli_browser(['browser'], '.', 2), result)
+        run.assert_called_once_with(['browser'], capture_output=True, timeout=2)
+        group.assert_not_called()
+
+
 def _png_with_idat(idats, w=1, h=1, interlace=0) -> bytes:
     """构造签名/IHDR/块边界/CRC/IEND 全部合法、IDAT 为任意给定字节的 PNG。
 

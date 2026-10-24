@@ -86,6 +86,35 @@ class InputIdentityGuard(unittest.TestCase):
                 self.assertEqual(rec['timeline'], self.c.timeline_sha256)
                 p.write_bytes(original)
 
+    def test_audio_implementation_change_or_unreadable_source_blocks_success(self):
+        real_digest = cache_state.file_digest
+        package = Path(cache_state.__file__).resolve().parents[1]
+        for relative in ('pipeline/stages.py', 'media/audio_filters.py'):
+            for failure in (False, True):
+                with self.subTest(source=relative, unreadable=failure):
+                    self.c = Ctx(self.path)
+                    original = self.product.read_bytes()
+                    def digest(path):
+                        value = real_digest(path)
+                        if path == package / relative:
+                            if failure:
+                                raise PermissionError('audio implementation unreadable')
+                            return '0' * 64 if value != '0' * 64 else '1' * 64
+                        return value
+                    with mock.patch.object(cache_state, 'file_digest', side_effect=digest):
+                        with self.assertRaises(cache_state.InputIdentityError):
+                            self.c.begin_stage('prepare')
+                        self.rejects(lambda: self.c.receipt('audio', True))
+                        self.rejects(lambda: hygiene.manifest_record(self.c, self.product, 'audio'))
+                        self.rejects(lambda: hygiene.versions_record(self.c, self.product, 'mux'))
+                    record = json.loads((self.c.out / 'receipt.json').read_text())
+                    self.assertEqual(record['input_fingerprint'], self.c.input_fingerprint)
+                    self.assertIs(record['stages']['audio']['ok'], False)
+                    self.assertIn('issue #32', record['stages']['audio']['detail'])
+                    self.assertEqual(self.product.read_bytes(), original)
+                    self.assertFalse((self.c.cache / 'manifest.json').exists())
+                    self.assertFalse((self.c.out / 'VERSIONS.json').exists())
+
     def test_change_while_waiting_for_ledger_lock_is_detected(self):
         for gate, loader, target in (
             (lambda: self.c.receipt('video', True), 'receipt', self.c.out / 'receipt.json'),

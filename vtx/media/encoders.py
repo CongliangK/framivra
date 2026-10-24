@@ -2,10 +2,61 @@
 
 无副作用（除探测子进程本身）；全部行为与拆分前逐字一致。
 """
-import contextlib, os, subprocess, sys, threading, time
+import contextlib, json, os, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from ..render.browser_paths import find_chrome_candidate
+
+
+def video_alpha_info(stream, pixel_formats):
+    """Bind alpha to FFmpeg's exact decoded pixel-format descriptor.
+
+    Four components alone are not evidence: rgb0/x2rgb10 contain padding, not
+    alpha. Container-only alpha (e.g. VP9 alpha_mode with a yuv420p decoder) is
+    left unknown rather than silently certifying an opaque default decode.
+    """
+    name = stream.get('pix_fmt')
+    descriptors = pixel_formats if isinstance(pixel_formats, list) else []
+    flags = [item.get('flags', {}) for item in descriptors
+             if isinstance(item, dict) and item.get('name') == name]
+    flag = flags[0].get('alpha') if len(flags) == 1 and isinstance(flags[0], dict) else None
+    alpha = bool(flag) if type(flag) is int and flag in (0, 1) else None
+    tags = stream.get('tags', {})
+    declared = isinstance(tags, dict) and any(key.lower() == 'alpha_mode' and str(value) == '1'
+                                               for key, value in tags.items())
+    if declared and alpha is False:
+        alpha = None
+    return {'pix_fmt': name, 'codec_name': stream.get('codec_name'), 'has_alpha': alpha}
+
+
+def seg_needs_alpha(clip, source_info):
+    """One pure alpha/encoder decision for rendering and every seg-key reader."""
+    alpha = source_info.get('has_alpha') if isinstance(source_info, dict) else None
+    if type(alpha) is not bool:
+        raise ValueError('source decoded alpha identity unavailable; inspect ffprobe pixel format/decoder')
+    return bool(alpha or clip.get('opacity', 1) < 1 or
+                clip.get('fade_in_frames') or clip.get('fade_out_frames'))
+
+
+def probe_video_alpha(path):
+    """Optional read-only analysis probe; callers turn failure into unknown.
+
+    Real rendering reuses Ctx.probe instead. Analysis contexts memoize per source
+    so many clips never cause one subprocess per clip, including failed probes.
+    """
+    if not path.is_file():
+        raise ValueError(f'video source unavailable: {path}')
+    result = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                             '-show_streams', '-show_pixel_formats', '-of', 'json', str(path)],
+                            capture_output=True, text=True, encoding='utf-8',
+                            errors='replace', timeout=15)
+    if result.returncode:
+        raise ValueError(f'video source metadata unavailable: {path}')
+    data = json.loads(result.stdout)
+    streams = data.get('streams', []) if isinstance(data, dict) else []
+    if not isinstance(streams, list) or not streams or not isinstance(streams[0], dict):
+        raise ValueError(f'video stream unavailable: {path}')
+    return video_alpha_info(streams[0], data.get('pixel_formats', []))
 
 
 def find_chrome() -> str:
