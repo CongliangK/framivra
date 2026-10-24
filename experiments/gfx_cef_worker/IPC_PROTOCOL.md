@@ -109,10 +109,18 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 | W→C | FrameSlotHeader（模式 1 回执） | 128B | `VTXF` 0x…46 | 工单冻结字段集（见 §4） |
 | W→C | SlotNotice（模式 2） | 32B | `VTXN` 0x…4E | status/request_id/frame_index/slot_index(0xFF=无)/seq/backpressure_wait_us |
 
+`HelloInfo.flags`：bit0 表示随附 SHM fd；bit1 表示本次 worker 启用了 paired-exact。
+生产适配在任何帧请求前要求 bit1；旧 worker 即使 protocol_version=1 也明确拒绝，
+须从同一源码重新构建 `VTX_CEF_WORKER`，不静默使用旧实现。消息大小/偏移不变。
+
 `FrameRequest.flags`：bit0=WANT_SLOT（模式 2）、bit1=DUMP_RAW（诊断：
 交付字节同时直写 `<out_png_path>.raw`，供端到端逐字节对照）。
 关闭协议：无显式 Shutdown 消息——宿主 `close()` 即 EOF，worker 优雅
 收尾（退出码 0）；请求中途断裂/协议错误/空闲超时分别为 4/3/5。
+`exact` 请求要求 `request_id>0` 且在同一 worker 生命周期内严格递增；零、重放、
+倒序或回绕以 DUPLICATE 拒绝。通用客户端 `request_png(..., request_id=0)` 的默认值
+不能用于 exact，调用者须显式分配正递增 ID；生产按已排序帧的 `f+1` 分配。
+clean/diagnostic 的旧请求 ID 语义不变；这不是二进制布局版本升级。
 
 ### FrameSlotHeader（工单冻结，偏移=线上规范）
 
@@ -131,7 +139,7 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 | 44 | u8 | pixel_format | 1=BGRA_PREMUL（OnPaint 原始面）2=RGBA_STRAIGHT |
 | 45 | u8 | color_space | 1=sRGB |
 | 46 | u16 | rejected_paints | 本请求拒绝的陈旧 OnPaint 次数 |
-| 48 | u64 | t_ready_wait_us | 导航→加载落定 |
+| 48 | u64 | t_ready_wait_us | 就绪段：sync 为 S1→S3；非 sync 为导航→加载落定，不是整帧墙钟 |
 | 56 | u64 | t_capture_raw_us | OnPaint→槽/暂存紧凑拷贝 |
 | 64 | u64 | t_alpha_norm_us | SIMD 逆预乘（模式 1） |
 | 72 | u64 | t_png_encode_us | PNG 编码（模式 1） |
@@ -148,6 +156,27 @@ acquire 见 `READY` 即见完整帧（读写同步不依赖信号量/轮询数�
 spng L1 SUB|UP）→ `.tmp.<pid>.<tid>`+`rename` 原子落盘 → 回执(128B)。
 回执计时字段语义不变：`t_png_encode_us` 为所选后端编码段耗时
 （跨后端对比时注意口径一致）。
+
+Python 单线程客户端使用 `submit_png` / `receive_png` 分离发送与接收；同一客户端
+最多一个未收回执的请求，禁止和槽请求交错。收到并核验回执后，才可发送下一请求；
+两个交替文件名使下一帧原生工作能与上一帧宿主校验/原子提交重叠。同步
+`request_png` 仍可用；64B 请求、128B 回执、SHM 布局不变，不是批量协议或无限队列。
+`*.pipeline.json` 另记宿主请求往返与块墙钟；回执分项不覆盖完整导航/JS fence/
+宿主校验等开销，也不能因流水重叠将各分项之和当作端到端墙钟。
+其中 execution/task/attempt 关联 execution events；每帧 submit/receive/validate/commit
+offset 均相对该块的 `block_started_counter_us`，使用 Python `perf_counter_ns`。
+请求往返包括宿主迟收和重叠工作，`native_wait_us` 仅是阻塞 receive 的累计值。
+`final_validate_us` 只覆盖所选块；末块的整页/哈希/输入认证在 pipeline.json 之外，仍计入
+其 gfx task 和整体 stage 的 execution events，不应从 gfx 总耗时中漏掉。
+原生成功请求 `adapter_timing.request_wall_to_reply_us` 从验证后的请求接收至回执准备好，
+不含实际 socket 发送；capture/encode queue/alpha/png/disk 可分项，剩余为未细分适配开销。
+`capture_offsets_origin=sync_request_begin` 下的 signed proof、unsigned load/readiness/
+two samples/veto 是里程碑 offset，不能相加；原生与 Python 时钟不假定可直接对齐。
+失败请求可能只有带原因的 `request_end` 而没有 adapter timing；缺项不代表耗时为 0。
+renderer PID 是原生错误观察器在现有文档/请求绑定后附加的诊断，未知为 0，绝不作为
+捕获证明或放行条件；相同/不同 PID 用于核实共享/独立 context 是否真的分 renderer。
+`adapter_timing.capture_fps_requested` 与宿主 runtime `capture_fps` 记录两路浏览器的
+同一个 OSR 请求值，不是实测回调速率或 timeline 帧率；不改变请求/回执二进制布局。
 
 **模式 2（SHM 环跨进程传输，为 #68 直通 FFmpeg 预研）**：
 请求(64B) → **先取空槽**（4 槽全满=背压：暂停发起下一帧 BeginFrame，

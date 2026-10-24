@@ -6,19 +6,22 @@
 //     A == 255   → 仅交换 B/R（AVX2 _mm256_shuffle_epi8 / NEON vld4+vst4 快路径）
 //     0 < A < 255→ 查表定点四舍五入逆预乘 min(255, (C*255 + A/2)/A) 并交换 B/R
 //
-// 确定性口径：65,536 项预计算 LUT（UNPREMUL_LUT[a][c]，含上表三支语义；
-// LUT[255][c]==c 恒等、LUT[0][c]==0），与 #109 标量参考公式逐值一致 ——
-// 由 pixel_ops_selftest 对 (c,a)∈[0,255]² 全域穷举复核（非抽检）。
+// Exact integer division, not a reciprocal approximation:
+//   d=max(A,1), n=C*255+A/2, r=min(65535,floor(65536/d));
+//   q0=(n*r)>>16 is at most one below floor(n/d), because n<65536;
+//   q=q0+((q0+1)*d<=n), then saturate at 255 and clear A==0.
+// AVX2 gathers eight reciprocals from a 1 KiB table; NEON gathers sixteen
+// reciprocals once and vectorizes all three channels. A 65,536-entry LUT remains
+// the scalar fallback/reference. Full (C,A) domain tests check both formulas.
 //
-// 后端分派（运行时 CPU 探测，进程内缓存）：
-//   x86_64 + AVX2 → 单遍混合式：逐 8 像素块全不透明走 shuffle 纯交换，
-//                   否则走 4 字节 gather LUT 查表（同一块内混合 alpha 也正确）
-//   aarch64 + NEON→ 逐 16 像素块：全不透明 vld4q/vst4q 结构交换快路径；
-//                   否则 LUT 精确标量（与 AVX2 路径逐值同源）
-//   其他          → LUT 标量兜底（与 SIMD 路径逐字节一致）
+// Runtime backend selection (cached once per process):
+//   x86_64 + AVX2: 8 pixels/block; opaque shuffle, binary-alpha shuffle/mask,
+//                  exact reciprocal/correction for general alpha.
+//   aarch64 + NEON: 16 pixels/block with the same three cases.
+//   otherwise: scalar LUT fallback. All outputs are byte-identical.
 //
 // 本算子为路线 A/B 共享原生组件（#113 Electron 双通路输出桥接复用）：
-// 无 CEF 依赖、无全局状态（除 const LUT），可独立链接进 shm_ring_selftest。
+// 无 CEF 依赖、查表只读，可独立链接进 shm_ring_selftest。
 #ifndef GFX_CEF_WORKER_PIXEL_OPS_H_
 #define GFX_CEF_WORKER_PIXEL_OPS_H_
 

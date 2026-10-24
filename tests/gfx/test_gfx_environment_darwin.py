@@ -113,10 +113,27 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         with patch.object(env, '_command', side_effect=command):
             record = env.collect('cef', self.binary, 'a0')
         self.assertEqual(record['platform_resolver'], 'darwin-arm64-cef/1')
-        self.assertEqual(record['launch_flags'], ['mode=a0', 'sync-mode=n', 'sync-canary=exact',
-                                                '--use-mock-keychain'])
+        self.assertEqual(record['launch_flags'], ['mode=a0', 'sync-canary=exact', 'sync-mode=n',
+            'reference-context=shared', 'png-encoder=spng', 'png-level=1',
+            'png-filter=sub_up', 'encode-threads=2', 'capture-fps=120',
+            '--use-mock-keychain'])
+        self.assertEqual(record['cef_configuration']['runtime']['sync_mode'], 'n')
+        self.assertEqual(record['cef_configuration']['runtime']['capture_fps'], 120)
+        self.assertEqual(record['cef_configuration']['scheduling']['pages'], 7)
+        with patch.object(env, '_command', side_effect=command), \
+                patch.dict(os.environ, VTX_CEF_SYNC_MODE='p', VTX_CEF_PNG_FILTER='none',
+                           VTX_GFX_PAGES='2', VTX_CEF_CAPTURE_FPS='60'):
+            other = env.collect('cef', self.binary, 'a0')
+        self.assertIn('sync-mode=p', other['launch_flags'])
+        self.assertIn('png-filter=none', other['launch_flags'])
+        self.assertIn('capture-fps=60', other['launch_flags'])
+        self.assertEqual(other['cef_configuration']['runtime']['capture_fps'], 60)
+        self.assertEqual(other['cef_configuration']['scheduling']['pages'], 2)
+        self.assertNotEqual(env.digest(record), env.digest(other))
         with patch.object(env, 'resolve', return_value=record):
             certificate = env.certificate(SimpleNamespace(w=32, h=16, fps=30))
+        self.assertEqual(certificate['axes']['fps'], 30)
+        self.assertEqual(certificate['axes']['cef_configuration']['runtime']['capture_fps'], 120)
         self.assertEqual(env.verify_certificate(certificate), certificate['sha256'])
 
     def test_complete_native_identity_keeps_pixel_equivalence_unproven(self):

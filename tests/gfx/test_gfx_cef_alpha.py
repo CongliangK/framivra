@@ -9,15 +9,18 @@ from vtx.runtime import events
 from vtx.render import gfx_cli, gfx_render
 
 import contextlib
+import errno
 import io
 import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import struct
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -62,6 +65,78 @@ def project(root, n=3):
         subtitles=[], audio_tracks=[], video_tracks=[dict(name='gfx', kind='gfx',
             clips=[dict(src='page.html', dst_in=0, dur=n)])])))
     return p
+
+
+def _rights(*fds):
+    return [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack(f'{len(fds)}i', *fds))]
+
+
+def _packet_receipt(**changes):
+    fields = dict.fromkeys(cef_client._HEADER_FIELDS, 0)
+    fields.update(magic=cef_client.SLOT_MAGIC, protocol_version=1, run_id=123,
+                  request_id=7, target_frame_index=3, canary_frame_index=3,
+                  width=1, height=1, stride=4, pixel_format=1, color_space=1)
+    fields.update(changes)
+    raw = struct.pack(cef_client._HEADER_FMT, *(fields[k] for k in cef_client._HEADER_FIELDS))
+    return raw + bytes(128 - len(raw))
+
+
+@contextlib.contextmanager
+def _native_test_ring(width=1, height=1, *, run_id=123, pid=45, flags=0):
+    """One owned protocol-v1 mmap file and its matching Hello, shared by peers."""
+    frame_bytes = width * height * 4
+    stride = (128 + frame_bytes + 63) & ~63
+    size = 384 + stride * 4
+    if sys.platform == 'darwin':
+        page = cef_client.mmap.PAGESIZE
+        size = ((size + page - 1) // page) * page
+    layout = bytearray(size)
+    struct.pack_into('<IIHH', layout, 0, cef_client.RING_MAGIC, cef_client.RING_MAGIC, 1, 4)
+    struct.pack_into('<IIII', layout, 12, width, height, frame_bytes, stride)
+    struct.pack_into('<Q', layout, 32, run_id)
+    hello = struct.pack(cef_client._HELLO_FMT, cef_client.HELLO_MAGIC, 1, flags,
+                        run_id, pid, 4, width, height, frame_bytes, *([0] * 7))
+    with tempfile.TemporaryFile() as file:
+        file.write(layout)
+        file.flush()
+        yield SimpleNamespace(fd=file.fileno(), size=size, hello=hello)
+
+
+def _read_test_request(peer, *, allow_eof=False):
+    request = b''
+    while len(request) < 64:
+        chunk = peer.recv(64 - len(request))
+        if not chunk:
+            if allow_eof and not request:
+                return None
+            raise AssertionError('host EOF before a complete 64-byte frame request')
+        request += chunk
+    return request
+
+
+@contextlib.contextmanager
+def _socket_peer(serve):
+    """Own the real socketpair/thread; each case supplies only its peer behavior."""
+    server, consumer = socket.socketpair()
+    server.settimeout(5)
+    failures = []
+
+    def run():
+        try:
+            serve(server)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            server.close()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    try:
+        yield SimpleNamespace(socket=consumer, thread=thread, failures=failures)
+    finally:
+        consumer.close()
+        thread.join(6)
+        server.close()
 
 
 class Routing(unittest.TestCase):
@@ -154,9 +229,7 @@ class ClientHelloOwnership(unittest.TestCase):
         return struct.pack(cef_client._HELLO_FMT, magic, version, 0, 123, 45, 4, 1, 1, 4,
                            *([0] * 7))
 
-    def rights(self, *fds):
-        return [(cef_client.socket.SOL_SOCKET, cef_client.socket.SCM_RIGHTS,
-                 struct.pack(f'{len(fds)}i', *fds))]
+    rights = staticmethod(_rights)
 
     @contextlib.contextmanager
     def resources(self, packets):
@@ -179,6 +252,55 @@ class ClientHelloOwnership(unittest.TestCase):
                 mock.patch.object(cef_client.socket, 'socket', side_effect=AssertionError('real socket')), \
                 mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('real process')):
             yield SimpleNamespace(sock=sock, mapping=mapping, close=close, stat=stat, mmap=mmap_call)
+
+    def test_connect_attempts_close_on_failure_and_obey_one_deadline(self):
+        for error in (PermissionError('denied'), OSError('connect failed'),
+                      socket.timeout('backlog full'), KeyboardInterrupt(), MemoryError()):
+            sock = mock.Mock()
+            sock.connect.side_effect = error
+            expected = cef_client.CefWorkerError if isinstance(error, socket.timeout) else type(error)
+            with self.subTest(error=type(error).__name__), \
+                    mock.patch.object(cef_client.socket, 'socket', return_value=sock), \
+                    mock.patch.object(cef_client.CefWorkerClient, 'from_socket') as hello, \
+                    self.assertRaises(expected) as caught:
+                cef_client.CefWorkerClient._connect('owned.sock', 1, 2)
+            if isinstance(error, socket.timeout):
+                self.assertIs(caught.exception.__cause__, error)
+            else:
+                self.assertIs(caught.exception, error)
+            sock.close.assert_called_once_with()
+            hello.assert_not_called()
+            self.assertGreater(sock.settimeout.call_args.args[0], 0)
+            self.assertLessEqual(sock.settimeout.call_args.args[0], 1)
+        first, second = mock.Mock(), mock.Mock()
+        first.connect.side_effect = FileNotFoundError('starting')
+        with mock.patch.object(cef_client.socket, 'socket', side_effect=[first, second]), \
+                mock.patch.object(cef_client.CefWorkerClient, 'from_socket', return_value='client') as hello, \
+                mock.patch.object(cef_client.time, 'monotonic', side_effect=[0, .1, .2, .5]), \
+                mock.patch.object(cef_client.time, 'sleep') as sleep:
+            self.assertEqual(cef_client.CefWorkerClient._connect('owned.sock', 1, 2), 'client')
+        first.close.assert_called_once_with()
+        second.close.assert_not_called()
+        first.settimeout.assert_called_once_with(.9)
+        second.settimeout.assert_called_once_with(.5)
+        hello.assert_called_once_with(second, 2)
+        sleep.assert_called_once_with(.05)
+        refused = ConnectionRefusedError('not ready')
+        first.reset_mock(); first.connect.side_effect = refused
+        with mock.patch.object(cef_client.socket, 'socket', return_value=first) as create, \
+                mock.patch.object(cef_client.time, 'monotonic', side_effect=[0, .1, 1.1, 1.2]), \
+                mock.patch.object(cef_client.time, 'sleep'), \
+                self.assertRaises(cef_client.CefWorkerError) as caught:
+            cef_client.CefWorkerClient._connect('owned.sock', 1, 2)
+        self.assertIs(caught.exception.__cause__, refused)
+        first.close.assert_called_once_with()
+        self.assertEqual(create.call_count, 1)
+        for timeout in (0, -1, float('nan'), float('inf')):
+            with self.subTest(timeout=timeout), \
+                    mock.patch.object(cef_client.socket, 'socket') as create, \
+                    self.assertRaises(ValueError):
+                cef_client.CefWorkerClient._connect('owned.sock', timeout, 2)
+            create.assert_not_called()
 
     def test_complete_fragmented_hello_transfers_one_fd_once(self):
         data = self.hello()
@@ -393,6 +515,945 @@ class ClientHelloOwnership(unittest.TestCase):
         self.assertEqual(cef_client.CefWorkerClient._recv_exact(sock, 3, 'receipt'), b'abc')
         sock.recvmsg.assert_not_called()
         self.assertEqual(sock.recv.call_args_list, [mock.call(3), mock.call(2)])
+
+
+    png_receipt = staticmethod(_packet_receipt)
+
+    def test_png_split_api_has_one_inflight_request_and_does_not_mix_receipts(self):
+        with self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+            r.sock.recv.return_value = self.png_receipt()
+            with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                client.submit_png(3, 'frame0.png', request_id=7, worker_relative=True)
+                r.sock.recv.assert_not_called()
+                packet = struct.unpack(cef_client._REQUEST_FMT, r.sock.sendall.call_args.args[0])
+                self.assertEqual(packet[3:7], (7, 3, 0, 0))
+                self.assertEqual(packet[-1].rstrip(b'\0'), b'frame0.png')
+                for call in (lambda: client.submit_png(4, 'frame1.png', worker_relative=True),
+                             lambda: client.request_slot(4)):
+                    with self.assertRaisesRegex(cef_client.CefWorkerError, 'pending'):
+                        call()
+                self.assertEqual(r.sock.sendall.call_count, 1)
+                self.assertEqual(client.receive_png().header['target_frame_index'], 3)
+                with self.assertRaisesRegex(cef_client.CefWorkerError, 'no PNG request'):
+                    client.receive_png()
+                self.assertEqual(client.request_png(3, 'frame1.png', request_id=7,
+                    worker_relative=True).header['request_id'], 7)
+                self.assertEqual(r.sock.sendall.call_count, 2)
+
+    def test_png_request_owns_long_path_descriptor_until_receipt_or_close(self):
+        for finish in ('receive', 'close', 'transport_error', 'send_error'):
+            with self.subTest(finish=finish), mock.patch.object(cef_client.sys, 'platform', 'linux'), \
+                    self.resources([(self.hello(), self.rights(888), 0, None)]) as r, \
+                    mock.patch.object(cef_client.os, 'open', return_value=999):
+                client = cef_client.CefWorkerClient.from_socket(r.sock)
+                r.sock.recv.return_value = self.png_receipt()
+                if finish == 'send_error':
+                    r.sock.sendall.side_effect = BrokenPipeError('send failed')
+                    with self.assertRaises(cef_client.CefWorkerError):
+                        client.submit_png(3, '/long-project-' + 'x' * 80 + '/f.png', request_id=7)
+                else:
+                    client.submit_png(3, '/long-project-' + 'x' * 80 + '/f.png', request_id=7)
+                    r.close.assert_not_called()
+                    if finish == 'receive':
+                        client.receive_png()
+                        r.close.assert_called_once_with(999)
+                    elif finish == 'transport_error':
+                        r.sock.recv.side_effect = ConnectionResetError('reset')
+                        with self.assertRaises(cef_client.CefWorkerError):
+                            client.receive_png()
+                client.close(); client.close()
+                self.assertCountEqual(r.close.call_args_list, [mock.call(888), mock.call(999)])
+
+    def test_png_protocol_uncertainty_closes_instead_of_consuming_next_frame(self):
+        invalid = [{'magic': 0}, {'protocol_version': 0}, {'run_id': 124},
+                   {'request_id': 8}, {'target_frame_index': 4}, {'status_code': 99}]
+        for changes in invalid:
+            with self.subTest(changes=changes), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                client = cef_client.CefWorkerClient.from_socket(r.sock)
+                r.sock.recv.return_value = self.png_receipt(**changes)
+                with self.assertRaises(cef_client.CefWorkerError):
+                    client.request_png(3, 'frame.png', request_id=7, worker_relative=True)
+                self.assertTrue(client._closed)
+                with self.assertRaisesRegex(cef_client.CefWorkerError, 'closed'):
+                    client.submit_png(4, 'frame.png', worker_relative=True)
+                self.assertEqual(r.sock.sendall.call_count, 1)
+                r.close.assert_called_once_with(888)
+        for error in (b'', socket.timeout(), ConnectionResetError(), OSError('recv'),
+                      KeyboardInterrupt(), RuntimeError('consumer')):
+            with self.subTest(error=error), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                client = cef_client.CefWorkerClient.from_socket(r.sock)
+                if isinstance(error, bytes): r.sock.recv.return_value = error
+                else: r.sock.recv.side_effect = error
+                expected = cef_client.CefWorkerError if isinstance(error, (bytes, OSError)) else type(error)
+                with self.assertRaises(expected):
+                    client.request_png(3, 'frame.png', request_id=7, worker_relative=True)
+                self.assertTrue(client._closed)
+                r.close.assert_called_once_with(888)
+
+    def test_png_bound_worker_errors_clear_admission_but_keep_connection_usable(self):
+        for status in (1, 2, 3, 4):
+            with self.subTest(status=status), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                    r.sock.recv.return_value = self.png_receipt(status_code=status)
+                    with self.assertRaises(cef_client.CefWorkerError) as caught:
+                        client.request_png(3, 'frame.png', request_id=7, worker_relative=True)
+                    self.assertEqual(caught.exception.status_code, status)
+                    self.assertEqual(caught.exception.detail['request_id'], 7)
+                    self.assertFalse(client._closed)
+                    self.assertIsNone(client._pending_png)
+                    r.sock.recv.return_value = self.png_receipt()
+                    client.request_png(3, 'frame.png', request_id=7, worker_relative=True)
+
+    def test_png_timeout_is_one_absolute_deadline_including_host_overlap(self):
+        for timestamps, fragments in (([0, .25, 1.25], 1), ([0, 1.25], 0)):
+            with self.subTest(timestamps=timestamps), self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+                client = cef_client.CefWorkerClient.from_socket(r.sock)
+                raw = self.png_receipt()
+                r.sock.recv.side_effect = [raw[:1], raw[1:]]
+                with mock.patch.object(cef_client.time, 'monotonic', side_effect=timestamps):
+                    client.submit_png(3, 'frame.png', request_id=7, timeout=1, worker_relative=True)
+                    with self.assertRaisesRegex(cef_client.CefWorkerError, '回执.*超时'):
+                        client.receive_png()
+                self.assertEqual(r.sock.recv.call_count, fragments)
+                self.assertTrue(client._closed)
+
+    def test_png_split_requests_over_real_socketpair_and_transferred_shm_fd(self):
+        """Exercise actual recv/send/SCM_RIGHTS/mmap, not mocked socket methods."""
+        requests, eof = [], []
+        with _native_test_ring() as ring:
+            def serve(server):
+                server.sendmsg([ring.hello], _rights(ring.fd))
+                for expected_frame in (0, 65535, 7):
+                    fields = struct.unpack(cef_client._REQUEST_FMT, _read_test_request(server))
+                    requests.append(fields)
+                    if fields[4] != expected_frame:
+                        raise AssertionError('unexpected frame order')
+                    response = self.png_receipt(request_id=fields[3],
+                        target_frame_index=expected_frame, canary_frame_index=expected_frame)
+                    server.sendall(response[:17])
+                    server.sendall(response[17:])
+                eof.append(server.recv(1))
+
+            with _socket_peer(serve) as peer:
+                with cef_client.CefWorkerClient.from_socket(peer.socket, ready_timeout=5) as client:
+                    for frame in (0, 65535, 7):
+                        client.submit_png(frame, '界.png', request_id=frame + 1,
+                                          timeout=5, worker_relative=True)
+                        self.assertEqual(client.receive_png().header['target_frame_index'], frame)
+                # Client closes its SCM_RIGHTS duplicate, never the sender's fd.
+                self.assertEqual(os.fstat(ring.fd).st_size, ring.size)
+        self.assertFalse(peer.thread.is_alive(), 'serial peer must see EOF after host closes')
+        self.assertEqual(peer.failures, [])
+        self.assertEqual(eof, [b''])
+        self.assertEqual([r[4] for r in requests], [0, 65535, 7])
+        self.assertTrue(all(r[-1].rstrip(b'\0') == '界.png'.encode() for r in requests))
+
+    def test_real_png_timeout_closes_socket_mapping_and_owned_output_descriptor(self):
+        received = []
+        with _native_test_ring() as ring, tempfile.TemporaryDirectory(prefix='cef_timeout_') as td:
+            def stalled_peer(server):
+                server.sendmsg([ring.hello], _rights(ring.fd))
+                received.append(_read_test_request(server))
+                # No receipt: client must time out and close, not send a retry.
+                received.append(server.recv(1))
+
+            with _socket_peer(stalled_peer) as peer:
+                client = cef_client.CefWorkerClient.from_socket(peer.socket, ready_timeout=5)
+                try:
+                    if sys.platform == 'darwin':
+                        kwargs = dict(out_png_path='frame.png', worker_relative=True)
+                    else:
+                        directory = Path(td) / ('long-output-parent-' * 4)
+                        directory.mkdir()
+                        kwargs = dict(out_png_path=directory / 'f.png')
+                    client.submit_png(3, request_id=7, timeout=.05, **kwargs)
+                    output_fd = client._pending_png.output_fd
+                    shared_fd = client._shm_fd
+                    with self.assertRaisesRegex(cef_client.CefWorkerError, '回执.*超时'):
+                        client.receive_png()
+                    self.assertTrue(client._closed)
+                    self.assertIsNone(client._pending_png)
+                    self.assertEqual(peer.socket.fileno(), -1)
+                    for fd in (shared_fd, output_fd):
+                        if fd is not None:
+                            with self.assertRaises(OSError) as caught:
+                                os.fstat(fd)
+                            self.assertEqual(caught.exception.errno, errno.EBADF)
+                    with self.assertRaises(ValueError):
+                        client._mm[0]
+                    with self.assertRaisesRegex(cef_client.CefWorkerError, 'closed'):
+                        client.submit_png(4, 'frame.png', worker_relative=True)
+                    client.close()
+                finally:
+                    client.close()
+        self.assertFalse(peer.thread.is_alive())
+        self.assertEqual(peer.failures, [])
+        self.assertEqual(len(received[0]), 64)
+        self.assertEqual(received[1:], [b''])
+
+    def test_png_local_argument_errors_do_not_send_or_poison_session(self):
+        cases = [{'out_png_path': s} for s in ('', '.', '..', 'dir/file.png', '/file.png',
+                                             'x\0.png', '界' * 14)]
+        cases += [{'timeout': v} for v in (-1, 0, float('nan'), float('inf'))]
+        cases += [{'request_id': -1}, {'expected_wh': (2 ** 32, 1)}]
+        with self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
+            with cef_client.CefWorkerClient.from_socket(r.sock) as client:
+                for case in cases:
+                    with self.subTest(case=case), self.assertRaises((cef_client.CefWorkerError, ValueError, struct.error)):
+                        arguments = dict(frame_index=3, out_png_path='frame.png', worker_relative=True)
+                        arguments.update(case)
+                        client.submit_png(**arguments)
+                    self.assertFalse(client._closed)
+                    self.assertIsNone(client._pending_png)
+                r.sock.sendall.assert_not_called()
+                r.sock.recv.return_value = self.png_receipt()
+                client.request_png(3, '界' * 13, request_id=7, timeout=None, worker_relative=True)
+                self.assertIsNone(r.sock.settimeout.call_args.args[0])
+
+
+@unittest.skipUnless(hasattr(os, 'O_NOFOLLOW') and hasattr(socket, 'SCM_RIGHTS'),
+                     'CEF host requires POSIX no-follow and SCM_RIGHTS')
+class HostOutputPipeline(unittest.TestCase):
+    """Real PNG parser/atomic publication with a strictly serial native stand-in."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='cef_host_')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.out = self.root / 'cache' / 'gfx' / 'page'
+        self.out.mkdir(parents=True)
+        self.page = self.root / 'page.html'
+        self.page.write_text('<!doctype html>')
+        self.ctx = SimpleNamespace(root=self.root, cache=self.root / 'cache', verify_inputs=mock.Mock())
+        self.options = gfx_backend.CefRuntimeOptions('n', 'spng', 1, 'sub_up', 2)
+
+    @contextlib.contextmanager
+    def pipeline(self, *, corrupt=None, header=None, fail_frame=None, exit_code=0,
+                 platform=None, pid=123, hello_flags=cef_client.HELLO_FLAG_PAIRED_EXACT):
+        test, steps = self, []
+        run = self.root / 'cache' / 'tmp' / 'native'
+        requested, generated = [], {}
+
+        class SerialClient:
+            hello = {'pid': pid, 'flags': hello_flags}
+            pending = None
+            closed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.closed = True
+                steps.append(('close', self.pending[0] if self.pending else None))
+
+            def submit_png(self, frame, output, *, request_id, expected_wh, worker_relative):
+                test.assertIsNone(self.pending, 'more than one native request in flight')
+                test.assertTrue(worker_relative)
+                test.assertEqual((request_id, expected_wh), (frame + 1, (16, 16)))
+                test.assertFalse((run / output).exists(), 'reused a still-owned output buffer')
+                self.pending = (frame, output)
+                requested.append(frame)
+                steps.append(('submit', frame, output))
+
+            def receive_png(self):
+                test.assertIsNotNone(self.pending)
+                frame, output = self.pending
+                self.pending = None
+                steps.append(('receive', frame, output))
+                if frame == fail_frame:
+                    raise cef_client.CefWorkerError('native JS_ERR', status_code=3,
+                                                    detail={'target_frame_index': frame})
+                write_png(run / output, frame=frame)
+                if corrupt is not None:
+                    corrupt(frame, run / output)
+                generated[frame] = (run / output).read_bytes()
+                h = dict(canary_frame_index=frame, width=16, height=16, stride=64,
+                         pixel_format=1, color_space=1, target_frame_index=frame,
+                         request_id=frame + 1, run_id=777)
+                h.update(header or {})
+                return cef_client.FrameReceipt(h)
+
+        client = SerialClient()
+        state = SimpleNamespace(steps=steps, requested=requested, generated=generated,
+                                client=client, run=run, argv=None, launch=None, exited=False)
+
+        class Group:
+            proc = SimpleNamespace(pid=123)
+            run_dir = run
+
+            def __init__(self, ctx, argv, **kwargs):
+                state.launch = kwargs
+                state.builder = argv
+
+            def __enter__(self):
+                run.mkdir(parents=True)
+                profile = run / 'profile'
+                profile.mkdir()
+                state.argv = state.builder(run, profile)
+                (run / 'sync.jsonl').write_text('{"event":"test"}\n')
+                self.proc.wait = mock.Mock(return_value=exit_code)
+                state.proc = self.proc
+                return self
+
+            def __exit__(self, *args):
+                state.exited = True
+                steps.append(('stop',))
+                shutil.rmtree(run)
+
+        validate = gfx_cli.png_invalid_reason
+        commit = gfx_cef._commit_png
+
+        def checked(path, **kwargs):
+            if Path(path).parent == run:
+                steps.append(('validate', Path(path).name))
+            return validate(path, **kwargs)
+
+        def committed(source, target, **kwargs):
+            steps.append(('commit', Path(source).name, Path(target).name))
+            return commit(source, target, **kwargs)
+
+        with contextlib.ExitStack() as stack:
+            for target, name, kwargs in (
+                    (gfx_cef, 'cef_config', {'return_value': (self.root / 'worker', 'a0')}),
+                    (gfx_cef, 'cef_runtime_options', {'return_value': self.options}),
+                    (gfx_cef, 'supervision_available', {'return_value': True}),
+                    (gfx_cef, 'SupervisedProcessGroup', {'new': Group}),
+                    (gfx_cef.CefWorkerClient, 'connect', {'return_value': client}),
+                    (gfx_cef.CefWorkerClient, 'from_socket', {'return_value': client}),
+                    (gfx_cli, 'png_invalid_reason', {'side_effect': checked}),
+                    (gfx_cef, '_commit_png', {'side_effect': committed})):
+                stack.enter_context(mock.patch.object(target, name, **kwargs))
+            if platform:
+                stack.enter_context(mock.patch.object(gfx_cef, 'sys', SimpleNamespace(platform=platform)))
+            yield state
+
+    def render(self, n=4, frames=None):
+        return gfx_cef.render_page(self.page, self.out, n, ctx=self.ctx,
+                                   width=16, height=16, frames=frames)
+
+    def report(self, kind):
+        files = list((self.ctx.cache / 'reports' / 'cef').glob('*.' + kind + '.json'))
+        self.assertEqual(len(files), 1)
+        return json.loads(files[0].read_text())
+
+    @contextlib.contextmanager
+    def serial_native_workers(self, *, fault=None, synchronize=True):
+        """Real socketpair protocol peers; no listener/network or CEF executable.
+
+        Exercise the Darwin inherited-socket production branch on any POSIX
+        host. Process creation is replaced by owned serial peer threads only.
+        """
+        lock = threading.Lock()
+        workers, requests, failures = [], [], []
+        state = SimpleNamespace(active=0, peak=0, workers=workers,
+                                requests=requests, failures=failures)
+        barrier = threading.Barrier(2) if fault is None and synchronize else None
+
+        class Group:
+            def __init__(self, ctx, argv, **kwargs):
+                with lock:
+                    self.index = len(workers)
+                    workers.append(self)
+                self.ctx, self.builder, self.launch = ctx, argv, kwargs
+                self.run_dir = ctx.cache / 'tmp' / f'unit-native-{self.index}'
+                self.proc = SimpleNamespace(pid=20000 + self.index, wait=self.wait)
+                self.connection = None
+                self.stopped = False
+                self.completed = threading.Event()
+
+            def __enter__(self):
+                self.run_dir.mkdir(parents=True)
+                profile = self.run_dir / 'profile'
+                profile.mkdir()
+                self.argv = self.builder(self.run_dir, profile)
+                self.width = int(next(a.split('=', 1)[1] for a in self.argv if a.startswith('--width=')))
+                self.height = int(next(a.split('=', 1)[1] for a in self.argv if a.startswith('--height=')))
+                self.connection = socket.socket(fileno=os.dup(self.launch['pass_fds'][0]))
+                with lock:
+                    state.active += 1
+                    state.peak = max(state.peak, state.active)
+                self.thread = threading.Thread(target=self.serve, daemon=True)
+                self.thread.start()
+                return self
+
+            def serve(self):
+                try:
+                    conn = self.connection
+                    conn.settimeout(5)
+                    run_id = 777 + self.index
+                    with _native_test_ring(self.width, self.height, run_id=run_id,
+                            pid=self.proc.pid, flags=1 | cef_client.HELLO_FLAG_PAIRED_EXACT) as ring:
+                        conn.sendmsg([ring.hello], _rights(ring.fd))
+                        count = 0
+                        while True:
+                            raw = _read_test_request(conn, allow_eof=True)
+                            if raw is None:
+                                return
+                            fields = struct.unpack(cef_client._REQUEST_FMT, raw)
+                            frame = fields[4]
+                            if (fields[0:3] != (cef_client.REQUEST_MAGIC, 1, 0)
+                                    or fields[3] != frame + 1
+                                    or fields[5:7] != (self.width, self.height)):
+                                raise AssertionError('invalid request contract')
+                            output = self.run_dir / fields[-1].split(b'\0', 1)[0].decode()
+                            if output.parent != self.run_dir or output.exists():
+                                raise AssertionError('output not an empty owned buffer')
+                            with lock:
+                                requests.append((self.index, frame))
+                            if barrier is not None and self.index < 2 and count == 0:
+                                barrier.wait(5)  # stage-wide pool must really overlap
+                            count += 1
+                            write_png(output, width=self.width, height=self.height, frame=frame)
+                            if fault == 'png' and frame == 2:
+                                output.write_bytes(output.read_bytes()[:-1])
+                            header = _packet_receipt(run_id=run_id, request_id=frame + 1,
+                                target_frame_index=(frame + 1 if fault == 'receipt' and frame == 2 else frame),
+                                canary_frame_index=frame, width=self.width, height=self.height,
+                                stride=self.width * 4)
+                            conn.sendall(header)
+                except (BrokenPipeError, ConnectionResetError):
+                    if fault is None:
+                        failures.append('unexpected transport interruption')
+                except BaseException as error:
+                    failures.append(error)
+                finally:
+                    if self.connection is not None:
+                        self.connection.close()
+                    self.completed.set()
+
+            def wait(self, timeout):
+                if not self.completed.wait(timeout):
+                    raise AssertionError('worker did not observe host EOF')
+                self.thread.join(timeout)
+                return 0
+
+            def __exit__(self, *args):
+                try:
+                    self.wait(6)
+                finally:
+                    self.stopped = True
+                    with lock:
+                        state.active -= 1
+                    shutil.rmtree(self.run_dir)
+
+        with mock.patch.object(gfx_cef, 'SupervisedProcessGroup', Group), \
+                mock.patch.object(gfx_cef, 'supervision_available', return_value=True), \
+                mock.patch.object(gfx_cef, 'sys', SimpleNamespace(platform='darwin')):
+            yield state
+        self.assertEqual(failures, [])
+        self.assertTrue(all(w.stopped and not w.thread.is_alive() for w in workers))
+        self.assertEqual(state.active, 0)
+
+    def stage_context(self):
+        bind_environment(self)
+        timeline = project(self.root, n=6)
+        data = json.loads(timeline.read_text())
+        data['project'].update(width=16, height=16)
+        timeline.write_text(json.dumps(data))
+        worker = self.root / 'worker'
+        worker.write_text('#!/bin/sh\nexit 99\n')
+        worker.chmod(0o700)
+        environment = mock.patch.dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=str(worker),
+            VTX_CEF_MODE='a0', VTX_CEF_SYNC_MODE='n', VTX_GFX_PAGES='2',
+            VTX_GFX_SPLIT_FRAMES='2', VTX_GFX_SPLIT_MAX='3', VTX_GFX_CACHE_NS='')
+        environment.start()
+        self.addCleanup(environment.stop)
+        ctx = Ctx(timeline)
+        self.out = hygiene.gfx_dir(ctx, ctx.tl['video_tracks'][0]['clips'][0])
+        return ctx
+
+    def test_shared_stage_pool_to_real_ipc_hosts_certifies_once_and_reuses_warm_cache(self):
+        ctx = self.stage_context()
+        with self.serial_native_workers() as peers, \
+                mock.patch.object(gfx_cli, 'complete_page', wraps=gfx_cli.complete_page) as complete, \
+                mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('CLI fallback')), \
+                mock.patch.object(gfx_render, 'render_page', side_effect=AssertionError('CDP fallback')), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            cli.gfx(ctx)
+            self.assertEqual(complete.call_count, 1)
+            self.assertEqual(len(peers.workers), 3)
+            self.assertEqual(peers.peak, 2)
+            self.assertCountEqual([frame for _, frame in peers.requests], range(6))
+            for worker in peers.workers:
+                self.assertTrue(worker.stopped)
+            record = json.loads((self.out / gfx_cli.COMPLETE_FILE).read_text())
+            self.assertEqual(len(record['sha256']), 6)
+            cli.gfx(ctx)  # real completion/environment gate, no new host session
+            self.assertEqual(len(peers.workers), 3)
+            self.assertEqual(complete.call_count, 1)
+        self.assertIn('split×3', stdout.getvalue())
+        diagnostics = [json.loads(p.read_text()) for p in (ctx.cache / 'reports' / 'cef').glob('*.pipeline.json')]
+        self.assertEqual(len(diagnostics), 3)
+        self.assertTrue(all(p['execution']['run_id'] == ctx.execution.run_id for p in diagnostics))
+        self.assertEqual(len({p['task']['task_id'] for p in diagnostics}), 3)
+        self.assertTrue(all(p['task']['attempt_no'] == 1 for p in diagnostics))
+        self.assertTrue(all(p['completed'] and p['max_native_inflight'] == 1 for p in diagnostics))
+        self.assertEqual(sorted(f for p in diagnostics for f in p['rendered_frames']), list(range(6)))
+        self.assertTrue(all('not native CPU time' in p['request_wall_scope'] for p in diagnostics))
+        self.assertEqual(gfx_cli.verify_frames(self.out, range(6), width=16, height=16), [])
+        self.assertFalse(any((ctx.cache / 'tmp').iterdir()))
+
+    def test_shared_stage_real_ipc_faults_never_certify_partial_page_and_are_repairable(self):
+        ctx = self.stage_context()
+        for fault in ('png', 'receipt'):
+            with self.subTest(fault=fault):
+                if self.out.exists():
+                    shutil.rmtree(self.out)
+                with self.serial_native_workers(fault=fault) as peers, \
+                        mock.patch.object(gfx_cli, 'complete_page', wraps=gfx_cli.complete_page) as complete, \
+                        mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('CLI fallback')), \
+                        mock.patch.object(gfx_render, 'render_page', side_effect=AssertionError('CDP fallback')), \
+                        contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                    cli.gfx(ctx)
+                complete.assert_not_called()
+                self.assertFalse((self.out / gfx_cli.COMPLETE_FILE).exists())
+                self.assertFalse((self.out / 'f0002.png').exists())
+                self.assertFalse(any((ctx.cache / 'tmp').iterdir()))
+                receipt = json.loads((ctx.root / 'out' / 'receipt.json').read_text())
+                self.assertFalse(receipt['stages']['gfx']['ok'])
+                # A failed session leaves only independently complete old frames;
+                # a fresh stage may repair them, never pretend the failed run passed.
+                with self.serial_native_workers(synchronize=False) as repair, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    cli.gfx(ctx)
+                self.assertEqual(gfx_cli.verify_frames(self.out, range(6), width=16, height=16), [])
+                self.assertTrue((self.out / gfx_cli.COMPLETE_FILE).is_file())
+                self.assertIn(2, [frame for _, frame in repair.requests])
+
+    def test_pipeline_overlaps_next_request_uses_two_buffers_and_moves_exact_bytes(self):
+        with self.pipeline() as p, mock.patch.object(Path, 'read_bytes', autospec=True,
+                side_effect=Path.read_bytes) as reads:
+            result = self.render()
+        self.assertIn('host-pipeline×2', result)
+        self.assertEqual(p.requested, [0, 1, 2, 3])
+        self.assertEqual([s[2] for s in p.steps if s[0] == 'submit'],
+                         ['frame0.png', 'frame1.png', 'frame0.png', 'frame1.png'])
+        self.assertLess(p.steps.index(('submit', 1, 'frame1.png')),
+                        p.steps.index(('validate', 'frame0.png')))
+        self.assertLess(p.steps.index(('commit', 'frame0.png', 'f0000.png')),
+                        p.steps.index(('receive', 1, 'frame1.png')))
+        # Four stand-in writes inspect their own bytes; host reads only sync log,
+        # never an additional PNG payload before the atomic rename.
+        png_reads = [c.args[0] for c in reads.call_args_list if str(c.args[0]).endswith('.png')]
+        self.assertEqual(len(png_reads), 4)
+        for frame, expected in p.generated.items():
+            output = self.out / f'f{frame:04d}.png'
+            self.assertEqual(output.read_bytes(), expected)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        pipeline = self.report('pipeline')
+        self.assertEqual(pipeline['output_commits'], {'rename': 4, 'copy': 0})
+        self.assertEqual(pipeline['max_native_inflight'], 1)
+        self.assertEqual(pipeline['output_buffers'], 2)
+        self.assertEqual(pipeline['rendered_frames'], [0, 1, 2, 3])
+        self.assertEqual(pipeline['worker_options'], self.options.to_dict())
+        self.assertEqual(pipeline['execution'], {'run_id': None})
+        self.assertEqual(pipeline['task'], {'task_id': None, 'attempt_no': None})
+        for sample in pipeline['request_roundtrips']:
+            offsets = [sample[k] for k in ('submit_offset_us', 'receive_offset_us',
+                'validate_start_offset_us', 'validate_end_offset_us',
+                'commit_start_offset_us', 'commit_end_offset_us')]
+            self.assertEqual(offsets, sorted(offsets))
+            self.assertLessEqual(offsets[-1], pipeline['block_wall_us'])
+            self.assertTrue(sample['committed'])
+        for previous, following in zip(pipeline['request_roundtrips'], pipeline['request_roundtrips'][1:]):
+            self.assertLessEqual(following['submit_offset_us'], previous['validate_start_offset_us'])
+        self.assertEqual([r['frame'] for r in pipeline['request_roundtrips']], [0, 1, 2, 3])
+        self.assertTrue(pipeline['completed'])
+        self.assertGreaterEqual(pipeline['block_wall_us'], pipeline['host_commit_us'])
+        self.assertEqual(len(self.report('receipts')), 4)
+        self.ctx.verify_inputs.assert_called_once_with('gfx')
+        self.assertTrue(p.client.closed and p.exited)
+        self.assertFalse(p.run.exists())
+        self.assertFalse((self.out / gfx_cli.COMPLETE_FILE).exists(), 'only page coordinator may certify')
+
+    def test_real_serial_peer_renders_next_file_during_previous_host_validation(self):
+        """Event ordering proves overlap without timing-dependent speed assertions."""
+        next_ready = threading.Event()
+        received, expected = [], {}
+        validate = gfx_cli.png_invalid_reason
+        attach = cef_client.CefWorkerClient.from_socket
+        with _native_test_ring(16, 16, pid=123, flags=cef_client.HELLO_FLAG_PAIRED_EXACT) as ring, \
+                self.pipeline() as p:
+            def serve(server):
+                server.sendmsg([ring.hello], _rights(ring.fd))
+                for frame in range(3):
+                    fields = struct.unpack(cef_client._REQUEST_FMT, _read_test_request(server))
+                    if (fields[3], fields[4]) != (frame + 1, frame):
+                        raise AssertionError('request identity mismatch')
+                    output = p.run / fields[-1].split(b'\0', 1)[0].decode()
+                    if output.exists():
+                        raise AssertionError('host reused a still-owned output buffer')
+                    write_png(output, frame=frame)
+                    expected[frame] = output.read_bytes()
+                    received.append(frame)
+                    server.sendall(_packet_receipt(request_id=frame + 1,
+                        target_frame_index=frame, canary_frame_index=frame,
+                        width=16, height=16, stride=64))
+                    if frame == 1:
+                        next_ready.set()
+                if server.recv(1) != b'':
+                    raise AssertionError('unexpected request after final frame')
+
+            def validating(path, **kwargs):
+                if Path(path) == p.run / 'frame0.png' and not (self.out / 'f0000.png').exists():
+                    self.assertTrue(next_ready.wait(5), 'next frame never overlapped validation')
+                    # The previous native file remains intact even though the
+                    # peer has already finished producing the next PNG.
+                    self.assertEqual(Path(path).read_bytes(), expected[0])
+                return validate(path, **kwargs)
+
+            with _socket_peer(serve) as peer:
+                client = attach(peer.socket, ready_timeout=5)
+                with mock.patch.object(gfx_cef.CefWorkerClient, 'connect', return_value=client), \
+                        mock.patch.object(gfx_cef.CefWorkerClient, 'from_socket', return_value=client), \
+                        mock.patch.object(gfx_cli, 'png_invalid_reason', side_effect=validating):
+                    self.render(n=3)
+        self.assertFalse(peer.thread.is_alive())
+        self.assertEqual(peer.failures, [])
+        self.assertEqual(received, [0, 1, 2])
+        for frame in range(3):
+            self.assertEqual((self.out / f'f{frame:04d}.png').read_bytes(), expected[frame])
+
+    def test_subset_does_not_request_or_require_other_blocks_and_skips_valid_frames(self):
+        write_png(self.out / 'f0002.png', frame=2)
+        cached = (self.out / 'f0002.png').read_bytes()
+        with self.pipeline() as p:
+            self.render(n=6, frames=[1, 2, 4])
+        self.assertEqual(p.requested, [1, 4])
+        self.assertEqual((self.out / 'f0002.png').read_bytes(), cached)
+        self.assertEqual(sorted(x.name for x in self.out.glob('*.png')),
+                         ['f0001.png', 'f0002.png', 'f0004.png'])
+        self.assertEqual(self.report('pipeline')['frames'], [1, 2, 4])
+
+    def test_empty_or_fully_valid_subset_starts_no_worker(self):
+        write_png(self.out / 'f0001.png', frame=1)
+        for frames in ([], [1]):
+            with self.subTest(frames=frames), self.pipeline() as p:
+                self.assertIn('native-exact×0', self.render(frames=frames))
+            self.assertIsNone(p.argv)
+            self.assertEqual(p.requested, [])
+        self.assertFalse((self.ctx.cache / 'reports').exists())
+
+    def test_frame_selection_does_not_exhaust_oversized_iterable(self):
+        seen = []
+
+        def excessive():
+            for frame in range(50):
+                seen.append(frame)
+                yield frame
+
+        with self.pipeline() as p, self.assertRaises(ValueError):
+            self.render(n=3, frames=excessive())
+        self.assertEqual(seen, [0, 1, 2, 3])
+        self.assertIsNone(p.argv)
+        self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_cached_validation_timing_excludes_report_directory_setup(self):
+        now = [0]
+        mkdir = gfx_cef.fstxn.mkdir
+
+        def slow_report_setup(path, **kwargs):
+            result = mkdir(path, **kwargs)
+            if Path(path).name == 'cef':
+                now[0] += 1_000_000
+            return result
+
+        with self.pipeline(), mock.patch.object(gfx_cef.time, 'perf_counter_ns', side_effect=lambda: now[0]), \
+                mock.patch.object(gfx_cef.fstxn, 'mkdir', side_effect=slow_report_setup):
+            self.render(n=1)
+        pipeline = self.report('pipeline')
+        self.assertEqual(pipeline['cached_validate_us'], 0)
+        self.assertEqual(pipeline['block_wall_us'], 1000)
+
+    def test_invalid_viewport_rejects_before_native_start_or_cache_writes(self):
+        for width, height in ((15, 16), (16, 15), (True, 16), (16, 16.0),
+                              (16385, 16), (16, 16385), (2 ** 32, 16)):
+            with self.subTest(width=width, height=height), self.pipeline() as p, self.assertRaises(ValueError):
+                gfx_cef.render_page(self.page, self.out, 1, ctx=self.ctx,
+                                   width=width, height=height)
+            self.assertIsNone(p.argv)
+        self.assertEqual(list(self.out.iterdir()), [])
+        self.assertFalse((self.ctx.cache / 'reports').exists())
+
+    def test_invalid_frame_selection_is_rejected_before_worker_or_output_mutation(self):
+        cases = [(-1, None), (65537, None), (True, None), (3.0, None),
+                 (3, [-1]), (3, [3]), (3, [True]), (3, [0.0]), (3, ['1']),
+                 (3, [1, 1]), (3, [2, 1])]
+        for count, frames in cases:
+            with self.subTest(count=count, frames=frames), self.pipeline() as p, self.assertRaises(ValueError):
+                self.render(n=count, frames=frames)
+            self.assertIsNone(p.argv)
+        self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_invalid_png_aborts_speculative_request_without_publishing_it(self):
+        from tests.gfx._png import png
+        cases = [b'\x89PNG\r\n\x1a\n', png(w=16, h=16, filter_byte=5),
+                 png(w=15, h=16), png(w=16, h=16)[:-1],
+                 png(w=16, h=16) + b'trailing']
+        for data in cases:
+            with self.subTest(data=data[:24]), self.pipeline(
+                    corrupt=lambda frame, path: path.write_bytes(data) if frame == 0 else None) as p:
+                with self.assertRaisesRegex(cef_client.CefWorkerError, 'output invalid'):
+                    self.render()
+            self.assertEqual(p.requested, [0, 1])
+            self.assertEqual(list(self.out.glob('*.png')), [])
+            self.assertTrue(p.client.closed and p.exited)
+            self.assertFalse(p.run.exists())
+            self.assertNotIn(('receive', 1, 'frame1.png'), p.steps)
+            p.proc.wait.assert_not_called()
+            self.assertIn(('close', 1), p.steps)
+
+    def test_move_failure_closes_pending_next_frame_without_receipt_wait_or_retry(self):
+        original = OSError(errno.EACCES, 'atomic commit denied')
+        with self.pipeline() as p, \
+                mock.patch.object(gfx_cef.fstxn, 'replace', side_effect=original) as move:
+            with self.assertRaisesRegex(cef_client.CefWorkerError, 'atomic commit denied') as caught:
+                self.render()
+        self.assertIs(caught.exception.__cause__, original)
+        self.assertEqual(p.requested, [0, 1])
+        self.assertIn(('close', 1), p.steps)
+        self.assertNotIn(('receive', 1, 'frame1.png'), p.steps)
+        p.proc.wait.assert_not_called()
+        move.assert_called_once()
+        self.assertEqual(list(self.out.glob('*.png')), [])
+        self.assertEqual(self.report('receipts'), [])
+        self.assertFalse(self.report('pipeline')['completed'])
+        self.assertTrue(p.client.closed and p.exited)
+        self.assertFalse(p.run.exists())
+
+    def test_pipeline_report_failure_preserves_primary_failure_and_pending_cleanup(self):
+        write = gfx_cef.fstxn.atomic_write
+        report_error = OSError(errno.ENOSPC, 'pipeline report disk full')
+        move_error = OSError(errno.EACCES, 'frame commit denied')
+
+        def report_failed(path, *args, **kwargs):
+            if str(path).endswith('.pipeline.json'):
+                raise report_error
+            return write(path, *args, **kwargs)
+
+        for kind in ('png', 'move', 'native'):
+            corrupt = (lambda frame, path: path.write_bytes(b'bad PNG') if frame == 0 else None) if kind == 'png' else None
+            with self.subTest(kind=kind), self.pipeline(corrupt=corrupt,
+                    fail_frame=1 if kind == 'native' else None) as p, \
+                    mock.patch.object(gfx_cef.fstxn, 'atomic_write', side_effect=report_failed), \
+                    contextlib.ExitStack() as stack:
+                if kind == 'move':
+                    stack.enter_context(mock.patch.object(gfx_cef.fstxn, 'replace', side_effect=move_error))
+                with self.assertRaises(cef_client.CefWorkerError) as caught:
+                    self.render()
+            self.assertIn('CEF pipeline diagnostic failed', str(caught.exception))
+            self.assertIn('pipeline report disk full', str(caught.exception))
+            if kind == 'move':
+                self.assertIs(caught.exception.__cause__, move_error)
+                self.assertIn('frame commit denied', str(caught.exception))
+            elif kind == 'png':
+                self.assertIn('CEF output invalid', str(caught.exception))
+            else:
+                self.assertEqual(caught.exception.status_code, 3)
+                self.assertEqual(caught.exception.detail, {'target_frame_index': 1})
+            self.assertTrue(p.client.closed and p.exited)
+            p.proc.wait.assert_not_called()
+            self.assertFalse(p.run.exists())
+            if kind != 'native':
+                self.assertIn(('close', 1), p.steps)
+                self.assertNotIn(('receive', 1, 'frame1.png'), p.steps)
+
+    def test_pipeline_report_failure_after_success_is_still_explicit(self):
+        write = gfx_cef.fstxn.atomic_write
+        error = OSError(errno.ENOSPC, 'pipeline report disk full')
+
+        def report_failed(path, *args, **kwargs):
+            if str(path).endswith('.pipeline.json'):
+                raise error
+            return write(path, *args, **kwargs)
+
+        with self.pipeline() as p, mock.patch.object(gfx_cef.fstxn, 'atomic_write', side_effect=report_failed):
+            with self.assertRaises(OSError) as caught:
+                self.render(n=1)
+        self.assertIs(caught.exception, error)
+        self.assertTrue(p.client.closed and p.exited)
+        self.assertFalse((self.out / gfx_cli.COMPLETE_FILE).exists())
+
+    def test_native_evidence_failure_retains_primary_status_and_alone_still_fails(self):
+        write, replace = gfx_cef.fstxn.atomic_write, gfx_cef.fstxn.os.replace
+        for artifact in ('sync.jsonl', 'receipts.json', 'worker.log'):
+            for native_failed in (True, False):
+                for path in self.out.glob('*.png'):
+                    path.unlink()
+                diagnostic = OSError(errno.ENOSPC, artifact + ' disk full')
+
+                def bad_write(path, *args, **kwargs):
+                    if str(path).endswith('.' + artifact):
+                        raise diagnostic
+                    return write(path, *args, **kwargs)
+
+                def bad_replace(source, target, *args, **kwargs):
+                    if str(target).endswith('.worker.log'):
+                        raise diagnostic
+                    return replace(source, target, *args, **kwargs)
+
+                expected = cef_client.CefWorkerError if native_failed or artifact != 'worker.log' else OSError
+                with self.subTest(artifact=artifact, native_failed=native_failed), \
+                        self.pipeline(fail_frame=1 if native_failed else None) as p, \
+                        contextlib.ExitStack() as stack:
+                    stack.enter_context(mock.patch.object(gfx_cef.fstxn, 'atomic_write', side_effect=bad_write))
+                    if artifact == 'worker.log':
+                        stack.enter_context(mock.patch.object(gfx_cef.fstxn.os, 'replace', side_effect=bad_replace))
+                    with self.assertRaises(expected) as caught:
+                        self.render(n=4 if native_failed else 1)
+                self.assertIn(artifact + ' disk full', str(caught.exception))
+                if native_failed:
+                    self.assertEqual(caught.exception.status_code, 3)
+                    self.assertEqual(caught.exception.detail, {'target_frame_index': 1})
+                    self.assertIsInstance(caught.exception.__cause__, cef_client.CefWorkerError)
+                    self.assertEqual(caught.exception.__cause__.status_code, 3)
+                    self.assertIn('native JS_ERR', str(caught.exception))
+                    p.proc.wait.assert_not_called()
+                self.assertTrue(p.client.closed and p.exited)
+                self.assertFalse(p.run.exists())
+
+    def test_failed_phase_timings_are_measured_and_unrun_phases_are_null(self):
+        for phase in ('startup', 'receive', 'final_validation'):
+            for path in self.out.glob('*.png'):
+                path.unlink()
+            report = self.ctx.cache / 'reports'
+            if report.exists():
+                shutil.rmtree(report)
+            ticks = [0]
+
+            def clock():
+                ticks[0] += 1_000_000
+                return ticks[0]
+
+            expected = ValueError if phase == 'final_validation' else cef_client.CefWorkerError
+            with self.subTest(phase=phase), self.pipeline(fail_frame=0 if phase == 'receive' else None) as p, \
+                    mock.patch.object(gfx_cef.time, 'perf_counter_ns', side_effect=clock), \
+                    contextlib.ExitStack() as stack:
+                if phase == 'startup':
+                    for name in ('connect', 'from_socket'):
+                        stack.enter_context(mock.patch.object(gfx_cef.CefWorkerClient, name,
+                            side_effect=cef_client.CefWorkerError('startup timeout')))
+                elif phase == 'final_validation':
+                    stack.enter_context(mock.patch.object(gfx_cli, 'require_frames',
+                        side_effect=ValueError('final validation failed')))
+                with self.assertRaises(expected):
+                    self.render(n=1)
+            pipeline = self.report('pipeline')
+            self.assertFalse(pipeline['completed'])
+            self.assertGreater(pipeline['worker_startup_us'], 0)
+            if phase == 'startup':
+                self.assertEqual(pipeline['native_receive_attempts'], 0)
+                self.assertEqual(pipeline['native_wait_us'], 0)
+            else:
+                self.assertEqual(pipeline['native_receive_attempts'], 1)
+                self.assertGreater(pipeline['native_wait_us'], 0)
+            if phase == 'final_validation':
+                self.assertGreater(pipeline['final_validate_us'], 0)
+            else:
+                self.assertIsNone(pipeline['final_validate_us'])
+                self.assertEqual(pipeline['request_roundtrips'], [])
+            self.assertTrue(p.exited)
+            self.assertFalse(p.run.exists())
+
+    def test_bad_receipt_metadata_stops_admission_before_next_frame(self):
+        for h in ({'canary_frame_index': -1}, {'width': 17}, {'height': 17},
+                  {'stride': 65}, {'pixel_format': 2}, {'color_space': 2}):
+            with self.subTest(header=h), self.pipeline(header=h) as p, \
+                    self.assertRaisesRegex(cef_client.CefWorkerError, 'geometry/canary/pixel format'):
+                self.render()
+            self.assertEqual(p.requested, [0])
+            self.assertEqual(list(self.out.glob('*.png')), [])
+            self.assertTrue(p.client.closed and p.exited)
+
+    def test_worker_failure_and_nonzero_exit_preserve_failure_and_cleanup(self):
+        with self.pipeline(fail_frame=1) as p:
+            with self.assertRaises(cef_client.CefWorkerError) as caught:
+                self.render()
+        self.assertEqual(caught.exception.status_code, 3)
+        self.assertEqual(caught.exception.detail, {'target_frame_index': 1})
+        self.assertEqual(p.requested, [0, 1])
+        self.assertEqual(self.report('pipeline')['rendered_frames'], [0])
+        self.assertEqual(len(self.report('receipts')), 1)
+        self.assertFalse((self.out / 'f0001.png').exists())
+        self.assertTrue(p.client.closed and p.exited)
+        self.assertFalse(p.run.exists())
+        with self.pipeline(exit_code=4) as p, self.assertRaisesRegex(cef_client.CefWorkerError, 'exited 4'):
+            self.render(n=2)
+        self.assertTrue(p.client.closed and p.exited)
+
+    def test_old_worker_without_paired_exact_handshake_is_rejected_before_admission(self):
+        for flags in (0, 1):
+            with self.subTest(flags=flags), self.pipeline(hello_flags=flags) as p, \
+                    self.assertRaisesRegex(cef_client.CefWorkerError, 'paired-exact.*rebuild'):
+                self.render()
+            self.assertEqual(p.requested, [])
+            self.assertTrue(p.client.closed and p.exited)
+            self.assertEqual(list(self.out.glob('*.png')), [])
+
+    def test_hello_pid_mismatch_never_admits_a_frame(self):
+        with self.pipeline(pid=456) as p, self.assertRaisesRegex(cef_client.CefWorkerError, 'PID'):
+            self.render()
+        self.assertEqual(p.requested, [])
+        self.assertTrue(p.client.closed and p.exited)
+
+    def test_mode_p_has_one_fixed_url_for_distinct_frames_and_mode_n_expands(self):
+        for mode in ('p', 'n'):
+            self.options = gfx_backend.CefRuntimeOptions(mode, 'spng', 1, 'sub_up', 2)
+            frames = [1, 3] if mode == 'p' else [0, 2]
+            with self.subTest(mode=mode), self.pipeline() as p:
+                self.render(frames=frames)
+            self.assertEqual(p.requested, frames)
+            expected = self.page.as_uri() + ('?f=0' if mode == 'p' else '?f={f}')
+            self.assertIn('--url-template=' + expected, p.argv)
+            self.assertIn('--sync-mode=' + mode, p.argv)
+
+    def test_darwin_uses_supervised_socketpair_and_closes_both_endpoints(self):
+        pair = socket.socketpair()
+        self.addCleanup(lambda: [s.close() for s in pair])
+        worker_fd = pair[1].fileno()
+        with self.pipeline(platform='darwin') as p, \
+                mock.patch.object(gfx_cef.socket, 'socketpair', return_value=pair):
+            self.render(n=1)
+        self.assertEqual(p.launch['pass_fds'], (worker_fd,))
+        self.assertIn(f'--ipc-fd={worker_fd}', p.argv)
+        self.assertFalse(any(a.startswith('--ipc-socket=') for a in p.argv))
+        self.assertEqual(p.launch['env']['TMPDIR'], str(p.run))
+        self.assertEqual([s.fileno() for s in pair], [-1, -1])
+
+    def test_atomic_move_rejects_unsafe_paths_and_preserves_existing_file_on_error(self):
+        source, target = self.root / 'source.png', self.out / 'f0000.png'
+        write_png(source)
+        target.write_bytes(b'previous target')
+        with mock.patch.object(gfx_cef.fstxn, 'replace', side_effect=OSError(errno.EACCES, 'denied')), \
+                mock.patch.object(gfx_cef.fstxn, 'atomic_write') as copy:
+            with self.assertRaises(OSError):
+                gfx_cef._commit_png(source, target, root=self.root)
+            copy.assert_not_called()
+        self.assertEqual(target.read_bytes(), b'previous target')
+        victim = self.root / 'victim'
+        victim.write_bytes(b'untouched')
+        target.unlink()
+        target.symlink_to(victim)
+        from vtx.pipeline.infra import ProjectPathError
+        try:
+            gfx_cef._commit_png(source, target, root=self.root)
+        except ProjectPathError:
+            self.assertTrue(source.is_file())
+        else:
+            # fstxn's legacy-platform contract may replace the symlink itself;
+            # it must never follow that leaf or modify the victim inode.
+            self.assertFalse(target.is_symlink())
+            self.assertFalse(source.exists())
+        self.assertEqual(victim.read_bytes(), b'untouched')
+
+    def test_cross_device_commit_retains_atomic_write_and_consumes_source(self):
+        source, target = self.root / 'source.png', self.out / 'f0000.png'
+        write_png(source)
+        data = source.read_bytes()
+        with mock.patch.object(gfx_cef.fstxn, 'replace', side_effect=OSError(errno.EXDEV, 'cross-device')):
+            self.assertEqual(gfx_cef._commit_png(source, target, root=self.root), 'copy')
+        self.assertEqual(target.read_bytes(), data)
+        self.assertFalse(source.exists())
 
 
 @unittest.skipUnless(WORKER and Path(WORKER).is_file(), 'requires VTX_TEST_CEF_WORKER')
