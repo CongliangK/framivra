@@ -74,6 +74,14 @@ struct JitterStats {
   uint32_t max_delta = 0;
   uint64_t signature = 1469598103934665603ull;  // FNV-1a offset basis
   bool within_budget = false;
+  bool corner_reject = false;
+  // Bounded diagnostics for the corner-reject path (first 8 differing corner
+  // pixels) so evidence can distinguish probe-edge AA/quantization from a
+  // genuinely different probe token.
+  uint32_t corner_x[8] = {};
+  uint32_t corner_y[8] = {};
+  int corner_d[8] = {};
+  uint32_t corner_n = 0;
 };
 
 JitterStats ClassifyBaselineDivergence(const uint8_t* sample, size_t stride,
@@ -97,9 +105,29 @@ JitterStats ClassifyBaselineDivergence(const uint8_t* sample, size_t stride,
       d[3] = std::abs(static_cast<int>(sp[3]) - static_cast<int>(cp[3]));
       const int mx = std::max(std::max(d[0], d[1]), std::max(d[2], d[3]));
       if (mx == 0) continue;
-      if (row_edge && (x < diag || x >= width - diag)) {
-        s.within_budget = false;  // corner probe rects: byte-exact only
-        return s;
+      const bool corner = row_edge && (x < diag || x >= width - diag);
+      // Corner probe rects stay fail-closed for token-class divergence: a
+      // wrong/missing probe token is a high-contrast (>kJitterMaxChannelDelta)
+      // difference and must never be tolerated. Low-delta corner divergence is
+      // the same cross-renderer AA/gradient-quantization jitter seen in the
+      // interior (measured frozen at frame 130 of the formal run), so it
+      // participates in the same frozen-signature tolerance under the same
+      // global budgets, with a much tighter corner-pixel cap.
+      if (corner) {
+        if (static_cast<uint32_t>(mx) >
+                FrameSyncStateMachine::kJitterMaxChannelDelta ||
+            s.corner_n >= FrameSyncStateMachine::kJitterMaxCornerPixels) {
+          s.corner_reject = true;
+          s.within_budget = false;
+          if (s.corner_n < 8) {
+            s.corner_x[s.corner_n] = x;
+            s.corner_y[s.corner_n] = y;
+            s.corner_d[s.corner_n] = mx;
+          }
+          ++s.corner_n;
+          return s;
+        }
+        ++s.corner_n;
       }
       if (static_cast<uint32_t>(mx) > FrameSyncStateMachine::kJitterMaxChannelDelta ||
           s.pixels >= FrameSyncStateMachine::kJitterMaxPixels) {
@@ -805,6 +833,18 @@ PaintVerdict FrameSyncStateMachine::FeedExactBaselinePaint(
           ",\"jitter_pixels\":" + std::to_string(js.pixels) +
           ",\"jitter_max_channel_delta\":" + std::to_string(js.max_delta) +
           ",\"jitter_signature_streak\":" + std::to_string(jitter_streak_);
+      if (js.corner_reject) {
+        extra += ",\"corner_reject\":true,\"corner_pixels\":\"";
+        for (uint32_t i = 0; i < js.corner_n && i < 8; ++i) {
+          if (i) extra += ";";
+          extra += std::to_string(js.corner_x[i]) + "," +
+                   std::to_string(js.corner_y[i]) + "," +
+                   std::to_string(js.corner_d[i]);
+        }
+        extra += "\"";
+      } else if (js.corner_n) {
+        extra += ",\"jitter_corner_pixels\":" + std::to_string(js.corner_n);
+      }
       // Retain the public veto-category event consumed by native acceptance
       // tests/reports. A mismatch alone cannot distinguish probe perturbation
       // from an unsigned page whose rasterization has not caught up yet.
@@ -825,6 +865,7 @@ PaintVerdict FrameSyncStateMachine::FeedExactBaselinePaint(
            ",\"jitter_pixels\":" + std::to_string(js.pixels) +
            ",\"jitter_max_channel_delta\":" + std::to_string(js.max_delta) +
            ",\"jitter_signature_streak\":" + std::to_string(jitter_streak_) +
+           (js.corner_n ? ",\"jitter_corner_pixels\":" + std::to_string(js.corner_n) : "") +
            ",\"compared_bytes\":" + std::to_string(exact_candidate_.size()));
       const uint64_t t0 = NowUs();
       if (dst) std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());

@@ -216,6 +216,10 @@ class FrameSyncStateMachine {
   // orders of magnitude above these budgets.
   static constexpr uint32_t kJitterMaxPixels = 12288;  // 0.6% of 1080p, 1.2x largest measured
   static constexpr uint32_t kJitterMaxChannelDelta = 32;  // 1.14x largest measured (28)
+  // Corner probe rects tolerate only low-delta jitter (same channel budget)
+  // and at most this many pixels; a high-contrast corner difference (wrong or
+  // missing probe token) is always fail-closed.
+  static constexpr uint32_t kJitterMaxCornerPixels = 16;
   static constexpr uint32_t kJitterStreakTarget = 6;
   PaintVerdict FeedExactBaselinePaint(const PageEvent& identity,
       const uint8_t* src, size_t stride, uint32_t width, uint32_t height,

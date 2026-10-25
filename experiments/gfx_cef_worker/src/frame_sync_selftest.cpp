@@ -840,9 +840,11 @@ void TestNativeExact() {
           "jitter: mismatch/equal audit lines record the tolerance evidence");
   }
   {
+    // A high-contrast corner difference (wrong or missing probe token)
+    // stays byte-exact fail-closed forever, frozen or not.
     Harness corner;
     FrameBuf wrong = original;
-    wrong.px[wrong.Off(0, 0)] ^= 1;
+    wrong.px[wrong.Off(0, 0)] ^= 0xFF;
     Check(corner.AdvanceToS3(d, nullptr, 5000) &&
           corner.m.ArmExactBaseline(identity, 0, 5050) &&
           corner.m.EnterPumping(5100), "jitter corner: armed");
@@ -858,7 +860,60 @@ void TestNativeExact() {
                closed;
     }
     Check(closed && out == std::vector<uint8_t>(original.px.size(), 0xAA),
-          "jitter: corner probe rects remain byte-exact fail-closed");
+          "jitter: high-contrast corner probe diffs stay fail-closed");
+  }
+  {
+    // Low-delta frozen corner jitter (AA/gradient quantization landing in a
+    // corner rect, as measured at formal frame 130) is tolerated under the
+    // same frozen-signature rule and capped at kJitterMaxCornerPixels.
+    Harness cornerjit;
+    FrameBuf drift = original;
+    drift.px[drift.Off(0, 0)] ^= 1;
+    Check(cornerjit.AdvanceToS3(d, nullptr, 5500) &&
+          cornerjit.m.ArmExactBaseline(identity, 0, 5550) &&
+          cornerjit.m.EnterPumping(5600), "jitter corner tolerance: armed");
+    std::vector<uint8_t> out(original.px.size(), 0xAA);
+    cornerjit.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, out.data(), 5700);
+    cornerjit.m.FeedPaint(second.px.data(), 64 * 4, 64, 48, out.data(), 5800);
+    bool accepted = false;
+    for (uint64_t k = 1; k <= 8 && !accepted; ++k) {
+      accepted = cornerjit.m.FeedExactBaselinePaint(
+                     identity, drift.px.data(), 64 * 4, 64, 48, out.data(),
+                     5900, k).disposition == PaintDisposition::kAccepted;
+    }
+    Check(std::any_of(cornerjit.lines.begin(), cornerjit.lines.end(),
+                      [](const auto& line) {
+                        return line.find("\"event\":"
+                                         "\"exact_baseline_equal\"") !=
+                                   std::string::npos &&
+                               line.find("\"jitter_corner_pixels\":1") !=
+                                   std::string::npos;
+                      }),
+          "jitter: frozen low-delta corner diff tolerates with audit");
+    // Exceeding the corner-pixel cap with frozen low-delta diffs must stay
+    // fail-closed.
+    Harness cornercap;
+    FrameBuf wide = original;
+    for (uint32_t i = 0;
+         i <= FrameSyncStateMachine::kJitterMaxCornerPixels; ++i) {
+      wide.px[wide.Off(i % 8, i / 8)] ^= 1;  // stay inside corner rects
+    }
+    Check(cornercap.AdvanceToS3(d, nullptr, 6000) &&
+          cornercap.m.ArmExactBaseline(identity, 0, 6050) &&
+          cornercap.m.EnterPumping(6100), "jitter corner cap: armed");
+    std::vector<uint8_t> capped(original.px.size(), 0xAA);
+    cornercap.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, capped.data(), 6200);
+    cornercap.m.FeedPaint(second.px.data(), 64 * 4, 64, 48, capped.data(), 6300);
+    bool still_closed = true;
+    for (uint64_t k = 1; k <= 8; ++k) {
+      still_closed = cornercap.m.FeedExactBaselinePaint(
+                         identity, wide.px.data(), 64 * 4, 64, 48,
+                         capped.data(), 6400, k)
+                         .disposition != PaintDisposition::kAccepted &&
+                     still_closed;
+    }
+    Check(still_closed && capped == std::vector<uint8_t>(original.px.size(), 0xAA),
+          "jitter: corner diffs beyond kJitterMaxCornerPixels stay closed");
   }
   {
     Harness unstable;
