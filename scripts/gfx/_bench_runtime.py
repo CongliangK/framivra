@@ -476,8 +476,15 @@ def _verify_media(project, evidence_dir, ffmpeg, ffprobe, timeout, env, *,
         check('video_geometry', video.get('width') == expected_width and video.get('height') == expected_height
               and isinstance(video.get('pix_fmt'), str) and bool(video['pix_fmt']), 'video geometry/pixel format mismatch')
         check('video_frame_count', str(video.get('nb_read_frames')) == str(expected_frames), 'full ffprobe frame count mismatch')
-        check('video_frame_rate', _fraction(video.get('avg_frame_rate')) == expected_fps
-              and _fraction(video.get('r_frame_rate')) == expected_fps, 'video frame rate mismatch')
+        # r_frame_rate 必须精确（排除 29.97 等真实错帧率，NTSC 的 r=30000/1001）；
+        # avg_frame_rate 由容器时长导出，帧级 pts 在 1/15360 时基上的舍入可累积
+        # ~1ms 量级偏差（900 帧实测 30.0016），故用相对容差 2e-3。真实缺帧由
+        # video_frame_count（精确相等）与解码 pts 归一化检查拦截。
+        avg_fps = _fraction(video.get('avg_frame_rate'))
+        check('video_frame_rate', _fraction(video.get('r_frame_rate')) == expected_fps
+              and avg_fps is not None
+              and abs(float(avg_fps) - float(expected_fps)) <= 2e-3 * float(expected_fps),
+              'video frame rate mismatch')
         check('video_start_time', _fraction(video.get('start_pts')) == 0, 'video must start at time zero')
         check('audio_format', str(audio.get('sample_rate')) == '48000' and audio.get('channels') == 2,
               'expected 48 kHz stereo audio before PCM normalization')
