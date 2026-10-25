@@ -785,6 +785,113 @@ void TestNativeExact() {
         }), "exact veto: mismatch audit preserves contract without claiming an unproven cause");
   }
 
+  // Jitter tolerance contract: a frozen INTERIOR divergence within the tiny
+  // pixel/delta budgets accepts only after kJitterStreakTarget signature-
+  // identical samples, publishing the probe-authenticated candidate unchanged
+  // with full audit fields. Corner probe rects, unstable signatures and
+  // budget-exceeding deltas all stay fail-closed.
+  {
+    Harness jitter;
+    Check(jitter.AdvanceToS3(d, nullptr, 4000) &&
+          jitter.m.ArmExactBaseline(identity, 0, 4050) &&
+          jitter.m.EnterPumping(4100), "jitter: armed and pumping");
+    std::vector<uint8_t> out(original.px.size(), 0xAA);
+    jitter.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, out.data(), 4200);
+    jitter.m.FeedPaint(second.px.data(), 64 * 4, 64, 48, out.data(), 4300);
+    Check(jitter.m.needs_baseline_veto(), "jitter: candidate frozen");
+    auto interior_delta3 = [&]() {
+      FrameBuf bad = original;
+      bad.SetPx(30, 30, Bgra{3, 30, 30 ^ 0x5A, 255});  // B: 0 -> 3
+      return bad;
+    };
+    uint64_t seq = 0;
+    auto feed = [&](const FrameBuf& b) {
+      return jitter.m.FeedExactBaselinePaint(identity, b.px.data(), 64 * 4, 64,
+                                             48, out.data(), 4400, ++seq);
+    };
+    for (int k = 1; k < 6; ++k) {
+      Check(feed(interior_delta3()).disposition != PaintDisposition::kAccepted,
+            "jitter: frozen divergence below streak target stays closed");
+    }
+    const auto jv = feed(interior_delta3());
+    Check(jv.disposition == PaintDisposition::kAccepted && jitter.m.accepted(),
+          "jitter: 6th signature-identical frozen divergence accepts");
+    Check(out == original.px,
+          "jitter: probe-authenticated candidate published unchanged");
+    Check(std::any_of(jitter.lines.begin(), jitter.lines.end(),
+                      [](const auto& line) {
+                        return line.find(
+                                   "\"event\":\"exact_baseline_equal\"") !=
+                                   std::string::npos &&
+                               line.find("\"via\":"
+                                         "\"rasterization_jitter_tolerance\"") !=
+                                   std::string::npos &&
+                               line.find("\"jitter_pixels\":1") !=
+                                   std::string::npos;
+                      }) &&
+              std::any_of(jitter.lines.begin(), jitter.lines.end(),
+                          [](const auto& line) {
+                            return line.find("\"event\":"
+                                             "\"exact_baseline_mismatch\"") !=
+                                       std::string::npos &&
+                                   line.find("\"jitter\":true") !=
+                                       std::string::npos;
+                          }),
+          "jitter: mismatch/equal audit lines record the tolerance evidence");
+  }
+  {
+    Harness corner;
+    FrameBuf wrong = original;
+    wrong.px[wrong.Off(0, 0)] ^= 1;
+    Check(corner.AdvanceToS3(d, nullptr, 5000) &&
+          corner.m.ArmExactBaseline(identity, 0, 5050) &&
+          corner.m.EnterPumping(5100), "jitter corner: armed");
+    std::vector<uint8_t> out(original.px.size(), 0xAA);
+    corner.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, out.data(), 5200);
+    corner.m.FeedPaint(second.px.data(), 64 * 4, 64, 48, out.data(), 5300);
+    bool closed = true;
+    for (uint64_t k = 1; k <= 8; ++k) {
+      closed = corner.m.FeedExactBaselinePaint(identity, wrong.px.data(),
+                                               64 * 4, 64, 48, out.data(),
+                                               5400, k)
+                   .disposition != PaintDisposition::kAccepted &&
+               closed;
+    }
+    Check(closed && out == std::vector<uint8_t>(original.px.size(), 0xAA),
+          "jitter: corner probe rects remain byte-exact fail-closed");
+  }
+  {
+    Harness unstable;
+    Check(unstable.AdvanceToS3(d, nullptr, 6000) &&
+          unstable.m.ArmExactBaseline(identity, 0, 6050) &&
+          unstable.m.EnterPumping(6100), "jitter unstable: armed");
+    std::vector<uint8_t> out(original.px.size(), 0xAA);
+    unstable.m.FeedPaint(first.px.data(), 64 * 4, 64, 48, out.data(), 6200);
+    unstable.m.FeedPaint(second.px.data(), 64 * 4, 64, 48, out.data(), 6300);
+    FrameBuf a = original, b = original, big = original;
+    a.SetPx(30, 30, Bgra{3, 30, 30 ^ 0x5A, 255});
+    b.SetPx(31, 31, Bgra{31, 31, 31 ^ 0x5A, 255});  // different signature
+    big.SetPx(30, 30, Bgra{200, 30, 30 ^ 0x5A, 255});  // delta > budget
+    bool closed = true;
+    for (uint64_t k = 1; k <= 8; ++k) {
+      const FrameBuf& pick = (k % 2 == 1) ? a : b;
+      closed = unstable.m.FeedExactBaselinePaint(identity, pick.px.data(),
+                                                 64 * 4, 64, 48, out.data(),
+                                                 6400, k)
+                   .disposition != PaintDisposition::kAccepted &&
+               closed;
+    }
+    for (uint64_t k = 9; k <= 12; ++k) {
+      closed = unstable.m.FeedExactBaselinePaint(identity, big.px.data(),
+                                                 64 * 4, 64, 48, out.data(),
+                                                 6400, k)
+                   .disposition != PaintDisposition::kAccepted &&
+               closed;
+    }
+    Check(closed && out == std::vector<uint8_t>(original.px.size(), 0xAA),
+          "jitter: alternating signatures and over-budget deltas never accept");
+  }
+
   // An early stable blank never establishes identity and can only delay/veto.
   // Two later fresh native equalities can certify the frozen signed candidate.
   Harness resample;

@@ -195,6 +195,28 @@ class FrameSyncStateMachine {
   // nonzero native paint_sequence (not a counter of calls to this method).
   // Two consecutive full-byte equalities veto the frozen candidate; baseline
   // bytes NEVER supply output or frame identity. Other calls leave dst intact.
+  //
+  // Rasterization-jitter tolerance: two independent renderer processes can
+  // rasterize the SAME static page into rasters that disagree on
+  // anti-aliased/gradient-quantized pixels. Measured over a full 900-frame
+  // run (1080p, 20 frozen divergences): 2-91 px at AA edges, 822-1599 px
+  // and 10050-10214 px at gradient quantization, channel deltas <= 25/255;
+  // transient catching-up rasters change BETWEEN samples and recover to
+  // byte equality on their own. Byte equality is unattainable for the
+  // frozen cases and the historical path (treat every mismatch as
+  // catch-up-able staleness) stalled the request until pump_timeout. A
+  // divergence qualifies as jitter ONLY when it stays within
+  // kJitterMaxPixels/kJitterMaxChannelDelta AND repeats with an IDENTICAL
+  // diff signature for kJitterStreakTarget consecutive samples (a frozen
+  // raster, not catching-up content). Acceptance then publishes the
+  // probe-authenticated candidate unchanged and records the tolerated diff
+  // in the exact_baseline_mismatch/exact_baseline_equal events. Anything
+  // larger or unstable keeps the fail-closed mismatch path; injected
+  // perturbations (whole-region flips, ~2M px at full-scale deltas) stay
+  // orders of magnitude above these budgets.
+  static constexpr uint32_t kJitterMaxPixels = 12288;  // 0.6% of 1080p, 1.2x largest measured
+  static constexpr uint32_t kJitterMaxChannelDelta = 32;  // 1.28x largest measured (25)
+  static constexpr uint32_t kJitterStreakTarget = 6;
   PaintVerdict FeedExactBaselinePaint(const PageEvent& identity,
       const uint8_t* src, size_t stride, uint32_t width, uint32_t height,
       uint8_t* dst, uint64_t now_us, uint64_t paint_sequence);
@@ -202,8 +224,10 @@ class FrameSyncStateMachine {
   // that complete batch cannot veto, discard its partial equality streak:
   // acceptance must not skip an already-collected second sample in the NEXT
   // batch by combining its first match with a prior batch's last match.
-  // This only discards evidence; identity, readiness floor, last native paint
-  // sequence and the immutable signed candidate are deliberately preserved.
+  // This only discards equality evidence; identity, readiness floor, last
+  // native paint sequence, the immutable signed candidate and the jitter
+  // classification streak (frozen-raster evidence spans batches by design)
+  // are deliberately preserved.
   void DiscardExactBaselinePartialMatch() { exact_baseline_equal_paints_ = 0; }
   bool needs_baseline_veto() const {
     return state_ == State::S4_COMPOSITOR_PUMPING && exact_candidate_pending_;
@@ -282,6 +306,9 @@ class FrameSyncStateMachine {
   uint64_t exact_baseline_last_paint_ = 0;
   uint64_t exact_baseline_ready_paint_ = 0;
   bool exact_baseline_ready_ = false;
+  // Jitter-classification state for the unsigned veto (see FeedExactBaselinePaint).
+  uint32_t jitter_streak_ = 0;
+  uint64_t jitter_signature_ = 0;
   uint32_t exact_request_high_water_ = 0;  // NEVER reset: no request-token replay
   uint32_t exact_candidate_decoded_request_id_ = 0;
   std::vector<uint8_t> exact_first_;

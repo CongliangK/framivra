@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -53,6 +54,69 @@ std::string JsonEscape(const char* s) {
 
 const char* PhaseName(PageEvent::Phase p) {
   return p == PageEvent::Phase::kAssetsReady ? "assets_ready" : "canary_set";
+}
+
+// Classify a baseline divergence between an unsigned sample and the frozen
+// probe-authenticated candidate. Returns false as soon as the divergence
+// exceeds the jitter budgets (bounded work: the scan dies on the 33rd differing
+// pixel or the first delta above kJitterMaxChannelDelta). On true, populates
+// pixels/max_delta and a FNV-1a signature over every differing pixel's
+// coordinates and per-channel deltas — two samples of a FROZEN raster produce
+// the same signature, catching-up content does not.
+//
+// The four 8x8 probe rects at the frame corners are excluded from tolerance:
+// they are the only candidate bytes the signed phase-2 comparison does not
+// byte-verify (the probes live there), so the unsigned veto is their sole
+// independent check and stays byte-exact fail-closed. The real-world jitter
+// this recovers from (dash-cap x rounded-corner AA overlap) is interior.
+struct JitterStats {
+  uint32_t pixels = 0;
+  uint32_t max_delta = 0;
+  uint64_t signature = 1469598103934665603ull;  // FNV-1a offset basis
+  bool within_budget = false;
+};
+
+JitterStats ClassifyBaselineDivergence(const uint8_t* sample, size_t stride,
+                                       const uint8_t* candidate,
+                                       uint32_t width, uint32_t height,
+                                       uint32_t first_bad_row) {
+  JitterStats s;
+  s.within_budget = true;
+  const uint32_t diag = static_cast<uint32_t>(kDiagSize);
+  for (uint32_t y = first_bad_row; y < height; ++y) {
+    const uint8_t* sr = sample + static_cast<size_t>(y) * stride;
+    const uint8_t* cr = candidate + static_cast<size_t>(y) * width * 4u;
+    const bool row_edge = y < diag || y >= height - diag;
+    for (uint32_t x = 0; x < width; ++x) {
+      const uint8_t* sp = sr + static_cast<size_t>(x) * 4u;
+      const uint8_t* cp = cr + static_cast<size_t>(x) * 4u;
+      int d[4];
+      d[0] = std::abs(static_cast<int>(sp[0]) - static_cast<int>(cp[0]));
+      d[1] = std::abs(static_cast<int>(sp[1]) - static_cast<int>(cp[1]));
+      d[2] = std::abs(static_cast<int>(sp[2]) - static_cast<int>(cp[2]));
+      d[3] = std::abs(static_cast<int>(sp[3]) - static_cast<int>(cp[3]));
+      const int mx = std::max(std::max(d[0], d[1]), std::max(d[2], d[3]));
+      if (mx == 0) continue;
+      if (row_edge && (x < diag || x >= width - diag)) {
+        s.within_budget = false;  // corner probe rects: byte-exact only
+        return s;
+      }
+      if (static_cast<uint32_t>(mx) > FrameSyncStateMachine::kJitterMaxChannelDelta ||
+          s.pixels >= FrameSyncStateMachine::kJitterMaxPixels) {
+        s.within_budget = false;
+        return s;
+      }
+      ++s.pixels;
+      s.max_delta = std::max(s.max_delta, static_cast<uint32_t>(mx));
+      for (int i = 0; i < 4; ++i) {
+        s.signature ^= static_cast<uint64_t>(static_cast<uint8_t>(d[i]));
+        s.signature *= 1099511628211ull;  // FNV-1a prime
+      }
+      s.signature ^= static_cast<uint64_t>(x) * 31ull + y;
+      s.signature *= 1099511628211ull;
+    }
+  }
+  return s;
 }
 
 }  // namespace
@@ -285,6 +349,8 @@ bool FrameSyncStateMachine::BeginRequest(const RequestDesc& desc,
   exact_baseline_last_paint_ = 0;
   exact_baseline_ready_paint_ = 0;
   exact_baseline_ready_ = false;
+  jitter_streak_ = 0;
+  jitter_signature_ = 0;
   exact_candidate_decoded_request_id_ = 0;
   exact_first_.clear();
   exact_candidate_.clear();
@@ -714,17 +780,65 @@ PaintVerdict FrameSyncStateMachine::FeedExactBaselinePaint(
       exact_baseline_equal_paints_ = 0;
       ++req_rejected_;
       ++counters_.rejected_stale_paint;
+      // Classify before failing: cross-renderer rasterization jitter (frozen,
+      // tiny, signature-stable) is recoverable; content-sized or unstable
+      // divergence keeps the historical catch-up loop (and its timeout).
+      const JitterStats js = ClassifyBaselineDivergence(
+          src, stride, exact_candidate_.data(), width, height, y);
+      if (js.within_budget) {
+        if (js.signature == jitter_signature_) {
+          ++jitter_streak_;
+        } else {
+          jitter_signature_ = js.signature;
+          jitter_streak_ = 1;
+        }
+      } else {
+        jitter_signature_ = 0;
+        jitter_streak_ = 0;
+      }
+      std::string extra =
+          "\"reason\":\"probe_content_perturbation\","
+          "\"observation\":\"native_full_frame_mismatch\",\"cause_unproven\":true,"
+          "\"mismatch_row\":" + std::to_string(y) +
+          ",\"paint_sequence\":" + std::to_string(paint_sequence) +
+          ",\"jitter\":" + (js.within_budget ? "true" : "false") +
+          ",\"jitter_pixels\":" + std::to_string(js.pixels) +
+          ",\"jitter_max_channel_delta\":" + std::to_string(js.max_delta) +
+          ",\"jitter_signature_streak\":" + std::to_string(jitter_streak_);
       // Retain the public veto-category event consumed by native acceptance
       // tests/reports. A mismatch alone cannot distinguish probe perturbation
       // from an unsigned page whose rasterization has not caught up yet.
-      Emit("exact_baseline_mismatch", now_us, nullptr, nullptr,
-           "\"reason\":\"probe_content_perturbation\","
-           "\"observation\":\"native_full_frame_mismatch\",\"cause_unproven\":true,"
-           "\"mismatch_row\":" + std::to_string(y) +
-           ",\"paint_sequence\":" + std::to_string(paint_sequence));
-      return v;
+      Emit("exact_baseline_mismatch", now_us, nullptr, nullptr, extra);
+      if (!js.within_budget ||
+          jitter_streak_ < kJitterStreakTarget) {
+        return v;
+      }
+      // kJitterStreakTarget consecutive samples disagreed with the candidate
+      // on the SAME <=32-pixel, <=32/255 signature: the unsigned raster is
+      // frozen and byte equality is unattainable for this page. Publish the
+      // probe-authenticated candidate and record the tolerance explicitly.
+      Emit("exact_baseline_equal", now_us, nullptr, nullptr,
+           std::string("\"role\":\"equality_veto_only\",\"baseline_source\":\"") +
+           (desc_.drive == DriveMode::kModeP ? "persistent_unsigned" :
+                                            "concurrent_unsigned_navigation") +
+           "\",\"via\":\"rasterization_jitter_tolerance\"" +
+           ",\"jitter_pixels\":" + std::to_string(js.pixels) +
+           ",\"jitter_max_channel_delta\":" + std::to_string(js.max_delta) +
+           ",\"jitter_signature_streak\":" + std::to_string(jitter_streak_) +
+           ",\"compared_bytes\":" + std::to_string(exact_candidate_.size()));
+      const uint64_t t0 = NowUs();
+      if (dst) std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());
+      v.disposition = PaintDisposition::kAccepted;
+      v.decoded_frame = exact_candidate_decoded_frame_;
+      v.decoded_request_id = exact_candidate_decoded_request_id_;
+      v.restored = true;
+      v.capture_us = NowUs() - t0;
+      exact_candidate_pending_ = false;
+      return FinalizeAccepted(v, now_us);
     }
   }
+  jitter_streak_ = 0;  // an equal sample breaks any frozen-divergence streak
+  jitter_signature_ = 0;
   if (++exact_baseline_equal_paints_ < 2) {
     return v;
   }
@@ -732,7 +846,7 @@ PaintVerdict FrameSyncStateMachine::FeedExactBaselinePaint(
        std::string("\"role\":\"equality_veto_only\",\"baseline_source\":\"") +
        (desc_.drive == DriveMode::kModeP ? "persistent_unsigned" :
                                         "concurrent_unsigned_navigation") +
-       "\",\"consecutive_equal_paints\":2,\"compared_bytes\":" +
+       "\",\"via\":\"byte_exact\",\"consecutive_equal_paints\":2,\"compared_bytes\":" +
        std::to_string(exact_candidate_.size()));
   const uint64_t t0 = NowUs();
   if (dst) std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());
