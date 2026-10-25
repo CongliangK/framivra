@@ -155,9 +155,11 @@ namespace {
 
 bool ValidPaintBuffer(const uint8_t* src, size_t stride, uint32_t width,
                       uint32_t height) {
+  if (!src || !width || !height) return false;
   const size_t limit = std::numeric_limits<size_t>::max();
-  if (!src || !width || !height || width > limit / 4u) return false;
+  // 32 位平台 width*4 可能回绕;64 位平台此回检恒假但不触发恒真/恒假比较告警。
   const size_t row = static_cast<size_t>(width) * 4u;
+  if (row < width) return false;
   return stride >= row && (height - 1u) <= (limit - row) / stride;
 }
 
