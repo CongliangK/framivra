@@ -51,6 +51,7 @@ MEDIA_TESTS = {
         'tests.media.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
         'tests.cache.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
         'tests.gfx.test_graphics_portability.SubtitleIntegration',
+        'tests.gfx.test_cef_benchmark.FullStreamMediaContracts',
     ),
     'chrome': (
         'tests.gfx.test_graphics_portability.BrowserIntegration',
