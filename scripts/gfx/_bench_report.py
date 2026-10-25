@@ -591,7 +591,10 @@ def _media_evidence(media, evidence, issues):
         if (video.get("width") != 1920 or video.get("height") != 1080
                 or not isinstance(video.get("pix_fmt"), str) or not video["pix_fmt"]
                 or str(video.get("nb_read_frames")) != "900"
-                or Fraction(str(video.get("avg_frame_rate"))) != 30
+                # 与 _bench_runtime.py 的 video_frame_rate 同判据：r_frame_rate
+                # 精确 30，avg_frame_rate 允许 pts 舍入漂移（相对容差 2e-3）。
+                or Fraction(str(video.get("avg_frame_rate"))) <= 0
+                or abs(float(Fraction(str(video.get("avg_frame_rate")))) - 30.0) > 2e-3 * 30.0
                 or Fraction(str(video.get("r_frame_rate"))) != 30
                 or Fraction(str(video.get("start_pts"))) != 0
                 or str(audio.get("sample_rate")) != "48000" or audio.get("channels") != 2
