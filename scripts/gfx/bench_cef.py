@@ -91,13 +91,23 @@ def _physical(path, kind, executable=False):
     return path
 
 
-def _file_identity(path):
-    path = _physical(path, "file", executable=True)
-    return {"path": str(path), "sha256": _sha256(path), "size": path.stat().st_size}
+def _file_identity(path, keep_symlink=False):
+    physical = _physical(path, "file", executable=True)
+    logical = Path(path)
+    if not keep_symlink or not logical.is_symlink():
+        logical = physical
+    elif not logical.is_absolute():
+        logical = Path.cwd() / logical
+    return {"path": str(logical), "sha256": _sha256(physical), "size": physical.stat().st_size}
 
 
 def _tool_identities(args):
-    return {name: _file_identity(getattr(args, name)) for name in ("python", "ffmpeg", "ffprobe")}
+    # venv 入口是对解释器的符号链接；物理化会丢掉 venv 身份及其安装包
+    # 清单（gfx 环境核验依赖 importlib.metadata RECORD），故 python 保留
+    # 逻辑路径，身份哈希仍按物理文件计算。ffmpeg/ffprobe 不受影响。
+    return {"python": _file_identity(args.python, keep_symlink=True),
+            "ffmpeg": _file_identity(args.ffmpeg),
+            "ffprobe": _file_identity(args.ffprobe)}
 
 
 def _base_env(tools):

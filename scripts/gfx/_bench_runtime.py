@@ -489,7 +489,7 @@ def _verify_media(project, evidence_dir, ffmpeg, ffprobe, timeout, env, *,
         command('video', [os.fspath(ffmpeg), '-v', 'error', '-nostdin', '-y', '-xerror',
                           '-err_detect', 'explode', '-copyts', '-i', str(final), '-map', '0:v:0',
                           '-an', '-sn', '-dn', '-c:v', 'rawvideo', '-threads', '1',
-                          '-enc_time_base', '-1', '-vsync', '0', '-f', 'framemd5', str(video_path)])
+                          '-fps_mode', 'passthrough', '-f', 'framemd5', str(video_path)])
         try:
             normalized, digest = _normalize_framemd5(video_path, video, expected_frames, expected_fps)
         except (ValueError, UnicodeError) as error:
@@ -513,7 +513,7 @@ def _verify_media(project, evidence_dir, ffmpeg, ffprobe, timeout, env, *,
                           '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', '-f', 'hash',
                           '-hash', 'sha256', str(audio_path),
                           '-map', '0:a:0', '-vn', '-sn', '-dn', '-ar', '48000', '-ac', '2',
-                          '-c:a', 'pcm_s16le', '-enc_time_base', '-1', '-f', 'framemd5', str(audio_frames_path)])
+                          '-c:a', 'pcm_s16le', '-f', 'framemd5', str(audio_frames_path)])
         match = re.fullmatch(r'SHA256=([0-9a-fA-F]{64})\s*', audio_path.read_text(encoding='ascii'))
         check('audio_nonempty', match is not None and match.group(1).lower() != hashlib.sha256(b'').hexdigest(),
               'missing, invalid or empty decoded PCM SHA256')
