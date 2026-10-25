@@ -173,7 +173,8 @@ offset 均相对该块的 `block_started_counter_us`，使用 Python `perf_count
 `capture_offsets_origin=sync_request_begin` 下的 signed proof、unsigned load/readiness/
 two samples/veto 是里程碑 offset，不能相加；原生与 Python 时钟不假定可直接对齐。
 veto 的 two samples 默认要求与冻结签名重建逐字节相同；唯一例外是光栅化抖动容忍
-（差异冻结 ≥6 样本、≤12288 px、逐通道差 ≤28/255、四角探针仍逐字节相同），
+（差异冻结 ≥6 样本、≤12288 px、逐通道差 ≤28/255、四角探针区仅容忍 ≤16 个
+低差像素，token 级高对比角差异仍拒绝），
 接受时以 `via=rasterization_jitter_tolerance` 事件留痕（jitter_pixels、
 jitter_max_channel_delta、jitter_signature_streak），不改变输出字节。
 失败请求可能只有带原因的 `request_end` 而没有 adapter timing；缺项不代表耗时为 0。
