@@ -27,8 +27,10 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 
+#include "external_pump_schedule.hpp"
 #include "frame_sync_machine.hpp"
 #include "js_error_observer.h"
+#include "passive_snapshot.hpp"
 
 namespace vtx_cef {
 
@@ -38,6 +40,7 @@ struct Options {
   std::string ozone_platform = "headless";  // 仅 a1：headless|x11|wayland
   int width = 1920;
   int height = 1080;
+  int capture_fps = 120;              // OSR capture request, NOT timeline FPS
   bool probe = false;                  // 注入 WebGL/WebGPU 探针
   bool probe_gpu_page = false;         // 额外导航 chrome://gpu 提取特性
   // #110 serve/故障注入：视图实际渲染尺寸（GetViewRect 取此值；0=width/
@@ -53,16 +56,27 @@ struct Options {
 // 单次运行状态。CEF 回调与主循环同在 UI/主线程（external_message_pump +
 // multi_threaded_message_loop=false）；原子量只为 hold 轮询可见性。
 struct RunState {
+  std::atomic<uint64_t> load_starts{0};  // main-frame committed navigation sequence
   std::atomic<bool> loaded{false};        // OnLoadingStateChange(!isLoading)
   std::atomic<bool> closed{false};        // OnBeforeClose
   std::atomic<int> paints{0};             // OnPaint（PET_VIEW）次数
-  std::atomic<bool> pump_scheduled{false};
-  std::atomic<int64_t> pump_delay_ms{0};
+  ExternalPumpSchedule pump_schedule;  // shared process-wide CEF wakeup source
 
   std::mutex mu;                          // 以下四组跨回调/主循环共享
   std::vector<uint8_t> buffer;            // 最近一次全帧 BGRA（上行）
   int width = 0;
   int height = 0;
+  // Passive snapshots are needed by one-shot capture and by the unsigned
+  // exact browser only while collecting its two post-readiness native paints.
+  // Signed sync browsers never need this fallback while capture is unarmed.
+  bool passive_snapshot_enabled = true;
+  uint64_t passive_snapshot_copied_paints = 0;
+  uint64_t passive_snapshot_copied_bytes = 0;
+  uint64_t passive_snapshot_dropped_paints = 0;
+  int SetPassiveSnapshotDemand(bool enabled) {
+    std::lock_guard<std::mutex> lock(mu);
+    return SetPassiveSnapshotDemandLocked(*this, enabled);
+  }
   CefRefPtr<CefBrowser> browser;          // OnAfterCreated 捕获（异步建窗）
   std::string page_probe;                 // WebGL/WebGPU 探针 JSON（首个为准）
   std::string gpu_page_probe;             // chrome://gpu 提取 JSON（首个为准）
@@ -132,14 +146,17 @@ CefSettings MakeWorkerSettings(const std::string& root_cache_path);
 // 透明背景），返回 CreateBrowser 同步结果（浏览器实例经 OnAfterCreated
 // 异步送达 RunState::browser）。
 bool CreateOsrBrowser(CefRefPtr<CefClient> client, const CefString& url,
-                      int width, int height);
+                      int width, int height, int capture_fps);
 
-// 外置泵驱动器（#109 main.cpp 泵语义原样抽提）：OnScheduleMessagePumpWork
-// 唤醒即时干活；空闲保底每 ~8ms 一拍；Until 完成后补一拍。
+// Wake-driven external pump. All browsers share WorkerApp's RunState schedule.
+// The 8ms fallback keeps non-CEF completion predicates/live cleanup responsive;
+// readiness and completion do not incur an unconditional sleep or extra pump.
 struct PumpDriver {
   RunState* state = nullptr;
   void Once();
   bool Until(const std::function<bool()>& done, int timeout_ms);
+  // For capture loops: replace fixed sleeps without pumping/reordering events.
+  void WaitForWork(uint64_t deadline_us, uint64_t max_wait_us = 1000);
 };
 
 class WorkerApp : public CefApp, public CefBrowserProcessHandler {
@@ -199,6 +216,8 @@ class WorkerClient : public CefClient,
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
   // CefLoadHandler
+  void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                   TransitionType transition_type) override;
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading,
                             bool canGoBack, bool canGoForward) override;
   void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,

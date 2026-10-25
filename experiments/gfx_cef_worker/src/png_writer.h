@@ -21,7 +21,9 @@
 #ifndef GFX_CEF_WORKER_PNG_WRITER_H_
 #define GFX_CEF_WORKER_PNG_WRITER_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -62,6 +64,62 @@ void PngEncoderGlobalInit();
 // 确定性：同输入+同参数输出字节逐位一致（selftest 复跑校验）。
 bool EncodePngRgba(const uint8_t* rgba, int width, int height,
                    const PngEncodeOptions& opt, std::vector<uint8_t>* png);
+
+// Move-only encoded bytes. The spng path adopts its malloc buffer instead of
+// copying it into a second allocation; fpng/zlib retain vector-backed storage.
+// Ownership stays with this object until destruction/move/clear, not with a
+// temporary spng context. Encoding failures leave the previous output intact.
+class PngBuffer {
+ public:
+  PngBuffer() = default;
+  PngBuffer(PngBuffer&&) noexcept = default;
+  PngBuffer& operator=(PngBuffer&&) noexcept = default;
+  PngBuffer(const PngBuffer&) = delete;
+  PngBuffer& operator=(const PngBuffer&) = delete;
+  const uint8_t* data() const noexcept {
+    return allocated_ ? allocated_.get() : bytes_.data();
+  }
+  size_t size() const noexcept {
+    return allocated_ ? allocated_size_ : bytes_.size();
+  }
+  bool empty() const noexcept { return size() == 0; }
+  void clear() noexcept {
+    allocated_.reset();
+    allocated_size_ = 0;
+    bytes_.clear();
+  }
+
+ private:
+  struct FreeBytes { void operator()(uint8_t* data) const noexcept; };
+  friend struct PngBufferAccess;
+  std::unique_ptr<uint8_t, FreeBytes> allocated_;
+  size_t allocated_size_ = 0;
+  std::vector<uint8_t> bytes_;
+};
+
+// Owned-buffer overload; identical encoder/options and decoded RGBA semantics.
+bool EncodePngRgba(const uint8_t* rgba, int width, int height,
+                   const PngEncodeOptions& opt, PngBuffer* png);
+
+// Reuse one workspace per sequential encoder lane, never concurrently. Used
+// exclusively with spng, it needs only a bounded tile (16 rows plus one previous row); fpng/zlib require
+// a complete RGBA frame. No source pixels or output buffers are retained here.
+struct PngEncodeWorkspace {
+  std::vector<uint8_t> rgba;
+  std::vector<uint8_t> previous_row;
+};
+
+// Supply `row_count` consecutive compact RGBA rows beginning at `first_row`.
+// Called synchronously, exactly once per row, in increasing order. Its source
+// must not alias workspace storage. Returning
+// false aborts the encode without publishing a partial output. A callback may
+// throw; the caller retains responsibility for translating exceptions to its
+// request failure. Existing vector encoder APIs remain source compatible.
+using PngRowSource = bool (*)(void* user, size_t first_row, size_t row_count,
+                             uint8_t* rgba_out);
+bool EncodePngRgbaRows(int width, int height, const PngEncodeOptions& opt,
+                       PngRowSource source, void* user,
+                       PngEncodeWorkspace* workspace, PngBuffer* png);
 
 // #110 兼容重载（zlib 后端，字节与历史 #110 产物一致；计时段不受影响）。
 bool EncodePngRgba(const uint8_t* rgba, int width, int height,

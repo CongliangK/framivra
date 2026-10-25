@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <unistd.h>
 
 namespace vtx_cef {
 namespace {
@@ -31,6 +32,7 @@ void Send(CefRefPtr<CefFrame> frame, const std::shared_ptr<Document>& d,
   a->SetBool(3, identity && d && d->installed);
   a->SetBool(4, !identity || !d || d->failed);
   a->SetString(5, d ? d->detail : "observer_context_missing");
+  a->SetInt(6, static_cast<int>(getpid()));  // native process, never page JS
   frame->SendProcessMessage(PID_BROWSER, msg);
 }
 class Report final : public CefV8Handler {
@@ -181,22 +183,32 @@ bool ReceiveJsErrorMessage(RunState& state, CefRefPtr<CefBrowser> browser,
   auto& g = state.js_error;
   auto a = message->GetArgumentList();
   if (!frame || !frame->IsMain() || !browser->IsSame(state.browser ? state.browser : browser) ||
-      a->GetSize() != 6 || g.expected_url.empty()) return true;
+      a->GetSize() != 7 || g.expected_url.empty()) return true;
   if (a->GetString(2).ToString() != g.expected_url ||
       frame->GetURL().ToString() != g.expected_url) return true;
   if (name == kReply) {
     if (static_cast<uint32_t>(a->GetInt(0)) != g.sent) return true;
-    if (!g.token.empty() && (g.token != a->GetString(1).ToString() ||
-        g.frame_id != frame->GetIdentifier().ToString())) g.failed = true;
+    const bool identity_matches = g.token.empty() ||
+        (g.token == a->GetString(1).ToString() &&
+         g.frame_id == frame->GetIdentifier().ToString());
+    if (!identity_matches) g.failed = true;
     g.token = a->GetString(1).ToString();
     g.frame_id = frame->GetIdentifier().ToString();
     g.installed = a->GetBool(3);
     g.done = g.sent;
     g.failed = g.failed || !g.installed || a->GetBool(4);
+    // Metadata cannot install an observer, repair an identity or admit pixels.
+    // Both processes run this same binary's seven-field internal message.
+    // Malformed diagnostic values report unknown, without changing proof.
+    g.renderer_pid = identity_matches && g.installed && !g.token.empty() &&
+        a->GetType(6) == VTYPE_INT && a->GetInt(6) > 0
+        ? a->GetInt(6) : 0;
   } else {
     // Pre-binding errors are included in the first fence's sticky snapshot.
     if (g.token.empty() || g.token != a->GetString(1).ToString() ||
         g.frame_id != frame->GetIdentifier().ToString()) return true;
+    g.renderer_pid = a->GetType(6) == VTYPE_INT &&
+        a->GetInt(6) > 0 ? a->GetInt(6) : 0;
     g.failed = true;
   }
   if (g.failed) {
@@ -209,6 +221,12 @@ bool ReceiveJsErrorMessage(RunState& state, CefRefPtr<CefBrowser> browser,
 bool CheckJsCheckpoint(RunState& state, PumpDriver& pump,
     CefRefPtr<CefBrowser> browser, uint64_t deadline) {
   auto& g = state.js_error;
+  // OnBeforeClose is terminal: even retaining CefRefPtr does not authorize
+  // further browser/frame calls. A prior pump may have delivered that callback.
+  if (state.closed.load()) {
+    if (!g.failed) state.last_error = "BROWSER_CLOSED observer_checkpoint";
+    return false;
+  }
   if (g.failed || g.expected_url.empty() ||
       JsCheckpointRemainingMs(NowUs(), deadline) <= 0) return false;
   // Signed int is CEF's transport field. Never reuse a sequence on overflow.
@@ -220,7 +238,15 @@ bool CheckJsCheckpoint(RunState& state, PumpDriver& pump,
   browser->GetMainFrame()->SendProcessMessage(PID_RENDERER, message);
   const auto remaining = JsCheckpointRemainingMs(NowUs(), deadline);
   const bool completed = remaining > 0 &&
-      pump.Until([&] { return g.failed || g.done == g.sent; }, remaining);
+      pump.Until([&] {
+        return state.closed.load() || g.failed || g.done == g.sent;
+      }, remaining);
+  // A successful reply and terminal closure can arrive in the SAME pump turn.
+  // Closure also aborts a missing-reply wait, without consuming its deadline.
+  if (state.closed.load()) {
+    if (!g.failed) state.last_error = "BROWSER_CLOSED observer_checkpoint";
+    return false;
+  }
   const auto result = JsCheckpointResult(g, NowUs(), deadline);
   if (completed && result == JsCheckpointOutcome::kPassed) return true;
   // No authenticated observer error: this is a protocol budget failure, NOT a

@@ -429,7 +429,8 @@ class AtomicWriteKillWindow(unittest.TestCase):
 
 # CEF-free execution of the actual encoder task/wait/receipt source. The fake
 # pump expires one deadline while a controlled writer is blocked, then releases
-# it only on the required drain. No SDK, real deadline or browser is needed.
+# it only on the required drain; a permanently blocked writer must fail-stop.
+# No SDK, real deadline or browser is needed.
 class EncoderCompletion(unittest.TestCase):
     def test_owned_completion_and_failure_receipts(self):
         compiler = shutil.which('c++')
@@ -438,13 +439,15 @@ class EncoderCompletion(unittest.TestCase):
         source = (ROOT / 'experiments/gfx_cef_worker/src/serve.cpp').read_text()
         pool = source[source.index('class MiniPool {'):
                       source.index('// ---------------------------------------------------------------- 帧生产')]
-        start = source.index('      uint64_t t_alpha = 0, t_png = 0, t_disk = 0;')
+        start = source.index('      uint64_t t_alpha = 0, t_png = 0, t_disk = 0')
         end = source.index('    } else {\n      // ================= 模式 2', start)
         delivery = source[start:end]
+        exit_start = source.index('[[noreturn]] void ExitUnclosedServe(')
+        fail_stop = source[exit_start:source.index('// ---------------------------------------------------------------- RunServe', exit_start)]
         with tempfile.TemporaryDirectory() as directory:
             cpp = Path(directory) / 'completion.cpp'
             exe = Path(directory) / 'completion'
-            cpp.write_text(_ENCODER_PREFIX + pool + _ENCODER_MAIN_START + delivery + _ENCODER_MAIN_END)
+            cpp.write_text(_ENCODER_PREFIX + pool + fail_stop + _ENCODER_MAIN_START + delivery + _ENCODER_MAIN_END)
             subprocess.run([compiler, '-std=c++17', '-pthread', '-O0',
                             str(cpp), '-o', str(exe)], check=True, timeout=30,
                            capture_output=True, text=True)
@@ -453,6 +456,15 @@ class EncoderCompletion(unittest.TestCase):
                 with self.subTest(case=case):
                     subprocess.run([str(exe), case], check=True, timeout=5,
                                    capture_output=True, text=True)
+            # The real _Exit primitive must defeat a join on this deliberately
+            # stuck native thread, with no receipt, next request, or stack unwind.
+            for case in ('timeout_stuck', 'timeout_stuck_stderr_owned'):
+                with self.subTest(case=case):
+                    stuck = subprocess.run([str(exe), case], timeout=5,
+                                           capture_output=True, text=True,
+                                           start_new_session=True)
+                    self.assertEqual(stuck.returncode, 4, stuck.stdout + stuck.stderr)
+                    self.assertNotIn('UNSAFE_UNWIND', stuck.stderr)
 
 
 _ENCODER_PREFIX = r'''
@@ -461,6 +473,7 @@ _ENCODER_PREFIX = r'''
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <mutex>
 #include <stdexcept>
@@ -472,17 +485,33 @@ static std::mutex gate_mu;
 static std::condition_variable gate_cv;
 static bool writer_entered = false, writer_released = false;
 static std::atomic<bool> committed{false};
-static std::atomic<int> receipts{0}, requests{0};
+static std::atomic<int> receipts{0}, requests{0}, completed_logs{0};
+static std::atomic<int> png_owners{0}, encode_calls{0};
 static bool IsTimeout() { return test_case.rfind("timeout", 0) == 0; }
+static bool IsStuck() { return test_case.rfind("timeout_stuck", 0) == 0; }
 static uint64_t NowUs() { return 1; }
-static void UnpremultiplyToRgba(const uint8_t*, size_t, uint8_t*) {}
-static bool EncodePngRgba(const uint8_t*, int, int, int, std::vector<uint8_t>* png) {
+struct PngEncodeWorkspace {};
+struct PngBuffer {
+  std::vector<uint8_t> bytes;
+  PngBuffer() { ++png_owners; }
+  ~PngBuffer() { --png_owners; }
+  const uint8_t* data() const { return bytes.data(); }
+  size_t size() const { return bytes.size(); }
+};
+static bool EncodePngBgraPremultiplied(const uint8_t* bgra, int width, int height,
+    size_t stride, int, PngEncodeWorkspace* workspace, PngBuffer* png,
+    uint64_t* alpha_us) {
+  assert(width == 1 && height == 1 && stride == 4);
+  assert(workspace && png && alpha_us && bgra[0] == 1 && bgra[3] == 4);
+  ++encode_calls;
   if (test_case == "encode_throw") throw std::runtime_error("encoder");
-  png->assign(1, 42);
+  *alpha_us = 0;
+  png->bytes.assign(1, 42);
   return test_case != "encode_false";
 }
 static bool AtomicWriteBytes(const std::string&, const uint8_t*, size_t) {
   if (IsTimeout()) {
+    if (test_case == "timeout_stuck_stderr_owned") ::flockfile(stderr);
     std::unique_lock<std::mutex> lock(gate_mu);
     writer_entered = true;
     gate_cv.notify_all();
@@ -501,6 +530,9 @@ static void FillReceipt(FrameSlotHeader* h, const ProduceResult& r, uint64_t,
   h->status_code = r.status;
 }
 static bool SendAll(int, const void* data, size_t) {
+  assert(!IsStuck());  // No receipt before permanent task exit.
+  assert(png_owners.load() == 0);  // Encoded bytes no longer owned by a live task.
+  assert(completed_logs.load() == receipts.load() + 1);
   auto* receipt = static_cast<const FrameSlotHeader*>(data);
   if (IsTimeout()) {
     assert(writer_released);  // No receipt while worker still owns captures.
@@ -517,13 +549,18 @@ static bool SendAll(int, const void* data, size_t) {
 struct FakePump {
   unsigned calls = 0;
   bool Until(const std::function<bool()>& done, int timeout_ms) {
-    assert(timeout_ms == 60000);
+    assert(timeout_ms == (IsTimeout() && calls > 0 ? 5000 : 60000));
     ++calls;
     if (IsTimeout() && calls == 1) {
       std::unique_lock<std::mutex> lock(gate_mu);
       gate_cv.wait(lock, [] { return writer_entered; });
       assert(!done());
       return false;
+    }
+    if (IsStuck()) {
+      assert(calls == 2 && receipts.load() == 0 && requests.load() == 1);
+      assert(writer_entered && !writer_released && !committed.load());
+      return false;  // The grace expires while the encoder still owns its data.
     }
     if (IsTimeout()) {
       // The drain must happen before any error receipt, reuse or scope exit.
@@ -540,11 +577,27 @@ struct FakePump {
 _ENCODER_MAIN_START = r'''
 int main(int argc, char** argv) {
   assert(argc == 2); test_case = argv[1];
+  struct Sentinel {
+    ~Sentinel() {
+      if (IsStuck()) std::fputs("UNSAFE_UNWIND\n", stderr);
+    }
+  } sentinel;
   MiniPool pool(2); FakePump pump;
   struct { std::vector<uint8_t> cap_staging{1, 2, 3, 4}; } state;
   struct { int png = 0; } opt;
   struct { unsigned request_id = 1; int frame_index = 0; } req;
-  std::vector<uint8_t> rgba(4);
+  PngEncodeWorkspace encode_workspace;
+  const uint64_t capture_wall_us = 0;
+  auto finish_sync = [&](uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                         uint64_t, int status) {
+    assert(pool.Done() && png_owners.load() == 0);
+    if (IsTimeout()) {
+      assert(writer_released && status == kStatusTimeout);
+    } else {
+      assert(status == (test_case == "ok" ? kStatusOk : kStatusJsErr));
+    }
+    ++completed_logs;
+  };
   uint64_t run_id = 1; unsigned ok_replies = 0; int conn = 0, exit_code = 0;
   std::string out_path = "same-output.png";
   for (int index = 0; index < 2; ++index) {
@@ -555,6 +608,8 @@ _ENCODER_MAIN_END = r'''
   assert(pool.Done());
   assert(requests.load() == (IsTimeout() ? 1 : 2));
   assert(receipts.load() == requests.load());
+  assert(completed_logs.load() == requests.load());
+  assert(encode_calls.load() == requests.load() && png_owners.load() == 0);
   assert(ok_replies == (test_case == "ok" ? 2u : 0u));
   assert(exit_code == (IsTimeout() ? 4 : 0));
 }

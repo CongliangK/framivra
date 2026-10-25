@@ -19,6 +19,7 @@ tests/gfx/test_cef_worker_shm.py 以 shm_ring_selftest --dump-ring 跨语言锁�
 """
 from __future__ import annotations
 
+import math
 import mmap
 import os
 import socket
@@ -37,6 +38,7 @@ REQUEST_MAGIC = 0x56545851     # "VTXQ"
 NOTICE_MAGIC = 0x5654584E      # "VTXN"
 HELLO_MAGIC = 0x56545848       # "VTXH"
 PROTOCOL_VERSION = 1
+HELLO_FLAG_PAIRED_EXACT = 1 << 1  # active paired exact path, not generic protocol-v1 support
 
 STATUS_OK = 0
 STATUS_TIMEOUT = 1
@@ -48,6 +50,7 @@ FLAG_WANT_SLOT = 1 << 0
 FLAG_DUMP_RAW = 1 << 1
 
 RING_SLOTS = 4
+MAX_VIEWPORT_SIZE = 16384  # ShmRingWriter::Create native capacity guard
 MAX_OUT_PNG_PATH = 39  # 不含 NUL
 
 # 定长消息（小端 packed；与 C++ 原生偏移一致）
@@ -103,6 +106,14 @@ def _align64(v: int) -> int:
 
 
 @dataclass(frozen=True)
+class _PendingPng:
+    frame_index: int
+    request_id: int
+    deadline: float | None
+    output_fd: int | None
+
+
+@dataclass(frozen=True)
 class FrameReceipt:
     """模式 1 计时回执（FrameSlotHeader 解析面）。"""
     header: dict
@@ -143,7 +154,7 @@ class SlotFrame:
 
 
 class CefWorkerClient:
-    """单连接帧服务客户端（协议见 IPC_PROTOCOL.md）。"""
+    """Single-owner (not thread-safe) frame client; see IPC_PROTOCOL.md."""
 
     def __init__(self, sock: socket.socket, shm_fd: int, hello: dict):
         self._sock = sock
@@ -155,6 +166,7 @@ class CefWorkerClient:
             cleanup.callback(self._mm.close)
             self._validate_ring(size)
             self._closed = False
+            self._pending_png = None
             cleanup.pop_all()
 
     # ------------------------------------------------------------ 连接
@@ -177,21 +189,31 @@ class CefWorkerClient:
 
     @classmethod
     def _connect(cls, path, connect_timeout, ready_timeout):
+        if not math.isfinite(connect_timeout) or connect_timeout <= 0:
+            raise ValueError("worker connect timeout must be finite and positive")
         deadline = time.monotonic() + connect_timeout
         last_err = None
         while True:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                sock.connect(path)
-                break
-            except (FileNotFoundError, ConnectionRefusedError) as exc:
-                sock.close()
-                last_err = exc
-                if time.monotonic() >= deadline:
-                    raise CefWorkerError(
-                        f"连接 worker 失败: {path} ({last_err})") from exc
-                time.sleep(0.05)
-        return cls.from_socket(sock, ready_timeout)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CefWorkerError(
+                    f"连接 worker 超时: {path} ({last_err})") from last_err
+            # Own every attempt, including denied/failed connect and interruption.
+            # A full listen backlog must not block beyond the startup deadline.
+            with ExitStack() as cleanup:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                cleanup.callback(sock.close)
+                sock.settimeout(remaining)
+                try:
+                    sock.connect(path)
+                except (FileNotFoundError, ConnectionRefusedError) as exc:
+                    last_err = exc
+                except socket.timeout as exc:
+                    raise CefWorkerError(f"连接 worker 超时: {path}") from exc
+                else:
+                    cleanup.pop_all()  # from_socket owns it, including Hello failure
+                    return cls.from_socket(sock, ready_timeout)
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
     @classmethod
     def from_socket(cls, sock, ready_timeout=30.0):
@@ -323,17 +345,22 @@ class CefWorkerClient:
             buf += chunk
         return buf
 
-    def _send_request(self, frame_index: int, out_path: str, flags: int,
-                      request_id: int, expected_wh) -> None:
+    @staticmethod
+    def _request_packet(frame_index: int, out_path: str, flags: int,
+                        request_id: int, expected_wh) -> bytes:
         if len(out_path.encode("utf-8")) > MAX_OUT_PNG_PATH or "\0" in out_path:
             raise CefWorkerError(
-                f"out_png_path 超长（{len(out_path)}>{MAX_OUT_PNG_PATH}，"
+                f"out_png_path 超长（{len(out_path.encode('utf-8'))}>{MAX_OUT_PNG_PATH}，"
                 "64B 定长请求面约束；请用短路径）")
         exp_w, exp_h = expected_wh
-        packet = struct.pack(
+        return struct.pack(
             _REQUEST_FMT, REQUEST_MAGIC, PROTOCOL_VERSION, flags, request_id,
             frame_index, exp_w, exp_h, out_path.encode("utf-8"))
-        self._sock.sendall(packet)
+
+    def _send_request(self, frame_index: int, out_path: str, flags: int,
+                      request_id: int, expected_wh) -> None:
+        self._sock.sendall(self._request_packet(
+            frame_index, out_path, flags, request_id, expected_wh))
 
     def _parse_header_at(self, offset: int) -> dict:
         values = struct.unpack_from(_HEADER_FMT, self._mm, offset)
@@ -351,51 +378,100 @@ class CefWorkerClient:
 
     # ------------------------------------------------------------ 公共 API
 
-    def request_png(self, frame_index: int, out_png_path,
-                    request_id: int = 0, expected_wh=(0, 0),
-                    timeout: float = 90.0, *, worker_relative=False) -> FrameReceipt:
-        path = str(out_png_path)
-        fd = None
-        if not worker_relative and len(os.path.abspath(path).encode()) > MAX_OUT_PNG_PATH:
-            if sys.platform == 'darwin':
-                raise CefWorkerError("Darwin PNG output requires worker-relative basename")
-            parent, name = os.path.split(os.path.abspath(path))
-            fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            path = f"/proc/{os.getpid()}/fd/{fd}/{name}"
-        try:
-            return self._request_png(frame_index, path, request_id, expected_wh,
-                                     timeout, worker_relative=worker_relative)
-        finally:
-            if fd is not None:
-                os.close(fd)
+    def submit_png(self, frame_index: int, out_png_path,
+                   request_id: int = 0, expected_wh=(0, 0),
+                   timeout: float = 90.0, *, worker_relative=False) -> None:
+        """Send one Mode 1 request; receive_png() must consume it before another.
 
-    def _request_png(self, frame_index: int, out_png_path,
-                    request_id: int = 0, expected_wh=(0, 0),
-                    timeout: float = 90.0, *, worker_relative=False) -> FrameReceipt:
-        """模式 1：worker 原地落盘 PNG，回 FrameSlotHeader 计时回执。"""
-        path = str(out_png_path)
+        Splitting send/receive overlaps host validation/commit of the preceding
+        file with native work. It does NOT imply a parallel native worker: only
+        one request is ever in flight, including on protocol-v1 workers without
+        a capability handshake. The output directory fd and absolute deadline
+        belong to this request until its receipt is consumed or the client closes.
+        """
+        if self._closed:
+            raise CefWorkerError("PNG client is closed")
+        if self._pending_png is not None:
+            raise CefWorkerError("PNG request already pending; receive it before submitting another")
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("PNG request timeout must be finite and positive, or None")
+        path, fd = str(out_png_path), None
         if worker_relative:
             if not path or path in (".", "..") or Path(path).name != path:
                 raise CefWorkerError("worker-relative output must be a plain basename")
         else:
             path = os.path.abspath(path)
-        self._send_request(frame_index, path, 0, request_id, expected_wh)
-        self._sock.settimeout(timeout)
-        raw = self._recv_exact(self._sock, 128, "模式 1 回执")
-        (magic, version, status) = struct.unpack_from("<IHH", raw, 0)
-        if magic != SLOT_MAGIC or version != PROTOCOL_VERSION:
-            raise CefWorkerError(f"回执 magic/版本不符: {magic:#x}/{version}")
-        values = struct.unpack_from(_HEADER_FMT, raw, 0)
-        header = dict(zip(_HEADER_FIELDS, values))
-        self._validate_slot_header(header, request_id, frame_index)
-        receipt = FrameReceipt(header=header)
-        if status != STATUS_OK:
-            raise CefWorkerError(
-                f"帧请求失败 status={status}（1=TIMEOUT 2=SIZE_MISMATCH "
-                f"3=JS_ERR）：w={header['width']} h={header['height']} "
-                f"rejected={header['rejected_paints']}",
-                status_code=status, detail=header)
-        return receipt
+            if len(path.encode("utf-8")) > MAX_OUT_PNG_PATH:
+                if sys.platform == 'darwin':
+                    raise CefWorkerError("Darwin PNG output requires worker-relative basename")
+                parent, name = os.path.split(path)
+                fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                path = f"/proc/{os.getpid()}/fd/{fd}/{name}"
+        try:
+            # Local argument failures occur before any bytes are sent. They may
+            # be corrected without poisoning the otherwise untouched session.
+            packet = self._request_packet(frame_index, path, 0, request_id, expected_wh)
+        except BaseException:
+            if fd is not None:
+                os.close(fd)
+            raise
+        deadline = None if timeout is None else time.monotonic() + timeout
+        self._pending_png = _PendingPng(frame_index, request_id, deadline, fd)
+        try:
+            self._sock.settimeout(timeout)
+            self._sock.sendall(packet)
+        except BaseException as error:
+            self._png_transport_error(error)
+
+    def _png_transport_error(self, error):
+        # A partially sent request or unread/corrupt receipt cannot be retried
+        # on this stream: doing so might consume another frame's completion.
+        try:
+            self.close()
+        finally:
+            if isinstance(error, (OSError, ValueError, struct.error)):
+                raise CefWorkerError(f"PNG transport/layout failed: {error}") from error
+            raise error
+
+    def receive_png(self) -> FrameReceipt:
+        """Consume the single pending PNG receipt with one end-to-end deadline."""
+        if self._closed:
+            raise CefWorkerError("PNG client is closed")
+        pending = self._pending_png
+        if pending is None:
+            raise CefWorkerError("no PNG request pending")
+        try:
+            raw = self._recv_exact(self._sock, 128, "模式 1 回执", deadline=pending.deadline)
+            values = struct.unpack_from(_HEADER_FMT, raw, 0)
+            header = dict(zip(_HEADER_FIELDS, values))
+            self._validate_slot_header(header, pending.request_id, pending.frame_index)
+            status = header["status_code"]
+            if status not in (STATUS_OK, STATUS_TIMEOUT, STATUS_SIZE_MISMATCH,
+                              STATUS_JS_ERR, STATUS_DUPLICATE):
+                raise CefWorkerError(f"unknown PNG receipt status={status}")
+            # Only a fully received, identity-bound response clears admission.
+            self._pending_png = None
+            if pending.output_fd is not None:
+                os.close(pending.output_fd)
+            if status != STATUS_OK:
+                raise CefWorkerError(
+                    f"帧请求失败 status={status}（1=TIMEOUT 2=SIZE_MISMATCH "
+                    f"3=JS_ERR 4=DUPLICATE）：w={header['width']} h={header['height']} "
+                    f"rejected={header['rejected_paints']}",
+                    status_code=status, detail=header)
+            return FrameReceipt(header=header)
+        except BaseException as error:
+            if isinstance(error, CefWorkerError) and error.status_code is not None:
+                raise  # a complete bound worker error leaves no ambiguous bytes
+            self._png_transport_error(error)
+
+    def request_png(self, frame_index: int, out_png_path,
+                    request_id: int = 0, expected_wh=(0, 0),
+                    timeout: float = 90.0, *, worker_relative=False) -> FrameReceipt:
+        """Synchronous compatibility API, using the same bounded request state."""
+        self.submit_png(frame_index, out_png_path, request_id, expected_wh,
+                        timeout, worker_relative=worker_relative)
+        return self.receive_png()
 
     def request_slot(self, frame_index: int, request_id: int = 0,
                      dump_raw_path=None, timeout: float = 90.0) -> SlotFrame:
@@ -420,6 +496,8 @@ class CefWorkerClient:
         flags = FLAG_WANT_SLOT | (FLAG_DUMP_RAW if dump else 0)
         if self._closed:
             raise CefWorkerError("slot client is closed")
+        if self._pending_png is not None:
+            raise CefWorkerError("PNG request pending; cannot mix slot and PNG receipts")
         try:
             self._send_request(frame_index, path, flags, request_id, (0, 0))
             self._sock.settimeout(timeout)
@@ -485,7 +563,12 @@ class CefWorkerClient:
             try:
                 self._mm.close()
             finally:
-                os.close(self._shm_fd)
+                try:
+                    os.close(self._shm_fd)
+                finally:
+                    pending, self._pending_png = self._pending_png, None
+                    if pending is not None and pending.output_fd is not None:
+                        os.close(pending.output_fd)
 
     def __enter__(self):
         return self

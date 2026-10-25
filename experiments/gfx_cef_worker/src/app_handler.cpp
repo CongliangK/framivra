@@ -2,9 +2,9 @@
 // #110 增 serve 捕获路径与共享装配件）。
 #include "app_handler.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <thread>
 
 #include "frame_pipeline.h"
 #include "shm_ring.hpp"
@@ -77,9 +77,9 @@ void WorkerApp::OnBeforeCommandLineProcessing(
 }
 
 void WorkerApp::OnScheduleMessagePumpWork(int64_t delay_ms) {
-  // external_message_pump 外置泵契约：CEF 有活要干时叫醒主循环。
-  state_->pump_delay_ms.store(delay_ms, std::memory_order_relaxed);
-  state_->pump_scheduled.store(true, std::memory_order_relaxed);
+  // Browser-process schedule is shared by every OSR browser. Child-process
+  // placeholder apps have no RunState and must not dereference one.
+  if (state_) state_->pump_schedule.Schedule(delay_ms, ExternalPumpSchedule::NowUs());
 }
 
 // ---------------------------------------------------------------- 探针 JS
@@ -182,16 +182,29 @@ void WorkerClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
 }
 
 void WorkerClient::OnBeforeClose(CefRefPtr<CefBrowser> /*browser*/) {
-  state_->closed.store(true, std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> lock(state_->mu);
+    state_->browser = nullptr;  // break client -> owned state -> browser cycle
+  }
+  state_->closed.store(true, std::memory_order_release);
+}
+
+void WorkerClient::OnLoadStart(CefRefPtr<CefBrowser> /*browser*/,
+                               CefRefPtr<CefFrame> frame,
+                               TransitionType /*transition_type*/) {
+  if (frame && frame->IsMain()) {
+    // A same-URL LoadURL must not mistake the previous document's loaded bit
+    // or an old observer context for completion of the newly requested load.
+    state_->loaded.store(false, std::memory_order_relaxed);
+    state_->load_starts.fetch_add(1, std::memory_order_release);
+  }
 }
 
 void WorkerClient::OnLoadingStateChange(CefRefPtr<CefBrowser> /*browser*/,
                                         bool isLoading,
                                         bool /*canGoBack*/,
                                         bool /*canGoForward*/) {
-  if (!isLoading) {
-    state_->loaded.store(true, std::memory_order_relaxed);
-  }
+  state_->loaded.store(!isLoading, std::memory_order_release);
 }
 
 void WorkerClient::OnLoadError(CefRefPtr<CefBrowser> /*browser*/,
@@ -227,13 +240,25 @@ void WorkerClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
   std::lock_guard<std::mutex> lock(state_->mu);
 
   if (state_->sync_machine != nullptr && state_->sync_capture_armed) {
-    // ===== #114 sync 模式：五阶段状态机闸门（同 UI 线程调用）。
-    // S4 前早期丢弃 / 尺寸不符 / 陈旧与半更新签名拒收 / 精确匹配接受并
-    // 原地恢复两个绑定原像素 —— 判定细节见 frame_sync_machine.cpp。
-    // A paint is only a candidate. FeedPaint can emit S5, so it must run
-    // outside this callback AFTER a renderer error fence for these bytes.
-    if (!state_->js_error.failed && !state_->js_paint_pending) {
-      state_->js_paint_candidate.assign(src, src + static_cast<size_t>(width) * height * 4u);
+    // Reject only paints that provably CANNOT advance a signed phase. This
+    // avoids an 8 MiB copy and renderer round-trip for every early/stale 1080p
+    // paint. The prefilter is pure; accounting runs through the SAME verifier.
+    // It never accepts or supplies output, even for a matching unsigned frame.
+    const auto w = static_cast<uint32_t>(width);
+    const auto h = static_cast<uint32_t>(height);
+    const size_t stride = width > 0 ? static_cast<size_t>(width) * 4u : 0;
+    if (!state_->sync_machine->PaintMayAdvance(src, stride, w, h)) {
+      const auto verdict = state_->sync_machine->FeedPaint(src, stride, w, h,
+                                                         nullptr, NowUs());
+      if (verdict.disposition == fsync::PaintDisposition::kSizeMismatch) {
+        state_->sync_size_mismatch = true;
+        state_->sync_actual_w = w;
+        state_->sync_actual_h = h;
+      }
+    } else if (!state_->js_error.failed && !state_->js_paint_pending) {
+      // Positive candidates remain immutable and cannot reach S5 until the
+      // consumer completes its renderer error fence AFTER this native paint.
+      state_->js_paint_candidate.assign(src, src + stride * h);
       state_->js_paint_w = width;
       state_->js_paint_h = height;
       state_->js_paint_pending = true;
@@ -274,15 +299,11 @@ void WorkerClient::OnPaint(CefRefPtr<CefBrowser> /*browser*/,
     return;
   }
 
-  // ===== #109 一次性渲染路径（行为不变）：全帧缓存 =====
-  const size_t bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-  // buffer 生命周期仅限回调内 —— 立即整帧拷贝（CEF 给的是全视图尺寸，
-  // dirtyRects 只是变化区提示）。
-  state_->buffer.assign(src, src + bytes);
-  state_->width = width;
-  state_->height = height;
-  state_->paints.store(state_->paints.load(std::memory_order_relaxed) + 1,
-                       std::memory_order_relaxed);
+  // One-shot capture still snapshots every paint. Exact unsigned capture asks
+  // for snapshots only after readiness and until two distinct samples exist;
+  // signed idle/encoding paints have no consumer and must not copy 8 MiB.
+  CapturePassiveSnapshotLocked(*state_, src, width, height,
+                               state_->sync_machine != nullptr);
 }
 
 bool WorkerClient::OnConsoleMessage(CefRefPtr<CefBrowser> /*browser*/,
@@ -335,13 +356,17 @@ CefSettings MakeWorkerSettings(const std::string& root_cache_path) {
 }
 
 bool CreateOsrBrowser(CefRefPtr<CefClient> client, const CefString& url,
-                      int width, int height) {
+                      int width, int height, int capture_fps) {
   CefWindowInfo window_info;
   window_info.SetAsWindowless(0);
   window_info.shared_texture_enabled = false;
   window_info.external_begin_frame_enabled = true;
   CefBrowserSettings browser_settings;
   browser_settings.background_color = 0;  // 透明（gfxA 协议要求 alpha 通道）
+  // Locked CEF 154 forwards positive rates to the minimum capture period.
+  // This is a requested OSR sampling rate, NOT actual callback throughput or
+  // timeline FPS: external BeginFrame cadence/coalescing can still limit it.
+  browser_settings.windowless_frame_rate = capture_fps;
   (void)width;  // OSR 视口由 GetViewRect 提供（client 持有 Options）
   (void)height;
   return CefBrowserHost::CreateBrowser(window_info, client, url,
@@ -349,27 +374,37 @@ bool CreateOsrBrowser(CefRefPtr<CefClient> client, const CefString& url,
 }
 
 void PumpDriver::Once() {
-  state->pump_scheduled.store(false, std::memory_order_relaxed);
+  // Consume before CEF: reentrant/on-another-thread callbacks remain pending.
+  state->pump_schedule.ConsumeDue(ExternalPumpSchedule::NowUs());
   CefDoMessageLoopWork();
 }
 
+void PumpDriver::WaitForWork(uint64_t deadline_us, uint64_t max_wait_us) {
+  const uint64_t now = ExternalPumpSchedule::NowUs();
+  if (now >= deadline_us || max_wait_us == 0) return;
+  const uint64_t wait = std::min(max_wait_us, deadline_us - now);
+  state->pump_schedule.WaitUntil(now + wait);
+}
+
 bool PumpDriver::Until(const std::function<bool()>& done, int timeout_ms) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  int idle = 0;
-  while (!done()) {
-    if (std::chrono::steady_clock::now() >= deadline) {
-      return false;
-    }
-    if (state->pump_scheduled.load(std::memory_order_relaxed) ||
-        ++idle >= 4) {
-      idle = 0;
+  if (done()) return true;
+  if (timeout_ms <= 0) return false;
+  const uint64_t deadline = ExternalPumpSchedule::DeadlineUs(
+      ExternalPumpSchedule::NowUs(), timeout_ms);
+  uint64_t fallback = 0;  // first iteration always pumps immediately
+  for (;;) {
+    const uint64_t now = ExternalPumpSchedule::NowUs();
+    if (now >= deadline) return false;
+    if (now >= fallback || state->pump_schedule.deadline_us() <= now) {
       Once();
+      if (done()) return true;  // no extra paint/fence after completion
+      const uint64_t after_pump = ExternalPumpSchedule::NowUs();
+      if (after_pump >= deadline) return false;
+      fallback = after_pump + std::min<uint64_t>(8000, deadline - after_pump);
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    state->pump_schedule.WaitUntil(std::min(deadline, fallback));
+    if (done()) return true;
   }
-  Once();
-  return true;
 }
 
 }  // namespace vtx_cef

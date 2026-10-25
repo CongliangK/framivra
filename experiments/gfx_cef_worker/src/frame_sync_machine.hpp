@@ -26,7 +26,8 @@
 // 本文件是其 C++ 消费镜像：Clean wire 名 clean_1px_restore 实为 (0,0)/(1,0)
 // 两像素；P1 xor 键 0x5A / P2 加性键 0x3C / 系数 (16,22) / α=254 均为冻结值，
 // 禁止回退旧单像素公式或只验第一像素。Diagnostic 为双对角 8×8 块。
-// 帧号签名不编码 document_gen/request_id —— 跨导航/重启后同帧号的世代隔离
+// Clean/Diagnostic 签名不编码 document_gen/request_id；Exact 另验
+// frame16+request32 三带双角签名，防同帧号旧请求重放。前两者的跨导航世代隔离
 // 由宿主侧机制承担（S4 前早期丢弃、请求间 S0 缴械、晚到就绪回调三元组
 // 核对拒收、S4 泵送归属构造性绑定），证据见 frame_sync_selftest 与 JSONL。
 #ifndef GFX_CEF_WORKER_FRAME_SYNC_MACHINE_H_
@@ -60,8 +61,9 @@ const char* DriveModeName(DriveMode m);
 // kExact: two opaque, disjoint corner probes in the SAME document. Both
 // paints must verify; all unoccluded bytes must agree. Cross-copy restores the
 // actual covered pixels (including alpha), without page hooks or neighbors.
-// A separate never-instrumented navigation supplies a mandatory full-frame
+// A separate never-instrumented document supplies a mandatory full-frame
 // equality VETO only. It supplies neither target identity nor restoration bytes.
+// Exact requests encode frame16 + request32 in three horizontal bands of each probe; probe footprint and restoration are unchanged.
 enum class CanaryMode : uint8_t { kClean = 0, kDiagnostic = 1, kExact = 2 };
 
 // ---------------------------------------------------------------- 计数器面
@@ -82,7 +84,7 @@ struct Counters {
 // ---------------------------------------------------------------- Paint 判定
 
 enum class PaintDisposition : uint8_t {
-  kEarlyDropped = 0,   // S4 前：直接丢弃（工单：异步残余 Paint）
+  kEarlyDropped = 0,   // pre-S4 or an exact intermediate phase (not deliverable)
   kLateDropped = 1,    // S5 后 / S0：本请求已完成或未开始
   kSizeMismatch = 2,   // width/height ≠ 期望
   kRejectedStale = 3,  // S4 中签名不匹配（含半更新/无签名/归因失败）
@@ -93,10 +95,11 @@ struct PaintVerdict {
   PaintDisposition disposition = PaintDisposition::kEarlyDropped;
   int32_t decoded_frame = -1;        // 双像素候选交集单例（接受时 == 目标帧，
                                      // 来自解码结果而非请求值回显）
+  uint32_t decoded_request_id = 0;  // exact: decoded from BOTH probes
   bool half_signature = false;       // 双像素恰一者与期望签名逐字节相等
-  bool restored = false;             // 接受后已恢复两个绑定原像素
-  bool restore_from_reported = false;  // true=页面上报原像素；false=行 1 邻域
-                                       // 兜底（仅 fixture 证明等值时合法）
+  bool restored = false;             // clean originals / exact native corners restored
+  bool restore_from_reported = false;  // false: exact native cross-capture, or
+                                       // clean neighbor fallback (fixture-only)
   uint64_t accepted_elapsed_us_since_ready = 0;  // S3 就绪信号→S5 接受
   uint64_t capture_us = 0;           // 接受帧紧凑拷贝+恢复耗时
 };
@@ -139,7 +142,9 @@ class FrameSyncStateMachine {
 
   // S0 → S1：发出导航/求值（宿主已完成 LoadURL / ExecuteJavaScript 装配）。
   // 契约：仅 S0 可开局；request_id 与在途/上一请求重复 → 拒绝（重复请求
-  // 对抗面），状态不变。成功时记录 request_begin 事件并锁定三元组。
+  // 对抗面），状态不变。Exact IDs must be nonzero and strictly increasing
+  // for the machine lifetime, including failed requests; wrap/replay is refused.
+  // 成功时记录 request_begin 事件并锁定三元组。
   bool BeginRequest(const RequestDesc& desc, uint64_t now_us);
 
   // 页面就绪回调：kAssetsReady → S1→S2；kCanarySet → S2→S3（记录
@@ -152,30 +157,83 @@ class FrameSyncStateMachine {
   // 证明 —— 提交完成只能由 S5 真实像素验签确立）。
   bool EnterPumping(uint64_t now_us);
 
-  // Only in exact S1: native pixels from a separate fresh navigation that has
-  // NEVER had witness DOM. Equality can veto the signed reconstruction, never
-  // establish its frame identity or contribute output/restoration bytes.
-  bool SetExactBaseline(const uint8_t* src, size_t stride, uint32_t width,
-                        uint32_t height, uint64_t now_us);
+  // Negative-only prefilter: false means FeedPaint cannot advance a signed
+  // phase or accept. This permits early/late/stale/invalid OnPaint rejection
+  // without allocating a full frame or running a renderer error fence. True
+  // ALWAYS requires immutable native bytes + a successful post-paint fence;
+  // it is NOT acceptance, full-content validation, or compositor completion.
+  bool PaintMayAdvance(const uint8_t* src, size_t stride, uint32_t width,
+                       uint32_t height) const;
 
   // OnPaint 喂入（UI 线程同步调用）。
   //   src：CEF OnPaint 原始 BGRA_PREMUL 缓冲（行步长 stride 字节）；
   //   dst：接受帧紧凑拷贝目标（可空 = 只判定不拷贝，供早期丢弃/拒收路径
-  //        零带宽）；接受时逐行紧凑拷贝后原地恢复 (0,0)/(0,1) 两像素。
+  //        零带宽）；接受时逐行紧凑拷贝后原地恢复 (0,0)/(1,0) 两像素（clean）。
   // 判定序（工单口径）：S4 前直接丢弃 → 尺寸卫兵 → 双像素逐字节全等
   // （Clean）/双对角 8×8 块核验（Diagnostic）→ 匹配即 S5 + 恢复 + 计时。
+  // Exact instead requires both relocated signed phases and the separate veto.
   PaintVerdict FeedPaint(const uint8_t* src, size_t stride, uint32_t width,
                          uint32_t height, uint8_t* dst, uint64_t now_us);
 
-  // Only after BOTH signed phases and an initial baseline mismatch. Adapter
-  // must use a fresh browser that has NEVER received witness DOM, validate its
-  // baseline-ready identity, and feed distinct native paints after readiness.
+  // Same verifier for an already fenced, compact immutable native candidate.
+  // On the first exact phase its storage is transferred (swap) into
+  // the machine instead of copying the whole frame. All rejected candidates
+  // and other modes retain their storage; no borrowed CEF pointer is retained.
+  PaintVerdict FeedOwnedPaint(std::vector<uint8_t>& src, uint32_t width,
+                              uint32_t height, uint8_t* dst, uint64_t now_us);
+
+  // Record the native OnPaint counter observed when the adapter consumed a
+  // matching unsigned baseline-ready event. Exactly once per exact request;
+  // both proving samples must be strictly newer. Not a readiness/paint proof
+  // by itself; independent post-paint JS fences remain the adapter's duty.
+  bool ArmExactBaseline(const PageEvent& identity, uint64_t ready_paint_sequence,
+                        uint64_t now_us);
+
+  // Only after BOTH signed phases. Adapter must use a browser that has NEVER
+  // received witness DOM, validate baseline-ready identity, and feed distinct
+  // post-readiness native paints. Exact mode requires a strictly increasing,
+  // nonzero native paint_sequence (not a counter of calls to this method).
   // Two consecutive full-byte equalities veto the frozen candidate; baseline
   // bytes NEVER supply output or frame identity. Other calls leave dst intact.
+  //
+  // Rasterization-jitter tolerance: two independent renderer processes can
+  // rasterize the SAME static page into rasters that disagree on
+  // anti-aliased/gradient-quantized pixels. Measured over a full 900-frame
+  // run (1080p, 20 frozen divergences): 2-91 px at AA edges, 822-1599 px
+  // and 10050-10214 px at gradient quantization, channel deltas <= 28/255;
+  // transient catching-up rasters change BETWEEN samples and recover to
+  // byte equality on their own. Byte equality is unattainable for the
+  // frozen cases and the historical path (treat every mismatch as
+  // catch-up-able staleness) stalled the request until pump_timeout. A
+  // divergence qualifies as jitter ONLY when it stays within
+  // kJitterMaxPixels/kJitterMaxChannelDelta AND repeats with an IDENTICAL
+  // diff signature for kJitterStreakTarget consecutive samples (a frozen
+  // raster, not catching-up content). Acceptance then publishes the
+  // probe-authenticated candidate unchanged and records the tolerated diff
+  // in the exact_baseline_mismatch/exact_baseline_equal events. Anything
+  // larger or unstable keeps the fail-closed mismatch path; injected
+  // perturbations (whole-region flips, ~2M px at full-scale deltas) stay
+  // orders of magnitude above these budgets.
+  static constexpr uint32_t kJitterMaxPixels = 12288;  // 0.6% of 1080p, 1.2x largest measured
+  static constexpr uint32_t kJitterMaxChannelDelta = 32;  // 1.14x largest measured (28)
+  // Corner probe rects tolerate only low-delta jitter (same channel budget)
+  // and at most this many pixels; a high-contrast corner difference (wrong or
+  // missing probe token) is always fail-closed.
+  static constexpr uint32_t kJitterMaxCornerPixels = 16;
+  static constexpr uint32_t kJitterStreakTarget = 6;
   PaintVerdict FeedExactBaselinePaint(const PageEvent& identity,
       const uint8_t* src, size_t stride, uint32_t width, uint32_t height,
-      uint8_t* dst, uint64_t now_us);
-  bool needs_baseline_resample() const {
+      uint8_t* dst, uint64_t now_us, uint64_t paint_sequence);
+  // The adapter freezes two native samples before running their fences. If
+  // that complete batch cannot veto, discard its partial equality streak:
+  // acceptance must not skip an already-collected second sample in the NEXT
+  // batch by combining its first match with a prior batch's last match.
+  // This only discards equality evidence; identity, readiness floor, last
+  // native paint sequence, the immutable signed candidate and the jitter
+  // classification streak (frozen-raster evidence spans batches by design)
+  // are deliberately preserved.
+  void DiscardExactBaselinePartialMatch() { exact_baseline_equal_paints_ = 0; }
+  bool needs_baseline_veto() const {
     return state_ == State::S4_COMPOSITOR_PUMPING && exact_candidate_pending_;
   }
 
@@ -184,6 +242,12 @@ class FrameSyncStateMachine {
 
   // 显式复位（S5 完成后的收尾 / 异常路径）：记录 request_end 并回 S0。
   void Reset(uint64_t now_us, const char* reason);
+
+  // Adapter supplies numeric timing fields from trusted native clocks. This
+  // event shares the request identity/sequence and changes no proof state.
+  void RecordAdapterTiming(uint64_t now_us, const std::string& fields) {
+    Emit("adapter_timing", now_us, nullptr, nullptr, fields);
+  }
 
   // —— 查询面（serve 回执/测试断言消费；计数器为全程累计口径）——
   State state() const { return state_; }
@@ -213,6 +277,11 @@ class FrameSyncStateMachine {
   }
 
  private:
+  PaintVerdict FeedPaintImpl(const uint8_t* src, size_t stride, uint32_t width,
+      uint32_t height, uint8_t* dst, uint64_t now_us,
+      std::vector<uint8_t>* owned);
+  bool DecodeSignedProbes(const uint8_t* src, size_t stride, uint32_t width,
+                          uint32_t height, PaintVerdict* verdict) const;
   PaintVerdict FinalizeAccepted(PaintVerdict verdict, uint64_t now_us);
   void Emit(const std::string& event, uint64_t now_us, const char* from,
             const char* to, const std::string& extra_json_fields = {});
@@ -238,8 +307,15 @@ class FrameSyncStateMachine {
   bool exact_candidate_pending_ = false;
   int32_t exact_candidate_decoded_frame_ = -1;
   unsigned exact_baseline_equal_paints_ = 0;
+  uint64_t exact_baseline_last_paint_ = 0;
+  uint64_t exact_baseline_ready_paint_ = 0;
+  bool exact_baseline_ready_ = false;
+  // Jitter-classification state for the unsigned veto (see FeedExactBaselinePaint).
+  uint32_t jitter_streak_ = 0;
+  uint64_t jitter_signature_ = 0;
+  uint32_t exact_request_high_water_ = 0;  // NEVER reset: no request-token replay
+  uint32_t exact_candidate_decoded_request_id_ = 0;
   std::vector<uint8_t> exact_first_;
-  std::vector<uint8_t> exact_baseline_;
   std::vector<uint8_t> exact_candidate_;
   EventSink sink_;
 };

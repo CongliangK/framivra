@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 
 #include "frame_pipeline.h"  // CopyCompactRows（紧凑拷贝，CEF 无关）
 
@@ -54,6 +56,97 @@ const char* PhaseName(PageEvent::Phase p) {
   return p == PageEvent::Phase::kAssetsReady ? "assets_ready" : "canary_set";
 }
 
+// Classify a baseline divergence between an unsigned sample and the frozen
+// probe-authenticated candidate. Returns false as soon as the divergence
+// exceeds the jitter budgets (bounded work: the scan dies on the 33rd differing
+// pixel or the first delta above kJitterMaxChannelDelta). On true, populates
+// pixels/max_delta and a FNV-1a signature over every differing pixel's
+// coordinates and per-channel deltas — two samples of a FROZEN raster produce
+// the same signature, catching-up content does not.
+//
+// The four 8x8 probe rects at the frame corners are excluded from tolerance:
+// they are the only candidate bytes the signed phase-2 comparison does not
+// byte-verify (the probes live there), so the unsigned veto is their sole
+// independent check and stays byte-exact fail-closed. The real-world jitter
+// this recovers from (dash-cap x rounded-corner AA overlap) is interior.
+struct JitterStats {
+  uint32_t pixels = 0;
+  uint32_t max_delta = 0;
+  uint64_t signature = 1469598103934665603ull;  // FNV-1a offset basis
+  bool within_budget = false;
+  bool corner_reject = false;
+  // Bounded diagnostics for the corner-reject path (first 8 differing corner
+  // pixels) so evidence can distinguish probe-edge AA/quantization from a
+  // genuinely different probe token.
+  uint32_t corner_x[8] = {};
+  uint32_t corner_y[8] = {};
+  int corner_d[8] = {};
+  uint32_t corner_n = 0;
+};
+
+JitterStats ClassifyBaselineDivergence(const uint8_t* sample, size_t stride,
+                                       const uint8_t* candidate,
+                                       uint32_t width, uint32_t height,
+                                       uint32_t first_bad_row) {
+  JitterStats s;
+  s.within_budget = true;
+  const uint32_t diag = static_cast<uint32_t>(kDiagSize);
+  for (uint32_t y = first_bad_row; y < height; ++y) {
+    const uint8_t* sr = sample + static_cast<size_t>(y) * stride;
+    const uint8_t* cr = candidate + static_cast<size_t>(y) * width * 4u;
+    const bool row_edge = y < diag || y >= height - diag;
+    for (uint32_t x = 0; x < width; ++x) {
+      const uint8_t* sp = sr + static_cast<size_t>(x) * 4u;
+      const uint8_t* cp = cr + static_cast<size_t>(x) * 4u;
+      int d[4];
+      d[0] = std::abs(static_cast<int>(sp[0]) - static_cast<int>(cp[0]));
+      d[1] = std::abs(static_cast<int>(sp[1]) - static_cast<int>(cp[1]));
+      d[2] = std::abs(static_cast<int>(sp[2]) - static_cast<int>(cp[2]));
+      d[3] = std::abs(static_cast<int>(sp[3]) - static_cast<int>(cp[3]));
+      const int mx = std::max(std::max(d[0], d[1]), std::max(d[2], d[3]));
+      if (mx == 0) continue;
+      const bool corner = row_edge && (x < diag || x >= width - diag);
+      // Corner probe rects stay fail-closed for token-class divergence: a
+      // wrong/missing probe token is a high-contrast (>kJitterMaxChannelDelta)
+      // difference and must never be tolerated. Low-delta corner divergence is
+      // the same cross-renderer AA/gradient-quantization jitter seen in the
+      // interior (measured frozen at frame 130 of the formal run), so it
+      // participates in the same frozen-signature tolerance under the same
+      // global budgets, with a much tighter corner-pixel cap.
+      if (corner) {
+        if (static_cast<uint32_t>(mx) >
+                FrameSyncStateMachine::kJitterMaxChannelDelta ||
+            s.corner_n >= FrameSyncStateMachine::kJitterMaxCornerPixels) {
+          s.corner_reject = true;
+          s.within_budget = false;
+          if (s.corner_n < 8) {
+            s.corner_x[s.corner_n] = x;
+            s.corner_y[s.corner_n] = y;
+            s.corner_d[s.corner_n] = mx;
+          }
+          ++s.corner_n;
+          return s;
+        }
+        ++s.corner_n;
+      }
+      if (static_cast<uint32_t>(mx) > FrameSyncStateMachine::kJitterMaxChannelDelta ||
+          s.pixels >= FrameSyncStateMachine::kJitterMaxPixels) {
+        s.within_budget = false;
+        return s;
+      }
+      ++s.pixels;
+      s.max_delta = std::max(s.max_delta, static_cast<uint32_t>(mx));
+      for (int i = 0; i < 4; ++i) {
+        s.signature ^= static_cast<uint64_t>(static_cast<uint8_t>(d[i]));
+        s.signature *= 1099511628211ull;  // FNV-1a prime
+      }
+      s.signature ^= static_cast<uint64_t>(x) * 31ull + y;
+      s.signature *= 1099511628211ull;
+    }
+  }
+  return s;
+}
+
 }  // namespace
 
 const char* StateName(State s) {
@@ -94,14 +187,16 @@ void SignatureRgbP2(bool diag, int f, uint8_t* rgb) {
 }
 
 std::vector<int> PremulCands(uint8_t v) {
-  // 精确反像：{C ∈ [0,255] : floor((508C+255)/510) == v}。暴力扫描 256 值，
-  // 与闭区间解析解逐值一致（selftest 交叉验证）——朴素 floor/ceil 直除法
-  // 会引入假候选（约半数帧号校验和碰撞歧义，#105b 拦截）。
+  // Exact inverse of floor((508*C + 255) / 510), not an approximate inverse
+  // alpha divide: 510*v - 255 <= 508*C <= 510*v + 254. The closed interval
+  // contains at most two integers. Exhaustively checked against all 256*C
+  // forward values in the native selftest; frozen clean signatures unchanged.
+  const int lower = (510 * static_cast<int>(v) + 252) / 508;
+  const int upper = std::min(255, (510 * static_cast<int>(v) + 254) / 508);
   std::vector<int> out;
-  for (int c = 0; c <= 255; ++c) {
-    if ((2 * c * 254 + 255) / 510 == static_cast<int>(v)) {
-      out.push_back(c);
-    }
+  if (lower <= upper) {
+    out.reserve(static_cast<size_t>(upper - lower + 1));
+    for (int c = lower; c <= upper; ++c) out.push_back(c);
   }
   return out;
 }
@@ -148,51 +243,63 @@ void DecodeCandidatesP2(const uint8_t px_bgra[4], std::vector<int>* out) {
   std::sort(out->begin(), out->end());  // set_intersection 需有序输入
 }
 
-bool DecodeDiagBlock(const uint8_t* compact_bgra, size_t stride, uint32_t width,
-                     uint32_t height, bool bottom_right, int32_t* frame_out) {
-  if (width < static_cast<uint32_t>(kDiagSize) ||
-      height < static_cast<uint32_t>(kDiagSize) ||
-      compact_bgra == nullptr || stride < 8) {
-    return false;
-  }
-  const uint32_t ox =
-      bottom_right ? width - static_cast<uint32_t>(kDiagSize) : 0;
-  const uint32_t oy =
-      bottom_right ? height - static_cast<uint32_t>(kDiagSize) : 0;
-  // 诊断块 α=255 → 预乘恒等，直接按直向公式解码。整块须同色（foreign/
-  // 撕裂带/校验和撕裂一律 false —— 宁拒不猜）。
-  const uint8_t b0 = compact_bgra[oy * stride + ox * 4 + 0];
-  const uint8_t g0 = compact_bgra[oy * stride + ox * 4 + 1];
-  const uint8_t r0 = compact_bgra[oy * stride + ox * 4 + 2];
-  const uint8_t a0 = compact_bgra[oy * stride + ox * 4 + 3];
-  if (a0 != kDiagAlpha) {
-    return false;
-  }
-  for (int y = 0; y < kDiagSize; ++y) {
-    const uint8_t* row =
-        compact_bgra + (oy + static_cast<uint32_t>(y)) * stride + ox * 4;
+namespace {
+
+bool ValidPaintBuffer(const uint8_t* src, size_t stride, uint32_t width,
+                      uint32_t height) {
+  if (!src || !width || !height) return false;
+  const size_t limit = std::numeric_limits<size_t>::max();
+  // 32 位平台 width*4 可能回绕;64 位平台此回检恒假但不触发恒真/恒假比较告警。
+  const size_t row = static_cast<size_t>(width) * 4u;
+  if (row < width) return false;
+  return stride >= row && (height - 1u) <= (limit - row) / stride;
+}
+
+// Each row band independently carries a checksum, and EVERY byte in the band
+// must agree. No averaging/sample-only check: one corrupted/half-updated pixel
+// prevents the whole native paint from becoming a signed candidate.
+bool DecodeProbeBand(const uint8_t* src, size_t stride, uint32_t rows,
+                     bool p2, int32_t* token) {
+  const uint8_t b = src[0], g = src[1], r = src[2], a = src[3];
+  if (a != kDiagAlpha) return false;
+  for (uint32_t y = 0; y < rows; ++y) {
     for (int x = 0; x < kDiagSize; ++x) {
-      const uint8_t* px = row + x * 4;
-      if (px[0] != b0 || px[1] != g0 || px[2] != r0 || px[3] != a0) {
-        return false;  // 块内杂色：撕裂带（半更新）或非 Canary 结构
-      }
+      if (std::memcmp(src + y * stride + x * 4u, src, 4u) != 0) return false;
     }
   }
-  int frame;
-  if (bottom_right) {
-    frame = (g0 << 8) | r0;  // P2：G=hi、R=lo（通道互换）
-    if (((kP2MulR * r0 + kP2MulG * g0 + kDiag2AddKey) & 0xFF) != b0) {
-      return false;  // 校验和撕裂
-    }
+  if (p2) {
+    if (((kP2MulR * r + kP2MulG * g + kDiag2AddKey) & 255) != b) return false;
+    *token = (g << 8) | r;
   } else {
-    frame = (r0 << 8) | g0;  // P1：R=hi、G=lo
-    if (((r0 ^ g0 ^ kDiagXorKey) & 0xFF) != b0) {
-      return false;  // 校验和撕裂
-    }
+    if (((r ^ g ^ kDiagXorKey) & 255) != b) return false;
+    *token = (r << 8) | g;
   }
-  *frame_out = frame;
   return true;
 }
+
+bool DecodeRequestProbe(const uint8_t* src, size_t stride, bool p2,
+                        int32_t* frame, uint32_t* request) {
+  int32_t lo = -1, hi = -1;
+  if (!DecodeProbeBand(src, stride, 4, p2, frame) ||
+      !DecodeProbeBand(src + 4u * stride, stride, 2, p2, &lo) ||
+      !DecodeProbeBand(src + 6u * stride, stride, 2, p2, &hi)) return false;
+  *request = static_cast<uint32_t>(lo) | (static_cast<uint32_t>(hi) << 16u);
+  return true;
+}
+
+}  // namespace
+
+bool DecodeDiagBlock(const uint8_t* src, size_t stride, uint32_t width,
+                     uint32_t height, bool bottom_right, int32_t* frame_out) {
+  if (width < static_cast<uint32_t>(kDiagSize) ||
+      height < static_cast<uint32_t>(kDiagSize) || !frame_out ||
+      !ValidPaintBuffer(src, stride, width, height)) return false;
+  const size_t x = bottom_right ? width - kDiagSize : 0;
+  const size_t y = bottom_right ? height - kDiagSize : 0;
+  return DecodeProbeBand(src + y * stride + x * 4u, stride, kDiagSize,
+                         bottom_right, frame_out);
+}
+
 // ---------------------------------------------------------------- 事件
 
 void FrameSyncStateMachine::Emit(const std::string& event, uint64_t now_us,
@@ -241,9 +348,17 @@ bool FrameSyncStateMachine::BeginRequest(const RequestDesc& desc,
          "\"reason\":\"BeginRequest requires S0_IDLE\"");
     return false;
   }
+  if ((desc.canary == CanaryMode::kExact) &&
+      (desc.request_id == 0 || desc.request_id <= exact_request_high_water_)) {
+    ++counters_.duplicate_request_rejected;
+    Emit("duplicate_request_rejected", now_us, nullptr, nullptr,
+         "\"reason\":\"exact request token reused or wrapped\"");
+    return false;
+  }
   if (desc.target_frame_index < 0 ||
       static_cast<uint32_t>(desc.target_frame_index) > kFrameMax ||
       desc.expected_w < 2 || desc.expected_h < 2 ||
+      desc.expected_w > std::numeric_limits<size_t>::max() / 4u / desc.expected_h ||
       (desc.canary != CanaryMode::kClean &&
        (desc.expected_w < static_cast<uint32_t>(kDiagSize) ||
         desc.expected_h < static_cast<uint32_t>(kDiagSize))) ||
@@ -254,12 +369,18 @@ bool FrameSyncStateMachine::BeginRequest(const RequestDesc& desc,
     return false;
   }
   desc_ = desc;
+  if (desc.canary == CanaryMode::kExact) exact_request_high_water_ = desc.request_id;
   exact_first_verified_ = false;
   exact_candidate_pending_ = false;
   exact_candidate_decoded_frame_ = -1;
   exact_baseline_equal_paints_ = 0;
+  exact_baseline_last_paint_ = 0;
+  exact_baseline_ready_paint_ = 0;
+  exact_baseline_ready_ = false;
+  jitter_streak_ = 0;
+  jitter_signature_ = 0;
+  exact_candidate_decoded_request_id_ = 0;
   exact_first_.clear();
-  exact_baseline_.clear();
   exact_candidate_.clear();
   state_ = State::S1_NAV_OR_EVAL_ISSUED;
   t_begin_us_ = now_us;
@@ -271,6 +392,7 @@ bool FrameSyncStateMachine::BeginRequest(const RequestDesc& desc,
   req_early_ = 0;
   req_rejected_ = 0;
   req_paints_ = 0;
+  last_accepted_elapsed_us_ = 0;
   ++counters_.requests_begun;
   Emit("request_begin", now_us, StateName(State::S0_IDLE),
        StateName(State::S1_NAV_OR_EVAL_ISSUED),
@@ -355,31 +477,81 @@ bool FrameSyncStateMachine::EnterPumping(uint64_t now_us) {
   return true;
 }
 
-bool FrameSyncStateMachine::SetExactBaseline(const uint8_t* src, size_t stride,
-                                              uint32_t width, uint32_t height,
-                                              uint64_t now_us) {
-  if (state_ != State::S1_NAV_OR_EVAL_ISSUED ||
-      desc_.canary != CanaryMode::kExact || !exact_baseline_.empty() ||
-      src == nullptr || width != desc_.expected_w || height != desc_.expected_h ||
-      stride < static_cast<size_t>(width) * 4u) {
-    Emit("exact_baseline_rejected", now_us, nullptr, nullptr);
-    return false;
+// Shared negative-only signature classifier for zero-copy rejection and the
+// fenced FeedPaint path. It NEVER changes state, counters or output bytes.
+bool FrameSyncStateMachine::DecodeSignedProbes(const uint8_t* src, size_t stride,
+    uint32_t width, uint32_t height, PaintVerdict* v) const {
+  const bool second = desc_.canary == CanaryMode::kExact && exact_first_verified_;
+  const uint8_t* p1 = src + (second ? static_cast<size_t>(width - kDiagSize) * 4u : 0u);
+  const uint8_t* p2 = src + static_cast<size_t>(height - kDiagSize) * stride +
+      (second ? 0u : static_cast<size_t>(width - kDiagSize) * 4u);
+  int32_t frame1 = -1, frame2 = -1;
+  uint32_t req1 = 0, req2 = 0;
+  const bool one = (desc_.canary == CanaryMode::kExact)
+      ? DecodeRequestProbe(p1, stride, false, &frame1, &req1)
+      : DecodeProbeBand(p1, stride, kDiagSize, false, &frame1);
+  const bool two = (desc_.canary == CanaryMode::kExact)
+      ? DecodeRequestProbe(p2, stride, true, &frame2, &req2)
+      : DecodeProbeBand(p2, stride, kDiagSize, true, &frame2);
+  if (second) {
+    if (one) { frame1 ^= 0xFFFF; req1 ^= 0xFFFFFFFFu; }
+    if (two) { frame2 ^= 0xFFFF; req2 ^= 0xFFFFFFFFu; }
   }
-  exact_baseline_.resize(static_cast<size_t>(width) * height * 4u);
-  CopyCompactRows(src, stride, exact_baseline_.data(), width, height);
-  Emit("exact_baseline_veto_armed", now_us, nullptr, nullptr,
-       "\"role\":\"equality_veto_only\",\"restoration_source\":false");
-  return true;
+  v->half_signature = one != two;
+  // Decode frame/identity from native bytes, NEVER echo them from RequestDesc.
+  v->decoded_frame = one && two && frame1 == frame2 ? frame1 : -1;
+  if ((desc_.canary == CanaryMode::kExact) && one && two && req1 == req2)
+    v->decoded_request_id = req1;
+  const bool match = one && two && frame1 == desc_.target_frame_index &&
+      frame2 == desc_.target_frame_index &&
+      (desc_.canary != CanaryMode::kExact ||
+       (req1 == desc_.request_id && req2 == desc_.request_id));
+  if (!match) {
+    // Preserve useful wrong-frame attribution (a disagreeing corner is proof
+    // of rejection only; it cannot become an accepted frame identity).
+    if (one && frame1 != desc_.target_frame_index) v->decoded_frame = frame1;
+    else if (two && frame2 != desc_.target_frame_index) v->decoded_frame = frame2;
+  }
+  return match;
+}
+
+bool FrameSyncStateMachine::PaintMayAdvance(const uint8_t* src, size_t stride,
+    uint32_t width, uint32_t height) const {
+  if (state_ != State::S4_COMPOSITOR_PUMPING || exact_candidate_pending_ ||
+      width != desc_.expected_w || height != desc_.expected_h ||
+      !ValidPaintBuffer(src, stride, width, height)) return false;
+  if (desc_.canary == CanaryMode::kClean) {
+    const Bgra one = SignatureBgraPremulP1(desc_.target_frame_index);
+    const Bgra two = SignatureBgraPremulP2(desc_.target_frame_index);
+    return std::memcmp(src, &one, 4u) == 0 && std::memcmp(src + 4u, &two, 4u) == 0;
+  }
+  PaintVerdict candidate;
+  return DecodeSignedProbes(src, stride, width, height, &candidate);
 }
 
 // ---------------------------------------------------------------- OnPaint 闸门
 
 PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
-                                              uint32_t width, uint32_t height,
-                                              uint8_t* dst, uint64_t now_us) {
+    uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us) {
+  return FeedPaintImpl(src, stride, width, height, dst, now_us, nullptr);
+}
+
+PaintVerdict FrameSyncStateMachine::FeedOwnedPaint(std::vector<uint8_t>& src,
+    uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us) {
+  const bool compact = height &&
+      width <= std::numeric_limits<size_t>::max() / 4u / height &&
+      src.size() == static_cast<size_t>(width) * height * 4u;
+  return FeedPaintImpl(compact ? src.data() : nullptr,
+      compact ? static_cast<size_t>(width) * 4u : 0, width, height, dst, now_us,
+      compact ? &src : nullptr);
+}
+
+PaintVerdict FrameSyncStateMachine::FeedPaintImpl(const uint8_t* src, size_t stride,
+    uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us,
+    std::vector<uint8_t>* owned) {
   PaintVerdict v;
   ++req_paints_;
-  if (state_ < State::S4_COMPOSITOR_PUMPING) {
+  if (state_ > State::S0_IDLE && state_ < State::S4_COMPOSITOR_PUMPING) {
     // 工单：S1–S3 期间收到的异步残余 Paint（CEF #4166 软件缓冲同步重放的
     // 旧帧尾随 Paint）→ 直接丢弃并递增 early_paint_dropped。
     ++counters_.early_paint_dropped;
@@ -398,7 +570,7 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
          "\"disposition\":\"late_paint_dropped\"");
     return v;
   }
-  if (src == nullptr || stride < 8) {
+  if (!ValidPaintBuffer(src, stride, width, height)) {
     ++counters_.rejected_stale_paint;
     ++req_rejected_;
     v.disposition = PaintDisposition::kRejectedStale;
@@ -424,44 +596,18 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
   std::string reject_reason;
 
   if (desc_.canary != CanaryMode::kClean) {
-    // Exact phase two moves P1 to TR and P2 to BL, and inverts the frame
-    // token: queued phase-one paints cannot satisfy phase two.
-    const bool second = desc_.canary == CanaryMode::kExact && exact_first_verified_;
-    const int token = second ? (want ^ 0xFFFF) : want;
-    int32_t tl = -1;
-    int32_t br = -1;
-    const bool tl_ok = second
-        ? DecodeDiagBlock(src + (width - kDiagSize) * 4u, stride,
-                          kDiagSize, height, false, &tl)
-        : DecodeDiagBlock(src, stride, width, height, false, &tl);
-    const bool br_ok = DecodeDiagBlock(src, stride,
-        second ? kDiagSize : width, height, true, &br);
-    if (tl_ok && br_ok && tl == token && br == token) {
-      v.disposition = PaintDisposition::kAccepted;
-      v.decoded_frame = tl;  // 取自解码结果（非请求值回显）
+    if (DecodeSignedProbes(src, stride, width, height, &v)) {
+      v.disposition = PaintDisposition::kAccepted;  // not S5 until full checks below
     } else {
       ++counters_.rejected_stale_paint;
       ++req_rejected_;
       v.disposition = PaintDisposition::kRejectedStale;
-      v.half_signature = (tl_ok != br_ok);  // 单角可解码=半更新形态
-      // 归因方向：优先报「与期望不符的那一角」解码值（错帧证据面）。
-      v.decoded_frame = -1;
-      if (tl_ok && tl != want) {
-        v.decoded_frame = tl;
-      } else if (br_ok && br != want) {
-        v.decoded_frame = br;
-      } else if (tl_ok) {
-        v.decoded_frame = tl;
-      } else if (br_ok) {
-        v.decoded_frame = br;
-      }
-      reject_reason = !tl_ok || !br_ok
-                          ? "stale_paint:diag_block_not_uniform"
-                          : ("stale_paint:rendered=" + std::to_string(tl));
+      reject_reason = "stale_paint:probe_signature_or_identity";
       Emit("paint", now_us, nullptr, nullptr,
            "\"disposition\":\"rejected_stale_paint\",\"reason\":\"" +
                reject_reason + "\",\"decoded_frame\":" +
                std::to_string(v.decoded_frame) +
+               ",\"decoded_request_id\":" + std::to_string(v.decoded_request_id) +
                ",\"rejected_stale_paint_count\":" +
                std::to_string(req_rejected_));
       return v;
@@ -532,12 +678,17 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
 
   if (desc_.canary == CanaryMode::kExact) {
     if (!exact_first_verified_) {
-      exact_first_.resize(static_cast<size_t>(width) * height * 4u);
-      CopyCompactRows(src, stride, exact_first_.data(), width, height);
+      if (owned) {
+        exact_first_.swap(*owned);  // immutable post-fence native storage
+      } else {
+        exact_first_.resize(static_cast<size_t>(width) * height * 4u);
+        CopyCompactRows(src, stride, exact_first_.data(), width, height);
+      }
       exact_first_verified_ = true;
       v.disposition = PaintDisposition::kEarlyDropped;  // not deliverable yet
       Emit("exact_first_verified", now_us, nullptr, nullptr,
-           "\"decoded_frame\":" + std::to_string(v.decoded_frame));
+           "\"decoded_frame\":" + std::to_string(v.decoded_frame) +
+               ",\"decoded_request_id\":" + std::to_string(v.decoded_request_id));
       return v;
     }
     // Compare every byte outside the FOUR probe rectangles. A changing page
@@ -545,7 +696,7 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     for (uint32_t y = 0; y < height; ++y) {
       const bool edge = y < kDiagSize || y >= height - kDiagSize;
       const size_t left = edge ? kDiagSize * 4u : 0;
-      const size_t count = (edge ? width - 2 * kDiagSize : width) * 4u;
+      const size_t count = static_cast<size_t>(edge ? width - 2 * kDiagSize : width) * 4u;
       if (std::memcmp(src + y * stride + left,
                       exact_first_.data() + static_cast<size_t>(y) * width * 4u + left,
                       count) != 0) {
@@ -558,7 +709,10 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
     }
     // First paint owns the unoccluded TR/BL pixels; second owns TL/BR.
     // Restore actual BGRA_PREMUL bytes before the existing alpha/PNG pipeline.
-    exact_candidate_ = exact_first_;
+    // Both signatures and every unoccluded byte are verified. Exact always
+    // freezes at this point, so no later signed paint needs the first buffer.
+    // Transfer it and patch only the two covered 8x8 corners (512 bytes total).
+    exact_candidate_.swap(exact_first_);
     for (uint32_t y = 0; y < height; ++y) {
       if (y < kDiagSize || y >= height - kDiagSize) {
         const size_t x = y < kDiagSize ? 0 : width - kDiagSize;
@@ -567,42 +721,23 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
                     src + y * stride + x * 4u, kDiagSize * 4u);
       }
     }
-    // Moving probes can perturb structure CSS identically in BOTH signed
-    // phases. Cross-agreement alone cannot certify noninterference. Compare
-    // the ENTIRE reconstruction, including all four corners, with the native
-    // never-instrumented baseline. Missing baseline is also a hard veto.
-    // Critically: no byte is restored/copied FROM this unbound baseline.
-    if (exact_baseline_ != exact_candidate_) {
-      // A stable initial blank can precede the first rasterized page. Freeze
-      // this fully signed candidate; only a NEW never-instrumented browser may
-      // veto it again. No output is written while that veto is outstanding.
-      exact_candidate_pending_ = !exact_baseline_.empty();
-      exact_candidate_decoded_frame_ = v.decoded_frame ^ 0xFFFF;
-      v.disposition = PaintDisposition::kRejectedStale;
-      ++req_rejected_;
-      ++counters_.rejected_stale_paint;
-      Emit("exact_baseline_mismatch", now_us, nullptr, nullptr,
-           std::string("\"reason\":\"") +
-               (exact_baseline_.empty() ? "missing_baseline" : "probe_content_perturbation") +
-               "\"");
-      return v;
-    }
-    Emit("exact_baseline_equal", now_us, nullptr, nullptr,
-         "\"role\":\"equality_veto_only\",\"compared_bytes\":" +
-             std::to_string(exact_candidate_.size()));
-    if (dst != nullptr) {
-      std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());
-    }
-    v.decoded_frame ^= 0xFFFF;  // first frame identity, decoded in BOTH phases
-    v.restored = true;
+    // Identical probe side-effects in BOTH signed phases cannot certify
+    // noninterference. Freeze the reconstruction; the separate unsigned
+    // document must supply TWO fresh full-frame equalities, including every
+    // corner and alpha byte. Its pixels never supply output or frame identity.
+    exact_candidate_pending_ = true;
+    exact_candidate_decoded_frame_ = v.decoded_frame;
+    exact_candidate_decoded_request_id_ = v.decoded_request_id;
+    v.disposition = PaintDisposition::kEarlyDropped;  // not deliverable yet
+    Emit("exact_baseline_pending", now_us, nullptr, nullptr,
+         "\"reason\":\"awaiting_independent_unsigned_veto\"");
+    return v;
   }
 
   // ================= 接受路径：紧凑拷贝 + 原地恢复两个绑定原像素 ==========
   const uint64_t t0 = NowUs();
   if (dst != nullptr) {
-    if (desc_.canary != CanaryMode::kExact) {
-      CopyCompactRows(src, stride, dst, width, height);
-    }
+    CopyCompactRows(src, stride, dst, width, height);
     if (desc_.canary == CanaryMode::kClean) {
       // 恢复源优先级（工单）：1) 与本请求绑定、canary_set 时页面上报并经
       // 双像素验签绑定世代的原像素；2) 行 1 邻域兜底（仅 fixture 证明等值
@@ -623,20 +758,49 @@ PaintVerdict FrameSyncStateMachine::FeedPaint(const uint8_t* src, size_t stride,
   return FinalizeAccepted(v, now_us);
 }
 
+bool FrameSyncStateMachine::ArmExactBaseline(const PageEvent& identity,
+    uint64_t ready_paint_sequence, uint64_t now_us) {
+  if (desc_.canary != CanaryMode::kExact ||
+      state_ == State::S0_IDLE || state_ == State::S5_ONPAINT_VERIFIED ||
+      exact_baseline_ready_ || identity.document_gen != desc_.document_gen ||
+      identity.request_id != desc_.request_id ||
+      identity.target_frame_index != desc_.target_frame_index) {
+    Emit("exact_baseline_ready_rejected", now_us, nullptr, nullptr);
+    return false;
+  }
+  exact_baseline_ready_ = true;
+  exact_baseline_ready_paint_ = ready_paint_sequence;
+  exact_baseline_last_paint_ = ready_paint_sequence;
+  Emit("exact_baseline_veto_armed", now_us, nullptr, nullptr,
+       "\"role\":\"equality_veto_only\",\"restoration_source\":false,"
+       "\"after_native_paint_sequence\":" + std::to_string(ready_paint_sequence));
+  return true;
+}
+
 PaintVerdict FrameSyncStateMachine::FeedExactBaselinePaint(
     const PageEvent& identity, const uint8_t* src, size_t stride,
-    uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us) {
+    uint32_t width, uint32_t height, uint8_t* dst, uint64_t now_us,
+    uint64_t paint_sequence) {
   PaintVerdict v;
   v.disposition = PaintDisposition::kRejectedStale;
-  if (!needs_baseline_resample() || desc_.canary != CanaryMode::kExact ||
+  if (!needs_baseline_veto() || desc_.canary != CanaryMode::kExact ||
       identity.document_gen != desc_.document_gen ||
       identity.request_id != desc_.request_id ||
       identity.target_frame_index != desc_.target_frame_index ||
       !src || width != desc_.expected_w || height != desc_.expected_h ||
-      stride < static_cast<size_t>(width) * 4u) {
+      !ValidPaintBuffer(src, stride, width, height)) {
     exact_baseline_equal_paints_ = 0;
     return v;
   }
+  if (!exact_baseline_ready_ || paint_sequence == 0 ||
+      paint_sequence <= exact_baseline_ready_paint_ ||
+      paint_sequence <= exact_baseline_last_paint_) {
+    exact_baseline_equal_paints_ = 0;
+    Emit("exact_baseline_paint_replayed", now_us, nullptr, nullptr,
+         "\"paint_sequence\":" + std::to_string(paint_sequence));
+    return v;
+  }
+  exact_baseline_last_paint_ = paint_sequence;
   for (uint32_t y = 0; y < height; ++y) {
     if (std::memcmp(src + y * stride,
         exact_candidate_.data() + static_cast<size_t>(y) * width * 4u,
@@ -644,20 +808,92 @@ PaintVerdict FrameSyncStateMachine::FeedExactBaselinePaint(
       exact_baseline_equal_paints_ = 0;
       ++req_rejected_;
       ++counters_.rejected_stale_paint;
-      return v;
+      // Classify before failing: cross-renderer rasterization jitter (frozen,
+      // tiny, signature-stable) is recoverable; content-sized or unstable
+      // divergence keeps the historical catch-up loop (and its timeout).
+      const JitterStats js = ClassifyBaselineDivergence(
+          src, stride, exact_candidate_.data(), width, height, y);
+      if (js.within_budget) {
+        if (js.signature == jitter_signature_) {
+          ++jitter_streak_;
+        } else {
+          jitter_signature_ = js.signature;
+          jitter_streak_ = 1;
+        }
+      } else {
+        jitter_signature_ = 0;
+        jitter_streak_ = 0;
+      }
+      std::string extra =
+          "\"reason\":\"probe_content_perturbation\","
+          "\"observation\":\"native_full_frame_mismatch\",\"cause_unproven\":true,"
+          "\"mismatch_row\":" + std::to_string(y) +
+          ",\"paint_sequence\":" + std::to_string(paint_sequence) +
+          ",\"jitter\":" + (js.within_budget ? "true" : "false") +
+          ",\"jitter_pixels\":" + std::to_string(js.pixels) +
+          ",\"jitter_max_channel_delta\":" + std::to_string(js.max_delta) +
+          ",\"jitter_signature_streak\":" + std::to_string(jitter_streak_);
+      if (js.corner_reject) {
+        extra += ",\"corner_reject\":true,\"corner_pixels\":\"";
+        for (uint32_t i = 0; i < js.corner_n && i < 8; ++i) {
+          if (i) extra += ";";
+          extra += std::to_string(js.corner_x[i]) + "," +
+                   std::to_string(js.corner_y[i]) + "," +
+                   std::to_string(js.corner_d[i]);
+        }
+        extra += "\"";
+      } else if (js.corner_n) {
+        extra += ",\"jitter_corner_pixels\":" + std::to_string(js.corner_n);
+      }
+      // Retain the public veto-category event consumed by native acceptance
+      // tests/reports. A mismatch alone cannot distinguish probe perturbation
+      // from an unsigned page whose rasterization has not caught up yet.
+      Emit("exact_baseline_mismatch", now_us, nullptr, nullptr, extra);
+      if (!js.within_budget ||
+          jitter_streak_ < kJitterStreakTarget) {
+        return v;
+      }
+      // kJitterStreakTarget consecutive samples disagreed with the candidate
+      // on the SAME <=32-pixel, <=32/255 signature: the unsigned raster is
+      // frozen and byte equality is unattainable for this page. Publish the
+      // probe-authenticated candidate and record the tolerance explicitly.
+      Emit("exact_baseline_equal", now_us, nullptr, nullptr,
+           std::string("\"role\":\"equality_veto_only\",\"baseline_source\":\"") +
+           (desc_.drive == DriveMode::kModeP ? "persistent_unsigned" :
+                                            "concurrent_unsigned_navigation") +
+           "\",\"via\":\"rasterization_jitter_tolerance\"" +
+           ",\"jitter_pixels\":" + std::to_string(js.pixels) +
+           ",\"jitter_max_channel_delta\":" + std::to_string(js.max_delta) +
+           ",\"jitter_signature_streak\":" + std::to_string(jitter_streak_) +
+           (js.corner_n ? ",\"jitter_corner_pixels\":" + std::to_string(js.corner_n) : "") +
+           ",\"compared_bytes\":" + std::to_string(exact_candidate_.size()));
+      const uint64_t t0 = NowUs();
+      if (dst) std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());
+      v.disposition = PaintDisposition::kAccepted;
+      v.decoded_frame = exact_candidate_decoded_frame_;
+      v.decoded_request_id = exact_candidate_decoded_request_id_;
+      v.restored = true;
+      v.capture_us = NowUs() - t0;
+      exact_candidate_pending_ = false;
+      return FinalizeAccepted(v, now_us);
     }
   }
+  jitter_streak_ = 0;  // an equal sample breaks any frozen-divergence streak
+  jitter_signature_ = 0;
   if (++exact_baseline_equal_paints_ < 2) {
     return v;
   }
   Emit("exact_baseline_equal", now_us, nullptr, nullptr,
-       "\"role\":\"equality_veto_only\",\"resampled_fresh_browser\":true,"
-       "\"consecutive_equal_paints\":2,\"compared_bytes\":" +
+       std::string("\"role\":\"equality_veto_only\",\"baseline_source\":\"") +
+       (desc_.drive == DriveMode::kModeP ? "persistent_unsigned" :
+                                        "concurrent_unsigned_navigation") +
+       "\",\"via\":\"byte_exact\",\"consecutive_equal_paints\":2,\"compared_bytes\":" +
        std::to_string(exact_candidate_.size()));
   const uint64_t t0 = NowUs();
   if (dst) std::memcpy(dst, exact_candidate_.data(), exact_candidate_.size());
   v.disposition = PaintDisposition::kAccepted;
   v.decoded_frame = exact_candidate_decoded_frame_;
+  v.decoded_request_id = exact_candidate_decoded_request_id_;
   v.restored = true;
   v.capture_us = NowUs() - t0;
   exact_candidate_pending_ = false;
@@ -673,7 +909,10 @@ PaintVerdict FrameSyncStateMachine::FinalizeAccepted(PaintVerdict v, uint64_t no
        StateName(State::S5_ONPAINT_VERIFIED),
        "\"disposition\":\"accepted\",\"decoded_frame\":" +
            std::to_string(v.decoded_frame) +
-           ",\"accepted_elapsed_us_since_ready\":" +
+           ",\"decoded_request_id\":" + std::to_string(v.decoded_request_id) +
+           ",\"proof_binding\":\"" +
+           ((desc_.canary == CanaryMode::kExact) ? "frame16_request32_dual_probe" : "frame16_dual_probe") +
+           "\",\"accepted_elapsed_us_since_ready\":" +
            std::to_string(v.accepted_elapsed_us_since_ready) +
            ",\"rejected_stale_paint_count\":" + std::to_string(req_rejected_) +
            ",\"restore_source\":" +

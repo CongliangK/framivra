@@ -23,6 +23,11 @@ int main() {
   check(JsCheckpointResult(g, deadline - 1, deadline) == JsCheckpointOutcome::kPending, "stale sequence cannot pass");
   g.done = g.sent;
   check(JsCheckpointResult(g, deadline - 1, deadline) == JsCheckpointOutcome::kPassed, "matching fence before deadline");
+  for (const auto pid : {int64_t{0}, int64_t{17}, int64_t{2147483647}, int64_t{-1}}) {
+    g.renderer_pid = pid;
+    check(JsCheckpointResult(g, deadline - 1, deadline) == JsCheckpointOutcome::kPassed,
+          "renderer PID is diagnostic, not proof");
+  }
   check(JsCheckpointResult(g, deadline, deadline) == JsCheckpointOutcome::kTimeout, "matching fence exactly at deadline fails closed");
   check(JsCheckpointResult(g, deadline + 1, deadline) == JsCheckpointOutcome::kTimeout, "late reply cannot authorize pixels");
   g.token.clear();
@@ -32,10 +37,13 @@ int main() {
   g.frame_id = "main"; g.installed = false;
   check(JsCheckpointResult(g, deadline - 1, deadline) != JsCheckpointOutcome::kPassed, "uninstalled observer cannot pass");
   g.failed = true;
+  g.renderer_pid = 17;
   for (const auto now : {deadline - 1, deadline, deadline + 1})
     check(JsCheckpointResult(g, now, deadline) == JsCheckpointOutcome::kObserverError, "sticky authenticated error wins deadline race");
   g.failed = false; g.installed = true; g.expected_url.clear();
   check(JsCheckpointResult(g, deadline - 1, deadline) == JsCheckpointOutcome::kTimeout, "missing expected URL fails closed");
+  g = JsErrorGate{};
+  check(g.renderer_pid == 0, "new document resets renderer PID to unknown");
   std::printf("%d checks, %d failures\n", checks, failures);
   return failures ? 1 : 0;
 }

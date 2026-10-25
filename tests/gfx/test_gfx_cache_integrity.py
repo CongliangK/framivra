@@ -19,6 +19,7 @@ from pathlib import Path
 import shutil
 import struct
 import tempfile
+import threading
 import unittest
 import zlib
 from unittest import mock
@@ -267,25 +268,71 @@ class CacheIntegrity(unittest.TestCase):
         renderer.assert_not_called()
 
     def test_duplicate_cef_clips_dispatch_once_without_cdp_or_cli(self):
+        # Each unique page is produced once per disjoint block, never once per
+        # duplicate clip. Warm reuse, repair and failure must keep the same gate.
         worker = self.root / 'fake-worker'
         worker.write_text('#!/bin/sh\nexit 99\n')
         worker.chmod(0o700)
+        barrier = None
         def render(html, d, n, **kwargs):
-            for i in range(n):
+            frames = range(n) if kwargs['frames'] is None else kwargs['frames']
+            if barrier is not None:
+                barrier.wait(timeout=5)  # all three disjoint jobs really overlap
+            for i, _ in gfx_cli.verify_frames(d, frames, width=16, height=16):
+                self.rendered.append(i)
                 (d / f'f{i:04d}.png').write_bytes(png(16, 16, value=i))
             return 'unit-fixture CEF'
-        with mock.patch.dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=str(worker),
-                             VTX_CEF_MODE='a0', VTX_GFX_PAGES='3', VTX_GFX_SPLIT_FRAMES='1'), \
-                mock.patch('vtx.render.gfx_cef.render_page', side_effect=render) as renderer, \
-                mock.patch.object(gfx_render, 'render_page', side_effect=AssertionError('CDP')), \
-                mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('CLI')), \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.duplicate_clips(project={'width': 16, 'height': 16})
-            cli.gfx(self.c)
-            self.assertEqual(renderer.call_count, 1)
-            self.assert_gfx_layers()
-            cli.gfx(self.c)
-            self.assertEqual(renderer.call_count, 1)
+        for pages, split in (('1', '0'), ('3', '0'), ('1', '1'), ('3', '1')):
+            with mock.patch.dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=str(worker),
+                                 VTX_CEF_MODE='a0', VTX_GFX_PAGES=pages,
+                                 VTX_GFX_SPLIT_MAX='3', VTX_GFX_SPLIT_FRAMES=split), \
+                    mock.patch('vtx.render.gfx_cef.render_page', side_effect=render) as renderer, \
+                    mock.patch.object(gfx_render, 'render_page', side_effect=AssertionError('CDP')), \
+                    mock.patch.object(gfx_cli, 'render_cli', side_effect=AssertionError('CLI')), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.duplicate_clips(project={'width': 16, 'height': 16})
+                shutil.rmtree(self.d)
+                self.d.mkdir()
+                for state, expected in (('cold', [0, 1, 2]), ('warm', []),
+                                        ('corrupt', [1]), ('partial', [2])):
+                    with self.subTest(pages=pages, split=split, state=state):
+                        if state == 'corrupt':
+                            (self.d / 'f0001.png').write_bytes(b'broken')
+                        elif state == 'partial':
+                            (self.d / 'f0002.png').unlink()
+                        barrier = (threading.Barrier(3) if
+                                   (pages, split, state) == ('3', '1', 'cold') else None)
+                        renderer.reset_mock()
+                        self.rendered.clear()
+                        with mock.patch.object(gfx_cli, 'complete_page', wraps=gfx_cli.complete_page) as complete:
+                            cli.gfx(self.c)
+                        self.assertEqual(renderer.call_count,
+                                         len(expected) if split == '1' else int(bool(expected)))
+                        self.assertCountEqual(self.rendered, expected)
+                        self.assertEqual(complete.call_count, int(bool(expected)))
+                        self.assertCountEqual([call.kwargs['frames'] for call in renderer.call_args_list],
+                                              [[i] for i in expected] if split == '1' else
+                                              ([None] if expected else []))
+                        self.assert_gfx_layers()
+                # One failed split cannot publish page completion. Successful
+                # sibling blocks remain resumable, but none certify the page.
+                shutil.rmtree(self.d)
+                self.d.mkdir()
+                def fail_one(html, d, n, **kwargs):
+                    frames = kwargs['frames']
+                    if frames is None or 1 in frames:
+                        raise RuntimeError('native block failed')
+                    return render(html, d, n, **kwargs)
+                renderer.side_effect = fail_one
+                with self.assertRaises(SystemExit), \
+                        mock.patch.object(gfx_cli, 'complete_page', wraps=gfx_cli.complete_page) as complete:
+                    cli.gfx(self.c)
+                complete.assert_not_called()
+                self.assertFalse((self.d / gfx_cli.COMPLETE_FILE).exists())
+                self.assertFalse(json.loads((self.c.out / 'receipt.json').read_text())['stages']['gfx']['ok'])
+                renderer.side_effect = render
+                cli.gfx(self.c)
+                self.assert_gfx_layers()
 
     def test_missing_or_malformed_marker_requires_environment_rerender(self):
         self.frames()

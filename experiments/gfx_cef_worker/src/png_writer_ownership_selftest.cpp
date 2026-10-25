@@ -13,7 +13,7 @@
 #include "spng.h"
 
 namespace {
-enum class Fault { kNone, kContext, kOption, kEncode, kGet, kEmpty, kAssign };
+enum class Fault { kNone, kContext, kOption, kEncode, kGet, kEmpty, kAssign, kWorkspace, kSourceThrow };
 struct Tracking {
   Fault fault = Fault::kNone;
   spng_ctx* context = nullptr;
@@ -25,6 +25,9 @@ Tracking g_track;
 bool g_tracking = false;
 bool g_fail_next_new = false;
 int g_failures = 0;
+bool g_cpp_tracking = false;
+int g_cpp_attempts = 0, g_cpp_fail_at = -1;
+void* g_cpp_live[256]{};  // Allocation-free tracking while fault injection is on.
 }
 
 extern "C" {
@@ -52,6 +55,8 @@ void __wrap_spng_ctx_free(spng_ctx* ctx) {
 }
 int __wrap_spng_set_option(spng_ctx* ctx, enum spng_option option, int value) {
   if (g_tracking && g_track.fault == Fault::kOption) return SPNG_EINVAL;
+  if (g_tracking && g_track.fault == Fault::kWorkspace && option == SPNG_FILTER_CHOICE)
+    g_fail_next_new = true;
   return __real_spng_set_option(ctx, option, value);
 }
 int __wrap_spng_encode_image(spng_ctx* ctx, const void* image, size_t len,
@@ -79,6 +84,11 @@ void* __wrap_spng_get_png_buffer(spng_ctx* ctx, size_t* len, int* error) {
   return buffer;
 }
 void __wrap_free(void* pointer) {
+  if (g_cpp_tracking && pointer != nullptr) {
+    for (auto& live : g_cpp_live) {
+      if (live == pointer) { live = nullptr; break; }
+    }
+  }
   if (g_tracking && pointer != nullptr && pointer == g_track.context) {
     ++g_track.contexts_freed;  // Observe actual allocator free, not just ctx_free.
     g_track.context = nullptr;
@@ -98,7 +108,16 @@ void* operator new(std::size_t size) {
     g_fail_next_new = false;
     throw std::bad_alloc();
   }
-  if (void* pointer = std::malloc(size == 0 ? 1 : size)) return pointer;
+  if (g_cpp_tracking && g_cpp_attempts++ == g_cpp_fail_at) throw std::bad_alloc();
+  if (void* pointer = std::malloc(size == 0 ? 1 : size)) {
+    if (g_cpp_tracking) {
+      for (auto& live : g_cpp_live) {
+        if (live == nullptr) { live = pointer; return pointer; }
+      }
+      std::abort();  // A broken harness must fail, never silently stop tracking.
+    }
+    return pointer;
+  }
   throw std::bad_alloc();
 }
 void* operator new[](std::size_t size) { return ::operator new(size); }
@@ -138,6 +157,52 @@ Result Encode(const uint8_t* rgba, int w, int h,
   g_tracking = false;
   // Baseline/mutant failures are cleaned after measurement so thousands of
   // regression calls cannot themselves cause OOM. This is not a LSan test.
+  if (g_track.context != nullptr) __real_spng_ctx_free(g_track.context);
+  if (g_track.buffer != nullptr) __real_free(g_track.buffer);
+  return result;
+}
+
+Result EncodeOwned(const uint8_t* rgba, int w, int h, Fault fault,
+                   bool progressive) {
+  g_track = Tracking{};
+  g_track.fault = fault;
+  g_tracking = true;
+  Result result;
+  try {
+    vtx_cef::PngEncodeOptions options;
+    vtx_cef::PngEncodeWorkspace workspace;
+    vtx_cef::PngBuffer png;
+    if (progressive) {
+      struct Rows { const uint8_t* rgba; size_t row_bytes; } rows{rgba, static_cast<size_t>(w) * 4};
+      const auto copy = [](void* user, size_t first, size_t count, uint8_t* out) {
+        if (first != 0 && g_track.fault == Fault::kSourceThrow) throw std::bad_alloc();
+        const auto& source = *static_cast<Rows*>(user);
+        std::memcpy(out, source.rgba + first * source.row_bytes, count * source.row_bytes);
+        return true;
+      };
+      result.returned = vtx_cef::EncodePngRgbaRows(w, h, options, copy, &rows,
+                                                  &workspace, &png);
+    } else {
+      result.returned = vtx_cef::EncodePngRgba(rgba, w, h, options, &png);
+    }
+    if (result.returned) {
+      const uint8_t* bytes = png.data();
+      const size_t len = png.size();
+      vtx_cef::PngBuffer moved = std::move(png);
+      if (!png.empty() || moved.data() != bytes || moved.size() != len) result.returned = false;
+      png = std::move(moved);
+      if (!moved.empty() || png.data() != bytes || png.size() != len) result.returned = false;
+      // A getter-triggered next-new fault must remain unconsumed: adopting and
+      // moving encoded bytes requires no extra C++ allocation or memcpy.
+      if (fault == Fault::kAssign && !g_fail_next_new) result.returned = false;
+      png.clear();
+    }
+  } catch (const std::bad_alloc&) {
+    result.threw = true;
+  }
+  result.resources = g_track;
+  g_fail_next_new = false;
+  g_tracking = false;
   if (g_track.context != nullptr) __real_spng_ctx_free(g_track.context);
   if (g_track.buffer != nullptr) __real_free(g_track.buffer);
   return result;
@@ -228,6 +293,83 @@ void TestErrors() {
   Check(ok, "invalid_arguments_preserve_output_without_allocation");
 }
 
+void TestOwnedAndProgressiveErrors() {
+  const auto rgba = MakeFrame(17, 33, 1);
+  for (bool progressive : {false, true}) {
+    struct ErrorCase { const char* name; Fault fault; bool success, throws; };
+    const ErrorCase cases[] = {
+        {"owned_success_move_clear", Fault::kNone, true, false},
+        {"owned_context_failure", Fault::kContext, false, false},
+        {"owned_option_failure", Fault::kOption, false, false},
+        {"owned_encode_failure", Fault::kEncode, false, false},
+        {"owned_get_failure", Fault::kGet, false, false},
+        {"owned_empty_result", Fault::kEmpty, false, false},
+        {"owned_adoption_needs_no_allocation", Fault::kAssign, true, false},
+        {"progressive_workspace_bad_alloc", Fault::kWorkspace, false, true},
+        {"progressive_source_bad_alloc", Fault::kSourceThrow, false, true},
+    };
+    for (const auto& tc : cases) {
+      if (!progressive && (tc.fault == Fault::kWorkspace || tc.fault == Fault::kSourceThrow)) continue;
+      const Result r = EncodeOwned(rgba.data(), 17, 33, tc.fault, progressive);
+      Check(r.returned == tc.success && r.threw == tc.throws && r.balanced(), tc.name);
+      std::printf("OWNED progressive=%d fault=%d contexts=%d/%d buffers=%d/%d threw=%d\n",
+                  progressive, static_cast<int>(tc.fault), r.resources.contexts,
+                  r.resources.contexts_freed, r.resources.buffers, r.resources.buffers_freed,
+                  r.threw);
+    }
+  }
+}
+
+struct CppAllocationResult {
+  int attempts = 0, leaked = 0;
+  bool returned = false, threw = false;
+};
+CppAllocationResult EncodeFpngWithAllocationFailure(const std::vector<uint8_t>& rgba,
+                                                    int fail_at) {
+  g_cpp_attempts = 0;
+  g_cpp_fail_at = fail_at;
+  g_cpp_tracking = true;
+  CppAllocationResult result;
+  try {
+    vtx_cef::PngEncodeOptions options;
+    options.encoder = vtx_cef::PngEncoder::kFpng;
+    vtx_cef::PngBuffer output;
+    result.returned = vtx_cef::EncodePngRgba(rgba.data(), 64, 48, options, &output);
+  } catch (const std::bad_alloc&) {
+    result.threw = true;
+  }
+  result.attempts = g_cpp_attempts;
+  g_cpp_tracking = false;
+  // Count before cleaning a defective/no-exceptions build, just as the spng
+  // harness does. This is deterministic allocation accounting, not an LSan claim.
+  for (auto& live : g_cpp_live) {
+    if (live != nullptr) {
+      ++result.leaked;
+      __real_free(live);
+      live = nullptr;
+    }
+  }
+  return result;
+}
+
+void TestFpngAllocationFailures() {
+  vtx_cef::PngEncoderGlobalInit();  // Exclude process-global feature detection.
+  int failures = 0, tested = 0;
+  for (int kind : {0, 3}) {
+    const auto rgba = MakeFrame(64, 48, kind);
+    const auto normal = EncodeFpngWithAllocationFailure(rgba, -1);
+    if (!normal.returned || normal.threw || normal.leaked != 0 || normal.attempts < 2) ++failures;
+    for (int allocation = 0; allocation < normal.attempts; ++allocation) {
+      const auto result = EncodeFpngWithAllocationFailure(rgba, allocation);
+      if (result.returned || !result.threw || result.leaked != 0) ++failures;
+      std::printf("FPNG_ALLOC kind=%d fail_at=%d attempts=%d leaked=%d threw=%d\n",
+                  kind, allocation, result.attempts, result.leaked, result.threw);
+      ++tested;
+    }
+  }
+  Check(failures == 0 && tested >= 4, "fpng_all_allocation_failures_unwind_temporaries");
+}
+
 const vtx_cef::SpngFilter kFilters[] = {vtx_cef::SpngFilter::kNone,
     vtx_cef::SpngFilter::kSub, vtx_cef::SpngFilter::kUp,
     vtx_cef::SpngFilter::kSubUp, vtx_cef::SpngFilter::kAll};
@@ -252,6 +394,21 @@ void TestPixels(const std::string& output) {
         if (!r.returned || r.threw || !r.balanced() || r.resources.contexts != 1 ||
             r.resources.buffers != 1 || !rr.returned || rr.threw || !rr.balanced() ||
             png != again || !DecodeMatches(png, frame, tc.width, tc.height)) ++failures;
+        // The same bytes independently decoded by Pillow in the Python test
+        // must also be emitted by the progressive/owned production API.
+        struct Rows { const uint8_t* bytes; size_t row_bytes; } rows{
+            frame.data(), static_cast<size_t>(tc.width) * 4u};
+        const auto copy = [](void* user, size_t first, size_t count, uint8_t* out) {
+          const auto& source = *static_cast<Rows*>(user);
+          std::memcpy(out, source.bytes + first * source.row_bytes, count * source.row_bytes);
+          return true;
+        };
+        vtx_cef::PngEncodeWorkspace workspace;
+        vtx_cef::PngBuffer progressive;
+        if (!vtx_cef::EncodePngRgbaRows(tc.width, tc.height, options, copy, &rows,
+                                        &workspace, &progressive) ||
+            progressive.size() != png.size() ||
+            std::memcmp(progressive.data(), png.data(), png.size()) != 0) ++failures;
         const std::string name = "sample_" + std::to_string(i) + "_l" +
             std::to_string(level) + "_f" + std::to_string(static_cast<int>(filter)) + ".png";
         if (!output.empty()) {
@@ -265,7 +422,7 @@ void TestPixels(const std::string& output) {
     }
   }
   std::printf("PIXELS samples=%d failures=%d\n", samples, failures);
-  Check(samples == 75 && failures == 0, "pixels_all_levels_filters_and_determinism");
+  Check(samples == 75 && failures == 0, "pixels_all_levels_filters_and_progressive_determinism");
 }
 void TestRepeated() {
   const auto rgba = MakeFrame(64, 48, 1);
@@ -295,6 +452,8 @@ void TestRepeated() {
 int main(int argc, char** argv) {
   if (argc > 2) return 2;
   TestErrors();
+  TestOwnedAndProgressiveErrors();
+  TestFpngAllocationFailures();
   TestPixels(argc == 2 ? argv[1] : "");
   TestRepeated();
   std::printf("OWNERSHIP %s failures=%d\n", g_failures == 0 ? "ALL PASS" : "FAIL",

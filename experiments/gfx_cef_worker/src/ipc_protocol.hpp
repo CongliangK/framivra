@@ -142,10 +142,15 @@ static_assert(std::is_standard_layout_v<SlotNotice>);
 
 // ---------------------------------------------------------------- Hello（Worker→宿主，64B，建连即发）
 
+// Runtime capability bits; an old worker must not silently stand in for the
+// paired exact implementation merely because its fixed ABI is compatible.
+inline constexpr uint16_t kHelloHasShmFd = 1u << 0;
+inline constexpr uint16_t kHelloPairedExact = 1u << 1;
+
 struct HelloInfo {
   uint32_t magic;             // kHelloMagic
   uint16_t protocol_version;  // kProtocolVersion
-  uint16_t flags;             // bit0：随消息附 SHM fd（SCM_RIGHTS）
+  uint16_t flags;             // kHelloHasShmFd | optional kHelloPairedExact
   uint64_t run_id;            // 本次 serve 运行标识（槽头 run_id 必须相等）
   int32_t pid;
   uint32_t ring_slots;        // = 4（kRingSlots）

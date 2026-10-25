@@ -39,7 +39,7 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
 
-# ---- 上游 flag 集与工单要求的三处对齐 ----
+# ---- 上游 flag 集与工单要求对齐 ----
 # 1) 上游对 x86_64 追加保守的 -march=x86-64，命令行后到者生效会压过工单的
 #    -march=x86-64-v3；且 CMake 对重复 flag 去重，无法靠再追加覆盖 → 从
 #    CEF 列表移除基线 march，全域统一 v3（下方目录级 add_compile_options）。
@@ -50,6 +50,10 @@ list(REMOVE_ITEM CEF_LINKER_FLAGS -Wl,-rpath,.)
 # 3) 链接解包目录内 libcef.so 时 CMake 会把该目录的绝对路径写进 build
 #    RPATH（携带本机路径，破坏产物可迁移性）→ 转为 $ORIGIN 相对路径。
 set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+# 4) CEF 154 appends -O2 to Release target flags after our directory -O3.
+#    Keep all other upstream release/security flags and leave Debug unchanged.
+list(REMOVE_ITEM CEF_COMPILER_FLAGS_RELEASE -O2)
+list(APPEND CEF_COMPILER_FLAGS_RELEASE -O3)
 
 # ---- 语言标准：C++20 ----
 set(CMAKE_CXX_STANDARD 20)
@@ -107,15 +111,25 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
 else()
   set_source_files_properties(${FPNG_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 endif()
+# fpng owns temporary std::vectors across allocations. Preserve their unwind
+# cleanup when serve.cpp catches bad_alloc; retain the vendor/architecture flags.
+set_property(SOURCE ${FPNG_SOURCES} APPEND PROPERTY COMPILE_OPTIONS "-fexceptions")
 add_executable(vtx_cef_worker src/main.cpp src/app_handler.cpp
                              src/frame_pipeline.cpp src/pixel_ops.cpp
                              src/png_writer.cpp src/serve.cpp
                              src/frame_sync_machine.cpp src/js_error_observer.cpp
                              ${SPNG_SOURCES} ${FPNG_SOURCES})
-# serve.cpp catches allocation/encoding failures in the worker thread. CEF's
-# upstream flags disable exceptions for the whole executable, so keep exception
-# support local to this translation unit and preserve that failure path.
-set_source_files_properties(src/serve.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
+# serve.cpp translates allocation/encoding exceptions to failed requests. The
+# writer owns the spng context/output while vector allocation or a progressive
+# row callback can throw, so its RAII cleanup also needs unwind tables. CEF's
+# upstream -fno-exceptions remains unchanged for other translation units.
+set_source_files_properties(src/serve.cpp src/png_writer.cpp
+                            PROPERTIES COMPILE_OPTIONS "-fexceptions")
+# CEF disables thread-safe local statics globally. These two application TUs
+# cache dynamic LUT/backend/filter state and are also callable concurrently;
+# restore standard C++ first-use initialization without changing CEF/vendor flags.
+set_property(SOURCE src/pixel_ops.cpp src/png_writer.cpp APPEND
+             PROPERTY COMPILE_OPTIONS "-fthreadsafe-statics")
 # CEF 官方 exe 属性宏：CEF flag 集（含 -std=c++20 -O3 -Wall -Wextra -Werror，
 # 与目录级工单 flag 同语义）+ include 路径。
 SET_EXECUTABLE_TARGET_PROPERTIES(vtx_cef_worker)

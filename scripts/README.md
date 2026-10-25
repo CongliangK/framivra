@@ -11,6 +11,7 @@
 | 主宣传 Demo / 性能源 | `demo.py` 准备/核验唯一 30 秒输入，内部复用原 `build_demo.js`，渲染直接使用产品 `all`；[唯一源基线与用法](../templates/demo-timeline-svg/README.md#主性能基线)。 |
 | 发布 | `release/release_github.py` 执行发布事务；`release/verify_release.py` 核验身份；`release/release_acceptance.py` 在隔离冻结源码上验收。真实发布需要授权。 |
 | 图形基线与证据 | `gfx/gfx_golden.py` 是命令入口，`gfx/gfx_evidence.py` 是验证库；使用说明见 [图形证据](../docs/cache-provenance.md#golden-evidence)。 |
+| CEF 配对性能 | `gfx/bench_cef.py plan/run/report`；只读计划、新目录冷暖全链、JSON/Markdown 报告；[输入与 Mac 交接](../experiments/gfx_cef_worker/README.md#有界调度与-mac-性能交接)。 |
 | 许可政策 | `policy/model_license_policy.py` 被 app/worker 消费；`policy/distribution_license_audit.py` 审计分发归档，不属于测试夹具。 |
 | 生成源件 | `gen_manifest_catalog.py` 管理 [组件目录](../docs/catalog.md) 的生成区；`generate_placeholder_media.py` 默认显示计划，`--write` 会重建媒体，须复核许可清单中的生成器与媒体哈希。 |
 | 文档门 | `doc_gates.sh` 聚合 `docs/` 下七个叶；`doc_budget.snapshot.json` 是预算事实 home。门绿不代表完整命令或媒体效果已验证。 |

@@ -34,7 +34,8 @@ CHROME_VISUAL_FLAGS = ('--headless', '--disable-gpu', '--hide-scrollbars',
 _lock = threading.RLock()
 _hashes = {}
 _ROOT = Path(__file__).resolve().parents[1]
-# PNG compression and scheduling are deliberately provenance only.
+# CDP PNG compression/scheduling are provenance only. Experimental CEF also
+# binds its explicit runtime/scheduling configuration (see gfx_backend).
 PIXEL_ENV = ('LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'LC_NUMERIC', 'TZ',
              'FONTCONFIG_FILE', 'FONTCONFIG_PATH', 'FONTCONFIG_SYSROOT',
              'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_DATA_DIRS', 'XDG_CACHE_HOME', 'HOME',
@@ -287,6 +288,7 @@ def _darwin_cache_files(paths):
 
 def _collect_darwin_renderer(backend, executable, root, architecture, mode):
     """Collect renderer inputs independent of the active system cache bytes."""
+    from .gfx_backend import cef_configuration, cef_launch_flags
     runtime = _darwin_bundle(root)
     if not any('/Frameworks/' in p for p in runtime['files']):
         raise EnvironmentError('Darwin Chrome framework distribution is missing')
@@ -312,8 +314,8 @@ def _collect_darwin_renderer(backend, executable, root, architecture, mode):
             'environment': {k: os.environ.get(k) for k in sorted(set(PIXEL_ENV) |
                              {k for k in os.environ if k.startswith(('LC_', 'DYLD_', '__XPC_DYLD_', '__CF_'))})},
             'launch_flags': (list(CHROME_VISUAL_FLAGS) if backend == 'cdp' else
-                             ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact',
-                              '--use-mock-keychain']),
+                             cef_launch_flags(mode) + ['--use-mock-keychain']),
+            **({'cef_configuration': cef_configuration()} if backend == 'cef' else {}),
             'protocol': {'device_scale': 1, 'color': 'srgb',
                          'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
@@ -471,6 +473,7 @@ def _collect_darwin(backend, binary, mode):
             'host_boot': renderer['host_boot'], 'os': renderer['os'],
             'system_locale': renderer['system_locale'], 'tools': renderer['tools'],
             'environment': renderer['environment'], 'launch_flags': renderer['launch_flags'],
+            **({'cef_configuration': renderer['cef_configuration']} if backend == 'cef' else {}),
             'protocol': renderer['protocol'], 'python_runtime': renderer['python_runtime'],
             'implementation': renderer['implementation']}
 
@@ -841,6 +844,7 @@ def collect(backend, binary, mode=None):
     inputs. A host/boot boundary forbids portable-cache equality claims. Runtime
     observations remain separate evidence; no launch flag proves a GPU backend.
     """
+    from .gfx_backend import cef_configuration, cef_launch_flags
     try:
         if platform.system() == 'Windows':
             return _collect_windows(backend, binary, mode)
@@ -909,7 +913,8 @@ def collect(backend, binary, mode=None):
                 'system_locale': _files(p for p in ('/etc/localtime', '/etc/locale.conf')
                                         if Path(p).exists()),
                 'launch_flags': list(CHROME_VISUAL_FLAGS) if backend != 'cef' else
-                    ['mode=' + str(mode), 'sync-mode=n', 'sync-canary=exact'],
+                    cef_launch_flags(mode),
+                **({'cef_configuration': cef_configuration()} if backend == 'cef' else {}),
                 'protocol': {'device_scale': 1, 'color': 'srgb',
                              'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
                 'python_runtime': _python_runtime(),
@@ -923,13 +928,15 @@ def collect(backend, binary, mode=None):
 
 def resolve(c):
     """Pin one environment to a context; recheck() never adopts new inputs."""
-    from .gfx_backend import selected, cef_config
+    from .gfx_backend import selected, cef_config, CEF_CONFIGURATION_ENV
     from ..media.encoders import find_chrome
     backend = selected()
     if backend == 'electron':
         return None  # frozen historical identity owned by gfx_backend
     selector = (backend, os.environ.get('VTX_CHROME'), os.environ.get('VTX_CEF_WORKER'),
                 os.environ.get('VTX_CEF_MODE'), tuple(os.environ.get(k) for k in PIXEL_ENV))
+    if backend == 'cef':
+        selector += (tuple(os.environ.get(k) for k in CEF_CONFIGURATION_ENV),)
     if platform.system() == 'Darwin':
         selector += (tuple(sorted((k, v) for k, v in os.environ.items()
                      if k.startswith(('DYLD_', '__XPC_DYLD_', '__CF_')) or k == 'CFFIXED_USER_HOME')),)
