@@ -262,6 +262,8 @@ def _native(evidence, references, run_id):
     # Pipeline execution IDs provide attribution. A warm snapshot can contain
     # cold files; never count those costs again merely because they are present.
     linked, foreign = set(), set()
+    jitter = {"tolerated_frames": 0, "accepted_frames": 0,
+              "max_jitter_pixels": 0, "max_jitter_channel_delta": 0}
     for path in paths:
         if not path.name.endswith(".pipeline.json"):
             continue
@@ -310,6 +312,14 @@ def _native(evidence, references, run_id):
                     data = strict_json_loads(line)
                     if not isinstance(data, dict):
                         raise ValueError("native JSONL row is not an object at line " + str(line_number))
+                    if data.get("event") == "exact_baseline_equal" and prefix in linked:
+                        jitter["accepted_frames"] += 1
+                        if data.get("via") == "rasterization_jitter_tolerance":
+                            jitter["tolerated_frames"] += 1
+                            jitter["max_jitter_pixels"] = max(
+                                jitter["max_jitter_pixels"], data.get("jitter_pixels") or 0)
+                            jitter["max_jitter_channel_delta"] = max(
+                                jitter["max_jitter_channel_delta"], data.get("jitter_max_channel_delta") or 0)
                     if data.get("event") != "adapter_timing":
                         continue
                     for key in NATIVE_TIMINGS + NATIVE_COUNTS:
@@ -340,7 +350,24 @@ def _native(evidence, references, run_id):
             "unlinked_adapter_us": {key: _distribution([r[key] for r in unlinked_adapter if _number(r.get(key))], len(unlinked_adapter))
                                     for key in NATIVE_TIMINGS},
             "adapter_counts": {key: _distribution([r[key] for r in adapter if _number(r.get(key))], len(adapter))
-                               for key in NATIVE_COUNTS}}
+                               for key in NATIVE_COUNTS},
+            "jitter_tolerance": jitter}
+    # Rasterization-jitter drift gate: the veto tolerance is budgeted at
+    # 12288 px / delta 28-32 with measured headroom ~1.2x; drift toward the
+    # budget ceiling must surface as an issue instead of silence.
+    if jitter["accepted_frames"]:
+        share = jitter["tolerated_frames"] / jitter["accepted_frames"]
+        if jitter["max_jitter_pixels"] > 11000:
+            evidence.issues.append(
+                "rasterization jitter pixels {} exceed the 11000 early-warning ceiling (budget 12288)".format(
+                    jitter["max_jitter_pixels"]))
+        if jitter["max_jitter_channel_delta"] > 30:
+            evidence.issues.append(
+                "rasterization jitter channel delta {} exceeds the 30 early-warning ceiling (budget 32)".format(
+                    jitter["max_jitter_channel_delta"]))
+        if share > 0.05:
+            evidence.issues.append(
+                "rasterization jitter tolerated on {:.1%} of frames (>5%)".format(share))
 
 
 def _command_ok(command, name, issues, strict=False):

@@ -172,6 +172,10 @@ offset 均相对该块的 `block_started_counter_us`，使用 Python `perf_count
 不含实际 socket 发送；capture/encode queue/alpha/png/disk 可分项，剩余为未细分适配开销。
 `capture_offsets_origin=sync_request_begin` 下的 signed proof、unsigned load/readiness/
 two samples/veto 是里程碑 offset，不能相加；原生与 Python 时钟不假定可直接对齐。
+veto 的 two samples 默认要求与冻结签名重建逐字节相同；唯一例外是光栅化抖动容忍
+（差异冻结 ≥6 样本、≤12288 px、逐通道差 ≤28/255、四角探针仍逐字节相同），
+接受时以 `via=rasterization_jitter_tolerance` 事件留痕（jitter_pixels、
+jitter_max_channel_delta、jitter_signature_streak），不改变输出字节。
 失败请求可能只有带原因的 `request_end` 而没有 adapter timing；缺项不代表耗时为 0。
 renderer PID 是原生错误观察器在现有文档/请求绑定后附加的诊断，未知为 0，绝不作为
 捕获证明或放行条件；相同/不同 PID 用于核实共享/独立 context 是否真的分 renderer。

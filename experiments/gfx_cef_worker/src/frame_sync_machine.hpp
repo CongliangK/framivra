@@ -200,7 +200,7 @@ class FrameSyncStateMachine {
   // rasterize the SAME static page into rasters that disagree on
   // anti-aliased/gradient-quantized pixels. Measured over a full 900-frame
   // run (1080p, 20 frozen divergences): 2-91 px at AA edges, 822-1599 px
-  // and 10050-10214 px at gradient quantization, channel deltas <= 25/255;
+  // and 10050-10214 px at gradient quantization, channel deltas <= 28/255;
   // transient catching-up rasters change BETWEEN samples and recover to
   // byte equality on their own. Byte equality is unattainable for the
   // frozen cases and the historical path (treat every mismatch as
@@ -215,7 +215,7 @@ class FrameSyncStateMachine {
   // perturbations (whole-region flips, ~2M px at full-scale deltas) stay
   // orders of magnitude above these budgets.
   static constexpr uint32_t kJitterMaxPixels = 12288;  // 0.6% of 1080p, 1.2x largest measured
-  static constexpr uint32_t kJitterMaxChannelDelta = 32;  // 1.28x largest measured (25)
+  static constexpr uint32_t kJitterMaxChannelDelta = 32;  // 1.14x largest measured (28)
   static constexpr uint32_t kJitterStreakTarget = 6;
   PaintVerdict FeedExactBaselinePaint(const PageEvent& identity,
       const uint8_t* src, size_t stride, uint32_t width, uint32_t height,

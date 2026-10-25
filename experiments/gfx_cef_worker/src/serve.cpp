@@ -643,6 +643,11 @@ Promise.resolve(loadP).then(function () {
 // proof are in flight. They never enter FeedPaint and never supply output bytes.
 // S5 still requires TWO distinct post-readiness native paints that match the
 // frozen signed reconstruction byte-for-byte, including all four probe corners.
+// The sole exception is rasterization jitter tolerance: frozen cross-renderer
+// divergence (>=kJitterStreakTarget identical signatures) within the
+// kJitterMaxPixels/kJitterMaxChannelDelta budgets and exact probe corners
+// accepts the signed candidate with a via=rasterization_jitter_tolerance
+// audit event; anything beyond those budgets still fails closed.
 class ExactBaselineCapture {
  public:
   bool Begin(const ServeOptions& opt, uint32_t gen, uint32_t req,
@@ -841,7 +846,9 @@ class ExactBaselineCapture {
     }
     // Early stable blanks or late rasterization do not justify another fresh
     // browser/navigation. Continue collecting new unsigned paints inside the
-    // ORIGINAL pump deadline; mismatches never relax the equality predicate.
+    // ORIGINAL pump deadline; mismatches never relax the equality predicate
+    // except through the bounded, audited rasterization-jitter tolerance
+    // path in the sync machine (frozen signature + strict budgets).
     // Do not carry an M,E batch's trailing match into the next E,M batch:
     // accepting its first E would ignore the already-frozen latest mismatch.
     machine.DiscardExactBaselinePartialMatch();
