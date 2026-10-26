@@ -26,6 +26,7 @@ import socket
 import struct
 import sys
 import time
+from collections import deque
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -166,7 +167,10 @@ class CefWorkerClient:
             cleanup.callback(self._mm.close)
             self._validate_ring(size)
             self._closed = False
-            self._pending_png = None
+            # FIFO 深度 2：submit_png 入队，receive_png 按序弹出最旧回执
+            # （协议 v1 双 ticket 流水：帧 N 编码与帧 N+1 捕获并行，回执
+            # 仍按请求顺序到达；串行 worker 下退化为单条排队）。
+            self._pending_pngs: "deque[_PendingPng]" = deque()
             cleanup.pop_all()
 
     # ------------------------------------------------------------ 连接
@@ -381,18 +385,21 @@ class CefWorkerClient:
     def submit_png(self, frame_index: int, out_png_path,
                    request_id: int = 0, expected_wh=(0, 0),
                    timeout: float = 90.0, *, worker_relative=False) -> None:
-        """Send one Mode 1 request; receive_png() must consume it before another.
+        """Queue one Mode 1 request; receive_png() consumes receipts in order.
 
-        Splitting send/receive overlaps host validation/commit of the preceding
-        file with native work. It does NOT imply a parallel native worker: only
-        one request is ever in flight, including on protocol-v1 workers without
-        a capability handshake. The output directory fd and absolute deadline
-        belong to this request until its receipt is consumed or the client closes.
+        At most two requests may be queued (dual-ticket pipeline depth): the
+        native worker overlaps frame N PNG encode/disk-write with frame N+1
+        capture, but a receipt is only sent after its own frame's encode
+        completes — so submit-before-receive overlaps native stages without
+        weakening per-frame receipt semantics. Each queued request's output
+        directory fd and absolute deadline belong to it until its receipt is
+        consumed or the client closes. Receipts arrive in request order;
+        receive_png() always pops the oldest.
         """
         if self._closed:
             raise CefWorkerError("PNG client is closed")
-        if self._pending_png is not None:
-            raise CefWorkerError("PNG request already pending; receive it before submitting another")
+        if len(self._pending_pngs) >= 2:
+            raise CefWorkerError("PNG pipeline depth exceeded (2); receive a receipt before submitting another")
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError("PNG request timeout must be finite and positive, or None")
         path, fd = str(out_png_path), None
@@ -416,7 +423,7 @@ class CefWorkerClient:
                 os.close(fd)
             raise
         deadline = None if timeout is None else time.monotonic() + timeout
-        self._pending_png = _PendingPng(frame_index, request_id, deadline, fd)
+        self._pending_pngs.append(_PendingPng(frame_index, request_id, deadline, fd))
         try:
             self._sock.settimeout(timeout)
             self._sock.sendall(packet)
@@ -434,12 +441,12 @@ class CefWorkerClient:
             raise error
 
     def receive_png(self) -> FrameReceipt:
-        """Consume the single pending PNG receipt with one end-to-end deadline."""
+        """Consume the oldest pending PNG receipt with its end-to-end deadline."""
         if self._closed:
             raise CefWorkerError("PNG client is closed")
-        pending = self._pending_png
-        if pending is None:
+        if not self._pending_pngs:
             raise CefWorkerError("no PNG request pending")
+        pending = self._pending_pngs[0]
         try:
             raw = self._recv_exact(self._sock, 128, "模式 1 回执", deadline=pending.deadline)
             values = struct.unpack_from(_HEADER_FMT, raw, 0)
@@ -450,7 +457,7 @@ class CefWorkerClient:
                               STATUS_JS_ERR, STATUS_DUPLICATE):
                 raise CefWorkerError(f"unknown PNG receipt status={status}")
             # Only a fully received, identity-bound response clears admission.
-            self._pending_png = None
+            self._pending_pngs.popleft()
             if pending.output_fd is not None:
                 os.close(pending.output_fd)
             if status != STATUS_OK:
@@ -496,7 +503,7 @@ class CefWorkerClient:
         flags = FLAG_WANT_SLOT | (FLAG_DUMP_RAW if dump else 0)
         if self._closed:
             raise CefWorkerError("slot client is closed")
-        if self._pending_png is not None:
+        if self._pending_pngs:
             raise CefWorkerError("PNG request pending; cannot mix slot and PNG receipts")
         try:
             self._send_request(frame_index, path, flags, request_id, (0, 0))
@@ -566,9 +573,10 @@ class CefWorkerClient:
                 try:
                     os.close(self._shm_fd)
                 finally:
-                    pending, self._pending_png = self._pending_png, None
-                    if pending is not None and pending.output_fd is not None:
-                        os.close(pending.output_fd)
+                    pending, self._pending_pngs = list(self._pending_pngs), deque()
+                    for p in pending:
+                        if p.output_fd is not None:
+                            os.close(p.output_fd)
 
     def __enter__(self):
         return self

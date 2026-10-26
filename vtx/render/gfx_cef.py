@@ -91,13 +91,13 @@ def render_page(html, outdir, n_frames, *, ctx, width, height, frames=None):
                          "attempt_no": getattr(observation, "attempt_no", None)},
                 "clock": "python.perf_counter_ns", "block_started_counter_us": block_started // 1000,
                 "rendered_frames": [], "worker_options": options.to_dict(),
-                "max_native_inflight": 1, "output_buffers": 2,
+                "max_native_inflight": 2, "output_buffers": 2,
                 "native_wait_us": 0, "native_receive_attempts": 0,
                 "host_validate_us": 0, "host_commit_us": 0,
                 "cached_validate_us": (cached_validated - validation_started) // 1000,
                 "final_validate_us": None, "worker_startup_us": None,
                 "request_roundtrips": [], "completed": False,
-                "request_wall_scope": "submit to receive; includes overlapped host work, not native CPU time",
+                "request_wall_scope": "submit to receive; includes overlapped host work and the pipelined next-frame capture, not native CPU time",
                 "native_wait_scope": "host receive-call wall including protocol parsing; never native CPU or stage wall time",
                 "wall_scope": "block through validation/cleanup; excludes final diagnostic write",
                 "output_commits": {"rename": 0, "copy": 0}}
@@ -166,14 +166,29 @@ def render_page(html, outdir, n_frames, *, ctx, width, height, frames=None):
                                             "CEF worker lacks paired-exact Hello capability; "
                                             "rebuild VTX_CEF_WORKER from this revision (no fallback)")
                                     ctx.verify_inputs("gfx")
-                                    # One native request plus one completed host file:
-                                    # never assume native request parallelism, and never
-                                    # overwrite the file currently being validated.
+                                    # Dual-ticket pipeline (depth 2): the next
+                                    # request is submitted before the current
+                                    # receipt is consumed, so the native worker
+                                    # overlaps frame N+1 capture with frame N
+                                    # encode. Receipts stay strictly later than
+                                    # their own frame's encode (received file is
+                                    # complete), and alternating basenames mean
+                                    # the file being validated is never the one
+                                    # being written.
                                     request_started = time.perf_counter_ns()
                                     client.submit_png(
                                         missing[0], "frame0.png", request_id=missing[0] + 1,
                                         expected_wh=(width, height), worker_relative=True)
+                                    next_submit_started = None
                                     for index, f in enumerate(missing):
+                                        # 流水提交：等待当前回执前送入下一请求。
+                                        if index + 1 < len(missing):
+                                            next_frame = missing[index + 1]
+                                            next_submit_started = time.perf_counter_ns()
+                                            client.submit_png(
+                                                next_frame, f"frame{(index + 1) % 2}.png",
+                                                request_id=next_frame + 1, expected_wh=(width, height),
+                                                worker_relative=True)
                                         started = time.perf_counter_ns()
                                         pipeline["native_receive_attempts"] += 1
                                         try:
@@ -192,12 +207,7 @@ def render_page(html, outdir, n_frames, *, ctx, width, height, frames=None):
                                                 or (h["pixel_format"], h["color_space"]) != (1, 1)):
                                             raise CefWorkerError("verified frame geometry/canary/pixel format mismatch")
                                         if index + 1 < len(missing):
-                                            next_frame = missing[index + 1]
-                                            request_started = time.perf_counter_ns()
-                                            client.submit_png(
-                                                next_frame, f"frame{(index + 1) % 2}.png",
-                                                request_id=next_frame + 1, expected_wh=(width, height),
-                                                worker_relative=True)
+                                            request_started = next_submit_started
                                         source = group.run_dir / f"frame{index % 2}.png"
                                         started = time.perf_counter_ns()
                                         timing["validate_start_offset_us"] = (started - block_started) // 1000
