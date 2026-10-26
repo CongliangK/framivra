@@ -366,6 +366,12 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
   提交），仅回 128B 计时回执；模式 2 = 先取空槽再生产，4 槽全满即背压
   （暂停发起下一帧 BeginFrame，`backpressure_wait_us` 随通知回传并累计
   入环控制块，超时明确 TIMEOUT 不死等）。
+- **模式 1 双 ticket 流水（深度 2，默认开启）**：帧 N 的 PNG 编码/落盘
+  （池线程）与帧 N+1 的原生捕获（UI 线程）并行——staging 双缓冲分离
+  读写侧；回执严格按请求序、且晚于该帧自身编码完成（宿主收到即读文件，
+  原子写保证完整，alpha/png/disk 计时仍归属本帧）；编码失败/超时为保守
+  失败（非 OK 回执 + 整个 serve exit 4，不静默丢帧、不留半写文件），详见
+  [协议 §3/§4](IPC_PROTOCOL.md#3-帧槽framelot--回执)。
 - **帧正确性**：OnPaint 任意行步长逐行紧凑拷入槽（杜绝跨行斜纹）+
   (0,0) 金丝雀像素核实帧号（不符即拒绝计数）+ 槽头 run_id 跨 run 残帧
   拒收；SIMD 逆预乘与 #109 标量公式 (c,a) 全组合穷举一致。

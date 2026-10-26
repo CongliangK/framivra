@@ -249,6 +249,22 @@ class FrameSyncStateMachine {
     Emit("adapter_timing", now_us, nullptr, nullptr, fields);
   }
 
+  // 双 ticket 流水：帧 N 的 adapter_timing 要等编码/落盘完成后（即回执时）
+  // 才能补齐字段，而那时机器已 Reset 并开始跟踪帧 N+1。此变体临时换上
+  // 指定请求的身份与其被接受时的状态（S5）再 Emit，保证 JSONL 行仍归属
+  // 帧 N（drive_mode/document_gen/request_id/target_frame_index 皆取自
+  // desc 参数）；seq/ts_us 仍走全局单调计数，证明状态不被改动。
+  void RecordAdapterTimingFor(const RequestDesc& desc, uint64_t now_us,
+                              const std::string& fields) {
+    const RequestDesc keep_desc = desc_;
+    const State keep_state = state_;
+    desc_ = desc;
+    state_ = State::S5_ONPAINT_VERIFIED;
+    Emit("adapter_timing", now_us, nullptr, nullptr, fields);
+    desc_ = keep_desc;
+    state_ = keep_state;
+  }
+
   // —— 查询面（serve 回执/测试断言消费；计数器为全程累计口径）——
   State state() const { return state_; }
   const RequestDesc& request() const { return desc_; }

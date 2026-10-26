@@ -11,6 +11,11 @@
 //     偏差已在 IPC_PROTOCOL.md §0 记录。
 //   - 校验/版本面：每消息自带 magic + protocol_version；槽头另有 run_id
 //     （跨 run 陈旧帧检测）与 request_id/seq（序号）。
+//   - 模式 1 双 ticket 流水（深度 2，协议二进制布局不变）：worker 在帧 N
+//     编码/落盘期间即可接收帧 N+1 请求并捕获；回执仍严格在「本帧编码
+//     完成」之后按请求顺序发送（宿主收到回执即读文件，原子写保证完整）。
+//     客户端在途未回执请求至多 2 个；编码失败/超时以非 OK 回执 + 进程
+//     退出码 4 显形，绝不静默丢帧续跑。详见 IPC_PROTOCOL.md §3/§4。
 #ifndef GFX_CEF_WORKER_IPC_PROTOCOL_H_
 #define GFX_CEF_WORKER_IPC_PROTOCOL_H_
 

@@ -1260,6 +1260,38 @@ void FillReceipt(FrameSlotHeader* h, const ProduceResult& r, uint64_t run_id,
   h->t_disk_commit_us = t_disk;
 }
 
+// ---------------------------------------------------------------- 双 ticket 流水
+// 模式 1 流水深度 2：帧 N 的编码/落盘（池线程）与帧 N+1 的捕获（UI 线程）
+// 并行。帧 N 的回执延迟到其编码完成后发送（宿主收到 receive_png 即读文件，
+// 原子写保证完整）。此记录跨迭代持有帧 N 的回执身份、编码任务回填字段与
+// sync 快照（状态机让位给帧 N+1 前定格；回执时经 RecordAdapterTimingFor
+// 补记 adapter_timing，保证 JSONL 行归属帧 N）。
+struct PendingReceipt {
+  bool active = false;
+  uint32_t request_id = 0;
+  int32_t frame_index = 0;
+  ProduceResult r;  // 捕获结果（status/尺寸/金丝雀/拒收计数，属本帧）
+  uint64_t capture_wall_us = 0;
+  std::string out_path;
+  // —— 编码任务回填（仅池线程写；UI 线程仅在 pool.Done() 后读）——
+  uint64_t t_queue = 0, t_alpha = 0, t_png = 0, t_disk = 0;
+  bool deliver_ok = false;
+  bool encode_timed_out = false;
+  // —— sync 快照（帧 N 捕获完成、机器仍跟踪 N 时定格）——
+  bool sync_valid = false;
+  uint64_t request_started_us = 0;
+  uint64_t signed_ready_us = 0;
+  int32_t signed_renderer_pid = 0;
+  uint64_t signed_navigations = 0;
+  uint64_t signed_fence_count = 0;
+  uint64_t signed_native_paints = 0;
+  uint32_t capture_fps = 0;
+  bool exact_canary = false;
+  bool sync_mode_p = false;
+  std::string exact_timing_fields;
+  fsync::RequestDesc machine_desc;
+};
+
 // Close a signed browser even if asynchronous creation completes only after
 // the startup deadline. A successful CreateBrowser request with no callback is
 // still live CEF work: it is not evidence that CefShutdown is safe.
@@ -1600,18 +1632,144 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   uint32_t ok_replies = 0;
   int exit_code = 0;
 
+  // —— 双 ticket 流水（模式 1，深度 2）：帧 N 编码与帧 N+1 捕获并行 ——
+  // staging 双缓冲：帧 N 捕获写 staging[N%2]，帧 N-1 编码读另一缓冲。
+  // 单槽池顺序契约不变：post N 严格晚于 Done(N-1)，故 staging[N%2] 的
+  // resize 只发生在其上一次编码（帧 N-2）已完成后。
+  std::vector<uint8_t> staging[2];
+  int staging_idx = 0;
+  PendingReceipt pending;
+
+  // 发送帧 N-1 的回执（前提：pool.Done() 已真，或编码已超时排空）。
+  // 回执绑定帧 N-1 的身份与本帧编码计时；adapter_timing 用快照经
+  // RecordAdapterTimingFor 补记（机器此刻已跟踪帧 N，须按快照身份归属）。
+  // 返回 false = serve 必须以 exit_code=4 退出：回执发送失败，或本帧
+  // 编码/落盘失败/超时——保守失败路径：回执已尽力送达，绝不静默丢帧续跑。
+  const auto send_pending_receipt = [&](PendingReceipt& p) {
+    if (p.encode_timed_out) {
+      p.r.status = kStatusTimeout;
+    } else if (!p.deliver_ok) {
+      p.r.status = kStatusJsErr;  // 落盘失败以非 OK 码显形（复用 3 号档）
+      std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘失败 %s\n",
+                   p.out_path.c_str());
+    }
+    if (p.sync_valid) {
+      if (p.sync_mode_p && p.exact_canary && p.r.status != kStatusOk)
+        exact_baseline.PoisonResident();
+      const uint64_t now = NowUs();
+      std::string fields = "\"request_wall_to_reply_us\":" +
+          std::to_string(now - p.request_started_us) +
+          ",\"capture_fps_requested\":" + std::to_string(p.capture_fps) +
+          ",\"capture_wall_us\":" + std::to_string(p.capture_wall_us) +
+          ",\"signed_ready_us\":" + std::to_string(p.signed_ready_us) +
+          ",\"signed_renderer_pid\":" + std::to_string(p.signed_renderer_pid) +
+          ",\"signed_navigations\":" + std::to_string(p.signed_navigations) +
+          ",\"signed_fence_count\":" + std::to_string(p.signed_fence_count) +
+          ",\"signed_native_paints\":" + std::to_string(p.signed_native_paints) +
+          ",\"encode_queue_us\":" + std::to_string(p.t_queue) +
+          ",\"alpha_us\":" + std::to_string(p.t_alpha) +
+          ",\"png_us\":" + std::to_string(p.t_png) +
+          ",\"disk_us\":" + std::to_string(p.t_disk) +
+          ",\"backpressure_us\":0" +
+          ",\"delivery_status\":" + std::to_string(p.r.status) +
+          ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
+          ",\"capture_stages_overlap\":" +
+          (p.exact_canary ? "true" : "false");
+      if (p.exact_canary) fields += p.exact_timing_fields;
+      sync_machine.RecordAdapterTimingFor(p.machine_desc, now, fields);
+    }
+    FrameSlotHeader receipt;
+    FillReceipt(&receipt, p.r, run_id, p.request_id, p.frame_index,
+                p.t_alpha, p.t_png, p.t_disk);
+    p.active = false;
+    if (!SendAll(conn, &receipt, sizeof(receipt))) {
+      exit_code = 4;
+      return false;
+    }
+    if (p.r.status != kStatusOk) {
+      // 编码失败/超时：非 OK 回执已送达，整个 serve 失败退出（不丢帧续跑）。
+      exit_code = 4;
+      return false;
+    }
+    ++ok_replies;
+    return true;
+  };
+
+  // 等待在飞编码收尾（60s 死线 + 5s 收尾宽限——语义与串行版一致）后回执。
+  const auto drain_and_send_pending = [&]() -> bool {
+    if (!pending.active) return true;
+    if (!pump.Until([&] { return pool.Done(); }, 60000)) {
+      pending.encode_timed_out = true;
+      // This is a reply deadline, not cancellation of a blocking writer.
+      // Keep every capture/output owned until Done's acquire synchronizes
+      // with the task. Allow one bounded drain grace; if I/O is still stuck,
+      // exit the worker without joining the task, unwinding its references,
+      // acknowledging any receipt, or admitting another request. The existing
+      // process owner reclaims the tree and its private partial output.
+      if (!pump.Until([&] { return pool.Done(); }, 5000)) {
+        ExitUnclosedServe(4);
+      }
+      std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘超时，任务已收尾 %s\n",
+                   pending.out_path.c_str());
+    }
+    return send_pending_receipt(pending);
+  };
+
   for (;;) {
     FrameRequest req;
     std::memset(&req, 0, sizeof(req));
-    const int rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+    int rc = 0;
+    if (!pending.active) {
+      rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+    } else {
+      // —— 流水等待：帧 N-1 编码在飞 ——
+      // 串行宿主（收到回执才提交下一请求）：编码一完成立即回执，零死锁；
+      // 流水宿主（深度 2）：下一请求已在线，socket 可读即开始捕获帧 N。
+      // 分片轮询不消费 socket 字节；65s 守底 = 编码 60s 死线 + 5s 收尾
+      // 宽限的等价上限（宿主长期静默也照此退出）。
+      const uint64_t pipeline_deadline = NowUs() + 65000000ull;
+      for (;;) {
+        struct pollfd pfd;
+        pfd.fd = conn;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        const int pr = ::poll(&pfd, 1, 10);
+        if (pr > 0) {
+          rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+          break;
+        }
+        if (pr < 0) {
+          if (errno == EINTR) continue;
+          rc = -2;  // 连接层错误：与"请求中途断裂"同档（exit 4）
+          break;
+        }
+        if (pool.Done()) {
+          if (!send_pending_receipt(pending)) {
+            rc = -2;  // 回执失败：exit_code 已置 4，直接走退出路径
+            break;
+          }
+          // 回执已送达（串行宿主此刻才能提交下一请求）：回到常规等待。
+          rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+          break;
+        }
+        pump.Once();  // 编码期间保持 CEF 消息循环（外置泵语义不变）
+        if (NowUs() > pipeline_deadline) {
+          ExitUnclosedServe(4);  // 编码死线：不回执、不接新请求
+        }
+      }
+    }
     if (rc == 0) {
+      // 宿主 EOF：末帧回执必须先送达（宿主仍在读其输出），再优雅收尾。
+      if (pending.active && !drain_and_send_pending()) break;
       break;  // 宿主 EOF：优雅收尾
     }
     if (rc == -1) {
+      if (pending.active) (void)drain_and_send_pending();  // 防御：不应在飞
       exit_code = 5;  // 空闲超时
       break;
     }
     if (rc < 0) {
+      if (pending.active) (void)drain_and_send_pending();  // 尽力送达末帧回执
       exit_code = 4;  // 请求中途断裂（宿主死亡/abort 演练形态）
       break;
     }
@@ -1622,6 +1780,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
                    "vtx_cef_worker: 协议错误（magic=0x%x ver=%u path_ok=%d）\n",
                    req.magic, req.protocol_version,
                    static_cast<int>(RequestPathValid(req)));
+      if (pending.active) (void)drain_and_send_pending();  // 尽力送达，不静默丢帧
       exit_code = 3;
       break;
     }
@@ -1643,50 +1802,21 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       document_gen = 1;
     }
 
-    const auto finish_sync = [&](uint64_t capture_us, uint64_t queue_us,
-                                 uint64_t alpha_us, uint64_t png_us,
-                                 uint64_t disk_us, uint64_t backpressure_us,
-                                 uint16_t delivery_status) {
-      if (!opt.sync || !sync_machine.accepted()) return;
-      if (sync_mode_p && opt.sync_canary == "exact" && delivery_status != kStatusOk)
-        exact_baseline.PoisonResident();
-      const uint64_t now = NowUs();
-      std::string fields = "\"request_wall_to_reply_us\":" +
-          std::to_string(now - request_started_us) +
-          ",\"capture_fps_requested\":" + std::to_string(cef_opt.capture_fps) +
-          ",\"capture_wall_us\":" + std::to_string(capture_us) +
-          ",\"signed_ready_us\":" + std::to_string(
-              sync_machine.t_ready_us() - sync_machine.t_request_begin_us()) +
-          ",\"signed_renderer_pid\":" + std::to_string(state.js_error.renderer_pid) +
-          ",\"signed_navigations\":" + std::to_string(sync_mode_p ? 0 : 1) +
-          ",\"signed_fence_count\":" + std::to_string(state.js_error.sent - signed_checkpoint_floor) +
-          ",\"signed_native_paints\":" + std::to_string(state.paints.load() - signed_paint_floor) +
-          ",\"encode_queue_us\":" + std::to_string(queue_us) +
-          ",\"alpha_us\":" + std::to_string(alpha_us) +
-          ",\"png_us\":" + std::to_string(png_us) +
-          ",\"disk_us\":" + std::to_string(disk_us) +
-          ",\"backpressure_us\":" + std::to_string(backpressure_us) +
-          ",\"delivery_status\":" + std::to_string(delivery_status) +
-          ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
-          ",\"capture_stages_overlap\":" +
-          (opt.sync_canary == "exact" ? "true" : "false");
-      if (opt.sync_canary == "exact") fields += exact_baseline.TimingFields();
-      sync_machine.RecordAdapterTiming(now, fields);
-      sync_machine.Reset(now, "done");
-    };
-
     if ((req.flags & kFlagWantSlot) == 0) {
       // ================= 模式 1：Worker 原地落盘（零 IPC 像素传输）=====
+      // 双 ticket：帧 N 捕获写 cap_buf = staging[staging_idx]，与帧 N-1 的
+      // 编码（读另一缓冲）并行；帧 N 的回执在下一迭代的编码完成后发出。
+      std::vector<uint8_t>& cap_buf = staging[staging_idx];
       {
         std::lock_guard<std::mutex> lock(state.mu);
-        if (state.cap_staging.size() <
+        if (cap_buf.size() <
             static_cast<size_t>(expected_w) * expected_h * 4u) {
-          state.cap_staging.resize(
+          cap_buf.resize(
               static_cast<size_t>(expected_w) * expected_h * 4u);
         }
         state.cap_expected_w = expected_w;
         state.cap_expected_h = expected_h;
-        state.cap_dst = state.cap_staging.data();
+        state.cap_dst = cap_buf.data();
       }
       ProduceResult r;
       const uint64_t capture_started_us = NowUs();
@@ -1695,7 +1825,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         SyncProduceResult sr = ProduceFrameSync(
             state, pump, browser, sync_machine, exact_baseline, opt, document_gen,
             req.request_id, req.frame_index, expected_w, expected_h,
-            state.cap_staging.data());
+            cap_buf.data());
         r.status = sr.status;
         r.width = sr.width;
         r.height = sr.height;
@@ -1709,69 +1839,126 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
                          req.frame_index, opt, document_gen);
       }
       const uint64_t capture_wall_us = NowUs() - capture_started_us;
-      uint64_t t_alpha = 0, t_png = 0, t_disk = 0, t_queue = 0;
-      bool deliver_ok = r.status == kStatusOk;
-      bool encode_timed_out = false;
-      if (deliver_ok) {
-        const uint64_t queued_us = NowUs();
-        pool.Post([&] {
-          t_queue = NowUs() - queued_us;
-          try {
-            PngBuffer png;
-            const uint64_t t3 = NowUs();
-            const bool enc = EncodePngBgraPremultiplied(state.cap_staging.data(),
-                static_cast<int>(r.width), static_cast<int>(r.height),
-                static_cast<size_t>(r.width) * 4u, opt.png, &encode_workspace,
-                &png, &t_alpha);
-            const uint64_t encode_wall_us = NowUs() - t3;
-            t_png = encode_wall_us >= t_alpha ? encode_wall_us - t_alpha : 0;
-            const uint64_t t4 = NowUs();
-            deliver_ok = enc && AtomicWriteBytes(out_path, png.data(), png.size());
-            t_disk = NowUs() - t4;
-          } catch (...) {
-            // Keep task completion observable even if allocation/encoding throws.
-            deliver_ok = false;
-          }
-        });
-        if (!pump.Until([&] { return pool.Done(); }, 60000)) {
-          encode_timed_out = true;
-          // This is a reply deadline, not cancellation of a blocking writer.
-          // Keep every capture/output owned until Done's acquire synchronizes
-          // with the task. Allow one bounded drain grace; if I/O is still stuck,
-          // exit the worker without joining the task, unwinding its references,
-          // acknowledging any receipt, or admitting another request. The existing
-          // process owner reclaims the tree and its private partial output.
-          if (!pump.Until([&] { return pool.Done(); }, 5000)) {
-            ExitUnclosedServe(4);
-          }
-          r.status = kStatusTimeout;
-          std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘超时，任务已收尾 %s\n",
-                       out_path.c_str());
-        } else if (!deliver_ok) {
-          r.status = kStatusJsErr;  // 落盘失败以非 OK 码显形（复用 3 号档）
-          std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘失败 %s\n",
-                       out_path.c_str());
+
+      // —— sync 快照 + 机器让位：帧 N 的身份/证明字段在机器仍跟踪 N 时
+      // 定格（exact_baseline.TimingFields 同理——它是跨帧复用的有状态
+      // 对象）；随后 Reset 把 S0 让给帧 N+1 的 BeginRequest，捕获 N+1 才能
+      // 与编码 N 并行。adapter_timing 行在回执时按快照身份补记。
+      PendingReceipt snap;
+      snap.capture_wall_us = capture_wall_us;
+      if (opt.sync && sync_machine.accepted()) {
+        snap.sync_valid = true;
+        snap.request_started_us = request_started_us;
+        snap.signed_ready_us =
+            sync_machine.t_ready_us() - sync_machine.t_request_begin_us();
+        snap.signed_renderer_pid = state.js_error.renderer_pid;
+        snap.signed_navigations = sync_mode_p ? 0u : 1u;
+        snap.signed_fence_count = state.js_error.sent - signed_checkpoint_floor;
+        snap.signed_native_paints = state.paints.load() - signed_paint_floor;
+        snap.capture_fps = cef_opt.capture_fps;
+        snap.exact_canary = opt.sync_canary == "exact";
+        snap.sync_mode_p = sync_mode_p;
+        if (snap.exact_canary)
+          snap.exact_timing_fields = exact_baseline.TimingFields();
+        snap.machine_desc = sync_machine.request();
+        sync_machine.Reset(NowUs(), "done");
+      }
+
+      // —— 流水交汇：帧 N-1 编码完成后发送其回执（此后宿主才读其输出
+      // 文件、也才可能提交帧 N+1 的再下一请求；串行宿主在此自然同步）。
+      // 捕获失败也必须先排空 N-1：回执严格按请求序到达，宿主按序出队
+      // 校验身份，乱序会把"帧 N 捕获失败"误报成身份错位。
+      if (pending.active && !drain_and_send_pending()) break;
+
+      if (r.status != kStatusOk) {
+        // 捕获失败：不进流水，直接回执失败码（机器已 FailRequest→S0，
+        // 无 adapter_timing——与串行版 accepted() 守卫语义一致）。
+        FrameSlotHeader receipt;
+        FillReceipt(&receipt, r, run_id, req.request_id, req.frame_index,
+                    0, 0, 0);
+        if (!SendAll(conn, &receipt, sizeof(receipt))) {
+          exit_code = 4;
+          break;
         }
+        continue;
       }
-      finish_sync(capture_wall_us, t_queue, t_alpha, t_png, t_disk, 0, r.status);
-      FrameSlotHeader receipt;
-      FillReceipt(&receipt, r, run_id, req.request_id, req.frame_index,
-                  t_alpha, t_png, t_disk);
-      if (!SendAll(conn, &receipt, sizeof(receipt))) {
-        exit_code = 4;
-        break;
-      }
-      if (encode_timed_out) {
-        exit_code = 4;  // Failed request: drained task, no output/request reuse.
-        break;
-      }
-      if (r.status == kStatusOk) {
-        ++ok_replies;
-      }
+
+      // —— 提交帧 N 编码（池线程读 cap_buf；帧 N+1 捕获将写另一缓冲）——
+      snap.active = true;
+      snap.request_id = req.request_id;
+      snap.frame_index = req.frame_index;
+      snap.r = r;
+      snap.out_path = out_path;
+      snap.deliver_ok = true;
+      const uint8_t* cap_px = cap_buf.data();
+      const int enc_w = static_cast<int>(r.width);
+      const int enc_h = static_cast<int>(r.height);
+      const uint64_t queued_us = NowUs();
+      pending = std::move(snap);
+      PendingReceipt& p = pending;
+      pool.Post([&, cap_px, enc_w, enc_h, queued_us] {
+        p.t_queue = NowUs() - queued_us;
+        try {
+          PngBuffer png;
+          uint64_t t_alpha = 0;
+          const uint64_t t3 = NowUs();
+          const bool enc = EncodePngBgraPremultiplied(cap_px,
+              enc_w, enc_h, static_cast<size_t>(enc_w) * 4u, opt.png,
+              &encode_workspace, &png, &t_alpha);
+          const uint64_t encode_wall_us = NowUs() - t3;
+          p.t_png = encode_wall_us >= t_alpha ? encode_wall_us - t_alpha : 0;
+          p.t_alpha = t_alpha;
+          const uint64_t t4 = NowUs();
+          p.deliver_ok =
+              enc && AtomicWriteBytes(p.out_path, png.data(), png.size());
+          p.t_disk = NowUs() - t4;
+        } catch (...) {
+          // Keep task completion observable even if allocation/encoding throws.
+          p.deliver_ok = false;
+        }
+      });
+      staging_idx ^= 1;  // 帧 N+1 捕获切到另一缓冲（帧 N 编码仍读本缓冲）
     } else {
       // ================= 模式 2：SHM 环跨进程零拷贝 ====================
+      // 混合会话防御：上一帧模式 1 编码仍在飞时收到模式 2 请求，先排空其
+      // 回执再进入环路径——回执严格按请求序（模式 2 回执在本迭代内即时
+      // 发送，若不先排空会越过在飞的模式 1 回执）。
+      if (pending.active && !drain_and_send_pending()) break;
       // 工单背压语义：4 槽全满时不发起下一帧 BeginFrame（produce 未启
       // 动），分片等空槽；等待计时随通知回传并累计入环控制块。
+      // （模式 2 不经编码池：回执在本迭代内即时发送，机器仍跟踪本请求，
+      // adapter_timing 按当前身份直记——与模式 1 的流水快照路径不同。）
+      const auto finish_sync = [&](uint64_t capture_us, uint64_t queue_us,
+                                   uint64_t alpha_us, uint64_t png_us,
+                                   uint64_t disk_us, uint64_t backpressure_us,
+                                   uint16_t delivery_status) {
+        if (!opt.sync || !sync_machine.accepted()) return;
+        if (sync_mode_p && opt.sync_canary == "exact" && delivery_status != kStatusOk)
+          exact_baseline.PoisonResident();
+        const uint64_t now = NowUs();
+        std::string fields = "\"request_wall_to_reply_us\":" +
+            std::to_string(now - request_started_us) +
+            ",\"capture_fps_requested\":" + std::to_string(cef_opt.capture_fps) +
+            ",\"capture_wall_us\":" + std::to_string(capture_us) +
+            ",\"signed_ready_us\":" + std::to_string(
+                sync_machine.t_ready_us() - sync_machine.t_request_begin_us()) +
+            ",\"signed_renderer_pid\":" + std::to_string(state.js_error.renderer_pid) +
+            ",\"signed_navigations\":" + std::to_string(sync_mode_p ? 0 : 1) +
+            ",\"signed_fence_count\":" + std::to_string(state.js_error.sent - signed_checkpoint_floor) +
+            ",\"signed_native_paints\":" + std::to_string(state.paints.load() - signed_paint_floor) +
+            ",\"encode_queue_us\":" + std::to_string(queue_us) +
+            ",\"alpha_us\":" + std::to_string(alpha_us) +
+            ",\"png_us\":" + std::to_string(png_us) +
+            ",\"disk_us\":" + std::to_string(disk_us) +
+            ",\"backpressure_us\":" + std::to_string(backpressure_us) +
+            ",\"delivery_status\":" + std::to_string(delivery_status) +
+            ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
+            ",\"capture_stages_overlap\":" +
+            (opt.sync_canary == "exact" ? "true" : "false");
+        if (opt.sync_canary == "exact") fields += exact_baseline.TimingFields();
+        sync_machine.RecordAdapterTiming(now, fields);
+        sync_machine.Reset(now, "done");
+      };
       int slot = -1;
       uint64_t bp_wait = 0;
       const uint64_t deadline =

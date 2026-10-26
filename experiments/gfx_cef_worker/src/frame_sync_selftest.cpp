@@ -18,6 +18,7 @@
 #include <fstream>
 #include <future>
 #include <limits>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -664,6 +665,77 @@ void TestLatePaintAfterAccept() {
         "late: S5 后晚到 paint 丢弃");
   Check(t.m.counters().late_paint_dropped == 1, "late: 计数 1");
   t.m.Reset(40, "done");
+}
+
+// ⑫b 双 ticket 流水：帧 N 的 adapter_timing 在回执时（编码完成后）才补记，
+// 那时机器已 Reset 并开始跟踪帧 N+1。RecordAdapterTimingFor 必须把该行
+// 归属帧 N 的身份 + S5 接受态，且不扰动帧 N+1 的进行中状态与全局 seq。
+void TestRecordAdapterTimingFor() {
+  Harness t;
+  RequestDesc d1;
+  d1.document_gen = 7;
+  d1.request_id = 11;
+  d1.target_frame_index = 100;
+  d1.drive = DriveMode::kModeN;
+  d1.canary = CanaryMode::kClean;
+  d1.expected_w = 32;
+  d1.expected_h = 16;
+  Check(t.AdvanceToS3(d1, nullptr, 1000), "adapterN: 帧 N S0→S3");
+  Check(t.m.EnterPumping(1200), "adapterN: 帧 N S3→S4");
+  FrameBuf good(32, 16);
+  good.DrawCanaryClean(100);
+  std::vector<uint8_t> dst(32 * 16 * 4, 0);
+  Check(t.m.FeedPaint(good.px.data(), 32 * 4, 32, 16, dst.data(), 1400)
+            .disposition == PaintDisposition::kAccepted,
+        "adapterN: 帧 N 接受 → S5");
+  const uint64_t seq_at_accept = t.lines.size();
+  (void)seq_at_accept;
+  t.m.Reset(1500, "done");  // 流水：帧 N 捕获完成即让位（早于编码完成）
+  // 帧 N+1 捕获开始（机器身份切换，S1 进行中）
+  RequestDesc d2 = d1;
+  d2.document_gen = 8;
+  d2.request_id = 12;
+  d2.target_frame_index = 101;
+  Check(t.m.BeginRequest(d2, 2000), "adapterN: 帧 N+1 开局");
+  Check(t.m.state() == State::S1_NAV_OR_EVAL_ISSUED, "adapterN: 帧 N+1 S1");
+  // 帧 N 编码完成 → 回执时补记 adapter_timing（机器此刻跟踪帧 N+1）
+  t.m.RecordAdapterTimingFor(d1, 2100, "\"png_encode_us\":5");
+  // 归属断言：该行携带帧 N 身份（gen 7 / rid 11 / f 100）与 S5 状态
+  bool attributed = false;
+  for (const auto& l : t.lines) {
+    if (l.find("\"event\":\"adapter_timing\"") == std::string::npos) continue;
+    if (l.find("\"document_gen\":7") != std::string::npos &&
+        l.find("\"request_id\":11") != std::string::npos &&
+        l.find("\"target_frame_index\":100") != std::string::npos &&
+        l.find("\"state\":\"S5_ONPAINT_VERIFIED\"") != std::string::npos &&
+        l.find("\"png_encode_us\":5") != std::string::npos) {
+      attributed = true;
+    }
+  }
+  Check(attributed, "adapterN: adapter_timing 行归属帧 N + S5");
+  // 证明状态不被扰动：帧 N+1 仍在 S1，后续事件身份回到帧 N+1
+  Check(t.m.state() == State::S1_NAV_OR_EVAL_ISSUED && !t.m.accepted(),
+        "adapterN: 帧 N+1 状态未被扰动");
+  RequestDesc d3 = d1;  // 复用 32x16 但换帧号，验证后续 Emit 不再挂帧 N 身份
+  d3.document_gen = 8;
+  d3.request_id = 12;
+  d3.target_frame_index = 101;
+  t.m.Reset(2200, "abort");
+  (void)d3;
+  bool last_line_is_n1 = !t.lines.empty() &&
+      t.lines.back().find("\"request_id\":12") != std::string::npos;
+  Check(last_line_is_n1, "adapterN: 后续事件身份恢复帧 N+1");
+  // seq 全局单调（相邻行 seq 严格递增，含补记行）
+  bool monotonic = true;
+  unsigned long long prev = 0;
+  for (const auto& l : t.lines) {
+    const size_t p = l.find("\"seq\":");
+    if (p == std::string::npos) continue;
+    const unsigned long long s = std::strtoull(l.c_str() + p + 6, nullptr, 10);
+    if (s <= prev) monotonic = false;
+    prev = s;
+  }
+  Check(monotonic, "adapterN: seq 全局单调");
 }
 
 // ⑬ 非法转移面：S0 直接 EnterPumping / canary_set 前置 / 帧号越域。
@@ -1372,6 +1444,7 @@ int main(int argc, char* argv[]) {
   TestDiagnosticMode();
   TestFormulaVectors();
   TestLatePaintAfterAccept();
+  TestRecordAdapterTimingFor();
   TestIllegalTransitions();
 
   // --jsonl-out：跑一段混合场景把 JSONL 落盘，供 Python 跨语言全量校验。

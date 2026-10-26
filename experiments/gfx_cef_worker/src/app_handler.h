@@ -100,7 +100,8 @@ struct RunState {
   uint32_t cap_actual_h = 0;
   uint32_t cap_rejected = 0;          // 陈旧 OnPaint 拒绝计数
   uint64_t cap_last_capture_us = 0;   // 最近一次 OnPaint→目标拷贝耗时
-  std::vector<uint8_t> cap_staging;   // 模式 1 暂存区（serve 预留容量）
+  // （模式 1 暂存已上移至 serve 循环的 staging[2] 双缓冲：帧 N 捕获写与
+  // 帧 N-1 编码读分离，cap_dst 指向当帧活跃缓冲。）
 
   // —— #114 sync 模式（FrameSyncStateMachine 驱动；OnPaint 与请求循环
   //    同在 UI 线程，装配无跨线程竞态）。sync_machine 非空且

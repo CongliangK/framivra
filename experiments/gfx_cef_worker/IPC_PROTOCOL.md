@@ -157,10 +157,26 @@ spng L1 SUB|UP）→ `.tmp.<pid>.<tid>`+`rename` 原子落盘 → 回执(128B)�
 回执计时字段语义不变：`t_png_encode_us` 为所选后端编码段耗时
 （跨后端对比时注意口径一致）。
 
+**双 ticket 流水（深度 2，默认开启；二进制布局与回执字段集零改动）**：
+worker 在帧 N 的编码/落盘（池线程）期间即接收并捕获帧 N+1（UI 线程，
+暂存双缓冲：帧 N+1 捕获写与帧 N 编码读物理分离）。回执时序不变式：
+帧 N 的回执仍严格晚于其**自身**编码完成——宿主收到回执即读输出文件，
+原子写保证完整；两帧回执按请求顺序到达（客户端按提交序出队校验）。
+编码超时沿用 60s 死线 + 5s 收尾宽限；死线击穿（I/O 卡死）不回执、
+不接新请求，进程以 4 退出由宿主监管回收。失败路径保守：帧 N 编码/
+落盘失败 → 非 OK 回执送达后整个 serve 以退出码 4 终止（帧 N+1 的
+投机捕获随之废弃，不产生半写文件），绝不静默丢帧续跑；帧 N 捕获
+失败 → 先送达帧 N-1 的在途 OK 回执，再回执本帧失败码，宿主按序
+消费。宿主 EOF 时在途末帧先排空回执再优雅收尾。
+
 Python 单线程客户端使用 `submit_png` / `receive_png` 分离发送与接收；同一客户端
-最多一个未收回执的请求，禁止和槽请求交错。收到并核验回执后，才可发送下一请求；
-两个交替文件名使下一帧原生工作能与上一帧宿主校验/原子提交重叠。同步
-`request_png` 仍可用；64B 请求、128B 回执、SHM 布局不变，不是批量协议或无限队列。
+在途未回执的 PNG 请求至多 **2 个**（深度 2 上限，禁止更深排队；模式 2 槽请求
+不得与 PNG 请求混用）。`receive_png` 按提交顺序出队最旧在途请求并校验身份；
+回执永远不早于该帧自身编码完成。宿主可在收到帧 N 回执前先提交帧 N+1——
+这正是流水收益来源；两个交替文件名使下一帧原生工作能与上一帧宿主校验/原子
+提交重叠。同步 `request_png` 仍可用（串行契约：worker 对串行宿主零开销兼容，
+回执在编码完成即达）；64B 请求、128B 回执、SHM 布局不变，不是批量协议或
+无限队列。
 `*.pipeline.json` 另记宿主请求往返与块墙钟；回执分项不覆盖完整导航/JS fence/
 宿主校验等开销，也不能因流水重叠将各分项之和当作端到端墙钟。
 其中 execution/task/attempt 关联 execution events；每帧 submit/receive/validate/commit
@@ -170,6 +186,11 @@ offset 均相对该块的 `block_started_counter_us`，使用 Python `perf_count
 其 gfx task 和整体 stage 的 execution events，不应从 gfx 总耗时中漏掉。
 原生成功请求 `adapter_timing.request_wall_to_reply_us` 从验证后的请求接收至回执准备好，
 不含实际 socket 发送；capture/encode queue/alpha/png/disk 可分项，剩余为未细分适配开销。
+双 ticket 流水下该行的字段在「帧 N 捕获完成、状态机仍跟踪帧 N」时快照（含
+exact 基线计时），行本身在帧 N 回执时刻按快照身份补记（`RecordAdapterTimingFor`，
+JSONL 中 `request_end`(N) 先于 `adapter_timing`(N) 属预期顺序）；`request_wall_to_reply_us`
+因此完整覆盖「请求接收→本帧回执就绪」，含与帧 N+1 捕获重叠的等待，分项字段
+仍各自归属本帧，不可相加。
 `capture_offsets_origin=sync_request_begin` 下的 signed proof、unsigned load/readiness/
 two samples/veto 是里程碑 offset，不能相加；原生与 Python 时钟不假定可直接对齐。
 veto 的 two samples 默认要求与冻结签名重建逐字节相同；唯一例外是光栅化抖动容忍
