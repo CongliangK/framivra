@@ -386,6 +386,7 @@ class NativeOrchestrationModel(unittest.TestCase):
         scenarios = ("initialize_false", "create_false", "create_late", "create_closed", "sync_log_failure",
                      "resident_timeout", "resident_closed", "ring_failure", "hello_failure", "eof",
                      "partial_request", "invalid_request", "idle_timeout", "success",
+                     "pipeline_success", "pipeline_encode_throw", "pipeline_capture_fail",
                      "capture_failure", "encode_throw", "write_false", "baseline_closes_signed")
         for scenario in scenarios:
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:

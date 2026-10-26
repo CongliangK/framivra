@@ -519,26 +519,38 @@ class ClientHelloOwnership(unittest.TestCase):
 
     png_receipt = staticmethod(_packet_receipt)
 
-    def test_png_split_api_has_one_inflight_request_and_does_not_mix_receipts(self):
+    def test_png_split_api_allows_two_inflight_and_keeps_receipt_order(self):
         with self.resources([(self.hello(), self.rights(888), 0, None)]) as r:
-            r.sock.recv.return_value = self.png_receipt()
+            r.sock.recv.side_effect = [self.png_receipt(),
+                                       self.png_receipt(request_id=8, target_frame_index=4,
+                                                        canary_frame_index=4)]
             with cef_client.CefWorkerClient.from_socket(r.sock) as client:
                 client.submit_png(3, 'frame0.png', request_id=7, worker_relative=True)
                 r.sock.recv.assert_not_called()
                 packet = struct.unpack(cef_client._REQUEST_FMT, r.sock.sendall.call_args.args[0])
                 self.assertEqual(packet[3:7], (7, 3, 0, 0))
                 self.assertEqual(packet[-1].rstrip(b'\0'), b'frame0.png')
-                for call in (lambda: client.submit_png(4, 'frame1.png', worker_relative=True),
-                             lambda: client.request_slot(4)):
-                    with self.assertRaisesRegex(cef_client.CefWorkerError, 'pending'):
-                        call()
-                self.assertEqual(r.sock.sendall.call_count, 1)
-                self.assertEqual(client.receive_png().header['target_frame_index'], 3)
+                # 深度 2：第二个请求可在第一个回执前提交（双 ticket 流水）。
+                client.submit_png(4, 'frame1.png', request_id=8, worker_relative=True)
+                self.assertEqual(r.sock.sendall.call_count, 2)
+                # 第三个必须被拒：深度 2 是上限，不是无限队列。
+                with self.assertRaisesRegex(cef_client.CefWorkerError, 'pipeline depth'):
+                    client.submit_png(5, 'frame0.png', request_id=9, worker_relative=True)
+                # 在途 PNG 期间槽请求仍被拒（两种模式不得混用）。
+                with self.assertRaisesRegex(cef_client.CefWorkerError, 'pending'):
+                    client.request_slot(4)
+                self.assertEqual(r.sock.sendall.call_count, 2)
+                # 回执按提交顺序出队，不混淆身份。
+                self.assertEqual(client.receive_png().header['request_id'], 7)
+                self.assertEqual(client.receive_png().header['request_id'], 8)
                 with self.assertRaisesRegex(cef_client.CefWorkerError, 'no PNG request'):
                     client.receive_png()
-                self.assertEqual(client.request_png(3, 'frame1.png', request_id=7,
-                    worker_relative=True).header['request_id'], 7)
-                self.assertEqual(r.sock.sendall.call_count, 2)
+                # 排空后可再次武装流水。
+                r.sock.recv.side_effect = [self.png_receipt(request_id=9, target_frame_index=5,
+                                                            canary_frame_index=5)]
+                self.assertEqual(client.request_png(5, 'frame0.png', request_id=9,
+                    worker_relative=True).header['request_id'], 9)
+                self.assertEqual(r.sock.sendall.call_count, 3)
 
     def test_png_request_owns_long_path_descriptor_until_receipt_or_close(self):
         for finish in ('receive', 'close', 'transport_error', 'send_error'):
@@ -600,7 +612,7 @@ class ClientHelloOwnership(unittest.TestCase):
                     self.assertEqual(caught.exception.status_code, status)
                     self.assertEqual(caught.exception.detail['request_id'], 7)
                     self.assertFalse(client._closed)
-                    self.assertIsNone(client._pending_png)
+                    self.assertFalse(client._pending_pngs)
                     r.sock.recv.return_value = self.png_receipt()
                     client.request_png(3, 'frame.png', request_id=7, worker_relative=True)
 
@@ -667,12 +679,12 @@ class ClientHelloOwnership(unittest.TestCase):
                         directory.mkdir()
                         kwargs = dict(out_png_path=directory / 'f.png')
                     client.submit_png(3, request_id=7, timeout=.05, **kwargs)
-                    output_fd = client._pending_png.output_fd
+                    output_fd = client._pending_pngs[0].output_fd
                     shared_fd = client._shm_fd
                     with self.assertRaisesRegex(cef_client.CefWorkerError, '回执.*超时'):
                         client.receive_png()
                     self.assertTrue(client._closed)
-                    self.assertIsNone(client._pending_png)
+                    self.assertFalse(client._pending_pngs)
                     self.assertEqual(peer.socket.fileno(), -1)
                     for fd in (shared_fd, output_fd):
                         if fd is not None:
@@ -704,7 +716,7 @@ class ClientHelloOwnership(unittest.TestCase):
                         arguments.update(case)
                         client.submit_png(**arguments)
                     self.assertFalse(client._closed)
-                    self.assertIsNone(client._pending_png)
+                    self.assertFalse(client._pending_pngs)
                 r.sock.sendall.assert_not_called()
                 r.sock.recv.return_value = self.png_receipt()
                 client.request_png(3, '界' * 13, request_id=7, timeout=None, worker_relative=True)
@@ -736,7 +748,7 @@ class HostOutputPipeline(unittest.TestCase):
 
         class SerialClient:
             hello = {'pid': pid, 'flags': hello_flags}
-            pending = None
+            pending = []          # FIFO，深度 2（capture→encode 双 ticket 流水）
             closed = False
 
             def __enter__(self):
@@ -744,21 +756,21 @@ class HostOutputPipeline(unittest.TestCase):
 
             def __exit__(self, *args):
                 self.closed = True
-                steps.append(('close', self.pending[0] if self.pending else None))
+                steps.append(('close', self.pending[0][0] if self.pending else None))
 
             def submit_png(self, frame, output, *, request_id, expected_wh, worker_relative):
-                test.assertIsNone(self.pending, 'more than one native request in flight')
+                test.assertTrue(len(self.pending) < 2,
+                                'more than two native requests in flight')
                 test.assertTrue(worker_relative)
                 test.assertEqual((request_id, expected_wh), (frame + 1, (16, 16)))
                 test.assertFalse((run / output).exists(), 'reused a still-owned output buffer')
-                self.pending = (frame, output)
+                self.pending.append((frame, output))
                 requested.append(frame)
                 steps.append(('submit', frame, output))
 
             def receive_png(self):
-                test.assertIsNotNone(self.pending)
-                frame, output = self.pending
-                self.pending = None
+                test.assertTrue(self.pending, 'receipt without a pending request')
+                frame, output = self.pending.pop(0)   # 回执按提交顺序出队
                 steps.append(('receive', frame, output))
                 if frame == fail_frame:
                     raise cef_client.CefWorkerError('native JS_ERR', status_code=3,
@@ -987,7 +999,7 @@ class HostOutputPipeline(unittest.TestCase):
         self.assertTrue(all(p['execution']['run_id'] == ctx.execution.run_id for p in diagnostics))
         self.assertEqual(len({p['task']['task_id'] for p in diagnostics}), 3)
         self.assertTrue(all(p['task']['attempt_no'] == 1 for p in diagnostics))
-        self.assertTrue(all(p['completed'] and p['max_native_inflight'] == 1 for p in diagnostics))
+        self.assertTrue(all(p['completed'] and p['max_native_inflight'] == 2 for p in diagnostics))
         self.assertEqual(sorted(f for p in diagnostics for f in p['rendered_frames']), list(range(6)))
         self.assertTrue(all('not native CPU time' in p['request_wall_scope'] for p in diagnostics))
         self.assertEqual(gfx_cli.verify_frames(self.out, range(6), width=16, height=16), [])
@@ -1042,7 +1054,7 @@ class HostOutputPipeline(unittest.TestCase):
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)
         pipeline = self.report('pipeline')
         self.assertEqual(pipeline['output_commits'], {'rename': 4, 'copy': 0})
-        self.assertEqual(pipeline['max_native_inflight'], 1)
+        self.assertEqual(pipeline['max_native_inflight'], 2)
         self.assertEqual(pipeline['output_buffers'], 2)
         self.assertEqual(pipeline['rendered_frames'], [0, 1, 2, 3])
         self.assertEqual(pipeline['worker_options'], self.options.to_dict())
@@ -1361,7 +1373,7 @@ class HostOutputPipeline(unittest.TestCase):
             with self.subTest(header=h), self.pipeline(header=h) as p, \
                     self.assertRaisesRegex(cef_client.CefWorkerError, 'geometry/canary/pixel format'):
                 self.render()
-            self.assertEqual(p.requested, [0])
+            self.assertEqual(p.requested, [0, 1])   # frame1 已投机提交，但其回执永不被读
             self.assertEqual(list(self.out.glob('*.png')), [])
             self.assertTrue(p.client.closed and p.exited)
 
@@ -1371,7 +1383,7 @@ class HostOutputPipeline(unittest.TestCase):
                 self.render()
         self.assertEqual(caught.exception.status_code, 3)
         self.assertEqual(caught.exception.detail, {'target_frame_index': 1})
-        self.assertEqual(p.requested, [0, 1])
+        self.assertEqual(p.requested, [0, 1, 2])   # frame2 已投机提交，回执失败即中止
         self.assertEqual(self.report('pipeline')['rendered_frames'], [0])
         self.assertEqual(len(self.report('receipts')), 1)
         self.assertFalse((self.out / 'f0001.png').exists())

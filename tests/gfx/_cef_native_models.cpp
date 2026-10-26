@@ -19,7 +19,8 @@
 #include <sstream>
 #include <vector>
 namespace vtx_cef {
-  namespace fsync = vtx_cef::fsync;
+  // frame_sync_machine.hpp 已直接定义 vtx_cef::fsync；嵌套名在本作用域
+  // 直接可见（别名写法在 clang 下是对同名命名空间的非法重定义）。
   template<class T> struct CefRefPtr : std::shared_ptr<T>{
     using std::shared_ptr<T>::shared_ptr;
     CefRefPtr(T*p):std::shared_ptr<T>(p){
@@ -1395,7 +1396,7 @@ struct RunState {
   struct { uint32_t sent = 0; int renderer_pid = 123; } js_error;
   bool sync_capture_armed = false, capture_armed = false;
   fsync::FrameSyncStateMachine* sync_machine = nullptr;
-  std::vector<uint8_t> cap_staging, buffer;
+  std::vector<uint8_t> buffer;
   int width = 0, height = 0;
   std::string page_probe, gpu_page_probe, last_error;
   uint32_t cap_expected_w = 0, cap_expected_h = 0;
@@ -1546,7 +1547,9 @@ struct PngBuffer {
 bool EncodePngBgraPremultiplied(const uint8_t*, int, int, size_t,
     const PngEncodeOptions&, PngEncodeWorkspace*, PngBuffer*, uint64_t*) {
   ++encodes;
-  if (scenario == "encode_throw") throw std::runtime_error("fake encoder failure");
+  // 双 ticket 失败注入：帧 1 编码抛出（帧 2 可能已在捕获）。
+  if (scenario == "encode_throw" || scenario == "pipeline_encode_throw")
+    throw std::runtime_error("fake encoder failure");
   return true;
 }
 bool AtomicWriteBytes(const std::string&, const uint8_t*, size_t) {
@@ -1564,7 +1567,9 @@ struct ServeOptions {
   bool sync = false;
   std::string sync_mode = "n", sync_log, sync_canary = "exact", reference_context = "shared";
 };
-constexpr uint32_t kRingSlots = 4;
+// 仅 SERVE_FAILURES 拼接体（serve.cpp 环形槽路径）使用；ONESHOT 变体下
+// 未引用，标 maybe_unused 以免 -Wunused-const-variable 拦截。
+[[maybe_unused]] constexpr uint32_t kRingSlots = 4;
 struct ShmRingWriter {
   std::FILE* backing = nullptr;
   struct { uint32_t frame_bytes = 1024; } layout;
@@ -1609,7 +1614,11 @@ ProduceResult ProduceFrame(RunState&, PumpDriver&, CefRefPtr<CefBrowser>,
   result.width = result.height = 16;
   result.document_gen = gen;
   result.canary_frame = frame;
-  if (scenario == "capture_failure") result.status = kStatusTimeout;
+  // pipeline_capture_fail：帧 0（f=2）成功进流水，帧 1（f=3）捕获失败——
+  // 验证失败帧的回执仍严格排在帧 0 的 OK 回执之后（深度 2 顺序不变式）。
+  if (scenario == "capture_failure" ||
+      (scenario == "pipeline_capture_fail" && captures == 2))
+    result.status = kStatusTimeout;
   return result;
 }
 SyncProduceResult ProduceFrameSync(RunState&, PumpDriver&, CefRefPtr<CefBrowser>,
@@ -1671,11 +1680,26 @@ int test(int argc, char** argv) {
       request.request_id = 7;
       request.frame_index = 2;
       std::strcpy(request.out_png_path, "frame0.png");
+      // 双 ticket 流水场景：宿主在消费第一回执前连发第二请求（深度 2），
+      // 回执仍按提交顺序逐帧消费。
+      const bool pipeline = scenario == "pipeline_success" ||
+                            scenario == "pipeline_encode_throw" ||
+                            scenario == "pipeline_capture_fail";
       const bool render = scenario == "success" || scenario == "capture_failure" ||
-                          scenario == "encode_throw" || scenario == "write_false";
+                          scenario == "encode_throw" || scenario == "write_false" ||
+                          pipeline;
       if (scenario == "partial_request" || scenario == "invalid_request" || render) {
         const size_t size = scenario == "partial_request" ? 13 : sizeof(request);
         ck(SendAll(pair[1], &request, size), "send real request");
+        if (pipeline) {
+          FrameRequest second{};
+          second.magic = kRequestMagic;
+          second.protocol_version = kProtocolVersion;
+          second.request_id = 8;
+          second.frame_index = 3;
+          std::strcpy(second.out_png_path, "frame1.png");
+          ck(SendAll(pair[1], &second, sizeof(second)), "send second pipelined request");
+        }
       }
       ck(::shutdown(pair[1], SHUT_WR) == 0, "real host EOF");
       if (render) {
@@ -1685,6 +1709,19 @@ int test(int argc, char** argv) {
            receipt.target_frame_index == 2, "receipt bound to requested frame");
         status = receipt.status_code;
         ++replies;
+        if (scenario == "pipeline_success" || scenario == "pipeline_capture_fail") {
+          FrameSlotHeader tail{};
+          ck(RecvAllOrShort(pair[1], &tail, sizeof(tail), 2000) == 1,
+             "second pipelined receipt arrives after its own encode");
+          ck(tail.magic == kSlotMagic && tail.request_id == 8 &&
+             tail.target_frame_index == 3,
+             "pipelined receipts stay in request order");
+          ck(tail.status_code == (scenario == "pipeline_success" ?
+             kStatusOk : kStatusTimeout),
+             "second receipt carries its own frame's failure status");
+          status = tail.status_code;
+          ++replies;
+        }
       }
     } catch (...) { peer_error = std::current_exception(); }
   });
@@ -1701,20 +1738,41 @@ int test(int argc, char** argv) {
   const bool before_hello = scenario == "initialize_false" || scenario == "create_false" ||
       scenario == "create_late" || scenario == "create_closed" || scenario == "sync_log_failure" ||
       scenario == "resident_timeout" || scenario == "resident_closed" || scenario == "ring_failure";
+  const bool encode_failure = scenario == "encode_throw" ||
+      scenario == "write_false" || scenario == "pipeline_encode_throw";
   const int expected = before_hello ? 1 : scenario == "idle_timeout" ? 5 :
-      scenario == "partial_request" || scenario == "hello_failure" ? 4 :
+      scenario == "partial_request" || scenario == "hello_failure" || encode_failure ? 4 :
       scenario == "invalid_request" ? 3 : 0;
   ck(result == expected, "expected native failure exit code");
+  const bool pipeline = scenario == "pipeline_success" ||
+                        scenario == "pipeline_encode_throw" ||
+                        scenario == "pipeline_capture_fail";
   const bool render = scenario == "success" || scenario == "capture_failure" ||
-                      scenario == "encode_throw" || scenario == "write_false";
-  ck(replies == (render ? 1 : 0), "only complete accepted requests receive one receipt");
-  ck(captures == (render ? 1 : 0), "protocol/setup failures cannot start capture");
-  ck(commits == (scenario == "success" ? 1 : 0), "failed requests cannot publish stale output");
-  if (render) ck(status == (scenario == "success" ? kStatusOk :
-      scenario == "capture_failure" ? kStatusTimeout : kStatusJsErr), "failure receipt status");
+                      scenario == "encode_throw" || scenario == "write_false" ||
+                      pipeline;
+  // pipeline_encode_throw：帧 0 编码失败回执送达后 serve 以 rc=4 退出，
+  // 第二请求不回执（保守失败路径）；另两个流水场景两回执都到。
+  ck(replies == (scenario == "pipeline_success" || scenario == "pipeline_capture_fail" ?
+      2 : render ? 1 : 0),
+     "complete requests receive one receipt each, in submission order");
+  // 流水失败形态两种都合法：帧2 已捕获（poll 先见第二请求）或未捕获
+  // （编码先完成即回执退出）——但帧2 的编码绝不能被提交。
+  ck(captures == (pipeline ? 2 :
+                  scenario == "pipeline_encode_throw" ? captures : render ? 1 : 0),
+     "protocol/setup failures cannot start capture");
+  ck(commits == (scenario == "success" || scenario == "pipeline_capture_fail" ? 1 :
+      scenario == "pipeline_success" ? 2 : 0),
+     "failed requests cannot publish stale output");
+  ck(encodes == (scenario == "success" || scenario == "pipeline_capture_fail" ? 1 :
+      scenario == "pipeline_success" ? 2 : encode_failure ? 1 : 0),
+     "encode failure never posts the next frame's encode");
+  if (render) ck(status == (scenario == "success" || scenario == "pipeline_success" ?
+      kStatusOk : scenario == "capture_failure" || scenario == "pipeline_capture_fail" ?
+      kStatusTimeout : kStatusJsErr),
+      "failure receipt status");
   if (!before_hello && scenario != "hello_failure") ck(received_fd == -2, "hello fd was owned and closed");
-  std::printf("EXTRACTED_SERVE_FAILURE_PASS scenario=%s rc=%d closes=%d shutdowns=%d captures=%d commits=%d\n",
-      scenario.c_str(), result, closes, shutdowns, captures, commits);
+  std::printf("EXTRACTED_SERVE_FAILURE_PASS scenario=%s rc=%d closes=%d shutdowns=%d captures=%d commits=%d encodes=%d\n",
+      scenario.c_str(), result, closes, shutdowns, captures, commits, encodes);
   return 0;
 }
 #else  // VTX_MODEL_ONESHOT
