@@ -22,6 +22,37 @@ test('unsafe or fractional protocol indices/ranges are explicitly refused', () =
   }
 })
 
+test('every Host query selector rejects noncanonical/unsafe raw tokens before spawning', async t => {
+  const f = setup(); t.after(() => f.host.dispose())
+  const opened = await (await f.control({ op: 'open', timeline: 'timeline.json' })).json()
+  const request = query => f.host.control(new Request('http://owner/api/framivra/control', {
+    method: 'POST', body: `{"sessionId":"one","op":"query","grant":"${opened.grant}","query":${query}}`,
+  }))
+  const selectors = token => [
+    `{"frame":${token}}`, `{"family":"video","track_index":${token}}`,
+    `{"family":"video","track_index":0,"block_index":${token}}`,
+    `{"interval":[${token},9007199254740991]}`, `{"interval":[0,${token}]}`,
+  ]
+  const before = f.subprocess.calls.length
+  for (const token of ['1.0000000000000001', '9007199254740991.1', '-0', '-1', '1.0', '1e0', '1e309', '1e-400', '9007199254740992', '9007199254740993', '9'.repeat(4000), '"1"', 'null', 'true']) {
+    for (const query of selectors(token)) {
+      const response = await request(query)
+      assert.equal(response.status, 400, query)
+      assert.equal((await response.json()).error, 'BAD_QUERY', query)
+    }
+  }
+  assert.equal(f.subprocess.calls.length, before)
+  for (const token of ['0', '29', '30', '9007199254740991']) {
+    const response = await request(`{"frame":${token}}`)
+    assert.equal(response.status, 200, await response.text())
+    assert.deepEqual(f.subprocess.calls.at(-1).argv.slice(-2), ['--frame', token])
+  }
+  for (const query of ['{"family":"video","track_index":0,"block_index":0}', '{"interval":[0,9007199254740991]}']) {
+    const response = await request(query)
+    assert.equal(response.status, 200, await response.text())
+  }
+})
+
 test('Host returns actionable unsupported-native-JSON diagnostics before spawning vtx', async t => {
   const f = setup(); t.after(() => f.host.dispose())
   const raw = JSON.rawJSON

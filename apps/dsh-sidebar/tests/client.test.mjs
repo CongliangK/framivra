@@ -43,6 +43,26 @@ test('wire -> client decode -> details -> JSON serialization preserves original 
   }
 })
 
+test('frame input matches the Host canonical token contract before numeric conversion', () => {
+  assert.deepEqual(client.frameQuery(''), {})
+  for (const input of ['0', '1', '29', '30', '9007199254740990', '9007199254740991']) {
+    const query = client.frameQuery(input)
+    assert.equal(String(query.frame), input)
+    assert.equal(Number.isSafeInteger(query.frame), true)
+  }
+  for (const input of ['1.0000000000000001', '9007199254740991.1', '-0', '-1', '+1', '00', '01', '1.0', '1e0', '1e309', '1e-400', '9007199254740992', '9007199254740993', '9'.repeat(4000), ' 1', '1 ', '1\n', '\n', 'NaN', 'Infinity', '０', null, 1, -0]) {
+    assert.throws(() => client.frameQuery(input), /BAD_QUERY: Frame.*canonical nonnegative integer/)
+  }
+})
+
+test('view explicitly limits all fields/precision claims to the vtx-emitted wire', () => {
+  const text = JSON.stringify(client.TimelineView({ snapshot, result }))
+  assert.ok(text.includes('all vtx-emitted fields'))
+  assert.ok(text.includes('wire numeric tokens are preserved'))
+  assert.ok(text.includes('Original source numeric/lexical precision is not guaranteed'))
+  assert.equal(text.includes('all original fields'), false)
+})
+
 test('unsupported browser decoder returns a clear error rather than rounded display', () => {
   const raw = JSON.rawJSON
   try {

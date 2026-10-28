@@ -10,6 +10,18 @@ const details = (title, data, key) => h('details', { key }, h('summary', null, t
 // Also used by wire/presentation regressions: response.json() would round again.
 export const decodeControlResponse = text => parseJSON(text)
 
+// Match the Host's source-token contract before any floating-point conversion.
+// Decimal/exponent spellings (even 1.0/1e0), signs and whitespace are not canonical.
+export function frameQuery(input) {
+  if (input === '') return {}
+  const max = '9007199254740991'
+  if (typeof input !== 'string' || /[^0-9]/.test(input) || (input.length > 1 && input[0] === '0') ||
+      input.length > max.length || (input.length === max.length && input > max)) {
+    throw new Error('BAD_QUERY: Frame must be a canonical nonnegative integer from 0 to 9007199254740991 (digits only; no signs, leading zeros, decimals, exponents or whitespace). Blank selects all blocks.')
+  }
+  return { frame: Number(input) } // Exact and safe only after lexical and bound checks.
+}
+
 async function control(sessionId, payload, signal) {
   const response = await fetch('/api/framivra/control', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -31,11 +43,12 @@ export function TimelineView({ snapshot, result }) {
     details('Diagnostics', { inspect: snapshot.diagnostics, query: result.diagnostics }),
     ...result.tracks.map(track => h('section', { key: `${track.family}:${track.track_index}`, style: { borderTop: '1px solid currentColor', padding: '8px 0' } },
       h('h3', null, `${track.family} / track ${track.track_index}`),
-      details(`Track ${track.address} — all original fields`, track.data),
+      details(`Track ${track.address} — all vtx-emitted fields`, track.data),
       ...result.blocks.filter(block => block.family === track.family && block.track_index === track.track_index).map(block =>
         details(`${block.address} · frames [${block.range[0]}, ${block.range[1]})`, block.data, block.address)))),
     result.tracks.length === 0 ? h('p', null, 'No tracks matched this query.') : null,
-    details('Complete stored timeline document (all original fields)', snapshot.document),
+    h('p', null, 'All fields of the vtx-emitted read document are shown; wire numeric tokens are preserved. Original source numeric/lexical precision is not guaranteed by the current upstream protocol.'),
+    details('Complete vtx-emitted timeline document (all emitted fields)', snapshot.document),
     details('Complete query envelope', result))
 }
 
@@ -59,6 +72,13 @@ export function PreviewBody({ useTabInfo, sessionId }) {
   }, [tab.signal, sessionId])
 
   async function load(queryOnly = false) {
+    let query
+    try { query = queryOnly ? frameQuery(frame) : {} } catch (error) {
+      // Keep the preview/grant and entered token so the user can correct it.
+      // Invalid input must not query, reopen or even close over the network.
+      setState(previous => ({ ...previous, message: error.message }))
+      return
+    }
     task.current?.abort()
     const controller = new AbortController()
     task.current = controller
@@ -72,7 +92,6 @@ export function PreviewBody({ useTabInfo, sessionId }) {
         opened = await control(sessionId, { op: 'open', timeline }, signal)
         grant.current = opened.grant
       } else opened = previous.opened
-      const query = queryOnly && frame !== '' ? { frame: Number(frame) } : {}
       const result = await control(sessionId, { op: 'query', grant: opened.grant, query }, signal)
       signal.throwIfAborted()
       setState({ phase: 'ready', opened, result })
@@ -87,10 +106,10 @@ export function PreviewBody({ useTabInfo, sessionId }) {
       h('label', null, 'Timeline path ', h('input', { value: timeline, onChange: event => setTimeline(event.target.value), required: true })),
       h('button', { type: 'submit' }, 'Open / refresh')),
     state.phase === 'loading' ? h('p', { role: 'status' }, 'Reading through vtx…') : null,
-    state.phase === 'failed' ? h('pre', { role: 'alert', style: { whiteSpace: 'pre-wrap' } }, state.message) : null,
+    state.message ? h('pre', { role: 'alert', style: { whiteSpace: 'pre-wrap' } }, state.message) : null,
     state.phase === 'ready' ? h(React.Fragment, null,
       h('form', { onSubmit: event => { event.preventDefault(); void load(true) } },
-        h('label', null, 'Frame (blank = all) ', h('input', { type: 'number', min: 0, step: 1, value: frame, onChange: event => setFrame(event.target.value) })),
+        h('label', null, 'Frame (blank = all) ', h('input', { type: 'text', inputMode: 'numeric', value: frame, onChange: event => setFrame(event.target.value) })),
         h('button', { type: 'submit' }, 'Query stored blocks')),
       h(TimelineView, { snapshot: state.opened.snapshot, result: state.result }),
       h('h3', null, 'Existing output preview — provenance UNKNOWN'),
