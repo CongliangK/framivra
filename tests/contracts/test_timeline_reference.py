@@ -364,6 +364,186 @@ class TimelineReferenceTest(unittest.TestCase):
         self.path.write_text(text.replace('"src_out": 14', '"src_out": ' + literal, 1), encoding="utf-8")
         self.error("reference.precision")
 
+    def numeric_fixture(self, path, literal, *, managed=False):
+        from vtx.timeline_structure import managed_objects
+        self.doc = document()
+        if managed:
+            self.doc["_vtx"] = {"protocol": 1, "project_id": "project", "head": "head"}
+            for index, (_, obj, _) in enumerate(managed_objects(self.doc)):
+                obj.setdefault("id", "object-" + str(index))
+        target = self.doc
+        for index, part in enumerate(path[:-1]):
+            if isinstance(target, list):
+                target = target[part]
+            else:
+                target = target.setdefault(part, [] if isinstance(path[index + 1], int) else {})
+        if isinstance(target, list) and path[-1] == len(target):
+            target.append("NUMERIC_TOKEN")
+        else:
+            target[path[-1]] = "NUMERIC_TOKEN"
+        text = json.dumps(self.doc).replace('"NUMERIC_TOKEN"', literal)
+        self.path.write_text(text, encoding="utf-8")
+        return text
+
+    def test_raw_numeric_tokens_are_never_strings_even_for_extensions(self):
+        from vtx.timeline_structure import _schema_errors, valid_id
+        for literal in ("0", "-0", "9" * 64, "9" * 65, "9" * 128,
+                        "9" * 129, "-" + "9" * 128, "9" * 1_000_000):
+            with self.subTest(digits=len(literal)):
+                token = timeline._raw_integer(literal)
+                self.assertNotIsInstance(token, str)
+                self.assertFalse(valid_id(token))
+                self.assertEqual(_schema_errors(token, {"type": "string"}), ["/: expected string"])
+                if len(literal) > 64:
+                    self.assertIsInstance(token, timeline._RawInteger)
+                    self.assertFalse(hasattr(token, "__dict__"))
+                    self.assertEqual(token.negative, literal.startswith("-"))
+        # A giant token must not reach int(), nor retain its giant lexeme.
+        with patch.object(timeline, "int", side_effect=AssertionError("giant int conversion"), create=True):
+            token = timeline._raw_integer("9" * 1_000_000)
+        self.assertLess(sys.getsizeof(token), 128)
+
+    def test_red_team_four_numeric_identity_variants_and_all_managed_ids(self):
+        from vtx.api import query_timeline
+        from vtx.timeline_structure import identity_errors
+        paths = [("_vtx", "project_id"), ("_vtx", "head"),
+                 ("video_tracks", 0, "id"), ("video_tracks", 0, "clips", 0, "id"),
+                 ("audio_tracks", 0, "id"), ("audio_tracks", 0, "events", 0, "id"),
+                 ("subtitles", 0, "id"), ("sources", 0, "id")]
+        for path in paths:
+            for literal in ("0", "-1", "9" * 64, "9" * 65, "9" * 70,
+                            "9" * 128, "9" * 129, "-" + "9" * 65):
+                with self.subTest(path=path, digits=len(literal)):
+                    self.numeric_fixture(path, literal, managed=True)
+                    raw = timeline._load(self.path, "reference", raw=True)
+                    normal = inspect_timeline(self.path)
+                    self.assertEqual(identity_errors(raw["document"]), identity_errors(normal["document"]))
+                    self.assertTrue(identity_errors(raw["document"]))
+                    result = self.error("shape.type" if path[0] == "sources" else "reference.identity")
+                    self.assertEqual(result["content_version"], self.version())
+                    for read in (normal, query_timeline(self.path)):
+                        # Read/query check shape, not protocol identity; their
+                        # existing scope must not be widened to hide this bug.
+                        self.assertEqual(raw["diagnostics"], read["diagnostics"])
+                        self.assertEqual(result["content_version"], read["content_version"])
+                    json.dumps(result, allow_nan=False)  # opaque token never leaks
+        self.numeric_fixture(("video_tracks", 0, "id"), "9" * 70, managed=True)
+        code, wire = self.cli()
+        self.assertEqual(code, 1)
+        self.assertEqual(wire, self.ref())
+
+    def test_numeric_string_ids_keep_shared_grammar_and_selection(self):
+        from vtx.timeline_structure import identity_errors
+        paths = [("_vtx", "project_id"), ("_vtx", "head"), ("sources", 0, "id"),
+                 ("video_tracks", 0, "id"), ("video_tracks", 0, "clips", 0, "id"),
+                 ("audio_tracks", 0, "id"), ("audio_tracks", 0, "events", 0, "id"),
+                 ("subtitles", 0, "id")]
+        for path in paths:
+            for digits in (1, 64, 65, 128, 129):
+                with self.subTest(path=path, digits=digits):
+                    value = "9" * digits
+                    self.numeric_fixture(path, json.dumps(value), managed=True)
+                    loaded = timeline._load(self.path, "reference", raw=True)
+                    self.assertEqual(bool(identity_errors(loaded["document"])), digits > 128)
+                    # Source references must track a changed source ID.
+                    if path == ("sources", 0, "id"):
+                        self.doc["sources"][0]["id"] = value
+                        self.doc["video_tracks"][0]["clips"][0]["src"] = value
+                        self.doc["video_tracks"][0]["clips"][1]["src"] = value
+                        self.doc["audio_tracks"][0]["events"][0]["src"] = value
+                        self.store()
+                    result = self.ref(global_frame=10)
+                    self.assertEqual(result["ok"], digits <= 128, result["diagnostics"])
+                    if digits <= 128 and path == ("video_tracks", 0, "id"):
+                        selected = self.ref(track_ids=[value])
+                        self.assertTrue(selected["ok"], selected["diagnostics"])
+                        self.assertEqual(selected["selection"]["tracks"][0]["stable_id"], value)
+
+    def test_numeric_known_string_surfaces_match_shared_schema_and_read_shape(self):
+        from vtx.api import query_timeline
+        from vtx.timeline_structure import _schema_errors, structure_errors
+        schema = json.loads((ROOT / "vtx" / "timeline.schema.json").read_text(encoding="utf-8"))
+        # All declared string/enum-string fields, plus the duck-strategy voice
+        # reference checked by structure_errors rather than the JSON schema.
+        paths = [("project", "gfx_dependency_policy"), ("project", "cache_dependencies", 0),
+                 ("sources", 0, "path"), ("sources", 0, "transform"),
+                 ("video_tracks", 0, "name"), ("video_tracks", 0, "kind"),
+                 ("video_tracks", 0, "clips", 0, "src"),
+                 ("video_tracks", 0, "clips", 0, "format"),
+                 ("video_tracks", 0, "clips", 0, "cache_dependencies", 0),
+                 ("audio_tracks", 0, "name"), ("audio_tracks", 0, "events", 0, "src"),
+                 ("audio_tracks", 0, "duck_by", 0), ("audio_tracks", 0, "duck_strategy", "voice_track"),
+                 ("subtitles", 0, "text"), ("subtitles_src",)]
+        for path in paths:
+            address = "/" + "/".join(map(str, path))
+            for literal in ("0", "-0", "9" * 64, "9" * 65, "9" * 128,
+                            "9" * 129, "-" + "9" * 128):
+                with self.subTest(path=path, digits=len(literal)):
+                    self.numeric_fixture(path, literal)
+                    raw = timeline._load(self.path, "reference", raw=True)
+                    normal = inspect_timeline(self.path)
+                    query = query_timeline(self.path)
+                    self.assertEqual(raw["diagnostics"], normal["diagnostics"])
+                    self.assertEqual(raw["diagnostics"], query["diagnostics"])
+                    self.assertEqual(raw["content_version"], normal["content_version"])
+                    self.assertEqual(raw["content_version"], query["content_version"])
+                    self.assertEqual(_schema_errors(raw["document"], schema),
+                                     _schema_errors(normal["document"], schema))
+                    errors = structure_errors(raw["document"])
+                    self.assertTrue(any(address in error or "invalid voice reference" in error for error in errors), errors)
+                    result = self.ref(global_frame=10)
+                    if raw["ok"]:
+                        # Optional render-only fields stay outside reference's
+                        # query-shape scope, but never become string substitutes.
+                        self.assertTrue(result["ok"], result["diagnostics"])
+                    else:
+                        self.assertFalse(result["ok"])
+                        self.assertEqual(result["diagnostics"], raw["diagnostics"])
+                        self.assertIsNone(result["coverage"])
+                    json.dumps(result, allow_nan=False)
+
+    def test_invalid_known_numeric_never_leaks_in_error_envelopes(self):
+        identities = [("_vtx", "project_id"), ("_vtx", "head"),
+                      ("video_tracks", 0, "id"), ("video_tracks", 0, "clips", 0, "id"),
+                      ("audio_tracks", 0, "id"), ("audio_tracks", 0, "events", 0, "id"),
+                      ("subtitles", 0, "id"), ("sources", 0, "id")]
+        paths = identities + [("project", "fps"), ("project", "duration_frames"),
+                              ("video_tracks", 0, "clips", 0, "dur"), ("subtitles_src",),
+                              ("audio_tracks", 0, "name"), ("audio_tracks", 0, "events", 0, "src"),
+                              ("subtitles", 0, "text")]
+        for path in paths:
+            for literal in ("9" * 65, "-" + "9" * 129, "9" * 10_000,
+                            "9" * 1_000_000, "-" + "9" * 1_000_000):
+                with self.subTest(path=path, digits=len(literal)):
+                    self.numeric_fixture(path, literal, managed=path in identities)
+                    result = self.ref(global_frame=0)
+                    if path in identities:
+                        expected = "shape.type" if path[0] == "sources" else "reference.identity"
+                        self.assertIn(expected, [d["code"] for d in result["diagnostics"]])
+                    self.assertFalse(result["ok"])
+                    self.assertIsNone(result["document"])
+                    self.assertIsNone(result["selection"])
+                    if path not in identities or path[0] == "sources":
+                        self.assertIsNone(result["coverage"])
+                    wire = json.dumps(result, allow_nan=False)
+                    self.assertNotIn(literal, wire)
+                    self.assertEqual(result["content_version"], self.version())
+        code, result = self.cli()
+        self.assertEqual(code, 1)
+        self.assertEqual(result, self.ref())
+
+    def test_legacy_unknown_million_digit_integer_real_cli_is_lossless(self):
+        for literal in ("9" * 1_000_000, "-" + "9" * 1_000_000):
+            text = self.numeric_fixture(("video_tracks", 0, "clips", 0, "extension"), literal)
+            result = self.ref(global_frame=0)
+            self.assertTrue(result["ok"], result["diagnostics"])
+            self.assertEqual(result["document"]["raw"], text)
+            self.assertIn('"extension": ' + literal, result["selection"]["blocks"][0]["raw"])
+            self.assertEqual(result["content_version"], self.version())
+            code, actual = self.cli("--frame", "0")
+            self.assertEqual(code, 0)
+            self.assertEqual(actual, result)
+
     def test_raw_decode_chunk_boundaries_preserve_bytes_and_strict_diagnostics(self):
         from vtx.api import query_timeline
         # Each multibyte sequence starts just before a decoder chunk boundary.

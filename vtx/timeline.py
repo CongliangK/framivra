@@ -75,11 +75,19 @@ def _float(value):
     return number
 
 
-class _RawInteger(str):
-    """Opaque integer lexeme for raw references, never a query-shape string."""
+class _RawInteger:
+    """Raw-only numeric token, not a string or a materialized giant integer.
+
+    The authoritative lexeme lives only in raw_document. Keep just its sign for
+    frame diagnostics; shared identity/schema checks must see a non-string.
+    """
+    __slots__ = ("negative",)
+
+    def __init__(self, value):
+        self.negative = value.startswith("-")
 
     def __repr__(self):
-        return "<integer lexeme: " + str(len(self)) + " characters>"
+        return "<opaque JSON integer>"
 
 
 def _raw_integer(value):
@@ -143,12 +151,12 @@ def _check_shape(result):
     """
     doc = result["document"]
     def expect(value, cls, address):
-        if not isinstance(value, cls) or isinstance(value, _RawInteger):
+        if not isinstance(value, cls):
             _error(result, "shape.type", address, "expected " + cls.__name__)
             return False
         return True
     def integer(value, address, minimum):
-        if isinstance(value, _RawInteger) and not value.startswith("-"):
+        if isinstance(value, _RawInteger) and not value.negative:
             _error(result, "reference.precision", address, "derived frame exceeds safe integer range")
             return False
         if type(value) is not int or value < minimum:

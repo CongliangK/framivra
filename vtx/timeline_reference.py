@@ -187,7 +187,8 @@ def reference_timeline(path, *, track_ids=None, block_ids=None, track_addresses=
     doc = loaded.pop("document")
     raw = loaded.pop("raw_document", None)
     result = dict(loaded, schema=_SCHEMA, document=None, selection=None,
-                  coverage=_coverage(doc), image={"state": "not-generated", "kind": None})
+                  coverage=_coverage(doc) if loaded["ok"] else None,
+                  image={"state": "not-generated", "kind": None})
     version = result["content_version"]
     if not result["ok"]:
         return _finish(result)

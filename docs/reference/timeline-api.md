@@ -116,11 +116,11 @@ ID/address 旗标可重复，用于多轨/多块。所有选择器的 Python 集
 
 - `document: {state:"stored", raw, content_version, location, project}`。raw 是**严格 UTF-8 完整落盘文本**，包括首尾空白；不是解析对象的重序列化。content_version 与 inspect 相同，为本次完整原字节 SHA256。`stored` 只表示文件已落盘，不表示已受管、可渲染或已验收。
 - `document.location: {path:<文件名>, relative_to:"timeline parent directory"}`，仅在该时间线父目录的工程相对定位，不是跨工作区唯一身份；workspaceId/宿主根定位由 host 附加，内核不虚构。
-- `document.project: {kind:"managed"|"legacy", project_id:string|null, head:string|null}`。仅显式 `_vtx` 通过共享 store 的 protocol1、project_id/head、完整全局对象 ID 检查后为 managed。坏 metadata 不回退 legacy；此处不读/初始化 store 历史，不证明事务证据完整。legacy 无协议稳定 ID，即使恰有自定义 id 也不提供稳定复制；source_id 只是已存在的源引用。
+- `document.project: {kind:"managed"|"legacy", project_id:string|null, head:string|null}`。仅显式 `_vtx` 通过共享 store 的 protocol1、project_id/head、完整全局对象 ID 检查后为 managed。坏 metadata 不回退 legacy；此处不读/初始化 store 历史，不证明事务证据完整。legacy 无协议稳定 ID，即使恰有自定义 id 也不提供稳定复制；source_id 只是已存在的源引用。JSON 数值（包括超长整数）不会冒充字符串身份、源引用或其他字符串字段；带引号的纯数字 ID 仍按共享字符串 ID 规则校验，未知扩展数值仅由 raw 保留词法。
 - `selection: {global_frame, fps, interval, tracks, blocks}`。fps 是落盘真实值并经过现有 fps 约束。轨/块各含 `family, stable_id, address, content_version, raw`；块另含全局 `range`。raw 是原 token span，保留完整未知嵌套字段、超53bit整数、高精度十进制词法、空白与 Unicode/其他转义；document.raw 始终是权威。span 不含该值外侧的分隔空白。不返回可能舍入的解析 data，不通过 JSON roundtrip 伪造原文。派生帧超过 `2**53-1` 明确 `reference.precision` 拒绝，未知扩展数字的原文不受该派生字段限制。
 - 真实受管轨/块 stable_id 来自其原 ID；legacy 及字幕虚拟轨 stable_id 为 null，不把数组位置/pathhash 冒充 ID。字幕虚拟轨 address 为 `/subtitles`；external-only 且无内联数组时其 raw 为 null。
 - 仅非 gfx 视频/音频块引用存在且唯一的 source 时给 `source_id`。本片不探源媒体，不能确证原生 fps/CFR、源时长与归一化，因此**不提供 source_frame**，也不用 video.currentTime 假装精确帧。
-- `coverage` 与 read 相同，外部字幕不读取、不展开，`complete:false` 不声称完整活跃渲染集合。`image:{state:"not-generated",kind:null}` 明确本片未生成图；不渲染、不把旧输出或 UI 截图当 current-composite，未来须区分 current-composite/verified-output/ui-screenshot。
+- 成功时 `coverage` 与 read 相同；输入 shape 校验失败时为 null，不回显未验证外引值。外部字幕不读取、不展开，`complete:false` 不声称完整活跃渲染集合。`image:{state:"not-generated",kind:null}` 明确本片未生成图；不渲染、不把旧输出或 UI 截图当 current-composite，未来须区分 current-composite/verified-output/ui-screenshot。
 
 空选择仅引用整 document，tracks/blocks 为空；仅指定帧/区间时选择命中存储块。显式轨选择纳入该轨命中块；显式块选择纳入其所属轨；多个选择器取并集后保留 video/audio/subtitles 原始顺序。轨 raw 仍含全轨，不等于命中块集合。显式块不在窗口、显式轨窗口内无存储块为 `reference.conflict`；不存在为 `reference.not_found`，重复选择同一对象（含 ID/address 双重指定）为 `reference.duplicate`。重名轨或重复 source 身份为 `reference.ambiguous`，悬空源引用为 `reference.source`，不静默猜测。此检查仍不是完整 render/schema/EDL 校验。
 
