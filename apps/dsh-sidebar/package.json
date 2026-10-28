@@ -15,5 +15,19 @@
       "platform": "web"
     }
   },
-  "scripts": { "test": "node --test tests/*.test.mjs" }
+  "scripts": {
+    "build:client": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "peerDependencies": { "react": "18.3.1" },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-client-modules": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
+    "jsdom": "29.1.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsdown": "0.22.2"
+  }
 }

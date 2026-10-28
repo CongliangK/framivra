@@ -7,8 +7,10 @@ This optional app belongs to Framivra's `apps/` layer. The Python wheel does **n
 - Host and browser source: implemented. Host uses public DSH Session/workingDirectory/fs/subprocess/Connection Fetch contracts. Browser registers an independent `framivra` right-sidebar tab.
 - Local regressions cover a fixed protocol mock, a **real fixture subprocess**, in-memory filesystem, wire-to-client precision and bounded range cleanup. Opt-in [real-runtime tests](tests/real-runtime.test.mjs) also passed against an installed `vtx` wheel and the public built DSH `LocalSubprocessRuntime`: inspect/query through Host Response and Client presentation/serialization, plus forked helpers during completion, cancellation, timeout and unload. These are not proof of DSH authentication or ZIP installation.
 - Native lossless JSON was verified on Node **v22.23.3** and Chromium **149.0.7827.55**. An isolated actual-source `PreviewBody` / React **18.3.1** harness verified a visible `LOSSLESS_JSON_UNSUPPORTED` alert when rawJSON is unavailable. Firefox/other browser versions: **UNRUN**, not inferred from Node support.
-- Public, tree-external DSH Client build SDK: integration pending. We do not duplicate `window.__ModuleLoader__` or import DSH checkout-private build scripts. A production ZIP is not yet claimed installable.
-- Owner/anonymous HTTP carrier integration, complete live DSH GUI/React lifecycle, real SDK build and clean-profile ZIP installation/uninstallation: **UNRUN**.
+- Client builds through the public `@deepseek-ai/dsh-client-modules/build` API (`clientPluginConfig`) and `tsdown`; the ZIP command always builds a fresh factory, never accepts a prebuilt/dummy Client. No private loader implementation or checkout-private import is maintained here.
+- Package regressions extract the real ZIP, import its dependency-free Host closure in a separate process, and materialize its Client with the SDK package's public `createClientModuleSystem`. Shared React/ReactDOM hooks, Cordis injection, the public SlotCore ledger, guide-to-preview routing, UI open/query/close requests, wire precision, input refusal and unload cleanup run against explicit slot-owner/renderer and Connection Fetch **test adapters** plus the real fixture subprocess. This is not a complete DSH shell or authenticated HTTP test.
+- Candidate SDK support was tested from the reviewed `4358779e0527ece179a3610a13411614e65489a0` package artifact (merged into DSH `d065a1e82ff7cb2cac084bdd4b28340a7f9eb9f2`). Its manifest version is `0.2.1-rc.2`; the new public build API is **not yet claimed available from the public registry under that version**. ZIP installer/query changes are reviewed separately. The engine range is a declaration, not a tested host/browser matrix.
+- Owner/anonymous HTTP carrier integration, complete live DSH GUI lifecycle and clean-profile ZIP installation/uninstallation: **UNRUN**. Generated ZIPs are integration candidates, **not release-approved distributions**.
 
 ## User flow / limits
 
@@ -28,10 +30,13 @@ Only existing `out/final.mp4` and `out/draft_final.mp4` are offered, with **prov
 
 ## Development
 
-Requires Node >=22.15 (the source-view tests use public `node:module.registerHooks`); local tests have no installed dependencies:
+Host/source-view tests require Node >=22.15 and native lossless JSON. The SDK/tsdown build uses Node **22.23.3** here (tsdown requires Node ^22.18 or >=24); Python 3 stdlib creates ZIPs. Install this app's declared public-version `devDependencies` in an isolated development environment before running the complete tests; React, ReactDOM, Cordis, ui-slots and jsdom are test/platform suppliers, not plugin runtime copies. Do not assume registry installation currently supplies the candidate SDK API described above. This round used that SDK tarball, copied public Cordis/ui-slots built artifacts and reused already-installed tsdown/React/ReactDOM/jsdom dependencies: **no fresh registry install was tested**.
+
+From this app directory, with those build/test dependencies available:
 
 ```sh
-node --test apps/dsh-sidebar/tests/*.test.mjs
+npm run build:client
+npm test
 ```
 
 The mock CLI returns a fixed envelope; it deliberately does not implement frame/range selection. Security tests exercise URL/NUL/traversal/symlink rejection, Session/expiry/cwd grants, remote mapping, executable hijack, full multi-family original fields, lossy JSON, unsupported CLI, request/unload cancellation, media ID injection, HEAD/Range and pull bounds/revocation. A route-registration test verifies use of authenticated Connection Fetch, **not** real owner authentication.
@@ -40,15 +45,15 @@ The mock CLI returns a fixed envelope; it deliberately does not implement frame/
 
 The release ZIP must have `package.json`, `cordis.patch.yml`, ESM `lib/index.js`, `lib/client.js`, and `LICENSE` at its root, with no lifecycle scripts, dependencies, node_modules, checkout paths or second React/ReactDOM/Cordis copy. Browser third-party dependencies must be bundled except platform-shared peers. Runtime must work without a DSH source checkout.
 
-Needed from the public SDK: a versioned tree-external import/CLI, explicit browser entry/output/package ID, shared-platform external handling, and the supported DSH module-registration wrapper emitted by the SDK. No permanent hand-written loader wrapper is acceptable. Client compilation remains pending; once the SDK emits its browser artifact, the dependency-free packaging stage (Node + build-time Python stdlib) is available:
+The public SDK receives this package directory, `src/client/index.mjs` and an output directory; `package.json.name` is the module ID. `npm run build:client` emits `lib/client.js` and its debug map. React remains a platform-shared request and is declared as an exact `18.3.1` peer (the tested version, not a broader compatibility claim); no other external Client module is emitted. Local JSON presentation code is bundled. The separate packaging command builds again in a fresh staging directory, copies the Host's ESM closure with relative `.js` imports, and strips only the SDK debug-map trailer (the production ZIP omits maps/source paths). It never requires an SDK or source checkout at runtime.
+
+From this app directory, with the build dependencies available (**writes a candidate artifact**, not an install):
 
 ```sh
-node apps/dsh-sidebar/scripts/package.mjs \
-  --client /absolute/SDK-output/client.js \
-  --out /tmp/framivra-orchestrate-evidence/dsh-sidebar/framivra-dsh-sidebar.zip
+npm run package -- --out /absolute/new/framivra-dsh-sidebar-candidate.zip
 ```
 
-The output must not already exist. The packager allowlists release metadata, copies ESM Host modules, rejects source maps/obvious checkout paths in the Client artifact, and omits source scripts/dependencies/node_modules. It does **not** certify that an arbitrary input is a valid SDK artifact or that installation works. The packaging test deliberately uses a marked, non-installable dummy Client; do not distribute that test ZIP.
+The output must not already exist. The packager allowlists release metadata and omits source scripts/dependencies/node_modules. All stages complete before an atomic, no-overwrite publication of the final ZIP pathname; build/ZIP failure leaves that pathname absent. Hidden staging directories remain beside the output as build evidence. Reusing an existing pathname fails without modifying its bytes. `--client` injection is not supported. The package tests build/load the actual SDK output; no dummy Client ZIP is generated. A successful build/package test does **not** certify clean-profile installation or authentication.
 
 Needed from the read CLI: `vtx -t PATH capabilities|inspect|query`, the `framivra.timeline.read/v1` envelope and exit 0/1/2 as agreed. Optional query selectors are passed as separate argv tokens (`--family`, `--track-index`, `--block-index`, `--frame` or `--interval`). No subprocess is kept alive between reads.
 
