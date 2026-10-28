@@ -1,6 +1,6 @@
-# 时间线只读 API
+# 时间线 API 与事务内核
 
-本页是只读接口与写入口迁移清单的唯一 home。结构权威仍为 [timeline schema](../../vtx/timeline.schema.json)，渲染校验仍归 [validate](../../vtx/pipeline/stages.py)。本接口的 `ok` **仅表示可安全查询的数据形状**，不表示 schema 合规、素材可用、插件已安装或可渲染。
+本页是只读接口、首切片写事务与写入口迁移清单的唯一 home。结构权威仍为 [timeline schema](../../vtx/timeline.schema.json)，渲染校验仍归 [validate](../../vtx/pipeline/stages.py)。本接口的 `ok` **仅表示可安全查询的数据形状**，不表示 schema 合规、素材可用、插件已安装或可渲染。
 
 ## 公共面与零写态
 
@@ -93,6 +93,44 @@ capabilities 使用相同 envelope，content_version 为 null，另有 capabilit
 
 因此任意帧查询都**不是完整渲染活跃集合**；消费者必须展示未展开状态，不把无内联字幕误当无字幕。coverage.complete 只描述存储块是否需外部字幕展开，不表示输入合法、渲染已验收或素材完整。inline 与非空 external 同时存在拒绝查询。
 
+## 显式写事务第一切片（不是完整编辑器）
+
+**以下调用会写工程及持久历史**，没有 dry-run；先在副本核对请求，不自动迁移现有工程。公共 API 为 `timeline_transaction(path, request)`、`timeline_store_status(path, *, recover=False)`、`timeline_store_capabilities()`；CLI/Python 共用 [内核](../../vtx/timeline_store.py)，无需 Ctx、素材、渲染或插件。
+
+```bash
+vtx store capabilities
+vtx -t /path/to/timeline.json store status
+# 下列两条为实际写操作，不是预演：
+vtx -t /path/to/timeline.json store --request /path/to/request.json
+vtx -t /path/to/timeline.json store recover
+```
+
+request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`，拒绝未知请求键。`base_revision` 直接使用 inspect 的原字节 `content_version`，不使用 mtime。op_id/project_id/对象 ID 为 1–128 位、首位字母或数字、其余字母数字及 `_.:-` 的字符串；所有受管对象 ID 全局唯一。version 仍为 2，新增可选根 `_vtx: {protocol:1, project_id, head}`；未知未来协议拒写。管理对象为 sources、视频/音频轨、clip/event、内联字幕，不往自由 `_meta` 塞身份。
+
+| operation | 额外请求字段 | 首切片限制 |
+|---|---|---|
+| create | document | base 为 null，create-only 拒现存；完整受管对象 ID 由调用者提供，document 不带 _vtx |
+| adopt | 无 | 仅显式为旧工程所有非 source 对象分配 ID，sources.id 沿用；旧非 source 已有 ID（包括合法但不属本协议的 ID）、坏类型/重复一律拒绝，不覆盖；返回地址→新 ID 的 id_mapping |
+| replace | document | 全文替换，须携带当前 _vtx，保留完整 ID/对象种类清单；禁止增删/改签 ID；调用者显式负责全文及扩展值 |
+| apply | changes | 非空 `[{"id":"对象ID","set":{"text":"新字幕"}}]`；仅 capabilities 列出的本层字段，拒绝任意 JSON Pointer、身份及扩展路径 |
+| undo | head | 只撤当前已提交 head，仍是带新 op_id/base CAS 的新提交；文件必须逐字节等于原 head 结果；不能 undo create/adopt |
+
+没有命名的 move/copy/split、插入删除、ID 改签、轨重命名或 UI 操作；不得宣称完整编辑。replace 可保留 ID 重排既有对象，但不提供复制/切分语义或映射。apply/adopt 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
+
+### 发布与恢复协议
+
+同目录允许多个工程：按实际文件系统顺序解析父路径（包括 symlink 后的 `..`），再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，新 manifest 绑定该文件名及 canonical 完整位置（已发布的旧版 filename-only manifest 仍可读、不自动改写）；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
+
+初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
+
+顺序固定：同一线程锁+跨进程 flock → 验证/恢复所有已发布 intent → 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
+
+恢复只补证据：current==after 时补 commit；==before 时记 abort，**不自动 roll-forward**，同 op 重试返回 aborted，欲再试须新 op_id；其他字节、缺失/坏证据或无法判定时 recovery_required，绝不覆盖。create 的 before=null 特例允许仍缺失的目标记 abort。已提交同 op 同 payload 返回原结果与当下 current_revision，不倒退后续编辑；不同 payload 返回 idempotency.conflict。提交替换开始后同步/标记失败为 outcome_unknown（带 op_id），必须相同请求重试或 recover，不得误称未提交。
+
+成功 envelope 为 `schema: "framivra.timeline.store/v1"`、operation/ok、op_id/request_digest、base_revision/revision/project_id，首次与重试另带 current_revision/replayed；失败包含 code/message。CLI 成功 exit0，输入/CAS/恢复错误 exit1，不支持的旗标组合 exit2；拒绝 `--dry-run`、渲染旗标与 `--json` 输出文件。
+
+[共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展（含超出 Decimal 指数范围的合法 JSON 数值）在 adopt/status/recover 返回 input.json 失败 envelope，拒写而非舍入，不影响 legacy 只读；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为本地 POSIX 合作线程/进程与进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。Windows/NFS/物理断电未测，不作绝对保证。
+
 ## 生产写入口支持矩阵与迁移清单
 
 以下为当前源码盘点，不是本切片已经实现的写能力。手工编辑/外部脚本无法穷举；仓内测试夹具、验收探针、冻结模板复制不算生产编辑器。
@@ -107,10 +145,10 @@ capabilities 使用相同 envelope，content_version 为 null，另有 capabilit
 | [MG build](../../templates/mg-styles/build.py#L16-L65) | 新目录限定，dry 返回工程，生成 gfx/音频后写 timeline | 新建工程与完整源/轨数据 |
 | [MG media](../../templates/mg-styles/build_media.py#L111-L153) | 调用 build 后再替换视频轨/追加源，第二次覆盖 timeline | 新建过程的整批计划与失败边界 |
 | [既有只读预览页](../../vtx/preview.html#L264-L281)（非写入口） | 文件/粘贴 JSON 读取展示，不写工程；自带页面数据检查不是渲染校验 | 后续统一读模型消费面，不虚构编辑/导出能力 |
-| [新只读 CLI](../../vtx/cli/timeline.py)、[新公共 API](../../vtx/timeline.py) | 本切片新增，完整原文和暂态地址；无写入/ID/服务 | 未来写层从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
+| [只读 CLI](../../vtx/cli/timeline.py)、[只读模型](../../vtx/timeline.py) | 完整原文和暂态地址；仍零写态 | store 从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
 
-已有 [fstxn](../../vtx/runtime/fstxn.py) 是文件发布/锁/恢复设施，不是语义编辑 API，不应在只读层调用。上述入口当前**未迁移**；本切片不新增写接口、稳定 ID、常驻服务或 DSH 桥。
+上述生产写入口当前**全部未迁移**，仍可能非合作直接写工程，不能宣称统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
 
 ## 行为验证
 
-[真实行为测试](../../tests/contracts/test_timeline_api.py) 覆盖完整扩展保留、缺素材/未知插件、输入字节身份、暂态地址/数组次序、交集与端点、严格 JSON、坏 shape 仍可检查、结构化诊断、外部字幕不完整标注、开发错误透出、CLI/Python 同值及无工程写副作用。执行：`env python3 -m unittest tests.contracts.test_timeline_api -v`。测试通过不等于渲染或整仓全量通过；发行包安装烟测另需在仓外运行。
+[真实行为测试](../../tests/contracts/test_timeline_api.py) 覆盖完整扩展保留、缺素材/未知插件、输入字节身份、暂态地址/数组次序、交集与端点、严格 JSON、坏 shape 仍可检查、结构化诊断、外部字幕不完整标注、开发错误透出、CLI/Python 同值及无工程写副作用。[事务行为测试](../../tests/contracts/test_timeline_store.py) 在仓外临时项目覆盖双进程/线程同 base 恰一成功、重试不倒退、严格输入/ID/扩展/字幕外引、create-only、head undo、每阶段异常/SIGKILL、每次真实 write/fsync/rename/replace 调用 EIO、坏历史与源码 CLI/API 同值。[兼容回归](../../tests/contracts/test_timeline_store_compat.py) 补充相同 SHA 工程的绝对/相对 symlink/.. 寻址、跨路径双进程 CAS/恢复、坏别名拒绝，以及 legacy 读校验与 managed 严格拒绝的边界。执行：`env python3 -m unittest tests.contracts.test_timeline_api tests.contracts.test_timeline_store tests.contracts.test_timeline_store_compat -v`。测试通过不等于渲染或整仓全量通过；发行包安装烟测另需在仓外运行。

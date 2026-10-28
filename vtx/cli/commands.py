@@ -833,6 +833,7 @@ def _main(execution=None):
                     help="diff 时间线模式专属：机器可读 diff/影响面/推荐路径 JSON 写入 PATH"
                          "（缺省只打印人读摘要；报告对比模式不支持）；"
                          "audio --report/--report-only 专属：报告 JSON 落盘 PATH（默认 out/audio_report.json）")
+    ap.add_argument("--request", metavar="PATH", help="store only: strict JSON transaction request file (writes project)")
     ap.add_argument("--family", help="query only: video | audio | subtitles")
     ap.add_argument("--track-index", help="query only: zero-based transient track position")
     ap.add_argument("--block-index", help="query only: zero-based transient block position")
@@ -848,6 +849,11 @@ def _main(execution=None):
                     help="subs 专属：render | preview <时间点...> | check（时间点 `12.5`=秒 / `f360`=帧号）；"
                          "diff 专属：<旧报告.json> <新报告.json>（复用同一位置参数槽，见上注）")
     a = ap.parse_intermixed_args()
+    if a.command == "store":
+        from .timeline_store import run_store_command
+        return run_store_command(a, ap)
+    if a.request is not None and a.command not in ("inspect", "query", "capabilities"):
+        ap.error("--request requires store")
     if a.command in ("inspect", "query", "capabilities"):
         # Before Ctx, execution links, plugins, project paths or any write gate.
         from .timeline import run_read_command
