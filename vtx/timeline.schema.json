@@ -13,6 +13,17 @@
     "audio_tracks"
   ],
   "properties": {
+    "_vtx": {
+      "type": "object",
+      "required": ["protocol", "project_id", "head"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {"const": 1},
+        "project_id": {"type": "string", "minLength": 1},
+        "head": {"type": "string", "minLength": 1}
+      },
+      "description": "Optional stored-document transaction identity. protocol=1 requires unique nonempty stable IDs on all sources/tracks/clips/events/inline subtitles; legacy documents are changed only by explicit adopt. No arbitrary metadata here."
+    },
     "version": {
       "const": 2
     },
@@ -95,6 +106,7 @@
           }}}}
         }],
         "properties": {
+          "id": {"type": "string", "minLength": 1},
           "name": {
             "type": "string",
             "description": "轨道名，一般与 kind 同名或加序号"
@@ -121,6 +133,7 @@
                 "dur"
               ],
               "properties": {
+                "id": {"type": "string", "minLength": 1},
                 "src": {
                   "type": "string",
                   "description": "sources[].id；gfx 缺省为 HTML 文件路径；format=svg-sequence 为项目根相对的 framivra-svg-sequence/v1 manifest 路径"
@@ -198,6 +211,7 @@
           "text"
         ],
         "properties": {
+          "id": {"type": "string", "minLength": 1},
           "in": {
             "type": "integer"
           },
@@ -224,6 +238,7 @@
           "events"
         ],
         "properties": {
+          "id": {"type": "string", "minLength": 1},
           "name": {
             "type": "string",
             "description": "语义命名惯例：bed=BGM铺底 / voice=口播 / sfx=音效点 / amb=环境声；audit 阶段依赖 voice 这个名字评估口播覆盖率与语速"
@@ -262,6 +277,7 @@
                 "volume"
               ],
               "properties": {
+                "id": {"type": "string", "minLength": 1},
                 "src": {
                   "type": "string",
                   "description": "sources[].id；音频从对应素材提取（48kHz 立体声 PCM）"

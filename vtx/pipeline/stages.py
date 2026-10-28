@@ -40,11 +40,11 @@ DUCK_MAKEUP = 1
 # `_meta` 为永久自由命名空间白名单（§2.1——插件/脚本标记不触发任何分支）。
 KERNEL_KEYS = {
     "root": {"version", "project", "sources", "video_tracks", "subtitles",
-             "subtitles_src", "audio_tracks"},
+             "subtitles_src", "audio_tracks", "_vtx"},
     "project": {"fps", "width", "height", "duration_frames", "cache_dependencies", "gfx_dependency_policy"},
     "sources[]": {"id", "path", "transform"},
-    "audio_tracks[]": {"name", "duck", "duck_by", "duck_params", "events"},
-    "audio_tracks[].events[]": {"src", "src_in", "in", "out", "volume",
+    "audio_tracks[]": {"id", "name", "duck", "duck_by", "duck_params", "events"},
+    "audio_tracks[].events[]": {"id", "src", "src_in", "in", "out", "volume",
                                 "fade_in_frames", "fade_out_frames", "pan", "loop"},
 }
 
@@ -150,6 +150,27 @@ def validate(c: Ctx):
     def clip_fade(cl, cp, tr, tp):
         if native(cp, lambda: observe("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)) > field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur')]):
             err(f"fade 总长超过片段: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_fade', {'value': observed.get("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
+    # Identity checks use stored bytes, never Ctx.tl's expanded subtitles.
+    # Managed documents share the store's asset-independent structural check;
+    # legacy rendering keeps its existing (including low-resolution fixture) gates.
+    from ..timeline_structure import strict_loads, identity_errors, structure_errors
+    try:
+        stored = strict_loads(c.timeline_bytes) if hasattr(c, 'timeline_bytes') else c.tl
+        # Legacy missing source IDs retain their existing precise source_structure
+        # producer below; duplicate/invalid IDs still fail before dictionary assembly.
+        structural = structure_errors(stored) if isinstance(stored, dict) and '_vtx' in stored else identity_errors(stored, require_source_id=False)
+    except (ValueError, UnicodeError, RecursionError) as error:
+        structural = [str(error)]
+    if structural:
+        for message in structural:
+            err(message, rule='validate.stored_structure')
+        print(f"校验失败（{len(errs)} 项）：")
+        for message in errs:
+            print("  ✗", message)
+        c.receipt('validate', False, f'{len(errs)} errors')
+        failure = SystemExit(1)
+        mark_handled(failure)
+        raise failure
     from ..cache.cache_state import validate_cache_dependencies
     try:
         validate_cache_dependencies(c)
@@ -168,7 +189,11 @@ def validate(c: Ctx):
         problem = source_structure(s, si)
         if problem is not None:
             err(problem); continue
-        srcs[field(s, 'id', f'$.sources[{si}]')] = s
+        sid = field(s, 'id', f'$.sources[{si}]')
+        if sid in srcs:
+            err(f"重复 source id: {sid}", f'$.sources[{si}].id', 'validate.source_identity')
+            continue
+        srcs[sid] = s
     for sid, s in srcs.items():
         sp = f"$.sources[{source_indices[id(s)]}]"
         p = c.src_path(sid)

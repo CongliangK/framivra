@@ -40,6 +40,8 @@ from .pluginlib import config as _pl_config
 from .pluginlib.hooks import plugin_code_digest, resolve_source_wav
 from .cache.recovery import atomic_media, media_cache_valid
 from .timeline import inspect_timeline, query_timeline, timeline_capabilities
+from .timeline_store import (timeline_transaction, timeline_store_status,
+                             timeline_store_capabilities)
 
 __all__ = [
     "Ctx", "DOWNSTREAM", "load_receipt", "media_stat_digest", "audio_key",
@@ -48,6 +50,7 @@ __all__ = [
     "read_receipt_atomic", "write_receipt_atomic",
     "atomic_media", "media_cache_valid",
     "inspect_timeline", "query_timeline", "timeline_capabilities",
+    "timeline_transaction", "timeline_store_status", "timeline_store_capabilities",
 ]
 
 
