@@ -4,6 +4,7 @@ import re
 
 from ..timeline import (_error, _result, inspect_timeline, query_timeline,
                         timeline_capabilities)
+from ..timeline_reference import reference_timeline, _SCHEMA as _REFERENCE_SCHEMA
 
 
 def _integer(value):
@@ -22,11 +23,16 @@ def run_read_command(args, parser):
     allowed = {"command", "timeline", "dry_run"}
     if args.command == "query":
         allowed |= query_fields
+    elif args.command == "reference":
+        allowed |= {"track_id", "block_id", "track_address", "block_address",
+                    "frame", "interval", "expected_content_version"}
     unused = [key for key, value in vars(args).items()
               if key not in allowed and value != parser.get_default(key)
               and not (key == "subs_extra" and not value)]
     if unused:
         result = _result(args.command)
+        if args.command == "reference":
+            result["schema"] = _REFERENCE_SCHEMA
         _error(result, "cli.arguments", "", "unsupported arguments: " + ", ".join(unused))
         code = 2
     else:
@@ -34,6 +40,13 @@ def run_read_command(args, parser):
             result = timeline_capabilities()
         elif args.command == "inspect":
             result = inspect_timeline(args.timeline)
+        elif args.command == "reference":
+            result = reference_timeline(
+                args.timeline, track_ids=args.track_id, block_ids=args.block_id,
+                track_addresses=args.track_address, block_addresses=args.block_address,
+                global_frame=_integer(args.frame),
+                interval=[_integer(v) for v in args.interval] if args.interval is not None else None,
+                expected_content_version=args.expected_content_version)
         else:
             result = query_timeline(
                 args.timeline, family=args.family,

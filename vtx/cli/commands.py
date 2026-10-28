@@ -837,12 +837,15 @@ def _main(execution=None):
     ap.add_argument("--family", help="query only: video | audio | subtitles")
     ap.add_argument("--track-index", help="query only: zero-based transient track position")
     ap.add_argument("--block-index", help="query only: zero-based transient block position")
-    ap.add_argument("--frame", help="query only: global integer frame (not seconds)")
+    ap.add_argument("--frame", help="query/reference: global integer frame (not seconds)")
     ap.add_argument("--interval", nargs=2, metavar=("START", "END"),
-                    help="query only: overlapping global integer frame interval [START,END)")
+                    help="query/reference: overlapping global integer frame interval [START,END)")
+    for name in ("track-id", "block-id", "track-address", "block-address"):
+        ap.add_argument("--" + name, action="append", help="reference only: repeatable " + name)
+    ap.add_argument("--expected-content-version", help="reference only: exact byte version; required for addresses")
     ap.add_argument("command",
                     help="all | " + " | ".join(s[0] for s in STAGES) +
-                         " | clean | gc | df | snapshot | subs | diff | inspect | query | capabilities")
+                         " | clean | gc | df | snapshot | subs | diff | inspect | query | reference | capabilities")
     # 必须定义在 command 之后：argparse 位置参数按定义序匹配，`*` 放前面会把
     # `subs check` 的两个 token 全部吞掉、command 只剩末位（实测 2026-09-11）
     ap.add_argument("subs_extra", nargs="*", metavar="ARG",
@@ -852,15 +855,18 @@ def _main(execution=None):
     if a.command == "store":
         from .timeline_store import run_store_command
         return run_store_command(a, ap)
-    if a.request is not None and a.command not in ("inspect", "query", "capabilities"):
+    if a.request is not None and a.command not in ("inspect", "query", "reference", "capabilities"):
         ap.error("--request requires store")
-    if a.command in ("inspect", "query", "capabilities"):
+    if a.command in ("inspect", "query", "reference", "capabilities"):
         # Before Ctx, execution links, plugins, project paths or any write gate.
         from .timeline import run_read_command
         return run_read_command(a, ap)
     if any(getattr(a, name) is not None for name in
            ("family", "track_index", "block_index", "frame", "interval")):
         ap.error("--family/--track-index/--block-index/--frame/--interval require query")
+    if any(getattr(a, name) is not None for name in
+           ("track_id", "block_id", "track_address", "block_address", "expected_content_version")):
+        ap.error("reference selectors require reference")
     policy = ExecutionPolicy.PLAN if a.dry_run else ExecutionPolicy.EXECUTE
     # --until 校验（方案三阶段3）：仅 all 合法 + 值域 = _UNTIL_STAGES；两错均退出码 2
     # （与「未知命令」同级：用法错而非运行错，脚本侧好分类）。audio 不可作终点的

@@ -29,7 +29,12 @@ def timeline_capabilities():
     """Return the static read protocol, without opening any project or asset."""
     result = _result("capabilities")
     result["capabilities"] = {
-        "operations": ["inspect", "query", "capabilities"], "read_only": True,
+        "operations": ["inspect", "query", "reference", "capabilities"], "read_only": True,
+        "reference": {"schema": "framivra.timeline.reference/v1",
+                      "input_limit_bytes": 8 * 1024 * 1024,
+                      "wire_limit_bytes": 8 * 1024 * 1024,
+                      "raw_authority": "exact UTF-8 document and token spans",
+                      "address_selectors_require_expected_content_version": True},
         "cli_exit_codes": {"0": "success", "1": "input/query error", "2": "CLI usage error"},
         "validation_scope": "query-shape (not render validation)",
         "families": list(_FAMILIES), "fps": list(ALLOWED_FPS),
@@ -69,17 +74,24 @@ def _float(value):
     return number
 
 
-def _load(path, operation):
+def _load(path, operation, *, raw=False, max_bytes=None):
     result = _result(operation)
     result["document"] = None
     try:
-        payload = Path(path).expanduser().read_bytes()
+        with Path(path).expanduser().open("rb") as stream:
+            payload = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
     except (OSError, ValueError, TypeError) as error:
         _error(result, "input.read", "", str(error))
         return result
+    if max_bytes is not None and len(payload) > max_bytes:
+        _error(result, "input.limit", "", "timeline exceeds input byte limit", limit_bytes=max_bytes)
+        return result
     result["content_version"] = "sha256:" + hashlib.sha256(payload).hexdigest()
     try:
-        result["document"] = json.loads(payload.decode("utf-8"), object_pairs_hook=_pairs,
+        text = payload.decode("utf-8")
+        if raw:
+            result["raw_document"] = text
+        result["document"] = json.loads(text, object_pairs_hook=_pairs,
                                         parse_constant=_constant, parse_float=_float)
     except (ValueError, UnicodeError, RecursionError) as error:
         _error(result, "input.json", "", str(error),

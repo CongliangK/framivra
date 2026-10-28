@@ -1,6 +1,6 @@
 # 时间线 API 与事务内核
 
-本页是只读接口、首切片写事务与写入口迁移清单的唯一 home。结构权威仍为 [timeline schema](../../vtx/timeline.schema.json)，渲染校验仍归 [validate](../../vtx/pipeline/stages.py)。本接口的 `ok` **仅表示可安全查询的数据形状**，不表示 schema 合规、素材可用、插件已安装或可渲染。
+本页是只读接口、首切片写事务与写入口迁移清单的唯一 home。结构权威仍为 [timeline schema](../../vtx/timeline.schema.json)，渲染校验仍归 [validate](../../vtx/pipeline/stages.py)。inspect/query 的 `ok` **仅表示可安全查询的数据形状**；reference 另按下述引用合同检查身份、选择与精度，均不表示 schema 合规、素材可用、插件已安装或可渲染。
 
 ## 公共面与零写态
 
@@ -93,6 +93,41 @@ capabilities 使用相同 envelope，content_version 为 null，另有 capabilit
 
 因此任意帧查询都**不是完整渲染活跃集合**；消费者必须展示未展开状态，不把无内联字幕误当无字幕。coverage.complete 只描述存储块是否需外部字幕展开，不表示输入合法、渲染已验收或素材完整。inline 与非空 external 同时存在拒绝查询。
 
+## 原文引用 reference/v1（只读、无图）
+
+`reference_timeline` 由同一[引用内核](../../vtx/timeline_reference.py)服务 Python 与公开 CLI：
+
+```python
+reference_timeline(path, *, track_ids=None, block_ids=None, track_addresses=None,
+                   block_addresses=None, global_frame=None, interval=None,
+                   expected_content_version=None)
+```
+
+```bash
+vtx -t /path/to/timeline.json reference
+vtx -t /path/to/timeline.json reference --frame 30
+vtx -t /path/to/timeline.json reference --track-id TRACK_ID --block-id BLOCK_ID
+vtx -t /path/to/timeline.json reference --block-address /video_tracks/0/clips/0 --expected-content-version sha256:EXACT_VERSION
+```
+
+ID/address 旗标可重复，用于多轨/多块。所有选择器的 Python 集合参数为字符串 list/tuple；帧与 interval 沿用整数帧及 `[start,end)` 边界，不接受 bool/float，不裁夹。frame 与 interval 互斥。`--dry-run` 不改变只读结果；渲染/输出文件旗标仍按 read 的 `cli.arguments`/exit2 拒绝。reference 错误使用相同 diagnostics/envelope/退出约定，但 schema 是 `framivra.timeline.reference/v1`、operation 是 `reference`；其他读接口的数值表示合同不变。
+
+成功结果包含：
+
+- `document: {state:"stored", raw, content_version, location, project}`。raw 是**严格 UTF-8 完整落盘文本**，包括首尾空白；不是解析对象的重序列化。content_version 与 inspect 相同，为本次完整原字节 SHA256。`stored` 只表示文件已落盘，不表示已受管、可渲染或已验收。
+- `document.location: {path:<文件名>, relative_to:"timeline parent directory"}`，仅在该时间线父目录的工程相对定位，不是跨工作区唯一身份；workspaceId/宿主根定位由 host 附加，内核不虚构。
+- `document.project: {kind:"managed"|"legacy", project_id:string|null, head:string|null}`。仅显式 `_vtx` 通过共享 store 的 protocol1、project_id/head、完整全局对象 ID 检查后为 managed。坏 metadata 不回退 legacy；此处不读/初始化 store 历史，不证明事务证据完整。legacy 无协议稳定 ID，即使恰有自定义 id 也不提供稳定复制；source_id 只是已存在的源引用。
+- `selection: {global_frame, fps, interval, tracks, blocks}`。fps 是落盘真实值并经过现有 fps 约束。轨/块各含 `family, stable_id, address, content_version, raw`；块另含全局 `range`。raw 是原 token span，保留完整未知嵌套字段、超53bit整数、高精度十进制词法、空白与 Unicode/其他转义；document.raw 始终是权威。span 不含该值外侧的分隔空白。不返回可能舍入的解析 data，不通过 JSON roundtrip 伪造原文。派生帧超过 `2**53-1` 明确 `reference.precision` 拒绝，未知扩展数字的原文不受该派生字段限制。
+- 真实受管轨/块 stable_id 来自其原 ID；legacy 及字幕虚拟轨 stable_id 为 null，不把数组位置/pathhash 冒充 ID。字幕虚拟轨 address 为 `/subtitles`；external-only 且无内联数组时其 raw 为 null。
+- 仅非 gfx 视频/音频块引用存在且唯一的 source 时给 `source_id`。本片不探源媒体，不能确证原生 fps/CFR、源时长与归一化，因此**不提供 source_frame**，也不用 video.currentTime 假装精确帧。
+- `coverage` 与 read 相同，外部字幕不读取、不展开，`complete:false` 不声称完整活跃渲染集合。`image:{state:"not-generated",kind:null}` 明确本片未生成图；不渲染、不把旧输出或 UI 截图当 current-composite，未来须区分 current-composite/verified-output/ui-screenshot。
+
+空选择仅引用整 document，tracks/blocks 为空；仅指定帧/区间时选择命中存储块。显式轨选择纳入该轨命中块；显式块选择纳入其所属轨；多个选择器取并集后保留 video/audio/subtitles 原始顺序。轨 raw 仍含全轨，不等于命中块集合。显式块不在窗口、显式轨窗口内无存储块为 `reference.conflict`；不存在为 `reference.not_found`，重复选择同一对象（含 ID/address 双重指定）为 `reference.duplicate`。重名轨或重复 source 身份为 `reference.ambiguous`，悬空源引用为 `reference.source`，不静默猜测。此检查仍不是完整 render/schema/EDL 校验。
+
+**地址只在一个 content_version 中有效**：地址选择强制传 expected_content_version，缺失为 `reference.version_required`；任意请求传入版本与落盘原字节不一致为 `reference.stale`，不选择新位置上的另一个块。ID选择仅 managed 可用，legacy 为 `reference.unmanaged`，不自动 adopt。读取、原文截取、选择、版本均用同一次落盘 bytes 快照；文件返回后仍可变化，不承诺加锁或持续当前。重复 JSON 键等由现有严格 parser 拒绝；轻量 token span 只定位已验证文法，不建立第二解析/校验权威。
+
+协议上限：输入完整 UTF-8 bytes 和整个 ASCII 转义 JSON wire（含结尾换行）各 **8MiB**；超限分别 `input.limit`/`output.limit`，绝不截断原文或返回部分成功。output.limit 时 document/selection/coverage 为 null；无全文摘要时 input.limit 的 content_version 为 null。内核与 CLI 使用相同 wire 预算，包含 raw 字符串转义后的膨胀。错误时 selection 为 null；输入/metadata 错误可能无 document。能力查询另有 reference 子项声明此 schema/上限/版本要求。全程不写 cache/out/store/锁/回执，不读取源媒体、插件或字幕外引。
+
 ## 显式写事务第一切片（不是完整编辑器）
 
 **以下调用会写工程及持久历史**，没有 dry-run；先在副本核对请求，不自动迁移现有工程。公共 API 为 `timeline_transaction(path, request)`、`timeline_store_status(path, *, recover=False)`、`timeline_store_capabilities()`；CLI/Python 共用 [内核](../../vtx/timeline_store.py)，无需 Ctx、素材、渲染或插件。
@@ -145,10 +180,10 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 | [MG build](../../templates/mg-styles/build.py#L16-L65) | 新目录限定，dry 返回工程，生成 gfx/音频后写 timeline | 新建工程与完整源/轨数据 |
 | [MG media](../../templates/mg-styles/build_media.py#L111-L153) | 调用 build 后再替换视频轨/追加源，第二次覆盖 timeline | 新建过程的整批计划与失败边界 |
 | [既有只读预览页](../../vtx/preview.html#L264-L281)（非写入口） | 文件/粘贴 JSON 读取展示，不写工程；自带页面数据检查不是渲染校验 | 后续统一读模型消费面，不虚构编辑/导出能力 |
-| [只读 CLI](../../vtx/cli/timeline.py)、[只读模型](../../vtx/timeline.py) | 完整原文和暂态地址；仍零写态 | store 从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
+| [只读 CLI](../../vtx/cli/timeline.py)、[只读模型](../../vtx/timeline.py)、[引用模型](../../vtx/timeline_reference.py) | inspect/query 为完整解析数据；reference 提供权威原文和带版本暂态地址；均零写态 | store 从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
 
 上述生产写入口当前**全部未迁移**，仍可能非合作直接写工程，不能宣称统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
 
 ## 行为验证
 
-[真实行为测试](../../tests/contracts/test_timeline_api.py) 覆盖完整扩展保留、缺素材/未知插件、输入字节身份、暂态地址/数组次序、交集与端点、严格 JSON、坏 shape 仍可检查、结构化诊断、外部字幕不完整标注、开发错误透出、CLI/Python 同值及无工程写副作用。[事务行为测试](../../tests/contracts/test_timeline_store.py) 在仓外临时项目覆盖双进程/线程同 base 恰一成功、重试不倒退、严格输入/ID/扩展/字幕外引、create-only、head undo、每阶段异常/SIGKILL、每次真实 write/fsync/rename/replace 调用 EIO、坏历史与源码 CLI/API 同值。[兼容回归](../../tests/contracts/test_timeline_store_compat.py) 补充相同 SHA 工程的绝对/相对 symlink/.. 寻址、跨路径双进程 CAS/恢复、坏别名拒绝，以及 legacy 读校验与 managed 严格拒绝的边界。执行：`env python3 -m unittest tests.contracts.test_timeline_api tests.contracts.test_timeline_store tests.contracts.test_timeline_store_compat -v`。测试通过不等于渲染或整仓全量通过；发行包安装烟测另需在仓外运行。
+[真实行为测试](../../tests/contracts/test_timeline_api.py) 覆盖完整扩展保留、缺素材/未知插件、输入字节身份、暂态地址/数组次序、交集与端点、严格 JSON、坏 shape 仍可检查、结构化诊断、外部字幕不完整标注、开发错误透出、CLI/Python 同值及无工程写副作用。[事务行为测试](../../tests/contracts/test_timeline_store.py) 在仓外临时项目覆盖双进程/线程同 base 恰一成功、重试不倒退、严格输入/ID/扩展/字幕外引、create-only、head undo、每阶段异常/SIGKILL、每次真实 write/fsync/rename/replace 调用 EIO、坏历史与源码 CLI/API 同值。[兼容回归](../../tests/contracts/test_timeline_store_compat.py) 补充相同 SHA 工程的绝对/相对 symlink/.. 寻址、跨路径双进程 CAS/恢复、坏别名拒绝，以及 legacy 读校验与 managed 严格拒绝的边界。执行：`env python3 -m unittest tests.contracts.test_timeline_api tests.contracts.test_timeline_store tests.contracts.test_timeline_store_compat -v`。[引用测试](../../tests/contracts/test_timeline_reference.py) 以真实临时文件/公开 CLI 覆盖严格原文与块 span、未知嵌套/大整数/高精度/转义、managed/legacy、ID与版本寻址、帧边界/fps、外部字幕、输入及 wire 上限与零写态；执行 `env python3 -m unittest tests.contracts.test_timeline_reference -v`。测试通过不等于渲染或整仓全量通过；发行包安装烟测另需在仓外运行。
