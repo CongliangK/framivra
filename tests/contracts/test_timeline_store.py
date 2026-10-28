@@ -542,7 +542,9 @@ print(json.dumps(timeline_transaction(sys.argv[1],json.loads(sys.argv[2]))))
         for args in (["store", "--dry-run", "--request", str(path)], ["store", "status", "--draft"]):
             proc = subprocess.run([sys.executable, "-m", "vtx", *args], cwd=self.root, env=env, text=True, capture_output=True)
             self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
-        self.assertIn("split", timeline_store_capabilities()["unsupported"])
+        capabilities = timeline_store_capabilities()
+        self.assertIn("block.split", capabilities["edit"]["operations"])
+        self.assertIn("gfx continuous trim/split/crossing ripple", capabilities["unsupported"])
 
 
 if __name__ == "__main__":

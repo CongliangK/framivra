@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from ..timeline_store import (timeline_transaction, timeline_store_status,
-                              timeline_store_capabilities)
+                              timeline_store_capabilities, timeline_edit_plan)
 from ..timeline_structure import strict_loads
 
 
@@ -11,17 +11,17 @@ def run_store_command(args, parser):
     allowed = {"command", "timeline", "request", "subs_extra"}
     unused = [k for k, v in vars(args).items() if k not in allowed and v != parser.get_default(k)]
     extra = args.subs_extra
-    usage = unused or (args.request is not None and bool(extra)) or (
+    usage = unused or (args.request is not None and extra not in ([], ["plan"])) or (
         args.request is None and extra not in (["status"], ["recover"], ["capabilities"]))
     if usage:
         result = dict(schema="framivra.timeline.store/v1", ok=False, code="cli.arguments",
-                      message="use store --request PATH | store status | store recover | store capabilities; no render/dry-run flags")
+                      message="use store [plan] --request PATH | store status | store recover | store capabilities; no render/dry-run flags")
         code = 2
     else:
         if args.request is not None:
             try:
                 request = strict_loads(Path(args.request).expanduser().read_bytes())
-                result = timeline_transaction(args.timeline, request)
+                result = (timeline_edit_plan if extra == ["plan"] else timeline_transaction)(args.timeline, request)
             except (OSError, ValueError, UnicodeError, RecursionError) as error:
                 result = dict(schema="framivra.timeline.store/v1", ok=False, code="input.request", message=str(error))
         elif extra == ["capabilities"]:

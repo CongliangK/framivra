@@ -113,9 +113,69 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 | adopt | 无 | 仅显式为旧工程所有非 source 对象分配 ID，sources.id 沿用；旧非 source 已有 ID（包括合法但不属本协议的 ID）、坏类型/重复一律拒绝，不覆盖；返回地址→新 ID 的 id_mapping |
 | replace | document | 全文替换，须携带当前 _vtx，保留完整 ID/对象种类清单；禁止增删/改签 ID；调用者显式负责全文及扩展值 |
 | apply | changes | 非空 `[{"id":"对象ID","set":{"text":"新字幕"}}]`；仅 capabilities 列出的本层字段，拒绝任意 JSON Pointer、身份及扩展路径 |
-| undo | head | 只撤当前已提交 head，仍是带新 op_id/base CAS 的新提交；文件必须逐字节等于原 head 结果；不能 undo create/adopt |
+| edit | operations | 有序受管语义批次，见下节；不扩展 apply 或解除 replace 身份约束 |
+| undo | head | 只撤当前已提交 head，仍是带新 op_id/base CAS 的新提交；文件必须逐字节等于原 head 结果；不能 undo create/adopt；新结果含反向 edit 变更清单 |
 
-没有命名的 move/copy/split、插入删除、ID 改签、轨重命名或 UI 操作；不得宣称完整编辑。replace 可保留 ID 重排既有对象，但不提供复制/切分语义或映射。apply/adopt 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
+语义编辑使用独立的 `edit`，不是把 `replace` 的身份限制解除，也不改变既有 `apply.changes` 平面协议。尚无 UI、ID 改签或完整 gfx 连续编辑。apply/adopt/edit 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
+
+### Managed 语义编辑与零写计划
+
+Python 与 CLI 使用**同一份请求**；`operations` 非空、有序，每项以 `op` 指定下表操作，未列请求键拒绝。只有当前 `_vtx` 工程可编辑，不自动 adopt。所有新对象 ID 必须由调用者预先生成并放入请求；同 op 重试保持整个请求不变。
+
+```python
+from vtx.api import inspect_timeline, timeline_edit_plan, timeline_transaction
+request = {"operation": "edit", "op_id": "edit-request-1",
+           "base_revision": inspect_timeline(path)["content_version"],
+           "operations": [{"op": "block.split", "id": "clip-id",
+                           "at": 15, "new_id": "right-id"}]}
+plan = timeline_edit_plan(path, request)  # 零写，不创建历史目录、锁或 intent
+# 确认 plan 后才执行；以下是实际写操作：
+result = timeline_transaction(path, request)
+```
+
+```bash
+vtx -t /path/to/timeline.json store plan --request /path/to/request.json
+# 实际写操作（相同 request；不是第二种 publisher）：
+vtx -t /path/to/timeline.json store --request /path/to/request.json
+```
+
+plan 返回 `base_revision/request_digest/document/edit/prediction`。它是**未持锁预测**，不保留 op_id/ID/版本、不保证随后提交成功；预测 document 保留旧 head，不是提交回执。提交重新持锁读取并做原字节 CAS。plan/commit 均不调用 Ctx、FFmpeg、素材 probe、插件或外字幕解析。`edit.validation` 明确区分结构通过、源边界 unprobed、assets/plugins unchecked、render required，绝不把结构通过写成源长 verified。
+
+下表字段均是 `op` 以外的键；`?` 为可选。`id/track_id` 是稳定 ID；仅字幕目标 `track_id:"subtitles"` 是虚拟轨选择器，不支持多字幕层。所有帧/位置必须为非 bool 整数，时间 `[start,end)`；移动/复制的 `at` 指全局新起点。
+
+| op | 字段 | 语义 |
+|---|---|---|
+| source.add | data | 完整新 source，含新 id/path；同 path 多登记允许，不复制媒体 |
+| source.remove | id, cascade? | 不删除文件；剩余 source 用户最终拒绝。cascade 若给出，必须恰好枚举当前所有普通 clip/event 用户 ID；空轨仍须同批显式删轨 |
+| source.update | id, set | 仅 path/transform；共享 source ID 不变，列出所有共享用户及影响窗口 |
+| track.add | family, index, data | family=video/audio；index 为实际数组插入层序，data 含新轨及至少首块的完整 ID/类型字段 |
+| track.remove | id | 删除轨及后代；duck/voice 引用必须同批显式修复或删掉消费者，否则最终拒绝 |
+| track.copy | id, ids, name, index | ids 为旧轨及全部后代的精确 old→new ID 映射；源默认共享，extension 深拷贝，绝不全局替字符串 |
+| track.reorder | family, ids | 提供该 family 全部轨 ID 恰一次；video 数组即真实 z-order |
+| track.rename | id, name | 保留 ID；同步已知显式 duck_by、隐式 voice 及 duck_strategy.voice_track；旧名歧义拒绝，不改历史 _meta 或未知引用 |
+| track.references | id, set, unset? | 仅 audio 的 duck_by/duck_strategy；unset 为这些字段名列表，与 set 不重叠；专用引用入口，最终引用校验 |
+| block.insert | track_id, data | 完整新块；普通视频必须有源窗，gfx 是文件路径而非 source ID；不把 audio.src_out 冒称模型字段 |
+| block.remove | id | 删除末块不能留下空轨；可同批显式删轨，不自动填 dummy |
+| block.copy | id, new_id, track_id, at | 保留时长/源窗/参数/extension，必须显式 placement；不覆盖已有内容 |
+| block.move | id, track_id, at | 仅 placement/父轨，保留源窗/时长/ID；普通视频 kind 之间可换轨，普通/gfx、视频/音频/字幕之间拒绝 |
+| block.relink | id, src | clip/event 的显式源/文件引用变更，不改变源窗；普通源 ID 最终检查，gfx 仍是文件引用 |
+| block.trim | id, start, end, fade_policy? | inward：视频同步 dst_in/src_in/src_out/dur；音频同步 in/out/src_in，loop 保累计 phase，不发明 src_out；字幕不改字。outward 因无权威源边界事实明确拒绝 |
+| block.split | id, at, new_id, fade_policy?, text_policy?, texts? | 严格内部切点；原 ID 留左、新 ID 右，源共享。字幕必须 text_policy=duplicate-text 或 explicit 配 texts=[左,右] |
+| parameters.update | id 或 target:"project", path, value | path 是非空局部对象键列表；已知参数整值替换，未知 extension 可逐层定点 set，父对象须已存在；数组作为完整 JSON 值替换 |
+| parameters.unset | id 或 target:"project", path | 删除可选参数恢复真实缺省；不可删除必需 volume/text 或不存在键 |
+| project.resize | duration_frames | ≥1；越界内容最终拒绝，须同批显式 trim/remove；不改 FPS/分辨率 |
+| range.ripple | scope, mode, crossing, resize 及下述模式字段 | 仅显式 scope，不假设 linked AV group；resize 必须 bool |
+
+`parameters` 已知白名单：source.transform；clip 的 scale/x/y/opacity/fade_in_frames/fade_out_frames/cache_dependencies；event 的 volume/pan/loop/fade；audio track 的 duck/duck_params；subtitle.text；project 的 gfx_dependency_policy/cache_dependencies。id/_vtx、源/文件引用、duck_by/duck_strategy、轨名/kind、时间位置、子对象容器不能经参数入口偷渡；改引用用对应语义操作。未知字段保持 JSON value 深拷贝，不表示任意扩展键已获插件类型验证；未知扩展中的隐藏引用、Blender 映射、bake 历史等可能陈旧，结果始终告警，不作递归全局替换。
+
+`range.ripple.scope` 必须恰为 `{"track_ids":[实际轨ID...],"subtitles":false}`，非空且不重复：
+
+- `mode:"shift"` 配 `at/delta`（delta 非零），`crossing:"reject"`：起点 ≥at 的块整体平移，其余跨 at 的块拒绝；at 不得超画布。resize=true 时画布同加 delta。
+- `mode:"delete"` 配 `start/end`、`crossing:"reject"|"cut"`：删除 `[start,end)`，后续块平移 `-(end-start)`；reject 拒绝任何相交块，cut 才明确 trim/split/delete。跨两端的每个块须由 `split_ids:{旧ID:右ID}` 恰好提供新 ID；其他条目也拒绝。音频保持源 phase，跨区间字幕必须 text_policy:"duplicate-text"；resize=true 同缩画布。scope 外不动，若缩画布令它们越界则整批拒绝。
+
+fade 默认 `preserve-content`：保留外侧 fade，内部接缝设 0。切点落入已有局部 fade 中段无法精确保留曲线，明确拒绝；可显式 `reapply-edge-fades` 重施原边缘 fade 并收到行为变化告警。任何模式都不静默 clamp，短段容不下 fade 仍拒绝。gfx 目前只有 move/copy/delete；连续 trim/split/crossing ripple 拒绝，不能把改 dur 假装保持原动画内容。
+
+一批在内存完成后才校验最终结构/已知引用/各轨不重叠（字幕也是一个虚拟轨）；允许中间位置交换等暂态。一批仍只发布一个 intent/before/after/工程替换，共用 CAS/op_id/retry/recover/undo，不产生第二个 journal。成功的 `edit` 字段含 `id_locations/created_ids/deleted_ids/changed_ids/source_users/changed_references/affected_ranges/warnings/validation/requires_render_validation`；ID→位置绑定新 revision，不能复用旧 read 地址。undo 返回的是本次反向变化清单，不复用原编辑清单。
 
 ### 发布与恢复协议
 
