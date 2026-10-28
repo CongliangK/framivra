@@ -150,17 +150,19 @@ def validate(c: Ctx):
     def clip_fade(cl, cp, tr, tp):
         if native(cp, lambda: observe("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)) > field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur')]):
             err(f"fade 总长超过片段: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_fade', {'value': observed.get("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
-    # Identity checks use stored bytes, never Ctx.tl's expanded subtitles.
-    # Managed documents share the store's asset-independent structural check;
-    # legacy rendering keeps its existing (including low-resolution fixture) gates.
-    from ..timeline_structure import strict_loads, identity_errors, structure_errors
-    try:
-        stored = strict_loads(c.timeline_bytes) if hasattr(c, 'timeline_bytes') else c.tl
-        # Legacy missing source IDs retain their existing precise source_structure
-        # producer below; duplicate/invalid IDs still fail before dictionary assembly.
-        structural = structure_errors(stored) if isinstance(stored, dict) and '_vtx' in stored else identity_errors(stored, require_source_id=False)
-    except (ValueError, UnicodeError, RecursionError) as error:
-        structural = [str(error)]
+    # Presence of _vtx opts into the managed protocol, even if metadata is bad
+    # or incomplete. Never fall back to legacy after a managed check fails.
+    # Legacy rendering keeps its original source/diagnostic/numeric semantics;
+    # write-losslessness and stable-ID restrictions belong to store writes.
+    structural = []
+    if isinstance(c.tl, dict) and '_vtx' in c.tl:
+        from ..timeline_structure import strict_loads, structure_errors
+        try:
+            # Check stored objects, never Ctx.tl's expanded external subtitles.
+            stored = strict_loads(c.timeline_bytes) if hasattr(c, 'timeline_bytes') else c.tl
+            structural = structure_errors(stored, require_managed=True)
+        except (ValueError, UnicodeError, RecursionError) as error:
+            structural = [str(error)]
     if structural:
         for message in structural:
             err(message, rule='validate.stored_structure')

@@ -73,7 +73,10 @@ def _result(operation, **kw):
 def _canonical(path):
     if os.name != "posix":
         _fail("platform.unsupported", "timeline store currently requires POSIX")
-    value = Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
+    # Resolve parent components in filesystem order: abspath/normpath would
+    # collapse symlink/.. lexically and can silently select a different project.
+    # Do not resolve the final basename: leaf symlinks remain forbidden below.
+    value = Path(os.path.expanduser(os.fspath(path)))
     parent = value.parent.resolve(strict=True)
     value = parent / value.name
     # Names are not appended to a sidecar name: arbitrary Unicode/long filenames work.
