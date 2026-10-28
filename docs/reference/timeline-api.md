@@ -119,7 +119,9 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 
 ### 发布与恢复协议
 
-同目录允许多个工程：按实际文件系统顺序解析父路径（包括 symlink 后的 `..`），再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，manifest 绑定该文件名；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
+同目录允许多个工程：按实际文件系统顺序解析父路径（包括 symlink 后的 `..`），再加最终文件名确定 canonical 目标与独立 `.vtx-store-<文件名SHA256>/`，新 manifest 绑定该文件名及 canonical 完整位置（已发布的旧版 filename-only manifest 仍可读、不自动改写）；项目叶 symlink/多硬链与非普通文件拒绝。历史不在 cache/out，renderer 只读当前工程，日志不提供另一份 HEAD；不要移动/删改历史、锁文件或只复制工程后期待 undo。status 可创建锁与 manifest，但不恢复/修改工程；inspect/query 始终零写态。
+
+初始化先取同目标稳定的外置 `.bootstrap.lock`（仅同步发布，不存工程身份/HEAD，永不删除），在随机 sibling `.initializing-*` 私有目录内 write/flush/fsync manifest → rename manifest → fsync 私有目录 → rename 整个完整目录到 canonical history → fsync 工程父目录，然后才可执行事务。首次 mkdir、半写/fsync、两个 rename 与目录同步任一点进程崩溃，canonical 要么尚未发布，要么已有完整 manifest；下次 status/recover/事务在同一 bootstrap 锁内重试父目录同步。未发布私有目录不可能含运行过的事务，重试另建目录，不扫描选取、不采用也不删除其残件；其存在不阻止安全重新初始化。旧实现或外来 canonical 目录缺 manifest（即使空、仅 lock、完整单个 `.publish-*`、多个或损坏临时）一律 recovery_required 并提示人工检查，绝不猜身份/清证据。已发布新 manifest 的位置不符也拒绝，不能凭同 SHA 接管 decoy。旧版已发布 manifest 不具完整位置绑定，不宣称可鉴别其跨目录复制。初始化失败不返回成功、不改工程，发布后父 fsync 失败下次重试也不会永卡；这不是物理断电保证。
 
 顺序固定：同一线程锁+跨进程 flock → 验证/恢复所有已发布 intent → 严格读 → op_id/request_digest 幂等 → 原字节 CAS → 内存操作及共享无素材结构校验 → before/after 完整字节、SHA、完整请求与结果 fsync 并原子发布 intent 目录 → 工程 staging fsync → 最终原字节 CAS → os.replace 工程（线性化点）与父目录 fsync → 持久 commit 结果。没有默认 JSON 回退，不调用 fstxn.locked_update，不嵌套重入锁。
 
@@ -127,7 +129,7 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 
 成功 envelope 为 `schema: "framivra.timeline.store/v1"`、operation/ok、op_id/request_digest、base_revision/revision/project_id，首次与重试另带 current_revision/replayed；失败包含 code/message。CLI 成功 exit0，输入/CAS/恢复错误 exit1，不支持的旗标组合 exit2；拒绝 `--dry-run`、渲染旗标与 `--json` 输出文件。
 
-[共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展同样拒写而非舍入；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为本地 POSIX 合作线程/进程与进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。Windows/NFS/物理断电未测，不作绝对保证。
+[共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展（含超出 Decimal 指数范围的合法 JSON 数值）在 adopt/status/recover 返回 input.json 失败 envelope，拒写而非舍入，不影响 legacy 只读；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为本地 POSIX 合作线程/进程与进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。Windows/NFS/物理断电未测，不作绝对保证。
 
 ## 生产写入口支持矩阵与迁移清单
 

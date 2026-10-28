@@ -139,11 +139,16 @@ def _publish_file(path, payload):
     tmp = Path(name)
     try:
         with os.fdopen(fd, "wb") as stream:
+            _checkpoint("publish_created")
             stream.write(payload)
             stream.flush()
+            _checkpoint("publish_written")
             os.fsync(stream.fileno())
+            _checkpoint("publish_synced")
         os.replace(tmp, path)
+        _checkpoint("publish_replaced")
         _sync_dir(path.parent)
+        _checkpoint("publish_parent_synced")
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -152,13 +157,42 @@ def _location(target):
     return target.parent / (".vtx-store-" + hashlib.sha256(target.name.encode("utf-8")).hexdigest())
 
 
+def _initialize(target, home):
+    """Publish a complete home, never an empty canonical evidence directory.
+
+    Private sibling directories are *unpublished*, not candidate histories: no
+    transaction can reach them, and retries neither adopt nor delete them. This
+    avoids guessing whether a missing/partial manifest belongs to this target.
+    The stable external lock coordinates only directory publication, not HEAD.
+    """
+    bootstrap = home.with_name(home.name + ".bootstrap")
+    lock = bootstrap.with_name(bootstrap.name + ".lock")
+    _regular(lock, missing=True)
+    with file_lock(bootstrap):
+        _regular(lock)
+        _regular(home, missing=True, directory=True)
+        if not home.exists():
+            staging = Path(tempfile.mkdtemp(prefix=home.name + ".initializing-", dir=target.parent))
+            _checkpoint("init_mkdir")
+            manifest = {"protocol": 1, "target": target.name, "location": str(target)}
+            _publish_file(staging / "manifest.json", _encode(manifest))
+            _checkpoint("init_manifest_synced")
+            # The complete manifest (and directory entries) are synced before
+            # publishing the directory itself. No operation has run in staging.
+            os.rename(staging, home)
+            _checkpoint("init_published")
+        # store.lock is only opened *after* this publication sync succeeds.
+        # Until it exists, retry after a prior publisher died/failed after rename.
+        # Established homes use the normal operation/recovery sync boundaries.
+        if _regular(home / "store.lock", missing=True) is None:
+            _sync_dir(target.parent)
+            _checkpoint("init_parent_synced")
+
+
 @contextlib.contextmanager
 def _locked(target):
     home = _location(target)
-    _regular(home, missing=True, directory=True)
-    if not home.exists():
-        home.mkdir(mode=0o700, exist_ok=True)
-        _sync_dir(target.parent)
+    _initialize(target, home)
     _regular(home, directory=True)
     lock = home / "store.lock"
     _regular(lock, missing=True)
@@ -167,18 +201,15 @@ def _locked(target):
         _regular(lock)
         manifest = home / "manifest.json"
         expected = {"protocol": 1, "target": target.name}
-        if not manifest.exists():
-            # Do not bless an orphan history whose target cannot be authenticated.
-            if any(p.name != "store.lock" for p in home.iterdir()):
-                _fail("recovery_required", "history manifest missing with existing evidence")
-            _publish_file(manifest, _encode(expected))
-        else:
-            try:
-                actual = strict_loads(_read(manifest))
-            except (OSError, ValueError, TypeError, RecursionError) as error:
-                _fail("recovery_required", "invalid history manifest: " + str(error))
-            if actual != expected or type(actual.get("protocol")) is not int:
-                _fail("recovery_required", "history manifest target/protocol mismatch")
+        try:
+            actual = strict_loads(_read(manifest))
+        except (OSError, ValueError, TypeError, RecursionError) as error:
+            # Includes empty/lock-only old homes: never infer identity from SHA,
+            # .publish fragments or an arbitrary pre-existing directory.
+            _fail("recovery_required", "invalid or missing history manifest (manual inspection required): " + str(error))
+        if (actual not in (expected, dict(expected, location=str(target)))
+                or type(actual.get("protocol")) is not int):
+            _fail("recovery_required", "history manifest target/protocol/location mismatch")
         yield home
 
 

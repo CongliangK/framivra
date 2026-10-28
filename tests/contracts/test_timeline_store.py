@@ -366,6 +366,146 @@ s.timeline_transaction(p,dict(operation='adopt',op_id='killed',base_revision=s._
         doc = json.loads(payload)
         return not structure_errors(doc) and not identity_errors(doc) and "_vtx" in doc
 
+    def test_initialization_sigkill_boundaries_never_publish_partial_home(self):
+        code = """import os,signal,sys
+from vtx import timeline_store as s
+def stop(name):
+ if name==sys.argv[2]: os.kill(os.getpid(),signal.SIGKILL)
+s._checkpoint=stop
+s.timeline_store_status(sys.argv[1])
+"""
+        points = ("init_mkdir", "publish_created", "publish_written", "publish_synced",
+                  "publish_replaced", "publish_parent_synced", "init_manifest_synced",
+                  "init_published", "init_parent_synced")
+        for point in points:
+            with self.subTest(point=point), tempfile.TemporaryDirectory(prefix="framivra-init-") as tmp:
+                target = Path(tmp) / "timeline.json"
+                raw = json.dumps(document()).encode(); target.write_bytes(raw)
+                child = subprocess.run([sys.executable, "-c", code, str(target), point], cwd=tmp,
+                                       env=dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1"),
+                                       capture_output=True, timeout=20)
+                self.assertEqual(child.returncode, -signal.SIGKILL, child.stderr)
+                home = store._location(target)
+                self.assertEqual(home.exists(), point in ("init_published", "init_parent_synced"))
+                # Unpublished artifacts are not adopted, modified or removed.
+                leftovers = {p: {f.name: f.read_bytes() for f in p.iterdir()}
+                             for p in Path(tmp).glob(home.name + ".initializing-*")}
+                for recover in (False, True):
+                    self.assertTrue(timeline_store_status(target, recover=recover)["ok"])
+                    self.assertEqual(target.read_bytes(), raw)
+                for p, entries in leftovers.items():
+                    self.assertEqual({f.name: f.read_bytes() for f in p.iterdir()}, entries)
+                result = timeline_transaction(target, dict(operation="adopt", op_id="retry", base_revision=sha(raw)))
+                self.assertTrue(result["ok"], result)
+
+    def test_unknown_missing_manifest_homes_never_initialized_or_cleaned(self):
+        for kind in ("empty", "lock", "valid-temp", "bad-temp", "multiple", "unknown", "alias"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix="framivra-orphan-") as tmp:
+                target = Path(tmp) / "timeline.json"
+                raw = json.dumps(document()).encode(); target.write_bytes(raw)
+                home = store._location(target); home.mkdir()
+                if kind != "empty": (home / "store.lock").touch()
+                if kind in ("valid-temp", "multiple"):
+                    (home / ".publish-one").write_bytes(store._encode({"protocol": 1, "target": target.name}))
+                if kind in ("bad-temp", "multiple"): (home / ".publish-two").write_bytes(b'{bad')
+                if kind == "unknown": (home / "foreign").write_bytes(b'important')
+                if kind == "alias": (home / "manifest.json").symlink_to(target)
+                entries = {p.name: p.read_bytes() for p in home.iterdir()}
+                for result in (timeline_store_status(target), timeline_store_status(target, recover=True),
+                               timeline_transaction(target, dict(operation="adopt", op_id="orphan", base_revision=sha(raw)))):
+                    self.assertEqual(result["code"], "recovery_required", result)
+                self.assertEqual({p.name: p.read_bytes() for p in home.iterdir()},
+                                 dict(entries, **{"store.lock": b""}))
+                self.assertEqual(target.read_bytes(), raw)
+
+    def test_manifest_location_refuses_same_sha_decoy_and_accepts_legacy_manifest(self):
+        self.assertTrue(timeline_store_status(self.path)["ok"])
+        manifest = store._location(self.path) / "manifest.json"
+        other = self.root / "decoy"; other.mkdir()
+        target = other / self.path.name; target.write_bytes(self.path.read_bytes())
+        home = store._location(target); home.mkdir()
+        (home / "manifest.json").write_bytes(manifest.read_bytes())
+        before = target.read_bytes()
+        self.assertEqual(timeline_store_status(target, recover=True)["code"], "recovery_required")
+        self.assertEqual(target.read_bytes(), before)
+        # Published v1 homes remain readable without a migration/rewrite.
+        legacy = store._encode({"protocol": 1, "target": self.path.name})
+        manifest.write_bytes(legacy)
+        self.assertTrue(timeline_store_status(self.path)["ok"])
+        self.assertEqual(manifest.read_bytes(), legacy)
+
+    def test_initial_directory_publish_parent_sync_error_is_retryable_not_success(self):
+        original = store._sync_dir
+        def fail(path):
+            if path == self.root: raise OSError(5, "init parent fsync failure")
+            return original(path)
+        raw = self.path.read_bytes()
+        req = self.request("adopt", "after-init-failure")
+        with patch.object(store, "_sync_dir", fail):
+            result = timeline_transaction(self.path, req)
+        self.assertFalse(result["ok"], result)
+        self.assertTrue((store._location(self.path) / "manifest.json").is_file())
+        self.assertEqual(self.path.read_bytes(), raw)
+        self.assertTrue(timeline_store_status(self.path, recover=True)["ok"])
+        self.assertTrue(timeline_transaction(self.path, req)["ok"])
+
+    def test_bootstrap_lock_aliases_are_refused_without_blessing_home(self):
+        for hardlink in (False, True):
+            with self.subTest(hardlink=hardlink), tempfile.TemporaryDirectory(prefix="framivra-bootstrap-") as tmp:
+                target = Path(tmp) / "timeline.json"
+                target.write_text(json.dumps(document()))
+                home = store._location(target)
+                lock = home.with_name(home.name + ".bootstrap.lock")
+                sentinel = Path(tmp) / "sentinel"; sentinel.write_bytes(b"evidence")
+                if hardlink: os.link(sentinel, lock)
+                else: lock.symlink_to(sentinel)
+                raw = target.read_bytes()
+                for result in (timeline_store_status(target), timeline_store_status(target, recover=True),
+                               timeline_transaction(target, dict(operation="adopt", op_id="locked", base_revision=sha(raw)))):
+                    self.assertEqual(result["code"], "path.alias", result)
+                self.assertFalse(home.exists())
+                self.assertEqual(target.read_bytes(), raw)
+                self.assertEqual(sentinel.read_bytes(), b"evidence")
+                self.assertTrue(lock.is_symlink() if not hardlink else lock.stat().st_nlink == 2)
+
+    def test_cold_adopt_create_compete_on_single_fact(self):
+        adopt = self.request("adopt", "adopt")
+        create = dict(operation="create", op_id="create", base_revision=None, document=document(ids=True))
+        code = """import json,sys
+from vtx.api import timeline_transaction
+sys.stdin.readline()
+print(json.dumps(timeline_transaction(sys.argv[1],json.loads(sys.argv[2]))))
+"""
+        env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1")
+        procs = [subprocess.Popen([sys.executable, "-c", code, str(self.path), json.dumps(req)],
+                                  cwd=self.root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True) for req in (adopt, create)]
+        try:
+            for proc in procs: proc.stdin.write("go\n"); proc.stdin.flush()
+            results = []
+            for proc in procs:
+                out, err = proc.communicate(timeout=20)
+                self.assertEqual(proc.returncode, 0, err); results.append(json.loads(out))
+        finally:
+            for proc in procs:
+                if proc.poll() is None: proc.kill(); proc.communicate()
+        self.assertTrue(results[0]["ok"], results)
+        self.assertEqual(results[1]["code"], "conflict", results)
+        self.assertEqual(len(timeline_store_status(self.path)["operations"]), 1)
+
+    def test_decimal_exponent_boundary_structured_without_hiding_internal_errors(self):
+        raw = json.dumps(document())[:-1] + ',"x_exact":1e-9999999999999999999}'
+        self.path.write_text(raw, encoding="utf-8"); before = self.path.read_bytes()
+        self.assertTrue(inspect_timeline(self.path)["ok"])
+        for result in (timeline_store_status(self.path), timeline_store_status(self.path, recover=True),
+                       timeline_transaction(self.path, self.request("adopt", "precision"))):
+            self.assertEqual(result["code"], "input.json", result)
+            self.assertIn("numeric precision outside writable range", result["message"])
+            self.assertEqual(self.path.read_bytes(), before)
+        with patch.object(store, "strict_loads", side_effect=RuntimeError("internal bug")):
+            with self.assertRaisesRegex(RuntimeError, "internal bug"):
+                timeline_store_status(self.path)
+
     def test_tampered_history_full_payload_hash_and_bytes_are_checked(self):
         for entry in ("before.bin", "after.bin", "request", "result", "protocol", "mapping"):
             with self.subTest(entry=entry), tempfile.TemporaryDirectory(prefix="framivra-corrupt-") as tmp:

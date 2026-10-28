@@ -4,7 +4,7 @@ No Ctx, asset probing, subtitle expansion, plugin execution or migration.
 The JSON schema remains the field/type authority; identities are protocol checks.
 """
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import re
 from pathlib import Path
 
@@ -16,7 +16,13 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 def strict_loads(payload):
     def number(token):
         value = _float(token)
-        if Decimal(token) != Decimal(str(value)):
+        try:
+            exact = Decimal(token)
+        except InvalidOperation as error:
+            # JSON's exponent range exceeds Decimal's. Normalize this known
+            # input boundary here, not by swallowing arbitrary store failures.
+            raise ValueError("numeric precision outside writable range: " + token) from error
+        if exact != Decimal(str(value)):
             raise ValueError("numeric precision would be lost on write: " + token)
         return value
     return json.loads(payload.decode("utf-8"), object_pairs_hook=_pairs,
