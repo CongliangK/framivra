@@ -20,7 +20,7 @@ const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 const release = Object.fromEntries(['name', 'version', 'description', 'type', 'main', 'exports', 'engines', 'license', 'files', 'dsh'].map(key => [key, manifest[key]]))
 const stage = await mkdtemp(join(tmpdir(), 'framivra-sidebar-release-'))
 await mkdir(join(stage, 'lib'))
-for (const name of ['index', 'host', 'protocol', 'media']) {
+for (const name of ['index', 'host', 'protocol', 'media', 'json']) {
   const source = await readFile(join(root, 'src', `${name}.mjs`), 'utf8')
   await writeFile(join(stage, 'lib', `${name}.js`), source.replace(/from '(\.\/[^']+)\.mjs'/g, "from '$1.js'"))
 }

@@ -50,7 +50,7 @@ export function fixtureSubprocess() {
         child.on('error', reject)
         child.on('close', (exitCode, signal) => { spec.signal.removeEventListener('abort', terminate); fulfill({ exitCode, signal }) })
       })
-      return { done, terminate, collected: { stdout: { readFrom: () => ({ text: stdout, lossy: false }) }, stderr: { readFrom: () => ({ text: stderr, lossy: false }) } } }
+      return { done, terminate, waitForExit: async () => { await done; return true }, collected: { stdout: { readFrom: () => ({ text: stdout, lossy: false }) }, stderr: { readFrom: () => ({ text: stderr, lossy: false }) } } }
     },
   }
 }

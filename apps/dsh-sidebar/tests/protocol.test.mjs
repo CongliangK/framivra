@@ -4,7 +4,7 @@ import { TimelineReader, queryArgs, decodeEnvelope } from '../src/protocol.mjs'
 import { setup } from './helpers.mjs'
 
 const envelope = { schema: 'framivra.timeline.read/v1', operation: 'inspect', ok: true, content_version: `sha256:${'b'.repeat(64)}`, diagnostics: [], document: { unknown: [1, 2] }, coverage: { complete: true, scope: 'stored timeline blocks only', unexpanded: [] } }
-const fakeReader = ({ text = JSON.stringify(envelope), lossy = false, exitCode = 0 } = {}) => new TimelineReader({ spawn: () => ({ done: Promise.resolve({ exitCode }), collected: { stdout: { readFrom: () => ({ text, lossy }) }, stderr: { readFrom: () => ({ text: 'diagnostic', lossy: false }) } } }) })
+const fakeReader = ({ text = JSON.stringify(envelope), lossy = false, exitCode = 0 } = {}) => new TimelineReader({ spawn: () => ({ done: Promise.resolve({ exitCode }), terminate() {}, waitForExit: async () => true, collected: { stdout: { readFrom: () => ({ text, lossy }) }, stderr: { readFrom: () => ({ text: 'diagnostic', lossy: false }) } } }) })
 const read = reader => reader.read('/opt/vtx', '/project/timeline.json', 'inspect', {}, new AbortController().signal)
 
 test('query builder forwards only explicit validated integer selectors; no shell/string query', () => {
@@ -26,6 +26,82 @@ test('reject lossy/truncated JSON, malformed envelope and CLI unsupported/failur
   await assert.rejects(read(fakeReader({ exitCode: 1, text: JSON.stringify({ diagnostics: [{ code: 'BAD_INPUT' }] }) })), error => error.details.diagnostics[0].code === 'BAD_INPUT')
 })
 
+test('direct command settlement retains ownership until terminated managed range exits', async () => {
+  let finishRange, began
+  const waiting = new Promise(resolve => { began = resolve })
+  const range = new Promise(resolve => { finishRange = resolve })
+  let terminated = 0, complete = false
+  const reader = new TimelineReader({ spawn: () => ({
+    done: Promise.resolve({ exitCode: 0 }), terminate: () => { terminated++ },
+    waitForExit: () => { began(); return range },
+    collected: { stdout: { readFrom: () => ({ text: JSON.stringify(envelope), lossy: false }) } },
+  }) })
+  const result = read(reader).then(value => { complete = true; return value })
+  await waiting
+  assert.equal(terminated, 1)
+  assert.equal(reader.active.size, 1)
+  assert.equal(complete, false)
+  const disposed = reader.dispose()
+  finishRange(true)
+  await assert.rejects(result, { name: 'AbortError' })
+  await disposed
+  assert.equal(reader.active.size, 0)
+})
+
+test('failed range observation is explicit, retains ownership and unload retries', async () => {
+  let tries = 0
+  const reader = new TimelineReader({ spawn: () => ({
+    done: Promise.resolve({ exitCode: 0 }), terminate() {},
+    waitForExit: async () => ++tries > 1,
+    collected: { stdout: { readFrom: () => ({ text: JSON.stringify(envelope), lossy: false }) } },
+  }) })
+  await assert.rejects(read(reader), { code: 'PROCESS_CLEANUP_FAILED' })
+  assert.equal(reader.active.size, 1)
+  await reader.dispose()
+  assert.equal(tries, 2)
+  assert.equal(reader.active.size, 0)
+})
+
+test('a non-settling provider cannot hang read cleanup; 5-second bound retains ownership', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let began
+  const waiting = new Promise(resolve => { began = resolve })
+  const handle = {
+    done: Promise.resolve({ exitCode: 0 }), terminate() {},
+    waitForExit: () => { began(); return new Promise(() => {}) },
+    collected: { stdout: { readFrom: () => ({ text: JSON.stringify(envelope), lossy: false }) } },
+  }
+  const reader = new TimelineReader({ spawn: () => handle })
+  const outcome = read(reader)
+  await waiting
+  t.mock.timers.tick(5000)
+  await assert.rejects(outcome, { code: 'PROCESS_CLEANUP_FAILED' })
+  assert.equal(reader.active.size, 1)
+  handle.waitForExit = async () => true
+  await reader.dispose()
+  assert.equal(reader.active.size, 0)
+})
+
+test('deadline interrupts a stalled command but waits for independent range cleanup', async () => {
+  let done, finishRange, began
+  const waiting = new Promise(resolve => { began = resolve })
+  const range = new Promise(resolve => { finishRange = resolve })
+  const reader = new TimelineReader({ spawn: () => ({
+    done: new Promise(resolve => { done = resolve }),
+    terminate: () => done({ exitCode: null }),
+    waitForExit: signal => { assert.equal(signal.aborted, false); began(); return range }, collected: {},
+  }) })
+  const controller = new AbortController()
+  const outcome = reader.read('/opt/vtx', '/project/timeline.json', 'inspect', {}, controller.signal)
+  controller.abort(new DOMException('Read deadline exceeded', 'TimeoutError'))
+  await waiting
+  assert.equal(reader.active.size, 1)
+  finishRange(true)
+  await assert.rejects(outcome, { name: 'TimeoutError' })
+  assert.equal(reader.active.size, 0)
+  await reader.dispose()
+})
+
 test('request cancellation reaches subprocess and never yields partial JSON', async t => {
   const f = setup(); t.after(() => f.host.dispose())
   let began, finish
@@ -36,7 +112,7 @@ test('request cancellation reaches subprocess and never yields partial JSON', as
     began()
     const done = new Promise(resolve => { finish = resolve })
     signal.addEventListener('abort', () => finish({ exitCode: null, signal: 'SIGTERM' }), { once: true })
-    return { done, terminate: () => finish({ exitCode: null, signal: 'SIGTERM' }), collected: { stdout: { readFrom: () => ({ text: '{', lossy: false }) } } }
+    return { done, waitForExit: async () => { await done; return true }, terminate: () => finish({ exitCode: null, signal: 'SIGTERM' }), collected: { stdout: { readFrom: () => ({ text: '{', lossy: false }) } } }
   }
   const controller = new AbortController()
   const result = f.host.control(new Request('http://owner/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'one', op: 'open', timeline: 'timeline.json' }), signal: controller.signal }))
@@ -60,7 +136,7 @@ test('plugin dispose cancels active subprocesses, streams and grants', async () 
     const terminate = () => { terminated = true; finish({ exitCode: null }) }
     spec.signal.addEventListener('abort', terminate, { once: true })
     began()
-    return { done, terminate, collected: {} }
+    return { done, terminate, waitForExit: async () => { await done; return true }, collected: {} }
   }
   const query = f.control({ op: 'query', grant: opened.grant })
   await started

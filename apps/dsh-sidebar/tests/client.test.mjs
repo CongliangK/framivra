@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
+import { setup } from './helpers.mjs'
+import { stringifyJSON } from '../src/json.mjs'
 
 // Presentation/registration test, NOT a DOM/visual/React lifecycle test.
 // Resolve React to a tiny element recorder so the source stays dependency-free in tests.
@@ -22,6 +24,31 @@ test('view renders all families/tracks/raw fields and incomplete coverage; never
   const text = JSON.stringify(tree)
   for (const token of ['video / track 0', 'video / track 1', 'audio / track 2', 'audio / track 3', 'subtitles / track 4', 'Incomplete coverage', 'subtitles_src', 'block_raw', 'raw_extension', '<script>never execute</script>']) assert.ok(text.includes(token), token)
   assert.equal(text.includes('dangerouslySetInnerHTML'), false)
+})
+
+test('wire -> client decode -> details -> JSON serialization preserves original integer IDs', async t => {
+  const f = setup(); t.after(() => f.host.dispose())
+  const openResponse = await f.control({ op: 'open', timeline: 'timeline.json' })
+  const wireOpen = await openResponse.text()
+  assert.equal(openResponse.status, 200, wireOpen)
+  const opened = client.decodeControlResponse(wireOpen)
+  const response = await f.control({ op: 'query', grant: opened.grant })
+  const wireQuery = await response.text()
+  assert.equal(response.status, 200, wireQuery)
+  const result = client.decodeControlResponse(wireQuery)
+  for (const text of [wireOpen, wireQuery, stringifyJSON(opened), stringifyJSON(result), JSON.stringify(client.TimelineView({ snapshot: opened.snapshot, result }))]) {
+    assert.ok(text.includes('9007199254740993'))
+    assert.equal(text.includes('9007199254740992'), false)
+    assert.equal(text.includes('"rawJSON"'), false)
+  }
+})
+
+test('unsupported browser decoder returns a clear error rather than rounded display', () => {
+  const raw = JSON.rawJSON
+  try {
+    JSON.rawJSON = undefined
+    assert.throws(() => client.decodeControlResponse('{"id":9007199254740993}'), /LOSSLESS_JSON_UNSUPPORTED.*Upgrade/)
+  } finally { JSON.rawJSON = raw }
 })
 
 test('mixed content versions never display mismatched selection or raw document', () => {

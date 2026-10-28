@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute } from 'node:path'
 import { PreviewError, TimelineReader, fail } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
+import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 
 const MEDIA = ['out/final.mp4', 'out/draft_final.mp4']
 export function relativeTimeline(path) {
@@ -11,7 +12,7 @@ export function relativeTimeline(path) {
   }
   return path
 }
-const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } })
+const json = (value, status = 200) => new Response(stringifyJSON(value), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
 
 export function createPreviewHost(ctx, config = {}) {
   const reader = new TimelineReader(ctx.subprocess, config)
@@ -80,7 +81,7 @@ export function createPreviewHost(ctx, config = {}) {
   async function control(request) {
     const hold = lease(request)
     try {
-      const data = await request.json()
+      const data = parseJSON(await request.text())
       if (!data || typeof data !== 'object' || Array.isArray(data)) fail('BAD_REQUEST', 'Expected a JSON object')
       const session = sessionFor(data.sessionId)
       if (data.op === 'open') {
@@ -142,6 +143,7 @@ export function createPreviewHost(ctx, config = {}) {
     return request => {
       const operation = (async () => {
         try { return await handler(request) } catch (error) {
+          if (error instanceof LosslessJSONError) return json({ ok: false, error: 'LOSSLESS_JSON_UNSUPPORTED', message: error.message }, 502)
           const aborted = request.signal.aborted || lifecycle.signal.aborted || error?.name === 'AbortError' || error?.name === 'TimeoutError'
           return json({ ok: false, error: error instanceof PreviewError ? error.code : aborted ? 'CANCELLED' : 'PREVIEW_FAILED',
             message: error instanceof PreviewError ? error.message : aborted ? 'Preview cancelled' : 'Preview read failed',
@@ -159,8 +161,8 @@ export function createPreviewHost(ctx, config = {}) {
       lifecycle.abort()
       grants.clear()
       for (const release of streams) release()
-      await reader.dispose()
-      await Promise.allSettled([...operations])
+      try { await reader.dispose() }
+      finally { await Promise.allSettled([...operations]) }
     },
   }
 }

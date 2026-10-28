@@ -1,17 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { parseJSON, stringifyJSON } from '../json.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
 export const inject = ['slots', 'sidebarRightTabs']
-const pretty = value => JSON.stringify(value, null, 2)
+const pretty = value => stringifyJSON(value, 2)
 const details = (title, data, key) => h('details', { key }, h('summary', null, title), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, pretty(data)))
+
+// Also used by wire/presentation regressions: response.json() would round again.
+export const decodeControlResponse = text => parseJSON(text)
 
 async function control(sessionId, payload, signal) {
   const response = await fetch('/api/framivra/control', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, sessionId }), signal,
   })
-  const data = await response.json()
+  const data = decodeControlResponse(await response.text())
   if (!response.ok) throw new Error(`${data.error}: ${data.message}${data.diagnostics ? `\n${pretty(data.diagnostics)}` : ''}`)
   return data
 }
