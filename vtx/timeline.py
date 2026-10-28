@@ -3,6 +3,7 @@
 This is a query-shape check, NOT render validation or a second schema authority.
 No Ctx, plugins, referenced files, migrations, locks or project writes are used.
 """
+import codecs
 import hashlib
 import json
 import math
@@ -74,6 +75,37 @@ def _float(value):
     return number
 
 
+class _RawInteger(str):
+    """Opaque integer lexeme for raw references, never a query-shape string."""
+
+    def __repr__(self):
+        return "<integer lexeme: " + str(len(self)) + " characters>"
+
+
+def _raw_integer(value):
+    # Reference never publishes parsed extension data. Avoid Python's digit cap
+    # and superlinear giant-int conversion; shape fields still require real ints.
+    return int(value) if len(value) <= 64 else _RawInteger(value)
+
+
+def _raw_text(payload):
+    # Avoid the one-shot decoder's 4*byte-length transient astral allocation.
+    decoder = codecs.getincrementaldecoder("utf-8")()
+
+    def chunks():
+        for start in range(0, len(payload), 65536):
+            pending = len(decoder.getstate()[0])
+            try:
+                yield decoder.decode(payload[start:start + 65536], final=start + 65536 >= len(payload))
+            except UnicodeDecodeError as error:
+                # Preserve one-shot UTF-8 error offsets/messages, including a
+                # multibyte sequence carried over from the preceding chunk.
+                raise UnicodeDecodeError(error.encoding, payload,
+                                         start - pending + error.start,
+                                         start - pending + error.end, error.reason) from None
+    return "".join(chunks())
+
+
 def _load(path, operation, *, raw=False, max_bytes=None):
     result = _result(operation)
     result["document"] = None
@@ -88,11 +120,13 @@ def _load(path, operation, *, raw=False, max_bytes=None):
         return result
     result["content_version"] = "sha256:" + hashlib.sha256(payload).hexdigest()
     try:
-        text = payload.decode("utf-8")
+        text = _raw_text(payload) if raw else payload.decode("utf-8")
+        del payload  # the text and SHA now own this snapshot; do not retain bytes
         if raw:
             result["raw_document"] = text
         result["document"] = json.loads(text, object_pairs_hook=_pairs,
-                                        parse_constant=_constant, parse_float=_float)
+                                        parse_constant=_constant, parse_float=_float,
+                                        parse_int=_raw_integer if raw else int)
     except (ValueError, UnicodeError, RecursionError) as error:
         _error(result, "input.json", "", str(error),
                line=getattr(error, "lineno", None), column=getattr(error, "colno", None))
@@ -109,11 +143,14 @@ def _check_shape(result):
     """
     doc = result["document"]
     def expect(value, cls, address):
-        if not isinstance(value, cls):
+        if not isinstance(value, cls) or isinstance(value, _RawInteger):
             _error(result, "shape.type", address, "expected " + cls.__name__)
             return False
         return True
     def integer(value, address, minimum):
+        if isinstance(value, _RawInteger) and not value.startswith("-"):
+            _error(result, "reference.precision", address, "derived frame exceeds safe integer range")
+            return False
         if type(value) is not int or value < minimum:
             _error(result, "shape.frame", address, "expected integer >= " + str(minimum))
             return False

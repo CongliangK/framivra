@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import os
+import random
 from pathlib import Path
 import subprocess
 import sys
@@ -246,6 +247,147 @@ class TimelineReferenceTest(unittest.TestCase):
         self.doc["video_tracks"][0]["clips"][0]["src_in"] = 2 ** 53
         self.store()
         self.error("reference.precision", global_frame=0)
+
+    def test_wire_counter_matches_real_encoder_and_saturates(self):
+        from vtx.timeline_reference import _wire_size, _RawSpan
+        rng = random.Random(1701)
+        chars = 'abc"\\\\\b\f\n\r\t\x00\x1f\x7f中🎬\ud800'
+        scalars = [None, True, False, 0, -1, 2 ** 53 - 1, 30.0, -0.0, 1e-20]
+        for index in range(200):
+            text = "".join(rng.choice(chars) for _ in range(index))
+            value = {text: [text, {}, [], scalars, {"nested": text}]}
+            expected = len(json.dumps(value, ensure_ascii=True, allow_nan=False))
+            for budget in (0, expected - 1, expected, expected + 1):
+                self.assertEqual(_wire_size(value, budget), min(expected, budget + 1))
+            span = _RawSpan("prefix" + text + "suffix", 6, 6 + len(text))
+            self.assertEqual(_wire_size(span, LIMIT), len(json.dumps(text)))
+        # Iterative counting also handles malformed deeply nested coverage.
+        deep = None
+        for _ in range(1100):
+            deep = [deep]
+        self.assertEqual(_wire_size(deep, LIMIT), 2204)
+
+    def test_exact_wire_limit_with_newline_whole_and_selected_raw(self):
+        for selected in (False, True):
+            with self.subTest(selected=selected):
+                self.doc = document()
+                target = self.doc["video_tracks"][0]["clips"][0] if selected else self.doc
+                target["padding"] = ""
+                self.store()
+                kwargs = {"global_frame": 0} if selected else {}
+                initial = self.ref(**kwargs)
+                self.assertTrue(initial["ok"])
+                size = len(json.dumps(initial, ensure_ascii=True).encode("ascii")) + 1
+                count, remainder = divmod(LIMIT - size, 3 if selected else 1)
+                target["padding"] = "x" * count
+                self.store()
+                with self.path.open("a", encoding="utf-8") as stream:
+                    stream.write(" " * remainder)
+                result = self.ref(**kwargs)
+                self.assertTrue(result["ok"])
+                self.assertEqual(len(json.dumps(result).encode("ascii")) + 1, LIMIT)
+                code, actual = self.cli(*(("--frame", "0") if selected else ()))
+                self.assertEqual(code, 0)
+                self.assertEqual(actual, result)
+                with self.path.open("a", encoding="utf-8") as stream:
+                    stream.write(" ")
+                result = self.error("output.limit", **kwargs)
+                self.assertIsNone(result["document"])
+                self.assertIsNone(result["coverage"])
+
+    def test_wire_overflow_never_dumps_or_materializes_raw_selections(self):
+        import vtx.timeline_reference as tr
+        original = json.dumps
+        def scalar_only(value, *args, **kwargs):
+            self.assertNotIsInstance(value, (str, dict, list, tuple))
+            return original(value, *args, **kwargs)
+        for payload in ("🎬" * 1_800_000, "x" * 3_000_000):
+            self.doc = document()
+            self.doc["video_tracks"][0]["clips"][0]["extension"] = payload
+            self.store()
+            self.assertLess(self.path.stat().st_size, LIMIT)
+            with patch.object(tr.json, "dumps", side_effect=scalar_only), patch.object(
+                    tr._RawSpan, "materialize", side_effect=AssertionError("premature raw copy")):
+                result = self.error("output.limit", global_frame=0)
+            self.assertEqual([d["code"] for d in result["diagnostics"]], ["output.limit"])
+            self.assertIsNone(result["document"])
+            self.assertIsNone(result["coverage"])
+
+    @unittest.skipUnless(sys.platform == "linux", "child RLIMIT_AS probe requires Linux")
+    def test_real_cli_wire_overflow_under_child_only_memory_limit(self):
+        import resource
+        self.doc["video_tracks"][0]["clips"][0]["extension"] = "🎬" * 1_800_000
+        self.store()
+        before = resource.getrlimit(resource.RLIMIT_AS)
+        def child_limit():
+            resource.setrlimit(resource.RLIMIT_AS, (72 * 1024 * 1024,) * 2)
+        for flags in ([], ["--frame", "0"]):
+            proc = subprocess.run([sys.executable, "-m", "vtx", "-t", str(self.path),
+                                   "reference", *flags], cwd=self.root,
+                                  env=dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1"),
+                                  preexec_fn=child_limit, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertEqual(proc.stderr, "")
+            result = json.loads(proc.stdout)
+            self.assertEqual([d["code"] for d in result["diagnostics"]], ["output.limit"])
+            self.assertIsNone(result["document"])
+            self.assertIsNone(result["selection"])
+            self.assertIsNone(result["coverage"])
+        self.assertEqual(resource.getrlimit(resource.RLIMIT_AS), before)
+
+    def test_raw_span_index_is_bounded_and_unknown_large_integers_stay_lexical(self):
+        import tracemalloc
+        from vtx.timeline_reference import _spans
+        self.doc["video_tracks"][0]["clips"][0]["extension"] = "🎬" * 1_800_000
+        text = json.dumps(self.doc, ensure_ascii=False)
+        tracemalloc.start()
+        try:
+            spans = _spans(text, self.doc, {"/video_tracks/0", "/video_tracks/0/clips/0"})
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 128 * 1024)
+        self.assertEqual(len(spans), 2)
+        self.assertGreater(len(spans["/video_tracks/0/clips/0"]), 1_800_000)
+        self.doc = document()
+        text = json.dumps(self.doc)
+        literal = "9" * 100_000
+        text = text.replace('"src_out": 14', '"src_out": 14, "unknown": ' + literal, 1)
+        self.path.write_text(text, encoding="utf-8")
+        result = self.ref(global_frame=0)
+        self.assertTrue(result["ok"], result["diagnostics"])
+        self.assertIn('"unknown": ' + literal, result["selection"]["blocks"][0]["raw"])
+        # Opaque raw integer lexemes must not become valid string shape fields.
+        for token in ('"source"', '"picture"', '"aroll"'):
+            self.path.write_text(text.replace(token, literal, 1), encoding="utf-8")
+            self.error("shape.type")
+        self.path.write_text(text.replace('"src_out": 14', '"src_out": ' + literal, 1), encoding="utf-8")
+        self.error("reference.precision")
+
+    def test_raw_decode_chunk_boundaries_preserve_bytes_and_strict_diagnostics(self):
+        from vtx.api import query_timeline
+        # Each multibyte sequence starts just before a decoder chunk boundary.
+        for character in ("中", "🎬"):
+            for split in range(1, len(character.encode("utf-8"))):
+                self.doc = document()
+                self.doc["padding"] = "PREFIX"
+                raw = json.dumps(self.doc, ensure_ascii=False).encode("utf-8")
+                prefix, suffix = raw.split(b"PREFIX")
+                payload = prefix + b"x" * (65536 - split - len(prefix)) + character.encode() + suffix
+                self.path.write_bytes(payload)
+                result = self.ref(global_frame=0)
+                self.assertTrue(result["ok"], result["diagnostics"])
+                self.assertEqual(result["document"]["raw"].encode("utf-8"), payload)
+                self.assertEqual(result["content_version"], "sha256:" + hashlib.sha256(payload).hexdigest())
+        malformed = [b" " * 65535 + b"\xf0\x9f", b" " * 65535 + b"\xf0\x9f!",
+                     b" " * 65536 + b"\xff", b"\xef\xbb\xbf{}"]
+        for payload in malformed:
+            self.path.write_bytes(payload)
+            reference = self.error("input.json")
+            for read in (inspect_timeline, query_timeline):
+                result = read(self.path)
+                self.assertEqual(reference["diagnostics"], result["diagnostics"])
+                self.assertEqual(reference["content_version"], result["content_version"])
 
     def test_one_snapshot_even_if_file_changes_after_shared_parse(self):
         original = self.path.read_bytes()

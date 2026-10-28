@@ -126,7 +126,7 @@ ID/address 旗标可重复，用于多轨/多块。所有选择器的 Python 集
 
 **地址只在一个 content_version 中有效**：地址选择强制传 expected_content_version，缺失为 `reference.version_required`；任意请求传入版本与落盘原字节不一致为 `reference.stale`，不选择新位置上的另一个块。ID选择仅 managed 可用，legacy 为 `reference.unmanaged`，不自动 adopt。读取、原文截取、选择、版本均用同一次落盘 bytes 快照；文件返回后仍可变化，不承诺加锁或持续当前。重复 JSON 键等由现有严格 parser 拒绝；轻量 token span 只定位已验证文法，不建立第二解析/校验权威。
 
-协议上限：输入完整 UTF-8 bytes 和整个 ASCII 转义 JSON wire（含结尾换行）各 **8MiB**；超限分别 `input.limit`/`output.limit`，绝不截断原文或返回部分成功。output.limit 时 document/selection/coverage 为 null；无全文摘要时 input.limit 的 content_version 为 null。内核与 CLI 使用相同 wire 预算，包含 raw 字符串转义后的膨胀。错误时 selection 为 null；输入/metadata 错误可能无 document。能力查询另有 reference 子项声明此 schema/上限/版本要求。全程不写 cache/out/store/锁/回执，不读取源媒体、插件或字幕外引。
+协议上限：输入完整 UTF-8 bytes 和整个 ASCII 转义 JSON wire（含结尾换行）各 **8MiB**；超限分别 `input.limit`/`output.limit`，绝不截断原文或返回部分成功。output.limit 时 document/selection/coverage 为 null；无全文摘要时 input.limit 的 content_version 为 null。内核与 CLI 使用相同 wire 预算，包含 raw 字符串转义后的膨胀。先按原文及所选 span 组合长度作安全下界早停，再逐字符精确计数（含 6/12 字节 Unicode 转义、键、容器、分隔符、标量及换行），计数饱和即拒绝；不会为了检查上限先生成超限 escaped JSON。span 仅以游标定位、预算通过后才复制，未知超长整数保留词法而不作大整数转换；inspect/query/store 的解析合同不变。这是有界分配机制，不是固定宿主 RSS 承诺或主性能基线。错误时 selection 为 null；输入/metadata 错误可能无 document。能力查询另有 reference 子项声明此 schema/上限/版本要求。全程不写 cache/out/store/锁/回执，不读取源媒体、插件或字幕外引。
 
 ## 显式写事务第一切片（不是完整编辑器）
 

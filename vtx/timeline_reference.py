@@ -10,47 +10,167 @@ from .timeline_structure import identity_errors
 _SCHEMA = "framivra.timeline.reference/v1"
 _LIMIT = 8 * 1024 * 1024
 _SAFE_INT = 2 ** 53 - 1
-# Lexical spans only: grammar, duplicate keys and semantic values come from _load.
-_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[{}\[\]:,]|[^\s{}\[\]:,]+')
+# Single-character searches only: no giant-token regex/backtracking allocation.
+_STRING_EDGE = re.compile(r'["\\\\]')
+_CONTAINER_EDGE = re.compile(r'["{}\[\]]')
+_ATOM = re.compile(r'[^ \t\r\n,\]}]+')
+_ESCAPE = re.compile(r'["\\\\\x00-\x1f\x7f-\U0010ffff]')
+
+
+class _RawSpan:
+    """An unallocated slice of the one validated snapshot, not parsed JSON."""
+    __slots__ = ("text", "start", "end")
+
+    def __init__(self, text, start, end):
+        self.text, self.start, self.end = text, start, end
+
+    def __len__(self):
+        return self.end - self.start
+
+    def materialize(self):
+        return self.text[self.start:self.end]
 
 
 def _spans(text, document, wanted):
-    """Locate validated values using parsed object order; never interpret numbers."""
-    tokens = iter(_TOKEN.finditer(text))
-    spans = {}
+    """Index only requested paths; skip other validated values with a cursor.
 
-    def visit(value, path):
-        first = next(tokens)
-        last = first
-        if isinstance(value, dict):
-            for index, (key, child) in enumerate(value.items()):
-                if index:
-                    next(tokens)  # comma
-                next(tokens)  # original key token (already decoded by _load)
-                next(tokens)  # colon
-                last = visit(child, path + "/" + key.replace("~", "~0").replace("/", "~1"))
-            last = next(tokens)  # closing brace
-        elif isinstance(value, list):
-            for index, child in enumerate(value):
-                if index:
-                    next(tokens)
-                last = visit(child, path + "/" + str(index))
-            last = next(tokens)
-        if path in wanted:
-            spans[path] = text[first.start():last.end()]
-        return last
+    _load alone owns grammar, decoded keys and values. No token list, number
+    parsing, raw copies or paths through arbitrary extension objects are needed.
+    The searches have constant auxiliary space even for one giant string token.
+    """
+    trie = {}
+    for path in wanted:
+        node = trie
+        for part in path.split("/")[1:]:
+            node = node.setdefault(part.replace("~1", "/").replace("~0", "~"), {})
+        node[None] = path
+    spans, cursor = {}, 0
 
-    visit(document, "")
+    def whitespace():
+        nonlocal cursor
+        while cursor < len(text) and text[cursor] in " \t\r\n":
+            cursor += 1
+
+    def string_end():
+        nonlocal cursor
+        cursor += 1  # opening quote
+        while True:
+            edge = _STRING_EDGE.search(text, cursor)
+            cursor = edge.end()
+            if edge[0] == '"':
+                return
+            cursor += 1  # escaped character (including the u in a Unicode escape)
+
+    def skip():
+        nonlocal cursor
+        if text[cursor] == '"':
+            string_end()
+        elif text[cursor] in "{[":
+            depth = 1
+            cursor += 1
+            while depth:
+                edge = _CONTAINER_EDGE.search(text, cursor)
+                cursor = edge.start()
+                char = edge[0]
+                if char == '"':
+                    string_end()
+                else:
+                    depth += 1 if char in "{[" else -1
+                    cursor += 1
+        else:
+            cursor = _ATOM.match(text, cursor).end()
+
+    def visit(value, node):
+        nonlocal cursor
+        whitespace()
+        start = cursor
+        if not node or len(node) == 1 and None in node:
+            skip()
+        elif isinstance(value, (dict, list)):
+            cursor += 1
+            entries = value.items() if isinstance(value, dict) else enumerate(value)
+            for index, (key, child) in enumerate(entries):
+                whitespace()
+                if index:
+                    cursor += 1  # comma
+                    whitespace()
+                if isinstance(value, dict):
+                    string_end()  # key already decoded by _load
+                    whitespace()
+                    cursor += 1  # colon
+                visit(child, node.get(str(key)))
+            whitespace()
+            cursor += 1  # closing container
+        else:
+            skip()
+        if node and None in node:
+            spans[node[None]] = _RawSpan(text, start, cursor)
+
+    visit(document, trie)
     return spans
+
+
+def _string_size(value, budget):
+    """Exact ensure_ascii=True size, saturating before any escaped allocation."""
+    text, start, end = ((value.text, value.start, value.end) if isinstance(value, _RawSpan)
+                        else (value, 0, len(value)))
+    size = end - start + 2
+    if size > budget:  # safe raw-length lower bound, before scanning
+        return budget + 1
+    for match in _ESCAPE.finditer(text, start, end):
+        char = match[0]
+        code = ord(char)
+        cost = (2 if char in '\\"\\\\\b\f\n\r\t' else 12 if code > 0xffff else 6)
+        size += cost - 1
+        if size > budget:
+            return budget + 1
+    return size
+
+
+def _wire_size(value, budget):
+    """CLI's default separators, scalar spellings and ASCII escapes, no dump.
+
+    All counts saturate at budget+1. Containers use iterator frames, not copies
+    or recursion proportional to an untrusted coverage value's nesting depth.
+    """
+    size, stack = 0, [iter((value,))]
+    while stack:
+        try:
+            item = next(stack[-1])
+        except StopIteration:
+            stack.pop()
+            continue
+        if isinstance(item, (str, _RawSpan)):
+            size += _string_size(item, budget - size)
+        elif isinstance(item, dict):
+            # braces, comma-space and colon-space; keys are all strings here.
+            size += 2 + max(0, len(item) - 1) * 2 + len(item) * 2
+            stack.append((part for pair in item.items() for part in pair))
+        elif isinstance(item, (list, tuple)):
+            size += 2 + max(0, len(item) - 1) * 2
+            stack.append(iter(item))
+        elif item is None:
+            size += 4
+        elif type(item) is bool:
+            size += 4 if item else 5
+        elif type(item) is int:
+            size += len(str(item))
+        else:  # only finite, validated fps floats reach this branch
+            size += len(json.dumps(item, allow_nan=False))
+        if size > budget:
+            return budget + 1
+    return size
+
+
+def _overflow(result):
+    result.update(document=None, selection=None, coverage=None, diagnostics=[])
+    _error(result, "output.limit", "", "reference exceeds JSON wire byte limit", limit_bytes=_LIMIT)
+    return result
 
 
 def _finish(result):
     # Same ASCII JSON representation as the CLI, including the final newline.
-    if len(json.dumps(result, ensure_ascii=True, allow_nan=False).encode("ascii")) + 1 > _LIMIT:
-        result.update(document=None, selection=None, coverage=None)
-        result["diagnostics"] = []
-        _error(result, "output.limit", "", "reference exceeds JSON wire byte limit", limit_bytes=_LIMIT)
-    return result
+    return _overflow(result) if _wire_size(result, _LIMIT - 1) >= _LIMIT else result
 
 
 def reference_timeline(path, *, track_ids=None, block_ids=None, track_addresses=None,
@@ -84,6 +204,13 @@ def reference_timeline(path, *, track_ids=None, block_ids=None, track_addresses=
         "project": {"kind": "managed" if managed else "legacy",
                     "project_id": meta.get("project_id"), "head": meta.get("head")},
     }
+    # Whole-document lower bound, then exact escaping, before selection work or
+    # span scanning. A single raw astral extension can already exceed the wire.
+    if len(raw) + 2 >= _LIMIT:
+        return _overflow(result)
+    _finish(result)
+    if not result["ok"]:
+        return result
     duration = doc["project"]["duration_frames"]
     selection = {"global_frame": global_frame, "fps": doc["project"]["fps"],
                  "interval": list(interval) if isinstance(interval, (list, tuple)) else None,
@@ -203,11 +330,24 @@ def reference_timeline(path, *, track_ids=None, block_ids=None, track_addresses=
     except RecursionError:
         _error(result, "input.limit", "", "reference span nesting exceeds supported depth")
         return _finish(result)
-    if "/project/fps" in spans and Decimal(spans["/project/fps"]) != Decimal(str(selection["fps"])):
+    if "/project/fps" in spans and Decimal(spans["/project/fps"].materialize()) != Decimal(str(selection["fps"])):
         _error(result, "reference.precision", "/project/fps", "derived fps would lose stored numeric precision")
         return _finish(result)
+    # Combined raw-length lower bound first: overlapping track/block spans are
+    # separate wire strings. Do not create any slices until the full exact wire
+    # count (keys, metadata, separators and newline included) has also passed.
+    raw_length = len(raw)
     for item in selection["tracks"] + selected_blocks:
+        span = spans.get(item["address"])
+        raw_length += len(span) if span is not None else 0
+        if raw_length >= _LIMIT:
+            return _overflow(result)
         # An external-only subtitle virtual track has no stored array span.
-        item["raw"] = spans.get(item["address"])
+        item["raw"] = span
     result["selection"] = selection
-    return _finish(result)
+    _finish(result)
+    if result["selection"] is not None:
+        for item in selection["tracks"] + selected_blocks:
+            if item["raw"] is not None:
+                item["raw"] = item["raw"].materialize()
+    return result
