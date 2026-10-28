@@ -1,13 +1,13 @@
 {
   "version": 2,
   "_meta": {
-    "doc": "tech-talk 轨制骨架（模板包 R2，2026-10-03）：按 voice-ime v4.7 实际轨道组织抽象。用法＝整份复制为 <项目>/timeline.json，删除 ph_* 占位源与占位 clips/events，按 00-structure 帧预算铺真实编排；本骨架原位可通过 `python3 <video_tools>/vtx/vtx.py -t 本文件 validate`。",
+    "doc": "tech-talk 轨制骨架：按 voice-ime v4.7 轨道组织抽象。优先用 templates/tech-talk/scripts/new_project.sh 实例化（写入新项目并 validate）；手工复制须连同 placeholders/ 目录，见 instantiate_steps。替换占位编排后按 00-structure 帧预算验证；原位 validate 会写产物，见 validate_side_note。",
     "timebase": {
       "fps": 30,
       "sample_rate": 48000,
       "note": "30fps（≠29.97，D24）；整数帧；区间 [in,out) 左闭右开；每帧整 1600 音频采样"
     },
-    "layer_order": "video_tracks 数组序＝图层序（[0] 最底、末位最上）；画布为黑场；kind 纯语义标注（aroll/broll/screen/pip/gfx），渲染机制不区分",
+    "layer_order": "video_tracks 数组序＝图层序（[0] 最底、末位最上）；画布为黑场；aroll/broll/screen/pip 均走普通媒体源；kind=gfx 则走图形帧源路径，不赋予额外图层特权",
     "placeholders_note": "ph_av/ph_au/placeholder_gfx.html 为极小占位素材（placeholders/ 目录），仅证明结构合法——validate 要求每条视频轨 ≥1 clip 且 clip 引用的源必须真实存在，故骨架用占位件保「原位可验证」；实例化时全部删除",
     "sources_doc": {
       "ph_av": "占位：带视频+音频的微型 mp4（320x180@30fps，1s）——实例化后由 aroll_final 成品/演示录屏替换",
@@ -46,7 +46,7 @@
       "bgm-stem": "BGM stem 轨组示范：正式 BGM 按 stem 拆多轨（voice-ime v4.7 为 bgm-vln1/bgm-piano-sal 等 13 轨），每轨 duck:true + duck_params（D47）；stem 源写法见 source_templates"
     },
     "instantiate_steps": [
-      "① 复制本骨架为 <项目>/timeline.json（占位源指向随文件走，先 validate 一次确认环境）",
+      "① 优先运行 bash <video_tools>/templates/tech-talk/scripts/new_project.sh <新项目目录>（写入工程与占位素材并自动 validate）；若手工复制本骨架为 <项目>/timeline.json，必须同时复制 <video_tools>/templates/tech-talk/assets/presets/placeholders/ 整目录到 <项目>/placeholders/ 后再 validate；仅复制 JSON 不会携带素材",
       "② 删 ph_* 源与全部占位 clips/events，按 00-structure 帧预算与 02-script 分段铺真实编排",
       "③ 字幕锚定走 apps/asr（asr_cli.py timeline），铺完后 preview.html 人审",
       "④ vtx validate 硬门必过；批量重排写幂等脚本 + vtx snapshot"

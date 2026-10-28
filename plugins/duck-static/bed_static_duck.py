@@ -147,15 +147,25 @@ def main():
         """段 [a,b) 是否整体落在某口播窗内（切分后必然二择一）"""
         return any(w[0] <= a and b <= w[1] for w in wins)
 
+    # 分段变换——与插件 audio_events 同一实现；烘焙前先检查原始事件契约。
+    new_events = transform_events(bed, wins, args.global_db, args.duck_db,
+                                  ATTACK_F, RELEASE_F)
+    for i, event in enumerate(new_events):
+        fi, fo = event.get("fade_in_frames", 0), event.get("fade_out_frames", 0)
+        dur = event["out"] - event["in"]
+        if fi + fo > dur:
+            raise SystemExit(
+                f"FATAL: track={args.track!r} events[{i}] "
+                f"[{event['in']}, {event['out']}) fade_in_frames={fi}, "
+                f"fade_out_frames={fo}, duration_frames={dur}: 淡入出总长超过事件时长。"
+                "请改用内存 duck_strategy，或缩短 --attack/--release（必要时调整原事件淡入出）；"
+                "timeline 和备份均未写入。")
+
     if args.backup:
         bak = TL.parent / "timeline.pre-duck.json"
         if not bak.exists():
             shutil.copy2(TL, bak)
             print(f"备份 → {bak.name}")
-
-    # 分段变换——与插件 audio_events 同一实现
-    new_events = transform_events(bed, wins, args.global_db, args.duck_db,
-                                  ATTACK_F, RELEASE_F)
 
     tracks[args.track]["events"] = new_events
     tl["_meta"] = tl.get("_meta", {})

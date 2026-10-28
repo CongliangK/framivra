@@ -26,7 +26,7 @@
 ## 3. 双系统同步（`apps/sync/sync_audio.py`，D26）
 
 - GCC-PHAT 互相关（语音本身即标记，拍掌/LTC 废除）+ 稳健线性拟合（偏移+ppm）+ 话筒轨微重采样 conform（**视频永不动**）。
-- 短素材（<50s）加 `--win 10 --hop 5`；残差分级：0.6~1.3ms 优 / 3.8~4.5ms 可接受（<10ms 口播感知阈值）。
+- 短素材（<50s）加 `--win 10 --hop 5`。工具 `OK` 要求 conform 后复验最大残差 **<1.5ms**、有效拟合窗口至少 3 个且无疑似阶跃异常；否则为 `CHECK`，须排查后复验。历史 0.6~1.3ms / 3.8~4.5ms 是项目实测，不是两档通过线；「<10ms 感知可接受」也不能替代工具通过（实现中的 10ms 用于拟合异常判断）。
 - **全局拟合报超大 ppm「漂移」≠时钟漂移，=有一段对不上**（项目实例 P1040019：take 尾部多录 6.5s 废音伪装成 -19000ppm）。逐窗全范围搜索定位；**下「两遍录音/口型对不上」结论前必须做内容级验证**（ASR 段落对比+静音结构对比）——初判曾被用户听感推翻。
 - `--report` 出 JSON（偏移/ppm/各窗置信度/离群点/verdict）；**录完先跑本工具再进管线**。
 
@@ -73,7 +73,7 @@ ffmpeg -nostdin -y -i "<视频>" -i "<同步.wav>" -map 0:v:0 -map 1:a:0 -c:v co
 |---|---|---|
 | aup3 提取 | `apps/aroll/aup3_extract.py` | float32 解码；孤儿块自动恢复 |
 | 掐头去尾 | `apps/aroll/trim_takes.py` | 带通 -48dBFS；150/250ms pad |
-| 同步 | `apps/sync/sync_audio.py` | 短素材 --win 10；残差 <10ms 可用 |
+| 同步 | `apps/sync/sync_audio.py` | 短素材 --win 10 --hop 5；按 §3 的工具 OK 条件复验 |
 | 替换/切割/放大 | ffmpeg | -nostdin；单输入 copy 切割；坐标域显式 |
 | 降噪 | `plugins/denoise/denoise_voice.py` | 无损 PCM 源进 |
 

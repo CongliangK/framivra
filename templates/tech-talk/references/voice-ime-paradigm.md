@@ -22,5 +22,5 @@
 - **编排总纲**：本包 `references/narrative.md`（开场模板/正文节奏/演示对位三原则/字幕 ASR 锚定/结尾模板/硬约束；音频口径另见 `audio-mixing.md`）——编排每期 timeline 前先读。（历史源件：工作区 `_library/reports/编排方法论-科技口播视频.md`，内容已收编，跨机不必依赖）
 - **修复工作法**（迭代纪律）：先问后做不脑测 / 在时间轴编排层定性（Blender=审片界面）/ 区分「编排对实现错」vs「编排本身错」/ 用户权威文本 > 代理回读推断。
 - **用户手剪回读协议**（blend2json→ASR→用户权威文本对照）→ `apps/blender-bridge/README.md`「用户手剪回读协议」节。
-- **gfx 静态跨度优化工具链**（逐帧 DOM 序列化 sha1 指纹扫描产 decl.json）：已归档 voice-ime `cache/reports/gfx_opt_20260911/{scan.py,inject.py,decl.json}`；红线与重扫纪律见内核 gfx.md「静态跨度声明」。
+- **gfx 静态跨度优化工具链**（逐帧 DOM 序列化 sha1 指纹扫描产 decl.json）：已归档 voice-ime `cache/reports/gfx_opt_20260911/{scan.py,inject.py,decl.json}`；仅为历史工具，不证明当前像素恒定，也不能直接据此声明静态跨度。当前须按内核 [静态跨度](../../../docs/skill/references/gfx.md#静态跨度) 逐帧核验像素并遵守重扫纪律。
 - 已完成（2026-10-03）：通用实拍规范已上提为本包 `references/shooting-guide.md`（完整手册）；`shooting.md` 为速查版，voice-ime/07-shooting-guide.md 留作项目装备记录。
