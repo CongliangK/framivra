@@ -38,7 +38,15 @@ The mock CLI returns a fixed envelope; it deliberately does not implement frame/
 
 The release ZIP must have `package.json`, `cordis.patch.yml`, ESM `lib/index.js`, `lib/client.js`, and `LICENSE` at its root, with no lifecycle scripts, dependencies, node_modules, checkout paths or second React/ReactDOM/Cordis copy. Browser third-party dependencies must be bundled except platform-shared peers. Runtime must work without a DSH source checkout.
 
-Needed from the public SDK: a versioned tree-external import/CLI, explicit browser entry/output/package ID, shared-platform external handling, and the supported DSH module-registration wrapper emitted by the SDK. No permanent hand-written loader wrapper is acceptable. Build integration and exact commands will be recorded once that API is delivered.
+Needed from the public SDK: a versioned tree-external import/CLI, explicit browser entry/output/package ID, shared-platform external handling, and the supported DSH module-registration wrapper emitted by the SDK. No permanent hand-written loader wrapper is acceptable. Client compilation remains pending; once the SDK emits its browser artifact, the dependency-free packaging stage (Node + build-time Python stdlib) is available:
+
+```sh
+node apps/dsh-sidebar/scripts/package.mjs \
+  --client /absolute/SDK-output/client.js \
+  --out /tmp/framivra-orchestrate-evidence/dsh-sidebar/framivra-dsh-sidebar.zip
+```
+
+The output must not already exist. The packager allowlists release metadata, copies ESM Host modules, rejects source maps/obvious checkout paths in the Client artifact, and omits source scripts/dependencies/node_modules. It does **not** certify that an arbitrary input is a valid SDK artifact or that installation works. The packaging test deliberately uses a marked, non-installable dummy Client; do not distribute that test ZIP.
 
 Needed from the read CLI: `vtx -t PATH capabilities|inspect|query`, the `framivra.timeline.read/v1` envelope and exit 0/1/2 as agreed. Optional query selectors are passed as separate argv tokens (`--family`, `--track-index`, `--block-index`, `--frame` or `--interval`). No subprocess is kept alive between reads.
 
