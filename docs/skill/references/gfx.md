@@ -24,7 +24,7 @@
 
 ```html
 <script>
-const FPS = 30, N = <总帧数>;              // 全管线精确 30fps；N = 该 gfx 页所属事件的帧数（out−in）
+const FPS = 30, N = <总帧数>;              // 全管线精确 30fps；N = 该 gfx clip 的 dur（整数帧）
 const f = parseInt(new URLSearchParams(location.search).get("f") || "0");
 const t = Math.min(f / FPS, N / FPS);      // t：本图层局部时间（秒）
 /* 全部动画状态 = t 的纯函数。禁止：CSS animation/transition、Date.now()、
@@ -34,8 +34,8 @@ document.body.style.opacity = 1 - clamp01(seg(t, N/FPS - 0.4, N/FPS)); // 结尾
 ```
 
 - 画布尺寸匹配项目视口（模板示例为 `1920x1080`），使用 `overflow:hidden`；独立叠层可透明，全屏底页确保底色与转场不会意外露黑。确认所用字体在实际渲染环境可用，不假定模板字体已安装。
-- 动效时长 = 所属事件的帧数（`out`−`in`，契约字段见 `docs/ARCHITECTURE.md`）；页面内容的时间轴从 0 开始（vtx 负责把它平移到成片时间轴）。
-- vtx 默认用 CDP 常驻浏览器逐帧渲染，页面须从 `?f=` 确定性得到当前帧。CDP 与 CLI 具有独立环境身份，不承诺任意页面跨引擎像素或 PNG 字节相同。CDP 自动回落 CLI 的页不能发布成功凭证；确需 CLI 时显式 `VTX_GFX=cli` 重渲，strict 策略不支持该路径。身份与失败边界见 [缓存与回执](../../cache-provenance.md#gfx-environment)。
+- 动效时长为 gfx clip 的 `dur` 帧（秒数为 `dur / FPS`），不是音频事件的 `out−in`；页面内容的时间轴从 0 开始，`dst_in` 仅指定成片入点。字段见 [timeline schema](../../../vtx/timeline.schema.json)，vtx 负责时间轴平移。
+- vtx 默认用 CDP 常驻浏览器逐帧渲染，页面须从 `?f=` 确定性得到当前帧。CDP 与 CLI 具有独立环境身份，不承诺任意页面跨引擎像素或 PNG 字节相同。CDP 自动回落 CLI 的页不能发布成功凭证；确需 CLI 时显式 `VTX_GFX=cli` 重渲，strict 策略不支持该路径。身份与失败边界见 [缓存与回执](../../cache-provenance.md#gfx-environment)；可选后端的实现存在不等于验收通过，见 [支持与验证边界](../../DEV.md#支持与验证边界)。
 - **外部依赖声明**：本地 CSS/JS/图片/字体等列入 gfx clip 的 `cache_dependencies`；真正共享的依赖列入 `project.cache_dependencies`。两级声明取并集，路径都相对 timeline 根目录；clip 依赖变更使消费它的页面换键，项目依赖变更影响全部 gfx 页。依赖必须存在且为文件。默认 legacy 不证明资源闭包，未声明间接资源不能获得可靠失效保证；strict 仅接受受限静态 HTML/CSS/本地图像字体，拒绝脚本、SVG 与网络资源，仅支持 POSIX CDP，不能用于本文的 JavaScript 动画示例。完整约束见 [HTML 依赖](../../cache-provenance.md#html-依赖)。
 - **可选 `__vtx_render(f)` 协议**：同步、幂等、与调用顺序无关；调用后的视觉状态须与 `?f=f` 新加载一致。消费者 navfree 路径未获正式采用，`VTX_GFX_NAVFREE` 保持默认 0；历史实验见 [DEV](../../DEV.md)。DOM 哈希不能代替视觉等价验证。
 

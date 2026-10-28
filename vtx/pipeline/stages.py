@@ -150,6 +150,39 @@ def validate(c: Ctx):
     def clip_fade(cl, cp, tr, tp):
         if native(cp, lambda: observe("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)) > field(cl, 'dur', cp), 'comparison', paths=[key_path(cp, 'dur')]):
             err(f"fade 总长超过片段: {field(tr, 'name', tp)} dst_in={field(cl, 'dst_in', cp)}", cp, 'validate.clip_fade', {'value': observed.get("cl.get('fade_in_frames', 0) + cl.get('fade_out_frames', 0)", {'status': 'not_observed'}), 'unit': 'frames'}, {'max': observed.get(key_path(cp, 'dur'), {'status': 'not_observed'}), 'unit': 'frames'})
+    def audio_event_fade(e, ep, name):
+        valid = True
+        for key in ('fade_in_frames', 'fade_out_frames'):
+            value = e.get(key, 0)
+            # JSON Schema integer includes whole-number floats, but not bool.
+            if (isinstance(value, bool)
+                    or not (isinstance(value, int)
+                            or isinstance(value, float) and value.is_integer())
+                    or value < 0):
+                err(f"音频事件 {name}: {key} 须为非负整数帧", ep + '.' + key,
+                    'validate.audio_event_fade_value', {'value': value, 'unit': 'frames'},
+                    {'type': 'integer', 'min': 0, 'unit': 'frames'})
+                valid = False
+        if valid:
+            duration = native(ep, lambda: field(e, 'out', ep) - field(e, 'in', ep),
+                              'arithmetic', paths=[key_path(ep, 'out'), key_path(ep, 'in')])
+            total = int(e.get('fade_in_frames', 0)) + int(e.get('fade_out_frames', 0))
+            if total > duration:
+                err(f"音频 fade 总长超过事件: {name}@{field(e, 'in', ep)}", ep,
+                    'validate.audio_event_fade', {'value': total, 'unit': 'frames'},
+                    {'max': duration, 'unit': 'frames'})
+    # Enforce the existing schema const before interpreting a legacy timeline.
+    # Numeric 2.0 is equivalent to 2; bool/string/missing versions are not.
+    version = c.tl.get('version')
+    if isinstance(version, bool) or not isinstance(version, (int, float)) or version != 2:
+        err("时间线仅支持数值 version: 2（不自动转换旧版本或缺失版本）", '$.version',
+            'validate.timeline_version', {'present': 'version' in c.tl, 'value': version},
+            {'const': 2})
+        print("校验失败（1 项）："); print("  ✗", errs[0])
+        c.receipt('validate', False, '1 errors')
+        failure = SystemExit(1)
+        mark_handled(failure)
+        raise failure
     from ..cache.cache_state import validate_cache_dependencies
     try:
         validate_cache_dependencies(c)
@@ -264,6 +297,7 @@ def validate(c: Ctx):
             observed.clear()
             ep = f"{ap}.events[{event_indices[id(e)]}]"
             if not native(ep, lambda: 0 <= field(e, 'in', ep) < field(e, 'out', ep) <= c.dur, 'comparison', paths=[key_path(ep, 'in'), key_path(ep, 'out'), '$.project.duration_frames']): err(f"音频事件区间非法: {name}@{field(e, 'in', ep)}", ep, 'validate.audio_event_bounds', {'start': observed.get(key_path(ep, 'in'), {'status': 'not_observed'}), 'end': observed.get(key_path(ep, 'out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'start_before_end': True, 'unit': 'frames'})
+            audio_event_fade(e, ep, name)
             if native(ep, lambda: field(e, 'src', ep) not in srcs, 'comparison', paths=[key_path(ep, 'src')]): err(f"音频引用未知 src {field(e, 'src', ep)}", ep + '.src', 'validate.audio_source', {'value': observed.get(key_path(ep, 'src'), {'status': 'not_observed'})}, {'allowed': list(srcs)}); continue
             i = _plugin_hooks.run_probe_source(c, field(e, 'src', ep))
             if i is None:

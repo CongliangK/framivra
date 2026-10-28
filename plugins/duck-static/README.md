@@ -33,9 +33,11 @@ env python3 plugins/duck-static/bed_static_duck.py -t timeline.json \
     [--merge-gap 20] [--attack 5] [--release 8] [--no-backup]
 ```
 
-CLI 直接改写 timeline 并写 `_meta.bed_static_duck` 标记（幂等：同参数跳过）；
+**写操作**：CLI 直接改写 timeline 并写 `_meta.bed_static_duck` 标记（幂等：同参数跳过）；
 插件键与 CLI 烘焙互斥（见上）。变换数学两者同一实现
 （bed_static_duck.transform_events），脚本烘焙与管线渲染永不分叉。
+
+CLI 写入前检查全部派生事件；若任一事件淡入+淡出帧数超过段长，则报告事件区间和 fade 值并失败，timeline 与备份均不写入。可显式缩短 `--attack` / `--release` 后重试（原事件保留的边缘 fade 也须核对），或改用推荐的 `duck_strategy` 内存变换；CLI 不会为通过原始时间线校验而静默改写包络。内存变换不持久化，仍保留混音器对短事件两端 fade 的分别截断。
 
 ## 依赖环境
 

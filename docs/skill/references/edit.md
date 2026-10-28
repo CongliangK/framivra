@@ -182,7 +182,7 @@ validate 是机制硬门，audit 是内容体检；报告在 `out/audit_report.j
 
 ## 字幕预检与预览（subs check / preview，2026-09-12 方案四）
 - **`subs check`（零渲染，timeline 层面可跑）**：①字幕窗 vs voice 轨口播窗对齐（重叠取最大重叠窗算起点偏移，无重叠取最近外沿——滞后窗口末端为正/超前窗口起点为负；FAIL ±1.5s / WARN ±0.5s，`--align-threshold` 可调；最近窗距离 >5s 或无 voice 轨 → WARN 不静默，报告 coverage 如实扣减）；②阅读速度 CPS >9 FAIL / >7.5 WARN / <0.6s WARN（与 audit 同基准）；③字幕时间重叠双标 FAIL；④行宽 28 字×2 行 FAIL（PlayResX 1920/Fontsize 58/MarginL-R 60 推算）。报告 `out/subs_check.json` + 人类可读表格，末行 PASS/FAIL（FAIL 退出码 1，可做 CI 门）。
-- **`subs preview <秒|f帧号>...`**：单帧预览图 `out/subs_preview_f<N>.png`。背景三级回退：qc_clean 提帧 → 图层单帧合成（素材不全自动跳过）→ 黑场兜底（WARN，仅审字幕位置/样式）。活跃集判定与真实烧录的 cs 量化逐位一致（`_fc` 同式），烧录用 `ass_head` 同源样式；实际输入路径与有损编码仍可能产生像素差，不能把字幕预览当作最终成片等价证明。
+- **`subs preview <秒|f帧号>...`**：单帧预览图 `out/subs_preview_f<N>.png`。背景三级回退：qc_clean 提帧 → 图层单帧合成（素材不全自动跳过）→ 黑场兜底（WARN，仅审字幕位置/样式）。活跃集直接按整数帧意图 `in ≤ f < out` 判定；正式 ASS 通过 `_fc` 把边界放在相邻帧之间，分段时先在帧域裁切再按局部时钟量化，不能把预览判定说成复现旧的 cs 舍入规则。预览烧录用 `ass_head` 同源样式；实际输入路径与有损编码仍可能产生像素差，不能把字幕预览当作最终成片等价证明。
 修改顺序和音画复核见 [R2s](#r2s--纯字幕修订)。
 
 ## 音频工程（build_audio 内置）
@@ -236,7 +236,7 @@ env python3 scripts/audio/normalize_project_audio.py --help
   ]
 }
 ```
-**v2 核心语义**：所有视频轨道等价，无 base 特权、无全覆盖要求（空洞帧＝黑场，是规划问题不是校验错误）；`kind`（aroll/broll/screen/pip/gfx）纯语义标注，渲染机制完全不区分，只服务于编排规范、预览着色与画面构成统计；clip 的 `scale/x/y/opacity` 全部可选（缺省＝全屏不透明，全屏走 transform 归一）；fade 统一为 **alpha 淡入淡出**（无下层时自然露出黑场＝视觉淡黑）。gfx 的非默认 scale 按源 PNG 尺寸向下取偶数；最终尺寸（含 draft 缩放）任一边不足 2 像素时报错。内核与预览器均只接受 `version: 2`，不接受或自动转换旧 v1（role+overlays）及缺失版本的时间线。
+**v2 核心语义**：所有视频轨道等价，无 base 特权、无全覆盖要求（空洞帧＝黑场，是规划问题不是校验错误）；`kind` 不授予图层特权，aroll/broll/screen/pip 只作编排语义、预览着色与画面构成统计；但 `kind=gfx` 会选择 HTML/SVG 帧序列处理，clip.src 因而是文件路径而非 sources id，不能把实拍轨随意改成 gfx；clip 的 `scale/x/y/opacity` 全部可选（缺省＝全屏不透明，全屏走 transform 归一）；fade 统一为 **alpha 淡入淡出**（无下层时自然露出黑场＝视觉淡黑）。gfx 的非默认 scale 按源 PNG 尺寸向下取偶数；最终尺寸（含 draft 缩放）任一边不足 2 像素时报错。`validate` 与预览器要求数值 `version: 2`（含等值 `2.0`），不自动转换旧 v1（role+overlays）或缺失版本。此为校验阶段约束，不是加载前拦截：加载错误可能先报出；单独执行其他阶段前须先 validate。
 **"这个素材放哪条轨"速查**：
 | 素材 | 轨道 | 说明 |
 |---|---|---|
@@ -247,9 +247,9 @@ env python3 scripts/audio/normalize_project_audio.py --help
 | **全屏流程图/表格/数据展示/原理动画** | `gfx-full`（kind=gfx） | clip 只写 dst_in+dur，缺省全屏；覆盖实拍层 |
 | 标题卡/下三分之一/角标/强调字 | `gfx-overlay`（kind=gfx） | 页面自身留透明区域，叠在最上（仅低于字幕） |
 gfx 的"全屏 vs 局部"由 HTML 页面设计决定（帧恒为全画布 PNG，透明区域即"局部"），timeline 层不区分——不要为全屏图形发明新 kind。表中轨型是独立素材的放置规则，不是角色/组件的拆页清单；页面边界先按 [HTML 创作组织](gfx.md#html-创作组织) 决定，再按本文挂载。
-不变量（validate 强制）：`src_out - src_in == dur`（gfx clip 除外）；切割范围 ≤ 素材实测帧数；**同轨 clips 不重叠**（视频与音频皆是，唯一机制约束）；clip/事件不超出 duration_frames；fade 总长 ≤ 片段长。音频事件可加 `src_in`（取源音频中段）与 `loop`（循环平铺）。**source 可以是纯音频文件**（wav/mp3：音效、BGM、环境声等资产库素材直接进 timeline；时长换算项目帧网格，只能被音频事件引用，视频 clip 引用会被拒绝）。完整字段语义读 `~/.agents/skills/video/vtx/timeline.schema.json`，里面有每个字段的注释。
+不变量（validate 强制）：`src_out - src_in == dur`（gfx clip 除外）；切割范围 ≤ 素材实测帧数；**同轨 clips 不重叠**（视频与音频皆是，唯一机制约束）；clip/事件不超出 duration_frames；原始时间线中的 fade 总长 ≤ 片段/事件长，音频 fade 须为非负整数帧；插件变换后的事件（整片与区间渲染共用）仍由渲染器分别截断两端 fade，不能把该兜底当成原始输入合法。音频事件可加 `src_in`（取源音频中段）与 `loop`（循环平铺）。**source 可以是纯音频文件**（wav/mp3：音效、BGM、环境声等资产库素材直接进 timeline；时长换算项目帧网格，只能被音频事件引用，视频 clip 引用会被拒绝）。完整字段语义读 `~/.agents/skills/video/vtx/timeline.schema.json`，里面有每个字段的注释。
 
-**字幕来源 `subtitles_src`（v2 内核键）**：根级声明 `"subtitles_src": "subs/ep.srt"`（相对 timeline 路径），与根级 `subtitles[]` 互斥——内核只负责引用与烧录（.srt 时间戳按项目 fps 换算整帧 / .json 帧值直用），谁产出该文件（asr/手写/其他工具）内核不感知；文件内容参与回执指纹（改字幕文件即失效重渲）。
+**字幕来源 `subtitles_src`（v2 内核键）**：根级声明 `"subtitles_src": "subs/ep.srt"`（相对 timeline 路径）；它与根级 `subtitles[]` **同时非空时报错**，使用外部字幕时按 Schema 保留 `"subtitles": []`（运行时加载器也兼容省略，但省略不满足结构 Schema）。内核在加载点解析为帧值列表后烧录（.srt 时间戳按项目 fps 换算整帧 / .json 帧值直用），谁产出该文件（asr/手写/其他工具）内核不感知；文件内容参与回执指纹（改字幕文件即失效重渲）。
 
 ## 插件与素材工具
 

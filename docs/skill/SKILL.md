@@ -1,11 +1,25 @@
 ---
 name: video
-description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、制作纯 MG/Motion Graphics/视频动效/动态图表/字幕条/片头片尾/透明图层、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook / sync_audio / denoise_voice / content_gates / A-roll，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门，或要求视频调研、对标分析、选题池、B 站科技口播制作（→ 先读 templates/tech-talk/）。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 templates/tech-talk/（本仓 templates/ 工作流模板）——封面（make_cover）、调研（research 六件）、BGM（music skill 路由）的完整配方在彼处。"
+description: "Framivra v2 内核 skill：时间线契约与 vtx 帧精确渲染 CLI（validate/diff/subs/audit/prepare/gfx/video/audio/mux/qc/gc/snapshot）+ HTML 帧驱动 gfx 动效协议 + 缓存治理 + 混音响度链与验证门。Use whenever 用户要求剪辑视频、合成动效与实拍、制作纯 MG/Motion Graphics/视频动效/动态图表/字幕条/片头片尾/透明图层、切分素材、烧字幕、混音轨、渲染成片、新建视频项目、缓存治理，或提到 timeline.json / vtx / gfx 页面 / 帧驱动动画 / 修改配方 / runbook / sync_audio / denoise_voice / content_gates / A-roll，或要求处理实拍素材/双系统音视频同步/口播降噪/音频响度/混音验证门，或要求视频调研、对标分析、选题池、B 站科技口播制作（→ 先读 templates/tech-talk/）。选题调研/01-brief/选题可行性、B 站投稿封面、BGM/配乐路由、科技口播全流程 SOP 等产线任务先读 templates/tech-talk/（本仓 templates/ 工作流模板）——封面（make_cover）、调研（research 六件）、BGM（按可用性路由 music skill 或现成资产）的完整配方在彼处。"
 ---
-# video · video_tools v2 内核 skill（路由索引 + 迭代回路）
+# video · Framivra v2 内核 skill（路由索引 + 迭代回路）
 
 > **内核向**：本文件是机制文档的操作路由索引。机制/契约/基准留本 skill 与 docs/（任何产线通用）；产线配方（六阶段创作流程/拍摄规范/voice-ime 范式/发布链/BGM/封面）在 **`templates/tech-talk/`** 工作流包。开发者分析见 `docs/DEV.md`。
 > **接到任务先查路由表去读对应 reference 再动手**；本文件是「路线图」，字段语义与坑表以 references 为准。创作起手、页面拆分与多人分工，先读 [HTML 创作组织](references/gfx.md#html-创作组织)。
+
+## 路径起手（源码与挂载共用）
+
+`<video_tools>` / `VIDEO_TOOLS` 均指 **Framivra 仓根**，不是 skill 挂载目录。先对本次读取的 `SKILL.md` 做 realpath，再读取其真实源文件；本文件及 references 中的 Markdown 相对链接均按各自真实源文件目录解析，不能按挂载目录拼接 `../`，也不能用 `templates/../` 绕行（URL 归一化会改变落点）。
+
+默认 live 挂载可只读定位如下；自定义挂载使用 `VT_MOUNT_ROOT`，直接读源码时将 `VIDEO_SKILL` 改为该源文件路径：
+
+```bash
+VIDEO_SKILL="${VT_MOUNT_ROOT:-$HOME/.agents/skills/video}/SKILL.md"
+VIDEO_TOOLS="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve(strict=True).parents[2])' "$VIDEO_SKILL")"
+export VIDEO_TOOLS
+```
+
+先读取 `$VIDEO_TOOLS/docs/skill/SKILL.md`，后续先读表中 reference。未带前缀的 `references/`、`assets/` 相对本 skill；`templates/`、`apps/`、`plugins/`、`docs/`、`vtx/`、`scripts/` 与根 README 均相对仓根。不得假定 `apps/`、`plugins/` 或 docs 父目录也已挂载。
 
 ## 架构与组件入口
 
@@ -38,7 +52,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 | 新选题、调研 research 可行性、对标分析、生成 01-brief | 先读 `templates/tech-talk/SKILL.md`，再 `templates/tech-talk/references/research.md` | R0-R6 多智能体调研 |
 | 制作/修改 B 站投稿封面 cover、封面文案、封面裁切预览 | `templates/tech-talk/references/cover.md` | B 站封面产线 |
 | 实拍怎么拍、拍摄规范（机位/打光/录音/双系统） | `templates/tech-talk/references/shooting.md` | 实拍规范 |
-| BGM/配乐生成、音色、乐谱 | **`music` skill** | 挂载后分轨审计包配方见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
+| BGM/配乐生成、音色、乐谱 | **先检查当前技能清单是否提供 `music`** | 可用才加载；不可用时使用已有且授权明确的音频文件，或说明生成能力缺失，不假定外部 skill/CLI 已安装。挂载后审计见 `templates/tech-talk/references/runbook-r5r6r7.md` R6 |
 
 ## 推荐方式与全局铁律
 1. **委派模式**：复杂任务按 [HTML 创作组织](references/gfx.md#html-创作组织) 定模块边界后拆分；按任务需要保留结论与证据，交接要求见 [编辑与交接配方](references/edit.md#主控-子智能体棒次协议)；长命令按执行环境支持的后台会话与轮询机制运行。
@@ -48,7 +62,7 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 5. **gfx 页面必须帧驱动**：动画状态 = 帧号 f 的纯函数，禁 CSS animation/transition、Date.now()、Math.random()、rAF 时序。
 6. **tech-talk 调研走 R0-R6 编排**：主编只编排不采集，采集与评分分离，红队质疑必逐条回应。
 7. 时间量一律**整数帧**；时基 30fps（≠29.97）、48kHz（每帧整 1600 采样）；区间 `[in, out)` 左闭右开。
-8. **修改任何程序或文档一律改 video_tools 仓**（live 挂载点全是符号链接）。
+8. **修改本产线程序或文档一律改 Framivra 仓源件**（live 挂载点为符号链接），不改挂载副本或擅改外部音乐仓。
 
 ## CLI 速查（组件真实路径）
 | 操作 | 命令 |
@@ -76,5 +90,5 @@ description: "video_tools v2 内核 skill：时间线契约与 vtx 帧精确渲�
 
 ## 产线衔接
 - 科技口播产线（调研→实拍→动效→渲染→发布）完整 SOP → `templates/tech-talk/SKILL.md`；视频项目工作区在 `~/文档/04_bilibili视频/`（各期项目文件夹 + `_library/` 方法论/资产 + `_archive/`）。
-- 音频/BGM 产线 → `music` skill（music_tools / music_project 两仓）；视频是 BGM 的消费方（timeline 音轨直接引用产物，正式版挂载后走分轨审计包交付门）。
+- 音频/BGM 产线：当前清单提供 `music` 时才路由其外部产线；不可用时可把已有且授权明确的 wav/mp3 等资产作为普通 `sources[]` 入音轨，不需要 music 工程 JSON 或生成插件。现成资产是否存在、可用及授权须逐项核对；正式版仍按工作流完成适用的分轨审听与内容门。
 - 环境初始化与依赖矩阵 → 本仓 README（`env python3 vt.py init` 自检）。
