@@ -139,7 +139,19 @@ vtx -t /path/to/timeline.json store plan --request /path/to/request.json
 vtx -t /path/to/timeline.json store --request /path/to/request.json
 ```
 
-plan 返回 `base_revision/request_digest/document/edit/prediction`。它是**未持锁预测**，不保留 op_id/ID/版本、不保证随后提交成功；预测 document 保留旧 head，不是提交回执。提交重新持锁读取并做原字节 CAS。plan/commit 均不调用 Ctx、FFmpeg、素材 probe、插件或外字幕解析。`edit.validation` 明确区分结构通过、源边界 unprobed、assets/plugins unchecked、render required，绝不把结构通过写成源长 verified。
+plan 是零写的**未持锁、尽力 snapshot 预测**：只读工程与已存在的完整 history，绝不创建 store、目录、锁、manifest、journal 或 intent，也不恢复、不预留 op_id/ID/版本。重复读取仅检测已观察到的变化（`plan.not_ready`，可重试），不能保证跨文件原子快照、强一致或随后提交成功；即使未检测到变化，另一 writer 仍可随后改变历史。提交重新持锁验证 history、原字节 CAS 与最终结构。与 commit 一样，严格检查当前文件后先判已有 op_id/request_digest，再判 base；因此原请求 replay 允许旧 base，同 ID 新 payload（包括仅改 base）先报 `idempotency.conflict`，不是普通 stale conflict。
+
+所有分支仍使用 `schema:"framivra.timeline.store/v1", operation:"plan"`：
+
+| 只读观测 | 结果与字段 |
+|---|---|
+| 无该 op 历史，base 匹配 | `ok:true,replayed:false`，返回 `base_revision/request_digest/document/edit/prediction`；仅此分支运行 transformer。document 保留旧 head，不是提交回执 |
+| 已 committed，相同完整请求 | `ok:true,replayed:true`，返回 `base_revision/request_digest/current_revision/prediction` 与 `result`；result 是持久化原提交结果加本次 current_revision/replayed:true，表示重传无需新 plan，不含顶层 document/edit |
+| 同 op_id 不同完整请求 | `ok:false,code:"idempotency.conflict"`，不返回新 document/edit |
+| 已 aborted，相同请求 | `ok:false,code:"aborted"`；需要新 op_id 才能再试，不返回原意图的未提交 after |
+| 任何 pending intent 或损坏/缺失的既有 history 证据 | `ok:false,code:"recovery_required"`；须显式 recover 或人工检查，不猜终态、不自动修复、不生成新计划 |
+
+replay 的 `result.revision/edit` **仅是历史提交及其当时窗口**，不是当前工程或当前→after 的新变化；undo 或后续编辑后仍如此，`current_revision` 可不同于历史 revision。没有独立持久化的 plan 时不从当前文档重算历史，不伪造新的 after 窗口。不存在 store 时照常纯计划；缺失工程按 base 次序返回 conflict/input.missing，无任何初始化。plan/commit 均不调用 Ctx、FFmpeg、素材 probe、插件或外字幕解析。`edit.validation` 明确区分结构通过、源边界 unprobed、assets/plugins unchecked、render required，绝不把结构通过写成源长 verified。文件读取可能由文件系统更新 atime；零写保证不创建或改写文件内容、权限、mtime/ctime，不等于禁止系统访问时间记账。
 
 下表字段均是 `op` 以外的键；`?` 为可选。`id/track_id` 是稳定 ID；仅字幕目标 `track_id:"subtitles"` 是虚拟轨选择器，不支持多字幕层。所有帧/位置必须为非 bool 整数，时间 `[start,end)`；移动/复制的 `at` 指全局新起点。
 

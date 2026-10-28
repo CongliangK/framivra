@@ -344,6 +344,182 @@ class TimelineEditTest(unittest.TestCase):
         self.assertEqual(committed["edit"], planned["edit"])
         self.assertEqual(self.doc()["_vtx"]["head"], "create")
 
+    def tree_snapshot(self):
+        # Reads may update filesystem atime; no content/inode/mode/mtime/ctime changes.
+        return {str(p.relative_to(self.root)): (
+            p.read_bytes() if p.is_file() else None,
+            p.stat().st_mode, p.stat().st_size, p.stat().st_ino,
+            p.stat().st_mtime_ns, p.stat().st_ctime_ns)
+            for p in [self.root, *self.root.rglob("*")]}
+
+    def readonly_plan_both(self, request, code=None):
+        request_file = self.root / "plan-request.json"
+        request_file.write_text(json.dumps(request), encoding="utf-8")
+        before = self.tree_snapshot()
+        with patch.object(store, "transform_timeline", side_effect=AssertionError("persisted decisions must not transform")):
+            result = timeline_edit_plan(self.path, request)
+        self.assertEqual(self.tree_snapshot(), before)
+        env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1")
+        cli = subprocess.run([sys.executable, "-m", "vtx", "-t", str(self.path), "store", "plan", "--request", str(request_file)],
+                             cwd=self.root, env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(cli.returncode, int(code is not None), cli.stderr + cli.stdout)
+        self.assertEqual(json.loads(cli.stdout), result)
+        self.assertEqual(self.tree_snapshot(), before)
+        self.assertNotIn("document", result)
+        self.assertNotIn("edit", result)
+        if code is not None:
+            self.assertFalse(result["ok"], result)
+            self.assertEqual(result["code"], code)
+        else:
+            self.assertTrue(result["ok"], result)
+            self.assertTrue(result["replayed"])
+        return result
+
+    def test_plan_committed_original_old_base_returns_frozen_replay_cli_python(self):
+        request = self.request([{"op": "block.move", "id": "sub", "track_id": "subtitles", "at": 30}], "once")
+        committed = timeline_transaction(self.path, request)
+        self.assertTrue(committed["ok"], committed)
+        planned = self.readonly_plan_both(request)
+        replay = timeline_transaction(self.path, request)
+        self.assertEqual(planned["result"], replay)
+        self.assertEqual(planned["result"]["edit"], committed["edit"])
+        self.assertEqual(planned["base_revision"], request["base_revision"])
+        self.assertNotEqual(planned["base_revision"], planned["current_revision"])
+
+    def test_plan_same_id_new_payload_or_only_base_conflicts_before_cas(self):
+        request = self.request([{"op": "block.move", "id": "sub", "track_id": "subtitles", "at": 30}], "once")
+        self.assertTrue(timeline_transaction(self.path, request)["ok"])
+        for altered in (dict(request, base_revision=sha(self.path.read_bytes())),
+                        dict(request, operations=[{"op": "block.move", "id": "sub", "track_id": "subtitles", "at": 60}]),
+                        dict(request, base_revision=sha(self.path.read_bytes()), operations=[{"op": "block.move", "id": "sub", "track_id": "subtitles", "at": 60}])):
+            with self.subTest(request=altered):
+                self.readonly_plan_both(altered, "idempotency.conflict")
+                self.assertEqual(timeline_transaction(self.path, altered)["code"], "idempotency.conflict")
+
+    def test_plan_aborted_original_refuses_new_window_cli_python(self):
+        request = self.request([{"op": "block.move", "id": "sub", "track_id": "subtitles", "at": 30}], "aborted")
+        def fault(name):
+            if name == "intent_published":
+                raise OSError("abort plan regression intent")
+        with patch.object(store, "_checkpoint", side_effect=fault):
+            self.assertFalse(timeline_transaction(self.path, request)["ok"])
+        self.assertTrue(timeline_store_status(self.path, recover=True)["ok"])
+        self.readonly_plan_both(request, "aborted")
+        self.assertEqual(timeline_transaction(self.path, request)["code"], "aborted")
+        altered = dict(request, base_revision="stale")
+        self.readonly_plan_both(altered, "idempotency.conflict")
+        self.assertEqual(timeline_transaction(self.path, altered)["code"], "idempotency.conflict")
+
+    def test_plan_pending_before_and_after_replace_requires_explicit_recover(self):
+        for stage in ("intent_published", "replaced"):
+            request = self.request([{"op": "parameters.update", "id": "sub", "path": ["text"], "value": stage}], stage)
+            def fault(name):
+                if name == stage:
+                    raise OSError("pending plan regression intent")
+            with patch.object(store, "_checkpoint", side_effect=fault):
+                self.assertFalse(timeline_transaction(self.path, request)["ok"])
+            self.readonly_plan_both(request, "recovery_required")
+            self.readonly_plan_both(dict(request, op_id="unrelated"), "recovery_required")
+            with patch.object(store, "transform_timeline", side_effect=AssertionError("recovery must not transform")):
+                self.assertTrue(timeline_store_status(self.path, recover=True)["ok"])
+            self.readonly_plan_both(request, "aborted" if stage == "intent_published" else None)
+
+    def test_plan_replay_after_undo_is_historical_not_current_document(self):
+        request = self.request([{"op": "block.split", "id": "c", "at": 15, "new_id": "right"}], "split")
+        committed = timeline_transaction(self.path, request)
+        self.assertTrue(committed["ok"], committed)
+        undone = timeline_transaction(self.path, dict(operation="undo", op_id="undo", base_revision=committed["revision"], head="split"))
+        self.assertTrue(undone["ok"], undone)
+        planned = self.readonly_plan_both(request)
+        self.assertEqual(planned["result"]["revision"], committed["revision"])
+        self.assertEqual(planned["result"]["edit"]["created_ids"], ["right"])
+        self.assertEqual(planned["current_revision"], undone["revision"])
+        self.assertEqual(planned["result"], timeline_transaction(self.path, request))
+        self.assertNotIn("right", [o["id"] for _, o, _ in managed_objects(self.doc())])
+
+    def test_plan_corrupt_history_is_not_a_fresh_plan_and_never_repairs(self):
+        home = store._location(self.path)
+        record = next(home.glob("op-*"))
+        request = self.request([{"op": "block.remove", "id": "sub"}])
+        for evidence in (home / "manifest.json", record / "intent.json", record / "commit.json", record / "after.bin"):
+            original = evidence.read_bytes()
+            for corruption in (b"{broken", None):
+                with self.subTest(evidence=evidence.name, missing=corruption is None):
+                    if corruption is None:
+                        evidence.unlink()
+                    else:
+                        evidence.write_bytes(corruption)
+                    self.readonly_plan_both(request, "recovery_required")
+                    evidence.write_bytes(original)
+        unknown = home / "unexpected"
+        unknown.write_bytes(b"not a record")
+        self.readonly_plan_both(request, "recovery_required")
+
+    def test_plan_corrupt_current_timeline_rejects_before_persisted_decision(self):
+        request = self.request([{"op": "block.remove", "id": "sub"}], "once")
+        self.assertTrue(timeline_transaction(self.path, request)["ok"])
+        original = self.path.read_bytes()
+        for content, code in ((b"{broken", "input.json"), (b"{}", "input.structure")):
+            with self.subTest(content=content):
+                self.path.write_bytes(content)
+                self.readonly_plan_both(request, code)
+                self.assertEqual(timeline_transaction(self.path, request)["code"], code)
+        self.path.write_bytes(original)
+
+    def test_plan_empty_or_lock_only_home_never_initializes_or_recovers(self):
+        self.path = self.root / "partial.json"
+        self.path.write_bytes((self.root / "时间线.json").read_bytes())
+        request = self.request([{"op": "block.remove", "id": "sub"}])
+        home = store._location(self.path)
+        home.mkdir()
+        self.readonly_plan_both(request, "recovery_required")
+        (home / "store.lock").write_bytes(b"")
+        self.readonly_plan_both(request, "recovery_required")
+        self.assertEqual([p.name for p in home.iterdir()], ["store.lock"])
+
+    def test_plan_no_timeline_no_store_zero_write_and_no_transform(self):
+        self.path = self.root / "absent.json"
+        for base, expected in ((None, "input.missing"), ("stale", "conflict")):
+            request = dict(operation="edit", op_id="missing", base_revision=base, operations=[{"op": "block.remove", "id": "sub"}])
+            self.readonly_plan_both(request, expected)
+            self.assertFalse(store._location(self.path).exists())
+            self.assertEqual(timeline_transaction(self.root / "commit-absent.json", request)["code"], expected)
+
+    def test_plan_no_history_preserves_entire_tree_and_does_not_reserve(self):
+        self.path = self.root / "copied.json"
+        self.path.write_bytes((self.root / "时间线.json").read_bytes())
+        request = self.request([{"op": "block.split", "id": "c", "at": 15, "new_id": "right"}])
+        before = self.tree_snapshot()
+        first = timeline_edit_plan(self.path, request)
+        second = timeline_edit_plan(self.path, request)
+        self.assertTrue(first["ok"], first)
+        self.assertFalse(first["replayed"])
+        self.assertEqual(first, second)
+        self.assertEqual(self.tree_snapshot(), before)
+        self.assertFalse(store._location(self.path).exists())
+
+    def test_plan_observed_concurrent_history_or_timeline_change_is_not_ready(self):
+        request = self.request([{"op": "block.remove", "id": "sub"}])
+        original = store._plan_history
+        for change_history in (True, False):
+            calls = []
+            def read_history(home, target):
+                records = original(home, target)
+                calls.append(1)
+                if len(calls) == 2:
+                    if change_history:
+                        concurrent = self.request([{"op": "parameters.update", "id": "sub", "path": ["text"], "value": "concurrent"}])
+                        self.assertTrue(timeline_transaction(self.path, concurrent)["ok"])
+                        return original(home, target)
+                    # An external writer can change only the current file.
+                    self.path.write_bytes(self.path.read_bytes() + b"\n")
+                return records
+            with self.subTest(history=change_history), patch.object(store, "_plan_history", side_effect=read_history), patch.object(store, "transform_timeline", wraps=store.transform_timeline) as transform:
+                result = timeline_edit_plan(self.path, request)
+                self.assertEqual(result["code"], "plan.not_ready", result)
+                self.assertEqual(transform.call_count, int(change_history))  # only the concurrent writer
+                self.assertNotIn("document", result)
+
     def test_plan_success_does_not_reserve_and_later_cas_reject(self):
         request = self.request([{"op": "block.split", "id": "c", "at": 15, "new_id": "cr"}])
         self.assertTrue(timeline_edit_plan(self.path, request)["ok"])

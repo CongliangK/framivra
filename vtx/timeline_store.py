@@ -201,18 +201,22 @@ def _locked(target):
     # file_lock supplies thread lock -> flock, never delete it or reacquire this path.
     with file_lock(home / "store"):
         _regular(lock)
-        manifest = home / "manifest.json"
-        expected = {"protocol": 1, "target": target.name}
-        try:
-            actual = strict_loads(_read(manifest))
-        except (OSError, ValueError, TypeError, RecursionError) as error:
-            # Includes empty/lock-only old homes: never infer identity from SHA,
-            # .publish fragments or an arbitrary pre-existing directory.
-            _fail("recovery_required", "invalid or missing history manifest (manual inspection required): " + str(error))
-        if (actual not in (expected, dict(expected, location=str(target)))
-                or type(actual.get("protocol")) is not int):
-            _fail("recovery_required", "history manifest target/protocol/location mismatch")
+        _check_manifest(home, target)
         yield home
+
+
+def _check_manifest(home, target):
+    """Validate existing identity evidence without initializing or locking it."""
+    expected = {"protocol": 1, "target": target.name}
+    try:
+        actual = strict_loads(_read(home / "manifest.json"))
+    except (OSError, ValueError, TypeError, RecursionError) as error:
+        # Includes empty/lock-only old homes: never infer identity from SHA,
+        # .publish fragments or an arbitrary pre-existing directory.
+        _fail("recovery_required", "invalid or missing history manifest (manual inspection required): " + str(error))
+    if (actual not in (expected, dict(expected, location=str(target)))
+            or type(actual.get("protocol")) is not int):
+        _fail("recovery_required", "history manifest target/protocol/location mismatch")
 
 
 def _parse(payload):
@@ -404,6 +408,20 @@ def _same_ids(before, after):
         _fail("input.identity", "replace must retain the complete ID/kind inventory; add/remove/copy/split are not supported")
 
 
+def _idempotency_decision(records, op_id, digest, current_revision):
+    """Pure decision over validated evidence; no retry, recovery or transform."""
+    record = records.get(op_id)
+    if record is None:
+        return None
+    if record["intent"]["request_digest"] != digest:
+        _fail("idempotency.conflict", "same op_id has a different payload")
+    if record["state"] == "aborted":
+        _fail("aborted", "intent was not committed; use a new op_id to try again")
+    if record["state"] != "committed":
+        _fail("recovery_required", "unresolved intent; explicit recover required before planning")
+    return dict(record["intent"]["result"], current_revision=current_revision, replayed=True)
+
+
 def timeline_transaction(path, request):
     """Execute {operation, op_id, base_revision, document? / changes? / operations? / head?}.
 
@@ -442,13 +460,9 @@ def timeline_transaction(path, request):
             else:
                 doc = None
             _checkpoint("read")
-            if op_id in records:
-                record = records[op_id]
-                if record["intent"]["request_digest"] != digest:
-                    _fail("idempotency.conflict", "same op_id has a different payload")
-                if record["state"] == "aborted":
-                    _fail("aborted", "intent was not committed; use a new op_id to try again")
-                return dict(record["intent"]["result"], current_revision=_sha(before), replayed=True)
+            replay = _idempotency_decision(records, op_id, digest, _sha(before))
+            if replay is not None:
+                return replay
             revision = _sha(before)
             if request["base_revision"] != revision:
                 _fail("conflict", "base_revision does not match current file bytes")
@@ -536,29 +550,59 @@ def timeline_transaction(path, request):
                     message=str(error), retry="retry identical op_id/request or recover; never assume uncommitted" if code == "outcome_unknown" else None)
 
 
-def timeline_edit_plan(path, request):
-    """Zero-write, unlocked prediction. Commit always re-reads under lock/CAS.
+def _plan_history(home, target):
+    """Read only an already published home; absence is not initialization."""
+    try:
+        if _regular(home, missing=True, directory=True) is None:
+            return {}
+        _check_manifest(home, target)
+        return _history(home, target)
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:
+        _fail("recovery_required", "history not ready for read-only planning: " + str(error))
 
-    This never opens history or reserves op_id/IDs. No assets are inspected.
-    The predicted document retains the existing head (not a commit receipt).
+
+def timeline_edit_plan(path, request):
+    """Zero-write prediction over existing timeline/history, never a reservation.
+
+    Replays return the frozen historical result, not a freshly transformed
+    document. Pending/corrupt evidence needs explicit recovery/inspection.
+    Repeated reads detect observed changes only, not a linearizable snapshot.
     """
     try:
         if (not isinstance(request, dict)
                 or set(request) != {"operation", "op_id", "base_revision", "operations"}
                 or request["operation"] != "edit" or not valid_id(request["op_id"])):
             _fail("input.request", "plan requires the exact managed edit request")
-        request = strict_loads(_encode(request))
+        request_bytes = _encode(request)
+        request = strict_loads(request_bytes)
+        digest = _sha(request_bytes)
         target = _canonical(path)
-        before = _read(target)
+        home = _location(target)
+        records = _plan_history(home, target)
+        if any(r["state"] == "pending" for r in records.values()):
+            _fail("recovery_required", "unresolved intent; explicit recover required before planning")
+        before = _read(target, missing=True)
+        doc = _parse(before) if before is not None else None
+        if doc is not None:
+            _check(doc)
+        if records != _plan_history(home, target) or before != _read(target, missing=True):
+            _fail("plan.not_ready", "observed timeline/history change during unlocked reads; retry plan")
         revision = _sha(before)
+        prediction = "unlocked best-effort snapshot, no reservation or strong consistency; execution revalidates history, CAS and final structure"
+        replay = _idempotency_decision(records, request["op_id"], digest, revision)
+        if replay is not None:
+            return _result("plan", op_id=request["op_id"], base_revision=request["base_revision"],
+                           request_digest=digest, current_revision=revision, replayed=True,
+                           result=replay, prediction=prediction)
         if request["base_revision"] != revision:
             _fail("conflict", "base_revision does not match current file bytes")
-        doc = _parse(before)
+        if doc is None:
+            _fail("input.missing", "target missing")
         after_doc, summary = transform_timeline(doc, request["operations"])
         _encode(after_doc)
         return _result("plan", op_id=request["op_id"], base_revision=revision,
-                       request_digest=_sha(_encode(request)), document=after_doc, edit=summary,
-                       prediction="unlocked, no reservation; execution revalidates CAS and final structure")
+                       request_digest=digest, document=after_doc, edit=summary,
+                       replayed=False, prediction=prediction)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:
         return dict(schema=_SCHEMA, operation="plan", ok=False,
                     code=getattr(error, "code", "input.error"), message=str(error))
