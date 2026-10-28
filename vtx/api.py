@@ -39,6 +39,7 @@ from .pipeline.stages import load_timeline_check            # 稳定性承诺随
 from .pluginlib import config as _pl_config
 from .pluginlib.hooks import plugin_code_digest, resolve_source_wav
 from .cache.recovery import atomic_media, media_cache_valid
+from .timeline import inspect_timeline, query_timeline, timeline_capabilities
 
 __all__ = [
     "Ctx", "DOWNSTREAM", "load_receipt", "media_stat_digest", "audio_key",
@@ -46,6 +47,7 @@ __all__ = [
     "lookup", "measure_and_store", "gfx_key", "gfx_dir", "load_timeline_check",
     "read_receipt_atomic", "write_receipt_atomic",
     "atomic_media", "media_cache_valid",
+    "inspect_timeline", "query_timeline", "timeline_capabilities",
 ]
 
 

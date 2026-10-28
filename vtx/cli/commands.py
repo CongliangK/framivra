@@ -833,15 +833,28 @@ def _main(execution=None):
                     help="diff 时间线模式专属：机器可读 diff/影响面/推荐路径 JSON 写入 PATH"
                          "（缺省只打印人读摘要；报告对比模式不支持）；"
                          "audio --report/--report-only 专属：报告 JSON 落盘 PATH（默认 out/audio_report.json）")
+    ap.add_argument("--family", help="query only: video | audio | subtitles")
+    ap.add_argument("--track-index", help="query only: zero-based transient track position")
+    ap.add_argument("--block-index", help="query only: zero-based transient block position")
+    ap.add_argument("--frame", help="query only: global integer frame (not seconds)")
+    ap.add_argument("--interval", nargs=2, metavar=("START", "END"),
+                    help="query only: overlapping global integer frame interval [START,END)")
     ap.add_argument("command",
                     help="all | " + " | ".join(s[0] for s in STAGES) +
-                         " | clean | gc | df | snapshot | subs | diff")
+                         " | clean | gc | df | snapshot | subs | diff | inspect | query | capabilities")
     # 必须定义在 command 之后：argparse 位置参数按定义序匹配，`*` 放前面会把
     # `subs check` 的两个 token 全部吞掉、command 只剩末位（实测 2026-09-11）
     ap.add_argument("subs_extra", nargs="*", metavar="ARG",
                     help="subs 专属：render | preview <时间点...> | check（时间点 `12.5`=秒 / `f360`=帧号）；"
                          "diff 专属：<旧报告.json> <新报告.json>（复用同一位置参数槽，见上注）")
     a = ap.parse_intermixed_args()
+    if a.command in ("inspect", "query", "capabilities"):
+        # Before Ctx, execution links, plugins, project paths or any write gate.
+        from .timeline import run_read_command
+        return run_read_command(a, ap)
+    if any(getattr(a, name) is not None for name in
+           ("family", "track_index", "block_index", "frame", "interval")):
+        ap.error("--family/--track-index/--block-index/--frame/--interval require query")
     policy = ExecutionPolicy.PLAN if a.dry_run else ExecutionPolicy.EXECUTE
     # --until 校验（方案三阶段3）：仅 all 合法 + 值域 = _UNTIL_STAGES；两错均退出码 2
     # （与「未知命令」同级：用法错而非运行错，脚本侧好分类）。audio 不可作终点的
