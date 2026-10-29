@@ -1,6 +1,6 @@
 # Framivra DSH sidebar — read-only preview and stored references
 
-This optional app belongs to Framivra's `apps/` layer. The Python wheel does **not** include this plugin. Timeline semantics and selection remain exclusively in the unified `vtx` read kernel: this app does not contain another query/editor/render implementation. No cross-directory catalog/manifest registration is included in this review slice.
+This optional DSH integration lives in `integrations/dsh-sidebar/`, the source home for an external-host adapter, not a native `vtx` app or hook. The Python wheel does **not** include this adapter. Timeline semantics and selection remain exclusively in the unified `vtx` read kernel: this integration does not contain another query/editor/render implementation. It is loaded by DSH, not registered in the native vtx component catalog.
 
 ## Current status
 
@@ -36,7 +36,7 @@ Only existing `out/final.mp4` and `out/draft_final.mp4` are offered, with **prov
 
 Host/source-view tests require Node >=22.15 and native lossless JSON. The SDK/tsdown build uses Node **22.23.3** here (tsdown requires Node ^22.18 or >=24); Python 3 stdlib creates ZIPs. Install this app's declared public-version `devDependencies` in an isolated development environment before running the complete tests; React, ReactDOM, Cordis, ui-slots and jsdom are test/platform suppliers, not plugin runtime copies. Do not assume registry installation currently supplies the candidate SDK API described above. This round used that SDK tarball, copied public Cordis/ui-slots built artifacts and reused already-installed tsdown/React/ReactDOM/jsdom dependencies: **no fresh registry install was tested**.
 
-From this app directory, with those build/test dependencies available:
+From the repository root, enter `integrations/dsh-sidebar/` (`cd integrations/dsh-sidebar`), with those build/test dependencies available:
 
 ```sh
 npm run build:client
@@ -63,7 +63,7 @@ The release ZIP must have `package.json`, `cordis.patch.yml`, ESM `lib/index.js`
 
 The public SDK receives this package directory, `src/client/index.mjs` and an output directory; `package.json.name` is the module ID. `npm run build:client` emits `lib/client.js` and its debug map. React remains a platform-shared request and is declared as an exact `18.3.1` peer (the tested version, not a broader compatibility claim); no other external Client module is emitted. Local JSON presentation code is bundled. The separate packaging command builds again in a fresh staging directory, copies the Host's ESM closure with relative `.js` imports, and strips only the SDK debug-map trailer (the production ZIP omits maps/source paths). It never requires an SDK or source checkout at runtime.
 
-From this app directory, with the build dependencies available (**writes a candidate artifact**, not an install):
+From `integrations/dsh-sidebar/`, with the build dependencies available (**writes a candidate artifact**, not an install):
 
 ```sh
 npm run package -- --out /absolute/new/framivra-dsh-sidebar-candidate.zip
