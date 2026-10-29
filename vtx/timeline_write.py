@@ -6,8 +6,8 @@ are create-only artifacts, never an overwrite bypass for live projects.
 import copy
 from typing import Literal, Optional, TypedDict
 
-from .timeline_structure import managed_objects, strict_loads, structure_errors, valid_id
-from .timeline_edit import edit_summary, transform_timeline
+from .timeline_structure import json_equal, managed_objects, strict_loads, structure_errors, valid_id
+from .timeline_edit import edit_summary as _v1_edit_summary, reference_edges, transform_timeline, window
 
 SCHEMA = "framivra.timeline.store/v2"
 
@@ -92,6 +92,47 @@ def freeze_request(request, *, evidence=False):
     return strict_loads(encoded), s._sha(encoded)
 
 
+def edit_summary(before, after, warnings=()):
+    """v2 JSON-value change audit, without reinterpreting frozen v1 summaries.
+
+    Keep the existing reference/warning diagnostics. Recompute changed IDs and
+    their causal ranges because Python deep equality in v1 misses bool/number
+    changes, including changed parents, shared sources and project extensions.
+    """
+    summary = _v1_edit_summary(before, after, warnings)
+    old, new = ({obj["id"]: (path, obj, kind) for path, obj, kind in managed_objects(doc)}
+                for doc in (before, after))
+    changed = {i for i in old.keys() & new.keys()
+               if old[i][0] != new[i][0] or not json_equal(old[i][1], new[i][1])}
+    affected = []
+    def add(identity, reason=None):
+        item = {"id": identity}
+        if reason:
+            item["reason"] = reason
+        for label, objects in (("before", old), ("after", new)):
+            if identity in objects and objects[identity][2] in ("clip", "event", "subtitle"):
+                item[label] = list(window(objects[identity][1], objects[identity][2]))
+        if "before" in item or "after" in item:
+            affected.append(item)
+    for i in sorted(changed | (old.keys() ^ new.keys())):
+        add(i)
+    changed_sources = {i for i in changed if old[i][2] == "source"}
+    impacted = {e["id"] for doc in (before, after) for e in reference_edges(doc)
+                if e["field"] == "src" and e["value"] in changed_sources}
+    project_changed = not json_equal(before["project"], after["project"])
+    for objects in (old, new):
+        for i, (_, obj, kind) in objects.items():
+            child = "clips" if kind == "video_track" else "events" if kind == "audio_track" else None
+            if i in changed and child:
+                impacted.update(b["id"] for b in obj[child])
+            if kind in ("clip", "event", "subtitle") and project_changed:
+                impacted.add(i)
+    for i in sorted(impacted - {item["id"] for item in affected}):
+        add(i, "shared source, parent track or project changed")
+    summary.update(changed_ids=sorted(changed), affected_ranges=affected)
+    return summary
+
+
 def reconciliation(before, after, request):
     """Bounded stable-ID owner audit; no index/path/text matching or generated IDs.
 
@@ -122,14 +163,14 @@ def reconciliation(before, after, request):
                 parts = [p for p in (obj_projection(c) for c in children) if p is not None]
                 # Even an owned container cannot silently relocate non-owned
                 # children to another owned container with an identical shell.
-                return (value["id"], shell, parts) if shell is not None or parts else None
+                return [value["id"], shell, parts] if shell is not None or parts else None
             return shell
         root = {k: copy.deepcopy(v) for k, v in doc.items()
                 if k not in ("sources", "video_tracks", "audio_tracks", "subtitles", "_vtx")}
         for key, child in (("sources", None), ("video_tracks", "clips"), ("audio_tracks", "events"), ("subtitles", None)):
             root[key] = [p for p in (obj_projection(o, child) for o in doc[key]) if p is not None]
         return root
-    if nonowned_projection(before) != nonowned_projection(after):
+    if not json_equal(nonowned_projection(before), nonowned_projection(after)):
         s._fail("reconcile.scope", "semantic batch changes non-owned data or placement")
     for key in set(old) & set(current):
         if old[key][1] != current[key][1]:
@@ -180,14 +221,15 @@ def prepare(request, before, doc, records):
             if not isinstance(after_doc, dict) or identity_mode(after_doc) != mode:
                 s._fail("input.identity", "replace cannot change identity_mode")
             if mode == "managed":
-                if after_doc.get("_vtx") != doc["_vtx"]:
+                if not json_equal(after_doc.get("_vtx"), doc["_vtx"]):
                     s._fail("input.identity", "replace must retain current _vtx")
                 s._check(after_doc, managed=True)
                 s._same_ids(doc, after_doc)
         elif op == "apply":
             s._apply(after_doc, request["changes"])
         elif op in ("edit", "reconcile"):
-            after_doc, extras["edit"] = transform_timeline(doc, request["operations"])
+            after_doc, original_summary = transform_timeline(doc, request["operations"])
+            extras["edit"] = edit_summary(doc, after_doc, original_summary["warnings"])
             if op == "reconcile":
                 extras["reconciliation"] = reconciliation(doc, after_doc, request)
         elif op == "undo":
@@ -279,16 +321,16 @@ def record(directory, target, entries, metadata):
     if req["operation"] == "reconcile":
         extras["reconciliation"] = reconciliation(old, doc, req)
     expected_result = result(req, digest, before, after, doc, extras)
-    if metadata != intent(target, req, digest, before, after, doc, expected_result):
+    if not json_equal(metadata, intent(target, req, digest, before, after, doc, expected_result)):
         raise ValueError("v2 intent/result/request identity mismatch")
     if directory.name != "op-" + s.hashlib.sha256(req["op_id"].encode()).hexdigest():
         raise ValueError("v2 operation directory mismatch")
     committed, aborted = "commit.json" in entries, "abort.json" in entries
     if committed and aborted:
         raise ValueError("both commit and abort")
-    if committed and strict_loads(s._read(directory / "commit.json")) != expected_result:
+    if committed and not json_equal(strict_loads(s._read(directory / "commit.json")), expected_result):
         raise ValueError("commit result mismatch")
-    if aborted and strict_loads(s._read(directory / "abort.json")) != {"op_id": req["op_id"], "state": "aborted"}:
+    if aborted and not json_equal(strict_loads(s._read(directory / "abort.json")), {"op_id": req["op_id"], "state": "aborted"}):
         raise ValueError("abort result mismatch")
     return dict(intent=metadata, before=before, after=after, directory=directory,
                 state="committed" if committed else "aborted" if aborted else "pending")

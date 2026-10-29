@@ -282,7 +282,11 @@ plan = timeline_write_plan(path, request)  # 零写；不初始化 status/histor
 
 最终比较包括对象 kind、父容器、非 owned 同级次序及全部未知深字段：非 owned 数据/位置、root/project 数据不得改变；隐式引用修复若影响非 owned 也拒绝。owned 对象的未知字段仅通过既有定点语义变换保留/修改，不投影重建。结果 reconciliation 列出 owner/base_revision、changes/creates/deletes/preserved_ids/warnings；这是调用者声明的业务范围审计，**不是宿主授权或持久 owner 注册表**。尚未迁移 ASR/duck/Blender 等现入口，也未实现它们各自的业务键映射和 owned root metadata 更新。
 
+v2 的范围、变更摘要及证据按 JSON 值递归比较：object 键序无关，array 次序保留；boolean 与 number 严分。JSON 只有一种 number，int/float 同值（含 ±0）相等，不比较数字词法；实际可写输入仍受 strict parser 的有限值/十进制往返精度约束，Python tuple/非字符串键拒绝。owned 真变化须列入 changed_ids/changes，并追踪父轨、共享源及 project 的影响窗口。v1 有效请求 digest、结果与字节不重签、不改写，原 v1 摘要保持；历史 boolean 被换成 0/1 属损坏，status/plan/replay 拒绝而非放宽恢复。
+
 managed undo 额外字段仍为 head：只撤当前 managed head，保持原字节 CAS；也能消费原 v1 已提交记录。preserve-unmanaged undo 额外字段为 `undo_of`：必须显式选择 committed 操作且当前 bytes 逐字节等于该记录 after，然后**原字节**恢复 before；语义相等但排版变化也拒绝。不维护时间戳/sidecar HEAD，不猜最后操作。create 的 before 不存在，不把 undo 变成删文件；adopt 跨 mode、exact artifact 均不可隐式撤销。撤销本身是新请求/新提交，仍有幂等与恢复。
+
+[JSON 值回归](../../tests/contracts/test_timeline_write_json.py) 覆盖真实 plan/CLI 提交、嵌套非 owned/root/project 范围、owned 类型变化摘要及 typed receipt 损坏后的 status/plan/replay 零写拒绝，并保留 object 键序无关和 array 顺序边界。
 
 ### Exact-import 与 detached-copy
 

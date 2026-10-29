@@ -29,6 +29,26 @@ def strict_loads(payload):
                       parse_constant=_constant, parse_float=number)
 
 
+def json_equal(left, right):
+    """Compare parsed JSON values, not Python's bool/int equivalence.
+
+    Objects are unordered; arrays are ordered. JSON has one number type, so
+    equal int/float values and signed zero compare equal (not lexical identity).
+    Only writable JSON builtins are supported; encoding/strict_loads remain the
+    authority for finite/precision/range checks, not a second parser here.
+    """
+    if type(left) in (int, float) and type(right) in (int, float):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return (all(type(k) is str for k in left) and left.keys() == right.keys()
+                and all(json_equal(left[k], right[k]) for k in left))
+    if type(left) is list:
+        return len(left) == len(right) and all(json_equal(a, b) for a, b in zip(left, right))
+    return type(left) in (str, bool, type(None)) and left == right
+
+
 def managed_objects(doc):
     """Yield (JSON pointer, object, kind) for stored (not referenced) objects."""
     for key, kind, child in (("sources", "source", None),

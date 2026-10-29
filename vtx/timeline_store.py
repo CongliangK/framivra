@@ -18,7 +18,7 @@ from .runtime.fstxn import file_lock
 from . import timeline_write as _v2
 from .timeline_write import read_timeline_for_write, TimelineSnapshot
 from .timeline_edit import EDIT_OPERATIONS, edit_summary, transform_timeline
-from .timeline_structure import (identity_errors, managed_objects, strict_loads,
+from .timeline_structure import (identity_errors, json_equal, managed_objects, strict_loads,
                                  structure_errors, valid_id)
 
 _SCHEMA = "framivra.timeline.store/v1"
@@ -49,7 +49,7 @@ def _encode(value):
     # Roundtrip catches non-string keys, unsupported objects, NaN and lone surrogates.
     payload = json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
                          separators=(",", ":")).encode("utf-8")
-    if strict_loads(payload) != value:
+    if not json_equal(strict_loads(payload), value):
         _fail("input.json", "input is not a lossless JSON value")
     return payload
 
@@ -313,13 +313,13 @@ def _record(home, directory, target):
             expected["edit"] = edit_summary(before_doc, after_doc, warnings)
         elif intent["operation"] == "undo" and "edit" in intent["result"]:
             expected["edit"] = edit_summary(before_doc, after_doc)
-        if intent["result"] != expected:
+        if not json_equal(intent["result"], expected):
             raise ValueError("intent result mismatch")
         committed = "commit.json" in entries
         aborted = "abort.json" in entries
         if committed and aborted:
             raise ValueError("both commit and abort")
-        if committed and strict_loads(_read(directory / "commit.json")) != intent["result"]:
+        if committed and not json_equal(strict_loads(_read(directory / "commit.json")), intent["result"]):
             raise ValueError("commit result mismatch")
         if aborted and strict_loads(_read(directory / "abort.json")) != {"op_id": intent["op_id"], "state": "aborted"}:
             raise ValueError("abort result mismatch")
