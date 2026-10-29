@@ -159,6 +159,8 @@ vtx -t /path/to/timeline.json store --request /path/to/request.json
 vtx -t /path/to/timeline.json store recover
 ```
 
+CLI 的 `store [plan] --request-stdin` 可替代 `--request PATH`：直接读取已有 stdin 二进制流至 EOF，仅接受一个完整严格 UTF-8 JSON 对象，最多 **8388608 字节（8MiB）**；超限多读至多一字节即拒绝，不截断、不重开 `/dev/stdin`。发送者必须关闭写端；未到 EOF 不执行计划或提交。解析/UTF-8/重复键/非有限或不可无损写出的数值错误仍用 `input.request`/exit1；参数冲突为 `cli.arguments`/exit2。两种请求旗标互斥；status/recover/capabilities、所有只读/帧图像及渲染命令均拒绝该旗标且不消费 stdin。原 `--request PATH` 语义不变，`--request -` 仍是名为 `-` 的文件，不是 stdin。`store capabilities` 仅在 CLI 结果顶层额外声明 `request_transport:{"stdin":{"flag":"--request-stdin","max_bytes":8388608}}`；Python 能力结果、协议版本、digest 和历史回执不变。stdin 只传请求，不解除下述 exact-import 的显式本地 `payload_file` 限制。
+
 request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`，拒绝未知请求键。`base_revision` 直接使用 inspect 的原字节 `content_version`，不使用 mtime。op_id/project_id/对象 ID 为 1–128 位、首位字母或数字、其余字母数字及 `_.:-` 的字符串；所有受管对象 ID 全局唯一。version 仍为 2，新增可选根 `_vtx: {protocol:1, project_id, head}`；未知未来协议拒写。管理对象为 sources、视频/音频轨、clip/event、内联字幕，不往自由 `_meta` 塞身份。
 
 | operation | 额外请求字段 | 首切片限制 |
@@ -189,6 +191,8 @@ result = timeline_transaction(path, request)
 
 ```bash
 vtx -t /path/to/timeline.json store plan --request /path/to/request.json
+# 同样零写；通过重定向在发送完请求后关闭写端：
+vtx -t /path/to/timeline.json store plan --request-stdin < /path/to/request.json
 # 实际写操作（相同 request；不是第二种 publisher）：
 vtx -t /path/to/timeline.json store --request /path/to/request.json
 ```
@@ -309,7 +313,7 @@ managed undo 额外字段仍为 head：只撤当前 managed head，保持原字�
 
 ### Exact-import 与 detached-copy
 
-Python 额外字段恰为 `raw_bytes`，只收已固化的 bytes；CLI 用唯一的 `payload_file` 替代，按调用者 cwd 解释并一次读取普通非 symlink/多硬链文件；不收 stdin、URL、目录或内联 raw_utf8。读入发生在 digest/锁之前，journal 存 frozen UTF-8 文本和 after.bin，不只记录可变源路径。CLI 的 `store plan --request ...` 也走相同冻结和纯计划，提交仍需显式 `store --request ...`；文件旗标不是另一 publisher。
+Python 额外字段恰为 `raw_bytes`，只收已固化的 bytes；CLI 用唯一的 `payload_file` 替代，按调用者 cwd 解释并一次读取普通非 symlink/多硬链文件；payload 不收 stdin、URL、目录或内联 raw_utf8（即使请求本身来自 `--request-stdin` 也不例外）。读入发生在 digest/锁之前，journal 存 frozen UTF-8 文本和 after.bin，不只记录可变源路径。CLI 的 `store plan --request ...` 也走相同冻结和纯计划，提交仍需显式 `store --request ...`；文件旗标不是另一 publisher。
 
 仅 `operation:"create"`、base=null 且目标不存在可用。purpose 只允许 `create/frozen-copy/detached-copy`；前两者要求 preserve-unmanaged。managed 原 bytes（含旧 project_id/head）只能用 `detached-copy`，要求完整 managed payload；不生成新 project_id 同时假称字节一致、不复制来源 history 或承诺来源 undo。目标有独立创建历史，即使两个文件的 `_vtx` 相同也不是同一可撤销工作副本。source 文件随后变化只会使重新请求的 digest 不同，不能改变已固化 intent。
 
@@ -343,4 +347,4 @@ engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作�
 
 ## 行为验证
 
-[真实行为测试](../../tests/contracts/test_timeline_api.py) 覆盖完整扩展保留、缺素材/未知插件、输入字节身份、暂态地址/数组次序、交集与端点、严格 JSON、坏 shape 仍可检查、结构化诊断、外部字幕不完整标注、开发错误透出、CLI/Python 同值及无工程写副作用。[事务行为测试](../../tests/contracts/test_timeline_store.py) 在仓外临时项目覆盖双进程/线程同 base 恰一成功、重试不倒退、严格输入/ID/扩展/字幕外引、create-only、head undo、每阶段异常/SIGKILL、每次真实 write/fsync/rename/replace 调用 EIO、坏历史与源码 CLI/API 同值。[兼容回归](../../tests/contracts/test_timeline_store_compat.py) 补充相同 SHA 工程的绝对/相对 symlink/.. 寻址、跨路径双进程 CAS/恢复、坏别名拒绝，以及 legacy 读校验与 managed 严格拒绝的边界。执行：`env python3 -m unittest tests.contracts.test_timeline_api tests.contracts.test_timeline_store tests.contracts.test_timeline_store_compat -v`。[引用测试](../../tests/contracts/test_timeline_reference.py) 以真实临时文件/公开 CLI 覆盖严格原文与块 span、未知嵌套/大整数/高精度/转义、managed/legacy、ID与版本寻址、帧边界/fps、外部字幕、输入及 wire 上限与零写态；执行 `env python3 -m unittest tests.contracts.test_timeline_reference -v`。测试通过不等于渲染或整仓全量通过；发行包安装烟测另需在仓外运行。
+[真实行为测试](../../tests/contracts/test_timeline_api.py) 覆盖完整扩展保留、缺素材/未知插件、输入字节身份、暂态地址/数组次序、交集与端点、严格 JSON、坏 shape 仍可检查、结构化诊断、外部字幕不完整标注、开发错误透出、CLI/Python 同值及无工程写副作用。[事务行为测试](../../tests/contracts/test_timeline_store.py) 在仓外临时项目覆盖双进程/线程同 base 恰一成功、重试不倒退、严格输入/ID/扩展/字幕外引、create-only、head undo、每阶段异常/SIGKILL、每次真实 write/fsync/rename/replace 调用 EIO、坏历史与源码 CLI/API 同值。[兼容回归](../../tests/contracts/test_timeline_store_compat.py) 补充相同 SHA 工程的绝对/相对 symlink/.. 寻址、跨路径双进程 CAS/恢复、坏别名拒绝，以及 legacy 读校验与 managed 严格拒绝的边界。执行：`env python3 -m unittest tests.contracts.test_timeline_api tests.contracts.test_timeline_store tests.contracts.test_timeline_store_compat -v`。[引用测试](../../tests/contracts/test_timeline_reference.py) 以真实临时文件/公开 CLI 覆盖严格原文与块 span、未知嵌套/大整数/高精度/转义、managed/legacy、ID与版本寻址、帧边界/fps、外部字幕、输入及 wire 上限与零写态；执行 `env python3 -m unittest tests.contracts.test_timeline_reference -v`。[stdin 请求合同](../../tests/contracts/test_timeline_stdin.py) 使用真实 OS pipe/socketpair 验证 EOF/8MiB 字节界限、严格解析、错误旗标不消费、零写计划、v1/v2 提交/重放及 exact 显式文件冻结；执行 `env python3 -m unittest tests.contracts.test_timeline_stdin -v`。测试通过不等于渲染或整仓全量通过；发行包安装烟测另需在仓外运行。

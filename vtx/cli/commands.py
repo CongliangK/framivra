@@ -836,6 +836,8 @@ def _main(execution=None):
     ap.add_argument("--render", action="store_true", help="timeline frame only: authorize warm-input PNG writes under cache/preview")
     ap.add_argument("--max-png-bytes", help="timeline frame only: PNG delivery byte cap (default 8388608)")
     ap.add_argument("--request", metavar="PATH", help="store only: strict JSON request file (store writes; store plan is zero-write)")
+    ap.add_argument("--request-stdin", action="store_true",
+                    help="store [plan] only: strict UTF-8 JSON request from stdin through EOF (max 8388608 bytes); exclusive with --request")
     ap.add_argument("--family", help="query only: video | audio | subtitles")
     ap.add_argument("--track-index", help="query only: zero-based transient track position")
     ap.add_argument("--block-index", help="query only: zero-based transient block position")
@@ -860,8 +862,8 @@ def _main(execution=None):
     if a.command == "store":
         from .timeline_store import run_store_command
         return run_store_command(a, ap)
-    if a.request is not None and a.command not in ("inspect", "query", "reference", "capabilities"):
-        ap.error("--request requires store")
+    if (a.request is not None or a.request_stdin) and a.command not in ("inspect", "query", "reference", "capabilities"):
+        ap.error("--request/--request-stdin require store")
     if a.command in ("inspect", "query", "reference", "capabilities"):
         # Before Ctx, execution links, plugins, project paths or any write gate.
         from .timeline import run_read_command
