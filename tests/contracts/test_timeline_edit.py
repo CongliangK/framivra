@@ -459,12 +459,56 @@ class TimelineEditTest(unittest.TestCase):
         request = self.request([{"op": "block.remove", "id": "sub"}], "once")
         self.assertTrue(timeline_transaction(self.path, request)["ok"])
         original = self.path.read_bytes()
-        for content, code in ((b"{broken", "input.json"), (b"{}", "input.structure")):
-            with self.subTest(content=content):
-                self.path.write_bytes(content)
-                self.readonly_plan_both(request, code)
-                self.assertEqual(timeline_transaction(self.path, request)["code"], code)
+        for content, code in ((b"null", "input.structure"), (b"false", "input.structure"),
+                              (b"[]", "input.structure"), (b"{}", "input.structure"),
+                              (b"{broken", "input.json")):
+            self.path.write_bytes(content)
+            # Both a historical replay and a new request must validate existing
+            # bytes before idempotency/CAS; JSON null is not a missing file.
+            for candidate in (request, dict(request, op_id="fresh", base_revision=sha(content))):
+                with self.subTest(content=content, op_id=candidate["op_id"]):
+                    self.readonly_plan_both(candidate, code)
+                    with patch.object(store, "transform_timeline", side_effect=AssertionError("invalid current must not transform")):
+                        result = timeline_transaction(self.path, candidate)
+                    self.assertEqual(result["code"], code)
+                    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1")
+                    cli = subprocess.run([sys.executable, "-m", "vtx", "-t", str(self.path), "store", "--request", str(self.root / "plan-request.json")],
+                                         cwd=self.root, env=env, capture_output=True, text=True, timeout=20)
+                    self.assertEqual(cli.returncode, 1, cli.stderr + cli.stdout)
+                    self.assertEqual(json.loads(cli.stdout), result)
+                    self.assertEqual(self.path.read_bytes(), content)
         self.path.write_bytes(original)
+
+    def test_plan_missing_current_retains_historical_replay_cli_python(self):
+        request = self.request([{"op": "block.remove", "id": "sub"}], "once")
+        committed = timeline_transaction(self.path, request)
+        self.assertTrue(committed["ok"], committed)
+        self.path.unlink()  # Only missing raw bytes use the historical replay exception.
+        planned = self.readonly_plan_both(request)
+        self.assertIsNone(planned["current_revision"])
+        self.assertIsNone(planned["result"]["current_revision"])
+        expected = dict(committed, replayed=True, current_revision=None)
+        self.assertEqual(planned["result"], expected)
+        with patch.object(store, "transform_timeline", side_effect=AssertionError("historical replay must not transform")):
+            self.assertEqual(timeline_transaction(self.path, request), expected)
+        env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONDONTWRITEBYTECODE="1")
+        cli = subprocess.run([sys.executable, "-m", "vtx", "-t", str(self.path), "store", "--request", str(self.root / "plan-request.json")],
+                             cwd=self.root, env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(cli.returncode, 0, cli.stderr + cli.stdout)
+        self.assertEqual(json.loads(cli.stdout), expected)
+        self.assertFalse(self.path.exists())
+        for base, code in ((None, "input.missing"), ("stale", "conflict")):
+            candidate = dict(request, op_id="fresh", base_revision=base)
+            with self.subTest(base=base):
+                self.readonly_plan_both(candidate, code)
+                with patch.object(store, "transform_timeline", side_effect=AssertionError("missing current must not transform")):
+                    result = timeline_transaction(self.path, candidate)
+                self.assertEqual(result["code"], code)
+                cli = subprocess.run([sys.executable, "-m", "vtx", "-t", str(self.path), "store", "--request", str(self.root / "plan-request.json")],
+                                     cwd=self.root, env=env, capture_output=True, text=True, timeout=20)
+                self.assertEqual(cli.returncode, 1, cli.stderr + cli.stdout)
+                self.assertEqual(json.loads(cli.stdout), result)
+                self.assertFalse(self.path.exists())
 
     def test_plan_empty_or_lock_only_home_never_initializes_or_recovers(self):
         self.path = self.root / "partial.json"

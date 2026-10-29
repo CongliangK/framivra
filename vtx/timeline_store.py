@@ -582,9 +582,11 @@ def timeline_edit_plan(path, request):
         if any(r["state"] == "pending" for r in records.values()):
             _fail("recovery_required", "unresolved intent; explicit recover required before planning")
         before = _read(target, missing=True)
-        doc = _parse(before) if before is not None else None
-        if doc is not None:
+        if before is not None:
+            doc = _parse(before)
             _check(doc)
+        else:
+            doc = None
         if records != _plan_history(home, target) or before != _read(target, missing=True):
             _fail("plan.not_ready", "observed timeline/history change during unlocked reads; retry plan")
         revision = _sha(before)
