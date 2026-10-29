@@ -39,12 +39,47 @@ export function queryArgs(query = {}) {
   return args
 }
 
+export function referenceArgs(query) {
+  if (!object(query) || !/^sha256:[a-f0-9]{64}$/.test(query.expected_content_version)) fail('BAD_REFERENCE', 'Reference requires the displayed content version')
+  const flags = { track_ids: '--track-id', block_ids: '--block-id', track_addresses: '--track-address', block_addresses: '--block-address' }
+  if (Object.keys(query).some(key => ![...Object.keys(flags), 'expected_content_version', 'frame'].includes(key))) fail('BAD_REFERENCE', 'Unknown reference field')
+  const args = [`--expected-content-version=${query.expected_content_version}`]
+  let count = 0
+  for (const [key, flag] of Object.entries(flags)) {
+    if (query[key] === undefined) continue
+    if (!Array.isArray(query[key]) || query[key].length > 64 || query[key].some(value => typeof value !== 'string' || !value || value.length > 4096 || value.includes('\0'))) fail('BAD_REFERENCE', 'Invalid or oversized reference selector')
+    for (const value of query[key]) { args.push(`${flag}=${value}`); count++ }
+  }
+  if (count !== 1) fail('BAD_REFERENCE', 'Select exactly one stored track or block')
+  if (query.frame !== undefined) {
+    if (!integer(query.frame)) fail('BAD_REFERENCE', 'Reference frame must be a nonnegative safe integer')
+    args.push('--frame', String(query.frame))
+  }
+  return args
+}
+
+function decodeReference(value) {
+  const mismatch = () => fail('PROTOCOL_MISMATCH', 'Unsupported vtx reference/v1 envelope; upgrade installed vtx', 502)
+  if (!object(value) || value.schema !== 'framivra.timeline.reference/v1' || value.operation !== 'reference' || value.ok !== true ||
+      !/^sha256:[a-f0-9]{64}$/.test(value.content_version) || !Array.isArray(value.diagnostics) ||
+      !object(value.document) || typeof value.document.raw !== 'string' || value.document.content_version !== value.content_version ||
+      !object(value.selection) || !object(value.coverage) || typeof value.coverage.complete !== 'boolean' ||
+      !object(value.image) || value.image.state !== 'not-generated') mismatch()
+  for (const key of ['tracks', 'blocks']) {
+    if (!Array.isArray(value.selection[key]) || value.selection[key].some(item => !object(item) ||
+        typeof item.address !== 'string' || item.content_version !== value.content_version ||
+        !(item.stable_id === null || typeof item.stable_id === 'string') || !(item.raw === null || typeof item.raw === 'string'))) mismatch()
+  }
+  return value
+}
+
 export function decodeEnvelope(text, operation) {
   let value
   try { value = parseJSON(text) } catch (error) {
     if (error instanceof LosslessJSONError) fail('LOSSLESS_JSON_UNSUPPORTED', error.message, 502)
     fail('INVALID_JSON', 'vtx did not return complete JSON', 502)
   }
+  if (operation === 'reference') return decodeReference(value)
   if (operation === 'capabilities') {
     if (!object(value) || value.schema !== 'framivra.timeline.read/v1' || value.operation !== operation || value.ok !== true ||
         !object(value.capabilities) || !Array.isArray(value.capabilities.operations) ||
@@ -84,8 +119,8 @@ export class TimelineReader {
     return path
   }
   async read(executable, timeline, operation, query, signal) {
-    if (!['inspect', 'query', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
-    const args = operation === 'query' ? queryArgs(query) : []
+    if (!['inspect', 'query', 'reference', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
+    const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     const handle = this.subprocess.spawn({

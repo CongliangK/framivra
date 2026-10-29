@@ -107,13 +107,14 @@ export function createPreviewHost(ctx, config = {}) {
         expire()
         if (grants.size >= 32) fail('GRANT_LIMIT', 'Close an existing preview before opening another', 429)
         const grant = randomUUID()
-        grants.set(grant, { session, cwd, root, relative, timeline, project, projectPath, executable, media, expiresAt: clock() + ttlMs })
+        grants.set(grant, { session, cwd, root, relative, timeline, project, projectPath, executable, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs })
         return json({ grant, snapshot, capabilities, expires_in_ms: ttlMs,
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
       }
       const grant = grantFor(data.sessionId, data.grant)
       if (data.op === 'close') { grants.delete(data.grant); return json({ ok: true }) }
-      if (!['inspect', 'query'].includes(data.op)) fail('BAD_OPERATION', 'Only open, inspect, query and close are supported')
+      if (!['inspect', 'query', 'reference'].includes(data.op)) fail('BAD_OPERATION', 'Only open, inspect, query, reference and close are supported')
+      if (data.op === 'reference' && data.query?.expected_content_version !== grant.contentVersion) fail('STALE_REFERENCE', 'Reference version must match this opened preview; refresh first', 409)
       const timeline = await validateTimeline(grant, hold.signal)
       const result = await reader.read(grant.executable, ctx.fs.processPath(timeline), data.op, data.query, hold.signal)
       grantFor(data.sessionId, data.grant)
