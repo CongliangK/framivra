@@ -195,6 +195,9 @@ class RenderPlan:
     nframes: object = None   # --frames N（仅 --draft --frames 组合，None = 不截短）
     nseg: int = DEFAULT_SEGMENTS
     layers: list = field(default_factory=list)
+    # Internal single-frame preview profile; defaults preserve delivery behavior.
+    png_output: bool = False
+    scratch_dir: object = None
 
     # ---- 时间戳格式化（ass）----
     @staticmethod
@@ -303,7 +306,8 @@ class RenderPlan:
             parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
         else:
             parts.append(f"[{cur}]null[vout]")
-        vcodec, enc = pick_vcodec(c, draft)
+        vcodec, enc = ((["-c:v", "png", "-pix_fmt", "rgb24", "-threads", "1", "-f", "image2", "-update", "1"], "png")
+                       if self.png_output else pick_vcodec(c, draft))
         # -filter_complex_threads：滤镜图线程数（infra.filter_threads，默认 1，
         # VTX_FILTER_THREADS=4 可显式解锁多线程）。历史病灶记载（2026-09-08
         # v3.6 渲染棒，61 层 graph 三渲实测）：多线程 filtergraph 下多个 framesync
@@ -521,11 +525,13 @@ class RenderPlan:
         """
         c = self.c
         seglen = b - a
-        pdir = c.cache / "vseg_pass"; fstxn.mkdir(pdir, root=self.c.root)
+        pdir = self.scratch_dir if self.scratch_dir is not None else c.cache / "vseg_pass"
+        fstxn.mkdir(pdir, root=self.c.root)
         prev_key = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
         prev = None            # None = 主输入用 canvas（pass0）
         n = len(layers_subset)
-        vcodec, enc = pick_vcodec(c, self.draft)
+        vcodec, enc = ((["-c:v", "png", "-pix_fmt", "rgb24", "-threads", "1", "-f", "image2", "-update", "1"], "png")
+                       if self.png_output else pick_vcodec(c, self.draft))
         for k, L in enumerate(layers_subset):
             last = k == n - 1
             ident = L["source"].identity if L["gfx"] else L["seg"].name
@@ -539,7 +545,7 @@ class RenderPlan:
                     print(f"    · pass {k + 1}/{n} 已缓存（{target.name}）")
                     prev = target
                     continue
-            elif out_path.exists() and self._pass_fresh(out_path, seglen):
+            elif not self.png_output and out_path.exists() and self._pass_fresh(out_path, seglen):
                 # 最终 pass 也走帧数兜底（段缓存已在 render_segmented 判过，防御
                 # composite 被直接调用无段缓存的场景——如 --draft --frames 回落不
                 # 进此路径，b=None 时根本不到这里）
@@ -606,7 +612,11 @@ class RenderPlan:
                 # sys.exit(1) 误杀 --dry-run（TestUntilFlag 实测回归，R4-E1-v2）
                 prev = target
                 continue
-            if not self._pass_fresh(target, seglen):
+            if self.png_output and last:
+                from ..render.gfx_cli import png_invalid_reason
+                if png_invalid_reason(target, width=self.W, height=self.H):
+                    raise ValueError("single-frame compositor produced invalid PNG")
+            elif not self._pass_fresh(target, seglen):
                 print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
                       f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
                 sys.exit(1)
