@@ -278,9 +278,15 @@ plan = timeline_write_plan(path, request)  # 零写；不初始化 status/histor
 
 ### 稳定 ID owner reconciliation 与撤销
 
-`reconcile` 额外字段恰为 `owner/owned_ids/new_ids/operations`：owner 为显式非空标签；owned_ids 是本次允许变动/删除的现存全局稳定 ID；new_ids 恰好列出本批新增 ID，不能复用旧 ID。operations 仍是上文已审查的受限 managed 语义批次，不接全文替换、JSON Pointer、数组位置映射或按文本猜 ID。未有可靠 ID/业务映射的旧 writer 必须明确拒绝，不能自动制造身份。
+`reconcile` 必需额外字段为 `owner/owned_ids/new_ids/operations`：owner 为显式非空标签；owned_ids 是本次允许变动/删除的现存全局稳定 ID；new_ids 恰好列出本批新增 ID，不能复用旧 ID。operations 仍是上文已审查的受限 managed 语义批次，不接全文替换、JSON Pointer、数组位置映射或按文本猜 ID。未有可靠 ID/业务映射的旧 writer 必须明确拒绝，不能自动制造身份。
 
-最终比较包括对象 kind、父容器、非 owned 同级次序及全部未知深字段：非 owned 数据/位置、root/project 数据不得改变；隐式引用修复若影响非 owned 也拒绝。owned 对象的未知字段仅通过既有定点语义变换保留/修改，不投影重建。结果 reconciliation 列出 owner/base_revision、changes/creates/deletes/preserved_ids/warnings；这是调用者声明的业务范围审计，**不是宿主授权或持久 owner 注册表**。尚未迁移 ASR/duck/Blender 等现入口，也未实现它们各自的业务键映射和 owned root metadata 更新。
+最终比较包括对象 kind、父容器、非 owned 同级次序及全部未知深字段：非 owned 数据/位置、root/project 数据不得改变；隐式引用修复若影响非 owned 也拒绝。owned 对象的未知字段仅通过既有定点语义变换保留/修改，不投影重建。结果 reconciliation 列出 owner/base_revision、changes/creates/deletes/preserved_ids/warnings；这是调用者声明的业务范围审计，**不是宿主授权或持久 owner 注册表**。尚未迁移 ASR/duck/Blender 等现入口，也未实现它们各自的业务键映射。
+
+仅 managed、document、edit-purpose 的 v2 reconcile 可另带**成对**可选 `owned_meta_keys` 与 `meta_updates`。例如 `owned_meta_keys:["bed_static_duck"]`、`meta_updates:{"bed_static_duck":{"baked":true}}`：scope 必须为非空、唯一、非空白字符串列表，不得包含 `_meta`/`_vtx`；updates 必须为非空 JSON 对象，其键为 scope 子集。所有键均指 **root `_meta` 下的直接字面键**，点/斜杠不解析为 dotted path/JSON Pointer，不接管整个 `_meta`、project、source 或 `_vtx`；值中的 id/_vtx 只是普通 JSON 数据。没有 meta_remove；null 是普通值，不表示删除。其他 actions/unmanaged 请求不接受这些字段，不能只传其中一个或传空 scope。
+
+语义批次与 updates 在同一内存 candidate 上组合、一次范围审计、一个 intent 和一次工程 publish；不经 replace、不做第二事务，也不扩大普通 parameters 编辑权限。只有显式带该 pair 时允许 `operations:[]` identity candidate（例如 segments/volume 已符合目标，只需首次 marker）；旧 reconcile/edit 的空数组仍拒绝。原 root `_meta` 缺失可为授权键建立 dict；原值非 dict 报 `reconcile.meta_container`，不得强转/擦除。非 owned 兄弟及其他 root/project/source 数据仍按 typed JSON 严格比较，不能用删键/换容器逃逸。
+
+新 pair 的 reconciliation receipt 额外含 `owned_meta_keys`（声明顺序）与 `changed_meta_keys`（排序，presence 差异也算变化），后者从 before/after 独立重算，不从输入猜测；无变化则空列表。history 校验独立复算 scope/变化并核对 after 的 updates 值，拒绝省略变化、True/1 偷换和非 owned 改动；status/plan/replay/recover 不放宽。无 pair 的原有效 v1/v2 请求 canonical bytes/digest、summary/result 和历史读取严格保持，不补默认字段、不重签。仍使用 store/v2 与 protocol2，按明确 pair 字段 presence 分支扩展，不发明 v3；能力公布于 `v2.reconciliation_meta`。meta-only 变化不伪造 affected object IDs/窗口；CAS、重试、undo、recovery 仍走原 publisher。[owned-meta 契约测试](../../tests/contracts/test_timeline_owned_meta.py)覆盖手算 split/volume/marker、一批发布、literal/null、typed scope/receipt、旧空数组拒绝及现有崩溃边界。
 
 v2 的范围、变更摘要及证据按 JSON 值递归比较：object 键序无关，array 次序保留；boolean 与 number 严分。JSON 只有一种 number，int/float 同值（含 ±0）相等，不比较数字词法；实际可写输入仍受 strict parser 的有限值/十进制往返精度约束，Python tuple/非字符串键拒绝。owned 真变化须列入 changed_ids/changes，并追踪父轨、共享源及 project 的影响窗口。v1 有效请求 digest、结果与字节不重签、不改写，原 v1 摘要保持；历史 boolean 被换成 0/1 属损坏，status/plan/replay 拒绝而非放宽恢复。
 

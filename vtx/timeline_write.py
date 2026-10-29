@@ -81,6 +81,8 @@ def freeze_request(request, *, evidence=False):
         request["raw_utf8"] = raw
     elif payload == "document":
         extra = {"document"} if op in ("create", "replace") else {"changes"} if op == "apply" else {"operations"} if op == "edit" else {"owner", "owned_ids", "new_ids", "operations"} if op == "reconcile" else {"head"} if op == "undo" and mode == "managed" else {"undo_of"} if op == "undo" else None
+        if op == "reconcile" and {"owned_meta_keys", "meta_updates"} & request.keys():
+            extra = extra | {"owned_meta_keys", "meta_updates"}
         if extra is None or set(request) != common | extra:
             s._fail("input.request", "missing/unknown v2 operation fields")
         expected_purpose = "create" if op == "create" else "edit" if mode == "managed" else "legacy-write"
@@ -88,6 +90,8 @@ def freeze_request(request, *, evidence=False):
             s._fail("input.policy", "unsupported purpose/identity/operation combination")
     else:
         s._fail("input.request", "unknown payload_mode")
+    if "owned_meta_keys" in request:
+        _meta_scope(request)
     encoded = s._encode(request)
     return strict_loads(encoded), s._sha(encoded)
 
@@ -133,6 +137,40 @@ def edit_summary(before, after, warnings=()):
     return summary
 
 
+def _meta_scope(request):
+    """Explicit direct root _meta keys, never paths or a general root editor."""
+    s = _kernel()
+    keys, updates = request["owned_meta_keys"], request["meta_updates"]
+    if (not isinstance(keys, list) or not keys
+            or any(not isinstance(k, str) or not k.strip() or k in ("_meta", "_vtx") for k in keys)
+            or len(keys) != len(set(keys))):
+        s._fail("reconcile.meta_scope", "owned_meta_keys must be nonempty unique literal keys, excluding _meta/_vtx")
+    if not isinstance(updates, dict) or not updates or not updates.keys() <= set(keys):
+        s._fail("reconcile.meta_scope", "nonempty meta_updates must be inside owned_meta_keys")
+    return keys, updates
+
+
+def _meta_audit(before, after, request):
+    """Recompute typed changes from evidence, including absence versus null.
+
+    This runs on both live candidates and frozen history. An absent root can
+    acquire a dictionary, but existing containers and all non-owned siblings
+    cannot be erased by stripping the owned keys from the scope projection.
+    """
+    s = _kernel()
+    keys, updates = _meta_scope(request)
+    if ("_meta" in before and not isinstance(before["_meta"], dict)
+            or not isinstance(after.get("_meta"), dict)):
+        s._fail("reconcile.meta_container", "owned metadata requires a dictionary _meta; existing non-dict cannot be converted")
+    old, new = before.get("_meta", {}), after["_meta"]
+    changed = sorted(k for k in old.keys() | new.keys()
+                     if k not in old or k not in new or not json_equal(old[k], new[k]))
+    if not set(changed) <= updates.keys() or any(
+            k not in new or not json_equal(new[k], value) for k, value in updates.items()):
+        s._fail("reconcile.scope", "metadata changes must match explicit owned updates")
+    return dict(owned_meta_keys=list(keys), changed_meta_keys=changed)
+
+
 def reconciliation(before, after, request):
     """Bounded stable-ID owner audit; no index/path/text matching or generated IDs.
 
@@ -147,6 +185,12 @@ def reconciliation(before, after, request):
     for values in (owned, new):
         if not isinstance(values, list) or any(not valid_id(v) for v in values) or len(values) != len(set(values)):
             s._fail("reconcile.mapping", "owned_ids/new_ids must be unique stable IDs; no positional mapping")
+    meta = _meta_audit(before, after, request) if "owned_meta_keys" in request else {}
+    if meta:
+        # Live candidate retains the old head; frozen after bytes carry op_id.
+        identity = dict(after["_vtx"], head=before["_vtx"]["head"])
+        if after["_vtx"]["head"] not in (before["_vtx"]["head"], request["op_id"]) or not json_equal(before["_vtx"], identity):
+            s._fail("reconcile.scope", "reconciliation cannot change _vtx identity")
     old = {obj["id"]: (obj, kind) for _, obj, kind in managed_objects(before)}
     current = {obj["id"]: (obj, kind) for _, obj, kind in managed_objects(after)}
     if not set(owned) <= old.keys() or set(new) & old.keys() or set(owned) & set(new):
@@ -167,6 +211,14 @@ def reconciliation(before, after, request):
             return shell
         root = {k: copy.deepcopy(v) for k, v in doc.items()
                 if k not in ("sources", "video_tracks", "audio_tracks", "subtitles", "_vtx")}
+        if meta:
+            siblings = {k: copy.deepcopy(v) for k, v in doc.get("_meta", {}).items()
+                        if k not in request["owned_meta_keys"]}
+            # Only absence -> dictionary creation is allowed; _meta_audit has
+            # already rejected deletion/non-dict transitions and hidden updates.
+            root.pop("_meta", None)
+            if siblings:
+                root["_meta"] = siblings
         for key, child in (("sources", None), ("video_tracks", "clips"), ("audio_tracks", "events"), ("subtitles", None)):
             root[key] = [p for p in (obj_projection(o, child) for o in doc[key]) if p is not None]
         return root
@@ -181,7 +233,7 @@ def reconciliation(before, after, request):
     return dict(owner=owner, base_revision=request["base_revision"],
                 changes=summary["changed_ids"], creates=summary["created_ids"],
                 deletes=summary["deleted_ids"], preserved_ids=sorted(set(old) & set(current)),
-                warnings=summary["warnings"])
+                warnings=summary["warnings"], **meta)
 
 
 def prepare(request, before, doc, records):
@@ -228,7 +280,17 @@ def prepare(request, before, doc, records):
         elif op == "apply":
             s._apply(after_doc, request["changes"])
         elif op in ("edit", "reconcile"):
-            after_doc, original_summary = transform_timeline(doc, request["operations"])
+            if op == "reconcile" and "owned_meta_keys" in request and request["operations"] == []:
+                # Explicit new scope alone can publish the first idempotency
+                # marker; do not widen old requests or the ordinary editor.
+                after_doc, original_summary = copy.deepcopy(doc), edit_summary(doc, doc)
+            else:
+                after_doc, original_summary = transform_timeline(doc, request["operations"])
+            if op == "reconcile" and "owned_meta_keys" in request:
+                _, updates = _meta_scope(request)
+                if "_meta" in doc and not isinstance(doc["_meta"], dict):
+                    s._fail("reconcile.meta_container", "existing _meta must be a dictionary")
+                after_doc.setdefault("_meta", {}).update(copy.deepcopy(updates))
             extras["edit"] = edit_summary(doc, after_doc, original_summary["warnings"])
             if op == "reconcile":
                 extras["reconciliation"] = reconciliation(doc, after_doc, request)
