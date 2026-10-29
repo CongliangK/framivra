@@ -74,6 +74,10 @@ def timeline_store_capabilities():
                    "operations": ["create", "replace", "apply", "edit", "reconcile", "undo"],
                    "exact_import": "frozen UTF-8 bytes; create-only create/frozen-copy/detached-copy; no live overwrite",
                    "reconciliation": "managed stable-ID owned/new inventory + constrained semantic batch; no positional mapping",
+                   "reconciliation_meta": {"optional_pair": ["owned_meta_keys", "meta_updates"],
+                                           "scope": "direct literal root _meta keys only; nonempty unique scope and updates; no remove; null is a value",
+                                           "empty_operations": "only with the explicit optional pair",
+                                           "receipt": ["owned_meta_keys", "changed_meta_keys"]},
                    "plan": "timeline_write_plan: zero-write; no initialization, lock, recovery or reservation",
                    "pinned_artifact_target": "NOT IMPLEMENTED/NOT VERIFIED; snapshot adapter blocked"}}
 
