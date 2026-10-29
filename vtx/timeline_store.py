@@ -67,7 +67,7 @@ def timeline_store_capabilities():
             "base_revision": "exact file bytes sha256:<hex>; create only uses null",
             "validation_scope": "stored schema/IDs/bounds/EDL/references, not renderability/assets/plugins",
             "guarantee": "local POSIX cooperative threads/processes and process crashes only",
-            "unmigrated_writers": "all legacy consumers (including scaffold, ASR, Blender, duck)",
+            "unmigrated_writers": "Blender, scaffold, snapshot and other legacy consumers; ASR/duck migrated (scripts not in wheel)",
             "v2": {"schema": _v2.SCHEMA, "request_protocol": 2,
                    "identity_mode": ["managed", "preserve-unmanaged"],
                    "payload_mode": ["document", "exact-import"],

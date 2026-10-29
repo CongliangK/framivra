@@ -172,6 +172,12 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 
 语义编辑使用独立的 `edit`，不是把 `replace` 的身份限制解除，也不改变既有 `apply.changes` 平面协议。尚无 UI、ID 改签或完整 gfx 连续编辑。apply/adopt/edit 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
 
+### 原始写入 JSON 的公共解析边界
+
+`vtx.api.parse_write_json(payload: bytes)` 是纯函数，直接复用 store 的严格写解析器：输入完整 UTF-8 原字节，返回原 JSON 类型对应的 Python 值（对象、数组、标量均可），不做 timeline/schema 校验，不读取路径、不建工程或 history。重复键、非有限数字、无效 UTF-8/JSON，以及重序列化会改变十进制值的浮点 token 抛 `ValueError`（含 `UnicodeDecodeError` / `JSONDecodeError`）；过深嵌套可抛 `RecursionError`，不包装成回执。保留未知嵌套值，整数仍为 Python int；0.1、0.5、可安全重写的指数形式沿用原 store 合同，不要求二进制精确或保留数字词法。不增加输入字节上限。
+
+适配器必须在普通 JSON 解码之前传原 bytes，随后照常做自己的数组/结构校验并走公共 publisher；不得用 inspect/query 的读投影或临时文件替代。已有 Python 值无法追溯上游已经发生的舍入，此函数也不是任意精度数值或原文保留接口。
+
 ### Managed 语义编辑与零写计划
 
 Python 与 CLI 使用**同一份请求**；`operations` 非空、有序，每项以 `op` 指定下表操作，未列请求键拒绝。只有当前 `_vtx` 工程可编辑，不自动 adopt。所有新对象 ID 必须由调用者预先生成并放入请求；同 op 重试保持整个请求不变。
