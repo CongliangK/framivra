@@ -41,6 +41,7 @@ from .pluginlib.hooks import plugin_code_digest, resolve_source_wav
 from .cache.recovery import atomic_media, media_cache_valid
 from .timeline import inspect_timeline, query_timeline, timeline_capabilities
 from .timeline_reference import reference_timeline
+from .timeline_frame import frame_timeline
 from .timeline_store import (timeline_transaction, timeline_store_status,
                              timeline_store_capabilities, timeline_edit_plan)
 
@@ -50,7 +51,7 @@ __all__ = [
     "lookup", "measure_and_store", "gfx_key", "gfx_dir", "load_timeline_check",
     "read_receipt_atomic", "write_receipt_atomic",
     "atomic_media", "media_cache_valid",
-    "inspect_timeline", "query_timeline", "timeline_capabilities", "reference_timeline",
+    "inspect_timeline", "query_timeline", "timeline_capabilities", "reference_timeline", "frame_timeline",
     "timeline_transaction", "timeline_store_status", "timeline_store_capabilities",
     "timeline_edit_plan",
 ]
