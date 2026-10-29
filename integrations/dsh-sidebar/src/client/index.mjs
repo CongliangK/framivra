@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { captureCurrentDraft, performReferenceAction } from './reference.mjs'
+import { VisualTimeline } from './timeline.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
@@ -34,22 +35,25 @@ async function control(sessionId, payload, signal) {
 }
 
 /** Pure presentation: all addresses, ranges, selection and raw fields come from vtx. */
-export function TimelineView({ snapshot, result, onSelect }) {
+export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection }) {
   if (snapshot.content_version !== result.content_version) return h('p', { role: 'alert' }, 'Timeline changed between reads. Reopen preview; mixed-version selection is not displayed.')
   return h(React.Fragment, null,
     h('p', null, `Read-only · ${snapshot.content_version}`),
     h('p', null, 'Stored timeline blocks only; not render validation. Addresses are transient within this content version.'),
     ...[snapshot, result].filter(item => !item.coverage.complete).map((item, index) => h('div', { key: index, role: 'alert' },
       h('strong', null, 'Incomplete coverage: external subtitles/assets were not expanded.'), details('Unexpanded inputs', item.coverage))),
-    details('Diagnostics', { inspect: snapshot.diagnostics, query: result.diagnostics }),
-    ...result.tracks.map(track => h('section', { key: `${track.family}:${track.track_index}`, style: { borderTop: '1px solid currentColor', padding: '8px 0' } },
+    details('Diagnostics', { inspect: snapshot.diagnostics, query: result.diagnostics, frameQuery: hits?.diagnostics }),
+    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection }),
+    hits ? h('section', { 'aria-label': '帧查询详情' }, h('p', null, `本次 kernel 查询命中 ${hits.blocks.length} 块；完整时间轴保留，黄色底边仅强调命中。`), details('帧查询 envelope（独立详情）', hits)) : null,
+    h('details', null, h('summary', null, '全部轨道/块字段与选择（展开）'),
+    result.tracks.map(track => h('section', { key: `${track.family}:${track.track_index}`, style: { borderTop: '1px solid currentColor', padding: '8px 0' } },
       h('h3', null, `${track.family} / track ${track.track_index}`),
       onSelect ? h('button', { type: 'button', onClick: () => onSelect({ kind: 'track', address: track.address }) }, `选择轨道 ${track.address}`) : null,
       details(`Track ${track.address} — all vtx-emitted fields`, track.data),
-      ...result.blocks.filter(block => block.family === track.family && block.track_index === track.track_index).map(block =>
+      result.blocks.filter(block => block.family === track.family && block.track_index === track.track_index).map(block =>
         h('div', { key: block.address },
           onSelect ? h('button', { type: 'button', onClick: () => onSelect({ kind: 'block', address: block.address }) }, `选择块 ${block.address}`) : null,
-          details(`${block.address} · frames [${block.range[0]}, ${block.range[1]})`, block.data, block.address))))),
+          details(`${block.address} · frames ${pretty(block.range)}`, block.data, block.address)))))),
     result.tracks.length === 0 ? h('p', null, 'No tracks matched this query.') : null,
     h('p', null, 'All fields of the vtx-emitted read document are shown; wire numeric tokens are preserved. Original source numeric/lexical precision is not guaranteed by the current upstream protocol.'),
     details('Complete vtx-emitted timeline document (all emitted fields)', snapshot.document),
@@ -59,7 +63,7 @@ export function TimelineView({ snapshot, result, onSelect }) {
 export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal, getDraftServices, onStale }) {
   const [state, setState] = useState({})
   const task = useRef()
-  useEffect(() => () => task.current?.abort(), [selection, sessionId, opened.grant, tabSignal])
+  useEffect(() => () => task.current?.abort(), [selection, sessionId, opened.grant, opened.snapshot.content_version, frame, tabSignal])
   async function run(action) {
     task.current?.abort()
     const controller = new AbortController()
@@ -84,7 +88,8 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
       setState(previous => ({ ...previous, busy: false, ...(stale ? { envelope: undefined, item: undefined } : {}), message: error.message }))
     }
   }
-  useEffect(() => { setState({}); if (selection) void run('read') }, [selection, sessionId, opened.grant])
+  useEffect(() => { task.current?.abort(); setState({}) }, [frame])
+  useEffect(() => { setState({}); if (selection) void run('read') }, [selection, sessionId, opened.grant, opened.snapshot.content_version])
   return h('section', { 'aria-label': '时间线引用', style: { border: '1px solid currentColor', padding: 8 } },
     h('h3', null, '时间线引用 · 仅存储语义'),
     h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放是非精确采样、未与选择联动；本片不生成 PNG/附件。'),
@@ -107,12 +112,14 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
   const [selection, setSelection] = useState()
   const task = useRef()
   const grant = useRef()
+  let frameValue, frameError
+  try { frameValue = frameQuery(frame).frame } catch (error) { frameError = error.message }
   const close = () => {
     const current = grant.current
     grant.current = undefined
     if (current) void control(sessionId, { op: 'close', grant: current }).catch(() => {})
   }
-  useEffect(() => () => { task.current?.abort(); close() }, [sessionId])
+  useEffect(() => { setSelection(undefined); setState({ phase: 'idle' }); return () => { task.current?.abort(); close() } }, [sessionId])
   useEffect(() => {
     const abort = () => { task.current?.abort(); close() }
     tab.signal.addEventListener('abort', abort, { once: true })
@@ -132,7 +139,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
     task.current = controller
     const signal = AbortSignal.any([controller.signal, tab.signal])
     const previous = state
-    setState({ phase: 'loading' })
+    setState(queryOnly && previous.phase === 'ready' ? { ...previous, loading: true, message: undefined } : { phase: 'loading' })
     try {
       let opened
       if (!queryOnly || previous.phase !== 'ready') {
@@ -140,29 +147,36 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
         opened = await control(sessionId, { op: 'open', timeline }, signal)
         grant.current = opened.grant
       } else opened = previous.opened
-      const result = await control(sessionId, { op: 'query', grant: opened.grant, query }, signal)
+      // Always acquire a same-version full projection before a filtered query.
+      const full = queryOnly && query.frame !== undefined && previous.phase === 'ready' ? previous.result : await control(sessionId, { op: 'query', grant: opened.grant, query: {} }, signal)
+      const hits = query.frame === undefined ? undefined : await control(sessionId, { op: 'query', grant: opened.grant, query }, signal)
       signal.throwIfAborted()
-      setSelection(undefined)
-      setState({ phase: 'ready', opened, result, queryFrame: query.frame })
+      const stale = opened.snapshot.content_version !== full.content_version || (hits && hits.content_version !== full.content_version)
+      if (!queryOnly || stale) setSelection(undefined)
+      setState({ phase: 'ready', sessionId, opened, result: full, hits, stale: Boolean(stale) })
     } catch (error) {
-      if (!signal.aborted) { close(); setState({ phase: 'failed', message: error.message }) }
+      if (!signal.aborted) {
+        if (queryOnly && previous.phase === 'ready') setState({ ...previous, loading: false, message: error.message })
+        else { close(); setState({ phase: 'failed', message: error.message }) }
+      }
     }
   }
-  return h('article', { style: { padding: 12, overflow: 'auto', height: '100%', boxSizing: 'border-box' }, 'aria-label': 'Framivra read-only preview' },
+  return h('article', { style: { padding: 12, overflow: 'auto', height: '100%', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', boxSizing: 'border-box' }, 'aria-label': 'Framivra read-only preview' },
     h('h2', null, 'Framivra · read-only'),
     h('p', null, 'Choose a relative timeline file inside this Session’s current workspace. External projects, remote filesystems, editing, rendering and attachments are not supported. This does not change the workspace.'),
     h('form', { onSubmit: event => { event.preventDefault(); void load() } },
-      h('label', null, 'Timeline path ', h('input', { value: timeline, onChange: event => setTimeline(event.target.value), required: true })),
+      h('label', null, 'Timeline path ', h('input', { style: { maxWidth: '100%', boxSizing: 'border-box' }, value: timeline, onChange: event => setTimeline(event.target.value), required: true })),
       h('button', { type: 'submit' }, 'Open / refresh')),
-    state.phase === 'loading' ? h('p', { role: 'status' }, 'Reading through vtx…') : null,
+    state.phase === 'loading' || state.loading ? h('p', { role: 'status' }, 'Reading through vtx…') : null,
     state.message ? h('pre', { role: 'alert', style: { whiteSpace: 'pre-wrap' } }, state.message) : null,
-    state.phase === 'ready' ? h(React.Fragment, null,
+    state.phase === 'ready' && state.sessionId === sessionId ? h(React.Fragment, null,
       h('form', { onSubmit: event => { event.preventDefault(); void load(true) } },
-        h('label', null, 'Frame (blank = all) ', h('input', { type: 'text', inputMode: 'numeric', value: frame, onChange: event => setFrame(event.target.value) })),
+        h('label', null, 'Frame (blank = all) ', h('input', { type: 'text', inputMode: 'numeric', style: { maxWidth: '100%', boxSizing: 'border-box' }, value: frame, 'aria-invalid': Boolean(frameError), onChange: event => setFrame(event.target.value) })),
         h('button', { type: 'submit' }, 'Query stored blocks')),
-      state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, onSelect: setSelection }),
-      state.opened.snapshot.content_version === state.result.content_version ? h(ReferenceTools, { key: `${state.opened.grant}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: state.queryFrame, tabSignal: tab.signal, getDraftServices,
-        onStale: () => setState(previous => ({ ...previous, stale: true })),
+      frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
+      state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => setFrame(String(value)), onSelect: setSelection, activeSelection: selection }),
+      !state.stale && !frameError && state.opened.snapshot.content_version === state.result.content_version ? h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
+        onStale: () => { setSelection(undefined); setState(previous => ({ ...previous, stale: true })) },
       }) : null,
       h('h3', null, 'Existing output preview — provenance UNKNOWN'),
       h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),
