@@ -32,7 +32,9 @@ plugins/duck-static 插件 audio_events 钩子的变换核心——同一实现�
 """
 import argparse
 import json
-import shutil
+import copy
+import sys
+import uuid
 from pathlib import Path
 
 # ---- 纯函数核心（插件与 CLI 共用的单一实现；帧域数学，零 vtx 依赖）----
@@ -95,6 +97,118 @@ def transform_events(events, wins, global_db: float, duck_db: float,
     return new_events
 
 
+def _api():
+    try:
+        from vtx import api
+    except ModuleNotFoundError as exc:
+        if exc.name != "vtx":
+            raise
+        sys.path.append(str(Path(__file__).resolve().parents[2]))
+        from vtx import api
+    return api
+
+
+def prepare_bake(snapshot, track_name, wins, params, marker, op_id):
+    """Pure adapter. Preserve first split ID; freeze all other IDs in request.
+
+    Only bed volume/fades/segmentation and the named root marker are owned;
+    source, loop, pan, track delay, unrelated metadata and extensions survive.
+    """
+    tl = copy.deepcopy(snapshot["document"])
+    track = next(t for t in tl["audio_tracks"] if t["name"] == track_name)
+    old = track["events"]
+    managed = snapshot["identity_mode"] == "managed"
+    events, operations, new_ids = [], [], []
+    for ev in sorted(old, key=lambda e: e["in"]):
+        segments = transform_events([ev], wins, params["global_db"], params["duck_db"],
+                                    params["attack"], params["release"])
+        current = ev.get("id")
+        for index, seg in enumerate(segments):
+            if managed:
+                if index:
+                    identity = "duck-" + uuid.uuid5(uuid.NAMESPACE_URL, op_id + ":" + ev["id"] + ":" + str(index)).hex
+                    new_ids.append(identity)
+                    operations.append(dict(op="block.split", id=current, at=seg["in"],
+                                           new_id=identity, fade_policy="reapply-edge-fades"))
+                    current = identity
+                seg["id"] = current
+            events.append(seg)
+        if managed:
+            for seg in segments:
+                # Exact old transform materializes src_in=0 even without cuts.
+                if len(segments) == 1 and "src_in" not in ev:
+                    operations.append(dict(op="block.trim", id=seg["id"], start=seg["in"],
+                                           end=seg["out"], fade_policy="reapply-edge-fades"))
+                for key in ("volume", "fade_in_frames", "fade_out_frames"):
+                    if key in seg and (key not in ev or json.dumps(seg[key]) != json.dumps(ev[key])):
+                        operations.append(dict(op="parameters.update", id=seg["id"],
+                                               path=[key], value=seg[key]))
+                    elif key not in seg and key in ev:
+                        operations.append(dict(op="parameters.unset", id=seg["id"], path=[key]))
+    request = dict(protocol=2, operation="reconcile" if managed else "replace",
+                   op_id=op_id, base_revision=snapshot["revision"],
+                   identity_mode=snapshot["identity_mode"], payload_mode="document",
+                   purpose="edit" if managed else "legacy-write")
+    if managed:
+        if old != sorted(old, key=lambda e: e["in"]):
+            for seg in events:
+                operations.append(dict(op="block.move", id=seg["id"], track_id=track["id"], at=seg["in"]))
+        request.update(owner="duck-static.bake", owned_ids=[ev["id"] for ev in old],
+                       new_ids=new_ids, operations=operations,
+                       owned_meta_keys=["bed_static_duck"], meta_updates={"bed_static_duck": marker})
+    else:
+        track["events"] = events
+        tl.setdefault("_meta", {})["bed_static_duck"] = marker
+        request["document"] = tl
+    return request, events
+
+
+def publish_bake(path, snapshot, request, backup=True, dry_run=False):
+    """One main publish, preceded by an independent create-only exact backup.
+
+    Not a two-target atomic transaction. A successful backup can survive a later
+    stale CAS/failure. It is a detached artifact, never the authority for retry.
+    """
+    api = _api()
+    plan = api.timeline_write_plan(path, request)
+    if not plan["ok"]:
+        boundary = ("既有operation结果待查/恢复，不能假定timeline未改，勿盲重交新op"
+                    if plan.get("code") in ("outcome_unknown", "recovery_required") else
+                    "本次timeline未改，未创建备份")
+        raise RuntimeError("%s: %s; op_id=%s; %s" %
+                           (plan.get("code"), plan.get("message"), request["op_id"], boundary))
+    if dry_run:
+        return plan
+    bak = Path(path).parent / "timeline.pre-duck.json"
+    backup_created = False
+    if backup and not plan.get("replayed"):
+        br = dict(protocol=2, operation="create",
+                  op_id="duck-backup-" + uuid.uuid5(uuid.NAMESPACE_URL, request["op_id"]).hex,
+                  base_revision=None, identity_mode=snapshot["identity_mode"],
+                  payload_mode="exact-import", raw_bytes=snapshot["raw_bytes"],
+                  purpose="detached-copy" if snapshot["identity_mode"] == "managed" else "frozen-copy")
+        bp = api.timeline_write_plan(bak, br)
+        if bak.exists():
+            if not bp["ok"] and bp.get("code") == "recovery_required":
+                raise RuntimeError("backup recovery_required; main timeline未提交；查/恢复backup operation=%s，勿盲重交新op" % br["op_id"])
+            # Existing artifacts are never overwritten or used as a main base.
+        else:
+            result = api.timeline_transaction(bak, br) if bp["ok"] else bp
+            if not result["ok"]:
+                raise RuntimeError("backup %s: %s; main timeline未提交；backup operation=%s（可查/恢复同operation）" %
+                                   (result.get("code"), result.get("message"), br["op_id"]))
+            backup_created = True
+            print(f"备份 → {bak.name}")
+    result = api.timeline_transaction(path, request)
+    if not result["ok"]:
+        unknown = result.get("code") in ("outcome_unknown", "recovery_required")
+        boundary = "结果未知，可能已提交；查/恢复同operation，勿盲重交新op" if unknown else "本次timeline未改；不自动rebase或重试"
+        raise RuntimeError("%s: %s; op_id=%s; %s; backup_created=%s backup=%s" %
+                           (result.get("code"), result.get("message"), request["op_id"], boundary,
+                            backup_created, bak if backup else None))
+    return result
+
+
 # ---- CLI（命令面与 _meta 标记语义不变）----
 
 def main():
@@ -110,6 +224,7 @@ def main():
     ap.add_argument("--backup", dest="backup", action="store_true", default=True,
                     help="写 timeline.pre-duck.json 备份（默认开）")
     ap.add_argument("--no-backup", dest="backup", action="store_false")
+    ap.add_argument("--dry-run", action="store_true", help="仅公开 publisher 纯 plan，零写")
     args = ap.parse_args()
 
     TL = Path(args.timeline).resolve()
@@ -123,7 +238,11 @@ def main():
         "merge_gap": args.merge_gap, "attack": args.attack, "release": args.release,
     }
 
-    tl = json.loads(TL.read_text())
+    snapshot = _api().read_timeline_for_write(TL)
+    if snapshot["document"] is None:
+        raise SystemExit("FATAL: timeline不存在")
+    tl = snapshot["document"]
+    op_id = "duck-" + uuid.uuid4().hex
     tracks = {tr["name"]: tr for tr in tl["audio_tracks"]}
     for name in (args.track, args.voice_track):
         if name not in tracks:
@@ -161,21 +280,17 @@ def main():
                 "请改用内存 duck_strategy，或缩短 --attack/--release（必要时调整原事件淡入出）；"
                 "timeline 和备份均未写入。")
 
-    if args.backup:
-        bak = TL.parent / "timeline.pre-duck.json"
-        if not bak.exists():
-            shutil.copy2(TL, bak)
-            print(f"备份 → {bak.name}")
-
-    tracks[args.track]["events"] = new_events
-    tl["_meta"] = tl.get("_meta", {})
-    tl["_meta"]["bed_static_duck"] = {
+    marker = {
         "note": (f"bed 全局 {args.global_db}dB + 口播窗静态避让 {args.duck_db}dB"
                  f"（{len(wins)} 窗分段，src 连续；确定性替代 sidechaincompress）"),
         "script": "video_tools/plugins/duck-static/bed_static_duck.py",
         "params": params,
     }
-    TL.write_text(json.dumps(tl, ensure_ascii=False, indent=1))
+    request, _ = prepare_bake(snapshot, args.track, wins, params, marker, op_id)
+    publish_bake(TL, snapshot, request, backup=args.backup, dry_run=args.dry_run)
+    if args.dry_run:
+        print("✓ dry-run：纯计划，timeline、备份与history均未写入")
+        return
 
     n_duck = sum(1 for e in new_events if inside_voice(e["in"], e["out"]))
     print(f"✓ bed {len(bed)} 事件 → {len(new_events)} 段（其中口播避让段 {n_duck}）")
@@ -183,4 +298,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (RuntimeError, ValueError, OSError) as exc:
+        raise SystemExit("FATAL: " + str(exc))

@@ -1,86 +1,158 @@
 #!/usr/bin/env python3
-"""tl_merge —— timeline.json subtitles[] 合并（保护其他字段 + 写前备份）
+"""Subtitle-only adapter to the public timeline publisher.
 
-用途：asr_cli timeline 子命令把 segline 产出的新 subtitles[] 就地合并进项目
-timeline.json——只替换 subtitles[] 一个键，sources/video_tracks/audio_tracks/
-gfx_tracks/project 及任何自定义扩展键原样保留；写前把旧 subtitles 备份到
-<项目>/cache/reports/subtitles_backup_<UTC>.json；tempfile+rename 原子写回。
-
-用法（平铺 import，vtx 同款手法）：
-    import os, sys
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import tl_merge
-    tl_merge.merge_subtitles("/path/timeline.json", new_subs)
-
-机制：
-  - 读入 JSON 失败（损坏）→ 立即抛错、原文件一个字节不动；
-  - dry_run=True → 只返回新旧摘要，零写盘（不写 timeline、不产生备份）；
-  - 新条目校验（in/out 整数、text 字符串、0 <= in < out）不过 → 拒绝写，保护现状。
-
-来源：https://github.com/CongliangK/framivra/blob/c476b4f5f13687c61c9be02f4015e289a176ddc8/docs/plans/2026-09-11-三大模块整合方案.md v2.1 §3.2/§3.7/§9.1。
+The old four positional arguments and summary keys remain supported. Standalone
+calls capture a base at helper entry; callers doing slow work MUST pass their
+original snapshot and expected_base. No late read upgrades that base. Keep the
+snapshot, op_id and inputs to retry exactly the same operation after an uncertain
+outcome; alternatively inspect/recover that operation via vtx store.
 """
+import copy
 import json
 import os
-import tempfile
+import sys
 import time
+import uuid
 from pathlib import Path
 
 
+def _api():
+    # Prefer an installed kernel, including isolated Python consumers. Source
+    # scripts have no repository root on sys.path; fallback only if vtx is absent.
+    try:
+        from vtx import api
+    except ModuleNotFoundError as exc:
+        if exc.name != "vtx":
+            raise
+        sys.path.append(str(Path(__file__).resolve().parents[2]))
+        from vtx import api
+    return api
+
+
+def read_snapshot(path):
+    try:
+        snap = _api().read_timeline_for_write(path)
+    except ValueError as exc:
+        raise RuntimeError("timeline.json 不可安全写入（%s），已保持原文件不动：%s"
+                           % (exc, path)) from exc
+    if snap["document"] is None:
+        raise RuntimeError("timeline.json 不存在：%s" % path)
+    if snap["document"].get("subtitles_src"):
+        raise ValueError("subtitles_src 外部字幕存在；拒绝内联合并，不删除外部路径")
+    return snap
+
+
 def _validate_subs(subs):
-    """新 subtitles[] 结构校验（validate 硬门 0 <= in < out 的最小子集）。"""
     if not isinstance(subs, list):
         raise ValueError("subtitles 必须是数组")
     for i, s in enumerate(subs):
         if not isinstance(s, dict) or not {"in", "out", "text"} <= set(s):
             raise ValueError("第 %d 条缺少 in/out/text 键" % (i + 1))
-        if not isinstance(s["in"], int) or not isinstance(s["out"], int):
+        if type(s["in"]) is not int or type(s["out"]) is not int:
             raise ValueError("第 %d 条 in/out 必须是整数帧" % (i + 1))
         if not isinstance(s["text"], str):
             raise ValueError("第 %d 条 text 必须是字符串" % (i + 1))
-        if not (0 <= s["in"] < s["out"]):
-            raise ValueError("第 %d 条违反 0 <= in < out（in=%d, out=%d）"
-                             % (i + 1, s["in"], s["out"]))
+        if not 0 <= s["in"] < s["out"]:
+            raise ValueError("第 %d 条违反 0 <= in < out" % (i + 1))
 
 
-def merge_subtitles(timeline_path, new_subs, dry_run=False, reports_dir=None):
-    """合并新 subtitles[] 进 timeline.json，返回摘要 dict。
-
-    摘要：{"old_n", "new_n", "backup": 备份路径或 None, "dry_run": bool}。
-    reports_dir 缺省 = timeline 所在项目（timeline.parent）/cache/reports。
-    """
-    tl_path = Path(timeline_path)
-    raw = tl_path.read_text(encoding="utf-8")
-    try:
-        tl = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("timeline.json 不是合法 JSON（%s），已保持原文件不动：%s"
-                           % (exc, tl_path)) from exc
-    if not isinstance(tl, dict):
-        raise RuntimeError("timeline.json 顶层必须是对象，已保持原文件不动：%s" % tl_path)
-    old_subs = tl.get("subtitles", [])
+def prepare_subtitle_write(snapshot, new_subs, op_id):
+    """Pure adapter: fixed IDs and exact subtitle collection intent, no IO."""
     _validate_subs(new_subs)
+    tl = snapshot["document"]
+    if tl.get("subtitles_src"):
+        raise ValueError("subtitles_src 外部字幕存在；拒绝内联合并，不删除外部路径")
+    managed = snapshot["identity_mode"] == "managed"
+    request = dict(protocol=2, operation="reconcile" if managed else "replace",
+                   op_id=op_id, base_revision=snapshot["revision"],
+                   identity_mode=snapshot["identity_mode"], payload_mode="document",
+                   purpose="edit" if managed else "legacy-write")
+    if not managed:
+        doc = copy.deepcopy(tl)
+        doc["subtitles"] = copy.deepcopy(new_subs)
+        request["document"] = doc
+        return request
+    old = {s["id"]: s for s in tl.get("subtitles", [])}
+    retained = {s["id"] for s in new_subs if s.get("id") in old}
+    operations = [{"op": "block.remove", "id": i} for i in old if i not in retained]
+    new_ids = []
+    seen = set()
+    for index, sub in enumerate(new_subs):
+        data = copy.deepcopy(sub)
+        identity = data.get("id")
+        if identity in old:
+            # An existing stable ID means preserve, not positional reassignment.
+            # Strict typed comparison also prevents True==1 extension drift.
+            if json.dumps(data, sort_keys=True) != json.dumps(old[identity], sort_keys=True):
+                raise ValueError("已有字幕 ID %s 内容变化：请用显式编辑；不可按位置重签" % identity)
+            operations.append(dict(op="block.move", id=identity,
+                                   track_id="subtitles", at=data["in"]))
+        else:
+            if identity is None:
+                identity = "asr-" + uuid.uuid5(uuid.NAMESPACE_URL, op_id + ":" + str(index)).hex
+                data["id"] = identity
+            new_ids.append(identity)
+            operations.append(dict(op="block.insert", track_id="subtitles", data=data))
+        if identity in seen:
+            raise ValueError("重复字幕 ID：%s" % identity)
+        seen.add(identity)
+    request.update(owner="asr.subtitles", owned_ids=list(old), new_ids=new_ids,
+                   operations=operations)
+    return request
 
+
+class TimelineWriteError(RuntimeError):
+    def __init__(self, receipt, request, backup=None):
+        self.receipt, self.request, self.backup = receipt, request, backup
+        code = receipt.get("code", "unknown")
+        boundary = ("结果未知，timeline 可能已提交；用同一 snapshot/输入/op_id 重试或 store recover，不能盲提交新 op"
+                    if code in ("outcome_unknown", "recovery_required") else
+                    "本次未改 timeline；耗时产物或字幕备份可能已生成，不自动 rebase/重试")
+        super().__init__("%s: %s；op_id=%s；%s；backup=%s" %
+                         (code, receipt.get("message", ""), request["op_id"], boundary, backup))
+
+
+def merge_subtitles(timeline_path, new_subs, dry_run=False, reports_dir=None, *,
+                    snapshot=None, expected_base=None, op_id=None):
+    """Legacy helper captures on entry only when no early snapshot/base supplied.
+
+    expected_base without a snapshot fails closed: rereading now could silently
+    turn slow caller intent into a late-base overwrite. Summary shape is stable.
+    """
+    tl_path = Path(timeline_path).expanduser()
+    if snapshot is None:
+        if expected_base is not None:
+            raise ValueError("expected_base 需要同次早期 snapshot；拒绝 late-base 降级")
+        snapshot = read_snapshot(tl_path)
+    elif expected_base is None or expected_base != snapshot["revision"]:
+        raise ValueError("snapshot 必须携带相同 expected_base")
+    op_id = op_id or "asr-" + uuid.uuid4().hex
+    _validate_subs(new_subs)
+    if snapshot["document"].get("subtitles_src"):
+        raise ValueError("subtitles_src 外部字幕存在；拒绝内联合并，不删除外部路径")
+    old_subs = snapshot["document"].get("subtitles", [])
+    if json.dumps(old_subs, sort_keys=True) == json.dumps(new_subs, sort_keys=True):
+        # Read-only equality fence, not a late-base rebase or a write attempt.
+        if read_snapshot(tl_path)["revision"] != snapshot["revision"]:
+            raise RuntimeError("conflict: timeline早期base已变化；timeline未改；op_id=%s" % op_id)
+        return {"old_n": len(old_subs), "new_n": len(new_subs), "backup": None,
+                "dry_run": bool(dry_run)}
+    request = prepare_subtitle_write(snapshot, new_subs, op_id)
+    plan = _api().timeline_write_plan(tl_path, request)
+    if not plan["ok"]:
+        raise TimelineWriteError(plan, request)
+    old_subs = snapshot["document"].get("subtitles", [])
     backup = None
-    if not dry_run:
+    if not dry_run and not plan.get("replayed"):
         rdir = Path(reports_dir) if reports_dir else tl_path.parent / "cache" / "reports"
         rdir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-%d" % os.getpid()
         backup = rdir / ("subtitles_backup_%s.json" % stamp)
-        backup.write_text(json.dumps(old_subs, ensure_ascii=False, indent=1) + "\n",
-                          encoding="utf-8")
-        tl["subtitles"] = new_subs
-        # 原子写回：同目录 tempfile + os.replace（崩溃不留半截文件）
-        fd, tmp_name = tempfile.mkstemp(dir=str(tl_path.parent),
-                                        prefix=tl_path.name + ".tmp", suffix=".json")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(tl, f, ensure_ascii=False, indent=1)
-                f.write("\n")
-            os.replace(tmp_name, tl_path)
-        except BaseException:
-            if os.path.exists(tmp_name):
-                os.unlink(tmp_name)
-            raise
+        backup.write_text(json.dumps(old_subs, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    if not dry_run:
+        result = _api().timeline_transaction(tl_path, request)
+        if not result["ok"]:
+            raise TimelineWriteError(result, request, str(backup) if backup else None)
     return {"old_n": len(old_subs), "new_n": len(new_subs),
             "backup": str(backup) if backup else None, "dry_run": bool(dry_run)}
 
@@ -91,7 +163,10 @@ if __name__ == "__main__":
     ap.add_argument("-t", "--timeline", required=True)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    new_subs = json.load(__import__("sys").stdin)
-    result = merge_subtitles(args.timeline, new_subs, dry_run=args.dry_run)
+    try:
+        result = merge_subtitles(args.timeline, json.load(sys.stdin), dry_run=args.dry_run)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print("✗ %s" % exc)
+        sys.exit(1)
     print("✓ 合并完成：%s" % json.dumps(result, ensure_ascii=False)
           if not args.dry_run else "✓ dry-run：未写盘。%s" % json.dumps(result, ensure_ascii=False))

@@ -20,7 +20,7 @@ sidecar（stdlib http.server，默认 **127.0.0.1:18085**；18081 为语音输�
 | `textnorm.py` | 文本规范化 N1-N7（内化自 ibus-voice-ime text_postprocess 确定性子集 + ctypes libopencc 繁简软依赖） |
 | `segline.py` | 字级时间戳 → 断句聚合 → 帧（锚定式；split_line/allocate 内化自 voice-ime make_subs.py，时间改字级锚定） |
 | `srt_out.py` | 独立 SRT 1.0 写出（HH:MM:SS,mmm） |
-| `tl_merge.py` | timeline.json subtitles[] 合并（只动 subtitles 键 + 备份 + 原子写回） |
+| `tl_merge.py` | subtitles[] 适配器（只声明字幕范围 + 字幕备份；经公开 timeline publisher 提交） |
 | `asr_cli.py` | 总入口：`sidecar` / `transcribe` / `srt` / `timeline` / `batch` |
 | `init.sh` | 已有 Framivra 专属解释器/模型检查与本地 sidecar 冒烟；不补齐缺失资产，旧 `--download` 入口为 **BLOCKED**；**绝不借用输入法环境/模型** |
 | `tests/` | 单测（零模型零 GPU 零网络）+ fixtures |
@@ -40,7 +40,11 @@ env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
 
 `timeline` 子命令：读 `project.fps/duration_frames`，subtitles[] 就地合并（旧值备份进
 `<项目>/cache/reports/subtitles_backup_<UTC>.json`），打印摘要（窗数/字数/最快速率/
-最宽行）；随后用 `vtx validate && audit` 复核（阅读速度 ≤9 字/s 含标点口径、行宽等）。
+最宽行）；默认替换，`--append` 保留旧字幕后按 in 排序。随后用 `vtx validate && audit` 复核（阅读速度 ≤9 字/s 含标点口径、行宽等）。
+
+写入口已迁移至公开 `read_timeline_for_write` → `timeline_write_plan` → `timeline_transaction`，与 `vtx store` 共用 journal；仅结构验证，不证明素材存在、插件可渲染。转录前固定 raw snapshot/base/op_id，耗时返回后不重读升级 base；CAS 冲突 exit1，不自动 rebase，timeline 未改但耗时产物可能已生成。外部 `subtitles_src` 提前拒绝，不删除路径。legacy 保留未知字段/Unicode 源 ID、不新增身份；managed 仅 owner 字幕范围 reconcile，已有显式 ID 保内容，新字幕 ID 在请求固定，不按数组位置猜 ID。
+
+Python 旧四参 `merge_subtitles` 仍可调用，但无早期参数只在 helper 入口取 base，不保障调用前耗时窗口；长任务必须传同一 `snapshot/expected_base/op_id`，仅有 base 无 snapshot 拒绝。`--dry-run` 纯 plan 不写 timeline/备份/history；内容相同走只读 base fence。字幕数组备份与审计报告不是 timeline publisher 对象，也不与主文件原子提交。报错 `outcome_unknown/recovery_required` 不代表未提交：保留同一 snapshot/输入/op_id，用公开 store status/recover 查/恢复同 operation 后同请求重传，不能盲造新 op；helper 异常带 receipt/request/backup。
 
 ## sidecar 协议（默认 127.0.0.1:18085，可配 config `asr.base_url`）
 

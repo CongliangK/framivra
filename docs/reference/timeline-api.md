@@ -311,8 +311,8 @@ engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作�
 | 当前入口与源码证据 | 当前支持与风险 | 后续统一内核迁移面 |
 |---|---|---|
 | [Blender 回写](../../apps/blender-bridge/blend2json.py#L90-L193) | 视频移动/边裁/同族换轨后重排；音频 in/out/src_in 可回写，换音轨和部分 loop 移动拒收；字幕、音量、pan 不回写。重叠时**先写后 exit 2**，非事务覆盖 | 精确位置寻址、编辑计划、冲突/重叠预检、提交前拒绝；不得照抄过时文件头的“不回写音频” |
-| [ASR 合并](../../apps/asr/tl_merge.py#L45-L85)，[调用者](../../apps/asr/asr_cli.py) | 只替换 subtitles；保留其他字段，支持 dry-run，cache/reports 备份旧字幕，同目录临时文件+replace。无原文版本 CAS；不协调 subtitles_src | 字幕集合替换、引用冲突与并发版本门；保留备份语义 |
-| [静态 duck 烘焙](../../plugins/duck-static/bed_static_duck.py#L126-L168) | 按轨名查找后分段替换 events 与 _meta，参数幂等标记和可选备份；无版本门、非事务覆盖 | 事件批量变换、元数据扩展保留、原文版本冲突 |
+| [ASR 合并](../../apps/asr/tl_merge.py)，[调用者](../../apps/asr/asr_cli.py) | B1 经公开同 publisher：转录前 raw/base/op_id，默认替换、显式 append；legacy preserve-unmanaged、managed owned 字幕 reconcile；外部字幕先拒绝，dry/nochange 零写 | cache/reports 字幕数组备份/报告不是 timeline 事务对象；旧 helper 无 snapshot 只保障其入口后的窗口 |
+| [静态 duck 烘焙](../../plugins/duck-static/bed_static_duck.py) | B1 早 snapshot、纯变换、同 publisher；managed 首段保 ID、新 IDs 固定，显式 owned marker；同参 skip/dry 零写；首次备份 A1 exact-import/create-only 独立 history | 备份后主 CAS stale 可留下备份副作用，非两文件原子事务；需支持 owned metadata 的内核，不回退覆盖 |
 | [通用脚手架](../../scripts/new_project.sh#L11-L35) | heredoc 整体写 timeline，可覆盖既有文件；创建 cache/out | 新工程创建与禁止无意覆盖 |
 | [口播脚手架](../../templates/tech-talk/scripts/new_project.sh#L94-L115) | 已存在则不覆盖，递归改占位路径与 _meta，再写新文件 | 保留新建语义与原始模板扩展 |
 | [MG build](../../templates/mg-styles/build.py#L16-L65) | 新目录限定，dry 返回工程，生成 gfx/音频后写 timeline | 新建工程与完整源/轨数据 |
@@ -320,7 +320,7 @@ engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作�
 | [既有只读预览页](../../vtx/preview.html#L264-L281)（非写入口） | 文件/粘贴 JSON 读取展示，不写工程；自带页面数据检查不是渲染校验 | 后续统一读模型消费面，不虚构编辑/导出能力 |
 | [只读 CLI](../../vtx/cli/timeline.py)、[只读模型](../../vtx/timeline.py)、[引用模型](../../vtx/timeline_reference.py) | inspect/query 为完整解析数据；reference 提供权威原文和带版本暂态地址；均零写态 | store 从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
 
-上述生产写入口当前**全部未迁移**，仍可能非合作直接写工程，不能宣称统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
+仅 ASR 与静态 duck 已迁移 B1；Blender、通用/口播/MG 脚手架以及 snapshot（A2 pinned target 未实现）等仍未迁移，不能宣称所有 writers 或统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
 
 ## 行为验证
 

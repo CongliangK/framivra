@@ -29,6 +29,7 @@ import os
 import shutil
 import sys
 import time
+import uuid
 from pathlib import Path
 
 # 平铺 import 同目录模块（vtx 同款手法）
@@ -215,10 +216,12 @@ def cmd_timeline(args, cfg):
         print("✗ timeline.json 不存在：%s" % tl_path)
         return 1
     try:
-        tl = json.loads(tl_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        print("✗ timeline.json 不是合法 JSON（%s）" % exc)
+        snapshot = tl_merge.read_snapshot(tl_path)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print("✗ %s" % exc)
         return 1
+    tl = snapshot["document"]
+    op_id = "asr-" + uuid.uuid4().hex
     project = tl.get("project", {}) if isinstance(tl, dict) else {}
     fps = int(project.get("fps", 30) or 30)
     duration = project.get("duration_frames")
@@ -242,13 +245,20 @@ def cmd_timeline(args, cfg):
     for w in summary["warnings"]:
         print("⚠ %s" % w)
     if args.dry_run:
+        try:
+            tl_merge.merge_subtitles(str(tl_path), subs, dry_run=True, snapshot=snapshot,
+                                     expected_base=snapshot["revision"], op_id=op_id)
+        except (RuntimeError, ValueError, OSError) as exc:
+            print("✗ %s" % exc)
+            return 1
         print("… dry-run：预览前 8 行（未写盘）")
         for s in subs[:8]:
             print("  [%6d,%6d) %s" % (s["in"], s["out"], s["text"]))
         return 0
     try:
-        result = tl_merge.merge_subtitles(str(tl_path), subs)
-    except (RuntimeError, ValueError) as exc:
+        result = tl_merge.merge_subtitles(str(tl_path), subs, snapshot=snapshot,
+                                           expected_base=snapshot["revision"], op_id=op_id)
+    except (RuntimeError, ValueError, OSError) as exc:
         print("✗ %s" % exc)
         return 1
     print("✓ subtitles[] 已合并：%s（旧 %d 条 → 新 %d 条；备份 %s）"
