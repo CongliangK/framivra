@@ -15,6 +15,8 @@ import tempfile
 import uuid
 
 from .runtime.fstxn import file_lock
+from . import timeline_write as _v2
+from .timeline_write import read_timeline_for_write, TimelineSnapshot
 from .timeline_edit import EDIT_OPERATIONS, edit_summary, transform_timeline
 from .timeline_structure import (identity_errors, managed_objects, strict_loads,
                                  structure_errors, valid_id)
@@ -65,7 +67,15 @@ def timeline_store_capabilities():
             "base_revision": "exact file bytes sha256:<hex>; create only uses null",
             "validation_scope": "stored schema/IDs/bounds/EDL/references, not renderability/assets/plugins",
             "guarantee": "local POSIX cooperative threads/processes and process crashes only",
-            "unmigrated_writers": "all legacy consumers (including scaffold, ASR, Blender, duck)"}
+            "unmigrated_writers": "all legacy consumers (including scaffold, ASR, Blender, duck)",
+            "v2": {"schema": _v2.SCHEMA, "request_protocol": 2,
+                   "identity_mode": ["managed", "preserve-unmanaged"],
+                   "payload_mode": ["document", "exact-import"],
+                   "operations": ["create", "replace", "apply", "edit", "reconcile", "undo"],
+                   "exact_import": "frozen UTF-8 bytes; create-only create/frozen-copy/detached-copy; no live overwrite",
+                   "reconciliation": "managed stable-ID owned/new inventory + constrained semantic batch; no positional mapping",
+                   "plan": "timeline_write_plan: zero-write; no initialization, lock, recovery or reservation",
+                   "pinned_artifact_target": "NOT IMPLEMENTED/NOT VERIFIED; snapshot adapter blocked"}}
 
 
 def _result(operation, **kw):
@@ -243,6 +253,8 @@ def _record(home, directory, target):
                     "intent.json", "before.bin", "after.bin", "commit.json", "abort.json"}):
                 raise ValueError("unknown evidence entry")
         intent = strict_loads(_read(directory / "intent.json"))
+        if isinstance(intent, dict) and type(intent.get("protocol")) is int and intent["protocol"] == 2:
+            return _v2.record(directory, target, entries, intent)
         keys = {"protocol", "target", "op_id", "request", "request_digest", "operation", "before_revision",
                 "after_revision", "project_id", "result"}
         if (not isinstance(intent, dict) or set(intent) != keys or intent["protocol"] != 1
@@ -437,16 +449,20 @@ def timeline_transaction(path, request):
     operation = request.get("operation") if isinstance(request, dict) else None
     op_id = request.get("op_id") if isinstance(request, dict) else None
     replacing = False
+    v2 = isinstance(request, dict) and "protocol" in request
     try:
-        if not isinstance(request, dict) or operation not in _OPERATIONS or not valid_id(op_id):
+        if v2:
+            request, digest = _v2.freeze_request(request)
+        elif not isinstance(request, dict) or operation not in _OPERATIONS or not valid_id(op_id):
             _fail("input.request", "expected supported operation and valid op_id")
-        allowed = {"operation", "op_id", "base_revision"}
-        allowed |= {"document"} if operation in ("create", "replace") else {"changes"} if operation == "apply" else {"operations"} if operation == "edit" else {"head"} if operation == "undo" else set()
-        if set(request) != allowed:
-            _fail("input.request", "missing or unknown request fields")
-        request_bytes = _encode(request)
-        request = strict_loads(request_bytes)  # freeze caller-owned mutable input before taking the lock
-        digest = _sha(request_bytes)
+        if not v2:
+            allowed = {"operation", "op_id", "base_revision"}
+            allowed |= {"document"} if operation in ("create", "replace") else {"changes"} if operation == "apply" else {"operations"} if operation == "edit" else {"head"} if operation == "undo" else set()
+            if set(request) != allowed:
+                _fail("input.request", "missing or unknown request fields")
+            request_bytes = _encode(request)
+            request = strict_loads(request_bytes)  # freeze caller-owned mutable input before taking the lock
+            digest = _sha(request_bytes)
         target = _canonical(path)
         with _locked(target) as home:
             _checkpoint("locked")
@@ -456,7 +472,7 @@ def timeline_transaction(path, request):
             before = _read(target, missing=True)
             if before is not None:
                 doc = _parse(before)
-                _check(doc)
+                (_v2.check_document if v2 else _check)(doc)
             else:
                 doc = None
             _checkpoint("read")
@@ -468,7 +484,9 @@ def timeline_transaction(path, request):
                 _fail("conflict", "base_revision does not match current file bytes")
             mapping = None
             summary = None
-            if operation == "create":
+            if v2:
+                after, after_doc, extras = _v2.prepare(request, before, doc, records)
+            elif operation == "create":
                 if before is not None:
                     _fail("create.exists", "create-only refuses an existing target")
                 after_doc = copy.deepcopy(request["document"])
@@ -506,18 +524,23 @@ def timeline_transaction(path, request):
                         _check(after_doc, managed=True)
                         summary = edit_summary(doc, after_doc)
                     after_doc["_vtx"]["head"] = op_id
-            _check(after_doc, managed=True)
-            after = _encode(after_doc)
+            if not v2:
+                _check(after_doc, managed=True)
+                after = _encode(after_doc)
             _checkpoint("validated")
-            result = _result(operation, op_id=op_id, request_digest=digest, revision=_sha(after),
-                             base_revision=revision, project_id=after_doc["_vtx"]["project_id"])
-            if mapping is not None:
-                result["id_mapping"] = mapping
-            if summary is not None:
-                result["edit"] = summary
-            intent = dict(protocol=1, target=target.name, op_id=op_id, request_digest=digest,
-                          operation=operation, before_revision=revision, after_revision=_sha(after),
-                          project_id=after_doc["_vtx"]["project_id"], request=request, result=result)
+            if v2:
+                result = _v2.result(request, digest, before, after, after_doc, extras)
+                intent = _v2.intent(target, request, digest, before, after, after_doc, result)
+            else:
+                result = _result(operation, op_id=op_id, request_digest=digest, revision=_sha(after),
+                                 base_revision=revision, project_id=after_doc["_vtx"]["project_id"])
+                if mapping is not None:
+                    result["id_mapping"] = mapping
+                if summary is not None:
+                    result["edit"] = summary
+                intent = dict(protocol=1, target=target.name, op_id=op_id, request_digest=digest,
+                              operation=operation, before_revision=revision, after_revision=_sha(after),
+                              project_id=after_doc["_vtx"]["project_id"], request=request, result=result)
             directory = _publish_intent(home, target, intent, before, after)
             _checkpoint("intent_published")
             fd, name = tempfile.mkstemp(prefix=".vtx-timeline-", suffix=".tmp", dir=target.parent)
@@ -546,7 +569,7 @@ def timeline_transaction(path, request):
                 staging.unlink(missing_ok=True)
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:
         code = "outcome_unknown" if replacing else getattr(error, "code", "input.error")
-        return dict(schema=_SCHEMA, operation=operation, op_id=getattr(error, "op_id", op_id), ok=False, code=code,
+        return dict(schema=_v2.SCHEMA if v2 else _SCHEMA, operation=operation, op_id=getattr(error, "op_id", op_id), ok=False, code=code,
                     message=str(error), retry="retry identical op_id/request or recover; never assume uncommitted" if code == "outcome_unknown" else None)
 
 
@@ -610,6 +633,44 @@ def timeline_edit_plan(path, request):
                     code=getattr(error, "code", "input.error"), message=str(error))
 
 
+def timeline_write_plan(path, request):
+    """Zero-write v2 prediction; v1 managed edit requests retain their old plan.
+
+    Never initializes/recover/locks. Historical replay precedes CAS, but current
+    existing bytes must first pass strict write validation (including JSON null).
+    """
+    if isinstance(request, dict) and "protocol" not in request:
+        return timeline_edit_plan(path, request)
+    try:
+        request, digest = _v2.freeze_request(request)
+        target = _canonical(path)
+        home = _location(target)
+        records = _plan_history(home, target)
+        if any(r["state"] == "pending" for r in records.values()):
+            _fail("recovery_required", "unresolved intent; explicit recover required before planning")
+        before = _read(target, missing=True)
+        doc = _parse(before) if before is not None else None
+        if before is not None:
+            _v2.check_document(doc)
+        if records != _plan_history(home, target) or before != _read(target, missing=True):
+            _fail("plan.not_ready", "observed timeline/history change during unlocked reads; retry plan")
+        prediction = "unlocked best-effort snapshot; no reservation, recovery, asset probing or strong consistency"
+        envelope = dict(schema=_v2.SCHEMA, operation="plan", ok=True, op_id=request["op_id"],
+                        request_digest=digest, base_revision=request["base_revision"],
+                        identity_mode=request["identity_mode"], payload_mode=request["payload_mode"],
+                        purpose=request["purpose"], prediction=prediction)
+        replay = _idempotency_decision(records, request["op_id"], digest, _sha(before))
+        if replay is not None:
+            return dict(envelope, replayed=True, current_revision=_sha(before), result=replay)
+        if request["base_revision"] != _sha(before):
+            _fail("conflict", "base_revision does not match current file bytes")
+        after, after_doc, extras = _v2.prepare(request, before, doc, records)
+        return dict(envelope, replayed=False, document=after_doc, revision=_sha(after), **extras)
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as error:
+        return dict(schema=_v2.SCHEMA, operation="plan", ok=False,
+                    code=getattr(error, "code", "input.error"), message=str(error))
+
+
 def timeline_store_status(path, *, recover=False):
     """Lock and inspect evidence; recover=True resolves pending intents only.
 
@@ -625,8 +686,8 @@ def timeline_store_status(path, *, recover=False):
                 _recover(home, target, records)
             current = _read(target, missing=True)
             doc = _parse(current) if current is not None else None
-            if doc is not None:
-                _check(doc)
+            if current is not None:
+                _v2.check_document(doc)
             return _result(operation, current_revision=_sha(current),
                            head=doc.get("_vtx", {}).get("head") if doc else None,
                            evidence_path=str(home), pending=any(r["state"] == "pending" for r in records.values()),

@@ -845,7 +845,7 @@ def _main(execution=None):
     ap.add_argument("--expected-content-version", help="reference only: exact byte version; required for addresses")
     ap.add_argument("command",
                     help="all | " + " | ".join(s[0] for s in STAGES) +
-                         " | clean | gc | df | snapshot | subs | diff | inspect | query | reference | capabilities")
+                         " | clean | gc | df | snapshot | subs | diff | inspect | query | reference | capabilities | store")
     # 必须定义在 command 之后：argparse 位置参数按定义序匹配，`*` 放前面会把
     # `subs check` 的两个 token 全部吞掉、command 只剩末位（实测 2026-09-11）
     ap.add_argument("subs_extra", nargs="*", metavar="ARG",

@@ -49,7 +49,8 @@ def managed_objects(doc):
                         yield f"{path}/{child}/{j}", block, "clip" if child == "clips" else "event"
 
 
-def identity_errors(doc, *, require_managed=False, require_source_id=True):
+def identity_errors(doc, *, require_managed=False, require_source_id=True,
+                    preserve_unmanaged=False):
     errors = []
     if not isinstance(doc, dict):
         return ["/: expected object"]
@@ -69,6 +70,18 @@ def identity_errors(doc, *, require_managed=False, require_source_id=True):
                 errors.append(path + "/id: missing stable identity")
             continue
         value = obj["id"]
+        if preserve_unmanaged and not managed and not require_managed:
+            # Legacy source IDs are references, not protocol identities. Other
+            # id fields remain schema-checked custom data, not a global inventory.
+            if kind != "source":
+                continue
+            if not isinstance(value, str):
+                errors.append(path + "/id: expected source string")
+            elif value in seen:
+                errors.append(path + "/id: duplicate source identity " + value)
+            else:
+                seen.add(value)
+            continue
         if not valid_id(value):
             errors.append(path + "/id: invalid stable identity")
         elif value in seen:
@@ -131,11 +144,12 @@ def _schema_errors(value, schema, path=""):
     return errors
 
 
-def structure_errors(doc, *, require_managed=False):
+def structure_errors(doc, *, require_managed=False, preserve_unmanaged=False):
     """Schema + stored bounds/EDL/references/IDs; NOT renderability validation."""
     schema = json.loads(Path(__file__).with_name("timeline.schema.json").read_text(encoding="utf-8"))
     errors = _schema_errors(doc, schema)
-    errors.extend(identity_errors(doc, require_managed=require_managed))
+    errors.extend(identity_errors(doc, require_managed=require_managed,
+                                  preserve_unmanaged=preserve_unmanaged))
     result = {"document": doc, "ok": True, "diagnostics": []}
     _check_shape(result)
     errors.extend(d["address"] + ": " + d["message"] for d in result["diagnostics"])

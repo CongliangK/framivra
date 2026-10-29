@@ -42,7 +42,8 @@ from .cache.recovery import atomic_media, media_cache_valid
 from .timeline import inspect_timeline, query_timeline, timeline_capabilities
 from .timeline_reference import reference_timeline
 from .timeline_store import (timeline_transaction, timeline_store_status,
-                             timeline_store_capabilities, timeline_edit_plan)
+                             timeline_store_capabilities, timeline_edit_plan,
+                             timeline_write_plan, read_timeline_for_write, TimelineSnapshot)
 
 __all__ = [
     "Ctx", "DOWNSTREAM", "load_receipt", "media_stat_digest", "audio_key",
@@ -52,7 +53,7 @@ __all__ = [
     "atomic_media", "media_cache_valid",
     "inspect_timeline", "query_timeline", "timeline_capabilities", "reference_timeline",
     "timeline_transaction", "timeline_store_status", "timeline_store_capabilities",
-    "timeline_edit_plan",
+    "timeline_edit_plan", "timeline_write_plan", "read_timeline_for_write", "TimelineSnapshot",
 ]
 
 
