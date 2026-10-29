@@ -3,7 +3,10 @@
 
 The old four positional arguments and summary keys remain supported. Standalone
 calls capture a base at helper entry; callers doing slow work MUST pass their
-original snapshot and expected_base. No late read upgrades that base. Keep the
+original snapshot and expected_base. The raw stdin CLI uses the public strict
+write parser before ordinary JSON decoding; Python callers supply already-decoded
+values and cannot recover numeric precision previously lost upstream.
+No late read upgrades that base. Keep the
 snapshot, op_id and inputs to retry exactly the same operation after an uncertain
 outcome; alternatively inspect/recover that operation via vtx store.
 """
@@ -164,7 +167,8 @@ if __name__ == "__main__":
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     try:
-        result = merge_subtitles(args.timeline, json.load(sys.stdin), dry_run=args.dry_run)
+        new_subs = _api().parse_write_json(sys.stdin.buffer.read())
+        result = merge_subtitles(args.timeline, new_subs, dry_run=args.dry_run)
     except (RuntimeError, ValueError, OSError) as exc:
         print("✗ %s" % exc)
         sys.exit(1)

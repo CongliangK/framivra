@@ -46,6 +46,8 @@ env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
 
 Python 旧四参 `merge_subtitles` 仍可调用，但无早期参数只在 helper 入口取 base，不保障调用前耗时窗口；长任务必须传同一 `snapshot/expected_base/op_id`，仅有 base 无 snapshot 拒绝。`--dry-run` 纯 plan 不写 timeline/备份/history；内容相同走只读 base fence。字幕数组备份与审计报告不是 timeline publisher 对象，也不与主文件原子提交。报错 `outcome_unknown/recovery_required` 不代表未提交：保留同一 snapshot/输入/op_id，用公开 store status/recover 查/恢复同 operation 后同请求重传，不能盲造新 op；helper 异常带 receipt/request/backup。
 
+独立 `tl_merge.py -t <项目>/timeline.json [--dry-run]` 的 stdin 是原始 UTF-8 字幕 JSON 数组；经公共 `parse_write_json` 在普通解码前拒绝重复键、非有限数和会在写回时损失十进制值的高精度 token（包括未知嵌套扩展），错误 exit1，timeline/备份/history 均不写。0.1、0.5、安全指数及大整数沿用内核写解析合同，不承诺保留数值词法。Python `merge_subtitles(new_subs=...)` 接收已有 Python 值，不能追溯调用前已发生的舍入；转录总入口与旧参数/默认替换行为不变。
+
 ## sidecar 协议（默认 127.0.0.1:18085，可配 config `asr.base_url`）
 
 | 端点 | 方法 | 请求 | 响应 |
