@@ -29,6 +29,26 @@ def strict_loads(payload):
                       parse_constant=_constant, parse_float=number)
 
 
+def json_equal(left, right):
+    """Compare parsed JSON values, not Python's bool/int equivalence.
+
+    Objects are unordered; arrays are ordered. JSON has one number type, so
+    equal int/float values and signed zero compare equal (not lexical identity).
+    Only writable JSON builtins are supported; encoding/strict_loads remain the
+    authority for finite/precision/range checks, not a second parser here.
+    """
+    if type(left) in (int, float) and type(right) in (int, float):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return (all(type(k) is str for k in left) and left.keys() == right.keys()
+                and all(json_equal(left[k], right[k]) for k in left))
+    if type(left) is list:
+        return len(left) == len(right) and all(json_equal(a, b) for a, b in zip(left, right))
+    return type(left) in (str, bool, type(None)) and left == right
+
+
 def managed_objects(doc):
     """Yield (JSON pointer, object, kind) for stored (not referenced) objects."""
     for key, kind, child in (("sources", "source", None),
@@ -49,7 +69,8 @@ def managed_objects(doc):
                         yield f"{path}/{child}/{j}", block, "clip" if child == "clips" else "event"
 
 
-def identity_errors(doc, *, require_managed=False, require_source_id=True):
+def identity_errors(doc, *, require_managed=False, require_source_id=True,
+                    preserve_unmanaged=False):
     errors = []
     if not isinstance(doc, dict):
         return ["/: expected object"]
@@ -69,6 +90,18 @@ def identity_errors(doc, *, require_managed=False, require_source_id=True):
                 errors.append(path + "/id: missing stable identity")
             continue
         value = obj["id"]
+        if preserve_unmanaged and not managed and not require_managed:
+            # Legacy source IDs are references, not protocol identities. Other
+            # id fields remain schema-checked custom data, not a global inventory.
+            if kind != "source":
+                continue
+            if not isinstance(value, str):
+                errors.append(path + "/id: expected source string")
+            elif value in seen:
+                errors.append(path + "/id: duplicate source identity " + value)
+            else:
+                seen.add(value)
+            continue
         if not valid_id(value):
             errors.append(path + "/id: invalid stable identity")
         elif value in seen:
@@ -131,11 +164,12 @@ def _schema_errors(value, schema, path=""):
     return errors
 
 
-def structure_errors(doc, *, require_managed=False):
+def structure_errors(doc, *, require_managed=False, preserve_unmanaged=False):
     """Schema + stored bounds/EDL/references/IDs; NOT renderability validation."""
     schema = json.loads(Path(__file__).with_name("timeline.schema.json").read_text(encoding="utf-8"))
     errors = _schema_errors(doc, schema)
-    errors.extend(identity_errors(doc, require_managed=require_managed))
+    errors.extend(identity_errors(doc, require_managed=require_managed,
+                                  preserve_unmanaged=preserve_unmanaged))
     result = {"document": doc, "ok": True, "diagnostics": []}
     _check_shape(result)
     errors.extend(d["address"] + ": " + d["message"] for d in result["diagnostics"])

@@ -147,7 +147,7 @@ vtx -t /path/to/timeline.json timeline frame --frame 30 --render
 
 键包括原文版本、Fast 媒体 stat 输入指纹、整数帧/fps/画布、ASS 精确字节、有序层/上游内容键和当前上游字节 SHA、实际 ffmpeg/动态依赖/字体环境、graph/PNG profile/实现源码身份；环境采集复用既有 gfx 证书工具。**Fast 不等于全媒体内容哈希**，跨机器逐像素等价未证。输入/完整 ASCII JSON wire 各 8MiB；输出超限拒绝而不截断引用。PNG 实读上限 max_png_bytes 为 1..8MiB（`--max-png-bytes`），超限不发布完成结果；编码器瞬态文件可大于该交付上限。CLI 成功0、业务拒绝1、错误旗标组合2，仅 stdout 完整 JSON，不另落报告。
 
-## 显式写事务第一切片（不是完整编辑器）
+## 显式写事务第一切片（v1；不是完整编辑器）
 
 **以下调用会写工程及持久历史**，没有 dry-run；先在副本核对请求，不自动迁移现有工程。公共 API 为 `timeline_transaction(path, request)`、`timeline_store_status(path, *, recover=False)`、`timeline_store_capabilities()`；CLI/Python 共用 [内核](../../vtx/timeline_store.py)，无需 Ctx、素材、渲染或插件。
 
@@ -256,6 +256,72 @@ fade 默认 `preserve-content`：保留外侧 fade，内部接缝设 0。切点�
 成功 envelope 为 `schema: "framivra.timeline.store/v1"`、operation/ok、op_id/request_digest、base_revision/revision/project_id，首次与重试另带 current_revision/replayed；失败包含 code/message。CLI 成功 exit0，输入/CAS/恢复错误 exit1，不支持的旗标组合 exit2；拒绝 `--dry-run`、渲染旗标与 `--json` 输出文件。
 
 [共享无素材校验](../../vtx/timeline_structure.py) 用于 store 写入及显式带 `_vtx` 的受管工程 validate，检查 schema、ID、源引用、整数帧/区间、EDL、内联/外引字幕冲突和轨重叠；`_vtx` 键存在即适用，坏值、缺字段或未知协议不回退 legacy。未受管工程保持原只读/validate 的 Unicode source ID、高精度扩展数值及精确诊断行为；写入的 strict/ID 限制不扩散到 legacy validate。adopt 不改已有 source.id 或引用：符合上述稳定 ID 规则才可接管，不符合的合法 legacy source ID 明确拒写并保留原字节，不自动重命名/迁移；高精度扩展（含超出 Decimal 指数范围的合法 JSON 数值）在 adopt/status/recover 返回 input.json 失败 envelope，拒写而非舍入，不影响 legacy 只读；此 adopt 是受限显式接管，不是全面兼容迁移。重复 source ID 在 validate 中不再静默覆盖。**提交不等于可渲染**：不探素材、不查实际源帧数、不载入插件，不代替正式 validate/all。保证仅为本地 POSIX 合作线程/进程与进程崩溃；最终 CAS 后仍可能被非合作外写竞态覆盖。Windows/NFS/物理断电未测，不作绝对保证。
+
+## 显式 v2 兼容写地基（A1；旧入口尚未迁移）
+
+v1 请求不带 `protocol`，其 digest、提交结果、重放和 managed edit plan 合同保留；不是把旧请求补默认 mode 后重算身份。显式 `protocol:2` 才走以下新政策，[纯策略与证据校验](../../vtx/timeline_write.py)仍进入同一 [store 发布器](../../vtx/timeline_store.py)的锁、CAS、intent、工程替换与恢复；没有第二 parser/publisher、sidecar HEAD 或默认 adopt。新 intent 为 protocol2、结果 schema 为 `framivra.timeline.store/v2`，工程 `_vtx.protocol` 仍为 1。同一 history 可逐条读取 v1/v2，不改写旧证据。
+
+### 同次原字节读取与双维模式
+
+```python
+from vtx.api import read_timeline_for_write, timeline_write_plan, timeline_transaction
+snapshot = read_timeline_for_write(path)
+# snapshot = {raw_bytes: bytes|None, revision: str|None,
+#             document: dict|None, identity_mode: "managed"|"preserve-unmanaged"}
+```
+
+此 API 仅一次原字节读取，用同一份 bytes 严格解析、校验并计算 revision；不构造 Ctx、不读/初始化历史、锁、备份、外部字幕、素材或插件。返回独立可变 document；修改它不会修改文件。目标缺失才返回三个 None；现存 JSON null、坏 JSON/结构、重复键、非有限/高精度数值均抛出 StoreError（ValueError 子类，带 code）或 OSError，不伪装缺失。仍为未持锁瞬时快照；调用者需把返回 revision 原样用于 CAS。
+
+每个 v2 请求必需 `protocol/operation/op_id/base_revision/identity_mode/payload_mode/purpose`，拒绝未知或缺失字段。identity_mode 与 payload_mode **正交**：
+
+- `identity_mode:"managed"`：当前工程必须有完整有效 `_vtx` 和全局稳定 ID；create 的 document 由调用者提供全部 ID、不得带 `_vtx`，内核按完整固定请求确定性分配 project_id/head。不更改 replace 的完整 ID/kind 清单约束。坏 `_vtx` 不能降为 legacy，也不允许隐式 adopt/downgrade。
+- `identity_mode:"preserve-unmanaged"`：工程没有 `_vtx`，create/replace/undo 绝不插入 `_vtx` 或非 source ID。source ID 保持真实 legacy 字符串/Unicode 引用合同，仍拒绝重复和悬空引用；既有其他 id 只是 schema 检查的自定义数据，不当作全局身份、不按位置重签。未知扩展由完整 document 保留；replace 的完整输入仍由调用者负责。写用数值严格度不扩散到 legacy 只读/validate。
+- `payload_mode:"document"`：规范化 JSON 写出，不承诺排版。create 的 purpose 必须是 `create`；其他 managed 操作必须是 `edit`；其他 preserve-unmanaged 操作必须是 `legacy-write`。managed 支持 create/replace/apply/edit/reconcile/undo；preserve-unmanaged 只支持 create/replace/undo。无 v2 adopt 捷径，显式 adopt 继续用原 v1。
+- `payload_mode:"exact-import"`：下节独立的 create-only 字节通道，不能用于普通 live 覆盖或 undo。
+
+```python
+snapshot = read_timeline_for_write(path)
+request = {"protocol": 2, "operation": "replace", "op_id": "legacy-write-1",
+           "base_revision": snapshot["revision"],
+           "identity_mode": snapshot["identity_mode"], "payload_mode": "document",
+           "purpose": "legacy-write", "document": snapshot["document"]}
+# 此示例只适用于 preserve-unmanaged；managed 用 purpose:"edit"。
+request["document"]["subtitles"][0]["text"] = "修订字幕"
+plan = timeline_write_plan(path, request)  # 零写；不初始化 status/history/lock/backup
+# 确认 plan 后才可调用 timeline_transaction；该调用会真实写工程与持久历史。
+```
+
+`timeline_write_plan` 支持所有 v2 政策组合（包括缺失目标 create/exact）；不带 protocol 的旧 edit 请求仍委托原 `timeline_edit_plan`，后者合同不变。新 plan 成功有 mode/purpose、request_digest/base_revision、prediction；非 replay 另有预测 document/revision 和适用的 edit/reconciliation。其 document 含预测新 head，revision 对应实际提交 bytes（不是 v1 plan 的保留旧 head 文档）。重放返回持久历史 result，不从当前文档重算 after；当前文件仍须先通过严格检查，null 不绕过。historical idempotency 先于 CAS，相同 op_id 改 mode/payload/purpose/base 都是完整请求冲突。未决/坏历史拒绝，绝不恢复或预留；零写、atime 与未持锁尽力观测限制同上节。
+
+新成功提交结果在原身份/hash 字段外包含 `identity_mode/payload_mode/purpose/detached_copy`；无 `_vtx` 时 project_id 为 null。所有 metadata（含 before/after identity mode）、冻结请求、before/after 精确 bytes 和结果受同一证据校验，恢复只比较当前 bytes 与 frozen before/after，不重跑 transformer 或读取旧 payload 路径。
+
+### 稳定 ID owner reconciliation 与撤销
+
+`reconcile` 额外字段恰为 `owner/owned_ids/new_ids/operations`：owner 为显式非空标签；owned_ids 是本次允许变动/删除的现存全局稳定 ID；new_ids 恰好列出本批新增 ID，不能复用旧 ID。operations 仍是上文已审查的受限 managed 语义批次，不接全文替换、JSON Pointer、数组位置映射或按文本猜 ID。未有可靠 ID/业务映射的旧 writer 必须明确拒绝，不能自动制造身份。
+
+最终比较包括对象 kind、父容器、非 owned 同级次序及全部未知深字段：非 owned 数据/位置、root/project 数据不得改变；隐式引用修复若影响非 owned 也拒绝。owned 对象的未知字段仅通过既有定点语义变换保留/修改，不投影重建。结果 reconciliation 列出 owner/base_revision、changes/creates/deletes/preserved_ids/warnings；这是调用者声明的业务范围审计，**不是宿主授权或持久 owner 注册表**。尚未迁移 ASR/duck/Blender 等现入口，也未实现它们各自的业务键映射和 owned root metadata 更新。
+
+v2 的范围、变更摘要及证据按 JSON 值递归比较：object 键序无关，array 次序保留；boolean 与 number 严分。JSON 只有一种 number，int/float 同值（含 ±0）相等，不比较数字词法；实际可写输入仍受 strict parser 的有限值/十进制往返精度约束，Python tuple/非字符串键拒绝。owned 真变化须列入 changed_ids/changes，并追踪父轨、共享源及 project 的影响窗口。v1 有效请求 digest、结果与字节不重签、不改写，原 v1 摘要保持；历史 boolean 被换成 0/1 属损坏，status/plan/replay 拒绝而非放宽恢复。
+
+managed undo 额外字段仍为 head：只撤当前 managed head，保持原字节 CAS；也能消费原 v1 已提交记录。preserve-unmanaged undo 额外字段为 `undo_of`：必须显式选择 committed 操作且当前 bytes 逐字节等于该记录 after，然后**原字节**恢复 before；语义相等但排版变化也拒绝。不维护时间戳/sidecar HEAD，不猜最后操作。create 的 before 不存在，不把 undo 变成删文件；adopt 跨 mode、exact artifact 均不可隐式撤销。撤销本身是新请求/新提交，仍有幂等与恢复。
+
+[JSON 值回归](../../tests/contracts/test_timeline_write_json.py) 覆盖真实 plan/CLI 提交、嵌套非 owned/root/project 范围、owned 类型变化摘要及 typed receipt 损坏后的 status/plan/replay 零写拒绝，并保留 object 键序无关和 array 顺序边界。
+
+### Exact-import 与 detached-copy
+
+Python 额外字段恰为 `raw_bytes`，只收已固化的 bytes；CLI 用唯一的 `payload_file` 替代，按调用者 cwd 解释并一次读取普通非 symlink/多硬链文件；不收 stdin、URL、目录或内联 raw_utf8。读入发生在 digest/锁之前，journal 存 frozen UTF-8 文本和 after.bin，不只记录可变源路径。CLI 的 `store plan --request ...` 也走相同冻结和纯计划，提交仍需显式 `store --request ...`；文件旗标不是另一 publisher。
+
+仅 `operation:"create"`、base=null 且目标不存在可用。purpose 只允许 `create/frozen-copy/detached-copy`；前两者要求 preserve-unmanaged。managed 原 bytes（含旧 project_id/head）只能用 `detached-copy`，要求完整 managed payload；不生成新 project_id 同时假称字节一致、不复制来源 history 或承诺来源 undo。目标有独立创建历史，即使两个文件的 `_vtx` 相同也不是同一可撤销工作副本。source 文件随后变化只会使重新请求的 digest 不同，不能改变已固化 intent。
+
+exact 保留首尾空白、键次序、Unicode escape、数值词法与完整原文件 SHA；依然用同一 strict writable parser/schema 校验，重复键/NaN/高精度不可写数值明确拒绝，绝不舍入或从解析 document 重序列化。exact 不是 live overwrite、一般备份恢复或 snapshot 绕过口；目标碰撞拒绝。
+
+### A2 pinned artifact target：未实现、未验证
+
+当前 path-store 仅支持上文普通本地 POSIX 合作工程；**不能安全代接 snapshot 临时目录**。没有已实现 PinnedArtifactTarget，也没有 snapshot adapter；A1 不代表完整兼容地基完成。
+
+拟议最小内部边界（设计，不是可调用 API）：`PinnedArtifactTarget(parent_fd, work_fd, final_name, timeline_name, final_path)`。parent_fd/work_fd 必须在已验证、受信任目录打开并用 fstat 固定 dev/inode；所有文件、history、锁与 staging 操作需 dirfd-relative、拒绝 leaf alias，不能在校验后回落字符串 resolve 或 chdir。final_path 仅为最终公开目标与 history manifest 的绑定身份，不能把临时工作路径写成最终契约；拒绝同 SHA decoy history。
+
+engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作目录冻结 timeline/intent/完整产物并逐级 fsync → **整个目录发布到最终名字的 rename 为线性化点** → fsync 父目录 → 持久最终 commit。不能把临时目录内的文件 replace 当最终成功，也不能简单复用普通 path-store 后移动其 history。最终 create-only 竞争、目录 rename 前后 EIO/SIGKILL 的 before/after/neither 恢复、最终名字/manifest/已固定 fd 同一性、别名/父目录替换/TOCTOU/descriptor 生命周期均需独立故障审查；未发布私有目录不能靠扫描任意残件接管。具体 primitive 与恢复布局尚待 A2 实现验证，不把以上设计描述当安全保证；在此之前 C3 snapshot 迁移阻塞。
 
 ## 生产写入口支持矩阵与迁移清单
 
