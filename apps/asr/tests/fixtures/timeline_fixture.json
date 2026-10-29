@@ -1,4 +1,5 @@
 {
+  "version": 2,
   "project": {
     "fps": 30,
     "width": 1920,
@@ -16,21 +17,26 @@
   ],
   "video_tracks": [
     {
+      "name": "screen",
       "kind": "screen",
       "clips": [
-        {"src": "screen_main", "in": 0, "out": 900, "t": 0}
+        {"src": "screen_main", "in": 0, "out": 900, "t": 0, "dst_in": 0, "dur": 900, "src_in": 0, "src_out": 900}
       ]
     }
   ],
   "audio_tracks": [
     {
+      "name": "voice",
       "kind": "voice",
+      "events": [{"src": "screen_main", "in": 0, "out": 450, "volume": 1}],
       "clips": [
         {"src": "voice_a1", "in": 0, "out": 450, "t": 0, "gain_db": 0}
       ]
     },
     {
+      "name": "music",
       "kind": "music",
+      "events": [{"src": "screen_main", "in": 0, "out": 900, "volume": 0.125893}],
       "clips": [
         {"src": "bgm", "in": 0, "out": 900, "t": 0, "gain_db": -18}
       ]
