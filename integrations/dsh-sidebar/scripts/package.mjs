@@ -31,7 +31,7 @@ if (!clientSource.trim() || clientSource.includes('sourceMappingURL=') || client
 const manifest = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8'))
 // Source scripts and all build/test dependencies stay outside the release.
 const release = Object.fromEntries(['name', 'version', 'description', 'type', 'main', 'exports', 'engines', 'license', 'files', 'peerDependencies', 'dsh'].map(key => [key, manifest[key]]))
-for (const name of ['index', 'host', 'protocol', 'media', 'json']) {
+for (const name of ['index', 'host', 'protocol', 'media', 'json', 'bounded']) {
   const source = await readFile(join(packageDir, 'src', `${name}.mjs`), 'utf8')
   await writeFile(join(stage, 'lib', `${name}.js`), source.replace(/from '(\.\/[^']+)\.mjs'/g, "from '$1.js'"))
 }

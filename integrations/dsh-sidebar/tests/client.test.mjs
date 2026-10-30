@@ -89,6 +89,6 @@ test('independent framivra extension tab and guide registrations dispose cleanly
   assert.deepEqual(slots.map(slot => slot.definition.name), ['sidebar.right.pane.tab', 'sidebar.right.tab.guide.entry'])
   const props = slots[0].definition.inject('session')
   assert.equal(props.sessionId, 'session')
-  assert.deepEqual(props.getDraftServices(), { conversation: undefined, sessions: undefined })
+  assert.deepEqual(props.getDraftServices(), { conversation: undefined, sessions: undefined, uiSession: undefined })
   for (const dispose of cleanup.reverse()) dispose()
 })

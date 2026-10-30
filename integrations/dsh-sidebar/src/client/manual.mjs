@@ -56,12 +56,14 @@ export function compileIntent(op, v, { result, blocks, track, frame, makeId = id
   }
 }
 
-export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady }) {
+export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady, onEditState }) {
   const [write, setWrite] = useState()
   const [op, setOp] = useState('block.move')
   const [v, setV] = useState({ family: 'video', kind: 'aroll', source_field: 'path', property: 'opacity', property_target: 'block', reference_field: 'duck_by', fade_policy: 'preserve-content', text_policy: 'duplicate-text', mode: 'shift', crossing: 'reject', scope: [], split_ids: [], order: [], start: '0', end: '10', duration: '10', src_in: '0', src_out: '10', volume: '1', at: '0', delta: '1', index: '0', value: '1' })
   const [queue, setQueue] = useState([]), [plan, setPlan] = useState(), [status, setStatus] = useState(), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
   const request = useRef(), generation = useRef(0), live = useRef(true), invalidations = useRef(Promise.resolve())
+  const frameSafety = useRef({ dirty: false, busy: false, unknown: false })
+  const safety = change => { frameSafety.current = { ...frameSafety.current, ...change }; onEditState?.(frameSafety.current) }
   const managed = opened.snapshot.document?._vtx?.protocol === 1
   const allSelected = selected ?? (selection ? [selection] : [])
   const blocks = result.blocks.filter(b => allSelected.some(s => s.kind === 'block' && s.address === b.address))
@@ -86,11 +88,12 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   }, [selection, selected, base])
   useEffect(() => { live.current = true; return () => { live.current = false; request.current?.abort() } }, [])
   useEffect(() => {
-    onGestureReady?.(write && managed && !busy ? operations => { invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
+    onGestureReady?.(write && managed && !busy ? operations => { safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
     return () => onGestureReady?.(undefined)
   }, [write, managed, busy, base, selected])
-  const set = (key, value) => { invalidate(); setV(previous => ({ ...previous, [key]: value })) }
+  const set = (key, value) => { safety({ dirty: true }); invalidate(); setV(previous => ({ ...previous, [key]: value })) }
   async function run(action, extra = {}) {
+    safety({ busy: true })
     request.current?.abort()
     const controller = new AbortController(); request.current = controller
     const signal = AbortSignal.any([tabSignal, controller.signal])
@@ -110,14 +113,16 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
       if (action === 'authorize-write') { invalidations.current = Promise.resolve(); setWrite(answer.writeGrant) }
       else if (action === 'revoke-write') { setWrite(undefined); invalidate() }
       else if (action === 'plan' && answer.ok && epoch === generation.current) setPlan(answer)
-      else if (action === 'status' || action === 'recover') { setStatus(answer); invalidate() }
-      else if (['commit','undo','adopt'].includes(action)) { setPlan(undefined); if (answer.ok) { setQueue([]); await onCommitted() } }
+      else if (action === 'status' || action === 'recover') { setStatus(answer); invalidate(); if (answer.ok) { await onCommitted(); safety({ unknown: false }) } }
+      else if (['commit','undo','adopt'].includes(action)) { setPlan(undefined); if (answer.ok) { setQueue([]); await onCommitted(); safety({ dirty: false, unknown: false }) } else if (answer.code === 'outcome_unknown' || answer.outcome === 'unknown') safety({ unknown: true }) }
       setMessage(stringifyJSON(answer, 2))
     } catch (error) {
+      if (['commit','adopt','undo','recover'].includes(action)) safety({ unknown: true })
       if (live.current) setMessage(`${error.message}\n${['commit','adopt','undo','recover'].includes(action) ? `结果可能未知；原 op_id：${operationId ?? '请读 core status/history'}。不要新建操作重试，显式 status/recover。` : ''}`)
-    } finally { if (live.current) setBusy(false) }
+    } finally { safety({ busy: false }); if (live.current) setBusy(false) }
   }
   function add() {
+    safety({ dirty: true })
     try { const operations = compileIntent(op, v, { result, blocks, track, frame }); if (!operations.length) throw new Error('请选择操作对象'); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('已加入未保存批次；没有写工程。') } catch (error) { setMessage(error.message) }
   }
   const field = (key, title, type = 'text') => h('label', { key, style: { display: 'block' } }, title, h('input', { type, value: v[key] ?? '', onChange: e => set(key, e.target.value), style: { display: 'block', width: '100%', boxSizing: 'border-box' } }))
@@ -154,7 +159,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     h('p',null,`写授权：${write?'已明确授予（非 read grant）':'未授予，保留 read / copy / noDraft 降级'}；选择 ${blocks.length} 个块 / ${track?.data?.id ?? '无真实轨'}`),
     !managed ? h('div',null,h('p',null,'Legacy：只读。显式接管会分配稳定 ID 并创建持久历史；现有未知 ID/不兼容素材 ID 将被内核拒绝，绝不自动改名或迁移。'), h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('adopt',{base_revision:base,confirmation:'stable-ids-and-history'})},'确认稳定 ID / 历史影响并接管 legacy')) : null,
     h('fieldset',{disabled:!write||!managed||busy,style:{minWidth:0}},h('legend',null,'专用操作表单（不是整段 JSON 请求）'),selectOperation(),...form,
-      h('button',{type:'button',onClick:add},'加入未保存批次'), h('button',{type:'button',onClick:()=>{invalidate();setQueue([])}},'清空未保存批次')),
+      h('button',{type:'button',onClick:add},'加入未保存批次'), h('button',{type:'button',onClick:()=>{invalidate();setQueue([]);safety({dirty:false})}},'清空未保存批次')),
     h('pre',{'aria-label':'未保存 typed intents',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(queue,2)),
     h('button',{type:'button',disabled:!write||busy||!queue.length,onClick:()=>void run('plan',{base_revision:base,operations:queue})},'内核预检计划（零写）'),
     plan ? h('div',null,h('strong',null,`未保存计划 · op_id ${plan.submitted_request.op_id}`),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(plan,2)),h('button',{type:'button',disabled:busy,onClick:()=>void run('commit',{planToken:plan.planToken})},'确认提交此冻结计划（一次 revision）')) : null,
@@ -164,5 +169,5 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     h('p',null,'Redo：内核未支持，不伪造浏览器逆操作。status/recover 结果是唯一恢复依据；没有浏览器持久 timeline/history。'),
     busy ? h('button',{type:'button',onClick:()=>{request.current?.abort();void call(sessionId,payload('cancel-write'),tabSignal).catch(()=>{})}},'取消并等待子进程回收（写结果可能未知）') : null,
     h('pre',{role:'status',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},message),status?h('details',null,h('summary',null,'最近 core status / recover'),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(status,2))):null)
-  function selectOperation() { return h('label',{key:'operation'},'编辑操作',h('select',{value:op,onChange:e=>{invalidate();setOp(e.target.value)},style:{width:'100%'}}, EDIT_OPERATIONS.map((value,i)=>h('option',{key:value,value},`${names[i]} · ${value}`)))) }
+  function selectOperation() { return h('label',{key:'operation'},'编辑操作',h('select',{value:op,onChange:e=>{safety({dirty:true});invalidate();setOp(e.target.value)},style:{width:'100%'}}, EDIT_OPERATIONS.map((value,i)=>h('option',{key:value,value},`${names[i]} · ${value}`)))) }
 }

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute } from 'node:path'
 import { PreviewError, TimelineReader, fail } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
+import { boundedText, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 
 const MEDIA = ['out/final.mp4', 'out/draft_final.mp4']
@@ -12,7 +13,8 @@ export function relativeTimeline(path) {
   }
   return path
 }
-const json = (value, status = 200) => new Response(stringifyJSON(value), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
+const json = (value, status = 200) => new Response(stringifyJSON(value), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
+const inlineCapable = value => value?.capabilities?.frame?.schema === 'framivra.timeline.frame/v1' && value.capabilities.frame.explicit_render_required === true && value.capabilities.frame.inline_png?.flag === '--include-png' && value.capabilities.frame.inline_png.encoding === 'base64' && value.capabilities.frame.inline_png.wire_limit_bytes === FRAME_WIRE_LIMIT
 
 export function createPreviewHost(ctx, config = {}) {
   const reader = new TimelineReader(ctx.subprocess, config)
@@ -20,6 +22,8 @@ export function createPreviewHost(ctx, config = {}) {
   const grants = new Map()
   const operations = new Set()
   const streams = new Set()
+  const frameOwners = new Set()
+  let semanticAdmission = 0
   const clock = config.clock ?? Date.now
   const ttlMs = 30 * 60 * 1000
 
@@ -46,6 +50,7 @@ export function createPreviewHost(ctx, config = {}) {
     return { target, info }
   }
   function revoke(grant) {
+    grant.frame?.abort()
     grant.write?.abort()
     grant.write = undefined
     grant.plan = undefined
@@ -115,14 +120,17 @@ export function createPreviewHost(ctx, config = {}) {
         expire()
         if (grants.size >= 32) fail('GRANT_LIMIT', 'Close an existing preview before opening another', 429)
         const grant = randomUUID()
-        grants.set(grant, { session, cwd, root, relative, timeline, project, projectPath, executable, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs })
+        grants.set(grant, { session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion: (await ctx.fs.stat(executableTarget, hold.signal))?.version, capabilities, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs })
         return json({ grant, snapshot, capabilities, expires_in_ms: ttlMs,
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
       }
       const grant = grantFor(data.sessionId, data.grant)
-      if (data.op === 'close') { revoke(grant); grants.delete(data.grant); await grant.runningDone; return json({ ok: true }) }
+      if (data.op === 'close') { revoke(grant); grants.delete(data.grant); await Promise.all([grant.runningDone, grant.frameDone]); return json({ ok: true }) }
       if (['authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write', 'plan', 'commit', 'status', 'recover', 'adopt', 'undo'].includes(data.op)) {
-        return await editControl(data, grant, hold.signal)
+        if (data.op !== 'revoke-write' && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and confirm actual process reaping before semantic operations', 409)
+        semanticAdmission++
+        try { return await editControl(data, grant, hold.signal) }
+        finally { semanticAdmission-- }
       }
       if (!['inspect', 'query', 'reference'].includes(data.op)) fail('BAD_OPERATION', 'Unknown operation')
       if (data.op === 'reference' && data.query?.expected_content_version !== grant.contentVersion) fail('STALE_REFERENCE', 'Reference version must match this opened preview; refresh first', 409)
@@ -132,6 +140,7 @@ export function createPreviewHost(ctx, config = {}) {
       if (data.op === 'inspect') {
         if (grant.contentVersion !== result.content_version) { grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
         grant.contentVersion = result.content_version
+        if (grant.recoveryObserved) { grant.outcomeUnknown = false; grant.recoveryObserved = false }
       }
       return json(result)
     } finally { hold.release() }
@@ -139,7 +148,8 @@ export function createPreviewHost(ctx, config = {}) {
   async function editControl(data, grant, signal) {
     await validateTimeline(grant, signal)
     grantFor(data.sessionId, data.grant)
-    if (data.op === 'revoke-write') { revoke(grant); await grant.runningDone; return json({ ok: true }) }
+    if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone]); return json({ ok: true }) }
+    if (grant.frame || (reader.active.size && !grant.running)) fail('FRAME_BUSY', 'Explicitly cancel the frame and wait for process reaping before semantic operations', 409)
     if (data.op === 'authorize-write') {
       if (process.platform !== 'linux') fail('WRITE_UNSUPPORTED', 'Semantic writes are verified only on the local Linux backend', 422)
       revoke(grant)
@@ -177,6 +187,7 @@ export function createPreviewHost(ctx, config = {}) {
         mutating = true // Even status may initialize lock/manifest; write grant required.
         const result = await reader.store(grant.executable, path, data.op, undefined, combined)
         grant.plan = undefined
+        if (result.ok) grant.recoveryObserved = true
         return json(result)
       }
       if (data.op === 'commit') {
@@ -219,11 +230,80 @@ export function createPreviewHost(ctx, config = {}) {
       grant.plan = { token, request }
       return json({ ...result, planToken: token, submitted_request: request })
     } catch (error) {
-      if (mutating) return json({ ok: false, schema: 'framivra.timeline.store/v1', code: 'outcome_unknown', op_id: request?.op_id ?? null,
+      if (mutating) { grant.outcomeUnknown = true; return json({ ok: false, schema: 'framivra.timeline.store/v1', code: 'outcome_unknown', op_id: request?.op_id ?? null,
         submitted_request: request, message: 'Command interrupted or result unavailable. It may have committed; use explicit core status/recover. Never generate a replacement operation to retry.',
-        diagnostics: { error: error.code ?? error.name, message: error.message } })
+        diagnostics: { error: error.code ?? error.name, message: error.message } }) }
       throw error
     } finally { clearInterval(monitor); grant.running = undefined; settled() }
+  }
+  async function frame(request) {
+    if (request.method !== 'POST') fail('METHOD_NOT_ALLOWED', 'Frame is POST-only', 405)
+    const hold = lease(request)
+    let grant, controller, settled, monitor, expiry
+    try {
+      let text
+      try { text = await boundedText(request, FRAME_REQUEST_LIMIT, hold.signal) }
+      catch (error) { if (error.message?.startsWith('BODY_LIMIT:')) fail('REQUEST_TOO_LARGE', error.message, 413); throw error }
+      const data = parseJSON(text)
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
+      grant = grantFor(data.sessionId, data.grant)
+      if (data.op === 'cancel') {
+        grant.frame?.abort()
+        await grant.frameDone
+        await reader.reap()
+        grant.frame = undefined
+        frameOwners.delete(grant)
+        return json({ ok: true, reaped: true })
+      }
+      if (data.op !== 'render' || data.renderConsent !== 'cache/preview-only' || !/^[a-f0-9-]{36}$/.test(data.operationId)) fail('RENDER_DENIED', 'A fresh explicit preview-cache write consent is required', 403)
+      if (!Number.isSafeInteger(data.frame) || data.frame < 0 || data.contentVersion !== grant.contentVersion || !/^sha256:[a-f0-9]{64}$/.test(data.contentVersion)) fail('STALE_FRAME', 'Use an exact saved version and pinned integer frame', 409)
+      if (!inlineCapable(grant.capabilities)) fail('FRAME_UNSUPPORTED', 'Installed core must actually advertise --include-png; no path fallback', 422)
+      if (semanticAdmission || grant.running || grant.outcomeUnknown || grant.plan) fail('WRITE_BUSY', 'Resolve the active/unknown write or pending plan and refresh before a frame', 409)
+      if (frameOwners.size || grant.frame || reader.active.size) fail('FRAME_BUSY', 'Previous process ownership has not been reaped', 409)
+      grant.frameNonces ??= new Set()
+      if (grant.frameNonces.has(data.operationId)) fail('FRAME_REPLAY', 'A render click is single-use; no automatic retry', 409)
+      if (grant.frameNonces.size >= 128) fail('FRAME_LIMIT', 'Reopen this preview before more captures', 429)
+      grant.frameNonces.add(data.operationId)
+      controller = new AbortController()
+      grant.frame = controller // Synchronous admission: held until actual done + waitForExit.
+      frameOwners.add(grant)
+      grant.frameDone = new Promise(resolve => { settled = resolve })
+      const signal = AbortSignal.any([hold.signal, controller.signal])
+      monitor = setInterval(() => {
+        if (clock() >= grant.expiresAt || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd) controller.abort()
+      }, 50)
+      monitor.unref?.()
+      expiry = setTimeout(() => controller.abort(), Math.max(0, grant.expiresAt - clock()))
+      expiry.unref?.()
+      const validate = async () => {
+        signal.throwIfAborted()
+        grantFor(data.sessionId, data.grant)
+        const timeline = await validateTimeline(grant, signal)
+        const executable = await localTarget(grant.executable, undefined, signal)
+        const info = await ctx.fs.stat(executable, signal)
+        if (executable.targetKey !== grant.executableTarget.targetKey || info?.type !== 'file' || info.version !== grant.executableVersion || ctx.fs.contains(grant.root, executable)) fail('EXECUTABLE_CHANGED', 'Installed executable identity changed; reopen', 409)
+        if (data.contentVersion !== grant.contentVersion) fail('STALE_FRAME', 'Displayed version changed', 409)
+        grantFor(data.sessionId, data.grant)
+        signal.throwIfAborted()
+        return ctx.fs.processPath(timeline)
+      }
+      const path = await validate()
+      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal)
+      await validate()
+      signal.throwIfAborted()
+      // Exact whole response bound INCLUDING final newline; image.path is never resolved/read.
+      const wire = stringifyJSON(result) + '\n'
+      if (Buffer.byteLength(wire, 'utf8') > FRAME_WIRE_LIMIT) fail('FRAME_WIRE_LIMIT', 'Frame response exceeds 8 MiB including envelope/newline', 502)
+      return new Response(wire, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
+    } finally {
+      clearInterval(monitor); clearTimeout(expiry)
+      if (controller) {
+        // Failed cleanup keeps the owner; explicit cancel retries reaping. Never unlock on HTTP abort alone.
+        if (!reader.active.size && grant.frame === controller) { grant.frame = undefined; frameOwners.delete(grant) }
+        settled()
+      }
+      hold.release()
+    }
   }
   async function media(request) {
     const hold = lease(request, false)
@@ -261,7 +341,7 @@ export function createPreviewHost(ctx, config = {}) {
     }
   }
   return {
-    control: safe(control), media: safe(media),
+    control: safe(control), frame: safe(frame), media: safe(media),
     async dispose() {
       lifecycle.abort()
       for (const grant of grants.values()) revoke(grant)

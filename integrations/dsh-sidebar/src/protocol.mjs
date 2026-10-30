@@ -1,5 +1,7 @@
 /** Adapter only: timeline interpretation and selection belong exclusively to vtx. */
 import { dirname, isAbsolute } from 'node:path'
+import { Readable } from 'node:stream'
+import { boundedText, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 
 export class PreviewError extends Error {
@@ -50,7 +52,7 @@ export function referenceArgs(query) {
     if (!Array.isArray(query[key]) || query[key].length > 64 || query[key].some(value => typeof value !== 'string' || !value || value.length > 4096 || value.includes('\0'))) fail('BAD_REFERENCE', 'Invalid or oversized reference selector')
     for (const value of query[key]) { args.push(`${flag}=${value}`); count++ }
   }
-  if (count !== 1) fail('BAD_REFERENCE', 'Select exactly one stored track or block')
+  if (count !== 1 && !(count === 0 && query.frame !== undefined)) fail('BAD_REFERENCE', 'Select exactly one stored track/block or an explicit position-only frame')
   if (query.frame !== undefined) {
     if (!integer(query.frame)) fail('BAD_REFERENCE', 'Reference frame must be a nonnegative safe integer')
     args.push('--frame', String(query.frame))
@@ -123,6 +125,17 @@ export class TimelineReader {
     const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
     return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation))
   }
+  async frame(executable, timeline, frame, version, signal) {
+    if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version)) fail('BAD_FRAME', 'Exact saved version and integer pin required')
+    return this.command(executable, timeline, ['timeline', 'frame', '--frame', String(frame), `--expected-content-version=${version}`, '--render', '--include-png', '--max-png-bytes=8388608'], signal, text => {
+      const value = parseJSON(text)
+      if (!object(value) || value.schema !== 'framivra.timeline.frame/v1' || value.operation !== 'frame' || typeof value.ok !== 'boolean' || !Array.isArray(value.diagnostics)) fail('PROTOCOL_MISMATCH', 'Official frame/v1 envelope required', 502)
+      return value
+    }, undefined, true, true)
+  }
+  async reap() {
+    await Promise.all([...this.active.keys()].map(handle => this.cleanup(handle)))
+  }
   async store(executable, timeline, operation, request, signal) {
     if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
     // The official flag reads fd0 itself: public providers may expose a socket,
@@ -136,19 +149,23 @@ export class TimelineReader {
       return result
     }, input, true)
   }
-  async command(executable, timeline, args, signal, decode, input, business = false) {
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     const handle = this.subprocess.spawn({
       argv: [executable, '-t', timeline, ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
-      stdio: { stdin: input === undefined ? 'ignore' : { data: input }, stdout: { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
+      stdio: { stdin: input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
       env: { PATH: this.config.trustedPath, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
     })
     this.active.set(handle, undefined)
     try {
-      const outcome = await untilAborted(handle.done, signal)
+      if (streaming && !handle.stdout) fail('FRAME_STREAM_UNSUPPORTED', 'Public provider did not expose the requested owner stdout pipe', 502)
+      const [outcome, streamed] = await untilAborted(Promise.all([
+        handle.done,
+        streaming ? boundedText({ headers: new Headers(), body: Readable.toWeb(handle.stdout) }, FRAME_WIRE_LIMIT, signal) : undefined,
+      ]), signal)
       signal.throwIfAborted()
       if (outcome.exitCode !== 0 && !(business && outcome.exitCode === 1)) {
         const error = new PreviewError(outcome.exitCode === 2 ? 'CLI_UNSUPPORTED' : 'CLI_FAILED',
@@ -161,7 +178,7 @@ export class TimelineReader {
         }
         throw error
       }
-      const output = handle.collected.stdout?.readFrom(0)
+      const output = streaming ? { text: streamed, lossy: false } : handle.collected.stdout?.readFrom(0)
       if (!output || output.lossy) fail('TRUNCATED_JSON', 'vtx JSON exceeded the 8 MiB read limit; refusing truncated preview', 502)
       const result = decode(output.text)
       if (business && (outcome.exitCode === 0) !== result.ok) fail('PROTOCOL_MISMATCH', 'Store exit/envelope mismatch', 502)

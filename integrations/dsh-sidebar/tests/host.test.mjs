@@ -129,7 +129,8 @@ test('DSH mounting uses only exact authenticated Connection Fetch routes and rev
   const ctx = { effect: effect => cleanup.push(effect()), connection: { fetch: { register: route => { routes.push(route); return async () => {} } } }, subprocess: {} }
   apply(ctx)
   assert.deepEqual(routes.map(route => [route.path, route.methods, route.requestBody]), [
-    ['/api/framivra/control', ['POST'], 'buffered'], ['/api/framivra/media', ['GET', 'HEAD'], 'buffered'],
+    ['/api/framivra/control', ['POST'], 'buffered'], ['/api/framivra/frame', ['POST'], 'streaming'],
+    ['/api/framivra/media', ['GET', 'HEAD'], 'buffered'],
   ])
   for (const dispose of cleanup.reverse()) await dispose()
 })

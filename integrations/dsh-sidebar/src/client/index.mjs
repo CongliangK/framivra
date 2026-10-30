@@ -4,6 +4,7 @@ import { captureCurrentDraft, performReferenceAction } from './reference.mjs'
 import { VisualTimeline } from './timeline.mjs'
 import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
+import { FrameEpoch, FrameTools } from './frame.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
@@ -112,15 +113,21 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
   const [frame, setFrame] = useState('')
   const [state, setState] = useState({ phase: 'idle' })
   const [selectionIntent, setSelectionIntent] = useState(emptySelection)
+  const frameOwner = useRef(new FrameEpoch()).current
+  const ownerBinding = useRef()
+  if (ownerBinding.current !== sessionId) { frameOwner.invalidate(); frameOwner.edit = { dirty: false, busy: false, unknown: false }; ownerBinding.current = sessionId }
   const { primary: selection, items: selected } = selectionIntent
-  const pick = (item, event) => setSelectionIntent(previous => transitionSelection(previous, item, event, state.result))
-  const clearSelection = () => setSelectionIntent(emptySelection())
+  const pick = (item, event) => { frameOwner.invalidate(); setSelectionIntent(previous => transitionSelection(previous, item, event, state.result)) }
+  const clearSelection = () => { frameOwner.invalidate(); setSelectionIntent(emptySelection()) }
+  const pin = value => { frameOwner.invalidate(); setFrame(value) }
+  const editState = next => { frameOwner.editChanged(next); setState(previous => ({ ...previous })) }
   const [gesture, setGesture] = useState()
   const task = useRef()
   const grant = useRef()
   let frameValue, frameError
   try { frameValue = frameQuery(frame).frame } catch (error) { frameError = error.message }
   const close = () => {
+    frameOwner.invalidate()
     const current = grant.current
     grant.current = undefined
     if (current) void control(sessionId, { op: 'close', grant: current }).catch(() => {})
@@ -132,7 +139,21 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
     return () => { tab.signal.removeEventListener('abort', abort) }
   }, [tab.signal, sessionId])
 
+  useEffect(() => {
+    const services = getDraftServices?.(), list = services?.sessions?.list, navigation = services?.uiSession?.adapter.current
+    let binding = services?.sessions?.binding?.(sessionId), cwd = list?.getSnapshot().byId?.[sessionId]?.cwd, key = navigation?.getSnapshot().key
+    const observe = () => {
+      const nextBinding = services?.sessions?.binding?.(sessionId), nextCwd = list?.getSnapshot().byId?.[sessionId]?.cwd, nextKey = navigation?.getSnapshot().key
+      if (binding !== nextBinding || cwd !== nextCwd || key !== nextKey) {
+        binding = nextBinding; cwd = nextCwd; key = nextKey
+        frameOwner.invalidate(); setState(previous => ({ ...previous }))
+      }
+    }
+    const off = [list?.subscribe(observe), navigation?.subscribe(observe)]
+    return () => { frameOwner.invalidate(); off.forEach(dispose => dispose?.()) }
+  }, [sessionId, frameOwner])
   async function load(queryOnly = false) {
+    frameOwner.invalidate()
     let query
     try { query = queryOnly ? frameQuery(frame) : {} } catch (error) {
       // Keep the preview/grant and entered token so the user can correct it.
@@ -168,6 +189,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
     }
   }
   async function refreshCommitted() {
+    frameOwner.invalidate()
     const opened = state.opened
     const signal = tab.signal
     const snapshot = await control(sessionId, { op: 'inspect', grant: opened.grant }, signal)
@@ -180,7 +202,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
   }
   return h('article', { style: { padding: 12, overflow: 'auto', height: '100%', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', boxSizing: 'border-box' }, 'aria-label': 'Framivra read-only preview' },
     h('h2', null, 'Framivra · 时间线'),
-    h('p', null, '打开当前会话工作区内的相对 timeline 路径；不会切换工作区。默认仅只读 / 复制引用。手动编辑须另行明确授予本会话/工程写许可，受管工程经内核预检后才提交。外部工程、远程文件系统、渲染与附件不支持。'),
+    h('p', null, '打开当前会话工作区内的相对 timeline 路径；不会切换工作区。默认仅只读 / 复制引用。手动编辑须另行明确授予本会话/工程写许可，受管工程经内核预检后才提交。外部工程与远程文件系统不支持。固定帧 PNG 需要下方单独 cache/preview 写入同意；图片/引用仅加入草稿，不发送。'),
     h('form', { onSubmit: event => { event.preventDefault(); void load() } },
       h('label', null, 'Timeline path ', h('input', { style: { maxWidth: '100%', boxSizing: 'border-box' }, value: timeline, onChange: event => { task.current?.abort(); close(); setTimeline(event.target.value); setState({ phase: 'idle' }); clearSelection() }, required: true })),
       h('button', { type: 'submit' }, 'Open / refresh')),
@@ -188,14 +210,15 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
     state.message ? h('pre', { role: 'alert', style: { whiteSpace: 'pre-wrap' } }, state.message) : null,
     state.phase === 'ready' && state.sessionId === sessionId ? h(React.Fragment, null,
       h('form', { onSubmit: event => { event.preventDefault(); void load(true) } },
-        h('label', null, 'Frame (blank = all) ', h('input', { type: 'text', inputMode: 'numeric', style: { maxWidth: '100%', boxSizing: 'border-box' }, value: frame, 'aria-invalid': Boolean(frameError), onChange: event => setFrame(event.target.value) })),
+        h('label', null, 'Frame (blank = all) ', h('input', { type: 'text', inputMode: 'numeric', style: { maxWidth: '100%', boxSizing: 'border-box' }, value: frame, 'aria-invalid': Boolean(frameError), onChange: event => pin(event.target.value) })),
         h('button', { type: 'submit' }, 'Query stored blocks')),
       frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
-      state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => setFrame(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture }),
-      !state.stale ? h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onGestureReady: callback => setGesture(() => callback) }) : null,
+      state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture }),
+      !state.stale ? h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGestureReady: callback => setGesture(() => callback) }) : null,
       !state.stale && !frameError && state.opened.snapshot.content_version === state.result.content_version ? h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
         onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) },
       }) : null,
+      !state.stale && !frameError ? h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null,
       h('h3', null, 'Existing output preview — provenance UNKNOWN'),
       h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),
       state.opened.media.length === 0 ? h('p', null, 'No existing final.mp4 / draft_final.mp4 output found. No render was started.') : null,
@@ -212,7 +235,7 @@ export function apply(ctx) {
     guide: [{ id: 'open', order: 40, title: () => 'Framivra preview', description: () => 'Read-only timeline and existing outputs' }],
   }))
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-    name: 'sidebar.right.pane.tab', key: ID, inject: sessionId => ({ sessionId, getDraftServices: () => ({ conversation: ctx.get?.('conversation'), sessions: ctx.get?.('sessions') }) }),
+    name: 'sidebar.right.pane.tab', key: ID, inject: sessionId => ({ sessionId, getDraftServices: () => ({ conversation: ctx.get?.('conversation'), sessions: ctx.get?.('sessions'), uiSession: ctx.get?.('uiSession') }) }),
   }, PreviewBody)))
   ctx.effect(() => ctx.slots.inject('sidebar.right.tab.guide.entry', () => ctx.slots.register({ name: 'sidebar.right.tab.guide.entry', key: ID }, Guide)))
 }
