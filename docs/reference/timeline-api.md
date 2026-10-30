@@ -130,13 +130,15 @@ ID/address 旗标可重复，用于多轨/多块。所有选择器的 Python 集
 
 ## 显式当前帧图像（第一切片）
 
-公共 API：`frame_timeline(path, *, frame, expected_content_version=None, render=False, max_png_bytes=8388608)`；CLI：
+公共 API：`frame_timeline(path, *, frame, expected_content_version=None, render=False, max_png_bytes=8388608, include_png=False)`；CLI：
 
 ```bash
 # 默认只引用并返回 render.not_authorized，不启动 renderer/ffprobe、不开锁、不建目录：
 vtx -t /path/to/timeline.json timeline frame --frame 30
 # 警告：以下实际写 cache/preview；需先独立准备当前 seg/gfx，不会自动准备：
 vtx -t /path/to/timeline.json timeline frame --frame 30 --render
+# 同一写授权，另显式请求 PNG 传输（不是路径读取许可）：
+vtx -t /path/to/timeline.json timeline frame --frame 30 --render --include-png
 ```
 
 返回独立 `framivra.timeline.frame/v1` envelope：content_version、reference、image、diagnostics。reference 原样保留同版本完整原文/暂态地址/选择；图像不是解析数据投影。成功 image 的 kind 为 `current-composite`、approximate=false，含 PNG 相对工程路径、SHA256/实际字节数、画布宽高、整数 frame、fps={num,den}、content_version、input_fingerprint、render_key 与 cache_hit。图像来自共享 RenderPlan 在 `[frame,frame+1)` 的有序图层/黑画布/ASS 合成，直接 RGB PNG；不是 final/qc_clean 提帧、黑场兜底、丢层近似或已编码成片的像素等价保证。空画布的真实黑场可以成功。
@@ -146,6 +148,10 @@ vtx -t /path/to/timeline.json timeline frame --frame 30 --render
 写域仅 `cache/preview/frame_<render_key>/`（PNG、完成标记、ASS、随机 FFV1 暂存及锁），不改 timeline、store、普通 cache/seg/gfx、out、receipt 或 delivery 状态。相同 key 锁串行；完整 PNG 和同 SHA 完成标记均通过才可命中。发布前后复核原文完整 SHA/输入身份/有序上游字节/环境；中断和部分写不生成完成标记。遗留失败暂存可存在，不是成功缓存。媒体子进程不脱离调用者 process-group；取消时 kill 并 communicate/wait 回收。CLI 主线程临时处理 SIGINT/SIGTERM 并恢复 handler；Python API 不安装 signal handler。SIGKILL 或库调用者未处理的 SIGTERM 属硬退出边界，不承诺 finally。沿用 fstxn 合作进程/非对抗性边界，不承诺物理断电或非合作输入 ABA 攻击防御。
 
 键包括原文版本、Fast 媒体 stat 输入指纹、整数帧/fps/画布、ASS 精确字节、有序层/上游内容键和当前上游字节 SHA、实际 ffmpeg/动态依赖/字体环境、graph/PNG profile/实现源码身份；环境采集复用既有 gfx 证书工具。**Fast 不等于全媒体内容哈希**，跨机器逐像素等价未证。输入/完整 ASCII JSON wire 各 8MiB；输出超限拒绝而不截断引用。PNG 实读上限 max_png_bytes 为 1..8MiB（`--max-png-bytes`），超限不发布完成结果；编码器瞬态文件可大于该交付上限。CLI 成功0、业务拒绝1、错误旗标组合2，仅 stdout 完整 JSON，不另落报告。
+
+`include_png` 严格为 bool，默认 False 的 metadata-only shape 不变；True 仅在成功 image 增加 `inline:{encoding:"base64",data:"<canonical base64>"}`，无 data URL，消费者无需重开 path。它不授予渲染权：Python 未 render 仍 `render.not_authorized`；CLI `--include-png` 缺 `--render` 为 `cli.arguments`/exit2，其他命令拒绝该旗标。支持探测只看 capabilities 的可选 `frame:{schema:"framivra.timeline.frame/v1",explicit_render_required:true,inline_png:{flag:"--include-png",encoding:"base64",wire_limit_bytes:8388608}}`，不猜版本、不扩大只读 operations，不改变 store 能力；缺广告须拒绝 inline，不回退私读路径。
+
+帧 PNG staging/最终产物及完成标记使用 no-follow 全祖先/父 fd/项目根身份固定、普通叶子 O_NOFOLLOW|O_NONBLOCK、读前后 fd/目录项身份核对及 cap+1 有界读取；初始祖先链接（含项目内链接）拒绝。同一不可变 bytes 经原完整 PNG validator（CRC/IDAT/filter/IEND/尾随）产生 hash/size/inline，warm hit 也完整复核，不用另一次 pathname 校验。此边界不升级其他 gfx、源媒体或文档读取。PNG cap 不等于 wire cap：base64 长 `4*ceil(n/3)`，连 reference/raw/metadata/ASCII 转义和 stdout 换行共≤8388608；编码前预算、最终精确门均执行，超限 `ok:false,image:null,reference:null,output.limit`，不缩图/截断/删 raw 伪造成功。证书仅冻结 current-at-render 的保存版本与 Fast 输入身份，不保证之后 draft 暂存瞬间外部源仍 live-current，也不是跨文件系统事务。
 
 ## 显式写事务第一切片（v1；不是完整编辑器）
 

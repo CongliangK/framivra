@@ -613,9 +613,12 @@ class RenderPlan:
                 prev = target
                 continue
             if self.png_output and last:
-                from ..render.gfx_cli import png_invalid_reason
-                if png_invalid_reason(target, width=self.W, height=self.H):
-                    raise ValueError("single-frame compositor produced invalid PNG")
+                from ..render.png_artifact import read_png
+                try:
+                    read_png(target, root=c.root, width=self.W, height=self.H,
+                             root_identity=getattr(c, "frame_root_identity", None))
+                except (OSError, ValueError) as error:
+                    raise ValueError("single-frame compositor produced invalid PNG") from error
             elif not self._pass_fresh(target, seglen):
                 print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
                       f"（framesync 节律异常/中间物损坏，禁止向下游传递）")

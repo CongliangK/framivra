@@ -835,6 +835,7 @@ def _main(execution=None):
                          "audio --report/--report-only 专属：报告 JSON 落盘 PATH（默认 out/audio_report.json）")
     ap.add_argument("--render", action="store_true", help="timeline frame only: authorize warm-input PNG writes under cache/preview")
     ap.add_argument("--max-png-bytes", help="timeline frame only: PNG delivery byte cap (default 8388608)")
+    ap.add_argument("--include-png", action="store_true", help="timeline frame only: inline canonical base64 PNG; requires --render")
     ap.add_argument("--request", metavar="PATH", help="store only: strict JSON request file (store writes; store plan is zero-write)")
     ap.add_argument("--request-stdin", action="store_true",
                     help="store [plan] only: strict UTF-8 JSON request from stdin through EOF (max 8388608 bytes); exclusive with --request")
@@ -876,6 +877,8 @@ def _main(execution=None):
         ap.error("reference selectors require reference")
     if a.render or a.max_png_bytes is not None:
         ap.error("--render/--max-png-bytes require timeline frame")
+    if a.include_png:
+        ap.error("--include-png requires timeline frame")
     policy = ExecutionPolicy.PLAN if a.dry_run else ExecutionPolicy.EXECUTE
     # --until 校验（方案三阶段3）：仅 all 合法 + 值域 = _UNTIL_STAGES；两错均退出码 2
     # （与「未知命令」同级：用法错而非运行错，脚本侧好分类）。audio 不可作终点的
