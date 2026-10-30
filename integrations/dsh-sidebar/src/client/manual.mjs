@@ -61,7 +61,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected = 
   const [op, setOp] = useState('block.move')
   const [v, setV] = useState({ family: 'video', kind: 'aroll', source_field: 'path', property: 'opacity', property_target: 'block', reference_field: 'duck_by', fade_policy: 'preserve-content', text_policy: 'duplicate-text', mode: 'shift', crossing: 'reject', scope: [], split_ids: [], order: [], start: '0', end: '10', duration: '10', src_in: '0', src_out: '10', volume: '1', at: '0', delta: '1', index: '0', value: '1' })
   const [queue, setQueue] = useState([]), [plan, setPlan] = useState(), [status, setStatus] = useState(), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
-  const request = useRef(), generation = useRef(0), live = useRef(true)
+  const request = useRef(), generation = useRef(0), live = useRef(true), invalidations = useRef(Promise.resolve())
   const managed = opened.snapshot.document?._vtx?.protocol === 1
   const allSelected = selected.length ? selected : selection ? [selection] : []
   const blocks = result.blocks.filter(b => allSelected.some(s => s.kind === 'block' && s.address === b.address))
@@ -70,7 +70,9 @@ export function ManualEditor({ sessionId, opened, result, selection, selected = 
   const payload = (action, extra = {}) => ({ op: action, grant: opened.grant, ...(write ? { writeGrant: write } : {}), ...extra })
   function invalidate() {
     generation.current++; setPlan(undefined)
-    if (write) void call(sessionId, payload('invalidate-plan'), tabSignal).catch(() => {})
+    // A delayed invalidation must not overtake the next plan. Keep every
+    // acknowledgement, fail closed on transport loss, and await this barrier.
+    if (write) invalidations.current = Promise.all([invalidations.current, call(sessionId, payload('invalidate-plan'), tabSignal).then(() => undefined, error => error)]).then(outcomes => outcomes.find(Boolean))
   }
   useEffect(() => { invalidate() }, [selection, selected, frame, base])
   useEffect(() => { live.current = true; return () => { live.current = false; request.current?.abort() } }, [])
@@ -88,9 +90,15 @@ export function ManualEditor({ sessionId, opened, result, selection, selected = 
     if (['adopt','undo'].includes(action)) extra = { ...extra, op_id: operationId }
     setBusy(true); setMessage(`正在执行内核命令…${operationId ? ` op_id ${operationId}` : ''}`)
     try {
+      if (action === 'plan') {
+        const failure = await invalidations.current
+        signal.throwIfAborted()
+        if (failure) throw new Error('PLAN_INVALIDATION_FAILED: 无法确认旧计划已撤销；请重新打开工程/授予许可')
+        if (epoch !== generation.current) throw new Error('PLAN_INVALID: 等待撤销时选择或 intent 已变化')
+      }
       const answer = await call(sessionId, payload(action, extra), signal)
       if (!live.current || signal.aborted) return
-      if (action === 'authorize-write') setWrite(answer.writeGrant)
+      if (action === 'authorize-write') { invalidations.current = Promise.resolve(); setWrite(answer.writeGrant) }
       else if (action === 'revoke-write') { setWrite(undefined); invalidate() }
       else if (action === 'plan' && answer.ok && epoch === generation.current) setPlan(answer)
       else if (action === 'status' || action === 'recover') { setStatus(answer); invalidate() }

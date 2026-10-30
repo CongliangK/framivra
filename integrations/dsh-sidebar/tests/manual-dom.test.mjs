@@ -47,3 +47,19 @@ test('all dedicated forms exist, explicit write auth; in-flight plan cannot surv
  assert.equal(calls.filter(c=>c.op==='commit').length,0);assert(calls.some(c=>c.op==='invalidate-plan'))
  await act(async()=>button('撤销本会话/工程写许可').click());assert.equal(document.querySelector('fieldset').disabled,true)
 })
+
+test('plan waits for every previous invalidation acknowledgement and fails closed on lost acknowledgement',{timeout:10000},async t=>{
+ const {root,Simulate}=await mount(t),calls=[],acks=[]
+ const call=async(_session,payload)=>{calls.push(payload);if(payload.op==='authorize-write')return {writeGrant:'explicit'};if(payload.op==='invalidate-plan')return await new Promise((resolve,reject)=>acks.push({resolve,reject}));if(payload.op==='plan')return {ok:true,planToken:'new',submitted_request:{op_id:'new'}};return {ok:true}}
+ const selected=[{kind:'block',address:blocks[0].address}]
+ await act(async()=>root.render(h(ManualEditor,{sessionId:'one',opened:{grant:'read',snapshot},result,selection:selected[0],selected,frame:15,tabSignal:new AbortController().signal,call,onCommitted:()=>{}})))
+ await act(async()=>button('明确允许本会话向此工程及 core 历史写入').click())
+ const select=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='编辑操作').querySelector('select')
+ await act(async()=>Simulate.change(select,{target:{value:'project.resize'}}));await act(async()=>button('加入未保存批次').click());assert.equal(acks.length,2)
+ await act(async()=>button('内核预检计划（零写）').click());assert.equal(calls.filter(c=>c.op==='plan').length,0)
+ await act(async()=>acks[1].resolve({ok:true}));assert.equal(calls.filter(c=>c.op==='plan').length,0,'newer acknowledgement alone must not bypass older pending invalidation')
+ await act(async()=>acks[0].resolve({ok:true}));assert.equal(calls.filter(c=>c.op==='plan').length,1);assert(button('确认提交此冻结计划（一次 revision）'))
+ await act(async()=>button('清空未保存批次').click());await act(async()=>acks.at(-1).reject(Error('lost acknowledgement')))
+ await act(async()=>button('加入未保存批次').click());await act(async()=>acks.at(-1).resolve({ok:true}));await act(async()=>button('内核预检计划（零写）').click())
+ assert.equal(calls.filter(c=>c.op==='plan').length,1);assert(document.body.textContent.includes('PLAN_INVALIDATION_FAILED'));assert.equal(button('确认提交此冻结计划（一次 revision）'),undefined)
+})
