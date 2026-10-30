@@ -4,6 +4,7 @@ The read/reference protocol remains asset independent. This separately versioned
 operation only writes cache/preview, rejects active plugins, and uses the kernel
 compositor/validation. Media input identity is Fast, not adversarial full hashing.
 """
+import base64
 import hashlib
 import inspect
 import json
@@ -42,18 +43,10 @@ def _finish(result):
     return result
 
 
-def _png(path, width, height, limit):
-    from .render.gfx_cli import png_invalid_reason
-    # Bound actual reads, not just the advertised metadata. The temporary file
-    # may exceed this delivery cap; it is never published as a complete result.
-    with Path(path).open("rb") as stream:
-        data = stream.read(limit + 1)
-    if len(data) > limit:
-        raise _FrameError("image.limit", "PNG exceeds requested byte limit")
-    reason = png_invalid_reason(path, width=width, height=height)
-    if reason:
-        raise _FrameError("image.invalid", str(reason))
-    return {"sha256": _hash(data), "bytes": len(data)}
+def _png(path, width, height, limit, *, root, root_identity):
+    from .render.png_artifact import read_png
+    return read_png(path, root=root, root_identity=root_identity,
+                    width=width, height=height, limit=limit)
 
 
 def _environment():
@@ -156,6 +149,8 @@ def _render(path, reference, frame, limit):
             return value
 
     path = Path(os.path.abspath(Path(path).expanduser()))
+    from .render.png_artifact import project_identity, read_artifact
+    root_identity = project_identity(path.parent)
     version = reference["content_version"]
 
     def document_current():
@@ -166,6 +161,7 @@ def _render(path, reference, frame, limit):
 
     document_current()
     c = PreviewCtx(path)
+    c.frame_root_identity = root_identity
     if "sha256:" + c.timeline_sha256 != version:
         raise _FrameError("snapshot.changed", "timeline changed while loading renderer")
     errors = validate_core(c)
@@ -182,7 +178,10 @@ def _render(path, reference, frame, limit):
     # Full implementation files protect helper/ASS/profile changes too. This is
     # conservative code invalidation, not a claim of cross-host pixel equivalence.
     from .pipeline import composite
-    code = _files([__file__, inspect.getfile(composite), inspect.getfile(Ctx)])
+    from .render.gfx_cli import _png_stream_invalid_reason
+    code_files = [__file__, inspect.getfile(composite), inspect.getfile(Ctx),
+                  inspect.getfile(read_artifact), inspect.getfile(_png_stream_invalid_reason)]
+    code = _files(code_files)
     inputs = {"schema": _SCHEMA, "content_version": version,
               "input_fingerprint": c.input_fingerprint, "frame": frame, "fps": c.fps,
               "width": c.w, "height": c.h, "layers": identities,
@@ -195,13 +194,15 @@ def _render(path, reference, frame, limit):
     marker = directory / "complete.json"
 
     def current():
+        if project_identity(c.root) != root_identity:
+            raise _FrameError("snapshot.changed", "project root identity changed")
         verify_input_identity(c)
         document_current()
         if active_plugins(SimpleNamespace(tl=stored)):
             raise _FrameError("plugins.changed", "active plugin selection changed")
         if _layers_identity(layers, frame) != identities or _environment() != environment:
             raise _FrameError("inputs.changed", "render inputs/environment changed")
-        if _files([__file__, inspect.getfile(composite), inspect.getfile(Ctx)]) != code:
+        if _files(code_files) != code:
             raise _FrameError("implementation.changed", "compositor implementation changed")
 
     # Preflight checks have not written anything. Only the explicit authorization
@@ -211,8 +212,8 @@ def _render(path, reference, frame, limit):
     with fstxn.file_lock(directory / "frame.lock", root=c.root):
         current()
         try:
-            record = json.loads(marker.read_bytes())
-            facts = _png(image, c.w, c.h, limit)
+            record = json.loads(read_artifact(marker, root=c.root, limit=4096, root_identity=root_identity))
+            facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
             hit = record == {"schema": _SCHEMA, "render_key": key, **facts}
         except (OSError, ValueError):
             hit = False
@@ -225,7 +226,7 @@ def _render(path, reference, frame, limit):
             with fstxn.locked_staging(image, root=c.root) as staging:
                 plan.composite(layers, staging, with_subs=True, a=frame, b=frame + 1,
                                sub_file=ass_path)
-                facts = _png(staging, c.w, c.h, limit)
+                facts, data = _png(staging, c.w, c.h, limit, root=c.root, root_identity=root_identity)
                 current()
             current()
             # The marker is the sole success authority. Interrupted/failed PNG
@@ -238,16 +239,22 @@ def _render(path, reference, frame, limit):
                 raise
         else:
             current()
-    return {"state": "generated", "kind": "current-composite", "approximate": False,
+        # Reopen only through the anchored helper after publication. Neither a
+        # staging certificate nor an old marker may bless replacement bytes.
+        final_facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+        if final_facts != facts:
+            raise _FrameError("image.invalid", "published PNG differs from completion certificate")
+        current()
+    return ({"state": "generated", "kind": "current-composite", "approximate": False,
             "path": str(image.relative_to(c.root)), "mime_type": "image/png",
             "width": c.w, "height": c.h, "frame": frame, "fps": {"num": int(c.fps), "den": 1},
             "content_version": version, "input_fingerprint": c.input_fingerprint,
             "identity_semantics": "Fast media stat identity; non-adversarial inputs",
-            "render_key": key, "cache_hit": hit, **facts}
+            "render_key": key, "cache_hit": hit, **facts}, data)
 
 
 def frame_timeline(path, *, frame, expected_content_version=None, render=False,
-                   max_png_bytes=_LIMIT):
+                   max_png_bytes=_LIMIT, include_png=False):
     """Reference + exact current-composite PNG, only with explicit render=True.
 
     Defaults do not construct Ctx, probe assets, lock or create directories.
@@ -256,6 +263,8 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
     modifies timeline/store/delivery state, or uses final/qc_clean as fallback.
     Both timeline/reference and ASCII JSON wire limits are 8 MiB; PNG delivery is
     bounded by max_png_bytes (1..8 MiB). Transient encoder files may exceed it.
+    include_png must be bool; it requests canonical base64, not render authority.
+    Default False preserves the metadata-only result shape.
     """
     reference = reference_timeline(path, global_frame=frame,
                                    expected_content_version=expected_content_version)
@@ -269,6 +278,8 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
         _error(result, "frame.integer", "/frame", "required integer global frame")
     if type(render) is not bool:
         _error(result, "authorization.type", "/render", "render must be boolean")
+    if type(include_png) is not bool:
+        _error(result, "image.inline_type", "/include_png", "include_png must be boolean")
     if type(max_png_bytes) is not int or not 1 <= max_png_bytes <= _LIMIT:
         _error(result, "image.limit", "/max_png_bytes", "expected byte limit in [1,8388608]")
     if not result["ok"]:
@@ -277,9 +288,23 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
         _error(result, "render.not_authorized", "/render", "explicit render=True/--render required; no renderer started")
         return _finish(result)
     try:
-        result["image"] = _render(path, reference, frame, max_png_bytes)
+        image, data = _render(path, reference, frame, max_png_bytes)
+        result["image"] = image
+        if include_png:
+            image["inline"] = {"encoding": "base64", "data": ""}
+            # Exact empty-payload envelope + canonical ASCII base64 length. No
+            # huge encoding allocation just to discover that raw + PNG won't fit.
+            encoded_size = 4 * ((len(data) + 2) // 3)
+            if _wire_size(result, _LIMIT - 1) + encoded_size >= _LIMIT:
+                result.update(ok=False, reference=None, image=None, diagnostics=[])
+                _error(result, "output.limit", "", "frame result exceeds JSON wire byte limit", limit_bytes=_LIMIT)
+            else:
+                image["inline"]["data"] = base64.b64encode(data).decode("ascii")
     except KeyboardInterrupt:
+        result["image"] = None
         _error(result, "render.cancelled", "", "frame rendering cancelled; no success returned")
     except (OSError, ValueError, RuntimeError, KeyError, TypeError, SystemExit) as error:
-        _error(result, error.code if isinstance(error, _FrameError) else "render.failed", "", str(error)[:2000])
+        result["image"] = None
+        from .render.png_artifact import ArtifactError
+        _error(result, error.code if isinstance(error, (_FrameError, ArtifactError)) else "render.failed", "", str(error)[:2000])
     return _finish(result)

@@ -97,137 +97,154 @@ def png_invalid_reason(path, *, width=None, height=None, _fingerprint=None,
         return "零字节"
     try:
         with open(p, "rb") as stream:
-            fh = (_HashingReader(stream)
-                  if _fingerprint is not None or _verified_size is not None else stream)
-            head = fh.read(len(PNG_SIGNATURE))
-            if head != PNG_SIGNATURE:
-                return f"魔数头不符（前 {len(head)} 字节 = {head[:8]!r}，期望 {PNG_SIGNATURE!r}）"
-            # issue #28：签名不等于完整 PNG；流式检查块边界与 CRC，拒绝截断件。
-            if size < 33:
-                return "截断 PNG（不足完整 IHDR 的 33 字节）"
-            first, has_data = True, False
-            palette = False
-            idat_ended = False
-            # issue #28 R3：CRC 全对 ≠ 像素可解码——红队用「块结构完整、CRC 正确、
-            # IDAT 为垃圾字节」的件骗过纯结构校验：真 CLI rc0、gfx ok:true、二次
-            # 运行还缓存命中。故对全部 IDAT 块的联合 zlib 流做增量解压：解码报错、
-            # 流未完整结束（eof）、解出总量与 IHDR 尺寸不符、流结束后仍有尾随
-            # 数据均判损坏，绝不放行为缓存命中或已完成帧。隔行件同样不放行——
-            # R3 红队复审 D1：interlace=1 跳过总量比对即可蒙混，IHDR 处直接拒绝。
-            dec = zlib.decompressobj()
-            raw_len = 0              # 已解出的滤波扫描线总字节数
-            tail_after_eof = False   # zlib 流 eof 后仍喂入的 IDAT 尾随数据（D2）
-            expect_raw = None        # 按 IHDR 算出的应解出总量（隔行已在 IHDR 处拒绝）
-            while True:
-                header = fh.read(8)
-                if len(header) != 8:
-                    return "截断 PNG（缺少 IEND 或块头）"
-                length, tag = struct.unpack(">I4s", header)
-                if length > size - fh.tell() - 4:
-                    return "截断 PNG（块长度超出文件）"
-                if not all(65 <= x <= 90 or 97 <= x <= 122 for x in tag) or tag[2] & 32:
-                    return "损坏 PNG（块类型非法）"
-                if not first:
-                    if tag == b"IHDR":
-                        return "损坏 PNG（重复 IHDR）"
-                    if not tag[0] & 32 and tag not in (b"PLTE", b"IDAT", b"IEND"):
-                        return "损坏 PNG（未知关键块）"
-                    if tag == b"PLTE":
-                        if palette or has_data or not length or length % 3 or length > 768 \
-                                or color in (0, 4) or (color == 3 and length // 3 > 2 ** depth):
-                            return "损坏 PNG（PLTE 无效或顺序错误）"
-                        palette = True
+            return _png_stream_invalid_reason(stream, size, width=width, height=height,
+                                              _fingerprint=_fingerprint,
+                                              _verified_size=_verified_size)
+    except (OSError, struct.error) as e:
+        return f"不可读或截断（{e}）"
+
+
+def _png_stream_invalid_reason(stream, size, *, width=None, height=None,
+                               _fingerprint=None, _verified_size=None) -> "str | None":
+    """Internal seam: validate this stream and size, never reopen a pathname.
+
+    The public path wrapper retains its file/read error semantics. Frame artifact
+    readers pass one bounded immutable snapshot through the very same full gate.
+    """
+    if size == 0:
+        return "零字节"
+    try:
+        fh = (_HashingReader(stream)
+              if _fingerprint is not None or _verified_size is not None else stream)
+        head = fh.read(len(PNG_SIGNATURE))
+        if head != PNG_SIGNATURE:
+            return f"魔数头不符（前 {len(head)} 字节 = {head[:8]!r}，期望 {PNG_SIGNATURE!r}）"
+        # issue #28：签名不等于完整 PNG；流式检查块边界与 CRC，拒绝截断件。
+        if size < 33:
+            return "截断 PNG（不足完整 IHDR 的 33 字节）"
+        first, has_data = True, False
+        palette = False
+        idat_ended = False
+        # issue #28 R3：CRC 全对 ≠ 像素可解码——红队用「块结构完整、CRC 正确、
+        # IDAT 为垃圾字节」的件骗过纯结构校验：真 CLI rc0、gfx ok:true、二次
+        # 运行还缓存命中。故对全部 IDAT 块的联合 zlib 流做增量解压：解码报错、
+        # 流未完整结束（eof）、解出总量与 IHDR 尺寸不符、流结束后仍有尾随
+        # 数据均判损坏，绝不放行为缓存命中或已完成帧。隔行件同样不放行——
+        # R3 红队复审 D1：interlace=1 跳过总量比对即可蒙混，IHDR 处直接拒绝。
+        dec = zlib.decompressobj()
+        raw_len = 0              # 已解出的滤波扫描线总字节数
+        tail_after_eof = False   # zlib 流 eof 后仍喂入的 IDAT 尾随数据（D2）
+        expect_raw = None        # 按 IHDR 算出的应解出总量（隔行已在 IHDR 处拒绝）
+        while True:
+            header = fh.read(8)
+            if len(header) != 8:
+                return "截断 PNG（缺少 IEND 或块头）"
+            length, tag = struct.unpack(">I4s", header)
+            if length > size - fh.tell() - 4:
+                return "截断 PNG（块长度超出文件）"
+            if not all(65 <= x <= 90 or 97 <= x <= 122 for x in tag) or tag[2] & 32:
+                return "损坏 PNG（块类型非法）"
+            if not first:
+                if tag == b"IHDR":
+                    return "损坏 PNG（重复 IHDR）"
+                if not tag[0] & 32 and tag not in (b"PLTE", b"IDAT", b"IEND"):
+                    return "损坏 PNG（未知关键块）"
+                if tag == b"PLTE":
+                    if palette or has_data or not length or length % 3 or length > 768 \
+                            or color in (0, 4) or (color == 3 and length // 3 > 2 ** depth):
+                        return "损坏 PNG（PLTE 无效或顺序错误）"
+                    palette = True
+                if tag == b"IDAT":
+                    if idat_ended or (color == 3 and not palette):
+                        return "损坏 PNG（IDAT 顺序错误或缺少 PLTE）"
+                elif has_data:
+                    idat_ended = True
+            if first:
+                if tag != b"IHDR" or length != 13:
+                    return "损坏 PNG（首块必须是完整 IHDR）"
+                data = fh.read(13)
+                w, h, depth, color, comp, filt, interlace = struct.unpack(">IIBBBBB", data)
+                if not w or not h:
+                    return "损坏 PNG（IHDR 尺寸为零）"
+                if (width is not None and w != width) or (height is not None and h != height):
+                    return f"损坏 PNG（尺寸 {w}×{h}，期望 {width}×{height}）"
+                channels = _IHDR_CHANNELS.get(color)
+                if channels is None or depth not in _IHDR_DEPTHS.get(color, ()) \
+                        or comp or filt or interlace not in (0, 1):
+                    return (f"损坏 PNG（IHDR 字段非法：位深 {depth}/颜色类型 "
+                            f"{color}/压缩 {comp}/滤波 {filt}/隔行 {interlace}）")
+                if interlace:
+                    # issue #28 D1：直接拒绝隔行 PNG。本管线真 Chrome
+                    # （--headless --screenshot）产物从不含隔行件；原实现放行
+                    # interlace=1 后跳过「解出总量与 IHDR 比对」，结构/CRC 全对、
+                    # IDAT=zlib.compress(垃圾) 的隔行攻击件即蒙混为缓存命中。
+                    return ("损坏 PNG（不支持隔行 PNG（interlace=1，issue #28）："
+                            "本管线产物均为非隔行；隔行且尺寸不符的垃圾件无法经"
+                            "总量比对拦截）")
+                row_stride = 1 + (w * channels * depth + 7) // 8
+                expect_raw = h * row_stride
+                crc = zlib.crc32(data, zlib.crc32(tag))
+                first = False
+            else:
+                crc = zlib.crc32(tag)
+                remaining = length
+                while remaining:
+                    data = fh.read(min(remaining, 65536))
+                    if not data:
+                        return "截断 PNG（块数据不足）"
+                    crc = zlib.crc32(data, crc)
                     if tag == b"IDAT":
-                        if idat_ended or (color == 3 and not palette):
-                            return "损坏 PNG（IDAT 顺序错误或缺少 PLTE）"
-                    elif has_data:
-                        idat_ended = True
-                if first:
-                    if tag != b"IHDR" or length != 13:
-                        return "损坏 PNG（首块必须是完整 IHDR）"
-                    data = fh.read(13)
-                    w, h, depth, color, comp, filt, interlace = struct.unpack(">IIBBBBB", data)
-                    if not w or not h:
-                        return "损坏 PNG（IHDR 尺寸为零）"
-                    if (width is not None and w != width) or (height is not None and h != height):
-                        return f"损坏 PNG（尺寸 {w}×{h}，期望 {width}×{height}）"
-                    channels = _IHDR_CHANNELS.get(color)
-                    if channels is None or depth not in _IHDR_DEPTHS.get(color, ()) \
-                            or comp or filt or interlace not in (0, 1):
-                        return (f"损坏 PNG（IHDR 字段非法：位深 {depth}/颜色类型 "
-                                f"{color}/压缩 {comp}/滤波 {filt}/隔行 {interlace}）")
-                    if interlace:
-                        # issue #28 D1：直接拒绝隔行 PNG。本管线真 Chrome
-                        # （--headless --screenshot）产物从不含隔行件；原实现放行
-                        # interlace=1 后跳过「解出总量与 IHDR 比对」，结构/CRC 全对、
-                        # IDAT=zlib.compress(垃圾) 的隔行攻击件即蒙混为缓存命中。
-                        return ("损坏 PNG（不支持隔行 PNG（interlace=1，issue #28）："
-                                "本管线产物均为非隔行；隔行且尺寸不符的垃圾件无法经"
-                                "总量比对拦截）")
-                    row_stride = 1 + (w * channels * depth + 7) // 8
-                    expect_raw = h * row_stride
-                    crc = zlib.crc32(data, zlib.crc32(tag))
-                    first = False
-                else:
-                    crc = zlib.crc32(tag)
-                    remaining = length
-                    while remaining:
-                        data = fh.read(min(remaining, 65536))
-                        if not data:
-                            return "截断 PNG（块数据不足）"
-                        crc = zlib.crc32(data, crc)
-                        if tag == b"IDAT":
-                            # 逐块喂入联合 zlib 流；单次解压输出限流，产物即弃
-                            # 只记长度——流式推进，不整读超大文件也不驻留解压产物。
-                            try:
-                                tail = data
-                                while tail:
-                                    out = dec.decompress(tail, _MAX_ZLIB_OUT)
-                                    # Filters are the first byte of each scanline, even
-                                    # when a row crosses a decompression chunk boundary.
-                                    if any(x > 4 for x in out[(-raw_len) % row_stride::row_stride]):
-                                        return "损坏 PNG（IDAT 扫描行滤波类型非法）"
-                                    raw_len += len(out)
-                                    if raw_len > expect_raw:
-                                        return "损坏 PNG（IDAT 解压总量超出 IHDR 尺寸）"
-                                    nxt = dec.unconsumed_tail
-                                    if not out and nxt == tail:
-                                        # 无进展的病态件：流已 eof 则滞留的 tail 即
-                                        # 流后尾随数据（D2）；未 eof 由 IEND 的 eof 门拒绝。
-                                        if dec.eof:
-                                            tail_after_eof = True
-                                        break
-                                    tail = nxt
-                            except zlib.error as e:
-                                return f"损坏 PNG（IDAT zlib 解码失败：{e}）"
-                        remaining -= len(data)
-                stored_crc = fh.read(4)
-                if len(stored_crc) != 4 or struct.unpack(">I", stored_crc)[0] != crc & 0xFFFFFFFF:
-                    return "损坏 PNG（块 CRC 不符）"
-                if tag == b"IDAT" and length:
-                    has_data = True
-                if tag == b"IEND":
-                    if length or not has_data:
-                        return "损坏 PNG（IEND 或 IDAT 无效）"
-                    if not dec.eof:
-                        return "损坏 PNG（IDAT zlib 流未完整结束：垃圾或截断的压缩数据）"
-                    # issue #28 D2：PNG spec 要求全部 IDAT 恰好含一个 zlib 流；
-                    # 流结束（eof）后仍喂入的尾随数据（落入 unused_data 或滞留
-                    # unconsumed_tail）判损坏，不给「流后再拼数据」的病态件留门。
-                    if dec.unused_data or tail_after_eof:
-                        return ("损坏 PNG（IDAT zlib 流结束后仍有尾随数据："
-                                "须恰好一个 zlib 流）")
-                    if expect_raw is not None and raw_len != expect_raw:
-                        return (f"损坏 PNG（IDAT 解压得 {raw_len} 字节，与 IHDR "
-                                f"{w}×{h} 应解出 {expect_raw} 字节不符）")
-                    if fh.read(1):
-                        return "损坏 PNG（IEND 后有尾随数据）"
-                    if _fingerprint is not None:
-                        _fingerprint.append(fh.digest.hexdigest())
-                    if _verified_size is not None:
-                        # Same successfully parsed stream, never a later stat.
-                        _verified_size.append(fh.bytes_read)
-                    return None
+                        # 逐块喂入联合 zlib 流；单次解压输出限流，产物即弃
+                        # 只记长度——流式推进，不整读超大文件也不驻留解压产物。
+                        try:
+                            tail = data
+                            while tail:
+                                out = dec.decompress(tail, _MAX_ZLIB_OUT)
+                                # Filters are the first byte of each scanline, even
+                                # when a row crosses a decompression chunk boundary.
+                                if any(x > 4 for x in out[(-raw_len) % row_stride::row_stride]):
+                                    return "损坏 PNG（IDAT 扫描行滤波类型非法）"
+                                raw_len += len(out)
+                                if raw_len > expect_raw:
+                                    return "损坏 PNG（IDAT 解压总量超出 IHDR 尺寸）"
+                                nxt = dec.unconsumed_tail
+                                if not out and nxt == tail:
+                                    # 无进展的病态件：流已 eof 则滞留的 tail 即
+                                    # 流后尾随数据（D2）；未 eof 由 IEND 的 eof 门拒绝。
+                                    if dec.eof:
+                                        tail_after_eof = True
+                                    break
+                                tail = nxt
+                        except zlib.error as e:
+                            return f"损坏 PNG（IDAT zlib 解码失败：{e}）"
+                    remaining -= len(data)
+            stored_crc = fh.read(4)
+            if len(stored_crc) != 4 or struct.unpack(">I", stored_crc)[0] != crc & 0xFFFFFFFF:
+                return "损坏 PNG（块 CRC 不符）"
+            if tag == b"IDAT" and length:
+                has_data = True
+            if tag == b"IEND":
+                if length or not has_data:
+                    return "损坏 PNG（IEND 或 IDAT 无效）"
+                if not dec.eof:
+                    return "损坏 PNG（IDAT zlib 流未完整结束：垃圾或截断的压缩数据）"
+                # issue #28 D2：PNG spec 要求全部 IDAT 恰好含一个 zlib 流；
+                # 流结束（eof）后仍喂入的尾随数据（落入 unused_data 或滞留
+                # unconsumed_tail）判损坏，不给「流后再拼数据」的病态件留门。
+                if dec.unused_data or tail_after_eof:
+                    return ("损坏 PNG（IDAT zlib 流结束后仍有尾随数据："
+                            "须恰好一个 zlib 流）")
+                if expect_raw is not None and raw_len != expect_raw:
+                    return (f"损坏 PNG（IDAT 解压得 {raw_len} 字节，与 IHDR "
+                            f"{w}×{h} 应解出 {expect_raw} 字节不符）")
+                if fh.read(1):
+                    return "损坏 PNG（IEND 后有尾随数据）"
+                if _fingerprint is not None:
+                    _fingerprint.append(fh.digest.hexdigest())
+                if _verified_size is not None:
+                    # Same successfully parsed stream, never a later stat.
+                    _verified_size.append(fh.bytes_read)
+                return None
     except (OSError, struct.error) as e:
         return f"不可读或截断（{e}）"
 

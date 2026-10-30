@@ -47,6 +47,9 @@ def timeline_capabilities():
         "preserves_extensions": True, "resolves_assets": False,
         "expands_subtitles_src": False, "executes_plugins": False,
         "write_operations": [],
+        "frame": {"schema": "framivra.timeline.frame/v1", "explicit_render_required": True,
+                  "inline_png": {"flag": "--include-png", "encoding": "base64",
+                                 "wire_limit_bytes": 8388608}},
     }
     return result
 
