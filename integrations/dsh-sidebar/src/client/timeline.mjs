@@ -41,9 +41,27 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
   const ruler = useRef()
   const trackNodes = useRef(new Map())
   const gesture = useRef()
+  // A canceled gesture still owns its physical pointer's eventual click. React's
+  // click facade is a MouseEvent; the native PointerEvent carries pointerId.
+  // Retire ownership only on that click or a fresh down from the same pointer,
+  // never on a keyboard activation or an unrelated pointer's end/capture loss.
+  const pointerTails = useRef(new Set())
   const [ghost, setGhost] = useState()
   const [gestureError, setGestureError] = useState('')
-  useEffect(() => { gesture.current = undefined; setGhost(undefined) }, [snapshot.content_version, onGesture, intent, frame])
+  function releaseGesture(g) {
+    try { if (g.node.hasPointerCapture?.(g.pointer)) g.node.releasePointerCapture(g.pointer) } catch { /* detached/lost capture */ }
+  }
+  function cancelGesture(event) {
+    const g = gesture.current
+    if (!g || (event && ((event.pointerId !== undefined && g.pointer !== event.pointerId) || g.node !== event.currentTarget))) return
+    gesture.current = undefined
+    pointerTails.current.add(g.pointer)
+    releaseGesture(g)
+  }
+  useEffect(() => {
+    setGhost(undefined)
+    return () => cancelGesture()
+  }, [snapshot.content_version, onGesture, intent, frame])
   useEffect(() => { setWindow(undefined); setHover(undefined); setLocalIntent(emptySelection()); drag.current = undefined }, [snapshot.content_version])
   useEffect(() => { if (!activeSelection) setLocalIntent(emptySelection()) }, [activeSelection])
   if (extent.diagnostic) return h('p', { role: 'alert' }, extent.diagnostic)
@@ -79,12 +97,13 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     const origin = pointerFrame(event.clientX, ruler.current.getBoundingClientRect(), view)
     if (origin === undefined) return
     const moving = selected.includes(`block:${block.address}`) ? result.blocks.filter(b => selected.includes(`block:${b.address}`)) : [block]
-    gesture.current = { pointer: event.pointerId, origin, block, track, mode, moving }
+    cancelGesture()
+    gesture.current = { pointer: event.pointerId, node: event.currentTarget, origin, block, track, mode, moving }
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
   function updateGesture(event) {
     const g = gesture.current
-    if (!g || g.pointer !== event.pointerId) return
+    if (!g || g.pointer !== event.pointerId || g.node !== event.currentTarget) return
     const at = pointerFrame(event.clientX, ruler.current.getBoundingClientRect(), view)
     if (at === undefined) return
     let target = g.track
@@ -99,9 +118,11 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
   }
   function endGesture(event) {
     const g = updateGesture(event)
+    if (!g) return
     gesture.current = undefined; setGhost(undefined)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
-    if (!g || (!g.delta && (g.mode !== 'move' || g.target.address === g.track.address))) return
+    releaseGesture(g)
+    if (!g.delta && (g.mode !== 'move' || g.target.address === g.track.address)) return
+    pointerTails.current.add(g.pointer)
     try {
       if (g.mode === 'move') {
         const operations = g.moving.map(b => { const start = b.range[0] + g.delta; if (!Number.isSafeInteger(start) || start < 0) throw new Error('拖动结果不是可编辑安全整数帧')
@@ -123,7 +144,13 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     pinned !== undefined && pinned >= view.start && pinned < view.end ? h('span', { key: 'pin', className: 'fv-line', style: { left: `${framePercent(pinned, view)}%` }, 'aria-hidden': true }) : null,
     hover !== undefined && hover >= view.start && hover < view.end ? h('span', { key: 'hover', className: 'fv-line fv-hover', style: { left: `${framePercent(hover, view)}%` }, 'aria-hidden': true }) : null,
   ]
-  return h('section', { className: 'fv-timeline', 'aria-label': '完整只读可视时间轴' },
+  return h('section', { className: 'fv-timeline', 'aria-label': '完整只读可视时间轴',
+    onPointerDownCapture: event => pointerTails.current.delete(event.pointerId),
+    onClickCapture: event => {
+      if (event.detail === 0 || !pointerTails.current.delete(event.nativeEvent.pointerId)) return
+      event.preventDefault(); event.stopPropagation()
+    },
+  },
     h('style', null, css),
     h('h3', null, label(snapshot.document?.project, '时间线'), onGesture ? ' · 未保存手动 intents 可用' : ' · 只读'),
     h('p', null, `全部 ${result.tracks.length} 轨 / ${result.blocks.length} 块 · video / gfx / audio / subtitles；显示仍仅映射已保存 kernel range。${onGesture ? '拖动块 / 跨轨 / 两侧 trim 手柄仅生成 ghost + 未保存 batch，预检与提交在下方。键盘使用专用表单。' : '未授写许可，不执行编辑或渲染。'}`),
@@ -171,7 +198,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
               const geometry = clipGeometry(block.range, view)
               if (!geometry) return null
               const text = label(block.data, block.address)
-              const events = mode => ({ onPointerDown: e => beginGesture(e, block, track, mode), onPointerMove: updateGesture, onPointerUp: endGesture, onPointerCancel: () => { gesture.current = undefined; setGhost(undefined) }, onLostPointerCapture: () => { gesture.current = undefined; setGhost(undefined) } })
+              const events = mode => ({ onPointerDown: e => beginGesture(e, block, track, mode), onPointerMove: updateGesture, onPointerUp: endGesture, onPointerCancel: e => { cancelGesture(e); if (!gesture.current) setGhost(undefined) }, onLostPointerCapture: e => { cancelGesture(e); if (!gesture.current) setGhost(undefined) } })
               const button = h('button', { key: 'body', type: 'button', className: `fv-clip fv-${kind}`, style: { left: `${geometry.left}%`, width: `${geometry.width}%`, maxWidth: `${100 - geometry.left}%`, touchAction: onGesture ? 'none' : undefined },
                 title: `${text}\n${block.address} · [${block.range[0]}, ${block.range[1]})`, 'aria-label': `选择块 ${block.address} · ${text} · 帧 [${block.range[0]}, ${block.range[1]})`,
                 'aria-pressed': selected.includes(`block:${block.address}`), 'data-hit': hitSet?.has(block.address) ?? false,
