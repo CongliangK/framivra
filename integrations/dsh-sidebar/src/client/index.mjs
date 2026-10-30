@@ -3,6 +3,7 @@ import { parseJSON, stringifyJSON } from '../json.mjs'
 import { captureCurrentDraft, performReferenceAction } from './reference.mjs'
 import { VisualTimeline } from './timeline.mjs'
 import { ManualEditor } from './manual.mjs'
+import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
@@ -36,7 +37,7 @@ async function control(sessionId, payload, signal) {
 }
 
 /** Pure presentation: all addresses, ranges, selection and raw fields come from vtx. */
-export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, onGesture }) {
+export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture }) {
   if (snapshot.content_version !== result.content_version) return h('p', { role: 'alert' }, 'Timeline changed between reads. Reopen preview; mixed-version selection is not displayed.')
   return h(React.Fragment, null,
     h('p', null, `Read-only · ${snapshot.content_version}`),
@@ -44,7 +45,7 @@ export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect,
     ...[snapshot, result].filter(item => !item.coverage.complete).map((item, index) => h('div', { key: index, role: 'alert' },
       h('strong', null, 'Incomplete coverage: external subtitles/assets were not expanded.'), details('Unexpanded inputs', item.coverage))),
     details('Diagnostics', { inspect: snapshot.diagnostics, query: result.diagnostics, frameQuery: hits?.diagnostics }),
-    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, onGesture }),
+    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture }),
     hits ? h('section', { 'aria-label': '帧查询详情' }, h('p', null, `本次 kernel 查询命中 ${hits.blocks.length} 块；完整时间轴保留，黄色底边仅强调命中。`), details('帧查询 envelope（独立详情）', hits)) : null,
     h('details', null, h('summary', null, '全部轨道/块字段与选择（展开）'),
     result.tracks.map(track => h('section', { key: `${track.family}:${track.track_index}`, style: { borderTop: '1px solid currentColor', padding: '8px 0' } },
@@ -110,8 +111,10 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
   const [timeline, setTimeline] = useState('timeline.json')
   const [frame, setFrame] = useState('')
   const [state, setState] = useState({ phase: 'idle' })
-  const [selection, setSelection] = useState()
-  const [selected, setSelected] = useState([])
+  const [selectionIntent, setSelectionIntent] = useState(emptySelection)
+  const { primary: selection, items: selected } = selectionIntent
+  const pick = (item, event) => setSelectionIntent(previous => transitionSelection(previous, item, event, state.result))
+  const clearSelection = () => setSelectionIntent(emptySelection())
   const [gesture, setGesture] = useState()
   const task = useRef()
   const grant = useRef()
@@ -122,7 +125,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
     grant.current = undefined
     if (current) void control(sessionId, { op: 'close', grant: current }).catch(() => {})
   }
-  useEffect(() => { setSelection(undefined); setSelected([]); setGesture(undefined); setState({ phase: 'idle' }); return () => { task.current?.abort(); close() } }, [sessionId])
+  useEffect(() => { clearSelection(); setGesture(undefined); setState({ phase: 'idle' }); return () => { task.current?.abort(); close() } }, [sessionId])
   useEffect(() => {
     const abort = () => { task.current?.abort(); close() }
     tab.signal.addEventListener('abort', abort, { once: true })
@@ -155,7 +158,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
       const hits = query.frame === undefined ? undefined : await control(sessionId, { op: 'query', grant: opened.grant, query }, signal)
       signal.throwIfAborted()
       const stale = opened.snapshot.content_version !== full.content_version || (hits && hits.content_version !== full.content_version)
-      if (!queryOnly || stale) { setSelection(undefined); setSelected([]) }
+      if (!queryOnly || stale) { clearSelection() }
       setState({ phase: 'ready', sessionId, opened, result: full, hits, stale: Boolean(stale) })
     } catch (error) {
       if (!signal.aborted) {
@@ -171,17 +174,15 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
     const result = await control(sessionId, { op: 'query', grant: opened.grant, query: {} }, signal)
     signal.throwIfAborted()
     if (grant.current !== opened.grant) return
-    const oldItems = [...state.result.tracks.map(t => ({ ...t, kind: 'track' })), ...state.result.blocks.map(b => ({ ...b, kind: 'block' }))]
-    const newItems = [...result.tracks.map(t => ({ ...t, kind: 'track' })), ...result.blocks.map(b => ({ ...b, kind: 'block' }))]
-    const preserve = item => { const stable = oldItems.find(t => t.address === item?.address && t.kind === item?.kind)?.data?.id; const next = typeof stable === 'string' ? newItems.find(t => t.data?.id === stable && t.kind === item?.kind) : undefined; return next ? { kind: next.kind, address: next.address } : undefined }
-    setSelection(preserve(selection)); setSelected(previous => previous.map(preserve).filter(Boolean))
+    // Apply to the current intent, not the selection captured before async IO.
+    setSelectionIntent(previous => snapshot.content_version === result.content_version ? preserveSelection(previous, state.result, result) : emptySelection())
     setState({ phase: 'ready', sessionId, opened: { ...opened, snapshot }, result, stale: snapshot.content_version !== result.content_version })
   }
   return h('article', { style: { padding: 12, overflow: 'auto', height: '100%', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', boxSizing: 'border-box' }, 'aria-label': 'Framivra read-only preview' },
     h('h2', null, 'Framivra · 时间线'),
     h('p', null, '打开当前会话工作区内的相对 timeline 路径；不会切换工作区。默认仅只读 / 复制引用。手动编辑须另行明确授予本会话/工程写许可，受管工程经内核预检后才提交。外部工程、远程文件系统、渲染与附件不支持。'),
     h('form', { onSubmit: event => { event.preventDefault(); void load() } },
-      h('label', null, 'Timeline path ', h('input', { style: { maxWidth: '100%', boxSizing: 'border-box' }, value: timeline, onChange: event => { task.current?.abort(); close(); setTimeline(event.target.value); setState({ phase: 'idle' }); setSelection(undefined); setSelected([]) }, required: true })),
+      h('label', null, 'Timeline path ', h('input', { style: { maxWidth: '100%', boxSizing: 'border-box' }, value: timeline, onChange: event => { task.current?.abort(); close(); setTimeline(event.target.value); setState({ phase: 'idle' }); clearSelection() }, required: true })),
       h('button', { type: 'submit' }, 'Open / refresh')),
     state.phase === 'loading' || state.loading ? h('p', { role: 'status' }, 'Reading through vtx…') : null,
     state.message ? h('pre', { role: 'alert', style: { whiteSpace: 'pre-wrap' } }, state.message) : null,
@@ -190,10 +191,10 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
         h('label', null, 'Frame (blank = all) ', h('input', { type: 'text', inputMode: 'numeric', style: { maxWidth: '100%', boxSizing: 'border-box' }, value: frame, 'aria-invalid': Boolean(frameError), onChange: event => setFrame(event.target.value) })),
         h('button', { type: 'submit' }, 'Query stored blocks')),
       frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
-      state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => setFrame(String(value)), onSelect: setSelection, activeSelection: selection, onSelectionChange: setSelected, onGesture: gesture }),
+      state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => setFrame(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture }),
       !state.stale ? h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onGestureReady: callback => setGesture(() => callback) }) : null,
       !state.stale && !frameError && state.opened.snapshot.content_version === state.result.content_version ? h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
-        onStale: () => { setSelection(undefined); setState(previous => ({ ...previous, stale: true })) },
+        onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) },
       }) : null,
       h('h3', null, 'Existing output preview — provenance UNKNOWN'),
       h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),

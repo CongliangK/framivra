@@ -56,16 +56,17 @@ export function compileIntent(op, v, { result, blocks, track, frame, makeId = id
   }
 }
 
-export function ManualEditor({ sessionId, opened, result, selection, selected = [], frame, tabSignal, call, onCommitted, onGestureReady }) {
+export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady }) {
   const [write, setWrite] = useState()
   const [op, setOp] = useState('block.move')
   const [v, setV] = useState({ family: 'video', kind: 'aroll', source_field: 'path', property: 'opacity', property_target: 'block', reference_field: 'duck_by', fade_policy: 'preserve-content', text_policy: 'duplicate-text', mode: 'shift', crossing: 'reject', scope: [], split_ids: [], order: [], start: '0', end: '10', duration: '10', src_in: '0', src_out: '10', volume: '1', at: '0', delta: '1', index: '0', value: '1' })
   const [queue, setQueue] = useState([]), [plan, setPlan] = useState(), [status, setStatus] = useState(), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
   const request = useRef(), generation = useRef(0), live = useRef(true), invalidations = useRef(Promise.resolve())
   const managed = opened.snapshot.document?._vtx?.protocol === 1
-  const allSelected = selected.length ? selected : selection ? [selection] : []
+  const allSelected = selected ?? (selection ? [selection] : [])
   const blocks = result.blocks.filter(b => allSelected.some(s => s.kind === 'block' && s.address === b.address))
-  const track = selection?.kind === 'track' ? result.tracks.find(t => t.address === selection.address) : blocks.length ? result.tracks.find(t => t.family === blocks[0].family && t.track_index === blocks[0].track_index) : undefined
+  const primaryBlock = blocks.find(b => selection?.kind === 'block' && b.address === selection.address)
+  const track = selection?.kind === 'track' ? result.tracks.find(t => t.address === selection.address) : primaryBlock ? result.tracks.find(t => t.family === primaryBlock.family && t.track_index === primaryBlock.track_index) : undefined
   const base = opened.snapshot.content_version
   const payload = (action, extra = {}) => ({ op: action, grant: opened.grant, ...(write ? { writeGrant: write } : {}), ...extra })
   function invalidate() {
@@ -75,6 +76,14 @@ export function ManualEditor({ sessionId, opened, result, selection, selected = 
     if (write) invalidations.current = Promise.all([invalidations.current, call(sessionId, payload('invalidate-plan'), tabSignal).then(() => undefined, error => error)]).then(outcomes => outcomes.find(Boolean))
   }
   useEffect(() => { invalidate() }, [selection, selected, frame, base])
+  useEffect(() => {
+    // These checkboxes are selection-derived draft input, not queued intent.
+    // Never submit a now-hidden former selection as the next ripple split target.
+    setV(previous => {
+      const split_ids = previous.split_ids.filter(key => blocks.some(b => b.data.id === key))
+      return split_ids.length === previous.split_ids.length ? previous : { ...previous, split_ids }
+    })
+  }, [selection, selected, base])
   useEffect(() => { live.current = true; return () => { live.current = false; request.current?.abort() } }, [])
   useEffect(() => {
     onGestureReady?.(write && managed && !busy ? operations => { invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)

@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { displayExtent, windowFor, zoomWindow, panWindow, framePercent, clipGeometry, pointerFrame, frameTicks, displayLanes, safeFrame } from './viewport.mjs'
 
+import { emptySelection, transitionSelection } from './selection.mjs'
+
 const h = React.createElement
 // Kept in the JS factory: no stylesheet asset or private DSH theme dependency.
 const css = `
@@ -26,20 +28,24 @@ const css = `
 `
 const label = (data, fallback) => typeof data?.name === 'string' ? data.name : typeof data?.text === 'string' ? data.text : typeof data?.src === 'string' ? data.src : fallback
 
-export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, onGesture }) {
+export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture }) {
   const extent = displayExtent(snapshot, result)
   const [window, setWindow] = useState()
   const [hover, setHover] = useState()
-  const [selected, setSelected] = useState([])
+  // Standalone presentation consumers can remain uncontrolled. PreviewBody always
+  // supplies its single intent; this fallback is never a second product selection.
+  const [localIntent, setLocalIntent] = useState(emptySelection)
+  const intent = selectionIntent ?? localIntent
+  const selected = intent.items.map(item => `${item.kind}:${item.address}`)
   const drag = useRef()
   const ruler = useRef()
   const trackNodes = useRef(new Map())
   const gesture = useRef()
   const [ghost, setGhost] = useState()
   const [gestureError, setGestureError] = useState('')
-  useEffect(() => { gesture.current = undefined; setGhost(undefined) }, [snapshot.content_version, onGesture])
-  useEffect(() => { setWindow(undefined); setHover(undefined); setSelected([]); drag.current = undefined }, [snapshot.content_version])
-  useEffect(() => { if (!activeSelection) setSelected([]) }, [activeSelection])
+  useEffect(() => { gesture.current = undefined; setGhost(undefined) }, [snapshot.content_version, onGesture, intent, frame])
+  useEffect(() => { setWindow(undefined); setHover(undefined); setLocalIntent(emptySelection()); drag.current = undefined }, [snapshot.content_version])
+  useEffect(() => { if (!activeSelection) setLocalIntent(emptySelection()) }, [activeSelection])
   if (extent.diagnostic) return h('p', { role: 'alert' }, extent.diagnostic)
   const view = window ? windowFor(extent.end, window.start, window.end - window.start) : extent
   const pinned = safeFrame(frame) ? frame : undefined
@@ -51,11 +57,11 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     groups.get(key).push(block)
   }
   function pick(item, event) {
-    const id = `${item.kind}:${item.address}`
-    const next = event.ctrlKey || event.metaKey ? selected.includes(id) ? selected.filter(value => value !== id) : selected.concat(id) : [id]
-    setSelected(next)
-    onSelectionChange?.(next.map(value => { const i = value.indexOf(':'); return { kind: value.slice(0, i), address: value.slice(i + 1) } }))
-    onSelect?.(item)
+    if (selectionIntent) { onSelect?.(item, event); return }
+    const next = transitionSelection(localIntent, item, event, result)
+    setLocalIntent(next)
+    onSelectionChange?.(next.items)
+    onSelect?.(next.primary)
   }
   function move(event, pin = false) {
     const value = pointerFrame(event.clientX, ruler.current.getBoundingClientRect(), view)
@@ -134,7 +140,7 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     h('div', { className: 'fv-tools' },
       h('button', { type: 'button', disabled: !onFrame || pinned === undefined, onClick: () => step(-1) }, '前一帧'),
       h('button', { type: 'button', disabled: !onFrame || pinned === undefined, onClick: () => step(1) }, '后一帧')),
-    h('p', null, '帧标尺：点击/拖动固定播放头；聚焦标尺用 ←/→、Home/End。像素仅概览（1/1024 CSS px 采样），高帧/细块请放大或用整数输入精确定位。Ctrl/⌘ 点击可保留浏览多选；引用始终只有最后激活的一项。'),
+    h('p', null, '帧标尺：点击/拖动固定播放头；聚焦标尺用 ←/→、Home/End。像素仅概览（1/1024 CSS px 采样），高帧/细块请放大或用整数输入精确定位。Ctrl/⌘ 点击切换多选，Shift 点击按 kernel 查询顺序选择同类区间；引用是组内最后激活的一项。'),
     h('p', { 'aria-label': '活动引用' }, `浏览多选 ${selected.length} 项；活动引用：${activeSelection ? `${activeSelection.kind} ${activeSelection.address}` : '无'}（引用不批量；写授权后可用多选批次）`),
     h('div', { className: 'fv-scroll', tabIndex: 0, role: 'region', 'aria-label': '轨道垂直滚动区' },
       h('div', { className: 'fv-ruler', ref: ruler, role: 'slider', tabIndex: 0, 'aria-label': '固定播放头帧标尺', 'aria-valuemin': 0, 'aria-valuemax': extent.end - 1, ...(pinned === undefined ? { 'aria-valuetext': '未设置，按 Home 设置为首帧' } : { 'aria-valuenow': pinned }),
