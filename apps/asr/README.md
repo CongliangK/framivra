@@ -39,12 +39,12 @@ env python3 apps/asr/asr_cli.py batch <目录|清单.txt> -o <输出目录>
 ```
 
 `timeline` 子命令：读 `project.fps/duration_frames`，subtitles[] 就地合并（旧值备份进
-`<项目>/cache/reports/subtitles_backup_<UTC>.json`），打印摘要（窗数/字数/最快速率/
+`<项目>/cache/reports/subtitles_backup_<UTC秒>-<PID>-<唯一后缀>.json`），打印摘要（窗数/字数/最快速率/
 最宽行）；默认替换，`--append` 保留旧字幕后按 in 排序。随后用 `vtx validate && audit` 复核（阅读速度 ≤9 字/s 含标点口径、行宽等）。
 
 写入口已迁移至公开 `read_timeline_for_write` → `timeline_write_plan` → `timeline_transaction`，与 `vtx store` 共用 journal；仅结构验证，不证明素材存在、插件可渲染。转录前固定 raw snapshot/base/op_id，耗时返回后不重读升级 base；CAS 冲突 exit1，不自动 rebase，timeline 未改但耗时产物可能已生成。外部 `subtitles_src` 提前拒绝，不删除路径。legacy 保留未知字段/Unicode 源 ID、不新增身份；managed 仅 owner 字幕范围 reconcile，已有显式 ID 保内容，新字幕 ID 在请求固定，不按数组位置猜 ID。
 
-Python 旧四参 `merge_subtitles` 仍可调用，但无早期参数只在 helper 入口取 base，不保障调用前耗时窗口；长任务必须传同一 `snapshot/expected_base/op_id`，仅有 base 无 snapshot 拒绝。`--dry-run` 纯 plan 不写 timeline/备份/history；内容相同走只读 base fence。字幕数组备份与审计报告不是 timeline publisher 对象，也不与主文件原子提交。报错 `outcome_unknown/recovery_required` 不代表未提交：保留同一 snapshot/输入/op_id，用公开 store status/recover 查/恢复同 operation 后同请求重传，不能盲造新 op；helper 异常带 receipt/request/backup。
+Python 旧四参 `merge_subtitles` 仍可调用，但无早期参数只在 helper 入口取 base，不保障调用前耗时窗口；长任务必须传同一 `snapshot/expected_base/op_id`，仅有 base 无 snapshot 拒绝。`--dry-run` 纯 plan 不写 timeline/备份/history；内容相同走只读 base fence。字幕数组备份以标准库独占创建（含撞名/符号链接时重选唯一后缀），成功写完并关闭后才提交 timeline，每个返回路径保留该次旧字幕。备份 I/O 失败不提交 timeline、不返回备份路径；为避免误删被替换的外来文件，可能留下未返回的不完整文件供人工检查。字幕数组备份与审计报告不是 timeline publisher 对象，也不与主文件原子提交；备份成功后的 CAS 失败可能保留完整备份，由异常 backup 字段说明。报错 `outcome_unknown/recovery_required` 不代表未提交：保留同一 snapshot/输入/op_id，用公开 store status/recover 查/恢复同 operation 后同请求重传，不能盲造新 op；helper 异常带 receipt/request/backup。
 
 独立 `tl_merge.py -t <项目>/timeline.json [--dry-run]` 的 stdin 是原始 UTF-8 字幕 JSON 数组；经公共 `parse_write_json` 在普通解码前拒绝重复键、非有限数和会在写回时损失十进制值的高精度 token（包括未知嵌套扩展），错误 exit1，timeline/备份/history 均不写。0.1、0.5、安全指数及大整数沿用内核写解析合同，不承诺保留数值词法。Python `merge_subtitles(new_subs=...)` 接收已有 Python 值，不能追溯调用前已发生的舍入；转录总入口与旧参数/默认替换行为不变。
 

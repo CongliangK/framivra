@@ -14,6 +14,7 @@ import copy
 import json
 import os
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -150,8 +151,27 @@ def merge_subtitles(timeline_path, new_subs, dry_run=False, reports_dir=None, *,
         rdir = Path(reports_dir) if reports_dir else tl_path.parent / "cache" / "reports"
         rdir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-%d" % os.getpid()
-        backup = rdir / ("subtitles_backup_%s.json" % stamp)
-        backup.write_text(json.dumps(old_subs, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        payload = json.dumps(old_subs, ensure_ascii=False, indent=1) + "\n"
+        # mkstemp underneath NamedTemporaryFile uses O_EXCL, including on a
+        # collision with a symlink. Close successfully before publishing main.
+        # On IO failure retain the unreturned file: unlinking by name could
+        # remove a foreign replacement. No failed backup authorizes a publish.
+        stream = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=rdir,
+                                             prefix="subtitles_backup_%s-" % stamp,
+                                             suffix=".json", delete=False)
+        try:
+            stream.write(payload)
+            stream.flush()
+        except BaseException as error:
+            try:
+                stream.close()
+            except BaseException as close_error:
+                raise error from close_error
+            raise
+        else:
+            stream.close()
+        # Keep the caller's relative/absolute reports_dir spelling as before.
+        backup = rdir / Path(stream.name).name
     if not dry_run:
         result = _api().timeline_transaction(tl_path, request)
         if not result["ok"]:
