@@ -42,6 +42,7 @@ from .cache.recovery import atomic_media, media_cache_valid
 from .timeline import inspect_timeline, query_timeline, timeline_capabilities
 from .timeline_reference import reference_timeline
 from .timeline_frame import frame_timeline
+from .timeline_structure import strict_loads as _strict_loads
 from .timeline_store import (timeline_transaction, timeline_store_status,
                              timeline_store_capabilities, timeline_edit_plan,
                              timeline_write_plan, read_timeline_for_write, TimelineSnapshot)
@@ -55,7 +56,22 @@ __all__ = [
     "inspect_timeline", "query_timeline", "timeline_capabilities", "reference_timeline", "frame_timeline",
     "timeline_transaction", "timeline_store_status", "timeline_store_capabilities",
     "timeline_edit_plan", "timeline_write_plan", "read_timeline_for_write", "TimelineSnapshot",
+    "parse_write_json",
 ]
+
+
+def parse_write_json(payload: bytes):
+    """Parse raw UTF-8 bytes with the store's strict, lossless-write JSON parser.
+
+    Returns the original JSON type as Python values, including arrays/scalars;
+    no timeline/schema validation, IO, publication or new byte limit. Invalid
+    UTF-8/JSON, duplicate keys, nonfinite numbers and precision-losing float
+    tokens raise ValueError (including UnicodeDecodeError/JSONDecodeError).
+    Excessive nesting may raise RecursionError. Already-decoded Python values
+    cannot reveal upstream rounding; pass original bytes before ordinary JSON
+    decoding. Numeric spelling/formatting is not preserved.
+    """
+    return _strict_loads(payload)
 
 
 def cfg_get(key: str, default=None):

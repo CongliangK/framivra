@@ -30,14 +30,18 @@ sidechaincompress，规避长流异常），以 timeline 键挂进 vtx 混音 gr
 ```bash
 env python3 plugins/duck-static/bed_static_duck.py -t timeline.json \
     [--track bed] [--voice-track voice] [--global-db -8] [--duck-db -4] \
-    [--merge-gap 20] [--attack 5] [--release 8] [--no-backup]
+    [--merge-gap 20] [--attack 5] [--release 8] [--no-backup] [--dry-run]
 ```
 
-**写操作**：CLI 直接改写 timeline 并写 `_meta.bed_static_duck` 标记（幂等：同参数跳过）；
+**写操作**：CLI 经公开 timeline publisher 提交 timeline 与 `_meta.bed_static_duck` 标记（幂等：同参数跳过，不取写锁、不生成 history）；
 插件键与 CLI 烘焙互斥（见上）。变换数学两者同一实现
 （bed_static_duck.transform_events），脚本烘焙与管线渲染永不分叉。
 
 CLI 写入前检查全部派生事件；若任一事件淡入+淡出帧数超过段长，则报告事件区间和 fade 值并失败，timeline 与备份均不写入。可显式缩短 `--attack` / `--release` 后重试（原事件保留的边缘 fade 也须核对），或改用推荐的 `duck_strategy` 内存变换；CLI 不会为通过原始时间线校验而静默改写包络。内存变换不持久化，仍保留混音器对短事件两端 fade 的分别截断。
+
+烘焙先固定公开 `read_timeline_for_write` snapshot，再纯 transform/`timeline_write_plan`、同 `timeline_transaction` publisher，与 `vtx store` 共用 journal；仅结构检查，不承诺素材存在或音频可渲染。`--dry-run` 纯 plan，timeline/备份/history 零写。legacy 不新增 `_vtx`/非 source IDs，保留 Unicode 源与扩展。managed 每个原事件的首分段保原 ID，其余 ID 在请求固定；仅 owned bed 事件及显式 `_meta.bed_static_duck` 更新，轨延时、source/loop/pan/其他元数据不漂移；需支持 owned metadata 的内核，旧内核拒绝，不回退直写。
+
+默认先创建首次 `timeline.pre-duck.json`，公开 A1 exact-import + create-only，保 snapshot 原 raw bytes、不重排、不覆盖已有备份；managed 为 detached-copy，独立创建 history，不复制来源 history/undo 能力。备份不是主文件权威，二者**不是跨文件原子事务**：若备份后主 CAS stale，工程不改但 backup/history 可已创建，错误明确 `backup_created`，不声称目录零写。无自动 rebase/重读后重试。`outcome_unknown/recovery_required` 可能已发布，错误给出 operation ID；用公开 store status/recover 查/恢复同 operation，保存原 snapshot/请求/op_id 重传，不能盲交新 op。此普通单文件备份不涉及 snapshot pinned-stage；A2 未迁移。
 
 ## 依赖环境
 

@@ -174,6 +174,12 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 
 语义编辑使用独立的 `edit`，不是把 `replace` 的身份限制解除，也不改变既有 `apply.changes` 平面协议。尚无 UI、ID 改签或完整 gfx 连续编辑。apply/adopt/edit 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
 
+### 原始写入 JSON 的公共解析边界
+
+`vtx.api.parse_write_json(payload: bytes)` 是纯函数，直接复用 store 的严格写解析器：输入完整 UTF-8 原字节，返回原 JSON 类型对应的 Python 值（对象、数组、标量均可），不做 timeline/schema 校验，不读取路径、不建工程或 history。重复键、非有限数字、无效 UTF-8/JSON，以及重序列化会改变十进制值的浮点 token 抛 `ValueError`（含 `UnicodeDecodeError` / `JSONDecodeError`）；过深嵌套可抛 `RecursionError`，不包装成回执。保留未知嵌套值，整数仍为 Python int；0.1、0.5、可安全重写的指数形式沿用原 store 合同，不要求二进制精确或保留数字词法。不增加输入字节上限。
+
+适配器必须在普通 JSON 解码之前传原 bytes，随后照常做自己的数组/结构校验并走公共 publisher；不得用 inspect/query 的读投影或临时文件替代。已有 Python 值无法追溯上游已经发生的舍入，此函数也不是任意精度数值或原文保留接口。
+
 ### Managed 语义编辑与零写计划
 
 Python 与 CLI 使用**同一份请求**；`operations` 非空、有序，每项以 `op` 指定下表操作，未列请求键拒绝。只有当前 `_vtx` 工程可编辑，不自动 adopt。所有新对象 ID 必须由调用者预先生成并放入请求；同 op 重试保持整个请求不变。
@@ -301,9 +307,15 @@ plan = timeline_write_plan(path, request)  # 零写；不初始化 status/histor
 
 ### 稳定 ID owner reconciliation 与撤销
 
-`reconcile` 额外字段恰为 `owner/owned_ids/new_ids/operations`：owner 为显式非空标签；owned_ids 是本次允许变动/删除的现存全局稳定 ID；new_ids 恰好列出本批新增 ID，不能复用旧 ID。operations 仍是上文已审查的受限 managed 语义批次，不接全文替换、JSON Pointer、数组位置映射或按文本猜 ID。未有可靠 ID/业务映射的旧 writer 必须明确拒绝，不能自动制造身份。
+`reconcile` 必需额外字段为 `owner/owned_ids/new_ids/operations`：owner 为显式非空标签；owned_ids 是本次允许变动/删除的现存全局稳定 ID；new_ids 恰好列出本批新增 ID，不能复用旧 ID。operations 仍是上文已审查的受限 managed 语义批次，不接全文替换、JSON Pointer、数组位置映射或按文本猜 ID。未有可靠 ID/业务映射的旧 writer 必须明确拒绝，不能自动制造身份。
 
-最终比较包括对象 kind、父容器、非 owned 同级次序及全部未知深字段：非 owned 数据/位置、root/project 数据不得改变；隐式引用修复若影响非 owned 也拒绝。owned 对象的未知字段仅通过既有定点语义变换保留/修改，不投影重建。结果 reconciliation 列出 owner/base_revision、changes/creates/deletes/preserved_ids/warnings；这是调用者声明的业务范围审计，**不是宿主授权或持久 owner 注册表**。尚未迁移 ASR/duck/Blender 等现入口，也未实现它们各自的业务键映射和 owned root metadata 更新。
+最终比较包括对象 kind、父容器、非 owned 同级次序及全部未知深字段：非 owned 数据/位置、root/project 数据不得改变；隐式引用修复若影响非 owned 也拒绝。owned 对象的未知字段仅通过既有定点语义变换保留/修改，不投影重建。结果 reconciliation 列出 owner/base_revision、changes/creates/deletes/preserved_ids/warnings；这是调用者声明的业务范围审计，**不是宿主授权或持久 owner 注册表**。ASR/静态 duck 已按下文 B1 迁移；Blender、脚手架、A2/snapshot 及 gfx/HTML 其他写入口仍未迁移，不能据此宣称所有 writers 已完成。
+
+仅 managed、document、edit-purpose 的 v2 reconcile 可另带**成对**可选 `owned_meta_keys` 与 `meta_updates`。例如 `owned_meta_keys:["bed_static_duck"]`、`meta_updates:{"bed_static_duck":{"baked":true}}`：scope 必须为非空、唯一、非空白字符串列表，不得包含 `_meta`/`_vtx`；updates 必须为非空 JSON 对象，其键为 scope 子集。所有键均指 **root `_meta` 下的直接字面键**，点/斜杠不解析为 dotted path/JSON Pointer，不接管整个 `_meta`、project、source 或 `_vtx`；值中的 id/_vtx 只是普通 JSON 数据。没有 meta_remove；null 是普通值，不表示删除。其他 actions/unmanaged 请求不接受这些字段，不能只传其中一个或传空 scope。
+
+语义批次与 updates 在同一内存 candidate 上组合、一次范围审计、一个 intent 和一次工程 publish；不经 replace、不做第二事务，也不扩大普通 parameters 编辑权限。只有显式带该 pair 时允许 `operations:[]` identity candidate（例如 segments/volume 已符合目标，只需首次 marker）；旧 reconcile/edit 的空数组仍拒绝。原 root `_meta` 缺失可为授权键建立 dict；原值非 dict 报 `reconcile.meta_container`，不得强转/擦除。非 owned 兄弟及其他 root/project/source 数据仍按 typed JSON 严格比较，不能用删键/换容器逃逸。
+
+新 pair 的 reconciliation receipt 额外含 `owned_meta_keys`（声明顺序）与 `changed_meta_keys`（排序，presence 差异也算变化），后者从 before/after 独立重算，不从输入猜测；无变化则空列表。history 校验独立复算 scope/变化并核对 after 的 updates 值，拒绝省略变化、True/1 偷换和非 owned 改动；status/plan/replay/recover 不放宽。无 pair 的原有效 v1/v2 请求 canonical bytes/digest、summary/result 和历史读取严格保持，不补默认字段、不重签。仍使用 store/v2 与 protocol2，按明确 pair 字段 presence 分支扩展，不发明 v3；能力公布于 `v2.reconciliation_meta`。meta-only 变化不伪造 affected object IDs/窗口；CAS、重试、undo、recovery 仍走原 publisher。[owned-meta 契约测试](../../tests/contracts/test_timeline_owned_meta.py)覆盖手算 split/volume/marker、一批发布、literal/null、typed scope/receipt、旧空数组拒绝及现有崩溃边界。
 
 v2 的范围、变更摘要及证据按 JSON 值递归比较：object 键序无关，array 次序保留；boolean 与 number 严分。JSON 只有一种 number，int/float 同值（含 ±0）相等，不比较数字词法；实际可写输入仍受 strict parser 的有限值/十进制往返精度约束，Python tuple/非字符串键拒绝。owned 真变化须列入 changed_ids/changes，并追踪父轨、共享源及 project 的影响窗口。v1 有效请求 digest、结果与字节不重签、不改写，原 v1 摘要保持；历史 boolean 被换成 0/1 属损坏，status/plan/replay 拒绝而非放宽恢复。
 
@@ -334,8 +346,8 @@ engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作�
 | 当前入口与源码证据 | 当前支持与风险 | 后续统一内核迁移面 |
 |---|---|---|
 | [Blender 回写](../../apps/blender-bridge/blend2json.py#L90-L193) | 视频移动/边裁/同族换轨后重排；音频 in/out/src_in 可回写，换音轨和部分 loop 移动拒收；字幕、音量、pan 不回写。重叠时**先写后 exit 2**，非事务覆盖 | 精确位置寻址、编辑计划、冲突/重叠预检、提交前拒绝；不得照抄过时文件头的“不回写音频” |
-| [ASR 合并](../../apps/asr/tl_merge.py#L45-L85)，[调用者](../../apps/asr/asr_cli.py) | 只替换 subtitles；保留其他字段，支持 dry-run，cache/reports 备份旧字幕，同目录临时文件+replace。无原文版本 CAS；不协调 subtitles_src | 字幕集合替换、引用冲突与并发版本门；保留备份语义 |
-| [静态 duck 烘焙](../../plugins/duck-static/bed_static_duck.py#L126-L168) | 按轨名查找后分段替换 events 与 _meta，参数幂等标记和可选备份；无版本门、非事务覆盖 | 事件批量变换、元数据扩展保留、原文版本冲突 |
+| [ASR 合并](../../apps/asr/tl_merge.py)，[调用者](../../apps/asr/asr_cli.py) | B1 经公开同 publisher：转录前 raw/base/op_id，默认替换、显式 append；legacy preserve-unmanaged、managed owned 字幕 reconcile；外部字幕先拒绝，dry/nochange 零写 | cache/reports 字幕数组备份/报告不是 timeline 事务对象；旧 helper 无 snapshot 只保障其入口后的窗口 |
+| [静态 duck 烘焙](../../plugins/duck-static/bed_static_duck.py) | B1 早 snapshot、纯变换、同 publisher；managed 首段保 ID、新 IDs 固定，显式 owned marker；同参 skip/dry 零写；首次备份 A1 exact-import/create-only 独立 history | 备份后主 CAS stale 可留下备份副作用，非两文件原子事务；需支持 owned metadata 的内核，不回退覆盖 |
 | [通用脚手架](../../scripts/new_project.sh#L11-L35) | heredoc 整体写 timeline，可覆盖既有文件；创建 cache/out | 新工程创建与禁止无意覆盖 |
 | [口播脚手架](../../templates/tech-talk/scripts/new_project.sh#L94-L115) | 已存在则不覆盖，递归改占位路径与 _meta，再写新文件 | 保留新建语义与原始模板扩展 |
 | [MG build](../../templates/mg-styles/build.py#L16-L65) | 新目录限定，dry 返回工程，生成 gfx/音频后写 timeline | 新建工程与完整源/轨数据 |
@@ -343,7 +355,7 @@ engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作�
 | [既有只读预览页](../../vtx/preview.html#L264-L281)（非写入口） | 文件/粘贴 JSON 读取展示，不写工程；自带页面数据检查不是渲染校验 | 后续统一读模型消费面，不虚构编辑/导出能力 |
 | [只读 CLI](../../vtx/cli/timeline.py)、[只读模型](../../vtx/timeline.py)、[引用模型](../../vtx/timeline_reference.py) | inspect/query 为完整解析数据；reference 提供权威原文和带版本暂态地址；均零写态 | store 从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
 
-上述生产写入口当前**全部未迁移**，仍可能非合作直接写工程，不能宣称统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
+仅 ASR 与静态 duck 已迁移 B1；Blender、通用/口播/MG 脚手架以及 snapshot（A2 pinned target 未实现）等仍未迁移，不能宣称所有 writers 或统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
 
 ## 行为验证
 
