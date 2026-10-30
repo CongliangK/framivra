@@ -1,6 +1,6 @@
 /** Adapter only: timeline interpretation and selection belong exclusively to vtx. */
 import { dirname, isAbsolute } from 'node:path'
-import { parseJSON, LosslessJSONError } from './json.mjs'
+import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 
 export class PreviewError extends Error {
   constructor(code, message, status = 400) {
@@ -121,12 +121,28 @@ export class TimelineReader {
   async read(executable, timeline, operation, query, signal) {
     if (!['inspect', 'query', 'reference', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
     const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
+    return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation))
+  }
+  async store(executable, timeline, operation, request, signal) {
+    if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
+    // The official flag reads fd0 itself: public providers may expose a socket,
+    // for which reopening /dev/stdin fails with ENXIO. No temp files/bridge.
+    const args = request === undefined ? ['store', operation] : ['store', ...(operation === 'plan' ? ['plan'] : []), '--request-stdin']
+    const input = request === undefined ? undefined : stringifyJSON(request)
+    if (input !== undefined && Buffer.byteLength(input, 'utf8') > 8388608) fail('REQUEST_TOO_LARGE', 'Semantic request exceeds the official 8 MiB UTF-8 byte limit', 413)
+    return this.command(executable, timeline, args, signal, text => {
+      const result = parseJSON(text)
+      if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
+      return result
+    }, input, true)
+  }
+  async command(executable, timeline, args, signal, decode, input, business = false) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     const handle = this.subprocess.spawn({
-      argv: [executable, '-t', timeline, operation, ...args],
+      argv: [executable, '-t', timeline, ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
-      stdio: { stdin: 'ignore', stdout: { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
+      stdio: { stdin: input === undefined ? 'ignore' : { data: input }, stdout: { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
       env: { PATH: this.config.trustedPath, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
     })
@@ -134,7 +150,7 @@ export class TimelineReader {
     try {
       const outcome = await untilAborted(handle.done, signal)
       signal.throwIfAborted()
-      if (outcome.exitCode !== 0) {
+      if (outcome.exitCode !== 0 && !(business && outcome.exitCode === 1)) {
         const error = new PreviewError(outcome.exitCode === 2 ? 'CLI_UNSUPPORTED' : 'CLI_FAILED',
           outcome.exitCode === 2 ? 'Installed vtx does not support this read command' : 'vtx rejected this timeline or failed', 502)
         const diagnostic = handle.collected.stderr?.readFrom(0)
@@ -147,7 +163,9 @@ export class TimelineReader {
       }
       const output = handle.collected.stdout?.readFrom(0)
       if (!output || output.lossy) fail('TRUNCATED_JSON', 'vtx JSON exceeded the 8 MiB read limit; refusing truncated preview', 502)
-      return decodeEnvelope(output.text, operation)
+      const result = decode(output.text)
+      if (business && (outcome.exitCode === 0) !== result.ok) fail('PROTOCOL_MISMATCH', 'Store exit/envelope mismatch', 502)
+      return result
     } finally {
       await this.cleanup(handle)
       signal.throwIfAborted()
