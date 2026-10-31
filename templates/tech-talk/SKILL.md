@@ -50,7 +50,7 @@ PY
 
 ## 六阶段创作流程
 
-> **新项目一键开局**（生成目录树 + 工程文档四件 + 01-brief + 可 validate 的 timeline 骨架 + gates/mixing 预设，幂等可重跑）：
+> **新项目一键开局**（会写项目文档、素材、预设及 cache/out；已有 timeline 跳过但仍 validate，新建走 [C1 事务与失败边界](../../docs/reference/timeline-api.md#生产写入口支持矩阵与迁移清单)，新增 history/locks，非全项目原子回滚；其他 writers/A2 尚未完成）：
 > ```bash
 > bash <video_tools>/templates/tech-talk/scripts/new_project.sh <项目目录> --title "视频标题" --id 项目代号
 > ```

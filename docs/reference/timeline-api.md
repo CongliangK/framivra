@@ -355,13 +355,13 @@ engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作�
 | [ASR 合并](../../apps/asr/tl_merge.py)，[调用者](../../apps/asr/asr_cli.py) | B1 经公开同 publisher：转录前 raw/base/op_id，默认替换、显式 append；legacy preserve-unmanaged、managed owned 字幕 reconcile；外部字幕先拒绝，dry/nochange 零写 | cache/reports 字幕数组备份/报告不是 timeline 事务对象；旧 helper 无 snapshot 只保障其入口后的窗口 |
 | [静态 duck 烘焙](../../plugins/duck-static/bed_static_duck.py) | B1 早 snapshot、纯变换、同 publisher；managed 首段保 ID、新 IDs 固定，显式 owned marker；同参 skip/dry 零写；首次备份 A1 exact-import/create-only 独立 history | 备份后主 CAS stale 可留下备份副作用，非两文件原子事务；需支持 owned metadata 的内核，不回退覆盖 |
 | [通用脚手架](../../scripts/new_project.sh#L11-L35) | heredoc 整体写 timeline，可覆盖既有文件；创建 cache/out | 新工程创建与禁止无意覆盖 |
-| [口播脚手架](../../templates/tech-talk/scripts/new_project.sh#L94-L115) | 已存在则不覆盖，递归改占位路径与 _meta，再写新文件 | 保留新建语义与原始模板扩展 |
+| [口播脚手架](../../templates/tech-talk/scripts/new_project.sh) | C1：慢复制前固定 missing/base 与严格骨架，保留扩展并递归改占位路径/_meta；public create/preserve-unmanaged 单次发布（紧凑 JSON、0600、history/locks），晚外写拒绝 | 已有 timeline 不读 store 而跳过，仍执行非 TL 工作与 validate；失败可留非 TL 文件/sidecar，提交后 validate 失败不回滚 TL |
 | [MG build](../../templates/mg-styles/build.py#L16-L65) | 新目录限定，dry 返回工程，生成 gfx/音频后写 timeline | 新建工程与完整源/轨数据 |
 | [MG media](../../templates/mg-styles/build_media.py#L111-L153) | 调用 build 后再替换视频轨/追加源，第二次覆盖 timeline | 新建过程的整批计划与失败边界 |
 | [既有只读预览页](../../vtx/preview.html#L264-L281)（非写入口） | 文件/粘贴 JSON 读取展示，不写工程；自带页面数据检查不是渲染校验 | 后续统一读模型消费面，不虚构编辑/导出能力 |
 | [只读 CLI](../../vtx/cli/timeline.py)、[只读模型](../../vtx/timeline.py)、[引用模型](../../vtx/timeline_reference.py) | inspect/query 为完整解析数据；reference 提供权威原文和带版本暂态地址；均零写态 | store 从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
 
-仅 ASR 与静态 duck 已迁移 B1；Blender、通用/口播/MG 脚手架以及 snapshot（A2 pinned target 未实现）等仍未迁移，不能宣称所有 writers 或统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
+ASR 与静态 duck 已迁移 B1，口播脚手架已迁移 C1；Blender、通用/MG 脚手架以及 snapshot（A2 pinned target 未实现）等仍未迁移，不能宣称所有 writers 或统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
 
 ## 行为验证
 
