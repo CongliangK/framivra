@@ -7,6 +7,8 @@ import { registerHooks } from 'node:module'
 import { TimelineReader } from '../src/protocol.mjs'
 import { createPreviewHost } from '../src/host.mjs'
 import { stringifyJSON } from '../src/json.mjs'
+import { createHash } from 'node:crypto'
+import { performReferenceAction } from '../src/client/reference.mjs'
 
 // Opt-in, public built DSH exports + installed vtx. No replacement server or GUI.
 const dsh = process.env.SIDEBAR_DSH_ROOT
@@ -98,6 +100,62 @@ test('real installed vtx inspect/query -> real provider -> Host Response -> Clie
   // Neither HTTP transport nor the client may turn a numeric ID into a string.
   assert.match(serialized, /"asset_id":9007199254740993/)
   console.log(JSON.stringify({ evidence: dir, vtx, provider: 'LocalSubprocessRuntime', realWireClient: 'PASS' }))
+})
+
+test('real reference CLI -> provider -> Host -> copy is source-exact, stale and duplicate fail closed', { skip, timeout: 20000 }, async t => {
+  await mkdir(evidence, { recursive: true })
+  const dir = await mkdtemp(join(evidence, 'real-reference-'))
+  const raw = '{ "in":0, "out":30, "text":"中文 \\u4e2d", "asset_id":9007199254740993, "huge":1e300, "decimal":1.0000000000000001 }'
+  const source = ` \n{ "version":2,"project":{"fps":30,"duration_frames":30},"sources":[],"video_tracks":[],"audio_tracks":[],"subtitles":[${raw}] }\n`
+  const path = join(dir, 'timeline.json')
+  await writeFile(path, source)
+  const runtime = await provider(t)
+  const host = createPreviewHost({ subprocess: runtime, fs: localFs(), sessions: new Map([['real', {}]]), workingDirectory: { get: () => dir } }, { vtxExecutable: vtx })
+  t.after(() => host.dispose())
+  const control = payload => host.control(new Request('http://test/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'real', ...payload }) }))
+  const openedResponse = await control({ op: 'open', timeline: 'timeline.json' })
+  assert.equal(openedResponse.status, 200, await openedResponse.clone().text())
+  const opened = await openedResponse.json()
+  const selection = { kind: 'block', address: '/subtitles/0' }
+  const version = `sha256:${createHash('sha256').update(source).digest('hex')}`
+  assert.equal(opened.snapshot.content_version, version)
+  let copied, reference
+  const response = await performReferenceAction({ action: 'raw', selection, contentVersion: version, frame: 0, signal: AbortSignal.timeout(5000), clipboard: { writeText: async text => { copied = text } }, read: async query => {
+    const response = await control({ op: 'reference', grant: opened.grant, query })
+    const wire = await response.text()
+    await writeFile(join(dir, 'reference-wire.json'), wire)
+    assert.equal(response.status, 200, wire)
+    return reference = JSON.parse(wire)
+  } })
+  assert.equal(response.status, 'copied')
+  assert.equal(copied, raw)
+  assert.equal(reference.document.raw, source)
+  assert.equal(reference.selection.blocks[0].stable_id, null)
+  assert.equal(reference.selection.global_frame, 0)
+  assert.equal(reference.selection.fps, 30)
+  await writeFile(path, source.replace('中文', '更改'))
+  const query = { expected_content_version: version, block_addresses: [selection.address] }
+  const stale = await control({ op: 'reference', grant: opened.grant, query })
+  const staleBody = await stale.json()
+  assert.equal(stale.status, 502)
+  assert.equal(staleBody.diagnostics.diagnostics.some(item => item.code === 'reference.stale'), true)
+  await writeFile(path, source.replace('"asset_id":9007199254740993', '"text":"duplicate","asset_id":9007199254740993'))
+  const duplicate = await control({ op: 'reference', grant: opened.grant, query })
+  assert.equal(duplicate.status, 502)
+  const managed = { version: 2, project: { fps: 30, duration_frames: 30 }, sources: [], video_tracks: [], audio_tracks: [], subtitles: [{ in: 0, out: 30, text: 'managed', id: 'managed-real-id' }], _vtx: { protocol: 1, project_id: 'project', head: 'head' } }
+  await writeFile(path, JSON.stringify(managed))
+  const next = await control({ op: 'open', timeline: 'timeline.json' })
+  assert.equal(next.status, 200, await next.clone().text())
+  const m = await next.json()
+  const identified = await control({ op: 'reference', grant: m.grant, query: { expected_content_version: m.snapshot.content_version, block_ids: ['managed-real-id'] } })
+  assert.equal(identified.status, 200, await identified.clone().text())
+  assert.equal((await identified.json()).selection.blocks[0].stable_id, 'managed-real-id')
+  const missing = await control({ op: 'reference', grant: m.grant, query: { expected_content_version: m.snapshot.content_version, block_ids: ['missing-id'] } })
+  assert.equal(missing.status, 502)
+  assert.equal((await missing.json()).diagnostics.diagnostics.some(item => item.code === 'reference.not_found'), true)
+  const result = { version, rawHash: createHash('sha256').update(copied).digest('hex'), exactDocument: true, exactCopy: true, managedId: 'managed-real-id', missingIdStatus: missing.status, staleStatus: stale.status, duplicateStatus: duplicate.status, png: 'not-generated' }
+  await writeFile(join(dir, 'result.json'), JSON.stringify(result))
+  console.log(JSON.stringify(result))
 })
 
 async function stopped(pid) {

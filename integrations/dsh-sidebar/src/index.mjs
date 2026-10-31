@@ -11,6 +11,9 @@ export function apply(ctx, config = {}) {
     path: '/api/framivra/control', methods: ['POST'], requestBody: 'buffered', fetch: host.control,
   }))
   ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/framivra/frame', methods: ['POST'], requestBody: 'streaming', fetch: host.frame,
+  }))
+  ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/media', methods: ['GET', 'HEAD'], requestBody: 'buffered', fetch: host.media,
   }))
 }

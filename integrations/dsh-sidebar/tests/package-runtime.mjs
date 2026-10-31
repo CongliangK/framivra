@@ -22,7 +22,8 @@ globalThis.window = dom.window
 globalThis.document = dom.window.document
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 // This is the SDK package's public browser entry, not a reimplementation of its loader.
-const sandbox = { window: { __ModuleLoader__: target }, AbortController, AbortSignal, URLSearchParams, console }
+const copies = []
+const sandbox = { window: { __ModuleLoader__: target }, navigator: { clipboard: { writeText: async text => copies.push(text) } }, TextEncoder, AbortController, AbortSignal, URLSearchParams, console }
 runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'), 'utf8'), sandbox)
 const bootstrap = queue.shift()
 const modules = bootstrap.factory(() => { throw new Error('Unexpected bootstrap dependency') })
@@ -71,7 +72,13 @@ await hostFiber.await()
 await clientFiber.await()
 assert.equal(types.get('framivra').id, manifest.name)
 assert.equal(types.get('framivra').priority, 'extension')
-assert.deepEqual([...routes.keys()].sort(), ['/api/framivra/control', '/api/framivra/media'])
+assert.deepEqual([...routes.keys()].sort(), ['/api/framivra/control', '/api/framivra/frame', '/api/framivra/media'])
+assert.deepEqual(routes.get('/api/framivra/control').methods, ['POST'])
+assert.equal(routes.get('/api/framivra/control').requestBody, 'buffered')
+assert.deepEqual(routes.get('/api/framivra/media').methods, ['GET', 'HEAD'])
+assert.equal(routes.get('/api/framivra/media').requestBody, 'buffered')
+assert.deepEqual(routes.get('/api/framivra/frame').methods, ['POST'])
+assert.equal(routes.get('/api/framivra/frame').requestBody, 'streaming')
 const fetchControl = async (path, init) => {
   const request = new Request(new URL(path, 'http://owner/'), init)
   requests.push(JSON.parse(init.body))
@@ -115,6 +122,19 @@ try {
   assert(!document.body.textContent.includes('9007199254740992'))
   assert(document.body.textContent.includes('provenance UNKNOWN'))
   assert(document.querySelector('video').getAttribute('src').startsWith('/api/framivra/media?sessionId=one&grant='))
+  const button = label => [...document.querySelectorAll('button')].find(node => node.textContent === label)
+  await act(async () => button('选择块 /fixture/0/blocks/0').click())
+  await until(() => document.body.textContent.includes('引用就绪。'))
+  assert.equal(requests.at(-1).op, 'reference')
+  assert.equal(requests.at(-1).query.block_addresses[0], '/fixture/0/blocks/0')
+  assert(document.body.textContent.includes('legacy / 无协议稳定 ID'))
+  await act(async () => button('复制 raw JSON').click())
+  await until(() => copies.length === 1)
+  assert.equal(copies[0], '{ "id":9007199254740993, "decimal":1.0000000000000001, "huge":1e400, "text":"原文" }')
+  const beforeUnavailable = requests.length
+  await act(async () => button('加入当前会话草稿（不发送）').click())
+  assert(document.body.textContent.includes('DRAFT_UNAVAILABLE'))
+  assert.equal(requests.length, beforeUnavailable)
   const field = document.querySelector('input[inputmode="numeric"]')
   const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
   // ReactDOM was imported before jsdom, so use its public test event adapter.

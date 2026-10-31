@@ -199,6 +199,8 @@ wheel 包含 `vtx` 内核及其职责子包、仓级 vt 模块、schema/preview 
 
 组件命令直达 `apps/` / `plugins/`，仓级维护命令直达 scripts 职责目录；不提供根部组件别名或旧命令转发壳。技能 live 挂载与链接修复独立于组件别名；安装器保留仓内相对链接解包及 Windows 文件/目录物化。外部工作区和挂载必须逐件实查，仓内测试不能证明外部源件存在或链接有效，缺失/待办不得核销为完成。外部三载体的未结项与本机复验状态以 [已知问题④](reference/known-issues.md#external-installation-evidence) 为准。
 
+`integrations/` 是外宿主适配器的源码 home，不新增运行时层；这些适配器由外宿主管理，不注册为 vtx app/hook，也不进入 Python wheel。
+
 ### 5.3 配置
 
 唯一加载器 `vtx/pluginlib/config.py`：**`VTX_CONFIG` > 仓根 `config.local.json`**。imgen 与其他组件同入口，不读 IMGEN_CONFIG、不迁移或改写旧配置；坏 JSON 警告后按空配置继续，兼容读取 comfyui/asr/tts/imgen/denoise 键。已知路径型键自动展开 `~`，其他路径消费方用 expand_path/expanduser，不展开任意 URL/文本。config.example.json 与 gitignored config.local.json 均在仓根，插件通过 `vtx.api.cfg_get` 读取。

@@ -1,7 +1,7 @@
 {
   "name": "framivra-dsh-sidebar",
   "version": "0.1.0",
-  "description": "Read-only Framivra timeline preview for DSH",
+  "description": "Framivra timeline preview, stored references and explicit semantic editing for DSH",
   "type": "module",
   "main": "lib/index.js",
   "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json" },

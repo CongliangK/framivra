@@ -1,6 +1,8 @@
 /** Adapter only: timeline interpretation and selection belong exclusively to vtx. */
 import { dirname, isAbsolute } from 'node:path'
-import { parseJSON, LosslessJSONError } from './json.mjs'
+import { Readable } from 'node:stream'
+import { boundedText, FRAME_WIRE_LIMIT } from './bounded.mjs'
+import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 
 export class PreviewError extends Error {
   constructor(code, message, status = 400) {
@@ -39,12 +41,47 @@ export function queryArgs(query = {}) {
   return args
 }
 
+export function referenceArgs(query) {
+  if (!object(query) || !/^sha256:[a-f0-9]{64}$/.test(query.expected_content_version)) fail('BAD_REFERENCE', 'Reference requires the displayed content version')
+  const flags = { track_ids: '--track-id', block_ids: '--block-id', track_addresses: '--track-address', block_addresses: '--block-address' }
+  if (Object.keys(query).some(key => ![...Object.keys(flags), 'expected_content_version', 'frame'].includes(key))) fail('BAD_REFERENCE', 'Unknown reference field')
+  const args = [`--expected-content-version=${query.expected_content_version}`]
+  let count = 0
+  for (const [key, flag] of Object.entries(flags)) {
+    if (query[key] === undefined) continue
+    if (!Array.isArray(query[key]) || query[key].length > 64 || query[key].some(value => typeof value !== 'string' || !value || value.length > 4096 || value.includes('\0'))) fail('BAD_REFERENCE', 'Invalid or oversized reference selector')
+    for (const value of query[key]) { args.push(`${flag}=${value}`); count++ }
+  }
+  if (count !== 1 && !(count === 0 && query.frame !== undefined)) fail('BAD_REFERENCE', 'Select exactly one stored track/block or an explicit position-only frame')
+  if (query.frame !== undefined) {
+    if (!integer(query.frame)) fail('BAD_REFERENCE', 'Reference frame must be a nonnegative safe integer')
+    args.push('--frame', String(query.frame))
+  }
+  return args
+}
+
+function decodeReference(value) {
+  const mismatch = () => fail('PROTOCOL_MISMATCH', 'Unsupported vtx reference/v1 envelope; upgrade installed vtx', 502)
+  if (!object(value) || value.schema !== 'framivra.timeline.reference/v1' || value.operation !== 'reference' || value.ok !== true ||
+      !/^sha256:[a-f0-9]{64}$/.test(value.content_version) || !Array.isArray(value.diagnostics) ||
+      !object(value.document) || typeof value.document.raw !== 'string' || value.document.content_version !== value.content_version ||
+      !object(value.selection) || !object(value.coverage) || typeof value.coverage.complete !== 'boolean' ||
+      !object(value.image) || value.image.state !== 'not-generated') mismatch()
+  for (const key of ['tracks', 'blocks']) {
+    if (!Array.isArray(value.selection[key]) || value.selection[key].some(item => !object(item) ||
+        typeof item.address !== 'string' || item.content_version !== value.content_version ||
+        !(item.stable_id === null || typeof item.stable_id === 'string') || !(item.raw === null || typeof item.raw === 'string'))) mismatch()
+  }
+  return value
+}
+
 export function decodeEnvelope(text, operation) {
   let value
   try { value = parseJSON(text) } catch (error) {
     if (error instanceof LosslessJSONError) fail('LOSSLESS_JSON_UNSUPPORTED', error.message, 502)
     fail('INVALID_JSON', 'vtx did not return complete JSON', 502)
   }
+  if (operation === 'reference') return decodeReference(value)
   if (operation === 'capabilities') {
     if (!object(value) || value.schema !== 'framivra.timeline.read/v1' || value.operation !== operation || value.ok !== true ||
         !object(value.capabilities) || !Array.isArray(value.capabilities.operations) ||
@@ -84,22 +121,53 @@ export class TimelineReader {
     return path
   }
   async read(executable, timeline, operation, query, signal) {
-    if (!['inspect', 'query', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
-    const args = operation === 'query' ? queryArgs(query) : []
+    if (!['inspect', 'query', 'reference', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
+    const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
+    return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation))
+  }
+  async frame(executable, timeline, frame, version, signal) {
+    if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version)) fail('BAD_FRAME', 'Exact saved version and integer pin required')
+    return this.command(executable, timeline, ['timeline', 'frame', '--frame', String(frame), `--expected-content-version=${version}`, '--render', '--include-png', '--max-png-bytes=8388608'], signal, text => {
+      const value = parseJSON(text)
+      if (!object(value) || value.schema !== 'framivra.timeline.frame/v1' || value.operation !== 'frame' || typeof value.ok !== 'boolean' || !Array.isArray(value.diagnostics)) fail('PROTOCOL_MISMATCH', 'Official frame/v1 envelope required', 502)
+      return value
+    }, undefined, true, true)
+  }
+  async reap() {
+    await Promise.all([...this.active.keys()].map(handle => this.cleanup(handle)))
+  }
+  async store(executable, timeline, operation, request, signal) {
+    if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
+    // The official flag reads fd0 itself: public providers may expose a socket,
+    // for which reopening /dev/stdin fails with ENXIO. No temp files/bridge.
+    const args = request === undefined ? ['store', operation] : ['store', ...(operation === 'plan' ? ['plan'] : []), '--request-stdin']
+    const input = request === undefined ? undefined : stringifyJSON(request)
+    if (input !== undefined && Buffer.byteLength(input, 'utf8') > 8388608) fail('REQUEST_TOO_LARGE', 'Semantic request exceeds the official 8 MiB UTF-8 byte limit', 413)
+    return this.command(executable, timeline, args, signal, text => {
+      const result = parseJSON(text)
+      if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
+      return result
+    }, input, true)
+  }
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     const handle = this.subprocess.spawn({
-      argv: [executable, '-t', timeline, operation, ...args],
+      argv: [executable, '-t', timeline, ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
-      stdio: { stdin: 'ignore', stdout: { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
+      stdio: { stdin: input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
       env: { PATH: this.config.trustedPath, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
     })
     this.active.set(handle, undefined)
     try {
-      const outcome = await untilAborted(handle.done, signal)
+      if (streaming && !handle.stdout) fail('FRAME_STREAM_UNSUPPORTED', 'Public provider did not expose the requested owner stdout pipe', 502)
+      const [outcome, streamed] = await untilAborted(Promise.all([
+        handle.done,
+        streaming ? boundedText({ headers: new Headers(), body: Readable.toWeb(handle.stdout) }, FRAME_WIRE_LIMIT, signal) : undefined,
+      ]), signal)
       signal.throwIfAborted()
-      if (outcome.exitCode !== 0) {
+      if (outcome.exitCode !== 0 && !(business && outcome.exitCode === 1)) {
         const error = new PreviewError(outcome.exitCode === 2 ? 'CLI_UNSUPPORTED' : 'CLI_FAILED',
           outcome.exitCode === 2 ? 'Installed vtx does not support this read command' : 'vtx rejected this timeline or failed', 502)
         const diagnostic = handle.collected.stderr?.readFrom(0)
@@ -110,9 +178,11 @@ export class TimelineReader {
         }
         throw error
       }
-      const output = handle.collected.stdout?.readFrom(0)
+      const output = streaming ? { text: streamed, lossy: false } : handle.collected.stdout?.readFrom(0)
       if (!output || output.lossy) fail('TRUNCATED_JSON', 'vtx JSON exceeded the 8 MiB read limit; refusing truncated preview', 502)
-      return decodeEnvelope(output.text, operation)
+      const result = decode(output.text)
+      if (business && (outcome.exitCode === 0) !== result.ok) fail('PROTOCOL_MISMATCH', 'Store exit/envelope mismatch', 502)
+      return result
     } finally {
       await this.cleanup(handle)
       signal.throwIfAborted()
