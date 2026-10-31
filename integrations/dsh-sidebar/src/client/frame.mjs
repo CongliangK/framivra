@@ -13,6 +13,18 @@ export class FrameEpoch {
   epoch = 0
   generated = undefined
   edit = { dirty: false, busy: false, unknown: false }
+  ghost = undefined
+  // Only the originating gesture may release its exclusion. Never fold this
+  // into the editor's dirty/busy/unknown report, which has a different lifetime.
+  gestureChanged(token, active) {
+    if (!active && this.ghost !== token) return false
+    this.ghost = active ? token : undefined
+    this.invalidate()
+    return true
+  }
+  assertReady() {
+    if (this.ghost || this.edit.dirty || this.edit.busy || this.edit.unknown) throw new Error('FRAME_STALE: selection/pin/edit/session changed or write unresolved')
+  }
   invalidate() { this.epoch++; this.controller?.abort(); this.controller = undefined; this.generated = undefined }
   begin(tabSignal) {
     this.controller?.abort()
@@ -21,7 +33,8 @@ export class FrameEpoch {
   }
   check(operation) {
     operation.signal.throwIfAborted()
-    if (operation.epoch !== this.epoch || this.edit.dirty || this.edit.busy || this.edit.unknown) throw new Error('FRAME_STALE: selection/pin/edit/session changed or write unresolved')
+    this.assertReady()
+    if (operation.epoch !== this.epoch) throw new Error('FRAME_STALE: selection/pin/edit/session changed or write unresolved')
   }
   editChanged(next) { this.invalidate(); this.edit = { ...this.edit, ...next } }
 }
@@ -110,8 +123,10 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     return limits
   }
   async function generate() {
-    const operation = owner.begin(tabSignal)
+    let operation
     try {
+      owner.assertReady()
+      operation = owner.begin(tabSignal)
       owner.check(operation)
       if (!consent || !whole(frame)) throw new Error('FRAME_CONSENT: 请固定整数帧并明确允许仅 cache/preview 写入')
       owner.generated = undefined
@@ -123,12 +138,14 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       frameDraftText(verified, selection, positionOnly)
       owner.generated = verified
       setState({ message: '已验证 PNG 字节、SHA、IHDR 与完整浏览器解码。请第二次点击复制图片，或加入当前草稿；未发送。' })
-    } catch (error) { if (!operation.signal.aborted) setState({ message: error.message }); else setState({ message: '操作已失效/取消；未加入草稿。' }) }
+    } catch (error) { if (!operation?.signal.aborted) setState({ message: error.message }); else setState({ message: '操作已失效/取消；未加入草稿。' }) }
   }
   async function stage() {
-    // Synchronous click-time capture MUST precede begin/check/reference await.
+    // Guard even retained handlers before capture; clean clicks still capture
+    // synchronously before begin and before the first reference await.
     let captured, operation
     try {
+      owner.assertReady()
       captured = captureCurrentDraft(getDraftServices, sessionId)
       operation = owner.begin(tabSignal)
       owner.check(operation)
@@ -147,8 +164,10 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     } catch (error) { setState({ message: operation?.signal.aborted ? '操作已失效/取消；未补投草稿。' : error.message }) }
   }
   async function copy() {
-    const operation = owner.begin(tabSignal)
+    let operation
     try {
+      owner.assertReady()
+      operation = owner.begin(tabSignal)
       owner.check(operation)
       const current = owner.generated
       if (!current || !navigator.clipboard?.write || typeof ClipboardItem !== 'function' || (ClipboardItem.supports && !ClipboardItem.supports('image/png'))) throw new Error('CLIPBOARD_UNSUPPORTED: 当前浏览器不能写 PNG；未自动降级为文本')
@@ -157,7 +176,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       setState({ message: operation.signal.aborted ? '剪贴板写入可能已完成；OS 无法撤回，当前选择已变化。' : 'PNG 已复制；OS 可能重新编码，不承诺剪贴板字节恒等。' })
     } catch (error) { setState({ message: `图片未确认复制：${error.message}；无自动文本降级。` }) }
   }
-  const blocked = !whole(frame) || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
+  const blocked = !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
   return h('section', { 'aria-label': '当前合成帧与草稿', style: { border: '1px solid currentColor', padding: 8 } },
     h('h3', null, '固定帧 PNG → 当前草稿（不发送）'),
     h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),

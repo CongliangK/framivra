@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { displayExtent, windowFor, zoomWindow, panWindow, framePercent, clipGeometry, pointerFrame, frameTicks, displayLanes, safeFrame } from './viewport.mjs'
 
 import { emptySelection, transitionSelection } from './selection.mjs'
@@ -28,7 +28,7 @@ const css = `
 `
 const label = (data, fallback) => typeof data?.name === 'string' ? data.name : typeof data?.text === 'string' ? data.text : typeof data?.src === 'string' ? data.src : fallback
 
-export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture }) {
+export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState }) {
   const extent = displayExtent(snapshot, result)
   const [window, setWindow] = useState()
   const [hover, setHover] = useState()
@@ -56,12 +56,11 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     if (!g || (event && ((event.pointerId !== undefined && g.pointer !== event.pointerId) || g.node !== event.currentTarget))) return
     gesture.current = undefined
     pointerTails.current.add(g.pointer)
+    setGhost(undefined)
+    g.publish?.(g.token, false)
     releaseGesture(g)
   }
-  useEffect(() => {
-    setGhost(undefined)
-    return () => cancelGesture()
-  }, [snapshot.content_version, onGesture, intent, frame])
+  useLayoutEffect(() => () => cancelGesture(), [snapshot.content_version, onGesture, onGestureState, intent, frame])
   useEffect(() => { setWindow(undefined); setHover(undefined); setLocalIntent(emptySelection()); drag.current = undefined }, [snapshot.content_version])
   useEffect(() => { if (!activeSelection) setLocalIntent(emptySelection()) }, [activeSelection])
   if (extent.diagnostic) return h('p', { role: 'alert' }, extent.diagnostic)
@@ -97,8 +96,12 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     const origin = pointerFrame(event.clientX, ruler.current.getBoundingClientRect(), view)
     if (origin === undefined) return
     const moving = selected.includes(`block:${block.address}`) ? result.blocks.filter(b => selected.includes(`block:${b.address}`)) : [block]
+    const next = { pointer: event.pointerId, node: event.currentTarget, origin, block, track, mode, moving, token: {}, publish: onGestureState }
+    // Exclude frame work in this very DOM event, before capture/release can
+    // dispatch callbacks. Retiring the old token cannot clear this new one.
+    next.publish?.(next.token, true)
     cancelGesture()
-    gesture.current = { pointer: event.pointerId, node: event.currentTarget, origin, block, track, mode, moving }
+    gesture.current = next
     event.currentTarget.setPointerCapture?.(event.pointerId)
   }
   function updateGesture(event) {
@@ -120,8 +123,9 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
     const g = updateGesture(event)
     if (!g) return
     gesture.current = undefined; setGhost(undefined)
-    releaseGesture(g)
-    if (!g.delta && (g.mode !== 'move' || g.target.address === g.track.address)) return
+    if (!g.delta && (g.mode !== 'move' || g.target.address === g.track.address)) {
+      g.publish?.(g.token, false); releaseGesture(g); return
+    }
     pointerTails.current.add(g.pointer)
     try {
       if (g.mode === 'move') {
@@ -139,6 +143,11 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       }
       setGestureError('拖动/trim 已加入未保存批次。边界、源窗、AV、gfx 和 fade 以内核计划为准；默认明确 preserve-content，可在表单选择另一策略。')
     } catch (error) { setGestureError(error.message) }
+    finally {
+      // onGesture publishes queued dirty synchronously before exclusion ends.
+      g.publish?.(g.token, false)
+      releaseGesture(g)
+    }
   }
   const lines = () => [
     pinned !== undefined && pinned >= view.start && pinned < view.end ? h('span', { key: 'pin', className: 'fv-line', style: { left: `${framePercent(pinned, view)}%` }, 'aria-hidden': true }) : null,
