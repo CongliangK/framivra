@@ -32,9 +32,11 @@
 
 ## 媒体工程与交付
 
-两个公开 CLI 均从仓根调用；`--style` 名称保持上表 slug。`--content` 为 UTF-8 JSON，媒体输入按本款语义接口解释，不与 HTML 内嵌 JSON 或 prototype schema 互换。`--frames` 控制整数帧总长，30fps；修改时须同步 `[in,out)` 窗口和阅读预算。
+两个公开 CLI 均从源码仓根调用；模板不在 wheel 中。先按[官方克隆安装指南](../../docs/guides/installation.md)取得源码；开发者在可信仓根用实际执行的同一 Python 解释器运行 `python3 -m pip install -e .` 正常安装匹配的 Framivra（会修改当前 Python 环境/安装依赖；非 dry、非本轮自动执行步骤），提供 `vtx.api` 的 parse/snapshot/plan/transaction 公共导出；不靠 cwd 或 `PYTHONPATH` 注入内核。缺失/过旧 API 会提示当前解释器与安装入口。`--style` 名称保持上表 slug。`--content` 为原始 UTF-8 JSON bytes，经 public `parse_write_json` 严格解析，重复键、非有限及精度丢失的小数 token 在目录/素材写入前拒绝；含 `--content` 的 CLI 即使 `--dry` 也需要已安装 API。已解码 Python 参数无法恢复上游舍入前的 token，不承诺数字词法/排版保留。媒体输入仍按本款语义解释，不与 HTML 内嵌 JSON 或 prototype schema 互换。`--frames` 控制整数帧总长，30fps；修改时同步 `[in,out)` 窗口和阅读预算。
 
-先用款内 `--dry` 命令预检。去掉 `--dry` 会渲染源素材、编码并创建新工程，拒绝覆盖已有目录；部分失败保留日志与中间文件。随后按[内核路由](../../docs/skill/SKILL.md)依次 validate 和完整 all，生成成功不等于技术、艺术、声音验收完成。素材、cache/out、截图和字体保存在仓外，不提交 Git。媒体无 HTML gfx 时不会启动浏览器。
+先用款内 `--dry` 预检：不创建工程、素材或 store/history/lock，不调用 snapshot/plan/transaction；Python `build(..., dry=True)` 仍可纯 Python 校验。既有目录、文件或符号链接（含断链）均拒绝，即使 dry。去掉 `--dry` 是写操作：独占创建新目录后、任何 cue/renderer 工作前固定 missing/base=None/operation_id；完整最终工程用[公共 v2 create/preserve-unmanaged/document](../../docs/reference/timeline-api.md#显式-v2-兼容写地基a1旧入口尚未迁移) 先 plan、再同一请求发布一次，不加 `_vtx` 或非 source ID。媒体源生成过程中没有 intermediate timeline。新 timeline 为紧凑排序 JSON、0600（不同于旧 indent=2/umask），并有持久 history/控制区；未知工程扩展不经投影裁剪。目标晚出现会冲突，不重读 base、跳过或自动重试。
+
+素材/渲染失败可留新目录、素材与日志，但不发布 timeline；再次调用仍拒绝该目录。发布失败保留 code、operation_id、原请求及 retry 诊断；`outcome_unknown` 不代表未写，不能换 op 自动重试或假称回滚。成功发布后的版本查询/源码回执异常明确报“timeline committed; source receipt incomplete”，保留已提交 timeline 与原因；这不是素材+timeline+回执的全文件系统事务，失败也可能留下 store 证据。保证仅限公共 store 的本地合作 POSIX/CAS 边界，不宣称跨 OS/NFS 或抵御所有外写。随后按[内核路由](../../docs/skill/SKILL.md)依次 validate 和完整 all；生成成功不等于技术、艺术、声音验收完成。素材、cache/out、截图和字体保存在仓外，不提交 Git。媒体无 HTML gfx 时不会启动浏览器。
 
 输出保存捕获的 renderer/composer 源码与哈希；系统字体不复制。默认本机 Noto CJK 的来源和 SIL OFL 1.1 另记回执，指定 `font_path` 时由调用方核查许可与覆盖；系统字体与环境改变可能影响字形。三维源重生成和冻结媒体消费分别判定，已知严格差异见[验收边界](#验收边界)，不改变门槛。
 
