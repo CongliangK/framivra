@@ -7,7 +7,7 @@
 | 用途 | 入口与边界 |
 |---|---|
 | 安装 | `install.sh`、`install_windows.ps1` 是克隆引导；`install.py` 是独立资产安装器。参数先看 `--help`；安装会写入目标目录。 |
-| 新建项目 | `new_project.sh` 使用 `templates/gfx-starter.html`；仅用于全新项目。 |
+| 新建项目 | `new_project.sh DIR [SECS]`（默认 30，ASCII 十进制 ≥7 秒）使用 `templates/gfx-starter.html`；新建/完整替换 unmanaged timeline 经公共 plan/CAS/history，拒绝 managed/坏输入；不是无损初始化或目录级原子事务，详见[新项目写态](../docs/skill/references/edit.md)。 |
 | 主宣传 Demo / 性能源 | `demo.py` 准备/核验唯一 30 秒输入，内部复用原 `build_demo.js`，渲染直接使用产品 `all`；[唯一源基线与用法](../templates/demo-timeline-svg/README.md#主性能基线)。 |
 | 发布 | `release/release_github.py` 执行发布事务；`release/verify_release.py` 核验身份；`release/release_acceptance.py` 在隔离冻结源码上验收。真实发布需要授权。 |
 | 图形基线与证据 | `gfx/gfx_golden.py` 是命令入口，`gfx/gfx_evidence.py` 是验证库；使用说明见 [图形证据](../docs/cache-provenance.md#golden-evidence)。 |

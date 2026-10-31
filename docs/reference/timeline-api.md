@@ -354,14 +354,14 @@ engine 必须把已有同核发布状态机扩展为：在 pinned 私有工作�
 | [Blender 回写](../../apps/blender-bridge/blend2json.py#L90-L193) | 视频移动/边裁/同族换轨后重排；音频 in/out/src_in 可回写，换音轨和部分 loop 移动拒收；字幕、音量、pan 不回写。重叠时**先写后 exit 2**，非事务覆盖 | 精确位置寻址、编辑计划、冲突/重叠预检、提交前拒绝；不得照抄过时文件头的“不回写音频” |
 | [ASR 合并](../../apps/asr/tl_merge.py)，[调用者](../../apps/asr/asr_cli.py) | B1 经公开同 publisher：转录前 raw/base/op_id，默认替换、显式 append；legacy preserve-unmanaged、managed owned 字幕 reconcile；外部字幕先拒绝，dry/nochange 零写 | cache/reports 字幕数组备份/报告不是 timeline 事务对象；旧 helper 无 snapshot 只保障其入口后的窗口 |
 | [静态 duck 烘焙](../../plugins/duck-static/bed_static_duck.py) | B1 早 snapshot、纯变换、同 publisher；managed 首段保 ID、新 IDs 固定，显式 owned marker；同参 skip/dry 零写；首次备份 A1 exact-import/create-only 独立 history | 备份后主 CAS stale 可留下备份副作用，非两文件原子事务；需支持 owned metadata 的内核，不回退覆盖 |
-| [通用脚手架](../../scripts/new_project.sh#L11-L35) | heredoc 整体写 timeline，可覆盖既有文件；创建 cache/out | 新工程创建与禁止无意覆盖 |
+| [通用脚手架](../../scripts/new_project.sh) | 源码根公共 API；复制前冻结 raw/base/整份 candidate/op/request，纯 plan 后单次 create 或 legacy-write/replace，preserve-unmanaged；新建 0600/无 `_vtx`，拒绝 managed/坏输入，晚外写 CAS 拒绝 | 有效 legacy **整替换并有意丢弃扩展**，history 留精确 before.bin，当前仍为 after 时可 undo_of（create 不可 undo）；schema 覆盖/gfx 保留旧 guard；复制失败可留部分辅助文件但本次不发布 TL，非目录级原子事务；unknown 保留原请求/op，人工 status/recover，不自动重试/回滚；[普通行为测试](../../tests/contracts/test_generic_creator.py) |
 | [口播脚手架](../../templates/tech-talk/scripts/new_project.sh) | C1：慢复制前固定 missing/base 与严格骨架，保留扩展并递归改占位路径/_meta；public create/preserve-unmanaged 单次发布（紧凑 JSON、0600、history/locks），晚外写拒绝 | 已有 timeline 不读 store 而跳过，仍执行非 TL 工作与 validate；失败可留非 TL 文件/sidecar，提交后 validate 失败不回滚 TL |
 | [MG build](../../templates/mg-styles/build.py) | 新目录独占 claim 后、cue/gfx 前固定 missing/base/op；完整 document public plan+create/preserve-unmanaged 单次发布，紧凑 JSON/0600/history；dry 不碰 store | 匹配的正常安装 public API；raw CLI 严格解析，晚外写拒绝；失败可留素材/sidecar，不自动重试 |
 | [MG media](../../templates/mg-styles/build_media.py) | 复用捕获 build.py 内 asset-only seam；渲染期间无 intermediate timeline，完整源/轨最终一次同 publisher create | 源码捕获/回执顺序保留；发布后版本/回执失败明确 timeline 已提交、source receipt incomplete，不回滚 |
 | [既有只读预览页](../../vtx/preview.html#L264-L281)（非写入口） | 文件/粘贴 JSON 读取展示，不写工程；自带页面数据检查不是渲染校验 | 后续统一读模型消费面，不虚构编辑/导出能力 |
 | [只读 CLI](../../vtx/cli/timeline.py)、[只读模型](../../vtx/timeline.py)、[引用模型](../../vtx/timeline_reference.py) | inspect/query 为完整解析数据；reference 提供权威原文和带版本暂态地址；均零写态 | store 从原文与 content_version 起步；不得从会展开外部字幕的 Ctx.tl 回写 |
 
-ASR 与静态 duck 已迁移 B1，口播脚手架已迁移 C1，MG 两创建入口已接同 publisher；Blender、通用脚手架以及 snapshot（A2 pinned target 未实现）等仍未迁移，不能宣称所有 writers 或统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
+ASR 与静态 duck 已迁移 B1，口播脚手架已迁移 C1，MG 两创建入口与通用脚手架已接同 publisher；Blender 以及 snapshot（A2 pinned target 未实现）等仍未迁移，不能宣称所有 writers 或统一人/AI 编辑已完成。[fstxn](../../vtx/runtime/fstxn.py) 的 file_lock 由 store 单次复用，不用其默认损坏 JSON 回退/无 fsync 的 locked_update。此切片没有常驻服务、DSH 桥或消费 UI。
 
 ## 行为验证
 
