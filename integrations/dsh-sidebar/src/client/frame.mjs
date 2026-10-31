@@ -59,7 +59,13 @@ export async function verifyFrame(envelope, { frame, contentVersion, signal, lim
   if (!rawSHA.test(image.sha256) || !rawSHA.test(image.render_key) || !rawSHA.test(image.input_fingerprint) || typeof image.identity_semantics !== 'string' || !image.identity_semantics.includes('Fast media stat identity') || !whole(image.bytes) || image.bytes < 33 || image.bytes > FRAME_WIRE_LIMIT) bad('Missing PNG identity/size certificates')
   if (limits && (!limits.mediaTypes?.includes('image/png') || image.bytes > limits.maxImageBytes || image.bytes > limits.maxMessageImageBytes || limits.maxImagesPerMessage < 1)) bad('DSH image policy rejects this frame')
   const inline = image.inline
-  if (inline?.encoding !== 'base64' || typeof inline.data !== 'string' || inline.data.length !== 4 * Math.ceil(image.bytes / 3) || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(inline.data)) bad('Canonical bounded base64 required')
+  if (inline?.encoding !== 'base64' || typeof inline.data !== 'string' || inline.data.length !== 4 * Math.ceil(image.bytes / 3)) bad('Canonical bounded base64 required')
+  // Constant-stack scan: repeated regex groups can overflow on valid in-budget PNGs.
+  const dataEnd = inline.data.length - (3 - image.bytes % 3) % 3
+  for (let at = 0; at < inline.data.length; at++) {
+    const code = inline.data.charCodeAt(at)
+    if (at < dataEnd ? !((code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 43 || code === 47) : code !== 61) bad('Canonical bounded base64 required')
+  }
   const binary = atob(inline.data)
   if (binary.length !== image.bytes || btoa(binary) !== inline.data) bad('Noncanonical base64 or byte-count mismatch')
   const bytes = Uint8Array.from(binary, char => char.charCodeAt(0)), view = new DataView(bytes.buffer)
