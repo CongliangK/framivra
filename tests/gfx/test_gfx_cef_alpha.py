@@ -1803,6 +1803,16 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
             self.assertEqual(len(accepted), 3)
             self.assertTrue(all(e['drive_mode'] == 'n' and
                                 e['restore_source'] == 'native_cross_capture' for e in accepted))
+            # PairSwap 证据链：每帧 adapter_timing 必带 pair_index 与两侧预取结论；
+            # 默认开启下 3 帧序列是确定性的——f0 首导航 A 对 miss，f1 B 对以
+            # 目标 URL 创建（创建即导航）记 miss，f2 绑定 A 对时预取记录匹配
+            # 记 hit（hit/miss 只取决于绑定时的记录匹配，不依赖导航是否跑完）。
+            timing = [e for e in events if e['event'] == 'adapter_timing']
+            self.assertEqual(len(timing), 3)
+            self.assertEqual(
+                [(e['pair_index'], e['signed_prefetch'], e['unsigned_prefetch'])
+                 for e in timing],
+                [(0, 'miss', 'miss'), (1, 'miss', 'miss'), (0, 'hit', 'hit')])
             for accepted_event in accepted:
                 request = [e for e in events if e['request_id'] == accepted_event['request_id']]
                 baseline = [e for e in request if e['event'] == 'exact_baseline_veto_armed']
@@ -1827,6 +1837,28 @@ document.querySelector('div').style.left=(20+f*3)+'px';</script>''')
                 shutil.copytree(root, target, dirs_exist_ok=True)
                 (target / 'test.stdout.log').write_text(result.stdout + '\n' + repair.stdout)
 
+    def test_real_mode_n_pair_swap_disabled_falls_back_to_single_pair(self):
+        with tempfile.TemporaryDirectory(prefix='cef_production_') as td:
+            root = Path(td).resolve()
+            p = project(root)
+            env = dict(os.environ, VTX_GFX='cef', VTX_CEF_WORKER=WORKER,
+                       VTX_CEF_MODE='a0', VTX_GFX_PAGES='1', VTX_GFX_CACHE_NS='',
+                       VTX_CEF_PAIR_SWAP='0')
+            command = [os.sys.executable, str(ROOT / 'vtx/vtx.py'), '-t', str(p), 'gfx']
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=150)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Mode N native-exact', result.stdout)
+            events = [json.loads(s) for path in (root / 'cache/reports/cef').glob('*.sync.jsonl')
+                      for s in path.read_text().splitlines()]
+            accepted = [e for e in events if e.get('to') == 'S5_ONPAINT_VERIFIED']
+            self.assertEqual(len(accepted), 3)
+            timing = [e for e in events if e['event'] == 'adapter_timing']
+            self.assertEqual(len(timing), 3)
+            # 回退路径：恒单对（pair_index=0）、两侧预取结论恒 off。
+            for e in timing:
+                self.assertEqual(e['pair_index'], 0)
+                self.assertEqual(e['signed_prefetch'], 'off')
+                self.assertEqual(e['unsigned_prefetch'], 'off')
 
 
 class RendererEvents(unittest.TestCase):
