@@ -33,6 +33,7 @@
 
 #include "frame_pipeline.h"
 #include "ipc_protocol.hpp"
+#include "pair_swap_planner.hpp"
 #include "png_writer.h"
 #include "shm_ring.hpp"
 
@@ -672,9 +673,24 @@ class ExactBaselineCapture {
     // Release logical samples but preserve their allocation for the next frame.
     for (auto& sample : samples_) sample.sequence = 0;
     const bool first_browser = !state_;
+    // PairSwap 预取对账：帧号 + URL 均匹配的预取导航直接采纳——本请求
+    // 不再 LoadURL，load_floor 沿用预取发出前基线（导航已在上帧 veto
+    // 通过后发出，可能仍在途也可能已落定，加载门两者皆可判）。
+    // 未命中（乱序/跳帧/重放/从未预取）就地作废预取，回退 navigate-now；
+    // 在途的陈旧预取导航被本请求的新导航取代，加载门以
+    // GetURL==expected_url 保证只有最终文档能通过。
+    const bool adopt_prefetch =
+        !first_browser && mode_n_ &&
+        prefetch_.Matches(frame, ExpandUrlTemplate(opt.url_template, frame));
+    prefetch_.Consume();
+    unsigned_prefetch_ =
+        opt.pair_swap && mode_n_
+            ? (adopt_prefetch ? pairswap::Outcome::kHit
+                              : pairswap::Outcome::kMiss)
+            : pairswap::Outcome::kOff;
     if (!first_browser && state_->closed.load())
       return Fail("unsigned_browser_closed");
-    if (!first_browser && !browser_ && !AdoptCreatedBrowser())
+    if (!first_browser && !browser_ && !AdoptCreatedBrowser() && !adopt_prefetch)
       return Fail("unsigned_browser_creation_still_pending");
     if (first_browser) state_ = std::make_shared<RunState>();
     {
@@ -689,8 +705,14 @@ class ExactBaselineCapture {
     copied_bytes_floor_ = state_->passive_snapshot_copied_bytes;
     dropped_paints_floor_ = state_->passive_snapshot_dropped_paints;
     const auto url = ExpandUrlTemplate(opt.url_template, frame);
-    navigated_ = mode_n_ || first_browser;
-    if (navigated_) {
+    navigated_ = mode_n_ || first_browser || adopt_prefetch;
+    if (adopt_prefetch) {
+      // 预取采纳：导航（与 PrepareJsDocument）已在上帧 veto 通过后由
+      // Prefetch() 完成——loaded=false / expected_url 均已就位，此处只
+      // 继承预取发出前的 load_starts 基线；浏览器未决（创建仍在途）时它
+      // 本就以预取 URL 创建，落定即正确文档。
+      load_floor_ = prefetch_.load_floor;
+    } else if (navigated_) {
       state_->loaded.store(false, std::memory_order_relaxed);
       PrepareJsDocument(*state_, url);
       load_floor_ = state_->load_starts.load();
@@ -721,9 +743,26 @@ class ExactBaselineCapture {
       creating_ = CefBrowserHost::CreateBrowser(window, client, url, settings,
                                                nullptr, request_context_);
       if (!creating_) return Fail("unsigned_browser_create_failed");
-    } else if (navigated_) {
+    } else if (navigated_ && !adopt_prefetch) {
       browser_->GetMainFrame()->LoadURL(url);
     }
+    return true;
+  }
+
+  // PairSwap：帧 N（活跃对）veto 通过后，对本备用 unsigned 浏览器发出
+  // 帧 N+1 的预取导航——纯文档加载（PrepareJsDocument + LoadURL），
+  // 不注入桥：桥只在请求绑定（Begin）后注入，预取驻留文档零外部事件。
+  // 仅当浏览器已存在时发出；首航浏览器由其首个请求的 Begin 以目标 URL
+  // 创建（创建即导航），不为预取凭空建窗（短会话不增 RSS）。返回 false
+  // = 本次未预取（本捕获器下一个请求将记 miss 回退 navigate-now）。
+  bool Prefetch(int32_t frame, const std::string& url) {
+    if (!state_ || state_->closed.load()) return false;
+    if (!browser_ && !AdoptCreatedBrowser()) return false;
+    state_->loaded.store(false, std::memory_order_relaxed);
+    PrepareJsDocument(*state_, url);
+    const uint64_t floor = state_->load_starts.load();
+    browser_->GetMainFrame()->LoadURL(url);
+    prefetch_.Record(frame, url, floor);
     return true;
   }
 
@@ -884,7 +923,11 @@ class ExactBaselineCapture {
         ",\"unsigned_copied_bytes\":" + std::to_string(
             state_->passive_snapshot_copied_bytes - copied_bytes_floor_) +
         ",\"unsigned_discarded_paints\":" + std::to_string(
-            state_->passive_snapshot_dropped_paints - dropped_paints_floor_);
+            state_->passive_snapshot_dropped_paints - dropped_paints_floor_) +
+        // PairSwap 证据：unsigned 侧本请求预取采纳结果（hit=采纳预取导航
+        // / miss=回退 navigate-now / off=PairSwap 未启用或非 mode n）。
+        ",\"unsigned_prefetch\":\"" +
+        std::string(pairswap::OutcomeName(unsigned_prefetch_)) + "\"";
   }
   bool js_failed() const { return state_ && state_->js_error.failed; }
   const char* failure_reason() const { return failure_reason_; }
@@ -961,6 +1004,9 @@ class ExactBaselineCapture {
   uint64_t ready_deadline_ = 0;
   bool mode_n_ = true;
   bool resident_poisoned_ = false;
+  // PairSwap：备用对预取簿记（帧号/URL/load 基线）与本请求采纳结果。
+  pairswap::PairBookkeeping prefetch_{};
+  pairswap::Outcome unsigned_prefetch_ = pairswap::Outcome::kOff;
   bool injected_ = false;
   bool ready_ = false;
   bool failed_ = false;
@@ -1007,7 +1053,8 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
                                    const ServeOptions& opt,
                                    uint32_t document_gen, uint32_t request_id,
                                    int32_t frame, uint32_t expected_w,
-                                   uint32_t expected_h, uint8_t* dst) {
+                                   uint32_t expected_h, uint8_t* dst,
+                                   const pairswap::Binding& binding = {}) {
   SyncProduceResult r;
   r.document_gen = document_gen;
   r.request_id = request_id;
@@ -1090,11 +1137,25 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     state.sync_ready_queue.clear();
   }
   if (mode_n) {
-    state.loaded.store(false, std::memory_order_relaxed);
+    // PairSwap 三态导航（默认 kNavigateNow = 现路径逐字保留）：
+    //   kAdoptPrefetch      —— 预取导航已在上帧 veto 通过后发出（loaded
+    //                          已置 false、expected_url 已就位），本请求不
+    //                          再 LoadURL，load 基线继承预取发出前值；
+    //   kNavigateByCreation —— 本对 signed 浏览器尚未创建，RunServe 已以
+    //                          目标 URL 创建（创建即导航），基线恒 0。
     const auto url = ExpandUrlTemplate(opt.url_template, frame);
+    const bool navigate_now =
+        binding.signed_nav == pairswap::SignedNav::kNavigateNow;
+    if (navigate_now) {
+      state.loaded.store(false, std::memory_order_relaxed);
+    }
+    // 三态都要 expected_url 就位（观察者围栏 CheckJsCheckpoint 依赖）：
+    // navigate-now / creation 由本调用设置；adopt 路径 Prefetch 已设过，
+    // PrepareJsDocument 幂等（保 sent 计数、清 js_paint_pending）。
     PrepareJsDocument(state, url);
-    const auto load_floor = state.load_starts.load();
-    browser->GetMainFrame()->LoadURL(url);
+    const auto load_floor = navigate_now ? state.load_starts.load()
+                                         : binding.signed_load_floor;
+    if (navigate_now) browser->GetMainFrame()->LoadURL(url);
     while (!state.closed.load() && !(state.load_starts.load() > load_floor &&
              state.loaded.load(std::memory_order_relaxed) &&
              !browser->IsLoading() &&
@@ -1288,6 +1349,9 @@ struct PendingReceipt {
   uint32_t capture_fps = 0;
   bool exact_canary = false;
   bool sync_mode_p = false;
+  // —— PairSwap 证据（exact 时进 adapter_timing；off/0 = 未启用或回退）——
+  int pair_index = 0;
+  pairswap::Outcome signed_prefetch = pairswap::Outcome::kOff;
   std::string exact_timing_fields;
   fsync::RequestDesc machine_desc;
 };
@@ -1447,6 +1511,18 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   Options cef_opt = opt.cef;
   cef_opt.serve_mode = true;
   RunState state;
+  // ---- PairSwap 备用对（B 对）声明（惰性启用，见下）----
+  // PairSwap 双对交替预取（pair_swap_planner.hpp）：仅当 --pair-swap=1 且
+  // --sync + mode n + exact canary 时启用；其余配置（含 VTX_CEF_PAIR_SWAP=0
+  // 回退）零 B 侧开销——不建浏览器、不装 sync_machine、不进 planner。
+  const bool pair_swap_engaged =
+      opt.pair_swap && opt.sync && !sync_mode_p && opt.sync_canary == "exact";
+  RunState state_b;                       // B 对 signed 侧回调存储
+  CefRefPtr<WorkerClient> client_b;       // B 对 OSR client（惰性创建）
+  CefRefPtr<CefBrowser> browser_b;        // B 对 signed 浏览器（惰性创建）
+  bool creation_requested_b = false;
+  bool pair_b_broken = false;             // B 对创建失败/中途死亡 → 永久降级单对
+  pairswap::Planner planner{pair_swap_engaged};
   CefMainArgs main_args(argc, argv);
   CefSettings settings = MakeWorkerSettings(root_cache.string());
   CefRefPtr<WorkerApp> app = new WorkerApp(&cef_opt, &state);
@@ -1461,6 +1537,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   CefString initial_url;
   initial_url.FromString("about:blank");
   CefRefPtr<WorkerClient> client = new WorkerClient(&cef_opt, &state);
+  if (pair_swap_engaged) client_b = new WorkerClient(&cef_opt, &state_b);
   CefRefPtr<CefBrowser> browser;
   bool creation_requested = false;
   const auto shutdown_signed = [&]() {
@@ -1469,10 +1546,19 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     state.sync_capture_armed = false;
     state.capture_armed = false;
     state.sync_machine = nullptr;
-    if (!CloseServeBrowser(state, pump, browser, creation_requested)) {
+    // PairSwap B 对同样先解除回调消费者（可能已安装 sync_machine）。
+    state_b.sync_capture_armed = false;
+    state_b.capture_armed = false;
+    state_b.sync_machine = nullptr;
+    const bool a_closed = CloseServeBrowser(state, pump, browser, creation_requested);
+    // B 对未创建时 CloseServeBrowser 无害直过（见其 !browser 分支）。
+    const bool b_closed =
+        CloseServeBrowser(state_b, pump, browser_b, creation_requested_b);
+    if (!a_closed || !b_closed) {
       ExitUnclosedServe(1);
     }
     client = nullptr;
+    client_b = nullptr;
     CefShutdown();
   };
   creation_requested = CreateOsrBrowser(client, initial_url,
@@ -1522,6 +1608,11 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     {
       std::lock_guard<std::mutex> lock(state.mu);
       state.sync_machine = &sync_machine;
+    }
+    if (pair_swap_engaged) {
+      // B 对与 A 对共享同一状态机（同一时刻只有一个请求在推进）。
+      std::lock_guard<std::mutex> lock(state_b.mu);
+      state_b.sync_machine = &sync_machine;
     }
     if (sync_mode_p) {
       // 常驻页唯一一次导航（此后 document_gen 恒 1，请求以 request_id 区分）。
@@ -1626,6 +1717,9 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
 
   // ---- 请求主循环 ----
   ExactBaselineCapture exact_baseline;
+  // PairSwap B 对 unsigned 基线捕获器（惰性：首个绑定 B 对的 exact 请求
+  // 才创建浏览器；planner 关闭时恒空转）。
+  ExactBaselineCapture exact_baseline_b;
   PngEncodeWorkspace encode_workspace;
   MiniPool pool(opt.encode_threads, [&state] { state.pump_schedule.NotifyWork(); });
   uint32_t document_gen = 0;
@@ -1639,6 +1733,43 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   std::vector<uint8_t> staging[2];
   int staging_idx = 0;
   PendingReceipt pending;
+
+  // —— PairSwap 预取触发：绑定帧 N 的瞬间，立即对空闲对（(N+1)%2，自
+  // accept(N-1) 起已完全空闲）两个浏览器 LoadURL 帧 N+1——把双导航成本
+  // 藏进本帧捕获周期。时序依据：深度 2 流水下帧 N+1 请求在 accept(N-1)
+  // 后即刻到达 worker，accept(N) 瞬间触发只剩编码交接的几毫秒（实测
+  // unsigned_load_us 不降）；空闲对的真正空闲窗口是 [accept(N-1),
+  // Begin(N+1)] ≈ 完整帧周期，绑定帧 N 时（≈窗口起点）触发才能让预取
+  // 导航跑完。并发形状与报告口径一致：任一时刻 1 个对在验证（帧 N）
+  // + 1 个对在导航（帧 N+1），不新增第三路导航。预取是纯文档导航
+  // （不注入桥，桥只在下一请求绑定时注入）。B 对浏览器尚未创建（首个
+  // 绑定 B 的请求还没到）时跳过，不为预取凭空建窗——该请求以目标 URL
+  // 创建（创建即导航），由证据字段记 miss。
+  const auto trigger_pair_swap_prefetch = [&](int32_t bound_frame,
+                                              int idle_pair) {
+    if (!pair_swap_engaged || pair_b_broken) return;
+    if (bound_frame == std::numeric_limits<int32_t>::max()) return;
+    const int32_t next_frame =
+        pairswap::Planner::PrefetchFrame(bound_frame);
+    const auto next_url = ExpandUrlTemplate(opt.url_template, next_frame);
+    RunState& st = idle_pair == 0 ? state : state_b;
+    CefRefPtr<CefBrowser> br = idle_pair == 0 ? browser : browser_b;
+    if (!br || st.closed.load()) return;
+    // signed 侧导航（与 unsigned Prefetch 同构：loaded 置 false、
+    // expected_url 先就位、基线取导航前值；不注入桥）。
+    st.loaded.store(false, std::memory_order_relaxed);
+    PrepareJsDocument(st, next_url);
+    const uint64_t floor = st.load_starts.load();
+    CefString next_cef_url;
+    next_cef_url.FromString(next_url);
+    br->GetMainFrame()->LoadURL(next_cef_url);
+    planner.RecordSignedPrefetch(idle_pair, next_frame, next_url, floor);
+    // unsigned 侧同帧基线导航（捕获器内部自簿记；浏览器缺失时返回
+    // false → 下一请求该侧自然 miss 回退，不影响 signed 侧决策）。
+    ExactBaselineCapture& cap =
+        idle_pair == 0 ? exact_baseline : exact_baseline_b;
+    cap.Prefetch(next_frame, next_url);
+  };
 
   // 发送帧 N-1 的回执（前提：pool.Done() 已真，或编码已超时排空）。
   // 回执绑定帧 N-1 的身份与本帧编码计时；adapter_timing 用快照经
@@ -1675,7 +1806,14 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
           ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
           ",\"capture_stages_overlap\":" +
           (p.exact_canary ? "true" : "false");
-      if (p.exact_canary) fields += p.exact_timing_fields;
+      if (p.exact_canary) {
+        // PairSwap 证据：signed 侧服务对与预取采纳结局（unsigned 侧的
+        // unsigned_prefetch 在 exact_timing_fields 内）。
+        fields += ",\"pair_index\":" + std::to_string(p.pair_index) +
+                  ",\"signed_prefetch\":\"" +
+                  std::string(pairswap::OutcomeName(p.signed_prefetch)) + "\"";
+        fields += p.exact_timing_fields;
+      }
       sync_machine.RecordAdapterTimingFor(p.machine_desc, now, fields);
     }
     FrameSlotHeader receipt;
@@ -1785,8 +1923,71 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       break;
     }
     const uint64_t request_started_us = NowUs();
-    const auto signed_checkpoint_floor = state.js_error.sent;
-    const auto signed_paint_floor = state.paints.load();
+    // ---- PairSwap 绑定：选出服务对 + 预取命中判定（一次性消费）----
+    // 惰性建窗：首个路由到 B 对的请求以目标 URL 创建 B signed 浏览器
+    // （创建即导航，kNavigateByCreation——此后帧 2 起稳态全 hit）；此前
+    // （帧 0/1）零 B 侧开销。B 对创建失败/超时/中途死亡 → 永久降级单对
+    // （全部回 A 对 navigate-now 现路径，证据字段照常记 miss）。
+    pairswap::Binding binding{};
+    bool b_created_now = false;
+    if (pair_swap_engaged && !pair_b_broken) {
+      if (planner.active_pair() == 1 && state_b.closed.load()) {
+        std::fprintf(stderr,
+                     "vtx_cef_worker: PairSwap B 对浏览器已死亡，永久降级单对\n");
+        pair_b_broken = true;
+      } else if (planner.active_pair() == 1 && !browser_b &&
+                 !creation_requested_b) {
+        const auto first_url =
+            ExpandUrlTemplate(opt.url_template, req.frame_index);
+        CefString first_cef_url;
+        first_cef_url.FromString(first_url);
+        creation_requested_b = CreateOsrBrowser(
+            client_b, first_cef_url, cef_opt.width, cef_opt.height,
+            cef_opt.capture_fps);
+        const bool created =
+            creation_requested_b && !state_b.closed.load() && pump.Until([&] {
+              std::lock_guard<std::mutex> lock(state_b.mu);
+              return state_b.closed.load() || state_b.browser != nullptr;
+            }, 30000);
+        if (!created || state_b.closed.load()) {
+          std::fprintf(stderr,
+                       "vtx_cef_worker: PairSwap B 对浏览器创建失败或超时，"
+                       "永久降级单对\n");
+          pair_b_broken = true;
+        } else {
+          std::lock_guard<std::mutex> lock(state_b.mu);
+          browser_b = state_b.browser;
+          b_created_now = true;
+        }
+      }
+      if (!pair_b_broken) {
+        binding = planner.BindNextRequest(
+            req.frame_index,
+            ExpandUrlTemplate(opt.url_template, req.frame_index));
+        if (b_created_now) {
+          // 本请求以目标 URL 创建 B signed 浏览器（创建即导航）：不再
+          // LoadURL，加载门从 0 基线起步（load_starts>0 && loaded）。
+          binding.signed_nav = pairswap::SignedNav::kNavigateByCreation;
+          binding.signed_load_floor = 0;
+        } else if (binding.pair == 1 && !browser_b) {
+          // 防御（理论不可达：路由 B 必先建窗成功）。
+          pair_b_broken = true;
+          binding = pairswap::Binding{};
+        }
+      }
+    }
+    // 绑定帧 N 完成、活跃对开始捕获之前，先对空闲对发出帧 N+1 预取
+    // （空闲窗口 [accept(N-1), Begin(N+1)] 的起点）。
+    trigger_pair_swap_prefetch(req.frame_index, binding.pair ^ 1);
+    // 活跃对路由：state/browser/unsigned 捕获器随 binding 切换；未启用
+    // （含 VTX_CEF_PAIR_SWAP=0）时恒为 A 对，与现路径完全一致。
+    RunState& active_state = binding.pair == 1 ? state_b : state;
+    CefRefPtr<CefBrowser> active_browser =
+        binding.pair == 1 ? browser_b : browser;
+    ExactBaselineCapture& active_capture =
+        binding.pair == 1 ? exact_baseline_b : exact_baseline;
+    const auto signed_checkpoint_floor = active_state.js_error.sent;
+    const auto signed_paint_floor = active_state.paints.load();
     const std::string out_path(req.out_png_path);
     const uint32_t expected_w =
         req.expected_width > 0 ? static_cast<uint32_t>(req.expected_width)
@@ -1808,24 +2009,24 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       // 编码（读另一缓冲）并行；帧 N 的回执在下一迭代的编码完成后发出。
       std::vector<uint8_t>& cap_buf = staging[staging_idx];
       {
-        std::lock_guard<std::mutex> lock(state.mu);
+        std::lock_guard<std::mutex> lock(active_state.mu);
         if (cap_buf.size() <
             static_cast<size_t>(expected_w) * expected_h * 4u) {
           cap_buf.resize(
               static_cast<size_t>(expected_w) * expected_h * 4u);
         }
-        state.cap_expected_w = expected_w;
-        state.cap_expected_h = expected_h;
-        state.cap_dst = cap_buf.data();
+        active_state.cap_expected_w = expected_w;
+        active_state.cap_expected_h = expected_h;
+        active_state.cap_dst = cap_buf.data();
       }
       ProduceResult r;
       const uint64_t capture_started_us = NowUs();
       if (opt.sync) {
         // #114 状态机路径：canary/拒收计数/时序取自机器（解码结果口径）。
         SyncProduceResult sr = ProduceFrameSync(
-            state, pump, browser, sync_machine, exact_baseline, opt, document_gen,
-            req.request_id, req.frame_index, expected_w, expected_h,
-            cap_buf.data());
+            active_state, pump, active_browser, sync_machine, active_capture,
+            opt, document_gen, req.request_id, req.frame_index, expected_w,
+            expected_h, cap_buf.data(), binding);
         r.status = sr.status;
         r.width = sr.width;
         r.height = sr.height;
@@ -1851,17 +2052,22 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         snap.request_started_us = request_started_us;
         snap.signed_ready_us =
             sync_machine.t_ready_us() - sync_machine.t_request_begin_us();
-        snap.signed_renderer_pid = state.js_error.renderer_pid;
+        snap.signed_renderer_pid = active_state.js_error.renderer_pid;
         snap.signed_navigations = sync_mode_p ? 0u : 1u;
-        snap.signed_fence_count = state.js_error.sent - signed_checkpoint_floor;
-        snap.signed_native_paints = state.paints.load() - signed_paint_floor;
+        snap.signed_fence_count =
+            active_state.js_error.sent - signed_checkpoint_floor;
+        snap.signed_native_paints =
+            active_state.paints.load() - signed_paint_floor;
         snap.capture_fps = cef_opt.capture_fps;
         snap.exact_canary = opt.sync_canary == "exact";
         snap.sync_mode_p = sync_mode_p;
+        snap.pair_index = binding.pair;
+        snap.signed_prefetch = binding.signed_prefetch;
         if (snap.exact_canary)
-          snap.exact_timing_fields = exact_baseline.TimingFields();
+          snap.exact_timing_fields = active_capture.TimingFields();
         snap.machine_desc = sync_machine.request();
         sync_machine.Reset(NowUs(), "done");
+        planner.NotifyRequestFinished(true);  // 成功才交替活跃对
       }
 
       // —— 流水交汇：帧 N-1 编码完成后发送其回执（此后宿主才读其输出
@@ -1942,10 +2148,13 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
             ",\"capture_wall_us\":" + std::to_string(capture_us) +
             ",\"signed_ready_us\":" + std::to_string(
                 sync_machine.t_ready_us() - sync_machine.t_request_begin_us()) +
-            ",\"signed_renderer_pid\":" + std::to_string(state.js_error.renderer_pid) +
+            ",\"signed_renderer_pid\":" +
+            std::to_string(active_state.js_error.renderer_pid) +
             ",\"signed_navigations\":" + std::to_string(sync_mode_p ? 0 : 1) +
-            ",\"signed_fence_count\":" + std::to_string(state.js_error.sent - signed_checkpoint_floor) +
-            ",\"signed_native_paints\":" + std::to_string(state.paints.load() - signed_paint_floor) +
+            ",\"signed_fence_count\":" + std::to_string(
+                active_state.js_error.sent - signed_checkpoint_floor) +
+            ",\"signed_native_paints\":" + std::to_string(
+                active_state.paints.load() - signed_paint_floor) +
             ",\"encode_queue_us\":" + std::to_string(queue_us) +
             ",\"alpha_us\":" + std::to_string(alpha_us) +
             ",\"png_us\":" + std::to_string(png_us) +
@@ -1955,9 +2164,17 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
             ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
             ",\"capture_stages_overlap\":" +
             (opt.sync_canary == "exact" ? "true" : "false");
-        if (opt.sync_canary == "exact") fields += exact_baseline.TimingFields();
+        if (opt.sync_canary == "exact") {
+          // PairSwap 证据（同模式 1 回执字段面）。
+          fields += ",\"pair_index\":" + std::to_string(binding.pair) +
+                    ",\"signed_prefetch\":\"" +
+                    std::string(pairswap::OutcomeName(binding.signed_prefetch)) +
+                    "\"";
+          fields += active_capture.TimingFields();
+        }
         sync_machine.RecordAdapterTiming(now, fields);
         sync_machine.Reset(now, "done");
+        planner.NotifyRequestFinished(true);  // 成功才交替活跃对
       };
       int slot = -1;
       uint64_t bp_wait = 0;
@@ -1982,9 +2199,9 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         r.status = kStatusTimeout;  // 背压超时：明确错误，不死等
       } else if (opt.sync) {
         SyncProduceResult sr = ProduceFrameSync(
-            state, pump, browser, sync_machine, exact_baseline, opt, document_gen,
-            req.request_id, req.frame_index, expected_w, expected_h,
-            ring->SlotData(static_cast<uint32_t>(slot)));
+            active_state, pump, active_browser, sync_machine, active_capture,
+            opt, document_gen, req.request_id, req.frame_index, expected_w,
+            expected_h, ring->SlotData(static_cast<uint32_t>(slot)), binding);
         r.status = sr.status;
         r.width = sr.width;
         r.height = sr.height;
@@ -2057,9 +2274,18 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     std::lock_guard<std::mutex> lock(state.mu);
     state.sync_machine = nullptr;  // 先摘除再析构（防御晚回调）
   }
+  {
+    std::lock_guard<std::mutex> lock(state_b.mu);
+    state_b.sync_machine = nullptr;  // PairSwap B 对同摘（未启用时本为空）
+  }
   const bool unsigned_closed = exact_baseline.Close(pump);
+  const bool unsigned_closed_b =
+      !pair_swap_engaged ? true : exact_baseline_b.Close(pump);
   const bool signed_closed = CloseServeBrowser(state, pump, browser, creation_requested);
-  if (!unsigned_closed || !signed_closed) {
+  const bool signed_closed_b =
+      CloseServeBrowser(state_b, pump, browser_b, creation_requested_b);
+  if (!unsigned_closed || !unsigned_closed_b || !signed_closed ||
+      !signed_closed_b) {
     // Calling CefShutdown with a live browser violates CEF's lifetime contract.
     // Do not log/flush/close streams here: another thread may own a FILE lock.
     // The nonzero process exit and host EOF establish the failed shutdown.
@@ -2067,7 +2293,10 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   }
   browser = nullptr;
   state.browser = nullptr;
+  browser_b = nullptr;
+  state_b.browser = nullptr;
   client = nullptr;
+  client_b = nullptr;
   CefShutdown();
   if (sync_log_fh != nullptr) {
     std::fclose(sync_log_fh);  // JSONL 全事件日志（无缓冲，崩溃窗口亦保真）

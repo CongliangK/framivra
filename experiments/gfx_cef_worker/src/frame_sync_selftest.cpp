@@ -24,6 +24,7 @@
 
 #include "external_pump_schedule.hpp"
 #include "frame_sync_machine.hpp"
+#include "pair_swap_planner.hpp"
 
 using namespace vtx_cef;
 using namespace vtx_cef::fsync;
@@ -1390,6 +1391,119 @@ void TestExternalPumpSchedule() {
         "pump: native encoder completion independently wakes predicate waiter");
 }
 
+// ---------------------------------------------------------------- PairSwap 双对交替预取
+// pair_swap_planner.hpp 纯决策逻辑自检（无 CEF 依赖；LoadURL/建窗编排由
+// serve.cpp 负责，此处锁死决策面）：稳态交替全 hit、乱序/跳帧/URL 不匹配
+// 回退 navigate-now、陈旧预取一次性消费、失败请求不交替、开关关闭恒 off。
+void TestPairSwapPlannerAlternatingPrefetch() {
+  const auto url = [](int f) {
+    return "file:///demo.html?f=" + std::to_string(f);
+  };
+  pairswap::Planner p{true};
+  Check(p.enabled() && p.active_pair() == 0,
+        "pairswap: enabled planner starts on pair A");
+
+  // 帧 0（A 对）：从未预取 → miss + navigate-now（首帧全额导航）。
+  pairswap::Binding b0 = p.BindNextRequest(0, url(0));
+  Check(b0.pair == 0 && b0.signed_nav == pairswap::SignedNav::kNavigateNow &&
+            b0.signed_prefetch == pairswap::Outcome::kMiss,
+        "pairswap: frame 0 is a miss (nothing prefetched yet)");
+  Check(p.PrefetchTargetAfterAccept(0) == 1,
+        "pairswap: accept(0) targets standby pair B");
+  // B 对浏览器尚未创建 → serve.cpp 不登记（不为预取凭空建窗）。
+  p.NotifyRequestFinished(true);
+  Check(p.active_pair() == 1,
+        "pairswap: accepted request alternates to pair B");
+
+  // 帧 1（B 对首航）：无预取簿记 → miss，导航由创建承担。
+  pairswap::Binding b1 = p.BindNextRequest(1, url(1));
+  Check(b1.pair == 1 && b1.signed_prefetch == pairswap::Outcome::kMiss &&
+            b1.signed_nav == pairswap::SignedNav::kNavigateNow,
+        "pairswap: frame 1 on pair B is a miss (creation carries navigation)");
+  Check(p.PrefetchTargetAfterAccept(1) == 0,
+        "pairswap: accept(1) targets pair A");
+  p.RecordSignedPrefetch(0, 2, url(2), 200);
+  p.NotifyRequestFinished(true);
+
+  // 帧 2 起：稳态交替全 hit —— 采纳预取导航，继承预取发出前 load 基线。
+  pairswap::Binding b2 = p.BindNextRequest(2, url(2));
+  Check(b2.pair == 0 && b2.signed_prefetch == pairswap::Outcome::kHit &&
+            b2.signed_nav == pairswap::SignedNav::kAdoptPrefetch &&
+            b2.signed_load_floor == 200,
+        "pairswap: frame 2 adopts the prefetched navigation with its floor");
+  // serve.cpp 次序：accept 瞬间先问预取目标（此时活跃对仍是本帧的对），
+  // 请求收尾才交替 —— 备用对 = 本帧对 ^ 1。
+  Check(p.PrefetchTargetAfterAccept(2) == 1 &&
+            pairswap::Planner::PrefetchFrame(2) == 3,
+        "pairswap: accept(2) prefetches strictly N+1 on pair B");
+  p.NotifyRequestFinished(true);
+  p.RecordSignedPrefetch(1, 3, url(3), 300);
+  pairswap::Binding b3 = p.BindNextRequest(3, url(3));
+  Check(b3.pair == 1 && b3.signed_prefetch == pairswap::Outcome::kHit &&
+            b3.signed_load_floor == 300,
+        "pairswap: steady state alternates pairs with hits");
+  p.NotifyRequestFinished(true);
+}
+
+void TestPairSwapPlannerOutOfOrderFallback() {
+  const auto url = [](int f) {
+    return "file:///demo.html?f=" + std::to_string(f);
+  };
+  pairswap::Planner p{true};
+  (void)p.BindNextRequest(0, url(0));  // 帧 0 A miss
+  p.NotifyRequestFinished(true);
+  p.RecordSignedPrefetch(1, 1, url(1), 42);  // accept(0) 预取 B 帧 1
+
+  // 跳帧：宿主请求帧 5（非严格 N+1）→ miss + navigate-now 回退现路径。
+  pairswap::Binding skip = p.BindNextRequest(5, url(5));
+  Check(skip.pair == 1 && skip.signed_prefetch == pairswap::Outcome::kMiss &&
+            skip.signed_nav == pairswap::SignedNav::kNavigateNow,
+        "pairswap: out-of-order request falls back to navigate-now");
+  // 陈旧预取已被一次性消费作废：紧随其后的帧 1 请求不得再采纳。
+  pairswap::Binding stale = p.BindNextRequest(1, url(1));
+  Check(stale.signed_prefetch == pairswap::Outcome::kMiss &&
+            stale.signed_nav == pairswap::SignedNav::kNavigateNow,
+        "pairswap: stale prefetch is consumed by the miss (no late adoption)");
+  // 同帧号但 URL 不匹配（模板产物变化）同样拒绝采纳。
+  p.RecordSignedPrefetch(0, 4, url(4), 7);
+  pairswap::Binding wrong_url = p.BindNextRequest(4, "file:///other.html?f=4");
+  Check(wrong_url.signed_prefetch == pairswap::Outcome::kMiss &&
+            wrong_url.signed_nav == pairswap::SignedNav::kNavigateNow,
+        "pairswap: URL mismatch rejects adoption");
+  // 帧号回绕/非法值守门：不产生预取目标。
+  Check(p.PrefetchTargetAfterAccept(std::numeric_limits<int32_t>::max()) == -1 &&
+            p.PrefetchTargetAfterAccept(-1) == -1,
+        "pairswap: frame wrap/degenerate values never prefetch");
+  // 失败请求不交替活跃对（宿主必然中止会话）。
+  pairswap::Planner q{true};
+  (void)q.BindNextRequest(0, url(0));
+  q.NotifyRequestFinished(false);
+  Check(q.active_pair() == 0, "pairswap: failed request does not alternate");
+}
+
+void TestPairSwapPlannerDisabledFallback() {
+  const auto url = [](int f) {
+    return "file:///demo.html?f=" + std::to_string(f);
+  };
+  pairswap::Planner p{false};
+  Check(!p.enabled(), "pairswap: disabled planner stays dormant");
+  for (int f = 0; f < 4; ++f) {
+    pairswap::Binding b = p.BindNextRequest(f, url(f));
+    Check(b.pair == 0 && b.signed_nav == pairswap::SignedNav::kNavigateNow &&
+              b.signed_prefetch == pairswap::Outcome::kOff,
+          "pairswap: disabled planner keeps every request on pair A (off)");
+    Check(p.PrefetchTargetAfterAccept(f) == -1,
+          "pairswap: disabled planner never prefetches");
+    p.NotifyRequestFinished(true);
+  }
+  // 即使外部误登记预取，关闭态也不采纳（恒 navigate-now）。
+  p.RecordSignedPrefetch(0, 9, url(9), 1);
+  pairswap::Binding b = p.BindNextRequest(9, url(9));
+  Check(b.signed_prefetch == pairswap::Outcome::kOff &&
+            b.signed_nav == pairswap::SignedNav::kNavigateNow,
+        "pairswap: disabled planner ignores stray prefetch records");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -1446,6 +1560,9 @@ int main(int argc, char* argv[]) {
   TestLatePaintAfterAccept();
   TestRecordAdapterTimingFor();
   TestIllegalTransitions();
+  TestPairSwapPlannerAlternatingPrefetch();
+  TestPairSwapPlannerOutOfOrderFallback();
+  TestPairSwapPlannerDisabledFallback();
 
   // --jsonl-out：跑一段混合场景把 JSONL 落盘，供 Python 跨语言全量校验。
   if (!jsonl_out.empty()) {
