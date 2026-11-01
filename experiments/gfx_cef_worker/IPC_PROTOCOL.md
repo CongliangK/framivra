@@ -204,6 +204,20 @@ renderer PID 是原生错误观察器在现有文档/请求绑定后附加的诊
 `adapter_timing.capture_fps_requested` 与宿主 runtime `capture_fps` 记录两路浏览器的
 同一个 OSR 请求值，不是实测回调速率或 timeline 帧率；不改变请求/回执二进制布局。
 
+**PairSwap 双对交替预取（mode n + exact canary，默认开启）**：worker 维持两对浏览器
+（signed+unsigned × A/B，B 对在首个绑定它的请求时以目标 URL 创建，创建即导航）。
+绑定帧 N 的瞬间——即空闲对空闲窗口 `[accept(N-1), Begin(N+1)]` 的起点——立即对
+空闲对 `(N+1)%2` 两个浏览器 `LoadURL` 帧 N+1：纯文档导航，不注入桥（桥仍在下一
+请求绑定后按原语义注入）。帧 N+1 请求到达时若预取记录匹配（帧号+URL+导航基线）
+则绑定该对、跳过重新导航，走与逐帧语义完全相同的就绪/证明/veto 步骤；记录不匹配
+（乱序/非常规请求、B 对创建失败永久降级、开关关闭）一律回退 navigate-now 现路径。
+任一时刻仍是 1 个对在验证 + 1 个对在导航，不新增第三路并发。宿主侧
+`VTX_CEF_PAIR_SWAP=0`（默认 `1`）整体回退单对旧路径，该开关随 CEF 配置进缓存身份。
+回执与 JSONL 布局不变；`adapter_timing` 追加三个证据字段：`pair_index`（本帧绑定
+的对 0/1）、`signed_prefetch` / `unsigned_prefetch`（`hit`=预取记录匹配免导航、
+`miss`=回退 navigate-now、`off`=PairSwap 未启用）。`hit` 只说明绑定走了免导航路径，
+导航是否已跑完由既有加载门保证；veto 字节面与故障注入语义（§5/§6）不受预取影响。
+
 **模式 2（SHM 环跨进程传输，为 #68 直通 FFmpeg 预研）**：
 请求(64B) → **先取空槽**（4 槽全满=背压：暂停发起下一帧 BeginFrame，
 分片等待并计时 `backpressure_wait_us`，超时→TIMEOUT 通知，绝不死等）

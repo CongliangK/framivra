@@ -110,6 +110,7 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 | --- | --- |
 | `VTX_CEF_SYNC_MODE` | `n` / `n\|p`；生产 exact P 等待 Promise 钩子 |
 | `VTX_CEF_REFERENCE_CONTEXT` | `shared` / `shared\|isolated`；只改变无见证浏览器的 request context |
+| `VTX_CEF_PAIR_SWAP` | `1` / `0\|1`；mode n+exact 双对交替预取，`0` 回退单对逐帧导航（进缓存身份） |
 | `VTX_CEF_CAPTURE_FPS` | `120` / `1..240`；OSR 采样率请求，签名/无见证两路同值，不是 timeline FPS |
 | `VTX_CEF_PNG_ENCODER`、`VTX_CEF_PNG_LEVEL`、`VTX_CEF_PNG_FILTER` | `spng` / `spng\|fpng\|zlib`；`1` / `1..3`；`sub_up` / `none\|sub\|up\|sub_up\|all` |
 | `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；当前每 worker 仅一帧在途，增加线程不等于帧编码并行 |
@@ -121,6 +122,17 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 CEF 缓存身份；改变配置后的第一次运行不是同身份暖态。双浏览器有额外常驻开销，峰值
 RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1` 验正确性，再单独评估
 2/3/4，不默认推满 32；默认 7 不代表经过本机资源测定，线程上限亦非容量保证。
+
+**PairSwap 双对交替预取（mode n + exact，默认开启，`VTX_CEF_PAIR_SWAP=0` 关闭）**：
+每 worker 额外持有 B 对浏览器（signed+unsigned × A/B 共 4 个 OSR 渲染器，B 对惰性
+创建——首个绑定 B 的请求以目标 URL 建窗即导航，短会话不为预取凭空建窗）。绑定帧 N
+时立即对空闲对 `LoadURL` 帧 N+1，把每帧双导航成本藏进上一帧周期；请求严格按帧序时
+帧 2 起稳态 hit，乱序/降级/关闭时逐帧回退 navigate-now 旧路径，veto 字节面与故障
+注入语义不变，证据字段 `adapter_timing.pair_index` / `signed_prefetch` /
+`unsigned_prefetch`（hit/miss/off）进 sync.jsonl。任一时刻仍 1 对验证 + 1 对导航。
+内存实测（30 帧冷态小样本、1080p、本机单次）：开启峰值 RSS 2375.5MB vs 关闭
+1717.8MB（+657.7MB，新增一对渲染器），未观测到 staging 双份导致的显性翻倍；该数字
+是单机单次样本，不构成容量承诺。
 `--capture-fps` 只改变内部采样请求；锁定 CEF 154 的
 [ClampFrameRate](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/osr_util.cc)
 保留正值，传至 [SetMinCapturePeriod](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/video_consumer_osr.cc)。
