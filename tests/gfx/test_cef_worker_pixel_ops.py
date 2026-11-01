@@ -427,7 +427,11 @@ class AtomicWriteKillWindow(unittest.TestCase):
                 pass
 
 
-# CEF-free execution of the actual encoder task/wait/receipt source. The fake
+# CEF-free execution of the actual dual-ticket encode/wait/receipt source: the
+# verbatim PendingReceipt struct, send_pending_receipt / drain_and_send_pending
+# lambdas, the whole mode-1 delivery body (staging double-buffer arming, sync
+# snapshot incl. PairSwap evidence, pipeline-junction drain, failure receipt,
+# pool.Post encode task, staging flip) and the real ExitUnclosedServe. The fake
 # pump expires one deadline while a controlled writer is blocked, then releases
 # it only on the required drain; a permanently blocked writer must fail-stop.
 # No SDK, real deadline or browser is needed.
@@ -437,17 +441,29 @@ class EncoderCompletion(unittest.TestCase):
         if compiler is None:
             self.skipTest('C++ compiler unavailable')
         source = (ROOT / 'experiments/gfx_cef_worker/src/serve.cpp').read_text()
+        planner = (ROOT / 'experiments/gfx_cef_worker/src/pair_swap_planner.hpp').read_text()
         pool = source[source.index('class MiniPool {'):
                       source.index('// ---------------------------------------------------------------- 帧生产')]
-        start = source.index('      uint64_t t_alpha = 0, t_png = 0, t_disk = 0')
-        end = source.index('    } else {\n      // ================= 模式 2', start)
-        delivery = source[start:end]
+        pending_start = source.index('struct PendingReceipt {')
+        pending = source[pending_start:source.index(
+            '\n// Close a signed browser even if asynchronous creation', pending_start)]
+        receipt_start = source.index('  const auto send_pending_receipt = [&](PendingReceipt& p) {')
+        receipts = source[receipt_start:source.index(
+            '  const auto drain_and_send_pending', receipt_start)]
+        drain_start = source.index('  const auto drain_and_send_pending = [&]() -> bool {')
+        drain = source[drain_start:source.index('\n\n  for (;;) {', drain_start)]
+        delivery_start = source.index('    CefRefPtr<CefBrowser> active_browser =')
+        mode2 = source.index('    } else {\n      // ================= 模式 2', delivery_start)
+        delivery = source[delivery_start:mode2]
         exit_start = source.index('[[noreturn]] void ExitUnclosedServe(')
         fail_stop = source[exit_start:source.index('// ---------------------------------------------------------------- RunServe', exit_start)]
         with tempfile.TemporaryDirectory() as directory:
             cpp = Path(directory) / 'completion.cpp'
             exe = Path(directory) / 'completion'
-            cpp.write_text(_ENCODER_PREFIX + pool + fail_stop + _ENCODER_MAIN_START + delivery + _ENCODER_MAIN_END)
+            cpp.write_text(_ENCODER_PREFIX + planner + _ENCODER_PLANNER_ALIAS +
+                           pool + pending + fail_stop + _ENCODER_MAIN_START +
+                           receipts + drain + _ENCODER_LOOP_START + delivery +
+                           '    }\n' + _ENCODER_MAIN_END)
             subprocess.run([compiler, '-std=c++17', '-pthread', '-O0',
                             str(cpp), '-o', str(exe)], check=True, timeout=30,
                            capture_output=True, text=True)
@@ -485,7 +501,7 @@ static std::mutex gate_mu;
 static std::condition_variable gate_cv;
 static bool writer_entered = false, writer_released = false;
 static std::atomic<bool> committed{false};
-static std::atomic<int> receipts{0}, requests{0}, completed_logs{0};
+static std::atomic<int> receipts{0}, requests{0}, timing_rows{0};
 static std::atomic<int> png_owners{0}, encode_calls{0};
 static bool IsTimeout() { return test_case.rfind("timeout", 0) == 0; }
 static bool IsStuck() { return test_case.rfind("timeout_stuck", 0) == 0; }
@@ -523,7 +539,91 @@ static bool AtomicWriteBytes(const std::string&, const uint8_t*, size_t) {
   return true;
 }
 static constexpr int kStatusOk = 0, kStatusTimeout = 1, kStatusJsErr = 3;
-struct ProduceResult { int status = kStatusOk; unsigned width = 1, height = 1; };
+static constexpr uint32_t kFlagWantSlot = 0x1;
+namespace fsync { struct RequestDesc {}; }
+class CefBrowser;
+template <class T> class CefRefPtr {
+ public:
+  CefRefPtr() = default;
+};
+// serve.cpp 双 ticket 流水使用的最小生产形态：捕获面与 js 证据围栏字段。
+struct RunState {
+  std::mutex mu;
+  uint32_t cap_expected_w = 0, cap_expected_h = 0;
+  uint8_t* cap_dst = nullptr;
+  struct { int32_t renderer_pid = 0; uint32_t sent = 0; } js_error;
+  std::atomic<uint64_t> paints{0};
+};
+struct ServeOptions {
+  bool sync = true;
+  std::string sync_canary = "exact";
+  std::string url_template = "file://page.html?f={f}";
+  int png = 0;
+};
+struct FrameRequest {
+  uint32_t request_id = 1;
+  int32_t frame_index = 0;
+  uint32_t flags = 0;  // 0 = 模式 1（原地落盘），不携带 kFlagWantSlot
+  int32_t expected_width = 1, expected_height = 1;
+  const char* out_png_path = "same-output.png";
+};
+struct SyncProduceResult {
+  int status = kStatusOk;
+  uint32_t width = 1, height = 1;
+  uint32_t document_gen = 1;
+  int32_t canary_frame = 0;
+  uint64_t rejected_paints = 0;
+  uint64_t t_ready_wait_us = 1;
+  uint64_t t_capture_us = 1;
+};
+struct ProduceResult {
+  int status = kStatusOk;
+  unsigned width = 1, height = 1;
+  uint32_t document_gen = 1;
+  int32_t canary_frame = 0;
+  uint64_t rejected_paints = 0;
+  uint64_t t_ready_wait_us = 1;
+  uint64_t t_capture_us = 1;
+};
+// 前置声明：produce 替身引用其后定义的 fake 类型与 planner 的 Binding。
+struct FakePump;
+struct FakeMachine;
+struct ExactBaselineCapture;
+namespace vtx_cef { namespace pairswap { struct Binding; } }
+static SyncProduceResult ProduceFrameSync(
+    RunState&, FakePump&, CefRefPtr<CefBrowser>&, FakeMachine&,
+    ExactBaselineCapture&, const ServeOptions&, uint32_t, uint32_t, int32_t,
+    uint32_t, uint32_t, uint8_t*, const vtx_cef::pairswap::Binding&) {
+  return {};
+}
+static ProduceResult ProduceFrame(RunState&, FakePump&, CefRefPtr<CefBrowser>&,
+                                  const std::string&, int32_t,
+                                  const ServeOptions&, uint32_t) {
+  return {};
+}
+// FakeMachine：快照字段齐备；回执补记的 adapter_timing 必须携带
+// request_wall_to_reply_us 与 PairSwap 证据三元组（serve.cpp 真实拼装）。
+struct FakeMachine {
+  bool accepted() const { return true; }
+  uint64_t t_ready_us() const { return 1; }
+  uint64_t t_request_begin_us() const { return 0; }
+  fsync::RequestDesc request() const { return {}; }
+  void Reset(uint64_t, const char*) {}
+  void RecordAdapterTimingFor(const fsync::RequestDesc&, uint64_t,
+                              const std::string& fields) {
+    assert(fields.find("\"request_wall_to_reply_us\"") != std::string::npos);
+    assert(fields.find("\"pair_index\":") != std::string::npos);
+    assert(fields.find("\"signed_prefetch\":\"") != std::string::npos);
+    assert(fields.find("\"unsigned_prefetch\":\"") != std::string::npos);
+    ++timing_rows;
+  }
+};
+struct ExactBaselineCapture {
+  void PoisonResident() {}
+  std::string TimingFields() const {
+    return ",\"unsigned_prefetch\":\"off\"";
+  }
+};
 struct FrameSlotHeader { int status_code; };
 static void FillReceipt(FrameSlotHeader* h, const ProduceResult& r, uint64_t,
                         unsigned, int, uint64_t, uint64_t, uint64_t) {
@@ -532,11 +632,11 @@ static void FillReceipt(FrameSlotHeader* h, const ProduceResult& r, uint64_t,
 static bool SendAll(int, const void* data, size_t) {
   assert(!IsStuck());  // No receipt before permanent task exit.
   assert(png_owners.load() == 0);  // Encoded bytes no longer owned by a live task.
-  assert(completed_logs.load() == receipts.load() + 1);
+  assert(timing_rows.load() == receipts.load() + 1);  // adapter 行先于回执归属本帧
   auto* receipt = static_cast<const FrameSlotHeader*>(data);
   if (IsTimeout()) {
     assert(writer_released);  // No receipt while worker still owns captures.
-    assert(requests.load() == 1);
+    assert(requests.load() == 2);  // 深度 2：超时在帧 N+1 捕获后的交汇处显形
     assert(receipt->status_code == kStatusTimeout);
     assert(committed.load() == (test_case != "timeout_write_false"));
   } else {
@@ -558,13 +658,13 @@ struct FakePump {
       return false;
     }
     if (IsStuck()) {
-      assert(calls == 2 && receipts.load() == 0 && requests.load() == 1);
+      assert(calls == 2 && receipts.load() == 0 && requests.load() == 2);
       assert(writer_entered && !writer_released && !committed.load());
       return false;  // The grace expires while the encoder still owns its data.
     }
     if (IsTimeout()) {
       // The drain must happen before any error receipt, reuse or scope exit.
-      assert(receipts.load() == 0 && requests.load() == 1);
+      assert(receipts.load() == 0 && requests.load() == 2);
       assert(!committed.load());
       { std::lock_guard<std::mutex> lock(gate_mu); writer_released = true; }
       gate_cv.notify_all();
@@ -574,6 +674,7 @@ struct FakePump {
   }
 };
 '''
+_ENCODER_PLANNER_ALIAS = '\nnamespace pairswap = vtx_cef::pairswap;\n'
 _ENCODER_MAIN_START = r'''
 int main(int argc, char** argv) {
   assert(argc == 2); test_case = argv[1];
@@ -582,36 +683,50 @@ int main(int argc, char** argv) {
       if (IsStuck()) std::fputs("UNSAFE_UNWIND\n", stderr);
     }
   } sentinel;
-  MiniPool pool(2); FakePump pump;
-  struct { std::vector<uint8_t> cap_staging{1, 2, 3, 4}; } state;
-  struct { int png = 0; } opt;
-  struct { unsigned request_id = 1; int frame_index = 0; } req;
+  ServeOptions opt;
+  struct { int width = 1, height = 1; unsigned capture_fps = 120; } cef_opt;
+  FakeMachine sync_machine;
+  ExactBaselineCapture exact_baseline, exact_baseline_b;
+  vtx_cef::pairswap::Planner planner{true};
+  vtx_cef::pairswap::Binding binding;  // pair 0：本拼接固定走 A 对
+  RunState state, state_b;
+  RunState& active_state = state;
+  CefRefPtr<CefBrowser> browser, browser_b;
   PngEncodeWorkspace encode_workspace;
-  const uint64_t capture_wall_us = 0;
-  auto finish_sync = [&](uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
-                         uint64_t, int status) {
-    assert(pool.Done() && png_owners.load() == 0);
-    if (IsTimeout()) {
-      assert(writer_released && status == kStatusTimeout);
-    } else {
-      assert(status == (test_case == "ok" ? kStatusOk : kStatusJsErr));
-    }
-    ++completed_logs;
-  };
-  uint64_t run_id = 1; unsigned ok_replies = 0; int conn = 0, exit_code = 0;
-  std::string out_path = "same-output.png";
+  MiniPool pool(2); FakePump pump;
+  uint32_t document_gen = 0;
+  unsigned ok_replies = 0;
+  int conn = 0, exit_code = 0;
+  uint64_t run_id = 1;
+  const bool sync_mode_p = false;
+  std::vector<uint8_t> staging[2];
+  staging[0].assign({1, 2, 3, 4});
+  staging[1].assign({1, 2, 3, 4});
+  int staging_idx = 0;
+  PendingReceipt pending;
+'''
+_ENCODER_LOOP_START = r'''
   for (int index = 0; index < 2; ++index) {
-    ++requests; ProduceResult r;
+    ++requests;
+    FrameRequest req;
+    req.request_id = static_cast<uint32_t>(index + 1);
+    req.frame_index = index;
+    const uint64_t request_started_us = NowUs();
 '''
 _ENCODER_MAIN_END = r'''
   }
+  // EOF 排空：末帧无后续请求触发流水交汇，直接排空（与产线收尾同构）。
+  if (pending.active) {
+    if (!drain_and_send_pending()) return 0;
+  }
   assert(pool.Done());
-  assert(requests.load() == (IsTimeout() ? 1 : 2));
-  assert(receipts.load() == requests.load());
-  assert(completed_logs.load() == requests.load());
-  assert(encode_calls.load() == requests.load() && png_owners.load() == 0);
+  assert(requests.load() == 2);
+  assert(receipts.load() == (test_case == "ok" ? 2 : 1));
+  assert(timing_rows.load() == receipts.load());
+  assert(encode_calls.load() == (test_case == "ok" ? 2 : 1));
+  assert(png_owners.load() == 0);
   assert(ok_replies == (test_case == "ok" ? 2u : 0u));
-  assert(exit_code == (IsTimeout() ? 4 : 0));
+  assert(exit_code == (test_case == "ok" ? 0 : 4));
 }
 '''
 

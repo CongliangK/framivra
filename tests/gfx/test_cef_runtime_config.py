@@ -22,9 +22,10 @@ class CefRuntimeConfiguration(unittest.TestCase):
     def test_defaults_and_native_argv_have_one_normalized_source(self):
         options = backend.cef_runtime_options()
         self.assertEqual(options.to_dict(), dict(sync_mode='n', reference_context='shared', png_encoder='spng',
-            png_level=1, png_filter='sub_up', encode_threads=2, capture_fps=120))
+            png_level=1, png_filter='sub_up', encode_threads=2, capture_fps=120, pair_swap='1'))
         self.assertEqual(options.argv(), ['--sync-mode=n', '--reference-context=shared', '--png-encoder=spng',
-            '--png-level=1', '--png-filter=sub_up', '--encode-threads=2', '--capture-fps=120'])
+            '--png-level=1', '--png-filter=sub_up', '--encode-threads=2', '--capture-fps=120',
+            '--pair-swap=1'])
         self.assertEqual(backend.cef_scheduling_options(),
                          dict(pages=7, split_frames=450, split_max=3))
         self.assertEqual(backend.cef_launch_flags('a1'),
@@ -38,7 +39,20 @@ class CefRuntimeConfiguration(unittest.TestCase):
     def test_existing_five_positional_options_keep_their_meaning(self):
         options = backend.CefRuntimeOptions("p", "fpng", 3, "none", 4)
         self.assertEqual(options.to_dict(), dict(sync_mode="p", png_encoder="fpng",
-            png_level=3, png_filter="none", encode_threads=4, reference_context="shared", capture_fps=120))
+            png_level=3, png_filter="none", encode_threads=4, reference_context="shared",
+            capture_fps=120, pair_swap='1'))
+
+    def test_pair_swap_is_an_explicit_choice_defaulting_on(self):
+        self.assertEqual(backend.cef_runtime_options().pair_swap, '1')
+        with patch.dict(os.environ, VTX_CEF_PAIR_SWAP='0'):
+            options = backend.cef_runtime_options()
+            self.assertEqual(options.pair_swap, '0')
+            self.assertIn('--pair-swap=0', options.argv())
+            self.assertIn('pair-swap=0', backend.cef_launch_flags('a0'))
+        for value in ('', '2', 'true', 'ON'):
+            with self.subTest(value=value), patch.dict(os.environ, VTX_CEF_PAIR_SWAP=value):
+                with self.assertRaisesRegex(ValueError, 'VTX_CEF_PAIR_SWAP'):
+                    backend.cef_runtime_options()
 
     def test_capture_rate_is_an_explicit_native_request(self):
         for value in (1, 30, 60, 120, 240):

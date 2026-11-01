@@ -110,6 +110,7 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 | --- | --- |
 | `VTX_CEF_SYNC_MODE` | `n` / `n\|p`；生产 exact P 等待 Promise 钩子 |
 | `VTX_CEF_REFERENCE_CONTEXT` | `shared` / `shared\|isolated`；只改变无见证浏览器的 request context |
+| `VTX_CEF_PAIR_SWAP` | `1` / `0\|1`；mode n+exact 双对交替预取，`0` 回退单对逐帧导航（进缓存身份） |
 | `VTX_CEF_CAPTURE_FPS` | `120` / `1..240`；OSR 采样率请求，签名/无见证两路同值，不是 timeline FPS |
 | `VTX_CEF_PNG_ENCODER`、`VTX_CEF_PNG_LEVEL`、`VTX_CEF_PNG_FILTER` | `spng` / `spng\|fpng\|zlib`；`1` / `1..3`；`sub_up` / `none\|sub\|up\|sub_up\|all` |
 | `VTX_CEF_ENCODE_THREADS` | `2` / `1..16`；当前每 worker 仅一帧在途，增加线程不等于帧编码并行 |
@@ -121,6 +122,17 @@ env VTX_TEST_CEF_WORKER="${CEF_WORKER:?}" \
 CEF 缓存身份；改变配置后的第一次运行不是同身份暖态。双浏览器有额外常驻开销，峰值
 RAM 变化未实测，不能假定翻倍或本机可承受；Mac 先以 `PAGES=1` 验正确性，再单独评估
 2/3/4，不默认推满 32；默认 7 不代表经过本机资源测定，线程上限亦非容量保证。
+
+**PairSwap 双对交替预取（mode n + exact，默认开启，`VTX_CEF_PAIR_SWAP=0` 关闭）**：
+每 worker 额外持有 B 对浏览器（signed+unsigned × A/B 共 4 个 OSR 渲染器，B 对惰性
+创建——首个绑定 B 的请求以目标 URL 建窗即导航，短会话不为预取凭空建窗）。绑定帧 N
+时立即对空闲对 `LoadURL` 帧 N+1，把每帧双导航成本藏进上一帧周期；请求严格按帧序时
+帧 2 起稳态 hit，乱序/降级/关闭时逐帧回退 navigate-now 旧路径，veto 字节面与故障
+注入语义不变，证据字段 `adapter_timing.pair_index` / `signed_prefetch` /
+`unsigned_prefetch`（hit/miss/off）进 sync.jsonl。任一时刻仍 1 对验证 + 1 对导航。
+内存实测（30 帧冷态小样本、1080p、本机单次）：开启峰值 RSS 2375.5MB vs 关闭
+1717.8MB（+657.7MB，新增一对渲染器），未观测到 staging 双份导致的显性翻倍；该数字
+是单机单次样本，不构成容量承诺。
 `--capture-fps` 只改变内部采样请求；锁定 CEF 154 的
 [ClampFrameRate](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/osr_util.cc)
 保留正值，传至 [SetMinCapturePeriod](https://raw.githubusercontent.com/chromiumembedded/cef/14c5a08/libcef/browser/osr/video_consumer_osr.cc)。
@@ -366,6 +378,12 @@ experiments/gfx_cef_worker/build/bin/vtx_cef_worker --sanity
   提交），仅回 128B 计时回执；模式 2 = 先取空槽再生产，4 槽全满即背压
   （暂停发起下一帧 BeginFrame，`backpressure_wait_us` 随通知回传并累计
   入环控制块，超时明确 TIMEOUT 不死等）。
+- **模式 1 双 ticket 流水（深度 2，默认开启）**：帧 N 的 PNG 编码/落盘
+  （池线程）与帧 N+1 的原生捕获（UI 线程）并行——staging 双缓冲分离
+  读写侧；回执严格按请求序、且晚于该帧自身编码完成（宿主收到即读文件，
+  原子写保证完整，alpha/png/disk 计时仍归属本帧）；编码失败/超时为保守
+  失败（非 OK 回执 + 整个 serve exit 4，不静默丢帧、不留半写文件），详见
+  [协议 §3/§4](IPC_PROTOCOL.md#3-帧槽framelot--回执)。
 - **帧正确性**：OnPaint 任意行步长逐行紧凑拷入槽（杜绝跨行斜纹）+
   (0,0) 金丝雀像素核实帧号（不符即拒绝计数）+ 槽头 run_id 跨 run 残帧
   拒收；SIMD 逆预乘与 #109 标量公式 (c,a) 全组合穷举一致。

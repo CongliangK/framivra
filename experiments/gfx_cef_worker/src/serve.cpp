@@ -33,6 +33,7 @@
 
 #include "frame_pipeline.h"
 #include "ipc_protocol.hpp"
+#include "pair_swap_planner.hpp"
 #include "png_writer.h"
 #include "shm_ring.hpp"
 
@@ -672,9 +673,24 @@ class ExactBaselineCapture {
     // Release logical samples but preserve their allocation for the next frame.
     for (auto& sample : samples_) sample.sequence = 0;
     const bool first_browser = !state_;
+    // PairSwap 预取对账：帧号 + URL 均匹配的预取导航直接采纳——本请求
+    // 不再 LoadURL，load_floor 沿用预取发出前基线（导航已在上帧 veto
+    // 通过后发出，可能仍在途也可能已落定，加载门两者皆可判）。
+    // 未命中（乱序/跳帧/重放/从未预取）就地作废预取，回退 navigate-now；
+    // 在途的陈旧预取导航被本请求的新导航取代，加载门以
+    // GetURL==expected_url 保证只有最终文档能通过。
+    const bool adopt_prefetch =
+        !first_browser && mode_n_ &&
+        prefetch_.Matches(frame, ExpandUrlTemplate(opt.url_template, frame));
+    prefetch_.Consume();
+    unsigned_prefetch_ =
+        opt.pair_swap && mode_n_
+            ? (adopt_prefetch ? pairswap::Outcome::kHit
+                              : pairswap::Outcome::kMiss)
+            : pairswap::Outcome::kOff;
     if (!first_browser && state_->closed.load())
       return Fail("unsigned_browser_closed");
-    if (!first_browser && !browser_ && !AdoptCreatedBrowser())
+    if (!first_browser && !browser_ && !AdoptCreatedBrowser() && !adopt_prefetch)
       return Fail("unsigned_browser_creation_still_pending");
     if (first_browser) state_ = std::make_shared<RunState>();
     {
@@ -689,8 +705,14 @@ class ExactBaselineCapture {
     copied_bytes_floor_ = state_->passive_snapshot_copied_bytes;
     dropped_paints_floor_ = state_->passive_snapshot_dropped_paints;
     const auto url = ExpandUrlTemplate(opt.url_template, frame);
-    navigated_ = mode_n_ || first_browser;
-    if (navigated_) {
+    navigated_ = mode_n_ || first_browser || adopt_prefetch;
+    if (adopt_prefetch) {
+      // 预取采纳：导航（与 PrepareJsDocument）已在上帧 veto 通过后由
+      // Prefetch() 完成——loaded=false / expected_url 均已就位，此处只
+      // 继承预取发出前的 load_starts 基线；浏览器未决（创建仍在途）时它
+      // 本就以预取 URL 创建，落定即正确文档。
+      load_floor_ = prefetch_.load_floor;
+    } else if (navigated_) {
       state_->loaded.store(false, std::memory_order_relaxed);
       PrepareJsDocument(*state_, url);
       load_floor_ = state_->load_starts.load();
@@ -721,9 +743,26 @@ class ExactBaselineCapture {
       creating_ = CefBrowserHost::CreateBrowser(window, client, url, settings,
                                                nullptr, request_context_);
       if (!creating_) return Fail("unsigned_browser_create_failed");
-    } else if (navigated_) {
+    } else if (navigated_ && !adopt_prefetch) {
       browser_->GetMainFrame()->LoadURL(url);
     }
+    return true;
+  }
+
+  // PairSwap：帧 N（活跃对）veto 通过后，对本备用 unsigned 浏览器发出
+  // 帧 N+1 的预取导航——纯文档加载（PrepareJsDocument + LoadURL），
+  // 不注入桥：桥只在请求绑定（Begin）后注入，预取驻留文档零外部事件。
+  // 仅当浏览器已存在时发出；首航浏览器由其首个请求的 Begin 以目标 URL
+  // 创建（创建即导航），不为预取凭空建窗（短会话不增 RSS）。返回 false
+  // = 本次未预取（本捕获器下一个请求将记 miss 回退 navigate-now）。
+  bool Prefetch(int32_t frame, const std::string& url) {
+    if (!state_ || state_->closed.load()) return false;
+    if (!browser_ && !AdoptCreatedBrowser()) return false;
+    state_->loaded.store(false, std::memory_order_relaxed);
+    PrepareJsDocument(*state_, url);
+    const uint64_t floor = state_->load_starts.load();
+    browser_->GetMainFrame()->LoadURL(url);
+    prefetch_.Record(frame, url, floor);
     return true;
   }
 
@@ -884,7 +923,11 @@ class ExactBaselineCapture {
         ",\"unsigned_copied_bytes\":" + std::to_string(
             state_->passive_snapshot_copied_bytes - copied_bytes_floor_) +
         ",\"unsigned_discarded_paints\":" + std::to_string(
-            state_->passive_snapshot_dropped_paints - dropped_paints_floor_);
+            state_->passive_snapshot_dropped_paints - dropped_paints_floor_) +
+        // PairSwap 证据：unsigned 侧本请求预取采纳结果（hit=采纳预取导航
+        // / miss=回退 navigate-now / off=PairSwap 未启用或非 mode n）。
+        ",\"unsigned_prefetch\":\"" +
+        std::string(pairswap::OutcomeName(unsigned_prefetch_)) + "\"";
   }
   bool js_failed() const { return state_ && state_->js_error.failed; }
   const char* failure_reason() const { return failure_reason_; }
@@ -961,6 +1004,9 @@ class ExactBaselineCapture {
   uint64_t ready_deadline_ = 0;
   bool mode_n_ = true;
   bool resident_poisoned_ = false;
+  // PairSwap：备用对预取簿记（帧号/URL/load 基线）与本请求采纳结果。
+  pairswap::PairBookkeeping prefetch_{};
+  pairswap::Outcome unsigned_prefetch_ = pairswap::Outcome::kOff;
   bool injected_ = false;
   bool ready_ = false;
   bool failed_ = false;
@@ -1007,7 +1053,8 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
                                    const ServeOptions& opt,
                                    uint32_t document_gen, uint32_t request_id,
                                    int32_t frame, uint32_t expected_w,
-                                   uint32_t expected_h, uint8_t* dst) {
+                                   uint32_t expected_h, uint8_t* dst,
+                                   const pairswap::Binding& binding = {}) {
   SyncProduceResult r;
   r.document_gen = document_gen;
   r.request_id = request_id;
@@ -1090,11 +1137,25 @@ SyncProduceResult ProduceFrameSync(RunState& state, PumpDriver& pump,
     state.sync_ready_queue.clear();
   }
   if (mode_n) {
-    state.loaded.store(false, std::memory_order_relaxed);
+    // PairSwap 三态导航（默认 kNavigateNow = 现路径逐字保留）：
+    //   kAdoptPrefetch      —— 预取导航已在上帧 veto 通过后发出（loaded
+    //                          已置 false、expected_url 已就位），本请求不
+    //                          再 LoadURL，load 基线继承预取发出前值；
+    //   kNavigateByCreation —— 本对 signed 浏览器尚未创建，RunServe 已以
+    //                          目标 URL 创建（创建即导航），基线恒 0。
     const auto url = ExpandUrlTemplate(opt.url_template, frame);
+    const bool navigate_now =
+        binding.signed_nav == pairswap::SignedNav::kNavigateNow;
+    if (navigate_now) {
+      state.loaded.store(false, std::memory_order_relaxed);
+    }
+    // 三态都要 expected_url 就位（观察者围栏 CheckJsCheckpoint 依赖）：
+    // navigate-now / creation 由本调用设置；adopt 路径 Prefetch 已设过，
+    // PrepareJsDocument 幂等（保 sent 计数、清 js_paint_pending）。
     PrepareJsDocument(state, url);
-    const auto load_floor = state.load_starts.load();
-    browser->GetMainFrame()->LoadURL(url);
+    const auto load_floor = navigate_now ? state.load_starts.load()
+                                         : binding.signed_load_floor;
+    if (navigate_now) browser->GetMainFrame()->LoadURL(url);
     while (!state.closed.load() && !(state.load_starts.load() > load_floor &&
              state.loaded.load(std::memory_order_relaxed) &&
              !browser->IsLoading() &&
@@ -1260,6 +1321,41 @@ void FillReceipt(FrameSlotHeader* h, const ProduceResult& r, uint64_t run_id,
   h->t_disk_commit_us = t_disk;
 }
 
+// ---------------------------------------------------------------- 双 ticket 流水
+// 模式 1 流水深度 2：帧 N 的编码/落盘（池线程）与帧 N+1 的捕获（UI 线程）
+// 并行。帧 N 的回执延迟到其编码完成后发送（宿主收到 receive_png 即读文件，
+// 原子写保证完整）。此记录跨迭代持有帧 N 的回执身份、编码任务回填字段与
+// sync 快照（状态机让位给帧 N+1 前定格；回执时经 RecordAdapterTimingFor
+// 补记 adapter_timing，保证 JSONL 行归属帧 N）。
+struct PendingReceipt {
+  bool active = false;
+  uint32_t request_id = 0;
+  int32_t frame_index = 0;
+  ProduceResult r;  // 捕获结果（status/尺寸/金丝雀/拒收计数，属本帧）
+  uint64_t capture_wall_us = 0;
+  std::string out_path;
+  // —— 编码任务回填（仅池线程写；UI 线程仅在 pool.Done() 后读）——
+  uint64_t t_queue = 0, t_alpha = 0, t_png = 0, t_disk = 0;
+  bool deliver_ok = false;
+  bool encode_timed_out = false;
+  // —— sync 快照（帧 N 捕获完成、机器仍跟踪 N 时定格）——
+  bool sync_valid = false;
+  uint64_t request_started_us = 0;
+  uint64_t signed_ready_us = 0;
+  int32_t signed_renderer_pid = 0;
+  uint64_t signed_navigations = 0;
+  uint64_t signed_fence_count = 0;
+  uint64_t signed_native_paints = 0;
+  uint32_t capture_fps = 0;
+  bool exact_canary = false;
+  bool sync_mode_p = false;
+  // —— PairSwap 证据（exact 时进 adapter_timing；off/0 = 未启用或回退）——
+  int pair_index = 0;
+  pairswap::Outcome signed_prefetch = pairswap::Outcome::kOff;
+  std::string exact_timing_fields;
+  fsync::RequestDesc machine_desc;
+};
+
 // Close a signed browser even if asynchronous creation completes only after
 // the startup deadline. A successful CreateBrowser request with no callback is
 // still live CEF work: it is not evidence that CefShutdown is safe.
@@ -1415,6 +1511,18 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   Options cef_opt = opt.cef;
   cef_opt.serve_mode = true;
   RunState state;
+  // ---- PairSwap 备用对（B 对）声明（惰性启用，见下）----
+  // PairSwap 双对交替预取（pair_swap_planner.hpp）：仅当 --pair-swap=1 且
+  // --sync + mode n + exact canary 时启用；其余配置（含 VTX_CEF_PAIR_SWAP=0
+  // 回退）零 B 侧开销——不建浏览器、不装 sync_machine、不进 planner。
+  const bool pair_swap_engaged =
+      opt.pair_swap && opt.sync && !sync_mode_p && opt.sync_canary == "exact";
+  RunState state_b;                       // B 对 signed 侧回调存储
+  CefRefPtr<WorkerClient> client_b;       // B 对 OSR client（惰性创建）
+  CefRefPtr<CefBrowser> browser_b;        // B 对 signed 浏览器（惰性创建）
+  bool creation_requested_b = false;
+  bool pair_b_broken = false;             // B 对创建失败/中途死亡 → 永久降级单对
+  pairswap::Planner planner{pair_swap_engaged};
   CefMainArgs main_args(argc, argv);
   CefSettings settings = MakeWorkerSettings(root_cache.string());
   CefRefPtr<WorkerApp> app = new WorkerApp(&cef_opt, &state);
@@ -1429,6 +1537,7 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   CefString initial_url;
   initial_url.FromString("about:blank");
   CefRefPtr<WorkerClient> client = new WorkerClient(&cef_opt, &state);
+  if (pair_swap_engaged) client_b = new WorkerClient(&cef_opt, &state_b);
   CefRefPtr<CefBrowser> browser;
   bool creation_requested = false;
   const auto shutdown_signed = [&]() {
@@ -1437,10 +1546,19 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     state.sync_capture_armed = false;
     state.capture_armed = false;
     state.sync_machine = nullptr;
-    if (!CloseServeBrowser(state, pump, browser, creation_requested)) {
+    // PairSwap B 对同样先解除回调消费者（可能已安装 sync_machine）。
+    state_b.sync_capture_armed = false;
+    state_b.capture_armed = false;
+    state_b.sync_machine = nullptr;
+    const bool a_closed = CloseServeBrowser(state, pump, browser, creation_requested);
+    // B 对未创建时 CloseServeBrowser 无害直过（见其 !browser 分支）。
+    const bool b_closed =
+        CloseServeBrowser(state_b, pump, browser_b, creation_requested_b);
+    if (!a_closed || !b_closed) {
       ExitUnclosedServe(1);
     }
     client = nullptr;
+    client_b = nullptr;
     CefShutdown();
   };
   creation_requested = CreateOsrBrowser(client, initial_url,
@@ -1490,6 +1608,11 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     {
       std::lock_guard<std::mutex> lock(state.mu);
       state.sync_machine = &sync_machine;
+    }
+    if (pair_swap_engaged) {
+      // B 对与 A 对共享同一状态机（同一时刻只有一个请求在推进）。
+      std::lock_guard<std::mutex> lock(state_b.mu);
+      state_b.sync_machine = &sync_machine;
     }
     if (sync_mode_p) {
       // 常驻页唯一一次导航（此后 document_gen 恒 1，请求以 request_id 区分）。
@@ -1594,24 +1717,197 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
 
   // ---- 请求主循环 ----
   ExactBaselineCapture exact_baseline;
+  // PairSwap B 对 unsigned 基线捕获器（惰性：首个绑定 B 对的 exact 请求
+  // 才创建浏览器；planner 关闭时恒空转）。
+  ExactBaselineCapture exact_baseline_b;
   PngEncodeWorkspace encode_workspace;
   MiniPool pool(opt.encode_threads, [&state] { state.pump_schedule.NotifyWork(); });
   uint32_t document_gen = 0;
   uint32_t ok_replies = 0;
   int exit_code = 0;
 
+  // —— 双 ticket 流水（模式 1，深度 2）：帧 N 编码与帧 N+1 捕获并行 ——
+  // staging 双缓冲：帧 N 捕获写 staging[N%2]，帧 N-1 编码读另一缓冲。
+  // 单槽池顺序契约不变：post N 严格晚于 Done(N-1)，故 staging[N%2] 的
+  // resize 只发生在其上一次编码（帧 N-2）已完成后。
+  std::vector<uint8_t> staging[2];
+  int staging_idx = 0;
+  PendingReceipt pending;
+
+  // —— PairSwap 预取触发：绑定帧 N 的瞬间，立即对空闲对（(N+1)%2，自
+  // accept(N-1) 起已完全空闲）两个浏览器 LoadURL 帧 N+1——把双导航成本
+  // 藏进本帧捕获周期。时序依据：深度 2 流水下帧 N+1 请求在 accept(N-1)
+  // 后即刻到达 worker，accept(N) 瞬间触发只剩编码交接的几毫秒（实测
+  // unsigned_load_us 不降）；空闲对的真正空闲窗口是 [accept(N-1),
+  // Begin(N+1)] ≈ 完整帧周期，绑定帧 N 时（≈窗口起点）触发才能让预取
+  // 导航跑完。并发形状与报告口径一致：任一时刻 1 个对在验证（帧 N）
+  // + 1 个对在导航（帧 N+1），不新增第三路导航。预取是纯文档导航
+  // （不注入桥，桥只在下一请求绑定时注入）。B 对浏览器尚未创建（首个
+  // 绑定 B 的请求还没到）时跳过，不为预取凭空建窗——该请求以目标 URL
+  // 创建（创建即导航），由证据字段记 miss。
+  const auto trigger_pair_swap_prefetch = [&](int32_t bound_frame,
+                                              int idle_pair) {
+    if (!pair_swap_engaged || pair_b_broken) return;
+    if (bound_frame == std::numeric_limits<int32_t>::max()) return;
+    const int32_t next_frame =
+        pairswap::Planner::PrefetchFrame(bound_frame);
+    const auto next_url = ExpandUrlTemplate(opt.url_template, next_frame);
+    RunState& st = idle_pair == 0 ? state : state_b;
+    CefRefPtr<CefBrowser> br = idle_pair == 0 ? browser : browser_b;
+    if (!br || st.closed.load()) return;
+    // signed 侧导航（与 unsigned Prefetch 同构：loaded 置 false、
+    // expected_url 先就位、基线取导航前值；不注入桥）。
+    st.loaded.store(false, std::memory_order_relaxed);
+    PrepareJsDocument(st, next_url);
+    const uint64_t floor = st.load_starts.load();
+    CefString next_cef_url;
+    next_cef_url.FromString(next_url);
+    br->GetMainFrame()->LoadURL(next_cef_url);
+    planner.RecordSignedPrefetch(idle_pair, next_frame, next_url, floor);
+    // unsigned 侧同帧基线导航（捕获器内部自簿记；浏览器缺失时返回
+    // false → 下一请求该侧自然 miss 回退，不影响 signed 侧决策）。
+    ExactBaselineCapture& cap =
+        idle_pair == 0 ? exact_baseline : exact_baseline_b;
+    cap.Prefetch(next_frame, next_url);
+  };
+
+  // 发送帧 N-1 的回执（前提：pool.Done() 已真，或编码已超时排空）。
+  // 回执绑定帧 N-1 的身份与本帧编码计时；adapter_timing 用快照经
+  // RecordAdapterTimingFor 补记（机器此刻已跟踪帧 N，须按快照身份归属）。
+  // 返回 false = serve 必须以 exit_code=4 退出：回执发送失败，或本帧
+  // 编码/落盘失败/超时——保守失败路径：回执已尽力送达，绝不静默丢帧续跑。
+  const auto send_pending_receipt = [&](PendingReceipt& p) {
+    if (p.encode_timed_out) {
+      p.r.status = kStatusTimeout;
+    } else if (!p.deliver_ok) {
+      p.r.status = kStatusJsErr;  // 落盘失败以非 OK 码显形（复用 3 号档）
+      std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘失败 %s\n",
+                   p.out_path.c_str());
+    }
+    if (p.sync_valid) {
+      if (p.sync_mode_p && p.exact_canary && p.r.status != kStatusOk)
+        exact_baseline.PoisonResident();
+      const uint64_t now = NowUs();
+      std::string fields = "\"request_wall_to_reply_us\":" +
+          std::to_string(now - p.request_started_us) +
+          ",\"capture_fps_requested\":" + std::to_string(p.capture_fps) +
+          ",\"capture_wall_us\":" + std::to_string(p.capture_wall_us) +
+          ",\"signed_ready_us\":" + std::to_string(p.signed_ready_us) +
+          ",\"signed_renderer_pid\":" + std::to_string(p.signed_renderer_pid) +
+          ",\"signed_navigations\":" + std::to_string(p.signed_navigations) +
+          ",\"signed_fence_count\":" + std::to_string(p.signed_fence_count) +
+          ",\"signed_native_paints\":" + std::to_string(p.signed_native_paints) +
+          ",\"encode_queue_us\":" + std::to_string(p.t_queue) +
+          ",\"alpha_us\":" + std::to_string(p.t_alpha) +
+          ",\"png_us\":" + std::to_string(p.t_png) +
+          ",\"disk_us\":" + std::to_string(p.t_disk) +
+          ",\"backpressure_us\":0" +
+          ",\"delivery_status\":" + std::to_string(p.r.status) +
+          ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
+          ",\"capture_stages_overlap\":" +
+          (p.exact_canary ? "true" : "false");
+      if (p.exact_canary) {
+        // PairSwap 证据：signed 侧服务对与预取采纳结局（unsigned 侧的
+        // unsigned_prefetch 在 exact_timing_fields 内）。
+        fields += ",\"pair_index\":" + std::to_string(p.pair_index) +
+                  ",\"signed_prefetch\":\"" +
+                  std::string(pairswap::OutcomeName(p.signed_prefetch)) + "\"";
+        fields += p.exact_timing_fields;
+      }
+      sync_machine.RecordAdapterTimingFor(p.machine_desc, now, fields);
+    }
+    FrameSlotHeader receipt;
+    FillReceipt(&receipt, p.r, run_id, p.request_id, p.frame_index,
+                p.t_alpha, p.t_png, p.t_disk);
+    p.active = false;
+    if (!SendAll(conn, &receipt, sizeof(receipt))) {
+      exit_code = 4;
+      return false;
+    }
+    if (p.r.status != kStatusOk) {
+      // 编码失败/超时：非 OK 回执已送达，整个 serve 失败退出（不丢帧续跑）。
+      exit_code = 4;
+      return false;
+    }
+    ++ok_replies;
+    return true;
+  };
+
+  // 等待在飞编码收尾（60s 死线 + 5s 收尾宽限——语义与串行版一致）后回执。
+  const auto drain_and_send_pending = [&]() -> bool {
+    if (!pending.active) return true;
+    if (!pump.Until([&] { return pool.Done(); }, 60000)) {
+      pending.encode_timed_out = true;
+      // This is a reply deadline, not cancellation of a blocking writer.
+      // Keep every capture/output owned until Done's acquire synchronizes
+      // with the task. Allow one bounded drain grace; if I/O is still stuck,
+      // exit the worker without joining the task, unwinding its references,
+      // acknowledging any receipt, or admitting another request. The existing
+      // process owner reclaims the tree and its private partial output.
+      if (!pump.Until([&] { return pool.Done(); }, 5000)) {
+        ExitUnclosedServe(4);
+      }
+      std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘超时，任务已收尾 %s\n",
+                   pending.out_path.c_str());
+    }
+    return send_pending_receipt(pending);
+  };
+
   for (;;) {
     FrameRequest req;
     std::memset(&req, 0, sizeof(req));
-    const int rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+    int rc = 0;
+    if (!pending.active) {
+      rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+    } else {
+      // —— 流水等待：帧 N-1 编码在飞 ——
+      // 串行宿主（收到回执才提交下一请求）：编码一完成立即回执，零死锁；
+      // 流水宿主（深度 2）：下一请求已在线，socket 可读即开始捕获帧 N。
+      // 分片轮询不消费 socket 字节；65s 守底 = 编码 60s 死线 + 5s 收尾
+      // 宽限的等价上限（宿主长期静默也照此退出）。
+      const uint64_t pipeline_deadline = NowUs() + 65000000ull;
+      for (;;) {
+        struct pollfd pfd;
+        pfd.fd = conn;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        const int pr = ::poll(&pfd, 1, 10);
+        if (pr > 0) {
+          rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+          break;
+        }
+        if (pr < 0) {
+          if (errno == EINTR) continue;
+          rc = -2;  // 连接层错误：与"请求中途断裂"同档（exit 4）
+          break;
+        }
+        if (pool.Done()) {
+          if (!send_pending_receipt(pending)) {
+            rc = -2;  // 回执失败：exit_code 已置 4，直接走退出路径
+            break;
+          }
+          // 回执已送达（串行宿主此刻才能提交下一请求）：回到常规等待。
+          rc = RecvAllOrShort(conn, &req, sizeof(req), opt.idle_timeout_ms);
+          break;
+        }
+        pump.Once();  // 编码期间保持 CEF 消息循环（外置泵语义不变）
+        if (NowUs() > pipeline_deadline) {
+          ExitUnclosedServe(4);  // 编码死线：不回执、不接新请求
+        }
+      }
+    }
     if (rc == 0) {
+      // 宿主 EOF：末帧回执必须先送达（宿主仍在读其输出），再优雅收尾。
+      if (pending.active && !drain_and_send_pending()) break;
       break;  // 宿主 EOF：优雅收尾
     }
     if (rc == -1) {
+      if (pending.active) (void)drain_and_send_pending();  // 防御：不应在飞
       exit_code = 5;  // 空闲超时
       break;
     }
     if (rc < 0) {
+      if (pending.active) (void)drain_and_send_pending();  // 尽力送达末帧回执
       exit_code = 4;  // 请求中途断裂（宿主死亡/abort 演练形态）
       break;
     }
@@ -1622,12 +1918,76 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
                    "vtx_cef_worker: 协议错误（magic=0x%x ver=%u path_ok=%d）\n",
                    req.magic, req.protocol_version,
                    static_cast<int>(RequestPathValid(req)));
+      if (pending.active) (void)drain_and_send_pending();  // 尽力送达，不静默丢帧
       exit_code = 3;
       break;
     }
     const uint64_t request_started_us = NowUs();
-    const auto signed_checkpoint_floor = state.js_error.sent;
-    const auto signed_paint_floor = state.paints.load();
+    // ---- PairSwap 绑定：选出服务对 + 预取命中判定（一次性消费）----
+    // 惰性建窗：首个路由到 B 对的请求以目标 URL 创建 B signed 浏览器
+    // （创建即导航，kNavigateByCreation——此后帧 2 起稳态全 hit）；此前
+    // （帧 0/1）零 B 侧开销。B 对创建失败/超时/中途死亡 → 永久降级单对
+    // （全部回 A 对 navigate-now 现路径，证据字段照常记 miss）。
+    pairswap::Binding binding{};
+    bool b_created_now = false;
+    if (pair_swap_engaged && !pair_b_broken) {
+      if (planner.active_pair() == 1 && state_b.closed.load()) {
+        std::fprintf(stderr,
+                     "vtx_cef_worker: PairSwap B 对浏览器已死亡，永久降级单对\n");
+        pair_b_broken = true;
+      } else if (planner.active_pair() == 1 && !browser_b &&
+                 !creation_requested_b) {
+        const auto first_url =
+            ExpandUrlTemplate(opt.url_template, req.frame_index);
+        CefString first_cef_url;
+        first_cef_url.FromString(first_url);
+        creation_requested_b = CreateOsrBrowser(
+            client_b, first_cef_url, cef_opt.width, cef_opt.height,
+            cef_opt.capture_fps);
+        const bool created =
+            creation_requested_b && !state_b.closed.load() && pump.Until([&] {
+              std::lock_guard<std::mutex> lock(state_b.mu);
+              return state_b.closed.load() || state_b.browser != nullptr;
+            }, 30000);
+        if (!created || state_b.closed.load()) {
+          std::fprintf(stderr,
+                       "vtx_cef_worker: PairSwap B 对浏览器创建失败或超时，"
+                       "永久降级单对\n");
+          pair_b_broken = true;
+        } else {
+          std::lock_guard<std::mutex> lock(state_b.mu);
+          browser_b = state_b.browser;
+          b_created_now = true;
+        }
+      }
+      if (!pair_b_broken) {
+        binding = planner.BindNextRequest(
+            req.frame_index,
+            ExpandUrlTemplate(opt.url_template, req.frame_index));
+        if (b_created_now) {
+          // 本请求以目标 URL 创建 B signed 浏览器（创建即导航）：不再
+          // LoadURL，加载门从 0 基线起步（load_starts>0 && loaded）。
+          binding.signed_nav = pairswap::SignedNav::kNavigateByCreation;
+          binding.signed_load_floor = 0;
+        } else if (binding.pair == 1 && !browser_b) {
+          // 防御（理论不可达：路由 B 必先建窗成功）。
+          pair_b_broken = true;
+          binding = pairswap::Binding{};
+        }
+      }
+    }
+    // 绑定帧 N 完成、活跃对开始捕获之前，先对空闲对发出帧 N+1 预取
+    // （空闲窗口 [accept(N-1), Begin(N+1)] 的起点）。
+    trigger_pair_swap_prefetch(req.frame_index, binding.pair ^ 1);
+    // 活跃对路由：state/browser/unsigned 捕获器随 binding 切换；未启用
+    // （含 VTX_CEF_PAIR_SWAP=0）时恒为 A 对，与现路径完全一致。
+    RunState& active_state = binding.pair == 1 ? state_b : state;
+    CefRefPtr<CefBrowser> active_browser =
+        binding.pair == 1 ? browser_b : browser;
+    ExactBaselineCapture& active_capture =
+        binding.pair == 1 ? exact_baseline_b : exact_baseline;
+    const auto signed_checkpoint_floor = active_state.js_error.sent;
+    const auto signed_paint_floor = active_state.paints.load();
     const std::string out_path(req.out_png_path);
     const uint32_t expected_w =
         req.expected_width > 0 ? static_cast<uint32_t>(req.expected_width)
@@ -1643,59 +2003,30 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
       document_gen = 1;
     }
 
-    const auto finish_sync = [&](uint64_t capture_us, uint64_t queue_us,
-                                 uint64_t alpha_us, uint64_t png_us,
-                                 uint64_t disk_us, uint64_t backpressure_us,
-                                 uint16_t delivery_status) {
-      if (!opt.sync || !sync_machine.accepted()) return;
-      if (sync_mode_p && opt.sync_canary == "exact" && delivery_status != kStatusOk)
-        exact_baseline.PoisonResident();
-      const uint64_t now = NowUs();
-      std::string fields = "\"request_wall_to_reply_us\":" +
-          std::to_string(now - request_started_us) +
-          ",\"capture_fps_requested\":" + std::to_string(cef_opt.capture_fps) +
-          ",\"capture_wall_us\":" + std::to_string(capture_us) +
-          ",\"signed_ready_us\":" + std::to_string(
-              sync_machine.t_ready_us() - sync_machine.t_request_begin_us()) +
-          ",\"signed_renderer_pid\":" + std::to_string(state.js_error.renderer_pid) +
-          ",\"signed_navigations\":" + std::to_string(sync_mode_p ? 0 : 1) +
-          ",\"signed_fence_count\":" + std::to_string(state.js_error.sent - signed_checkpoint_floor) +
-          ",\"signed_native_paints\":" + std::to_string(state.paints.load() - signed_paint_floor) +
-          ",\"encode_queue_us\":" + std::to_string(queue_us) +
-          ",\"alpha_us\":" + std::to_string(alpha_us) +
-          ",\"png_us\":" + std::to_string(png_us) +
-          ",\"disk_us\":" + std::to_string(disk_us) +
-          ",\"backpressure_us\":" + std::to_string(backpressure_us) +
-          ",\"delivery_status\":" + std::to_string(delivery_status) +
-          ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
-          ",\"capture_stages_overlap\":" +
-          (opt.sync_canary == "exact" ? "true" : "false");
-      if (opt.sync_canary == "exact") fields += exact_baseline.TimingFields();
-      sync_machine.RecordAdapterTiming(now, fields);
-      sync_machine.Reset(now, "done");
-    };
-
     if ((req.flags & kFlagWantSlot) == 0) {
       // ================= 模式 1：Worker 原地落盘（零 IPC 像素传输）=====
+      // 双 ticket：帧 N 捕获写 cap_buf = staging[staging_idx]，与帧 N-1 的
+      // 编码（读另一缓冲）并行；帧 N 的回执在下一迭代的编码完成后发出。
+      std::vector<uint8_t>& cap_buf = staging[staging_idx];
       {
-        std::lock_guard<std::mutex> lock(state.mu);
-        if (state.cap_staging.size() <
+        std::lock_guard<std::mutex> lock(active_state.mu);
+        if (cap_buf.size() <
             static_cast<size_t>(expected_w) * expected_h * 4u) {
-          state.cap_staging.resize(
+          cap_buf.resize(
               static_cast<size_t>(expected_w) * expected_h * 4u);
         }
-        state.cap_expected_w = expected_w;
-        state.cap_expected_h = expected_h;
-        state.cap_dst = state.cap_staging.data();
+        active_state.cap_expected_w = expected_w;
+        active_state.cap_expected_h = expected_h;
+        active_state.cap_dst = cap_buf.data();
       }
       ProduceResult r;
       const uint64_t capture_started_us = NowUs();
       if (opt.sync) {
         // #114 状态机路径：canary/拒收计数/时序取自机器（解码结果口径）。
         SyncProduceResult sr = ProduceFrameSync(
-            state, pump, browser, sync_machine, exact_baseline, opt, document_gen,
-            req.request_id, req.frame_index, expected_w, expected_h,
-            state.cap_staging.data());
+            active_state, pump, active_browser, sync_machine, active_capture,
+            opt, document_gen, req.request_id, req.frame_index, expected_w,
+            expected_h, cap_buf.data(), binding);
         r.status = sr.status;
         r.width = sr.width;
         r.height = sr.height;
@@ -1709,69 +2040,142 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
                          req.frame_index, opt, document_gen);
       }
       const uint64_t capture_wall_us = NowUs() - capture_started_us;
-      uint64_t t_alpha = 0, t_png = 0, t_disk = 0, t_queue = 0;
-      bool deliver_ok = r.status == kStatusOk;
-      bool encode_timed_out = false;
-      if (deliver_ok) {
-        const uint64_t queued_us = NowUs();
-        pool.Post([&] {
-          t_queue = NowUs() - queued_us;
-          try {
-            PngBuffer png;
-            const uint64_t t3 = NowUs();
-            const bool enc = EncodePngBgraPremultiplied(state.cap_staging.data(),
-                static_cast<int>(r.width), static_cast<int>(r.height),
-                static_cast<size_t>(r.width) * 4u, opt.png, &encode_workspace,
-                &png, &t_alpha);
-            const uint64_t encode_wall_us = NowUs() - t3;
-            t_png = encode_wall_us >= t_alpha ? encode_wall_us - t_alpha : 0;
-            const uint64_t t4 = NowUs();
-            deliver_ok = enc && AtomicWriteBytes(out_path, png.data(), png.size());
-            t_disk = NowUs() - t4;
-          } catch (...) {
-            // Keep task completion observable even if allocation/encoding throws.
-            deliver_ok = false;
-          }
-        });
-        if (!pump.Until([&] { return pool.Done(); }, 60000)) {
-          encode_timed_out = true;
-          // This is a reply deadline, not cancellation of a blocking writer.
-          // Keep every capture/output owned until Done's acquire synchronizes
-          // with the task. Allow one bounded drain grace; if I/O is still stuck,
-          // exit the worker without joining the task, unwinding its references,
-          // acknowledging any receipt, or admitting another request. The existing
-          // process owner reclaims the tree and its private partial output.
-          if (!pump.Until([&] { return pool.Done(); }, 5000)) {
-            ExitUnclosedServe(4);
-          }
-          r.status = kStatusTimeout;
-          std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘超时，任务已收尾 %s\n",
-                       out_path.c_str());
-        } else if (!deliver_ok) {
-          r.status = kStatusJsErr;  // 落盘失败以非 OK 码显形（复用 3 号档）
-          std::fprintf(stderr, "vtx_cef_worker: PNG 编码/落盘失败 %s\n",
-                       out_path.c_str());
+
+      // —— sync 快照 + 机器让位：帧 N 的身份/证明字段在机器仍跟踪 N 时
+      // 定格（exact_baseline.TimingFields 同理——它是跨帧复用的有状态
+      // 对象）；随后 Reset 把 S0 让给帧 N+1 的 BeginRequest，捕获 N+1 才能
+      // 与编码 N 并行。adapter_timing 行在回执时按快照身份补记。
+      PendingReceipt snap;
+      snap.capture_wall_us = capture_wall_us;
+      if (opt.sync && sync_machine.accepted()) {
+        snap.sync_valid = true;
+        snap.request_started_us = request_started_us;
+        snap.signed_ready_us =
+            sync_machine.t_ready_us() - sync_machine.t_request_begin_us();
+        snap.signed_renderer_pid = active_state.js_error.renderer_pid;
+        snap.signed_navigations = sync_mode_p ? 0u : 1u;
+        snap.signed_fence_count =
+            active_state.js_error.sent - signed_checkpoint_floor;
+        snap.signed_native_paints =
+            active_state.paints.load() - signed_paint_floor;
+        snap.capture_fps = cef_opt.capture_fps;
+        snap.exact_canary = opt.sync_canary == "exact";
+        snap.sync_mode_p = sync_mode_p;
+        snap.pair_index = binding.pair;
+        snap.signed_prefetch = binding.signed_prefetch;
+        if (snap.exact_canary)
+          snap.exact_timing_fields = active_capture.TimingFields();
+        snap.machine_desc = sync_machine.request();
+        sync_machine.Reset(NowUs(), "done");
+        planner.NotifyRequestFinished(true);  // 成功才交替活跃对
+      }
+
+      // —— 流水交汇：帧 N-1 编码完成后发送其回执（此后宿主才读其输出
+      // 文件、也才可能提交帧 N+1 的再下一请求；串行宿主在此自然同步）。
+      // 捕获失败也必须先排空 N-1：回执严格按请求序到达，宿主按序出队
+      // 校验身份，乱序会把"帧 N 捕获失败"误报成身份错位。
+      if (pending.active && !drain_and_send_pending()) break;
+
+      if (r.status != kStatusOk) {
+        // 捕获失败：不进流水，直接回执失败码（机器已 FailRequest→S0，
+        // 无 adapter_timing——与串行版 accepted() 守卫语义一致）。
+        FrameSlotHeader receipt;
+        FillReceipt(&receipt, r, run_id, req.request_id, req.frame_index,
+                    0, 0, 0);
+        if (!SendAll(conn, &receipt, sizeof(receipt))) {
+          exit_code = 4;
+          break;
         }
+        continue;
       }
-      finish_sync(capture_wall_us, t_queue, t_alpha, t_png, t_disk, 0, r.status);
-      FrameSlotHeader receipt;
-      FillReceipt(&receipt, r, run_id, req.request_id, req.frame_index,
-                  t_alpha, t_png, t_disk);
-      if (!SendAll(conn, &receipt, sizeof(receipt))) {
-        exit_code = 4;
-        break;
-      }
-      if (encode_timed_out) {
-        exit_code = 4;  // Failed request: drained task, no output/request reuse.
-        break;
-      }
-      if (r.status == kStatusOk) {
-        ++ok_replies;
-      }
+
+      // —— 提交帧 N 编码（池线程读 cap_buf；帧 N+1 捕获将写另一缓冲）——
+      snap.active = true;
+      snap.request_id = req.request_id;
+      snap.frame_index = req.frame_index;
+      snap.r = r;
+      snap.out_path = out_path;
+      snap.deliver_ok = true;
+      const uint8_t* cap_px = cap_buf.data();
+      const int enc_w = static_cast<int>(r.width);
+      const int enc_h = static_cast<int>(r.height);
+      const uint64_t queued_us = NowUs();
+      pending = std::move(snap);
+      PendingReceipt& p = pending;
+      pool.Post([&, cap_px, enc_w, enc_h, queued_us] {
+        p.t_queue = NowUs() - queued_us;
+        try {
+          PngBuffer png;
+          uint64_t t_alpha = 0;
+          const uint64_t t3 = NowUs();
+          const bool enc = EncodePngBgraPremultiplied(cap_px,
+              enc_w, enc_h, static_cast<size_t>(enc_w) * 4u, opt.png,
+              &encode_workspace, &png, &t_alpha);
+          const uint64_t encode_wall_us = NowUs() - t3;
+          p.t_png = encode_wall_us >= t_alpha ? encode_wall_us - t_alpha : 0;
+          p.t_alpha = t_alpha;
+          const uint64_t t4 = NowUs();
+          p.deliver_ok =
+              enc && AtomicWriteBytes(p.out_path, png.data(), png.size());
+          p.t_disk = NowUs() - t4;
+        } catch (...) {
+          // Keep task completion observable even if allocation/encoding throws.
+          p.deliver_ok = false;
+        }
+      });
+      staging_idx ^= 1;  // 帧 N+1 捕获切到另一缓冲（帧 N 编码仍读本缓冲）
     } else {
       // ================= 模式 2：SHM 环跨进程零拷贝 ====================
+      // 混合会话防御：上一帧模式 1 编码仍在飞时收到模式 2 请求，先排空其
+      // 回执再进入环路径——回执严格按请求序（模式 2 回执在本迭代内即时
+      // 发送，若不先排空会越过在飞的模式 1 回执）。
+      if (pending.active && !drain_and_send_pending()) break;
       // 工单背压语义：4 槽全满时不发起下一帧 BeginFrame（produce 未启
       // 动），分片等空槽；等待计时随通知回传并累计入环控制块。
+      // （模式 2 不经编码池：回执在本迭代内即时发送，机器仍跟踪本请求，
+      // adapter_timing 按当前身份直记——与模式 1 的流水快照路径不同。）
+      const auto finish_sync = [&](uint64_t capture_us, uint64_t queue_us,
+                                   uint64_t alpha_us, uint64_t png_us,
+                                   uint64_t disk_us, uint64_t backpressure_us,
+                                   uint16_t delivery_status) {
+        if (!opt.sync || !sync_machine.accepted()) return;
+        if (sync_mode_p && opt.sync_canary == "exact" && delivery_status != kStatusOk)
+          exact_baseline.PoisonResident();
+        const uint64_t now = NowUs();
+        std::string fields = "\"request_wall_to_reply_us\":" +
+            std::to_string(now - request_started_us) +
+            ",\"capture_fps_requested\":" + std::to_string(cef_opt.capture_fps) +
+            ",\"capture_wall_us\":" + std::to_string(capture_us) +
+            ",\"signed_ready_us\":" + std::to_string(
+                sync_machine.t_ready_us() - sync_machine.t_request_begin_us()) +
+            ",\"signed_renderer_pid\":" +
+            std::to_string(active_state.js_error.renderer_pid) +
+            ",\"signed_navigations\":" + std::to_string(sync_mode_p ? 0 : 1) +
+            ",\"signed_fence_count\":" + std::to_string(
+                active_state.js_error.sent - signed_checkpoint_floor) +
+            ",\"signed_native_paints\":" + std::to_string(
+                active_state.paints.load() - signed_paint_floor) +
+            ",\"encode_queue_us\":" + std::to_string(queue_us) +
+            ",\"alpha_us\":" + std::to_string(alpha_us) +
+            ",\"png_us\":" + std::to_string(png_us) +
+            ",\"disk_us\":" + std::to_string(disk_us) +
+            ",\"backpressure_us\":" + std::to_string(backpressure_us) +
+            ",\"delivery_status\":" + std::to_string(delivery_status) +
+            ",\"timing_boundary\":\"request_received_to_reply_ready\"" +
+            ",\"capture_stages_overlap\":" +
+            (opt.sync_canary == "exact" ? "true" : "false");
+        if (opt.sync_canary == "exact") {
+          // PairSwap 证据（同模式 1 回执字段面）。
+          fields += ",\"pair_index\":" + std::to_string(binding.pair) +
+                    ",\"signed_prefetch\":\"" +
+                    std::string(pairswap::OutcomeName(binding.signed_prefetch)) +
+                    "\"";
+          fields += active_capture.TimingFields();
+        }
+        sync_machine.RecordAdapterTiming(now, fields);
+        sync_machine.Reset(now, "done");
+        planner.NotifyRequestFinished(true);  // 成功才交替活跃对
+      };
       int slot = -1;
       uint64_t bp_wait = 0;
       const uint64_t deadline =
@@ -1795,9 +2199,9 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
         r.status = kStatusTimeout;  // 背压超时：明确错误，不死等
       } else if (opt.sync) {
         SyncProduceResult sr = ProduceFrameSync(
-            state, pump, browser, sync_machine, exact_baseline, opt, document_gen,
-            req.request_id, req.frame_index, expected_w, expected_h,
-            ring->SlotData(static_cast<uint32_t>(slot)));
+            active_state, pump, active_browser, sync_machine, active_capture,
+            opt, document_gen, req.request_id, req.frame_index, expected_w,
+            expected_h, ring->SlotData(static_cast<uint32_t>(slot)), binding);
         r.status = sr.status;
         r.width = sr.width;
         r.height = sr.height;
@@ -1870,9 +2274,18 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
     std::lock_guard<std::mutex> lock(state.mu);
     state.sync_machine = nullptr;  // 先摘除再析构（防御晚回调）
   }
+  {
+    std::lock_guard<std::mutex> lock(state_b.mu);
+    state_b.sync_machine = nullptr;  // PairSwap B 对同摘（未启用时本为空）
+  }
   const bool unsigned_closed = exact_baseline.Close(pump);
+  const bool unsigned_closed_b =
+      !pair_swap_engaged ? true : exact_baseline_b.Close(pump);
   const bool signed_closed = CloseServeBrowser(state, pump, browser, creation_requested);
-  if (!unsigned_closed || !signed_closed) {
+  const bool signed_closed_b =
+      CloseServeBrowser(state_b, pump, browser_b, creation_requested_b);
+  if (!unsigned_closed || !unsigned_closed_b || !signed_closed ||
+      !signed_closed_b) {
     // Calling CefShutdown with a live browser violates CEF's lifetime contract.
     // Do not log/flush/close streams here: another thread may own a FILE lock.
     // The nonzero process exit and host EOF establish the failed shutdown.
@@ -1880,7 +2293,10 @@ int RunServe(const ServeOptions& opt, int argc, char* argv[]) {
   }
   browser = nullptr;
   state.browser = nullptr;
+  browser_b = nullptr;
+  state_b.browser = nullptr;
   client = nullptr;
+  client_b = nullptr;
   CefShutdown();
   if (sync_log_fh != nullptr) {
     std::fclose(sync_log_fh);  // JSONL 全事件日志（无缓冲，崩溃窗口亦保真）

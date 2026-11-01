@@ -157,10 +157,26 @@ spng L1 SUB|UP）→ `.tmp.<pid>.<tid>`+`rename` 原子落盘 → 回执(128B)�
 回执计时字段语义不变：`t_png_encode_us` 为所选后端编码段耗时
 （跨后端对比时注意口径一致）。
 
+**双 ticket 流水（深度 2，默认开启；二进制布局与回执字段集零改动）**：
+worker 在帧 N 的编码/落盘（池线程）期间即接收并捕获帧 N+1（UI 线程，
+暂存双缓冲：帧 N+1 捕获写与帧 N 编码读物理分离）。回执时序不变式：
+帧 N 的回执仍严格晚于其**自身**编码完成——宿主收到回执即读输出文件，
+原子写保证完整；两帧回执按请求顺序到达（客户端按提交序出队校验）。
+编码超时沿用 60s 死线 + 5s 收尾宽限；死线击穿（I/O 卡死）不回执、
+不接新请求，进程以 4 退出由宿主监管回收。失败路径保守：帧 N 编码/
+落盘失败 → 非 OK 回执送达后整个 serve 以退出码 4 终止（帧 N+1 的
+投机捕获随之废弃，不产生半写文件），绝不静默丢帧续跑；帧 N 捕获
+失败 → 先送达帧 N-1 的在途 OK 回执，再回执本帧失败码，宿主按序
+消费。宿主 EOF 时在途末帧先排空回执再优雅收尾。
+
 Python 单线程客户端使用 `submit_png` / `receive_png` 分离发送与接收；同一客户端
-最多一个未收回执的请求，禁止和槽请求交错。收到并核验回执后，才可发送下一请求；
-两个交替文件名使下一帧原生工作能与上一帧宿主校验/原子提交重叠。同步
-`request_png` 仍可用；64B 请求、128B 回执、SHM 布局不变，不是批量协议或无限队列。
+在途未回执的 PNG 请求至多 **2 个**（深度 2 上限，禁止更深排队；模式 2 槽请求
+不得与 PNG 请求混用）。`receive_png` 按提交顺序出队最旧在途请求并校验身份；
+回执永远不早于该帧自身编码完成。宿主可在收到帧 N 回执前先提交帧 N+1——
+这正是流水收益来源；两个交替文件名使下一帧原生工作能与上一帧宿主校验/原子
+提交重叠。同步 `request_png` 仍可用（串行契约：worker 对串行宿主零开销兼容，
+回执在编码完成即达）；64B 请求、128B 回执、SHM 布局不变，不是批量协议或
+无限队列。
 `*.pipeline.json` 另记宿主请求往返与块墙钟；回执分项不覆盖完整导航/JS fence/
 宿主校验等开销，也不能因流水重叠将各分项之和当作端到端墙钟。
 其中 execution/task/attempt 关联 execution events；每帧 submit/receive/validate/commit
@@ -170,6 +186,11 @@ offset 均相对该块的 `block_started_counter_us`，使用 Python `perf_count
 其 gfx task 和整体 stage 的 execution events，不应从 gfx 总耗时中漏掉。
 原生成功请求 `adapter_timing.request_wall_to_reply_us` 从验证后的请求接收至回执准备好，
 不含实际 socket 发送；capture/encode queue/alpha/png/disk 可分项，剩余为未细分适配开销。
+双 ticket 流水下该行的字段在「帧 N 捕获完成、状态机仍跟踪帧 N」时快照（含
+exact 基线计时），行本身在帧 N 回执时刻按快照身份补记（`RecordAdapterTimingFor`，
+JSONL 中 `request_end`(N) 先于 `adapter_timing`(N) 属预期顺序）；`request_wall_to_reply_us`
+因此完整覆盖「请求接收→本帧回执就绪」，含与帧 N+1 捕获重叠的等待，分项字段
+仍各自归属本帧，不可相加。
 `capture_offsets_origin=sync_request_begin` 下的 signed proof、unsigned load/readiness/
 two samples/veto 是里程碑 offset，不能相加；原生与 Python 时钟不假定可直接对齐。
 veto 的 two samples 默认要求与冻结签名重建逐字节相同；唯一例外是光栅化抖动容忍
@@ -182,6 +203,20 @@ renderer PID 是原生错误观察器在现有文档/请求绑定后附加的诊
 捕获证明或放行条件；相同/不同 PID 用于核实共享/独立 context 是否真的分 renderer。
 `adapter_timing.capture_fps_requested` 与宿主 runtime `capture_fps` 记录两路浏览器的
 同一个 OSR 请求值，不是实测回调速率或 timeline 帧率；不改变请求/回执二进制布局。
+
+**PairSwap 双对交替预取（mode n + exact canary，默认开启）**：worker 维持两对浏览器
+（signed+unsigned × A/B，B 对在首个绑定它的请求时以目标 URL 创建，创建即导航）。
+绑定帧 N 的瞬间——即空闲对空闲窗口 `[accept(N-1), Begin(N+1)]` 的起点——立即对
+空闲对 `(N+1)%2` 两个浏览器 `LoadURL` 帧 N+1：纯文档导航，不注入桥（桥仍在下一
+请求绑定后按原语义注入）。帧 N+1 请求到达时若预取记录匹配（帧号+URL+导航基线）
+则绑定该对、跳过重新导航，走与逐帧语义完全相同的就绪/证明/veto 步骤；记录不匹配
+（乱序/非常规请求、B 对创建失败永久降级、开关关闭）一律回退 navigate-now 现路径。
+任一时刻仍是 1 个对在验证 + 1 个对在导航，不新增第三路并发。宿主侧
+`VTX_CEF_PAIR_SWAP=0`（默认 `1`）整体回退单对旧路径，该开关随 CEF 配置进缓存身份。
+回执与 JSONL 布局不变；`adapter_timing` 追加三个证据字段：`pair_index`（本帧绑定
+的对 0/1）、`signed_prefetch` / `unsigned_prefetch`（`hit`=预取记录匹配免导航、
+`miss`=回退 navigate-now、`off`=PairSwap 未启用）。`hit` 只说明绑定走了免导航路径，
+导航是否已跑完由既有加载门保证；veto 字节面与故障注入语义（§5/§6）不受预取影响。
 
 **模式 2（SHM 环跨进程传输，为 #68 直通 FFmpeg 预研）**：
 请求(64B) → **先取空槽**（4 槽全满=背压：暂停发起下一帧 BeginFrame，

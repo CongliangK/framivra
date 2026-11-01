@@ -106,6 +106,7 @@ struct RunOptions {
   std::string sync_fault = "none";     // 对抗注入面（见 Usage）
   int sync_pump_timeout_ms = 5000;     // S4 泵送硬超时（工单冻结 5000ms）
   int sync_ready_timeout_ms = 20000;   // S1→S3 就绪信号等待上限
+  std::string pair_swap = "1";         // PairSwap 双对交替预取（默认开启）
 };
 
 void Usage(const char* argv0) {
@@ -163,7 +164,10 @@ void Usage(const char* argv0) {
       "  --sync-fault=<mode>     none|stale_canary（恒画 f-1 签名）|no_canary（不画）|\n"
       "                          no_ready（不发就绪信号）|early_burst（S1 突发泵送）\n"
       "  --sync-pump-timeout-ms=N        S4 泵送硬超时（默认 5000，工单口径）\n"
-      "  --sync-ready-timeout-ms=N       S1→S3 就绪等待上限（默认 20000）\n",
+      "  --sync-ready-timeout-ms=N       S1→S3 就绪等待上限（默认 20000）\n"
+      "  --pair-swap=0|1                 PairSwap 双对交替预取（默认 1；仅\n"
+      "                          --sync-mode=n + --sync-canary=exact 生效；0 回退\n"
+      "                          单对 navigate-now；env 面为 VTX_CEF_PAIR_SWAP）\n",
       CEF_VERSION, VTX_CHROME_VERSION_STRING, argv0, argv0);
 }
 
@@ -239,6 +243,8 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
       opt->sync_canary = v;
     } else if (const std::string v = value("--sync-fault="); !v.empty()) {
       opt->sync_fault = v;
+    } else if (const std::string v = value("--pair-swap="); !v.empty()) {
+      opt->pair_swap = v;
     } else if (const std::string v = value("--png-encoder="); !v.empty()) {
       opt->png_encoder = v;
     } else if (const std::string v = value("--png-filter="); !v.empty()) {
@@ -337,6 +343,11 @@ bool ParseArgs(int argc, char* argv[], RunOptions* opt, bool* sanity) {
         std::fprintf(stderr, "--sync-*-timeout-ms 须为正\n");
         return false;
       }
+    }
+    if (opt->pair_swap != "0" && opt->pair_swap != "1") {
+      std::fprintf(stderr, "--pair-swap 只接受 0|1，得到 %s\n",
+                   opt->pair_swap.c_str());
+      return false;
     }
     if (opt->fault_inject.empty() || opt->fault_inject == "none") {
       // 正常面
@@ -608,6 +619,7 @@ int main(int argc, char* argv[]) {
     sopt.sync_fault = opt.sync_fault;
     sopt.sync_pump_timeout_ms = opt.sync_pump_timeout_ms;
     sopt.sync_ready_timeout_ms = opt.sync_ready_timeout_ms;
+    sopt.pair_swap = opt.pair_swap == "1";
     if (opt.fault_inject == "abort_after_frame") {
       sopt.fault_abort_after_frames = opt.fault_abort_after_frames;
     }
