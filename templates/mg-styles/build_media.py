@@ -88,7 +88,7 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
     # Only common timeline/cue inputs go to the Canvas skeleton. Backend palettes
     # have their own schemas (flat-vector uses six colors) and are not Canvas data.
     basic={key:content[key] for key in ('title','subtitle','seed') if key in content}
-    builder.build(style,output,basic,frames,True,scaffold=False)
+    cue_data,timeline=builder._compose(style,output,basic,frames,False)
     data=dict(content);font_path=data.pop('font_path',None)
     if font_path is not None and not Path(font_path).is_file(): raise ValueError('font_path must name an existing local font')
     if style=='soft-3d':
@@ -108,7 +108,8 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
         return {'style':style,'frames':frames,'mode':three_d_mode if style=='soft-3d' else 'source-frames','output':str(output),'preflight':preflight}
     for tool in (('blender','ffmpeg') if style=='soft-3d' else ('ffmpeg',)):
         if not shutil.which(tool): raise ValueError(tool+' is required for selected media path')
-    timeline=builder.build(style,output,basic,frames,scaffold=False)
+    creation=builder._claim_creation(output)
+    builder._materialize_assets(style,output,cue_data,frames,scaffold=False)
     output=Path(output);media=output/'media';media.mkdir()
     for name,source in sources.items(): (output/name).write_bytes(source)
     renderer.__file__=str(output/renderer_name)
@@ -150,14 +151,22 @@ def assemble(style, output, content, frames=90, background=None, samples=16,
         timeline['sources'] += [{'id':'background','path':str(copied.relative_to(output))},{'id':'captions','path':'media/captions.mov'}]
         timeline['video_tracks'] += [dict(name='Real background video',kind='broll',clips=[clip('background')]),dict(name='Reaction captions',kind='broll',clips=[clip('captions',x=bounds[0],y=bounds[1],fade_in_frames=1,fade_out_frames=1)])]
         (output/'caption-provenance.json').write_text(json.dumps(provenance,indent=2)+'\n')
-    (output/'timeline.json').write_text(json.dumps(timeline,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
-    versions={}
-    for package in ('Pillow','numpy'):
-        try: versions[package]=importlib.metadata.version(package)
-        except importlib.metadata.PackageNotFoundError: versions[package]=None
-    versions['ffmpeg']=subprocess.check_output(['ffmpeg','-version'],text=True).splitlines()[0]
-    receipt={'style':style,'frames':frames,'mode':three_d_mode if style=='soft-3d' else 'source-frames','source_size':[render_width,render_height] if style=='soft-3d' else [1920,1080],'project_size':[1920,1080],'renderer_sources':{name:hashlib.sha256(source).hexdigest() for name,source in sources.items()},'versions':versions,'creative_sha256':hashlib.sha256((output/'creative.json').read_bytes()).hexdigest(),'state':'sources-created; vtx all and artistic acceptance pending'}
-    (output/'source-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    request=builder._publish(creation,timeline)
+    try:
+        versions={}
+        for package in ('Pillow','numpy'):
+            try: versions[package]=importlib.metadata.version(package)
+            except importlib.metadata.PackageNotFoundError: versions[package]=None
+        versions['ffmpeg']=subprocess.check_output(['ffmpeg','-version'],text=True).splitlines()[0]
+        receipt={'style':style,'frames':frames,'mode':three_d_mode if style=='soft-3d' else 'source-frames','source_size':[render_width,render_height] if style=='soft-3d' else [1920,1080],'project_size':[1920,1080],'renderer_sources':{name:hashlib.sha256(source).hexdigest() for name,source in sources.items()},'versions':versions,'creative_sha256':hashlib.sha256((output/'creative.json').read_bytes()).hexdigest(),'state':'sources-created; vtx all and artistic acceptance pending'}
+        (output/'source-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    except Exception as error:
+        failure=RuntimeError('MG timeline committed; source receipt incomplete: '
+                             f'{type(error).__name__}: {error}; operation_id={request["op_id"]}; '
+                             f'original_request={request!r}')
+        failure.operation_id=request['op_id']
+        failure.request=request
+        raise failure from error
     return timeline
 
 
@@ -175,7 +184,8 @@ def main():
     parser.add_argument('--three-d-mode',choices=('full','storyboard'),default='full')
     args=parser.parse_args()
     try:
-        result=assemble(args.style,args.output,json.loads(args.content.read_text(encoding='utf-8')),args.frames,args.background,args.samples,args.dry,args.three_d_mode,args.render_width,args.render_height)
+        content=frozen_module('build.py',(ROOT/'build.py').read_bytes())._parse_content(args.content)
+        result=assemble(args.style,args.output,content,args.frames,args.background,args.samples,args.dry,args.three_d_mode,args.render_width,args.render_height)
     except (ValueError,OSError,RuntimeError,ImportError) as error: parser.error(str(error))
     if args.dry: print(json.dumps(result,indent=2))
 if __name__=='__main__':main()

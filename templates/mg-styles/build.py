@@ -8,12 +8,81 @@ import shutil
 import math
 import struct
 import wave
+import uuid
+import sys
+from copy import deepcopy
+
+
+def _public_api():
+    """Use the normally installed public kernel, without masking broken imports."""
+    try:
+        import vtx.api as api
+    except ModuleNotFoundError as error:
+        if error.name not in ('vtx', 'vtx.api'):
+            raise
+        raise RuntimeError(f'MG requires matching Framivra installed in {sys.executable}; '
+                           'see templates/mg-styles/README.md for installation with this interpreter') from error
+    required = ('parse_write_json', 'read_timeline_for_write',
+                'timeline_write_plan', 'timeline_transaction')
+    missing = [name for name in required if not callable(getattr(api, name, None))]
+    if missing:
+        raise RuntimeError('MG requires a newer matching Framivra public API in '
+                           f'{sys.executable}; missing exports: {", ".join(missing)}; '
+                           'see templates/mg-styles/README.md for installation with this interpreter')
+    return api
+
+
+def _parse_content(path):
+    return _public_api().parse_write_json(Path(path).read_bytes())
+
+
+def _publication_error(phase, result, request):
+    error = RuntimeError(f'MG timeline {phase} failed: code={result.get("code", "input.error")} '
+                         f'operation_id={request["op_id"]}; {result.get("message", "")}; '
+                         f'retry={result.get("retry")}; original_request={request!r}')
+    error.code = result.get('code', 'input.error')
+    error.operation_id = request['op_id']
+    error.request = request
+    error.result = result
+    return error
+
+
+def _claim_creation(output):
+    """Claim a new leaf, then freeze missing/base/op before any asset work."""
+    api = _public_api()  # Missing/old kernel must fail before even mkdir.
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=False)
+    target = output.resolve(strict=True) / 'timeline.json'
+    request = dict(protocol=2, operation='create', op_id='mg-create-' + uuid.uuid4().hex,
+                   base_revision=None, identity_mode='preserve-unmanaged',
+                   payload_mode='document', purpose='create')
+    try:
+        snapshot = api.read_timeline_for_write(target)
+    except (ValueError, OSError) as error:
+        raise _publication_error('snapshot', dict(code=getattr(error, 'code', 'input.error'),
+                                                  message=str(error)), request) from error
+    if any(snapshot[key] is not None for key in ('raw_bytes', 'revision', 'document')):
+        raise _publication_error('snapshot', dict(code='create.exists',
+                                 message='target appeared after directory claim; expected missing'), request)
+    return api, target, request
+
+
+def _publish(creation, timeline):
+    """One complete document, same request for public plan and single commit."""
+    api, target, request = creation
+    request['document'] = deepcopy(timeline)
+    for phase, function in (('plan', api.timeline_write_plan),
+                            ('transaction', api.timeline_transaction)):
+        result = function(target, request)
+        if not result.get('ok'):
+            raise _publication_error(phase, result, request)
+    return request
 
 STYLES = ('cel-boil','isometric','flat-vector','line-art','soft-3d','morph','sticker','hud','collage','aurora-glass','bauhaus','synthwave','pixel','liquid','variety-captions')
 ROOT = Path(__file__).resolve().parent
 DEFAULT = dict(title='Ideas become motion', subtitle='Observe · connect · transform', items=[dict(label='Discover',value=24),dict(label='Build',value=56),dict(label='Share',value=88)], palette=['#faf5e8','#202730','#e66b42','#49a69d'],seed=7,pace=1.0,hold_frames=12)
 
-def build(style, output, content=None, frames=90, dry=False, *, scaffold=True):
+def _compose(style, output, content, frames, scaffold):
     if style not in STYLES: raise ValueError('unknown style')
     if type(frames) is not int or frames < 30 or frames > 18000: raise ValueError('frames must be an integer between 30 and 18000')
     data = dict(DEFAULT)
@@ -34,12 +103,16 @@ def build(style, output, content=None, frames=90, dry=False, *, scaffold=True):
     if type(data['hold_frames']) is not int or not 0 <= data['hold_frames'] < frames/2: raise ValueError('hold_frames must be integer in [0,frames/2)')
     data.update(style=style,frames=frames)
     output=Path(output)
-    if output.exists(): raise ValueError('output must be a new directory')
+    if output.exists() or output.is_symlink(): raise ValueError('output must be a new directory')
     deps=['gfx/'+s for s in ('content.js','runtime.js','prototype-helpers.js','prototype.js')]
     timeline={'version':2,'project':{'fps':30,'width':1920,'height':1080,'duration_frames':frames},'sources':[{'id':'cue','path':'cue.wav'}], 'video_tracks':[{'name':'MG composition','kind':'gfx','clips':[{'src':'gfx/index.html','dst_in':0,'dur':frames,'cache_dependencies':deps}]}], 'audio_tracks':[{'name':'procedural cues','events':[{'src':'cue','in':0,'out':frames,'src_in':0,'volume':1.0}]}],'subtitles':[]}
     if not scaffold: timeline['video_tracks']=[]
-    if dry: return timeline
-    output.mkdir(parents=True)
+    return data, timeline
+
+
+def _materialize_assets(style, output, data, frames, *, scaffold):
+    """Assets only, inside the caller's exclusively claimed new directory."""
+    output = Path(output)
     # Original, deterministic reference cue track. Replace with editorial audio.
     with wave.open(str(output/'cue.wav'),'wb') as wav:
         wav.setparams((2,2,48000,0,'NONE','not compressed'))
@@ -61,7 +134,14 @@ def build(style, output, content=None, frames=90, dry=False, *, scaffold=True):
         html='<!doctype html><meta charset="utf-8"><title>MG composition</title><style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden}canvas{display:block}</style><canvas id="stage" width="1920" height="1080"></canvas>'
         html+=''.join('<script src="'+s+'"></script>' for s in ('content.js','prototype-helpers.js','prototype.js','runtime.js'))
         (gfx/'index.html').write_text(html,encoding='utf-8')
-    (output/'timeline.json').write_text(json.dumps(timeline,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+
+
+def build(style, output, content=None, frames=90, dry=False, *, scaffold=True):
+    data, timeline = _compose(style, output, content, frames, scaffold)
+    if dry: return timeline
+    creation = _claim_creation(output)
+    _materialize_assets(style, output, data, frames, scaffold=scaffold)
+    _publish(creation, timeline)
     return timeline
 
 def main():
@@ -69,7 +149,7 @@ def main():
     p.add_argument('--style',choices=STYLES,required=True);p.add_argument('--output',type=Path,required=True)
     p.add_argument('--content',type=Path);p.add_argument('--frames',type=int,default=90);p.add_argument('--dry',action='store_true')
     a=p.parse_args()
-    try: result=build(a.style,a.output,json.loads(a.content.read_text(encoding='utf-8')) if a.content else None,a.frames,a.dry)
-    except (ValueError,OSError) as e: p.error(str(e))
+    try: result=build(a.style,a.output,_parse_content(a.content) if a.content else None,a.frames,a.dry)
+    except (ValueError,OSError,RuntimeError) as e: p.error(str(e))
     if a.dry: print(json.dumps(result,indent=2))
 if __name__=='__main__':main()

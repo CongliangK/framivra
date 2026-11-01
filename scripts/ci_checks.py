@@ -70,6 +70,27 @@ MEDIA_TESTS = {
     'demo-toolchain': (
         'tests.contracts.test_demo_fixture.RealGenerationTests',
     ),
+    # High-cost opt-in batch: WarmInline16 prepares a new 1080p/60s warm AV
+    # fixture. Like 'demo-toolchain' it is NOT executed by any CI workflow, but
+    # stays strictly inventoried (media_inventory anchors on VTX_TEST_INLINE16)
+    # so the class cannot silently disappear. Run it zero-skip on demand via
+    # 'python scripts/ci_checks.py inline16'.
+    'inline16': (
+        'tests.contracts.test_timeline_frame_inline_real.WarmInline16',
+    ),
+    # High-cost opt-in batch (~95s): FramePixels renders real frames and one
+    # method needs a real Chrome, so zero-skip requires both ffmpeg and Chrome.
+    # Not executed by any CI workflow; run on demand via
+    # 'python scripts/ci_checks.py frame-pixels'.
+    'frame-pixels': (
+        'tests.contracts.test_timeline_frame.FramePixels',
+    ),
+}
+
+# Selectors whose class-level gate would classify them as default 'ffmpeg' but
+# which are deliberately kept in an opt-in strict batch. They stay inventoried.
+OPT_IN_OVERRIDES = {
+    'tests.contracts.test_timeline_frame.FramePixels': 'frame-pixels',
 }
 
 # Whole-module placement only: MEDIA_TESTS is the complete strict inventory.
@@ -147,6 +168,8 @@ MEDIA_CONDITIONS = {
     # strict batch (not the CI ffmpeg job). Mixed demo+ffmpeg/chrome gates stay
     # classified as their CI kind so they can never escape strict coverage.
     'VTX_TEST_DEMO_TOOLCHAIN': 'demo-toolchain',
+    # High-cost warm-AV opt-in: its own strict batch, never a CI default job.
+    'VTX_TEST_INLINE16': 'inline16',
 }
 
 
@@ -207,6 +230,8 @@ def media_inventory(root=ROOT):
                 inventory[selector] = 'chrome'
             elif found == {'demo-toolchain'}:
                 inventory[selector] = 'demo-toolchain'
+            elif found <= {'inline16', 'ffmpeg'} and 'inline16' in found:
+                inventory[selector] = 'inline16'
             else:
                 inventory[selector] = 'ffmpeg'
 
@@ -227,6 +252,9 @@ def media_inventory(root=ROOT):
                 for method in methods:
                     if method.name.startswith('test'):
                         record(selector + '.' + method.name, gates(method))
+    for selector, kind in OPT_IN_OVERRIDES.items():
+        if selector in inventory:
+            inventory[selector] = kind
     return inventory
 
 
@@ -295,6 +323,14 @@ def prepare_media(kind):
          '-f', 'null', '-'])
     if kind == 'ffmpeg':
         os.environ.update(VTX_AUDIO_REPORT_INTEG='1', VTX_RANGE_INTEG='1')
+    elif kind == 'inline16':
+        # Opt-in high-cost batch: keep strict zero-skip semantics; the gate
+        # authorizes the new external warm16 AV preparation it names.
+        os.environ['VTX_TEST_INLINE16'] = '1'
+    elif kind == 'frame-pixels':
+        # Opt-in batch: strict zero-skip needs the real Chrome as well.
+        chrome = prepare_chrome()
+        os.environ.update(VTX_TEST_CHROME=chrome, VTX_CHROME=chrome)
     elif kind == 'demo-toolchain':
         # Opt-in input-anchor batch: preserve strict zero-skip semantics;
         # missing dependencies or unverified inputs remain hard failures.
@@ -364,7 +400,8 @@ def _strict_suite(names, stream):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('gate', choices=('static', 'ffmpeg', 'chrome',
-                                        'demo-toolchain'))
+                                        'demo-toolchain', 'inline16',
+                                        'frame-pixels'))
     parser.add_argument('--group', choices=('1', '2', '3'),
                         help='whole-module group: FFmpeg 1-3 or Chrome 1-2')
     args = parser.parse_args(argv)

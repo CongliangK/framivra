@@ -1,0 +1,33 @@
+{
+  "name": "framivra-dsh-sidebar",
+  "version": "0.1.0",
+  "description": "Read-only Framivra timeline preview for DSH",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "engines": { "node": ">=22.15", "dsh": ">=0.2.1-rc.2 <0.3.0" },
+  "license": "MIT",
+  "files": ["lib", "cordis.patch.yml", "LICENSE", "README.md"],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-session"],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build:client": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "peerDependencies": { "react": "18.3.1" },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-client-modules": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
+    "jsdom": "29.1.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsdown": "0.22.2"
+  }
+}

@@ -833,15 +833,52 @@ def _main(execution=None):
                     help="diff 时间线模式专属：机器可读 diff/影响面/推荐路径 JSON 写入 PATH"
                          "（缺省只打印人读摘要；报告对比模式不支持）；"
                          "audio --report/--report-only 专属：报告 JSON 落盘 PATH（默认 out/audio_report.json）")
+    ap.add_argument("--render", action="store_true", help="timeline frame only: authorize warm-input PNG writes under cache/preview")
+    ap.add_argument("--max-png-bytes", help="timeline frame only: PNG delivery byte cap (default 8388608)")
+    ap.add_argument("--include-png", action="store_true", help="timeline frame only: inline canonical base64 PNG; requires --render")
+    ap.add_argument("--request", metavar="PATH", help="store only: strict JSON request file (store writes; store plan is zero-write)")
+    ap.add_argument("--request-stdin", action="store_true",
+                    help="store [plan] only: strict UTF-8 JSON request from stdin through EOF (max 8388608 bytes); exclusive with --request")
+    ap.add_argument("--family", help="query only: video | audio | subtitles")
+    ap.add_argument("--track-index", help="query only: zero-based transient track position")
+    ap.add_argument("--block-index", help="query only: zero-based transient block position")
+    ap.add_argument("--frame", help="query/reference/timeline frame: global integer frame (not seconds)")
+    ap.add_argument("--interval", nargs=2, metavar=("START", "END"),
+                    help="query/reference: overlapping global integer frame interval [START,END)")
+    for name in ("track-id", "block-id", "track-address", "block-address"):
+        ap.add_argument("--" + name, action="append", help="reference only: repeatable " + name)
+    ap.add_argument("--expected-content-version", help="reference/timeline frame: exact byte version; required for addresses")
     ap.add_argument("command",
                     help="all | " + " | ".join(s[0] for s in STAGES) +
-                         " | clean | gc | df | snapshot | subs | diff")
+                         " | clean | gc | df | snapshot | subs | diff | inspect | query | reference | capabilities | store | timeline frame")
     # 必须定义在 command 之后：argparse 位置参数按定义序匹配，`*` 放前面会把
     # `subs check` 的两个 token 全部吞掉、command 只剩末位（实测 2026-09-11）
     ap.add_argument("subs_extra", nargs="*", metavar="ARG",
                     help="subs 专属：render | preview <时间点...> | check（时间点 `12.5`=秒 / `f360`=帧号）；"
                          "diff 专属：<旧报告.json> <新报告.json>（复用同一位置参数槽，见上注）")
     a = ap.parse_intermixed_args()
+    if a.command == "timeline":
+        from .timeline_frame import run_frame_command
+        return run_frame_command(a, ap)
+    if a.command == "store":
+        from .timeline_store import run_store_command
+        return run_store_command(a, ap)
+    if (a.request is not None or a.request_stdin) and a.command not in ("inspect", "query", "reference", "capabilities"):
+        ap.error("--request/--request-stdin require store")
+    if a.command in ("inspect", "query", "reference", "capabilities"):
+        # Before Ctx, execution links, plugins, project paths or any write gate.
+        from .timeline import run_read_command
+        return run_read_command(a, ap)
+    if any(getattr(a, name) is not None for name in
+           ("family", "track_index", "block_index", "frame", "interval")):
+        ap.error("--family/--track-index/--block-index/--frame/--interval require query")
+    if any(getattr(a, name) is not None for name in
+           ("track_id", "block_id", "track_address", "block_address", "expected_content_version")):
+        ap.error("reference selectors require reference")
+    if a.render or a.max_png_bytes is not None:
+        ap.error("--render/--max-png-bytes require timeline frame")
+    if a.include_png:
+        ap.error("--include-png requires timeline frame")
     policy = ExecutionPolicy.PLAN if a.dry_run else ExecutionPolicy.EXECUTE
     # --until 校验（方案三阶段3）：仅 all 合法 + 值域 = _UNTIL_STAGES；两错均退出码 2
     # （与「未知命令」同级：用法错而非运行错，脚本侧好分类）。audio 不可作终点的

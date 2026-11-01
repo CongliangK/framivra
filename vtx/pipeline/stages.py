@@ -40,11 +40,11 @@ DUCK_MAKEUP = 1
 # `_meta` 为永久自由命名空间白名单（§2.1——插件/脚本标记不触发任何分支）。
 KERNEL_KEYS = {
     "root": {"version", "project", "sources", "video_tracks", "subtitles",
-             "subtitles_src", "audio_tracks"},
+             "subtitles_src", "audio_tracks", "_vtx"},
     "project": {"fps", "width", "height", "duration_frames", "cache_dependencies", "gfx_dependency_policy"},
     "sources[]": {"id", "path", "transform"},
-    "audio_tracks[]": {"name", "duck", "duck_by", "duck_params", "events"},
-    "audio_tracks[].events[]": {"src", "src_in", "in", "out", "volume",
+    "audio_tracks[]": {"id", "name", "duck", "duck_by", "duck_params", "events"},
+    "audio_tracks[].events[]": {"id", "src", "src_in", "in", "out", "volume",
                                 "fade_in_frames", "fade_out_frames", "pan", "loop"},
 }
 
@@ -127,6 +127,19 @@ def _scan_plugin_keys(c: Ctx, errs: list) -> list:
 
 # ---------------------------------------------------------------- validate
 def validate(c: Ctx):
+    return _validate(c)
+
+
+def validate_core(c: Ctx):
+    """Same core rules, without plugin execution, prints or receipt writes.
+
+    Caller must statically exclude active plugins before constructing Ctx.
+    Asset probing and diagnostics remain real; this is not a schema-only check.
+    """
+    return _validate(c, plugin_hooks=False, reporting=False)
+
+
+def _validate(c: Ctx, *, plugin_hooks=True, reporting=True):
     errs = []
     observed = {}
     def observe(key, value):
@@ -178,8 +191,35 @@ def validate(c: Ctx):
         err("时间线仅支持数值 version: 2（不自动转换旧版本或缺失版本）", '$.version',
             'validate.timeline_version', {'present': 'version' in c.tl, 'value': version},
             {'const': 2})
+        if not reporting:
+            return errs
         print("校验失败（1 项）："); print("  ✗", errs[0])
         c.receipt('validate', False, '1 errors')
+        failure = SystemExit(1)
+        mark_handled(failure)
+        raise failure
+    # Presence of _vtx opts into the managed protocol, even if metadata is bad
+    # or incomplete. Never fall back to legacy after a managed check fails.
+    # Legacy rendering keeps its original source/diagnostic/numeric semantics;
+    # write-losslessness and stable-ID restrictions belong to store writes.
+    structural = []
+    if isinstance(c.tl, dict) and '_vtx' in c.tl:
+        from ..timeline_structure import strict_loads, structure_errors
+        try:
+            # Check stored objects, never Ctx.tl's expanded external subtitles.
+            stored = strict_loads(c.timeline_bytes) if hasattr(c, 'timeline_bytes') else c.tl
+            structural = structure_errors(stored, require_managed=True)
+        except (ValueError, UnicodeError, RecursionError) as error:
+            structural = [str(error)]
+    if structural:
+        for message in structural:
+            err(message, rule='validate.stored_structure')
+        if not reporting:
+            return errs
+        print(f"校验失败（{len(errs)} 项）：")
+        for message in errs:
+            print("  ✗", message)
+        c.receipt('validate', False, f'{len(errs)} errors')
         failure = SystemExit(1)
         mark_handled(failure)
         raise failure
@@ -201,14 +241,18 @@ def validate(c: Ctx):
         problem = source_structure(s, si)
         if problem is not None:
             err(problem); continue
-        srcs[field(s, 'id', f'$.sources[{si}]')] = s
+        sid = field(s, 'id', f'$.sources[{si}]')
+        if sid in srcs:
+            err(f"重复 source id: {sid}", f'$.sources[{si}].id', 'validate.source_identity')
+            continue
+        srcs[sid] = s
     for sid, s in srcs.items():
         sp = f"$.sources[{source_indices[id(s)]}]"
         p = c.src_path(sid)
         if not p.exists(): err(f"source {sid}: 文件不存在 {p}", sp+".path", 'validate.source_exists', {'path': str(p), 'exists': False}, {'exists': True}); continue
         # 缝 C（协议 v1.2，P6）：虚拟源 facts——插件受理的源（如 bgm-render 的
         # music_tools 工程 JSON）用插件供给的 facts，其余照旧 ffprobe 实测
-        i = _plugin_hooks.run_probe_source(c, sid)
+        i = _plugin_hooks.run_probe_source(c, sid) if plugin_hooks else None
         if i is None:
             i = c.probe(p)
         if operation(c, lambda: observe("i['has_video']", i['has_video']), path=sp, rule='probe.metadata_operation', operands={'operation': 'i["has_video"]'}, source={'provider': 'source facts', 'provider_path': "'has_video'"}, status='unknown'):
@@ -299,7 +343,7 @@ def validate(c: Ctx):
             if not native(ep, lambda: 0 <= field(e, 'in', ep) < field(e, 'out', ep) <= c.dur, 'comparison', paths=[key_path(ep, 'in'), key_path(ep, 'out'), '$.project.duration_frames']): err(f"音频事件区间非法: {name}@{field(e, 'in', ep)}", ep, 'validate.audio_event_bounds', {'start': observed.get(key_path(ep, 'in'), {'status': 'not_observed'}), 'end': observed.get(key_path(ep, 'out'), {'status': 'not_observed'}), 'unit': 'frames'}, {'min': 0, 'max': c.dur, 'start_before_end': True, 'unit': 'frames'})
             audio_event_fade(e, ep, name)
             if native(ep, lambda: field(e, 'src', ep) not in srcs, 'comparison', paths=[key_path(ep, 'src')]): err(f"音频引用未知 src {field(e, 'src', ep)}", ep + '.src', 'validate.audio_source', {'value': observed.get(key_path(ep, 'src'), {'status': 'not_observed'})}, {'allowed': list(srcs)}); continue
-            i = _plugin_hooks.run_probe_source(c, field(e, 'src', ep))
+            i = _plugin_hooks.run_probe_source(c, field(e, 'src', ep)) if plugin_hooks else None
             if i is None:
                 i = c.probe(c.src_path(field(e, 'src', ep)))
             need = native(ep, lambda: observe("e.get('src_in', 0) + (field(e, 'out', ep) - field(e, 'in', ep))", e.get('src_in', 0) + observe("field(e, 'out', ep) - field(e, 'in', ep)", field(e, 'out', ep) - field(e, 'in', ep))), 'arithmetic', paths=[key_path(ep, 'out'), key_path(ep, 'in')])
@@ -313,8 +357,11 @@ def validate(c: Ctx):
     _plugin_warns = _scan_plugin_keys(c, errs)
     # v2 §2.2 validate 钩子（协议 v1.1 增补）：插件级契约早失败（互斥/_meta 双施/
     # 键值形状），错误行并入 errs 阻断——仅对三分支放行后的生效插件调用。
-    for plugin_error in _plugin_hooks.run_validate(c):
-        err(plugin_error)
+    if plugin_hooks:
+        for plugin_error in _plugin_hooks.run_validate(c):
+            err(plugin_error)
+    if not reporting:
+        return errs
     if errs:
         print(f"校验失败（{len(errs)} 项）："); [print("  ✗", e) for e in errs]
         c.receipt("validate", False, f"{len(errs)} errors")

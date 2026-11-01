@@ -31,7 +31,7 @@ xdg-open "$VIDEO_TOOLS/vtx/preview.html"
 
 命令约定：先将 `VIDEO_TOOLS` 设为实际仓库根目录、`PROJ` 设为本次项目的绝对路径；`OLD` 是留存的改前 timeline 路径。以下从项目目录执行，不依赖任何私人 voice-ime 工作区：
 
-新项目先选尚不存在的 `PROJ`，执行以下**写操作**创建脚手架；已有项目不重建，脚本会覆盖 timeline/schema，不能当作已有工程无损初始化。随后把素材放入 assets/、页面放入 gfx/，编辑 timeline.json。
+新项目先选尚不存在的 `PROJ`，执行以下**写操作**创建脚手架（位置参数 `[SECS]` 默认/空值 30，ASCII 十进制 ≥7 秒，前导零按十进制）；也会**完整替换有效 unmanaged timeline，丢弃其文档扩展**，不是无损初始化；managed/严格解析或结构错误在复制前拒绝。先冻结原文/base/请求并做公共纯 plan，再覆盖 schema、仅在 gfx 不存在且非 symlink 时复制样页，最后同请求单次 CAS 发布；新 TL 为 0600、无 `_vtx`，旧 raw 留 history，替换可按 `undo_of` 在当前字节仍等于 after 时恢复，create 不可 undo。复制失败可留部分辅助文件，但本次不发布 TL（旧 TL 保持/新 TL 缺失），与旧脚本先写 TL 不同；晚外写拒绝，非目录级多文件原子操作。若 outcome unknown，保留错误输出的原 op_id/请求，按 `vtx.api.timeline_store_status` 人工核查/恢复，勿自动重提或声称回滚；提交后输出失败不撤销 TL。无新增 dry 旗标，缺 `assets/v01.mp4` 不妨碍结构创建；随后补素材、编辑 timeline.json，再用真实 `vtx/vtx.py` validate。
 
 ```bash
 bash "$VIDEO_TOOLS/scripts/new_project.sh" "$PROJ"
