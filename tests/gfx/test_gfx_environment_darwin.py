@@ -116,9 +116,10 @@ class DarwinEnvironmentContracts(unittest.TestCase):
         self.assertEqual(record['launch_flags'], ['mode=a0', 'sync-canary=exact', 'sync-mode=n',
             'reference-context=shared', 'png-encoder=spng', 'png-level=1',
             'png-filter=sub_up', 'encode-threads=2', 'capture-fps=120',
-            '--use-mock-keychain'])
+            'pair-swap=1', '--use-mock-keychain'])
         self.assertEqual(record['cef_configuration']['runtime']['sync_mode'], 'n')
         self.assertEqual(record['cef_configuration']['runtime']['capture_fps'], 120)
+        self.assertEqual(record['cef_configuration']['runtime']['pair_swap'], '1')
         self.assertEqual(record['cef_configuration']['scheduling']['pages'], 7)
         with patch.object(env, '_command', side_effect=command), \
                 patch.dict(os.environ, VTX_CEF_SYNC_MODE='p', VTX_CEF_PNG_FILTER='none',
