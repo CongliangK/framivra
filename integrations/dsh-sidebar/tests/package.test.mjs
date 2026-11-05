@@ -24,7 +24,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
 `, output, extracted], { encoding: 'utf8' })
   assert.equal(inspect.status, 0, inspect.stderr)
   const data = JSON.parse(inspect.stdout)
-  assert.deepEqual(data.names, ['LICENSE', 'README.md', 'cordis.patch.yml', 'lib/client.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/media.js', 'lib/protocol.js', 'package.json'])
+  assert.deepEqual(data.names, ['LICENSE', 'README.md', 'cordis.patch.yml', 'lib/bounded.js', 'lib/client.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/media.js', 'lib/protocol.js', 'package.json'])
   for (const key of ['scripts', 'dependencies', 'devDependencies']) assert.equal(Object.hasOwn(data.manifest, key), false)
   assert.deepEqual(data.manifest.peerDependencies, { react: '18.3.1' })
   assert.equal(data.manifest.main, 'lib/index.js')
