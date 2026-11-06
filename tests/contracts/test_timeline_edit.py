@@ -699,5 +699,89 @@ s.timeline_transaction(sys.argv[1],json.loads(sys.argv[2]))
         self.assertEqual(self.path.read_bytes(), raw)
 
 
+class EditOperationFieldsTest(unittest.TestCase):
+    """The module-level field table is the single authority for field admission."""
+
+    def managed_doc(self):
+        doc = fixture()
+        doc["_vtx"] = {"protocol": 1, "project_id": "p1", "head": "h1"}
+        return doc
+
+    def test_table_covers_exactly_the_twenty_operations(self):
+        from vtx.timeline_edit import EDIT_OPERATION_FIELDS
+        self.assertEqual(len(EDIT_OPERATIONS), 20)
+        self.assertEqual(set(EDIT_OPERATION_FIELDS), set(EDIT_OPERATIONS))
+        self.assertEqual(list(EDIT_OPERATION_FIELDS), list(EDIT_OPERATIONS))
+
+    def test_table_shapes_are_disjoint_and_op_free(self):
+        from vtx.timeline_edit import EDIT_OPERATION_FIELDS
+        for name, (required, optional) in EDIT_OPERATION_FIELDS.items():
+            with self.subTest(op=name):
+                self.assertTrue(required, "every operation needs required keys")
+                self.assertFalse(required & optional)
+                self.assertNotIn("op", required | optional)
+
+    def test_validator_admits_exactly_table_fields(self):
+        from vtx.timeline_edit import EDIT_OPERATION_FIELDS, fields
+        for name, (required, optional) in EDIT_OPERATION_FIELDS.items():
+            with self.subTest(op=name):
+                admitted = {key: None for key in required | optional}
+                fields({**admitted, "op": name}, *EDIT_OPERATION_FIELDS[name])  # admitted: no error
+                with self.assertRaises(EditError):
+                    fields({**admitted, "op": name, "zzz_unknown": 1}, *EDIT_OPERATION_FIELDS[name])
+                for missing in required:
+                    partial = {k: v for k, v in admitted.items() if k != missing}
+                    with self.assertRaises(EditError):
+                        fields({**partial, "op": name}, *EDIT_OPERATION_FIELDS[name])
+
+    def test_transform_timeline_rejects_unknown_and_missing_fields_for_every_operation(self):
+        from vtx.timeline_edit import EDIT_OPERATION_FIELDS
+        for name, (required, optional) in EDIT_OPERATION_FIELDS.items():
+            with self.subTest(op=name):
+                admitted = {key: None for key in required | optional}
+                with self.assertRaises(EditError) as ctx:
+                    transform_timeline(self.managed_doc(), [{**admitted, "op": name, "zzz_unknown": 1}])
+                self.assertIn("missing or unknown fields", str(ctx.exception))
+                first_required = next(iter(sorted(required)))
+                partial = {k: v for k, v in admitted.items() if k != first_required}
+                with self.assertRaises(EditError) as ctx:
+                    transform_timeline(self.managed_doc(), [{**partial, "op": name}])
+                self.assertIn("missing or unknown fields", str(ctx.exception))
+
+    def test_capabilities_are_pure_static_data_zero_io(self):
+        from vtx.timeline_edit import EDIT_OPERATION_FIELDS
+        from vtx.timeline_store import timeline_store_capabilities
+        with patch("builtins.open", side_effect=AssertionError("capabilities must not open files")):
+            caps = timeline_store_capabilities()
+        self.assertEqual(caps["edit"]["operation_fields"],
+                         {name: {"required": sorted(required), "optional": sorted(optional)}
+                          for name, (required, optional) in EDIT_OPERATION_FIELDS.items()})
+        with patch("builtins.open", side_effect=AssertionError("capabilities must not open files")):
+            again = timeline_store_capabilities()
+        self.assertEqual(caps["edit"]["operation_fields"], again["edit"]["operation_fields"],
+                         "no cached mutable state between capability calls")
+
+    def test_capabilities_lists_are_copy_isolated_from_the_validator(self):
+        from vtx.timeline_store import timeline_store_capabilities
+        caps = timeline_store_capabilities()
+        caps["edit"]["operation_fields"]["block.trim"]["required"].append("zzz")
+        caps["edit"]["operation_fields"]["block.trim"]["optional"].clear()
+        caps["edit"]["operations"].append("zzz.fake")
+        fresh = timeline_store_capabilities()
+        self.assertEqual(fresh["edit"]["operation_fields"]["block.trim"]["required"], ["end", "id", "start"])
+        self.assertEqual(fresh["edit"]["operation_fields"]["block.trim"]["optional"], ["fade_policy"])
+        self.assertNotIn("zzz.fake", fresh["edit"]["operations"])
+        with self.assertRaises(EditError):
+            transform_timeline(self.managed_doc(),
+                               [{"op": "block.trim", "id": "c", "start": 0, "end": 10, "zzz": 1}])
+
+    def test_field_table_itself_is_immutable(self):
+        from vtx.timeline_edit import EDIT_OPERATION_FIELDS
+        for name, (required, optional) in EDIT_OPERATION_FIELDS.items():
+            with self.subTest(op=name):
+                self.assertIsInstance(required, frozenset)
+                self.assertIsInstance(optional, frozenset)
+
+
 if __name__ == "__main__":
     unittest.main()

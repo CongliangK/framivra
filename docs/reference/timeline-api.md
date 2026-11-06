@@ -178,7 +178,7 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 | edit | operations | 有序受管语义批次，见下节；不扩展 apply 或解除 replace 身份约束 |
 | undo | head | 只撤当前已提交 head，仍是带新 op_id/base CAS 的新提交；文件必须逐字节等于原 head 结果；不能 undo create/adopt；新结果含反向 edit 变更清单 |
 
-语义编辑使用独立的 `edit`，不是把 `replace` 的身份限制解除，也不改变既有 `apply.changes` 平面协议。尚无 UI、ID 改签或完整 gfx 连续编辑。apply/adopt/edit 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
+语义编辑使用独立的 `edit`，不是把 `replace` 的身份限制解除，也不改变既有 `apply.changes` 平面协议。可选外部界面见 [DSH 适配器](../../integrations/dsh-sidebar/README.md)；尚无 ID 改签或完整 gfx 连续编辑。apply/adopt/edit 保留全部未知 JSON 数据，不投影/展开 `subtitles_src`，不读取/重写字幕外引；replace 的 document 是调用者显式提供的全文。写入允许重排键/格式，不承诺原排版；严格拒重复键、NaN/Infinity、bool 帧以及重序列化会损失十进制值的高精度浮点输入。
 
 ### 原始写入 JSON 的公共解析边界
 
@@ -189,6 +189,8 @@ request 为严格 JSON 对象，必需 `operation`、`op_id`、`base_revision`�
 ### Managed 语义编辑与零写计划
 
 Python 与 CLI 使用**同一份请求**；`operations` 非空、有序，每项以 `op` 指定下表操作，未列请求键拒绝。只有当前 `_vtx` 工程可编辑，不自动 adopt。所有新对象 ID 必须由调用者预先生成并放入请求；同 op 重试保持整个请求不变。
+
+`timeline_store_capabilities()` / `vtx store capabilities` 的 `edit.operation_fields` 为各操作返回独立的 `required` / `optional` 字段名列表，与 transformer 的首层键检查共用同一份定义；查询能力不读写工程。它只描述操作对象的顶层键，不是完整 JSON Schema：值类型、嵌套结构、互斥与业务约束仍由 plan/commit 校验。此可选元数据不改变既有操作、协议版本或拒绝语义；缺失时不得猜测完整输入契约。
 
 ```python
 from vtx.api import inspect_timeline, timeline_edit_plan, timeline_transaction
