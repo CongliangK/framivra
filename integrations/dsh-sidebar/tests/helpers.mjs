@@ -59,7 +59,7 @@ export function setup(config = {}) {
   const sessions = new Map([['one', { id: 'one' }], ['two', { id: 'two' }]])
   const cwd = { value: '/workspace' }
   const subprocess = fixtureSubprocess()
-  const ctx = { fs, sessions, workingDirectory: { get: () => cwd.value }, subprocess }
+  const ctx = { fs, sessions, workingDirectory: { get: () => cwd.value, ensure: async () => cwd.value }, subprocess }
   const host = createPreviewHost(ctx, { vtxExecutable: '/opt/trusted/vtx', ...config })
   const request = data => new Request('http://owner/api/framivra/control', { method: 'POST', body: JSON.stringify({ sessionId: 'one', ...data }) })
   const control = data => host.control(request(data))

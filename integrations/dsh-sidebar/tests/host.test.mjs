@@ -1,7 +1,35 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setup } from './helpers.mjs'
-import { apply } from '../src/index.mjs'
+import { apply, Config } from '../src/index.mjs'
+import { readConfiguration } from '../src/configuration.mjs'
+
+const validate = Config['~standard'].validate
+
+test('Config: defaults, host-trusted forms, and rejected shapes', async () => {
+  // Volatile fields validate to live cells, not plain strings; defaults are
+  // asserted through the same configuration home the Host applies path uses.
+  const defaults = await validate({})
+  assert.deepEqual(readConfiguration(defaults.value), readConfiguration({}))
+  assert.equal(Config.dict.vtxExecutable.meta.volatile, true)
+  assert.equal(Config.dict.trustedPath.meta.volatile, true)
+  for (const vtxExecutable of ['vtx', '/opt/trusted/vtx', '/', 'C:\\tools\\vtx.exe', '\\\\server\\share\\vtx']) {
+    const accepted = await validate({ vtxExecutable })
+    assert.equal(accepted.issues, undefined, vtxExecutable)
+  }
+  for (const vtxExecutable of ['./vtx', 'vtxx', 'vtx ', '', ' vtx']) {
+    const rejected = await validate({ vtxExecutable })
+    assert.notEqual(rejected.issues, undefined, vtxExecutable)
+  }
+  for (const trustedPath of ['/usr/local/bin:/usr/bin:/bin', '/', '/opt/bin', '/a:/', '/a://deep']) {
+    const accepted = await validate({ trustedPath })
+    assert.equal(accepted.issues, undefined, trustedPath)
+  }
+  for (const trustedPath of ['', 'relative/bin', '/a::b', '/a:', ':/a', '/a:rel', '/a: b']) {
+    const rejected = await validate({ trustedPath })
+    assert.notEqual(rejected.issues, undefined, trustedPath)
+  }
+})
 
 const open = async fixture => {
   const response = await fixture.control({ op: 'open', timeline: 'timeline.json' })
@@ -125,12 +153,14 @@ test('media ID/path injection, output symlink escape and changed media fail clos
 })
 
 test('DSH mounting uses only exact authenticated Connection Fetch routes and reversible effects', async () => {
-  const routes = [], cleanup = []
-  const ctx = { effect: effect => cleanup.push(effect()), connection: { fetch: { register: route => { routes.push(route); return async () => {} } } }, subprocess: {} }
+  const routes = [], cleanup = [], tools = new Set()
+  const ctx = { effect: effect => cleanup.push(effect()), tools: { register: tool => { tools.add(tool.name); return () => tools.delete(tool.name) } }, connection: { fetch: { register: route => { routes.push(route); return async () => {} } } }, subprocess: {} }
   apply(ctx)
   assert.deepEqual(routes.map(route => [route.path, route.methods, route.requestBody]), [
     ['/api/framivra/control', ['POST'], 'buffered'], ['/api/framivra/frame', ['POST'], 'streaming'],
     ['/api/framivra/media', ['GET', 'HEAD'], 'buffered'],
   ])
+  assert.deepEqual([...tools], ['framivra_timeline_read', 'framivra_timeline_propose', 'framivra_proposal_status'])
   for (const dispose of cleanup.reverse()) await dispose()
+  assert.equal(tools.size, 0)
 })

@@ -5,10 +5,11 @@ import { VisualTimeline } from './timeline.mjs'
 import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
 import { FrameEpoch, FrameTools } from './frame.mjs'
+import { registerBundleConfig } from './settings.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
-export const inject = ['slots', 'sidebarRightTabs']
+export const inject = ['slots', 'sidebarRightTabs', 'configForms']
 const pretty = value => stringifyJSON(value, 2)
 const details = (title, data, key) => h('details', { key }, h('summary', null, title), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, pretty(data)))
 
@@ -95,7 +96,7 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
   useEffect(() => { setState({}); if (selection) void run('read') }, [selection, sessionId, opened.grant, opened.snapshot.content_version])
   return h('section', { 'aria-label': '时间线引用', style: { border: '1px solid currentColor', padding: 8 } },
     h('h3', null, '时间线引用 · 仅存储语义'),
-    h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放是非精确采样、未与选择联动；本片不生成 PNG/附件。'),
+    h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放未与选择联动，不能代替精确帧。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
     h('p', null, '加入草稿需要宿主公开 conversation.captureDraftTarget / stageDraft；缺少 API 或空白未创建会话时仅复制可用。不会自动创建会话、不会发送。'),
     selection ? h('p', null, `当前选择：${selection.kind} ${selection.address} · ${opened.snapshot.content_version}`) : h('p', null, '尚未选择轨道或块。'),
     ...[['id', '复制 ID / 临时定位'], ['raw', '复制 raw JSON'], ['diagnostic', '复制诊断引用 JSON'], ['draft', '加入当前会话草稿（不发送）']].map(([action, label]) => h('button', { key: action, type: 'button', disabled: !selection || state.busy, onClick: () => { void run(action) } }, label)),
@@ -123,7 +124,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
   const pick = (item, event) => { frameOwner.invalidate(); setSelectionIntent(previous => transitionSelection(previous, item, event, state.result)) }
   const clearSelection = () => { frameOwner.invalidate(); setSelectionIntent(emptySelection()) }
   const pin = value => { frameOwner.invalidate(); setFrame(value) }
-  const editState = next => { frameOwner.editChanged(next); setState(previous => ({ ...previous })) }
+  const editState = next => { if (frameOwner.editChanged(next)) setState(previous => ({ ...previous })) }
   const [gesture, setGesture] = useState()
   const task = useRef()
   const grant = useRef()
@@ -241,4 +242,5 @@ export function apply(ctx) {
     name: 'sidebar.right.pane.tab', key: ID, inject: sessionId => ({ sessionId, getDraftServices: () => ({ conversation: ctx.get?.('conversation'), sessions: ctx.get?.('sessions'), uiSession: ctx.get?.('uiSession') }) }),
   }, PreviewBody)))
   ctx.effect(() => ctx.slots.inject('sidebar.right.tab.guide.entry', () => ctx.slots.register({ name: 'sidebar.right.tab.guide.entry', key: ID }, Guide)))
+  registerBundleConfig(ctx)
 }

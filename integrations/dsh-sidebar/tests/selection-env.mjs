@@ -35,7 +35,7 @@ export async function selectionEnvironment(t, kind) {
     assert.equal(extraction.status, 0, extraction.stderr)
     ;({ createPreviewHost } = await import(pathToFileURL(join(extracted, 'lib/host.js'))))
     const queue = [], target = { mode: 'queue', pendingQueue: queue, load: row => queue.push(row) }
-    sandbox = { window: { __ModuleLoader__: target }, TextEncoder, AbortController, AbortSignal, URLSearchParams, crypto: globalThis.crypto, console }
+    sandbox = { window: { __ModuleLoader__: target }, TextEncoder, AbortController, AbortSignal, URLSearchParams, crypto: globalThis.crypto, setTimeout, clearTimeout, console }
     runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'), 'utf8'), sandbox)
     const modules = queue.shift().factory(() => { throw Error('unexpected bootstrap dependency') })
     runInNewContext(await readFile(join(extracted, 'lib/client.js'), 'utf8'), sandbox)

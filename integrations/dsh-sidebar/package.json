@@ -11,7 +11,7 @@
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
-      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-session"],
+      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-settings"],
       "platform": "web"
     }
   },
@@ -20,11 +20,12 @@
     "package": "node scripts/package.mjs",
     "test": "node --test tests/*.test.mjs"
   },
-  "peerDependencies": { "react": "18.3.1" },
+  "peerDependencies": { "@deepseek-ai/schemastery": "~3.18.5", "react": "18.3.1" },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
     "@deepseek-ai/dsh-client-modules": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "~3.18.5",
     "jsdom": "29.1.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",

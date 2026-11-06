@@ -36,10 +36,10 @@ test('actual pointer handlers: pure ghost, multi move one batch, vertical-only c
 
 test('all dedicated forms exist, explicit write auth; in-flight plan cannot survive edited input or selection',{timeout:10000},async t=>{
  const {root,Simulate}=await mount(t),calls=[];let resolvePlan
- const call=async(_session,payload)=>{calls.push(payload);if(payload.op==='authorize-write')return {writeGrant:'explicit'};if(payload.op==='plan')return await new Promise(r=>{resolvePlan=r});return {ok:true}}
+ const call=async(_session,payload)=>{calls.push(payload);if(payload.op==='proposal-list')return {ok:true,proposals:[]};if(payload.op==='authorize-write')return {writeGrant:'explicit'};if(payload.op==='plan')return await new Promise(r=>{resolvePlan=r});return {ok:true}}
  const selected=[{kind:'block',address:blocks[0].address}]
  const render=selection=>root.render(h(ManualEditor,{sessionId:'one',opened:{grant:'read',snapshot},result,selection,selected,frame:15,tabSignal:new AbortController().signal,call,onCommitted:()=>{}}))
- await act(async()=>render(selected[0]));assert.equal(document.querySelector('fieldset').disabled,true);assert.equal(calls.length,0)
+ await act(async()=>render(selected[0]));assert.equal(document.querySelector('fieldset').disabled,true);assert.deepEqual(calls.map(c=>c.op),['proposal-list'])
  await act(async()=>button('明确允许本会话向此工程及 core 历史写入').click());assert.equal(document.querySelector('fieldset').disabled,false)
  for(const op of EDIT_OPERATIONS){const select=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='编辑操作').querySelector('select');await act(async()=>Simulate.change(select,{target:{value:op}}));assert.equal(select.value,op);assert(document.querySelector('[aria-label="未保存 typed intents"]'));assert.equal(document.querySelector('textarea'),null)}
  const select=[...document.querySelectorAll('label')].find(n=>n.firstChild?.textContent==='编辑操作').querySelector('select');await act(async()=>Simulate.change(select,{target:{value:'project.resize'}}));await act(async()=>button('加入未保存批次').click());await act(async()=>button('内核预检计划（零写）').click());assert(resolvePlan)
@@ -50,7 +50,7 @@ test('all dedicated forms exist, explicit write auth; in-flight plan cannot surv
 
 test('plan waits for every previous invalidation acknowledgement and fails closed on lost acknowledgement',{timeout:10000},async t=>{
  const {root,Simulate}=await mount(t),calls=[],acks=[]
- const call=async(_session,payload)=>{calls.push(payload);if(payload.op==='authorize-write')return {writeGrant:'explicit'};if(payload.op==='invalidate-plan')return await new Promise((resolve,reject)=>acks.push({resolve,reject}));if(payload.op==='plan')return {ok:true,planToken:'new',submitted_request:{op_id:'new'}};return {ok:true}}
+ const call=async(_session,payload)=>{calls.push(payload);if(payload.op==='proposal-list')return {ok:true,proposals:[]};if(payload.op==='authorize-write')return {writeGrant:'explicit'};if(payload.op==='invalidate-plan')return await new Promise((resolve,reject)=>acks.push({resolve,reject}));if(payload.op==='plan')return {ok:true,planToken:'new',submitted_request:{op_id:'new'}};return {ok:true}}
  const selected=[{kind:'block',address:blocks[0].address}]
  await act(async()=>root.render(h(ManualEditor,{sessionId:'one',opened:{grant:'read',snapshot},result,selection:selected[0],selected,frame:15,tabSignal:new AbortController().signal,call,onCommitted:()=>{}})))
  await act(async()=>button('明确允许本会话向此工程及 core 历史写入').click())

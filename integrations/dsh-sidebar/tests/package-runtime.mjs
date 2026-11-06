@@ -1,8 +1,8 @@
 /** Executable integration probe, invoked only against a freshly extracted ZIP. */
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, symlink } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import React, { act } from 'react'
@@ -15,6 +15,16 @@ import { MemoryFs, fixtureSubprocess } from './helpers.mjs'
 const [release] = process.argv.slice(2)
 const manifest = JSON.parse(await readFile(join(release, 'package.json'), 'utf8'))
 const require = createRequire(import.meta.url)
+// The extracted ZIP imports its host-side peer exactly as a real profile does:
+// the package is linked into node_modules next to the plugin's files. Resolve
+// the peer formally from the plugin workspace, never via a checkout path.
+{
+  const resolved = await realpath(require.resolve('@deepseek-ai/schemastery/package.json'))
+  await mkdir(join(release, 'node_modules/@deepseek-ai'), { recursive: true })
+  await symlink(dirname(resolved), join(release, 'node_modules/@deepseek-ai/schemastery'), 'dir').catch(error => {
+    if (error.code !== 'EEXIST') throw error
+  })
+}
 const queue = []
 const target = { mode: 'queue', pendingQueue: queue, load: row => queue.push(row) }
 const dom = new JSDOM('<div id="preview"></div>', { url: 'http://owner/' })
@@ -23,7 +33,7 @@ globalThis.document = dom.window.document
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 // This is the SDK package's public browser entry, not a reimplementation of its loader.
 const copies = []
-const sandbox = { window: { __ModuleLoader__: target }, navigator: { clipboard: { writeText: async text => copies.push(text) } }, TextEncoder, AbortController, AbortSignal, URLSearchParams, console }
+const sandbox = { window: { __ModuleLoader__: target }, navigator: { clipboard: { writeText: async text => copies.push(text) } }, TextEncoder, AbortController, AbortSignal, URLSearchParams, setTimeout, clearTimeout, console }
 runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'), 'utf8'), sandbox)
 const bootstrap = queue.shift()
 const modules = bootstrap.factory(() => { throw new Error('Unexpected bootstrap dependency') })
@@ -44,10 +54,33 @@ const core = new SlotCore()
 const disposeOwner = core.register({ name: 'root', children: {
   'sidebar.right.pane.tab': { kind: 'keyed', scope: 'session' },
   'sidebar.right.tab.guide.entry': { kind: 'keyed', scope: 'session' },
+  'plugins.bundle.config': { kind: 'keyed', scope: 'root' },
 } }, () => null)
-const types = new Map(), routes = new Map(), requests = []
+const types = new Map(), routes = new Map(), requests = [], tools = new Set()
+const configSubscribers = new Set()
+// A read-only settings carrier adapter, not a replacement for Host persistence.
+// The actual settings write/volatile update is exercised through the real GUI.
+const configSnapshot = { status: 'ready', value: { vtxExecutable: '/opt/trusted/vtx', trustedPath: '/usr/local/bin:/usr/bin:/bin' }, revision: 1, writable: false }
+// This-sensitive methods on purpose: the native ConfigForm reads this.store,
+// so this adapter must fail the same way if the client ever detaches a method
+// from its receiver when materializing the real ZIP bundle's config UI.
+const configForm = {
+  getSnapshot() { if (this !== configForm) throw new TypeError('Cannot read properties of undefined (reading \'store\') — lost receiver'); return configSnapshot },
+  subscribe(listener) { if (this !== configForm) throw new TypeError('lost receiver on subscribe'); configSubscribers.add(listener); return () => configSubscribers.delete(listener) },
+  async mutate() { if (this !== configForm) throw new TypeError('lost receiver on mutate'); throw new Error('Read-only settings adapter cannot write') },
+}
+let configServing = 0
 const fs = new MemoryFs(), subprocess = fixtureSubprocess()
 const services = {
+  configForms: {
+    get: namespace => { assert.equal(namespace, 'framivra-readonly'); return configForm },
+    whileServed: (namespaces, register) => {
+      assert.deepEqual([...namespaces], ['framivra-readonly'])
+      configServing++
+      const dispose = register(new Set(namespaces))
+      return () => { configServing--; dispose?.() }
+    },
+  },
   slots: {
     inject: (_name, register) => register(),
     register: (options, component) => core.register(options, component),
@@ -63,9 +96,17 @@ const services = {
     return () => routes.delete(route.path)
   } } },
   sessions: new Map([['one', { id: 'one' }]]),
-  workingDirectory: { get: () => '/workspace' }, fs, subprocess,
+  workingDirectory: { get: () => '/workspace', ensure: async () => '/workspace' }, fs, subprocess,
+  tools: { register: definition => { tools.add(definition.name); return () => tools.delete(definition.name) } },
 }
 const disposers = Object.entries(services).map(([name, service]) => ctx.reflect.provide(name, service))
+// Config is enforced by the real fiber path before apply runs: a relative
+// executable never reaches the Host.
+{
+  const invalid = ctx.plugin(hostPlugin, { vtxExecutable: './vtx' })
+  await assert.rejects(invalid.await(), error => /vtxExecutable/.test(String(error?.message)))
+  await invalid.dispose().catch(() => {})
+}
 const hostFiber = ctx.plugin(hostPlugin, { vtxExecutable: '/opt/trusted/vtx' })
 const clientFiber = ctx.plugin(client)
 await hostFiber.await()
@@ -93,6 +134,17 @@ const useTabInfo = () => ({ tab: { signal: tab.signal, actions: {
   openTab(kind, options) { openedKind = { kind, options } },
 } } })
 const root = createRoot(document.getElementById('preview'))
+const configuration = core.entries('plugins.bundle.config')[0]
+assert.equal(configuration.options.key, manifest.name)
+assert.equal(configServing, 1)
+await act(async () => root.render(React.createElement(configuration.component, { view: 'page' })))
+assert.equal(document.getElementById('framivra-config-executable').value, '/opt/trusted/vtx')
+assert.equal(document.getElementById('framivra-config-executable').disabled, true)
+assert(document.body.textContent.includes('当前宿主配置只读'))
+assert.equal(configSubscribers.size, 1)
+await act(async () => root.render(React.createElement(configuration.component, { view: 'summary' })))
+assert.equal(document.getElementById('preview').childNodes.length, 0)
+assert.equal(configSubscribers.size, 0)
 const guide = core.entries('sidebar.right.tab.guide.entry')[0]
 await act(async () => root.render(React.createElement(guide.component, { useTabInfo })))
 await act(async () => document.querySelector('button').click())
@@ -115,7 +167,9 @@ try {
   // Hook state/effects run under the exact same React instance supplied to the loader.
   await act(async () => submit(form()))
   await until(() => document.body.textContent.includes('Complete query envelope'))
-  assert.deepEqual(requests.map(x => x.op), ['open', 'query'])
+  assert.deepEqual(requests.filter(x => x.op !== 'proposal-list').map(x => x.op), ['open', 'query'])
+  assert.equal(requests.filter(x => x.op === 'proposal-list').length, 1)
+  assert.deepEqual([...tools], ['framivra_timeline_read', 'framivra_timeline_propose', 'framivra_proposal_status'])
   assert(requests.every(x => x.sessionId === 'one'))
   assert(document.body.textContent.includes('Read-only ·'))
   assert(document.body.textContent.includes('9007199254740993'))
@@ -156,8 +210,12 @@ try {
   assert.equal(types.size, 0)
   assert.equal(core.entries('sidebar.right.pane.tab').length, 0)
   assert.equal(core.entries('sidebar.right.tab.guide.entry').length, 0)
+  assert.equal(core.entries('plugins.bundle.config').length, 0)
+  assert.equal(configServing, 0)
+  assert.equal(configSubscribers.size, 0)
   await hostFiber.dispose()
   assert.equal(routes.size, 0)
+  assert.equal(tools.size, 0)
   console.log(JSON.stringify({ pass: true, moduleSystem: 'public SDK browser entry', sharedReactHooks: true, cordisInjection: true, slotLedger: 'public SlotCore; owner/renderer adapter', packagedHostControl: true, uiOpenQueryClose: true, authentication: 'UNRUN' }))
 } finally {
   await clientFiber.dispose()

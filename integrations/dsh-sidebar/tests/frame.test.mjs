@@ -66,3 +66,23 @@ test('official argv + true owner pipe; ownership persists until done AND waitFor
  assert(specs[0].argv.includes('--include-png'));assert(specs[0].argv.includes('--render'));assert.equal(specs[0].stdio.stdout,'pipe');assert.equal(specs[0].stdio.stderr.maxBytes,16384)
  finishRange(true);assert.deepEqual(await pending,parseJSON(stringifyJSON(value)));assert.equal(reader.active.size,0);await reader.dispose()
 })
+
+test('editChanged is semantically idempotent: unchanged edit reports never abort the epoch or drop the verified PNG',()=>{
+ const owner=new FrameEpoch(),tab=new AbortController(),first=owner.begin(tab.signal)
+ owner.generated={certificate:{frame:9}}
+ // Same flags as a repeat read-only proposal poll: no real transition.
+ assert.equal(owner.editChanged({dirty:false,busy:false,unknown:false}),false)
+ assert.equal(owner.epoch,0,'unchanged report must not invalidate')
+ assert.equal(first.signal.aborted,false,'in-flight frame render must survive a read-only poll')
+ assert.deepEqual(owner.generated,{certificate:{frame:9}},'verified PNG must be kept across a no-op report')
+ // A real transition still invalidates synchronously, aborts, and clears.
+ assert.equal(owner.editChanged({dirty:true}),true)
+ assert.equal(owner.epoch,1);assert.equal(first.signal.aborted,true);assert.equal(owner.generated,undefined)
+ assert.throws(()=>owner.assertReady(),/FRAME_STALE/)
+ // Re-reporting the same dirty state must not invalidate a second time.
+ assert.equal(owner.editChanged({dirty:true}),false)
+ assert.equal(owner.epoch,1)
+ // Clearing the flag is a real transition and invalidates again.
+ assert.equal(owner.editChanged({dirty:false}),true)
+ assert.equal(owner.epoch,2)
+})

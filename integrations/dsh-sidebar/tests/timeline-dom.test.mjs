@@ -49,6 +49,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
     let result
     if (request.op === 'open') result = { grant: 'grant', snapshot, media: [] }
     else if (request.op === 'query') result = request.query.frame === undefined ? full : { ...filtered, content_version: nextVersion }
+    else if (request.op === 'proposal-list') result = { ok: true, proposals: [] }
     else if (request.op === 'reference') {
       const kind = request.query.block_addresses ? 'blocks' : 'tracks'
       const address = (request.query.block_addresses ?? request.query.track_addresses)[0]
@@ -66,7 +67,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one', getDraftServices: () => services })))
   await submit(0)
   await settle(() => document.querySelector('.fv-ruler'))
-  assert.deepEqual(requests.map(x => x.op), ['open', 'query'])
+  assert.deepEqual(requests.map(x => x.op), ['open', 'query', 'proposal-list'])
   assert.equal(document.querySelectorAll('.fv-clip').length, blocks.length)
   assert(document.body.textContent.includes('gfx / track 1'))
   assert.equal(document.querySelectorAll('[aria-label^="显示子行"]').length, 6) // video + gfx + 3 audio + subtitle
@@ -142,7 +143,7 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   assert.equal(document.querySelector('.fv-timeline'), null)
   assert.equal(requests.at(-1).op, 'close')
   assert.equal(requests.at(-1).sessionId, 'one')
-  assert(requests.every(x => ['open', 'query', 'reference', 'close'].includes(x.op)))
+  assert(requests.every(x => ['open', 'query', 'reference', 'proposal-list', 'close'].includes(x.op)))
 })
 
 test('actual React DOM: pending references abort on selection/frame/session/unmount; late reads never publish old raw', async t => {

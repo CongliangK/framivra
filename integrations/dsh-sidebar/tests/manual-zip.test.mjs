@@ -18,7 +18,7 @@ test('candidate ZIP SDK-materialized PreviewBody and extracted Host actually pla
  const {createPreviewHost}=await import(pathToFileURL(join(extracted,'lib/host.js')))
  const env=await environment(t,'zip-core',fixture(),{createHost:createPreviewHost})
  const queue=[],target={mode:'queue',pendingQueue:queue,load:row=>queue.push(row)},copies=[]
- const sandbox={window:{__ModuleLoader__:target},navigator:{clipboard:{writeText:async text=>copies.push(text)}},TextEncoder,AbortController,AbortSignal,URLSearchParams,crypto:globalThis.crypto,console}
+ const sandbox={window:{__ModuleLoader__:target},navigator:{clipboard:{writeText:async text=>copies.push(text)}},TextEncoder,AbortController,AbortSignal,URLSearchParams,crypto:globalThis.crypto,setTimeout,clearTimeout,console}
  const require=createRequire(import.meta.url)
  runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'),'utf8'),sandbox)
  const modules=queue.shift().factory(()=>{throw Error('unexpected bootstrap dependency')})

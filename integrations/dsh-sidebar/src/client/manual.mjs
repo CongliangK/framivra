@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
+import { AgentProposals } from './proposals.mjs'
 const h = React.createElement
 const id = () => crypto.randomUUID()
 export const EDIT_OPERATIONS = ['source.add','source.remove','source.update','track.add','track.remove','track.copy','track.reorder','track.rename','track.references','block.insert','block.remove','block.copy','block.move','block.relink','block.trim','block.split','parameters.update','parameters.unset','project.resize','range.ripple']
@@ -63,7 +64,13 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   const [queue, setQueue] = useState([]), [plan, setPlan] = useState(), [status, setStatus] = useState(), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
   const request = useRef(), generation = useRef(0), live = useRef(true), invalidations = useRef(Promise.resolve())
   const frameSafety = useRef({ dirty: false, busy: false, unknown: false })
-  const safety = change => { frameSafety.current = { ...frameSafety.current, ...change }; onEditState?.(frameSafety.current) }
+  const proposalSafety = useRef({ dirty: false, busy: false, unknown: false })
+  const [proposalBlocked, setProposalBlocked] = useState(false)
+  const safety = change => {
+    frameSafety.current = { ...frameSafety.current, ...change }
+    onEditState?.(Object.fromEntries(['dirty','busy','unknown'].map(key => [key, frameSafety.current[key] || proposalSafety.current[key]])))
+  }
+  const proposalState = change => { proposalSafety.current = change; setProposalBlocked(change.dirty || change.busy || change.unknown); safety({}) }
   const managed = opened.snapshot.document?._vtx?.protocol === 1
   const allSelected = selected ?? (selection ? [selection] : [])
   const blocks = result.blocks.filter(b => allSelected.some(s => s.kind === 'block' && s.address === b.address))
@@ -88,9 +95,9 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   }, [selection, selected, base])
   useEffect(() => { live.current = true; return () => { live.current = false; request.current?.abort() } }, [])
   useEffect(() => {
-    onGestureReady?.(write && managed && !busy ? operations => { safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
+    onGestureReady?.(write && managed && !busy && !proposalBlocked ? operations => { safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
     return () => onGestureReady?.(undefined)
-  }, [write, managed, busy, base, selected])
+  }, [write, managed, busy, base, selected, proposalBlocked])
   const set = (key, value) => { safety({ dirty: true }); invalidate(); setV(previous => ({ ...previous, [key]: value })) }
   async function run(action, extra = {}) {
     safety({ busy: true })
@@ -161,13 +168,14 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     h('fieldset',{disabled:!write||!managed||busy,style:{minWidth:0}},h('legend',null,'专用操作表单（不是整段 JSON 请求）'),selectOperation(),...form,
       h('button',{type:'button',onClick:add},'加入未保存批次'), h('button',{type:'button',onClick:()=>{invalidate();setQueue([]);safety({dirty:false})}},'清空未保存批次')),
     h('pre',{'aria-label':'未保存 typed intents',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(queue,2)),
-    h('button',{type:'button',disabled:!write||busy||!queue.length,onClick:()=>void run('plan',{base_revision:base,operations:queue})},'内核预检计划（零写）'),
+    h('button',{type:'button',disabled:!write||busy||proposalBlocked||!queue.length,onClick:()=>void run('plan',{base_revision:base,operations:queue})},'内核预检计划（零写）'),
     plan ? h('div',null,h('strong',null,`未保存计划 · op_id ${plan.submitted_request.op_id}`),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(plan,2)),h('button',{type:'button',disabled:busy,onClick:()=>void run('commit',{planToken:plan.planToken})},'确认提交此冻结计划（一次 revision）')) : null,
     h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('status')},'读取 core status / history（可能初始化历史）'),
     h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('recover')},'显式 core recover（不另建操作）'),
     h('button',{type:'button',disabled:!write||busy||!opened.snapshot.document?._vtx?.head,onClick:()=>void run('undo',{base_revision:base,head:opened.snapshot.document._vtx.head})},'撤销当前 core head（新 CAS 事务）'),
     h('p',null,'Redo：内核未支持，不伪造浏览器逆操作。status/recover 结果是唯一恢复依据；没有浏览器持久 timeline/history。'),
     busy ? h('button',{type:'button',onClick:()=>{request.current?.abort();void call(sessionId,payload('cancel-write'),tabSignal).catch(()=>{})}},'取消并等待子进程回收（写结果可能未知）') : null,
+    h(AgentProposals,{sessionId,opened,tabSignal,call,writeGrant:write,manualBlocked:frameSafety.current.dirty||busy||Boolean(plan)||queue.length>0,onCommitted,onEditState:proposalState}),
     h('pre',{role:'status',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},message),status?h('details',null,h('summary',null,'最近 core status / recover'),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(status,2))):null)
   function selectOperation() { return h('label',{key:'operation'},'编辑操作',h('select',{value:op,onChange:e=>{safety({dirty:true});invalidate();setOp(e.target.value)},style:{width:'100%'}}, EDIT_OPERATIONS.map((value,i)=>h('option',{key:value,value},`${names[i]} · ${value}`)))) }
 }

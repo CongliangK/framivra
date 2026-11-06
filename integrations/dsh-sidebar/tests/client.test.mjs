@@ -79,14 +79,19 @@ test('mixed content versions never display mismatched selection or raw document'
 })
 
 test('independent framivra extension tab and guide registrations dispose cleanly', () => {
-  const definitions = [], slots = [], cleanup = []
-  client.apply({ effect: effect => cleanup.push(effect()), sidebarRightTabs: { register: definition => { definitions.push(definition); return () => {} } }, slots: {
+  const definitions = [], slots = [], cleanup = [], served = []
+  client.apply({ effect: effect => cleanup.push(effect()), sidebarRightTabs: { register: definition => { definitions.push(definition); return () => {} } }, configForms: {
+    whileServed: (namespaces, register) => { served.push(namespaces); return register(new Set(namespaces)) },
+    get: ns => { assert.equal(ns, 'framivra-readonly'); return { getSnapshot: () => ({ status: 'loading' }), subscribe: () => () => {}, mutate: async () => false } },
+  }, slots: {
     inject: (_name, register) => register(),
     register: (definition, Body) => { slots.push({ definition, Body }); return () => {} },
   } })
   assert.equal(definitions[0].kind, 'framivra')
   assert.equal(definitions[0].priority, 'extension')
-  assert.deepEqual(slots.map(slot => slot.definition.name), ['sidebar.right.pane.tab', 'sidebar.right.tab.guide.entry'])
+  assert.deepEqual(slots.map(slot => slot.definition.name), ['sidebar.right.pane.tab', 'sidebar.right.tab.guide.entry', 'plugins.bundle.config'])
+  assert.deepEqual(served, [['framivra-readonly']])
+  assert.equal(slots[2].definition.key, 'framivra-dsh-sidebar')
   const props = slots[0].definition.inject('session')
   assert.equal(props.sessionId, 'session')
   assert.deepEqual(props.getDraftServices(), { conversation: undefined, sessions: undefined, uiSession: undefined })

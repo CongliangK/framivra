@@ -1,6 +1,8 @@
 /** Feature-owned bounds, before text/JSON/base64 allocation. Shared by Host/browser. */
 export const FRAME_WIRE_LIMIT = 8 * 1024 * 1024
 export const FRAME_REQUEST_LIMIT = 16 * 1024
+export const AGENT_INPUT_LIMIT = 128 * 1024
+export const AGENT_WIRE_LIMIT = 256 * 1024
 export async function boundedText(message, limit, signal) {
   const length = message.headers.get('content-length')
   if (length !== null && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > limit)) {

@@ -3,6 +3,7 @@ import { dirname, isAbsolute } from 'node:path'
 import { Readable } from 'node:stream'
 import { boundedText, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
+import { readConfiguration, isVolatileConfig, ConfigurationError } from './configuration.mjs'
 
 export class PreviewError extends Error {
   constructor(code, message, status = 400) {
@@ -107,36 +108,78 @@ export function decodeEnvelope(text, operation) {
 }
 
 export class TimelineReader {
-  constructor(subprocess, { vtxExecutable = 'vtx', trustedPath = '/usr/local/bin:/usr/bin:/bin' } = {}) {
-    if (vtxExecutable !== 'vtx' && !isAbsolute(vtxExecutable)) fail('BAD_EXECUTABLE', 'vtxExecutable must be absolute')
-    if (trustedPath.split(':').some(path => !isAbsolute(path))) fail('BAD_EXECUTABLE', 'trustedPath entries must be absolute')
+  constructor(subprocess, config = {}) {
     this.subprocess = subprocess
-    this.config = { vtxExecutable, trustedPath }
+    this.configSource = config
+    // Plain (test/debug) sources keep fail-fast constructor validation; live
+    // Volatile sources are validated on EVERY snapshot instead, because their
+    // values can change at any time without a remount.
+    if (!isVolatileConfig(config)) {
+      const snapshot = readConfiguration(config)
+      this.config = { vtxExecutable: snapshot.vtxExecutable, trustedPath: snapshot.trustedPath }
+    } else this.config = undefined
     this.active = new Map() // Ownership survives direct-command settlement and failed cleanup.
+    this.spawnKinds = new WeakMap() // Spawned child -> admission class ('read' | 'store-capabilities' | 'store' | 'frame').
+    this.cleanupFailed = new WeakSet() // Children whose managed range was not confirmed reaped; retained until a retry succeeds.
     this.lifecycle = new AbortController()
   }
-  async executable(signal) {
-    const path = await this.subprocess.resolveExecutable(this.config.vtxExecutable, { PATH: this.config.trustedPath }, signal)
+  /**
+   * One consistent validated snapshot of the live configuration (defaults,
+   * plain strings, or cordis Volatile cells). Every executable resolution and
+   * every spawned command must take its own snapshot and use only that one.
+   * @returns {{ vtxExecutable: string, trustedPath: string, fingerprint: string }}
+   */
+  snapshotConfig() {
+    const snapshot = readConfiguration(this.configSource)
+    this.config = { vtxExecutable: snapshot.vtxExecutable, trustedPath: snapshot.trustedPath }
+    return snapshot
+  }
+  /**
+   * True while semantic admission must wait: an actual store transaction or a
+   * frame child is in flight, or any child — including an ordinary read — has a
+   * failed, unreaped cleanup. Ordinary reads and the pure-static store
+   * capabilities probe never block semantic operations on their own.
+   * @returns {boolean}
+   */
+  get semanticBusy() {
+    for (const handle of this.active.keys()) {
+      if (this.cleanupFailed.has(handle)) return true
+      const kind = this.spawnKinds.get(handle)
+      if (kind === 'store' || kind === 'frame') return true
+    }
+    return false
+  }
+  async executable(signal, snapshot = this.snapshotConfig()) {
+    let path
+    try {
+      path = await this.subprocess.resolveExecutable(snapshot.vtxExecutable, { PATH: snapshot.trustedPath }, signal)
+    } catch (error) {
+      // The one stable public miss class; every other error keeps its original shape.
+      if (error && error.name === 'SubprocessExecutableNotFoundError') {
+        fail('EXECUTABLE_NOT_FOUND', '未在受信 PATH 找到 vtx；请在 Framivra 插件详情中将 vtxExecutable 配置为绝对受信路径（或将 vtx 安装到受信 PATH）', 424)
+      }
+      throw error
+    }
     if (!isAbsolute(path)) fail('BAD_EXECUTABLE', 'Resolver returned a nonabsolute executable', 502)
     return path
   }
-  async read(executable, timeline, operation, query, signal) {
+  async read(executable, timeline, operation, query, signal, snapshot) {
     if (!['inspect', 'query', 'reference', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
     const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
-    return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation))
+    return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation), undefined, false, false, snapshot)
   }
-  async frame(executable, timeline, frame, version, signal) {
+  async frame(executable, timeline, frame, version, signal, snapshot) {
     if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version)) fail('BAD_FRAME', 'Exact saved version and integer pin required')
     return this.command(executable, timeline, ['timeline', 'frame', '--frame', String(frame), `--expected-content-version=${version}`, '--render', '--include-png', '--max-png-bytes=8388608'], signal, text => {
       const value = parseJSON(text)
       if (!object(value) || value.schema !== 'framivra.timeline.frame/v1' || value.operation !== 'frame' || typeof value.ok !== 'boolean' || !Array.isArray(value.diagnostics)) fail('PROTOCOL_MISMATCH', 'Official frame/v1 envelope required', 502)
       return value
-    }, undefined, true, true)
+    }, undefined, true, true, snapshot)
   }
   async reap() {
     await Promise.all([...this.active.keys()].map(handle => this.cleanup(handle)))
   }
-  async store(executable, timeline, operation, request, signal) {
+  async store(executable, timeline, operation, request, signal, snapshot) {
     if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
     // The official flag reads fd0 itself: public providers may expose a socket,
     // for which reopening /dev/stdin fails with ENXIO. No temp files/bridge.
@@ -147,19 +190,34 @@ export class TimelineReader {
       const result = parseJSON(text)
       if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
       return result
-    }, input, true)
+    }, input, true, undefined, snapshot)
   }
-  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false) {
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
+    // One snapshot per command: a caller-supplied snapshot is compared against
+    // the live configuration synchronously BEFORE spawning, so an admitted
+    // child never runs a stale executable with a newer PATH. Direct callers
+    // without a snapshot take the current configuration themselves.
+    let config
+    if (snapshot !== undefined) {
+      try { config = this.snapshotConfig() }
+      catch (error) {
+        if (error instanceof ConfigurationError) fail('CONFIG_INVALID', error.message, 502)
+        throw error
+      }
+      if (config.fingerprint !== snapshot.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed; reopen this preview and re-authorize', 409)
+      config = snapshot
+    } else config = this.snapshotConfig()
     const handle = this.subprocess.spawn({
       argv: [executable, '-t', timeline, ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
       stdio: { stdin: input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
-      env: { PATH: this.config.trustedPath, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
+      env: { PATH: config.trustedPath, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
     })
     this.active.set(handle, undefined)
+    this.spawnKinds.set(handle, spawnKind(args))
     try {
       if (streaming && !handle.stdout) fail('FRAME_STREAM_UNSUPPORTED', 'Public provider did not expose the requested owner stdout pipe', 502)
       const [outcome, streamed] = await untilAborted(Promise.all([
@@ -205,7 +263,9 @@ export class TimelineReader {
         ]), controller.signal)
         if (empty !== true) throw new Error('Managed range did not exit')
         this.active.delete(handle)
+        this.cleanupFailed.delete(handle)
       } catch {
+        this.cleanupFailed.add(handle)
         fail('PROCESS_CLEANUP_FAILED', 'vtx managed process range could not be confirmed stopped within 5 seconds; ownership retained for unload retry', 502)
       } finally { clearTimeout(timer) }
     })()
@@ -224,6 +284,16 @@ export class TimelineReader {
 }
 
 /** Bound command/result waits even if a provider fails to settle done on abort. */
+
+/** Classify a spawned child for semantic admission. Store capabilities are a
+ * pure static probe; every other store command is a transaction that may touch
+ * the lock/manifest, and frame children own render state. */
+function spawnKind(args) {
+  if (args[0] === 'store') return args[1] === 'capabilities' ? 'store-capabilities' : 'store'
+  if (args[0] === 'timeline' && args[1] === 'frame') return 'frame'
+  return 'read'
+}
+
 function untilAborted(promise, signal) {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason)

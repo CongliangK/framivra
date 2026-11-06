@@ -36,7 +36,16 @@ export class FrameEpoch {
     this.assertReady()
     if (operation.epoch !== this.epoch) throw new Error('FRAME_STALE: selection/pin/edit/session changed or write unresolved')
   }
-  editChanged(next) { this.invalidate(); this.edit = { ...this.edit, ...next } }
+  // Semantically idempotent: read-only polls re-report identical edit flags,
+  // and only a real dirty/busy/unknown transition may abort in-flight renders
+  // or drop a verified PNG. Ghost and other owners are untouched here.
+  editChanged(next) {
+    const merged = { ...this.edit, ...next }
+    const changed = merged.dirty !== this.edit.dirty || merged.busy !== this.edit.busy || merged.unknown !== this.edit.unknown
+    this.edit = merged
+    if (changed) this.invalidate()
+    return changed
+  }
 }
 export async function frameRequest(sessionId, payload, signal, fetcher = fetch) {
   const response = await fetcher('/api/framivra/frame', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, sessionId }), signal })
