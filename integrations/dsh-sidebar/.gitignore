@@ -1,0 +1,3 @@
+# Local development dependencies and regenerated client bundles.
+/node_modules/
+/lib/

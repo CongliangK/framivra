@@ -14,6 +14,35 @@ EDIT_OPERATIONS = (
     "block.split", "block.relink", "parameters.update", "parameters.unset",
     "project.resize", "range.ripple")
 
+# Single source of truth for the accepted request keys of every semantic
+# operation: name -> (required keys, optional keys), excluding the "op"
+# discriminator. fields() validates each request against this table and
+# timeline_store_capabilities() republishes it verbatim as edit.operation_fields;
+# the three must never drift apart. Pure static data: no file I/O, no state.
+EDIT_OPERATION_FIELDS = {
+    "source.add": (frozenset({"data"}), frozenset()),
+    "source.remove": (frozenset({"id"}), frozenset({"cascade"})),
+    "source.update": (frozenset({"id", "set"}), frozenset()),
+    "track.add": (frozenset({"family", "index", "data"}), frozenset()),
+    "track.remove": (frozenset({"id"}), frozenset()),
+    "track.copy": (frozenset({"id", "ids", "name", "index"}), frozenset()),
+    "track.reorder": (frozenset({"family", "ids"}), frozenset()),
+    "track.rename": (frozenset({"id", "name"}), frozenset()),
+    "track.references": (frozenset({"id", "set"}), frozenset({"unset"})),
+    "block.insert": (frozenset({"track_id", "data"}), frozenset()),
+    "block.remove": (frozenset({"id"}), frozenset()),
+    "block.copy": (frozenset({"id", "track_id", "at", "new_id"}), frozenset()),
+    "block.move": (frozenset({"id", "track_id", "at"}), frozenset()),
+    "block.trim": (frozenset({"id", "start", "end"}), frozenset({"fade_policy"})),
+    "block.split": (frozenset({"id", "at", "new_id"}), frozenset({"fade_policy", "text_policy", "texts"})),
+    "block.relink": (frozenset({"id", "src"}), frozenset()),
+    "parameters.update": (frozenset({"path", "value"}), frozenset({"id", "target"})),
+    "parameters.unset": (frozenset({"path"}), frozenset({"id", "target"})),
+    "project.resize": (frozenset({"duration_frames"}), frozenset()),
+    "range.ripple": (frozenset({"scope", "mode", "crossing", "resize"}),
+                     frozenset({"at", "delta", "start", "end", "split_ids", "fade_policy", "text_policy"})),
+}
+
 
 class EditError(ValueError):
     def __init__(self, code, message):
@@ -242,12 +271,13 @@ def transform_timeline(document, operations):
             fail("unsupported semantic operation")
         op = copy.deepcopy(request)
         name = op["op"]
+        # Field admission is the first check of every branch; hoisted here so the
+        # single table above is the only authority. Error order is unchanged.
+        fields(op, *EDIT_OPERATION_FIELDS[name])
         if name == "source.add":
-            fields(op, {"data"})
             allocate_tree(op["data"])
             doc["sources"].append(op["data"])
         elif name == "source.remove":
-            fields(op, {"id"}, {"cascade"})
             obj, kind, container, _ = locate(doc, op["id"])
             if kind != "source":
                 fail("expected source ID")
@@ -260,13 +290,11 @@ def transform_timeline(document, operations):
                     items.remove(user)
             container.remove(obj)
         elif name == "source.update":
-            fields(op, {"id", "set"})
             obj, kind, _, _ = locate(doc, op["id"])
             if kind != "source" or not isinstance(op["set"], dict) or not op["set"] or set(op["set"]) - {"path", "transform"}:
                 fail("source.update supports path/transform only, retaining source ID")
             obj.update(op["set"])
         elif name == "track.add":
-            fields(op, {"family", "index", "data"})
             if op["family"] not in ("video", "audio"):
                 fail("only real video/audio tracks can be added")
             items = doc[op["family"] + "_tracks"]
@@ -279,11 +307,9 @@ def transform_timeline(document, operations):
                 insertion_type(entry, "clip" if child == "clips" else "event", op["data"])
             items.insert(index, op["data"])
         elif name == "track.remove":
-            fields(op, {"id"})
             obj, _, items = track(doc, op["id"])
             items.remove(obj)  # Remaining known references are checked once, after the batch.
         elif name == "track.copy":
-            fields(op, {"id", "ids", "name", "index"})
             obj, kind, items = track(doc, op["id"])
             child = "clips" if kind == "video_track" else "events"
             identities = {obj["id"]} | {b["id"] for b in obj[child]}
@@ -300,7 +326,6 @@ def transform_timeline(document, operations):
                 fail("track insertion index outside collection")
             items.insert(index, copied)
         elif name == "track.reorder":
-            fields(op, {"family", "ids"})
             if op["family"] not in ("video", "audio"):
                 fail("reorder requires video/audio family")
             items = doc[op["family"] + "_tracks"]
@@ -309,7 +334,6 @@ def transform_timeline(document, operations):
             mapping = {t["id"]: t for t in items}
             items[:] = [mapping[i] for i in op["ids"]]
         elif name == "track.rename":
-            fields(op, {"id", "name"})
             obj, kind, items = track(doc, op["id"])
             if not isinstance(op["name"], str) or not op["name"]:
                 fail("track name must be nonempty string")
@@ -327,7 +351,6 @@ def transform_timeline(document, operations):
                         strategy["voice_track"] = op["name"]
             obj["name"] = op["name"]
         elif name == "track.references":
-            fields(op, {"id", "set"}, {"unset"})
             obj, kind, _ = track(doc, op["id"])
             values, unset = op["set"], op.get("unset", [])
             if kind != "audio_track" or not isinstance(values, dict) or set(values) - {"duck_by", "duck_strategy"} or not isinstance(unset, list) or set(unset) - {"duck_by", "duck_strategy"} or set(values) & set(unset):
@@ -336,17 +359,14 @@ def transform_timeline(document, operations):
             for key in unset:
                 obj.pop(key, None)
         elif name == "block.insert":
-            fields(op, {"track_id", "data"})
             items, kind, parent = destination(doc, op["track_id"])
             allocate_tree(op["data"])
             insertion_type(op["data"], kind, parent)
             items.append(op["data"])
         elif name == "block.remove":
-            fields(op, {"id"})
             obj, _, items, _ = block(doc, op["id"])
             items.remove(obj)
         elif name in ("block.move", "block.copy"):
-            fields(op, {"id", "track_id", "at"} | ({"new_id"} if name == "block.copy" else set()))
             obj, kind, items, parent = block(doc, op["id"])
             newitems, newkind, newparent = destination(doc, op["track_id"])
             compatible(kind, parent, newkind, newparent)
@@ -359,13 +379,11 @@ def transform_timeline(document, operations):
             place(obj, kind, op["at"])
             newitems.append(obj)
         elif name == "block.relink":
-            fields(op, {"id", "src"})
             obj, kind, _, _ = block(doc, op["id"])
             if kind == "subtitle" or "src" not in obj or not isinstance(op["src"], str):
                 fail("only source-bearing blocks can be relinked")
             obj["src"] = op["src"]
         elif name == "block.trim":
-            fields(op, {"id", "start", "end"}, {"fade_policy"})
             obj, kind, _, parent = block(doc, op["id"])
             start, end = integer(op["start"], "start", 0), integer(op["end"], "end", 1)
             oldstart, oldend = window(obj, kind)
@@ -373,7 +391,6 @@ def transform_timeline(document, operations):
                 fail("outward trim requires authoritative source bounds, unavailable in this asset-independent slice")
             segment(obj, kind, parent, start, end, op.get("fade_policy", "preserve-content"), warnings)
         elif name == "block.split":
-            fields(op, {"id", "at", "new_id"}, {"fade_policy", "text_policy", "texts"})
             obj, kind, items, parent = block(doc, op["id"])
             start, end = window(obj, kind)
             at = integer(op["at"], "at", 0)
@@ -393,7 +410,6 @@ def transform_timeline(document, operations):
             right["id"] = op["new_id"]
             items.insert(items.index(obj) + 1, right)
         elif name in ("parameters.update", "parameters.unset"):
-            fields(op, {"path", "value"} if name.endswith("update") else {"path"}, {"id", "target"})
             if ("id" in op) == ("target" in op):
                 fail("select exactly one object id or target:project")
             if "target" in op:
@@ -424,10 +440,8 @@ def transform_timeline(document, operations):
                     fail("cannot unset absent parameter")
                 del obj[path[-1]]
         elif name == "project.resize":
-            fields(op, {"duration_frames"})
             doc["project"]["duration_frames"] = integer(op["duration_frames"], "duration_frames", 1)
         elif name == "range.ripple":
-            fields(op, {"scope", "mode", "crossing", "resize"}, {"at", "delta", "start", "end", "split_ids", "fade_policy", "text_policy"})
             scope = op["scope"]
             if not isinstance(scope, dict) or set(scope) != {"track_ids", "subtitles"} or not isinstance(scope["track_ids"], list) or type(scope["subtitles"]) is not bool or type(op["resize"]) is not bool:
                 fail("ripple scope must explicitly list track_ids and subtitles bool; resize must be bool")

@@ -545,6 +545,18 @@ print(json.dumps(timeline_transaction(sys.argv[1],json.loads(sys.argv[2]))))
         capabilities = timeline_store_capabilities()
         self.assertIn("block.split", capabilities["edit"]["operations"])
         self.assertIn("gfx continuous trim/split/crossing ripple", capabilities["unsupported"])
+        from vtx.timeline_edit import EDIT_OPERATION_FIELDS, EDIT_OPERATIONS
+        self.assertEqual(capabilities["edit"]["operations"], list(EDIT_OPERATIONS))
+        self.assertEqual(capabilities["edit"]["operation_fields"],
+                         {name: {"required": sorted(required), "optional": sorted(optional)}
+                          for name, (required, optional) in EDIT_OPERATION_FIELDS.items()})
+        self.assertEqual(set(capabilities["edit"]["operation_fields"]), set(EDIT_OPERATIONS))
+        trim = capabilities["edit"]["operation_fields"]["block.trim"]
+        self.assertEqual(trim["required"], ["end", "id", "start"])
+        self.assertEqual(trim["optional"], ["fade_policy"])
+        ripple = capabilities["edit"]["operation_fields"]["range.ripple"]
+        self.assertEqual(ripple["optional"],
+                         ["at", "delta", "end", "fade_policy", "split_ids", "start", "text_policy"])
 
 
 if __name__ == "__main__":
