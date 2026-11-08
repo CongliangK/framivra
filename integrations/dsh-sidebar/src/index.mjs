@@ -34,6 +34,12 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/control', methods: ['POST'], requestBody: 'buffered', fetch: host.control,
   }))
+  // Authenticated Connection Fetch route like the others; it needs no Session
+  // and accepts an empty body only (the saved Host configuration is the sole
+  // input), so the check can never be turned into an arbitrary spawn.
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/framivra/diagnostics', methods: ['POST'], requestBody: 'buffered', fetch: host.diagnostics,
+  }))
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/frame', methods: ['POST'], requestBody: 'streaming', fetch: host.frame,
   }))

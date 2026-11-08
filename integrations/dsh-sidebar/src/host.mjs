@@ -15,6 +15,15 @@ export function relativeTimeline(path) {
   }
   return path
 }
+/** One-level browse relative path: '' (or absent/null) means the workspace
+ *  root; every other value takes the same rejects as relativeTimeline. */
+export function relativeBrowsePath(path) {
+  if (path === '' || path === null || path === undefined) return ''
+  if (typeof path !== 'string' || !path || path.includes('\0') || path.includes('\\') || path.includes(':') || isAbsolute(path) || path.split('/').some(part => !part || part === '.' || part === '..')) {
+    fail('BAD_PATH', 'Choose a relative workspace directory inside the current Session workspace; URLs and external paths are not supported')
+  }
+  return path
+}
 const json = (value, status = 200) => new Response(stringifyJSON(value), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
 const inlineCapable = value => value?.capabilities?.frame?.schema === 'framivra.timeline.frame/v1' && value.capabilities.frame.explicit_render_required === true && value.capabilities.frame.inline_png?.flag === '--include-png' && value.capabilities.frame.inline_png.encoding === 'base64' && value.capabilities.frame.inline_png.wire_limit_bytes === FRAME_WIRE_LIMIT
 
@@ -117,10 +126,115 @@ export function createPreviewHost(ctx, config = {}) {
     }
     return { signal, release }
   }
+  /** Bound on one browse listing; beyond this the response is truncated. */
+  const BROWSE_ENTRY_LIMIT = 500
+  /** One-level workspace listing through public fs APIs only. The directory
+   *  comes from the Host-owned Session cwd (never the browser); every entry's
+   *  RESOLVED target must stay canonically inside that root — symlinks that
+   *  escape are counted and omitted, never followed. This is a file picker,
+   *  not a parser: selecting a timeline still goes through op 'open'/vtx. */
+  async function browse(session, sessionId, relative, signal) {
+    const cwd = ctx.workingDirectory.get(session) // Never accept cwd/root from the browser.
+    const root = await localTarget(cwd, undefined, signal)
+    if ((await ctx.fs.stat(root, signal))?.type !== 'directory') fail('BAD_WORKSPACE', 'Session workspace is unavailable')
+    const target = relative === '' ? root : await localTarget(relative, cwd, signal)
+    if (target !== root && !ctx.fs.contains(root, target)) fail('PATH_ESCAPE', 'Resolved target escapes its authorized directory', 403)
+    if ((await ctx.fs.stat(target, signal))?.type !== 'directory') fail('NOT_A_DIRECTORY', 'Browse expects an existing workspace directory', 400)
+    if (typeof ctx.fs.listDir !== 'function') fail('BROWSE_UNSUPPORTED', 'This filesystem provider does not support directory listing', 502)
+    let listing
+    try { listing = await ctx.fs.listDir(target, signal) }
+    catch (error) {
+      if (error instanceof PreviewError) throw error
+      fail('BROWSE_UNSUPPORTED', 'Workspace directory could not be listed', 502)
+    }
+    if (!Array.isArray(listing)) fail('BROWSE_UNSUPPORTED', 'Filesystem provider returned an invalid listing', 502)
+    const entries = []
+    let truncated = false, escaped = 0
+    for (const entry of listing) {
+      if (!entry || typeof entry.name !== 'string' || !entry.name || entry.name.includes('/') || !['directory', 'file', 'other'].includes(entry.type)) {
+        fail('BROWSE_UNSUPPORTED', 'Filesystem provider returned an invalid listing', 502)
+      }
+      if (!entry.target || typeof entry.target !== 'object') fail('BROWSE_UNSUPPORTED', 'Filesystem provider returned an unresolved entry', 502)
+      // Canonical containment per entry against the RESOLVED target: a symlink
+      // that leaves the workspace is reported (escaped) and omitted.
+      if (!ctx.fs.contains(root, entry.target)) { escaped++; continue }
+      // A name that could not itself be addressed by op 'browse'/'open' (dots,
+      // separators, control bytes…) is not returnable — choosing it would only
+      // produce a BAD_PATH later. Validate with the shared helper, skip on reject.
+      try { relativeBrowsePath(entry.name) } catch { continue }
+      if (entry.type !== 'directory' && !(entry.type === 'file' && entry.name.toLowerCase().endsWith('.json'))) continue
+      if (entries.length >= BROWSE_ENTRY_LIMIT) { truncated = true; break }
+      entries.push({ name: entry.name, path: relative === '' ? entry.name : `${relative}/${entry.name}`, type: entry.type })
+    }
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+    signal.throwIfAborted()
+    // The listing must still describe the same Session/cwd it started from.
+    if (ctx.workingDirectory.get(session) !== cwd || ctx.sessions.get(sessionId) !== session) fail('PATH_CHANGED', 'Session workspace changed; browse again', 409)
+    return { ok: true, schema: 'framivra.browse/v1', path: relative, entries, truncated, escaped, limit: BROWSE_ENTRY_LIMIT }
+  }
+  /** Read-only diagnostic of the SAVED trusted Host configuration. The request
+   *  body must be empty: no executable, PATH or any other value is ever
+   *  accepted from the browser. Both probes are static capabilities commands
+   *  (they never open a real timeline or project, zero writes); the outcome is
+   *  only reported after re-checking that the configuration snapshot still
+   *  holds, so a stale result can never be presented as valid. No grant, no
+   *  Session, no settings mutation. */
+  async function diagnostics(request) {
+    const hold = lease(request)
+    try {
+      const text = await request.text()
+      hold.signal.throwIfAborted() // An aborted body read must surface as CANCELLED, never as a JSON parse error.
+      const data = text.trim() === '' ? {} : parseJSON(text)
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length) {
+        fail('BAD_REQUEST', 'The check reads only the saved Host configuration; no request fields are accepted')
+      }
+      const config = snapshotConfig()
+      const executable = await reader.executable(hold.signal, config)
+      const executableTarget = await localTarget(executable, undefined, hold.signal)
+      if ((await ctx.fs.stat(executableTarget, hold.signal))?.type !== 'file') {
+        fail('EXECUTABLE_NOT_REGULAR', '已解析的 vtx 不是常规文件；请在插件配置中改为受信目录里的常规可执行文件', 422)
+      }
+      // Public SessionStore surface is get()/list() only — values() is not a
+      // public API and must not be relied on.
+      if (typeof ctx.sessions.list !== 'function') fail('SESSION_STORE_UNAVAILABLE', 'Host SessionStore cannot enumerate workspaces; the executable trust check is unavailable', 503)
+      const liveSessions = ctx.sessions.list()
+      for (const session of liveSessions) {
+        let cwd
+        try { cwd = ctx.workingDirectory.get(session) } catch { continue }
+        if (typeof cwd !== 'string' || !cwd) continue
+        try {
+          const root = await localTarget(cwd, undefined, hold.signal)
+          if (ctx.fs.contains(root, executableTarget)) fail('UNTRUSTED_EXECUTABLE', 'Do not execute vtx from a session workspace', 403)
+        } catch (error) {
+          // Only the trust verdict aborts the check; per-session resolution
+          // problems in unrelated sessions must not mask the diagnostic.
+          if (error instanceof PreviewError && error.code === 'UNTRUSTED_EXECUTABLE') throw error
+        }
+      }
+      // Static probes: `capabilities` never opens the timeline or project.
+      const placeholder = 'framivra-diagnostics-no-timeline.json'
+      const capabilities = await reader.read(executable, placeholder, 'capabilities', undefined, hold.signal, config)
+      let storeCapabilities
+      try { storeCapabilities = await reader.store(executable, placeholder, 'capabilities', undefined, hold.signal, config) }
+      catch (error) {
+        if (error instanceof PreviewError && error.code === 'CLI_UNSUPPORTED') {
+          storeCapabilities = { ok: false, error: 'CLI_UNSUPPORTED', message: 'Installed vtx does not advertise the semantic store; reads remain usable' }
+        } else throw error
+      }
+      hold.signal.throwIfAborted()
+      if (snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed during the check; run the check again', 409)
+      return json({ ok: true, schema: 'framivra.diagnostics/v1',
+        config: { vtxExecutable: config.vtxExecutable, trustedPath: config.trustedPath },
+        executable: { path: ctx.fs.processPath(executableTarget), regularFile: true },
+        capabilities, storeCapabilities })
+    } finally { hold.release() }
+  }
   async function control(request) {
     const hold = lease(request)
     try {
-      const data = parseJSON(await request.text())
+      const raw = await request.text()
+      hold.signal.throwIfAborted() // An aborted body read must surface as CANCELLED, never as a JSON parse error.
+      const data = parseJSON(raw)
       if (!data || typeof data !== 'object' || Array.isArray(data)) fail('BAD_REQUEST', 'Expected a JSON object')
       const session = sessionFor(data.sessionId)
       if (data.op === 'open') {
@@ -158,6 +272,10 @@ export function createPreviewHost(ctx, config = {}) {
         grants.set(grant, { session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion, capabilities, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs, configFingerprint: config.fingerprint, configSnapshot: config })
         return json({ grant, snapshot, capabilities, expires_in_ms: ttlMs,
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
+      }
+      if (data.op === 'browse') {
+        const relative = relativeBrowsePath(data.path)
+        return json(await browse(session, data.sessionId, relative, hold.signal))
       }
       // Cleanup-only operations keep working after a configuration change so a
       // stale grant or write permission can always be torn down explicitly.
@@ -467,7 +585,7 @@ export function createPreviewHost(ctx, config = {}) {
     }
   }
   return {
-    control: safe(control), frame: safe(frame), media: safe(media),
+    control: safe(control), frame: safe(frame), media: safe(media), diagnostics: safe(diagnostics),
     agent: { read: trackTool(agent.read), propose: trackTool(agent.propose), status: trackTool(agent.status) },
     async dispose() {
       agent.dispose()

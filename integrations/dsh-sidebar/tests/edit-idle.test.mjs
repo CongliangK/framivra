@@ -54,7 +54,8 @@ test('empty proposal-list polls never abort an in-flight frame render; a real di
   assert.equal(polls.length, 1, 'first 1500ms poll scheduled after the immediate read-only poll')
 
   // Pin an integer frame and grant cache/preview consent for this render.
-  const frameInput = [...document.querySelectorAll('label')].find(node => node.textContent.startsWith('Frame')).querySelector('input')
+  const frameInput = document.querySelector('input[name="framivra-frame"]')
+  assert(frameInput, 'canonical frame field must remain available after localization')
   await act(async () => Simulate.change(frameInput, { target: { value: '9' } }))
   const consent = document.querySelector('input[type=checkbox]')
   await act(async () => Simulate.change(consent, { target: { checked: true } }))

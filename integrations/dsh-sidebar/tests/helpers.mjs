@@ -8,6 +8,9 @@ export class MemoryFs {
     this.files = new Map([
       ['/workspace', { type: 'directory', version: 'root' }],
       ['/workspace/timeline.json', { type: 'file', version: 'timeline', size: 2 }],
+      ['/workspace/sub', { type: 'directory', version: 'sub' }],
+      ['/workspace/sub/nested.json', { type: 'file', version: 'nested', size: 2 }],
+      ['/workspace/notes.txt', { type: 'file', version: 'notes', size: 3 }],
       ['/workspace/out/final.mp4', { type: 'file', version: 'media', size: 160_000 }],
       ['/opt/trusted/vtx', { type: 'file', version: 'vtx' }],
     ])
@@ -23,6 +26,21 @@ export class MemoryFs {
   processPathFromHostPath(path) { return path }
   contains(parent, child) { return child.targetKey === parent.targetKey || child.targetKey.startsWith(`${parent.targetKey}/`) }
   async stat(target) { const info = this.files.get(target.targetKey); return info ? { ...info } : undefined }
+  /** Public one-level listing contract: resolved targets make symlink escapes visible. */
+  async listDir(target, signal) {
+    signal?.throwIfAborted?.()
+    const prefix = target.targetKey.endsWith('/') ? target.targetKey : `${target.targetKey}/`
+    const entries = []
+    for (const [key, info] of this.files) {
+      if (!key.startsWith(prefix)) continue
+      const name = key.slice(prefix.length)
+      if (!name || name.includes('/')) continue
+      const resolved = this.aliases.get(key) ?? key
+      entries.push({ name, type: info.type, target: { targetKey: resolved, displayPath: resolved } })
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+    return entries
+  }
   async readByteRange(target, { offset, length }, signal) {
     signal.throwIfAborted()
     this.reads.push({ key: target.targetKey, offset, length, signal })
@@ -57,6 +75,9 @@ export function fixtureSubprocess() {
 export function setup(config = {}) {
   const fs = new MemoryFs()
   const sessions = new Map([['one', { id: 'one' }], ['two', { id: 'two' }]])
+  // Public SessionStore surface only: get()/list(). values() stays undefined
+  // so tests exercise the same public shape production Hosts expose.
+  sessions.list = () => [...sessions.values()]
   const cwd = { value: '/workspace' }
   const subprocess = fixtureSubprocess()
   const ctx = { fs, sessions, workingDirectory: { get: () => cwd.value, ensure: async () => cwd.value }, subprocess }

@@ -105,7 +105,7 @@ for (const kind of ['source', 'zip']) {
     await ui.click(`选择块 ${address(1)}`); await ui.settle(() => JSON.parse(document.querySelector('[aria-label="选中对象 raw JSON"]')?.textContent || '{}').id === 'c2')
     ui.faults.hold = undefined; ui.held.splice(0).forEach(resolve => resolve()); await ui.flush()
     assert.equal(JSON.parse(document.querySelector('[aria-label="选中对象 raw JSON"]').textContent).id, 'c2')
-    await ui.change('Frame (blank = all) ', '70'); assert.equal(document.querySelector('[aria-label="选中对象 raw JSON"]'), null)
+    await ui.change('帧（留空为全部） ', '70'); assert.equal(document.querySelector('[aria-label="选中对象 raw JSON"]'), null)
     await ui.click('复制 raw JSON'); assert.equal(JSON.parse(ui.copies.at(-1)).id, 'c2')
     await ui.save('retained-selection.json', { queue: ui.queue(), copies: ui.copies, before: clean(before), saved: clean(await ui.read()), keyboard: 'native key events + explicit native default-click adapter; not Chrome' })
   })

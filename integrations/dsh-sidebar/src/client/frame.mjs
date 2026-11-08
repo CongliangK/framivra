@@ -147,7 +147,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       // Validate association before making either stage/copy available.
       frameDraftText(verified, selection, positionOnly)
       owner.generated = verified
-      setState({ message: '已验证 PNG 字节、SHA、IHDR 与完整浏览器解码。请第二次点击复制图片，或加入当前草稿；未发送。' })
+      setState({ message: '已验证 PNG，未发送。复制与入稿请展开图片工具。' })
     } catch (error) { if (!operation?.signal.aborted) setState({ message: error.message }); else setState({ message: '操作已失效/取消；未加入草稿。' }) }
   }
   async function stage() {
@@ -188,16 +188,64 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     } catch (error) { setState({ message: `图片未确认复制：${error.message}；无自动文本降级。` }) }
   }
   const blocked = !whole(frame) || !!owner.ghost || owner.edit.dirty || owner.edit.busy || owner.edit.unknown
-  return h('section', { 'aria-label': '当前合成帧与草稿', style: { border: '1px solid currentColor', padding: 8 } },
-    h('h3', null, '固定帧 PNG → 当前草稿（不发送）'),
-    h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),
-    h('label', null, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '单独允许本次点击向此工程 cache/preview 写入（不授予 timeline/history 写权限）'),
-    h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '明确仅位置引用，不把非命中选择关联到画面'),
-    h('button', { type: 'button', disabled: !consent || blocked || state.busy, onClick: () => void generate() }, '显式生成并验证固定帧 PNG'),
-    h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void copy() }, '复制已生成 PNG（再次点击）'),
-    h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void stage() }, '将该帧 + 精确引用加入当前草稿（不发送）'),
-    h('button', { type: 'button', onClick: () => { owner.invalidate(); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => setState({ message: '已回收；未自动重试。' }), error => setState({ message: error.message })) } }, '显式取消帧并等待回收'),
+  // Verified preview object URL: created only from the verified owner.generated.file
+  // (never image.path or unverified bytes), revoked on replacement/invalidation/unmount.
+  // jsdom has no URL.createObjectURL; the guard keeps tests and non-browser hosts clean.
+  const verifiedFile = generated?.file
+  // Preview state carries the File it was created from: after owner.invalidate()
+  // the render itself (not just the effect tick) must stop showing the stale URL.
+  const [preview, setPreview] = useState()
+  useEffect(() => {
+    if (!verifiedFile || typeof URL?.createObjectURL !== 'function') return
+    const url = URL.createObjectURL(verifiedFile)
+    setPreview({ url, file: verifiedFile })
+    return () => { URL.revokeObjectURL(url); setPreview(undefined) }
+  }, [verifiedFile])
+  const shownPreview = generated && preview && preview.file === generated.file ? preview.url : null
+  const cancel = () => { owner.invalidate(); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => setState({ message: '已回收；未自动重试。' }), error => setState({ message: error.message })) }
+  const cancelButton = () => h('button', { type: 'button', onClick: cancel }, '显式取消帧并等待回收')
+  return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', 'aria-busy': state.busy ? 'true' : 'false' },
+    h('style', null, `
+.fv-frame-tools{min-width:0;max-width:100%;font:inherit;color:inherit}
+.fv-frame-tools *{box-sizing:border-box}.fv-frame-tools button,.fv-frame-tools input{font:inherit}
+.fv-frame-tools .fv-frame-tools-head{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin:0 0 6px}
+.fv-frame-tools h3{margin:0;font-size:13px;font-weight:600}
+.fv-frame-tools .fv-frame-tools-meta{font-size:11px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,currentColor 62%,transparent);overflow-wrap:anywhere}
+.fv-frame-tools .fv-frame-tools-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:320px;margin:0 0 8px;background:#000;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.fv-frame-tools .fv-frame-tools-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.fv-frame-tools .fv-frame-tools-empty{font-size:12px;color:#9aa0a6;text-align:center;padding:0 12px}
+.fv-frame-tools .fv-frame-tools-check{display:flex;flex-wrap:wrap;gap:2px 14px;margin:0 0 6px;font-size:12px}
+.fv-frame-tools .fv-frame-tools-tools{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}
+.fv-frame-tools button{border:1px solid color-mix(in srgb,currentColor 45%,transparent);border-radius:5px;background:color-mix(in srgb,currentColor 6%,transparent);padding:4px 10px;font-size:12px;cursor:pointer}
+.fv-frame-tools button:disabled{opacity:.45;cursor:default}
+.fv-frame-tools :focus-visible{outline:2px solid var(--fv-tl-accent,#579deb);outline-offset:2px}
+.fv-frame-tools [role=alert],.fv-frame-tools [role=status]{font-size:12px;margin:4px 0}
+.fv-frame-tools details{margin:4px 0;font-size:12px}
+.fv-frame-tools details summary{cursor:pointer;color:color-mix(in srgb,currentColor 68%,transparent)}
+.fv-frame-tools details p,.fv-frame-tools details pre{margin:6px 0}
+.fv-frame-tools pre{white-space:pre-wrap;overflow-wrap:anywhere}
+`),
+    h('div', { className: 'fv-frame-tools-head' },
+      h('h3', null, '当前合成帧'),
+      h('span', { className: 'fv-frame-tools-meta', title: version }, `版本 ${version.slice(7, 19)} · 帧 ${whole(frame) ? frame : '未固定'}`)),
+    h('div', { className: 'fv-frame-tools-stage' },
+      shownPreview
+        ? h('img', { src: shownPreview, width: generated.certificate.width, height: generated.certificate.height, alt: `已验证合成帧 ${generated.certificate.frame}（${generated.certificate.width}×${generated.certificate.height} PNG）` })
+        : h('div', { className: 'fv-frame-tools-empty' }, whole(frame) ? '未生成画面（需显式生成）' : '未固定帧')),
+    h('div', { className: 'fv-frame-tools-tools' },
+      h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
+      h('button', { type: 'button', disabled: !consent || blocked || state.busy, onClick: () => void generate() }, '显式生成并验证固定帧 PNG'),
+      state.busy ? cancelButton() : null),
     blocked ? h('p', { role: 'alert' }, '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。') : null,
     state.message ? h('p', { role: 'status' }, state.message) : null,
-    generated ? h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, stringifyJSON(generated.certificate, 2)) : null)
+    h('details', null,
+      h('summary', null, '图片与草稿 · 验证详情'),
+      h('div', { className: 'fv-frame-tools-tools' },
+        h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void copy() }, '复制已生成 PNG（再次点击）'),
+        h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void stage() }, '将该帧 + 精确引用加入当前草稿（不发送）'),
+        !state.busy ? cancelButton() : null),
+      h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
+      h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
+      h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),
+      generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null))
 }
