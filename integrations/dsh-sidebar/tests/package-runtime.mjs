@@ -96,6 +96,16 @@ const services = {
     return () => routes.delete(route.path)
   } } },
   sessions: new Map([['one', { id: 'one' }]]),
+  // Official-public-service DI prerequisites, provided as deliberately UNAVAILABLE
+  // faces — the same minimal shape the official runtime's own browser-plugin
+  // tests use (dsh-v0.2.1-rc.2 packages/client/ui-schedule/tests/browser-plugin.client.spec.ts:115
+  // `ctx.provide('conversation', {} as never)`; packages/client/ui-sidebar-right/tests/apply.client.spec.ts:79
+  // `ctx.provide('uiSession', { adapter: { current } })`). Their presence satisfies
+  // the client plugin's `inject` list so real Cordis activation runs; the absent
+  // draft/input faces keep the negative DRAFT_UNAVAILABLE path intact (no live
+  // conversation controller, no navigation snapshot, no extra control requests).
+  conversation: {},
+  uiSession: { adapter: { current: null } },
   workingDirectory: { get: () => '/workspace', ensure: async () => '/workspace' }, fs, subprocess,
   tools: { register: definition => { tools.add(definition.name); return () => tools.delete(definition.name) } },
 }

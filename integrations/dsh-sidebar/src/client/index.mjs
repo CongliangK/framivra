@@ -6,10 +6,11 @@ import { ManualEditor } from './manual.mjs'
 import { emptySelection, transitionSelection, preserveSelection } from './selection.mjs'
 import { FrameEpoch, FrameTools } from './frame.mjs'
 import { registerBundleConfig } from './settings.mjs'
+import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
-export const inject = ['slots', 'sidebarRightTabs', 'configForms']
+export const inject = ['slots', 'sidebarRightTabs', 'configForms', 'conversation', 'sessions', 'uiSession']
 const pretty = value => stringifyJSON(value, 2)
 const details = (title, data, key) => h('details', { key }, h('summary', null, title), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, pretty(data)))
 
@@ -83,8 +84,10 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
         read: (query, signal) => control(sessionId, { op: 'reference', grant: opened.grant, query }, signal),
         onReference: (envelope, item) => setState(previous => ({ ...previous, envelope, item })),
       })
-      signal.throwIfAborted()
-      setState(previous => ({ ...previous, busy: false, message: result.status === 'applied' ? '已追加到点击时会话的草稿；未发送。' : result.status === 'copied' ? '已复制。' : result.status === 'ready' ? '引用就绪。' : `草稿未更改：${result.status}/${result.reason}。保留引用供复制；请确认当前会话后重试。` }))
+      // A completed draft mutation must not be relabelled "unchanged" if a
+      // synchronous subscriber navigated/aborted after the public action ran.
+      if (action !== 'draft') signal.throwIfAborted()
+      setState(previous => ({ ...previous, busy: false, message: result.status === 'copied' ? '已复制。' : result.status === 'ready' ? '引用就绪。' : draftResultMessage(result) }))
     } catch (error) {
       if (signal.aborted) return
       const stale = /STALE_REFERENCE|reference\.stale/.test(error.message)
@@ -97,7 +100,7 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
   return h('section', { 'aria-label': '时间线引用', style: { border: '1px solid currentColor', padding: 8 } },
     h('h3', null, '时间线引用 · 仅存储语义'),
     h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放未与选择联动，不能代替精确帧。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
-    h('p', null, '加入草稿需要宿主公开 conversation.captureDraftTarget / stageDraft；缺少 API 或空白未创建会话时仅复制可用。不会自动创建会话、不会发送。'),
+    h('p', null, '加入草稿通过官方会话 InputActions；在点击时选区起点插入，不替换已选文字或原有引用。文本和图片顺序加入，部分结果会明确提示；不会创建会话、自动补投或发送。'),
     selection ? h('p', null, `当前选择：${selection.kind} ${selection.address} · ${opened.snapshot.content_version}`) : h('p', null, '尚未选择轨道或块。'),
     ...[['id', '复制 ID / 临时定位'], ['raw', '复制 raw JSON'], ['diagnostic', '复制诊断引用 JSON'], ['draft', '加入当前会话草稿（不发送）']].map(([action, label]) => h('button', { key: action, type: 'button', disabled: !selection || state.busy, onClick: () => { void run(action) } }, label)),
     state.busy ? h('button', { type: 'button', onClick: () => { task.current?.abort(); setState(previous => ({ ...previous, busy: false, message: '已取消；未重试/补投草稿，选择与已读取原文保留。' })) } }, '取消引用操作') : null,
@@ -108,8 +111,19 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
       details('vtx reference/v1 诊断与选择（完整）', state.envelope)) : null)
 }
 
-export function PreviewBody({ useTabInfo, sessionId, getDraftServices }) {
+export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostServices, inputActions, useAccess = () => false }) {
   const { tab } = useTabInfo()
+  const promptAllowed = useAccess('session/prompt') === true
+  const liveDraft = useRef()
+  liveDraft.current = { getHostServices, inputActions, promptAllowed }
+  const draftServices = React.useMemo(() => createOfficialDraftServices({
+    sessionId,
+    getServices: () => liveDraft.current.getHostServices?.(),
+    getActions: () => liveDraft.current.inputActions,
+    getAllowed: () => liveDraft.current.promptAllowed,
+  }), [sessionId])
+  useEffect(() => () => draftServices.dispose(), [draftServices])
+  const getDraftServices = React.useCallback(() => draftServices.getServices(), [draftServices])
   const [timeline, setTimeline] = useState('timeline.json')
   const [frame, setFrame] = useState('')
   const [state, setState] = useState({ phase: 'idle' })
@@ -234,12 +248,19 @@ function Guide({ useTabInfo }) {
   return h('button', { onClick: () => tab.actions.openTab('framivra', { replaceTab: true }) }, 'Framivra · read-only timeline preview')
 }
 export function apply(ctx) {
+  const lifetime = { active: true }
+  // Official Cordis creates a new traceable Proxy on EVERY service read.
+  // Pin public injected faces for this apply lifetime, not for each click.
+  // Dependency replacement disposes this lifetime and re-runs apply with fresh
+  // faces; draft contents, binding, permissions and budgets are still read live.
+  const services = { conversation: ctx.get?.('conversation'), sessions: ctx.get?.('sessions'), uiSession: ctx.get?.('uiSession') }
+  ctx.effect(() => () => { lifetime.active = false })
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: ID, kind: 'framivra', priority: 'extension', title: () => 'Framivra',
     guide: [{ id: 'open', order: 40, title: () => 'Framivra preview', description: () => 'Read-only timeline and existing outputs' }],
   }))
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-    name: 'sidebar.right.pane.tab', key: ID, inject: sessionId => ({ sessionId, getDraftServices: () => ({ conversation: ctx.get?.('conversation'), sessions: ctx.get?.('sessions'), uiSession: ctx.get?.('uiSession') }) }),
+    name: 'sidebar.right.pane.tab', key: ID, inject: sessionId => ({ sessionId, getDraftServices: () => ({ ...services, active: lifetime.active }) }),
   }, PreviewBody)))
   ctx.effect(() => ctx.slots.inject('sidebar.right.tab.guide.entry', () => ctx.slots.register({ name: 'sidebar.right.tab.guide.entry', key: ID }, Guide)))
   registerBundleConfig(ctx)

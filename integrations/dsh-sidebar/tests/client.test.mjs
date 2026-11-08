@@ -94,6 +94,7 @@ test('independent framivra extension tab and guide registrations dispose cleanly
   assert.equal(slots[2].definition.key, 'framivra-dsh-sidebar')
   const props = slots[0].definition.inject('session')
   assert.equal(props.sessionId, 'session')
-  assert.deepEqual(props.getDraftServices(), { conversation: undefined, sessions: undefined, uiSession: undefined })
+  assert.deepEqual(props.getDraftServices(), { conversation: undefined, sessions: undefined, uiSession: undefined, active: true })
   for (const dispose of cleanup.reverse()) dispose()
+  assert.deepEqual(props.getDraftServices(), { conversation: undefined, sessions: undefined, uiSession: undefined, active: false })
 })

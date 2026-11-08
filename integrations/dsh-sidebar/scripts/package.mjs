@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Build through the public SDK and atomically publish a self-contained ZIP. */
+/** Build the official public client factory and atomically publish a distributable ZIP. */
 import { readFile, mkdir, writeFile, mkdtemp, copyFile, link, lstat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -23,10 +23,10 @@ const stage = join(work, 'package')
 await mkdir(join(stage, 'lib'), { recursive: true })
 await buildClient(join(work, 'client-build'))
 const client = join(work, 'client-build', 'client.js')
-// Production ZIP omits debug maps/source paths; executable factory is SDK output.
+// Distribution ZIP omits debug maps/source paths; the factory uses the official loader protocol.
 const clientSource = (await readFile(client, 'utf8')).replace(/^\/\/# sourceMappingURL=.*(?:\r?\n|$)/gm, '')
 if (!clientSource.trim() || clientSource.includes('sourceMappingURL=') || clientSource.includes('/home/') || clientSource.includes('node_modules/')) {
-  throw new Error('SDK browser artifact is empty or contains checkout paths')
+  throw new Error('Official client factory is empty or contains checkout paths')
 }
 const manifest = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8'))
 // Source scripts and all build/test dependencies stay outside the release.
