@@ -92,6 +92,9 @@ def main():
     """One invocation, including input-load and finish failures."""
     import sys
 
+    from .runtime.stdio import ensure_blocking_stdio
+    ensure_blocking_stdio()
+
     from .cli.commands import _main
     from .runtime import events
     from .pipeline.infra import ProjectPathError
