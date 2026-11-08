@@ -22,7 +22,9 @@ test('empty proposal-list polls never abort an in-flight frame render; a real di
 
   const polls = [], originalSetTimeout = globalThis.setTimeout
   let proposals = [], renderSignal
-  const respond = payload => ({ ok: true, status: 200, text: async () => JSON.stringify(payload) })
+  // Exercise the actual Fetch stream seam: control responses are byte-bounded
+  // before decode, so a text-only mock would bypass the contract under test.
+  const respond = payload => new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } })
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url, init = {}) => {
     if (url === '/api/framivra/frame') { renderSignal = init.signal; return new Promise(() => {}) }

@@ -88,6 +88,46 @@ test('FileBrowser: folder navigation and up re-browse with exact relative paths;
   assert.deepEqual(calls, ['', 'sub', ''])
 })
 
+test('FileBrowser: refresh and retry preserve the active filter; folder navigation clears it', async t => {
+  const { root, settle, change, label } = await mount(t)
+  const listings = {
+    '': [dir('', 'sub'), file('', 'a.json'), file('', 'b.json')],
+    sub: [file('sub', 'inner project.json')],
+  }
+  const responses = { '': [...listings['']], sub: [...listings.sub] }
+  const failNext = { '': false }
+  const call = async (_sessionId, payload) => {
+    if (failNext[payload.path]) { failNext[payload.path] = false; throw new Error('TRANSPORT_DOWN: 模拟刷新失败') }
+    return browseOK(payload.path, responses[payload.path])
+  }
+  await act(async () => root.render(h(FileBrowser, { sessionId: 'one', tabSignal: new AbortController().signal, call, onChoose: () => {}, onClose: () => {} })))
+  await settle(() => document.querySelector('.fv-file-list'))
+  await change(document.querySelector('.fv-file-search'), '.json')
+  await settle(() => [...document.querySelectorAll('.fv-file-list span')].every(n => n.textContent.includes('.json')) && document.querySelectorAll('.fv-file-list button').length === 2)
+  // refresh preserves the filter and keeps filtering the fresh listing
+  await act(async () => document.querySelector('[aria-label="刷新文件列表"]').click())
+  await settle(() => document.querySelector('.fv-file-search').value === '.json')
+  assert.equal(document.querySelectorAll('.fv-file-list button').length, 2, 'filter still applied to the refreshed listing')
+  // a failing refresh keeps the filter; the next refresh (retry path, same folder) still preserves it
+  failNext[''] = true
+  await act(async () => document.querySelector('[aria-label="刷新文件列表"]').click())
+  await settle(() => document.body.textContent.includes('TRANSPORT_DOWN'))
+  assert.equal(document.querySelector('.fv-file-search').value, '.json', 'failure does not wipe the filter')
+  await act(async () => document.querySelector('[aria-label="刷新文件列表"]').click())
+  await settle(() => document.querySelector('.fv-file-search').value === '.json' && document.querySelectorAll('.fv-file-list button').length === 2)
+  // folder navigation clears the filter (filter to the folder name so its entry is visible)
+  await change(document.querySelector('.fv-file-search'), 'sub')
+  await settle(() => document.querySelectorAll('.fv-file-list button').length === 1)
+  await act(async () => label('打开文件夹 sub').click())
+  await settle(() => document.querySelector('.fv-file-location span').textContent === 'sub')
+  assert.equal(document.querySelector('.fv-file-search').value, '', 'navigation into a folder clears the filter')
+  assert.equal(document.querySelectorAll('.fv-file-list button').length, 1, 'unfiltered listing of the new folder')
+  await change(document.querySelector('.fv-file-search'), 'inner')
+  await act(async () => label('上一级文件夹').click())
+  await settle(() => document.querySelector('.fv-file-location span').textContent === '当前会话工作区')
+  assert.equal(document.querySelector('.fv-file-search').value, '', 'navigation up clears the filter')
+})
+
 test('FileBrowser: loading status, empty folder, truncated and escaped notices come from the Host response only', async t => {
   const { root, settle } = await mount(t)
   const responses = [
@@ -350,4 +390,29 @@ test('PreviewBody: session switch closes the grant and clears the shell; a cwd s
   assert(document.querySelector('.fv-ruler') === null)
   assert(document.querySelector('.fv-timeline-pane') === null)
   assert(!host.requests.slice(beforeSwitch).some(r => r.op === 'open' || r.op === 'query' || r.op === 'read'), 'no auto load on session switch')
+})
+
+test('PreviewBody: topbar path disclosure closes with Escape without closing the workbench; submit preserves the ordinary open contract', async t => {
+  const { root, dom, label, Simulate, submit, settle } = await mount(t)
+  const oldFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = oldFetch })
+  const host = hostFixture()
+  installDialogAdapter(dom)
+  await act(async () => root.render(h(PreviewBody, { ...host, sessionId: 'one' })))
+  const menu = document.querySelector('.fv-topbar > .fv-path')
+  assert(menu, 'rare path form belongs to the toolbar, not a permanent monitor row')
+  await act(async () => label('展开工作台').click())
+  menu.open = true
+  await act(async () => Simulate.keyDown(menu.querySelector('input'), { key: 'Escape' }))
+  assert.equal(menu.open, false)
+  assert.equal(document.querySelector('.fv-workbench').open, true, 'Escape was owned by the disclosure')
+  assert.equal(document.activeElement, menu.querySelector('summary'))
+  assert.equal(host.requests.length, 0, 'opening/closing the disclosure performs no IO')
+  menu.open = true
+  await submit(0)
+  await settle(() => document.querySelector('.fv-ruler'))
+  assert.equal(menu.open, false, 'submit reclaims the overlay')
+  assert.equal(host.requests.filter(r => r.op === 'open').length, 1)
+  assert(document.querySelector('.fv-inspector .fv-data'), 'complete raw project data stays mounted in the inspector')
+  assert.equal(document.querySelector('.fv-timeline-pane .fv-data'), null, 'data details do not consume lane height')
 })

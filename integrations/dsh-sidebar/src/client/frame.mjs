@@ -3,10 +3,42 @@ import { parseJSON, stringifyJSON } from '../json.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../bounded.mjs'
 import { captureCurrentDraft, referenceQuery, selectedReference } from './reference.mjs'
 import { draftResultMessage } from './draft-services.mjs'
+import { Icon } from './workbench.mjs'
 
 const h = React.createElement, rawSHA = /^[a-f0-9]{64}$/, versionSHA = /^sha256:[a-f0-9]{64}$/
 const bad = message => { throw new Error(`FRAME_INVALID: ${message}`) }
 const whole = value => Number.isSafeInteger(value) && value >= 0
+
+/** Exact FPS identity between the certificate rational num/den and the raw core
+ * token. Never Number(rawJSON): binary rounding would silently equate
+ * 30.0000000000000000000001 with 30. Canonical safe-integer numbers (the only
+ * numbers parseJSON keeps) compare by exact integer math; rawJSON tokens are
+ * compared as exact decimals with tightly bounded digit/exponent ranges, so a
+ * second JSON parser is not needed. Strings and lookalikes are rejected. */
+export const FPS_TOKEN_LIMIT = 64, FPS_DIGIT_LIMIT = 40, FPS_EXPONENT_LIMIT = 60
+const fpsTokenPattern = /^([+-]?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/
+export function fpsMatchesReference(num, den, referenceFps) {
+  if (!whole(num) || !whole(den) || num < 1 || den < 1) return false
+  if (typeof referenceFps === 'number') return Number.isSafeInteger(referenceFps) && referenceFps >= 1 && num % den === 0 && num / den === referenceFps
+  if (typeof JSON.isRawJSON !== 'function' || !JSON.isRawJSON(referenceFps)) return false
+  const token = stringifyJSON(referenceFps)
+  if (typeof token !== 'string' || token.length > FPS_TOKEN_LIMIT) return false
+  const match = fpsTokenPattern.exec(token)
+  if (!match) return false
+  const [, sign, intPart, fracPart = '', expPart = '0'] = match
+  const digits = intPart + fracPart
+  if (digits.length > FPS_DIGIT_LIMIT) return false
+  const exponent = Number(expPart) - fracPart.length
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > FPS_EXPONENT_LIMIT) return false
+  const magnitude = BigInt(digits)
+  if (magnitude === 0n) return false
+  const signedMagnitude = sign === '-' ? -magnitude : magnitude
+  const numerator = BigInt(num), denominator = BigInt(den)
+  // referenceFps = signedMagnitude * 10^exponent must equal num/den exactly.
+  return exponent >= 0
+    ? numerator === denominator * signedMagnitude * 10n ** BigInt(exponent)
+    : numerator * 10n ** BigInt(-exponent) === denominator * signedMagnitude
+}
 export const FRAME_EDGE_LIMIT = 8192, FRAME_PIXEL_LIMIT = 16777216
 
 /** Synchronous parent-owned invalidation; effects are cleanup, not the coherence boundary. */
@@ -78,7 +110,7 @@ export async function verifyFrame(envelope, { frame, contentVersion, signal, lim
   for (const item of [...reference.selection.tracks, ...reference.selection.blocks]) if (!item || typeof item.address !== 'string' || item.content_version !== contentVersion || !(item.stable_id === null || typeof item.stable_id === 'string') || !(item.raw === null || typeof item.raw === 'string')) bad('Malformed core reference selection')
   if (image?.state !== 'generated' || image.kind !== 'current-composite' || image.approximate !== false || image.mime_type !== 'image/png' || image.frame !== frame || image.content_version !== contentVersion || !whole(frame)) bad('Exact current-composite PNG certificate required')
   if (!whole(image.width) || !whole(image.height) || !image.width || !image.height || image.width > FRAME_EDGE_LIMIT || image.height > FRAME_EDGE_LIMIT || image.width * image.height > FRAME_PIXEL_LIMIT) bad('Decode dimensions exceed feature limits')
-  if (!whole(image.fps?.num) || image.fps.num < 1 || !whole(image.fps.den) || image.fps.den < 1 || image.fps.num / image.fps.den !== reference.selection.fps) bad('FPS does not match core reference')
+  if (!fpsMatchesReference(image.fps?.num, image.fps?.den, reference.selection?.fps)) bad('FPS does not match core reference')
   if (!rawSHA.test(image.sha256) || !rawSHA.test(image.render_key) || !rawSHA.test(image.input_fingerprint) || typeof image.identity_semantics !== 'string' || !image.identity_semantics.includes('Fast media stat identity') || !whole(image.bytes) || image.bytes < 33 || image.bytes > FRAME_WIRE_LIMIT) bad('Missing PNG identity/size certificates')
   if (limits && (!limits.mediaTypes?.includes('image/png') || image.bytes > limits.maxImageBytes || image.bytes > limits.maxMessageImageBytes || limits.maxImagesPerMessage < 1)) bad('DSH image policy rejects this frame')
   const inline = image.inline
@@ -204,6 +236,16 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
   const shownPreview = generated && preview && preview.file === generated.file ? preview.url : null
   const cancel = () => { owner.invalidate(); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => setState({ message: '已回收；未自动重试。' }), error => setState({ message: error.message })) }
   const cancelButton = () => h('button', { type: 'button', onClick: cancel }, '显式取消帧并等待回收')
+  const imageTools = h('details', { className: 'fv-frame-tools-details' },
+    h('summary', null, '图片与草稿 · 验证详情'),
+    h('div', { className: 'fv-frame-tools-tools' },
+      h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void copy() }, '复制已生成 PNG（再次点击）'),
+      h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void stage() }, '将该帧 + 精确引用加入当前草稿（不发送）'),
+      !state.busy ? cancelButton() : null),
+    h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
+    h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
+    h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),
+    generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null)
   return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', 'aria-busy': state.busy ? 'true' : 'false' },
     h('style', null, `
 .fv-frame-tools{min-width:0;max-width:100%;font:inherit;color:inherit}
@@ -212,8 +254,9 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
 .fv-frame-tools h3{margin:0;font-size:13px;font-weight:600}
 .fv-frame-tools .fv-frame-tools-meta{font-size:11px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,currentColor 62%,transparent);overflow-wrap:anywhere}
 .fv-frame-tools .fv-frame-tools-stage{position:relative;width:100%;aspect-ratio:16/9;max-height:320px;margin:0 0 8px;background:#000;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.fv-frame-tools .fv-frame-tools-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block}
-.fv-frame-tools .fv-frame-tools-empty{font-size:12px;color:#9aa0a6;text-align:center;padding:0 12px}
+.fv-frame-tools .fv-frame-tools-stage img{width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none}
+.fv-frame-tools .fv-frame-tools-empty{display:flex;flex-direction:column;align-items:center;gap:12px;font-size:12px;color:#b1b8c4;text-align:center;padding:16px 12px}
+.fv-frame-tools .fv-frame-tools-empty svg{opacity:.65}
 .fv-frame-tools .fv-frame-tools-check{display:flex;flex-wrap:wrap;gap:2px 14px;margin:0 0 6px;font-size:12px}
 .fv-frame-tools .fv-frame-tools-tools{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}
 .fv-frame-tools button{border:1px solid color-mix(in srgb,currentColor 45%,transparent);border-radius:5px;background:color-mix(in srgb,currentColor 6%,transparent);padding:4px 10px;font-size:12px;cursor:pointer}
@@ -231,21 +274,12 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     h('div', { className: 'fv-frame-tools-stage' },
       shownPreview
         ? h('img', { src: shownPreview, width: generated.certificate.width, height: generated.certificate.height, alt: `已验证合成帧 ${generated.certificate.frame}（${generated.certificate.width}×${generated.certificate.height} PNG）` })
-        : h('div', { className: 'fv-frame-tools-empty' }, whole(frame) ? '未生成画面（需显式生成）' : '未固定帧')),
+        : h('div', { className: 'fv-frame-tools-empty' }, h(Icon, { name: state.busy ? 'refresh' : 'film', size: 32 }), h('span', null, state.busy ? '正在生成并验证…' : whole(frame) ? '未生成画面（需显式生成）' : '未固定帧'))),
     h('div', { className: 'fv-frame-tools-tools' },
       h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
       h('button', { type: 'button', disabled: !consent || blocked || state.busy, onClick: () => void generate() }, '显式生成并验证固定帧 PNG'),
-      state.busy ? cancelButton() : null),
+      state.busy ? cancelButton() : null,
+      imageTools),
     blocked ? h('p', { role: 'alert' }, '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。') : null,
-    state.message ? h('p', { role: 'status' }, state.message) : null,
-    h('details', null,
-      h('summary', null, '图片与草稿 · 验证详情'),
-      h('div', { className: 'fv-frame-tools-tools' },
-        h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void copy() }, '复制已生成 PNG（再次点击）'),
-        h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void stage() }, '将该帧 + 精确引用加入当前草稿（不发送）'),
-        !state.busy ? cancelButton() : null),
-      h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
-      h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
-      h('p', null, `保存版本 ${version} · 固定全局帧 ${frame ?? '未设置'}。current-composite / Fast 身份，不是成片 QC。不会准备缺失输入；只接受 core inline PNG，绝不读取 image.path。`),
-      generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null))
+    state.message ? h('p', { role: 'status' }, state.message) : null)
 }

@@ -3,6 +3,10 @@ export const FRAME_WIRE_LIMIT = 8 * 1024 * 1024
 export const FRAME_REQUEST_LIMIT = 16 * 1024
 export const AGENT_INPUT_LIMIT = 128 * 1024
 export const AGENT_WIRE_LIMIT = 256 * 1024
+// Control must accept the largest valid plan/commit body: up to 256 semantic
+// operations serialized onto the 8 MiB --request-stdin transport, plus envelope
+// overhead. Rejected with a stable 413 before any text/JSON allocation.
+export const CONTROL_REQUEST_LIMIT = 8 * 1024 * 1024 + 64 * 1024
 export async function boundedText(message, limit, signal) {
   const length = message.headers.get('content-length')
   if (length !== null && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > limit)) {
@@ -21,7 +25,9 @@ export async function boundedText(message, limit, signal) {
       const { done, value } = await reader.read()
       signal?.throwIfAborted()
       if (done) { complete = true; break }
-      if (!(value instanceof Uint8Array)) throw new Error('BODY_LIMIT: A byte stream is required')
+      // Fetch and plugin module tables may belong to different realms. Brand
+      // checks must use the internal view slot, not this realm's constructor.
+      if (!ArrayBuffer.isView(value) || value.BYTES_PER_ELEMENT !== 1 || value.length !== value.byteLength) throw new Error('BODY_LIMIT: A byte stream is required')
       size += value.byteLength
       if (size > limit) throw new Error('BODY_LIMIT: Actual stream exceeds feature byte limit')
       chunks.push(value)

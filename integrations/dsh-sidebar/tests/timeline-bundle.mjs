@@ -14,7 +14,7 @@ assert(release, 'Pass an extracted candidate ZIP directory')
 const require = createRequire(import.meta.url)
 const manifest = JSON.parse(await readFile(join(release, 'package.json'), 'utf8'))
 const queue = [], target = { mode: 'queue', pendingQueue: queue, load: row => queue.push(row) }
-const sandbox = { window: { __ModuleLoader__: target }, TextEncoder, AbortController, AbortSignal, URLSearchParams, console }
+const sandbox = { window: { __ModuleLoader__: target }, TextEncoder, TextDecoder, DOMException, AbortController, AbortSignal, URLSearchParams, console }
 runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'), 'utf8'), sandbox)
 const modules = queue.shift().factory(() => { throw new Error('Unexpected bootstrap dependency') })
 const bundled = await readFile(join(release, 'lib/client.js'), 'utf8')
@@ -25,6 +25,8 @@ const system = modules.createClientModuleSystem(target, { id: 'bootstrap', expor
 const client = await system.import(manifest.name)
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://owner/' })
 globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.IS_REACT_ACT_ENVIRONMENT = true
+dom.window.__ModuleLoader__ = sandbox.window.__ModuleLoader__
+sandbox.window = dom.window; sandbox.document = dom.window.document
 const root = createRoot(document.getElementById('root'))
 const version = `sha256:${'a'.repeat(64)}`, coverage = { complete: false, unexpanded: [{ reference: 'external.srt' }] }
 const snapshot = { content_version: version, coverage, diagnostics: [], document: { project: { duration_frames: 100, fps: 30 }, extension: JSON.rawJSON('9007199254740993') } }
