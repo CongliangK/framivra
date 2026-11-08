@@ -19,11 +19,12 @@ export function diagnosticText(envelope) {
   return text
 }
 
-/** Called synchronously in the click handler, before any reference IO. No retain/create/fallback. */
+/** Called before reference IO. conversation here is our plugin-owned facade
+ * over official InputActions, NOT an extension to the DSH host service. */
 export function captureCurrentDraft(getServices, sessionId) {
   const { conversation, sessions } = getServices?.() ?? {}
   if (typeof conversation?.captureDraftTarget !== 'function' || typeof conversation?.stageDraft !== 'function' || typeof sessions?.binding !== 'function') {
-    throw new Error('DRAFT_UNAVAILABLE: 宿主未装配公开草稿 API；复制仍可用（需 DSH conversation-draft 候选宿主）')
+    throw new Error('DRAFT_UNAVAILABLE: 插件的官方会话草稿桥尚未就绪；请打开已有会话，复制仍可用')
   }
   const binding = sessions.binding(sessionId)
   if (!binding) throw new Error('DRAFT_UNAVAILABLE: 当前会话尚无已保留绑定；请先创建/打开会话，复制仍可用')

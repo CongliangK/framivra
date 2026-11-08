@@ -39,7 +39,7 @@ async function settle(predicate) {
 
 test('actual React DOM: full projection persists, hover is local, ruler/keys set canonical input and selection references click-time frame', async t => {
   const { root, dom, button, change, submit, Simulate } = await mount(t)
-  const requests = [], copies = [], stages = [], order = []
+  const requests = [], copies = [], order = [], inserts = [], forbidden = []
   const oldFetch = globalThis.fetch, oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
   t.after(() => { globalThis.fetch = oldFetch; if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator) })
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async text => copies.push(text) } } })
@@ -58,13 +58,41 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
     return new Response(stringifyJSON(result))
   }
   const tab = new AbortController()
-  const target = { sessionId: 'one' }
-  const services = { sessions: { binding: id => ({ id }) }, conversation: {
-    captureDraftTarget: binding => { order.push('capture'); assert.equal(binding.id, 'one'); return target },
-    stageDraft: async input => { order.push('stage'); stages.push(input); return { status: 'applied' } },
-  } }
+  // Official public seams only: SessionBinding (ctx + session lifecycle + imageLimits
+  // projection), sessions.list, uiSession.adapter.current.key, real InputActions on the
+  // inputActions prop, conversation.input.for / resolveDraftAttachments. No host shim.
+  const PRE = 'SENTINEL_KEEP ', POST = '[[ref-chip]] tail'
+  const draft = { text: PRE + POST, rev: 3, phase: 'plain', ids: [] }
+  const inputActions = {
+    captureInsertion: () => { order.push('capture'); return { start: PRE.length, end: PRE.length, draftRev: draft.rev } },
+    insertText: (text, span) => {
+      if (span.draftRev !== draft.rev) return false
+      order.push('insert'); inserts.push({ text, span })
+      draft.text = draft.text.slice(0, span.start) + text + draft.text.slice(span.end)
+      draft.rev += 1
+      return true
+    },
+    addAttachments: ids => { draft.ids = [...draft.ids, ...ids]; return true },
+    removeAttachment: () => { forbidden.push('removeAttachment') },
+    setDraft: () => { forbidden.push('setDraft') },
+    persistDraft: () => { forbidden.push('persistDraft') },
+    submit: () => { forbidden.push('submit') },
+  }
+  const lifecycle = { getSnapshot: () => ({ removed: false, openState: 'open' }) }
+  const limits = { getSnapshot: () => ({ maxImageBytes: 1 << 20, maxImagesPerMessage: 2, maxMessageImageBytes: 2 << 20, mediaTypes: ['image/png'] }) }
+  const binding = { sessionId: 'one', ctx: { officialScope: true }, session: { getSnapshot: lifecycle.getSnapshot, projections: { faceOf: name => name === 'imageLimits' ? limits : undefined } } }
+  const inputState = { getSnapshot: () => ({ draft: draft.text, attachmentIds: [...draft.ids], draftRev: draft.rev, phase: draft.phase }) }
+  const conversation = {
+    input: { for: ctx => { if (ctx !== binding.ctx) throw new Error('conversation.input.for requires a retained Session scope'); return { state: inputState } } },
+    resolveDraftAttachments: ids => ids.map(id => ({ id, kind: 'image' })),
+    releaseDraftAttachment: () => { forbidden.push('releaseDraftAttachment') },
+    createDrafts: () => { forbidden.push('createDrafts') },
+    sendSession: () => { forbidden.push('sendSession') },
+  }
+  const sessions = { binding: id => id === 'one' ? binding : undefined, list: { getSnapshot: () => ({ byId: { one: { cwd: '/w' } } }), subscribe: () => () => {} } }
+  const uiSession = { adapter: { current: { getSnapshot: () => ({ key: 'one' }), subscribe: () => () => {} } } }
   const useTabInfo = () => ({ tab: { signal: tab.signal } })
-  await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one', getDraftServices: () => services })))
+  await act(async () => root.render(h(PreviewBody, { useTabInfo, sessionId: 'one', getDraftServices: () => ({ active: true, conversation, sessions, uiSession }), inputActions, useAccess: () => true })))
   await submit(0)
   await settle(() => document.querySelector('.fv-ruler'))
   assert.deepEqual(requests.map(x => x.op), ['open', 'query', 'proposal-list'])
@@ -108,12 +136,18 @@ test('actual React DOM: full projection persists, hover is local, ruler/keys set
   await change(input, '71')
   const beforeDraft = requests.length
   await act(async () => button('加入当前会话草稿（不发送）').click())
-  await settle(() => stages.length === 1)
-  assert.deepEqual(order.slice(-3), ['capture', 'reference', 'stage'])
-  assert.equal(stages[0].target, target)
+  await settle(() => document.body.textContent.includes('已通过官方顺序接口'))
+  assert.deepEqual(order.slice(-3), ['capture', 'reference', 'insert'])
   assert.equal(requests[beforeDraft].query.frame, 71)
-  assert.equal(stages.length, 1)
-  assert.equal(typeof services.conversation.prompt, 'undefined')
+  assert.equal(inserts.length, 1)
+  const { text: insertedText, span } = inserts[0]
+  assert.ok(Object.isFrozen(span), 'official captured span is frozen')
+  assert.equal(span.end, span.start, 'captured span is zero-width at the collapsed caret')
+  assert.deepEqual(span, { start: PRE.length, end: PRE.length, draftRev: 3 }, 'span keeps the click-time caret location and the ORIGINAL draftRev, not the post-insert rev')
+  assert.equal(draft.text, PRE + insertedText + POST, 'sentinel and selected text/chips retained; insert at the captured caret, no replacement')
+  assert.equal(inserts.length, 1)
+  assert.deepEqual(draft.ids, [], 'text-only reference adds no attachments')
+  assert.deepEqual(forbidden, [], 'no setDraft/persistDraft/submit/removeAttachment and no send/upload/createDrafts surfaces touched')
   await change(input, '1.0')
   const beforeInvalid = requests.length
   await submit(1)

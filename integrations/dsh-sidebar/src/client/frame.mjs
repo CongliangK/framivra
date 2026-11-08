@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../bounded.mjs'
 import { captureCurrentDraft, referenceQuery, selectedReference } from './reference.mjs'
+import { draftResultMessage } from './draft-services.mjs'
 
 const h = React.createElement, rawSHA = /^[a-f0-9]{64}$/, versionSHA = /^sha256:[a-f0-9]{64}$/
 const bad = message => { throw new Error(`FRAME_INVALID: ${message}`) }
@@ -168,8 +169,9 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
       owner.check(operation)
       const text = frameDraftText(current, selection, positionOnly)
       const result = await captured.conversation.stageDraft({ target: captured.target, text, files: [current.file], signal: operation.signal })
-      owner.check(operation)
-      setState({ message: result.status === 'applied' ? '已原子追加文本和一张 PNG 到点击时草稿；未发送/上传。' : `草稿未更改：${result.status}/${result.reason}` })
+      // Do not turn an already-observed append/partial result into a false
+      // "unchanged" claim when a subscriber invalidates the view afterwards.
+      setState({ message: draftResultMessage(result, true) })
     } catch (error) { setState({ message: operation?.signal.aborted ? '操作已失效/取消；未补投草稿。' : error.message }) }
   }
   async function copy() {
