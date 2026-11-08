@@ -33,7 +33,10 @@ globalThis.document = dom.window.document
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 // This is the SDK package's public browser entry, not a reimplementation of its loader.
 const copies = []
-const sandbox = { window: { __ModuleLoader__: target }, navigator: { clipboard: { writeText: async text => copies.push(text) } }, TextEncoder, AbortController, AbortSignal, URLSearchParams, setTimeout, clearTimeout, console }
+// The factory runs in a separate realm but mounts in a real browser-like DOM.
+// Expose the complete Window/Document, not a loader-only window placeholder.
+dom.window.__ModuleLoader__ = target
+const sandbox = { window: dom.window, document: dom.window.document, navigator: { clipboard: { writeText: async text => copies.push(text) } }, TextEncoder, TextDecoder, DOMException, AbortController, AbortSignal, URLSearchParams, setTimeout, clearTimeout, console }
 runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'), 'utf8'), sandbox)
 const bootstrap = queue.shift()
 const modules = bootstrap.factory(() => { throw new Error('Unexpected bootstrap dependency') })

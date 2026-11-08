@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { parseJSON, stringifyJSON } from '../json.mjs'
 import { AgentProposals } from './proposals.mjs'
 const h = React.createElement
@@ -57,7 +57,7 @@ export function compileIntent(op, v, { result, blocks, track, frame, makeId = id
   }
 }
 
-export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady, onEditState }) {
+export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady, onEditState, onQuickReady }) {
   const [write, setWrite] = useState()
   const [op, setOp] = useState('block.move')
   const [v, setV] = useState({ family: 'video', kind: 'aroll', source_field: 'path', property: 'opacity', property_target: 'block', reference_field: 'duck_by', fade_policy: 'preserve-content', text_policy: 'duplicate-text', mode: 'shift', crossing: 'reject', scope: [], split_ids: [], order: [], start: '0', end: '10', duration: '10', src_in: '0', src_out: '10', volume: '1', at: '0', delta: '1', index: '0', value: '1' })
@@ -98,6 +98,25 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     onGestureReady?.(write && managed && !busy && !proposalBlocked ? operations => { safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
     return () => onGestureReady?.(undefined)
   }, [write, managed, busy, base, selected, proposalBlocked])
+  const quickOwner = useRef()
+  useLayoutEffect(() => {
+    const token = {}
+    quickOwner.current = token
+    const available = write && managed && !busy && !proposalBlocked && !frameSafety.current.unknown
+    const quick = operation => {
+      // Retained handlers cannot enqueue against a newer target/frame/grant.
+      if (quickOwner.current !== token || !live.current || tabSignal.aborted || !available || frameSafety.current.busy || frameSafety.current.unknown || proposalSafety.current.dirty || proposalSafety.current.busy || proposalSafety.current.unknown) throw new Error('EDIT_STALE: 剪辑目标或写许可已变化，请重新选择。')
+      if (!['block.split', 'block.remove'].includes(operation)) throw new Error('EDIT_UNSUPPORTED: 快捷入口只组装分割或移除 intent。')
+      if (operation === 'block.split' && track?.data?.kind === 'gfx') throw new Error('EDIT_UNSUPPORTED: 图形轨不支持分割，请使用移动、复制或移除。')
+      if (operation === 'block.split' && (blocks.length !== 1 || !Number.isSafeInteger(frame) || frame <= blocks[0].range[0] || frame >= blocks[0].range[1])) throw new Error('EDIT_BOUNDS: 请将播放头固定在选中片段的内部再分割。')
+      const operations = compileIntent(operation, v, { result, blocks, track, frame })
+      if (!operations.length) throw new Error('请选择可编辑片段。')
+      safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations))
+      setMessage('已加入未保存批次；仍需内核预检与明确确认提交，没有改写工程。')
+    }
+    onQuickReady?.(available ? quick : undefined)
+    return () => { if (quickOwner.current === token) quickOwner.current = undefined; onQuickReady?.(undefined) }
+  }, [write, managed, busy, base, selected, selection, frame, proposalBlocked, v])
   const set = (key, value) => { safety({ dirty: true }); invalidate(); setV(previous => ({ ...previous, [key]: value })) }
   async function run(action, extra = {}) {
     safety({ busy: true })

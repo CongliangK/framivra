@@ -120,6 +120,7 @@ export class TimelineReader {
     } else this.config = undefined
     this.active = new Map() // Ownership survives direct-command settlement and failed cleanup.
     this.spawnKinds = new WeakMap() // Spawned child -> admission class ('read' | 'store-capabilities' | 'store' | 'frame').
+    this.spawnOwners = new WeakMap() // Spawned child -> owner token (grant/session) so cancel reaping stays scoped.
     this.cleanupFailed = new WeakSet() // Children whose managed range was not confirmed reaped; retained until a retry succeeds.
     this.lifecycle = new AbortController()
   }
@@ -163,23 +164,30 @@ export class TimelineReader {
     if (!isAbsolute(path)) fail('BAD_EXECUTABLE', 'Resolver returned a nonabsolute executable', 502)
     return path
   }
-  async read(executable, timeline, operation, query, signal, snapshot) {
+  async read(executable, timeline, operation, query, signal, snapshot, owner) {
     if (!['inspect', 'query', 'reference', 'capabilities'].includes(operation)) fail('BAD_OPERATION', 'Only read operations are supported')
     const args = operation === 'query' ? queryArgs(query) : operation === 'reference' ? referenceArgs(query) : []
-    return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation), undefined, false, false, snapshot)
+    return this.command(executable, timeline, [operation, ...args], signal, text => decodeEnvelope(text, operation), undefined, false, false, snapshot, owner)
   }
-  async frame(executable, timeline, frame, version, signal, snapshot) {
+  async frame(executable, timeline, frame, version, signal, snapshot, owner) {
     if (!integer(frame) || !/^sha256:[a-f0-9]{64}$/.test(version)) fail('BAD_FRAME', 'Exact saved version and integer pin required')
     return this.command(executable, timeline, ['timeline', 'frame', '--frame', String(frame), `--expected-content-version=${version}`, '--render', '--include-png', '--max-png-bytes=8388608'], signal, text => {
       const value = parseJSON(text)
       if (!object(value) || value.schema !== 'framivra.timeline.frame/v1' || value.operation !== 'frame' || typeof value.ok !== 'boolean' || !Array.isArray(value.diagnostics)) fail('PROTOCOL_MISMATCH', 'Official frame/v1 envelope required', 502)
       return value
-    }, undefined, true, true, snapshot)
+    }, undefined, true, true, snapshot, owner)
   }
-  async reap() {
-    await Promise.all([...this.active.keys()].map(handle => this.cleanup(handle)))
+  /**
+   * Reap children, optionally scoped to one owner. Cancellation passes the
+   * affected grant/session so a cancel can never terminate children spawned
+   * for a DIFFERENT grant or session that happen to be in flight. Failed
+   * cleanups stay owned (active) and a targeted retry re-attempts only them.
+   * @param {object} [owner] Owner token passed at spawn time; omit to reap all (dispose).
+   */
+  async reap(owner) {
+    await Promise.all([...this.active.keys()].filter(handle => owner === undefined || this.spawnOwners.get(handle) === owner).map(handle => this.cleanup(handle)))
   }
-  async store(executable, timeline, operation, request, signal, snapshot) {
+  async store(executable, timeline, operation, request, signal, snapshot, owner) {
     if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
     // The official flag reads fd0 itself: public providers may expose a socket,
     // for which reopening /dev/stdin fails with ENXIO. No temp files/bridge.
@@ -190,9 +198,9 @@ export class TimelineReader {
       const result = parseJSON(text)
       if (result?.schema !== 'framivra.timeline.store/v1' || typeof result.ok !== 'boolean') fail('PROTOCOL_MISMATCH', 'Installed vtx store/v1 required', 502)
       return result
-    }, input, true, undefined, snapshot)
+    }, input, true, undefined, snapshot, owner)
   }
-  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot) {
+  async command(executable, timeline, args, signal, decode, input, business = false, streaming = false, snapshot, owner) {
     signal = AbortSignal.any([signal, this.lifecycle.signal])
     signal.throwIfAborted()
     // One snapshot per command: a caller-supplied snapshot is compared against
@@ -218,6 +226,7 @@ export class TimelineReader {
     })
     this.active.set(handle, undefined)
     this.spawnKinds.set(handle, spawnKind(args))
+    this.spawnOwners.set(handle, owner)
     try {
       if (streaming && !handle.stdout) fail('FRAME_STREAM_UNSUPPORTED', 'Public provider did not expose the requested owner stdout pipe', 502)
       const [outcome, streamed] = await untilAborted(Promise.all([

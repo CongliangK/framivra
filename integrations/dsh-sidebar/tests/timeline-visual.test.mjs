@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
-import { VisualTimeline } from '../src/client/timeline.mjs'
+import { VisualTimeline, TimelineHelp } from '../src/client/timeline.mjs'
 
 const h = React.createElement
 const version = `sha256:${'a'.repeat(64)}`
@@ -96,4 +96,213 @@ test('visual timeline: multi-selection count reflects ctrl-clicked clips via unc
   await act(async () => clips[2].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true })))
   assert.equal(document.querySelectorAll('.fv-clip[aria-pressed="true"]').length, 2)
   assert(document.body.textContent.includes('已选 2'))
+})
+
+test('ruler scrub ownership: first pointer owns until release; second touch and non-owner capture loss cannot hijack', async t => {
+  const { root } = await mount(t)
+  const frames = []
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result, frame: 0, onFrame: value => frames.push(value) })))
+  const { Simulate } = await import('react-dom/test-utils')
+  const ruler = document.querySelector('.fv-ruler')
+  ruler.getBoundingClientRect = () => ({ left: 0, width: 100 })
+  const pd = (id, x) => act(async () => Simulate.pointerDown(ruler, { button: 0, clientX: x, pointerId: id }))
+  const pm = (id, x) => act(async () => Simulate.pointerMove(ruler, { clientX: x, pointerId: id }))
+  const pu = (id, x) => act(async () => Simulate.pointerUp(ruler, { clientX: x, pointerId: id }))
+  await pd(1, 50); assert.deepEqual(frames.slice(-1), [50])
+  // Second touch during the scrub is ignored entirely: no pin, no ownership change.
+  await pd(2, 20); await pm(2, 30)
+  assert.deepEqual(frames.slice(-1), [50])
+  // Non-owner's pointerCancel/lostpointercapture (implicit release after its own
+  // pointerup) cannot cancel the owner's scrub.
+  await act(async () => Simulate.pointerCancel(ruler, { pointerId: 2 }))
+  await act(async () => Simulate.lostPointerCapture(ruler, { pointerId: 2 }))
+  await pm(1, 80); assert.deepEqual(frames.slice(-1), [80])
+  await pu(1, 80); assert.deepEqual(frames.slice(-1), [80])
+  // After the owner releases, the next pointer acquires the scrub normally.
+  await pd(2, 10); assert.deepEqual(frames.slice(-1), [10])
+  await pu(2, 10)
+})
+
+test('overview strip: display-only navigation pans/zooms the window; never pins, selects, or gestures', async t => {
+  const { root } = await mount(t)
+  const frames = [], selections = [], gestures = []
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result, frame: 10, onFrame: v => frames.push(v), onSelect: v => selections.push(v), onGesture: ops => gestures.push(ops) })))
+  const { Simulate } = await import('react-dom/test-utils')
+  const windowText = () => document.querySelector('[aria-label="可见帧范围"]').textContent
+  const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
+  await act(async () => button('放大').click())
+  assert(windowText().includes('帧窗口 [25, 75)'))
+  const overview = document.querySelector('.fv-overview')
+  overview.getBoundingClientRect = () => ({ left: 0, width: 200 })
+  // Stored clip ranges (8 blocks) plus view window and pinned playhead markers.
+  assert.equal(document.querySelectorAll('.fv-ov').length, blocks.length)
+  assert(document.querySelector('.fv-ov-window'))
+  assert(document.querySelector('.fv-ov-pin'))
+  assert.equal(overview.getAttribute('role'), 'slider')
+  assert.equal(overview.getAttribute('aria-valuenow'), '25')
+  // Click at frame 25 centers the 50-frame window at [0, 50).
+  await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 50, pointerId: 3 }))
+  assert(windowText().includes('帧窗口 [0, 50)'))
+  // A second simultaneous touch cannot hijack the navigation drag.
+  await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 199, pointerId: 4 }))
+  await act(async () => Simulate.pointerMove(overview, { clientX: 199, pointerId: 4 }))
+  assert(windowText().includes('帧窗口 [0, 50)'))
+  // Owner drag continues to steer the window.
+  await act(async () => Simulate.pointerMove(overview, { clientX: 100, pointerId: 3 }))
+  assert(windowText().includes('帧窗口 [25, 75)'))
+  await act(async () => Simulate.lostPointerCapture(overview, { pointerId: 4 }))
+  await act(async () => Simulate.pointerUp(overview, { clientX: 100, pointerId: 3 }))
+  // Keyboard: quarter-span arrows, Home, End.
+  await act(async () => Simulate.keyDown(overview, { key: 'ArrowRight', preventDefault() {} }))
+  assert(windowText().includes('帧窗口 [38, 88)'))
+  await act(async () => Simulate.keyDown(overview, { key: 'Home', preventDefault() {} }))
+  assert(windowText().includes('帧窗口 [0, 50)'))
+  await act(async () => Simulate.keyDown(overview, { key: 'End', preventDefault() {} }))
+  assert(windowText().includes('帧窗口 [50, 100)'))
+  // Pure display: playhead pinned value, selection and gesture callbacks untouched.
+  assert.deepEqual(frames, [])
+  assert.deepEqual(selections, [])
+  assert.deepEqual(gestures, [])
+  assert(document.body.textContent.includes('播放头 10'))
+})
+
+test('缩放到选区 zooms to stored ranges of selected blocks only; clip labels carry safe frame durations', async t => {
+  const { root, dom } = await mount(t)
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result })))
+  const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
+  const zoom = button('缩放到选区')
+  assert.equal(zoom.disabled, true, 'no selection yet')
+  const clips = [...document.querySelectorAll('.fv-clip')]
+  assert(clips[0].textContent.includes('20 帧'), 'clip shows stored range duration')
+  await act(async () => clips[0].click())
+  assert.equal(button('缩放到选区').disabled, false)
+  await act(async () => button('缩放到选区').click())
+  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('帧窗口 [0, 20)'), 'single block [0,20) zooms window to itself')
+  // Two blocks [0,20)+[40,100) ctrl-selected: union window [0, 100). Re-fit first:
+  // after the single-block zoom the other clip is outside the window and unmounted.
+  await act(async () => button('适配全片').click())
+  const fresh = [...document.querySelectorAll('.fv-clip')]
+  await act(async () => fresh[1].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true })))
+  await act(async () => button('缩放到选区').click())
+  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('帧窗口 [0, 100)'))
+  // Disjoint union across tracks zooms to the bounding range of stored ranges.
+  await act(async () => button('放大').click())
+  await act(async () => button('缩放到选区').click())
+  assert(document.querySelector('[aria-label="可见帧范围"]').textContent.includes('帧窗口 [0, 100)'))
+})
+
+test('window blur / hidden tab with NO delivered cancel clears stranded owners: ruler and overview recover, block ghost is canceled', async t => {
+  const { root, dom } = await mount(t)
+  const frames = [], tokens = []
+  // Gestures require managed block ids.
+  const editableBlocks = blocks.map((block, index) => ({ ...block, data: { ...block.data, id: `blk-${index}` } }))
+  const editable = { ...result, blocks: editableBlocks }
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result: editable, frame: 0, onFrame: value => frames.push(value), onGesture: () => {}, onGestureState: (token, active) => tokens.push(active) })))
+  const { Simulate } = await import('react-dom/test-utils')
+  const blur = () => act(async () => dom.window.dispatchEvent(new dom.window.Event('blur')))
+  // --- Ruler: alt-tab mid-scrub can strand the owner pointer.
+  const ruler = document.querySelector('.fv-ruler')
+  ruler.getBoundingClientRect = () => ({ left: 0, width: 100 })
+  await act(async () => Simulate.pointerDown(ruler, { button: 0, clientX: 50, pointerId: 1 }))
+  assert.deepEqual(frames.slice(-1), [50])
+  await blur()
+  // Stale-owner moves after blur no longer pin; a fresh pointer acquires the scrub.
+  await act(async () => Simulate.pointerMove(ruler, { clientX: 80, pointerId: 1 }))
+  assert.deepEqual(frames.slice(-1), [50], 'stranded owner cannot pin after blur cleanup')
+  await act(async () => Simulate.pointerDown(ruler, { button: 0, clientX: 20, pointerId: 2 }))
+  assert.deepEqual(frames.slice(-1), [20], 'new pointer acquires scrub after blur cleanup')
+  await act(async () => Simulate.pointerUp(ruler, { clientX: 20, pointerId: 2 }))
+  // --- Overview strip: same recovery for the navigation drag.
+  const overview = document.querySelector('.fv-overview')
+  overview.getBoundingClientRect = () => ({ left: 0, width: 200 })
+  const windowText = () => document.querySelector('[aria-label="可见帧范围"]').textContent
+  const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
+  await act(async () => button('放大').click()) // span 50: a seek can actually move the window
+  await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 50, pointerId: 3 }))
+  assert(windowText().includes('帧窗口 [0, 50)'))
+  await blur()
+  await act(async () => Simulate.pointerMove(overview, { clientX: 100, pointerId: 3 }))
+  assert(windowText().includes('帧窗口 [0, 50)'), 'stranded overview owner cannot steer after blur')
+  await act(async () => Simulate.pointerDown(overview, { button: 0, clientX: 100, pointerId: 5 }))
+  assert(windowText().includes('帧窗口 [25, 75)'), 'new pointer acquires overview after blur cleanup')
+  await act(async () => Simulate.pointerUp(overview, { clientX: 100, pointerId: 5 }))
+  // --- Block gesture: blur mid-drag cancels the ghost and releases the token.
+  for (const track of document.querySelectorAll('.fv-track')) track.getBoundingClientRect = () => ({ top: 0, bottom: 100, left: 0, width: 100 })
+  const clip = document.querySelector('.fv-clip')
+  await act(async () => Simulate.pointerDown(clip, { button: 0, clientX: 10, pointerId: 6 }))
+  assert.deepEqual(tokens.slice(-1), [true], 'gesture publishes its token active')
+  await act(async () => Simulate.pointerMove(clip, { clientX: 60, pointerId: 6 }))
+  assert(document.querySelector('[aria-label="未保存拖动 ghost"]'), 'ghost visible mid-drag')
+  await blur()
+  assert(!document.querySelector('[aria-label="未保存拖动 ghost"]'), 'blur cancels the ghost')
+  assert.deepEqual(tokens.slice(-1), [false], 'blur releases the gesture token')
+  // The canceled gesture still owns its pointer's eventual click; a new pointer gesture starts cleanly.
+  await act(async () => Simulate.pointerDown(clip, { button: 0, clientX: 10, pointerId: 7 }))
+  assert.deepEqual(tokens.slice(-1), [true], 'new gesture acquires after blur cleanup')
+  await act(async () => Simulate.pointerCancel(clip, { pointerId: 7 }))
+  assert.deepEqual(tokens.slice(-1), [false])
+})
+
+test('coarse-pointer contract: 44px minimums hit only compact controls; trim handles get a class, hide under coarse primary pointer, and refuse touch pointers with the form alternative', async t => {
+  const { root } = await mount(t)
+  // Gestures (and therefore trim handles) require managed block ids.
+  const editableBlocks = blocks.map((block, index) => ({ ...block, data: { ...block.data, id: `blk-${index}` } }))
+  const editable = { ...result, blocks: editableBlocks }
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result: editable, frame: 10, onGesture: () => {} })))
+  const css = document.querySelector('.fv-timeline style').textContent
+  // Scoped 44px rules — never the broad selector that inflated clips/handles.
+  assert(css.includes('.fv-timeline .fv-tools button{min-height:44px;min-width:44px}'), 'tools buttons get coarse 44px minimums')
+  assert(css.includes('.fv-timeline .fv-track-title{min-height:44px}'), 'track titles get coarse minimum height')
+  assert(!css.includes('.fv-timeline button{min-height:44px'), 'no broad coarse rule over every timeline button')
+  assert(!/\.fv-clip\{[^}]*44/.test(css), 'clips keep their compact lane size')
+  assert(css.includes('.fv-timeline .fv-trim{display:none}'), 'trim handles hidden under a coarse primary pointer')
+  // Handles carry the explicit class (visible under a fine primary pointer on hybrid devices).
+  const handles = [...document.querySelectorAll('button.fv-trim')]
+  assert(handles.length > 0, 'trim handles present with fv-trim class')
+  const { Simulate } = await import('react-dom/test-utils')
+  document.querySelector('.fv-ruler').getBoundingClientRect = () => ({ left: 0, width: 100 })
+  const tokens = []
+  // Touch pointer on a trim handle is refused in JS with visible guidance — no gesture starts.
+  await act(async () => Simulate.pointerDown(handles[0], { button: 0, clientX: 5, pointerId: 9, pointerType: 'touch' }))
+  assert(document.body.textContent.includes('触控指针不支持 trim 手柄'), 'touch trim refusal message is visible')
+  await act(async () => Simulate.pointerMove(handles[0], { clientX: 30, pointerId: 9 }))
+  assert(!document.querySelector('[aria-label="未保存拖动 ghost"]'), 'no ghost from refused touch trim')
+  // Touch pointers still own selection/move gestures on clip bodies.
+  const clip = document.querySelector('.fv-clip')
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result: editable, frame: 10, onGesture: () => {}, onGestureState: (token, active) => tokens.push(active) })))
+  const freshClip = document.querySelector('.fv-clip')
+  await act(async () => Simulate.pointerDown(freshClip, { button: 0, clientX: 10, pointerId: 10, pointerType: 'touch' }))
+  assert.deepEqual(tokens.slice(-1), [true], 'touch move gesture is allowed on the clip body')
+  await act(async () => Simulate.pointerCancel(freshClip, { pointerId: 10 }))
+  assert.deepEqual(tokens.slice(-1), [false])
+})
+
+test('compact mode: inline help suppressed and class applied; exported TimelineHelp preserves the same text', async t => {
+  const { root } = await mount(t)
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result, frame: 10, onFrame: () => {} })))
+  const section = document.querySelector('.fv-timeline')
+  assert(!section.classList.contains('fv-compact'), 'default is the full standalone timeline')
+  assert(document.querySelector('details.fv-help'), 'default keeps the inline help details')
+  const defaultText = document.querySelector('details.fv-help').textContent
+  // Compact (monitor-pane embedding): same tree minus the inline help.
+  await act(async () => root.render(h(VisualTimeline, { snapshot, result, frame: 10, onFrame: () => {}, compact: true })))
+  const compactSection = document.querySelector('.fv-timeline')
+  assert(compactSection.classList.contains('fv-compact'), 'compact adds the fv-compact class')
+  assert(!document.querySelector('details.fv-help'), 'compact suppresses the inline help only')
+  assert(compactSection.querySelector('.fv-ruler') && compactSection.querySelector('.fv-overview'), 'grid/overview/ruler unchanged in compact')
+  const css = compactSection.querySelector('style').textContent
+  assert(css.includes('.fv-timeline.fv-compact .fv-track{padding:0 6px}'), 'compact tightens track padding only')
+  assert(css.includes('.fv-timeline.fv-compact .fv-row{margin:0}'), 'compact zeroes row margins only')
+  assert(css.includes('height:46px'), 'lane height 46 preserved in compact')
+  assert(css.includes('height:40px'), 'clip height 40 preserved in compact')
+  // The exported TimelineHelp mounts the identical content for the inspector.
+  await act(async () => root.render(h('div', null, h(TimelineHelp, { result }), h(TimelineHelp, { result, onGesture: () => {} }))))
+  const [readOnlyHelp, editableHelp] = [...document.querySelectorAll('details.fv-help')]
+  assert(readOnlyHelp && editableHelp, 'exported TimelineHelp renders details.fv-help')
+  assert.equal(readOnlyHelp.querySelector('summary').textContent, '操作说明（选择 / 播放头 / 拖拽 / 精度）')
+  assert(readOnlyHelp.textContent.includes('kernel range'))
+  assert(readOnlyHelp.textContent.includes('全部 4 轨 / 8 块'), 'uses live result data')
+  assert(readOnlyHelp.textContent.includes('未授写许可'), 'read-only variant copy preserved')
+  assert.equal(readOnlyHelp.textContent, defaultText, 'exported help text matches the former inline default verbatim')
+  assert(editableHelp.textContent.includes('未保存 batch'), 'editable variant copy preserved')
 })

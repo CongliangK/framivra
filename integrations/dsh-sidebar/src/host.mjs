@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute } from 'node:path'
 import { PreviewError, TimelineReader, fail } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
-import { boundedText, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
+import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 import { createTimelineAgent } from './agent.mjs'
 import { ConfigurationError } from './configuration.mjs'
@@ -70,7 +70,10 @@ export function createPreviewHost(ctx, config = {}) {
     const target = await localTarget(path, cwd, signal)
     if (!ctx.fs.contains(parent, target)) fail('PATH_ESCAPE', 'Resolved target escapes its authorized directory', 403)
     const info = await ctx.fs.stat(target, signal)
-    if (optional && !info) return undefined
+    // Optional entries (probe outputs) are skipped when absent OR of the wrong
+    // type — a stale directory where a file is expected must not fail the whole
+    // open. Containment was already enforced above; stat errors still propagate.
+    if (optional && (!info || info.type !== type)) return undefined
     if (info?.type !== type) fail('NOT_REGULAR', `Expected an existing regular ${type}`, 400)
     return { target, info }
   }
@@ -81,7 +84,13 @@ export function createPreviewHost(ctx, config = {}) {
     grant.plan = undefined
   }
   function expire() {
-    for (const [id, grant] of grants) if (clock() >= grant.expiresAt) { revoke(grant); grants.delete(id) }
+    for (const [id, grant] of grants) if (clock() >= grant.expiresAt) {
+      revoke(grant)
+      grants.delete(id)
+      // The id is about to become unaddressable; a last best-effort scoped reap
+      // prevents an expired grant from wedging the global semantic gate.
+      reader.reap(id).catch(() => {})
+    }
   }
   function grantFor(sessionId, id, allowStaleConfig = false) {
     expire()
@@ -182,7 +191,9 @@ export function createPreviewHost(ctx, config = {}) {
   async function diagnostics(request) {
     const hold = lease(request)
     try {
-      const text = await request.text()
+      let text
+      try { text = await boundedText(request, FRAME_REQUEST_LIMIT, hold.signal) }
+      catch (error) { if (error.message?.startsWith('BODY_LIMIT:')) fail('REQUEST_TOO_LARGE', error.message, 413); throw error }
       hold.signal.throwIfAborted() // An aborted body read must surface as CANCELLED, never as a JSON parse error.
       const data = text.trim() === '' ? {} : parseJSON(text)
       if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length) {
@@ -213,9 +224,9 @@ export function createPreviewHost(ctx, config = {}) {
       }
       // Static probes: `capabilities` never opens the timeline or project.
       const placeholder = 'framivra-diagnostics-no-timeline.json'
-      const capabilities = await reader.read(executable, placeholder, 'capabilities', undefined, hold.signal, config)
+      const capabilities = await reader.read(executable, placeholder, 'capabilities', undefined, hold.signal, config, 'diagnostics')
       let storeCapabilities
-      try { storeCapabilities = await reader.store(executable, placeholder, 'capabilities', undefined, hold.signal, config) }
+      try { storeCapabilities = await reader.store(executable, placeholder, 'capabilities', undefined, hold.signal, config, 'diagnostics') }
       catch (error) {
         if (error instanceof PreviewError && error.code === 'CLI_UNSUPPORTED') {
           storeCapabilities = { ok: false, error: 'CLI_UNSUPPORTED', message: 'Installed vtx does not advertise the semantic store; reads remain usable' }
@@ -232,12 +243,18 @@ export function createPreviewHost(ctx, config = {}) {
   async function control(request) {
     const hold = lease(request)
     try {
-      const raw = await request.text()
+      let raw
+      try { raw = await boundedText(request, CONTROL_REQUEST_LIMIT, hold.signal) }
+      catch (error) { if (error.message?.startsWith('BODY_LIMIT:')) fail('REQUEST_TOO_LARGE', error.message, 413); throw error }
       hold.signal.throwIfAborted() // An aborted body read must surface as CANCELLED, never as a JSON parse error.
       const data = parseJSON(raw)
       if (!data || typeof data !== 'object' || Array.isArray(data)) fail('BAD_REQUEST', 'Expected a JSON object')
       const session = sessionFor(data.sessionId)
       if (data.op === 'open') {
+        // The grant id is minted BEFORE any probe so every open child is owned
+        // by this id from birth; teardown (close/cancel) reaps by the same id.
+        const grantId = randomUUID()
+        try {
         const relative = relativeTimeline(data.timeline)
         const cwd = ctx.workingDirectory.get(session) // Never accept cwd/root from the browser.
         const root = await localTarget(cwd, undefined, hold.signal)
@@ -249,8 +266,8 @@ export function createPreviewHost(ctx, config = {}) {
         const executable = await reader.executable(hold.signal, config)
         const executableTarget = await localTarget(executable, undefined, hold.signal)
         if (ctx.fs.contains(root, executableTarget)) fail('UNTRUSTED_EXECUTABLE', 'Do not execute vtx from the project workspace', 403)
-        const capabilities = await reader.read(executable, ctx.fs.processPath(timeline), 'capabilities', undefined, hold.signal, config)
-        const snapshot = await reader.read(executable, ctx.fs.processPath(timeline), 'inspect', undefined, hold.signal, config)
+        const capabilities = await reader.read(executable, ctx.fs.processPath(timeline), 'capabilities', undefined, hold.signal, config, grantId)
+        const snapshot = await reader.read(executable, ctx.fs.processPath(timeline), 'inspect', undefined, hold.signal, config, grantId)
         const media = new Map()
         for (const path of MEDIA) {
           const item = await contained(path, projectPath, project, 'file', hold.signal, true)
@@ -268,10 +285,16 @@ export function createPreviewHost(ctx, config = {}) {
         if (snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed while opening; retry', 409)
         expire()
         if (grants.size >= 32) fail('GRANT_LIMIT', 'Close an existing preview before opening another', 429)
-        const grant = randomUUID()
-        grants.set(grant, { session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion, capabilities, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs, configFingerprint: config.fingerprint, configSnapshot: config })
-        return json({ grant, snapshot, capabilities, expires_in_ms: ttlMs,
+        grants.set(grantId, { id: grantId, session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion, capabilities, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs, configFingerprint: config.fingerprint, configSnapshot: config })
+        return json({ grant: grantId, snapshot, capabilities, expires_in_ms: ttlMs,
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
+        } catch (error) {
+          // A failed open must not strand probe children: one scoped reap retry
+          // keeps the global semantic gate from wedging. A still-stuck child
+          // stays owned by this unrevealed id until dispose.
+          await reader.reap(grantId).catch(() => {})
+          throw error
+        }
       }
       if (data.op === 'browse') {
         const relative = relativeBrowsePath(data.path)
@@ -281,7 +304,15 @@ export function createPreviewHost(ctx, config = {}) {
       // stale grant or write permission can always be torn down explicitly.
       const cleanup = ['close'].includes(data.op) || ['revoke-write', 'invalidate-plan', 'cancel-write'].includes(data.op)
       const grant = grantFor(data.sessionId, data.grant, cleanup)
-      if (data.op === 'close') { revoke(grant); grants.delete(data.grant); await Promise.all([grant.runningDone, grant.frameDone]); return json({ ok: true }) }
+      if (data.op === 'close') {
+        revoke(grant)
+        await Promise.all([grant.runningDone, grant.frameDone])
+        // Scoped reap BEFORE untracking: an unconfirmed teardown keeps the grant
+        // alive so an explicit retry can finish it; never half-deleted.
+        await reader.reap(grant.id)
+        grants.delete(data.grant)
+        return json({ ok: true })
+      }
       if (['proposal-list', 'proposal-reject', 'proposal-confirm'].includes(data.op)) {
         if (data.op === 'proposal-confirm' && frameOwners.size) fail('FRAME_BUSY', 'Cancel the frame and wait for actual cleanup before confirming', 409)
         semanticAdmission++
@@ -298,7 +329,7 @@ export function createPreviewHost(ctx, config = {}) {
       if (!['inspect', 'query', 'reference'].includes(data.op)) fail('BAD_OPERATION', 'Unknown operation')
       if (data.op === 'reference' && data.query?.expected_content_version !== grant.contentVersion) fail('STALE_REFERENCE', 'Reference version must match this opened preview; refresh first', 409)
       const timeline = await validateTimeline(grant, hold.signal)
-      const result = await reader.read(grant.executable, ctx.fs.processPath(timeline), data.op, data.query, hold.signal, grant.configSnapshot)
+      const result = await reader.read(grant.executable, ctx.fs.processPath(timeline), data.op, data.query, hold.signal, grant.configSnapshot, grant.id)
       grantFor(data.sessionId, data.grant)
       if (data.op === 'inspect') {
         if (grant.contentVersion !== result.content_version) { grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1 }
@@ -313,7 +344,7 @@ export function createPreviewHost(ctx, config = {}) {
   }
   async function writeCapabilities(grant, signal) {
     if (process.platform !== 'linux') fail('WRITE_UNSUPPORTED', 'Semantic writes are verified only on the local Linux backend', 422)
-    const capabilities = await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, signal, grant.configSnapshot)
+    const capabilities = await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, signal, grant.configSnapshot, grant.id)
     if (!capabilities.ok || !capabilities.operations?.includes('edit') || !capabilities.edit?.operations?.length) fail('WRITE_UNSUPPORTED', 'Installed vtx does not advertise semantic edit/plan', 422)
     const transport = capabilities.request_transport?.stdin
     if (transport?.flag !== '--request-stdin' || transport.max_bytes !== 8388608) fail('WRITE_UNSUPPORTED', 'Installed vtx lacks the official bounded --request-stdin transport; read/copy remain available. Reopening /dev/stdin is not a supported fallback.', 422)
@@ -326,7 +357,9 @@ export function createPreviewHost(ctx, config = {}) {
     grantFor(data.sessionId, data.grant, cleanup)
     if (data.op === 'revoke-write') { revoke(grant); await Promise.all([grant.runningDone, grant.frameDone]); return json({ ok: true }) }
     // Revoking a frozen plan is host bookkeeping, not permission to spawn or write.
-    if (data.op !== 'invalidate-plan' && (grant.frame || (reader.semanticBusy && !grant.running))) fail('FRAME_BUSY', 'Explicitly cancel the frame and wait for process reaping before semantic operations', 409)
+    // cancel-write IS the explicit store-child cancel: it must never be gated
+    // by a stuck semanticBusy (a failed cleanup), or the retry path wedges.
+    if (!['invalidate-plan', 'cancel-write'].includes(data.op) && (grant.frame || (reader.semanticBusy && !grant.running))) fail('FRAME_BUSY', 'Explicitly cancel the frame and wait for process reaping before semantic operations', 409)
     if (data.op === 'authorize-write') {
       revoke(grant)
       await grant.runningDone
@@ -340,7 +373,14 @@ export function createPreviewHost(ctx, config = {}) {
     }
     if (!readOnlyPlan && (!grant.write || grant.write.signal.aborted || data.writeGrant !== grant.writeKey)) fail('WRITE_DENIED', 'Read access is not write permission; explicitly authorize this Session/project first', 403)
     if (readOnlyPlan) { await writeCapabilities(grant, signal); grantFor(data.sessionId, data.grant) }
-    if (data.op === 'cancel-write') { grant.running?.abort(); await grant.runningDone; return json({ ok: true, message: 'Process settled and reaped; original operation may have committed. Check status/recover.' }) }
+    if (data.op === 'cancel-write') {
+      grant.running?.abort()
+      await grant.runningDone
+      // Scoped to THIS grant: other grants'/sessions' in-flight children are
+      // untouched. A failed cleanup stays owned and a retry re-attempts it.
+      await reader.reap(grant.id)
+      return json({ ok: true, message: 'Process settled and reaped; original operation may have committed. Check status/recover.' })
+    }
     if (data.op === 'invalidate-plan') { grant.plan = undefined; grant.planEpoch = (grant.planEpoch ?? 0) + 1; return json({ ok: true }) }
     if (grant.running) fail('WRITE_BUSY', 'Wait for managed process cleanup before another command', 409)
     if (grant.outcomeUnknown && !['status', 'recover'].includes(data.op)) fail('OUTCOME_UNKNOWN', 'Use explicit core status/recover and refresh before any new plan or transaction', 409)
@@ -351,7 +391,11 @@ export function createPreviewHost(ctx, config = {}) {
     const combined = AbortSignal.any([signal, ...(readOnlyPlan ? [] : [grant.write.signal]), controller.signal])
     // Observe changes during a child too; get() is the public Session/cwd contract.
     const monitor = setInterval(() => {
-      if (ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+      // A throwing provider inside a timer would kill the whole Host process;
+      // treat any probe failure as "world unverifiable" and abort fail-closed.
+      try {
+        if (ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+      } catch { controller.abort() }
     }, 50)
     monitor.unref?.()
     const epoch = grant.planEpoch ?? 0
@@ -360,7 +404,7 @@ export function createPreviewHost(ctx, config = {}) {
       const path = ctx.fs.processPath(await validateTimeline(grant, combined))
       if (data.op === 'status' || data.op === 'recover') {
         mutating = true // Even status may initialize lock/manifest; write grant required.
-        const result = await reader.store(grant.executable, path, data.op, undefined, combined, grant.configSnapshot)
+        const result = await reader.store(grant.executable, path, data.op, undefined, combined, grant.configSnapshot, grant.id)
         grant.plan = undefined
         // A successful status can still report unresolved intents. Only an explicit
         // settled core result plus a later authoritative read may release unknown state.
@@ -375,7 +419,7 @@ export function createPreviewHost(ctx, config = {}) {
         // No body replacement, fresh ID, auto-rebase or automatically repeated commit.
         grant.plan = undefined
         mutating = true
-        const result = await reader.store(grant.executable, path, 'commit', request, combined, grant.configSnapshot)
+        const result = await reader.store(grant.executable, path, 'commit', request, combined, grant.configSnapshot, grant.id)
         return json({ ...result, submitted_request: request })
       }
       if (data.base_revision !== grant.contentVersion) fail('STALE_BASE', 'Refresh the authoritative timeline before planning', 409)
@@ -395,10 +439,10 @@ export function createPreviewHost(ctx, config = {}) {
       if (data.op !== 'plan') {
         mutating = true
         grant.plan = undefined
-        return json({ ...await reader.store(grant.executable, path, 'commit', request, combined, grant.configSnapshot), submitted_request: request })
+        return json({ ...await reader.store(grant.executable, path, 'commit', request, combined, grant.configSnapshot, grant.id), submitted_request: request })
       }
       grant.plan = undefined
-      const result = await reader.store(grant.executable, path, 'plan', request, combined, grant.configSnapshot)
+      const result = await reader.store(grant.executable, path, 'plan', request, combined, grant.configSnapshot, grant.id)
       grantFor(data.sessionId, data.grant)
       await validateTimeline(grant, combined)
       if (!result.ok) return json({ ...result, submitted_request: request })
@@ -428,7 +472,10 @@ export function createPreviewHost(ctx, config = {}) {
       if (data.op === 'cancel') {
         grant.frame?.abort()
         await grant.frameDone
-        await reader.reap()
+        // Scoped to THIS grant only: a cancel must never terminate children
+        // spawned for another grant or session (or a diagnostics probe) that
+        // happen to be in flight. Failed cleanups stay owned for a retry.
+        await reader.reap(grant.id)
         grant.frame = undefined
         frameOwners.delete(grant)
         return json({ ok: true, reaped: true })
@@ -448,7 +495,11 @@ export function createPreviewHost(ctx, config = {}) {
       grant.frameDone = new Promise(resolve => { settled = resolve })
       const signal = AbortSignal.any([hold.signal, controller.signal])
       monitor = setInterval(() => {
-        if (clock() >= grant.expiresAt || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+        // Same fail-closed rule as the edit monitor: a throwing provider must
+        // abort this frame, never escape as an uncaught timer exception.
+        try {
+          if (clock() >= grant.expiresAt || ctx.sessions.get(data.sessionId) !== grant.session || ctx.workingDirectory.get(grant.session) !== grant.cwd || !configCurrent(grant)) controller.abort()
+        } catch { controller.abort() }
       }, 50)
       monitor.unref?.()
       expiry = setTimeout(() => controller.abort(), Math.max(0, grant.expiresAt - clock()))
@@ -466,7 +517,7 @@ export function createPreviewHost(ctx, config = {}) {
         return ctx.fs.processPath(timeline)
       }
       const path = await validate()
-      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot)
+      const result = await reader.frame(grant.executable, path, data.frame, data.contentVersion, signal, grant.configSnapshot, grant.id)
       await validate()
       signal.throwIfAborted()
       // Exact whole response bound INCLUDING final newline; image.path is never resolved/read.
@@ -545,7 +596,7 @@ export function createPreviewHost(ctx, config = {}) {
     const hold = lease({ signal })
     try {
       await validateTimeline(grant, hold.signal)
-      return await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, hold.signal, grant.configSnapshot)
+      return await reader.store(grant.executable, ctx.fs.processPath(grant.timeline), 'capabilities', undefined, hold.signal, grant.configSnapshot, grant.id)
     } catch (error) {
       // Only admission/protocol mismatches degrade to an advisory: reads stay usable.
       // Cleanup, cancellation, timeout and truncation failures must propagate.

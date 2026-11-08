@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash, webcrypto } from 'node:crypto'
 import { Readable } from 'node:stream'
-import { FrameEpoch, verifyFrame, frameDraftText, decodePNG, frameRequest } from '../src/client/frame.mjs'
+import { FrameEpoch, verifyFrame, frameDraftText, decodePNG, frameRequest, fpsMatchesReference, FPS_TOKEN_LIMIT, FPS_DIGIT_LIMIT, FPS_EXPONENT_LIMIT } from '../src/client/frame.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../src/bounded.mjs'
 import { TimelineReader, referenceArgs } from '../src/protocol.mjs'
 import { parseJSON, stringifyJSON } from '../src/json.mjs'
@@ -23,6 +23,65 @@ test('exact PNG File and raw reference; image.path is never accessed',async()=>{
  assert(!text.includes('base64'));assert(!text.includes('image.path'))
  assert.throws(()=>frameDraftText(result,{kind:'block',address:'/not-hit'}),/FRAME_NOT_HIT/)
  assert(frameDraftText(result,{kind:'block',address:'/not-hit'},true).includes('position-only'))
+})
+test('fps identity: kernel non-canonical 30.0 rawJSON token verifies exactly; rounding lookalikes, strings and oversize tokens are rejected',async()=>{
+  const raw30 = parseJSON('{"fps":30.0}').fps, raw3e1 = parseJSON('{"fps":3e1}').fps
+  assert.equal(JSON.isRawJSON(raw30),true)
+  // End-to-end through verifyFrame with the exact kernel wire spelling 30.0.
+  const value=fixture();value.reference.selection.fps=raw30
+  assert.equal((await verify(value)).certificate.fps.num,30)
+  // Other exact decimal spellings of the same rational still verify.
+  const trailing=value.reference.selection.fps=parseJSON('{"fps":30.000}').fps
+  assert.equal(JSON.isRawJSON(trailing),true)
+  await verify(value)
+  // Number path: canonical safe integer stays accepted, non-integer rejected.
+  assert.equal(fpsMatchesReference(30,1,30),true)
+  assert.equal(fpsMatchesReference(60,2,30),true)
+  assert.equal(fpsMatchesReference(30,1,30.5),false)
+  assert.equal(fpsMatchesReference(30,1,31),false)
+  // Exact rational comparison: 30.0000000000000000000001 !== 30 even though
+  // Number(rawJSON) would round both to 30.
+  assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":30.0000000000000000000001}').fps),false)
+  assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":29.9999999999999999999999}').fps),false)
+  assert.equal(fpsMatchesReference(30,1,raw3e1),true)
+  assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":3.0e1}').fps),true)
+  assert.equal(fpsMatchesReference(30,4,parseJSON('{"fps":7.5}').fps),true)
+  assert.equal(fpsMatchesReference(30,4,parseJSON('{"fps":7.50}').fps),true)
+  assert.equal(fpsMatchesReference(30,4,parseJSON('{"fps":7.5000000000000000000001}').fps),false)
+  // Strings and lookalikes never pass as FPS.
+  for(const lookalike of ['30','30.0',' 30','30 ','0x1e',{},null,true,[],{rawJSON:'30.0'}])
+    assert.equal(fpsMatchesReference(30,1,lookalike),false,JSON.stringify(lookalike))
+  // Negative, zero, and inverted fractions never match a positive certificate.
+  assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":-30}').fps),false)
+  assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":0}').fps),false)
+  assert.equal(fpsMatchesReference(30,1,parseJSON('{"fps":0.0}').fps),false)
+  // Tightly bounded token: oversize digit runs and unsafe exponents are rejected.
+  assert.equal(fpsMatchesReference(30,1,JSON.rawJSON('3'.repeat(FPS_DIGIT_LIMIT+1))),false)
+  assert.equal(fpsMatchesReference(30,1,JSON.rawJSON(`30${'0'.repeat(FPS_TOKEN_LIMIT)}`)),false)
+  assert.equal(fpsMatchesReference(30,1,JSON.rawJSON(`1e${FPS_EXPONENT_LIMIT+1}`)),false)
+  assert.equal(fpsMatchesReference(30,1,JSON.rawJSON(`1e-${FPS_EXPONENT_LIMIT+1}`)),false)
+  // A genuinely different huge-but-in-bounds rational is rejected by value, not by crash.
+  assert.equal(fpsMatchesReference(30,1,JSON.rawJSON(`1e${FPS_EXPONENT_LIMIT}`)),false)
+  // Invalid certificate rationals fail closed.
+  for(const [num,den] of [[undefined,1],[30,undefined],[0,1],[30,0],[-30,1],[1.5,1],[30,1.5],[30,-1]])
+    assert.equal(fpsMatchesReference(num,den,30),false,`${num}/${den}`)
+  // Full verifyFrame still rejects a real fps mismatch and malformed fps objects.
+  const mismatch=fixture();mismatch.reference.selection.fps=raw30;mismatch.image.fps={num:60000,den:2001}
+  await assert.rejects(verify(mismatch),/FRAME_INVALID: FPS does not match core reference/)
+  const stringFps=fixture();stringFps.reference.selection.fps='30.0'
+  await assert.rejects(verify(stringFps),/FRAME_INVALID: FPS does not match core reference/)
+  const missingFps=fixture();delete missingFps.image.fps
+  await assert.rejects(verify(missingFps),/FRAME_INVALID: FPS does not match core reference/)
+})
+test('fps identity reflects the real vtx wire: a kernel-valid timeline with literal fps 30.0 emits selection.fps rawJSON token "30.0" and certificate 30/1',async()=>{
+  // Confirmed against the real kernel (vtx.timeline_reference with a timeline
+  // whose project.fps is the literal token 30.0, accepted by ALLOWED_FPS):
+  // the wire selection carries "fps": 30.0 while timeline_frame emits
+  // {num: 30, den: 1}. parseJSON keeps the token as rawJSON (String(30.0)!
+  // === "30.0"), which the old Number()-style compare always rejected.
+  const envelope=parseJSON(`{"fps": ${'30.0'}}`)
+  assert.equal(JSON.isRawJSON(envelope.fps),true)
+  assert.equal(fpsMatchesReference(30,1,envelope.fps),true)
 })
 test('certificates, unsupported inline, stale raw, hash and pixel bounds fail closed',async()=>{
  for(const mutate of [v=>delete v.image.inline,v=>v.image.approximate=true,v=>v.image.frame=8,v=>v.image.bytes++,v=>v.image.sha256='c'.repeat(64),v=>v.image.width=9000,v=>v.image.fps.den=2,v=>v.reference.document.raw+=' ',v=>v.reference.content_version='sha256:'+'e'.repeat(64),v=>v.image.inline.data+='=',v=>v.image.mime_type='image/jpeg']) {

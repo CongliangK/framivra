@@ -35,7 +35,7 @@ export async function selectionEnvironment(t, kind) {
     assert.equal(extraction.status, 0, extraction.stderr)
     ;({ createPreviewHost } = await import(pathToFileURL(join(extracted, 'lib/host.js'))))
     const queue = [], target = { mode: 'queue', pendingQueue: queue, load: row => queue.push(row) }
-    sandbox = { window: { __ModuleLoader__: target }, TextEncoder, AbortController, AbortSignal, URLSearchParams, crypto: globalThis.crypto, setTimeout, clearTimeout, console }
+    sandbox = { window: { __ModuleLoader__: target }, TextEncoder, TextDecoder, DOMException, AbortController, AbortSignal, URLSearchParams, crypto: globalThis.crypto, setTimeout, clearTimeout, console }
     runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'), 'utf8'), sandbox)
     const modules = queue.shift().factory(() => { throw Error('unexpected bootstrap dependency') })
     runInNewContext(await readFile(join(extracted, 'lib/client.js'), 'utf8'), sandbox)
@@ -64,7 +64,11 @@ export async function selectionEnvironment(t, kind) {
     })()
     pending.add(promise); promise.finally(() => pending.delete(promise)); return promise
   }
-  if (sandbox) { sandbox.fetch = globalThis.fetch; sandbox.navigator = dom.window.navigator }
+  if (sandbox) {
+    dom.window.__ModuleLoader__ = sandbox.window.__ModuleLoader__
+    sandbox.window = dom.window; sandbox.document = dom.window.document
+    sandbox.fetch = globalThis.fetch; sandbox.navigator = dom.window.navigator
+  }
   const { createRoot } = require('react-dom/client'), reactRoot = createRoot(document.getElementById('root')), tab = new AbortController()
   const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text)
   async function settle(predicate) { for (let i = 0; i < 1000; i++) { if (predicate()) return; await act(async () => { await new Promise(r => setTimeout(r, 5)) }) } assert.fail(document.body.textContent) }

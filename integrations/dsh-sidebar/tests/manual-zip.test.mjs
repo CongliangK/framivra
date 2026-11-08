@@ -18,7 +18,7 @@ test('candidate ZIP SDK-materialized PreviewBody and extracted Host actually pla
  const {createPreviewHost}=await import(pathToFileURL(join(extracted,'lib/host.js')))
  const env=await environment(t,'zip-core',fixture(),{createHost:createPreviewHost})
  const queue=[],target={mode:'queue',pendingQueue:queue,load:row=>queue.push(row)},copies=[]
- const sandbox={window:{__ModuleLoader__:target},navigator:{clipboard:{writeText:async text=>copies.push(text)}},TextEncoder,AbortController,AbortSignal,URLSearchParams,crypto:globalThis.crypto,setTimeout,clearTimeout,console}
+ const sandbox={window:{__ModuleLoader__:target},navigator:{clipboard:{writeText:async text=>copies.push(text)}},TextEncoder,TextDecoder,DOMException,AbortController,AbortSignal,URLSearchParams,crypto:globalThis.crypto,setTimeout,clearTimeout,console}
  const require=createRequire(import.meta.url)
  runInNewContext(await readFile(require.resolve('@deepseek-ai/dsh-client-modules/client'),'utf8'),sandbox)
  const modules=queue.shift().factory(()=>{throw Error('unexpected bootstrap dependency')})
@@ -29,6 +29,7 @@ test('candidate ZIP SDK-materialized PreviewBody and extracted Host actually pla
  const requests=[]
  sandbox.fetch=async(_url,init)=>{requests.push(parseJSON(init.body));return env.host.control(new Request('http://owner/api/framivra/control',{method:'POST',body:init.body,signal:init.signal}))}
  const dom=new JSDOM('<div id="root"></div>',{url:'http://owner/'});globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true
+ dom.window.__ModuleLoader__=sandbox.window.__ModuleLoader__;sandbox.window=dom.window;sandbox.document=dom.window.document
  const {createRoot}=await import('react-dom/client'),{Simulate}=await import('react-dom/test-utils'),root=createRoot(document.getElementById('root'))
  t.after(async()=>{await act(async()=>root.unmount());dom.window.close();delete globalThis.window;delete globalThis.document})
  const button=label=>[...document.querySelectorAll('button')].find(n=>n.textContent===label)

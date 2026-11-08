@@ -11,6 +11,20 @@ const paths = {
   refresh: ['M20 8a8 8 0 1 0 1 6', 'M20 3v5h-5'],
   back: ['M14 5l-7 7 7 7'],
   close: ['M6 6l12 12M6 18L18 6'],
+  first: ['M5 5v14M18 5l-9 7 9 7z'],
+  last: ['M19 5v14M6 5l9 7-9 7z'],
+  previous: ['M16 5l-9 7 9 7z'],
+  next: ['M8 5l9 7-9 7z'],
+  audio: ['M9 18V5l10-2v13', 'M9 15a3 3 0 1 0 0 3M19 13a3 3 0 1 0 0 3'],
+  text: ['M4 5h16M12 5v15M8 20h8'],
+  clip: ['M3 5h18v14H3zM8 5v14'],
+  split: ['M12 3v18M3 8h6v8H3zM15 8h6v8h-6z'],
+  remove: ['M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7'],
+  pin: ['M12 3v18M7 8l5-5 5 5M7 21h10'],
+  grip: ['M8 9h8M8 15h8'],
+  zoomIn: ['M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14M15 15l6 6M7 10h6M10 7v6'],
+  zoomOut: ['M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14M15 15l6 6M7 10h6'],
+  fit: ['M7 4H3v16h4M17 4h4v16h-4M7 12h10'],
 }
 export function Icon({ name, size = 18 }) {
   return h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
@@ -43,7 +57,9 @@ export const workbenchCSS = `
 .fv-workbench [role=alert]{color:#f0bc91}
 .fv-workbench [role=status]{color:var(--fv-muted)}
 .fv-workbench :is(.fv-body,.fv-inspector,.fv-files,.fv-timeline pre){scrollbar-color:#555d6b transparent;scrollbar-width:thin;overscroll-behavior:contain}
-.fv-topbar{display:flex;gap:10px;align-items:center;padding:12px;border-bottom:1px solid var(--fv-line);flex:none;min-width:0}
+.fv-topbar{display:flex;gap:10px;align-items:center;padding:12px;border-bottom:1px solid var(--fv-line);flex:none;min-width:0;position:relative;z-index:3}
+.fv-topbar>.fv-path{padding:0;border:0;flex:none}.fv-topbar>.fv-path>summary{list-style:none;white-space:nowrap;min-height:34px;padding:6px 10px;border:1px solid var(--fv-line);border-radius:5px;background:var(--fv-surface);color:var(--fv-text)}.fv-topbar>.fv-path>summary::-webkit-details-marker{display:none}.fv-topbar>.fv-path[open]>summary{border-color:var(--fv-accent)}
+.fv-topbar>.fv-path>form{position:absolute;right:12px;top:calc(100% + 4px);width:min(500px,calc(100% - 24px));padding:12px;background:var(--fv-raised);border:1px solid var(--fv-line);border-radius:5px;box-shadow:0 8px 20px #0006;z-index:5}
 .fv-brand{color:var(--fv-accent);display:flex;flex:none}
 .fv-title{flex:1;min-width:0}
 .fv-title h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -105,7 +121,29 @@ export const workbenchCSS = `
 .fv-guide svg{color:var(--fv-accent)}
 .fv-guide strong{font-size:14px;font-weight:500}
 .fv-guide small{font-size:11px;color:var(--fv-muted);margin-left:auto}
+.fv-layout-divider{display:none}
+.fv-transport{justify-content:center;gap:8px;margin:0;padding:8px 0}
+.fv-transport-buttons{display:flex;align-items:center;gap:4px;min-width:0}
+.fv-transport .fv-frame-input{display:block;flex:none;text-align:center;font-size:12px}
+.fv-transport .fv-frame-input>span{position:absolute;width:1px;height:1px;padding:0;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.fv-transport .fv-frame-input input{width:92px;text-align:center;font:500 14px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.03em}
+.fv-transport-buttons>button{width:32px;height:32px;min-height:32px;padding:5px}
+.fv-duration{font-size:12px;color:var(--fv-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.fv-frame-query .fv-query-button{font-size:12px;margin-inline-start:auto}
+.fv-selection-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;padding:8px 0;border-bottom:1px solid var(--fv-line);margin-bottom:4px}
+.fv-selection-description{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.fv-selection-kind{display:flex;flex:none;color:var(--fv-tl-accent)}
+.fv-selection-kind[data-family=audio]{color:#93cfba}.fv-selection-kind[data-family=gfx]{color:#bf9cdd}.fv-selection-kind[data-family=subtitles]{color:#e1be7c}
+.fv-selection-description>div{min-width:0}.fv-selection-description strong{display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-size:12px;font-weight:500}
+.fv-selection-description div>span{display:block;color:var(--fv-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.fv-selection-actions{display:flex;align-items:center;gap:4px;flex:none}
+.fv-selection-actions button{min-height:32px;padding:5px 7px;font-size:12px}
+.fv-frame-tools .fv-frame-tools-tools>.fv-frame-tools-details{margin:0 0 0 auto}.fv-frame-tools .fv-frame-tools-tools>.fv-frame-tools-details>summary{padding:6px 0;min-height:32px}.fv-frame-tools .fv-frame-tools-tools>.fv-frame-tools-details[open]{flex-basis:100%;margin-left:0}
+.fv-workbench[open] .fv-frame-tools-details[open]{max-height:160px;overflow:auto}
+@media(pointer:coarse){.fv-workbench[open] .fv-layout-divider{min-height:32px}}
+@container fv-workbench (max-width:600px){.fv-selection-bar{flex-wrap:wrap;gap:8px}.fv-selection-actions{width:100%;justify-content:flex-end}.fv-frame-query .fv-query-button{margin-inline-start:0}.fv-transport{gap:6px}.fv-duration{display:none}}
 @container fv-workbench (min-width:860px){
+ .fv-selection-bar{padding:4px 0}.fv-selection-description>div{display:flex;align-items:baseline;gap:10px;overflow:hidden}.fv-selection-description strong{flex:0 1 auto}.fv-selection-description div>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
  .fv-upper{display:grid;grid-template-columns:var(--fv-files-column,0px) minmax(0,1fr) var(--fv-inspector-column,0px);align-items:stretch}
  .fv-files{grid-column:1;border:0;border-right:1px solid var(--fv-line);max-height:none}
  .fv-monitor{grid-column:2;padding:16px 24px;overflow:auto}
@@ -113,12 +151,19 @@ export const workbenchCSS = `
  .fv-topbar{padding:12px 20px}
  .fv-workbench[open] .fv-body{display:flex;flex-direction:column;overflow:hidden}
  .fv-workbench[open] .fv-upper{flex:1;min-height:0;overflow:hidden}
- .fv-workbench[open] .fv-monitor{padding:10px 16px}
- .fv-workbench[open] .fv-frame-query{position:sticky;top:-10px;z-index:4;background:#141619;padding:6px 0;font-size:12px}
+ .fv-workbench[open] .fv-monitor{display:flex;flex-direction:column;padding:10px 16px;overflow:auto;min-height:0}
+ .fv-workbench[open] .fv-monitor-title{flex:none;margin-bottom:4px}
+ .fv-workbench[open] .fv-frame-query{flex:none;font-size:12px}
  .fv-workbench[open] .fv-frame-query button{font-size:12px}
+ .fv-workbench[open] .fv-frame-tools{display:flex;flex-direction:column;flex:1;min-height:200px}
  .fv-workbench[open] .fv-frame-tools-head{display:none}
- .fv-workbench[open] .fv-frame-tools-stage{max-height:20dvh}
- .fv-workbench[open] .fv-timeline-pane{display:flex;flex-direction:column;flex:0 0 42%;min-height:300px;overflow:hidden}
+ .fv-workbench[open] .fv-frame-tools-stage{flex:1;min-height:100px;max-height:none;aspect-ratio:auto}
+ .fv-workbench[open] .fv-frame-tools-stage img{width:100%;height:100%;object-fit:contain}
+ .fv-workbench[open] .fv-frame-tools-tools,.fv-workbench[open] .fv-frame-tools>details,.fv-workbench[open] .fv-frame-tools>[role=status],.fv-workbench[open] .fv-frame-tools>[role=alert]{flex:none}
+ .fv-workbench[open] .fv-output{flex:none}
+ .fv-workbench[open] .fv-layout-divider{display:flex;align-items:center;justify-content:center;height:12px;flex:none;border-top:1px solid var(--fv-line);cursor:row-resize;color:var(--fv-muted);background:var(--fv-bg);touch-action:none;user-select:none}
+ .fv-workbench[open] .fv-layout-divider:hover,.fv-workbench[open] .fv-layout-divider:focus-visible{color:var(--fv-accent);background:var(--fv-raised);outline:2px solid var(--fv-accent);outline-offset:-2px}
+ .fv-workbench[open] .fv-timeline-pane{display:flex;flex-direction:column;flex:0 0 var(--fv-timeline-share,38%);min-height:300px;overflow:hidden;padding-top:4px}
  .fv-workbench[open] .fv-timeline{display:flex;flex-direction:column;flex:1;min-height:0}
  .fv-workbench[open] .fv-timeline .fv-scroll{flex:1;min-height:70px;max-height:none}
  .fv-workbench[open] .fv-timeline .fv-help summary,.fv-workbench[open] .fv-data>summary{padding:3px 0;min-height:24px}
@@ -135,12 +180,12 @@ export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath
   const [state, setState] = useState({ path: '', phase: 'loading', entries: [] })
   const [search, setSearch] = useState('')
   const request = useRef()
-  async function browse(path) {
+  async function browse(path, preserveSearch = false) {
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
     const signal = AbortSignal.any([controller.signal, tabSignal])
-    setSearch('')
+    if (!preserveSearch) setSearch('')
     setState(previous => ({ ...previous, path, phase: 'loading', message: undefined }))
     try {
       const result = await call(sessionId, { op: 'browse', path }, signal)
@@ -160,7 +205,7 @@ export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath
   return h('aside', { className: 'fv-files', 'aria-label': '工作区文件选择器' },
     h('div', { className: 'fv-panel-heading' }, h('h3', null, '项目文件'),
       h('div', null,
-        h('button', { type: 'button', title: '刷新文件列表', 'aria-label': '刷新文件列表', onClick: () => void browse(state.path), disabled: state.phase === 'loading' }, h(Icon, { name: 'refresh', size: 15 })),
+        h('button', { type: 'button', title: '刷新文件列表', 'aria-label': '刷新文件列表', onClick: () => void browse(state.path, true), disabled: state.phase === 'loading' }, h(Icon, { name: 'refresh', size: 15 })),
         h('button', { type: 'button', title: '收起项目文件', 'aria-label': '收起项目文件', onClick: onClose }, h(Icon, { name: 'close', size: 15 })))),
     h('div', { className: 'fv-file-location' },
       h('button', { type: 'button', title: '上一级文件夹', 'aria-label': '上一级文件夹', disabled: !state.path || state.phase === 'loading', onClick: () => void browse(parent) }, h(Icon, { name: 'back', size: 14 })),
@@ -168,7 +213,7 @@ export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath
     h('input', { className: 'fv-file-search', type: 'search', value: search, 'aria-label': '筛选当前文件夹', name: 'framivra-file-filter', autoComplete: 'off', placeholder: '筛选文件…', onChange: event => setSearch(event.target.value) }),
     state.phase === 'loading' ? h('p', { className: 'fv-file-status', role: 'status' }, '正在读取文件夹…') : null,
     state.phase === 'failed' ? h('div', { className: 'fv-file-status', role: 'alert' }, state.message,
-      h('button', { type: 'button', onClick: () => void browse(state.path) }, '重试读取文件夹')) : null,
+      h('button', { type: 'button', onClick: () => void browse(state.path, true) }, '重试读取文件夹')) : null,
     state.phase === 'ready' ? h(React.Fragment, null,
       h('ul', { className: 'fv-file-list', 'aria-label': '文件与文件夹' }, entries.map(entry => h('li', { key: entry.path, style: { contentVisibility: 'auto', containIntrinsicSize: '38px' } },
         h('button', { type: 'button', title: entry.name, 'aria-label': `${entry.type === 'directory' ? '打开文件夹' : '打开时间线'} ${entry.name}`, 'aria-current': selectedPath === entry.path ? true : undefined,
