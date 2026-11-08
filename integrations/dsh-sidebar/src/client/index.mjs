@@ -7,6 +7,7 @@ import { emptySelection, transitionSelection, preserveSelection } from './select
 import { FrameEpoch, FrameTools } from './frame.mjs'
 import { registerBundleConfig } from './settings.mjs'
 import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
+import { Icon, WorkbenchStyles, FileBrowser } from './workbench.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
@@ -43,12 +44,13 @@ async function control(sessionId, payload, signal) {
 export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState }) {
   if (snapshot.content_version !== result.content_version) return h('p', { role: 'alert' }, 'Timeline changed between reads. Reopen preview; mixed-version selection is not displayed.')
   return h(React.Fragment, null,
+    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState }),
+    h('details', { className: 'fv-data' }, h('summary', null, '项目数据与诊断'),
     h('p', null, `Read-only · ${snapshot.content_version}`),
     h('p', null, 'Stored timeline blocks only; not render validation. Addresses are transient within this content version.'),
     ...[snapshot, result].filter(item => !item.coverage.complete).map((item, index) => h('div', { key: index, role: 'alert' },
       h('strong', null, 'Incomplete coverage: external subtitles/assets were not expanded.'), details('Unexpanded inputs', item.coverage))),
     details('Diagnostics', { inspect: snapshot.diagnostics, query: result.diagnostics, frameQuery: hits?.diagnostics }),
-    h(VisualTimeline, { key: snapshot.content_version, snapshot, result, hits, frame, onFrame, onSelect, activeSelection, onSelectionChange, selectionIntent, onGesture, onGestureState }),
     hits ? h('section', { 'aria-label': '帧查询详情' }, h('p', null, `本次 kernel 查询命中 ${hits.blocks.length} 块；完整时间轴保留，黄色底边仅强调命中。`), details('帧查询 envelope（独立详情）', hits)) : null,
     h('details', null, h('summary', null, '全部轨道/块字段与选择（展开）'),
     result.tracks.map(track => h('section', { key: `${track.family}:${track.track_index}`, style: { borderTop: '1px solid currentColor', padding: '8px 0' } },
@@ -62,7 +64,7 @@ export function TimelineView({ snapshot, result, hits, frame, onFrame, onSelect,
     result.tracks.length === 0 ? h('p', null, 'No tracks matched this query.') : null,
     h('p', null, 'All fields of the vtx-emitted read document are shown; wire numeric tokens are preserved. Original source numeric/lexical precision is not guaranteed by the current upstream protocol.'),
     details('Complete vtx-emitted timeline document (all emitted fields)', snapshot.document),
-    details('Complete query envelope', result))
+    details('Complete query envelope', result)))
 }
 
 export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal, getDraftServices, onStale }) {
@@ -99,15 +101,16 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
   useEffect(() => { setState({}); if (selection) void run('read') }, [selection, sessionId, opened.grant, opened.snapshot.content_version])
   return h('section', { 'aria-label': '时间线引用', style: { border: '1px solid currentColor', padding: 8 } },
     h('h3', null, '时间线引用 · 仅存储语义'),
-    h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放未与选择联动，不能代替精确帧。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
-    h('p', null, '加入草稿通过官方会话 InputActions；在点击时选区起点插入，不替换已选文字或原有引用。文本和图片顺序加入，部分结果会明确提示；不会创建会话、自动补投或发送。'),
+    h('details', null, h('summary', null, '引用与草稿说明'),
+      h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放未与选择联动，不能代替精确帧。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
+      h('p', null, '加入草稿通过官方会话 InputActions；在点击时选区起点插入，不替换已选文字或原有引用。文本和图片顺序加入，部分结果会明确提示；不会创建会话、自动补投或发送。')),
     selection ? h('p', null, `当前选择：${selection.kind} ${selection.address} · ${opened.snapshot.content_version}`) : h('p', null, '尚未选择轨道或块。'),
     ...[['id', '复制 ID / 临时定位'], ['raw', '复制 raw JSON'], ['diagnostic', '复制诊断引用 JSON'], ['draft', '加入当前会话草稿（不发送）']].map(([action, label]) => h('button', { key: action, type: 'button', disabled: !selection || state.busy, onClick: () => { void run(action) } }, label)),
     state.busy ? h('button', { type: 'button', onClick: () => { task.current?.abort(); setState(previous => ({ ...previous, busy: false, message: '已取消；未重试/补投草稿，选择与已读取原文保留。' })) } }, '取消引用操作') : null,
     state.message ? h('p', { role: 'status' }, state.message) : null,
     state.item ? h(React.Fragment, null,
       h('p', null, state.item.stable_id === null ? `legacy / 无协议稳定 ID：临时地址 ${state.item.address}（仅此 content_version 有效）` : `稳定 ID：${state.item.stable_id}`),
-      h('pre', { 'aria-label': '选中对象 raw JSON', style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, state.item.raw ?? '无存储原文（虚拟轨道）'),
+      h('details', null, h('summary', null, '选中对象原文'), h('pre', { 'aria-label': '选中对象 raw JSON', style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, state.item.raw ?? '无存储原文（虚拟轨道）')),
       details('vtx reference/v1 诊断与选择（完整）', state.envelope)) : null)
 }
 
@@ -128,6 +131,17 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const [frame, setFrame] = useState('')
   const [state, setState] = useState({ phase: 'idle' })
   const [selectionIntent, setSelectionIntent] = useState(emptySelection)
+  const [filesVisible, setFilesVisible] = useState(false)
+  const [browserEpoch, setBrowserEpoch] = useState(0)
+  const [inspectorVisible, setInspectorVisible] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const workbench = useRef()
+  const expandButton = useRef()
+  function toggleExpanded() {
+    const dialog = workbench.current
+    if (dialog?.open) { dialog.close(); return }
+    if (typeof dialog?.showModal === 'function') { dialog.showModal(); setExpanded(true) }
+  }
   const frameOwner = useRef(new FrameEpoch()).current
   const ownerBinding = useRef()
   if (ownerBinding.current !== sessionId) { frameOwner.invalidate(); frameOwner.ghost = undefined; frameOwner.edit = { dirty: false, busy: false, unknown: false }; ownerBinding.current = sessionId }
@@ -164,13 +178,22 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       const nextBinding = services?.sessions?.binding?.(sessionId), nextCwd = list?.getSnapshot().byId?.[sessionId]?.cwd, nextKey = navigation?.getSnapshot().key
       if (binding !== nextBinding || cwd !== nextCwd || key !== nextKey) {
         binding = nextBinding; cwd = nextCwd; key = nextKey
-        frameOwner.invalidate(); setState(previous => ({ ...previous }))
+        task.current?.abort(); close(); clearSelection(); setFrame('')
+        setBrowserEpoch(previous => previous + 1)
+        setState({ phase: 'idle', message: '会话或工作区已切换，请重新选择时间线。' })
       }
     }
     const off = [list?.subscribe(observe), navigation?.subscribe(observe)]
     return () => { frameOwner.invalidate(); off.forEach(dispose => dispose?.()) }
   }, [sessionId, frameOwner])
-  async function load(queryOnly = false) {
+  async function load(queryOnly = false, chosenTimeline = timeline) {
+    if (!queryOnly && (frameOwner.edit.busy || frameOwner.edit.unknown)) {
+      setState(previous => ({ ...previous, message: '编辑正在执行或写结果未知。请在属性面板读取 status / recover，解决后再打开工程。' }))
+      setInspectorVisible(true)
+      return
+    }
+    if (!queryOnly && frameOwner.edit.dirty && !globalThis.window?.confirm('存在未保存的编辑批次。切换或刷新会丢弃此批次，是否继续？')) return
+    if (!queryOnly && chosenTimeline !== timeline) { setTimeline(chosenTimeline); setFrame('') }
     frameOwner.invalidate()
     let query
     try { query = queryOnly ? frameQuery(frame) : {} } catch (error) {
@@ -189,7 +212,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       let opened
       if (!queryOnly || previous.phase !== 'ready') {
         close()
-        opened = await control(sessionId, { op: 'open', timeline }, signal)
+        opened = await control(sessionId, { op: 'open', timeline: chosenTimeline }, signal)
         grant.current = opened.grant
       } else opened = previous.opened
       // Always acquire a same-version full projection before a filtered query.
@@ -198,7 +221,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       signal.throwIfAborted()
       const stale = opened.snapshot.content_version !== full.content_version || (hits && hits.content_version !== full.content_version)
       if (!queryOnly || stale) { clearSelection() }
-      setState({ phase: 'ready', sessionId, opened, result: full, hits, stale: Boolean(stale) })
+      setState({ phase: 'ready', sessionId, timeline: queryOnly && previous.phase === 'ready' ? previous.timeline : chosenTimeline, opened, result: full, hits, stale: Boolean(stale) })
     } catch (error) {
       if (!signal.aborted) {
         if (queryOnly && previous.phase === 'ready') setState({ ...previous, loading: false, message: error.message })
@@ -216,36 +239,64 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     if (grant.current !== opened.grant) return
     // Apply to the current intent, not the selection captured before async IO.
     setSelectionIntent(previous => snapshot.content_version === result.content_version ? preserveSelection(previous, state.result, result) : emptySelection())
-    setState({ phase: 'ready', sessionId, opened: { ...opened, snapshot }, result, stale: snapshot.content_version !== result.content_version })
+    setState({ phase: 'ready', sessionId, timeline: state.timeline, opened: { ...opened, snapshot }, result, stale: snapshot.content_version !== result.content_version })
   }
-  return h('article', { style: { padding: 12, overflow: 'auto', height: '100%', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', boxSizing: 'border-box' }, 'aria-label': 'Framivra read-only preview' },
-    h('h2', null, 'Framivra · 时间线'),
-    h('p', null, '打开当前会话工作区内的相对 timeline 路径；不会切换工作区。默认仅只读 / 复制引用。手动编辑须另行明确授予本会话/工程写许可，受管工程经内核预检后才提交。外部工程与远程文件系统不支持。固定帧 PNG 需要下方单独 cache/preview 写入同意；图片/引用仅加入草稿，不发送。'),
-    h('form', { onSubmit: event => { event.preventDefault(); void load() } },
-      h('label', null, 'Timeline path ', h('input', { style: { maxWidth: '100%', boxSizing: 'border-box' }, value: timeline, onChange: event => { task.current?.abort(); close(); setTimeline(event.target.value); setState({ phase: 'idle' }); clearSelection() }, required: true })),
-      h('button', { type: 'submit' }, 'Open / refresh')),
-    state.phase === 'loading' || state.loading ? h('p', { role: 'status' }, 'Reading through vtx…') : null,
-    state.message ? h('pre', { role: 'alert', style: { whiteSpace: 'pre-wrap' } }, state.message) : null,
-    state.phase === 'ready' && state.sessionId === sessionId ? h(React.Fragment, null,
-      h('form', { onSubmit: event => { event.preventDefault(); void load(true) } },
-        h('label', null, 'Frame (blank = all) ', h('input', { type: 'text', inputMode: 'numeric', style: { maxWidth: '100%', boxSizing: 'border-box' }, value: frame, 'aria-invalid': Boolean(frameError), onChange: event => pin(event.target.value) })),
-        h('button', { type: 'submit' }, 'Query stored blocks')),
-      frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
-      state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture, onGestureState: gestureState }),
-      !state.stale ? h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGestureReady: callback => setGesture(() => callback) }) : null,
-      !state.stale && !frameError && state.opened.snapshot.content_version === state.result.content_version ? h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
-        onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) },
-      }) : null,
-      !state.stale && !frameError ? h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null,
-      h('h3', null, 'Existing output preview — provenance UNKNOWN'),
-      h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),
-      state.opened.media.length === 0 ? h('p', null, 'No existing final.mp4 / draft_final.mp4 output found. No render was started.') : null,
-      ...state.opened.media.map(media => h('section', { key: media.mediaId }, h('p', null, media.label, ' — ', media.warning),
-        h('video', { controls: true, preload: 'metadata', style: { width: '100%' }, src: `/api/framivra/media?${new URLSearchParams({ sessionId, grant: state.opened.grant, mediaId: media.mediaId })}` })))) : null)
+  const ready = state.phase === 'ready' && state.sessionId === sessionId
+  const valid = ready && !state.stale && state.opened.snapshot.content_version === state.result.content_version
+  const activePath = ready ? state.timeline : timeline
+  const filename = activePath.split('/').at(-1) || '时间线'
+  return h('article', { className: 'fv-shell', 'aria-label': 'Framivra read-only preview' },
+    h(WorkbenchStyles),
+    h('dialog', { className: 'fv-workbench', ref: workbench, role: expanded ? 'dialog' : 'region', 'aria-label': 'Framivra 工作台', 'aria-modal': expanded ? true : undefined,
+      onClose: () => { setExpanded(false); expandButton.current?.focus() },
+      style: { '--fv-files-column': filesVisible ? '220px' : '0px', '--fv-inspector-column': ready && inspectorVisible ? '300px' : '0px' } },
+      h('header', { className: 'fv-topbar' },
+        h('span', { className: 'fv-brand' }, h(Icon, { name: 'film', size: 22 })),
+        h('div', { className: 'fv-title' }, h('h2', { title: ready ? activePath : 'Framivra' }, ready ? filename : 'Framivra'), h('span', { className: 'fv-subtitle' }, ready ? '已保存视图 · 精确帧定位' : '时间线工作台')),
+        h('button', { type: 'button', title: '浏览工作区，打开时间线', 'aria-label': '浏览工作区打开时间线', 'aria-pressed': filesVisible, onClick: () => setFilesVisible(value => !value) }, h(Icon, { name: 'folder', size: 16 }), h('span', { className: 'fv-open-label' }, '打开')),
+        ready ? h('button', { className: 'fv-icon-button', type: 'button', title: '刷新保存版本', 'aria-label': '刷新保存版本', onClick: () => void load(), disabled: state.loading }, h(Icon, { name: 'refresh', size: 16 })) : null,
+        ready ? h('button', { className: 'fv-icon-button', type: 'button', title: '属性与编辑', 'aria-label': '属性与编辑', 'aria-pressed': inspectorVisible, onClick: () => setInspectorVisible(value => !value) }, h(Icon, { name: 'settings', size: 17 })) : null,
+        h('button', { className: 'fv-icon-button', type: 'button', ref: expandButton, title: expanded ? '收起工作台' : '展开工作台', 'aria-label': expanded ? '收起工作台' : '展开工作台', onClick: toggleExpanded }, h(Icon, { name: expanded ? 'collapse' : 'expand', size: 17 }))),
+      h('details', { className: 'fv-path' }, h('summary', null, '通过路径打开'),
+        h('form', { onSubmit: event => { event.preventDefault(); void load() } },
+          h('label', null, '时间线路径 ', h('input', { name: 'framivra-timeline', autoComplete: 'off', spellCheck: false, value: timeline, onChange: event => setTimeline(event.target.value), required: true })),
+          h('button', { type: 'submit' }, '打开 / 刷新'))),
+      state.phase === 'loading' || state.loading ? h('p', { className: 'fv-notice', role: 'status' }, '正在通过 vtx 读取时间线…') : null,
+      state.message ? h('p', { className: 'fv-notice', role: 'alert' }, state.message) : null,
+      h('div', { className: 'fv-body' },
+        h('div', { className: 'fv-upper' },
+          filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: () => setFilesVisible(false) }) : null,
+          h('main', { className: 'fv-monitor', 'aria-label': '画面预览' },
+            ready ? h(React.Fragment, null,
+              h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : `帧 ${frameValue}`)),
+              h('form', { className: 'fv-frame-query', onSubmit: event => { event.preventDefault(); void load(true) } },
+                h('label', null, '帧（留空为全部） ', h('input', { type: 'text', name: 'framivra-frame', autoComplete: 'off', inputMode: 'numeric', value: frame, 'aria-invalid': Boolean(frameError), onChange: event => pin(event.target.value) })),
+                h('button', { type: 'button', onClick: () => pin('0') }, '定位首帧'),
+                h('button', { type: 'submit' }, '查询命中')),
+              frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
+              valid && !frameError ? h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null,
+              h('details', { className: 'fv-output', hidden: !state.opened.media.length },  h('summary', null, `已有成片${state.opened.media.length ? ` · ${state.opened.media.length}` : ' · 暂无'}`),
+                h('h3', null, 'Existing output preview — provenance UNKNOWN'),
+                h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),
+                !state.opened.media.length ? h('p', null, 'No existing final.mp4 / draft_final.mp4 output found. No render was started.') : null,
+                ...state.opened.media.map(media => h('section', { key: media.mediaId }, h('p', null, media.label, ' — ', media.warning),
+                  h('video', { controls: true, preload: 'none', 'aria-label': `${media.label}（未验证对应版本）`, src: `/api/framivra/media?${new URLSearchParams({ sessionId, grant: state.opened.grant, mediaId: media.mediaId })}` }))))) :
+              h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 38 }), h('h3', null, '从一条时间线开始'), h('p', null, '浏览当前工作区，选择工程的 JSON 文件。'),
+                h('button', { className: 'fv-primary', type: 'button', onClick: () => setFilesVisible(true) }, h(Icon, { name: 'folder', size: 17 }), '打开时间线'))),
+          ready ? h('aside', { className: 'fv-inspector', 'aria-label': '属性与剪辑', hidden: !inspectorVisible },
+            h('div', { className: 'fv-panel-heading' }, h('h3', null, '属性与剪辑'), h('button', { type: 'button', 'aria-label': '收起属性与剪辑', onClick: () => setInspectorVisible(false) }, h(Icon, { name: 'close', size: 15 }))),
+            valid && !frameError ? h('details', { className: 'fv-inspector-section', open: true }, h('summary', null, '选区与引用'),
+              h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
+                onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) } })) : null,
+            valid ? h('details', { className: 'fv-inspector-section' }, h('summary', null, '剪辑编辑与提交'),
+              h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGestureReady: callback => setGesture(() => callback) })) : null) : null),
+        ready ? h('section', { className: 'fv-timeline-pane', 'aria-label': '工程时间线' },
+          state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请 Open / refresh。') : h(TimelineView, { snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture, onGestureState: gestureState })) : null)))
 }
 function Guide({ useTabInfo }) {
   const { tab } = useTabInfo()
-  return h('button', { onClick: () => tab.actions.openTab('framivra', { replaceTab: true }) }, 'Framivra · read-only timeline preview')
+  return h(React.Fragment, null, h(WorkbenchStyles),
+    h('button', { className: 'fv-guide', type: 'button', onClick: () => tab.actions.openTab('framivra', { replaceTab: true }) }, h(Icon, { name: 'film', size: 21 }), h('strong', null, 'Framivra'), h('small', null, '时间线工作台')) )
 }
 export function apply(ctx) {
   const lifetime = { active: true }

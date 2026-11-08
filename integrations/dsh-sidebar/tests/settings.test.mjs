@@ -217,3 +217,114 @@ test('registerBundleConfig: served-only registration, page view renders the form
   dispose()
   assert.deepEqual(servedDisposed, [true]); assert.deepEqual(slotDisposed, [true])
 })
+
+// Saved-configuration check (检查保存的配置): the button posts an empty-body
+// POST to /api/framivra/diagnostics and renders the verdict. The outcome is
+// pinned to the mirror revision; any later revision renders it expired, and a
+// visible draft reminds that only the SAVED configuration is ever checked.
+
+const okDiagnostics = { ok: true, schema: 'framivra.diagnostics/v1',
+  config: { vtxExecutable: '/opt/trusted/vtx', trustedPath: '/usr/local/bin:/usr/bin:/bin' },
+  executable: { path: '/opt/trusted/vtx', regularFile: true },
+  capabilities: { schema: 'framivra.timeline.read/v1' },
+  storeCapabilities: { ok: false, error: 'CLI_UNSUPPORTED' } }
+
+function stubFetch(t, implement) {
+  const calls = []
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, init) => { calls.push({ url, init }); return implement(url, init) }
+  t.after(() => { globalThis.fetch = original })
+  return calls
+}
+
+test('check button posts an empty-body diagnostics request and renders the verdict', async t => {
+  const { root } = await mount(t)
+  const form = fakeForm(ready)
+  const calls = stubFetch(t, () => new Response(JSON.stringify(okDiagnostics), { status: 200 }))
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  click(button('检查保存的配置'))
+  await act(async () => {})
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, '/api/framivra/diagnostics')
+  assert.equal(calls[0].init.method, 'POST')
+  assert.equal(calls[0].init.credentials, 'same-origin')
+  assert.equal(calls[0].init.headers['Content-Type'], 'application/json')
+  assert.equal(calls[0].init.body, '{}', 'no executable/config may ever be sent from the browser')
+  assert.match(text(), /检查通过/)
+  assert.match(text(), /可执行文件：\/opt\/trusted\/vtx/)
+  assert.match(text(), /语义编辑不可用/)
+})
+
+test('semantic-edit availability renders when store capabilities pass', async t => {
+  const { root } = await mount(t)
+  const form = fakeForm(ready)
+  stubFetch(t, () => new Response(JSON.stringify({ ...okDiagnostics, storeCapabilities: { ok: true } }), { status: 200 }))
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  click(button('检查保存的配置'))
+  await act(async () => {})
+  assert.match(text(), /语义编辑（store\/v1）可用/)
+})
+
+test('failed check surfaces the wire code, message and actionable hint', async t => {
+  const { root } = await mount(t)
+  const form = fakeForm(ready)
+  stubFetch(t, () => new Response(JSON.stringify({ ok: false, error: 'EXECUTABLE_NOT_FOUND', message: '未在受信 PATH 找到 vtx' }), { status: 424 }))
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  click(button('检查保存的配置'))
+  await act(async () => {})
+  assert.match(text(), /检查未通过（EXECUTABLE_NOT_FOUND）：未在受信 PATH 找到 vtx/)
+  assert.match(text(), /绝对受信路径/)
+})
+
+test('a revision change expires the previous check outcome', async t => {
+  const { root } = await mount(t)
+  const form = fakeForm(ready)
+  stubFetch(t, () => new Response(JSON.stringify(okDiagnostics), { status: 200 }))
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  click(button('检查保存的配置'))
+  await act(async () => {})
+  assert.match(text(), /检查通过/)
+  await act(async () => form.setSnapshot({ status: 'ready', value: { vtxExecutable: '/other/vtx', trustedPath: '/usr/local/bin:/usr/bin:/bin' }, revision: 8, writable: true }))
+  assert.match(text(), /检查结果已过期/)
+  assert.equal(text().includes('检查通过'), false, 'a stale verdict must never look valid')
+})
+
+test('a visible draft explains that the check reads only the saved configuration', async t => {
+  const { root } = await mount(t)
+  const form = fakeForm(ready)
+  stubFetch(t, () => new Response(JSON.stringify(okDiagnostics), { status: 200 }))
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  click(button('检查保存的配置'))
+  await act(async () => {})
+  type(input('framivra-config-executable'), '/other/vtx')
+  assert.match(text(), /检查只针对保存的配置：请先保存草稿，再检查。/)
+  assert.equal(text().includes('检查通过'), false)
+})
+
+test('a failing fetch surfaces a network outcome', async t => {
+  const { root } = await mount(t)
+  const form = fakeForm(ready)
+  stubFetch(t, async () => { throw new Error('boom') })
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  click(button('检查保存的配置'))
+  await act(async () => {})
+  assert.match(text(), /检查未通过（NETWORK）/)
+  assert.match(text(), /boom/)
+})
+
+test('an in-flight check refuses a second click', async t => {
+  const { root } = await mount(t)
+  const form = fakeForm(ready)
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const calls = stubFetch(t, async () => { await gate; return new Response(JSON.stringify(okDiagnostics), { status: 200 }) })
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  click(button('检查保存的配置'))
+  await act(async () => {})
+  assert.match(text(), /检查中…/)
+  click(button('检查中…'))
+  await act(async () => {})
+  assert.equal(calls.length, 1, 'second click during an in-flight check is refused')
+  await act(async () => { release(); await gate })
+  assert.match(text(), /检查通过/)
+})

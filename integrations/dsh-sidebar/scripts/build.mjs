@@ -223,6 +223,9 @@ export async function buildClient(outDir = 'lib', options = {}) {
   const dir = resolve(options.packageDir ?? packageDir)
   const results = await build({
     ...(await clientPluginConfig({ packageDir, outDir, ...options })),
+    // The library's direct-stdout logger can corrupt an embedding caller's
+    // serialized transport (notably node:test). Errors still reject build().
+    logLevel: 'silent',
     config: false,
   })
   await Promise.all(results.map(result => result[Symbol.asyncDispose]()))
