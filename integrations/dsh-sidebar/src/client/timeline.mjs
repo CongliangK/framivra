@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { displayExtent, windowFor, zoomWindow, panWindow, framePercent, clipGeometry, pointerFrame, frameTicks, displayLanes, safeFrame } from './viewport.mjs'
-import { Icon } from './workbench.mjs'
+import { Icon } from './icons.mjs'
+import { ToolButton, iconControlCSS } from './icon-controls.mjs'
 
 import { emptySelection, transitionSelection } from './selection.mjs'
 
@@ -265,20 +266,20 @@ export function VisualTimeline({ snapshot, result, hits, frame, onFrame, onSelec
       event.preventDefault(); event.stopPropagation()
     },
   },
-    h('style', null, css),
+    h('style', null, css + iconControlCSS),
     h('div', { className: 'fv-head' },
       h('h3', { title: label(snapshot.document?.project, '时间线') }, label(snapshot.document?.project, '时间线')),
       h('span', { className: 'fv-badge' }, onGesture ? '可拖拽 · 未保存 intents' : '只读'),
       h('div', { className: 'fv-tools', role: 'group', 'aria-label': '显示范围' },
-        h('button', { type: 'button', title: '窗口回到全片', onClick: () => setWindow(undefined) }, h(Icon, { name: 'fit', size: 13 }), '适配全片'),
-        h('button', { type: 'button', title: '窗口放大一倍精度', disabled: view.end - view.start <= 1, onClick: () => setWindow(zoomWindow(view, extent.end, true)) }, h(Icon, { name: 'zoomIn', size: 13 }), '放大'),
-        h('button', { type: 'button', title: '窗口缩小一半', disabled: view.end - view.start >= extent.end, onClick: () => setWindow(zoomWindow(view, extent.end, false)) }, h(Icon, { name: 'zoomOut', size: 13 }), '缩小'),
-        h('button', { type: 'button', title: '窗口向前平移半屏', disabled: view.start === 0, onClick: () => setWindow(panWindow(view, extent.end, -1)) }, h(Icon, { name: 'back', size: 13 }), '向前平移'),
-        h('button', { type: 'button', title: '窗口向后平移半屏', disabled: view.end === extent.end, onClick: () => setWindow(panWindow(view, extent.end, 1)) }, h(Icon, { name: 'next', size: 13 }), '向后平移'),
-        h('button', { type: 'button', title: '窗口缩放到已选块的存储帧范围（只改显示）', disabled: !selectionZoom, onClick: () => selectionZoom && setWindow(selectionZoom) }, h(Icon, { name: 'clip', size: 13 }), '缩放到选区')),
-      h('div', { className: 'fv-tools' },
-        h('button', { type: 'button', disabled: !onFrame || pinned === undefined, onClick: () => step(-1) }, h(Icon, { name: 'previous', size: 13 }), '前一帧'),
-        h('button', { type: 'button', disabled: !onFrame || pinned === undefined, onClick: () => step(1) }, h(Icon, { name: 'next', size: 13 }), '后一帧'))),
+        h(ToolButton, { icon: 'fit', label: '适配全片', tooltip: '窗口回到全片', onClick: () => setWindow(undefined) }),
+        h(ToolButton, { icon: 'zoomIn', label: '放大', tooltip: '窗口放大一倍精度', disabled: view.end - view.start <= 1, onClick: () => setWindow(zoomWindow(view, extent.end, true)) }),
+        h(ToolButton, { icon: 'zoomOut', label: '缩小', tooltip: '窗口缩小一半', disabled: view.end - view.start >= extent.end, onClick: () => setWindow(zoomWindow(view, extent.end, false)) }),
+        h(ToolButton, { icon: 'back', label: '向前平移', tooltip: '窗口向前平移半屏', disabled: view.start === 0, onClick: () => setWindow(panWindow(view, extent.end, -1)) }),
+        h(ToolButton, { icon: 'next', label: '向后平移', tooltip: '窗口向后平移半屏', disabled: view.end === extent.end, onClick: () => setWindow(panWindow(view, extent.end, 1)) }),
+        h(ToolButton, { icon: 'clip', label: '缩放到选区', tooltip: '窗口缩放到已选块的存储帧范围（只改显示）', disabled: !selectionZoom, onClick: () => selectionZoom && setWindow(selectionZoom) })),
+      h('div', { className: 'fv-tools', role: 'group', 'aria-label': '播放头步进' },
+        h(ToolButton, { icon: 'previous', label: '前一帧', tooltip: '播放头后退一帧', disabled: !onFrame || pinned === undefined, onClick: () => step(-1) }),
+        h(ToolButton, { icon: 'next', label: '后一帧', tooltip: '播放头前进一帧', disabled: !onFrame || pinned === undefined, onClick: () => step(1) }))),
     h('div', { className: 'fv-status', role: 'status' },
       h('span', { 'aria-label': '可见帧范围' }, `帧窗口 [${view.start}, ${view.end}) / 全片 [0, ${extent.end})`),
       h('span', null, `播放头 ${pinned ?? '未固定'}`),

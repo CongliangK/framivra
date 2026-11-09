@@ -187,6 +187,25 @@ export class TimelineReader {
   async reap(owner) {
     await Promise.all([...this.active.keys()].filter(handle => owner === undefined || this.spawnOwners.get(handle) === owner).map(handle => this.cleanup(handle)))
   }
+  /**
+   * True while any child spawned for this owner token is still tracked —
+   * in flight OR retained after a failed cleanup. Scoped exactly like reap,
+   * so callers can distinguish "my children are done" from "some unrelated
+   * grant/session still has a child in flight".
+   * @param {object} owner Owner token passed at spawn time
+   * @param {string} [kind] Optional spawn admission class ('read' |
+   *   'store-capabilities' | 'store' | 'frame'); when given, only children of
+   *   that class count. Admission globals (active.size, semanticBusy) and
+   *   reap(owner) semantics are unchanged — this only narrows THIS query.
+   * @returns {boolean}
+   */
+  activeFor(owner, kind) {
+    for (const handle of this.active.keys()) {
+      if (this.spawnOwners.get(handle) !== owner) continue
+      if (kind === undefined || this.spawnKinds.get(handle) === kind) return true
+    }
+    return false
+  }
   async store(executable, timeline, operation, request, signal, snapshot, owner) {
     if (!['capabilities', 'plan', 'commit', 'status', 'recover'].includes(operation)) fail('BAD_OPERATION', 'Unknown store command')
     // The official flag reads fd0 itself: public providers may expose a socket,

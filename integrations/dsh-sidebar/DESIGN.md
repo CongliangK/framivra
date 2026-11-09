@@ -23,9 +23,15 @@
 - 法律/边界整句（写入授权、来源未知声明）保留语义但收进折叠区或 `title` 提示；确权 checkbox 标签用短语（如「允许写 cache/preview（仅本次）」），完整句放 `title` 与详情内。
 - 禁止中英混排遗留（如 "Query stored blocks"、"Frame (blank = all)"）；面向用户的动词用中文业务语，不用实现描述。
 
+## 图标与交互
+
+- 常用导航、缩放、选区、引用、预览与面板切换使用统一的 Lucide 线性 SVG，不保留「图标 + 重复动作文字」。工程名称、帧号、片段范围和文件名仍是可见信息；空态引导、配置保存、写许可、预检与提交保留明确文字，不把后果藏进图标。
+- 固定 vendored `lucide-static` 1.70.0 子集，24×24 viewBox、2px 描边、18px 常用图标；只随客户端打包结构化 SVG 数据，不加载 CDN 或第二套 React。完整 ISC 和 Feather MIT 附录随源码和 ZIP 的 [第三方声明](THIRD-PARTY-NOTICES.md) 交付。
+- 图标控件仍是原生 button / summary，提供完整 `aria-label`、视觉隐藏名称与禁用/切换状态。悬停或键盘聚焦显示可关闭的顶层提示；Escape 先关闭提示，不误关工作台。提示可悬停，滚动、失焦、隐藏页、属性变更与卸载回收监听和短暂离开计时器；不支持 Popover 时保留原生 title。
+
 ## 密度与层级
 
-- 主要控件 min-height 34px（行内小按钮 30px）；工作台正文与展开态查询按钮不低于 12px。窄侧栏的紧凑查询按钮目前为 11px，作为现有密度例外；帧号等 meta 数字使用 `tabular-nums`。
+- 图标按钮 34×34px，粗指针 44×44px；工作台正文与查询提示不低于 12px。帧号等 meta 数字使用 `tabular-nums`。
 - 单色调 + 一处强调色（`--fv-accent`）；层级靠 surface 亮度微阶与 1px 低对比描边，不加阴影堆叠。
 - 时间线 ruler/lane 网格是本工作台的签名元素，保持低噪、帧号 `tabular-nums`。
 

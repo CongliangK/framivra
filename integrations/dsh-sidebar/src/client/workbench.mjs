@@ -1,35 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { Icon } from './icons.mjs'
+import { iconControlCSS } from './icon-controls.mjs'
+export { Icon } from './icons.mjs'
 
 const h = React.createElement
-const paths = {
-  film: ['M3 5h18v14H3z', 'M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4'],
-  folder: ['M3 7h7l2 2h9v10H3z', 'M3 7V5h7l2 2'],
-  file: ['M6 3h8l4 4v14H6z', 'M14 3v5h4M9 12h6M9 16h6'],
-  expand: ['M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5'],
-  collapse: ['M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5'],
-  settings: ['M4 7h16M4 17h16M8 4v6M16 14v6'],
-  refresh: ['M20 8a8 8 0 1 0 1 6', 'M20 3v5h-5'],
-  back: ['M14 5l-7 7 7 7'],
-  close: ['M6 6l12 12M6 18L18 6'],
-  first: ['M5 5v14M18 5l-9 7 9 7z'],
-  last: ['M19 5v14M6 5l9 7-9 7z'],
-  previous: ['M16 5l-9 7 9 7z'],
-  next: ['M8 5l9 7-9 7z'],
-  audio: ['M9 18V5l10-2v13', 'M9 15a3 3 0 1 0 0 3M19 13a3 3 0 1 0 0 3'],
-  text: ['M4 5h16M12 5v15M8 20h8'],
-  clip: ['M3 5h18v14H3zM8 5v14'],
-  split: ['M12 3v18M3 8h6v8H3zM15 8h6v8h-6z'],
-  remove: ['M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7'],
-  pin: ['M12 3v18M7 8l5-5 5 5M7 21h10'],
-  grip: ['M8 9h8M8 15h8'],
-  zoomIn: ['M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14M15 15l6 6M7 10h6M10 7v6'],
-  zoomOut: ['M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14M15 15l6 6M7 10h6'],
-  fit: ['M7 4H3v16h4M17 4h4v16h-4M7 12h10'],
-}
-export function Icon({ name, size = 18 }) {
-  return h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
-    (paths[name] ?? paths.film).map((d, index) => h('path', { d, key: index })))
-}
 export const workbenchCSS = `
 .fv-shell{height:100%;min-width:0;overflow:auto;container-type:inline-size}
 .fv-workbench,.fv-guide{--fv-bg:#181a1e;--fv-surface:#212329;--fv-raised:#2b2e35;--fv-line:#383c44;--fv-text:#e9ebef;--fv-muted:#b1b8c4;--fv-accent:#8cbfae;--fv-tl-accent:#8eb9ed;--fv-tl-surface:#212329;color-scheme:dark;color:var(--fv-text);font:400 13px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -172,6 +146,8 @@ export const workbenchCSS = `
 }
 @container fv-workbench (max-width:420px){.fv-topbar{gap:7px;padding:10px}.fv-subtitle{display:none}.fv-topbar .fv-open-label{display:none}.fv-monitor{padding:10px}.fv-empty{min-height:200px}.fv-timeline-pane{padding:10px}.fv-frame-query label{flex-basis:100%}}
 @media(prefers-reduced-motion:reduce){.fv-workbench *,.fv-guide{transition:none!important}}
+.fv-reference-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+${iconControlCSS}
 `
 export function WorkbenchStyles() { return h('style', null, workbenchCSS) }
 

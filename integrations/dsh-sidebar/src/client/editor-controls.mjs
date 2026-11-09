@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
-import { Icon } from './workbench.mjs'
+import { Icon } from './icons.mjs'
+import { ToolButton } from './icon-controls.mjs'
 import { safeFrame } from './viewport.mjs'
 
 const h = React.createElement
@@ -22,13 +23,13 @@ export function Transport({ frame, frameText, frameError, duration, onFrame, onT
   const move = (direction, distance = 1) => { const next = stepFrame(frame, duration, direction, distance); if (next !== undefined) onFrame(String(next)) }
   return h('form', { className: 'fv-frame-query fv-transport', 'aria-label': '帧定位控制', onSubmit: event => { event.preventDefault(); onQuery() } },
     h('div', { className: 'fv-transport-buttons', role: 'group', 'aria-label': '播放头定位（不自动渲染）' },
-      h('button', { type: 'button', title: '定位首帧 · Home', 'aria-label': '定位首帧', disabled: !validDuration, onClick: () => onFrame('0') }, h(Icon, { name: 'first', size: 16 })),
-      h('button', { type: 'button', title: '前一帧 · ←', 'aria-label': '监视器前一帧', disabled: !validDuration || frame === 0, onClick: () => move(-1) }, h(Icon, { name: 'previous', size: 16 })),
+      h(ToolButton, { icon: 'first', label: '定位首帧', tooltip: '定位首帧 · Home', disabled: !validDuration, onClick: () => onFrame('0') }),
+      h(ToolButton, { icon: 'previous', label: '监视器前一帧', tooltip: '前一帧 · ←', disabled: !validDuration || frame === 0, onClick: () => move(-1) }),
       h('label', { className: 'fv-frame-input' }, h('span', null, '帧（留空为全部） '), h('input', { type: 'text', name: 'framivra-frame', autoComplete: 'off', spellCheck: false, inputMode: 'numeric', value: frameText, 'aria-invalid': Boolean(frameError), onChange: event => onText(event.target.value) })),
-      h('button', { type: 'button', title: '后一帧 · →', 'aria-label': '监视器后一帧', disabled: !validDuration || frame === duration - 1, onClick: () => move(1) }, h(Icon, { name: 'next', size: 16 })),
-      h('button', { type: 'button', title: '定位末帧 · End', 'aria-label': '定位末帧', disabled: !validDuration, onClick: () => onFrame(String(duration - 1)) }, h(Icon, { name: 'last', size: 16 }))),
+      h(ToolButton, { icon: 'next', label: '监视器后一帧', tooltip: '后一帧 · →', disabled: !validDuration || frame === duration - 1, onClick: () => move(1) }),
+      h(ToolButton, { icon: 'last', label: '定位末帧', tooltip: '定位末帧 · End', disabled: !validDuration, onClick: () => onFrame(String(duration - 1)) })),
     h('span', { className: 'fv-duration', title: '工程整数帧范围，不表示已渲染时长' }, validDuration ? `/ ${duration} 帧` : '时长不可显示'),
-    h('button', { type: 'submit', className: 'fv-query-button', title: '查询该帧的内核命中集合，不生成画面' }, '查询命中'))
+    h(ToolButton, { type: 'submit', icon: 'query', label: '查询命中', className: 'fv-query-button', tooltip: '查询该帧的内核命中集合，不生成画面' }))
 }
 
 /** Local layout only. One captured pointer owns resizing; blur/cancel always retire it. */
@@ -81,9 +82,9 @@ export function SelectionSummary({ selection, selected = [], result, frame, onFr
       h('div', null, h('strong', { title: item ? clipName(item.data, item.address) : undefined }, item ? clipName(item.data, item.address) : '选择时间线中的片段'),
         h('span', null, item ? `${familyName(family)}${selected.length > 1 ? ` · 已选 ${selected.length} 项` : ''}${range ? ` · ${range[0]}–${range[1]} · ${range[1] - range[0]} 帧` : ' · 轨道'}` : '点击选择 · Ctrl/⌘ 多选 · 拖动标尺定位'))),
     h('div', { className: 'fv-selection-actions', role: 'group', 'aria-label': '片段操作（仅加入待预检批次）' },
-      h('button', { type: 'button', title: '定位片段起点，不生成画面', 'aria-label': '定位选中片段起点', disabled: !range, onClick: () => onFrame(String(range[0])) }, h(Icon, { name: 'pin', size: 15 }), h('span', null, '定位')),
-      h('button', { type: 'button', title: quick ? '分割选中块，加入未保存批次 · S' : '请先在属性面板明确授予工程写许可；不自动接管 legacy', 'aria-label': '在播放头分割选中片段', disabled: !quick || blocks.length !== 1 || !range || family === 'gfx' || !safeFrame(frame) || frame <= range[0] || frame >= range[1], onClick: () => quick('block.split') }, h(Icon, { name: 'split', size: 16 }), h('span', null, '分割')),
-      h('button', { type: 'button', title: quick ? '移除选中块，加入未保存批次 · Delete' : '请先在属性面板明确授予工程写许可', 'aria-label': '将移除选中片段加入批次', disabled: !quick || !blocks.length, onClick: () => quick('block.remove') }, h(Icon, { name: 'remove', size: 16 }), h('span', null, '移除')),
-      h('button', { type: 'button', 'aria-label': '查看选区属性与编辑', onClick: onProperties }, h(Icon, { name: 'settings', size: 16 }), h('span', null, '属性')),
-      h('button', { type: 'button', title: '清除选区，不改片段', 'aria-label': '清除时间线选区', disabled: !selected.length, onClick: onClear }, h(Icon, { name: 'close', size: 15 }))))
+      h(ToolButton, { icon: 'pin', label: '定位选中片段起点', tooltip: '定位片段起点，不生成画面', disabled: !range, onClick: () => onFrame(String(range[0])) }),
+      h(ToolButton, { icon: 'split', label: '在播放头分割选中片段', tooltip: quick ? '分割选中块，加入未保存批次 · S' : '请先在属性面板明确授予工程写许可；不自动接管 legacy', disabled: !quick || blocks.length !== 1 || !range || family === 'gfx' || !safeFrame(frame) || frame <= range[0] || frame >= range[1], onClick: () => quick('block.split') }),
+      h(ToolButton, { icon: 'remove', label: '将移除选中片段加入批次', tooltip: quick ? '移除选中块，加入未保存批次 · Delete' : '请先在属性面板明确授予工程写许可', variant: 'danger', disabled: !quick || !blocks.length, onClick: () => quick('block.remove') }),
+      h(ToolButton, { icon: 'settings', label: '查看选区属性与编辑', onClick: onProperties }),
+      h(ToolButton, { icon: 'close', label: '清除时间线选区', tooltip: '清除选区，不改片段', disabled: !selected.length, onClick: onClear })))
 }

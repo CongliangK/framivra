@@ -7,7 +7,9 @@ import { emptySelection, transitionSelection, preserveSelection } from './select
 import { FrameEpoch, FrameTools } from './frame.mjs'
 import { registerBundleConfig } from './settings.mjs'
 import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
-import { Icon, WorkbenchStyles, FileBrowser } from './workbench.mjs'
+import { WorkbenchStyles, FileBrowser } from './workbench.mjs'
+import { Icon } from './icons.mjs'
+import { ToolButton, ToolSummary } from './icon-controls.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT } from '../bounded.mjs'
 import { LayoutDivider, SelectionSummary, Transport, editingTarget, stepFrame } from './editor-controls.mjs'
 
@@ -118,8 +120,9 @@ export function ReferenceTools({ selection, sessionId, opened, frame, tabSignal,
       h('p', null, '选择轨道或块后可复制。raw JSON 是 vtx 提取的原文，不是上方 read/v1 的重编码。整数帧由 vtx 解释；播放未与选择联动，不能代替精确帧。此处仅提取引用；生成 PNG 与加入图片草稿需在帧工具中单独授权、点击。'),
       h('p', null, '加入草稿通过官方会话 InputActions；在点击时选区起点插入，不替换已选文字或原有引用。文本和图片顺序加入，部分结果会明确提示；不会创建会话、自动补投或发送。')),
     selection ? h('p', null, `当前选择：${selection.kind} ${selection.address} · ${opened.snapshot.content_version}`) : h('p', null, '尚未选择轨道或块。'),
-    ...[['id', '复制 ID / 临时定位'], ['raw', '复制 raw JSON'], ['diagnostic', '复制诊断引用 JSON'], ['draft', '加入当前会话草稿（不发送）']].map(([action, label]) => h('button', { key: action, type: 'button', disabled: !selection || state.busy, onClick: () => { void run(action) } }, label)),
-    state.busy ? h('button', { type: 'button', onClick: () => { task.current?.abort(); setState(previous => ({ ...previous, busy: false, message: '已取消；未重试/补投草稿，选择与已读取原文保留。' })) } }, '取消引用操作') : null,
+    h('div', { className: 'fv-reference-actions', role: 'group', 'aria-label': '引用与草稿工具' },
+      ...[['id', 'id', '复制 ID / 临时定位'], ['raw', 'code', '复制 raw JSON'], ['diagnostic', 'diagnostic', '复制诊断引用 JSON'], ['draft', 'draft', '加入当前会话草稿（不发送）']].map(([action, icon, label]) => h(ToolButton, { key: action, icon, label, disabled: !selection || state.busy, onClick: () => { void run(action) } })),
+      state.busy ? h(ToolButton, { icon: 'cancel', label: '取消引用操作', onClick: () => { task.current?.abort(); setState(previous => ({ ...previous, busy: false, message: '已取消；未重试/补投草稿，选择与已读取原文保留。' })) } }) : null),
     state.message ? h('p', { role: 'status' }, state.message) : null,
     state.item ? h(React.Fragment, null,
       h('p', null, state.item.stable_id === null ? `legacy / 无协议稳定 ID：临时地址 ${state.item.address}（仅此 content_version 有效）` : `稳定 ID：${state.item.stable_id}`),
@@ -311,15 +314,15 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       h('header', { className: 'fv-topbar' },
         h('span', { className: 'fv-brand' }, h(Icon, { name: 'film', size: 22 })),
         h('div', { className: 'fv-title' }, h('h2', { title: ready ? activePath : 'Framivra' }, ready ? filename : 'Framivra'), h('span', { className: 'fv-subtitle' }, ready ? '已保存视图 · 精确帧定位' : '时间线工作台')),
-        h('button', { type: 'button', title: '浏览工作区，打开时间线', 'aria-label': '浏览工作区打开时间线', 'aria-pressed': filesVisible, onClick: () => setFilesVisible(value => !value) }, h(Icon, { name: 'folder', size: 16 }), h('span', { className: 'fv-open-label' }, '打开')),
-        ready ? h('button', { className: 'fv-icon-button', type: 'button', title: '刷新保存版本', 'aria-label': '刷新保存版本', onClick: () => void load(), disabled: state.loading }, h(Icon, { name: 'refresh', size: 16 })) : null,
-        ready ? h('button', { className: 'fv-icon-button', type: 'button', title: '属性与编辑', 'aria-label': '属性与编辑', 'aria-pressed': inspectorVisible, onClick: () => setInspectorVisible(value => !value) }, h(Icon, { name: 'settings', size: 17 })) : null,
+        h(ToolButton, { icon: 'folder', label: '浏览工作区打开时间线', tooltip: '浏览工作区，打开时间线', 'aria-pressed': filesVisible, onClick: () => setFilesVisible(value => !value) }),
+        ready ? h(ToolButton, { icon: 'refresh', label: '刷新保存版本', onClick: () => void load(), disabled: state.loading }) : null,
+        ready ? h(ToolButton, { icon: 'settings', label: '属性与编辑', 'aria-pressed': inspectorVisible, onClick: () => setInspectorVisible(value => !value) }) : null,
         h('details', { className: 'fv-path', onKeyDown: event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } } },
-          h('summary', { 'aria-label': '通过路径打开', title: '通过工作区内的相对路径打开' }, '路径'),
+          h(ToolSummary, { icon: 'path', label: '通过路径打开', tooltip: '通过工作区内的相对路径打开' }),
           h('form', { onSubmit: event => { event.preventDefault(); event.currentTarget.closest('details').open = false; void load() } },
             h('label', null, '时间线路径 ', h('input', { name: 'framivra-timeline', autoComplete: 'off', spellCheck: false, value: timeline, onChange: event => setTimeline(event.target.value), required: true })),
             h('button', { type: 'submit' }, '打开 / 刷新'))),
-        h('button', { className: 'fv-icon-button', type: 'button', ref: expandButton, title: expanded ? '收起工作台' : '展开工作台', 'aria-label': expanded ? '收起工作台' : '展开工作台', onClick: toggleExpanded }, h(Icon, { name: expanded ? 'collapse' : 'expand', size: 17 }))),
+        h(ToolButton, { icon: expanded ? 'collapse' : 'expand', label: expanded ? '收起工作台' : '展开工作台', elementRef: expandButton, onClick: toggleExpanded })),
       state.phase === 'loading' || state.loading ? h('p', { className: 'fv-notice', role: 'status' }, '正在通过 vtx 读取时间线…') : null,
       state.message ? h('p', { className: 'fv-notice', role: 'alert' }, state.message) : null,
       valid && (!state.result.coverage.complete || !state.opened.snapshot.coverage.complete) ? h('p', { className: 'fv-notice', role: 'alert' }, '存在未展开的外部素材；请在属性面板查看完整诊断。') : null,
@@ -341,7 +344,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
               h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 38 }), h('h3', null, '从一条时间线开始'), h('p', null, '浏览当前工作区，选择工程的 JSON 文件。'),
                 h('button', { className: 'fv-primary', type: 'button', onClick: () => setFilesVisible(true) }, h(Icon, { name: 'folder', size: 17 }), '打开时间线'))),
           ready ? h('aside', { className: 'fv-inspector', ref: inspector, 'aria-label': '属性与剪辑', hidden: !inspectorVisible },
-            h('div', { className: 'fv-panel-heading' }, h('h3', null, '属性与剪辑'), h('button', { type: 'button', 'aria-label': '收起属性与剪辑', onClick: () => setInspectorVisible(false) }, h(Icon, { name: 'close', size: 15 }))),
+            h('div', { className: 'fv-panel-heading' }, h('h3', null, '属性与剪辑'), h(ToolButton, { icon: 'close', label: '收起属性与剪辑', onClick: () => setInspectorVisible(false) })),
             valid && !frameError ? h('details', { className: 'fv-inspector-section', open: true }, h('summary', null, '选区与引用'),
               h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
                 onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) } })) : null,

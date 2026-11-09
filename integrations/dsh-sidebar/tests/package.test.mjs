@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 
 const script = fileURLToPath(new URL('../scripts/package.mjs', import.meta.url))
 const runtime = fileURLToPath(new URL('./package-runtime.mjs', import.meta.url))
@@ -39,7 +40,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
 `, output, extracted], { encoding: 'utf8' })
   assert.equal(inspect.status, 0, inspect.stderr)
   const data = JSON.parse(inspect.stdout)
-  assert.deepEqual(data.names, ['LICENSE', 'README.md', 'cordis.patch.yml', 'lib/agent.js', 'lib/bounded.js', 'lib/client.js', 'lib/configuration.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js', 'package.json'])
+  assert.deepEqual(data.names, ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'cordis.patch.yml', 'lib/agent.js', 'lib/bounded.js', 'lib/client.js', 'lib/configuration.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js', 'package.json'])
   for (const key of ['scripts', 'dependencies', 'devDependencies']) assert.equal(Object.hasOwn(data.manifest, key), false)
   assert.deepEqual(data.manifest.peerDependencies, { '@deepseek-ai/schemastery': '~3.18.5', react: '18.3.1' })
   assert.equal(data.manifest.main, 'lib/index.js')
@@ -47,6 +48,14 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   assert.equal(data.manifest.exports['./client'], './lib/client.js')
   assert.equal(data.manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert(data.patch.includes('framivra-dsh-sidebar'))
+  // Positive license-provenance assertions: the vendored Lucide subset notice must ship in the
+  // ZIP with both grants, and the release manifest must list it in files without adding runtime deps.
+  const notices = await readFile(join(extracted, 'THIRD-PARTY-NOTICES.md'), 'utf8')
+  assert(notices.includes('lucide-static 1.70.0') && notices.includes('ISC License') && notices.includes('The MIT License (MIT)'), 'notices must identify lucide-static 1.70.0 and carry both ISC and Feather MIT grants')
+  const licenseStart = notices.indexOf('\nISC License\n')
+  assert(licenseStart >= 0, 'verbatim upstream license must be present')
+  assert.equal(createHash('sha256').update(notices.slice(licenseStart + 1)).digest('hex'), 'b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57', 'the packaged ISC + Feather MIT license bytes must match the pinned upstream file exactly')
+  assert.deepEqual(data.manifest.files, ['lib', 'cordis.patch.yml', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'README.md'])
   const client = await readFile(join(extracted, 'lib/client.js'), 'utf8')
   for (const forbidden of ['sourceMappingURL=', '/home/', 'node_modules/', 'TEST-ONLY', 'window.testFixture']) assert.equal(client.includes(forbidden), false, forbidden)
   // A new Node process in the extracted ZIP resolves its host-side peer the
