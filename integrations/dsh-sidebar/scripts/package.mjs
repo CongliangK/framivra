@@ -37,7 +37,7 @@ for (const name of ['index', 'configuration', 'host', 'protocol', 'media', 'json
 }
 await writeFile(join(stage, 'package.json'), `${JSON.stringify(release, null, 2)}\n`)
 await writeFile(join(stage, 'lib', 'client.js'), clientSource)
-for (const name of ['cordis.patch.yml', 'LICENSE', 'README.md']) await copyFile(join(packageDir, name), join(stage, name))
+for (const name of ['cordis.patch.yml', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md']) await copyFile(join(packageDir, name), join(stage, name))
 const archive = join(work, 'candidate.zip')
 const zip = spawnSync('python3', ['-c', `import pathlib, sys, zipfile
 root = pathlib.Path(sys.argv[1])

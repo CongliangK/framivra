@@ -528,7 +528,11 @@ export function createPreviewHost(ctx, config = {}) {
       clearInterval(monitor); clearTimeout(expiry)
       if (controller) {
         // Failed cleanup keeps the owner; explicit cancel retries reaping. Never unlock on HTTP abort alone.
-        if (!reader.active.size && grant.frame === controller) { grant.frame = undefined; frameOwners.delete(grant) }
+        // Ownership release checks only THIS grant's 'frame'-class children (the controller's own kind,
+        // including any retained after a failed cleanup of the same kind): an overlapping read — even this
+        // grant's own plain query — must not wedge the frame owner. Global admission (active.size,
+        // semanticBusy) and reap(owner) semantics are unchanged elsewhere.
+        if (!reader.activeFor(grant.id, 'frame') && grant.frame === controller) { grant.frame = undefined; frameOwners.delete(grant) }
         settled()
       }
       hold.release()

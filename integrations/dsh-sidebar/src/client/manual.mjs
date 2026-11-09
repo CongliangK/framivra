@@ -66,6 +66,17 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   const frameSafety = useRef({ dirty: false, busy: false, unknown: false })
   const proposalSafety = useRef({ dirty: false, busy: false, unknown: false })
   const [proposalBlocked, setProposalBlocked] = useState(false)
+  // True when a kernel ok receipt was already answered but the authoritative
+  // view refresh failed afterwards (commit/adopt/undo ok = confirmed write;
+  // status/recover ok = NOT write proof). The stale view must stay fail-closed
+  // (no further write/frame export from it), yet a confirmed write must
+  // NOT be relabeled outcome_unknown and must never be auto-retried.
+  const [staleLock, setStaleLock] = useState(false)
+  // Dirty ownership: the stale-view lock owns its dirty ONLY while the
+  // authoritative refresh has not succeeded. A later successful refresh may
+  // clear stale-owned dirty, but NEVER the user's unsaved draft/queue dirty
+  // (form edits, quick edits, gestures, queued intents stay fail-closed).
+  const staleOwnedDirty = useRef(false), draftDirty = useRef(false)
   const safety = change => {
     frameSafety.current = { ...frameSafety.current, ...change }
     onEditState?.(Object.fromEntries(['dirty','busy','unknown'].map(key => [key, frameSafety.current[key] || proposalSafety.current[key]])))
@@ -95,35 +106,40 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
   }, [selection, selected, base])
   useEffect(() => { live.current = true; return () => { live.current = false; request.current?.abort() } }, [])
   useEffect(() => {
-    onGestureReady?.(write && managed && !busy && !proposalBlocked ? operations => { safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
+    onGestureReady?.(write && managed && !busy && !proposalBlocked && !staleLock ? operations => { draftDirty.current = true; safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('拖动仅生成未保存 intent；请检查批次并计划。') } : undefined)
     return () => onGestureReady?.(undefined)
-  }, [write, managed, busy, base, selected, proposalBlocked])
+  }, [write, managed, busy, base, selected, proposalBlocked, staleLock])
   const quickOwner = useRef()
   useLayoutEffect(() => {
     const token = {}
     quickOwner.current = token
-    const available = write && managed && !busy && !proposalBlocked && !frameSafety.current.unknown
+    const available = write && managed && !busy && !proposalBlocked && !staleLock && !frameSafety.current.unknown
     const quick = operation => {
       // Retained handlers cannot enqueue against a newer target/frame/grant.
-      if (quickOwner.current !== token || !live.current || tabSignal.aborted || !available || frameSafety.current.busy || frameSafety.current.unknown || proposalSafety.current.dirty || proposalSafety.current.busy || proposalSafety.current.unknown) throw new Error('EDIT_STALE: 剪辑目标或写许可已变化，请重新选择。')
+      if (quickOwner.current !== token || !live.current || tabSignal.aborted || !available || staleLock || frameSafety.current.busy || frameSafety.current.unknown || proposalSafety.current.dirty || proposalSafety.current.busy || proposalSafety.current.unknown) throw new Error('EDIT_STALE: 剪辑目标或写许可已变化，请重新选择。')
       if (!['block.split', 'block.remove'].includes(operation)) throw new Error('EDIT_UNSUPPORTED: 快捷入口只组装分割或移除 intent。')
       if (operation === 'block.split' && track?.data?.kind === 'gfx') throw new Error('EDIT_UNSUPPORTED: 图形轨不支持分割，请使用移动、复制或移除。')
       if (operation === 'block.split' && (blocks.length !== 1 || !Number.isSafeInteger(frame) || frame <= blocks[0].range[0] || frame >= blocks[0].range[1])) throw new Error('EDIT_BOUNDS: 请将播放头固定在选中片段的内部再分割。')
       const operations = compileIntent(operation, v, { result, blocks, track, frame })
       if (!operations.length) throw new Error('请选择可编辑片段。')
-      safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations))
+      draftDirty.current = true; safety({ dirty: true }); invalidate(); setQueue(previous => previous.concat(operations))
       setMessage('已加入未保存批次；仍需内核预检与明确确认提交，没有改写工程。')
     }
     onQuickReady?.(available ? quick : undefined)
     return () => { if (quickOwner.current === token) quickOwner.current = undefined; onQuickReady?.(undefined) }
-  }, [write, managed, busy, base, selected, selection, frame, proposalBlocked, v])
-  const set = (key, value) => { safety({ dirty: true }); invalidate(); setV(previous => ({ ...previous, [key]: value })) }
+  }, [write, managed, busy, base, selected, selection, frame, proposalBlocked, staleLock, v])
+  const set = (key, value) => { draftDirty.current = true; safety({ dirty: true }); invalidate(); setV(previous => ({ ...previous, [key]: value })) }
   async function run(action, extra = {}) {
     safety({ busy: true })
     request.current?.abort()
     const controller = new AbortController(); request.current = controller
     const signal = AbortSignal.any([tabSignal, controller.signal])
     const epoch = generation.current
+    // Two distinct receipt classes, never conflated:
+    // - confirmedWrite: commit/adopt/undo receipt ok — the write IS known applied.
+    // - receiptOnly: status/recover receipt ok — proves nothing about a
+    //   previously unknown write; the prior unknown verdict must survive.
+    let confirmedWrite = false, receiptOnly = false
     const operationId = ['adopt','undo'].includes(action) ? id() : plan?.submitted_request?.op_id
     if (['adopt','undo'].includes(action)) extra = { ...extra, op_id: operationId }
     setBusy(true); setMessage(`正在执行内核命令…${operationId ? ` op_id ${operationId}` : ''}`)
@@ -139,15 +155,32 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
       if (action === 'authorize-write') { invalidations.current = Promise.resolve(); setWrite(answer.writeGrant) }
       else if (action === 'revoke-write') { setWrite(undefined); invalidate() }
       else if (action === 'plan' && answer.ok && epoch === generation.current) setPlan(answer)
-      else if (action === 'status' || action === 'recover') { setStatus(answer); invalidate(); if (answer.ok) { await onCommitted(); safety({ unknown: false }) } }
-      else if (['commit','undo','adopt'].includes(action)) { setPlan(undefined); if (answer.ok) { setQueue([]); await onCommitted(); safety({ dirty: false, unknown: false }) } else if (answer.code === 'outcome_unknown' || answer.outcome === 'unknown') safety({ unknown: true }) }
+      else if (action === 'status' || action === 'recover') { setStatus(answer); invalidate(); if (answer.ok) { receiptOnly = true; await onCommitted(); safety({ unknown: false }); setStaleLock(false); if (staleOwnedDirty.current) { staleOwnedDirty.current = false; if (!draftDirty.current) safety({ dirty: false }) } } }
+      else if (['commit','undo','adopt'].includes(action)) { setPlan(undefined); if (answer.ok) { confirmedWrite = true; setQueue([]); await onCommitted(); safety({ dirty: false, unknown: false }); setStaleLock(false); staleOwnedDirty.current = false; draftDirty.current = false } else if (answer.code === 'outcome_unknown' || answer.outcome === 'unknown') safety({ unknown: true }) }
       setMessage(stringifyJSON(answer, 2))
     } catch (error) {
-      if (['commit','adopt','undo','recover'].includes(action)) safety({ unknown: true })
-      if (live.current) setMessage(`${error.message}\n${['commit','adopt','undo','recover'].includes(action) ? `结果可能未知；原 op_id：${operationId ?? '请读 core status/history'}。不要新建操作重试，显式 status/recover。` : ''}`)
+      if (confirmedWrite || receiptOnly) {
+        // The kernel receipt itself settled ok; ONLY the authoritative-view
+        // refresh failed. Lock the stale view against further writes and frame
+        // export (dirty blocks via the frame owner) and never auto-retry.
+        // A confirmed write is known applied (unknown cleared); a plain
+        // status/recover receipt is NOT write proof — any prior unknown
+        // verdict must survive untouched.
+        setStaleLock(true)
+        staleOwnedDirty.current = true
+        if (confirmedWrite) { safety({ dirty: true, unknown: false }); draftDirty.current = false }
+        else safety({ dirty: true })
+        if (live.current) setMessage(confirmedWrite
+          ? `${error.message}\n内核已确认本次写入（回执 ok/applied）；仅权威视图刷新失败。旧视图已锁定（禁止再写与导帧）：请显式刷新或关闭后重开预览；不会自动重试写操作。`
+          : `${error.message}\n本次 ${action === 'recover' ? 'recover' : 'status'} 回执 ok，仅权威视图刷新失败；这不证明此前未知写已应用。旧视图已锁定（禁止再写与导帧）：请显式刷新或关闭后重开预览；原未知结果判定保持不变。`)
+      } else {
+        if (['commit','adopt','undo','recover'].includes(action)) safety({ unknown: true })
+        if (live.current) setMessage(`${error.message}\n${['commit','adopt','undo','recover'].includes(action) ? `结果可能未知；原 op_id：${operationId ?? '请读 core status/history'}。不要新建操作重试，显式 status/recover。` : ''}`)
+      }
     } finally { safety({ busy: false }); if (live.current) setBusy(false) }
   }
   function add() {
+    draftDirty.current = true
     safety({ dirty: true })
     try { const operations = compileIntent(op, v, { result, blocks, track, frame }); if (!operations.length) throw new Error('请选择操作对象'); invalidate(); setQueue(previous => previous.concat(operations)); setMessage('已加入未保存批次；没有写工程。') } catch (error) { setMessage(error.message) }
   }
@@ -183,18 +216,19 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     h('p',null,'只编辑受管工程；不渲染、不暗存、不自动 adopt。取消/断线可能结果未知。trim 仅向内；gfx 仅移动/复制/删除，trim/split/crossing ripple 后端不支持；外字幕只读。没有隐式 AV 联动。'),
     h('button',{type:'button',disabled:busy,onClick:()=>void run(write?'revoke-write':'authorize-write')},write?'撤销本会话/工程写许可':'明确允许本会话向此工程及 core 历史写入'),
     h('p',null,`写授权：${write?'已明确授予（非 read grant）':'未授予，保留 read / copy / noDraft 降级'}；选择 ${blocks.length} 个块 / ${track?.data?.id ?? '无真实轨'}`),
-    !managed ? h('div',null,h('p',null,'Legacy：只读。显式接管会分配稳定 ID 并创建持久历史；现有未知 ID/不兼容素材 ID 将被内核拒绝，绝不自动改名或迁移。'), h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('adopt',{base_revision:base,confirmation:'stable-ids-and-history'})},'确认稳定 ID / 历史影响并接管 legacy')) : null,
-    h('fieldset',{disabled:!write||!managed||busy,style:{minWidth:0}},h('legend',null,'专用操作表单（不是整段 JSON 请求）'),selectOperation(),...form,
-      h('button',{type:'button',onClick:add},'加入未保存批次'), h('button',{type:'button',onClick:()=>{invalidate();setQueue([]);safety({dirty:false})}},'清空未保存批次')),
+    staleLock ? h('p',{role:'alert'},'权威视图刷新失败：此旧视图已锁定，禁止再写、快捷编辑、拖动与导帧。请刷新或关闭后重开预览；不会自动重试；结果判定以内核回执为准。') : null,
+    !managed ? h('div',null,h('p',null,'Legacy：只读。显式接管会分配稳定 ID 并创建持久历史；现有未知 ID/不兼容素材 ID 将被内核拒绝，绝不自动改名或迁移。'), h('button',{type:'button',disabled:!write||busy||staleLock,onClick:()=>void run('adopt',{base_revision:base,confirmation:'stable-ids-and-history'})},'确认稳定 ID / 历史影响并接管 legacy')) : null,
+    h('fieldset',{disabled:!write||!managed||busy||staleLock,style:{minWidth:0}},h('legend',null,'专用操作表单（不是整段 JSON 请求）'),selectOperation(),...form,
+      h('button',{type:'button',disabled:busy||staleLock,onClick:add},'加入未保存批次'), h('button',{type:'button',disabled:busy||staleLock,onClick:()=>{invalidate();setQueue([]);if(!staleOwnedDirty.current){draftDirty.current=false;safety({dirty:false})}}},'清空未保存批次')),
     h('pre',{'aria-label':'未保存 typed intents',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(queue,2)),
-    h('button',{type:'button',disabled:!write||busy||proposalBlocked||!queue.length,onClick:()=>void run('plan',{base_revision:base,operations:queue})},'内核预检计划（零写）'),
-    plan ? h('div',null,h('strong',null,`未保存计划 · op_id ${plan.submitted_request.op_id}`),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(plan,2)),h('button',{type:'button',disabled:busy,onClick:()=>void run('commit',{planToken:plan.planToken})},'确认提交此冻结计划（一次 revision）')) : null,
+    h('button',{type:'button',disabled:!write||busy||proposalBlocked||staleLock||!queue.length,onClick:()=>void run('plan',{base_revision:base,operations:queue})},'内核预检计划（零写）'),
+    plan ? h('div',null,h('strong',null,`未保存计划 · op_id ${plan.submitted_request.op_id}`),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(plan,2)),h('button',{type:'button',disabled:busy||staleLock,onClick:()=>void run('commit',{planToken:plan.planToken})},'确认提交此冻结计划（一次 revision）')) : null,
     h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('status')},'读取 core status / history（可能初始化历史）'),
     h('button',{type:'button',disabled:!write||busy,onClick:()=>void run('recover')},'显式 core recover（不另建操作）'),
-    h('button',{type:'button',disabled:!write||busy||!opened.snapshot.document?._vtx?.head,onClick:()=>void run('undo',{base_revision:base,head:opened.snapshot.document._vtx.head})},'撤销当前 core head（新 CAS 事务）'),
+    h('button',{type:'button',disabled:!write||busy||staleLock||!opened.snapshot.document?._vtx?.head,onClick:()=>void run('undo',{base_revision:base,head:opened.snapshot.document._vtx.head})},'撤销当前 core head（新 CAS 事务）'),
     h('p',null,'Redo：内核未支持，不伪造浏览器逆操作。status/recover 结果是唯一恢复依据；没有浏览器持久 timeline/history。'),
     busy ? h('button',{type:'button',onClick:()=>{request.current?.abort();void call(sessionId,payload('cancel-write'),tabSignal).catch(()=>{})}},'取消并等待子进程回收（写结果可能未知）') : null,
     h(AgentProposals,{sessionId,opened,tabSignal,call,writeGrant:write,manualBlocked:frameSafety.current.dirty||busy||Boolean(plan)||queue.length>0,onCommitted,onEditState:proposalState}),
     h('pre',{role:'status',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},message),status?h('details',null,h('summary',null,'最近 core status / recover'),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(status,2))):null)
-  function selectOperation() { return h('label',{key:'operation'},'编辑操作',h('select',{value:op,onChange:e=>{safety({dirty:true});invalidate();setOp(e.target.value)},style:{width:'100%'}}, EDIT_OPERATIONS.map((value,i)=>h('option',{key:value,value},`${names[i]} · ${value}`)))) }
+  function selectOperation() { return h('label',{key:'operation'},'编辑操作',h('select',{value:op,onChange:e=>{draftDirty.current=true;safety({dirty:true});invalidate();setOp(e.target.value)},style:{width:'100%'}}, EDIT_OPERATIONS.map((value,i)=>h('option',{key:value,value},`${names[i]} · ${value}`)))) }
 }

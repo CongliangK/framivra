@@ -3,7 +3,8 @@ import { parseJSON, stringifyJSON } from '../json.mjs'
 import { boundedText, FRAME_WIRE_LIMIT } from '../bounded.mjs'
 import { captureCurrentDraft, referenceQuery, selectedReference } from './reference.mjs'
 import { draftResultMessage } from './draft-services.mjs'
-import { Icon } from './workbench.mjs'
+import { Icon } from './icons.mjs'
+import { ToolButton, ToolSummary, iconControlCSS } from './icon-controls.mjs'
 
 const h = React.createElement, rawSHA = /^[a-f0-9]{64}$/, versionSHA = /^sha256:[a-f0-9]{64}$/
 const bad = message => { throw new Error(`FRAME_INVALID: ${message}`) }
@@ -235,12 +236,12 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
   }, [verifiedFile])
   const shownPreview = generated && preview && preview.file === generated.file ? preview.url : null
   const cancel = () => { owner.invalidate(); setState({ busy: true, message: '取消并等待实际进程退出…' }); void frameRequest(sessionId, { op: 'cancel', grant: opened.grant }, tabSignal).then(() => setState({ message: '已回收；未自动重试。' }), error => setState({ message: error.message })) }
-  const cancelButton = () => h('button', { type: 'button', onClick: cancel }, '显式取消帧并等待回收')
+  const cancelButton = () => h(ToolButton, { icon: 'cancel', variant: 'danger', label: '显式取消帧并等待回收', tooltip: '取消当前帧操作并等待实际进程回收', onClick: cancel })
   const imageTools = h('details', { className: 'fv-frame-tools-details' },
-    h('summary', null, '图片与草稿 · 验证详情'),
+    h(ToolSummary, { icon: 'more', label: '图片与草稿 · 验证详情', tooltip: '展开图片复制 / 入稿与验证详情' }),
     h('div', { className: 'fv-frame-tools-tools' },
-      h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void copy() }, '复制已生成 PNG（再次点击）'),
-      h('button', { type: 'button', disabled: !generated || blocked || state.busy, onClick: () => void stage() }, '将该帧 + 精确引用加入当前草稿（不发送）'),
+      h(ToolButton, { icon: 'copy', label: '复制已生成 PNG（再次点击）', tooltip: '把已验证的当前合成 PNG 写入剪贴板（再次点击确认）', disabled: !generated || blocked || state.busy, onClick: () => void copy() }),
+      h(ToolButton, { icon: 'draft', label: '将该帧 + 精确引用加入当前草稿（不发送）', tooltip: '把已验证帧与精确 core 引用追加到当前草稿，不发送', disabled: !generated || blocked || state.busy, onClick: () => void stage() }),
       !state.busy ? cancelButton() : null),
     h('label', null, h('input', { type: 'checkbox', checked: positionOnly, onChange: event => { owner.invalidate(); setPositionOnly(event.target.checked); setState({}) } }), '仅位置引用，不关联未命中选区'),
     h('p', null, '生成前须单独允许本次 cache/preview 写入；不授予 timeline/history 写权限。图片和引用仅加入草稿，不发送。'),
@@ -248,8 +249,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
     generated ? h('pre', null, stringifyJSON(generated.certificate, 2)) : null)
   return h('section', { 'aria-label': '当前合成帧与草稿', className: 'fv-frame-tools', 'aria-busy': state.busy ? 'true' : 'false' },
     h('style', null, `
-.fv-frame-tools{min-width:0;max-width:100%;font:inherit;color:inherit}
-.fv-frame-tools *{box-sizing:border-box}.fv-frame-tools button,.fv-frame-tools input{font:inherit}
+.fv-frame-tools{min-width:0;max-width:100%;font:inherit;color:inherit}.fv-frame-tools *{box-sizing:border-box}.fv-frame-tools button,.fv-frame-tools input{font:inherit}
 .fv-frame-tools .fv-frame-tools-head{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin:0 0 6px}
 .fv-frame-tools h3{margin:0;font-size:13px;font-weight:600}
 .fv-frame-tools .fv-frame-tools-meta{font-size:11px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,currentColor 62%,transparent);overflow-wrap:anywhere}
@@ -267,7 +267,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
 .fv-frame-tools details summary{cursor:pointer;color:color-mix(in srgb,currentColor 68%,transparent)}
 .fv-frame-tools details p,.fv-frame-tools details pre{margin:6px 0}
 .fv-frame-tools pre{white-space:pre-wrap;overflow-wrap:anywhere}
-`),
+` + iconControlCSS),
     h('div', { className: 'fv-frame-tools-head' },
       h('h3', null, '当前合成帧'),
       h('span', { className: 'fv-frame-tools-meta', title: version }, `版本 ${version.slice(7, 19)} · 帧 ${whole(frame) ? frame : '未固定'}`)),
@@ -277,7 +277,7 @@ export function FrameTools({ owner, opened, sessionId, frame, selection, tabSign
         : h('div', { className: 'fv-frame-tools-empty' }, h(Icon, { name: state.busy ? 'refresh' : 'film', size: 32 }), h('span', null, state.busy ? '正在生成并验证…' : whole(frame) ? '未生成画面（需显式生成）' : '未固定帧'))),
     h('div', { className: 'fv-frame-tools-tools' },
       h('label', { title: '单独允许本次点击向此工程 cache/preview 写入；不授予 timeline/history 写权限。' }, h('input', { type: 'checkbox', checked: consent, onChange: event => { owner.invalidate(); setConsent(event.target.checked); setState({}) } }), '允许写入预览缓存（不改时间线）'),
-      h('button', { type: 'button', disabled: !consent || blocked || state.busy, onClick: () => void generate() }, '显式生成并验证固定帧 PNG'),
+      h(ToolButton, { icon: 'camera', variant: 'primary', label: '显式生成并验证固定帧 PNG', tooltip: '显式生成当前固定帧合成 PNG 并逐项验证证书', disabled: !consent || blocked || state.busy, onClick: () => void generate() }),
       state.busy ? cancelButton() : null,
       imageTools),
     blocked ? h('p', { role: 'alert' }, '当前未固定帧，或编辑/队列/计划/写结果未解决；拒绝生成和加入草稿。') : null,
