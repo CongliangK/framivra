@@ -12,6 +12,7 @@ import { Icon } from './icons.mjs'
 import { ToolButton, ToolSummary } from './icon-controls.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT } from '../bounded.mjs'
 import { LayoutDivider, SelectionSummary, Transport, editingTarget, stepFrame } from './editor-controls.mjs'
+import { terminalGrantFailure, GRANT_DEAD_MESSAGE } from './grant-lifecycle.mjs'
 
 const h = React.createElement
 const ID = 'framivra-dsh-sidebar'
@@ -177,6 +178,13 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const task = useRef()
   const grant = useRef()
   const readSequence = useRef(0)
+  // Terminal grant death, lifted from any grant-bound failure (or the Host's
+  // own expires_in_ms deadline). While set, every grant-using tool is
+  // unmounted: no polling, no frame render, no draft, no manual write, no
+  // proposal confirm. Only a NEW grant (explicit refresh / reopen) clears it.
+  const [grantDead, setGrantDead] = useState()
+  const grantDeadlines = useRef(new Map())
+  const grantDied = (code, grantId) => { if (grantId === grant.current) setGrantDead(previous => previous ?? code) }
   let frameValue, frameError
   try { frameValue = frameQuery(frame).frame } catch (error) { frameError = error.message }
   const close = () => {
@@ -186,7 +194,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     grant.current = undefined
     if (current) void control(sessionId, { op: 'close', grant: current }).catch(() => {})
   }
-  useEffect(() => { clearSelection(); setGesture(undefined); setState({ phase: 'idle' }); return () => { task.current?.abort(); close() } }, [sessionId])
+  useEffect(() => { clearSelection(); setGesture(undefined); setState({ phase: 'idle' }); setGrantDead(undefined); return () => { task.current?.abort(); close() } }, [sessionId])
   useEffect(() => {
     const abort = () => { task.current?.abort(); close() }
     tab.signal.addEventListener('abort', abort, { once: true })
@@ -208,6 +216,24 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
     const off = [list?.subscribe(observe), navigation?.subscribe(observe)]
     return () => { frameOwner.invalidate(); off.forEach(dispose => dispose?.()) }
   }, [sessionId, frameOwner])
+  // Host grants carry a fixed absolute TTL (open answers expires_in_ms). The
+  // Host stays fail-closed on its own clock regardless; this local advisory
+  // deadline only makes the UI proactive: when it fires (or any grant-bound
+  // call answers a terminal code via grantDied), the stale view is locked and
+  // the user is told to refresh/reopen — instead of hammering 403s forever.
+  // The deadline is anchored ONCE per grant id, so refreshes of the same
+  // grant never extend it, and it never fires for a grant already replaced.
+  useEffect(() => {
+    const opened = state.opened
+    if (state.phase !== 'ready' || !opened?.grant || !Number.isSafeInteger(opened.expires_in_ms) || opened.expires_in_ms <= 0) return
+    const grantId = opened.grant
+    let deadline = grantDeadlines.current.get(grantId)
+    if (deadline === undefined) { deadline = Date.now() + opened.expires_in_ms; grantDeadlines.current.set(grantId, deadline) }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) { if (grant.current === grantId) setGrantDead(previous => previous ?? 'EXPIRED'); return }
+    const timer = setTimeout(() => { if (grant.current === grantId) setGrantDead(previous => previous ?? 'EXPIRED') }, remaining)
+    return () => clearTimeout(timer)
+  }, [state.phase, state.opened?.grant, sessionId])
   async function load(queryOnly = false, chosenTimeline = timeline) {
     if (frameOwner.edit.busy || frameOwner.edit.unknown) {
       setState(previous => ({ ...previous, message: '编辑正在执行或写结果未知。请先等待刷新完成，或在属性面板读取 status / recover。' }))
@@ -269,6 +295,8 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
           return
         }
         grant.current = opened.grant
+        // A new grant is the ONLY thing that releases a terminal grant death.
+        setGrantDead(undefined)
         // A successful open recalibrates the file browser: a stale failed
         // listing retries at its current folder; a healthy one only clears a
         // lingering banner. The browser itself decides; no forced remount.
@@ -284,6 +312,11 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       setState({ phase: 'ready', sessionId, timeline: queryOnly && previous.phase === 'ready' ? previous.timeline : chosenTimeline, opened, result: full, hits, stale: Boolean(stale) })
     } catch (error) {
       if (current()) {
+        // A terminal grant code observed on any load path means this grant id
+        // is dead at the Host; lock the view before the regular handling so
+        // the shared banner + tool teardown appear even without the deadline.
+        const code = terminalGrantFailure(error.message)
+        if (code) setGrantDead(previous => previous ?? code)
         if (queryOnly && previous.phase === 'ready') setState({ ...previous, loading: false, message: error.message })
         else { close(); setState({ phase: 'failed', message: error.message }) }
       }
@@ -350,6 +383,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
         h(ToolButton, { icon: expanded ? 'collapse' : 'expand', label: expanded ? '收起工作台' : '展开工作台', elementRef: expandButton, onClick: toggleExpanded })),
       state.phase === 'loading' || state.loading ? h('p', { className: 'fv-notice', role: 'status' }, '正在通过 vtx 读取时间线…') : null,
       state.message ? h('p', { className: 'fv-notice', role: 'alert' }, state.message) : null,
+      grantDead ? h('p', { className: 'fv-notice', role: 'alert', style: { border: '1px solid currentColor', padding: 8 } }, `${GRANT_DEAD_MESSAGE}（${grantDead}）`) : null,
       valid && (!state.result.coverage.complete || !state.opened.snapshot.coverage.complete) ? h('p', { className: 'fv-notice', role: 'alert' }, '存在未展开的外部素材；请在属性面板查看完整诊断。') : null,
       h('div', { className: 'fv-body' },
         h('div', { className: 'fv-upper' },
@@ -359,7 +393,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
               h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : `帧 ${frameValue}`)),
               h(Transport, { frame: frameValue, frameText: frame, frameError, duration, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
               frameError ? h('p', { role: 'alert' }, `${frameError} 引用已暂停；不会暗用旧帧。`) : null,
-              valid && !frameError ? h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null,
+              valid && !grantDead && !frameError ? h(FrameTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}`, owner: frameOwner, opened: state.opened, sessionId, frame: frameValue, selection, tabSignal: tab.signal, getDraftServices, call: control }) : null,
               h('details', { className: 'fv-output', hidden: !state.opened.media.length },  h('summary', null, `已有成片${state.opened.media.length ? ` · ${state.opened.media.length}` : ' · 暂无'}`),
                 h('h3', null, 'Existing output preview — provenance UNKNOWN'),
                 h('p', null, 'These files are not verified to correspond to this timeline. Playback time is not linked to frame selection. Grants expire after 30 minutes; reopen on expiry.'),
@@ -370,11 +404,11 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
                 h('button', { className: 'fv-primary', type: 'button', onClick: () => setFilesVisible(true) }, h(Icon, { name: 'folder', size: 17 }), '打开时间线'))),
           ready ? h('aside', { className: 'fv-inspector', ref: inspector, 'aria-label': '属性与剪辑', hidden: !inspectorVisible },
             h('div', { className: 'fv-panel-heading' }, h('h3', null, '属性与剪辑'), h(ToolButton, { icon: 'close', label: '收起属性与剪辑', onClick: () => setInspectorVisible(false) })),
-            valid && !frameError ? h('details', { className: 'fv-inspector-section', open: true }, h('summary', null, '选区与引用'),
+            valid && !grantDead && !frameError ? h('details', { className: 'fv-inspector-section', open: true }, h('summary', null, '选区与引用'),
               h(ReferenceTools, { key: `${state.opened.grant}:${state.opened.snapshot.content_version}:${selection?.kind}:${selection?.address}`, selection, sessionId, opened: state.opened, frame: frameValue, tabSignal: tab.signal, getDraftServices,
                 onStale: () => { clearSelection(); setState(previous => ({ ...previous, stale: true })) } })) : null,
-            valid ? h('details', { className: 'fv-inspector-section', ref: manualPane }, h('summary', null, '剪辑编辑与提交'),
-              h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGestureReady: callback => setGesture(() => callback), onQuickReady: callback => setQuickEdit(() => callback) })) : null,
+            valid && !grantDead ? h('details', { className: 'fv-inspector-section', ref: manualPane }, h('summary', null, '剪辑编辑与提交'),
+              h(ManualEditor, { key: state.opened.grant, sessionId, opened: state.opened, result: state.result, selection, selected, frame: frameValue, tabSignal: tab.signal, call: control, onCommitted: refreshCommitted, onEditState: editState, onGrantDead: grantDied, onGestureReady: callback => setGesture(() => callback), onQuickReady: callback => setQuickEdit(() => callback) })) : null,
              valid ? timelineData({ snapshot: state.opened.snapshot, result: state.result, hits: state.hits, onSelect: pick }) : null,
              valid ? h(TimelineHelp, { result: state.result, onGesture: gesture }) : null) : null),
         ready ? h(LayoutDivider, { value: timelineShare, onChange: setTimelineShare }) : null,
