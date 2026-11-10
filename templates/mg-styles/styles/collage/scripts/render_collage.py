@@ -86,6 +86,53 @@ def _points(part,transform):
     return [(x+_rot(px*scale,py*scale,a)[0],y+_rot(px*scale,py*scale,a)[1]) for px,py in _shape(part['shape'])]
 
 
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
+_DEFAULT_LATIN_FONTS=(
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf'),
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf'),
+)
+
+_VF_DEFAULT_WEIGHTS={
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'):'Bold',
+    Path('/usr/share/fonts/google-noto-serif-cjk-vf-fonts/NotoSerifCJK-VF.ttc'):'Regular',
+}
+class _DefaultFont(str):
+    """Default-resolved font path carrying its VF weight; explicit paths stay plain."""
+    __slots__=('default_weight','_path')
+    def __new__(cls,path,weight):
+        self=super().__new__(cls,str(path))
+        self._path=Path(path)
+        self.default_weight=weight
+        return self
+    @property
+    def name(self):return self._path.name
+    def is_file(self):return self._path.is_file()
+    def exists(self):return self._path.exists()
+    def read_bytes(self):return self._path.read_bytes()
+
+def _wrap_default(path):
+    return _DefaultFont(path,_VF_DEFAULT_WEIGHTS.get(Path(path)))
+
+
+
+def _truetype(path,size,index=0):
+    from PIL import ImageFont
+    font=ImageFont.truetype(str(path),size,index=index)
+    weight=getattr(path,'default_weight',None)
+    if weight:
+        try:font.set_variation_by_name(weight)
+        except Exception as exc:
+            raise ValueError('default variable font %s requires the %r instance for this template style; install a static Noto CJK font or pass an explicit font_path (variation error: %s)'%(path,weight,exc)) from exc
+    return font
+
 def _prepare(data,frames,font_path):
     from PIL import Image,ImageDraw,ImageFont
     _int(frames,'frames',90,18000)
@@ -132,11 +179,11 @@ def _prepare(data,frames,font_path):
     for item in evidence:
         if not isinstance(item,dict) or set(item)!={'label','value','source'}:raise ValueError('data evidence must carry label,value,source')
         for key in ('label','value','source'):_text(item[key],'evidence.'+key,120)
-    paths=[Path(font_path)] if font_path is not None else [Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')]
+    paths=[Path(font_path)] if font_path is not None else [_wrap_default(v) for v in (*_DEFAULT_CJK_FONTS,*_DEFAULT_LATIN_FONTS)]
     path=next((v for v in paths if v.is_file()),None)
     if path is None:raise ValueError('provide a separately licensed local font_path')
-    face=2 if path.name=='NotoSansCJK-Bold.ttc' else 0
-    font=ImageFont.truetype(str(path),40,index=face);mask=font.getmask(chr(0x10ffff));missing=(mask.size,bytes(mask))
+    face=2 if path.name in ('NotoSansCJK-Bold.ttc','NotoSansCJK-VF.ttc') else 0
+    font=_truetype(path,40,index=face);mask=font.getmask(chr(0x10ffff));missing=(mask.size,bytes(mask))
     strings=[title,subtitle]+[b['text'] for b in beats]+[item['label']+' '+item['value']+' / '+item['source'] for item in evidence]
     for char in set(''.join(strings)):
         if not char.isspace():
@@ -145,7 +192,7 @@ def _prepare(data,frames,font_path):
     probe=ImageDraw.Draw(Image.new('L',(1,1)));fonts={}
     def fit(text,width,size):
         for pixels in range(size,19,-1):
-            f=ImageFont.truetype(str(path),pixels,index=face)
+            f=_truetype(path,pixels,index=face)
             if probe.textlength(text,font=f)<=width:fonts[(text,width,size)]=f;return
         raise ValueError('collage text cannot fit its region at minimum font size 20')
     fit(title,1660,80);fit(subtitle,1660,30)

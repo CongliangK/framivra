@@ -13,6 +13,51 @@ export class PreviewError extends Error {
   }
 }
 export const fail = (code, message, status) => { throw new PreviewError(code, message, status) }
+
+/**
+ * Host protocol/build identity used for verifiable client↔host negotiation.
+ * `ops` lists every control op this build dispatches. A NEWER client on an
+ * OLDER running host gets BAD_GRANT for ops the old host never knew (its
+ * grant gate runs before BAD_OPERATION); with this identity the client can
+ * distinguish "host too old, refresh/restart" from a real authorization
+ * failure. Keep `plugin` in sync with package.json version.
+ */
+export const HOST_PROTOCOL_OPS = [
+  'hello', 'open', 'browse', 'close',
+  'authorize-write', 'revoke-write', 'invalidate-plan', 'cancel-write',
+  'plan', 'commit', 'status', 'recover', 'adopt', 'undo',
+  'proposal-list', 'proposal-reject', 'proposal-confirm',
+  'inspect', 'query', 'reference',
+]
+export const HOST_IDENTITY = { plugin: '0.2.0', protocol: 1, ops: HOST_PROTOCOL_OPS }
+
+/**
+ * Deterministic build fingerprint inputs — the single home for WHICH source
+ * files define a build and the packaged-stamp marker format. The Host half
+ * (src/host.mjs resolveBuildStamp) and the client build (scripts/build.mjs)
+ * both hash this exact file list with the same recipe, so a client bundle and
+ * the host it was shipped with carry the same stamp; scripts/package.mjs
+ * replaces the BAKED_BUILD_STAMP literal below with the packaged value.
+ * Any content change to any listed module changes the next build's stamp —
+ * identity no longer depends on a hand-maintained version string.
+ */
+export const BUILD_STAMP_MARKER = '__FRAMIVRA_BUILD_STAMP__'
+// packaged builds replace this literal (keep it identical to BUILD_STAMP_MARKER)
+export const BAKED_BUILD_STAMP = '__FRAMIVRA_BUILD_STAMP__'
+/** Host-side modules that participate in the build stamp, in fixed order. */
+export const HOST_LIB_MODULES = ['configuration', 'protocol', 'bounded', 'json', 'media', 'agent', 'tools', 'host', 'index']
+/** Client-side modules that participate in the build stamp, in fixed order. */
+export const CLIENT_MODULES = [
+  'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
+  'selection', 'reference', 'frame', 'settings', 'draft-services', 'proposals',
+  'official-draft', 'workbench', 'index',
+]
+/** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
+ *  digests of the modules above (joined with '\n'), in the listed order.
+ *  Implemented with node:crypto on both the Host and the build script. */
+export function composeBuildStamp(prefix, combinedDigestHex) {
+  return `${prefix}${String(combinedDigestHex).slice(0, 16)}`
+}
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value) && !JSON.isRawJSON(value)
 const integer = value => Number.isSafeInteger(value) && value >= 0
 
@@ -329,4 +374,88 @@ function untilAborted(promise, signal) {
     Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
     if (signal.aborted) { signal.removeEventListener('abort', abort); abort() }
   })
+}
+
+/**
+ * Bounded, sanitized request/rejection diagnostics for the Host operator.
+ * Wire shape is fixed: `[framivra-dsh-sidebar] <route> op=<op> code=<code> status=<n> ms=<n>`.
+ * NEVER log request bodies, timelines, grants/tokens, session ids, paths or
+ * media identity — only whitelisted route/op/code tokens and bounded numbers.
+ * A strict per-minute rate cap (plus one cap notice and a rollover summary)
+ * keeps a chatty failure source from flooding the host log. The sink is
+ * injectable so tests verify content and rate limits without the console.
+ * The cap may be supplied as a zero-arg provider, re-read per line, so the
+ * host's volatile configuration applies live without resetting the window.
+ */
+export function createRequestLogger(options = {}) {
+  const sink = typeof options.sink === 'function' ? options.sink : null
+  // The cap is VOLATILE: a plain number pins it for tests, a zero-arg provider
+  // is re-read on every failure() so live configuration changes take effect
+  // immediately. Reading must never break the caller's business failure.
+  const capProvider = typeof options.maxPerMinute === 'function'
+    ? options.maxPerMinute
+    : () => (Number.isSafeInteger(options.maxPerMinute) && options.maxPerMinute >= 0 ? options.maxPerMinute : 120)
+  let windowStart = -Infinity
+  let counted = 0
+  let suppressed = 0
+  let capNoticeSent = false
+  const token = value => (typeof value === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value) ? value : undefined)
+  const emit = (kind, line) => {
+    try {
+      if (sink) sink(kind, line)
+      // The bounded stack record (console.error) is emitted separately by the
+      // host for unexpected failures; these one-liners stay on console.warn so
+      // operators can filter them and stack-logging behavior stays stable.
+      else console.warn(line)
+    } catch { /* a failed sink must never replace the failure */ }
+  }
+  return {
+    /**
+     * One sanitized failure line. kind: 'rejected' (business refusal, incl.
+     * PreviewError codes) or 'unexpected' (non-PreviewError). Cancelled
+     * requests are not failures and are never logged by the caller.
+     */
+    failure({ route, op, code, status, durationMs, kind = 'rejected' }) {
+      // Per-log volatile cap read. Invalid/throwing reads skip the line
+      // silently (fail closed); the window counters are untouched so a later
+      // valid read resumes the SAME minute's rate limiting — no reset.
+      let maxPerMinute
+      try {
+        const read = capProvider()
+        maxPerMinute = Number.isSafeInteger(read) && read >= 0 ? read : undefined
+      } catch { maxPerMinute = undefined }
+      if (maxPerMinute === undefined) return
+      const now = Date.now()
+      if (!(now - windowStart < 60_000)) {
+        // Rollover summary only for windows that emitted lines: a fully
+        // suppressed window (e.g. cap=0, or reads failing throughout) must
+        // stay completely silent — no summary, no notice.
+        if (suppressed > 0 && counted > 0) emit('suppressed', `[framivra-dsh-sidebar] ${suppressed} further failure line(s) suppressed in the last minute`)
+        windowStart = now
+        counted = 0
+        suppressed = 0
+        capNoticeSent = false
+      }
+      if (counted >= maxPerMinute) {
+        // cap=0 (and any fully-capped window) stays completely silent — no
+        // notice line, no per-failure output; suppressed still counts for the
+        // rollover summary.
+        if (maxPerMinute > 0 && !capNoticeSent) {
+          capNoticeSent = true
+          emit('suppressed', `[framivra-dsh-sidebar] failure lines capped at ${maxPerMinute}/min; further lines in this window are suppressed`)
+        }
+        suppressed++
+        return
+      }
+      counted++
+      const parts = [
+        `[framivra-dsh-sidebar] ${token(route) ?? 'route'}`,
+        `op=${token(op) ?? '?'}`,
+        `code=${token(code) ?? (kind === 'unexpected' ? 'PREVIEW_FAILED' : 'REJECTED')}`,
+        `status=${Number.isSafeInteger(status) ? status : 0}`,
+        `ms=${Number.isSafeInteger(durationMs) && durationMs >= 0 ? Math.min(durationMs, 3_600_000) : 0}`,
+      ]
+      emit(kind === 'unexpected' ? 'unexpected' : 'rejected', parts.join(' '))
+    },
+  }
 }

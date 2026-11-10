@@ -16,11 +16,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { createPreviewHost } from '../src/host.mjs'
 import { createTimelineTools } from '../src/tools.mjs'
 import { parseJSON, stringifyJSON } from '../src/json.mjs'
 import { fixture, localFs } from './manual-env.mjs'
+import { importDsh } from './dsh-public-sdk.mjs'
 
 const enabled = Boolean(process.env.SIDEBAR_DSH_ROOT && process.env.SIDEBAR_REAL_VTX && process.env.SIDEBAR_EVIDENCE_DIR)
 const skip = enabled ? false : 'Set SIDEBAR_DSH_ROOT, SIDEBAR_REAL_VTX and SIDEBAR_EVIDENCE_DIR to run the real ToolRuntime acceptance'
@@ -63,12 +63,12 @@ async function runtime(t, label) {
   const dirTwo = await mkdtemp(join(evidence, `agent-runtime-${label}-two-`))
   await writeFile(join(dirTwo, 'timeline.json'), legacyDocumentText())
 
-  const dsh = rel => import(pathToFileURL(join(root, rel)))
-  const { Context } = await dsh('vendor/cordis/lib/index.js')
-  const { LocalSubprocessRuntime } = await dsh('packages/subprocess/subprocess-local/lib/index.js')
-  const SystemPrompt = (await dsh('packages/core/system-prompt/lib/index.js')).default
-  const ToolRuntime = (await dsh('packages/core/tools/lib/index.js')).default
-  const { ToolCallId } = await dsh('packages/llm/llm/lib/index.js')
+  const dsh = name => importDsh(root, name)
+  const { Context } = await dsh('cordis')
+  const { LocalSubprocessRuntime } = await dsh('subprocessLocal')
+  const SystemPrompt = (await dsh('systemPrompt')).default
+  const ToolRuntime = (await dsh('tools')).default
+  const { ToolCallId } = await dsh('llm')
 
   const ctx = new Context()
   const fibers = []

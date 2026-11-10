@@ -1,5 +1,5 @@
 """Semantic contour geometry and real PNG checks for frame-driven shape morphs."""
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 import json
 import math
 from pathlib import Path
@@ -71,8 +71,8 @@ class SemanticMorph(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'lacks required glyph'):
                 morph.render_morph_frames(missing,240,output)
             self.assertFalse(output.exists())
-        dejavu=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
-        if dejavu.exists():
+        dejavu=find_font(*LATIN_FONT_CANDIDATES)
+        if dejavu is not None:
             with self.assertRaises(ValueError):morph.validate_morph_content(example('growth'),240,dejavu)
         with self.assertRaises(ValueError):morph.render_morph_frame(example('growth'),True,240)
         with self.assertRaises(ValueError):morph.validate_morph_content(example('growth'),True)

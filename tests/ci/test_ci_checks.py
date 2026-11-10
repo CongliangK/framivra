@@ -735,7 +735,11 @@ class WorkflowContract(unittest.TestCase):
         # Full app batches still need requests even without contacting a service.
         installs = [step['run'] for step in self.integration['jobs']['core']['steps']
                     if 'run' in step and 'python -m pip install ' in step['run']]
-        self.assertEqual(len(installs), 1)
+        # Test dependencies retain their exact set; the separately approved
+        # public-kernel bootstrap is required for MG subprocess CLIs as well.
+        self.assertEqual(len(installs), 2)
+        self.assertEqual(shlex.split(installs[1]),
+                         ['python', '-m', 'pip', 'install', '--no-deps', '-e', '.'])
         argv = shlex.split(installs[0])
         self.assertEqual(argv[:4], ['python', '-m', 'pip', 'install'])
         dependencies = {re.split(r'[<>=!~\[]', requirement, maxsplit=1)[0].lower()

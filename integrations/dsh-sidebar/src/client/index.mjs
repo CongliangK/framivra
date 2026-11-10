@@ -7,7 +7,7 @@ import { emptySelection, transitionSelection, preserveSelection } from './select
 import { FrameEpoch, FrameTools } from './frame.mjs'
 import { registerBundleConfig } from './settings.mjs'
 import { createOfficialDraftServices, draftResultMessage } from './draft-services.mjs'
-import { WorkbenchStyles, FileBrowser } from './workbench.mjs'
+import { WorkbenchStyles, FileBrowser, buildMismatchMessage } from './workbench.mjs'
 import { Icon } from './icons.mjs'
 import { ToolButton, ToolSummary } from './icon-controls.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT } from '../bounded.mjs'
@@ -149,6 +149,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const [selectionIntent, setSelectionIntent] = useState(emptySelection)
   const [filesVisible, setFilesVisible] = useState(false)
   const [browserEpoch, setBrowserEpoch] = useState(0)
+  const [browserRecalibrate, setBrowserRecalibrate] = useState(0)
   const [inspectorVisible, setInspectorVisible] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [timelineShare, setTimelineShare] = useState(38)
@@ -247,7 +248,31 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
           void control(sessionId, { op: 'close', grant: opened.grant }).catch(() => {})
           return
         }
+        // Deterministic host/client build check (both stamps baked from the
+        // same artifact hash): a mismatch means the RUNNING host is not the
+        // build this client shipped with — e.g. the plugin was updated but
+        // the host process was not restarted. Fail closed BEFORE committing
+        // any state: the minted grant is released and editing/framing never
+        // starts against a host whose feature set this client cannot know.
+        // Unknown stamps (unbundled source runs) never block.
+        const mismatch = buildMismatchMessage(opened?.host?.build)
+        if (mismatch) {
+          grant.current = undefined
+          // Single best-effort close of the just-minted grant; no retry. If it
+          // cannot be confirmed reclaimed, say so explicitly instead of letting
+          // the failure banner imply the session is fully released.
+          let closeConfirmed = false
+          try { await control(sessionId, { op: 'close', grant: opened.grant }); closeConfirmed = true } catch { closeConfirmed = false }
+          if (!current()) return
+          const message = closeConfirmed ? mismatch : `${mismatch}（注意：未能确认回收刚打开的预览授权；请勿重开会话，或等待授权TTL过期后由宿主自动回收。）`
+          setState(previous => ({ phase: 'failed', sessionId, message }))
+          return
+        }
         grant.current = opened.grant
+        // A successful open recalibrates the file browser: a stale failed
+        // listing retries at its current folder; a healthy one only clears a
+        // lingering banner. The browser itself decides; no forced remount.
+        setBrowserRecalibrate(value => value + 1)
       } else opened = previous.opened
       // Always acquire a same-version full projection before a filtered query.
       const full = queryOnly && query.frame !== undefined && previous.phase === 'ready' ? previous.result : await control(sessionId, { op: 'query', grant: opened.grant, query: {} }, signal)
@@ -328,7 +353,7 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       valid && (!state.result.coverage.complete || !state.opened.snapshot.coverage.complete) ? h('p', { className: 'fv-notice', role: 'alert' }, '存在未展开的外部素材；请在属性面板查看完整诊断。') : null,
       h('div', { className: 'fv-body' },
         h('div', { className: 'fv-upper' },
-          filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: () => setFilesVisible(false) }) : null,
+          filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: () => setFilesVisible(false), recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
           h('main', { className: 'fv-monitor', 'aria-label': '画面预览' },
             ready ? h(React.Fragment, null,
               h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : `帧 ${frameValue}`)),

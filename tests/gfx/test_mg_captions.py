@@ -1,5 +1,5 @@
 """Real PNG checks for the optional media reaction-caption renderer."""
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,8 +16,8 @@ class ReactionCaptions(unittest.TestCase):
     def setUp(self):
         self.cues = [{'in': 2, 'out': 16, 'text': '真的成功了！ <yes> & 好', 'emotion': 'joy', 'punchFrame': 10}]
         self.content = {'subject_rect': [.25, .15, .75, .74]}
-        self.font = Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
-        if not self.font.is_file():
+        self.font = find_font(*CJK_FONT_CANDIDATES)
+        if self.font is None:
             self.skipTest('CJK font fixture unavailable on this host')
 
     def frame(self, number):

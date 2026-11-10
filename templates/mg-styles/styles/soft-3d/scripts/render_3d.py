@@ -198,6 +198,11 @@ def story_state(data, frame):
     return {'chapter':chapter_index,'progress':progress,'positions':positions,'scales':scales,'connections':connections,'camera':camera_state(data,frame)}
 
 
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
 def main():
     args = arguments()
     data = validate(args)
@@ -257,9 +262,10 @@ def main():
     ink_mat = material('Extruded type ink', palette[1], .5)
     font_path = args.font
     if font_path is None:
-        candidate = Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
-        if candidate.is_file():
-            font_path = candidate
+        for candidate in _DEFAULT_CJK_FONTS:
+            if candidate.is_file():
+                font_path = candidate
+                break
     font = bpy.data.fonts.load(str(font_path)) if font_path else None
     all_text = data.get('title','') + data.get('subtitle','') + ''.join(item['label'] for item in data['objects']) + ''.join(c['title'] for c in data['scene_story'])
     if font is None and any(ord(c)>127 for c in all_text):

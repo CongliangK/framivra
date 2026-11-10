@@ -1,6 +1,6 @@
 """Semantic path geometry and real Pillow seek checks for line-art assets."""
 import copy
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import SERIF_CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 import importlib.util
 import json
 import math
@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 line = load_renderer('mg_semantic_line_art', ROOT / 'templates/mg-styles/styles/line-art/scripts/render_line_art.py')
-FONT = Path('/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc')
+FONT = find_font(*SERIF_CJK_FONT_CANDIDATES) or SERIF_CJK_FONT_CANDIDATES[0]
 READY = bool(importlib.util.find_spec('PIL')) and FONT.is_file()
 
 
@@ -67,8 +67,8 @@ class PathGeometry(unittest.TestCase):
             self.assertEqual(metadata['font_license'], 'SIL OFL 1.1')
             self.assertTrue(metadata['font_sha256'])
             self.assertEqual(metadata['semantic_objects'], ['seed', 'tree', 'book', 'house'])
-            latin = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
-            if latin.is_file():
+            latin = find_font(*LATIN_FONT_CANDIDATES)
+            if latin is not None:
                 with self.assertRaisesRegex(ValueError, 'lacks glyph'):
                     line.validate_line_art_content(data, 180, latin)
                 with self.assertRaisesRegex(ValueError, 'lacks glyph'):

@@ -30,15 +30,60 @@ def _text(value, name, limit=120, empty=False):
     return value
 
 
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
+_DEFAULT_LATIN_FONTS=(
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf'),
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf'),
+)
+
+_VF_DEFAULT_WEIGHTS={
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'):'Bold',
+    Path('/usr/share/fonts/google-noto-serif-cjk-vf-fonts/NotoSerifCJK-VF.ttc'):'Regular',
+}
+class _DefaultFont(str):
+    """Default-resolved font path carrying its VF weight; explicit paths stay plain."""
+    __slots__=('default_weight','_path')
+    def __new__(cls,path,weight):
+        self=super().__new__(cls,str(path))
+        self._path=Path(path)
+        self.default_weight=weight
+        return self
+    @property
+    def name(self):return self._path.name
+    def is_file(self):return self._path.is_file()
+    def exists(self):return self._path.exists()
+    def read_bytes(self):return self._path.read_bytes()
+
+def _wrap_default(path):
+    return _DefaultFont(path,_VF_DEFAULT_WEIGHTS.get(Path(path)))
+
+
+
+def _truetype(path,size,index=0):
+    from PIL import ImageFont
+    font=ImageFont.truetype(str(path),size,index=index)
+    weight=getattr(path,'default_weight',None)
+    if weight:
+        try:font.set_variation_by_name(weight)
+        except Exception as exc:
+            raise ValueError('default variable font %s requires the %r instance for this template style; install a static Noto CJK font or pass an explicit font_path (variation error: %s)'%(path,weight,exc)) from exc
+    return font
+
 def _font_file(strings, font_path):
-    candidates = [Path(font_path)] if font_path is not None else [
-        Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
-        Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')]
+    candidates = [Path(font_path)] if font_path is not None else [_wrap_default(v) for v in (*_DEFAULT_CJK_FONTS, *_DEFAULT_LATIN_FONTS)]
     from PIL import ImageFont
     for path in candidates:
         if path.is_file():
-            face = 2 if path.name == 'NotoSansCJK-Bold.ttc' else 0
-            font = ImageFont.truetype(str(path), 40, index=face)
+            face = 2 if path.name in ('NotoSansCJK-Bold.ttc', 'NotoSansCJK-VF.ttc') else 0
+            font = _truetype(path, 40, index=face)
             missing = font.getmask(chr(0x10ffff))
             missing_key = (missing.size, bytes(missing))
             for char in set(''.join(strings)):
@@ -112,7 +157,7 @@ def _prepare(data, frames, font_path):
     fonts = {}
     def fit(text,width,size):
         for pixels in range(size,19,-1):
-            font = ImageFont.truetype(str(path),pixels,index=face)
+            font = _truetype(path,pixels,index=face)
             if probe.textlength(text,font=font)<=width:
                 fonts[(text,width,size)] = font
                 return
@@ -217,7 +262,7 @@ def _render(p,frame):
     def text(value,xy,width,size,fill,anchor='lt',font_key=None):
         key = font_key if font_key else value
         font=p['fonts'].get((key,width,size))
-        if font is None: font=ImageFont.truetype(str(p['font_path']),size,index=p['font_face'])
+        if font is None: font=_truetype(p['font_path'],size,index=p['font_face'])
         draw.text(xy,value,font=font,fill=fill,anchor=anchor)
     text(p['title'],(100,72),1700,72,ink)
     text(p['subtitle'],(104,166),1700,30,ink)
@@ -231,7 +276,7 @@ def _render(p,frame):
         font=p['fonts'][(final,380,40)]
         if draw.textlength(display,font=font)>380:
             while font.size>20 and draw.textlength(display,font=font)>380:
-                font=ImageFont.truetype(str(p['font_path']),font.size-1,index=p['font_face'])
+                font=_truetype(p['font_path'],font.size-1,index=p['font_face'])
         draw.text((1810,y),display,font=font,fill=ink,anchor='rt')
         draw.line((1450,y+57,1810,y+57),fill=rgb(color,75),width=2)
         q=1 if stage['mode']=='confirm' else min(1,frame/max(1,p['stages'][2]['in']))

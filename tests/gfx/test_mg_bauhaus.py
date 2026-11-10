@@ -1,6 +1,6 @@
 """Real raster and analytic trajectory checks for modular Bauhaus choreography."""
 import copy
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 import importlib.util
 import json
 import math
@@ -10,7 +10,7 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[2]/'templates'/'mg-styles'
 bauhaus = load_renderer('mg_bauhaus',ROOT/'styles/bauhaus/scripts/render_bauhaus.py')
-FONT=Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
+FONT=find_font(*CJK_FONT_CANDIDATES) or CJK_FONT_CANDIDATES[0]
 READY=bool(importlib.util.find_spec('PIL')) and FONT.is_file()
 
 
@@ -117,8 +117,8 @@ class ModularBauhaus(unittest.TestCase):
         for text in ('长'*120,'\U0010ffff'):
             data=example();data['title']=text
             with self.assertRaises(ValueError):bauhaus.validate_bauhaus_content(data,180)
-        latin=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
-        if latin.is_file():
+        latin=find_font(*LATIN_FONT_CANDIDATES)
+        if latin is not None:
             with self.assertRaisesRegex(ValueError,'lacks glyph'):
                 bauhaus.validate_bauhaus_content(example(),180,latin)
         data=example();data['font_path']=str(FONT)

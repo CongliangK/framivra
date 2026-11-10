@@ -1,6 +1,7 @@
 // Independent CEF-free regression models; compiled by the exact contract suite.
 // Each model executes production code, with only the browser/event transport
 // substituted. No native Chromium rasterization or performance result is implied.
+#include "pair_swap_planner.hpp"
 #if defined(VTX_MODEL_ORCHESTRATION)
 // === Paired browser orchestration: actual serve/parser/OnPaint + fake CEF. ===
 #include "frame_sync_machine.hpp"
@@ -51,6 +52,10 @@ namespace vtx_cef {
   static std::vector<std::string> trace;
   static std::function<void(RunState&)> fence_hook;
   static bool withhold_unsigned_second=false, stale_same_url_load=false, wrong_unsigned_ready=false, unsigned_content_mismatch=false;
+  // 抖动容忍契约正例：unsigned 样本带稳定预算内低差（1px、Δ1、签名
+  // 冻结）——按 frame_sync_machine.hpp:199-224 契约必须在连续相同签名
+  // 样本上接受并原样发布探针认证候选（不弱化字节等式：发布体不带差异）。
+  static bool unsigned_stable_low_delta_jitter=false;
   static bool fail_context_creation = false, fail_browser_creation = false;
   static int create_delay_turns = 0, context_creations = 0, browser_creations = 0;
   static int contexts_alive = 0;
@@ -71,6 +76,8 @@ namespace vtx_cef {
     Options cef;
     std::string sync_mode="n",sync_canary="exact",sync_fault="none",url_template="file:///page?f={f}";
     std::string reference_context = "shared";
+    // These fault scenarios model a single pair; PairSwap has its own planner tests.
+    bool pair_swap = false;
     int frame_budget_ms=20,sync_ready_timeout_ms=20,sync_pump_timeout_ms=20;
   };
   constexpr uint16_t kStatusOk=0,kStatusTimeout=1,kStatusSizeMismatch=2,kStatusJsErr=3,kStatusDuplicate=4;
@@ -304,11 +311,22 @@ if ((unsigned_cross_batch_pattern || unsigned_four_sample_mask >= 0) &&
   const bool mismatch = unsigned_four_sample_mask >= 0
       ? (sample > 4 || (unsigned_four_sample_mask & (1 << (sample - 1))) != 0)
       : (sample == 1 || sample == 4 || (!unsigned_pattern_stabilizes && sample > 4));
-  if (mismatch) p[0] ^= 1;
+  // 同上（抖动容忍契约）：M/E 模式注入稳定超预算高差，验证"只有完整
+  // 同批 E,E 对才能接受、批间相等不合并"；低差冻结差异按生产契约属可
+  // 接受抖动，不能再用作"必须拒绝"的载荷。
+  if (mismatch) p[0] ^= 0xFF;
 }
 
-if (browser->name == "unsigned" &&
-        (unsigned_content_mismatch || (browser->ready && transient_unsigned_mismatch_paints-- > 0)))
+// 抖动容忍契约（frame_sync_machine.hpp:199-224，dc93bc5/6734ce2 实测冻结
+// 低差光栅化抖动按设计接受：≤kJitterMaxChannelDelta 且签名相同连续
+// kJitterStreakTarget 样本；自检 frame_sync_selftest.cpp:861-894 独立断言
+// 该接受）。本场景验证的属性是"稳定不匹配不得弱化等式"，故注入稳定且
+// 超出抖动预算的高差（1px、Δ255，token 级）——按契约必须保持 fail-closed
+// 直至超时；瞬时低差路径（transient_…）保持 Δ1 不变（其不稳定性本身即
+// fail-closed 依据）。
+if (browser->name == "unsigned" && unsigned_content_mismatch) p[0] ^= 0xFF;
+else if (browser->name == "unsigned" && unsigned_stable_low_delta_jitter) p[0] ^= 1;
+else if (browser->ready && browser->name == "unsigned" && transient_unsigned_mismatch_paints-- > 0)
       p[0] ^= 1;
 if(browser->ready&&browser->name=="unsigned"&&withhold_unsigned_second&&browser->postready_paints++>0)return;
 if(browser->name=="signed"&&browser->ready)Draw(p,browser->f,browser->req,browser->relocated);
@@ -399,6 +417,7 @@ struct Fixture {
     trace.clear();
     fence_hook=nullptr;
     withhold_unsigned_second=stale_same_url_load=wrong_unsigned_ready=unsigned_content_mismatch=false;
+    unsigned_stable_low_delta_jitter=false;
     fail_context_creation = fail_browser_creation = false;
     create_delay_turns = context_creations = browser_creations = 0;
     transient_unsigned_mismatch_paints = 0;
@@ -534,6 +553,18 @@ int tests(){
       return c==0xcc;
     }
     ),"mismatch untouched dst");
+    x.close();
+  }
+  {
+    // budget_checks 正例（与上例 Δ255 负例成对）：稳定预算内冻结低差
+    // （1px、Δ1、签名相同连续样本）按生产抖动容忍契约接受；接受后必须
+    // 恰好一次 S5，且发布体为探针认证候选原样字节（等于 Original）。
+    Fixture x;
+    unsigned_stable_low_delta_jitter=true;
+    auto r=x.run(1,6);
+    ck(r.status==kStatusOk,"budget: stable in-budget frozen low-delta jitter accepts per contract");
+    ck(x.machine.counters().requests_accepted==1,"budget: jitter acceptance is a real S5 adoption");
+    ck(x.dst==Original(6),"budget: jitter acceptance publishes authenticated candidate unchanged");
     x.close();
   }
   {
@@ -775,6 +806,7 @@ int tests(){
     x.close();
   }
   std::printf("EXTRACTED_NATIVE_MODEL_PASS checks=%d scenarios=49 (fake CEF events, actual production orchestration/FSM)\n",check_count);
+  std::printf("BUDGET_CHECKS_OK stable_in_budget_low_delta_accepts + over_budget_or_unstable_rejects (jitter tolerance contract regression)\n");
   return 0;
 }
 }
@@ -1565,6 +1597,8 @@ struct ServeOptions {
   int encode_threads = 2, fault_abort_after_frames = -1;
   PngEncodeOptions png;
   bool sync = false;
+  // The transport fault model is explicitly single-pair, not the PairSwap suite.
+  bool pair_swap = false;
   std::string sync_mode = "n", sync_log, sync_canary = "exact", reference_context = "shared";
 };
 // 仅 SERVE_FAILURES 拼接体（serve.cpp 环形槽路径）使用；ONESHOT 变体下
@@ -1594,7 +1628,23 @@ struct ShmRingWriter {
   auto* control() { return &ctrl; }
 };
 #if defined(VTX_MODEL_SERVE_FAILURES)
+// PairSwap 后 serve.cpp 拼接体（预取触发/B 对创建/BindNextRequest）引用
+// 生产自由函数 ExpandUrlTemplate；故障模型始终 pair_swap=false，该函数
+// 运行期不可达，仅为拼接体编译提供与 serve.cpp:197 逐字一致的实现。
+std::string ExpandUrlTemplate(const std::string& tpl, int32_t frame) {
+  std::string url = tpl;
+  const std::string tag = "{f}";
+  const std::string val = std::to_string(frame);
+  for (size_t pos = url.find(tag); pos != std::string::npos;
+       pos = url.find(tag, pos + val.size())) {
+    url.replace(pos, tag.size(), val);
+  }
+  return url;
+}
 struct ExactBaselineCapture {
+  // serve.cpp:758 同名成员（PairSwap 预取导航簿记）；故障模型
+  // pair_swap=false，仅满足拼接体编译，运行期不可达。
+  bool Prefetch(int32_t, const std::string&) { return true; }
   bool Close(PumpDriver& pump) {
     ++baseline_closes;
     if (scenario == "baseline_closes_signed") {
@@ -1623,7 +1673,10 @@ ProduceResult ProduceFrame(RunState&, PumpDriver&, CefRefPtr<CefBrowser>,
 }
 SyncProduceResult ProduceFrameSync(RunState&, PumpDriver&, CefRefPtr<CefBrowser>,
     fsync::FrameSyncStateMachine&, ExactBaselineCapture&, const ServeOptions&,
-    uint32_t, uint32_t, int32_t, uint32_t, uint32_t, uint8_t*) {
+    uint32_t, uint32_t, int32_t, uint32_t, uint32_t, uint8_t*,
+    // serve.cpp:1049 现签名含 PairSwap 绑定参数（带默认值）；故障模型
+    // 全部 sync 场景走 throw 分支，绑定不可达。
+    const pairswap::Binding& = {}) {
   throw std::runtime_error("unexpected fake sync capture");
 }
 // PRODUCTION_SERVE_TRANSPORT_POOL

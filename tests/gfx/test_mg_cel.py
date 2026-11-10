@@ -1,6 +1,6 @@
 """Real held-drawing PNG, smear timing, content and preflight tests."""
 import copy
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 import importlib.util
 from pathlib import Path
 import json
@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 cel = load_renderer('mg_cel', ROOT / 'templates/mg-styles/styles/cel-boil/scripts/render_cel.py')
-READY = bool(importlib.util.find_spec('PIL')) and Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc').is_file()
+READY = bool(importlib.util.find_spec('PIL')) and bool(find_font(*CJK_FONT_CANDIDATES))
 
 
 def example(name='garden'):
@@ -88,8 +88,8 @@ class CelDrawings(unittest.TestCase):
                 self.assertFalse(output.exists())
             with self.assertRaises(ValueError):
                 cel.validate_cel_content(example(),240,root/'missing.ttf')
-            latin = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
-            if latin.exists():
+            latin = find_font(*LATIN_FONT_CANDIDATES)
+            if latin is not None:
                 with self.assertRaisesRegex(ValueError,'lacks glyph'):
                     cel.render_cel_frame(example(),0,240,latin)
             self.assertEqual(list(root.iterdir()),[])

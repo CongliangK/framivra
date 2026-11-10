@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildClient, clientPluginConfig, PLATFORM_MODULES } from '../scripts/build.mjs'
+import { resolveDshEntry } from './dsh-public-sdk.mjs'
 
 const packageDir = fileURLToPath(new URL('../', import.meta.url))
 const dshRoot = process.env.SIDEBAR_DSH_ROOT
@@ -109,8 +110,11 @@ test(`[${mode}] materialization resolves React through the shared module table`,
   assert.throws(() => exports.frameQuery('1.0'), /BAD_QUERY/)
 })
 
-// 3. Real official loader (only when the official checkout supplies the built module system).
-const officialClient = dshRoot ? resolve(dshRoot, 'packages/client/modules/lib/client.js') : null
+// 3. Real official loader (only when the official distribution/checkout supplies the built module system).
+let officialClient = null
+if (dshRoot) {
+  try { officialClient = resolveDshEntry(dshRoot, 'clientModulesBrowser') } catch { officialClient = null }
+}
 if (officialClient && exists(officialClient)) {
   test('[official-loader] official ClientModuleSystem imports the built bundle', async () => {
     const facade = makeOfficialFacade()

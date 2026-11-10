@@ -17,14 +17,61 @@ def _number(value):
     return str(value) if type(value) is int else format(value,'.10g')
 
 
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
+_DEFAULT_LATIN_FONTS=(
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf'),
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf'),
+)
+
+_VF_DEFAULT_WEIGHTS={
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'):'Bold',
+    Path('/usr/share/fonts/google-noto-serif-cjk-vf-fonts/NotoSerifCJK-VF.ttc'):'Regular',
+}
+class _DefaultFont(str):
+    """Default-resolved font path carrying its VF weight; explicit paths stay plain."""
+    __slots__=('default_weight','_path')
+    def __new__(cls,path,weight):
+        self=super().__new__(cls,str(path))
+        self._path=Path(path)
+        self.default_weight=weight
+        return self
+    @property
+    def name(self):return self._path.name
+    def is_file(self):return self._path.is_file()
+    def exists(self):return self._path.exists()
+    def read_bytes(self):return self._path.read_bytes()
+
+def _wrap_default(path):
+    return _DefaultFont(path,_VF_DEFAULT_WEIGHTS.get(Path(path)))
+
+
+
+def _truetype(path,size,index=0):
+    from PIL import ImageFont
+    font=ImageFont.truetype(str(path),size,index=index)
+    weight=getattr(path,'default_weight',None)
+    if weight:
+        try:font.set_variation_by_name(weight)
+        except Exception as exc:
+            raise ValueError('default variable font %s requires the %r instance for this template style; install a static Noto CJK font or pass an explicit font_path (variation error: %s)'%(path,weight,exc)) from exc
+    return font
+
 def _font(data,path=None):
     from PIL import ImageFont
     strings=[data['title'],data['subtitle']]+[c[k] for c in data['chapters'] for k in ('label','detail','unit')]
     text=''.join(strings)+''.join(_number(c['value']) for c in data['chapters'])+'% 0123456789'
-    candidates=[Path(path)] if path else [Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')]
+    candidates=[Path(path)] if path else [_wrap_default(v) for v in (*_DEFAULT_CJK_FONTS,*_DEFAULT_LATIN_FONTS)]
     for candidate in candidates:
         if candidate.is_file():
-            face=ImageFont.truetype(str(candidate),40)
+            face=_truetype(candidate,40)
             missing=face.getmask(chr(0x10ffff));sentinel=(missing.size,bytes(missing))
             for char in set(text):
                 if not char.isspace():
@@ -38,7 +85,7 @@ def _fit(text,width,size,font,minimum=14):
     from PIL import Image,ImageDraw,ImageFont
     draw=ImageDraw.Draw(Image.new('L',(1,1)))
     while True:
-        face=ImageFont.truetype(str(font),size)
+        face=_truetype(font,size)
         if draw.textlength(text,font=face)<=width:return face
         if size<=minimum:raise ValueError('text does not fit its reading zone at minimum font size')
         size-=1

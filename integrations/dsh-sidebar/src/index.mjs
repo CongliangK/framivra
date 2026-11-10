@@ -1,7 +1,7 @@
 import z from '@deepseek-ai/schemastery'
 import { createPreviewHost } from './host.mjs'
 import { registerTimelineTools } from './tools.mjs'
-import { DEFAULT_VTX_EXECUTABLE, DEFAULT_TRUSTED_PATH, VTX_EXECUTABLE_PATTERN, TRUSTED_PATH_PATTERN } from './configuration.mjs'
+import { DEFAULT_VTX_EXECUTABLE, DEFAULT_TRUSTED_PATH, DEFAULT_LOG_MAX_PER_MINUTE, MAX_LOG_MAX_PER_MINUTE, VTX_EXECUTABLE_PATTERN, TRUSTED_PATH_PATTERN } from './configuration.mjs'
 
 export const name = 'framivra-dsh-sidebar'
 export const inject = ['connection', 'sessions', 'workingDirectory', 'fs', 'subprocess', 'tools']
@@ -24,6 +24,12 @@ export const Config = z.object({
     z.string().pattern(VTX_EXECUTABLE_PATTERN),
   ]).default(DEFAULT_VTX_EXECUTABLE).volatile().description('Host-trusted vtx executable: the literal "vtx" (searched on trustedPath) or an absolute path on the host. Must not point inside a session workspace.'),
   trustedPath: z.string().pattern(TRUSTED_PATH_PATTERN).default(DEFAULT_TRUSTED_PATH).volatile().description('Host-trusted colon-separated search PATH for the vtx executable. Every segment must be an absolute host path; empty or relative segments are rejected. The separator stays ":" per the Host contract.'),
+  // Sanitized-diagnostics rate cap. Bounds and the reader live in
+  // ./configuration.mjs (single home); the Host re-validates on every use so
+  // even a directly constructed config object cannot bypass the ceiling.
+  // Deliberately NOT part of the grant fingerprint: adjusting it never
+  // invalidates open previews with CONFIG_CHANGED.
+  logMaxPerMinute: z.number().min(0).max(MAX_LOG_MAX_PER_MINUTE).default(DEFAULT_LOG_MAX_PER_MINUTE).volatile().description(`Maximum sanitized diagnostic log lines per minute (0 silences, ceiling ${MAX_LOG_MAX_PER_MINUTE}). Failure one-liners only; never affects grants or previews.`),
 })
 
 /** The Connection carrier admits owner Peers before these exact handlers run. */
