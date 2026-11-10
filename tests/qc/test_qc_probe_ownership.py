@@ -224,7 +224,7 @@ class ProbeOwnership(unittest.TestCase):
                     c.w = 64; c.h = 48  # Project/crop dimensions do not set the gray sample size.
                     self.assertEqual(frame(c.out / 'final.mp4', 0, 'crop=64:48'), payload)
                     self.assertEqual(c.commands[-1][c.commands[-1].index('-vf') + 1],
-                                     'crop=64:48,scale=48:27:flags=bicubic+accurate_rnd,format=gray')
+                                     'crop=64:48,' + qc._QC_GRAY_FILTER)
                 sibling = c.cache / 'qc_probe_sibling'
                 sibling.mkdir(); (sibling / 'keep').write_bytes(b'keep')
                 try:

@@ -9,6 +9,7 @@ import { createPreviewHost } from '../src/host.mjs'
 import { stringifyJSON } from '../src/json.mjs'
 import { createHash } from 'node:crypto'
 import { performReferenceAction } from '../src/client/reference.mjs'
+import { importDsh } from './dsh-public-sdk.mjs'
 
 // Opt-in, public built DSH exports + installed vtx. No replacement server or GUI.
 const dsh = process.env.SIDEBAR_DSH_ROOT
@@ -18,8 +19,8 @@ const enabled = Boolean(dsh && vtx && evidence)
 const skip = enabled ? false : 'Set SIDEBAR_DSH_ROOT, SIDEBAR_REAL_VTX and SIDEBAR_EVIDENCE_DIR for real-provider/upstream evidence'
 
 async function provider(t) {
-  const { Context } = await import(pathToFileURL(join(dsh, 'vendor/cordis/lib/index.js')))
-  const { LocalSubprocessRuntime } = await import(pathToFileURL(join(dsh, 'packages/subprocess/subprocess-local/lib/index.js')))
+  const { Context } = await importDsh(dsh, 'cordis')
+  const { LocalSubprocessRuntime } = await importDsh(dsh, 'subprocessLocal')
   const ctx = new Context()
   const fiber = ctx.plugin(LocalSubprocessRuntime)
   await fiber.await()

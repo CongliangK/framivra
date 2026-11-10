@@ -97,9 +97,20 @@ def _render(path, reference, frame, limit):
         raise _FrameError("plugins.unsupported", "first slice supports core-only projects; active plugins: " +
                           ", ".join(p["name"] for p in active))
     from .timeline_structure import structure_errors
-    errors = structure_errors(stored)
+    # Same legacy identity semantics as the write path: unmanaged source IDs
+    # are references, not protocol identities. Managed documents still take
+    # the strict stable-ID path inside identity_errors.
+    errors = structure_errors(stored, preserve_unmanaged=True)
     if errors:
-        raise _FrameError("render.structure", "; ".join(errors[:16]))
+        # Each entry carries its JSON pointer; surface the total so the
+        # 16-entry excerpt is explicitly a prefix, never silent truncation.
+        detail = "; ".join(errors[:16])
+        if len(detail) > 1900:
+            detail = detail[:1900] + "…"
+        if len(errors) > 16:
+            detail += " (+%d more)" % (len(errors) - 16)
+        raise _FrameError("render.structure",
+                          "stored structure errors[%d]: %s" % (len(errors), detail))
     from .pipeline.infra import Ctx
     from .pipeline.stages import validate_core
     from .pipeline.composite import RenderPlan, _graph_code_digest

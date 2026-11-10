@@ -103,18 +103,65 @@ def liquid_mask(data,frame,frames,size=(480,270)):
     return Image.fromarray((field>=1).astype('uint8')*255)
 
 
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
+_DEFAULT_LATIN_FONTS=(
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf'),
+    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/dejavu/DejaVuSans.ttf'),
+    Path('/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf'),
+)
+
+_VF_DEFAULT_WEIGHTS={
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'):'Bold',
+    Path('/usr/share/fonts/google-noto-serif-cjk-vf-fonts/NotoSerifCJK-VF.ttc'):'Regular',
+}
+class _DefaultFont(str):
+    """Default-resolved font path carrying its VF weight; explicit paths stay plain."""
+    __slots__=('default_weight','_path')
+    def __new__(cls,path,weight):
+        self=super().__new__(cls,str(path))
+        self._path=Path(path)
+        self.default_weight=weight
+        return self
+    @property
+    def name(self):return self._path.name
+    def is_file(self):return self._path.is_file()
+    def exists(self):return self._path.exists()
+    def read_bytes(self):return self._path.read_bytes()
+
+def _wrap_default(path):
+    return _DefaultFont(path,_VF_DEFAULT_WEIGHTS.get(Path(path)))
+
+
+
+def _truetype(path,size,index=0):
+    from PIL import ImageFont
+    font=ImageFont.truetype(str(path),size,index=index)
+    weight=getattr(path,'default_weight',None)
+    if weight:
+        try:font.set_variation_by_name(weight)
+        except Exception as exc:
+            raise ValueError('default variable font %s requires the %r instance for this template style; install a static Noto CJK font or pass an explicit font_path (variation error: %s)'%(path,weight,exc)) from exc
+    return font
+
 def _font_file(data,font_path=None):
     from PIL import ImageFont
     strings=[data['title'],data['subtitle']]+[s['label'] for s in data['stages']]
     needs_cjk=any(0x2e80<=ord(ch)<=0x9fff or 0xf900<=ord(ch)<=0xfaff for text in strings for ch in text)
-    candidates=[Path(font_path)] if font_path is not None else [Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')]
+    candidates=[Path(font_path)] if font_path is not None else [_wrap_default(v) for v in _DEFAULT_CJK_FONTS]
     if font_path is None and not needs_cjk:
-        candidates.append(Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+        candidates.extend(_wrap_default(v) for v in _DEFAULT_LATIN_FONTS)
     for path in candidates:
         if path.is_file():
             if needs_cjk and 'DejaVu' in path.name:
                 raise ValueError('Chinese content requires a CJK-capable font_path')
-            font=ImageFont.truetype(str(path),24)
+            font=_truetype(path,24)
             notdef=font.getmask(chr(0x10ffff))
             missing=(notdef.size,bytes(notdef))
             for char in set(''.join(strings)):
@@ -141,7 +188,7 @@ def validate_liquid_content(data,frames,font_path=None):
 
 def _font(size,font_path):
     from PIL import ImageFont
-    return ImageFont.truetype(str(font_path),size)
+    return _truetype(font_path,size)
 
 
 def _fit_font(text,maxwidth,size,font_path):

@@ -1,5 +1,5 @@
 """True-isometric projection, assembly causality and real PNG checks."""
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 import json
 import math
 from pathlib import Path
@@ -88,8 +88,8 @@ class IsometricAssembly(unittest.TestCase):
             output=Path(tmp)/'not-created'
             with self.assertRaises(ValueError):iso.render_isometric_frames(missing,240,output)
             self.assertFalse(output.exists())
-        dejavu=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
-        if dejavu.is_file():
+        dejavu=find_font(*LATIN_FONT_CANDIDATES)
+        if dejavu is not None:
             with self.assertRaises(ValueError):iso.validate_isometric_content(example('neighborhood'),240,dejavu)
         with self.assertRaises(ValueError):iso.render_isometric_frame(example('neighborhood'),True,240)
 

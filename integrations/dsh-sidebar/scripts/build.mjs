@@ -25,10 +25,42 @@
  */
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { readFileSync, statSync, rmSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, join } from 'node:path'
 import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
+import { HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from '../src/protocol.mjs'
 
 export const packageDir = fileURLToPath(new URL('../', import.meta.url))
+
+/**
+ * Deterministic build stamp over the dev/source tree — the EXACT recipe of
+ * src/host.mjs computeSourceStampFromDir (same module lists from
+ * src/protocol.mjs, same digest joining), so a client bundle built here and a
+ * host running from the same source carry the same 'src:<hash>' stamp.
+ * Returns null when the stamped module set is not fully present (synthetic
+ * build-fixture packages with a minimal src/): those bundles simply carry no
+ * stamp and never take part in build comparison. scripts/package.mjs
+ * overrides this with a placeholder via options.clientStamp and rewrites it
+ * to the final packaged artifact stamp on BOTH sides.
+ */
+export function computeSourceStamp(dir) {
+  const root = resolve(dir)
+  const digests = []
+  const read = path => {
+    try { return readFileSync(join(root, path)) } catch { return null }
+  }
+  for (const name of HOST_LIB_MODULES) {
+    const content = read(join('src', `${name}.mjs`))
+    if (content === null) return null
+    digests.push(createHash('sha256').update(content).digest('hex'))
+  }
+  for (const name of CLIENT_MODULES) {
+    const content = read(join('src', 'client', `${name}.mjs`))
+    if (content === null) return null
+    digests.push(createHash('sha256').update(content).digest('hex'))
+  }
+  return composeBuildStamp('src:', createHash('sha256').update(digests.join('\n')).digest('hex'))
+}
 
 /**
  * Exact module-table words the official web shell seeds as shared platform
@@ -199,6 +231,11 @@ export async function clientPluginConfig(options = {}) {
       'process.env.NODE_ENV': JSON.stringify(mode),
       'import.meta.env.MODE': JSON.stringify(mode),
       'import.meta.env': JSON.stringify({ MODE: mode }),
+      // Client-side build identity: the same deterministic stamp the host
+      // reports in hello/open. The default bakes the source stamp; the
+      // package flow passes a placeholder here and scripts/package.mjs
+      // rewrites it to the final artifact stamp on BOTH sides.
+      '__FRAMIVRA_CLIENT_STAMP__': JSON.stringify(options.clientStamp ?? computeSourceStamp(dir) ?? null),
     },
     outputOptions: {
       ...clientFactoryOutput(id),

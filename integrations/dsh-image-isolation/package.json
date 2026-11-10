@@ -1,0 +1,33 @@
+{
+  "name": "dsh-image-isolation",
+  "version": "0.1.0",
+  "description": "LocalAttachmentStore provider that runs every DSH image raster operation in isolated child processes (persistent pool, one operation per worker), so native image-library crashes cannot take down the host",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./worker": "./src/worker.mjs",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": "0.2.1-rc.2"
+  },
+  "license": "MIT",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {},
+  "scripts": {
+    "test": "node --test tests/isolation.test.mjs tests/patch.test.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-attachment": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-attachment-local": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "~3.18.5"
+  }
+}

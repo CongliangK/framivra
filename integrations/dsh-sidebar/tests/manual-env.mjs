@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createPreviewHost } from '../src/host.mjs'
 import { parseJSON, stringifyJSON } from '../src/json.mjs'
+import { importDsh } from './dsh-public-sdk.mjs'
 export const enabled = Boolean(process.env.SIDEBAR_DSH_ROOT && process.env.SIDEBAR_REAL_VTX && process.env.SIDEBAR_EVIDENCE_DIR)
 export const skip = enabled ? false : 'Set SIDEBAR_DSH_ROOT, SIDEBAR_REAL_VTX, SIDEBAR_EVIDENCE_DIR for actual installed write kernel/public provider'
 export function fixture() { return { version:2, project:{ fps:30,width:1920,height:1080,duration_frames:120 }, sources:[{id:'s',path:'missing.mov',extension:{id:'s',nested:[null,false,1.25]}}],video_tracks:[{id:'v',name:'main',kind:'aroll',clips:[{id:'c',src:'s',src_in:10,src_out:40,dst_in:0,dur:30,extension:{ref:'c',nested:{x:[1,2]}}},{id:'c2',src:'s',src_in:50,src_out:80,dst_in:60,dur:30}]},{id:'g',name:'graphics',kind:'gfx',clips:[{id:'gc',src:'missing.html',dst_in:0,dur:30}]}],audio_tracks:[{id:'a',name:'voice',events:[{id:'e',src:'s',src_in:7,in:0,out:90,volume:1,loop:true}]},{id:'bed',name:'bed',duck:true,duck_strategy:{voice_track:'voice',extra:'voice'},events:[{id:'be',src:'s',in:0,out:100,volume:0.2}],_meta:{bed_static_duck:{params:{voice_track:'voice'}}}}],subtitles:[{id:'sub',in:0,out:30,text:'你好',extension:{preserve:'sub'}}],unknown_root:{references:['c','voice','s'],nested:{anything:[false,null,{id:'v'}]}} } }
@@ -12,8 +13,8 @@ const providers=new WeakMap()
 export async function realProvider(t) {
  if(providers.has(t))return providers.get(t)
  const root=process.env.SIDEBAR_DSH_ROOT
- const {Context}=await import(pathToFileURL(join(root,'vendor/cordis/lib/index.js')))
- const {LocalSubprocessRuntime}=await import(pathToFileURL(join(root,'packages/subprocess/subprocess-local/lib/index.js')))
+ const {Context}=await importDsh(root,'cordis')
+ const {LocalSubprocessRuntime}=await importDsh(root,'subprocessLocal')
  const ctx=new Context(), fiber=ctx.plugin(LocalSubprocessRuntime);await fiber.await();t.after(()=>fiber.dispose());const runtime=ctx.get('subprocess');providers.set(t,runtime);return runtime
 }
 export async function environment(t, label='manual', document=fixture(), { legacy=false,createHost=createPreviewHost }={}) {

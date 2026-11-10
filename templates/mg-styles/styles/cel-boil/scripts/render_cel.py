@@ -50,12 +50,51 @@ def _wrap(draw, value, font, width, max_lines):
 def _fit(draw, value, font_path, face, width, maximum, minimum, max_lines):
     from PIL import ImageFont
     for size in range(maximum, minimum - 1, -2):
-        font = ImageFont.truetype(str(font_path), size, index=face)
+        font = _truetype(font_path, size, index=face)
         lines = _wrap(draw, value, font, width, max_lines)
         if lines is not None:
             return font, lines
     raise ValueError('text still overflows at minimum font size; shorten the content')
 
+
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
+
+_VF_DEFAULT_WEIGHTS={
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'):'Bold',
+    Path('/usr/share/fonts/google-noto-serif-cjk-vf-fonts/NotoSerifCJK-VF.ttc'):'Regular',
+}
+class _DefaultFont(str):
+    """Default-resolved font path carrying its VF weight; explicit paths stay plain."""
+    __slots__=('default_weight','_path')
+    def __new__(cls,path,weight):
+        self=super().__new__(cls,str(path))
+        self._path=Path(path)
+        self.default_weight=weight
+        return self
+    @property
+    def name(self):return self._path.name
+    def is_file(self):return self._path.is_file()
+    def exists(self):return self._path.exists()
+    def read_bytes(self):return self._path.read_bytes()
+
+def _wrap_default(path):
+    return _DefaultFont(path,_VF_DEFAULT_WEIGHTS.get(Path(path)))
+
+
+
+def _truetype(path,size,index=0):
+    from PIL import ImageFont
+    font=ImageFont.truetype(str(path),size,index=index)
+    weight=getattr(path,'default_weight',None)
+    if weight:
+        try:font.set_variation_by_name(weight)
+        except Exception as exc:
+            raise ValueError('default variable font %s requires the %r instance for this template style; install a static Noto CJK font or pass an explicit font_path (variation error: %s)'%(path,weight,exc)) from exc
+    return font
 
 def _prepare(data, frames, font_path=None):
     from PIL import Image, ImageDraw, ImageFont
@@ -125,16 +164,16 @@ def _prepare(data, frames, font_path=None):
         radius = actor['size'] * 1.65 + 35
         if min(actor['center'][0] + x - radius for x in positions) < 80 or max(actor['center'][0] + x + radius for x in positions) > 1840:
             raise ValueError('actor motion/smear exceeds stage safe margins; reduce size or hop distance')
-    font = Path(font_path) if font_path else Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
-    if not font.is_file():
+    font = Path(font_path) if font_path else next((_wrap_default(candidate) for candidate in _DEFAULT_CJK_FONTS if candidate.is_file()), None)
+    if font is None or not font.is_file():
         raise ValueError('provide a separately licensed local font covering all CJK content')
-    face = 2 if font.name == 'NotoSansCJK-Bold.ttc' else 0
+    face = 2 if font.name in ('NotoSansCJK-Bold.ttc', 'NotoSansCJK-VF.ttc') else 0
     draw = ImageDraw.Draw(Image.new('RGB', SIZE))
     title_style = _fit(draw, title, font, face, 1640, 76, 36, 2)
     subtitle_style = _fit(draw, subtitle, font, face, 1640, 32, 24, 1)
     for actor in cast:
         actor['text_style'] = _fit(draw, actor['label'], font, face, 1440 / len(cast), 36, 24, 3)
-    glyph_font = ImageFont.truetype(str(font), 28, index=face)
+    glyph_font = _truetype(font, 28, index=face)
     tofu = glyph_font.getmask('\U0010ffff')
     missing = (tofu.size, bytes(tofu))
     for char in set(title + subtitle + ''.join(actor['label'] for actor in cast)):

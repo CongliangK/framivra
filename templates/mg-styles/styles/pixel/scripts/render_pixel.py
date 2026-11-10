@@ -31,6 +31,45 @@ def _text(value, name):
     return value
 
 
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
+
+_VF_DEFAULT_WEIGHTS={
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'):'Bold',
+    Path('/usr/share/fonts/google-noto-serif-cjk-vf-fonts/NotoSerifCJK-VF.ttc'):'Regular',
+}
+class _DefaultFont(str):
+    """Default-resolved font path carrying its VF weight; explicit paths stay plain."""
+    __slots__=('default_weight','_path')
+    def __new__(cls,path,weight):
+        self=super().__new__(cls,str(path))
+        self._path=Path(path)
+        self.default_weight=weight
+        return self
+    @property
+    def name(self):return self._path.name
+    def is_file(self):return self._path.is_file()
+    def exists(self):return self._path.exists()
+    def read_bytes(self):return self._path.read_bytes()
+
+def _wrap_default(path):
+    return _DefaultFont(path,_VF_DEFAULT_WEIGHTS.get(Path(path)))
+
+
+
+def _truetype(path,size,index=0):
+    from PIL import ImageFont
+    font=ImageFont.truetype(str(path),size,index=index)
+    weight=getattr(path,'default_weight',None)
+    if weight:
+        try:font.set_variation_by_name(weight)
+        except Exception as exc:
+            raise ValueError('default variable font %s requires the %r instance for this template style; install a static Noto CJK font or pass an explicit font_path (variation error: %s)'%(path,weight,exc)) from exc
+    return font
+
 def _prepare(data, frames, font_path):
     from PIL import ImageFont
     _integer(frames, 'frames', 2, 18000)
@@ -62,13 +101,13 @@ def _prepare(data, frames, font_path):
             or any(not isinstance(x, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', x) for x in palette)):
         raise ValueError('palette must contain four #RRGGBB colours')
     seed = _integer(data.get('seed', 1), 'seed', -2147483648, 2147483647)
-    path = Path(font_path) if font_path else Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
-    if not path.is_file():
+    path = Path(font_path) if font_path else next((_wrap_default(candidate) for candidate in _DEFAULT_CJK_FONTS if candidate.is_file()), None)
+    if path is None or not path.is_file():
         raise ValueError('provide a separately licensed local CJK font_path')
-    # Noto TTC index 2 is SC; externally supplied single fonts use their default face.
-    face = 2 if path.name == 'NotoSansCJK-Bold.ttc' else 0
+    # Noto TTC index 2 is SC (static and VF collections alike); single fonts use their default face.
+    face = 2 if path.name in ('NotoSansCJK-Bold.ttc', 'NotoSansCJK-VF.ttc') else 0
     return {'mission': mission, 'steps': steps, 'reward': reward, 'palette': palette,
-            'seed': seed, 'font': ImageFont.truetype(str(path), 12, index=face),
+            'seed': seed, 'font': _truetype(path, 12, index=face),
             'font_path': path, 'frames': frames}
 
 

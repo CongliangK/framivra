@@ -9,6 +9,7 @@ import { runInNewContext } from 'node:vm'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { fixture } from './manual-env.mjs'
+import { importDsh } from './dsh-public-sdk.mjs'
 import { parseJSON, stringifyJSON } from '../src/json.mjs'
 export { skip } from './manual-env.mjs'
 const require = createRequire(import.meta.url)
@@ -18,10 +19,9 @@ export async function selectionEnvironment(t, kind) {
   await mkdir(evidence, { recursive: true })
   const dir = await mkdtemp(join(evidence, `selection-${kind}-`)), path = join(dir, 'timeline.json')
   const root = process.env.SIDEBAR_DSH_ROOT
-  const imp = name => import(pathToFileURL(join(root, name)))
-  const { Context } = await imp('vendor/cordis/lib/index.js')
-  const { LocalSubprocessRuntime } = await imp('packages/subprocess/subprocess-local/lib/index.js')
-  const { LocalFileSystem } = await imp('packages/fs/fs-local/lib/index.js')
+  const { Context } = await importDsh(root, 'cordis')
+  const { LocalSubprocessRuntime } = await importDsh(root, 'subprocessLocal')
+  const { LocalFileSystem } = await importDsh(root, 'fsLocal')
   const ctx = new Context(), sf = ctx.plugin(LocalSubprocessRuntime), ff = ctx.plugin(LocalFileSystem, { cwd: dir })
   await sf.await(); await ff.await()
   const runtime = ctx.get('subprocess'), children = [], specs = [], wire = []

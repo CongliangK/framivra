@@ -19,6 +19,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, writeFile, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { dshEntryShape, resolveDshEntry } from './dsh-public-sdk.mjs'
 
 const root = process.env.SIDEBAR_DSH_ROOT
 const vtx = process.env.SIDEBAR_REAL_VTX
@@ -131,9 +132,21 @@ function mockLlmSource(dshLlmUrl) {
 test('real Loader composition: deterministic model turns drive the native timeline tools end to end', { skip, timeout: 420_000 }, async t => {
   // DSH-worktree imports resolve inside the test body so the module itself
   // loads (and skips) without SIDEBAR_DSH_ROOT.
-  const dshLib = rel => pathToFileURL(join(root, rel)).href
-  const { bootProductionProfile } = await import(dshLib('packages/test-support/loader-smoke/tests/fixtures/production-profile.ts'))
-  const { runFixtureTurn } = await import(dshLib('packages/test-support/loader-smoke/src/agent-turn.ts'))
+  // DSH-worktree imports resolve inside the test body so the module itself
+  // loads (and skips) without SIDEBAR_DSH_ROOT. A source checkout keeps the
+  // original test-support fixture; the official npm distribution (which does
+  // not ship test-support) boots the same composition through the thin
+  // public-API harness with the npm package.json as install anchor. Same
+  // profile, overlays, assertions, and turn semantics either way.
+  let bootProductionProfile, runFixtureTurn, harnessAnchor = null
+  if (dshEntryShape(root) === 'monorepo') {
+    const dshLib = rel => pathToFileURL(join(root, rel)).href
+    ;({ bootProductionProfile } = await import(dshLib('packages/test-support/loader-smoke/tests/fixtures/production-profile.ts')))
+    ;({ runFixtureTurn } = await import(dshLib('packages/test-support/loader-smoke/src/agent-turn.ts')))
+  } else {
+    ;({ bootProductionProfile, runFixtureTurn } = await import('./dsh-profile-harness.mjs'))
+    harnessAnchor = join(root, 'package.json')
+  }
 
   const evidence = await mkdtemp(join(evidenceRoot, 'profile-agent-'))
   const workspace = join(evidence, 'workspace')
@@ -142,7 +155,7 @@ test('real Loader composition: deterministic model turns drive the native timeli
   await mkdir(join(evidence, 'dsh-home'), { recursive: true })
   await mkdir(join(evidence, 'agents-home'), { recursive: true })
   await writeFile(timelinePath, legacyDocumentText())
-  await writeFile(join(evidence, 'mock-llm.mjs'), mockLlmSource(dshLib('packages/llm/llm/lib/index.js')))
+  await writeFile(join(evidence, 'mock-llm.mjs'), mockLlmSource(pathToFileURL(resolveDshEntry(root, 'llm')).href))
   const contextLog = join(evidence, 'model-context.jsonl')
   await writeFile(contextLog, '')
 
@@ -196,12 +209,19 @@ test('real Loader composition: deterministic model turns drive the native timeli
     '',
   ].join('\n'))
 
-  const ctx = await bootProductionProfile({
-    binName: 'framivra-profile-agent',
-    profile: 'headless',
-    overlayPaths: [overlay],
-    prepare(context) { context.provide('connection', connection) },
-  })
+  const ctx = await (harnessAnchor
+    ? bootProductionProfile({
+        binName: 'framivra-profile-agent',
+        profile: 'headless',
+        overlayPaths: [overlay],
+        prepare(context) { context.provide('connection', connection) },
+      }, harnessAnchor, root)
+    : bootProductionProfile({
+        binName: 'framivra-profile-agent',
+        profile: 'headless',
+        overlayPaths: [overlay],
+        prepare(context) { context.provide('connection', connection) },
+      }))
   // Single-dispose guard: the flow below disposes on success; t.after is the
   // failure-path net. Both share the flag, so a dispose error is never
   // swallowed as a harmless second failure.
@@ -249,7 +269,7 @@ test('real Loader composition: deterministic model turns drive the native timeli
   // Turn one: real agent turn; the model reads, then proposes (zero write).
   const events = []
   const remember = (_sid, event) => { events.push(event) }
-  const first = await runFixtureTurn(ctx, { task: 'TURN-ONE inspect the timeline and propose the resize', onEvent: remember })
+  const first = await runFixtureTurn(ctx, { task: 'TURN-ONE inspect the timeline and propose the resize', onEvent: remember }, harnessAnchor ? root : undefined)
   t.diagnostic(`turn one output: ${first.output}`)
   const proposalMatch = /^PROPOSAL ([0-9a-f-]+) ([0-9a-f-]+)$/.exec(first.output ?? '')
   assert.ok(proposalMatch, `turn one must report the parked proposal, got: ${first.output}`)
@@ -272,7 +292,7 @@ test('real Loader composition: deterministic model turns drive the native timeli
   assert.equal(disk._vtx.head, modelOpId, 'kernel head is the confirmed op id')
 
   // Turn two: same session, real context; the model asks for status itself.
-  const second = await runFixtureTurn(ctx, { task: 'TURN-TWO check what the user confirmed', onEvent: remember })
+  const second = await runFixtureTurn(ctx, { task: 'TURN-TWO check what the user confirmed', onEvent: remember }, harnessAnchor ? root : undefined)
   t.diagnostic(`turn two output: ${second.output}`)
   assert.match(second.output ?? '', /^STATUS applied [0-9a-f-]+$/)
   const statusOpId = /^STATUS applied ([0-9a-f-]+)$/.exec(second.output)[1]

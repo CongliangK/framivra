@@ -142,13 +142,13 @@ CEF 负例仅在同一 worker、同一路径的 libcef.so 追加不参与装载�
 ## 阶段回执（PR#1）
 
 QC 的段免检记录另绑定 `vtx/inspection/qc.py` 中 `_QC_GRAY_FILTER` 的精确采样表达式。
-记录 schema 为 v4：视频探针显式选择首个视频流，原生 alpha 底轨使用黑画布合成基准；
+记录 schema 为 v5：继承 v4 的首个视频流选择与原生 alpha 黑画布合成基准，
+并显式在 YUV→YUV 缩放时展开满幅，再直接取 Y 面，避免 FFmpeg 8 的 YUV→gray 范围/舍入漂移。
 gfx 源 alpha 内容 bbox 仍按合成器实际尺寸投影，再平移、裁至画布，
-不是 Lanczos 后重新阈值测得的 bbox。当前读取器拒绝 v1/v2/v3（即使 filter 相同），
-旧读取器也拒绝 v4，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
-实测后刷新；不删除媒体、
-重编码或放宽阈值。当前表达式保留 bicubic 并开启准确舍入，避免已观察到的
-FFmpeg 7.1.5 x86_64 黑场缩小偏差；源片、成片与 `qc_clean` 共用该探针。
+不是 Lanczos 后重新阈值测得的 bbox。当前读取器拒绝 v1/v2/v3/v4（即使 filter 相同），
+旧读取器也拒绝 v5，因此升级和回退均重测段像素探针。缺少或不匹配 `probe_filter` 的记录不免检，下一次 QC
+实测后刷新；不删除媒体、重编码或放宽阈值。当前表达式保留 bicubic 与准确舍入，
+不新增 libzimg 依赖；源片、成片与 `qc_clean` 共用该探针。
 `--strict` 禁用段像素免检，响度仍可能复用回执缓存。此身份不包含完整 FFmpeg/CPU 环境，环境升级不构成跨版本
 像素保证；重测段像素使用 strict，独立响度/TP 需另直接解码测量。黑场、近黑、声明范围与泄漏的 CPU 回归见
 `tests/qc/test_qc_sampling.py`；这不是整片内容或任意小区域泄漏的保证。

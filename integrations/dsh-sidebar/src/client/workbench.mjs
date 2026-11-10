@@ -151,17 +151,57 @@ ${iconControlCSS}
 `
 export function WorkbenchStyles() { return h('style', null, workbenchCSS) }
 
+/** Guidance shown when the RUNNING host predates the browse/hello ops: an
+ *  unknown op reaches the host's grant gate before BAD_OPERATION, so the
+ *  client would otherwise see a misleading BAD_GRANT authorization error. */
+const HOST_TOO_OLD = 'HOST_TOO_OLD: 正在运行的宿主插件缺少文件浏览能力（宿主可能未随插件更新重启）。请刷新页面；若仍失败，请重启 DSH 宿主后重试。'
+
+/**
+ * Deterministic identity of THIS client bundle, baked by scripts/build.mjs
+ * (define) and identical to the host stamp of the artifact it shipped with.
+ * Null when the source is executed unbundled (unit tests) — then build
+ * comparison is skipped rather than guessed. Test-only override below.
+ */
+export const CLIENT_BUILD_STAMP = typeof __FRAMIVRA_CLIENT_STAMP__ === 'string' ? __FRAMIVRA_CLIENT_STAMP__ : null
+let clientBuildStampOverride
+export function setClientBuildStampForTests(stamp) { clientBuildStampOverride = stamp }
+export function effectiveClientBuildStamp() { return clientBuildStampOverride !== undefined ? clientBuildStampOverride : CLIENT_BUILD_STAMP }
+
+/** Deterministic host/client build verdict with refresh guidance.
+ *  Called ONLY when this client carries a build stamp (a real bundle): a
+ *  matching stamp passes; a different reported stamp is HOST_BUILD_MISMATCH;
+ *  a MISSING or non-string host build is HOST_BUILD_UNVERIFIED — the running
+ *  host predates build reporting, so this client cannot know its feature set
+ *  and must fail closed rather than guess "probably fine". Unstamped clients
+ *  (unbundled source runs, old bundles) never block: null. */
+export function buildMismatchMessage(hostBuild) {
+  const clientStamp = effectiveClientBuildStamp()
+  if (!clientStamp) return null
+  if (typeof hostBuild === 'string' && hostBuild.trim() !== '') {
+    if (hostBuild === clientStamp) return null
+    return `HOST_BUILD_MISMATCH: 宿主插件与页面客户端构建不一致（host ${hostBuild.slice(0, 20)} / client ${clientStamp.slice(0, 20)}）。请刷新页面；若仍失败，请重启 DSH 宿主后重试。`
+  }
+  return `HOST_BUILD_UNVERIFIED: 运行中的宿主未上报构建身份（宿主插件早于本客户端构建，或未随插件更新重启）。请刷新页面；若仍失败，请重启 DSH 宿主后重试。`
+}
+
 /** A Host-bound file picker, not a browser upload or a second timeline parser. */
-export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath, onClose }) {
+export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath, onClose, recalibrate = 0, hostOps }) {
   const [state, setState] = useState({ path: '', phase: 'loading', entries: [] })
   const [search, setSearch] = useState('')
   const request = useRef()
+  const pathRef = useRef('')
+  const stateRef = useRef(state)
+  stateRef.current = state
+  // The open response carries the host protocol ops; if the running host is
+  // KNOWN (via handshake identity) to lack browse, fail fast without a call.
+  const legacyHost = Array.isArray(hostOps) && !hostOps.includes('browse')
   async function browse(path, preserveSearch = false) {
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
     const signal = AbortSignal.any([controller.signal, tabSignal])
     if (!preserveSearch) setSearch('')
+    pathRef.current = path
     setState(previous => ({ ...previous, path, phase: 'loading', message: undefined }))
     try {
       const result = await call(sessionId, { op: 'browse', path }, signal)
@@ -172,10 +212,44 @@ export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath
       }
       setState({ ...result, phase: 'ready' })
     } catch (error) {
-      if (!signal.aborted) setState(previous => ({ ...previous, phase: 'failed', entries: [], message: error.message }))
+      if (!signal.aborted) {
+        let message = error?.message ?? String(error)
+        if (/^BAD_GRANT/.test(message)) {
+          // browse is grant-free in every host build that knows the op; a
+          // BAD_GRANT here means the RUNNING host predates it. Verify with the
+          // grant-free hello handshake so the verdict is checkable, then guide
+          // the user instead of misreporting an authorization failure.
+          try {
+            const hello = await call(sessionId, { op: 'hello' }, signal)
+            const mismatch = buildMismatchMessage(hello?.host?.build)
+            message = mismatch ?? 'BAD_GRANT: 宿主拒绝了浏览请求，请刷新页面后重试。'
+          } catch (helloError) {
+            if (/^BAD_GRANT/.test(helloError?.message ?? '')) message = HOST_TOO_OLD
+          }
+        }
+        setState(previous => ({ ...previous, phase: 'failed', entries: [], message }))
+      }
     }
   }
-  useEffect(() => { void browse(''); return () => request.current?.abort() }, [sessionId, tabSignal])
+  useEffect(() => {
+    if (legacyHost) {
+      setState(previous => ({ ...previous, phase: 'failed', entries: [], message: HOST_TOO_OLD }))
+      return
+    }
+    void browse('')
+    return () => request.current?.abort()
+  }, [sessionId, tabSignal, legacyHost])
+  // Recalibration after a successful project open: retry a failed listing at
+  // its current folder (real errors resurface — never swallowed), and clear a
+  // lingering failure banner otherwise. A healthy listing issues no new IO.
+  const lastRecalibrate = useRef()
+  useEffect(() => {
+    if (lastRecalibrate.current === recalibrate) return
+    lastRecalibrate.current = recalibrate
+    if (!recalibrate || legacyHost) return
+    if (stateRef.current.phase === 'failed') void browse(pathRef.current, true)
+    else setState(previous => (previous.message ? { ...previous, message: undefined } : previous))
+  }, [recalibrate])
   const entries = state.entries.filter(entry => entry.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
   const parent = state.path.split('/').slice(0, -1).join('/')
   return h('aside', { className: 'fv-files', 'aria-label': '工作区文件选择器' },

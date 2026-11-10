@@ -1,5 +1,5 @@
 """Implicit-surface topology and actual PNG tests for the liquid template."""
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 from pathlib import Path
 import tempfile
 import shutil
@@ -124,8 +124,8 @@ class LiquidTemplate(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,'font lacks required glyph'):
                         liquid.render_liquid_frames(data,120,output)
                     self.assertFalse(output.exists())
-        dejavu=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
-        if dejavu.is_file():
+        dejavu=find_font(*LATIN_FONT_CANDIDATES)
+        if dejavu is not None:
             with tempfile.TemporaryDirectory() as temp:
                 renamed=Path(temp)/'custom-font.ttf'
                 shutil.copyfile(dejavu,renamed)
@@ -150,8 +150,8 @@ class LiquidTemplate(unittest.TestCase):
         for stage in maximum['stages']:stage['amount']=1.25
         # At the largest supported amount, the contour stays below the subtitle band.
         self.assertGreaterEqual(liquid.liquid_mask(maximum,119,120).getbbox()[1]*4,250)
-        dejavu=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
-        if dejavu.is_file():
+        dejavu=find_font(*LATIN_FONT_CANDIDATES)
+        if dejavu is not None:
             with self.assertRaises(ValueError):liquid.validate_liquid_content(second_content(),144,dejavu)
         overflowing=second_content()
         overflowing['stages'][-1]['label']='满'*80

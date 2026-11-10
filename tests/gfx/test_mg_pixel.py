@@ -1,6 +1,6 @@
 """Real Pillow pixels for the quest path; these do not certify a finished film."""
 import copy
-from tests.gfx._mg import load_renderer
+from tests.gfx._mg import CJK_FONT_CANDIDATES, LATIN_FONT_CANDIDATES, load_renderer, find_font
 import json
 from pathlib import Path
 import tempfile
@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 PIXEL = load_renderer('mg_pixel', ROOT / 'templates/mg-styles/styles/pixel/scripts/render_pixel.py')
-FONT = Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
+FONT = find_font(*CJK_FONT_CANDIDATES) or CJK_FONT_CANDIDATES[0]
 try:
     from PIL import Image, ImageChops
 except ImportError:

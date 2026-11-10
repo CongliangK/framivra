@@ -1,12 +1,48 @@
 /** Host-only orchestration through public DSH filesystem/process capabilities. */
-import { randomUUID } from 'node:crypto'
-import { dirname, isAbsolute } from 'node:path'
-import { PreviewError, TimelineReader, fail } from './protocol.mjs'
+import { createHash, randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { PreviewError, TimelineReader, fail, HOST_IDENTITY, createRequestLogger, BAKED_BUILD_STAMP, BUILD_STAMP_MARKER, HOST_LIB_MODULES, CLIENT_MODULES, composeBuildStamp } from './protocol.mjs'
 import { mediaResponse } from './media.mjs'
 import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIMIT } from './bounded.mjs'
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 import { createTimelineAgent } from './agent.mjs'
-import { ConfigurationError } from './configuration.mjs'
+import { ConfigurationError, readLogMaxPerMinute } from './configuration.mjs'
+
+/**
+ * Deterministic build stamp over the module list in protocol.mjs: per-file
+ * sha256 digests joined with '\n', re-hashed, first 16 hex, 'src:'-prefixed.
+ * Shared verbatim with scripts/build.mjs (which injects the same value into
+ * the client bundle through its define) — keep the two in lockstep.
+ */
+export function computeSourceStampFromDir(dir) {
+  const digests = []
+  for (const name of HOST_LIB_MODULES) digests.push(createHash('sha256').update(readFileSync(join(dir, `${name}.mjs`))).digest('hex'))
+  for (const name of CLIENT_MODULES) digests.push(createHash('sha256').update(readFileSync(join(dir, 'client', `${name}.mjs`))).digest('hex'))
+  return composeBuildStamp('src:', createHash('sha256').update(digests.join('\n')).digest('hex'))
+}
+
+/**
+ * Build identity of THIS running host code, FROZEN at module load — never
+ * recomputed, never re-read from disk. Packaged builds: package.mjs baked the
+ * artifact hash into the BAKED_BUILD_STAMP literal (substituted before this
+ * module ever ships, so the marker branch is dead there). Source/dev runs:
+ * the source tree is hashed once, synchronously, while this module loads.
+ * A host process therefore always reports the identity of the code it
+ * actually loaded, even if the files on disk are replaced underneath it —
+ * exactly the property that lets a newer client detect a stale running host
+ * deterministically instead of guessing from version strings.
+ */
+const BUILD_STAMP = BAKED_BUILD_STAMP !== BUILD_STAMP_MARKER
+  ? composeBuildStamp('pkg:', BAKED_BUILD_STAMP)
+  : computeSourceStampFromDir(dirname(fileURLToPath(import.meta.url)))
+export function resolveBuildStamp() { return BUILD_STAMP }
+
+/** Identity reported in hello/open; build is the frozen per-process stamp. */
+function hostIdentity() {
+  return { ...HOST_IDENTITY, build: BUILD_STAMP }
+}
 
 const MEDIA = ['out/final.mp4', 'out/draft_final.mp4']
 export function relativeTimeline(path) {
@@ -37,6 +73,16 @@ export function createPreviewHost(ctx, config = {}) {
   let semanticAdmission = 0
   const clock = config.clock ?? Date.now
   const ttlMs = 30 * 60 * 1000
+  // Sanitized, rate-bounded diagnostics: config.logger(level, line) injectable
+  // for tests; logMaxPerMinute comes from the validated configuration schema
+  // (single home: configuration.mjs readLogMaxPerMinute — bounds enforced even
+  // for directly constructed config objects that bypass the schema). The cap
+  // is re-read per logged line so VOLATILE live changes take effect without a
+  // host restart and without resetting the current minute's counters; a read
+  // error skips the line, never the business failure. Never receives bodies.
+  // Logging limits deliberately do NOT join the grant fingerprint: changing
+  // them must not invalidate open previews.
+  const requestLog = config.requestLogger ?? createRequestLogger({ sink: config.logger, maxPerMinute: () => readLogMaxPerMinute(config) })
 
   /** Current live configuration snapshot; CONFIG_INVALID is fail-closed (502). */
   function snapshotConfig() {
@@ -240,7 +286,7 @@ export function createPreviewHost(ctx, config = {}) {
         capabilities, storeCapabilities })
     } finally { hold.release() }
   }
-  async function control(request) {
+  async function control(request, note = {}) {
     const hold = lease(request)
     try {
       let raw
@@ -249,7 +295,16 @@ export function createPreviewHost(ctx, config = {}) {
       hold.signal.throwIfAborted() // An aborted body read must surface as CANCELLED, never as a JSON parse error.
       const data = parseJSON(raw)
       if (!data || typeof data !== 'object' || Array.isArray(data)) fail('BAD_REQUEST', 'Expected a JSON object')
+      if (typeof data.op === 'string') note.op = data.op
       const session = sessionFor(data.sessionId)
+      if (data.op === 'hello') {
+        // Grant-free protocol/build handshake. A NEWER client probes this first
+        // so an OLD running host (no hello → BAD_GRANT at the grant gate) can be
+        // reported as "host too old, refresh/restart" instead of a misleading
+        // authorization failure. Dispatch order elsewhere is unchanged: unknown
+        // ops without a grant still fail BAD_GRANT exactly as before.
+        return json({ ok: true, schema: 'framivra.handshake/v1', host: hostIdentity() })
+      }
       if (data.op === 'open') {
         // The grant id is minted BEFORE any probe so every open child is owned
         // by this id from birth; teardown (close/cancel) reaps by the same id.
@@ -286,7 +341,7 @@ export function createPreviewHost(ctx, config = {}) {
         expire()
         if (grants.size >= 32) fail('GRANT_LIMIT', 'Close an existing preview before opening another', 429)
         grants.set(grantId, { id: grantId, session, cwd, root, relative, timeline, project, projectPath, executable, executableTarget, executableVersion, capabilities, media, contentVersion: snapshot.content_version, expiresAt: clock() + ttlMs, configFingerprint: config.fingerprint, configSnapshot: config })
-        return json({ grant: grantId, snapshot, capabilities, expires_in_ms: ttlMs,
+        return json({ grant: grantId, snapshot, capabilities, expires_in_ms: ttlMs, host: hostIdentity(),
           media: [...media].map(([mediaId, item]) => ({ mediaId, label: item.path, provenance: 'unknown', warning: 'Existing output; correspondence to this timeline content_version is NOT verified' })) })
         } catch (error) {
           // A failed open must not strand probe children: one scoped reap retry
@@ -458,7 +513,7 @@ export function createPreviewHost(ctx, config = {}) {
       throw error
     } finally { clearInterval(monitor); grant.running = undefined; settled() }
   }
-  async function frame(request) {
+  async function frame(request, note = {}) {
     if (request.method !== 'POST') fail('METHOD_NOT_ALLOWED', 'Frame is POST-only', 405)
     const hold = lease(request)
     let grant, controller, settled, monitor, expiry
@@ -468,6 +523,7 @@ export function createPreviewHost(ctx, config = {}) {
       catch (error) { if (error.message?.startsWith('BODY_LIMIT:')) fail('REQUEST_TOO_LARGE', error.message, 413); throw error }
       const data = parseJSON(text)
       if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['op', 'sessionId', 'grant', 'frame', 'contentVersion', 'renderConsent', 'operationId'].includes(key))) fail('BAD_FRAME', 'Only the bounded frame operation fields are accepted')
+      if (typeof data.op === 'string') note.op = data.op
       grant = grantFor(data.sessionId, data.grant, data.op === 'cancel')
       if (data.op === 'cancel') {
         grant.frame?.abort()
@@ -560,7 +616,11 @@ export function createPreviewHost(ctx, config = {}) {
   function safe(handler) {
     return request => {
       const operation = (async () => {
-        try { return await handler(request) } catch (error) {
+        // note.op is set by the handler after body parsing; the sanitized
+        // failure line below then names the op without ever logging the body.
+        const note = { op: handler.name === 'control' || handler.name === 'frame' ? undefined : handler.name }
+        const startedAt = clock()
+        try { return await handler(request, note) } catch (error) {
           if (error instanceof LosslessJSONError) return json({ ok: false, error: 'LOSSLESS_JSON_UNSUPPORTED', message: error.message }, 502)
           const aborted = request.signal.aborted || lifecycle.signal.aborted || error?.name === 'AbortError' || error?.name === 'TimeoutError'
           if (!(error instanceof PreviewError) && !aborted) {
@@ -571,6 +631,19 @@ export function createPreviewHost(ctx, config = {}) {
               const stack = typeof error?.stack === 'string' ? error.stack : `Non-Error rejection (${typeof error})`
               console.error(`[framivra-dsh-sidebar] Unexpected ${handler.name} failure:\n${stack.slice(0, 8192)}${stack.length > 8192 ? '\n[stack truncated]' : ''}`)
             } catch { /* A failed diagnostic sink must not replace this failure. */ }
+          }
+          if (!aborted) {
+            // Bounded, redacted one-line record for EVERY failure — including
+            // ordinary business rejections (PreviewError), which previously
+            // left no trace. Tokens only; rate-capped; injectable sink.
+            requestLog.failure({
+              route: handler.name,
+              op: note.op,
+              code: error instanceof PreviewError ? error.code : 'PREVIEW_FAILED',
+              status: error instanceof PreviewError ? error.status : 500,
+              durationMs: Math.max(0, clock() - startedAt),
+              kind: error instanceof PreviewError ? 'rejected' : 'unexpected',
+            })
           }
           return json({ ok: false, error: error instanceof PreviewError ? error.code : aborted ? 'CANCELLED' : 'PREVIEW_FAILED',
             message: error instanceof PreviewError ? error.message : aborted ? 'Preview cancelled' : 'Preview read failed',

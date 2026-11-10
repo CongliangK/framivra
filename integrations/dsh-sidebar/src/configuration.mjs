@@ -7,6 +7,11 @@
 
 export const DEFAULT_VTX_EXECUTABLE = 'vtx'
 export const DEFAULT_TRUSTED_PATH = '/usr/local/bin:/usr/bin:/bin'
+/** Sanitized-diagnostics rate cap: inclusive bounds for the Host config field.
+ *  The ceiling keeps an operator typo or a hostile profile value from turning
+ *  the "bounded" logger into an unbounded firehose; 0 legitimately silences. */
+export const DEFAULT_LOG_MAX_PER_MINUTE = 120
+export const MAX_LOG_MAX_PER_MINUTE = 1000
 
 /** Absolute executable spellings the Host contract accepts; the single pattern
  *  home — src/index.mjs Config references these exact RegExp objects. */
@@ -65,6 +70,24 @@ export function isVolatileConfig(source) {
     const field = source?.[key]
     return field !== undefined && field !== null && ((typeof field === 'object' || typeof field === 'function') && typeof field.get === 'function')
   })
+}
+
+/**
+ * Read and validate the sanitized-logging rate cap from the plugin config.
+ * Same field-reading rules as readConfiguration (plain value or Volatile
+ * cell), but deliberately kept OUT of that snapshot: the logging cap is not
+ * part of the grant fingerprint, so adjusting it never invalidates open
+ * previews. undefined → default; anything but a safe integer within
+ * [0, MAX_LOG_MAX_PER_MINUTE] throws CONFIG_INVALID, so no configuration
+ * path (schema-typed or directly constructed) can bypass the bound.
+ */
+export function readLogMaxPerMinute(source) {
+  const value = readField(source?.logMaxPerMinute)
+  if (value === undefined) return DEFAULT_LOG_MAX_PER_MINUTE
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_LOG_MAX_PER_MINUTE) {
+    throw new ConfigurationError(`logMaxPerMinute must be an integer between 0 and ${MAX_LOG_MAX_PER_MINUTE}`)
+  }
+  return value
 }
 
 /**

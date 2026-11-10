@@ -108,7 +108,7 @@ def _motion_bounds(prepared,module,before,after,axis):
 def _fit(text,font_path,face,size,width,lines,minimum=24):
     from PIL import ImageFont
     for pixels in range(size,minimum-1,-2):
-        font=ImageFont.truetype(str(font_path),pixels,index=face)
+        font=_truetype(font_path,pixels,index=face)
         result=['']
         for char in text:
             if char=='\n' or (result[-1] and font.getlength(result[-1]+char)>width): result.append('')
@@ -116,6 +116,45 @@ def _fit(text,font_path,face,size,width,lines,minimum=24):
         if len(result)<=lines:return font,result
     raise ValueError('text cannot fit its fixed typography region; shorten it')
 
+
+_DEFAULT_CJK_FONTS=(
+    Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc'),
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'),
+)
+
+_VF_DEFAULT_WEIGHTS={
+    Path('/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc'):'Bold',
+    Path('/usr/share/fonts/google-noto-serif-cjk-vf-fonts/NotoSerifCJK-VF.ttc'):'Regular',
+}
+class _DefaultFont(str):
+    """Default-resolved font path carrying its VF weight; explicit paths stay plain."""
+    __slots__=('default_weight','_path')
+    def __new__(cls,path,weight):
+        self=super().__new__(cls,str(path))
+        self._path=Path(path)
+        self.default_weight=weight
+        return self
+    @property
+    def name(self):return self._path.name
+    def is_file(self):return self._path.is_file()
+    def exists(self):return self._path.exists()
+    def read_bytes(self):return self._path.read_bytes()
+
+def _wrap_default(path):
+    return _DefaultFont(path,_VF_DEFAULT_WEIGHTS.get(Path(path)))
+
+
+
+def _truetype(path,size,index=0):
+    from PIL import ImageFont
+    font=ImageFont.truetype(str(path),size,index=index)
+    weight=getattr(path,'default_weight',None)
+    if weight:
+        try:font.set_variation_by_name(weight)
+        except Exception as exc:
+            raise ValueError('default variable font %s requires the %r instance for this template style; install a static Noto CJK font or pass an explicit font_path (variation error: %s)'%(path,weight,exc)) from exc
+    return font
 
 def _prepare(data,frames,font_path=None):
     _int(frames,'frames',30,18000)
@@ -186,11 +225,11 @@ def _prepare(data,frames,font_path=None):
             bounds=_motion_bounds(prepared,module,before[module['id']],after[module['id']],axis)
             if bounds[0]<ARENA[0]+2 or bounds[1]<ARENA[1]+2 or bounds[2]>ARENA[2]-2 or bounds[3]>ARENA[3]-2:raise ValueError('rotation trajectory leaves protected composition area: '+module['id']+' / '+beat['target']+' / '+str(bounds))
         before=after
-    requested_font=font_path or data.get('font_path') or '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc'
-    if not isinstance(requested_font,(str,Path)):raise ValueError('font_path must be a local path')
-    font=Path(requested_font)
-    if not font.is_file():raise ValueError('provide a separately licensed local covering font')
-    face=2 if font.name=='NotoSansCJK-Bold.ttc' else 0
+    requested_font=font_path or data.get('font_path') or next((_wrap_default(candidate) for candidate in _DEFAULT_CJK_FONTS if candidate.is_file()),None)
+    if requested_font is not None and not isinstance(requested_font,(str,Path)):raise ValueError('font_path must be a local path')
+    font=requested_font if isinstance(requested_font,_DefaultFont) else (Path(requested_font) if requested_font else None)
+    if font is None or not font.is_file():raise ValueError('provide a separately licensed local covering font')
+    face=2 if font.name in ('NotoSansCJK-Bold.ttc','NotoSansCJK-VF.ttc') else 0
     title_font,title_lines=_fit(title,font,face,72,1680,2,48)
     subtitle_font,subtitle_lines=_fit(subtitle,font,face,28,1680,1)
     labels=[_fit(beat['label'],font,face,40,1680,1) for beat in beats]

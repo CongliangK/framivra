@@ -41,17 +41,17 @@ class SamplingCacheContract(unittest.TestCase):
                 self.assertEqual(code, 0)
                 path = c.cache / qc._QC_SEG_RECORD
                 current = json.loads(path.read_text())
-                self.assertEqual(current['version'], 4)
+                self.assertEqual(current['version'], 5)
                 self.assertEqual(current['probe_filter'], qc._QC_GRAY_FILTER)
                 # Previous readers require their exact version before any reuse.
-                self.assertNotEqual(current['version'], 1)
-                self.assertNotEqual(current['version'], 2)
-                self.assertNotEqual(current['version'], 3)
+                for previous in (1, 2, 3, 4):
+                    self.assertNotEqual(current['version'], previous)
                 for version, value in ((1, None), (1, qc._QC_GRAY_FILTER),
                         (2, None), (2, 'scale=48:27,format=gray'),
                         (2, 'other-filter'), (2, qc._QC_GRAY_FILTER),
                         (3, None), (3, 'other-filter'), (3, qc._QC_GRAY_FILTER),
-                        (4, None), (4, 'other-filter'), (5, qc._QC_GRAY_FILTER)):
+                        (4, None), (4, 'other-filter'), (4, qc._QC_GRAY_FILTER),
+                        (5, None), (5, 'other-filter'), (6, qc._QC_GRAY_FILTER)):
                     old = dict(current, version=version)
                     if value is None:
                         old.pop('probe_filter')
@@ -143,6 +143,44 @@ class SamplingMediaContract(unittest.TestCase):
                         self.assertEqual(_sample(self.c, video,
                             f'crop={w}:{h},scale=1920:1080:flags=lanczos,crop=960:540:240:120'),
                             bytes(48 * 27))
+
+    def test_mixed_pattern_truth_and_untagged_range_defaults_to_limited(self):
+        # Non-constant truth: left 3/4 limited black, right 1/4 limited white.
+        # Interior probes must land exactly on 0/255 and the transition must
+        # stay at the geometric boundary — no sub-pixel drift from the
+        # format=yuv420p front (chroma site / matrix cannot move luma edges).
+        w, h = 1920, 1080
+        self.serial += 1
+        split = w * 3 // 4
+        lum = b''.join(bytes([16]) * split + bytes([235]) * (w - split)
+                       for _ in range(h))
+        raw = lum + bytes([128]) * (w * h // 4) * 2
+        source = self.root / f'{self.serial}.yuv'; source.write_bytes(raw)
+        tagged = self.root / f'{self.serial}.mp4'
+        for target, args in ((tagged, ['-color_range', 'tv']),
+                             (self.root/'untagged.mp4', [])):
+            # The untagged encode carries no range on either side; its samples
+            # must still resolve via in_range=auto to the limited mapping.
+            common = ['-f', 'rawvideo', '-pixel_format', 'yuv420p',
+                      '-video_size', f'{w}x{h}', '-framerate', '30']
+            if args:
+                common += args
+            self.command(['ffmpeg', '-v', 'error', *common,
+                          '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
+                          '-i', source, '-frames:v', '1', '-c:v', 'libx264', '-threads', '1',
+                          '-preset', 'ultrafast', '-crf', '0',
+                          '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
+                          *args, target])
+        sample = _sample(self.c, tagged)
+        self.assertEqual(len(sample), 48 * 27)
+        rows = [sample[i*48:(i+1)*48] for i in range(27)]
+        for row in rows:
+            self.assertEqual(set(row[:32]), {0}, row[:32])
+            self.assertEqual(set(row[40:]), {255}, row[40:])
+        for a, b in zip(rows, rows[1:]):
+            self.assertEqual(a[32:40], b[32:40])
+        # An untagged stream resolves in_range=auto to limited, same samples.
+        self.assertEqual(_sample(self.c, self.root/'untagged.mp4'), sample)
 
     def test_central_edge_and_colored_leaks_remain_visible(self):
         w, h = 1920, 1080
