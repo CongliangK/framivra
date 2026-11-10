@@ -57,7 +57,7 @@ export function compileIntent(op, v, { result, blocks, track, frame, makeId = id
   }
 }
 
-export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady, onEditState, onQuickReady }) {
+export function ManualEditor({ sessionId, opened, result, selection, selected, frame, tabSignal, call, onCommitted, onGestureReady, onEditState, onQuickReady, onGrantDead }) {
   const [write, setWrite] = useState()
   const [op, setOp] = useState('block.move')
   const [v, setV] = useState({ family: 'video', kind: 'aroll', source_field: 'path', property: 'opacity', property_target: 'block', reference_field: 'duck_by', fade_policy: 'preserve-content', text_policy: 'duplicate-text', mode: 'shift', crossing: 'reject', scope: [], split_ids: [], order: [], start: '0', end: '10', duration: '10', src_in: '0', src_out: '10', volume: '1', at: '0', delta: '1', index: '0', value: '1' })
@@ -228,7 +228,7 @@ export function ManualEditor({ sessionId, opened, result, selection, selected, f
     h('button',{type:'button',disabled:!write||busy||staleLock||!opened.snapshot.document?._vtx?.head,onClick:()=>void run('undo',{base_revision:base,head:opened.snapshot.document._vtx.head})},'撤销当前 core head（新 CAS 事务）'),
     h('p',null,'Redo：内核未支持，不伪造浏览器逆操作。status/recover 结果是唯一恢复依据；没有浏览器持久 timeline/history。'),
     busy ? h('button',{type:'button',onClick:()=>{request.current?.abort();void call(sessionId,payload('cancel-write'),tabSignal).catch(()=>{})}},'取消并等待子进程回收（写结果可能未知）') : null,
-    h(AgentProposals,{sessionId,opened,tabSignal,call,writeGrant:write,manualBlocked:frameSafety.current.dirty||busy||Boolean(plan)||queue.length>0,onCommitted,onEditState:proposalState}),
+    h(AgentProposals,{sessionId,opened,tabSignal,call,writeGrant:write,manualBlocked:frameSafety.current.dirty||busy||Boolean(plan)||queue.length>0,onCommitted,onEditState:proposalState,onGrantDead}),
     h('pre',{role:'status',style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},message),status?h('details',null,h('summary',null,'最近 core status / recover'),h('pre',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},stringifyJSON(status,2))):null)
   function selectOperation() { return h('label',{key:'operation'},'编辑操作',h('select',{value:op,onChange:e=>{draftDirty.current=true;safety({dirty:true});invalidate();setOp(e.target.value)},style:{width:'100%'}}, EDIT_OPERATIONS.map((value,i)=>h('option',{key:value,value},`${names[i]} · ${value}`)))) }
 }

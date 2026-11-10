@@ -50,7 +50,7 @@ export const HOST_LIB_MODULES = ['configuration', 'protocol', 'bounded', 'json',
 export const CLIENT_MODULES = [
   'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
   'selection', 'reference', 'frame', 'settings', 'draft-services', 'proposals',
-  'official-draft', 'workbench', 'index',
+  'grant-lifecycle', 'official-draft', 'workbench', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
  *  digests of the modules above (joined with '\n'), in the listed order.
