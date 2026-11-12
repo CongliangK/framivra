@@ -2,7 +2,7 @@
 // (scripts/build.mjs) against the OFFICIAL DSH loader contract.
 //
 // Contract under test (documented + exported by the official
-// @deepseek-ai/dsh-client-modules of dsh-v0.2.1-rc.2):
+// @deepseek-ai/dsh-client-modules of dsh-v0.2.2-rc.1):
 //   - packages/client/modules/src/client/manifest.ts: ClientBundleRegistration
 //     {id, factory(require)} submitted through window.__ModuleLoader__.load;
 //   - executing the built script only REGISTERS the lazy factory — no module
@@ -185,6 +185,24 @@ test('undeclared @deepseek-ai runtime import fails the build closed', async () =
   // NOT a platform word: a plugin package must be declared in dsh.client.external to be requested.
   const fixture = fixturePackage({ entryBody: "import { x } from '@deepseek-ai/dsh-client-ui-sidebar-right'\nexport const y = x\n" })
   await assert.rejects(() => buildViaBuild(fixture, dshRoot), /client bundle purity: "@deepseek-ai\/dsh-client-ui-sidebar-right"/)
+})
+
+test('resolvable development dependencies cannot silently inline undeclared runtime copies', async () => {
+  // Build from beneath this package so normal Node resolution really can find
+  // its installed devDependencies, unlike the isolated tiny fixture above.
+  const dir = mkdtempSync(join(packageDir, 'node_modules', '.framivra-import-contract-'))
+  try {
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/fixture', type: 'module' }))
+    for (const specifier of ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/schemastery', 'react-dom/client', 'react/jsx-runtime']) {
+      writeFileSync(join(dir, 'src/index.mjs'), `import * as dependency from '${specifier}'\nexport const value = dependency\n`)
+      await assert.rejects(() => buildViaBuild(dir, dshRoot), error => String(error).includes(`client bundle purity: "${specifier}"`))
+    }
+  } finally {
+    const owned = resolve(dir)
+    assert(owned.startsWith(resolve(packageDir, 'node_modules') + sep + '.framivra-import-contract-'))
+    rmSync(owned, { recursive: true, force: false })
+  }
 })
 
 test('declared dsh.client.external stays an exact module-table request', async () => {

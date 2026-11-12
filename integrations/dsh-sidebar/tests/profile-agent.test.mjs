@@ -209,18 +209,37 @@ test('real Loader composition: deterministic model turns drive the native timeli
     '',
   ].join('\n'))
 
+  // Host-side public services the booted composition consumes. `connection` is
+  // the same minimal Fetch carrier as before. `headlessStartup` is the stable
+  // service @deepseek-ai/dsh-headless/startup publishes from CLI argv (dsh
+  // 0.2.2 has the headless bundle's sandbox-policy row inject it); this test
+  // disables that argv parser — node --test's own command line is not a DSH
+  // invocation — so it provides the service directly with the neutral facts a
+  // no-option `dsh --profile headless` run publishes. Without it, sandbox-policy
+  // stays pending and cascades fs/workingDirectory absence into the sidebar,
+  // which never activates (routes missing).
+  const prepare = context => {
+    context.provide('connection', connection)
+    context.provide('headlessStartup', {
+      task: undefined,
+      sessionId: undefined,
+      json: false,
+      additionalWritableRoots: [],
+    })
+  }
+
   const ctx = await (harnessAnchor
     ? bootProductionProfile({
         binName: 'framivra-profile-agent',
         profile: 'headless',
         overlayPaths: [overlay],
-        prepare(context) { context.provide('connection', connection) },
+        prepare,
       }, harnessAnchor, root)
     : bootProductionProfile({
         binName: 'framivra-profile-agent',
         profile: 'headless',
         overlayPaths: [overlay],
-        prepare(context) { context.provide('connection', connection) },
+        prepare,
       }))
   // Single-dispose guard: the flow below disposes on success; t.after is the
   // failure-path net. Both share the flag, so a dispose error is never

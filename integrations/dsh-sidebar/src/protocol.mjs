@@ -29,7 +29,7 @@ export const HOST_PROTOCOL_OPS = [
   'proposal-list', 'proposal-reject', 'proposal-confirm',
   'inspect', 'query', 'reference',
 ]
-export const HOST_IDENTITY = { plugin: '0.2.0', protocol: 1, ops: HOST_PROTOCOL_OPS }
+export const HOST_IDENTITY = { plugin: '0.2.1', protocol: 1, ops: HOST_PROTOCOL_OPS }
 
 /**
  * Deterministic build fingerprint inputs — the single home for WHICH source

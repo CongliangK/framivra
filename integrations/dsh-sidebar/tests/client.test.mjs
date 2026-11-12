@@ -98,3 +98,42 @@ test('independent framivra extension tab and guide registrations dispose cleanly
   for (const dispose of cleanup.reverse()) dispose()
   assert.deepEqual(props.getDraftServices(), { conversation: undefined, sessions: undefined, uiSession: undefined, active: false })
 })
+
+// Regression against the INSTALLED @deepseek-ai/dsh-client-ui-sidebar-right
+// (0.2.2-rc.1) client contract, verified in its shipped lib/types +
+// lib/client.js: useTabInfo() returns { sidebar, panel, tab } where tab
+// carries the TabRecord (id: TabId) plus the tab-scoped actions, and
+// tab.actions.openTab takes a BOOLEAN replaceTab that the runtime resolves
+// to the CURRENT occurrence TabId before the controller-level openTabIn
+// (TabDomain place()). A raw TabId passed at this seat is silently dropped
+// by that translation, so the guide MUST send strict boolean true — that is
+// what makes the resolved controller call carry the current tab id.
+test('guide entry opens framivra via the tab-scoped boolean replaceTab, resolved by the runtime to the CURRENT TabId', () => {
+  const slots = [], cleanup = []
+  client.apply({ effect: effect => cleanup.push(effect()), sidebarRightTabs: { register: () => () => {} }, configForms: {
+    whileServed: (namespaces, register) => register(new Set(namespaces)),
+    get: () => ({ getSnapshot: () => ({ status: 'loading' }), subscribe: () => () => {}, mutate: async () => false }),
+  }, slots: {
+    inject: (_name, register) => register(),
+    register: (definition, Body) => { slots.push({ definition, Body }); return () => {} },
+  } })
+  for (const dispose of cleanup.reverse()) dispose()
+  const guide = slots.find(slot => slot.definition.name === 'sidebar.right.tab.guide.entry')
+  assert.ok(guide, 'guide entry registration exists')
+  const TAB_ID = 'tab-guide-current'
+  let openedTab, rawOpenOptions
+  // Stub mirrors the installed runtime translation (lib/client.js place()).
+  const useTabInfo = () => ({ tab: { id: TAB_ID, actions: {
+    openTab(kind, options = {}) {
+      rawOpenOptions = options
+      openedTab = { kind, options: { ...(options.replaceTab === true ? { replaceTab: TAB_ID } : {}) } }
+    },
+  } } })
+  const tree = guide.Body({ useTabInfo })
+  const button = [tree, ...(tree.children ?? [])].find(node => node?.type === 'button')
+  assert.ok(button, 'guide renders its entry button')
+  button.props.onClick()
+  assert.equal(openedTab.kind, 'framivra')
+  assert.equal(rawOpenOptions.replaceTab, true, 'the tab-scoped placement is the BOOLEAN spelling (a raw TabId would be dropped by the runtime translation)')
+  assert.equal(openedTab.options.replaceTab, TAB_ID, 'the runtime resolves replaceTab:true to the CURRENT occurrence TabId')
+})

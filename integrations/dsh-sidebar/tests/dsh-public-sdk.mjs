@@ -2,8 +2,9 @@
  * Public DSH package-entry resolver for the official-integration tests.
  *
  * The gated tests consume only PUBLIC DSH entries (Cordis runtime, the local
- * subprocess/fs service plugins, system prompt, ToolRuntime, LLM ids, and
- * the browser client module-system bundle). Historically they resolved those
+ * subprocess/fs service plugins, system prompt, ToolRuntime with its native
+ * executor, LLM ids, and the browser client module-system bundle). Historically
+ * they resolved those
  * through monorepo-relative lib paths under SIDEBAR_DSH_ROOT (vendor/,
  * packages/). The official npm distribution ships the same entries as
  * separately published @deepseek-ai/* packages instead, so this helper
@@ -32,6 +33,7 @@ const MONOREPO_ENTRIES = {
   fsLocal: 'packages/fs/fs-local/lib/index.js',
   systemPrompt: 'packages/core/system-prompt/lib/index.js',
   tools: 'packages/core/tools/lib/index.js',
+  toolExecutorNative: 'packages/core/tool-executor-native/lib/index.js',
   llm: 'packages/llm/llm/lib/index.js',
   clientModulesBrowser: 'packages/client/modules/lib/client.js',
 }
@@ -42,6 +44,10 @@ const PACKAGE_ENTRIES = {
   fsLocal: '@deepseek-ai/dsh-fs-local',
   systemPrompt: '@deepseek-ai/dsh-system-prompt',
   tools: '@deepseek-ai/dsh-tools',
+  // dsh 0.2.2 split tool execution out of the ToolRuntime registry: ctx.tools.execute
+  // now dispatches through an executor plugin mounted beside it (dsh-base ships
+  // the tools + tool-executor-native rows exactly this way).
+  toolExecutorNative: '@deepseek-ai/dsh-tool-executor-native',
   llm: '@deepseek-ai/dsh-llm',
   clientModulesBrowser: '@deepseek-ai/dsh-client-modules/client',
 }

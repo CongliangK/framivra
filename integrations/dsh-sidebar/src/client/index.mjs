@@ -416,6 +416,9 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
           valid ? h(SelectionSummary, { selection, selected, result: state.result, frame: frameValue, onFrame: pin, onClear: clearSelection, onProperties: () => showProperties(true), quick: quickEdit ? runQuick : undefined }) : null,
           state.stale ? h('p', { role: 'alert' }, '时间线版本已变化；旧块已隐藏，请刷新保存版本。') : h(TimelineView, { compact: true, snapshot: state.opened.snapshot, result: state.result, hits: state.hits, frame: frameValue, onFrame: value => pin(String(value)), onSelect: pick, activeSelection: selection, selectionIntent, onGesture: gesture, onGestureState: gestureState })) : null)))
 }
+// DSH 0.2.2-rc.1: this is the tab-scoped action, not ISidebarRight.
+// Its boolean replaceTab:true is translated to this occurrence's TabId by
+// SidebarRightTabActions.place(); passing a raw TabId here would be dropped.
 function Guide({ useTabInfo }) {
   const { tab } = useTabInfo()
   return h(React.Fragment, null, h(WorkbenchStyles),

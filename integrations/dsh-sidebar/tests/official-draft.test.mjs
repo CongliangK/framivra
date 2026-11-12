@@ -5,6 +5,9 @@
 //   - facade addAttachments publishes synchronously; mock subscribers can
 //     flip phase / bump draftRev mid-call, exercising reentrant refusals.
 //   - ConversationController.createDrafts / releaseDraftAttachment may throw.
+//     createDrafts is the official THREE-argument form (dsh-v0.2.2-rc.1
+//     lib/types/client/service.d.ts): (sessionId, files, uploadImages);
+//     the bridge must pass literal false to keep the no-upload invariant.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createDraftBridge, bridgeWiring, DRAFT_BRIDGE_SPEC, APPEND_ATOMICITY } from '../src/client/official-draft.mjs'
@@ -58,8 +61,8 @@ function makeConversation(overrides = {}) {
     createThrows: false,
     wrongKind: false,
     releaseThrowsOn: undefined,
-    createDrafts(sessionId, files) {
-      this.calls.push({ op: 'createDrafts', sessionId, files })
+    createDrafts(sessionId, files, uploadImages) {
+      this.calls.push({ op: 'createDrafts', sessionId, files, uploadImages })
       if (controller.createThrows) throw new Error('boom')
       if (controller.wrongKind) return files.map(() => ({ id: `bad-${++seq}`, kind: 'file' }))
       return files.map(() => ({ id: `new-${++seq}`, kind: 'image' }))
@@ -108,6 +111,22 @@ test('appendTextWithImage appends text then image id in order (plain happy path)
   assert.deepEqual(live.input.attachmentIds, ['old-1', 'new-1'])
   assert.deepEqual(conversation.calls.map(call => call.op), ['createDrafts'])
   assert.equal(live.input.draftRev, 8)
+})
+
+// Regression (dsh-v0.2.2-rc.1): the official createDrafts signature is
+// (sessionId, files, uploadImages: boolean); a truthy third argument starts a
+// service-owned background image upload, which the no-upload bridge must
+// never leave behind. The bridge must pass STRICT boolean false — not merely
+// an omitted/undefined argument — on every image path.
+test('createDrafts receives explicit uploadImages:false on both image paths (official 3-arg contract)', () => {
+  for (const text of ['caption', '']) {
+    const { bridge, conversation } = freshBridge()
+    const intent = bridge.captureIntent()
+    const result = bridge.appendTextWithImage(intent, text, png())
+    assert.equal(result.status, 'appended', `text=${JSON.stringify(text)}`)
+    assert.equal(conversation.calls.length, 1, `text=${JSON.stringify(text)}`)
+    assert.equal(conversation.calls[0].uploadImages, false, `text=${JSON.stringify(text)} (strict false: an omitted argument records undefined)`)
+  }
 })
 
 test('image-only append lands the attachment and never inserts text', () => {

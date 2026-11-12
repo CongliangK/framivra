@@ -40,9 +40,22 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
 `, output, extracted], { encoding: 'utf8' })
   assert.equal(inspect.status, 0, inspect.stderr)
   const data = JSON.parse(inspect.stdout)
-  assert.deepEqual(data.names, ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'cordis.patch.yml', 'lib/agent.js', 'lib/bounded.js', 'lib/client.js', 'lib/configuration.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js', 'package.json'])
+  assert.deepEqual(data.names, ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'cordis.patch.yml', 'icon.svg', 'lib/agent.js', 'lib/bounded.js', 'lib/client.js', 'lib/configuration.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js', 'locale/en.json', 'locale/zh.json', 'package.json'])
   for (const key of ['scripts', 'dependencies', 'devDependencies']) assert.equal(Object.hasOwn(data.manifest, key), false)
-  assert.deepEqual(data.manifest.peerDependencies, { '@deepseek-ai/schemastery': '~3.18.5', react: '18.3.1' })
+  assert.deepEqual(data.manifest.peerDependencies, { '@deepseek-ai/schemastery': '~3.19.0', react: '18.3.1' })
+  assert.equal(data.manifest.version, '0.2.1')
+  assert.deepEqual(data.manifest.engines, { node: '>=24.9.0', dsh: '0.2.2-rc.1' })
+  assert.equal(data.manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-slots'), false)
+  assert.equal(data.manifest.exports['./locale/*.json'], './locale/*.json')
+  assert.equal(data.manifest.exports['./icon'], './icon.svg')
+  assert(data.manifest.files.includes('locale/*.json') && data.manifest.files.includes('icon.svg'))
+  for (const language of ['en', 'zh']) {
+    const locale = JSON.parse(await readFile(join(extracted, 'locale', `${language}.json`), 'utf8'))
+    assert.match(locale.meta.title, /Framivra/)
+    assert(locale.meta.description.trim().length > 0)
+  }
+  const icon = await readFile(join(extracted, 'icon.svg'), 'utf8')
+  assert(icon.startsWith('<svg ') && icon.includes('<title>Framivra</title>'))
   assert.equal(data.manifest.main, 'lib/index.js')
   assert.equal(data.manifest.exports['.'], './lib/index.js')
   assert.equal(data.manifest.exports['./client'], './lib/client.js')
@@ -55,7 +68,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   const licenseStart = notices.indexOf('\nISC License\n')
   assert(licenseStart >= 0, 'verbatim upstream license must be present')
   assert.equal(createHash('sha256').update(notices.slice(licenseStart + 1)).digest('hex'), 'b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57', 'the packaged ISC + Feather MIT license bytes must match the pinned upstream file exactly')
-  assert.deepEqual(data.manifest.files, ['lib', 'cordis.patch.yml', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'README.md'])
+  assert.deepEqual(data.manifest.files, ['lib', 'cordis.patch.yml', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'README.md', 'locale/*.json', 'icon.svg'])
   const client = await readFile(join(extracted, 'lib/client.js'), 'utf8')
   for (const forbidden of ['sourceMappingURL=', '/home/', 'node_modules/', 'TEST-ONLY', 'window.testFixture']) assert.equal(client.includes(forbidden), false, forbidden)
   // A new Node process in the extracted ZIP resolves its host-side peer the
@@ -64,7 +77,9 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   await linkHostPeers(extracted)
   const host = run(['--input-type=module', '-e', `
     import { apply, inject, Config } from './lib/index.js';
-    import { decodeEnvelope } from './lib/protocol.js';
+    import { decodeEnvelope, HOST_IDENTITY } from './lib/protocol.js';
+    import { readFileSync } from 'node:fs';
+    if (HOST_IDENTITY.plugin !== JSON.parse(readFileSync('./package.json', 'utf8')).version) throw Error('Packaged handshake version differs from manifest');
     import { stringifyJSON } from './lib/json.js';
     import { readConfiguration } from './lib/configuration.js';
     if (typeof apply !== 'function' || inject.length !== 6 || !inject.includes('tools')) throw Error('Host exports');

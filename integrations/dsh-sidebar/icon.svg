@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Framivra</title>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#153c35"/>
+  <path d="M15 18h34v22H15z" fill="none" stroke="#a8ead4" stroke-width="3" stroke-linejoin="round"/>
+  <path d="m28 23 11 6-11 6z" fill="#a8ead4"/>
+  <path d="M15 48h10m5 0h19" stroke="#a8ead4" stroke-width="4" stroke-linecap="round"/>
+  <path d="M27 43v10" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+</svg>

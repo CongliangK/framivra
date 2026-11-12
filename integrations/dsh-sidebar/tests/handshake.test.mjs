@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
 import React, { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { stringifyJSON } from '../src/json.mjs'
@@ -13,6 +14,11 @@ import { setup } from './helpers.mjs'
 const h = React.createElement
 
 // ---------- Host: hello handshake ----------
+
+test('host handshake release version matches the source manifest', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(HOST_IDENTITY.plugin, manifest.version)
+})
 
 test('host handshake: hello answers grant-free with the protocol identity and spawns nothing', async t => {
   const f = setup(); t.after(() => f.host.dispose())
