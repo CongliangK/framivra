@@ -9,7 +9,7 @@
 - clip: frame_final_start=dst_in, frame_final_end=dst_in+dur；源偏移=src_in
 - 全屏 clip: crop169 语义（16:9 中心裁切）+ 等比拉满画布（vtx L313）
 - 窗口 clip(scale/x/y): scale 相对【源原始尺寸】直接缩放（vtx L307-311），x/y=左上角
-- gfx clip: 当前后端/namespace/内容键的 vtx 帧缓存（只读校验后使用）
+- gfx clip: 只读认证当前 vtx 帧，复制到同名 .assets/gfx/<key>/ 作为独立交付依赖
 - 字幕: 不经 Blender 文字渲染——subs_alpha.py 产出的 cache/subs_alpha.mov
   （ASS+libass 透明轨，与终渲同源）作为最上层普通视频条叠加
 - fade_*: blend_alpha / volume 关键帧（预览近似）
@@ -46,7 +46,8 @@ RESOLVED = {}
 if len(argv) > 2 and argv[2].endswith(".json") and Path(argv[2]).is_file():
     RESOLVED = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
 
-tl = json.loads(tl_path.read_text(encoding="utf-8"))
+_timeline_bytes = tl_path.read_bytes()
+tl = json.loads(_timeline_bytes)
 base = tl_path.parent
 P = tl["project"]
 W, H, FPS, DUR = P["width"], P["height"], P["fps"], P["duration_frames"]
@@ -155,12 +156,18 @@ def crop169_dims(w, h):
 # this entry point to its own checkout and use the canonical vtx package (no
 # copied key formula, alternate module name or global installed checkout).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from vtx.render import gfx_cache_reader
+from vtx.cache.cache_state import receipt_fingerprint, verify_input_identity
+from vtx.cache.policy import policy_for
+from gfx_assets import materialize_frames
 
-# Only the fields consumed by the read-only production cache resolver; do not
-# construct a new pipeline Ctx or run prepare/render/receipt writers in Blender.
-_GFX_CONTEXT = SimpleNamespace(root=base, cache=base / "cache", tl=tl,
-                               fps=FPS, w=W, h=H)
+# Full read-only input pin, not a pipeline Ctx, dry shortcut or receipt writer.
+_GFX_CONTEXT = None
+if any(tr['kind'] == 'gfx' and tr['clips'] for tr in tl['video_tracks']):
+    _GFX_CONTEXT = SimpleNamespace(root=base, cache=base / "cache", tl=tl,
+                                   tl_path=tl_path, fps=FPS, w=W, h=H)
+    policy_for(_GFX_CONTEXT)
+    _GFX_CONTEXT.input_fingerprint = receipt_fingerprint(_GFX_CONTEXT, timeline_bytes=_timeline_bytes)
+    verify_input_identity(_GFX_CONTEXT)
 
 def place(strip, track_i, ch_base, clip, src_w, src_h):
     """视频条：trim→channel→变换（顺序不可换）。
@@ -231,7 +238,7 @@ for ti, tr in enumerate(tl["video_tracks"]):
         name, ch = f"{tr['name']}|{i}", CH_V + ti
         if tr["kind"] == "gfx":  # HTML → vtx 帧缓存
             try:
-                files = gfx_cache_reader.resolve_frames(_GFX_CONTEXT, clip)
+                files = materialize_frames(_GFX_CONTEXT, clip, blend_path)
             except (OSError, ValueError) as exc:
                 errors.append(f"gfx 缓存解析失败 {name}: {exc}")
                 continue
@@ -263,13 +270,19 @@ if tl["subtitles"]:
         errors.append(f"缺少字幕透明轨 {subs_mov}（先跑 subs_alpha.py）")
 
 # ---------- 保存 ----------
+if _GFX_CONTEXT is not None:
+    try:
+        verify_input_identity(_GFX_CONTEXT)
+    except (OSError, ValueError, RuntimeError) as exc:
+        errors.append(f"gfx 导出期间输入变化: {exc}")
+# Do not replace an existing review project with a partial or unpinned scene.
+if errors:
+    print(f"[json2blend] 错误 {len(errors)} 条:")
+    for e in errors: print("  !", e)
+    sys.exit(1)
 bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
 print(f"[json2blend] {tl_path.name} -> {blend_path.name}")
 print(f"[json2blend] 视频 {stats['video']} | gfx {stats['gfx']} | 音频 {stats['audio']}"
       f" | 字幕轨 {'有' if stats['subs'] else '无'}")
 print(f"[json2blend] 通道: 音频 1..{CH_V-1}, 视频 {CH_V}..{SUB_CH-1}, 字幕 {SUB_CH}")
-if errors:
-    print(f"[json2blend] 错误 {len(errors)} 条:")
-    for e in errors: print("  !", e)
-    sys.exit(1)
 print("[json2blend] OK 无错误")
