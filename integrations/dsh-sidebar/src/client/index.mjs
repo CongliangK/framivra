@@ -158,6 +158,30 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   const inspector = useRef()
   const workbench = useRef()
   const expandButton = useRef()
+  const filesButton = useRef()
+  const pathDisclosure = useRef()
+  const pendingFileFocus = useRef(false)
+  function browseWorkspace() {
+    if (filesVisible) { workbench.current?.querySelector('.fv-file-search')?.focus(); return }
+    pendingFileFocus.current = true
+    setFilesVisible(true)
+  }
+  useEffect(() => {
+    if (filesVisible && pendingFileFocus.current) {
+      pendingFileFocus.current = false
+      workbench.current?.querySelector('.fv-file-search')?.focus()
+    }
+  }, [filesVisible])
+  function closeFiles() {
+    pendingFileFocus.current = false
+    setFilesVisible(false)
+    filesButton.current?.focus()
+  }
+  function openPath() {
+    if (!pathDisclosure.current) return
+    pathDisclosure.current.open = true
+    pathDisclosure.current.querySelector('input')?.focus()
+  }
   function toggleExpanded() {
     const dialog = workbench.current
     if (dialog?.open) { dialog.close(); return }
@@ -366,16 +390,16 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
   }
   return h('article', { className: 'fv-shell', 'aria-label': 'Framivra read-only preview' },
     h(WorkbenchStyles),
-    h('dialog', { className: 'fv-workbench', ref: workbench, role: expanded ? 'dialog' : 'region', 'aria-label': 'Framivra 工作台', 'aria-modal': expanded ? true : undefined,
+    h('dialog', { className: 'fv-workbench', ref: workbench, 'data-view': ready ? 'editor' : 'start', 'data-files': filesVisible, role: expanded ? 'dialog' : 'region', 'aria-label': 'Framivra 工作台', 'aria-modal': expanded ? true : undefined,
       onClose: () => { setExpanded(false); expandButton.current?.focus() }, onKeyDown: editorKey,
-      style: { '--fv-files-column': filesVisible ? '220px' : '0px', '--fv-inspector-column': ready && inspectorVisible ? '300px' : '0px', '--fv-timeline-share': `${timelineShare}%` } },
+      style: { '--fv-files-column': filesVisible ? '248px' : '0px', '--fv-inspector-column': ready && inspectorVisible ? '300px' : '0px', '--fv-timeline-share': `${timelineShare}%` } },
       h('header', { className: 'fv-topbar' },
         h('span', { className: 'fv-brand' }, h(Icon, { name: 'film', size: 22 })),
         h('div', { className: 'fv-title' }, h('h2', { title: ready ? activePath : 'Framivra' }, ready ? filename : 'Framivra'), h('span', { className: 'fv-subtitle' }, ready ? '已保存视图 · 精确帧定位' : '时间线工作台')),
-        h(ToolButton, { icon: 'folder', label: '浏览工作区打开时间线', tooltip: '浏览工作区，打开时间线', 'aria-pressed': filesVisible, onClick: () => setFilesVisible(value => !value) }),
+        h(ToolButton, { icon: 'folder', label: '浏览工作区打开时间线', tooltip: '浏览工作区，打开时间线', 'aria-pressed': filesVisible, elementRef: filesButton, onClick: () => filesVisible ? closeFiles() : browseWorkspace() }),
         ready ? h(ToolButton, { icon: 'refresh', label: '刷新保存版本', onClick: () => void load(), disabled: state.loading }) : null,
         ready ? h(ToolButton, { icon: 'settings', label: '属性与编辑', 'aria-pressed': inspectorVisible, onClick: () => setInspectorVisible(value => !value) }) : null,
-        h('details', { className: 'fv-path', onKeyDown: event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } } },
+        h('details', { className: 'fv-path', ref: pathDisclosure, onKeyDown: event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } } },
           h(ToolSummary, { icon: 'path', label: '通过路径打开', tooltip: '通过工作区内的相对路径打开' }),
           h('form', { onSubmit: event => { event.preventDefault(); event.currentTarget.closest('details').open = false; void load() } },
             h('label', null, '时间线路径 ', h('input', { name: 'framivra-timeline', autoComplete: 'off', spellCheck: false, value: timeline, onChange: event => setTimeline(event.target.value), required: true })),
@@ -387,8 +411,8 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
       valid && (!state.result.coverage.complete || !state.opened.snapshot.coverage.complete) ? h('p', { className: 'fv-notice', role: 'alert' }, '存在未展开的外部素材；请在属性面板查看完整诊断。') : null,
       h('div', { className: 'fv-body' },
         h('div', { className: 'fv-upper' },
-          filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: () => setFilesVisible(false), recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
-          h('main', { className: 'fv-monitor', 'aria-label': '画面预览' },
+          filesVisible ? h(FileBrowser, { key: `${sessionId}:${browserEpoch}`, sessionId, tabSignal: tab.signal, call: control, selectedPath: ready ? activePath : undefined, onChoose: path => void load(false, path), onClose: closeFiles, recalibrate: browserRecalibrate, hostOps: state.opened?.host?.ops }) : null,
+          h('main', { className: 'fv-monitor', 'aria-label': ready ? '画面预览' : '时间线启动区' },
             ready ? h(React.Fragment, null,
               h('div', { className: 'fv-monitor-title' }, h('span', null, '节目监视器'), h('span', null, frameValue === undefined ? '尚未定位' : `帧 ${frameValue}`)),
               h(Transport, { frame: frameValue, frameText: frame, frameError, duration, onFrame: pin, onText: pin, onQuery: () => void load(true) }),
@@ -400,8 +424,10 @@ export function PreviewBody({ useTabInfo, sessionId, getDraftServices: getHostSe
                 !state.opened.media.length ? h('p', null, 'No existing final.mp4 / draft_final.mp4 output found. No render was started.') : null,
                 ...state.opened.media.map(media => h('section', { key: media.mediaId }, h('p', null, media.label, ' — ', media.warning),
                   h('video', { controls: true, preload: 'none', 'aria-label': `${media.label}（未验证对应版本）`, src: `/api/framivra/media?${new URLSearchParams({ sessionId, grant: state.opened.grant, mediaId: media.mediaId })}` }))))) :
-              h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 38 }), h('h3', null, '从一条时间线开始'), h('p', null, '浏览当前工作区，选择工程的 JSON 文件。'),
-                h('button', { className: 'fv-primary', type: 'button', onClick: () => setFilesVisible(true) }, h(Icon, { name: 'folder', size: 17 }), '打开时间线'))),
+              h('div', { className: 'fv-empty' }, h(Icon, { name: 'film', size: 32 }), h('h3', null, '从一条时间线开始'), h('p', null, '选择当前工作区中的时间线 JSON 文件，开始预览与剪辑。'),
+                h('div', { className: 'fv-start-actions' },
+                  h('button', { className: 'fv-primary', type: 'button', onClick: browseWorkspace }, h(Icon, { name: 'folder', size: 17 }), '浏览工作区'),
+                  h('button', { className: 'fv-path-action', type: 'button', onClick: openPath }, '通过路径打开')))),
           ready ? h('aside', { className: 'fv-inspector', ref: inspector, 'aria-label': '属性与剪辑', hidden: !inspectorVisible },
             h('div', { className: 'fv-panel-heading' }, h('h3', null, '属性与剪辑'), h(ToolButton, { icon: 'close', label: '收起属性与剪辑', onClick: () => setInspectorVisible(false) })),
             valid && !grantDead && !frameError ? h('details', { className: 'fv-inspector-section', open: true }, h('summary', null, '选区与引用'),
