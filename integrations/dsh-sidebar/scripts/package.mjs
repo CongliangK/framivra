@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Build the official public client factory and atomically publish a distributable ZIP. */
+/** Build the official client factory and atomically emit a release ZIP or npm tarball. */
 import { readFile, mkdir, writeFile, mkdtemp, copyFile, link, lstat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -8,10 +8,11 @@ import { spawnSync } from 'node:child_process'
 import { buildClient, packageDir } from './build.mjs'
 
 const args = process.argv.slice(2)
-if (args.length !== 2 || args[0] !== '--out' || !isAbsolute(args[1]) || !args[1].endsWith('.zip')) {
-  throw new Error('Usage: node scripts/package.mjs --out /absolute/new-plugin.zip')
+if (args.length !== 2 || args[0] !== '--out' || !isAbsolute(args[1]) || !/\.(zip|tgz)$/.test(args[1])) {
+  throw new Error('Usage: node scripts/package.mjs --out /absolute/new-plugin.zip (or .tgz)')
 }
 const output = args[1]
+const format = output.endsWith('.tgz') ? 'tgz' : 'zip'
 try {
   await lstat(output)
   throw new Error(`Output already exists: ${output}`)
@@ -37,7 +38,9 @@ if (!clientSource.trim() || clientSource.includes('sourceMappingURL=') || client
 }
 const manifest = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8'))
 // Source scripts and all build/test dependencies stay outside the release.
-const release = Object.fromEntries(['name', 'version', 'description', 'type', 'main', 'exports', 'engines', 'license', 'files', 'peerDependencies', 'dsh'].map(key => [key, manifest[key]]))
+// private:true protects the source directory from accidental npm publication;
+// only this freshly built, allowlisted release manifest is publishable.
+const release = Object.fromEntries(['name', 'version', 'description', 'repository', 'homepage', 'bugs', 'keywords', 'publishConfig', 'type', 'main', 'exports', 'engines', 'license', 'files', 'peerDependencies', 'dsh'].map(key => [key, manifest[key]]))
 const libContents = new Map()
 for (const name of ['index', 'configuration', 'host', 'protocol', 'media', 'json', 'bounded', 'agent', 'tools']) {
   const source = await readFile(join(packageDir, 'src', `${name}.mjs`), 'utf8')
@@ -77,14 +80,32 @@ for (const language of ['en', 'zh']) await copyFile(join(packageDir, 'locale', `
   if (hostStamp !== artifactStamp) throw new Error(`package build stamp: packaged host reports ${hostStamp}, expected ${artifactStamp}`)
   if (!stampedClientSource.includes(JSON.stringify(artifactStamp))) throw new Error('package build stamp: client bundle does not carry the artifact stamp')
 }
-const archive = join(work, 'candidate.zip')
-const zip = spawnSync('python3', ['-c', `import pathlib, sys, zipfile
+let archive
+if (format === 'zip') {
+  archive = join(work, 'candidate.zip')
+  const zip = spawnSync('python3', ['-c', `import pathlib, sys, zipfile
 root = pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(sys.argv[2], 'x', compression=zipfile.ZIP_DEFLATED) as archive:
     for path in sorted(root.rglob('*')):
         if path.is_file():
             archive.write(path, path.relative_to(root).as_posix())
 `, stage, archive], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-if (zip.error || zip.status !== 0) throw new Error(`ZIP creation failed: ${zip.error?.message ?? zip.stderr}`)
+  if (zip.error || zip.status !== 0) throw new Error(`ZIP creation failed: ${zip.error?.message ?? zip.stderr}`)
+} else {
+  // npm owns the standard package/ tar layout and integrity metadata. Never
+  // pack the source directory or execute source/install lifecycle scripts.
+  const packed = spawnSync('npm', ['pack', '--ignore-scripts', '--offline', '--json', '--pack-destination', work], {
+    cwd: stage, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
+  })
+  if (packed.error || packed.status !== 0) throw new Error(`npm pack failed: ${packed.error?.message ?? packed.stderr}`)
+  const results = JSON.parse(packed.stdout)
+  const filename = `${manifest.name.replace(/^@/, '').replace('/', '-')}-${manifest.version}.tgz`
+  if (results.length !== 1 || results[0].filename !== filename || /[/\\]/.test(filename)) {
+    throw new Error('npm pack returned an unexpected archive name')
+  }
+  archive = join(work, filename)
+}
+const bytes = await readFile(archive)
+const sha256 = createHash('sha256').update(bytes).digest('hex')
 await link(archive, output)
-console.log(JSON.stringify({ output, stage, client, name: manifest.name, version: manifest.version }))
+console.log(JSON.stringify({ output, format, stage, client, name: manifest.name, version: manifest.version, build: artifactStamp, bytes: bytes.length, sha256 }))

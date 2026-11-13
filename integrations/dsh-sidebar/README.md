@@ -144,7 +144,7 @@ The Host also emits one sanitized, rate-capped line (`[framivra-dsh-sidebar] con
 
 ## Development
 
-This section and relative links to `src/`, `tests/` and `scripts/` describe the **source checkout**, not members of the current eighteen-file candidate ZIP. The ZIP deliberately omits those development resources; these source links are not self-contained installation instructions. Installation/configuration and lifecycle checks are independent of source test success; use the extract → official local-directory install flow below and this bundle's configuration page.
+This section and relative links to `src/`, `tests/` and `scripts/` describe the **source checkout**, not members of the current eighteen-file candidate ZIP. The ZIP deliberately omits those development resources; these source links are not self-contained installation instructions. Installation/configuration and lifecycle checks are independent of source test success; use the npm / GitHub release / local archive installation section below and this bundle's configuration page.
 
 Host/source-view tests require Node `>=24.9.0` (as declared in `engines`) and native lossless JSON; the tested `tsdown` is `0.22.2`. The client builder needs no DSH SDK package: it resolves the public `tsdown` bundler from this package's devDependencies, or — when `SIDEBAR_DSH_ROOT` points at a DSH checkout with dependencies installed — from that checkout (build-time tool path only, never a runtime dependency). Install this package's declared public-version `devDependencies` in an isolated development environment before running the complete tests; React, ReactDOM, Cordis, ui-slots and jsdom are test/platform suppliers, not plugin runtime copies.
 
@@ -172,29 +172,50 @@ The mock CLI returns a fixed envelope; it deliberately does not implement frame/
 
 ## Packaging / upstream requirements
 
-The release ZIP must have `package.json`, `cordis.patch.yml`, ESM `lib/index.js`, `lib/client.js`, `LICENSE`, third-party notices, `icon.svg` and exported `locale/en.json` / `locale/zh.json`, with no lifecycle scripts, dependencies, node_modules, checkout paths or second React/ReactDOM/Cordis copy. Browser third-party dependencies must be bundled except platform-shared peers. Runtime must work without a DSH source checkout.
+The release ZIP and standard npm tarball must have `package.json`, `cordis.patch.yml`, ESM `lib/index.js`, `lib/client.js`, `LICENSE`, third-party notices, `icon.svg` and exported `locale/en.json` / `locale/zh.json`, with no lifecycle scripts, dependencies, node_modules, checkout paths or second React/ReactDOM/Cordis copy. Browser third-party dependencies must be bundled except platform-shared peers. Runtime must work without a DSH source checkout.
 
 The own builder receives this package directory, `src/client/index.mjs` and an output directory; `package.json.name` is the module ID. `npm run build:client` emits `lib/client.js` and its debug map. React remains a platform-shared request and is declared as an exact `18.3.1` peer (the tested version, not a broader compatibility claim); no other external Client module is emitted unless explicitly declared in `dsh.client.external`. Local JSON presentation code is bundled. The separate packaging command builds again in a fresh staging directory, copies the Host's ESM closure with relative `.js` imports, and strips the debug-map trailer (the production ZIP omits maps/source paths). It never requires a DSH SDK package or source checkout at runtime.
 
-From `integrations/dsh-sidebar/`, with the build dependencies available (**writes a candidate artifact**, not an install):
+From `integrations/dsh-sidebar/`, install the locked build/test dependencies with `npm ci --ignore-scripts` (**writes node_modules**). Build with this package's bundler, not an ambient DSH checkout (**writes fresh artifacts**, not an install):
 
 ```sh
-npm run package -- --out /absolute/new/framivra-dsh-sidebar-candidate.zip
+env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-0.2.1.tgz
+env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-candidate.zip
 ```
 
-The output must not already exist. The packager allowlists release metadata and omits source scripts/dependencies/node_modules. All stages complete before an atomic, no-overwrite publication of the final ZIP pathname; build/ZIP failure leaves that pathname absent. Hidden staging directories remain beside the output as build evidence. Reusing an existing pathname fails without modifying its bytes. `--client` injection is not supported. The package tests build/load the actual SDK output; no dummy Client ZIP is generated. A successful build/package test does **not** certify clean-profile installation or authentication.
+The output must not already exist. The packager allowlists release metadata and omits source scripts/dependencies/node_modules. The source manifest stays `private: true`; only the freshly staged release manifest omits that guard. `.tgz` uses `npm pack --ignore-scripts --offline` in that stage, with standard `package/` layout. All stages complete before atomic, no-overwrite creation of the final archive pathname; build/archive failure leaves it absent. Hidden staging directories remain beside the output as build evidence; do not edit their archive aliases after acceptance. Reusing an existing pathname fails without modifying its bytes. `--client` injection is not supported. Packaging reports bytes, full SHA-256 and the Host/Client code stamp; the latter is not a whole-archive integrity digest. ZIP timestamps are not normalized, so rebuilding is not a promise of identical ZIP bytes. Record Node/npm/bundler versions and verify the **exact final tarball**.
+
+For maintainers, inspect the tarball with `npm publish /absolute/new/framivra-dsh-sidebar-0.2.1.tgz --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org/`. This is a publication preview, not proof of account permission. Only after artifact acceptance and explicit publishing authorization, remove `--dry-run` to publish **that tarball**, never the source directory. Use npm login/2FA as required; do not store tokens in the repository. Upload the same verified bytes plus SHA-256 to a plugin-specific GitHub Release, without changing the core's latest release. Publish source through the normal review/PR process and pin the plugin tag to that reviewed commit. npm version bytes and released tags must not be replaced; fixes require a new version.
+
+The package tests build/load the actual SDK output; no dummy Client archive is generated. A successful build/package test does **not** certify clean-profile installation or authentication.
 
 Manual writes additionally require real `store capabilities` to advertise `request_transport: { stdin: { flag: "--request-stdin", max_bytes: 8388608 } }`, semantic edit operations and the `framivra.timeline.store/v1` envelope. Host passes exactly one lossless JSON request over the public provider's batch stdin; the official CLI enforces strict UTF-8, one JSON value/EOF and its byte bound. No Python bridge, fs writer or fallback to reopening `/dev/stdin` is used. Older installed semantic cores can still supply read/copy but cannot authorize writes through this transport.
 
 Needed from the read CLI: `vtx -t PATH capabilities|inspect|query`, the `framivra.timeline.read/v1` envelope and exit 0/1/2 as agreed. Reference actions additionally require `vtx -t PATH reference` and `framivra.timeline.reference/v1`; one track/block ID or transient-address selector plus the opened expected content version is passed as bounded argv (`--track-id=…`, `--block-id=…`, `--track-address=…`, `--block-address=…`, `--expected-content-version=…`, optionally integer `--frame`). These `=value` tokens keep leading dashes in IDs from becoming options. Old installed CLIs fail explicitly for reference/copy/stage actions; ordinary read/v1 preview remains independent. Optional query selectors are passed as separate argv tokens (`--family`, `--track-index`, `--block-index`, `--frame` or `--interval`). No subprocess is kept alive between reads.
 
-## Install (official local-directory flow)
+## Install (npm / GitHub release / local archive)
 
-Delivery is a release ZIP, installed by **extract → official local-directory plugin install** (not a native ZIP upload): verify the ZIP's SHA-256, extract it to a fresh directory of your choice, then install that directory into the intended profile with the official `dsh plugin` management command (forwarded to `pnpm`; have `pnpm` available for this command only):
+Requires **Node >=24.9.0 and DSH exactly 0.2.2-rc.1**; other DSH versions are not certified. The plugin does **not** install the Python `vtx` kernel, FFmpeg or render dependencies. Install/configure that toolchain separately before using a timeline.
+
+Once the version is published, enter `framivra-dsh-sidebar@0.2.1` in DSH's existing plugin-install input. No DSH interface changes, source checkout, download/extract step or local path are needed. If a registry mirror has not synchronized, choose the official registry `https://registry.npmjs.org/`. The equivalent CLI command below **writes the selected profile** (requires `pnpm`):
+
+```sh
+dsh plugin --profile web add framivra-dsh-sidebar@0.2.1 --registry=https://registry.npmjs.org/
+```
+
+The same input also accepts the standard `.tgz` asset URL from this repository's **`dsh-sidebar-v0.2.1`** GitHub Release, once published. Use the actual asset download URL, not the Python repository URL, GitHub's generated source archive or a ZIP. Plugin releases have their own tag namespace and must not replace the core's latest stable release. For an already downloaded and SHA-256-verified tarball, install directly (**writes the profile**, no extraction required):
+
+```sh
+dsh plugin --profile web add /absolute/download/framivra-dsh-sidebar-0.2.1.tgz
+```
+
+Legacy ZIP delivery remains supported via **extract → official local-directory installation**, not native ZIP upload (**writes the extraction directory and profile**):
 
 ```sh
 unzip framivra-dsh-sidebar-candidate.zip -d /absolute/new/framivra-dsh-sidebar
 dsh plugin --profile web add file:/absolute/new/framivra-dsh-sidebar
 ```
 
-`--profile web` matches the GUI web profile shown by `dsh web`; substitute the profile you boot. DSH records any installed package exporting a `dsh.bundle` layer and checks `engines.dsh` at installation. In the bundle's configuration page, set the trusted installed `vtx` executable outside the Session workspace; no source checkout or manual YAML edit is required at runtime. Clean-profile installation, owner-authenticated preview, anonymous denial, persistence/restart and uninstall remain artifact-specific acceptance obligations. The official visual-workbench acceptance above records the checks actually run for its exact ZIP SHA-256; it does not imply the listed UNRUN checks passed. The development instance is isolated from live 3080; switching that live instance requires separate approval.
+`--profile web` matches the GUI web profile shown by `dsh web`; substitute the profile you boot. DSH records the package's `dsh.bundle` layer and checks `engines.dsh`. In the bundle's configuration page, set the trusted installed `vtx` executable outside the Session workspace. Refresh the page after installation; if the host/client build-mismatch message persists, restart the intended DSH host. No manual YAML edit is required. To uninstall (**writes the profile**), run `dsh plugin --profile web remove framivra-dsh-sidebar`.
+
+Clean-profile installation, owner-authenticated preview, anonymous denial, persistence/restart and uninstall remain artifact-specific acceptance obligations; source test success does not certify them. Historical acceptance above applies only to its named archive, not a newly built tarball. Development acceptance uses an independent `DSH_HOME`; deployment to live 3080 requires separate approval.
