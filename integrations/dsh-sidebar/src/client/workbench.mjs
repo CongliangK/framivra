@@ -48,13 +48,18 @@ export const workbenchCSS = `
 .fv-frame-query label{font-size:11px;color:var(--fv-muted);flex:1;flex-wrap:wrap}
 .fv-frame-query input{width:88px;font-variant-numeric:tabular-nums}
 .fv-frame-query button{font-size:11px;min-height:30px}
-.fv-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:240px;aspect-ratio:16/9;background:#0c0e11;color:var(--fv-muted);border-radius:4px;text-align:center;padding:24px}
-.fv-empty>svg{color:#727f8e;margin-bottom:4px}
-.fv-empty h3{color:var(--fv-text);font-size:16px}
-.fv-empty p{font-size:12px;max-width:32ch}
+.fv-empty{display:flex;flex:none;flex-direction:column;align-items:flex-start;gap:16px;width:min(100%,480px);color:var(--fv-muted);text-align:left}
+.fv-empty>svg{color:var(--fv-muted)}
+.fv-empty h3{color:var(--fv-text);font-size:24px;line-height:1.35;text-wrap:balance}
+.fv-empty p{font-size:14px;line-height:1.7;text-wrap:pretty}
+.fv-start-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.fv-start-actions .fv-path-action{background:transparent;border-color:transparent;color:var(--fv-muted)}
 .fv-workbench .fv-primary{background:#91c6b2;color:#14271f;border-color:#91c6b2;font-weight:600}
 .fv-workbench .fv-primary:hover:not(:disabled){background:#b3dec9;border-color:#b3dec9}
-.fv-files{background:var(--fv-surface);border-bottom:1px solid var(--fv-line);padding:12px;min-width:0;overflow:auto;max-height:330px}
+.fv-files{display:flex;flex-direction:column;background:var(--fv-surface);border-bottom:1px solid var(--fv-line);padding:12px;min-width:0;min-height:0;overflow:hidden;max-height:330px}
+.fv-file-toolbar{flex:none}
+.fv-file-scroll{flex:1;min-height:0;overflow:auto;padding:4px;margin:0 -4px -4px;scrollbar-color:#555d6b transparent;scrollbar-width:thin;overscroll-behavior:contain}
+.fv-file-scroll:focus-visible{outline:2px solid var(--fv-accent);outline-offset:-2px}
 .fv-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .fv-panel-heading button{min-height:30px;padding:4px 7px}
 .fv-file-location{display:flex;align-items:center;gap:6px;color:var(--fv-muted);margin-bottom:8px;min-width:0}
@@ -118,7 +123,9 @@ export const workbenchCSS = `
 @container fv-workbench (max-width:600px){.fv-selection-bar{flex-wrap:wrap;gap:8px}.fv-selection-actions{width:100%;justify-content:flex-end}.fv-frame-query .fv-query-button{margin-inline-start:0}.fv-transport{gap:6px}.fv-duration{display:none}}
 @container fv-workbench (min-width:860px){
  .fv-selection-bar{padding:4px 0}.fv-selection-description>div{display:flex;align-items:baseline;gap:10px;overflow:hidden}.fv-selection-description strong{flex:0 1 auto}.fv-selection-description div>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .fv-upper{display:grid;grid-template-columns:var(--fv-files-column,0px) minmax(0,1fr) var(--fv-inspector-column,0px);align-items:stretch}
+ /* Bound the inline grid as well as the modal: otherwise a long file list
+    grows its own scrollport, and overscroll containment traps the wheel. */
+ .fv-upper{display:grid;grid-template-columns:var(--fv-files-column,0px) minmax(0,1fr) var(--fv-inspector-column,0px);grid-template-rows:minmax(0,1fr);align-items:stretch;min-height:0;max-height:100%}
  .fv-files{grid-column:1;border:0;border-right:1px solid var(--fv-line);max-height:none}
  .fv-monitor{grid-column:2;padding:16px 24px;overflow:auto}
  .fv-inspector{grid-column:3;border:0;border-left:1px solid var(--fv-line);max-height:none}
@@ -144,7 +151,16 @@ export const workbenchCSS = `
  .fv-workbench[open] .fv-data{flex:none}
  .fv-workbench[open] .fv-data[open]{max-height:45%;overflow:auto}
 }
-@container fv-workbench (max-width:420px){.fv-topbar{gap:7px;padding:10px}.fv-subtitle{display:none}.fv-topbar .fv-open-label{display:none}.fv-monitor{padding:10px}.fv-empty{min-height:200px}.fv-timeline-pane{padding:10px}.fv-frame-query label{flex-basis:100%}}
+/* Startup is a workspace chooser, not an empty video frame. The 248px file
+   column and flexible main share the available height, without a media ratio. */
+.fv-workbench[data-view=start] .fv-body{display:flex;flex-direction:column;overflow:hidden}
+.fv-workbench[data-view=start] .fv-upper{flex:1;min-height:0}
+.fv-workbench[data-view=start] .fv-monitor{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:safe center;min-height:0;overflow:auto;background:var(--fv-bg);padding:32px 24px clamp(32px,10dvh,96px)}
+@container fv-workbench (width < 860px){
+ .fv-workbench[data-view=start] .fv-files{flex:1;max-height:none}
+ .fv-workbench[data-view=start][data-files=true] .fv-monitor{display:none}
+}
+@container fv-workbench (max-width:420px){.fv-topbar{gap:7px;padding:10px}.fv-subtitle{display:none}.fv-topbar .fv-open-label{display:none}.fv-monitor{padding:10px}.fv-empty h3{font-size:22px}.fv-timeline-pane{padding:10px}.fv-frame-query label{flex-basis:100%}}
 @media(prefers-reduced-motion:reduce){.fv-workbench *,.fv-guide{transition:none!important}}
 .fv-reference-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
 ${iconControlCSS}
@@ -253,14 +269,16 @@ export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath
   const entries = state.entries.filter(entry => entry.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
   const parent = state.path.split('/').slice(0, -1).join('/')
   return h('aside', { className: 'fv-files', 'aria-label': '工作区文件选择器' },
-    h('div', { className: 'fv-panel-heading' }, h('h3', null, '项目文件'),
-      h('div', null,
-        h('button', { type: 'button', title: '刷新文件列表', 'aria-label': '刷新文件列表', onClick: () => void browse(state.path, true), disabled: state.phase === 'loading' }, h(Icon, { name: 'refresh', size: 15 })),
-        h('button', { type: 'button', title: '收起项目文件', 'aria-label': '收起项目文件', onClick: onClose }, h(Icon, { name: 'close', size: 15 })))),
-    h('div', { className: 'fv-file-location' },
-      h('button', { type: 'button', title: '上一级文件夹', 'aria-label': '上一级文件夹', disabled: !state.path || state.phase === 'loading', onClick: () => void browse(parent) }, h(Icon, { name: 'back', size: 14 })),
-      h('span', { title: state.path || '当前会话工作区' }, state.path || '当前会话工作区')),
-    h('input', { className: 'fv-file-search', type: 'search', value: search, 'aria-label': '筛选当前文件夹', name: 'framivra-file-filter', autoComplete: 'off', placeholder: '筛选文件…', onChange: event => setSearch(event.target.value) }),
+    h('div', { className: 'fv-file-toolbar' },
+      h('div', { className: 'fv-panel-heading' }, h('h3', null, '项目文件'),
+        h('div', null,
+          h('button', { type: 'button', title: '刷新文件列表', 'aria-label': '刷新文件列表', onClick: () => void browse(state.path, true), disabled: state.phase === 'loading' }, h(Icon, { name: 'refresh', size: 15 })),
+          h('button', { type: 'button', title: '收起项目文件', 'aria-label': '收起项目文件', onClick: onClose }, h(Icon, { name: 'close', size: 15 })))),
+      h('div', { className: 'fv-file-location' },
+        h('button', { type: 'button', title: '上一级文件夹', 'aria-label': '上一级文件夹', disabled: !state.path || state.phase === 'loading', onClick: () => void browse(parent) }, h(Icon, { name: 'back', size: 14 })),
+        h('span', { title: state.path || '当前会话工作区' }, state.path || '当前会话工作区')),
+      h('input', { className: 'fv-file-search', type: 'search', value: search, 'aria-label': '筛选当前文件夹', name: 'framivra-file-filter', autoComplete: 'off', placeholder: '筛选文件…', onChange: event => setSearch(event.target.value) })),
+    h('div', { className: 'fv-file-scroll', role: 'region', 'aria-label': '文件列表', tabIndex: 0 },
     state.phase === 'loading' ? h('p', { className: 'fv-file-status', role: 'status' }, '正在读取文件夹…') : null,
     state.phase === 'failed' ? h('div', { className: 'fv-file-status', role: 'alert' }, state.message,
       h('button', { type: 'button', onClick: () => void browse(state.path, true) }, '重试读取文件夹')) : null,
@@ -271,5 +289,5 @@ export function FileBrowser({ sessionId, tabSignal, call, onChoose, selectedPath
       !entries.length ? h('p', { className: 'fv-file-status', role: 'status' }, search ? '没有匹配的文件。' : '此文件夹没有 JSON 文件或子文件夹。') : null,
       state.truncated ? h('p', { className: 'fv-file-status', role: 'status' }, `目录过大，仅显示前 ${state.limit} 项。请进入子文件夹。`) : null,
       state.escaped ? h('p', { className: 'fv-file-status' }, '已隐藏指向工作区外的链接。') : null) : null,
-    h('details', null, h('summary', null, '选择范围'), h('p', { className: 'fv-file-status' }, '仅浏览当前会话工作区，不上传文件。JSON 是否为有效时间线由 vtx 核验；外部工程请先切换会话工作区。')))
+    h('details', null, h('summary', null, '选择范围'), h('p', { className: 'fv-file-status' }, '仅浏览当前会话工作区，不上传文件。JSON 是否为有效时间线由 vtx 核验；外部工程请先切换会话工作区。'))))
 }
