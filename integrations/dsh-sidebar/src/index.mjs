@@ -1,7 +1,8 @@
 import z from '@deepseek-ai/schemastery'
 import { createPreviewHost } from './host.mjs'
+import { createKernelManagement } from './kernel-management.mjs'
 import { registerTimelineTools } from './tools.mjs'
-import { DEFAULT_VTX_EXECUTABLE, DEFAULT_TRUSTED_PATH, DEFAULT_LOG_MAX_PER_MINUTE, MAX_LOG_MAX_PER_MINUTE, VTX_EXECUTABLE_PATTERN, TRUSTED_PATH_PATTERN } from './configuration.mjs'
+import { DEFAULT_VTX_EXECUTABLE, DEFAULT_TRUSTED_PATH, DEFAULT_LOG_MAX_PER_MINUTE, MAX_LOG_MAX_PER_MINUTE, VTX_EXECUTABLE_PATTERN, TRUSTED_PATH_PATTERN, DEFAULT_VTX_CONFIG_FILE, VTX_CONFIG_FILE_PATTERN } from './configuration.mjs'
 
 export const name = 'framivra-dsh-sidebar'
 export const inject = ['connection', 'sessions', 'workingDirectory', 'fs', 'subprocess', 'tools']
@@ -19,6 +20,7 @@ export const inject = ['connection', 'sessions', 'workingDirectory', 'fs', 'subp
  * snapshot on every operation and binds grants to the exact fingerprint.
  */
 export const Config = z.object({
+  vtxConfigFile: z.string().pattern(VTX_CONFIG_FILE_PATTERN).default(DEFAULT_VTX_CONFIG_FILE).volatile().description('Explicit independent absolute .json VTX_CONFIG file. Empty uses the kernel default; the GUI never guesses its location.'),
   vtxExecutable: z.union([
     z.const('vtx'),
     z.string().pattern(VTX_EXECUTABLE_PATTERN),
@@ -35,7 +37,19 @@ export const Config = z.object({
 /** The Connection carrier admits owner Peers before these exact handlers run. */
 export function apply(ctx, config = {}) {
   const host = createPreviewHost(ctx, config)
+  const management = createKernelManagement(ctx, config)
+  // Optional public policy service: absent means installation stays denied.
+  // No session/request can choose a wider mode for this agentless Host action.
+  ctx.inject?.(['sandboxPolicy'], policyCtx => {
+    management.setPolicyResolver(() => policyCtx.sandboxPolicy.resolve())
+    policyCtx.effect(() => () => management.setPolicyResolver(undefined))
+  })
+  ctx.effect(() => () => management.dispose())
   ctx.effect(() => () => host.dispose())
+  // Connection admits owner peers only. Deliberately NOT a model tool.
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/framivra/kernel-management', methods: ['POST'], requestBody: 'buffered', fetch: management.fetch,
+  }))
   registerTimelineTools(ctx, host.agent)
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/framivra/control', methods: ['POST'], requestBody: 'buffered', fetch: host.control,

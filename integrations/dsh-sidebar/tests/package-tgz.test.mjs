@@ -18,7 +18,7 @@ const run = (args, options = {}) => spawnSync(process.execPath, args, {
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const members = ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'cordis.patch.yml', 'icon.svg',
   'lib/agent.js', 'lib/bounded.js', 'lib/client.js', 'lib/configuration.js', 'lib/host.js',
-  'lib/index.js', 'lib/json.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js',
+  'lib/index.js', 'lib/json.js', 'lib/kernel-config.js', 'lib/kernel-management.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js',
   'locale/en.json', 'locale/zh.json', 'package.json']
 
 // Additional format coverage; the existing ZIP/runtime/core tests remain unchanged.

@@ -45,11 +45,11 @@ export const BUILD_STAMP_MARKER = '__FRAMIVRA_BUILD_STAMP__'
 // packaged builds replace this literal (keep it identical to BUILD_STAMP_MARKER)
 export const BAKED_BUILD_STAMP = '__FRAMIVRA_BUILD_STAMP__'
 /** Host-side modules that participate in the build stamp, in fixed order. */
-export const HOST_LIB_MODULES = ['configuration', 'protocol', 'bounded', 'json', 'media', 'agent', 'tools', 'host', 'index']
+export const HOST_LIB_MODULES = ['configuration', 'kernel-config', 'kernel-management', 'protocol', 'bounded', 'json', 'media', 'agent', 'tools', 'host', 'index']
 /** Client-side modules that participate in the build stamp, in fixed order. */
 export const CLIENT_MODULES = [
   'icons', 'icon-controls', 'editor-controls', 'viewport', 'timeline', 'manual',
-  'selection', 'reference', 'frame', 'settings', 'draft-services', 'proposals',
+  'selection', 'reference', 'frame', 'settings', 'kernel-settings', 'draft-services', 'proposals',
   'grant-lifecycle', 'official-draft', 'workbench', 'index',
 ]
 /** Stamp recipe: prefix + first 16 hex of sha256 over the per-file sha256
@@ -153,9 +153,10 @@ export function decodeEnvelope(text, operation) {
 }
 
 export class TimelineReader {
-  constructor(subprocess, config = {}) {
+  constructor(subprocess, config = {}, validateConfigSelection) {
     this.subprocess = subprocess
     this.configSource = config
+    this.validateConfigSelection = validateConfigSelection
     // Plain (test/debug) sources keep fail-fast constructor validation; live
     // Volatile sources are validated on EVERY snapshot instead, because their
     // values can change at any time without a remount.
@@ -281,12 +282,24 @@ export class TimelineReader {
       if (config.fingerprint !== snapshot.fingerprint) fail('CONFIG_CHANGED', 'Host plugin configuration changed; reopen this preview and re-authorize', 409)
       config = snapshot
     } else config = this.snapshotConfig()
+    if (config.vtxConfigFile) {
+      if (typeof this.validateConfigSelection !== 'function') fail('CONFIG_TRUST_REQUIRED', 'Explicit VTX_CONFIG requires Host path trust validation', 403)
+      try { await this.validateConfigSelection(config, signal) }
+      catch (error) {
+        if (signal.aborted) throw signal.reason
+        if (error instanceof PreviewError) throw error
+        fail(error.code ?? 'CONFIG_UNTRUSTED', error.message ?? 'VTX_CONFIG path is not trusted', error.status ?? 403)
+      }
+      // Never spawn against a newer selection than the async path check used.
+      if (this.snapshotConfig().fingerprint !== config.fingerprint) fail('CONFIG_CHANGED', 'Host configuration changed during VTX_CONFIG validation', 409)
+    }
+    signal.throwIfAborted()
     const handle = this.subprocess.spawn({
       argv: [executable, '-t', timeline, ...args],
       cwd: dirname(executable), // Never execute Python/imports from an untrusted project cwd.
       stdio: { stdin: input === undefined ? 'ignore' : { data: input }, stdout: streaming ? 'pipe' : { maxBytes: 8 * 1024 * 1024 }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal,
-      env: { PATH: config.trustedPath, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
+      env: { PATH: config.trustedPath, VTX_CONFIG: config.vtxConfigFile || undefined, PYTHONDONTWRITEBYTECODE: '1', PYTHONSAFEPATH: '1', PYTHONPATH: undefined, PYTHONHOME: undefined },
     })
     this.active.set(handle, undefined)
     this.spawnKinds.set(handle, spawnKind(args))
