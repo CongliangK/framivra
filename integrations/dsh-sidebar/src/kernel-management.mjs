@@ -256,6 +256,9 @@ export function createKernelManagement(ctx, config = {}) {
     }
     if (snapshot.vtxExecutable !== 'vtx') await candidate(snapshot.vtxExecutable, 'current-setting')
     for (const dir of [...snapshot.trustedPath.split(':').slice(0, 32), join(home, '.local/bin'), join(home, '.cargo/bin'), '/opt/homebrew/bin']) await candidate(join(dir, 'vtx'), 'trusted-or-common-bin')
+    // The standard live video skill mounts the source kernel, not a bin/vtx
+    // console script. Probe only its known launcher; discovery never grants trust.
+    await candidate(join(home, '.agents/skills/video/vtx/vtx.py'), 'video-skill-source')
     const roots = [join(home, '.local/share/pipx/venvs'), join(home, '.local/pipx/venvs'), join(home, '.local/share/uv/tools'), join(home, '.virtualenvs'), managedRoot]
     for (const rootPath of roots) {
       const root = await local(rootPath, signal)

@@ -127,6 +127,46 @@ test('scan reads only bounded common roots and current/trusted paths; never spaw
   await env.service.dispose()
 })
 
+test('scan discovers the standard live video skill launcher without executing or trusting it', async () => {
+  const env = setup()
+  const mounted = join(homedir(), '.agents/skills/video/vtx/vtx.py')
+  const source = '/source/framivra/vtx/vtx.py'
+  env.fs.add(source, '#!/usr/bin/env python3')
+  env.fs.links.set(mounted, source)
+  try {
+    const result = await env.request({ op: 'scan' })
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.candidates.filter(item => item.source === 'video-skill-source'), [
+      { path: mounted, kind: 'executable', source: 'video-skill-source' },
+    ])
+    assert.equal(env.calls.length, 0)
+    assert.equal(env.fs.reads.length, 0)
+    assert.equal(env.fs.writes.length, 0)
+    assert.equal(env.config.vtxExecutable, '/opt/trusted/bin/vtx')
+  } finally { await env.service.dispose() }
+})
+
+test('missing or denied video skill mounts do not hide other kernel candidates', async () => {
+  for (const code of [undefined, 'FS_NOT_FOUND', 'FS_SANDBOX_DENIED', 'FS_PERMISSION_DENIED']) {
+    const env = setup()
+    const mounted = join(homedir(), '.agents/skills/video/vtx/vtx.py')
+    const original = env.fs.resolve.bind(env.fs)
+    env.fs.resolve = async path => {
+      if (path === mounted && code) throw Object.assign(new Error('unavailable'), { code })
+      return original(path)
+    }
+    try {
+      const result = await env.request({ op: 'scan' })
+      assert.equal(result.ok, true)
+      assert(result.candidates.some(item => item.path === '/opt/trusted/bin/vtx'))
+      assert(!result.candidates.some(item => item.source === 'video-skill-source'))
+      assert.equal(result.warnings.length, code?.includes('DENIED') ? 1 : 0)
+      assert.equal(env.calls.length, 0)
+      assert.equal(env.fs.writes.length, 0)
+    } finally { await env.service.dispose() }
+  }
+})
+
 test('scan truncates each venv directory and rejects request roots', async () => {
   const env = setup()
   for (let i = 0; i < 40; i++) env.fs.add(join(homedir(), `.virtualenvs/env-${i}/bin/vtx`), 'candidate')
