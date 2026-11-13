@@ -31,7 +31,7 @@ PY
 本包面向口播产线；纯 MG 起手直接读内核 [HTML 创作组织](../../docs/skill/references/gfx.md#html-创作组织)，不把本包的拍摄阶段、轨道骨架或模板页数当作必需结构。
 
 - **一条主链**：调研立项 → 稿子与结构 → 实拍与素材 → 动效页 → 时间线编排 → 渲染与 QC → 发布链（4K/封面/冻结）。
-- **两条音频支线**：口播/同期声支线（每期必经）与 BGM/音效支线（外部 music skill 可用时路由；缺失时按 [已有资产与受阻处理](references/audio-mixing.md#六授权与资产)；分轨审计包仍是交付门）。
+- **两条音频支线**：口播/同期声支线（每期必经）与 BGM/音效支线（[仓内 bgm](../../apps/bgm/README.md) 或[已有授权资产](references/audio-mixing.md#六授权与资产)；分轨审计包仍是交付门）。
 - **产线挂载件**：见文末「uses 声明表」——12 件 app 全量使用；denoise 已列入 uses_plugins，按素材需要选择处理，duck-static 列入 optional_plugins（键声明进 timeline 才生效）。
 - 编排层方法论（开场模板/演示对位/字幕策略/结尾模板）已提炼收编为本包 `references/narrative.md`（原外部报告 `~/文档/04_bilibili视频/_library/reports/编排方法论-科技口播视频.md` 为历史源件）；gfx 页面写法（帧驱动协议 + D22）读内核 `docs/skill/references/gfx.md`，成熟页面范式速查见本包 `references/voice-ime-paradigm.md`。
 
@@ -85,7 +85,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
 ## 音频创作流程（两条支线）
 
 - **口播/同期声支线**（每期视频必经）：① 录音=电容麦/boom 同期声 + 相机内录麦常开（=同步参考轨），长镜连续录制（详见 `references/shooting.md`）；② 同步=`apps/sync/sync_audio.py`（GCC-PHAT 相关法，无需拍掌/时间码）；③ 降噪=可选 [denoise 插件](../../plugins/denoise/README.md)（生产链、适用域与 timeline `sources[].denoise` 用法以组件文档为准；备选算法见 `references/shooting-guide.md`）；④ 入轨=timeline voice 轨事件（画面/声音同源，口型同步由构造保证；口型感知全局 +200ms）；⑤ 混音=bed 避让可选插件 `duck_strategy` 静态分段方案（`plugins/duck-static/`，与 `duck:true` 互斥）或 sidechaincompress 动态避让（启用前必做 A/B 响度对照，见内核 edit.md）+ **vtx audio 内置两遍静态增益到 -14 LUFS + alimiter 限幅终态**（post_loudness 已并入 build_audio 尾部，v2 §1.2，无独立步骤；量化口径参数化预设=`assets/presets/mixing.json`，含 duck 静态/sidechain 备用/降噪链/响度门数值），**终检必测编码后解码 TP**；⑥ 验证=`apps/gates/content_gates.py`（G1 口播−间隙响度 / G2 全片 LUFS / G3 解码域 TP（内核 qc 同阈复检）/ G7 零黑帧 / G10 帧数封装 + 项目门）。
-- **BGM/音效支线** → 仅在当前技能清单可用时路由进 **`music` skill**，缺失时按 [授权与资产](references/audio-mixing.md#六授权与资产) 处理；可用时流程如下（挂载 `~/.agents/skills/music/`，本体 music_tools 仓）：音色契约先行门 → 产线选路（公有领域改编=默认路线 / ACE-Step 时长精确 / synthlib 代码合成）→ 渲染+QC → **挂载进视频 timeline 后必做分轨审计包**（`apps/blender-bridge/audit_bundle.py`，用户 Blender 逐轨审听=交付门；配方见 `references/runbook-r5r6r7.md` R6）。授权红线：**商业音乐绝对不用**；音效宽松获取、AI 生成积极使用；现成资产在 `_library/assets_audio/`。
+- **BGM/音效支线** → [仓内 bgm](../../apps/bgm/README.md)：音色契约先行 → 选引擎与核验资产许可 → 渲染+QC → **挂载进视频 timeline 后必做分轨审计包**（`apps/blender-bridge/audit_bundle.py`，用户 Blender 逐轨审听=交付门；配方见 `references/runbook-r5r6r7.md` R6）。基础代码合成不要求外部 music skill；音源/模型选装、不自动下载。已有资产与能力受阻处理见 [授权与资产](references/audio-mixing.md#六授权与资产)。
 
 ## 全链路闭环（推荐 SOP）
 
@@ -105,7 +105,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
 ## 产线衔接与外部资产
 
 - 视频项目工作区在 `~/文档/04_bilibili视频/`（现状快照以其 AGENTS.md 为准）：每期视频一个文件夹 + `_library/`（assets_audio / corpus / reports 方法论 / blender_bridge 符号链接）+ `_archive/`。素材、timeline、gfx、out/ 都在**各期项目文件夹**内。
-- 音频/BGM 产线与外部 `music` 可用性检查 → [授权与资产](references/audio-mixing.md#六授权与资产)；视频消费已有产物，正式版挂载后仍走分轨审计包交付门。
+- 音频/BGM 生成入口 → [仓内 bgm](../../apps/bgm/README.md)；资产许可与受阻处理 → [授权与资产](references/audio-mixing.md#六授权与资产)。视频可消费已有产物，正式版挂载后仍走分轨审计包交付门。
 - 环境初始化与依赖矩阵（ffmpeg/libfdk_aac/Chrome/Blender/NVENC）→ video_tools 仓 `env python3 vt.py init` 自检 / `env VTX_DOCTOR_OFFLINE=1 python3 vt.py doctor` 三检。
 
 ## uses 声明表（产线用法定，非最小依赖）
@@ -120,7 +120,7 @@ bash <video_tools>/apps/publish/check_4k.sh out/final_4k.mp4 ...         # 4K �
 | app | `apps/tts/` | 口播占位语音（spec.json 贴预算合成） |
 | app | `apps/imgen/` | 背景图与封面底图生成（bg4k 硬接口） |
 | app | `apps/matting/` | 真人抠像与背景合成（resolve_matte 主力） |
-| app | `apps/bgm/` | BGM 需求路由声明（本体 music_tools 仓） |
+| app | `apps/bgm/` | 仓内 BGM 生成、混音与 QC（运行资产外置） |
 | app | `apps/blender-bridge/` | Blender 审片预览 + BGM 分轨审计包 |
 | app | `apps/cover/` | B 站投稿封面产线（make_cover 一条龙） |
 | app | `apps/gates/` | 发布前内容级复检（G1/G2/G7/G10+项目门） |

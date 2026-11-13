@@ -68,7 +68,7 @@ def _isolated_env(root):
     (tools / "python3").symlink_to(sys.executable)
     config = root / "config.json"
     config.write_text(json.dumps({"bgm": {"enabled": True,
-                                        "cli": str(root / "missing-bgm")}}))
+                                        "python": str(root / "missing-bgm-python")}}))
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("VTX_", "VT_", "SC_", "NANOBANANA", "IMGEN_", "ASR_", "TTS_"))
            and k not in ("PYTHONPATH", "PYTHONHOME", "BGM_CLI", "BGM_REPO",

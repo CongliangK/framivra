@@ -38,19 +38,17 @@ sources[] 级键 ``"bgm": true | {"output": "master|premaster|stem:<轨名>",
   render 的 build_render_plan 同口径，mix 被 atrim 定长到该时长）→ nb_frames
   供给事件时长校验——工程 JSON 不再触发 ffprobe 误报。分轨时长 = 工程时长
   （stem 与成片等长），facts 逻辑不受 stem 影响。
-- 环境缺失 fail-hard：bgm CLI 不可解析（config bgm.cli / ~/.local/bin/bgm /
-  bgm.repo + python3 -m bgm_gen 三通道全败）→ 打印逐通道缺什么 + exit 1
-  （v1.2.0：config 通道指向不存在/不可执行路径 = 该通道不可用落下一通道，
-  不再裸栈崩）。
-- 回执身份：工程 JSON 作为 sources[] 条目，stat 身份天然入 receipt_fingerprint；
-  深度依赖（$ref/采样）建议同时列入 project.cache_dependencies 获得回执级失效。
+- 固定调用仓内 apps/bgm/bgm.py；缺组件/解释器 fail-hard，不再寻找旧音乐仓
+  或本机 bgm 包装脚本。bgm.python 选解释器，bgm.runtime 选外置用户运行配置。
+- input_identity 将每工程执行代码、运行配置、工具及声明/标准资产依赖身份
+  同时纳入源缓存与阶段回执；$ref 不再需要重复列入 project.cache_dependencies。
 - contribute_keys（不变量 ①）：全部 bgm 源产物键进 gc 白名单；共享渲染目录
   经 registry cache_dirs 白名单保活，**v1.2.0 起键级回收**（cache_dir_keys 供给
   当前 render_digest 集——cache/bgm/ 下陈旧 digest 目录由 gc 列出/回收，
   在用目录保活，不再无界累积）。
 
-config 键（vtx.api.cfg_get）：``bgm.cli``（bgm 包装脚本路径，优先）；
-``bgm.repo``（music_tools 仓根，python3 -m bgm_gen 兜底通道的 PYTHONPATH）。
+config 键（vtx.api.cfg_get）：``bgm.python`` 与 ``bgm.runtime``。
+音乐本体、外部资产与配置边界见 apps/bgm/README.md。
 """
 from vtx.runtime.diagnostics import DiagnosticMessage, key_path, emit
 from vtx.runtime import fstxn
@@ -68,7 +66,7 @@ from vtx.api import audio_key as _audio_key
 from vtx.api import cfg_get, media_cache_valid, plugin_code_digest
 from .health_check import bgm_cmd
 
-VERSION = "1.2.0"
+VERSION = "2.0.0"
 KEY = "bgm"
 OUTPUTS = ("master", "premaster")     # master=母带终态（默认，-14 LUFS/-1 dBTP）；premaster=母前
 STEM_PREFIX = "stem:"
@@ -219,13 +217,45 @@ def _dep_sigs(c, s, proj: Path) -> dict:
     for ref in sorted(set(refs)):
         rp = (proj.parent / ref).resolve()
         dep_sigs[str(rp)] = _file_sig(rp)
-    for extra in sorted(_params(s).get("extra_deps", []) or []):
+    params = _params(s)
+    extras = params.get("extra_deps", []) if isinstance(params, dict) else []
+    for extra in sorted(x for x in (extras if isinstance(extras, list) else [])
+                        if isinstance(x, str)):
         if isinstance(extra, str):
             ep = Path(extra).expanduser()
             if not ep.is_absolute():
                 ep = (proj.parent / ep).resolve()
             dep_sigs[str(ep)] = _file_sig(ep)
     return dep_sigs
+
+
+def _producer_identity(c, sid):
+    """One project's execution identity, independent of stem/output selection."""
+    from apps.bgm.identity import execution_identity, asset_dependencies
+
+    cmd, env = bgm_cmd(cfg_get)
+    if cmd is None:
+        raise RuntimeError(env)
+    identity, runtime = execution_identity(cmd, env)
+    identity["assets"] = {p: _file_sig(Path(p))
+                          for p in asset_dependencies(c.src_path(sid), runtime)}
+    return identity
+
+
+def input_identity(c):
+    """Read-only invariant contribution: all music inputs bind stage receipts.
+
+    Ctx calls this before probes/dry are initialized. Invalid source shapes are
+    left to validate; timeline bytes already bind those shapes. No render or
+    persistent memo is permitted here (same-Ctx mutation must be observable).
+    """
+    sources = getattr(c, "tl", {}).get("sources", [])
+    if not isinstance(sources, list):
+        return []
+    return [{"id": s["id"], "render": render_digest(c, s["id"])}
+            for s in sources if isinstance(s, dict) and KEY in s
+            and isinstance(s.get("id"), str) and isinstance(s.get("path"), str)
+            and (s[KEY] is True or isinstance(s[KEY], dict))]
 
 
 def param_digest(c, sid) -> str:
@@ -235,7 +265,8 @@ def param_digest(c, sid) -> str:
     s = _source(c, sid) or {}
     proj = Path(c.src_path(sid))
     blob = json.dumps({"bgm": s.get(KEY), "deps": _dep_sigs(c, s, proj),
-                       "code": plugin_code_digest("bgm-render")},
+                       "code": plugin_code_digest("bgm-render"),
+                       "producer": _producer_identity(c, sid)},
                       ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:12]
 
@@ -248,7 +279,8 @@ def render_digest(c, sid) -> str:
     s = _source(c, sid) or {}
     proj = Path(c.src_path(sid))
     blob = json.dumps({"proj": _file_sig(proj), "deps": _dep_sigs(c, s, proj),
-                       "code": plugin_code_digest("bgm-render")},
+                       "code": plugin_code_digest("bgm-render"),
+                       "producer": _producer_identity(c, sid)},
                       ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:12]
 
@@ -315,6 +347,8 @@ def _ensure_shared_render(c, sid, force: bool = False):
             print(f"✗ bgm-render：render 结果不是 JSON 对象：{stdout[-300:]}",
                   file=sys.stderr)
             sys.exit(1)
+        if render_digest(c, sid) != shared.name:
+            raise RuntimeError(f"bgm-render: {sid} 的输入在渲染期间变化，拒绝发布共享完成标记")
         tmp = marker.parent / (marker.name + ".tmp")
         tmp.write_text(json.dumps({"result": result}, ensure_ascii=False,
                                   indent=1), encoding="utf-8")
@@ -428,6 +462,12 @@ def prepare_source(c, sid):
     want, _err = _resolve_render_wav(shared, result, which, sid)
     if want is not None and not _wav_ok(want):
         shared, result = _ensure_shared_render(c, sid, force=True)
+    if which == "master" and result.get("qc_ok") is not True:
+        print(f"✗ bgm-render：{sid} 母带 QC 未通过，拒绝接收 master；"
+              "请检查音乐 qc 报告并修复工程", file=sys.stderr)
+        sys.exit(1)
+    # Premaster/bus stems are mixing inputs, not loudness-normalized deliveries.
+    # Their final quality gate remains the mandatory video audio/mux/qc chain.
     src_wav = _locate_render_wav(shared, result, which, sid)
     # 转封装与内核裸提取同一形状（48kHz stereo pcm_s16le）——下游 _audio_graph
     # / audio_report 无感。bus stem 本就 48k f32 2ch，-ar 48000 同采样率直通

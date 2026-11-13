@@ -735,8 +735,8 @@ class WorkflowContract(unittest.TestCase):
         # Full app batches still need requests even without contacting a service.
         installs = [step['run'] for step in self.integration['jobs']['core']['steps']
                     if 'run' in step and 'python -m pip install ' in step['run']]
-        # Test dependencies retain their exact set; the separately approved
-        # public-kernel bootstrap is required for MG subprocess CLIs as well.
+        # Preserve every existing dependency and add only the approved music
+        # pytest dependency; public-kernel bootstrap still serves MG CLIs.
         self.assertEqual(len(installs), 2)
         self.assertEqual(shlex.split(installs[1]),
                          ['python', '-m', 'pip', 'install', '--no-deps', '-e', '.'])
@@ -745,7 +745,7 @@ class WorkflowContract(unittest.TestCase):
         dependencies = {re.split(r'[<>=!~\[]', requirement, maxsplit=1)[0].lower()
                         for requirement in argv[4:]}
         self.assertEqual(dependencies,
-                         {'numpy', 'pillow', 'jsonschema', 'pyyaml', 'requests'})
+                         {'numpy', 'pillow', 'jsonschema', 'pyyaml', 'requests', 'pytest'})
 
     def test_core_installs_cpu_tools_and_isolates_private_configuration(self):
         """Historical ID: real CPU setup belongs only to integration CI."""

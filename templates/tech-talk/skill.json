@@ -33,7 +33,7 @@
     },
     {
       "name": "bgm",
-      "role": "BGM 需求路由声明（本体在姊妹仓 music_tools；分轨审计包交付门知识链接）"
+      "role": "仓内 BGM 生成、混音与 QC（运行资产外置；视频挂载后走分轨审计包交付门）"
     },
     {
       "name": "blender-bridge",

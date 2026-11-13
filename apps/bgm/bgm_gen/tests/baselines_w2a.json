@@ -1,0 +1,115 @@
+{
+  "_meta": {
+    "generated": "2026-08-22",
+    "worker": "R2-W2A（确定性引擎适配）",
+    "contract": "R4 引擎冒烟断言下限 = rms_db - margin_db（margin>=3dB，PLAN.md R2 验收）",
+    "determinism_precheck": "7/7 case 三次渲染（含正式产物）sha256 逐位一致；sf2/fluidsynth 未观测浮点抖动，维持 deterministic 分级",
+    "sr_policy": "全部 case 声明 sr=44100 并实测相等（BG-D5 验收口径）"
+  },
+  "baselines": [
+    {
+      "engine": "sfz",
+      "case": "vsco2_celloens",
+      "file": "out/smoke/sfz/engine_vsco2_celloens.wav",
+      "sr": 44100,
+      "duration_s": 4.179591836734694,
+      "rms_db": -32.999415953643954,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -35.999,
+      "channels": 2,
+      "sha256": "c79049819516092d664c9e06ffb7b5ac557018760c1bce737b07e7cc8bc63cf4",
+      "spec": "out/smoke/sfz/spec_sfz_vsco2.json"
+    },
+    {
+      "engine": "sfz",
+      "case": "war_tuba",
+      "file": "out/smoke/sfz/engine_war_tuba.wav",
+      "sr": 44100,
+      "duration_s": 3.320453514739229,
+      "rms_db": -23.112108155600684,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -26.112,
+      "channels": 2,
+      "sha256": "06cb93539a7efb165e28fdd4f6230fe2ed8850ea989a79db07dee19d76011baa",
+      "spec": "out/smoke/sfz/spec_sfz_tuba.json"
+    },
+    {
+      "engine": "sf2",
+      "case": "fluidr3_p48",
+      "file": "out/smoke/sf2/engine_fluidr3_p48.wav",
+      "sr": 44100,
+      "duration_s": 6.9616326530612245,
+      "rms_db": -41.83682981451001,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -44.837,
+      "channels": 2,
+      "sha256": "be0948b2764295ec6d48d87266cf272f8b48343047749702872683372b7e7b35",
+      "spec": "out/smoke/sf2/spec_sf2_fluidr3.json"
+    },
+    {
+      "engine": "sf2",
+      "case": "gugs_p0",
+      "file": "out/smoke/sf2/engine_gugs_p0.wav",
+      "sr": 44100,
+      "duration_s": 6.381133786848072,
+      "rms_db": -45.78523945679959,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -48.785,
+      "channels": 2,
+      "sha256": "2415260cf6da3719e7b03a4da8591c169fabf863e5b1b9859afb0c66c47991a5",
+      "spec": "out/smoke/sf2/spec_sf2_gugs.json"
+    },
+    {
+      "engine": "sample",
+      "case": "kenney_impact",
+      "file": "out/smoke/sample/engine_kenney_impact.wav",
+      "sr": 44100,
+      "duration_s": 2.5,
+      "rms_db": -28.48980368712305,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -31.49,
+      "channels": 2,
+      "sha256": "c3d6ee37a2f90e359282b0ad5ec68c377973ba122bd8c76ecba58b974f8dcf7f",
+      "spec": "out/smoke/sample/spec_sample.json"
+    },
+    {
+      "engine": "synth",
+      "case": "kick_bar",
+      "file": "out/smoke/synth/engine_kick_bar.wav",
+      "sr": 44100,
+      "duration_s": 2.6249886621315195,
+      "rms_db": -11.67135372130953,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -14.671,
+      "channels": 2,
+      "sha256": "ecb7d5b3e4d41529d3f0fb5b185222a38809474ce7a4e963ce44de1d4a89241b",
+      "spec": "out/smoke/synth/spec_synth_kick.json"
+    },
+    {
+      "engine": "synth",
+      "case": "hat_bar",
+      "file": "out/smoke/synth/engine_hat_bar.wav",
+      "sr": 44100,
+      "duration_s": 2.8749886621315195,
+      "rms_db": -23.65767146528844,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -26.658,
+      "channels": 2,
+      "sha256": "921628af7275e74d9615806fe2c2ee650e0b876433863997b4dd4e789b61811c",
+      "spec": "out/smoke/synth/spec_synth_hat.json"
+    },
+    {
+      "engine": "master",
+      "case": "loudnorm_sine",
+      "file": "out/smoke/master/engine_master_loudnorm.wav",
+      "sr": 44100,
+      "duration_s": 3.0,
+      "rms_db": -13.41,
+      "margin_db": 3.0,
+      "assert_rms_floor_db": -16.41,
+      "channels": 1,
+      "sha256": "bdbba7717d7a102d00b4f6c8f85168de3150c84c2e4d9c89caa3239ef27a59bc",
+      "spec": "out/smoke/master/spec_master_loudnorm.json"
+    }
+  ]
+}

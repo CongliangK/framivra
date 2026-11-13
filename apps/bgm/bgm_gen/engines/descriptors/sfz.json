@@ -1,0 +1,215 @@
+{
+  "binary_pin": {
+    "note": "sfizz_render 无 --version（实测输出 'Option version does not exist'）——version 取 audinux COPR rpm 登记事实 sfizz-1.2.3-4.fc44；doctor 核验退化为 sha/size（C2，sha=advisory 黄灯）",
+    "sha256": "caa9b3104beaa0059cd00e3deab697f2ddb2423d0e4b777b9fe0598c3e46ddd5",
+    "size": 1212944,
+    "version": "1.2.3-4.fc44"
+  },
+  "coverage": {
+    "evidence": [
+      "bgm_gen/engines/sfz.py（渲染选项使用面：--sfz/--midi/--wav/-s——源码是第一事实源 C12）",
+      "bgm_gen/engines/midi_util.py（R2：events_to_smf 编码器——事件通道字节层，tests/test_events.py 锚点锁定）",
+      "sfizz_render.sh --help 参数名表实测（--blocksize/--quality/--polyphony/--use-eot 存在但未被引擎使用；harvest_log 存档）",
+      "SFZ 规范 sfzformat.com（事件通道语义参考）",
+      "audinux COPR sfizz-1.2.3-4.fc44.x86_64.rpm（BSD-2-Clause；binary_pin 版本来源，sfizz_render.sh 头部注释）"
+    ],
+    "gaps": [
+      "能力面=SFZ 文件本身（对 AI 无闸门）；描述符只覆盖渲染选项与事件通道",
+      "--blocksize/--quality/--polyphony/--use-eot 等 CLI 选项未接入引擎 payload（引擎只用 --sfz/--midi/--wav/-s）",
+      "payload.events 通道 R2 落地（描述符 version 1.1.0；envelope spec_version 不变——BG-D14 口径）；SFZ 文件级 pitch_wheel_range 逐文件不同——工程轨含弯音必须显式声明 bend_range（实测证据 examples/fate/bend_range_evidence.json）",
+      "tier B：参数语义依赖 CLI --help 参数名表+SFZ 规范佐证，非纯源码收割（sfizz 为黑盒二进制）",
+      "bpm 收紧 min=1（同 synth；R1 审查 E-1 记录）"
+    ],
+    "probes": [
+      "bgm_gen/tests/test_descriptors.py [fast] sfz_default（VSCO2 CelloEnsSusVib）/ sfz_bpm_boundary（bpm 边界近点 150）+ determinism 双渲",
+      "bgm_gen/tests/test_events.py [fast] 编码锚点（ppq/KS 错开/bend 14bit/混装轨逐位一致）+ [slow] 冒烟：CC1 渐强（VPO PERF）/ keyswitch sw_last / pitch_bend 微分音（实测弯音量程→examples/fate/bend_range_evidence.json）"
+    ],
+    "tier": "B"
+  },
+  "engine": "sfz",
+  "events_supported": [
+    {
+      "note": "sfizz 经 SMF 透传",
+      "type": "cc"
+    },
+    {
+      "note": "量程按轨级 bend_range（SFZ 文件级 pitch_wheel_range 逐文件不同——v2 含弯音事件的 sfz 轨必须显式声明）",
+      "type": "pitch_bend"
+    },
+    {
+      "note": "sw_last 语义（VPO KS 文件实测）；KS 键区逐乐器避让音域",
+      "type": "keyswitch"
+    },
+    {
+      "note": "SFZ 文件内 <control>/program 解析（能力面=文件本身）",
+      "type": "program_change"
+    },
+    {
+      "note": "notes 投影载体（XOR，组装层合成——R2 落地）",
+      "type": "note_on"
+    },
+    {
+      "note": "同 note_on",
+      "type": "note_off"
+    }
+  ],
+  "formats": [
+    "wav（sfizz_render --wav）"
+  ],
+  "input_ports": [
+    {
+      "description": "BG-D7 记谱",
+      "id": "notes",
+      "type": "note_array"
+    },
+    {
+      "description": "SFZ 引用（resolve_sfz 规则）",
+      "id": "sfz",
+      "type": "asset_path"
+    }
+  ],
+  "invariants": [
+    {
+      "check": false,
+      "id": "sfz_tool_required",
+      "rule": "runtime.json tools.sfizz_render 必须存在（引擎守卫；doctor 校验）"
+    },
+    {
+      "check": false,
+      "id": "sfz_output_sr_exact",
+      "rule": "输出 sr=sfizz -s 参数（spec.sr 声明则必须相等——envelope 契约）；stderr 'Cannot set current thread scheduling' 属无害噪音（JACK 探测失败）"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "SFZ 引用：绝对路径 / 相对 assets_root/sfz（别名前缀归一 VSCO2→VSCO2_CE、Karoryfer→karoryfer）/ 纯文件名树内 sorted 唯一匹配（resolve_sfz；文件存在性由引擎守卫）",
+      "flags": [
+        "required"
+      ],
+      "id": "sfz",
+      "type": "path"
+    },
+    {
+      "description": "BG-D7 统一记谱 [[pitch, beat, dur, vel], ...]（midi_util write_notes_smf → 临时 SMF → sfizz_render --midi）",
+      "flags": [
+        "required"
+      ],
+      "id": "notes",
+      "schema": {
+        "items": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "minItems": 1
+      },
+      "type": "tuple"
+    },
+    {
+      "default": 120.0,
+      "description": "beat→秒换算（写入 SMF set_tempo）",
+      "id": "bpm",
+      "min": 1,
+      "type": "float",
+      "unit": "bpm"
+    },
+    {
+      "description": "v2 控制事件数组（PLAN_v3 §3.2/BG-D14；R2 落地）：{type,t}+逐类型字段；type 六类闭集与逐类型字段约束由工程层 core/project.py 校验（描述符 schema 为结构性兜底）；非空时引擎改走 events_to_smf（无 events 保持旧路径字节不动）",
+      "flags": [
+        "optional"
+      ],
+      "id": "events",
+      "schema": {
+        "items": {
+          "properties": {
+            "bank": {
+              "maximum": 128,
+              "minimum": 0,
+              "type": "number"
+            },
+            "ctrl": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "pitch": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "program": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "semitones": {
+              "type": "number"
+            },
+            "t": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "value": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "vel": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "t"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "array"
+    },
+    {
+      "default": 2.0,
+      "description": "弯音量程半音数（缺省 2.0）：pitch_bend 事件 14bit 线性映射 clamp(round_half_up(8192*(1+semitones/bend_range)), 0, 16383)；SFZ 文件级 pitch_wheel_range 逐文件不同——工程轨含弯音时必须显式声明（轨级 track.bend_range 经 track_projection 透传）",
+      "exclusive_min": true,
+      "id": "bend_range",
+      "min": 0,
+      "type": "float",
+      "unit": "st"
+    }
+  ],
+  "track_projection": {
+    "bend_range": "track.bend_range（sfz 轨含 pitch_bend 必须显式声明；透传编码器）",
+    "bpm": "meta.bpm",
+    "events": "track.events（控制事件；非空才注入 payload——无 events 保持旧路径字节不动）",
+    "hooks": [
+      "③ meta 注入（bpm/sr）",
+      "④ params 覆盖合并（显式优先）"
+    ],
+    "note": "R2 数据化：if/elif 退役为 track_projection + 四类封闭钩子（PLAN_v3 §3.1；重组装深比较锁 tests/test_events.py）",
+    "notes": "track.notes（note 事件载体 XOR 时由组装层 events_to_notes 合成）",
+    "sfz": "track.instrument"
+  },
+  "version": "1.1.0"
+}

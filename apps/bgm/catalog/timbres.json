@@ -1,0 +1,1583 @@
+{
+  "generated": "2026-10-11",
+  "sources": {
+    "synth": {
+      "engine": "synth",
+      "module": "bgm_gen/synthlib.py",
+      "count": 7,
+      "percussive": [
+        "hat",
+        "kick",
+        "snare"
+      ],
+      "tonal": [
+        "bass",
+        "fm_ep",
+        "lead",
+        "nylon"
+      ],
+      "timbres": {
+        "hat": {
+          "type": "percussive",
+          "pitch": "ignored",
+          "params": [
+            "decay"
+          ],
+          "desc": "踩镲：7kHz 以上带通噪声 × 指数衰减"
+        },
+        "kick": {
+          "type": "percussive",
+          "pitch": "ignored",
+          "params": [],
+          "desc": "808 血统底鼓：音高 155Hz 下扫 45Hz"
+        },
+        "snare": {
+          "type": "percussive",
+          "pitch": "ignored",
+          "params": [],
+          "desc": "军鼓：185/330Hz body + 带通噪声 snap"
+        },
+        "bass": {
+          "type": "tonal",
+          "pitch": "MIDI pitch → f0",
+          "params": [],
+          "desc": "合成 bass：基频+八度泛音，tanh 饱和"
+        },
+        "fm_ep": {
+          "type": "tonal",
+          "pitch": "MIDI pitch → f0",
+          "params": [
+            "ratio",
+            "idx",
+            "bright_decay"
+          ],
+          "desc": "FM 电钢琴（DX7 tine 两算子近似，亮度随调制指数衰减）"
+        },
+        "lead": {
+          "type": "tonal",
+          "pitch": "MIDI pitch → f0",
+          "params": [],
+          "desc": "合成 lead：双振荡器微失谐 + 迟到颤音"
+        },
+        "nylon": {
+          "type": "tonal",
+          "pitch": "MIDI pitch → f0",
+          "params": [
+            "bright",
+            "pick",
+            "body",
+            "decay_ref"
+          ],
+          "desc": "尼龙弦吉他单音拨弦（Karplus-Strong 拨弦物理模型：延迟线弦+梳状拨弦+FFT 琴体共振；默认 bright 0.55 激励亮度 / pick 0.26 拨弦位置 / body 1.0 琴体共鸣 / decay_ref 6.0 参考音 G2 的 T60 秒——与 synthlib.nylon 签名默认值一致）"
+        }
+      },
+      "payload": "payload（描述符 v1.1.0 · tier A）:\n  *program        enum  枚举 kick/snare/hat/fm_ep/bass/lead/nylon；synthlib 音色函数名：kick/snare/hat=打击乐（pitch 忽略），fm_ep/bass/lead/nylon=调性（pitch→f0）；nylon=Karplus-Strong 尼龙弦吉他拨弦物理模型（时值语义：输出=dur+0.9s 自然延音+80ms 释音）\n  *notes          tuple BG-D7 统一记谱 [[pitch(MIDI 0-127), beat(浮点), dur(浮点 beat), vel(0-127)], ...]；beat/dur 单位=四分音符；vel→gain=vel/127（线性），总线叠加后 softclip\n   bpm            float 默认 120.0；范围 1..…；bpm；beat→秒换算：at = beat * 60/bpm\n   params         object默认 {}；按 program 透传为 synthlib 函数 kwargs；合法键随 program 变（invariant synth_params_by_program 强制）"
+    },
+    "sf2": {
+      "engine": "sf2",
+      "count": 2,
+      "fonts": {
+        "FluidR3_GM": {
+          "path": "/usr/share/soundfonts/FluidR3_GM.sf2",
+          "exists": true,
+          "size_mb": 148.4
+        },
+        "GeneralUser_GS": {
+          "path": "$MUSIC_ASSETS_ROOT/sf2/GeneralUser_GS.sf2",
+          "exists": true,
+          "size_mb": 32.3
+        }
+      },
+      "banks": {
+        "0": "GM 128 melodic（program 0..127，标准名见 gm_programs）",
+        "128": "GM 打击组（channel 10 鼓组）"
+      },
+      "gm_programs": [
+        "Acoustic Grand Piano",
+        "Bright Acoustic Piano",
+        "Electric Grand Piano",
+        "Honky-tonk Piano",
+        "Electric Piano 1",
+        "Electric Piano 2",
+        "Harpsichord",
+        "Clavi",
+        "Celesta",
+        "Glockenspiel",
+        "Music Box",
+        "Vibraphone",
+        "Marimba",
+        "Xylophone",
+        "Tubular Bells",
+        "Dulcimer",
+        "Drawbar Organ",
+        "Percussive Organ",
+        "Rock Organ",
+        "Church Organ",
+        "Reed Organ",
+        "Accordion",
+        "Harmonica",
+        "Tango Accordion",
+        "Acoustic Guitar (nylon)",
+        "Acoustic Guitar (steel)",
+        "Electric Guitar (jazz)",
+        "Electric Guitar (clean)",
+        "Electric Guitar (muted)",
+        "Overdriven Guitar",
+        "Distortion Guitar",
+        "Guitar harmonics",
+        "Acoustic Bass",
+        "Electric Bass (finger)",
+        "Electric Bass (pick)",
+        "Fretless Bass",
+        "Slap Bass 1",
+        "Slap Bass 2",
+        "Synth Bass 1",
+        "Synth Bass 2",
+        "Violin",
+        "Viola",
+        "Cello",
+        "Contrabass",
+        "Tremolo Strings",
+        "Pizzicato Strings",
+        "Orchestral Harp",
+        "Timpani",
+        "String Ensemble 1",
+        "String Ensemble 2",
+        "SynthStrings 1",
+        "SynthStrings 2",
+        "Choir Aahs",
+        "Voice Oohs",
+        "Synth Voice",
+        "Orchestra Hit",
+        "Trumpet",
+        "Trombone",
+        "Tuba",
+        "Muted Trumpet",
+        "French Horn",
+        "Brass Section",
+        "SynthBrass 1",
+        "SynthBrass 2",
+        "Soprano Sax",
+        "Alto Sax",
+        "Tenor Sax",
+        "Baritone Sax",
+        "Oboe",
+        "English Horn",
+        "Bassoon",
+        "Clarinet",
+        "Piccolo",
+        "Flute",
+        "Recorder",
+        "Pan Flute",
+        "Blown Bottle",
+        "Shakuhachi",
+        "Whistle",
+        "Ocarina",
+        "Lead 1 (square)",
+        "Lead 2 (sawtooth)",
+        "Lead 3 (calliope)",
+        "Lead 4 (chiff)",
+        "Lead 5 (charang)",
+        "Lead 6 (voice)",
+        "Lead 7 (fifths)",
+        "Lead 8 (bass + lead)",
+        "Pad 1 (new age)",
+        "Pad 2 (warm)",
+        "Pad 3 (polysynth)",
+        "Pad 4 (choir)",
+        "Pad 5 (bowed)",
+        "Pad 6 (metallic)",
+        "Pad 7 (halo)",
+        "Pad 8 (sweep)",
+        "FX 1 (rain)",
+        "FX 2 (soundtrack)",
+        "FX 3 (crystal)",
+        "FX 4 (atmosphere)",
+        "FX 5 (brightness)",
+        "FX 6 (goblins)",
+        "FX 7 (echoes)",
+        "FX 8 (sci-fi)",
+        "Sitar",
+        "Banjo",
+        "Shamisen",
+        "Koto",
+        "Kalimba",
+        "Bag pipe",
+        "Fiddle",
+        "Shanai",
+        "Tinkle Bell",
+        "Agogo",
+        "Steel Drums",
+        "Woodblock",
+        "Taiko Drum",
+        "Melodic Tom",
+        "Synth Drum",
+        "Reverse Cymbal",
+        "Guitar Fret Noise",
+        "Breath Noise",
+        "Seashore",
+        "Bird Tweet",
+        "Telephone Ring",
+        "Helicopter",
+        "Applause",
+        "Gunshot"
+      ],
+      "shorthand": "instrument 速记 \"FluidR3_GM:0:48\" = 名字:bank:program（core/project.py track_engine_spec）",
+      "payload": "payload（描述符 v1.1.0 · tier A）:\n  *sf2            path  SoundFont：runtime.json sf2 表名字（FluidR3_GM/GeneralUser_GS）或绝对路径（resolve_sf2；文件存在性由引擎守卫）\n  *notes          tuple BG-D7 统一记谱 [[pitch, beat, dur, vel], ...]（midi_util write_notes_smf → 临时 SMF；SMF 不写 program change，音色由 program_select 显式指定）\n   bank           int   默认 0；范围 0..128；bank（128=GM 打击组）；经 fluid_synth_program_select 显式选音色，可覆盖非 GM-bank0 预设\n   program        int   默认 0；范围 0..127；GM program（0..127）\n   bpm            float 默认 120.0；范围 1..…；bpm；beat→秒换算（写入 SMF set_tempo）\n   gain           float 默认 1.0；范围 0..…；线性输出增益（apply_gain_wav 后处理；gain==1 时 no-op 字节不动）\n   channel        int   范围 0..15；MIDI 通道；缺省=bank==128 ? 9 : 0（引擎派生，invariant sf2_channel_default_derived 文档化）\n   events         array v2 控制事件数组（PLAN_v3 §3.2/BG-D14；R2 落地）：{type,t}+逐类型字段；type 六类闭集与逐类型字段约束由工程层 core/project.py 校验（描述符 schema 为结构性兜底）；非空时引擎改走 events_to_smf（无 events 保持旧路径字节不动）\n   bend_range     float 默认 2.0；范围 0..…；st；弯音量程半音数（缺省 2.0）：pitch_bend 事件 14bit 线性映射 clamp(round_half_up(8192*(1+semitones/bend_range)), 0, 16383)；轨级声明经 track_projection 透传"
+    },
+    "sfz": {
+      "engine": "sfz",
+      "root": "$MUSIC_ASSETS_ROOT/sfz",
+      "exists": true,
+      "total": 685,
+      "libraries": {
+        "SalamanderGrand": {
+          "count": 1,
+          "groups": {
+            ".": [
+              "Salamander Grand Piano V3.sfz"
+            ]
+          },
+          "license": "CC-BY 3.0（作者 Alexander Holm；SFZ 化 kinwie）——**视频简介需署名**",
+          "notes": []
+        },
+        "VPO": {
+          "count": 454,
+          "groups": {
+            "Brass": [
+              "Brass/all-brass-SEC-PERF-panned.sfz",
+              "Brass/all-brass-SEC-PERF-staccato-panned.sfz",
+              "Brass/all-brass-SEC-PERF-staccato.sfz",
+              "Brass/all-brass-SEC-PERF.sfz",
+              "Brass/all-brass-SEC-accent-panned.sfz",
+              "Brass/all-brass-SEC-accent.sfz",
+              "Brass/all-brass-SEC-normal-DXF.sfz",
+              "Brass/all-brass-SEC-normal-mod-wheel-panned.sfz",
+              "Brass/all-brass-SEC-normal-mod-wheel.sfz",
+              "Brass/all-brass-SEC-normal-panned-DXF.sfz",
+              "Brass/all-brass-SEC-staccato-panned.sfz",
+              "Brass/all-brass-SEC-staccato.sfz",
+              "Brass/all-brass-SEC-sustain-panned.sfz",
+              "Brass/all-brass-SEC-sustain.sfz",
+              "Brass/all-brass-SOLO-PERF-panned.sfz",
+              "Brass/all-brass-SOLO-PERF-staccato-panned.sfz",
+              "Brass/all-brass-SOLO-PERF-staccato.sfz",
+              "Brass/all-brass-SOLO-PERF.sfz",
+              "Brass/all-brass-SOLO-accent-panned.sfz",
+              "Brass/all-brass-SOLO-accent.sfz",
+              "Brass/all-brass-SOLO-normal-DXF.sfz",
+              "Brass/all-brass-SOLO-normal-mod-wheel-panned.sfz",
+              "Brass/all-brass-SOLO-normal-mod-wheel.sfz",
+              "Brass/all-brass-SOLO-normal-panned-DXF.sfz",
+              "Brass/all-brass-SOLO-staccato-panned.sfz",
+              "Brass/all-brass-SOLO-staccato.sfz",
+              "Brass/all-brass-SOLO-sustain-panned.sfz",
+              "Brass/all-brass-SOLO-sustain.sfz",
+              "Brass/bass-trombone-SOLO-KS-C6.sfz",
+              "Brass/bass-trombone-SOLO-PERF-KS-A5.sfz",
+              "Brass/bass-trombone-SOLO-PERF-KS-C6.sfz",
+              "Brass/bass-trombone-SOLO-PERF-staccato.sfz",
+              "Brass/bass-trombone-SOLO-PERF.sfz",
+              "Brass/bass-trombone-SOLO-accent.sfz",
+              "Brass/bass-trombone-SOLO-normal-mod-wheel.sfz",
+              "Brass/bass-trombone-SOLO-staccato.sfz",
+              "Brass/bass-trombone-SOLO-sustain.sfz",
+              "Brass/french-horn-SEC-KS-C6-DXF.sfz",
+              "Brass/french-horn-SEC-KS-C6.sfz",
+              "Brass/french-horn-SEC-PERF-KS-C6.sfz",
+              "Brass/french-horn-SEC-PERF-staccato.sfz",
+              "Brass/french-horn-SEC-PERF.sfz",
+              "Brass/french-horn-SEC-accent-DXF.sfz",
+              "Brass/french-horn-SEC-accent.sfz",
+              "Brass/french-horn-SEC-normal-DXF.sfz",
+              "Brass/french-horn-SEC-normal-mod-wheel.sfz",
+              "Brass/french-horn-SEC-staccato-DXF.sfz",
+              "Brass/french-horn-SEC-staccato.sfz",
+              "Brass/french-horn-SEC-sustain-DXF.sfz",
+              "Brass/french-horn-SEC-sustain.sfz",
+              "Brass/french-horn-SOLO-KS-C6-DXF.sfz",
+              "Brass/french-horn-SOLO-KS-C6.sfz",
+              "Brass/french-horn-SOLO-PERF-KS-C6.sfz",
+              "Brass/french-horn-SOLO-PERF-staccato.sfz",
+              "Brass/french-horn-SOLO-PERF.sfz",
+              "Brass/french-horn-SOLO-accent-DXF.sfz",
+              "Brass/french-horn-SOLO-accent.sfz",
+              "Brass/french-horn-SOLO-normal-DXF.sfz",
+              "Brass/french-horn-SOLO-normal-mod-wheel.sfz",
+              "Brass/french-horn-SOLO-staccato-DXF.sfz",
+              "Brass/french-horn-SOLO-staccato.sfz",
+              "Brass/french-horn-SOLO-sustain-DXF.sfz",
+              "Brass/french-horn-SOLO-sustain.sfz",
+              "Brass/trombone-SEC-KS-C6-DXF.sfz",
+              "Brass/trombone-SEC-KS-C6.sfz",
+              "Brass/trombone-SEC-PERF-KS-C6.sfz",
+              "Brass/trombone-SEC-PERF-staccato.sfz",
+              "Brass/trombone-SEC-PERF.sfz",
+              "Brass/trombone-SEC-accent-DXF.sfz",
+              "Brass/trombone-SEC-accent.sfz",
+              "Brass/trombone-SEC-normal-DXF.sfz",
+              "Brass/trombone-SEC-normal-mod-wheel.sfz",
+              "Brass/trombone-SEC-staccato-DXF.sfz",
+              "Brass/trombone-SEC-staccato.sfz",
+              "Brass/trombone-SEC-sustain-DXF.sfz",
+              "Brass/trombone-SEC-sustain.sfz",
+              "Brass/trombone-SOLO-KS-C6-DXF.sfz",
+              "Brass/trombone-SOLO-KS-C6.sfz",
+              "Brass/trombone-SOLO-PERF-KS-C6.sfz",
+              "Brass/trombone-SOLO-PERF-staccato.sfz",
+              "Brass/trombone-SOLO-PERF.sfz",
+              "Brass/trombone-SOLO-accent-DXF.sfz",
+              "Brass/trombone-SOLO-accent.sfz",
+              "Brass/trombone-SOLO-normal-DXF.sfz",
+              "Brass/trombone-SOLO-normal-mod-wheel.sfz",
+              "Brass/trombone-SOLO-staccato-DXF.sfz",
+              "Brass/trombone-SOLO-staccato.sfz",
+              "Brass/trombone-SOLO-sustain-DXF.sfz",
+              "Brass/trombone-SOLO-sustain.sfz",
+              "Brass/trumpet-SEC-KS-C2-DXF.sfz",
+              "Brass/trumpet-SEC-KS-C2.sfz",
+              "Brass/trumpet-SEC-PERF-KS-C2.sfz",
+              "Brass/trumpet-SEC-PERF-staccato.sfz",
+              "Brass/trumpet-SEC-PERF.sfz",
+              "Brass/trumpet-SEC-accent-DXF.sfz",
+              "Brass/trumpet-SEC-accent.sfz",
+              "Brass/trumpet-SEC-normal-DXF.sfz",
+              "Brass/trumpet-SEC-normal-mod-wheel.sfz",
+              "Brass/trumpet-SEC-staccato-DXF.sfz",
+              "Brass/trumpet-SEC-staccato.sfz",
+              "Brass/trumpet-SEC-sustain-DXF.sfz",
+              "Brass/trumpet-SEC-sustain.sfz",
+              "Brass/trumpet-SOLO-KS-C2-DXF.sfz",
+              "Brass/trumpet-SOLO-KS-C2.sfz",
+              "Brass/trumpet-SOLO-PERF-KS-C2.sfz",
+              "Brass/trumpet-SOLO-PERF-staccato.sfz",
+              "Brass/trumpet-SOLO-PERF.sfz",
+              "Brass/trumpet-SOLO-accent-DXF.sfz",
+              "Brass/trumpet-SOLO-accent.sfz",
+              "Brass/trumpet-SOLO-normal-DXF.sfz",
+              "Brass/trumpet-SOLO-normal-mod-wheel.sfz",
+              "Brass/trumpet-SOLO-staccato-DXF.sfz",
+              "Brass/trumpet-SOLO-staccato.sfz",
+              "Brass/trumpet-SOLO-sustain-DXF.sfz",
+              "Brass/trumpet-SOLO-sustain.sfz",
+              "Brass/tuba-SOLO-KS-C5.sfz",
+              "Brass/tuba-SOLO-KS-C6.sfz",
+              "Brass/tuba-SOLO-PERF-KS-C5.sfz",
+              "Brass/tuba-SOLO-PERF-KS-C6.sfz",
+              "Brass/tuba-SOLO-PERF-staccato.sfz",
+              "Brass/tuba-SOLO-PERF.sfz",
+              "Brass/tuba-SOLO-accent.sfz",
+              "Brass/tuba-SOLO-normal-mod-wheel.sfz",
+              "Brass/tuba-SOLO-staccato.sfz",
+              "Brass/tuba-SOLO-sustain.sfz"
+            ],
+            "Keys": [
+              "Keys/celesta.sfz"
+            ],
+            "Percussion": [
+              "Percussion/bassdrum-snare-cymbals.sfz",
+              "Percussion/bassdrum.sfz",
+              "Percussion/cymbals.sfz",
+              "Percussion/glockenspiel.sfz",
+              "Percussion/misc.sfz",
+              "Percussion/snare.sfz",
+              "Percussion/timpani-KS-C6.sfz",
+              "Percussion/timpani-hit-LR.sfz",
+              "Percussion/timpani-hit-n-roll.sfz",
+              "Percussion/timpani-hit.sfz",
+              "Percussion/timpani-roll.sfz",
+              "Percussion/tubular-bells.sfz",
+              "Percussion/vibraphone-KS-C2.sfz",
+              "Percussion/vibraphone-auto-damp.sfz",
+              "Percussion/vibraphone-open.sfz",
+              "Percussion/xylophone.sfz"
+            ],
+            "Strings": [
+              "Strings/1st-violin-SEC-KS-C2.sfz",
+              "Strings/1st-violin-SEC-KS-C3.sfz",
+              "Strings/1st-violin-SEC-PERF-KS-C2.sfz",
+              "Strings/1st-violin-SEC-PERF-KS-C3.sfz",
+              "Strings/1st-violin-SEC-PERF-pizzicato.sfz",
+              "Strings/1st-violin-SEC-PERF-staccato.sfz",
+              "Strings/1st-violin-SEC-PERF-tremolo.sfz",
+              "Strings/1st-violin-SEC-PERF.sfz",
+              "Strings/1st-violin-SEC-accent.sfz",
+              "Strings/1st-violin-SEC-normal-mod-wheel.sfz",
+              "Strings/1st-violin-SEC-pizzicato.sfz",
+              "Strings/1st-violin-SEC-staccato.sfz",
+              "Strings/1st-violin-SEC-sustain.sfz",
+              "Strings/1st-violin-SEC-tremolo.sfz",
+              "Strings/1st-violin-SOLO-KS-C2.sfz",
+              "Strings/1st-violin-SOLO-KS-C3.sfz",
+              "Strings/1st-violin-SOLO-PERF-KS-C2.sfz",
+              "Strings/1st-violin-SOLO-PERF-KS-C3.sfz",
+              "Strings/1st-violin-SOLO-PERF-pizzicato.sfz",
+              "Strings/1st-violin-SOLO-PERF-staccato.sfz",
+              "Strings/1st-violin-SOLO-PERF-tremolo.sfz",
+              "Strings/1st-violin-SOLO-PERF.sfz",
+              "Strings/1st-violin-SOLO-accent.sfz",
+              "Strings/1st-violin-SOLO-normal-mod-wheel.sfz",
+              "Strings/1st-violin-SOLO-pizzicato.sfz",
+              "Strings/1st-violin-SOLO-staccato.sfz",
+              "Strings/1st-violin-SOLO-sustain.sfz",
+              "Strings/1st-violin-SOLO-tremolo.sfz",
+              "Strings/2nd-violin-SEC-KS-C2.sfz",
+              "Strings/2nd-violin-SEC-KS-C3.sfz",
+              "Strings/2nd-violin-SEC-PERF-KS-C2.sfz",
+              "Strings/2nd-violin-SEC-PERF-KS-C3.sfz",
+              "Strings/2nd-violin-SEC-PERF-pizzicato.sfz",
+              "Strings/2nd-violin-SEC-PERF-staccato.sfz",
+              "Strings/2nd-violin-SEC-PERF-tremolo.sfz",
+              "Strings/2nd-violin-SEC-PERF.sfz",
+              "Strings/2nd-violin-SEC-accent.sfz",
+              "Strings/2nd-violin-SEC-normal-mod-wheel.sfz",
+              "Strings/2nd-violin-SEC-pizzicato.sfz",
+              "Strings/2nd-violin-SEC-staccato.sfz",
+              "Strings/2nd-violin-SEC-sustain.sfz",
+              "Strings/2nd-violin-SEC-tremolo.sfz",
+              "Strings/2nd-violin-SOLO-KS-C2.sfz",
+              "Strings/2nd-violin-SOLO-KS-C3.sfz",
+              "Strings/2nd-violin-SOLO-PERF-KS-C2.sfz",
+              "Strings/2nd-violin-SOLO-PERF-KS-C3.sfz",
+              "Strings/2nd-violin-SOLO-PERF-pizzicato.sfz",
+              "Strings/2nd-violin-SOLO-PERF-staccato.sfz",
+              "Strings/2nd-violin-SOLO-PERF.sfz",
+              "Strings/2nd-violin-SOLO-accent.sfz",
+              "Strings/2nd-violin-SOLO-normal-mod-wheel.sfz",
+              "Strings/2nd-violin-SOLO-pizzicato.sfz",
+              "Strings/2nd-violin-SOLO-staccato.sfz",
+              "Strings/2nd-violin-SOLO-sustain.sfz",
+              "Strings/all-strings-SEC-PERF-panned.sfz",
+              "Strings/all-strings-SEC-PERF-pizzicato-panned.sfz",
+              "Strings/all-strings-SEC-PERF-pizzicato.sfz",
+              "Strings/all-strings-SEC-PERF-staccato-panned.sfz",
+              "Strings/all-strings-SEC-PERF-staccato.sfz",
+              "Strings/all-strings-SEC-PERF-tremolo-panned.sfz",
+              "Strings/all-strings-SEC-PERF-tremolo.sfz",
+              "Strings/all-strings-SEC-PERF.sfz",
+              "Strings/all-strings-SEC-accent-panned.sfz",
+              "Strings/all-strings-SEC-accent.sfz",
+              "Strings/all-strings-SEC-normal-mod-wheel-panned.sfz",
+              "Strings/all-strings-SEC-normal-mod-wheel.sfz",
+              "Strings/all-strings-SEC-pizzicato-panned.sfz",
+              "Strings/all-strings-SEC-pizzicato.sfz",
+              "Strings/all-strings-SEC-staccato-panned.sfz",
+              "Strings/all-strings-SEC-staccato.sfz",
+              "Strings/all-strings-SEC-sustain-panned.sfz",
+              "Strings/all-strings-SEC-sustain.sfz",
+              "Strings/all-strings-SEC-tremolo-panned.sfz",
+              "Strings/all-strings-SEC-tremolo.sfz",
+              "Strings/all-strings-SOLO-PERF-panned.sfz",
+              "Strings/all-strings-SOLO-PERF-pizzicato-panned.sfz",
+              "Strings/all-strings-SOLO-PERF-pizzicato.sfz",
+              "Strings/all-strings-SOLO-PERF-staccato-panned.sfz",
+              "Strings/all-strings-SOLO-PERF-staccato.sfz",
+              "Strings/all-strings-SOLO-PERF.sfz",
+              "Strings/all-strings-SOLO-accent-panned.sfz",
+              "Strings/all-strings-SOLO-accent.sfz",
+              "Strings/all-strings-SOLO-normal-mod-wheel-panned.sfz",
+              "Strings/all-strings-SOLO-normal-mod-wheel.sfz",
+              "Strings/all-strings-SOLO-pizzicato-panned.sfz",
+              "Strings/all-strings-SOLO-pizzicato.sfz",
+              "Strings/all-strings-SOLO-staccato-panned.sfz",
+              "Strings/all-strings-SOLO-staccato.sfz",
+              "Strings/all-strings-SOLO-sustain-panned.sfz",
+              "Strings/all-strings-SOLO-sustain.sfz",
+              "Strings/bass-SEC-KS-C5.sfz",
+              "Strings/bass-SEC-KS-C6.sfz",
+              "Strings/bass-SEC-PERF-KS-C5.sfz",
+              "Strings/bass-SEC-PERF-KS-C6.sfz",
+              "Strings/bass-SEC-PERF-pizzicato.sfz",
+              "Strings/bass-SEC-PERF-staccato.sfz",
+              "Strings/bass-SEC-PERF-tremolo.sfz",
+              "Strings/bass-SEC-PERF.sfz",
+              "Strings/bass-SEC-accent.sfz",
+              "Strings/bass-SEC-normal-mod-wheel.sfz",
+              "Strings/bass-SEC-pizzicato.sfz",
+              "Strings/bass-SEC-staccato.sfz",
+              "Strings/bass-SEC-sustain.sfz",
+              "Strings/bass-SEC-tremolo.sfz",
+              "Strings/bass-SOLO-KS-C5.sfz",
+              "Strings/bass-SOLO-KS-C6.sfz",
+              "Strings/bass-SOLO-PERF-KS-C5.sfz",
+              "Strings/bass-SOLO-PERF-KS-C6.sfz",
+              "Strings/bass-SOLO-PERF-pizzicato.sfz",
+              "Strings/bass-SOLO-PERF-staccato.sfz",
+              "Strings/bass-SOLO-PERF.sfz",
+              "Strings/bass-SOLO-accent.sfz",
+              "Strings/bass-SOLO-normal-mod-wheel.sfz",
+              "Strings/bass-SOLO-pizzicato.sfz",
+              "Strings/bass-SOLO-staccato.sfz",
+              "Strings/bass-SOLO-sustain.sfz",
+              "Strings/cello-SEC-KS-C6.sfz",
+              "Strings/cello-SEC-PERF-KS-C6.sfz",
+              "Strings/cello-SEC-PERF-pizzicato.sfz",
+              "Strings/cello-SEC-PERF-staccato.sfz",
+              "Strings/cello-SEC-PERF-tremolo.sfz",
+              "Strings/cello-SEC-PERF.sfz",
+              "Strings/cello-SEC-accent.sfz",
+              "Strings/cello-SEC-normal-mod-wheel.sfz",
+              "Strings/cello-SEC-pizzicato.sfz",
+              "Strings/cello-SEC-staccato.sfz",
+              "Strings/cello-SEC-sustain.sfz",
+              "Strings/cello-SEC-tremolo.sfz",
+              "Strings/cello-SOLO-KS-C6.sfz",
+              "Strings/cello-SOLO-PERF-KS-C6.sfz",
+              "Strings/cello-SOLO-PERF-pizzicato.sfz",
+              "Strings/cello-SOLO-PERF-staccato.sfz",
+              "Strings/cello-SOLO-PERF.sfz",
+              "Strings/cello-SOLO-accent.sfz",
+              "Strings/cello-SOLO-normal-mod-wheel.sfz",
+              "Strings/cello-SOLO-pizzicato.sfz",
+              "Strings/cello-SOLO-staccato.sfz",
+              "Strings/cello-SOLO-sustain.sfz",
+              "Strings/harp-KS-B7.sfz",
+              "Strings/harp-KS-C0.sfz",
+              "Strings/harp-dampened.sfz",
+              "Strings/harp-sustain.sfz",
+              "Strings/viola-SEC-KS-C2.sfz",
+              "Strings/viola-SEC-PERF-KS-C2.sfz",
+              "Strings/viola-SEC-PERF-pizzicato.sfz",
+              "Strings/viola-SEC-PERF-staccato.sfz",
+              "Strings/viola-SEC-PERF-tremolo.sfz",
+              "Strings/viola-SEC-PERF.sfz",
+              "Strings/viola-SEC-accent.sfz",
+              "Strings/viola-SEC-normal-mod-wheel.sfz",
+              "Strings/viola-SEC-pizzicato.sfz",
+              "Strings/viola-SEC-staccato.sfz",
+              "Strings/viola-SEC-sustain.sfz",
+              "Strings/viola-SEC-tremolo.sfz",
+              "Strings/viola-SOLO-KS-C2.sfz",
+              "Strings/viola-SOLO-PERF-KS-C2.sfz",
+              "Strings/viola-SOLO-PERF-pizzicato.sfz",
+              "Strings/viola-SOLO-PERF-staccato.sfz",
+              "Strings/viola-SOLO-PERF.sfz",
+              "Strings/viola-SOLO-accent.sfz",
+              "Strings/viola-SOLO-normal-mod-wheel.sfz",
+              "Strings/viola-SOLO-pizzicato.sfz",
+              "Strings/viola-SOLO-staccato.sfz",
+              "Strings/viola-SOLO-sustain.sfz"
+            ],
+            "Vocals": [
+              "Vocals/choir-FEMALE-PERF.sfz",
+              "Vocals/choir-FEMALE-normal-mod-wheel.sfz",
+              "Vocals/choir-FEMALE-sustain.sfz",
+              "Vocals/choir-MALE-PERF.sfz",
+              "Vocals/choir-MALE-normal-mod-wheel.sfz",
+              "Vocals/choir-MALE-sustain.sfz",
+              "Vocals/choir-MIXED-PERF.sfz",
+              "Vocals/choir-MIXED-normal-mod-wheel.sfz",
+              "Vocals/choir-MIXED-sustain.sfz"
+            ],
+            "Woodwinds": [
+              "Woodwinds/all-woodwinds-SEC-PERF-panned.sfz",
+              "Woodwinds/all-woodwinds-SEC-PERF-staccato-panned.sfz",
+              "Woodwinds/all-woodwinds-SEC-PERF-staccato.sfz",
+              "Woodwinds/all-woodwinds-SEC-PERF.sfz",
+              "Woodwinds/all-woodwinds-SEC-accent-panned.sfz",
+              "Woodwinds/all-woodwinds-SEC-accent.sfz",
+              "Woodwinds/all-woodwinds-SEC-normal-mod-wheel-panned.sfz",
+              "Woodwinds/all-woodwinds-SEC-normal-mod-wheel.sfz",
+              "Woodwinds/all-woodwinds-SEC-staccato-panned.sfz",
+              "Woodwinds/all-woodwinds-SEC-staccato.sfz",
+              "Woodwinds/all-woodwinds-SEC-sustain-panned.sfz",
+              "Woodwinds/all-woodwinds-SEC-sustain.sfz",
+              "Woodwinds/all-woodwinds-SOLO-PERF-panned.sfz",
+              "Woodwinds/all-woodwinds-SOLO-PERF-staccato-panned.sfz",
+              "Woodwinds/all-woodwinds-SOLO-PERF-staccato.sfz",
+              "Woodwinds/all-woodwinds-SOLO-PERF.sfz",
+              "Woodwinds/all-woodwinds-SOLO-accent-panned.sfz",
+              "Woodwinds/all-woodwinds-SOLO-accent.sfz",
+              "Woodwinds/all-woodwinds-SOLO-normal-mod-wheel-panned.sfz",
+              "Woodwinds/all-woodwinds-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/all-woodwinds-SOLO-staccato-panned.sfz",
+              "Woodwinds/all-woodwinds-SOLO-staccato.sfz",
+              "Woodwinds/all-woodwinds-SOLO-sustain-panned.sfz",
+              "Woodwinds/all-woodwinds-SOLO-sustain.sfz",
+              "Woodwinds/alto-flute-SOLO-KS-C2.sfz",
+              "Woodwinds/alto-flute-SOLO-PERF-KS-C2.sfz",
+              "Woodwinds/alto-flute-SOLO-PERF-staccato.sfz",
+              "Woodwinds/alto-flute-SOLO-PERF.sfz",
+              "Woodwinds/alto-flute-SOLO-accent.sfz",
+              "Woodwinds/alto-flute-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/alto-flute-SOLO-staccato.sfz",
+              "Woodwinds/alto-flute-SOLO-sustain.sfz",
+              "Woodwinds/bass-clarinet-SOLO-KS-C1.sfz",
+              "Woodwinds/bass-clarinet-SOLO-KS-C6.sfz",
+              "Woodwinds/bass-clarinet-SOLO-PERF-KS-C6.sfz",
+              "Woodwinds/bass-clarinet-SOLO-PERF-staccato.sfz",
+              "Woodwinds/bass-clarinet-SOLO-PERF.sfz",
+              "Woodwinds/bass-clarinet-SOLO-accent.sfz",
+              "Woodwinds/bass-clarinet-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/bass-clarinet-SOLO-staccato.sfz",
+              "Woodwinds/bass-clarinet-SOLO-sustain.sfz",
+              "Woodwinds/bassoon-SEC-KS-C6.sfz",
+              "Woodwinds/bassoon-SEC-PERF-KS-C6.sfz",
+              "Woodwinds/bassoon-SEC-PERF-staccato.sfz",
+              "Woodwinds/bassoon-SEC-PERF.sfz",
+              "Woodwinds/bassoon-SEC-accent.sfz",
+              "Woodwinds/bassoon-SEC-normal-mod-wheel.sfz",
+              "Woodwinds/bassoon-SEC-staccato.sfz",
+              "Woodwinds/bassoon-SEC-sustain.sfz",
+              "Woodwinds/bassoon-SOLO-KS-C6.sfz",
+              "Woodwinds/bassoon-SOLO-PERF-KS-C6.sfz",
+              "Woodwinds/bassoon-SOLO-PERF-staccato.sfz",
+              "Woodwinds/bassoon-SOLO-PERF.sfz",
+              "Woodwinds/bassoon-SOLO-accent.sfz",
+              "Woodwinds/bassoon-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/bassoon-SOLO-staccato.sfz",
+              "Woodwinds/bassoon-SOLO-sustain.sfz",
+              "Woodwinds/clarinet-SEC-KS-C2.sfz",
+              "Woodwinds/clarinet-SEC-PERF-KS-C2.sfz",
+              "Woodwinds/clarinet-SEC-PERF-staccato.sfz",
+              "Woodwinds/clarinet-SEC-PERF.sfz",
+              "Woodwinds/clarinet-SEC-accent.sfz",
+              "Woodwinds/clarinet-SEC-normal-mod-wheel.sfz",
+              "Woodwinds/clarinet-SEC-staccato.sfz",
+              "Woodwinds/clarinet-SEC-sustain.sfz",
+              "Woodwinds/clarinet-SOLO-KS-C2.sfz",
+              "Woodwinds/clarinet-SOLO-PERF-KS-C2.sfz",
+              "Woodwinds/clarinet-SOLO-PERF-staccato.sfz",
+              "Woodwinds/clarinet-SOLO-PERF.sfz",
+              "Woodwinds/clarinet-SOLO-accent.sfz",
+              "Woodwinds/clarinet-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/clarinet-SOLO-staccato.sfz",
+              "Woodwinds/clarinet-SOLO-sustain.sfz",
+              "Woodwinds/contrabassoon-SOLO-KS-C4.sfz",
+              "Woodwinds/contrabassoon-SOLO-KS-C5.sfz",
+              "Woodwinds/contrabassoon-SOLO-KS-C6.sfz",
+              "Woodwinds/contrabassoon-SOLO-PERF-KS-C4.sfz",
+              "Woodwinds/contrabassoon-SOLO-PERF-KS-C5.sfz",
+              "Woodwinds/contrabassoon-SOLO-PERF-KS-C6.sfz",
+              "Woodwinds/contrabassoon-SOLO-PERF-staccato.sfz",
+              "Woodwinds/contrabassoon-SOLO-PERF.sfz",
+              "Woodwinds/contrabassoon-SOLO-accent.sfz",
+              "Woodwinds/contrabassoon-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/contrabassoon-SOLO-staccato.sfz",
+              "Woodwinds/contrabassoon-SOLO-sustain.sfz",
+              "Woodwinds/english-horn-SOLO-KS-C2.sfz",
+              "Woodwinds/english-horn-SOLO-PERF-KS-C2.sfz",
+              "Woodwinds/english-horn-SOLO-PERF-staccato.sfz",
+              "Woodwinds/english-horn-SOLO-PERF.sfz",
+              "Woodwinds/english-horn-SOLO-accent.sfz",
+              "Woodwinds/english-horn-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/english-horn-SOLO-staccato.sfz",
+              "Woodwinds/english-horn-SOLO-sustain.sfz",
+              "Woodwinds/flute-SEC-KS-C2.sfz",
+              "Woodwinds/flute-SEC-KS-C3.sfz",
+              "Woodwinds/flute-SEC-PERF-KS-C2.sfz",
+              "Woodwinds/flute-SEC-PERF-KS-C3.sfz",
+              "Woodwinds/flute-SEC-PERF-staccato.sfz",
+              "Woodwinds/flute-SEC-PERF.sfz",
+              "Woodwinds/flute-SEC-accent.sfz",
+              "Woodwinds/flute-SEC-normal-mod-wheel.sfz",
+              "Woodwinds/flute-SEC-staccato.sfz",
+              "Woodwinds/flute-SEC-sustain.sfz",
+              "Woodwinds/flute-SOLO-KS-C2.sfz",
+              "Woodwinds/flute-SOLO-KS-C3.sfz",
+              "Woodwinds/flute-SOLO-PERF-KS-C2.sfz",
+              "Woodwinds/flute-SOLO-PERF-KS-C3.sfz",
+              "Woodwinds/flute-SOLO-PERF-staccato.sfz",
+              "Woodwinds/flute-SOLO-PERF.sfz",
+              "Woodwinds/flute-SOLO-accent.sfz",
+              "Woodwinds/flute-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/flute-SOLO-staccato.sfz",
+              "Woodwinds/flute-SOLO-sustain.sfz",
+              "Woodwinds/oboe-SEC-KS-C2.sfz",
+              "Woodwinds/oboe-SEC-PERF-KS-C2.sfz",
+              "Woodwinds/oboe-SEC-PERF-staccato.sfz",
+              "Woodwinds/oboe-SEC-PERF.sfz",
+              "Woodwinds/oboe-SEC-accent.sfz",
+              "Woodwinds/oboe-SEC-normal-mod-wheel.sfz",
+              "Woodwinds/oboe-SEC-staccato.sfz",
+              "Woodwinds/oboe-SEC-sustain.sfz",
+              "Woodwinds/oboe-SOLO-KS-C2.sfz",
+              "Woodwinds/oboe-SOLO-PERF-KS-C2.sfz",
+              "Woodwinds/oboe-SOLO-PERF-staccato.sfz",
+              "Woodwinds/oboe-SOLO-PERF.sfz",
+              "Woodwinds/oboe-SOLO-accent.sfz",
+              "Woodwinds/oboe-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/oboe-SOLO-staccato.sfz",
+              "Woodwinds/oboe-SOLO-sustain.sfz",
+              "Woodwinds/piccolo-SOLO-KS-C2.sfz",
+              "Woodwinds/piccolo-SOLO-KS-C3.sfz",
+              "Woodwinds/piccolo-SOLO-PERF-KS-C2.sfz",
+              "Woodwinds/piccolo-SOLO-PERF-KS-C3.sfz",
+              "Woodwinds/piccolo-SOLO-PERF-staccato.sfz",
+              "Woodwinds/piccolo-SOLO-PERF.sfz",
+              "Woodwinds/piccolo-SOLO-accent.sfz",
+              "Woodwinds/piccolo-SOLO-normal-mod-wheel.sfz",
+              "Woodwinds/piccolo-SOLO-staccato.sfz",
+              "Woodwinds/piccolo-SOLO-sustain.sfz"
+            ]
+          },
+          "license": "CC-BY-SA 组件 + 自由使用许可（用库制音乐完全自由、含商用；再分发采样需署名，作者 Paul Battersby；全文=库内 Documentation/license.htm）",
+          "notes": []
+        },
+        "VSCO2_CE": {
+          "count": 75,
+          "groups": {
+            ".": [
+              "BassoonStac.sfz",
+              "BassoonSus.sfz",
+              "BassoonVib.sfz",
+              "CelloEns-KS.sfz",
+              "CelloEnsPizz.sfz",
+              "CelloEnsSpic.sfz",
+              "CelloEnsSusVib-Quiet.sfz",
+              "CelloEnsSusVib.sfz",
+              "CelloEnsTrem.sfz",
+              "Clarinet-KS.sfz",
+              "ClarinetStac.sfz",
+              "ClarinetSus.sfz",
+              "Contrabass-KS.sfz",
+              "ContrabassPizz.sfz",
+              "ContrabassSpic.sfz",
+              "ContrabassSusNV.sfz",
+              "ContrabassSusVB-Quiet.sfz",
+              "ContrabassSusVB.sfz",
+              "ContrabassTrem.sfz",
+              "FHornMute.sfz",
+              "FHornStac.sfz",
+              "FHornSus.sfz",
+              "Flute-KS.sfz",
+              "FluteExpVib.sfz",
+              "FluteStac.sfz",
+              "FluteSusNV.sfz",
+              "FluteSusVib.sfz",
+              "GM-StylePerc.sfz",
+              "Glockenspiel.sfz",
+              "Harp.sfz",
+              "Marimba.sfz",
+              "OboeStac.sfz",
+              "OboeSusNV.sfz",
+              "OboeSusVib.sfz",
+              "OrganLoud.sfz",
+              "OrganLoudPedal.sfz",
+              "OrganQuiet.sfz",
+              "OrganQuietPedal.sfz",
+              "PiccoloStac.sfz",
+              "PiccoloSus.sfz",
+              "SViolin-KS.sfz",
+              "SViolinPizz.sfz",
+              "SViolinSpic.sfz",
+              "SViolinTrem.sfz",
+              "SViolinVib-Quiet.sfz",
+              "SViolinVib.sfz",
+              "Timpani.sfz",
+              "TimpaniRolls.sfz",
+              "TromboneStac.sfz",
+              "TromboneSus.sfz",
+              "TromboneVib.sfz",
+              "TrumpetHarmonMuteSus.sfz",
+              "TrumpetStac.sfz",
+              "TrumpetStraightMuteSus.sfz",
+              "TrumpetSus.sfz",
+              "TrumpetSusVib.sfz",
+              "Tuba-KS.sfz",
+              "TubaStac.sfz",
+              "TubaSus.sfz",
+              "TubularBells.sfz",
+              "UprightPiano.sfz",
+              "VSUpright1.sfz",
+              "ViolaEns-KS.sfz",
+              "ViolaEnsPizz.sfz",
+              "ViolaEnsSpic.sfz",
+              "ViolaEnsSusVib-Quiet.sfz",
+              "ViolaEnsSusVib.sfz",
+              "ViolaEnsTrem.sfz",
+              "ViolinEns-KS.sfz",
+              "ViolinEnsPizz.sfz",
+              "ViolinEnsSpic.sfz",
+              "ViolinEnsSusVib-Quiet.sfz",
+              "ViolinEnsSusVib.sfz",
+              "ViolinEnsTrem.sfz",
+              "Xylophone.sfz"
+            ]
+          },
+          "license": "CC0 1.0 Universal（仓库根 LICENSE 即 CC0 全文；Readme.txt 明示教育/商用均可）",
+          "notes": []
+        },
+        "karoryfer": {
+          "count": 155,
+          "groups": {
+            "bigcat_cello": [
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/01- Bowed (velocity layer).sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/02- Bowed (mod wheel).sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/03- Plucked.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_eight_legato_first_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_eight_legato_first_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_eight_legato_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_eight_legato_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_eight_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_eight_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_four_legato_first_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_four_legato_first_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_four_legato_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_four_legato_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_four_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_four_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_marcato_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_marcato_mono_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_staccato_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_for_marcato_poly_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_for_marcato_poly_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_first_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_first_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_for_marcato_mono_first_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_for_marcato_mono_first_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_for_marcato_mono_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_for_marcato_mono_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_legato_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_map.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_arco_sus_map_mw.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_basic.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_eight.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_four.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_legato_basic.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_legato_eight.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_legato_first_basic.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_legato_first_eight.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_legato_first_four.sfz",
+              "bigcat_cello/Karoryfer_Bigcat_cello/Programs/vc_pizz_legato_four.sfz"
+            ],
+            "meatbass": [
+              "meatbass/Meatbass/Programs/01_arco_modwheel.sfz",
+              "meatbass/Meatbass/Programs/02_arco_3vel.sfz",
+              "meatbass/Meatbass/Programs/03_arco_5vel.sfz",
+              "meatbass/Meatbass/Programs/04_pizz.sfz",
+              "meatbass/Meatbass/Programs/arco_basic.sfz",
+              "meatbass/Meatbass/Programs/arco_basic_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_basic_map.sfz",
+              "meatbass/Meatbass/Programs/arco_looped_basic_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_looped_basic_map.sfz",
+              "meatbass/Meatbass/Programs/arco_looped_six_legato_first_map.sfz",
+              "meatbass/Meatbass/Programs/arco_looped_six_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_looped_six_map.sfz",
+              "meatbass/Meatbass/Programs/arco_looped_three_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_looped_three_map.sfz",
+              "meatbass/Meatbass/Programs/arco_mw_basic_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_mw_basic_map.sfz",
+              "meatbass/Meatbass/Programs/arco_mw_six_legato_first_map.sfz",
+              "meatbass/Meatbass/Programs/arco_mw_six_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_mw_six_map.sfz",
+              "meatbass/Meatbass/Programs/arco_mw_three_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_mw_three_map.sfz",
+              "meatbass/Meatbass/Programs/arco_six.sfz",
+              "meatbass/Meatbass/Programs/arco_six_legato_first_map.sfz",
+              "meatbass/Meatbass/Programs/arco_six_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_six_map.sfz",
+              "meatbass/Meatbass/Programs/arco_three.sfz",
+              "meatbass/Meatbass/Programs/arco_three_legato_map.sfz",
+              "meatbass/Meatbass/Programs/arco_three_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_basic.sfz",
+              "meatbass/Meatbass/Programs/pizz_basic_legato_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_basic_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_six.sfz",
+              "meatbass/Meatbass/Programs/pizz_six_legato_first_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_six_legato_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_six_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_three.sfz",
+              "meatbass/Meatbass/Programs/pizz_three_legato_first_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_three_legato_map.sfz",
+              "meatbass/Meatbass/Programs/pizz_three_map.sfz"
+            ],
+            "war_tuba": [
+              "war_tuba/War_tuba/Programs/1-solo-legato.sfz",
+              "war_tuba/War_tuba/Programs/2-solo-poly.sfz",
+              "war_tuba/War_tuba/Programs/3-duo-legato.sfz",
+              "war_tuba/War_tuba/Programs/4-duo-poly.sfz",
+              "war_tuba/War_tuba/Programs/5-trio-legato.sfz",
+              "war_tuba/War_tuba/Programs/6-trio-poly.sfz",
+              "war_tuba/War_tuba/Programs/7-tubaborg.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccatissimo_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccatissimo_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccatissimo_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccatissimo_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccato_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/staccato_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/sustain_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/sustain_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/sustain_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_legato/sustain_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_poly/staccatissimo_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_poly/staccatissimo_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_poly/staccato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_poly/staccato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/dbl_poly/sustain_cnd.sfz",
+              "war_tuba/War_tuba/Programs/dbl_poly/sustain_dyn.sfz",
+              "war_tuba/War_tuba/Programs/legato/fx_cnd.sfz",
+              "war_tuba/War_tuba/Programs/legato/fx_dyn.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccatissimo_cnd.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccatissimo_dyn.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccatissimo_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccatissimo_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccato_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/legato/staccato_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/legato/sustain_cnd.sfz",
+              "war_tuba/War_tuba/Programs/legato/sustain_dyn.sfz",
+              "war_tuba/War_tuba/Programs/legato/sustain_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/legato/sustain_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/poly/fx_cnd.sfz",
+              "war_tuba/War_tuba/Programs/poly/fx_dyn.sfz",
+              "war_tuba/War_tuba/Programs/poly/staccatissimo_cnd.sfz",
+              "war_tuba/War_tuba/Programs/poly/staccatissimo_dyn.sfz",
+              "war_tuba/War_tuba/Programs/poly/staccato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/poly/staccato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/poly/sustain_cnd.sfz",
+              "war_tuba/War_tuba/Programs/poly/sustain_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccatissimo_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccatissimo_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccatissimo_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccatissimo_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccato_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/staccato_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/sustain_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/sustain_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/sustain_legato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_legato/sustain_legato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_poly/staccatissimo_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_poly/staccatissimo_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_poly/staccato_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_poly/staccato_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tri_poly/sustain_cnd.sfz",
+              "war_tuba/War_tuba/Programs/tri_poly/sustain_dyn.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/noise.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/noise_mono.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/single_cycle_center.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/single_cycle_center_mono.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/single_cycle_sides.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/single_cycle_sides_mono.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/sub.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/sub_mono.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/sustains_center.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/sustains_center_mono.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/sustains_sides.sfz",
+              "war_tuba/War_tuba/Programs/tubaborg/sustains_sides_mono.sfz"
+            ]
+          },
+          "license": "CC0 1.0 Universal（包内 LICENSE 为 CC0 全文；与官网 free-samples 页声明一致）",
+          "notes": [
+            "war_tuba 只用顶层 Programs 入口（1-solo-legato … 7-tubaborg，项目约定）"
+          ]
+        }
+      },
+      "aliases": {
+        "VSCO2": "VSCO2_CE",
+        "Karoryfer": "karoryfer"
+      },
+      "ref_rules": "绝对路径 / 相对 assets_root/sfz / 纯文件名树内唯一匹配（engines/sfz.py resolve_sfz）",
+      "payload": "payload（描述符 v1.1.0 · tier B）:\n  *sfz            path  SFZ 引用：绝对路径 / 相对 assets_root/sfz（别名前缀归一 VSCO2→VSCO2_CE、Karoryfer→karoryfer）/ 纯文件名树内 sorted 唯一匹配（resolve_sfz；文件存在性由引擎守卫）\n  *notes          tuple BG-D7 统一记谱 [[pitch, beat, dur, vel], ...]（midi_util write_notes_smf → 临时 SMF → sfizz_render --midi）\n   bpm            float 默认 120.0；范围 1..…；bpm；beat→秒换算（写入 SMF set_tempo）\n   events         array v2 控制事件数组（PLAN_v3 §3.2/BG-D14；R2 落地）：{type,t}+逐类型字段；type 六类闭集与逐类型字段约束由工程层 core/project.py 校验（描述符 schema 为结构性兜底）；非空时引擎改走 events_to_smf（无 events 保持旧路径字节不动）\n   bend_range     float 默认 2.0；范围 0..…；st；弯音量程半音数（缺省 2.0）：pitch_bend 事件 14bit 线性映射 clamp(round_half_up(8192*(1+semitones/bend_range)), 0, 16383)；SFZ 文件级 pitch_wheel_range 逐文件不同——工程轨含弯音时必须显式声明（轨级 track.bend_range 经 track_projection 透传）"
+    },
+    "sample": {
+      "engine": "sample",
+      "samples_root": "$MUSIC_SAMPLES_ROOT",
+      "exists": true,
+      "kenney": {
+        "root": "$MUSIC_SAMPLES_ROOT/_raw/kenney",
+        "packages": {
+          "casino-audio": {
+            "ogg": 55,
+            "categories": {
+              ".": {
+                "count": 1,
+                "examples": [
+                  "Preview.ogg"
+                ]
+              },
+              "Audio": {
+                "count": 54,
+                "examples": [
+                  "card-fan-1.ogg",
+                  "card-fan-2.ogg",
+                  "card-place-1.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_casino-audio/"
+          },
+          "digital-audio": {
+            "ogg": 63,
+            "categories": {
+              ".": {
+                "count": 1,
+                "examples": [
+                  "Preview.ogg"
+                ]
+              },
+              "Audio": {
+                "count": 62,
+                "examples": [
+                  "highDown.ogg",
+                  "highUp.ogg",
+                  "laser1.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_digital-audio/"
+          },
+          "impact-sounds": {
+            "ogg": 130,
+            "categories": {
+              "Audio": {
+                "count": 130,
+                "examples": [
+                  "footstep_carpet_000.ogg",
+                  "footstep_carpet_001.ogg",
+                  "footstep_carpet_002.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_impact-sounds/"
+          },
+          "interface-sounds": {
+            "ogg": 100,
+            "categories": {
+              "Audio": {
+                "count": 100,
+                "examples": [
+                  "back_001.ogg",
+                  "back_002.ogg",
+                  "back_003.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_interface-sounds/"
+          },
+          "music-jingles": {
+            "ogg": 86,
+            "categories": {
+              ".": {
+                "count": 1,
+                "examples": [
+                  "Preview.ogg"
+                ]
+              },
+              "Audio/8-Bit jingles": {
+                "count": 17,
+                "examples": [
+                  "jingles_NES00.ogg",
+                  "jingles_NES01.ogg",
+                  "jingles_NES02.ogg"
+                ]
+              },
+              "Audio/Hit jingles": {
+                "count": 17,
+                "examples": [
+                  "jingles_HIT00.ogg",
+                  "jingles_HIT01.ogg",
+                  "jingles_HIT02.ogg"
+                ]
+              },
+              "Audio/Pizzicato jingles": {
+                "count": 17,
+                "examples": [
+                  "jingles_PIZZI00.ogg",
+                  "jingles_PIZZI01.ogg",
+                  "jingles_PIZZI02.ogg"
+                ]
+              },
+              "Audio/Sax jingles": {
+                "count": 17,
+                "examples": [
+                  "jingles_SAX00.ogg",
+                  "jingles_SAX01.ogg",
+                  "jingles_SAX02.ogg"
+                ]
+              },
+              "Audio/Steel jingles": {
+                "count": 17,
+                "examples": [
+                  "jingles_STEEL00.ogg",
+                  "jingles_STEEL01.ogg",
+                  "jingles_STEEL02.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_music-jingles/"
+          },
+          "rpg-audio": {
+            "ogg": 52,
+            "categories": {
+              ".": {
+                "count": 1,
+                "examples": [
+                  "Preview.ogg"
+                ]
+              },
+              "Audio": {
+                "count": 51,
+                "examples": [
+                  "beltHandle1.ogg",
+                  "beltHandle2.ogg",
+                  "bookClose.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_rpg-audio/"
+          },
+          "sci-fi-sounds": {
+            "ogg": 73,
+            "categories": {
+              "Audio": {
+                "count": 73,
+                "examples": [
+                  "computerNoise_000.ogg",
+                  "computerNoise_001.ogg",
+                  "computerNoise_002.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_sci-fi-sounds/"
+          },
+          "ui-audio": {
+            "ogg": 52,
+            "categories": {
+              ".": {
+                "count": 1,
+                "examples": [
+                  "Preview.ogg"
+                ]
+              },
+              "Audio": {
+                "count": 51,
+                "examples": [
+                  "click1.ogg",
+                  "click2.ogg",
+                  "click3.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_ui-audio/"
+          },
+          "voiceover-pack": {
+            "ogg": 95,
+            "categories": {
+              ".": {
+                "count": 3,
+                "examples": [
+                  "Preview (Female).ogg",
+                  "Preview (Male).ogg",
+                  "Preview.ogg"
+                ]
+              },
+              "Female": {
+                "count": 46,
+                "examples": [
+                  "1.ogg",
+                  "10.ogg",
+                  "2.ogg"
+                ]
+              },
+              "Male": {
+                "count": 46,
+                "examples": [
+                  "1.ogg",
+                  "10.ogg",
+                  "2.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_voiceover-pack/"
+          },
+          "voiceover-pack-fighter": {
+            "ogg": 47,
+            "categories": {
+              ".": {
+                "count": 1,
+                "examples": [
+                  "Preview.ogg"
+                ]
+              },
+              "Audio": {
+                "count": 46,
+                "examples": [
+                  "1.ogg",
+                  "10.ogg",
+                  "2.ogg"
+                ]
+              }
+            },
+            "ref_prefix": "_raw/kenney/kenney_voiceover-pack-fighter/"
+          }
+        },
+        "total_ogg": 753
+      },
+      "drums_gdc": {
+        "path": "$MUSIC_ASSETS_ROOT/samples/drums_gdc",
+        "exists": true,
+        "total_wav": 12,
+        "kits": {
+          "clap": {
+            "count": 1,
+            "examples": [
+              "clap_ui_snap.wav"
+            ]
+          },
+          "closed_hat": {
+            "count": 2,
+            "examples": [
+              "closedhat_hard_metal_tick.wav",
+              "closedhat_soft_glassy.wav"
+            ]
+          },
+          "kick": {
+            "count": 3,
+            "examples": [
+              "kick_punch_combat.wav",
+              "kick_sub_boom_deep.wav"
+            ]
+          },
+          "open_hat": {
+            "count": 1,
+            "examples": [
+              "openhat_coin_flip.wav"
+            ]
+          },
+          "perc": {
+            "count": 2,
+            "examples": [
+              "perc_electric_tonal_impact.wav",
+              "perc_zap_scifi_burst.wav"
+            ]
+          },
+          "ride": {
+            "count": 1,
+            "examples": [
+              "ride_ting_metal.wav"
+            ]
+          },
+          "snare": {
+            "count": 2,
+            "examples": [
+              "snare_crunchy_blast.wav",
+              "snare_transient_smash.wav"
+            ]
+          }
+        },
+        "manifest_entries": 12,
+        "source": "Sonniss GDC 2026 精选 one-shot（manifest.json 有逐条元数据）",
+        "note": "位于 assets_root/samples/（samples_root 之外），sample 引擎须用绝对路径引用"
+      },
+      "mixkit": {
+        "root": "$MUSIC_SAMPLES_ROOT/_raw/mixkit",
+        "categories": {
+          "alerts": {
+            "count": 57,
+            "examples": [
+              "Alert_bells_echo__765.mp3",
+              "Alert_quick_chime__766.mp3",
+              "Arcade_bonus_alert__767.mp3"
+            ]
+          },
+          "ambience": {
+            "count": 130,
+            "examples": [
+              "Angry_male_crowd_ambience__458.mp3",
+              "Applause_ambience_loop__513.mp3",
+              "Audience_light_applause__354.mp3"
+            ]
+          },
+          "beep": {
+            "count": 8,
+            "examples": [
+              "Appliance_ready_beep__1076.mp3",
+              "Censorship_beep__1082.mp3",
+              "Censorship_beep_long__1083.mp3"
+            ]
+          },
+          "bell": {
+            "count": 62,
+            "examples": [
+              "Achievement_bell__600.mp3",
+              "Airport_announcement_ding__1569.mp3",
+              "Alert_bells_echo__765.mp3"
+            ]
+          },
+          "boom": {
+            "count": 14,
+            "examples": [
+              "8-bit_game_shots__2778.mp3",
+              "Arcade_game_explosion__1699.mp3",
+              "Arcade_game_explosion_echo__1698.mp3"
+            ]
+          },
+          "chimes": {
+            "count": 4,
+            "examples": [
+              "Crystal_chime__3108.mp3",
+              "Page_back_chime__1108.mp3",
+              "Page_forward_single_chime__1107.mp3"
+            ]
+          },
+          "click": {
+            "count": 52,
+            "examples": [
+              "Camera_shutter_click__1133.mp3",
+              "Classic_click__1117.mp3",
+              "Clear_mouse_clicks__2997.mp3"
+            ]
+          },
+          "ding": {
+            "count": 15,
+            "examples": [
+              "Arcade_game_over__3068.mp3",
+              "Bells_of_summer__929.mp3",
+              "Chamber_bot_mech_screech__3214.mp3"
+            ]
+          },
+          "drone": {
+            "count": 13,
+            "examples": [
+              "Creepy_organ_drone__2746.mp3",
+              "Drone_logo_presentation__2751.mp3",
+              "Drone_spaceship_sound__2743.mp3"
+            ]
+          },
+          "electricity": {
+            "count": 23,
+            "examples": [
+              "Electric_buzz_glitch__2594.mp3",
+              "Electric_charge_hum__3201.mp3",
+              "Electric_fence_buzzing__2967.mp3"
+            ]
+          },
+          "error": {
+            "count": 9,
+            "examples": [
+              "Electric_fence_alert__2969.mp3",
+              "Electric_fence_buzzing__2967.mp3",
+              "Electric_fence_fx__2968.mp3"
+            ]
+          },
+          "game": {
+            "count": 54,
+            "examples": [
+              "Arcade_game_opener__222.mp3",
+              "Arcade_mechanical_bling__210.mp3",
+              "Arcade_retro_background__219.mp3"
+            ]
+          },
+          "game-over": {
+            "count": 33,
+            "examples": [
+              "Arcade_fast_game_over__233.mp3",
+              "Arcade_game_over__1949.mp3",
+              "Arcade_game_over__3068.mp3"
+            ]
+          },
+          "glitch": {
+            "count": 66,
+            "examples": [
+              "Alien_glitch_communication__1028.mp3",
+              "Alien_radio_frequency_connection__2550.mp3",
+              "Arcade_explosion__230.mp3"
+            ]
+          },
+          "high-tech": {
+            "count": 53,
+            "examples": [
+              "Alien_technology_button__3118.mp3",
+              "Arcade_retro_changing_tab__206.mp3",
+              "Cartoon_robot_sound__3172.mp3"
+            ]
+          },
+          "hit": {
+            "count": 31,
+            "examples": [
+              "Air_in_a_hit__2161.mp3",
+              "Big_cinematic_impact__788.mp3",
+              "Body_cutting_impact__2199.mp3"
+            ]
+          },
+          "hum": {
+            "count": 45,
+            "examples": [
+              "ATV_engine_motor_hum__1553.mp3",
+              "Alien_technology_hum__2134.mp3",
+              "Bass_rumble_hum__2297.mp3"
+            ]
+          },
+          "impact": {
+            "count": 57,
+            "examples": [
+              "8-bit_explosion_gun__2779.mp3",
+              "8-bit_game_shots__2778.mp3",
+              "Axe_hits_to_a_plate__2774.mp3"
+            ]
+          },
+          "interface": {
+            "count": 15,
+            "examples": [
+              "Click_error__1110.mp3",
+              "Cool_interface_click_tone__2568.mp3",
+              "Game_interface_sound__2567.mp3"
+            ]
+          },
+          "keyboard": {
+            "count": 21,
+            "examples": [
+              "Atm_cash_machine_key_press__2841.mp3",
+              "Chatting_with_a_laptop__2540.mp3",
+              "Entering_pin_in_a_cash_machine__2846.mp3"
+            ]
+          },
+          "lose": {
+            "count": 14,
+            "examples": [
+              "8_bit_lose__2031.mp3",
+              "Circus_lose__2030.mp3",
+              "Crowd_disappointment_long_boo__463.mp3"
+            ]
+          },
+          "notification": {
+            "count": 44,
+            "examples": [
+              "Access_allowed_tone__2869.mp3",
+              "Arabian_mystery_harp_notification__2489.mp3",
+              "Arcade_magic_notification__2342.mp3"
+            ]
+          },
+          "pop": {
+            "count": 11,
+            "examples": [
+              "Bubble_pop_up_alert_notification__2357.mp3",
+              "Dry_pop_up_notification_alert__2356.mp3",
+              "Electric_pop__2365.mp3"
+            ]
+          },
+          "rewind": {
+            "count": 8,
+            "examples": [
+              "Fast_tape_rewind_cinematic_transition__1092.mp3",
+              "Flashback_echo_rewind__1087.mp3",
+              "Horror_tape_rewind_cinematic_transition__1090.mp3"
+            ]
+          },
+          "sparkle": {
+            "count": 16,
+            "examples": [
+              "Christmas_reveal_tones__2988.mp3",
+              "Construction_welder__812.mp3",
+              "Electric_welding_and_sparkles__2603.mp3"
+            ]
+          },
+          "swish": {
+            "count": 11,
+            "examples": [
+              "Air_in_a_hit__2161.mp3",
+              "Horror_swish__1495.mp3",
+              "Magical_swish__1496.mp3"
+            ]
+          },
+          "swoosh": {
+            "count": 55,
+            "examples": [
+              "Air_whoosh_and_whistle__607.mp3",
+              "Atmospheric_wind_drum_roll_swoosh__576.mp3",
+              "Big_fire_magic_swoosh__1327.mp3"
+            ]
+          },
+          "synth": {
+            "count": 9,
+            "examples": [
+              "Cinematic_synth_riser__645.mp3",
+              "Glitchy_synth_intro__651.mp3",
+              "Glitchy_synth_trailer__652.mp3"
+            ]
+          },
+          "technology": {
+            "count": 72,
+            "examples": [
+              "Alarm_tone__996.mp3",
+              "Alien_radio_frequency_call__2555.mp3",
+              "Alien_technology_button__3118.mp3"
+            ]
+          },
+          "tones": {
+            "count": 12,
+            "examples": [
+              "Access_allowed_tone__2869.mp3",
+              "Clear_announce_tones__2861.mp3",
+              "Confirmation_tone__2867.mp3"
+            ]
+          },
+          "transition": {
+            "count": 42,
+            "examples": [
+              "Air_zoom_vacuum__2608.mp3",
+              "Apocalyptic_stomp_impact__3057.mp3",
+              "Bass_rumble_hum__2297.mp3"
+            ]
+          },
+          "type": {
+            "count": 21,
+            "examples": [
+              "Chatting_with_a_laptop__2540.mp3",
+              "Electronic_typing__1397.mp3",
+              "Fast_keyboard_typing__1387.mp3"
+            ]
+          },
+          "typewriter": {
+            "count": 18,
+            "examples": [
+              "Data_input_on_typewriter__1378.mp3",
+              "Data_short_input_on_typewriter__1379.mp3",
+              "Digital_typewriter__1363.mp3"
+            ]
+          },
+          "white-noise": {
+            "count": 18,
+            "examples": [
+              "Deep_cinematic_wind_hum__1177.mp3",
+              "Dial_error_tone__2871.mp3",
+              "Electricity_intense_hum__2138.mp3"
+            ]
+          },
+          "whoosh": {
+            "count": 19,
+            "examples": [
+              "Air_woosh__1489.mp3",
+              "Arrow_whoosh__1491.mp3",
+              "Cinematic_tunnel_reverb_woosh__1486.mp3"
+            ]
+          },
+          "win": {
+            "count": 37,
+            "examples": [
+              "Achievement_bell__600.mp3",
+              "Animated_small_group_applause__523.mp3",
+              "Arcade_bonus_alert__767.mp3"
+            ]
+          }
+        },
+        "total_mp3": 1169
+      },
+      "sonniss": {
+        "root": "$MUSIC_SAMPLES_ROOT/_raw/sonniss",
+        "zips": 5,
+        "total_gb": 6.92,
+        "note": "原始分卷 zip，未解压（精选件已入 drums_gdc）"
+      },
+      "other": {
+        "99sounds": {
+          "files": 0,
+          "note": "空目录（Gumroad 渠道未脚本化）"
+        },
+        "bgm_audition": {
+          "count": 8,
+          "note": "AI 生成试听样（整曲 BGM，非 one-shot 音色）"
+        }
+      },
+      "payload": "payload（描述符 v1.0.0 · tier A）:\n   hits           array 入口一（hits 优先）：[{file, at(秒,默认0), gain_db(默认0)}, ...]；numpy 等功率叠加\n   instrument     path  入口二（notes 记谱法）的采样文件（file 解析规则同 hits[].file；走 notes 入口时必填——invariant sample_hits_or_notes_entry 强制）\n   notes          tuple 入口二（BG-D7 记谱法）：[[pitch(仅记录用), beat, dur, vel], ...]；at=beat*60/bpm；gain_db=20*log10(max(vel,1)/100)\n   bpm            float 默认 120.0；范围 1..…；bpm；notes 入口的 beat→秒换算\n  *length_s       float 范围 0..…；s；输出总时长（秒；混合结果不足补零、超出截断）——无条件必填（两种入口同）"
+    }
+  },
+  "engines_note": "非静态音色源：ai 引擎（ComfyUI ACE-Step 1.5 / Music3，text-to-music 整段素材生成，无固定音色，工作流见 workflows/）；demucs 引擎（htdemucs 分轨降维，非音色源）；master 引擎（母带响度处理，非音色源）。"
+}

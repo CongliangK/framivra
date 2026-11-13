@@ -25,7 +25,7 @@
 | 执行面 | 覆盖与失败语义 |
 |---|---|
 | 普通 PR / main push | [CI](../.github/workflows/ci.yml) 在 Python 3.9 / 3.13 运行[显式冒烟模块](../scripts/ci_pr.py)，并保留文档与静态门；冒烟只需标准库，不安装 FFmpeg、浏览器或第三方 Python 包，不执行真实媒体集成 |
-| 定时 / 手动 Python 检查 | 独立的 [Integration regression](../.github/workflows/integration.yml) 保留全部受支持 Python 版本的默认全量发现；本地无参统一入口也保持全量，新模块自动进入全量，是否纳入冒烟需评审 |
+| 定时 / 手动 Python 检查 | 独立的 [Integration regression](../.github/workflows/integration.yml) 保留全部受支持 Python 版本的默认全量 unittest 发现，并追加音乐 pytest 独立子进程（安装测试用 pytest/NumPy，分档由组件管理）；本地无参统一入口一致，新模块进入对应发现，是否纳入冒烟需评审 |
 | 定时 / 手动 FFmpeg / Chrome 严格清单 | 按完整模块并行分组；无分组参数仍执行全清单，新模块确定性归默认组，原断言、工具预检、零 skip 约束不变；含 FrameSource 的组及无分组命令显式预检 Chrome，无环境凭证旧 PNG 必须真实重渲，不补签 |
 | 定时 / 手动 Windows 安装检查 | 同属 Integration regression，保留安装安全、安装端到端与定向原生清理；不替代本地原生渲染验收 |
 

@@ -1,0 +1,21 @@
+# ai 描述符收割证据日志（harvest.py 生成）
+generated: 2026-08-23
+tool: python3 -m bgm_gen.engines.harvest log ai
+descriptor: bgm_gen/engines/descriptors/ai.json（v1.0.0 · tier A）
+harvest_method: A=程序化收割（第一事实源=引擎源码 payload 读取行为）
+sources:
+  - bgm_gen/engines/ai.py（提交/轮询/取回行为——收割第一事实源）
+  - ComfyUI /system_stats 实测 comfyui_version=0.33.0（binary_pin 来源）
+  - ComfyUI /object_info 实测（params 点路径注入面；service 探针交叉核验）
+binary_facts:
+  version = '0.33.0'（ComfyUI comfyui_version（GET /system_stats 实测；doctor 交叉核验））
+params（参数名表；类型/单位/短语义 ≤1 行/参数）:
+  workflow | path | required | ComfyUI API 格式 workflow JSON 文件路径（同 legacy/gen.py 用法；文件存在性由引擎守卫）
+  params | object | - | 默认{} | 点路径覆盖：{节点id.inputs.字段: 值}（如 94.inputs.duration/104s.inputs.filename_prefix）；值限 int/float/str/bool；路径不存在即报错（引擎守卫 _apply_overrides）
+  timeout_s | float | - | 默认600.0 | 范围1..… | s | 完成等待上限（超时抛 EngineError，任务仍在队列/执行）
+  out | path | - | 输出文件（音频扩展名结尾→首个输出写入该路径）或目录；缺省 <仓库根>/out/smoke/ai/（多音频全落盘，第一个为出参 path）
+events_supported: （无——synth/sample 拒任何事件）
+coverage.gaps:
+  - params 点路径覆盖集随 workflow 文件变化（描述符不枚举具体节点/字段——workflow 文件本身是事实源）
+  - determinism=nondeterministic（GPU 扩散采样，seed 固定亦不保证逐位一致；冻结复现协议=生成物落盘后工程按绝对路径引用）
+  - 底层模型版本（ACE-Step 1.5/Music3 等）不在描述符内（workflow 文件事实，非引擎契约面）

@@ -1,0 +1,31 @@
+# sf2 描述符收割证据日志（harvest.py 生成）
+generated: 2026-08-23
+tool: python3 -m bgm_gen.engines.harvest log sf2
+descriptor: bgm_gen/engines/descriptors/sf2.json（v1.1.0 · tier A）
+harvest_method: A=程序化收割（第一事实源=引擎源码 payload 读取行为）
+sources:
+  - bgm_gen/engines/sf2.py（ctypes 调用点：program_select/player/file_renderer/apply_gain_wav——收割第一事实源）
+  - bgm_gen/engines/midi_util.py（R2：events_to_smf 编码器——事件通道字节层）
+binary_facts:
+  version = '2.5.4'（libfluidsynth.so.3（系统包；FluidSynth runtime version 2.5.4，doctor 经 `fluidsynth --version` 探测交叉核验））
+  ffmpeg = '8.1.2'（ffmpeg_match_wav 声道/sr 兜底转换（系统包））
+params（参数名表；类型/单位/短语义 ≤1 行/参数）:
+  sf2 | path | required | SoundFont：runtime.json sf2 表名字（FluidR3_GM/GeneralUser_GS）或绝对路径（resolve_sf2；文件存在性由引擎守卫）
+  notes | tuple | required | BG-D7 统一记谱 [[pitch, beat, dur, vel], ...]（midi_util write_notes_smf → 临时 SMF；SMF 不写 program change，音色由 program_select 显式指定）
+  bank | int | - | 默认0 | 范围0..128 | bank（128=GM 打击组）；经 fluid_synth_program_select 显式选音色，可覆盖非 GM-bank0 预设
+  program | int | - | 默认0 | 范围0..127 | GM program（0..127）
+  bpm | float | - | 默认120.0 | 范围1..… | bpm | beat→秒换算（写入 SMF set_tempo）
+  gain | float | - | 默认1.0 | 范围0..… | 线性输出增益（apply_gain_wav 后处理；gain==1 时 no-op 字节不动）
+  channel | int | - | 范围0..15 | MIDI 通道；缺省=bank==128 ? 9 : 0（引擎派生，invariant sf2_channel_default_derived 文档化）
+  events | array | optional | v2 控制事件数组（PLAN_v3 §3.2/BG-D14；R2 落地）：{type,t}+逐类型字段；type 六类闭集与逐类型字段约束由工程层 core/project.py 校验（描述符 schema 为结构性兜底）；非空时引擎改走 events_to_smf（无 events 保持旧路径字节不动）
+  bend_range | float | - | 默认2.0 | 范围0..… | st | 弯音量程半音数（缺省 2.0）：pitch_bend 事件 14bit 线性映射 clamp(round_half_up(8192*(1+semitones/bend_range)), 0, 16383)；轨级声明经 track_projection 透传
+events_supported: cc,pitch_bend,note_on,note_off
+coverage.gaps:
+  - fluidsynth settings API 未接入描述符（仅 doctor 版本交叉核验）
+  - sf2 文件本身能力面（bank/program 实际集合）不在描述符内——依赖 SoundFont 文件内容
+  - program_change/keyswitch 事件被拒（护 program_select 显式选音色——events_supported 未列出；PLAN_v3 §3.2 消费矩阵）
+  - gain<0（相位翻转）被拒绝（min 0，收紧面；引擎原无检查）
+  - channel/bank/program 引擎原用 int() 宽容转换（如 0.5→0），描述符 int 型收紧为整值/整值浮点
+  - bank 上限 128/channel 上限 15 为描述符单向收紧（引擎 int() 无上界；R1 审查 A1 记录）
+  - bpm 收紧 min=1（同 synth；R1 审查 E-1 记录）
+changelog: R2（2026-08-23）：parameters +events（type=array, optional；事件对象 schema 片段）+bend_range（float>0 默认 2）；version 1.0.0→1.1.0（BG-D14：payload.events 引入伴随描述符 bump，envelope spec_version 不变）；来源指针=PLAN_v3 §3.2/§5 R2 行 + bgm_gen/tests/test_events.py

@@ -1,0 +1,200 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local/bgm_gen/schema/engine_descriptor_v1.json",
+  "title": "bgm_gen 引擎描述符 schema v1（PLAN_v3 §3.1 机制 A / BG-D13）",
+  "description": "描述符是引擎能力面的声明式 JSON（git 版本化，落盘 bgm_gen/engines/descriptors/<engine>.json，唯一事实源=引擎源码 payload 读取行为——收割法 C12）。本 schema 是文档性契约：运行期校验由 engines/base.py validate_payload 手写实现（系统 python3 无 jsonschema，零新增 pip 依赖——C10/R3a-#5），两者语义必须保持一致。描述符变更走防漂移四件套：binary_pin（sha=advisory 黄灯）+ 行为探针 + doctor 增查（severity warn 不拉红）+ 引擎升级先 diff 描述符再重收割。校验语义：validate_payload 只校验已声明参数（拒绝=显式报错带字段路径），未声明的 payload 键被静默忽略（与退役前引擎行为一致；track.params 透传槽（PLAN_v3 §3.6）只接受描述符声明键）。",
+  "type": "object",
+  "required": ["engine", "version", "binary_pin", "parameters", "input_ports", "events_supported", "formats", "invariants", "coverage"],
+  "additionalProperties": false,
+  "properties": {
+    "engine": {
+      "type": "string",
+      "enum": ["synth", "sf2", "sfz", "sample", "master", "demucs", "ai"],
+      "description": "引擎名（与 @register_engine 注册名一致；描述符文件名 = <engine>.json，二者必须一致）"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "描述符版本（CLAP 风格语义化版本串）。payload 契约变更须 bump（BG-D13：payload.events 引入伴随 sfz/sf2 描述符 bump，envelope spec_version 不变）。进入 content_hash_key 增量渲染键"
+    },
+    "binary_pin": {
+      "type": "object",
+      "required": ["version", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": ["string", "null"],
+          "description": "主二进制版本（探测来源见 note；无独立二进制=null，如 synth/sample 的纯 numpy 实现）。进入 content_hash_key 增量渲染键"
+        },
+        "sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "二进制 sha256（advisory 黄灯：doctor 交叉核验不一致仅 warn，不拉红 exit code）。系统包/无独立二进制=null"
+        },
+        "size": {
+          "type": ["integer", "null"],
+          "description": "二进制字节数（sfizz 无 --version，核验退化为 sha/size——C2；其余引擎=null）"
+        },
+        "note": {
+          "type": "string",
+          "description": "探测口径/版本来源说明（如 rpm 登记事实、GET /system_stats、系统包版本、comfyui env import）"
+        },
+        "additional_pins": {
+          "type": "array",
+          "description": "副二进制 pin（如 master=ffmpeg 主 + matchering 副；sf2/synth/sample 以 ffmpeg 为副：兜底转码/重采样路径）",
+          "items": {
+            "type": "object",
+            "required": ["name", "version", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "description": "二进制名（doctor 探针映射键）"},
+              "version": {"type": ["string", "null"]},
+              "sha256": {"type": ["string", "null"]},
+              "note": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "description": "payload 参数清单（稳定字符串 id，LV2 symbol 惯例 C1）。单字段约束（required/type/range/enum）可无上下文求值，由 validate_payload 描述符驱动；跨字段/条件约束走 invariants（C13 划界）",
+      "items": {
+        "type": "object",
+        "required": ["id", "type"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "稳定字符串参数 id：永不复用语义、永不改为序号（C1）"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["int", "float", "enum", "bool", "str", "path", "any", "object", "array", "tuple"],
+            "description": "参数类型：int=整数（接受整值浮点）；float=数值；enum=枚举（必须伴 stepped，C1）；bool=布尔；str=自由字符串；path=路径字符串（存在性由引擎守卫）；any=不校验；object=对象；array=列表；tuple=定长行数组（如 notes 四元组，行校验走 schema.prefixItems）"
+          },
+          "schema": {
+            "type": "object",
+            "description": "值结构片段（受限子集，validate_payload 手写解释）：type(any/number/str/object/array) · minimum/maximum/exclusiveMinimum · minItems/maxItems · items · prefixItems（定长行）· properties · required"
+          },
+          "min": {"type": "number", "description": "数值下界（含；配合 exclusive_min=true 变开区间）"},
+          "max": {"type": "number", "description": "数值上界（含）"},
+          "exclusive_min": {"type": "boolean", "description": "true=min 为开区间下界（如 length_s>0）"},
+          "default": {"description": "缺省值（由引擎 payload.get 应用；validate_payload 不注入默认）"},
+          "unit": {"type": "string", "description": "量纲（LV2 units 惯例 C1：bpm/s/LUFS/dBTP/dB/MB…）"},
+          "enum": {"type": "array", "description": "枚举合法值清单（type=enum 时必填；必须伴 stepped=true）"},
+          "stepped": {
+            "type": "boolean",
+            "description": "离散步进声明（CLAP IS_ENUM↔IS_STEPPED 同族惯例 C1；元数据，不额外机械校验——枚举成员资格由 type=enum 强制）"
+          },
+          "flags": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["required", "optional"]},
+            "uniqueItems": true,
+            "description": "required=缺失即拒；缺省视为 optional（含默认值的参数不标 required）"
+          },
+          "realtime": {
+            "type": "boolean",
+            "description": "v2 预留：是否允许渲染期实时改动（R1 全部缺省=false）"
+          },
+          "description": {
+            "type": "string",
+            "description": "参数语义摘要（中文，≤1 行口径——harvest_log 纪律 C10 复用同一句）"
+          }
+        }
+      }
+    },
+    "input_ports": {
+      "type": "array",
+      "description": "引擎数据输入口清单（非音频布线）：note_array / asset_path / audio_path / json_path / override_map / hit_list 等",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "events_supported": {
+      "type": "array",
+      "description": "事件类型消费声明（PLAN_v3 §3.2 消费矩阵，引擎级事实）：列出的类型可经 payload.events 通道进入（v2）；未列出的类型在工程校验层拒绝。synth/sample=空数组（任何事件均拒）；sf2=仅 cc/pitch_bend（program_change 透传会破坏 program_select 显式选音色、keyswitch 的 note_on 会在无 KS 区音色上出实音）+note 事件仅作 notes 投影载体；sfz=cc/pitch_bend/keyswitch/program_change/note_on/note_off 全集",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {"type": "string", "enum": ["cc", "pitch_bend", "keyswitch", "program_change", "note_on", "note_off"]},
+          "note": {"type": "string", "description": "消费语义注记（如量程来源、sw_last、载体投影）"}
+        }
+      }
+    },
+    "formats": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "引擎产出音频格式清单（确定性引擎=wav pcm_s16le；ai=ComfyUI outputs 透传扩展名集）"
+    },
+    "track_projection": {
+      "type": "object",
+      "description": "工程轨字段→payload 映射表＋封闭钩子集（仅 synth/sf2/sfz/sample 四个工程轨引擎携带；master/demucs/ai 不参与编排故无此字段）。R1 阶段 core/project.py track_engine_spec 的 if/elif 原样不动，本表只写映射事实本身；数据化+R2 落地（钩子集封闭：①sf2 instrument 速记解析②sample length_s 派生量③meta 注入④params 覆盖合并）",
+      "properties": {
+        "bpm": {"type": "string", "description": "← meta.bpm"},
+        "notes": {"type": "string", "description": "← track.notes"},
+        "hooks": {"type": "array", "items": {"type": "string"}, "description": "本引擎用到的封闭钩子"},
+        "note": {"type": "string", "description": "R1 现状注记"}
+      },
+      "additionalProperties": true
+    },
+    "invariants": {
+      "type": "array",
+      "description": "跨字段/条件约束清单（C13）：单字段可无上下文求值 → parameters；跨字段/条件 → 本清单。check=true 的条目由 validate_payload 经 base.INVARIANTS 注册表强制；check=false 为文档化（引擎内语义守卫如文件存在性/派生默认值）",
+      "items": {
+        "type": "object",
+        "required": ["id", "rule"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "invariant 稳定 id；check=true 时必须注册于 base.INVARIANTS"
+          },
+          "check": {
+            "type": "boolean",
+            "default": false,
+            "description": "true=validate_payload 强制（INVARIANTS 注册表断言）；false=文档化"
+          },
+          "rule": {"type": "string", "description": "约束条文（人读）"}
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["tier", "evidence", "probes", "gaps"],
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": ["A", "B", "C"],
+          "description": "三档来源（R3-P21）：A=程序化收割（第一事实源=引擎源码 payload 读取行为）；B=AI 起草+探针验证（sfizz：CLI --help 参数名表 + SFZ 规范 + 源码）；C=手写降级（A/B 均不可行时人工起草，gaps 强制标注+全量行为探针；当前无 C 档实例）"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "收割依据（文件路径/URL 指针；不粘正文——C10）"
+        },
+        "probes": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "行为探针落点（test_descriptors.py 用例名/档位）"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "未覆盖面如实标注（尤其 sfizz：能力面=SFZ 文件本身，描述符只覆盖渲染选项与事件通道）"
+        }
+      }
+    }
+  }
+}

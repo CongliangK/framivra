@@ -1,0 +1,113 @@
+{
+  "binary_pin": {
+    "note": "comfyui env python -m demucs（子进程；doctor 经 env import demucs 探测交叉核验；权重缓存 HF_HOME 见 runtime.json demucs.env）",
+    "sha256": null,
+    "size": null,
+    "version": "4.1.0"
+  },
+  "coverage": {
+    "evidence": [
+      "bgm_gen/engines/demucs.py（payload 读取 + CLI 组装 + BG-D8 显存闸接线——收割第一事实源 C12）",
+      "comfyui env 实测：demucs 4.1.0 / torch 2.11.0+cu130"
+    ],
+    "gaps": [
+      "model 名枚举不封闭（任何 demucs 模型名透传；模型能力面=demucs 仓库）",
+      "GPU 显存闸策略（排队/降级/阈值）在 gpu_guard 内部，不在描述符参数面（vram_need_mb/vram_timeout_s 已暴露）",
+      "determinism=tolerant（GPU 归约非逐位；分级证据 tests/baselines_w2b.json）"
+    ],
+    "probes": [
+      "bgm_gen/tests/test_descriptors.py [slow] demucs 探针（vram_need_mb/vram_timeout_s/offline/model 全参数赋值；输入 out/smoke/demucs/demucs_in10s.wav 缺失时 pytest.skip——worktree 无此文件，主树合流后会有）"
+    ],
+    "tier": "A"
+  },
+  "engine": "demucs",
+  "events_supported": [],
+  "formats": [
+    "wav（htdemucs 恒 44100；spec.sr 声明其他值→引擎内 ffmpeg 重采样全部 stems）"
+  ],
+  "input_ports": [
+    {
+      "description": "待分轨音频",
+      "id": "input",
+      "type": "audio_path"
+    }
+  ],
+  "invariants": [
+    {
+      "check": false,
+      "id": "demucs_env_required",
+      "rule": "runtime.json demucs.python + demucs.env.HF_HOME 必须齐（引擎守卫；HF_HOME 防回退下载旧权重——W1B 坑）"
+    },
+    {
+      "check": false,
+      "id": "demucs_native_sr_44100",
+      "rule": "htdemucs 恒输出 44100（与输入 sr 无关）；引擎内按 spec.sr 重采样归一（BG-D5）；输出 sr≠44100 视为异常报 EngineError"
+    },
+    {
+      "check": false,
+      "id": "demucs_track_from_input_name",
+      "rule": "track=输入文件名去扩展名；出参 path=vocals stem（惯例主输出；纯器乐输入接近无声是正确路由）"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "输入音频路径（文件存在性由引擎守卫）",
+      "flags": [
+        "required"
+      ],
+      "id": "input",
+      "type": "path"
+    },
+    {
+      "default": "htdemucs",
+      "description": "demucs 模型名（枚举不封闭，透传 demucs CLI -n）",
+      "id": "model",
+      "type": "str"
+    },
+    {
+      "description": "stems 根目录；缺省 <仓库根>/out/smoke/demucs/；产物约定 {out_dir}/{track}/{stem}.wav",
+      "id": "out_dir",
+      "type": "path"
+    },
+    {
+      "default": "auto",
+      "description": "auto/gpu 走 BG-D8 显存闸（auto 超时降级 cpu 并记录；gpu 超时抛错）；cpu=直跑不占锁",
+      "enum": [
+        "auto",
+        "gpu",
+        "cpu"
+      ],
+      "id": "device",
+      "stepped": true,
+      "type": "enum"
+    },
+    {
+      "description": "两分轨模式（如 'vocals'→vocals/no_vocals）；缺省四分轨 vocals/drums/bass/other",
+      "id": "two_stems",
+      "type": "str"
+    },
+    {
+      "default": 4096,
+      "description": "显存闸需求（BG-D8 gpu_guard）",
+      "id": "vram_need_mb",
+      "min": 0,
+      "type": "int",
+      "unit": "MB"
+    },
+    {
+      "default": 120.0,
+      "description": "显存闸等待上限（auto 超时降级 cpu；gpu 超时抛错）",
+      "id": "vram_timeout_s",
+      "min": 0,
+      "type": "float",
+      "unit": "s"
+    },
+    {
+      "default": true,
+      "description": "恒注入 HF_HUB_OFFLINE=1（权重已缓存；防静默回退下载第二份旧格式 .th 权重）",
+      "id": "offline",
+      "type": "bool"
+    }
+  ],
+  "version": "1.0.0"
+}

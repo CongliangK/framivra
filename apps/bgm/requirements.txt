@@ -1,0 +1,10 @@
+# Runtime: the core DSP / mixer / QC stack
+numpy
+
+# Development / tests (not required to run the CLI)
+pytest
+
+# Optional engines are NOT installed here:
+# demucs / matchering / torch / pretty_midi / midiutil: isolated Python environment.
+# ffmpeg / libfluidsynth / sfizz_render / Audiveris: external system or CLI tools.
+# ComfyUI + model weights: separately installed local service; see NOTICE.md.

@@ -686,12 +686,17 @@ class FakePluginBus(unittest.TestCase):
             self.assertEqual(pl_hooks.contribute_keys(c), {"fakeplug:abc123"})
 
     def test_active_plugin_module_load_failure_fails_hard(self):
-        with mock.patch.object(pl_hooks, "_load_plugin_module",
-                               side_effect=RuntimeError("安装破损")):
-            with tempfile.TemporaryDirectory() as d:
-                c = Ctx(_tl(Path(d)))
+        with tempfile.TemporaryDirectory() as d:
+            timeline = _tl(Path(d))
+            c = Ctx(timeline)
+            with mock.patch.object(pl_hooks, "_load_plugin_module",
+                                   side_effect=RuntimeError("安装破损")):
                 with self.assertRaises(RuntimeError):
                     pl_hooks.run_prepare_source(c, "src1")
+                # 2.3 also needs provider availability during receipt identity;
+                # failure must be early, not silently omit the contribution.
+                with self.assertRaises(RuntimeError):
+                    Ctx(timeline)
 
     def test_hooks_declared_not_registered_rejected(self):
         """§2.3 单一事实源对账：声明了没注册 / 注册了没声明都报错。"""

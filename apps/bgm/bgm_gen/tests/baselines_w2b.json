@@ -1,0 +1,79 @@
+[
+  {
+    "engine": "ai",
+    "case": "smoke_ace15_8s",
+    "file": "out/smoke/ai/w2b_ai_smoke_00001.mp3",
+    "sr": 48000,
+    "duration_s": 8.0,
+    "rms_db": -35.43,
+    "margin_db": 3,
+    "note": "wf_ace15.json + params 覆盖 duration/seconds=8、filename_prefix=w2b_ai_smoke；ComfyUI 9.0s 出片。determinism=nondeterministic（GPU 扩散，seed 固定亦不保证逐位）——R4 冒烟建议只断言存在+时长，RMS 基线仅参考（PLAN §0.5 AI 免 RMS）。输出恒 48000Hz（SaveAudioMP3/SaveAudioAdvanced 实测），spec.sr 声明其他值时引擎内 ffmpeg 重采样。确定性证据：out/smoke/determinism_w2b.json#ai_service_down（service 不可达→EngineError，pytest skip 依据）",
+    "assert_rms_floor_db": -38.43
+  },
+  {
+    "engine": "demucs",
+    "case": "smoke_10s/vocals",
+    "file": "out/smoke/demucs/demucs_in10s/vocals.wav",
+    "sr": 44100,
+    "duration_s": 10.031,
+    "rms_db": -93.91,
+    "margin_db": 3,
+    "note": "纯器乐输入（gm_lofi_demo 截 10s）vocals 接近无声是正确路由（W1B RUNBOOK §5.5）；R4 断言不得对 vocals 设统一下限（建议仅断言存在+sr）。determinism=tolerant；rms<-60dB 等效静音，断言只验存在性不设 RMS 下限",
+    "assert_rms_floor_db": null
+  },
+  {
+    "engine": "demucs",
+    "case": "smoke_10s/drums",
+    "file": "out/smoke/demucs/demucs_in10s/drums.wav",
+    "sr": 44100,
+    "duration_s": 10.031,
+    "rms_db": -46.75,
+    "margin_db": 3,
+    "note": "GPU 两遍整体 RMS 差 0.026dB；分帧 max 4.25dB/mean 0.38dB（tolerant）。非逐位复现：GPU 与 CPU 路径 md5 均不一致（torch 多线程归约/cudnn），证据 out/smoke/determinism_w2b.json + det2（CPU 两遍 md5 亦不等，elapsed 3.7s）",
+    "assert_rms_floor_db": -49.75
+  },
+  {
+    "engine": "demucs",
+    "case": "smoke_10s/bass",
+    "file": "out/smoke/demucs/demucs_in10s/bass.wav",
+    "sr": 44100,
+    "duration_s": 10.031,
+    "rms_db": -53.69,
+    "margin_db": 3,
+    "note": "安静 stem 两次运行整体 RMS 差 1.23dB（R5 复现判据 ±1dB 带建议只对活跃 stem 生效）；spec.sr=48000 案例已验引擎内重采样（native 44100→48000，out/smoke/demucs/det_sr48/）",
+    "assert_rms_floor_db": -56.69
+  },
+  {
+    "engine": "demucs",
+    "case": "smoke_10s/other",
+    "file": "out/smoke/demucs/demucs_in10s/other.wav",
+    "sr": 44100,
+    "duration_s": 10.031,
+    "rms_db": -39.49,
+    "margin_db": 3,
+    "note": "最响 stem；GPU 两遍整体 RMS 差 0.052dB、分帧 mean 0.45dB",
+    "assert_rms_floor_db": -42.49
+  },
+  {
+    "engine": "master",
+    "case": "smoke_loudnorm_-14",
+    "file": "out/smoke/master/loudnorm_10s.wav",
+    "sr": 44100,
+    "duration_s": 10.0,
+    "rms_db": -16.59,
+    "margin_db": 3,
+    "note": "ffmpeg 两遍法：输入测得 input_i=-36.15（距目标>15dB→自动 Dynamic 模式），成品 ebur128 实测 LUFS=-14.1（-14±1 达标）/TP=-1.0dBFS。R4 建议直接断言 |LUFS+14|≤1（用 master.py measure_lufs）。确定性：两遍渲染 md5 相等、分帧 RMS diff=0.0（deterministic 实证，determinism_w2b.json）",
+    "assert_rms_floor_db": -19.59
+  },
+  {
+    "engine": "master",
+    "case": "smoke_matchering_ref10s",
+    "file": "out/smoke/master/matched_10s.wav",
+    "sr": 44100,
+    "duration_s": 10.0,
+    "rms_db": -28.32,
+    "margin_db": 3,
+    "note": "ref=ab_clean16_00001.flac 截 10s（重采样 44100 与 target 对齐——matchering 要求 target/ref 同 sr）；成品 LUFS=-25.4/TP=-9.8，跟随安静参考（行为正确，勿对 matchering 模式断言绝对 LUFS）。确定性：两遍 md5 相等、diff=0.0（CPU DSP 逐位稳定）",
+    "assert_rms_floor_db": -31.32
+  }
+]
