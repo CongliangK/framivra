@@ -42,7 +42,7 @@ const manifest = JSON.parse(await readFile(join(packageDir, 'package.json'), 'ut
 // only this freshly built, allowlisted release manifest is publishable.
 const release = Object.fromEntries(['name', 'version', 'description', 'repository', 'homepage', 'bugs', 'keywords', 'publishConfig', 'type', 'main', 'exports', 'engines', 'license', 'files', 'peerDependencies', 'dsh'].map(key => [key, manifest[key]]))
 const libContents = new Map()
-for (const name of ['index', 'configuration', 'host', 'protocol', 'media', 'json', 'bounded', 'agent', 'tools']) {
+for (const name of ['index', 'configuration', 'kernel-config', 'kernel-management', 'host', 'protocol', 'media', 'json', 'bounded', 'agent', 'tools']) {
   const source = await readFile(join(packageDir, 'src', `${name}.mjs`), 'utf8')
   libContents.set(name, source.replace(/from '(\.\/[^']+)\.mjs'/g, "from '$1.js'"))
 }

@@ -5,6 +5,27 @@
  * client bundle can reuse the exact same validators and copy semantics.
  */
 
+// GUI saves invalidate all readers sharing this live Host config source, even
+// when VTX_CONFIG's path is unchanged. No filesystem I/O or secret enters this
+// token. External edits are not watched: reopen/re-authorize after editing them.
+const configurationEpochs = new WeakMap()
+export function invalidateConfiguration(source) {
+  if (source && (typeof source === 'object' || typeof source === 'function')) {
+    configurationEpochs.set(source, (configurationEpochs.get(source) ?? 0) + 1)
+  }
+}
+
+export const DEFAULT_VTX_CONFIG_FILE = ''
+// Empty selects the kernel's own default; otherwise one explicit absolute JSON file.
+export const VTX_CONFIG_FILE_PATTERN = /^(?:|\/[^\x00-\x1f]*\.json|[a-zA-Z]:[\\/][^\x00-\x1f]*\.json)$/
+export function validateVtxConfigFile(value) {
+  if (value === undefined) return DEFAULT_VTX_CONFIG_FILE
+  if (typeof value !== 'string' || !VTX_CONFIG_FILE_PATTERN.test(value) || value.split(/[\\/]/).some(part => part === '..' || part === '.')) {
+    throw new ConfigurationError('vtxConfigFile must be empty or an absolute .json file path without traversal or control characters')
+  }
+  return value
+}
+
 export const DEFAULT_VTX_EXECUTABLE = 'vtx'
 export const DEFAULT_TRUSTED_PATH = '/usr/local/bin:/usr/bin:/bin'
 /** Sanitized-diagnostics rate cap: inclusive bounds for the Host config field.
@@ -46,12 +67,13 @@ export function validateTrustedPath(value) {
   return value
 }
 
-/** Stable identity of one configuration value pair; grants bind this exactly.
- *  JSON escaping makes the encoding collision-free even for adversarial values
- *  containing separators or quotes: no escaped JSON string can contain the
- *  raw `","` boundary, so pair → text is injective. */
-export function configurationFingerprint({ vtxExecutable, trustedPath }) {
-  return JSON.stringify([vtxExecutable, trustedPath])
+/* Stable identity of execution configuration; grants bind this exactly.
+ * JSON escaping keeps values collision-free; the empty config-file default
+ * preserves the legacy pair, while an explicit file extends it to a triple. */
+export function configurationFingerprint({ vtxExecutable, trustedPath, vtxConfigFile = '' }) {
+  // Preserve the historical default fingerprint; an explicit file is a third
+  // collision-free component and invalidates every grant minted without it.
+  return JSON.stringify(vtxConfigFile ? [vtxExecutable, trustedPath, vtxConfigFile] : [vtxExecutable, trustedPath])
 }
 
 /** Read one field: a plain value, or a cordis Volatile/Obs cell via .get().
@@ -66,7 +88,7 @@ function readField(field) {
 
 /** Whether any field of this source is a live Volatile cell rather than a plain string. */
 export function isVolatileConfig(source) {
-  return ['vtxExecutable', 'trustedPath'].some(key => {
+  return ['vtxExecutable', 'trustedPath', 'vtxConfigFile'].some(key => {
     const field = source?.[key]
     return field !== undefined && field !== null && ((typeof field === 'object' || typeof field === 'function') && typeof field.get === 'function')
   })
@@ -93,15 +115,21 @@ export function readLogMaxPerMinute(source) {
 /**
  * One consistent validated snapshot of the Host-trusted configuration.
  * Reads plain strings and Volatile cells alike, validates string/absolute
- * semantics on EVERY call, and returns a frozen value pair plus fingerprint.
- * @param {{ vtxExecutable?: unknown, trustedPath?: unknown }} source plugin config (apply argument or plain object)
- * @returns {{ vtxExecutable: string, trustedPath: string, fingerprint: string }} frozen snapshot
+ * semantics on EVERY call, and returns a frozen snapshot plus fingerprint.
+ * An empty config file is omitted for backward-compatible default snapshots.
+ * @param {{ vtxExecutable?: unknown, trustedPath?: unknown, vtxConfigFile?: unknown }} source plugin config
+ * @returns {{ vtxExecutable: string, trustedPath: string, vtxConfigFile?: string, fingerprint: string }} frozen snapshot
  */
 export function readConfiguration(source) {
   const snapshot = {
     vtxExecutable: validateVtxExecutable(readField(source?.vtxExecutable)),
     trustedPath: validateTrustedPath(readField(source?.trustedPath)),
   }
+  const vtxConfigFile = validateVtxConfigFile(readField(source?.vtxConfigFile))
+  // Keep default snapshots wire-compatible with pre-management two-field saves.
+  if (vtxConfigFile) snapshot.vtxConfigFile = vtxConfigFile
   snapshot.fingerprint = configurationFingerprint(snapshot)
+  const epoch = source && (typeof source === 'object' || typeof source === 'function') ? configurationEpochs.get(source) ?? 0 : 0
+  if (epoch) snapshot.fingerprint += `|config-save:${epoch}`
   return Object.freeze(snapshot)
 }

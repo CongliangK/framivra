@@ -9,6 +9,7 @@ import { boundedText, CONTROL_REQUEST_LIMIT, FRAME_REQUEST_LIMIT, FRAME_WIRE_LIM
 import { parseJSON, stringifyJSON, LosslessJSONError } from './json.mjs'
 import { createTimelineAgent } from './agent.mjs'
 import { ConfigurationError, readLogMaxPerMinute } from './configuration.mjs'
+import { validateKernelConfigSelection } from './kernel-management.mjs'
 
 /**
  * Deterministic build stamp over the module list in protocol.mjs: per-file
@@ -64,7 +65,13 @@ const json = (value, status = 200) => new Response(stringifyJSON(value), { statu
 const inlineCapable = value => value?.capabilities?.frame?.schema === 'framivra.timeline.frame/v1' && value.capabilities.frame.explicit_render_required === true && value.capabilities.frame.inline_png?.flag === '--include-png' && value.capabilities.frame.inline_png.encoding === 'base64' && value.capabilities.frame.inline_png.wire_limit_bytes === FRAME_WIRE_LIMIT
 
 export function createPreviewHost(ctx, config = {}) {
-  const reader = new TimelineReader(ctx.subprocess, config)
+  const reader = new TimelineReader(ctx.subprocess, config, async (snapshot, signal) => {
+    try { return await validateKernelConfigSelection(ctx, snapshot, signal) }
+    catch (error) {
+      if (typeof error?.code === 'string' && Number.isInteger(error?.status)) fail('CONFIG_INVALID', error.message, error.status)
+      throw error
+    }
+  })
   const lifecycle = new AbortController()
   const grants = new Map()
   const operations = new Set()

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Framivra 视频工作台",
-    "description": "预览视频时间线、导出精确帧引用，并审核显式授权的语义剪辑。"
+    "description": "在 DSH 中查看时间线、预览画面和确认剪辑；安装与配置 VTX 内核。"
   }
 }
