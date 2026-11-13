@@ -43,7 +43,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   assert.deepEqual(data.names, ['LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'cordis.patch.yml', 'icon.svg', 'lib/agent.js', 'lib/bounded.js', 'lib/client.js', 'lib/configuration.js', 'lib/host.js', 'lib/index.js', 'lib/json.js', 'lib/kernel-config.js', 'lib/kernel-management.js', 'lib/media.js', 'lib/protocol.js', 'lib/tools.js', 'locale/en.json', 'locale/zh.json', 'package.json'])
   for (const key of ['scripts', 'dependencies', 'devDependencies']) assert.equal(Object.hasOwn(data.manifest, key), false)
   assert.deepEqual(data.manifest.peerDependencies, { '@deepseek-ai/schemastery': '~3.19.0', react: '18.3.1' })
-  assert.equal(data.manifest.version, '0.2.1')
+  assert.equal(data.manifest.version, '0.2.2')
   assert.deepEqual(data.manifest.engines, { node: '>=24.9.0', dsh: '0.2.2-rc.1' })
   assert.equal(data.manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-slots'), false)
   assert.equal(data.manifest.exports['./locale/*.json'], './locale/*.json')

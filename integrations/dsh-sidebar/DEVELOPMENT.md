@@ -6,7 +6,7 @@ This optional DSH integration lives in `integrations/dsh-sidebar/`, the source h
 
 ## Implementation and evidence boundaries
 
-The current target is **unmodified npm DSH `0.2.2-rc.1`**, plugin version `0.2.1`. This is the installed prerelease, **not a compatibility claim for a future stable `0.2.2`**. The adapter requires no DSH source modification, no Host edits, no installer extension and no `@deepseek-ai/dsh-client-modules/build` dependency: its own builder uses the public `tsdown` API. The host uses installed core `vtx` **2.2.0**, whose POSIX main-stdio normalizer clears inherited descriptor state. Engines: Node `>=24.9.0`, DSH exactly `0.2.2-rc.1`; five client-bundle injection declarations. Cordis `4.1.0` and Schemastery `3.19.0` match the tested SDK. Published `dsh-client-ui-slots` remains a development/test supplier; it is not a standalone client-bundle injection.
+The current target is **unmodified npm DSH `0.2.2-rc.1`**, plugin version `0.2.2`. This is the installed prerelease, **not a compatibility claim for a future stable `0.2.2`**. The adapter requires no DSH source modification, no Host edits, no installer extension and no `@deepseek-ai/dsh-client-modules/build` dependency: its own builder uses the public `tsdown` API. The host uses installed core `vtx` **2.2.0**, whose POSIX main-stdio normalizer clears inherited descriptor state. Engines: Node `>=24.9.0`, DSH exactly `0.2.2-rc.1`; five client-bundle injection declarations. Cordis `4.1.0` and Schemastery `3.19.0` match the tested SDK. Published `dsh-client-ui-slots` remains a development/test supplier; it is not a standalone client-bundle injection.
 
 The conversation-draft bridge uses official `InputActions` plus public `ConversationController` methods. `createDrafts(sessionId, files, false)` explicitly disables service-owned image uploads. The Guide retains the **tab-scoped boolean** `replaceTab: true`; the separate controller-level API takes a TabId. The builder rejects undeclared DSH/React-family runtime imports before resolution, even when a development dependency could otherwise be silently inlined. The release includes exported English/Chinese metadata and an SVG icon.
 
@@ -195,13 +195,13 @@ The own builder receives this package directory, `src/client/index.mjs` and an o
 From `integrations/dsh-sidebar/`, install the locked build/test dependencies with `npm ci --ignore-scripts` (**writes node_modules**). Build with this package's bundler, not an ambient DSH checkout (**writes fresh artifacts**, not an install):
 
 ```sh
-env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-0.2.1.tgz
+env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-0.2.2.tgz
 env -u SIDEBAR_DSH_ROOT NODE_ENV=production npm run package -- --out /absolute/new/framivra-dsh-sidebar-candidate.zip
 ```
 
 The output must not already exist. The packager allowlists release metadata and omits source scripts/dependencies/node_modules. The source manifest stays `private: true`; only the freshly staged release manifest omits that guard. `.tgz` uses `npm pack --ignore-scripts --offline` in that stage, with standard `package/` layout. All stages complete before atomic, no-overwrite creation of the final archive pathname; build/archive failure leaves it absent. Hidden staging directories remain beside the output as build evidence; do not edit their archive aliases after acceptance. Reusing an existing pathname fails without modifying its bytes. `--client` injection is not supported. Packaging reports bytes, full SHA-256 and the Host/Client code stamp; the latter is not a whole-archive integrity digest. ZIP timestamps are not normalized, so rebuilding is not a promise of identical ZIP bytes. Record Node/npm/bundler versions and verify the **exact final tarball**.
 
-For maintainers, inspect the tarball with `npm publish /absolute/new/framivra-dsh-sidebar-0.2.1.tgz --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org/`. This is a publication preview, not proof of account permission. Only after artifact acceptance and explicit publishing authorization, remove `--dry-run` to publish **that tarball**, never the source directory. Use npm login/2FA as required; do not store tokens in the repository. Upload the same verified bytes plus SHA-256 to a plugin-specific GitHub Release, without changing the core's latest release. Publish source through the normal review/PR process and pin the plugin tag to that reviewed commit. npm version bytes and released tags must not be replaced; fixes require a new version.
+For maintainers, inspect the tarball with `npm publish /absolute/new/framivra-dsh-sidebar-0.2.2.tgz --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org/`. This is a publication preview, not proof of account permission. Only after artifact acceptance and explicit publishing authorization, remove `--dry-run` to publish **that tarball**, never the source directory. Use npm login/2FA as required; do not store tokens in the repository. Upload the same verified bytes plus SHA-256 to a plugin-specific GitHub Release, without changing the core's latest release. Publish source through the normal review/PR process and pin the plugin tag to that reviewed commit. npm version bytes and released tags must not be replaced; fixes require a new version.
 
 The package tests build/load the actual SDK output; no dummy Client archive is generated. A successful build/package test does **not** certify clean-profile installation or authentication.
 
@@ -213,16 +213,16 @@ Needed from the read CLI: `vtx -t PATH capabilities|inspect|query`, the `framivr
 
 Requires **Node >=24.9.0 and DSH exactly 0.2.2-rc.1**; other DSH versions are not certified. The owner-only management page can install an explicitly trusted local Python `framivra` wheel in a new independent venv. It does **not** install Python, FFmpeg, browsers, models or other render dependencies. Prepare those separately before using a timeline. No official wheel download or PyPI installation is offered without an actual verified distribution source.
 
-Once the version is published, enter `framivra-dsh-sidebar@0.2.1` in DSH's existing plugin-install input. No DSH interface changes, source checkout, download/extract step or local path are needed. If a registry mirror has not synchronized, choose the official registry `https://registry.npmjs.org/`. The equivalent CLI command below **writes the selected profile** (requires `pnpm`):
+Once the version is published, enter `framivra-dsh-sidebar@0.2.2` in DSH's existing plugin-install input. No DSH interface changes, source checkout, download/extract step or local path are needed. If a registry mirror has not synchronized, choose the official registry `https://registry.npmjs.org/`. The equivalent CLI command below **writes the selected profile** (requires `pnpm`):
 
 ```sh
-dsh plugin --profile web add framivra-dsh-sidebar@0.2.1 --registry=https://registry.npmjs.org/
+dsh plugin --profile web add framivra-dsh-sidebar@0.2.2 --registry=https://registry.npmjs.org/
 ```
 
-The same input also accepts the standard `.tgz` asset URL from this repository's **`dsh-sidebar-v0.2.1`** GitHub Release, once published. Use the actual asset download URL, not the Python repository URL, GitHub's generated source archive or a ZIP. Plugin releases have their own tag namespace and must not replace the core's latest stable release. For an already downloaded and SHA-256-verified tarball, install directly (**writes the profile**, no extraction required):
+The same input also accepts the standard `.tgz` asset URL from this repository's **`dsh-sidebar-v0.2.2`** GitHub Release, once published. Use the actual asset download URL, not the Python repository URL, GitHub's generated source archive or a ZIP. Plugin releases have their own tag namespace and must not replace the core's latest stable release. For an already downloaded and SHA-256-verified tarball, install directly (**writes the profile**, no extraction required):
 
 ```sh
-dsh plugin --profile web add /absolute/download/framivra-dsh-sidebar-0.2.1.tgz
+dsh plugin --profile web add /absolute/download/framivra-dsh-sidebar-0.2.2.tgz
 ```
 
 Legacy ZIP delivery remains supported via **extract → official local-directory installation**, not native ZIP upload (**writes the extraction directory and profile**):
