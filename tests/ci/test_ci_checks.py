@@ -384,9 +384,13 @@ class StrictMediaGate(unittest.TestCase):
         sys.path.insert(0, str(ROOT))
         import tests.media.test_range_render as range_tests
         target = range_tests.TestRangeIntegration
-        original = target.__dict__['test_range_render']
+        # Empty the actual class, including methods added after this probe.
+        # Removing only one method could accidentally execute another media test.
+        originals = {name: target.__dict__[name]
+                     for name in unittest.TestLoader().getTestCaseNames(target)}
         healthy = self.healthy_suite()
-        delattr(target, 'test_range_render')
+        for name in originals:
+            delattr(target, name)
         try:
             for names in (['tests.media.test_range_render.TestRangeIntegration',
                            'fixture'],
@@ -396,7 +400,8 @@ class StrictMediaGate(unittest.TestCase):
                     self.assertEqual(
                         self.suite_exit({'fixture': healthy}, names=names), 1)
         finally:
-            setattr(target, 'test_range_render', original)
+            for name, original in originals.items():
+                setattr(target, name, original)
 
     def test_multiple_healthy_selectors_pass(self):
         class Second(unittest.TestCase):
