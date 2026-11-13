@@ -1,0 +1,294 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local/bgm_gen/schema/project_v2.json",
+  "title": "bgm_gen project.json schema v2（PLAN_v3 §3.3 机制 C 双布局）",
+  "description": "v2 = v1 + track $ref 槽位（双布局）+ track.events/bend_range/params（R2 落地，PLAN_v3 §3.2/§3.6）+ master.qc.duration_min_s 补正。运行期校验由 core/project.py 手写实现（系统 python3 无 jsonschema，PLAN BG-D3），两者语义必须保持一致。v1 工程零迁移、渲染位级不变（BG-D12 草案）。",
+  "type": "object",
+  "required": ["meta", "tracks"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "工程名；缺省 = project.json 文件名去扩展名。决定默认输出目录 out/<name>/（BG-D9）"
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec_version"],
+      "properties": {
+        "spec_version": {"type": "string", "enum": ["1", "2"], "description": "工程 schema 版本；\"1\" 严格适用 v1 规则（轨带 events/$ref/params/bend_range/space 或 master.pre_limit/space_ir 一律拒绝——装载层版本前置门）；\"2\" 增 track.$ref 槽位、track.events/bend_range/params/space、master.qc.duration_min_s、master.pre_limit、master.space_ir"},
+        "sr": {"type": "integer", "minimum": 8000, "maximum": 384000, "default": 44100, "description": "全局权威采样率（BG-D5），所有 stem 归一到此值"},
+        "channels": {"type": "integer", "enum": [1, 2], "default": 2, "description": "全局声道数（BG-D5）"},
+        "bpm": {"type": "number", "exclusiveMinimum": 0, "default": 120, "description": "全局速度；beat→秒 = beat*60/bpm"},
+        "key": {"type": ["string", "null"], "description": "目标调性（如 \"D minor\"）；null/缺省 = QC 不做调性断言（info 项）"},
+        "timesig": {"type": "string", "pattern": "^[0-9]+/[0-9]+$", "description": "拍号标注（如 \"4/4\"），当前仅记录不参与渲染"},
+        "seed": {"type": ["integer", "null"], "description": "随机种子（传递给需要的引擎；确定性引擎均不消费）"},
+        "duration_hint": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "时长提示（秒）。工程时长 = max(duration_hint, 所有轨 clip 窗结束秒)；全体 stem 补零/截断到该时长"}
+      }
+    },
+    "sections": {
+      "type": "array",
+      "description": "段落时间窗标注（仅命名/审读用，渲染不依赖）",
+      "items": {
+        "type": "object",
+        "required": ["name", "start_beat", "length_beat"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "start_beat": {"type": "number", "minimum": 0},
+          "length_beat": {"type": "number", "exclusiveMinimum": 0}
+        }
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "音轨列表（双布局：槽位为内联 track 对象或纯 $ref 对象）。轨内 notes 时间基准=轨道局部 beat（beat 0 = clip.start_beat 对齐的全局位置）",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["name", "engine", "instrument"],
+            "additionalProperties": false,
+            "description": "内联 track 对象（与 v1 相同；轨名全局唯一）。v2：notes 改 optional——notes 与 note_on/note_off 事件 XOR（互斥且恰有其一，校验层强制）；events-only 轨缺省 clip 按 note_off 最大 beat + 4 拍尾巴推导",
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "description": "轨名，全局唯一；stem 文件名与 automation/sidechain 引用它"},
+              "engine": {"type": "string", "enum": ["synth", "sf2", "sfz", "sample"], "description": "编排只接受确定性引擎；ai/demucs 走 bgm stem / ai 产线（BG-D10 扩散=整段素材非音色引擎）"},
+              "instrument": {"type": "string", "minLength": 1, "description": "synth=synthlib 音色函数名(kick/snare/hat/fm_ep/bass/lead)；sf2=sf2 名或绝对路径，可带 :bank:program 后缀（默认 :0:0）；sfz=SFZ 引用（engines/sfz.py resolve 规则）；sample=采样文件（相对 assets_audio/）"},
+              "bank": {"type": "integer", "minimum": 0, "maximum": 128, "default": 0, "description": "仅 sf2：bank（128=GM 打击）"},
+              "program": {"type": "integer", "minimum": 0, "maximum": 127, "default": 0, "description": "仅 sf2：program"},
+              "notes": {
+                "type": "array",
+                "description": "[pitch(MIDI 0-127), beat(局部, 浮点), dur(浮点 beat), vel(0-127)]，BG-D7 统一记谱；鼓=GM 打击位。v2：optional 且允许空数组——与 note_on/note_off 事件 XOR（互斥且恰有其一；空数组在 events-only 轨合法，PLAN_v3 §3.2 投影规范/R2 审查 C1）",
+                "items": {
+                  "type": "array",
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "prefixItems": [
+                    {"type": "number", "minimum": 0, "maximum": 127},
+                    {"type": "number", "minimum": 0},
+                    {"type": "number", "exclusiveMinimum": 0},
+                    {"type": "number", "minimum": 0, "maximum": 127}
+                  ]
+                }
+              },
+              "events": {
+                "type": "array",
+                "description": "v2 通用事件流（PLAN_v3 §3.2，时间基准=轨局部 beat）。note_on/note_off 与 notes[] XOR；控制事件（cc/pitch_bend/keyswitch/program_change）可与 notes 混装（混装轨）。引擎能力门由描述符 events_supported 门控（sf2 仅 cc/pitch_bend+note 载体；sfz 全集；synth/sample 全拒）。同 tick 规范全序（C3）：event_sort_key() = (t, 类型序 keyswitch→program_change→cc→pitch_bend→note_off→note_on, pitch 升序, 插入序)。note 事件配对：同 pitch 交叠/悬空 note_on/无 on 的 note_off 拒绝",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": ["type", "t", "ctrl", "value"],
+                      "additionalProperties": false,
+                      "description": "cc：SMF 0xB0；value 编码 round-half-up 后 clamp 0..127（C3b）",
+                      "properties": {
+                        "type": {"const": "cc"},
+                        "t": {"type": "number", "minimum": 0},
+                        "ctrl": {"type": "integer", "minimum": 0, "maximum": 127},
+                        "value": {"type": "number", "minimum": 0, "maximum": 127}
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": ["type", "t", "semitones"],
+                      "additionalProperties": false,
+                      "description": "pitch_bend：SMF 0xE0 14bit 线性映射 clamp(round_half_up(8192*(1+semitones/bend_range)), 0, 16383)；量程=轨级 bend_range（sfz 轨含弯音必须显式声明；sf2 缺省 2）",
+                      "properties": {
+                        "type": {"const": "pitch_bend"},
+                        "t": {"type": "number", "minimum": 0},
+                        "semitones": {"type": "number"}
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": ["type", "t", "pitch"],
+                      "additionalProperties": false,
+                      "description": "keyswitch：note_on vel127 + note_off（off tick = clamp(min(下一 KS tick-1, KS tick+0.25beat·ppq), ≥KS tick+1)；相邻同 tick 双 KS 各 +1 tick 确定性错开）",
+                      "properties": {
+                        "type": {"const": "keyswitch"},
+                        "t": {"type": "number", "minimum": 0},
+                        "pitch": {"type": "integer", "minimum": 0, "maximum": 127}
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": ["type", "t", "program"],
+                      "additionalProperties": false,
+                      "description": "program_change：带 bank 时编码为 CC0/32 紧贴 0xC0 之前的复合消息（C3a，bank CC 不参与通用排序）",
+                      "properties": {
+                        "type": {"const": "program_change"},
+                        "t": {"type": "number", "minimum": 0},
+                        "program": {"type": "integer", "minimum": 0, "maximum": 127},
+                        "bank": {"type": "integer", "minimum": 0, "maximum": 128}
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": ["type", "t", "pitch", "vel"],
+                      "additionalProperties": false,
+                      "description": "note_on（vel ∈ 1..127；vel=0 校验层拒绝；与 notes[] XOR）；SMF 0x90",
+                      "properties": {
+                        "type": {"const": "note_on"},
+                        "t": {"type": "number", "minimum": 0},
+                        "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+                        "vel": {"type": "integer", "minimum": 1, "maximum": 127}
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": ["type", "t", "pitch"],
+                      "additionalProperties": false,
+                      "description": "note_off（vel 可选，缺省 0；SMF 0x80 编码 vel=0）",
+                      "properties": {
+                        "type": {"const": "note_off"},
+                        "t": {"type": "number", "minimum": 0},
+                        "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+                        "vel": {"type": "integer", "minimum": 0, "maximum": 127, "default": 0}
+                      }
+                    }
+                  ]
+                }
+              },
+              "bend_range": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "轨级弯音量程（半音数，PLAN_v3 §3.2）：pitch_bend 事件 14bit 映射的分母。sfz 轨含 pitch_bend 事件必须显式声明（SFZ 文件级 pitch_wheel_range 逐文件不同）；sf2 缺省 2（引擎层默认）"
+              },
+              "params": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "v2 params 透传槽（PLAN_v3 §3.6）：键 = 该轨引擎描述符 parameters id 减「投影锁定集」（track_projection 映射所产出的字段 + 结构必填字段）。即 sf2 轨合法键={gain,channel}；synth={params}（嵌套 synthlib 参数对象）；sfz/sample=∅。值按描述符单字段校验（base.validate_param_value）；组装=投影产出→params 覆盖→结构字段锁定（钩子④）",
+                "propertyNames": {"type": "string"}
+              },
+              "gain_db": {"type": "number", "minimum": -80, "maximum": 24, "default": 0, "description": "静态轨道增益（自动化在其上叠加，相乘关系）"},
+              "pan": {"type": "number", "minimum": -1, "maximum": 1, "default": 0, "description": "静态声像 -1 全左 .. 1 全右（lg=1-pan*0.5, rg=1+pan*0.5）"},
+              "space": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["depth"],
+                "description": "v3.2 轨道空间化（深度模型，core/space.py）：depth=0 台前 / 1 厅尾。施加点=轨道链 A 后、求和 C 前（mixer A' 段）。depth 映射：预延迟 depth×24ms（≈8.2m 声程差）、电平 -depth×4.5dB、一阶高频滚降 8000→3500Hz、湿送量缺省 -12+depth×9dB；width=M/S side 增益 width/0.3（0.3=中性，0=单声道坍缩，1=side×10/3；mono 工程无宽度概念）。null/缺省 = 不启用（工程渲染位级与现状一致）；space 声明而 master.space_ir 缺省时仅 dry 深度处理、无 wet 总线",
+                "properties": {
+                  "depth": {"type": "number", "minimum": 0, "maximum": 1, "description": "深度位置（必填）：0=台前 1=厅尾"},
+                  "width": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.3, "description": "M/S 宽度（side 增益 = width/0.3；0.3 中性）"},
+                  "send_db": {"type": "number", "minimum": -60, "maximum": 12, "description": "湿声送量（dB）；缺省按 depth 推导 = -12 + depth×9（越远越湿），显式给出才落盘"}
+                }
+              },
+              "clip": {
+                "type": "object",
+                "required": ["start_beat", "end_beat"],
+                "additionalProperties": false,
+                "description": "轨道在全局时间线上的窗口（beat）。缺省 = {start_beat:0, end_beat: max(note 结束)+4（释放尾巴）}；events-only 轨 = note_off 最大 beat + 4 拍尾巴（v1 语义等价物）。stem 渲染后截断/补零到窗长，整体平移到 start_beat",
+                "properties": {
+                  "start_beat": {"type": "number", "minimum": 0},
+                  "end_beat": {"type": "number", "exclusiveMinimum": 0}
+                }
+              },
+              "bus": {
+                "type": "array",
+                "default": [],
+                "description": "轨道级 ffmpeg 滤镜直传链（如 [\"lowpass=f=8000\"]）。禁止 ; [ ] 与标签（保持单链嵌入）；lowpass_hz 自动化由编排层 numpy OLA 频域扫描原地施加（asendcmd 方案因拉链噪声已弃用，见 core/mixer.py docstring）",
+                "items": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["$ref"],
+            "additionalProperties": false,
+            "description": "$ref 槽位（PLAN_v3 C5）：唯一键 $ref，不得带兄弟字段；值=相对工程文件所在目录的轨文件路径（禁绝对路径）。外部文件=完整 track 对象（name 即身份），内不得再嵌 $ref",
+            "properties": {
+              "$ref": {"type": "string", "minLength": 1, "description": "相对路径（禁绝对路径），如 \"tracks/vla.json\"；装载层展开并记录来源映射（校验报错路径附来源标注）"}
+            }
+          }
+        ]
+      }
+    },
+    "automation": {
+      "type": "array",
+      "default": [],
+      "description": "参数自动化（时间基准=全局 beat）。支持参数：gain_db / pan / lowpass_hz；curve=linear 直线插值参数原值（dB 直线、Hz 直线），exp 按感知几何插值（增益在线性域几何插值=等 dB 斜率，频率在对数域=音高线性）；pan 仅 linear",
+      "items": {
+        "type": "object",
+        "required": ["target_track", "param", "points"],
+        "additionalProperties": false,
+        "properties": {
+          "target_track": {"type": "string", "description": "必须命中 tracks[].name"},
+          "param": {"type": "string", "enum": ["gain_db", "pan", "lowpass_hz"]},
+          "points": {
+            "type": "array",
+            "minItems": 2,
+            "description": "[全局beat, value]，beat 严格递增；首点前恒持首值、末点后恒持末值",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [{"type": "number", "minimum": 0}, {"type": "number"}]
+            }
+          },
+          "curve": {"type": "string", "enum": ["linear", "exp"], "default": "linear"}
+        }
+      }
+    },
+    "sidechain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger_track", "targets"],
+      "description": "侧链 ducking：trigger 轨（自动化后信号）经确定性 numpy 包络跟随器（阈值/比率/attack/release，1kHz 包络分析）压低 targets（core/mixer.py B 段；ffmpeg sidechaincompress 因位级非确定已弃用）",
+      "properties": {
+        "trigger_track": {"type": "string", "description": "必须命中 tracks[].name；同一轨可同时为 target（自避让）"},
+        "targets": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+        "threshold_db": {"type": "number", "minimum": -90, "maximum": 0, "default": -24, "description": "触发阈值（dB，包络跟随器增益计算）"},
+        "ratio": {"type": "number", "minimum": 1, "maximum": 20, "default": 4},
+        "attack_ms": {"type": "number", "minimum": 0.01, "maximum": 1000, "default": 20},
+        "release_ms": {"type": "number", "minimum": 1, "maximum": 10000, "default": 300}
+      }
+    },
+    "master": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "description": "工程级母带与 QC 目标",
+      "properties": {
+        "target_lufs": {"type": "number", "minimum": -40, "maximum": 0, "default": -14, "description": "EBU R128 综合响度（B 站标准 -14，AGENTS.md D16）"},
+        "true_peak_db": {"type": "number", "maximum": 0, "default": -1, "description": "真峰值上限 dBTP"},
+        "chain": {"type": "string", "enum": ["loudnorm", "matchering"], "default": "loudnorm"},
+        "ref": {"type": "string", "description": "matchering 模式必填：参考音频路径"},
+        "lufs_tol": {"type": "number", "exclusiveMinimum": 0, "default": 1.0, "description": "QC 判定容差（|实测-目标|<=tol）"},
+        "pre_limit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ceiling_db"],
+          "description": "母前峰值限幅（PLAN_v3 §4.3 crest>13dB 预案）：premix 求和后、母带前削峰——管弦等高动态素材 TP-I 超 loudnorm linear 约束（target_TP−target_L≈12.8dB）时先轻限幅再归一化，消除 Dynamic 回退。确定性 numpy lookahead 限幅器（mixer._apply_premaster_limit）",
+          "properties": {
+            "ceiling_db": {"type": "number", "minimum": -40, "maximum": 12, "description": "峰值上限（dB，premix float 域——可为正值，如 +6 = 仅削顶 4dB）"},
+            "attack_ms": {"type": "number", "exclusiveMinimum": 0, "maximum": 100, "default": 5, "description": "lookahead 前瞻窗（增益下降沿零瞬态）"},
+            "release_ms": {"type": "number", "exclusiveMinimum": 0, "maximum": 2000, "default": 150, "description": "dB 域一阶指数释放"}
+          }
+        },
+        "space_ir": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rt60_s", "seed"],
+          "description": "v3.2 工程级共享厅堂 IR 声明（core/space.make_hall_ir 确定性合成：早期反射簇（5-30ms 稀疏对、左右不对称）+ 晚期混响（两通道独立去相关、指数衰减）、全局能量归一 Σh²=1、Schroeder 倒积分 RT60 自测 ±15%）。wet 总线 = 全部轨 space 送量求和 → 与此 IR FFT/OLA 卷积 → 与 dry 求和进母带。null/缺省 = 不启用（无 wet 总线，渲染位级与现状一致）；轨声明 space 而无 space_ir 时仅 dry 深度处理。湿声声道口径：立体声 IR 能量 L/R 均分 → 每通道 wet RMS 比 send_db 低 3dB（mono 等价）——v3.2 审收 M-1 订正",
+          "properties": {
+            "rt60_s": {"type": "number", "minimum": 0.4, "maximum": 4.0, "description": "混响时间 RT60（秒），生成后 Schroeder 实测自校 ±15%"},
+            "seed": {"type": "integer", "description": "确定性种子（splitmix64 整数哈希噪声，同参数两次生成逐位相等）"}
+          }
+        },
+        "qc": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "QC 目标；null/缺省 = 该项降级为 info（不判 pass/fail）",
+          "properties": {
+            "silent_window_max_s": {"type": ["number", "null"], "exclusiveMinimum": 0, "default": 1.5, "description": "最长无声窗上限（分帧 50ms、帧 RMS<-60dB 计无声）"},
+            "bpm_tol_pct": {"type": ["number", "null"], "description": "BPM 检测容差百分比；top-3 候选含 1/2/2 倍频内命中即过；null=info"},
+            "key_top2": {"type": ["boolean", "null"], "description": "true = top-1 r>=0.70 或 meta.key 入 top-2；null/false = info"},
+            "hf_ratio_max": {"type": ["number", "null"], "description": ">8kHz 能量占比上限（削平/噪声异常检测）；null=info"},
+            "duration_min_s": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "最短时长闸（秒）；null=info（本期随 v2 一并补正进 v1 schema）"}
+          }
+        }
+      }
+    }
+  }
+}

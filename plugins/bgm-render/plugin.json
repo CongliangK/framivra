@@ -1,6 +1,6 @@
 {
   "name": "bgm-render",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "kind": "plugin",
   "entry": {
     "cli": []
@@ -10,7 +10,7 @@
     "command": "health_check.py"
   },
   "requires": {
-    "core": ">=2.0.0",
+    "core": ">=2.3.0",
     "binaries": [
       "ffmpeg"
     ],
@@ -18,8 +18,8 @@
     "platforms": []
   },
   "config_keys": [
-    "bgm.repo",
-    "bgm.cli"
+    "bgm.python",
+    "bgm.runtime"
   ],
   "docs": "README.md",
   "extends": {

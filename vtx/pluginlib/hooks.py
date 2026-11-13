@@ -454,8 +454,27 @@ def _plugin_params_digest(c, name: str) -> str:
                     picked.setdefault(f"{info.get('path')}:{key}", []).append(it[key])
     except Exception:
         pass   # 摘要失败不阻断指纹——退化为无参数成分（宁弱不崩）
-    blob = json.dumps({"params": picked, "code": plugin_code_digest(name)},
-                      ensure_ascii=False, sort_keys=True)
+    material = {"params": picked, "code": plugin_code_digest(name)}
+    # Optional invariant contribution, not a lifecycle hook. This must remain
+    # outside the legacy parameter-collection fallback: an unavailable identity
+    # must never inherit an earlier successful receipt. Old providers without
+    # this function retain the exact previous material/serialization.
+    mod = _load_plugin_module(name)
+    provider = getattr(mod, "input_identity", None)
+    if provider is not None:
+        try:
+            if not callable(provider):
+                raise TypeError("input_identity is not callable")
+            material["input_identity"] = provider(c)
+            blob = json.dumps(material, ensure_ascii=False, sort_keys=True,
+                              allow_nan=False)
+        except Exception as exc:
+            # Provider exception text may contain a private runtime config;
+            # suppress chained tracebacks as well as the public error text.
+            raise RuntimeError(f"插件 {name}: input_identity 无法建立有效 JSON 身份"
+                               f"（{type(exc).__name__}）") from None
+    else:
+        blob = json.dumps(material, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:12]
 
 

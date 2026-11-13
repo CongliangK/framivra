@@ -1,0 +1,24 @@
+# demucs 描述符收割证据日志（harvest.py 生成）
+generated: 2026-08-23
+tool: python3 -m bgm_gen.engines.harvest log demucs
+descriptor: bgm_gen/engines/descriptors/demucs.json（v1.0.0 · tier A）
+harvest_method: A=程序化收割（第一事实源=引擎源码 payload 读取行为）
+sources:
+  - bgm_gen/engines/demucs.py（payload 读取 + CLI 组装 + BG-D8 显存闸接线——收割第一事实源）
+  - comfyui env 实测：demucs 4.1.0 / torch 2.11.0+cu130
+binary_facts:
+  version = '4.1.0'（comfyui env python -m demucs（子进程；doctor 经 env import demucs 探测交叉核验；权重缓存 HF_HOME 见 runtime.json demucs.env））
+params（参数名表；类型/单位/短语义 ≤1 行/参数）:
+  input | path | required | 输入音频路径（文件存在性由引擎守卫）
+  model | str | - | 默认htdemucs | demucs 模型名（枚举不封闭，透传 demucs CLI -n）
+  out_dir | path | - | stems 根目录；缺省 <仓库根>/out/smoke/demucs/；产物约定 {out_dir}/{track}/{stem}.wav
+  device | enum | - | 默认auto | 枚举auto/gpu/cpu | auto/gpu 走 BG-D8 显存闸（auto 超时降级 cpu 并记录；gpu 超时抛错）；cpu=直跑不占锁
+  two_stems | str | - | 两分轨模式（如 'vocals'→vocals/no_vocals）；缺省四分轨 vocals/drums/bass/other
+  vram_need_mb | int | - | 默认4096 | 范围0..… | MB | 显存闸需求（BG-D8 gpu_guard）
+  vram_timeout_s | float | - | 默认120.0 | 范围0..… | s | 显存闸等待上限（auto 超时降级 cpu；gpu 超时抛错）
+  offline | bool | - | 默认True | 恒注入 HF_HUB_OFFLINE=1（权重已缓存；防静默回退下载第二份旧格式 .th 权重）
+events_supported: （无——synth/sample 拒任何事件）
+coverage.gaps:
+  - model 名枚举不封闭（任何 demucs 模型名透传；模型能力面=demucs 仓库）
+  - GPU 显存闸策略（排队/降级/阈值）在 gpu_guard 内部，不在描述符参数面（vram_need_mb/vram_timeout_s 已暴露）
+  - determinism=tolerant（GPU 归约非逐位；分级证据 tests/baselines_w2b.json）

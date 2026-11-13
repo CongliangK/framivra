@@ -105,7 +105,17 @@ print(json.dumps({'duration_s': duration}, indent=2))
         cfg = self.root / "cfg.json"
         argv = [sys.executable, str(fake)]
         command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-        cfg.write_text(json.dumps({"bgm": {"cli": command}}), encoding="utf-8")
+        cfg.write_text(json.dumps({"bgm": {"python": sys.executable}}), encoding="utf-8")
+        import importlib
+        bgm = importlib.import_module("plugins.bgm-render")
+        boundary = mock.patch.object(bgm, "bgm_cmd", side_effect=lambda _: (argv, dict(os.environ)))
+        boundary.start()
+        self.addCleanup(boundary.stop)
+        runtime = self.root / "runtime.json"
+        runtime.write_text("{}", encoding="utf-8")
+        env = mock.patch.dict(os.environ, {"MUSIC_RUNTIME": str(runtime)})
+        env.start()
+        self.addCleanup(env.stop)
         self._old = os.environ.get("VTX_CONFIG")
         os.environ["VTX_CONFIG"] = str(cfg)
         (self.root / "bgm.json").write_text('{"name": "x"}', encoding="utf-8")
@@ -166,10 +176,15 @@ class ScopeItemsAlignment(unittest.TestCase):
             tl = _tl(project={"fps": 30, "width": 640, "height": 360,
                              "duration_frames": 180, "magic": {"x": 1}})
         kmap = {"magic": {"plugin": "demo", "path": "project"}}
-        with mock.patch.object(pl_registry, "key_map", return_value=kmap):
-            self.assertTrue(pl_hooks._timeline_declares(_C(), "demo"))
-            d = pl_hooks._plugin_params_digest(_C(), "demo")
-        self.assertNotIn("params\": {}", d, "project 声明键参数须进摘要")
+        from types import SimpleNamespace
+        with mock.patch.object(pl_registry, "key_map", return_value=kmap), \
+             mock.patch.object(pl_hooks, "_load_plugin_module", return_value=SimpleNamespace()):
+            c = _C()
+            self.assertTrue(pl_hooks._timeline_declares(c, "demo"))
+            d = pl_hooks._plugin_params_digest(c, "demo")
+            c.tl["project"]["magic"]["x"] = 2
+            self.assertNotEqual(pl_hooks._plugin_params_digest(c, "demo"), d,
+                                "project 声明键参数须进摘要")
 
 
 class GcLoudnessSidecarExemption(unittest.TestCase):

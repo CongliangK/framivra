@@ -10,7 +10,7 @@
 - source: apps/asr/app.json:3
 | asr | app | 1.0.0 | asr.enabled, asr.base_url, asr.python, asr.model_dir, asr.aligner_dir, asr.device_map, asr.vram_budget_mib | — | — | 有 | 有 |
 - source: apps/bgm/app.json:3
-| bgm | app | 1.0.0 | bgm.enabled | — | — | 无 | 有 |
+| bgm | app | 2.0.0 | bgm.enabled, bgm.python, bgm.runtime | — | — | 无 | 有 |
 - source: apps/blender-bridge/app.json:3
 | blender-bridge | app | 1.0.0 | — | — | — | 有 | 有 |
 - source: apps/cover/app.json:3
@@ -30,7 +30,7 @@
 - source: apps/tts/app.json:3
 | tts | app | 1.0.0 | tts.engine, tts.repo, tts.python, tts.voice_ref, tts.edge_bin | — | — | 有 | 有 |
 - source: plugins/bgm-render/plugin.json:3
-| bgm-render | plugin | 1.2.0 | sources[]:bgm | validate, probe_source, prepare_source | true | 有 | 有 |
+| bgm-render | plugin | 2.0.0 | sources[]:bgm | validate, probe_source, prepare_source | true | 有 | 有 |
 - source: plugins/blender-bridge/plugin.json:3
 | blender-bridge | plugin | 1.0.0 | root:blender_bridge | validate, finish | true | 有 | 有 |
 - source: plugins/denoise/plugin.json:3

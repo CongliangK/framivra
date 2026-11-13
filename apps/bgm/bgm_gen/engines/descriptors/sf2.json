@@ -1,0 +1,256 @@
+{
+  "binary_pin": {
+    "additional_pins": [
+      {
+        "name": "ffmpeg",
+        "note": "ffmpeg_match_wav 声道/sr 兜底转换（系统包）",
+        "sha256": null,
+        "version": "8.1.2"
+      }
+    ],
+    "note": "libfluidsynth.so.3（系统包；FluidSynth runtime version 2.5.4，doctor 经 `fluidsynth --version` 探测交叉核验）",
+    "sha256": null,
+    "size": null,
+    "version": "2.5.4"
+  },
+  "coverage": {
+    "evidence": [
+      "bgm_gen/engines/sf2.py（ctypes 调用点：program_select/player/file_renderer/apply_gain_wav——收割第一事实源 C12）",
+      "bgm_gen/engines/midi_util.py（R2：events_to_smf 编码器——事件通道字节层，tests/test_events.py 锚点锁定）",
+      "FluidSynth runtime version 2.5.4（`fluidsynth --version` 实测，doctor 交叉核验）"
+    ],
+    "gaps": [
+      "fluidsynth settings API 未接入描述符（仅 doctor 版本交叉核验）",
+      "sf2 文件本身能力面（bank/program 实际集合）不在描述符内——依赖 SoundFont 文件内容",
+      "program_change/keyswitch 事件被拒（护 program_select 显式选音色——events_supported 未列出；PLAN_v3 §3.2 消费矩阵）",
+      "gain<0（相位翻转）被拒绝（min 0，收紧面；引擎原无检查）",
+      "channel/bank/program 引擎原用 int() 宽容转换（如 0.5→0），描述符 int 型收紧为整值/整值浮点",
+      "bank 上限 128/channel 上限 15 为描述符单向收紧（引擎 int() 无上界；R1 审查 A1 记录）",
+      "bpm 收紧 min=1（同 synth；R1 审查 E-1 记录）"
+    ],
+    "probes": [
+      "bgm_gen/tests/test_descriptors.py [fast] sf2_full（bank/program/gain/channel/bpm 全参数赋值）+ sf2_perc_bank128（channel 派生 9）+ determinism 双渲",
+      "bgm_gen/tests/test_events.py [fast] 编码锚点（ppq/bend 14bit/混装轨逐位一致）+ [slow] params.gain 生效冒烟（RMS 变化）"
+    ],
+    "tier": "A"
+  },
+  "engine": "sf2",
+  "events_supported": [
+    {
+      "note": "fluid_player 标准透传（libfluidsynth 文件渲染）",
+      "type": "cc"
+    },
+    {
+      "note": "默认量程 ±2 半音（轨级 bend_range 透传，缺省 2）",
+      "type": "pitch_bend"
+    },
+    {
+      "note": "仅作 notes 投影载体（XOR），经投影合成 SMF 音符",
+      "type": "note_on"
+    },
+    {
+      "note": "同 note_on（vel=0 编码）",
+      "type": "note_off"
+    }
+  ],
+  "formats": [
+    "wav（pcm_s16le）"
+  ],
+  "input_ports": [
+    {
+      "description": "BG-D7 记谱",
+      "id": "notes",
+      "type": "note_array"
+    },
+    {
+      "description": "SoundFont 名或绝对路径",
+      "id": "sf2",
+      "type": "asset_path"
+    }
+  ],
+  "invariants": [
+    {
+      "check": false,
+      "id": "sf2_channel_default_derived",
+      "rule": "channel 缺省 = bank==128 ? 9 : 0（GM 打击组惯例 ch10；引擎内派生）"
+    },
+    {
+      "check": false,
+      "id": "sf2_program_select_explicit",
+      "rule": "bank/program 经 fluid_synth_program_select 显式选音色、SMF 不写 program change——因此 program_change 事件被拒（events_supported 未列出）"
+    },
+    {
+      "check": false,
+      "id": "sf2_gain_pcm16_only",
+      "rule": "gain 后处理仅 PCM16 wav（apply_gain_wav，sampwidth≠2 报 EngineError）"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "SoundFont：runtime.json sf2 表名字（FluidR3_GM/GeneralUser_GS）或绝对路径（resolve_sf2；文件存在性由引擎守卫）",
+      "flags": [
+        "required"
+      ],
+      "id": "sf2",
+      "type": "path"
+    },
+    {
+      "description": "BG-D7 统一记谱 [[pitch, beat, dur, vel], ...]（midi_util write_notes_smf → 临时 SMF；SMF 不写 program change，音色由 program_select 显式指定）",
+      "flags": [
+        "required"
+      ],
+      "id": "notes",
+      "schema": {
+        "items": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        "minItems": 1
+      },
+      "type": "tuple"
+    },
+    {
+      "default": 0,
+      "description": "bank（128=GM 打击组）；经 fluid_synth_program_select 显式选音色，可覆盖非 GM-bank0 预设",
+      "id": "bank",
+      "max": 128,
+      "min": 0,
+      "type": "int"
+    },
+    {
+      "default": 0,
+      "description": "GM program（0..127）",
+      "id": "program",
+      "max": 127,
+      "min": 0,
+      "type": "int"
+    },
+    {
+      "default": 120.0,
+      "description": "beat→秒换算（写入 SMF set_tempo）",
+      "id": "bpm",
+      "min": 1,
+      "type": "float",
+      "unit": "bpm"
+    },
+    {
+      "default": 1.0,
+      "description": "线性输出增益（apply_gain_wav 后处理；gain==1 时 no-op 字节不动）",
+      "id": "gain",
+      "min": 0,
+      "type": "float"
+    },
+    {
+      "default": null,
+      "description": "MIDI 通道；缺省=bank==128 ? 9 : 0（引擎派生，invariant sf2_channel_default_derived 文档化）",
+      "id": "channel",
+      "max": 15,
+      "min": 0,
+      "type": "int"
+    },
+    {
+      "description": "v2 控制事件数组（PLAN_v3 §3.2/BG-D14；R2 落地）：{type,t}+逐类型字段；type 六类闭集与逐类型字段约束由工程层 core/project.py 校验（描述符 schema 为结构性兜底）；非空时引擎改走 events_to_smf（无 events 保持旧路径字节不动）",
+      "flags": [
+        "optional"
+      ],
+      "id": "events",
+      "schema": {
+        "items": {
+          "properties": {
+            "bank": {
+              "maximum": 128,
+              "minimum": 0,
+              "type": "number"
+            },
+            "ctrl": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "pitch": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "program": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "semitones": {
+              "type": "number"
+            },
+            "t": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "value": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            },
+            "vel": {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "t"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "array"
+    },
+    {
+      "default": 2.0,
+      "description": "弯音量程半音数（缺省 2.0）：pitch_bend 事件 14bit 线性映射 clamp(round_half_up(8192*(1+semitones/bend_range)), 0, 16383)；轨级声明经 track_projection 透传",
+      "exclusive_min": true,
+      "id": "bend_range",
+      "min": 0,
+      "type": "float",
+      "unit": "st"
+    }
+  ],
+  "track_projection": {
+    "bank": "track.bank",
+    "bend_range": "track.bend_range（显式声明时透传；缺省 2 由引擎层默认）",
+    "bpm": "meta.bpm",
+    "channel": "—（缺省按 bank 派生）",
+    "events": "track.events（控制事件；非空才注入 payload——无 events 保持旧路径字节不动）",
+    "gain": "—（v2=track.params 覆盖合并，钩子④）",
+    "hooks": [
+      "① sf2 instrument 速记解析（显式优先）",
+      "③ meta 注入（bpm/sr）",
+      "④ params 覆盖合并（显式优先）"
+    ],
+    "note": "R2 数据化：if/elif 退役为 track_projection + 四类封闭钩子（PLAN_v3 §3.1；重组装深比较锁 tests/test_events.py）",
+    "notes": "track.notes（note 事件载体 XOR 时由组装层 events_to_notes 合成）",
+    "program": "track.program",
+    "sf2": "track.instrument（速记 名:bank:program 解析——钩子①；显式 bank/program 字段优先）"
+  },
+  "version": "1.1.0"
+}

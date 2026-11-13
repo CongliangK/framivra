@@ -67,7 +67,7 @@ python3 "$VIDEO_TOOLS"/apps/blender-bridge/audit_bundle.py -t timeline.json --pr
 
 **必跑验证门**：audit_bundle 内置五步（转码→审计 timeline→vtx validate→audit.blend→verify_blend 结构校验）。
 
-**已知坑位**：给用户的 Blender 用法话术与交付规程见 music skill「交付门：分轨审计包」节与 `apps/blender-bridge/README.md`。
+**已知坑位**：给用户的 Blender 用法与交付规程见[分轨审计说明](../../../apps/blender-bridge/README.md#分轨审计包-audit_bundlepy人机协作交付门)；音乐生成入口见[仓内 bgm](../../../apps/bgm/README.md)。
 
 ---
 

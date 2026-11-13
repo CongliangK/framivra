@@ -1,0 +1,21 @@
+# synth 描述符收割证据日志（harvest.py 生成）
+generated: 2026-08-23
+tool: python3 -m bgm_gen.engines.harvest log synth
+descriptor: bgm_gen/engines/descriptors/synth.json（v1.0.0 · tier A）
+harvest_method: A=程序化收割（第一事实源=引擎源码 payload 读取行为）
+sources:
+  - bgm_gen/engines/synth.py（render() 的 payload 读取行为——收割第一事实源）
+  - bgm_gen/synthlib.py（音色函数签名=params 合法键事实源）
+binary_facts:
+  version = None（无独立二进制：纯 numpy（synthlib，内部 SR 恒 44100，随机源全部种子化→deterministic）；解释器=runtime.json python_system（miniconda base））
+  ffmpeg = '8.1.2'（spec.sr≠44100 时 _wavio.resample_wav_file 重采样（系统包；doctor 探测交叉核验））
+params（参数名表；类型/单位/短语义 ≤1 行/参数）:
+  program | enum | required | 枚举kick/snare/hat/fm_ep/bass/lead | synthlib 音色函数名：kick/snare/hat=打击乐（pitch 忽略），fm_ep/bass/lead=调性（pitch→f0）
+  notes | tuple | required | BG-D7 统一记谱 [[pitch(MIDI 0-127), beat(浮点), dur(浮点 beat), vel(0-127)], ...]；beat/dur 单位=四分音符；vel→gain=vel/127（线性），总线叠加后 softclip
+  bpm | float | - | 默认120.0 | 范围1..… | bpm | beat→秒换算：at = beat * 60/bpm
+  params | object | - | 默认{} | 按 program 透传为 synthlib 函数 kwargs；合法键随 program 变（invariant synth_params_by_program 强制）
+events_supported: （无——synth/sample 拒任何事件）
+coverage.gaps:
+  - dur=0 行不拒绝（引擎内 dur_s=0 宽容，与 midi 层钳 1 tick 口径不同属引擎差异）
+  - vel=0 不拒绝（gain 0，仅占时长）
+  - spec.sr≠44100 依赖 ffmpeg 重采样（未在描述符参数面建模，binary_pin additional_pins 注记）

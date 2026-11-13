@@ -472,12 +472,12 @@
     },
     "music-tools-assets": {
       "kind": "external-models-api",
-      "source": "external music_tools repository / caller-supplied BGM CLI",
+      "source": "apps/bgm code interfaces; user-installed external music assets and services",
       "license_status": "UNKNOWN",
       "license_identifier": null,
       "default_payload": false,
       "installed_version": "UNVERIFIED: no private environment inspected",
-      "notes": "No fixed external checkout/hash inspected. ACE/quantizations, Music3 API/output rights and htdemucs weights require separate evidence. No weights are bundled here; this policy does not sandbox that external process.",
+      "notes": "Music implementation is maintained in apps/bgm, not an external source checkout. Optional user-installed soundfonts/samples, ACE/quantizations, Music3 API/output rights and htdemucs weights require separate evidence. No third-party media, sound libraries, scores, previews or model weights are bundled or automatically downloaded by the music component; runtime assets remain external. This policy does not sandbox optional engines or services.",
       "distribution": [
         "external-runtime",
         "on-demand-download",

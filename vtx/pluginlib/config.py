@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # asr.ime_root 已废除（issue #141：ASR 与输入法彻底解耦），不再收录。
 PATH_KEYS = ("asr.python", "asr.model_dir", "asr.aligner_dir",
              "tts.repo", "tts.python", "tts.voice_ref", "tts.edge_bin",
-             "bgm.repo", "bgm.cli")   # P6：bgm-render 插件 CLI 解析的两路径键
+             "bgm.python", "bgm.runtime")   # 内置音乐解释器与用户运行配置
 
 
 def expand_path(value):

@@ -28,6 +28,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing htt
 
 脚本名后参数原样交给 init，短横线开头须加引号，如 `& $env:TEMP\vt-i.ps1 '--fix'`；`--fix` 自动装缺失基础依赖。
 
+## 可选音乐环境
+
+完整 clone/源码安装包含 [bgm 执行本体](../../apps/bgm/README.md)，无需旧 music_tools 仓或外部 music skill。内核 wheel **不包含 app 源码**，仅 `pip install framivra` 不会安装音乐组件；使用完整仓入口 `python3 apps/bgm/bgm.py --help`。
+
+音乐基础运行需要 NumPy + FFmpeg；可在独立 Python 环境安装 NumPy，并用宿主 `bgm.python` 指定解释器。运行配置 JSON 由 `MUSIC_RUNTIME` 或宿主 `bgm.runtime` 指向，默认 `$XDG_DATA_HOME/framivra/music/runtime.json`（未设 XDG 时为 `~/.local/share/framivra/music/runtime.json`），资产放同根 `assets/`；默认文件不存在仍可基础代码合成，显式指定的文件缺失则报错。配置格式与引擎前置条件以组件 README 为准。普通视频不要求音乐环境，选装音乐不应触发所有重服务探测。
+
+源码不捆绑音源、采样、乐谱、模型或第三方预览，也不自动下载；用户自行获取并核验[许可与来源](../third-party-licenses.md)。旧 `bgm.repo` / `bgm.cli` 已废弃，不再选择旧仓、包装器或执行器；请迁移到仓内入口与上述解释器/运行配置。旧资产迁移须先列清单、校验内容与许可，再经确认搬到新资产根并切换用户配置及活引用，不用旧路径软链延续依赖；冻结历史项目不重写，也不算当前活依赖。
+
 ## 共同更新安全边界
 
 重复执行会安全更新并重跑幂等 init。仅干净克隆（`git status --porcelain` 为空）才 fetch 并 `reset --hard`：`main` 用 `refs/remotes/origin/main`；`stable` 先解析发行 tag，与显式 tag 均核验后使用 `refs/tags/<tag>`。Linux/macOS 显式 refspec 浅 fetch。下列情况拒绝更新，不静默丢改动：

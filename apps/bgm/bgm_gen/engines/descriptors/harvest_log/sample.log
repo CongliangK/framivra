@@ -1,0 +1,22 @@
+# sample 描述符收割证据日志（harvest.py 生成）
+generated: 2026-08-23
+tool: python3 -m bgm_gen.engines.harvest log sample
+descriptor: bgm_gen/engines/descriptors/sample.json（v1.0.0 · tier A）
+harvest_method: A=程序化收割（第一事实源=引擎源码 payload 读取行为）
+sources:
+  - bgm_gen/engines/sample.py（payload 双入口读取行为——收割第一事实源）
+  - bgm_gen/engines/_wavio.py（解码/写盘路径）
+binary_facts:
+  version = None（无独立二进制：numpy 时间线混合（wave 直读 PCM）；非 PCM/异 sr 采样经 ffmpeg 解码重采样（_wavio.read_audio 兜底）；解释器=runtime.json python_system）
+  ffmpeg = '8.1.2'（解码/重采样兜底（系统包））
+params（参数名表；类型/单位/短语义 ≤1 行/参数）:
+  hits | array | - | 入口一（hits 优先）：[{file, at(秒,默认0), gain_db(默认0)}, ...]；numpy 等功率叠加
+  instrument | path | - | 入口二（notes 记谱法）的采样文件（file 解析规则同 hits[].file；走 notes 入口时必填——invariant sample_hits_or_notes_entry 强制）
+  notes | tuple | - | 入口二（BG-D7 记谱法）：[[pitch(仅记录用), beat, dur, vel], ...]；at=beat*60/bpm；gain_db=20*log10(max(vel,1)/100)
+  bpm | float | - | 默认120.0 | 范围1..… | bpm | notes 入口的 beat→秒换算
+  length_s | float | required | 范围0..… | s | 输出总时长（秒；混合结果不足补零、超出截断）——无条件必填（两种入口同）
+events_supported: （无——synth/sample 拒任何事件）
+coverage.gaps:
+  - 采样根 samples_root 为跨项目指针（runtime.json，doctor 校验；改挪需用户拍板）
+  - hits[] 逐条 at/gain_db 类型在描述符 schema 覆盖，但 hits 内 file 存在性逐条由引擎循环守卫
+  - notes 入口 pitch 仅记录用（不驱动任何合成）

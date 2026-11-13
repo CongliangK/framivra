@@ -1,0 +1,29 @@
+# sfz 描述符收割证据日志（harvest.py 生成）
+generated: 2026-08-23
+tool: python3 -m bgm_gen.engines.harvest log sfz
+descriptor: bgm_gen/engines/descriptors/sfz.json（v1.1.0 · tier B）
+harvest_method: B=AI 起草+探针验证（CLI --help 参数名表+SFZ 规范+源码佐证）
+sources:
+  - bgm_gen/engines/sfz.py（渲染选项使用面：--sfz/--midi/--wav/-s——源码是第一事实源）
+  - bgm_gen/engines/midi_util.py（R2：events_to_smf 编码器——事件通道字节层）
+  - sfizz_render.sh --help 参数名表（--sfz/--midi/--wav/-b/--blocksize/-s/--samplerate/-q/--quality/-p/--polyphony/-v/--verbose/--log/--use-eot/-h/--help；仅参数名表，不粘帮助正文）
+  - URL: https://sfzformat.com/（SFZ 规范：事件通道语义参考）
+  - URL: https://copr.fedorainfracloud.org/coprs/audinux/（audinux COPR sfizz-1.2.3-4.fc44.x86_64.rpm，BSD-2-Clause；binary_pin 版本来源，sfizz_render.sh 头部注释）
+binary_facts:
+  version = '1.2.3-4.fc44'（sfizz_render 无 --version（实测输出 'Option version does not exist'）——version 取 audinux COPR rpm 登记事实 sfizz-1.2.3-4.fc44；doctor 核验退化为 sha/size（C2，sha=advisory 黄灯））
+  sha256 = caa9b3104beaa0059cd00e3deab697f2ddb2423d0e4b777b9fe0598c3e46ddd5
+  size = 1212944
+params（参数名表；类型/单位/短语义 ≤1 行/参数）:
+  sfz | path | required | SFZ 引用：绝对路径 / 相对 assets_root/sfz（别名前缀归一 VSCO2→VSCO2_CE、Karoryfer→karoryfer）/ 纯文件名树内 sorted 唯一匹配（resolve_sfz；文件存在性由引擎守卫）
+  notes | tuple | required | BG-D7 统一记谱 [[pitch, beat, dur, vel], ...]（midi_util write_notes_smf → 临时 SMF → sfizz_render --midi）
+  bpm | float | - | 默认120.0 | 范围1..… | bpm | beat→秒换算（写入 SMF set_tempo）
+  events | array | optional | v2 控制事件数组（PLAN_v3 §3.2/BG-D14；R2 落地）：{type,t}+逐类型字段；type 六类闭集与逐类型字段约束由工程层 core/project.py 校验（描述符 schema 为结构性兜底）；非空时引擎改走 events_to_smf（无 events 保持旧路径字节不动）
+  bend_range | float | - | 默认2.0 | 范围0..… | st | 弯音量程半音数（缺省 2.0）：pitch_bend 事件 14bit 线性映射 clamp(round_half_up(8192*(1+semitones/bend_range)), 0, 16383)；SFZ 文件级 pitch_wheel_range 逐文件不同——工程轨含弯音时必须显式声明（轨级 track.bend_range 经 track_projection 透传）
+events_supported: cc,pitch_bend,keyswitch,program_change,note_on,note_off
+coverage.gaps:
+  - 能力面=SFZ 文件本身（对 AI 无闸门）；描述符只覆盖渲染选项与事件通道
+  - --blocksize/--quality/--polyphony/--use-eot 等 CLI 选项未接入引擎 payload（引擎只用 --sfz/--midi/--wav/-s）
+  - payload.events 通道 R2 落地（描述符 version 1.1.0；envelope spec_version 不变——BG-D14 口径）；SFZ 文件级 pitch_wheel_range 逐文件不同——工程轨含弯音必须显式声明 bend_range（实测证据 examples/fate/bend_range_evidence.json）
+  - tier B：参数语义依赖 CLI --help 参数名表+SFZ 规范佐证，非纯源码收割（sfizz 为黑盒二进制）
+  - bpm 收紧 min=1（同 synth；R1 审查 E-1 记录）
+changelog: R2（2026-08-23）：parameters +events（type=array, optional；事件对象 schema 片段）+bend_range（float>0 默认 2；SFZ 文件级 pitch_wheel_range 逐文件不同，工程轨含弯音时必须显式声明）；version 1.0.0→1.1.0（BG-D14：payload.events 引入伴随描述符 bump，envelope spec_version 不变）；来源指针=PLAN_v3 §3.2/§5 R2 行 + bgm_gen/tests/test_events.py + examples/fate/bend_range_evidence.json

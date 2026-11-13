@@ -14,7 +14,7 @@
 | 5 | A-roll/同步/抠像 | `apps/aroll/` `apps/sync/` `apps/matting/` | `references/aroll-pipeline.md` |
 | 6 | gfx 动效页 | 内核 gfx.md + 模板库 | `references/visual-baseline.md` + `assets/gfx-templates/` |
 | 7 | 时间线编排 | timeline.json + vtx | 内核 edit.md + `narrative.md` |
-| 8 | 音频/BGM | vtx audio + music skill | `references/audio-mixing.md` |
+| 8 | 音频/BGM | vtx audio + 仓内 bgm | `references/audio-mixing.md` |
 | 9 | QC→封面→发布冻结 | `apps/gates/` `apps/publish/` `apps/cover/` | `runbook-r5r6r7.md` + `cover.md` |
 
 ## 1 调研立项
@@ -63,7 +63,7 @@
 
 ## 8 音频 / BGM
 
-- **入口**：[audio-mixing](audio-mixing.md)（-14 LUFS 两遍静态增益链 / D47 避让量化口径 / 降噪链 / 双系统同步）；BGM 生成须先确认外部 music skill 可用，不可用时按该文「授权与资产」处理。
+- **入口**：[audio-mixing](audio-mixing.md)（-14 LUFS 两遍静态增益链 / D47 避让量化口径 / 降噪链 / 双系统同步）；BGM 生成从[仓内 bgm](../../../apps/bgm/README.md)起步，依赖/资产缺失时按该文「授权与资产」处理。
 - **关键规则**：商业音乐绝对不用（唯一红线）；口播间隙必有铺底；改避让后必须 A/B 实证。
 - **验证门**：G1 口播−间隙响度 / G2 全片 LUFS / G3 解码域 TP；使用 sfx 时另需 G8 互相关证据，通用 content_gates 不执行 G8，缺证据不能宣称全门通过（[覆盖与未运行规则](audio-mixing.md#七验证门汇总)）。BGM 挂载后分轨审计包（R6）交用户逐轨审听=交付门。
 
