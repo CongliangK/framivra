@@ -1,6 +1,6 @@
 {
   "name": "framivra-dsh-sidebar",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Framivra timeline preview, references and explicit semantic editing for official DSH",
   "private": true,
   "repository": { "type": "git", "url": "git+https://github.com/CongliangK/framivra.git", "directory": "integrations/dsh-sidebar" },
