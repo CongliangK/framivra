@@ -90,6 +90,8 @@ def copy_png(source, destination, fingerprint, size, *, root):
 
 
 def render_stage(c):
+    from ..cache.policy import graphics_root
+    cache = graphics_root(c)
     total = warm = 0
     for track in c.tl['video_tracks']:
         if track.get('kind') != 'gfx':
@@ -98,12 +100,12 @@ def render_stage(c):
             total += 1
             record = gfx_svg.resolve(c, clip)
             key = gfx_svg.record_key(record)
-            directory = c.cache / 'gfx_exp' / gfx_svg.NAMESPACE / key
+            directory = cache / 'gfx_exp' / gfx_svg.NAMESPACE / key
             if c.dry:
                 print(f'  [dry-run] SVG gfx {clip["src"]}[{key}]: {clip["dur"]} frames')
                 continue
             from .frame_source import PngSequence
-            source = PngSequence(directory, str(directory.relative_to(c.cache)),
+            source = PngSequence(directory, str(directory.relative_to(cache)),
                                  clip['dur'], c.fps, c.w, c.h,
                                  environment_check=lambda: gfx_svg.completion(
                                      c, clip, directory, expected_record=record))

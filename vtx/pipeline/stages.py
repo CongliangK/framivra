@@ -584,7 +584,7 @@ def source_audio_extraction(c: Ctx, sid: str):
     return wav, cmd
 
 
-def prepare(c: Ctx):
+def prepare(c: Ctx, *, publish_receipt=True):
     fstxn.mkdir(c.cache / "audio", root=c.root)
     tasks = []
     for s in c.tl["sources"]:
@@ -595,19 +595,26 @@ def prepare(c: Ctx):
             tasks.append((f"audio {s['id']}", cmd))
     run_parallel(c, tasks, "音频提取")
     # Do not re-resolve source keys (or invoke plugins) after an input swap.
-    c.verify_inputs("prepare")
+    if publish_receipt:
+        c.verify_inputs("prepare")
+    else:
+        from ..cache.cache_state import verify_input_identity
+        verify_input_identity(c)
     for s in c.tl["sources"]:
         # 记账键 = 产物名 stem（裸提取即 audio_key；插件产物即其内容寻址键——
         # manifest 只记账不做删除判据，两形态同栏即可）
         wav, _cmd = source_audio_extraction(c, s["id"])
         if _cmd is not None and not c.dry:
-            c.receipt("prepare", False, "incomplete extracted audio; rerun prepare")
+            if publish_receipt:
+                c.receipt("prepare", False, "incomplete extracted audio; rerun prepare")
             print(f"✗ incomplete extracted audio: {wav}", file=sys.stderr)
             sys.exit(1)
-        if wav.exists():
+        if wav.exists() and publish_receipt:
             manifest_record(c, wav, "prepare", wav.stem)
     msg = f"{len(c.tl['sources'])} → 48kHz stereo PCM"
-    print("✓ 音频提取：" + msg); c.receipt("prepare", True, msg)
+    print("✓ 音频提取：" + msg)
+    if publish_receipt:
+        c.receipt("prepare", True, msg)
 
 
 # ---------------------------------------------------------------- audio
@@ -892,6 +899,12 @@ def load_timeline_check(timeline_path):
 
 
 def mux(c: Ctx):
+    session = getattr(c, 'cache_session', None)
+    if session is not None and not session.policy.reuse_media and not c.dry:
+        handoff = ('draft.mp4' if getattr(c, 'draft', False) else 'video_noaudio.mp4', 'audio.wav')
+        if any(not (c.out / name).is_file() for name in handoff):
+            print('✗ 封装交接件缺失或已按缓存策略退役；请重跑 video/audio，或运行 all。')
+            sys.exit(1)
     if getattr(c, "draft", False):
         c.run(["ffmpeg", "-v", "error", "-y", "-i", str(c.out / "draft.mp4"),
                "-i", str(c.out / "audio.wav"), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",

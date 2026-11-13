@@ -394,6 +394,17 @@ def require_page_record(outdir, n, key, width, height, *, backend_ns=None,
         old = json.loads((Path(outdir) / COMPLETE_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise ValueError('gfx environment certificate missing; rerun vtx gfx') from error
+    return verify_page_record(old, n, key, width, height, backend_ns=backend_ns,
+                              dependency_digest=dependency_digest, environment=environment)
+
+
+def verify_page_record(old, n, key, width, height, *, backend_ns=None,
+                       dependency_digest=None, environment):
+    """Pure proof gate shared by directory and packed-byte consumers.
+
+    Caller supplies CURRENT independently resolved inputs/environment. The record
+    supplies expected PNG hashes only; consumers still bind actual PNG bytes.
+    """
     hashes = old.get('sha256') if isinstance(old, dict) else None
     if (environment is None or not isinstance(hashes, list) or len(hashes) != n
             or any(not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value)

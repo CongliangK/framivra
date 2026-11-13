@@ -15,7 +15,8 @@
 | `blend2json.py` | 用户手剪回写桥（Blender→json，保护规则拒收危险改动） | **blender** |
 | `subs_alpha.py` | 字幕透明轨（cache/subs.ass → ProRes 4444 alpha mov） | 系统 python3 |
 | `bundle_session.py` | audit_bundle 的单次 blender 会话合并执行器（runpy 依次跑 json2blend/verify） | **blender** |
-| `tests/` | audit 真 ffmpeg 回归（`test_audio_audit.py`） | 系统 python3 |
+| [gfx_assets.py](gfx_assets.py) | gfx 原 PNG 独立交付依赖；只读内核输入、全帧核验后发布 | 系统 python3 / blender |
+| `tests/` | audit 真 ffmpeg 回归；gfx 交付快速 synthetic 回归不启动 Blender/browser | 系统 python3 |
 
 ## 依赖
 
@@ -54,7 +55,7 @@ env python3 audit_bundle.py -t <项目>/timeline.json [--prefix bgm-]   # 分轨
 - clip：`frame_final_start=dst_in`，`frame_final_end=dst_in+dur`（右开区间语义一致）；源偏移＝src_in
 - 全屏 clip：crop169（16:9 中心裁切）+ 等比拉满（vtx L313）
 - 窗口 clip（scale/x/y 任一存在）：scale 相对**源原始尺寸**（vtx L306-311，非画布 fit）、x/y=左上角像素
-- gfx：复用内核只读解析器 `vtx/render/gfx_cache_reader.py`，只从生产 `gfx_dir` 按当前 `VTX_GFX`、worker 身份、`VTX_GFX_CACHE_NS` 与内容键定位，逐帧校验连续编号/PNG/完成摘要。Electron 复用生产 validator 验证真实 adapter/worker 回执与当前 binary/JS/settings 身份；HTML 缓存必须已有与当前环境、key、宽高、帧数、连续帧覆盖及逐 PNG SHA256 完整匹配的 `complete.json`，不接受无标记 PNG，不搜索其它 namespace、旧键或 `cache/<stem>/`。缺失/过期/损坏证书一律拒绝、不补签；请重新运行 `vtx gfx` 生成当前目录（会写入项目缓存），再导出。Blender 进程继承同一渲染环境，独立调用须使用生成缓存时的环境。
+- gfx：调用内核只读 [packed/bare 帧读取器](../../vtx/render/gfx_packed_reader.py)，按当前后端、namespace、内容键及输入/环境证明逐帧认证；不运行 gfx producer、不恢复或补签 canonical 缓存。仅 Linux fd-anchored 环境将 core 的压缩包与 aggressive 的裸帧复制原 PNG 到 `<blend-stem>.assets/gfx/<key>/`，作为 **.blend 的持久交付依赖**，不是可清理缓存；须随工程保留；迁移仍需重定位绝对素材路径，该副本不因之后切换 core 而消失。非 Linux 或非 fd-anchored 环境沿用旧只读裸帧解析，不写 .assets；这些平台的 core 不压缩/退役裸 gfx，工程仍依赖 canonical 缓存保留。全帧认证与最终输入 pin 通过才保存 .blend；已有交付帧不同则拒绝覆盖，请换输出名。off 禁止读取旧 gfx；此独立脚本也不能访问 finish 的 private fresh gfx，故明确不支持该模式的 gfx 导出。缺失/过期/损坏证明拒绝、不降级；core 下重跑 `vtx gfx` 可仍只留下压缩包，无需恢复裸帧。Blender 进程须继承生成时的环境；Electron getter 保留逐次全页 producer/PNG 核验，导出成本可能较高，不作提速承诺。
 - 字幕：**不经 Blender 文字渲染**——vtx 的 subs.ass 经 `alphamerge 透明画布 + ass:alpha=1` 渲成
   透明视频轨叠加，与终渲像素同源（libass 同库同字体）
 - fade_in/out：blend_alpha/volume 关键帧（插值取默认，预览近似）

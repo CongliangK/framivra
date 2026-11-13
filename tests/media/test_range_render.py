@@ -12,6 +12,8 @@
 运行：env python3 -m unittest discover tests -v（本机 ZCode 环境必须 env python3 前缀，
 裸 python3 的 sys.executable 被 AppImage 劫持，见全局 AGENTS.md）
 """
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -19,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))   # repo 根注入（v2 §1.4 包导入，不再注入 repo/vtx）
@@ -214,11 +217,92 @@ class TestCliGuards(unittest.TestCase):
                 "video_tracks": list(video_tracks)}
 
 
+class TestRangeCachePolicy(unittest.TestCase):
+    """Exercise range routing and the real receipt gate, not rendering quality."""
+
+    def setUp(self):
+        from vtx.pipeline.infra import Ctx
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        timeline = self.root / 'timeline.json'
+        timeline.write_text(json.dumps(TestCliGuards._min_tl()), encoding='utf-8')
+        self.c = Ctx(timeline)
+        self.c.dry = True
+        self.c.run = mock.Mock()
+
+    def test_all_modes_reuse_current_formal_gain_and_reject_stale_receipt(self):
+        from vtx.cache.policy import CachePolicy
+        from vtx.pipeline import range as ranges
+        self.c.out.mkdir()
+        receipt = self.c.out / 'receipt.json'
+        plan = mock.Mock(nseg=1)
+        plan._seg_content_key.return_value = 'fixture-key'
+        with mock.patch.object(ranges, 'RenderPlan', return_value=plan), \
+                mock.patch.object(ranges, 'prepare_layers', return_value=[]), \
+                mock.patch.object(ranges, 'media_cache_valid', return_value=False), \
+                mock.patch.object(ranges, 'pick_vcodec', return_value=([], 'fixture')), \
+                mock.patch.object(ranges, 'mix_audio_wav') as mix, \
+                mock.patch.object(ranges.fstxn, 'mkdir'), \
+                mock.patch.object(ranges.fstxn, 'atomic_write'), \
+                mock.patch.object(ranges.subprocess, 'run') as subprocess_run:
+            for mode in ('off', 'core', 'aggressive'):
+                self.c.cache_policy = CachePolicy(mode)
+                for current in (True, False):
+                    with self.subTest(mode=mode, current=current):
+                        record = {'input_fingerprint': self.c.input_fingerprint if current else 'stale',
+                                  'stages': {'audio': {'ok': True, 'gain_db': -3.25}}}
+                        receipt.write_text(json.dumps(record), encoding='utf-8')
+                        before = receipt.read_bytes()
+                        mix.reset_mock()
+                        with contextlib.redirect_stdout(io.StringIO()) as output:
+                            ranges.run_range(self.c, 0, 30)
+                        mix.assert_called_once_with(
+                            self.c, self.c.cache / 'preview/range_0.000_1.000.wav',
+                            win=(0, 30), gain_override=-3.25 if current else None)
+                        self.assertEqual(receipt.read_bytes(), before)
+                        self.assertIn('复用整片回执' if current else '区间增益改用窗口自测', output.getvalue())
+            subprocess_run.assert_not_called()
+        self.assertFalse(self.c.cache.exists(), 'mock producers must not create media/cache files')
+
+    def test_off_gfx_rejected_before_preencoding_with_actionable_guidance(self):
+        from vtx.cache.policy import CachePolicy
+        from vtx.pipeline import range as ranges
+        self.c.dry = False
+        self.c.cache_policy = CachePolicy('off')
+        self.c.tl['video_tracks'] = [{'kind': 'gfx', 'clips': [
+            {'src': 'page.html', 'dst_in': 0, 'dur': 30}]}]
+        with mock.patch.object(ranges, 'prepare_layers') as prepare, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(SystemExit) as failure:
+                ranges.run_range(self.c, 0, 30)
+        self.assertEqual(failure.exception.code, 1)
+        prepare.assert_not_called()
+        self.c.run.assert_not_called()
+        message = output.getvalue()
+        for guidance in ('off', '不启动图形渲染器', 'core/aggressive', 'gfx', 'all'):
+            self.assertIn(guidance, message)
+        self.assertFalse(self.c.cache.exists())
+        self.assertFalse(self.c.out.exists())
+
+
 @unittest.skipUnless(os.environ.get("VTX_RANGE_INTEG") == "1",
                      "可选集成测试：VTX_RANGE_INTEG=1 且需 ffmpeg（真实渲染，含gfx则需 Chrome）")
 class TestRangeIntegration(unittest.TestCase):
     """小型合成 timeline 实跑：无 gfx / 2 轨 / 有音频与字幕，验证产物落点、
     含音轨、帧数精确、不写 out/ 与 receipt。"""
+
+    def setUp(self):
+        from unittest.mock import patch
+        directory = tempfile.TemporaryDirectory(prefix='vtx-range-cache-config-')
+        self.addCleanup(directory.cleanup)
+        config = Path(directory.name) / 'config.json'
+        # This fixture audits retained intermediate WAV samples as well as the
+        # delivery; preserve its full PCM assertions under explicit retention.
+        config.write_text('{"cache":{"mode":"aggressive"}}')
+        settings = patch.dict(os.environ, {'VTX_CONFIG': str(config)})
+        settings.start()
+        self.addCleanup(settings.stop)
 
     def test_silent_gap_window_renders_exact_audio_without_formal_writes(self):
         import math

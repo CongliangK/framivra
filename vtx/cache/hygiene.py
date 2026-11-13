@@ -301,12 +301,14 @@ def gfx_dir(c, cl) -> Path:
     # issue #103：实验态（VTX_GFX_CACHE_NS 非空）整树路由 cache/gfx_exp/<ns>/<key>/，
     # 与正式 cache/gfx/<key> 物理隔离；默认空 = 原路径逐字节不变。
     from ..render import gfx_svg
+    from .policy import graphics_root
+    root = graphics_root(c)
     if gfx_svg.is_svg(cl):
-        return c.cache / GFX_EXP / gfx_svg.NAMESPACE / gfx_key(c, cl)
+        return root / GFX_EXP / gfx_svg.NAMESPACE / gfx_key(c, cl)
     ns = gfx_cache_ns()
     if ns:
-        return c.cache / GFX_EXP / ns / gfx_key(c, cl)
-    return c.cache / "gfx" / gfx_key(c, cl)
+        return root / GFX_EXP / ns / gfx_key(c, cl)
+    return root / "gfx" / gfx_key(c, cl)
 
 
 def seg_key(c, cl, ti: int, ci: int, windowed: bool, need_alpha: bool, encoder: str) -> str:
@@ -344,7 +346,8 @@ def audio_key(c, sid) -> str:
 
 # ---------------------------------------------------------------- manifest 记账
 def _manifest_path(c) -> Path:
-    return c.cache / "manifest.json"
+    from .policy import storage_root
+    return storage_root(c) / "manifest.json"
 
 
 # issue #31（B07 / F-09）：manifest/VERSIONS 是**账本**（ledger），损坏语义与
@@ -625,6 +628,13 @@ def gc_plan(c, keep_days: int = 0):
         for x in cleanup_children(c, d):
             if x.name not in gk:
                 add("gfx", x, "键不在当前 timeline 键集")
+    # Compact HTML pages mirror the ordinary gfx key namespace. Experimental
+    # packs follow gfx_exp's existing explicit/deep-GC ownership boundary.
+    d = c.cache / 'gfx_packs' / 'gfx'
+    if d.exists():
+        for x in cleanup_children(c, d):
+            if x.suffix == '.vtxp' and x.stem not in gk:
+                add('gfx', x, '压缩页键不在当前 timeline 键集')
     d = c.cache / "seg"
     if d.exists():
         for x in cleanup_children(c, d):
@@ -665,7 +675,7 @@ def gc_plan(c, keep_days: int = 0):
     # 注：gc 与在途写者并发时理论上有「恰好扫掉活 tmp」的微窗口（replace 因此
     # FileNotFoundError）——后果只是那一笔记账显式失败（账本保持旧值，old-or-new
     # 不变量不破），与 B06 receipt 同口径，不为它加年龄门。
-    known = {"gfx", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
+    known = {"gfx", "gfx_packs", "seg", "audio", REPORTS, TMP, "snapshots", "manifest.json",
              "subs.ass", "subs_draft.ass", "qc_clean.mp4",
              "vseg", "vseg_draft", "vseg_qc", "vseg_pass", "preview", "report_audio",
              # issue #103：实验缓存根并入已知布局——不经键集判活（实验键集不在
@@ -944,8 +954,16 @@ def snapshot(c, keep: int = None):
                                     preserve=lambda p: False)
                 except FileNotFoundError:
                     pass
+            # Publication changed the directory after parent was opened. Use a
+            # fresh enumeration description, not its pre-publication view/cursor;
+            # stat and removal remain anchored to the original parent descriptor.
+            scan = os.open('.', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            try:
+                oldnames = sorted(os.listdir(scan))
+            finally:
+                os.close(scan)
             snaps = []
-            for oldname in sorted(os.listdir(parent)):
+            for oldname in oldnames:
                 info = os.stat(oldname, dir_fd=parent, follow_symlinks=False)
                 if stat.S_ISDIR(info.st_mode) and not oldname.startswith('.'):
                     snaps.append((oldname, fstxn.entry_identity(info), info.st_mtime_ns))
@@ -1105,6 +1123,14 @@ def budget_gate(c, stage: str):
         if action == "stop":
             raise ValueError("VTX_CACHE_BUDGET_ACTION=stop requires a non-negative VTX_CACHE_BUDGET_GB")
         return
+    # Account for persistent packs AND all active working sets, not only this
+    # invocation's private media directory. Keep the active context untouched.
+    from copy import copy
+    from .policy import storage_root
+    if storage_root(c) != c.cache:
+        original = c
+        c = copy(c)
+        c.cache = storage_root(original)
     limit = float(budget) * 1024**3
     size = dir_size(c.cache)
     if size <= limit: return

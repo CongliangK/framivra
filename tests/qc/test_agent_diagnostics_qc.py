@@ -124,6 +124,16 @@ class TestQCDiagnostics(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'requires CPU FFmpeg tools')
 class TestQCDiagnosticsCPU(unittest.TestCase):
+    def setUp(self):
+        # These regressions inspect persistent vseg listings and QC records.
+        temporary = tempfile.TemporaryDirectory(prefix='vtx-qc-cache-policy-')
+        self.addCleanup(temporary.cleanup)
+        config = Path(temporary.name) / 'cache-config.json'
+        config.write_text(json.dumps({'cache': {'mode': 'aggressive'}}))
+        policy = mock.patch.dict(os.environ, VTX_CONFIG=str(config))
+        policy.start()
+        self.addCleanup(policy.stop)
+
     def command(self, args, **kwargs):
         result = subprocess.run(list(map(str, args)), capture_output=True, text=True,
                                 timeout=180, **kwargs)

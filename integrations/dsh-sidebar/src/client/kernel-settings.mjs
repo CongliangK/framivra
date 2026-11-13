@@ -149,7 +149,7 @@ export function KernelConfigEditor({ revision, configFile, writable, connectionD
   const [baseline, setBaseline] = React.useState(null)
   const [text, setText] = React.useState('')
   const [mode, setMode] = React.useState('fields')
-  const [group, setGroup] = React.useState('asr')
+  const [group, setGroup] = React.useState('cache')
   const [validation, setValidation] = React.useState(null)
   const [review, setReview] = React.useState(false)
   const [confirmation, setConfirmation] = React.useState(false)
@@ -224,10 +224,18 @@ export function KernelConfigEditor({ revision, configFile, writable, connectionD
           const simple = ['string', 'boolean', 'number'].includes(field.type)
           const isRaw = value !== null && typeof value === 'object'
           const renderedValue = value === undefined ? '' : value === null ? '' : isRaw ? '' : String(value)
+          const invalidParent = parsed.errors.some(item => item.path === field.group)
+          const invalidEnum = field.enum && (invalidParent || (value !== undefined && !field.enum.includes(value)))
           return h('div', { className: 'fv-settings-field', key: field.path },
             h('label', { htmlFor: id }, field.label),
             h('small', { id: `${id}-help` }, field.description),
-            field.type === 'boolean' ? h('select', { id, value: value === undefined ? 'unset' : value === null ? 'null' : String(value), disabled, 'aria-describedby': `${id}-help`,
+            field.enum ? h(React.Fragment, null,
+              h('select', { id, value: invalidEnum ? '' : value ?? 'core', disabled: disabled || invalidParent, 'aria-describedby': `${id}-help`,
+                'aria-invalid': invalidEnum ? 'true' : undefined,
+                onChange: event => editField(field, event.target.value) },
+                invalidEnum ? h('option', { value: '', disabled: true }, invalidParent ? '缓存分组无效，请在完整 JSON 中修正' : '当前值无效，请选择缓存档位') : null,
+                h('option', { value: 'off' }, 'off · 关闭复用'), h('option', { value: 'core' }, 'core · 核心缓存（推荐 / 默认）'), h('option', { value: 'aggressive' }, 'aggressive · 积极缓存')),
+              value === undefined && !invalidParent ? h('small', null, '尚未显式设置：当前沿用 core（推荐）。仅显示默认档位，不会自动写入配置。') : null) : field.type === 'boolean' ? h('select', { id, value: value === undefined ? 'unset' : value === null ? 'null' : String(value), disabled, 'aria-describedby': `${id}-help`,
               onChange: event => editField(field, event.target.value === 'unset' ? undefined : event.target.value === 'null' ? null : event.target.value === 'true') },
               h('option', { value: 'unset' }, '未设置（沿用默认）'), h('option', { value: 'true' }, '是'), h('option', { value: 'false' }, '否'), value === null ? h('option', { value: 'null' }, 'null（沿用默认）') : null,
               typeof value === 'string' ? h('option', { value }, `旧式值：${value}`) : null) : field.type === 'number' ? h(ExactNumberInput, { key: `${field.path}-${fieldReset}`, id, value, disabled,
@@ -246,7 +254,7 @@ export function KernelConfigEditor({ revision, configFile, writable, connectionD
         dirty || stale ? action('放弃配置草稿', () => { setText(baseline.text); setPendingNumbers({}); setFieldReset(value => value + 1); setValidation(null); setReview(false); setConfirmation(false); setNotice('已放弃本地草稿；此操作不会改动磁盘文件。'); setError('') }, !!busy || unknownSave) : null),
       review ? h('section', { className: 'fv-settings-well', 'aria-label': '配置保存确认' },
         h('h3', null, '确认配置变更'), pathText(baseline.path),
-        h('p', null, '先备份原文件，再校验版本并保存。启用外部应用或插件表示信任其代码；保存后需重新打开工程。'),
+        h('p', null, '先备份原文件，再校验版本并保存。此为全局配置，缓存档位影响使用同一 VTX_CONFIG 的所有工程与调用者，不限于当前时间线或会话。启用外部应用或插件表示信任其代码；保存后需重新打开工程。'),
         h('div', { className: 'fv-settings-diff' }, h('div', null, h('h4', null, '保存前'), h('pre', null, baseline.text)), h('div', null, h('h4', null, '保存后'), h('pre', null, text))),
         h('label', { className: 'fv-settings-check' }, h('input', { type: 'checkbox', checked: confirmation, disabled, onChange: event => setConfirmation(event.target.checked) }), '我已核对修改，确认保存此配置文件'),
         action(busy === 'save' ? '保存中…' : '确认保存文件', () => {

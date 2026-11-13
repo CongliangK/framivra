@@ -81,7 +81,8 @@ def render_page(html, outdir, n_frames, *, ctx, width, height, frames=None):
     label = f"CEF Alpha {mode} Mode {options.sync_mode.upper()} native-exact"
     if not missing:
         return f"{label}×0 (no fallback)"
-    report = ctx.cache / "reports" / "cef"
+    from ..cache.policy import storage_root
+    report = storage_root(ctx) / "reports" / "cef"
     fstxn.mkdir(report, root=ctx.root)
     key, receipts, descriptors = f"{outdir.name}-{secrets.token_hex(4)}", [], []
     execution, observation = events.context(ctx), events.current(ctx)

@@ -494,11 +494,19 @@ def _observed_stage(c, name, fn, *, capture_exit=False):
             c.begin_stage(stage)
         except RuntimeError as error:
             print(f"✗ {error}"); sys.exit(1)
+        session = getattr(c, 'cache_session', None)
+        if session is not None:
+            session.ensure_stage_inputs(name)
         if capture_exit:
             code = _stage_exit_code(fn, c, observation=observation)
             observation.finish(code, RuntimeError() if code else None)
+            if session is not None and not code:
+                session.completed.add(name)
             return code
-        return fn(c)
+        result = fn(c)
+        if session is not None:
+            session.completed.add(name)
+        return result
 
 
 def _run_all_pipeline(c: Ctx, until=None):
@@ -1120,6 +1128,21 @@ def _main(execution=None):
         except ProjectPathError as e:
             print(f"✗ {e}"); sys.exit(1)
         return
+    if (a.command in ('all', 'prepare', 'gfx', 'video', 'audio', 'mux', 'qc')
+            or a.command == 'subs' and a.subs_extra[:1] == ['preview']):
+        from ..cache.session import CacheSession
+        retire = a.command == 'all' and a.until in (None, 'qc') and not c.draft
+        try:
+            session = CacheSession(c, retire_stage_outputs=retire)
+        except ValueError as error:
+            print(f'✗ 全局缓存配置无效：{error}'); sys.exit(2)
+        with session:
+            print(f'缓存模式：{c.cache_policy.mode}')
+            return _execute_render(c, a)
+    return _execute_render(c, a)
+
+
+def _execute_render(c, a):
     if a.command == "subs":
         # 信息性命令（render/preview/check）：不进流水线、不做 receipt 依赖门，
         # 但 subs render 写 cache 走 manifest_record 记账；--dry-run 被尊重。
@@ -1129,12 +1152,17 @@ def _main(execution=None):
     # 预览渲染对正式产物链（out/、receipt、manifest、VERSIONS）零干扰
     if getattr(c, "range_window", None):
         from ..pipeline.range import run_range
+        if getattr(c, 'cache_session', None) is not None:
+            c.cache_session.ensure_graphics()
         run_range(c, *c.range_window)
         return
     # 音频纯报告分发（方案五阶段3，区间渲染同款短路）：只读已有产物，不进依赖门、
     # 不做 receipt——报告对正式产物链零干扰（写 out/audio_report.json 一个报告件）
     if a.report_only:
         from ..media.audio_report import run_report
+        session = getattr(c, 'cache_session', None)
+        if session is not None and not session.policy.reuse_media:
+            prepare(c, publish_receipt=False)
         sys.exit(run_report(c, json_path=a.json))
     if a.command == "all":
         todo = STAGES

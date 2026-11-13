@@ -2,9 +2,11 @@ import { parseJSON, stringifyJSON } from './json.mjs'
 
 /** Static, browser/Host shared configuration help. No services, files, or plugins are loaded.
  * These are the template and known consumers, NOT a complete kernel schema.
- * Omitted fields stay omitted; null is cfg_get's explicit fallback to its consumer default.
+ * Omitted fields stay omitted; nullable fields accept cfg_get's null fallback.
+ * cache.mode is a strict three-value contract, with core only when omitted.
  */
 export const KERNEL_CONFIG_GROUPS = Object.freeze([
+  { id: 'cache', label: '全局缓存' },
   { id: 'external', label: '仓外扩展注册' },
   { id: 'comfyui', label: 'ComfyUI 背景生成' },
   { id: 'asr', label: 'ASR 字幕识别' },
@@ -37,6 +39,11 @@ const pathField = (path, label, source) => field(path, label, 'string',
   '文件或目录路径；支持 ~/、绝对路径和消费方支持的相对路径。不检查存在性、权限、软链接、归属或依赖。空字符串不等同于未设置。', source, 'path')
 
 export const KERNEL_CONFIG_FIELDS = Object.freeze([
+  Object.freeze({
+    ...field('cache.mode', '缓存档位', 'string',
+      'off：不读取或保留可复用缓存，必要临时件用后清理，并非完全无中间文件；core：压缩保留高价值 gfx，合成缓存短暂保留（推荐）；aggressive：保留更多缓存，以磁盘换取复用。缺省为 core。影响使用同一 VTX_CONFIG 的所有工程，不是当前时间线或会话的选项；下次操作读取生效，不改变正在运行的任务，保存不会立即清理旧缓存目录。', 'vtx/cache/policy.py'),
+    nullable: false, enum: Object.freeze(['off', 'core', 'aggressive']),
+  }),
   field('external_apps', '外部应用', 'array', '条目为路径字符串（默认禁用）或 {"path":"…","enabled":true}。此处只检查形状，不加载或执行扩展，不确认信任或白名单。', `${template}; ${loader}; vtx/pluginlib/registry.py`, 'external-entries'),
   field('external_plugins', '外部插件', 'array', '条目为路径字符串（默认禁用）或 {"path":"…","enabled":true}。此处只检查形状，不加载或执行扩展，不确认信任或白名单。', `${template}; ${loader}; vtx/pluginlib/registry.py`, 'external-entries'),
   enabled('comfyui', 'ComfyUI 清单标记', 'manifest', `${template}; apps/matting/app.json`),
@@ -62,6 +69,8 @@ export const KERNEL_CONFIG_FIELDS = Object.freeze([
   field('imgen.price_per_image', '兼容单张价格', 'number', '旧配置兼容字段，消费方转换为 float；实际按模型单价。不在此添加正数限制。', imgen, 'float-compatible'),
   field('imgen.confirm_before_submit', '提交前确认', 'boolean', '是否在 API 提交前确认；建议使用 JSON true / false。', `${imgen}; ${loader}`),
   enabled('bgm', 'BGM 健康清单标记', 'manifest', `${template}; apps/bgm/app.json`),
+  field('bgm.python', '内置配乐 Python 解释器', 'string', '解释器命令或路径，支持 ~ 与环境变量展开；仅选择解释器，不替换仓内配乐程序。空值在 Windows 沿用当前解释器，其它平台使用 python3。不探测可执行性或依赖。', `plugins/bgm-render/health_check.py; ${loader}`, 'path'),
+  field('bgm.runtime', '配乐运行配置', 'string', '用户运行配置文件路径，支持 ~ 与环境变量展开；相对路径以生效 VTX_CONFIG 文件所在目录为基准。空值不覆盖继承的 MUSIC_RUNTIME。不读取内容或检查存在性。', `plugins/bgm-render/health_check.py; ${loader}`, 'path'),
   pathField('bgm.repo', '配乐仓库', `plugins/bgm-render/health_check.py; ${loader}`),
   field('bgm.cli', 'BGM CLI 命令行', 'string', '由 shlex 拆分的命令行，可含参数；不是单一文件路径。不在这里解析或执行命令。', `plugins/bgm-render/health_check.py; ${loader}`, 'command'),
   enabled('denoise', '启用降噪'),
@@ -164,6 +173,10 @@ function checkExternal(value, path, errors, warnings) {
 
 function checkField(value, metadata, errors, warnings) {
   const { path, type, format } = metadata
+  if (metadata.enum) {
+    if (!metadata.enum.includes(value)) issue(errors, path, `应为 ${metadata.enum.join(' / ')} 之一；删除字段以沿用默认值。`)
+    return
+  }
   if (value === null) return // cfg_get(None) -> consumer default, not a GUI default.
   if (type === 'boolean') {
     if (typeof value === 'boolean') return

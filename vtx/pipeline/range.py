@@ -147,6 +147,13 @@ def run_range(c, fa: int, fb: int):
     fa, fb = max(0, fa), min(c.dur, fb)
     if not (0 <= fa < fb <= c.dur):
         print(f"✗ 无效区间 [{fa},{fb})（项目总长 {c.dur} 帧）"); sys.exit(1)
+    policy = getattr(c, 'cache_policy', None)
+    if (not c.dry and policy is not None and not policy.reuse_graphics
+            and any(track.get('kind') == 'gfx' and track.get('clips')
+                    for track in c.tl['video_tracks'])):
+        print('✗ 缓存模式 off 不复用 gfx，区间预览也不启动图形渲染器；'
+              '请切换 core/aggressive 并运行 gfx，或使用完整 all 渲染。')
+        sys.exit(1)
     t0 = time.monotonic()
     draft = True
     f = 0.5
@@ -219,13 +226,17 @@ def run_range(c, fa: int, fb: int):
     t = time.monotonic()
     wav = vdir / f"range_{la}_{lb}.wav"
     _ensure_audio_wavs(c, fa, fb)                   # prepare 抽音频冷填充（键与 prepare 一致）
+    # The current full-build gain is a quality reference in the formal receipt,
+    # not reusable media. Re-measuring a quiet window would change its loudness.
     g = _receipt_audio_gain(c)
     mix_audio_wav(c, wav, win=(fa, fb), gain_override=g)  # 同一 filtergraph（含 duck），边界 atrim
     print(f"[timing] 窗口音频混音（±{AUDIO_MARGIN_FRAMES}f 事件外延，"
           f"增益{'复用整片回执' if g is not None else '窗口自测'}）: {time.monotonic() - t:.1f}s")
 
     t = time.monotonic()
-    out = vdir / f"range_{la}_{lb}.mp4"
+    delivery_dir = getattr(c, 'preview_cache', vdir)
+    fstxn.mkdir(delivery_dir, root=c.root)
+    out = delivery_dir / f"range_{la}_{lb}.mp4"
     c.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmpv), "-i", str(wav),
            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
            "-movflags", "+faststart", str(out)])

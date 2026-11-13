@@ -28,9 +28,13 @@ class EmptyTrackImpactIntegration(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="vtx-empty-impact-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        # This regression specifically reconciles reusable composition segments;
+        # the global default core mode intentionally retires those intermediates.
+        config = self.root / 'cache-config.json'
+        config.write_text(json.dumps({'cache': {'mode': 'aggressive'}}))
         self.env = dict(os.environ, VTX_PIPELINE="0", VTX_VIDEO_SEGMENTS="4",
                         VTX_NO_NVENC="1", VTX_SEG_NVENC="0", VTX_IO_WORKERS="1",
-                        VTX_FILTER_THREADS="1", VTX_DOCTOR_OFFLINE="1")
+                        VTX_FILTER_THREADS="1", VTX_DOCTOR_OFFLINE="1", VTX_CONFIG=str(config))
 
     def run_command(self, argv):
         result = subprocess.run(list(map(str, argv)), cwd=ROOT, env=self.env,

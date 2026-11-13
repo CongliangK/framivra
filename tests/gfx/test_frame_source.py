@@ -415,6 +415,14 @@ class TestPngDynamicFormatIntegration(unittest.TestCase):
 
 class TestGeneratedPngConsumerIntegration(unittest.TestCase):
     """CPU consumer coverage; generated PNGs deliberately need no browser."""
+    def setUp(self):
+        # This fixture inspects warm passes and deliberately removes bare PNGs.
+        config = temporary_root(self) / 'cache-config.json'
+        config.write_text(json.dumps({'cache': {'mode': 'aggressive'}}))
+        policy = mock.patch.dict(os.environ, VTX_CONFIG=str(config))
+        policy.start()
+        self.addCleanup(policy.stop)
+
     @unittest.skipUnless(os.environ.get('VTX_TEST_FFMPEG'), 'set VTX_TEST_FFMPEG to ffmpeg executable')
     def test_effects_through_single_graph_and_segment_passes(self):
         from vtx.pipeline.infra import Ctx

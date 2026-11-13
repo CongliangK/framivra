@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createKernelManagement, validateKernelConfigSelection, INSTALL_SCRIPT, KERNEL_CONFIG_LIMIT, KERNEL_WHEEL_LIMIT } from '../src/kernel-management.mjs'
 import { readConfiguration, validateVtxConfigFile, isVolatileConfig } from '../src/configuration.mjs'
+import { updateKernelConfigField } from '../src/kernel-config.mjs'
 import { TimelineReader } from '../src/protocol.mjs'
 import { createPreviewHost } from '../src/host.mjs'
 import { MemoryFs as TimelineFs, fixtureSubprocess } from './helpers.mjs'
@@ -189,6 +190,50 @@ test('save needs explicit confirmation and successful static validation, preserv
   assert.equal(env.fs.entries.get('/settings/config.json').content.toString(), text)
   assert.deepEqual(env.fs.writes[0].expected, { kind: 'createIfAbsent' })
   await env.service.dispose()
+})
+
+test('cache config uses existing global read/confirm/CAS path with BGM and unknown values intact', async () => {
+  const env = setup()
+  try {
+    const original = '{"bgm":{"cli":"bgm --keep","enabled":false},"cache":{"future":9007199254740993},"future":1e+100}\n'
+    env.fs.add('/settings/config.json', original)
+    const initial = await env.rawRequest({ op: 'config-read' })
+    assert.equal(initial.text, original)
+    assert.equal(env.fs.writes.length, 0)
+    const version = env.fs.entries.get('/settings/config.json').version
+    const text = updateKernelConfigField(initial.text, 'cache.mode', 'off').text
+    const payload = { op: 'config-save', text, expectedHash: initial.hash, selectionToken: initial.selectionToken }
+    assert.equal((await env.rawRequest(payload)).error, 'CONFIRM_REQUIRED')
+    assert.equal(env.fs.writes.length, 0)
+    const before = readConfiguration(env.config).fingerprint
+    const saved = await env.rawRequest({ ...payload, confirmed: true })
+    assert.equal(saved.ok, true)
+    assert.deepEqual(env.fs.writes[1].expected, { kind: 'replaceIfVersion', version })
+    assert.equal(env.fs.entries.get(saved.backupPath).content.toString(), original)
+    assert.equal(env.fs.entries.get('/settings/config.json').content.toString(), text)
+    assert.match(text, /9007199254740993/)
+    assert.match(text, /1e\+100/)
+    assert.deepEqual(JSON.parse(text).bgm, { cli: 'bgm --keep', enabled: false })
+    assert.notEqual(readConfiguration(env.config).fingerprint, before)
+    assert.equal(env.calls.length, 0) // No render, cleanup command or session environment mutation.
+  } finally { await env.service.dispose() }
+})
+
+test('invalid cache modes fail Host validation before backup or publication', async () => {
+  const env = setup()
+  try {
+    const initial = await env.rawRequest({ op: 'config-read' })
+    for (const mode of [null, false, '', 'CORE', 'future']) {
+      const text = JSON.stringify({ cache: { mode } })
+      const checked = await env.rawRequest({ op: 'config-check', text })
+      assert.equal(checked.validation.ok, false)
+      assert.ok(checked.validation.errors.some(item => item.path === 'cache.mode'))
+      const saved = await env.rawRequest({ op: 'config-save', text, expectedHash: initial.hash, selectionToken: initial.selectionToken, confirmed: true })
+      assert.equal(saved.error, 'CONFIG_INVALID')
+    }
+    assert.equal(env.fs.writes.length, 0)
+    assert.equal(env.calls.length, 0)
+  } finally { await env.service.dispose() }
 })
 
 test('replacement uses authoritative CAS version and unique exclusive backup', async () => {

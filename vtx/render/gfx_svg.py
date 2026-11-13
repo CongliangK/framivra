@@ -624,16 +624,21 @@ def completion(c, clip, directory, *, expected_record=None):
     # A producer may reuse the record freshly resolved at this stage boundary.
     # External consumers always re-resolve; no context-global identity cache.
     record = resolve(c, clip) if expected_record is None else expected_record
-    expected_key = record_key(record)
     try:
         value = json.loads((directory / COMPLETE_FILE).read_bytes())
     except (OSError, ValueError) as error:
         raise ValueError('SVG completion record missing; rerun vtx gfx') from error
+    return verify_completion(value, record, clip['dur'], directory.name)
+
+
+def verify_completion(value, record, frames, directory_key):
+    """Pure SVG proof gate; record must be independently resolved current input."""
+    expected_key = record_key(record)
     hashes = value.get('sha256') if isinstance(value, dict) else None
     if (not isinstance(value, dict) or value.get('format') != 'framivra-svg-completion/v1'
-            or value.get('key') != expected_key or directory.name != expected_key
+            or value.get('key') != expected_key or directory_key != expected_key
             or value.get('input') != record or not isinstance(hashes, list)
-            or len(hashes) != clip['dur']
+            or len(hashes) != frames
             or any(not isinstance(x, str) or not re.fullmatch('[0-9a-f]{64}', x) for x in hashes)):
         raise ValueError('SVG completion record does not match inputs; rerun vtx gfx')
     return hashes

@@ -1,4 +1,4 @@
-"""Authorized, warm-input single-frame composition; never a delivery/QC shortcut.
+"""Authorized single-frame composition; never a delivery/QC shortcut.
 
 The read/reference protocol remains asset independent. This separately versioned
 operation only writes cache/preview, rejects active plugins, and uses the kernel
@@ -65,25 +65,6 @@ def _environment():
                             if k not in ("DISPLAY", "WAYLAND_DISPLAY")}}
 
 
-def _layers_identity(layers, frame):
-    from .render.gfx_environment import _file
-    out = []
-    for layer in layers:
-        if layer["gfx"]:
-            source = layer["source"]
-            rel = frame - layer["cl"]["dst_in"]
-            source.require_ready(rel, rel + 1)
-            asset = {"upstream": source.identity, "file": _file(source.frame_path(rel))}
-        else:
-            from .cache.recovery import media_cache_valid
-            if not media_cache_valid(layer["seg"], layer["cl"]["dur"]):
-                raise _FrameError("inputs.not_ready", "complete current seg required (short verified previews are not accepted)")
-            asset = {"upstream": layer["seg"].name, "file": _file(layer["seg"])}
-        out.append({"asset": asset, "clip": layer["cl"], "track": layer["ti"],
-                    "x": layer["x"], "y": layer["y"]})
-    return out
-
-
 def _render(path, reference, frame, limit):
     from .runtime import fstxn
     if sys.platform != "linux" or fstxn.write_capability() != "fd-anchored":
@@ -114,7 +95,8 @@ def _render(path, reference, frame, limit):
     from .pipeline.infra import Ctx
     from .pipeline.stages import validate_core
     from .pipeline.composite import RenderPlan, _graph_code_digest
-    from .media.subs import _layer_ready
+    from .render.preview_inputs import PreviewInputs
+    from .cache.policy import policy_for
     from .cache.cache_state import verify_input_identity
     from .render.gfx_environment import _files
 
@@ -126,11 +108,10 @@ def _render(path, reference, frame, limit):
 
         def run(self, cmd, need=True, **kwargs):
             if Path(str(cmd[0])).name == "ffmpeg":
-                if self.write_root is None:
-                    # Encoder capability probes use a null muxer, no disk output.
-                    if cmd[-1] not in ("-", os.devnull):
+                # Encoder capability probes use a null muxer, no disk output.
+                if cmd[-1] not in ("-", os.devnull):
+                    if self.write_root is None:
                         raise _FrameError("write.denied", "preflight cannot write media")
-                else:
                     target = Path(cmd[-1]).absolute()
                     if self.write_root not in target.parents:
                         raise _FrameError("write.denied", "frame write escaped preview namespace")
@@ -178,29 +159,37 @@ def _render(path, reference, frame, limit):
     errors = validate_core(c)
     if errors:
         raise _FrameError("render.validation", "; ".join(errors[:16]))
-    layers = _layer_ready(c, frame)
-    if layers is None:
-        raise _FrameError("inputs.not_ready", "current warm seg/gfx inputs required; run preparation explicitly")
+    policy = policy_for(c)
+    try:
+        sources = PreviewInputs(c, frame)
+        identities = sources.identity()
+    except (OSError, ValueError) as error:
+        raise _FrameError("inputs.not_ready", str(error)) from error
+    c.pass_cache = policy.pass_retention
     plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h,
-                      layers=layers, png_output=True)
+                      layers=[], png_output=True)
     ass = plan.segment_ass_bytes(frame, frame + 1)
     environment = _environment()
-    identities = _layers_identity(layers, frame)
     # Full implementation files protect helper/ASS/profile changes too. This is
     # conservative code invalidation, not a claim of cross-host pixel equivalence.
     from .pipeline import composite
+    from .render import preview_inputs
     from .render.gfx_cli import _png_stream_invalid_reason
     code_files = [__file__, inspect.getfile(composite), inspect.getfile(Ctx),
-                  inspect.getfile(read_artifact), inspect.getfile(_png_stream_invalid_reason)]
+                  inspect.getfile(preview_inputs), inspect.getfile(read_artifact),
+                  inspect.getfile(_png_stream_invalid_reason)]
     code = _files(code_files)
     inputs = {"schema": _SCHEMA, "content_version": version,
               "input_fingerprint": c.input_fingerprint, "frame": frame, "fps": c.fps,
               "width": c.w, "height": c.h, "layers": identities,
               "ass_sha256": _hash(ass), "graph": _graph_code_digest(),
               "profile": "kernel-composite/png-rgb24/ffv1/v1", "code": code,
-              "environment": environment}
+              "environment": environment, "cache_mode": policy.mode}
     key = _digest(inputs)
-    directory = c.cache / "preview" / ("frame_" + key)
+    import secrets
+    # core/off images are explicit requested deliveries, never reusable entries.
+    suffix = "" if policy.reuse_media else "_" + secrets.token_hex(8)
+    directory = c.cache / "preview" / ("frame_" + key + suffix)
     image = directory / "image.png"
     marker = directory / "complete.json"
 
@@ -211,7 +200,11 @@ def _render(path, reference, frame, limit):
         document_current()
         if active_plugins(SimpleNamespace(tl=stored)):
             raise _FrameError("plugins.changed", "active plugin selection changed")
-        if _layers_identity(layers, frame) != identities or _environment() != environment:
+        try:
+            same_inputs = sources.identity() == identities
+        except (OSError, ValueError) as error:
+            raise _FrameError("inputs.changed", str(error)) from error
+        if not same_inputs or _environment() != environment:
             raise _FrameError("inputs.changed", "render inputs/environment changed")
         if _files(code_files) != code:
             raise _FrameError("implementation.changed", "compositor implementation changed")
@@ -222,26 +215,37 @@ def _render(path, reference, frame, limit):
     fstxn.mkdir(directory, root=c.root)
     with fstxn.file_lock(directory / "frame.lock", root=c.root):
         current()
-        try:
-            record = json.loads(read_artifact(marker, root=c.root, limit=4096, root_identity=root_identity))
-            facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
-            hit = record == {"schema": _SCHEMA, "render_key": key, **facts}
-        except (OSError, ValueError):
-            hit = False
+        hit = False
+        if policy.reuse_media:
+            try:
+                record = json.loads(read_artifact(marker, root=c.root, limit=4096, root_identity=root_identity))
+                facts, data = _png(image, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+                hit = record == {"schema": _SCHEMA, "render_key": key, **facts}
+            except (OSError, ValueError):
+                pass
         if not hit:
             c.write_root = directory
-            import secrets
-            plan.scratch_dir = directory / ("passes_" + secrets.token_hex(8))
-            ass_path = directory / "subtitles.ass"
-            fstxn.atomic_write(ass_path, ass, root=c.root)
-            with fstxn.locked_staging(image, root=c.root) as staging:
-                plan.composite(layers, staging, with_subs=True, a=frame, b=frame + 1,
-                               sub_file=ass_path)
-                facts, data = _png(staging, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+            scratch = directory / ("inputs_" + secrets.token_hex(8))
+            fstxn.mkdir(scratch, root=c.root)
+            scratch_identity = fstxn.cleanup_identity(scratch)
+            try:
+                layers = sources.materialize(scratch)
+                plan.layers = layers
+                plan.scratch_dir = scratch / "passes"
+                ass_path = scratch / "subtitles.ass"
+                fstxn.atomic_write(ass_path, ass, root=c.root)
+                with fstxn.locked_staging(image, root=c.root) as staging:
+                    plan.composite(layers, staging, with_subs=True, a=frame, b=frame + 1,
+                                   sub_file=ass_path)
+                    facts, data = _png(staging, c.w, c.h, limit, root=c.root, root_identity=root_identity)
+                    current()
                 current()
+            finally:
+                fstxn.remove_pinned(scratch, scratch_identity, preserve=lambda _path: False)
+                sources.materialized = []
             current()
-            # The marker is the sole success authority. Interrupted/failed PNG
-            # writes never receive one; old mismatched markers cannot bless bytes.
+            # Cleanup must also succeed before a delivery receives its success
+            # authority; temporary seg/PNG/pass/ASS files are not retained.
             fstxn.atomic_write(marker, json.dumps({"schema": _SCHEMA, "render_key": key, **facts}), root=c.root)
             try:
                 current()
@@ -269,9 +273,11 @@ def frame_timeline(path, *, frame, expected_content_version=None, render=False,
     """Reference + exact current-composite PNG, only with explicit render=True.
 
     Defaults do not construct Ctx, probe assets, lock or create directories.
-    Authorized first slice requires Linux fd-anchored writes, core-only projects,
-    and current warm seg/gfx inputs. It never prepares inputs, executes plugins,
-    modifies timeline/store/delivery state, or uses final/qc_clean as fallback.
+    Authorized rendering requires Linux fd-anchored writes and core-only projects.
+    Visible native clips may be encoded temporarily inside cache/preview; graphics
+    require existing authenticated inputs (disabled in off mode). It never runs a
+    graphics producer/plugin, modifies timeline/store/delivery state, or uses
+    final/qc_clean as fallback.
     Both timeline/reference and ASCII JSON wire limits are 8 MiB; PNG delivery is
     bounded by max_png_bytes (1..8 MiB). Transient encoder files may exceed it.
     include_png must be bool; it requests canonical base64, not render authority.

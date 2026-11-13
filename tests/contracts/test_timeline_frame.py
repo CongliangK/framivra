@@ -104,6 +104,11 @@ class FramePixels(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.path = self.root / "timeline.json"
+        self.config = self.root / "config.json"
+        self.config.write_text('{"cache":{"mode":"aggressive"}}')
+        self.config_env = patch.dict(os.environ, {"VTX_CONFIG": str(self.config)})
+        self.config_env.start()
+        self.addCleanup(self.config_env.stop)
         self.doc = document()
         proc = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
             "color=c=blue:s=1920x1080:r=30:d=0.4", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
@@ -162,17 +167,118 @@ class FramePixels(unittest.TestCase):
         self.assertNotEqual(ass["image"]["sha256"], first["image"]["sha256"])
         self.assertEqual(ass["image"]["content_version"], ass["reference"]["content_version"])
 
-    def test_missing_warm_input_never_prepares_or_uses_decoy_final(self):
+    def test_missing_native_seg_is_prepared_only_in_preview_never_uses_decoy_final(self):
         self.doc["video_tracks"] = [{"name": "base", "kind": "aroll", "clips": [
             {"src": "s", "src_in": 0, "src_out": 12, "dst_in": 0, "dur": 12}]}]
         self.save()
         (self.root / "out").mkdir()
         (self.root / "out" / "final.mp4").write_bytes(b"decoy")
         result = frame_timeline(self.path, frame=3, render=True)
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["diagnostics"][0]["code"], "inputs.not_ready")
-        self.assertFalse((self.root / "cache").exists())
+        self.assertTrue(result["ok"], result["diagnostics"])
+        self.assertFalse(result["image"]["cache_hit"])
+        self.assertFalse((self.root / "cache" / "seg").exists())
+        self.assertFalse(list((self.root / "cache" / "preview").rglob("*.mp4")))
+        self.assertFalse(list((self.root / "cache" / "preview").rglob("*.ass")))
+        self.assertFalse(list((self.root / "cache" / "preview").glob("*/inputs_*")))
         self.assertEqual((self.root / "out" / "final.mp4").read_bytes(), b"decoy")
+
+    def test_core_off_keep_exact_native_encoder_pixels_without_reusing_preview_or_media(self):
+        self.doc['video_tracks'] = [
+            {'name': 'base', 'kind': 'aroll', 'clips': [
+                {'src': 's', 'src_in': 0, 'src_out': 12, 'dst_in': 0, 'dur': 12}]},
+            {'name': 'window', 'kind': 'pip', 'clips': [
+                {'src': 's', 'src_in': 1, 'src_out': 10, 'dst_in': 2, 'dur': 9,
+                 'scale': 0.25, 'x': 100, 'y': 80, 'opacity': 0.5,
+                 'fade_in_frames': 3, 'fade_out_frames': 3}]}]
+        self.save()
+        self.prepare()
+        warm = frame_timeline(self.path, frame=3, render=True)
+        self.assertTrue(warm['ok'], warm['diagnostics'])
+        expected = self.pixels(warm['image'])
+        canonical = {str(p.relative_to(self.root)): p.read_bytes()
+                     for p in (self.root / 'cache' / 'seg').rglob('*') if p.is_file()}
+        for mode in ('core', 'off'):
+            self.config.write_text(json.dumps({'cache': {'mode': mode}}))
+            with patch('vtx.media.subs._layer_ready', side_effect=AssertionError('old seg read')):
+                first = frame_timeline(self.path, frame=3, render=True)
+                second = frame_timeline(self.path, frame=3, render=True)
+            for result in (first, second):
+                self.assertTrue(result['ok'], result['diagnostics'])
+                self.assertFalse(result['image']['cache_hit'])
+                self.assertEqual(self.pixels(result['image']), expected)
+                self.assertTrue((self.root / result['image']['path']).is_file())
+            self.assertNotEqual(first['image']['path'], second['image']['path'])
+            self.assertEqual(first['image']['render_key'], second['image']['render_key'])
+        after = {str(p.relative_to(self.root)): p.read_bytes()
+                 for p in (self.root / 'cache' / 'seg').rglob('*') if p.is_file()}
+        self.assertEqual(after, canonical)
+        preview = self.root / 'cache' / 'preview'
+        self.assertFalse(list(preview.rglob('*.mp4')))
+        self.assertFalse(list(preview.rglob('*.mov')))
+        self.assertFalse(list(preview.rglob('*.ass')))
+        self.assertFalse(list(preview.glob('*/inputs_*')))
+        self.assertFalse((self.root / 'out').exists())
+
+    def test_core_packed_gfx_matches_authenticated_bare_pixels_without_producer(self):
+        # Synthetic producer bytes/certificate, REAL reader + compositor. This is
+        # not browser/environment acceptance or a performance baseline.
+        from tests.gfx._environment import bind_environment
+        from tests.gfx._png import write_png
+        from vtx.cache.hygiene import gfx_dir
+        from vtx.cache.session import pack_path
+        from vtx.render import gfx_cli, gfx_environment, gfx_pack
+        bind_environment(self)
+        self.config.write_text('{"cache":{"mode":"core"}}')
+        (self.root / 'page.html').write_text('<html><body>fixture</body></html>')
+        self.doc['video_tracks'] = [{'name': 'gfx', 'kind': 'gfx', 'clips': [
+            {'src': 'page.html', 'dst_in': 0, 'dur': 3, 'scale': 0.5,
+             'x': 100, 'y': 100, 'fade_in_frames': 3}]}]
+        self.save()
+        with patch.dict(os.environ, {'VTX_GFX': 'cdp', 'VTX_GFX_CACHE_NS': ''}), \
+                patch('vtx.render.gfx_cli.render_cli', side_effect=AssertionError('no graphics producer')):
+            c = Ctx(self.path)
+            clip = c.tl['video_tracks'][0]['clips'][0]
+            directory = gfx_dir(c, clip)
+            directory.mkdir(parents=True)
+            for i in range(3):
+                write_png(directory / f'f{i:04d}.png', width=c.w, height=c.h, frame=i)
+            gfx_cli.complete_page(directory, 3, directory.name, c.w, c.h,
+                                 verify_inputs=lambda: c.verify_inputs(None),
+                                 environment=gfx_environment.certificate(c))
+            bare = frame_timeline(self.path, frame=2, render=True)
+            self.assertTrue(bare['ok'], bare['diagnostics'])
+            record = json.loads((directory / 'complete.json').read_bytes())
+            archive = pack_path(c, clip)
+            archive.parent.mkdir(parents=True)
+            gfx_pack.pack_page(directory, archive, expected_record=record, root=self.root)
+            for name in ['complete.json', *(f'f{i:04d}.png' for i in range(3))]:
+                (directory / name).unlink()
+            before = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*')
+                      if p.is_file() and 'preview' not in p.parts}
+            packed = frame_timeline(self.path, frame=2, render=True)
+            self.assertTrue(packed['ok'], packed['diagnostics'])
+            self.assertFalse(packed['image']['cache_hit'])
+            self.assertEqual(packed['image']['render_key'], bare['image']['render_key'])
+            self.assertEqual(self.pixels(packed['image']), self.pixels(bare['image']))
+            after = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob('*')
+                     if p.is_file() and 'preview' not in p.parts}
+            self.assertEqual(before, after)
+            self.assertFalse(list(directory.glob('f*.png')))
+            self.assertFalse(list((self.root / 'cache' / 'preview').glob('*/inputs_*')))
+
+    def test_off_visible_gfx_refuses_even_existing_preview_without_browser_or_writes(self):
+        self.config.write_text('{"cache":{"mode":"off"}}')
+        (self.root / 'page.html').write_text('<html>cold, never execute</html>')
+        self.doc['video_tracks'] = [{'name': 'gfx', 'kind': 'gfx', 'clips': [
+            {'src': 'page.html', 'dst_in': 0, 'dur': 4}]}]
+        self.save()
+        with patch('vtx.render.gfx_packed_reader.read_frame', side_effect=AssertionError('old gfx read')):
+            result = frame_timeline(self.path, frame=1, render=True)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['diagnostics'][0]['code'], 'inputs.not_ready')
+        self.assertIsNone(result['image'])
+        self.assertFalse((self.root / 'cache').exists())
+        self.assertFalse((self.root / 'out').exists())
 
     def test_layer_endpoints_subtitles_and_edit_invalidate(self):
         self.doc["video_tracks"] = [{"name": "base", "kind": "aroll", "clips": [
@@ -311,7 +417,18 @@ class FramePixels(unittest.TestCase):
             with self.subTest(signal=sig):
                 self._cancel_process(sig, cli=True)
 
-    def _cancel_process(self, cancellation, cli):
+    def test_native_preencode_cancellation_reaps_child_and_cleans_scratch(self):
+        import signal
+        self.config.write_text('{"cache":{"mode":"core"}}')
+        self.doc['video_tracks'] = [{'kind': 'aroll', 'name': 'native', 'clips': [
+            {'src': 's', 'src_in': 0, 'src_out': 12, 'dst_in': 0, 'dur': 12}]}]
+        self.save()
+        self._cancel_process(signal.SIGINT, cli=False, preencode=True)
+        self.assertFalse((self.root / 'cache' / 'seg').exists())
+        self.assertFalse(list((self.root / 'cache' / 'preview').glob('*/inputs_*')))
+        self.assertFalse(list((self.root / 'cache' / 'preview').rglob('*.mp4')))
+
+    def _cancel_process(self, cancellation, cli, preencode=False):
         import signal
         import time
         child_pid = self.root / ("child-" + str(int(cancellation)) + ".pid")
@@ -324,20 +441,24 @@ pidpath = pathlib.Path(sys.argv[2])
 path = sys.argv[1]
 mode = sys.argv[3]
 def tracked(*args, **kwargs):
+    if mode == 'preencode' and args[0][0] == 'ffmpeg' and '/seg/' in str(args[0][-1]):
+        command = ['ffmpeg','-v','error','-y','-re','-f','lavfi','-i','color=c=black:s=1920x1080:r=30',
+                   '-t','60','-c:v','libx264','-threads','1','-f','mp4',str(args[0][-1])]
+        args = (command, *args[1:])
     p = real(*args, **kwargs)
     if '-re' in args[0]: pidpath.write_text(str(p.pid))
     return p
 subprocess.Popen = tracked
 def slow(plan, layers, path, **kwargs):
     return plan.c.run(['ffmpeg','-v','error','-y','-re','-f','lavfi','-i','color=c=black:s=1920x1080:r=30','-t','60','-c:v','png','-threads','1','-f','image2','-update','1',str(path)])
-RenderPlan.composite = slow
+if mode != 'preencode': RenderPlan.composite = slow
 if mode == 'cli':
     sys.argv = ['vtx','-t',path,'timeline','frame','--frame','2','--render']
     from vtx.cli.commands import main
     raise SystemExit(main())
 print(json.dumps(frame_timeline(path,frame=2,render=True)))
 ''')
-        process = subprocess.Popen([sys.executable, str(script), str(self.path), str(child_pid), 'cli' if cli else 'api'],
+        process = subprocess.Popen([sys.executable, str(script), str(self.path), str(child_pid), 'preencode' if preencode else 'cli' if cli else 'api'],
                                    cwd=REPO, env={**os.environ, "PYTHONPATH": str(REPO)},
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
