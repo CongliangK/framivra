@@ -63,6 +63,23 @@ test('scan never executes or saves a candidate; select only drafts a path', asyn
   assert.equal(form.calls[0].revision, 7)
 })
 
+test('source discovery is labeled unverified and empty scans explain their scope', async t => {
+  let candidates = [{ path: '/home/owner/.agents/skills/video/vtx/vtx.py', source: 'video-skill-source' }]
+  const { root, calls } = await setup(t, () => ({ ok: true, candidates, warnings: [] }))
+  const form = store()
+  await act(async () => root.render(h(BundleConfigForm, { form })))
+  await click(button('扫描已安装内核'))
+  assert.match(text(), /video skill 源码内核 · 未执行验证/)
+  await click(button('填入路径'))
+  assert.equal(document.querySelector('#framivra-config-executable').value, candidates[0].path)
+  assert.equal(form.calls.length, 0)
+  candidates = []
+  await click(button('扫描已安装内核'))
+  assert.match(text(), /不代表本机没有内核/)
+  assert.match(text(), /vtx\/vtx.py 的绝对路径/)
+  assert.deepEqual(calls.map(item => item.payload), [{ op: 'scan' }, { op: 'scan' }])
+})
+
 test('kernel config path and log budget save through revision-pinned ConfigForm only', async t => {
   const { root, calls } = await setup(t)
   const form = store()
