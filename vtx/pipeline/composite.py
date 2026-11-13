@@ -483,152 +483,181 @@ class RenderPlan:
         return True  # verified producer certificate, digest and frame count
 
     def _composite_passes(self, layers_subset, out_path, with_subs, a, b, sub_file=None):
-        """段内逐层 pass 合成（R4-E1-v2 核心修复，2026-09-14）：每 pass 恰 2 输入
-        （主=canvas 或上游 pass 中间物，次=1 层），pass k 的输出作为 pass k+1 的
-        主输入，层序与旧链式 graph 逐位同序（视觉合成语义不变）。
+        """Serialize chains sharing pass keys; keep one recovery checkpoint by default."""
+        retention = os.environ.get("VTX_PASS_CACHE", "checkpoint")
+        if retention not in ("checkpoint", "all", "none"):
+            raise ValueError("VTX_PASS_CACHE must be checkpoint, all or none")
+        pdir = self.scratch_dir if self.scratch_dir is not None else self.c.cache / "vseg_pass"
+        seed = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
 
-        为什么必须拆 pass（证据链全部在案 /tmp/vtx_r4/FINDINGS.md、
-        docs/reference/known-issues.md ⑭）：链式 N 输入 graph 下
-        overlay/framesync 的输出节律存在跨运行随机的丢帧/配对滞后——E-A5 showinfo
-        直证：canvas+L9+L11 双 overlay 最小图 2 次复渲，一版 L11 输出缺 4 帧
-        （pts 2054~2057）且其后 1 帧内容迟到，另一版 L9 输出旧帧内容；错帧全程
-        随机发生，静止区 checksum 相同不可见，只在层淡入/淡出（enable 窗口边界
-        带）被观测——这同时解释 E2 的「差异带在层窗口边界 ±20 帧」与 96.9% 帧
-        一致（观测偏差而非病灶位置）。单 overlay+canvas 三种输入（PNG/prores/
-        h264）各 2 次复渲全确定（E-A3）；tpad 尾垫满（EOF 裁决假说）与全输入
-        -threads 1（解码线程假说）两族参数化方案均被 4×复渲证伪。framesync.c
-        状态机本身闭合（miss→request 等待、同 pts 同轮推进），非确定源在滤镜图
-        框架对「帧何时可得」的调度依赖 → 参数层无法钉死，结构化：把 N 输入问题
-        分解为 N−1 个「已证确定的两输入 pass」。
+        def render_chain():
+            """段内逐层 pass 合成（R4-E1-v2 核心修复，2026-09-14）：每 pass 恰 2 输入
+            （主=canvas 或上游 pass 中间物，次=1 层），pass k 的输出作为 pass k+1 的
+            主输入，层序与旧链式 graph 逐位同序（视觉合成语义不变）。
 
-        中间物：cache/vseg_pass/p{k}_{键}.mkv，FFV1 intra（-level 3 -g 1）无损编码，
-        输出端不强制 format——保留 overlay(format=auto) 协商出的 alpha/位深，使 pass
-        链的格式域演化与链式 graph 逐位同构（关键教训：曾用 libx264 qp0 + 强制
-        format=yuv420p，prores alpha 10bit 层使链式自该层升 10bit/alpha 域而中间物
-        落回 8bit，量化点错位造成全帧 ±1 级系统性微差——与链式成品 0/2093 帧一致、
-        PSNR 46.7dB，见 E-B2/FINDINGS）。pass 键 = sha1(上游 pass 键|pass 序|合成代码
-        摘要|层内容键/参数)[a|b|WxH|draft 打头][:12]——上游内容/层参数/代码任一变更
-        整条 pass 链自动失效（与段键 _seg_content_key 同防洗白口径）。中间物帧数硬
-        校验 == 段长（不 cfr 补帧：丢帧 fail-fast 而非静默复制；这也是对 framesync
-        节律异常的在案探针）。
-        成本（实测口径 R5 2026-09-15）：温态 pass 全命中=仅最终段编码一次 ffmpeg；
-        冷态每段 N−1 个 pass 串行（2093 帧段 14 层 ≈ 13 pass，FFV1 每 pass ~15s 级）。
-        全片冷建（8 段并行 ~104 pass）墙钟实测 900s、单代 pass 占盘 ~44G，对照 v4.0
-        旧链式分段 277s ≈ 3.2×（「≈4~5×」为无实测支撑的推算值已废弃；区间多层窗口
-        回落路径更慢且未被该账覆盖——R4-E2' A5）。
-        gc：hygiene.gc_plan 的 known 白名单已包含 vseg_pass；本目录不进入
-        legacy 或 vseg/vseg_draft/vseg_qc 的整体回收列表。早期未列入白名单时
-        曾被整体回收，导致下次冷建（R4-E2' A3 历史记录）；当前回收范围以
-        hygiene.gc_plan 为准。
-        -fps_mode cfr 只在最终 pass（正式段文件）：帧数/时基安全网 + 拼接自检
-        （render_segmented 总帧数硬门），语义见 _composite_graph 同名注释。
-        """
-        c = self.c
-        seglen = b - a
-        pdir = self.scratch_dir if self.scratch_dir is not None else c.cache / "vseg_pass"
-        fstxn.mkdir(pdir, root=self.c.root)
-        prev_key = f"{a}|{b}|{self.W}x{self.H}|{int(bool(self.draft))}|{int(bool(with_subs))}"
-        prev = None            # None = 主输入用 canvas（pass0）
-        n = len(layers_subset)
-        vcodec, enc = ((["-c:v", "png", "-pix_fmt", "rgb24", "-threads", "1", "-f", "image2", "-update", "1"], "png")
-                       if self.png_output else pick_vcodec(c, self.draft))
-        for k, L in enumerate(layers_subset):
-            last = k == n - 1
-            ident = L["source"].identity if L["gfx"] else L["seg"].name
-            pkey = pass_content_key(prev_key, k,
-                (ident, L["cl"], L["x"], L["y"], L["w2"], L["h2"]),
-                _graph_code_digest())
-            prev_key = pkey
-            target = out_path if last else pdir / f"p{k}_{pkey}.mkv"
-            if not last:
-                if self._pass_fresh(target, seglen, sidecar=True):
-                    print(f"    · pass {k + 1}/{n} 已缓存（{target.name}）")
+            为什么必须拆 pass（证据链全部在案 /tmp/vtx_r4/FINDINGS.md、
+            docs/reference/known-issues.md ⑭）：链式 N 输入 graph 下
+            overlay/framesync 的输出节律存在跨运行随机的丢帧/配对滞后——E-A5 showinfo
+            直证：canvas+L9+L11 双 overlay 最小图 2 次复渲，一版 L11 输出缺 4 帧
+            （pts 2054~2057）且其后 1 帧内容迟到，另一版 L9 输出旧帧内容；错帧全程
+            随机发生，静止区 checksum 相同不可见，只在层淡入/淡出（enable 窗口边界
+            带）被观测——这同时解释 E2 的「差异带在层窗口边界 ±20 帧」与 96.9% 帧
+            一致（观测偏差而非病灶位置）。单 overlay+canvas 三种输入（PNG/prores/
+            h264）各 2 次复渲全确定（E-A3）；tpad 尾垫满（EOF 裁决假说）与全输入
+            -threads 1（解码线程假说）两族参数化方案均被 4×复渲证伪。framesync.c
+            状态机本身闭合（miss→request 等待、同 pts 同轮推进），非确定源在滤镜图
+            框架对「帧何时可得」的调度依赖 → 参数层无法钉死，结构化：把 N 输入问题
+            分解为 N−1 个「已证确定的两输入 pass」。
+
+            中间物：cache/vseg_pass/p{k}_{键}.mkv，FFV1 intra（-level 3 -g 1）无损编码，
+            输出端不强制 format——保留 overlay(format=auto) 协商出的 alpha/位深，使 pass
+            链的格式域演化与链式 graph 逐位同构（关键教训：曾用 libx264 qp0 + 强制
+            format=yuv420p，prores alpha 10bit 层使链式自该层升 10bit/alpha 域而中间物
+            落回 8bit，量化点错位造成全帧 ±1 级系统性微差——与链式成品 0/2093 帧一致、
+            PSNR 46.7dB，见 E-B2/FINDINGS）。pass 键 = sha1(上游 pass 键|pass 序|合成代码
+            摘要|层内容键/参数)[a|b|WxH|draft 打头][:12]——上游内容/层参数/代码任一变更
+            整条 pass 链自动失效（与段键 _seg_content_key 同防洗白口径）。中间物帧数硬
+            校验 == 段长（不 cfr 补帧：丢帧 fail-fast 而非静默复制；这也是对 framesync
+            节律异常的在案探针）。
+            成本（实测口径 R5 2026-09-15）：温态 pass 全命中=仅最终段编码一次 ffmpeg；
+            冷态每段 N−1 个 pass 串行（2093 帧段 14 层 ≈ 13 pass，FFV1 每 pass ~15s 级）。
+            全片冷建（8 段并行 ~104 pass）墙钟实测 900s、单代 pass 占盘 ~44G，对照 v4.0
+            旧链式分段 277s ≈ 3.2×（「≈4~5×」为无实测支撑的推算值已废弃；区间多层窗口
+            回落路径更慢且未被该账覆盖——R4-E2' A5）。
+            gc：hygiene.gc_plan 的 known 白名单已包含 vseg_pass；本目录不进入
+            legacy 或 vseg/vseg_draft/vseg_qc 的整体回收列表。早期未列入白名单时
+            曾被整体回收，导致下次冷建（R4-E2' A3 历史记录）；当前回收范围以
+            hygiene.gc_plan 为准。
+            -fps_mode cfr 只在最终 pass（正式段文件）：帧数/时基安全网 + 拼接自检
+            （render_segmented 总帧数硬门），语义见 _composite_graph 同名注释。
+            """
+            c = self.c
+            seglen = b - a
+            prev_key = seed
+            prev = None            # None = 主输入用 canvas（pass0）
+            n = len(layers_subset)
+            vcodec, enc = ((["-c:v", "png", "-pix_fmt", "rgb24", "-threads", "1", "-f", "image2", "-update", "1"], "png")
+                           if self.png_output else pick_vcodec(c, self.draft))
+            if not self.png_output and self._pass_fresh(out_path, seglen):
+                return enc
+            targets = []
+            for k, L in enumerate(layers_subset):
+                ident = L["source"].identity if L["gfx"] else L["seg"].name
+                prev_key = pass_content_key(prev_key, k,
+                    (ident, L["cl"], L["x"], L["y"], L["w2"], L["h2"]),
+                    _graph_code_digest())
+                targets.append(out_path if k == n - 1 else pdir / f"p{k}_{prev_key}.mkv")
+            # A certified later checkpoint includes all earlier layers. Starting at
+            # zero would rebuild the deliberately released prefix on every warm run.
+            start = 0
+            for k in range(n - 2, -1, -1):
+                if self._pass_fresh(targets[k], seglen, sidecar=True):
+                    start, prev = k + 1, targets[k]
+                    print(f"    · pass {k + 1}/{n} 已缓存（{prev.name}）")
+                    break
+            owned_previous = ()
+            for k in range(start, n):
+                L, target, last = layers_subset[k], targets[k], k == n - 1
+                # Only absent entries created by this chain may be released. Never
+                # turn rendering into a migration/deletion of pre-existing caches.
+                family = (target, target.with_suffix(target.suffix + ".n"),
+                          target.with_suffix(target.suffix + ".complete.json"))
+                new_entries = [p for p in family if fstxn.cleanup_identity(p) is None] \
+                    if not last and not c.dry and retention != "all" else []
+                cmd = ["ffmpeg", "-v", "error", "-y"]
+                if prev is None:
+                    cmd += ["-f", "lavfi", "-i",
+                            f"color=c=black:s={self.W}x{self.H}:r={c.fps}:d={seglen * c.spf:.3f}"]
+                else:
+                    cmd += ["-i", str(prev)]
+                cmd += self._layer_input_args(L, a)
+                slave, ov, cur = self._layer_chain(L, k, "base", a, seglen, idx=1)
+                if k == 0:
+                    parts = ["[0:v]format=yuv420p[base]", slave, ov]
+                else:
+                    # pass k>0 主输入：FFV1 的 RGB 打包往返会把 rgba 落成 bgra 且旗标
+                    # 标 pc/gbr（实测），format=rgba 重排回链式布局（无损），setparams
+                    # 把旗标抹回链式内存帧口径（E-C3 实测链式 rgba 帧 cl:unspecified）。
+                    parts = ["[0:v]format=rgba,setparams=range=unspecified:colorspace=unknown[base]",
+                             slave, ov]
+                if last and with_subs:
+                    parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
+                elif last:
+                    parts.append(f"[{cur}]format=yuv420p[vout]")
+                elif with_subs:
+                    # 域钉定 rgba（域同构核心步骤，R4-E1-v2 2026-09-14）：链式
+                    # graph 里 subtitles(libass) 只接受 RGB 输入，该约束经 filtergraph
+                    # 协商反向传播，把主链自 L0 overlay 起全程钉在 rgba（E-C3 实测：
+                    # seg00 链式 14 层 showinfo fmt 全=rgba、cl=unspecified，
+                    # /tmp/vtx_r4/FINDINGS.md）。pass 链主输入格式列表钉成 [rgba] 后，
+                    # overlay 的 auto 协商输入与链式相同 → 域演化逐层同构。
+                    # 实测史（为何必须钉）：不钉则 pass 开头的 format=yuv420p 把主链
+                    # 拉回 YUV 域且下游无 RGB 约束，协商自由漂移（yuva420p/bgra 混杂）
+                    # → 全帧 ±1 级系统性微差：vs 链式 0/2093、vs v4.6 基线 8.15%
+                    # （链式同测 96.3%，E-B4/E-C1/E-C2）；首版钉 rgba 未抹旗标仍
+                    # 255/2093（FFV1 落盘 bgra/pc/gbr，旗标路径与链式 unspec 不对称）
+                    # → 本版输入/输出端 setparams 抹旗标（修复迭代 4）。
+                    parts.append(f"[{cur}]format=rgba,setparams=range=unspecified:colorspace=unknown[vout]")
+                else:
+                    # 无字幕路径（复渲/内部形态）：单 graph 回落路径同样无 subtitles
+                    # 的 RGB 反向约束，链式域本身协商自由——pass 链保持 auto 不钉
+                    # （确定性由单 overlay pass 结构保证，与域无关；域不承诺与链式
+                    # 逐位同构——该承诺只在正式段路径 with_subs=True 下成立）。
+                    parts.append(f"[{cur}]null[vout]")
+                if last:
+                    tail = ["-frames:v", str(seglen), "-fps_mode", "cfr", "-r", str(c.fps),
+                            *vcodec, str(out_path)]
+                else:
+                    # FFV1 intra（-g 1）无损：像素/alpha/位深零漂移，解码域确定
+                    # （实测口径 R4-E2' A1d：FFV1 同输入同 argv 重复编码 4 次得 4 个
+                    # 不同容器 md5——容器字节层非确定；但 4 产物解码域 framemd5 逐帧
+                    # 全同，无损语义成立，只影响 pass 文件字节、不影响像素与缓存命中
+                    # 正确性，「与线程数无关的确定性编码器」旧表述作废）。Ctx.run
+                    # owns staging, publication and the completion marker for this
+                    # exact target; a second .part rename would orphan its marker.
+                    tail = ["-frames:v", str(seglen), "-c:v", "ffv1", "-level", "3",
+                            "-g", "1", str(target)]
+                c.run(cmd + ["-filter_complex_threads", "1",
+                             "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
+                if c.dry:
+                    # dry-run：命令已由 Ctx.run 打印（[dry-run] 前缀），不执行不落盘
+                    # ——跳过原子替换/帧数校验/旁车，继续打印余下 pass 命令。dry 口径
+                    # 与单 graph 一致（编排可见、零副作用）；否则 dry 下帧数校验
+                    # sys.exit(1) 误杀 --dry-run（TestUntilFlag 实测回归，R4-E1-v2）
                     prev = target
                     continue
-            elif not self.png_output and out_path.exists() and self._pass_fresh(out_path, seglen):
-                # 最终 pass 也走帧数兜底（段缓存已在 render_segmented 判过，防御
-                # composite 被直接调用无段缓存的场景——如 --draft --frames 回落不
-                # 进此路径，b=None 时根本不到这里）
-                break
-            cmd = ["ffmpeg", "-v", "error", "-y"]
-            if prev is None:
-                cmd += ["-f", "lavfi", "-i",
-                        f"color=c=black:s={self.W}x{self.H}:r={c.fps}:d={seglen * c.spf:.3f}"]
-            else:
-                cmd += ["-i", str(prev)]
-            cmd += self._layer_input_args(L, a)
-            slave, ov, cur = self._layer_chain(L, k, "base", a, seglen, idx=1)
-            if k == 0:
-                parts = ["[0:v]format=yuv420p[base]", slave, ov]
-            else:
-                # pass k>0 主输入：FFV1 的 RGB 打包往返会把 rgba 落成 bgra 且旗标
-                # 标 pc/gbr（实测），format=rgba 重排回链式布局（无损），setparams
-                # 把旗标抹回链式内存帧口径（E-C3 实测链式 rgba 帧 cl:unspecified）。
-                parts = ["[0:v]format=rgba,setparams=range=unspecified:colorspace=unknown[base]",
-                         slave, ov]
-            if last and with_subs:
-                parts.append(f"[{cur}]subtitles=filename={filter_filename(sub_file)}[vout]")
-            elif last:
-                parts.append(f"[{cur}]format=yuv420p[vout]")
-            elif with_subs:
-                # 域钉定 rgba（域同构核心步骤，R4-E1-v2 2026-09-14）：链式
-                # graph 里 subtitles(libass) 只接受 RGB 输入，该约束经 filtergraph
-                # 协商反向传播，把主链自 L0 overlay 起全程钉在 rgba（E-C3 实测：
-                # seg00 链式 14 层 showinfo fmt 全=rgba、cl=unspecified，
-                # /tmp/vtx_r4/FINDINGS.md）。pass 链主输入格式列表钉成 [rgba] 后，
-                # overlay 的 auto 协商输入与链式相同 → 域演化逐层同构。
-                # 实测史（为何必须钉）：不钉则 pass 开头的 format=yuv420p 把主链
-                # 拉回 YUV 域且下游无 RGB 约束，协商自由漂移（yuva420p/bgra 混杂）
-                # → 全帧 ±1 级系统性微差：vs 链式 0/2093、vs v4.6 基线 8.15%
-                # （链式同测 96.3%，E-B4/E-C1/E-C2）；首版钉 rgba 未抹旗标仍
-                # 255/2093（FFV1 落盘 bgra/pc/gbr，旗标路径与链式 unspec 不对称）
-                # → 本版输入/输出端 setparams 抹旗标（修复迭代 4）。
-                parts.append(f"[{cur}]format=rgba,setparams=range=unspecified:colorspace=unknown[vout]")
-            else:
-                # 无字幕路径（复渲/内部形态）：单 graph 回落路径同样无 subtitles
-                # 的 RGB 反向约束，链式域本身协商自由——pass 链保持 auto 不钉
-                # （确定性由单 overlay pass 结构保证，与域无关；域不承诺与链式
-                # 逐位同构——该承诺只在正式段路径 with_subs=True 下成立）。
-                parts.append(f"[{cur}]null[vout]")
-            if last:
-                tail = ["-frames:v", str(seglen), "-fps_mode", "cfr", "-r", str(c.fps),
-                        *vcodec, str(out_path)]
-            else:
-                # FFV1 intra（-g 1）无损：像素/alpha/位深零漂移，解码域确定
-                # （实测口径 R4-E2' A1d：FFV1 同输入同 argv 重复编码 4 次得 4 个
-                # 不同容器 md5——容器字节层非确定；但 4 产物解码域 framemd5 逐帧
-                # 全同，无损语义成立，只影响 pass 文件字节、不影响像素与缓存命中
-                # 正确性，「与线程数无关的确定性编码器」旧表述作废）。Ctx.run
-                # owns staging, publication and the completion marker for this
-                # exact target; a second .part rename would orphan its marker.
-                tail = ["-frames:v", str(seglen), "-c:v", "ffv1", "-level", "3",
-                        "-g", "1", str(target)]
-            c.run(cmd + ["-filter_complex_threads", "1",
-                         "-filter_complex", ";".join(parts), "-map", "[vout]", *tail])
-            if c.dry:
-                # dry-run：命令已由 Ctx.run 打印（[dry-run] 前缀），不执行不落盘
-                # ——跳过原子替换/帧数校验/旁车，继续打印余下 pass 命令。dry 口径
-                # 与单 graph 一致（编排可见、零副作用）；否则 dry 下帧数校验
-                # sys.exit(1) 误杀 --dry-run（TestUntilFlag 实测回归，R4-E1-v2）
+                if self.png_output and last:
+                    from ..render.png_artifact import read_png
+                    try:
+                        read_png(target, root=c.root, width=self.W, height=self.H,
+                                 root_identity=getattr(c, "frame_root_identity", None))
+                    except (OSError, ValueError) as error:
+                        raise ValueError("single-frame compositor produced invalid PNG") from error
+                elif not self._pass_fresh(target, seglen):
+                    print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
+                          f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
+                    sys.exit(1)
+                if not last:
+                    # 帧数硬校验通过后落旁车（_pass_fresh sidecar 快路径的凭据，
+                    # 见其 docstring；截断/中断产物到不了这里，不会误发旁车）
+                    fstxn.atomic_write(target.with_suffix(target.suffix + ".n"), str(seglen), root=self.c.root)
+                # The successor is complete before its owned predecessor is removed.
+                # On failure the latest good checkpoint stays available for retry.
+                if not last or retention == "none":
+                    for path, identity in owned_previous:
+                        fstxn.remove_pinned(path, identity, preserve=lambda _: False)
+                owned_previous = tuple((p, fstxn.cleanup_identity(p)) for p in new_entries)
                 prev = target
-                continue
-            if self.png_output and last:
-                from ..render.png_artifact import read_png
-                try:
-                    read_png(target, root=c.root, width=self.W, height=self.H,
-                             root_identity=getattr(c, "frame_root_identity", None))
-                except (OSError, ValueError) as error:
-                    raise ValueError("single-frame compositor produced invalid PNG") from error
-            elif not self._pass_fresh(target, seglen):
-                print(f"✗ pass {k + 1}/{n} 帧数自检失败：{target.name} ≠ {seglen} 帧"
-                      f"（framesync 节律异常/中间物损坏，禁止向下游传递）")
-                sys.exit(1)
-            if not last:
-                # 帧数硬校验通过后落旁车（_pass_fresh sidecar 快路径的凭据，
-                # 见其 docstring；截断/中断产物到不了这里，不会误发旁车）
-                fstxn.atomic_write(target.with_suffix(target.suffix + ".n"), str(seglen), root=self.c.root)
-            prev = target
-        return enc
+            return enc
+
+        if self.c.dry:
+            return render_chain()
+        fstxn.mkdir(pdir, root=self.c.root)
+        # Same seed can share lower-layer files despite different upper layers.
+        # Lock all retention modes, so another render cannot lose its next input.
+        lock = pdir / (".chain-" + hashlib.sha256(seed.encode()).hexdigest()[:16] + ".lock")
+        with fstxn.file_lock(lock, root=self.c.root):
+            return render_chain()
 
     # ---- 阶段二：段级编码 → concat demuxer -c copy 拼接（2026-09-10）----
     # 单条 61 层全片 graph 的滤镜链是单线程硬瓶颈（voice-ime 实测 CPU 7.8%、511s）。

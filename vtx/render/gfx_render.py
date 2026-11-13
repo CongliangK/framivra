@@ -18,7 +18,8 @@ alpha 处理（截图路径；页面 opt-in 的 __vtx_export_png 导出优先）
 
 __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注释块）：
   VTX_GFX_NAVFREE（默认 0）=1 时每 tab 免逐帧导航，帧态由页内 __vtx_render 置位；
-  VTX_GFX_STATIC（默认 1）按页面 __vtx_static_spans 声明字节复制静态跨度成员帧。
+  VTX_GFX_STATIC（默认 1）按页面 __vtx_static_spans 声明同字节复制静态跨度成员帧
+  （独立 inode，优先 COW reflink，不支持时复制字节）。
   原 foreignObject 快照批量通路已判死移除（FO 图像上下文光栅化固有偏差）。
 
 传输使用标准库（socket/struct/base64/hashlib/json）；CDP 后端要求 numpy
@@ -28,7 +29,8 @@ __vtx_render 加速特性（方案 v2 阶段 2，详见「渲染主体」前注�
 独立渲染（写入 outdir）：env python3 -m vtx.render.gfx_render <html> <outdir> <N帧> [--tabs 4]
 """
 import base64
-from ..runtime import fstxn
+from ..runtime import fstxn, file_clone
+from itertools import groupby
 import hashlib
 from pathlib import Path
 import json
@@ -44,7 +46,7 @@ import time
 import urllib.request
 import zlib
 
-from .gfx_cli import png_invalid_reason, verify_frames
+from .gfx_cli import png_invalid_reason, verify_frames, _png_stream_invalid_reason
 from .browser_paths import find_chrome_candidate
 
 try:
@@ -812,8 +814,9 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     返回统计 dict；帧级失败（含浏览器崩溃自愈重试 2 次）列入 failed，
     调用方对这些帧回落 CLI。rendered = work 帧渲染成功数（按 work 归属过滤
     failed 后扣减，deferred 复制失败成员不入该口径；static_copied 字节复制帧
-    单独计数不占 rendered）。帧落盘统一走 _atomic_write_bytes（同目录 tmp +
-    os.replace 原子替换，并发双写不撕裂）。浏览器起不来抛 GfxRenderError（全页回落 CLI）。
+    单独计数不占 rendered）。渲染帧走 _atomic_write_bytes，静态成员走独立 inode
+    reflink/字节复制；均经 fstxn 同目录 tmp + os.replace 原子发布，不撕裂。
+    浏览器起不来抛 GfxRenderError（全页回落 CLI）。
     观测字段（方案 v2 阶段 0，只加观测）：path_counts=各帧实际导出路径计数
     （canvas 校验失败回落帧同时计入实际路径与 canvas_fallback）；timings_ms=
     nav/export/decode/write 各分项 p50/p95/sum 毫秒（只含成功帧；每 tab 线程
@@ -1062,18 +1065,26 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
         if spans:
             work, copy_now, deferred_spans, static_spans_n = plan_static_spans(
                 spans, work, outdir, width=width, height=height)
-        for m, head_path in copy_now:
-            # 头帧已缓存：字节复制（B5 口径：写成功才计数）；失败则交回渲染集。
-            # 读头帧直读、写成员走 _atomic_write_bytes（并发双写下成员文件同样不撕裂）
+        for head_path, entries in groupby(copy_now, key=lambda entry: entry[1]):
+            members = [m for m, _ in entries]
             try:
-                with open(head_path, "rb") as fh:
-                    data = fh.read()
-                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data, root=ctx.root if ctx is not None else None)
-                static_copied_n += 1
+                # Revalidate the pinned FD with the same full PNG gate used by
+                # png_invalid_reason; never clone a later pathname replacement.
+                with file_clone.validated_source(
+                        head_path, root=ctx.root if ctx is not None else None,
+                        validate=lambda stream, size: _png_stream_invalid_reason(
+                            stream, size, width=width, height=height)) as source:
+                    for m in members:
+                        try:
+                            source.copy_to(os.path.join(outdir, f"f{m:04d}.png"))
+                            static_copied_n += 1
+                        except OSError as e:
+                            note(f"帧 {m} 复制头帧失败（{e}），改渲染")
+                            work.append(m)
             except OSError as e:
-                note(f"帧 {m} 复制头帧失败（{e}），改渲染")
-                work.append(m)
-                work.sort()
+                note(f"跨度头帧 {head_path} 不可读（{e}），改渲染成员帧")
+                work.extend(members)
+        work.sort()
         queues = [work[k::tabs_n] for k in range(tabs_n)]
         # —— 特性 1 nav-free 资格判定：VTX_GFX_NAVFREE=1 且页面有 __vtx_render。
         # 默认 0：env 关闭时零额外 eval，页面行为与旧路径逐字节一致。——
@@ -1130,25 +1141,23 @@ def render_page(html_path, outdir, n_frames, chrome_path=None, tabs=None,
     for head, members in deferred_spans:
         head_path = os.path.join(outdir, f"f{head:04d}.png")
         try:
-            reason = png_invalid_reason(head_path, width=width, height=height)
-            if reason:
-                raise OSError(reason)
-            with open(head_path, "rb") as fh:
-                data = fh.read()
+            with file_clone.validated_source(
+                    head_path, root=ctx.root if ctx is not None else None,
+                    validate=lambda stream, size: _png_stream_invalid_reason(
+                        stream, size, width=width, height=height)) as source:
+                for m in members:
+                    try:
+                        source.copy_to(os.path.join(outdir, f"f{m:04d}.png"))
+                        static_copied_n += 1
+                    except OSError as e:
+                        note(f"帧 {m} 复制头帧失败（{e}），交由调用方回落")
+                        failed.append(m)
         except OSError as e:
-            # 头帧渲染失败/不可读：成员帧交回 failed 由调用方 CLI 补渲，绝不静默丢帧
+            # Invalid/unreadable heads never enter the clone or byte-copy path.
             note(f"跨度头帧 f{head:04d}.png 不可读（{e}），{len(members)} 个成员帧交由调用方回落")
             for m in members:
                 if not os.path.exists(os.path.join(outdir, f"f{m:04d}.png")):
                     failed.append(m)
-            continue
-        for m in members:
-            try:
-                _atomic_write_bytes(os.path.join(outdir, f"f{m:04d}.png"), data, root=ctx.root if ctx is not None else None)
-                static_copied_n += 1
-            except OSError as e:
-                note(f"帧 {m} 复制头帧失败（{e}），交由调用方回落")
-                failed.append(m)
     # rendered 口径（m2 修正）：= work 帧渲染成功数，按 work 归属过滤后再扣减。
     # failed 里可能混有 deferred 复制失败的成员帧（成员被跨度认领后不在 work 内），
     # 直接 len(work)-len(failed) 会失真甚至为负；static_copied 字节复制帧按既有

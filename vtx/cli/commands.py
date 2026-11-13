@@ -594,7 +594,7 @@ def _plan_without_linked_roots(plan, links):
     return plan
 
 
-def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
+def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False, passes_only=False):
     """先完整列出删除候选，再执行；沿用 hygiene 的现有保护策略。
 
     A02（issue #21 / F-01）清理三段式的计划段（预览=_run_cleanup，执行=
@@ -609,6 +609,12 @@ def _cleanup_plan(c, command, *, deep=False, keep_days=0, nuke=False):
       - 普通 gc 复用 gc_plan；cache 不存在时仅需计算 out 的既有中间物规则。
     cache/out 根为符号链接时整根拒绝（打印原因，不列、不删链接目标内容）。
     """
+    if passes_only:
+        if command != 'gc' or deep or nuke:
+            raise ValueError('--passes-only 仅用于 gc，且与 --all 互斥')
+        return hygiene.passes_plan(c, keep_days)
+    if not nuke:
+        hygiene.protection(c, refresh=True)
     links = _symlink_roots(c)
     for p in links:
         print(f"✗ 拒绝清理符号链接根 {p.relative_to(c.root)} → {os.readlink(p)}"
@@ -683,11 +689,15 @@ def _clean_preview(c, nuke: bool):
         print("  （out/ 当前无不可再生交付件）")
 
 
-def _run_cleanup(c, policy, command, *, deep=False, keep_days=0, nuke=False):
+def _run_cleanup(c, policy, command, *, deep=False, keep_days=0, nuke=False, passes_only=False):
     # 计划段：先完整列出删除候选（nuke 时最后警告先行，眼见为实）
     if command == "clean":
         _clean_preview(c, nuke)
-    plan = _cleanup_plan(c, command, deep=deep, keep_days=keep_days, nuke=nuke)
+    plan = _cleanup_plan(c, command, deep=deep, keep_days=keep_days, nuke=nuke,
+                         passes_only=passes_only)
+    if passes_only:
+        print('注：请先停止正在运行的渲染；本回收不是渲染排他锁。'
+              '仅定向回收可重算 pass，不判定所有旧键；未校验可重建性，重建仍需源/依赖')
     if command == "gc" and deep:
         print("注：深度回收保留不可再生交付件与 reports/snapshots"
               "（gc 无全删变体；全删唯一入口 clean --i-know-this-nukes-everything）")
@@ -808,6 +818,10 @@ def _main(execution=None):
     ap.add_argument("--all", action="store_true",
                     help="gc 专属：深度回收（等价原 clean，但保留 reports/snapshots 与"
                          " final/VERSIONS/history/FREEZE* 等不可再生交付件）")
+    ap.add_argument('--passes-only', action='store_true',
+                    help='gc 专属：先停止正在运行的渲染（无渲染排他锁）；只回收 vseg_pass '
+                         '严格生产命名的可重算 pass 及精确伴生件；'
+                         '不判旧键/不校验可重建性，重建需源/依赖；与 --all 互斥')
     ap.add_argument("--i-know-this-nukes-everything", dest="nuke_everything",
                     action="store_true",
                     help="clean 专属危险操作旗标：连不可再生交付件（final.mp4、VERSIONS.json、"
@@ -912,8 +926,10 @@ def _main(execution=None):
         print("--gpu 仅作用于 video 阶段"); sys.exit(2)
     if a.strict and a.command != "qc":
         print("--strict 仅作用于 qc 阶段"); sys.exit(2)
-    if (a.all or a.keep_days is not None) and a.command != "gc":
-        print("--all/--keep-days 仅作用于 gc 命令"); sys.exit(2)
+    if (a.all or a.passes_only or a.keep_days is not None) and a.command != "gc":
+        print("--all/--passes-only/--keep-days 仅作用于 gc 命令"); sys.exit(2)
+    if a.passes_only and a.all:
+        print('--passes-only 与 --all 互斥'); sys.exit(2)
     if a.nuke_everything and a.command != "clean":
         print("--i-know-this-nukes-everything 仅作用于 clean 命令"
               "（gc 永不删除不可再生交付件，无全删变体）"); sys.exit(2)
@@ -1007,9 +1023,20 @@ def _main(execution=None):
     if not tp.exists():
         print(f"timeline 不存在: {tp}")
         raise SystemExit(1) from FileNotFoundError()
+    if a.passes_only:
+        # Ctx fingerprints invoke gfx/BGM identity providers. Targeted pass GC
+        # deliberately needs neither those keys nor available external sources.
+        from types import SimpleNamespace
+        c = SimpleNamespace(root=tp.parent, tl_path=tp, cache=tp.parent / 'cache',
+                            out=tp.parent / 'out', dry=policy.dry)
+        try:
+            _run_cleanup(c, policy, 'gc', passes_only=True, keep_days=a.keep_days or 0)
+        except (OSError, ValueError, RuntimeError) as error:
+            print(f'✗ 定向回收失败，已保守停止：{error}'); sys.exit(1)
+        return
     try:
         c = Ctx(tp, execution=execution)   # PR#1：构造期校验 cache_dependencies（缺失/非文件 → 友好报错）
-    except (ValueError, KeyError, TypeError, ZeroDivisionError, FileNotFoundError) as e:
+    except (ValueError, KeyError, TypeError, ZeroDivisionError, OSError) as e:
         # 2026-09-11 扩捕获：timeline 结构缺键（KeyError）/类型错（TypeError）/fps=0
         # （ZeroDivisionError）/文件缺失（FileNotFoundError）均友好打印而非裸栈
         print(f"✗ timeline 无效：{e}"); sys.exit(1)
@@ -1042,8 +1069,11 @@ def _main(execution=None):
             print(f"✗ 空区间：B（帧 {fb}）必须大于 A（帧 {fa}）"); sys.exit(1)
         c.range_window = (fa, fb)
     if a.command in ("clean", "gc"):
-        _run_cleanup(c, policy, a.command, deep=a.all,
-                     keep_days=a.keep_days or 0, nuke=a.nuke_everything)
+        try:
+            _run_cleanup(c, policy, a.command, deep=a.all,
+                         keep_days=a.keep_days or 0, nuke=a.nuke_everything)
+        except (OSError, ValueError, RuntimeError) as error:
+            print(f'✗ 清理失败，已保守停止：{error}'); sys.exit(1)
         return
     if policy.dry:
         _preview_command(c, a)

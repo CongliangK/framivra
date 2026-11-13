@@ -320,7 +320,7 @@ def _collect_darwin_renderer(backend, executable, root, architecture, mode):
                          'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
             'implementation': _files([_ROOT / p for p in (
-                'render/gfx_environment.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
+                'render/gfx_environment.py', 'runtime/file_clone.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
                 'render/gfx_cef.py', 'render/cef_client.py')])}
 
 
@@ -616,7 +616,7 @@ def _collect_windows(backend, binary, mode):
             'launch_flags': list(CHROME_VISUAL_FLAGS),
             'protocol': {'device_scale': 1, 'color': 'srgb', 'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
             'python_runtime': _python_runtime(),
-            'implementation': _files([_ROOT / p for p in ('render/gfx_environment.py', 'render/gfx_backend.py',
+            'implementation': _files([_ROOT / p for p in ('render/gfx_environment.py', 'runtime/file_clone.py', 'render/gfx_backend.py',
                 'render/gfx_render.py', 'render/gfx_cli.py', 'render/gfx_cef.py', 'render/cef_client.py', 'runtime/windows_browser.py',
                 'render/browser_paths.py')])}
 
@@ -919,7 +919,7 @@ def collect(backend, binary, mode=None):
                              'alpha': 'native-or-white-black-solve', 'class': 'full-html'},
                 'python_runtime': _python_runtime(),
                 'implementation': _files([_ROOT / p for p in (
-                    'render/gfx_environment.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
+                    'render/gfx_environment.py', 'runtime/file_clone.py', 'render/gfx_backend.py', 'render/gfx_render.py', 'render/gfx_cli.py', 'render/browser_paths.py',
                     'render/gfx_cef.py', 'render/cef_client.py')])}
     except (OSError, RuntimeError, TypeError, AttributeError, plistlib.InvalidFileException,
             UnicodeError, struct.error) as e:
