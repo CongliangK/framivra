@@ -39,6 +39,23 @@ test('metadata describes actual consumer layers, types and sources without inven
   assert.equal(field('bgm.enabled').consumption, 'manifest')
 })
 
+test('built-in BGM interpreter and runtime fields follow current path consumers', () => {
+  for (const path of ['bgm.python', 'bgm.runtime']) {
+    const field = KERNEL_CONFIG_FIELDS.find(item => item.path === path)
+    assert.equal(field.type, 'string')
+    assert.equal(field.format, 'path')
+    assert.equal(field.consumption, 'runtime')
+    assert.equal(field.nullable, true)
+    for (const value of ['', '~/音乐配置.json', '$HOME/Python with spaces', null]) {
+      const result = check({ bgm: { [path.split('.')[1]]: value } })
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.warnings, [])
+    }
+    for (const value of [true, 42, [], {}]) assert.ok(errorAt(check({ bgm: { [path.split('.')[1]]: value } }), path))
+  }
+  assert.deepEqual(checkKernelConfig('{}').value, {})
+})
+
 test('cache mode is a strict global three-value field; missing defaults are never materialized', () => {
   const field = KERNEL_CONFIG_FIELDS.find(item => item.path === 'cache.mode')
   assert.equal(field.group, 'cache')

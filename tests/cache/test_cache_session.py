@@ -1,4 +1,5 @@
 """Cache working-set lifecycle; synthetic storage, not HTML render acceptance."""
+from contextlib import ExitStack
 import hashlib
 import json
 import io
@@ -19,14 +20,16 @@ class CacheSessionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
         self.root = Path(self.temporary.name)
         self.timeline = self.root / 'timeline.json'
         self.tl = {'project': {}, 'sources': [], 'video_tracks': []}
         self.timeline.write_text(json.dumps(self.tl))
         # This lifecycle fixture has no genuine Ctx/input pin. Authentication is
         # independently covered by reader/backend tests, not counterfeited here.
-        self.identity = self.enterContext(patch('vtx.cache.session.verify_input_identity'))
-        self.manifest = self.enterContext(patch('vtx.cache.hygiene.manifest_record'))
+        self.identity = self.stack.enter_context(patch('vtx.cache.session.verify_input_identity'))
+        self.manifest = self.stack.enter_context(patch('vtx.cache.hygiene.manifest_record'))
 
     def context(self, mode):
         return SimpleNamespace(root=self.root, cache=self.root / 'cache', out=self.root / 'out',
@@ -143,8 +146,8 @@ class CacheSessionTests(unittest.TestCase):
                 (evidence / name).write_bytes(b'{"synthetic_opaque_receipt": true}\n')
         marker = json.dumps(record, indent=2).encode() + b'\n'
         (directory / 'complete.json').write_bytes(marker)
-        self.enterContext(patch('vtx.cache.hygiene.gfx_key', return_value=key))
-        self.enterContext(patch('vtx.cache.hygiene.gfx_cache_ns', return_value=''))
+        self.stack.enter_context(patch('vtx.cache.hygiene.gfx_key', return_value=key))
+        self.stack.enter_context(patch('vtx.cache.hygiene.gfx_cache_ns', return_value=''))
         def ready(*args, **kwargs):
             try:
                 if json.loads((directory / 'complete.json').read_bytes()) != record:
@@ -154,7 +157,7 @@ class CacheSessionTests(unittest.TestCase):
             except (OSError, ValueError) as error:
                 raise ValueError('synthetic loose page is incomplete') from error
             return paths
-        self.enterContext(patch('vtx.render.gfx_cache_reader.resolve_frames', side_effect=ready))
+        self.stack.enter_context(patch('vtx.render.gfx_cache_reader.resolve_frames', side_effect=ready))
         return c, clip, directory, paths, data, marker
 
     @unittest.skipUnless(fstxn.write_capability() == 'fd-anchored', 'requires safe packed storage')
