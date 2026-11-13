@@ -484,7 +484,9 @@ class RenderPlan:
 
     def _composite_passes(self, layers_subset, out_path, with_subs, a, b, sub_file=None):
         """Serialize chains sharing pass keys; keep one recovery checkpoint by default."""
-        retention = os.environ.get("VTX_PASS_CACHE", "checkpoint")
+        retention = getattr(self.c, 'pass_cache', None)
+        if retention is None:
+            retention = os.environ.get("VTX_PASS_CACHE", "checkpoint")
         if retention not in ("checkpoint", "all", "none"):
             raise ValueError("VTX_PASS_CACHE must be checkpoint, all or none")
         pdir = self.scratch_dir if self.scratch_dir is not None else self.c.cache / "vseg_pass"
@@ -832,7 +834,7 @@ def _media_geometry(c, cl):
     return windowed, 0, 0, None, None, [c.crop169(cl['src']), f'scale={c.w}:{c.h}:flags=lanczos']
 
 
-def prepare_layers(c: Ctx):
+def prepare_layers(c: Ctx, *, run_tasks=None):
     """全部视频轨 clip 的图层预处理 + seg 预编码（缓存命中即跳过），返回 layers 列表
     （每项 {cl, seg|source, x, y, w2, h2, gfx, ti}，顺序=图层序）。
 
@@ -918,7 +920,7 @@ def prepare_layers(c: Ctx):
             if not producer["queued"]:
                 enc_tasks.append((label, cmd, nvenc))
                 producer["queued"] = True
-    run_parallel(c, enc_tasks, "seg 预编码")
+    (run_tasks or run_parallel)(c, enc_tasks, "seg 预编码")
     # This task also runs independently in the all pipeline wave.
     stage = "video_draft" if getattr(c, "draft", False) else "video"
     c.verify_inputs(None if getattr(c, "range_window", None) else stage)
@@ -964,6 +966,17 @@ def render_source_frame(c, clip, frame, directory):
     return output
 
 
+def render_qc_clean(c, plan, layers):
+    """Build the same independent bottom-track reference in every stage path."""
+    if not plan.draft and needs_qc_clean(c):
+        bottom = [layer for layer in layers if layer['ti'] == 0]
+        if plan.nseg > 1:
+            plan.render_segmented(c.cache / 'qc_clean.mp4', bottom,
+                                  with_subs=False, tag='vseg_qc')
+        else:
+            plan.composite(bottom, c.cache / 'qc_clean.mp4', False)
+
+
 def build_video(c: Ctx, layers=None):
     """layers=None（单跑 `vtx video` / 线性 all）：内部现做 prepare_layers（行为逐字
     不变）；流水线模式（方案二阶段2）由波内「video 预编码」job 预计算传入，跳过
@@ -1005,12 +1018,7 @@ def build_video(c: Ctx, layers=None):
         # 那是第二遍全片合成（voice-ime 实测与主合成同量级）；底轨为普通视频轨时，
         # qc 改为对每个探测帧现场从源视频提帧合成基准（像素语义等价，见 qc 内注释），
         # video 阶段不再为 qc 付这笔全片成本。
-        if not draft and needs_qc_clean(c):
-            bottom = [L for L in layers if L["ti"] == 0]
-            if nseg > 1:
-                plan.render_segmented(c.cache / "qc_clean.mp4", bottom, with_subs=False, tag="vseg_qc")
-            else:
-                plan.composite(bottom, c.cache / "qc_clean.mp4", False)
+        render_qc_clean(c, plan, layers)
         msg = f"黑场画布 + {len(tracks)} 轨 {len(layers)} 层等价叠加（时移）+ 字幕｜{enc}"
         if nseg > 1 and not (draft and nframes):
             msg += f"｜分段并行 N={nseg}"

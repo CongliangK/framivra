@@ -39,6 +39,48 @@ test('metadata describes actual consumer layers, types and sources without inven
   assert.equal(field('bgm.enabled').consumption, 'manifest')
 })
 
+test('cache mode is a strict global three-value field; missing defaults are never materialized', () => {
+  const field = KERNEL_CONFIG_FIELDS.find(item => item.path === 'cache.mode')
+  assert.equal(field.group, 'cache')
+  assert.equal(field.nullable, false)
+  assert.equal(field.consumption, 'runtime')
+  assert.deepEqual(field.enum, ['off', 'core', 'aggressive'])
+  for (const mode of field.enum) {
+    const result = check({ cache: { mode } })
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.warnings, [])
+  }
+  for (const mode of ['', 'CORE', ' core ', 'default', false, 0, null, [], {}]) {
+    assert.ok(errorAt(check({ cache: { mode } }), 'cache.mode'), JSON.stringify(mode))
+  }
+  for (const cache of [null, false, 'core', []]) assert.ok(errorAt(check({ cache }), 'cache'))
+  for (const text of ['{}', '{ "cache": {} }\n']) {
+    assert.equal(checkKernelConfig(text).text, text)
+    assert.equal(updateKernelConfigField(text, 'cache.mode', undefined).text, text)
+    assert.equal(Object.hasOwn(checkKernelConfig(text).value.cache ?? {}, 'mode'), false)
+  }
+})
+
+test('cache form edits preserve BGM, cache extensions and unknown exact numeric tokens', () => {
+  const text = '{"cache":{"future":9007199254740993},"bgm":{"repo":"~/music","cli":"bgm --flag","enabled":false,"future":1e+100},"future":[-0,1.0000000000000001]}'
+  for (const mode of ['off', 'core', 'aggressive']) {
+    const result = updateKernelConfigField(text, 'cache.mode', mode)
+    assert.equal(result.ok, true)
+    const value = parseJSON(result.text), before = parseJSON(text)
+    assert.equal(value.cache.mode, mode)
+    assert.equal(stringifyJSON(value.bgm), stringifyJSON(before.bgm))
+    assert.equal(stringifyJSON(value.future), stringifyJSON(before.future))
+    assert.equal(stringifyJSON(value.cache.future), '9007199254740993')
+    const reset = updateKernelConfigField(result.text, 'cache.mode', undefined)
+    assert.equal(Object.hasOwn(reset.value.cache, 'mode'), false)
+    assert.equal(stringifyJSON(reset.value), stringifyJSON(before))
+  }
+  assert.equal(Object.hasOwn(updateKernelConfigField(text, 'asr.language', 'Chinese').value.cache, 'mode'), false)
+  const blocked = updateKernelConfigField('{"cache":false,"bgm":{"repo":"keep"}}', 'cache.mode', 'core')
+  assert.equal(blocked.text, '{"cache":false,"bgm":{"repo":"keep"}}')
+  assert.equal(blocked.ok, false)
+})
+
 test('invalid JSON, nonobject roots and nontext inputs receive shape errors without echoing secrets', () => {
   for (const text of ['', '{', '[]', 'null', 'true', '42', '"text"', '{"asr":', '{} trailing', undefined, {}]) {
     const result = checkKernelConfig(text)

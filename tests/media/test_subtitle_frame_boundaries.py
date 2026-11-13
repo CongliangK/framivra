@@ -218,6 +218,12 @@ class SubtitleFrameIntegration(unittest.TestCase):
             self.temp = tempfile.TemporaryDirectory(prefix='vtx-subtitle-edges-')
             self.addCleanup(self.temp.cleanup)
             self.root = Path(self.temp.name)
+        # Warm-vseg assertions require explicitly persistent intermediates.
+        config = self.root / 'cache-config.json'
+        config.write_text(json.dumps({'cache': {'mode': 'aggressive'}}))
+        policy = patch.dict(os.environ, VTX_CONFIG=str(config))
+        policy.start()
+        self.addCleanup(policy.stop)
         self.ff = os.environ['VTX_TEST_FFMPEG']
         self.records = []
         self.env = dict(os.environ, VTX_NO_NVENC='1', VTX_SEG_NVENC='0')

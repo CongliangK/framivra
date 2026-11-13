@@ -1,4 +1,6 @@
 """Fail-closed public Electron scheduling/completion, separate from legacy CDP fallback."""
+import hashlib
+import io
 import json
 import re
 import os
@@ -12,8 +14,14 @@ from .gfx_electron import PAGE_ERROR_GATE, ElectronRenderError, expected_request
 from ..cache.hygiene import gfx_cache_ns, gfx_dir, gfx_key, manifest_record
 
 
-def require_result(st, frames, outdir, width, height, *, expected_html=None, expected_config=None):
-    """Require this invocation's complete adapter AND worker receipts, not old PNGs."""
+def require_result(st, frames, outdir, width, height, *, expected_html=None, expected_config=None,
+                   read_artifact=None):
+    """Require complete adapter AND worker receipts, not merely valid PNGs.
+
+    A packed consumer may supply immutable bytes by FIXED page-relative name.
+    All original absolute paths, producer receipts and PNG gates remain checked;
+    no directory reconstruction, path rewriting or new certification is implied.
+    """
     def reject(reason):
         detail = {k: st.get(k) for k in ("run_id", "evidence_dir", "exit_code", "failed")} if isinstance(st, dict) else st
         raise ElectronRenderError(f"Electron incomplete/failed receipt: {reason}; {detail}")
@@ -45,18 +53,25 @@ def require_result(st, frames, outdir, width, height, *, expected_html=None, exp
             reject("invalid caller frames")
         # Reject aliases/escapes at every evidence and PNG path, not just the
         # marker. resolve() equality also catches symlinked parent directories.
-        for p in [outdir, evidence, *(evidence / name for name in
-                  ('request.json', 'adapter-result.json', 'result.json'))]:
-            if p.resolve(strict=True) != p:
-                reject("symlink/path escape")
-        request = json.loads((evidence / 'request.json').read_text(encoding='utf-8'))
+        if read_artifact is None:
+            for p in [outdir, evidence, *(evidence / name for name in
+                      ('request.json', 'adapter-result.json', 'result.json'))]:
+                if p.resolve(strict=True) != p:
+                    reject("symlink/path escape")
+        elif outdir.resolve() != outdir:
+            reject("noncanonical packed page path")
+        def artifact(name):
+            relative = f'.electron/{run_id}/{name}'
+            return ((outdir / relative).read_bytes() if read_artifact is None
+                    else read_artifact(relative))
+        request = json.loads(artifact('request.json'))
         expected = expected_request(expected_html, outdir, frames, width, height, run_id,
                                     mode=mode, output=output, timeout_s=timeout)
         # JSON type-exact comparison: false/0 and 192.0/192 are not the same job.
         if json.dumps(request, sort_keys=True) != json.dumps(expected, sort_keys=True):
             reject("request differs from current caller source/settings/run/paths/frames")
-        saved = json.loads((evidence / "adapter-result.json").read_text(encoding="utf-8"))
-        raw = json.loads((evidence / "result.json").read_text(encoding="utf-8"))
+        saved = json.loads(artifact('adapter-result.json'))
+        raw = json.loads(artifact('result.json'))
         if saved != st:
             reject("adapter receipt mismatch")
         if (raw.get("run_id") != run_id or raw.get("schema") != "vtx.electron.navigation/1"
@@ -75,12 +90,18 @@ def require_result(st, frames, outdir, width, height, *, expected_html=None, exp
         for r in receipts:
             p = Path(outdir) / f"f{r['frame']:04d}.png"
             fingerprint = []
-            if (type(r.get('frame')) is not int or p.resolve(strict=True) != p
+            if read_artifact is None:
+                invalid = (p.resolve(strict=True) != p or gfx_cli.png_invalid_reason(
+                    p, width=width, height=height, _fingerprint=fingerprint))
+            else:
+                data = read_artifact(p.name)
+                invalid = gfx_cli._png_stream_invalid_reason(io.BytesIO(data), len(data),
+                    width=width, height=height, _fingerprint=fingerprint)
+            if (type(r.get('frame')) is not int or invalid
                     or r.get('url') != frame_url(expected_html, r['frame'])
                     or r.get('output') != str(p)
                     or r.get("path") != OUTPUT or r.get("page_error_fence_passed") is not True
                     or r.get("baseline_veto_passed") is not True or r.get("png_semantics_passed") is not True
-                    or gfx_cli.png_invalid_reason(p, width=width, height=height, _fingerprint=fingerprint)
                     or r.get("sha256") != fingerprint[0]):
                 reject("frame verification")
     except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
@@ -90,15 +111,17 @@ def require_result(st, frames, outdir, width, height, *, expected_html=None, exp
             "path_counts": st["path_counts"], "versions": st.get("versions", {})}
 
 
-def cached_record(d, n, key, width, height, backend, ns, *, expected_html=None, expected_config=None):
+def cached_record(d, n, key, width, height, backend, ns, *, expected_html=None, expected_config=None,
+                  read_artifact=None):
     """Authenticate completion and producer receipts; return the bound PNG hashes too."""
     try:
         d = Path(d).absolute()
         marker = d / gfx_cli.COMPLETE_FILE
-        if (expected_html is None or expected_config is None
-                or d.resolve(strict=True) != d or marker.resolve(strict=True) != marker):
+        if (expected_html is None or expected_config is None or d.resolve() != d
+                or (read_artifact is None and
+                    (d.resolve(strict=True) != d or marker.resolve(strict=True) != marker))):
             return None
-        record = json.loads(marker.read_text(encoding="utf-8"))
+        record = json.loads(marker.read_bytes() if read_artifact is None else read_artifact('complete.json'))
         runs = record["render_runs"]
         if (record.get("schema") != 1 or record.get("backend_identity") != backend
                 or record.get("backend_ns") != ns or not runs
@@ -107,16 +130,23 @@ def cached_record(d, n, key, width, height, backend, ns, *, expected_html=None, 
                 or any(r.get("requested_backend") != "electron" or r.get("effective_backend") != "electron"
                        or not re.fullmatch(r"[a-f0-9]{32}", r.get("run_id", "")) for r in runs)):
             return None
-        bad, _ = gfx_cli.inspect_page(d, n, key, width, height, backend_ns=ns)
+        if read_artifact is None:
+            bad, _ = gfx_cli.inspect_page(d, n, key, width, height, backend_ns=ns)
+        else:
+            current = gfx_cli._page_metadata(n, key, width, height, ns)
+            current['sha256'] = [hashlib.sha256(read_artifact(f'f{i:04d}.png')).hexdigest() for i in range(n)]
+            bad, _ = gfx_cli._inspect_page_record(record, current, [])
         if bad:
             return None
         # Validate the actual producer receipts through the same gate used before
         # publication. Marker summaries and generic PNG hashes are not receipts.
         for run in runs:
             evidence = d / '.electron' / run['run_id']
-            adapter = json.loads((evidence / 'adapter-result.json').read_text(encoding='utf-8'))
+            adapter = json.loads((evidence / 'adapter-result.json').read_bytes() if read_artifact is None
+                                 else read_artifact(f".electron/{run['run_id']}/adapter-result.json"))
             if require_result(adapter, run['frames'], d, width, height,
-                              expected_html=expected_html, expected_config=expected_config) != run:
+                              expected_html=expected_html, expected_config=expected_config,
+                              read_artifact=read_artifact) != run:
                 return None
         return record
     except (OSError, ValueError, TypeError, KeyError, AttributeError, ElectronRenderError):

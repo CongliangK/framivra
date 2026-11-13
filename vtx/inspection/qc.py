@@ -720,7 +720,9 @@ def qc(c):
     # v2 §1.3（2026-09-13）：TP 从「只归档回执」升为内核 qc 判定项（阈 -1.0 dBFS，
     # 与 gates G3 同一权威值、同一回执不重测）——检查项见下方 checks 回填段。
     def loudness():
-        hit = loudness_cache.lookup(final, root=c.root)
+        policy = getattr(c, 'cache_policy', None)
+        reuse = policy is None or policy.reuse_media
+        hit = loudness_cache.lookup(final, root=c.root) if reuse else None
         cache_source = {"provider": "loudness_cache", "resource": str(final)}
         if hit is not None:
             return (field(hit, "i_lufs", "$", source=cache_source),
@@ -733,7 +735,12 @@ def qc(c):
             mP = native("re.search", r"Peak:\s*(-?[\d.]+) dBFS", r2.stderr, path="$", source=provider)
             return (native("float", mI.group(1), path="$", source=dict(provider, field="i_lufs")) if mI else None,
                     native("float", mP.group(1), path="$", source=dict(provider, field="tp_dbfs")) if mP else None)
-        r = loudness_cache.measure_and_store(final, measure, root=c.root)
+        if reuse:
+            r = loudness_cache.measure_and_store(final, measure, root=c.root)
+        else:
+            i, tp = map(loudness_cache._measurement, measure())
+            r = {'i_lufs': i, 'tp_dbfs': tp}
+            cache_source = {'provider': 'ffmpeg', 'resource': str(final), 'measurement': 'ebur128'}
         return (field(r, "i_lufs", "$", source=cache_source),
                 field(r, "tp_dbfs", "$", source=cache_source), False)
 

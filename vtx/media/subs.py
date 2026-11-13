@@ -176,7 +176,8 @@ def run_render(c: Ctx, dry: bool):
         RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h, nframes=None,
                    layers=[]).write_global_ass(tmp)   # 复用唯一权威实现，不另拼 ass
         new = tmp.read_bytes()
-    if dst.exists() and dst.read_bytes() == new:
+    from ..cache.policy import policy_for
+    if policy_for(c).reuse_media and dst.exists() and dst.read_bytes() == new:
         print(f"✓ cache/subs.ass 已缓存（字节一致），跳过")
     else:
         fstxn.atomic_write(dst, new, root=c.root)
@@ -275,13 +276,30 @@ def _layer_ready(c: Ctx, f: int):
 def _bg_frame(c: Ctx, f: int, d: Path, dry: bool):
     """背景帧来源三级优先：qc_clean 提帧 → 图层单帧合成 → 黑场兜底。
     返回 (png 路径|None, 来源描述)。dry 只返回描述不执行。"""
+    policy = getattr(c, 'cache_policy', None)
     qc = c.cache / "qc_clean.mp4"
-    if media_cache_valid(qc, c.dur):
+    if (policy is None or policy.reuse_media) and media_cache_valid(qc, c.dur):
         p = d / "bg.png"
         if not dry:
             c.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{f * c.spf:.6f}", "-i", str(qc),
                    "-frames:v", "1", str(p)])
         return p, "cache/qc_clean.mp4 提帧"
+    if policy is not None and not dry:
+        from ..cache.cache_state import verify_input_identity
+        from ..render.preview_inputs import PreviewInputs
+        verify_input_identity(c)
+        inputs = PreviewInputs(c, f)
+        identity = inputs.identity()
+        layers = inputs.materialize(d / 'inputs')
+        plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h, layers=layers)
+        video = d / 'bg.mp4'
+        plan.composite(layers, video, False, a=f, b=f + 1)
+        c.run(['ffmpeg', '-v', 'error', '-y', '-i', str(video),
+               '-frames:v', '1', str(d / 'bg.png')])
+        verify_input_identity(c)
+        if inputs.identity() != identity:
+            raise ValueError('subtitle preview inputs changed during composition')
+        return d / 'bg.png', '当前图层单帧合成（全局缓存策略）'
     layers = _layer_ready(c, f)
     if layers is not None:
         plan = RenderPlan(c=c, draft=False, f=1.0, W=c.w, H=c.h, nframes=None, layers=[])

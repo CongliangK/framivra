@@ -50,6 +50,7 @@ MEDIA_TESTS = {
         'tests.media.test_range_render.TestRangeIntegration',
         'tests.media.test_subtitle_frame_boundaries.SubtitleFrameIntegration',
         'tests.cache.test_timeline_diff_empty_tracks.EmptyTrackImpactIntegration',
+        'tests.cache.test_cache_modes_integration.CacheModesIntegration',
         'tests.gfx.test_graphics_portability.SubtitleIntegration',
         'tests.gfx.test_cef_benchmark.FullStreamMediaContracts',
     ),

@@ -192,22 +192,24 @@ class PngSequence:
 def png_source(c, clip):
     """Describe expected output only; safe in the concurrent prepare/gfx wave."""
     from . import gfx_svg
+    from ..cache.policy import graphics_root
+    cache = graphics_root(c)
     if gfx_svg.is_svg(clip):
         scope = getattr(c, '_svg_consumer_sources', None)
         scope_key = gfx_svg.canonical(clip)
         if scope is not None and scope_key in scope:
             return scope[scope_key]
         record = gfx_svg.resolve(c, clip)
-        directory = c.cache / 'gfx_exp' / gfx_svg.NAMESPACE / gfx_svg.record_key(record)
+        directory = cache / 'gfx_exp' / gfx_svg.NAMESPACE / gfx_svg.record_key(record)
         snapshot = gfx_svg.SequenceSnapshot(c, clip, directory, record, scope=scope)
-        source = PngSequence(directory, str(directory.relative_to(c.cache)), clip['dur'],
+        source = PngSequence(directory, str(directory.relative_to(cache)), clip['dur'],
                              c.fps, c.w, c.h, interval_check=snapshot.check_interval)
         if scope is not None:
             scope[scope_key] = source
         return source
     directory = gfx_dir(c, clip)
     # Preserve the default leaf identity and HTML environment behavior.
-    relative = directory.relative_to(c.cache)
+    relative = directory.relative_to(cache)
     identity = str(relative) if relative.parts[0] == "gfx_exp" else directory.name
     def check_environment():
         from .gfx_environment import certificate

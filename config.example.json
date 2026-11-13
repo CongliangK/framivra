@@ -3,6 +3,9 @@
   "_comment_external": "external_apps / external_plugins（v2 §2.4 安全节）：仓外 app/plugin 根目录注册。条目 = 本仓相对、绝对或 ~/ 路径字符串（默认 disabled），或 {\"path\": ..., \"enabled\": true} 显式启用；路径 resolve 后做白名单根校验（manifest/health 命令必须落在该目录内）；独立 external 插件由条目 enabled 显式启用，仍须通过 manifest/钩子校验；官方同名插件只认 plugins/<name>/ 与 registry 安装态，不允许 external 顶替。官方件不在此注册（随仓分发）。",
   "external_apps": [],
   "external_plugins": [],
+  "cache": {
+    "mode": "core"
+  },
   "comfyui": {
     "enabled": false,
     "base_url": "http://127.0.0.1:8188",

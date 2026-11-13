@@ -251,6 +251,12 @@ class TestQcSegmentExemption(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
         root = Path(tmp.name)
+        # This ordered fixture specifically exercises persistent QC exemptions.
+        config = root / 'cache-config.json'
+        config.write_text(json.dumps({'cache': {'mode': 'aggressive'}}))
+        policy = patch.dict(os.environ, VTX_CONFIG=str(config))
+        policy.start()
+        cls.addClassCleanup(policy.stop)
         assets = root / "assets"; assets.mkdir(parents=True)
         dur = 180   # 6s；pip 放后半段（130-160）使 2 段切点在 ~69 帧找到静默帧
         fps = 30
